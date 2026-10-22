@@ -1111,6 +1111,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-waiting-label",
+      "trigger_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_waiting_label.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAITING-LABEL-01",
+          "name": "thẻ Blocked chỉ chờ thẻ khác mang nhãn '⏳ chờ thẻ khác' (planner pending, runner gắn/gỡ), thẻ 🙋 không có nhãn, status tách hai nhóm (#235)",
+          "command": "bash tests/super-board/test_waiting_label.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

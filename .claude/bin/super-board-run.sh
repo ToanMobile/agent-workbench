@@ -1845,6 +1845,35 @@ swept_add() {
   printf '%s\n' "$1" >> "$(sweep_ledger)" 2>/dev/null || log "⚠ cannot write the sweep ledger $(sweep_ledger)"
 }
 
+WAITING_LABEL="⏳ chờ thẻ khác"
+sync_waiting_labels() {
+  # #235: $1 = plan JSON. Thẻ Blocked chỉ chờ thẻ khác (plan `pending`) mang nhãn WAITING_LABEL để board phân biệt với thẻ cần người;
+  # nhãn ở bất kỳ thẻ nào không còn trong `pending` (sweep vừa thả, kéo tay đi chỗ khác, thành 🙋) bị gỡ. Plan không có khoá `pending`
+  # (planner cũ) thì không đụng nhãn nào. Nhãn không bao giờ là căn cứ chặn hay thả thẻ: chỉ hiển thị.
+  local plan="$1" n
+  printf '%s' "$plan" | jq -e 'has("pending")' >/dev/null 2>&1 || return 0
+  local pending
+  pending=$(printf '%s' "$plan" | jq -c '[.pending[]?.number]' 2>/dev/null) || return 0
+  for n in $(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson p "$pending" --arg l "$WAITING_LABEL" '
+      .items[] | select(.status == "Blocked") | .content.number as $n | select($p | index($n))
+      | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index($l) | not)
+      | $n' 2>/dev/null); do
+    if [ "${WAITING_LABEL_READY:-0}" != 1 ]; then
+      gh_write_once label create "$WAITING_LABEL" --color FBCA04 --description "Blocked only on other open cards; the sweep releases it" --force >/dev/null 2>&1 \
+        && WAITING_LABEL_READY=1
+    fi
+    gh_write_once issue edit "$n" --add-label "$WAITING_LABEL" >/dev/null 2>&1 || true
+    log "⏳ #${n}: label '${WAITING_LABEL}' (waits on other cards)"
+  done
+  for n in $(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson p "$pending" --arg l "$WAITING_LABEL" '
+      .items[] | .content.number as $n | select($p | index($n) | not)
+      | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index($l))
+      | $n' 2>/dev/null); do
+    gh_write_once issue edit "$n" --remove-label "$WAITING_LABEL" >/dev/null 2>&1 || true
+    log "⏳ #${n}: label '${WAITING_LABEL}' removed"
+  done
+}
+
 sweep_blocked_cards() {
   # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
   # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
@@ -1860,6 +1889,7 @@ sweep_blocked_cards() {
     return 2
   fi
   local next key
+  sync_waiting_labels "$plan"
   while IFS=$'\t' read -r issue cleared; do
     # Không có blocker nào (thẻ bị kéo tay sang Blocked, body ghi None): không có gì vừa đóng, để người quyết.
     [ -n "$issue" ] && [ -n "$cleared" ] || continue
@@ -1903,7 +1933,8 @@ maybe_sweep_blocked() {
   # thử lại sau SWEEP_RETRY_SECONDS, không phải đợi tới lần có thẻ về Done kế tiếp.
   # ponytail: blocker đóng ngoài board (tập Done không đổi) phải chờ lần về Done sau; sweep theo sự kiện issue nếu việc này gây kẹt.
   local sig rc=0
-  sig=$(done_signature)
+  # #235: cộng thêm tập thẻ Blocked để thẻ vừa bị chặn được gắn nhãn chờ ngay, không phải đợi thẻ Done kế tiếp.
+  sig="$(done_signature)|$(echo "$PROJECT_ITEMS_JSON" | jq -r '[.items[] | select(.status == "Blocked") | .content.number // empty] | sort | @csv' 2>/dev/null)"
   if [ "$sig" = "${SWEEP_DONE_SIG-<none>}" ]; then
     [ "${SWEEP_RETRY_AT:-0}" -gt 0 ] && [ "$(date +%s)" -ge "$SWEEP_RETRY_AT" ] || return 1
   fi

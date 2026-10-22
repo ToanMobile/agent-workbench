@@ -462,6 +462,16 @@ def waiting_on_person(items: list[dict[str, Any]], no_device: bool = False) -> l
                   key=lambda x: -x["number"])
 
 
+WAITING_LABEL = "⏳ chờ thẻ khác"
+
+
+def waiting_on_cards(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """#235: Blocked cards that only wait on other open cards (the runner labels them WAITING_LABEL; the sweep releases them by
+    itself), newest first. Apart from the cards that need a person."""
+    return sorted((i for i in items if i.get("status") == "Blocked"
+                   and WAITING_LABEL in [str(l).lower() for l in i.get("labels") or []]), key=lambda x: -x["number"])
+
+
 def held_for_device(i: dict[str, Any]) -> bool:
     """#95: its QA needs a real device (needs-device, any case) — in QA, or in Ready labelled `qa`. The runner and the planner hold
     it while none is online (super-board-run.sh DEVICE_JQ). Not Review; a Ready card without `qa` is built first."""
@@ -750,7 +760,11 @@ def main() -> int:
     # ── block reasons ──
     print()
     print("▎Block reasons")
-    blockers = [it for it in by_status["Blocked"] if it["number"] not in person_numbers]
+    waiting_cards = [it for it in waiting_on_cards(items) if it["number"] not in person_numbers]
+    waiting_numbers = {it["number"] for it in waiting_cards}
+    blockers = [it for it in by_status["Blocked"] if it["number"] not in person_numbers | waiting_numbers]
+    print(f"   {WAITING_LABEL} ×{len(waiting_cards)}  (the sweep releases them when the blocker closes — nothing to do)"
+          + ("  " + ", ".join(f"#{it['number']}" for it in waiting_cards) if waiting_cards else ""))
     if not blockers:
         print("   (none)")
     else:
