@@ -9,7 +9,7 @@
 # Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-RUNNER="$ROOT/.claude/bin/super-board-run.sh"
+RUNNER="${SB_TEST_RUNNER:-$ROOT/.claude/bin/super-board-run.sh}"
 WRAP="$ROOT/.claude/bin/super-board-worker-wrap.sh"
 FAILS=0
 ok() { echo "✔ $1"; }
@@ -103,5 +103,27 @@ ZOMBIE_SEEN="$ZP:$(( $(date +%s) - 61 ))"
 check_lane_zombie qa "QA"
 sleep 1
 if ! kill -0 "$ZP" 2>/dev/null && [ -z "$QA_PID" ]; then ok "G2: killed once grace expired"; else fail "G2: not killed after grace"; kill -9 "$ZP" 2>/dev/null; fi
+
+# ── H: pid trong lock là wrapper; zombie kill phải diệt cả worker con (kể cả khi nó bỏ qua TERM), không để 2 worker/1 thẻ.
+PROJECT_ITEMS_JSON='{"items":[{"content":{"number":139},"status":"Review"}]}'
+bash "$WRAP" bash -c 'trap "" TERM; sleep 40' >/dev/null 2>&1 & WP=$!
+sleep 1
+WKID=$(pgrep -P "$WP" | head -1)
+QA_PID="$WP"; QA_ISSUE=139; QA_SEEN_IN_QA="$WP"; ZOMBIE_SEEN="$WP:$(( $(date +%s) - 61 ))"
+check_lane_zombie qa "QA"
+sleep 1
+if [ -n "$WKID" ] && ! kill -0 "$WKID" 2>/dev/null && ! kill -0 "$WP" 2>/dev/null; then ok "H: zombie kill takes the wrapper's child too"; else fail "H: child $WKID survived"; kill -9 "$WKID" "$WP" 2>/dev/null; fi
+
+# ── I: startup_orphan_workers không coi con của wrapper đã khoá là orphan; process lạ vẫn là orphan.
+RT="$TMP/repo"; mkdir -p "$RT"
+ARGV0="$TMP/claude --root '$RT' for super-board run"
+bash -c 'exec -a "$0" sleep 30' "$ARGV0" & SOLO=$!
+bash -c 'exec -a "$0" sleep 30 & wait' "$ARGV0" & WRP=$!
+sleep 1
+CHILD=$(pgrep -P "$WRP" | head -1)
+rm -f "$INFLIGHT_DIR"/*; printf 'PID=%s\nLANE=qa\n' "$WRP" > "$INFLIGHT_DIR/140"
+OUT=" $(startup_orphan_workers "$RT" | tr '\n' ' ')"
+case "$OUT" in *" $CHILD "*) fail "I: child of locked wrapper reported as orphan ($OUT)" ;; *" $SOLO "*) ok "I: wrapper child is not an orphan, stray worker is" ;; *) fail "I: stray worker not reported ($OUT)" ;; esac
+kill -9 "$CHILD" "$WRP" "$SOLO" 2>/dev/null
 
 [ "$FAILS" -eq 0 ] && echo "ALL PASS" || { echo "$FAILS FAIL"; exit 1; }

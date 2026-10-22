@@ -908,6 +908,36 @@
           "command": "bash tests/super-board/test_verify_cmd_same_as_gate.sh"
         }
       ]
+    },
+    {
+      "component": "super-board-self-reload",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SELF-RELOAD-01",
+          "name": "runner rảnh tự nạp lại super-board-run.sh khi origin đổi: ff main rồi exec lại; main lệch origin / ff hỏng / sai cú pháp thì notify một lần, không restart mù; còn worker thì không đụng",
+          "command": "bash tests/super-board/test_runner_self_reload.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-preflight-stale-overlap",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_preflight_overlap_stale.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-PREFLIGHT-STALE-OVERLAP-01",
+          "name": "preflight câu 3: PR của thẻ Backlog/Blocked không chặn; PR của thẻ đang chạy vẫn chặn; thẻ có PR riêng không bị sequence lại; không --inflight giữ hành vi cũ (#280)",
+          "command": "bash tests/super-board/test_preflight_overlap_stale.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

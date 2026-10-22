@@ -48,6 +48,7 @@ gh_checkpoint() { :; }
 gh_write_once() { echo "gh $*" >> "$TMP/writes"; }
 set_card_status() { echo "move $1 $2" >> "$TMP/writes"; }
 log() { echo "$*" >> "$TMP/log"; }
+issue_is_open() { return 0; }   # #254: reclaim_stranded_building đọc state issue; mọi thẻ ở đây là issue mở (bản thật được nạp lại ở ca 79 bên dưới)
 
 items() {   # items <number> <status> [labels-json]: a one-card board snapshot
   PROJECT_ITEMS_JSON="{\"items\":[{\"id\":\"PVTI_$1\",\"status\":\"$2\",\"labels\":${3:-[]},\"content\":{\"type\":\"Issue\",\"number\":$1,\"assignees\":[]}}]}"
@@ -282,6 +283,7 @@ printf '#!/usr/bin/env bash\necho "unknown flag: --renamed" >&2\nexit 1\n' > "$T
 ( SB_GITHUB_READ="$ROOT/.claude/bin/super-board-github-read.py"
   export PATH="$TMP/ghbin:$PATH" SB_GITHUB_HALT_FILE="$TMP/runner-halt2.json" SB_GITHUB_RETRY_DELAY=0
   unset SB_GITHUB_READ_STRICT
+  SB_LIB_ONLY=1 . "$RUNNER"; set +e   # nạp lại issue_is_open thật (đầu file đã stub)
   issue_is_open 7 ) >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 79 ] && [ -e "$TMP/runner-halt2.json" ] && ok "runner's own issue-state read with a broken flag: halt file written (79)" \
   || fail "runner's own issue-state read with a broken flag: rc=$rc halt=$([ -e "$TMP/runner-halt2.json" ] && echo yes || echo no) (exit 79 without a halt file: a restart fails again without the reason)"
