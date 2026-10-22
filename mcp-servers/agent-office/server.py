@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -182,11 +183,17 @@ def parse_ticks(text: str, ref_ts: float):
     return ticks
 
 
-SECRET_RE = re.compile(
-    r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{16,}"
-    r"|(?i:bearer)\s+[A-Za-z0-9._~+/=-]{8,}"
-    r"|(?i:[\w-]*(?:token|secret|passw(?:or)?d|api[_-]?key)[\w-]*)\s*[=:]\s*\S+"
-    r"|(?<=://)[^/\s:@]+:[^@\s]+(?=@)")
+# Bounded repeats and a left boundary keep the key-name branch linear on long \w runs.
+_KEY = r"(?<![\w-])[\w-]{0,30}?(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|key|auth|credential|private)[\w-]{0,30}"
+SECRET_RE = re.compile("|".join([
+    r"gh[pousr]_[A-Za-z0-9]{20,}", r"github_pat_[A-Za-z0-9_]{20,}", r"(?<![\w-])sk-[A-Za-z0-9_-]{16,}",
+    r"\bAKIA[0-9A-Z]{16}\b", r"\bxox[abposr]-[A-Za-z0-9-]{10,}", r"\beyJ[\w-]{5,}\.eyJ[\w-]{5,}\.[\w-]+",
+    r"-----BEGIN[^-]*PRIVATE KEY-----[\s\S]*?(?:-----END[^-]*-----|$)",
+    r"(?i:authorization:?\s*basic)\s+\S+", r"(?i:bearer)\s+[A-Za-z0-9._~+/=-]{8,}",
+    r"(?i:--?(?:token|password|passwd|api-key|secret|pass))[\s=]+(?:\"[^\"]*\"|'[^']*'|\S+)",
+    r"(?i:" + _KEY + r")[\"']?\s*[=:]\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"']{8,})",
+    r"(?<=://)[^/\s:@]+:[^@\s]+(?=@)",
+]))
 
 
 def redact(text: str) -> str:
@@ -200,9 +207,9 @@ def tool_summary(name, inp) -> str:
     for key in ("command", "file_path", "notebook_path", "path", "pattern", "url", "query", "description", "prompt"):
         v = inp.get(key)
         if isinstance(v, str) and v.strip():
-            return redact(v.strip()[:600])
+            return redact(v.strip())[:600]  # redact first: a secret straddling the cut must still match
     try:
-        return redact(json.dumps(inp, ensure_ascii=False)[:300])
+        return redact(json.dumps(inp, ensure_ascii=False))[:300]
     except (TypeError, ValueError):
         return ""
 
@@ -326,6 +333,63 @@ def fetch_project(gcfg: dict) -> dict:
     return normalize_project(proj, items_raw, gcfg)
 
 
+def fetch_projects(gcfg: dict) -> dict:
+    """Read every Project in gcfg["projects"] (default: just gcfg["project"]); one failing board keeps the others."""
+    numbers = gcfg.get("projects") or [gcfg["project"]]
+
+    def one(n):
+        try:
+            return fetch_project({**gcfg, "project": n}), None
+        except GhError as e:
+            warn(f"project #{n}", e)
+            return None, f"#{n}: {e}"
+
+    with ThreadPoolExecutor(max_workers=len(numbers)) as pool:  # one gh process per Project, ~2.5 s each
+        results = list(pool.map(one, numbers))  # map keeps the configured order
+    parts = [p for p, _ in results if p]
+    errors = [e for _, e in results if e]
+    if not parts:
+        raise GhError("; ".join(errors))
+    return merge_projects(parts, errors)
+
+
+def board_fingerprint(parts: list) -> str:
+    """Changes only when a card moves, is edited or gets a new comment."""
+    h = hashlib.sha1()
+    for p in parts:
+        for i in p["items"]:
+            h.update(f"{i['id']}|{i['status']}|{i.get('updatedAt')}|{(i.get('lastComment') or {}).get('at')}\n".encode())
+    return h.hexdigest()
+
+
+def poll_interval(base: float, unchanged: int) -> float:
+    """An idle board is read half as often (the GraphQL budget is shared with the super-board runners)."""
+    return base * 2 if unchanged >= 3 else base
+
+
+def merge_projects(parts: list, errors: list) -> dict:
+    first = parts[0]
+    columns, fields = [], {}
+    for p in parts:
+        for c in p["columns"]:
+            if all(c["name"] != x["name"] for x in columns):
+                columns.append(c)
+        for f in p["selectFields"]:
+            mf = fields.setdefault(f["name"], {"id": f["id"], "name": f["name"], "options": []})
+            for o in f["options"]:
+                if all(o["name"] != x["name"] for x in mf["options"]):
+                    mf["options"].append(o)
+    merged = dict(first)
+    merged.update(
+        columns=columns, selectFields=list(fields.values()), items=[i for p in parts for i in p["items"]],
+        parts={p["id"]: {k: p.get(k) for k in ("id", "statusFieldId", "statusField", "selectFields", "title")} for p in parts},
+        partialErrors=errors,
+        title=first.get("title") if len(parts) == 1 else f"{len(parts)} Project",
+    )
+    merged["totalCount"] = len(merged["items"])
+    return merged
+
+
 def last_comment(c: dict):
     nodes = [x for x in ((c.get("comments") or {}).get("nodes") or []) if x]
     if not nodes:
@@ -393,6 +457,7 @@ def normalize_project(p: dict, items_raw: list, gcfg: dict) -> dict:
             "fields": {k: v for k, v in fv.items() if k not in skip_fields},
             "updatedAt": parse_iso(c.get("updatedAt") or n.get("updatedAt")),
             "lastComment": last_comment(c),
+            "pid": p.get("id"),
         })
     if any(not it["status"] for it in items):
         columns.insert(0, {"name": NO_STATUS, "kind": "backlog", "ghColor": "GRAY"})
@@ -484,7 +549,7 @@ class LocalScanner:
                     if not isinstance(b, dict):
                         continue
                     if b.get("type") == "text" and (b.get("text") or "").strip():
-                        s["texts"].append({"ts": ts, "text": redact(b["text"].strip()[:1500])})
+                        s["texts"].append({"ts": ts, "text": redact(b["text"].strip())[:1500]})
                     elif b.get("type") == "tool_use":
                         s["tools"].append({"ts": ts, "name": b.get("name") or "Tool",
                                            "summary": tool_summary(b.get("name"), b.get("input"))})
@@ -1157,19 +1222,25 @@ class App:
             raise ValueError("Không tìm thấy thẻ này, có thể vừa bị xoá trên GitHub.")
         return it
 
-    def _select(self, field_name):
-        f = next((x for x in (self.project.get("selectFields") or []) if x["name"] == field_name), None)
+    def _part(self, item):
+        """The Project that owns this card (single-project and demo data fall back to self.project)."""
+        return (self.project.get("parts") or {}).get(item.get("pid")) or self.project
+
+    def _select(self, field_name, part=None):
+        f = next((x for x in ((part or self.project).get("selectFields") or []) if x["name"] == field_name), None)
         if not f:
             raise ValueError(f"Project không có trường chọn '{field_name}'.")
         return f
 
-    def _set(self, item_id, field_name, option_name):
-        f = self._select(field_name)
+    def _set(self, item_id, field_name, option_name, part=None):
+        if part is None:
+            part = next((self._part(x) for x in self.project.get("items", []) if x["id"] == item_id), self.project)
+        f = self._select(field_name, part)
         opt = next((o for o in f["options"] if o["name"] == option_name), None)
         if not opt:
             raise ValueError(f"Trường {field_name} không có lựa chọn '{option_name}'.")
         if not self.demo:
-            gh_graphql(M_SET, {"p": self.project["id"], "i": item_id, "f": f["id"], "o": opt["id"]})
+            gh_graphql(M_SET, {"p": part["id"], "i": item_id, "f": f["id"], "o": opt["id"]})
         return f, opt
 
     def act(self, action: str, body: dict) -> dict:
@@ -1178,6 +1249,7 @@ class App:
         status_field = self.project.get("statusField")
         if action == "set-field":
             it = self._item(body["itemId"])
+            status_field = self._part(it).get("statusField") or status_field
             field = body.get("field") or status_field
             f, opt = self._set(it["id"], field, body["option"])
             with self.lock:
@@ -1195,6 +1267,9 @@ class App:
             text = str(body.get("body") or "")[:20000]
             repo = str(body.get("repo") or "").strip()
             number, url, content_id, full, typ = None, None, None, None, "DraftIssue"
+            owner_item = next((x for x in self.project.get("items", []) if repo and x["repo"] == repo and x.get("pid")), None)
+            part = self._part(owner_item) if owner_item else self.project
+            status_field = part.get("statusField") or status_field
             if self.demo:
                 item_id = "demo-new-%d" % int(now() * 1000)
                 if repo:
@@ -1210,17 +1285,18 @@ class App:
                     raise ValueError(f"Không tìm thấy repo {full} trên GitHub.")
                 issue = gh_graphql(M_ISSUE, {"r": rid, "t": title, "b": text})["createIssue"]["issue"]
                 content_id, number, url, typ = issue["id"], str(issue["number"]), issue["url"], "Issue"
-                item_id = gh_graphql(M_ADD, {"p": self.project["id"], "c": content_id})["addProjectV2ItemById"]["item"]["id"]
+                item_id = gh_graphql(M_ADD, {"p": part["id"], "c": content_id})["addProjectV2ItemById"]["item"]["id"]
             else:
-                item_id = gh_graphql(M_DRAFT, {"p": self.project["id"], "t": title, "b": text})["addProjectV2DraftIssue"]["projectItem"]["id"]
+                item_id = gh_graphql(M_DRAFT, {"p": part["id"], "t": title, "b": text})["addProjectV2DraftIssue"]["projectItem"]["id"]
             status = body.get("status") or None
             if status and status_field:
-                self._set(item_id, status_field, status)
+                self._set(item_id, status_field, status, part)
             with self.lock:
                 self.project.setdefault("items", []).append({
                     "id": item_id, "contentId": content_id, "number": number, "title": title, "url": url,
                     "type": typ, "state": "OPEN", "isDraft": False, "repo": repo or "Nháp", "repoFull": full,
                     "status": status or NO_STATUS, "assignees": [], "labels": [], "fields": {}, "updatedAt": now(),
+                    "pid": part.get("id"),
                 })
             result = {"ok": True, "itemId": item_id, "number": number, "url": url}
         elif action == "comment":
@@ -1238,7 +1314,7 @@ class App:
         elif action == "archive":
             it = self._item(body["itemId"])
             if not self.demo:
-                gh_graphql(M_ARCHIVE, {"p": self.project["id"], "i": it["id"]})
+                gh_graphql(M_ARCHIVE, {"p": self._part(it)["id"], "i": it["id"]})
             with self.lock:
                 self.project["items"] = [x for x in self.project["items"] if x["id"] != it["id"]]
             result = {"ok": True}
@@ -1250,19 +1326,28 @@ class App:
         return result
 
     def github_loop(self):
+        last_fp, unchanged = None, 0
         while True:
+            changed = True  # an error also needs a rebuild, so the notice shows
             try:
-                proj = fetch_project(self.cfg["github"])
+                proj = fetch_projects(self.cfg["github"])
                 with self.lock:
                     self.project = proj
-                    self.gh_meta = {"ok": True, "error": None, "fetchedAt": now()}
-                print(f"[github] {len(proj['items'])} việc, {len(proj['columns'])} cột", flush=True)
+                    self.gh_meta = {"ok": True, "error": "; ".join(proj.get("partialErrors") or []) or None,
+                                    "fetchedAt": now()}
+                fp = board_fingerprint([proj])
+                unchanged = unchanged + 1 if fp == last_fp else 0
+                changed, last_fp = unchanged == 0, fp
+                if changed:
+                    print(f"[github] {len(proj['items'])} việc, {len(proj['columns'])} cột", flush=True)
             except Exception as e:  # noqa: BLE001
                 with self.lock:
                     self.gh_meta = {"ok": False, "error": str(e), "fetchedAt": self.gh_meta.get("fetchedAt")}
                 print(f"[github] lỗi: {e}", file=sys.stderr, flush=True)
-            self.rebuild()
-            self.refresh_evt.wait(float(self.cfg["githubSeconds"]))
+            if changed:
+                self.rebuild()
+            if self.refresh_evt.wait(poll_interval(float(self.cfg["githubSeconds"]), unchanged)):
+                unchanged = 0  # the user acted or asked for a refresh: back to the base rate
             self.refresh_evt.clear()
 
     def local_loop(self):
@@ -1391,7 +1476,7 @@ def run_check(cfg: dict) -> int:
         print(f"[quyền]       {'có quyền project (đọc và sửa)' if has else 'THIẾU quyền project. Chạy: gh auth refresh -s project'}")
         ok = ok and bool(has)
         try:
-            proj = fetch_project(cfg["github"])
+            proj = fetch_projects(cfg["github"])
             writable = bool(proj.get("id") and proj.get("statusFieldId"))
             print(f"[Project]     {proj['title']}  ({proj['url']})")
             print(f"[view]        {proj.get('viewName') or 'không đọc được view, dùng trường Status'}")
