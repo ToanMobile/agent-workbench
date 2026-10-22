@@ -739,9 +739,11 @@ def _make_room(main, wt):
 
 def _live_worktrees(main):
     """The linked worktrees that hold a slot: registered with a folder on disk. A red_proof sandbox (red-proof-*, removed by the run that
-    made it), a super-board worktree (K7: board_worktree) and a registration whose folder is gone (prunable) take none."""
+    made it), a merge-gate proof tree (.merge-scratch-*, #155: a SIGKILLed gate leaves it behind), a super-board worktree (K7:
+    board_worktree) and a registration whose folder is gone (prunable) take none."""
     return [e["path"] for e in _worktree_entries(main)[1:]
-            if not e["broken"] and os.path.isdir(e["path"]) and not os.path.basename(e["path"]).startswith("red-proof-")
+            if not e["broken"] and os.path.isdir(e["path"])
+            and not os.path.basename(e["path"]).startswith(("red-proof-", ".merge-scratch-"))
             and not board_worktree(e["path"], e["branch"] or "")]
 
 
