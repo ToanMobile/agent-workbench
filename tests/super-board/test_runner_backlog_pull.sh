@@ -146,7 +146,7 @@ if [ "$(moved_to_ready)" = 0 ]; then ok "F2: chỉ còn wontfix + thẻ có assi
 # ── W: dây nối trong vòng chính.
 wire=$(grep -n 'pull_backlog_cards' "$RUNNER" | tail -1 | cut -d: -f1)
 cnt=$(grep -n '^  count_board$' "$RUNNER" | tail -1 | cut -d: -f1)
-if [ -n "$wire" ] && [ -n "$cnt" ] && [ "$wire" -gt "$cnt" ] && sed -n "${wire},$((wire + 2))p" "$RUNNER" | grep -q 'fetch_project_items'; then
+if [ -n "$wire" ] && [ -n "$cnt" ] && [ "$wire" -gt "$cnt" ] && sed -n "${wire},$((wire + 2))p" "$RUNNER" | grep -qE 'fetch_project_items|tick_fetch'; then   # #256: vòng chính đọc qua tick_fetch
   ok "W: vòng chính gọi pull_backlog_cards sau count_board rồi đọc lại bảng"
 else
   fail "W: pull_backlog_cards chưa được nối vào vòng chính (wire=${wire:-none} count_board=${cnt:-none})"

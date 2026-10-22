@@ -200,9 +200,58 @@ fetch_project_items() {
   # One board read per tick; all column lookups read from this cache.
   # super-board-card.sh items: ~1 GraphQL point per 100 cards, where
   # `gh project item-list` spends 101 per 100.
-  local fresh
-  fresh=$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || return $?
-  PROJECT_ITEMS_JSON="$fresh"
+  # #256: một lần đọc board hỏng tạm thời (card.sh exit 69: số item lệch totalCount, 22/10 22:05 sau khi máy khởi động
+  # lại) từng giết runner ngay. Đọc lại có backoff + jitter (SB_FETCH_RETRY_DELAYS, giây). Mã halt có chủ đích
+  # (RUNNER_HALT_CODES, vd 79: github-read halt sau lỗi mạng lặp lại) trả về ngay, không đọc lại.
+  # Hỏng hết lượt: trả mã của lần đọc cuối, cache cũ giữ nguyên.
+  local fresh rc=0 d pause delays
+  read -r -a delays <<< "${SB_FETCH_RETRY_DELAYS-10 30 60}"   # tách theo khoảng trắng, không glob ("*" là một giá trị)
+  for d in ${delays[@]+"${delays[@]}"} ""; do
+    rc=0
+    fresh=$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || rc=$?
+    if [ "$rc" -eq 0 ]; then PROJECT_ITEMS_JSON="$fresh"; return 0; fi
+    case "$RUNNER_HALT_CODES" in *" $rc "*) return "$rc" ;; esac
+    [ -n "$d" ] || break
+    case "$d" in *[!0-9]*|?????*) d=10 ;; esac   # giá trị lạ (1.5, chữ, quá dài): dùng 10s, không để lỗi số học giết runner
+    d=$((10#$d))                                  # 08/09 không bị đọc thành bát phân
+    pause=$(( d + RANDOM % (d / 2 + 1) ))   # jitter: các board khởi động lại cùng lúc không đọc cùng nhịp
+    log "⚠ board read failed (rc=$rc) — reading again in ${pause}s"
+    tick_sleep "$pause"
+  done
+  return "$rc"
+}
+
+READ_SKIPS=0
+tick_read_failed() {
+  # $1 = mã của lần đọc hỏng, $2 = "nosleep" khi người gọi tự ngủ. Một lần đọc GitHub hỏng trong vòng lặp chính (board
+  # hoặc quota) bỏ tick này thay vì để `set -e` giết runner (#256); mã halt có chủ đích vẫn dừng runner như trước. Lỗi kéo
+  # dài (quyền Project đổi, lệch số mãi) không được che: quá SB_READ_SKIP_MAX tick bỏ liên tiếp thì thoát với mã của lần
+  # đọc (không phải halt) để watchdog khởi động lại có backoff và trần như một lần crash. Luôn trả 1.
+  local rc="$1" max="${SB_READ_SKIP_MAX:-5}"
+  case "$max" in ''|*[!0-9]*|????*) max=5 ;; esac   # giá trị lạ không được lặng lẽ tắt trần
+  case "$RUNNER_HALT_CODES" in *" $rc "*) exit "$rc" ;; esac
+  READ_SKIPS=$((READ_SKIPS + 1))
+  if [ "$READ_SKIPS" -gt "$((10#$max))" ]; then
+    log "✖ GitHub read failed ${READ_SKIPS} ticks in a row (rc=$rc) — exiting so the watchdog restarts the runner"
+    exit "$rc"
+  fi
+  log "⚠ GitHub read still failing (rc=$rc) — skipping this tick (${READ_SKIPS}/${max}), runner keeps going"
+  [ "${2:-}" = nosleep ] || tick_sleep "${TICK_SECONDS:-30}"
+  return 1
+}
+
+tick_fetch() {  # $1 = "nosleep" tuỳ chọn. Trả 1 khi bỏ tick (vòng lặp `continue`).
+  local rc=0
+  fetch_project_items || rc=$?
+  if [ "$rc" -eq 0 ]; then READ_SKIPS=0; return 0; fi
+  tick_read_failed "$rc" "${1:-}"
+}
+
+tick_guard() {  # gh_rate_guard trong vòng lặp: lỗi đọc quota tạm thời (vd 64) cũng chỉ bỏ tick. $1 = "nosleep" tuỳ chọn.
+  local rc=0
+  gh_rate_guard || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  tick_read_failed "$rc" "${1:-}"
 }
 
 column_count() {
@@ -635,10 +684,13 @@ gh_rate_guard() {
   local payload remaining reset now wait
   payload=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind quota -- api rate_limit) || return $?
   # REST misreports the GraphQL bucket; super-board-gh-guard.sh → sb_gh_quota_merge.
-  payload=$(. "$(dirname "$SB_GITHUB_READ")/super-board-gh-guard.sh" && sb_gh_quota_merge "$payload")
-  remaining=$(echo "$payload" | jq -r '.resources.graphql.remaining // 5000')
+  payload=$(. "$(dirname "$SB_GITHUB_READ")/super-board-gh-guard.sh" && sb_gh_quota_merge "$payload") || return $?
+  # #256: tick_guard gọi hàm này trong ngữ cảnh `||` (errexit tắt), nên payload hỏng phải tự trả lỗi, không lặng lẽ bỏ guard.
+  remaining=$(echo "$payload" | jq -r '.resources.graphql.remaining // 5000') || return 64
+  case "$remaining" in ''|*[!0-9]*) return 64 ;; esac
   if [ "$remaining" -lt 200 ]; then
-    reset=$(echo "$payload" | jq -r '.resources.graphql.reset // 0')
+    reset=$(echo "$payload" | jq -r '.resources.graphql.reset // 0') || reset=0
+    case "$reset" in ''|*[!0-9]*) reset=0 ;; esac   # reset lạ: ngủ mức sàn 60s, không lỗi số học
     now=$(date +%s)
     wait=$((reset - now + 10))
     [ "$wait" -lt 60 ] && wait=60
@@ -991,8 +1043,8 @@ paused_tick() {
   # bỏ hẳn lần đọc) thì worker có thẻ đã sang cột khác trong lúc hoãn giữ lane tới hết hạn chót.
   PAUSED_TICKS=$(( ${PAUSED_TICKS:-0} + 1 ))
   [ $(( PAUSED_TICKS % PAUSED_READ_EVERY )) -eq 0 ] || return 0
-  gh_rate_guard
-  fetch_project_items
+  tick_guard nosleep || return 0
+  tick_fetch nosleep || return 0
   sweep_lane_zombies
 }
 
@@ -1853,14 +1905,14 @@ while true; do
   fi
 
   # ── Expensive-tick path: we have capacity, fetch real state.
-  gh_rate_guard
-  fetch_project_items
+  tick_guard || continue
+  tick_fetch || continue
 
   # Re-sweep zombies against fresh cache; the previous sweep used stale data.
   sweep_lane_zombies
   RECLAIM_MOVED=0
   reclaim_dead_builds
-  if [ "$RECLAIM_MOVED" = 1 ]; then fetch_project_items; fi
+  if [ "$RECLAIM_MOVED" = 1 ]; then tick_fetch || continue; fi
   BUILD_IDLE=1; QA_IDLE=1; REVIEW_IDLE=1
   build_workers_count
   [ "$BUILD_COUNT" -eq 0 ] || BUILD_IDLE=0
@@ -1873,12 +1925,12 @@ while true; do
   [ "$REVIEW_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
-  if maybe_sweep_blocked; then fetch_project_items; fi
+  if maybe_sweep_blocked; then tick_fetch || continue; fi
 
   count_board
 
   # #189: lane build còn worker rảnh mà Ready không đủ việc thì kéo thẻ Backlog đủ AC lên (cờ backlog_pull).
-  if pull_backlog_cards; then fetch_project_items; count_board; fi
+  if pull_backlog_cards; then tick_fetch || continue; count_board; fi
 
   log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}${BUILD_EXTRA:+ +${BUILD_EXTRA}}) b_workers=${BUILD_COUNT}/${BUILD_WORKERS} q_idle=$QA_IDLE(#${QA_ISSUE:-_}${QA_EXTRA:+ +${QA_EXTRA}}) q_workers=${QA_COUNT}/${QA_WORKERS} r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}${REVIEW_EXTRA:+ +${REVIEW_EXTRA}}) r_workers=${REVIEW_COUNT}/${REVIEW_WORKERS} waiting_on_you=$WAITING"
 
