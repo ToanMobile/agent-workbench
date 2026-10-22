@@ -42,7 +42,7 @@ cat > "$TMP/bin/gh" <<'SH'
 n=$(printf '%s\n' "$@" | grep -E '^[0-9]+$' | head -1)
 head=$(cat "$FAKE_DIR/pr$n.head")
 case " $* " in
-  *" pr view "*"headRefName,headRefOid"*) echo "issue-$n-x $head" ;;
+  *" pr view "*"headRefName,headRefOid"*) if [ -e "$FAKE_DIR/fail_head$n" ]; then echo "boom: HTTP 502" >&2; exit 1; fi; echo "issue-$n-x $head" ;;
   *" pr view "*"state,mergeCommit,headRefOid"*) printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$head" ;;
   *" pr view "*"labels,files"*) cat "$FAKE_DIR/pr$n.meta" ;;
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
@@ -98,5 +98,26 @@ reset_run
 ( cd "$W/review" && bash "$ROOT/.claude/bin/super-board-merge-gate.sh" --config "$CFG" --pr 8 --expect-head "$(cat "$TMP/pr8.head")" --train-receipt "$TMP/bad.receipt" ) >"$TMP/t4.log" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && [ "$(merged_list)" = "8 " ] && ok "wrong-tree receipt: PR still merged" || fail "wrong-tree receipt: exit $rc merged=$(merged_list): $(tail -6 "$TMP/t4.log")"
 [ "$(runs)" = 1 ] && ok "wrong-tree receipt: gate verified (receipt did not skip)" || fail "wrong-tree receipt: verify ran $(runs) times"
+
+# ── 5. R1 (review #110): github-read không đọc được head của một PR → exit 79 của nó đi tới caller (không bị nuốt thành exit 1), không merge gì.
+card_branch 9 f9; card_branch 10 f10
+touch "$TMP/fail_head10"
+reset_run; rm -f "$TMP/halt.json"
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs 9,10 ) >"$TMP/t5.log" 2>&1; rc=$?
+[ "$rc" -eq 79 ] && ok "head read outage: github-read exit 79 reaches the caller" || fail "head read outage: exit $rc (want 79): $(tail -5 "$TMP/t5.log")"
+[ -z "$(merged_list)" ] && ok "head read outage: nothing merged" || fail "head read outage: merged $(merged_list)"
+rm -f "$TMP/fail_head10" "$TMP/halt.json"
+
+# ── 6. R2 (review #110): verify hết giờ (exit 124) không phải PR đỏ: thử lại đúng một lần, vẫn hết giờ thì dừng, không chia đôi, không `train-red`.
+card_branch 11 f11; card_branch 12 slow; card_branch 13 f13
+CFG_SLOW="$TMP/cfg-slow.json"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo x >> %s/verify.count; if [ -e slow ]; then exit 124; fi"]}\n' "$TMP" > "$CFG_SLOW"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_SLOW" --prs 11,12,13 ) >"$TMP/t6.log" 2>&1; rc=$?
+[ "$rc" -eq 12 ] && ok "timeout: train exit 12 (not 11)" || fail "timeout: exit $rc (want 12): $(tail -8 "$TMP/t6.log")"
+if grep -q "train-red" "$TMP/t6.log"; then fail "timeout: a PR was blamed as red"; else ok "timeout: no PR blamed as red"; fi
+[ "$(runs)" = 2 ] && ok "timeout: verify ran twice (one retry, no bisect)" || fail "timeout: verify ran $(runs) times (want 2)"
+[ -z "$(merged_list)" ] && ok "timeout: nothing merged" || fail "timeout: merged $(merged_list)"
+grep -q "train-result: 12 timeout" "$TMP/t6.log" && ok "timeout: PRs reported as timeout" || fail "timeout: no timeout result: $(grep train "$TMP/t6.log")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train: all passed" || { echo "❌ test_merge_train: $FAILS failed"; exit 1; }

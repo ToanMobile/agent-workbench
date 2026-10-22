@@ -13,11 +13,15 @@
 #   4. Ghi biên nhận `<head sha> <cây sau khi merge head đó vào chuỗi>` cho các PR xanh, rồi gọi gate cho từng PR theo thứ tự với
 #      `--train-receipt`. Gate tự merge base hiện tại với head: cây trùng biên nhận thì bỏ verify, khác (base đã dời, head đổi,
 #      PR đứng trước không merge) thì verify như thường. Biên nhận chỉ rút ngắn, không bao giờ nới tiêu chuẩn.
+#      Điều biên nhận chứng minh là cây của CHUỖI đầy đủ (đích cuối của đợt) đã qua verify; trạng thái trung gian của main giữa hai
+#      lần merge (mới PR đầu) không được verify riêng.
 #
 # Usage: super-board-merge-train.sh --config <config.json> --prs <N,M,...> [gate flags: --lock-timeout S --stale-after S ...]
 #
-# Exit: 0 mọi PR đã merge · 11 có PR đỏ (về Build; dòng `train-red: <N>`) · 5 có PR conflict, không PR nào đỏ ·
-#       còn lại: mã thoát gate đầu tiên khác 0. Mỗi PR một dòng `train-result: <N> <merged|red|conflict|gate-exit-K>` trên stdout.
+# Exit: 0 mọi PR đã merge · 11 có PR đỏ (về Build; dòng `train-red: <N>`) · mã thoát gate đầu tiên khác 0 (gate chặn PR) ·
+#       12 verify hết giờ sau một lần chạy lại: PR chưa chứng minh ở lại Review, wave sau thử lại, không PR nào bị quy là đỏ ·
+#       5 có PR conflict, không PR nào đỏ/hết giờ · 79/9 của github-read và readiness đi thẳng tới caller.
+#       Mỗi PR một dòng `train-result: <N> <merged|red|conflict|timeout|gate-exit-K>` trên stdout.
 # ponytail: PR bị gate chặn (policy cần người duyệt) vẫn nằm trong chuỗi verify, nên cây của các PR sau nó lệch biên nhận và chúng verify như thường;
 #           nâng lên khi nhiều PR cần người duyệt hay đi chung đợt: gate --dry-run từng PR trước khi dựng chuỗi.
 set -euo pipefail
@@ -74,8 +78,10 @@ trap cleanup EXIT
 # Head của từng PR, ghim một lần: verify và biên nhận thuộc đúng commit này (gate còn --match-head-commit lúc merge).
 HEADS=(); REFS=()
 for p in "${LIST[@]}"; do
-  read -r ref sha <<<"$(python3 "$GITHUB_READ" --kind head -- pr view "$p" ${REPO:+--repo "$REPO"} --json headRefName,headRefOid \
-                          -q '.headRefName + " " + .headRefOid')" || exit $?
+  # Lấy output trước rồi mới `read`: `read <<<"$(…)" || exit $?` kiểm exit của `read`, mất exit 79 (halt) / 9 của github-read.
+  head_out=$(python3 "$GITHUB_READ" --kind head -- pr view "$p" ${REPO:+--repo "$REPO"} --json headRefName,headRefOid \
+               -q '.headRefName + " " + .headRefOid') || exit $?
+  read -r ref sha <<<"$head_out"
   [ -n "${sha:-}" ] || { say "could not read the head of PR #${p}"; exit 1; }
   REFS+=("$ref"); HEADS+=("$sha")
 done
@@ -116,21 +122,47 @@ build_chain() {
   done
   return 0
 }
-# verify_set <PR...>: 0 nếu chuỗi dựng được và mọi verify_commands xanh.
+# verify_timed_out <rc>: verify hết giờ chứ không đỏ. Cùng tiêu chí với is_verify_timeout của merge gate: exit 124; gate đã in KẾT LUẬN thì chỉ khi
+# mọi suite đỏ là TIMEOUT; lệnh khác (không có dòng kết luận) thì log chứa "TIMEOUT after" / "quá giới hạn".
+verify_timed_out() {
+  local plain
+  [ "$1" -eq 124 ] && return 0
+  plain=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VLOG" 2>/dev/null) || return 1
+  if printf '%s\n' "$plain" | grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT"; then
+    printf '%s\n' "$plain" | LC_ALL=C awk '/^[[:space:]]*\[ \] [^|]*\|/ { if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT[[:space:]]*\|/) t++; else o++ } END { exit !(t > 0 && o == 0) }'
+    return
+  fi
+  printf '%s\n' "$plain" | grep -aqE "TIMEOUT after|quá giới hạn"
+}
+# verify_set <PR...>: 0 chuỗi dựng được và mọi verify_commands xanh · 1 đỏ · 2 chuỗi không dựng được (không phải lỗi đỏ của PR)
+#                     · 3 hết giờ sau một lần chạy lại (máy quá tải, không quy lỗi cho PR nào).
 verify_set() {
-  local cmd
-  build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]"; return 1; }
+  local cmd rc try merged
+  build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]"; return 2; }
+  merged=$(git -C "$SCRATCH" rev-parse HEAD)
   for cmd in "${VERIFY[@]}"; do
     if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
       [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"
       [[ "$cmd" == *"--force-full"* ]] || cmd="$cmd --force-full"
     fi
-    say "verify [$*]: ${cmd}"
-    if ! ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
-             && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$cmd" ) >"$VLOG" 2>&1; then
+    try=1
+    while :; do
+      say "verify [$*]: ${cmd}"
+      rc=0
+      ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+          && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$cmd" ) >"$VLOG" 2>&1 || rc=$?
+      [ "$rc" -ne 0 ] || break
+      if verify_timed_out "$rc"; then
+        # Suite bị giết giữa chừng có thể để lại file sửa dở: trả cây về đúng commit đã dựng rồi chạy lại đúng một lần, như merge gate.
+        if [ "$try" -eq 1 ] && git -C "$SCRATCH" reset -q --hard "$merged" 2>/dev/null; then
+          say "verify timed out (exit ${rc}); retrying once"; try=2; continue
+        fi
+        say "verify timed out (exit ${rc}) for [$*]; not blaming any PR"
+        return 3
+      fi
       say "red [$*]: $(tail -3 "$VLOG" | tr '\n' ' ' | cut -c1-300)"
       return 1
-    fi
+    done
   done
   return 0
 }
@@ -142,15 +174,31 @@ for p in "${LIST[@]}"; do
   if build_chain ${GOOD[@]+"${GOOD[@]}"} ${CANDS[@]+"${CANDS[@]}"} "$p"; then CANDS+=("$p"); else CONFLICT+=("$p"); fi
 done
 # solve <PR...>: GOOD dài ra bằng các PR xanh; PR đỏ vào RED. Đỏ thì chia đôi, đúng một PR đỏ thì đó là thủ phạm.
+# Hết giờ (3) dừng cả chia đôi (ABORT): PR chưa chứng minh được không bị quy là đỏ. Chuỗi không dựng được (2) ở đúng một PR → CONFLICT.
+ABORT=0
 solve() {
-  [ "$#" -gt 0 ] || return 0
-  if verify_set ${GOOD[@]+"${GOOD[@]}"} "$@"; then GOOD+=("$@"); return 0; fi
-  if [ "$#" -eq 1 ]; then RED+=("$1"); return 0; fi
+  [ "$#" -gt 0 ] && [ "$ABORT" -eq 0 ] || return 0
+  local rc=0
+  verify_set ${GOOD[@]+"${GOOD[@]}"} "$@" || rc=$?
+  case "$rc" in
+    0) GOOD+=("$@"); return 0 ;;
+    3) ABORT=1; return 0 ;;
+  esac
+  if [ "$#" -eq 1 ]; then
+    if [ "$rc" -eq 2 ]; then CONFLICT+=("$1"); else RED+=("$1"); fi
+    return 0
+  fi
   local half=$(( $# / 2 )) all=("$@")
   solve "${all[@]:0:$half}"
   solve "${all[@]:$half}"
 }
 [ "${#CANDS[@]}" -eq 0 ] || solve "${CANDS[@]}"
+# PR chưa được chứng minh xanh/đỏ/conflict vì verify hết giờ.
+in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
+TIMEDOUT=()
+for p in "${CANDS[@]+"${CANDS[@]}"}"; do
+  in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} || TIMEDOUT+=("$p")
+done
 
 # Biên nhận: cây sau từng head của chuỗi GOOD (đúng tập vừa qua verify xanh ở lượt solve gần nhất có thêm PR).
 if [ "${#GOOD[@]}" -gt 0 ]; then
@@ -171,6 +219,9 @@ for p in "${GOOD[@]+"${GOOD[@]}"}"; do
 done
 for p in "${CONFLICT[@]+"${CONFLICT[@]}"}"; do echo "train-result: $p conflict"; done
 for p in "${RED[@]+"${RED[@]}"}"; do echo "train-result: $p red"; echo "train-red: $p"; done
+for p in "${TIMEDOUT[@]+"${TIMEDOUT[@]}"}"; do echo "train-result: $p timeout"; done
 if [ "${#RED[@]}" -gt 0 ]; then exit 11; fi
-if [ "${#CONFLICT[@]}" -gt 0 ] && [ "$RC" -eq 0 ]; then exit 5; fi
-exit "$RC"
+if [ "$RC" -ne 0 ]; then exit "$RC"; fi
+if [ "${#TIMEDOUT[@]}" -gt 0 ]; then exit 12; fi
+if [ "${#CONFLICT[@]}" -gt 0 ]; then exit 5; fi
+exit 0
