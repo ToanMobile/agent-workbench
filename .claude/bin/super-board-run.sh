@@ -1460,6 +1460,54 @@ backlog_ticket_gaps() {
       | join(", ")'
 }
 
+backlog_issue_comments() {
+  # $1 = số issue. In mảng JSON [{id, body}] theo thứ tự thời gian (exit khác 0 = đọc hỏng, caller dừng như backlog_issue_body).
+  SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind comments -- api "repos/{owner}/{repo}/issues/$1/comments" --paginate --slurp \
+    | jq -c '[.[][] | {id: .id, body: .body}]'
+}
+
+backlog_hold_state() {
+  # #232: $1 = số issue, $2 = body, $3 = mảng comment. In `pull`, `hold` hoặc `bounced`.
+  #  hold    comment mới nhất là block-template (Reason tag 📦/🙋/🧑/❓) hoặc orchestrator "về Backlog", chưa có comment của người
+  #          và chưa có sửa body sau nó (sổ $INFLIGHT_DIR/backlog-hold/<issue> = "<id comment>:<cksum body>").
+  #  bounced thẻ đã bị kéo rồi chặn lại từ 2 lần: dừng kéo hẳn, kể cả khi body được sửa.
+  # ponytail: sửa body chỉ nhận ra từ lúc runner thấy comment chặn lần đầu (sổ mất khi INFLIGHT_DIR mất); đổi sang đọc lastEditedAt khi cần.
+  local st marker newer bounces sum led
+  st=$(printf '%s' "$3" | jq -r '
+    def blk: .body | (test("\\[blocker\\]") and test("Reason tag:[^\n]*(📦|🙋|🧑|❓)"));
+    def back: .body | (startswith("[orchestrator]") and test("(về|to|→)[ ]+Backlog"));
+    def pull: .body | contains("⬆️ Backlog → Ready");
+    . as $c
+    | ([ $c | to_entries[] | select(.value | blk or back) | .key ] | last) as $m
+    | (reduce $c[] as $x ({p: false, n: 0}; if ($x | pull) then .p = true elif ($x | blk) and .p then (.n += 1 | .p = false) else . end) | .n) as $n
+    | [ (if $m == null then "-" else ($c[$m].id | tostring) end),
+        (if $m == null then 0 else ([ $c[$m + 1:][] | select(.body | startswith("[orchestrator]") | not) ] | length) end),
+        $n ] | @tsv') || { echo pull; return 0; }
+  IFS=$'\t' read -r marker newer bounces <<EOF
+$st
+EOF
+  [ "${bounces:-0}" -lt 2 ] || { echo bounced; return 0; }
+  [ "$marker" != "-" ] && [ "${newer:-0}" -eq 0 ] || { echo pull; return 0; }
+  sum=$(printf '%s' "$2" | cksum | cut -d' ' -f1)
+  mkdir -p "$INFLIGHT_DIR/backlog-hold"
+  led=$(cat "$INFLIGHT_DIR/backlog-hold/$1" 2>/dev/null)
+  case "$led" in
+    "${marker}:${sum}") echo hold ;;
+    "${marker}:"*) printf '%s' "${marker}:${sum}" > "$INFLIGHT_DIR/backlog-hold/$1"; echo pull ;;
+    *) printf '%s' "${marker}:${sum}" > "$INFLIGHT_DIR/backlog-hold/$1"; echo hold ;;
+  esac
+}
+
+backlog_mark_needs_you() {
+  # #232: $1 = số issue. Nhãn needs-you + một comment; nhãn đó loại thẻ khỏi mọi lần kéo sau (for_a_person).
+  local repo
+  repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##')
+  [ -n "$repo" ] || return 1
+  python3 "$(dirname "$SB_GITHUB_READ")/super-board-needs-you.py" mark --repo "$repo" --issue "$1" \
+    --action "thẻ đã bị kéo Backlog → Ready rồi bị builder chặn lại 2 lần: sửa body cho đúng board/đủ thông tin, hoặc đóng thẻ" \
+    --next "gỡ nhãn needs-you rồi kéo thẻ về Ready" >/dev/null 2>&1
+}
+
 pull_backlog_cards() {
   # #189: Ready rỗng mà lane build còn worker rảnh thì kéo thẻ Backlog lên Ready (bug trước, rồi thứ tự bảng), tối đa
   # BUILD_WORKERS - BUILD_COUNT - READY thẻ. Chỉ kéo thẻ không assignee, không chờ người (needs-you/human-gated), không wontfix /
@@ -1467,7 +1515,7 @@ pull_backlog_cards() {
   # về Done, không đếm vào trần. Tải máy >= build_load_max (hoặc không đọc được) chỉ cho kéo 1 thẻ khi lane rỗng hẳn.
   # Trả 0 khi bảng đã đổi (caller đọc lại), 1 khi không có gì.
   # ponytail: tối đa 20 thẻ xét mỗi tick (mỗi thẻ 2 lần đọc REST); Backlog dài hơn thì tick sau xét tiếp từ đầu — đổi sang con trỏ khi cần.
-  local want load moved=1 tried=0 issue item_id body gaps stamp issue_rc cap_one=0 busy
+  local want load moved=1 tried=0 issue item_id body comments gaps stamp issue_rc cap_one=0 busy
   backlog_pull_enabled || return 1
   [ "${BUILD_COUNT:-0}" -lt "$BUILD_WORKERS" ] || return 1
   busy=$(( ${BUILD_COUNT:-0} + ${READY:-0} ))
@@ -1497,6 +1545,15 @@ pull_backlog_cards() {
       continue
     fi
     body=$(backlog_issue_body "$issue") || exit $?
+    comments=$(backlog_issue_comments "$issue") || exit $?
+    case "$(backlog_hold_state "$issue" "$body" "$comments")" in
+      hold) log "backlog pull: #${issue} skipped — latest block/park comment not superseded"; continue ;;
+      bounced)
+        gh_checkpoint
+        backlog_mark_needs_you "$issue" || log "⚠ backlog pull: could not mark #${issue} needs-you"
+        log "backlog pull: #${issue} skipped — pulled then blocked 2 times, needs-you"
+        continue ;;
+    esac
     gaps=$(printf '%s\n' "$body" | backlog_ticket_gaps)
     if [ -n "$gaps" ]; then
       stamp="${gaps}:$(printf '%s' "$body" | cksum | cut -d' ' -f1)"
