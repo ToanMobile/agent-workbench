@@ -728,6 +728,21 @@
       ]
     },
     {
+      "component": "super-board-merge-gate-dead-holder",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_dead_holder.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-DEAD-HOLDER-01",
+          "name": "merge gate: khoá merge có pid đã chết (gate bị giết trước trap EXIT) được reap ngay, không chờ stale-after; pid còn sống và khoá không có pid vẫn chờ như cũ (exit 4)",
+          "command": "bash tests/super-board/test_merge_gate_dead_holder.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-lane-workers",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
@@ -744,4 +759,3 @@
     }
   ]
 }
-
