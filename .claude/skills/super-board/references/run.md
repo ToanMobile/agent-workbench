@@ -291,13 +291,20 @@ do not make this card big (the listed items are one small change, the device che
 | `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: Eric (close as duplicate) · `blocked-by: -` |
 | `hold` — in progress | move card to Blocked | `👯` · names the open PR / card · `blocked-by: <the issue that PR or card closes>` — the sweep returns it when that closes, and pre-flight then finds it done |
 | `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
-| `hold` — too big | move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
-| `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy>` — the wave-start sweep frees it |
+| `hold` — too big | the Builder splits it with `/createTask` (super-build → "Too big → split"); only when it cannot, move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
+| `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy, open issues only — generate with `super-board-blocked-by.py line`>. Run the helper BEFORE moving the card: it prints `blocked-by: -` (no blocker still open) → treat as `blockedBy` empty, card stays Ready; it exits 79 (state unreadable) → leave the card untouched and return `skipped`, never Blocked with an empty line` — the wave-start sweep frees it |
 | `sequence` — `blockedBy` empty | proceed (card stays Ready, return column `Ready`), comment `⚠️ expected conflict with PR #<P> on <files> — the merge gate will rebase` | — |
 | `halted` | script exit 79: required evidence unavailable; leave the card untouched, stop this run, resume explicitly after recovery | — |
 
 A card the pre-flight agent returns no verdict for is treated as `skipped` (a verdict, not a
 column), never built unchecked. `qa` cards are not pre-flighted: nothing is built.
+
+### Running the gate and the merge gate (every lane)
+
+`post-fix-gate.py --run-tests --full` and `super-board-merge-gate.sh` can wait up to 600 s for a heavy slot before they
+start. Run them with the Bash tool's `run_in_background: true` from the first attempt, then poll the output; a foreground
+call is cut by the Bash timeout and the whole run is repeated (#249). The runner also exports
+`BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` = 3600000 to every worker as a second line of defence.
 
 ### Builder (first pass)
 
