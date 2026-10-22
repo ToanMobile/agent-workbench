@@ -925,6 +925,21 @@
       ]
     },
     {
+      "component": "super-board-preflight-stale-overlap",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_preflight_overlap_stale.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-PREFLIGHT-STALE-OVERLAP-01",
+          "name": "preflight câu 3: PR của thẻ Backlog/Blocked không chặn; PR của thẻ đang chạy vẫn chặn; thẻ có PR riêng không bị sequence lại; không --inflight giữ hành vi cũ (#280)",
+          "command": "bash tests/super-board/test_preflight_overlap_stale.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-multi-session-gate-env",
       "watch_files": [
         "universal-agent-devkit/tests/gates/test_multi_session_gate.sh",
