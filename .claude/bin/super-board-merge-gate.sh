@@ -354,7 +354,7 @@ wait_for_load() {
     { date +%s > "$LOCK_DIR/at.$$" && mv -f "$LOCK_DIR/at.$$" "$LOCK_DIR/at"; } 2>/dev/null \
       || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
     load=$(load_now)
-    [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; return 0; }
+    [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; LOAD_WAIT_ON=0; return 0; }
     load=$((10#$load)); LOAD_WAIT_ON=1
     if [ "$load" -lt "$max" ]; then
       [ "$waited" -gt 0 ] && say "load ${load} after ${waited}s; verifying"
