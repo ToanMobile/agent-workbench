@@ -9,12 +9,23 @@ set -u
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-# --full trong file này chạy `true` / shell, không phải Gradle hay Unity. Slot riêng để
+# Fast, and safe next to other tests (#255, DevKit speed): the scenarios below are split into GROUPS (grp_*) that start from their own
+# fresh repo under $ROOT/<group> (own repo, state, lock, heavy-slot dir; no shared path or global state), so they run at the same time.
+# A group body is the original scenarios in the original order, verbatim; the helper functions they share moved above them. The groups'
+# output is printed in the original order after all of them finished. The two real-time waits (timeout test, sleep 1) now overlap.
+ROOT="$(mktemp -d)" || exit 1
+PIDS=""   # the groups' process-group ids while they run
+cleanup() {   # normal end, a failure, Ctrl-C or TERM: stop every group whole (its own process group; never `kill 0`), then remove the run dir
+  local p
+  for p in $PIDS; do kill -TERM -- "-$p" 2>/dev/null; done
+  wait 2>/dev/null
+  if [ -n "$ROOT" ]; then rm -rf "$ROOT"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# --full trong file này chạy `true` / shell, không phải Gradle hay Unity. Slot riêng cho từng group (export ở vòng chạy group bên dưới) để
 # không chờ semaphore toàn máy (Stop 20:32: ca thứ ba đứng đến khi bị ngắt ở 600s).
-export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"
-mkdir -p "$SB_HEAVY_SLOT_DIR"
 
 FAILS=0
 check() { # name expected actual [output] [forbidden-substring]
@@ -44,6 +55,124 @@ run_gate() {
   CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --matrix "$TMP/repo/matrix.json" "$@" 2>&1
 }
 
+# --- helpers shared by the groups (moved verbatim from between the scenarios) ---
+expect_in() { # name substring output
+  if printf '%s' "$3" | grep -q -- "$2"; then echo "✔ $1"; else echo "✖ $1: missing '$2'"; FAILS=$((FAILS + 1)); fi
+}
+expect_not_in() { # name substring output
+  if printf '%s' "$3" | grep -q -- "$2"; then echo "✖ $1: contains '$2'"; FAILS=$((FAILS + 1)); else echo "✔ $1"; fi
+}
+gate_nomatrix() { CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --run-tests --allow-no-tests "$@" 2>&1; }
+secret_case() { # name file content
+  make_repo "true"; mkdir -p "$(dirname "$2")"; printf '%s\n' "$3" > "$2"
+  out="$(gate_nomatrix)"; check "$1 -> REJECT" 1 $? "$out"
+}
+mkpng() { python3 -c 'import os,sys,zlib,struct
+def c(t,d): return struct.pack(">I",len(d))+t+d+struct.pack(">I",zlib.crc32(t+d)&0xffffffff)
+open(sys.argv[1],"wb").write(b"\x89PNG\r\n\x1a\n"+c(b"IHDR",struct.pack(">IIBBBBB",1,1,8,2,0,0,0))+c(b"IDAT",os.urandom(20000))+c(b"IEND",b""))' "$1"; }
+rep() { python3 -c 'import sys; print(sys.argv[1] * int(sys.argv[2]), end="")' "$1" "$2"; }
+untested_repo() { # $1 = command, $2 = untested_exit JSON fragment
+  make_repo "true"
+  cat > matrix.json <<JSON
+{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+ "mandatory_regression_tests":[{"id":"REG-U","name":"unity","command":"$1"$2}]}]}
+JSON
+  git add -A && git commit -qm m && echo "fun ok() = 5" > src/Core.kt
+}
+gate_staged() { CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --staged "$@" 2>&1; }
+json_findings() { printf '%s\n' "$1" | tail -n 1 | python3 -c 'import json,sys
+for f in json.load(sys.stdin).get("findings", []):
+    print("%s|%s|%s|%s|%s" % (f["category"], f["file"], f["line"], f["rule"], f["snippet"]))'; }
+# fake_session <sid> <transcript> [edit-path [tool]] — a transcript that started 10 min ago, with one
+# harmless Bash call and optionally a <tool> call (default Edit) on <edit-path>; for tool=Bash,
+# <edit-path> is the command. SESSION_SHIFT=<s> moves every timestamp by s seconds; FAKE_INPUT=<json>
+# replaces the tool's input.
+fake_session() {
+  python3 - "$@" <<'PY'
+import json, os, sys, time
+sid, tp = sys.argv[1], sys.argv[2]
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+now = time.time() + float(os.environ.get("SESSION_SHIFT") or 0)
+recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
+        {"type": "assistant", "sessionId": sid, "timestamp": iso(now - 590), "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git status"}}]}}]
+if len(sys.argv) > 3:
+    tool = sys.argv[4] if len(sys.argv) > 4 else "Edit"
+    inp = ({"command": sys.argv[3]} if tool == "Bash"
+           else {"file_path": sys.argv[3], "old_string": "a", "new_string": "b"})
+    if os.environ.get("FAKE_INPUT"):
+        inp = json.loads(os.environ["FAKE_INPUT"])
+    recs.append({"type": "assistant", "sessionId": sid, "timestamp": iso(now - 580), "message": {"content": [
+        {"type": "tool_use", "id": "t2", "name": tool, "input": inp}]}})
+open(tp, "w").write("".join(json.dumps(r) + "\n" for r in recs))
+PY
+}
+# ledger_window <sid> <tool-use-id> <start> <end> — offsets in seconds from now (negative = past)
+ledger_window() {
+  mkdir -p .claude/audit-gate
+  python3 -c 'import sys,time; n=time.time(); s,t,a,b=sys.argv[1:]
+print("%s\tstart\t%.3f\t%s\n%s\tend\t%.3f\t%s" % (s, n+float(a), t, s, n+float(b), t))' "$@" >> .claude/audit-gate/bash_write_ledger.tsv
+}
+set_mtime() { python3 -c 'import os,sys,time; t=time.time()+float(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
+existing_test_repo() {
+  make_repo "true"
+  mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm t
+  echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
+}
+other_edit() {
+  mkdir -p "$(dirname "$1")"
+  python3 - "$@" <<'PY'
+import json, sys, time
+tp, sid, path, use = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+res = sys.argv[5] if len(sys.argv) > 5 else "none"
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".%03dZ" % int((t % 1) * 1000)
+now = time.time()
+recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now + use - 30), "message": {"role": "user", "content": "go"}},
+        {"type": "assistant", "sessionId": sid, "timestamp": iso(now + use), "message": {"content": [
+            {"type": "tool_use", "id": "o1", "name": "Edit", "input": {"file_path": path, "old_string": "a", "new_string": "b"}}]}}]
+if res != "none":
+    blk = {"type": "tool_result", "tool_use_id": "o1", "content": "ok"}
+    if len(sys.argv) > 6 and sys.argv[6] == "error":
+        blk["is_error"] = True
+    recs.append({"type": "user", "sessionId": sid, "timestamp": iso(now + float(res)), "message": {"role": "user", "content": [blk]}})
+with open(tp, "a") as fh:
+    fh.write("".join(json.dumps(r) + "\n" for r in recs))
+PY
+}
+other_case() { # <name> <expected> — this session: no write of the test, windows elsewhere
+  out="$(run_gate --run-tests --session s-me --transcript "$P/s-me.jsonl")"; local rc=$?
+  if [ "$2" = 0 ]; then check "$1" 0 "$rc" "$out"; else check "$1" 2 "$rc" "$out" "PASS —"; fi
+}
+fresh_other() { existing_test_repo; rm -rf "$P"; mkdir -p "$P"; set_mtime src/test/CoreTest.kt -120
+  ledger_window s-me m1 -590 -589; fake_session s-me "$P/s-me.jsonl"; }
+other_session_repo() {
+  make_repo "true"
+  echo "fun ok() = 2" > src/Core.kt
+  mkdir -p src/test reports
+  printf 'class NewTest {\n  @Test fun a() { val x = 1 }\n}\n' > src/test/NewTest.kt
+  printf '\x89PNG\r\n\x1a\nsame-bytes' > reports/proof-a.png
+  printf '\x89PNG\r\n\x1a\nsame-bytes' > reports/proof-b.png
+  set_mtime reports/proof-a.png -310; set_mtime reports/proof-b.png -300; set_mtime src/test/NewTest.kt -300
+  ledger_window s-other b1 -315 -295; ledger_window s-me m1 -590 -589
+}
+approval_tr() {
+  mkdir -p "$TMP/tr"
+  python3 - "$@" <<'PY'
+import json, sys, time
+out, q, label, off = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + off))
+rec = {"type": "user", "sessionId": "s-me", "timestamp": ts,
+       "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]},
+       "toolUseResult": {"questions": [{"question": q, "header": "Test", "options": [
+           {"label": "Duyệt", "description": "giữ diff"}, {"label": "Không", "description": "đổi hướng"}]}],
+           "answers": {q: label}}}
+with open(out, "a") as fh:
+    fh.write(json.dumps(rec) + "\n")
+PY
+}
+runs() { wc -l < runs.txt 2>/dev/null | tr -d ' '; }
+
+grp_start() {   # a clean tree, upstream, plain PASS/REJECT, exit codes
 make_repo "true"
 out="$(run_gate --run-tests)"; check "clean tree is not PASS" 3 $? "$out" "PASS —"
 
@@ -75,7 +204,9 @@ echo "fun ok() = 3" > src/Core.kt
 out="$(run_gate --run-tests)"; check "failing regression command -> REJECT" 1 $? "$out" "\[x\] PASS"
 printf '%s' "$out" | grep -q 'exit=7' \
   && echo "✔ real exit code reported" || { echo "✖ exit code 7 not reported"; FAILS=$((FAILS + 1)); }
+}
 
+grp_discovery() {   # changed-file discovery, no coverage, monorepo, timeout kills the tree, G-1..G-10, devkit links
 # --- Changed-file discovery must not let content escape the scans -----------------
 make_repo "true"
 # Fake secrets are assembled at runtime so this file itself never matches the scanner.
@@ -116,13 +247,6 @@ if [ -n "$_child_stat" ] && [ "${_child_stat#Z}" = "$_child_stat" ]; then
   echo "✖ timed-out test left a child process running"; FAILS=$((FAILS + 1)); kill "$(cat "$TMP/child.pid")"
 else echo "✔ timed-out test's child process was killed"; fi
 
-expect_in() { # name substring output
-  if printf '%s' "$3" | grep -q -- "$2"; then echo "✔ $1"; else echo "✖ $1: missing '$2'"; FAILS=$((FAILS + 1)); fi
-}
-expect_not_in() { # name substring output
-  if printf '%s' "$3" | grep -q -- "$2"; then echo "✖ $1: contains '$2'"; FAILS=$((FAILS + 1)); else echo "✔ $1"; fi
-}
-gate_nomatrix() { CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --run-tests --allow-no-tests "$@" 2>&1; }
 
 # --- G-1: the audited change must not be able to rewrite its own regression command -
 make_repo "exit 1"
@@ -162,10 +286,6 @@ printf 'API_KEY=changeme\n' > .env.example
 out="$(gate_nomatrix)"; check ".env.example with a placeholder -> PASS" 0 $? "$out"
 
 # --- G-3: common secret shapes -------------------------------------------------------
-secret_case() { # name file content
-  make_repo "true"; mkdir -p "$(dirname "$2")"; printf '%s\n' "$3" > "$2"
-  out="$(gate_nomatrix)"; check "$1 -> REJECT" 1 $? "$out"
-}
 secret_case "base64 password" src/Conf.kt "val password = \"Zx9/Qw+Er7Ty==\""
 secret_case "AWS access key" src/Aws.kt "val id = \"AKI""AABCDEFGHIJKLMNOP\""
 secret_case "GitHub token" src/Gh.kt "val ghToken = \"gh""p_abcdefghijklmnopqrstuvwxyz0123456789AB\""
@@ -257,6 +377,9 @@ out="$(gate_nomatrix)"; check "only devkit links -> nothing to audit" 3 $? "$out
 echo "fun ok() = 2" > src/Core.kt
 out="$(gate_nomatrix)"; check "devkit links + real change -> PASS" 0 $? "$out" "không đọc được"
 
+}
+
+grp_deps() {   # dependency check, lazy-senior advisories, new-dependency advisory for every manifest kind
 # --- Dependency check: floating versions and http:// sources -----------------------
 # http:// is assembled at runtime so this file itself never looks like a manifest.
 H="http"
@@ -345,11 +468,10 @@ for bumped in "new dependency requests" "new dependency Alamofire" "new dependen
 done
 adv="$(DEVKIT_LANG=en gate_nomatrix --json | tail -n 1 | python3 -c 'import json,sys; print(len([a for a in json.load(sys.stdin).get("advisories", []) if "new dependency" in a]))')"
 [ "$adv" = 7 ] && echo "✔ --json carries the 7 advisories" || { echo "✖ --json advisories: '$adv'"; FAILS=$((FAILS + 1)); }
+}
 
+grp_proofs_docs() {   # proof block, docs-only change, manifest parsers, vacuous-test audit
 # --- Proof block judges only this turn's images; older ones are references, never findings ---
-mkpng() { python3 -c 'import os,sys,zlib,struct
-def c(t,d): return struct.pack(">I",len(d))+t+d+struct.pack(">I",zlib.crc32(t+d)&0xffffffff)
-open(sys.argv[1],"wb").write(b"\x89PNG\r\n\x1a\n"+c(b"IHDR",struct.pack(">IIBBBBB",1,1,8,2,0,0,0))+c(b"IDAT",os.urandom(20000))+c(b"IEND",b""))' "$1"; }
 make_repo "true"; mkdir -p reports
 mkpng reports/proof-old-a.png; git add reports && git commit -qm proofs && git rm -q reports/proof-old-a.png
 out="$(DEVKIT_LANG=en gate_nomatrix)"; check "deleted tracked proof image -> not judged" 0 $? "$out" "zero-byte proof image"
@@ -414,7 +536,9 @@ expect_in "vacuous Kotlin test named" "Vacuous test at line 3" "$out"
 rm src/test/kotlin/FooTest.kt
 printf '#!/bin/sh\nprintf %s "class T {\\n    @Test fun a() {}\\n}" > "$TMP/T.kt"\n' "'" > tests/test_fixture.sh
 out="$(DEVKIT_LANG=en gate_nomatrix)"; check "@Test inside a shell fixture -> not a vacuous test" 0 $? "$out" "Vacuous test"
+}
 
+grp_static() {   # mobile / web findings, bare tokens, raw console, findings already in HEAD, untested_exit, UNCOVERED
 # --- mobile findings: local.properties, SwiftPM branch pins, plist secrets -----------
 make_repo "true"
 printf 'sdk.dir=/Users/dev/Library/Android/sdk\n' > local.properties
@@ -450,7 +574,6 @@ mkdir -p deploy && echo "key material" > deploy/id_ed25519
 out="$(gate_nomatrix)"; check "private SSH key file id_ed25519 -> REJECT" 1 $? "$out"
 
 # --- bare AI / cloud tokens: caught by prefix even in a variable not named key/token ---
-rep() { python3 -c 'import sys; print(sys.argv[1] * int(sys.argv[2]), end="")' "$1" "$2"; }
 for tok in "hf_$(rep a 34)" "sk-ant-api03-$(rep B 90)" "sk-proj-$(rep c 60)" "sbp_$(rep d 40)" \
            "sk_live_$(rep e 24)" "glpat-$(rep f 20)"; do
   make_repo "true"
@@ -502,14 +625,6 @@ printf 'fun n() {\n  System.out.println("y")\n}\n' >> app/B.kt
 out="$(gate_nomatrix)"; check "a new raw log line in a touched file -> REJECT" 1 $? "$out"
 
 # --- untested_exit: a test that cannot run here is UNTESTED (exit 4), never PASS/REJECT --
-untested_repo() { # $1 = command, $2 = untested_exit JSON fragment
-  make_repo "true"
-  cat > matrix.json <<JSON
-{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
- "mandatory_regression_tests":[{"id":"REG-U","name":"unity","command":"$1"$2}]}]}
-JSON
-  git add -A && git commit -qm m && echo "fun ok() = 5" > src/Core.kt
-}
 untested_repo "exit 2" ', "untested_exit": 2'
 out="$(run_gate --run-tests)"; check "command exits with its untested_exit -> UNTESTED (exit 4)" 4 $? "$out" "PASS —"
 printf '%s' "$out" | grep -q "UNTESTED" && echo "✔ UNTESTED named in the verdict" || { echo "✖ UNTESTED not named"; FAILS=$((FAILS + 1)); }
@@ -530,9 +645,10 @@ out="$(run_gate --run-tests --json)"
 unc="$(printf '%s\n' "$out" | tail -n 1 | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["uncovered"]))')"
 [ "$unc" = "src/Other.kt" ] && echo "✔ UNCOVERED: only the profile's source file (not docs/ XML, .agents/ JS, res XML)" \
   || { echo "✖ UNCOVERED list: '$unc'"; FAILS=$((FAILS + 1)); }
+}
 
+grp_staged_json_brief() {   # --staged, --json findings, a tool-written log, --brief
 # --- --staged: static checks on the index, never PASS --------------------------------
-gate_staged() { CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --staged "$@" 2>&1; }
 make_repo "true"
 out="$(gate_staged)"; check "--staged with nothing staged -> nothing to audit" 3 $? "$out"
 echo "fun ok() = 2" > src/Core.kt && git add src/Core.kt
@@ -547,9 +663,6 @@ out="$(gate_staged --json)"; expect_in "--staged --json reports mode" '"mode": "
 
 # --- --json "findings": file:line an agent can act on without parsing the log --------
 # jq-free: python reads the last stdout line (the JSON) and prints what the case needs.
-json_findings() { printf '%s\n' "$1" | tail -n 1 | python3 -c 'import json,sys
-for f in json.load(sys.stdin).get("findings", []):
-    print("%s|%s|%s|%s|%s" % (f["category"], f["file"], f["line"], f["rule"], f["snippet"]))'; }
 make_repo "true"
 printf 'dependencies {\n  implementation "com.squareup.okhttp3:okhttp:4.+"\n}\n' > build.gradle
 out="$(gate_nomatrix --json)"; check "floating dep with --json -> REJECT" 1 $? "$out"
@@ -567,49 +680,46 @@ printf 'val x = 1\n%s = "%s"\n' "api_""key" "ABCDEFGHIJKLMNOP" > src/Leak.kt && 
 out="$(gate_staged --json)"; check "--staged --json with a secret -> REJECT" 1 $? "$out"
 expect_in "--json secret finding has its line" 'secrets|src/Leak.kt|2|' "$(json_findings "$out")"
 expect_not_in "--json never echoes the secret value" "ABCDEFGHIJKLMNOP" "$(printf '%s\n' "$out" | tail -n 1)"
+# --- A tool-written *.log needs no regression test ----------------------------------------
+# GeelyEx2 2026-09-28: pre-push wrote artifacts/red-proof/<time>.log; on an otherwise clean
+# tree the Stop hook blocked twice with "no regression test matches the change". tree_fp
+# already treats *.log anywhere as off-screen; needs_no_test did not.
+make_repo "true"
+mkdir -p artifacts/red-proof && echo "PROVEN 10" > artifacts/red-proof/20260928-091310.log
+out="$(run_gate --run-tests --full)"; check "tool log only (artifacts/red-proof/*.log) needs no test -> PASS" 0 $? "$out"
+echo "fun other() = 1" > src/Other.kt
+out="$(run_gate --run-tests --full)"; check "log + unwatched code -> still UNVERIFIED" 2 $? "$out" "PASS —"
+# --- --brief: the agent reads the verdict and what failed, not 70 lines of ✔ (O3, 2026-09-28) ---
+make_repo "echo run"; echo "fun ok() = 2" > src/Core.kt
+full="$(run_gate --run-tests --full --no-cache)"; brief="$(run_gate --run-tests --full --no-cache --brief)"; rc=$?
+check "--brief keeps the exit code (PASS)" 0 $rc "$brief"
+expect_in "--brief keeps the verdict" "KẾT LUẬN" "$brief"
+expect_in "--brief names the full output file" "last_output" "$brief"
+[ "$(printf '%s' "$brief" | wc -c)" -lt "$(( $(printf '%s' "$full" | wc -c) * 45 / 100 ))" ] \
+  && echo "✔ --brief is under 45% of the full output" || { echo "✖ --brief $(printf '%s' "$brief" | wc -c) vs full $(printf '%s' "$full" | wc -c)"; FAILS=$((FAILS + 1)); }
+make_repo "echo boom-detail; exit 7"; echo "fun ok() = 2" > src/Core.kt
+brief="$(run_gate --run-tests --full --brief)"; rc=$?
+check "--brief keeps the exit code (REJECT)" 1 $rc "$brief"
+expect_in "--brief names the failing suite" "REG-1" "$brief"
+expect_in "--brief keeps its exit code" "exit=7" "$brief"
+expect_in "--brief keeps the tail of its output" "boom-detail" "$brief"
 
+# --brief of a failing suite shows WHICH sub-test failed, not only the last 5 lines (2026-09-28:
+# run_impacted's ✖ tests/gates/test_guards_orphans.sh sat mid-output; --brief showed five ✔ lines).
+make_repo "printf '✔ a\\\\n✖ tests/test_mid.sh — boom\\\\n✔ b\\\\n✔ c\\\\n✔ d\\\\n✔ e\\\\n✔ f\\\\n✔ g\\\\n'; exit 1"; echo "fun ok() = 2" > src/Core.kt
+brief="$(run_gate --run-tests --full --brief)"
+expect_in "--brief names the failing sub-test from mid-output" "| ✖ tests/test_mid.sh — boom" "$brief"
+full="$(run_gate --run-tests --full --no-cache)"
+expect_in "the full report names it too" "| ✖ tests/test_mid.sh — boom" "$full"
+}
+
+grp_edited_tests() {   # an existing test edited by ANOTHER session or a person: attribution by Bash windows and tool kind
 # --- An existing test edited by ANOTHER session (or a person) must not block this one ----
 # 2026-09-25: session X edited two existing tests; session Y, which never touched them, got
 # "UNVERIFIED — existing test edited" on every Stop until X committed. The block binds to the
 # session that made the edit (--session/--transcript: its Edit/Write calls, its write-shaped
 # Bash commands, its bash_write_ledger windows). Someone else's edit: a warning, not a block.
 # No session info, or no way to tell: today's block (the "existing test edited" check above).
-# fake_session <sid> <transcript> [edit-path [tool]] — a transcript that started 10 min ago, with one
-# harmless Bash call and optionally a <tool> call (default Edit) on <edit-path>; for tool=Bash,
-# <edit-path> is the command. SESSION_SHIFT=<s> moves every timestamp by s seconds; FAKE_INPUT=<json>
-# replaces the tool's input.
-fake_session() {
-  python3 - "$@" <<'PY'
-import json, os, sys, time
-sid, tp = sys.argv[1], sys.argv[2]
-iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
-now = time.time() + float(os.environ.get("SESSION_SHIFT") or 0)
-recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now - 600), "message": {"role": "user", "content": "fix it"}},
-        {"type": "assistant", "sessionId": sid, "timestamp": iso(now - 590), "message": {"content": [
-            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git status"}}]}}]
-if len(sys.argv) > 3:
-    tool = sys.argv[4] if len(sys.argv) > 4 else "Edit"
-    inp = ({"command": sys.argv[3]} if tool == "Bash"
-           else {"file_path": sys.argv[3], "old_string": "a", "new_string": "b"})
-    if os.environ.get("FAKE_INPUT"):
-        inp = json.loads(os.environ["FAKE_INPUT"])
-    recs.append({"type": "assistant", "sessionId": sid, "timestamp": iso(now - 580), "message": {"content": [
-        {"type": "tool_use", "id": "t2", "name": tool, "input": inp}]}})
-open(tp, "w").write("".join(json.dumps(r) + "\n" for r in recs))
-PY
-}
-# ledger_window <sid> <tool-use-id> <start> <end> — offsets in seconds from now (negative = past)
-ledger_window() {
-  mkdir -p .claude/audit-gate
-  python3 -c 'import sys,time; n=time.time(); s,t,a,b=sys.argv[1:]
-print("%s\tstart\t%.3f\t%s\n%s\tend\t%.3f\t%s" % (s, n+float(a), t, s, n+float(b), t))' "$@" >> .claude/audit-gate/bash_write_ledger.tsv
-}
-set_mtime() { python3 -c 'import os,sys,time; t=time.time()+float(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
-existing_test_repo() {
-  make_repo "true"
-  mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm t
-  echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
-}
 
 existing_test_repo   # the edit happened inside ANOTHER session's Bash window; this one has its own windows
 set_mtime src/test/CoreTest.kt -300; ledger_window s-other b1 -305 -295; ledger_window s-me m1 -590 -589
@@ -647,6 +757,9 @@ fake_session s-me "$TMP/me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__codebase
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
 check "read-only MCP tool + another session's window -> still a warning (PASS)" 0 $? "$out"
 
+}
+
+grp_edited_tests_mcp() {   # …the read-only / write-capable MCP tool lists, ui-capture, mtime set back, this session's own edit
 # camelCase read tools (Atlassian Rovo) and the antigravity-pm read tools are read-only too:
 # they used to make the session "opaque" and switch attribution off. Write tools stay opaque.
 for tool in mcp__claude_ai_Atlassian_Rovo__getJiraIssue mcp__claude_ai_Atlassian_Rovo__getConfluencePage \
@@ -751,40 +864,16 @@ existing_test_repo   # a missing transcript: today's behaviour
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/nope.jsonl")"
 check "unreadable transcript -> today's UNVERIFIED" 2 $? "$out" "PASS —"
 expect_in "…the verdict names the edited test" "src/test/CoreTest.kt" "$out"
+}
 
+grp_other_edit() {   # another Claude Code session edited the test with the Edit tool (transcript evidence)
 # --- Another Claude Code session edited the test with the Edit tool (no Bash window) --------
 # Its transcript sits next to this one (~/.claude/projects/<slug>/<session>.jsonl, sub-agents
 # under <session>/subagents/). An Edit/Write of the same absolute path whose tool_use→tool_result
 # span holds the file's mtime is positive evidence of "other". Bounded: only transcripts touched
 # since this session started, only their last 8 MB; any doubt stays blocking.
 # other_edit <transcript> <sid> <path> <use-offset> [result-offset|none] [error] — offsets from now
-other_edit() {
-  mkdir -p "$(dirname "$1")"
-  python3 - "$@" <<'PY'
-import json, sys, time
-tp, sid, path, use = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
-res = sys.argv[5] if len(sys.argv) > 5 else "none"
-iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".%03dZ" % int((t % 1) * 1000)
-now = time.time()
-recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now + use - 30), "message": {"role": "user", "content": "go"}},
-        {"type": "assistant", "sessionId": sid, "timestamp": iso(now + use), "message": {"content": [
-            {"type": "tool_use", "id": "o1", "name": "Edit", "input": {"file_path": path, "old_string": "a", "new_string": "b"}}]}}]
-if res != "none":
-    blk = {"type": "tool_result", "tool_use_id": "o1", "content": "ok"}
-    if len(sys.argv) > 6 and sys.argv[6] == "error":
-        blk["is_error"] = True
-    recs.append({"type": "user", "sessionId": sid, "timestamp": iso(now + float(res)), "message": {"role": "user", "content": [blk]}})
-with open(tp, "a") as fh:
-    fh.write("".join(json.dumps(r) + "\n" for r in recs))
-PY
-}
 P="$TMP/proj"
-other_case() { # <name> <expected> — this session: no write of the test, windows elsewhere
-  out="$(run_gate --run-tests --session s-me --transcript "$P/s-me.jsonl")"; local rc=$?
-  if [ "$2" = 0 ]; then check "$1" 0 "$rc" "$out"; else check "$1" 2 "$rc" "$out" "PASS —"; fi
-}
-fresh_other() { existing_test_repo; rm -rf "$P"; mkdir -p "$P"; set_mtime src/test/CoreTest.kt -120
-  ledger_window s-me m1 -590 -589; fake_session s-me "$P/s-me.jsonl"; }
 
 fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -121 -119.5
 other_case "another session's Edit of the test (its transcript, no Bash window) -> warning (PASS)" 0
@@ -827,7 +916,9 @@ other_case "bound: the Edit is more than 8 MB before the transcript's end -> UNV
 fresh_other; other_edit "$P/s-other.jsonl" s-other "$TMP/repo/src/test/CoreTest.kt" -121 -119.5
 fake_session s-me "$P/s-me.jsonl" "$TMP/repo/src/test/CoreTest.kt" mcp__jetbrains__replace_text_in_file
 other_case "another session's Edit, but this session called a write-capable tool -> UNVERIFIED" 2
+}
 
+grp_busy_approval() {   # BUSY test-run lock, vacuous test by another session, user-approved edited test
 # --- Another run holds the project's test-run lock: BUSY, said as such -----------------
 # A BUSY run is UNTESTED (exit 4) but not "missing tool/device" — the Stop hook must tell it
 # apart (summary "busy") to say the right cause and not cache it for the tree.
@@ -856,16 +947,6 @@ assert "thiếu công cụ" not in v and "missing tool" not in v, v' "$json" 2>/
 # GeelyEx2 2026-09-27: another session's QuickInstallLaBanMoiNhatTest and byte-identical
 # proof-*.png REJECTed this session 13 times; it stopped 3 times to ask the user. Same
 # attribution as the edited-test rule: other -> warning; this session or unknown -> block.
-other_session_repo() {
-  make_repo "true"
-  echo "fun ok() = 2" > src/Core.kt
-  mkdir -p src/test reports
-  printf 'class NewTest {\n  @Test fun a() { val x = 1 }\n}\n' > src/test/NewTest.kt
-  printf '\x89PNG\r\n\x1a\nsame-bytes' > reports/proof-a.png
-  printf '\x89PNG\r\n\x1a\nsame-bytes' > reports/proof-b.png
-  set_mtime reports/proof-a.png -310; set_mtime reports/proof-b.png -300; set_mtime src/test/NewTest.kt -300
-  ledger_window s-other b1 -315 -295; ledger_window s-me m1 -590 -589
-}
 other_session_repo
 fake_session s-me "$TMP/me.jsonl"
 out="$(run_gate --run-tests --session s-me --transcript "$TMP/me.jsonl")"
@@ -886,21 +967,6 @@ check "no session info -> vacuous test + duplicate proof still REJECT" 1 $? "$ou
 # answer (toolUseResult.answers) — the agent cannot. Bound to the file: the question names it,
 # the chosen label approves, and the file has not changed since the answer.
 # approval_tr <file> <question> <label> <answer-offset-s>
-approval_tr() {
-  mkdir -p "$TMP/tr"
-  python3 - "$@" <<'PY'
-import json, sys, time
-out, q, label, off = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
-ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + off))
-rec = {"type": "user", "sessionId": "s-me", "timestamp": ts,
-       "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]},
-       "toolUseResult": {"questions": [{"question": q, "header": "Test", "options": [
-           {"label": "Duyệt", "description": "giữ diff"}, {"label": "Không", "description": "đổi hướng"}]}],
-           "answers": {q: label}}}
-with open(out, "a") as fh:
-    fh.write(json.dumps(rec) + "\n")
-PY
-}
 Q="Duyệt diff test src/test/CoreTest.kt (git diff HEAD -- src/test/CoreTest.kt)?"
 mkdir -p "$TMP/tr"
 existing_test_repo; set_mtime src/test/CoreTest.kt -300
@@ -935,16 +1001,9 @@ check "--auto-approve-tests: edited test approved -> PASS" 0 $? "$out"
 expect_not_in "--auto-approve-tests is not labelled as the user's approval" "người dùng đã duyệt" "$out"
 expect_in "--auto-approve-tests is labelled as the agent's own approval" "agent tự duyệt" "$out"
 
-# --- A tool-written *.log needs no regression test ----------------------------------------
-# GeelyEx2 2026-09-28: pre-push wrote artifacts/red-proof/<time>.log; on an otherwise clean
-# tree the Stop hook blocked twice with "no regression test matches the change". tree_fp
-# already treats *.log anywhere as off-screen; needs_no_test did not.
-make_repo "true"
-mkdir -p artifacts/red-proof && echo "PROVEN 10" > artifacts/red-proof/20260928-091310.log
-out="$(run_gate --run-tests --full)"; check "tool log only (artifacts/red-proof/*.log) needs no test -> PASS" 0 $? "$out"
-echo "fun other() = 1" > src/Other.kt
-out="$(run_gate --run-tests --full)"; check "log + unwatched code -> still UNVERIFIED" 2 $? "$out" "PASS —"
+}
 
+grp_cache() {   # the same command in two rules runs once, a PASS on the same content is reused
 # --- The same command in two matrix rules runs once per gate (O2, 2026-09-28) ------------
 # agent-workbench: test_proof_gate.sh was one command under REG-DK-GATE-02 and REG-DK-HOOK-02 —
 # 151 s + 125 s for one result. The second rule reuses the first's result (and its FAIL).
@@ -980,7 +1039,6 @@ grep -q 'tests/test_b.sh$' done.txt && ! grep -q 'test_a.sh' done.txt && echo "�
 # passed. Same tree fingerprint + same gate + same matrix, within DEVKIT_GATE_CACHE_MAX_S → reuse.
 make_repo "echo run >> runs.txt"; printf 'runs.txt\n' > .gitignore; git add .gitignore; git commit -qm ign
 echo "fun ok() = 2" > src/Core.kt
-runs() { wc -l < runs.txt 2>/dev/null | tr -d ' '; }
 out="$(run_gate --run-tests --full)"; check "first full run: PASS" 0 $? "$out"
 [ "$(runs)" = 1 ] && echo "✔ first run ran the suite" || { echo "✖ first run: $(runs) runs"; FAILS=$((FAILS + 1)); }
 out="$(run_gate --run-tests --full)"; check "same content again: PASS" 0 $? "$out"
@@ -1021,29 +1079,24 @@ run_gate --run-tests --full >/dev/null; run_gate --run-tests --full >/dev/null
 d="$(python3 -c 'import json; print(json.load(open(".agents/regression_status.json"))["items"]["REG-1"]["last"]["duration"])' 2>/dev/null)"
 [ "$(runs)" = 1 ] && [ -n "$d" ] && [ "$d" != "0s" ] && echo "✔ a reused PASS records the suite's real duration ($d)" \
   || { echo "✖ reused PASS duration: '$d' (runs=$(runs))"; FAILS=$((FAILS + 1)); }
+}
 
-# --- --brief: the agent reads the verdict and what failed, not 70 lines of ✔ (O3, 2026-09-28) ---
-make_repo "echo run"; echo "fun ok() = 2" > src/Core.kt
-full="$(run_gate --run-tests --full --no-cache)"; brief="$(run_gate --run-tests --full --no-cache --brief)"; rc=$?
-check "--brief keeps the exit code (PASS)" 0 $rc "$brief"
-expect_in "--brief keeps the verdict" "KẾT LUẬN" "$brief"
-expect_in "--brief names the full output file" "last_output" "$brief"
-[ "$(printf '%s' "$brief" | wc -c)" -lt "$(( $(printf '%s' "$full" | wc -c) * 45 / 100 ))" ] \
-  && echo "✔ --brief is under 45% of the full output" || { echo "✖ --brief $(printf '%s' "$brief" | wc -c) vs full $(printf '%s' "$full" | wc -c)"; FAILS=$((FAILS + 1)); }
-make_repo "echo boom-detail; exit 7"; echo "fun ok() = 2" > src/Core.kt
-brief="$(run_gate --run-tests --full --brief)"; rc=$?
-check "--brief keeps the exit code (REJECT)" 1 $rc "$brief"
-expect_in "--brief names the failing suite" "REG-1" "$brief"
-expect_in "--brief keeps its exit code" "exit=7" "$brief"
-expect_in "--brief keeps the tail of its output" "boom-detail" "$brief"
-
-# --brief of a failing suite shows WHICH sub-test failed, not only the last 5 lines (2026-09-28:
-# run_impacted's ✖ tests/gates/test_guards_orphans.sh sat mid-output; --brief showed five ✔ lines).
-make_repo "printf '✔ a\\\\n✖ tests/test_mid.sh — boom\\\\n✔ b\\\\n✔ c\\\\n✔ d\\\\n✔ e\\\\n✔ f\\\\n✔ g\\\\n'; exit 1"; echo "fun ok() = 2" > src/Core.kt
-brief="$(run_gate --run-tests --full --brief)"
-expect_in "--brief names the failing sub-test from mid-output" "| ✖ tests/test_mid.sh — boom" "$brief"
-full="$(run_gate --run-tests --full --no-cache)"
-expect_in "the full report names it too" "| ✖ tests/test_mid.sh — boom" "$full"
+# Run the groups at the same time (job control on only for these launches: every group is its own process group, which `cleanup`
+# stops whole). A group that dies before its end leaves no fails file: that is a failure, never a silent pass.
+GROUPS_IN_ORDER="start discovery deps proofs_docs static staged_json_brief edited_tests edited_tests_mcp other_edit busy_approval cache"
+set -m
+for grp in $GROUPS_IN_ORDER; do
+  ( TMP="$ROOT/$grp"; mkdir -p "$TMP"; export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"; FAILS=0
+    "grp_$grp"; echo "$FAILS" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &
+  PIDS="$PIDS $!"
+done
+set +m
+wait
+PIDS=""
+for grp in $GROUPS_IN_ORDER; do
+  cat "$ROOT/out.$grp"
+  if [ -f "$ROOT/fails.$grp" ]; then FAILS=$((FAILS + $(cat "$ROOT/fails.$grp"))); else echo "✖ group $grp did not finish"; FAILS=$((FAILS + 1)); fi
+done
 
 if [ "$FAILS" -ne 0 ]; then
   echo "post-fix-gate: $FAILS FAILED"; exit 1
