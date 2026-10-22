@@ -6,6 +6,7 @@
 #   c. validate-assets.sh: a rename from Assets/ to outside Assets/ keeps the NUL stream in step.
 # No Unity needed: every case stops before an Editor would start.
 set -u
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$DEVKIT_DIR/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh

@@ -513,7 +513,7 @@ on the base branch**.
           `loop:rebase`, NOT Blocked); the Builder fixes the failing verify
      3 → GitHub refused after a green verify (branch protection, required check)
           → Blocked with the §4 template; this one really is a human's
-     4 → another card holds the merge lock → leave the card in Review, next wave retries
+     4 → another card holds the merge lock, or the merge call failed while GitHub still shows the PR open at the verified head → leave the card in Review, next wave retries
      5 → the base does not merge in cleanly → **rebase pass** (see below)
      6 → the PR head is not the commit you reviewed (a push after review, or during
           verify). Your evidence is void: leave the card in Review with a `[reviewer]`

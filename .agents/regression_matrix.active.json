@@ -696,6 +696,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-merge-call-failed",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_merge_call_failed.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-CALL-FAILED-01",
+          "name": "merge gate: gh pr merge lỗi mà PR vẫn OPEN đúng head → exit 4, không halt board; đọc lại lỗi/CLOSED vẫn halt; MERGED muộn exit 0; head đổi exit 6",
+          "command": "bash tests/super-board/test_merge_gate_merge_call_failed.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

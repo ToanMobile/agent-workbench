@@ -5,6 +5,7 @@ Cập nhật 2026-10-10. Nguồn: các agent nghiên cứu chỉ đọc của ng
 ## Cập nhật 2026-10-13 (Đợt 28, mục 5 ngữ cảnh)
 
 - Đã làm: luật profile game/android tách nạp-luôn / theo-yêu-cầu (`profile-reference.md`, hook nêu mục). Số đo chỉ đọc: Neighbours 35,1 KiB đạt ≤ 40; OfficeReader 47,9, Goods 47,3, GeelyEx2 55,2 KiB chưa đạt.
+- **22/10 (người dùng): trần nâng từ 40 KB lên 64 KiB (65.536 B), thẻ #28 đóng.** OfficeReader đo lại 56,6 KB: phần luật riêng chuyển được chỉ ~3 KB, phần còn lại do kit sinh; chuyển luật riêng không đạt 40 KB. Dòng dưới là số đo cũ, giữ để tra.
 - Còn thiếu tới 40 KB: Office −7,9 KiB, Goods −7,3 KiB, Geely −15,2 KiB. Phần còn lại là essentials nhúng 19,5 KB (người dùng: không cắt) + phần dự án trong `AGENTS.md` (Geely 20 KB, Goods 9 KB, Office 6 KB; chuyển sang `.agents/local/rules/` nhưng dòng bất biến/MUST của dự án phải ở lại) + `rules-index.md` Office 9,9 KB (viết gọn lại). Geely không thể xuống 40 KB nếu không cắt essentials: AGENTS.md chỉ còn essentials + khối DevKit + bản đồ ≈ 26 KB, profile automotive 10 KB (toàn hardware-safety, cố ý không tách), index ≈ 7 KB.
 - Chưa đo: host không hook (Antigravity) hay bỏ output hook (Grok, Cursor) có mở `profile-reference.md` theo dòng `↪` hay không. Cần A/B có/không phần cắt trên một việc có luật nằm trong đoạn cắt trước khi cắt thêm.
 - Thang kiểm tra là regex (MUST/CẤM/…): reviewer tìm 8 dòng game, 9 dòng android, 4 dòng automotive có từ chỉ nghĩa vụ mà regex không bắt; đã xét tay từng đoạn đang cắt, giữ lại ở phần nạp luôn dòng bắt buộc không từ khoá.
