@@ -26,6 +26,11 @@ import subprocess
 import sys
 import threading
 import time
+
+try:
+    import fcntl  # chỉ dùng để dò khoá việc nặng cho bảng chỉ số; máy không có fcntl thì bảng báo 0 khoá
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -718,6 +723,70 @@ def slim_session(s: dict, tokens_fallback=None):
     }
 
 
+HEAVY_LOCK_DIR = os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")  # khoá việc nặng của DevKit (heavy_slot)
+
+
+def host_stats(lock_dir: str = "") -> dict:
+    """Sức khoẻ máy cho bảng chỉ số: tải 1/5/15 phút, số nhân, ngưỡng tải gate, số khoá việc nặng đang giữ. Chỉ đọc, rất rẻ."""
+    try:
+        load = [round(float(x), 2) for x in os.getloadavg()]
+    except (OSError, AttributeError):  # Windows không có getloadavg
+        load = [0.0, 0.0, 0.0]
+    lock_dir = lock_dir or os.environ.get("SB_HEAVY_SLOT_DIR", "").strip() or HEAVY_LOCK_DIR  # cùng chỗ với heavy_slot.slot_dir()
+    try:
+        load_max = float(os.environ.get("DEVKIT_SLOT_LOAD_MAX") or 100)
+    except ValueError:
+        load_max = 100.0
+    if not 0 < load_max < float("inf"):  # nan/inf/âm: inf sẽ ra "Infinity" làm hỏng JSON của cả trang
+        load_max = 100.0
+    return {"load": load, "cpus": os.cpu_count() or 1, "loadMax": load_max, "slotsHeld": _held_locks(lock_dir)}
+
+
+_LOCK_CACHE: dict = {}  # thư mục -> (lúc đo, số khoá): dò 15 s một lần để ít va với heavy_slot
+
+
+def _held_locks(lock_dir: str, ttl: float = 15.0) -> int:
+    """Số khoá việc nặng đang bị giữ. Thử LOCK_SH không chờ rồi nhả ngay; trong khe đó một worker xin đúng slot ấy sẽ chờ
+    thêm một nhịp poll của heavy_slot. ponytail: dò bằng flock, đổi sang đọc trạng thái do heavy_slot ghi ra khi nó có."""
+    now = time.time()
+    hit = _LOCK_CACHE.get(lock_dir)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    held = 0
+    try:
+        names = [n for n in os.listdir(lock_dir) if n.endswith(".lock") and n.startswith(("heavy", "unity"))]  # pool việc nặng; light/cpu không tính
+    except OSError:
+        names = []
+    for n in names if fcntl else []:  # file khoá còn nằm trên đĩa sau khi nhả: thử khoá không chờ để biết khoá nào đang thật sự bị giữ
+        try:
+            with open(os.path.join(lock_dir, n), "rb") as f:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)  # khoá chia sẻ chỉ va với người đang giữ độc quyền, nhả ngay
+                    fcntl.flock(f, fcntl.LOCK_UN)
+                except BlockingIOError:
+                    held += 1
+        except OSError:
+            continue
+    _LOCK_CACHE[lock_dir] = (now, held)
+    return held
+
+
+def tally_moves(prev: dict, cur: dict, kinds: dict, tally: dict) -> dict:
+    """Cộng dồn số lượt thẻ đổi cột, số thẻ vào cột xong và vào cột bị chặn giữa hai lần đọc (thẻ mới xuất hiện không tính)."""
+    out = dict(tally)
+    for iid, status in cur.items():
+        ps = prev.get(iid)
+        if not ps or ps == status:
+            continue
+        out["moves"] = out.get("moves", 0) + 1
+        kd = kinds.get(status) or column_kind(status)
+        if kd == "done":
+            out["done"] = out.get("done", 0) + 1
+        elif kd == "blocked":
+            out["blocked"] = out.get("blocked", 0) + 1
+    return out
+
+
 def build_state(cfg: dict, project: dict, gh_meta: dict, sessions: list, sess_info: dict,
                 file_ticks: list, scanner: LocalScanner, demo: bool = False, manifests=None) -> dict:
     t_now = now()
@@ -1116,6 +1185,7 @@ class App:
         self.demo_manifests = None
         # nhật ký sự kiện: lưu ra file để còn nguyên khi tải lại trang hoặc khởi động lại server
         self.events, self.prev_rows, self.prev_items, self.user_moves = [], None, None, {}
+        self.started_at, self.tally = time.time(), {"moves": 0, "done": 0, "blocked": 0}  # thống kê phiên: từ lúc server chạy
         self.events_path = expand(cfg.get("eventsFile") or "") if not demo else ""
         self._load_events()
         if demo:
@@ -1133,6 +1203,9 @@ class App:
             st["events"] = self.events[-120:]
             if self.events:
                 st["version"] = hashlib.sha1((st["version"] + self.events[-1]["id"]).encode()).hexdigest()[:12]
+            # ngoài mã phiên bản: số đổi liên tục mà không bắt trang dựng lại cảnh
+            st["host"] = host_stats()
+            st["session"] = dict(self.tally, since=self.started_at)
             self.state_bytes = json.dumps(st, ensure_ascii=False).encode("utf-8")
 
     # ---- nhật ký sự kiện
@@ -1199,6 +1272,7 @@ class App:
             return
         if self.prev_items is not None:
             kinds = {c["name"]: c["kind"] for c in st["columns"]}
+            self.tally = tally_moves(self.prev_items, {k: v["status"] for k, v in items.items()}, kinds, self.tally)
             for iid, it in items.items():
                 ps = self.prev_items.get(iid)
                 if not ps or ps == it["status"]:
