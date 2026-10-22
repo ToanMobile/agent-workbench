@@ -344,10 +344,10 @@ RUNAWAY_PAUSE_UNTIL=0
 #    dòng lệnh thật (`claude --dangerously-skip-permissions -p …`, agy/grok cũng vậy) và không giới hạn theo repo:
 #    21:52 nó khớp một tiến trình khác nên runner OfficeReader và Goods từ chối khởi động. Worker còn sống có lock
 #    đã được adopt_live_locks nhận lại, nên chỉ worker CỦA REPO NÀY mà không có lock mới chặn. Bảng tiến trình giả
-#    lập theo đúng dạng `ps -ww -A -o pid=,command=` đo ngày 16/10.
+#    lập theo đúng dạng `ps -ww -A -o pid=,ppid=,command=` đo ngày 16/10.
 R="/Volumes/X/Repo"
 wl() {   # wl <pid> <argv0 + cờ> <root> <issue>: một dòng worker đúng dạng prompt của dispatch_lane
-  printf "%s %s -p First operation: run .claude/bin/super-board-skills-ready.py --root '%s' --host claude --cards - --lane 'build' --hydrate with [] as stdin. Run super-build on issue #%s for super-board run. Config: x.\n" "$1" "$2" "$3" "$4"
+  printf "%s 1 %s -p First operation: run .claude/bin/super-board-skills-ready.py --root '%s' --host claude --cards - --lane 'build' --hydrate with [] as stdin. Run super-build on issue #%s for super-board run. Config: x.\n" "$1" "$2" "$3" "$4"
 }
 {
   wl 4101 "claude --dangerously-skip-permissions" "$R" 5             # repo này, có lock
@@ -356,8 +356,8 @@ wl() {   # wl <pid> <argv0 + cờ> <root> <issue>: một dòng worker đúng d�
   wl 4104 "claude --dangerously-skip-permissions" "$R-2" 8           # repo khác có tên bắt đầu bằng tên repo này
   wl 4105 "/Users/u/.local/bin/agy --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions" "$R" 9
   wl 4106 "/Users/u/.grok/bin/grok -m grok-4.7" "$R" 10
-  echo "4107 /bin/zsh -c grep -c \"claude -p --root '$R' for super-board run\" runner.log"   # shell chẩn đoán, không phải worker
-  echo "4108 bash $R/.claude/bin/super-board-run.sh repo"
+  echo "4107 1 /bin/zsh -c grep -c \"claude -p --root '$R' for super-board run\" runner.log"   # shell chẩn đoán, không phải worker
+  echo "4108 1 bash $R/.claude/bin/super-board-run.sh repo"
 } > "$TMP/ps.txt"
 ps() { case "$*" in *command=*) cat "$TMP/ps.txt" ;; *) command ps "$@" ;; esac; }
 pgrep() {   # pgrep -f <mẫu> trên bảng giả
