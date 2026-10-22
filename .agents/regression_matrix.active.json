@@ -759,6 +759,21 @@
       ]
     },
     {
+      "component": "super-board-lane-workers",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_lane_workers.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-LANE-WORKERS-01",
+          "name": "lane QA và Review chạy nhiều worker (qa_workers / review_workers, mặc định 1): một worker mới mỗi tick, cổng tải build_load_max, zombie/reap/dừng khẩn/nhận lại nhận ra cả worker thêm, worker thêm không bị trần max_workers chặn",
+          "command": "bash tests/super-board/test_runner_lane_workers.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "mcp-servers/agent-office",
       "watch_files": [
         "mcp-servers/agent-office/server.py",
