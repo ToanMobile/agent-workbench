@@ -48,6 +48,10 @@ python3 universal-agent-devkit/scripts/governance/create_task.py \
 ```
 
 ### 1b. Thẻ chỉ người làm được (máy thật, playtest, store, secret, quyết định)
+**Kiểm thẻ trước khi tạo (#233):** AC phải là danh sách gạch đầu dòng, body không được nhắc repo của board khác
+(`ToanMobile/GeelyEx2`, thư mục `/Volumes/Data/Toan/<repo khác>`; cố ý thì `--no-repo-check`) — vi phạm thì thoát 65, chưa tạo gì.
+Runner dùng cùng kiểm tra này (`create_task.py --check-body`) khi kéo Backlog lên Ready.
+
 Thêm `--needs-you "<ĐÚNG việc người phải làm>"` (và `--needs-you-next "<xong thì làm gì>"`, mặc định
 "gỡ nhãn needs-you rồi kéo thẻ về Ready"). Script thêm mục `## Cần người` lên đầu body, rồi gọi
 `.claude/bin/super-board-needs-you.py mark` của repo: nhãn `needs-you` (hiện ngay trên thẻ) + một comment

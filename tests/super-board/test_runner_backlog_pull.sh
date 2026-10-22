@@ -7,6 +7,7 @@
 #  D  Không kéo vượt số worker rảnh: BUILD_WORKERS - BUILD_COUNT - READY; tải >= build_load_max chỉ cho kéo 1 thẻ khi lane rỗng hẳn.
 #  E  Cờ tắt (SB_BACKLOG_PULL=0 hoặc backlog_pull:false trong config) -> không đọc, không kéo.
 #  F  Thứ tự: thẻ `bug` trước, còn lại theo thứ tự bảng; thẻ wontfix / có assignee người bị bỏ qua.
+#  G  #233: thẻ đủ mục nhưng nhắc repo của board khác, hoặc AC toàn việc của người ("prompt thật") -> giữ Backlog, comment một lần.
 #  W  Dây nối: vòng chính gọi pull_backlog_cards sau count_board rồi đọc lại bảng.
 # Tương thích bash 3.2.
 set -u
@@ -142,6 +143,25 @@ reset_case
 card 391 Backlog '["wontfix"]'; card 392 Backlog '[]' '["alice"]'; add_body 391 "$GOOD"; add_body 392 "$GOOD"; board
 pull_backlog_cards >/dev/null
 if [ "$(moved_to_ready)" = 0 ]; then ok "F2: chỉ còn wontfix + thẻ có assignee -> không kéo"; else fail "F2: moved=$(moved_to_ready)"; fi
+
+# ── G: #233 thẻ đủ Problem/Fix/AC nhưng nhắc repo board khác, hoặc AC toàn việc của người -> giữ Backlog, comment một lần.
+reset_case
+FOREIGN=$'## Problem\nlỗi ở ToanMobile/GeelyEx2\n\n## Fix\nsửa\n\n## Acceptance Criteria\n- [ ] test đỏ rồi xanh\n'
+HUMANAC=$'## Problem\nlỗi\n\n## Fix\nsửa\n\n## Acceptance Criteria\n- [ ] Chạy ≥100 prompt thật\n'
+card 401 Backlog '[]'; card 402 Backlog '[]'; card 403 Backlog '[]'
+add_body 401 "$FOREIGN"; add_body 402 "$HUMANAC"; add_body 403 "$GOOD"
+board
+pull_backlog_cards >/dev/null
+g1=$(grep -c '^gh issue comment' "$TMP/writes"); gm=$(moved_to_ready)
+pull_backlog_cards >/dev/null
+g2=$(grep -c '^gh issue comment' "$TMP/writes")
+if [ "$gm" = 1 ] && grep -qx "move PVTI_403 Ready" "$TMP/writes" && ! grep -q "PVTI_401 Ready\|PVTI_402 Ready" "$TMP/writes" \
+   && grep -q "GeelyEx2" "$TMP/writes" && [ "$(grep -c '^gh issue comment .*⏸' "$TMP/writes")" = 2 ] \
+   && [ "$(grep -c "GeelyEx2" "$TMP/writes")" = 1 ]; then
+  ok "G: #401 (repo khác) và #402 (AC cần người) giữ Backlog kèm lý do, tick 2 im lặng; #403 lên Ready"
+else
+  fail "G: moved=$gm g1=$g1 g2=$g2 writes: $(tr '\n' ';' < "$TMP/writes")"
+fi
 
 # ── W: dây nối trong vòng chính.
 wire=$(grep -n 'pull_backlog_cards' "$RUNNER" | tail -1 | cut -d: -f1)

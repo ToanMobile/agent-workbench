@@ -1460,6 +1460,15 @@ backlog_ticket_gaps() {
       | join(", ")'
 }
 
+backlog_ticket_problems() {
+  # #233: body trên stdin; kiểm sai board / AC toàn việc của người bằng đúng hàm của create_task.py (`--check-body`), bỏ dòng `ac:`
+  # vì backlog_ticket_gaps đã báo AC. Thiếu script (repo chưa cài DevKit) = không kiểm thêm. Mỗi vấn đề một dòng; rỗng = đạt.
+  local ct="$REPO_ROOT/universal-agent-devkit/scripts/governance/create_task.py"   # kit's own repo: the source, not the symlink
+  [ -f "$ct" ] || ct="$REPO_ROOT/.agents/devkit/scripts/governance/create_task.py"
+  [ -f "$ct" ] || { cat >/dev/null; return 0; }
+  (cd "$REPO_ROOT" && python3 "$ct" --check-body 2>/dev/null) | grep -v '^ac:' || true
+}
+
 pull_backlog_cards() {
   # #189: Ready rỗng mà lane build còn worker rảnh thì kéo thẻ Backlog lên Ready (bug trước, rồi thứ tự bảng), tối đa
   # BUILD_WORKERS - BUILD_COUNT - READY thẻ. Chỉ kéo thẻ không assignee, không chờ người (needs-you/human-gated), không wontfix /
@@ -1467,7 +1476,7 @@ pull_backlog_cards() {
   # về Done, không đếm vào trần. Tải máy >= build_load_max (hoặc không đọc được) chỉ cho kéo 1 thẻ khi lane rỗng hẳn.
   # Trả 0 khi bảng đã đổi (caller đọc lại), 1 khi không có gì.
   # ponytail: tối đa 20 thẻ xét mỗi tick (mỗi thẻ 2 lần đọc REST); Backlog dài hơn thì tick sau xét tiếp từ đầu — đổi sang con trỏ khi cần.
-  local want load moved=1 tried=0 issue item_id body gaps stamp issue_rc cap_one=0 busy
+  local want load moved=1 tried=0 issue item_id body gaps problems stamp issue_rc cap_one=0 busy
   backlog_pull_enabled || return 1
   [ "${BUILD_COUNT:-0}" -lt "$BUILD_WORKERS" ] || return 1
   busy=$(( ${BUILD_COUNT:-0} + ${READY:-0} ))
@@ -1498,17 +1507,18 @@ pull_backlog_cards() {
     fi
     body=$(backlog_issue_body "$issue") || exit $?
     gaps=$(printf '%s\n' "$body" | backlog_ticket_gaps)
-    if [ -n "$gaps" ]; then
-      stamp="${gaps}:$(printf '%s' "$body" | cksum | cut -d' ' -f1)"
+    problems=$(printf '%s\n' "$body" | backlog_ticket_problems)
+    if [ -n "$gaps" ] || [ -n "$problems" ]; then
+      stamp="${gaps}:${problems}:$(printf '%s' "$body" | cksum | cut -d' ' -f1)"
       mkdir -p "$INFLIGHT_DIR/backlog-skip"
       if [ "$(cat "$INFLIGHT_DIR/backlog-skip/$issue" 2>/dev/null)" != "$stamp" ]; then
         gh_checkpoint
         gh_write_once issue comment "$issue" --body "[orchestrator] [report] ⏸ not pulled from Backlog · ticket incomplete
 Did: checked the body before moving it to Ready
-❌ Not done: missing section(s): ${gaps} (Problem, Fix and Acceptance Criteria with at least one bullet are required)
-Next: fill the missing section(s); the next tick pulls it" >/dev/null 2>&1 || true
+❌ Not done: ${gaps:+missing section(s): ${gaps} (Problem, Fix and Acceptance Criteria with at least one bullet are required)}${gaps:+${problems:+; }}${problems}
+Next: fix the ticket; the next tick pulls it" >/dev/null 2>&1 || true
         printf '%s' "$stamp" > "$INFLIGHT_DIR/backlog-skip/$issue"
-        log "backlog pull: #${issue} skipped — missing ${gaps}"
+        log "backlog pull: #${issue} skipped — ${gaps:+missing ${gaps}}${problems:+ ${problems}}"
       fi
       continue
     fi
