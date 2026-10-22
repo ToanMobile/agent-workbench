@@ -505,7 +505,7 @@ The imported files are real copies, not links: an `@` import whose real path is 
 - **Pre-Code Gate (Section 5):** 5-box mandatory check (Target + authority, real source read, consumer list, failure mechanism, residual) before modifying production code.
 - **Zero-Defect Protocol & Paired Executable Oracle:** Mandatory RED → GREEN verification on physical failure boundary with zero waivers.
 - **No-Fabrication Engine (C1–C9 Decision Table):** Strict prohibition against hallucinated metrics, file paths, or test results.
-- **Solo Dev & Git Conventions:** Conventional Commits (`feat`, `fix`, `chore`), zero secret commits, surgical diffs, and clean PR workflows (Rule 0: No commits or pushes without explicit user instruction).
+- **Solo Dev & Git Conventions:** Conventional Commits (`feat`, `fix`, `chore`), zero secret commits, surgical diffs, and clean PR workflows (precedence: a project rule in `.agents/local/rules/` or a user rule wins — if it forbids commit/push, stop and wait for the order; otherwise, per `rules/essentials.md` "Git", the agent commits and pushes itself once the `--full` gate exits 0).
 - **Multi-Agent Cross-Compatibility:** The same `AGENTS.md` is read by all 5 supported agent platforms.
 
 ---

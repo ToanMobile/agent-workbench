@@ -25,6 +25,8 @@ NIGHTLY_SUITE_TIMEOUT_S (default 3600). Standard library only.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -44,6 +46,7 @@ for _sub in ("audits", "context", "git", "governance", "linters", "testing"):
     if _sub_path not in sys.path:
         sys.path.insert(0, _sub_path)
 sys.dont_write_bytecode = True
+import devkit_clean  # noqa: E402
 import regression_checklist as rc  # noqa: E402
 import session_lock  # noqa: E402
 import stale_rerun  # noqa: E402
@@ -170,12 +173,22 @@ def run_in_worktree(project: Path, named: bool) -> tuple:
     return turned, f"{msg}; kết quả CHƯA về main ({fin.stdout.strip() or fin.stderr.strip()}), worktree giữ ở {wt}"
 
 
+def clean_audit_gate(project: Path) -> None:
+    """The hooks' working area (.claude/audit-gate) grew to 15-30 MB: drop what is older than 7 days, trim an oversized log."""
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):   # its report would land in the run's own output lines
+            devkit_clean.main(["devkit_clean.py", str(project), "--days=7", "--apply", "--keep-state"])
+    except OSError as e:   # a file a hook removed or locked mid-clean: the night's suites still run
+        print(f"{project.name}: clean audit-gate: {e}", file=sys.stderr)
+
+
 def run_project(project: Path, named: bool = False) -> tuple:
     """(turned red: [(id, status)], message) for one project. `named`: the project was named on the command line, so a session that
     holds its checkout is not run over (the unnamed run is the night's own LaunchAgent: nobody works then)."""
     busy = checkout_busy(project) if named else None
     if busy:
         return [], f"{project.name}: skip: {busy}"
+    clean_audit_gate(project)
     if is_trunk_main(project):
         return run_in_worktree(project, named)
     if not (project / rc.STATUS_FILE).is_file() and not (project / ".agents" / "regression_matrix.active.json").is_file():

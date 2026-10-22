@@ -67,6 +67,10 @@
 # lock legitimately held for 20 minutes by a slow verification run — which is
 # exactly the merge it was waiting politely for.
 #
+# `--train-receipt <file>` (super-board-merge-train.sh): lines `<head sha> <tree sha>`. The train verified the combined tree of several
+# PRs once; when this gate's clean merge of the base and the PR head produces exactly the tree recorded for that head, the proof
+# already exists and verification is skipped. Any other tree (the base moved, the head changed) verifies as usual.
+#
 # Exit codes, all meaningful to the caller:
 #   0  merged
 #   11 verification failed after merging the base cleanly into the scratch tree —
@@ -74,6 +78,7 @@
 #      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
+#      — or the merge call failed while GitHub still shows the PR OPEN at the verified head (nothing merged; next wave retries)
 #   5  the base could not be merged in (real conflict) — needs a rebase pass
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2 and 5
@@ -119,7 +124,7 @@ export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 
-CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""
+CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""; TRAIN_RECEIPT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -129,6 +134,7 @@ while [ $# -gt 0 ]; do
     --body-file)     MSG_FILE="$2"; shift 2 ;;
     --lock-timeout)  LOCK_TIMEOUT="$2"; shift 2 ;;
     --stale-after)   STALE_AFTER="$2"; shift 2 ;;
+    --train-receipt) TRAIN_RECEIPT="$2"; shift 2 ;;
     --dry-run)       DRY=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
@@ -179,8 +185,13 @@ board_notify() {
   fi
   python3 "$HERE/super-board-notify.py" "$@" || true
 }
+# Tiêu đề PR cho tin Telegram (người đọc cần biết việc gì, project nào). Lỗi mạng: rỗng, tin về dạng cũ.
+pr_title() {
+  if [ -n "$SUBJECT" ]; then printf '%s' "$SUBJECT"; return 0; fi
+  gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
+}
 needs_you_notify() {
-  board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}"
+  board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
 # (văn bản không còn UTF-8, github-read từ chối). Byte không phải UTF-8 trong lỗi của git thành U+FFFD, không bao giờ vỡ giữa ký tự.
@@ -188,10 +199,35 @@ clip() { tr '\n\t' '  ' | python3 -I -c 'import sys; sys.stdout.buffer.write(sys
 
 # ---- the mutex -------------------------------------------------------------
 # mkdir is atomic: it succeeds for exactly one caller and fails for the rest.
-# The pid/date inside is for a human reading a stuck lock, never for logic.
+# The date inside is for a human reading a stuck lock. pid, pgid and host let a waiter
+# reap early: a holder killed by a signal never runs its EXIT trap, and waiting out
+# stale-after (90 min by default) for a lock nobody holds left PR #176 stuck in Review
+# (22/10). Early reap only when ALL hold: the lock was written on this host (a pid says
+# nothing about another machine), the holder pid is gone, and no process is left in its
+# process group (a SIGKILL to the shell alone leaves a migration or `gh pr merge` child
+# running; review of PR #219). A lock without pgid/host (an older gate), EPERM, a reused
+# pid or a group shared with a living caller all read as alive and fall back to the age.
+holder_gone() {
+  local pid pgid host
+  pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+  pgid=$(cat "$LOCK_DIR/pgid" 2>/dev/null || true)
+  host=$(cat "$LOCK_DIR/host" 2>/dev/null || true)
+  [ -n "$pid" ] && [ "$pid" -gt 0 ] 2>/dev/null && [ -n "$pgid" ] && [ "$pgid" -gt 0 ] 2>/dev/null || return 1
+  [ "$host" = "$(hostname)" ] || return 1
+  ! kill -0 "$pid" 2>/dev/null && ! ps -p "$pid" >/dev/null 2>&1 || return 1
+  ! kill -0 -- "-$pgid" 2>/dev/null || return 1
+  # Re-read the pid last: a holder that exits normally while we look frees the lock, and
+  # the next gate's fresh lock (a different pid) must not be removed.
+  [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$pid" ] || return 1
+  HOLDER_GONE="$pid (group $pgid)"
+}
 acquire() {
   local waited=0
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    if holder_gone; then
+      say "reaping a lock whose holder pid ${HOLDER_GONE} is gone (killed before its EXIT trap ran)"
+      rm -rf "$LOCK_DIR"; continue
+    fi
     # A lock older than the timeout belongs to a process that died holding it.
     # Reaping it is safe because the only thing it guards is a merge, and a dead
     # merge has already either landed or not.
@@ -206,6 +242,7 @@ acquire() {
     sleep 5; waited=$(( waited + 5 ))
   done
   date +%s > "$LOCK_DIR/at"; echo "$$" > "$LOCK_DIR/pid"; echo "$PR" > "$LOCK_DIR/pr"
+  ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ' > "$LOCK_DIR/pgid" || true; hostname > "$LOCK_DIR/host" 2>/dev/null || true
   return 0
 }
 # Chỉ xoá khoá còn mang pid của gate này: gate khác đã chiếm nó (coi là bỏ quên) thì đó là khoá đang sống của gate kia.
@@ -227,7 +264,7 @@ MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //
 BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
-cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}"; release; }
+cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}"; release; }
 trap cleanup EXIT
 
 # ---- the head guard --------------------------------------------------------
@@ -348,7 +385,7 @@ wait_for_load() {
     { date +%s > "$LOCK_DIR/at.$$" && mv -f "$LOCK_DIR/at.$$" "$LOCK_DIR/at"; } 2>/dev/null \
       || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
     load=$(load_now)
-    [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; return 0; }
+    [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; LOAD_WAIT_ON=0; return 0; }
     load=$((10#$load)); LOAD_WAIT_ON=1
     if [ "$load" -lt "$max" ]; then
       [ "$waited" -gt 0 ] && say "load ${load} after ${waited}s; verifying"
@@ -393,6 +430,11 @@ fi
 # Nhánh chậm hơn base nhưng merge scratch sạch: đẩy fast-forward lên đúng nhánh PR
 # rồi mới verify. Timeout phía dưới vẫn thử lại một lần. Không --force.
 MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
+TRAIN_PROVED=0
+if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
+  TRAIN_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
+  [ -z "$TRAIN_TREE" ] || [ "$TRAIN_TREE" != "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" ] || TRAIN_PROVED=1
+fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
 if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
   if git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
@@ -469,9 +511,42 @@ own_lock_or_stop() {
   fi
 }
 
+# #146: một lần verify dài (chờ heavy slot + suite 900 s) vượt STALE_AFTER thì gate khác reap khoá và merge song song. Trong lúc verify
+# chạy, tiến trình nền làm mới mốc "at" mỗi STALE_AFTER/3 giây (tối đa 60 s), CHỈ khi khoá còn mang pid của gate này: khoá đã bị
+# gate khác chiếm thì không ghi vào nó. Dừng ngay khi verify xong (stop_heartbeat, cả trong trap EXIT).
+# ponytail: giữa lúc đọc pid và mv vẫn có cửa sổ mili giây nếu gate khác reap + mkdir đúng lúc đó; own_lock_or_stop trước merge bắt được.
+HB_PID=""
+start_heartbeat() {
+  local every=$(( STALE_AFTER / 3 )) owner="$$"
+  [ "$every" -gt 60 ] && every=60
+  [ "$every" -ge 1 ] || every=1
+  (
+    while sleep "$every"; do
+      kill -0 "$owner" 2>/dev/null || exit 0   # gate bị SIGKILL (trap EXIT không chạy): không làm mới khoá của gate đã chết
+      [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$owner" ] || exit 0
+      { date +%s > "$LOCK_DIR/at.hb$owner" && mv -f "$LOCK_DIR/at.hb$owner" "$LOCK_DIR/at"; } 2>/dev/null || exit 0
+    done
+  ) >/dev/null 2>&1 &
+  HB_PID=$!
+  say "heartbeat pid ${HB_PID} refreshes the lock every ${every}s while verify runs"
+}
+stop_heartbeat() {
+  [ -n "$HB_PID" ] || return 0
+  kill "$HB_PID" 2>/dev/null || true
+  wait "$HB_PID" 2>/dev/null || true
+  HB_PID=""
+}
+
 run_verify_cmd() {
-  local c="$1"
+  local c="$1" rc=0
   own_lock_or_stop
+  start_heartbeat
+  run_verify_cmd_inner "$c" || rc=$?
+  stop_heartbeat
+  return "$rc"
+}
+run_verify_cmd_inner() {
+  local c="$1"
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
     ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
         && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
@@ -524,9 +599,29 @@ is_verify_timeout() {
   grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
 for cmd in "${VERIFY[@]}"; do
+  if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
-    [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"
-    [[ "$cmd" == *"--force-full"* ]] || cmd="$cmd --force-full"
+    flags=""
+    [[ "$cmd" == *"--diff"* ]] || flags=" --diff origin/${BASE}"
+    [[ "$cmd" == *"--force-full"* ]] || flags="$flags --force-full"
+    if [ -n "$flags" ]; then
+      # Cờ chèn ngay sau token post-fix-gate.py (#102): nối vào cuối thì `… post-fix-gate.py --run-tests && npm test` đưa cờ cho npm,
+      # `bash -c '…'` đưa cờ cho bash. Lệnh chỉ có một lệnh (phần sau token không có ; & | < > " ' ) }) giữ như cũ: cờ ở cuối.
+      # Không tách được token: để nguyên và cảnh báo (không nối cờ vào lệnh khác).
+      pfg_re="(^|[[:space:]\"'\`(){};&|=<>])[^[:space:]\"'\`(){};&|=<>]*post-fix-gate[.]py(\$|[[:space:]\"'\`(){};&|<>])"
+      if [[ "$cmd" =~ $pfg_re ]]; then
+        pfg_after="${cmd#*"${BASH_REMATCH[0]}"}"
+        pfg_end=$(( ${#cmd} - ${#pfg_after} - ${#BASH_REMATCH[2]} ))
+        pfg_rest="${cmd:$pfg_end}"
+        if [[ "$pfg_rest" == *[\;\&\|\<\>\"\'\)\}]* ]]; then
+          cmd="${cmd:0:$pfg_end}${flags}${pfg_rest}"
+        else
+          cmd="$cmd$flags"
+        fi
+      else
+        say "warning: cannot locate the post-fix-gate.py token in the verify command; --diff/--force-full not added: ${cmd}"
+      fi
+    fi
     # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
   fi
   say "verify: ${cmd}"
@@ -642,7 +737,7 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
-  board_notify send --card "PR #${PR}" --text "merged ${HEAD_SHA}"
+  board_notify send --card "PR #${PR}" --repo "$REPO" --title "$(pr_title)" --text "✅ đã merge ${HEAD_SHA}"
   # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
   # (không bao giờ của thẻ khác), để không phải dọn tay. worktree_merge_gate.state là sổ nợ worktree toàn repo
   # của hook DevKit: hook tự dọn sổ đó, gate này không bao giờ xoá.
@@ -818,15 +913,34 @@ PY
   fi
   exit 0
 fi
-STATE=$(pr_state) || exit $?
-if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then
-  say "merge response was lost; GitHub confirms the merge commit"
-  exit 0
-fi
-NOW_SHA=$(echo "$STATE" | jq -r .headRefOid)
-if [ "$NOW_SHA" != "$HEAD_SHA" ]; then
-  say "head moved during the gate: verified ${HEAD_SHA}, PR head is now ${NOW_SHA}"
-  say "the review evidence is void — send the card back to Review"
-  exit 6
-fi
+# gh pr merge lỗi (vd. GraphQL 5xx tạm thời của GitHub, 22/10 PR #176): đọc lại PR vài lần có giãn cách (GitHub có thể vừa merge
+# xong phía server). MERGED → coi như đã merge; head đổi → bằng chứng review mất hiệu lực; vẫn OPEN đúng head đã verify sau mọi
+# lần đọc = GitHub xác nhận CHƯA merge: thoát 4 (thẻ ở lại Review, wave sau chạy lại gate; lần đó gặp MERGED thì exit 0 ở đầu gate),
+# không halt cả board và không gọi lại merge ở đây. Đọc lỗi → github-read tự halt như cũ; trạng thái khác (CLOSED…) → halt như cũ.
+MERGE_RECHECKS=${SB_MERGE_RECHECKS:-3}
+MERGE_RECHECK_DELAY=${SB_MERGE_RECHECK_DELAY_S:-10}
+case "$MERGE_RECHECKS" in ''|*[!0-9]*|0) MERGE_RECHECKS=3;; esac
+case "$MERGE_RECHECK_DELAY" in ''|*[!0-9]*) MERGE_RECHECK_DELAY=10;; esac
+i=0
+while :; do
+  STATE=$(pr_state) || exit $?
+  if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then
+    say "merge response was lost; GitHub confirms the merge commit"
+    exit 0
+  fi
+  NOW_SHA=$(echo "$STATE" | jq -r .headRefOid)
+  if [ "$NOW_SHA" != "$HEAD_SHA" ]; then
+    say "head moved during the gate: verified ${HEAD_SHA}, PR head is now ${NOW_SHA}"
+    say "the review evidence is void — send the card back to Review"
+    exit 6
+  fi
+  [ "$(echo "$STATE" | jq -r .state)" = OPEN ] || break
+  i=$((i + 1))
+  if [ "$i" -ge "$MERGE_RECHECKS" ]; then
+    say "the merge call failed but GitHub still shows PR #${PR} OPEN at the verified head ${HEAD_SHA} after ${i} re-read(s): nothing was merged"
+    say "leave the card in Review; the next wave re-runs the gate (no merge retried here, no board halt)"
+    exit 4
+  fi
+  sleep "$MERGE_RECHECK_DELAY"
+done
 python3 "$GITHUB_READ" --halt "Merge response failed and GitHub has not confirmed a merge; reconcile PR #${PR} before restarting. No merge was retried."
