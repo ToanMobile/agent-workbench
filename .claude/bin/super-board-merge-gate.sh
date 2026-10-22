@@ -194,10 +194,21 @@ clip() { tr '\n\t' '  ' | python3 -I -c 'import sys; sys.stdout.buffer.write(sys
 
 # ---- the mutex -------------------------------------------------------------
 # mkdir is atomic: it succeeds for exactly one caller and fails for the rest.
-# The pid/date inside is for a human reading a stuck lock, never for logic.
+# The date inside is for a human reading a stuck lock. The pid is used once: a holder
+# killed by a signal never runs its EXIT trap, and waiting out stale-after (90 min by
+# default) for a lock nobody holds left PR #176 stuck in Review (22/10). kill -0 that
+# fails means the holder is gone; EPERM or a reused pid reads as alive, which only waits.
 acquire() {
-  local waited=0
+  local waited=0 holder
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    holder=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+    # Re-read the pid last: a holder that exits normally while we look frees the lock, and
+    # the next gate's fresh lock (a different pid) must not be removed.
+    if [ -n "$holder" ] && [ "$holder" -gt 0 ] 2>/dev/null && ! kill -0 "$holder" 2>/dev/null && ! ps -p "$holder" >/dev/null 2>&1 \
+       && [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$holder" ]; then
+      say "reaping a lock whose holder pid ${holder} is gone (killed before its EXIT trap ran)"
+      rm -rf "$LOCK_DIR"; continue
+    fi
     # A lock older than the timeout belongs to a process that died holding it.
     # Reaping it is safe because the only thing it guards is a merge, and a dead
     # merge has already either landed or not.
