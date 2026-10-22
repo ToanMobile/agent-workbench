@@ -525,8 +525,27 @@ is_verify_timeout() {
 }
 for cmd in "${VERIFY[@]}"; do
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
-    [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"
-    [[ "$cmd" == *"--force-full"* ]] || cmd="$cmd --force-full"
+    flags=""
+    [[ "$cmd" == *"--diff"* ]] || flags=" --diff origin/${BASE}"
+    [[ "$cmd" == *"--force-full"* ]] || flags="$flags --force-full"
+    if [ -n "$flags" ]; then
+      # Cờ chèn ngay sau token post-fix-gate.py (#102): nối vào cuối thì `… post-fix-gate.py --run-tests && npm test` đưa cờ cho npm,
+      # `bash -c '…'` đưa cờ cho bash. Lệnh chỉ có một lệnh (phần sau token không có ; & | < > " ' ) }) giữ như cũ: cờ ở cuối.
+      # Không tách được token: để nguyên và cảnh báo (không nối cờ vào lệnh khác).
+      pfg_re="(^|[[:space:]\"'\`(){};&|=<>])[^[:space:]\"'\`(){};&|=<>]*post-fix-gate[.]py(\$|[[:space:]\"'\`(){};&|<>])"
+      if [[ "$cmd" =~ $pfg_re ]]; then
+        pfg_after="${cmd#*"${BASH_REMATCH[0]}"}"
+        pfg_end=$(( ${#cmd} - ${#pfg_after} - ${#BASH_REMATCH[2]} ))
+        pfg_rest="${cmd:$pfg_end}"
+        if [[ "$pfg_rest" == *[\;\&\|\<\>\"\'\)\}]* ]]; then
+          cmd="${cmd:0:$pfg_end}${flags}${pfg_rest}"
+        else
+          cmd="$cmd$flags"
+        fi
+      else
+        say "warning: cannot locate the post-fix-gate.py token in the verify command; --diff/--force-full not added: ${cmd}"
+      fi
+    fi
     # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
   fi
   say "verify: ${cmd}"
