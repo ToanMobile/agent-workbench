@@ -638,9 +638,12 @@ sys.exit(2 if rc in (126, 127) else (1 if rc else 0))' "$1" )
 
 # Mở thẻ bug riêng cho suite đỏ sẵn trên base (không trùng: bỏ qua nếu đã có thẻ mở nhắc id đó). Lỗi mở thẻ → return 1.
 file_red_on_base_card() {
-  local id="$1" name="$2" url
+  local id="$1" name="$2" url found
   if [ "$DRY" -eq 1 ]; then say "dry run: would file a bug card for ${id} (red on origin/${BASE})"; return 0; fi
-  if [ "$(gh issue list ${REPO:+--repo "$REPO"} --state open --label bug --search "\"${id}\" in:title" --json number --jq length 2>/dev/null || echo 0)" != 0 ]; then
+  found=$(gh issue list ${REPO:+--repo "$REPO"} --state open --label bug --search "\"${id}\" in:title" --json number --jq length 2>/dev/null) || found=""
+  # Tra cứu lỗi (mạng, rate limit) không phải "chưa có thẻ": mở thẻ ở đây có thể trùng; không chứng minh được → giữ PR đỏ.
+  if ! [[ "$found" =~ ^[0-9]+$ ]]; then say "could not look up open cards for ${id}; not filing, PR stays red"; return 1; fi
+  if [ "$found" != 0 ]; then
     say "open card for ${id} already exists; not filing another"; return 0
   fi
   url=$(gh issue create ${REPO:+--repo "$REPO"} --label bug \
@@ -673,18 +676,35 @@ Tìm nguyên nhân gốc vì sao \`${id}\` đỏ trên ${BASE} và sửa tại �
   return 0
 }
 
+# #251 R1: post-fix-gate.py xét REJECT TRƯỚC các điều kiện CHƯA XÁC MINH (ma trận không tin được, test đã có bị sửa, file không đọc được, test
+# mới mồ côi, code chưa có test, không suite nào khớp): khi có suite đỏ, log chỉ còn REJECT và các điều kiện đó chưa từng được đánh giá. Dòng JSON
+# cuối của `--json` vẫn mang chúng. Chỉ khi JSON có mặt và mọi điều kiện sạch (trường thiếu = không sạch) mới coi REJECT là chỉ do suite đỏ.
+gate_masked_conditions_clean() {
+  local line
+  line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$1" 2>/dev/null | tail -1) || return 1
+  [ -n "$line" ] || return 1
+  printf '%s' "$line" | jq -e '(.matrix_problem // "x") == "" and ((.tests_touched // ["x"]) | length) == 0 and ((.unreadable // ["x"]) | length) == 0
+    and ((.uncovered // ["x"]) | length) == 0 and ((.orphan_tests // ["x"]) | length) == 0 and (.busy == false) and (.budget_exhausted == false)
+    and ((.regression_tests // []) | length) > 0' >/dev/null 2>&1
+}
+
 # Verify đỏ (exit $1, log $2, lệnh $3): mọi suite đỏ cũng đỏ trên origin/<base> (scratch reset về BASE_SHA, chạy lệnh trong ma trận
 # CỦA BASE, rồi trả về MERGED_SHA)? Có → mở thẻ cho từng suite, return 0 (không REJECT PR). Mọi trường hợp khác → return 1: giữ kết quả
 # đỏ như cũ. Fail-closed: lệnh verify ghép nhiều lệnh (`; & | < >` hay xuống dòng: lệnh khác có thể chưa chạy hay đỏ vì PR); suite
 # không có trong ma trận của base hay có lệnh khác với cây gộp (PR thêm/sửa suite thì PR chịu); suite xanh, quá giờ hay không chạy
 # được trên base.
 red_only_on_base() {
-  local rc="$1" log_file="$2" vcmd="$3" ids id bcmd mcmd name p all_red=1 sr
+  local rc="$1" log_file="$2" vcmd="$3" ids id bcmd mcmd name p all_red=1 sr pfg_cmd_re
   local base_matrix="$SCRATCH/.red-on-base-matrix.json" merged_matrix="$SCRATCH/.agents/regression_matrix.active.json"
   local jqq='[.. | objects | select(.id? == $id and (.command? | type) == "string")] | first // empty'
   local ids_list=() names=() cmds=()
   [ "$rc" -eq 1 ] || return 1
   case "$vcmd" in *[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
+  # R2: không ghép lệnh là chưa đủ: `./scripts/verify.sh`, `make verify` có thể chạy post-fix-gate rồi bước khác cũng exit 1. Phải là chính
+  # post-fix-gate.py (tuỳ chọn biến môi trường VAR=x và python/python3 đứng trước).
+  pfg_cmd_re='^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(python3?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*)?[^[:space:]]*post-fix-gate[.]py([[:space:]]|$)'
+  [[ "$vcmd" =~ $pfg_cmd_re ]] || return 1
+  gate_masked_conditions_clean "$log_file" || { say "the gate log carries no clean --json (or an UNVERIFIED condition hidden by REJECT); red stays red"; return 1; }
   [ -f "$merged_matrix" ] || return 1
   git -C "$SCRATCH" show "${BASE_SHA}:.agents/regression_matrix.active.json" >"$base_matrix" 2>/dev/null || { rm -f "$base_matrix"; return 1; }
   ids=$(gate_red_suite_ids "$log_file") || { rm -f "$base_matrix"; return 1; }
@@ -722,10 +742,11 @@ red_only_on_base() {
 for cmd in "${VERIFY[@]}"; do
   if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
   cmd=$(sb_verify_inject_flags "$cmd" "$BASE")
+  run_cmd=$(sb_verify_inject_flags "$cmd" "$BASE" json)   # #251 R1: chạy kèm --json, hiển thị/so sánh không có
   # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
   say "verify: ${cmd}"
   VRC=0
-  run_verify_cmd "$cmd" || VRC=$?
+  run_verify_cmd "$run_cmd" || VRC=$?
   if [ "$VRC" -ne 0 ] && is_verify_timeout "$VRC" "$VERIFY_LOG"; then
     # Suite bị giết giữa chừng có thể để lại file đã track bị sửa, `git add` hay cả commit trong scratch: trả cây và index về đúng
     # commit đã merge (file bị ignore như DevKit, config cục bộ giữ nguyên). Không trả được thì giữ kết quả đỏ của lần 1 (chạy lại
@@ -733,7 +754,7 @@ for cmd in "${VERIFY[@]}"; do
     if git -C "$SCRATCH" reset -q --hard "$MERGED_SHA" 2>/dev/null; then
       say "verify timed out (exit ${VRC}); retrying once: ${cmd}"
       VRC=0
-      run_verify_cmd "$cmd" || VRC=$?
+      run_verify_cmd "$run_cmd" || VRC=$?
     else
       say "verify timed out (exit ${VRC}) but the scratch tree could not be reset; not retrying"
     fi

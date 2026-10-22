@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Issue #251: verify đỏ vì suite đã đỏ SẴN trên origin/<base> (không phải lỗi của PR) không được REJECT PR (exit 11) làm kéo bounce +
 # rebuild. Luật:
-#   - gate REJECT (exit 1), lớp tĩnh "đạt", mọi dòng suite đỏ là FAIL/TIMEOUT có lệnh trong ma trận, và chạy lại từng suite trên
+#   - gate REJECT (exit 1), lớp tĩnh "đạt", mọi dòng suite đỏ là FAIL (TIMEOUT không bao giờ tính, ca 39) có lệnh trong ma trận, và chạy lại từng suite trên
 #     cây base (scratch reset về origin/<base>) cũng đỏ → "đỏ sẵn trên base": merge tiếp, mở thẻ bug riêng cho mỗi suite (không trùng).
 #   - bất kỳ suite nào xanh trên base (lỗi do PR), suite không có trong ma trận, trạng thái lạ, lớp tĩnh có phát hiện → exit 11 như cũ.
 #   - sau khi chạy base, scratch trả về đúng commit đã merge.
@@ -53,8 +53,10 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
 case " $* " in
-  *" issue list "*) cat "$FAKE_DIR/existing-issues" 2>/dev/null || echo 0; exit 0 ;;
-  *" issue create "*) echo "$*" >> "$FAKE_DIR/created"; echo "https://github.com/o/r/issues/900"; exit 0 ;;
+  *" issue list "*) echo "$*" >> "$FAKE_DIR/searches"; [ -f "$FAKE_DIR/list-fails" ] && { echo "fake gh: API rate limit" >&2; exit 1; }
+     # thẻ đã có chỉ khi truy vấn --search nhắc đúng id đó (existing-issues = id), không phải mọi truy vấn
+     if [ -f "$FAKE_DIR/existing-issues" ] && grep -qF -- "\"$(cat "$FAKE_DIR/existing-issues")\"" <<<"$*"; then echo 1; else echo 0; fi; exit 0 ;;
+  *" issue create "*) [ -f "$FAKE_DIR/create-fails" ] && { echo "fake gh: create failed" >&2; exit 1; }; echo "$*" >> "$FAKE_DIR/created"; echo "https://github.com/o/r/issues/900"; exit 0 ;;
   *" project item-add "*) echo "$*" >> "$FAKE_DIR/added"; exit 0 ;;
 esac
 n=$(printf '%s\n' "$@" | grep -E '^[0-9]+$' | head -1)
@@ -88,11 +90,30 @@ reject() {
 { row FAIL REG-RED-BASE "always red"; reject "CÓ PHÁT HIỆN"; } > "$TMP/red-static.log"
 { row UNTESTED REG-RED-BASE "always red"; reject "đạt"; } > "$TMP/red-untested.log"
 
+# JSON cuối của post-fix-gate --json (chỉ các trường merge gate đọc). clean = không điều kiện CHƯA XÁC MINH nào bị REJECT che.
+J='"regression_tests":[{"id":"REG-RED-BASE","status":"FAIL"}],"unreadable":[],"tests_touched":[],"uncovered":[],"orphan_tests":[],"busy":false,"budget_exhausted":false'
+mkjson() { echo "{\"exit_code\":1,\"matrix_problem\":\"${2:-}\",$1}" > "$TMP/$3.json"; }
+mkjson "$J" "" clean
+mkjson "$J" "ma trận không tin được" masked-matrix
+mkjson "$(echo "$J" | sed 's/"orphan_tests":\[\]/"orphan_tests":["tests\/new_orphan.sh"]/')" "" masked-orphan
+mkjson "$(echo "$J" | sed 's/"uncovered":\[\]/"uncovered":["src\/a.py"]/')" "" masked-uncovered
+mkjson "$(echo "$J" | sed 's/"tests_touched":\[\]/"tests_touched":["tests\/t.sh"]/')" "" masked-edited
+mkjson "$(echo "$J" | sed 's/"regression_tests":\[[^]]*\]/"regression_tests":[]/')" "" masked-nocoverage
+: > "$TMP/no.json"
+
 run_case() {  # $1 = PR, $2 = log verify giả (exit 1)
   local n="$1" cfg="$TMP/cfg$1.json" script="$TMP/verify$1.sh"
   rm -f "$TMP/created" "$TMP/added"
-  printf '#!/usr/bin/env bash\ncat %s\nexit 1\n' "$2" > "$script"
-  VCMD="${3:-bash $script}"   # $3 = lệnh verify thay thế, $4 = lệnh verify thứ hai
+  mkdir -p "$TMP/g$n"; script="$TMP/g$n/post-fix-gate.py"
+  # gate giả: in log REJECT rồi dòng JSON của `--json` (R1: matrix_problem/orphan/uncovered… bị REJECT che chỉ lộ ở JSON), exit 1
+  cat > "$script" <<PY
+import sys
+sys.stdout.write(open("$2").read())
+if "--json" in sys.argv:
+    sys.stdout.write(open("${JSON_FILE:-$TMP/clean.json}").read())
+sys.exit(1)
+PY
+  VCMD="${3:-python3 $script}"   # $3 = lệnh verify thay thế, $4 = lệnh verify thứ hai
   python3 -c 'import json,sys; print(json.dumps({"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"project":{"owner":"o","number":1},"verify_commands":sys.argv[1:]}))' "$VCMD" ${4:+"$4"} > "$cfg"
   ( cd "$WT" && bash "$GATE" --config "$cfg" --pr "$n" --expect-head "$(cat "$TMP/pr$n.head")" ) >"$TMP/gate$n.log" 2>&1
   CASE_RC=$?
@@ -136,7 +157,7 @@ mkpr 37; run_case 37 "$TMP/red-untested.log"
   || fail "UNTESTED (rc=$CASE_RC issues=$CASE_CREATED, want 11 and 0): $(why 37)"
 
 # Thẻ đã có (cùng id suite, còn mở): không mở thẻ thứ hai, vẫn merge.
-mkpr 38; echo 1 > "$TMP/existing-issues"; run_case 38 "$TMP/red-base.log"; rm -f "$TMP/existing-issues"
+mkpr 38; echo REG-RED-BASE > "$TMP/existing-issues"; run_case 38 "$TMP/red-base.log"; rm -f "$TMP/existing-issues"
 [ "$CASE_RC" -eq 0 ] && [ "$CASE_CREATED" -eq 0 ] \
   && ok "open card for that suite already exists: no duplicate, merged (exit 0, issues=0)" \
   || fail "duplicate card (rc=$CASE_RC issues=$CASE_CREATED, want 0 and 0): $(why 38)"
@@ -168,11 +189,11 @@ mkpr_matrix 40; run_case 40 "$TMP/red-new.log"
   || fail "PR-added suite (rc=$CASE_RC issues=$CASE_CREATED, want 11 and 0): $(why 40)"
 
 # Lệnh verify ghép: phần sau && / ; chưa chắc đã chạy hay đỏ vì PR → fail-closed.
-mkpr 41; run_case 41 "$TMP/red-base.log" "bash $TMP/verify41.sh && true"
+mkpr 41; run_case 41 "$TMP/red-base.log" "python3 $TMP/g41/post-fix-gate.py && true"
 [ "$CASE_RC" -eq 11 ] && [ "$CASE_CREATED" -eq 0 ] \
   && ok "compound verify command (&&): never red-on-base (exit 11)" \
   || fail "compound && (rc=$CASE_RC issues=$CASE_CREATED, want 11 and 0): $(why 41)"
-mkpr 42; run_case 42 "$TMP/red-base.log" "true; bash $TMP/verify42.sh"
+mkpr 42; run_case 42 "$TMP/red-base.log" "true; python3 $TMP/g42/post-fix-gate.py"
 [ "$CASE_RC" -eq 11 ] && [ "$CASE_CREATED" -eq 0 ] \
   && ok "compound verify command (;): never red-on-base (exit 11)" \
   || fail "compound ; (rc=$CASE_RC issues=$CASE_CREATED, want 11 and 0): $(why 42)"
@@ -181,10 +202,66 @@ mkpr 42; run_case 42 "$TMP/red-base.log" "true; bash $TMP/verify42.sh"
 mkpr 43
 printf '#!/usr/bin/env bash\ntest -f f43 && echo present > "%s/seen43"\ntest -z "$(git status --porcelain)" || echo dirty > "%s/dirty43"\nexit 0\n' "$TMP" "$TMP" > "$TMP/second43.sh"
 rm -f "$TMP/seen43" "$TMP/dirty43"
-run_case 43 "$TMP/red-base.log" "bash $TMP/verify43.sh" "bash $TMP/second43.sh"
+run_case 43 "$TMP/red-base.log" "python3 $TMP/g43/post-fix-gate.py" "bash $TMP/second43.sh"
 [ "$CASE_RC" -eq 0 ] && [ -f "$TMP/seen43" ] && [ ! -f "$TMP/dirty43" ] \
   && ok "scratch restored to the merged commit (PR file back, tree clean) before the next verify command" \
   || fail "scratch not restored (rc=$CASE_RC): $(why 43)"
+
+# --- rebuild 1 (reviewer R1–R4) ---
+# R1: REJECT che các điều kiện CHƯA XÁC MINH (post-fix-gate.py xét REJECT trước matrix/orphan/uncovered/no-coverage): suite đỏ sẵn
+# trên base không được biến chúng thành exit 0. Điều kiện nào còn trong JSON của gate → exit 11, không mở thẻ.
+n=50
+for kind in matrix orphan uncovered edited nocoverage; do
+  n=$((n + 1)); mkpr "$n"; JSON_FILE="$TMP/masked-$kind.json" run_case "$n" "$TMP/red-base.log"
+  [ "$CASE_RC" -eq 11 ] && [ "$CASE_CREATED" -eq 0 ] \
+    && ok "R1: red-on-base does not hide '$kind' (exit 11, no card)" \
+    || fail "R1 $kind (rc=$CASE_RC issues=$CASE_CREATED, want 11 and 0): $(why $n)"
+done
+# R1: gate cũ không in JSON (hay JSON hỏng) → không chứng minh được gì → fail-closed.
+n=$((n + 1)); mkpr "$n"; JSON_FILE="$TMP/no.json" run_case "$n" "$TMP/red-base.log"
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_CREATED" -eq 0 ] \
+  && ok "R1: no JSON from the gate: fail-closed (exit 11)" \
+  || fail "R1 no JSON (rc=$CASE_RC issues=$CASE_CREATED, want 11 and 0): $(why $n)"
+
+# R2: lệnh bọc (make verify, ./scripts/verify.sh) có thể chạy post-fix-gate rồi bước khác cũng exit 1 → phải là chính post-fix-gate.py.
+n=$((n + 1)); mkpr "$n"; mkdir -p "$TMP/g$n"
+printf '#!/usr/bin/env bash\ncat %s\nexit 1\n' "$TMP/red-base.log" > "$TMP/g$n/wrapper.sh"
+run_case "$n" "$TMP/red-base.log" "bash $TMP/g$n/wrapper.sh"
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_CREATED" -eq 0 ] \
+  && ok "R2: wrapper script that is not post-fix-gate.py: never red-on-base (exit 11)" \
+  || fail "R2 wrapper (rc=$CASE_RC issues=$CASE_CREATED, want 11 and 0): $(why $n)"
+n=$((n + 1)); mkpr "$n"; run_case "$n" "$TMP/red-base.log" "python3 $TMP/g$n/post-fix-gate.py"
+[ "$CASE_RC" -eq 0 ] && ok "R2: plain 'python3 …/post-fix-gate.py' still qualifies (exit 0)" || fail "R2 plain (rc=$CASE_RC): $(why $n)"
+
+# R3: tra cứu thẻ trùng lỗi (rate limit/mạng) ≠ "chưa có thẻ": không mở thẻ trùng, không merge (fail-closed).
+n=$((n + 1)); mkpr "$n"; touch "$TMP/list-fails"; run_case "$n" "$TMP/red-base.log"; rm -f "$TMP/list-fails"
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_CREATED" -eq 0 ] \
+  && ok "R3: issue lookup failed: no duplicate card, PR stays red (exit 11)" \
+  || fail "R3 lookup failure (rc=$CASE_RC issues=$CASE_CREATED, want 11 and 0): $(why $n)"
+
+# R4: mở thẻ lỗi → fail-closed; dedup tra theo đúng id suite (thẻ nhắc id khác không chặn thẻ cho id này).
+n=$((n + 1)); mkpr "$n"; touch "$TMP/create-fails"; run_case "$n" "$TMP/red-base.log"; rm -f "$TMP/create-fails"
+[ "$CASE_RC" -eq 11 ] && ok "R4: issue create failed: PR stays red (exit 11)" || fail "R4 create failure (rc=$CASE_RC, want 11): $(why $n)"
+n=$((n + 1)); mkpr "$n"; echo REG-OTHER > "$TMP/existing-issues"; run_case "$n" "$TMP/red-base.log"; rm -f "$TMP/existing-issues"
+[ "$CASE_RC" -eq 0 ] && [ "$CASE_CREATED" -eq 1 ] \
+  && ok "R4: a card naming another suite does not suppress this suite's card (issues=1)" \
+  || fail "R4 dedup by id (rc=$CASE_RC issues=$CASE_CREATED, want 0 and 1): $(why $n)"
+# R4: PR đổi lệnh của suite có sẵn: lệnh trong ma trận base ≠ lệnh cây gộp → PR chịu.
+mkpr_cmd() {
+  local k="$1" h
+  git -C "$R" branch -q --no-track "issue-$k-x" main
+  git -C "$WT" checkout -q "issue-$k-x"
+  python3 -c 'import json,sys; p=sys.argv[1]; m=json.load(open(p)); m[0]["mandatory_regression_tests"][0]["command"]="false # edited by PR"; json.dump(m,open(p,"w"))' "$WT/.agents/regression_matrix.active.json"
+  git -C "$WT" add -A; git -C "$WT" commit -qm "card$k"; git -C "$R" push -q origin "issue-$k-x"
+  h=$(git -C "$R" rev-parse "issue-$k-x"); git -C "$R" diff "$h~1" "$h" > "$TMP/pr$k.diff"
+  read -r adds dels _ < <(git -C "$R" diff --numstat "$h~1" "$h")
+  printf '{"files":[{"path":".agents/regression_matrix.active.json"}],"labels":[],"body":"","additions":%s,"deletions":%s,"changedFiles":1}' "$adds" "$dels" > "$TMP/pr$k.meta"
+  rm -f "$TMP/halt.json"; echo "$h" > "$TMP/pr$k.head"
+}
+n=$((n + 1)); mkpr_cmd "$n"; run_case "$n" "$TMP/red-base.log"
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_CREATED" -eq 0 ] \
+  && ok "R4: PR changed the command of an existing suite: PR owns it (exit 11)" \
+  || fail "R4 changed command (rc=$CASE_RC issues=$CASE_CREATED, want 11 and 0): $(why $n)"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_red_on_base: PASS"; exit 0; } || { echo "test_merge_gate_red_on_base: FAIL ($FAILS)"; exit 1; }
