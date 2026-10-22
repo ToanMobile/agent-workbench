@@ -7,6 +7,7 @@
 #   3. both branches append the SAME rule (same id, same content): kept once
 #   4. both branches append the same test id with a different command: merge FAILS (exit != 0) naming the id, never merges silently
 #   5. a non-additive edit (both branches change the same existing rule) falls back to the text merge, which conflicts
+#   7. merging origin/main INTO a PR branch keeps the matrix append-only against origin/main (what the gate compares), main's rules first
 #   6. githooks.sh install registers the driver and .gitattributes routes the matrix file to it
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
@@ -82,6 +83,21 @@ git checkout -q -b b main && sed -i.bak 's/"command": "true"/"command": "echo b"
 git checkout -q a
 git merge --no-edit b >/dev/null 2>&1 && bad "5: overlapping edit of an existing rule merged silently" || ok "5: non-additive overlap still conflicts"
 git merge --abort >/dev/null 2>&1
+
+# 7: QA v1 of #221 — the gate compares with origin/main, not with the merge-base
+make_repo
+branch_add a "$(rule A-1 true)"
+git checkout -q main && write_matrix "$(rule BASE-1 true)" "$(rule M-1 true)" && git commit -qam main-adds
+git update-ref refs/remotes/origin/main main
+git checkout -q a
+git merge --no-edit main >/dev/null 2>&1 && [ "$(ids)" = "BASE-1 M-1 A-1" ] && ok "7: main's rule first, the branch's after" || bad "7: '$(ids)'"
+python3 - "$GATE" "$R" <<'PY' && ok "7: gate trusts the matrix as append-only against origin/main" || bad "7: matrix_additions vs origin/main rejected the merge"
+import importlib.util, json, subprocess, sys
+spec = importlib.util.spec_from_file_location("g", sys.argv[1]); g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+base = json.loads(subprocess.check_output(["git", "-C", sys.argv[2], "show", "origin/main:.agents/regression_matrix.active.json"]))
+cur = json.load(open(sys.argv[2] + "/.agents/regression_matrix.active.json"))
+sys.exit(0 if g.matrix_additions(base, cur) == ["A-1"] else 1)
+PY
 
 # 6
 H="$(mktemp -d "$TMP/hooks.XXXXXX")" && cd "$H" && git init -q . && git config user.email t@t && git config user.name t

@@ -4,7 +4,8 @@
 The gate trusts a matrix change only when the new rules sit at the END of "rules" (post-fix-gate.matrix_additions),
 so two PRs that each append a rule edit the same last lines and the second one to merge goes CONFLICTING.
 This driver merges the two sides as a union of appended rules: base rules, then what `ours` appended, then what
-`theirs` appended — still append-only against the base, so the gate keeps trusting it.
+`theirs` appended — still append-only against the base, so the gate keeps trusting it. The gate compares with
+origin/main, so the side that IS origin/main's matrix (merging main into a PR branch: `theirs`) goes first.
 
   matrix_merge_driver.py %O %A %B %P      (base, ours — the result is written here —, theirs, path)
 
@@ -36,8 +37,22 @@ def _top(d):
     return {k: v for k, v in d.items() if k != "rules"}
 
 
-def merge(base, ours, theirs):
+def _origin_rules(path):
+    """Rules of the matrix on origin/<default branch>, or None when there is no such ref (a bare test repo)."""
+    for ref in ("refs/remotes/origin/HEAD", "refs/remotes/origin/main"):
+        try:
+            out = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True, text=True, timeout=10)
+            if out.returncode == 0:
+                return json.loads(out.stdout).get("rules")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    return None
+
+
+def merge(base, ours, theirs, origin_rules=None):
     """(merged dict, None) or (None, reason). A reason starting with 'id:' is a real duplicate, not a fallback."""
+    if origin_rules is not None and theirs["rules"] == origin_rules and ours["rules"] != origin_rules:
+        ours, theirs = theirs, ours   # main's additions first, the branch's after: append-only against origin/main
     n = len(base["rules"])
     if ours["rules"][:n] != base["rules"] or theirs["rules"][:n] != base["rules"]:
         return None, "an existing rule was edited"
@@ -65,7 +80,7 @@ def main(argv):
         return 2
     base_p, ours_p, theirs_p = argv[1:4]
     base, ours, theirs = _load(base_p), _load(ours_p), _load(theirs_p)
-    merged, reason = (None, "a side is not a matrix") if not (base and ours and theirs) else merge(base, ours, theirs)
+    merged, reason = (None, "a side is not a matrix") if not (base and ours and theirs) else merge(base, ours, theirs, _origin_rules(argv[4] if len(argv) > 4 else ".agents/regression_matrix.active.json"))
     if merged is not None:
         with open(ours_p, "w", encoding="utf-8") as f:
             f.write(json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
