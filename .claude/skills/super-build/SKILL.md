@@ -302,5 +302,11 @@ Hash inputs (joined with `|`): lane (`build`) | error class | first 3 unique nor
 ### Never merge
 Builder NEVER squash-merges. Reviewer owns merge.
 
+### Too big → split, don't park (#253)
+A card over the size cap that is agent-doable is split by the Builder, not blocked for a person: file each vertical slice with
+`/createTask` (under the cap, own ACs, `Blocked by` the earlier slice), keep the first slice on this card, and say so in the
+`[builder] [report]`. `super-board-needs-you.py mark` refuses "split the card" as a person's step, so a Block ❓ that only says
+"too big" has no way out (#181 sat Blocked two ways on 22/10).
+
 ### Block exits use the §4 mandatory template
-When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template from `.claude/skills/super-board/references/block-template.md`. A 1-line "needs creds" comment is a contract violation. When a person must act (🙋 🧑 🔐 🔑 💳 🎨 🛡, or ❓ waiting on a person's decision), also run `super-board-needs-you.py mark` in the same step (block-template.md → "A person must act").
+When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template (its `blocked-by:` line from `super-board-blocked-by.py`, open issues only) from `.claude/skills/super-board/references/block-template.md`. A 1-line "needs creds" comment is a contract violation. When a person must act (🙋 🧑 🔐 🔑 💳 🎨 🛡, or ❓ waiting on a person's decision), also run `super-board-needs-you.py mark` in the same step (block-template.md → "A person must act").
