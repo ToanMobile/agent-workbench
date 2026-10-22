@@ -16,7 +16,7 @@ sys.path.insert(0, sys.argv[1])
 import session_lock as sl
 a = sl.pid_start(os.getpid()); b = sl.pid_start(os.getpid())
 assert a and a == b, (a, b)
-assert sl.pid_start(2**22 - 3) is None
+assert sl.pid_start(2**22 + 77) is None   # past Linux pid_max (4194304): never a live pid
 print("ok")
 PY
 ); [ "$out" = ok ] && ok "pid_start: stable for a live pid, None for a missing one" || fail "pid_start: $out"
@@ -86,5 +86,49 @@ finally:
 print("ok")
 PY
 ); [ "$out" = ok ] && ok "pid_start is the same under any TZ; a live pid is not read as recycled" || fail "pid_start TZ: $out"
+
+# 6. importing session_lock must not load subprocess (it cost ~7 ms of every PreToolUse hook call); only a real ps/git run pays.
+out=$(python3 -I - "$DEVKIT_DIR/bin" <<'PY' 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+import session_lock  # noqa: F401
+assert "subprocess" not in sys.modules, "subprocess imported at module level"
+print("ok")
+PY
+); [ "$out" = ok ] && ok "import session_lock does not load subprocess" || fail "lazy subprocess: $out"
+
+# 7. with /proc (Linux) pid_start and is_pid_alive read starttime (stat field 22) and never fork ps; ps is only the fallback.
+out=$(python3 - "$DEVKIT_DIR/bin" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import session_lock as sl
+# comm may hold spaces and ')': field 22 is counted after the LAST ')'
+fake = b"123 (a b) c) S 1 123 123 0 -1 4194560 1 0 0 0 1 1 0 0 20 0 1 0 987654 1000 100 18446744073709551615"
+assert sl._parse_starttime(fake) == "proc:987654", sl._parse_starttime(fake)
+assert sl._parse_starttime(b"garbage") is None and sl._parse_starttime(b"1 (x) S 1") is None
+def boom(*a, **k): raise AssertionError("ps was forked")
+sl._ps = boom
+sl._proc_start = lambda pid: "proc:42"
+me = os.getpid()
+assert sl.pid_start(me) == "proc:42"
+assert sl.is_pid_alive(me, "proc:42") is True
+assert sl.is_pid_alive(me, "proc:43") is False          # same pid, other start: recycled
+print("ok")
+PY
+); [ "$out" = ok ] && ok "/proc starttime: pid_start and is_pid_alive never fork ps" || fail "proc starttime: $out"
+
+# 8. a record written by ps (old format) is still compared with ps, so an upgrade does not read live sessions as recycled.
+out=$(python3 - "$DEVKIT_DIR/bin" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import session_lock as sl
+me = os.getpid()
+sl._proc_start = lambda pid: "proc:42"
+ps_start = sl._ps(me, "lstart")
+assert ps_start and sl.is_pid_alive(me, ps_start) is True
+assert sl.is_pid_alive(me, "Thu Jan  1 00:00:00 1970") is False
+print("ok")
+PY
+); [ "$out" = ok ] && ok "ps-format record is still honoured when /proc exists" || fail "ps-format compat: $out"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_session_lock_pid_start: all passed" || { echo "❌ test_session_lock_pid_start: $FAILS failed"; exit 1; }

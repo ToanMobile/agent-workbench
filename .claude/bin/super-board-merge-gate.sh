@@ -78,6 +78,7 @@
 #      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
+#      — or the merge call failed while GitHub still shows the PR OPEN at the verified head (nothing merged; next wave retries)
 #   5  the base could not be merged in (real conflict) — needs a rebase pass
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2 and 5
@@ -867,15 +868,34 @@ PY
   fi
   exit 0
 fi
-STATE=$(pr_state) || exit $?
-if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then
-  say "merge response was lost; GitHub confirms the merge commit"
-  exit 0
-fi
-NOW_SHA=$(echo "$STATE" | jq -r .headRefOid)
-if [ "$NOW_SHA" != "$HEAD_SHA" ]; then
-  say "head moved during the gate: verified ${HEAD_SHA}, PR head is now ${NOW_SHA}"
-  say "the review evidence is void — send the card back to Review"
-  exit 6
-fi
+# gh pr merge lỗi (vd. GraphQL 5xx tạm thời của GitHub, 22/10 PR #176): đọc lại PR vài lần có giãn cách (GitHub có thể vừa merge
+# xong phía server). MERGED → coi như đã merge; head đổi → bằng chứng review mất hiệu lực; vẫn OPEN đúng head đã verify sau mọi
+# lần đọc = GitHub xác nhận CHƯA merge: thoát 4 (thẻ ở lại Review, wave sau chạy lại gate; lần đó gặp MERGED thì exit 0 ở đầu gate),
+# không halt cả board và không gọi lại merge ở đây. Đọc lỗi → github-read tự halt như cũ; trạng thái khác (CLOSED…) → halt như cũ.
+MERGE_RECHECKS=${SB_MERGE_RECHECKS:-3}
+MERGE_RECHECK_DELAY=${SB_MERGE_RECHECK_DELAY_S:-10}
+case "$MERGE_RECHECKS" in ''|*[!0-9]*|0) MERGE_RECHECKS=3;; esac
+case "$MERGE_RECHECK_DELAY" in ''|*[!0-9]*) MERGE_RECHECK_DELAY=10;; esac
+i=0
+while :; do
+  STATE=$(pr_state) || exit $?
+  if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then
+    say "merge response was lost; GitHub confirms the merge commit"
+    exit 0
+  fi
+  NOW_SHA=$(echo "$STATE" | jq -r .headRefOid)
+  if [ "$NOW_SHA" != "$HEAD_SHA" ]; then
+    say "head moved during the gate: verified ${HEAD_SHA}, PR head is now ${NOW_SHA}"
+    say "the review evidence is void — send the card back to Review"
+    exit 6
+  fi
+  [ "$(echo "$STATE" | jq -r .state)" = OPEN ] || break
+  i=$((i + 1))
+  if [ "$i" -ge "$MERGE_RECHECKS" ]; then
+    say "the merge call failed but GitHub still shows PR #${PR} OPEN at the verified head ${HEAD_SHA} after ${i} re-read(s): nothing was merged"
+    say "leave the card in Review; the next wave re-runs the gate (no merge retried here, no board halt)"
+    exit 4
+  fi
+  sleep "$MERGE_RECHECK_DELAY"
+done
 python3 "$GITHUB_READ" --halt "Merge response failed and GitHub has not confirmed a merge; reconcile PR #${PR} before restarting. No merge was retried."
