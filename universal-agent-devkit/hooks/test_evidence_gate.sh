@@ -825,10 +825,13 @@ _KIT_BASH_FILE = re.compile(
     r"(?:^|/)(?:tests(?:/[\w.-]+)*/test_[\w.-]+\.sh|hooks/tests/[\w.-]+\.sh)$")
 
 def _bash_runs_command_string(words):
+    """True when bash/sh does not run the file as a test: -c (command string) or -n/--noexec (syntax check only, exit 0)."""
     for w in words[1:]:
         if w == "--":
             break
-        if w == "-c" or (w.startswith("-") and not w.startswith("--") and "c" in w[1:]):
+        if w == "--noexec" or w == "noexec":
+            return True
+        if w == "-c" or (w.startswith("-") and not w.startswith("--") and ("c" in w[1:] or "n" in w[1:])):
             return True
     return False
 

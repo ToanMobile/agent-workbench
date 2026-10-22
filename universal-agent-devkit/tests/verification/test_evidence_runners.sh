@@ -180,6 +180,17 @@ case("bash kit test piped to cat is not a pass",
      [E, ["bash", KIT_BASH + " | cat", MARKS]], 2, NO, msg="test PASS")
 case("bash kit test backgrounded is not a pass",
      [E, ["bash", KIT_BASH + " &", MARKS]], 2, NO, msg="test PASS")
+# R1 (reviewer, PR #204): cờ chỉ kiểm cú pháp, bash thoát 0 mà không chạy test nào.
+case("bash -n of a kit test only checks syntax, not a test run",
+     [E, ["bash", "bash -n tests/a/test_x.sh", ""]], 2, NO, msg="test PASS")
+case("bash -xn (clustered flags with n) is a syntax check, not a test run",
+     [E, ["bash", "bash -xn tests/a/test_x.sh", ""]], 2, NO, msg="test PASS")
+case("bash --noexec of a kit test is a syntax check, not a test run",
+     [E, ["bash", "bash --noexec tests/a/test_x.sh", ""]], 2, NO, msg="test PASS")
+case("sh -n of a hooks/tests file is a syntax check, not a test run",
+     [E, ["bash", "sh -n hooks/tests/plain_helper.sh", ""]], 2, NO, msg="test PASS")
+case("control: bash -x (trace, still runs) of a kit test is a pass",
+     [E, ["bash", "bash -x tests/a/test_x.sh", MARKS]], 0, msg="test PASS")
 case("CHECK 7 is untouched: a gate PASS is no RED→GREEN pair for an outcome claim",
      [E, ["bash", GATE_CMD, G_PASS]], 2, "CHECK 7", msg="Đã fix lỗi X. 14/14 test pass.")
 
