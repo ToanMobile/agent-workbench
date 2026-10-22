@@ -89,6 +89,17 @@ install_msg_hook() {
     echo 'exec bash "$DEVKIT_HOOK" "$@"'
   } > "$MSG_HOOK.devkit-tmp" && chmod +x "$MSG_HOOK.devkit-tmp" && mv "$MSG_HOOK.devkit-tmp" "$MSG_HOOK"
 }
+# The regression matrix is append-only for the gate, so every PR that adds a rule edits the same last lines and the second
+# one to merge conflicts (agent-workbench #221). A union merge driver joins the appended rules; the attribute routes the
+# matrix file to it. The driver is repo config (shared by every worktree), the attribute a tracked line.
+MATRIX_ATTR=".agents/regression_matrix.active.json merge=devkit-matrix"
+install_matrix_driver() {
+  git -C "$TARGET" config merge.devkit-matrix.name "DevKit regression matrix union merge" \
+    && git -C "$TARGET" config merge.devkit-matrix.driver "python3 .agents/devkit/scripts/git/matrix_merge_driver.py %O %A %B %P" || return 0
+  local root; root="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  grep -qxF "$MATRIX_ATTR" "$root/.gitattributes" 2>/dev/null || echo "$MATRIX_ATTR" >> "$root/.gitattributes"
+  echo "✔ $(L "merge driver cho ma trận hồi quy" "regression matrix merge driver") → .gitattributes"
+}
 # Git operations that can remove untracked DevKit links from the working tree; each gets a
 # stub running scripts/relink_check.py (instant when nothing is missing).
 RELINK_HOOKS="post-merge post-checkout post-rewrite"
@@ -158,6 +169,7 @@ case "$ACTION" in
     mkdir -p "$HOOKS_DIR" 2>/dev/null
     install_relink_hooks
     install_msg_hook
+    install_matrix_driver
     if [ -e "$HOOK" ] && ! is_ours; then
       echo "✖ githooks: $(L "$HOOK đã có và không phải của DevKit — giữ nguyên, không ghi đè." "$HOOK exists and is not the DevKit's — left untouched.")" >&2
       # Right after the shebang, not at the end: a hook that ends with `exit 0` (or
