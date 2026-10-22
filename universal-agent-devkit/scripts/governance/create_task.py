@@ -67,6 +67,17 @@ PROJECT_REGISTRY = {
 
 DEFAULT_REPO = "ToanMobile/agent-workbench"
 
+# Tên một repo app trong chữ của thẻ (tiêu đề, body). Thẻ nêu tên repo app mà chạy từ checkout khác thì phải đi
+# với --repo, nếu không nó nằm trên board của checkout (22/10: 8 thẻ Goods/NFH/GeelyEx2/OfficeReader ở Project #1).
+# agent-workbench không có mặt ở đây: thẻ app nhắc kit là chuyện thường, và sự cố 22/10 chỉ đi chiều kit sang app.
+# ponytail: heuristic theo tên, tên viết thường hoặc cách khác (officereader, Office Reader) lọt; nâng cấp khi có thẻ nhầm lọt.
+REPO_NAME_PATTERNS = {
+    "ToanMobile/OfficeReader": r"OfficeReader",
+    "ToanMobile/Goods-Triple-Shelf-Match-3D": r"Goods(?:-Triple-Shelf-Match-3D)?",
+    "ToanMobile/GeelyEx2": r"GeelyEx2",
+    "ToanMobile/Neighbours-From-Hell": r"Neighbours(?:-| )From(?:-| )Hell|NFH",
+}
+
 # Thẻ chỉ người làm được (máy thật, playtest, store, secret, quyết định): nhãn + comment do
 # .claude/bin/super-board-needs-you.py ở thư mục gốc của checkout đang đứng gắn (nó nhận --repo); nhãn, màu và
 # mô tả dưới đây chỉ dùng khi chưa có helper đó.
@@ -112,6 +123,11 @@ def detect_repo():
     except Exception:
         pass
     return DEFAULT_REPO
+
+def other_repos_named(text, repo):
+    """Repo đã đăng ký, khác `repo`, mà `text` nhắc tên (đúng hoa thường, không dính chữ cái hay số)."""
+    return [r for r, pat in REPO_NAME_PATTERNS.items()
+            if r.lower() != repo.lower() and re.search(rf"(?<![A-Za-z0-9_])(?:{pat})(?![A-Za-z0-9_])", text)]
 
 def build_body(problem, context=None, fix=None, ac=None, risk=None, blocked_by=None):
     lines = []
@@ -341,6 +357,8 @@ def main():
     parser = argparse.ArgumentParser(description="Tạo Task chuẩn Super-Board và đẩy lên Backlog GitHub Project Board")
     parser.add_argument("summary", nargs="?", help="Mô tả tóm tắt hoặc tiêu đề task")
     parser.add_argument("--repo", help="Chỉ định repo cụ thể (mặc định tự phát hiện theo git origin)")
+    parser.add_argument("--here", action="store_true",
+                        help="Giữ thẻ ở repo đang đứng dù chữ của thẻ nhắc tên repo khác (thẻ về kit, lấy repo khác làm ví dụ)")
     parser.add_argument("--title", help="Tiêu đề chuẩn Super-Board: <emoji> [<kind>] <scope>: <what>")
     parser.add_argument("--problem", help="Nội dung ## Problem")
     parser.add_argument("--fix", help="Nội dung ## Fix")
@@ -382,6 +400,17 @@ def main():
         print('   3. Đẩy từ file có sẵn:')
         print('      python3 create_task.py --from-file docs/super-board/backlog-tickets.md --ticket 1')
         sys.exit(0)
+
+    # --from-file: ticket nằm trong backlog của chính checkout này, tên repo khác chỉ là ngữ cảnh đo.
+    if not args.repo and not args.here and not (args.from_file and args.ticket):
+        here = detect_repo()
+        others = other_repos_named(f"{title}\n{body}", here)
+        if others:
+            hint = " hoặc ".join(f"--repo {r}" for r in others)
+            print(f"❌ Thẻ nhắc tên repo khác ({', '.join(others)}) mà chưa chỉ repo đích: thẻ sẽ nằm ở board của "
+                  f"{here}. Thêm {hint}; thẻ chạm hai repo thì tạo một thẻ mỗi repo. "
+                  "Thẻ thật sự về repo này (chỉ lấy repo kia làm ví dụ) thì thêm --here.", file=sys.stderr)
+            sys.exit(64)
 
     # Cờ --needs-you là đường chính (nó nói đúng việc người phải làm); không có cờ thì chỉ tự đánh dấu khi MỌI
     # dòng AC là việc của người; AC trộn và câu tóm tắt khi tạo nhanh chỉ in gợi ý.
