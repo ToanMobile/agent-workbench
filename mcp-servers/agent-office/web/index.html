@@ -502,6 +502,19 @@ function latestEvent(sess) {
 
 // ------------------------------------------------------------ state
 let STATE = null, VERSION = null, LAYOUT_KEY = null;
+// Remote access: the QR link ends in #key=...; keep the key on this device, drop it from the address bar, send it with every API call.
+const AO_KEY = (() => {
+  let k = '';
+  try { k = localStorage.getItem('ao-key') || ''; } catch (e) { /* storage blocked: the key lives only in this page */ }
+  const m = location.hash.match(/[#&]key=([A-Za-z0-9_-]+)/);
+  if (m) {
+    k = m[1];
+    try { localStorage.setItem('ao-key', k); } catch (e) { /* storage blocked: rescan after a reload */ }
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+  return k;
+})();
+const apiHeaders = (extra) => Object.assign(AO_KEY ? { 'X-Agent-Office-Key': AO_KEY } : {}, extra || {});
 let selection = null;
 const idx = { repo: new Map(), item: new Map(), worker: new Map(), itemsAt: new Map(), itemByNum: new Map() };
 function indexState(S) {
@@ -1733,7 +1746,7 @@ function toast(text, kind) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), kind === 'error' || kind === 'hint' ? 8000 : 2800);
 }
 async function api(action, body) {
-  const res = await fetch('api/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agent-Office': '1' }, body: JSON.stringify(body) });
+  const res = await fetch('api/' + action, { method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json', 'X-Agent-Office': '1' }), body: JSON.stringify(body) });
   let data = null; try { data = await res.json(); } catch (e) { data = null; }
   if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ('Server trả lỗi ' + res.status));
   return data;
@@ -1969,7 +1982,7 @@ $('#btnTheme').onclick = () => {
   try { localStorage.setItem('agent-office-theme', next); } catch (e) {}
   syncThemeBtn(); if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
 };
-$('#btnRefresh').onclick = () => { fetch('api/refresh').catch(() => {}); $('#btnRefresh').textContent = 'Đang tải…'; setTimeout(() => { $('#btnRefresh').textContent = 'Tải lại GitHub'; }, 2500); };
+$('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() }).catch(() => {}); $('#btnRefresh').textContent = 'Đang tải…'; setTimeout(() => { $('#btnRefresh').textContent = 'Tải lại GitHub'; }, 2500); };
 const SHORTCUTS = { w: '#btnAgents', e: '#btnEvents', f: '#btnFit', z: '#btnZoom', b: '#btnBoard', a: '#btnAdd', n: '#btnNext', t: '#btnTheme', r: '#btnRail', d: '#btnDesk' };
 Object.entries(SHORTCUTS).forEach(([k, q]) => { const btn = $(q); btn.setAttribute('aria-keyshortcuts', k.toUpperCase()); btn.title = 'Phím tắt: ' + k.toUpperCase(); });
 document.addEventListener('keydown', (e) => {
@@ -2157,7 +2170,8 @@ let pollTimer = null;
 async function poll(once) {
   if (!once) clearTimeout(pollTimer);
   try {
-    const res = await fetch('api/state', { cache: 'no-store' });
+    const res = await fetch('api/state', { cache: 'no-store', headers: apiHeaders() });
+    if (res.status === 401 || res.status === 403) { $('#boot').hidden = false; $('#boot').textContent = 'Mã truy cập đã hết hạn. Quét mã QR mới trên máy Mac (chạy lại ai-factory).'; return; }
     if (!res.ok) throw new Error(res.status);
     const S = await res.json();
     if (S.version !== VERSION) { VERSION = S.version; apply(S); }
