@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 22/10: gate bị giết bằng tín hiệu (trap EXIT không chạy, ví dụ Bash tool hết 10 phút) để lại khoá merge với pid đã chết và mốc
 # "at" còn mới. acquire() chỉ reap theo tuổi (stale-after = 3 x lock-timeout, sàn 1800 s), nên gate kế tiếp chờ hết lock-timeout rồi
-# thoát 4 dù không còn ai giữ khoá: PR #176 (thẻ #155) kẹt lane Review hơn một giờ. Khoá có pid đã chết phải được reap ngay;
-# khoá của pid còn sống thì vẫn phải chờ như cũ. Tương thích bash 3.2.
+# thoát 4 dù không còn ai giữ khoá: PR #176 (thẻ #155) kẹt lane Review hơn một giờ. Khoá có pid đã chết, cả process group đã hết
+# tiến trình và cùng host phải được reap ngay. Còn con mồ côi trong group (migration, gh pr merge đang chạy), khoá của host khác, khoá
+# định dạng cũ chỉ có pid, hay pid còn sống: vẫn chờ như cũ (review PR #219). Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
 export SB_NOTIFY_SKIP=1
@@ -31,7 +32,9 @@ LOCK="$R/.claude/super-board/inflight/merge.lock"
 
 # pid chắc chắn đã chết: tiến trình con đã thoát và được wait.
 sleep 0 & DEAD=$!; wait "$DEAD" 2>/dev/null
-mkdir -p "$LOCK"; date +%s > "$LOCK/at"; echo "$DEAD" > "$LOCK/pid"; echo 9 > "$LOCK/pr"
+HOST=$(hostname)
+# group DEAD không có thành viên (sleep 0 chạy trong group của test, chưa từng lập group riêng): kill -0 -- -DEAD là ESRCH
+mkdir -p "$LOCK"; date +%s > "$LOCK/at"; echo "$DEAD" > "$LOCK/pid"; echo "$DEAD" > "$LOCK/pgid"; echo "$HOST" > "$LOCK/host"; echo 9 > "$LOCK/pr"
 ( cd "$R" && bash "$GATE" --config "$CFG" --pr 5 --expect-head deadbeef --lock-timeout 5 ) >"$TMP/g1.log" 2>&1; rc=$?
 if grep -q "could not take the merge lock" "$TMP/g1.log"; then
   fail "dead-holder lock was not reaped: gate gave up after --lock-timeout (rc=$rc)"
@@ -40,7 +43,7 @@ elif grep -q "lock taken" "$TMP/g1.log"; then
 else
   fail "gate never reached the lock (rc=$rc): $(tail -3 "$TMP/g1.log" | tr '\n' ' ')"
 fi
-grep -q "reaping a lock whose holder pid $DEAD is gone" "$TMP/g1.log" \
+grep -q "reaping a lock whose holder pid $DEAD (group $DEAD) is gone" "$TMP/g1.log" \
   && ok "the reap names the dead pid" || fail "no log line naming the dead pid $DEAD"
 
 # pid còn sống: khoá phải được giữ, gate chờ hết lock-timeout rồi thoát 4 như trước.
@@ -56,6 +59,22 @@ kill "$LIVE" 2>/dev/null
 rm -rf "$LOCK" "$SB_GITHUB_HALT_FILE"; mkdir -p "$LOCK"; date +%s > "$LOCK/at"
 ( cd "$R" && bash "$GATE" --config "$CFG" --pr 5 --expect-head deadbeef --lock-timeout 5 ) >"$TMP/g3.log" 2>&1; rc=$?
 [ "$rc" -eq 4 ] && ok "lock without a pid file still waits (exit 4)" || fail "pid-less fresh lock was reaped (rc=$rc)"
+
+# Ba ca dưới: pid đã chết nhưng khoá vẫn có thể đang được dùng, gate phải chờ (exit 4) và không đụng khoá.
+wait_case() {   # $1 tên ca, rồi các file khoá dạng tên=giá-trị
+  local name="$1" kv; shift
+  rm -rf "$LOCK" "$SB_GITHUB_HALT_FILE"; mkdir -p "$LOCK"; date +%s > "$LOCK/at"; echo "$DEAD" > "$LOCK/pid"; echo 9 > "$LOCK/pr"
+  for kv in "$@"; do echo "${kv#*=}" > "$LOCK/${kv%%=*}"; done
+  ( cd "$R" && bash "$GATE" --config "$CFG" --pr 5 --expect-head deadbeef --lock-timeout 5 ) >"$TMP/w.log" 2>&1; rc=$?
+  [ "$rc" -eq 4 ] && [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$DEAD" ] && ok "$name: lock kept, gate waits (exit 4)" \
+    || fail "$name: lock reaped or taken (rc=$rc)"
+}
+# con mồ côi còn sống trong group của gate đã chết: group của chính test này luôn có thành viên sống
+wait_case "orphan child still in the dead gate's process group" "pgid=$(ps -o pgid= -p $$ | tr -d ' ')" "host=$HOST"
+# khoá của máy khác (header: orchestrator thứ hai trên máy khác): pid ở đây không nói gì về máy đó
+wait_case "lock written on another host" "pgid=$DEAD" "host=other-host.invalid"
+# khoá do gate bản cũ ghi (chỉ có pid): không biết group nên giữ luật tuổi
+wait_case "old-format lock with only a pid"
 
 [ "$FAILS" -eq 0 ] && { echo "✅ test_merge_gate_dead_holder: all passed"; exit 0; }
 echo "❌ test_merge_gate_dead_holder: $FAILS failed"; exit 1
