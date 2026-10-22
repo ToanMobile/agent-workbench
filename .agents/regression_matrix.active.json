@@ -726,6 +726,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-runner-ready-order",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_ready_order.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-READY-ORDER-01",
+          "name": "runner giao thẻ Ready theo priority label, bug trước, số issue tăng dần; thẻ body nhắm repo khác → Blocked kèm block-template; thẻ có Fix trùng thẻ đang mở → comment một lần, không giao",
+          "command": "bash tests/super-board/test_runner_ready_order.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
