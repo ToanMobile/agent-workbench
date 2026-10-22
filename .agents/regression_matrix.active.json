@@ -757,6 +757,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "mcp-servers/agent-office",
+      "watch_files": [
+        "mcp-servers/agent-office/server.py",
+        "mcp-servers/agent-office/web/index.html",
+        "mcp-servers/agent-office/web/pathing.js",
+        "mcp-servers/agent-office/tests/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-01",
+          "name": "agent-office: unittest (server, redact, host check) và tìm đường A* của người đi trong xưởng (node)",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

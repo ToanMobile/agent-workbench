@@ -415,6 +415,9 @@
 
 <script src="vendor/three.min.js"></script>
 <script src="vendor/OrbitControls.js"></script>
+<script src="vendor/GLTFLoader.js"></script>
+<script src="vendor/SkeletonUtils.js"></script>
+<script src="pathing.js"></script>
 <script>
 (() => {
 'use strict';
@@ -585,10 +588,14 @@ let cardMeshes = new Map();// item id -> mesh
 let workerRings = new Map();
 let deskAt = new Map();    // worker id -> { w, pg (người ngồi), pos (vị trí trên sàn), key }
 let walkers = [];          // người đang đi từ bàn cũ sang bàn mới
+let actors = [];           // mọi người bằng glTF đang có trong cảnh (ngồi và đang đi)
+let navObs = [];           // vật cản trên sàn cho việc tìm đường: { x, z, hw, hd, yaw }
+let buildGen = 0;          // tăng mỗi lần dựng lại cảnh, để bỏ qua model tải xong muộn
 let lamps = [];
 let halos = [];
 let L = null;              // layout
 const SIZE = { COL_W: 6.4, ROW_D: 7.6, OFFICE_W: 7.0 };
+const DOOR_W = 2.4;
 
 function track(x) { disposables.push(x); return x; }
 function mat(color, opts) { return track(new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.82, metalness: 0 }, opts || {}))); }
@@ -711,11 +718,12 @@ function sceneTheme(T) {
 }
 
 function clearWorld() {
+  actors.slice().forEach(freeActor);
   scene.remove(world);
   world.traverse((o) => { if (o.material && Array.isArray(o.material)) o.material.forEach((m) => m.dispose && m.dispose()); });
   disposables.forEach((d) => d.dispose && d.dispose());
   disposables = []; pickables = []; rigs = []; lamps = []; colStripes = []; halos = [];
-  screens = new Map(); rowMarks = new Map(); cardMeshes = new Map(); workerRings = new Map(); deskAt = new Map(); walkers = [];
+  screens = new Map(); rowMarks = new Map(); cardMeshes = new Map(); workerRings = new Map(); deskAt = new Map(); walkers = []; actors = []; navObs = []; buildGen++;
   labels.forEach((l) => l.el.remove()); labels = [];
   world = new THREE.Group(); scene.add(world);
 }
@@ -766,13 +774,24 @@ function buildWorld(S) {
     addLabel('lbl-col', new THREE.Vector3(L.colX(i), 0.05, -z0 + 1.4), el, 'down');
   });
   const wallMat = mat(T.wall);
-  for (let r = 0; r < nR; r++) box(width - 0.4, r === 0 ? 1.0 : 0.38, 0.12, wallMat, 0, r === 0 ? 0.5 : 0.19, z0 + r * SIZE.ROW_D, null);
+  const doors = []; for (let c = 0; c < nC; c += 2) doors.push(x0 + SIZE.OFFICE_W + c * SIZE.COL_W); // cửa thông giữa các hàng
+  for (let r = 0; r < nR; r++) {
+    const wz = z0 + r * SIZE.ROW_D, wh = r === 0 ? 1.0 : 0.38;
+    let a = -width / 2 + 0.2;
+    const edges = r === 0 ? [] : doors.map((dx) => [dx - DOOR_W / 2, dx + DOOR_W / 2]).concat([[width / 2 - 0.2, width / 2 - 0.2]]);
+    if (r === 0) edges.push([width / 2 - 0.2, width / 2 - 0.2]);
+    for (const [e0, e1] of edges) {
+      if (e0 - a > 0.05) { box(e0 - a, wh, 0.12, wallMat, (a + e0) / 2, wh / 2, wz, null); navObs.push({ x: (a + e0) / 2, z: wz, hw: (e0 - a) / 2, hd: 0.06, yaw: 0 }); }
+      a = e1;
+    }
+  }
   S.repos.forEach((repo, r) => buildRow(S, repo, r, cols, T));
   const span = Math.max(width, depth) * 0.62 + 6;
   sun.position.set(-width * 0.25, Math.max(width, depth) * 0.9, depth * 0.55 + 20);
   sun.target.position.set(0, 0, 0);
   Object.assign(sun.shadow.camera, { left: -span, right: span, top: span, bottom: -span, near: 1, far: Math.max(width, depth) * 3 });
   sun.shadow.camera.updateProjectionMatrix();
+  buildNav();
   updateSelectionVisuals();
   lastBuildMs = Math.round(performance.now() - t0);
 }
@@ -789,6 +808,7 @@ function buildRow(S, repo, r, cols, T) {
   box(0.1, 1.95, 0.1, postMat, sx - 1.9, 0.98, sz); box(0.1, 1.95, 0.1, postMat, sx + 1.9, 0.98, sz);
   const signTex = signTexture(repo, T);
   const side = mat(T.wall);
+  navObs.push({ x: sx, z: sz, hw: 2.1, hd: 0.2, yaw: 0 });
   const sign = new THREE.Mesh(GEO.box, [side, side, side, side, track(new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.9 })), side]);
   sign.scale.set(4.0, 1.25, 0.1); sign.position.set(sx, 1.5, sz); sign.castShadow = true; world.add(sign);
   pick(sign, { type: 'repo', id: repo.name });
@@ -830,6 +850,7 @@ function buildStation(S, repo, col, ci, z, T, dim) {
     const rackMat = mat(T.rack);
     const wide = count > 3 ? 5.6 : count * 1.66 + 0.6;
     box(wide, 0.46, 2.35, rackMat, x - 2.8 + wide / 2, 0.23, z - 1.75);
+    navObs.push({ x: x - 2.8 + wide / 2, z: z - 1.75, hw: wide / 2, hd: 1.18, yaw: 0 });
     if (count > 3) box(5.6, 0.34, 1.05, rackMat, x, 0.46 + 0.17, z - 2.4);
   } else {
     flat(5.4, 2.2, T.line, T.dark ? 0.35 : 0.55, x, 0.03, z - 1.75);
@@ -915,7 +936,7 @@ const DESK_STYLES = [
       box(0.3, 0.03, 0.3, dark, 0.5, 0.81, 0); box(0.06, 0.26, 0.06, dark, 0.5, 0.94, 0); K.monitor(0.5, 1.33, 0);
       box(0.56, 0.08, 0.56, chair, -0.95, 0.5, 0); box(0.07, 0.62, 0.56, chair, -1.25, 0.86, 0); box(0.07, 0.46, 0.07, chair, -0.95, 0.24, 0);
     } },
-  { name: 'Góc chữ L', desc: 'Bàn chữ L, hai màn hình, ghế lưng cao, chậu cây', pose: SIT,
+  { name: 'Góc chữ L', desc: 'Bàn chữ L, hai màn hình, ghế lưng cao, chậu cây', pose: SIT, nav: [{ x: 0.53, z: -1.08, hw: 0.55, hd: 0.7 }],
     build(K) {
       const { box, desk, dark, chair, T } = K;
       box(1.9, 0.07, 0.95, desk, 0.05, 0.76, 0); box(0.95, 0.07, 1.25, desk, 0.53, 0.76, -1.08);
@@ -1047,6 +1068,10 @@ function makeDesk(w, x, z, T, sc, opts) {
     },
   };
   style.build(K);
+  [{ x: -0.15, z: 0, hw: 1.2, hd: 0.52 }].concat(style.nav || []).forEach((r) => { // khung bàn trên sàn, xoay theo bàn
+    const k = sc || 1.3, c = Math.cos(g.rotation.y), sn = Math.sin(g.rotation.y);
+    navObs.push({ x: x + (r.x * c + r.z * sn) * k, z: z + (-r.x * sn + r.z * c) * k, hw: r.hw * k, hd: r.hd * k, yaw: g.rotation.y });
+  });
   const ring = new THREE.Mesh(GEO.ring, track(new THREE.MeshBasicMaterial({ color: workerColor(w), transparent: true, opacity: 0.9, side: THREE.DoubleSide })));
   ring.rotation.x = -Math.PI / 2; ring.position.set(P.x + 0.15, 0.03, 0); ring.scale.setScalar(1.25); ring.visible = false; g.add(ring);
   workerRings.set(w.id, ring);
@@ -1054,11 +1079,16 @@ function makeDesk(w, x, z, T, sc, opts) {
   if (w.status !== 'idle') {
     const bodyCol = workerColor(w);
     const pg = new THREE.Group(); g.add(pg); // người ngồi nằm trong nhóm riêng để ẩn đi khi có người đang đi tới bàn này
-    const person = makePerson(pg, P, w, T, parts);
+    const pp = [];
+    const person = makePerson(pg, P, w, T, pp);
+    pp.forEach((m) => parts.push(m));
+    let dk = null;
     if (w.status === 'working') {
       g.updateMatrixWorld(true);
-      deskAt.set(w.id, { w, pg, pos: new THREE.Vector3(P.x, 0, 0).applyMatrix4(g.matrixWorld), key: w.repo + '#' + (w.issue || '') });
+      dk = { w, pg, sc: sc || 1.3, pos: new THREE.Vector3(P.x, 0, 0).applyMatrix4(g.matrixWorld), key: w.repo + '#' + (w.issue || '') };
+      deskAt.set(w.id, dk);
     }
+    seatActor(w, pg, P, pp, K.chair, dk);
     if (w.status === 'working') {
       rigs.push({ head: person.head, armL: person.armL, armR: person.armR, phase: Math.random() * 6.28, headY: person.headY, armRot: person.armRot });
       const halo = new THREE.Mesh(GEO.ring, track(new THREE.MeshBasicMaterial({ color: cssVar('--c-done'), transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })));
@@ -1146,44 +1176,227 @@ function refreshDynamic(S) {
   labels.forEach((l) => { const id = l.el.dataset && l.el.dataset.worker; if (id && idx.worker.get(id)) { fillBubble(l.el, idx.worker.get(id)); l.w = 0; } else if (l.el.dataset && l.el.dataset.station) { fillCrowd(l.el, l.el.dataset.station); l.w = 0; } });
 }
 
+// ---- người bằng glTF (Quaternius, CC0): nạp mỗi model một lần, nhân bản bằng SkeletonUtils, hoạt cảnh bằng AnimationMixer
+const HAS_PATH = !!window.OfficePath;
+const HAS_GLTF = !!(THREE.GLTFLoader && THREE.SkeletonUtils);
+const CHARS = [ // shirt = tên vật liệu áo, được nhuộm theo màu lane; sit = model có clip Sit
+  { file: 'man.glb', shirt: 'White' }, { file: 'woman.glb', shirt: 'Orange' }, { file: 'woman2.glb', shirt: 'Shirt.001', sit: true },
+  { file: 'woman3.glb', shirt: 'Dress', sit: true }, { file: 'beach.glb', shirt: 'White.002' },
+];
+const charLib = CHARS.map(() => ({ state: 'new', waiters: [] }));
+const CHAR_H = 1.8;          // chiều cao người theo đơn vị của bàn (bàn được nhân theo cỡ ô, người cũng thế)
+const SIT_Y = 0;             // độ hạ người khi ngồi (clip Sit đã có sẵn tư thế)
+function withChar(i, cb) {
+  const c = charLib[i];
+  if (c.state === 'ready') { cb(c); return; }
+  if (c.state === 'failed') return;
+  c.waiters.push(cb);
+  if (c.state !== 'new') return;
+  c.state = 'loading';
+  new THREE.GLTFLoader().load('models/' + CHARS[i].file, (g) => {
+    // chiều cao thật lấy từ xương (Box3 của lưới có da sai vì armature nhân 100): từ sàn tới đỉnh đầu
+    g.scene.updateMatrixWorld(true);
+    const joints = new THREE.Box3(), jp = new THREE.Vector3();
+    g.scene.traverse((o) => { if (o.isBone || /^Head_end/.test(o.name)) joints.expandByPoint(o.getWorldPosition(jp)); });
+    c.scene = g.scene; c.scale = CHAR_H / ((joints.max.y - Math.min(0, joints.min.y)) || 1.8);
+    c.clips = {};
+    g.animations.forEach((cl) => { c.clips[cl.name.toLowerCase()] = cl; });
+    if (c.clips.sit) splitSit(c, g.scene);
+    const seen = new Set(); // kim loại 0.4 thì đen kịt vì cảnh không có env map nên đặt 0; glTF lưu màu ở không gian tuyến tính, cảnh này xuất tuyến tính: đổi sang sRGB một lần cho khớp màu còn lại
+    g.scene.traverse((o) => { if (o.isMesh && !seen.has(o.material)) { seen.add(o.material); o.material.color.convertLinearToSRGB(); o.material.metalness = 0; o.material.roughness = 0.85; } });
+    c.state = 'ready';
+    c.waiters.splice(0).forEach((f) => f(c));
+  }, undefined, (e) => { c.state = 'failed'; c.waiters.length = 0; console.warn('Không nạp được model người', CHARS[i].file, e && e.message); });
+}
+// Clip Sit gốc là ngồi xuống, ngồi yên, rồi đứng lên (8 s). Cắt thành 3 đoạn theo độ cao đầu: sitdown, sit (lặp), standup.
+function splitSit(c, sceneRoot) {
+  const clip = c.clips.sit, head = sceneRoot.getObjectByName('Head');
+  if (!head) return;
+  const mixer = new THREE.AnimationMixer(sceneRoot), act = mixer.clipAction(clip).play(), N = 64, ys = [], p = new THREE.Vector3();
+  for (let k = 0; k <= N; k++) { mixer.setTime(clip.duration * k / N); sceneRoot.updateMatrixWorld(true); ys.push(head.getWorldPosition(p).y); }
+  act.stop(); mixer.uncacheRoot(sceneRoot); // trả bộ xương mẫu về tư thế gốc trước khi nhân bản
+  const lo = Math.min(...ys), hi = Math.max(...ys), low = lo + (hi - lo) * 0.08;
+  const a0 = ys.findIndex((y) => y <= low), a1 = ys.length - 1 - [...ys].reverse().findIndex((y) => y <= low);
+  if (a0 < 0 || a1 <= a0) return;
+  const fps = 30, f = (k) => Math.round(clip.duration * k / N * fps), end = Math.round(clip.duration * fps);
+  c.clips.sitdown = THREE.AnimationUtils.subclip(clip, 'SitDown', 0, f(a0), fps);
+  c.clips.sit = THREE.AnimationUtils.subclip(clip, 'Sit', f(a0), f(a1), fps);
+  c.clips.standup = THREE.AnimationUtils.subclip(clip, 'StandUp', f(a1), end, fps);
+}
+function spawnActor(c, i, w) {
+  const root = new THREE.Group(), model = THREE.SkeletonUtils.clone(c.scene);
+  model.scale.setScalar(c.scale); root.add(model);
+  model.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = true; o.frustumCulled = false; // hình cầu bao của lưới có da tính theo tư thế gốc nên bị cắt nhầm khi người đi xa chỗ cũ
+    if (o.material.name === CHARS[i].shirt) { o.material = track(o.material.clone()); o.material.color.set(workerColor(w)); }
+  });
+  const mixer = new THREE.AnimationMixer(model), act = {};
+  for (const n of ['idle', 'walk', 'sit', 'sitdown', 'standup']) if (c.clips[n]) act[n] = mixer.clipAction(c.clips[n]);
+  for (const n of ['sitdown', 'standup']) if (act[n]) { act[n].setLoop(THREE.LoopOnce, 1); act[n].clampWhenFinished = true; }
+  const a = { root, model, mixer, act, cur: null, live: true, w, i, sit: !!act.sit };
+  actors.push(a);
+  return a;
+}
+function play(a, name, fade) {
+  const n = a.act[name] || a.act.idle;
+  if (a.cur === n) return;
+  n.reset().play(); if (n.loop !== THREE.LoopOnce) n.time = Math.random() * n.getClip().duration; // lệch pha cho khỏi đồng loạt
+  if (a.cur && fade > 0) a.cur.crossFadeTo(n, fade, false); else if (a.cur) a.cur.stop();
+  a.cur = n;
+}
+function freeActor(a) {
+  a.mixer.stopAllAction(); a.mixer.uncacheRoot(a.model);
+  a.model.traverse((o) => { if (o.isSkinnedMesh && o.skeleton) o.skeleton.dispose(); }); // mỗi bản nhân có texture xương riêng trên GPU
+  const k = actors.indexOf(a); if (k >= 0) actors.splice(k, 1);
+}
+
+// người ngồi (hoặc đứng) ở bàn: hộp là chỗ giữ trước, model xuất hiện thay khi tải xong
+function seatActor(w, pg, P, boxParts, chairMat, d) {
+  if (!HAS_GLTF) return;
+  const i = hashStr(w.id) % CHARS.length, gen = buildGen;
+  const sits = !P.standing && !!CHARS[i].sit;
+  if (d) { d.sits = sits; d.ci = i; }
+  withChar(i, (c) => {
+    if (gen !== buildGen) return;
+    const a = spawnActor(c, i, w);
+    a.root.position.set(P.x, sits ? SIT_Y : 0, 0); a.root.rotation.y = Math.PI / 2; // hướng về bàn
+    pg.add(a.root);
+    play(a, sits ? 'sit' : 'idle', 0);
+    a.mixer.update(0);
+    boxParts.forEach((m) => { m.visible = false; });
+    if (!P.standing && !sits) chairMat.visible = false; // đứng làm việc thì bỏ ghế
+    if (d) d.actor = a;
+  });
+}
+
+// ---- lưới đi lại: dựng lại sau mỗi lần dựng cảnh, từ vật cản đã ghi lúc dựng
+let navTight = null, navLoose = null;
+function buildNav() {
+  if (!HAS_PATH) return;
+  const mk = (margin) => {
+    const g = OfficePath.createGrid(L.x0 - 1.5, L.z0 - 1.5, L.x0 + L.width + 1.5, L.z0 + L.depth + 3, 0.25);
+    for (const o of navObs) OfficePath.blockRect(g, o.x, o.z, o.hw, o.hd, o.yaw, margin);
+    return g;
+  };
+  navTight = mk(0.22); navLoose = mk(0);
+}
+function planPath(sx, sz, gx, gz) {
+  for (const base of [navTight, navLoose]) {
+    if (!base) break;
+    const g = Object.assign({}, base, { blocked: base.blocked.slice() }); // mở chỗ đứng đầu và đích mà không đổi lưới chung
+    OfficePath.clearCircle(g, sx, sz, 0.7); OfficePath.clearCircle(g, gx, gz, 0.7);
+    const p = OfficePath.findPath(g, sx, sz, gx, gz);
+    if (p) return p;
+  }
+  return [sx, sz, gx, gz];
+}
+
 // ---- người đi từ bàn cũ sang bàn mới khi việc chuyển cột (thay cho việc dựng lại cảnh làm người nhảy chỗ)
-const WALK_SPEED = 5, DESK_YAW = 0.85;
+const DESK_YAW = 0.85, SEAT_YAW = DESK_YAW + Math.PI / 2;
+const WALK_V = 2.6, WALK_ACC = 3.2, WALK_REF = 1.9, TURN_RATE = 7, WAYPOINT_R = 0.35, AVOID_R = 1.2, MAX_WALKERS = 8;
 function snapshotPeople() {
   const byId = new Map(), byIssue = new Map();
-  const put = (w, pos) => {
-    byId.set(w.id, { pos });
-    if (w.issue) byIssue.set(w.repo + '#' + w.issue, { pos });
+  const put = (w, pos, sat, yaw, sc) => {
+    const v = { pos, sat, yaw, sc };
+    byId.set(w.id, v);
+    if (w.issue) byIssue.set(w.repo + '#' + w.issue, v);
   };
-  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone());          // đang ngồi
-  for (const k of walkers) put(k.dest.w, k.wg.position.clone());                        // đang đi dở: bắt đầu từ chỗ đang đứng
+  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone(), !!d.sits, SEAT_YAW, d.sc);   // đang ngồi
+  for (const k of walkers) put(k.dest.w, new THREE.Vector3(k.x, 0, k.z), false, k.yaw, k.obj.scale.x);             // đang đi dở: bắt đầu từ chỗ đang đứng
   return { byId, byIssue };
 }
 function startWalks(snap) {
-  if (reduceMotion.matches || !snap || (!snap.byId.size && !snap.byIssue.size)) return;
+  if (!HAS_PATH || reduceMotion.matches || !snap || (!snap.byId.size && !snap.byIssue.size)) return;
   const T = palette();
   for (const d of deskAt.values()) {
+    if (walkers.length >= MAX_WALKERS) break;
     const w = d.w;
     const old = snap.byId.get(w.id) || (w.issue && snap.byIssue.get(d.key));
     if (!old || old.pos.distanceTo(d.pos) < 0.6) continue;
     let taken = false; // chỗ cũ vẫn có người ngồi thì không có ai rời đi
     for (const o of deskAt.values()) if (o !== d && o.pos.distanceTo(old.pos) < 0.6) taken = true;
     if (taken) continue;
-    const wg = new THREE.Group(); wg.scale.setScalar(1.3);
-    makePerson(wg, { x: 0, standing: true }, w, T, []);
-    wg.position.copy(old.pos); world.add(wg);
+    const i = d.ci != null ? d.ci : hashStr(w.id) % CHARS.length, c = charLib[i];
+    let a = null, obj, yawOff = 0;
+    if (HAS_GLTF && c.state === 'ready') {
+      a = spawnActor(c, i, w); a.walker = true; obj = a.root;
+      play(a, old.sat && a.sit ? 'standup' : 'idle', 0); a.mixer.update(0);
+    } else { // model chưa có (đang tải, lỗi, hoặc thiếu thư viện): người hộp đi cùng đường
+      obj = new THREE.Group(); makePerson(obj, { x: 0, standing: true }, w, T, []); yawOff = -Math.PI / 2; // người hộp nhìn theo +x
+    }
+    obj.position.copy(old.pos); obj.rotation.y = old.yaw + yawOff; obj.scale.setScalar(old.sc); world.add(obj);
     d.pg.visible = false;
-    walkers.push({ wg, dest: d, from: old.pos.clone(), to: d.pos.clone(), t0: performance.now(), dur: Math.min(4500, Math.max(1400, old.pos.distanceTo(d.pos) / WALK_SPEED * 1000)) });
+    const pts = planPath(old.pos.x, old.pos.z, d.pos.x, d.pos.z);
+    walkers.push({ a, obj, yawOff, dest: d, from: old.pos.clone(), to: d.pos.clone(), pts, total: Math.max(0.01, OfficePath.pathLength(pts)), seg: 1,
+      x: old.pos.x, z: old.pos.z, yaw: old.yaw, speed: 0, sp: 0, s0: old.sc, s1: d.sc,
+      phase: 'rise', t: 0, riseT: old.sat && a && a.act.standup ? a.act.standup.getClip().duration * 0.75 : 0.05, fade: 0.35 }); // đứng dậy khỏi ghế rồi mới bước
   }
 }
-function stepWalkers(now) {
-  for (let i = walkers.length - 1; i >= 0; i--) {
-    const k = walkers[i], t = Math.min(1, (now - k.t0) / k.dur);
-    k.wg.position.lerpVectors(k.from, k.to, t);
-    k.wg.position.y = Math.abs(Math.sin(t * k.dur / 1000 * 7)) * 0.07 * (t < 1 ? 1 : 0); // nhún theo bước chân
-    const travel = Math.atan2(-(k.to.z - k.from.z), k.to.x - k.from.x);
-    k.wg.rotation.y = t < 0.85 ? travel : travel + (DESK_YAW - travel) * ((t - 0.85) / 0.15); // tới nơi thì quay về hướng bàn
-    if (t >= 1) { world.remove(k.wg); k.dest.pg.visible = true; walkers.splice(i, 1); }
+function finishWalk(k) {
+  world.remove(k.obj); if (k.a) freeActor(k.a);
+  k.dest.pg.visible = true;
+}
+function finishAllWalks() { walkers.forEach(finishWalk); walkers = []; }
+reduceMotion.addEventListener('change', () => { if (reduceMotion.matches) finishAllWalks(); }); // bật giảm chuyển động giữa chừng: về chỗ ngay
+function stepWalkers(dt) {
+  const P = OfficePath;
+  for (let n = walkers.length - 1; n >= 0; n--) {
+    const k = walkers[n], a = k.a, p = k.pts;
+    if (k.phase === 'rise') {
+      k.t += dt;
+      if (k.t >= k.riseT) { k.phase = 'walk'; if (a) play(a, 'walk', k.fade); }
+    } else if (k.phase === 'walk') {
+      const nPts = p.length / 2, last = k.seg >= nPts - 1;
+      let dx = p[2 * k.seg] - k.x, dz = p[2 * k.seg + 1] - k.z, dist = Math.hypot(dx, dz);
+      if (!last && dist < WAYPOINT_R) { k.seg++; continue; }
+      let rem = dist;
+      for (let j = k.seg; j < nPts - 1; j++) rem += Math.hypot(p[2 * j + 2] - p[2 * j], p[2 * j + 3] - p[2 * j + 1]);
+      let want = P.desiredSpeed(rem, WALK_V, WALK_ACC, 0.45);
+      let px = 0, pz = 0;
+      for (const o of walkers) { // nhường nhau: chậm lại khi người khác ở phía trước, đẩy nhẹ sang bên
+        if (o === k || o.phase !== 'walk') continue;
+        const ox = o.x - k.x, oz = o.z - k.z, d2 = ox * ox + oz * oz;
+        if (d2 > AVOID_R * AVOID_R || d2 < 1e-6) continue;
+        const od = Math.sqrt(d2);
+        if ((ox * Math.sin(k.yaw) + oz * Math.cos(k.yaw)) / od > 0.3) want = Math.min(want, 0.35 + (od / AVOID_R) * WALK_V * 0.5);
+        px -= ox / od * (AVOID_R - od); pz -= oz / od * (AVOID_R - od);
+      }
+      k.speed += Math.max(-WALK_ACC * 1.5 * dt, Math.min(WALK_ACC * dt, want - k.speed));
+      const target = Math.atan2(dx, dz);
+      k.yaw = P.dampAngle(k.yaw, target, TURN_RATE, dt);
+      const err = Math.abs(Math.atan2(Math.sin(target - k.yaw), Math.cos(target - k.yaw)));
+      const sp = k.speed * Math.max(0.3, Math.cos(Math.min(err, 1.2)));
+      const step = sp * dt;
+      if (last && dist < 1e-4) { k.x = p[2 * k.seg]; k.z = p[2 * k.seg + 1]; }
+      else if (last && dist < 0.8) { // vào chỗ ngồi: đi thẳng tới đích
+        const m = Math.min(step, dist); k.x += dx / dist * m; k.z += dz / dist * m;
+      } else { k.x += Math.sin(k.yaw) * step + px * 0.8 * dt; k.z += Math.cos(k.yaw) * step + pz * 0.8 * dt; }
+      k.sp = sp;
+      if (a) a.act.walk.timeScale = Math.max(0.5, Math.min(1.5, sp / WALK_REF)); // bước chân khớp tốc độ đi
+      else k.bob = (k.bob || 0) + sp * dt * 3.2;
+      k.prog = 1 - Math.min(1, (rem - step) / k.total);
+      if (last && dist - step < 0.06) { k.phase = 'seat'; k.t = 0; k.speed = 0; k.prog = 1; if (a) play(a, k.dest.sits && a.act.sitdown ? 'sitdown' : 'idle', 0.3); k.seatT = a && k.dest.sits && a.act.sitdown ? a.act.sitdown.getClip().duration : 0.5; }
+    } else { // seat: quay về hướng bàn rồi trao lại cho người ngồi sẵn ở bàn
+      k.t += dt; k.sp = 0;
+      k.yaw = P.dampAngle(k.yaw, SEAT_YAW, 9, dt);
+      if (k.t >= k.seatT) { finishWalk(k); walkers.splice(n, 1); continue; }
+    }
+    k.obj.position.set(k.x, a ? 0 : Math.abs(Math.sin(k.bob || 0)) * 0.07, k.z); // người hộp nhún theo bước, model đã có clip
+    k.obj.rotation.y = k.yaw + k.yawOff;
+    k.obj.scale.setScalar(k.s0 + (k.s1 - k.s0) * (k.prog || 0)); // bàn đông thu nhỏ người: đổi cỡ dần trên đường đi
   }
+}
+// chỉ những người ở gần camera mới chạy hoạt cảnh; xa thì đứng yên một tư thế (không tốn CPU)
+const LIVE_MAX = 14, LIVE_DIST = 80;
+let liveAt = 0;
+function updateLive(now) {
+  if (now - liveAt < 300) return; liveAt = now;
+  const cam = camera.position;
+  const ds = [];
+  for (const a of actors) { if (a.walker) { a.live = true; continue; } a.root.getWorldPosition(v3); ds.push([v3.distanceTo(cam), a]); } // người đang đi luôn động
+  ds.sort((p, q) => p[0] - q[0]);
+  ds.forEach(([d, a], k) => { a.live = k < LIVE_MAX && d < LIVE_DIST; });
 }
 
 function layoutKey(S) {
@@ -2014,7 +2227,15 @@ $('#btnDesk').onclick = () => {
 };
 window.agentOffice = Object.freeze({
   setDesk: (i) => setDesk(i),
-  walkers: () => walkers.map((k) => ({ id: k.dest.w.id, from: k.from.toArray(), to: k.to.toArray(), at: k.wg.position.toArray(), seated: k.dest.pg.visible })),
+  walkers: () => walkers.map((k) => ({ id: k.dest.w.id, from: k.from.toArray(), to: k.to.toArray(), at: k.obj.position.toArray(), scale: +k.obj.scale.x.toFixed(2), box: !k.a, seated: k.dest.pg.visible,
+    phase: k.phase, speed: +(k.sp || 0).toFixed(2), yaw: +k.yaw.toFixed(2), clip: k.a && k.a.cur ? k.a.cur.getClip().name : '', clipTime: k.a && k.a.cur ? +k.a.cur.time.toFixed(3) : null, path: k.pts.map((v) => +v.toFixed(2)) })),
+  people: () => ({ actors: actors.length, live: actors.filter((a) => a.live).length, models: charLib.map((c) => c.state), boxes: deskAt.size }),
+  path: (ax, az, bx, bz) => planPath(ax, az, bx, bz).map((v) => +v.toFixed(2)),
+  actorInfo: () => actors.map((a) => { const b = new THREE.Box3().setFromObject(a.model), p = new THREE.Vector3(); a.root.getWorldPosition(p);
+    return { id: a.w.id, at: p.toArray().map((v) => +v.toFixed(2)), s: +a.model.scale.x.toFixed(3), clip: a.cur ? a.cur.getClip().name : '', live: a.live, min: b.min.toArray().map((v) => +v.toFixed(2)), max: b.max.toArray().map((v) => +v.toFixed(2)) }; }),
+  setCamera: (x, y, z, tx, ty, tz) => { flight = null; camera.position.set(x, y, z); controls.target.set(tx, ty, tz); controls.update(); },
+  focus: (id) => select({ type: 'worker', id }),
+  seats: () => [...deskAt.values()].map((d) => ({ id: d.w.id, at: d.pos.toArray(), sits: !!d.sits })),
   camera: () => ({ t: controls.target.toArray().map((v) => +v.toFixed(2)), d: +camera.position.distanceTo(controls.target).toFixed(2), y: +camera.position.y.toFixed(2), a: +Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z).toFixed(3) }),
   stats: () => ({ buildMs: lastBuildMs, cards: cardMeshes.size, textures: disposables.filter((d) => d.isTexture).length, labels: labels.length, gpu: Object.assign({}, renderer.info.memory) }),
   screenOf: (kind, id, repo) => {
@@ -2178,6 +2399,7 @@ async function poll(once) {
     else renderTop(S);
     if ($('#notices').dataset.offline === '1') { $('#notices').dataset.offline = '0'; renderNotices(STATE, false); }
   } catch (e) {
+    console.error('Agent Office: không áp được dữ liệu', e);
     $('#notices').dataset.offline = '1'; renderNotices(STATE, true);
     if (!STATE) $('#boot').textContent = 'Không kết nối được server. Chạy: python3 server.py';
   } finally { if (!once) pollTimer = setTimeout(poll, 3000); }
@@ -2226,6 +2448,7 @@ function updateLabels() {
     l.el.style.zIndex = String(Math.round((1 - l.z) * 10000));
   }
 }
+let lastFrame = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   if (document.hidden) return;
@@ -2235,8 +2458,11 @@ function frame(now) {
     if (t >= 1) flight = null;
   }
   controls.update();
+  const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
   if (!reduceMotion.matches) {
-    stepWalkers(now);
+    stepWalkers(dt);
+    updateLive(now);
+    for (const a of actors) if (a.live) a.mixer.update(dt);
     const t = now / 1000;
     for (const r of rigs) {
       r.armL.rotation.z = r.armRot + Math.sin(t * 11 + r.phase) * 0.12;
