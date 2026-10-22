@@ -67,6 +67,10 @@
 # lock legitimately held for 20 minutes by a slow verification run — which is
 # exactly the merge it was waiting politely for.
 #
+# `--train-receipt <file>` (super-board-merge-train.sh): lines `<head sha> <tree sha>`. The train verified the combined tree of several
+# PRs once; when this gate's clean merge of the base and the PR head produces exactly the tree recorded for that head, the proof
+# already exists and verification is skipped. Any other tree (the base moved, the head changed) verifies as usual.
+#
 # Exit codes, all meaningful to the caller:
 #   0  merged
 #   11 verification failed after merging the base cleanly into the scratch tree —
@@ -120,7 +124,7 @@ export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 
-CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""
+CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""; TRAIN_RECEIPT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -130,6 +134,7 @@ while [ $# -gt 0 ]; do
     --body-file)     MSG_FILE="$2"; shift 2 ;;
     --lock-timeout)  LOCK_TIMEOUT="$2"; shift 2 ;;
     --stale-after)   STALE_AFTER="$2"; shift 2 ;;
+    --train-receipt) TRAIN_RECEIPT="$2"; shift 2 ;;
     --dry-run)       DRY=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
@@ -425,6 +430,11 @@ fi
 # Nhánh chậm hơn base nhưng merge scratch sạch: đẩy fast-forward lên đúng nhánh PR
 # rồi mới verify. Timeout phía dưới vẫn thử lại một lần. Không --force.
 MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
+TRAIN_PROVED=0
+if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
+  TRAIN_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
+  [ -z "$TRAIN_TREE" ] || [ "$TRAIN_TREE" != "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" ] || TRAIN_PROVED=1
+fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
 if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
   if git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
@@ -589,6 +599,7 @@ is_verify_timeout() {
   grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
 for cmd in "${VERIFY[@]}"; do
+  if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
     flags=""
     [[ "$cmd" == *"--diff"* ]] || flags=" --diff origin/${BASE}"
