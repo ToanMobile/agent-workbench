@@ -486,3 +486,11 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** .claude/bin/super-board-heavy-slot.py tìm bin/heavy_slot.py ở main worktree TRƯỚC (main_wt/universal-agent-devkit), nên test gọi wrapper (test_tests_skip_machine_slots.sh, test_heavy_slot.sh) trong worktree chạy code CŨ của main: P1 bỏ 2 slot mà REG-SB-TEST-SLOT-ISO-01 vẫn XANH ở worktree, ĐỎ ngay khi main được fast-forward (21/10)
 - **Quy tắc phòng ngừa & Cách fix:** Sửa universal-agent-devkit/bin/heavy_slot.py thì chạy lại các test gọi .claude/bin/super-board-heavy-slot.py SAU khi main có code mới (sau worktree finish), trước khi push
 - **Lệnh kiểm tra:** `grep -rlE 'super-board-heavy-slot.py|SLOT_BIN' tests/`
+
+---
+
+### [INSTINCT-058] Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu
+- **Ngày phát hiện:** 2026-10-22
+- **Hiện tượng lỗi:** Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu
+- **Nguyên nhân:** Memo hoa cau tra loi dia chi thu muc quan tri ca tien trinh nen khi worktree bi go giua luot gate van dung duong dan cu va tao lai thu muc quan tri (test_gate_project_removed_midrun do); cache in_linked_worktree lam ca commondir bi trong doc cau tra loi cu nen mutant van xanh. Hai loi chi lo khi reviewer chay test co san tren diff; test RED moi cua minh van xanh.
+- **Quy tắc phòng ngừa & Cách fix:** Chi memo hoa cau tra loi tinh va kiem lai thu muc con ton tai (os.path.isdir) truoc khi dung; khong cache trong ham ma test hien co doi bo cuc giua hai lan goi; chay lai test gate va worktree ke can cung mot mutant truoc khi tin test RED sang GREEN cua chinh minh.
