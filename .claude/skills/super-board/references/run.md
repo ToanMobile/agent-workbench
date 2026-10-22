@@ -299,6 +299,13 @@ do not make this card big (the listed items are one small change, the device che
 A card the pre-flight agent returns no verdict for is treated as `skipped` (a verdict, not a
 column), never built unchecked. `qa` cards are not pre-flighted: nothing is built.
 
+### Running the gate and the merge gate (every lane)
+
+`post-fix-gate.py --run-tests --full` and `super-board-merge-gate.sh` can wait up to 600 s for a heavy slot before they
+start. Run them with the Bash tool's `run_in_background: true` from the first attempt, then poll the output; a foreground
+call is cut by the Bash timeout and the whole run is repeated (#249). The runner also exports
+`BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` = 3600000 to every worker as a second line of defence.
+
 ### Builder (first pass)
 
 0. Legacy backend only: run the Builder pre-flight above in a sub-agent. Anything but `proceed`
