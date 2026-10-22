@@ -210,7 +210,7 @@ grep -q "waiting for load 60 to drop below 50 before verify" "$TMP/gate15.log" \
 # post-fix-gate không chạy sentinel hằng ngày trong merge gate). DEVKIT_SLOT_LOAD_WAIT_S=0 CHỈ khi chính gate đã bật chờ tải ở trên
 # (cap > 0): OCR 20/10 — cap = 0 (config thiếu merge_load_wait_s, mặc định của hầu hết board, hay SB_MERGE_LOAD_WAIT_S=0) từng vẫn ép 0,
 # nên verify của các board đó chạy không xét tải lần nào. Biến người gọi đã đặt thì giữ nguyên. Cả hai nhánh của run_verify_cmd: lệnh bọc
-# qua heavy-slot, và lệnh có chữ post-fix-gate.py (gate nối thêm "--diff … --force-full": `false` nuốt chúng; tên trần không có
+# qua heavy-slot, và lệnh có chữ post-fix-gate.py (gate chèn "--diff … --force-full" ngay sau token, #102: không rơi vào `false`; tên trần không có
 # .agents/devkit/bin/ đứng trước nên không vướng kiểm tra exit 9). `-unset` (không `:-`): phân biệt chưa đặt với rỗng.
 PRIOF="$TMP/prio"; CFG_PRIO="$TMP/cfg-prio.json"; CFG_PRIO_PFG="$TMP/cfg-prio-pfg.json"
 probe="printf '%s %s' \"\${DEVKIT_SLOT_PRIORITY-unset}\" \"\${DEVKIT_SLOT_LOAD_WAIT_S-unset}\" > '$PRIOF'"
@@ -237,7 +237,7 @@ verify_env "$CFG_PRIO_PFG" pfg-push "push unset" DEVKIT_SLOT_PRIORITY=push
 # OCR 21/10: cap > 0 nhưng tải không đọc được ⇒ gate không chờ tải ⇒ không ép 0 (bên trong tự chờ tải như mọi lượt).
 VE_LOAD=12.5 verify_env "$CFG_PRIO" wrap-noload "merge unset" SB_MERGE_LOAD_WAIT_S=3
 VE_LOAD=12.5 verify_env "$CFG_PRIO_PFG" pfg-noload "merge unset" SB_MERGE_LOAD_WAIT_S=3
-grep -q "verify: : post-fix-gate.py; .* --force-full" "$TMP/gate16-pfg-cap3.log" \
+grep -q "verify: : post-fix-gate.py --diff origin/main --force-full; " "$TMP/gate16-pfg-cap3.log" \
   && ok "16 pfg: the verify command took the post-fix-gate.py branch" \
   || fail "16 pfg: post-fix-gate.py branch not taken: $(grep 'verify:' "$TMP/gate16-pfg-cap3.log" | head -1)"
 
