@@ -9,6 +9,7 @@ set -u
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$DEVKIT_DIR/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 MARATHON="$DEVKIT_DIR/profiles/game/scripts/unity-bot-marathon.sh"
 BATCH="$DEVKIT_DIR/profiles/game/scripts/unity-batch.sh"
 VALIDATE="$DEVKIT_DIR/profiles/game/hooks/validate-assets.sh"
