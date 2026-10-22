@@ -36,20 +36,37 @@ def _git(project_dir, *args):
     return subprocess.run(["git", "-C", str(project_dir), *args], capture_output=True)
 
 
+_STATIC = {}
+
+
+def rev_parse_static(project_dir, *args):
+    """stdout (bytes, stripped) of `git -C project_dir rev-parse <args>`, or None on a git error. Only for answers that cannot move while
+    this process lives (git dir, top level, prefix, common dir, object path): one spawn per distinct question, where one gate run spawned
+    `--absolute-git-dir` 8 times (tests/gates/test_gate_git_spawn_budget.sh). A failure is never cached (the repo may appear later);
+    never use it for HEAD or anything else a commit changes. OSError / TimeoutExpired reach the caller as before."""
+    key = (str(project_dir), args)
+    if key not in _STATIC or not os.path.isdir(str(project_dir)):   # a folder removed mid-run is asked again: git fails, no admin dir is re-created (tests/gates/test_gate_project_removed_midrun.sh)
+        res = subprocess.run(["git", "-C", str(project_dir), "rev-parse", *args], capture_output=True, timeout=30)
+        if res.returncode != 0:
+            return None
+        _STATIC[key] = res.stdout.strip()
+    return _STATIC[key]
+
+
 def receipt_path(project_dir):
     """.git/postfix-gate/full_pass.json of the repo holding project_dir, or .agents/audit-gate/full_pass.json for non-git."""
-    res = _git(project_dir, "rev-parse", "--absolute-git-dir")
-    if res.returncode != 0:
+    gitdir = rev_parse_static(project_dir, "--absolute-git-dir")
+    if gitdir is None:
         return os.path.join(str(project_dir), ".agents", "audit-gate", RECEIPT)
-    return os.path.join(res.stdout.decode(errors="surrogateescape").strip(), "postfix-gate", RECEIPT)   # a non-UTF-8 folder name (2026-10-09)
+    return os.path.join(gitdir.decode(errors="surrogateescape"), "postfix-gate", RECEIPT)   # a non-UTF-8 folder name (2026-10-09)
 
 
 def tree_receipt_dir(project_dir):
     """<git common dir>/postfix-gate/tree_receipts (<fingerprint>.json each), shared by every worktree of the repo; None outside git."""
-    res = _git(project_dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if res.returncode != 0:
+    common = rev_parse_static(project_dir, "--path-format=absolute", "--git-common-dir")
+    if common is None:
         return None
-    return os.path.join(res.stdout.decode(errors="surrogateescape").strip(), "postfix-gate", "tree_receipts")
+    return os.path.join(common.decode(errors="surrogateescape"), "postfix-gate", "tree_receipts")
 
 
 def _non_git_fingerprint(project_dir):
@@ -88,9 +105,9 @@ def tree_fingerprint(project_dir):
     import tempfile
     if _git(project_dir, "rev-parse", "HEAD").returncode != 0:
         return _non_git_fingerprint(project_dir)
-    gitdir = _git(project_dir, "rev-parse", "--absolute-git-dir").stdout.decode().strip()
-    prefix = _git(project_dir, "rev-parse", "--show-prefix").stdout.decode().strip()
-    objects = _git(project_dir, "rev-parse", "--path-format=absolute", "--git-path", "objects").stdout.decode().strip()
+    gitdir, prefix, objects = (
+        (rev_parse_static(project_dir, *q) or b"").decode() for q in
+        (("--absolute-git-dir",), ("--show-prefix",), ("--path-format=absolute", "--git-path", "objects")))
     tree_fingerprint.error = ""
     with tempfile.TemporaryDirectory() as tmp:
         index = os.path.join(tmp, "index")
