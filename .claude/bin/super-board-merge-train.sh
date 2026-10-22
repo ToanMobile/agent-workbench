@@ -56,6 +56,7 @@ if [ "${#LIST[@]}" -eq 1 ]; then
 fi
 
 say() { echo "[merge-train] $*" >&2; }
+. "$HERE/super-board-verify-flags.sh"
 CONFIG_JSON=$(cat "$CONFIG")
 printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
@@ -149,10 +150,7 @@ verify_set() {
   build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]"; return 2; }
   merged=$(git -C "$SCRATCH" rev-parse HEAD)
   for cmd in "${VERIFY[@]}"; do
-    if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
-      [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"
-      [[ "$cmd" == *"--force-full"* ]] || cmd="$cmd --force-full"
-    fi
+    cmd=$(sb_verify_inject_flags "$cmd" "$BASE")
     try=1
     while :; do
       say "verify [$*]: ${cmd}"
