@@ -726,6 +726,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-settings-read-deny-apk",
+      "watch_files": [
+        "universal-agent-devkit/templates/claude_settings.json",
+        "universal-agent-devkit/.claude/settings.json",
+        ".claude/settings.json",
+        "universal-agent-devkit/tests/verification/test_settings_template_read_deny.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SETTINGS-READ-DENY-APK-01",
+          "name": "luật deny Read của settings không chặn build/outputs và *.apk (worker QA liệt kê, cài APK debug), vẫn chặn build/intermediates, build/tmp, *.aab, *.hprof",
+          "command": "bash universal-agent-devkit/tests/verification/test_settings_template_read_deny.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
