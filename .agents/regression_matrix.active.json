@@ -743,6 +743,22 @@
       ]
     },
     {
+      "component": "super-board-merge-train",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_train.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-TRAIN-01",
+          "name": "merge train: 3 PR sẵn sàng thì verify đúng một lần và cả 3 merge; một PR đỏ được chia đôi tìm ra (exit 11) và hai PR còn lại vẫn merge; một PR chạy như gate thường (#110)",
+          "command": "bash tests/super-board/test_merge_train.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-runner-gate-red-requeue",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
