@@ -1734,6 +1734,10 @@ def write_budget_record(project_dir, matrix_arg, tests, tested_fp, tested_at=Non
         log_err(f"budget record not written: {e}")
 
 
+# Third-party code (a minified lib dropped into vendor/) is not ours to lint; the secret scan still reads it.
+THIRD_PARTY_DIRS = ("vendor",)
+
+
 def has_dir(rel_file: str, *names) -> bool:
     parts = rel_file.replace("\\", "/").split("/")[:-1]
     return any(p in names for p in parts)
@@ -2404,7 +2408,7 @@ def run_git_hygiene_audit(modified_files: list) -> tuple:
 def run_anti_laziness_audit(modified_files: list) -> tuple:
     lazy_matches = []
     for rel_file in modified_files:
-        if is_test_path(rel_file) or has_dir(rel_file, "scripts") or rel_file.endswith(("post-fix-gate.py", "gate.sh")):
+        if is_test_path(rel_file) or has_dir(rel_file, "scripts", *THIRD_PARTY_DIRS) or rel_file.endswith(("post-fix-gate.py", "gate.sh")):
             continue
         if any(rel_file.endswith(ext) for ext in CODE_EXTENSIONS):
             content = read_changed_text(rel_file)
@@ -2624,7 +2628,7 @@ def run_performance_audit(modified_files: list) -> tuple:
 
     for rel_file in modified_files:
         # Exclude tests and build scripts from performance antipattern checks
-        if (is_test_path(rel_file) or has_dir(rel_file, "scripts", "bin")
+        if (is_test_path(rel_file) or has_dir(rel_file, "scripts", "bin", *THIRD_PARTY_DIRS)
                 or rel_file.endswith(("build.gradle", "build.gradle.kts", "pom.xml"))):
             continue
         if not any(rel_file.endswith(ext) for ext in CODE_EXTENSIONS):
@@ -2690,7 +2694,7 @@ def run_performance_audit(modified_files: list) -> tuple:
 def run_resilience_audit(modified_files: list) -> tuple:
     findings = []
     for rel_file in modified_files:
-        if is_test_path(rel_file) or has_dir(rel_file, "scripts", "bin"):
+        if is_test_path(rel_file) or has_dir(rel_file, "scripts", "bin", *THIRD_PARTY_DIRS):
             continue
         content = read_changed_text(rel_file) if any(rel_file.endswith(ext) for ext in CODE_EXTENSIONS) else None
         if content is None:
@@ -2708,7 +2712,7 @@ def run_logging_audit(modified_files: list) -> tuple:
     findings = []
     for rel_file in modified_files:
         # A command-line tool's output IS its console: scripts/, bin/, Go's cmd/, tools/.
-        if is_test_path(rel_file) or has_dir(rel_file, "scripts", "bin", "cmd", "tools"):
+        if is_test_path(rel_file) or has_dir(rel_file, "scripts", "bin", "cmd", "tools", *THIRD_PARTY_DIRS):
             continue
         content = read_changed_text(rel_file) if any(rel_file.endswith(ext) for ext in CODE_EXTENSIONS) else None
         if content is None:
