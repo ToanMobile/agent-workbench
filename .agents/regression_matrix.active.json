@@ -726,7 +726,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-status-needs-you-column",
+      "watch_files": [
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_status_needs_you_column.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-STATUS-NEEDS-YOU-01",
+          "name": "status: option Needs You của Project vẽ thành ô riêng và vào nhóm Waiting on you; không có thẻ Needs You thì đầu ra không đổi",
+          "command": "bash tests/super-board/test_status_needs_you_column.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
-
