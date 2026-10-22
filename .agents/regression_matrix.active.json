@@ -1128,6 +1128,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-guard-kill-by-name",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/tests/gates/test_guard_kill_by_name.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-KILL-BY-NAME-01",
+          "name": "git guard chặn pkill / killall / pgrep -f (kill theo tên trúng mọi board); kill <PID>, pgrep không -f và chữ pkill trong echo/grep/commit -m vẫn qua (#144)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_kill_by_name.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
