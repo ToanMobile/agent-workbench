@@ -546,7 +546,8 @@ gq "$R30"; r30=$?
 [ "$r30" = 1 ] && ok "30. không có bằng chứng base, input bị sót đổi làm suite FAIL ⇒ FAIL vào kết luận (exit 1)" \
   || { fail "30. FAIL do chính thay đổi (input bao đóng tĩnh không thấy) bị xếp KNOWN-RED (exit $r30, mong 1)"; grep -E "REG-X|KNOWN" "$TMP/outq" | tail -3; }
 grep -q -- "--diff HEAD~1" "$TMP/outq" && grep -Eq "REG-X.*(chưa có bằng chứng|no evidence)" "$TMP/outq" \
-  && ok "30. FAIL chưa có bằng chứng: gate nói cách ghi bằng chứng lỗi có sẵn (--diff HEAD~1 trên checkout sạch)" \
+  && grep -Eq "(worktree)" "$TMP/outq" \
+  && ok "30. FAIL chưa có bằng chứng: gate nói cách ghi bằng chứng lỗi có sẵn (--diff HEAD~1 trong worktree ở base, main trunk mode bị khoá)" \
   || fail "30. thiếu hướng dẫn ghi bằng chứng cho FAIL cached-full: $(grep -E 'REG-X' "$TMP/outq" | tail -2)"
 
 # 31. FAIL của chính lượt này không bao giờ là bằng chứng của nó (audit #4 21/10): thay đổi chỉ chạm file EXCLUDE (.agents/instincts.md —
