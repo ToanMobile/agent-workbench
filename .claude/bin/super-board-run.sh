@@ -332,11 +332,27 @@ ready_card_held() {
   self=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##' | tr '[:upper:]' '[:lower:]')
   other=""
   if [ -n "$self" ]; then
-    other=$( { printf '%s\n' "$body" | grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+' || true; } \
-      | sed -E 's#^github\.com/##; s#\.git$##; s#\.$##; s/#[0-9]+$//' | tr '[:upper:]' '[:lower:]' | sort -u | grep -vxF "$self" | head -1 || true)
+    # Only forms that name a repo unambiguously: github.com/<o>/<r>/(issues|pull|blob|tree|...) and a standalone <o>/<r>#N.
+    # user-attachments/orgs/settings URLs and relative paths (docs/notes.md#12, docs/x#3) are not another repo.
+    local cand owner repo
+    while IFS= read -r cand; do
+      [ -n "$cand" ] || continue
+      owner="${cand%%/*}"; repo="${cand#*/}"
+      case "$repo" in *.md|*.sh|*.py|*.js|*.ts|*.json|*.yml|*.yaml|*.txt|*.html|*.css|*.kt|*.java|*.swift|*.go|*.rs) continue ;; esac
+      [ -e "$REPO_ROOT/$owner" ] && continue
+      [ "$cand" = "$self" ] && continue
+      other="$cand"; break
+    done < <( {
+        printf '%s\n' "$body" | grep -oE 'github\.com/[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+/(issues|pull|pulls|blob|tree|commit|commits|actions)([^A-Za-z0-9_-]|$)' \
+          | sed -E 's#^github\.com/([^/]+/[^/]+)/.*#\1#'
+        printf '%s\n' "$body" | grep -oE '(^|[[:space:](`"])[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+#[0-9]+' \
+          | sed -E 's#^[^A-Za-z0-9]##; s/#[0-9]+$//'
+      } | sed -E 's#\.git$##; s#\.$##' | tr '[:upper:]' '[:lower:]' | sort -u )
   fi
   if [ -z "$other" ]; then
-    other=$( { printf '%s\n' "$body" | grep -oE '/(Volumes|Users|home)/[^][:space:])`"<>]+' || true; } \
+    # A checkout path counts only in the card's own Fix/Context (not stack traces or prose in Problem) and must go below the disk/user dir.
+    other=$( { printf '%s\n' "$body" | awk '/^## /{f = ($0 ~ /^## (Fix|Context)[[:space:]]*$/); next} f' \
+        | grep -oE '/(Volumes|Users|home)/[^/[:space:]]+/[^][:space:])`"<>]+' || true; } \
       | grep -vF -e "$REPO_ROOT" -e "${HOME:-/nonexistent}/.claude" | head -1 || true)
   fi
   if [ -n "$other" ]; then
@@ -362,25 +378,26 @@ blocked-by:  -" >/dev/null 2>&1 || true
     fi
     return 0
   fi
-  fixlines=$(printf '%s\n' "$body" | awk '/^## /{f = ($0 ~ /^## Fix/); next} f' | grep -viE 'blocked|depends|after|sau khi' || true)
+  fixlines=$(printf '%s\n' "$body" | awk '/^## /{f = ($0 ~ /^## Fix[[:space:]]*$/); next} f' \
+    | grep -viE '(^|[^[:alnum:]_])(blocked|depends|after|sau khi)([^[:alnum:]_]|$)' || true)
   refs=$( { printf '%s\n' "$fixlines" | grep -oE '#[0-9]+' || true; } | tr -d '#' | sort -un)
   dup=""
   for r in $refs; do
-    [ "$r" != "$issue" ] || continue
+    [ "$r" -lt "$issue" ] || continue   # A<->B: only the higher-numbered card is held, the lower one proceeds
     if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$r" '[.items[] | select(.content.number == $n and (.status == "Ready" or .status == "Building"))] | length > 0' >/dev/null 2>&1; then
       dup="${dup:+$dup }#${r}"
     fi
   done
   [ -n "$dup" ] || return 1
-  case " ${DUP_NOTED:-} " in
-    *" ${issue}:${dup// /,} "*) ;;
-    *) gh_write_once issue comment "$issue" --body "[orchestrator] [report] 👯 not dispatched · its Fix covers ${dup}
+  local noted="$(dirname "$INFLIGHT_DIR")/dup-noted" key="${issue}:${dup// /,}"   # state file: survives a runner restart
+  if ! grep -qxF "$key" "$noted" 2>/dev/null; then
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] 👯 not dispatched · its Fix covers ${dup}
 Did: runner Ready guard (#202) found ${dup} still open in Ready/Building and named in this card's Fix
 ❌ Not done: no worker was started for #${issue}, to avoid building the same change twice
 Next: Eric — merge this card into ${dup}, or cut the overlap from its Fix" >/dev/null 2>&1 || true
-       log "hold #${issue} in Ready: its Fix covers ${dup}, still open — not dispatched"
-       DUP_NOTED="${DUP_NOTED:-} ${issue}:${dup// /,}" ;;
-  esac
+    log "hold #${issue} in Ready: its Fix covers ${dup}, still open — not dispatched"
+    echo "$key" >> "$noted" 2>/dev/null || log "⚠ could not record the duplicate note for #${issue} (${noted})"
+  fi
   return 0
 }
 

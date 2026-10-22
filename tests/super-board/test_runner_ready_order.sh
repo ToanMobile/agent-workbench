@@ -43,7 +43,7 @@ issue_is_open() { return 0; }
 cd "$TMP/repo" || exit 1
 
 item() { # id number status labels-json
-  printf '{"id":"PVTI_%s","status":"%s","labels":%s,"content":{"type":"Issue","number":%s,"assignees":[]}}' "$1" "$3" "$4" "$1"
+  printf '{"id":"PVTI_%s","status":"%s","labels":%s,"content":{"type":"Issue","number":%s,"assignees":[]}}' "$1" "$3" "$4" "$2"
 }
 pick() { : > "$TMP/writes"; : > "$TMP/log"; if top_card_in_column "${1:-Ready}"; then echo "$TOP_ISSUE"; else echo NONE; fi; }
 
@@ -84,7 +84,7 @@ p=$(pick)
 # ── 3. Fix làm thẻ đang mở khác
 printf '## Fix\nLàm #151 #152 như đã mô tả.\n\n## Acceptance Criteria\n1) ok\n' > "$TMP/bodies/201"
 PROJECT_ITEMS_JSON="{\"items\":[$(item 201 201 Ready '["feature","priority:high"]'),$(item 151 151 Ready '["feature"]')]}"
-: > "$TMP/writes"; : > "$TMP/log"; top_card_in_column Ready; p=$TOP_ISSUE   # same shell: the runner keeps DUP_NOTED across ticks
+: > "$TMP/writes"; : > "$TMP/log"; top_card_in_column Ready; p=$TOP_ISSUE   # same shell: the note mark lives in the state dir
 [ "$p" = 151 ] && ok "thẻ #201 (đứng đầu) có Fix làm #151 (đang Ready) không được giao, #151 được giao" || fail "thẻ trùng: giao #$p, cần #151"
 n=$(grep -c "issue comment 201" "$TMP/writes"); [ "$n" = 1 ] && ! grep -q "status PVTI_201" "$TMP/writes" \
   && ok "  … comment trùng đúng một lần, thẻ vẫn ở Ready" || fail "  comment trùng $n lần / thẻ bị chuyển cột: $(cat "$TMP/writes")"
@@ -96,6 +96,40 @@ printf '## Fix\nsửa x.\n\n## Blocked by\n- #151\n' > "$TMP/bodies/202"
 PROJECT_ITEMS_JSON="{\"items\":[$(item 202 202 Ready '["bug"]'),$(item 151 151 Ready '["feature"]')]}"
 p=$(pick)
 [ "$p" = 202 ] && ok "#N ngoài mục Fix không chặn thẻ" || fail "#N ngoài mục Fix chặn nhầm: giao #$p"
+
+# ── R1: dạng nhìn giống repo khác nhưng không phải → KHÔNG chặn thẻ
+mkdir -p "$TMP/repo/docs"
+printf '## Problem\n![img](https://github.com/user-attachments/assets/1f2e3d4c-aaaa) và https://github.com/orgs/acme/settings, xem docs/notes.md#12 và docs/foo#3\n' > "$TMP/bodies/310"
+PROJECT_ITEMS_JSON="{\"items\":[$(item 310 310 Ready '["bug"]')]}"
+p=$(pick)
+[ "$p" = 310 ] && ! grep -q "status PVTI_310" "$TMP/writes" && ok "R1: user-attachments/orgs/docs/x.md#N không bị coi là repo khác" || fail "R1: thẻ #310 bị chặn nhầm (giao #$p): $(cat "$TMP/log")"
+printf '## Fix\nlàm theo ToanMobile/OfficeReader#7\n' > "$TMP/bodies/311"
+PROJECT_ITEMS_JSON="{\"items\":[$(item 311 311 Ready '["bug"]')]}"
+p=$(pick)
+[ "$p" = NONE ] && grep -q "status PVTI_311 Blocked" "$TMP/writes" && ok "R1: <owner>/<repo>#N đứng riêng vẫn là repo khác → Blocked" || fail "R1: owner/repo#N không bị chặn (giao #$p)"
+
+# ── R2: đường dẫn trong văn xuôi/stack trace không chặn; đường dẫn checkout trong Fix vẫn chặn
+printf '## Problem\nổ /Volumes/Data còn 13 GiB; at /Users/alex/proj/x.kt:12 (stack trace)\n\n## Fix\nsửa script runner.\n' > "$TMP/bodies/312"
+PROJECT_ITEMS_JSON="{\"items\":[$(item 312 312 Ready '["bug"]')]}"
+p=$(pick)
+[ "$p" = 312 ] && ! grep -q "status PVTI_312" "$TMP/writes" && ok "R2: /Volumes/Data trong văn xuôi và stack trace ở Problem không chặn thẻ" || fail "R2: thẻ #312 bị chặn nhầm (giao #$p)"
+
+# ── R3: vòng A<->B chỉ giữ thẻ số lớn; 'afterwards' không cắt dòng Fix; ## Fixture không phải mục Fix
+printf '## Fix\nlàm cùng #301.\n' > "$TMP/bodies/300"; printf '## Fix\nlàm cùng #300.\n' > "$TMP/bodies/301"
+PROJECT_ITEMS_JSON="{\"items\":[$(item 301 301 Ready '["bug"]'),$(item 300 300 Ready '["bug"]')]}"
+p=$(pick)
+[ "$p" = 300 ] && ok "R3: tham chiếu chéo #300<->#301 → giao #300 (thẻ số nhỏ), không kẹt cả hai" || fail "R3: vòng A<->B giao #$p, cần #300"
+printf '## Fix\nlàm #151 afterwards cũng sửa x.\n' > "$TMP/bodies/313"
+PROJECT_ITEMS_JSON="{\"items\":[$(item 313 313 Ready '["bug"]'),$(item 151 151 Ready '["feature"]')]}"
+p=$(pick)
+[ "$p" = 151 ] && ok "R3: 'afterwards' không phải 'after' — Fix #151 vẫn tính là trùng" || fail "R3: 'afterwards' cắt dòng Fix (giao #$p)"
+printf '## Fixture\ndữ liệu mẫu nhắc #151\n' > "$TMP/bodies/314"
+PROJECT_ITEMS_JSON="{\"items\":[$(item 314 314 Ready '["bug"]'),$(item 151 151 Ready '["feature"]')]}"
+p=$(pick)
+[ "$p" = 314 ] && ok "R3: '## Fixture' không bị coi là mục Fix" || fail "R3: ## Fixture bị coi là Fix (giao #$p)"
+
+# ── R4: dấu đã comment sống qua restart (file trong state dir, không chỉ biến của process)
+grep -qx "201:#151" "$(dirname "$INFLIGHT_DIR")/dup-noted" 2>/dev/null && ok "R4: dấu 'đã comment #201' nằm trong state dir (sống qua restart)" || fail "R4: không có dấu comment trong state dir"
 
 echo
 [ "$FAILS" -eq 0 ] && echo "ALL PASS" || { echo "$FAILS FAIL"; exit 1; }
