@@ -301,14 +301,20 @@ run_capped() {   # run_capped <giây> <lệnh…>: hết giờ thì TERM rồi K
   perl -MPOSIX -e '$t = shift; my $p = 0;
     # Chặn tín hiệu từ trước fork tới khi nhóm đã lập ở cả cha lẫn con: handler không bao giờ chạy khi $p chưa có hay
     # nhóm chưa tồn tại. stop giết cả nhóm lẫn chính PID con.
-    sub stop { my ($rc) = @_; if ($p > 0) { kill "TERM", -$p, $p; sleep 1; kill "KILL", -$p, $p } exit $rc }
-    $SIG{ALRM} = sub { stop(124) }; $SIG{TERM} = sub { stop(143) }; $SIG{INT} = sub { stop(130) }; $SIG{HUP} = sub { stop(129) };
+    # Tín hiệu từ ngoài (TERM/INT/HUP): sau khi giết nhóm, tự chết bởi chính tín hiệu đó để bash cha thấy "chết vì tín hiệu"
+    # (Ctrl-C dừng cả lệnh, không chỉ một card); exit 130 thì bash coi là đã xử lý và chạy tiếp (#143).
+    sub stop { my ($rc, $sig) = @_; if ($p > 0) { kill "TERM", -$p, $p; sleep 1; kill "KILL", -$p, $p }
+      if ($sig) { $SIG{$sig} = "DEFAULT"; kill $sig => $$; sleep 1 } exit $rc }
+    $SIG{ALRM} = sub { stop(124) }; $SIG{TERM} = sub { stop(143, "TERM") }; $SIG{INT} = sub { stop(130, "INT") }; $SIG{HUP} = sub { stop(129, "HUP") };
     my $block = POSIX::SigSet->new(SIGTERM, SIGINT, SIGHUP, SIGALRM); my $old = POSIX::SigSet->new;
     sigprocmask(SIG_BLOCK, $block, $old);
     $p = fork; die "fork: $!" unless defined $p;
     if (!$p) { setpgrp(0, 0); sigprocmask(SIG_SETMASK, $old); exec @ARGV; exit 127 }
     setpgrp($p, 0); sigprocmask(SIG_SETMASK, $old);
-    alarm $t; waitpid $p, 0; exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
+    # bash cha bị TERM (launchd bootout, AbandonProcessGroup) thì wrapper mồ côi, getppid đổi: dừng thay vì sống tới hết hạn.
+    my $pp = getppid; alarm $t;
+    while (1) { my $w = waitpid($p, WNOHANG); last if $w != 0; stop(143, "TERM") if getppid != $pp; select(undef, undef, undef, 0.5) }
+    exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
 }
 GH_CAP="${SB_BOARD_GH_TIMEOUT:-20}"
 gh20() { run_capped "$GH_CAP" gh "$@"; }   # gh treo (mạng nửa vời sau khi máy thức) không được giữ lượt check
