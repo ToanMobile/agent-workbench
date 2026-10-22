@@ -486,3 +486,11 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** .claude/bin/super-board-heavy-slot.py tìm bin/heavy_slot.py ở main worktree TRƯỚC (main_wt/universal-agent-devkit), nên test gọi wrapper (test_tests_skip_machine_slots.sh, test_heavy_slot.sh) trong worktree chạy code CŨ của main: P1 bỏ 2 slot mà REG-SB-TEST-SLOT-ISO-01 vẫn XANH ở worktree, ĐỎ ngay khi main được fast-forward (21/10)
 - **Quy tắc phòng ngừa & Cách fix:** Sửa universal-agent-devkit/bin/heavy_slot.py thì chạy lại các test gọi .claude/bin/super-board-heavy-slot.py SAU khi main có code mới (sau worktree finish), trước khi push
 - **Lệnh kiểm tra:** `grep -rlE 'super-board-heavy-slot.py|SLOT_BIN' tests/`
+
+---
+
+### [INSTINCT-058] Một lần đọc GitHub hỏng tạm thời dưới set -e giết runner, watchdog crash-loop rồi bỏ cuộc
+- **Ngày phát hiện:** 2026-10-22
+- **Hiện tượng lỗi:** Một lần đọc GitHub hỏng tạm thời dưới set -e giết runner, watchdog crash-loop rồi bỏ cuộc
+- **Nguyên nhân:** super-board-run.sh chạy set -euo pipefail; fetch_project_items/gh_rate_guard gọi trần trong vòng lặp nên một lần card.sh exit 69 (đọc board lệch số sau khi máy khởi động lại) làm runner chết; watchdog khởi động lại 5 lần, lần nào cũng chết ở lần đọc đầu, rồi bỏ cuộc (22/10 22:05-22:15, #256)
+- **Quy tắc phòng ngừa & Cách fix:** Mọi lệnh đọc mạng trong vòng lặp daemon chạy set -e phải đi qua wrapper: đọc lại có backoff+jitter, hỏng hết lượt thì bỏ tick, có trần số tick bỏ liên tiếp rồi mới thoát; mã halt có chủ đích vẫn dừng. Hàm gọi trong ngữ cảnh || mất errexit nên phải tự kiểm payload. Đổi tên biến bằng sed toàn file shell lớn dễ trúng hàm khác: sửa theo dòng/hàm cụ thể

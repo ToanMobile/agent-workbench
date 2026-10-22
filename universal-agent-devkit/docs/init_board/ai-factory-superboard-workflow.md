@@ -2,8 +2,6 @@
 
 Máy Mac ở nhà chạy 24/7. Bạn giao việc bằng thẻ trên GitHub Project, các runner super-board tự nhận thẻ, viết code, chạy gate của DevKit rồi merge. Agent Office là văn phòng 3D để xem và điều khiển cả 6 board, mở được trên Mac lẫn điện thoại.
 
-Tài liệu này thay cho bản cũ có TUIOS. TUIOS đã bỏ, không còn dùng.
-
 ## 1. Chạy nhanh
 
 Mọi lệnh chạy từ thư mục `/Volumes/Data/Toan/agent-workbench`.
