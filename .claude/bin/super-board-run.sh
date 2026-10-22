@@ -714,6 +714,18 @@ PY
   [ "$rc" -ne 4 ]
 }
 
+claude_model_for_tier() {
+  # model_tier của config -> --model của `claude -p` (#254: trước đây không truyền, mọi lượt chạy model mặc định đắt nhất).
+  # low=haiku, high=opus; medium, thiếu hoặc lạ = sonnet.
+  local tier
+  tier=$(jq -r '.model_tier // "medium"' "$CONFIG_PATH" 2>/dev/null || echo medium)
+  case "$tier" in
+    low) echo haiku ;;
+    high) echo opus ;;
+    *) echo sonnet ;;
+  esac
+}
+
 dispatch_lane() {
   # $1 = lane (build|qa|review); $2 = issue number
   local lane="$1" issue="$2" prompt pid
@@ -792,14 +804,16 @@ dispatch_lane() {
   # CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0: ngăn `claude -p` tự huỷ tác vụ nền (như red_proof.py --pending) sau 10 phút.
   export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-0}"
   unset POSTFIX_GATE_FORCE_FULL
+  local claude_model
+  claude_model=$(claude_model_for_tier)
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
     nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
     nohup "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
-    CLAUDE_CONFIG_DIR="$pool_cfg" nohup claude --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    CLAUDE_CONFIG_DIR="$pool_cfg" nohup claude --model "$claude_model" --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   else
-    nohup claude --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup claude --model "$claude_model" --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!
   DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
