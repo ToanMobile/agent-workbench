@@ -718,7 +718,7 @@ if [ -f "$SBA" ]; then
   python3 - "$SBA" "$TMP/all" > "$TMP/all.out" 2>&1 <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("sba", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-m.REPOS = [{"slug": "zz-none", "name": "test", "dir": sys.argv[2], "tuios_window": "x", "url": "x"}]
+m.REPOS = [{"slug": "zz-none", "name": "test", "dir": sys.argv[2], "url": "x"}]
 m.get_running_pids = lambda slug: []
 m.stop_all()
 PY
@@ -731,7 +731,7 @@ PY
   python3 - "$SBA" "$TMP/all" > "$TMP/all.status" 2>&1 <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("sba", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-m.REPOS = [{"slug": "zz-none", "name": "test", "dir": sys.argv[2], "tuios_window": "x", "url": "x"}]
+m.REPOS = [{"slug": "zz-none", "name": "test", "dir": sys.argv[2], "url": "x"}]
 m.get_running_pids = lambda slug: []
 m.status_all()
 PY
@@ -742,7 +742,7 @@ PY
   python3 - "$SBA" "$TMP/all2" > "$TMP/all2.out" 2>&1 <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("sba", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-m.REPOS = [{"slug": "zz-nostop", "name": "test", "dir": sys.argv[2], "tuios_window": "x", "url": "x"}]
+m.REPOS = [{"slug": "zz-nostop", "name": "test", "dir": sys.argv[2], "url": "x"}]
 m.get_running_pids = lambda slug: []
 m.stop_all()
 PY
