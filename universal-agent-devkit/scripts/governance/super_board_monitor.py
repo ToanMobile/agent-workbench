@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 super_board_monitor.py — Hiển thị trực tiếp (Real-time Live Stream) tiến trình Super-Board Runner
-và từng bước suy nghĩ / gõ lệnh (🔧 Tool / 💬 Text) của Worker Agent bên trong cửa sổ TUIOS.
+và từng bước suy nghĩ / gõ lệnh (🔧 Tool / 💬 Text) của Worker Agent ngay trong terminal.
 """
 import glob
 import json
