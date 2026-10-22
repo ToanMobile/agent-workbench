@@ -313,6 +313,7 @@
 3 tests/gates/test_tree_fp_checklist_temp.sh
 30 tests/gates/test_guard_shell_norm.sh
 30 tests/gates/test_guard_shell_norm_monotonic.sh
+30 tests/gates/test_guard_shell_norm_load_retry.sh
 10 tests/gates/test_hook_big_command_fast_path.sh
 3 tests/verification/test_evidence_check7_pair.sh
 1 tests/gates/test_review_claim_follow_worktree.sh

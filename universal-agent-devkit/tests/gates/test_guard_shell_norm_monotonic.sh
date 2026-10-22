@@ -39,18 +39,28 @@ ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 ENV.update(CLAUDE_PROJECT_DIR=proj, XDG_CONFIG_HOME=os.path.join(tmp, "xdg"), ADB_DENY_SERIALS="", ADB_ALLOW_SERIALS="", ANDROID_SERIAL="")
 
 
+# The 7 s analysis watchdog of hardware_safety_gate.sh (production budget, never loosened) answers rc 2 with this text. On a busy machine it fires
+# on a row the hook judges in 0.1 s when idle: that is no verdict (#147), so the row runs again (the retries are sequential, one row at a time).
+WATCHDOG = "quá lớn / quá phức tạp để phân tích"
+WATCHDOG_RUNS = 3
+
+
 def run(hook, cmd):
     payload = json.dumps({"session_id": "s", "transcript_path": "", "cwd": proj, "hook_event_name": "PreToolUse",
                           "tool_name": "Bash", "tool_input": {"command": cmd, "description": "d"}})
-    try:
-        p = subprocess.run(["bash", HOOK[hook]], input=payload, capture_output=True, text=True, errors="replace", cwd=proj, env=ENV, timeout=90)
-    except subprocess.TimeoutExpired:   # a hook that does not answer in 90 s is a failed row (its limit is 10 s)
-        return "TIMEOUT", "the hook did not answer in 90 s"
+    for _ in range(WATCHDOG_RUNS):
+        try:
+            p = subprocess.run(["bash", HOOK[hook]], input=payload, capture_output=True, text=True, errors="replace", cwd=proj, env=ENV, timeout=90)
+        except subprocess.TimeoutExpired:   # a hook that does not answer in 90 s is a failed row (its limit is 10 s)
+            return "TIMEOUT", "the hook did not answer in 90 s"
+        if not (p.returncode == 2 and WATCHDOG in p.stderr):
+            break
     return p.returncode, p.stderr
 
 
-# stderr of a hook that did not judge: a crash of the parser, python missing or failing, the module not loaded. Fail closed (rc 2) but no verdict.
-CRASH = ("lỗi nội bộ", "python không chạy được", "không nạp được shell_norm.py")
+# stderr of a hook that did not judge: a crash of the parser, python missing or failing, the module not loaded, the watchdog still firing after
+# WATCHDOG_RUNS runs. Fail closed (rc 2) but no verdict.
+CRASH = ("lỗi nội bộ", "python không chạy được", "không nạp được shell_norm.py", WATCHDOG)
 
 
 GITD, RMD = "git reset --hard", "rm -rf ~"
