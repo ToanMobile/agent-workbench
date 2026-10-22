@@ -545,7 +545,10 @@ def main():
             return 0
         meta = json.loads(Path(args.meta).read_text()) if args.meta else None
         output, _ = read(command, args.kind or 'json', meta)
-        sys.stdout.write(output)
+        # Bytes UTF-8, không theo locale: merge-policy đọc lại bằng UTF-8 (#124).
+        sys.stdout.flush()
+        sys.stdout.buffer.write(output.encode('utf-8'))
+        sys.stdout.buffer.flush()
         return 0
     except ReadHalted as error:
         print(f'[github-read] HALT: {error}. Saved at {halt_path()}', file=sys.stderr)
