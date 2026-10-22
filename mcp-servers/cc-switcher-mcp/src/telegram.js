@@ -453,17 +453,36 @@ function approvalRequestSource(comments, head) {
   return null;
 }
 
-async function defaultApprovalComments(record) {
+async function defaultGhRead(args) {
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
-  const exec = promisify(execFile);
-  const sources = [...new Set([record.source, record.pr].filter((n) => Number(n) > 0))];
+  const { stdout } = await promisify(execFile)('gh', args, { timeout: 15000 });
+  return stdout;
+}
+
+const SAME_REPO_CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b/gi;
+
+// Head hien tai cua PR va cac issue no dong (request chinh tac nam tren issue, block-template.md).
+async function readPrState(record, ghRead) {
+  const out = await ghRead(['pr', 'view', String(record.pr), '--repo', record.repo, '--json', 'headRefOid,body,closingIssuesReferences']);
+  const pr = JSON.parse(out || '{}');
+  const repo = String(record.repo).toLowerCase();
+  const issues = new Set();
+  for (const ref of pr.closingIssuesReferences || []) {
+    if (String(ref?.repository?.nameWithOwner || '').toLowerCase() === repo) issues.add(Number(ref.number));
+  }
+  for (const m of String(pr.body || '').matchAll(SAME_REPO_CLOSES)) issues.add(Number(m[1]));
+  return { head: String(pr.headRefOid || ''), issues: [...issues].filter((n) => n > 0) };
+}
+
+async function readApprovalComments(record, issues, ghRead) {
+  const sources = [...new Set([record.source, record.pr, ...issues].filter((n) => Number(n) > 0))];
   const all = [];
   for (const source of sources) {
-    const { stdout } = await exec('gh', ['api', '--paginate', `repos/${record.repo}/issues/${source}/comments`], { timeout: 15000 });
-    const page = JSON.parse(stdout || '[]');
-    const list = Array.isArray(page) ? page : [];
-    for (const comment of list) all.push({ ...comment, source: Number(source) });
+    const out = await ghRead(['api', '--paginate', '--slurp', `repos/${record.repo}/issues/${source}/comments?per_page=100`]);
+    for (const page of JSON.parse(out || '[]')) {
+      for (const comment of Array.isArray(page) ? page : []) all.push({ ...comment, source: Number(source) });
+    }
   }
   return all;
 }
@@ -495,17 +514,25 @@ export async function approveSuperBoardCallback(token, opts = {}) {
   if (!/^[0-9a-f]{40}$/.test(head) || !/^[^/\s]+\/[^/\s]+$/.test(repo)) {
     return { toastText: 'Phiếu duyệt thiếu head hoặc repo.', showAlert: true };
   }
-  const readComments = opts.readComments || defaultApprovalComments;
+  const ghRead = opts.ghRead || defaultGhRead;
   const gh = opts.gh || defaultGh;
   let comments;
   try {
-    comments = await readComments(record);
+    const pr = await readPrState(record, ghRead);
+    if (!/^[0-9a-f]{40}$/.test(pr.head)) throw new Error('unreadable head');
+    if (pr.head !== head) {
+      return {
+        toastText: `Head đã đổi (${head.slice(0, 7)} → ${pr.head.slice(0, 7)}). Dùng tin mới nhất của PR này.`,
+        showAlert: true,
+      };
+    }
+    comments = opts.readComments ? await opts.readComments(record) : await readApprovalComments(record, pr.issues, ghRead);
   } catch {
     return { toastText: 'Không đọc được approval-request.', showAlert: true };
   }
   const source = approvalRequestSource(comments, head);
   if (!source) {
-    return { toastText: 'Chưa có approval-request cho đúng head.', showAlert: true };
+    return { toastText: `Chưa có approval-request cho head ${head.slice(0, 7)}: đăng request trên issue liên kết hoặc PR rồi bấm lại.`, showAlert: true };
   }
   try {
     await gh(['api', '--method', 'POST', `repos/${repo}/issues/${source}/comments`, '-f', 'body=done']);
