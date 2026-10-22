@@ -44,6 +44,8 @@
   "tick_seconds": 30,
   "qa_workers": 3,
   "review_workers": 3,
+  "build_load_max": 24,
+  "backlog_pull": false,
   "no_progress_cycles": 240,
   "truth_gate": "non-trivial",
   "truth_threshold": 70,
