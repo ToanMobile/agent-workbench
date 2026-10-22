@@ -62,6 +62,9 @@ DEFAULT_ALWAYS_HUMAN = {
         "labels": ["schema", "destructive"],
         "paths": [],
         "keywords": ["drop table", "drop column", "truncate table", "rename column", "drop schema"],
+        # Valid forms the plain keywords miss: COLUMN / TABLE are optional in `ALTER TABLE t DROP c` and `TRUNCATE t`.
+        "patterns": [r"\balter table\b[^;]*\bdrop\b(?! (?:constraint|default|not null|index)\b)",
+                     r"\btruncate [a-z_\"`\[]"],
     },
 }
 DEFAULT_MIGRATION_GLOBS = [
@@ -118,6 +121,11 @@ def added_text(diff: str) -> str:
     return " ".join(" ".join(out).lower().split())
 
 
+def comment_free(text: str) -> str:
+    """`DROP/**/TABLE` is a valid DROP TABLE (SQL treats a comment as whitespace): blank `/*...*/` out."""
+    return " ".join(re.sub(r"/\*.*?\*/", " ", text).split())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
@@ -141,6 +149,7 @@ def main() -> int:
     labels = {(l.get("name") or "").lower() for l in meta.get("labels") or []}
     paths = [f.get("path") or "" for f in meta.get("files") or []]
     added = added_text(diff)
+    added_nc = comment_free(added)
     body = meta.get("body") or ""
 
     policy = cfg.get("merge_policy") or {}
@@ -180,7 +189,10 @@ def main() -> int:
                         for g in [matches(p, rule.get("paths"))] if g), None)
         if not hit:
             hit = next((f"keyword \"{k}\" in an added line" for k in rule.get("keywords") or []
-                        if " ".join(k.lower().split()) in added), None)
+                        if " ".join(k.lower().split()) in added or " ".join(k.lower().split()) in added_nc), None)
+        if not hit:
+            hit = next((f"pattern \"{r}\" in an added line" for r in rule.get("patterns") or []
+                        if re.search(r, added) or re.search(r, added_nc)), None)
         if hit:
             human.append({"category": cat, "why": hit})
 
