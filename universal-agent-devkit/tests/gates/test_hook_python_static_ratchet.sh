@@ -20,7 +20,7 @@
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="${HP_KIT:-$DEVKIT_DIR}"
-python3 -I - "$KIT" <<'PY'
+python3 -I - "$KIT" <<'PYEND'
 import glob, os, re, sys
 
 KIT = sys.argv[1]
@@ -171,4 +171,4 @@ if fails:
     print("❌ test_hook_python_static_ratchet: %d failed" % len(fails))
     sys.exit(1)
 print("✅ test_hook_python_static_ratchet: every inline python start runs isolated (-I), no sys.path entry can be the cwd")
-PY
+PYEND

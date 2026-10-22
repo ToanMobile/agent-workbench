@@ -43,7 +43,7 @@ out="$(DEVKIT_RED_PATCH_MAX_MB=1 python3 "$PROOF" "$P" --bug "$B2" --patch "$TMP
 [ "$rc" = 2 ] && ok "a patch over the cap is refused (exit 2)" || fail "big patch: exit $rc, want 2: $out"
 echo "$out" | grep -qi 'DEVKIT_RED_PATCH_MAX_MB' && ok "the refusal names the knob and how to shrink the patch" || fail "refusal without the knob: $out"
 [ ! -e "$P/.agents/local/red-patches/$B2.patch" ] && ok "the big patch was not copied into the tracked folder" || fail "big patch kept in .agents/local/red-patches"
-[ "$(proof "$B2")" = - ] && ok "no proof was run for the refused patch" || fail "a proof ran: $(proof "$B2")"
+[ "$(proof "$B2")" = "-" ] && ok "no proof was run for the refused patch" || fail "a proof ran: $(proof "$B2")"
 
 DEVKIT_RED_PATCH_MAX_MB=1 python3 "$PROOF" "$P" --bug "$B1" --patch "$TMP/small.patch" --wait >/dev/null 2>&1
 [ "$(proof "$B1")" = PROVEN ] && ok "a patch under the cap still proves" || fail "small patch: $(proof "$B1")"
