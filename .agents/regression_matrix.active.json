@@ -726,7 +726,37 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-merge-gate-dead-holder",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_dead_holder.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-DEAD-HOLDER-01",
+          "name": "merge gate: khoá merge có pid đã chết (gate bị giết trước trap EXIT) được reap ngay, không chờ stale-after; pid còn sống và khoá không có pid vẫn chờ như cũ (exit 4)",
+          "command": "bash tests/super-board/test_merge_gate_dead_holder.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-train",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_train.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-TRAIN-01",
+          "name": "merge train: 3 PR sẵn sàng thì verify đúng một lần và cả 3 merge; một PR đỏ được chia đôi tìm ra (exit 11) và hai PR còn lại vẫn merge; một PR chạy như gate thường (#110)",
+          "command": "bash tests/super-board/test_merge_train.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
-
