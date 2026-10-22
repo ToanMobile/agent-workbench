@@ -69,6 +69,8 @@ LANE_ROLE = {"build": "Builder ", "qa": "Tester  ", "review": "Reviewer"}
 BOARD_ORDER: tuple[str, ...] = (
     "Backlog", "Ready", "Building", "QA", "Review", "Blocked", "Done",
 )
+# #138: a Status option outside BOARD_ORDER (the DevKit's "Needs You") gets its own box before Done, only when it holds a card.
+NEEDS_YOU_STATUS = "Needs You"
 COLLAPSED_TAIL = {"Backlog": "(not started, collapsed)", "Done": "(squash-merged, collapsed)"}
 
 
@@ -440,8 +442,14 @@ def paginate_items(
 PERSON_LABELS = ("needs-you", "human-gated")
 
 
+def group_by_status(items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """#138: cards per Status, newest first. Every BOARD_ORDER column is a key; any other option present on the project is one too."""
+    names = list(BOARD_ORDER) + sorted({i["status"] for i in items} - set(BOARD_ORDER))
+    return {s: sorted([i for i in items if i["status"] == s], key=lambda x: -x["number"]) for s in names}
+
+
 def waiting_on_person(items: list[dict[str, Any]], no_device: bool = False) -> list[dict[str, Any]]:
-    """#95: Ready and Blocked cards only a person can move on (needs-you / human-gated, any case), newest first. The runner and the
+    """#138: every card in the "Needs You" column. #95: Ready and Blocked cards only a person can move on (needs-you / human-gated, any case), newest first. The runner and the
     planner never take such a card from Ready, so they get their own group instead of hiding among the Block reasons. Not QA or
     Review: a lane works those (the resume path brings an approved 🙋 card to Review with its label possibly still on).
     With no_device, also the cards held for a real device (held_for_device)."""
@@ -450,7 +458,7 @@ def waiting_on_person(items: list[dict[str, Any]], no_device: bool = False) -> l
         back_in_loop = any(n == "loop:rebase" or n.startswith("loop:rebuild-") for n in names)   # super-board-run.sh FOR_A_PERSON_JQ
         return any(n in PERSON_LABELS for n in names) and not (i.get("status") == "Ready" and back_in_loop)
 
-    return sorted((i for i in items if (i.get("status") in ("Ready", "Blocked") and waits(i)) or (no_device and held_for_device(i))),
+    return sorted((i for i in items if i.get("status") == NEEDS_YOU_STATUS or (i.get("status") in ("Ready", "Blocked") and waits(i)) or (no_device and held_for_device(i))),
                   key=lambda x: -x["number"])
 
 
@@ -505,7 +513,9 @@ def render_kanban(
 ) -> str:
     """The kanban boxes in BOARD_ORDER. Pure: lookups come in as callables."""
     boxes: list[str] = []
-    for label in BOARD_ORDER:
+    order = list(BOARD_ORDER)
+    order[order.index("Done"):order.index("Done")] = [s for s in by_status if s not in BOARD_ORDER and by_status[s]]
+    for label in order:
         lane_items = by_status.get(label, [])
         if label in COLLAPSED_TAIL:
             boxes.append(render_collapsed(label, lane_items))
@@ -598,10 +608,7 @@ def main() -> int:
             "status": field_status(n),
         })
 
-    by_status: dict[str, list[dict[str, Any]]] = {
-        s: sorted([i for i in items if i["status"] == s], key=lambda x: -x["number"])
-        for s in BOARD_ORDER
-    }
+    by_status = group_by_status(items)
 
     # ── fetch reason-tag comments for Blocked only ──
     # Skip silently on error so a stale token doesn't break the rest of the
