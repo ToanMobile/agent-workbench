@@ -1327,20 +1327,20 @@ pr_open() { [ "$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind json -
 
 requeue_gate_red_blocked() {
   # #188: thẻ Blocked vì "merge gate đỏ, không phải diff của PR" (comment [reviewer] [blocker], dòng đầu có "merge gate đỏ",
-  # `PR: #N`, dòng cuối `blocked-by: -`) không có issue blocker nên sweep_blocked_cards không thả. Khi main có commit MỚI HƠN comment
+  # `PR: #N`, dòng cuối `blocked-by: -`; blocker CUỐI của mọi vai phải là comment này) không có issue blocker nên sweep_blocked_cards không thả. Khi main có commit MỚI HƠN comment
   # đó (lỗi kit có thể đã sửa), thẻ về Review để reviewer chạy lại merge gate với đủ luật merge (policy, subject, Done); runner không
   # tự merge. Mỗi (thẻ, SHA main) một lần và cách nhau SB_GATE_RETRY_COOLDOWN_S (mặc định 3600 s). Bỏ qua needs-you/human-gated.
   # Trả 0 khi có thẻ được chuyển (caller đọc lại board), 1 khi không.
-  local moved=1 issue item_id body pr main sha mdate at cid f last now cd
+  local moved=1 issue item_id body pr main sha mdate at f last ep now cd
   now=$(date +%s); cd=${SB_GATE_RETRY_COOLDOWN_S:-3600}
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] && [ -n "$item_id" ] || continue
-    body=$(gate_red_comments "$issue" 2>/dev/null | jq -r '[.[][] | select(.body | startswith("[reviewer] [blocker]"))] | last // empty
+    body=$(gate_red_comments "$issue" 2>/dev/null | jq -r '[.[][] | select(.body | test("^\\[[a-z-]+\\] \\[blocker\\]"))] | last // empty
       | [.created_at, .body] | @json') || { gh_checkpoint; continue; }
     [ -n "$body" ] || continue
     at=$(printf '%s' "$body" | jq -r '.[0]'); body=$(printf '%s' "$body" | jq -r '.[1]')
-    printf '%s\n' "$body" | head -1 | grep -qi 'merge gate đỏ' || continue
-    printf '%s\n' "$body" | grep -E '^blocked-by:[[:space:]]*-[[:space:]]*$' >/dev/null || continue
+    printf '%s\n' "$body" | head -1 | grep -E '^\[reviewer\] \[blocker\]' | grep -qi 'merge gate đỏ' || continue
+    printf '%s\n' "$body" | grep -v '^[[:space:]]*$' | tail -n 1 | grep -E '^blocked-by:[[:space:]]*-[[:space:]]*$' >/dev/null || continue
     pr=$(printf '%s\n' "$body" | sed -n 's/^PR:[[:space:]]*#\([0-9][0-9]*\).*/\1/p' | head -1)
     [ -n "$pr" ] || continue
     main=$(base_head_info 2>/dev/null) || { gh_checkpoint; continue; }
@@ -1349,7 +1349,8 @@ requeue_gate_red_blocked() {
     f="$INFLIGHT_DIR/gate-retry/$issue"
     last=$(cat "$f" 2>/dev/null || true)
     [ "${last%% *}" != "$sha" ] || continue
-    [ -z "$last" ] || [ $((now - ${last##* })) -ge "$cd" ] || continue
+    ep=${last##* }; [[ "$ep" =~ ^[0-9]+$ ]] || ep=0   # file rỗng/hỏng: epoch không phải số = 0, không làm runner dừng
+    [ -z "$last" ] || [ $((now - ep)) -ge "$cd" ] || continue
     pr_open "$pr" 2>/dev/null || { gh_checkpoint; continue; }
     set_card_status "$item_id" "Review" || { gh_checkpoint; log "⚠ gate-red requeue: could not move #${issue} to Review"; continue; }
     mkdir -p "$INFLIGHT_DIR/gate-retry" 2>/dev/null || true
@@ -1362,10 +1363,9 @@ Next: reviewer (reruns the merge gate on main ${sha:0:12}; red again stays Block
     log "↩ requeued #${issue}: Blocked → Review (merge gate was red, main now ${sha:0:12})"
     moved=0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r '.items[]
+$(echo "$PROJECT_ITEMS_JSON" | jq -r "$FOR_A_PERSON_JQ"'.items[]
     | select(.status == "Blocked" and .content.type == "Issue")
-    | select(([(.labels // []) + (.content.labels // []) | .[] | (if type == "object" then .name else . end) | ascii_downcase]
-              | (index("needs-you") or index("human-gated"))) | not)
+    | select(for_a_person | not)
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
   return "$moved"
