@@ -77,9 +77,20 @@ if '--resume' in args:
     if kind == 'read':
         os.remove(h)
         sys.exit(0)
-    if kind == 'write':   # câu của super-board-github-read.py thật cho halt không có lần đọc đã lưu
+    if kind.startswith('write'):   # câu của super-board-github-read.py thật cho halt không có lần đọc đã lưu
         print('[github-read] HALT: saved failure needs manual outcome reconciliation before restart', file=sys.stderr)
     sys.exit(79)
+# --reconcile (#190): đối chiếu halt do một lần GHI chưa rõ kết quả bằng cách ĐỌC lại GitHub. Loại halt = nội dung file halt giả:
+# write-applied = ghi đã xảy ra (lưu trữ halt, exit 0); write-pending = đọc xác minh ghi CHƯA xảy ra (exit 10); write khác =
+# không kiểm chứng được (exit 11). Hai loại sau không đụng file halt.
+if '--reconcile' in args:
+    h = os.environ['STUB_HALT']
+    kind = open(h).read().strip() if os.path.exists(h) else ''
+    if kind == 'write-applied':
+        os.remove(h)
+        print('[github-read] reconciled: PR #7 is MERGED', file=sys.stderr)
+        sys.exit(0)
+    sys.exit(10 if kind == 'write-pending' else 11)
 if 'quota' in args:
     print('{"resources":{"graphql":{"remaining":5000,"reset":0},"core":{"remaining":5000}}}')
     sys.exit(0)
@@ -113,6 +124,12 @@ case "$*" in
 esac
 SH
 printf '#!/usr/bin/env bash\necho %s\n' "'{}'" > "$BIN/super-board-wave-plan.sh"
+# Stub thông báo Telegram: ghi lại mỗi lần gửi (watchdog phải báo khi giữ halt vì không kiểm chứng được).
+cat > "$BIN/super-board-notify.py" <<'PY'
+#!/usr/bin/env python3
+import os, sys
+open(os.environ["STUB_CALLS"], "a").write("notify " + " ".join(sys.argv[1:]) + "\n")
+PY
 for c in gh claude; do printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_CALLS"; exit 1\n' "$c" > "$TMP/stub/$c"; done
 # `gh project edit` (watchdog ghi trạng thái board lên mô tả Project) thành công, trừ khi STUB_EDIT_FAIL=1.
 cat > "$TMP/stub/gh" <<'SH'
@@ -520,6 +537,34 @@ case "$L" in *"🟢 đang chạy từ"*) fail "restarted board shows the dead ru
   *"🟢 đang chạy"*) ok "restarted board does not show the dead runner's start time" ;; *) fail "restart status: '$L'" ;; esac
 kill_tree "$RP"; wait_for 10 '! alive "$RP"'
 rm -f "$WD" "$TMP/halt"
+
+# #190: halt rc=79 do một lần GHI chưa rõ kết quả (22/10 06:31, board đứng 2g47 chờ người --resume --reconciled). Watchdog đọc
+# lại GitHub: ghi đã xảy ra → tự --reconcile + khởi động lại (có log lý do); xác minh ghi chưa xảy ra hay không kiểm chứng
+# được → giữ halt, KHÔNG resume mù, báo notify đúng một lần; quá 3 lần tự đối chiếu mỗi giờ → dừng và báo.
+notifies() { local n; n=$(grep -c '^notify ' "$TMP/calls" 2>/dev/null); echo "${n:-0}"; }
+RECON="$RUNDIR/t.reconcile.log"
+rm -f "$WD" "$RECON"; dead_pid; set_state "$D" halted 79
+printf 'write-applied\n' > "$TMP/halt"; expect_restart "halt on an uncertain write that GitHub shows was applied"
+[ ! -e "$TMP/halt" ] && grep -q 'auto-reconciled' "$WLOG" 2>/dev/null && grep -q 'MERGED' "$WLOG" 2>/dev/null \
+  && ok "applied write → halt archived and the reason logged (what GitHub showed)" \
+  || fail "applied write not reconciled/logged: $(tail -2 "$WLOG" 2>/dev/null | tr '\n' ' ')"
+[ "$(wc -l < "$RECON" 2>/dev/null | tr -d ' ')" = 1 ] && ok "auto-reconcile is counted against the hourly budget" || fail "reconcile budget file: $(cat "$RECON" 2>/dev/null)"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+rm -f "$WD" "$RECON"; dead_pid; set_state "$D" halted 79; n0=$(notifies)
+printf 'write-pending\n' > "$TMP/halt"; expect_no_restart "halt on an uncertain write verified NOT applied (no blind resume)"
+[ -e "$TMP/halt" ] && [ "$(field VERDICT "$WD")" = write-not-applied ] && ok "not-applied write → halt kept, verdict write-not-applied" \
+  || fail "not-applied verdict: $(field VERDICT "$WD") halt=$([ -e "$TMP/halt" ] && echo kept || echo gone)"
+[ "$(notifies)" = $((n0 + 1)) ] && ok "not-applied halt → one notify" || fail "notify count $(notifies) vs $n0"
+wd; [ "$(notifies)" = $((n0 + 1)) ] && ok "the same halt is not notified again on the next check" || fail "notify repeated: $(notifies)"
+n0=$(notifies); rm -f "$WD"
+printf 'write\n' > "$TMP/halt"; expect_no_restart "halt on an uncertain write GitHub cannot confirm"
+[ -e "$TMP/halt" ] && [ "$(notifies)" = $((n0 + 1)) ] && grep -q '^notify send' "$TMP/calls" \
+  && ok "unverifiable write → halt kept and a notify sent" || fail "unverifiable: notifies=$(notifies) vs $n0"
+n0=$(notifies); rm -f "$WD"; printf '%s\n%s\n%s\n' "$(date +%s)" "$(date +%s)" "$(date +%s)" > "$RECON"
+printf 'write-applied\n' > "$TMP/halt"; expect_no_restart "auto-reconcile budget (3 per hour) exhausted"
+[ -e "$TMP/halt" ] && [ "$(field VERDICT "$WD")" = reconcile-budget ] && [ "$(notifies)" = $((n0 + 1)) ] \
+  && ok "over budget → halt kept, verdict reconcile-budget, notify sent" || fail "budget: verdict=$(field VERDICT "$WD") notifies=$(notifies)"
+rm -f "$WD" "$TMP/halt" "$RECON"
 
 # Trạng thái board hiện trên GitHub (người dùng 20/10: "thể hiện lên board 1 icon … chứ để mấy giờ sau mới phát hiện được"
 # và "thêm thời gian để biết task chạy được bao lâu, bắt đầu từ khi nào"): mỗi check ghi icon, worker đang chạy kèm giờ

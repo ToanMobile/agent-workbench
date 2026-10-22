@@ -13,7 +13,9 @@
 #      thì khởi động lại (lỗi mạng tạm, vd. máy ngủ dậy);
 #   3. PID trong bản ghi không còn là một super-board-run.sh đang chạy;
 #   4. PATH có đủ công cụ runner cần để đọc board và giao việc (gh, jq, python3, claude, git);
-#   5. GitHub không bị halt (github-halt.json lưu một lần ghi chưa rõ kết quả: đối chiếu rồi khởi động tay);
+#   5. GitHub không bị halt. Halt 79 do một lần GHI chưa rõ kết quả (#190): watchdog ĐỌC lại GitHub bằng `--reconcile` (PR đã
+#      merge? comment đã có?). Đã áp dụng → tự lưu trữ halt kèm bằng chứng + khởi động lại (tối đa 3 lần/giờ, <slug>.reconcile.log);
+#      chưa áp dụng / không kiểm chứng được / quá ngân sách → giữ halt, gửi super-board-notify một lần, không resume mù;
 #   6. backoff cho phép: lần thứ n chờ 60·2^(n-1) s sau lần trước; 5 lần liên tiếp thì bỏ cuộc tới khi người dùng
 #      khởi động tường minh hoặc runner sống được 10 phút.
 # Watchdog không bao giờ kill gì (không pkill theo tên) và không bao giờ xoá marker. Mỗi lần khởi động lại và mỗi lần
@@ -429,6 +431,43 @@ publish_board_status() {
   return 0
 }
 
+RECONCILE_MAX=3; RECONCILE_WINDOW=3600   # #190: tối đa 3 lần tự đối chiếu halt ghi mỗi giờ
+RECON_LOG="$DIR/$SLUG.reconcile.log"       # mỗi dòng = epoch một lần tự đối chiếu thành công
+
+hold_and_notify() {   # $1 = khoá kết luận, $2 = thông điệp: giữ halt, báo người đúng một lần (verdict chỉ ghi khi đổi)
+  if [ "$VERDICT" != "$1" ]; then
+    (PATH="${env_path:-$PATH}"; run_capped 20 python3 "$SCRIPT_DIR/super-board-notify.py" send --text "super-board $SLUG: $2" >/dev/null 2>&1) || true
+  fi
+  verdict "$1" "$2"
+}
+
+reconcile_write_halt() {
+  # #190 (22/10 06:31 board đứng 2g47): halt rc=79 do một lần GHI chưa rõ kết quả. Thay vì chờ người, ĐỌC lại GitHub
+  # (--reconcile: PR đã merge? comment đã có?). Ghi đã xảy ra → lưu trữ halt kèm lý do rồi để caller khởi động lại (return 0).
+  # Ghi chưa xảy ra hay không kiểm chứng được → giữ halt, báo notify, KHÔNG resume mù (return 1). Giới hạn số lần mỗi giờ.
+  local out rc recent=0 t
+  if [ -f "$RECON_LOG" ]; then
+    while read -r t; do
+      case "$t" in ''|*[!0-9]*) continue ;; esac
+      [ $((NOW - t)) -ge "$RECONCILE_WINDOW" ] || recent=$((recent + 1))
+    done < "$RECON_LOG"
+  fi
+  if [ "$recent" -ge "$RECONCILE_MAX" ]; then
+    hold_and_notify reconcile-budget "runner pid $1 halted (rc=79) on an uncertain GitHub write; $recent auto-reconciles in the last hour (max $RECONCILE_MAX) — a person must check it, then --resume --reconciled \"<what was checked>\""
+    return 1
+  fi
+  rc=0; out=$( (PATH="$env_path"; run_capped 90 python3 "$SCRIPT_DIR/super-board-github-read.py" --reconcile 2>&1 >/dev/null) ) || rc=$?
+  case "$rc" in
+    0)
+      { printf '%s\n' "$NOW" >> "$RECON_LOG"; } 2>/dev/null || echo "watchdog $SLUG: could not write $RECON_LOG" >&2
+      wlog "auto-reconciled the GitHub halt of runner pid $1: $(printf '%s' "$out" | tr '\n' ' ')"
+      return 0 ;;
+    10) hold_and_notify write-not-applied "runner pid $1 halted (rc=79): GitHub shows the uncertain write was NOT applied ($(printf '%s' "$out" | tr '\n' ' ')) — halt kept, not resumed blindly; a person decides" ;;
+    *) hold_and_notify github-halt "runner pid $1 halted (rc=79) on an uncertain GitHub write that cannot be verified — check it on GitHub, then --resume --reconciled \"<what was checked>\" and start the board explicitly" ;;
+  esac
+  return 1
+}
+
 check() {
   # Không có bản ghi lẫn marker: board chưa từng chạy với runner này, không có gì để giám sát (không tạo thư mục, khoá).
   [ -f "$STATE" ] || [ -e "$MARK" ] || return 0
@@ -509,12 +548,12 @@ check() {
     local why
     if ! why=$( (PATH="$env_path"; run_capped 90 python3 "$SCRIPT_DIR/super-board-github-read.py" --resume 2>&1 >/dev/null) ); then
       case "$why" in
-        *reconcil*) verdict github-halt "runner halted (rc=79) on an uncertain GitHub write — check it on GitHub, then --resume --reconciled \"<what was checked>\" and start the board explicitly" ;;
-        *) verdict halt-wait "runner halted (rc=79): its saved GitHub read still fails — retried every check" ;;
+        *reconcil*) reconcile_write_halt "$pid" || return 0 ;;
+        *) verdict halt-wait "runner halted (rc=79): its saved GitHub read still fails — retried every check"; return 0 ;;
       esac
-      return 0
+    else
+      wlog "auto-resumed the GitHub halt of runner pid $pid: its saved read replayed OK (transient failure, e.g. network down after sleep)"
     fi
-    wlog "auto-resumed the GitHub halt of runner pid $pid: its saved read replayed OK (transient failure, e.g. network down after sleep)"
   fi
   restart_runner "$pid" "$state" "$rc"
 }

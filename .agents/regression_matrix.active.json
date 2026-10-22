@@ -726,6 +726,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-github-read-reconcile",
+      "watch_files": [
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_github_read_reconcile.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GITHUB-RECONCILE-01",
+          "name": "github-read --halt --verify / --reconcile: đọc lại lần ghi chưa rõ kết quả; đã áp dụng thì lưu trữ halt, chưa áp dụng hay không kiểm chứng được thì giữ halt",
+          "command": "bash tests/super-board/test_github_read_reconcile.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
