@@ -359,4 +359,6 @@
 1 tests/verification/test_governance_cleanup_fold_intent.sh
 2 tests/gates/test_gate_sentinel_merge_env.sh
 2 tests/gates/test_gate_vendor_skip.sh
+1 tests/gates/test_gate_git_spawn_budget.sh
+2 tests/gates/test_matrix_merge_driver.sh
 3 tests/verification/test_create_task_repo_routing.sh
