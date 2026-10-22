@@ -16,7 +16,7 @@
 #                           with an expected-conflict note so the merge gate rebases. Two
 #                           batch peers: the lower number proceeds, the other is sequenced
 #                           `blockedBy: [<lower>]` — never both against each other.
-#   4. Unclear?             no `## Acceptance Criteria` section with at least one bullet.
+#   4. Unclear?             no `## Acceptance Criteria` section with at least one item (`-`, `*`, `1)` or `1.`).
 #   5. Too big?             (lint.md tiêu chí 15) ≥2 tín hiệu cỡ lớn trong chính nội dung issue:
 #                           Fix liệt kê ≥5 đầu việc ngắn (≈100 dòng mỗi việc, vượt trần 400 dòng)
 #                           hoặc tiêu đề nêu ≥3 việc · trải ≥4 vùng · thẻ tự nhận lớn (giai đoạn,
@@ -114,7 +114,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | if ($h | length) == 0 then false
       else [ $l[($h | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
-        | (if $e == null then $t else $t[:$e] end) | any(.[]; test("^[ \t]*[-*][ \t]+\\S")) end;
+        | (if $e == null then $t else $t[:$e] end) | any(.[]; test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S")) end;
 
   # Câu 5 — quá lớn? Regex trên chữ của issue (title + body), tất định. Chỉnh 19/10 trên 245 issue lấy bằng
   # `gh issue list --state all` ở 6 board: 6 thẻ builder đã chặn vì quá lớn (NFH #4 #13 #14 #54, OfficeReader
@@ -159,8 +159,8 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | [ $items[] | select([ scan("\\S+") ] | length <= 6) ] as $short
     | [ (.title // "") | sub("^\\S+ \\[\\w+\\] "; "") | gsub("\\([^()]*\\)"; "") | splits("(?<![0-9]),|,(?![0-9])|;")
         | gsub("^\\s+|\\s+$"; "") | select(length > 0) ] as $named
-    | [ $ac / "\n" | .[] | select(test("^[ \t]*[-*][ \t]+\\S"))
-        | sub("^[ \t]*[-*][ \t]+(?:\\[[ xX]\\][ \t]*)?"; "") ] as $acs
+    | [ $ac / "\n" | .[] | select(test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S"))
+        | sub("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+(?:\\[[ xX]\\][ \t]*)?"; "") ] as $acs
     | ([ (.title // ""), $fix, $ac ] | join("\n")) as $txt
     | [ areas | to_entries[] | select(.value as $re | $txt | test($re; "i")) | .key ] as $zones
     # Tự nhận lớn: tiêu đề là cả một giai đoạn / vertical slice ("Season", "epic" là tên tính năng game,
@@ -250,7 +250,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
           elif ($busy | length) > 0 then
             { verdict: "hold", tag: "in-progress", reason: "already being built elsewhere", evidence: $busy }
           elif ($i | has_acs | not) then
-            { verdict: "hold", tag: "unclear", reason: "no `## Acceptance Criteria` bullets", evidence: ["issue #\($n) body"] }
+            { verdict: "hold", tag: "unclear", reason: "no `## Acceptance Criteria` items (`-`, `*`, `1.`, `1)`)", evidence: ["issue #\($n) body"] }
           elif $big.hold then
             { verdict: "hold", tag: "too-big", evidence: $big.evidence, split: $big.split,
               reason: "too big — split it with /to-tickets into cards under the merge cap (default 400 lines) before building" }
