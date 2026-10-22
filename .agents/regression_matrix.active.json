@@ -842,6 +842,37 @@
       ]
     },
     {
+      "component": "super-board-runner-preflight-swept",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_runner_preflight_swept.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-PREFLIGHT-SWEPT-01",
+          "name": "runner chạy preflight trước khi nhận thẻ build (hold/sequence có blockedBy: không claim, thẻ sang Blocked kèm blocked-by; exit 79 dừng run) và sổ SWEPT_CARDS bền qua lần khởi động lại (#253)",
+          "command": "bash tests/super-board/test_runner_preflight_swept.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-blocked-by-open-only",
+      "watch_files": [
+        ".claude/bin/super-board-blocked-by.py",
+        "tests/super-board/test_blocked_by_open_only.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-BLOCKED-BY-OPEN-ONLY-01",
+          "name": "dòng blocked-by: chỉ ghi issue còn mở; số đã đóng bị bỏ kèm lý do, không còn số mở thì `-`, không đọc được trạng thái thì exit 79 (#253)",
+          "command": "python3 tests/super-board/test_blocked_by_open_only.py",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-red-on-base",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
