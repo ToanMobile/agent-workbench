@@ -19,6 +19,7 @@ import sys
 import glob
 import json
 import subprocess
+import time
 import argparse
 from pathlib import Path
 
@@ -211,6 +212,17 @@ def start_all():
     print("\n🎉 Toàn bộ 5 Runners đã được kích hoạt & hiển thị trên TUIOS (tuios attach factory)!")
     print("💡 Bây giờ bạn vào BẤT KỲ Project Board nào kéo thẻ sang Ready là máy tự động làm!")
 
+def write_stop_marker(marker):
+    """Cùng định dạng super-board-stop.sh: watchdog không khởi động lại board có marker."""
+    try:
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w") as f:
+            f.write("STOPPED_AT=%s\nBY=%s via super_board_all.py\nPID=%d\n" % (
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), os.environ.get("USER", "unknown"), os.getpid()))
+    except OSError as e:
+        print(f"⚠️  không ghi được stop marker {marker}: {e}")
+
+
 def stop_all():
     print("=================================================================")
     print("  🛑 DỪNG TOÀN BỘ 5 SUPER-BOARD RUNNERS")
@@ -227,6 +239,9 @@ def stop_all():
             r = subprocess.run(["bash", stop_sh, slug], cwd=rdir, capture_output=True, text=True)
             if r.returncode != 0:
                 print(f"⚠️  {name:<30} : super-board-stop.sh exit {r.returncode}: {r.stderr.strip()[:200]}")
+        if not os.path.exists(stop_sh):
+            # Repo không có stop.sh riêng: stop.sh của agent-workbench tự chuyển về repo của nó nên không ghi marker ở đây.
+            write_stop_marker(marker)
         if not os.path.exists(marker):
             print(f"⚠️  {name:<30} : CHƯA có stop marker {marker} — watchdog có thể khởi động lại board này")
         if not pids:

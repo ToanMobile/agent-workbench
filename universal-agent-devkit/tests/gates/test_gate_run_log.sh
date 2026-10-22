@@ -42,7 +42,7 @@ TMP="$(mktemp -d)"
 case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 trap 'chmod -R u+rwx "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
-"$PYBIN" -I - "$KIT" "$TMP" <<'PY'
+"$PYBIN" -I - "$KIT" "$TMP" <<'PYEND'
 import difflib, json, os, re, signal, stat, subprocess, sys, time
 
 KIT, TMP = sys.argv[1], sys.argv[2]
@@ -1027,4 +1027,4 @@ if fails:
     print("gate run log: %d FAILED" % fails)
     sys.exit(1)
 print("gate run log: all checks passed")
-PY
+PYEND

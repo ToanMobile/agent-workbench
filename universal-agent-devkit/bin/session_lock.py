@@ -460,6 +460,7 @@ def register_session(cwd, sid, agent="agent", pid=None, status="working"):
             "session_id": sid,
             "agent": agent,
             "pid": pid,
+            "pid_start": pid_start(pid),
             "started": now,
             "heartbeat": now,
             "cwd": os.path.abspath(cwd),
@@ -549,43 +550,100 @@ def unregister_session(cwd, sid):
         pass
 
 
+def _ps(pid, fields):
+    """`ps -o <fields>= -p pid` output, stripped; None when the process is gone or ps fails (macOS has no /proc)."""
+    # `lstart` is printed in local time: pin TZ/locale so a start recorded under one TZ equals the one read under another
+    env = dict(os.environ, TZ="UTC", LC_ALL="C")
+    import subprocess  # noqa: PLC0415 - only a platform without /proc forks ps
+    try:
+        r = subprocess.run(["ps", "-o", "=,".join(fields.split(",")) + "=", "-p", str(pid)], capture_output=True, text=True, timeout=1, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = r.stdout.strip()
+    return out if r.returncode == 0 and out else None
+
+
+def _parse_starttime(stat):
+    """`proc:<starttime>` (field 22 of /proc/<pid>/stat), None when unparsable. comm may hold spaces or ')': count after the last ')'."""
+    try:
+        return "proc:" + str(int(stat[stat.rfind(b")") + 2:].split()[19]))   # fields after ") " start at 3 (state): 22 is index 19
+    except (IndexError, ValueError):
+        return None
+
+
+def _proc_start(pid):
+    """`proc:<starttime>` read from /proc without a fork (Linux); None when there is no /proc entry."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            return _parse_starttime(f.read())
+    except OSError:
+        return None
+
+
+def pid_start(pid):
+    """Start time of `pid`: `proc:<starttime>` from /proc on Linux (no fork), else `ps -o lstart=`; None when unknown. Recorded with
+    the pid: the OS may hand the same pid to another process later, and only a different start time tells that apart from the session."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return None
+    return _proc_start(pid) or _ps(pid, "lstart")
+
+
+def _parent_and_comm(pid):
+    """(ppid, command name) of `pid`: /proc on Linux, `ps -o ppid=,comm=` elsewhere (macOS); None when unreadable."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            stat = f.read()
+    except OSError:
+        out = _ps(pid, "ppid,comm")
+        if not out:
+            return None
+        head, _, comm = out.partition(" ")
+        try:
+            return int(head), os.path.basename(comm.strip()).encode()
+        except ValueError:
+            return None
+    close = stat.rfind(b")")   # comm may hold spaces or ')': it ends at the last ')'
+    try:
+        return int(stat[close + 2:].split()[1]), stat[stat.find(b"(") + 1:close]   # after ") ": state, ppid
+    except (IndexError, ValueError):
+        return None
+
+
 def holder_pid():
     """The process that lives as long as the session: the hook's parent. Claude Code runs a hook as `/bin/sh -c 'bash …'`; bash
     (macOS /bin/sh) execs that last command, so the parent is claude. dash (Linux /bin/sh) forks it and stays as a short-lived
     parent: its pid was dead at the next call and every lock read as free (audit 2026-10-09,
-    tests/context_memory/test_session_lock_sh_parent.sh). Such a sh/dash parent is skipped (via /proc: Linux only, where dash is)."""
+    tests/context_memory/test_session_lock_sh_parent.sh). Such a sh/dash parent is skipped (/proc on Linux, `ps` on macOS, where
+    a `sh -c 'a; b'` parent forks too, issue #17)."""
     pid = os.getppid()
     for _ in range(3):
-        try:
-            with open(f"/proc/{pid}/stat", "rb") as f:
-                stat = f.read()
-        except OSError:
+        info = _parent_and_comm(pid)
+        if info is None or info[1] not in (b"sh", b"dash"):
             return pid
-        close = stat.rfind(b")")   # comm may hold spaces or ')': it ends at the last ')'
-        if stat[stat.find(b"(") + 1:close] not in (b"sh", b"dash"):
+        if info[0] <= 1:
             return pid
-        try:
-            ppid = int(stat[close + 2:].split()[1])   # after ") ": state, ppid
-        except (IndexError, ValueError):
-            return pid
-        if ppid <= 1:
-            return pid
-        pid = ppid
+        pid = info[0]
     return pid
 
 
-def is_pid_alive(pid):
+def is_pid_alive(pid, start=None):
+    """`start`: the pid_start recorded with the pid. A live pid whose start time differs was recycled by the OS: dead."""
     if not pid or not isinstance(pid, int) or pid <= 1:
         return True
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        pass   # exists, owned by another user: a recycled pid is told apart by `start` below
     except (OSError, OverflowError):   # (a pid past the OS range: unknown, like a pid that is not a number)
         return True
+    if start:
+        # a `proc:` record is compared with /proc, a ps record (written on macOS or before this format) with ps
+        now = _proc_start(pid) if str(start).startswith("proc:") else _ps(pid, "lstart")
+        if now is not None and now != start:
+            return False
+    return True
 
 
 def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
@@ -628,7 +686,7 @@ def get_active_sessions(cwd=None, current_sid=None, stale_s=180.0):
 
         hb = _num(info.get("heartbeat"))
         pid = info.get("pid")
-        alive = is_pid_alive(pid)
+        alive = is_pid_alive(pid, info.get("pid_start"))
         # Dual-tier pruning:
         # 1. Dead process -> prune immediately (0s delay)
         # 2. Alive process -> allow up to 600s before stale (handles long builds/tests)
@@ -751,7 +809,7 @@ def is_free_for(lock, sid, now, idle_frees=True, live_pid_holds=False):
     if idle_frees and lock.get("idle_since"):
         return True   # the holder finished its turn and waits for the user (Notification idle_prompt)
     lock_pid = lock.get("pid")
-    if lock_pid and not is_pid_alive(lock_pid):
+    if lock_pid and not is_pid_alive(lock_pid, lock.get("pid_start")):
         return True
     if live_pid_holds and lock_pid:
         return False
@@ -1457,7 +1515,7 @@ def info_alive(info, now=None):
         return False
     pid = info.get("pid")
     if pid:
-        return is_pid_alive(pid)
+        return is_pid_alive(pid, info.get("pid_start"))
     return (time.time() if now is None else now) - _num(info.get("heartbeat")) <= 180.0
 
 
@@ -1666,7 +1724,7 @@ def take(path, lock, sid, cwd, now, pid=None):
         return  # heartbeat throttle (an idle mark is always cleared: the holder works again)
     if pid is None:
         pid = holder_pid()
-    write_lock(path, {"session_id": sid, "started": started, "heartbeat": now, "cwd": cwd, "pid": pid, "gitdir": os.path.dirname(path)})
+    write_lock(path, {"session_id": sid, "started": started, "heartbeat": now, "cwd": cwd, "pid": pid, "pid_start": pid_start(pid), "gitdir": os.path.dirname(path)})
 
 
 def status(argv):
