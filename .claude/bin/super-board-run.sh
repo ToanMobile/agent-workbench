@@ -1372,6 +1372,22 @@ reclaim_stranded_building() {
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
+    # #254: builder đóng issue khi AC đã đạt sẵn trên main (không PR) — thẻ đóng ở Building đi thẳng Done, không quay về Ready.
+    local issue_rc=0
+    issue_is_open "$issue" || issue_rc=$?
+    [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+    if [ "$issue_rc" -eq 1 ]; then
+      if set_card_status "$item_id" "Done"; then
+        gh_checkpoint
+        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        rm -f "$INFLIGHT_DIR/$issue"
+        log "reconciled closed #${issue} -> Done (was 'Building') — builder closed it, AC already met"
+      else
+        gh_checkpoint
+        log "⚠ closed #${issue} in Building — could not move it to Done; drag it by hand"
+      fi
+      continue
+    fi
     # Chỉ để ghi vào comment: ls-remote lỗi (mạng, không có remote) dưới pipefail không được giết runner.
     branch=$(git ls-remote --heads origin "issue-${issue}-*" 2>/dev/null | head -1 | sed 's#.*refs/heads/##') || branch=""
     wt=".claude/worktrees/issue-${issue}-build"

@@ -315,8 +315,9 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
 3c. **Already met (exit without a PR).** Before writing code, run each AC's check against
    `origin/<config.base_branch>`. Every AC already holds there → no branch, no PR: post one issue
    comment with the command and its output per AC (proof, not a claim), run `gh issue close <N>
-   --reason completed`, release the claim and clean up the worktree. The runner's reconcile moves
-   the closed card to Done. Any AC not yet met → continue with step 4 (never close on a partial match).
+   --reason completed`, release the claim and clean up the worktree. The runner moves the closed
+   card (still in Building) straight to Done (`reclaim_stranded_building`); the wave workflow's
+   Reconcile step does the same for a card that ends closed. Any AC not yet met → continue with step 4 (never close on a partial match).
 4. Implement smallest safe change covering ACs, under the PR size cap
    (`merge_policy.auto_max_lines`, default 400 changed lines). Growing past it mid-build → stop,
    push what you have, propose the split (vertical slices via `/to-tickets`) in a PR comment and
