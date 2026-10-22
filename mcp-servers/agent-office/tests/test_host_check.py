@@ -51,7 +51,7 @@ class HostCheck(unittest.TestCase):
         self.assertEqual(self.req("GET", "/", "evil.example"), 403)
 
     def test_get_state_allows_local_names(self):
-        for h in ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port, "ai-factory.test:%d" % self.port):
+        for h in ("127.0.0.1:%d" % self.port, "localhost:%d" % self.port, "ai-factory.test:%d" % self.port, "ai-factory.localhost:%d" % self.port):
             self.assertEqual(self.req("GET", "/api/state", h), 200, h)
 
     def test_get_refresh_rejects_foreign_host(self):

@@ -33,6 +33,7 @@
   "eventsFile": "~/.agent-office/events.jsonl",
   "macNotify": true,
   "allowedHosts": [
-    "ai-factory.test"
+    "ai-factory.test",
+    "ai-factory.localhost"
   ]
 }

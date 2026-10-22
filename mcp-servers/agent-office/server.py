@@ -52,7 +52,7 @@ DEFAULTS = {
     "githubSeconds": 30,
     "localSeconds": 3,
     "host": "127.0.0.1",
-    "allowedHosts": ["ai-factory.test"],
+    "allowedHosts": ["ai-factory.test", "ai-factory.localhost"],
     "port": 4317,
     "eventsFile": "~/.agent-office/events.jsonl",
     "macNotify": True,
