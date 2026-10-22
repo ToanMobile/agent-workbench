@@ -32,7 +32,7 @@ blocked() {
   exit 1
 }
 
-bash "$DEVKIT_ROOT/scripts/git/check-test-durations.sh" \
+[ ! -f "$DEVKIT_ROOT/scripts/git/check-test-durations.sh" ] || bash "$DEVKIT_ROOT/scripts/git/check-test-durations.sh" \
   || blocked "$(L "test mới chưa có trong tests/lib/test_durations.txt (dòng cần thêm ở trên)." "new test missing from tests/lib/test_durations.txt (line to add above).")"
 
 command -v python3 >/dev/null 2>&1 \

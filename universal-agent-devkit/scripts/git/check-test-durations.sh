@@ -16,14 +16,15 @@ case "$DEVKIT_ROOT/" in "$ROOT"/*) ;; *) exit 0 ;; esac            # the kit is 
 P="${DEVKIT_ROOT#"$ROOT"}"; P="${P#/}"; [ -n "$P" ] && P="$P/"     # kit folder relative to the repo root, with a trailing /
 DUR="${P}tests/lib/test_durations.txt"
 list="$(git show ":$DUR" 2>/dev/null)" || exit 0                   # no staged list: nothing to compare against
-added="$(git diff --cached --name-only --diff-filter=A 2>/dev/null)" || exit 0
+added="$(git diff --cached --no-renames --name-only --diff-filter=A 2>/dev/null)" || exit 0   # a rename is a new path too
 
 missing=""
 while IFS= read -r f; do
   case "$f" in "${P}tests/"*/test_*.sh) ;; *) continue ;; esac
   rel="${f#"$P"}"
   d="${rel#tests/}"; case "${d#*/}" in */*) continue ;; esac       # only tests/<dir>/test_*.sh, as the order test globs
-  printf '%s\n' "$list" | awk -v p="$rel" '$1 ~ /^[0-9]+(\.[0-9]+)?$/ && NF == 2 && $2 == p { f = 1 } END { exit !f }' || missing="$missing $rel"
+  # same parse as tests/run_impacted.sh: split on [ \t]+, a number first, the path second, extra fields ignored
+  printf '%s\n' "$list" | awk -v p="$rel" '{ n = split($0, a, /[ \t]+/); if (n >= 2 && a[1] ~ /^[0-9]+(\.[0-9]+)?$/ && a[2] == p) f = 1 } END { exit !f }' || missing="$missing $rel"
 done <<EOF
 $added
 EOF

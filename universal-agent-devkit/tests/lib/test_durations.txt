@@ -360,3 +360,4 @@
 3 tests/gates/test_precommit_test_durations.sh
 2 tests/gates/test_gate_vendor_skip.sh
 3 tests/verification/test_create_task_repo_routing.sh
+3 tests/gates/test_gate_git_spawn_budget.sh

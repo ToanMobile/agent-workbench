@@ -63,6 +63,29 @@ mk_repo "$R" kit; echo 'exit 0' > "$R/kit/tests/gates/test_new.sh"; ( cd "$R" &&
 OUT="$(cd "$R" && DEVKIT_ROOT="$TMP" bash "$CHECK" 2>&1)"; RC=$?
 [ "$RC" = 0 ] && ok "kit outside the repo: not blocked" || fail "kit outside the repo blocked (rc=$RC): $OUT"
 
+# 4b) a RENAMED test is a new path for the order test: an unlisted new name is rejected (plain git diff reports R, not A)
+R="$TMP/r_ren"; mk_repo "$R" kit
+( cd "$R" && git mv kit/tests/gates/test_old.sh kit/tests/gates/test_renamed.sh )
+run_check "$R" kit
+[ "$RC" != 0 ] && printf '%s' "$OUT" | grep -qE '^ +[0-9]+ tests/gates/test_renamed\.sh$' && ok "renamed unlisted test: rejected, line to add printed" || fail "renamed test slipped through (rc=$RC): $OUT"
+
+# 4c) the line format is the one tests/run_impacted.sh parses: split on [ \t]+, first field a number, second the path, extras ignored
+R="$TMP/r_fmt"; mk_repo "$R" kit; echo 'exit 0' > "$R/kit/tests/gates/test_new.sh"
+printf '4\ttests/gates/test_new.sh\n' >> "$R/kit/tests/lib/test_durations.txt"; ( cd "$R" && git add -A )
+run_check "$R" kit
+[ "$RC" = 0 ] && ok "tab-separated line is accepted (the order test accepts it)" || fail "tab-separated line rejected (rc=$RC): $OUT"
+printf '4 tests/gates/test_new.sh # note\n' > "$R/kit/tests/lib/test_durations.txt"; ( cd "$R" && git add -A )
+run_check "$R" kit
+[ "$RC" = 0 ] && ok "line with a trailing field is accepted (the order test accepts it)" || fail "line with a trailing field rejected (rc=$RC): $OUT"
+printf ' 4 tests/gates/test_new.sh\n' > "$R/kit/tests/lib/test_durations.txt"; ( cd "$R" && git add -A )
+run_check "$R" kit
+[ "$RC" != 0 ] && ok "line with a leading blank is rejected (the order test ignores it)" || fail "leading-blank line accepted: it would not count for the order test"
+
+# 4d) the hook with the check script absent (old layout, partial copy): the durations block must not fire
+R="$TMP/r_hook"; mk_repo "$R" kit; mkdir -p "$TMP/kitcopy/profiles"; cp -R "$DEVKIT_DIR/scripts" "$TMP/kitcopy/scripts"; rm -f "$TMP/kitcopy/scripts/git/check-test-durations.sh"
+HOUT="$(cd "$R" && DEVKIT_ROOT="$TMP/kitcopy" bash "$TMP/kitcopy/scripts/git/git-pre-commit.sh" 2>&1)"
+printf '%s' "$HOUT" | grep -q 'test_durations' && fail "hook blocks with the durations message although the check script is absent: $HOUT" || ok "hook without the check script: no durations block"
+
 # 6) the hook runs the check (wiring)
 grep -q 'check-test-durations.sh' "$HOOK" && ok "git-pre-commit.sh calls check-test-durations.sh" || fail "git-pre-commit.sh does not call check-test-durations.sh"
 
