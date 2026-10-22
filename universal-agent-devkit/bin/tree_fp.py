@@ -17,6 +17,7 @@ import sys
 
 EXCLUDE = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regression_checklist.md",
            ".agents/CHECKLIST.md", ".agents/INBOX.md", ".agents/evidence", ".agents/archive", ".agents/instincts.md", "reports",
+           "docs/super-board/runs",   # QA-lane evidence committed after the gate PASSed: not code (agent-workbench#248)
            ".agents/local/memory/claude-auto",   # the agent's own notes: not code (memory/voice is, GeelyEx2 tests read it)
            # the temp file of regression_checklist.save(): tempfile.mkstemp(dir=".agents", prefix=".regression_status.") = that prefix + exactly 8
            # characters of [a-z0-9_], in .agents/ until os.replace. The gate releases test_run.lock before the save, so a run that wins the lock
