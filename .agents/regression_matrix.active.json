@@ -825,6 +825,69 @@
       ]
     },
     {
+      "component": "devkit-matrix-merge-driver",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/matrix_merge_driver.py",
+        "universal-agent-devkit/scripts/git/githooks.sh",
+        "universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+        ".gitattributes"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MATRIX-MERGE-01",
+          "name": "merge driver ma trận hồi quy: hai nhánh cùng nối rule khác nhau vào cuối thì gộp không conflict và gate vẫn tin ma trận chỉ-thêm; cùng id khác nội dung thì lỗi rõ; sửa rule cũ vẫn conflict; githooks install cài driver",
+          "command": "bash universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-preflight-swept",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_runner_preflight_swept.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-PREFLIGHT-SWEPT-01",
+          "name": "runner chạy preflight trước khi nhận thẻ build (hold/sequence có blockedBy: không claim, thẻ sang Blocked kèm blocked-by; exit 79 dừng run) và sổ SWEPT_CARDS bền qua lần khởi động lại (#253)",
+          "command": "bash tests/super-board/test_runner_preflight_swept.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-blocked-by-open-only",
+      "watch_files": [
+        ".claude/bin/super-board-blocked-by.py",
+        "tests/super-board/test_blocked_by_open_only.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-BLOCKED-BY-OPEN-ONLY-01",
+          "name": "dòng blocked-by: chỉ ghi issue còn mở; số đã đóng bị bỏ kèm lý do, không còn số mở thì `-`, không đọc được trạng thái thì exit 79 (#253)",
+          "command": "python3 tests/super-board/test_blocked_by_open_only.py",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-wip-limit",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_wip_limit.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WIP-LIMIT-01",
+          "name": "runner giới hạn WIP (#252): không giao build khi QA+Review chờ >= build_wip_k × (qa_workers+review_workers); không giao build / worker QA-Review thêm khi số post-fix-gate đang chạy >= gate_max; log lý do; số gate không đếm được thì không chặn",
+          "command": "bash tests/super-board/test_runner_wip_limit.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "mcp-servers/agent-office/blender",
       "watch_files": [
         "mcp-servers/agent-office/blender/*",
