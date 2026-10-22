@@ -667,7 +667,7 @@ kill_tree "$FR3"; rm -f "$WD" "$BST" "$STATE" "$R/.claude/super-board/inflight/1
 
 # Runner do watchdog khởi động crash trước tick đầu (đọc board hỏng): bản ghi vẫn mang bộ đếm RUNAWAY đã chuyển sang.
 rm -f "$WD"; dead_pid; set_state "$D" crashed 143
-start_runner "$TMP/run11.out" SB_WATCHDOG_START=1 SB_DAEMON=1 STUB_CARD_FAIL=1
+start_runner "$TMP/run11.out" SB_WATCHDOG_START=1 SB_DAEMON=1 STUB_CARD_FAIL=1 SB_FETCH_RETRY_DELAYS=   # #256: không đọc lại, crash ngay như trước
 wait_for 20 '! alive "$RP"' || kill_tree "$RP"
 [ "$(field STATE "$STATE")" = crashed ] && [ "$(field NO_PROGRESS "$STATE")" = 4 ] \
   && ok "a restarted runner crashing before its first tick keeps the carried no-progress count (4)" \
