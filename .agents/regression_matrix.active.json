@@ -873,6 +873,21 @@
       ]
     },
     {
+      "component": "super-board-wip-limit",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_wip_limit.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WIP-LIMIT-01",
+          "name": "runner giới hạn WIP (#252): không giao build khi QA+Review chờ >= build_wip_k × (qa_workers+review_workers); không giao build / worker QA-Review thêm khi số post-fix-gate đang chạy >= gate_max; log lý do; số gate không đếm được thì không chặn",
+          "command": "bash tests/super-board/test_runner_wip_limit.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-multi-session-gate-env",
       "watch_files": [
         "universal-agent-devkit/tests/gates/test_multi_session_gate.sh",
