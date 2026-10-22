@@ -367,3 +367,4 @@
 3 tests/gates/test_gate_git_spawn_budget.sh
 3 tests/gates/test_matrix_merge_driver.sh
 3 tests/gates/test_durations_union_merge.sh
+1 tests/installer/test_place_keeps_tracked_in_worktree.sh
