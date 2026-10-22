@@ -764,6 +764,9 @@
         "mcp-servers/agent-office/server.py",
         "mcp-servers/agent-office/web/index.html",
         "mcp-servers/agent-office/web/pathing.js",
+        "mcp-servers/agent-office/web/vendor/*",
+        "mcp-servers/agent-office/*.sh",
+        "ai-factory.sh",
         "mcp-servers/agent-office/tests/*"
       ],
       "mandatory_regression_tests": [
