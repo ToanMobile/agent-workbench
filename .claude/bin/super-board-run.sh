@@ -807,6 +807,18 @@ PY
   [ "$rc" -ne 4 ]
 }
 
+claude_model_for_tier() {
+  # model_tier của config -> --model của `claude -p` (#254: trước đây không truyền, mọi lượt chạy model mặc định đắt nhất).
+  # low=haiku, high=opus; medium, thiếu hoặc lạ = sonnet.
+  local tier
+  tier=$(jq -r '.model_tier // "medium"' "$CONFIG_PATH" 2>/dev/null || echo medium)
+  case "$tier" in
+    low) echo haiku ;;
+    high) echo opus ;;
+    *) echo sonnet ;;
+  esac
+}
+
 preflight_gate() {
   # #253: chạy super-board-preflight.sh TRƯỚC khi nhận thẻ build; trước đây LLM mới chạy nó (09:58Z #200 mới thấy "hold" sau khi
   # đã tốn một lượt). Trả 0 = giao, 1 = không giao (thẻ đã sang Blocked, hoặc còn Ready để thử lại tick sau). Chỉ chặn trên bằng chứng CHÍNH XÁC: PR đã merge / đang mở
@@ -960,15 +972,19 @@ dispatch_lane() {
   [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
   # CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0: ngăn `claude -p` tự huỷ tác vụ nền (như red_proof.py --pending) sau 10 phút.
   export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-0}"
+  # BASH_*_TIMEOUT_MS=1h: Bash tool của worker mặc định bị cắt ở 10 phút, đúng lúc gate còn chờ heavy_slot (≤600 s) (#249).
+  export BASH_DEFAULT_TIMEOUT_MS="${BASH_DEFAULT_TIMEOUT_MS:-3600000}" BASH_MAX_TIMEOUT_MS="${BASH_MAX_TIMEOUT_MS:-3600000}"
   unset POSTFIX_GATE_FORCE_FULL
+  local claude_model
+  claude_model=$(claude_model_for_tier)
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
     nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
     nohup "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
-    CLAUDE_CONFIG_DIR="$pool_cfg" nohup claude --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    CLAUDE_CONFIG_DIR="$pool_cfg" nohup claude --model "$claude_model" --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   else
-    nohup claude --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup claude --model "$claude_model" --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!
   DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
@@ -1399,6 +1415,22 @@ reclaim_stranded_building() {
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
+    # #254: builder đóng issue khi AC đã đạt sẵn trên main (không PR) — thẻ đóng ở Building đi thẳng Done, không quay về Ready.
+    local issue_rc=0
+    issue_is_open "$issue" || issue_rc=$?
+    [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+    if [ "$issue_rc" -eq 1 ]; then
+      if set_card_status "$item_id" "Done"; then
+        gh_checkpoint
+        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        rm -f "$INFLIGHT_DIR/$issue"
+        log "reconciled closed #${issue} -> Done (was 'Building') — builder closed it, AC already met"
+      else
+        gh_checkpoint
+        log "⚠ closed #${issue} in Building — could not move it to Done; drag it by hand"
+      fi
+      continue
+    fi
     # Chỉ để ghi vào comment: ls-remote lỗi (mạng, không có remote) dưới pipefail không được giết runner.
     branch=$(git ls-remote --heads origin "issue-${issue}-*" 2>/dev/null | head -1 | sed 's#.*refs/heads/##') || branch=""
     wt=".claude/worktrees/issue-${issue}-build"
@@ -1786,6 +1818,57 @@ RECLAIM_MOVED=0
 LANDED_COUNT=0
 DISPATCH_LOG=""
 
+# ── Tự nạp lại code mới (#229, gap 4 của #226). Runner là bash chạy dài: PR sửa chính super-board-run.sh merge xong mà tiến trình vẫn
+# chạy bản cũ cho tới khi ai đó dừng/chạy lại tay. Lúc rảnh (không worker nào, lock nào) mỗi tick fetch origin/<base>; blob của script trên
+# origin khác blob đang chạy thì: main checkout fast-forward được (đang ở <base>, HEAD là tổ tiên của origin) → ff rồi exec lại chính nó
+# (cùng PID, nên bản ghi watchdog vẫn đúng; SB_WATCHDOG_START=1 nạp lại bộ đếm và không xoá stop marker). Main lệch origin, ff không áp
+# được hoặc bản mới sai cú pháp → notify một lần cho mỗi bản origin, tiếp tục chạy bản cũ: không restart mù, không chạy code cũ im lặng.
+# ponytail: chỉ nạp lại khi rảnh hoàn toàn; board luôn có worker thì chờ tới lúc rảnh, nâng lên khi thấy board bận liên tục.
+RELOAD_SELF="${RELOAD_SELF:-$SCRIPT_DIR/super-board-run.sh}"
+RELOAD_RUN_SUM="${RELOAD_RUN_SUM:-$(git hash-object "$RELOAD_SELF" 2>/dev/null || true)}"
+RELOAD_WARNED=""
+RELOAD_NEXT_CHECK=0
+reload_exec() {
+  runner_state_write running
+  SB_WATCHDOG_START=1 SB_RELOADED=1 exec bash "$1" "$CONFIG_SLUG"
+}
+reload_warn() {
+  # $1 = blob của script trên origin, $2 = lý do. Một cảnh báo cho mỗi bản origin.
+  [ "$RELOAD_WARNED" != "$1" ] || return 0
+  RELOAD_WARNED="$1"
+  log "⚠ self-reload: origin/${BASE_BRANCH} has a newer super-board-run.sh but this runner keeps the old code — $2"
+  board_notify send --card "$CONFIG_SLUG" --text "runner đang chạy code cũ: origin/${BASE_BRANCH} có super-board-run.sh mới nhưng không nạp được — $2"
+}
+self_reload_tick() {
+  local now new disk rel cur
+  [ "${ACTIVE_WORKERS:-0}" -eq 0 ] || return 0
+  [ -n "$RELOAD_RUN_SUM" ] || return 0
+  now=$(date +%s)
+  [ "$now" -ge "$RELOAD_NEXT_CHECK" ] || return 0
+  RELOAD_NEXT_CHECK=$((now + ${SB_RELOAD_EVERY:-${TICK_SECONDS:-120}}))
+  rel=$(git ls-files --full-name -- "$RELOAD_SELF" 2>/dev/null | head -1) || rel=""
+  [ -n "$rel" ] || return 0
+  git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 fetch -q origin "$BASE_BRANCH" >/dev/null 2>&1 \
+    || { log "⚠ self-reload: git fetch origin ${BASE_BRANCH} failed; retrying next check"; return 0; }
+  new=$(git rev-parse -q --verify "origin/${BASE_BRANCH}:${rel}" 2>/dev/null) || return 0
+  [ "$new" != "$RELOAD_RUN_SUM" ] || return 0
+  disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
+  if [ "$disk" != "$new" ]; then
+    cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || cur=""
+    if [ "$cur" != "$BASE_BRANCH" ] || ! git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null; then
+      reload_warn "$new" "main checkout is not a fast-forward of origin/${BASE_BRANCH} (branch '${cur:-detached}'); bring it level, then the next idle tick reloads"
+      return 0
+    fi
+    git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1 \
+      || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+    disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
+    [ "$disk" = "$new" ] || { reload_warn "$new" "after the fast-forward the file on disk still differs from origin"; return 0; }
+  fi
+  bash -n "$RELOAD_SELF" 2>/dev/null || { reload_warn "$new" "the new script fails bash -n"; return 0; }
+  log "♻ self-reload: origin/${BASE_BRANCH} changed super-board-run.sh (${RELOAD_RUN_SUM:0:7} → ${new:0:7}) and no worker is running — restarting on the new code"
+  reload_exec "$RELOAD_SELF"
+}
+
 # Sourced by the gate tests (`SB_LIB_ONLY=1 . scripts/super-board-run.sh`) to exercise
 # the helpers above without starting a run. Executing the script normally is unaffected.
 if [ "${SB_LIB_ONLY:-0}" = "1" ]; then
@@ -1833,6 +1916,8 @@ stop_in_flight() {
 }
 if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
   START_TAG=" (watchdog restart)"
+  [ "${SB_RELOADED:-0}" != "1" ] || START_TAG=" (self-reload)"
+  unset SB_RELOADED
   if [ -e "$STOP_MARK" ]; then
     log "🛑 watchdog restart refused: board ${CONFIG_SLUG} was stopped by the user ($STOP_MARK); only an explicit super-board run starts it"
     exit 0
@@ -1974,6 +2059,9 @@ while true; do
   [ "$BUILD_COUNT" -eq 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))   # lane build = 1 slot của max_workers dù chạy N worker: build_workers là trần riêng, không bỏ đói QA/Review
   [ "$QA_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
   [ "$REVIEW_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+
+  # Rảnh hoàn toàn (không worker nào): nạp lại code nếu super-board-run.sh trên origin đã đổi (#229). Có thể exec và không quay lại.
+  self_reload_tick
 
   # Đang hoãn sau RUNAWAY: không giao được gì nên chỉ đọc board thưa (paused_tick). Kiểm trước nhánh cap-reached:
   # runaway thường xảy ra khi cả 3 lane đều bận, và lúc đó vẫn phải quét zombie trên dữ liệu mới.

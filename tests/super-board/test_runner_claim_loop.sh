@@ -190,6 +190,20 @@ grep -qx "BG_WAIT=0" "$TMP/repo/wl/worker-build-70.log" 2>/dev/null \
   && ok "dispatch_lane exports CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 for long background proofs" \
   || fail "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS not set in worker env: $(cat "$TMP/repo/wl/worker-build-70.log" 2>/dev/null)"
 
+# ── 8b. #249: the worker's Bash tool is cut at 10 min while the gate still waits for a heavy_slot (up to 600 s) → raise the Bash timeout
+cat > "$TMP/path/claude" <<'SH'
+#!/usr/bin/env bash
+echo "BASH_TO=${BASH_DEFAULT_TIMEOUT_MS:-unset}/${BASH_MAX_TIMEOUT_MS:-unset}"
+SH
+chmod +x "$TMP/path/claude"
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_71","status":"Ready","labels":[],"content":{"type":"Issue","number":71,"assignees":[]}}]}'
+( dispatch_lane build 71 ) >/dev/null 2>&1
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q "^BASH_TO=" "$TMP/repo/wl/worker-build-71.log" 2>/dev/null && break; sleep 0.2; done
+bto="$(grep '^BASH_TO=' "$TMP/repo/wl/worker-build-71.log" 2>/dev/null | head -1 | sed 's/^BASH_TO=//')"
+[ "${bto%/*}" -ge 3600000 ] 2>/dev/null && [ "${bto#*/}" -ge 3600000 ] 2>/dev/null \
+  && ok "dispatch_lane exports BASH_DEFAULT_TIMEOUT_MS and BASH_MAX_TIMEOUT_MS >= 3600000 (#249)" \
+  || fail "worker Bash timeout env below 3600000 ms: '$bto'"
+
 # ── 9. cleanup_stale_worktrees prunes orphaned red-proof-* worktrees when no red_proof.py is running
 git -C "$TMP/repo" init -q
 git -C "$TMP/repo" config user.email "t@e.st"
