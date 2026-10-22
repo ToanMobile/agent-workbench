@@ -67,6 +67,10 @@
 # lock legitimately held for 20 minutes by a slow verification run — which is
 # exactly the merge it was waiting politely for.
 #
+# `--train-receipt <file>` (super-board-merge-train.sh): lines `<head sha> <tree sha>`. The train verified the combined tree of several
+# PRs once; when this gate's clean merge of the base and the PR head produces exactly the tree recorded for that head, the proof
+# already exists and verification is skipped. Any other tree (the base moved, the head changed) verifies as usual.
+#
 # Exit codes, all meaningful to the caller:
 #   0  merged
 #   11 verification failed after merging the base cleanly into the scratch tree —
@@ -120,7 +124,7 @@ export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 
-CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""
+CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""; TRAIN_RECEIPT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -130,6 +134,7 @@ while [ $# -gt 0 ]; do
     --body-file)     MSG_FILE="$2"; shift 2 ;;
     --lock-timeout)  LOCK_TIMEOUT="$2"; shift 2 ;;
     --stale-after)   STALE_AFTER="$2"; shift 2 ;;
+    --train-receipt) TRAIN_RECEIPT="$2"; shift 2 ;;
     --dry-run)       DRY=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
@@ -194,10 +199,35 @@ clip() { tr '\n\t' '  ' | python3 -I -c 'import sys; sys.stdout.buffer.write(sys
 
 # ---- the mutex -------------------------------------------------------------
 # mkdir is atomic: it succeeds for exactly one caller and fails for the rest.
-# The pid/date inside is for a human reading a stuck lock, never for logic.
+# The date inside is for a human reading a stuck lock. pid, pgid and host let a waiter
+# reap early: a holder killed by a signal never runs its EXIT trap, and waiting out
+# stale-after (90 min by default) for a lock nobody holds left PR #176 stuck in Review
+# (22/10). Early reap only when ALL hold: the lock was written on this host (a pid says
+# nothing about another machine), the holder pid is gone, and no process is left in its
+# process group (a SIGKILL to the shell alone leaves a migration or `gh pr merge` child
+# running; review of PR #219). A lock without pgid/host (an older gate), EPERM, a reused
+# pid or a group shared with a living caller all read as alive and fall back to the age.
+holder_gone() {
+  local pid pgid host
+  pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+  pgid=$(cat "$LOCK_DIR/pgid" 2>/dev/null || true)
+  host=$(cat "$LOCK_DIR/host" 2>/dev/null || true)
+  [ -n "$pid" ] && [ "$pid" -gt 0 ] 2>/dev/null && [ -n "$pgid" ] && [ "$pgid" -gt 0 ] 2>/dev/null || return 1
+  [ "$host" = "$(hostname)" ] || return 1
+  ! kill -0 "$pid" 2>/dev/null && ! ps -p "$pid" >/dev/null 2>&1 || return 1
+  ! kill -0 -- "-$pgid" 2>/dev/null || return 1
+  # Re-read the pid last: a holder that exits normally while we look frees the lock, and
+  # the next gate's fresh lock (a different pid) must not be removed.
+  [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$pid" ] || return 1
+  HOLDER_GONE="$pid (group $pgid)"
+}
 acquire() {
   local waited=0
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    if holder_gone; then
+      say "reaping a lock whose holder pid ${HOLDER_GONE} is gone (killed before its EXIT trap ran)"
+      rm -rf "$LOCK_DIR"; continue
+    fi
     # A lock older than the timeout belongs to a process that died holding it.
     # Reaping it is safe because the only thing it guards is a merge, and a dead
     # merge has already either landed or not.
@@ -212,6 +242,7 @@ acquire() {
     sleep 5; waited=$(( waited + 5 ))
   done
   date +%s > "$LOCK_DIR/at"; echo "$$" > "$LOCK_DIR/pid"; echo "$PR" > "$LOCK_DIR/pr"
+  ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ' > "$LOCK_DIR/pgid" || true; hostname > "$LOCK_DIR/host" 2>/dev/null || true
   return 0
 }
 # Chỉ xoá khoá còn mang pid của gate này: gate khác đã chiếm nó (coi là bỏ quên) thì đó là khoá đang sống của gate kia.
@@ -354,7 +385,7 @@ wait_for_load() {
     { date +%s > "$LOCK_DIR/at.$$" && mv -f "$LOCK_DIR/at.$$" "$LOCK_DIR/at"; } 2>/dev/null \
       || say "could not refresh the merge lock stamp ${LOCK_DIR}/at"
     load=$(load_now)
-    [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; return 0; }
+    [[ "$load" =~ ^[0-9]{1,6}$ ]] || { say "cannot read the machine load ('${load}'); verifying without waiting"; LOAD_WAIT_ON=0; return 0; }
     load=$((10#$load)); LOAD_WAIT_ON=1
     if [ "$load" -lt "$max" ]; then
       [ "$waited" -gt 0 ] && say "load ${load} after ${waited}s; verifying"
@@ -399,6 +430,11 @@ fi
 # Nhánh chậm hơn base nhưng merge scratch sạch: đẩy fast-forward lên đúng nhánh PR
 # rồi mới verify. Timeout phía dưới vẫn thử lại một lần. Không --force.
 MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
+TRAIN_PROVED=0
+if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
+  TRAIN_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
+  [ -z "$TRAIN_TREE" ] || [ "$TRAIN_TREE" != "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" ] || TRAIN_PROVED=1
+fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
 if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
   if git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
@@ -563,6 +599,7 @@ is_verify_timeout() {
   grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
 for cmd in "${VERIFY[@]}"; do
+  if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
     flags=""
     [[ "$cmd" == *"--diff"* ]] || flags=" --diff origin/${BASE}"
