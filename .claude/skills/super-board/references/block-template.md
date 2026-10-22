@@ -61,6 +61,11 @@ same rule: **prose above for the human, one parseable line below for the loop.**
 - `blocked-by: -` — nothing on this board clears it. It waits for a person, and the sweep leaves it
   alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
 
+Write only issues that are still OPEN: generate the line with
+`python3 .claude/bin/super-board-blocked-by.py line --repo <owner/name> <N,M…>` (closed numbers are dropped, its stderr gives the
+reason for the Block comment; nothing open prints `blocked-by: -`; exit 79 = state unreadable, write nothing). A closed blocker on
+the line frees the card at once and the Builder rebuilds it (agent-workbench#253: #200 built 6 times).
+
 Write the numbers alone. **Never `blocked-by: none — but #26 must merge first`**: a line that says
 none and then names an issue is read as *no blocker* by the sweep and as *one blocker* by a human,
 and the sweep is the one that acts. That exact shape shipped on a real board and is the reason

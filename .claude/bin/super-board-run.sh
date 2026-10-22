@@ -766,6 +766,80 @@ PY
   [ "$rc" -ne 4 ]
 }
 
+preflight_gate() {
+  # #253: chạy super-board-preflight.sh TRƯỚC khi nhận thẻ build; trước đây LLM mới chạy nó (09:58Z #200 mới thấy "hold" sau khi
+  # đã tốn một lượt). Trả 0 = giao, 1 = không giao (thẻ đã sang Blocked, hoặc còn Ready để thử lại tick sau). Chỉ chặn trên bằng chứng CHÍNH XÁC: PR đã merge / đang mở
+  # có `closes #N`, thiếu AC, hoặc `sequence` có blocker còn MỞ. Hold dựa trên độ giống tiêu đề / fingerprint / thẻ khác / too-big
+  # là phán đoán ("agent hạ được khi nêu lý do", run.md): giao như cũ để Builder bước 0 xét. Exit 79 khi không đọc được bằng chứng
+  # GitHub (preflight mù không bao giờ nói proceed); lỗi khác của preflight hoặc không có verdict: log và giao như cũ (không chặn lane,
+  # không crash-loop). Thiếu repo.remote trong config: giao như cũ.
+  # ponytail: hold chính xác chỉ ghi `blocked-by:` rồi chờ người, không gắn needs-you (mark từ chối việc agent làm được); nâng khi cần.
+  local issue="$1" pf repo inf out rc=0 v verdict tag reason blocked title item_id exact tagline csv bline orc
+  pf="${SB_PREFLIGHT:-$(dirname "$SB_GITHUB_READ")/super-board-preflight.sh}"
+  repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+  if [ -z "$repo" ] || [ ! -f "$pf" ]; then log "preflight skipped for #${issue}: no repo.remote in config or no ${pf}"; return 0; fi
+  inf=$(mktemp "${TMPDIR:-/tmp}/sb-inflight.XXXXXX")
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -c '[.items[] | select(.status == "Building" or .status == "QA" or .status == "Review" or .status == "Ready")
+    | {number: .content.number, title: (.content.title // ""), status: .status}]' > "$inf" 2>/dev/null || echo '[]' > "$inf"
+  out=$(bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$inf"
+  if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
+  if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
+  v=$(printf '%s' "$out" | jq -c --arg n "$issue" '.[$n] // empty' 2>/dev/null)
+  [ -n "$v" ] || { log "⚠ preflight returned no verdict for #${issue} — dispatching without it"; return 0; }
+  verdict=$(printf '%s' "$v" | jq -r '.verdict'); tag=$(printf '%s' "$v" | jq -r '.tag // ""')
+  reason=$(printf '%s' "$v" | jq -r '.reason // ""')
+  blocked=""
+  case "$verdict" in
+    proceed) return 0 ;;
+    sequence)
+      # blockedBy đọc từ body PR, không kiểm trạng thái: chỉ số issue còn MỞ mới chặn (số đã đóng là đúng mẫu #200). Một lệnh
+      # super-board-blocked-by.py cho cả danh sách: nó không đi qua file halt, số gõ nhầm / số PR không dừng board (review P1/P2).
+      csv=$(printf '%s' "$v" | jq -r '(.blockedBy // []) | map(tostring) | join(",")')
+      if [ -n "$csv" ]; then
+        orc=0
+        bline=$(python3 "$(dirname "$SB_GITHUB_READ")/super-board-blocked-by.py" line --repo "$repo" "$csv" 2>>"$RUN_MANIFEST") || orc=$?
+        # Không đọc được trạng thái blocker (gh lỗi thoáng qua): không giao, không chặn, thử lại tick sau. Không exit 79: helper không ghi
+        # file halt nên watchdog sẽ không tự resume (máy ngủ dậy rồi board chết, #253 review).
+        [ "$orc" -ne 79 ] || { log "preflight #${issue}: blocker state unreadable — not dispatched this tick, retrying next"; return 1; }
+        if [ "$orc" -ne 0 ]; then log "⚠ preflight #${issue}: blocker check failed (exit ${orc}) — dispatching without it"; return 0; fi
+        blocked="${bline#blocked-by: }"; [ "$blocked" != "-" ] || blocked=""
+      fi
+      [ -n "$blocked" ] || { log "preflight #${issue}: ${reason} — proceeding (merge gate rebases)"; return 0; }
+      tagline="⏳" ;;
+    hold)
+      exact=$(printf '%s' "$v" | jq -r --arg n "$issue" '
+        if .tag == "unclear" then "yes"
+        elif .tag == "done" or .tag == "in-progress" then
+          (if ([.evidence[]? | select(test("closes #" + $n + "$"))] | length) > 0 then "yes" else "no" end)
+        else "no" end')
+      if [ "$exact" != "yes" ]; then
+        log "preflight ${verdict}/${tag} for #${issue} rests on similarity or size (${reason}) — dispatching, Builder step 0 judges"
+        return 0
+      fi
+      case "$tag" in unclear) tagline="❓" ;; *) tagline="👯" ;; esac ;;
+    *) log "⚠ preflight verdict '${verdict}' for #${issue} not understood — dispatching without it"; return 0 ;;
+  esac
+  title=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .content.title][0] // ""')
+  item_id=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+  log "preflight ${verdict}/${tag} for #${issue}: ${reason} — not dispatched, card to Blocked"
+  # Chuyển thẻ TRƯỚC, comment chỉ khi chuyển được: chuyển hỏng thì thẻ còn Ready và tick sau sẽ comment lại (#253 review F6).
+  gh_checkpoint
+  if [ -z "$item_id" ] || ! set_card_status "$item_id" "Blocked"; then
+    log "⚠ preflight: could not move #${issue} to Blocked — not dispatched, no comment"
+    return 1
+  fi
+  gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tagline} pre-flight ${verdict} (${tag})
+Card:        #${issue} ${title}
+Reason tag:  ${tagline}
+Why blocked: ${reason}
+Evidence:    super-board-preflight.sh → $(printf '%s' "$v" | jq -c '.evidence // []')
+Owner:       Eric
+Move back:   drag this card to Ready once the evidence above is resolved
+blocked-by:  ${blocked:--}" >/dev/null 2>&1 || true
+  return 1
+}
+
 dispatch_lane() {
   # $1 = lane (build|qa|review); $2 = issue number
   local lane="$1" issue="$2" prompt pid
@@ -803,6 +877,8 @@ dispatch_lane() {
     board_notify accounts-limited --card "${CONFIG_SLUG:-board}" --accounts "${POOL_RESETS:-all}" --state-dir "${SB_NOTIFY_STATE_DIR:-$HOME/.claude/super-board}"
     return 0
   fi
+  # Sau các kiểm tra đĩa/account (không tốn một lượt preflight mỗi tick khi chưa giao được), trước khi nhận thẻ.
+  if [ "$lane" = "build" ]; then preflight_gate "$issue" || return 0; fi
   if ! try_claim_assignee "$issue"; then
     return 0
   fi
@@ -1418,6 +1494,18 @@ sweep_merged_lanes() {
     >>"$RUN_MANIFEST" 2>&1 </dev/null &
 }
 
+sweep_ledger() { printf '%s/swept-cards' "$INFLIGHT_DIR"; }
+swept_seen() {
+  # #253: sổ (thẻ, bộ blocker) đã sweep nằm ở file, không chỉ RAM: runner khởi động lại (4 lần trong ngày 22/10) không được
+  # sweep lại đúng cặp đó rồi build lại thẻ vừa bị chặn. $1 = "<issue>:<blockers>". SWEPT_CARDS giữ làm cache RAM.
+  case " ${SWEPT_CARDS:-} " in *" $1 "*) return 0 ;; esac
+  grep -qxF -- "$1" "$(sweep_ledger)" 2>/dev/null
+}
+swept_add() {
+  SWEPT_CARDS="${SWEPT_CARDS:-} $1"
+  printf '%s\n' "$1" >> "$(sweep_ledger)" 2>/dev/null || log "⚠ cannot write the sweep ledger $(sweep_ledger)"
+}
+
 sweep_blocked_cards() {
   # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
   # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
@@ -1436,10 +1524,10 @@ sweep_blocked_cards() {
   while IFS=$'\t' read -r issue cleared; do
     # Không có blocker nào (thẻ bị kéo tay sang Blocked, body ghi None): không có gì vừa đóng, để người quyết.
     [ -n "$issue" ] && [ -n "$cleared" ] || continue
-    # Mỗi (thẻ, bộ blocker) một lần mỗi lần chạy: bị park lại với CÙNG blocker là việc người cần xem, không phải
+    # Mỗi (thẻ, bộ blocker) một lần, bền qua lần khởi động lại (người gỡ sổ swept-cards nếu muốn sweep lại): bị park lại với CÙNG blocker là việc người cần xem, không phải
     # vòng lặp; bị chặn bởi blocker KHÁC (daemon chạy nhiều ngày) thì vẫn được sweep khi blocker mới đóng.
     key="${issue}:$(printf '%s' "$cleared" | tr -d ' #')"
-    case " ${SWEPT_CARDS:-} " in *" $key "*) log "blocked sweep: #${issue} already swept this run for ${cleared} — left Blocked"; continue ;; esac
+    if swept_seen "$key"; then log "blocked sweep: #${issue} already swept for ${cleared} — left Blocked"; continue; fi
     # `needs-you` là quyết định của người, kể cả khi planner thả thẻ (planner chỉ đọc 8 comment cuối).
     if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
          | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
@@ -1453,7 +1541,7 @@ sweep_blocked_cards() {
       log "⚠ blocked sweep: could not move #${issue} to Ready"
       continue
     fi
-    SWEPT_CARDS="${SWEPT_CARDS:-} $key"
+    swept_add "$key"
     next=builder; [ "$(card_lane "$issue")" = qa ] && next=tester
     # Định dạng comment: writing-standard.md § 4.
     gh_checkpoint
