@@ -940,6 +940,22 @@
       ]
     },
     {
+      "component": "super-board-preflight-numbered-ac",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_preflight_numbered_ac.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-PREFLIGHT-NUMBERED-AC-01",
+          "name": "AC đánh số 1) / 1. được nhận ở preflight (không hold unclear) và ở luật kéo Backlog; AC chỉ văn xuôi vẫn bị chặn (#283)",
+          "command": "bash tests/super-board/test_preflight_numbered_ac.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-multi-session-gate-env",
       "watch_files": [
         "universal-agent-devkit/tests/gates/test_multi_session_gate.sh",
