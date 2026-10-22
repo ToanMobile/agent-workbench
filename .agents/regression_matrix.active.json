@@ -842,6 +842,74 @@
       ]
     },
     {
+      "component": "super-board-runner-preflight-swept",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_runner_preflight_swept.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-PREFLIGHT-SWEPT-01",
+          "name": "runner chạy preflight trước khi nhận thẻ build (hold/sequence có blockedBy: không claim, thẻ sang Blocked kèm blocked-by; exit 79 dừng run) và sổ SWEPT_CARDS bền qua lần khởi động lại (#253)",
+          "command": "bash tests/super-board/test_runner_preflight_swept.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-blocked-by-open-only",
+      "watch_files": [
+        ".claude/bin/super-board-blocked-by.py",
+        "tests/super-board/test_blocked_by_open_only.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-BLOCKED-BY-OPEN-ONLY-01",
+          "name": "dòng blocked-by: chỉ ghi issue còn mở; số đã đóng bị bỏ kèm lý do, không còn số mở thì `-`, không đọc được trạng thái thì exit 79 (#253)",
+          "command": "python3 tests/super-board/test_blocked_by_open_only.py",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-wip-limit",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_wip_limit.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WIP-LIMIT-01",
+          "name": "runner giới hạn WIP (#252): không giao build khi QA+Review chờ >= build_wip_k × (qa_workers+review_workers); không giao build / worker QA-Review thêm khi số post-fix-gate đang chạy >= gate_max; log lý do; số gate không đếm được thì không chặn",
+          "command": "bash tests/super-board/test_runner_wip_limit.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-red-on-base",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-verify-cmd.sh",
+        "tests/super-board/test_merge_gate_red_on_base.sh",
+        "tests/super-board/test_verify_cmd_same_as_gate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RED-ON-BASE-01",
+          "name": "merge gate: suite đỏ cả trên origin/base không REJECT PR, mở thẻ riêng; suite do PR làm đỏ vẫn exit 11 (#251)",
+          "command": "bash tests/super-board/test_merge_gate_red_on_base.sh"
+        },
+        {
+          "id": "REG-SB-VERIFY-CMD-01",
+          "name": "QA in đúng lệnh verify của merge gate (cùng hàm chèn --diff/--force-full) (#251)",
+          "command": "bash tests/super-board/test_verify_cmd_same_as_gate.sh"
+        }
+      ]
+    },
+    {
       "component": "super-board-review-approved-head",
       "watch_files": [
         ".claude/bin/super-board-run.sh",

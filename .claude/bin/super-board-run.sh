@@ -119,6 +119,19 @@ resolve_lane_workers() {
   printf '%s\n' "$v"
 }
 
+resolve_pos_int() {
+  # $1 = đường dẫn config; $2 = khoá; $3 = mặc định. Số nguyên >= 1; thiếu hoặc sai thì mặc định (#252).
+  local v
+  v=$(jq -r --arg k "$2" '.[$k] // empty' "$1" 2>/dev/null || true)
+  case "$v" in ''|*[!0-9]*) v=$3 ;; esac
+  [ "${#v}" -le 6 ] || v=$3
+  v=$((10#$v))
+  [ "$v" -ge 1 ] || v=$3
+  printf '%s\n' "$v"
+}
+resolve_wip_k() { resolve_pos_int "$1" build_wip_k 2; }    # k: build chỉ giao khi (QA+Review chờ) < k × (qa_workers + review_workers)
+resolve_gate_max() { resolve_pos_int "$1" gate_max 6; }    # trần số post-fix-gate chạy cùng lúc trên máy (mọi repo)
+
 resolve_build_load_max() {
   # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, rồi 100. Mỗi nguồn phải là số
   # DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không nhảy thẳng về 100 (OCR 21/10).
@@ -162,6 +175,9 @@ BUILD_LOAD_MAX=$(resolve_build_load_max "$CONFIG_PATH")
 # Lane QA và Review cũng chạy nhiều worker (#209): qa_workers / review_workers = trần mỗi lane, mặc định 1; worker thêm dùng chung cổng tải build_load_max.
 QA_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" qa_workers)
 REVIEW_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" review_workers)
+# #252: chỉ giao build khi hàng QA+Review chưa dài (build_wip_k), và không giao worker mới khi số gate đang chạy đã chạm gate_max.
+WIP_K=$(resolve_wip_k "$CONFIG_PATH")
+GATE_MAX=$(resolve_gate_max "$CONFIG_PATH")
 BOT_LOGIN=$(jq -r '.notifications.bot_identity // .bot_identity // ""' "$CONFIG_PATH")
 WORKER_BACKEND=$(jq -r '.worker_backend // "workflow"' "$CONFIG_PATH")
 # Runaway controls (issue #8). NO_PROGRESS_CYCLES counts dispatch cycles with no
@@ -574,17 +590,41 @@ build_load_now() {
   else python3 -c 'import os; print(os.getloadavg()[0])' 2>/dev/null || true; fi
 }
 
+gates_running() {
+  # Số post-fix-gate.py đang chạy trên máy (mọi repo); trống khi không đếm được. SB_GATE_COUNT_FILE: móc test.
+  # Đếm tiến trình python có script post-fix-gate.py trong argv, không đếm shell bọc ngoài.
+  if [ -n "${SB_GATE_COUNT_FILE:-}" ]; then { tr -d '[:space:]' < "$SB_GATE_COUNT_FILE"; } 2>/dev/null || true
+  else ps -axo command= 2>/dev/null | awk '$1 ~ /[Pp]ython/ && ($2 ~ /post-fix-gate\.py$/ || $3 ~ /post-fix-gate\.py$/) { n++ } END { print n + 0 }'; fi
+}
+
+gates_at_cap() {
+  # 0 (và log lý do) khi số gate đang chạy >= GATE_MAX. Đếm không ra thì không chặn: heuristic không được làm chết lane. $1 = nhãn lane.
+  local g
+  g=$(gates_running)
+  case "$g" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$g" -ge "${GATE_MAX:-6}" ] || return 1
+  log "$1 workers: gates ${g} >= ${GATE_MAX:-6}: holding"
+  return 0
+}
+
 build_slot_free() {
   # BUILD_FREE=1 (và trả 0) khi lane build được khởi một worker ở tick này. Worker đầu tiên không bị tải chặn; worker thêm chỉ khi
   # còn dưới trần build_workers và tải đọc được và dưới build_load_max. Tối đa một worker mỗi tick (vòng chính giao một thẻ), nên
   # tải kịp phản ứng trước lần khởi kế. Không bao giờ kill worker đang chạy. Mỗi tick log quyết định khi trần > 1.
-  local load
+  local load wip wip_max
   build_workers_count
   BUILD_FREE=0
   if [ "$BUILD_COUNT" -ge "$BUILD_WORKERS" ]; then
     [ "$BUILD_WORKERS" -le 1 ] || log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: at the cap, not starting"
     return 1
   fi
+  # #252: hàng QA+Review dài thì build mới chỉ đẻ thêm việc cho lane đã nghẽn; gate chạm trần thì build mới chỉ chạy chậm hơn. Cả hai chặn cả worker đầu.
+  wip=$(( ${QA:-0} + ${REVIEW:-0} )); wip_max=$(( ${WIP_K:-2} * (${QA_WORKERS:-1} + ${REVIEW_WORKERS:-1}) ))
+  if [ "$wip" -ge "$wip_max" ]; then
+    log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: WIP ${wip} >= ${wip_max} (QA+Review waiting): holding"
+    return 1
+  fi
+  gates_at_cap build && return 1
   if [ "$BUILD_COUNT" -eq 0 ]; then BUILD_FREE=1; return 0; fi
   load=$(build_load_now)
   case "$load" in
@@ -634,6 +674,7 @@ lane_slot_free() {
     return 1
   fi
   [ "$LANE_COUNT" -ne 0 ] || return 0
+  gates_at_cap "$lane" && return 1
   load=$(build_load_now)
   case "$load" in
     ''|*[!0-9.]*|*.*.*|.) log "${lane} workers ${LANE_COUNT}/${L_CAP}: load unreadable ('${load}') — holding at the first worker"; return 1 ;;
@@ -785,6 +826,80 @@ EOF
   printf '%s %s' "$pr" "$head"
 }
 
+preflight_gate() {
+  # #253: chạy super-board-preflight.sh TRƯỚC khi nhận thẻ build; trước đây LLM mới chạy nó (09:58Z #200 mới thấy "hold" sau khi
+  # đã tốn một lượt). Trả 0 = giao, 1 = không giao (thẻ đã sang Blocked, hoặc còn Ready để thử lại tick sau). Chỉ chặn trên bằng chứng CHÍNH XÁC: PR đã merge / đang mở
+  # có `closes #N`, thiếu AC, hoặc `sequence` có blocker còn MỞ. Hold dựa trên độ giống tiêu đề / fingerprint / thẻ khác / too-big
+  # là phán đoán ("agent hạ được khi nêu lý do", run.md): giao như cũ để Builder bước 0 xét. Exit 79 khi không đọc được bằng chứng
+  # GitHub (preflight mù không bao giờ nói proceed); lỗi khác của preflight hoặc không có verdict: log và giao như cũ (không chặn lane,
+  # không crash-loop). Thiếu repo.remote trong config: giao như cũ.
+  # ponytail: hold chính xác chỉ ghi `blocked-by:` rồi chờ người, không gắn needs-you (mark từ chối việc agent làm được); nâng khi cần.
+  local issue="$1" pf repo inf out rc=0 v verdict tag reason blocked title item_id exact tagline csv bline orc
+  pf="${SB_PREFLIGHT:-$(dirname "$SB_GITHUB_READ")/super-board-preflight.sh}"
+  repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+  if [ -z "$repo" ] || [ ! -f "$pf" ]; then log "preflight skipped for #${issue}: no repo.remote in config or no ${pf}"; return 0; fi
+  inf=$(mktemp "${TMPDIR:-/tmp}/sb-inflight.XXXXXX")
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -c '[.items[] | select(.status == "Building" or .status == "QA" or .status == "Review" or .status == "Ready")
+    | {number: .content.number, title: (.content.title // ""), status: .status}]' > "$inf" 2>/dev/null || echo '[]' > "$inf"
+  out=$(bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$inf"
+  if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
+  if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
+  v=$(printf '%s' "$out" | jq -c --arg n "$issue" '.[$n] // empty' 2>/dev/null)
+  [ -n "$v" ] || { log "⚠ preflight returned no verdict for #${issue} — dispatching without it"; return 0; }
+  verdict=$(printf '%s' "$v" | jq -r '.verdict'); tag=$(printf '%s' "$v" | jq -r '.tag // ""')
+  reason=$(printf '%s' "$v" | jq -r '.reason // ""')
+  blocked=""
+  case "$verdict" in
+    proceed) return 0 ;;
+    sequence)
+      # blockedBy đọc từ body PR, không kiểm trạng thái: chỉ số issue còn MỞ mới chặn (số đã đóng là đúng mẫu #200). Một lệnh
+      # super-board-blocked-by.py cho cả danh sách: nó không đi qua file halt, số gõ nhầm / số PR không dừng board (review P1/P2).
+      csv=$(printf '%s' "$v" | jq -r '(.blockedBy // []) | map(tostring) | join(",")')
+      if [ -n "$csv" ]; then
+        orc=0
+        bline=$(python3 "$(dirname "$SB_GITHUB_READ")/super-board-blocked-by.py" line --repo "$repo" "$csv" 2>>"$RUN_MANIFEST") || orc=$?
+        # Không đọc được trạng thái blocker (gh lỗi thoáng qua): không giao, không chặn, thử lại tick sau. Không exit 79: helper không ghi
+        # file halt nên watchdog sẽ không tự resume (máy ngủ dậy rồi board chết, #253 review).
+        [ "$orc" -ne 79 ] || { log "preflight #${issue}: blocker state unreadable — not dispatched this tick, retrying next"; return 1; }
+        if [ "$orc" -ne 0 ]; then log "⚠ preflight #${issue}: blocker check failed (exit ${orc}) — dispatching without it"; return 0; fi
+        blocked="${bline#blocked-by: }"; [ "$blocked" != "-" ] || blocked=""
+      fi
+      [ -n "$blocked" ] || { log "preflight #${issue}: ${reason} — proceeding (merge gate rebases)"; return 0; }
+      tagline="⏳" ;;
+    hold)
+      exact=$(printf '%s' "$v" | jq -r --arg n "$issue" '
+        if .tag == "unclear" then "yes"
+        elif .tag == "done" or .tag == "in-progress" then
+          (if ([.evidence[]? | select(test("closes #" + $n + "$"))] | length) > 0 then "yes" else "no" end)
+        else "no" end')
+      if [ "$exact" != "yes" ]; then
+        log "preflight ${verdict}/${tag} for #${issue} rests on similarity or size (${reason}) — dispatching, Builder step 0 judges"
+        return 0
+      fi
+      case "$tag" in unclear) tagline="❓" ;; *) tagline="👯" ;; esac ;;
+    *) log "⚠ preflight verdict '${verdict}' for #${issue} not understood — dispatching without it"; return 0 ;;
+  esac
+  title=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .content.title][0] // ""')
+  item_id=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+  log "preflight ${verdict}/${tag} for #${issue}: ${reason} — not dispatched, card to Blocked"
+  # Chuyển thẻ TRƯỚC, comment chỉ khi chuyển được: chuyển hỏng thì thẻ còn Ready và tick sau sẽ comment lại (#253 review F6).
+  gh_checkpoint
+  if [ -z "$item_id" ] || ! set_card_status "$item_id" "Blocked"; then
+    log "⚠ preflight: could not move #${issue} to Blocked — not dispatched, no comment"
+    return 1
+  fi
+  gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tagline} pre-flight ${verdict} (${tag})
+Card:        #${issue} ${title}
+Reason tag:  ${tagline}
+Why blocked: ${reason}
+Evidence:    super-board-preflight.sh → $(printf '%s' "$v" | jq -c '.evidence // []')
+Owner:       Eric
+Move back:   drag this card to Ready once the evidence above is resolved
+blocked-by:  ${blocked:--}" >/dev/null 2>&1 || true
+  return 1
+}
+
 dispatch_lane() {
   # $1 = lane (build|qa|review); $2 = issue number
   local lane="$1" issue="$2" prompt pid
@@ -822,6 +937,8 @@ dispatch_lane() {
     board_notify accounts-limited --card "${CONFIG_SLUG:-board}" --accounts "${POOL_RESETS:-all}" --state-dir "${SB_NOTIFY_STATE_DIR:-$HOME/.claude/super-board}"
     return 0
   fi
+  # Sau các kiểm tra đĩa/account (không tốn một lượt preflight mỗi tick khi chưa giao được), trước khi nhận thẻ.
+  if [ "$lane" = "build" ]; then preflight_gate "$issue" || return 0; fi
   if ! try_claim_assignee "$issue"; then
     return 0
   fi
@@ -872,6 +989,8 @@ EOF
   [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
   # CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0: ngăn `claude -p` tự huỷ tác vụ nền (như red_proof.py --pending) sau 10 phút.
   export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-0}"
+  # BASH_*_TIMEOUT_MS=1h: Bash tool của worker mặc định bị cắt ở 10 phút, đúng lúc gate còn chờ heavy_slot (≤600 s) (#249).
+  export BASH_DEFAULT_TIMEOUT_MS="${BASH_DEFAULT_TIMEOUT_MS:-3600000}" BASH_MAX_TIMEOUT_MS="${BASH_MAX_TIMEOUT_MS:-3600000}"
   unset POSTFIX_GATE_FORCE_FULL
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
     nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
@@ -1447,6 +1566,18 @@ sweep_merged_lanes() {
     >>"$RUN_MANIFEST" 2>&1 </dev/null &
 }
 
+sweep_ledger() { printf '%s/swept-cards' "$INFLIGHT_DIR"; }
+swept_seen() {
+  # #253: sổ (thẻ, bộ blocker) đã sweep nằm ở file, không chỉ RAM: runner khởi động lại (4 lần trong ngày 22/10) không được
+  # sweep lại đúng cặp đó rồi build lại thẻ vừa bị chặn. $1 = "<issue>:<blockers>". SWEPT_CARDS giữ làm cache RAM.
+  case " ${SWEPT_CARDS:-} " in *" $1 "*) return 0 ;; esac
+  grep -qxF -- "$1" "$(sweep_ledger)" 2>/dev/null
+}
+swept_add() {
+  SWEPT_CARDS="${SWEPT_CARDS:-} $1"
+  printf '%s\n' "$1" >> "$(sweep_ledger)" 2>/dev/null || log "⚠ cannot write the sweep ledger $(sweep_ledger)"
+}
+
 sweep_blocked_cards() {
   # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
   # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
@@ -1465,10 +1596,10 @@ sweep_blocked_cards() {
   while IFS=$'\t' read -r issue cleared; do
     # Không có blocker nào (thẻ bị kéo tay sang Blocked, body ghi None): không có gì vừa đóng, để người quyết.
     [ -n "$issue" ] && [ -n "$cleared" ] || continue
-    # Mỗi (thẻ, bộ blocker) một lần mỗi lần chạy: bị park lại với CÙNG blocker là việc người cần xem, không phải
+    # Mỗi (thẻ, bộ blocker) một lần, bền qua lần khởi động lại (người gỡ sổ swept-cards nếu muốn sweep lại): bị park lại với CÙNG blocker là việc người cần xem, không phải
     # vòng lặp; bị chặn bởi blocker KHÁC (daemon chạy nhiều ngày) thì vẫn được sweep khi blocker mới đóng.
     key="${issue}:$(printf '%s' "$cleared" | tr -d ' #')"
-    case " ${SWEPT_CARDS:-} " in *" $key "*) log "blocked sweep: #${issue} already swept this run for ${cleared} — left Blocked"; continue ;; esac
+    if swept_seen "$key"; then log "blocked sweep: #${issue} already swept for ${cleared} — left Blocked"; continue; fi
     # `needs-you` là quyết định của người, kể cả khi planner thả thẻ (planner chỉ đọc 8 comment cuối).
     if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
          | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
@@ -1482,7 +1613,7 @@ sweep_blocked_cards() {
       log "⚠ blocked sweep: could not move #${issue} to Ready"
       continue
     fi
-    SWEPT_CARDS="${SWEPT_CARDS:-} $key"
+    swept_add "$key"
     next=builder; [ "$(card_lane "$issue")" = qa ] && next=tester
     # Định dạng comment: writing-standard.md § 4.
     gh_checkpoint

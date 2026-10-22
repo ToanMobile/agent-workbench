@@ -291,13 +291,20 @@ do not make this card big (the listed items are one small change, the device che
 | `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: Eric (close as duplicate) · `blocked-by: -` |
 | `hold` — in progress | move card to Blocked | `👯` · names the open PR / card · `blocked-by: <the issue that PR or card closes>` — the sweep returns it when that closes, and pre-flight then finds it done |
 | `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
-| `hold` — too big | move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
-| `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy>` — the wave-start sweep frees it |
+| `hold` — too big | the Builder splits it with `/createTask` (super-build → "Too big → split"); only when it cannot, move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
+| `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy, open issues only — generate with `super-board-blocked-by.py line`>. Run the helper BEFORE moving the card: it prints `blocked-by: -` (no blocker still open) → treat as `blockedBy` empty, card stays Ready; it exits 79 (state unreadable) → leave the card untouched and return `skipped`, never Blocked with an empty line` — the wave-start sweep frees it |
 | `sequence` — `blockedBy` empty | proceed (card stays Ready, return column `Ready`), comment `⚠️ expected conflict with PR #<P> on <files> — the merge gate will rebase` | — |
 | `halted` | script exit 79: required evidence unavailable; leave the card untouched, stop this run, resume explicitly after recovery | — |
 
 A card the pre-flight agent returns no verdict for is treated as `skipped` (a verdict, not a
 column), never built unchecked. `qa` cards are not pre-flighted: nothing is built.
+
+### Running the gate and the merge gate (every lane)
+
+`post-fix-gate.py --run-tests --full` and `super-board-merge-gate.sh` can wait up to 600 s for a heavy slot before they
+start. Run them with the Bash tool's `run_in_background: true` from the first attempt, then poll the output; a foreground
+call is cut by the Bash timeout and the whole run is repeated (#249). The runner also exports
+`BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` = 3600000 to every worker as a second line of defence.
 
 ### Builder (first pass)
 
@@ -368,6 +375,7 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
 for affected feature selection, actual host readiness and new run-owned proof.
 Record uncovered/stale optional coverage alongside ordinary issue AC checks.
 4b. **Test-gap check** (super-qa → "Test-gap check (after build)"): map every AC to unit / component / e2e tests, hunt edge cases, write the High gaps red-first. A High gap that needs app code changed → Fail (step 7) with the gap list. Medium/Low go in the handoff under `Test gaps (not written)`.
+4c. **Same suites as the merge gate (#251).** In the QA worktree run `git merge --no-edit origin/<config.base_branch>` (the tree the gate verifies), then run every line of `.claude/bin/super-board-verify-cmd.sh --config <cfg>`: it prints the `verify_commands` with ` --diff origin/<base> --force-full` already inserted, by the same function the merge gate uses. Never a hand-built `post-fix-gate.py` line. A red suite is rerun once on `origin/<base>`; red there too = red on base, not this PR (the merge gate files its own card), so QA does not fail the card for it.
 5. Run the tests. Capture evidence to `docs/super-board/runs/issue-<N>-qa-v<N>/`. For UI/visual ACs, capture screenshots at the standard viewports (1920×1080 desktop, 1024×768 tablet, 375×667 mobile). Commit the screenshots to the issue branch BEFORE writing the comment (the markdown image URLs depend on the files being present on the branch).
    **Evidence stays small** (Goods PR #48, 19/10: 17k lines of raw test XML and logs with ANSI colour codes made `gh pr diff` fail and halted the board). Commit the screenshots plus one `summary.md` of at most 40 lines: the command, its exit code, the pass/fail counts and the failing lines quoted. Never commit raw runner output over 200 lines (`*.log`, JUnit/NUnit `*.xml`, HAR): keep it in `$(git rev-parse --git-common-dir)/super-board/evidence/issue-<N>/`, outside the branch. Strip ANSI colour codes from anything you commit (`LC_ALL=C sed $'s/\x1b\\[[0-9;]*m//g'`). Comments stay short and plain: what passed, what failed, the evidence path (writing-standard.md § 4, at most 8 lines).
 6. **Pass** → commit test files + screenshots to same branch + push → tick the `ac` block with proof lines, write `visual` for UI, append a `history` row, rewrite `status` → `[qa] [report] ✅` PR comment with results + evidence path **+ inline screenshot embeds** (see "Screenshot embed format" below) → issue comment with the SAME inline screenshot embeds → move card QA → Review. Clean up worktree.
@@ -433,6 +441,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
 5. **Reviewer-side test rerun** (always — closes the Tester self-verification gap):
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the test command Tester used (recorded in Tester's PR handoff comment as `Local tests:` line).
+   - Exception: the DevKit gate (`post-fix-gate.py … --full`) is never rerun here — never rerun post-fix-gate --full; read its exit 0 for this head SHA from QA's report. The merge gate's `--force-full` verifies the merged tree.
    - Tests green → continue to step 6.
    - Tests red → open new `[qa]`-prefixed PR thread quoting the failure output, move card Review → QA with `loop:rebuild-N`, exit. Tester wrote a broken suite; QA owns the fix.
 6. **Adversarial mode** (per `truth_gate`): when triggered, spawn 2 sub-agents in parallel:

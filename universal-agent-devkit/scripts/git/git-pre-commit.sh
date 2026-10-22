@@ -32,6 +32,9 @@ blocked() {
   exit 1
 }
 
+[ ! -f "$DEVKIT_ROOT/scripts/git/check-test-durations.sh" ] || bash "$DEVKIT_ROOT/scripts/git/check-test-durations.sh" \
+  || blocked "$(L "test mới chưa có trong tests/lib/test_durations.txt (dòng cần thêm ở trên)." "new test missing from tests/lib/test_durations.txt (line to add above).")"
+
 command -v python3 >/dev/null 2>&1 \
   || blocked "$(L "không có python3 — không quét được secret, commit bị chặn." "python3 not found — cannot scan for secrets, commit blocked.")"
 
