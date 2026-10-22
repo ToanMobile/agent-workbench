@@ -372,7 +372,7 @@ read_lock() {
   # Reads $INFLIGHT_DIR/$1 (bash-assignment format) into PID/LANE/STARTED/WORKER_LOG.
   # Sets empty strings if the file is missing or legacy single-PID format.
   local lock="$INFLIGHT_DIR/$1"
-  PID=""; LANE=""; STARTED=""; WORKER_LOG=""
+  PID=""; LANE=""; STARTED=""; WORKER_LOG=""; FROM_COL=""; COMMENTS0=""
   [ -f "$lock" ] || return 1
   if grep -q '^PID=' "$lock" 2>/dev/null; then
     # shellcheck disable=SC1090
@@ -395,6 +395,7 @@ issue_locked() {
   fi
   [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
   note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
+  note_worker_end "$issue"
   [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
   rm -f "$lock"
   return 1
@@ -731,6 +732,7 @@ dispatch_lane() {
   # to recover lane + dispatch time. issue_locked()/reap_finished_locks() still work
   # because PID= is the first line.
   printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\n' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" > "$INFLIGHT_DIR/$issue"
+  stamp_dispatch_baseline "$issue" "$lane"
   case "$lane" in
     build)
       if lane_idle "${BUILD_PID:-}"; then BUILD_PID="$pid"; BUILD_ISSUE="$issue"
@@ -951,6 +953,98 @@ early_backoff() {
   [ "${n:-0}" -ge 2 ] || [ "${total:-0}" -ge "${SB_EARLY_MAX_TOTAL:-3}" ]
 }
 
+# #137 (20/10, OfficeReader): a QA worker that needed a real device exited after 60–120 s, moved nothing and wrote nothing, and the
+# runner handed the card to the next worker five times in 40 minutes. dispatch_lane stamps the card's column and its issue comment
+# count into the lock; when the worker's lock dies (qa/review lanes only: a build worker moves its card to Building at dispatch, and
+# reclaim_dead_builds already caps those) block_noop_workers compares them with the board. Still in that column with no new comment is
+# a no-op, one line in inflight/noops/<issue>; SB_NOOP_MAX (2) of them inside SB_NOOP_WINDOW_S (24 h) park the card in Blocked instead
+# of a third dispatch. Bookkeeping only: nothing here may end the runner.
+issue_comment_count() {
+  # $1 = issue. Prints its comment count; prints nothing when GitHub cannot say (the caller then concludes nothing).
+  python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1" --jq .comments 2>/dev/null | tr -dc '0-9' || true
+}
+
+stamp_dispatch_baseline() {
+  # $1 = issue, $2 = lane; called right after the lock is written. A baseline we cannot read is left out: that lock is never judged.
+  local issue="$1" lane="$2" col count
+  case "$lane" in qa|review) ;; *) return 0 ;; esac
+  col=$(issue_status "$issue")
+  count=$(issue_comment_count "$issue")
+  [ -n "$col" ] && [ -n "$count" ] || return 0
+  printf 'FROM_COL=%s\nCOMMENTS0=%s\n' "$col" "$count" >> "$INFLIGHT_DIR/$issue" 2>/dev/null || true
+}
+
+note_worker_end() {
+  # $1 = issue; the lock just read (LANE, FROM_COL, COMMENTS0) is the worker that ended. Queued for block_noop_workers.
+  case "${LANE:-}" in qa|review) ;; *) return 0 ;; esac
+  [ -n "${FROM_COL:-}" ] && [ -n "${COMMENTS0:-}" ] || return 0
+  NOOP_CHECK="${NOOP_CHECK:-} ${1}:${LANE}:${FROM_COL}:${COMMENTS0}"
+}
+
+block_noop_workers() {
+  # Expensive tick, after fetch_project_items: judge the workers queued by note_worker_end. Sets NOOP_MOVED=1 when a card was moved.
+  local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
+  local entry issue lane from c0 col count f now n item_id title wlog last tag
+  NOOP_CHECK=""
+  for entry in $pending; do
+    IFS=: read -r issue lane from c0 <<EOF
+$entry
+EOF
+    [ -n "$issue" ] && [ -n "$c0" ] || continue
+    issue_locked "$issue" && continue
+    f="$INFLIGHT_DIR/noops/$issue"
+    col=$(issue_status "$issue")
+    [ -n "$col" ] || continue
+    count=$(issue_comment_count "$issue")
+    [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
+    if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
+      rm -f "$f" 2>/dev/null || true   # it moved the card or wrote something: progress
+      continue
+    fi
+    now=$(date +%s)
+    mkdir -p "$INFLIGHT_DIR/noops" 2>/dev/null || true
+    { { tail -n 19 "$f" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now $lane"; } > "$f.tmp" 2>/dev/null \
+      && mv "$f.tmp" "$f" 2>/dev/null || true
+    n=$( { wc -l < "$f"; } 2>/dev/null | tr -d ' ')
+    wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
+    last=$( { grep -v '^[[:space:]]*$' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
+    if [ "${n:-0}" -lt "$max" ]; then
+      log "⚠ #${issue} (lane ${lane}): worker ended with the card still in ${col} and no new comment — no-op ${n} of ${max}; last log line: ${last:-<no worker log at ${wlog}>}"
+      continue
+    fi
+    item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
+    title=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .content.title][0] // empty' 2>/dev/null || true)
+    tag="❓"
+    printf '%s' "$last" | grep -qiE 'máy thật|thiết bị|real device|device|adb' && tag="📱"
+    if [ -n "$item_id" ] && set_card_status "$item_id" "Blocked"; then
+      NOOP_MOVED=1
+      rm -f "$f" 2>/dev/null || true
+      [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+      gh_checkpoint
+      gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tag} ${lane} worker exited ${n} times without moving the card or commenting
+Card:        #${issue}${title:+ ${title}}
+Reason tag:  ${tag}
+Why blocked: the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment
+Evidence:    ${wlog}; last log line: ${last:-<empty>}
+Checked:     inflight lock reaped; card still in ${col}; issue comment count unchanged since dispatch (${c0})
+What blocks: the worker cannot finish this card${last:+ — its last log line is quoted above}
+Why I (bot) cannot decide:
+             dispatching it again would repeat the same exit and keep the ${lane} lane busy while other cards wait
+To unblock:  read the worker log and give the worker what it lacked
+             [ ] Inspect ${wlog}
+             [ ] Fix the cause (connect the device, label the card needs-device), then drag #${issue} back to ${from}
+Owner:       repo admin
+Move back:   drag this card to ${from} after the steps above are done
+blocked-by:  -" >/dev/null 2>&1 || true
+      log "🛑 #${issue} ${col} → Blocked: ${lane} worker exited ${n} times without a card move or comment"
+    else
+      gh_checkpoint
+      log "⚠ #${issue} in ${col} — ${lane} worker is a no-op ${n} times but the card could not be moved to Blocked; drag it by hand"
+    fi
+  done
+  return 0
+}
+
 reap_finished_locks() {
   # Sweep inflight/ for dead PIDs; remove locks AND sweep stale assignees so the
   # next dispatch can re-claim the card if the worker crashed without releasing.
@@ -968,6 +1062,7 @@ reap_finished_locks() {
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
       note_early_death "$issue"
+      note_worker_end "$issue"
       [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
@@ -1617,6 +1712,9 @@ while true; do
   RECLAIM_MOVED=0
   reclaim_dead_builds
   if [ "$RECLAIM_MOVED" = 1 ]; then fetch_project_items; fi
+  NOOP_MOVED=0
+  block_noop_workers
+  if [ "$NOOP_MOVED" = 1 ]; then fetch_project_items; fi
   BUILD_IDLE=1; QA_IDLE=1; REVIEW_IDLE=1
   build_workers_count
   [ "$BUILD_COUNT" -eq 0 ] || BUILD_IDLE=0
