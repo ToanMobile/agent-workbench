@@ -867,6 +867,13 @@ check_lane_zombie() {
     [ "$cur" = "$col" ] && found=1
   done
   if [ "$found" -eq 0 ]; then
+    # Ân hạn (#237): worker vừa chuyển thẻ còn đang in báo cáo cuối; kill ngay xoá báo cáo đó khỏi log.
+    # ZOMBIE_SEEN = "pid:epoch" lần đầu thấy; kill khi quá SB_ZOMBIE_GRACE giây (mặc định 60).
+    local seen_at now
+    now=$(date +%s)
+    seen_at=$(printf '%s\n' ${ZOMBIE_SEEN:-} | sed -n "s/^${pid}://p" | head -1)
+    if [ -z "$seen_at" ]; then seen_at="$now"; ZOMBIE_SEEN="${ZOMBIE_SEEN:+$ZOMBIE_SEEN }${pid}:${now}"; fi
+    [ $(( now - seen_at )) -ge "${SB_ZOMBIE_GRACE:-60}" ] || return 0
     gh_checkpoint
     log "💀 zombie ${lane} worker on #${issue} (pid=${pid}) — card moved to '${cur}'; killing"
     kill "$pid" 2>/dev/null || true

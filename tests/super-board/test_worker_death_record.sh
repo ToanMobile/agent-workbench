@@ -92,4 +92,16 @@ else
   fail "F: resume_hint wrong (killed='$H1' clean='$H2' none='$H3' unrecorded='$H4')"
 fi
 
+# ── G: zombie (thẻ đã rời cột) được ân hạn: lần thấy đầu không kill, worker tự thoát thì không bị kill; quá hạn mới kill.
+sleep 30 & ZP=$!
+PROJECT_ITEMS_JSON='{"items":[{"content":{"number":138},"status":"Review"}]}'
+QA_PID="$ZP"; QA_ISSUE=138; QA_SEEN_IN_QA="$ZP"; ZOMBIE_SEEN=""
+SB_ZOMBIE_GRACE=60; : > "$TMP/log"
+check_lane_zombie qa "QA"
+if kill -0 "$ZP" 2>/dev/null && [ "$QA_PID" = "$ZP" ]; then ok "G1: first sighting keeps the worker alive (grace)"; else fail "G1: killed on first sighting"; fi
+ZOMBIE_SEEN="$ZP:$(( $(date +%s) - 61 ))"
+check_lane_zombie qa "QA"
+sleep 1
+if ! kill -0 "$ZP" 2>/dev/null && [ -z "$QA_PID" ]; then ok "G2: killed once grace expired"; else fail "G2: not killed after grace"; kill -9 "$ZP" 2>/dev/null; fi
+
 [ "$FAILS" -eq 0 ] && echo "ALL PASS" || { echo "$FAILS FAIL"; exit 1; }

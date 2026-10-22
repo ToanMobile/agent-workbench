@@ -37,6 +37,7 @@ chmod +x "$TMP/bin/super-board-wave-plan.sh"
 export STUB_DIR="$TMP"
 
 unset SB_GITHUB_READ_STRICT   # merge gate export biến này cho verify của nó; test không thừa hưởng
+export SB_ZOMBIE_GRACE=0  # test kill trực tiếp, không chờ ân hạn (#237)
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e   # runner đặt -euo pipefail; các kiểm tra bên dưới tự xét lỗi
 SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"
