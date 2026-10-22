@@ -119,6 +119,19 @@ resolve_lane_workers() {
   printf '%s\n' "$v"
 }
 
+resolve_pos_int() {
+  # $1 = đường dẫn config; $2 = khoá; $3 = mặc định. Số nguyên >= 1; thiếu hoặc sai thì mặc định (#252).
+  local v
+  v=$(jq -r --arg k "$2" '.[$k] // empty' "$1" 2>/dev/null || true)
+  case "$v" in ''|*[!0-9]*) v=$3 ;; esac
+  [ "${#v}" -le 6 ] || v=$3
+  v=$((10#$v))
+  [ "$v" -ge 1 ] || v=$3
+  printf '%s\n' "$v"
+}
+resolve_wip_k() { resolve_pos_int "$1" build_wip_k 2; }    # k: build chỉ giao khi (QA+Review chờ) < k × (qa_workers + review_workers)
+resolve_gate_max() { resolve_pos_int "$1" gate_max 6; }    # trần số post-fix-gate chạy cùng lúc trên máy (mọi repo)
+
 resolve_build_load_max() {
   # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, rồi 100. Mỗi nguồn phải là số
   # DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không nhảy thẳng về 100 (OCR 21/10).
@@ -162,6 +175,9 @@ BUILD_LOAD_MAX=$(resolve_build_load_max "$CONFIG_PATH")
 # Lane QA và Review cũng chạy nhiều worker (#209): qa_workers / review_workers = trần mỗi lane, mặc định 1; worker thêm dùng chung cổng tải build_load_max.
 QA_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" qa_workers)
 REVIEW_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" review_workers)
+# #252: chỉ giao build khi hàng QA+Review chưa dài (build_wip_k), và không giao worker mới khi số gate đang chạy đã chạm gate_max.
+WIP_K=$(resolve_wip_k "$CONFIG_PATH")
+GATE_MAX=$(resolve_gate_max "$CONFIG_PATH")
 BOT_LOGIN=$(jq -r '.notifications.bot_identity // .bot_identity // ""' "$CONFIG_PATH")
 WORKER_BACKEND=$(jq -r '.worker_backend // "workflow"' "$CONFIG_PATH")
 # Runaway controls (issue #8). NO_PROGRESS_CYCLES counts dispatch cycles with no
@@ -574,17 +590,41 @@ build_load_now() {
   else python3 -c 'import os; print(os.getloadavg()[0])' 2>/dev/null || true; fi
 }
 
+gates_running() {
+  # Số post-fix-gate.py đang chạy trên máy (mọi repo); trống khi không đếm được. SB_GATE_COUNT_FILE: móc test.
+  # Đếm tiến trình python có script post-fix-gate.py trong argv, không đếm shell bọc ngoài.
+  if [ -n "${SB_GATE_COUNT_FILE:-}" ]; then { tr -d '[:space:]' < "$SB_GATE_COUNT_FILE"; } 2>/dev/null || true
+  else ps -axo command= 2>/dev/null | awk '$1 ~ /[Pp]ython/ && ($2 ~ /post-fix-gate\.py$/ || $3 ~ /post-fix-gate\.py$/) { n++ } END { print n + 0 }'; fi
+}
+
+gates_at_cap() {
+  # 0 (và log lý do) khi số gate đang chạy >= GATE_MAX. Đếm không ra thì không chặn: heuristic không được làm chết lane. $1 = nhãn lane.
+  local g
+  g=$(gates_running)
+  case "$g" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$g" -ge "${GATE_MAX:-6}" ] || return 1
+  log "$1 workers: gates ${g} >= ${GATE_MAX:-6}: holding"
+  return 0
+}
+
 build_slot_free() {
   # BUILD_FREE=1 (và trả 0) khi lane build được khởi một worker ở tick này. Worker đầu tiên không bị tải chặn; worker thêm chỉ khi
   # còn dưới trần build_workers và tải đọc được và dưới build_load_max. Tối đa một worker mỗi tick (vòng chính giao một thẻ), nên
   # tải kịp phản ứng trước lần khởi kế. Không bao giờ kill worker đang chạy. Mỗi tick log quyết định khi trần > 1.
-  local load
+  local load wip wip_max
   build_workers_count
   BUILD_FREE=0
   if [ "$BUILD_COUNT" -ge "$BUILD_WORKERS" ]; then
     [ "$BUILD_WORKERS" -le 1 ] || log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: at the cap, not starting"
     return 1
   fi
+  # #252: hàng QA+Review dài thì build mới chỉ đẻ thêm việc cho lane đã nghẽn; gate chạm trần thì build mới chỉ chạy chậm hơn. Cả hai chặn cả worker đầu.
+  wip=$(( ${QA:-0} + ${REVIEW:-0} )); wip_max=$(( ${WIP_K:-2} * (${QA_WORKERS:-1} + ${REVIEW_WORKERS:-1}) ))
+  if [ "$wip" -ge "$wip_max" ]; then
+    log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: WIP ${wip} >= ${wip_max} (QA+Review waiting): holding"
+    return 1
+  fi
+  gates_at_cap build && return 1
   if [ "$BUILD_COUNT" -eq 0 ]; then BUILD_FREE=1; return 0; fi
   load=$(build_load_now)
   case "$load" in
@@ -634,6 +674,7 @@ lane_slot_free() {
     return 1
   fi
   [ "$LANE_COUNT" -ne 0 ] || return 0
+  gates_at_cap "$lane" && return 1
   load=$(build_load_now)
   case "$load" in
     ''|*[!0-9.]*|*.*.*|.) log "${lane} workers ${LANE_COUNT}/${L_CAP}: load unreadable ('${load}') — holding at the first worker"; return 1 ;;
