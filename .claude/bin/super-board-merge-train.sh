@@ -13,6 +13,9 @@
 #   4. Ghi biên nhận `<head sha> <cây sau khi merge head đó vào chuỗi>` cho các PR xanh, rồi gọi gate cho từng PR theo thứ tự với
 #      `--train-receipt`. Gate tự merge base hiện tại với head: cây trùng biên nhận thì bỏ verify, khác (base đã dời, head đổi,
 #      PR đứng trước không merge) thì verify như thường. Biên nhận chỉ rút ngắn, không bao giờ nới tiêu chuẩn.
+#      Trước khi merge gì, mỗi PR xanh qua gate --dry-run (policy/approval, không verify lại); PR bị chặn ra khỏi chuỗi và chuỗi còn lại
+#      được verify lại (R11), nên main không dừng ở cây chưa verify vì một PR sau bị policy chặn.
+#      PR sạch với base mà chỉ xung đột với PR đứng trước: `deferred`, ở lại Review chờ wave sau (R8). Head ghim không còn trong repo: exit 6.
 #      Điều biên nhận chứng minh là cây của CHUỖI đầy đủ (đích cuối của đợt) đã qua verify; trạng thái trung gian của main giữa hai
 #      lần merge (mới PR đầu) không được verify riêng.
 #
@@ -21,7 +24,7 @@
 # Exit: 0 mọi PR đã merge · 11 có PR đỏ (về Build; dòng `train-red: <N>`) · mã thoát gate đầu tiên khác 0 (gate chặn PR) ·
 #       12 verify hết giờ sau một lần chạy lại: PR chưa chứng minh ở lại Review, wave sau thử lại, không PR nào bị quy là đỏ ·
 #       5 có PR conflict, không PR nào đỏ/hết giờ · 79/9 của github-read và readiness đi thẳng tới caller.
-#       Mỗi PR một dòng `train-result: <N> <merged|red|conflict|timeout|gate-exit-K>` trên stdout.
+#       Mỗi PR một dòng `train-result: <N> <merged|red|conflict|deferred|timeout|gate-exit-K>` trên stdout.
 # ponytail: PR bị gate chặn (policy cần người duyệt) vẫn nằm trong chuỗi verify, nên cây của các PR sau nó lệch biên nhận và chúng verify như thường;
 #           nâng lên khi nhiều PR cần người duyệt hay đi chung đợt: gate --dry-run từng PR trước khi dựng chuỗi.
 set -euo pipefail
@@ -86,6 +89,11 @@ for p in "${LIST[@]}"; do
   REFS+=("$ref"); HEADS+=("$sha")
 done
 git -C "$REPO_PATH" fetch origin "$BASE" ${REFS[@]+"${REFS[@]}"} --quiet
+# R9: nhánh bị force-push sau lúc đọc head thì SHA đã ghim không còn trong repo: đó là head đã dời (exit 6 như gate), không phải conflict.
+for i in "${!HEADS[@]}"; do
+  git -C "$REPO_PATH" cat-file -e "${HEADS[$i]}^{commit}" 2>/dev/null \
+    || { say "head ${HEADS[$i]} of PR #${LIST[$i]} is no longer in the repo (branch rewritten); the review evidence is void"; exit 6; }
+done
 BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { say "cannot resolve origin/${BASE}"; exit 1; }
 head_of() { local i; for i in "${!LIST[@]}"; do [ "${LIST[$i]}" = "$1" ] && { echo "${HEADS[$i]}"; return 0; }; done; return 1; }
 
@@ -167,11 +175,14 @@ verify_set() {
   return 0
 }
 
-GOOD=(); RED=(); CONFLICT=()
+GOOD=(); RED=(); GATERED=(); CONFLICT=(); DEFERRED=(); BLOCKED=()
 # Một PR không merge sạch vào base + các PR trước: bỏ ra trước, rồi mới chứng minh phần còn lại.
+# Sạch với base mà chỉ xung đột với PR đứng trước (R8): không phải lỗi của PR, ở lại Review chờ wave sau (lúc đó base đã có PR trước).
 CANDS=()
 for p in "${LIST[@]}"; do
-  if build_chain ${GOOD[@]+"${GOOD[@]}"} ${CANDS[@]+"${CANDS[@]}"} "$p"; then CANDS+=("$p"); else CONFLICT+=("$p"); fi
+  if build_chain ${CANDS[@]+"${CANDS[@]}"} "$p"; then CANDS+=("$p")
+  elif build_chain "$p"; then DEFERRED+=("$p")
+  else CONFLICT+=("$p"); fi
 done
 # solve <PR...>: GOOD dài ra bằng các PR xanh; PR đỏ vào RED. Đỏ thì chia đôi, đúng một PR đỏ thì đó là thủ phạm.
 # Hết giờ (3) dừng cả chia đôi (ABORT): PR chưa chứng minh được không bị quy là đỏ. Chuỗi không dựng được (2) ở đúng một PR → CONFLICT.
@@ -193,6 +204,32 @@ solve() {
   solve "${all[@]:$half}"
 }
 [ "${#CANDS[@]}" -eq 0 ] || solve "${CANDS[@]}"
+# R11: biên nhận chỉ chứng minh cây của CHUỖI ĐẦY ĐỦ. PR sau bị gate chặn giữa đợt (policy cần người, exit 7…) sẽ để main dừng ở một
+# cây chưa ai verify. Nên trước khi merge gì: gate --dry-run từng PR xanh (biên nhận dry = cây merge(base, head), nên không verify lại, chỉ
+# chạy policy/approval); PR bị chặn ra khỏi chuỗi và phần còn lại được chứng minh lại. Lặp tối đa số PR lần.
+# ponytail: gate chặn sau preflight (đua với người duyệt/chờ khoá) vẫn có thể để main ở cây đã verify của tiền tố chuỗi trước đó; nâng lên khi
+#           cần tuyệt đối: merge các PR bằng một ref-update duy nhất thay vì từng gate.
+DRYRC=0
+while [ "${#GOOD[@]}" -gt 0 ]; do
+  : >"$RECEIPT"
+  for p in "${GOOD[@]}"; do
+    echo "$(head_of "$p") $(git -C "$SCRATCH" merge-tree --write-tree "$BASE_SHA" "$(head_of "$p")" 2>/dev/null || echo none)" >>"$RECEIPT"
+  done
+  NEWGOOD=(); DROPPED=0
+  for p in "${GOOD[@]}"; do
+    GRC=0
+    bash "$GATE" --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" --dry-run ${PASS[@]+"${PASS[@]}"} >&2 || GRC=$?
+    case "$GRC" in
+      0) NEWGOOD+=("$p") ;;
+      79|9) exit "$GRC" ;;
+      *) BLOCKED+=("$p:$GRC"); DROPPED=1; say "PR #${p} is blocked by the merge gate (exit ${GRC}); the chain is proved again without it"
+         [ "$DRYRC" -ne 0 ] || DRYRC=$GRC ;;
+    esac
+  done
+  [ "$DROPPED" -eq 1 ] || break
+  CANDS=(${NEWGOOD[@]+"${NEWGOOD[@]}"}); GOOD=(); ABORT=0
+  [ "${#CANDS[@]}" -eq 0 ] || solve "${CANDS[@]}"
+done
 # PR chưa được chứng minh xanh/đỏ/conflict vì verify hết giờ.
 in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
 TIMEDOUT=()
@@ -211,16 +248,23 @@ if [ "${#GOOD[@]}" -gt 0 ]; then
   done
 fi
 
-RC=0
+RC=$DRYRC
+for b in "${BLOCKED[@]+"${BLOCKED[@]}"}"; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done
 for p in "${GOOD[@]+"${GOOD[@]}"}"; do
   GRC=0
   bash "$GATE" --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" ${PASS[@]+"${PASS[@]}"} || GRC=$?
-  if [ "$GRC" -eq 0 ]; then echo "train-result: $p merged"; else echo "train-result: $p gate-exit-${GRC}"; [ "$RC" -ne 0 ] || RC=$GRC; fi
+  case "$GRC" in
+    0)     echo "train-result: $p merged" ;;
+    79|9)  echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # R7: halt / readiness của gate đi thẳng tới caller, không bị che bởi 11
+    11)    echo "train-result: $p red"; echo "train-red: $p"; GATERED+=("$p") ;;   # R7: verify riêng của gate đỏ = PR về Build, có dòng train-red
+    *)     echo "train-result: $p gate-exit-${GRC}"; [ "$RC" -ne 0 ] || RC=$GRC ;;
+  esac
 done
+for p in "${DEFERRED[@]+"${DEFERRED[@]}"}"; do echo "train-result: $p deferred"; done
 for p in "${CONFLICT[@]+"${CONFLICT[@]}"}"; do echo "train-result: $p conflict"; done
 for p in "${RED[@]+"${RED[@]}"}"; do echo "train-result: $p red"; echo "train-red: $p"; done
 for p in "${TIMEDOUT[@]+"${TIMEDOUT[@]}"}"; do echo "train-result: $p timeout"; done
-if [ "${#RED[@]}" -gt 0 ]; then exit 11; fi
+if [ "${#RED[@]}" -gt 0 ] || [ "${#GATERED[@]}" -gt 0 ]; then exit 11; fi
 if [ "$RC" -ne 0 ]; then exit "$RC"; fi
 if [ "${#TIMEDOUT[@]}" -gt 0 ]; then exit 12; fi
 if [ "${#CONFLICT[@]}" -gt 0 ]; then exit 5; fi

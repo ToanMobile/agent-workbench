@@ -120,4 +120,33 @@ if grep -q "train-red" "$TMP/t6.log"; then fail "timeout: a PR was blamed as red
 [ -z "$(merged_list)" ] && ok "timeout: nothing merged" || fail "timeout: merged $(merged_list)"
 grep -q "train-result: 12 timeout" "$TMP/t6.log" && ok "timeout: PRs reported as timeout" || fail "timeout: no timeout result: $(grep train "$TMP/t6.log")"
 
+# ── 7. R11 (review #110, blocker): PR sau bị policy chặn (nhãn money → exit 7) giữa đợt. Main không bao giờ dừng ở cây chưa verify:
+#    verify chỉ xanh khi `bad` đi cùng `fix`; #14 thêm `bad`, #15 (money) thêm `fix`. Bỏ #15 khỏi chuỗi thì #14 một mình đỏ → không merge gì.
+card_branch 14 bad; card_branch 15 fix
+printf '{"files":[{"path":"fix"}],"labels":[{"name":"money"}],"body":"","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr15.meta"
+CFG_PAIR="$TMP/cfg-pair.json"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo x >> %s/verify.count; test ! -e bad || test -e fix"]}\n' "$TMP" > "$CFG_PAIR"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_PAIR" --prs 14,15 ) >"$TMP/t7.log" 2>&1; rc=$?
+if origin_has bad && ! origin_has fix; then fail "gate-blocked mid-train: origin/main stopped at an unverified tree (bad without fix)"; else ok "gate-blocked mid-train: origin/main never holds an unverified tree"; fi
+[ "$rc" -ne 0 ] && ok "gate-blocked mid-train: train exit non-zero ($rc)" || fail "gate-blocked mid-train: exit 0"
+
+# ── 8. R8: #17 sạch với base nhưng xung đột với #16 đứng trước (cùng sửa file `shared`): không phải conflict của PR, chờ wave sau (deferred), #16 vẫn merge.
+git -C "$R" fetch -q origin
+card_branch 16 shared; card_branch 17 shared
+printf '{"files":[{"path":"shared"}],"labels":[],"body":"","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr17.meta"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs 16,17 ) >"$TMP/t8.log" 2>&1; rc=$?
+grep -q "train-result: 17 deferred" "$TMP/t8.log" && ok "chain-only conflict: #17 deferred to the next wave" || fail "chain-only conflict: no deferred result: $(grep train "$TMP/t8.log")"
+[ "$rc" -eq 0 ] && ok "chain-only conflict: train exit 0 (no rebase pass for #17)" || fail "chain-only conflict: exit $rc (want 0)"
+[ "$(merged_list)" = "16 " ] && ok "chain-only conflict: #16 merged" || fail "chain-only conflict: merged $(merged_list)"
+
+# ── 9. R9: head ghim không còn trong repo (nhánh bị force-push sau khi đọc): head đã dời (exit 6), không phải conflict.
+card_branch 18 f18; card_branch 19 f19
+echo 1111111111111111111111111111111111111111 > "$TMP/pr19.head"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs 18,19 ) >"$TMP/t9.log" 2>&1; rc=$?
+[ "$rc" -eq 6 ] && ok "missing pinned head: exit 6 (head moved)" || fail "missing pinned head: exit $rc (want 6): $(tail -4 "$TMP/t9.log")"
+[ -z "$(merged_list)" ] && ok "missing pinned head: nothing merged" || fail "missing pinned head: merged $(merged_list)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train: all passed" || { echo "❌ test_merge_train: $FAILS failed"; exit 1; }
