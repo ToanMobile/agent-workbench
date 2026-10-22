@@ -86,11 +86,12 @@ rm_wt wt-t2
 wipe
 add_wt wt-b2
 out="$(run_gate "$TMP/wt-b2" --no-cache)"; rm_wt wt-b2
-[ -n "$(store_file)" ] || fail "4. tiền đề: builder không ghi mục store (ca tuổi vô nghĩa)"
-add_wt wt-q2
-b=$(runs); out="$(DEVKIT_GATE_CACHE_MAX_S=0 run_gate "$TMP/wt-q2")"; rc=$?
-check "4. mục store quá tuổi: chạy suite" 0 1 no "$b" "$rc" "$out"
-rm_wt wt-q2
+if [ -n "$(store_file)" ]; then
+  add_wt wt-q2
+  b=$(runs); out="$(DEVKIT_GATE_CACHE_MAX_S=0 run_gate "$TMP/wt-q2")"; rc=$?
+  check "4. mục store quá tuổi: chạy suite" 0 1 no "$b" "$rc" "$out"
+  rm_wt wt-q2
+else fail "4. tiền đề: builder không ghi mục store (ca tuổi vô nghĩa)"; fi
 
 # 5. Mục store không đáng tin: exit 2, carried_from, ma trận khác, fingerprint trong file khác tên file → chạy suite.
 for kind in exit2 carried matrix fpname; do
@@ -201,7 +202,7 @@ git add -A && git commit -qm init; echo 'a = 2' > src/a.py; git commit -qam chan
 STORE10="$(git rev-parse --path-format=absolute --git-common-dir)/postfix-gate/tree_receipts"
 n10() { [ -f "$TMP/count10.$1" ] && wc -l < "$TMP/count10.$1" | tr -d ' ' || echo 0; }
 gate10() { local d="$1"; ( cd "$d" && CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --matrix "$d/matrix.json" --run-tests --full --force-full --diff HEAD~1 --no-checklist 2>&1 ); }
-out="$(gate10 "$R10")"
+out="$(gate10 "$R10")" || { fail "10. setup: lượt gate đầu của repo10 exit khác 0"; printf '%s\n' "$out" | tail -8; }
 git -C "$R10" worktree add -q --detach "$TMP/wt-x10" HEAD || { echo "✖ setup: worktree add wt-x10"; exit 1; }; echo 'a = 3' > "$TMP/wt-x10/src/a.py"
 b1=$(n10 1); b2=$(n10 2); out="$(gate10 "$TMP/wt-x10")"; rc=$?
 FP10="$(python3 "$DEVKIT_DIR/bin/tree_fp.py" "$TMP/wt-x10")"
