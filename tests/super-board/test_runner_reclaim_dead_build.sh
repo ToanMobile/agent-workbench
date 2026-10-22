@@ -37,6 +37,7 @@ set_card_status() { echo "move $1 $2" >> "$TMP/writes"; }
 log() { echo "$*" >> "$TMP/log"; }
 note_worker_limit() { :; }
 fetch_project_items() { :; }
+issue_is_open() { return 0; }   # #254: reclaim đọc state issue; các ca ở đây là issue mở
 
 worker() { sleep 300 >/dev/null 2>&1 & W=$!; WORKERS="$WORKERS $W"; }
 sleep 0 & DEAD=$!; wait "$DEAD"
