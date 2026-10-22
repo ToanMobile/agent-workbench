@@ -1185,6 +1185,8 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
     tra bên dưới vẫn so với project_dir."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     sibling = bool(path) and name is None   # trước khi path bị gán biên nhận của chính git dir bên dưới
+    # #247: một mục của store theo cây (<common>/postfix-gate/tree_receipts/<fp>.json), không phải full_pass.json của một worktree
+    from_store = sibling and os.path.basename(os.path.dirname(path)) == TREE_STORE_DIR
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
         path = path or tree_fp.receipt_path(project_dir)
@@ -1241,7 +1243,10 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
         # Lượt chạy suite thật ghi tested_at ngay lúc ghi biên nhận; lượt dùng lại (một phần hay toàn bộ) giữ tested_at của biên nhận cũ
         # (write_full_pass_receipt tested_at=cache["tested_at"]). Run-log chỉ có epoch làm tròn giây: một PASS thật cùng giây không phân biệt được.
         # "time" lấy trước "tested_at" vài µs trong cùng dict: hiệu hơi âm. _time_ok trước: số nguyên 400 chữ số trừ float là OverflowError.
-        if not _time_ok(r.get("time")) or not (-1 <= r["time"] - tested < 5):
+        # Mục của store theo cây không phải qua hai luật "lượt chạy thật" này (#247): mọi lượt không-PASS trên cây xoá đúng mục đó (cùng khoá
+        # fp, _tree_store), nên bản chép dây chuyền (lượt dùng lại ghi đè mục của lượt thật) không thoát khỏi một FAIL; tested_at cũ giữ nguyên
+        # qua mỗi lượt dùng lại nên tuổi tối đa vẫn tính từ lần chạy thật. Các kiểm tra còn lại (cây, ma trận, định dạng, local_sha) vẫn áp.
+        if not from_store and (not _time_ok(r.get("time")) or not (-1 <= r["time"] - tested < 5)):
             return None
     if name and (not r.get("head") or r.get("head") != _head_sha(project_dir)):
         return None   # a Stop record also names the HEAD it was taken at: a commit (the fingerprint does not see one) is a new state
@@ -1251,7 +1256,7 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
     fp = fp or tree_fp.tree_fingerprint(project_dir)
     if not fp or r.get("fingerprint") != fp:
         return None
-    if sibling and not _sibling_logged_pass(path, r):   # sau phép so fingerprint (rẻ): chỉ biên nhận đúng nội dung mới đọc run-log
+    if sibling and not from_store and not _sibling_logged_pass(path, r):   # sau phép so fingerprint (rẻ): chỉ biên nhận đúng nội dung mới đọc run-log
         return None
     # local_state_sha(project_dir) alone when nothing was rewritten: the one-argument call is the seam tests stub (test_gate_stop_run_record A10)
     return r if r.get("local_sha") == (local_state_sha(project_dir, regen) if regen else local_state_sha(project_dir)) else None
@@ -1334,6 +1339,27 @@ def _sibling_logged_pass(path, r):
                 and rec.get("verdict") == "PASS" and rec.get("reused_full_pass") is False)   # lượt dùng lại một phần cũng log PASS
                 # (một suite chạy thật) nhưng mang PASS mượn: không cho mượn tiếp (review + OCR 17/10). Dòng không có field: không mượn.
     return False
+
+
+TREE_STORE_DIR = "tree_receipts"   # tree_fp.tree_receipt_dir: <git common dir>/postfix-gate/tree_receipts
+
+
+def tree_store_receipts(project_dir, fp):
+    """[<store>/<fp>.json] khi mục store của đúng cây `fp` là file thường (#247: PASS của builder còn đó sau khi worktree của nó bị gỡ,
+    full_pass.json đi theo git dir nên sibling_receipts không thấy), [] nếu không. Không đọc nội dung: cached_full_pass kiểm."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - sibling module in bin/
+        store = tree_fp.tree_receipt_dir(project_dir)
+    except (ImportError, OSError, subprocess.SubprocessError):
+        return []
+    if not store or not re.fullmatch(r"[0-9a-f]{24}", fp or ""):
+        return []
+    p = os.path.join(store, fp + ".json")
+    try:
+        return [p] if stat.S_ISREG(os.lstat(p).st_mode) else []   # chỉ file thường (INSTINCT-040)
+    except OSError:
+        return []
 
 
 def sibling_receipts(project_dir):
@@ -1432,11 +1458,13 @@ def dirty_links(project_dir, dirty):
     return {p: hashlib.new(algo, b"blob %d\0" % len(t) + t).hexdigest() for p, t in texts.items()}
 
 
-def _tree_store(tree_fp, project_dir, fp, data=None):
+def _tree_store(tree_fp, project_dir, fp, data=None, create=True):
     """#105 (trunk mode): mirror of the receipt in <git common dir>/postfix-gate/tree_receipts/<fp>.json. A worktree's own receipt goes with
     its git dir when the worktree is removed, so proof_gate finds the full PASS of the tree a session delivered into main (finish, squash
     PR) here. data: the exit-0 receipt; None: drop the entry, any other verdict on that tree. fp None: the tested tree, fingerprinted only when the store holds something. Only the
-    entry of that one tree is touched; a write prunes entries older than TREE_RECEIPT_MAX_AGE_S or beyond the TREE_RECEIPT_MAX newest."""
+    entry of that one tree is touched; a write prunes entries older than TREE_RECEIPT_MAX_AGE_S or beyond the TREE_RECEIPT_MAX newest.
+    create False (#247, a run that re-used a PASS): only refreshes an entry that is there. A FAIL on the tree removes its entry, and a copy
+    carrying a re-used PASS must never put it back (principal review 22/10, P1: wt-b FAILs, wt-c re-runs on its own receipt, a new worktree borrows)."""
     store = None
     try:
         store = tree_fp.tree_receipt_dir(project_dir)
@@ -1449,6 +1477,8 @@ def _tree_store(tree_fp, project_dir, fp, data=None):
         if data is None:
             with contextlib.suppress(FileNotFoundError):
                 os.remove(path)
+            return
+        if not create and not os.path.isfile(path):
             return
         os.makedirs(store, exist_ok=True)
         text = json.dumps(data)
@@ -1476,7 +1506,7 @@ def _tree_store(tree_fp, project_dir, fp, data=None):
 
 
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
-                            untested=None, partial=False, locked=True, keep_same=False):
+                            untested=None, partial=False, locked=True, keep_same=False, refresh_only=False):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
     tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
@@ -1493,7 +1523,8 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     locked: the run holds test_run.lock (False: it waited and did not get it, or it never asked: it re-used and ran nothing). A run without the lock
     may only DROP a receipt, never replace it (F1, see the partial branch).
     keep_same (#154): the run is the merge gate of `worktree finish` — its UNVERIFIED exit 2 leaves an exit-0 receipt of the SAME
-    content as it is (what the session owes is its own gate's business); a receipt of other content is still dropped."""
+    content as it is (what the session owes is its own gate's business); a receipt of other content is still dropped.
+    refresh_only (#247): the run re-used a PASS — its tree store entry is refreshed when there, never created (see _tree_store)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -1601,7 +1632,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
             f.write(text)
         os.replace(tmp, path)
         if exit_code == 0:
-            _tree_store(tree_fp, project_dir, fingerprint, data)
+            _tree_store(tree_fp, project_dir, fingerprint, data, create=not refresh_only)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
 
@@ -5744,12 +5775,15 @@ def main():
         # stale_reused cuối mà trước khi lượt này ghi biên nhận thì lượt này vẫn exit 0 — cùng loại cửa sổ read-only đã ghi bên dưới; khoá
         # cả lock của worktree anh em (LOCK_NB) khi gặp một ca như vậy.
         siblings = sibling_receipts(project_dir)
-        fp = (fp or tree_fp_of(project_dir)) if siblings else fp   # một lần cho mọi biên nhận anh em, không phải mỗi file một lần
-        for path in siblings:
+        # #247: sau các biên nhận anh em còn một nguồn nữa — mục theo cây trong store, sống sau khi worktree ghi nó bị gỡ (Builder bước 9)
+        fp = (fp or tree_fp_of(project_dir)) or None   # một lần cho mọi biên nhận (anh em và store), không phải mỗi file một lần
+        for path in siblings + tree_store_receipts(project_dir, fp):
+            from_store = os.path.basename(os.path.dirname(path)) == TREE_STORE_DIR
             stamp = _file_stamp(path)
             found = reuse_from(cached_full_pass(project_dir, args.matrix, fp, None, path), partial=True)
             if found:
-                print(f"    {DIM}{tr(f'(biên nhận của worktree anh em: {path})', f'(sibling worktree receipt: {path})')}{RESET}")
+                kind = (tr('biên nhận theo cây', 'tree receipt') if from_store else tr('biên nhận của worktree anh em', 'sibling worktree receipt'))
+                print(f"    {DIM}({kind}: {path}){RESET}")
                 regen = regen_allowed(found.get("local_regen") or [])   # what cached_full_pass left out, filtered the same way
                 if regen:   # what the comparison of local state left out: the files its suites rewrote (local_regen)
                     print(f"    {DIM}{tr('không so (suite tự ghi lại)', 'not compared (rewritten by its suites)')}: {len(regen)}: {', '.join(regen[:3])}{RESET}")
@@ -6725,8 +6759,14 @@ def main():
             # PASS theo khoá CHÍNH XÁC (cached-full) vào biên nhận như UNTESTED: biên nhận nói về nội dung cả cây, và reuse_from chạy
             # lại mọi suite UNTESTED của biên nhận (review 20/10, P0-A; tests/gates/test_gate_suite_cache.sh ca 16)
             receipt_tests = [dict(t, status="UNTESTED", label="KEYED") if precise_hit(t) else t for t in regression_tests]
+            # Refresh-only only when a PASS was COPIED from a receipt (own, sibling, store, budget record: reuse_src): a content-key hit (suite
+            # cache) re-uses nothing from a receipt, and a FAIL on a key is permanent there, so it cannot put a PASS back (review 22/10, P2).
+            # ponytail: a --full that re-used some suites of its own exit-2 receipt (the Stop hook dropped the tree entry) and ran the rest leaves no
+            # tree entry for a removed worktree: safe, only slower; upgrade when a PASS carries its lineage (real-run time) so a copy of a real
+            # run can be told from a copy of a copy.
+            reuse_at = reused_tested_at()
             write_full_pass_receipt(project_dir, exit_code, args.matrix, receipt_tests,
-                                    tested_at=reused_tested_at(),
+                                    tested_at=reuse_at, refresh_only=reuse_src[0] is not None,
                                     tested_fp=tested_fp, untested=receipt_untested, partial=partial or read_only,
                                     locked=lock_fh is not None,   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
                                     keep_same=merge_check)
@@ -6734,6 +6774,13 @@ def main():
         # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).
         if run_tests and any(t.get("status") in ("FAIL", "TIMEOUT") for t in regression_tests):
             drop_budget_record(project_dir)
+            # #247 (review P2): an impacted or deferred run that FAILS never reaches write_full_pass_receipt, so the tree store entry of the
+            # tree it tested would stay lendable: a FAIL on a tree takes its store entry, whatever the run mode
+            try:
+                import tree_fp  # noqa: PLC0415 - sibling module in bin/
+                _tree_store(tree_fp, project_dir, budget_fp)   # budget_fp = tested_fp or the fingerprint taken for the budget record
+            except ImportError:
+                pass
         elif run_tests and budget_fp and budget_head and not force_reason and not lock_busy and exit_code != 0 and ran_cmds:
             # a PASS is the hook's pass_fp; a run that started no suite has nothing of its own to record (and rewriting what it only read is how a
             # PASS that a concurrent run had just replaced came back). The suites it re-used stand on the file that vouched for them: when that
