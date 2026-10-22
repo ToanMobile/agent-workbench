@@ -63,6 +63,17 @@ python3 universal-agent-devkit/scripts/governance/create_task.py \
   --needs-you "Cắm Pixel 7 thật, mở file DOCX 20 MB, chụp màn hình kết quả vào issue"
 ```
 
+### 1c. Thẻ về repo khác: luôn chỉ repo đích
+Mặc định thẻ nằm ở repo của checkout đang đứng (theo `git origin`) và đi vào board của repo đó. Thẻ có việc ở repo
+khác (Goods, NFH, GeelyEx2, OfficeReader) phải đi với `--repo`, để issue và card nằm ở đúng repo và đúng board:
+```bash
+python3 universal-agent-devkit/scripts/governance/create_task.py --repo ToanMobile/GeelyEx2 \
+  --title "🔧 [chore] GeelyEx2: merge PR #82" --problem "..." --ac "- [ ] PR #82 merged"
+```
+Tiêu đề hoặc body nhắc tên repo khác mà thiếu `--repo` thì script thoát exit 64 và chưa tạo gì. Việc chạm hai repo:
+tạo một thẻ mỗi repo. Thẻ thật sự về repo đang đứng, chỉ lấy repo kia làm ví dụ: thêm `--here`.
+Chế độ `--from-file` (mục 2) không bị kiểm: ticket thuộc backlog của chính checkout đang đứng.
+
 ### 2. Đẩy một ticket có sẵn từ file backlog
 Khi người dùng muốn đẩy ticket số N từ file [`docs/super-board/backlog-tickets.md`](file:///Volumes/Data/Toan/agent-workbench/docs/super-board/backlog-tickets.md):
 ```bash

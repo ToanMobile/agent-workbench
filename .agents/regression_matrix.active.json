@@ -743,11 +743,45 @@
       ]
     },
     {
+      "component": "super-board-merge-train",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_train.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-TRAIN-01",
+          "name": "merge train: 3 PR sẵn sàng thì verify đúng một lần và cả 3 merge; một PR đỏ được chia đôi tìm ra (exit 11) và hai PR còn lại vẫn merge; một PR chạy như gate thường (#110)",
+          "command": "bash tests/super-board/test_merge_train.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-lane-workers",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_lane_workers.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-LANE-WORKERS-01",
+          "name": "lane QA và Review chạy nhiều worker (qa_workers / review_workers, mặc định 1): một worker mới mỗi tick, cổng tải build_load_max, zombie/reap/dừng khẩn/nhận lại nhận ra cả worker thêm, worker thêm không bị trần max_workers chặn",
+          "command": "bash tests/super-board/test_runner_lane_workers.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "mcp-servers/agent-office",
       "watch_files": [
         "mcp-servers/agent-office/server.py",
         "mcp-servers/agent-office/web/index.html",
         "mcp-servers/agent-office/web/pathing.js",
+        "mcp-servers/agent-office/web/vendor/*",
+        "mcp-servers/agent-office/*.sh",
+        "ai-factory.sh",
         "mcp-servers/agent-office/tests/*"
       ],
       "mandatory_regression_tests": [
@@ -755,6 +789,37 @@
           "id": "REG-AGENT-OFFICE-01",
           "name": "agent-office: unittest (server, redact, host check) và tìm đường A* của người đi trong xưởng (node)",
           "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-card-items-retry",
+      "watch_files": [
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-stop.sh",
+        "tests/super-board/test_card_items_count_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-CARD-ITEMS-RETRY-01",
+          "name": "card.sh items đọc lại 1 lần khi số item lệch totalCount (không chết runner); lệch cả hai lần vẫn exit 69; stop.sh ghi marker trước kill (#256)",
+          "command": "bash tests/super-board/test_card_items_count_retry.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-board-read-retry",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_board_read_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-READ-RETRY-01",
+          "name": "runner đọc lại board có backoff khi lần đọc hỏng tạm thời; hỏng hết lượt thì bỏ tick thay vì chết; halt 79 vẫn dừng; vòng chính chỉ đọc qua tick_fetch (#256)",
+          "command": "bash tests/super-board/test_runner_board_read_retry.sh",
           "parallel_safe": true
         }
       ]

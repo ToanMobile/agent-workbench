@@ -241,5 +241,18 @@ grep -q "verify: : post-fix-gate.py --diff origin/main --force-full; " "$TMP/gat
   && ok "16 pfg: the verify command took the post-fix-gate.py branch" \
   || fail "16 pfg: post-fix-gate.py branch not taken: $(grep 'verify:' "$TMP/gate16-pfg-cap3.log" | head -1)"
 
+# Ca 17 (#152, OCR 21/10 vòng 10): lần đọc đầu tải cao (gate vào chờ, LOAD_WAIT_ON=1), poll sau file tải rác ⇒ gate bỏ chờ ⇒ verify
+# KHÔNG được thấy DEVKIT_SLOT_LOAD_WAIT_S=0 (không ai còn chờ tải; bên trong phải tự chờ).
+echo 99 > "$LOADF"; rm -f "$PRIOF"
+( when_waiting "$TMP/gate17.log"; echo junk > "$LOADF" ) &
+writer=$!
+( unset DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S; cd "$WT" \
+    && SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=1 bash "$GATE" --config "$CFG_PRIO" --pr 5 --expect-head "$H" ) >"$TMP/gate17.log" 2>&1
+wait "$writer" 2>/dev/null
+grep -q "cannot read the machine load" "$TMP/gate17.log" && ok "17: the gate saw the unreadable load mid-wait" \
+  || fail "17: no unreadable-load message: $(grep merge-gate "$TMP/gate17.log" | tail -3)"
+[ "$(cat "$PRIOF" 2>/dev/null)" = "merge unset" ] && ok "17: verify sees DEVKIT_SLOT_LOAD_WAIT_S unset after a mid-wait load read failure" \
+  || fail "17: verify env '$(cat "$PRIOF" 2>/dev/null)' (want 'merge unset')"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }

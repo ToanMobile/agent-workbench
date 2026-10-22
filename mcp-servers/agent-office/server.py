@@ -984,7 +984,7 @@ def build_state(cfg: dict, project: dict, gh_meta: dict, sessions: list, sess_in
     # thông báo
     notices = []
     if demo:
-        notices.append({"level": "info", "text": "Chế độ demo: số liệu runner lấy từ ảnh chụp tuios lúc 14:44, tên việc là dữ liệu mẫu."})
+        notices.append({"level": "info", "text": "Chế độ demo: số liệu runner lấy từ ảnh chụp lúc 14:44, tên việc là dữ liệu mẫu."})
     if gh_meta.get("error"):
         err = gh_meta["error"]
         if err == "NO_GH":
@@ -1026,7 +1026,7 @@ def build_state(cfg: dict, project: dict, gh_meta: dict, sessions: list, sess_in
 
 # ----------------------------------------------------------------- demo
 def demo_data(cfg: dict):
-    """Dựng lại ảnh chụp tuios 14:44:50 ngày 21/10; tên việc là dữ liệu mẫu."""
+    """Dựng lại ảnh chụp runner 14:44:50 ngày 21/10; tên việc là dữ liệu mẫu."""
     t0 = (now() // 120) * 120 + 60  # chỉ dời mốc 2 phút/lần để giao diện không dựng lại liên tục
     snap = datetime.fromtimestamp(t0).replace(hour=14, minute=44, second=50)
     shift = t0 - snap.timestamp()

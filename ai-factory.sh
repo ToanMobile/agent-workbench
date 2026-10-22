@@ -20,22 +20,30 @@ mkdir -p "$STATE" && chmod 700 "$STATE"
 PORT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("port",4317))' "$APP/config.json")"
 
 listening() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; }
-alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
-stop_pid() { # only the PID this script recorded, never a process found by name
-  if alive "$1"; then kill "$(cat "$1")"; fi
+is_office() { curl -s -m 3 -o /dev/null -D - "http://127.0.0.1:$PORT/" 2>/dev/null | grep -qi '^Server: AgentOffice'; }
+# alive FILE PATTERN: the recorded PID still runs AND is still our program (after a reboot the number may belong to another one)
+alive() {
+  [ -f "$1" ] || return 1
+  local pid; pid="$(cat "$1")"
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  ps -p "$pid" -o args= 2>/dev/null | grep -q -- "$2"
+}
+stop_pid() { # stop_pid FILE PATTERN: kills only the recorded PID, and only when it is still ours
+  if alive "$1" "$2"; then kill "$(cat "$1")"; fi
   rm -f "$1"
 }
+tunnel_url() { grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$TUN_LOG" 2>/dev/null | grep -v '//api\.' | head -1; }
 
 case "${1:-start}" in
   stop)
-    stop_pid "$TUN_PID"; rm -f "$KEY_FILE"
-    stop_pid "$SRV_PID"
+    stop_pid "$TUN_PID" cloudflared; rm -f "$KEY_FILE"
+    stop_pid "$SRV_PID" server.py
     python3 "$BOARDS" stop
     echo "Đã dừng AI Factory (tunnel, server, các board)."
     exit 0 ;;
   status)
     if listening; then echo "Agent Office: đang chạy (http://ai-factory.localhost:$PORT/)"; else echo "Agent Office: tắt"; fi
-    if alive "$TUN_PID"; then echo "Tunnel: đang chạy ($(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$TUN_LOG" | head -1))"; else echo "Tunnel: tắt"; fi
+    if alive "$TUN_PID" cloudflared; then echo "Tunnel: đang chạy ($(tunnel_url))"; else echo "Tunnel: tắt"; fi
     python3 "$BOARDS" status
     exit 0 ;;
   start) ;;
@@ -53,30 +61,32 @@ if listening; then echo "✔ Agent Office: http://ai-factory.localhost:$PORT/"; 
 if python3 "$BOARDS" start; then echo "✔ Các board đã chạy"; else echo "⚠ Một số board không khởi động được (xem ở trên)"; fi
 
 # 3. quick tunnel with a fresh key: the old tunnel and its key go first
-stop_pid "$TUN_PID"
+stop_pid "$TUN_PID" cloudflared; rm -f "$KEY_FILE"
 if ! command -v cloudflared >/dev/null; then
   echo "⚠ Chưa có cloudflared (brew install cloudflared): bỏ qua truy cập từ xa"
+elif ! is_office; then
+  echo "✖ Cổng $PORT không phải Agent Office (chương trình khác đang chiếm): không mở tunnel"
 else
-  (umask 077 && python3 -c 'import secrets;print(secrets.token_urlsafe(32))' >"$KEY_FILE")
+  # write the key in one step (temp file + rename) so the server never reads a half-written key
+  (umask 077 && python3 -c 'import secrets;print(secrets.token_urlsafe(32))' >"$KEY_FILE.tmp" && mv -f "$KEY_FILE.tmp" "$KEY_FILE")
   : >"$TUN_LOG"
   nohup cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$PORT" >"$TUN_LOG" 2>&1 &
   echo $! >"$TUN_PID"
   URL=""
   for _ in $(seq 1 60); do
-    URL="$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$TUN_LOG" | head -1)"
+    URL="$(tunnel_url)"
     [ -n "$URL" ] && break
-    alive "$TUN_PID" || break
+    alive "$TUN_PID" cloudflared || break
     sleep 0.5
   done
   if [ -z "$URL" ]; then
     echo "✖ Tunnel không lên, xem $TUN_LOG"
-    stop_pid "$TUN_PID"; rm -f "$KEY_FILE"
+    stop_pid "$TUN_PID" cloudflared; rm -f "$KEY_FILE"
   else
     LINK="$URL/#key=$(cat "$KEY_FILE")"
     echo
     echo "📱 Quét mã này bằng điện thoại (mã đổi mỗi lần chạy ai-factory):"
     if command -v qrencode >/dev/null; then qrencode -t ANSIUTF8 -m 2 "$LINK"; else echo "(cài qrencode để hiện QR: brew install qrencode)"; fi
-    printf %s "$LINK" | pbcopy 2>/dev/null && echo "Link đầy đủ đã chép vào clipboard."
     echo "Địa chỉ tunnel: $URL"
   fi
 fi
