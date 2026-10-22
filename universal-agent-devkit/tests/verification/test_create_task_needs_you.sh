@@ -137,5 +137,34 @@ rc=$(run "fix lỗi crash trên thiết bị thật")
 [ "$rc" = 0 ] && [ "$(q 'helper')" = None ] && [ "$(q '"## Cần người" in body')" = False ] && grep -q "\-\-needs-you" "$TMP/out" \
   && ok "a one-line summary is never auto-marked, a hint is printed" || fail "summary rc=$rc helper=$(q 'helper') out=$(cat "$TMP/out")"
 
+# 14. #233: AC là văn xuôi (không gạch đầu dòng) -> từ chối (65) TRƯỚC khi tạo issue, nêu lý do.
+with_helper
+rc=$(run --title "🐛 [bug] viewer: crash DOCX lớn" --problem "Crash." --ac "Không quá 2% tổng số")
+[ "$rc" = 65 ] && [ ! -s "$FAKE_LOG" ] && grep -q "Acceptance Criteria" "$TMP/out" \
+  && ok "prose AC is refused (65) before anything is created, reason printed" || fail "prose AC rc=$rc log=$(cat "$FAKE_LOG") out=$(cat "$TMP/out")"
+
+# 15. #233: body nhắc repo khác trong registry (ToanMobile/GeelyEx2) khi --repo là agent-workbench -> không tạo issue, không vào Project #1.
+rc=$(run --repo ToanMobile/agent-workbench --title "🐛 [bug] viewer: crash DOCX lớn" --problem "Lỗi nằm ở ToanMobile/GeelyEx2, file app/Foo.kt." --ac "- [ ] Test pass")
+[ "$rc" = 65 ] && [ ! -s "$FAKE_LOG" ] && grep -q "GeelyEx2" "$TMP/out" \
+  && ok "body naming another board's repo is refused, nothing created or added to Project #1" || fail "foreign repo rc=$rc log=$(cat "$FAKE_LOG") out=$(cat "$TMP/out")"
+# 15b. --no-repo-check cho phép (ticket cố ý nhắc repo khác).
+rc=$(run --repo ToanMobile/agent-workbench --title "🐛 [bug] viewer: crash DOCX lớn" --problem "Port sang ToanMobile/GeelyEx2." --ac "- [ ] Test pass" --no-repo-check)
+[ "$rc" = 0 ] && [ "$(q 'bool(create)')" = True ] && ok "--no-repo-check lets a deliberate cross-repo mention through" || fail "no-repo-check rc=$rc out=$(cat "$TMP/out")"
+# 15c. Tên repo của chính board không bị coi là repo khác.
+rc=$(run --repo ToanMobile/agent-workbench --title "🐛 [bug] viewer: crash DOCX lớn" --problem "Xem ToanMobile/agent-workbench#12." --ac "- [ ] Test pass")
+[ "$rc" = 0 ] && ok "mentioning the board's own repo is fine" || fail "own repo rc=$rc out=$(cat "$TMP/out")"
+
+# 16. #233: AC cần dữ liệu ngoài ("prompt thật") -> thẻ có nhãn needs-you (mọi dòng AC là việc của người).
+rc=$(run --title "🧪 [test] router: đo tỉ lệ đúng" --problem "Chưa đo." --ac "- [ ] Chạy ≥100 prompt thật, tỉ lệ đúng ≥ 95%")
+[ "$rc" = 0 ] && [ "$(q 'helper is not None and "prompt thật" in helper[helper.index("--action") + 1]')" = True ] \
+  && ok "an AC that needs real prompts marks the card needs-you" || fail "prompt thật rc=$rc helper=$(q 'helper') out=$(cat "$TMP/out")"
+
+# 17. --check-body: cùng kiểm tra cho runner (body stdin) -> mỗi lý do một dòng, exit 65; body sạch -> exit 0, im lặng.
+GOODBODY=$'## Acceptance Criteria\n- [ ] test đỏ rồi xanh\n'
+out=$(printf '%s' "$GOODBODY" | python3 "$CT" --check-body --repo ToanMobile/agent-workbench 2>&1); rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] && ok "--check-body: clean body exits 0 silently" || fail "check-body clean rc=$rc out=$out"
+out=$(printf '%s' $'## Problem\nToanMobile/Goods-Triple-Shelf-Match-3D\n## Acceptance Criteria\nprose only\n' | python3 "$CT" --check-body --repo ToanMobile/agent-workbench 2>&1); rc=$?
+[ "$rc" = 65 ] && [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 2 ] && ok "--check-body: one reason line per problem, exit 65" || fail "check-body bad rc=$rc out=$out"
+
 [ "$FAILS" -eq 0 ] || { echo "$FAILS failed"; exit 1; }
 echo "all passed"

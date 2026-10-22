@@ -84,6 +84,7 @@ HUMAN_ONLY = re.compile("|".join([
     r"thiết bị thật", r"máy thật", r"điện thoại thật", r"\breal device", r"\bphysical device",
     r"xe thật", r"head ?unit thật", r"\bin[- ]car\b",
     r"playtest", r"người chơi thật", r"\breal players?\b",
+    r"prompt thật", r"\breal prompts?\b", r"người duyệt", r"dữ liệu (production|thật)",
     r"play console", r"app store connect", r"testflight", r"apple team id", r"\biarc\b",
     r"(đặt|thêm|nhập|tạo|cấp|set|add|provide) (secret|api key|khoá api|khóa api)",
     r"chốt (thiết kế|phương án|vị trí|scope)", r"(design|product|scope) decision",
@@ -162,6 +163,41 @@ def detect_needs_you(text):
     lines = [line for line in lines if line]
     hits = [line for line in lines if HUMAN_ONLY.search(line)]
     return (hits[0] if hits else None), bool(hits) and len(hits) == len(lines)
+
+
+# #233: một hàm kiểm thẻ cho create_task và bước kéo Backlog của runner (`--check-body`). Mỗi vấn đề một dòng
+# `<loại>: <lý do>`; loại ac | repo | human. Rỗng = thẻ đạt.
+LOCAL_CHECKOUT_ROOT = "/Volumes/Data/Toan/"
+
+
+def foreign_repo_mentions(body, repo):
+    """Repo của board khác (theo PROJECT_REGISTRY) hoặc thư mục checkout khác mà body nhắc tới; thẻ vào Project #1 sẽ sai board."""
+    own = repo.split("/")[-1].lower()
+    found = []
+    for known in PROJECT_REGISTRY:
+        name = known.split("/")[-1]
+        if name.lower() != own and re.search(rf"(?<![\w/-]){re.escape(known)}(?![\w-])", body or "", re.I):
+            found.append(known)
+    for m in re.finditer(rf"{re.escape(LOCAL_CHECKOUT_ROOT)}([^/\s`'\"]+)", body or ""):
+        if m.group(1).lower() != own and m.group(0) not in found:
+            found.append(m.group(0))
+    return found
+
+
+def ticket_problems(body, repo):
+    problems = []
+    ac = ac_lines(body)
+    if not any(re.match(r"^\s*[-*]\s+\S", line) for line in ac):
+        problems.append("ac: ## Acceptance Criteria phải là danh sách gạch đầu dòng (`- [ ] …`), mỗi dòng một điều kiện kiểm được; "
+                        "AC văn xuôi không có gì để kiểm")
+    foreign = foreign_repo_mentions(body, repo)
+    if foreign:
+        problems.append(f"repo: body nhắc {', '.join(foreign)} nhưng board này là {repo} (Project #{resolve_project_config(repo)['number']}); "
+                        "tạo thẻ ở repo đó, hoặc --no-repo-check nếu cố ý")
+    hit, only_people = detect_needs_you("\n".join(ac))
+    if hit and only_people:
+        problems.append(f"human: mọi dòng AC cần người/dữ liệu ngoài (\"{hit[:120]}\"): thẻ này là việc của người, không phải lane build")
+    return problems
 
 
 # Cùng luật với one_line() của super-board-needs-you.py: comment và mục Cần người không mang dòng máy đọc
@@ -354,8 +390,15 @@ def main():
     parser.add_argument("--needs-you", help="Thẻ cần người: ĐÚNG việc người phải làm (máy thật, playtest, store, secret, quyết định)")
     parser.add_argument("--needs-you-next", help="Người làm xong thì làm gì tiếp (mặc định: --needs-you thì "
                         f"'{NEEDS_YOU_NEXT}', tự đánh dấu thì '{NEEDS_YOU_DONE_NEXT}')")
+    parser.add_argument("--check-body", action="store_true", help="Đọc body từ stdin, in mỗi vấn đề một dòng, exit 65 nếu có (runner dùng khi kéo Backlog)")
+    parser.add_argument("--no-repo-check", action="store_true", help="Cho phép body nhắc repo của board khác")
     parser.add_argument("--no-needs-you", action="store_true", help="Không tự đánh dấu cần người dù AC khớp cụm từ")
     args = parser.parse_args()
+
+    if args.check_body:
+        problems = ticket_problems(sys.stdin.read(), args.repo or detect_repo())
+        print("\n".join(problems))
+        sys.exit(65 if problems else 0)
 
     title = None
     body = None
@@ -382,6 +425,13 @@ def main():
         print('   3. Đẩy từ file có sẵn:')
         print('      python3 create_task.py --from-file docs/super-board/backlog-tickets.md --ticket 1')
         sys.exit(0)
+
+    problems = [p for p in ticket_problems(body, args.repo or detect_repo())
+                if not (args.no_repo_check and p.startswith("repo:")) and not p.startswith("human:")]
+    if problems:
+        print("❌ Thẻ không đạt, chưa tạo gì trên GitHub:", file=sys.stderr)
+        print("\n".join(f"   - {p}" for p in problems), file=sys.stderr)
+        sys.exit(65)
 
     # Cờ --needs-you là đường chính (nó nói đúng việc người phải làm); không có cờ thì chỉ tự đánh dấu khi MỌI
     # dòng AC là việc của người; AC trộn và câu tóm tắt khi tạo nhanh chỉ in gợi ý.
