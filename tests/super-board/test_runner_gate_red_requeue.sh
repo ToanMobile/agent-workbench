@@ -73,6 +73,9 @@ SB_GATE_RETRY_COOLDOWN_S=0
 requeue_gate_red_blocked; rc=$?
 n=$(grep -c "^move " "$TMP/writes")
 if [ "$rc" -eq 0 ] && [ "$n" = 2 ]; then ok "C2: new SHA after cooldown -> retried once more"; else fail "C2: not retried (rc=$rc moves=$n)"; fi
+requeue_gate_red_blocked; rc=$?   # cooldown 0, same SHA as C2: only the per-SHA record can stop it
+n=$(grep -c "^move " "$TMP/writes")
+if [ "$rc" -eq 1 ] && [ "$n" = 2 ]; then ok "C3: same SHA after cooldown -> not retried"; else fail "C3: SHA dedupe ignored (rc=$rc moves=$n)"; fi
 
 reset_case; set_card 79 '["feature","needs-you"]'
 requeue_gate_red_blocked; rc=$?
