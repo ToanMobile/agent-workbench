@@ -47,6 +47,12 @@ done
 # leaves test_githooks green and turns test_commit_hygiene red), and it names the hook, not the script.
 out="$(sel scripts/git/git-commit-msg.sh)"
 printf '%s\n' "$out" | grep -qx "tests/worktree_git/test_commit_hygiene.sh" && ok "git-commit-msg.sh change selects test_commit_hygiene.sh" || fail "git-commit-msg.sh change does not select test_commit_hygiene.sh"
+# 21/10 (#31): scripts/governance/fold_agent_file.py (CLAUDE.md folded into AGENTS.md at install) and devkit_i18n.py (the i18n of installed
+# files) are named by no test; the install and i18n tests exercise them through bin/install.sh.
+out="$(sel scripts/governance/fold_agent_file.py)"
+printf '%s\n' "$out" | grep -qx "tests/installer/test_uninstall.sh" && ok "fold_agent_file.py change selects test_uninstall.sh" || fail "fold_agent_file.py change does not select test_uninstall.sh"
+out="$(sel scripts/governance/devkit_i18n.py)"
+printf '%s\n' "$out" | grep -qx "tests/installer/test_i18n_profiles.sh" && ok "devkit_i18n.py change selects test_i18n_profiles.sh" || fail "devkit_i18n.py change does not select test_i18n_profiles.sh"
 out="$(sel LICENSE)"
 printf '%s\n' "$out" | grep -qx "hooks/tests/test_prompt_dedupe.sh" && fail "an unrelated change selects a mapped test" || ok "an unrelated change selects nothing from the map"
 

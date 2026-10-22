@@ -499,6 +499,12 @@ on the base branch**.
      bash .claude/bin/super-board-merge-gate.sh --config <config> --pr <N> --expect-head "$HEAD" \
        --subject "<PR title>" --body-file <msg.md>
    <msg.md> = the PR's commit bullets, deduplicated, plus `Closes #<issue>` (writing-standard.md § 1).
+   Several PRs ready in the same wave: `bash .claude/bin/super-board-merge-train.sh --config <config> --prs <N,M,…>`
+   verifies their combined tree once (bisecting to the red PR when it fails), then runs this same gate for each good PR
+   with `--train-receipt`, which skips only the verify the train already proved (the full chain's final tree; the intermediate main between two merges is not verified on its own). Exit 11 + `train-red: <N>` lines = those PRs go back to Build;
+   exit 12 (`train-result: <N> timeout`) = verify timed out twice, no PR is blamed: they stay in Review for the next wave;
+   `train-result: <N> deferred` = clean against the base but conflicts only with an earlier PR of the batch: it stays in Review, no rebase pass; a PR the gate would block (policy needs a person, exit 7…) is dropped from the chain before any merge and the rest is verified again; a pinned head no longer in the repo = exit 6 (head moved);
+   exit 79/9 from the GitHub read or readiness check pass through unchanged; one PR in `--prs` is exactly the plain gate.
    The gate takes the merge mutex, checks the PR head is still $HEAD, merges the CURRENT
    base into a scratch worktree at $HEAD, runs `config.verify_commands`, and only then
    squash-merges with `--match-head-commit $HEAD`. After a merge it runs `cleanup-wt --post-merge`
@@ -513,7 +519,7 @@ on the base branch**.
           `loop:rebase`, NOT Blocked); the Builder fixes the failing verify
      3 → GitHub refused after a green verify (branch protection, required check)
           → Blocked with the §4 template; this one really is a human's
-     4 → another card holds the merge lock → leave the card in Review, next wave retries
+     4 → another card holds the merge lock, or the merge call failed while GitHub still shows the PR open at the verified head → leave the card in Review, next wave retries
      5 → the base does not merge in cleanly → **rebase pass** (see below)
      6 → the PR head is not the commit you reviewed (a push after review, or during
           verify). Your evidence is void: leave the card in Review with a `[reviewer]`
