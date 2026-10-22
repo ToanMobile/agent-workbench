@@ -24,7 +24,7 @@ TMP="$(mktemp -d)"
 case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 trap 'rm -rf "$TMP"' EXIT
-"$PYBIN" -I - "$SCRIPT" "$TMP" <<'PY'
+"$PYBIN" -I - "$SCRIPT" "$TMP" <<'PYEND'
 import json, os, re, subprocess, sys, time
 
 SCRIPT, TMP = sys.argv[1], sys.argv[2]
@@ -292,4 +292,4 @@ if fails:
     print("gate runs report: %d FAILED" % fails)
     sys.exit(1)
 print("gate runs report: all checks passed")
-PY
+PYEND

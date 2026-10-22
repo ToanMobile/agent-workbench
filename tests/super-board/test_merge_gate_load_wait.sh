@@ -210,7 +210,7 @@ grep -q "waiting for load 60 to drop below 50 before verify" "$TMP/gate15.log" \
 # post-fix-gate không chạy sentinel hằng ngày trong merge gate). DEVKIT_SLOT_LOAD_WAIT_S=0 CHỈ khi chính gate đã bật chờ tải ở trên
 # (cap > 0): OCR 20/10 — cap = 0 (config thiếu merge_load_wait_s, mặc định của hầu hết board, hay SB_MERGE_LOAD_WAIT_S=0) từng vẫn ép 0,
 # nên verify của các board đó chạy không xét tải lần nào. Biến người gọi đã đặt thì giữ nguyên. Cả hai nhánh của run_verify_cmd: lệnh bọc
-# qua heavy-slot, và lệnh có chữ post-fix-gate.py (gate nối thêm "--diff … --force-full": `false` nuốt chúng; tên trần không có
+# qua heavy-slot, và lệnh có chữ post-fix-gate.py (gate chèn "--diff … --force-full" ngay sau token, #102: không rơi vào `false`; tên trần không có
 # .agents/devkit/bin/ đứng trước nên không vướng kiểm tra exit 9). `-unset` (không `:-`): phân biệt chưa đặt với rỗng.
 PRIOF="$TMP/prio"; CFG_PRIO="$TMP/cfg-prio.json"; CFG_PRIO_PFG="$TMP/cfg-prio-pfg.json"
 probe="printf '%s %s' \"\${DEVKIT_SLOT_PRIORITY-unset}\" \"\${DEVKIT_SLOT_LOAD_WAIT_S-unset}\" > '$PRIOF'"
@@ -237,9 +237,22 @@ verify_env "$CFG_PRIO_PFG" pfg-push "push unset" DEVKIT_SLOT_PRIORITY=push
 # OCR 21/10: cap > 0 nhưng tải không đọc được ⇒ gate không chờ tải ⇒ không ép 0 (bên trong tự chờ tải như mọi lượt).
 VE_LOAD=12.5 verify_env "$CFG_PRIO" wrap-noload "merge unset" SB_MERGE_LOAD_WAIT_S=3
 VE_LOAD=12.5 verify_env "$CFG_PRIO_PFG" pfg-noload "merge unset" SB_MERGE_LOAD_WAIT_S=3
-grep -q "verify: : post-fix-gate.py; .* --force-full" "$TMP/gate16-pfg-cap3.log" \
+grep -q "verify: : post-fix-gate.py --diff origin/main --force-full; " "$TMP/gate16-pfg-cap3.log" \
   && ok "16 pfg: the verify command took the post-fix-gate.py branch" \
   || fail "16 pfg: post-fix-gate.py branch not taken: $(grep 'verify:' "$TMP/gate16-pfg-cap3.log" | head -1)"
+
+# Ca 17 (#152, OCR 21/10 vòng 10): lần đọc đầu tải cao (gate vào chờ, LOAD_WAIT_ON=1), poll sau file tải rác ⇒ gate bỏ chờ ⇒ verify
+# KHÔNG được thấy DEVKIT_SLOT_LOAD_WAIT_S=0 (không ai còn chờ tải; bên trong phải tự chờ).
+echo 99 > "$LOADF"; rm -f "$PRIOF"
+( when_waiting "$TMP/gate17.log"; echo junk > "$LOADF" ) &
+writer=$!
+( unset DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S; cd "$WT" \
+    && SB_MERGE_LOAD_WAIT_S=60 SB_MERGE_LOAD_POLL_S=1 bash "$GATE" --config "$CFG_PRIO" --pr 5 --expect-head "$H" ) >"$TMP/gate17.log" 2>&1
+wait "$writer" 2>/dev/null
+grep -q "cannot read the machine load" "$TMP/gate17.log" && ok "17: the gate saw the unreadable load mid-wait" \
+  || fail "17: no unreadable-load message: $(grep merge-gate "$TMP/gate17.log" | tail -3)"
+[ "$(cat "$PRIOF" 2>/dev/null)" = "merge unset" ] && ok "17: verify sees DEVKIT_SLOT_LOAD_WAIT_S unset after a mid-wait load read failure" \
+  || fail "17: verify env '$(cat "$PRIOF" 2>/dev/null)' (want 'merge unset')"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }

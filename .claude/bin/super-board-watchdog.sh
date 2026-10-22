@@ -100,17 +100,38 @@ canon_path() {
   printf '%s' "${base:-/}"   # gốc "/" in là "/": chuỗi rỗng trong PATH là thư mục hiện tại (= repo root khi khởi động lại runner)
 }
 
+raw_entry_ok() {
+  # 0 khi $1 (tuyệt đối) viết sạch (không ., .., //) và không đi qua symlink NẰM TRONG repo: khi đó giữ nguyên văn
+  # (JAVA_HOME=/opt/homebrew/opt/openjdk@17 không bị ghim vào Cellar/17.0.x, brew upgrade xoá thư mục cũ).
+  local p="$1" cur="" rest c par
+  case "$p" in */./*|*/../*|*//*|*/.|*/..) return 1 ;; esac
+  rest=${p#/}
+  while [ -n "$rest" ]; do
+    c=${rest%%/*}
+    case "$rest" in */*) rest=${rest#*/} ;; *) rest="" ;; esac
+    [ -n "$c" ] || continue
+    par=${cur:-/}; cur="$cur/$c"
+    if [ -L "$cur" ]; then
+      par=$(cd -P "$par" 2>/dev/null && pwd -P) || return 1
+      case "$par/" in "$ROOT_P"/*) return 1 ;; esac
+    fi
+  done
+  return 0
+}
+
 safe_path() {
   # $1 = PATH lấy từ bản ghi. Bỏ mục tương đối và mục nằm trong repo (kể cả .claude/worktrees của worker): một thư mục
   # worker tạo đứng đầu PATH sẽ thay gh/claude/python3 của runner chạy không người giám sát. So trên đường dẫn vật lý của
   # cả hai phía: so tiền tố chuỗi để lọt $TMP/./repo, $TMP/x/../repo và bí danh symlink (/tmp ↔ /private/tmp). Trả mục
-  # đã phân giải: symlink trong repo trỏ ra ngoài không bị worker đổi đích sau lượt kiểm.
-  local out="" d rest="$1:"
+  # đã phân giải khi nó đi qua symlink trong repo trỏ ra ngoài (worker không đổi đích được sau lượt kiểm); mục không đi
+  # qua symlink trong repo giữ nguyên văn.
+  local out="" d raw rest="$1:"
   while [ -n "$rest" ]; do
-    d=${rest%%:*}; rest=${rest#*:}
-    d=$(canon_path "$d") || continue
+    raw=${rest%%:*}; rest=${rest#*:}
+    d=$(canon_path "$raw") || continue
     [ -n "$d" ] || continue   # mục rỗng trong PATH = thư mục hiện tại (repo root khi khởi động lại runner)
     case "$d/" in "$ROOT_P"/*) continue ;; esac
+    if raw_entry_ok "$raw"; then d=$raw; fi
     out="${out:+$out:}$d"
   done
   printf '%s' "$out"
@@ -180,8 +201,23 @@ take_check_lock() {
   if ! mkdir "$lock" 2>/dev/null; then
     m=$(file_mtime "$lock") || m=$NOW
     [ $((NOW - m)) -ge 120 ] || return 1
-    rmdir "$lock" 2>/dev/null || true
-    mkdir "$lock" 2>/dev/null || return 1
+    # Lấy lại tuần tự: một cổng mkdir cho mọi bên muốn lấy lại, rồi kiểm lại tuổi BÊN TRONG cổng. rmdir + mkdir trần để hai
+    # check cùng thấy khoá cũ, check sau rmdir đúng khoá mới của check trước và cả hai cùng giữ khoá. Cổng bỏ lại quá 120 s
+    # (check bị kill giữa chừng) bị gỡ, lượt check sau lấy lại khoá.
+    if ! mkdir "$lock.reclaim" 2>/dev/null; then
+      m=$(file_mtime "$lock.reclaim") || m=$NOW
+      [ $((NOW - m)) -lt 120 ] || rmdir "$lock.reclaim" 2>/dev/null || true
+      return 1
+    fi
+    m=$(file_mtime "$lock") || m=$NOW
+    if [ $((NOW - m)) -ge 120 ]; then
+      rmdir "$lock" 2>/dev/null || true
+      mkdir "$lock" 2>/dev/null || { rmdir "$lock.reclaim" 2>/dev/null || true; return 1; }
+    else
+      rmdir "$lock.reclaim" 2>/dev/null || true
+      return 1
+    fi
+    rmdir "$lock.reclaim" 2>/dev/null || true
   fi
   CHECK_LOCK="$lock"
   trap 'rmdir "'"$lock"'" 2>/dev/null || true' EXIT

@@ -25,7 +25,7 @@ TMP="$(mktemp -d)"
 case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 trap 'rm -rf "$TMP"' EXIT
-python3 -I - "$KIT" "$TMP" <<'PY'
+python3 -I - "$KIT" "$TMP" <<'PYEND'
 import json, math, os, subprocess, sys, time
 
 KIT, TMP = sys.argv[1], sys.argv[2]
@@ -329,4 +329,4 @@ chk("steps" in txt and "vacuity" in txt and "running suites" in txt, "S6: the te
 
 print("\ngate run steps: all checks passed" if not fails else "\ngate run steps: %d FAILED" % fails)
 sys.exit(1 if fails else 0)
-PY
+PYEND

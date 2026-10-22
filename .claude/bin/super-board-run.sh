@@ -97,6 +97,28 @@ board_notify() {
   python3 "$SCRIPT_DIR/super-board-notify.py" "$@" || true
 }
 
+resolve_build_workers() {
+  # $1 = đường dẫn config. Khoá build_workers (số nguyên >= 1); thiếu hoặc sai thì 10 (người dùng 21/10); đặt 1 để về một worker.
+  local v
+  v=$(jq -r '.build_workers // empty' "$1" 2>/dev/null || true)
+  case "$v" in ''|*[!0-9]*) v=10 ;; esac
+  [ "${#v}" -le 6 ] || v=10   # số quá dài tràn phép tính bash (OCR 21/10)
+  v=$((10#$v))
+  [ "$v" -ge 1 ] || v=10      # 0, 00, 000
+  printf '%s\n' "$v"
+}
+
+resolve_build_load_max() {
+  # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, rồi 100. Mỗi nguồn phải là số
+  # DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không nhảy thẳng về 100 (OCR 21/10).
+  local v="" cand
+  for cand in "${SB_BUILD_LOAD_MAX:-}" "$(jq -r '.build_load_max // empty' "$1" 2>/dev/null || true)" "${DEVKIT_SLOT_LOAD_MAX:-}"; do
+    case "$cand" in ''|*[!0-9.]*|*.*.*|.) continue ;; esac
+    if awk -v m="$cand" 'BEGIN { exit !(m > 0) }'; then v="$cand"; break; fi
+  done
+  printf '%s\n' "${v:-100}"
+}
+
 if [ "${SB_LIB_ONLY:-0}" != "1" ]; then
 CONFIG_PATH=".claude/super-board/configs/${CONFIG_SLUG}.json"
 if [ ! -f "$CONFIG_PATH" ]; then
@@ -121,12 +143,11 @@ REBUILD_CAP=$(jq -r '.rebuild_cap // 2' "$CONFIG_PATH")
 BLOCK_ALERT_PCT=$(jq -r '.block_rate_alert_pct // 30' "$CONFIG_PATH")
 TICK_SECONDS=$(jq -r '.tick_seconds // 120' "$CONFIG_PATH")
 MAX_WORKERS=$(jq -r '.max_workers // 3' "$CONFIG_PATH")
-# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định 1 = như trước. build_load_max (hoặc env
-# SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này, mặc định 8. Giá trị sai thì dùng mặc định.
-BUILD_WORKERS=$(jq -r '.build_workers // 1' "$CONFIG_PATH")
-case "$BUILD_WORKERS" in ''|*[!0-9]*|0) BUILD_WORKERS=1 ;; esac
-BUILD_LOAD_MAX="${SB_BUILD_LOAD_MAX:-$(jq -r '.build_load_max // 8' "$CONFIG_PATH")}"
-case "$BUILD_LOAD_MAX" in ''|*[!0-9.]*|*.*.*|.) BUILD_LOAD_MAX=8 ;; esac
+# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định 10 (đặt 1 để về một worker). build_load_max (hoặc env
+# SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này; mặc định DEVKIT_SLOT_LOAD_MAX, thiếu nữa thì 100
+# (người dùng 21/10: "tải máy dưới 100 thì cho chạy"). Giá trị sai thì dùng mặc định.
+BUILD_WORKERS=$(resolve_build_workers "$CONFIG_PATH")
+BUILD_LOAD_MAX=$(resolve_build_load_max "$CONFIG_PATH")
 BOT_LOGIN=$(jq -r '.notifications.bot_identity // .bot_identity // ""' "$CONFIG_PATH")
 WORKER_BACKEND=$(jq -r '.worker_backend // "workflow"' "$CONFIG_PATH")
 # Runaway controls (issue #8). NO_PROGRESS_CYCLES counts dispatch cycles with no
@@ -374,6 +395,7 @@ issue_locked() {
   fi
   [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
   note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
+  [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
   rm -f "$lock"
   return 1
 }
@@ -946,6 +968,7 @@ reap_finished_locks() {
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
       note_early_death "$issue"
+      [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
         gh_checkpoint
@@ -1099,12 +1122,10 @@ cleanup_stale_worktrees() {
 }
 
 reclaim_stranded_building() {
-  # Run start only (no worker of ours is alive yet — the orphan guard proved it).
-  # A card in Building with no live in-flight lock and no assignee but ours was
-  # stranded by a run that stopped mid-build. No lane selects from Building, so
-  # left alone it sits there forever and the run can never reach "all columns
-  # empty". Move it back to Ready and say so; the issue branch is kept, so the
-  # next Builder continues on it instead of starting over.
+  # Run start (mọi thẻ Building không có lock sống) hoặc giữa lượt chạy ($1 = danh sách issue vừa mất worker build,
+  # $2 = câu Did: cho comment). Trả thẻ Building không còn worker sống và không có assignee nào khác ngoài bot về Ready;
+  # nhánh issue được giữ nguyên để Builder kế tiếp làm tiếp thay vì làm lại từ đầu.
+  local only="${1:-}" did="${2:-found no live worker; the last run stopped mid-build}"
   local issue item_id branch wt wt_branch
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
@@ -1125,21 +1146,92 @@ reclaim_stranded_building() {
       log "⚠ stranded #${issue} in Building — could not move it to Ready; drag it by hand"
       continue
     fi
+    RECLAIM_MOVED=1
     [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
     # Comment format: writing-standard.md § 4.
     gh_checkpoint
     gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · stranded in Building
-Did: found no live worker; the last run stopped mid-build
+Did: ${did}
 ✅ Done: card moved to Ready · branch ${branch:-none found}${branch:+ kept}
 Next: builder (next tick${branch:+, continues on the branch})" >/dev/null 2>&1 || true
     log "↩ stranded #${issue}: Building → Ready (branch ${branch:-none})"
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" '
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" --arg only " $only " '
     .items[]
     | select(.status == "Building" and .content.type == "Issue")
+    | (" " + (.content.number | tostring) + " ") as $n
+    | select($only == "  " or ($only | contains($n)))
     | select(((.content.assignees // []) - [$bot]) | length == 0)
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
+}
+
+reclaim_dead_builds() {
+  # Giữa lượt chạy (expensive tick): các lock lane=build vừa chết ở reap_finished_locks hoặc issue_locked đã ghi số
+  # issue vào RECLAIM_BUILDING. Nếu thẻ vẫn ở Building, không có lock sống và không có assignee nào khác ngoài bot:
+  #  - Dưới trần SB_RECLAIM_MAX (mặc định 2) lần trong cửa sổ SB_RECLAIM_WINDOW_S (mặc định 86400 s): ghi epoch vào
+  #    sổ $INFLIGHT_DIR/reclaims/<issue> rồi trả thẻ về Ready qua reclaim_stranded_building.
+  #  - Đạt/vượt trần: chuyển thẻ sang Blocked kèm comment theo block-template (dòng cuối `blocked-by:  -`).
+  # Luôn return 0; đặt RECLAIM_MOVED=1 khi có thẻ được chuyển (Ready hoặc Blocked).
+  local pending="${RECLAIM_BUILDING:-}"
+  RECLAIM_BUILDING=""
+  [ -n "${pending// /}" ] || return 0
+  local window="${SB_RECLAIM_WINDOW_S:-86400}" max="${SB_RECLAIM_MAX:-2}"
+  local issue item_id title seen=" " now f n wlog
+  while IFS=$'\t' read -r issue item_id title; do
+    [ -n "$issue" ] || continue
+    case "$seen" in *" $issue "*) continue ;; esac
+    seen="${seen}${issue} "
+    issue_locked "$issue" && continue
+    now=$(date +%s)
+    f="$INFLIGHT_DIR/reclaims/$issue"
+    n=0
+    if [ -f "$f" ]; then
+      n=$( { awk -v from=$((now - window)) '$1 >= from' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
+    fi
+    if [ "${n:-0}" -ge "$max" ]; then
+      wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-build-${issue}.log"
+      if set_card_status "$item_id" "Blocked"; then
+        RECLAIM_MOVED=1
+        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        gh_checkpoint
+        gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · 🔁 build worker died mid-run $((n + 1)) times in 24h
+Card:        #${issue}${title:+ ${title}}
+Reason tag:  🔁
+Why blocked: build worker for #${issue} died mid-run $((n + 1)) times within ${window}s after moving the card to Building
+Evidence:    ${wlog} (${n} prior reclaims in ${window}s; cap SB_RECLAIM_MAX=${max})
+Checked:     inflight lock reaped; card still in Building with no live worker and no human assignee
+What blocks: repeated build worker termination mid-run (e.g. gate/test timeout or OOM under load)
+Why I (bot) cannot decide:
+             re-queuing past ${max} reclaims in ${window}s would burn build slots in an infinite loop
+To unblock:  inspect the worker log and resolve the mid-run crash or timeout
+             [ ] Inspect ${wlog} for the failing step or timeout
+             [ ] Fix or split the task, then drag #${issue} back to Ready
+Owner:       repo admin
+Move back:   drag this card to Ready after the steps above are done
+blocked-by:  -" >/dev/null 2>&1 || true
+        log "🛑 #${issue} Building → Blocked: build worker died mid-run $((n + 1)) times in ${window}s"
+      else
+        gh_checkpoint
+        log "⚠ stranded #${issue} in Building — could not move it to Blocked; drag it by hand"
+      fi
+    else
+      mkdir -p "$INFLIGHT_DIR/reclaims" 2>/dev/null || true
+      { tail -n 19 "$f" 2>/dev/null || true; echo "$now"; } > "$f.tmp" 2>/dev/null \
+        && mv "$f.tmp" "$f" 2>/dev/null || true
+      reclaim_stranded_building "$issue" "its build worker died mid-run (lock reaped); the card was left in Building"
+    fi
+  done <<EOF
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" --arg only " $pending " '
+    .items[]
+    | select(.status == "Building" and .content.type == "Issue")
+    | (" " + (.content.number | tostring) + " ") as $n
+    | select($only | contains($n))
+    | select(((.content.assignees // []) - [$bot]) | length == 0)
+    | [(.content.number | tostring), (.id // ""), (.content.title // "")] | @tsv')
+EOF
+  RECLAIM_BUILDING=""
+  return 0
 }
 
 startup_reconcile() {
@@ -1156,6 +1248,7 @@ startup_reconcile() {
   reclaim_stranded_building; fetch_project_items
   # Sweep sau reap/adopt: lock của lane còn sống đã rõ.
   sweep_merged_lanes
+  RECLAIM_BUILDING=""
 }
 # Dọn worktree lane + nhánh của thẻ đã merge (#96, OCR batch trên #111): lúc khởi động và mỗi tick của vòng chính (#118: runner chạy
 # nhiều ngày, worktree issue-7-review của PR #128 nằm tới lần khởi động sau). Chạy NỀN: một `gh pr list` cho mỗi thẻ còn sót có thể mất
@@ -1241,6 +1334,109 @@ maybe_sweep_blocked() {
   return "$rc"
 }
 
+backlog_pull_enabled() {
+  # #189: env SB_BACKLOG_PULL (0 tắt, 1 bật) thắng khoá `backlog_pull` của config; thiếu cả hai thì bật.
+  case "${SB_BACKLOG_PULL:-}" in 0) return 1 ;; 1) return 0 ;; esac
+  [ "$(jq -r 'if .backlog_pull == false then "off" else "on" end' "$CONFIG_PATH" 2>/dev/null)" != "off" ]
+}
+
+backlog_issue_body() {
+  # $1 = số issue. In body của issue qua lớp đọc GitHub (exit khác 0 = đọc hỏng, caller dừng như issue_is_open).
+  SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind issue -- issue view "$1" --json number,title,body | jq -r '.body'
+}
+
+backlog_ticket_gaps() {
+  # Body trên stdin; in các phần còn thiếu của thẻ chuẩn (Problem, Fix, Acceptance Criteria có ít nhất một gạch đầu dòng — cùng
+  # luật với super-board-preflight.sh nên thẻ kéo lên không bị preflight chặn "unclear"). Rỗng = đủ.
+  jq -Rrs '(. / "\n") as $l
+    | def sect($h): [ $l | to_entries[] | select(.value | test("^##[ \t]+" + $h + "(?!\\w)")) | .key ] as $k
+        | if ($k | length) == 0 then null
+          else [ $l[($k | last) + 1:][] ] as $t
+            | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
+            | (if $e == null then $t else $t[:$e] end) end;
+      [ (if (sect("Problem") // [] | any(.[]; test("\\S"))) then empty else "Problem" end),
+        (if (sect("Fix") // [] | any(.[]; test("\\S"))) then empty else "Fix" end),
+        (if (sect("Acceptance Criteria") // [] | any(.[]; test("^[ \t]*[-*][ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
+      | join(", ")'
+}
+
+pull_backlog_cards() {
+  # #189: Ready rỗng mà lane build còn worker rảnh thì kéo thẻ Backlog lên Ready (bug trước, rồi thứ tự bảng), tối đa
+  # BUILD_WORKERS - BUILD_COUNT - READY thẻ. Chỉ kéo thẻ không assignee, không chờ người (needs-you/human-gated), không wontfix /
+  # loop:halted, đủ Problem/Fix/AC; thẻ thiếu bị comment lý do MỘT lần mỗi nội dung (sổ $INFLIGHT_DIR/backlog-skip). Thẻ đã CLOSED
+  # về Done, không đếm vào trần. Tải máy >= build_load_max (hoặc không đọc được) chỉ cho kéo 1 thẻ khi lane rỗng hẳn.
+  # Trả 0 khi bảng đã đổi (caller đọc lại), 1 khi không có gì.
+  # ponytail: tối đa 20 thẻ xét mỗi tick (mỗi thẻ 2 lần đọc REST); Backlog dài hơn thì tick sau xét tiếp từ đầu — đổi sang con trỏ khi cần.
+  local want load moved=1 tried=0 issue item_id body gaps stamp issue_rc cap_one=0 busy
+  backlog_pull_enabled || return 1
+  [ "${BUILD_COUNT:-0}" -lt "$BUILD_WORKERS" ] || return 1
+  busy=$(( ${BUILD_COUNT:-0} + ${READY:-0} ))
+  want=$(( BUILD_WORKERS - busy ))
+  [ "$want" -gt 0 ] || return 1
+  load=$(build_load_now)
+  case "$load" in
+    ''|*[!0-9.]*|*.*.*|.) cap_one=1 ;;
+    *) awk -v l="$load" -v m="$BUILD_LOAD_MAX" 'BEGIN { exit !(l < m) }' || cap_one=1 ;;
+  esac
+  if [ "$cap_one" -eq 1 ]; then
+    [ "$busy" -eq 0 ] || return 1
+    want=1
+  fi
+  while IFS=$'\t' read -r issue item_id; do
+    [ -n "$issue" ] && [ -n "$item_id" ] || continue
+    [ "$want" -gt 0 ] && [ "$tried" -lt 20 ] || break
+    tried=$((tried + 1))
+    issue_rc=0; issue_is_open "$issue" || issue_rc=$?
+    [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+    if [ "$issue_rc" -ne 0 ]; then
+      if set_card_status "$item_id" "Done"; then
+        log "backlog pull: #${issue} is CLOSED -> Done (not pulled)"; moved=0
+      else
+        gh_checkpoint; log "⚠ backlog pull: could not move closed #${issue} to Done"
+      fi
+      continue
+    fi
+    body=$(backlog_issue_body "$issue") || exit $?
+    gaps=$(printf '%s\n' "$body" | backlog_ticket_gaps)
+    if [ -n "$gaps" ]; then
+      stamp="${gaps}:$(printf '%s' "$body" | cksum | cut -d' ' -f1)"
+      mkdir -p "$INFLIGHT_DIR/backlog-skip"
+      if [ "$(cat "$INFLIGHT_DIR/backlog-skip/$issue" 2>/dev/null)" != "$stamp" ]; then
+        gh_checkpoint
+        gh_write_once issue comment "$issue" --body "[orchestrator] [report] ⏸ not pulled from Backlog · ticket incomplete
+Did: checked the body before moving it to Ready
+❌ Not done: missing section(s): ${gaps} (Problem, Fix and Acceptance Criteria with at least one bullet are required)
+Next: fill the missing section(s); the next tick pulls it" >/dev/null 2>&1 || true
+        printf '%s' "$stamp" > "$INFLIGHT_DIR/backlog-skip/$issue"
+        log "backlog pull: #${issue} skipped — missing ${gaps}"
+      fi
+      continue
+    fi
+    if ! set_card_status "$item_id" "Ready"; then
+      gh_checkpoint; log "⚠ backlog pull: could not move #${issue} to Ready"
+      continue
+    fi
+    rm -f "$INFLIGHT_DIR/backlog-skip/$issue"
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ⬆️ Backlog → Ready · build lane idle
+Did: the lane had a free worker and the ticket has Problem, Fix and Acceptance Criteria
+✅ Done: card moved Backlog → Ready
+Next: builder (next tick)" >/dev/null 2>&1 || true
+    log "⬆ backlog pull: #${issue} Backlog -> Ready"
+    want=$((want - 1)); moved=0
+  done <<EOF
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "${BOT_LOGIN:-}" "$FOR_A_PERSON_JQ"'
+    [.items | to_entries[] | select(.value.status == "Backlog" and .value.content.type == "Issue") | .value as $c | .key as $i
+      | select((($c.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
+      | select($c | for_a_person | not)
+      | ([(($c.labels // []) + ($c.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]) as $lb
+      | select(($lb | index("wontfix") or index("loop:halted")) | not)
+      | {n: $c.content.number, id: ($c.id // ""), rank: (if ($lb | index("bug")) then 0 else 1 end), i: $i}]
+    | sort_by([.rank, .i])[] | [(.n | tostring), .id] | @tsv')
+EOF
+  return "$moved"
+}
+
 # ── Bản ghi trạng thái runner cho super-board-watchdog.sh: .claude/super-board/runner/<slug>.state
 # (PID/SLUG/STARTED/DAEMON/LOG/STATE, thêm RC/ENDED khi thoát). STATE: running (còn nguyên khi bị SIGKILL) · crashed
 # (thoát ngoài ý muốn) · finished (vòng lặp kết thúc: board rỗng, RUNAWAY, trần dispatch) · halted (mã dừng có chủ
@@ -1304,6 +1500,8 @@ runner_state_exit() {
 # ───────────────────────── run counters (shared state) ─────────────────────────
 DISPATCH_COUNT=0
 REAP_COUNT=0
+RECLAIM_BUILDING=""
+RECLAIM_MOVED=0
 LANDED_COUNT=0
 DISPATCH_LOG=""
 
@@ -1422,8 +1620,16 @@ fi
 
 # Production-merge guard.
 if [ "$BASE_BRANCH" = "main" ] && [ "$HUMAN_APPROVES" = "false" ]; then
-  if rg -qU 'on:\s*\n?\s*push:\s*\n?\s*branches:[^a-z]*main' .github/workflows 2>/dev/null \
-     || [ -f vercel.json ] || [ -f netlify.toml ]; then
+  # grep -E trên workflow đã nối dòng: rg không phải binary trên mọi máy, thiếu nó guard này cho qua (fail-open).
+  workflow_push_main() {
+    local f
+    for f in .github/workflows/*; do
+      [ -f "$f" ] || continue
+      tr '\n' ' ' < "$f" | grep -Eq 'on:[[:space:]]*push:[[:space:]]*branches:[^a-z]*main' && return 0
+    done
+    return 1
+  }
+  if workflow_push_main || [ -f vercel.json ] || [ -f netlify.toml ]; then
     log "🛡 refusing to start: would auto-merge to production main."
     exit 75
   fi
@@ -1443,7 +1649,7 @@ log "initial Ready count: $INITIAL_READY"
 # Landed-work baseline (issue #8). Progress is a change in this set, not lane state.
 PREV_DONE_SIG=$(done_signature)
 INITIAL_DONE_SIG="$PREV_DONE_SIG"
-NO_PROGRESS_CYCLE_COUNT="${NO_PROGRESS_CYCLE_COUNT:-0}"   # watchdog khởi động lại: đếm tiếp từ runner trước
+[ "${SB_WATCHDOG_START:-0}" = "1" ] || NO_PROGRESS_CYCLE_COUNT=0   # watchdog khởi động lại: đã nạp từ bản ghi ở trên; khởi động tường minh đếm từ 0, không thừa hưởng môi trường người gọi
 
 while true; do
   refresh_run_paths
@@ -1511,6 +1717,9 @@ while true; do
 
   # Re-sweep zombies against fresh cache; the previous sweep used stale data.
   sweep_lane_zombies
+  RECLAIM_MOVED=0
+  reclaim_dead_builds
+  if [ "$RECLAIM_MOVED" = 1 ]; then fetch_project_items; fi
   BUILD_IDLE=1; QA_IDLE=1; REVIEW_IDLE=1
   build_workers_count
   [ "$BUILD_COUNT" -eq 0 ] || BUILD_IDLE=0
@@ -1525,6 +1734,9 @@ while true; do
   if maybe_sweep_blocked; then fetch_project_items; fi
 
   count_board
+
+  # #189: lane build còn worker rảnh mà Ready không đủ việc thì kéo thẻ Backlog đủ AC lên (cờ backlog_pull).
+  if pull_backlog_cards; then fetch_project_items; count_board; fi
 
   log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}${BUILD_EXTRA:+ +${BUILD_EXTRA}}) b_workers=${BUILD_COUNT}/${BUILD_WORKERS} q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}) waiting_on_you=$WAITING"
 
