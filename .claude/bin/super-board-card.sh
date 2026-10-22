@@ -170,7 +170,7 @@ move() {  # $1 = issue, $2 = Status name
   return 69
 }
 
-items() {  # whole board, gh item-list shape, ~1 point per 100 cards
+items_once() {  # whole board, gh item-list shape, ~1 point per 100 cards
   local pages
   pages=$(gh_read api graphql --paginate --slurp -f query='query($owner:String!,$number:Int!,$endCursor:String){
       repositoryOwner(login:$owner){ ... on ProjectV2Owner { projectV2(number:$number){
@@ -199,6 +199,23 @@ items() {  # whole board, gh item-list shape, ~1 point per 100 cards
       then { items: $items, totalCount: $total }
       else error("board read incomplete: \([ $p[].nodes[] ] | length) of \($total) items") end' \
     || { echo "board read incomplete" >&2; return 69; }
+}
+
+# The board can change between two pages (a card added or moved while paginating), so the item count
+# disagrees with totalCount (#256: 103 vs 102 killed the runner). Read once more before reporting failure;
+# only the incomplete-read exit (69) retries, a halt (79) or usage error never does.
+items() {
+  local rc=0
+  items_once && return 0 || rc=$?
+  [ "$rc" -eq 69 ] || return "$rc"
+  echo "board read incomplete; re-reading once (board changed between pages?)" >&2
+  local s="${SB_CARD_RETRY_SLEEP:-2}"
+  case "$s" in ''|*[!0-9]*|????*) s=2 ;; esac    # giá trị lạ/quá dài không được làm `sleep` lỗi và đổi mã thoát khỏi 69
+  s=$((10#$s))                                    # 08/09 không bị đọc thành bát phân
+  [ "$s" -eq 0 ] || s=$(( s + RANDOM % (s + 1) ))  # jitter: nhiều board/worker không đọc lại cùng lúc
+  [ "$s" -le 30 ] || s=30                         # trần (sau jitter): một lần đọc lại không chặn board quá 30s
+  sleep "$s"
+  items_once
 }
 
 case "$VERB" in
