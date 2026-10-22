@@ -1299,10 +1299,10 @@ def _ever_gated(project_dir):
     if os.path.lexists(os.path.join(str(project_dir), ".claude", "audit-gate", "test_run.lock")):
         return True
     try:
-        gd = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--absolute-git-dir"], capture_output=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
+        gd = _git_static(project_dir, "--absolute-git-dir")
+    except (ImportError, OSError, subprocess.SubprocessError):
         return True
-    recs = _run_log_records(_run_log_dir(os.fsdecode(gd.stdout.strip()))) if gd.returncode == 0 else None
+    recs = _run_log_records(_run_log_dir(os.fsdecode(gd))) if gd is not None else None
     name = os.path.basename(str(project_dir))[:64]
     return recs is None or any(rec.get("project") == name for rec in recs)
 
@@ -1346,12 +1346,11 @@ def sibling_receipts(project_dir):
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
         own = tree_fp.receipt_path(project_dir)
-        res = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-                             capture_output=True, timeout=30)
+        common_b = tree_fp.rev_parse_static(project_dir, "--path-format=absolute", "--git-common-dir")
     except (ImportError, OSError, subprocess.SubprocessError):
         return []
-    common = os.fsdecode(res.stdout.strip())
-    if res.returncode != 0 or not common:
+    common = os.fsdecode(common_b) if common_b else ""
+    if not common:
         return []
     dirs = [common]
     try:
@@ -2035,12 +2034,20 @@ REPO_ROOT = None
 PROJECT_PREFIX = None
 
 
+def _git_static(project_dir, *args):
+    """tree_fp.rev_parse_static: a `git rev-parse` whose answer cannot move during this run, spawned once per distinct question."""
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    return tree_fp.rev_parse_static(project_dir, *args)
+
+
 def get_repo_root() -> Path:
     global REPO_ROOT
     if REPO_ROOT is None:
-        res = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--show-toplevel"],
-                             capture_output=True, text=True)
-        REPO_ROOT = Path(res.stdout.strip()).resolve() if res.returncode == 0 and res.stdout.strip() else get_project_dir()
+        top = _git_static(get_project_dir(), "--show-toplevel")
+        REPO_ROOT = Path(os.fsdecode(top)).resolve() if top else get_project_dir()
     return REPO_ROOT
 
 
@@ -2048,9 +2055,8 @@ def get_project_prefix() -> str:
     """Project dir relative to the repo root ("" unless the project is a monorepo subdir)."""
     global PROJECT_PREFIX
     if PROJECT_PREFIX is None:
-        res = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--show-prefix"],
-                             capture_output=True, text=True)
-        PROJECT_PREFIX = res.stdout.strip() if res.returncode == 0 else ""
+        prefix = _git_static(get_project_dir(), "--show-prefix")
+        PROJECT_PREFIX = os.fsdecode(prefix) if prefix is not None else ""
     return PROJECT_PREFIX
 
 
@@ -6772,8 +6778,7 @@ def main():
 
     # Write Markdown summary artifact for user inspection — chỉ ghi những gì đã thực sự kiểm.
     # Written inside .git/ so the report never becomes a change in the audited tree.
-    git_dir = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--absolute-git-dir"],
-                             capture_output=True, text=True).stdout.strip()
+    git_dir = os.fsdecode(_git_static(project_dir, "--absolute-git-dir") or b"")
     report_file = (Path(git_dir) if git_dir else Path(tempfile.gettempdir())) / "postfix-gate" / "last_report.md"
     try:
         report_file.parent.mkdir(parents=True, exist_ok=True)
@@ -6887,9 +6892,8 @@ def run_brief():
             crash, code = e, 1
     text = buf.getvalue()
     try:
-        gd = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--absolute-git-dir"],
-                            capture_output=True, text=True, errors="surrogateescape").stdout.strip()
-    except OSError:   # no git on PATH (A10): the log goes to the temp dir
+        gd = os.fsdecode(_git_static(get_project_dir(), "--absolute-git-dir") or b"")
+    except (ImportError, OSError, subprocess.SubprocessError):   # no git on PATH (A10): the log goes to the temp dir
         gd = ""
     out = (Path(gd) if gd else Path(tempfile.gettempdir())) / "postfix-gate" / "last_output.log"
     try:
