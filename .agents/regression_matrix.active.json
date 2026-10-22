@@ -888,6 +888,28 @@
       ]
     },
     {
+      "component": "super-board-red-on-base",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-verify-cmd.sh",
+        "tests/super-board/test_merge_gate_red_on_base.sh",
+        "tests/super-board/test_verify_cmd_same_as_gate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RED-ON-BASE-01",
+          "name": "merge gate: suite đỏ cả trên origin/base không REJECT PR, mở thẻ riêng; suite do PR làm đỏ vẫn exit 11 (#251)",
+          "command": "bash tests/super-board/test_merge_gate_red_on_base.sh"
+        },
+        {
+          "id": "REG-SB-VERIFY-CMD-01",
+          "name": "QA in đúng lệnh verify của merge gate (cùng hàm chèn --diff/--force-full) (#251)",
+          "command": "bash tests/super-board/test_verify_cmd_same_as_gate.sh"
+        }
+      ]
+    },
+    {
       "component": "devkit-multi-session-gate-env",
       "watch_files": [
         "universal-agent-devkit/tests/gates/test_multi_session_gate.sh",

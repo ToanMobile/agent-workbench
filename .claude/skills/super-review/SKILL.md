@@ -77,8 +77,10 @@ If the input is ambiguous, default to reviewing the current branch against its u
      - structured `AppError({ error_code, context })`;
      - jsonb writes are Zod-validated.
    - **DevKit repo** (it has `.agents/devkit/bin/post-fix-gate.py`): the reviewed head needs a
-     `post-fix-gate.py --run-tests --full --brief` exit 0 on that exact SHA — QA's report, or rerun it
-     yourself — and an `.agents/devkit/bin/ocr-review` pass on the diff. Missing either is a
+     `post-fix-gate.py --run-tests --full --brief` exit 0 on that exact SHA — read it from QA's report
+     and never rerun post-fix-gate --full yourself inside the board: the merge gate's `--force-full`
+     verifies the merged tree. A review run on its own, outside the board, has no merge gate and runs it.
+     It also needs an `.agents/devkit/bin/ocr-review` pass on the diff. Missing either is a
      **Verification miss**, also when `/super-review` runs on its own, outside the board.
 
 3. **Classify findings** — every finding gets a **class** (what kind of problem) and a
@@ -331,6 +333,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
 5. **Reviewer-side test rerun (always — closes Tester self-verification gap):**
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the EXACT command from Tester's PR `Local tests:` line.
+   - Exception: the DevKit gate (`post-fix-gate.py … --full`) is never rerun here — never rerun post-fix-gate --full; read its exit 0 for this head SHA from QA's report. The merge gate's `--force-full` verifies the merged tree (run.md → Merge protocol).
    - Green → continue. Red → open new `[qa]`-prefixed thread quoting failure, move card Review → QA with `loop:rebuild-N`, exit.
    - If QA includes `Runtime checks:`, follow
      [optional runtime verification](../super-qa/references/runtime-verification.md):

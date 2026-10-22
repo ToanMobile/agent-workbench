@@ -960,6 +960,8 @@ dispatch_lane() {
   [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
   # CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0: ngăn `claude -p` tự huỷ tác vụ nền (như red_proof.py --pending) sau 10 phút.
   export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-0}"
+  # BASH_*_TIMEOUT_MS=1h: Bash tool của worker mặc định bị cắt ở 10 phút, đúng lúc gate còn chờ heavy_slot (≤600 s) (#249).
+  export BASH_DEFAULT_TIMEOUT_MS="${BASH_DEFAULT_TIMEOUT_MS:-3600000}" BASH_MAX_TIMEOUT_MS="${BASH_MAX_TIMEOUT_MS:-3600000}"
   unset POSTFIX_GATE_FORCE_FULL
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
     nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
