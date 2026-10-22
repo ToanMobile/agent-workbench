@@ -1,0 +1,38 @@
+{
+  "github": {
+    "owner": "ToanMobile",
+    "ownerType": "user",
+    "project": 1,
+    "view": 2
+  },
+  "root": "/Volumes/Data/Toan",
+  "repos": [
+    "agent-workbench",
+    "GeelyEx2",
+    "OfficeReader",
+    "Goods-Triple-Shelf-Match-3D",
+    "Neighbours-From-Hell",
+    "Humans-vs.-UFOs"
+  ],
+  "repoPaths": {
+    "OfficeReader": "/Volumes/Data/Toan/OfficeReader/OfficeReader",
+    "Goods-Triple-Shelf-Match-3D": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D",
+    "Neighbours-From-Hell": "/Volumes/Data/Toan/Game/Neighbours-From-Hell",
+    "Humans-vs.-UFOs": "/Volumes/Data/Toan/Game/Humans-vs.-UFOs"
+  },
+  "claudeProjectsDir": "~/.claude/projects",
+  "runnerLogGlobs": [
+    "~/.agent-office/logs/*.log"
+  ],
+  "activeMinutes": 10,
+  "lookbackMinutes": 240,
+  "githubSeconds": 30,
+  "localSeconds": 3,
+  "host": "127.0.0.1",
+  "port": 4317,
+  "eventsFile": "~/.agent-office/events.jsonl",
+  "macNotify": true,
+  "allowedHosts": [
+    "ai-factory.test"
+  ]
+}

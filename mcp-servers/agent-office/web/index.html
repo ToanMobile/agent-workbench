@@ -1,0 +1,2196 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Xưởng agent</title>
+<script>
+  (function () {
+    var saved = null;
+    try { saved = localStorage.getItem('agent-office-theme'); } catch (e) {}
+    var dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #E4E9EF; --floor: #EEF1F5; --floor2: #E2E7EE; --wall: #F8F9FB; --rack: #D9CDBB; --desk: #EFE8DC;
+    --ink: #1C2431; --muted: #5A6475; --faint: #6B7484; --line: #CDD4DE;
+    --panel: rgba(250, 251, 253, 0.92); --panel-solid: #FAFBFD; --card: #FFFFFF; --paper: #FFFFFF; --skin: #F3EEE7; --screen: #0F1622;
+    --c-backlog: #8C96A8; --c-ready: #3567D6; --c-building: #E58D0B; --c-qa: #8B5CF6; --c-review: #0E9A8A;
+    --c-blocked: #D63E2C; --c-done: #4C9744; --c-you: #D2337A; --c-away: #A3ABB8;
+    --t-ready: #2B58BD; --t-building: #8F5200; --t-qa: #6638D4; --t-review: #06705F; --t-blocked: #B02D1E; --t-done: #2C6E27; --t-you: #AD1E5E;
+    --shadow: 0 10px 34px rgba(20, 32, 52, 0.13);
+    --font: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0D1218; --floor: #1A212B; --floor2: #212935; --wall: #2E3846; --rack: #5A4E3F; --desk: #5C5247;
+    --ink: #E6EBF2; --muted: #9AA5B5; --faint: #8792A3; --line: #2B3543;
+    --panel: rgba(19, 25, 33, 0.92); --panel-solid: #131921; --card: #1F2732; --paper: #DDE3EB; --skin: #E2D9CD; --screen: #070B11;
+    --c-backlog: #8792A6; --c-ready: #5B8BF2; --c-building: #F3A63A; --c-qa: #A27EFB; --c-review: #26B6A3;
+    --c-blocked: #F05A47; --c-done: #69B35E; --c-you: #EE5197; --c-away: #4D5664;
+    --t-ready: #86A9F6; --t-building: #F3A63A; --t-qa: #B99BFC; --t-review: #3FC4B1; --t-blocked: #F47B6B; --t-done: #7DC373; --t-you: #F270A9;
+    --shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: grab; }
+  #scene:active { cursor: grabbing; }
+  #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--c-ready); outline-offset: 2px; }
+  a { color: var(--c-ready); }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+
+  /* top */
+  .top { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px; display: flex; gap: 12px; align-items: flex-start; pointer-events: none; z-index: 5; }
+  .top > * { pointer-events: auto; }
+  .brand { padding: 12px 16px 12px; width: 320px; flex: none; }
+  .brand h1 { margin: 0; font-size: 22px; line-height: 1.15; font-weight: 700; letter-spacing: -0.01em; }
+  .brand .proj { margin-top: 4px; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brand .proj a { color: inherit; text-decoration-color: var(--line); text-underline-offset: 3px; }
+  .sync { display: flex; gap: 6px; align-items: center; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-done); flex: none; }
+  .dot.warn { background: var(--c-building); } .dot.err { background: var(--c-blocked); }
+  .legend { margin-left: auto; padding: 8px; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: min(760px, 60vw); }
+  .chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 8px; border-radius: 999px; font-size: 13px; white-space: nowrap; }
+  .chip .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .chip b { font-weight: 700; font-variant-numeric: tabular-nums; }
+  button.chip { border: 0; background: transparent; cursor: pointer; font: inherit; color: inherit; }
+  button.chip:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+  .chip.you { background: color-mix(in srgb, var(--c-you) 14%, transparent); color: var(--t-you); font-weight: 600; }
+  .chip.working { background: color-mix(in srgb, var(--c-done) 14%, transparent); }
+
+  .notices { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .notices:empty { display: none; }
+  .notice { padding: 8px 10px; border-radius: 10px; background: var(--floor2); font-size: 12.5px; line-height: 1.45; display: flex; gap: 6px 8px; align-items: center; flex-wrap: wrap; }
+  .notice.error { background: color-mix(in srgb, var(--c-blocked) 11%, var(--panel-solid)); }
+  .notice.warn { background: color-mix(in srgb, var(--c-building) 12%, var(--panel-solid)); }
+  .notice code { font-family: var(--mono); font-size: 12px; background: var(--floor2); padding: 3px 7px; border-radius: 6px; user-select: all; }
+  .notice button { border: 1px solid var(--line); background: var(--panel-solid); border-radius: 8px; padding: 3px 9px; cursor: pointer; font-size: 12px; }
+
+  /* rail */
+  .rail { position: fixed; left: 12px; top: calc(var(--top-h, 134px) + 12px); bottom: calc(var(--bot-h, 64px) + 10px); width: 300px; padding: 8px; overflow: auto; z-index: 4; }
+  .rail h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 6px 8px 8px; }
+  .rail[hidden] { display: none; }
+  .agents h2 { display: flex; justify-content: space-between; align-items: baseline; }
+  #agentsCount { font-weight: 600; color: var(--t-done); }
+  .ag { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 9px 10px 10px; border-radius: 12px; cursor: pointer; }
+  .ag + .ag { border-top: 1px solid var(--line); border-radius: 0 0 12px 12px; }
+  .ag:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .ag-top { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+  .ag-top i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .ag-top b { white-space: nowrap; flex: none; }
+  .ag-repo { flex: 1 1 auto; }
+  .ag-repo { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .ag-time { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; padding-left: 6px; }
+  .ag-task { font-size: 12.5px; color: var(--muted); margin: 3px 0 0 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ag-do { font-size: 13.5px; margin: 2px 0 0 16px; font-weight: 600; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .ag.away { opacity: .7; }
+  .ag-group { font-size: 12px; font-weight: 700; color: var(--muted); margin: 12px 10px 2px; }
+  .ag-idle { font-size: 12.5px; color: var(--muted); margin: 10px 10px 4px; line-height: 1.45; }
+  body.rail-open .board { left: 324px; }
+  .lbl-repo { pointer-events: auto; cursor: pointer; }
+  .lbl-repo:hover { border-color: var(--c-ready); }
+  @media (max-width: 900px) { body.rail-open .board { left: 12px; } }
+  .repo { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 10px; border-radius: 12px; cursor: pointer; }
+  .repo:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .repo[aria-current="true"] { background: color-mix(in srgb, var(--c-ready) 11%, transparent); }
+  .repo .r1 { display: flex; align-items: center; gap: 8px; }
+  .repo .name { font-weight: 600; font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .pill.running { color: var(--t-done); background: color-mix(in srgb, var(--c-done) 13%, transparent); }
+  .pill.idle { color: var(--t-building); background: color-mix(in srgb, var(--c-building) 14%, transparent); }
+  .pill.finished, .pill.none { color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent); }
+  .pill.stale { color: var(--t-blocked); background: color-mix(in srgb, var(--c-blocked) 12%, transparent); }
+  .pill.working { color: var(--t-done); background: color-mix(in srgb, var(--c-done) 13%, transparent); }
+  .pill.away { color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent); }
+  .bar { display: flex; height: 7px; border-radius: 4px; overflow: hidden; margin: 9px 0 7px; background: var(--floor2); gap: 2px; }
+  .bar span { display: block; height: 100%; min-width: 3px; }
+  .repo .r3 { font-size: 12.5px; color: var(--muted); display: flex; gap: 10px; justify-content: space-between; }
+  .repo .r3 .busy { color: var(--ink); font-weight: 500; }
+
+  /* drawer */
+  .drawer { position: fixed; right: 12px; top: calc(var(--top-r, 70px) + 12px); bottom: calc(var(--bot-h, 64px) + 10px); width: 388px; overflow: auto; z-index: 4; padding: 18px 18px 22px; }
+  .drawer[hidden] { display: none; }
+  .close { position: sticky; top: -6px; float: right; margin: -8px -8px 0 8px; width: 32px; height: 32px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-solid); cursor: pointer; font-size: 18px; line-height: 1; z-index: 2; }
+  .kicker { font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .drawer h2 { font-size: 20px; line-height: 1.3; margin: 6px 0 4px; font-weight: 700; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+  .drawer h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 20px 0 8px; }
+  .meta { display: grid; grid-template-columns: 96px 1fr; gap: 6px 12px; font-size: 13.5px; }
+  .meta dt { color: var(--muted); } .meta dd { margin: 0; overflow-wrap: anywhere; }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  .say { margin: 0; padding: 10px 12px; border-left: 3px solid var(--c-ready); background: color-mix(in srgb, var(--c-ready) 7%, transparent); border-radius: 0 10px 10px 0; font-size: 14px; }
+  .say.blocked { border-left-color: var(--c-blocked); background: color-mix(in srgb, var(--c-blocked) 7%, transparent); }
+  .say small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .feed li { display: grid; grid-template-columns: 62px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .feed li:last-child { border-bottom: 0; }
+  .feed .k { font-size: 11.5px; font-weight: 600; color: var(--muted); padding-top: 1px; }
+  .feed .k.tool { color: var(--c-ready); }
+  .feed .v { min-width: 0; overflow-wrap: anywhere; }
+  .feed .v .mono { color: var(--ink); }
+  .feed time { display: block; color: var(--faint); font-size: 11.5px; }
+  .row-list { list-style: none; margin: 0; padding: 0; }
+  .meta dd .more { text-align: left; }
+  .row-list button { width: 100%; text-align: left; border: 0; background: transparent; padding: 7px 8px; border-radius: 9px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+  .row-list button:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .row-list .num { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 44px; white-space: nowrap; }
+  .row-list .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-list .tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+  .colhead { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin: 12px 0 2px; }
+  .colhead .sw { width: 10px; height: 10px; border-radius: 3px; }
+  .colhead .n { color: var(--muted); font-weight: 500; }
+  .bars { display: flex; flex-direction: column; gap: 6px; }
+  .bars .b { display: grid; grid-template-columns: 96px 1fr 30px; gap: 10px; align-items: center; font-size: 13px; }
+  .bars .track { height: 8px; background: var(--floor2); border-radius: 4px; overflow: hidden; }
+  .bars .fill { height: 100%; border-radius: 4px; }
+  .bars .n { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .lanes { display: flex; flex-direction: column; gap: 6px; }
+  .lane { display: grid; grid-template-columns: minmax(70px, auto) 1fr; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--floor2); font-size: 13.5px; border: 0; text-align: left; cursor: pointer; width: 100%; }
+  .lane .ln { font-weight: 700; white-space: nowrap; }
+  .lane .lv { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lane.busy .lv { color: var(--ink); }
+  .labels { display: flex; flex-wrap: wrap; gap: 5px; }
+  .gl { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+  .ghlink { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; padding: 8px 14px; border-radius: 10px; background: var(--ink); color: var(--panel-solid); text-decoration: none; font-weight: 600; font-size: 13.5px; }
+  .empty { color: var(--muted); font-size: 13.5px; margin: 0; }
+  .more { border: 1px solid var(--line); background: transparent; border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 12.5px; margin: 4px 8px; }
+  .spark { width: 100%; height: 84px; display: block; }
+  .spark-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .spark-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .spark-legend i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
+
+  /* controls */
+  .controls { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 4px; padding: 6px; z-index: 5; }
+  .controls button { border: 0; background: transparent; padding: 8px 14px; border-radius: 11px; cursor: pointer; font-weight: 500; white-space: nowrap; }
+  .controls button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+  .controls { flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 24px); }
+  .controls .sec { display: none; }
+  .controls.more .sec { display: inline-block; }
+  .controls .more-btn { color: var(--muted); }
+
+  /* 3D labels */
+  .lbl { position: absolute; left: 0; top: 0; will-change: transform; white-space: nowrap; }
+  .lbl-col { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 14px; padding: 4px 10px; border-radius: 9px; background: var(--panel); border: 1px solid var(--line); }
+  .lbl-col .sw { width: 10px; height: 10px; border-radius: 3px; }
+  .lbl-col .n { font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .lbl-repo { flex-direction: column; align-items: flex-end !important; gap: 3px !important; display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 15px; padding: 5px 11px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); }
+  .lbl-repo .you { color: var(--t-you); font-size: 12px; font-weight: 700; }
+  .lbl-col { font-size: 15px; padding: 5px 12px; pointer-events: auto; cursor: pointer; color: var(--ink); }
+  .lbl-col:hover { border-color: var(--muted); }
+  .row-list.wrap .t { white-space: normal; }
+  .why-line { font-size: 12px; color: var(--muted); margin: -2px 8px 6px 60px; border-left: 2px solid var(--c-blocked); padding-left: 7px; line-height: 1.4; overflow-wrap: anywhere; }
+  .lbl-repo { font-size: 16px; padding: 7px 12px 8px; gap: 1px !important; border-right: 5px solid var(--st, var(--line)); }
+  .lbl-repo .rs { display: inline-flex; gap: 6px; align-items: center; font-size: 13.5px; font-weight: 700; color: var(--st-t, var(--st)); }
+  .lbl-repo .rs i { width: 10px; height: 10px; border-radius: 50%; background: var(--st); }
+  .lbl-repo .rd { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+  .lbl-repo.st-working { --st: var(--c-done); --st-t: var(--t-done); background: color-mix(in srgb, var(--c-done) 9%, var(--panel-solid)); }
+  .lbl-repo.st-idle { --st: var(--c-building); --st-t: var(--t-building); }
+  .lbl-repo.st-stopped { --st: var(--muted); color: var(--muted); }
+  .lbl-repo.st-stopped .rs i { border-radius: 2px; }
+  .lbl-repo.st-stale { --st: var(--c-blocked); --st-t: var(--t-blocked); }
+  .st-working .rs i { animation: livepulse 1.4s ease-in-out infinite; }
+  @keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  .lbl-idle { font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--panel); border: 1px dashed var(--faint); padding: 2px 9px; border-radius: 999px; }
+  .far .lbl-idle { display: none; }
+  .bubble { max-width: 280px; font-size: 13.5px; border-top: 3px solid var(--c-done); }
+  .bubble .bt { font-size: 13.5px; }
+  .bubble .bx .mono { font-size: 12px; }
+  .bubble { pointer-events: auto; cursor: pointer; text-align: left; color: var(--ink); }
+  .bubble:hover { border-color: var(--c-done); }
+  .lbl-repo { text-align: right; color: var(--ink); }
+  .lbl-repo { gap: 0 !important; font-size: 13px; line-height: 1.3; padding: 4px 9px 5px; border-right-width: 3px; border-radius: 8px; }
+  .lbl-repo .rs { font-size: 11.5px; gap: 5px; }
+  .lbl-repo .rs i { width: 7px; height: 7px; }
+  .lbl-repo .rd { font-size: 11px; }
+  .states { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 13.5px; font-weight: 600; }
+  .states span { display: inline-flex; align-items: center; gap: 6px; }
+  .states i { width: 9px; height: 9px; border-radius: 50%; }
+  @media (prefers-reduced-motion: reduce) { .st-working .rs i { animation: none; } }
+  .bubble { max-width: 250px; white-space: normal; padding: 7px 11px 8px; border-radius: 12px; background: var(--panel-solid); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 12.5px; line-height: 1.38; }
+  .bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; background: var(--panel-solid); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: translateX(-50%) rotate(45deg); }
+  .bubble .bt { display: flex; gap: 6px; align-items: center; font-weight: 700; font-size: 12.5px; }
+  .bubble .bt i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .far .bubble { padding: 5px 9px; max-width: 232px; } .far .bubble .bdo { -webkit-line-clamp: 1; }
+  .bubble .bt { white-space: nowrap; }
+  .bubble .bt > span:first-of-type { flex: none; }
+  .bubble .bt .bwhen { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .bubble.crowd { min-width: 230px; }
+  .bubble.crowd .bdo { -webkit-line-clamp: 1; }
+  .bubble .bwhen { margin-left: auto; padding-left: 8px; font-weight: 500; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+  .bubble .btask { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .bubble .bdo { font-size: 12.5px; font-weight: 600; margin-top: 1px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .bubble .bx { color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .bubble .bx .mono { color: var(--ink); font-size: 11.5px; }
+  .tip { position: fixed; left: 0; top: 0; z-index: 9; pointer-events: none; max-width: 320px; padding: 7px 10px; border-radius: 9px; background: var(--ink); color: var(--panel-solid); font-size: 12.5px; line-height: 1.4; opacity: 0; transition: opacity .12s; }
+  .tip.on { opacity: 1; }
+  .tip b { display: block; }
+  .boot[hidden] { display: none; }
+  .boot { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; z-index: 3; pointer-events: none; }
+
+  /* thao tác ghi */
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg button { border: 1px solid var(--line); background: var(--panel-solid); border-radius: 999px; padding: 5px 12px 5px 10px; cursor: pointer; font-size: 13px; display: inline-flex; align-items: center; gap: 7px; }
+  .seg button::before { content: ""; width: 9px; height: 9px; border-radius: 3px; background: var(--sw); }
+  .seg button[aria-pressed="true"] { background: color-mix(in srgb, var(--sw) 16%, var(--panel-solid)); border-color: var(--sw); font-weight: 700; }
+  .seg button:disabled { opacity: .55; cursor: default; }
+  .field { display: grid; grid-template-columns: 96px 1fr; gap: 12px; align-items: center; margin-top: 10px; font-size: 13.5px; }
+  .field span { color: var(--muted); }
+  select, input[type="text"], input:not([type]), textarea { font: inherit; color: var(--ink); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; width: 100%; }
+  textarea { resize: vertical; min-height: 70px; }
+  .btn { border: 1px solid var(--line); background: var(--panel-solid); border-radius: 10px; padding: 7px 14px; cursor: pointer; font-weight: 600; font-size: 13.5px; }
+  .btn.primary { background: var(--ink); color: var(--panel-solid); border-color: var(--ink); }
+  .btn.danger { color: var(--t-blocked); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .row-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .readonly { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  .toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 12px); padding: 10px 16px; font-size: 13.5px; font-weight: 500; z-index: 20; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; max-width: min(560px, 90vw); }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+  .toast.error { border-color: var(--c-blocked); color: var(--t-blocked); }
+  .toast.alert { border-color: var(--c-blocked); border-width: 2px; font-weight: 700; }
+  .dragchip { position: fixed; left: 0; top: 0; z-index: 30; pointer-events: none; padding: 7px 12px; border-radius: 10px; background: var(--ink); color: var(--panel-solid); font-weight: 600; font-size: 13px; white-space: nowrap; box-shadow: var(--shadow); }
+  .dragchip[hidden] { display: none; }
+  .desk-picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--bot-h, 64px) + 10px); z-index: 6; padding: 8px; display: grid; grid-template-columns: repeat(5, 152px); gap: 6px; }
+  .desk-picker[hidden] { display: none; }
+  .desk-picker button { border: 1px solid var(--line); background: var(--panel-solid); border-radius: 12px; padding: 9px 11px 10px; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+  .desk-picker button:hover { border-color: var(--c-ready); }
+  .desk-picker button[aria-pressed="true"] { border: 2px solid var(--c-ready); padding: 8px 10px 9px; background: color-mix(in srgb, var(--c-ready) 9%, var(--panel-solid)); }
+  .desk-picker small { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .desk-picker b { font-size: 14px; }
+  .desk-picker span { font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+  @media (max-width: 900px) { .desk-picker { left: 12px; right: 12px; transform: none; grid-template-columns: 1fr 1fr; max-height: 50vh; overflow: auto; } }
+
+  .zoom-ctl { position: fixed; right: 12px; bottom: calc(var(--bot-h, 64px) + 10px); z-index: 5; display: flex; flex-direction: column; padding: 4px; gap: 2px; border-radius: 12px; }
+  .zoom-ctl button { width: 38px; height: 38px; border: 0; background: transparent; border-radius: 9px; font-size: 22px; line-height: 1; cursor: pointer; color: var(--ink); }
+  .zoom-ctl button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+  body.drawer-open .zoom-ctl { right: 412px; }
+  @media (max-width: 900px) { body.drawer-open .zoom-ctl { display: none; } }
+
+  /* dạng bảng */
+  .board { position: fixed; left: 12px; right: 12px; top: calc(var(--top-h, 134px) + 12px); bottom: calc(var(--bot-h, 64px) + 10px); z-index: 4; display: flex; flex-direction: column; padding: 12px; }
+  .board[hidden] { display: none; }
+  body.drawer-open .board { right: 412px; }
+  .board-head { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .board-head select { width: auto; }
+  .board-head input { max-width: 260px; }
+  .board-head .count { color: var(--muted); font-size: 13px; margin-left: auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cols { flex: 1; display: flex; gap: 10px; overflow-x: auto; min-height: 0; }
+  .col { flex: 0 0 264px; display: flex; flex-direction: column; background: color-mix(in srgb, var(--ink) 4%, transparent); border-radius: 12px; min-height: 0; border: 2px solid transparent; }
+  .col.over { border-color: var(--sw); background: color-mix(in srgb, var(--sw) 10%, transparent); }
+  .col-h { display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px; font-weight: 700; font-size: 14px; }
+  .col-h .sw { width: 10px; height: 10px; border-radius: 3px; background: var(--sw); }
+  .col-h .n { color: var(--muted); font-weight: 500; }
+  .col-list { flex: 1; overflow-y: auto; padding: 4px 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .bc { text-align: left; border: 1px solid var(--line); background: var(--panel-solid); border-radius: 10px; padding: 9px 10px; cursor: grab; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; border-top: 3px solid var(--sw); }
+  .bc:active { cursor: grabbing; }
+  .bc .bc-top { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--muted); }
+  .bc .bc-top b { color: var(--ink); font-size: 13px; }
+  .bc .tt { font-weight: 500; overflow-wrap: anywhere; }
+  .bc .why { font-size: 12px; color: var(--muted); border-left: 2px solid var(--c-blocked); padding-left: 7px; line-height: 1.4; }
+  .bc .agent { font-size: 12px; font-weight: 600; display: inline-flex; gap: 5px; align-items: center; }
+  .bc .agent i { width: 7px; height: 7px; border-radius: 50%; }
+  .bc[aria-current="true"] { outline: 2px solid var(--c-ready); }
+  dialog.dlg { border: 1px solid var(--line); border-radius: 16px; padding: 20px; width: min(520px, 92vw); background: var(--panel-solid); color: var(--ink); box-shadow: var(--shadow); }
+  dialog.dlg::backdrop { background: rgba(10, 16, 24, 0.35); }
+  dialog.dlg h2 { margin: 0 0 14px; font-size: 19px; }
+  dialog.dlg label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  dialog.dlg .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  dialog.dlg .hint { font-size: 12.5px; color: var(--muted); margin: 0 0 14px; }
+  dialog.dlg .actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+  @media (max-width: 900px) {
+    .board { left: 12px; right: 12px !important; top: calc(var(--top-h, 120px) + 10px); bottom: calc(var(--bot-h, 64px) + 8px); }
+    .board-head input { max-width: none; }
+    .brand { width: auto; flex: 1; min-width: 0; }
+    .legend { display: none; }
+    .rail { top: auto; bottom: calc(var(--bot-h, 64px) + 8px); left: 12px; right: 12px; width: auto; height: auto; max-height: none; display: flex; gap: 4px; overflow-x: auto; overflow-y: hidden; padding: 6px; }
+    .rail h2 { display: none; }
+    .repo { min-width: 190px; }
+    .drawer { left: 12px; right: 12px; width: auto; top: auto; bottom: calc(var(--bot-h, 64px) + 8px); max-height: 58vh; }
+    .controls { left: 12px; right: 12px; transform: none; justify-content: center; flex-wrap: wrap; }
+    .controls .sec { display: none; }
+    .controls.more .sec, .controls .more-btn { display: inline-block; }
+    .lbl-repo .rd, .bubble .btask, .lbl-idle { display: none !important; }
+    .ag { min-width: 250px; }
+    .lbl-repo { font-size: 13px !important; padding: 4px 8px 5px !important; border-right-width: 4px; }
+    .lbl-repo .rs { font-size: 12px; }
+    .bubble { padding: 4px 8px; font-size: 12px; max-width: 160px; }
+    .bubble .bt { font-size: 12px; }
+    .lbl-col { font-size: 12px; padding: 3px 7px; }
+    .brand { padding: 10px 12px; }
+    .brand .proj { display: none; }
+    .brand h1 { font-size: 19px; }
+    .states { font-size: 12.5px; margin-top: 4px; }
+    .board-head { flex-wrap: wrap; }
+    .board-head select, .board-head input { flex: 1 1 140px; }
+    .board-head .count { width: 100%; margin-left: 0; }
+    .board-head .hint { display: none; }
+    .controls button { padding: 8px 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="scene" role="img" aria-label="Xưởng 3D: mỗi hàng là một repo, mỗi cột là một trạng thái trên bảng"></canvas>
+<div class="boot" id="boot">Đang dựng xưởng…</div>
+
+<header class="top">
+  <div class="brand panel">
+    <h1>Xưởng agent</h1>
+    <div class="proj" id="proj">Đang kết nối server…</div>
+    <div class="sync" id="sync"><span class="dot warn"></span><span>Chưa có dữ liệu</span></div>
+    <div class="states" id="states" aria-label="Tình trạng"></div>
+    <div class="notices" id="notices"></div>
+  </div>
+  <div class="legend panel" id="legend" aria-label="Tổng số việc theo cột"></div>
+</header>
+
+<nav class="rail panel" id="rail" aria-label="Các repo" hidden>
+  <h2>Repo</h2>
+  <div id="repoList"></div>
+</nav>
+<nav class="rail panel agents" id="agentsPanel" aria-label="Ai đang làm gì">
+  <h2><span>Ai đang làm gì</span><span id="agentsCount"></span></h2>
+  <div id="agentList"></div>
+</nav>
+
+<aside class="drawer panel" id="drawer" hidden aria-live="polite"></aside>
+
+<div class="controls panel" role="toolbar" aria-label="Điều khiển">
+  <button type="button" id="btnAgents" aria-pressed="true">Ai đang làm gì</button>
+  <button type="button" id="btnFit">Toàn cảnh</button>
+  <button type="button" class="sec" id="btnZoom">Phóng to</button>
+  <button type="button" class="sec" id="btnRail" aria-pressed="false">Danh sách repo</button>
+  <button type="button" id="btnBoard">Dạng bảng</button>
+  <button type="button" id="btnAdd">Thêm việc</button>
+  <button type="button" id="btnEvents">Vừa xảy ra</button>
+  <button type="button" class="sec" id="btnNext">Agent kế tiếp</button>
+  <button type="button" class="sec" id="btnDesk" aria-expanded="false" aria-controls="deskPicker">Kiểu bàn</button>
+  <button type="button" class="sec" id="btnTheme">Ca đêm</button>
+  <button type="button" class="sec" id="btnRefresh">Tải lại GitHub</button>
+  <button type="button" class="more-btn" id="btnMore" aria-expanded="false">Khác</button>
+</div>
+<div class="desk-picker panel" id="deskPicker" role="group" aria-label="Chọn kiểu bàn làm việc" hidden></div>
+<div id="labels" aria-label="Repo và agent trong xưởng"></div>
+<div class="zoom-ctl panel" role="group" aria-label="Phóng to, thu nhỏ"><button type="button" id="btnZoomIn" aria-label="Phóng to" title="Phóng to (+)">+</button><button type="button" id="btnZoomOut" aria-label="Thu nhỏ" title="Thu nhỏ (−)">−</button></div>
+<div class="tip" id="tip" role="tooltip"></div>
+<div class="toast panel" id="toast" role="status" aria-live="polite"></div>
+<div class="dragchip" id="dragchip" hidden></div>
+
+<section class="board panel" id="board" hidden aria-label="Bảng công việc">
+  <div class="board-head">
+    <select id="boardRepo" aria-label="Lọc theo repo"></select>
+    <select id="boardFocus" aria-label="Lọc thẻ"><option value="">Mọi thẻ</option><option value="working">Agent đang làm</option><option value="blocked">Bị chặn</option><option value="nocomment">Bị chặn, chưa rõ lý do</option></select>
+    <input id="boardQ" type="text" placeholder="Tìm theo số hoặc tên việc" aria-label="Tìm việc">
+    <span class="count" id="boardCount"></span>
+  </div>
+  <div class="cols" id="boardCols"></div>
+</section>
+
+<dialog class="dlg" id="createDlg">
+  <form id="createForm">
+    <h2>Thêm việc mới</h2>
+    <label>Tiêu đề<input name="title" required maxlength="256" autocomplete="off"></label>
+    <label>Mô tả<textarea name="body" rows="4" placeholder="Agent sẽ đọc phần này khi nhận thẻ"></textarea></label>
+    <div class="two">
+      <label>Repo<select name="repo"></select></label>
+      <label>Cột<select name="status"></select></label>
+    </div>
+    <p class="hint" id="createHint"></p>
+    <div class="actions">
+      <button type="button" class="btn" id="createCancel">Huỷ</button>
+      <button type="submit" class="btn primary" id="createSubmit">Tạo việc</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="vendor/three.min.js"></script>
+<script src="vendor/OrbitControls.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = (s, root = document) => root.querySelector(s);
+function h(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
+// ------------------------------------------------------------ helpers
+const KIND_RULES = [
+  ['blocked', /block|chặn|stuck|on hold/i], ['done', /done|xong|closed|merged|hoàn thành|shipped|released/i],
+  ['review', /review|duyệt/i], ['qa', /\bqa\b|test|kiểm thử|verify/i],
+  ['building', /build|progress|doing|đang làm|\bdev\b|wip|implement/i], ['ready', /ready|todo|to do|sẵn sàng|next|selected/i],
+  ['backlog', /backlog|idea|inbox|triage|\bnew\b|chưa có/i],
+];
+const kindOf = (name) => { for (const [k, re] of KIND_RULES) if (re.test(name || '')) return k; return 'other'; };
+const GH = { GRAY: '#8C96A8', BLUE: '#3567D6', GREEN: '#4C9744', YELLOW: '#C99A0A', ORANGE: '#E58D0B', RED: '#D63E2C', PINK: '#D2337A', PURPLE: '#8B5CF6' };
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function colColor(col) {
+  const k = col.kind || kindOf(col.name);
+  if (k !== 'other') return cssVar('--c-' + k);
+  return GH[col.ghColor] || cssVar('--c-backlog');
+}
+const LANE_KIND = { Build: 'building', QA: 'qa', Review: 'review' };
+function workerColor(w) {
+  if (w.status === 'away') return cssVar('--c-away');
+  if (w.lane && LANE_KIND[w.lane]) return cssVar('--c-' + LANE_KIND[w.lane]);
+  return cssVar('--c-ready');
+}
+function colText(col) {
+  const k = col.kind || kindOf(col.name);
+  return (k === 'other' || k === 'backlog') ? cssVar('--muted') : cssVar('--t-' + k);
+}
+function workerText(w) {
+  if (w.status === 'away') return cssVar('--muted');
+  return cssVar('--t-' + ((w.lane && LANE_KIND[w.lane]) || 'ready'));
+}
+function workerName(w) {
+  if (w.lane) return w.lane + ' agent';
+  if (w.session && w.session.subagent) return 'Agent phụ';
+  return 'Điều phối';
+}
+function ago(ts) {
+  if (!ts) return 'chưa rõ';
+  const s = Date.now() / 1000 - ts;
+  if (s < 45) return 'vừa xong';
+  if (s < 3600) return Math.round(s / 60) + ' phút trước';
+  if (s < 86400) return Math.round(s / 3600) + ' giờ trước';
+  return Math.round(s / 86400) + ' ngày trước';
+}
+const clock = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+const fmtTokens = (n) => n ? (n / 1e6).toLocaleString('vi-VN', { maximumFractionDigits: 2 }) + ' triệu token' : null;
+function clip(s, n) { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+function shortPath(p, repo) {
+  if (!p) return '';
+  let out = String(p);
+  if (repo && repo.path) out = out.split(repo.path + '/').join('');
+  if (STATE && STATE.root) out = out.split(STATE.root + '/').join('');
+  return out;
+}
+const RUNNER_STATE = { running: 'Đang chạy', idle: 'Chờ việc', finished: 'Đã chạy xong', stale: 'Mất tín hiệu', none: 'Không có runner' };
+const WORKER_STATE = { working: 'Đang làm', away: 'Đang nghỉ', idle: 'Rảnh' };
+const ROW_PILL = { working: 'running', idle: 'idle', stopped: 'finished', stale: 'stale' };
+function rowState(repo) {
+  const ws = STATE ? STATE.workers.filter((w) => w.repo === repo.name && w.status === 'working') : [];
+  const rn = repo.runner; const rs = rn ? rn.state : 'none';
+  if (ws.length) {
+    const nums = ws.filter((w) => w.issue).map((w) => '#' + w.issue);
+    return { key: 'working', label: 'Đang làm', detail: ws.length + ' agent' + (nums.length ? ': ' + nums.slice(0, 5).join(', ') + (nums.length > 5 ? ' +' + (nums.length - 5) : '') : '') };
+  }
+  if (rs === 'running' || rs === 'idle') return { key: 'idle', label: 'Chờ việc', detail: 'runner vẫn chạy' };
+  if (rs === 'stale') return { key: 'stale', label: 'Mất tín hiệu', detail: 'tick cuối ' + ago(rn.tick.at) };
+  if (rs === 'finished') return { key: 'stopped', label: 'Đã dừng', detail: 'dừng sau tick ' + rn.tick.time.slice(0, 5) };
+  return { key: 'stopped', label: 'Không chạy', detail: 'chưa thấy runner' };
+}
+const ITEM_STATE = { OPEN: 'Đang mở', CLOSED: 'Đã đóng', MERGED: 'Đã merge' };
+const ITEM_TYPE = { Issue: 'Issue', PullRequest: 'Pull request', DraftIssue: 'Bản nháp' };
+const safeUrl = (u) => (typeof u === 'string' && /^https:\/\/github\.com\//.test(u)) ? u : null;
+function latestEvent(sess) {
+  if (!sess) return null;
+  const t = (sess.texts || []).slice(-1)[0], tool = (sess.tools || []).slice(-1)[0];
+  if (t && (!tool || (t.ts || 0) >= (tool.ts || 0))) return { kind: 'text', text: t.text, ts: t.ts };
+  if (tool) return { kind: 'tool', name: tool.name, text: tool.summary, ts: tool.ts };
+  return null;
+}
+
+// ------------------------------------------------------------ state
+let STATE = null, VERSION = null, LAYOUT_KEY = null;
+let selection = null;
+const idx = { repo: new Map(), item: new Map(), worker: new Map(), itemsAt: new Map(), itemByNum: new Map() };
+function indexState(S) {
+  idx.repo.clear(); idx.item.clear(); idx.worker.clear(); idx.itemsAt.clear(); idx.itemByNum.clear();
+  S.repos.forEach((r) => idx.repo.set(r.name, r));
+  S.items.forEach((it) => {
+    idx.item.set(it.id, it);
+    const k = it.repo + '\u0000' + it.status;
+    if (!idx.itemsAt.has(k)) idx.itemsAt.set(k, []);
+    idx.itemsAt.get(k).push(it);
+    if (it.number) idx.itemByNum.set(it.repo.toLowerCase() + '#' + it.number, it);
+  });
+  S.workers.forEach((w) => idx.worker.set(w.id, w));
+}
+const itemsAt = (repo, col) => idx.itemsAt.get(repo + '\u0000' + col) || [];
+const itemFor = (repo, num) => num ? idx.itemByNum.get(String(repo).toLowerCase() + '#' + num) : null;
+function workersOnItem(it) { return STATE.workers.filter((w) => w.repo.toLowerCase() === it.repo.toLowerCase() && w.issue && w.issue === it.number); }
+function hotNumbers(repo) { const s = new Set(); STATE.workers.forEach((w) => { if (w.repo === repo && w.status === 'working' && w.issue) s.add(w.issue); }); return s; }
+
+// ------------------------------------------------------------ three
+const canvas = $('#scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(26, 1, 0.1, 1200);
+camera.position.set(0, 60, 60);
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+// điều khiển kiểu bản đồ: kéo trái để di chuyển, chuột phải hoặc Shift + kéo để xoay
+controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+controls.screenSpacePanning = false;
+controls.maxPolarAngle = 1.33; controls.minDistance = 5; controls.maxDistance = 420;
+const hemi = new THREE.HemisphereLight(0xffffff, 0xaab4c2, 0.85);
+const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
+scene.add(hemi, sun, sun.target);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+let world = new THREE.Group(); scene.add(world);
+const maxAniso = renderer.capabilities.getMaxAnisotropy();
+
+const GEO = {
+  box: new THREE.BoxGeometry(1, 1, 1),
+  plane: new THREE.PlaneGeometry(1, 1),
+  card: new THREE.BoxGeometry(1.42, 1.0, 0.05),
+  body: new THREE.CapsuleGeometry(0.27, 0.5, 4, 12),
+  head: new THREE.SphereGeometry(0.22, 20, 14),
+  lamp: new THREE.SphereGeometry(0.2, 18, 12),
+  ring: new THREE.RingGeometry(0.62, 0.74, 40),
+  cyl: new THREE.CylinderGeometry(1, 1, 1, 28),
+  halfDisc: new THREE.CylinderGeometry(1, 1, 1, 28, 1, false, 0, Math.PI),
+  arc: new THREE.CylinderGeometry(1, 1, 1, 44, 1, true, -0.05, 4.68),
+  cone: new THREE.CylinderGeometry(0.05, 0.14, 0.18, 18, 1, true),
+  limb: new THREE.CapsuleGeometry(0.06, 0.38, 4, 10),
+  torso: new THREE.CylinderGeometry(0.2, 0.17, 0.5, 18),
+  sphere1: new THREE.SphereGeometry(1, 18, 14),
+};
+let disposables = [];      // textures + materials created per build
+let pickables = [];        // meshes with userData.pick
+let labels = [];           // { el, pos }
+let rigs = [];             // animated avatars
+let screens = new Map();   // worker id -> { canvas, ctx, tex }
+let rowMarks = new Map();  // repo -> highlight mesh
+let cardMeshes = new Map();// item id -> mesh
+let workerRings = new Map();
+let lamps = [];
+let halos = [];
+let L = null;              // layout
+const SIZE = { COL_W: 6.4, ROW_D: 7.6, OFFICE_W: 7.0 };
+
+function track(x) { disposables.push(x); return x; }
+function mat(color, opts) { return track(new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.82, metalness: 0 }, opts || {}))); }
+function box(w, hgt, d, material, x, y, z, parent) {
+  const m = new THREE.Mesh(GEO.box, material);
+  m.scale.set(w, hgt, d); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
+  (parent || world).add(m); return m;
+}
+function flat(w, d, color, opacity, x, y, z, parent) {
+  const m = new THREE.Mesh(GEO.plane, track(new THREE.MeshStandardMaterial({ color, roughness: 1, transparent: opacity < 1, opacity, depthWrite: opacity >= 1 })));
+  m.scale.set(w, d, 1); m.rotation.x = -Math.PI / 2; m.position.set(x, y, z); m.receiveShadow = true;
+  (parent || world).add(m); return m;
+}
+function canvasTex(w, hgt) {
+  const c = document.createElement('canvas'); c.width = w; c.height = hgt;
+  const tex = track(new THREE.CanvasTexture(c)); tex.anisotropy = maxAniso;
+  return { c, ctx: c.getContext('2d'), tex };
+}
+function wrap(ctx, text, maxW, maxLines) {
+  const words = String(text || '').split(/\s+/).filter(Boolean); const lines = []; let line = '';
+  for (let i = 0; i < words.length; i++) {
+    const test = line ? line + ' ' + words[i] : words[i];
+    if (ctx.measureText(test).width <= maxW) { line = test; continue; }
+    if (line) lines.push(line); line = words[i];
+    while (ctx.measureText(line).width > maxW && line.length > 1) {
+      let cut = line.length; while (cut > 1 && ctx.measureText(line.slice(0, cut)).width > maxW) cut--;
+      lines.push(line.slice(0, cut)); line = line.slice(cut);
+    }
+    if (lines.length >= maxLines) break;
+  }
+  if (line && lines.length < maxLines) lines.push(line);
+  const used = lines.join(' ').length;
+  if (lines.length === maxLines && used < String(text || '').replace(/\s+/g, ' ').trim().length) {
+    let last = lines[maxLines - 1];
+    while (last.length && ctx.measureText(last + '…').width > maxW) last = last.slice(0, -1);
+    lines[maxLines - 1] = last + '…';
+  }
+  return lines;
+}
+const F = (wt, px) => `${wt} ${px}px "Be Vietnam Pro", system-ui, sans-serif`;
+const FM = (px) => `500 ${px}px "JetBrains Mono", ui-monospace, Menlo, monospace`;
+function roundRect(ctx, x, y, w, hgt, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + hgt, r); ctx.arcTo(x + w, y + hgt, x, y + hgt, r); ctx.arcTo(x, y + hgt, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+
+function cardTexture(it, color, laneTag, T) {
+  const { ctx, tex } = canvasTex(320, 226); ctx.scale(320 / 426, 226 / 300); const c = { width: 426, height: 300 };
+  ctx.fillStyle = T.card; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = color; ctx.fillRect(0, 0, c.width, 22);
+  ctx.fillStyle = T.paperInk; ctx.font = F(700, 64);
+  ctx.fillText(it.number ? '#' + it.number : 'Nháp', 24, 100);
+  if (it.type === 'PullRequest') { ctx.font = F(600, 24); ctx.fillStyle = T.paperMuted; ctx.fillText('Pull request', 26, 134); }
+  if (laneTag) {
+    ctx.font = F(700, 26); const tw = ctx.measureText(laneTag).width + 28;
+    roundRect(ctx, c.width - tw - 18, 44, tw, 42, 21); ctx.fillStyle = color; ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(laneTag, c.width - tw - 4, 74);
+  }
+  ctx.font = F(600, 33); ctx.fillStyle = T.paperInk;
+  wrap(ctx, it.title, c.width - 48, it.type === 'PullRequest' ? 3 : 4).forEach((ln, i) => ctx.fillText(ln, 24, (it.type === 'PullRequest' ? 178 : 150) + i * 40));
+  tex.needsUpdate = true; return tex;
+}
+function overflowTexture(n, color, T) {
+  const { ctx, tex } = canvasTex(320, 226); ctx.scale(320 / 426, 226 / 300); const c = { width: 426, height: 300 };
+  ctx.fillStyle = T.card; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = color; ctx.fillRect(0, 0, c.width, 22);
+  ctx.fillStyle = T.paperInk; ctx.font = F(700, 84); ctx.fillText('+' + n, 28, 150);
+  ctx.font = F(500, 34); ctx.fillStyle = T.paperMuted; ctx.fillText('việc nữa', 30, 210);
+  tex.needsUpdate = true; return tex;
+}
+function signTexture(repo, T) {
+  const { c, ctx, tex } = canvasTex(640, 200);
+  ctx.fillStyle = T.wall; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = T.ink; ctx.font = F(700, 64);
+  const name = wrap(ctx, repo.name, c.width - 60, 1)[0] || repo.name;
+  ctx.fillText(name, 30, 96);
+  ctx.font = F(500, 30); ctx.fillStyle = T.muted;
+  ctx.fillText(`${repo.total} việc trên bảng`, 32, 150);
+  tex.needsUpdate = true; return tex;
+}
+function drawScreen(scr, w, T) {
+  const { c, ctx, tex } = scr;
+  ctx.fillStyle = w.status === 'idle' ? T.screen : (T.dark ? '#18212f' : '#1f2a3b'); ctx.fillRect(0, 0, c.width, c.height);
+  const col = workerColor(w);
+  if (w.status === 'idle') {
+    ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.font = F(600, 34); ctx.fillText('rảnh', 24, 80);
+    if (w.lastCard) { ctx.font = F(500, 22); ctx.fillText('lần cuối #' + w.lastCard, 24, 118); }
+  } else {
+    ctx.fillStyle = col; ctx.font = F(700, 44); ctx.fillText(w.issue ? '#' + w.issue : workerName(w), 22, 58);
+    const ev = latestEvent(w.session);
+    ctx.fillStyle = w.status === 'away' ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.88)';
+    if (ev && ev.kind === 'tool') {
+      ctx.font = F(700, 22); ctx.fillText(ev.name, 22, 96);
+      ctx.font = FM(18); wrap(ctx, shortPath(ev.text, idx.repo.get(w.repo)), c.width - 40, 3).forEach((l, i) => ctx.fillText(l, 22, 126 + i * 24));
+    } else if (ev) {
+      ctx.font = F(500, 20); wrap(ctx, ev.text, c.width - 40, 4).forEach((l, i) => ctx.fillText(l, 22, 96 + i * 26));
+    } else {
+      ctx.font = F(500, 22); ctx.fillText('runner giao thẻ này', 22, 100);
+    }
+  }
+  tex.needsUpdate = true;
+}
+
+function palette() {
+  return {
+    bg: cssVar('--bg'), floor: cssVar('--floor'), floor2: cssVar('--floor2'), wall: cssVar('--wall'), rack: cssVar('--rack'),
+    desk: cssVar('--desk'), ink: cssVar('--ink'), muted: cssVar('--muted'), card: cssVar('--paper'), skin: cssVar('--skin'),
+    paperInk: '#1C2431', paperMuted: '#5A6475',
+    screen: cssVar('--screen'), line: cssVar('--line'), dark: document.documentElement.dataset.theme === 'dark',
+  };
+}
+function sceneTheme(T) {
+  renderer.setClearColor(T.bg);
+  scene.fog = new THREE.Fog(T.bg, 260, 700);
+  ground.material.color.set(T.bg);
+  if (T.dark) {
+    hemi.color.set(0xb7c3e0); hemi.groundColor.set(0x1a2028); hemi.intensity = 0.78;
+    sun.color.set(0xbfcaff); sun.intensity = 0.55;
+  } else {
+    hemi.color.set(0xffffff); hemi.groundColor.set(0xaab4c2); hemi.intensity = 0.88;
+    sun.color.set(0xfff6ea); sun.intensity = 0.72;
+  }
+}
+
+function clearWorld() {
+  scene.remove(world);
+  world.traverse((o) => { if (o.material && Array.isArray(o.material)) o.material.forEach((m) => m.dispose && m.dispose()); });
+  disposables.forEach((d) => d.dispose && d.dispose());
+  disposables = []; pickables = []; rigs = []; lamps = []; colStripes = []; halos = [];
+  screens = new Map(); rowMarks = new Map(); cardMeshes = new Map(); workerRings = new Map();
+  labels.forEach((l) => l.el.remove()); labels = [];
+  world = new THREE.Group(); scene.add(world);
+}
+function addLabel(cls, pos, el, align) { el.classList.add('lbl', cls); $('#labels').appendChild(el); const l = { el, pos, align: align || 'up' }; labels.push(l); return l; }
+function pick(mesh, p) { mesh.userData.pick = p; pickables.push(mesh); }
+
+let held = new Set();
+let lastBuildMs = 0;
+function buildWorld(S) {
+  const t0 = performance.now();
+  clearWorld();
+  held = new Set();
+  S.workers.forEach((w) => { if (w.status === 'working' && w.issue) { const it = itemFor(w.repo, w.issue); if (it) held.add(it.id); } });
+  const T = palette();
+  sceneTheme(T);
+  const cols = S.columns.length ? S.columns : [{ name: 'Chưa có cột', kind: 'backlog' }];
+  const nC = cols.length, nR = Math.max(1, S.repos.length);
+  const width = SIZE.OFFICE_W + nC * SIZE.COL_W, depth = nR * SIZE.ROW_D;
+  const x0 = -width / 2, z0 = -depth / 2;
+  L = {
+    width, depth, z0, x0, cols,
+    colX: (c) => x0 + SIZE.OFFICE_W + c * SIZE.COL_W + SIZE.COL_W / 2,
+    officeX: x0 + SIZE.OFFICE_W / 2,
+    rowZ: (r) => z0 + r * SIZE.ROW_D + SIZE.ROW_D / 2,
+    rowOf: new Map(),
+  };
+  ground.scale.set(width + 400, depth + 400, 1); ground.position.y = -0.01;
+  flat(width + 1.2, depth + 3.4, T.floor, 1, 0, 0.004, 0.6);
+  flat(SIZE.OFFICE_W - 0.5, depth + 1.4, T.floor2, 1, L.officeX, 0.012, 0);
+  { // lưới ô sàn
+    const pts = [], step = 1.6, gx0 = -width / 2 - 0.6, gx1 = width / 2 + 0.6, gz0 = z0 - 1.1, gz1 = -z0 + 2.3;
+    for (let gx = gx0; gx <= gx1 + 1e-6; gx += step) pts.push(gx, 0, gz0, gx, 0, gz1);
+    for (let gz = gz0; gz <= gz1 + 1e-6; gz += step) pts.push(gx0, 0, gz, gx1, 0, gz);
+    const geo = track(new THREE.BufferGeometry()); geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const grid = new THREE.LineSegments(geo, track(new THREE.LineBasicMaterial({ color: T.dark ? '#2a3442' : '#cfd6df', transparent: true, opacity: T.dark ? 0.55 : 0.7, depthWrite: false })));
+    grid.position.y = 0.018; world.add(grid);
+  }
+  cols.forEach((c, i) => {
+    const color = colColor(c);
+    const stripe = flat(SIZE.COL_W - 0.5, depth + 1.4, color, T.dark ? 0.07 : 0.09, L.colX(i), 0.016, 0);
+    stripe.material.depthWrite = false; stripe.userData.baseOpacity = stripe.material.opacity; colStripes[i] = stripe;
+    flat(SIZE.COL_W - 0.5, 0.32, color, 1, L.colX(i), 0.02, -z0 + 0.9);
+    const n = S.items.filter((it) => it.status === c.name).length;
+    const el = h('button'); el.type = 'button'; el.setAttribute('aria-label', 'Xem ' + n + ' thẻ ở cột ' + c.name);
+    el.addEventListener('click', () => select({ type: 'column', id: c.name }, false));
+    const sw = h('span', 'sw'); sw.style.background = color;
+    el.append(sw, h('span', null, c.name), h('span', 'n', String(n)));
+    addLabel('lbl-col', new THREE.Vector3(L.colX(i), 0.05, -z0 + 1.4), el, 'down');
+  });
+  const wallMat = mat(T.wall);
+  for (let r = 0; r < nR; r++) box(width - 0.4, r === 0 ? 1.0 : 0.38, 0.12, wallMat, 0, r === 0 ? 0.5 : 0.19, z0 + r * SIZE.ROW_D, null);
+  S.repos.forEach((repo, r) => buildRow(S, repo, r, cols, T));
+  const span = Math.max(width, depth) * 0.62 + 6;
+  sun.position.set(-width * 0.25, Math.max(width, depth) * 0.9, depth * 0.55 + 20);
+  sun.target.position.set(0, 0, 0);
+  Object.assign(sun.shadow.camera, { left: -span, right: span, top: span, bottom: -span, near: 1, far: Math.max(width, depth) * 3 });
+  sun.shadow.camera.updateProjectionMatrix();
+  updateSelectionVisuals();
+  lastBuildMs = Math.round(performance.now() - t0);
+}
+
+function buildRow(S, repo, r, cols, T) {
+  const z = L.rowZ(r);
+  L.rowOf.set(repo.name, r);
+  const mark = flat(L.width - 0.4, SIZE.ROW_D - 0.4, cssVar('--c-ready'), T.dark ? 0.1 : 0.07, 0, 0.026, z);
+  mark.visible = false; rowMarks.set(repo.name, mark);
+
+  // biển tên repo + đèn runner
+  const sx = L.officeX - 0.4, sz = z - 2.7;
+  const postMat = mat(T.dark ? '#59626f' : '#9aa3af');
+  box(0.1, 1.95, 0.1, postMat, sx - 1.9, 0.98, sz); box(0.1, 1.95, 0.1, postMat, sx + 1.9, 0.98, sz);
+  const signTex = signTexture(repo, T);
+  const side = mat(T.wall);
+  const sign = new THREE.Mesh(GEO.box, [side, side, side, side, track(new THREE.MeshStandardMaterial({ map: signTex, roughness: 0.9 })), side]);
+  sign.scale.set(4.0, 1.25, 0.1); sign.position.set(sx, 1.5, sz); sign.castShadow = true; world.add(sign);
+  pick(sign, { type: 'repo', id: repo.name });
+  const rn = repo.runner;
+  const rstate = rn ? rn.state : 'none';
+  if (rn) {
+    const lampColor = { running: cssVar('--c-done'), idle: cssVar('--c-building'), finished: cssVar('--c-away'), stale: cssVar('--c-blocked') }[rstate];
+    const waiting = rn.tick && rn.tick.waiting > 0;
+    const lm = new THREE.Mesh(GEO.lamp, mat(waiting ? cssVar('--c-you') : lampColor, { emissive: waiting ? cssVar('--c-you') : lampColor, emissiveIntensity: rstate === 'finished' ? 0.15 : 0.85 }));
+    lm.position.set(sx + 1.9, 2.15, sz); world.add(lm);
+    lamps.push({ mesh: lm, pulse: waiting || rstate === 'running' });
+  }
+  const rsx = rowState(repo);
+  const lbl = h('button', 'st-' + rsx.key); lbl.type = 'button';
+  lbl.setAttribute('aria-label', repo.name + ': ' + rsx.label + (rsx.detail ? ', ' + rsx.detail : ''));
+  lbl.append(h('span', null, repo.name));
+  const stl = h('span', 'rs'); stl.append(h('i'), h('span', null, rsx.label)); lbl.append(stl);
+  if (rsx.detail) lbl.append(h('span', 'rd', rsx.detail));
+  if (rsx.key === 'stopped' || rsx.key === 'stale') { // tắt đèn cả hàng
+    const off = flat(L.width - 0.4, SIZE.ROW_D - 0.3, T.bg, T.dark ? 0.66 : 0.62, 0, 0.024, z); off.material.depthWrite = false;
+  }
+  if (rn && rn.tick && rn.tick.waiting > 0) lbl.append(h('span', 'you', 'Chờ bạn ' + rn.tick.waiting));
+  lbl.addEventListener('click', () => select({ type: 'repo', id: repo.name }));
+  addLabel('lbl-repo', new THREE.Vector3(L.x0 - 0.6, 0.05, z), lbl, 'left');
+
+  const dim = rsx.key === 'stopped' || rsx.key === 'stale';
+  cols.forEach((c, ci) => buildStation(S, repo, c, ci, z, T, dim));
+  const colNames = new Set(cols.map((c) => c.name));
+  const office = S.workers.filter((w) => w.repo === repo.name && (!w.column || !colNames.has(w.column)));
+  placeDesks(office, L.officeX, z, T, { repo: repo.name, col: null });
+}
+
+function buildStation(S, repo, col, ci, z, T, dim) {
+  const x = L.colX(ci);
+  const color = colColor(col);
+  const hot = hotNumbers(repo.name);
+  const count = itemsAt(repo.name, col.name).length;
+  if (count) {
+    const rackMat = mat(T.rack);
+    const wide = count > 3 ? 5.6 : count * 1.66 + 0.6;
+    box(wide, 0.46, 2.35, rackMat, x - 2.8 + wide / 2, 0.23, z - 1.75);
+    if (count > 3) box(5.6, 0.34, 1.05, rackMat, x, 0.46 + 0.17, z - 2.4);
+  } else {
+    flat(5.4, 2.2, T.line, T.dark ? 0.35 : 0.55, x, 0.03, z - 1.75);
+  }
+  const laneOf = new Map();
+  S.workers.forEach((w) => { if (w.repo === repo.name && w.issue && w.status === 'working' && w.lane) laneOf.set(w.issue, w.lane); });
+  const its = itemsAt(repo.name, col.name).filter((it) => !held.has(it.id)).sort((a, b) =>
+    (hot.has(b.number) - hot.has(a.number)) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
+  const cap = 6;
+  const vis = its.length > cap ? its.slice(0, cap - 1) : its;
+  const edge = mat(dim ? (T.dark ? '#59606b' : '#c3c8cf') : T.card);
+  const back = mat(dim ? (T.dark ? '#4a515c' : '#b8bec7') : color);
+  const tint = dim ? new THREE.Color(T.dark ? '#5f6774' : '#b3b9c2') : new THREE.Color('#ffffff');
+  const slot = (k) => {
+    const rowI = k < 3 ? 0 : 1, kk = k % 3;
+    return { x: x - 2.8 + 0.3 + 0.83 + kk * 1.66, y: (rowI === 0 ? 0.46 : 0.8) + 0.52, z: rowI === 0 ? z - 1.2 : z - 2.35 };
+  };
+  vis.forEach((it, k) => {
+    const p = slot(k);
+    const isHot = hot.has(it.number);
+    const front = track(new THREE.MeshStandardMaterial({ map: cardTexture(it, color, isHot ? laneOf.get(it.number) : null, T), roughness: 0.9, color: tint,
+      emissive: isHot ? new THREE.Color(color) : new THREE.Color(0x000000), emissiveIntensity: isHot ? (T.dark ? 0.35 : 0.12) : 0 }));
+    const m = new THREE.Mesh(GEO.card, [edge, edge, edge, edge, front, back]);
+    m.position.set(p.x, p.y + (isHot ? 0.22 : 0), p.z); m.rotation.x = -0.1;
+    m.castShadow = true; world.add(m);
+    pick(m, { type: 'item', id: it.id });
+    cardMeshes.set(it.id, m);
+    m.userData.baseY = m.position.y; m.userData.hot = isHot;
+  });
+  if (its.length > cap) {
+    const p = slot(cap - 1);
+    const front = track(new THREE.MeshStandardMaterial({ map: overflowTexture(its.length - (cap - 1), color, T), roughness: 0.9, color: tint }));
+    const m = new THREE.Mesh(GEO.card, [edge, edge, edge, edge, front, back]);
+    m.position.set(p.x, p.y, p.z); m.rotation.x = -0.1; m.castShadow = true; world.add(m);
+    pick(m, { type: 'repo', id: repo.name });
+  }
+  const ws = S.workers.filter((w) => w.repo === repo.name && w.column === col.name);
+  placeDesks(ws, x, z, T, { repo: repo.name, col: col.name });
+}
+
+function stationWorkers(key) {
+  const [repo, col] = key.split('\u0000');
+  const names = new Set(STATE.columns.map((c) => c.name));
+  return STATE.workers.filter((w) => w.repo === repo && (col ? w.column === col : (!w.column || !names.has(w.column))));
+}
+function fillCrowd(el, key) {
+  const [repo, col] = key.split('\u0000');
+  const working = stationWorkers(key).filter((w) => w.status === 'working');
+  el.textContent = '';
+  const t = h('div', 'bt'); const dot = h('i'); dot.style.background = working[0] ? workerColor(working[0]) : 'var(--muted)';
+  t.append(dot, h('span', null, working.length + ' agent đang làm' + (col ? ' ở ' + col : '')));
+  el.append(t);
+  working.slice(0, 3).forEach((w) => el.append(h('div', 'bdo', (w.issue ? '#' + w.issue + ' ' : '') + describe(w).doing)));
+  if (working.length > 3) el.append(h('div', 'btask', '+' + (working.length - 3) + ' agent nữa, bấm để xem hết'));
+  el.setAttribute('aria-label', repo + ', ' + (col || 'bàn điều phối') + ': ' + working.length + ' agent đang làm. Bấm để xem từng agent.');
+}
+function placeDesks(ws, cx, z, T, place) {
+  const order = { working: 0, away: 1, idle: 2 };
+  const all = ws.slice().sort((a, b) => order[a.status] - order[b.status]);
+  if (all.length <= 3) {
+    const offs = all.length === 1 ? [0] : all.length === 2 ? [-1.4, 1.6] : [-2.2, 0, 2.2];
+    all.forEach((w, i) => makeDesk(w, cx + offs[i], z + 1.7, T));
+    return;
+  }
+  // ô đông (từ 4 agent): lưới 3 x 3 bàn nhỏ hơn, gom bóng thoại thành một bảng tóm tắt
+  all.slice(0, 9).forEach((w, i) => makeDesk(w, cx + ((i % 3) - 1) * 2.05, z + 0.8 + Math.floor(i / 3) * 1.12, T, 0.8, { noBubble: true }));
+  if (all.length > 9) { const more = h('div', null, '+' + (all.length - 9) + ' agent nữa'); more.setAttribute('aria-hidden', 'true'); addLabel('lbl-idle', new THREE.Vector3(cx, 0.6, z + 3.5), more); }
+  if (!all.some((w) => w.status === 'working')) return;
+  const key = place.repo + '\u0000' + (place.col || '');
+  const el = h('button', 'bubble crowd'); el.type = 'button'; el.dataset.station = key;
+  el.addEventListener('click', () => select({ type: 'station', id: key }, false));
+  fillCrowd(el, key);
+  addLabel('bubble-l', new THREE.Vector3(cx, 2.1, z + 0.4), el);
+}
+
+// ------------------------------------------------------------ 5 mẫu bàn làm việc
+const SIT = { x: -0.95, seat: 0.54, top: 0.8, card: [-0.05, 1.2, 0.5] };
+const DESK_STYLES = [
+  { name: 'Gỗ sáng', desc: 'Bàn gỗ, một màn hình, ghế văn phòng', pose: SIT,
+    build(K) {
+      const { box, desk, dark, chair } = K;
+      box(1.8, 0.07, 0.9, desk, 0, 0.76, 0); [[-0.82, 0.38], [-0.82, -0.38], [0.82, 0.38], [0.82, -0.38]].forEach(([px, pz]) => box(0.06, 0.72, 0.06, desk, px, 0.36, pz));
+      box(0.3, 0.03, 0.3, dark, 0.5, 0.81, 0); box(0.06, 0.26, 0.06, dark, 0.5, 0.94, 0); K.monitor(0.5, 1.33, 0);
+      box(0.56, 0.08, 0.56, chair, -0.95, 0.5, 0); box(0.07, 0.62, 0.56, chair, -1.25, 0.86, 0); box(0.07, 0.46, 0.07, chair, -0.95, 0.24, 0);
+    } },
+  { name: 'Góc chữ L', desc: 'Bàn chữ L, hai màn hình, ghế lưng cao, chậu cây', pose: SIT,
+    build(K) {
+      const { box, desk, dark, chair, T } = K;
+      box(1.9, 0.07, 0.95, desk, 0.05, 0.76, 0); box(0.95, 0.07, 1.25, desk, 0.53, 0.76, -1.08);
+      box(0.06, 0.72, 0.06, desk, -0.86, 0.36, 0.4); box(0.06, 0.72, 0.06, desk, -0.86, 0.36, -0.4); box(0.95, 0.72, 0.07, desk, 0.53, 0.36, -1.67); box(0.07, 0.72, 0.07, desk, 0.96, 0.36, 0.42);
+      box(0.32, 0.03, 0.32, dark, 0.55, 0.81, -0.02); box(0.06, 0.24, 0.06, dark, 0.55, 0.93, -0.02);
+      K.monitor(0.55, 1.3, 0.34, 0.78, 0.5, 0.25); K.monitor(0.55, 1.3, -0.38, 0.78, 0.5, -0.25);
+      box(0.26, 0.2, 0.26, K.mat(T.dark ? '#7a6a58' : '#d9cbb7'), 0.62, 0.9, -1.38);
+      const leaf = K.mesh(GEO.head, K.mat(T.dark ? '#4f8a4a' : '#5f9c50'), 0.62, 1.16, -1.38); leaf.scale.set(1.15, 1.35, 1.15);
+      box(0.6, 0.09, 0.6, chair, -0.95, 0.5, 0); box(0.08, 1.02, 0.58, chair, -1.27, 1.03, 0); box(0.07, 0.46, 0.07, chair, -0.95, 0.24, 0);
+      box(0.45, 0.05, 0.07, chair, -0.95, 0.72, 0.31); box(0.45, 0.05, 0.07, chair, -0.95, 0.72, -0.31);
+    } },
+  { name: 'Bàn đứng', desc: 'Agent đứng làm, màn hình rộng, thảm đứng',
+    pose: { x: -0.95, standing: true, top: 1.15, card: [-0.05, 1.55, 0.45] },
+    build(K) {
+      const { box, desk, dark, T } = K;
+      box(1.6, 0.06, 0.85, desk, 0.05, 1.12, 0);
+      box(0.09, 1.1, 0.09, dark, -0.6, 0.56, 0); box(0.09, 1.1, 0.09, dark, 0.7, 0.56, 0);
+      box(0.09, 0.04, 0.75, dark, -0.6, 0.02, 0); box(0.09, 0.04, 0.75, dark, 0.7, 0.02, 0);
+      box(0.05, 0.36, 0.05, dark, 0.55, 1.33, 0); K.monitor(0.55, 1.68, 0, 1.3, 0.5);
+      box(0.8, 0.025, 0.75, K.mat(T.dark ? '#33423a' : '#8a9a8e'), -0.95, 0.012, 0);
+    } },
+  { name: 'Buồng phát sáng', desc: 'Buồng kính tròn theo màu lane, sáng khi agent đang làm',
+    pose: Object.assign({}, SIT, { x: -0.62, card: [0.3, 1.2, 0.42] }),
+    build(K) {
+      const { box, desk, dark, chair, T } = K;
+      const base = K.mesh(GEO.cyl, K.mat(T.dark ? '#26303c' : '#e6eaef'), -0.3, 0.03, 0); base.scale.set(1.4, 0.06, 1.4);
+      const wall = K.mesh(GEO.arc, track(new THREE.MeshStandardMaterial({ color: K.accent, transparent: true, opacity: K.working ? 0.32 : 0.14, side: THREE.DoubleSide, roughness: 0.25, depthWrite: false })), -0.3, 0.8, 0);
+      wall.scale.set(1.32, 1.55, 1.32); wall.castShadow = false;
+      const top = K.mesh(GEO.halfDisc, desk, 0.02, 0.76, 0); top.scale.set(0.85, 0.07, 0.85);
+      box(0.1, 0.72, 0.1, dark, 0.45, 0.38, 0);
+      K.monitor(0.6, 1.3, 0, 1.0, 0.58);
+      const glow = K.mesh(GEO.ring, track(new THREE.MeshBasicMaterial({ color: K.accent, transparent: true, opacity: K.working ? 0.95 : 0.25, side: THREE.DoubleSide })), -0.3, 0.07, 0);
+      glow.rotation.x = -Math.PI / 2; glow.scale.setScalar(1.86); glow.castShadow = false;
+      const seat = K.mesh(GEO.cyl, chair, -0.62, 0.5, 0); seat.scale.set(0.3, 0.08, 0.3); box(0.06, 0.46, 0.06, chair, -0.62, 0.24, 0);
+    } },
+  { name: 'Bàn xưởng cơ khí', desc: 'Mặt gỗ dày, khung thép, bảng treo đồ nghề, đèn kẹp',
+    pose: Object.assign({}, SIT, { seat: 0.6, top: 0.88, card: [-0.05, 1.28, 0.5] }),
+    build(K) {
+      const { box, dark, T } = K;
+      const wood = K.mat(T.dark ? '#6b5236' : '#c08a52'), steel = K.mat(T.dark ? '#59616d' : '#8d96a3');
+      box(1.95, 0.12, 0.95, wood, 0.05, 0.82, 0);
+      [[-0.85, 0.4], [-0.85, -0.4], [0.95, 0.4], [0.95, -0.4]].forEach(([px, pz]) => box(0.07, 0.76, 0.07, steel, px, 0.38, pz));
+      box(1.25, 0.04, 0.85, steel, 0.33, 0.24, 0);
+      box(0.5, 0.24, 0.3, K.mat(cssVar('--c-blocked')), 0.45, 0.38, 0.15); box(0.5, 0.05, 0.3, K.mat(T.dark ? '#2a2f37' : '#3a4250'), 0.45, 0.52, 0.15);
+      box(0.04, 0.95, 1.0, K.mat(T.dark ? '#4b443a' : '#ddd0b8'), 1.0, 1.36, 0);
+      box(0.03, 0.2, 0.03, dark, 0.97, 1.55, 0.3); box(0.03, 0.14, 0.03, dark, 0.97, 1.5, -0.25); box(0.03, 0.03, 0.22, dark, 0.97, 1.2, 0.05);
+      box(0.05, 0.28, 0.05, dark, 0.5, 1.02, -0.1); K.monitor(0.5, 1.38, -0.1, 0.8, 0.5);
+      box(0.04, 0.55, 0.04, dark, 0.78, 1.15, 0.38);
+      const shade = K.mesh(GEO.cone, track(new THREE.MeshStandardMaterial({ color: '#f2c14e', emissive: '#f2c14e', emissiveIntensity: K.working ? 0.95 : 0.12, side: THREE.DoubleSide })), 0.64, 1.45, 0.38);
+      shade.rotation.z = 0.7;
+      const seat = K.mesh(GEO.cyl, K.chair, -0.95, 0.56, 0); seat.scale.set(0.3, 0.07, 0.3); box(0.06, 0.52, 0.06, steel, -0.95, 0.27, 0); box(0.4, 0.03, 0.4, steel, -0.95, 0.02, 0);
+    } },
+];
+let deskStyle = 0;
+try { deskStyle = Math.min(DESK_STYLES.length - 1, Math.max(0, parseInt(localStorage.getItem('agent-office-desk') || '0', 10) || 0)); } catch (e) { deskStyle = 0; }
+
+// ------------------------------------------------------------ người
+const SKINS = ['#F2D3B6', '#E0B08A', '#C48A5E', '#9A6440', '#6B442C'];
+const HAIRS = ['#2A221D', '#4B3427', '#7B5534', '#16181C'];
+function hashStr(str) { let x = 2166136261; for (let i = 0; i < str.length; i++) { x ^= str.charCodeAt(i); x = Math.imul(x, 16777619); } return x >>> 0; }
+function makePerson(g, P, w, T, parts) {
+  const hsh = hashStr(w.id);
+  const shirt = mat(workerColor(w), { roughness: 0.9 });
+  const skin = mat(SKINS[hsh % SKINS.length], { roughness: 0.7 });
+  const hairM = mat(HAIRS[(hsh >>> 3) % HAIRS.length], { roughness: 0.95 });
+  const pants = mat(T.dark ? '#3a4558' : '#2f3a4d');
+  const shoe = mat('#1f232a');
+  const eye = mat('#1b1d22', { roughness: 0.4 });
+  const add = (geo, m, x, y, z, sx, sy, sz, parent) => {
+    const mm = new THREE.Mesh(geo, m); mm.position.set(x, y, z); if (sx) mm.scale.set(sx, sy, sz);
+    mm.castShadow = true; (parent || g).add(mm); parts.push(mm); return mm;
+  };
+  const X = P.x, hipY = P.standing ? 1.0 : P.seat + 0.08;
+  [0.1, -0.1].forEach((zz) => { // chân: ngồi thì gập gối, đứng thì thẳng
+    if (P.standing) {
+      add(GEO.limb, pants, X, hipY / 2 + 0.03, zz, 1.25, (hipY - 0.06) / 0.5, 1.25);
+      add(GEO.box, shoe, X + 0.05, 0.035, zz, 0.24, 0.07, 0.11);
+    } else {
+      const thigh = add(GEO.limb, pants, X + 0.2, hipY - 0.03, zz, 1.3, 0.84, 1.3); thigh.rotation.z = -Math.PI / 2;
+      add(GEO.limb, pants, X + 0.4, (hipY - 0.03) / 2, zz, 1.15, (hipY - 0.06) / 0.5, 1.15);
+      add(GEO.box, shoe, X + 0.45, 0.035, zz, 0.22, 0.07, 0.11);
+    }
+  });
+  add(GEO.box, pants, X, hipY, 0, 0.3, 0.15, 0.36); // hông
+  const torso = add(GEO.torso, shirt, X - 0.02, hipY + 0.29, 0, 0.72, 1, 1.12); torso.rotation.z = P.standing ? 0 : 0.07;
+  const shY = hipY + 0.5;
+  add(GEO.limb, skin, X - 0.03, shY + 0.06, 0, 0.75, 0.22, 0.75); // cổ
+  const head = new THREE.Group(); head.position.set(X - 0.03, shY + 0.24, 0); g.add(head);
+  add(GEO.sphere1, skin, 0, 0, 0, 0.125, 0.145, 0.118, head);
+  add(GEO.sphere1, eye, 0.108, 0.02, 0.045, 0.018, 0.022, 0.018, head);
+  add(GEO.sphere1, eye, 0.108, 0.02, -0.045, 0.018, 0.022, 0.018, head);
+  add(GEO.sphere1, hairM, -0.045, 0.06, 0, 0.13, 0.12, 0.128, head); // tóc phủ đỉnh và sau đầu
+  const hairStyle = (hsh >>> 7) % 3;
+  if (hairStyle === 1) add(GEO.box, hairM, -0.09, -0.08, 0, 0.08, 0.26, 0.22, head); // tóc dài sau gáy
+  if (hairStyle === 2) add(GEO.sphere1, hairM, -0.13, 0.13, 0, 0.06, 0.06, 0.06, head); // búi tóc
+  const arms = [];
+  [0.205, -0.205].forEach((zz) => {
+    add(GEO.sphere1, shirt, X - 0.03, shY, zz, 0.07, 0.07, 0.07); // vai
+    const sh = new THREE.Group(); sh.position.set(X - 0.03, shY, zz); sh.rotation.z = 0.42; g.add(sh);
+    add(GEO.limb, shirt, 0, -0.14, 0, 0.95, 0.56, 0.95, sh); // cánh tay trên
+    const el = new THREE.Group(); el.position.set(0, -0.28, 0); el.rotation.z = -Math.PI / 2 - 0.42 + 0.08; sh.add(el);
+    add(GEO.limb, skin, 0, 0.13, 0, 0.8, 0.52, 0.8, el); // cẳng tay
+    add(GEO.sphere1, skin, 0, 0.28, 0, 0.042, 0.03, 0.05, el); // bàn tay
+    arms.push(el);
+  });
+  return { head, armL: arms[0], armR: arms[1], armRot: arms[0].rotation.z, headY: head.position.y };
+}
+
+function makeDesk(w, x, z, T, sc, opts) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = 0.85; g.scale.setScalar(sc || 1.3); world.add(g);
+  const style = DESK_STYLES[deskStyle] || DESK_STYLES[0];
+  const P = style.pose;
+  const hipY = P.standing ? 1.0 : P.seat + 0.08;
+  const bubbleY = hipY + 1.2, idleY = P.standing ? 1.5 : P.seat + 0.75;
+  const parts = [];
+  const scr = canvasTex(320, 200);
+  drawScreen(scr, w, T);
+  screens.set(w.id, scr);
+  const screenFace = track(new THREE.MeshBasicMaterial({ map: scr.tex }));
+  const K = {
+    T, g, mat, accent: workerColor(w), working: w.status === 'working',
+    desk: mat(T.desk), dark: mat(T.dark ? '#14181e' : '#3a4250'), chair: mat(T.dark ? '#4a5462' : '#c3cad4'),
+    box: (wd, ht, dp, m, px, py, pz) => { const b = box(wd, ht, dp, m, px, py, pz, g); parts.push(b); return b; },
+    mesh: (geo, m, px, py, pz) => { const o = new THREE.Mesh(geo, m); o.position.set(px, py, pz); o.castShadow = true; o.receiveShadow = true; g.add(o); parts.push(o); return o; },
+    monitor: (px, py, pz, wd, ht, ry) => {
+      const mon = new THREE.Mesh(GEO.box, [K.dark, screenFace, K.dark, K.dark, K.dark, K.dark]);
+      mon.scale.set(0.06, ht || 0.6, wd || 0.96); mon.position.set(px, py, pz); if (ry) mon.rotation.y = ry;
+      mon.castShadow = true; g.add(mon); parts.push(mon); return mon;
+    },
+  };
+  style.build(K);
+  const ring = new THREE.Mesh(GEO.ring, track(new THREE.MeshBasicMaterial({ color: workerColor(w), transparent: true, opacity: 0.9, side: THREE.DoubleSide })));
+  ring.rotation.x = -Math.PI / 2; ring.position.set(P.x + 0.15, 0.03, 0); ring.scale.setScalar(1.25); ring.visible = false; g.add(ring);
+  workerRings.set(w.id, ring);
+
+  if (w.status !== 'idle') {
+    const bodyCol = workerColor(w);
+    const person = makePerson(g, P, w, T, parts);
+    if (w.status === 'working') {
+      rigs.push({ head: person.head, armL: person.armL, armR: person.armR, phase: Math.random() * 6.28, headY: person.headY, armRot: person.armRot });
+      const halo = new THREE.Mesh(GEO.ring, track(new THREE.MeshBasicMaterial({ color: cssVar('--c-done'), transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })));
+      halo.rotation.x = -Math.PI / 2; halo.position.set(P.x, 0.08, 0); g.add(halo); halos.push({ mesh: halo, phase: Math.random() });
+    }
+    const it = itemFor(w.repo, w.issue);
+    if (it && w.status === 'working' && !cardMeshes.has(it.id)) { // agent đã kéo thẻ về bàn
+      const col = STATE.columns.find((c) => c.name === it.status) || { name: it.status };
+      const color = colColor(col);
+      const e = mat(T.card), bk = mat(color);
+      const front = track(new THREE.MeshStandardMaterial({ map: cardTexture(it, color, w.lane, T), roughness: 0.9, emissive: new THREE.Color(color), emissiveIntensity: T.dark ? 0.22 : 0.06 }));
+      const cm = new THREE.Mesh(GEO.card, [e, e, e, e, front, bk]);
+      cm.scale.setScalar(0.48); cm.position.set(P.card[0], P.top + 0.3, P.card[2]); cm.rotation.set(-0.12, -0.85, 0, 'YXZ'); // cỡ tờ giấy trên bàn cm.castShadow = true; g.add(cm);
+      cm.userData.baseY = cm.position.y;
+      cardMeshes.set(it.id, cm); pick(cm, { type: 'item', id: it.id });
+    }
+    if (w.issue && !it) { // thẻ runner đang cầm nhưng không có trên project
+      const tex = cardTexture({ number: w.issue, title: 'Không có trên Project', type: 'Issue' }, bodyCol, null, T);
+      const e = mat(T.card);
+      const cm = new THREE.Mesh(GEO.card, [e, e, e, e, track(new THREE.MeshStandardMaterial({ map: tex })), e]);
+      cm.scale.setScalar(0.5); cm.rotation.x = -Math.PI / 2 + 0.25; cm.rotation.z = 0.1; cm.position.set(P.card[0], P.top + 0.04, 0.12); g.add(cm);
+      parts.push(cm);
+    }
+    if (w.status === 'working' && !(opts && opts.noBubble)) {
+      const el = h('button', 'bubble'); el.type = 'button';
+      el.dataset.worker = w.id;
+      el.addEventListener('click', () => select({ type: 'worker', id: w.id }));
+      fillBubble(el, w);
+      g.updateMatrixWorld(true);
+      addLabel('bubble-l', new THREE.Vector3(P.x, bubbleY, 0).applyMatrix4(g.matrixWorld), el);
+    }
+  }
+  if (w.status !== 'working') {
+    g.updateMatrixWorld(true);
+    const tag = h('div', null, w.status === 'idle' ? (w.lane || 'Lane') + ' rảnh' : 'Nghỉ, ' + ago(w.session && w.session.lastTs));
+    tag.setAttribute('aria-hidden', 'true');
+    addLabel('lbl-idle', new THREE.Vector3(P.x, w.status === 'idle' ? idleY : bubbleY + 0.05, 0).applyMatrix4(g.matrixWorld), tag);
+  }
+  parts.forEach((p) => pick(p, { type: 'worker', id: w.id }));
+}
+
+const TOOL_VERB = { Read: 'đọc', Edit: 'sửa', MultiEdit: 'sửa', Write: 'tạo', NotebookEdit: 'sửa notebook', Grep: 'tìm trong code', Glob: 'tìm file',
+  Task: 'giao việc cho agent phụ', Agent: 'giao việc cho agent phụ', WebFetch: 'đọc trang web', WebSearch: 'tìm trên web', TodoWrite: 'cập nhật kế hoạch',
+  EnterWorktree: 'vào worktree', ExitWorktree: 'rời worktree' };
+const baseName = (p) => String(p || '').replace(/\/+$/, '').split('/').pop();
+function describeCmd(cmd) {
+  const c = String(cmd || '').trim().replace(/^(cd\s+[^&;]+(&&|;)\s*)+/, '');
+  const first = c.split(/&&|;|\|/)[0].trim(); const w = first.split(/\s+/);
+  const script = (first.match(/(?:bash|sh|python3?|node|npx|pytest)\s+([^\s"']+)/) || [])[1];
+  if (/\bpytest\b|\btest\b/.test(first) || (script && /test/i.test(script))) return 'chạy test ' + baseName(script || w[1] || '');
+  if (w[0] === 'git') return 'chạy git ' + (w[1] || '') + (w[2] && !w[2].startsWith('-') ? ' ' + baseName(w[2]) : '');
+  if (w[0] === 'gh') return 'gọi GitHub (gh ' + w.slice(1, 3).join(' ') + ')';
+  if (['grep', 'rg', 'sed', 'cat', 'head', 'tail', 'ls', 'find'].includes(w[0])) return 'xem code: ' + clip(first, 48);
+  return 'chạy ' + clip(first, 52);
+}
+function describe(w) {
+  const it = itemFor(w.repo, w.issue); const task = it ? it.title : null;
+  const ev = latestEvent(w.session);
+  if (!ev) return { task, ts: null, doing: w.status === 'working' ? 'Đang làm thẻ này, chưa thấy lệnh' : 'Rảnh' };
+  let what;
+  if (ev.kind === 'tool') {
+    if (ev.name === 'Bash') what = describeCmd(ev.text);
+    else if (['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(ev.name)) what = TOOL_VERB[ev.name] + ' ' + baseName(ev.text);
+    else what = (TOOL_VERB[ev.name] || ev.name) + (ev.text ? ': ' + clip(shortPath(ev.text, idx.repo.get(w.repo)), 44) : '');
+  } else what = 'nói: ' + clip(ev.text.split(/(?<=[.!?:])\s/)[0], 96);
+  const age = Date.now() / 1000 - (ev.ts || 0);
+  const prefix = w.status !== 'working' ? 'Lần cuối ' : age < 180 ? 'Đang ' : 'Vừa ';
+  return { task, ts: ev.ts, doing: prefix + what };
+}
+function fillBubble(el, w) {
+  el.textContent = '';
+  const d = describe(w);
+  const t = h('div', 'bt'); const dot = h('i'); dot.style.background = workerColor(w);
+  t.append(dot, h('span', null, workerName(w) + (w.issue ? ' #' + w.issue : '')));
+  if (d.ts) t.append(h('span', 'bwhen', ago(d.ts)));
+  el.append(t);
+  if (d.task) el.append(h('div', 'btask', d.task));
+  el.append(h('div', 'bdo', d.doing));
+  el.setAttribute('aria-label', workerName(w) + (w.issue ? ' #' + w.issue : '') + ' ở ' + w.repo + ': ' + (d.task ? d.task + '. ' : '') + d.doing);
+}
+
+function refreshDynamic(S) {
+  const T = palette();
+  S.workers.forEach((w) => { const scr = screens.get(w.id); if (scr) drawScreen(scr, w, T); });
+  labels.forEach((l) => { const id = l.el.dataset && l.el.dataset.worker; if (id && idx.worker.get(id)) { fillBubble(l.el, idx.worker.get(id)); l.w = 0; } else if (l.el.dataset && l.el.dataset.station) { fillCrowd(l.el, l.el.dataset.station); l.w = 0; } });
+}
+
+function layoutKey(S) {
+  return JSON.stringify([
+    document.documentElement.dataset.theme, deskStyle,
+    S.columns.map((c) => c.name),
+    S.repos.map((r) => [r.name, r.total, r.runner && r.runner.state, r.runner && r.runner.tick && r.runner.tick.waiting]),
+    S.items.map((i) => [i.id, i.status, i.title, i.number]),
+    S.workers.map((w) => [w.id, w.status, w.column, w.issue, w.lane]),
+  ]);
+}
+
+// ------------------------------------------------------------ camera
+let flight = null;
+const ease = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+function occupied() {
+  const top = chromePx('--top-h', 140), bot = chromePx('--bot-h', 64);
+  if (innerWidth <= 900) return { left: 0, right: 0, top, bottom: $('#drawer').hidden ? (($('#rail').hidden && $('#agentsPanel').hidden) ? bot : bot + 90) : innerHeight * 0.6 };
+  return { left: ($('#rail').hidden && $('#agentsPanel').hidden) ? 0 : 324, right: $('#drawer').hidden ? 0 : 412, top, bottom: bot };
+}
+function framing(center, w, d, elev) {
+  // Tìm khoảng cách + tâm sao cho cả khối (w x d, cao 2.6) nằm gọn trong vùng không bị panel che.
+  const occ = occupied();
+  const W = innerWidth, H = innerHeight;
+  const vx0 = occ.left + 16, vx1 = W - occ.right - 16, vy0 = occ.top + 16, vy1 = H - occ.bottom - 16;
+  const e = elev || 0.8;
+  const dir = new THREE.Vector3(0, Math.sin(e), Math.cos(e));
+  const corners = [];
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const y of [0, 2.6]) corners.push(new THREE.Vector3(center.x + sx * w / 2, y, center.z + sz * d / 2));
+  const cam = camera.clone();
+  const target = center.clone();
+  const p = new THREE.Vector3();
+  const bounds = (dist) => {
+    cam.position.copy(target).addScaledVector(dir, dist); cam.lookAt(target); cam.updateMatrixWorld(); cam.updateProjectionMatrix();
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const c of corners) { p.copy(c).project(cam); const px = (p.x + 1) / 2 * W, py = (1 - p.y) / 2 * H; x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py); }
+    return { x0, x1, y0, y1 };
+  };
+  let dist = 40;
+  for (let iter = 0; iter < 3; iter++) {
+    let lo = 3, hi = 600;
+    for (let i = 0; i < 28; i++) {
+      const mid = (lo + hi) / 2; const b = bounds(mid);
+      if ((b.x1 - b.x0) <= (vx1 - vx0) && (b.y1 - b.y0) <= (vy1 - vy0)) hi = mid; else lo = mid;
+    }
+    dist = hi;
+    const b = bounds(dist);
+    const dxPx = (vx0 + vx1) / 2 - (b.x0 + b.x1) / 2, dyPx = (vy0 + vy1) / 2 - (b.y0 + b.y1) / 2;
+    const wpp = (2 * dist * Math.tan(camera.fov * Math.PI / 360)) / H;
+    target.x -= dxPx * wpp;
+    target.z -= dyPx * wpp / Math.max(0.35, Math.sin(e));
+  }
+  return { pos: target.clone().addScaledVector(dir, dist), target };
+}
+function flyTo(f, ms) {
+  if (reduceMotion.matches || !ms) { camera.position.copy(f.pos); controls.target.copy(f.target); controls.update(); flight = null; return; }
+  flight = { p0: camera.position.clone(), t0: controls.target.clone(), p1: f.pos, t1: f.target, start: performance.now(), dur: ms };
+}
+controls.addEventListener('start', () => { flight = null; });
+function clampTarget(move) {
+  if (!L) return move;
+  const t = controls.target.clone().add(move);
+  const cx = Math.min(Math.max(t.x, L.x0 - 14), L.x0 + L.width + 6), cz = Math.min(Math.max(t.z, L.z0 - 8), -L.z0 + 8);
+  return move.set(cx - controls.target.x, 0, cz - controls.target.z);
+}
+function panBy(dxPx, dyPx) { // cuộn xuống thì xem phần bên dưới, cuộn sang phải thì xem phần bên phải
+  flight = null;
+  const wpp = (2 * camera.position.distanceTo(controls.target) * Math.tan(camera.fov * Math.PI / 360)) / innerHeight;
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0); right.y = 0; right.normalize();
+  const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize();
+  const move = clampTarget(right.multiplyScalar(dxPx * wpp).add(fwd.multiplyScalar(-dyPx * wpp)));
+  camera.position.add(move); controls.target.add(move);
+}
+function zoomAt(f, cx, cy) { // phóng vào đúng điểm dưới con trỏ, như bản đồ
+  flight = null;
+  const off = camera.position.clone().sub(controls.target);
+  const d0 = off.length(), d1 = Math.min(Math.max(d0 * f, controls.minDistance), controls.maxDistance), real = d1 / d0;
+  const r = canvas.getBoundingClientRect(), n = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+  const rc = new THREE.Raycaster(); rc.setFromCamera(n, camera);
+  const p = new THREE.Vector3();
+  if (rc.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), p)) {
+    const want = controls.target.clone().sub(p).multiplyScalar(real).add(p).sub(controls.target);
+    controls.target.add(clampTarget(want));
+  }
+  camera.position.copy(controls.target).add(off.multiplyScalar(real));
+}
+const zoomBy = (f) => zoomAt(f, innerWidth / 2, innerHeight / 2);
+addEventListener('wheel', (e) => { // nghe cả trang để cuộn trên bóng thoại hay nhãn vẫn di chuyển được
+  if (e.target.closest && e.target.closest('#drawer, #board, .rail, dialog, .desk-picker, .notices')) return; // các khung có thanh cuộn riêng
+  e.preventDefault(); e.stopPropagation();
+  const k = e.deltaMode === 1 ? 32 : e.deltaMode === 2 ? innerHeight : 1;
+  const sideways = Math.abs(e.deltaX) > 0.5 && Math.abs(e.deltaX) > Math.abs(e.deltaY) * 0.5; // vuốt ngang/chéo trên trackpad
+  if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(e.deltaY * k * 0.01), e.clientX, e.clientY); // chụm hai ngón gửi kèm ctrlKey
+  else if (e.shiftKey) panBy((e.deltaX || e.deltaY) * k, 0);
+  else if (sideways) panBy(e.deltaX * k, e.deltaY * k);
+  else zoomAt(Math.exp(e.deltaY * k * 0.0018), e.clientX, e.clientY); // cuộn chuột: phóng to/thu nhỏ
+}, { capture: true, passive: false });
+// kéo bắt đầu trên bóng thoại hay nhãn repo thì vẫn di chuyển xưởng; bấm nhẹ vẫn mở chi tiết
+let lblDrag = null, suppressLabelClick = false;
+$('#labels').addEventListener('pointerdown', (e) => { if (e.button === 0) lblDrag = { x: e.clientX, y: e.clientY, moved: false }; });
+addEventListener('pointermove', (e) => {
+  if (!lblDrag) return;
+  const dx = e.clientX - lblDrag.x, dy = e.clientY - lblDrag.y;
+  if (!lblDrag.moved && Math.hypot(dx, dy) < 6) return;
+  lblDrag.moved = true; panBy(-dx, -dy); lblDrag.x = e.clientX; lblDrag.y = e.clientY;
+});
+addEventListener('pointerup', () => { if (lblDrag && lblDrag.moved) { suppressLabelClick = true; setTimeout(() => { suppressLabelClick = false; }, 0); } lblDrag = null; });
+$('#labels').addEventListener('click', (e) => { if (suppressLabelClick) { e.stopPropagation(); e.preventDefault(); } }, true);
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable], #drawer, #board, .rail')) || $('#createDlg').open) return;
+  const act = { ArrowLeft: () => panBy(-70, 0), ArrowRight: () => panBy(70, 0), ArrowUp: () => panBy(0, -70), ArrowDown: () => panBy(0, 70),
+    '+': () => zoomBy(0.85), '=': () => zoomBy(0.85), '-': () => zoomBy(1 / 0.85) }[e.key];
+  if (act) { e.preventDefault(); act(); }
+});
+const HEAD_W = 10;
+function fitAll(ms) { if (L) flyTo(framing(new THREE.Vector3(-HEAD_W / 2, 0, 0.9), L.width + HEAD_W, L.depth + 4.4, 0.64), ms == null ? 900 : ms); }
+// Gần gấp đôi toàn cảnh, đặt tâm vào chỗ các agent đang làm
+function zoomView(ms) {
+  if (!L) return;
+  const f = framing(new THREE.Vector3(-HEAD_W / 2, 0, 0.9), L.width + HEAD_W, L.depth + 4.4, 0.64);
+  const target = f.target.clone();
+  const p = new THREE.Vector3(), sum = new THREE.Vector3(); let n = 0;
+  halos.forEach((hl) => { hl.mesh.getWorldPosition(p); sum.add(p); n++; });
+  if (n) { sum.divideScalar(n); target.x = Math.min(Math.max(sum.x, L.x0 + 8), L.x0 + L.width - 8); target.z = Math.min(Math.max(sum.z, L.z0 + 4), -L.z0 - 4); }
+  const offset = f.pos.clone().sub(f.target).multiplyScalar(camera.aspect < 0.8 ? 0.34 : 0.5); // màn hình dọc: gần hơn để lấp đầy chiều cao
+  flyTo({ pos: target.clone().add(offset), target }, ms == null ? 900 : ms);
+}
+function focusSelection() {
+  if (!selection || !L) return;
+  if (selection.type === 'repo') {
+    const r = L.rowOf.get(selection.id); if (r == null) return;
+    // khung theo vùng có agent (hoặc có việc) của repo, không cố nhét cả hàng dài
+    const xs = []; const p = new THREE.Vector3();
+    STATE.workers.forEach((w) => { if (w.repo !== selection.id) return; const ring = workerRings.get(w.id); if (ring) { ring.getWorldPosition(p); xs.push(p.x); } });
+    if (!xs.length) L.cols.forEach((c, i) => { if (itemsAt(selection.id, c.name).length) xs.push(L.colX(i)); });
+    if (!xs.length) xs.push(L.officeX);
+    const x0 = Math.min(...xs) - 3.6, x1 = Math.max(...xs) + 3.6;
+    const w = Math.max(18, x1 - x0);
+    flyTo(framing(new THREE.Vector3((x0 + x1) / 2, 0, L.rowZ(r)), w, SIZE.ROW_D + 0.6, 0.6), 900);
+  } else if (selection.type === 'item') {
+    const m = cardMeshes.get(selection.id);
+    if (m) { const wp = new THREE.Vector3(); m.getWorldPosition(wp); flyTo(framing(wp.setY(0), 9, 7, 0.7), 900); }
+    else { const it = idx.item.get(selection.id); if (it) { selection = { type: 'repo', id: it.repo }; } }
+  } else if (selection.type === 'worker') {
+    const ring = workerRings.get(selection.id);
+    if (ring) { const p = new THREE.Vector3(); ring.getWorldPosition(p); flyTo(framing(p.setY(0).add(new THREE.Vector3(0, 0, -1.2)), 9, 7.5, 0.66), 900); }
+  }
+}
+
+// ------------------------------------------------------------ interaction
+const ray = new THREE.Raycaster(); const ndc = new THREE.Vector2();
+let hoverEvt = null, downAt = null, hovered = null;
+canvas.addEventListener('pointermove', (e) => { hoverEvt = e; });
+canvas.addEventListener('pointerleave', () => { hoverEvt = null; setTip(null); });
+canvas.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
+canvas.addEventListener('pointerup', (e) => {
+  if (!downAt) return; const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y); downAt = null;
+  if (moved > 6) return;
+  const p = hitAt(e); if (p) select(p);
+});
+function hitAt(e) {
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObjects(pickables, false)[0];
+  return hit ? hit.object.userData.pick : null;
+}
+const tip = $('#tip');
+function setTip(p, e) {
+  if (!p) { tip.classList.remove('on'); canvas.style.cursor = ''; return; }
+  canvas.style.cursor = 'pointer';
+  tip.textContent = '';
+  if (p.type === 'item') { const it = idx.item.get(p.id); if (!it) return; tip.append(h('b', null, (it.number ? '#' + it.number + ' ' : '') + it.title), h('span', null, it.repo + ', cột ' + it.status)); }
+  else if (p.type === 'worker') {
+    const w = idx.worker.get(p.id); if (!w) return;
+    tip.append(h('b', null, workerName(w) + (w.issue ? ' #' + w.issue : '') + ' ở ' + w.repo));
+    const ev = latestEvent(w.session);
+    tip.append(h('span', null, WORKER_STATE[w.status] + (ev ? ', ' + clip(ev.kind === 'tool' ? ev.name + ' ' + shortPath(ev.text, idx.repo.get(w.repo)) : ev.text, 120) : '')));
+  } else if (p.type === 'repo') { const r = idx.repo.get(p.id); if (!r) return; tip.append(h('b', null, r.name), h('span', null, r.total + ' việc trên bảng. Bấm để xem chi tiết.')); }
+  const x = Math.min(e.clientX + 14, innerWidth - 330), y = Math.min(e.clientY + 16, innerHeight - 80);
+  tip.style.transform = `translate(${x}px, ${y}px)`; tip.classList.add('on');
+}
+
+function select(sel, fly = true) {
+  selection = sel;
+  $('#drawer').scrollTop = 0; drawerSig = null;
+  renderDrawer(); renderRail(); updateSelectionVisuals();
+  if (fly) requestAnimationFrame(focusSelection);
+}
+function updateSelectionVisuals() {
+  rowMarks.forEach((m, name) => { m.visible = !!selection && selection.type === 'repo' && selection.id === name; });
+  workerRings.forEach((ring, id) => { ring.visible = !!selection && selection.type === 'worker' && selection.id === id; });
+  cardMeshes.forEach((m, id) => {
+    const on = selection && selection.type === 'item' && selection.id === id;
+    m.scale.setScalar(on ? 1.12 : 1);
+    m.position.y = m.userData.baseY + (on ? 0.25 : 0);
+  });
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#deskPicker').hidden) { $('#deskPicker').hidden = true; $('#btnDesk').setAttribute('aria-expanded', 'false'); $('#btnDesk').focus(); return; }
+  if (e.key === 'Escape' && !selection && boardOpen && !$('#createDlg').open) { boardOpen = false; $('#btnBoard').textContent = 'Dạng bảng'; renderBoard(); return; }
+  if (e.key === 'Escape' && selection) { selection = null; renderDrawer(); renderRail(); updateSelectionVisuals(); } });
+
+// ------------------------------------------------------------ UI
+function renderTop(S) {
+  const proj = $('#proj'); proj.textContent = '';
+  const title = S.project.title || 'GitHub Project';
+  const url = safeUrl(S.project.url);
+  if (url) { const a = h('a', null, title); a.href = url; a.target = '_blank'; a.rel = 'noopener'; proj.append(a); } else proj.append(title);
+  if (S.project.viewName) proj.append(', view ' + S.project.viewName);
+  const sync = $('#sync'); sync.textContent = '';
+  const ok = S.project.ok !== false;
+  sync.append(h('span', 'dot' + (ok ? '' : ' err')));
+  const working = S.workers.filter((w) => w.status === 'working').length;
+  sync.append(h('span', null, S.project.fetchedAt ? 'Đồng bộ GitHub ' + ago(S.project.fetchedAt) : 'Chưa đọc được GitHub'));
+  const stBox = $('#states'); stBox.textContent = '';
+  const states = S.repos.filter((r) => r.runner || S.workers.some((w) => w.repo === r.name)).map(rowState);
+  const cnt = (k) => states.filter((x) => x.key === k).length;
+  [[working, 'agent đang làm', '--c-done', true], [cnt('idle'), 'repo chờ việc', '--c-building'], [cnt('stopped'), 'repo đã dừng', '--faint'], [cnt('stale'), 'repo mất tín hiệu', '--c-blocked']]
+    .forEach(([c, t, v, always]) => { if (!c && !always) return; const sp = h('span'); const i = h('i'); i.style.background = 'var(' + v + ')'; sp.append(i, c + ' ' + t); stBox.append(sp); });
+
+  const lg = $('#legend'); lg.textContent = '';
+  S.columns.forEach((c) => {
+    const n = S.items.filter((it) => it.status === c.name).length;
+    const chip = h('button', 'chip'); chip.type = 'button'; chip.title = 'Xem ' + n + ' thẻ ở cột ' + c.name; chip.onclick = () => select({ type: 'column', id: c.name }, false);
+    const sw = h('span', 'sw'); sw.style.background = colColor(c);
+    chip.append(sw, h('span', null, c.name), h('b', null, String(n))); lg.append(chip);
+  });
+  const waiting = S.repos.reduce((a, r) => a + ((r.runner && r.runner.tick && r.runner.tick.waiting) || 0), 0);
+  if (waiting) { const c = h('button', 'chip you'); c.type = 'button'; c.onclick = () => select({ type: 'events' }, false); c.append(h('span', null, 'Đang chờ bạn'), h('b', null, String(waiting))); lg.append(c); }
+}
+const dismissed = new Set();
+function renderNotices(S, offline) {
+  const box = $('#notices'); box.textContent = '';
+  const list = (S ? S.notices : []).slice();
+  if (offline) list.unshift({ level: 'error', text: 'Mất kết nối tới server.py. Kiểm tra cửa sổ terminal đang chạy server.' });
+  list.filter((n) => !dismissed.has(n.text)).forEach((n) => {
+    const el = h('div', 'notice ' + n.level); el.append(h('span', null, n.text));
+    const x = h('button', null, 'Ẩn'); x.type = 'button'; x.onclick = () => { dismissed.add(n.text); el.remove(); };
+    if (n.cmd) {
+      const code = h('code', null, n.cmd); const b = h('button', null, 'Chép lệnh'); b.type = 'button';
+      b.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(n.cmd).then(() => { b.textContent = 'Đã chép'; }); };
+      el.append(code, b);
+    }
+    el.append(x); box.append(el);
+  });
+}
+function stackBar(counts, cols) {
+  const bar = h('div', 'bar'); const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  if (!total) return bar;
+  cols.forEach((c) => { const n = counts[c.name] || 0; if (!n) return; const s = h('span'); s.style.background = colColor(c); s.style.flex = String(n); s.title = c.name + ': ' + n; bar.append(s); });
+  return bar;
+}
+const railButtons = new Map();
+function renderRail() {
+  const S = STATE; if (!S) return;
+  const list = $('#repoList');
+  const seen = new Set();
+  S.repos.forEach((r, i) => {
+    seen.add(r.name);
+    let b = railButtons.get(r.name);
+    if (!b) {
+      b = h('button', 'repo'); b.type = 'button'; b.dataset.sig = '';
+      b.addEventListener('click', () => select({ type: 'repo', id: r.name }));
+      railButtons.set(r.name, b);
+    }
+    if (list.children[i] !== b) list.insertBefore(b, list.children[i] || null);
+    b.setAttribute('aria-current', String(!!selection && selection.type === 'repo' && selection.id === r.name));
+    const busy = S.workers.filter((w) => w.repo === r.name && w.status === 'working');
+    const sig = JSON.stringify([r.counts, r.runner && r.runner.state, r.runner && r.runner.tick && r.runner.tick.time, busy.map((w) => w.issue), document.documentElement.dataset.theme]);
+    if (b.dataset.sig === sig) return;
+    b.dataset.sig = sig; b.textContent = '';
+    const r1 = h('div', 'r1'); r1.append(h('span', 'name', r.name));
+    const rsx = rowState(r); r1.append(h('span', 'pill ' + ROW_PILL[rsx.key], rsx.label));
+    b.append(r1);
+    let counts = r.counts, cols = S.columns;
+    if (!r.total && r.runner && r.runner.tick) { counts = r.runner.tick.counts; cols = Object.keys(counts).map((k) => ({ name: k, kind: kindOf(k) })); }
+    b.append(stackBar(counts, cols));
+    const r3 = h('div', 'r3');
+    const nums = busy.filter((w) => w.issue).map((w) => '#' + w.issue);
+    r3.append(h('span', busy.length ? 'busy' : null, busy.length ? busy.length + ' agent: ' + (nums.join(', ') || 'điều phối') : 'Không agent nào đang làm'));
+    if (r.runner && r.runner.tick) r3.append(h('span', null, 'tick ' + r.runner.tick.time));
+    b.append(r3);
+  });
+  railButtons.forEach((b, name) => { if (!seen.has(name)) { b.remove(); railButtons.delete(name); } });
+}
+
+function drawerShell() {
+  const d = $('#drawer'); d.hidden = false; d.textContent = '';
+  const x = h('button', 'close', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Đóng');
+  x.onclick = () => { selection = null; renderDrawer(); renderRail(); updateSelectionVisuals(); };
+  d.append(x); return d;
+}
+function metaList(pairs) {
+  const dl = h('dl', 'meta');
+  pairs.filter((p) => p[1] != null && p[1] !== '').forEach(([k, v, mono]) => { dl.append(h('dt', null, k)); const dd = h('dd', mono ? 'mono' : null); if (v instanceof Node) dd.append(v); else dd.textContent = v; dl.append(dd); });
+  return dl;
+}
+function linkBtn(text, sel) { const b = h('button', null, text); b.type = 'button'; b.className = 'more'; b.style.margin = '0'; b.onclick = () => select(sel); return b; }
+
+let drawerSig = null;
+function renderDrawer(force) {
+  const S = STATE; const d = $('#drawer');
+  document.body.classList.toggle('drawer-open', !!selection && !!S);
+  if (!selection || !S) { d.hidden = true; drawerSig = null; return; }
+  const sig = JSON.stringify([selection, document.documentElement.dataset.theme,
+    selection.type === 'repo' ? [idx.repo.get(selection.id), S.workers.filter((w) => w.repo === selection.id), S.items.filter((i) => i.repo === selection.id)]
+    : selection.type === 'item' ? [idx.item.get(selection.id), S.workers] : selection.type === 'column' ? [S.items.filter((i) => i.status === selection.id), S.workers.map((w) => [w.id, w.status, w.issue])] : selection.type === 'station' ? stationWorkers(selection.id).map((w) => [w.id, w.status, describe(w).doing]) : idx.worker.get(selection.id)]);
+  if (!force && sig === drawerSig && !d.hidden) return;
+  drawerSig = sig;
+  const keep = d.scrollTop;
+  renderDrawerNow();
+  d.scrollTop = keep;
+}
+function renderDrawerNow() {
+  const S = STATE; const d = $('#drawer');
+  if (selection.type === 'events') return drawEvents();
+  if (selection.type === 'column') return drawColumn(selection.id);
+  if (selection.type === 'station') return drawStation(selection.id);
+  if (selection.type === 'repo') return drawRepo(idx.repo.get(selection.id));
+  if (selection.type === 'item') return drawItem(idx.item.get(selection.id));
+  if (selection.type === 'worker') return drawWorker(idx.worker.get(selection.id));
+}
+
+function drawRepo(r) {
+  if (!r) { $('#drawer').hidden = true; return; }
+  const S = STATE; const d = drawerShell();
+  const rsx = rowState(r);
+  const k = h('div', 'kicker'); k.append(h('span', 'pill ' + ROW_PILL[rsx.key], rsx.label + ', ' + rsx.detail)); if (r.path) k.append(h('span', 'mono', shortPath(r.path) || r.path));
+  d.append(k, h('h2', null, r.name));
+  if (canWrite() && r.full && r.name !== 'Nháp') {
+    const ra = h('div', 'row-actions'); const add = h('button', 'btn', 'Thêm việc vào ' + r.name); add.type = 'button';
+    add.onclick = () => openCreate(r.name); ra.append(add); d.append(ra);
+  }
+
+  d.append(h('h3', null, 'Trên bảng GitHub (' + r.total + ' việc)'));
+  if (r.total) {
+    const bars = h('div', 'bars');
+    S.columns.forEach((c) => {
+      const n = r.counts[c.name] || 0;
+      const row = h('div', 'b'); const tr = h('div', 'track'); const f = h('div', 'fill');
+      f.style.width = (r.total ? (n / r.total) * 100 : 0) + '%'; f.style.background = colColor(c); tr.append(f);
+      row.append(h('span', null, c.name), tr, h('span', 'n', String(n))); bars.append(row);
+    });
+    d.append(bars);
+  } else d.append(h('p', 'empty', 'Repo này chưa có việc nào trên Project.'));
+
+  if (r.runner && r.runner.tick) {
+    const t = r.runner.tick;
+    d.append(h('h3', null, 'Runner super-board, tick ' + t.time + ' (' + ago(t.at) + ')'));
+    const lanes = h('div', 'lanes');
+    ['b', 'q', 'r'].forEach((key) => {
+      const w = idx.worker.get(r.name + ':lane:' + key); const lane = t.lanes[key]; if (!lane) return;
+      const b = h('button', 'lane' + (w && w.status === 'working' ? ' busy' : '')); b.type = 'button';
+      const name = { b: 'Build', q: 'QA', r: 'Review' }[key];
+      const ln = h('span', 'ln', name); ln.style.color = cssVar('--t-' + LANE_KIND[name]);
+      let txt;
+      if (!lane.idle) { const it = itemFor(r.name, lane.card); txt = 'Đang làm #' + lane.card + (it ? ' ' + it.title : ''); }
+      else txt = 'Rảnh' + (lane.card ? ', lần cuối #' + lane.card : '');
+      b.append(ln, h('span', 'lv', txt));
+      if (w) b.onclick = () => select({ type: 'worker', id: w.id });
+      lanes.append(b);
+    });
+    d.append(lanes);
+    const counts = Object.entries(t.counts).map(([k2, v]) => k2 + ' ' + v).join(', ');
+    d.append(metaList([
+      ['Đếm của runner', counts], ['Chờ bạn', String(t.waiting)],
+      ['Manifest', (r.manifest && r.manifest.path) || r.runner.manifestHint, true],
+      ['Nguồn', r.runner.source === 'transcript' ? 'transcript Claude Code' : shortPath(r.runner.source), r.runner.source !== 'transcript'],
+    ]));
+    if (r.runner.history && r.runner.history.length > 1) d.append(sparkline(r.runner.history));
+  } else if (r.manifest) {
+    d.append(h('h3', null, 'Runner super-board'));
+    d.append(metaList([['Manifest', r.manifest.path, true], ['Cập nhật', ago(r.manifest.mtime)]]));
+  }
+
+  const ws = S.workers.filter((w) => w.repo === r.name && w.kind === 'session' || (w.repo === r.name && w.session));
+  if (ws.length) {
+    d.append(h('h3', null, 'Phiên agent'));
+    const ul = h('ul', 'row-list');
+    ws.forEach((w) => {
+      const li = h('li'); const b = h('button'); b.type = 'button';
+      const tag = h('span', 'tag pill ' + w.status, WORKER_STATE[w.status]);
+      b.append(h('span', 'num', w.issue ? '#' + w.issue : ''), h('span', 't', workerName(w) + ', ' + ago(w.session && w.session.lastTs)), tag);
+      b.onclick = () => select({ type: 'worker', id: w.id }); li.append(b); ul.append(li);
+    });
+    d.append(ul);
+  }
+
+  if (r.total) {
+    d.append(h('h3', null, 'Việc theo cột'));
+    S.columns.forEach((c) => {
+      const its = itemsAt(r.name, c.name); if (!its.length) return;
+      const head = h('div', 'colhead'); const sw = h('span', 'sw'); sw.style.background = colColor(c);
+      head.append(sw, h('span', null, c.name), h('span', 'n', String(its.length))); d.append(head);
+      const ul = h('ul', 'row-list');
+      const hot = hotNumbers(r.name);
+      const sorted = its.slice().sort((a, b) => (hot.has(b.number) - hot.has(a.number)) || ((b.updatedAt || 0) - (a.updatedAt || 0)));
+      const show = (n) => {
+        ul.textContent = '';
+        sorted.slice(0, n).forEach((it) => {
+          const li = h('li'); const b = h('button'); b.type = 'button';
+          b.append(h('span', 'num', it.number ? '#' + it.number : 'Nháp'), h('span', 't', it.title));
+          if (hot.has(it.number)) b.append(h('span', 'tag pill working', 'đang làm'));
+          b.onclick = () => select({ type: 'item', id: it.id }); li.append(b); ul.append(li);
+        });
+        if (sorted.length > n) { const m = h('button', 'more', 'Xem thêm ' + (sorted.length - n) + ' việc'); m.type = 'button'; m.onclick = () => show(sorted.length); ul.append(m); }
+      };
+      show(6); d.append(ul);
+    });
+  }
+}
+
+function sparkline(hist) {
+  const wrapEl = h('div');
+  const keys = Object.keys(hist[hist.length - 1].counts);
+  const max = Math.max(1, ...hist.flatMap((p) => keys.map((k) => p.counts[k] || 0)));
+  const W = 320, H = 84, pad = 6;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('class', 'spark'); svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Số thẻ theo từng tick');
+  const leg = h('div', 'spark-legend');
+  keys.forEach((k) => {
+    const col = cssVar('--c-' + (kindOf(k) === 'other' ? 'backlog' : kindOf(k)));
+    const pts = hist.map((p, i) => `${pad + (i / (hist.length - 1)) * (W - 2 * pad)},${H - pad - ((p.counts[k] || 0) / max) * (H - 2 * pad)}`).join(' ');
+    const pl = document.createElementNS(ns, 'polyline'); pl.setAttribute('points', pts); pl.setAttribute('fill', 'none'); pl.setAttribute('stroke', col);
+    pl.setAttribute('stroke-width', '2'); pl.setAttribute('vector-effect', 'non-scaling-stroke'); pl.setAttribute('stroke-linejoin', 'round'); svg.append(pl);
+    const s = h('span'); const i = h('i'); i.style.background = col; s.append(i, k + ' ' + (hist[hist.length - 1].counts[k] || 0)); leg.append(s);
+  });
+  wrapEl.append(h('h3', null, 'Diễn biến ' + hist.length + ' tick gần nhất (' + hist[0].time + ' đến ' + hist[hist.length - 1].time + ')'), svg, leg);
+  return wrapEl;
+}
+
+function drawItem(it) {
+  if (!it) { $('#drawer').hidden = true; return; }
+  const S = STATE; const d = drawerShell();
+  const col = S.columns.find((c) => c.name === it.status) || { name: it.status };
+  const k = h('div', 'kicker');
+  const sp = h('span', 'pill'); sp.textContent = it.status; sp.style.color = colText(col); sp.style.background = 'color-mix(in srgb, ' + colColor(col) + ' 14%, transparent)';
+  k.append(sp, h('span', null, it.repo + (it.number ? ' #' + it.number : '')));
+  d.append(k, h('h2', null, it.title));
+  if (it.lastComment && it.lastComment.body) {
+    const isBlocked = (col.kind || kindOf(col.name)) === 'blocked';
+    d.append(h('h3', null, isBlocked ? 'Lý do bị chặn (bình luận mới nhất)' : 'Bình luận mới nhất'));
+    const q = h('p', 'say' + (isBlocked ? ' blocked' : '')); q.append(document.createTextNode(clip(it.lastComment.body, 700)));
+    q.append(h('small', null, (it.lastComment.author || 'không rõ') + ', ' + ago(it.lastComment.at))); d.append(q);
+  }
+  if (canWrite()) {
+    d.append(h('h3', null, 'Chuyển cột'));
+    const seg = h('div', 'seg');
+    S.columns.forEach((c) => {
+      const b = h('button', null, c.name); b.type = 'button'; b.style.setProperty('--sw', colColor(c));
+      b.setAttribute('aria-pressed', String(c.name === it.status)); b.onclick = () => moveItem(it, c.name); seg.append(b);
+    });
+    d.append(seg);
+    (S.project.selectFields || []).filter((f) => f.name !== S.project.statusField).forEach((f) => {
+      const row = h('label', 'field'); row.append(h('span', null, f.name));
+      const sel = h('select'); const none = h('option', null, 'Chưa chọn'); none.value = ''; none.disabled = true; sel.append(none);
+      f.options.forEach((o) => { const op = h('option', null, o.name); op.value = o.name; sel.append(op); });
+      sel.value = (it.fields || {})[f.name] || '';
+      sel.onchange = () => setField(it, f.name, sel.value);
+      row.append(sel); d.append(row);
+    });
+  } else if (!S.demo) d.append(h('p', 'readonly', 'Đang ở chế độ chỉ xem vì chưa kết nối được GitHub Project để sửa.'));
+  const labelsEl = it.labels && it.labels.length ? (() => { const box = h('div', 'labels'); it.labels.forEach((l) => { const c = /^[0-9a-f]{6}$/i.test(l.color || '') ? '#' + l.color : 'var(--muted)'; const s = h('span', 'gl', l.name); s.style.color = c; s.style.borderColor = c; box.append(s); }); return box; })() : null;
+  const pairs = [
+    ['Loại', ITEM_TYPE[it.type] || it.type], ['Tình trạng', ITEM_STATE[it.state] || it.state],
+    ['Người nhận', (it.assignees || []).join(', ')], ['Nhãn', labelsEl],
+  ];
+  const editable = new Set(canWrite() ? (S.project.selectFields || []).map((f) => f.name) : []);
+  Object.entries(it.fields || {}).forEach(([key, v]) => { if (!editable.has(key)) pairs.push([key, String(v)]); });
+  pairs.push(['Cập nhật', it.updatedAt ? ago(it.updatedAt) : null]);
+  d.append(metaList(pairs));
+  const url = safeUrl(it.url);
+  if (url) { const a = h('a', 'ghlink', 'Mở trên GitHub'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; d.append(a); }
+  const ws = workersOnItem(it);
+  d.append(h('h3', null, 'Ai đang làm thẻ này'));
+  const afterAgents = () => {
+    if (!canWrite()) return;
+    if (it.type === 'Issue' || it.type === 'PullRequest') {
+      d.append(h('h3', null, 'Bình luận lên GitHub'));
+      const ta = h('textarea'); ta.rows = 3; ta.placeholder = 'Ví dụ: ưu tiên làm phần D2 trước'; ta.setAttribute('aria-label', 'Nội dung bình luận');
+      const send = h('button', 'btn primary', 'Gửi bình luận'); send.type = 'button';
+      send.onclick = async () => {
+        if (!ta.value.trim()) return; send.disabled = true;
+        try { await api('comment', { itemId: it.id, body: ta.value }); ta.value = ''; toast('Đã gửi bình luận lên ' + itemLabel(it)); }
+        catch (err) { toast('Không gửi được: ' + err.message, 'error'); } finally { send.disabled = false; }
+      };
+      const ra = h('div', 'row-actions'); ra.append(send); d.append(ta, ra);
+    }
+    const ra2 = h('div', 'row-actions'); ra2.style.marginTop = '22px';
+    const arch = h('button', 'btn danger', 'Lưu trữ khỏi Project'); arch.type = 'button'; arch.onclick = () => archiveItem(it);
+    ra2.append(arch); d.append(ra2);
+  };
+  if (!ws.length) d.append(h('p', 'empty', 'Chưa có agent nào cầm thẻ này.'));
+  ws.forEach((w) => {
+    const b = h('button', 'lane busy'); b.type = 'button';
+    const ln = h('span', 'ln', workerName(w)); ln.style.color = workerText(w);
+    const ev = latestEvent(w.session);
+    b.append(ln, h('span', 'lv', WORKER_STATE[w.status] + (ev ? ': ' + clip(ev.kind === 'tool' ? ev.name + ' ' + shortPath(ev.text, idx.repo.get(w.repo)) : ev.text, 80) : '')));
+    b.onclick = () => select({ type: 'worker', id: w.id }); d.append(b);
+  });
+  afterAgents();
+}
+
+function drawWorker(w) {
+  if (!w) { $('#drawer').hidden = true; return; }
+  const d = drawerShell();
+  const repo = idx.repo.get(w.repo);
+  const k = h('div', 'kicker'); k.append(h('span', 'pill ' + w.status, WORKER_STATE[w.status]), h('span', null, w.repo));
+  d.append(k, h('h2', null, workerName(w) + (w.issue ? ' #' + w.issue : '')));
+  const it = itemFor(w.repo, w.issue);
+  const s = w.session;
+  let card = null;
+  if (it) { card = linkBtn('#' + it.number + ' ' + clip(it.title, 60), { type: 'item', id: it.id }); }
+  else if (w.issue) card = '#' + w.issue + ' (không có trên Project)';
+  const src = { path: 'theo thư mục/nhánh', command: 'theo lệnh gần nhất', mention: 'đoán từ lời agent' }[w.issueSource];
+  d.append(metaList([
+    ['Thẻ', card], ['Cách biết', w.issue && src ? src : null],
+    ['Lane', w.lane || (s ? 'phiên điều phối' : null)], ['Cột', w.column],
+    ['Thư mục', s && shortPath(s.cwd, repo), true], ['Nhánh', s && s.branch, true],
+    ['Hoạt động', s ? ago(s.lastTs) : null], ['Token còn', s && fmtTokens(s.tokensLeft)],
+    ['Lần cuối', w.status === 'idle' && w.lastCard ? '#' + w.lastCard : null],
+  ]));
+  if (!s) {
+    d.append(h('h3', null, 'Hoạt động'));
+    d.append(h('p', 'empty', w.status === 'idle' ? 'Lane đang rảnh theo tick gần nhất của runner.' : 'Runner báo lane này đang làm thẻ trên, nhưng chưa thấy phiên Claude Code nào khớp trong ~/.claude/projects.'));
+    return;
+  }
+  const lastText = (s.texts || []).slice(-1)[0];
+  if (lastText) {
+    d.append(h('h3', null, 'Agent vừa nói'));
+    const q = h('p', 'say'); q.append(document.createTextNode(lastText.text)); q.append(h('small', null, clock(lastText.ts) + ', ' + ago(lastText.ts)));
+    d.append(q);
+  }
+  const events = [];
+  (s.texts || []).slice(0, -1).forEach((t) => events.push({ ts: t.ts, k: 'Nói', v: t.text }));
+  (s.tools || []).forEach((t) => events.push({ ts: t.ts, k: t.name, v: shortPath(t.summary, repo), tool: true }));
+  events.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  if (events.length) {
+    d.append(h('h3', null, 'Các bước gần đây'));
+    const ul = h('ul', 'feed');
+    events.slice(0, 18).forEach((e) => {
+      const li = h('li'); li.append(h('span', 'k' + (e.tool ? ' tool' : ''), e.k));
+      const v = h('div', 'v'); v.append(e.tool ? h('span', 'mono', clip(e.v, 260)) : h('span', null, clip(e.v, 400)));
+      v.append(h('time', null, clock(e.ts))); li.append(v); ul.append(li);
+    });
+    d.append(ul);
+  }
+}
+
+// ------------------------------------------------------------ ghi lên GitHub
+const canWrite = () => !!(STATE && STATE.project && STATE.project.writable);
+const itemLabel = (it) => it.number ? '#' + it.number : '“' + clip(it.title, 40) + '”';
+let toastTimer = null;
+function toast(text, kind) {
+  const t = $('#toast'); t.textContent = text; t.className = 'toast panel on' + (kind ? ' ' + kind : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), kind === 'error' || kind === 'hint' ? 8000 : 2800);
+}
+async function api(action, body) {
+  const res = await fetch('api/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agent-Office': '1' }, body: JSON.stringify(body) });
+  let data = null; try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ('Server trả lỗi ' + res.status));
+  return data;
+}
+function rerender() { LAYOUT_KEY = null; apply(STATE); }
+async function moveItem(it, colName) {
+  if (!it || it.status === colName || !canWrite()) return;
+  const prev = it.status;
+  it.status = colName; rerender();
+  try { await api('set-field', { itemId: it.id, field: STATE.project.statusField, option: colName }); toast('Đã chuyển ' + itemLabel(it) + ' sang ' + colName); }
+  catch (err) { it.status = prev; rerender(); toast('Không chuyển được ' + itemLabel(it) + ': ' + err.message, 'error'); }
+}
+async function setField(it, field, option) {
+  const prev = (it.fields || {})[field];
+  it.fields = Object.assign({}, it.fields, { [field]: option }); renderDrawer(true);
+  try { await api('set-field', { itemId: it.id, field, option }); toast(field + ' của ' + itemLabel(it) + ': ' + option); }
+  catch (err) { it.fields = Object.assign({}, it.fields, { [field]: prev }); renderDrawer(true); toast('Không đổi được ' + field + ': ' + err.message, 'error'); }
+}
+async function archiveItem(it) {
+  if (!confirm('Lưu trữ ' + itemLabel(it) + ' khỏi Project? Issue gốc trên repo vẫn còn.')) return;
+  try { await api('archive', { itemId: it.id }); STATE.items = STATE.items.filter((x) => x.id !== it.id); selection = null; rerender(); toast('Đã lưu trữ ' + itemLabel(it)); }
+  catch (err) { toast('Không lưu trữ được: ' + err.message, 'error'); }
+}
+function openCreate(repoName, status) {
+  if (!STATE) return;
+  if (!canWrite()) { toast('Chưa sửa được Project: kiểm tra kết nối gh ở thông báo phía dưới.', 'error'); return; }
+  const f = $('#createForm');
+  f.reset();
+  const rs = f.elements.repo; rs.textContent = '';
+  STATE.repos.filter((r) => r.full && r.name !== 'Nháp').forEach((r) => { const o = h('option', null, r.name); o.value = r.name; o.dataset.full = r.full; rs.append(o); });
+  const draft = h('option', null, 'Bản nháp, không gắn repo'); draft.value = ''; rs.append(draft);
+  rs.value = repoName && STATE.repos.some((r) => r.name === repoName) ? repoName : (rs.options[0] ? rs.options[0].value : '');
+  const ss = f.elements.status; ss.textContent = '';
+  STATE.columns.forEach((c) => { const o = h('option', null, c.name); o.value = c.name; ss.append(o); });
+  const ready = STATE.columns.find((c) => c.kind === 'ready') || STATE.columns.find((c) => c.kind === 'backlog') || STATE.columns[0];
+  ss.value = status || (ready ? ready.name : '');
+  updateCreateHint();
+  $('#createDlg').showModal();
+  f.elements.title.focus();
+}
+function updateCreateHint() {
+  const f = $('#createForm'); const o = f.elements.repo.selectedOptions[0];
+  $('#createHint').textContent = o && o.value ? 'Tạo issue mới trong ' + o.dataset.full + ', rồi gắn vào Project ở cột đã chọn.' : 'Bản nháp chỉ nằm trên Project. Agent không nhận được bản nháp nếu runner chỉ lấy issue.';
+}
+$('#createForm').elements.repo.addEventListener('change', updateCreateHint);
+$('#createCancel').onclick = () => $('#createDlg').close();
+$('#createForm').elements.title.addEventListener('invalid', (e) => e.target.setCustomValidity('Cần nhập tiêu đề cho việc mới.'));
+$('#createForm').elements.title.addEventListener('input', (e) => e.target.setCustomValidity(''));
+$('#createForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target; const btn = $('#createSubmit'); const o = f.elements.repo.selectedOptions[0];
+  const payload = { title: f.elements.title.value.trim(), body: f.elements.body.value, repo: f.elements.repo.value, repoFull: o ? o.dataset.full : '', status: f.elements.status.value };
+  if (!payload.title) return;
+  btn.disabled = true; btn.textContent = 'Đang tạo…';
+  try {
+    const r = await api('create', payload);
+    $('#createDlg').close();
+    toast('Đã tạo ' + (r.number ? '#' + r.number : 'bản nháp') + ' ở cột ' + payload.status);
+    pendingSelect = r.itemId; VERSION = null; poll(true);
+  } catch (err) { toast('Không tạo được: ' + err.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Tạo việc'; }
+});
+let pendingSelect = null;
+
+// kéo thả thẻ ngay trong 3D
+let drag = null; const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+let colStripes = [];
+function colAt(e) {
+  if (!L) return null;
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const pt = new THREE.Vector3(); if (!ray.ray.intersectPlane(groundPlane, pt)) return null;
+  const i = Math.floor((pt.x - (L.x0 + SIZE.OFFICE_W)) / SIZE.COL_W);
+  return i >= 0 && i < L.cols.length ? i : null;
+}
+function highlightCol(ci) { colStripes.forEach((m, i) => { m.material.opacity = i === ci ? 0.32 : m.userData.baseOpacity; }); }
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !canWrite()) return;
+  const p = hitAt(e);
+  if (p && p.type === 'item') { drag = { id: p.id, sx: e.clientX, sy: e.clientY, active: false, col: null }; controls.enabled = false; }
+}, { capture: true });
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  if (!drag.active && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 8) { drag.active = true; setTip(null); }
+  if (!drag.active) return;
+  const it = idx.item.get(drag.id); drag.col = colAt(e); highlightCol(drag.col);
+  const chip = $('#dragchip'); chip.hidden = false;
+  chip.textContent = (it ? itemLabel(it) : '') + (drag.col != null ? ' sang ' + L.cols[drag.col].name : ', thả vào một cột');
+  chip.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 10}px)`;
+});
+addEventListener('pointerup', () => {
+  if (!drag) return; const d = drag; drag = null; controls.enabled = true; highlightCol(null); $('#dragchip').hidden = true;
+  if (d.active && d.col != null) { const it = idx.item.get(d.id); if (it) moveItem(it, L.cols[d.col].name); }
+});
+
+// dạng bảng 2D
+let boardOpen = false, boardDragging = false;
+const boardFilter = { repo: '', q: '', focus: '' };
+$('#boardFocus').addEventListener('change', (e) => { boardFilter.focus = e.target.value; renderBoard(); });
+$('#boardRepo').addEventListener('change', (e) => { boardFilter.repo = e.target.value; renderBoard(); });
+$('#boardQ').addEventListener('input', (e) => { boardFilter.q = e.target.value; renderBoard(); });
+function renderBoard() {
+  const el = $('#board');
+  if (!boardOpen || !STATE) { el.hidden = true; return; }
+  el.hidden = false;
+  if (boardDragging) return;
+  const S = STATE;
+  const rs = $('#boardRepo'); const keepRepo = boardFilter.repo; rs.textContent = '';
+  const all = h('option', null, 'Tất cả repo'); all.value = ''; rs.append(all);
+  S.repos.forEach((r) => { if (!r.total) return; const o = h('option', null, r.name); o.value = r.name; rs.append(o); });
+  rs.value = keepRepo; if (rs.value !== keepRepo) boardFilter.repo = rs.value;
+  const q = boardFilter.q.trim().toLowerCase().replace(/^#/, '');
+  const colKindOf = (name) => { const c = S.columns.find((x) => x.name === name); return (c && c.kind) || kindOf(name); };
+  const focusOk = (it) => !boardFilter.focus
+    || (boardFilter.focus === 'working' && workersOnItem(it).some((w) => w.status === 'working'))
+    || (boardFilter.focus === 'blocked' && colKindOf(it.status) === 'blocked')
+    || (boardFilter.focus === 'nocomment' && colKindOf(it.status) === 'blocked' && !(it.lastComment && it.lastComment.body));
+  const match = (it) => (!boardFilter.repo || it.repo === boardFilter.repo) && focusOk(it) && (!q || (it.number || '').startsWith(q) || it.title.toLowerCase().includes(q));
+  const box = $('#boardCols'); const scrollX = box.scrollLeft; const scrolls = {};
+  box.querySelectorAll('.col').forEach((c) => { scrolls[c.dataset.col] = c.querySelector('.col-list').scrollTop; });
+  box.textContent = '';
+  let shown = 0;
+  S.columns.forEach((c) => {
+    const color = colColor(c);
+    const col = h('div', 'col'); col.dataset.col = c.name; col.style.setProperty('--sw', color);
+    const its = S.items.filter((it) => it.status === c.name && match(it)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    shown += its.length;
+    if (!its.length && (boardFilter.focus || q)) return; // đang lọc: bỏ cột trống để cột có thẻ hiện ngay
+    const head = h('div', 'col-h'); head.append(h('span', 'sw'), h('span', null, c.name), h('span', 'n', String(its.length)));
+    const list = h('div', 'col-list');
+    its.forEach((it) => {
+      const b = h('button', 'bc'); b.type = 'button'; b.draggable = canWrite(); b.style.setProperty('--sw', color);
+      b.setAttribute('aria-current', String(!!selection && selection.type === 'item' && selection.id === it.id));
+      const top = h('div', 'bc-top'); top.append(h('b', null, it.number ? '#' + it.number : 'Nháp'), h('span', null, it.repo));
+      b.append(top, h('div', 'tt', it.title));
+      if ((c.kind || kindOf(c.name)) === 'blocked' && it.lastComment && it.lastComment.body) b.append(h('div', 'why', clip(it.lastComment.body, 110)));
+      workersOnItem(it).filter((w) => w.status === 'working').forEach((w) => { const a = h('span', 'agent'); const i = h('i'); i.style.background = workerColor(w); a.append(i, workerName(w) + ' đang làm'); b.append(a); });
+      b.addEventListener('click', () => select({ type: 'item', id: it.id }, false));
+      b.addEventListener('dragstart', (e) => { boardDragging = true; e.dataTransfer.setData('text/plain', it.id); e.dataTransfer.effectAllowed = 'move'; });
+      b.addEventListener('dragend', () => { boardDragging = false; box.querySelectorAll('.col.over').forEach((x) => x.classList.remove('over')); renderBoard(); });
+      list.append(b);
+    });
+    if (!its.length) list.append(h('p', 'empty', 'Trống'));
+    col.addEventListener('dragover', (e) => { if (!canWrite()) return; e.preventDefault(); col.classList.add('over'); });
+    col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('over'); });
+    col.addEventListener('drop', (e) => {
+      e.preventDefault(); col.classList.remove('over'); boardDragging = false;
+      const it = idx.item.get(e.dataTransfer.getData('text/plain')); if (it) moveItem(it, c.name);
+    });
+    col.append(head, list); box.append(col);
+    if (scrolls[c.name]) list.scrollTop = scrolls[c.name];
+  });
+  box.scrollLeft = scrollX;
+  const bcount = $('#boardCount'); bcount.textContent = shown + ' việc';
+  if (canWrite()) bcount.append(h('span', 'hint', '. Kéo thẻ sang cột khác để chuyển trên GitHub.'));
+}
+$('#btnBoard').onclick = () => { boardOpen = !boardOpen; $('#btnBoard').textContent = boardOpen ? 'Dạng 3D' : 'Dạng bảng'; renderBoard(); };
+$('#btnAdd').onclick = () => openCreate(selection && selection.type === 'repo' ? selection.id : (boardFilter.repo || null));
+function renderAgents() {
+  const box = $('#agentList'); if (!box || !STATE) return;
+  const order = new Map(STATE.repos.map((r, i) => [r.name, i]));
+  const list = STATE.workers.filter((w) => w.status !== 'idle')
+    .sort((a, b) => ((a.status === 'working' ? 0 : 1) - (b.status === 'working' ? 0 : 1)) || ((order.get(a.repo) || 0) - (order.get(b.repo) || 0)));
+  const idle = STATE.workers.filter((w) => w.status === 'idle');
+  const rows = list.map((w) => ({ w, d: describe(w) }));
+  const sig = JSON.stringify(rows.map((r) => [r.w.id, r.w.status, r.d.doing, r.d.task, r.d.ts ? ago(r.d.ts) : ''])) + '|' + idle.map((w) => w.id).join(',') + document.documentElement.dataset.theme;
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig; box.textContent = '';
+  $('#agentsCount').textContent = list.filter((x) => x.status === 'working').length + ' đang làm';
+  let lastRepo = null;
+  rows.forEach(({ w, d }) => {
+    if (rows.length > 6 && w.repo !== lastRepo) { lastRepo = w.repo; box.append(h('div', 'ag-group', w.repo + ' (' + rows.filter((r) => r.w.repo === w.repo).length + ')')); }
+    const b = h('button', 'ag' + (w.status === 'working' ? '' : ' away')); b.type = 'button';
+    const top = h('div', 'ag-top'); const dot = h('i'); dot.style.background = workerColor(w);
+    top.append(dot, h('b', null, workerName(w).replace(' agent', '') + (w.issue ? ' #' + w.issue : '')), h('span', 'ag-repo', w.repo), h('span', 'ag-time', d.ts ? ago(d.ts) : ''));
+    b.append(top);
+    if (d.task) b.append(h('div', 'ag-task', d.task));
+    b.append(h('div', 'ag-do', d.doing));
+    b.onclick = () => select({ type: 'worker', id: w.id });
+    box.append(b);
+  });
+  if (!rows.length) box.append(h('p', 'empty', 'Chưa có agent nào đang làm.'));
+  if (idle.length) box.append(h('p', 'ag-idle', idle.length + ' lane rảnh: ' + idle.map((w) => (w.lane || 'lane') + ' ' + w.repo).join(', ')));
+}
+function setLeftPanel(which) {
+  $('#agentsPanel').hidden = which !== 'agents'; $('#rail').hidden = which !== 'rail';
+  document.body.classList.toggle('rail-open', !!which);
+  $('#btnAgents').setAttribute('aria-pressed', String(which === 'agents'));
+  $('#btnRail').setAttribute('aria-pressed', String(which === 'rail'));
+  $('#btnRail').textContent = which === 'rail' ? 'Ẩn danh sách' : 'Danh sách repo';
+  try { localStorage.setItem('agent-office-left', which || 'none'); } catch (e) { /* chỉ nhớ trong phiên */ }
+  if (STATE) { renderAgents(); renderRail(); requestAnimationFrame(syncChrome); }
+}
+$('#btnRail').onclick = () => setLeftPanel($('#rail').hidden ? 'rail' : null);
+$('#btnAgents').onclick = () => setLeftPanel($('#agentsPanel').hidden ? 'agents' : null);
+$('#btnZoomIn').onclick = () => zoomBy(0.78);
+$('#btnZoomOut').onclick = () => zoomBy(1 / 0.78);
+let leftPref = null; try { leftPref = localStorage.getItem('agent-office-left'); } catch (e) { leftPref = null; }
+setLeftPanel(leftPref ? (leftPref === 'none' ? null : leftPref) : (innerWidth > 900 ? 'agents' : null));
+setInterval(() => { if (STATE && !document.hidden) { refreshDynamic(STATE); renderAgents(); } }, 30000);
+
+// ------------------------------------------------------------ đo khung
+function syncChrome() {
+  const root = document.documentElement.style;
+  const brand = $('.brand').getBoundingClientRect(), legend = $('#legend').getBoundingClientRect(), ctr = $('.controls').getBoundingClientRect();
+  root.setProperty('--top-h', Math.round(brand.bottom) + 'px');
+  root.setProperty('--top-r', Math.round(legend.height ? legend.bottom : brand.bottom) + 'px');
+  root.setProperty('--bot-h', Math.round(innerHeight - ctr.top) + 'px');
+}
+if (window.ResizeObserver) { const ro = new ResizeObserver(syncChrome); ro.observe($('.brand')); ro.observe($('.controls')); ro.observe($('#legend')); }
+addEventListener('resize', syncChrome);
+const chromePx = (name, fallback) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) || fallback;
+$('#btnMore').onclick = () => {
+  const c = $('.controls'); const open = !c.classList.contains('more');
+  c.classList.toggle('more', open); $('#btnMore').setAttribute('aria-expanded', String(open)); $('#btnMore').textContent = open ? 'Thu gọn' : 'Khác';
+};
+
+// ------------------------------------------------------------ controls
+$('#btnFit').onclick = () => { selection = null; renderDrawer(); renderRail(); updateSelectionVisuals(); requestAnimationFrame(() => fitAll()); };
+$('#btnZoom').onclick = () => { selection = null; renderDrawer(); renderRail(); updateSelectionVisuals(); requestAnimationFrame(() => zoomView()); };
+let nextIdx = -1;
+$('#btnNext').onclick = () => {
+  if (!STATE) return;
+  const list = STATE.workers.filter((w) => w.status === 'working');
+  if (!list.length) { select({ type: 'repo', id: STATE.repos[0] && STATE.repos[0].name }); return; }
+  nextIdx = (nextIdx + 1) % list.length; select({ type: 'worker', id: list[nextIdx].id });
+};
+function syncThemeBtn() { $('#btnTheme').textContent = document.documentElement.dataset.theme === 'dark' ? 'Ca ngày' : 'Ca đêm'; }
+$('#btnTheme').onclick = () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('agent-office-theme', next); } catch (e) {}
+  syncThemeBtn(); if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
+};
+$('#btnRefresh').onclick = () => { fetch('api/refresh').catch(() => {}); $('#btnRefresh').textContent = 'Đang tải…'; setTimeout(() => { $('#btnRefresh').textContent = 'Tải lại GitHub'; }, 2500); };
+const SHORTCUTS = { w: '#btnAgents', e: '#btnEvents', f: '#btnFit', z: '#btnZoom', b: '#btnBoard', a: '#btnAdd', n: '#btnNext', t: '#btnTheme', r: '#btnRail', d: '#btnDesk' };
+Object.entries(SHORTCUTS).forEach(([k, q]) => { const btn = $(q); btn.setAttribute('aria-keyshortcuts', k.toUpperCase()); btn.title = 'Phím tắt: ' + k.toUpperCase(); });
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  const t = e.target;
+  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable]')) || $('#createDlg').open) return;
+  const q = SHORTCUTS[(e.key || '').toLowerCase()]; if (!q) return;
+  e.preventDefault(); $(q).click();
+});
+function renderDeskPicker() {
+  const box = $('#deskPicker'); box.textContent = '';
+  DESK_STYLES.forEach((d, i) => {
+    const b = h('button'); b.type = 'button'; b.setAttribute('aria-pressed', String(i === deskStyle));
+    b.append(h('small', null, 'Mẫu ' + (i + 1)), h('b', null, d.name), h('span', null, d.desc));
+    b.onclick = () => setDesk(i); box.append(b);
+  });
+}
+function setDesk(i) {
+  if (i === deskStyle) return;
+  deskStyle = i; try { localStorage.setItem('agent-office-desk', String(i)); } catch (e) {}
+  const had = document.activeElement && document.activeElement.closest('#deskPicker');
+  renderDeskPicker(); if (had) $('#deskPicker [aria-pressed="true"]').focus();
+  if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
+  toast('Đang dùng mẫu ' + (i + 1) + ': ' + DESK_STYLES[i].name);
+}
+$('#btnDesk').onclick = () => {
+  const p = $('#deskPicker'); p.hidden = !p.hidden; $('#btnDesk').setAttribute('aria-expanded', String(!p.hidden));
+  if (!p.hidden) { renderDeskPicker(); $('#deskPicker [aria-pressed="true"]').focus(); }
+};
+window.agentOffice = Object.freeze({
+  setDesk: (i) => setDesk(i),
+  camera: () => ({ t: controls.target.toArray().map((v) => +v.toFixed(2)), d: +camera.position.distanceTo(controls.target).toFixed(2), y: +camera.position.y.toFixed(2), a: +Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z).toFixed(3) }),
+  stats: () => ({ buildMs: lastBuildMs, cards: cardMeshes.size, textures: disposables.filter((d) => d.isTexture).length, labels: labels.length, gpu: Object.assign({}, renderer.info.memory) }),
+  screenOf: (kind, id, repo) => {
+    const p = new THREE.Vector3();
+    if (kind === 'item') { const m = cardMeshes.get(id); if (!m) return null; m.getWorldPosition(p); }
+    else { const i = L.cols.findIndex((c) => c.name === id); const r = L.rowOf.get(repo); if (i < 0 || r == null) return null; p.set(L.colX(i), 0.3, L.rowZ(r) - 1.5); }
+    p.project(camera); return { x: (p.x + 1) / 2 * innerWidth, y: (1 - p.y) / 2 * innerHeight };
+  },
+});
+syncThemeBtn();
+
+// ------------------------------------------------------------ data
+let first = true;
+let unseen = 0; const BASE_TITLE = document.title;
+let seenTs = 0; try { seenTs = parseFloat(localStorage.getItem('agent-office-seen') || '0') || 0; } catch (e) { seenTs = 0; }
+let shownTs = null; // mốc đã báo bằng toast trong lần mở trang này
+const serverEvents = () => (STATE && STATE.events) || [];
+function syncBadge() {
+  unseen = serverEvents().filter((e) => e.ts > seenTs).length;
+  document.title = (unseen ? '(' + unseen + ') ' : '') + BASE_TITLE;
+  $('#btnEvents').textContent = 'Vừa xảy ra' + (unseen ? ' (' + unseen + ')' : '');
+}
+function notify(text) {
+  if ('Notification' in window && Notification.permission === 'granted' && document.hidden) { try { new Notification('Xưởng agent', { body: text }); } catch (e) { /* trình duyệt chặn */ } }
+}
+function handleEvents(S) {
+  const evs = S.events || [];
+  const latest = evs.length ? evs[evs.length - 1].ts : 0;
+  if (shownTs === null) shownTs = latest; // lần đầu mở: không báo lại chuyện cũ, chỉ đếm số chưa xem
+  else {
+    evs.filter((e) => e.ts > shownTs).forEach((e) => { toast(e.text, e.important ? 'alert' : null); if (e.important) notify(e.text); });
+    shownTs = Math.max(shownTs, latest);
+  }
+  syncBadge();
+  if (selection && selection.type === 'events') renderDrawer(true);
+}
+function markSeen() {
+  const evs = serverEvents();
+  if (evs.length) { seenTs = evs[evs.length - 1].ts; try { localStorage.setItem('agent-office-seen', String(seenTs)); } catch (e) { /* chỉ nhớ trong phiên */ } }
+  syncBadge();
+}
+function whenText(ts) {
+  const d = new Date(ts * 1000), today = new Date();
+  const hm = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === today.toDateString() ? hm : d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) + ' ' + hm;
+}
+function agentRow(w) {
+  const d = describe(w);
+  const b = h('button', 'ag' + (w.status === 'working' ? '' : ' away')); b.type = 'button';
+  const top = h('div', 'ag-top'); const dot = h('i'); dot.style.background = workerColor(w);
+  top.append(dot, h('b', null, workerName(w).replace(' agent', '') + (w.issue ? ' #' + w.issue : '')), h('span', 'ag-repo', w.repo), h('span', 'ag-time', d.ts ? ago(d.ts) : ''));
+  b.append(top);
+  if (d.task) b.append(h('div', 'ag-task', d.task));
+  b.append(h('div', 'ag-do', d.doing));
+  b.onclick = () => select({ type: 'worker', id: w.id });
+  return b;
+}
+function drawStation(key) {
+  const [repo, col] = key.split('\u0000');
+  const ws = stationWorkers(key).filter((w) => w.status !== 'idle').sort((a, b) => (a.status === 'working' ? 0 : 1) - (b.status === 'working' ? 0 : 1));
+  const d = drawerShell();
+  d.append(h('div', 'kicker', repo), h('h2', null, ws.filter((w) => w.status === 'working').length + ' agent đang làm ' + (col ? 'ở cột ' + col : 'ở bàn điều phối')));
+  if (!ws.length) { d.append(h('p', 'empty', 'Không còn agent nào ở đây.')); return; }
+  ws.forEach((w) => d.append(agentRow(w)));
+}
+function drawColumn(name) {
+  const S = STATE; const col = S.columns.find((c) => c.name === name);
+  if (!col) { $('#drawer').hidden = true; return; }
+  const d = drawerShell(); const its = S.items.filter((i) => i.status === name);
+  const isBlocked = (col.kind || kindOf(col.name)) === 'blocked';
+  const k = h('div', 'kicker'); const sp = h('span', 'pill', name);
+  sp.style.color = colText(col); sp.style.background = 'color-mix(in srgb, ' + colColor(col) + ' 14%, transparent)'; k.append(sp);
+  d.append(k, h('h2', null, its.length + ' thẻ ở cột ' + name));
+  const order = new Map(S.repos.map((r, i) => [r.name, i]));
+  const groups = [...its.reduce((m, it) => m.set(it.repo, (m.get(it.repo) || []).concat(it)), new Map())]
+    .sort((a, b) => b[1].length - a[1].length || (order.get(a[0]) || 0) - (order.get(b[0]) || 0));
+  d.append(h('p', 'readonly', groups.map(([repo, list]) => repo + ' ' + list.length).join(', ')));
+  if (isBlocked) {
+    const noReason = its.filter((i) => !(i.lastComment && i.lastComment.body)).length;
+    if (noReason) d.append(h('p', 'readonly', noReason + ' thẻ chưa có lý do chặn trên GitHub.'));
+  }
+  if (!its.length) { d.append(h('p', 'empty', 'Cột này đang trống.')); return; }
+  groups.forEach(([repo, list]) => {
+    const head = h('div', 'colhead'); const sw = h('span', 'sw'); sw.style.background = colColor(col);
+    head.append(sw, h('span', null, repo), h('span', 'n', String(list.length))); d.append(head);
+    const ul = h('ul', 'row-list wrap');
+    list.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).forEach((it) => {
+      const li = h('li'); const b = h('button'); b.type = 'button';
+      b.append(h('span', 'num', it.number ? '#' + it.number : 'Nháp'), h('span', 't', it.title));
+      const ws = workersOnItem(it).filter((w) => w.status === 'working');
+      if (ws.length) b.append(h('span', 'tag pill working', workerName(ws[0]).replace(' agent', '') + ' đang làm'));
+      b.onclick = () => select({ type: 'item', id: it.id });
+      li.append(b);
+      if (isBlocked && it.lastComment && it.lastComment.body) li.append(h('div', 'why-line', clip(it.lastComment.body, 140)));
+      ul.append(li);
+    });
+    d.append(ul);
+  });
+}
+function drawEvents() {
+  const d = drawerShell(); const evs = serverEvents(); const before = seenTs; markSeen();
+  d.append(h('div', 'kicker', 'Lưu trên máy, kể cả lúc trang đóng'), h('h2', null, 'Vừa xảy ra'));
+  if ('Notification' in window && Notification.permission !== 'granted') {
+    const denied = Notification.permission === 'denied';
+    const b = h('button', 'btn', denied ? 'Trình duyệt đang chặn thông báo của trang này' : 'Bật thông báo trên trình duyệt'); b.type = 'button'; b.disabled = denied;
+    b.onclick = () => Notification.requestPermission().then(() => renderDrawer(true));
+    const ra = h('div', 'row-actions'); ra.append(b); d.append(ra);
+  }
+  if (!evs.length) { d.append(h('p', 'empty', 'Chưa có gì. Server ghi lại khi agent bắt đầu hoặc dừng, khi thẻ chuyển cột, bị chặn hoặc xong, và khi runner chờ bạn.')); return; }
+  const ul = h('ul', 'row-list');
+  evs.slice().reverse().forEach((e) => {
+    const li = h('li'); const b = h('button'); b.type = 'button';
+    b.append(h('span', 'num', whenText(e.ts)), h('span', 't', e.text));
+    if (e.ts > before) b.append(h('span', 'tag pill ' + (e.tone || 'working'), 'mới'));
+    if (e.sel) b.onclick = () => select(e.sel);
+    li.append(b); ul.append(li);
+  });
+  d.append(h('h3', null, evs.length + ' sự kiện gần nhất'), ul);
+}
+$('#btnEvents').onclick = () => select({ type: 'events' }, false);
+
+function apply(S, force) {
+  STATE = S; indexState(S);
+  handleEvents(S);
+  const key = layoutKey(S);
+  if (force || key !== LAYOUT_KEY) { LAYOUT_KEY = key; buildWorld(S); } else refreshDynamic(S);
+  if (selection) {
+    const exists = selection.type === 'events' || selection.type === 'station' || (selection.type === 'column' && S.columns.some((c) => c.name === selection.id)) || (selection.type === 'repo' ? idx.repo.has(selection.id) : selection.type === 'item' ? idx.item.has(selection.id) : idx.worker.has(selection.id));
+    if (!exists) selection = null;
+  }
+  if (pendingSelect && idx.item.has(pendingSelect)) { selection = { type: 'item', id: pendingSelect }; pendingSelect = null; drawerSig = null; requestAnimationFrame(focusSelection); }
+  renderTop(S); renderNotices(S, false); renderRail(); renderAgents(); renderDrawer(); updateSelectionVisuals(); renderBoard(); syncChrome();
+  $('#boot').hidden = true;
+  if (first) {
+    first = false;
+    try {
+      if (!localStorage.getItem('agent-office-hint-nav2')) {
+        localStorage.setItem('agent-office-hint-nav2', '1');
+        const touch = matchMedia('(pointer: coarse)').matches;
+        setTimeout(() => toast(touch ? 'Một ngón để di chuyển, chụm hai ngón để phóng to hoặc xoay.'
+          : 'Cuộn chuột hoặc chụm hai ngón để phóng to, thu nhỏ. Kéo để di chuyển. Chuột phải hoặc Shift + kéo để xoay.', 'hint'), 2600);
+      }
+    } catch (e) { /* không lưu được thì thôi không nhắc */ }
+    if (!reduceMotion.matches && L) {
+      const f = framing(new THREE.Vector3(-HEAD_W / 2, 0, 0.9), L.width + HEAD_W, L.depth + 4.4, 0.64);
+      const top = framing(new THREE.Vector3(-HEAD_W / 2, 0, 0.9), L.width + HEAD_W, L.depth + 4.4, 1.5);
+      camera.position.copy(top.pos).multiplyScalar(1.25); controls.target.copy(top.target); controls.update();
+      flyTo(f, 1200); setTimeout(() => zoomView(1100), 1250);
+    } else zoomView(0);
+  }
+}
+let pollTimer = null;
+async function poll(once) {
+  if (!once) clearTimeout(pollTimer);
+  try {
+    const res = await fetch('api/state', { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    const S = await res.json();
+    if (S.version !== VERSION) { VERSION = S.version; apply(S); }
+    else renderTop(S);
+    if ($('#notices').dataset.offline === '1') { $('#notices').dataset.offline = '0'; renderNotices(STATE, false); }
+  } catch (e) {
+    $('#notices').dataset.offline = '1'; renderNotices(STATE, true);
+    if (!STATE) $('#boot').textContent = 'Không kết nối được server. Chạy: python3 server.py';
+  } finally { if (!once) pollTimer = setTimeout(poll, 3000); }
+}
+
+// ------------------------------------------------------------ loop
+const v3 = new THREE.Vector3();
+function resize() {
+  const w = innerWidth, hgt = innerHeight;
+  renderer.setSize(w, hgt, false); camera.aspect = w / hgt; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+function updateLabels() {
+  const w = innerWidth, hgt = innerHeight;
+  const far = camera.position.distanceTo(controls.target) > 70;
+  const leftEdge = (innerWidth <= 900 || ($('#rail').hidden && $('#agentsPanel').hidden)) ? 0 : 324;
+  const bottomEdge = innerHeight - chromePx('--bot-h', 64) - 4;
+  const layer = $('#labels');
+  if (layer.classList.contains('far') !== far) { layer.classList.toggle('far', far); labels.forEach((l) => { l.w = 0; }); }
+  const vis = [];
+  for (const l of labels) {
+    v3.copy(l.pos).project(camera);
+    if (v3.z > 1 || v3.z < -1 || (l.align === 'left' ? v3.x > 1.15 : Math.abs(v3.x) > 1.15) || Math.abs(v3.y) > 1.15) {
+      if (l.shown !== false) { l.el.style.display = 'none'; l.shown = false; }
+      continue;
+    }
+    if (l.shown !== true) { l.el.style.display = ''; l.shown = true; l.w = 0; }
+    if (!l.w) { l.w = l.el.offsetWidth; l.h = l.el.offsetHeight; }
+    l.x = (v3.x + 1) / 2 * w; l.y = (1 - v3.y) / 2 * hgt; l.z = v3.z;
+    if (l.align === 'left') l.x = Math.max(l.x, leftEdge + l.w + 12); // ghim nhãn repo vào mép trái, ngay cạnh khung bên trái
+    else if (l.align === 'up') l.x = Math.max(l.x, leftEdge + l.w / 2 + 8);
+    if (l.align === 'up' && l.y > bottomEdge) { l.el.style.display = 'none'; l.shown = false; continue; } // agent nằm sau thanh nút: ẩn bóng thoại cụt
+    vis.push(l);
+  }
+  // nhãn hàng/cột giữ chỗ; bóng thoại và nhãn "rảnh" nhích lên khi đè nhau
+  const rect = (l) => l.align === 'left' ? [l.x - l.w, l.y - l.h / 2, l.x, l.y + l.h / 2]
+    : l.align === 'down' ? [l.x - l.w / 2, l.y, l.x + l.w / 2, l.y + l.h] : [l.x - l.w / 2, l.y - l.h, l.x + l.w / 2, l.y];
+  const hit = (p, q) => p[0] < q[2] - 1 && p[2] > q[0] + 1 && p[1] < q[3] - 1 && p[3] > q[1] + 1;
+  const placed = vis.filter((l) => l.align !== 'up').map(rect);
+  vis.filter((l) => l.align === 'up').sort((p, q) => q.y - p.y).forEach((l) => {
+    for (let i = 0; i < 6; i++) { const r = rect(l); const o = placed.find((q) => hit(r, q)); if (!o) break; l.y = o[1] - 4; }
+    placed.push(rect(l));
+  });
+  for (const l of vis) {
+    l.el.style.transform = `translate(${l.x.toFixed(1)}px, ${l.y.toFixed(1)}px) ` + (l.align === 'left' ? 'translate(-100%, -50%)' : l.align === 'down' ? 'translate(-50%, 0)' : 'translate(-50%, -100%)');
+    l.el.style.zIndex = String(Math.round((1 - l.z) * 10000));
+  }
+}
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (document.hidden) return;
+  if (flight) {
+    const t = Math.min(1, (now - flight.start) / flight.dur), e = ease(t);
+    camera.position.lerpVectors(flight.p0, flight.p1, e); controls.target.lerpVectors(flight.t0, flight.t1, e);
+    if (t >= 1) flight = null;
+  }
+  controls.update();
+  if (!reduceMotion.matches) {
+    const t = now / 1000;
+    for (const r of rigs) {
+      r.armL.rotation.z = r.armRot + Math.sin(t * 11 + r.phase) * 0.12;
+      r.armR.rotation.z = r.armRot + Math.sin(t * 11 + r.phase + 1.7) * 0.12;
+      r.head.position.y = r.headY + Math.sin(t * 2.2 + r.phase) * 0.025;
+    }
+    for (const l of lamps) if (l.pulse) l.mesh.material.emissiveIntensity = 0.55 + Math.sin(t * 3) * 0.35;
+    for (const hl of halos) { const k = (t * 0.7 + hl.phase) % 1; hl.mesh.scale.setScalar(1 + k * 0.9); hl.mesh.material.opacity = 0.85 * (1 - k); }
+  }
+  if (hoverEvt && !(drag && drag.active)) { const p = hitAt(hoverEvt); setTip(p, hoverEvt); }
+  updateLabels();
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+const fontsReady = document.fonts && document.fonts.ready ? Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 1500))]) : Promise.resolve();
+fontsReady.then(() => poll()); // gọi không tham số: poll(once) chỉ dành cho lần hỏi lẻ
+})();
+</script>
+</body>
+</html>
