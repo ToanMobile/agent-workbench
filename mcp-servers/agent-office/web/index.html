@@ -570,6 +570,8 @@ let screens = new Map();   // worker id -> { canvas, ctx, tex }
 let rowMarks = new Map();  // repo -> highlight mesh
 let cardMeshes = new Map();// item id -> mesh
 let workerRings = new Map();
+let deskAt = new Map();    // worker id -> { w, pg (người ngồi), pos (vị trí trên sàn), key }
+let walkers = [];          // người đang đi từ bàn cũ sang bàn mới
 let lamps = [];
 let halos = [];
 let L = null;              // layout
@@ -700,7 +702,7 @@ function clearWorld() {
   world.traverse((o) => { if (o.material && Array.isArray(o.material)) o.material.forEach((m) => m.dispose && m.dispose()); });
   disposables.forEach((d) => d.dispose && d.dispose());
   disposables = []; pickables = []; rigs = []; lamps = []; colStripes = []; halos = [];
-  screens = new Map(); rowMarks = new Map(); cardMeshes = new Map(); workerRings = new Map();
+  screens = new Map(); rowMarks = new Map(); cardMeshes = new Map(); workerRings = new Map(); deskAt = new Map(); walkers = [];
   labels.forEach((l) => l.el.remove()); labels = [];
   world = new THREE.Group(); scene.add(world);
 }
@@ -1038,7 +1040,12 @@ function makeDesk(w, x, z, T, sc, opts) {
 
   if (w.status !== 'idle') {
     const bodyCol = workerColor(w);
-    const person = makePerson(g, P, w, T, parts);
+    const pg = new THREE.Group(); g.add(pg); // người ngồi nằm trong nhóm riêng để ẩn đi khi có người đang đi tới bàn này
+    const person = makePerson(pg, P, w, T, parts);
+    if (w.status === 'working') {
+      g.updateMatrixWorld(true);
+      deskAt.set(w.id, { w, pg, pos: new THREE.Vector3(P.x, 0, 0).applyMatrix4(g.matrixWorld), key: w.repo + '#' + (w.issue || '') });
+    }
     if (w.status === 'working') {
       rigs.push({ head: person.head, armL: person.armL, armR: person.armR, phase: Math.random() * 6.28, headY: person.headY, armRot: person.armRot });
       const halo = new THREE.Mesh(GEO.ring, track(new THREE.MeshBasicMaterial({ color: cssVar('--c-done'), transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })));
@@ -1124,6 +1131,46 @@ function refreshDynamic(S) {
   const T = palette();
   S.workers.forEach((w) => { const scr = screens.get(w.id); if (scr) drawScreen(scr, w, T); });
   labels.forEach((l) => { const id = l.el.dataset && l.el.dataset.worker; if (id && idx.worker.get(id)) { fillBubble(l.el, idx.worker.get(id)); l.w = 0; } else if (l.el.dataset && l.el.dataset.station) { fillCrowd(l.el, l.el.dataset.station); l.w = 0; } });
+}
+
+// ---- người đi từ bàn cũ sang bàn mới khi việc chuyển cột (thay cho việc dựng lại cảnh làm người nhảy chỗ)
+const WALK_SPEED = 5, DESK_YAW = 0.85;
+function snapshotPeople() {
+  const byId = new Map(), byIssue = new Map();
+  const put = (w, pos) => {
+    byId.set(w.id, { pos });
+    if (w.issue) byIssue.set(w.repo + '#' + w.issue, { pos });
+  };
+  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone());          // đang ngồi
+  for (const k of walkers) put(k.dest.w, k.wg.position.clone());                        // đang đi dở: bắt đầu từ chỗ đang đứng
+  return { byId, byIssue };
+}
+function startWalks(snap) {
+  if (reduceMotion.matches || !snap || (!snap.byId.size && !snap.byIssue.size)) return;
+  const T = palette();
+  for (const d of deskAt.values()) {
+    const w = d.w;
+    const old = snap.byId.get(w.id) || (w.issue && snap.byIssue.get(d.key));
+    if (!old || old.pos.distanceTo(d.pos) < 0.6) continue;
+    let taken = false; // chỗ cũ vẫn có người ngồi thì không có ai rời đi
+    for (const o of deskAt.values()) if (o !== d && o.pos.distanceTo(old.pos) < 0.6) taken = true;
+    if (taken) continue;
+    const wg = new THREE.Group(); wg.scale.setScalar(1.3);
+    makePerson(wg, { x: 0, standing: true }, w, T, []);
+    wg.position.copy(old.pos); world.add(wg);
+    d.pg.visible = false;
+    walkers.push({ wg, dest: d, from: old.pos.clone(), to: d.pos.clone(), t0: performance.now(), dur: Math.min(4500, Math.max(1400, old.pos.distanceTo(d.pos) / WALK_SPEED * 1000)) });
+  }
+}
+function stepWalkers(now) {
+  for (let i = walkers.length - 1; i >= 0; i--) {
+    const k = walkers[i], t = Math.min(1, (now - k.t0) / k.dur);
+    k.wg.position.lerpVectors(k.from, k.to, t);
+    k.wg.position.y = Math.abs(Math.sin(t * k.dur / 1000 * 7)) * 0.07 * (t < 1 ? 1 : 0); // nhún theo bước chân
+    const travel = Math.atan2(-(k.to.z - k.from.z), k.to.x - k.from.x);
+    k.wg.rotation.y = t < 0.85 ? travel : travel + (DESK_YAW - travel) * ((t - 0.85) / 0.15); // tới nơi thì quay về hướng bàn
+    if (t >= 1) { world.remove(k.wg); k.dest.pg.visible = true; walkers.splice(i, 1); }
+  }
 }
 
 function layoutKey(S) {
@@ -1954,6 +2001,7 @@ $('#btnDesk').onclick = () => {
 };
 window.agentOffice = Object.freeze({
   setDesk: (i) => setDesk(i),
+  walkers: () => walkers.map((k) => ({ id: k.dest.w.id, from: k.from.toArray(), to: k.to.toArray(), at: k.wg.position.toArray(), seated: k.dest.pg.visible })),
   camera: () => ({ t: controls.target.toArray().map((v) => +v.toFixed(2)), d: +camera.position.distanceTo(controls.target).toFixed(2), y: +camera.position.y.toFixed(2), a: +Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z).toFixed(3) }),
   stats: () => ({ buildMs: lastBuildMs, cards: cardMeshes.size, textures: disposables.filter((d) => d.isTexture).length, labels: labels.length, gpu: Object.assign({}, renderer.info.memory) }),
   screenOf: (kind, id, repo) => {
@@ -2079,7 +2127,7 @@ function apply(S, force) {
   STATE = S; indexState(S);
   handleEvents(S);
   const key = layoutKey(S);
-  if (force || key !== LAYOUT_KEY) { LAYOUT_KEY = key; buildWorld(S); } else refreshDynamic(S);
+  if (force || key !== LAYOUT_KEY) { LAYOUT_KEY = key; const snap = snapshotPeople(); buildWorld(S); startWalks(snap); } else refreshDynamic(S);
   if (selection) {
     const exists = selection.type === 'events' || selection.type === 'station' || (selection.type === 'column' && S.columns.some((c) => c.name === selection.id)) || (selection.type === 'repo' ? idx.repo.has(selection.id) : selection.type === 'item' ? idx.item.has(selection.id) : idx.worker.has(selection.id));
     if (!exists) selection = null;
@@ -2174,6 +2222,7 @@ function frame(now) {
   }
   controls.update();
   if (!reduceMotion.matches) {
+    stepWalkers(now);
     const t = now / 1000;
     for (const r of rigs) {
       r.armL.rotation.z = r.armRot + Math.sin(t * 11 + r.phase) * 0.12;
