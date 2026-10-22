@@ -910,6 +910,21 @@
       ]
     },
     {
+      "component": "super-board-self-reload",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SELF-RELOAD-01",
+          "name": "runner rảnh tự nạp lại super-board-run.sh khi origin đổi: ff main rồi exec lại; main lệch origin / ff hỏng / sai cú pháp thì notify một lần, không restart mù; còn worker thì không đụng",
+          "command": "bash tests/super-board/test_runner_self_reload.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-preflight-stale-overlap",
       "watch_files": [
         ".claude/bin/super-board-preflight.sh",
