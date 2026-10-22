@@ -489,7 +489,13 @@ Mẫu ghi nhận:
 
 ---
 
-### [INSTINCT-058] Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu
+### [INSTINCT-058] Một lần đọc GitHub hỏng tạm thời dưới set -e giết runner, watchdog crash-loop rồi bỏ cuộc
+- **Ngày phát hiện:** 2026-10-22
+- **Hiện tượng lỗi:** Một lần đọc GitHub hỏng tạm thời dưới set -e giết runner, watchdog crash-loop rồi bỏ cuộc
+- **Nguyên nhân:** super-board-run.sh chạy set -euo pipefail; fetch_project_items/gh_rate_guard gọi trần trong vòng lặp nên một lần card.sh exit 69 (đọc board lệch số sau khi máy khởi động lại) làm runner chết; watchdog khởi động lại 5 lần, lần nào cũng chết ở lần đọc đầu, rồi bỏ cuộc (22/10 22:05-22:15, #256)
+- **Quy tắc phòng ngừa & Cách fix:** Mọi lệnh đọc mạng trong vòng lặp daemon chạy set -e phải đi qua wrapper: đọc lại có backoff+jitter, hỏng hết lượt thì bỏ tick, có trần số tick bỏ liên tiếp rồi mới thoát; mã halt có chủ đích vẫn dừng. Hàm gọi trong ngữ cảnh || mất errexit nên phải tự kiểm payload. Đổi tên biến bằng sed toàn file shell lớn dễ trúng hàm khác: sửa theo dòng/hàm cụ thể
+
+### [INSTINCT-059] Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu
 - **Ngày phát hiện:** 2026-10-22
 - **Hiện tượng lỗi:** Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu
 - **Nguyên nhân:** Memo hoa cau tra loi dia chi thu muc quan tri ca tien trinh nen khi worktree bi go giua luot gate van dung duong dan cu va tao lai thu muc quan tri (test_gate_project_removed_midrun do); cache in_linked_worktree lam ca commondir bi trong doc cau tra loi cu nen mutant van xanh. Hai loi chi lo khi reviewer chay test co san tren diff; test RED moi cua minh van xanh.
