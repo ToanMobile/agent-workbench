@@ -199,10 +199,35 @@ clip() { tr '\n\t' '  ' | python3 -I -c 'import sys; sys.stdout.buffer.write(sys
 
 # ---- the mutex -------------------------------------------------------------
 # mkdir is atomic: it succeeds for exactly one caller and fails for the rest.
-# The pid/date inside is for a human reading a stuck lock, never for logic.
+# The date inside is for a human reading a stuck lock. pid, pgid and host let a waiter
+# reap early: a holder killed by a signal never runs its EXIT trap, and waiting out
+# stale-after (90 min by default) for a lock nobody holds left PR #176 stuck in Review
+# (22/10). Early reap only when ALL hold: the lock was written on this host (a pid says
+# nothing about another machine), the holder pid is gone, and no process is left in its
+# process group (a SIGKILL to the shell alone leaves a migration or `gh pr merge` child
+# running; review of PR #219). A lock without pgid/host (an older gate), EPERM, a reused
+# pid or a group shared with a living caller all read as alive and fall back to the age.
+holder_gone() {
+  local pid pgid host
+  pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+  pgid=$(cat "$LOCK_DIR/pgid" 2>/dev/null || true)
+  host=$(cat "$LOCK_DIR/host" 2>/dev/null || true)
+  [ -n "$pid" ] && [ "$pid" -gt 0 ] 2>/dev/null && [ -n "$pgid" ] && [ "$pgid" -gt 0 ] 2>/dev/null || return 1
+  [ "$host" = "$(hostname)" ] || return 1
+  ! kill -0 "$pid" 2>/dev/null && ! ps -p "$pid" >/dev/null 2>&1 || return 1
+  ! kill -0 -- "-$pgid" 2>/dev/null || return 1
+  # Re-read the pid last: a holder that exits normally while we look frees the lock, and
+  # the next gate's fresh lock (a different pid) must not be removed.
+  [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$pid" ] || return 1
+  HOLDER_GONE="$pid (group $pgid)"
+}
 acquire() {
   local waited=0
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    if holder_gone; then
+      say "reaping a lock whose holder pid ${HOLDER_GONE} is gone (killed before its EXIT trap ran)"
+      rm -rf "$LOCK_DIR"; continue
+    fi
     # A lock older than the timeout belongs to a process that died holding it.
     # Reaping it is safe because the only thing it guards is a merge, and a dead
     # merge has already either landed or not.
@@ -217,6 +242,7 @@ acquire() {
     sleep 5; waited=$(( waited + 5 ))
   done
   date +%s > "$LOCK_DIR/at"; echo "$$" > "$LOCK_DIR/pid"; echo "$PR" > "$LOCK_DIR/pr"
+  ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ' > "$LOCK_DIR/pgid" || true; hostname > "$LOCK_DIR/host" 2>/dev/null || true
   return 0
 }
 # Chỉ xoá khoá còn mang pid của gate này: gate khác đã chiếm nó (coi là bỏ quên) thì đó là khoá đang sống của gate kia.
