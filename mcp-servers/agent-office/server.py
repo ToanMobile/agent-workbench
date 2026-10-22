@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import glob
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -1384,10 +1385,35 @@ CTYPES = {".html": "text/html; charset=utf-8", ".js": "application/javascript; c
 HOST_RE = re.compile(r"\[([^\]]+)\](?::\d+)?|([^:\[\]@\s]+)(?::\d+)?")
 
 
+def host_name(header) -> str:
+    m = HOST_RE.fullmatch((header or "").strip().lower())
+    return (m.group(1) or m.group(2)) if m else ""
+
+
 def host_ok(header, allowed) -> bool:
     """Host header must name this machine: blocks DNS rebinding on reads and writes."""
-    m = HOST_RE.fullmatch((header or "").strip().lower())
-    return bool(m) and (m.group(1) or m.group(2)) in allowed
+    return host_name(header) in allowed
+
+
+# cloudflared adds these to every request it forwards: a request carrying one came from outside this Mac
+TUNNEL_HEADERS = ("Cf-Connecting-Ip", "Cf-Ray")
+_key_cache = {"path": None, "mtime": None, "key": ""}
+
+
+def remote_key(path: str) -> str:
+    """The per-run secret ai-factory.sh writes; "" (remote access off) while the file is missing."""
+    try:
+        mtime = os.stat(path).st_mtime
+    except OSError:
+        return ""
+    if _key_cache["path"] != path or _key_cache["mtime"] != mtime:
+        try:
+            with open(path, encoding="utf-8") as f:
+                _key_cache.update(path=path, mtime=mtime, key=f.read().strip())
+        except OSError as exc:
+            warn("remote key " + path, exc)
+            return ""
+    return _key_cache["key"]
 
 
 def make_handler(app: App):
@@ -1398,6 +1424,20 @@ def make_handler(app: App):
     allowed = {"127.0.0.1", "localhost", "::1", *(str(x).lower() for x in extra)}
     if bind not in ("", "0.0.0.0", "::"):
         allowed.add(bind)
+    key_file = os.path.expanduser(os.environ.get("AGENT_OFFICE_KEY_FILE") or "~/.agent-office/remote-key")
+
+    def refusal(headers, api: bool):
+        """None when the request may go on, else the HTTP status that refuses it."""
+        host = host_name(headers.get("Host"))
+        if host in allowed and not any(headers.get(h) for h in TUNNEL_HEADERS):
+            return None  # this Mac itself
+        key = remote_key(key_file)
+        if not key or not (host in allowed or host.endswith(".trycloudflare.com")):
+            return 403
+        if not api:
+            return None  # the page and its assets carry no data; the page reads the key from the QR link
+        given = headers.get("X-Agent-Office-Key") or ""
+        return None if hmac.compare_digest(given.encode(), key.encode()) else 401
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "AgentOffice/1.0"
@@ -1415,9 +1455,10 @@ def make_handler(app: App):
             self.wfile.write(body)
 
         def do_GET(self):
-            if not host_ok(self.headers.get("Host"), allowed):
-                return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
             path = urlparse(self.path).path
+            code = refusal(self.headers, path.startswith("/api/"))
+            if code:
+                return self.send(code, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
             if path == "/api/state":
                 with app.lock:
                     body = app.state_bytes
@@ -1436,8 +1477,11 @@ def make_handler(app: App):
 
         def do_POST(self):
             path = urlparse(self.path).path
-            if self.headers.get("X-Agent-Office") != "1" or not host_ok(self.headers.get("Host"), allowed):
+            if self.headers.get("X-Agent-Office") != "1":
                 return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+            code = refusal(self.headers, True)
+            if code:
+                return self.send(code, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
             n = int(self.headers.get("Content-Length") or 0)
             if n > 200_000:
                 return self.send(413, b'{"ok":false,"error":"too large"}', CTYPES[".json"])
