@@ -807,6 +807,18 @@ PY
   [ "$rc" -ne 4 ]
 }
 
+claude_model_for_tier() {
+  # model_tier của config -> --model của `claude -p` (#254: trước đây không truyền, mọi lượt chạy model mặc định đắt nhất).
+  # low=haiku, high=opus; medium, thiếu hoặc lạ = sonnet.
+  local tier
+  tier=$(jq -r '.model_tier // "medium"' "$CONFIG_PATH" 2>/dev/null || echo medium)
+  case "$tier" in
+    low) echo haiku ;;
+    high) echo opus ;;
+    *) echo sonnet ;;
+  esac
+}
+
 preflight_gate() {
   # #253: chạy super-board-preflight.sh TRƯỚC khi nhận thẻ build; trước đây LLM mới chạy nó (09:58Z #200 mới thấy "hold" sau khi
   # đã tốn một lượt). Trả 0 = giao, 1 = không giao (thẻ đã sang Blocked, hoặc còn Ready để thử lại tick sau). Chỉ chặn trên bằng chứng CHÍNH XÁC: PR đã merge / đang mở
@@ -963,14 +975,16 @@ dispatch_lane() {
   # BASH_*_TIMEOUT_MS=1h: Bash tool của worker mặc định bị cắt ở 10 phút, đúng lúc gate còn chờ heavy_slot (≤600 s) (#249).
   export BASH_DEFAULT_TIMEOUT_MS="${BASH_DEFAULT_TIMEOUT_MS:-3600000}" BASH_MAX_TIMEOUT_MS="${BASH_MAX_TIMEOUT_MS:-3600000}"
   unset POSTFIX_GATE_FORCE_FULL
+  local claude_model
+  claude_model=$(claude_model_for_tier)
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
     nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
     nohup "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
-    CLAUDE_CONFIG_DIR="$pool_cfg" nohup claude --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    CLAUDE_CONFIG_DIR="$pool_cfg" nohup claude --model "$claude_model" --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   else
-    nohup claude --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup claude --model "$claude_model" --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!
   DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
@@ -1401,6 +1415,22 @@ reclaim_stranded_building() {
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
+    # #254: builder đóng issue khi AC đã đạt sẵn trên main (không PR) — thẻ đóng ở Building đi thẳng Done, không quay về Ready.
+    local issue_rc=0
+    issue_is_open "$issue" || issue_rc=$?
+    [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+    if [ "$issue_rc" -eq 1 ]; then
+      if set_card_status "$item_id" "Done"; then
+        gh_checkpoint
+        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        rm -f "$INFLIGHT_DIR/$issue"
+        log "reconciled closed #${issue} -> Done (was 'Building') — builder closed it, AC already met"
+      else
+        gh_checkpoint
+        log "⚠ closed #${issue} in Building — could not move it to Done; drag it by hand"
+      fi
+      continue
+    fi
     # Chỉ để ghi vào comment: ls-remote lỗi (mạng, không có remote) dưới pipefail không được giết runner.
     branch=$(git ls-remote --heads origin "issue-${issue}-*" 2>/dev/null | head -1 | sed 's#.*refs/heads/##') || branch=""
     wt=".claude/worktrees/issue-${issue}-build"
