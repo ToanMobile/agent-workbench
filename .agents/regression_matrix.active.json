@@ -759,21 +759,6 @@
       ]
     },
     {
-      "component": "super-board-runner-ready-order",
-      "watch_files": [
-        ".claude/bin/super-board-run.sh",
-        "tests/super-board/test_runner_ready_order.sh"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-SB-RUNNER-READY-ORDER-01",
-          "name": "runner giao thẻ Ready theo priority label, bug trước, số issue tăng dần; thẻ body nhắm repo khác → Blocked kèm block-template; thẻ có Fix trùng thẻ đang mở → comment một lần, không giao",
-          "command": "bash tests/super-board/test_runner_ready_order.sh",
-          "parallel_safe": true
-        }
-      ]
-    },
-    {
       "component": "super-board-lane-workers",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
@@ -784,6 +769,21 @@
           "id": "REG-SB-LANE-WORKERS-01",
           "name": "lane QA và Review chạy nhiều worker (qa_workers / review_workers, mặc định 1): một worker mới mỗi tick, cổng tải build_load_max, zombie/reap/dừng khẩn/nhận lại nhận ra cả worker thêm, worker thêm không bị trần max_workers chặn",
           "command": "bash tests/super-board/test_runner_lane_workers.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-ready-order",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_ready_order.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-READY-ORDER-01",
+          "name": "runner giao thẻ Ready theo priority label, bug trước, số issue tăng dần; thẻ body nhắm repo khác → Blocked kèm block-template; thẻ có Fix trùng thẻ đang mở → comment một lần, không giao",
+          "command": "bash tests/super-board/test_runner_ready_order.sh",
           "parallel_safe": true
         }
       ]
