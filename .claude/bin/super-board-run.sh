@@ -1605,6 +1605,57 @@ RECLAIM_MOVED=0
 LANDED_COUNT=0
 DISPATCH_LOG=""
 
+# ── Tự nạp lại code mới (#229, gap 4 của #226). Runner là bash chạy dài: PR sửa chính super-board-run.sh merge xong mà tiến trình vẫn
+# chạy bản cũ cho tới khi ai đó dừng/chạy lại tay. Lúc rảnh (không worker nào, lock nào) mỗi tick fetch origin/<base>; blob của script trên
+# origin khác blob đang chạy thì: main checkout fast-forward được (đang ở <base>, HEAD là tổ tiên của origin) → ff rồi exec lại chính nó
+# (cùng PID, nên bản ghi watchdog vẫn đúng; SB_WATCHDOG_START=1 nạp lại bộ đếm và không xoá stop marker). Main lệch origin, ff không áp
+# được hoặc bản mới sai cú pháp → notify một lần cho mỗi bản origin, tiếp tục chạy bản cũ: không restart mù, không chạy code cũ im lặng.
+# ponytail: chỉ nạp lại khi rảnh hoàn toàn; board luôn có worker thì chờ tới lúc rảnh, nâng lên khi thấy board bận liên tục.
+RELOAD_SELF="${RELOAD_SELF:-$SCRIPT_DIR/super-board-run.sh}"
+RELOAD_RUN_SUM="${RELOAD_RUN_SUM:-$(git hash-object "$RELOAD_SELF" 2>/dev/null || true)}"
+RELOAD_WARNED=""
+RELOAD_NEXT_CHECK=0
+reload_exec() {
+  runner_state_write running
+  SB_WATCHDOG_START=1 SB_RELOADED=1 exec bash "$1" "$CONFIG_SLUG"
+}
+reload_warn() {
+  # $1 = blob của script trên origin, $2 = lý do. Một cảnh báo cho mỗi bản origin.
+  [ "$RELOAD_WARNED" != "$1" ] || return 0
+  RELOAD_WARNED="$1"
+  log "⚠ self-reload: origin/${BASE_BRANCH} has a newer super-board-run.sh but this runner keeps the old code — $2"
+  board_notify send --card "$CONFIG_SLUG" --text "runner đang chạy code cũ: origin/${BASE_BRANCH} có super-board-run.sh mới nhưng không nạp được — $2"
+}
+self_reload_tick() {
+  local now new disk rel cur
+  [ "${ACTIVE_WORKERS:-0}" -eq 0 ] || return 0
+  [ -n "$RELOAD_RUN_SUM" ] || return 0
+  now=$(date +%s)
+  [ "$now" -ge "$RELOAD_NEXT_CHECK" ] || return 0
+  RELOAD_NEXT_CHECK=$((now + ${SB_RELOAD_EVERY:-${TICK_SECONDS:-120}}))
+  rel=$(git ls-files --full-name -- "$RELOAD_SELF" 2>/dev/null | head -1) || rel=""
+  [ -n "$rel" ] || return 0
+  git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 fetch -q origin "$BASE_BRANCH" >/dev/null 2>&1 \
+    || { log "⚠ self-reload: git fetch origin ${BASE_BRANCH} failed; retrying next check"; return 0; }
+  new=$(git rev-parse -q --verify "origin/${BASE_BRANCH}:${rel}" 2>/dev/null) || return 0
+  [ "$new" != "$RELOAD_RUN_SUM" ] || return 0
+  disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
+  if [ "$disk" != "$new" ]; then
+    cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || cur=""
+    if [ "$cur" != "$BASE_BRANCH" ] || ! git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null; then
+      reload_warn "$new" "main checkout is not a fast-forward of origin/${BASE_BRANCH} (branch '${cur:-detached}'); bring it level, then the next idle tick reloads"
+      return 0
+    fi
+    git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1 \
+      || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+    disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
+    [ "$disk" = "$new" ] || { reload_warn "$new" "after the fast-forward the file on disk still differs from origin"; return 0; }
+  fi
+  bash -n "$RELOAD_SELF" 2>/dev/null || { reload_warn "$new" "the new script fails bash -n"; return 0; }
+  log "♻ self-reload: origin/${BASE_BRANCH} changed super-board-run.sh (${RELOAD_RUN_SUM:0:7} → ${new:0:7}) and no worker is running — restarting on the new code"
+  reload_exec "$RELOAD_SELF"
+}
+
 # Sourced by the gate tests (`SB_LIB_ONLY=1 . scripts/super-board-run.sh`) to exercise
 # the helpers above without starting a run. Executing the script normally is unaffected.
 if [ "${SB_LIB_ONLY:-0}" = "1" ]; then
@@ -1652,6 +1703,8 @@ stop_in_flight() {
 }
 if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
   START_TAG=" (watchdog restart)"
+  [ "${SB_RELOADED:-0}" != "1" ] || START_TAG=" (self-reload)"
+  unset SB_RELOADED
   if [ -e "$STOP_MARK" ]; then
     log "🛑 watchdog restart refused: board ${CONFIG_SLUG} was stopped by the user ($STOP_MARK); only an explicit super-board run starts it"
     exit 0
@@ -1793,6 +1846,9 @@ while true; do
   [ "$BUILD_COUNT" -eq 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))   # lane build = 1 slot của max_workers dù chạy N worker: build_workers là trần riêng, không bỏ đói QA/Review
   [ "$QA_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
   [ "$REVIEW_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+
+  # Rảnh hoàn toàn (không worker nào): nạp lại code nếu super-board-run.sh trên origin đã đổi (#229). Có thể exec và không quay lại.
+  self_reload_tick
 
   # Đang hoãn sau RUNAWAY: không giao được gì nên chỉ đọc board thưa (paused_tick). Kiểm trước nhánh cap-reached:
   # runaway thường xảy ra khi cả 3 lane đều bận, và lúc đó vẫn phải quét zombie trên dữ liệu mới.
