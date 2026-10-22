@@ -1198,9 +1198,12 @@ note_worker_exit() {
   local line role
   line=$(worker_exit_line "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}")
   log "worker of #${1} (lane ${LANE:-?}) exit record: ${line:-none — wrapper killed or host asleep}"
-  case "$line" in *"exit=0 "*) return 0 ;; esac
+  # exit=0: finished; exit=143: stopped by the runner itself (super-board stop sends TERM), not a death worth a card comment.
+  case "$line" in *"exit=0 "*|*"exit=143 "*) return 0 ;; esac
   case "${LANE:-}" in qa) role=qa ;; review) role=reviewer ;; *) role=builder ;; esac
-  gh_write_once issue comment "$1" --body "[${role}] [report] ⚠️ worker chết giữa chừng
+  # A diagnostic comment must never halt the board: gh_write_once exits 79 on a gh failure and `|| true` cannot catch an exit.
+  gh_checkpoint
+  gh issue comment "$1" --body "[${role}] [report] ⚠️ worker chết giữa chừng
 Did: runner thấy worker lane ${LANE:-?} đã dừng, thẻ sẽ được giao lại.
 Exit record: ${line:-không có (wrapper bị kill hoặc máy ngủ)}
 Next: lượt giao lại tiếp tục từ commit/comment cuối" >/dev/null 2>&1 || true

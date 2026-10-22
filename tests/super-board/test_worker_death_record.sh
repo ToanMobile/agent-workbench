@@ -44,6 +44,7 @@ WORKER_LOG_DIR="$TMP/wl"; mkdir -p "$WORKER_LOG_DIR"
 BOT_LOGIN=""
 gh_checkpoint() { :; }
 gh_write_once() { echo "gh $*" >> "$TMP/writes"; }
+gh() { echo "gh $*" >> "$TMP/writes"; }
 log() { echo "$*" >> "$TMP/log"; }
 note_early_death() { :; }
 sleep 0 & DEAD=$!; wait "$DEAD"
@@ -125,5 +126,24 @@ rm -f "$INFLIGHT_DIR"/*; printf 'PID=%s\nLANE=qa\n' "$WRP" > "$INFLIGHT_DIR/140"
 OUT=" $(startup_orphan_workers "$RT" | tr '\n' ' ')"
 case "$OUT" in *" $CHILD "*) fail "I: child of locked wrapper reported as orphan ($OUT)" ;; *" $SOLO "*) ok "I: wrapper child is not an orphan, stray worker is" ;; *) fail "I: stray worker not reported ($OUT)" ;; esac
 kill -9 "$CHILD" "$WRP" "$SOLO" 2>/dev/null
+
+# ── J (R5): comment chẩn đoán không được halt board: gh lỗi tạm thời (5xx) -> note_worker_exit trả 0, runner không exit 79.
+STUB="$TMP/stub-read.py"; printf 'import sys\nopen(sys.argv[0] + ".calls", "a").write(" ".join(sys.argv[1:]) + "\\n")\n' > "$STUB"
+( SB_LIB_ONLY=1 . "$RUNNER" >/dev/null 2>&1; set +e
+  SB_GITHUB_READ="$STUB"; gh() { return 1; }; log() { :; }
+  LANE=qa; WORKER_LOG="$TMP/j.log"; printf '=== dispatch lane=qa issue=#9 at x ===\n\nworker_exit: exit=137 signal=KILL elapsed=5s\n' > "$WORKER_LOG"
+  note_worker_exit 9; echo "rc=$?" > "$TMP/j.out" ); jrc=$?
+if [ "$jrc" -eq 0 ] && grep -qx "rc=0" "$TMP/j.out" 2>/dev/null && ! grep -q -- "--halt" "$STUB.calls" 2>/dev/null; then
+  ok "J: gh failure while posting the death comment does not halt the runner"
+else
+  fail "J: note_worker_exit ended the runner (subshell rc=$jrc, out: $(cat "$TMP/j.out" 2>/dev/null), calls: $(tr '\n' '|' < "$STUB.calls" 2>/dev/null))"
+fi
+
+# ── K (R7): worker bị runner dừng (exit 143) không bị comment "chết giữa chừng".
+: > "$TMP/writes"; : > "$TMP/log"
+printf '=== dispatch lane=qa issue=#225 at x ===\n\nworker_exit: exit=143 signal=TERM elapsed=90s\n' > "$WORKER_LOG_DIR/worker-qa-225.log"
+printf 'PID=%s\nLANE=qa\nWORKER_LOG=%s\n' "$DEAD" "$WORKER_LOG_DIR/worker-qa-225.log" > "$INFLIGHT_DIR/225"
+reap_finished_locks
+if ! grep -q "^gh issue comment 225" "$TMP/writes"; then ok "K: runner-stopped worker (143) posts no 'died' comment"; else fail "K: 143 commented"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL PASS" || { echo "$FAILS FAIL"; exit 1; }
