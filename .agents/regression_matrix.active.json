@@ -774,6 +774,74 @@
       ]
     },
     {
+      "component": "mcp-servers/agent-office",
+      "watch_files": [
+        "mcp-servers/agent-office/server.py",
+        "mcp-servers/agent-office/web/index.html",
+        "mcp-servers/agent-office/web/pathing.js",
+        "mcp-servers/agent-office/web/vendor/*",
+        "mcp-servers/agent-office/*.sh",
+        "ai-factory.sh",
+        "mcp-servers/agent-office/tests/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-01",
+          "name": "agent-office: unittest (server, redact, host check) và tìm đường A* của người đi trong xưởng (node)",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-card-items-retry",
+      "watch_files": [
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-stop.sh",
+        "tests/super-board/test_card_items_count_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-CARD-ITEMS-RETRY-01",
+          "name": "card.sh items đọc lại 1 lần khi số item lệch totalCount (không chết runner); lệch cả hai lần vẫn exit 69; stop.sh ghi marker trước kill (#256)",
+          "command": "bash tests/super-board/test_card_items_count_retry.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-board-read-retry",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_board_read_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-READ-RETRY-01",
+          "name": "runner đọc lại board có backoff khi lần đọc hỏng tạm thời; hỏng hết lượt thì bỏ tick thay vì chết; halt 79 vẫn dừng; vòng chính chỉ đọc qua tick_fetch (#256)",
+          "command": "bash tests/super-board/test_runner_board_read_retry.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-matrix-merge-driver",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/matrix_merge_driver.py",
+        "universal-agent-devkit/scripts/git/githooks.sh",
+        "universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+        ".gitattributes"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MATRIX-MERGE-01",
+          "name": "merge driver ma trận hồi quy: hai nhánh cùng nối rule khác nhau vào cuối thì gộp không conflict và gate vẫn tin ma trận chỉ-thêm; cùng id khác nội dung thì lỗi rõ; sửa rule cũ vẫn conflict; githooks install cài driver",
+          "command": "bash universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-self-reload",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
