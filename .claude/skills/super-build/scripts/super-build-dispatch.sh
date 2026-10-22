@@ -22,7 +22,7 @@
 #   are still accepted so a branch started before the switch is not read as a failure.
 #
 # Notes:
-#   - The dispatcher never merges, never closes the issue, never edits labels — those
+#   - The dispatcher never merges, never edits labels, closes an issue only on the "already met" exit (run.md step 3c) — those
 #     are the orchestrator's job. This script just runs the worker and reports outcome.
 #   - The worktree is left intact in all exit paths so a human can inspect it.
 
