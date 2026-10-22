@@ -209,7 +209,12 @@ items() {
   items_once && return 0 || rc=$?
   [ "$rc" -eq 69 ] || return "$rc"
   echo "board read incomplete; re-reading once (board changed between pages?)" >&2
-  sleep "${SB_CARD_RETRY_SLEEP:-2}"
+  local s="${SB_CARD_RETRY_SLEEP:-2}"
+  case "$s" in ''|*[!0-9]*|????*) s=2 ;; esac    # giá trị lạ/quá dài không được làm `sleep` lỗi và đổi mã thoát khỏi 69
+  s=$((10#$s))                                    # 08/09 không bị đọc thành bát phân
+  [ "$s" -eq 0 ] || s=$(( s + RANDOM % (s + 1) ))  # jitter: nhiều board/worker không đọc lại cùng lúc
+  [ "$s" -le 30 ] || s=30                         # trần (sau jitter): một lần đọc lại không chặn board quá 30s
+  sleep "$s"
   items_once
 }
 
