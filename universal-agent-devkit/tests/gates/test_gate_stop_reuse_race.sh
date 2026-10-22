@@ -35,6 +35,8 @@
 # copy of the kit (a mutant must go red); PYGATE=/usr/bin/python3 runs the gate under another Python.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
+# Id phiên của máy thật (phiên Claude, worker board) làm gate đổi nhánh chạy (hoãn --full, record theo phiên) và đỏ oan ca K1 (#240).
+unset DEVKIT_SESSION_ID CLAUDE_SESSION_ID CLAUDE_CODE_SESSION_ID
 unset DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S DEVKIT_UNITY_REUSE_MAX_S GATE_TOTAL_BUDGET_S TEST_RUN_LOCK_WAIT_S DEVKIT_IMPACTED_SINCE
 export VACUITY_REVERT=0 FLAKY_RETRY=0
 # The races here are on the receipt and the Stop/budget records; the per-suite content-key cache (bin/suite_cache.py, P2 20/10) would
