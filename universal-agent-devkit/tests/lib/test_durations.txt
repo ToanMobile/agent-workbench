@@ -336,6 +336,7 @@
 6 tests/gates/test_worktree_merge_gate_subagent_live.sh
 1 tests/context_memory/test_parallel_hint.sh
 3 tests/verification/test_create_task_needs_you.sh
+3 tests/verification/test_create_task_repo_routing.sh
 42 tests/worktree_git/test_worktree_lane.sh
 # 2026-10-20: two tests that were missing (an unlisted test starts first). Each alone on this machine.
 9 tests/installer/test_agent_health_score_inflation.sh
