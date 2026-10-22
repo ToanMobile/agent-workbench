@@ -54,6 +54,7 @@
 7 tests/worktree_git/test_x_old_conflict_isolation.sh
 7 tests/verification/test_agent_bridge.sh
 8 tests/gates/test_gate_sibling_receipt.sh
+10 tests/gates/test_gate_tree_store_reuse.sh
 6 tests/gates/test_worktree_merge_gate.sh
 6 tests/worktree_git/test_relink.sh
 17 tests/verification/test_nightly.sh
@@ -357,5 +358,9 @@
 1 tests/verification/test_checklist_retired_status.sh
 1 tests/verification/test_governance_cleanup_fold_intent.sh
 2 tests/gates/test_gate_sentinel_merge_env.sh
+3 tests/gates/test_precommit_test_durations.sh
+3 tests/gates/test_tree_fp_super_board_runs.sh
 2 tests/gates/test_gate_vendor_skip.sh
 3 tests/verification/test_create_task_repo_routing.sh
+3 tests/gates/test_gate_git_spawn_budget.sh
+3 tests/gates/test_matrix_merge_driver.sh
