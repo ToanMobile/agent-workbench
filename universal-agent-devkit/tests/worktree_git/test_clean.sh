@@ -42,8 +42,8 @@ bash "$KIT" clean "$P" --apply >/dev/null 2>&1
 [ -f "$A/review_gate.log" ] && [ -f "$A/restore-backup/NEW/cart.js" ] && ok "recent items are kept" || fail "recent items removed"
 [ -f "$A/.gitignore" ] && [ -f "$P/.agents/instincts.md" ] && [ -f "$P/src/app.js" ] \
   && ok ".gitignore, .agents/ and code are never touched (even when old)" || fail "touched protected files"
-[ "$(wc -l < "$A/claim_check.log" | xargs)" = 2000 ] && tail -1 "$A/claim_check.log" | grep -q "line 699999" \
-  && ok "log over 5 MB trimmed to its last 2000 lines" || fail "big log not trimmed ($(wc -l < "$A/claim_check.log"))"
+[ "$(wc -l < "$A/claim_check.log" | xargs)" = 1000 ] && tail -1 "$A/claim_check.log" | grep -q "line 699999" \
+  && ok "log over 5 MB trimmed to its last 1000 lines" || fail "big log not trimmed ($(wc -l < "$A/claim_check.log"))"
 [ -d "$HOME/.universal-agent-devkit.old-20200101-000000" ] && ok "old DevKit installs kept without --old-installs" || fail "old install removed"
 bash "$KIT" clean "$P" --apply --old-installs >/dev/null 2>&1
 [ ! -e "$HOME/.universal-agent-devkit.old-20200101-000000" ] && ok "--old-installs removes an old quick-install copy" || fail "old install kept"

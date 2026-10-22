@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
+SHA_IN_TEXT = re.compile(r"\b[0-9a-f]{40}\b")
 REPO = re.compile(r"[^/\s]+/[^/\s]+\Z")
 
 
@@ -92,6 +93,17 @@ def send_text(token: str, chat: str, text: str) -> bool:
     return safe_deliver(token, "sendMessage", {"chat_id": chat, "text": text})
 
 
+def describe(card: str, repo: str, title: str, text: str = "") -> str:
+    """Tin đọc được: việc gì (tiêu đề), của project nào. Thiếu title thì giữ dạng cũ card + text."""
+    title = " ".join((title or "").split())
+    if not title:
+        return ("%s\n%s" % (card, text)).strip()
+    project = (repo or "").rsplit("/", 1)[-1]
+    head = ("%s — %s" % (text, title)) if text else title
+    tail = " · ".join(p for p in (project and "Project: %s" % project, card) if p)
+    return ("%s\n%s" % (head, tail)).strip()
+
+
 def accounts_key(raw: str) -> str:
     parts = sorted({p.strip() for p in (raw or "").split(",") if p.strip()})
     return ",".join(parts) or "all"
@@ -150,8 +162,8 @@ def run(args: argparse.Namespace) -> int:
     if not token or not chat:
         return 0
     if args.cmd == "send":
-        text = args.text or ""
-        body = ("%s\n%s" % (card, text)).strip()
+        text = SHA_IN_TEXT.sub(lambda m: m.group(0)[:7], args.text or "") if args.title else (args.text or "")
+        body = describe(card, args.repo, args.title, text)
         if body:
             send_text(token, chat, body)
         return 0
@@ -169,7 +181,9 @@ def run(args: argparse.Namespace) -> int:
         callback = "sb:ap:%s" % pointer
         send_text_with_button = {
             "chat_id": chat,
-            "text": "%s\nneeds you — approve comments done on the same source" % (card or ("PR #%s" % args.pr)),
+            "text": describe(card or ("PR #%s" % args.pr), args.repo, args.title, "cần bạn duyệt")
+            if args.title
+            else "%s\nneeds you — approve comments done on the same source" % (card or ("PR #%s" % args.pr)),
             "reply_markup": {"inline_keyboard": [[{"text": "Approve", "callback_data": callback}]]},
         }
         safe_deliver(token, "sendMessage", send_text_with_button)
@@ -184,6 +198,8 @@ def main(argv=None) -> int:
         cmd = sub.add_parser(name)
         cmd.add_argument("--text", default="")
         cmd.add_argument("--card", default="")
+        cmd.add_argument("--repo", default="")
+        cmd.add_argument("--title", default="")
     limited = sub.add_parser("accounts-limited")
     limited.add_argument("--accounts", default="all")
     limited.add_argument("--state-dir", default="")
@@ -194,6 +210,7 @@ def main(argv=None) -> int:
     approve.add_argument("--head", default="")
     approve.add_argument("--source", type=int, default=0)
     approve.add_argument("--card", default="")
+    approve.add_argument("--title", default="")
     try:
         return run(parser.parse_args(argv))
     except (OSError, urllib.error.URLError, TimeoutError, ValueError):

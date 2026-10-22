@@ -23,7 +23,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
+case "${1:-}" in
+  -h|--help) echo "usage: unity-bot-marathon.sh [levels]   # levels: \"100\", \"1-100\" or \"3,7,12\" (default 1-100)"; exit 0 ;;
+esac
 LEVELS="${1:-1-100}"
+# levels reach shell arithmetic below: accept only N, A-B or A,B,C
+case "$LEVELS" in
+  ""|*[!0-9,-]*|-*|*-|*,,*|,*|*,|*-*-*|*-*,*|*,*-*) echo "UNTESTED: bad levels '$LEVELS' (use N, A-B or A,B,C)" >&2; exit 2 ;;
+esac
 ROOT="$(cd "${UNITY_PROJECT:-$PWD}" 2>/dev/null && pwd -P)" || { echo "UNTESTED: project dir not found"; exit 2; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 

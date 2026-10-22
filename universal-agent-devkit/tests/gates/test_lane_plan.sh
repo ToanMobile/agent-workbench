@@ -20,7 +20,7 @@ TMP="$(mktemp -d)"
 case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 trap 'rm -rf "$TMP"' EXIT
-"$PYBIN" -I - "$SCRIPT" "$TMP" <<'PY'
+"$PYBIN" -I - "$SCRIPT" "$TMP" <<'PYEND'
 import json, os, subprocess, sys
 
 SCRIPT, TMP = sys.argv[1], sys.argv[2]
@@ -511,5 +511,5 @@ if os.path.isfile(AK):
     chk(r.stdout == "plan record slots ", "agent-kit completion offers the three lanes sub-actions", "%r %r" % (r.stdout, r.stderr[:200]))
 
 sys.exit(1 if fails else 0)
-PY
+PYEND
 exit $?
