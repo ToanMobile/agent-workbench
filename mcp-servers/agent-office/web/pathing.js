@@ -17,7 +17,8 @@
 
   // Chặn hình chữ nhật tâm (cx, cz), nửa cạnh hw x hd, xoay yaw quanh trục Y, nở thêm margin (bán kính người).
   function blockRect(g, cx, cz, hw, hd, yaw, margin) {
-    const m = margin || 0, c = Math.cos(yaw || 0), s = Math.sin(yaw || 0);
+    // nở thêm nửa ô để chặn mọi ô chạm vào vật cản: vách mỏng hơn một ô nằm giữa hai tâm ô vẫn phải chặn
+    const m = (margin || 0) + g.cell / 2, c = Math.cos(yaw || 0), s = Math.sin(yaw || 0);
     const R = Math.hypot(hw, hd) + m;
     const i0 = Math.max(0, cellX(g, cx - R)), i1 = Math.min(g.nx - 1, cellX(g, cx + R));
     const j0 = Math.max(0, cellZ(g, cz - R)), j1 = Math.min(g.nz - 1, cellZ(g, cz + R));
@@ -41,11 +42,12 @@
   }
 
   // Đường thẳng đi qua toàn ô trống? Lấy mẫu mỗi nửa ô.
-  function lineClear(g, ax, az, bx, bz) {
+  // skipA, skipB: chỉ số hai ô được bỏ qua (ô của chỗ đầu/đích nằm trong khung bàn), mọi ô khác phải trống
+  function lineClear(g, ax, az, bx, bz, skipA, skipB) {
     const d = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.ceil(d / (g.cell * 0.5)));
     for (let k = 0; k <= n; k++) {
-      const t = k / n;
-      if (isBlocked(g, cellX(g, ax + (bx - ax) * t), cellZ(g, az + (bz - az) * t))) return false;
+      const t = k / n, i = cellX(g, ax + (bx - ax) * t), j = cellZ(g, az + (bz - az) * t), c = j * g.nx + i;
+      if (isBlocked(g, i, j) && c !== skipA && c !== skipB) return false;
     }
     return true;
   }
@@ -127,19 +129,44 @@
   }
 
   // Kéo căng: bỏ mọi điểm giữa nếu nhìn thẳng từ điểm trước tới điểm sau không vướng. Đầu/đích có thể nằm trong ô chặn
-  // (chỗ ngồi), nên đoạn nối thẳng tới chúng được chấp nhận khi đoạn ngắn hơn hai ô.
+  // (chỗ ngồi), nên riêng hai ô đó được bỏ qua khi kiểm.
   function pull(g, p) {
     const out = [p[0], p[1]]; let a = 0; const n = p.length / 2;
+    const e0 = cellZ(g, p[1]) * g.nx + cellX(g, p[0]), e1 = cellZ(g, p[2 * n - 1]) * g.nx + cellX(g, p[2 * n - 2]);
     while (a < n - 1) {
       let b = n - 1;
       while (b > a + 1) {
-        const short = Math.hypot(p[2 * b] - p[2 * a], p[2 * b + 1] - p[2 * a + 1]) < g.cell * 2;
-        if (short || lineClear(g, p[2 * a], p[2 * a + 1], p[2 * b], p[2 * b + 1])) break;
+        if (lineClear(g, p[2 * a], p[2 * a + 1], p[2 * b], p[2 * b + 1], a === 0 ? e0 : -1, b === n - 1 ? e1 : -1)) break; // chỉ bỏ qua ô đầu/đích ở đoạn chạm chúng
         b--;
       }
       out.push(p[2 * b], p[2 * b + 1]); a = b;
     }
     return out;
+  }
+
+  // Lập đường giữa hai chỗ ngồi: thử lần lượt các lưới (chặt rồi lỏng) trên bản sao, mở vòng tròn quanh điểm đầu/đích
+  // (chỗ ngồi nằm trong khung bàn). null khi không có đường nào: người gọi cho người tới thẳng, không đi xuyên tường.
+  // mảng vách -> lưới chỉ có vách. Giả định: người gọi tạo mảng vách mới mỗi lần dựng cảnh, không thêm vách sau lần gọi đầu,
+  // và luôn đưa kèm các lưới cùng khung (index.html: navWalls dựng lại cùng navTight/navLoose trong buildNav)
+  const wallGrids = new WeakMap();
+  function planRoute(grids, walls, sx, sz, gx, gz, clearR) {
+    let wg = null; // lưới chỉ có vách (dựng một lần cho mỗi mảng vách): kiểm từng đoạn sau khi kéo căng
+    const crossesWall = (p) => {
+      if (!walls || !walls.length) return false;
+      if (!wg) wg = wallGrids.get(walls);
+      if (!wg) { const b = grids.find(Boolean); wg = createGrid(b.minX, b.minZ, b.minX + b.nx * b.cell, b.minZ + b.nz * b.cell, b.cell); for (const w of walls) blockRect(wg, w.x, w.z, w.hw, w.hd, w.yaw || 0, 0); wallGrids.set(walls, wg); }
+      for (let k = 2; k < p.length; k += 2) if (!lineClear(wg, p[k - 2], p[k - 1], p[k], p[k + 1])) return true;
+      return false;
+    };
+    for (const base of grids) {
+      if (!base) continue;
+      const g = Object.assign({}, base, { blocked: base.blocked.slice() });
+      clearCircle(g, sx, sz, clearR); clearCircle(g, gx, gz, clearR);
+      for (const w of walls || []) blockRect(g, w.x, w.z, w.hw, w.hd, w.yaw || 0, 0); // vòng mở không được đục thủng vách
+      const p = findPath(g, sx, sz, gx, gz);
+      if (p && !crossesWall(p)) return p;
+    }
+    return null;
   }
 
   function pathLength(p) { let d = 0; for (let k = 2; k < p.length; k += 2) d += Math.hypot(p[k] - p[k - 2], p[k + 1] - p[k - 1]); return d; }
@@ -152,5 +179,5 @@
     return cur + d * (1 - Math.exp(-rate * dt));
   }
 
-  return { createGrid, blockRect, clearCircle, lineClear, nearestFree, findPath, pathLength, desiredSpeed, dampAngle };
+  return { createGrid, blockRect, clearCircle, lineClear, nearestFree, findPath, planRoute, pathLength, desiredSpeed, dampAngle };
 });
