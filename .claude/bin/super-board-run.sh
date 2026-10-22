@@ -1669,7 +1669,7 @@ backlog_ticket_gaps() {
             | (if $e == null then $t else $t[:$e] end) end;
       [ (if (sect("Problem") // [] | any(.[]; test("\\S"))) then empty else "Problem" end),
         (if (sect("Fix") // [] | any(.[]; test("\\S"))) then empty else "Fix" end),
-        (if (sect("Acceptance Criteria") // [] | any(.[]; test("^[ \t]*[-*][ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
+        (if (sect("Acceptance Criteria") // [] | any(.[]; test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
       | join(", ")'
 }
 
@@ -1718,7 +1718,7 @@ pull_backlog_cards() {
         gh_checkpoint
         gh_write_once issue comment "$issue" --body "[orchestrator] [report] ⏸ not pulled from Backlog · ticket incomplete
 Did: checked the body before moving it to Ready
-❌ Not done: missing section(s): ${gaps} (Problem, Fix and Acceptance Criteria with at least one bullet are required)
+❌ Not done: missing section(s): ${gaps} (Problem, Fix and Acceptance Criteria with at least one item, a dash or star bullet or a numbered line such as 1. or 1), are required)
 Next: fill the missing section(s); the next tick pulls it" >/dev/null 2>&1 || true
         printf '%s' "$stamp" > "$INFLIGHT_DIR/backlog-skip/$issue"
         log "backlog pull: #${issue} skipped — missing ${gaps}"
