@@ -56,14 +56,14 @@ wlog() {
     || echo "watchdog $SLUG: could not write $WLOG: $*" >&2
 }
 wd_save() {
-  { mkdir -p "$DIR" && printf 'RESTARTS=%s\nLAST_RESTART=%s\nVERDICT=%s\nSPAWNED=%s\n' \
-      "$RESTARTS" "$LAST_RESTART" "$VERDICT" "$SPAWNED" > "$WD.$$" && mv -f "$WD.$$" "$WD"; } 2>/dev/null \
+  { mkdir -p "$DIR" && printf 'RESTARTS=%s\nLAST_RESTART=%s\nVERDICT=%s\nSPAWNED=%s\nNOTIFIED=%s\n' \
+      "$RESTARTS" "$LAST_RESTART" "$VERDICT" "$SPAWNED" "$NOTIFIED" > "$WD.$$" && mv -f "$WD.$$" "$WD"; } 2>/dev/null \
     || { rm -f "$WD.$$" 2>/dev/null; echo "watchdog $SLUG: could not write $WD" >&2; }
 }
 load_wd() {   # SPAWNED = PID runner do watchdog khởi động gần nhất
   RESTARTS=$(field RESTARTS "$WD"); RESTARTS=${RESTARTS:-0}
   LAST_RESTART=$(field LAST_RESTART "$WD"); LAST_RESTART=${LAST_RESTART:-0}
-  VERDICT=$(field VERDICT "$WD"); SPAWNED=$(field SPAWNED "$WD")
+  VERDICT=$(field VERDICT "$WD"); SPAWNED=$(field SPAWNED "$WD"); NOTIFIED=$(field NOTIFIED "$WD")
   case "$RESTARTS:$LAST_RESTART:$SPAWNED" in *[!0-9:]*) RESTARTS=$MAX_RESTARTS; LAST_RESTART=0; SPAWNED="" ;; esac   # hỏng: coi như đã bỏ cuộc
 }
 load_wd
@@ -180,7 +180,7 @@ restart_runner() {   # $1 = PID cũ, $2 = STATE cũ, $3 = RC cũ
   # marker xuất hiện trước khi nó chạy tới bước kiểm (SB_WATCHDOG_START=1 không bao giờ xoá marker).
   new=$( (env -u POSTFIX_GATE_FORCE_FULL -u DEVKIT_ALLOW_BRANCH ${ENVV[@]+"${ENVV[@]}"} SB_DAEMON="$daemon" SB_WATCHDOG_START=1 \
             nohup /bin/bash "$ROOT/.claude/bin/super-board-run.sh" "$SLUG" >> "$log" 2>&1 < /dev/null & echo $!) )
-  RESTARTS=$((RESTARTS + 1)); LAST_RESTART=$NOW; VERDICT=restarted; SPAWNED=$new
+  RESTARTS=$((RESTARTS + 1)); LAST_RESTART=$NOW; VERDICT=restarted; SPAWNED=$new; NOTIFIED=
   wd_save
   wlog "♻ restarted the runner (attempt $RESTARTS/$MAX_RESTARTS): new pid $new; previous pid ${1:-?} STATE=${2:-?} rc=${3:-?}; log $log"
 }
@@ -434,8 +434,10 @@ publish_board_status() {
 RECONCILE_MAX=3; RECONCILE_WINDOW=3600   # #190: tối đa 3 lần tự đối chiếu halt ghi mỗi giờ
 RECON_LOG="$DIR/$SLUG.reconcile.log"       # mỗi dòng = epoch một lần tự đối chiếu thành công
 
-hold_and_notify() {   # $1 = khoá kết luận, $2 = thông điệp: giữ halt, báo người đúng một lần (verdict chỉ ghi khi đổi)
-  if [ "$VERDICT" != "$1" ]; then
+hold_and_notify() {   # $1 = khoá kết luận, $2 = thông điệp: giữ halt, báo người đúng một lần cho mỗi khoá (NOTIFIED riêng, không dựa vào verdict trước đó: #190 R3)
+  if [ "$NOTIFIED" != "$1" ]; then
+    NOTIFIED="$1"
+    wd_save   # verdict() thoát sớm khi kết luận không đổi: NOTIFIED phải tự được lưu, không thì check sau báo lại
     (PATH="${env_path:-$PATH}"; run_capped 20 python3 "$SCRIPT_DIR/super-board-notify.py" send --text "super-board $SLUG: $2" >/dev/null 2>&1) || true
   fi
   verdict "$1" "$2"

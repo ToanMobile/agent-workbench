@@ -560,6 +560,11 @@ n0=$(notifies); rm -f "$WD"
 printf 'write\n' > "$TMP/halt"; expect_no_restart "halt on an uncertain write GitHub cannot confirm"
 [ -e "$TMP/halt" ] && [ "$(notifies)" = $((n0 + 1)) ] && grep -q '^notify send' "$TMP/calls" \
   && ok "unverifiable write → halt kept and a notify sent" || fail "unverifiable: notifies=$(notifies) vs $n0"
+# R3: verdict trước đó đã là github-halt (nhánh "reads halted") thì lần giữ halt vì không kiểm chứng được vẫn phải báo người.
+n0=$(notifies); printf 'RESTARTS=0\nLAST_RESTART=1\nVERDICT=github-halt\n' > "$WD"
+printf 'write\n' > "$TMP/halt"; expect_no_restart "unverifiable write while the previous verdict was already github-halt"
+[ "$(notifies)" = $((n0 + 1)) ] && ok "unverifiable halt after a github-halt verdict → notify still sent" || fail "no notify after github-halt verdict: $(notifies) vs $n0"
+wd; [ "$(notifies)" = $((n0 + 1)) ] && ok "…and the next check does not notify again (NOTIFIED persisted)" || fail "notify repeated after github-halt verdict: $(notifies)"
 n0=$(notifies); rm -f "$WD"; printf '%s\n%s\n%s\n' "$(date +%s)" "$(date +%s)" "$(date +%s)" > "$RECON"
 printf 'write-applied\n' > "$TMP/halt"; expect_no_restart "auto-reconcile budget (3 per hour) exhausted"
 [ -e "$TMP/halt" ] && [ "$(field VERDICT "$WD")" = reconcile-budget ] && [ "$(notifies)" = $((n0 + 1)) ] \
