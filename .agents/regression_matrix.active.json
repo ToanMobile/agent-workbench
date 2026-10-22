@@ -823,6 +823,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-matrix-merge-driver",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/matrix_merge_driver.py",
+        "universal-agent-devkit/scripts/git/githooks.sh",
+        "universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+        ".gitattributes"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MATRIX-MERGE-01",
+          "name": "merge driver ma trận hồi quy: hai nhánh cùng nối rule khác nhau vào cuối thì gộp không conflict và gate vẫn tin ma trận chỉ-thêm; cùng id khác nội dung thì lỗi rõ; sửa rule cũ vẫn conflict; githooks install cài driver",
+          "command": "bash universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
