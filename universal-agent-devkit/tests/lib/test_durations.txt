@@ -34,6 +34,8 @@
 13 hooks/tests/or_ported_contract_test.sh
 13 tests/worktree_git/test_worktree.sh
 2 tests/worktree_git/test_worktree_immutable_copy.sh
+3 tests/worktree_git/test_worktree_merge_scratch_slot.sh
+3 tests/gates/test_gate_sentinel_merge_env.sh
 4 tests/gates/test_regression_gate_held_by_other.sh
 1 tests/installer/test_ocr_review_helper.sh
 13 tests/gates/test_gate_friction.sh

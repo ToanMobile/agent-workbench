@@ -1334,6 +1334,109 @@ maybe_sweep_blocked() {
   return "$rc"
 }
 
+backlog_pull_enabled() {
+  # #189: env SB_BACKLOG_PULL (0 tắt, 1 bật) thắng khoá `backlog_pull` của config; thiếu cả hai thì bật.
+  case "${SB_BACKLOG_PULL:-}" in 0) return 1 ;; 1) return 0 ;; esac
+  [ "$(jq -r 'if .backlog_pull == false then "off" else "on" end' "$CONFIG_PATH" 2>/dev/null)" != "off" ]
+}
+
+backlog_issue_body() {
+  # $1 = số issue. In body của issue qua lớp đọc GitHub (exit khác 0 = đọc hỏng, caller dừng như issue_is_open).
+  SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind issue -- issue view "$1" --json number,title,body | jq -r '.body'
+}
+
+backlog_ticket_gaps() {
+  # Body trên stdin; in các phần còn thiếu của thẻ chuẩn (Problem, Fix, Acceptance Criteria có ít nhất một gạch đầu dòng — cùng
+  # luật với super-board-preflight.sh nên thẻ kéo lên không bị preflight chặn "unclear"). Rỗng = đủ.
+  jq -Rrs '(. / "\n") as $l
+    | def sect($h): [ $l | to_entries[] | select(.value | test("^##[ \t]+" + $h + "(?!\\w)")) | .key ] as $k
+        | if ($k | length) == 0 then null
+          else [ $l[($k | last) + 1:][] ] as $t
+            | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
+            | (if $e == null then $t else $t[:$e] end) end;
+      [ (if (sect("Problem") // [] | any(.[]; test("\\S"))) then empty else "Problem" end),
+        (if (sect("Fix") // [] | any(.[]; test("\\S"))) then empty else "Fix" end),
+        (if (sect("Acceptance Criteria") // [] | any(.[]; test("^[ \t]*[-*][ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
+      | join(", ")'
+}
+
+pull_backlog_cards() {
+  # #189: Ready rỗng mà lane build còn worker rảnh thì kéo thẻ Backlog lên Ready (bug trước, rồi thứ tự bảng), tối đa
+  # BUILD_WORKERS - BUILD_COUNT - READY thẻ. Chỉ kéo thẻ không assignee, không chờ người (needs-you/human-gated), không wontfix /
+  # loop:halted, đủ Problem/Fix/AC; thẻ thiếu bị comment lý do MỘT lần mỗi nội dung (sổ $INFLIGHT_DIR/backlog-skip). Thẻ đã CLOSED
+  # về Done, không đếm vào trần. Tải máy >= build_load_max (hoặc không đọc được) chỉ cho kéo 1 thẻ khi lane rỗng hẳn.
+  # Trả 0 khi bảng đã đổi (caller đọc lại), 1 khi không có gì.
+  # ponytail: tối đa 20 thẻ xét mỗi tick (mỗi thẻ 2 lần đọc REST); Backlog dài hơn thì tick sau xét tiếp từ đầu — đổi sang con trỏ khi cần.
+  local want load moved=1 tried=0 issue item_id body gaps stamp issue_rc cap_one=0 busy
+  backlog_pull_enabled || return 1
+  [ "${BUILD_COUNT:-0}" -lt "$BUILD_WORKERS" ] || return 1
+  busy=$(( ${BUILD_COUNT:-0} + ${READY:-0} ))
+  want=$(( BUILD_WORKERS - busy ))
+  [ "$want" -gt 0 ] || return 1
+  load=$(build_load_now)
+  case "$load" in
+    ''|*[!0-9.]*|*.*.*|.) cap_one=1 ;;
+    *) awk -v l="$load" -v m="$BUILD_LOAD_MAX" 'BEGIN { exit !(l < m) }' || cap_one=1 ;;
+  esac
+  if [ "$cap_one" -eq 1 ]; then
+    [ "$busy" -eq 0 ] || return 1
+    want=1
+  fi
+  while IFS=$'\t' read -r issue item_id; do
+    [ -n "$issue" ] && [ -n "$item_id" ] || continue
+    [ "$want" -gt 0 ] && [ "$tried" -lt 20 ] || break
+    tried=$((tried + 1))
+    issue_rc=0; issue_is_open "$issue" || issue_rc=$?
+    [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+    if [ "$issue_rc" -ne 0 ]; then
+      if set_card_status "$item_id" "Done"; then
+        log "backlog pull: #${issue} is CLOSED -> Done (not pulled)"; moved=0
+      else
+        gh_checkpoint; log "⚠ backlog pull: could not move closed #${issue} to Done"
+      fi
+      continue
+    fi
+    body=$(backlog_issue_body "$issue") || exit $?
+    gaps=$(printf '%s\n' "$body" | backlog_ticket_gaps)
+    if [ -n "$gaps" ]; then
+      stamp="${gaps}:$(printf '%s' "$body" | cksum | cut -d' ' -f1)"
+      mkdir -p "$INFLIGHT_DIR/backlog-skip"
+      if [ "$(cat "$INFLIGHT_DIR/backlog-skip/$issue" 2>/dev/null)" != "$stamp" ]; then
+        gh_checkpoint
+        gh_write_once issue comment "$issue" --body "[orchestrator] [report] ⏸ not pulled from Backlog · ticket incomplete
+Did: checked the body before moving it to Ready
+❌ Not done: missing section(s): ${gaps} (Problem, Fix and Acceptance Criteria with at least one bullet are required)
+Next: fill the missing section(s); the next tick pulls it" >/dev/null 2>&1 || true
+        printf '%s' "$stamp" > "$INFLIGHT_DIR/backlog-skip/$issue"
+        log "backlog pull: #${issue} skipped — missing ${gaps}"
+      fi
+      continue
+    fi
+    if ! set_card_status "$item_id" "Ready"; then
+      gh_checkpoint; log "⚠ backlog pull: could not move #${issue} to Ready"
+      continue
+    fi
+    rm -f "$INFLIGHT_DIR/backlog-skip/$issue"
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ⬆️ Backlog → Ready · build lane idle
+Did: the lane had a free worker and the ticket has Problem, Fix and Acceptance Criteria
+✅ Done: card moved Backlog → Ready
+Next: builder (next tick)" >/dev/null 2>&1 || true
+    log "⬆ backlog pull: #${issue} Backlog -> Ready"
+    want=$((want - 1)); moved=0
+  done <<EOF
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "${BOT_LOGIN:-}" "$FOR_A_PERSON_JQ"'
+    [.items | to_entries[] | select(.value.status == "Backlog" and .value.content.type == "Issue") | .value as $c | .key as $i
+      | select((($c.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
+      | select($c | for_a_person | not)
+      | ([(($c.labels // []) + ($c.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]) as $lb
+      | select(($lb | index("wontfix") or index("loop:halted")) | not)
+      | {n: $c.content.number, id: ($c.id // ""), rank: (if ($lb | index("bug")) then 0 else 1 end), i: $i}]
+    | sort_by([.rank, .i])[] | [(.n | tostring), .id] | @tsv')
+EOF
+  return "$moved"
+}
+
 # ── Bản ghi trạng thái runner cho super-board-watchdog.sh: .claude/super-board/runner/<slug>.state
 # (PID/SLUG/STARTED/DAEMON/LOG/STATE, thêm RC/ENDED khi thoát). STATE: running (còn nguyên khi bị SIGKILL) · crashed
 # (thoát ngoài ý muốn) · finished (vòng lặp kết thúc: board rỗng, RUNAWAY, trần dispatch) · halted (mã dừng có chủ
@@ -1631,6 +1734,9 @@ while true; do
   if maybe_sweep_blocked; then fetch_project_items; fi
 
   count_board
+
+  # #189: lane build còn worker rảnh mà Ready không đủ việc thì kéo thẻ Backlog đủ AC lên (cờ backlog_pull).
+  if pull_backlog_cards; then fetch_project_items; count_board; fi
 
   log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}${BUILD_EXTRA:+ +${BUILD_EXTRA}}) b_workers=${BUILD_COUNT}/${BUILD_WORKERS} q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}) waiting_on_you=$WAITING"
 
