@@ -123,5 +123,5 @@
   "build_load_max": 60,
   "qa_workers": 3,
   "review_workers": 3,
-  "backlog_pull": false
+  "backlog_pull": true
 }
