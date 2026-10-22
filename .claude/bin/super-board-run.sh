@@ -108,6 +108,17 @@ resolve_build_workers() {
   printf '%s\n' "$v"
 }
 
+resolve_lane_workers() {
+  # $1 = đường dẫn config; $2 = khoá (qa_workers | review_workers). Số nguyên >= 1; thiếu hoặc sai thì 1 = hành vi cũ, một worker mỗi lane (#209).
+  local v
+  v=$(jq -r --arg k "$2" '.[$k] // empty' "$1" 2>/dev/null || true)
+  case "$v" in ''|*[!0-9]*) v=1 ;; esac
+  [ "${#v}" -le 6 ] || v=1
+  v=$((10#$v))
+  [ "$v" -ge 1 ] || v=1
+  printf '%s\n' "$v"
+}
+
 resolve_build_load_max() {
   # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, rồi 100. Mỗi nguồn phải là số
   # DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không nhảy thẳng về 100 (OCR 21/10).
@@ -148,6 +159,9 @@ MAX_WORKERS=$(jq -r '.max_workers // 3' "$CONFIG_PATH")
 # (người dùng 21/10: "tải máy dưới 100 thì cho chạy"). Giá trị sai thì dùng mặc định.
 BUILD_WORKERS=$(resolve_build_workers "$CONFIG_PATH")
 BUILD_LOAD_MAX=$(resolve_build_load_max "$CONFIG_PATH")
+# Lane QA và Review cũng chạy nhiều worker (#209): qa_workers / review_workers = trần mỗi lane, mặc định 1; worker thêm dùng chung cổng tải build_load_max.
+QA_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" qa_workers)
+REVIEW_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" review_workers)
 BOT_LOGIN=$(jq -r '.notifications.bot_identity // .bot_identity // ""' "$CONFIG_PATH")
 WORKER_BACKEND=$(jq -r '.worker_backend // "workflow"' "$CONFIG_PATH")
 # Runaway controls (issue #8). NO_PROGRESS_CYCLES counts dispatch cycles with no
@@ -535,6 +549,70 @@ build_slot_free() {
   return 1
 }
 
+# Lane QA / Review: worker thứ nhất ở QA_PID/QA_ISSUE (REVIEW_*), worker thêm ở QA_EXTRA / REVIEW_EXTRA ("pid:issue ..."), cùng dạng BUILD_EXTRA (#209).
+lane_state() {
+  # $1 = qa|review → L_PID, L_EXTRA, L_CAP của lane đó.
+  case "$1" in
+    qa)     L_PID="${QA_PID:-}";     L_EXTRA="${QA_EXTRA:-}";     L_CAP="${QA_WORKERS:-1}" ;;
+    review) L_PID="${REVIEW_PID:-}"; L_EXTRA="${REVIEW_EXTRA:-}"; L_CAP="${REVIEW_WORKERS:-1}" ;;
+    *) return 1 ;;
+  esac
+}
+
+lane_workers_count() {
+  # $1 = qa|review. Gỡ PID chết khỏi *_EXTRA; đặt LANE_COUNT (và QA_COUNT / REVIEW_COUNT) = số worker sống (slot đầu + extra).
+  lane_state "$1" || return 1
+  local e keep=""
+  for e in $L_EXTRA; do
+    kill -0 "${e%%:*}" 2>/dev/null && keep="${keep:+$keep }$e"
+  done
+  LANE_COUNT=0
+  lane_idle "$L_PID" || LANE_COUNT=1
+  for e in $keep; do LANE_COUNT=$((LANE_COUNT + 1)); done
+  case "$1" in
+    qa)     QA_EXTRA="$keep";     QA_COUNT=$LANE_COUNT ;;
+    review) REVIEW_EXTRA="$keep"; REVIEW_COUNT=$LANE_COUNT ;;
+  esac
+}
+
+lane_slot_free() {
+  # 0 khi lane $1 (qa|review) được khởi thêm một worker ở tick này. Như build_slot_free: worker đầu không bị tải chặn; worker thêm chỉ khi
+  # còn dưới trần của lane, tải đọc được và dưới build_load_max. Không bao giờ kill worker đang chạy. Trần 1 thì im lặng (hành vi cũ).
+  local lane="$1" load
+  lane_workers_count "$lane" || return 1
+  if [ "$LANE_COUNT" -ge "$L_CAP" ]; then
+    [ "$L_CAP" -le 1 ] || log "${lane} workers ${LANE_COUNT}/${L_CAP}: at the cap, not starting"
+    return 1
+  fi
+  [ "$LANE_COUNT" -ne 0 ] || return 0
+  load=$(build_load_now)
+  case "$load" in
+    ''|*[!0-9.]*|*.*.*|.) log "${lane} workers ${LANE_COUNT}/${L_CAP}: load unreadable ('${load}') — holding at the first worker"; return 1 ;;
+  esac
+  if awk -v l="$load" -v m="$BUILD_LOAD_MAX" 'BEGIN { exit !(l < m) }'; then return 0; fi
+  log "${lane} workers ${LANE_COUNT}/${L_CAP}: load ${load} >= ${BUILD_LOAD_MAX}: holding"
+  return 1
+}
+
+lane_dispatch_tick() {
+  # $1 = qa|review; $2 = cột nguồn (QA|Review). Giao tối đa MỘT thẻ đầu cột cho lane ở tick này. Lane đã có worker thì worker thêm
+  # không tốn thêm slot max_workers (lane = 1 slot, như build) nên không bị trần đó chặn; lane đang rảnh vẫn bị chặn như cũ.
+  # LANE_DISPATCHED=1 khi thật sự có worker mới.
+  local lane="$1" col="$2" before
+  LANE_DISPATCHED=0
+  dispatch_paused && return 0
+  lane_slot_free "$lane" || return 0
+  before=$LANE_COUNT
+  if [ "$before" -eq 0 ] && [ "${ACTIVE_WORKERS:-0}" -ge "${MAX_WORKERS:-3}" ]; then return 0; fi
+  top_card_in_column "$col" || return 0
+  [ -n "$TOP_ISSUE" ] || return 0
+  dispatch_lane "$lane" "$TOP_ISSUE"
+  lane_workers_count "$lane"
+  [ "$LANE_COUNT" -gt "$before" ] || return 0
+  LANE_DISPATCHED=1
+  [ "$before" -gt 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+}
+
 tick_sleep() {
   # $1 = số giây. Một `sleep` bị kill không được kết thúc runner: 17/10 12:17 cả 5 runner chết với
   # `Terminated: 15 sleep "$TICK_SECONDS"` (sleep rc 143 dưới `set -e`) và nằm chết 2 ngày. Chỉ stop marker của
@@ -735,8 +813,12 @@ dispatch_lane() {
     build)
       if lane_idle "${BUILD_PID:-}"; then BUILD_PID="$pid"; BUILD_ISSUE="$issue"
       else BUILD_EXTRA="${BUILD_EXTRA:+$BUILD_EXTRA }${pid}:${issue}"; fi ;;
-    qa) QA_PID="$pid"; QA_ISSUE="$issue" ;;
-    review) REVIEW_PID="$pid"; REVIEW_ISSUE="$issue" ;;
+    qa)
+      if lane_idle "${QA_PID:-}"; then QA_PID="$pid"; QA_ISSUE="$issue"
+      else QA_EXTRA="${QA_EXTRA:+$QA_EXTRA }${pid}:${issue}"; fi ;;
+    review)
+      if lane_idle "${REVIEW_PID:-}"; then REVIEW_PID="$pid"; REVIEW_ISSUE="$issue"
+      else REVIEW_EXTRA="${REVIEW_EXTRA:+$REVIEW_EXTRA }${pid}:${issue}"; fi ;;
   esac
   log "dispatch lane=${lane} issue=#${issue} pid=${pid} claim=${BOT_LOGIN:-local-only}"
 }
@@ -752,13 +834,13 @@ check_lane_zombie() {
   # If the lane's worker PID is alive but its claimed issue has already moved to a column
   # NOT in the expected source set, the worker's logical work is done — kill the zombie
   # process and free the lane. Uses cached project items only (no extra API calls).
-  # $3/$4 (chỉ lane build) = PID/issue của một worker thêm trong BUILD_EXTRA; không có thì xét worker ở BUILD_PID.
+  # $3/$4 = PID/issue của một worker thêm trong BUILD_EXTRA / QA_EXTRA / REVIEW_EXTRA; không có thì xét worker ở slot đầu của lane.
   local lane="$1" expected="$2" pid="" issue="" extra=0
   [ -z "${3:-}" ] || extra=1
   case "$lane" in
     build)  if [ "$extra" -eq 1 ]; then pid="$3"; issue="$4"; else pid="$BUILD_PID"; issue="$BUILD_ISSUE"; fi ;;
-    qa)     pid="$QA_PID";     issue="$QA_ISSUE" ;;
-    review) pid="$REVIEW_PID"; issue="$REVIEW_ISSUE" ;;
+    qa)     if [ "$extra" -eq 1 ]; then pid="$3"; issue="$4"; else pid="$QA_PID"; issue="$QA_ISSUE"; fi ;;
+    review) if [ "$extra" -eq 1 ]; then pid="$3"; issue="$4"; else pid="$REVIEW_PID"; issue="$REVIEW_ISSUE"; fi ;;
     *) return 1 ;;
   esac
   [ -z "$pid" ] && return 0
@@ -770,12 +852,14 @@ check_lane_zombie() {
   # Thẻ `qa` được giao từ Ready và Tester tự chuyển Ready → QA sau khi khởi động (run.md, Tester lượt đầu).
   # Khi thẻ của Tester này chưa từng thấy ở QA thì Ready không phải dấu hiệu zombie; sau đó Ready là đường
   # fail của Tester và giải phóng lane như cũ. QA_SEEN_IN_QA giữ PID đã thấy, nên Tester mới trên cùng thẻ
-  # bắt đầu sạch.
+  # bắt đầu sạch. QA_SEEN_IN_QA là danh sách PID (nhiều Tester cùng lúc, #209).
   # ponytail: Tester treo trước bước chuyển đầu tiên giữ lane QA tới khi được thu hồi tay; thêm trần ân hạn
   # tính theo thời điểm đọc board (không theo đồng hồ, cache có thể cũ ở tick cap-reached) nếu việc này xảy ra.
   if [ "$lane" = qa ]; then
-    if [ "$cur" = QA ]; then QA_SEEN_IN_QA="$pid"
-    elif [ "${QA_SEEN_IN_QA:-}" != "$pid" ]; then expected="$expected Ready"; fi
+    case " ${QA_SEEN_IN_QA:-} " in
+      *" $pid "*) ;;
+      *) if [ "$cur" = QA ]; then QA_SEEN_IN_QA="${QA_SEEN_IN_QA:+$QA_SEEN_IN_QA }$pid"; else expected="$expected Ready"; fi ;;
+    esac
   fi
   for col in $expected; do
     [ "$cur" = "$col" ] && found=1
@@ -797,8 +881,18 @@ check_lane_zombie() {
           for e in ${BUILD_EXTRA:-}; do [ "$e" = "${pid}:${issue}" ] || keep="${keep:+$keep }$e"; done
           BUILD_EXTRA="$keep"
         else BUILD_PID="";  BUILD_ISSUE=""; fi ;;
-      qa)     QA_PID="";     QA_ISSUE="" ;;
-      review) REVIEW_PID=""; REVIEW_ISSUE="" ;;
+      qa)
+        if [ "$extra" -eq 1 ]; then
+          local e keep=""
+          for e in ${QA_EXTRA:-}; do [ "$e" = "${pid}:${issue}" ] || keep="${keep:+$keep }$e"; done
+          QA_EXTRA="$keep"
+        else QA_PID=""; QA_ISSUE=""; fi ;;
+      review)
+        if [ "$extra" -eq 1 ]; then
+          local e keep=""
+          for e in ${REVIEW_EXTRA:-}; do [ "$e" = "${pid}:${issue}" ] || keep="${keep:+$keep }$e"; done
+          REVIEW_EXTRA="$keep"
+        else REVIEW_PID=""; REVIEW_ISSUE=""; fi ;;
     esac
   fi
 }
@@ -808,7 +902,9 @@ sweep_lane_zombies() {
   local e
   for e in ${BUILD_EXTRA:-}; do check_lane_zombie build "Ready Building QA Review" "${e%%:*}" "${e#*:}"; done
   check_lane_zombie qa     "QA"
+  for e in ${QA_EXTRA:-}; do check_lane_zombie qa "QA" "${e%%:*}" "${e#*:}"; done
   check_lane_zombie review "Review"
+  for e in ${REVIEW_EXTRA:-}; do check_lane_zombie review "Review" "${e%%:*}" "${e#*:}"; done
 }
 
 done_signature() {
@@ -1032,8 +1128,12 @@ adopt_live_locks() {
       build)
         if lane_idle "${BUILD_PID:-}"; then BUILD_PID="$PID"; BUILD_ISSUE="$issue"
         else BUILD_EXTRA="${BUILD_EXTRA:+$BUILD_EXTRA }${PID}:${issue}"; fi ;;
-      qa)     QA_PID="$PID";     QA_ISSUE="$issue" ;;
-      review) REVIEW_PID="$PID"; REVIEW_ISSUE="$issue" ;;
+      qa)
+        if lane_idle "${QA_PID:-}"; then QA_PID="$PID"; QA_ISSUE="$issue"
+        else QA_EXTRA="${QA_EXTRA:+$QA_EXTRA }${PID}:${issue}"; fi ;;
+      review)
+        if lane_idle "${REVIEW_PID:-}"; then REVIEW_PID="$PID"; REVIEW_ISSUE="$issue"
+        else REVIEW_EXTRA="${REVIEW_EXTRA:+$REVIEW_EXTRA }${PID}:${issue}"; fi ;;
       *) continue ;;
     esac
     ADOPTED_PIDS="${ADOPTED_PIDS:-} $PID"
@@ -1045,7 +1145,7 @@ own_lane_pids() {
   # PID trong các lane do chính lần chạy này khởi tạo (không phải nhận lại): khi dừng khẩn chỉ kill các PID này
   # (hợp đồng của halt_cleanup).
   local pid e extras=""
-  for e in ${BUILD_EXTRA:-}; do extras="$extras ${e%%:*}"; done
+  for e in ${BUILD_EXTRA:-} ${QA_EXTRA:-} ${REVIEW_EXTRA:-}; do extras="$extras ${e%%:*}"; done
   for pid in "${BUILD_PID:-}" $extras "${QA_PID:-}" "${REVIEW_PID:-}"; do
     [ -n "$pid" ] || continue
     case " ${ADOPTED_PIDS:-} " in *" $pid "*) continue ;; esac
@@ -1240,8 +1340,8 @@ startup_reconcile() {
   # gỡ lock: thẻ nằm Building suốt lần chạy. Worker được nhận lại vẫn giữ lock, nên reclaim vẫn bỏ qua thẻ của nó.
   reap_finished_locks
   BUILD_PID=""; BUILD_ISSUE=""; BUILD_EXTRA=""
-  QA_PID=""; QA_ISSUE=""
-  REVIEW_PID=""; REVIEW_ISSUE=""
+  QA_PID=""; QA_ISSUE=""; QA_EXTRA=""
+  REVIEW_PID=""; REVIEW_ISSUE=""; REVIEW_EXTRA=""
   adopt_live_locks
   gh_rate_guard
   fetch_project_items
@@ -1685,8 +1785,9 @@ while true; do
   BUILD_IDLE=1; QA_IDLE=1; REVIEW_IDLE=1
   build_workers_count
   [ "$BUILD_COUNT" -eq 0 ] || BUILD_IDLE=0
-  lane_idle "$QA_PID" || QA_IDLE=0
-  lane_idle "$REVIEW_PID" || REVIEW_IDLE=0
+  lane_workers_count qa; lane_workers_count review
+  [ "$QA_COUNT" -eq 0 ] || QA_IDLE=0
+  [ "$REVIEW_COUNT" -eq 0 ] || REVIEW_IDLE=0
 
   ACTIVE_WORKERS=0
   [ "$BUILD_COUNT" -eq 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))   # lane build = 1 slot của max_workers dù chạy N worker: build_workers là trần riêng, không bỏ đói QA/Review
@@ -1705,7 +1806,9 @@ while true; do
 
   # ── Cheap-tick path: workers at cap → skip GraphQL fetch entirely.
   #    The board can't change in a way that helps us until a lane frees up.
-  if [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ]; then
+  #    QA/Review còn chỗ thêm worker (qa_workers/review_workers > số đang chạy) thì KHÔNG coi là đầy: worker thêm không tốn slot lane (#209).
+  #    Trần mặc định 1 thì QA_COUNT>=QA_WORKERS khi lane bận, nên điều kiện này đúng như cũ.
+  if [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ] && [ "$QA_COUNT" -ge "$QA_WORKERS" ] && [ "$REVIEW_COUNT" -ge "$REVIEW_WORKERS" ]; then
     log "tick — cap reached (${ACTIVE_WORKERS}/${MAX_WORKERS} busy) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
     tick_sleep "$TICK_SECONDS"
     continue
@@ -1723,8 +1826,9 @@ while true; do
   BUILD_IDLE=1; QA_IDLE=1; REVIEW_IDLE=1
   build_workers_count
   [ "$BUILD_COUNT" -eq 0 ] || BUILD_IDLE=0
-  lane_idle "$QA_PID" || QA_IDLE=0
-  lane_idle "$REVIEW_PID" || REVIEW_IDLE=0
+  lane_workers_count qa; lane_workers_count review
+  [ "$QA_COUNT" -eq 0 ] || QA_IDLE=0
+  [ "$REVIEW_COUNT" -eq 0 ] || REVIEW_IDLE=0
   ACTIVE_WORKERS=0
   [ "$BUILD_COUNT" -eq 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))   # lane build = 1 slot của max_workers dù chạy N worker: build_workers là trần riêng, không bỏ đói QA/Review
   [ "$QA_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
@@ -1738,7 +1842,7 @@ while true; do
   # #189: lane build còn worker rảnh mà Ready không đủ việc thì kéo thẻ Backlog đủ AC lên (cờ backlog_pull).
   if pull_backlog_cards; then fetch_project_items; count_board; fi
 
-  log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}${BUILD_EXTRA:+ +${BUILD_EXTRA}}) b_workers=${BUILD_COUNT}/${BUILD_WORKERS} q_idle=$QA_IDLE(#${QA_ISSUE:-_}) r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}) waiting_on_you=$WAITING"
+  log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}${BUILD_EXTRA:+ +${BUILD_EXTRA}}) b_workers=${BUILD_COUNT}/${BUILD_WORKERS} q_idle=$QA_IDLE(#${QA_ISSUE:-_}${QA_EXTRA:+ +${QA_EXTRA}}) q_workers=${QA_COUNT}/${QA_WORKERS} r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}${REVIEW_EXTRA:+ +${REVIEW_EXTRA}}) r_workers=${REVIEW_COUNT}/${REVIEW_WORKERS} waiting_on_you=$WAITING"
 
   if [ "$READY" -eq 0 ] && [ "$BUILDING" -eq 0 ] && [ "$QA" -eq 0 ] && [ "$REVIEW" -eq 0 ] \
      && [ "$BUILD_IDLE" -eq 1 ] && [ "$QA_IDLE" -eq 1 ] && [ "$REVIEW_IDLE" -eq 1 ]; then
@@ -1764,19 +1868,12 @@ while true; do
     [ "$ACTIVE_WORKERS" -lt "$MAX_WORKERS" ] && ! dispatch_paused
   }
 
-  if can_dispatch && [ "$REVIEW" -gt 0 ] && [ "$REVIEW_IDLE" -eq 1 ]; then
-    if top_card_in_column "Review"; then
-      dispatch_lane review "$TOP_ISSUE"
-      ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
-    fi
-  fi
-  QA_FREE=$QA_IDLE
-  if can_dispatch && [ "$QA" -gt 0 ] && [ "$QA_IDLE" -eq 1 ]; then
-    if top_card_in_column "QA"; then
-      dispatch_lane qa "$TOP_ISSUE"
-      ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1)); QA_FREE=0
-    fi
-  fi
+  # Review / QA: lane_dispatch_tick giao tối đa một thẻ mỗi tick; qa_workers / review_workers > 1 cho phép worker thêm khi tải cho phép (#209).
+  if [ "$REVIEW" -gt 0 ]; then lane_dispatch_tick review Review; fi
+  QA_FREE=0; QA_DISPATCHED=0
+  if [ "$QA" -gt 0 ]; then lane_dispatch_tick qa QA; QA_DISPATCHED=$LANE_DISPATCHED; fi
+  # Thẻ Ready mang nhãn `qa` đi vào lane QA: chỉ khi tick này lane QA chưa nhận thẻ nào và còn chỗ.
+  if [ "$QA_DISPATCHED" -eq 0 ] && lane_slot_free qa; then QA_FREE=1; fi
   # Ready: the top card's label picks the lane — `qa` skips Building (Tester),
   # anything else is built first. A busy lane waits for the next tick.
   # Lane build: worker đầu như trước; worker thêm (build_workers > 1) chỉ khi tải máy cho phép (build_slot_free, một worker mỗi tick).
