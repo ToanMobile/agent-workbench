@@ -395,6 +395,7 @@ issue_locked() {
   fi
   [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
   note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
+  [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
   rm -f "$lock"
   return 1
 }
@@ -967,6 +968,7 @@ reap_finished_locks() {
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
       note_early_death "$issue"
+      [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
         gh_checkpoint
@@ -1120,12 +1122,10 @@ cleanup_stale_worktrees() {
 }
 
 reclaim_stranded_building() {
-  # Run start only (no worker of ours is alive yet — the orphan guard proved it).
-  # A card in Building with no live in-flight lock and no assignee but ours was
-  # stranded by a run that stopped mid-build. No lane selects from Building, so
-  # left alone it sits there forever and the run can never reach "all columns
-  # empty". Move it back to Ready and say so; the issue branch is kept, so the
-  # next Builder continues on it instead of starting over.
+  # Run start (mọi thẻ Building không có lock sống) hoặc giữa lượt chạy ($1 = danh sách issue vừa mất worker build,
+  # $2 = câu Did: cho comment). Trả thẻ Building không còn worker sống và không có assignee nào khác ngoài bot về Ready;
+  # nhánh issue được giữ nguyên để Builder kế tiếp làm tiếp thay vì làm lại từ đầu.
+  local only="${1:-}" did="${2:-found no live worker; the last run stopped mid-build}"
   local issue item_id branch wt wt_branch
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
@@ -1146,21 +1146,92 @@ reclaim_stranded_building() {
       log "⚠ stranded #${issue} in Building — could not move it to Ready; drag it by hand"
       continue
     fi
+    RECLAIM_MOVED=1
     [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
     # Comment format: writing-standard.md § 4.
     gh_checkpoint
     gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · stranded in Building
-Did: found no live worker; the last run stopped mid-build
+Did: ${did}
 ✅ Done: card moved to Ready · branch ${branch:-none found}${branch:+ kept}
 Next: builder (next tick${branch:+, continues on the branch})" >/dev/null 2>&1 || true
     log "↩ stranded #${issue}: Building → Ready (branch ${branch:-none})"
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" '
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" --arg only " $only " '
     .items[]
     | select(.status == "Building" and .content.type == "Issue")
+    | (" " + (.content.number | tostring) + " ") as $n
+    | select($only == "  " or ($only | contains($n)))
     | select(((.content.assignees // []) - [$bot]) | length == 0)
     | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
+}
+
+reclaim_dead_builds() {
+  # Giữa lượt chạy (expensive tick): các lock lane=build vừa chết ở reap_finished_locks hoặc issue_locked đã ghi số
+  # issue vào RECLAIM_BUILDING. Nếu thẻ vẫn ở Building, không có lock sống và không có assignee nào khác ngoài bot:
+  #  - Dưới trần SB_RECLAIM_MAX (mặc định 2) lần trong cửa sổ SB_RECLAIM_WINDOW_S (mặc định 86400 s): ghi epoch vào
+  #    sổ $INFLIGHT_DIR/reclaims/<issue> rồi trả thẻ về Ready qua reclaim_stranded_building.
+  #  - Đạt/vượt trần: chuyển thẻ sang Blocked kèm comment theo block-template (dòng cuối `blocked-by:  -`).
+  # Luôn return 0; đặt RECLAIM_MOVED=1 khi có thẻ được chuyển (Ready hoặc Blocked).
+  local pending="${RECLAIM_BUILDING:-}"
+  RECLAIM_BUILDING=""
+  [ -n "${pending// /}" ] || return 0
+  local window="${SB_RECLAIM_WINDOW_S:-86400}" max="${SB_RECLAIM_MAX:-2}"
+  local issue item_id title seen=" " now f n wlog
+  while IFS=$'\t' read -r issue item_id title; do
+    [ -n "$issue" ] || continue
+    case "$seen" in *" $issue "*) continue ;; esac
+    seen="${seen}${issue} "
+    issue_locked "$issue" && continue
+    now=$(date +%s)
+    f="$INFLIGHT_DIR/reclaims/$issue"
+    n=0
+    if [ -f "$f" ]; then
+      n=$( { awk -v from=$((now - window)) '$1 >= from' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
+    fi
+    if [ "${n:-0}" -ge "$max" ]; then
+      wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-build-${issue}.log"
+      if set_card_status "$item_id" "Blocked"; then
+        RECLAIM_MOVED=1
+        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        gh_checkpoint
+        gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · 🔁 build worker died mid-run $((n + 1)) times in 24h
+Card:        #${issue}${title:+ ${title}}
+Reason tag:  🔁
+Why blocked: build worker for #${issue} died mid-run $((n + 1)) times within ${window}s after moving the card to Building
+Evidence:    ${wlog} (${n} prior reclaims in ${window}s; cap SB_RECLAIM_MAX=${max})
+Checked:     inflight lock reaped; card still in Building with no live worker and no human assignee
+What blocks: repeated build worker termination mid-run (e.g. gate/test timeout or OOM under load)
+Why I (bot) cannot decide:
+             re-queuing past ${max} reclaims in ${window}s would burn build slots in an infinite loop
+To unblock:  inspect the worker log and resolve the mid-run crash or timeout
+             [ ] Inspect ${wlog} for the failing step or timeout
+             [ ] Fix or split the task, then drag #${issue} back to Ready
+Owner:       repo admin
+Move back:   drag this card to Ready after the steps above are done
+blocked-by:  -" >/dev/null 2>&1 || true
+        log "🛑 #${issue} Building → Blocked: build worker died mid-run $((n + 1)) times in ${window}s"
+      else
+        gh_checkpoint
+        log "⚠ stranded #${issue} in Building — could not move it to Blocked; drag it by hand"
+      fi
+    else
+      mkdir -p "$INFLIGHT_DIR/reclaims" 2>/dev/null || true
+      { tail -n 19 "$f" 2>/dev/null || true; echo "$now"; } > "$f.tmp" 2>/dev/null \
+        && mv "$f.tmp" "$f" 2>/dev/null || true
+      reclaim_stranded_building "$issue" "its build worker died mid-run (lock reaped); the card was left in Building"
+    fi
+  done <<EOF
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "$BOT_LOGIN" --arg only " $pending " '
+    .items[]
+    | select(.status == "Building" and .content.type == "Issue")
+    | (" " + (.content.number | tostring) + " ") as $n
+    | select($only | contains($n))
+    | select(((.content.assignees // []) - [$bot]) | length == 0)
+    | [(.content.number | tostring), (.id // ""), (.content.title // "")] | @tsv')
+EOF
+  RECLAIM_BUILDING=""
+  return 0
 }
 
 startup_reconcile() {
@@ -1177,6 +1248,7 @@ startup_reconcile() {
   reclaim_stranded_building; fetch_project_items
   # Sweep sau reap/adopt: lock của lane còn sống đã rõ.
   sweep_merged_lanes
+  RECLAIM_BUILDING=""
 }
 # Dọn worktree lane + nhánh của thẻ đã merge (#96, OCR batch trên #111): lúc khởi động và mỗi tick của vòng chính (#118: runner chạy
 # nhiều ngày, worktree issue-7-review của PR #128 nằm tới lần khởi động sau). Chạy NỀN: một `gh pr list` cho mỗi thẻ còn sót có thể mất
@@ -1325,6 +1397,8 @@ runner_state_exit() {
 # ───────────────────────── run counters (shared state) ─────────────────────────
 DISPATCH_COUNT=0
 REAP_COUNT=0
+RECLAIM_BUILDING=""
+RECLAIM_MOVED=0
 LANDED_COUNT=0
 DISPATCH_LOG=""
 
@@ -1540,6 +1614,9 @@ while true; do
 
   # Re-sweep zombies against fresh cache; the previous sweep used stale data.
   sweep_lane_zombies
+  RECLAIM_MOVED=0
+  reclaim_dead_builds
+  if [ "$RECLAIM_MOVED" = 1 ]; then fetch_project_items; fi
   BUILD_IDLE=1; QA_IDLE=1; REVIEW_IDLE=1
   build_workers_count
   [ "$BUILD_COUNT" -eq 0 ] || BUILD_IDLE=0
