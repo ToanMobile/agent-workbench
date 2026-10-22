@@ -170,7 +170,7 @@ move() {  # $1 = issue, $2 = Status name
   return 69
 }
 
-items() {  # whole board, gh item-list shape, ~1 point per 100 cards
+items_once() {  # whole board, gh item-list shape, ~1 point per 100 cards
   local pages
   pages=$(gh_read api graphql --paginate --slurp -f query='query($owner:String!,$number:Int!,$endCursor:String){
       repositoryOwner(login:$owner){ ... on ProjectV2Owner { projectV2(number:$number){
@@ -199,6 +199,18 @@ items() {  # whole board, gh item-list shape, ~1 point per 100 cards
       then { items: $items, totalCount: $total }
       else error("board read incomplete: \([ $p[].nodes[] ] | length) of \($total) items") end' \
     || { echo "board read incomplete" >&2; return 69; }
+}
+
+# The board can change between two pages (a card added or moved while paginating), so the item count
+# disagrees with totalCount (#256: 103 vs 102 killed the runner). Read once more before reporting failure;
+# only the incomplete-read exit (69) retries, a halt (79) or usage error never does.
+items() {
+  local rc=0
+  items_once && return 0 || rc=$?
+  [ "$rc" -eq 69 ] || return "$rc"
+  echo "board read incomplete; re-reading once (board changed between pages?)" >&2
+  sleep "${SB_CARD_RETRY_SLEEP:-2}"
+  items_once
 }
 
 case "$VERB" in
