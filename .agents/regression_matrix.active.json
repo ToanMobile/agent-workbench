@@ -743,23 +743,6 @@
       ]
     },
     {
-      "component": "devkit-matrix-merge-driver",
-      "watch_files": [
-        "universal-agent-devkit/scripts/git/matrix_merge_driver.py",
-        "universal-agent-devkit/scripts/git/githooks.sh",
-        "universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
-        ".gitattributes"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-DK-MATRIX-MERGE-01",
-          "name": "merge driver ma trận hồi quy: hai nhánh cùng nối rule khác nhau vào cuối thì gộp không conflict và gate vẫn tin ma trận chỉ-thêm; cùng id khác nội dung thì lỗi rõ; sửa rule cũ vẫn conflict; githooks install cài driver",
-          "command": "bash universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
-          "parallel_safe": true
-        }
-      ]
-    },
-    {
       "component": "super-board-merge-train",
       "watch_files": [
         ".claude/bin/super-board-merge-train.sh",
@@ -786,6 +769,23 @@
           "id": "REG-SB-LANE-WORKERS-01",
           "name": "lane QA và Review chạy nhiều worker (qa_workers / review_workers, mặc định 1): một worker mới mỗi tick, cổng tải build_load_max, zombie/reap/dừng khẩn/nhận lại nhận ra cả worker thêm, worker thêm không bị trần max_workers chặn",
           "command": "bash tests/super-board/test_runner_lane_workers.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-matrix-merge-driver",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/matrix_merge_driver.py",
+        "universal-agent-devkit/scripts/git/githooks.sh",
+        "universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+        ".gitattributes"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MATRIX-MERGE-01",
+          "name": "merge driver ma trận hồi quy: hai nhánh cùng nối rule khác nhau vào cuối thì gộp không conflict và gate vẫn tin ma trận chỉ-thêm; cùng id khác nội dung thì lỗi rõ; sửa rule cũ vẫn conflict; githooks install cài driver",
+          "command": "bash universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
           "parallel_safe": true
         }
       ]
