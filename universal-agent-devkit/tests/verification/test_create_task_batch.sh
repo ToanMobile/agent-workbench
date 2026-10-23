@@ -19,6 +19,8 @@ cat > "$TMP/bin/gh" <<'PY'
 import json, os, sys
 a = sys.argv[1:]
 open(os.environ["FAKE_LOG"], "a").write(json.dumps({"gh": a}, ensure_ascii=False) + "\n")
+if os.environ.get("FAKE_HANG") == " ".join(a[:2]):
+    import time; time.sleep(30)
 if a[:2] == ["issue", "create"]:
     print("https://github.com/ToanMobile/agent-workbench/issues/99"); sys.exit(0)
 if a[:2] == ["project", "item-add"]:
@@ -321,5 +323,18 @@ open(os.environ["FAKE_ITEMS"], "w").write(json.dumps({"totalCount": 900, "items"
 PY
 rc=$(run "${NEWARGS[@]}")
 grep -q "bị cắt" "$TMP/out" && ok "28 board vượt giới hạn đọc → cảnh báo" || fail "28 thiếu cảnh báo cắt"
+
+# 29. field-list treo quá hạn (#305): dùng ID cột Backlog dự phòng + cảnh báo, createTask vẫn xong (item-edit chạy).
+items '[{"n":7,"label":"qa"}]'
+export FAKE_HANG="project field-list" CREATE_TASK_GH_TIMEOUT_S=1
+rc=$(run "${NEWARGS[@]}" --new-card "test hết hạn")
+unset FAKE_HANG CREATE_TASK_GH_TIMEOUT_S
+[ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && [ "$(called project item-edit)" = "1" ] && grep -q "dự phòng" "$TMP/out" && grep -q "thoát 124" "$TMP/out" && ok "29 field-list treo → ID dự phòng + cảnh báo, vẫn xong" || fail "29 rc=$rc"
+
+# 30. issue create treo quá hạn (#305): thoát khác 0 kèm thông báo rõ, không treo, không đẩy lên board.
+export FAKE_HANG="issue create" CREATE_TASK_GH_TIMEOUT_S=1
+rc=$(run "${NEWARGS[@]}" --new-card "test hết hạn")
+unset FAKE_HANG CREATE_TASK_GH_TIMEOUT_S
+[ "$rc" != "0" ] && grep -q "quá 1s không phản hồi" "$TMP/out" && [ "$(called project item-add)" = "0" ] && ok "30 issue create treo → thoát khác 0 + thông báo" || fail "30 rc=$rc"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
