@@ -421,7 +421,18 @@ ready_card_held() {
   local issue="$1" item_id="$2" body self other refs dup r fixlines
   # Dạng đúng của kind issue là --json number,title,body (github-read từ chối -q/--jq: lệnh cũ `--json body -q .body` in chữ thô,
   # bước kiểm JSON hỏng, hàm này không bao giờ ra verdict và ở chế độ STRICT làm halt cả board, 22 và 23/10).
-  body=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json number,title,body 2>/dev/null | jq -r '.body // empty' 2>/dev/null) || return 1
+  # #303: stderr của github-read vào log (không 2>/dev/null) và exit 79 (halt) đi lên như gh_checkpoint: một halt không phải "không có verdict".
+  local errf out rc
+  errf=$(mktemp "${TMPDIR:-/tmp}/sb-ready-held.XXXXXX") || return 1
+  rc=0; out=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json number,title,body 2>"$errf") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "ready_card_held #${issue}: github-read exit ${rc}: $(tail -n 1 "$errf" | cut -c1-300)"
+    rm -f "$errf"
+    [ "$rc" -eq 79 ] && exit 79
+    return 1
+  fi
+  rm -f "$errf"
+  body=$(printf '%s' "$out" | jq -r '.body // empty' 2>/dev/null) || return 1
   [ -n "$body" ] || return 1
   self=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##' | tr '[:upper:]' '[:lower:]')
   other=""
@@ -2078,11 +2089,13 @@ if [ "${SB_LIB_ONLY:-0}" = "1" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
-# A readiness/read failure stops only workers launched by this dispatcher. Keep their
+# A readiness failure (9, 10) stops only workers launched by this dispatcher. Keep their
 # locks, worktrees, claims, and approval evidence for explicit recovery.
+# A GitHub halt (79) does NOT stop workers (#306): they share the github-read layer and stop themselves at
+# check_halt, and the next runner adopts the survivors as after a crash. Killing them lost the work done mid-lane.
 halt_cleanup() {
   local rc=$?
-  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || ! python3 "$SB_GITHUB_READ" --check >/dev/null 2>&1; then
+  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ]; then
     for pid in $(own_lane_pids); do
       kill -TERM "$pid" 2>/dev/null || true
     done
