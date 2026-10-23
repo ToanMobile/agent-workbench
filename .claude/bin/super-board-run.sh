@@ -41,8 +41,20 @@ SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github
 gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
 gh_write_once() {
   gh_checkpoint
-  gh "$@" || {
-    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" >&2 || true
+  # #190: comment ghi chưa rõ kết quả → kèm cách đọc lại. Marker là token DUY NHẤT gắn vào cuối body (comment HTML ẩn): comment
+  # cố định lặp trên cùng issue (back to Ready · …) không được làm reconcile báo "đã áp dụng" nhầm.
+  local args=("$@") token="" i
+  if [ "$1 $2" = "issue comment" ]; then
+    token="sb-write:$(date +%s)-$$-$RANDOM"
+    for ((i = 0; i < ${#args[@]} - 1; i++)); do
+      [ "${args[i]}" = --body ] && { args[i+1]="${args[i+1]}"$'\n'"<!-- ${token} -->"; break; }
+    done
+  fi
+  gh "${args[@]}" || {
+    local verify=() spec=""
+    [ -z "$token" ] || spec=$(jq -nc --argjson n "$3" --arg m "$token" '{kind:"comment",issue:$n,marker:$m}' 2>/dev/null) || spec=""
+    [ -z "$spec" ] || verify=(--verify "$spec")
+    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 || true
     exit 79
   }
 }
@@ -407,7 +419,9 @@ ready_card_held() {
   #  - its `## Fix` section does the work of another card still open in Ready/Building (#N): commented once per runner process, left in Ready.
   # An unreadable or empty body is no verdict (returns 1): the card is dispatched as before.
   local issue="$1" item_id="$2" body self other refs dup r fixlines
-  body=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json body -q .body 2>/dev/null) || return 1
+  # Dạng đúng của kind issue là --json number,title,body (github-read từ chối -q/--jq: lệnh cũ `--json body -q .body` in chữ thô,
+  # bước kiểm JSON hỏng, hàm này không bao giờ ra verdict và ở chế độ STRICT làm halt cả board, 22 và 23/10).
+  body=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json number,title,body 2>/dev/null | jq -r '.body // empty' 2>/dev/null) || return 1
   [ -n "$body" ] || return 1
   self=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##' | tr '[:upper:]' '[:lower:]')
   other=""
