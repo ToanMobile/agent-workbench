@@ -6532,9 +6532,12 @@ def main():
                             "pre-existing failure (KNOWN-RED), not part of the verdict; fix it separately"))
             else:
                 log_warn(tr(f"{t.get('id')}: suite cached-full FAIL, chưa có bằng chứng nó cũng FAIL trên {BASE_REF} — vào kết luận. Lỗi có sẵn thì "
-                            f"ghi bằng chứng: chạy post-fix-gate.py --run-tests --full --diff HEAD~1 trên checkout sạch ở {BASE_REF}",
+                            f"ghi bằng chứng: tạo worktree detached ở {BASE_REF} (agent-kit worktree add ../<repo>-baseline), chạy post-fix-gate.py "
+                            "--run-tests --full --diff HEAD~1 trong đó (sổ khoá ở git common dir nên bằng chứng dùng chung), rồi agent-kit worktree remove",
                             f"{t.get('id')}: cached-full suite FAILED, no evidence it also FAILS on {BASE_REF} — part of the verdict. If it is "
-                            f"pre-existing, record the evidence: run post-fix-gate.py --run-tests --full --diff HEAD~1 on a clean checkout at {BASE_REF}"))
+                            f"pre-existing, record the evidence: create a detached worktree at {BASE_REF} (agent-kit worktree add ../<repo>-baseline), run "
+                            "post-fix-gate.py --run-tests --full --diff HEAD~1 in it (the key store lives in the git common dir, so the evidence "
+                            "is shared), then agent-kit worktree remove"))
     # P2: suite cached-full thêm vào (keyed_full) mà QUÁ GIỜ: --full trước P2 không chạy nó, và quá giờ dưới tải không chứng minh lỗi của thay
     # đổi (REG-DK-ALL-01 quá 900 s ở merge gate dưới tải, 19/10) — UNTESTED ngoài kết luận, được nêu tên, chạy lại lượt sau; FAIL thật của nó
     # vẫn vào kết luận. Không ghi vào sổ khoá (record_keyed chỉ ghi PASS/FAIL). tests/gates/test_gate_suite_cache.sh ca 15.
