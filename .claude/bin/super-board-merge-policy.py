@@ -51,7 +51,11 @@ DEFAULT_ALWAYS_HUMAN = {
     "money": {
         "labels": ["money", "payments", "billing", "pricing"],
         "paths": ["**/billing/**", "**/payments/**", "**/stripe/**", "**/checkout/**"],
-        "keywords": ["stripe.", "payment_intent", "price_id", "invoice.create"],
+        # Stripe is matched by its real context, not the bare word `stripe.` (#261: `stripe.material`, a colour-stripe variable,
+        # sent PR #224 to a person): import/require, api.stripe.com, live keys, a `Stripe(` call. `added` is lower-cased.
+        "keywords": ["api.stripe.com", "payment_intent", "price_id", "invoice.create"],
+        "patterns": [r"\b(?:import|from)\s+stripe\b", r"from\s+['\"]stripe['\"]", r"require\(\s*['\"]stripe['\"]",
+                     r"\b[sp]k_live_", r"\bstripe\("],
     },
     "auth": {
         "labels": ["auth", "security"],
