@@ -85,6 +85,38 @@ gate "$REPO" --full --tree "$BASE"; rc=$?
 gate "$REPO" --full --tree HEAD --diff "$BASE"; rc=$?
 [ "$rc" = 2 ] && grep -q -- "--tree: " "$TMP/gate" && ok "N5 --tree with --diff: exit 2" || fail "N5 expected exit 2, got $rc"
 
+# --- 23/10 review (principal-code-reviewer): mỗi ca dưới đây từng cho exit 0 giả; mỗi ca chỉ khác ca xanh đúng một biến.
+# B1. Commit cục bộ CHƯA push: quét tĩnh, kiểm test bị sửa và độ tin ma trận đều nhìn HEAD, nên lệnh `true` + code hỏng lọt. --tree phải từ chối.
+HEAD0="$(git -C "$REPO" rev-parse HEAD)"
+( cd "$REPO" && sed -i.bak 's/"command":"sh result.sh"/"command":"true"/' templates/regression_matrix.json && rm -f templates/regression_matrix.json.bak \
+  && printf 'exit 1\n' > result.sh && git commit -qam "commit cục bộ chưa push: ma trận true, code hỏng" )
+gate "$REPO" --full --tree HEAD --no-cache; rc=$?
+[ "$rc" = 2 ] && grep -q -- "--tree: " "$TMP/gate" && ok "B1 unpushed local commit under --tree: exit 2" || fail "B1 expected exit 2, got $rc"
+git -C "$REPO" reset -q --hard "$HEAD0"
+# B2. Ma trận thay bằng symlink ra ngoài devkit (chưa commit): is_devkit_artifact miễn mọi symlink dưới .agents/.claude.
+printf '{"project":"t","rules":[{"component":"E","watch_files":["x"],"mandatory_regression_tests":[{"id":"E1","name":"e","command":"true"}]}]}\n' > "$TMP/evil.json"
+ln -sf "$TMP/evil.json" "$REPO/.agents/regression_matrix.active.json"
+FAIL_SUITE=1 gate "$REPO" --full --tree HEAD --no-cache; rc=$?
+[ "$rc" = 2 ] && grep -q -- "--tree: " "$TMP/gate" && ok "B2 untracked matrix symlink outside the devkit under --tree: exit 2" || fail "B2 expected exit 2, got $rc"
+rm -f "$REPO/.agents/regression_matrix.active.json"
+rm -f "$REPO/templates/regression_matrix.json"; ln -s "$TMP/evil.json" "$REPO/templates/regression_matrix.json"
+FAIL_SUITE=1 gate "$REPO" --full --tree HEAD --no-cache; rc=$?
+[ "$rc" = 2 ] && grep -q -- "--tree: " "$TMP/gate" && ok "B2b tracked matrix swapped for a symlink under --tree: exit 2" || fail "B2b expected exit 2, got $rc"
+rm -f "$REPO/templates/regression_matrix.json"; git -C "$REPO" checkout -q -- templates/regression_matrix.json
+# P1. skip-worktree: git status rỗng nhưng suite chạy trên bản sửa bị giấu.
+git -C "$REPO" update-index --skip-worktree result.sh; printf 'true\n' > "$REPO/result.sh"
+FAIL_SUITE=1 gate "$REPO" --full --tree HEAD --no-cache; rc=$?
+[ "$rc" = 2 ] && grep -q -- "--tree: " "$TMP/gate" && ok "P1 skip-worktree hidden edit under --tree: exit 2" || fail "P1 expected exit 2, got $rc"
+git -C "$REPO" update-index --no-skip-worktree result.sh; git -C "$REPO" checkout -q -- result.sh
+# P3. Ma trận rỗng đã commit + --allow-no-tests: exit 0 mà không chạy suite nào.
+( cd "$REPO" && printf '{"project":"t","rules":[]}\n' > templates/regression_matrix.json && git commit -qam "ma trận rỗng" && git push -q origin main )
+gate "$REPO" --full --tree HEAD --allow-no-tests --no-cache; rc=$?
+[ "$rc" = 2 ] && grep -q -- "--tree: " "$TMP/gate" && ok "P3 empty committed matrix under --tree: exit 2" || fail "P3 expected exit 2, got $rc"
+git -C "$REPO" reset -q --hard "$HEAD0" && git -C "$REPO" push -qf origin main
+# P4. --matrix trỏ ra ngoài: --tree hứa ma trận ĐÃ COMMIT trong cây, nên từ chối.
+gate "$REPO" --full --tree HEAD --matrix "$TMP/evil.json" --no-cache; rc=$?
+[ "$rc" = 2 ] && grep -q -- "--tree: " "$TMP/gate" && ok "P4 --tree with --matrix: exit 2" || fail "P4 expected exit 2, got $rc"
+
 # R1. proof_gate nhận biên nhận theo cây: worktree sạch ở HEAD, gate --tree HEAD exit 0, worktree gỡ, XONG ở main được qua.
 WT="$TMP/wt"; git -C "$REPO" worktree add -q --detach "$WT" HEAD
 python3 -c 'import datetime,json
