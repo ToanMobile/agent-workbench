@@ -53,17 +53,18 @@ class ChibiGlbTest(unittest.TestCase):
     def test_every_person_the_page_loads_is_rigged(self):
         with open(os.path.join(HERE, "web", "index.html"), encoding="utf-8") as f:
             page = f.read()
-        self.assertIn("'chibi' + (i + 1) + '.glb'", page)
-        count = int(re.search(r"Array\.from\(\{ length: (\d+) \}", page).group(1))
-        self.assertEqual(count, 5)
-        for i in range(1, count + 1):
-            j = glb_json(os.path.join(HERE, "web", "models", f"chibi{i}.glb"))
-            nodes = {n.get("name"): n for n in j["nodes"]}
-            self.assertTrue(self.BONES <= set(nodes), (i, self.BONES - set(nodes)))
+        chars = page[page.index("const CHARS = ["):]
+        files = re.findall(r"file: '([\w.]+\.glb)'", chars[:chars.index("];")])
+        self.assertEqual(files, ["chibi_girl.glb", "chibi_boy.glb"])
+        for name in files:
+            path = os.path.join(HERE, "web", "models", name)
+            j = glb_json(path)
+            nodes = {n.get("name") for n in j["nodes"]}
+            self.assertTrue(self.BONES <= nodes, (name, self.BONES - nodes))
             self.assertEqual({a["name"].lower() for a in j["animations"]}, {"idle", "walk"})
-            self.assertTrue(any(m["name"].startswith("Shirt") for m in j["materials"]), i)
-            self.assertLess(os.path.getsize(os.path.join(HERE, "web", "models", f"chibi{i}.glb")), 500_000)  # năm người cộng lại vẫn nhẹ hơn bộ Quaternius cũ (khoảng 3,3 MB)
-
+            mats = [m["name"] for m in j["materials"]]
+            self.assertTrue(any(m.startswith("Shirt") for m in mats) and any(m.startswith("Hair") for m in mats), (name, mats))
+            self.assertLess(os.path.getsize(path), 1_500_000)  # lưới dày cho mịn; hai người cộng lại vẫn nhẹ hơn bộ Quaternius cũ (khoảng 3,3 MB)
 
 if __name__ == "__main__":
     unittest.main()
