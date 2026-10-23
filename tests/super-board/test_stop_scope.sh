@@ -36,7 +36,12 @@ STUB="$TMP/stub"; mkdir -p "$STUB"
 cat > "$STUB/ps" <<'SH'
 #!/usr/bin/env bash
 # Bảng tiến trình giả cho lệnh liệt kê; ps theo PID (-p) vẫn chạy ps thật trên các sleep của test.
-case " $* " in *" -A "*|*" -ax "*|*" aux "*) cat "$STUB_PS" ;; *) exec /bin/ps "$@" ;; esac
+# `-o ppid=` (startup_orphan_workers, #237): tiến trình giả có cha là launchd (1), nên không phải con của wrapper nào.
+case " $* " in
+  *" -A "*ppid=*) awk '{ pid = $1; $1 = ""; print pid, 1 $0 }' "$STUB_PS" ;;
+  *" -A "*|*" -ax "*|*" aux "*) cat "$STUB_PS" ;;
+  *) exec /bin/ps "$@" ;;
+esac
 SH
 cat > "$STUB/pgrep" <<'SH'
 #!/usr/bin/env bash

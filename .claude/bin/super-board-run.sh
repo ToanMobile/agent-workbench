@@ -34,6 +34,7 @@ set -euo pipefail
 # Mốc ra đời của runner, đặt trước mọi bước đọc config: stop marker ghi từ giây này trở đi là super-board-stop.sh chạy
 # trùng lúc runner đang khởi động, và stop thắng (khởi động tường minh không xoá marker đó).
 RUNNER_BORN=$(date +%s)
+SB_WORKER_WRAP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-worker-wrap.sh"
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
 # của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
@@ -574,6 +575,7 @@ issue_locked() {
     return 0
   fi
   [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
+  note_worker_exit "$issue"
   note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
   [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
   rm -f "$lock"
@@ -600,7 +602,7 @@ import datetime, json, os, re, sys, time
 log, state = sys.argv[1], sys.argv[2]
 section = open(log, errors='replace').read().rsplit('=== dispatch ', 1)[-1]
 acct = re.search(r'^account_pool: engine=\S+ account=([A-Za-z0-9_.-]+)', section, re.M)
-tail = '\n'.join([l for l in section.splitlines() if l.strip()][-3:])
+tail = '\n'.join([l for l in section.splitlines() if l.strip() and not l.startswith('worker_exit:')][-3:])
 # Claude Code: "You've hit your session limit · resets 10:50pm (Asia/Saigon)" (đo 16/10). Ba mẫu sau là mã quota của
 # Gemini/xAI, chưa đo trên agy/grok thật.
 hit = re.search(r"hit your (?:\w+ )?limit|usage limit reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
@@ -1077,7 +1079,7 @@ EOF
       fi ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac
-  prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt $(lane_worktree_hint "$lane" "$issue") Emulator policy: NEVER launch an Android emulator without -no-window (always run headless in background with -no-window -no-audio -no-boot-anim, or via python3 .agents/devkit/bin/proof-capture.py)."
+  prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt $(lane_worktree_hint "$lane" "$issue") $(resume_hint "${WORKER_LOG_DIR}/worker-${lane}-${issue}.log") Emulator policy: NEVER launch an Android emulator without -no-window (always run headless in background with -no-window -no-audio -no-boot-anim, or via python3 .agents/devkit/bin/proof-capture.py)."
   if [ -f "$REPO_ROOT/.agents/active-profile.json" ] && grep -q '"lang": "vi"' "$REPO_ROOT/.agents/active-profile.json" 2>/dev/null; then
     prompt="$prompt Language policy: This repository uses Vietnamese ('lang': 'vi'). Write all PR descriptions, problem/solution/AC explanations, status comments, and review notes in Vietnamese (Tiếng Việt); identifiers/symbols remain English."
   fi
@@ -1108,13 +1110,13 @@ EOF
   local claude_model
   claude_model=$(claude_model_for_tier)
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
-    nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
-    nohup "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup "$SB_WORKER_WRAP" "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
-    CLAUDE_CONFIG_DIR="$pool_cfg" nohup claude --model "$claude_model" --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose -p "$prompt" >> "$worker_log" 2>&1 &
   else
-    nohup claude --model "$claude_model" --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!
   DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
@@ -1179,12 +1181,24 @@ check_lane_zombie() {
   for col in $expected; do
     [ "$cur" = "$col" ] && found=1
   done
+  # Thẻ về cột cũ: bỏ mốc ân hạn để lần rời cột sau tính lại từ đầu.
+  [ "$found" -eq 0 ] || ZOMBIE_SEEN=$(printf '%s\n' ${ZOMBIE_SEEN:-} | grep -v "^${pid}:" | tr '\n' ' ' || true)
   if [ "$found" -eq 0 ]; then
+    # Ân hạn (#237): worker vừa chuyển thẻ còn đang in báo cáo cuối; kill ngay xoá báo cáo đó khỏi log.
+    # ZOMBIE_SEEN = "pid:epoch" lần đầu thấy; kill khi quá SB_ZOMBIE_GRACE giây (mặc định 60).
+    local seen_at now
+    now=$(date +%s)
+    seen_at=$(printf '%s\n' ${ZOMBIE_SEEN:-} | sed -n "s/^${pid}://p" | head -1)
+    if [ -z "$seen_at" ]; then seen_at="$now"; ZOMBIE_SEEN="${ZOMBIE_SEEN:+$ZOMBIE_SEEN }${pid}:${now}"; fi
+    [ $(( now - seen_at )) -ge "${SB_ZOMBIE_GRACE:-60}" ] || return 0
     gh_checkpoint
     log "💀 zombie ${lane} worker on #${issue} (pid=${pid}) — card moved to '${cur}'; killing"
+    # #237: pid trong lock là wrapper; kill -9 chỉ trúng wrapper còn worker con sống tiếp → diệt con trước.
     kill "$pid" 2>/dev/null || true
     sleep 1 || true
+    pkill -9 -P "$pid" 2>/dev/null || true
     kill -9 "$pid" 2>/dev/null || true
+    ZOMBIE_SEEN=$(printf '%s\n' ${ZOMBIE_SEEN:-} | grep -v "^${pid}:" | tr '\n' ' ' || true)
     gh_checkpoint
     [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
     gh_checkpoint
@@ -1303,6 +1317,37 @@ paused_tick() {
 }
 
 # A folder in inflight/ (git-ignored in every board repo); every reader of inflight/ skips folders and non-numeric names, as merge.lock
+# #237: super-board-worker-wrap.sh ends every worker log section with `worker_exit: exit=<mã> signal=<tên> elapsed=<s>s`.
+worker_exit_line() {
+  awk '/^=== dispatch /{l=""} /^worker_exit: /{l=$0} END{print l}' "$1" 2>/dev/null || true
+}
+
+note_worker_exit() {
+  # $1 = issue; the lock just read (LANE) is the worker that died. Logs its exit record and, unless it exited 0, comments on the card.
+  # No record = the wrapper itself was killed (SIGKILL, host asleep) or the worker predates the wrapper.
+  local line role
+  line=$(worker_exit_line "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}")
+  log "worker of #${1} (lane ${LANE:-?}) exit record: ${line:-none — wrapper killed or host asleep}"
+  # exit=0: finished; exit=143: stopped by the runner itself (super-board stop sends TERM), not a death worth a card comment.
+  case "$line" in *"exit=0 "*|*"exit=143 "*) return 0 ;; esac
+  case "${LANE:-}" in qa) role=qa ;; review) role=reviewer ;; *) role=builder ;; esac
+  # A diagnostic comment must never halt the board: gh_write_once exits 79 on a gh failure and `|| true` cannot catch an exit.
+  gh_checkpoint
+  gh issue comment "$1" --body "[${role}] [report] ⚠️ worker chết giữa chừng
+Did: runner thấy worker lane ${LANE:-?} đã dừng, thẻ sẽ được giao lại.
+Exit record: ${line:-không có (wrapper bị kill hoặc máy ngủ)}
+Next: lượt giao lại tiếp tục từ commit/comment cuối" >/dev/null 2>&1 || true
+}
+
+resume_hint() {
+  # $1 = worker log. Words for the next prompt when the previous dispatch of this card died (exit != 0, or no record): continue, never restart.
+  local line
+  [ -f "$1" ] && grep -q '^=== dispatch ' "$1" || return 0
+  line=$(worker_exit_line "$1")
+  case "$line" in *"exit=0 "*) return 0 ;; esac
+  printf 'Resume: the previous worker of this card died (%s). Do not start over: read the issue comments and PR threads, run git log in the lane worktree, and continue from the last commit and evidence.' "${line:-no exit record}"
+}
+
 early_death_file() { printf '%s/early-deaths/%s' "$INFLIGHT_DIR" "$1"; }
 
 note_early_death() {
@@ -1335,7 +1380,7 @@ print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED
   { tail -n 19 "$f" 2>/dev/null || true; echo "$now ${LANE:-?}"; } > "$f.tmp" 2>/dev/null \
     && mv "$f.tmp" "$f" 2>/dev/null || return 0
   # the log may be gone or empty (the 19/10 shape): grep exits 1/2, which pipefail would turn into the runner's exit
-  last=$( { grep -v '^[[:space:]]*$' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
+  last=$( { grep -Ev '^[[:space:]]*$|^worker_exit: ' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
   n=$( { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) -v l="${LANE:-?}" '$1 >= from && $2 == l' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
   log "⚠ worker of #${1} (lane ${LANE:-?}) ended ${age}s after dispatch (a crash or a very quick exit) — early end ${n} of this lane in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${wlog}>}"
 }
@@ -1378,6 +1423,7 @@ reap_finished_locks() {
     read_lock "$issue"
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
+      note_worker_exit "$issue"
       note_early_death "$issue"
       [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
       gh_checkpoint
@@ -1482,14 +1528,16 @@ startup_orphan_workers() {
     [ -n "$PID" ] && locked="${locked}${PID} "
   done
   # ps lỗi thì không có dòng nào: không chặn khởi động (adopt_live_locks vẫn chạy sau đó).
-  while read -r pid cmd; do
+  while read -r pid ppid cmd; do
     [ -n "$pid" ] && [ "$pid" != "$$" ] || continue
+    # #237: worker chạy dưới wrapper (pid trong lock) — con của một PID đã khoá không phải orphan.
+    case "$locked" in *" $ppid "*) continue ;; esac
     case "$cmd" in *"--root '${root}'"*"for super-board run"*) ;; *) continue ;; esac
     exe=${cmd%% *}
     case "${exe##*/}" in claude|agy|grok) ;; *) continue ;; esac
     case "$locked" in *" $pid "*) continue ;; esac
     echo "$pid"
-  done < <(ps -ww -A -o pid= -o command= 2>/dev/null || true)
+  done < <(ps -ww -A -o pid= -o ppid= -o command= 2>/dev/null || true)
 }
 
 check_legacy_worktrees() {
