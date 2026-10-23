@@ -94,8 +94,14 @@ install_msg_hook() {
 # matrix file to it. The driver is repo config (shared by every worktree), the attribute a tracked line.
 MATRIX_ATTR=".agents/regression_matrix.active.json merge=devkit-matrix"
 install_matrix_driver() {
+  # #282: a relative ".agents/devkit/…" did not exist in the merge gate's .merge-scratch-* worktree (the kit symlink
+  # is untracked), so the driver failed and git fell back to a text merge. The config is shared by every worktree, so
+  # the command finds the kit of the MAIN checkout at merge time (first entry of `git worktree list`: any git version,
+  # submodules and separate git dirs included), then the worktree's own copy.
+  # shellcheck disable=SC2016
+  local drv='d="$(git worktree list --porcelain | sed -n "1s/^worktree //p")/.agents/devkit/scripts/git/matrix_merge_driver.py"; [ -f "$d" ] || d=.agents/devkit/scripts/git/matrix_merge_driver.py; python3 "$d" %O %A %B %P'
   git -C "$TARGET" config merge.devkit-matrix.name "DevKit regression matrix union merge" \
-    && git -C "$TARGET" config merge.devkit-matrix.driver "python3 .agents/devkit/scripts/git/matrix_merge_driver.py %O %A %B %P" || return 0
+    && git -C "$TARGET" config merge.devkit-matrix.driver "$drv" || return 0
   local root; root="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null)" || return 0
   grep -qxF "$MATRIX_ATTR" "$root/.gitattributes" 2>/dev/null || echo "$MATRIX_ATTR" >> "$root/.gitattributes"
   echo "✔ $(L "merge driver cho ma trận hồi quy" "regression matrix merge driver") → .gitattributes"

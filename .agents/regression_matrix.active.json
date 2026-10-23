@@ -991,6 +991,21 @@
       ]
     },
     {
+      "component": "super-board-review-approved-head",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_review_approved_head.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-APPROVED-HEAD-01",
+          "name": "runner: thẻ Review đã duyệt đúng head (comment approved-head:<sha> của OWNER/MEMBER/COLLABORATOR) chỉ chạy merge-only với --expect-head, kể cả sau merge gate exit 4; head đổi, người ngoài duyệt hay đọc GitHub hỏng thì review đầy đủ (#227)",
+          "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-runner-ready-order",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
