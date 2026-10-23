@@ -640,23 +640,7 @@ gq "$R32"; r32=$?
   || { fail "32. FAIL chập chờn thành bằng chứng KNOWN-RED (exit $r32, mong 1)"; grep -E "REG-X|KNOWN" "$TMP/outq" | tail -3; }
 }
 
-# Run the groups at the same time (job control on only for these launches: every group is its own process group, which `cleanup`
-# stops whole). A group that dies before its end leaves no fails file: that is a failure, never a silent pass.
-GROUPS_IN_ORDER="chain coalesce mutate_prune cover stop_timeout exact_key units known_red"
-set -m
-for grp in $GROUPS_IN_ORDER; do
-  ( TMP="$ROOT/$grp"; mkdir -p "$TMP"; export SB_HEAVY_SLOT_DIR="$TMP/slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"; FAILS=0
-    "grp_$grp"; echo "$FAILS" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &
-  PIDS="$PIDS $!"
-done
-set +m
-wait
-PIDS=""
-for grp in $GROUPS_IN_ORDER; do
-  cat "$ROOT/out.$grp"
-  if [ -f "$ROOT/fails.$grp" ]; then FAILS=$((FAILS + $(cat "$ROOT/fails.$grp"))); else fail "group $grp did not finish"; fi
-done
-
+grp_closure() {
 # 33. Bao đóng input của khoá chính xác (issue #151): probe tính khoá của REG-P trước/sau khi đổi một file, in "same" hoặc "diff".
 #     Ma trận: REG-P watch src/a.py, lệnh `true` (lệnh không nêu tên file nào: mọi input đến từ watch_files).
 probe_key() {   # probe_key <repo> <file đổi> <nội dung mới>
@@ -723,5 +707,23 @@ printf 'ls src/lnk33\n' > "$R33/src/a.py"; ln -s data "$R33/src/lnk33"; echo u >
 git -C "$R33" add -A && git -C "$R33" commit -qm init
 r=$(probe_key "$R33" src/unrelated.txt 'changed')
 [ "$r" = same ] && ok "33f. symlink thư mục không cắt khoá chính xác" || fail "33f. symlink thư mục bị tính là file không đọc được ⇒ khoá chính xác bị cắt ($r)"
+}
+
+# Run the groups at the same time (job control on only for these launches: every group is its own process group, which `cleanup`
+# stops whole). A group that dies before its end leaves no fails file: that is a failure, never a silent pass.
+GROUPS_IN_ORDER="chain coalesce mutate_prune cover stop_timeout exact_key units known_red closure"
+set -m
+for grp in $GROUPS_IN_ORDER; do
+  ( TMP="$ROOT/$grp"; mkdir -p "$TMP"; export SB_HEAVY_SLOT_DIR="$TMP/slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"; FAILS=0
+    "grp_$grp"; echo "$FAILS" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &
+  PIDS="$PIDS $!"
+done
+set +m
+wait
+PIDS=""
+for grp in $GROUPS_IN_ORDER; do
+  cat "$ROOT/out.$grp"
+  if [ -f "$ROOT/fails.$grp" ]; then FAILS=$((FAILS + $(cat "$ROOT/fails.$grp"))); else fail "group $grp did not finish"; fi
+done
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_suite_cache: all passed" || { echo "❌ test_gate_suite_cache: $FAILS failed"; exit 1; }
