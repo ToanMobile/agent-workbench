@@ -2020,13 +2020,19 @@ reload_warn() {
   board_notify send --card "$CONFIG_SLUG" --text "runner đang chạy code cũ: origin/${BASE_BRANCH} có super-board-run.sh mới nhưng không nạp được — $2"
 }
 reload_finish_main() {
-  # Worktree tạm ở origin/<base>: finish gộp nó vào main (gate, rồi fast-forward main). Xung đột/gate đỏ → khác 0, main giữ nguyên.
-  local ak wt rc
-  if command -v agent-kit >/dev/null 2>&1; then ak=(agent-kit worktree); else ak=(python3 .agents/devkit/scripts/git/worktree.py); fi
+  # Worktree tạm tại HEAD của main (không phải origin/<base>: finish coi worktree ở origin là PR đã squash và từ chối), gộp origin vào đó
+  # rồi finish (gate, fast-forward main). Xung đột/gate đỏ → khác 0, main giữ nguyên.
+  local ak wt rc out
+  if [ -n "${SB_WORKTREE_CMD:-}" ]; then read -r -a ak <<<"$SB_WORKTREE_CMD"
+  elif command -v agent-kit >/dev/null 2>&1; then ak=(agent-kit worktree); else ak=(python3 .agents/devkit/scripts/git/worktree.py); fi
   wt=".claude/worktrees/self-reload-$$"
-  "${ak[@]}" add "$wt" --base="origin/${BASE_BRANCH}" >/dev/null 2>&1 || { log "⚠ self-reload: cannot create worktree $wt"; return 1; }
-  "${ak[@]}" finish "$wt" >/dev/null 2>&1; rc=$?
-  [ "$rc" -eq 0 ] || log "⚠ self-reload: worktree finish $wt exited $rc"
+  out=$("${ak[@]}" add "$wt" 2>&1) || { log "⚠ self-reload: cannot create worktree $wt: $(printf '%s' "$out" | tail -c 300)"; return 1; }
+  if git -C "$wt" merge --no-edit -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
+    "${ak[@]}" finish "$wt" >/dev/null 2>&1; rc=$?
+  else
+    git -C "$wt" merge --abort >/dev/null 2>&1; rc=1
+  fi
+  [ "$rc" -eq 0 ] || log "⚠ self-reload: merge origin/${BASE_BRANCH} / worktree finish $wt failed (rc=$rc)"
   "${ak[@]}" remove "$wt" >/dev/null 2>&1 || log "⚠ self-reload: worktree remove $wt failed; left for the cleanup hook"
   return "$rc"
 }
