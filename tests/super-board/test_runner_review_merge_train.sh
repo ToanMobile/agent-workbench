@@ -14,7 +14,8 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-review-train.XXXXXX")"
-cleanup() { for p in $(pgrep -f "$TMP/path/claude" 2>/dev/null); do kill "$p" 2>/dev/null; done; rm -rf "$TMP"; }
+# the stub claude is `exec sleep 301` (unique length): killing the worker wrapper orphans it and it holds the gate's pipe open
+cleanup() { for p in $(pgrep -f "$TMP/path/claude" 2>/dev/null); do kill "$p" 2>/dev/null; done; pkill -f '^sleep 301$' 2>/dev/null; rm -rf "$TMP"; }
 trap cleanup EXIT
 mkdir -p "$TMP/bin" "$TMP/path" "$TMP/repo/docs/super-board" "$TMP/repo/wl"
 # SB_GITHUB_READ giả: pr list → $STUB_DIR/prs.json; pr view <N> --json comments → $STUB_DIR/comments-<N>.json; thiếu file = đọc hỏng.
@@ -29,7 +30,7 @@ if not os.path.exists(f): sys.exit(1)
 sys.stdout.write(open(f).read())
 PY
 printf 'print("ok")\n' > "$TMP/bin/super-board-skills-ready.py"
-printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/path/claude"
+printf '#!/usr/bin/env bash\nexec sleep 301\n' > "$TMP/path/claude"
 chmod +x "$TMP/path/claude"
 export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_DISK_WARN_GIB=0
 
@@ -106,7 +107,7 @@ prompt_any | grep -q 'merge-train' && fail "SB_REVIEW_TRAIN=0 still batched" || 
 
 # ── 6. thẻ khoá/đã có worker khác không bị kéo vào đợt
 reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"
-sleep 300 & OTHER=$!; printf 'PID=%s\nLANE=review\nSTARTED=now\nWORKER_LOG=x\n' "$OTHER" > "$INFLIGHT_DIR/8"; tick
+sleep 301 & OTHER=$!; printf 'PID=%s\nLANE=review\nSTARTED=now\nWORKER_LOG=x\n' "$OTHER" > "$INFLIGHT_DIR/8"; tick
 prompt_any | grep -q -- "--prs 70:$H1,72:$H3" && ok "a card already locked by another worker (#8) is left alone: --prs 70:H1,72:H3" || fail "locked card batched: $(prompt_any | cut -c1-300)"
 kill "$OTHER" 2>/dev/null; wait "$OTHER" 2>/dev/null
 
@@ -130,7 +131,7 @@ prompt_any | grep -q -- "--prs 70:$H1,71:$H2,72:$H3" && ok "needs-device is not 
 
 # ── 10. R3: nhiều lock cùng PID (worker train) khi runner khởi động lại = MỘT worker nhận lại, không N mục REVIEW_EXTRA
 reset; items Review Review Review
-bash -c 'sleep 300; : "Run one merge-train worker on issues #7, #8, #9 (PRs 70,71,72) for super-board run"' & TW=$!
+bash -c 'trap "kill \$c" TERM; sleep 301 & c=$!; wait; : "Run one merge-train worker on issues #7, #8, #9 (PRs 70,71,72) for super-board run"' & TW=$!
 sleep 1
 for i in 7 8 9; do printf 'PID=%s\nLANE=review\nSTARTED=%s\nWORKER_LOG=x\n' "$TW" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/$i"; done
 adopt_live_locks
