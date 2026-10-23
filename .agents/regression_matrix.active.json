@@ -1209,6 +1209,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-runner-noop-worker",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_noop_worker.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-NOOP-WORKER-01",
+          "name": "runner: worker qa/review thoát mà thẻ vẫn ở cột cũ và không comment mới thì tính no-op; 2 lần liên tiếp thì thẻ sang Blocked (📱 nếu log nhắc máy thật, còn lại ❓) kèm dòng cuối log, không giao lại; chuyển cột hoặc có comment thì không tính",
+          "command": "bash tests/super-board/test_runner_noop_worker.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
