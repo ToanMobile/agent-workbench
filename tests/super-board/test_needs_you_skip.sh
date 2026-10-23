@@ -17,6 +17,11 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-needs-you.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+# Cô lập khỏi GitHub thật và khỏi tệp halt dùng chung: top_card_in_column gọi ready_card_held (#202) và nó đọc issue qua github-read.
+# 22 và 23/10 merge gate chạy test này ở chế độ STRICT: lệnh đọc thẻ #32 hỏng ghi github-halt.json vào checkout chính, cả board dừng.
+mkdir -p "$TMP/bin"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/gh.calls"\nexit 1\n' "$TMP" > "$TMP/bin/gh"; chmod +x "$TMP/bin/gh"
+export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_GITHUB_READ_STRICT=1
 
 ITEMS='{"items":[
  {"id":"I30","status":"Ready","labels":["needs-you"],"content":{"type":"Issue","number":30,"title":"playtest","assignees":[]}},
@@ -29,6 +34,7 @@ ITEMS='{"items":[
 ( SB_LIB_ONLY=1 . "$RUNNER" || exit 99
   set +e
   log() { :; }; issue_locked() { return 1; }; issue_is_open() { return 0; }; early_backoff() { return 1; }
+  ready_card_held() { return 1; }   # chốt #202 đọc thân issue qua GitHub; test này chỉ kiểm nhãn needs-you / human-gated
   INFLIGHT_DIR="$TMP/inflight"; mkdir -p "$INFLIGHT_DIR"
   PROJECT_ITEMS_JSON="$ITEMS"
   top_card_in_column "Ready"; echo "ready=$TOP_ISSUE"
@@ -51,6 +57,7 @@ BOUNCED='{"items":[
 ( SB_LIB_ONLY=1 . "$RUNNER" || exit 99
   set +e
   log() { :; }; issue_locked() { return 1; }; issue_is_open() { return 0; }; early_backoff() { return 1; }
+  ready_card_held() { return 1; }   # chốt #202 đọc thân issue qua GitHub; test này chỉ kiểm nhãn needs-you / human-gated
   INFLIGHT_DIR="$TMP/inflight"; mkdir -p "$INFLIGHT_DIR"
   PROJECT_ITEMS_JSON="$BOUNCED"
   top_card_in_column "Ready"; echo "ready=$TOP_ISSUE"
@@ -118,5 +125,9 @@ print("waiting=" + ",".join(str(i["number"]) for i in m.waiting_on_person(items)
 PY
 grep -qx "waiting=35,34,30" "$TMP/status.out" && ok "status: needs-you / human-gated Ready and Blocked cards form their own group (not Done, not a Review a lane works)" \
   || fail "status waiting group: $(tail -3 "$TMP/status.out" | tr '\n' ' ')"
+
+# ── 4. cô lập: test này không được chạm GitHub thật và không được ghi file halt
+[ ! -s "$TMP/gh.calls" ] && ok "isolation: no gh call was made" || fail "isolation: the test called gh: $(head -2 "$TMP/gh.calls" | tr '\n' '|')"
+[ ! -e "$TMP/halt.json" ] && ok "isolation: no github-halt file was written" || fail "isolation: a halt file was written: $(cut -c1-160 "$TMP/halt.json")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_needs_you_skip: all passed" || { echo "❌ test_needs_you_skip: $FAILS failed"; exit 1; }
