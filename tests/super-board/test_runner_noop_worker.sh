@@ -8,7 +8,8 @@
 #    `blocked-by:  -`, kèm dòng cuối log worker; thẻ 📱 nếu dòng đó nhắc máy thật/thiết bị, còn lại ❓), không giao lại.
 #  - Worker đã chuyển cột hoặc đã comment thì không tính no-op và xoá sổ của thẻ.
 #  - Không đọc được số comment hiện tại: không kết luận gì (không tính, không xoá).
-#  - dispatch_lane ghi FROM_COL và COMMENTS0 vào lock; lane build do reclaim_dead_builds lo.
+#  - dispatch_lane ghi FROM_COL và COMMENTS0 (đọc trước khi worker chạy) vào lock cùng lần ghi; lane build do reclaim_dead_builds lo.
+#  - Dispatch merge-only / merge-train không có mốc (đúng quy trình là để thẻ ở Review, không comment). Đổi cột hoặc comment giữa hai lần giao thì xoá sổ.
 # Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -68,6 +69,8 @@ if [ "${n1:-0}" = "1" ] && [ "$moved1" = "0" ] \
    && grep -q "thiếu máy thật RFCWA1KQT1Y để đo 60 FPS" "$TMP/writes" \
    && grep -q "Reason tag:  📱" "$TMP/writes" \
    && ! grep -q "last log line: worker_exit:" "$TMP/writes" \
+   && grep -qx "gh issue edit 100 --remove-assignee sb-bot" "$TMP/writes" \
+   && [ ! -e "$INFLIGHT_DIR/noops/100" ] \
    && [ "${NOOP_MOVED:-0}" = "1" ]; then
   ok "A: 2 no-op QA exits -> #100 Blocked 📱 with block-template comment carrying the worker's last log line"
 else
@@ -147,35 +150,92 @@ reset_case
 mkdir -p "$INFLIGHT_DIR/noops"; echo "$(( $(date +%s) - 90000 )) qa" > "$INFLIGHT_DIR/noops/107"
 set_card 107 QA
 lock 107 qa QA 3; noop_cycle
-if ! grep -q "^move " "$TMP/writes"; then
+h_n=$(wc -l < "$INFLIGHT_DIR/noops/107" 2>/dev/null | tr -d ' ')
+if ! grep -q "^move " "$TMP/writes" && [ "${h_n:-0}" = "1" ]; then
   ok "H: a no-op older than the window does not count toward the cap"
 else
   fail "H: stale ledger line blocked the card (writes: $(tr '\n' ';' < "$TMP/writes"))"
 fi
 
-# ── I: stamp_dispatch_baseline ghi FROM_COL và COMMENTS0 vào lock, và lock vẫn đọc được bằng read_lock.
+# ── I (R8): dispatch_baseline đọc mốc TRƯỚC khi worker chạy và lock mang mốc trong cùng một lần ghi; chỉ lane qa/review và
+#    chỉ khi được phép (merge-only/merge-train: R5) hoặc đọc được cả cột lẫn số comment.
 reset_case
 set_card 108 QA; COMMENTS_NOW=7
-printf 'PID=%s\nLANE=qa\nSTARTED=2026-10-20T13:10:00Z\nWORKER_LOG=x\n' "$DEAD" > "$INFLIGHT_DIR/108"
-stamp_dispatch_baseline 108 qa
+out=$(dispatch_baseline 108 qa 1)
+printf 'PID=%s\nLANE=qa\nSTARTED=2026-10-20T13:10:00Z\nWORKER_LOG=x\nTRAIN=""\n%s' "$DEAD" "$out" > "$INFLIGHT_DIR/108"
 read_lock 108
-if [ "${FROM_COL:-}" = "QA" ] && [ "${COMMENTS0:-}" = "7" ] && [ "${LANE:-}" = "qa" ]; then
-  ok "I: stamp_dispatch_baseline records FROM_COL=QA COMMENTS0=7 in the lock"
+out_mo=$(dispatch_baseline 108 review 0); out_build=$(dispatch_baseline 108 build 1)
+COMMENTS_NOW=""; out_blind=$(dispatch_baseline 108 qa 1)
+if [ "${FROM_COL:-}" = "QA" ] && [ "${COMMENTS0:-}" = "7" ] && [ "${LANE:-}" = "qa" ] \
+   && [ -z "$out_mo" ] && [ -z "$out_build" ] && [ -z "$out_blind" ]; then
+  ok "I: dispatch_baseline gives FROM_COL=QA COMMENTS0=7 for qa; nothing for merge-only, build lane or an unreadable count"
 else
-  fail "I: baseline not stamped (FROM_COL=${FROM_COL:-} COMMENTS0=${COMMENTS0:-} lock: $(tr '\n' ';' < "$INFLIGHT_DIR/108"))"
+  fail "I: baseline wrong (FROM_COL=${FROM_COL:-} COMMENTS0=${COMMENTS0:-} mo='$out_mo' build='$out_build' blind='$out_blind')"
 fi
 
-# ── J (nối dây): dispatch_lane gọi stamp_dispatch_baseline; vòng chính gọi block_noop_workers ở expensive tick, không ở cheap tick.
+# ── K (R6): người đổi cột hoặc comment giữa hai lần giao thì sổ no-op cũ bị xoá; không đổi gì thì giữ.
+reset_case
+mkdir -p "$INFLIGHT_DIR/noops"
+set_card 109 QA; COMMENTS_NOW=3
+echo "$(date +%s) qa QA 3" > "$INFLIGHT_DIR/noops/109"; dispatch_baseline 109 qa 1 > /dev/null
+k_same=$([ -e "$INFLIGHT_DIR/noops/109" ] && echo kept || echo gone)
+COMMENTS_NOW=4; dispatch_baseline 109 qa 1 > /dev/null
+k_comment=$([ -e "$INFLIGHT_DIR/noops/109" ] && echo kept || echo gone)
+COMMENTS_NOW=3; echo "$(date +%s) qa Review 3" > "$INFLIGHT_DIR/noops/109"; dispatch_baseline 109 qa 1 > /dev/null
+k_col=$([ -e "$INFLIGHT_DIR/noops/109" ] && echo kept || echo gone)
+if [ "$k_same" = kept ] && [ "$k_comment" = gone ] && [ "$k_col" = gone ]; then
+  ok "K: ledger kept when column and comments match the last no-op, cleared when either changed"
+else
+  fail "K: ledger handling wrong (same=$k_same comment=$k_comment col=$k_col)"
+fi
+
+# ── L: worker khác đang giữ lock thẻ -> không phán xét (issue_locked && continue).
+reset_case
+set_card 110 QA
+printf 'PID=%s\nLANE=qa\nSTARTED=2026-10-20T13:10:00Z\nFROM_COL=QA\nCOMMENTS0=3\n' "$$" > "$INFLIGHT_DIR/110"
+NOOP_CHECK=" 110:qa:QA:3"; block_noop_workers
+if ! grep -q "^move " "$TMP/writes" && [ ! -e "$INFLIGHT_DIR/noops/110" ]; then
+  ok "L: card with a live lock is not judged"
+else
+  fail "L: live-lock card judged (writes: $(tr '\n' ';' < "$TMP/writes"))"
+fi
+
+# ── M: không chuyển được thẻ sang Blocked -> không comment, không báo đã chuyển, sổ giữ nguyên (lần sau thử lại).
+reset_case
+set_card 111 QA
+set_card_status() { return 1; }
+lock 111 qa QA 3; noop_cycle
+lock 111 qa QA 3; noop_cycle
+set_card_status() { echo "move $1 $2" >> "$TMP/writes"; }
+m_n=$(wc -l < "$INFLIGHT_DIR/noops/111" 2>/dev/null | tr -d ' ')
+if ! grep -q "gh issue comment" "$TMP/writes" && [ "${NOOP_MOVED:-0}" = "0" ] && [ "${m_n:-0}" = "2" ] \
+   && grep -q "could not be moved to Blocked" "$TMP/log"; then
+  ok "M: Blocked move failing -> no comment, ledger kept, drag-by-hand warning logged"
+else
+  fail "M: failed move mishandled (moved=${NOOP_MOVED:-} ledger=${m_n:-} log: $(tr '\n' ';' < "$TMP/log"))"
+fi
+
+# ── J (nối dây): dispatch_lane gọi dispatch_baseline; vòng chính gọi block_noop_workers ở expensive tick, không ở cheap tick.
 disp=$(awk '/^dispatch_lane\(\) \{/{on=1} on{print} on && /^}/{exit}' "$RUNNER")
 exp_section=$(awk '/Expensive-tick path/{on=1} on{print} on && /count_board/{exit}' "$RUNNER")
 cheap_section=$(awk '/^while true; do/{on=1} on{print} on && /Expensive-tick path/{exit}' "$RUNNER")
-case "$disp" in *stamp_dispatch_baseline*) d_ok=1 ;; *) d_ok=0 ;; esac   # no pipe: the runner's pipefail turns grep -q's early exit into SIGPIPE flakes
+case "$disp" in *dispatch_baseline*) d_ok=1 ;; *) d_ok=0 ;; esac   # no pipe: the runner's pipefail turns grep -q's early exit into SIGPIPE flakes
 case "$exp_section" in *block_noop_workers*) e_ok=1 ;; *) e_ok=0 ;; esac
 case "$cheap_section" in *block_noop_workers*) c_bad=1 ;; *) c_bad=0 ;; esac
+[ -n "$disp" ] && [ -n "$exp_section" ] && [ -n "$cheap_section" ] || { d_ok=0; echo "J: a runner section could not be cut out"; }
 if [ "$d_ok" = 1 ] && [ "$e_ok" = 1 ] && [ "$c_bad" = 0 ]; then
-  ok "J: dispatch_lane stamps the baseline; main loop runs block_noop_workers in the expensive tick only"
+  ok "J: dispatch_lane takes the baseline; main loop runs block_noop_workers in the expensive tick only"
 else
   fail "J: wiring for the no-op path missing"
+fi
+
+# ── N (R5): merge-only và merge-train thoát đúng quy trình (để thẻ ở Review, không comment) nên dispatch_lane không bao giờ cho chúng mốc.
+n_off=$(printf '%s\n' "$disp" | grep -c 'noop_judge=0')
+n_use=$(printf '%s\n' "$disp" | grep -c 'dispatch_baseline "\$issue" "\$lane" "\$noop_judge"')
+if [ "${n_off:-0}" -ge 2 ] && [ "${n_use:-0}" = "1" ]; then
+  ok "N: dispatch_lane turns the baseline off for merge-train and merge-only dispatches"
+else
+  fail "N: merge-only/merge-train still get a baseline (noop_judge=0 x${n_off:-0}, baseline call x${n_use:-0})"
 fi
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_noop_worker: all passed" || { echo "❌ test_runner_noop_worker: $FAILS failed"; exit 1; }

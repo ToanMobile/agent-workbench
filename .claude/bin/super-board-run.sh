@@ -1101,15 +1101,18 @@ EOF
     build_item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n and .status == "Ready") | .id][0] // empty' 2>/dev/null || true)
     [ -z "$build_item_id" ] || set_card_status "$build_item_id" "Building" || true
   fi
+  local noop_judge=1 baseline
   case "$lane" in
     build)  prompt="Run super-build on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Builder lifecycle. Config: ${CONFIG_PATH}." ;;
     qa)     prompt="Run super-qa on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Tester lifecycle. Config: ${CONFIG_PATH}." ;;
     review)
       local merge_only="" mo_pr mo_head
       if [ -n "$train_rows" ]; then
+        noop_judge=0
         log "review lane: merge-train for #${train_issues// /, #} (PRs ${train_prs}) — one worker, one verify, no fresh review"
         prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done; red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
       elif merge_only=$(review_approved_head "$issue"); then
+        noop_judge=0
         read -r mo_pr mo_head <<EOF
 $merge_only
 EOF
@@ -1127,6 +1130,7 @@ EOF
   # Worker output goes to a per-worker log, not /dev/null (issue #13). Redirect at the
   # `claude` invocation itself — no wrapping subshell, no `exec` — so the wire to the
   # file survives and `$!` names the worker process rather than a bash stub.
+  baseline=$(dispatch_baseline "$issue" "$lane" "$noop_judge")
   mkdir -p "$WORKER_LOG_DIR"
   local worker_log="${WORKER_LOG_DIR}/worker-${lane}-${issue}.log"
   local worker_log_abs
@@ -1167,12 +1171,11 @@ EOF
   # v1.3.0+ lock format: bash-assignment style so `super-board stop` can source it
   # to recover lane + dispatch time. issue_locked()/reap_finished_locks() still work
   # because PID= is the first line.
-  printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\nTRAIN="%s"\n' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" "$train_issues" > "$INFLIGHT_DIR/$issue"
+  printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\nTRAIN="%s"\n%s' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" "$train_issues" "$baseline" > "$INFLIGHT_DIR/$issue"
   # #228: cả đợt cùng một worker: mỗi thẻ có lock riêng (cùng PID) để issue_locked và reap_finished_locks xử lý từng thẻ như thường.
   for t_issue in $train_issues; do
     [ "$t_issue" = "$issue" ] || printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\nTRAIN="%s"\n' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" "$train_issues" > "$INFLIGHT_DIR/$t_issue"
   done
-  stamp_dispatch_baseline "$issue" "$lane"
   case "$lane" in
     build)
       if lane_idle "${BUILD_PID:-}"; then BUILD_PID="$pid"; BUILD_ISSUE="$issue"
@@ -1466,21 +1469,32 @@ early_backoff() {
 # runner handed the card to the next worker five times in 40 minutes. dispatch_lane stamps the card's column and its issue comment
 # count into the lock; when the worker's lock dies (qa/review lanes only: a build worker moves its card to Building at dispatch, and
 # reclaim_dead_builds already caps those) block_noop_workers compares them with the board. Still in that column with no new comment is
-# a no-op, one line in inflight/noops/<issue>; SB_NOOP_MAX (2) of them inside SB_NOOP_WINDOW_S (24 h) park the card in Blocked instead
+# a no-op, one line `<epoch> <lane> <column> <count>` in inflight/noops/<issue>; SB_NOOP_MAX (2) of them inside SB_NOOP_WINDOW_S (24 h) park the card in Blocked instead
 # of a third dispatch. Bookkeeping only: nothing here may end the runner.
 issue_comment_count() {
   # $1 = issue. Prints its comment count; prints nothing when GitHub cannot say (the caller then concludes nothing).
   python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1" --jq .comments 2>/dev/null | tr -dc '0-9' || true
 }
 
-stamp_dispatch_baseline() {
-  # $1 = issue, $2 = lane; called right after the lock is written. A baseline we cannot read is left out: that lock is never judged.
-  local issue="$1" lane="$2" col count
+dispatch_baseline() {
+  # $1 = issue, $2 = lane, $3 = 1 when the dispatch is judged. Called BEFORE the worker starts (a worker that comments at once would
+  # inflate COMMENTS0, #316 R8); prints the FROM_COL/COMMENTS0 lines for dispatch_lane to write into the lock in the same write as PID=.
+  # Nothing is printed for a baseline we cannot read, for the build lane, or for merge-only / merge-train (the right exit there is
+  # "leave the card in Review", with no comment, #316 R5): that lock is never judged.
+  local issue="$1" lane="$2" judge="${3:-1}" col count last_col last_count
+  [ "$judge" = 1 ] || return 0
   case "$lane" in qa|review) ;; *) return 0 ;; esac
   col=$(issue_status "$issue")
   count=$(issue_comment_count "$issue")
   [ -n "$col" ] && [ -n "$count" ] || return 0
-  printf 'FROM_COL=%s\nCOMMENTS0=%s\n' "$col" "$count" >> "$INFLIGHT_DIR/$issue" 2>/dev/null || true
+  # #316 R6: the card moved or got a comment since the last no-op (its ledger line holds column and count): that no-op is stale.
+  read -r _ _ last_col last_count <<EOF
+$( { tail -n 1 "$INFLIGHT_DIR/noops/$issue" 2>/dev/null || true; } )
+EOF
+  if [ -n "${last_col:-}" ] && { [ "$last_col" != "$col" ] || [ "${last_count:-0}" -lt "$count" ]; }; then
+    rm -f "$INFLIGHT_DIR/noops/$issue" 2>/dev/null || true
+  fi
+  printf 'FROM_COL=%s\nCOMMENTS0=%s\n' "$col" "$count"
 }
 
 note_worker_end() {
@@ -1512,7 +1526,7 @@ EOF
     fi
     now=$(date +%s)
     mkdir -p "$INFLIGHT_DIR/noops" 2>/dev/null || true
-    { { tail -n 19 "$f" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now $lane"; } > "$f.tmp" 2>/dev/null \
+    { { tail -n 19 "$f" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now $lane $col $count"; } > "$f.tmp" 2>/dev/null \
       && mv "$f.tmp" "$f" 2>/dev/null || true
     n=$( { wc -l < "$f"; } 2>/dev/null | tr -d ' ')
     wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
