@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Cho việc nặng chạy theo TẢI MÁY (người dùng 20/10: bỏ giới hạn 2 slot --full): tải 1 phút dưới DEVKIT_SLOT_LOAD_MAX (mặc định
-100, như merge_load_max của merge gate) thì chạy ngay, cao hơn thì chờ tải xuống tối đa DEVKIT_SLOT_LOAD_WAIT_S (600 s) rồi VẪN chạy —
+capacity hold_load của bin/capacity.py — 8 × lõi, 12 lõi: 96, cùng ngưỡng merge gate dùng khi config không đặt merge_load_max) thì chạy ngay, cao hơn thì chờ tải xuống tối đa DEVKIT_SLOT_LOAD_WAIT_S (600 s) rồi VẪN chạy —
 tải không bao giờ làm một suite thành UNTESTED. Chỉ tài nguyên độc quyền còn khoá (P1, 20/10): Unity (1 Editor một lúc), có hàng
 đợi vé: ưu tiên merge > push > interactive > stop > nightly, cùng mức thì việc ngắn trước, chờ lâu được bù 1:1 (không đói). Không còn
 khoá thiết bị (review 20/10): suite thiết bị nhận bằng regex chữ (`bash -n scripts/qa/adb/x.sh` cũng khớp), khoá đó không khớp khoá
@@ -25,9 +25,11 @@ DEFAULT_WAIT_S = 3600.0   # SB_HEAVY_SLOT_WAIT_S: chờ khoá độc quyền (Un
 PRIORITY = {"merge": 0, "push": 1, "interactive": 2, "stop": 3, "nightly": 4}
 DEFAULT_EST_S = 600.0     # suite chưa có thời lượng ghi nhận
 CPU_HEAVY_S = 300.0       # thời lượng ghi nhận dài nhất vượt mức này: suite nặng CPU (DEVKIT_SLOT_CPU_S)
-LOAD_MAX = 100.0          # DEVKIT_SLOT_LOAD_MAX: tải 1 phút (os.getloadavg) dưới mức này thì chạy ngay (người dùng 20/10)
+LOAD_MAX = 100.0          # DEVKIT_SLOT_LOAD_MAX: tải 1 phút (os.getloadavg) dưới mức này thì chạy ngay (người dùng 20/10); mặc định là
+                          # capacity hold_load (T0052, 8 × lõi, 12 lõi: 96), số này chỉ dùng khi không nạp được bin/capacity.py
 LOAD_WAIT_S = 600.0       # DEVKIT_SLOT_LOAD_WAIT_S: tải cao thì chờ tối đa chừng này rồi vẫn chạy; 0 = không chờ
-HEAVY_MAX = 3             # DEVKIT_SLOT_HEAVY_MAX: số suite nặng (cpu/gradle/xcode) chạy cùng lúc trên cả máy; hết slot thì xếp hàng (người dùng 21/10)
+HEAVY_MAX = 3             # DEVKIT_SLOT_HEAVY_MAX: số suite nặng (cpu/gradle/xcode) chạy cùng lúc trên cả máy; hết slot thì xếp hàng (người dùng 21/10);
+                          # mặc định là capacity heavy_max (T0052, 12 lõi: 3), số này chỉ dùng khi không nạp được bin/capacity.py
 HEAVY_CLASSES = ("cpu", "gradle", "xcode")   # Unity có khoá riêng (1 Editor); suite nhẹ và thiết bị không đếm
 ADVISORY_BUDGET_S = 600.0  # DEVKIT_SLOT_ADVISORY_BUDGET_S: tổng giây ĐỒNG HỒ một tiến trình được chờ tải (chờ chồng nhau tính một lần)
 # Sổ chờ tải của tiến trình: giây đồng hồ đã chờ (các khoảng có ít nhất một suite đang chờ, hợp lại), số suite đang chờ, lúc khoảng
@@ -99,16 +101,68 @@ def load_now() -> Optional[float]:
     return value if value == value and 0 <= value != float("inf") else None
 
 
+_CAPACITY: list = []   # [module capacity hoặc None]: nạp một lần cho cả tiến trình
+
+
+def _capacity():
+    """bin/capacity.py (nguồn sức chứa chung, T0052) nạp một lần; None khi không nạp được (kit cũ thiếu file): chỗ gọi dùng hằng cũ."""
+    if not _CAPACITY:
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        try:
+            import capacity  # noqa: PLC0415 - module anh em trong bin/
+            _CAPACITY.append(capacity)
+        except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không được làm chết gate
+            print(f"[heavy-slot] không nạp được bin/capacity.py ({exc!r}); dùng ngưỡng cũ (tải {LOAD_MAX:g}, {HEAVY_MAX} suite nặng)",
+                  file=sys.stderr, flush=True)
+            _CAPACITY.append(None)
+    return _CAPACITY[0]
+
+
+_CAPACITY_WARNED: set = set()   # khoá capacity đã báo hỏng: một dòng mỗi khoá cho cả tiến trình
+
+
+def _from_capacity(key: str, ok, fallback):
+    """capacity.<key>(); capacity vắng thì fallback. Nạp được mà hàm thiếu (file 0 byte, cắt cụt), ném lỗi hay trả ngoài miền
+    (ok(value) sai) cũng fallback, kèm một dòng stderr mỗi khoá — Antigravity audit 23/10: file rỗng làm AttributeError sập gate ở
+    acquire_for_suite, heavy_max 0 thành pool_paths rỗng = không khoá suite nặng nào."""
+    cap = _capacity()
+    if cap is None:
+        return fallback
+    try:
+        value = getattr(cap, key)()
+        if ok(value):
+            return value
+        why = f"trả {value!r}, ngoài miền"
+    except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì cũng không được làm chết gate
+        why = repr(exc)
+    if key not in _CAPACITY_WARNED:
+        _CAPACITY_WARNED.add(key)
+        print(f"[heavy-slot] capacity {key}: {why}; dùng {fallback}", file=sys.stderr, flush=True)
+    return fallback
+
+
+def _positive_finite(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and 0 < value != float("inf")
+
+
 def load_max() -> float:
-    """Ngưỡng tải (DEVKIT_SLOT_LOAD_MAX); rỗng, rác hay không dương thì 100."""
-    value = _env_float("DEVKIT_SLOT_LOAD_MAX", LOAD_MAX)
-    return value if value > 0 else LOAD_MAX
+    """Ngưỡng tải (DEVKIT_SLOT_LOAD_MAX); rỗng, rác hay không dương thì capacity hold_load (ngưỡng của việc BẮT BUỘC, 8 × lõi,
+    12 lõi: 96 — người dùng 20/10: "dưới 100 thì cho chạy"), không có hay hỏng capacity thì 100."""
+    value = _env_float("DEVKIT_SLOT_LOAD_MAX", 0.0)
+    if value > 0:
+        return value
+    return float(_from_capacity("hold_load", _positive_finite, LOAD_MAX))
 
 
 def heavy_max() -> int:
-    """Trần suite nặng cùng lúc (DEVKIT_SLOT_HEAVY_MAX); rỗng, rác, không dương hay không nguyên thì 3."""
-    value = _env_float("DEVKIT_SLOT_HEAVY_MAX", HEAVY_MAX)
-    return int(value) if value >= 1 and value == int(value) else HEAVY_MAX
+    """Trần suite nặng cùng lúc (DEVKIT_SLOT_HEAVY_MAX); rỗng, rác, không dương hay không nguyên thì capacity heavy_max (12 lõi: 3),
+    không có hay hỏng capacity thì 3."""
+    value = _env_float("DEVKIT_SLOT_HEAVY_MAX", 0.0)
+    if value >= 1 and value == int(value):
+        return int(value)
+    return _from_capacity("heavy_max", lambda v: type(v) is int and v >= 1, HEAVY_MAX)
 
 
 def wait_load(wait_s: float, label: str = "") -> tuple:
