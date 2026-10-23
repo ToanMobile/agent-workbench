@@ -144,6 +144,19 @@ class NewCardsAndBulkMove(unittest.TestCase):
             r = self.app.act("move-all", {"from": "Backlog", "to": "Review"})  # no project has Review here
         self.assertEqual((r["moved"], r["failedCount"]), (0, 3))
 
+    def test_cards_without_status_are_set_to_backlog_once(self):
+        it = self.app.project["items"][0]
+        it["status"] = server.NO_STATUS
+        self.app.project["columns"].append({"name": server.NO_STATUS, "kind": "backlog", "ghColor": None, "noStatus": True})
+        self.app.backfilled = set()
+        calls = []
+        with mock.patch.object(server, "gh_graphql", side_effect=lambda q, v: calls.append(v) or {}):
+            self.app.backfill_backlog(self.app.project)
+            self.app.backfill_backlog(self.app.project)
+        self.assertEqual([c["o"] for c in calls], ["OPT_1_Backlog"])
+        self.assertEqual(it["status"], "Backlog")
+        self.assertFalse(any(c.get("noStatus") for c in self.app.project["columns"]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1182,6 +1182,7 @@ class App:
         self.sessions, self.sess_info, self.file_ticks = [], {"ok": False}, []
         self.state_bytes = b"{}"
         self.refresh_evt = threading.Event()
+        self.backfilled = set()  # thẻ đã thử đặt Backlog, mỗi thẻ chỉ thử một lần
         self.demo_manifests = None
         # nhật ký sự kiện: lưu ra file để còn nguyên khi tải lại trang hoặc khởi động lại server
         self.events, self.prev_rows, self.prev_items, self.user_moves = [], None, None, {}
@@ -1323,6 +1324,26 @@ class App:
         f = next((x for x in (part.get("selectFields") or []) if x["name"] == part.get("statusField")), None)
         return next((o["name"] for o in (f or {}).get("options", []) if column_kind(o["name"]) == "backlog"), None)
 
+    def backfill_backlog(self, proj):
+        """Thẻ vào Project mà chưa có Status (issue tự thêm, createTask) được đặt Backlog ngay trên GitHub."""
+        if self.demo:
+            return
+        for it in proj["items"]:
+            if it["status"] != NO_STATUS or it["id"] in self.backfilled:
+                continue
+            self.backfilled.add(it["id"])
+            part = (proj.get("parts") or {}).get(it.get("pid")) or proj
+            name = self._default_status(part)
+            if not name:
+                continue
+            try:
+                self._set(it["id"], part["statusField"], name, part)
+                it["status"] = name
+            except (ValueError, GhError, KeyError) as e:
+                warn(f"đặt Backlog cho {it.get('number') or it['id']}", e)
+        if not any(i["status"] == NO_STATUS for i in proj["items"]):
+            proj["columns"] = [c for c in proj["columns"] if not c.get("noStatus")]
+
     def act(self, action: str, body: dict) -> dict:
         if not self.demo and not (self.project.get("id") and self.gh_meta.get("ok")):
             raise ValueError("Chưa kết nối được GitHub Project nên chưa sửa được.")
@@ -1430,6 +1451,7 @@ class App:
             changed = True  # an error also needs a rebuild, so the notice shows
             try:
                 proj = fetch_projects(self.cfg["github"])
+                self.backfill_backlog(proj)
                 with self.lock:
                     self.project = proj
                     self.gh_meta = {"ok": True, "error": "; ".join(proj.get("partialErrors") or []) or None,
