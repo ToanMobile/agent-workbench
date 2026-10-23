@@ -110,8 +110,6 @@ board_notify() {
   python3 "$SCRIPT_DIR/super-board-notify.py" "$@" || true
 }
 
-
-
 resolve_pos_int() {
   # $1 = đường dẫn config; $2 = khoá; $3 = mặc định. Số nguyên >= 1; thiếu hoặc sai thì mặc định (#252).
   local v
