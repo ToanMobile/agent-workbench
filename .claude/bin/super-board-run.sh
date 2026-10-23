@@ -826,6 +826,20 @@ lane_dispatch_tick() {
   [ "$before" -gt 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
 }
 
+tick_is_cheap() {
+  # #288: 0 khi tick này không giao được gì nên khỏi đọc board (GraphQL): ACTIVE=MAX và mỗi lane QA/Review hoặc đã đủ worker, hoặc đang rảnh
+  # (lane rảnh bị trần max_workers chặn, lane_dispatch_tick). Trước đây lane rảnh làm tick không bao giờ rẻ khi max_workers < 3.
+  [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ] || return 1
+  { [ "$QA_COUNT" -ge "$QA_WORKERS" ] || [ "$QA_COUNT" -eq 0 ]; } || return 1
+  { [ "$REVIEW_COUNT" -ge "$REVIEW_WORKERS" ] || [ "$REVIEW_COUNT" -eq 0 ]; } || return 1
+}
+
+ready_qa_lane_free() {
+  # #288: $1 = số thẻ Ready. Lane QA nhận được thẻ `qa` từ Ready khi Ready có thẻ và lane còn chỗ; Ready trống thì không hỏi (mỗi tick
+  # một lần lane_slot_free + một dòng log vô ích).
+  [ "${1:-0}" -gt 0 ] && lane_slot_free qa
+}
+
 tick_sleep() {
   # $1 = số giây. Một `sleep` bị kill không được kết thúc runner: 17/10 12:17 cả 5 runner chết với
   # `Terminated: 15 sleep "$TICK_SECONDS"` (sleep rc 143 dưới `set -e`) và nằm chết 2 ngày. Chỉ stop marker của
@@ -1510,6 +1524,8 @@ reap_finished_locks() {
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
       note_worker_exit "$issue"
       note_early_death "$issue"
+      # #288: PID chết rời danh sách "đã thấy ở QA": Tester mới tái dùng PID đó phải bắt đầu sạch (ân hạn Ready → QA).
+      [ -z "$PID" ] || QA_SEEN_IN_QA=$(printf '%s\n' ${QA_SEEN_IN_QA:-} | grep -vxF -- "$PID" | tr '\n' ' ') || true
       [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
@@ -2399,7 +2415,7 @@ while true; do
   #    The board can't change in a way that helps us until a lane frees up.
   #    QA/Review còn chỗ thêm worker (qa_workers/review_workers > số đang chạy) thì KHÔNG coi là đầy: worker thêm không tốn slot lane (#209).
   #    Trần mặc định 1 thì QA_COUNT>=QA_WORKERS khi lane bận, nên điều kiện này đúng như cũ.
-  if [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ] && [ "$QA_COUNT" -ge "$QA_WORKERS" ] && [ "$REVIEW_COUNT" -ge "$REVIEW_WORKERS" ]; then
+  if tick_is_cheap; then
     log "tick — cap reached (${ACTIVE_WORKERS}/${MAX_WORKERS} busy) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
     tick_sleep "$TICK_SECONDS"
     continue
@@ -2464,7 +2480,7 @@ while true; do
   QA_FREE=0; QA_DISPATCHED=0
   if [ "$QA" -gt 0 ]; then lane_dispatch_tick qa QA; QA_DISPATCHED=$LANE_DISPATCHED; fi
   # Thẻ Ready mang nhãn `qa` đi vào lane QA: chỉ khi tick này lane QA chưa nhận thẻ nào và còn chỗ.
-  if [ "$QA_DISPATCHED" -eq 0 ] && lane_slot_free qa; then QA_FREE=1; fi
+  if [ "$QA_DISPATCHED" -eq 0 ] && ready_qa_lane_free "$READY"; then QA_FREE=1; fi
   # Ready: the top card's label picks the lane — `qa` skips Building (Tester),
   # anything else is built first. A busy lane waits for the next tick.
   # Lane build: worker đầu như trước; worker thêm (build_workers > 1) chỉ khi tải máy cho phép (build_slot_free, một worker mỗi tick).
