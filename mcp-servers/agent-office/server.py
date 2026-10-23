@@ -1635,6 +1635,10 @@ def main():
         with open(args.config, encoding="utf-8") as f:
             user_cfg = json.load(f)
     cfg = deep_merge(DEFAULTS, user_cfg)
+    try:  # Agent Office chỉ để xem: nhường CPU cho agent, gate và test đang chạy trên máy
+        os.nice(10)
+    except (OSError, AttributeError) as e:  # Windows không có os.nice: chạy với ưu tiên thường
+        warn("không hạ được ưu tiên tiến trình", e)
     if args.port:
         cfg["port"] = args.port
     if args.check:
