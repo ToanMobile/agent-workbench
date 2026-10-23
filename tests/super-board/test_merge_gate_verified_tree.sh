@@ -131,4 +131,16 @@ mkcfg "$TMP/cfgqb.json" "$PFG"
 BEFORE=$(runs); gate 44 "$PFG"; G=$(runs)
 [ "$GATE_RC" -eq 0 ] && [ "$G" -eq "$BEFORE" ] && ok "key uses the injected commands on both sides: gate skips (runs unchanged)" || fail "injected-flags key (rc=$GATE_RC runs=$G, want 0 and $BEFORE)"
 
+# R5: thông báo đúng nguồn bằng chứng; --record từ chối cây chưa gộp origin/<base> hiện tại; verify_commands rỗng không lỗi bash 3.2
+grep -q "merge train proved" "$TMP/gate43.log" && fail "receipt skip is reported as 'merge train proved' (gate43.log)" || ok "receipt skip does not claim the merge train proved it"
+mkpr 45
+QC="$R/.claude/worktrees/qa-45"; git -C "$R" worktree add -q --detach "$QC" "issue-45-x"
+echo c > "$R/c"; git -C "$R" add c; git -C "$R" commit -qm "base moves again"; git -C "$R" push -q origin main
+mkcfg "$TMP/cfgqc.json" "$CMD"
+( cd "$QC" && bash "$ROOT/.claude/bin/super-board-verify-cmd.sh" --config "$TMP/cfgqc.json" --record ) >"$TMP/qc.out" 2>&1; CRC=$?
+[ "$CRC" -eq 65 ] && ok "QA --record refuses a tree that lacks the current origin/<base> (exit 65)" || fail "stale-base record (rc=$CRC, want 65): $(cat "$TMP/qc.out")"
+python3 -c 'import json; print(json.dumps({"base_branch":"main","repo":{"path":"."},"verify_commands":[]}))' > "$TMP/cfgempty.json"
+( cd "$QC" && git merge -q --no-edit origin/main && /bin/bash "$ROOT/.claude/bin/super-board-verify-cmd.sh" --config "$TMP/cfgempty.json" --record ) >"$TMP/qe.out" 2>&1; ERC=$?
+[ "$ERC" -eq 0 ] && ok "QA --record with no verify commands exits 0 without a receipt" || fail "empty-commands record (rc=$ERC, want 0): $(cat "$TMP/qe.out")"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_gate_verified_tree: all passed" || { echo "❌ test_merge_gate_verified_tree: $FAILS failed"; exit 1; }

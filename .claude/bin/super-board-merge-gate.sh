@@ -818,7 +818,8 @@ for cmd in "${VERIFY[@]}"; do
   fi
 done
 # #288: tiền tố `verified green against` giữ nguyên (proof_gate.sh đọc nó); phần sau nói thật số lệnh đã chạy ở đây.
-if [ "$TRAIN_PROVED" -eq 1 ]; then say "verified green against ${BASE} (0 command(s) run here; the merge train proved this exact tree)"
+if [ "$TREE_PROVED" -eq 1 ]; then say "verified green against ${BASE} (0 command(s) run here; a receipt of this exact merged tree and commands exists)"
+elif [ "$TRAIN_PROVED" -eq 1 ]; then say "verified green against ${BASE} (0 command(s) run here; the merge train proved this exact tree)"
 else say "verified green against ${BASE} (${#VERIFY[@]} command(s))"; fi
 if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ]; then
   mkdir -p "${TREE_RECEIPT%/*}" && : > "$TREE_RECEIPT" || say "could not write the verified-tree receipt ${TREE_RECEIPT}; the next gate verifies again"

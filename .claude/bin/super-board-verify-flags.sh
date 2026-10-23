@@ -38,7 +38,9 @@ sb_verified_tree_receipt() {
   local tree="$1" base="$2" repo="$3" common kit key c; shift 3
   common=$(cd "$repo" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || return 0
   [ -n "$common" ] || return 0
-  kit=$(git hash-object "$repo/.agents/devkit/bin/post-fix-gate.py" 2>/dev/null || echo none)
+  # R4: kit thiếu ở $repo (worktree không link) thì dùng kit của chính checkout chứa script này; cả hai thiếu mới là `none`.
+  kit=$(git hash-object "$repo/.agents/devkit/bin/post-fix-gate.py" 2>/dev/null \
+    || git hash-object "$(dirname "${BASH_SOURCE[0]}")/../../.agents/devkit/bin/post-fix-gate.py" 2>/dev/null || echo none)
   key=$({ printf '%s\n%s\n' "$tree" "$kit"; for c in "$@"; do sb_verify_inject_flags "$c" "$base"; echo; done; } | shasum -a 256 | cut -d' ' -f1)
   printf '%s/super-board/verified-trees/%s' "$common" "$key"
 }

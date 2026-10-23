@@ -20,7 +20,10 @@ done
 # --record (#226 gap 7): QA gọi SAU KHI mọi lệnh trên xanh, trên cây gộp sạch. Ghi biên nhận cùng khoá với merge gate; base đổi thì khoá khác.
 if [ "$RECORD" -eq 1 ]; then
   [ -z "$(git status --porcelain 2>/dev/null)" ] || { echo "super-board-verify-cmd: --record needs a clean merged tree" >&2; exit 65; }
+  # Cây phải chứa origin/<base> hiện tại: khoá theo tree, nhưng QA chưa gộp base mới thì cây này không phải cây merge gate sẽ dựng.
+  git merge-base --is-ancestor "origin/$BASE" HEAD 2>/dev/null || { echo "super-board-verify-cmd: --record needs origin/$BASE merged into this tree" >&2; exit 65; }
   CMDS=(); while IFS= read -r c; do CMDS+=("$c"); done < <(jq -r '.verify_commands[] | select(test("\\S"))' "$CONFIG")
+  [ "${#CMDS[@]}" -gt 0 ] || { echo "super-board-verify-cmd: no verify commands; no receipt" >&2; exit 0; }   # bash 3.2: "${CMDS[@]}" rỗng lỗi unbound
   RECEIPT=$(sb_verified_tree_receipt "$(git rev-parse 'HEAD^{tree}')" "$BASE" "." "${CMDS[@]}")
   [ -n "$RECEIPT" ] || { echo "super-board-verify-cmd: no git common dir; no receipt" >&2; exit 66; }
   mkdir -p "${RECEIPT%/*}" && : > "$RECEIPT" && echo "recorded verified tree receipt ${RECEIPT##*/}" >&2
