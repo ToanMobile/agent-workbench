@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Test: lane build chạy NHIỀU worker, số worker theo tải máy (người dùng 21/10: "chạy theo workload cpu, không cố định số lượng").
 #  - config `build_workers` = trần trên (mặc định 10; đặt 1 để về một worker);
-#  - mỗi tick lane build chỉ khởi THÊM tối đa một worker, và chỉ khi tải 1 phút < build_load_max (mặc định DEVKIT_SLOT_LOAD_MAX, thiếu thì 100);
+#  - mỗi tick lane build chỉ khởi THÊM tối đa một worker, và chỉ khi tải 1 phút < build_load_max (mặc định DEVKIT_SLOT_LOAD_MAX, thiếu thì
+#    capacity busy_load — T0052, 12 lõi: 36 —, capacity vắng thì 100);
 #  - tải tăng không giết worker đang chạy, chỉ ngừng khởi thêm; tải không đọc được = không quá worker đầu tiên (fail closed);
 #  - mỗi tick log quyết định; dừng khẩn / nhận lại lúc khởi động / quét zombie nhận ra cả N worker.
 # Chạy offline: runner source ở lib mode, gh/claude là stub, tải đọc từ file (SB_BUILD_LOAD_FILE). Tương thích bash 3.2.
@@ -26,7 +27,9 @@ export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_D
 
 # #252: số gate thật trên máy không được chi phối test; 0 = không có gate nào đang chạy
 printf "0\n" > "$TMP/gates0"; export SB_GATE_COUNT_FILE="$TMP/gates0"
-unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX
+unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX DEVKIT_CAPACITY SB_CAPACITY
+# T0052: máy giả 12 lõi rảnh cho nguồn sức chứa chung (bin/capacity.py): busy_load 36, build_workers 10, không lệ thuộc máy chạy test
+export DEVKIT_CAPACITY_CORES=12 DEVKIT_CAPACITY_LOAD=0
 export SB_ZOMBIE_GRACE=0  # test kill trực tiếp, không chờ ân hạn (#237)
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
@@ -132,10 +135,15 @@ grep -q '^BUILD_WORKERS=$(resolve_build_workers "$CONFIG_PATH")' "$RUNNER" && gr
   && ok "  … the config read at startup goes through resolve_build_workers / resolve_build_load_max (the defaults apply)" || fail "startup config read does not use the resolvers"
 grep -n 'BUILD_FREE' "$RUNNER" | grep -q 'READY' && ok "  … Ready dispatch is gated by BUILD_FREE" || fail "Ready dispatch not gated by BUILD_FREE"
 
-# ── 8. ngưỡng tải mặc định = 100 (người dùng 21/10: "tải máy dưới 100 thì cho chạy"), cùng luật với DEVKIT_SLOT_LOAD_MAX
+# ── 8. ngưỡng tải mặc định = capacity busy_load (T0052: 3 × lõi, 12 lõi: 36), capacity vắng thì 100 (người dùng 21/10), cùng luật với
+#       DEVKIT_SLOT_LOAD_MAX
 cfg_with() { printf '%s\n' "$1" > "$TMP/c.json"; }
 cfg_with '{}'; d=$(resolve_build_load_max "$TMP/c.json")
-[ "$d" = 100 ] && ok "default build_load_max is 100" || fail "default build_load_max is '$d' (want 100)"
+[ "$d" = 36 ] && ok "default build_load_max is capacity busy_load (36 on 12 cores)" || fail "default build_load_max is '$d' (want 36)"
+d=$(DEVKIT_CAPACITY_CORES=4 resolve_build_load_max "$TMP/c.json")
+[ "$d" = 12 ] && ok "  … mặc định đi theo số lõi: 4 lõi -> 12" || fail "4 lõi: build_load_max '$d' (muốn 12)"
+d=$(SB_CAPACITY=/nonexistent resolve_build_load_max "$TMP/c.json")
+[ "$d" = 100 ] && ok "  … capacity vắng (SB_CAPACITY=/nonexistent): về 100 như cũ" || fail "capacity vắng: '$d' (muốn 100)"
 d=$(DEVKIT_SLOT_LOAD_MAX=64 resolve_build_load_max "$TMP/c.json")
 [ "$d" = 64 ] && ok "  … unset in config and env: reuses DEVKIT_SLOT_LOAD_MAX" || fail "DEVKIT_SLOT_LOAD_MAX not reused: '$d'"
 cfg_with '{"build_load_max": 30}'; d=$(DEVKIT_SLOT_LOAD_MAX=64 resolve_build_load_max "$TMP/c.json")
@@ -143,10 +151,14 @@ cfg_with '{"build_load_max": 30}'; d=$(DEVKIT_SLOT_LOAD_MAX=64 resolve_build_loa
 d=$(SB_BUILD_LOAD_MAX=12.5 resolve_build_load_max "$TMP/c.json")
 [ "$d" = 12.5 ] && ok "  … SB_BUILD_LOAD_MAX beats the config key" || fail "SB_BUILD_LOAD_MAX lost: '$d'"
 cfg_with '{"build_load_max": "abc"}'; d=$(resolve_build_load_max "$TMP/c.json")
-[ "$d" = 100 ] && ok "  … an invalid value falls back to 100" || fail "invalid value gave '$d'"
-# OCR 21/10: mỗi nguồn phải là số DƯƠNG (như heavy_slot.load_max) và nguồn sai thì xét nguồn kế, không nhảy thẳng về 100
+[ "$d" = 36 ] && ok "  … an invalid value falls back to capacity busy_load (36)" || fail "invalid value gave '$d' (want 36)"
+d=$(SB_CAPACITY=/nonexistent resolve_build_load_max "$TMP/c.json")
+[ "$d" = 100 ] && ok "  … giá trị sai và capacity vắng: về 100" || fail "invalid value, no capacity gave '$d' (muốn 100)"
+# OCR 21/10: mỗi nguồn phải là số DƯƠNG (như heavy_slot.load_max) và nguồn sai thì xét nguồn kế, không nhảy thẳng về mặc định
 cfg_with '{}'; d=$(DEVKIT_SLOT_LOAD_MAX=0 resolve_build_load_max "$TMP/c.json")
-[ "$d" = 100 ] && ok "  … DEVKIT_SLOT_LOAD_MAX=0 is not a threshold (100, as heavy_slot)" || fail "DEVKIT_SLOT_LOAD_MAX=0 gave '$d'"
+[ "$d" = 36 ] && ok "  … DEVKIT_SLOT_LOAD_MAX=0 is not a threshold (capacity 36, as heavy_slot)" || fail "DEVKIT_SLOT_LOAD_MAX=0 gave '$d' (want 36)"
+d=$(SB_CAPACITY=/nonexistent DEVKIT_SLOT_LOAD_MAX=0 resolve_build_load_max "$TMP/c.json")
+[ "$d" = 100 ] && ok "  … DEVKIT_SLOT_LOAD_MAX=0 và capacity vắng: về 100" || fail "DEVKIT_SLOT_LOAD_MAX=0, no capacity gave '$d' (muốn 100)"
 cfg_with '{"build_load_max": 0}'; d=$(DEVKIT_SLOT_LOAD_MAX=64 resolve_build_load_max "$TMP/c.json")
 [ "$d" = 64 ] && ok "  … build_load_max=0 is skipped, the next source (64) counts" || fail "build_load_max=0 gave '$d'"
 cfg_with '{"build_load_max": 30}'; d=$(SB_BUILD_LOAD_MAX=abc resolve_build_load_max "$TMP/c.json")
@@ -154,21 +166,26 @@ cfg_with '{"build_load_max": 30}'; d=$(SB_BUILD_LOAD_MAX=abc resolve_build_load_
 d=$(SB_BUILD_LOAD_MAX=0.0 DEVKIT_SLOT_LOAD_MAX=7 resolve_build_load_max "$TMP/c.json")
 [ "$d" = 30 ] && ok "  … 0.0 is not positive: skipped" || fail "SB_BUILD_LOAD_MAX=0.0 gave '$d'"
 
-# ── 9. build_workers mặc định = 10 (người dùng 21/10); khoá config vẫn đặt lại được, build_workers=1 quay về một worker
+# ── 9. build_workers mặc định = capacity build_workers (T0052, 12 lõi: 10; capacity vắng: 10 như người dùng 21/10); khoá config vẫn
+#       đặt lại được, build_workers=1 quay về một worker
 cfg_with '{}'; w=$(resolve_build_workers "$TMP/c.json")
-[ "$w" = 10 ] && ok "default build_workers is 10" || fail "default build_workers is '$w' (want 10)"
+[ "$w" = 10 ] && ok "default build_workers is 10 (capacity, 12 cores)" || fail "default build_workers is '$w' (want 10)"
+w=$(DEVKIT_CAPACITY_CORES=4 resolve_build_workers "$TMP/c.json")
+[ "$w" = 3 ] && ok "  … mặc định đi theo số lõi: 4 lõi -> 3" || fail "4 lõi: build_workers '$w' (muốn 3)"
+w=$(SB_CAPACITY=/nonexistent DEVKIT_CAPACITY_CORES=4 resolve_build_workers "$TMP/c.json")
+[ "$w" = 10 ] && ok "  … capacity vắng: về 10 như cũ" || fail "capacity vắng: build_workers '$w' (muốn 10)"
 cfg_with '{"build_workers": 1}'; w=$(resolve_build_workers "$TMP/c.json")
 [ "$w" = 1 ] && ok "  … build_workers=1 in the config still gives one worker" || fail "build_workers=1 gave '$w'"
 cfg_with '{"build_workers": 4}'; w=$(resolve_build_workers "$TMP/c.json")
 [ "$w" = 4 ] && ok "  … any other value is honoured" || fail "build_workers=4 gave '$w'"
-for bad in '"x"' 0 -3 2.5 '"000"' 99999999999999999999; do cfg_with "{\"build_workers\": $bad}"; w=$(resolve_build_workers "$TMP/c.json")
-  [ "$w" = 10 ] && ok "  … an invalid build_workers ($bad) falls back to 10" || fail "build_workers=$bad gave '$w'"; done
-# with the defaults, low load climbs past one worker; load at the default limit holds; unreadable load stays at one
+for bad in '"x"' 0 -3 2.5 '"000"' 99999999999999999999; do cfg_with "{\"build_workers\": $bad}"; w=$(DEVKIT_CAPACITY_CORES=4 resolve_build_workers "$TMP/c.json")
+  [ "$w" = 3 ] && ok "  … an invalid build_workers ($bad) falls back to capacity (3 on 4 cores)" || fail "build_workers=$bad gave '$w' (want 3)"; done
+# with the defaults (12 cores: limit 36), low load climbs past one worker; load at the default limit holds; unreadable load stays at one
 cfg_with '{}'; reset; BUILD_WORKERS=$(resolve_build_workers "$TMP/c.json"); BUILD_LOAD_MAX=$(resolve_build_load_max "$TMP/c.json")
-load 40; cards 1 2 3; tick; tick; tick; build_workers_count
-[ "$BUILD_COUNT" = 3 ] && ok "defaults, load 40: the lane climbs to 3 workers" || fail "defaults, load 40: $BUILD_COUNT workers"
-reset; load 100; cards 1 2 3; tick; tick; build_workers_count
-[ "$BUILD_COUNT" = 1 ] && ok "defaults, load 100 (>= limit): holds at one" || fail "defaults, load 100: $BUILD_COUNT workers"
+load 20; cards 1 2 3; tick; tick; tick; build_workers_count
+[ "$BUILD_COUNT" = 3 ] && ok "defaults, load 20 (< 36): the lane climbs to 3 workers" || fail "defaults, load 20: $BUILD_COUNT workers (limit $BUILD_LOAD_MAX)"
+reset; load 36; cards 1 2 3; tick; tick; build_workers_count
+[ "$BUILD_COUNT" = 1 ] && ok "defaults, load 36 (>= limit): holds at one" || fail "defaults, load 36: $BUILD_COUNT workers (limit $BUILD_LOAD_MAX)"
 reset; load ""; cards 1 2 3; tick; tick; build_workers_count
 [ "$BUILD_COUNT" = 1 ] && ok "defaults, unreadable load: still one worker" || fail "defaults, unreadable load: $BUILD_COUNT workers"
 

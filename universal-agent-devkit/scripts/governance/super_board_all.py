@@ -73,9 +73,26 @@ def heavy_slot_dir():
     return os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")
 
 
+CAPACITY_PY = Path(__file__).resolve().parents[2] / "bin" / "capacity.py"   # nguồn sức chứa chung (T0052)
+
+
+def hold_load_text():
+    """Câu báo ngưỡng tải của suite: hold_load thật của bin/capacity.py (8 × lõi, cùng ngưỡng heavy_slot.load_max); không nạp được
+    capacity thì câu dự phòng không có số."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("devkit_capacity", str(CAPACITY_PY))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return "dưới %d thì chạy" % mod.hold_load()
+    except Exception as exc:   # noqa: BLE001 - chỉ là dòng báo, capacity hỏng kiểu gì cũng không được chặn khởi động runner
+        print("⚠ không nạp được %s: %r" % (CAPACITY_PY, exc), file=sys.stderr)
+        return "dưới ngưỡng hold_load của bin/capacity.py thì chạy"
+
+
 def ensure_heavy_slots(directory=None):
     """Tạo đúng 2 file slot cho các bản DevKit cũ còn khoá chúng. DevKit hiện tại không khoá: suite chạy theo tải máy
-    (bin/heavy_slot.py, DEVKIT_SLOT_LOAD_MAX = 100; người dùng 20/10: bỏ giới hạn 2 slot)."""
+    (bin/heavy_slot.py, DEVKIT_SLOT_LOAD_MAX, mặc định capacity hold_load = 8 × lõi; người dùng 20/10: bỏ giới hạn 2 slot)."""
     directory = directory or heavy_slot_dir()
     os.makedirs(directory, mode=0o700, exist_ok=True)
     for number in range(1, SLOT_COUNT + 1):
@@ -152,7 +169,7 @@ def start_all():
     print("=================================================================\n")
     locks_dir = ensure_heavy_slots()
     ensure_claude_workspace_trust()
-    print(f"🔒 Suite nặng chạy theo tải máy (dưới 100 thì chạy; khoá riêng chỉ cho Unity): {locks_dir}\n")
+    print(f"🔒 Suite nặng chạy theo tải máy ({hold_load_text()}; khoá riêng chỉ cho Unity): {locks_dir}\n")
     for repo in REPOS:
         rdir = repo["dir"]
         slug = repo["slug"]
