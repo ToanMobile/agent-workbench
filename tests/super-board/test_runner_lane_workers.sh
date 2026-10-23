@@ -150,6 +150,33 @@ adopt_live_locks; q=$(qa_count); r=$(review_count)
 unset -f ps
 QA_PID=""; QA_EXTRA=""; REVIEW_PID=""; REVIEW_EXTRA=""
 
+# ── 8b. #288: PID của Tester đã chết phải rời QA_SEEN_IN_QA, không thì Tester mới tái dùng PID đó thừa hưởng "đã thấy ở QA".
+reset; QA_WORKERS=2; load 1; cards QA 1 2; tick_qa; tick_qa
+dead_pid="${QA_EXTRA%%:*}"; live_pid="$QA_PID"; QA_SEEN_IN_QA="$dead_pid $live_pid"
+kill "$dead_pid" 2>/dev/null; wait "$dead_pid" 2>/dev/null; reap_finished_locks
+case " $QA_SEEN_IN_QA " in *" $dead_pid "*) fail "reap kept the dead tester's PID in QA_SEEN_IN_QA ('$QA_SEEN_IN_QA')" ;;
+  *) case " $QA_SEEN_IN_QA " in *" $live_pid "*) ok "reap drops a dead tester's PID from QA_SEEN_IN_QA and keeps the live one" ;; *) fail "reap dropped the live tester too ('$QA_SEEN_IN_QA')" ;; esac ;; esac
+
+# ── 8c. #288: tick rẻ (bỏ qua GraphQL) khi ACTIVE=MAX và không lane nào giao được: lane rảnh bị trần max_workers chặn nên cũng "đầy".
+reset; QA_WORKERS=1; REVIEW_WORKERS=1
+tick_is_cheap_with() { ACTIVE_WORKERS=$1; MAX_WORKERS=$2; QA_COUNT=$3; REVIEW_COUNT=$4; tick_is_cheap && echo cheap || echo full; }
+r=$(tick_is_cheap_with 2 2 1 0)
+[ "$r" = cheap ] && ok "max_workers=2, build+qa busy, review idle: cheap tick (an idle lane cannot start at the cap)" || fail "idle lane at the cap: $r (want cheap)"
+r=$(tick_is_cheap_with 3 3 1 1)
+[ "$r" = cheap ] && ok "  … all lanes busy at the cap: cheap tick, as before" || fail "all busy: $r (want cheap)"
+r=$(tick_is_cheap_with 1 3 0 0)
+[ "$r" = full ] && ok "  … below the cap: full tick" || fail "below the cap: $r (want full)"
+QA_WORKERS=3; r=$(tick_is_cheap_with 3 3 1 1)
+[ "$r" = full ] && ok "  … a lane with room for another worker (1/3): full tick" || fail "qa 1/3 at the cap: $r (want full)"
+QA_WORKERS=1
+
+# ── 8d. #288: Ready không có thẻ nào thì không hỏi lane_slot_free qa (mỗi tick một lần hỏi + một dòng log vô ích).
+reset; QA_WORKERS=2; load 1; cards QA 1; tick_qa; : > "$TMP/log"
+r=$(ready_qa_lane_free 0 && echo free || echo no); n=$(grep -c "qa workers" "$TMP/log")
+[ "$r" = no ] && [ "$n" = 0 ] && ok "READY=0: the Ready→qa slot check is skipped (no lane_slot_free call, no log line)" || fail "READY=0: '$r', $n log lines"
+r=$(ready_qa_lane_free 1 && echo free || echo no)
+[ "$r" = free ] && ok "  … READY=1 with a free QA lane: free" || fail "READY=1: '$r' (want free)"
+
 # ── 9. cái dây vòng chính
 grep -q '^QA_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" qa_workers)' "$RUNNER" && grep -q '^REVIEW_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" review_workers)' "$RUNNER" \
   && ok "runner reads qa_workers / review_workers through resolve_lane_workers at startup" || fail "startup config read does not use the resolver"
@@ -157,6 +184,8 @@ grep -q 'lane_dispatch_tick review Review' "$RUNNER" && grep -q 'lane_dispatch_t
   && ok "the main loop dispatches QA and Review through lane_dispatch_tick" || fail "main loop does not call lane_dispatch_tick"
 grep -n 'QA_IDLE=\|REVIEW_IDLE=' "$RUNNER" | grep -q 'lane_idle "\$QA_PID"\|lane_idle "\$REVIEW_PID"' \
   && fail "the main loop still derives QA/Review idleness from the first PID only" || ok "  … QA/Review idleness comes from the worker count, not the first PID"
+grep -q '^  if tick_is_cheap; then' "$RUNNER" && grep -q 'ready_qa_lane_free "\$READY"' "$RUNNER" \
+  && ok "the main loop uses tick_is_cheap and ready_qa_lane_free (#288)" || fail "main loop is not wired to tick_is_cheap / ready_qa_lane_free"
 cfg=$(jq -r '.qa_workers // empty, .review_workers // empty' "$ROOT/.claude/super-board/configs/agent-workbench.json" | tr '\n' ' ')
 [ "$cfg" = "3 3 " ] && ok "agent-workbench config sets qa_workers=3, review_workers=3" || fail "agent-workbench config: '$cfg'"
 
