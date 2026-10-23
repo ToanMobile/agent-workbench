@@ -27,6 +27,23 @@ Mỗi Task tạo ra BẮT BUỘC phải tuân thủ cấu trúc sau:
 
 ---
 
+## 🧺 Gom Việc: Ít Thẻ Nhất Có Thể (BẮT BUỘC)
+
+Mỗi thẻ là một PR, một merge-gate và một lần `post-fix-gate --full`; nhiều thẻ nhỏ làm gate chạy đè nhau và máy quá tải
+(23/10: load 112 trên 12 lõi). Vì vậy **gom, đừng tách**:
+- Việc mới cùng loại (`bug` / `feature` / `qa`) **tự nhập vào thẻ Backlog đang có**: script chọn thẻ trùng đường dẫn file nhiều
+  nhất (hòa thì thẻ mới nhất), thêm dòng AC vào mục `## Acceptance Criteria` của thẻ đó và Problem/Fix vào mục `## Gộp thêm: <tiêu đề>`.
+  Agent không cần tự chọn thẻ, không cần gọi `--merge-into`.
+- Nhiều việc nhỏ trong cùng một lượt: tạo **một** thẻ có nhiều dòng AC, không gọi script mỗi việc một lần.
+- Việc phát hiện giữa chừng mà không gấp: nhập vào thẻ Backlog đang có (bằng chính lệnh tạo thẻ), không mở thẻ lẻ.
+- Sửa một lỗi gốc cho nhiều chỗ, hay một nhóm suite/test cùng nguyên nhân: **một thẻ, nhiều commit**, không một thẻ mỗi chỗ.
+- Mở thẻ riêng chỉ khi có lý do thật và nói rõ bằng `--new-card "<lý do>"`: việc độc lập cần PR riêng, khác repo (`--repo`),
+  hoặc thẻ Backlog hiện có đã đủ 6 việc gộp (`MAX_BATCH`, vì PR > 400 dòng đổi phải người duyệt). Thẻ cần người (`--needs-you`),
+  khác loại với mọi thẻ Backlog, `--from-file` và Backlog trống thì script tự tạo thẻ mới. Không đọc được board thì tạo thẻ mới và cảnh báo.
+- Thẻ đã ở Building / QA / Review / Done không nhận thêm việc: việc mới nhập vào thẻ Backlog khác hoặc mở thẻ mới.
+
+---
+
 ## 🛠️ Công Cụ Thực Thi
 
 Công cụ cốt lõi được đặt tại:
@@ -46,6 +63,9 @@ python3 universal-agent-devkit/scripts/governance/create_task.py \
   --ac "- [ ] AC 1\n- [ ] AC 2" \
   --risk "🟢 **Low** · <mô tả>"
 ```
+
+Thẻ được gom vào thẻ có sẵn thì script in `🧺 Đã gom ... vào thẻ Backlog #N` và không tạo issue; trả link thẻ #N cho người dùng.
+Thêm `--new-card "<lý do>"` để mở thẻ riêng (xem mục Gom Việc).
 
 ### 1b. Thẻ chỉ người làm được (máy thật, playtest, store, secret, quyết định)
 Thêm `--needs-you "<ĐÚNG việc người phải làm>"` (và `--needs-you-next "<xong thì làm gì>"`, mặc định

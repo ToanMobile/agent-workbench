@@ -67,5 +67,13 @@ printf '%s\n' "$ci_kept" | grep -qx DEVKIT_PROBE_KEEP || { echo "✖ CI probe re
 printf '%s\n' "$ci_kept" | grep -qx CI && fail "suite_env keeps CI (worker CI=true forces a nested full run)" || ok "suite_env drops CI"
 ci_left="$(env CI=true bash -c '. "$1"; printf %s "${CI-unset}"' _ "$DEVKIT_DIR/tests/lib/clean_git_env.sh")"
 [ "$ci_left" = unset ] && ok "clean_git_env unsets CI" || fail "clean_git_env keeps CI ($ci_left)"
+# T0052: DEVKIT_CAPACITY_CORES / DEVKIT_CAPACITY_LOAD là móc test của bin/capacity.py (giả số lõi / tải) cho lần gọi này, suite không
+# thừa hưởng (suite tự ghim nếu cần); DEVKIT_CAPACITY là nút của người dùng, suite (run_impacted.sh) phải thấy để co giãn theo nó.
+cap="$(probe DEVKIT_CAPACITY=2 DEVKIT_CAPACITY_CORES=64 DEVKIT_CAPACITY_LOAD=0 DEVKIT_PROBE_KEEP=1)"
+printf '%s\n' "$cap" | grep -qx DEVKIT_PROBE_KEEP || { echo "✖ capacity probe returned no environment"; exit 1; }
+for v in DEVKIT_CAPACITY_CORES DEVKIT_CAPACITY_LOAD; do
+  printf '%s\n' "$cap" | grep -qx "$v" && fail "suite_env giữ $v (móc test của capacity.py)" || ok "suite_env bỏ $v"
+done
+printf '%s\n' "$cap" | grep -qx DEVKIT_CAPACITY && ok "suite_env giữ DEVKIT_CAPACITY (nút người dùng)" || fail "suite_env làm mất DEVKIT_CAPACITY"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_suite_env: all passed" || { echo "❌ test_suite_env: $FAILS failed"; exit 1; }

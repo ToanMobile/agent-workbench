@@ -47,12 +47,21 @@ BIG_FILE_BYTES = 8 << 20         # như tree_fp: file lớn hơn thì băm theo 
 # Đổi một file khớp danger list là đổi khoá của MỌI suite (bảo thủ: thư viện test dùng chung, mã của gate/hook, ma trận).
 DANGER = ("**/tests/lib/**", "tests/lib/**", "**/clean_git_env.sh",
           "universal-agent-devkit/bin/post-fix-gate.py", "universal-agent-devkit/bin/heavy_slot.py",
+          "universal-agent-devkit/bin/capacity.py",   # mặc định song song / ngưỡng tải của gate, heavy_slot và run_impacted (T0052)
           "universal-agent-devkit/bin/suite_cache.py", "universal-agent-devkit/bin/tree_fp.py",
           "universal-agent-devkit/bin/regression_checklist.py", "universal-agent-devkit/hooks/**",
           # config mà công cụ đọc ngầm, không lệnh nào nêu tên (review 20/10)
           "**/conftest.py", "conftest.py", "pyproject.toml", "**/pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini",
           "**/package.json", "package.json", "**/tsconfig*.json", "tsconfig*.json", "**/*.gradle", "**/*.gradle.kts", "*.gradle",
-          "*.gradle.kts", "gradle.properties", "**/gradle.properties", "gradle/libs.versions.toml")
+          "*.gradle.kts", "gradle.properties", "**/gradle.properties", "gradle/libs.versions.toml",
+          # lockfile, config runner và pin phiên bản: công cụ đọc ngầm, không lệnh nào nêu tên (issue #151)
+          "**/package-lock.json", "**/npm-shrinkwrap.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/uv.lock", "**/poetry.lock",
+          "**/Pipfile.lock", "**/Cargo.lock", "**/go.sum", "**/requirements*.txt",
+          "**/jest.config.*", "**/vitest.config.*", "**/vitest.workspace.*", "**/babel.config.*", "**/.babelrc*", "**/.mocharc*",
+          "**/.nvmrc", "**/.node-version", "**/.python-version", "**/.tool-versions")
+# Khớp DANGER mà không phải input của suite nào: chỉ xếp thứ tự test cho run_impacted.sh (suite đó không cache theo khoá),
+# mỗi test DevKit mới thêm một dòng ⇒ đổi khoá của MỌI suite (issue #315).
+DANGER_EXEMPT = ("tests/lib/test_durations.txt",)
 # Suite không cache theo khoá: chọn test theo lịch sử git / đồng hồ (run_impacted.sh), hoặc đọc mạng ngay trong lệnh.
 DIFF_DEPENDENT = re.compile(r"(?:^|[\s/;&|(])run_impacted\.sh\b")
 NETWORK = re.compile(r"\b(?:curl|wget)\b[^\n;|&]*\bhttps?://|\bnpx\s+(?:-y|--yes)\b|\bnpm\s+(?:i|install|ci)\b|\bpip3?\s+install\b"
@@ -210,6 +219,8 @@ class Index:
             tok = tok[2:]
         if not tok or tok.startswith(("/", "~")) or "$" in tok:
             return set()
+        if all(part in ("", ".", "..") for part in tok.split("/")):
+            return set()   # "../.." là chuyển thư mục, không phải input: resolve ra thư mục gốc quá lớn ⇒ cắt oan khoá chính xác (issue #151)
         found = set()
         stems = [tok] + ([tok + e for e in (".sh", ".py", ".js", ".mjs", ".ts")] if not os.path.splitext(tok)[1] else [])
         for s in stems:
@@ -372,6 +383,9 @@ def closure(project_dir, idx, seeds, ext_seeds=()):
                 continue
             info = _file_refs(project_dir, idx, full, rel, here)
             if info is None:
+                # file thường mà không đọc được / nhị phân / > SCAN_MAX_BYTES: không biết nó nguồn gì ⇒ không có khoá chính xác
+                # (thư mục, symlink thư mục, link gãy không phải file để đọc: không cắt — issue #151)
+                cut = cut or os.path.isfile(full)
                 continue
             refs, outs, found_tools, skipped = info
             tools |= found_tools
@@ -458,7 +472,7 @@ class SuiteCache:
         self.learned = learned if learned is not None else self.load_learned()
         self.idx = Index(self.cmap or {})
         self.matrix_digest = _file_digest(matrix_path) if matrix_path and os.path.isfile(matrix_path) else "none"
-        danger = sorted(p for pat in DANGER for p in self.idx.glob(pat))
+        danger = sorted(p for pat in DANGER for p in self.idx.glob(pat) if not p.endswith(DANGER_EXEMPT))
         self.danger_files = danger
         self.matrix_path = matrix_path
         h = hashlib.sha256()
@@ -495,6 +509,7 @@ class SuiteCache:
                     files |= self.idx.glob(pat)
         for pat in self.learned.get(sid) or []:   # đường dẫn học được là đường dẫn thật, không phải glob
             files |= {pat} if pat in self.cmap else self.idx.glob(pat)
+        watched = set(files)   # watch_files / covers / learned: hạt giống bao đóng cùng file lệnh nêu tên (issue #151)
         skips0 = self.idx.skips
         named, dirs = command_files(self.project_dir, self.idx, cmd)
         for d in dirs:
@@ -504,7 +519,7 @@ class SuiteCache:
             hit = _external(self.project_dir, w, "")
             if hit:
                 ext_seeds.append(hit)
-        seen, ext, tools, cut = closure(self.project_dir, self.idx, named, ext_seeds)
+        seen, ext, tools, cut = closure(self.project_dir, self.idx, named | watched, ext_seeds)
         cut = cut or self.idx.skips > skips0
         files |= seen
         head = json.dumps({

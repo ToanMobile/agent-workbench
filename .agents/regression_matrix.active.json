@@ -1096,6 +1096,119 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-status-needs-you-column",
+      "watch_files": [
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_status_needs_you_column.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-STATUS-NEEDS-YOU-01",
+          "name": "status: option Needs You của Project vẽ thành ô riêng và vào nhóm Waiting on you; không có thẻ Needs You thì đầu ra không đổi",
+          "command": "bash tests/super-board/test_status_needs_you_column.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-waiting-label",
+      "trigger_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_waiting_label.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAITING-LABEL-01",
+          "name": "thẻ Blocked chỉ chờ thẻ khác mang nhãn '⏳ chờ thẻ khác' (planner pending, runner gắn/gỡ), thẻ 🙋 không có nhãn, status tách hai nhóm (#235)",
+          "command": "bash tests/super-board/test_waiting_label.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "capacity",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-CAPACITY-CODEX-WAVE-01",
+          "name": "codex-wave: số lane Codex = min(max_workers, capacity build_workers); max_workers 0 lấy capacity; capacity vắng/hỏng/rác thì công thức cũ",
+          "command": "bash tests/super-board/test_codex_wave_workers.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-RUNNER-01",
+          "name": "super-board-run resolve_build_*: config vắng thì build_workers và build_load_max (busy_load) lấy từ capacity, capacity vắng thì số cũ (lệnh trùng REG-SB-BUILD-WORKERS-01: gate gộp, không chạy hai lần)",
+          "command": "bash tests/super-board/test_runner_build_workers.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-RUNNER-02",
+          "name": "super-board-run resolve_lane_workers: config vắng thì lane_workers từ capacity, capacity vắng thì 1 (lệnh trùng REG-SB-LANE-WORKERS-01)",
+          "command": "bash tests/super-board/test_runner_lane_workers.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-RUNNER-03",
+          "name": "super-board-run resolve_gate_max: config vắng thì gate_max từ capacity (4 lõi: 2), capacity vắng thì 6 (lệnh trùng REG-SB-WIP-LIMIT-01)",
+          "command": "bash tests/super-board/test_runner_wip_limit.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-MERGE-HOLD-01",
+          "name": "merge gate: config thiếu merge_load_max thì chờ theo capacity hold_load (12 lõi: 96, biên 95/96), capacity vắng thì cùng công thức 8 × lõi (lệnh trùng REG-SB-MERGE-LOAD-WAIT-01)",
+          "command": "bash tests/super-board/test_merge_gate_load_wait.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-SLOTS-01",
+          "name": "heavy_slot CLI / wrapper super-board: ngưỡng tải mặc định là capacity hold_load (lệnh trùng REG-SB-HEAVY-SLOT-01)",
+          "command": "bash tests/super-board/test_heavy_slot.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-SLOTS-02",
+          "name": "test super-board không xếp hàng sau slot thật của máy khi ngưỡng tải đến từ capacity (lệnh trùng REG-SB-TEST-SLOT-ISO-01)",
+          "command": "bash tests/super-board/test_tests_skip_machine_slots.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-SLOTS-03",
+          "name": "super_board_all: dòng khởi động in ngưỡng hold_load của capacity, nút DEVKIT_CAPACITY không lái test (lệnh trùng REG-SB-NOTIFY-SLOTS-01)",
+          "command": "python3 tests/super-board/test_notify.py && python3 tests/super-board/test_super_board_all_slots.py && bash tests/super-board/test_runner_claim_loop.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-OFFICE-01",
+          "name": "agent-office dashboard: hiển thị ngưỡng tải hold_load từ capacity, capacity hỏng không làm sập dashboard",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_dashboard_stats",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-total-worker-cap",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/super-board/configs/agent-workbench.json",
+        "tests/super-board/test_runner_total_cap.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TOTAL-CAP-01",
+          "name": "một trần worker duy nhất: build+qa+review của mọi repo trên máy <= max_workers (5), đếm qua thư mục slot chung, PID chết tự trả slot; tải CPU, WIP, gate_max không còn chi phối",
+          "command": "bash tests/super-board/test_runner_total_cap.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

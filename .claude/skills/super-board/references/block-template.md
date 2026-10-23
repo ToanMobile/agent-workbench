@@ -14,6 +14,10 @@ the wave planner sweeps `Blocked` at the start of every wave, and any card whose
 issues have all closed is moved back to `Ready` automatically, with a comment saying what cleared
 it. Everything else — credentials, permissions, product decisions — still waits for a person.
 
+The runner marks those cards with the label `⏳ chờ thẻ khác` (planner `pending`), so the board tells
+"waiting on another card, nothing to do" from "needs a person"; it removes the label when the sweep
+frees the card. `super-board status` lists the two groups apart.
+
 That sweep is why the `blocked-by:` line below is mandatory. Before it existed, `Blocked` was
 terminal: on 2026-08-20 five cards sat there long after their blockers had merged, because the only
 record of what they were waiting for was English prose in a comment nobody re-read.
