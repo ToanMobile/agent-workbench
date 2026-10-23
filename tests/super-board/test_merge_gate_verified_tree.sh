@@ -105,4 +105,30 @@ gate 42 "$CMD"; E1=$(runs)
 gate 42 "$CMD"; E2=$(runs)
 [ "$GATE_RC" -eq 11 ] && [ "$E2" -eq 5 ] && ok "red verify left no receipt: verifies again (runs=5)" || fail "red again (rc=$GATE_RC runs=$E2, want 11 and 5)"
 
+# R1: QA ghi biên nhận (verify-cmd --record) trên cây gộp sạch → merge gate lần đầu bỏ verify
+echo 0 > "$TMP/verify-rc"
+mkpr 43
+QA="$R/.claude/worktrees/qa-43"; git -C "$R" worktree add -q --detach "$QA" "issue-43-x"
+git -C "$QA" merge -q --no-edit origin/main
+mkcfg() { python3 -c 'import json,sys; print(json.dumps({"base_branch":"main","repo":{"path":"."},"verify_commands":[sys.argv[1]]}))' "$2" > "$1"; }
+mkcfg "$TMP/cfgqa.json" "$CMD"
+BEFORE=$(runs)
+( cd "$QA" && bash "$ROOT/.claude/bin/super-board-verify-cmd.sh" --config "$TMP/cfgqa.json" --record ) >"$TMP/qa.out" 2>&1; QRC=$?
+[ "$QRC" -eq 0 ] && grep -q "recorded" "$TMP/qa.out" && ok "QA --record on a clean merged tree writes a receipt" || fail "QA record (rc=$QRC): $(cat "$TMP/qa.out")"
+gate 43 "$CMD"; F=$(runs)
+[ "$GATE_RC" -eq 0 ] && [ "$F" -eq "$BEFORE" ] && ok "QA recorded this exact tree: merge gate skips verify (runs unchanged)" || fail "gate after QA record (rc=$GATE_RC runs=$F, want 0 and $BEFORE): $(tail -3 "$TMP/gate43.log")"
+echo dirty > "$QA/dirty"
+( cd "$QA" && bash "$ROOT/.claude/bin/super-board-verify-cmd.sh" --config "$TMP/cfgqa.json" --record ) >/dev/null 2>&1; DRC=$?
+[ "$DRC" -eq 65 ] && ok "QA --record refuses a dirty tree (exit 65)" || fail "dirty record (rc=$DRC, want 65)"
+rm -f "$QA/dirty"
+
+# R3: khoá dùng lệnh đã chèn cờ (--diff/--force-full) ở cả hai phía: QA ghi → gate bỏ verify
+PFG="python3 $TMP/g/post-fix-gate.py --run-tests"
+mkpr 44
+QB="$R/.claude/worktrees/qa-44"; git -C "$R" worktree add -q --detach "$QB" "issue-44-x"; git -C "$QB" merge -q --no-edit origin/main
+mkcfg "$TMP/cfgqb.json" "$PFG"
+( cd "$QB" && bash "$ROOT/.claude/bin/super-board-verify-cmd.sh" --config "$TMP/cfgqb.json" --record ) >/dev/null 2>&1
+BEFORE=$(runs); gate 44 "$PFG"; G=$(runs)
+[ "$GATE_RC" -eq 0 ] && [ "$G" -eq "$BEFORE" ] && ok "key uses the injected commands on both sides: gate skips (runs unchanged)" || fail "injected-flags key (rc=$GATE_RC runs=$G, want 0 and $BEFORE)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_gate_verified_tree: all passed" || { echo "❌ test_merge_gate_verified_tree: $FAILS failed"; exit 1; }

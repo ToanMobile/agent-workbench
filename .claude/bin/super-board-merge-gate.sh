@@ -440,13 +440,9 @@ if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
 fi
 # #226 gap 7: biên nhận theo cây gộp. Verify xanh ghi <git common dir>/super-board/verified-trees/<sha256(tree + lệnh verify)>; lượt gate sau
 # (vd. lượt trước thoát exit 4 sau verify) trên đúng cây gộp và đúng bộ lệnh bỏ verify. Base đổi, head đổi hay lệnh đổi: khoá khác, verify đủ.
-TREE_RECEIPT=""
-TREE_COMMON=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P || true)
-if [ -n "$TREE_COMMON" ]; then
-  TREE_KEY=$({ git -C "$SCRATCH" rev-parse 'HEAD^{tree}'; printf '%s\n' "${VERIFY[@]}"; } | shasum -a 256 | cut -d' ' -f1)
-  TREE_RECEIPT="$TREE_COMMON/super-board/verified-trees/$TREE_KEY"
-  if [ "$TRAIN_PROVED" -eq 0 ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
-fi
+TREE_RECEIPT=$(sb_verified_tree_receipt "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
+TREE_KEY=${TREE_RECEIPT##*/}
+if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
 if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
   if [ "$DRY" -eq 1 ]; then
