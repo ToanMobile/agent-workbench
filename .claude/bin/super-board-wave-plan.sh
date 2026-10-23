@@ -70,6 +70,7 @@
 #     "sweep": [ {"number":37,"title":"…","clearedBy":[32]} ],
 #     "resume": [ {"number":51,"title":"…"} ],
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
+#     "pending": [ {"number":48,"title":"…","openBlockers":[32]} ],   # Blocked, waiting only on open cards (#235)
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
 #     "stranded": [ {"number":44,"title":"…"} ],
 #     "waiting": [ {"number":45,"title":"…","labels":["needs-you"]},       # Ready cards held for a person (#95)
@@ -194,6 +195,15 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
                | select(free(.number))
                | { number, title,
                    clearedBy: (dep(.number) | .blockers) } ],
+
+      # #235: Blocked cards that only wait on other open cards (readable `blocked-by:`, not for a person). The runner labels them
+      # "⏳ chờ thẻ khác" so the board tells them from cards that need a person.
+      pending: [ $all[]
+                 | select(.status == "Blocked")
+                 | select(for_a_person(.labels) | not)
+                 | select(dep(.number) != null and dep(.number).parseable and (dep(.number).humanGated | not)
+                          and ((dep(.number).openBlockers // []) | length) > 0)
+                 | { number, title, openBlockers: dep(.number).openBlockers } ],
 
       # Verified current-head human approval from the dependency helper. The
       # Reviewer independently rechecks it; labels are only UI state.
