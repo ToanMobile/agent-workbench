@@ -692,7 +692,7 @@ last_edit | sed 's/^gh project edit 1 --owner o --description //' > "$TMP/long.t
 python3 -c "import sys; t=open(sys.argv[1],'rb').read().decode('utf-8'); assert 'cập nhật' in t.split('·')[-1], t; assert '…' in t, t; assert len(t.strip()) <= 230, len(t)" "$TMP/long.txt" 2>/dev/null \
   && ok "long status cut on characters under the C locale, stamp kept at the end" || fail "long status broken: $(cat "$TMP/long.txt")"
 for i in 31 32 33 34 35 36 37 38 39 40 41 42; do rm -f "$R/.claude/super-board/inflight/$i"; done
-# Watchdog bị dừng (launchd stop, Ctrl-C) khi đang chờ một gh treo: gh không được sống tiếp mồ côi.
+# TERM vào wrapper timeout khi đang chờ một gh treo: gh không được sống tiếp mồ côi (TERM vào bash watchdog: ca sau).
 printf 'KEY=x\nAT=1\n' > "$BST"; rm -f "$TMP/calls.hang"   # PID cũ của ca gh treo trước: xoá TRƯỚC khi chạy
 ( STUB_GH_HANG=1 SB_BOARD_GH_TIMEOUT=60 wd ) & WDP=$!
 wait_for 10 '[ -s "$TMP/calls.hang" ]' || true
@@ -701,6 +701,34 @@ HANG=$(cat "$TMP/calls.hang" 2>/dev/null); PERLP=$(ps -o ppid= -p "${HANG:-0}" 2
 if [ -n "$HANG" ] && wait_for 5 '! kill -0 "$HANG" 2>/dev/null'; then ok "TERM to the timeout wrapper also stops the hung gh"
 else fail "hung gh left running after the wrapper got TERM (hang=$HANG perl=$PERLP)"; [ -n "$HANG" ] && kill "$HANG" 2>/dev/null; fi
 wait "$WDP" 2>/dev/null
+# launchd bootout gửi TERM vào bash watchdog (không vào wrapper, AbandonProcessGroup=true): wrapper mồ côi và con của nó
+# không được sống tới hết hạn (#143).
+printf 'KEY=x\nAT=1\n' > "$BST"; rm -f "$TMP/calls.hang"
+( STUB_GH_HANG=1 SB_BOARD_GH_TIMEOUT=60 wd ) & WDP=$!
+wait_for 10 '[ -s "$TMP/calls.hang" ]' || true
+HANG=$(cat "$TMP/calls.hang" 2>/dev/null); PERLP=$(ps -o ppid= -p "${HANG:-0}" 2>/dev/null | tr -d ' ')
+BASHP=$(ps -o ppid= -p "${PERLP:-0}" 2>/dev/null | tr -d ' ')   # bash watchdog = cha của wrapper
+[ -n "$BASHP" ] && kill -TERM "$BASHP" 2>/dev/null
+if [ -n "$HANG" ] && wait_for 3 '! kill -0 "$HANG" 2>/dev/null && ! kill -0 "$PERLP" 2>/dev/null'; then ok "TERM to the bash watchdog stops the wrapper and the hung gh within 3 s"
+else fail "orphan left after the bash watchdog got TERM (gh=$HANG wrapper=$PERLP bash=$BASHP)"; [ -n "$HANG" ] && kill "$HANG" 2>/dev/null; [ -n "$PERLP" ] && kill "$PERLP" 2>/dev/null; fi
+wait "$WDP" 2>/dev/null
+# Ctrl-C gửi vào cả nhóm: wrapper phải chết bởi chính SIGINT để bash cha coi là bị ngắt, không chạy tiếp lệnh sau.
+awk '/^run_capped\(\) \{/{p=1} p{print} p&&/^}/{p=0}' "$BIN/super-board-watchdog.sh" > "$TMP/rc_fn.sh"
+printf '. "%s"\nset -e\nrun_capped 30 sleep 20 || true\necho AFTER\n' "$TMP/rc_fn.sh" > "$TMP/rc_int.sh"
+rc_int=$(python3 - "$TMP/rc_int.sh" <<'PY'
+import os, signal, subprocess, sys, time
+p = subprocess.Popen(["bash", sys.argv[1]], stdout=subprocess.PIPE, start_new_session=True)
+time.sleep(1)
+os.killpg(p.pid, signal.SIGINT)
+try:
+    out, _ = p.communicate(timeout=5)
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL); out, _ = p.communicate()
+print(f"{p.returncode} {out.decode().strip()}")
+PY
+)
+[ "$rc_int" = "-2 " ] && ok "INT to the group of a bash calling run_capped stops it, nothing after runs" \
+  || fail "INT to run_capped's group: '$rc_int' (want '-2 ': bash killed by SIGINT, no AFTER)"
 # Hết ngân sách publish (nhiều card × 20 s): không gọi thêm gh, card chưa xoá giữ trong CARDS cho lượt sau.
 printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; c0=$(grep -c -- '--clear' "$TMP/calls")
 BOARD_STATUS_BUDGET=0 wd
