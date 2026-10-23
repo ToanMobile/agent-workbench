@@ -33,7 +33,7 @@ PROJECT_REGISTRY = {
         "name": "Agent Workbench",
         "project_id": "PVT_kwHOAGnqzM4BnS4g",
         "status_field_id": "PVTSSF_lAHOAGnqzM4BnS4gzhl4Kok",
-        "backlog_option_id": "a537f4c7",
+        "backlog_option_id": "81f934af",
     },
     "ToanMobile/OfficeReader": {
         "number": 2,
@@ -62,7 +62,14 @@ PROJECT_REGISTRY = {
         "project_id": "PVT_kwHOAGnqzM4BnTFL",
         "status_field_id": "PVTSSF_lAHOAGnqzM4BnTFLzhl4WVM",
         "backlog_option_id": "8b4a5523",
-    }
+    },
+    "ToanMobile/Humans-vs.-UFOs": {
+        "number": 6,
+        "name": "Humans vs. UFOs",
+        "project_id": "PVT_kwHOAGnqzM4Bnjmj",
+        "status_field_id": "PVTSSF_lAHOAGnqzM4BnjmjzhmHqYI",
+        "backlog_option_id": "9466928a",
+    },
 }
 
 DEFAULT_REPO = "ToanMobile/agent-workbench"
@@ -76,6 +83,7 @@ REPO_NAME_PATTERNS = {
     "ToanMobile/Goods-Triple-Shelf-Match-3D": r"Goods(?:-Triple-Shelf-Match-3D)?",
     "ToanMobile/GeelyEx2": r"GeelyEx2",
     "ToanMobile/Neighbours-From-Hell": r"Neighbours(?:-| )From(?:-| )Hell|NFH",
+    "ToanMobile/Humans-vs.-UFOs": r"Humans-vs\.-UFOs",
 }
 
 # Thẻ chỉ người làm được (máy thật, playtest, store, secret, quyết định): nhãn + comment do
@@ -112,7 +120,7 @@ def detect_repo():
         r = run_cmd(["git", "remote", "get-url", "origin"], check=False)
         if r.returncode == 0:
             url = r.stdout.strip()
-            m = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?$", url)
+            m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$", url)
             if m:
                 repo_slug = m.group(1)
                 # Chuẩn hóa tên slug
@@ -256,6 +264,32 @@ def resolve_project_config(repo: str):
     # Fallback mặc định về Agent Workbench (Project #1)
     return PROJECT_REGISTRY[DEFAULT_REPO]
 
+def project_node_id(number):
+    """ID node của board, cho repo tìm board qua .claude/super-board/configs (cấu hình đó không ghi ID này)."""
+    res = run_cmd(["gh", "project", "view", str(number), "--owner", PROJECT_OWNER, "--format", "json"], check=False)
+    try:
+        return json.loads(res.stdout)["id"] if res.returncode == 0 else ""
+    except (KeyError, ValueError, TypeError):
+        return ""
+
+def backlog_target(cfg):
+    """(field_id, option_id) của cột Backlog đọc từ board lúc chạy; ID trong registry là phương án dự phòng.
+
+    Cột đổi tên hoặc thêm cột (22/10: thêm Needs You) làm ID cứng trong registry lệch, và gh item-edit với ID lạ
+    để lại cột trống mà không báo lỗi."""
+    fallback = (cfg.get("status_field_id", ""), cfg.get("backlog_option_id", ""))
+    res = run_cmd(["gh", "project", "field-list", str(cfg["number"]), "--owner", PROJECT_OWNER, "--format", "json"], check=False)
+    why = f"gh project field-list thoát {res.returncode}"
+    if res.returncode == 0:
+        try:
+            status = next(f for f in json.loads(res.stdout).get("fields", []) if f.get("name") == "Status")
+            option = next(o for o in status.get("options", []) if o.get("name") == "Backlog")
+            return status["id"], option["id"]
+        except (StopIteration, KeyError, ValueError, TypeError, AttributeError):
+            why = "board không có trường Status hoặc cột Backlog"
+    print(f"   ⚠️  Dùng ID cột Backlog dự phòng trong registry ({why}).", file=sys.stderr)
+    return fallback
+
 def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_you=None, needs_you_next=NEEDS_YOU_NEXT):
     repo = repo or detect_repo()
     labels = labels or []
@@ -266,8 +300,6 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
     project_number = cfg["number"]
     project_name = cfg["name"]
     project_id = cfg.get("project_id", "")
-    status_field_id = cfg.get("status_field_id", "")
-    backlog_option_id = cfg.get("backlog_option_id", "")
     project_url = f"https://github.com/users/{PROJECT_OWNER}/projects/{project_number}/views/2"
 
     # Auto label detection
@@ -315,6 +347,10 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
     print(f"   ✅ Đã tạo Issue: {issue_url}")
 
     # 2. Thêm vào Project tương ứng
+    if not project_id:
+        project_id = project_node_id(project_number)
+        if not project_id:
+            print(f"   ⚠️  Chưa tra được ID node của Project #{project_number}: gán cột sẽ lỗi.", file=sys.stderr)
     print(f"   ⏳ Đang đẩy vào Project #{project_number} ({project_name})...")
     cmd_add = [
         "gh", "project", "item-add", str(project_number),
@@ -327,17 +363,26 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
     item_id = item_data.get("id")
 
     # 3. Chuyển sang cột Backlog
+    column_ok = bool(item_id)
+    if not item_id:
+        print("   ❌ Issue đã tạo nhưng gh project item-add không trả id: thẻ chưa có cột.", file=sys.stderr)
     if item_id:
         print("   ⏳ Đang gán trạng thái 'Backlog'...")
+        field_id, option_id = backlog_target(cfg)
         cmd_edit = [
             "gh", "project", "item-edit",
             "--id", item_id,
             "--project-id", project_id,
-            "--field-id", status_field_id,
-            "--single-select-option-id", backlog_option_id
+            "--field-id", field_id,
+            "--single-select-option-id", option_id
         ]
-        run_cmd(cmd_edit, check=False)
-        print(f"   🎉 THÀNH CÔNG! Task đã nằm trên Backlog Board: {project_url}")
+        res_edit = run_cmd(cmd_edit, check=False)
+        if res_edit.returncode == 0:
+            print(f"   🎉 THÀNH CÔNG! Task đã nằm trên Backlog Board: {project_url}")
+        else:
+            column_ok = False
+            print(f"   ❌ Issue đã tạo nhưng chưa gán được cột Backlog (exit {res_edit.returncode}): "
+                  f"{res_edit.stderr.strip()[:300]}", file=sys.stderr)
 
     marked = True
     if needs_you and helper is not None:
@@ -351,7 +396,8 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
             print(f"   ❌ Chưa đánh dấu được thẻ cần người (exit {res_mark.returncode}): {res_mark.stderr.strip()}",
                   file=sys.stderr)
 
-    return {"url": issue_url, "item_id": item_id, "project_url": project_url, "needs_you_marked": marked}
+    return {"url": issue_url, "item_id": item_id, "project_url": project_url, "needs_you_marked": marked,
+            "column_ok": column_ok}
 
 def main():
     parser = argparse.ArgumentParser(description="Tạo Task chuẩn Super-Board và đẩy lên Backlog GitHub Project Board")
@@ -443,7 +489,7 @@ def main():
 
     result = create_and_push(title, body, labels=args.labels, repo=args.repo, dry_run=args.dry_run,
                              needs_you=needs_you, needs_you_next=needs_you_next)
-    if not result.get("needs_you_marked", True):
+    if not result.get("needs_you_marked", True) or not result.get("column_ok", True):
         sys.exit(3)
 
 if __name__ == "__main__":
