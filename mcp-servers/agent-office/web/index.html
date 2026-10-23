@@ -1147,8 +1147,8 @@ function makePerson(g, P, w, T, parts) {
 }
 
 function makeDesk(w, x, z, T, sc, opts) {
-  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = 0.85; g.scale.setScalar(sc || 1.3); world.add(g);
   const style = stationStyleFor(w) || DESK_STYLES[deskStyle] || DESK_STYLES[0];
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = deskYaw(style); g.scale.setScalar(sc || 1.3); world.add(g);
   const P = style.pose;
   const hipY = P.standing ? 1.0 : P.seat + 0.08;
   const bubbleY = hipY + 1.2, idleY = P.standing ? 1.5 : P.seat + 0.75;
@@ -1189,7 +1189,7 @@ function makeDesk(w, x, z, T, sc, opts) {
     let dk = null;
     if (w.status === 'working') {
       g.updateMatrixWorld(true);
-      dk = { w, pg, sc: sc || 1.3, pos: new THREE.Vector3(P.x, 0, 0).applyMatrix4(g.matrixWorld), key: w.repo + '#' + (w.issue || '') };
+      dk = { w, pg, sc: sc || 1.3, yaw: g.rotation.y, pos: new THREE.Vector3(P.x, 0, 0).applyMatrix4(g.matrixWorld), key: w.repo + '#' + (w.issue || '') };
       deskAt.set(w.id, dk);
     }
     seatActor(w, pg, P, pp, dk);
@@ -1483,7 +1483,10 @@ function planPath(sx, sz, gx, gz) { // null: không có đường hợp lệ, ng
 }
 
 // ---- người đi từ bàn cũ sang bàn mới khi việc chuyển cột (thay cho việc dựng lại cảnh làm người nhảy chỗ)
-const DESK_YAW = 0.85, SEAT_YAW = DESK_YAW + Math.PI / 2;
+const DESK_YAW = -0.85; // người ngồi nhìn chéo về phía camera mặc định (0, 60, 60): thấy mặt, không thấy lưng
+const STATION_YAW = 0.85; // trạm đứng giữ hướng cũ: mặt bảng quay ra camera, xoay lại thì lưng bảng che người
+function deskYaw(style) { return style && style.station ? STATION_YAW : DESK_YAW; }
+const seatYaw = (d) => (d && d.yaw != null ? d.yaw : DESK_YAW) + Math.PI / 2; // người quay về phía bàn của chính chỗ đó
 const WALK_VMAX = 4.4, WALK_TARGET_S = 14; // đường xa (qua hành lang) thì rảo bước để không mất quá ~14 s
 const WALK_V = 2.6, WALK_ACC = 3.2, WALK_REF = 1.9, TURN_RATE = 7, WAYPOINT_R = 0.35, AVOID_R = 1.2, MAX_WALKERS = 8;
 function snapshotPeople() {
@@ -1493,7 +1496,7 @@ function snapshotPeople() {
     byId.set(w.id, v);
     if (w.issue) byIssue.set(w.repo + '#' + w.issue, v);
   };
-  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone(), !!d.sits, SEAT_YAW, d.sc, d.desk);   // đang ngồi
+  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone(), !!d.sits, seatYaw(d), d.sc, d.desk);   // đang ngồi
   for (const k of walkers) put(k.dest.w, new THREE.Vector3(k.x, 0, k.z), false, k.yaw, k.obj.scale.x);             // đang đi dở: bắt đầu từ chỗ đang đứng
   return { byId, byIssue };
 }
@@ -1574,7 +1577,7 @@ function stepWalkers(dt) {
       if (last && dist - step < 0.06) { k.phase = 'seat'; k.t = 0; k.speed = 0; k.prog = 1; if (a) { play(a, 'idle', 0.3); const dk = k.dest.desk; a.pose = dk ? poseFor(a.c, dk.seatTop, dk.top, dk.standing) : null; a.typing = k.dest.w.status === 'working'; } k.seatT = a && a.pose ? SIT_T + 0.1 : 0.5; }
     } else { // seat: quay về hướng bàn rồi trao lại cho người ngồi sẵn ở bàn
       k.t += dt; k.sp = 0;
-      k.yaw = P.dampAngle(k.yaw, SEAT_YAW, 9, dt);
+      k.yaw = P.dampAngle(k.yaw, seatYaw(k.dest), 9, dt);
       if (a && a.pose) { const u = smooth01((k.t - 0.1) / SIT_T); a.sitW = k.dest.sits ? u : 0; a.armW = u; } // quay về bàn rồi ngồi xuống, đặt tay lên phím
       if (k.t >= k.seatT) { finishWalk(k); walkers.splice(n, 1); continue; }
     }
