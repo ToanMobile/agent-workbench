@@ -162,7 +162,20 @@ for pair in 1:4 4:5 12:16 012:16 13:16 64:16; do
   [ "$g" = "$w" ] || bad="$bad ${c}cores->'$g'(want $w)"
 done
 [ -z "$bad" ] && ok "f: không có bin/capacity.py: công thức shell cũ min(cores + cores/3, 16), floor 4 (1,4,12,012,13,64 cores)" || fail "f: fallback:$bad"
+# capacity.py hỏng (thoát khác 0, in rác / 0 / dòng rỗng): cũng công thức shell cũ, không bao giờ 0 = không giới hạn (OCR 23/10)
+bad=""
+for body in 'import sys; sys.exit(1)' 'print("abc")' 'print(0)' 'print("")' 'raise RuntimeError("x")'; do
+  printf '%s\n' "$body" > "$J/bin/capacity.py"
+  for pair in 12:16 64:16; do
+    c="${pair%%:*}"; w="${pair##*:}"; g="$(jobs_of DEVKIT_TEST_CORES="$c")"
+    [ "$g" = "$w" ] || bad="$bad [$body] ${c}cores->'$g'(want $w)"
+  done
+done
+[ -z "$bad" ] && ok "f: capacity.py hỏng (exit 1, rác, 0, rỗng, ngoại lệ): công thức shell cũ (12 -> 16, 64 -> 16)" || fail "f: capacity hỏng:$bad"
 mv "$TMP/capacity.keep" "$J/bin/capacity.py"
+# nút hệ số DEVKIT_CAPACITY của người dùng đi qua run_impacted vào capacity: 12 lõi × 0.5 -> 8, × 2 -> 32
+g05="$(jobs_of DEVKIT_TEST_CORES=12 DEVKIT_CAPACITY=0.5)"; g2="$(jobs_of DEVKIT_TEST_CORES=12 DEVKIT_CAPACITY=2)"
+[ "$g05:$g2" = "8:32" ] && ok "f: DEVKIT_CAPACITY đi qua run_impacted (12 lõi: 0.5 -> 8, 2 -> 32)" || fail "f: DEVKIT_CAPACITY: '$g05' '$g2' (muốn 8 32)"
 # on THIS machine: the formula applied to a core count the machine itself reports
 exp=""; for c in "$(sysctl -n hw.ncpu 2>/dev/null)" "$(nproc 2>/dev/null)" "$(python3 -c 'import os; print(os.cpu_count() or 0)' 2>/dev/null)"; do
   case "$c" in ''|*[!0-9]*|0) continue ;; esac

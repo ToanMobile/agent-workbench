@@ -18,12 +18,13 @@ cd "$DK" || exit 2
 # Tests started at once: DEVKIT_TEST_JOBS when it is a positive integer, else bin/capacity.py test_jobs (T0052, below), else min(cores + cores/3, 16) with a floor of 4, the old default (3 cores or fewer keep 4; only 12 cores was measured) (cores
 # from nproc, sysctl hw.ncpu or python3; none answers: 4, the old default). 2026-10-04: `--all` took 301 s for 102 tests at 4 jobs on 12 cores (bound by the job count: about 20 min of
 # tests / 4). 2026-10-23, 12 cores, the same 127 tests: at 10 jobs the pool kept about 7 cores busy (1822 s CPU in 272 s), so more jobs fill the time the tests wait; 2 runs per
-# setting, alternating: 272/326 s at 10 jobs, 240/263 s at 16, 0 red tests in 6 runs (tests/verification/test_run_impacted_order.sh (f)). ponytail: 2 runs per setting on one
-# 12-core machine; measure >= 5 alternating pairs (and on 4-8 cores) before raising the cap again.
+# setting, alternating: 272/326 s at 10 jobs, 240/263 s at 16, 0 red tests in 6 runs (tests/verification/test_run_impacted_order.sh (f)).
 # DEVKIT_TEST_CORES pretends a core count (tests only). `--jobs` prints the number a run would use.
 # T0052: mặc định lấy từ nguồn sức chứa chung bin/capacity.py test_jobs = max(4, ⌊lõi × 4/3 × DEVKIT_CAPACITY⌋), không còn trần 16
 # (13 lõi: 17, 64 lõi: 85), không co theo tải (người dùng 23/10: máy bận thì chờ trước khi chạy); DEVKIT_TEST_CORES đi vào capacity
 # dưới tên DEVKIT_CAPACITY_CORES.
+# ponytail: không còn trần trên — số job chỉ đo trên một máy 12 lõi (16 job); máy lớn (64 lõi: 85, DEVKIT_CAPACITY=4: 341) chưa đo,
+# thêm trần vào capacity.test_jobs khi máy lớn báo hết fd/tiến trình hoặc test quá giờ.
 # capacity.py vắng / hỏng / không có python3: công thức shell cũ bên dưới.
 pint() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ $((10#$1)) -gt 0 ]; }   # 10# so 08 is eight, 00 is not "unlimited"
 default_jobs() {

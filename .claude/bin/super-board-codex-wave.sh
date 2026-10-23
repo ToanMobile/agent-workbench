@@ -59,21 +59,25 @@ try:
 except (OSError, ValueError, subprocess.CalledProcessError) as error:
     parser.error(str(error))
 # T0052: trần worker lấy từ nguồn sức chứa chung (super-board-capacity.py build_workers, dò DevKit theo repo của wave). Capacity
-# vắng, lỗi, in rác hay số ≤ 0 thì công thức cũ, ngoài khối try ở trên nên không bao giờ thành lỗi argparse. max_workers 0 = theo
-# capacity; > 0 = min(max_workers, capacity): throttle vẫn hạ được.
+# vắng, lỗi, in rác hay số ≤ 0 thì hành vi cũ, ngoài khối try ở trên nên không bao giờ thành lỗi argparse. max_workers 0 = theo
+# capacity; > 0 = min(max_workers, capacity) khi capacity trả lời (throttle vẫn hạ được), capacity hỏng thì dùng nguyên max_workers như
+# cũ — công thức cũ chỉ là mặc định của max_workers 0, chưa bao giờ là trần của số đã đặt (OCR 23/10).
 cap = max(1, min(16, (os.cpu_count() or 2) - 2))
+capacity_ok = False
 capacity_bin = os.environ.get('SB_CAPACITY') or str(launcher.with_name('super-board-capacity.py'))
 try:
     probe = subprocess.run([capacity_bin, 'build_workers'], capture_output=True, text=True, timeout=30,
                            env=dict(os.environ, SB_REPO_PATH=str(root)))
+    if probe.returncode != 0:
+        raise ValueError(f'exit {probe.returncode}: {probe.stderr.strip()[-200:]}')
     value = int(probe.stdout.strip())
-    if probe.returncode != 0 or value <= 0:
-        raise ValueError(f'exit {probe.returncode}, build_workers {value}')
-    cap = value
+    if value <= 0:
+        raise ValueError(f'build_workers {value}')
+    cap, capacity_ok = value, True
 except (OSError, ValueError, subprocess.SubprocessError) as exc:
-    print(f'super-board-codex-wave: capacity {capacity_bin} không dùng được ({exc!r}); dùng công thức cũ {cap} worker',
-          file=sys.stderr, flush=True)
-workers = min(workers, cap) if workers else cap
+    print(f'super-board-codex-wave: capacity {capacity_bin} không dùng được ({exc!r}); '
+          f'max_workers {workers or "0 → công thức cũ " + str(cap)} worker', file=sys.stderr, flush=True)
+workers = (min(workers, cap) if capacity_ok else workers) if workers else cap
 readiness = launcher.with_name('super-board-verification-ready.py')
 if subprocess.run([sys.executable, str(readiness), '--config', str(config_path)]).returncode:
     result = json.dumps({'cards': [dict(number=c['number'], finalStatus='halted', lastLane='none',

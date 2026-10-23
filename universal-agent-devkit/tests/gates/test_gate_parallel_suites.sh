@@ -32,6 +32,10 @@ DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# DEVKIT_CAPACITY_CORES cũng đổi ngưỡng chờ tải của heavy_slot trong gate (hold_load: 4 lõi 32, 12 lõi 96) mà heavy_slot đọc tải THẬT:
+# máy tải 45–100 thì ca 4 lõi chờ tới 600 s, ca 12 lõi lệch giờ bắt đầu làm hẹn ba bên hỏng (OCR 23/10). Ghim tải giả 0.
+echo 0 > "$TMP/load"
+export DEVKIT_SLOT_LOAD_FILE="$TMP/load"
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }

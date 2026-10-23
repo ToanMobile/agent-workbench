@@ -55,6 +55,11 @@ for bad in '"x"' 0 -1 2.5; do
   cfg_with "{\"build_wip_k\": $bad, \"gate_max\": $bad}"
   [ "$(resolve_wip_k "$TMP/c.json")" = 2 ] && [ "$(resolve_gate_max "$TMP/c.json")" = 6 ] && ok "  … invalid value ($bad) falls back to 2 / 6" || fail "invalid value ($bad) gave '$(resolve_wip_k "$TMP/c.json")' / '$(resolve_gate_max "$TMP/c.json")'"
 done
+# 12 lõi: capacity gate_max (12/2 = 6) trùng số cũ 6 — hai ca dưới tách được nhánh capacity khỏi nhánh số cũ (OCR 23/10)
+cfg_with '{}'
+g4="$(DEVKIT_CAPACITY_CORES=4 resolve_gate_max "$TMP/c.json")"; gn="$(SB_CAPACITY=/nonexistent DEVKIT_CAPACITY_CORES=4 resolve_gate_max "$TMP/c.json")"
+[ "$g4" = 2 ] && ok "  … default gate_max follows cores (4 cores -> capacity 2)" || fail "4 cores: default gate_max '$g4' (want 2)"
+[ "$gn" = 6 ] && ok "  … capacity missing (SB_CAPACITY=/nonexistent): old default 6" || fail "no capacity: default gate_max '$gn' (want 6)"
 
 # ── 2. WIP: ngưỡng = 2 × (3 + 3) = 12. QA + Review = 12 -> không giao build; 11 -> giao
 QA=7; REVIEW=5; : > "$TMP/log"; BUILD_FREE=0
