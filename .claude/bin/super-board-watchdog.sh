@@ -504,10 +504,16 @@ check() {
     # rate_limit` hỏng 3 lần → cả 5 board halt và nằm im 3,5 giờ. Halt có lần ĐỌC đã lưu thì `--resume` phát lại được an
     # toàn (chỉ đọc); halt do một lần ghi chưa rõ kết quả thì --resume tự từ chối (cần người đối chiếu).
     halted)
-      if [ "$rc" != 79 ] || (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1); then
+      if [ "$rc" != 79 ]; then
         verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0
       fi
-      halt_resume=1 ;;
+      # rc 79 không bao giờ là dừng có chủ đích. Hết file halt (đã phát lại/lưu trữ ở nơi khác) thì không còn gì để
+      # resume: khởi động lại thẳng (24/10 02:40 board nằm im 5,5 giờ vì nhánh này ghi "ended on purpose").
+      if (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1); then
+        halt_resume=0
+      else
+        halt_resume=1
+      fi ;;
     *) verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0 ;;
   esac
   # Runner watchdog vừa khởi động đã chết trước khi ghi bản ghi của nó (lỗi config, verification-readiness, trước trap

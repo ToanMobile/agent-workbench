@@ -421,7 +421,7 @@ set_state "$D" running; printf 'STOPPED_AT=test\n' > "$MARK"
 expect_no_restart "dead runner, stop marker set"
 rm -f "$MARK"
 set_state "$D" finished 0;  expect_no_restart "clean finish (STATE=finished)"
-set_state "$D" halted 79;   expect_no_restart "deliberate halt (STATE=halted rc=79)"
+set_state "$D" halted 9;    expect_no_restart "deliberate halt (STATE=halted rc=9)"
 set_state "$D" crashed 143; : > "$TMP/halt"
 expect_no_restart "GitHub reads halted (github-halt.json)"
 rm -f "$TMP/halt"
@@ -536,6 +536,11 @@ L=$(grep '^gh project edit 1 --owner o --description' "$TMP/calls" | tail -1)
 case "$L" in *"🟢 đang chạy từ"*) fail "restarted board shows the dead runner's start time: $L" ;;
   *"🟢 đang chạy"*) ok "restarted board does not show the dead runner's start time" ;; *) fail "restart status: '$L'" ;; esac
 kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+rm -f "$WD" "$TMP/halt"
+# 24/10 02:40: runner halted rc=79, rồi file halt đã biến mất (replay/archive ở nơi khác) → watchdog ghi "ended on purpose"
+# và board nằm im 5,5 giờ. rc=79 không bao giờ là dừng có chủ đích: hết file halt thì khởi động lại.
+dead_pid; set_state "$D" halted 79; rm -f "$WD" "$TMP/halt"
+expect_restart "halted rc=79 whose halt file is already gone (cleared elsewhere)"
 rm -f "$WD" "$TMP/halt"
 
 # #190: halt rc=79 do một lần GHI chưa rõ kết quả (22/10 06:31, board đứng 2g47 chờ người --resume --reconciled). Watchdog đọc
