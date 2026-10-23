@@ -71,4 +71,14 @@ rc=$(run --kind body -- api repos/o/r/pulls/5 --jq '{headRefOid: .head.sha, body
 rc=$(run --kind state -- pr view 5 --json state --jq .state)
 [ "$rc" = 0 ] && [ "$(halted)" = no ] && ok "kind state keeps its --jq string form" || fail "kind state: rc=$rc halt=$(halted) ($(tail -1 "$TMP/err"))"
 
+
+# #303: --resume phát lại lệnh đã lưu có -q (halt cũ, trước chốt chặn sớm): chốt chặn đúng nhưng thông báo phải nói ngữ cảnh resume,
+# không phải "this call failed, the run continues" (run đang dừng, không "tiếp tục").
+printf '%s' '{"reason":"old","attempts":3,"at":1,"operation":{"args":["issue","view","32","--json","body","-q",".body"],"kind":"issue","meta":null}}' > "$TMP/halt.json"
+python3 "$READ" --resume >"$TMP/out" 2>"$TMP/err"; rc=$?
+[ "$rc" = 64 ] && [ -e "$TMP/halt.json" ] && ok "--resume with saved -q read: exit 64, halt record kept" || fail "--resume -q: rc=$rc"
+grep -qi "resume" "$TMP/err" && ! grep -q "the run continues" "$TMP/err" && ok "--resume with saved -q read: message names the resume context" \
+  || fail "--resume -q message: $(tail -1 "$TMP/err")"
+rm -f "$TMP/halt.json"
+
 [ "$FAILS" -eq 0 ] && { echo "✅ test_github_read_jq_flag: all passed"; exit 0; } || { echo "❌ test_github_read_jq_flag: $FAILS failed"; exit 1; }

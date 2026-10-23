@@ -416,8 +416,11 @@ def read(args, kind='json', meta=None, recovering=False):
     # in chữ thường, bước kiểm JSON hỏng 3 lần, STRICT halt cả board và --resume phát lại lần nào cũng hỏng (22 và 23/10).
     # kind head/state cần --jq in chuỗi và kind json/object cho phép --jq ra JSON, nên không nằm trong tập này.
     if kind in JSON_SHAPED_KINDS and shaped:
-        raise ValueError(f'kind {kind} validates the raw JSON of --json, so --jq/-q/--template cannot pass; this call '
-                         f'failed, the run continues. Valid form: --kind {kind} -- {FORMS[kind]}')
+        # Khi recovering (--resume phát lại lệnh đã lưu) run đang dừng, không "tiếp tục": nói đúng cách thoát.
+        outcome = ('this recovery read can never pass; the halt record is kept. Resume with: --resume --kind '
+                   f'{kind} -- <valid read>.' if recovering else 'this call failed, the run continues.')
+        raise ValueError(f'kind {kind} validates the raw JSON of --json, so --jq/-q/--template cannot pass; {outcome} '
+                         f'Valid form: --kind {kind} -- {FORMS[kind]}')
     if not recovering:
         check_halt()
     operation = {'args': args, 'kind': kind, 'meta': meta}
