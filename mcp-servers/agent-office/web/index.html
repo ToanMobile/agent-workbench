@@ -746,10 +746,10 @@ function clearWorld() {
   disposables.forEach((d) => d.dispose && d.dispose());
   disposables = []; pickables = []; rigs = []; lamps = []; colStripes = []; halos = [];
   screens = new Map(); rowMarks = new Map(); cardMeshes = new Map(); workerRings = new Map(); deskAt = new Map(); walkers = []; actors = []; navObs = []; navWalls = []; buildGen++;
-  labels.forEach((l) => l.el.remove()); labels = [];
+  labels.forEach((l) => l.el.remove()); labels = []; labelsDirty = true; hoverDirty = true; // cảnh mới: tính lại nhãn và vật dưới chuột
   world = new THREE.Group(); scene.add(world);
 }
-function addLabel(cls, pos, el, align) { el.classList.add('lbl', cls); $('#labels').appendChild(el); const l = { el, pos, align: align || 'up' }; labels.push(l); return l; }
+function addLabel(cls, pos, el, align) { labelsDirty = true; el.classList.add('lbl', cls); $('#labels').appendChild(el); const l = { el, pos, align: align || 'up' }; labels.push(l); return l; }
 function pick(mesh, p) { mesh.userData.pick = p; pickables.push(mesh); }
 
 let held = new Set();
@@ -1248,6 +1248,7 @@ function fillBubble(el, w) {
 function refreshDynamic(S) {
   const T = palette();
   S.workers.forEach((w) => { const scr = screens.get(w.id); if (scr) drawScreen(scr, w, T); });
+  labelsDirty = true; hoverDirty = true; // nội dung đổi: nhãn và tooltip dưới chuột vẽ lại
   labels.forEach((l) => { const id = l.el.dataset && l.el.dataset.worker; if (id && idx.worker.get(id)) { fillBubble(l.el, idx.worker.get(id)); l.w = 0; } else if (l.el.dataset && l.el.dataset.station) { fillCrowd(l.el, l.el.dataset.station); l.w = 0; } });
 }
 
@@ -1528,7 +1529,7 @@ function stepWalkers(dt) {
   }
 }
 // chỉ những người ở gần camera mới chạy hoạt cảnh; xa thì đứng yên một tư thế (không tốn CPU)
-const LIVE_MAX = 14, LIVE_DIST = 160; // toàn cảnh đứng xa ~120: 14 người gần nhất vẫn cử động
+const LIVE_MAX = 14, LIVE_DIST = 450; // góc nhìn mặc định đứng xa ~170-300: 14 người gần camera nhất vẫn gõ phím (đo 16 người, 14 cử động: ~117 fps)
 let liveAt = 0;
 function updateLive(now) {
   if (now - liveAt < 300) return; liveAt = now;
@@ -1690,8 +1691,8 @@ function focusSelection() {
 
 // ------------------------------------------------------------ interaction
 const ray = new THREE.Raycaster(); const ndc = new THREE.Vector2();
-let hoverEvt = null, downAt = null, hovered = null;
-canvas.addEventListener('pointermove', (e) => { hoverEvt = e; });
+let hoverEvt = null, downAt = null, hovered = null, hoverDirty = false;
+canvas.addEventListener('pointermove', (e) => { hoverEvt = e; hoverDirty = true; });
 canvas.addEventListener('pointerleave', () => { hoverEvt = null; setTip(null); });
 canvas.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
 canvas.addEventListener('pointerup', (e) => {
@@ -1729,6 +1730,7 @@ function select(sel, fly = true) {
   if (fly) requestAnimationFrame(focusSelection);
 }
 function updateSelectionVisuals() {
+  hoverDirty = true; // thẻ được chọn nâng lên / hạ xuống: vật dưới chuột có thể đổi
   rowMarks.forEach((m, name) => { m.visible = !!selection && selection.type === 'repo' && selection.id === name; });
   workerRings.forEach((ring, id) => { ring.visible = !!selection && selection.type === 'worker' && selection.id === id; });
   cardMeshes.forEach((m, id) => {
@@ -2618,10 +2620,15 @@ function resize() {
   renderer.setSize(w, hgt, false); camera.aspect = w / hgt; camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize); resize();
-function updateLabels() {
+let labelsDirty = true, labelKey = '';
+function updateLabels(moved) {
   const w = innerWidth, hgt = innerHeight;
-  const far = camera.position.distanceTo(controls.target) > 70;
   const leftEdge = (innerWidth <= 900 || ($('#rail').hidden && $('#agentsPanel').hidden)) ? 0 : 324;
+  // camera đứng yên, nhãn không đổi nội dung, khung trang không đổi: vị trí nhãn như khung trước, bỏ qua (không đọc style, không ghi DOM)
+  const key = w + ',' + hgt + ',' + leftEdge + ',' + labels.length + ',' + document.documentElement.style.getPropertyValue('--bot-h');
+  if (!moved && !labelsDirty && key === labelKey) return;
+  labelKey = key; labelsDirty = false;
+  const far = camera.position.distanceTo(controls.target) > 70;
   const bottomEdge = innerHeight - chromePx('--bot-h', 64) - 4;
   const layer = $('#labels');
   if (layer.classList.contains('far') !== far) { layer.classList.toggle('far', far); labels.forEach((l) => { l.w = 0; }); }
@@ -2655,6 +2662,15 @@ function updateLabels() {
   }
 }
 let lastFrame = 0;
+// camera có đổi so với khung trước không (vị trí, hướng, ống kính): đứng yên thì nhãn và dò chuột không cần tính lại
+const camSig = new Float64Array(18);
+function cameraMoved() {
+  const m = camera.matrixWorld.elements, p = camera.projectionMatrix.elements;
+  let ch = false;
+  for (let i = 0; i < 16; i++) if (camSig[i] !== m[i]) { camSig[i] = m[i]; ch = true; }
+  if (camSig[16] !== p[0] || camSig[17] !== p[5]) { camSig[16] = p[0]; camSig[17] = p[5]; ch = true; }
+  return ch;
+}
 function frame(now) {
   requestAnimationFrame(frame);
   if (document.hidden) return;
@@ -2671,6 +2687,7 @@ function frame(now) {
     for (const a of actors) if (a.live) { a.mixer.update(dt); applySit(a, now / 1000); }
     const t = now / 1000;
     for (const r of rigs) {
+      if (r.head.children[0] && !r.head.children[0].visible) continue; // người hộp đã được người glTF thay chỗ: không ai thấy, khỏi tính
       r.armL.rotation.z = r.armRot + Math.sin(t * 11 + r.phase) * 0.12;
       r.armR.rotation.z = r.armRot + Math.sin(t * 11 + r.phase + 1.7) * 0.12;
       r.head.position.y = r.headY + Math.sin(t * 2.2 + r.phase) * 0.025;
@@ -2678,8 +2695,10 @@ function frame(now) {
     for (const l of lamps) if (l.pulse) l.mesh.material.emissiveIntensity = 0.55 + Math.sin(t * 3) * 0.35;
     for (const hl of halos) { const k = (t * 0.7 + hl.phase) % 1; hl.mesh.scale.setScalar(1 + k * 0.9); hl.mesh.material.opacity = 0.85 * (1 - k); }
   }
-  if (hoverEvt && !(drag && drag.active)) { const p = hitAt(hoverEvt); setTip(p, hoverEvt); }
-  updateLabels();
+  camera.updateMatrixWorld();
+  const moved = cameraMoved();
+  if (hoverEvt && !(drag && drag.active) && (hoverDirty || moved)) { hoverDirty = false; const p = hitAt(hoverEvt); setTip(p, hoverEvt); } // chỉ dò khi chuột hay camera vừa đổi
+  updateLabels(moved);
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
