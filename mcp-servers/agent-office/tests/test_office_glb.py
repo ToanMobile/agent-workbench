@@ -45,5 +45,25 @@ class StationsGlbTest(unittest.TestCase):
         self.assertTrue(used <= roots, used - roots)
 
 
+class ChibiGlbTest(unittest.TestCase):
+    """Mã tư thế ngồi/đứng của trang tìm xương theo tên và lấy chiều cao từ Head_end: mọi người chibi phải giữ đúng hợp đồng đó."""
+    BONES = {"Hips", "Head", "Head_end", "UpperLeg.L", "UpperLeg.R", "LowerLeg.L", "LowerLeg.R", "Foot.L", "Foot.R",
+             "UpperArm.L", "UpperArm.R", "LowerArm.L", "LowerArm.R", "Hand.L", "Hand.R"}
+
+    def test_every_person_the_page_loads_is_rigged(self):
+        with open(os.path.join(HERE, "web", "index.html"), encoding="utf-8") as f:
+            page = f.read()
+        self.assertIn("'chibi' + (i + 1) + '.glb'", page)
+        count = int(re.search(r"Array\.from\(\{ length: (\d+) \}", page).group(1))
+        self.assertEqual(count, 5)
+        for i in range(1, count + 1):
+            j = glb_json(os.path.join(HERE, "web", "models", f"chibi{i}.glb"))
+            nodes = {n.get("name"): n for n in j["nodes"]}
+            self.assertTrue(self.BONES <= set(nodes), (i, self.BONES - set(nodes)))
+            self.assertEqual({a["name"].lower() for a in j["animations"]}, {"idle", "walk"})
+            self.assertTrue(any(m["name"].startswith("Shirt") for m in j["materials"]), i)
+            self.assertLess(os.path.getsize(os.path.join(HERE, "web", "models", f"chibi{i}.glb")), 500_000)  # năm người cộng lại vẫn nhẹ hơn bộ Quaternius cũ (khoảng 3,3 MB)
+
+
 if __name__ == "__main__":
     unittest.main()

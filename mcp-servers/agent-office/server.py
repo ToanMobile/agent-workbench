@@ -276,6 +276,20 @@ VIEW_BLOCK = """view(number: $view) { name layout filter
         groupByFields(first: 3) { nodes { %FIELD% } } }"""
 
 
+def models_version(web_dir=WEB_DIR) -> str:
+    """Newest mtime under web/models: the page appends it to model URLs so a rebuilt GLB is not served from the browser's one-day cache."""
+    d = os.path.join(web_dir, "models")
+    try:
+        return str(int(max(os.path.getmtime(os.path.join(d, f)) for f in os.listdir(d))))
+    except (OSError, ValueError) as e:
+        warn("models_version", e)
+        return "0"
+
+
+def fill_models_version(page: bytes, version: str) -> bytes:
+    return page.replace(b"__MODELS_V__", version.encode())
+
+
 def warn(context, err) -> None:
     print(f"[agent-office] {context}: {err}", file=sys.stderr, flush=True)
 
@@ -1594,7 +1608,10 @@ def make_handler(app: App):
             if not full.startswith(os.path.realpath(WEB_DIR) + os.sep) or not os.path.isfile(full):
                 return self.send(404, b"not found", "text/plain")
             with open(full, "rb") as f:
-                return self.send(200, f.read(), CTYPES.get(os.path.splitext(full)[1], "application/octet-stream"))
+                data = f.read()
+            if rel == "index.html":
+                data = fill_models_version(data, models_version())
+            return self.send(200, data, CTYPES.get(os.path.splitext(full)[1], "application/octet-stream"))
 
         def do_POST(self):
             path = urlparse(self.path).path

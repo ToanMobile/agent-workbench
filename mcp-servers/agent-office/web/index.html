@@ -1038,11 +1038,12 @@ const KIT_STYLE = DESK_STYLES.findIndex((st) => st.kit); // mẫu bàn Blender, 
 let deskStyle = KIT_STYLE; // mặc định: nội thất Blender; ai đã chọn mẫu khác thì giữ lựa chọn đó
 try { const v = localStorage.getItem('agent-office-desk'); if (v != null) deskStyle = Math.min(DESK_STYLES.length - 1, Math.max(0, parseInt(v, 10) || 0)); } catch (e) { deskStyle = KIT_STYLE; }
 // ---- nội thất dựng bằng Blender (models/office.glb, blender/build_office.py): nạp một lần, nhân bản cho mỗi bàn và mỗi kệ
+const MODELS_V = '?v=__MODELS_V__'; // server điền mtime mới nhất của web/models: dựng lại model thì URL đổi, trình duyệt không dùng bản cũ trong cache
 const officeKit = { state: 'new', parts: {} };
 function loadOfficeKit() {
   if (!HAS_GLTF || officeKit.state !== 'new') return;
   officeKit.state = 'loading';
-  new THREE.GLTFLoader().load('models/office.glb', (g) => {
+  new THREE.GLTFLoader().load('models/office.glb' + MODELS_V, (g) => {
     const seen = new Set();
     g.scene.traverse((o) => {
       if (!o.isMesh) return;
@@ -1061,7 +1062,7 @@ const stationKit = { state: 'new', parts: {} };
 function loadStationKit() {
   if (!HAS_GLTF || stationKit.state !== 'new') return;
   stationKit.state = 'loading';
-  new THREE.GLTFLoader().load('models/stations.glb', (g) => {
+  new THREE.GLTFLoader().load('models/stations.glb' + MODELS_V, (g) => {
     const seen = new Set();
     g.scene.traverse((o) => {
       if (!o.isMesh) return;
@@ -1073,7 +1074,7 @@ function loadStationKit() {
     if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
   }, undefined, (e) => { stationKit.state = 'failed'; console.warn('Không nạp được trạm QA/Review', e && e.message); });
 }
-const STATION_POSE = { x: -0.45, standing: true, top: 1.0, card: [0.3, 1.04, 0.45] };
+const STATION_POSE = { x: -0.3, standing: true, top: 1.0, card: [0.3, 1.04, 0.45] };
 const STATION_STYLES = { // theo lane của runner (QA, Review); lane build vẫn dùng bàn đã chọn
   QA: { name: 'Ma trận test', station: 'QAMatrix', pose: STATION_POSE, nav: [{ x: 0.2, z: 0, hw: 0.9, hd: 1.3 }] },
   Review: { name: 'Buồng review', station: 'ReviewCockpit', pose: STATION_POSE, nav: [{ x: 0.2, z: 0, hw: 0.9, hd: 1.4 }] },
@@ -1086,7 +1087,8 @@ for (const st of Object.values(STATION_STYLES)) {
   };
 }
 function stationStyleFor(w) {
-  const st = w.lane && STATION_STYLES[w.lane];
+  const key = w.lane && Object.keys(STATION_STYLES).find((k) => k.toLowerCase() === String(w.lane).toLowerCase()); // runner ghi 'QA', phiên agent ghi 'Qa'
+  const st = key && STATION_STYLES[key];
   if (!st || !HAS_GLTF) return null;
   loadStationKit();
   return stationKit.state === 'ready' ? st : null; // chưa nạp xong thì tạm dùng bàn thường
@@ -1292,13 +1294,9 @@ function refreshDynamic(S) {
 // ---- người bằng glTF (Quaternius, CC0): nạp mỗi model một lần, nhân bản bằng SkeletonUtils, hoạt cảnh bằng AnimationMixer
 const HAS_PATH = !!window.OfficePath;
 const HAS_GLTF = !!(THREE.GLTFLoader && THREE.SkeletonUtils);
-const CHARS = [ // shirt = tên vật liệu áo, được nhuộm theo màu lane
-  { file: 'man.glb', shirt: 'White' }, { file: 'woman.glb', shirt: 'Orange' }, { file: 'woman2.glb', shirt: 'Shirt.001' },
-  { file: 'woman3.glb', shirt: 'Dress' }, { file: 'beach.glb', shirt: 'White.002' },
-];
+const CHARS = Array.from({ length: 5 }, (_, i) => ({ file: 'chibi' + (i + 1) + '.glb', shirt: 'Shirt' })); // dựng bằng Blender (blender/build_chibi.py); shirt = tiền tố tên vật liệu áo, được nhuộm theo màu lane
 const charLib = CHARS.map(() => ({ state: 'new', waiters: [] }));
 const CHAR_H = 1.8;          // chiều cao người theo đơn vị của bàn (bàn được nhân theo cỡ ô, người cũng thế)
-const CHIBI = { head: 2.1, body: 0.78 }; // dáng chibi: đầu phóng to, cả người thấp lại (c.scale đổi theo nên tư thế ngồi và tay gõ vẫn khớp)
 const SIT_T = 0.6;           // giây để ngồi xuống hoặc đứng dậy
 function withChar(i, cb) {
   const c = charLib[i];
@@ -1307,12 +1305,12 @@ function withChar(i, cb) {
   c.waiters.push(cb);
   if (c.state !== 'new') return;
   c.state = 'loading';
-  new THREE.GLTFLoader().load('models/' + CHARS[i].file, (g) => {
+  new THREE.GLTFLoader().load('models/' + CHARS[i].file + MODELS_V, (g) => {
     // chiều cao thật lấy từ xương (Box3 của lưới có da sai vì armature nhân 100): từ sàn tới đỉnh đầu
     g.scene.updateMatrixWorld(true);
     const joints = new THREE.Box3(), jp = new THREE.Vector3();
     g.scene.traverse((o) => { if (o.isBone || /^Head_end/.test(o.name)) joints.expandByPoint(o.getWorldPosition(jp)); });
-    c.scene = g.scene; c.scale = CHAR_H * CHIBI.body / ((joints.max.y - Math.min(0, joints.min.y)) || 1.8);
+    c.scene = g.scene; c.scale = CHAR_H / ((joints.max.y - Math.min(0, joints.min.y)) || 1.8);
     c.clips = {};
     g.animations.forEach((cl) => { c.clips[cl.name.toLowerCase()] = cl; });
     c.poses = new Map(); // tư thế ở bàn theo cỡ ghế/bàn, tính khi cần rồi giữ lại
@@ -1348,7 +1346,7 @@ function computePose(c, root, seatTop, top, standing) {
   };
   const entry = (b, q0) => ({ name: b.name, off: q0.clone().invert().multiply(b.quaternion), still: !animated.has(b.name + '.quaternion'), base: q0.clone() });
   const hips = bone('Hips'); if (!hips) return null;
-  const hipY = hips.getWorldPosition(V()).y, drop = standing ? 0 : Math.max(0, hipY - seatTop * k);
+  const hipY = hips.getWorldPosition(V()).y, drop = standing ? 0 : hipY - seatTop * k; // âm = người thấp hơn ghế (chibi): nâng lên cho mông ngồi đúng mặt ghế
   const legs = [], feet = [], arms = [];
   if (!standing) for (const sd of ['L', 'R']) {
     const th = bone('UpperLeg' + sd), sh = bone('LowerLeg' + sd), ft = bone('Foot' + sd);
@@ -1394,7 +1392,7 @@ function spawnActor(c, i, w) {
   model.traverse((o) => {
     if (!o.isMesh) return;
     o.castShadow = true; o.frustumCulled = false; // hình cầu bao của lưới có da tính theo tư thế gốc nên bị cắt nhầm khi người đi xa chỗ cũ
-    if (o.material.name === CHARS[i].shirt) { o.material = track(o.material.clone()); o.material.color.set(workerColor(w)); }
+    if (o.material.name.startsWith(CHARS[i].shirt)) { o.material = track(o.material.clone()); o.material.color.set(workerColor(w)); }
   });
   const mixer = new THREE.AnimationMixer(model), act = {};
   for (const n of ['idle', 'walk']) if (c.clips[n]) act[n] = mixer.clipAction(c.clips[n]);
@@ -1405,7 +1403,6 @@ function spawnActor(c, i, w) {
 }
 const _sq = new THREE.Quaternion(), _sq2 = new THREE.Quaternion(), _SQID = new THREE.Quaternion();
 function applySit(a, t) { // gọi ngay sau mixer.update: nhân độ lệch tư thế bàn vào xương (chân theo sitW, tay theo armW), tay gõ khi đang làm
-  const hd = a.bm.get('Head'); if (hd) hd.scale.setScalar(CHIBI.head); // clip có track scale nên đặt lại sau mỗi lần mixer chạy
   const p = a.pose; if (!p) return;
   const lw = a.sitW, aw = a.armW;
   a.model.position.y = -p.drop * lw;
