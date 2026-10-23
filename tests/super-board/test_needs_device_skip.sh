@@ -38,6 +38,10 @@ printf 'List of devices attached\n'
 SH
 chmod +x "$TMP/bin/adb"
 export PATH="$TMP/bin:$PATH"
+# Cô lập khỏi GitHub thật và khỏi tệp halt dùng chung: top_card_in_column gọi ready_card_held (#202), nó đọc issue qua github-read
+# (merge gate chạy test này ở chế độ STRICT: một lệnh đọc hỏng ghi github-halt.json và cả board dừng, 22 và 23/10).
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/gh.calls"\nexit 1\n' "$TMP" > "$TMP/bin/gh"; chmod +x "$TMP/bin/gh"
+export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_GITHUB_READ_STRICT=1
 cp "$ROOT/universal-agent-devkit/bin/proof-capture.py" "$TMP/repo/.agents/devkit/bin/"
 cp "$ROOT/universal-agent-devkit/bin/proof-capture.py" "$TMP/repo2/universal-agent-devkit/bin/"
 REAL='R58N1234567\tdevice'
@@ -82,6 +86,7 @@ runner_pick() {   # $1 = items JSON, $2 = adb output; from a folder with no DevK
   ( cd "$TMP/nokit" && SB_LIB_ONLY=1 . "$RUNNER" || exit 99
     set +e
     log() { echo "LOG $*"; }; issue_locked() { return 1; }; issue_is_open() { return 0; }; early_backoff() { return 1; }
+    ready_card_held() { return 1; }   # chốt #202 đọc thân issue qua GitHub; test này chỉ kiểm thẻ cần thiết bị thật
     INFLIGHT_DIR="$TMP/inflight"; mkdir -p "$INFLIGHT_DIR"
     PROJECT_ITEMS_JSON="$1"
     export STUB_ADB_OUT="$2"
@@ -163,5 +168,9 @@ grep -qx "nodev=True" "$TMP/s0.out" && grep -qx "waiting=56,52,50" "$TMP/s0.out"
 status_waiting "$REAL" > "$TMP/s1.out"
 grep -qx "nodev=False" "$TMP/s1.out" && grep -qx "waiting=56" "$TMP/s1.out" \
   && ok "status, real device online: they are not waiting" || fail "status device online: $(tr '\n' ' ' < "$TMP/s1.out")"
+
+# ── cô lập: test này không được chạm GitHub thật và không được ghi file halt
+[ ! -s "$TMP/gh.calls" ] && ok "isolation: no gh call was made" || fail "isolation: the test called gh: $(head -2 "$TMP/gh.calls" | tr '\n' '|')"
+[ ! -e "$TMP/halt.json" ] && ok "isolation: no github-halt file was written" || fail "isolation: a halt file was written: $(cut -c1-160 "$TMP/halt.json")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_needs_device_skip: all passed" || { echo "❌ test_needs_device_skip: $FAILS failed"; exit 1; }

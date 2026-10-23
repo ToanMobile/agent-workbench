@@ -18,13 +18,18 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-ready-order.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bodies" "$TMP/repo"
 # stub đọc GitHub: `issue view N --json body ...` in body của $TMP/bodies/N (thiếu file = body rỗng)
+# Giống github-read thật: kind issue từ chối --jq/-q/--template (exit 64) và in JSON {"number","title","body"} cho dạng đúng
+# `--json number,title,body`. Stub cũ nhận cả `-q .body` và in chữ thô nên mã gọi sai dạng vẫn xanh (22 và 23/10).
 cat > "$TMP/gh-read.py" <<'PY'
-import os, sys
+import json, os, sys
 a = sys.argv[1:]
+if any(x in ("-q", "--jq", "--template", "-t") for x in a):
+    sys.stderr.write("stub github-read: --jq/-q/--template cannot pass with --kind issue\n")
+    sys.exit(64)
 n = a[a.index("view") + 1] if "view" in a else ""
 p = os.path.join(os.environ["STUB_DIR"], "bodies", n)
 if "body" in " ".join(a) and os.path.exists(p):
-    sys.stdout.write(open(p).read())
+    sys.stdout.write(json.dumps({"number": int(n), "title": "t", "body": open(p).read()}))
 PY
 export STUB_DIR="$TMP"
 
