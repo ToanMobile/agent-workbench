@@ -1294,7 +1294,15 @@ function refreshDynamic(S) {
 // ---- người bằng glTF (Quaternius, CC0): nạp mỗi model một lần, nhân bản bằng SkeletonUtils, hoạt cảnh bằng AnimationMixer
 const HAS_PATH = !!window.OfficePath;
 const HAS_GLTF = !!(THREE.GLTFLoader && THREE.SkeletonUtils);
-const CHARS = Array.from({ length: 5 }, (_, i) => ({ file: 'chibi' + (i + 1) + '.glb', shirt: 'Shirt' })); // dựng bằng Blender (blender/build_chibi.py); shirt = tiền tố tên vật liệu áo, được nhuộm theo màu lane
+const CHARS = [ // dựng bằng Blender (blender/build_chibi.py); shirt/hair = tiền tố tên vật liệu được nhuộm theo lane và theo agent
+  { file: 'chibi_girl.glb', shirt: 'Shirt', hair: 'Hair' }, { file: 'chibi_boy.glb', shirt: 'Shirt', hair: 'Hair' },
+];
+const CHIBI_HAIRS = ['#74493a', '#5b3a2e', '#8c5a3a', '#3e2d2b', '#a8704a', '#4a3428']; // tóc mỗi agent một tông để xưởng không toàn bản sao
+// tô bóng kiểu hoạt hình: 3 bậc sáng phẳng + viền tối quanh hình (vỏ lật mặt trong, đẩy theo pháp tuyến), như tranh chibi
+const TOON_RAMP = (() => { const t = new THREE.DataTexture(new Uint8Array([110, 168, 208]), 3, 1, THREE.RedFormat); t.minFilter = t.magFilter = THREE.NearestFilter; t.needsUpdate = true; return t; })();
+const NO_OUTLINE = /^(Eye|Pupil|EyeShine|Ink|Blush|Badge|Collar|Star)/; // nét trên mặt và chi tiết nhỏ: tự là nét vẽ, thêm viền thì thành vệt đen
+const OUTLINE_MAT = new THREE.MeshBasicMaterial({ color: '#2e2127', side: THREE.BackSide });
+OUTLINE_MAT.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  transformed += normalize( objectNormal ) * 0.009;'); };
 const charLib = CHARS.map(() => ({ state: 'new', waiters: [] }));
 const CHAR_H = 1.8;          // chiều cao người theo đơn vị của bàn (bàn được nhân theo cỡ ô, người cũng thế)
 const SIT_T = 0.6;           // giây để ngồi xuống hoặc đứng dậy
@@ -1389,11 +1397,22 @@ function computePose(c, root, seatTop, top, standing) {
 function spawnActor(c, i, w) {
   const root = new THREE.Group(), model = THREE.SkeletonUtils.clone(c.scene);
   model.scale.setScalar(c.scale); root.add(model);
+  const outlines = [];
   model.traverse((o) => {
     if (!o.isMesh) return;
     o.castShadow = true; o.frustumCulled = false; // hình cầu bao của lưới có da tính theo tư thế gốc nên bị cắt nhầm khi người đi xa chỗ cũ
-    if (o.material.name.startsWith(CHARS[i].shirt)) { o.material = track(o.material.clone()); o.material.color.set(workerColor(w)); }
+    const src = o.material, toon = track(new THREE.MeshToonMaterial({ color: src.color.clone(), gradientMap: TOON_RAMP }));
+    if (src.name.startsWith(CHARS[i].shirt)) toon.color.set(workerColor(w));
+    else if (src.name.startsWith(CHARS[i].hair)) toon.color.set(CHIBI_HAIRS[(hashStr(w.id) >>> 5) % CHIBI_HAIRS.length]);
+    o.material = toon;
+    if (o.isSkinnedMesh && !NO_OUTLINE.test(src.name)) outlines.push(o);
   });
+  for (const o of outlines) { // viền: cùng hình học và bộ xương, vẽ mặt trong phồng ra một chút
+    const ol = new THREE.SkinnedMesh(o.geometry, OUTLINE_MAT);
+    ol.bind(o.skeleton, o.bindMatrix); ol.frustumCulled = false; ol.castShadow = false;
+    ol.position.copy(o.position); ol.quaternion.copy(o.quaternion); ol.scale.copy(o.scale);
+    o.parent.add(ol);
+  }
   const mixer = new THREE.AnimationMixer(model), act = {};
   for (const n of ['idle', 'walk']) if (c.clips[n]) act[n] = mixer.clipAction(c.clips[n]);
   const bm = new Map(); model.traverse((o) => { if (o.isBone) bm.set(o.name, o); });
