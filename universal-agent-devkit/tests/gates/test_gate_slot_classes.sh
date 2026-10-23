@@ -2,7 +2,8 @@
 # Test hồi quy (P1 + P1b, 20/10): post-fix-gate xin quyền chạy cho TỪNG suite, không giữ slot cả lượt vì --full.
 # Đo 20/10: một lượt --full chỉ có suite bash/python chờ 30+ phút ở 2 heavy slot toàn máy sau merge gate Unity/Gradle của repo
 # khác mà không chạy suite nào. P1b (người dùng 20/10: "bỏ 2 slot gate, tải CPU dưới 100 thì cứ cho chạy"). Luật:
-#   - không còn 2 slot engine: mọi suite (Gradle/xcodebuild/cpu/nhẹ) chạy ngay khi tải 1 phút < DEVKIT_SLOT_LOAD_MAX (100); tải cao
+#   - không còn 2 slot engine: mọi suite (Gradle/xcodebuild/cpu/nhẹ) chạy ngay khi tải 1 phút < DEVKIT_SLOT_LOAD_MAX (không đặt:
+#     capacity hold_load = 8 × lõi × DEVKIT_CAPACITY, T0052; máy 12 lõi: 96); tải cao
 #     thì chờ tải xuống tối đa DEVKIT_SLOT_LOAD_WAIT_S rồi VẪN chạy — tải không bao giờ làm suite thành UNTESTED
 #   - tổng giây chờ tải của một lượt có trần (DEVKIT_SLOT_ADVISORY_BUDGET_S); merge gate super-board tự chờ tải trước verify rồi đặt
 #     DEVKIT_SLOT_LOAD_WAIT_S=0; DEVKIT_SLOT_PRIORITY=merge một mình (worktree finish) vẫn chờ tải như mọi lượt
@@ -19,7 +20,8 @@ set -u
 # đụng khoá thiết bị thật của máy (bản có khoá thiết bị khoá serial đó dưới ~/.config/universal-agent-devkit/device-locks).
 unset SB_HEAVY_SLOT_HELD DEVKIT_SLOT_ADVISORY_HELD DEVKIT_SLOT_ADVISORY_BUDGET_S SB_HEAVY_SLOT_WAIT_S DEVKIT_SLOT_LOAD_WAIT_S \
   DEVKIT_SLOT_LOAD_MAX DEVKIT_SLOT_PRIORITY GATE_TOTAL_BUDGET_S CI ANDROID_SERIAL FLAKY_RETRY FLAKY_RETRY_MAX_S DEVKIT_GATE_PARALLEL
-# T0052: ngưỡng tải mặc định là capacity hold_load (bin/capacity.py, 8 × lõi): máy giả 12 lõi = 96, tải giả 1/5 dưới và 150 trên ngưỡng
+# T0052: ngưỡng tải mặc định là capacity hold_load (bin/capacity.py, 8 × lõi): máy giả 12 lõi = 96, tải giả 1/5 dưới và 150 trên ngưỡng.
+# Nút hệ số DEVKIT_CAPACITY của người gọi (suite_env của gate giữ nó) đã bị clean_git_env.sh ở trên gỡ, nên ngưỡng luôn là 96.
 export DEVKIT_CAPACITY_CORES=12
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

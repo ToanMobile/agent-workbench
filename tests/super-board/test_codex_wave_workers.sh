@@ -71,18 +71,24 @@ wave 0 EXPECT=3 SB_CAPACITY="$ROOT/.claude/bin/super-board-capacity.py" DEVKIT_C
 
 # capacity hỏng: công thức cũ, không bao giờ thành lỗi argparse
 FB="$(python3 -c 'import os; print(max(1, min(16, (os.cpu_count() or 2) - 2)))')"
-WANT=$(( FB < 6 ? FB : 6 ))   # 6 thẻ
+WANT=$(( FB < 6 ? FB : 6 ))
+cards_n() { python3 -c "import json,sys; print(json.dumps([{'number': i, 'status': 'QA'} for i in range(1, int(sys.argv[1]) + 1)]))" "$1"; }
+# đúng WANT thẻ: một đợt duy nhất, hàng rào không bao giờ chờ một đợt cuối ít lane hơn EXPECT (OCR 23/10: 6 thẻ trên máy 6 lõi, FB 4,
+# đợt cuối 2 lane chờ hết 10 s ở mỗi ca)
+CARDS_SAVE="$CARDS"; CARDS="$(cards_n "$WANT")"; FAIL_RUN=""
 for c in /nonexistent "$TMP/caps/fail" "$TMP/caps/junk" "$TMP/caps/zero" "$TMP/caps/neg"; do
   wave 0 EXPECT="$WANT" SB_CAPACITY="$c"
+  [ "$c" = "$TMP/caps/fail" ] && FAIL_RUN="$RUN_N"
   if [ "$RC" = 0 ] && [ "$PEAK" = "$WANT" ] && ! grep -q 'error:' "$TMP/err.$RUN_N"; then ok "capacity $(basename "$c"): rơi về công thức cũ ($WANT worker), exit 0"
   else fail "capacity $(basename "$c"): rc=$RC peak=$PEAK (muốn $WANT) err=$ERR"; fi
 done
-grep -q 'exit 3' "$TMP/err.$((RUN_N - 3))" && ok "capacity exit 3: cảnh báo nêu mã thoát (không phải lỗi int(''))" \
-  || fail "capacity exit 3: cảnh báo không nêu mã thoát: $(tail -2 "$TMP/err.$((RUN_N - 3))" | tr '\n' '|')"
+CARDS="$CARDS_SAVE"
+grep -q 'exit 3' "$TMP/err.$FAIL_RUN" && ok "capacity exit 3: cảnh báo nêu mã thoát (không phải lỗi int(''))" \
+  || fail "capacity exit 3: cảnh báo không nêu mã thoát: $(tail -2 "$TMP/err.$FAIL_RUN" | tr '\n' '|')"
 
 # capacity hỏng mà max_workers đã đặt (> công thức cũ): dùng nguyên max_workers như trước T0052, không kẹp về công thức cũ (OCR 23/10)
 MW=$((FB + 2)); CARDS_SAVE="$CARDS"
-CARDS="$(python3 -c "import json,sys; print(json.dumps([{'number': i, 'status': 'QA'} for i in range(1, int(sys.argv[1]) + 1)]))" "$MW")"
+CARDS="$(cards_n "$MW")"
 wave "$MW" EXPECT="$MW" SB_CAPACITY=/nonexistent
 [ "$RC" = 0 ] && [ "$PEAK" = "$MW" ] && ok "capacity vắng, max_workers $MW (> công thức cũ $FB): chạy đủ $MW worker" \
   || fail "capacity vắng, max_workers $MW: rc=$RC peak=$PEAK (muốn $MW) err=$ERR"

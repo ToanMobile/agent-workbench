@@ -51,7 +51,9 @@ def main() -> int:
         check("nohup '/bin/run.sh' agent-workbench > '/repo/runner.log'" in cmd, "the launch line names the repo slug and its log")
 
         # T0052: dòng báo ngưỡng tải in hold_load thật của bin/capacity.py (8 × lõi), không phải số 100 viết cứng; thiếu capacity thì
-        # câu dự phòng không có số
+        # câu dự phòng không có số. Nút hệ số DEVKIT_CAPACITY của người gọi (suite_env của gate giữ nó) và tải giả không được lái
+        # số kỳ vọng (review 23/10: DEVKIT_CAPACITY=2 làm hai ca này đỏ): gỡ ra, trả lại trong finally
+        saved_env = {k: os.environ.pop(k) for k in ("DEVKIT_CAPACITY", "DEVKIT_CAPACITY_LOAD") if k in os.environ}
         old_cores = os.environ.get("DEVKIT_CAPACITY_CORES")
         os.environ["DEVKIT_CAPACITY_CORES"] = "12"
         try:
@@ -71,6 +73,7 @@ def main() -> int:
                 os.environ.pop("DEVKIT_CAPACITY_CORES", None)
             else:
                 os.environ["DEVKIT_CAPACITY_CORES"] = old_cores
+            os.environ.update(saved_env)
 
         mon = load_monitor()
         fake_home = Path(raw) / "home"

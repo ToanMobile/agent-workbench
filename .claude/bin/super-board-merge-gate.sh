@@ -343,7 +343,7 @@ fi
 # ---- chờ máy bớt tải trước verify ------------------------------------------------
 # 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
 # quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX, không đặt thì `merge_load_max` của config board, thiếu nữa thì capacity
-# hold_load (T0052, 8 × lõi, 12 lõi: 96 — verify là việc bắt buộc), capacity vắng thì 2 × số lõi (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
+# hold_load (T0052, 8 × lõi, 12 lõi: 96 — verify là việc bắt buộc), capacity vắng thì cùng công thức 8 × số lõi (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 2 × lõi = 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
 # đa SB_MERGE_LOAD_WAIT_S, không đặt thì
 # `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
 # không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
@@ -381,10 +381,11 @@ wait_for_load() {
   else
     [ -n "$max" ] && say "${max_src}='${max}' is not a positive number; using the capacity hold load"
     # T0052: ngưỡng của việc bắt buộc capacity hold_load (8 × lõi, 12 lõi: 96, cùng ngưỡng với heavy_slot; busy_load 36 chỉ cho
-    # worker tùy chọn của runner); capacity vắng, lỗi hay in rác thì 2 × số lõi như cũ.
+    # worker tùy chọn của runner); capacity vắng, lỗi hay in rác thì cùng công thức 8 × số lõi (review 23/10: 2 × lõi cũ = 24 không
+    # bao giờ đạt trên máy này, mọi PR lại chờ hết merge_load_wait_s — đúng lỗi T0052 sửa).
     max=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" hold_load 2>/dev/null) || max=""
     if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
-    else max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 )); fi
+    else max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 8 )); fi
   fi
   while :; do
     # Khoá được giữ cả lúc chờ: làm mới mốc "at" để gate khác không coi nó là khoá bỏ quên. Ghi hỏng không phải lý do bỏ verify.

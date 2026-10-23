@@ -1067,20 +1067,44 @@
         },
         {
           "id": "REG-CAPACITY-RUNNER-01",
-          "name": "super-board-run resolve_*: khoá config vắng thì lấy capacity (build_workers, lane_workers, gate_max, busy_load), capacity vắng thì số cũ",
-          "command": "bash tests/super-board/test_runner_build_workers.sh && bash tests/super-board/test_runner_lane_workers.sh",
+          "name": "super-board-run resolve_build_*: config vắng thì build_workers và build_load_max (busy_load) lấy từ capacity, capacity vắng thì số cũ (lệnh trùng REG-SB-BUILD-WORKERS-01: gate gộp, không chạy hai lần)",
+          "command": "bash tests/super-board/test_runner_build_workers.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-RUNNER-02",
+          "name": "super-board-run resolve_lane_workers: config vắng thì lane_workers từ capacity, capacity vắng thì 1 (lệnh trùng REG-SB-LANE-WORKERS-01)",
+          "command": "bash tests/super-board/test_runner_lane_workers.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-RUNNER-03",
+          "name": "super-board-run resolve_gate_max: config vắng thì gate_max từ capacity (4 lõi: 2), capacity vắng thì 6 (lệnh trùng REG-SB-WIP-LIMIT-01)",
+          "command": "bash tests/super-board/test_runner_wip_limit.sh",
           "parallel_safe": true
         },
         {
           "id": "REG-CAPACITY-MERGE-HOLD-01",
-          "name": "merge gate: config thiếu merge_load_max thì chờ theo capacity hold_load (12 lõi: 96), capacity vắng thì 2 × lõi",
+          "name": "merge gate: config thiếu merge_load_max thì chờ theo capacity hold_load (12 lõi: 96, biên 95/96), capacity vắng thì cùng công thức 8 × lõi (lệnh trùng REG-SB-MERGE-LOAD-WAIT-01)",
           "command": "bash tests/super-board/test_merge_gate_load_wait.sh",
           "parallel_safe": true
         },
         {
           "id": "REG-CAPACITY-SLOTS-01",
-          "name": "heavy_slot / slot máy / super_board_all: trần suite nặng và ngưỡng tải lấy từ capacity (heavy_max, hold_load)",
-          "command": "bash tests/super-board/test_heavy_slot.sh && bash tests/super-board/test_tests_skip_machine_slots.sh && python3 tests/super-board/test_super_board_all_slots.py",
+          "name": "heavy_slot CLI / wrapper super-board: ngưỡng tải mặc định là capacity hold_load (lệnh trùng REG-SB-HEAVY-SLOT-01)",
+          "command": "bash tests/super-board/test_heavy_slot.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-SLOTS-02",
+          "name": "test super-board không xếp hàng sau slot thật của máy khi ngưỡng tải đến từ capacity (lệnh trùng REG-SB-TEST-SLOT-ISO-01)",
+          "command": "bash tests/super-board/test_tests_skip_machine_slots.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-SLOTS-03",
+          "name": "super_board_all: dòng khởi động in ngưỡng hold_load của capacity, nút DEVKIT_CAPACITY không lái test (lệnh trùng REG-SB-NOTIFY-SLOTS-01)",
+          "command": "python3 tests/super-board/test_notify.py && python3 tests/super-board/test_super_board_all_slots.py && bash tests/super-board/test_runner_claim_loop.sh",
           "parallel_safe": true
         },
         {
