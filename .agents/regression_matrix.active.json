@@ -1098,6 +1098,38 @@
       ]
     },
     {
+      "component": "super-board-status-needs-you-column",
+      "watch_files": [
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_status_needs_you_column.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-STATUS-NEEDS-YOU-01",
+          "name": "status: option Needs You của Project vẽ thành ô riêng và vào nhóm Waiting on you; không có thẻ Needs You thì đầu ra không đổi",
+          "command": "bash tests/super-board/test_status_needs_you_column.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-waiting-label",
+      "trigger_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_waiting_label.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAITING-LABEL-01",
+          "name": "thẻ Blocked chỉ chờ thẻ khác mang nhãn '⏳ chờ thẻ khác' (planner pending, runner gắn/gỡ), thẻ 🙋 không có nhãn, status tách hai nhóm (#235)",
+          "command": "bash tests/super-board/test_waiting_label.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "capacity",
       "watch_files": [
         "universal-agent-devkit/bin/capacity.py",

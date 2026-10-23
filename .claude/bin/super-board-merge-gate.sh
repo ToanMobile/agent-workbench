@@ -405,7 +405,17 @@ wait_for_load() {
     sleep "$nap"; waited=$(( waited + nap )); LOAD_WAITED=$waited
   done
 }
-wait_for_load
+# #288: biên nhận của merge train đã chứng minh đúng cây này thì verify bị bỏ, nên không chờ tải: mỗi PR của đợt từng chờ tới
+# merge_load_wait_s để rồi không chạy gì. Cây dự kiến = merge-tree(base, head), đúng cây train ghi (và cây merge scratch bên dưới).
+SKIP_LOAD_WAIT=0
+if [ "$DRY" -ne 1 ] && [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
+  PRE_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
+  if [ -n "$PRE_TREE" ] && git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null; then
+    [ "$PRE_TREE" != "$(git -C "$REPO_PATH" merge-tree --write-tree "origin/${BASE}" "$HEAD_SHA" 2>/dev/null)" ] || SKIP_LOAD_WAIT=1
+  fi
+fi
+if [ "$SKIP_LOAD_WAIT" -eq 1 ]; then LOAD_WAITED=0; LOAD_WAIT_ON=0; say "train receipt matches the tree to merge: verify will be skipped, not waiting for the load"
+else wait_for_load; fi
 # Đã chờ thì PR có thể đã đổi: đọc lại head và trạng thái, không verify code không còn là PR.
 if [ "${LOAD_WAITED:-0}" -gt 0 ]; then
   NOW_HEAD=$(pr_head) || exit $?
@@ -800,7 +810,9 @@ for cmd in "${VERIFY[@]}"; do
     exit 11
   fi
 done
-say "verified green against ${BASE} (${#VERIFY[@]} command(s))"
+# #288: tiền tố `verified green against` giữ nguyên (proof_gate.sh đọc nó); phần sau nói thật số lệnh đã chạy ở đây.
+if [ "$TRAIN_PROVED" -eq 1 ]; then say "verified green against ${BASE} (0 command(s) run here; the merge train proved this exact tree)"
+else say "verified green against ${BASE} (${#VERIFY[@]} command(s))"; fi
 own_lock_or_stop   # verify dài có thể đã để gate khác chiếm khoá: không merge song song với nó
 
 python3 "$GITHUB_READ" --check

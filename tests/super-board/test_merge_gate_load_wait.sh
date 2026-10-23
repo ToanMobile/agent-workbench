@@ -279,5 +279,18 @@ grep -q "cannot read the machine load" "$TMP/gate17.log" && ok "17: the gate saw
 [ "$(cat "$PRIOF" 2>/dev/null)" = "merge unset" ] && ok "17: verify sees DEVKIT_SLOT_LOAD_WAIT_S unset after a mid-wait load read failure" \
   || fail "17: verify env '$(cat "$PRIOF" 2>/dev/null)' (want 'merge unset')"
 
+# Ca 18 (#288): biên nhận của merge train đã chứng minh đúng cây này ⇒ gate không verify, nên cũng không được chờ tải (mỗi PR của đợt
+# từng chờ tới SB_MERGE_LOAD_WAIT_S rồi bỏ verify). Dòng cuối không được khoe đã chạy lệnh nào; tiền tố `verified green against` giữ
+# nguyên vì proof_gate.sh đọc nó làm bằng chứng merge.
+printf '%s %s\n' "$H" "$(git -C "$R" rev-parse "${H}^{tree}")" > "$TMP/good.receipt"
+echo 99 > "$LOADF"; rm -f "$STARTED"
+SB_MERGE_LOAD_WAIT_S=3 SB_MERGE_LOAD_POLL_S=1 gate --train-receipt "$TMP/good.receipt" >"$TMP/gate18.log" 2>&1
+grep -q "verify skipped" "$TMP/gate18.log" && [ ! -f "$STARTED" ] \
+  && ok "18: a matching train receipt skips verify" || fail "18: verify not skipped: $(grep merge-gate "$TMP/gate18.log" | head -4)"
+grep -q "waiting for load" "$TMP/gate18.log" \
+  && fail "18: the gate waited for the load although verify is skipped" || ok "18: no load wait when the train receipt proves the tree"
+grep -q "verified green against main (0 command(s) run here" "$TMP/gate18.log" \
+  && ok "18: the final line says no command ran here" || fail "18: final line: $(grep 'verified green' "$TMP/gate18.log")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }
