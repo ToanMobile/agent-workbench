@@ -1070,6 +1070,24 @@
           "name": "super-board-run resolve_*: khoá config vắng thì lấy capacity (build_workers, lane_workers, gate_max, busy_load), capacity vắng thì số cũ",
           "command": "bash tests/super-board/test_runner_build_workers.sh && bash tests/super-board/test_runner_lane_workers.sh",
           "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-MERGE-HOLD-01",
+          "name": "merge gate: config thiếu merge_load_max thì chờ theo capacity hold_load (12 lõi: 96), capacity vắng thì 2 × lõi",
+          "command": "bash tests/super-board/test_merge_gate_load_wait.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-SLOTS-01",
+          "name": "heavy_slot / slot máy / super_board_all: trần suite nặng và ngưỡng tải lấy từ capacity (heavy_max, hold_load)",
+          "command": "bash tests/super-board/test_heavy_slot.sh && bash tests/super-board/test_tests_skip_machine_slots.sh && python3 tests/super-board/test_super_board_all_slots.py",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-OFFICE-01",
+          "name": "agent-office dashboard: hiển thị ngưỡng tải hold_load từ capacity, capacity hỏng không làm sập dashboard",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_dashboard_stats",
+          "parallel_safe": true
         }
       ]
     }

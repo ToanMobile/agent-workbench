@@ -75,7 +75,7 @@ done
 # không đặt SB_CAPACITY: wrapper cạnh script, SB_REPO_PATH = gốc repo của wave (repo tạm có capacity.py của worktree này)
 cp "$ROOT/.claude/bin/super-board-capacity.py" "$TMP/bin/"
 mkdir -p "$TMP/repo/universal-agent-devkit/bin"; cp "$ROOT/universal-agent-devkit/bin/capacity.py" "$TMP/repo/universal-agent-devkit/bin/"
-wave 0 DEVKIT_CAPACITY_CORES=4 DEVKIT_CAPACITY_LOAD=0
+wave 0 -u SB_CAPACITY DEVKIT_CAPACITY_CORES=4 DEVKIT_CAPACITY_LOAD=0   # -u: SB_CAPACITY của người gọi không được lọt vào ca "vắng"
 [ "$RC" = 0 ] && [ "$PEAK" = 3 ] && ok "không đặt SB_CAPACITY: dùng super-board-capacity.py cạnh script, dò capacity.py trong repo của wave" \
   || fail "SB_CAPACITY vắng: rc=$RC peak=$PEAK err=$ERR"
 

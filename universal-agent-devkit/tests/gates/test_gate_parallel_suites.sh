@@ -26,7 +26,7 @@
 set -u
 export VACUITY_REVERT=0
 # T0052: cỡ nhóm mặc định đến từ bin/capacity.py gate_parallel (co theo tải): ghim máy giả 12 lõi rảnh = 6, như hằng cũ
-unset DEVKIT_GATE_PARALLEL
+unset DEVKIT_GATE_PARALLEL DEVKIT_CAPACITY   # DEVKIT_CAPACITY: nút hệ số của người gọi (suite_env của gate cha giữ nó) không được lái cỡ nhóm
 export DEVKIT_CAPACITY_CORES=12 DEVKIT_CAPACITY_LOAD=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

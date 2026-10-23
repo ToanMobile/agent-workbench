@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wrapper mỏng: tìm universal-agent-devkit/bin/capacity.py (nguồn sức chứa chung, T0052) và in một khoá của nó.
 
-  super-board-capacity.py <khoá>    in số (busy_load, build_workers, lane_workers, gate_max, …)
+  super-board-capacity.py <khoá>    in số (hold_load, busy_load, build_workers, lane_workers, gate_max, …)
   super-board-capacity.py --json    in mọi khoá
 
 Thứ tự dò: repo hiện tại (SB_REPO_PATH hoặc cwd; universal-agent-devkit rồi .agents/devkit) → main worktree → repo chứa chính script

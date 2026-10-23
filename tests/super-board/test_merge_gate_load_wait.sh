@@ -206,19 +206,20 @@ gate_max env SB_MERGE_LOAD_MAX=50 >"$TMP/gate15.log" 2>&1; rc=$?
 grep -q "waiting for load 60 to drop below 50 before verify" "$TMP/gate15.log" \
   && ok "SB_MERGE_LOAD_MAX=50 overrides config merge_load_max=100" || fail "env did not override the config: $(grep merge-gate "$TMP/gate15.log" | head -3)"
 
-# Ca 15b (T0052): config không đặt merge_load_max và SB_MERGE_LOAD_MAX không đặt → ngưỡng chung capacity busy_load (máy giả 12 lõi: 36,
-# cùng ngưỡng heavy_slot); capacity vắng (SB_CAPACITY=/nonexistent) → 2 × số lõi thật như cũ.
+# Ca 15b (T0052): config không đặt merge_load_max và SB_MERGE_LOAD_MAX không đặt → ngưỡng chung capacity hold_load (8 × lõi, máy giả
+# 12 lõi: 96, cùng ngưỡng heavy_slot; verify là việc BẮT BUỘC — người dùng 20/10: "dưới 100 thì cho chạy", không phải busy_load 36);
+# capacity vắng (SB_CAPACITY=/nonexistent) → 2 × số lõi thật như cũ.
 CFG_NOMAX="$TMP/cfg-nomax.json"; jq '.merge_load_wait_s = 3' "$CFG" > "$CFG_NOMAX"
 gate_nomax() { ( unset SB_MERGE_LOAD_WAIT_S SB_MERGE_LOAD_MAX DEVKIT_CAPACITY SB_CAPACITY; cd "$WT" && SB_MERGE_LOAD_POLL_S=1 \
   DEVKIT_CAPACITY_CORES=12 "$@" bash "$GATE" --config "$CFG_NOMAX" --pr 5 --expect-head "$H" ); }
-echo 30 > "$LOADF"; rm -f "$STARTED"
+echo 90 > "$LOADF"; rm -f "$STARTED"
 gate_nomax env >"$TMP/gate15b.log" 2>&1; rc=$?
-if ! grep -q "waiting for load" "$TMP/gate15b.log" && ran "$rc"; then ok "không có merge_load_max, 12 lõi, tải 30 < busy_load 36: không chờ, verify chạy"
-else fail "không có merge_load_max, tải 30: rc=$rc $(grep merge-gate "$TMP/gate15b.log" | head -3)"; fi
-echo 40 > "$LOADF"; rm -f "$STARTED"
+if ! grep -q "waiting for load" "$TMP/gate15b.log" && ran "$rc"; then ok "không có merge_load_max, 12 lõi, tải 90 < hold_load 96: không chờ, verify chạy"
+else fail "không có merge_load_max, tải 90: rc=$rc $(grep merge-gate "$TMP/gate15b.log" | head -3)"; fi
+echo 100 > "$LOADF"; rm -f "$STARTED"
 gate_nomax env >"$TMP/gate15c.log" 2>&1; rc=$?
-grep -q "waiting for load 40 to drop below 36 before verify" "$TMP/gate15c.log" \
-  && ok "không có merge_load_max, 12 lõi, tải 40: chờ dưới busy_load 36" || fail "không có merge_load_max, tải 40: $(grep merge-gate "$TMP/gate15c.log" | head -3)"
+grep -q "waiting for load 100 to drop below 96 before verify" "$TMP/gate15c.log" \
+  && ok "không có merge_load_max, 12 lõi, tải 100: chờ dưới hold_load 96" || fail "không có merge_load_max, tải 100: $(grep merge-gate "$TMP/gate15c.log" | head -3)"
 TWO_X=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)') * 2 ))
 echo $((TWO_X + 1)) > "$LOADF"; rm -f "$STARTED"
 gate_nomax env SB_CAPACITY=/nonexistent >"$TMP/gate15d.log" 2>&1; rc=$?

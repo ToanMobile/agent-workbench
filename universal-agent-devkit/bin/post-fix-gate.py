@@ -5930,7 +5930,7 @@ def main():
     # run side by side as one group: the DevKit's five independent suites took the SUM of their times. A suite without
     # the flag is a barrier: the group before it finishes first, so nothing runs next to it. Only mode "full" joins a
     # group, which keeps vacuity_revert (it rewrites production files in the tree) from ever running next to another
-    # suite. DEVKIT_GATE_PARALLEL=0 turns it off; a number caps the group (default 6).
+    # suite. DEVKIT_GATE_PARALLEL=0 turns it off; a number caps the group (default: capacity gate_parallel, 6 on 12 idle cores).
     # ponytail: a flaky re-run of a grouped suite sees os.environ's DEVKIT_GATE_DONE, the scripts of the suites run alone
     # before it, not its group mates' (it re-runs them: slower, never less checked); upgrade if grouped suites retry often.
     # run_impacted.sh không vào nhóm này (may_join): các job của nó (run_impacted.sh --jobs) cộng GATE/HOOK đẩy suite quá 900 s.
@@ -5947,7 +5947,7 @@ def main():
                 sys.path.insert(0, _bin)
             import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
             parallel_cap = _capacity.gate_parallel()
-        except (ImportError, SyntaxError, OSError) as exc:
+        except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không làm chết gate
             log_warn(f"capacity: {exc!r}; DEVKIT_GATE_PARALLEL mặc định 6")
             parallel_cap = 6
     slots = threading.BoundedSemaphore(max(parallel_cap, 1))
@@ -6005,8 +6005,8 @@ def main():
     def take_slots(t, cmd):
         """P1 (20/10): quyền chạy của CHÍNH suite này (heavy_slot.classify), giữ trong lúc nó chạy — kể cả lần chạy lại flaky và
         vacuity revert. --full không còn giữ slot cả lượt (đo 20/10: một lượt --full chỉ suite bash/python chờ 30+ phút mà không chạy
-        suite nào); P1b (người dùng 20/10): không còn 2 slot — tải máy dưới DEVKIT_SLOT_LOAD_MAX (100) thì chạy, chỉ Unity còn khoá
-        độc quyền. None: không có heavy_slot."""
+        suite nào); P1b (người dùng 20/10): không còn 2 slot — tải máy dưới DEVKIT_SLOT_LOAD_MAX (mặc định capacity hold_load,
+        12 lõi: 96) thì chạy, chỉ Unity còn khoá độc quyền. None: không có heavy_slot."""
         if not slot_mod:
             try:
                 sys.path.insert(0, str(Path(__file__).resolve().parent))

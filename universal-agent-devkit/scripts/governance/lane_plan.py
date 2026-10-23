@@ -78,7 +78,7 @@ def _capacity():
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return mod
-    except (ImportError, SyntaxError, OSError, AttributeError) as exc:
+    except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không làm chết lane_plan
         sys.stderr.write("lane_plan: không nạp được bin/capacity.py (%r); trần %d lane\n" % (exc, MAX_SLOTS))
         return None
 

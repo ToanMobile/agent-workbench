@@ -21,8 +21,9 @@ cd "$DK" || exit 2
 # setting, alternating: 272/326 s at 10 jobs, 240/263 s at 16, 0 red tests in 6 runs (tests/verification/test_run_impacted_order.sh (f)). ponytail: 2 runs per setting on one
 # 12-core machine; measure >= 5 alternating pairs (and on 4-8 cores) before raising the cap again.
 # DEVKIT_TEST_CORES pretends a core count (tests only). `--jobs` prints the number a run would use.
-# T0052: mặc định lấy từ nguồn sức chứa chung bin/capacity.py test_jobs = max(4, ⌊lõi × 4/3 × DEVKIT_CAPACITY × phần máy rảnh⌋), không
-# còn trần 16 (13 lõi: 17, 64 lõi: 85) và tự thu lại tới 1/4 khi tải cao; DEVKIT_TEST_CORES đi vào capacity dưới tên DEVKIT_CAPACITY_CORES.
+# T0052: mặc định lấy từ nguồn sức chứa chung bin/capacity.py test_jobs = max(4, ⌊lõi × 4/3 × DEVKIT_CAPACITY⌋), không còn trần 16
+# (13 lõi: 17, 64 lõi: 85), không co theo tải (người dùng 23/10: máy bận thì chờ trước khi chạy); DEVKIT_TEST_CORES đi vào capacity
+# dưới tên DEVKIT_CAPACITY_CORES.
 # capacity.py vắng / hỏng / không có python3: công thức shell cũ bên dưới.
 pint() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ $((10#$1)) -gt 0 ]; }   # 10# so 08 is eight, 00 is not "unlimited"
 default_jobs() {

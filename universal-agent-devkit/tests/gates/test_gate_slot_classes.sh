@@ -19,7 +19,7 @@ set -u
 # đụng khoá thiết bị thật của máy (bản có khoá thiết bị khoá serial đó dưới ~/.config/universal-agent-devkit/device-locks).
 unset SB_HEAVY_SLOT_HELD DEVKIT_SLOT_ADVISORY_HELD DEVKIT_SLOT_ADVISORY_BUDGET_S SB_HEAVY_SLOT_WAIT_S DEVKIT_SLOT_LOAD_WAIT_S \
   DEVKIT_SLOT_LOAD_MAX DEVKIT_SLOT_PRIORITY GATE_TOTAL_BUDGET_S CI ANDROID_SERIAL FLAKY_RETRY FLAKY_RETRY_MAX_S DEVKIT_GATE_PARALLEL
-# T0052: ngưỡng tải mặc định là capacity busy_load (bin/capacity.py): máy giả 12 lõi = 36, tải giả 1/5 dưới và 150 trên ngưỡng ở mọi máy
+# T0052: ngưỡng tải mặc định là capacity hold_load (bin/capacity.py, 8 × lõi): máy giả 12 lõi = 96, tải giả 1/5 dưới và 150 trên ngưỡng
 export DEVKIT_CAPACITY_CORES=12
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"

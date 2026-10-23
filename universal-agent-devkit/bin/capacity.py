@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Nguồn sức chứa DUY NHẤT của máy (T0052): mọi giới hạn song song của DevKit và super-board (ngưỡng tải, số job test, nhóm suite
 của gate, suite nặng, gate cùng lúc, worker board, lane song song) suy từ số lõi × hệ số DEVKIT_CAPACITY (nhóm suite của gate còn co
-lại khi tải cao; máy bận thì các nơi gọi chờ dưới busy_load trước khi chạy), thay
-cho các hằng số rải rác (100, 6, 3, 10, 16, 4) chỉ đúng trên máy 12 lõi.
+lại khi tải cao), thay cho các hằng số rải rác (100, 6, 3, 10, 16, 4) chỉ đúng trên máy 12 lõi.
+
+Hai ngưỡng tải:
+  hold_load (8 × lõi, 12 lõi: 96)  việc BẮT BUỘC (suite của gate trong heavy_slot, verify của merge gate) chỉ chờ khi tải trên mức này
+                                   (người dùng 20/10: "dưới 100 thì cho chạy" — máy này tải 45–100 cả ngày);
+  busy_load (3 × lõi, 12 lõi: 36)  chỉ để mở thêm việc TÙY CHỌN (worker build / QA / review thêm của super-board).
+Nhóm suite của gate co dần từ tải = lõi tới hold_load (free_fraction).
 
   capacity.py <khoá>    in một số (khoá: xem KEYS, thêm cores / scale / load / free_fraction)
   capacity.py load      in tải 1 phút, hoặc chuỗi rỗng khi không đọc được (exit 0)
@@ -32,7 +37,7 @@ def _floor(x: float) -> int:
 
 
 def cores() -> int:
-    """Số lõi: DEVKIT_CAPACITY_CORES (số nguyên 1..MAX_CORES) → os.cpu_count() → 4. Rác thì bỏ nguồn đó."""
+    """Số lõi: DEVKIT_CAPACITY_CORES (số nguyên 1..MAX_CORES) → số CPU tiến trình được dùng → 4. Rác thì bỏ nguồn đó."""
     raw = os.environ.get("DEVKIT_CAPACITY_CORES", "").strip()
     try:
         v = int(raw)
@@ -40,8 +45,22 @@ def cores() -> int:
             return v
     except ValueError:
         pass   # rỗng hoặc rác: sang nguồn kế
-    c = os.cpu_count()
-    return c if isinstance(c, int) and c >= 1 else FALLBACK_CORES
+    # CPU tiến trình này được dùng (affinity / cgroup), không phải cả máy: process_cpu_count (3.13+) → sched_getaffinity (Linux)
+    # → cpu_count. Nguồn trả None, 0 hay lỗi thì sang nguồn kế.
+    probes = []
+    if hasattr(os, "process_cpu_count"):
+        probes.append(os.process_cpu_count)
+    if hasattr(os, "sched_getaffinity"):
+        probes.append(lambda: len(os.sched_getaffinity(0)))
+    probes.append(os.cpu_count)
+    for probe in probes:
+        try:
+            c = probe()
+        except (OSError, ValueError, TypeError):
+            continue
+        if isinstance(c, int) and c >= 1:
+            return c
+    return FALLBACK_CORES
 
 
 def load():
@@ -81,22 +100,32 @@ def _resolve_load(l):
 
 
 def busy_load(cores=None, scale=None, load=None) -> int:
-    """Ngưỡng tải coi là bận: 3 × lõi × hệ số (12 lõi: 36). Tham số `load` để snapshot() gọi mọi khoá theo một dạng fn(c, s, l)."""
+    """Ngưỡng tải coi là bận, cho việc TÙY CHỌN (mở thêm worker super-board): 3 × lõi × hệ số (12 lõi: 36). Tham số `load` để
+    snapshot() gọi mọi khoá theo một dạng fn(c, s, l)."""
     c, s = _resolve(cores, scale)
     return max(1, _floor(3 * c * s))
 
 
+def hold_load(cores=None, scale=None, load=None) -> int:
+    """Ngưỡng tải mà việc BẮT BUỘC (suite của gate, verify của merge gate) chờ ở trên: 8 × lõi × hệ số (12 lõi: 96 — người dùng 20/10:
+    "dưới 100 thì cho chạy"). Tham số `load` để snapshot() gọi mọi khoá theo một dạng fn(c, s, l)."""
+    c, s = _resolve(cores, scale)
+    return max(1, _floor(8 * c * s))
+
+
 def free_fraction(cores=None, scale=None, load=_READ) -> float:
-    """Phần máy còn rảnh trong [0.25, 1]: tải ≤ lõi × min(1, hệ số) → 1; tải ≥ busy_load → 0.25; giữa hai mức giảm tuyến tính."""
+    """Phần máy còn rảnh trong [0.25, 1]: tải ≤ lõi × min(1, hệ số) → 1; tải ≥ hold_load → 0.25; giữa hai mức giảm tuyến tính.
+    Trần là hold_load chứ không phải busy_load: gate_parallel (người dùng duy nhất) phục vụ việc BẮT BUỘC, máy này tải 45–100 cả
+    ngày, co hết ở 36 thì gate luôn chạy 2 suite (12 lõi: tải 24 → 5, 36 → 4, 60 → 3, 90 → 2)."""
     c, s = _resolve(cores, scale)
     l = _resolve_load(load)
     low = c * min(1.0, s)
-    busy = busy_load(c, s)
+    hold = hold_load(c, s)
     if l is None or l <= low:
         return 1.0
-    if l >= busy or busy <= low:
+    if l >= hold or hold <= low:
         return 0.25
-    return 1.0 - 0.75 * (l - low) / (busy - low)
+    return 1.0 - 0.75 * (l - low) / (hold - low)
 
 
 def test_jobs(cores=None, scale=None, load=None) -> int:
@@ -145,7 +174,7 @@ def lane_slots_max(cores=None, scale=None, load=None) -> int:
 
 # khoá đếm (int ≥ 1) mà CLI in; jobs_per_lane không ở đây (lane_plan giữ 4 cố định: chi phí một lane, không phải sức máy)
 KEYS = {
-    "busy_load": busy_load, "test_jobs": test_jobs, "gate_parallel": gate_parallel, "heavy_max": heavy_max,
+    "busy_load": busy_load, "hold_load": hold_load, "test_jobs": test_jobs, "gate_parallel": gate_parallel, "heavy_max": heavy_max,
     "gate_max": gate_max, "build_workers": build_workers, "lane_workers": lane_workers, "lane_slots_max": lane_slots_max,
 }
 
@@ -172,17 +201,9 @@ def main(argv=None) -> int:
         l = load()
         print("" if l is None else l)
         return 0
-    if key == "cores":
-        print(cores())
-        return 0
-    if key == "scale":
-        print(scale())
-        return 0
-    if key == "free_fraction":
-        print(free_fraction())
-        return 0
-    if key in KEYS:
-        print(KEYS[key]())
+    fn = KEYS.get(key) or {"cores": cores, "scale": scale, "free_fraction": free_fraction}.get(key)
+    if fn is not None:
+        print(fn())
         return 0
     print("capacity.py: unknown key %r (keys: %s, cores, scale, load, free_fraction)" % (key, ", ".join(KEYS)), file=sys.stderr)
     return 2

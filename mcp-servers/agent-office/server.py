@@ -745,7 +745,8 @@ def slim_session(s: dict, tokens_fallback=None):
 
 
 HEAVY_LOCK_DIR = os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")  # khoá việc nặng của DevKit (heavy_slot)
-# T0052: ngưỡng tải mặc định lấy từ nguồn sức chứa chung universal-agent-devkit/bin/capacity.py của repo này (cùng ngưỡng heavy_slot)
+# T0052: ngưỡng tải gate mặc định = hold_load của nguồn sức chứa chung universal-agent-devkit/bin/capacity.py (8 × lõi, cùng ngưỡng
+# heavy_slot.load_max: việc bắt buộc chỉ chờ trên mức này)
 CAPACITY_PY = os.path.join(os.path.dirname(os.path.dirname(HERE)), "universal-agent-devkit", "bin", "capacity.py")
 _CAPACITY: list = []   # [module capacity hoặc None]: nạp một lần
 
@@ -760,7 +761,7 @@ def _capacity():
             if spec is not None and spec.loader is not None:
                 mod = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(mod)
-        except (OSError, ImportError, SyntaxError) as exc:
+        except Exception as exc:  # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không làm chết bảng chỉ số
             warn(f"không nạp được {CAPACITY_PY}, ngưỡng tải hiển thị 100", repr(exc))
             mod = None
         _CAPACITY.append(mod)
@@ -769,7 +770,7 @@ def _capacity():
 
 def _default_load_max() -> float:
     cap = _capacity()
-    return float(cap.busy_load()) if cap is not None else 100.0
+    return float(cap.hold_load()) if cap is not None else 100.0
 
 
 def host_stats(lock_dir: str = "") -> dict:
@@ -779,7 +780,7 @@ def host_stats(lock_dir: str = "") -> dict:
     except (OSError, AttributeError):  # Windows không có getloadavg
         load = [0.0, 0.0, 0.0]
     lock_dir = lock_dir or os.environ.get("SB_HEAVY_SLOT_DIR", "").strip() or HEAVY_LOCK_DIR  # cùng chỗ với heavy_slot.slot_dir()
-    # DEVKIT_SLOT_LOAD_MAX thắng; rỗng/rác/≤ 0 thì capacity busy_load (12 lõi: 36), không có capacity thì 100 — cùng luật heavy_slot.load_max
+    # DEVKIT_SLOT_LOAD_MAX thắng; rỗng/rác/≤ 0 thì capacity hold_load (12 lõi: 96), không có capacity thì 100 — cùng luật heavy_slot.load_max
     try:
         load_max = float(os.environ.get("DEVKIT_SLOT_LOAD_MAX") or 0)
     except ValueError:

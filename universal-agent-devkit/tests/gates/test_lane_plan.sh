@@ -43,7 +43,8 @@ def chk(cond, good, why=""):
 
 
 HIST = os.path.join(TMP, "hist", "lane_times.jsonl")
-BASE_ENV = dict((k, v) for k, v in os.environ.items() if not k.startswith("LANE_PLAN_"))
+# LANE_PLAN_* và DEVKIT_CAPACITY* (nút / móc test của bin/capacity.py) của người gọi không được lái test; ca nào cần thì tự đặt
+BASE_ENV = dict((k, v) for k, v in os.environ.items() if not k.startswith(("LANE_PLAN_", "DEVKIT_CAPACITY")))
 BASE_ENV["LANE_PLAN_HISTORY"] = HIST
 BASE_ENV["LANE_PLAN_CORES"] = "16"   # the machine reading is pinned: a plan without --slots must not depend on the host
 BASE_ENV["LANE_PLAN_LOAD"] = "0"
@@ -314,6 +315,14 @@ e = dict(BASE_ENV, LANE_PLAN_CORES="64", LANE_PLAN_LOAD="0")
 r = subprocess.run([PY, os.path.join(nokit, "lane_plan.py"), "slots", "--quiet", "--jobs-per-lane", "1"], capture_output=True, text=True, env=e,
                    cwd=TMP, timeout=60)
 chk(r.returncode == 0 and r.stdout.strip() == "4" and "Traceback" not in r.stderr, "slots: kit without bin/capacity.py keeps the fixed cap of 4",
+    "%r %r" % (r.stdout, r.stderr[-200:]))
+# capacity.py hỏng lúc nạp (lỗi runtime, không chỉ ImportError): vẫn trần 4, không traceback
+os.makedirs(os.path.join(TMP, "nokit", "bin"))
+with open(os.path.join(TMP, "nokit", "bin", "capacity.py"), "w") as fh:
+    fh.write("raise RuntimeError('capacity hỏng lúc nạp')\n")
+r = subprocess.run([PY, os.path.join(nokit, "lane_plan.py"), "slots", "--quiet", "--jobs-per-lane", "1"], capture_output=True, text=True, env=e,
+                   cwd=TMP, timeout=60)
+chk(r.returncode == 0 and r.stdout.strip() == "4" and "Traceback" not in r.stderr, "slots: a capacity.py that raises at import keeps the fixed cap of 4",
     "%r %r" % (r.stdout, r.stderr[-200:]))
 
 # 11. history: a bad line is skipped, an odd file is refused or ignored, never a hang or a traceback

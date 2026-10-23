@@ -10,7 +10,7 @@ echo 1 > "$TMP/load"
 export SB_HEAVY_SLOT_DIR="$TMP/locks" DEVKIT_SLOT_LOAD_FILE="$TMP/load" SB_HEAVY_SLOT_POLL_S=0.1
 unset SB_HEAVY_SLOT_HELD DEVKIT_SLOT_ADVISORY_HELD DEVKIT_SLOT_HEAVY_MAX DEVKIT_SLOT_HEAVY_WAIT_S DEVKIT_SLOT_HEAVY_BUDGET_S \
   DEVKIT_SLOT_LOAD_WAIT_S SB_HEAVY_SLOT_WAIT_S DEVKIT_SLOT_ADVISORY_BUDGET_S   # merge gate / stale_rerun đặt vài biến này: test không được lệ thuộc môi trường gọi
-# T0052: mặc định 3 slot / ngưỡng tải đến từ bin/capacity.py; ghim máy giả 12 lõi rảnh (heavy_max 3, busy_load 36), bỏ nút của người gọi
+# T0052: mặc định 3 slot / ngưỡng tải đến từ bin/capacity.py; ghim máy giả 12 lõi rảnh (heavy_max 3, hold_load 96), bỏ nút của người gọi
 unset DEVKIT_CAPACITY DEVKIT_SLOT_LOAD_MAX
 export DEVKIT_CAPACITY_CORES=12 DEVKIT_CAPACITY_LOAD=0
 python3 - "$DEVKIT_DIR/bin" <<'PY'
@@ -126,9 +126,10 @@ for s in full:
     hs.release_suite(s)
 
 # 10. T0052: mặc định đi theo bin/capacity.py (số lõi), biến cũ vẫn thắng, không nạp được capacity thì hằng cũ
-check("10a. 12 lõi: heavy_max 3, load_max 36 (capacity)", hs.heavy_max() == 3 and hs.load_max() == 36.0, f"{hs.heavy_max()} {hs.load_max()}")
+# ngưỡng chờ của suite (việc BẮT BUỘC) là hold_load = 8 × lõi, không phải busy_load = 3 × lõi (người dùng 20/10: "dưới 100 thì cho chạy")
+check("10a. 12 lõi: heavy_max 3, load_max 96 (capacity hold_load)", hs.heavy_max() == 3 and hs.load_max() == 96.0, f"{hs.heavy_max()} {hs.load_max()}")
 os.environ["DEVKIT_CAPACITY_CORES"] = "4"
-check("10b. 4 lõi: heavy_max 1, load_max 12 (capacity)", hs.heavy_max() == 1 and hs.load_max() == 12.0, f"{hs.heavy_max()} {hs.load_max()}")
+check("10b. 4 lõi: heavy_max 1, load_max 32 (capacity hold_load)", hs.heavy_max() == 1 and hs.load_max() == 32.0, f"{hs.heavy_max()} {hs.load_max()}")
 os.environ["DEVKIT_SLOT_HEAVY_MAX"] = "2"; os.environ["DEVKIT_SLOT_LOAD_MAX"] = "64"
 check("10c. DEVKIT_SLOT_HEAVY_MAX / DEVKIT_SLOT_LOAD_MAX vẫn thắng capacity", hs.heavy_max() == 2 and hs.load_max() == 64.0,
       f"{hs.heavy_max()} {hs.load_max()}")
@@ -138,6 +139,19 @@ hs._CAPACITY[:] = [None]   # như kit cũ thiếu bin/capacity.py
 check("10d. không có capacity: hằng cũ (3 suite nặng, tải 100)", hs.heavy_max() == 3 and hs.load_max() == 100.0, f"{hs.heavy_max()} {hs.load_max()}")
 hs._CAPACITY[:] = saved_cap
 os.environ["DEVKIT_CAPACITY_CORES"] = "12"
+
+# 11. capacity.py hỏng lúc nạp (lỗi runtime, không chỉ ImportError): heavy_slot không chết theo, về hằng cũ và báo một dòng stderr
+import shutil, subprocess, tempfile
+with tempfile.TemporaryDirectory() as d:
+    shutil.copy(os.path.join(sys.argv[1], "heavy_slot.py"), d)
+    with open(os.path.join(d, "capacity.py"), "w") as f:
+        f.write("raise RuntimeError('capacity hỏng lúc nạp')\n")
+    r = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import heavy_slot as h; "
+                        "print(h.load_max(), h.heavy_max(), h.load_max())", d], capture_output=True, text=True, timeout=30,
+                       env={k: v for k, v in os.environ.items() if k not in ("DEVKIT_SLOT_LOAD_MAX", "DEVKIT_SLOT_HEAVY_MAX")})
+    check("11. capacity.py ném lỗi lúc nạp: load_max 100, heavy_max 3, không traceback, một dòng cảnh báo",
+          r.returncode == 0 and r.stdout.split() == ["100.0", "3", "100.0"] and "Traceback" not in r.stderr
+          and r.stderr.count("capacity.py") == 1, f"rc={r.returncode} out={r.stdout!r} err={r.stderr[-300:]!r}")
 
 sys.exit(1 if fails else 0)
 PY

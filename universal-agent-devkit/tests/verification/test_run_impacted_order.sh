@@ -10,7 +10,8 @@
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 unset DEVKIT_GATE_DONE DEVKIT_TEST_JOBS DEVKIT_TEST_CORES DEVKIT_IMPACT_TEST_CHANGED   # the fixtures must not inherit these
-# T0052: số job mặc định đến từ bin/capacity.py, co theo tải: ghim tải 0 để bảng (f) không lệ thuộc tải thật của máy
+# T0052: số job mặc định đến từ bin/capacity.py (lõi × 4/3 × DEVKIT_CAPACITY): bỏ nút / móc test của người gọi, ghim tải 0
+unset DEVKIT_CAPACITY DEVKIT_CAPACITY_CORES
 export DEVKIT_CAPACITY_LOAD=0
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
