@@ -101,6 +101,27 @@ wave 0 -u SB_CAPACITY EXPECT=3 DEVKIT_CAPACITY_CORES=4 DEVKIT_CAPACITY_LOAD=0   
 [ "$RC" = 0 ] && [ "$PEAK" = 3 ] && ok "không đặt SB_CAPACITY: dùng super-board-capacity.py cạnh script, dò capacity.py trong repo của wave" \
   || fail "SB_CAPACITY vắng: rc=$RC peak=$PEAK err=$ERR"
 
+# hợp đồng exit của wrapper super-board-capacity.py (Antigravity audit 23/10): capacity.py hỏng kiểu gì — 0 byte (thiếu main), lỗi
+# runtime lúc nạp, main ném lỗi, main trả rác — đều exit 3 gọn, không traceback; main trả 2 (khoá lạ) vẫn exit 2; bản tốt exit 0
+WRAP="$ROOT/.claude/bin/super-board-capacity.py"
+mkdir -p "$TMP/wrap/universal-agent-devkit/bin"
+bad=""
+for body in '' 'raise RuntimeError("x")' 'def main(a):
+    raise ValueError("y")' 'def main(a):
+    return "abc"'; do
+  printf '%s\n' "$body" > "$TMP/wrap/universal-agent-devkit/bin/capacity.py"
+  [ -n "$body" ] || : > "$TMP/wrap/universal-agent-devkit/bin/capacity.py"
+  out="$(SB_REPO_PATH="$TMP/wrap" python3 "$WRAP" build_workers 2>&1)"; rc=$?
+  { [ "$rc" = 3 ] && ! printf '%s' "$out" | grep -q Traceback; } || bad="$bad [$(printf '%s' "$body" | head -1)] rc=$rc $(printf '%s' "$out" | tail -1)"
+done
+[ -z "$bad" ] && ok "wrapper: capacity.py rỗng / lỗi lúc nạp / main ném lỗi / main trả rác → exit 3, không traceback" || fail "wrapper exit:$bad"
+printf 'def main(a):\n    return 2\n' > "$TMP/wrap/universal-agent-devkit/bin/capacity.py"
+SB_REPO_PATH="$TMP/wrap" python3 "$WRAP" bogus >/dev/null 2>&1; rc2=$?
+cp "$ROOT/universal-agent-devkit/bin/capacity.py" "$TMP/wrap/universal-agent-devkit/bin/capacity.py"
+g="$(SB_REPO_PATH="$TMP/wrap" DEVKIT_CAPACITY_CORES=12 python3 "$WRAP" build_workers 2>/dev/null)"; rc0=$?
+[ "$rc2" = 2 ] && [ "$rc0:$g" = "0:10" ] && ok "wrapper: khoá lạ vẫn exit 2; bản tốt in build_workers 10 (12 lõi), exit 0" \
+  || fail "wrapper: khoá lạ rc=$rc2 (muốn 2); bản tốt rc=$rc0 out='$g' (muốn 0:10)"
+
 # max_workers sai vẫn bị từ chối như cũ (exit 2 của argparse)
 wave '"x"' SB_CAPACITY="$TMP/caps/two"
 [ "$RC" = 2 ] && grep -q 'max_workers must be a non-negative integer' "$TMP/err.$RUN_N" && ok "max_workers sai vẫn bị từ chối (exit 2)" || fail "max_workers sai: rc=$RC err=$ERR"

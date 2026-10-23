@@ -5054,6 +5054,24 @@ def _gate_busy(run_tests, lock_held, read_only, regression_tests):
     return bool(run_tests and ((not lock_held and not read_only) or any(t.get("label") == "STALE" for t in regression_tests)))
 
 
+def default_gate_parallel() -> int:
+    """Cỡ nhóm suite parallel_safe khi DEVKIT_GATE_PARALLEL không đặt / rác: bin/capacity.py gate_parallel (T0052). capacity vắng, hỏng
+    lúc nạp, thiếu hàm, ném lỗi hay trả không phải int ≥ 1 (None / chuỗi từng làm BoundedSemaphore ném TypeError sập gate, ≤ 0 tắt ngầm
+    chạy song song — Antigravity audit 23/10) thì 6 như cũ, kèm cảnh báo."""
+    try:
+        _bin = str(Path(__file__).resolve().parent)
+        if _bin not in sys.path:
+            sys.path.insert(0, _bin)
+        import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+        value = _capacity.gate_parallel()
+        if type(value) is not int or value < 1:
+            raise ValueError(f"gate_parallel trả {value!r}")
+        return value
+    except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không làm chết gate
+        log_warn(f"capacity: {exc!r}; DEVKIT_GATE_PARALLEL mặc định 6")
+        return 6
+
+
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
                   cache, run_tests, force_reason, no_test_only, project_dir, git_dir, read_only=False, log_fp="", exit_reason=""):
     """Append the run log line (see above). Takes only values the gate already has and reads nothing; `no_test_only` is main()'s own
@@ -5941,15 +5959,7 @@ def main():
     try:
         parallel_cap = int(os.environ.get("DEVKIT_GATE_PARALLEL", "").strip())
     except ValueError:
-        try:
-            _bin = str(Path(__file__).resolve().parent)
-            if _bin not in sys.path:
-                sys.path.insert(0, _bin)
-            import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
-            parallel_cap = _capacity.gate_parallel()
-        except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không làm chết gate
-            log_warn(f"capacity: {exc!r}; DEVKIT_GATE_PARALLEL mặc định 6")
-            parallel_cap = 6
+        parallel_cap = default_gate_parallel()
     slots = threading.BoundedSemaphore(max(parallel_cap, 1))
     group, group_ts, deferred = [], set(), []
 

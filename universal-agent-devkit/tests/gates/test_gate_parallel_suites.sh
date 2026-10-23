@@ -174,6 +174,35 @@ make_repo "$(suite REG-X 'sh tests/rv3_x.sh' p),$(suite REG-Y 'sh tests/rv3_y.sh
 OUT="$(FLAKY_RETRY=0 DEVKIT_CAPACITY_CORES=4 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests 2>&1)"; RC=$?
 if [ "$RC" != 0 ] && { failed REG-X || failed REG-Y || failed REG-Z; }; then ok "7b: 4 lõi: capacity gate_parallel = 2, suite thứ ba phải chờ (hẹn ba bên hỏng)"
 else bad "7b: 4 lõi: nhóm vẫn chạy 3 suite một lúc (exit $RC) — cỡ nhóm không theo capacity"; printf '%s\n' "$OUT" | tail -15; fi
+# 7c. capacity nạp được nhưng gate_parallel hỏng (Antigravity audit 23/10): thiếu hàm, ném lỗi, trả None / chuỗi / bool / số lẻ / ≤ 0 →
+# 6 như cũ (None hay chuỗi từng làm BoundedSemaphore ném TypeError sập gate; ≤ 0 từng tắt ngầm chạy song song); số tốt dùng nguyên
+OUT7C="$(python3 - "$GATE" <<'PY' 2>&1
+import importlib.util, sys, types
+spec = importlib.util.spec_from_file_location("post_fix_gate", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+def fake(fn):
+    m = types.ModuleType("capacity")
+    if fn is not None:
+        m.gate_parallel = fn
+    return m
+def boom():
+    raise RuntimeError("x")
+cases = [(None, 6), (boom, 6), (lambda: None, 6), (lambda: "abc", 6), (lambda: True, 6), (lambda: 2.5, 6), (lambda: 0, 6),
+         (lambda: -2, 6), (lambda: 4, 4)]
+bad = []
+for fn, want in cases:
+    sys.modules["capacity"] = fake(fn)
+    try:
+        got = mod.default_gate_parallel()
+    except Exception as exc:
+        got = repr(exc)
+    if got != want or type(got) is not int:
+        bad.append(f"{getattr(fn, '__name__', fn)}->{got!r}(muốn {want})")
+print("BAD " + "; ".join(bad) if bad else "OK")
+PY
+)"
+case "$OUT7C" in *OK) ok "7c: capacity gate_parallel thiếu / ném lỗi / None / chuỗi / bool / lẻ / ≤ 0 → 6, số tốt (4) dùng nguyên" ;;
+  *) bad "7c: default_gate_parallel: $(printf '%s' "$OUT7C" | tail -3)" ;; esac
 
 # 11. a suite that waited for a slot past GATE_TOTAL_BUDGET_S is not started (cap 2, three 2 s suites, budget 1 s)
 make_repo "$(suite REG-A 'sh tests/slow2.sh' p),$(suite REG-B 'sh tests/slow2b.sh' p),$(suite REG-C 'sh tests/slow2c.sh' p)"

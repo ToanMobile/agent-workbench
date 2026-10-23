@@ -153,6 +153,28 @@ with tempfile.TemporaryDirectory() as d:
           r.returncode == 0 and r.stdout.split() == ["100.0", "3", "100.0"] and "Traceback" not in r.stderr
           and r.stderr.count("capacity.py") == 1, f"rc={r.returncode} out={r.stdout!r} err={r.stderr[-300:]!r}")
 
+# 11b. capacity.py nạp được nhưng hỏng khi gọi (Antigravity audit 23/10): file 0 byte / thiếu hàm (AttributeError làm sập gate ở
+# acquire_for_suite), hàm ném lỗi, hay trả ngoài miền (0 → pool_paths rỗng = không khoá suite nặng nào, inf/nan/chuỗi/bool/số âm/số lẻ)
+# → hằng cũ (tải 100, 3 suite nặng), không traceback
+BROKEN = ("", "def hold_load(): return 0\ndef heavy_max(): return 0\n",
+          "def hold_load(): return float('inf')\ndef heavy_max(): return True\n",
+          "def hold_load(): return float('nan')\ndef heavy_max(): return 2.5\n",
+          "def hold_load(): return 'abc'\ndef heavy_max(): return -1\n",
+          "def hold_load(): raise RuntimeError('x')\ndef heavy_max(): raise RuntimeError('y')\n")
+bad = []
+for body in BROKEN:
+    with tempfile.TemporaryDirectory() as d:
+        shutil.copy(os.path.join(sys.argv[1], "heavy_slot.py"), d)
+        with open(os.path.join(d, "capacity.py"), "w") as f:
+            f.write(body)
+        r = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import heavy_slot as h; "
+                            "print(h.load_max(), h.heavy_max(), h.load_max())", d], capture_output=True, text=True, timeout=30,
+                           env={k: v for k, v in os.environ.items() if k not in ("DEVKIT_SLOT_LOAD_MAX", "DEVKIT_SLOT_HEAVY_MAX")})
+        if not (r.returncode == 0 and r.stdout.split() == ["100.0", "3", "100.0"] and "Traceback" not in r.stderr):
+            bad.append(f"{body!r}: rc={r.returncode} out={r.stdout.strip()!r} err={r.stderr.strip()[-160:]!r}")
+check("11b. capacity.py rỗng / thiếu hàm / hàm ném lỗi / trả 0, inf, nan, chuỗi, bool, âm, lẻ: load_max 100, heavy_max 3", not bad,
+      "; ".join(bad[:3]))
+
 sys.exit(1 if fails else 0)
 PY
 RC=$?

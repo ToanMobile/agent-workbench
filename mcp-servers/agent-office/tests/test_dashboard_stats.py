@@ -70,6 +70,23 @@ class HostStatsTest(unittest.TestCase):
                 self.assertEqual(server.host_stats(lock_dir="/nonexistent")["loadMax"], 100.0)
                 self.assertEqual(warned.call_count, 1)
 
+    def test_capacity_broken_on_call_falls_back(self):  # Antigravity audit 23/10: nạp được nhưng hỏng khi gọi
+        # file 0 byte (thiếu hold_load → AttributeError làm host_stats chết), hold_load ném lỗi, hay trả inf/nan/0/âm/chuỗi/bool
+        # (inf ra "Infinity" làm hỏng JSON cả trang): bảng hiển thị 100, server không chết
+        bodies = ("", "def hold_load():\n    raise RuntimeError('x')\n", "def hold_load():\n    return float('inf')\n",
+                  "def hold_load():\n    return float('nan')\n", "def hold_load():\n    return 0\n",
+                  "def hold_load():\n    return -5\n", "def hold_load():\n    return 'abc'\n", "def hold_load():\n    return True\n")
+        for body in bodies:
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as d:
+                bad = os.path.join(d, "capacity.py")
+                with open(bad, "w") as f:
+                    f.write(body)
+                with mock.patch.object(server, "CAPACITY_PY", bad), mock.patch.object(server, "_CAPACITY", []), \
+                        mock.patch.object(server, "warn") as warned:
+                    self.assertEqual(server.host_stats(lock_dir="/nonexistent")["loadMax"], 100.0)
+                    self.assertEqual(server.host_stats(lock_dir="/nonexistent")["loadMax"], 100.0)
+                    self.assertEqual(warned.call_count, 1)  # một dòng cảnh báo, không lặp mỗi lần bảng làm mới
+
     def test_lock_dir_env_override(self):  # cùng thư mục khoá với heavy_slot.slot_dir()
         import fcntl
         with tempfile.TemporaryDirectory() as d:

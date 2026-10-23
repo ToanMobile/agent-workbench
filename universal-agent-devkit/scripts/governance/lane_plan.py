@@ -83,28 +83,59 @@ def _capacity():
         return None
 
 
+_BROKEN = object()   # _cap_call: capacity vắng hay hỏng (khác None, giá trị hợp lệ của load() khi không đọc được tải)
+
+
+def _cap_call(cap, name, ok, *args):
+    """capacity.<name>(*args) khi giá trị qua ok(); capacity vắng thì _BROKEN; hàm thiếu (file 0 byte), ném lỗi hay trả ngoài miền thì
+    _BROKEN và một dòng stderr — chỗ gọi dùng đọc máy cũ / MAX_SLOTS (Antigravity audit 23/10: AttributeError làm lane_plan chết)."""
+    if cap is None:
+        return _BROKEN
+    try:
+        value = getattr(cap, name)(*args)
+        if ok(value):
+            return value
+        why = "trả %r" % (value,)
+    except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì cũng không làm chết lane_plan
+        why = repr(exc)
+    sys.stderr.write("lane_plan: capacity %s hỏng (%s); dùng đọc máy cũ / trần %d lane\n" % (name, why, MAX_SLOTS))
+    return _BROKEN
+
+
+def _pos_int(v):
+    return type(v) is int and v >= 1
+
+
+def _load_ok(v):
+    return v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and 0 <= v != float("inf"))
+
+
 def slots(jobs_per_lane=None):
     """(slots, cores, load): free CPU divided by what one lane uses, between 1 and capacity lane_slots_max (MAX_SLOTS without it).
     LANE_PLAN_CORES / LANE_PLAN_LOAD, khi đặt, vẫn qua _num (rác: exit 2) rồi mới vào capacity; không đặt thì capacity.cores() /
-    capacity.load() (DEVKIT_CAPACITY_CORES / DEVKIT_CAPACITY_LOAD rồi máy thật)."""
+    capacity.load() (DEVKIT_CAPACITY_CORES / DEVKIT_CAPACITY_LOAD rồi máy thật); capacity vắng hay hỏng thì đọc máy như cũ."""
     jobs_per_lane = JOBS_PER_LANE if jobs_per_lane is None else jobs_per_lane
     cap = _capacity()
     if "LANE_PLAN_CORES" in os.environ:
         cores = int(_num(os.environ["LANE_PLAN_CORES"], "LANE_PLAN_CORES"))
     else:
-        cores = cap.cores() if cap is not None else int(_num(os.cpu_count() or 1, "LANE_PLAN_CORES"))
+        cores = _cap_call(cap, "cores", _pos_int)
+        if cores is _BROKEN:
+            cores = int(_num(os.cpu_count() or 1, "LANE_PLAN_CORES"))
     if "LANE_PLAN_LOAD" in os.environ:
         load = _num(os.environ["LANE_PLAN_LOAD"], "LANE_PLAN_LOAD")
-    elif cap is not None:
-        load = cap.load()
-        if load is None:
-            load = 0.0   # no reading: do not throttle on a guess
     else:
-        try:
-            load = os.getloadavg()[0]
-        except (OSError, AttributeError):
+        load = _cap_call(cap, "load", _load_ok)
+        if load is _BROKEN:
+            try:
+                load = os.getloadavg()[0]
+            except (OSError, AttributeError):
+                load = 0.0   # no reading: do not throttle on a guess
+        elif load is None:
             load = 0.0   # no reading: do not throttle on a guess
-    max_slots = cap.lane_slots_max(cores) if cap is not None else MAX_SLOTS
+    max_slots = _cap_call(cap, "lane_slots_max", _pos_int, cores)
+    if max_slots is _BROKEN:
+        max_slots = MAX_SLOTS
     free = max(0.0, cores - load)
     return max(1, min(max_slots, int(free // max(1, jobs_per_lane)))), cores, load
 

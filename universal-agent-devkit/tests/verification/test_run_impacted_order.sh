@@ -177,7 +177,10 @@ mv "$TMP/capacity.keep" "$J/bin/capacity.py"
 g05="$(jobs_of DEVKIT_TEST_CORES=12 DEVKIT_CAPACITY=0.5)"; g2="$(jobs_of DEVKIT_TEST_CORES=12 DEVKIT_CAPACITY=2)"
 [ "$g05:$g2" = "8:32" ] && ok "f: DEVKIT_CAPACITY đi qua run_impacted (12 lõi: 0.5 -> 8, 2 -> 32)" || fail "f: DEVKIT_CAPACITY: '$g05' '$g2' (muốn 8 32)"
 # on THIS machine: the formula applied to a core count the machine itself reports
-exp=""; for c in "$(sysctl -n hw.ncpu 2>/dev/null)" "$(nproc 2>/dev/null)" "$(python3 -c 'import os; print(os.cpu_count() or 0)' 2>/dev/null)"; do
+# capacity.cores() đọc CPU tiến trình được dùng trước (process_cpu_count 3.13+ → sched_getaffinity → cpu_count): container giới hạn CPU
+# cho số nhỏ hơn nproc — thêm cả hai làm ứng viên (Antigravity audit 23/10)
+exp=""; for c in "$(sysctl -n hw.ncpu 2>/dev/null)" "$(nproc 2>/dev/null)" "$(python3 -c 'import os; print(os.cpu_count() or 0)' 2>/dev/null)" \
+  "$(python3 -c 'import os; print(os.process_cpu_count() or 0)' 2>/dev/null)" "$(python3 -c 'import os; print(len(os.sched_getaffinity(0)))' 2>/dev/null)"; do
   case "$c" in ''|*[!0-9]*|0) continue ;; esac
   j=$((c + c / 3)); [ "$j" -lt 4 ] && j=4; exp="$exp $j"
 done

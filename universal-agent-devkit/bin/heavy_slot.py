@@ -120,24 +120,49 @@ def _capacity():
     return _CAPACITY[0]
 
 
+_CAPACITY_WARNED: set = set()   # khoá capacity đã báo hỏng: một dòng mỗi khoá cho cả tiến trình
+
+
+def _from_capacity(key: str, ok, fallback):
+    """capacity.<key>(); capacity vắng thì fallback. Nạp được mà hàm thiếu (file 0 byte, cắt cụt), ném lỗi hay trả ngoài miền
+    (ok(value) sai) cũng fallback, kèm một dòng stderr mỗi khoá — Antigravity audit 23/10: file rỗng làm AttributeError sập gate ở
+    acquire_for_suite, heavy_max 0 thành pool_paths rỗng = không khoá suite nặng nào."""
+    cap = _capacity()
+    if cap is None:
+        return fallback
+    try:
+        value = getattr(cap, key)()
+        if ok(value):
+            return value
+        why = f"trả {value!r}, ngoài miền"
+    except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì cũng không được làm chết gate
+        why = repr(exc)
+    if key not in _CAPACITY_WARNED:
+        _CAPACITY_WARNED.add(key)
+        print(f"[heavy-slot] capacity {key}: {why}; dùng {fallback}", file=sys.stderr, flush=True)
+    return fallback
+
+
+def _positive_finite(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and 0 < value != float("inf")
+
+
 def load_max() -> float:
     """Ngưỡng tải (DEVKIT_SLOT_LOAD_MAX); rỗng, rác hay không dương thì capacity hold_load (ngưỡng của việc BẮT BUỘC, 8 × lõi,
-    12 lõi: 96 — người dùng 20/10: "dưới 100 thì cho chạy"), không có capacity thì 100."""
+    12 lõi: 96 — người dùng 20/10: "dưới 100 thì cho chạy"), không có hay hỏng capacity thì 100."""
     value = _env_float("DEVKIT_SLOT_LOAD_MAX", 0.0)
     if value > 0:
         return value
-    cap = _capacity()
-    return float(cap.hold_load()) if cap is not None else LOAD_MAX
+    return float(_from_capacity("hold_load", _positive_finite, LOAD_MAX))
 
 
 def heavy_max() -> int:
     """Trần suite nặng cùng lúc (DEVKIT_SLOT_HEAVY_MAX); rỗng, rác, không dương hay không nguyên thì capacity heavy_max (12 lõi: 3),
-    không có capacity thì 3."""
+    không có hay hỏng capacity thì 3."""
     value = _env_float("DEVKIT_SLOT_HEAVY_MAX", 0.0)
     if value >= 1 and value == int(value):
         return int(value)
-    cap = _capacity()
-    return cap.heavy_max() if cap is not None else HEAVY_MAX
+    return _from_capacity("heavy_max", lambda v: type(v) is int and v >= 1, HEAVY_MAX)
 
 
 def wait_load(wait_s: float, label: str = "") -> tuple:

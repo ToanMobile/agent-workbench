@@ -769,8 +769,22 @@ def _capacity():
 
 
 def _default_load_max() -> float:
+    """capacity hold_load; capacity vắng, hàm thiếu (file 0 byte), ném lỗi hay trả ngoài (0, inf) — inf ra "Infinity" làm hỏng JSON cả
+    trang — thì 100 (Antigravity audit 23/10)."""
     cap = _capacity()
-    return float(cap.hold_load()) if cap is not None else 100.0
+    if cap is None:
+        return 100.0
+    try:
+        value = cap.hold_load()
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value < float("inf"):
+            return float(value)
+        why = f"hold_load trả {value!r}"
+    except Exception as exc:  # noqa: BLE001 - capacity.py hỏng kiểu gì cũng không làm chết bảng chỉ số
+        why = repr(exc)
+    if len(_CAPACITY) < 2:  # một dòng cho cả tiến trình: bảng chỉ số gọi host_stats mỗi lần làm mới
+        _CAPACITY.append("warned")
+        warn(f"{CAPACITY_PY} hỏng, ngưỡng tải hiển thị 100", why)
+    return 100.0
 
 
 def host_stats(lock_dir: str = "") -> dict:

@@ -57,12 +57,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"[capacity] không nạp được {target}", file=sys.stderr, flush=True)
         return 3
     mod = importlib.util.module_from_spec(spec)
+    # bản capacity.py hỏng kiểu gì (lỗi lúc nạp, file 0 byte thiếu main, main ném lỗi hay trả rác): một dòng cảnh báo, exit 3, chỗ gọi
+    # dùng số cũ — không traceback, không exit 1 (Antigravity audit 23/10). main trả 2 (khoá lạ / sai đối số) giữ nguyên 2.
     try:
         spec.loader.exec_module(mod)
-    except (OSError, SyntaxError, ImportError) as exc:   # bản capacity.py hỏng: chỗ gọi dùng số cũ, không chết theo
-        print(f"[capacity] nạp {target} lỗi: {exc!r}", file=sys.stderr, flush=True)
+        rc = mod.main(args)
+        if type(rc) is not int:
+            raise ValueError(f"main() trả {rc!r}, không phải mã thoát")
+        return rc
+    except Exception as exc:   # noqa: BLE001
+        print(f"[capacity] {target} hỏng: {exc!r}; chỗ gọi dùng số mặc định cũ", file=sys.stderr, flush=True)
         return 3
-    return int(mod.main(args))
 
 
 if __name__ == "__main__":
