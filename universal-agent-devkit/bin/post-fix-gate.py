@@ -5237,6 +5237,13 @@ def main():
                                 capture_output=True, text=True).stdout.strip()
             left = mb or left
         base_ref = left
+    elif args.diff:
+        # #300: a plain ref is the TIP of that branch; commits that landed on it after this branch was cut (another PR's test or
+        # matrix edit) would read as this change's own edits. Audit against merge-base(ref, HEAD), as `A...B` does.
+        mb = subprocess.run(["git", "-C", str(get_project_dir()), "merge-base", args.diff, "HEAD"],
+                            capture_output=True, text=True).stdout.strip()
+        if mb:
+            args.diff = base_ref = mb
 
     global STAGED, BASE_REF, VACUITY_BASE
     STAGED = args.staged or bool(args.commit_msg)
