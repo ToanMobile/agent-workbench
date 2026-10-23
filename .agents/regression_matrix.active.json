@@ -976,6 +976,21 @@
       ]
     },
     {
+      "component": "mcp-servers/agent-office/blender",
+      "watch_files": [
+        "mcp-servers/agent-office/blender/*",
+        "mcp-servers/agent-office/web/models/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-02",
+          "name": "agent-office: bộ nội thất office.glb dựng bằng Blender còn đủ khối có tên (Desk, Chair, Monitor/Screen có UV, Shelf...) và đủ nhỏ",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_office_glb",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-multi-session-gate-env",
       "watch_files": [
         "universal-agent-devkit/tests/gates/test_multi_session_gate.sh",
@@ -987,21 +1002,6 @@
           "id": "REG-DK-SESSION-ENV-01",
           "name": "test_multi_session_gate + test_gate_stop_reuse_race xanh khi id phiên của máy thật (CLAUDE_CODE_SESSION_ID, DEVKIT_SESSION_ID) rò vào môi trường (#240)",
           "command": "bash universal-agent-devkit/tests/gates/test_multi_session_gate_session_env.sh",
-          "parallel_safe": true
-        }
-      ]
-    },
-    {
-      "component": "mcp-servers/agent-office/blender",
-      "watch_files": [
-        "mcp-servers/agent-office/blender/*",
-        "mcp-servers/agent-office/web/models/*"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-AGENT-OFFICE-02",
-          "name": "agent-office: bộ nội thất office.glb dựng bằng Blender còn đủ khối có tên (Desk, Chair, Monitor/Screen có UV, Shelf...) và đủ nhỏ",
-          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_office_glb",
           "parallel_safe": true
         }
       ]
