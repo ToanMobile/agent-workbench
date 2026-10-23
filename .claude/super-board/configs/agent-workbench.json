@@ -96,8 +96,6 @@
     "checks": {},
     "human_steps": []
   },
-  "merge_load_wait_s": 900,
-  "merge_load_max": 100,
   "tick_seconds": 30,
   "no_progress_cycles": 240,
   "truth_gate": "non-trivial",
@@ -118,10 +116,6 @@
     "chat_id": null,
     "bot_identity": "ToanMobile"
   },
-  "max_workers": 10,
-  "build_workers": 10,
-  "build_load_max": 36,
-  "qa_workers": 3,
-  "review_workers": 3,
+  "max_workers": 5,
   "backlog_pull": false
 }
