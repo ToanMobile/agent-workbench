@@ -451,7 +451,7 @@ read_lock() {
   # Reads $INFLIGHT_DIR/$1 (bash-assignment format) into PID/LANE/STARTED/WORKER_LOG.
   # Sets empty strings if the file is missing or legacy single-PID format.
   local lock="$INFLIGHT_DIR/$1"
-  PID=""; LANE=""; STARTED=""; WORKER_LOG=""
+  PID=""; LANE=""; STARTED=""; WORKER_LOG=""; TRAIN=""
   [ -f "$lock" ] || return 1
   if grep -q '^PID=' "$lock" 2>/dev/null; then
     # shellcheck disable=SC1090
@@ -694,9 +694,16 @@ lane_dispatch_tick() {
   lane_slot_free "$lane" || return 0
   before=$LANE_COUNT
   if [ "$before" -eq 0 ] && [ "${ACTIVE_WORKERS:-0}" -ge "${MAX_WORKERS:-3}" ]; then return 0; fi
-  top_card_in_column "$col" || return 0
-  [ -n "$TOP_ISSUE" ] || return 0
+  TRAIN_BATCH=""
+  [ "$lane" != "review" ] || review_train_batch   # #228: ≥2 thẻ đã duyệt thì một worker merge train cho cả đợt
+  if [ -n "$TRAIN_BATCH" ]; then
+    TOP_ISSUE=${TRAIN_BATCH%% *}
+  else
+    top_card_in_column "$col" || return 0
+    [ -n "$TOP_ISSUE" ] || return 0
+  fi
   dispatch_lane "$lane" "$TOP_ISSUE"
+  TRAIN_BATCH=""
   lane_workers_count "$lane"
   [ "$LANE_COUNT" -gt "$before" ] || return 0
   LANE_DISPATCHED=1
@@ -824,6 +831,33 @@ EOF
       | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty' 2>/dev/null) || return 1
   [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
   printf '%s %s' "$pr" "$head"
+}
+
+review_train_batch() {
+  # #228: ≥2 thẻ Review đã duyệt đúng head (review_approved_head, #227) đi cùng MỘT worker chạy super-board-merge-train.sh (verify một
+  # lần cho cả đợt) thay vì mỗi reviewer tự chạy merge gate nối tiếp qua merge.lock. Đặt TRAIN_BATCH = các dòng "<issue> <PR> <head>"
+  # theo thứ tự bảng (tối đa SB_TRAIN_MAX, mặc định 8); rỗng khi dưới 2 thẻ đủ điều kiện hoặc SB_REVIEW_TRAIN=0 (đường từng thẻ như cũ).
+  # Thẻ đủ điều kiện = không khoá, không chết sớm, không giao cho người khác, issue còn mở, và đã duyệt đúng head. Đọc GitHub hỏng thì
+  # review_approved_head trả 1 nên thẻ ra khỏi đợt (không bao giờ bỏ qua review vì lỗi đọc). Luật merge không đổi: gate vẫn áp từng PR.
+  # ponytail: mỗi thẻ ứng viên tốn một lần `pr list` + `pr view` (Review thường chỉ vài thẻ); nâng lên khi cột Review quá 10 thẻ: đọc pr list một lần.
+  TRAIN_BATCH=""
+  [ "${SB_REVIEW_TRAIN:-1}" != "0" ] || return 0
+  local n=0 max="${SB_TRAIN_MAX:-8}" rows="" issue row cands
+  case "$max" in ''|*[!0-9]*) max=8 ;; esac
+  cands=$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "${BOT_LOGIN:-}" '
+    .items[] | select(.status == "Review" and .content.type == "Issue")
+    | select(((.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
+    | .content.number')
+  for issue in $cands; do
+    [ "$n" -lt "$max" ] || break
+    issue_locked "$issue" && continue
+    early_backoff "$issue" Review && continue
+    issue_is_open "$issue" || continue
+    row=$(review_approved_head "$issue") || continue
+    rows="${rows}${issue} ${row}"$'\n'; n=$((n + 1))
+  done
+  [ "$n" -ge 2 ] || return 0
+  TRAIN_BATCH="${rows%$'\n'}"
 }
 
 claude_model_for_tier() {
@@ -954,6 +988,20 @@ dispatch_lane() {
   if ! try_claim_assignee "$issue"; then
     return 0
   fi
+  # #228: thẻ còn lại của đợt merge train cũng phải nhận được claim; thẻ thua đua bị bỏ khỏi đợt (lock chỉ ghi cho thẻ đã claim).
+  local train_rows="" train_issues="" train_prs="" train_heads="" t_issue t_pr t_head
+  if [ "$lane" = "review" ] && [ -n "${TRAIN_BATCH:-}" ]; then
+    while read -r t_issue t_pr t_head; do
+      [ -n "$t_issue" ] || continue
+      [ "$t_issue" = "$issue" ] || try_claim_assignee "$t_issue" || continue
+      train_rows="${train_rows}${t_issue} ${t_pr} ${t_head}"$'\n'
+      train_issues="${train_issues:+$train_issues }${t_issue}"
+      train_prs="${train_prs:+$train_prs,}${t_pr}"
+      train_heads="${train_heads:+$train_heads, }PR #${t_pr}=${t_head}"
+    done <<EOF
+$TRAIN_BATCH
+EOF
+  fi
   # Chuyển ngay thẻ Ready sang cột Building trên GitHub Project Board khi giao cho Builder để bảng hiển thị tức thì.
   if [ "$lane" = "build" ] && [ -n "$PROJECT_OWNER" ] && [ "${PROJECT_NUMBER:-0}" -gt 0 ]; then
     local build_item_id
@@ -965,7 +1013,10 @@ dispatch_lane() {
     qa)     prompt="Run super-qa on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Tester lifecycle. Config: ${CONFIG_PATH}." ;;
     review)
       local merge_only="" mo_pr mo_head
-      if merge_only=$(review_approved_head "$issue"); then
+      if [ -n "$train_rows" ]; then
+        log "review lane: merge-train for #${train_issues// /, #} (PRs ${train_prs}) — one worker, one verify, no fresh review"
+        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. For each PR check the head is still the approved one (gh pr view <PR> --json headRefOid); a PR whose head moved leaves the batch and its card stays in Review for a fresh review. Mark the rest ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (without any PR whose head moved) and route every train-result line exactly as the Merge protocol says: merged → confirm it landed, close the issue, card Review → Done; red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
+      elif merge_only=$(review_approved_head "$issue"); then
         read -r mo_pr mo_head <<EOF
 $merge_only
 EOF
@@ -1022,7 +1073,11 @@ EOF
   # v1.3.0+ lock format: bash-assignment style so `super-board stop` can source it
   # to recover lane + dispatch time. issue_locked()/reap_finished_locks() still work
   # because PID= is the first line.
-  printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\n' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" > "$INFLIGHT_DIR/$issue"
+  printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\nTRAIN="%s"\n' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" "$train_issues" > "$INFLIGHT_DIR/$issue"
+  # #228: cả đợt cùng một worker: mỗi thẻ có lock riêng (cùng PID) để issue_locked và reap_finished_locks xử lý từng thẻ như thường.
+  for t_issue in $train_issues; do
+    [ "$t_issue" = "$issue" ] || printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\nTRAIN="%s"\n' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" "$train_issues" > "$INFLIGHT_DIR/$t_issue"
+  done
   case "$lane" in
     build)
       if lane_idle "${BUILD_PID:-}"; then BUILD_PID="$pid"; BUILD_ISSUE="$issue"
@@ -1060,7 +1115,7 @@ check_lane_zombie() {
   [ -z "$pid" ] && return 0
   [ -z "$issue" ] && return 0
   kill -0 "$pid" 2>/dev/null || return 0   # already dead → reap_finished_locks handles it
-  local cur found=0 col
+  local cur found=0 col t
   cur=$(issue_status "$issue")
   [ -z "$cur" ] && return 0                # not in cache (closed/deleted/race) → don't kill
   # Thẻ `qa` được giao từ Ready và Tester tự chuyển Ready → QA sau khi khởi động (run.md, Tester lượt đầu).
@@ -1078,6 +1133,14 @@ check_lane_zombie() {
   for col in $expected; do
     [ "$cur" = "$col" ] && found=1
   done
+  # #228: worker của đợt merge train giữ lock của mọi thẻ trong đợt (TRAIN): thẻ đầu sang Done không làm nó thành zombie khi thẻ khác
+  # của đợt còn ở cột nguồn.
+  if [ "$found" -eq 0 ] && [ "$lane" = review ]; then
+    read_lock "$issue" || true
+    for t in ${TRAIN:-}; do
+      [ "$(issue_status "$t")" = "Review" ] && found=1
+    done
+  fi
   if [ "$found" -eq 0 ]; then
     gh_checkpoint
     log "💀 zombie ${lane} worker on #${issue} (pid=${pid}) — card moved to '${cur}'; killing"
