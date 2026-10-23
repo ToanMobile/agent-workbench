@@ -1240,6 +1240,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "approval-auto-merge-head",
+      "trigger_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_approval_auto_merge_head.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVAL-AUTO-MERGE-01",
+          "name": "duyệt head X vẫn hiệu lực khi merge gate tự gộp main thành Y; commit khác đẩy thêm thì đòi duyệt lại (#262)",
+          "command": "python3 tests/super-board/test_approval_auto_merge_head.py",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
