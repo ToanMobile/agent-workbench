@@ -27,8 +27,8 @@ DEVKIT_LANG="$(devkit_resolve_lang "" "$TARGET")"; export DEVKIT_LANG
 
 die() { echo "✖ githooks: $1" >&2; exit "${2:-1}"; }
 
-case "$ACTION" in install|uninstall|status|state) ;; *)
-  die "$(L "lệnh không hợp lệ '$ACTION' (install | uninstall | status | state)" "unknown action '$ACTION' (install | uninstall | status | state)")" 2 ;;
+case "$ACTION" in install|uninstall|status|state|refresh-matrix-driver) ;; *)
+  die "$(L "lệnh không hợp lệ '$ACTION' (install | uninstall | status | state | refresh-matrix-driver)" "unknown action '$ACTION' (install | uninstall | status | state | refresh-matrix-driver)")" 2 ;;
 esac
 [ -d "$TARGET" ] || die "$(L "không có thư mục: $TARGET" "no such directory: $TARGET")" 2
 git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1 \
@@ -93,13 +93,22 @@ install_msg_hook() {
 # one to merge conflicts (agent-workbench #221). A union merge driver joins the appended rules; the attribute routes the
 # matrix file to it. The driver is repo config (shared by every worktree), the attribute a tracked line.
 MATRIX_ATTR=".agents/regression_matrix.active.json merge=devkit-matrix"
-install_matrix_driver() {
+matrix_driver_cmd() {
   # #282: a relative ".agents/devkit/…" did not exist in the merge gate's .merge-scratch-* worktree (the kit symlink
   # is untracked), so the driver failed and git fell back to a text merge. The config is shared by every worktree, so
   # the command finds the kit of the MAIN checkout at merge time (first entry of `git worktree list`: any git version,
   # submodules and separate git dirs included), then the worktree's own copy.
   # shellcheck disable=SC2016
-  local drv='d="$(git worktree list --porcelain | sed -n "1s/^worktree //p")/.agents/devkit/scripts/git/matrix_merge_driver.py"; [ -f "$d" ] || d=.agents/devkit/scripts/git/matrix_merge_driver.py; python3 "$d" %O %A %B %P'
+  echo 'd="$(git worktree list --porcelain | sed -n "1s/^worktree //p")/.agents/devkit/scripts/git/matrix_merge_driver.py"; [ -f "$d" ] || d=.agents/devkit/scripts/git/matrix_merge_driver.py; python3 "$d" %O %A %B %P'
+}
+# #291: `install` is the only writer, so a repo installed before a change of the command above kept the old one.
+# SessionStart runs this: rewrite the command only when the repo has one and it differs (a repo never opted in stays out).
+refresh_matrix_driver() {
+  local cur; cur="$(git -C "$TARGET" config --get merge.devkit-matrix.driver 2>/dev/null)" || return 0
+  [ "$cur" = "$(matrix_driver_cmd)" ] || git -C "$TARGET" config merge.devkit-matrix.driver "$(matrix_driver_cmd)"
+}
+install_matrix_driver() {
+  local drv; drv="$(matrix_driver_cmd)"
   git -C "$TARGET" config merge.devkit-matrix.name "DevKit regression matrix union merge" \
     && git -C "$TARGET" config merge.devkit-matrix.driver "$drv" || return 0
   local root; root="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null)" || return 0
@@ -170,6 +179,9 @@ case "$ACTION" in
     ;;
   state)
     pre_commit_state
+    ;;
+  refresh-matrix-driver)
+    refresh_matrix_driver
     ;;
   install)
     mkdir -p "$HOOKS_DIR" 2>/dev/null
