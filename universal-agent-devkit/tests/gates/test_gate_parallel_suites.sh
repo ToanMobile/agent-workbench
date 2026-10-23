@@ -13,7 +13,7 @@
 #   8. a flagged suite is told (DEVKIT_GATE_DONE) which test scripts the flagged suites before it run, per job, so
 #      run_impacted.sh still skips them
 #   8b. a script nested under tests/<dir>/ is recorded too (tests/gates/*.sh was invisible)
-#  15. a flagged run_impacted.sh does not join the group: it fans out to 10 jobs and was the 900 s timeout
+#  15. a flagged run_impacted.sh does not join the group: it fans out to many jobs (run_impacted.sh --jobs) and was the 900 s timeout
 #   9. GATE_TOTAL_BUDGET_S still counts the time of the group before a suite that cannot join it
 #  10. a Gradle/Unity/device command is never grouped, whatever the flag says
 #  11. a suite that waited for a group slot past the budget is not started
@@ -219,7 +219,7 @@ PY
 if [ "$res" = "skip skip skip skip skip" ]; then ok "14: vacuity_revert skips a mode \"full\" suite for every VACUITY_REVERT setting (a group never holds a reverting suite)"
 else bad "14: vacuity_revert acted on a mode \"full\" suite: '$res'"; fi
 
-# 15. run_impacted.sh tự mở tới 10 job. Cờ parallel_safe không được nhét nó vào nhóm đang chạy GATE/HOOK:
+# 15. run_impacted.sh tự mở nhiều job (run_impacted.sh --jobs). Cờ parallel_safe không được nhét nó vào nhóm đang chạy GATE/HOOK:
 # need_a chỉ xanh khi slow_a đã xong, nên chạy chồng là đỏ.
 make_repo "$(suite REG-A 'sh tests/slow_a.sh' p),$(suite REG-B 'sh tests/need_a.sh run_impacted.sh' p)"
 run_gate

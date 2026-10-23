@@ -17,26 +17,32 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-ready-order.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bodies" "$TMP/repo"
-# stub đọc GitHub: `issue view N --json body ...` in body của $TMP/bodies/N (thiếu file = body rỗng)
-# Giống github-read thật: kind issue từ chối --jq/-q/--template (exit 64) và in JSON {"number","title","body"} cho dạng đúng
-# `--json number,title,body`. Stub cũ nhận cả `-q .body` và in chữ thô nên mã gọi sai dạng vẫn xanh (22 và 23/10).
-cat > "$TMP/gh-read.py" <<'PY'
+# #303: đọc GitHub qua super-board-github-read.py THẬT với gh giả (như test_github_read_jq_flag.sh), không còn stub tự viết có thể
+# lệch công cụ thật. gh giả: `issue view N --json number,title,body` in JSON body của $TMP/bodies/N (thiếu file = body rỗng);
+# có file $TMP/gh-fail thì mọi lệnh gh lỗi HTTP 502 (github-read thử 3 lần rồi halt, exit 79).
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gh" <<'SH'
+#!/usr/bin/env bash
+if [ -e "$STUB_DIR/gh-fail" ]; then echo "HTTP 502: Bad Gateway" >&2; exit 1; fi
+if [ "$1 $2" = "issue view" ]; then
+  python3 - "$3" <<'PY'
 import json, os, sys
-a = sys.argv[1:]
-if any(x in ("-q", "--jq", "--template", "-t") for x in a):
-    sys.stderr.write("stub github-read: --jq/-q/--template cannot pass with --kind issue\n")
-    sys.exit(64)
-n = a[a.index("view") + 1] if "view" in a else ""
+n = sys.argv[1]
 p = os.path.join(os.environ["STUB_DIR"], "bodies", n)
-if "body" in " ".join(a) and os.path.exists(p):
-    sys.stdout.write(json.dumps({"number": int(n), "title": "t", "body": open(p).read()}))
+sys.stdout.write(json.dumps({"number": int(n), "title": "t", "body": open(p).read() if os.path.exists(p) else ""}))
 PY
+  exit 0
+fi
+echo "unexpected gh call: $*" >&2; exit 1
+SH
+chmod +x "$TMP/bin/gh"
 export STUB_DIR="$TMP"
 
 unset SB_GITHUB_READ_STRICT
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
-SB_GITHUB_READ="$TMP/gh-read.py"
+SB_GITHUB_READ="$ROOT/.claude/bin/super-board-github-read.py"
+export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
 CONFIG_PATH="$TMP/cfg.json"; echo '{"repo":{"remote":"https://github.com/ToanMobile/agent-workbench"}}' > "$CONFIG_PATH"
 INFLIGHT_DIR="$TMP/repo/.claude/super-board/inflight"; mkdir -p "$INFLIGHT_DIR"
 REPO_ROOT="$TMP/repo"; BOT_LOGIN="bot"; NO_DEVICE=false
@@ -135,6 +141,16 @@ p=$(pick)
 
 # ── R4: dấu đã comment sống qua restart (file trong state dir, không chỉ biến của process)
 grep -qx "201:#151" "$(dirname "$INFLIGHT_DIR")/dup-noted" 2>/dev/null && ok "R4: dấu 'đã comment #201' nằm trong state dir (sống qua restart)" || fail "R4: không có dấu comment trong state dir"
+
+# ── R5 (#303): github-read halt (79) trong ready_card_held không được nuốt thành "không có verdict" và để lại lý do trong log
+printf '## Problem\nbình thường\n' > "$TMP/bodies/400"
+: > "$TMP/log"; touch "$TMP/gh-fail"; rm -f "$TMP/halt.json"
+PROJECT_ITEMS_JSON="{\"items\":[$(item 400 400 Ready '["bug"]')]}"
+( top_card_in_column Ready; echo "TOP=${TOP_ISSUE:-}" ) >"$TMP/out" 2>&1; rc=$?   # qua caller thật: return 79 thay exit 79 sẽ giao thẻ
+rm -f "$TMP/gh-fail"
+[ "$rc" = 79 ] && ! grep -q "TOP=400" "$TMP/out" && ok "R5: github-read halt → top_card_in_column thoát 79, thẻ #400 không được giao" || fail "R5: rc=$rc out=$(cat "$TMP/out")"
+grep -q "#400" "$TMP/log" && grep -q "HALT" "$TMP/log" && ok "R5: log giữ một dòng lý do halt của github-read cho #400" || fail "R5: log không có lý do halt: $(cat "$TMP/log")"
+rm -f "$TMP/halt.json"
 
 echo
 [ "$FAILS" -eq 0 ] && echo "ALL PASS" || { echo "$FAILS FAIL"; exit 1; }
