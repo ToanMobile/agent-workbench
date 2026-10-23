@@ -5159,6 +5159,10 @@ def main():
     parser.add_argument("--since", help="Also audit the files of the commits REF..HEAD (the regression Stop hook passes "
                                         "the last verified HEAD); the static checks compare with REF (without --diff), "
                                         "while unlike --diff the matrix and the edited-test check still read HEAD")
+    parser.add_argument("--tree", metavar="HEAD",
+                        help="Verify the CLEAN committed tree as it stands (#307): run every suite of the matrix committed in that tree and trust "
+                             "that matrix; no diff, so a clean main is no longer exit 3 and a merge that edited the matrix is no exit 2. "
+                             "Only HEAD, only with no uncommitted change (exit 2 otherwise); implies --full")
     parser.add_argument("--no-cache", action="store_true",
                         help="Run the tests even when the last full PASS holds for this exact content (DEVKIT_GATE_CACHE=0 does the same)")
     parser.add_argument("--timeout", type=int, default=900, help="Timeout (seconds) per regression command")
@@ -5209,11 +5213,36 @@ def main():
         log_err(tr("--staged chỉ kiểm tĩnh nội dung đã stage — không dùng chung với --diff / --run-tests / --record-lesson",
                    "--staged only statically checks the staged content — it cannot be combined with --diff / --run-tests / --full / --record-lesson"))
         return 2
+    if args.tree is not None:
+        # #307: the suites run on the working tree, so the tree named must be HEAD's and the working tree must BE it — an uncommitted edit
+        # would skip every static audit (nothing is "changed") and ride a matrix nobody committed.
+        proj = str(get_project_dir())
+        head = subprocess.run(["git", "-C", proj, "rev-parse", "--verify", "-q", "HEAD^{commit}"], capture_output=True, text=True).stdout.strip()
+        named = subprocess.run(["git", "-C", proj, "rev-parse", "--verify", "-q", f"{args.tree}^{{commit}}"], capture_output=True, text=True).stdout.strip() \
+            if args.tree and not args.tree.startswith("-") else ""
+        if args.diff or args.since or args.staged or args.commit_msg:
+            log_err(tr("--tree: không dùng chung với --diff / --since / --staged / --commit-msg (cây sạch không có diff)",
+                       "--tree: cannot be combined with --diff / --since / --staged / --commit-msg (a clean tree has no diff)"))
+            return 2
+        if not head or named != head:
+            log_err(tr(f"--tree: chỉ nhận HEAD (suite chạy trên cây làm việc), không phải {args.tree!r}",
+                       f"--tree: only HEAD is accepted (the suites run on the working tree), not {args.tree!r}"))
+            return 2
+        try:
+            dirty = [f for f in get_modified_files() if not is_devkit_artifact(f)]
+        except RuntimeError as e:
+            log_err(f"--tree: {e}")
+            return 2
+        if dirty:
+            log_err(tr(f"--tree: cây làm việc còn {len(dirty)} thay đổi chưa commit ({', '.join(dirty[:3])}) — commit rồi chạy lại, hoặc dùng --diff",
+                       f"--tree: the working tree has {len(dirty)} uncommitted change(s) ({', '.join(dirty[:3])}) — commit them and re-run, or use --diff"))
+            return 2
+        args.full = args.force_full = True   # no "current case" to narrow to, and a deferral to a sibling session would write no receipt
     # 2026-09-29: after a commit, --full on the clean tree said "nothing to audit" (exit 3), so the
     # commits about to be pushed got no receipt unless the agent found `--diff <sha>` by hand. A clean
     # tree AHEAD of its upstream audits upstream..HEAD — exactly what a push sends. No upstream, or
     # level with it: unchanged (exit 3).
-    if (args.run_tests or args.full) and not (args.diff or args.since or args.staged or args.commit_msg):
+    if (args.run_tests or args.full) and not (args.diff or args.since or args.staged or args.commit_msg or args.tree is not None):
         try:
             clean = not [f for f in get_modified_files() if not is_devkit_artifact(f)]
         except RuntimeError:
@@ -5371,7 +5400,7 @@ def main():
     print(f"{BOLD}{CYAN}══════════════════════════════════════════════════════════════════════════════════════{RESET}\n")
 
     # Không có thay đổi thì không có gì để nghiệm thu — tuyệt đối không bịa file mẫu để ra PASS.
-    if not modified_files:
+    if not modified_files and args.tree is None:
         if devkit_artifacts:
             log_warn(tr(f"Chỉ có {len(devkit_artifacts)} link/state do devkit cài — không phải thay đổi của người dùng.",
                         f"Only {len(devkit_artifacts)} DevKit-installed links/state files — not a change of yours."))
@@ -5497,7 +5526,7 @@ def main():
         comp_name = rule.get("component", "UnknownComponent")
         watch_files = rule_watch(rule, covers)
         rule_files = [f for f in modified_files if any(match_pattern(f, pat) for pat in watch_files)]
-        if not rule_files:
+        if not rule_files and args.tree is None:   # --tree: every rule's suites run, whatever the files
             continue
         impacted_components.append(comp_name)
         for test in rule.get("mandatory_regression_tests", []):
