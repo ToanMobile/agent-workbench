@@ -692,6 +692,34 @@ def main(argv):
         except OSError:
             pass
 
+    # 4c. The regression-matrix merge driver from `agent-kit githooks install` (#221, githooks.sh MATRIX_ATTR): its line in
+    #     .gitattributes — the file goes when that line was all it held, other lines stay byte for byte — and the repo config
+    #     section merge.devkit-matrix. Without this the project kept a .gitattributes the installer created (test_uninstall
+    #     red on main since the driver landed, 23/10).
+    attrs = os.path.join(project, ".gitattributes")
+    matrix_attr = ".agents/regression_matrix.active.json merge=devkit-matrix"
+    if os.path.isfile(attrs) and not os.path.islink(attrs):
+        try:
+            with open(attrs, encoding="utf-8", newline="") as f:
+                lines = f.read().splitlines(keepends=True)
+        except (OSError, UnicodeDecodeError) as exc:
+            lines = None
+            plan.keep(attrs, f"không đọc được ({exc!r})", f"unreadable ({exc!r})")
+        if lines is not None and any(ln.rstrip("\r\n") == matrix_attr for ln in lines):
+            rest = [ln for ln in lines if ln.rstrip("\r\n") != matrix_attr]
+            if not "".join(rest).strip():
+                plan.remove(attrs)
+            else:
+                if apply:
+                    with open(attrs, "w", encoding="utf-8", newline="") as f:
+                        f.write("".join(rest))
+                plan.say("đã sửa" if apply else "sẽ sửa", "cleaned" if apply else "would clean", attrs,
+                         tr(" (bỏ dòng merge driver của ma trận)", " (matrix merge driver line removed)"))
+                plan.removed += 1
+    if apply:
+        # no section (never installed, or already gone): git exits non-zero, nothing to do
+        subprocess.run(["git", "-C", project, "config", "--remove-section", "merge.devkit-matrix"], capture_output=True, text=True)
+
     # 5. Directories the installer created and that are now empty.
     if apply:
         for sub in (".claude/hooks", ".claude/commands", ".claude/agents", ".claude",
