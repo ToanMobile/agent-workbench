@@ -60,4 +60,13 @@ for v in DEVKIT_ALLOW_BRANCH WORKTREE_MERGE_GATE POSTFIX_GATE_FORCE_FULL POSTFIX
   printf '%s\n' "$switches" | grep -qx "$v" && fail "suite_env keeps $v (the caller's gate switch)" || ok "suite_env drops $v"
 done
 
+# T0052: DEVKIT_CAPACITY_CORES / DEVKIT_CAPACITY_LOAD là móc test của bin/capacity.py (giả số lõi / tải) cho lần gọi này, suite không
+# thừa hưởng (suite tự ghim nếu cần); DEVKIT_CAPACITY là nút của người dùng, suite (run_impacted.sh) phải thấy để co giãn theo nó.
+cap="$(probe DEVKIT_CAPACITY=2 DEVKIT_CAPACITY_CORES=64 DEVKIT_CAPACITY_LOAD=0 DEVKIT_PROBE_KEEP=1)"
+printf '%s\n' "$cap" | grep -qx DEVKIT_PROBE_KEEP || { echo "✖ capacity probe returned no environment"; exit 1; }
+for v in DEVKIT_CAPACITY_CORES DEVKIT_CAPACITY_LOAD; do
+  printf '%s\n' "$cap" | grep -qx "$v" && fail "suite_env giữ $v (móc test của capacity.py)" || ok "suite_env bỏ $v"
+done
+printf '%s\n' "$cap" | grep -qx DEVKIT_CAPACITY && ok "suite_env giữ DEVKIT_CAPACITY (nút người dùng)" || fail "suite_env làm mất DEVKIT_CAPACITY"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_suite_env: all passed" || { echo "❌ test_suite_env: $FAILS failed"; exit 1; }

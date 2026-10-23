@@ -10,6 +10,9 @@
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 unset DEVKIT_GATE_DONE DEVKIT_TEST_JOBS DEVKIT_TEST_CORES DEVKIT_IMPACT_TEST_CHANGED   # the fixtures must not inherit these
+# T0052: số job mặc định đến từ bin/capacity.py (lõi × 4/3 × DEVKIT_CAPACITY): bỏ nút / móc test của người gọi, ghim tải 0
+unset DEVKIT_CAPACITY DEVKIT_CAPACITY_CORES
+export DEVKIT_CAPACITY_LOAD=0
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 FAILS=0
@@ -26,9 +29,10 @@ mk_test() { # <kit> <relative path> <sleep seconds> [exit code]
   body="${body//NAME/$(basename "$2" .sh)}"; body="${body//SECS/$3}"; body="${body//RC/${4:-0}}"
   printf '%s\n' "$body" > "$f"
 }
-mk_kit() { # <dir> : an empty kit with a copy of the runner
-  mkdir -p "$1/tests/lib" "$1/tests/gates" "$1/tests/verification" "$1/tests/context_memory"
+mk_kit() { # <dir> : an empty kit with a copy of the runner (and bin/capacity.py, its default job count: T0052)
+  mkdir -p "$1/tests/lib" "$1/tests/gates" "$1/tests/verification" "$1/tests/context_memory" "$1/bin"
   cp "$DEVKIT_DIR/tests/run_impacted.sh" "$1/tests/"; : > "$1/tests/impact_map.txt"   # the runner reads the map on every changed file
+  cp "$DEVKIT_DIR/bin/capacity.py" "$1/bin/"
   ( cd "$1" && git init -q . )   # a scratch repo of its own: never the repo this test lives in
 }
 run_kit() { # <kit> <jobs or ""> [run_impacted args] -> OUT, RC, and a fresh $RUN_LOG / $CONC_DIR
@@ -134,21 +138,51 @@ peak="$(grep -v '^test_budgets ' "$RUN_LOG" | cut -d' ' -f2 | sort -n | tail -1)
 [ "$(grep '^test_budgets ' "$RUN_LOG")" = "test_budgets 1" ] && ok "the timing test (test_budgets) runs alone, after everything else" || fail "test_budgets not alone: $(grep '^test_budgets ' "$RUN_LOG")"
 [ "$RC" = 0 ] && ok "fixture 2 passes (exit 0) in $((t1 - t0)) s" || fail "fixture 2 rc=$RC: $OUT"
 
-# ── (f) the default job count: min(cores + cores/3, 16), floor 4 (3 cores or fewer keep the old default of 4); DEVKIT_TEST_JOBS overrides; --jobs prints what a run uses ─
+# ── (f) the default job count: bin/capacity.py test_jobs = max(4, cores + cores/3) at load 0 (T0052: no cap of 16 any more); without
+#        capacity.py the old shell formula min(cores + cores/3, 16), floor 4; DEVKIT_TEST_JOBS overrides; --jobs prints what a run uses ─
 # 2026-10-23, 12 cores, the same 127 tests (a post-fix-gate.py change), alternating 10/14/16/16/14/10: median 299 s at 10 jobs, 252 s at 16, 0 red tests in all 6 runs
 J="$TMP/jobs"; mk_kit "$J"
 jobs_of() { (cd "$J" && env "$@" bash tests/run_impacted.sh --jobs 2>&1); }
 bad=""
 # 08 and 012: a leading zero is read as decimal (10#) on both operands, never as octal ("value too great for base", or 15 for 012)
-for pair in 1:4 2:4 3:4 4:5 5:6 6:8 8:10 08:10 11:14 12:16 012:16 13:16 64:16; do
+for pair in 1:4 2:4 3:4 4:5 5:6 6:8 8:10 08:10 11:14 12:16 012:16 13:17 64:85; do
   c="${pair%%:*}"; w="${pair##*:}"; g="$(jobs_of DEVKIT_TEST_CORES="$c")"
   [ "$g" = "$w" ] || bad="$bad ${c}cores->'$g'(want $w)"
 done
-[ -z "$bad" ] && ok "f: default jobs = min(cores + cores/3, 16), floor 4: 3 cores or fewer keep the old default (1,2,3,4,5,6,8,08,11,12,012,13,64 cores)" || fail "f: formula:$bad"
+[ -z "$bad" ] && ok "f: default jobs = capacity test_jobs = max(4, cores + cores/3), no cap of 16 (1,2,3,4,5,6,8,08,11,12,012,13,64 cores)" || fail "f: formula:$bad"
+# tải cao: số job KHÔNG co (người dùng 23/10: máy bận thì chờ trước khi chạy; pool nhỏ đi giành ít CPU hơn các phiên khác và
+# REG-DK-ALL-01 dễ chạm 900 s): 12 lõi ở tải 24 và 99 vẫn 16
+g24="$(jobs_of DEVKIT_TEST_CORES=12 DEVKIT_CAPACITY_LOAD=24)"; g99="$(jobs_of DEVKIT_TEST_CORES=12 DEVKIT_CAPACITY_LOAD=99)"
+[ "$g24:$g99" = "16:16" ] && ok "f: tải cao không thu số job (12 lõi: tải 24 và 99 -> 16)" || fail "f: số job theo tải: '$g24' '$g99' (muốn 16 16)"
+# capacity.py vắng (kit cũ): công thức shell cũ, trần 16
+mv "$J/bin/capacity.py" "$TMP/capacity.keep"
+bad=""
+for pair in 1:4 4:5 12:16 012:16 13:16 64:16; do
+  c="${pair%%:*}"; w="${pair##*:}"; g="$(jobs_of DEVKIT_TEST_CORES="$c")"
+  [ "$g" = "$w" ] || bad="$bad ${c}cores->'$g'(want $w)"
+done
+[ -z "$bad" ] && ok "f: không có bin/capacity.py: công thức shell cũ min(cores + cores/3, 16), floor 4 (1,4,12,012,13,64 cores)" || fail "f: fallback:$bad"
+# capacity.py hỏng (thoát khác 0, in rác / 0 / dòng rỗng): cũng công thức shell cũ, không bao giờ 0 = không giới hạn (OCR 23/10)
+bad=""
+for body in 'import sys; sys.exit(1)' 'print("abc")' 'print(0)' 'print("")' 'raise RuntimeError("x")'; do
+  printf '%s\n' "$body" > "$J/bin/capacity.py"
+  for pair in 12:16 64:16; do
+    c="${pair%%:*}"; w="${pair##*:}"; g="$(jobs_of DEVKIT_TEST_CORES="$c")"
+    [ "$g" = "$w" ] || bad="$bad [$body] ${c}cores->'$g'(want $w)"
+  done
+done
+[ -z "$bad" ] && ok "f: capacity.py hỏng (exit 1, rác, 0, rỗng, ngoại lệ): công thức shell cũ (12 -> 16, 64 -> 16)" || fail "f: capacity hỏng:$bad"
+mv "$TMP/capacity.keep" "$J/bin/capacity.py"
+# nút hệ số DEVKIT_CAPACITY của người dùng đi qua run_impacted vào capacity: 12 lõi × 0.5 -> 8, × 2 -> 32
+g05="$(jobs_of DEVKIT_TEST_CORES=12 DEVKIT_CAPACITY=0.5)"; g2="$(jobs_of DEVKIT_TEST_CORES=12 DEVKIT_CAPACITY=2)"
+[ "$g05:$g2" = "8:32" ] && ok "f: DEVKIT_CAPACITY đi qua run_impacted (12 lõi: 0.5 -> 8, 2 -> 32)" || fail "f: DEVKIT_CAPACITY: '$g05' '$g2' (muốn 8 32)"
 # on THIS machine: the formula applied to a core count the machine itself reports
-exp=""; for c in "$(sysctl -n hw.ncpu 2>/dev/null)" "$(nproc 2>/dev/null)" "$(python3 -c 'import os; print(os.cpu_count() or 0)' 2>/dev/null)"; do
+# capacity.cores() đọc CPU tiến trình được dùng trước (process_cpu_count 3.13+ → sched_getaffinity → cpu_count): container giới hạn CPU
+# cho số nhỏ hơn nproc — thêm cả hai làm ứng viên (Antigravity audit 23/10)
+exp=""; for c in "$(sysctl -n hw.ncpu 2>/dev/null)" "$(nproc 2>/dev/null)" "$(python3 -c 'import os; print(os.cpu_count() or 0)' 2>/dev/null)" \
+  "$(python3 -c 'import os; print(os.process_cpu_count() or 0)' 2>/dev/null)" "$(python3 -c 'import os; print(len(os.sched_getaffinity(0)))' 2>/dev/null)"; do
   case "$c" in ''|*[!0-9]*|0) continue ;; esac
-  j=$((c + c / 3)); [ "$j" -gt 16 ] && j=16; [ "$j" -lt 4 ] && j=4; exp="$exp $j"
+  j=$((c + c / 3)); [ "$j" -lt 4 ] && j=4; exp="$exp $j"
 done
 real="$(jobs_of A=1)"
 case "$real:$exp " in [0-9]*:*" $real "*) ok "f: on this machine the default is $real jobs (formula candidates:$exp)" ;; *) fail "f: this machine's default is '$real', formula says:$exp" ;; esac
