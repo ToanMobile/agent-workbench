@@ -1128,6 +1128,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "durations-union-merge",
+      "trigger_files": [
+        ".gitattributes",
+        "universal-agent-devkit/tests/lib/test_durations.txt",
+        "universal-agent-devkit/tests/gates/test_durations_union_merge.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-DURATIONS-UNION-01",
+          "name": "test_durations.txt gộp bằng merge=union: hai nhánh cùng nối dòng cuối không xung đột, dòng trùng còn một (#302)",
+          "command": "bash universal-agent-devkit/tests/gates/test_durations_union_merge.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
