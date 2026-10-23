@@ -508,3 +508,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Model 3D cache cũ sau khi dựng lại
 - **Nguyên nhân:** server trả web/models/*.glb với Cache-Control max-age 1 ngày dưới URL cố định; dựng lại GLB cùng tên thì trình duyệt vẫn dùng bản cũ, nhìn như sửa không có tác dụng
 - **Quy tắc phòng ngừa & Cách fix:** URL tài nguyên tĩnh được cache lâu phải mang dấu vân tay nội dung (tên+kích thước+mtime_ns hoặc hash) do server điền vào trang; kiểm thay đổi hình ảnh bằng chính renderer cuối (three.js trong trang), không bằng ảnh render của công cụ dựng
+
+---
+
+### [INSTINCT-061] Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source
+- **Ngày phát hiện:** 2026-10-23
+- **Hiện tượng lỗi:** Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source
+- **Nguyên nhân:** Test gọi SB_LIB_ONLY=1 . super-board-run.sh; bash giữ phép gán đứng trước builtin '.' chỉ trong lúc source, nên hàm gọi về sau không thấy SB_LIB_ONLY và test đếm slot worker thật trong ~/.claude/super-board-slots (23/10: merge-train bị giữ 3/3 running)
+- **Quy tắc phòng ngừa & Cách fix:** Cần biết lib mode ở thời điểm gọi hàm thì chốt nó bằng một dòng top-level chạy lúc source (SB_SLOT_LIB_MODE="${SB_LIB_ONLY:-0}"); test lib mode bằng một HOME giả có slot sống và kiểm đột biến
