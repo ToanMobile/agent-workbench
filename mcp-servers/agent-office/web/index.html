@@ -2518,6 +2518,11 @@ function drawStation(key) {
   if (!ws.length) { d.append(h('p', 'empty', 'Không còn agent nào ở đây.')); return; }
   ws.forEach((w) => d.append(agentRow(w)));
 }
+function tintBtn(b, col) {
+  const c = colColor(col);
+  b.style.color = colText(col); b.style.borderColor = 'color-mix(in srgb, ' + c + ' 45%, transparent)';
+  b.style.background = 'color-mix(in srgb, ' + c + ' 14%, transparent)'; b.style.fontWeight = '600';
+}
 function drawColumn(name) {
   const S = STATE; const col = S.columns.find((c) => c.name === name);
   if (!col) { $('#drawer').hidden = true; return; }
@@ -2537,7 +2542,7 @@ function drawColumn(name) {
   if (!its.length) { d.append(h('p', 'empty', 'Cột này đang trống.')); return; }
   const target = S.columns.find((c) => c.kind === 'ready');
   if (target && target.name !== name && canWrite()) {
-    const ra = h('div', 'row-actions'); const bt = h('button', 'btn', 'Chuyển tất cả ' + its.length + ' thẻ sang ' + target.name); bt.type = 'button';
+    const ra = h('div', 'row-actions'); const bt = h('button', 'btn', 'Chuyển tất cả ' + its.length + ' thẻ sang ' + target.name); bt.type = 'button'; tintBtn(bt, target);
     bt.onclick = () => moveAll(name, target.name, its.length);
     ra.append(bt); d.append(ra);
   }
@@ -2546,7 +2551,7 @@ function drawColumn(name) {
     head.append(sw, h('span', null, repo), h('span', 'n', String(list.length)));
     d.append(head);
     if (target && target.name !== name && canWrite() && groups.length > 1) {
-      const ra = h('div', 'row-actions'); const rb = h('button', 'btn', 'Chuyển ' + list.length + ' thẻ ' + repo + ' sang ' + target.name); rb.type = 'button';
+      const ra = h('div', 'row-actions'); const rb = h('button', 'btn', 'Chuyển ' + list.length + ' thẻ ' + repo + ' sang ' + target.name); rb.type = 'button'; tintBtn(rb, target);
       rb.onclick = () => moveAll(name, target.name, list.length, repo); ra.append(rb); d.append(ra);
     }
     const ul = h('ul', 'row-list wrap');
