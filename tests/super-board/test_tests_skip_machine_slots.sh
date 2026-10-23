@@ -25,12 +25,15 @@ mkdir -p "$HOME"
 unset SB_HEAVY_SLOT_DIR SB_HEAVY_SLOT_HELD SB_HEAVY_SLOT_WAIT_S
 export SB_HEAVY_SLOT_POLL_S="0.1"
 
-# Máy bận theo luật hiện tại (P1 20/10: không còn 2 slot — suite chạy theo tải máy, dưới 100 là chạy): tải 1 phút đọc từ file = 150.
+# Máy bận theo luật hiện tại (P1 20/10: không còn 2 slot — suite chạy theo tải máy, dưới ngưỡng tải là chạy): tải 1 phút đọc từ file = 150.
 # Lệnh bọc heavy slot mà không được cho chạy sẵn thì --nonblock từ chối (đối chứng: máy bận thật sự chặn).
-unset DEVKIT_SLOT_ADVISORY_HELD DEVKIT_SLOT_LOAD_MAX DEVKIT_SLOT_LOAD_WAIT_S
+unset DEVKIT_SLOT_ADVISORY_HELD DEVKIT_SLOT_LOAD_MAX DEVKIT_SLOT_LOAD_WAIT_S DEVKIT_CAPACITY DEVKIT_CAPACITY_CORES DEVKIT_CAPACITY_LOAD
+# T0052: ngưỡng mặc định là capacity hold_load (8 × lõi); máy giả 12 lõi (96) để tải 150 luôn là "bận", kể cả khi người gọi đặt
+# DEVKIT_CAPACITY (suite_env của gate giữ nút đó) hay máy thật ≥ 19 lõi (hold_load ≥ 152).
+export DEVKIT_CAPACITY_CORES=12
 export DEVKIT_SLOT_LOAD_FILE="$TMP/load"; echo 150 > "$DEVKIT_SLOT_LOAD_FILE"
 if ! python3 "$SLOT_BIN" --nonblock -- true 2>/dev/null; then
-  ok "the machine is busy (load 150 >= 100): --nonblock refuses"
+  ok "the machine is busy (load 150 >= hold_load 96): --nonblock refuses"
 else
   fail "could not make the machine busy (--nonblock ran at load 150)"
 fi
