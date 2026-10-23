@@ -138,3 +138,45 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n✗ Integration test failed: {e}")
         sys.exit(1)
+
+
+def test_wait_for_server_survives_slow_start(tmp_path):
+    """#263: a server that opens its port late (loaded machine) is still waited for, not failed at the first bound."""
+    import threading
+
+    port = _find_free_port()
+    log = tmp_path / "server.log"
+    log.write_text("starting")
+
+    class _Alive:
+        def poll(self):
+            return None
+
+    def _listen_late():
+        # Event.wait, not time.sleep: conftest's autouse fixture patches the shared time.sleep to a no-op
+        threading.Event().wait(1.5)
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", port))
+        srv.listen(1)
+        threading.Event().wait(4)
+        srv.close()
+
+    threading.Thread(target=_listen_late, daemon=True).start()
+    _wait_for_server("127.0.0.1", port, _Alive(), str(log), timeout=8.0)
+
+
+def test_wait_for_server_reports_early_exit_at_once(tmp_path):
+    """#263: a server that dies before listening is reported immediately, not after the whole bound."""
+    log = tmp_path / "server.log"
+    log.write_text("boom")
+
+    class _Dead:
+        returncode = 3
+
+        def poll(self):
+            return 3
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="exited early"):
+        _wait_for_server("127.0.0.1", _find_free_port(), _Dead(), str(log), timeout=45.0)
+    assert time.monotonic() - started < 2
