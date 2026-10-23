@@ -67,6 +67,7 @@ and its commits are kept (a detached worktree's commits must be brought back fir
 Only the recorded setup and ignored files (copied config, hook logs) go with the folder.
 """
 
+import collections
 import contextlib
 import errno
 import filecmp
@@ -177,16 +178,16 @@ def _timeout():
     return t
 
 
-def _run(argv, inp=None, text=True, env=None, bounded=True):
+def _run(argv, inp=None, text=True, env=None, bounded=True, cwd=None):
     """subprocess.run with a bounded time. On timeout the child is killed and a CompletedProcess with returncode 124 comes back; so it does
     when the shared deadline of the running inventory() is spent (nothing is started then). `bounded=False` for a call that CHANGES the repo or the
     disk (worktree add / remove --force, the temp-index work of `diff`): killed midway it leaves a half checkout or a half-deleted folder."""
     if not bounded:
-        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env)
+        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env, cwd=cwd)
     if _spent():
         return subprocess.CompletedProcess(argv, 124, "" if text else b"", "inventory deadline spent")
     try:
-        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env, timeout=_timeout())
+        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env, timeout=_timeout(), cwd=cwd)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(argv, 124, "" if text else b"", "timed out")
 
@@ -197,6 +198,18 @@ def git(cwd, *args, check=True, env=None, inp=None, bounded=True):
         err = r.stderr if isinstance(r.stderr, str) else r.stderr.decode("utf-8", "replace")
         raise SystemExit(f"✖ worktree: git {' '.join(args[:2])}: {err.strip()}")
     return r
+
+
+def _merge_tree(repo, attr_tree, *args):
+    """`git merge-tree --write-tree <args>` for `repo`, run with a scratch cwd. An external merge driver (the matrix driver) writes its
+    `.merge_file_*` temp files into git's cwd, and a probe killed by its time budget leaves them there: three files in the main checkout
+    per kill (#309). `--git-dir` + `--attr-source=<attr_tree>` keep the repo's own attributes, so the driver still applies and the verdict is
+    the one `git -C repo merge-tree` gave. Trouble finding the git dir: the CompletedProcess of that failed call."""
+    gd = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
+    if gd.returncode != 0 or not gd.stdout.strip():
+        return gd
+    with tempfile.TemporaryDirectory(prefix="devkit-merge-tree-") as scratch:
+        return _run(["git", f"--git-dir={gd.stdout.strip()}", f"--attr-source={attr_tree}", "merge-tree", "--write-tree", *args], cwd=scratch)
 
 
 def _read_regular(path, limit=32_000_000):
@@ -1329,7 +1342,7 @@ def _adds_nothing_to_main(cwd, main_head, head):
     base = git(cwd, "merge-base", main_head, head, check=False).stdout.strip()
     if not base:
         return False
-    r = git(cwd, "merge-tree", "--write-tree", f"--merge-base={base}", main_head, head, check=False)
+    r = _merge_tree(cwd, main_head, f"--merge-base={base}", main_head, head)
     merged = (r.stdout.splitlines() or [""])[0].strip()
     if r.returncode != 0 or not merged:
         return False
@@ -1828,11 +1841,12 @@ def cmd_diff(cwd, args):
     return 0
 
 
-def _iter_blockers(cwd, wt, shown, budget):
+def _iter_blockers(cwd, wt, shown, budget, rows=None):
     """The reasons a worktree must NOT be removed, one at a time, in the order `remove` has always checked them. Yields
     (exit code, kind, text, detail lines). Lazy: a check that cannot run (not made by `worktree add`) is only reached when
     nothing earlier blocked. kind: unregistered | busy | unreachable | submodule | not_ours | main | uncommitted | secret."""
-    rows = inventory(cwd, only=wt, budget=budget)
+    if rows is None:
+        rows = inventory(cwd, only=wt, budget=budget)
     if not rows and os.path.isdir(wt):
         # git does not list this directory as a linked worktree (a subdirectory of one, the main checkout, a plain folder, a name the
         # listing could not tie to it): the busy / reflog / unreachable checks have nothing to run on, so nothing may be assumed safe
@@ -2219,6 +2233,51 @@ def _content_in_trunk(main, ref):
                if git(main, "rev-parse", "-q", "--verify", f"{tip}^{{commit}}", check=False).returncode == 0)
 
 
+def _same_patches_verbatim(cwd, tip, head, cap=300):
+    """Như `_same_patches_in_main` nhưng so `git patch-id --verbatim`: patch-id mặc định bỏ khoảng trắng nên `a2` và `a 2` coi như một,
+    còn discard xoá thật. Mọi commit của `head` mà `tip` chưa có phải có patch-id y hệt một commit của tip (từ merge-base). Có merge
+    commit, quá `cap` commit, lỗi git: False."""
+    base = git(cwd, "merge-base", tip, head, check=False).stdout.strip()
+    if not base:
+        return False
+    merges = git(cwd, "rev-list", "--merges", "--count", f"{base}..{head}", check=False)
+    total = git(cwd, "rev-list", "--count", f"{base}..{tip}", check=False)
+    if merges.returncode or merges.stdout.strip() != "0" or total.returncode or not total.stdout.strip().isdigit() or int(total.stdout) > cap:
+        return False
+
+    def ids(rng):   # BYTES: text mode đổi \r\n thành \n trước patch-id; --submodule=short: commit chỉ đổi gitlink vẫn có patch-id
+        log = _git_bytes(cwd, "log", "-p", "--no-merges", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short",
+                         "--ignore-submodules=none", "--full-index", "--format=commit %H", rng)
+        pid = _git_bytes(cwd, "patch-id", "--verbatim", inp=log.stdout) if log.returncode == 0 else None
+        return collections.Counter(l.split()[0] for l in pid.stdout.splitlines() if l.strip()) if pid is not None and pid.returncode == 0 else None
+    mine, theirs = ids(f"{base}..{head}"), ids(f"{base}..{tip}")
+    return mine is not None and theirs is not None and not (mine - theirs)   # đếm số lần: add, delete, add lại không bằng add, delete
+
+
+def _merges_to_strict(main, into, other):
+    """`_merges_to` cho discard (xoá thật): chỉ khi KHÔNG file nào `other` đổi có thuộc tính `merge=<driver>` (driver như `ours` giữ bản của
+    trunk) và gộp thử không chuẩn hoá lại dòng (`merge.renormalize` làm commit chỉ khác CRLF trông như đã có). Lỗi git: False."""
+    base = git(main, "merge-base", into, other, check=False).stdout.strip()
+    names = git(main, "diff", "--name-only", "-z", "--no-renames", base, other, check=False) if base else None
+    attrs = git(main, "check-attr", "-z", "--stdin", "merge", check=False, inp=names.stdout) if names is not None and names.returncode == 0 else None
+    if attrs is None or attrs.returncode or any(v not in ("unspecified", "set") for v in attrs.stdout.split("\0")[2::3]):
+        return False
+    tree = git(main, "rev-parse", "-q", "--verify", f"{into}^{{tree}}", check=False).stdout.strip()
+    r = git(main, "-c", "merge.renormalize=false", "merge-tree", "--write-tree", into, other, check=False)
+    return bool(tree) and r.returncode == 0 and r.stdout.split("\n", 1)[0].strip() == tree
+
+
+def _chain_in_trunk(main, head):
+    """Mọi commit `head` có hơn một đầu trunk (local hoặc origin/<trunk>) đã được tích hợp theo cách `remove` tính: là tổ tiên, gộp thử
+    ra đúng cây trunk, cùng patch-id với một commit ở đó, hoặc cả patch đã nằm trong trunk (squash). Commit rỗng, lỗi git: False."""
+    trunk = _trunk_branch(main)
+    for ref in ((f"refs/heads/{trunk}", f"refs/remotes/origin/{trunk}") if trunk else ()):
+        tip = git(main, "rev-parse", "-q", "--verify", f"{ref}^{{commit}}", check=False).stdout.strip()
+        if tip and (_is_ancestor(main, head, tip) or _merges_to_strict(main, tip, head) or _same_patches_verbatim(main, tip, head)) and not _empty_commit_between(main, tip, head):
+            return True
+    return False
+
+
 def _merged_pr_at(main, branch, tip):
     """Số PR MERGED VÀO TRUNK (baseRefName = trunk, không phải PR từ fork) có head là `branch` và headRefOid đúng `tip` (không còn commit mới
     sau lần gộp), theo `gh`; None khi không có, không biết trunk, gh không chạy được, quá 15 s hay trả gì đọc không được (không nói được =
@@ -2343,13 +2402,20 @@ def cmd_discard(cwd, args):
     live = _live_holder(main, wt)
     if live:
         die(tr(f"{wt}: {live} — để yên", f"{wt}: {live} - left alone"), 1)
+    head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()
     try:
-        refused = [text for _code, kind, text, _detail in _iter_blockers(cwd, wt, args[0], None) if kind != "uncommitted"]
+        in_trunk = bool(head) and _chain_in_trunk(main, head)
+        # `remove` so commit của worktree với HEAD của main checkout, mà PR squash trên origin để lại phía sau: UNREACHABLE của nó chỉ nói
+        # "hơn main local". Bỏ qua khi trunk (local hoặc origin) đã giữ cả chuỗi và không commit nào chỉ còn trong reflog
+        rows = inventory(cwd, only=wt, budget=None)   # một kiểm kê cho cả waive lẫn blocker: không lệch nhau giữa hai lần đọc
+        waive = in_trunk and [r["reflog"] for r in rows] == [[]] \
+            and git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip() == head   # HEAD không đổi giữa hai lần đọc
+        refused = [text for _code, kind, text, _detail in _iter_blockers(cwd, wt, args[0], None, rows=rows)
+                   if kind != "uncommitted" and not (waive and kind == "unreachable")]
         refused += _discard_leftovers(wt)
     except UnicodeError as e:
         die(tr(f"không kiểm tra được {wt} (tên file không phải UTF-8: {e}) — không gỡ", f"cannot check {wt} (a file name that is not UTF-8: {e}) - nothing removed"), 1)
-    head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()
-    if not head or not _content_in_trunk(main, head):   # một nhánh có tên giữ commit của nó, nhưng discard chỉ cho HEAD trunk đã có (audit T0044)
+    if not in_trunk:   # một nhánh có tên giữ commit của nó, nhưng discard chỉ cho HEAD trunk đã có (audit T0044)
         refused.append(tr(f"{wt}: HEAD ({head[:12] or '?'}) có commit trunk chưa có (không là tổ tiên, gộp thử squash cũng thêm vào): đem về hoặc PR trước",
                           f"{wt}: HEAD ({head[:12] or '?'}) holds commits the trunk lacks (neither an ancestor nor a squash): bring them back or PR them first"))
     try:
@@ -3170,7 +3236,7 @@ def _merges_to(main, into, other):
     """True khi gộp `other` vào `into` ra ĐÚNG cây của `into` (merge-tree, không đụng cây làm việc): `other` không mang thêm gì, kể cả
     file sổ sách (khác _adds_nothing_to_main). Xung đột, git cũ, lỗi: False."""
     tree = git(main, "rev-parse", "-q", "--verify", f"{into}^{{tree}}", check=False).stdout.strip()
-    r = git(main, "merge-tree", "--write-tree", into, other, check=False)
+    r = _merge_tree(main, into, into, other)
     return bool(tree) and r.returncode == 0 and r.stdout.split("\n", 1)[0].strip() == tree
 
 
@@ -3653,6 +3719,32 @@ def _grok_source(session, wt):
     return None
 
 
+MERGE_FILE_MIN_AGE_S = 600   # a `.merge_file_*` younger than this may still be in use by a merge driver that is running
+
+
+def _sweep_merge_files(top):
+    """Delete the untracked top-level `.merge_file_*` files that killed `git merge-tree` probes left in `top` (#309): only a regular file
+    (never a link) whose name is git's own `.merge_file_XXXXXX`, that git does not track and nobody wrote to for MERGE_FILE_MIN_AGE_S.
+    Returns the names removed; an error on one file is skipped (heal never fails a session start)."""
+    out = []
+    try:
+        names = os.listdir(top)
+    except OSError:
+        return out
+    for n in names:
+        path = os.path.join(top, n)
+        try:
+            if not re.fullmatch(r"\.merge_file_[A-Za-z0-9]{6}", n) or not stat.S_ISREG(os.lstat(path).st_mode) \
+                    or time.time() - os.lstat(path).st_mtime < MERGE_FILE_MIN_AGE_S \
+                    or git(top, "ls-files", "--error-unmatch", "--", n, check=False).returncode == 0:
+                continue
+            os.unlink(path)
+            out.append(n)
+        except OSError:
+            continue
+    return out
+
+
 def cmd_heal(cwd, args):
     """A checkout the HOST made — Grok's worktree session, a separate clone (OfficeReader
     2026-09-28), or a plain `git worktree` — never went through `add`: no .agents/devkit link
@@ -3679,6 +3771,8 @@ def cmd_heal(cwd, args):
         pass
     src = src or _grok_source(session, wt)
     done = []
+    for top in {wt, src} - {None}:
+        done += _sweep_merge_files(top)
     link = os.path.join(wt, ".agents", "devkit")
     target = os.path.join(src, ".agents", "devkit") if src else None
     target = target if target and os.path.isdir(target) else devkit
