@@ -106,5 +106,44 @@ class WriteGoesToOwnProject(unittest.TestCase):
                 self.app._set("PVTI_1_1", "Status", "Review")  # only project 3 has Review
 
 
+class NewCardsAndBulkMove(unittest.TestCase):
+    def setUp(self):
+        with mock.patch.object(server, "fetch_project", side_effect=lambda g: fake_project(g["project"], f"repo{g['project']}")):
+            proj = server.fetch_projects(CFG)
+        self.app = object.__new__(server.App)
+        self.app.project, self.app.demo, self.app.cfg = proj, False, {"github": CFG}
+        self.app.gh_meta, self.app.lock, self.app.user_moves = {"ok": True}, __import__("threading").RLock(), {}
+        self.app.refresh_evt = __import__("threading").Event()
+        self.app.rebuild = lambda: None
+
+    def test_new_draft_card_lands_in_backlog_not_no_status(self):
+        calls = []
+
+        def gql(q, v):
+            calls.append(v)
+            return {"addProjectV2DraftIssue": {"projectItem": {"id": "NEW"}}}
+        with mock.patch.object(server, "gh_graphql", side_effect=gql):
+            self.app.act("create", {"title": "t"})
+        self.assertEqual(calls[-1]["o"], "OPT_1_Backlog")
+        self.assertEqual(self.app.project["items"][-1]["status"], "Backlog")
+
+    def test_move_all_moves_every_card_of_a_column_to_ready(self):
+        for it in self.app.project["items"]:
+            it["status"] = server.NO_STATUS
+        calls = []
+        with mock.patch.object(server, "gh_graphql", side_effect=lambda q, v: calls.append(v) or {}):
+            r = self.app.act("move-all", {"from": server.NO_STATUS, "to": "Ready"})
+        self.assertEqual((r["moved"], r["failedCount"]), (3, 0))
+        self.assertEqual({c["o"] for c in calls}, {"OPT_1_Ready", "OPT_2_Ready", "OPT_3_Ready"})
+        self.assertTrue(all(i["status"] == "Ready" for i in self.app.project["items"]))
+
+    def test_move_all_reports_cards_whose_project_lacks_the_column(self):
+        for it in self.app.project["items"]:
+            it["status"] = "Backlog"
+        with mock.patch.object(server, "gh_graphql", side_effect=lambda q, v: {}):
+            r = self.app.act("move-all", {"from": "Backlog", "to": "Review"})  # no project has Review here
+        self.assertEqual((r["moved"], r["failedCount"]), (0, 3))
+
+
 if __name__ == "__main__":
     unittest.main()

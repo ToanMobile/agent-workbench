@@ -2178,6 +2178,15 @@ async function moveItem(it, colName) {
   try { await api('set-field', { itemId: it.id, field: STATE.project.statusField, option: colName }); toast('Đã chuyển ' + itemLabel(it) + ' sang ' + colName); }
   catch (err) { it.status = prev; rerender(); toast('Không chuyển được ' + itemLabel(it) + ': ' + err.message, 'error'); }
 }
+async function moveAll(from, to, n) {
+  if (!canWrite() || !confirm('Chuyển ' + n + ' thẻ từ "' + from + '" sang "' + to + '"? Runner sẽ nhận các thẻ này ngay.')) return;
+  try {
+    const r = await api('move-all', { from, to });
+    STATE.items.forEach((it) => { if (it.status === from && !r.failedCount) it.status = to; });
+    VERSION = null; poll(true);
+    toast('Đã chuyển ' + r.moved + ' thẻ sang ' + to + (r.failedCount ? ', ' + r.failedCount + ' thẻ lỗi: ' + r.failed.join('; ') : ''), r.failedCount ? 'error' : undefined);
+  } catch (err) { toast('Không chuyển được hàng loạt: ' + err.message, 'error'); }
+}
 async function setField(it, field, option) {
   const prev = (it.fields || {})[field];
   it.fields = Object.assign({}, it.fields, { [field]: option }); renderDrawer(true);
@@ -2199,8 +2208,9 @@ function openCreate(repoName, status) {
   const draft = h('option', null, 'Bản nháp, không gắn repo'); draft.value = ''; rs.append(draft);
   rs.value = repoName && STATE.repos.some((r) => r.name === repoName) ? repoName : (rs.options[0] ? rs.options[0].value : '');
   const ss = f.elements.status; ss.textContent = '';
-  STATE.columns.forEach((c) => { const o = h('option', null, c.name); o.value = c.name; ss.append(o); });
-  const ready = STATE.columns.find((c) => c.kind === 'ready') || STATE.columns.find((c) => c.kind === 'backlog') || STATE.columns[0];
+  const real = STATE.columns.filter((c) => !c.noStatus);
+  real.forEach((c) => { const o = h('option', null, c.name); o.value = c.name; ss.append(o); });
+  const ready = real.find((c) => c.kind === 'backlog') || real[0];
   ss.value = status || (ready ? ready.name : '');
   updateCreateHint();
   $('#createDlg').showModal();
@@ -2525,6 +2535,12 @@ function drawColumn(name) {
     if (noReason) d.append(h('p', 'readonly', noReason + ' thẻ chưa có lý do chặn trên GitHub.'));
   }
   if (!its.length) { d.append(h('p', 'empty', 'Cột này đang trống.')); return; }
+  const target = S.columns.find((c) => c.kind === 'ready');
+  if (target && target.name !== name && canWrite()) {
+    const ra = h('div', 'row-actions'); const bt = h('button', 'btn', 'Chuyển tất cả ' + its.length + ' thẻ sang ' + target.name); bt.type = 'button';
+    bt.onclick = () => moveAll(name, target.name, its.length);
+    ra.append(bt); d.append(ra);
+  }
   groups.forEach(([repo, list]) => {
     const head = h('div', 'colhead'); const sw = h('span', 'sw'); sw.style.background = colColor(col);
     head.append(sw, h('span', null, repo), h('span', 'n', String(list.length))); d.append(head);
