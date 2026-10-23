@@ -111,6 +111,15 @@ CASES = [
     ("crash when you fix 3 bugs in a row", False),
     ("make the test runner run in parallel", False),
     ("sửa crash ở dòng #12, #15 của log", False),
+    # #75: the one file named is a LIST of work (Markdown / txt), not the file to edit: the count still splits
+    ("fix hết 5 bug trong docs/issues-bugs.md", True),
+    ("làm 3 việc trong TODO.md", True),
+    ("fix all 4 issues listed in notes/backlog.txt", True),
+    # …but a source file named with several steps, or a count of edits inside one non-list file, stays one lane
+    ("sửa hooks/proof_gate.sh:\n1. đổi regex của XONG\n2. thêm log khi chặn", False),
+    ("sửa 3 lỗi trong hooks/proof_gate.sh", False),
+    ("sửa lỗi 3 chỗ trong README.md", False),
+    ("fix hết 5 bug trong docs/issues-bugs.md: tại sao lại đỏ?", False),
 ]
 for prompt, want in CASES:
     got = split(prompt)
