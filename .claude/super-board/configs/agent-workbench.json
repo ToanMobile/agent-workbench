@@ -120,7 +120,7 @@
   },
   "max_workers": 10,
   "build_workers": 10,
-  "build_load_max": 36,
+  "build_load_max": 70,
   "qa_workers": 3,
   "review_workers": 3,
   "backlog_pull": false
