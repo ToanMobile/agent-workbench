@@ -437,7 +437,18 @@ ready_card_held() {
   local issue="$1" item_id="$2" body self other refs dup r fixlines
   # Dạng đúng của kind issue là --json number,title,body (github-read từ chối -q/--jq: lệnh cũ `--json body -q .body` in chữ thô,
   # bước kiểm JSON hỏng, hàm này không bao giờ ra verdict và ở chế độ STRICT làm halt cả board, 22 và 23/10).
-  body=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json number,title,body 2>/dev/null | jq -r '.body // empty' 2>/dev/null) || return 1
+  # #303: stderr của github-read vào log (không 2>/dev/null) và exit 79 (halt) đi lên như gh_checkpoint: một halt không phải "không có verdict".
+  local errf out rc
+  errf=$(mktemp "${TMPDIR:-/tmp}/sb-ready-held.XXXXXX") || return 1
+  rc=0; out=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json number,title,body 2>"$errf") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "ready_card_held #${issue}: github-read exit ${rc}: $(tail -n 1 "$errf" | cut -c1-300)"
+    rm -f "$errf"
+    [ "$rc" -eq 79 ] && exit 79
+    return 1
+  fi
+  rm -f "$errf"
+  body=$(printf '%s' "$out" | jq -r '.body // empty' 2>/dev/null) || return 1
   [ -n "$body" ] || return 1
   self=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##' | tr '[:upper:]' '[:lower:]')
   other=""
@@ -2017,7 +2028,7 @@ DISPATCH_LOG=""
 # ── Tự nạp lại code mới (#229, gap 4 của #226). Runner là bash chạy dài: PR sửa chính super-board-run.sh merge xong mà tiến trình vẫn
 # chạy bản cũ cho tới khi ai đó dừng/chạy lại tay. Lúc rảnh (không worker nào, lock nào) mỗi tick fetch origin/<base>; blob của script trên
 # origin khác blob đang chạy thì: main checkout fast-forward được (đang ở <base>, HEAD là tổ tiên của origin) → ff rồi exec lại chính nó
-# (cùng PID, nên bản ghi watchdog vẫn đúng; SB_WATCHDOG_START=1 nạp lại bộ đếm và không xoá stop marker). Main lệch origin, ff không áp
+# (cùng PID, nên bản ghi watchdog vẫn đúng; SB_WATCHDOG_START=1 nạp lại bộ đếm và không xoá stop marker). Gộp xung đột/gate đỏ, ff không áp
 # được hoặc bản mới sai cú pháp → notify một lần cho mỗi bản origin, tiếp tục chạy bản cũ: không restart mù, không chạy code cũ im lặng.
 # ponytail: chỉ nạp lại khi rảnh hoàn toàn; board luôn có worker thì chờ tới lúc rảnh, nâng lên khi thấy board bận liên tục.
 RELOAD_SELF="${RELOAD_SELF:-$SCRIPT_DIR/super-board-run.sh}"
@@ -2035,6 +2046,23 @@ reload_warn() {
   log "⚠ self-reload: origin/${BASE_BRANCH} has a newer super-board-run.sh but this runner keeps the old code — $2"
   board_notify send --card "$CONFIG_SLUG" --text "runner đang chạy code cũ: origin/${BASE_BRANCH} có super-board-run.sh mới nhưng không nạp được — $2"
 }
+reload_finish_main() {
+  # Worktree tạm tại HEAD của main (không phải origin/<base>: finish coi worktree ở origin là PR đã squash và từ chối), gộp origin vào đó
+  # rồi finish (gate, fast-forward main). Xung đột/gate đỏ → khác 0, main giữ nguyên.
+  local ak wt rc out
+  if [ -n "${SB_WORKTREE_CMD:-}" ]; then read -r -a ak <<<"$SB_WORKTREE_CMD"
+  elif command -v agent-kit >/dev/null 2>&1; then ak=(agent-kit worktree); else ak=(python3 .agents/devkit/scripts/git/worktree.py); fi
+  wt=".claude/worktrees/self-reload-$$"
+  out=$("${ak[@]}" add "$wt" 2>&1) || { log "⚠ self-reload: cannot create worktree $wt: $(printf '%s' "$out" | tail -c 300)"; return 1; }
+  if git -C "$wt" merge --no-edit -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
+    "${ak[@]}" finish "$wt" >/dev/null 2>&1; rc=$?
+  else
+    git -C "$wt" merge --abort >/dev/null 2>&1; rc=1
+  fi
+  [ "$rc" -eq 0 ] || log "⚠ self-reload: merge origin/${BASE_BRANCH} / worktree finish $wt failed (rc=$rc)"
+  "${ak[@]}" remove "$wt" >/dev/null 2>&1 || log "⚠ self-reload: worktree remove $wt failed; left for the cleanup hook"
+  return "$rc"
+}
 self_reload_tick() {
   local now new disk rel cur
   [ "${ACTIVE_WORKERS:-0}" -eq 0 ] || return 0
@@ -2051,12 +2079,18 @@ self_reload_tick() {
   disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
   if [ "$disk" != "$new" ]; then
     cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || cur=""
-    if [ "$cur" != "$BASE_BRANCH" ] || ! git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null; then
-      reload_warn "$new" "main checkout is not a fast-forward of origin/${BASE_BRANCH} (branch '${cur:-detached}'); bring it level, then the next idle tick reloads"
+    if [ "$cur" != "$BASE_BRANCH" ]; then
+      reload_warn "$new" "main checkout is on branch '${cur:-detached}', not ${BASE_BRANCH}; bring it level, then the next idle tick reloads"
       return 0
     fi
-    git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1 \
-      || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+    if git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null; then
+      git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1 \
+        || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+    else
+      # Main có commit cục bộ của phiên khác (#308): gộp origin vào main bằng đường finish (worktree tạm + gate + ff), không đụng tay.
+      reload_finish_main \
+        || { reload_warn "$new" "main has local commits and merging origin/${BASE_BRANCH} through worktree finish failed (conflict, red gate or dirty files in the way)"; return 0; }
+    fi
     disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
     [ "$disk" = "$new" ] || { reload_warn "$new" "after the fast-forward the file on disk still differs from origin"; return 0; }
   fi
@@ -2071,11 +2105,13 @@ if [ "${SB_LIB_ONLY:-0}" = "1" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
-# A readiness/read failure stops only workers launched by this dispatcher. Keep their
+# A readiness failure (9, 10) stops only workers launched by this dispatcher. Keep their
 # locks, worktrees, claims, and approval evidence for explicit recovery.
+# A GitHub halt (79) does NOT stop workers (#306): they share the github-read layer and stop themselves at
+# check_halt, and the next runner adopts the survivors as after a crash. Killing them lost the work done mid-lane.
 halt_cleanup() {
   local rc=$?
-  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || ! python3 "$SB_GITHUB_READ" --check >/dev/null 2>&1; then
+  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ]; then
     for pid in $(own_lane_pids); do
       kill -TERM "$pid" 2>/dev/null || true
     done

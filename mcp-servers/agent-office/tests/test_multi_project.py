@@ -198,6 +198,13 @@ class NewCardsAndBulkMove(unittest.TestCase):
             self.app.backfill_backlog(self.app.project)
         self.assertEqual(len(calls), 2)
 
+    def test_backfill_is_not_logged_as_a_card_move(self):
+        it = self._no_status()
+        self.app.prev_items = {i["id"]: i["status"] for i in self.app.project["items"]}
+        with mock.patch.object(server, "gh_graphql", side_effect=lambda q, v: {}):
+            self.app.backfill_backlog(self.app.project)
+        self.assertEqual(self.app.prev_items[it["id"]], "Backlog")  # the next _diff sees no move, so no bogus event/tally
+
     def test_move_all_reports_github_errors_in_friendly_words(self):
         for it in self.app.project["items"]:
             it["status"] = "Backlog"
