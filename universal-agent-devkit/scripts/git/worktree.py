@@ -4035,6 +4035,13 @@ def cmd_gc(cwd, args):
     here = os.path.realpath(cwd)
     deleted, kept, notes = [], [], {}
     registered = [e["path"] for e in _worktree_entries(main)]   # compared with _same_path: realpath keeps APFS case spellings apart (#327 review)
+    # #327: a devkit-kept lock whose pid is dead holds nothing and nobody opens it but `remove`: open it (the worktree stays, remove and the
+    # merge gate judge it); a live pid's lock is never touched. --dry-run only names it.
+    for e in _worktree_entries(main)[1:]:
+        k = None if e["broken"] else kept_lock(main, e["path"])
+        if k and not k[2] and (dry or git(main, "worktree", "unlock", e["path"], check=False).returncode == 0):
+            print(("• gc (dry-run): " + tr("sẽ mở khoá ", "would unlock ") if dry else "✔ gc: " + tr("đã mở khoá ", "unlocked "))
+                  + f"{e['path']} (devkit-kept session={k[0]} pid={k[1]} " + tr("đã chết)", "is dead)"))
     parent, prefix = os.path.dirname(main), os.path.basename(main) + "-"
     try:
         siblings = sorted(os.listdir(parent))

@@ -260,4 +260,16 @@ python3 "$WT" gc > "$TMP/gc10.out" 2>&1
   && ok "  … one holding a file never committed is kept and names it (#327)" || fail "leftover-unique deleted or unnamed: $(cat "$TMP/gc10.out")"
 [ -e "$WD/registered" ] && { [ "$CASEVAR" = 0 ] || [ -e "$WD/casevar" ]; } && G "$R" worktree list --porcelain | grep -q "$WD/registered" \
   && ok "  … a worktree git still registers under .claude/worktrees is not gc's (#327)" || fail "registered worktree touched: $(cat "$TMP/gc10.out")"
+# issue #327 AC3: a devkit-kept lock whose pid is dead is opened by gc (the worktree stays: remove/merge gate judge it), a live pid's lock is not
+( : ) & DEADPID=$!; wait "$DEADPID" 2>/dev/null
+G "$R" worktree add -q --detach "$TMP/kept-dead" && G "$R" worktree lock --reason "devkit-kept session=gone pid=$DEADPID" "$TMP/kept-dead"
+G "$R" worktree add -q --detach "$TMP/kept-live" && G "$R" worktree lock --reason "devkit-kept session=live pid=$$" "$TMP/kept-live"
+locked() { G "$R" worktree list --porcelain | awk -v n="/$(basename "$1")" '/^worktree /{f=(substr($0,length($0)-length(n)+1)==n);next} f&&/^locked/{print "L"}' | grep -q L; }
+python3 "$WT" gc --dry-run > "$TMP/gc11d.out" 2>&1
+grep -q "kept-dead" "$TMP/gc11d.out" && locked "$TMP/kept-dead" && ok "--dry-run names a devkit-kept lock of a dead pid and leaves it locked (#327)" \
+  || fail "dry-run: dead kept lock unnamed or opened: $(cat "$TMP/gc11d.out")"
+python3 "$WT" gc > "$TMP/gc11.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && ! locked "$TMP/kept-dead" && [ -e "$TMP/kept-dead" ] && ok "gc opens the devkit-kept lock of a dead pid and keeps the worktree (#327)" \
+  || fail "dead kept lock still held (rc=$rc): $(cat "$TMP/gc11.out")"
+locked "$TMP/kept-live" && ok "  … the lock of a live pid is untouched (#327)" || fail "live kept lock was opened: $(cat "$TMP/gc11.out")"
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc: all passed" || { echo "❌ test_worktree_gc: $FAILS failed"; exit 1; }
