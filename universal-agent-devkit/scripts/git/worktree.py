@@ -4035,13 +4035,6 @@ def cmd_gc(cwd, args):
     here = os.path.realpath(cwd)
     deleted, kept, notes = [], [], {}
     registered = [e["path"] for e in _worktree_entries(main)]   # compared with _same_path: realpath keeps APFS case spellings apart (#327 review)
-    # #327: a devkit-kept lock whose pid is dead holds nothing and nobody opens it but `remove`: open it (the worktree stays, remove and the
-    # merge gate judge it); a live pid's lock is never touched. --dry-run only names it.
-    for e in _worktree_entries(main)[1:]:
-        k = None if e["broken"] else kept_lock(main, e["path"])
-        if k and not k[2] and (dry or git(main, "worktree", "unlock", e["path"], check=False).returncode == 0):
-            print(("• gc (dry-run): " + tr("sẽ mở khoá ", "would unlock ") if dry else "✔ gc: " + tr("đã mở khoá ", "unlocked "))
-                  + f"{e['path']} (devkit-kept session={k[0]} pid={k[1]} " + tr("đã chết)", "is dead)"))
     parent, prefix = os.path.dirname(main), os.path.basename(main) + "-"
     try:
         siblings = sorted(os.listdir(parent))
@@ -4104,6 +4097,12 @@ def cmd_gc(cwd, args):
         if log:
             _gc_log(log, (["== " + time.strftime("%Y-%m-%d %H:%M:%S")] if len(deleted) == 1 else [])
                     + ["✔ gc: " + tr("đã xoá ", "deleted ") + top + notes.get(top, "")])
+    for e in _worktree_entries(main)[1:]:   # #327 b: a devkit-kept lock of a dead pid was opened only by `remove`; a live pid's lock is never touched
+        k = None if e["broken"] else kept_lock(main, e["path"])
+        if k and not k[2]:
+            why = f"devkit-kept session={k[0]} pid={k[1]}"
+            if dry or git(main, "worktree", "unlock", e["path"], check=False).returncode == 0:
+                print(("• gc (dry-run): " + tr("sẽ mở khoá ", "would unlock ") if dry else "✔ gc: " + tr("đã mở khoá ", "unlocked ")) + e["path"] + f" ({why}, " + tr("pid đã chết)", "pid is dead)"))
     oldest = time.strftime("%Y%m%d", time.localtime(time.time() - DISCARD_KEEP_DAYS * 86400))
     for ref in git(main, "for-each-ref", "--format=%(refname)", DISCARD_REF, check=False).stdout.split():
         m = DISCARD_REF_DATE_RE.fullmatch(ref)   # bản cất của `worktree discard` quá DISCARD_KEEP_DAYS ngày; tên không có ngày thì để yên
