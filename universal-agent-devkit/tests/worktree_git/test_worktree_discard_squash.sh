@@ -10,6 +10,9 @@
 #   s7. (âm) chuỗi chỉ khác commit đã vào origin ở khoảng trắng (`a 2` vs `a2`; patch-id mặc định coi là một): từ chối
 #   s8. (âm) chỉ khác \r\n so với commit đã vào origin: từ chối
 #   s9. (âm) chuỗi thêm, xoá, thêm lại x.txt mà origin chỉ có thêm, xoá (so theo số lần, không theo tập): từ chối
+#   s10. (âm) commit chỉ đổi con trỏ gitlink, diff.submodule=log + ignoreSubmodules=all: từ chối (ghim kết quả; chặn bằng cả blocker submodule,
+#        nên mutant bỏ cờ --submodule=short vẫn sống: cờ đó là lớp phòng thủ thứ hai, chưa có ca riêng)
+#   s11. (âm) .gitattributes merge=ours: gộp thử giữ bản trunk nên trông như đã có, discard vẫn từ chối
 #   s6. (âm) chuỗi đã squash + một commit chỉ còn trong reflog của worktree: từ chối
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -36,6 +39,12 @@ chain() {
 mk w-sq; mk w-new; mk w-mod; mk w-rb; mk w-em; mk w-rl
 mk w-ws
 chain w-sq; chain w-new; chain w-mod; chain w-rb; chain w-em; chain w-rl
+mk w-gl; G "$TMP/w-gl" checkout -q --detach
+printf 'a2\n' > "$TMP/w-gl/a.txt"; G "$TMP/w-gl" commit -qam c1
+G "$TMP/w-gl" update-index --add --cacheinfo 160000,"$(G "$R" rev-parse HEAD)",sub; G "$TMP/w-gl" commit -qm bump-gitlink
+G "$TMP/w-gl" config diff.submodule log; G "$TMP/w-gl" config diff.ignoreSubmodules all
+mk w-mg; G "$TMP/w-mg" checkout -q --detach
+printf 'b2\nonly-in-worktree\n' > "$TMP/w-mg/b.txt"; G "$TMP/w-mg" commit -qam mergeours
 mk w-crlf; G "$TMP/w-crlf" checkout -q --detach
 printf 'a2\n' > "$TMP/w-crlf/a.txt"; G "$TMP/w-crlf" commit -qam c1
 printf 'b2\r\n' > "$TMP/w-crlf/b.txt"; G "$TMP/w-crlf" -c core.autocrlf=false commit -qam c2crlf
@@ -97,6 +106,14 @@ for w in w-crlf w-dup; do
   tag=s8; [ "$w" = w-dup ] && tag=s9
   bash "$KIT" worktree discard "../$w" >"$TMP/$tag.out" 2>&1; rc=$?
   [ "$rc" != 0 ] && [ -e "$TMP/$w" ] && grep -q 'holds commits the trunk lacks' "$TMP/$tag.out" && ok "$tag discard refuses $w (rc=$rc)" || { fail "$tag discard dropped $w (rc=$rc)"; cat "$TMP/$tag.out"; }
+done
+
+# thuộc tính merge chỉ bật từ đây: b.txt có merge=ours thì mọi ca trên (cùng đổi b.txt) bị từ chối vì lý do khác
+mkdir -p "$R/.git/info"; printf 'b.txt merge=ours\n' > "$R/.git/info/attributes"; G "$R" config merge.ours.driver true
+for w in w-gl w-mg; do
+  tag=s10; [ "$w" = w-mg ] && tag=s11
+  bash "$KIT" worktree discard "../$w" >"$TMP/$tag.out" 2>&1; rc=$?
+  [ "$rc" != 0 ] && [ -e "$TMP/$w" ] && ok "$tag discard refuses $w (rc=$rc)" || { fail "$tag discard dropped $w (rc=$rc)"; cat "$TMP/$tag.out"; }
 done
 
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }

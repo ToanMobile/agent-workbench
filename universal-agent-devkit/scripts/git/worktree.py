@@ -2235,11 +2235,24 @@ def _same_patches_verbatim(cwd, tip, head, cap=300):
 
     def ids(rng):   # BYTES: text mode đổi \r\n thành \n trước patch-id; --submodule=short: commit chỉ đổi gitlink vẫn có patch-id
         log = _git_bytes(cwd, "log", "-p", "--no-merges", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short",
-                         "--ignore-submodules=none", "--full-index", "--binary", "--format=commit %H", rng)
+                         "--ignore-submodules=none", "--full-index", "--format=commit %H", rng)
         pid = _git_bytes(cwd, "patch-id", "--verbatim", inp=log.stdout) if log.returncode == 0 else None
         return collections.Counter(l.split()[0] for l in pid.stdout.splitlines() if l.strip()) if pid is not None and pid.returncode == 0 else None
     mine, theirs = ids(f"{base}..{head}"), ids(f"{base}..{tip}")
     return mine is not None and theirs is not None and not (mine - theirs)   # đếm số lần: add, delete, add lại không bằng add, delete
+
+
+def _merges_to_strict(main, into, other):
+    """`_merges_to` cho discard (xoá thật): chỉ khi KHÔNG file nào `other` đổi có thuộc tính `merge=<driver>` (driver như `ours` giữ bản của
+    trunk) và gộp thử không chuẩn hoá lại dòng (`merge.renormalize` làm commit chỉ khác CRLF trông như đã có). Lỗi git: False."""
+    base = git(main, "merge-base", into, other, check=False).stdout.strip()
+    names = git(main, "diff", "--name-only", "-z", "--no-renames", base, other, check=False) if base else None
+    attrs = git(main, "check-attr", "-z", "--stdin", "merge", check=False, inp=names.stdout) if names is not None and names.returncode == 0 else None
+    if attrs is None or attrs.returncode or any(v not in ("unspecified", "set") for v in attrs.stdout.split("\0")[2::3]):
+        return False
+    tree = git(main, "rev-parse", "-q", "--verify", f"{into}^{{tree}}", check=False).stdout.strip()
+    r = git(main, "-c", "merge.renormalize=false", "merge-tree", "--write-tree", into, other, check=False)
+    return bool(tree) and r.returncode == 0 and r.stdout.split("\n", 1)[0].strip() == tree
 
 
 def _chain_in_trunk(main, head):
@@ -2248,7 +2261,7 @@ def _chain_in_trunk(main, head):
     trunk = _trunk_branch(main)
     for ref in ((f"refs/heads/{trunk}", f"refs/remotes/origin/{trunk}") if trunk else ()):
         tip = git(main, "rev-parse", "-q", "--verify", f"{ref}^{{commit}}", check=False).stdout.strip()
-        if tip and (_is_ancestor(main, head, tip) or _merges_to(main, tip, head) or _same_patches_verbatim(main, tip, head)) and not _empty_commit_between(main, tip, head):
+        if tip and (_is_ancestor(main, head, tip) or _merges_to_strict(main, tip, head) or _same_patches_verbatim(main, tip, head)) and not _empty_commit_between(main, tip, head):
             return True
     return False
 
