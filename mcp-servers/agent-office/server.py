@@ -66,6 +66,8 @@ DEFAULTS = {
 }
 
 NO_STATUS = "Chưa có trạng thái"
+BACKFILL_PER_POLL = 5   # thẻ chưa có Status được đặt Backlog mỗi lần đọc board (mỗi lần ghi là một lệnh gh)
+MOVE_ALL_MAX = 100      # thẻ tối đa cho một lần "chuyển tất cả"
 
 KIND_RULES = [
     ("blocked", r"block|chặn|stuck|on hold"),
@@ -277,11 +279,16 @@ VIEW_BLOCK = """view(number: $view) { name layout filter
 
 
 def models_version(web_dir=WEB_DIR) -> str:
-    """Newest mtime under web/models: the page appends it to model URLs so a rebuilt GLB is not served from the browser's one-day cache."""
+    """Fingerprint of web/models (name, size, mtime of each file): the page appends it to model URLs so a rebuilt
+    GLB is never served from the browser's one-day cache, even when a copy keeps the old mtime."""
     d = os.path.join(web_dir, "models")
     try:
-        return str(int(max(os.path.getmtime(os.path.join(d, f)) for f in os.listdir(d))))
-    except (OSError, ValueError) as e:
+        h = hashlib.sha1()
+        for f in sorted(os.listdir(d)):
+            st = os.stat(os.path.join(d, f))
+            h.update(f"{f}|{st.st_size}|{st.st_mtime_ns}\n".encode())
+        return h.hexdigest()[:12]
+    except OSError as e:
         warn("models_version", e)
         return "0"
 
@@ -1338,25 +1345,41 @@ class App:
         f = next((x for x in (part.get("selectFields") or []) if x["name"] == part.get("statusField")), None)
         return next((o["name"] for o in (f or {}).get("options", []) if column_kind(o["name"]) == "backlog"), None)
 
-    def backfill_backlog(self, proj):
-        """Thẻ vào Project mà chưa có Status (issue tự thêm, createTask) được đặt Backlog ngay trên GitHub."""
+    def backfill_backlog(self, proj) -> int:
+        """Thẻ đang mở vào Project mà chưa có Status (issue tự thêm, createTask) được đặt Backlog trên GitHub.
+        Thẻ đã đóng/merge giữ nguyên; mỗi lần đọc board ghi tối đa BACKFILL_PER_POLL thẻ; lỗi GitHub tạm thời thì lần sau thử lại."""
         if self.demo:
-            return
+            return 0
+        done = 0
         for it in proj["items"]:
-            if it["status"] != NO_STATUS or it["id"] in self.backfilled:
+            if done >= BACKFILL_PER_POLL:
+                break
+            if it["status"] != NO_STATUS or it["id"] in self.backfilled or it.get("state") not in (None, "OPEN"):
                 continue
-            self.backfilled.add(it["id"])
             part = (proj.get("parts") or {}).get(it.get("pid")) or proj
             name = self._default_status(part)
             if not name:
+                self.backfilled.add(it["id"])
                 continue
             try:
                 self._set(it["id"], part["statusField"], name, part)
-                it["status"] = name
-            except (ValueError, GhError, KeyError) as e:
+            except GhError as e:  # mạng, rate limit: để lần đọc sau thử lại
+                warn(f"đặt Backlog cho {it.get('number') or it['id']} (sẽ thử lại)", e)
+                continue
+            except (ValueError, KeyError) as e:  # Project không có cột đó: thử lại cũng hỏng
+                self.backfilled.add(it["id"])
                 warn(f"đặt Backlog cho {it.get('number') or it['id']}", e)
-        if not any(i["status"] == NO_STATUS for i in proj["items"]):
-            proj["columns"] = [c for c in proj["columns"] if not c.get("noStatus")]
+                continue
+            self.backfilled.add(it["id"])
+            done += 1
+            with self.lock:
+                it["status"] = name
+                if getattr(self, "prev_items", None) is not None and it["id"] in self.prev_items:
+                    self.prev_items[it["id"]] = name  # việc máy tự làm: không ghi thành sự kiện chuyển cột hay cộng vào tally
+        with self.lock:
+            if not any(i["status"] == NO_STATUS for i in proj["items"]):
+                proj["columns"] = [c for c in proj["columns"] if not c.get("noStatus")]
+        return done
 
     def act(self, action: str, body: dict) -> dict:
         if not self.demo and not (self.project.get("id") and self.gh_meta.get("ok")):
@@ -1421,19 +1444,24 @@ class App:
             with self.lock:
                 repo = str(body.get("repo") or "")
                 todo = [x for x in self.project.get("items", []) if x["status"] == src and (not repo or x["repo"] == repo)]
+            remaining = max(0, len(todo) - MOVE_ALL_MAX)
+            todo = todo[:MOVE_ALL_MAX]  # một lần bấm không giữ request quá lâu; còn thì bấm lại
             moved, failed = 0, []
             for it in todo:
                 part = self._part(it)
                 try:
                     self._set(it["id"], part.get("statusField") or status_field, dst, part)
-                except (ValueError, GhError) as e:
+                except GhError as e:
+                    failed.append(f"{it.get('number') or it['id']}: {friendly(str(e))}")
+                    continue
+                except ValueError as e:
                     failed.append(f"{it.get('number') or it['id']}: {e}")
                     continue
                 with self.lock:
                     it["status"], it["updatedAt"] = dst, now()
                     self.user_moves[it["id"]] = dst
                 moved += 1
-            result = {"ok": True, "moved": moved, "failed": failed[:5], "failedCount": len(failed)}
+            result = {"ok": True, "moved": moved, "failed": failed[:5], "failedCount": len(failed), "remaining": remaining}
         elif action == "comment":
             it = self._item(body["itemId"])
             text = str(body.get("body") or "").strip()
@@ -1466,11 +1494,12 @@ class App:
             changed = True  # an error also needs a rebuild, so the notice shows
             try:
                 proj = fetch_projects(self.cfg["github"])
-                self.backfill_backlog(proj)
                 with self.lock:
                     self.project = proj
                     self.gh_meta = {"ok": True, "error": "; ".join(proj.get("partialErrors") or []) or None,
                                     "fetchedAt": now()}
+                self.rebuild()  # board hiện ngay, việc ghi Backlog chạy sau
+                self.backfill_backlog(proj)
                 fp = board_fingerprint([proj])
                 unchanged = unchanged + 1 if fp == last_fp else 0
                 changed, last_fp = unchanged == 0, fp

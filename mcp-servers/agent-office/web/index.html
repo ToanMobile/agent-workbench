@@ -1074,7 +1074,7 @@ function loadStationKit() {
     if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
   }, undefined, (e) => { stationKit.state = 'failed'; console.warn('Không nạp được trạm QA/Review', e && e.message); });
 }
-const STATION_POSE = { x: -0.3, standing: true, top: 1.0, card: [0.3, 1.04, 0.45] };
+const STATION_POSE = { x: -0.3, standing: true, top: 1.0, card: [0.3, 1.04, 0.45], faceOut: true }; // đứng quay lưng vào bảng, mặt hướng ra camera như đang thuyết trình
 const STATION_STYLES = { // theo lane của runner (QA, Review); lane build vẫn dùng bàn đã chọn
   QA: { name: 'Ma trận test', station: 'QAMatrix', pose: STATION_POSE, nav: [{ x: 0.2, z: 0, hw: 0.9, hd: 1.3 }] },
   Review: { name: 'Buồng review', station: 'ReviewCockpit', pose: STATION_POSE, nav: [{ x: 0.2, z: 0, hw: 0.9, hd: 1.4 }] },
@@ -1147,8 +1147,8 @@ function makePerson(g, P, w, T, parts) {
 }
 
 function makeDesk(w, x, z, T, sc, opts) {
-  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = 0.85; g.scale.setScalar(sc || 1.3); world.add(g);
   const style = stationStyleFor(w) || DESK_STYLES[deskStyle] || DESK_STYLES[0];
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = deskYaw(style); g.scale.setScalar(sc || 1.3); world.add(g);
   const P = style.pose;
   const hipY = P.standing ? 1.0 : P.seat + 0.08;
   const bubbleY = hipY + 1.2, idleY = P.standing ? 1.5 : P.seat + 0.75;
@@ -1189,7 +1189,7 @@ function makeDesk(w, x, z, T, sc, opts) {
     let dk = null;
     if (w.status === 'working') {
       g.updateMatrixWorld(true);
-      dk = { w, pg, sc: sc || 1.3, pos: new THREE.Vector3(P.x, 0, 0).applyMatrix4(g.matrixWorld), key: w.repo + '#' + (w.issue || '') };
+      dk = { w, pg, sc: sc || 1.3, yaw: g.rotation.y, faceOut: !!P.faceOut, pos: new THREE.Vector3(P.x, 0, 0).applyMatrix4(g.matrixWorld), key: w.repo + '#' + (w.issue || '') };
       deskAt.set(w.id, dk);
     }
     seatActor(w, pg, P, pp, dk);
@@ -1294,7 +1294,15 @@ function refreshDynamic(S) {
 // ---- người bằng glTF (Quaternius, CC0): nạp mỗi model một lần, nhân bản bằng SkeletonUtils, hoạt cảnh bằng AnimationMixer
 const HAS_PATH = !!window.OfficePath;
 const HAS_GLTF = !!(THREE.GLTFLoader && THREE.SkeletonUtils);
-const CHARS = Array.from({ length: 5 }, (_, i) => ({ file: 'chibi' + (i + 1) + '.glb', shirt: 'Shirt' })); // dựng bằng Blender (blender/build_chibi.py); shirt = tiền tố tên vật liệu áo, được nhuộm theo màu lane
+const CHARS = [ // dựng bằng Blender (blender/build_chibi.py); shirt/hair = tiền tố tên vật liệu được nhuộm theo lane và theo agent
+  { file: 'chibi_girl.glb', shirt: 'Shirt', hair: 'Hair' }, { file: 'chibi_boy.glb', shirt: 'Shirt', hair: 'Hair' },
+];
+const CHIBI_HAIRS = ['#74493a', '#5b3a2e', '#8c5a3a', '#3e2d2b', '#a8704a', '#4a3428']; // tóc mỗi agent một tông để xưởng không toàn bản sao
+// tô bóng kiểu hoạt hình: 3 bậc sáng phẳng + viền tối quanh hình (vỏ lật mặt trong, đẩy theo pháp tuyến), như tranh chibi
+const TOON_RAMP = (() => { const t = new THREE.DataTexture(new Uint8Array([110, 168, 208]), 3, 1, THREE.RedFormat); t.minFilter = t.magFilter = THREE.NearestFilter; t.needsUpdate = true; return t; })();
+const NO_OUTLINE = /^(Eye|Pupil|EyeShine|Ink|Blush|Badge|Collar|Star)/; // nét trên mặt và chi tiết nhỏ: tự là nét vẽ, thêm viền thì thành vệt đen
+const OUTLINE_MAT = new THREE.MeshBasicMaterial({ color: '#2e2127', side: THREE.BackSide });
+OUTLINE_MAT.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  transformed += normalize( objectNormal ) * 0.009;'); };
 const charLib = CHARS.map(() => ({ state: 'new', waiters: [] }));
 const CHAR_H = 1.8;          // chiều cao người theo đơn vị của bàn (bàn được nhân theo cỡ ô, người cũng thế)
 const SIT_T = 0.6;           // giây để ngồi xuống hoặc đứng dậy
@@ -1386,14 +1394,56 @@ function computePose(c, root, seatTop, top, standing) {
   root.updateMatrixWorld(true);
   return { legs, feet, arms, drop: drop * c.scale };
 }
+// Động tác thuyết trình ở trạm QA/Review (người quay lưng vào bảng): tay phải chỉ ra sau vào bảng và đầu ngoái theo,
+// tay trái đưa ra trước như đang giải thích. Tính một lần cho mỗi model như tư thế ngồi: độ lệch so với Idle, mỗi khung trộn theo nhịp.
+function presentFor(c) { // GLTFLoader bỏ dấu chấm trong tên xương: UpperArm.R thành UpperArmR
+  if (!c.present) { try { c.present = computePresent(c.scene, c.clips.idle); } catch (e) { c.present = []; console.warn('Không tính được động tác thuyết trình', e); } }
+  return c.present;
+}
+function computePresent(root, idle) {
+  const mixer = new THREE.AnimationMixer(root);
+  if (idle) { mixer.clipAction(idle).play(); mixer.setTime(0); }
+  root.updateMatrixWorld(true);
+  const V = () => new THREE.Vector3(), Q = () => new THREE.Quaternion();
+  const bone = (n) => root.getObjectByName(n);
+  const endOf = (b) => b.children.find((o) => o.isBone) || b.children[0];
+  const toWorld = (b, qWorldDelta) => { // quay b thêm qWorldDelta trong không gian model, giữ xương cha
+    const qw = Q(), qp = Q(); b.getWorldQuaternion(qw); b.parent.getWorldQuaternion(qp);
+    b.quaternion.copy(qp.invert().multiply(qWorldDelta.multiply(qw))); root.updateMatrixWorld(true);
+  };
+  const aim = (b, dir) => { const pa = V(), pb = V(); b.getWorldPosition(pa); endOf(b).getWorldPosition(pb); toWorld(b, Q().setFromUnitVectors(pb.sub(pa).normalize(), dir.normalize())); };
+  const out = [], touched = [];
+  const step = (n, group, fn) => { const b = bone(n); if (!b || !b.parent || !endOf(b)) return; const q0 = b.quaternion.clone(); touched.push([b, q0]); fn(b); out.push({ name: n, group, off: q0.clone().invert().multiply(b.quaternion) }); };
+  step('UpperArmR', 'point', (b) => aim(b, V().set(-0.92, 0.32, -0.22)));   // tay phải giơ ngang vai, chỉ ra sau vào bảng
+  step('LowerArmR', 'point', (b) => aim(b, V().set(-0.78, 0.55, -0.3)));
+  step('Head', 'point', (b) => toWorld(b, Q().setFromAxisAngle(V().set(0, 1, 0), -0.55)));  // ngoái đầu về phía tay chỉ
+  step('UpperArmL', 'explain', (b) => aim(b, V().set(0.45, -0.55, 0.55)));  // tay trái đưa ra trước, lòng bàn tay ngửa
+  step('LowerArmL', 'explain', (b) => aim(b, V().set(0.15, 0.35, 1)));
+  mixer.setTime(0); mixer.stopAllAction(); mixer.uncacheRoot(root);
+  for (const [b, q0] of touched) b.quaternion.copy(q0); // trả bộ xương mẫu về Idle trước khi nhân bản
+  root.updateMatrixWorld(true);
+  return out;
+}
+const bump = (t, up, down) => { const r = 0.6; return smooth01((t - up) / r) * (1 - smooth01((t - down) / r)); };
 function spawnActor(c, i, w) {
   const root = new THREE.Group(), model = THREE.SkeletonUtils.clone(c.scene);
   model.scale.setScalar(c.scale); root.add(model);
+  const outlines = [];
   model.traverse((o) => {
     if (!o.isMesh) return;
     o.castShadow = true; o.frustumCulled = false; // hình cầu bao của lưới có da tính theo tư thế gốc nên bị cắt nhầm khi người đi xa chỗ cũ
-    if (o.material.name.startsWith(CHARS[i].shirt)) { o.material = track(o.material.clone()); o.material.color.set(workerColor(w)); }
+    const src = o.material, toon = track(new THREE.MeshToonMaterial({ color: src.color.clone(), gradientMap: TOON_RAMP }));
+    if (src.name.startsWith(CHARS[i].shirt)) toon.color.set(workerColor(w));
+    else if (src.name.startsWith(CHARS[i].hair)) toon.color.set(CHIBI_HAIRS[(hashStr(w.id) >>> 5) % CHIBI_HAIRS.length]);
+    o.material = toon;
+    if (o.isSkinnedMesh && !NO_OUTLINE.test(src.name)) outlines.push(o);
   });
+  for (const o of outlines) { // viền: cùng hình học và bộ xương, vẽ mặt trong phồng ra một chút
+    const ol = new THREE.SkinnedMesh(o.geometry, OUTLINE_MAT);
+    ol.bind(o.skeleton, o.bindMatrix); ol.frustumCulled = false; ol.castShadow = false;
+    ol.position.copy(o.position); ol.quaternion.copy(o.quaternion); ol.scale.copy(o.scale);
+    o.parent.add(ol);
+  }
   const mixer = new THREE.AnimationMixer(model), act = {};
   for (const n of ['idle', 'walk']) if (c.clips[n]) act[n] = mixer.clipAction(c.clips[n]);
   const bm = new Map(); model.traverse((o) => { if (o.isBone) bm.set(o.name, o); });
@@ -1414,6 +1464,10 @@ function applySit(a, t) { // gọi ngay sau mixer.update: nhân độ lệch tư
     if (aw <= 0) continue;
     if (e.offB && a.typing) _sq2.slerpQuaternions(e.off, e.offB, Math.max(0, Math.sin(t * 15 + a.ph + e.ph))); else _sq2.copy(e.off);
     b.quaternion.multiply(_sq.copy(_SQID).slerp(_sq2, aw));
+  }
+  if (a.present && a.presentW > 0) { // sau vòng tay (nó đặt lại xương hằng số về gốc), nên không cộng dồn. Thuyết trình: cứ ~7 s chỉ vào bảng một lần, giữa chừng tay trái giải thích
+    const tc = (t + a.ph) % 7, wp = a.presentW * bump(tc, 0.4, 3.2), we = a.presentW * (0.55 + 0.45 * Math.sin(t * 2.4 + a.ph)) * (1 - 0.6 * wp);
+    for (const e of a.present) { const b = a.bm.get(e.name); const k = e.group === 'point' ? wp : we; if (b && k > 0) b.quaternion.multiply(_sq.copy(_SQID).slerp(e.off, k)); }
   }
 }
 function play(a, name, fade) {
@@ -1437,9 +1491,10 @@ function seatActor(w, pg, P, boxParts, d) {
   withChar(i, (c) => {
     if (gen !== buildGen) return;
     const a = spawnActor(c, i, w);
-    a.root.position.set(P.x, 0, 0); a.root.rotation.y = Math.PI / 2; // hướng về bàn
+    a.root.position.set(P.x, 0, 0); a.root.rotation.y = P.faceOut ? -Math.PI / 2 : Math.PI / 2; // hướng về bàn (trạm: quay ra ngoài)
     pg.add(a.root);
-    a.pose = poseFor(c, desk.seatTop, desk.top, desk.standing); a.sitW = P.standing ? 0 : 1; a.armW = 1; a.typing = w.status === 'working';
+    a.pose = poseFor(c, desk.seatTop, desk.top, desk.standing); a.sitW = P.standing ? 0 : 1; a.armW = P.faceOut ? 0 : 1; a.typing = !P.faceOut && w.status === 'working';
+    if (P.faceOut) { a.present = presentFor(c); a.presentW = w.status === 'working' ? 1 : 0.35; }
     play(a, 'idle', 0);
     a.mixer.update(0); applySit(a, 0);
     boxParts.forEach((m) => { m.visible = false; });
@@ -1464,7 +1519,10 @@ function planPath(sx, sz, gx, gz) { // null: không có đường hợp lệ, ng
 }
 
 // ---- người đi từ bàn cũ sang bàn mới khi việc chuyển cột (thay cho việc dựng lại cảnh làm người nhảy chỗ)
-const DESK_YAW = 0.85, SEAT_YAW = DESK_YAW + Math.PI / 2;
+const DESK_YAW = -0.85; // người ngồi nhìn chéo về phía camera mặc định (0, 60, 60): thấy mặt, không thấy lưng
+const STATION_YAW = 0.85; // trạm đứng giữ hướng cũ: mặt bảng quay ra camera, xoay lại thì lưng bảng che người
+function deskYaw(style) { return style && style.station ? STATION_YAW : DESK_YAW; }
+const seatYaw = (d) => (d && d.yaw != null ? d.yaw : DESK_YAW) + (d && d.faceOut ? -Math.PI / 2 : Math.PI / 2); // quay về bàn của chính chỗ đó, hoặc quay ra ngoài ở trạm
 const WALK_VMAX = 4.4, WALK_TARGET_S = 14; // đường xa (qua hành lang) thì rảo bước để không mất quá ~14 s
 const WALK_V = 2.6, WALK_ACC = 3.2, WALK_REF = 1.9, TURN_RATE = 7, WAYPOINT_R = 0.35, AVOID_R = 1.2, MAX_WALKERS = 8;
 function snapshotPeople() {
@@ -1474,7 +1532,7 @@ function snapshotPeople() {
     byId.set(w.id, v);
     if (w.issue) byIssue.set(w.repo + '#' + w.issue, v);
   };
-  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone(), !!d.sits, SEAT_YAW, d.sc, d.desk);   // đang ngồi
+  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone(), !!d.sits, seatYaw(d), d.sc, d.desk);   // đang ngồi
   for (const k of walkers) put(k.dest.w, new THREE.Vector3(k.x, 0, k.z), false, k.yaw, k.obj.scale.x);             // đang đi dở: bắt đầu từ chỗ đang đứng
   return { byId, byIssue };
 }
@@ -1555,8 +1613,9 @@ function stepWalkers(dt) {
       if (last && dist - step < 0.06) { k.phase = 'seat'; k.t = 0; k.speed = 0; k.prog = 1; if (a) { play(a, 'idle', 0.3); const dk = k.dest.desk; a.pose = dk ? poseFor(a.c, dk.seatTop, dk.top, dk.standing) : null; a.typing = k.dest.w.status === 'working'; } k.seatT = a && a.pose ? SIT_T + 0.1 : 0.5; }
     } else { // seat: quay về hướng bàn rồi trao lại cho người ngồi sẵn ở bàn
       k.t += dt; k.sp = 0;
-      k.yaw = P.dampAngle(k.yaw, SEAT_YAW, 9, dt);
-      if (a && a.pose) { const u = smooth01((k.t - 0.1) / SIT_T); a.sitW = k.dest.sits ? u : 0; a.armW = u; } // quay về bàn rồi ngồi xuống, đặt tay lên phím
+      k.yaw = P.dampAngle(k.yaw, seatYaw(k.dest), 9, dt);
+      if (a && a.pose) { const u = smooth01((k.t - 0.1) / SIT_T); a.sitW = k.dest.sits ? u : 0; a.armW = k.dest.faceOut ? 0 : u;
+        if (k.dest.faceOut) { a.present = presentFor(a.c); a.presentW = u * (k.dest.w.status === 'working' ? 1 : 0.35); } } // quay về bàn rồi ngồi xuống, đặt tay lên phím
       if (k.t >= k.seatT) { finishWalk(k); walkers.splice(n, 1); continue; }
     }
     k.obj.position.set(k.x, a ? 0 : Math.abs(Math.sin(k.bob || 0)) * 0.07, k.z); // người hộp nhún theo bước, model đã có clip
@@ -2218,9 +2277,9 @@ async function moveAll(from, to, n, repo) {
   if (!canWrite() || !confirm('Chuyển ' + n + ' thẻ' + (repo ? ' của ' + repo : '') + ' từ "' + from + '" sang "' + to + '"? Runner sẽ nhận các thẻ này ngay.')) return;
   try {
     const r = await api('move-all', { from, to, repo });
-    STATE.items.forEach((it) => { if (it.status === from && (!repo || it.repo === repo) && !r.failedCount) it.status = to; });
+    if (!r.failedCount && !r.remaining) STATE.items.forEach((it) => { if (it.status === from && (!repo || it.repo === repo)) it.status = to; }); // chuyển dở thì để lần đọc lại vẽ đúng
     VERSION = null; poll(true);
-    toast('Đã chuyển ' + r.moved + ' thẻ sang ' + to + (r.failedCount ? ', ' + r.failedCount + ' thẻ lỗi: ' + r.failed.join('; ') : ''), r.failedCount ? 'error' : undefined);
+    toast('Đã chuyển ' + r.moved + ' thẻ sang ' + to + (r.remaining ? ', còn ' + r.remaining + ' thẻ: bấm lại để chuyển tiếp' : '') + (r.failedCount ? ', ' + r.failedCount + ' thẻ lỗi: ' + r.failed.join('; ') : ''), r.failedCount ? 'error' : undefined);
   } catch (err) { toast('Không chuyển được hàng loạt: ' + err.message, 'error'); }
 }
 async function setField(it, field, option) {
@@ -2577,7 +2636,8 @@ function drawColumn(name) {
   }
   if (!its.length) { d.append(h('p', 'empty', 'Cột này đang trống.')); return; }
   const target = S.columns.find((c) => c.kind === 'ready');
-  if (target && target.name !== name && canWrite()) {
+  const fromBacklog = col.noStatus || (col.kind || kindOf(col.name)) === 'backlog'; // chỉ đẩy việc chờ sang Ready: Done/Building/Blocked đẩy về là giao lại việc cho runner
+  if (target && fromBacklog && canWrite()) {
     const ra = h('div', 'row-actions'); const bt = h('button', 'btn', 'Chuyển tất cả ' + its.length + ' thẻ sang ' + target.name); bt.type = 'button'; tintBtn(bt, target);
     bt.onclick = () => moveAll(name, target.name, its.length);
     ra.append(bt); d.append(ra);
@@ -2586,7 +2646,7 @@ function drawColumn(name) {
     const head = h('div', 'colhead'); const sw = h('span', 'sw'); sw.style.background = colColor(col);
     head.append(sw, h('span', null, repo), h('span', 'n', String(list.length)));
     d.append(head);
-    if (target && target.name !== name && canWrite() && groups.length > 1) {
+    if (target && fromBacklog && canWrite() && groups.length > 1) {
       const ra = h('div', 'row-actions'); const rb = h('button', 'btn', 'Chuyển ' + list.length + ' thẻ ' + repo + ' sang ' + target.name); rb.type = 'button'; tintBtn(rb, target);
       rb.onclick = () => moveAll(name, target.name, list.length, repo); ra.append(rb); d.append(ra);
     }
@@ -2747,6 +2807,10 @@ function frame(now) {
     stepWalkers(dt);
     updateLive(now);
     for (const a of actors) if (a.live) { a.mixer.update(dt); applySit(a, now / 1000); }
+    { // viền chỉ bật khi người đủ lớn trên màn hình: nhìn xa nó mảnh dưới 1 pixel nên thành răng cưa
+      const d = camera.position.distanceTo(controls.target), px = canvas.clientHeight * 2.3 / (2 * d * Math.tan(camera.fov * Math.PI / 360));
+      OUTLINE_MAT.visible = px > 70;
+    }
     const t = now / 1000;
     for (const r of rigs) {
       if (r.head.children[0] && !r.head.children[0].visible) continue; // người hộp đã được người glTF thay chỗ: không ai thấy, khỏi tính
