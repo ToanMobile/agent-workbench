@@ -27,13 +27,13 @@ env | grep -E '^(DEVKIT_SESSION_ID|CLAUDE_SESSION_ID|CLAUDE_CODE_SESSION_ID)=' >
 exit 1
 SHIM
 chmod +x "$TMPD/bin/mktemp"
-# AC2: suite không đụng registry phiên thật — chụp danh sách + mtime trước/sau.
-snap() { python3 -I -c 'import os,sys
+# AC2: registry phiên dùng chung với các phiên khác nên KHÔNG so mtime/danh sách (phiên khác ghi vào lúc test chạy là đỏ oan, #240 R1).
+# Chỉ kiểm dấu vết của chính test: các id `leaked-*` mà hai suite được chạy với chưa bao giờ được ghi vào registry thật.
+leaked_in_registry() { python3 -I -c 'import os,sys
 sys.path.insert(0, sys.argv[1])
 import session_lock
 d, _ = session_lock.sessions_dir(os.getcwd())
-print(sorted((f, os.stat(os.path.join(d, f)).st_mtime_ns) for f in os.listdir(d)) if d and os.path.isdir(d) else [])' "$DEVKIT_DIR/bin"; }
-BEFORE="$(snap)"
+print(" ".join(sorted(f for f in os.listdir(d) if f.startswith("leaked-"))) if d and os.path.isdir(d) else "")' "$DEVKIT_DIR/bin"; }
 SEEN_FILE="$TMPD/seen" PATH="$TMPD/bin:$PATH" \
   DEVKIT_SESSION_ID=leaked-a CLAUDE_SESSION_ID=leaked-b CLAUDE_CODE_SESSION_ID=leaked-c \
   bash "$DEVKIT_DIR/tests/gates/test_gate_stop_reuse_race.sh" >/dev/null 2>&1
@@ -43,10 +43,11 @@ else
   echo "✖ test_gate_stop_reuse_race.sh còn thấy id phiên rò vào: $(cat "$TMPD/seen" 2>/dev/null | tr '\n' ' ') (shim không chạy nếu file thiếu)"
   FAILS=$((FAILS + 1))
 fi
-if [ "$BEFORE" = "$(snap)" ]; then
-  echo "✔ registry phiên thật không đổi trước/sau"
+LEAKED="$(leaked_in_registry)"
+if [ -z "$LEAKED" ]; then
+  echo "✔ registry phiên thật không nhận id leaked-* của test"
 else
-  echo "✖ registry phiên thật bị đổi bởi suite"
+  echo "✖ registry phiên thật bị ghi bởi suite: $LEAKED"
   FAILS=$((FAILS + 1))
 fi
 if [ "$FAILS" -eq 0 ]; then echo "✅ test_multi_session_gate_session_env: all passed"; else echo "❌ test_multi_session_gate_session_env: $FAILS ca đỏ"; exit 1; fi
