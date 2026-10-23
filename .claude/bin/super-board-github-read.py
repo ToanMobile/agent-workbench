@@ -52,6 +52,7 @@ FORMS = {
     'metadata': 'pr view <N> --json files,labels,body,additions,deletions,changedFiles',
     'state': 'issue view <N> --json state --jq .state',
 }
+JSON_SHAPED_KINDS = ('issue', 'comments', 'metadata')   # FORMS của các kind này là JSON thô, không --jq; kind body nhận --jq ra JSON (super-board-pr-body.sh)
 
 
 def halt_path():
@@ -406,11 +407,17 @@ def read(args, kind='json', meta=None, recovering=False):
     # kind quota kiểm JSON rate_limit thô; --jq/--template in thứ khác nên lần nào cũng hỏng. Lỗi của người gọi biết trước
     # khi gọi gh (OfficeReader 17/10 00:22: worker QA tự viết dòng gh-quota-on-exit): exit 64 ngay, không retry, không
     # halt kể cả STRICT, để file halt không lưu một lệnh mà --resume phát lại lần nào cũng hỏng.
-    if kind == 'quota' and any(a in ('--jq', '-q', '--template', '-t') or a.startswith(('--jq=', '--template=', '-q', '-t'))
-                               for a in args):
+    shaped = any(a in ('--jq', '-q', '--template', '-t') or a.startswith(('--jq=', '--template=', '-q', '-t')) for a in args)
+    if kind == 'quota' and shaped:
         raise ValueError('kind quota validates the raw `api rate_limit` JSON, so --jq/--template cannot pass; this call '
                          'failed, the run continues. For the gh-quota-on-exit line run sb_gh_guard_summary '
                          '(source .claude/bin/super-board-gh-guard.sh); for the payload use --kind quota -- api rate_limit')
+    # Cùng lỗi với quota ở các kind có hình dạng JSON cố định trong FORMS: `--kind issue -- issue view 32 --json body -q .body`
+    # in chữ thường, bước kiểm JSON hỏng 3 lần, STRICT halt cả board và --resume phát lại lần nào cũng hỏng (22 và 23/10).
+    # kind head/state cần --jq in chuỗi và kind json/object cho phép --jq ra JSON, nên không nằm trong tập này.
+    if kind in JSON_SHAPED_KINDS and shaped:
+        raise ValueError(f'kind {kind} validates the raw JSON of --json, so --jq/-q/--template cannot pass; this call '
+                         f'failed, the run continues. Valid form: --kind {kind} -- {FORMS[kind]}')
     if not recovering:
         check_halt()
     operation = {'args': args, 'kind': kind, 'meta': meta}

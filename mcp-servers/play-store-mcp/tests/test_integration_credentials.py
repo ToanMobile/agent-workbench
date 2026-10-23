@@ -27,9 +27,12 @@ def _read_log(log_path: str) -> str:
 
 
 def _wait_for_server(
-    host: str, port: int, process: subprocess.Popen[bytes], log_path: str, timeout: float = 10.0
+    host: str, port: int, process: subprocess.Popen[bytes], log_path: str, timeout: float = 45.0
 ) -> None:
-    """Poll until the server is accepting connections; fail fast if it exits."""
+    """Poll until the server is accepting connections; fail fast if it exits.
+
+    The wait ends as soon as the port accepts a connection; the long bound only matters on a loaded
+    machine, where startup measured just over 10 s (load average 80+, 22/10) and failed the old bound."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:

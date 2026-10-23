@@ -419,7 +419,9 @@ ready_card_held() {
   #  - its `## Fix` section does the work of another card still open in Ready/Building (#N): commented once per runner process, left in Ready.
   # An unreadable or empty body is no verdict (returns 1): the card is dispatched as before.
   local issue="$1" item_id="$2" body self other refs dup r fixlines
-  body=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json body -q .body 2>/dev/null) || return 1
+  # Dạng đúng của kind issue là --json number,title,body (github-read từ chối -q/--jq: lệnh cũ `--json body -q .body` in chữ thô,
+  # bước kiểm JSON hỏng, hàm này không bao giờ ra verdict và ở chế độ STRICT làm halt cả board, 22 và 23/10).
+  body=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json number,title,body 2>/dev/null | jq -r '.body // empty' 2>/dev/null) || return 1
   [ -n "$body" ] || return 1
   self=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##' | tr '[:upper:]' '[:lower:]')
   other=""

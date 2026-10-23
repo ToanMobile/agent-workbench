@@ -440,7 +440,10 @@ if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
 fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
 if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
-  if git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
+  if [ "$DRY" -eq 1 ]; then
+    # --dry-run không ghi lên remote: đầu PR đổi thì --expect-head của lần gọi thật sau đó thoát exit 6 (head moved).
+    say "dry run: ${HEAD_REF} is ${BEHIND_NOW} commit(s) behind ${BASE}; the real run would update it to ${MERGED_SHA} (nothing pushed)"
+  elif git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
     say "updated ${HEAD_REF} in place ${HEAD_SHA} -> ${MERGED_SHA} (clean merge of ${BASE}, no --force)"
     HEAD_SHA=$MERGED_SHA
   else
