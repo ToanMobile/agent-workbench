@@ -99,11 +99,15 @@ install_matrix_driver() {
   # the command finds the kit of the MAIN checkout at merge time (first entry of `git worktree list`: any git version,
   # submodules and separate git dirs included), then the worktree's own copy.
   # shellcheck disable=SC2016
-  local drv='d="$(git worktree list --porcelain | sed -n "1s/^worktree //p")/.agents/devkit/scripts/git/matrix_merge_driver.py"; [ -f "$d" ] || d=.agents/devkit/scripts/git/matrix_merge_driver.py; python3 "$d" %O %A %B %P'
+  local drv='d="$(git worktree list --porcelain | sed -n "1s/^worktree //p")/.agents/devkit/scripts/git/matrix_merge_driver.py"; [ -f "$d" ] || d=.agents/devkit/scripts/git/matrix_merge_driver.py; if [ -f "$d" ]; then python3 "$d" %O %A %B %P; else git merge-file %A %O %B; fi'
   git -C "$TARGET" config merge.devkit-matrix.name "DevKit regression matrix union merge" \
     && git -C "$TARGET" config merge.devkit-matrix.driver "$drv" || return 0
   local root; root="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null)" || return 0
-  grep -qxF "$MATRIX_ATTR" "$root/.gitattributes" 2>/dev/null || echo "$MATRIX_ATTR" >> "$root/.gitattributes"
+  if ! grep -qxF "$MATRIX_ATTR" "$root/.gitattributes" 2>/dev/null; then
+    # a last line with no newline would swallow the attribute: add the newline first
+    [ -s "$root/.gitattributes" ] && [ -n "$(tail -c1 "$root/.gitattributes")" ] && echo >> "$root/.gitattributes"
+    echo "$MATRIX_ATTR" >> "$root/.gitattributes"
+  fi
   echo "✔ $(L "merge driver cho ma trận hồi quy" "regression matrix merge driver") → .gitattributes"
 }
 # Git operations that can remove untracked DevKit links from the working tree; each gets a

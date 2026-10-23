@@ -500,3 +500,19 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu
 - **Nguyên nhân:** Memo hoa cau tra loi dia chi thu muc quan tri ca tien trinh nen khi worktree bi go giua luot gate van dung duong dan cu va tao lai thu muc quan tri (test_gate_project_removed_midrun do); cache in_linked_worktree lam ca commondir bi trong doc cau tra loi cu nen mutant van xanh. Hai loi chi lo khi reviewer chay test co san tren diff; test RED moi cua minh van xanh.
 - **Quy tắc phòng ngừa & Cách fix:** Chi memo hoa cau tra loi tinh va kiem lai thu muc con ton tai (os.path.isdir) truoc khi dung; khong cache trong ham ma test hien co doi bo cuc giua hai lan goi; chay lai test gate va worktree ke can cung mot mutant truoc khi tin test RED sang GREEN cua chinh minh.
+
+---
+
+### [INSTINCT-060] Model 3D cache cũ sau khi dựng lại
+- **Ngày phát hiện:** 2026-10-23
+- **Hiện tượng lỗi:** Model 3D cache cũ sau khi dựng lại
+- **Nguyên nhân:** server trả web/models/*.glb với Cache-Control max-age 1 ngày dưới URL cố định; dựng lại GLB cùng tên thì trình duyệt vẫn dùng bản cũ, nhìn như sửa không có tác dụng
+- **Quy tắc phòng ngừa & Cách fix:** URL tài nguyên tĩnh được cache lâu phải mang dấu vân tay nội dung (tên+kích thước+mtime_ns hoặc hash) do server điền vào trang; kiểm thay đổi hình ảnh bằng chính renderer cuối (three.js trong trang), không bằng ảnh render của công cụ dựng
+
+---
+
+### [INSTINCT-061] Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source
+- **Ngày phát hiện:** 2026-10-23
+- **Hiện tượng lỗi:** Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source
+- **Nguyên nhân:** Test gọi SB_LIB_ONLY=1 . super-board-run.sh; bash giữ phép gán đứng trước builtin '.' chỉ trong lúc source, nên hàm gọi về sau không thấy SB_LIB_ONLY và test đếm slot worker thật trong ~/.claude/super-board-slots (23/10: merge-train bị giữ 3/3 running)
+- **Quy tắc phòng ngừa & Cách fix:** Cần biết lib mode ở thời điểm gọi hàm thì chốt nó bằng một dòng top-level chạy lúc source (SB_SLOT_LIB_MODE="${SB_LIB_ONLY:-0}"); test lib mode bằng một HOME giả có slot sống và kiểm đột biến

@@ -66,6 +66,8 @@ DEFAULTS = {
 }
 
 NO_STATUS = "Chưa có trạng thái"
+BACKFILL_PER_POLL = 5   # thẻ chưa có Status được đặt Backlog mỗi lần đọc board (mỗi lần ghi là một lệnh gh)
+MOVE_ALL_MAX = 100      # thẻ tối đa cho một lần "chuyển tất cả"
 
 KIND_RULES = [
     ("blocked", r"block|chặn|stuck|on hold"),
@@ -277,11 +279,16 @@ VIEW_BLOCK = """view(number: $view) { name layout filter
 
 
 def models_version(web_dir=WEB_DIR) -> str:
-    """Newest mtime under web/models: the page appends it to model URLs so a rebuilt GLB is not served from the browser's one-day cache."""
+    """Fingerprint of web/models (name, size, mtime of each file): the page appends it to model URLs so a rebuilt
+    GLB is never served from the browser's one-day cache, even when a copy keeps the old mtime."""
     d = os.path.join(web_dir, "models")
     try:
-        return str(int(max(os.path.getmtime(os.path.join(d, f)) for f in os.listdir(d))))
-    except (OSError, ValueError) as e:
+        h = hashlib.sha1()
+        for f in sorted(os.listdir(d)):
+            st = os.stat(os.path.join(d, f))
+            h.update(f"{f}|{st.st_size}|{st.st_mtime_ns}\n".encode())
+        return h.hexdigest()[:12]
+    except OSError as e:
         warn("models_version", e)
         return "0"
 
@@ -738,6 +745,46 @@ def slim_session(s: dict, tokens_fallback=None):
 
 
 HEAVY_LOCK_DIR = os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")  # khoá việc nặng của DevKit (heavy_slot)
+# T0052: ngưỡng tải gate mặc định = hold_load của nguồn sức chứa chung universal-agent-devkit/bin/capacity.py (8 × lõi, cùng ngưỡng
+# heavy_slot.load_max: việc bắt buộc chỉ chờ trên mức này)
+CAPACITY_PY = os.path.join(os.path.dirname(os.path.dirname(HERE)), "universal-agent-devkit", "bin", "capacity.py")
+_CAPACITY: list = []   # [module capacity hoặc None]: nạp một lần
+
+
+def _capacity():
+    """bin/capacity.py nạp một lần qua importlib; None khi thiếu hay hỏng (bảng chỉ số dùng 100 như cũ)."""
+    if not _CAPACITY:
+        mod = None
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("devkit_capacity", CAPACITY_PY)
+            if spec is not None and spec.loader is not None:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+        except Exception as exc:  # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không làm chết bảng chỉ số
+            warn(f"không nạp được {CAPACITY_PY}, ngưỡng tải hiển thị 100", repr(exc))
+            mod = None
+        _CAPACITY.append(mod)
+    return _CAPACITY[0]
+
+
+def _default_load_max() -> float:
+    """capacity hold_load; capacity vắng, hàm thiếu (file 0 byte), ném lỗi hay trả ngoài (0, inf) — inf ra "Infinity" làm hỏng JSON cả
+    trang — thì 100 (Antigravity audit 23/10)."""
+    cap = _capacity()
+    if cap is None:
+        return 100.0
+    try:
+        value = cap.hold_load()
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value < float("inf"):
+            return float(value)
+        why = f"hold_load trả {value!r}"
+    except Exception as exc:  # noqa: BLE001 - capacity.py hỏng kiểu gì cũng không làm chết bảng chỉ số
+        why = repr(exc)
+    if len(_CAPACITY) < 2:  # một dòng cho cả tiến trình: bảng chỉ số gọi host_stats mỗi lần làm mới
+        _CAPACITY.append("warned")
+        warn(f"{CAPACITY_PY} hỏng, ngưỡng tải hiển thị 100", why)
+    return 100.0
 
 
 def host_stats(lock_dir: str = "") -> dict:
@@ -747,12 +794,13 @@ def host_stats(lock_dir: str = "") -> dict:
     except (OSError, AttributeError):  # Windows không có getloadavg
         load = [0.0, 0.0, 0.0]
     lock_dir = lock_dir or os.environ.get("SB_HEAVY_SLOT_DIR", "").strip() or HEAVY_LOCK_DIR  # cùng chỗ với heavy_slot.slot_dir()
+    # DEVKIT_SLOT_LOAD_MAX thắng; rỗng/rác/≤ 0 thì capacity hold_load (12 lõi: 96), không có capacity thì 100 — cùng luật heavy_slot.load_max
     try:
-        load_max = float(os.environ.get("DEVKIT_SLOT_LOAD_MAX") or 100)
+        load_max = float(os.environ.get("DEVKIT_SLOT_LOAD_MAX") or 0)
     except ValueError:
-        load_max = 100.0
+        load_max = 0.0
     if not 0 < load_max < float("inf"):  # nan/inf/âm: inf sẽ ra "Infinity" làm hỏng JSON của cả trang
-        load_max = 100.0
+        load_max = _default_load_max()
     return {"load": load, "cpus": os.cpu_count() or 1, "loadMax": load_max, "slotsHeld": _held_locks(lock_dir)}
 
 
@@ -1338,25 +1386,41 @@ class App:
         f = next((x for x in (part.get("selectFields") or []) if x["name"] == part.get("statusField")), None)
         return next((o["name"] for o in (f or {}).get("options", []) if column_kind(o["name"]) == "backlog"), None)
 
-    def backfill_backlog(self, proj):
-        """Thẻ vào Project mà chưa có Status (issue tự thêm, createTask) được đặt Backlog ngay trên GitHub."""
+    def backfill_backlog(self, proj) -> int:
+        """Thẻ đang mở vào Project mà chưa có Status (issue tự thêm, createTask) được đặt Backlog trên GitHub.
+        Thẻ đã đóng/merge giữ nguyên; mỗi lần đọc board ghi tối đa BACKFILL_PER_POLL thẻ; lỗi GitHub tạm thời thì lần sau thử lại."""
         if self.demo:
-            return
+            return 0
+        done = 0
         for it in proj["items"]:
-            if it["status"] != NO_STATUS or it["id"] in self.backfilled:
+            if done >= BACKFILL_PER_POLL:
+                break
+            if it["status"] != NO_STATUS or it["id"] in self.backfilled or it.get("state") not in (None, "OPEN"):
                 continue
-            self.backfilled.add(it["id"])
             part = (proj.get("parts") or {}).get(it.get("pid")) or proj
             name = self._default_status(part)
             if not name:
+                self.backfilled.add(it["id"])
                 continue
             try:
                 self._set(it["id"], part["statusField"], name, part)
-                it["status"] = name
-            except (ValueError, GhError, KeyError) as e:
+            except GhError as e:  # mạng, rate limit: để lần đọc sau thử lại
+                warn(f"đặt Backlog cho {it.get('number') or it['id']} (sẽ thử lại)", e)
+                continue
+            except (ValueError, KeyError) as e:  # Project không có cột đó: thử lại cũng hỏng
+                self.backfilled.add(it["id"])
                 warn(f"đặt Backlog cho {it.get('number') or it['id']}", e)
-        if not any(i["status"] == NO_STATUS for i in proj["items"]):
-            proj["columns"] = [c for c in proj["columns"] if not c.get("noStatus")]
+                continue
+            self.backfilled.add(it["id"])
+            done += 1
+            with self.lock:
+                it["status"] = name
+                if getattr(self, "prev_items", None) is not None and it["id"] in self.prev_items:
+                    self.prev_items[it["id"]] = name  # việc máy tự làm: không ghi thành sự kiện chuyển cột hay cộng vào tally
+        with self.lock:
+            if not any(i["status"] == NO_STATUS for i in proj["items"]):
+                proj["columns"] = [c for c in proj["columns"] if not c.get("noStatus")]
+        return done
 
     def act(self, action: str, body: dict) -> dict:
         if not self.demo and not (self.project.get("id") and self.gh_meta.get("ok")):
@@ -1421,19 +1485,24 @@ class App:
             with self.lock:
                 repo = str(body.get("repo") or "")
                 todo = [x for x in self.project.get("items", []) if x["status"] == src and (not repo or x["repo"] == repo)]
+            remaining = max(0, len(todo) - MOVE_ALL_MAX)
+            todo = todo[:MOVE_ALL_MAX]  # một lần bấm không giữ request quá lâu; còn thì bấm lại
             moved, failed = 0, []
             for it in todo:
                 part = self._part(it)
                 try:
                     self._set(it["id"], part.get("statusField") or status_field, dst, part)
-                except (ValueError, GhError) as e:
+                except GhError as e:
+                    failed.append(f"{it.get('number') or it['id']}: {friendly(str(e))}")
+                    continue
+                except ValueError as e:
                     failed.append(f"{it.get('number') or it['id']}: {e}")
                     continue
                 with self.lock:
                     it["status"], it["updatedAt"] = dst, now()
                     self.user_moves[it["id"]] = dst
                 moved += 1
-            result = {"ok": True, "moved": moved, "failed": failed[:5], "failedCount": len(failed)}
+            result = {"ok": True, "moved": moved, "failed": failed[:5], "failedCount": len(failed), "remaining": remaining}
         elif action == "comment":
             it = self._item(body["itemId"])
             text = str(body.get("body") or "").strip()
@@ -1466,11 +1535,12 @@ class App:
             changed = True  # an error also needs a rebuild, so the notice shows
             try:
                 proj = fetch_projects(self.cfg["github"])
-                self.backfill_backlog(proj)
                 with self.lock:
                     self.project = proj
                     self.gh_meta = {"ok": True, "error": "; ".join(proj.get("partialErrors") or []) or None,
                                     "fetchedAt": now()}
+                self.rebuild()  # board hiện ngay, việc ghi Backlog chạy sau
+                self.backfill_backlog(proj)
                 fp = board_fingerprint([proj])
                 unchanged = unchanged + 1 if fp == last_fp else 0
                 changed, last_fp = unchanged == 0, fp
@@ -1551,6 +1621,70 @@ def remote_key(path: str) -> str:
     return _key_cache["key"]
 
 
+# Menu "Điện thoại": máy Mac lấy link + QR của quick tunnel để quét bằng điện thoại ở mạng khác, và mở tunnel mới khi
+# tunnel cũ đã chết (quick tunnel không sống mãi: sau khi máy ngủ Cloudflare trả "Tunnel not found").
+FACTORY_SCRIPT = os.environ.get("AGENT_OFFICE_FACTORY_SCRIPT") or os.path.join(os.path.dirname(os.path.dirname(HERE)), "ai-factory.sh")
+TUNNEL_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+
+
+def tunnel_alive(state_dir: str) -> bool:
+    """PID trong tunnel.pid còn sống VÀ vẫn là cloudflared (sau khi khởi động lại máy, số PID có thể thuộc chương trình khác)."""
+    try:
+        with open(os.path.join(state_dir, "tunnel.pid"), encoding="utf-8") as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        out = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        warn("ps tunnel", exc)
+        return False
+    return "cloudflared" in out
+
+
+def phone_info(state_dir: str, key_file: str) -> dict:
+    """{live, url, link, svg}. Tunnel chết, chưa có url hay chưa có key: live=False và KHÔNG trả key."""
+    url = ""
+    try:
+        with open(os.path.join(state_dir, "tunnel.log"), encoding="utf-8", errors="replace") as f:
+            url = next((m for m in TUNNEL_URL_RE.findall(f.read()) if not m.startswith("https://api.")), "")
+    except FileNotFoundError:
+        url = ""   # chưa từng mở tunnel trên máy này: không phải lỗi
+    except OSError as exc:
+        warn("tunnel log", exc)
+    key = remote_key(key_file)
+    if not (url and key and tunnel_alive(state_dir)):
+        return {"ok": True, "live": False}
+    link = f"{url}/#key={key}"
+    svg = None
+    qr = shutil.which("qrencode")
+    if qr:
+        try:
+            r = subprocess.run([qr, "-t", "SVG", "-m", "2", "-o", "-", link], capture_output=True, text=True, timeout=5)
+            svg = r.stdout if r.returncode == 0 and "<svg" in r.stdout else None
+        except (OSError, subprocess.SubprocessError) as exc:
+            warn("qrencode", exc)
+    return {"ok": True, "live": True, "url": url, "link": link, "svg": svg}
+
+
+def open_phone_tunnel(state_dir: str) -> str:
+    """Chạy `ai-factory.sh phone` (tunnel + key mới, không đụng runner). Trả "" khi chạy được, hoặc lý do lỗi cho UI.
+    stdout của script có QR chứa key: không log stdout, chỉ log mã thoát."""
+    if not os.path.isfile(FACTORY_SCRIPT):
+        warn("ai-factory phone", f"không có {FACTORY_SCRIPT}")
+        return f"Không tìm thấy ai-factory.sh ({FACTORY_SCRIPT}): cài lại autostart (install-autostart.sh) hoặc chạy ai-factory"
+    try:
+        r = subprocess.run(["bash", FACTORY_SCRIPT, "phone"], env=dict(os.environ, AGENT_OFFICE_STATE=state_dir),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=90)
+    except (OSError, subprocess.SubprocessError) as exc:
+        warn("ai-factory phone", exc)
+        return f"ai-factory phone không chạy được: {exc}"
+    if r.returncode != 0:
+        print(f"[phone] ai-factory phone rc={r.returncode}: {r.stderr.strip()[-300:]}", flush=True)
+        return f"ai-factory phone lỗi (mã {r.returncode}): xem ~/.agent-office/tunnel.log"
+    return ""
+
+
 def make_handler(app: App):
     extra = app.cfg.get("allowedHosts") or []
     if isinstance(extra, str):
@@ -1560,12 +1694,18 @@ def make_handler(app: App):
     if bind not in ("", "0.0.0.0", "::"):
         allowed.add(bind)
     key_file = os.path.expanduser(os.environ.get("AGENT_OFFICE_KEY_FILE") or "~/.agent-office/remote-key")
+    state_dir = os.path.dirname(key_file)
+    phone_busy = threading.Lock()   # một lần mở tunnel một lúc: bấm "Tạo mã mới" hai lần không mở hai tunnel
+
+    def from_mac(headers) -> bool:
+        """Chính máy Mac, không qua tunnel: link có key không bao giờ đi ra qua tunnel, kể cả khi người gọi có key."""
+        return host_name(headers.get("Host")) in allowed and not any(headers.get(h) for h in TUNNEL_HEADERS)
 
     def refusal(headers, api: bool):
         """None when the request may go on, else the HTTP status that refuses it."""
-        host = host_name(headers.get("Host"))
-        if host in allowed and not any(headers.get(h) for h in TUNNEL_HEADERS):
+        if from_mac(headers):
             return None  # this Mac itself
+        host = host_name(headers.get("Host"))
         key = remote_key(key_file)
         if not key or not (host in allowed or host.endswith(".trycloudflare.com")):
             return 403
@@ -1594,6 +1734,10 @@ def make_handler(app: App):
             code = refusal(self.headers, path.startswith("/api/"))
             if code:
                 return self.send(code, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+            if path == "/api/phone":
+                if not from_mac(self.headers):
+                    return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+                return self.send(200, json.dumps(phone_info(state_dir, key_file)).encode("utf-8"), CTYPES[".json"])
             if path == "/api/state":
                 with app.lock:
                     body = app.state_bytes
@@ -1620,6 +1764,18 @@ def make_handler(app: App):
             code = refusal(self.headers, True)
             if code:
                 return self.send(code, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+            if path == "/api/phone":
+                if not from_mac(self.headers):
+                    return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+                if not phone_busy.acquire(blocking=False):
+                    return self.send(409, '{"ok":false,"error":"Đang tạo mã, chờ vài giây"}'.encode("utf-8"), CTYPES[".json"])
+                try:
+                    err = open_phone_tunnel(state_dir)
+                finally:
+                    phone_busy.release()
+                if err:
+                    return self.send(502, json.dumps({"ok": False, "error": err}, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                return self.send(200, json.dumps(phone_info(state_dir, key_file)).encode("utf-8"), CTYPES[".json"])
             n = int(self.headers.get("Content-Length") or 0)
             if n > 200_000:
                 return self.send(413, b'{"ok":false,"error":"too large"}', CTYPES[".json"])
