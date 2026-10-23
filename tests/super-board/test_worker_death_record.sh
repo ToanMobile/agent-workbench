@@ -146,4 +146,17 @@ printf 'PID=%s\nLANE=qa\nWORKER_LOG=%s\n' "$DEAD" "$WORKER_LOG_DIR/worker-qa-225
 reap_finished_locks
 if ! grep -q "^gh issue comment 225" "$TMP/writes"; then ok "K: runner-stopped worker (143) posts no 'died' comment"; else fail "K: 143 commented"; fi
 
+# ── L (R8): `super-board stop` (kill_pid) với pid là wrapper phải diệt cả worker con bỏ qua TERM, không để con mồ côi.
+eval "$(awk '/^kill_pid\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$ROOT/.claude/bin/super-board-stop.sh")"
+log() { :; }
+bash "$WRAP" bash -c 'trap "" TERM; sleep 40' >/dev/null 2>&1 & LP=$!
+sleep 1
+LCHILD=$(pgrep -P "$LP" | head -1)
+kill_pid "$LP" "worker(qa/#1)" 1
+sleep 1
+if [ -n "$LCHILD" ] && ! kill -0 "$LCHILD" 2>/dev/null && ! kill -0 "$LP" 2>/dev/null; then ok "L: stop's kill_pid takes the wrapper's child too"; else fail "L: child $LCHILD survived stop"; kill -9 "$LCHILD" "$LP" 2>/dev/null; fi
+
+# ── M (R9): trap TERM được đặt trước khi chạy con, nên TERM tới sớm không làm wrapper chết mà không dọn con.
+if awk '/^trap /{t=NR} /^"\$@" &/{c=NR} END{exit !(t && c && t<c)}' "$WRAP"; then ok "M: wrapper installs its trap before starting the child"; else fail "M: trap is set after the child starts"; fi
+
 [ "$FAILS" -eq 0 ] && echo "ALL PASS" || { echo "$FAILS FAIL"; exit 1; }
