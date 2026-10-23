@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Test (#209): lane QA và Review chạy NHIỀU worker như lane build.
 #  - config `qa_workers` / `review_workers` = trần mỗi lane (mặc định 1 = hành vi cũ);
-#  - mỗi tick một lane chỉ khởi THÊM tối đa một worker, và worker thêm chỉ khi tải 1 phút < build_load_max (cùng cổng với build);
+#  - mỗi tick một lane chỉ khởi THÊM tối đa một worker, tới trần lane (= max_workers, chung với build; xem test_runner_total_cap.sh);
 #  - thẻ bị kéo khỏi cột thì worker thêm bị giết như zombie; worker chết thì slot trả lại; dừng khẩn / nhận lại lúc khởi động nhận ra cả N worker;
-#  - lane đã có worker thì worker thêm không bị trần max_workers (số lane) chặn.
 # Chạy offline: runner source ở lib mode, gh/claude là stub, tải đọc từ file. Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -23,8 +22,6 @@ printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/path/claude"
 chmod +x "$TMP/bin/super-board-github-read.py" "$TMP/path/claude"
 export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_DISK_WARN_GIB=0
 
-# #252: số gate thật trên máy không được chi phối test; 0 = không có gate nào đang chạy
-printf "0\n" > "$TMP/gates0"; export SB_GATE_COUNT_FILE="$TMP/gates0"
 unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX
 export SB_ZOMBIE_GRACE=0  # test kill trực tiếp, không chờ ân hạn (#237)
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
@@ -49,11 +46,11 @@ cards() {   # cards <status> <n>...: bảng chỉ có các thẻ đó ở cột 
 load() { printf '%s\n' "$1" > "$TMP/load"; export SB_BUILD_LOAD_FILE="$TMP/load"; }
 BUILD_PID=""; BUILD_ISSUE=""; BUILD_EXTRA=""
 QA_PID=""; QA_ISSUE=""; QA_EXTRA=""; REVIEW_PID=""; REVIEW_ISSUE=""; REVIEW_EXTRA=""
-MAX_WORKERS=3; ACTIVE_WORKERS=0; BUILD_LOAD_MAX=8
+MAX_WORKERS=10; ACTIVE_WORKERS=0
 reset() {
   for p in $QA_PID $REVIEW_PID ${QA_EXTRA:-} ${REVIEW_EXTRA:-}; do kill "${p%%:*}" 2>/dev/null; wait "${p%%:*}" 2>/dev/null; done
   QA_PID=""; QA_ISSUE=""; QA_EXTRA=""; REVIEW_PID=""; REVIEW_ISSUE=""; REVIEW_EXTRA=""
-  rm -f "$INFLIGHT_DIR"/[0-9]*; : > "$TMP/log"; : > "$TMP/writes"; ACTIVE_WORKERS=0; MAX_WORKERS=3
+  rm -f "$INFLIGHT_DIR"/[0-9]*; : > "$TMP/log"; : > "$TMP/writes"; ACTIVE_WORKERS=0; MAX_WORKERS=10
 }
 tick_qa() { reap_finished_locks; lane_dispatch_tick qa QA; }          # đúng nhịp của vòng chính cho lane qa
 tick_review() { reap_finished_locks; lane_dispatch_tick review Review; }
@@ -88,38 +85,10 @@ sweep_lane_zombies; sleep 0.3; r=$(review_count)
 [ "$r" = 1 ] && ! kill -0 "$pid6" 2>/dev/null && ok "review zombie sweep kills only the reviewer whose card left Review (#6)" || fail "review zombie: $r workers, #6 alive=$(kill -0 "$pid6" 2>/dev/null && echo y || echo n)"
 
 # ── 4. không có khoá config → mỗi lane đúng một worker như cũ
-cfg_with() { printf '%s\n' "$1" > "$TMP/c.json"; }
-cfg_with '{}'; q=$(resolve_lane_workers "$TMP/c.json" qa_workers); r=$(resolve_lane_workers "$TMP/c.json" review_workers)
-[ "$q $r" = "1 1" ] && ok "no qa_workers / review_workers key: both default to 1" || fail "defaults: $q $r"
-cfg_with '{"qa_workers": 3, "review_workers": 2}'; q=$(resolve_lane_workers "$TMP/c.json" qa_workers); r=$(resolve_lane_workers "$TMP/c.json" review_workers)
-[ "$q $r" = "3 2" ] && ok "  … the keys are honoured" || fail "keys: $q $r"
-for bad in '"x"' 0 -3 2.5 '"000"' 99999999999999999999; do cfg_with "{\"qa_workers\": $bad}"; q=$(resolve_lane_workers "$TMP/c.json" qa_workers)
-  [ "$q" = 1 ] && ok "  … an invalid qa_workers ($bad) falls back to 1" || fail "qa_workers=$bad gave '$q'"; done
 reset; QA_WORKERS=1; REVIEW_WORKERS=1; load 0.1; cards QA 1 2 3; tick_qa; tick_qa; tick_qa; q=$(qa_count)
 [ "$q" = 1 ] && [ -z "${QA_EXTRA:-}" ] && ok "qa_workers=1: one tester, no extra slot — as before" || fail "qa_workers=1: $q workers, QA_EXTRA='${QA_EXTRA:-}'"
 reset; cards Review 5 6 7; tick_review; tick_review; r=$(review_count)
 [ "$r" = 1 ] && ok "review_workers=1: one reviewer — as before" || fail "review_workers=1: $r workers"
-
-# ── 5. cổng tải: tải cao giữ ở worker đầu (worker đầu không bị tải chặn), không giết worker đang chạy; tải không đọc được = fail closed
-reset; QA_WORKERS=3; load 2; cards QA 1 2 3; tick_qa; first=$QA_PID
-load 11.4; tick_qa; tick_qa; q=$(qa_count)
-[ "$q" = 1 ] && kill -0 "$first" 2>/dev/null && ok "high load: no tester added, the running one is not killed" || fail "high load: $q workers"
-grep -q "qa workers 1/3: load 11.4 >= 8: holding" "$TMP/log" && ok "  … and the log says holding" || fail "no holding line: $(tr '\n' '|' < "$TMP/log")"
-reset; QA_WORKERS=3; load 50; cards QA 1 2; tick_qa; q=$(qa_count)
-[ "$q" = 1 ] && ok "  … the FIRST tester starts even under high load" || fail "first tester blocked by load: $q"
-for bad in "" abc; do reset; REVIEW_WORKERS=3; load "$bad"; cards Review 5 6 7; tick_review; tick_review; tick_review; r=$(review_count)
-  [ "$r" = 1 ] && ok "unreadable load ('${bad:-empty}'): stays at one reviewer" || fail "unreadable load ('${bad:-empty}'): $r reviewers"; done
-
-# ── 6. lane đã có worker: worker thêm không bị trần max_workers chặn (lane = 1 slot); lane rảnh thì vẫn bị chặn khi đủ lane
-reset; QA_WORKERS=3; load 2; cards QA 1 2 3; tick_qa      # worker đầu
-ACTIVE_WORKERS=3; MAX_WORKERS=3                              # build + qa + review đều bận
-tick_qa; q=$(qa_count)
-[ "$q" = 2 ] && ok "all 3 lanes busy (ACTIVE=MAX): the QA lane still adds its 2nd tester" || fail "extra tester blocked by max_workers: $q"
-[ "$ACTIVE_WORKERS" = 3 ] && ok "  … and an extra worker does not take another max_workers slot" || fail "ACTIVE_WORKERS=$ACTIVE_WORKERS (want 3)"
-reset; QA_WORKERS=3; load 2; cards QA 1; ACTIVE_WORKERS=3; MAX_WORKERS=3; tick_qa; q=$(qa_count)
-[ "$q" = 0 ] && ok "  … an IDLE lane is still gated by max_workers (cap unchanged)" || fail "idle lane started at ACTIVE=MAX: $q"
-reset; QA_WORKERS=3; load 2; cards QA 1; ACTIVE_WORKERS=0; tick_qa
-[ "$ACTIVE_WORKERS" = 1 ] && ok "  … the first worker of a lane takes one slot" || fail "ACTIVE_WORKERS=$ACTIVE_WORKERS (want 1)"
 
 # ── 7. worker chết → số đếm giảm, lock bị gỡ, tick sau khởi lại thẻ khác
 reset; QA_WORKERS=2; load 1; cards QA 1 2 3; tick_qa; tick_qa
@@ -157,18 +126,11 @@ kill "$dead_pid" 2>/dev/null; wait "$dead_pid" 2>/dev/null; reap_finished_locks
 case " $QA_SEEN_IN_QA " in *" $dead_pid "*) fail "reap kept the dead tester's PID in QA_SEEN_IN_QA ('$QA_SEEN_IN_QA')" ;;
   *) case " $QA_SEEN_IN_QA " in *" $live_pid "*) ok "reap drops a dead tester's PID from QA_SEEN_IN_QA and keeps the live one" ;; *) fail "reap dropped the live tester too ('$QA_SEEN_IN_QA')" ;; esac ;; esac
 
-# ── 8c. #288: tick rẻ (bỏ qua GraphQL) khi ACTIVE=MAX và không lane nào giao được: lane rảnh bị trần max_workers chặn nên cũng "đầy".
-reset; QA_WORKERS=1; REVIEW_WORKERS=1
-tick_is_cheap_with() { ACTIVE_WORKERS=$1; MAX_WORKERS=$2; QA_COUNT=$3; REVIEW_COUNT=$4; tick_is_cheap && echo cheap || echo full; }
-r=$(tick_is_cheap_with 2 2 1 0)
-[ "$r" = cheap ] && ok "max_workers=2, build+qa busy, review idle: cheap tick (an idle lane cannot start at the cap)" || fail "idle lane at the cap: $r (want cheap)"
-r=$(tick_is_cheap_with 3 3 1 1)
-[ "$r" = cheap ] && ok "  … all lanes busy at the cap: cheap tick, as before" || fail "all busy: $r (want cheap)"
-r=$(tick_is_cheap_with 1 3 0 0)
-[ "$r" = full ] && ok "  … below the cap: full tick" || fail "below the cap: $r (want full)"
-QA_WORKERS=3; r=$(tick_is_cheap_with 3 3 1 1)
-[ "$r" = full ] && ok "  … a lane with room for another worker (1/3): full tick" || fail "qa 1/3 at the cap: $r (want full)"
-QA_WORKERS=1
+# ── 8c. #288: tick rẻ (bỏ qua GraphQL) khi repo đã đủ max_workers worker.
+tick_is_cheap_with() { ACTIVE_WORKERS=$1; MAX_WORKERS=$2; tick_is_cheap && echo cheap || echo full; }
+r=$(tick_is_cheap_with 3 3); [ "$r" = cheap ] && ok "ACTIVE=MAX: cheap tick" || fail "at the cap: $r (want cheap)"
+r=$(tick_is_cheap_with 1 3); [ "$r" = full ] && ok "  … below the cap: full tick" || fail "below the cap: $r (want full)"
+MAX_WORKERS=10
 
 # ── 8d. #288: Ready không có thẻ nào thì không hỏi lane_slot_free qa (mỗi tick một lần hỏi + một dòng log vô ích).
 reset; QA_WORKERS=2; load 1; cards QA 1; tick_qa; : > "$TMP/log"
@@ -178,15 +140,11 @@ r=$(ready_qa_lane_free 1 && echo free || echo no)
 [ "$r" = free ] && ok "  … READY=1 with a free QA lane: free" || fail "READY=1: '$r' (want free)"
 
 # ── 9. cái dây vòng chính
-grep -q '^QA_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" qa_workers)' "$RUNNER" && grep -q '^REVIEW_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" review_workers)' "$RUNNER" \
-  && ok "runner reads qa_workers / review_workers through resolve_lane_workers at startup" || fail "startup config read does not use the resolver"
+grep -q '^QA_WORKERS=\$MAX_WORKERS' "$RUNNER" && grep -q '^REVIEW_WORKERS=\$MAX_WORKERS' "$RUNNER" \
+  && ok "runner ties qa / review lane caps to max_workers at startup" || fail "startup lane caps are not tied to max_workers"
 grep -q 'lane_dispatch_tick review Review' "$RUNNER" && grep -q 'lane_dispatch_tick qa QA' "$RUNNER" \
   && ok "the main loop dispatches QA and Review through lane_dispatch_tick" || fail "main loop does not call lane_dispatch_tick"
-grep -n 'QA_IDLE=\|REVIEW_IDLE=' "$RUNNER" | grep -q 'lane_idle "\$QA_PID"\|lane_idle "\$REVIEW_PID"' \
-  && fail "the main loop still derives QA/Review idleness from the first PID only" || ok "  … QA/Review idleness comes from the worker count, not the first PID"
 grep -q '^  if tick_is_cheap; then' "$RUNNER" && grep -q 'ready_qa_lane_free "\$READY"' "$RUNNER" \
   && ok "the main loop uses tick_is_cheap and ready_qa_lane_free (#288)" || fail "main loop is not wired to tick_is_cheap / ready_qa_lane_free"
-cfg=$(jq -r '.qa_workers // empty, .review_workers // empty' "$ROOT/.claude/super-board/configs/agent-workbench.json" | tr '\n' ' ')
-[ "$cfg" = "3 3 " ] && ok "agent-workbench config sets qa_workers=3, review_workers=3" || fail "agent-workbench config: '$cfg'"
 
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }
