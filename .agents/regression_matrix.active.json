@@ -1049,6 +1049,29 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "capacity",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-CAPACITY-CODEX-WAVE-01",
+          "name": "codex-wave: số lane Codex = min(max_workers, capacity build_workers); max_workers 0 lấy capacity; capacity vắng/hỏng/rác thì công thức cũ",
+          "command": "bash tests/super-board/test_codex_wave_workers.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-CAPACITY-RUNNER-01",
+          "name": "super-board-run resolve_*: khoá config vắng thì lấy capacity (build_workers, lane_workers, gate_max, busy_load), capacity vắng thì số cũ",
+          "command": "bash tests/super-board/test_runner_build_workers.sh && bash tests/super-board/test_runner_lane_workers.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

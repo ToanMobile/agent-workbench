@@ -206,6 +206,25 @@ gate_max env SB_MERGE_LOAD_MAX=50 >"$TMP/gate15.log" 2>&1; rc=$?
 grep -q "waiting for load 60 to drop below 50 before verify" "$TMP/gate15.log" \
   && ok "SB_MERGE_LOAD_MAX=50 overrides config merge_load_max=100" || fail "env did not override the config: $(grep merge-gate "$TMP/gate15.log" | head -3)"
 
+# Ca 15b (T0052): config không đặt merge_load_max và SB_MERGE_LOAD_MAX không đặt → ngưỡng chung capacity busy_load (máy giả 12 lõi: 36,
+# cùng ngưỡng heavy_slot); capacity vắng (SB_CAPACITY=/nonexistent) → 2 × số lõi thật như cũ.
+CFG_NOMAX="$TMP/cfg-nomax.json"; jq '.merge_load_wait_s = 3' "$CFG" > "$CFG_NOMAX"
+gate_nomax() { ( unset SB_MERGE_LOAD_WAIT_S SB_MERGE_LOAD_MAX DEVKIT_CAPACITY SB_CAPACITY; cd "$WT" && SB_MERGE_LOAD_POLL_S=1 \
+  DEVKIT_CAPACITY_CORES=12 "$@" bash "$GATE" --config "$CFG_NOMAX" --pr 5 --expect-head "$H" ); }
+echo 30 > "$LOADF"; rm -f "$STARTED"
+gate_nomax env >"$TMP/gate15b.log" 2>&1; rc=$?
+if ! grep -q "waiting for load" "$TMP/gate15b.log" && ran "$rc"; then ok "không có merge_load_max, 12 lõi, tải 30 < busy_load 36: không chờ, verify chạy"
+else fail "không có merge_load_max, tải 30: rc=$rc $(grep merge-gate "$TMP/gate15b.log" | head -3)"; fi
+echo 40 > "$LOADF"; rm -f "$STARTED"
+gate_nomax env >"$TMP/gate15c.log" 2>&1; rc=$?
+grep -q "waiting for load 40 to drop below 36 before verify" "$TMP/gate15c.log" \
+  && ok "không có merge_load_max, 12 lõi, tải 40: chờ dưới busy_load 36" || fail "không có merge_load_max, tải 40: $(grep merge-gate "$TMP/gate15c.log" | head -3)"
+TWO_X=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)') * 2 ))
+echo $((TWO_X + 1)) > "$LOADF"; rm -f "$STARTED"
+gate_nomax env SB_CAPACITY=/nonexistent >"$TMP/gate15d.log" 2>&1; rc=$?
+grep -q "waiting for load $((TWO_X + 1)) to drop below ${TWO_X} before verify" "$TMP/gate15d.log" \
+  && ok "capacity vắng: về 2 × số lõi (${TWO_X}) như cũ" || fail "capacity vắng: $(grep merge-gate "$TMP/gate15d.log" | head -3)"
+
 # Ca 16: lệnh verify chạy với DEVKIT_SLOT_PRIORITY=merge (bin/heavy_slot.py: merge đứng đầu hàng đợi khoá Unity;
 # post-fix-gate không chạy sentinel hằng ngày trong merge gate). DEVKIT_SLOT_LOAD_WAIT_S=0 CHỈ khi chính gate đã bật chờ tải ở trên
 # (cap > 0): OCR 20/10 — cap = 0 (config thiếu merge_load_wait_s, mặc định của hầu hết board, hay SB_MERGE_LOAD_WAIT_S=0) từng vẫn ép 0,

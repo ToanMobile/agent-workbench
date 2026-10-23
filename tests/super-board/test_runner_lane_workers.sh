@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Test (#209): lane QA và Review chạy NHIỀU worker như lane build.
-#  - config `qa_workers` / `review_workers` = trần mỗi lane (mặc định 1 = hành vi cũ);
+#  - config `qa_workers` / `review_workers` = trần mỗi lane (mặc định capacity lane_workers — T0052, 12 lõi: 3 —; capacity vắng thì 1 =
+#    hành vi cũ);
 #  - mỗi tick một lane chỉ khởi THÊM tối đa một worker, và worker thêm chỉ khi tải 1 phút < build_load_max (cùng cổng với build);
 #  - thẻ bị kéo khỏi cột thì worker thêm bị giết như zombie; worker chết thì slot trả lại; dừng khẩn / nhận lại lúc khởi động nhận ra cả N worker;
 #  - lane đã có worker thì worker thêm không bị trần max_workers (số lane) chặn.
@@ -25,7 +26,9 @@ export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_D
 
 # #252: số gate thật trên máy không được chi phối test; 0 = không có gate nào đang chạy
 printf "0\n" > "$TMP/gates0"; export SB_GATE_COUNT_FILE="$TMP/gates0"
-unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX
+unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX DEVKIT_CAPACITY SB_CAPACITY
+# T0052: máy giả 12 lõi rảnh cho nguồn sức chứa chung (bin/capacity.py): lane_workers 3, không lệ thuộc máy chạy test
+export DEVKIT_CAPACITY_CORES=12 DEVKIT_CAPACITY_LOAD=0
 export SB_ZOMBIE_GRACE=0  # test kill trực tiếp, không chờ ân hạn (#237)
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
@@ -87,14 +90,17 @@ cards Review 5; PROJECT_ITEMS_JSON=$(echo "$PROJECT_ITEMS_JSON" | jq -c '.items 
 sweep_lane_zombies; sleep 0.3; r=$(review_count)
 [ "$r" = 1 ] && ! kill -0 "$pid6" 2>/dev/null && ok "review zombie sweep kills only the reviewer whose card left Review (#6)" || fail "review zombie: $r workers, #6 alive=$(kill -0 "$pid6" 2>/dev/null && echo y || echo n)"
 
-# ── 4. không có khoá config → mỗi lane đúng một worker như cũ
+# ── 4. không có khoá config → capacity lane_workers (T0052, 12 lõi: 3); capacity vắng → mỗi lane đúng một worker như cũ
 cfg_with() { printf '%s\n' "$1" > "$TMP/c.json"; }
 cfg_with '{}'; q=$(resolve_lane_workers "$TMP/c.json" qa_workers); r=$(resolve_lane_workers "$TMP/c.json" review_workers)
-[ "$q $r" = "1 1" ] && ok "no qa_workers / review_workers key: both default to 1" || fail "defaults: $q $r"
+[ "$q $r" = "3 3" ] && ok "no qa_workers / review_workers key: both default to capacity lane_workers (3 on 12 cores)" || fail "defaults: $q $r (want 3 3)"
+q=$(SB_CAPACITY=/nonexistent resolve_lane_workers "$TMP/c.json" qa_workers); r=$(SB_CAPACITY=/nonexistent resolve_lane_workers "$TMP/c.json" review_workers)
+[ "$q $r" = "1 1" ] && ok "  … capacity vắng (SB_CAPACITY=/nonexistent): cả hai về 1 như cũ" || fail "capacity vắng: $q $r (muốn 1 1)"
 cfg_with '{"qa_workers": 3, "review_workers": 2}'; q=$(resolve_lane_workers "$TMP/c.json" qa_workers); r=$(resolve_lane_workers "$TMP/c.json" review_workers)
 [ "$q $r" = "3 2" ] && ok "  … the keys are honoured" || fail "keys: $q $r"
 for bad in '"x"' 0 -3 2.5 '"000"' 99999999999999999999; do cfg_with "{\"qa_workers\": $bad}"; q=$(resolve_lane_workers "$TMP/c.json" qa_workers)
-  [ "$q" = 1 ] && ok "  … an invalid qa_workers ($bad) falls back to 1" || fail "qa_workers=$bad gave '$q'"; done
+  q1=$(SB_CAPACITY=/nonexistent resolve_lane_workers "$TMP/c.json" qa_workers)
+  [ "$q $q1" = "3 1" ] && ok "  … an invalid qa_workers ($bad) falls back to capacity (3), or 1 without capacity" || fail "qa_workers=$bad gave '$q' / '$q1' (want 3 / 1)"; done
 reset; QA_WORKERS=1; REVIEW_WORKERS=1; load 0.1; cards QA 1 2 3; tick_qa; tick_qa; tick_qa; q=$(qa_count)
 [ "$q" = 1 ] && [ -z "${QA_EXTRA:-}" ] && ok "qa_workers=1: one tester, no extra slot — as before" || fail "qa_workers=1: $q workers, QA_EXTRA='${QA_EXTRA:-}'"
 reset; cards Review 5 6 7; tick_review; tick_review; r=$(review_count)
@@ -157,7 +163,9 @@ grep -q 'lane_dispatch_tick review Review' "$RUNNER" && grep -q 'lane_dispatch_t
   && ok "the main loop dispatches QA and Review through lane_dispatch_tick" || fail "main loop does not call lane_dispatch_tick"
 grep -n 'QA_IDLE=\|REVIEW_IDLE=' "$RUNNER" | grep -q 'lane_idle "\$QA_PID"\|lane_idle "\$REVIEW_PID"' \
   && fail "the main loop still derives QA/Review idleness from the first PID only" || ok "  … QA/Review idleness comes from the worker count, not the first PID"
-cfg=$(jq -r '.qa_workers // empty, .review_workers // empty' "$ROOT/.claude/super-board/configs/agent-workbench.json" | tr '\n' ' ')
-[ "$cfg" = "3 3 " ] && ok "agent-workbench config sets qa_workers=3, review_workers=3" || fail "agent-workbench config: '$cfg'"
+# T0052: config agent-workbench bỏ qa_workers / review_workers; kết quả đọc qua resolve_lane_workers vẫn là 3/3 trên 12 lõi (capacity)
+AW_CFG="$ROOT/.claude/super-board/configs/agent-workbench.json"
+cfg="$(resolve_lane_workers "$AW_CFG" qa_workers) $(resolve_lane_workers "$AW_CFG" review_workers)"
+[ "$cfg" = "3 3" ] && ok "agent-workbench config resolves to qa_workers=3, review_workers=3 (12 cores)" || fail "agent-workbench config resolves to '$cfg' (want 3 3)"
 
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }

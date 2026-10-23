@@ -342,8 +342,8 @@ fi
 
 # ---- chờ máy bớt tải trước verify ------------------------------------------------
 # 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
-# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX, không đặt thì `merge_load_max` của config board, thiếu nữa thì 2 × số lõi
-# (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX, không đặt thì `merge_load_max` của config board, thiếu nữa thì capacity
+# busy_load (T0052, 12 lõi: 36), capacity vắng thì 2 × số lõi (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
 # đa SB_MERGE_LOAD_WAIT_S, không đặt thì
 # `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
 # không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
@@ -379,8 +379,12 @@ wait_for_load() {
   else say "SB_MERGE_LOAD_POLL_S='${poll}' is not a positive number; polling every 30s"; poll=30; fi
   if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
   else
-    [ -n "$max" ] && say "${max_src}='${max}' is not a positive number; using 2 x cores"
-    max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
+    [ -n "$max" ] && say "${max_src}='${max}' is not a positive number; using the capacity busy load"
+    # T0052: ngưỡng chung capacity busy_load (12 lõi: 36, cùng ngưỡng với heavy_slot / build_load_max); capacity vắng, lỗi hay in
+    # rác thì 2 × số lõi như cũ.
+    max=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" busy_load 2>/dev/null) || max=""
+    if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
+    else max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 )); fi
   fi
   while :; do
     # Khoá được giữ cả lúc chờ: làm mới mốc "at" để gate khác không coi nó là khoá bỏ quên. Ghi hỏng không phải lý do bỏ verify.

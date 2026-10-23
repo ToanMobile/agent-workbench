@@ -10,6 +10,7 @@
 #   5. a failing flagged suite fails the gate and does not hide its sibling's PASS
 #   6. the flag is read from the base-ref matrix only: a working-copy edit that adds it changes nothing
 #   7. DEVKIT_GATE_PARALLEL=0 turns it off (the kill switch)
+#  7b. T0052: không đặt / rỗng / rác thì cỡ nhóm = bin/capacity.py gate_parallel (12 lõi: 6, 4 lõi: 2)
 #   8. a flagged suite is told (DEVKIT_GATE_DONE) which test scripts the flagged suites before it run, per job, so
 #      run_impacted.sh still skips them
 #   8b. a script nested under tests/<dir>/ is recorded too (tests/gates/*.sh was invisible)
@@ -24,6 +25,9 @@
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 export VACUITY_REVERT=0
+# T0052: cỡ nhóm mặc định đến từ bin/capacity.py gate_parallel (co theo tải): ghim máy giả 12 lõi rảnh = 6, như hằng cũ
+unset DEVKIT_GATE_PARALLEL
+export DEVKIT_CAPACITY_CORES=12 DEVKIT_CAPACITY_LOAD=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)"
@@ -55,6 +59,10 @@ make_repo() {
   printf 'exit 0\n' > tests/fine.sh
   printf 'printf "%%s" "$DEVKIT_GATE_DONE" > "$MARK/done_seen"\n' > tests/see_done.sh
   printf 'sleep 1\n' > tests/first.sh
+  # hẹn ba bên: mỗi suite chờ tối đa 3 s cho đủ 3 suite cùng bắt đầu (chỉ qua khi nhóm chạy được 3 suite một lúc)
+  for me in x y z; do
+    printf 'touch "$MARK/r3_%s"\ni=0\nwhile [ "$(ls "$MARK" | grep -c "^r3_")" -lt 3 ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done\n[ "$(ls "$MARK" | grep -c "^r3_")" -ge 3 ]\n' "$me" > "tests/rv3_$me.sh"
+  done
   for n in slow2 slow2b slow2c; do printf 'sleep 2\n' > "tests/$n.sh"; done
   for n in a b; do printf 'touch "$MARK/long_%s.started"\nsleep 25\n' "$n" > "tests/long_$n.sh"; done   # outlive the Ctrl-C of case 12
   printf '{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],"mandatory_regression_tests":[%s]}]}\n' "$1" > matrix.json
@@ -150,6 +158,18 @@ make_repo "$(suite REG-A 'sh tests/slow_a.sh #gradlew' p),$(suite REG-B 'sh test
 run_gate
 if [ "$RC" = 0 ] && passed REG-A && passed REG-B; then ok "10: a flagged suite whose command is Gradle runs alone, the flagged suite after it starts when it is done"
 else bad "10: a flagged Gradle command ran next to its sibling (exit $RC)"; printf '%s\n' "$OUT" | tail -15; fi
+
+# 7b. T0052: DEVKIT_GATE_PARALLEL không đặt / rỗng / rác = capacity gate_parallel: 12 lõi (6) chạy được 3 suite hẹn nhau, 4 lõi (2) thì không
+for v in unset "" abc; do
+  make_repo "$(suite REG-X 'sh tests/rv3_x.sh' p),$(suite REG-Y 'sh tests/rv3_y.sh' p),$(suite REG-Z 'sh tests/rv3_z.sh' p)"
+  if [ "$v" = unset ]; then run_gate; else OUT="$(DEVKIT_GATE_PARALLEL=$v CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests 2>&1)"; RC=$?; fi
+  if [ "$RC" = 0 ] && passed REG-X && passed REG-Y && passed REG-Z; then ok "7b: DEVKIT_GATE_PARALLEL=$v, 12 lõi: capacity cho nhóm 6, ba suite hẹn nhau cùng chạy"
+  else bad "7b: DEVKIT_GATE_PARALLEL=$v, 12 lõi: ba suite không chạy cùng lúc (exit $RC)"; printf '%s\n' "$OUT" | tail -15; fi
+done
+make_repo "$(suite REG-X 'sh tests/rv3_x.sh' p),$(suite REG-Y 'sh tests/rv3_y.sh' p),$(suite REG-Z 'sh tests/rv3_z.sh' p)"
+OUT="$(FLAKY_RETRY=0 DEVKIT_CAPACITY_CORES=4 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests 2>&1)"; RC=$?
+if [ "$RC" != 0 ] && { failed REG-X || failed REG-Y || failed REG-Z; }; then ok "7b: 4 lõi: capacity gate_parallel = 2, suite thứ ba phải chờ (hẹn ba bên hỏng)"
+else bad "7b: 4 lõi: nhóm vẫn chạy 3 suite một lúc (exit $RC) — cỡ nhóm không theo capacity"; printf '%s\n' "$OUT" | tail -15; fi
 
 # 11. a suite that waited for a slot past GATE_TOTAL_BUDGET_S is not started (cap 2, three 2 s suites, budget 1 s)
 make_repo "$(suite REG-A 'sh tests/slow2.sh' p),$(suite REG-B 'sh tests/slow2b.sh' p),$(suite REG-C 'sh tests/slow2c.sh' p)"

@@ -21,7 +21,9 @@ printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/path/claude"
 chmod +x "$TMP/bin/super-board-github-read.py" "$TMP/path/claude"
 export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_DISK_WARN_GIB=0
 
-unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX
+unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX DEVKIT_CAPACITY DEVKIT_CAPACITY_LOAD SB_CAPACITY
+# T0052: mặc định của runner (gate_max, lane workers…) đến từ bin/capacity.py: máy giả 12 lõi, không lệ thuộc máy chạy test
+export DEVKIT_CAPACITY_CORES=12
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
 SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"

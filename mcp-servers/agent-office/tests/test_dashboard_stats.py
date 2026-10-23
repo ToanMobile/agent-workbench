@@ -1,5 +1,6 @@
 """Số liệu cho bảng chỉ số: sức khoẻ máy và đếm việc trong phiên."""
 import os, sys, tempfile, unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
@@ -7,6 +8,15 @@ import server  # noqa: E402
 
 
 class HostStatsTest(unittest.TestCase):
+    def setUp(self):
+        # T0052: ngưỡng tải mặc định đến từ universal-agent-devkit/bin/capacity.py; ghim máy giả 12 lõi (busy_load 36) và bỏ nút của
+        # người gọi. patch.dict trả lại nguyên os.environ khi xong, nên không rò sang TestCase khác chạy cùng tiến trình discover.
+        patcher = mock.patch.dict(os.environ, {"DEVKIT_CAPACITY_CORES": "12"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for k in ("DEVKIT_CAPACITY", "DEVKIT_CAPACITY_LOAD", "DEVKIT_SLOT_LOAD_MAX"):
+            os.environ.pop(k, None)
+
     def test_host_stats_shape(self):
         import fcntl
         with tempfile.TemporaryDirectory() as d:
@@ -32,12 +42,23 @@ class HostStatsTest(unittest.TestCase):
             old = os.environ.get("DEVKIT_SLOT_LOAD_MAX")
             os.environ["DEVKIT_SLOT_LOAD_MAX"] = bad
             try:
-                self.assertEqual(server.host_stats(lock_dir="/nonexistent")["loadMax"], 100.0, bad)
+                # T0052: giá trị hỏng về ngưỡng mặc định = capacity busy_load (12 lõi: 36), như heavy_slot.load_max
+                self.assertEqual(server.host_stats(lock_dir="/nonexistent")["loadMax"], 36.0, bad)
             finally:
                 if old is None:
                     os.environ.pop("DEVKIT_SLOT_LOAD_MAX", None)
                 else:
                     os.environ["DEVKIT_SLOT_LOAD_MAX"] = old
+
+    def test_load_max_from_capacity(self):  # T0052: mặc định theo số lõi, biến cũ thắng, thiếu capacity thì 100
+        self.assertEqual(server.host_stats(lock_dir="/nonexistent")["loadMax"], 36.0)
+        os.environ["DEVKIT_CAPACITY_CORES"] = "4"
+        self.assertEqual(server.host_stats(lock_dir="/nonexistent")["loadMax"], 12.0)
+        os.environ["DEVKIT_SLOT_LOAD_MAX"] = "64"
+        self.assertEqual(server.host_stats(lock_dir="/nonexistent")["loadMax"], 64.0)
+        del os.environ["DEVKIT_SLOT_LOAD_MAX"]
+        with mock.patch.object(server, "_CAPACITY", [None]):  # như repo thiếu universal-agent-devkit/bin/capacity.py
+            self.assertEqual(server.host_stats(lock_dir="/nonexistent")["loadMax"], 100.0)
 
     def test_lock_dir_env_override(self):  # cùng thư mục khoá với heavy_slot.slot_dir()
         import fcntl

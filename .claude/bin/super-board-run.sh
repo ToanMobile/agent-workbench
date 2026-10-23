@@ -71,6 +71,9 @@ file_mtime() {
 
 # Auto-resolve repository root if called from outside
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# T0052: nguồn sức chứa chung (universal-agent-devkit/bin/capacity.py qua wrapper) cho mặc định của build_workers, qa/review_workers,
+# gate_max, build_load_max. Đặt sẵn SB_CAPACITY (vd. /nonexistent) = móc test giả lập thiếu capacity: các resolve_* về số cũ.
+SB_CAPACITY="${SB_CAPACITY:-$SCRIPT_DIR/super-board-capacity.py}"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 if [ -d "$REPO_ROOT/.claude/super-board" ]; then
   cd "$REPO_ROOT"
@@ -110,27 +113,36 @@ board_notify() {
   python3 "$SCRIPT_DIR/super-board-notify.py" "$@" || true
 }
 
-resolve_build_workers() {
-  # $1 = đường dẫn config. Khoá build_workers (số nguyên >= 1); thiếu hoặc sai thì 10 (người dùng 21/10); đặt 1 để về một worker.
+capacity_int() {
+  # $1 = khoá của capacity.py. In số nguyên >= 1 (tối đa 6 chữ số), hoặc không in gì khi capacity vắng / lỗi / in rác: chỗ gọi dùng
+  # số cũ. Gọi trực tiếp mỗi lần (không cache --json): resolve_* chỉ chạy lúc khởi động và trong test.
   local v
-  v=$(jq -r '.build_workers // empty' "$1" 2>/dev/null || true)
-  case "$v" in ''|*[!0-9]*) v=10 ;; esac
-  [ "${#v}" -le 6 ] || v=10   # số quá dài tràn phép tính bash (OCR 21/10)
-  v=$((10#$v))
-  [ "$v" -ge 1 ] || v=10      # 0, 00, 000
-  printf '%s\n' "$v"
+  v=$("$SB_CAPACITY" "$1" 2>/dev/null) || v=""
+  case "$v" in ''|*[!0-9]*) return 0 ;; esac
+  [ "${#v}" -le 6 ] || return 0
+  [ $((10#$v)) -ge 1 ] && printf '%s\n' $((10#$v))
+  return 0
 }
 
-resolve_lane_workers() {
-  # $1 = đường dẫn config; $2 = khoá (qa_workers | review_workers). Số nguyên >= 1; thiếu hoặc sai thì 1 = hành vi cũ, một worker mỗi lane (#209).
+resolve_pos_int_cap() {
+  # $1 = đường dẫn config; $2 = khoá config; $3 = khoá capacity; $4 = số cũ khi capacity vắng. Khoá config (số nguyên >= 1) thắng;
+  # thiếu hoặc sai thì capacity (T0052), capacity vắng / lỗi thì số cũ.
   local v
   v=$(jq -r --arg k "$2" '.[$k] // empty' "$1" 2>/dev/null || true)
-  case "$v" in ''|*[!0-9]*) v=1 ;; esac
-  [ "${#v}" -le 6 ] || v=1
-  v=$((10#$v))
-  [ "$v" -ge 1 ] || v=1
-  printf '%s\n' "$v"
+  case "$v" in ''|*[!0-9]*) v="" ;; esac
+  [ "${#v}" -le 6 ] || v=""   # số quá dài tràn phép tính bash (OCR 21/10)
+  if [ -n "$v" ] && [ $((10#$v)) -ge 1 ]; then printf '%s\n' $((10#$v)); return 0; fi   # 0, 00, 000 là sai
+  v=$(capacity_int "$3")
+  printf '%s\n' "${v:-$4}"
 }
+
+# $1 = đường dẫn config. Khoá build_workers (số nguyên >= 1); thiếu hoặc sai thì capacity build_workers (12 lõi: 10), capacity vắng
+# thì 10 (người dùng 21/10); đặt 1 để về một worker.
+resolve_build_workers() { resolve_pos_int_cap "$1" build_workers build_workers 10; }
+
+# $1 = đường dẫn config; $2 = khoá (qa_workers | review_workers). Số nguyên >= 1; thiếu hoặc sai thì capacity lane_workers (12 lõi: 3),
+# capacity vắng thì 1 = hành vi cũ, một worker mỗi lane (#209).
+resolve_lane_workers() { resolve_pos_int_cap "$1" "$2" lane_workers 1; }
 
 resolve_pos_int() {
   # $1 = đường dẫn config; $2 = khoá; $3 = mặc định. Số nguyên >= 1; thiếu hoặc sai thì mặc định (#252).
@@ -143,16 +155,19 @@ resolve_pos_int() {
   printf '%s\n' "$v"
 }
 resolve_wip_k() { resolve_pos_int "$1" build_wip_k 2; }    # k: build chỉ giao khi (QA+Review chờ) < k × (qa_workers + review_workers)
-resolve_gate_max() { resolve_pos_int "$1" gate_max 6; }    # trần số post-fix-gate chạy cùng lúc trên máy (mọi repo)
+# trần số post-fix-gate chạy cùng lúc trên máy (mọi repo): khoá gate_max, thiếu thì capacity gate_max (12 lõi: 6), capacity vắng thì 6
+resolve_gate_max() { resolve_pos_int_cap "$1" gate_max gate_max 6; }
 
 resolve_build_load_max() {
-  # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, rồi 100. Mỗi nguồn phải là số
-  # DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không nhảy thẳng về 100 (OCR 21/10).
+  # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, capacity busy_load (T0052,
+  # 12 lõi: 36), rồi 100. Mỗi nguồn phải là số DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không
+  # nhảy thẳng về 100 (OCR 21/10).
   local v="" cand
   for cand in "${SB_BUILD_LOAD_MAX:-}" "$(jq -r '.build_load_max // empty' "$1" 2>/dev/null || true)" "${DEVKIT_SLOT_LOAD_MAX:-}"; do
     case "$cand" in ''|*[!0-9.]*|*.*.*|.) continue ;; esac
     if awk -v m="$cand" 'BEGIN { exit !(m > 0) }'; then v="$cand"; break; fi
   done
+  [ -n "$v" ] || v=$(capacity_int busy_load)
   printf '%s\n' "${v:-100}"
 }
 
@@ -180,12 +195,13 @@ REBUILD_CAP=$(jq -r '.rebuild_cap // 2' "$CONFIG_PATH")
 BLOCK_ALERT_PCT=$(jq -r '.block_rate_alert_pct // 30' "$CONFIG_PATH")
 TICK_SECONDS=$(jq -r '.tick_seconds // 120' "$CONFIG_PATH")
 MAX_WORKERS=$(jq -r '.max_workers // 3' "$CONFIG_PATH")
-# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định 10 (đặt 1 để về một worker). build_load_max (hoặc env
-# SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này; mặc định DEVKIT_SLOT_LOAD_MAX, thiếu nữa thì 100
-# (người dùng 21/10: "tải máy dưới 100 thì cho chạy"). Giá trị sai thì dùng mặc định.
+# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định theo capacity (12 lõi: 10; đặt 1 để về một
+# worker). build_load_max (hoặc env SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này; mặc định DEVKIT_SLOT_LOAD_MAX,
+# thiếu nữa thì capacity busy_load (12 lõi: 36), capacity vắng thì 100. Giá trị sai thì dùng mặc định.
 BUILD_WORKERS=$(resolve_build_workers "$CONFIG_PATH")
 BUILD_LOAD_MAX=$(resolve_build_load_max "$CONFIG_PATH")
-# Lane QA và Review cũng chạy nhiều worker (#209): qa_workers / review_workers = trần mỗi lane, mặc định 1; worker thêm dùng chung cổng tải build_load_max.
+# Lane QA và Review cũng chạy nhiều worker (#209): qa_workers / review_workers = trần mỗi lane, mặc định theo capacity lane_workers (12 lõi: 3,
+# capacity vắng: 1); worker thêm dùng chung cổng tải build_load_max.
 QA_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" qa_workers)
 REVIEW_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" review_workers)
 # #252: chỉ giao build khi hàng QA+Review chưa dài (build_wip_k), và không giao worker mới khi số gate đang chạy đã chạm gate_max.

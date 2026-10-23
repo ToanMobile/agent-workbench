@@ -50,15 +50,30 @@ try:
             raise ValueError('invalid card lane')
         if card['status'] == 'Ready' and card.get('lane') == 'review':
             raise ValueError('a Ready card must enter build or qa')
+    root = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()).resolve()
     workers = config.get('max_workers', 0)
     if type(workers) is not int or workers < 0:
         raise ValueError('max_workers must be a non-negative integer')
-    workers = workers or max(1, min(16, (os.cpu_count() or 2) - 2))
-    root = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()).resolve()
     configured = (config.get('codex') or {}).get('model')
     pinned = codex[0].startswith('--codex=') or (isinstance(configured, str) and configured.strip())
 except (OSError, ValueError, subprocess.CalledProcessError) as error:
     parser.error(str(error))
+# T0052: trần worker lấy từ nguồn sức chứa chung (super-board-capacity.py build_workers, dò DevKit theo repo của wave). Capacity
+# vắng, lỗi, in rác hay số ≤ 0 thì công thức cũ, ngoài khối try ở trên nên không bao giờ thành lỗi argparse. max_workers 0 = theo
+# capacity; > 0 = min(max_workers, capacity): throttle vẫn hạ được.
+cap = max(1, min(16, (os.cpu_count() or 2) - 2))
+capacity_bin = os.environ.get('SB_CAPACITY') or str(launcher.with_name('super-board-capacity.py'))
+try:
+    probe = subprocess.run([capacity_bin, 'build_workers'], capture_output=True, text=True, timeout=30,
+                           env=dict(os.environ, SB_REPO_PATH=str(root)))
+    value = int(probe.stdout.strip())
+    if probe.returncode != 0 or value <= 0:
+        raise ValueError(f'exit {probe.returncode}, build_workers {value}')
+    cap = value
+except (OSError, ValueError, subprocess.SubprocessError) as exc:
+    print(f'super-board-codex-wave: capacity {capacity_bin} không dùng được ({exc!r}); dùng công thức cũ {cap} worker',
+          file=sys.stderr, flush=True)
+workers = min(workers, cap) if workers else cap
 readiness = launcher.with_name('super-board-verification-ready.py')
 if subprocess.run([sys.executable, str(readiness), '--config', str(config_path)]).returncode:
     result = json.dumps({'cards': [dict(number=c['number'], finalStatus='halted', lastLane='none',

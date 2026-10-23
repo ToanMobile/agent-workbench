@@ -30,3 +30,6 @@ bin/install.sh   tests/installer/test_gitignore_keeps_agents_hooks.sh
 # 21/10 (#31): fold_agent_file.py gộp CLAUDE.md vào AGENTS.md lúc cài, devkit_i18n.py dịch file đã cài; không test nào gọi tên chúng.
 scripts/governance/fold_agent_file.py   tests/installer/test_uninstall.sh tests/installer/test_platform_rules.sh
 scripts/governance/devkit_i18n.py   tests/installer/test_i18n_profiles.sh
+# 23/10 (T0052): bin/capacity.py cho mặc định của heavy_slot.py (ngưỡng tải, trần suite nặng), post-fix-gate.py (nhóm suite song song) và
+# lane_plan.py (trần lane); test của các file đó chạy qua mặc định ấy mà không gọi tên capacity.py.
+bin/capacity.py   tests/gates/test_capacity.sh tests/gates/test_heavy_slot_cap.sh tests/gates/test_gate_slot_classes.sh tests/gates/test_gate_parallel_suites.sh tests/gates/test_lane_plan.sh

@@ -4703,7 +4703,9 @@ def suite_env():
             "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",  # `git -c k=v commit` reaches the hook as GIT_CONFIG_PARAMETERS
             "DEVKIT_LEDGER_ROOT",  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
             "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH",
-            "DEVKIT_GATE_MERGE_CHECK"}   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
+            "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
+            # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
+            "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD"}
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
@@ -5934,10 +5936,20 @@ def main():
     # run_impacted.sh không vào nhóm này (may_join): các job của nó (run_impacted.sh --jobs) cộng GATE/HOOK đẩy suite quá 900 s.
     # ponytail: a grouped suite's recorded duration is wall time under contention (GATE-02 20 s alone, 26 s in the group), so
     # pre-commit's "skip a suite that took > DEVKIT_PRECOMMIT_MAX_S" can fire earlier; the Stop and push gates still run it.
+    # T0052: không đặt / rỗng / không phải số nguyên thì bin/capacity.py gate_parallel (lõi/2 × DEVKIT_CAPACITY × phần máy rảnh, sàn 2;
+    # 12 lõi rảnh: 6), không nạp được capacity thì 6 như cũ. Số đã đặt dùng nguyên: 0 và 1 vẫn là công tắc chạy tuần tự.
     try:
-        parallel_cap = int(os.environ.get("DEVKIT_GATE_PARALLEL", "6"))
+        parallel_cap = int(os.environ.get("DEVKIT_GATE_PARALLEL", "").strip())
     except ValueError:
-        parallel_cap = 6
+        try:
+            _bin = str(Path(__file__).resolve().parent)
+            if _bin not in sys.path:
+                sys.path.insert(0, _bin)
+            import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+            parallel_cap = _capacity.gate_parallel()
+        except (ImportError, SyntaxError, OSError) as exc:
+            log_warn(f"capacity: {exc!r}; DEVKIT_GATE_PARALLEL mặc định 6")
+            parallel_cap = 6
     slots = threading.BoundedSemaphore(max(parallel_cap, 1))
     group, group_ts, deferred = [], set(), []
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Cho việc nặng chạy theo TẢI MÁY (người dùng 20/10: bỏ giới hạn 2 slot --full): tải 1 phút dưới DEVKIT_SLOT_LOAD_MAX (mặc định
-100, như merge_load_max của merge gate) thì chạy ngay, cao hơn thì chờ tải xuống tối đa DEVKIT_SLOT_LOAD_WAIT_S (600 s) rồi VẪN chạy —
+capacity busy_load của bin/capacity.py — 12 lõi: 36, cùng ngưỡng merge gate dùng khi config không đặt merge_load_max) thì chạy ngay, cao hơn thì chờ tải xuống tối đa DEVKIT_SLOT_LOAD_WAIT_S (600 s) rồi VẪN chạy —
 tải không bao giờ làm một suite thành UNTESTED. Chỉ tài nguyên độc quyền còn khoá (P1, 20/10): Unity (1 Editor một lúc), có hàng
 đợi vé: ưu tiên merge > push > interactive > stop > nightly, cùng mức thì việc ngắn trước, chờ lâu được bù 1:1 (không đói). Không còn
 khoá thiết bị (review 20/10): suite thiết bị nhận bằng regex chữ (`bash -n scripts/qa/adb/x.sh` cũng khớp), khoá đó không khớp khoá
@@ -25,9 +25,11 @@ DEFAULT_WAIT_S = 3600.0   # SB_HEAVY_SLOT_WAIT_S: chờ khoá độc quyền (Un
 PRIORITY = {"merge": 0, "push": 1, "interactive": 2, "stop": 3, "nightly": 4}
 DEFAULT_EST_S = 600.0     # suite chưa có thời lượng ghi nhận
 CPU_HEAVY_S = 300.0       # thời lượng ghi nhận dài nhất vượt mức này: suite nặng CPU (DEVKIT_SLOT_CPU_S)
-LOAD_MAX = 100.0          # DEVKIT_SLOT_LOAD_MAX: tải 1 phút (os.getloadavg) dưới mức này thì chạy ngay (người dùng 20/10)
+LOAD_MAX = 100.0          # DEVKIT_SLOT_LOAD_MAX: tải 1 phút (os.getloadavg) dưới mức này thì chạy ngay (người dùng 20/10); mặc định là
+                          # capacity busy_load (T0052, 12 lõi: 36), số này chỉ dùng khi không nạp được bin/capacity.py
 LOAD_WAIT_S = 600.0       # DEVKIT_SLOT_LOAD_WAIT_S: tải cao thì chờ tối đa chừng này rồi vẫn chạy; 0 = không chờ
-HEAVY_MAX = 3             # DEVKIT_SLOT_HEAVY_MAX: số suite nặng (cpu/gradle/xcode) chạy cùng lúc trên cả máy; hết slot thì xếp hàng (người dùng 21/10)
+HEAVY_MAX = 3             # DEVKIT_SLOT_HEAVY_MAX: số suite nặng (cpu/gradle/xcode) chạy cùng lúc trên cả máy; hết slot thì xếp hàng (người dùng 21/10);
+                          # mặc định là capacity heavy_max (T0052, 12 lõi: 3), số này chỉ dùng khi không nạp được bin/capacity.py
 HEAVY_CLASSES = ("cpu", "gradle", "xcode")   # Unity có khoá riêng (1 Editor); suite nhẹ và thiết bị không đếm
 ADVISORY_BUDGET_S = 600.0  # DEVKIT_SLOT_ADVISORY_BUDGET_S: tổng giây ĐỒNG HỒ một tiến trình được chờ tải (chờ chồng nhau tính một lần)
 # Sổ chờ tải của tiến trình: giây đồng hồ đã chờ (các khoảng có ít nhất một suite đang chờ, hợp lại), số suite đang chờ, lúc khoảng
@@ -99,16 +101,42 @@ def load_now() -> Optional[float]:
     return value if value == value and 0 <= value != float("inf") else None
 
 
+_CAPACITY: list = []   # [module capacity hoặc None]: nạp một lần cho cả tiến trình
+
+
+def _capacity():
+    """bin/capacity.py (nguồn sức chứa chung, T0052) nạp một lần; None khi không nạp được (kit cũ thiếu file): chỗ gọi dùng hằng cũ."""
+    if not _CAPACITY:
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        try:
+            import capacity  # noqa: PLC0415 - module anh em trong bin/
+            _CAPACITY.append(capacity)
+        except (ImportError, SyntaxError, OSError) as exc:
+            print(f"[heavy-slot] không nạp được bin/capacity.py ({exc!r}); dùng ngưỡng cũ (tải {LOAD_MAX:g}, {HEAVY_MAX} suite nặng)",
+                  file=sys.stderr, flush=True)
+            _CAPACITY.append(None)
+    return _CAPACITY[0]
+
+
 def load_max() -> float:
-    """Ngưỡng tải (DEVKIT_SLOT_LOAD_MAX); rỗng, rác hay không dương thì 100."""
-    value = _env_float("DEVKIT_SLOT_LOAD_MAX", LOAD_MAX)
-    return value if value > 0 else LOAD_MAX
+    """Ngưỡng tải (DEVKIT_SLOT_LOAD_MAX); rỗng, rác hay không dương thì capacity busy_load (12 lõi: 36), không có capacity thì 100."""
+    value = _env_float("DEVKIT_SLOT_LOAD_MAX", 0.0)
+    if value > 0:
+        return value
+    cap = _capacity()
+    return float(cap.busy_load()) if cap is not None else LOAD_MAX
 
 
 def heavy_max() -> int:
-    """Trần suite nặng cùng lúc (DEVKIT_SLOT_HEAVY_MAX); rỗng, rác, không dương hay không nguyên thì 3."""
-    value = _env_float("DEVKIT_SLOT_HEAVY_MAX", HEAVY_MAX)
-    return int(value) if value >= 1 and value == int(value) else HEAVY_MAX
+    """Trần suite nặng cùng lúc (DEVKIT_SLOT_HEAVY_MAX); rỗng, rác, không dương hay không nguyên thì capacity heavy_max (12 lõi: 3),
+    không có capacity thì 3."""
+    value = _env_float("DEVKIT_SLOT_HEAVY_MAX", 0.0)
+    if value >= 1 and value == int(value):
+        return int(value)
+    cap = _capacity()
+    return cap.heavy_max() if cap is not None else HEAVY_MAX
 
 
 def wait_load(wait_s: float, label: str = "") -> tuple:

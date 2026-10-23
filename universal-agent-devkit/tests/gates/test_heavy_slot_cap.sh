@@ -10,6 +10,9 @@ echo 1 > "$TMP/load"
 export SB_HEAVY_SLOT_DIR="$TMP/locks" DEVKIT_SLOT_LOAD_FILE="$TMP/load" SB_HEAVY_SLOT_POLL_S=0.1
 unset SB_HEAVY_SLOT_HELD DEVKIT_SLOT_ADVISORY_HELD DEVKIT_SLOT_HEAVY_MAX DEVKIT_SLOT_HEAVY_WAIT_S DEVKIT_SLOT_HEAVY_BUDGET_S \
   DEVKIT_SLOT_LOAD_WAIT_S SB_HEAVY_SLOT_WAIT_S DEVKIT_SLOT_ADVISORY_BUDGET_S   # merge gate / stale_rerun đặt vài biến này: test không được lệ thuộc môi trường gọi
+# T0052: mặc định 3 slot / ngưỡng tải đến từ bin/capacity.py; ghim máy giả 12 lõi rảnh (heavy_max 3, busy_load 36), bỏ nút của người gọi
+unset DEVKIT_CAPACITY DEVKIT_SLOT_LOAD_MAX
+export DEVKIT_CAPACITY_CORES=12 DEVKIT_CAPACITY_LOAD=0
 python3 - "$DEVKIT_DIR/bin" <<'PY'
 import os, sys, threading, time
 sys.path.insert(0, sys.argv[1])
@@ -121,6 +124,20 @@ full[0] = s
 del os.environ["DEVKIT_SLOT_HEAVY_WAIT_S"]; del os.environ["DEVKIT_SLOT_HEAVY_BUDGET_S"]
 for s in full:
     hs.release_suite(s)
+
+# 10. T0052: mặc định đi theo bin/capacity.py (số lõi), biến cũ vẫn thắng, không nạp được capacity thì hằng cũ
+check("10a. 12 lõi: heavy_max 3, load_max 36 (capacity)", hs.heavy_max() == 3 and hs.load_max() == 36.0, f"{hs.heavy_max()} {hs.load_max()}")
+os.environ["DEVKIT_CAPACITY_CORES"] = "4"
+check("10b. 4 lõi: heavy_max 1, load_max 12 (capacity)", hs.heavy_max() == 1 and hs.load_max() == 12.0, f"{hs.heavy_max()} {hs.load_max()}")
+os.environ["DEVKIT_SLOT_HEAVY_MAX"] = "2"; os.environ["DEVKIT_SLOT_LOAD_MAX"] = "64"
+check("10c. DEVKIT_SLOT_HEAVY_MAX / DEVKIT_SLOT_LOAD_MAX vẫn thắng capacity", hs.heavy_max() == 2 and hs.load_max() == 64.0,
+      f"{hs.heavy_max()} {hs.load_max()}")
+del os.environ["DEVKIT_SLOT_HEAVY_MAX"]; del os.environ["DEVKIT_SLOT_LOAD_MAX"]
+saved_cap = list(hs._CAPACITY)
+hs._CAPACITY[:] = [None]   # như kit cũ thiếu bin/capacity.py
+check("10d. không có capacity: hằng cũ (3 suite nặng, tải 100)", hs.heavy_max() == 3 and hs.load_max() == 100.0, f"{hs.heavy_max()} {hs.load_max()}")
+hs._CAPACITY[:] = saved_cap
+os.environ["DEVKIT_CAPACITY_CORES"] = "12"
 
 sys.exit(1 if fails else 0)
 PY

@@ -25,6 +25,9 @@ export SB_HEAVY_SLOT_POLL_S="0.1"
 export DEVKIT_SLOT_LOAD_FILE="$TMP/load"
 echo 1 > "$TMP/load"
 unset SB_HEAVY_SLOT_HELD SB_HEAVY_SLOT_WAIT_S DEVKIT_SLOT_LOAD_WAIT_S DEVKIT_SLOT_LOAD_MAX DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_ADVISORY_HELD
+# T0052: ngưỡng tải mặc định là capacity busy_load (bin/capacity.py): máy giả 12 lõi = 36, tải giả 1/5 dưới và 150 trên ngưỡng ở mọi máy
+unset DEVKIT_CAPACITY DEVKIT_CAPACITY_LOAD
+export DEVKIT_CAPACITY_CORES=12
 # Gate lồng ở ca 7–8 chạy trong repo fixture (cd "$REPO"): CLAUDE_PROJECT_DIR kế thừa từ gate cha (khi test này là suite của ma
 # trận) làm nó kiểm nhầm repo cha — gate đọc CLAUDE_PROJECT_DIR trước git root (20/10: 4 ca đỏ khi chạy trong gate).
 unset CLAUDE_PROJECT_DIR

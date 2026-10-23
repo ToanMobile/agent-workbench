@@ -5,7 +5,8 @@
 #     a lane never starts before its dependencies end, the merge order is the order they end, two lanes that edit the same file are
 #     warned about while the files every lane touches (impact_map, test_durations, checklist) are not, `plan` writes nothing;
 #   * a missing estimate is the median of the recorded lanes of that kind (junk history lines skipped), 30 without history;
-#   * `slots`: free CPU / jobs per lane, never below 1, never above 4;
+#   * `slots`: free CPU / jobs per lane, never below 1, never above capacity lane_slots_max (T0052: bin/capacity.py, lõi/3 × DEVKIT_CAPACITY;
+#     kit thiếu capacity.py thì 4);
 #   * bad input (unknown dependency, cycle, duplicate id, negative or non-numeric estimate, --slots 0) exits 2 and says why.
 #   LP_KIT=<devkit dir>   test another copy of the kit (one without the script: RED; a mutant: must go red)
 #   LP_PY=<python>        interpreter (default python3; try /usr/bin/python3 = 3.9)
@@ -130,7 +131,7 @@ chk(d is not None and d["start_order"] == ["H", "L"], "equal paths: the high-ris
 for env, want, why in (
     ({"LANE_PLAN_CORES": "8", "LANE_PLAN_LOAD": "30"}, 1, "overloaded machine still gets one slot"),
     ({"LANE_PLAN_CORES": "16", "LANE_PLAN_LOAD": "2"}, 3, "16 cores, load 2: 14 free / 4 = 3"),
-    ({"LANE_PLAN_CORES": "64", "LANE_PLAN_LOAD": "0"}, 4, "never more than 4 lanes"),
+    ({"LANE_PLAN_CORES": "64", "LANE_PLAN_LOAD": "0"}, 16, "64 idle cores: 64 / 4 = 16 (T0052: no fixed cap of 4, capacity cap 64/3 = 21)"),
     ({"LANE_PLAN_CORES": "8", "LANE_PLAN_LOAD": "7.5"}, 1, "half a core free: one slot"),
 ):
     rc, out, err = run(["slots", "--quiet"], **env)
@@ -299,7 +300,21 @@ for args in (["slots", "--jobs-per-lane", "0"], ["slots", "--jobs-per-lane", "0.
     rc, out, err = run(args, LANE_PLAN_CORES="16", LANE_PLAN_LOAD="0")
     chk(rc == 2 and "Traceback" not in err, "refused: lane_plan.py " + " ".join(args), "rc=%s %r %r" % (rc, out, err))
 rc, out, err = run(["slots", "--quiet", "--jobs-per-lane", "1"], LANE_PLAN_CORES="64", LANE_PLAN_LOAD="0")
-chk(rc == 0 and out.strip() == "4", "slots: never more than 4 lanes, even with --jobs-per-lane 1 on 64 idle cores", "%r %r" % (out, err))
+chk(rc == 0 and out.strip() == "21", "slots: capacity lane_slots_max caps --jobs-per-lane 1 on 64 idle cores at 64/3 = 21", "%r %r" % (out, err))
+rc, out, err = run(["slots", "--quiet", "--jobs-per-lane", "1"], LANE_PLAN_CORES="64", LANE_PLAN_LOAD="0", DEVKIT_CAPACITY="0.5")
+chk(rc == 0 and out.strip() == "10", "slots: DEVKIT_CAPACITY=0.5 halves the cap (64 cores: 10)", "%r %r" % (out, err))
+rc, out, err = run(["slots", "--quiet", "--jobs-per-lane", "1"], LANE_PLAN_CORES="12", LANE_PLAN_LOAD="0")
+chk(rc == 0 and out.strip() == "4", "slots: 12 idle cores, --jobs-per-lane 1: cap 12/3 = 4 (as the old fixed 4)", "%r %r" % (out, err))
+# kit thiếu bin/capacity.py (bản cũ): trần cố định MAX_SLOTS = 4, không traceback
+nokit = os.path.join(TMP, "nokit", "scripts", "governance")
+os.makedirs(nokit)
+with open(SCRIPT, "rb") as src, open(os.path.join(nokit, "lane_plan.py"), "wb") as dst:
+    dst.write(src.read())
+e = dict(BASE_ENV, LANE_PLAN_CORES="64", LANE_PLAN_LOAD="0")
+r = subprocess.run([PY, os.path.join(nokit, "lane_plan.py"), "slots", "--quiet", "--jobs-per-lane", "1"], capture_output=True, text=True, env=e,
+                   cwd=TMP, timeout=60)
+chk(r.returncode == 0 and r.stdout.strip() == "4" and "Traceback" not in r.stderr, "slots: kit without bin/capacity.py keeps the fixed cap of 4",
+    "%r %r" % (r.stdout, r.stderr[-200:]))
 
 # 11. history: a bad line is skipped, an odd file is refused or ignored, never a hang or a traceback
 H2 = os.path.join(TMP, "h2.jsonl")
