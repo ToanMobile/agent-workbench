@@ -12,9 +12,11 @@ mkdir -p "$HOME/Library/LaunchAgents" "$APP"
 rm -rf "$APP/web"
 cp -R "$SRC/server.py" "$SRC/config.json" "$SRC/web" "$APP/"
 chmod 700 "$HOME/.agent-office" "$APP"
-"$PY" - "$PLIST" "$LABEL" "$PY" "$APP" "$HOME" <<'PYEOF'
+# Bản chép không nằm trong repo: chỉ cho server đường dẫn ai-factory.sh thật (nút "Tạo mã mới" của menu Điện thoại gọi nó).
+FACTORY="$(cd "$SRC/../.." && pwd)/ai-factory.sh"
+"$PY" - "$PLIST" "$LABEL" "$PY" "$APP" "$HOME" "$FACTORY" <<'PYEOF'
 import plistlib, sys
-path, label, py, app, home = sys.argv[1:6]
+path, label, py, app, home, factory = sys.argv[1:7]
 plist = {
     "Label": label,
     "ProgramArguments": [py, app + "/server.py"],
@@ -22,7 +24,8 @@ plist = {
     "RunAtLoad": True,
     "KeepAlive": {"SuccessfulExit": False},
     "ThrottleInterval": 20,
-    "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"},
+    "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                             "AGENT_OFFICE_FACTORY_SCRIPT": factory},
     "StandardOutPath": home + "/.agent-office/server.log",
     "StandardErrorPath": home + "/.agent-office/server.log",
 }

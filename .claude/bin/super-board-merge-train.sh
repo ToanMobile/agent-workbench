@@ -26,8 +26,9 @@
 #       5 có PR conflict, không PR nào đỏ/hết giờ · 79/9 của github-read và readiness đi thẳng tới caller.
 #       6 có PR đã dời head khỏi sha duyệt (`--prs N:sha`): PR đó rời đợt, dòng `head-moved`, ở lại Review chờ review lại.
 #       Mỗi PR một dòng `train-result: <N> <merged|red|conflict|deferred|timeout|head-moved|gate-exit-K>` trên stdout.
-# ponytail: PR bị gate chặn (policy cần người duyệt) vẫn nằm trong chuỗi verify, nên cây của các PR sau nó lệch biên nhận và chúng verify như thường;
-#           nâng lên khi nhiều PR cần người duyệt hay đi chung đợt: gate --dry-run từng PR trước khi dựng chuỗi.
+# ponytail: gate --dry-run từng PR chạy SAU lượt verify đầu (R11): PR bị gate chặn (policy cần người duyệt) ra khỏi chuỗi rồi phần còn lại
+#           verify lại, tức thêm một lượt verify mỗi vòng có PR bị chặn; nâng lên khi hay có PR cần người duyệt đi chung đợt:
+#           gate --dry-run từng PR trước khi dựng chuỗi đầu tiên.
 set -euo pipefail
 export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

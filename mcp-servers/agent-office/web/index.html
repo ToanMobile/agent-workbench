@@ -325,6 +325,10 @@
   dialog.dlg .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   dialog.dlg .hint { font-size: 12.5px; color: var(--muted); margin: 0 0 14px; }
   dialog.dlg .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  /* menu Điện thoại: QR luôn trên nền trắng (camera điện thoại đọc được cả ở Ca đêm) */
+  dialog.dlg .qr { display: grid; place-items: center; min-height: 220px; margin: 0 0 12px; font-size: 13px; color: var(--muted); text-align: center; }
+  dialog.dlg .qr svg { width: min(260px, 70vw); height: auto; background: #fff; border-radius: 12px; padding: 8px; }
+  dialog.dlg .phone-url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; text-align: center; }
 
   @media (max-width: 900px) {
     .board { left: 12px; right: 12px !important; top: calc(var(--top-h, 120px) + 10px); bottom: calc(var(--bot-h, 64px) + 8px); }
@@ -396,6 +400,7 @@
   <button type="button" class="sec" id="btnNext">Agent kế tiếp</button>
   <button type="button" class="sec" id="btnDesk" aria-expanded="false" aria-controls="deskPicker">Kiểu bàn</button>
   <button type="button" class="sec" id="btnTheme">Ca đêm</button>
+  <button type="button" class="sec" id="btnPhone" aria-haspopup="dialog" aria-controls="phoneDlg">Điện thoại</button>
   <button type="button" class="sec" id="btnRefresh">Tải lại GitHub</button>
   <button type="button" class="more-btn" id="btnMore" aria-expanded="false">Khác</button>
 </div>
@@ -432,6 +437,18 @@
       <button type="submit" class="btn primary" id="createSubmit">Tạo việc</button>
     </div>
   </form>
+</dialog>
+
+<dialog class="dlg" id="phoneDlg" aria-labelledby="phoneTitle">
+  <h2 id="phoneTitle">Mở trên điện thoại</h2>
+  <p class="hint" id="phoneHint"></p>
+  <div class="qr" id="phoneQr" role="img" aria-label="Mã QR mở xưởng trên điện thoại" aria-live="polite"></div>
+  <p class="hint phone-url" id="phoneUrl"></p>
+  <div class="actions">
+    <button type="button" class="btn" id="phoneNew">Tạo mã mới</button>
+    <button type="button" class="btn" id="phoneCopy">Chép link</button>
+    <button type="button" class="btn primary" id="phoneClose" autofocus>Đóng</button>
+  </div>
 </dialog>
 
 <script src="vendor/three.min.js"></script>
@@ -1413,7 +1430,9 @@ function computePresent(root, idle) {
   };
   const aim = (b, dir) => { const pa = V(), pb = V(); b.getWorldPosition(pa); endOf(b).getWorldPosition(pb); toWorld(b, Q().setFromUnitVectors(pb.sub(pa).normalize(), dir.normalize())); };
   const out = [], touched = [];
-  const step = (n, group, fn) => { const b = bone(n); if (!b || !b.parent || !endOf(b)) return; const q0 = b.quaternion.clone(); touched.push([b, q0]); fn(b); out.push({ name: n, group, off: q0.clone().invert().multiply(b.quaternion) }); };
+  // track hằng/vắng thì mixer không ghi lại xương đó: lưu base để applySit đặt lại mỗi khung (như computePose), không cộng dồn
+  const animated = new Set(idle ? idle.tracks.filter((tr) => tr.values.some((v, k) => Math.abs(v - tr.values[k % tr.getValueSize()]) > 1e-6)).map((tr) => tr.name) : []);
+  const step = (n, group, fn) => { const b = bone(n); if (!b || !b.parent || !endOf(b)) return; const q0 = b.quaternion.clone(); touched.push([b, q0]); fn(b); out.push({ name: n, group, off: q0.clone().invert().multiply(b.quaternion), still: !animated.has(n + '.quaternion'), base: q0.clone() }); };
   step('UpperArmR', 'point', (b) => aim(b, V().set(-0.92, 0.32, -0.22)));   // tay phải giơ ngang vai, chỉ ra sau vào bảng
   step('LowerArmR', 'point', (b) => aim(b, V().set(-0.78, 0.55, -0.3)));
   step('Head', 'point', (b) => toWorld(b, Q().setFromAxisAngle(V().set(0, 1, 0), -0.55)));  // ngoái đầu về phía tay chỉ
@@ -1465,9 +1484,9 @@ function applySit(a, t) { // gọi ngay sau mixer.update: nhân độ lệch tư
     if (e.offB && a.typing) _sq2.slerpQuaternions(e.off, e.offB, Math.max(0, Math.sin(t * 15 + a.ph + e.ph))); else _sq2.copy(e.off);
     b.quaternion.multiply(_sq.copy(_SQID).slerp(_sq2, aw));
   }
-  if (a.present && a.presentW > 0) { // sau vòng tay (nó đặt lại xương hằng số về gốc), nên không cộng dồn. Thuyết trình: cứ ~7 s chỉ vào bảng một lần, giữa chừng tay trái giải thích
+  if (a.present) { // sau vòng tay (nó đặt lại xương hằng số về gốc), nên không cộng dồn. Thuyết trình: cứ ~7 s chỉ vào bảng một lần, giữa chừng tay trái giải thích
     const tc = (t + a.ph) % 7, wp = a.presentW * bump(tc, 0.4, 3.2), we = a.presentW * (0.55 + 0.45 * Math.sin(t * 2.4 + a.ph)) * (1 - 0.6 * wp);
-    for (const e of a.present) { const b = a.bm.get(e.name); const k = e.group === 'point' ? wp : we; if (b && k > 0) b.quaternion.multiply(_sq.copy(_SQID).slerp(e.off, k)); }
+    for (const e of a.present) { const b = a.bm.get(e.name); if (!b) continue; if (e.still) b.quaternion.copy(e.base); const k = e.group === 'point' ? wp : we; if (k > 0) b.quaternion.multiply(_sq.copy(_SQID).slerp(e.off, k)); }
   }
 }
 function play(a, name, fade) {
@@ -1527,12 +1546,12 @@ const WALK_VMAX = 4.4, WALK_TARGET_S = 14; // đường xa (qua hành lang) thì
 const WALK_V = 2.6, WALK_ACC = 3.2, WALK_REF = 1.9, TURN_RATE = 7, WAYPOINT_R = 0.35, AVOID_R = 1.2, MAX_WALKERS = 8;
 function snapshotPeople() {
   const byId = new Map(), byIssue = new Map();
-  const put = (w, pos, sat, yaw, sc, desk) => {
-    const v = { pos, sat, yaw, sc, desk };
+  const put = (w, pos, sat, yaw, sc, desk, faceOut) => {
+    const v = { pos, sat, yaw, sc, desk, faceOut: !!faceOut };
     byId.set(w.id, v);
     if (w.issue) byIssue.set(w.repo + '#' + w.issue, v);
   };
-  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone(), !!d.sits, seatYaw(d), d.sc, d.desk);   // đang ngồi
+  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone(), !!d.sits, seatYaw(d), d.sc, d.desk, d.faceOut);   // đang ngồi
   for (const k of walkers) put(k.dest.w, new THREE.Vector3(k.x, 0, k.z), false, k.yaw, k.obj.scale.x);             // đang đi dở: bắt đầu từ chỗ đang đứng
   return { byId, byIssue };
 }
@@ -1553,7 +1572,7 @@ function startWalks(snap) {
     let a = null, obj, yawOff = 0;
     if (HAS_GLTF && c.state === 'ready') {
       a = spawnActor(c, i, w); a.walker = true; obj = a.root;
-      if (old.desk) { a.pose = poseFor(c, old.desk.seatTop, old.desk.top, old.desk.standing); a.sitW = old.sat ? 1 : 0; a.armW = 1; }
+      if (old.desk) { a.pose = poseFor(c, old.desk.seatTop, old.desk.top, old.desk.standing); a.sitW = old.sat ? 1 : 0; a.armW = old.faceOut ? 0 : 1; if (old.faceOut) { a.present = presentFor(c); a.presentW = 1; } } // trạm: tay thuyết trình, không phải tay gõ
       play(a, 'idle', 0); a.mixer.update(0); applySit(a, 0);
     } else { // model chưa có (đang tải, lỗi, hoặc thiếu thư viện): người hộp đi cùng đường
       obj = new THREE.Group(); makePerson(obj, { x: 0, standing: true }, w, T, []); yawOff = -Math.PI / 2; // người hộp nhìn theo +x
@@ -1562,7 +1581,7 @@ function startWalks(snap) {
     d.pg.visible = false;
     walkers.push({ a, obj, yawOff, dest: d, from: old.pos.clone(), to: d.pos.clone(), pts, total: Math.max(0.01, OfficePath.pathLength(pts)), seg: 1, vmax: Math.min(WALK_VMAX, Math.max(WALK_V, OfficePath.pathLength(pts) / WALK_TARGET_S)),
       x: old.pos.x, z: old.pos.z, yaw: old.yaw, speed: 0, sp: 0, s0: old.sc, s1: d.sc,
-      phase: 'rise', t: 0, riseT: a && a.armW > 0 ? SIT_T : 0.05, fade: 0.35 }); // đứng dậy khỏi ghế rồi mới bước
+      phase: 'rise', fromFaceOut: !!old.faceOut, t: 0, riseT: a && (a.armW > 0 || a.presentW > 0) ? SIT_T : 0.05, fade: 0.35 }); // đứng dậy khỏi ghế rồi mới bước
   }
 }
 function finishWalk(k) {
@@ -1578,8 +1597,8 @@ function stepWalkers(dt) {
     const k = walkers[n], a = k.a, p = k.pts;
     if (k.phase === 'rise') {
       k.t += dt;
-      if (a && a.pose) { const u = 1 - smooth01(k.t / SIT_T); a.sitW = Math.min(a.sitW, u); a.armW = u; } // rời bàn phím, đứng dậy khỏi ghế cũ
-      if (k.t >= k.riseT) { k.phase = 'walk'; if (a) { a.sitW = 0; a.armW = 0; a.pose = null; play(a, 'walk', k.fade); } } // bỏ tư thế bàn để clip Walk điều khiển cả tay chân
+      if (a && a.pose) { const u = 1 - smooth01(k.t / SIT_T); a.sitW = Math.min(a.sitW, u); a.armW = k.fromFaceOut ? 0 : u; if (k.fromFaceOut) a.presentW = u; } // rời bàn phím, đứng dậy khỏi ghế cũ
+      if (k.t >= k.riseT) { k.phase = 'walk'; if (a) { a.sitW = 0; a.armW = 0; a.presentW = 0; a.pose = null; play(a, 'walk', k.fade); } } // bỏ tư thế bàn để clip Walk điều khiển cả tay chân
     } else if (k.phase === 'walk') {
       const nPts = p.length / 2, last = k.seg >= nPts - 1;
       let dx = p[2 * k.seg] - k.x, dz = p[2 * k.seg + 1] - k.z, dist = Math.hypot(dx, dz);
@@ -1744,7 +1763,7 @@ $('#labels').addEventListener('click', (e) => { if (suppressLabelClick) { e.stop
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
-  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable], #drawer, #board, .rail')) || $('#createDlg').open) return;
+  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable], #drawer, #board, .rail')) || $('#createDlg').open || $('#phoneDlg').open) return;
   const act = { ArrowLeft: () => panBy(-70, 0), ArrowRight: () => panBy(70, 0), ArrowUp: () => panBy(0, -70), ArrowDown: () => panBy(0, 70),
     '+': () => zoomBy(0.85), '=': () => zoomBy(0.85), '-': () => zoomBy(1 / 0.85) }[e.key];
   if (act) { e.preventDefault(); act(); }
@@ -1836,7 +1855,7 @@ function updateSelectionVisuals() {
 }
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#deskPicker').hidden) { $('#deskPicker').hidden = true; $('#btnDesk').setAttribute('aria-expanded', 'false'); $('#btnDesk').focus(); return; }
-  if (e.key === 'Escape' && !selection && boardOpen && !$('#createDlg').open) { boardOpen = false; $('#btnBoard').textContent = 'Dạng bảng'; renderBoard(); return; }
+  if (e.key === 'Escape' && !selection && boardOpen && !($('#createDlg').open || $('#phoneDlg').open)) { boardOpen = false; $('#btnBoard').textContent = 'Dạng bảng'; renderBoard(); return; }
   if (e.key === 'Escape' && selection) { selection = null; renderDrawer(); renderRail(); updateSelectionVisuals(); } });
 
 // ------------------------------------------------------------ UI
@@ -2506,12 +2525,55 @@ $('#btnTheme').onclick = () => {
   syncThemeBtn(); if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
 };
 $('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() }).catch(() => {}); $('#btnRefresh').textContent = 'Đang tải…'; setTimeout(() => { $('#btnRefresh').textContent = 'Tải lại GitHub'; }, 2500); };
+
+// Menu "Điện thoại" (chỉ trên máy Mac): QR của Cloudflare tunnel kèm key để mở xưởng trên điện thoại ở mạng khác.
+// Server chỉ trả link cho chính máy Mac; mở qua tunnel thì ẩn nút (server cũng trả 403).
+const PHONE_HINT = 'Quét bằng camera điện thoại. Dùng được cả khi điện thoại ở mạng khác (4G, Wi-Fi khác). Tạo mã mới thì mã cũ hết hiệu lực.';
+let phoneLink = '';
+if (location.hostname.endsWith('.trycloudflare.com')) $('#btnPhone').hidden = true;
+function showPhone(d) {
+  const qr = $('#phoneQr');
+  phoneLink = d && d.live ? d.link : '';
+  qr.textContent = '';
+  if (!d || !d.ok) qr.textContent = 'Không đọc được trạng thái kết nối từ xa.';
+  else if (!d.live) qr.textContent = 'Chưa có kết nối từ xa (hoặc kết nối cũ đã hết hạn). Bấm "Tạo mã mới".';
+  else if (d.svg) qr.innerHTML = d.svg;   // SVG do qrencode trên chính máy này tạo từ link
+  else qr.textContent = 'Máy chưa cài qrencode (brew install qrencode): dùng nút "Chép link".';
+  $('#phoneUrl').textContent = d && d.live ? d.url : '';
+  $('#phoneCopy').disabled = !phoneLink;
+}
+async function loadPhone(fresh) {
+  const btn = $('#phoneNew');
+  if (fresh) { btn.disabled = true; btn.textContent = 'Đang tạo…'; $('#phoneQr').textContent = 'Đang mở kết nối, chờ khoảng 10–30 giây…'; }
+  try {
+    const res = await fetch('api/phone', fresh
+      ? { method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json', 'X-Agent-Office': '1' }), body: '{}' }
+      : { cache: 'no-store', headers: apiHeaders() });
+    const d = await res.json().catch(() => null);
+    if (!res.ok) { showPhone(null); $('#phoneQr').textContent = (d && d.error) || ('Lỗi ' + res.status); return; }
+    showPhone(d);
+    if (fresh && d && d.live) $('#phoneHint').textContent = 'Mã mới đã sẵn sàng. Điện thoại báo không mở được thì đợi thêm 30 giây rồi quét lại (Cloudflare cần thời gian bật tên miền).';
+  } catch (e) {
+    showPhone(null);
+  } finally {
+    if (fresh) setTimeout(() => { btn.disabled = false; btn.textContent = 'Tạo mã mới'; }, 1000);
+  }
+}
+$('#btnPhone').onclick = () => { $('#phoneHint').textContent = PHONE_HINT; $('#phoneDlg').showModal(); loadPhone(false); };
+$('#phoneNew').onclick = () => loadPhone(true);
+$('#phoneClose').onclick = () => $('#phoneDlg').close();
+$('#phoneCopy').onclick = async () => {
+  if (!phoneLink) return;
+  try { await navigator.clipboard.writeText(phoneLink); $('#phoneCopy').textContent = 'Đã chép'; }
+  catch (e) { $('#phoneCopy').textContent = 'Không chép được'; }
+  setTimeout(() => { $('#phoneCopy').textContent = 'Chép link'; }, 1500);
+};
 const SHORTCUTS = { w: '#btnAgents', e: '#btnEvents', f: '#btnFit', z: '#btnZoom', b: '#btnBoard', a: '#btnAdd', n: '#btnNext', t: '#btnTheme', r: '#btnRail', d: '#btnDesk' };
 Object.entries(SHORTCUTS).forEach(([k, q]) => { const btn = $(q); btn.setAttribute('aria-keyshortcuts', k.toUpperCase()); btn.title = 'Phím tắt: ' + k.toUpperCase(); });
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
   const t = e.target;
-  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable]')) || $('#createDlg').open) return;
+  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable]')) || $('#createDlg').open || $('#phoneDlg').open) return;
   const q = SHORTCUTS[(e.key || '').toLowerCase()]; if (!q) return;
   e.preventDefault(); $(q).click();
 });

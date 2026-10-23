@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test hồi quy cho quyền chạy việc nặng theo TẢI MÁY (heavy_slot.py / super-board-heavy-slot.py). P1b (người dùng 20/10: "bỏ 2 slot
-# gate, tải CPU dưới 100 thì cứ cho chạy"): không còn giới hạn 2 lượt --full; tải 1 phút dưới DEVKIT_SLOT_LOAD_MAX (100) thì chạy ngay,
+# gate, tải CPU dưới 100 thì cứ cho chạy"): không còn giới hạn 2 lượt --full; tải 1 phút dưới DEVKIT_SLOT_LOAD_MAX (mặc định capacity hold_load = 8 × lõi) thì chạy ngay,
 # cao hơn thì chờ tải xuống rồi vẫn chạy. Tải đọc từ file (DEVKIT_SLOT_LOAD_FILE), không phải tải thật của máy.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -25,6 +25,9 @@ export SB_HEAVY_SLOT_POLL_S="0.1"
 export DEVKIT_SLOT_LOAD_FILE="$TMP/load"
 echo 1 > "$TMP/load"
 unset SB_HEAVY_SLOT_HELD SB_HEAVY_SLOT_WAIT_S DEVKIT_SLOT_LOAD_WAIT_S DEVKIT_SLOT_LOAD_MAX DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_ADVISORY_HELD
+# T0052: ngưỡng tải mặc định là capacity hold_load (bin/capacity.py, 8 × lõi): máy giả 12 lõi = 96, tải giả 1/5 dưới và 150 trên ngưỡng
+unset DEVKIT_CAPACITY DEVKIT_CAPACITY_LOAD
+export DEVKIT_CAPACITY_CORES=12
 # Gate lồng ở ca 7–8 chạy trong repo fixture (cd "$REPO"): CLAUDE_PROJECT_DIR kế thừa từ gate cha (khi test này là suite của ma
 # trận) làm nó kiểm nhầm repo cha — gate đọc CLAUDE_PROJECT_DIR trước git root (20/10: 4 ca đỏ khi chạy trong gate).
 unset CLAUDE_PROJECT_DIR
@@ -47,7 +50,7 @@ else
 fi
 for p in $PIDS; do kill "$p" 2>/dev/null || true; done; wait 2>/dev/null; PIDS=""
 
-# ── 2. --nonblock: tải thấp thì chạy; tải cao (≥ 100) thì không chạy, exit 1.
+# ── 2. --nonblock: tải thấp thì chạy; tải cao (150 ≥ hold_load 96 của máy giả 12 lõi) thì không chạy, exit 1.
 python3 "$DK_BIN" --nonblock -- touch "$TMP/nb_low" >/dev/null 2>&1; rc_low=$?
 echo 150 > "$TMP/load"
 python3 "$DK_BIN" --nonblock -- touch "$TMP/nb_high" >"$TMP/nb_high.log" 2>&1; rc_high=$?
@@ -56,6 +59,18 @@ if [ "$rc_low" -eq 0 ] && [ -f "$TMP/nb_low" ] && [ "$rc_high" -ne 0 ] && [ ! -f
   ok "--nonblock runs at low load and refuses at high load"
 else
   fail "--nonblock (low rc=$rc_low ran=$([ -f "$TMP/nb_low" ] && echo yes || echo no); high rc=$rc_high ran=$([ -f "$TMP/nb_high" ] && echo yes || echo no))"
+fi
+
+# ── 2b. T0052: ngưỡng là capacity hold_load (8 × lõi), không phải số cố định. Tải 50: máy 12 lõi (96) chạy — cũng không phải busy_load
+#        (36) — còn máy 4 lõi (32) từ chối, điều mà ngưỡng cố định 100 cũ không làm.
+echo 50 > "$TMP/load"
+python3 "$DK_BIN" --nonblock -- touch "$TMP/nb_h12" >"$TMP/nb_h12.log" 2>&1; rc_h12=$?
+DEVKIT_CAPACITY_CORES=4 python3 "$DK_BIN" --nonblock -- touch "$TMP/nb_h4" >"$TMP/nb_h4.log" 2>&1; rc_h4=$?
+echo 1 > "$TMP/load"
+if [ "$rc_h12" -eq 0 ] && [ -f "$TMP/nb_h12" ] && [ "$rc_h4" -ne 0 ] && [ ! -f "$TMP/nb_h4" ]; then
+  ok "tải 50: 12 lõi (hold_load 96) chạy, 4 lõi (hold_load 32) --nonblock từ chối — ngưỡng đi theo capacity"
+else
+  fail "tải 50 (12 lõi rc=$rc_h12 chạy=$([ -f "$TMP/nb_h12" ] && echo có || echo không); 4 lõi rc=$rc_h4 chạy=$([ -f "$TMP/nb_h4" ] && echo có || echo không))"
 fi
 
 # ── 3. Tải cao rồi xuống: lệnh chờ, rồi chạy ngay khi tải xuống (trước trần chờ 30 s).
