@@ -1548,7 +1548,7 @@ EOF
       && mv "$f.tmp" "$f" 2>/dev/null || true
     n=$( { wc -l < "$f"; } 2>/dev/null | tr -d ' ')
     wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
-    last=$( { grep -v '^[[:space:]]*$' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
+    last=$( { grep -Ev '^[[:space:]]*$|^worker_exit: ' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
     if [ "${n:-0}" -lt "$max" ]; then
       log "⚠ #${issue} (lane ${lane}): worker ended with the card still in ${col} and no new comment — no-op ${n} of ${max}; last log line: ${last:-<no worker log at ${wlog}>}"
       continue

@@ -56,7 +56,7 @@ cd "$TMP" || exit 1
 
 # ── A: stub worker QA thoát ngay không ghi gì, hai lần liên tiếp: lần 1 chỉ ghi sổ; lần 2 chuyển Blocked (lần 3 không giao lại).
 reset_case
-printf 'Đang chạy QA\nthiếu máy thật RFCWA1KQT1Y để đo 60 FPS\n' > "$WORKER_LOG_DIR/worker-qa-100.log"
+printf 'Đang chạy QA\nthiếu máy thật RFCWA1KQT1Y để đo 60 FPS\nworker_exit: exit=0 signal=- elapsed=3s\n' > "$WORKER_LOG_DIR/worker-qa-100.log"
 set_card 100 QA
 lock 100 qa QA 3; noop_cycle
 n1=$(wc -l < "$INFLIGHT_DIR/noops/100" 2>/dev/null | tr -d ' ')
@@ -67,6 +67,7 @@ if [ "${n1:-0}" = "1" ] && [ "$moved1" = "0" ] \
    && grep -q "blocked-by:  -" "$TMP/writes" \
    && grep -q "thiếu máy thật RFCWA1KQT1Y để đo 60 FPS" "$TMP/writes" \
    && grep -q "Reason tag:  📱" "$TMP/writes" \
+   && ! grep -q "last log line: worker_exit:" "$TMP/writes" \
    && [ "${NOOP_MOVED:-0}" = "1" ]; then
   ok "A: 2 no-op QA exits -> #100 Blocked 📱 with block-template comment carrying the worker's last log line"
 else
@@ -75,7 +76,7 @@ fi
 
 # ── B: log cuối không nhắc thiết bị -> ❓.
 reset_case
-printf 'worker exited without doing anything\n' > "$WORKER_LOG_DIR/worker-review-101.log"
+printf 'worker exited without doing anything\nworker_exit: exit=0 signal=- elapsed=3s\n' > "$WORKER_LOG_DIR/worker-review-101.log"
 set_card 101 Review
 lock 101 review Review 3; noop_cycle
 lock 101 review Review 3; noop_cycle
