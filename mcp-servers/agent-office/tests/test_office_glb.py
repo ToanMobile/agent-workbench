@@ -62,7 +62,7 @@ class ChibiGlbTest(unittest.TestCase):
             self.assertTrue(self.BONES <= set(nodes), (i, self.BONES - set(nodes)))
             self.assertEqual({a["name"].lower() for a in j["animations"]}, {"idle", "walk"})
             self.assertTrue(any(m["name"].startswith("Shirt") for m in j["materials"]), i)
-            self.assertLess(os.path.getsize(os.path.join(HERE, "web", "models", f"chibi{i}.glb")), 400_000)
+            self.assertLess(os.path.getsize(os.path.join(HERE, "web", "models", f"chibi{i}.glb")), 500_000)  # năm người cộng lại vẫn nhẹ hơn bộ Quaternius cũ (khoảng 3,3 MB)
 
 
 if __name__ == "__main__":

@@ -1038,11 +1038,12 @@ const KIT_STYLE = DESK_STYLES.findIndex((st) => st.kit); // mẫu bàn Blender, 
 let deskStyle = KIT_STYLE; // mặc định: nội thất Blender; ai đã chọn mẫu khác thì giữ lựa chọn đó
 try { const v = localStorage.getItem('agent-office-desk'); if (v != null) deskStyle = Math.min(DESK_STYLES.length - 1, Math.max(0, parseInt(v, 10) || 0)); } catch (e) { deskStyle = KIT_STYLE; }
 // ---- nội thất dựng bằng Blender (models/office.glb, blender/build_office.py): nạp một lần, nhân bản cho mỗi bàn và mỗi kệ
+const MODELS_V = '?v=__MODELS_V__'; // server điền mtime mới nhất của web/models: dựng lại model thì URL đổi, trình duyệt không dùng bản cũ trong cache
 const officeKit = { state: 'new', parts: {} };
 function loadOfficeKit() {
   if (!HAS_GLTF || officeKit.state !== 'new') return;
   officeKit.state = 'loading';
-  new THREE.GLTFLoader().load('models/office.glb', (g) => {
+  new THREE.GLTFLoader().load('models/office.glb' + MODELS_V, (g) => {
     const seen = new Set();
     g.scene.traverse((o) => {
       if (!o.isMesh) return;
@@ -1061,7 +1062,7 @@ const stationKit = { state: 'new', parts: {} };
 function loadStationKit() {
   if (!HAS_GLTF || stationKit.state !== 'new') return;
   stationKit.state = 'loading';
-  new THREE.GLTFLoader().load('models/stations.glb', (g) => {
+  new THREE.GLTFLoader().load('models/stations.glb' + MODELS_V, (g) => {
     const seen = new Set();
     g.scene.traverse((o) => {
       if (!o.isMesh) return;
@@ -1086,7 +1087,8 @@ for (const st of Object.values(STATION_STYLES)) {
   };
 }
 function stationStyleFor(w) {
-  const st = w.lane && STATION_STYLES[w.lane];
+  const key = w.lane && Object.keys(STATION_STYLES).find((k) => k.toLowerCase() === String(w.lane).toLowerCase()); // runner ghi 'QA', phiên agent ghi 'Qa'
+  const st = key && STATION_STYLES[key];
   if (!st || !HAS_GLTF) return null;
   loadStationKit();
   return stationKit.state === 'ready' ? st : null; // chưa nạp xong thì tạm dùng bàn thường
@@ -1303,7 +1305,7 @@ function withChar(i, cb) {
   c.waiters.push(cb);
   if (c.state !== 'new') return;
   c.state = 'loading';
-  new THREE.GLTFLoader().load('models/' + CHARS[i].file, (g) => {
+  new THREE.GLTFLoader().load('models/' + CHARS[i].file + MODELS_V, (g) => {
     // chiều cao thật lấy từ xương (Box3 của lưới có da sai vì armature nhân 100): từ sàn tới đỉnh đầu
     g.scene.updateMatrixWorld(true);
     const joints = new THREE.Box3(), jp = new THREE.Vector3();
