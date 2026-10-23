@@ -1,15 +1,37 @@
 {
   "version": 1,
   "description": "agent-workbench build board",
-  "project": { "owner": "ToanMobile", "title": "Agent Workbench", "number": 1 },
+  "project": {
+    "owner": "ToanMobile",
+    "title": "Agent Workbench",
+    "number": 1
+  },
   "worker_backend": "claude-p",
   "model_tier": "medium",
-  "target": { "type": "repo", "url": null },
-  "repo": { "path": ".", "remote": "https://github.com/ToanMobile/agent-workbench" },
+  "target": {
+    "type": "repo",
+    "url": null
+  },
+  "repo": {
+    "path": ".",
+    "remote": "https://github.com/ToanMobile/agent-workbench"
+  },
   "base_branch": "main",
   "timezone": "Asia/Ho_Chi_Minh",
-  "columns": ["Backlog", "Ready", "Building", "QA", "Review", "Blocked", "Done"],
-  "labels": ["qa", "bug", "feature"],
+  "columns": [
+    "Backlog",
+    "Ready",
+    "Building",
+    "QA",
+    "Review",
+    "Blocked",
+    "Done"
+  ],
+  "labels": [
+    "qa",
+    "bug",
+    "feature"
+  ],
   "paths": {
     "project_md": "docs/super-board/PROJECT.md",
     "pre_flight_md": "docs/super-board/pre-flight.md",
@@ -21,19 +43,54 @@
     "auto_max_lines": 0,
     "allow_auto_on_production": false,
     "size_exclude": [
-      "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/bun.lockb", "**/bun.lock",
-      "**/npm-shrinkwrap.json", "**/Cargo.lock", "**/poetry.lock", "**/uv.lock", "**/Pipfile.lock",
-      "**/Gemfile.lock", "**/composer.lock", "**/go.sum", "**/Podfile.lock", "**/pubspec.lock",
-      "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*",
-      "**/*.min.js", "**/*.min.css", "**/*.map", "**/*.pb.go", "**/*_pb2.py",
-      "**/__snapshots__/**", "**/*.snap",
-      "docs/super-board/runs/**/*.md", "docs/super-board/runs/**/*.log", "docs/super-board/runs/**/*.txt",
-      "docs/super-board/runs/**/*.png", "docs/super-board/runs/**/*.jpg", "docs/super-board/runs/**/*.jpeg", "docs/super-board/runs/**/*.webp"
+      "**/package-lock.json",
+      "**/yarn.lock",
+      "**/pnpm-lock.yaml",
+      "**/bun.lockb",
+      "**/bun.lock",
+      "**/npm-shrinkwrap.json",
+      "**/Cargo.lock",
+      "**/poetry.lock",
+      "**/uv.lock",
+      "**/Pipfile.lock",
+      "**/Gemfile.lock",
+      "**/composer.lock",
+      "**/go.sum",
+      "**/Podfile.lock",
+      "**/pubspec.lock",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.min.css",
+      "**/*.map",
+      "**/*.pb.go",
+      "**/*_pb2.py",
+      "**/__snapshots__/**",
+      "**/*.snap",
+      "docs/super-board/runs/**/*.md",
+      "docs/super-board/runs/**/*.log",
+      "docs/super-board/runs/**/*.txt",
+      "docs/super-board/runs/**/*.png",
+      "docs/super-board/runs/**/*.jpg",
+      "docs/super-board/runs/**/*.jpeg",
+      "docs/super-board/runs/**/*.webp"
     ]
   },
   "migrations": {
-    "globs": ["supabase/migrations/**", "prisma/migrations/**", "drizzle/**", "**/migrations/*.sql", "db/migrate/**", "alembic/versions/**"],
-    "allowed_envs": ["test", "staging"],
+    "globs": [
+      "supabase/migrations/**",
+      "prisma/migrations/**",
+      "drizzle/**",
+      "**/migrations/*.sql",
+      "db/migrate/**",
+      "alembic/versions/**"
+    ],
+    "allowed_envs": [
+      "test",
+      "staging"
+    ],
     "target_env": "staging",
     "commands": {},
     "checks": {},
@@ -42,14 +99,29 @@
   "merge_load_wait_s": 900,
   "merge_load_max": 100,
   "tick_seconds": 30,
-  "qa_workers": 3,
-  "review_workers": 3,
   "no_progress_cycles": 240,
   "truth_gate": "non-trivial",
   "truth_threshold": 70,
   "verify_commands": [
     "python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --full --force-full --brief --auto-approve-tests"
   ],
-  "collect": { "sources": ["github", "prs", "architecture"], "window_days": 14 },
-  "notifications": { "channel": "session", "chat_id": null, "bot_identity": "ToanMobile" }
+  "collect": {
+    "sources": [
+      "github",
+      "prs",
+      "architecture"
+    ],
+    "window_days": 14
+  },
+  "notifications": {
+    "channel": "session",
+    "chat_id": null,
+    "bot_identity": "ToanMobile"
+  },
+  "max_workers": 10,
+  "build_workers": 10,
+  "build_load_max": 36,
+  "qa_workers": 3,
+  "review_workers": 3,
+  "backlog_pull": false
 }

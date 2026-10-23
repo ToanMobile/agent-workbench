@@ -16,7 +16,7 @@
 #                           with an expected-conflict note so the merge gate rebases. Two
 #                           batch peers: the lower number proceeds, the other is sequenced
 #                           `blockedBy: [<lower>]` — never both against each other.
-#   4. Unclear?             no `## Acceptance Criteria` section with at least one bullet.
+#   4. Unclear?             no `## Acceptance Criteria` section with at least one item (`-`, `*`, `1)` or `1.`).
 #   5. Too big?             (lint.md tiêu chí 15) ≥2 tín hiệu cỡ lớn trong chính nội dung issue:
 #                           Fix liệt kê ≥5 đầu việc ngắn (≈100 dòng mỗi việc, vượt trần 400 dòng)
 #                           hoặc tiêu đề nêu ≥3 việc · trải ≥4 vùng · thẻ tự nhận lớn (giai đoạn,
@@ -91,6 +91,7 @@ done
 
 jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$OPEN" \
       --argjson closed "$CLOSED" --argjson cards "$CARDS" --arg files "$FILES" \
+      --argjson hasinf "$([ -n "$INFLIGHT" ] && echo true || echo false)" \
       --argjson th "$THRESHOLD" '
   def stop: ["the","and","for","with","from","into","when","that","this","add","fix","make","use","should","not","are","can","new"];
   def toks: ascii_downcase | [scan("[a-z0-9]+")] | map(select(length > 2)) | . - stop | unique;
@@ -113,7 +114,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | if ($h | length) == 0 then false
       else [ $l[($h | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
-        | (if $e == null then $t else $t[:$e] end) | any(.[]; test("^[ \t]*[-*][ \t]+\\S")) end;
+        | (if $e == null then $t else $t[:$e] end) | any(.[]; test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S")) end;
 
   # Câu 5 — quá lớn? Regex trên chữ của issue (title + body), tất định. Chỉnh 19/10 trên 245 issue lấy bằng
   # `gh issue list --state all` ở 6 board: 6 thẻ builder đã chặn vì quá lớn (NFH #4 #13 #14 #54, OfficeReader
@@ -158,8 +159,8 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | [ $items[] | select([ scan("\\S+") ] | length <= 6) ] as $short
     | [ (.title // "") | sub("^\\S+ \\[\\w+\\] "; "") | gsub("\\([^()]*\\)"; "") | splits("(?<![0-9]),|,(?![0-9])|;")
         | gsub("^\\s+|\\s+$"; "") | select(length > 0) ] as $named
-    | [ $ac / "\n" | .[] | select(test("^[ \t]*[-*][ \t]+\\S"))
-        | sub("^[ \t]*[-*][ \t]+(?:\\[[ xX]\\][ \t]*)?"; "") ] as $acs
+    | [ $ac / "\n" | .[] | select(test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S"))
+        | sub("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+(?:\\[[ xX]\\][ \t]*)?"; "") ] as $acs
     | ([ (.title // ""), $fix, $ac ] | join("\n")) as $txt
     | [ areas | to_entries[] | select(.value as $re | $txt | test($re; "i")) | .key ] as $zones
     # Tự nhận lớn: tiêu đề là cả một giai đoạn / vertical slice ("Season", "epic" là tên tính năng game,
@@ -225,11 +226,17 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
           | select(sim(.title; $i.title) >= $th)
           | "card #\(.number) in \(.status) covers it: \"\(.title)\"" ] ) as $busy
 
-    | [ $others[] | select(closes($n) | not) | select(sim(.title; $i.title) < $th)
+    # #280: a card that already has its own open PR came back (rebuild/rebase): its overlap was accepted at the first
+    # build, so it is not sequenced again (the merge gate rebases). With --inflight, only a PR that closes a card in
+    # Ready/Building/QA/Review blocks: the PR of a Backlog/Blocked card may never close, so waiting on it is a deadlock.
+    | ([ $open[] | select((.headRefName // "") | startswith("issue-\($n)-")) ] | length > 0) as $own
+    | [ $cards[] | select((.status as $s | ["Ready","Building","QA","Review"] | index($s)) != null) | .number ] as $active
+    | [ $others[] | select($own | not) | select(closes($n) | not) | select(sim(.title; $i.title) < $th)
         | . as $p | [ ($p.files // [])[] | .path ] as $pf
         | ($mine - ($mine - $pf)) as $hit
         | select(($hit | length) > 0)
-        | { pr: $p.number, issues: ($p | closed_refs), files: $hit } ] as $overlap
+        | { pr: $p.number, files: $hit,
+            issues: ($p | closed_refs | if $hasinf then map(select(. as $k | $active | index($k))) else . end) } ] as $overlap
 
     | ( [ $merged[] | { ref: "#\(.number)", kind: "merged-pr", title, sim: sim(.title; $i.title) } ]
         + [ $others[] | { ref: "#\(.number)", kind: "open-pr", title, sim: sim(.title; $i.title) } ]
@@ -237,13 +244,13 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
         + [ $cards[] | select(.number != $n) | { ref: "#\(.number)", kind: "card:\(.status)", title, sim: sim(.title; $i.title) } ]
         | map(select(.sim >= 0.25 and .sim < $th)) | sort_by(-.sim) | .[:5] ) as $near
 
-    | { number: $n, title: $i.title, candidates: $near, blockedBy: [], conflictWith: [], _files: $mine }
+    | { number: $n, title: $i.title, candidates: $near, blockedBy: [], conflictWith: [], _files: $mine, _own: $own }
       + ( if ($done | length) > 0 then
             { verdict: "hold", tag: "done", reason: "already delivered", evidence: $done }
           elif ($busy | length) > 0 then
             { verdict: "hold", tag: "in-progress", reason: "already being built elsewhere", evidence: $busy }
           elif ($i | has_acs | not) then
-            { verdict: "hold", tag: "unclear", reason: "no `## Acceptance Criteria` bullets", evidence: ["issue #\($n) body"] }
+            { verdict: "hold", tag: "unclear", reason: "no `## Acceptance Criteria` items (`-`, `*`, `1.`, `1)`)", evidence: ["issue #\($n) body"] }
           elif $big.hold then
             { verdict: "hold", tag: "too-big", evidence: $big.evidence, split: $big.split,
               reason: "too big — split it with /to-tickets into cards under the merge cap (default 400 lines) before building" }
@@ -262,7 +269,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   | sort_by(.number)
   | reduce .[] as $c ({out: [], go: []};
       ([ .go[] | select((.files - (.files - $c._files)) | length > 0) ] | first) as $first
-      | if $c.verdict == "proceed" and $first != null then
+      | if $c.verdict == "proceed" and $first != null and ($c._own | not) then
           .out += [ $c + { verdict: "sequence", tag: "overlap",
                            reason: "a lower-numbered card in this check touches the same files — build after it",
                            evidence: [ "#\($first.number) touches \(($first.files - ($first.files - $c._files)) | join(", "))" ],
@@ -270,5 +277,5 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
         elif $c.verdict == "proceed" then
           .out += [ $c ] | .go += [ { number: $c.number, files: $c._files } ]
         else .out += [ $c ] end)
-  | .out | map(del(._files))
+  | .out | map(del(._files, ._own))
   | INDEX(.number | tostring)'

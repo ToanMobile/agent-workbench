@@ -39,7 +39,8 @@
         {
           "id": "REG-AUTO-ANTIGRAVITY-PM-MCP-01",
           "name": "antigravity-pm-mcp: package.json test script",
-          "command": "cd mcp-servers/antigravity-pm-mcp && npm test"
+          "command": "cd mcp-servers/antigravity-pm-mcp && npm test",
+          "parallel_safe": true
         }
       ]
     },
@@ -78,7 +79,8 @@
         {
           "id": "REG-AUTO-PLAY-STORE-MCP-01",
           "name": "play-store-mcp: pytest",
-          "command": "cd mcp-servers/play-store-mcp && uv run --frozen --extra dev pytest -q"
+          "command": "cd mcp-servers/play-store-mcp && uv run --frozen --extra dev pytest -q",
+          "parallel_safe": true
         }
       ]
     },
@@ -183,20 +185,6 @@
       ]
     },
     {
-      "component": "devkit-all",
-      "watch_files": [
-        "universal-agent-devkit/*"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-DK-ALL-01",
-          "name": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
-          "command": "bash universal-agent-devkit/tests/run_impacted.sh",
-          "parallel_safe": true
-        }
-      ]
-    },
-    {
       "component": "workbench-agent-config",
       "watch_files": [
         ".claude/settings.json",
@@ -208,7 +196,8 @@
         {
           "id": "REG-WB-CONFIG-01",
           "name": "agent-kit health: every registered hook exists, imports resolve, context in sync",
-          "command": "bash universal-agent-devkit/bin/agent-kit health -t ."
+          "command": "bash universal-agent-devkit/bin/agent-kit health -t .",
+          "parallel_safe": true
         }
       ]
     },
@@ -221,12 +210,14 @@
         {
           "id": "REG-SB-GITHUB-READ-01",
           "name": "super-board github-read helper",
-          "command": "bash tests/super-board/test_github_read.sh"
+          "command": "bash tests/super-board/test_github_read.sh",
+          "parallel_safe": true
         },
         {
           "id": "REG-SB-RUNNER-LANES-01",
           "name": "super-board runner lanes",
-          "command": "bash tests/super-board/test_runner_lanes.sh"
+          "command": "bash tests/super-board/test_runner_lanes.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -239,7 +230,8 @@
         {
           "id": "REG-SB-MERGE-GATE-STALE-01",
           "name": "merge gate says stale only when the branch is behind base",
-          "command": "bash tests/super-board/test_merge_gate_stale_message.sh"
+          "command": "bash tests/super-board/test_merge_gate_stale_message.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -256,7 +248,8 @@
         {
           "id": "REG-SB-PREFLIGHT-TOO-BIG-01",
           "name": "preflight holds too-big cards before a builder pass, proceeds on normal ones",
-          "command": "bash tests/super-board/test_preflight_too_big.sh"
+          "command": "bash tests/super-board/test_preflight_too_big.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -275,7 +268,8 @@
         {
           "id": "REG-SB-RUNNER-WATCHDOG-01",
           "name": "super-board runner survives a killed sleep; durable stop marker; launchd watchdog never restarts a stopped board",
-          "command": "bash tests/super-board/test_runner_watchdog.sh"
+          "command": "bash tests/super-board/test_runner_watchdog.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -292,12 +286,14 @@
         {
           "id": "REG-SB-MERGE-POLICY-NL-01",
           "name": "merge-policy sees always_human keywords after VT/FF/CR/NEL/U+2028, in ++ lines and across odd whitespace",
-          "command": "bash tests/super-board/test_merge_policy_odd_newlines.sh"
+          "command": "bash tests/super-board/test_merge_policy_odd_newlines.sh",
+          "parallel_safe": true
         },
         {
           "id": "REG-SB-UPSTREAM-66-67-01",
           "name": "github-read keeps odd-newline diffs byte-exact without halting; approval links body issues off the default base",
-          "command": "bash tests/super-board/test_upstream_66_67.sh"
+          "command": "bash tests/super-board/test_upstream_66_67.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -311,7 +307,8 @@
         {
           "id": "REG-AUTO-CC-SWITCHER-MCP-01",
           "name": "cc-switcher-mcp: package.json test script",
-          "command": "cd mcp-servers/cc-switcher-mcp && npm test"
+          "command": "cd mcp-servers/cc-switcher-mcp && npm test",
+          "parallel_safe": true
         }
       ]
     },
@@ -345,7 +342,8 @@
         {
           "id": "REG-SB-NEEDS-YOU-SKIP-01",
           "name": "runner, planner and status leave Ready cards that wait for a person (needs-you / human-gated) to the person",
-          "command": "bash tests/super-board/test_needs_you_skip.sh"
+          "command": "bash tests/super-board/test_needs_you_skip.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -407,7 +405,8 @@
         {
           "id": "REG-SB-POST-MERGE-CLEAN-01",
           "name": "post-merge clean and --sweep remove merged lane worktrees, keep work, one sweep at a time, salvage leaves no junk",
-          "command": "bash tests/super-board/test_post_merge_clean.sh && bash tests/super-board/test_post_merge_squash_leftovers.sh && bash tests/super-board/test_post_merge_sweep_wiring.sh"
+          "command": "bash tests/super-board/test_post_merge_clean.sh && bash tests/super-board/test_post_merge_squash_leftovers.sh && bash tests/super-board/test_post_merge_sweep_wiring.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -440,7 +439,8 @@
         {
           "id": "REG-SB-NEEDS-DEVICE-01",
           "name": "runner, planner and status hold needs-device QA cards while no real device is online (emulator, denylist, no adb)",
-          "command": "bash tests/super-board/test_needs_device_skip.sh"
+          "command": "bash tests/super-board/test_needs_device_skip.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -468,7 +468,8 @@
         {
           "id": "REG-SB-MERGE-LOAD-WAIT-01",
           "name": "merge gate waits (bounded, inside the lock before the base is pinned, lock stamp refreshed) for the machine load to drop, then verifies anyway",
-          "command": "bash tests/super-board/test_merge_gate_load_wait.sh"
+          "command": "bash tests/super-board/test_merge_gate_load_wait.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -535,7 +536,8 @@
         {
           "id": "REG-SB-MERGE-TIMEOUT-RETRY-01",
           "name": "merge gate retries a post-fix-gate verify once only when every red suite is TIMEOUT (REJECT exit 1, static checks passed); a real FAIL, UNTESTED or static finding is not retried; verify exit 124 still retried once",
-          "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh"
+          "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -568,7 +570,8 @@
         {
           "id": "REG-DK-SLOT-CLASSES-01",
           "name": "quyền chạy theo tải máy của từng suite (P1b): bỏ 2 slot engine; tải cao thì chờ rồi vẫn chạy, không UNTESTED; chờ tải không ăn vào thời gian chờ khoá; khoá Unity (độc quyền) vẫn chặn, không còn khoá thiết bị; bash -lc nhận ra Unity; hàng đợi ưu tiên + SJF; suite STALE bị SLOT không lọt PASS",
-          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_classes.sh"
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_classes.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -583,7 +586,8 @@
         {
           "id": "REG-SB-HEAVY-SLOT-01",
           "name": "heavy slot theo tải máy (P1b): CLI/wrapper super-board chạy ngay khi tải < DEVKIT_SLOT_LOAD_MAX, chờ rồi vẫn chạy khi tải cao, --nonblock không chạy khi tải cao, DEVKIT_SLOT_LOAD_WAIT_S=0 không chờ, suite Unity lồng trong CLI vẫn xin khoá Unity; --force-full với suite nhẹ không chờ",
-          "command": "bash tests/super-board/test_heavy_slot.sh"
+          "command": "bash tests/super-board/test_heavy_slot.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -799,6 +803,249 @@
           "id": "REG-SB-LANE-WORKERS-01",
           "name": "lane QA và Review chạy nhiều worker (qa_workers / review_workers, mặc định 1): một worker mới mỗi tick, cổng tải build_load_max, zombie/reap/dừng khẩn/nhận lại nhận ra cả worker thêm, worker thêm không bị trần max_workers chặn",
           "command": "bash tests/super-board/test_runner_lane_workers.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "mcp-servers/agent-office",
+      "watch_files": [
+        "mcp-servers/agent-office/server.py",
+        "mcp-servers/agent-office/web/index.html",
+        "mcp-servers/agent-office/web/pathing.js",
+        "mcp-servers/agent-office/web/vendor/*",
+        "mcp-servers/agent-office/*.sh",
+        "ai-factory.sh",
+        "mcp-servers/agent-office/tests/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-01",
+          "name": "agent-office: unittest (server, redact, host check) và tìm đường A* của người đi trong xưởng (node)",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-card-items-retry",
+      "watch_files": [
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-stop.sh",
+        "tests/super-board/test_card_items_count_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-CARD-ITEMS-RETRY-01",
+          "name": "card.sh items đọc lại 1 lần khi số item lệch totalCount (không chết runner); lệch cả hai lần vẫn exit 69; stop.sh ghi marker trước kill (#256)",
+          "command": "bash tests/super-board/test_card_items_count_retry.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-board-read-retry",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_board_read_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-READ-RETRY-01",
+          "name": "runner đọc lại board có backoff khi lần đọc hỏng tạm thời; hỏng hết lượt thì bỏ tick thay vì chết; halt 79 vẫn dừng; vòng chính chỉ đọc qua tick_fetch (#256)",
+          "command": "bash tests/super-board/test_runner_board_read_retry.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-matrix-merge-driver",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/matrix_merge_driver.py",
+        "universal-agent-devkit/scripts/git/githooks.sh",
+        "universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+        ".gitattributes"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MATRIX-MERGE-01",
+          "name": "merge driver ma trận hồi quy: hai nhánh cùng nối rule khác nhau vào cuối thì gộp không conflict và gate vẫn tin ma trận chỉ-thêm; cùng id khác nội dung thì lỗi rõ; sửa rule cũ vẫn conflict; githooks install cài driver",
+          "command": "bash universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-preflight-swept",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_runner_preflight_swept.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-PREFLIGHT-SWEPT-01",
+          "name": "runner chạy preflight trước khi nhận thẻ build (hold/sequence có blockedBy: không claim, thẻ sang Blocked kèm blocked-by; exit 79 dừng run) và sổ SWEPT_CARDS bền qua lần khởi động lại (#253)",
+          "command": "bash tests/super-board/test_runner_preflight_swept.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-blocked-by-open-only",
+      "watch_files": [
+        ".claude/bin/super-board-blocked-by.py",
+        "tests/super-board/test_blocked_by_open_only.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-BLOCKED-BY-OPEN-ONLY-01",
+          "name": "dòng blocked-by: chỉ ghi issue còn mở; số đã đóng bị bỏ kèm lý do, không còn số mở thì `-`, không đọc được trạng thái thì exit 79 (#253)",
+          "command": "python3 tests/super-board/test_blocked_by_open_only.py",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-wip-limit",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_wip_limit.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WIP-LIMIT-01",
+          "name": "runner giới hạn WIP (#252): không giao build khi QA+Review chờ >= build_wip_k × (qa_workers+review_workers); không giao build / worker QA-Review thêm khi số post-fix-gate đang chạy >= gate_max; log lý do; số gate không đếm được thì không chặn",
+          "command": "bash tests/super-board/test_runner_wip_limit.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-red-on-base",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-verify-cmd.sh",
+        "tests/super-board/test_merge_gate_red_on_base.sh",
+        "tests/super-board/test_verify_cmd_same_as_gate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RED-ON-BASE-01",
+          "name": "merge gate: suite đỏ cả trên origin/base không REJECT PR, mở thẻ riêng; suite do PR làm đỏ vẫn exit 11 (#251)",
+          "command": "bash tests/super-board/test_merge_gate_red_on_base.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-VERIFY-CMD-01",
+          "name": "QA in đúng lệnh verify của merge gate (cùng hàm chèn --diff/--force-full) (#251)",
+          "command": "bash tests/super-board/test_verify_cmd_same_as_gate.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-self-reload",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SELF-RELOAD-01",
+          "name": "runner rảnh tự nạp lại super-board-run.sh khi origin đổi: ff main rồi exec lại; main lệch origin / ff hỏng / sai cú pháp thì notify một lần, không restart mù; còn worker thì không đụng",
+          "command": "bash tests/super-board/test_runner_self_reload.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-preflight-stale-overlap",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_preflight_overlap_stale.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-PREFLIGHT-STALE-OVERLAP-01",
+          "name": "preflight câu 3: PR của thẻ Backlog/Blocked không chặn; PR của thẻ đang chạy vẫn chặn; thẻ có PR riêng không bị sequence lại; không --inflight giữ hành vi cũ (#280)",
+          "command": "bash tests/super-board/test_preflight_overlap_stale.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-preflight-numbered-ac",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_preflight_numbered_ac.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-PREFLIGHT-NUMBERED-AC-01",
+          "name": "AC đánh số 1) / 1. được nhận ở preflight (không hold unclear) và ở luật kéo Backlog; AC chỉ văn xuôi vẫn bị chặn (#283)",
+          "command": "bash tests/super-board/test_preflight_numbered_ac.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "mcp-servers/agent-office/blender",
+      "watch_files": [
+        "mcp-servers/agent-office/blender/*",
+        "mcp-servers/agent-office/web/models/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-02",
+          "name": "agent-office: bộ nội thất office.glb dựng bằng Blender còn đủ khối có tên (Desk, Chair, Monitor/Screen có UV, Shelf...) và đủ nhỏ",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_office_glb",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-review-approved-head",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_review_approved_head.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-APPROVED-HEAD-01",
+          "name": "runner: thẻ Review đã duyệt đúng head (comment approved-head:<sha> của OWNER/MEMBER/COLLABORATOR) chỉ chạy merge-only với --expect-head, kể cả sau merge gate exit 4; head đổi, người ngoài duyệt hay đọc GitHub hỏng thì review đầy đủ (#227)",
+          "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-all",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-01",
+          "name": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
+          "command": "bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-ready-order",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_ready_order.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-READY-ORDER-01",
+          "name": "runner giao thẻ Ready theo priority label, bug trước, số issue tăng dần; thẻ body nhắm repo khác → Blocked kèm block-template; thẻ có Fix trùng thẻ đang mở → comment một lần, không giao",
+          "command": "bash tests/super-board/test_runner_ready_order.sh",
           "parallel_safe": true
         }
       ]

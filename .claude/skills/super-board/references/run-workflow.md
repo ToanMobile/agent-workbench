@@ -270,6 +270,8 @@ Repeat until a done condition or halt gate fires:
    For a GitHub read halt, follow "Required GitHub evidence" above. Otherwise,
    for EVERY card in the wave, release the assignee
    (`gh issue edit <n> --remove-assignee <bot_identity>`, idempotent).
+   A card whose issue is now CLOSED (builder "already met" exit, run.md step 3c) moves to Done:
+   `.claude/bin/super-board-card.sh --config <cfg> move <N> Done`.
    Append one line per card to the run manifest
    `docs/super-board/runs/<date>-<slug>.md`:
    `| #N | <lanesRun> | <finalStatus> | <column> | <detail> |`.
