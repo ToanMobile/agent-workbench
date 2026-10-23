@@ -1081,6 +1081,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-review-merge-train",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_review_merge_train.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-MERGE-TRAIN-01",
+          "name": "runner: từ 2 thẻ Review đã duyệt đúng head trở lên thì một worker chạy super-board-merge-train.sh --prs cho cả đợt (lock chung PID, không bị coi là zombie khi thẻ đầu đã Done); thẻ chưa duyệt, sai head, đã khoá hay SB_REVIEW_TRAIN=0 thì đường từng thẻ như cũ (#228)",
+          "command": "bash tests/super-board/test_runner_review_merge_train.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
