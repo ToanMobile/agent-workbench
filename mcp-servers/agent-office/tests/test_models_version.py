@@ -26,6 +26,17 @@ class ModelsVersionTest(unittest.TestCase):
             os.utime(p, (2000, 2000))
             self.assertNotEqual(v1, server.models_version(d))
 
+    def test_version_changes_when_a_model_is_replaced_keeping_its_mtime(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.mkdir(os.path.join(d, "models"))
+            p = os.path.join(d, "models", "a.glb")
+            open(p, "wb").write(b"x")
+            os.utime(p, (1000, 1000))
+            v1 = server.models_version(d)
+            open(p, "wb").write(b"xyz")  # cp -p / rsync -a from an older build: new bytes, old mtime
+            os.utime(p, (1000, 1000))
+            self.assertNotEqual(v1, server.models_version(d))
+
     def test_index_gets_the_version_filled_in(self):
         page = server.fill_models_version(b"const MODELS_V = '?v=__MODELS_V__';", "123")
         self.assertEqual(page, b"const MODELS_V = '?v=123';")
