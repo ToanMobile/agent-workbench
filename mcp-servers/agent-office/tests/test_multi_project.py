@@ -137,6 +137,15 @@ class NewCardsAndBulkMove(unittest.TestCase):
         self.assertEqual({c["o"] for c in calls}, {"OPT_1_Ready", "OPT_2_Ready", "OPT_3_Ready"})
         self.assertTrue(all(i["status"] == "Ready" for i in self.app.project["items"]))
 
+    def test_move_all_can_be_limited_to_one_repo(self):
+        for it in self.app.project["items"]:
+            it["status"] = "Backlog"
+        with mock.patch.object(server, "gh_graphql", side_effect=lambda q, v: {}):
+            r = self.app.act("move-all", {"from": "Backlog", "to": "Ready", "repo": "repo2"})
+        self.assertEqual(r["moved"], 1)
+        self.assertEqual({i["repo"]: i["status"] for i in self.app.project["items"]},
+                         {"repo1": "Backlog", "repo2": "Ready", "repo3": "Backlog"})
+
     def test_move_all_reports_cards_whose_project_lacks_the_column(self):
         for it in self.app.project["items"]:
             it["status"] = "Backlog"

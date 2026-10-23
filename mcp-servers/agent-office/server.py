@@ -1405,7 +1405,8 @@ class App:
             if not src or not dst or src == dst:
                 raise ValueError("Cần cột nguồn và cột đích khác nhau.")
             with self.lock:
-                todo = [x for x in self.project.get("items", []) if x["status"] == src]
+                repo = str(body.get("repo") or "")
+                todo = [x for x in self.project.get("items", []) if x["status"] == src and (not repo or x["repo"] == repo)]
             moved, failed = 0, []
             for it in todo:
                 part = self._part(it)

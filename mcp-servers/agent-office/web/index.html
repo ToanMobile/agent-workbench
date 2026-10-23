@@ -2178,11 +2178,11 @@ async function moveItem(it, colName) {
   try { await api('set-field', { itemId: it.id, field: STATE.project.statusField, option: colName }); toast('Đã chuyển ' + itemLabel(it) + ' sang ' + colName); }
   catch (err) { it.status = prev; rerender(); toast('Không chuyển được ' + itemLabel(it) + ': ' + err.message, 'error'); }
 }
-async function moveAll(from, to, n) {
-  if (!canWrite() || !confirm('Chuyển ' + n + ' thẻ từ "' + from + '" sang "' + to + '"? Runner sẽ nhận các thẻ này ngay.')) return;
+async function moveAll(from, to, n, repo) {
+  if (!canWrite() || !confirm('Chuyển ' + n + ' thẻ' + (repo ? ' của ' + repo : '') + ' từ "' + from + '" sang "' + to + '"? Runner sẽ nhận các thẻ này ngay.')) return;
   try {
-    const r = await api('move-all', { from, to });
-    STATE.items.forEach((it) => { if (it.status === from && !r.failedCount) it.status = to; });
+    const r = await api('move-all', { from, to, repo });
+    STATE.items.forEach((it) => { if (it.status === from && (!repo || it.repo === repo) && !r.failedCount) it.status = to; });
     VERSION = null; poll(true);
     toast('Đã chuyển ' + r.moved + ' thẻ sang ' + to + (r.failedCount ? ', ' + r.failedCount + ' thẻ lỗi: ' + r.failed.join('; ') : ''), r.failedCount ? 'error' : undefined);
   } catch (err) { toast('Không chuyển được hàng loạt: ' + err.message, 'error'); }
@@ -2543,7 +2543,12 @@ function drawColumn(name) {
   }
   groups.forEach(([repo, list]) => {
     const head = h('div', 'colhead'); const sw = h('span', 'sw'); sw.style.background = colColor(col);
-    head.append(sw, h('span', null, repo), h('span', 'n', String(list.length))); d.append(head);
+    head.append(sw, h('span', null, repo), h('span', 'n', String(list.length)));
+    if (target && target.name !== name && canWrite() && groups.length > 1) {
+      const rb = h('button', 'btn', '→ ' + target.name); rb.type = 'button'; rb.title = 'Chuyển ' + list.length + ' thẻ của ' + repo + ' sang ' + target.name;
+      rb.onclick = () => moveAll(name, target.name, list.length, repo); head.append(rb);
+    }
+    d.append(head);
     const ul = h('ul', 'row-list wrap');
     list.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).forEach((it) => {
       const li = h('li'); const b = h('button'); b.type = 'button';
