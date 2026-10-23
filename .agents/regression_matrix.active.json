@@ -1064,6 +1064,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "kit-merge-tree-no-leak",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_merge_tree_no_leak.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MERGE-TREE-NOLEAK-01",
+          "name": "merge-tree dò bị kill giữa chừng không để .merge_file_* ở cây làm việc (cwd tạm), kết luận 'đã tích hợp' không đổi khi driver chạy kịp (#309)",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_merge_tree_no_leak.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

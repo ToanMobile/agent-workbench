@@ -178,16 +178,16 @@ def _timeout():
     return t
 
 
-def _run(argv, inp=None, text=True, env=None, bounded=True):
+def _run(argv, inp=None, text=True, env=None, bounded=True, cwd=None):
     """subprocess.run with a bounded time. On timeout the child is killed and a CompletedProcess with returncode 124 comes back; so it does
     when the shared deadline of the running inventory() is spent (nothing is started then). `bounded=False` for a call that CHANGES the repo or the
     disk (worktree add / remove --force, the temp-index work of `diff`): killed midway it leaves a half checkout or a half-deleted folder."""
     if not bounded:
-        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env)
+        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env, cwd=cwd)
     if _spent():
         return subprocess.CompletedProcess(argv, 124, "" if text else b"", "inventory deadline spent")
     try:
-        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env, timeout=_timeout())
+        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env, timeout=_timeout(), cwd=cwd)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(argv, 124, "" if text else b"", "timed out")
 
@@ -198,6 +198,18 @@ def git(cwd, *args, check=True, env=None, inp=None, bounded=True):
         err = r.stderr if isinstance(r.stderr, str) else r.stderr.decode("utf-8", "replace")
         raise SystemExit(f"✖ worktree: git {' '.join(args[:2])}: {err.strip()}")
     return r
+
+
+def _merge_tree(repo, attr_tree, *args):
+    """`git merge-tree --write-tree <args>` for `repo`, run with a scratch cwd. An external merge driver (the matrix driver) writes its
+    `.merge_file_*` temp files into git's cwd, and a probe killed by its time budget leaves them there: three files in the main checkout
+    per kill (#309). `--git-dir` + `--attr-source=<attr_tree>` keep the repo's own attributes, so the driver still applies and the verdict is
+    the one `git -C repo merge-tree` gave. Trouble finding the git dir: the CompletedProcess of that failed call."""
+    gd = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
+    if gd.returncode != 0 or not gd.stdout.strip():
+        return gd
+    with tempfile.TemporaryDirectory(prefix="devkit-merge-tree-") as scratch:
+        return _run(["git", f"--git-dir={gd.stdout.strip()}", f"--attr-source={attr_tree}", "merge-tree", "--write-tree", *args], cwd=scratch)
 
 
 def _read_regular(path, limit=32_000_000):
@@ -1330,7 +1342,7 @@ def _adds_nothing_to_main(cwd, main_head, head):
     base = git(cwd, "merge-base", main_head, head, check=False).stdout.strip()
     if not base:
         return False
-    r = git(cwd, "merge-tree", "--write-tree", f"--merge-base={base}", main_head, head, check=False)
+    r = _merge_tree(cwd, main_head, f"--merge-base={base}", main_head, head)
     merged = (r.stdout.splitlines() or [""])[0].strip()
     if r.returncode != 0 or not merged:
         return False
@@ -3224,7 +3236,7 @@ def _merges_to(main, into, other):
     """True khi gộp `other` vào `into` ra ĐÚNG cây của `into` (merge-tree, không đụng cây làm việc): `other` không mang thêm gì, kể cả
     file sổ sách (khác _adds_nothing_to_main). Xung đột, git cũ, lỗi: False."""
     tree = git(main, "rev-parse", "-q", "--verify", f"{into}^{{tree}}", check=False).stdout.strip()
-    r = git(main, "merge-tree", "--write-tree", into, other, check=False)
+    r = _merge_tree(main, into, into, other)
     return bool(tree) and r.returncode == 0 and r.stdout.split("\n", 1)[0].strip() == tree
 
 
@@ -3707,6 +3719,32 @@ def _grok_source(session, wt):
     return None
 
 
+MERGE_FILE_MIN_AGE_S = 600   # a `.merge_file_*` younger than this may still be in use by a merge driver that is running
+
+
+def _sweep_merge_files(top):
+    """Delete the untracked top-level `.merge_file_*` files that killed `git merge-tree` probes left in `top` (#309): only a regular file
+    (never a link) whose name is git's own `.merge_file_XXXXXX`, that git does not track and nobody wrote to for MERGE_FILE_MIN_AGE_S.
+    Returns the names removed; an error on one file is skipped (heal never fails a session start)."""
+    out = []
+    try:
+        names = os.listdir(top)
+    except OSError:
+        return out
+    for n in names:
+        path = os.path.join(top, n)
+        try:
+            if not re.fullmatch(r"\.merge_file_[A-Za-z0-9]{6}", n) or not stat.S_ISREG(os.lstat(path).st_mode) \
+                    or time.time() - os.lstat(path).st_mtime < MERGE_FILE_MIN_AGE_S \
+                    or git(top, "ls-files", "--error-unmatch", "--", n, check=False).returncode == 0:
+                continue
+            os.unlink(path)
+            out.append(n)
+        except OSError:
+            continue
+    return out
+
+
 def cmd_heal(cwd, args):
     """A checkout the HOST made — Grok's worktree session, a separate clone (OfficeReader
     2026-09-28), or a plain `git worktree` — never went through `add`: no .agents/devkit link
@@ -3733,6 +3771,8 @@ def cmd_heal(cwd, args):
         pass
     src = src or _grok_source(session, wt)
     done = []
+    for top in {wt, src} - {None}:
+        done += _sweep_merge_files(top)
     link = os.path.join(wt, ".agents", "devkit")
     target = os.path.join(src, ".agents", "devkit") if src else None
     target = target if target and os.path.isdir(target) else devkit
