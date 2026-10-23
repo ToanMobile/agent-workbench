@@ -496,6 +496,7 @@ def merged_evidence():
           trong lượt là squash của H (cây S = merge-tree S^1 H), và repo xét đứng ở H hoặc chứa S mà không có gì ngoài origin.
     Cả hai: repo xét sạch, hoặc (chỉ main) chỉ bẩn file mà phiên này không đụng (untouched_by_session)."""
     import subprocess
+    import tempfile
     import session_worktree   # hooks/ (đã vào sys.path cùng devkit_harness); thiếu thì ImportError -> chặn như cũ
     import tree_fp
     if start is None or not session_worktree.trunk_mode(repo):
@@ -674,6 +675,9 @@ def merged_evidence():
     landed = [(c[0], c[2]) for c in (l.split() for l in hist.splitlines())
               if len(c) == 3 and c[1].isdigit() and int(c[1]) >= start - MERGE_GATE_SKEW_S]   # một cha (squash), ghi trong lượt
     trees = {}
+    gdir = out(git("rev-parse", "--path-format=absolute", "--git-common-dir"))   # #309: merge-tree runs with a scratch cwd (a killed merge driver leaves its temp files there)
+    if not gdir:
+        return None
     for pr, h in reversed(merged):
         if git("cat-file", "-e", h + "^{commit}").returncode:   # head của PR chưa từng fetch về đây: thử bản ghi kế tiếp
             continue
@@ -681,7 +685,9 @@ def merged_evidence():
             if left() <= 0:
                 log("merge-gate check: out of time")
                 return None
-            r = git("merge-tree", "--write-tree", parent, h)
+            with tempfile.TemporaryDirectory(prefix="devkit-merge-tree-") as scratch:
+                r = subprocess.run(["git", "--git-dir=" + gdir, "--attr-source=" + parent, "merge-tree", "--write-tree", parent, h],
+                                   capture_output=True, env=genv, cwd=scratch, timeout=max(0.5, min(10, left())))
             if r.returncode not in (0, 1):   # 1 = xung đột (không phải squash này); khác = git cũ (< 2.38) hay lỗi: nói ra, không im lặng
                 log("merge-gate check: merge-tree failed (%s)" % r.stderr.decode("utf-8", "replace").strip()[:120])
                 return None
