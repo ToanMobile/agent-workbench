@@ -519,9 +519,9 @@ on the base branch**.
    Review whose PR head equals it (gate exit 4, a lock or conflict, not code) gets a **merge-only** worker next tick — this step 5 only,
    `--expect-head` pinned, no new review. A push changes the head, so the approval lapses and the next tick reviews the new head (#227).
    The runner batches by itself (#228): when two or more Review cards carry a valid `approved-head:` (above), it hands them to
-   **one merge-train worker** (`super-board-merge-train.sh --prs <PRs in board order>`, up to `SB_TRAIN_MAX`, default 8) instead of one
+   **one merge-train worker** (`super-board-merge-train.sh --prs <N:sha,…>` in board order, each `sha` the approved head, up to `SB_TRAIN_MAX`, default 8) instead of one
    reviewer per card, each running its own gate; every card of the batch holds a lock with the same PID, so the zombie sweep keeps that worker
-   while any of them is still in Review. That worker reviews nothing, re-checks each head against its approval (moved → leaves the batch),
+   while any of them is still in Review. That worker reviews nothing; the train itself drops a PR whose head moved off its `sha` (`train-result: <N> head-moved`, exit 6, the card stays in Review for a fresh review),
    runs the train once and routes every `train-result: <PR> <state>` line below. `SB_REVIEW_TRAIN=0` goes back to one worker per card.
    Several PRs ready in the same wave: `bash .claude/bin/super-board-merge-train.sh --config <config> --prs <N,M,…>`
    verifies their combined tree once (bisecting to the red PR when it fails), then runs this same gate for each good PR

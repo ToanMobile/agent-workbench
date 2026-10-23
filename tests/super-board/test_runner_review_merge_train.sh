@@ -76,7 +76,7 @@ lock_pid() { sed -n 's/^PID=//p' "$INFLIGHT_DIR/$1" 2>/dev/null | head -1; }
 reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 MEMBER "$H2"; approve 72 COLLABORATOR "$H3"; tick
 [ "$(ls wl | wc -l | tr -d ' ')" = 1 ] && ok "3 approved cards: exactly one worker dispatched ($(logs))" || fail "expected one worker log, got: $(logs)"
 prompt_any | grep -q 'super-board-merge-train.sh' && ok "  … its prompt runs super-board-merge-train.sh" || fail "prompt lacks the merge train: $(prompt_any | cut -c1-200)"
-prompt_any | grep -q -- '--prs 70,71,72' && ok "  … over all three PRs in board order (--prs 70,71,72)" || fail "prompt lacks --prs 70,71,72"
+prompt_any | grep -q -- "--prs 70:$H1,71:$H2,72:$H3" && ok "  … over all three PRs in board order, each pinned to its approved head" || fail "prompt lacks the pinned --prs: $(prompt_any | cut -c1-400)"
 prompt_any | grep -q 'super-review on issue' && fail "a full review was ordered inside the train prompt" || ok "  … and orders no fresh review"
 P7=$(lock_pid 7); P8=$(lock_pid 8); P9=$(lock_pid 9)
 { [ -n "$P7" ] && [ "$P7" = "$P8" ] && [ "$P8" = "$P9" ]; } && ok "  … locks of #7 #8 #9 hold the same live PID ($P7)" || fail "locks differ: 7=$P7 8=$P8 9=$P9"
@@ -89,9 +89,9 @@ rm -f wl/*; tick
 
 # ── 3. thẻ chưa duyệt / duyệt sai head / người ngoài duyệt không vào đợt
 reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 NONE "$H2"; approve 72 OWNER "$H3"; tick
-prompt_any | grep -q -- '--prs 70,72' && ok "forged approval (NONE) on #8 stays out: --prs 70,72" || fail "batch wrong: $(prompt_any | cut -c1-300)"
+prompt_any | grep -q -- "--prs 70:$H1,72:$H3" && ok "forged approval (NONE) on #8 stays out: --prs 70:H1,72:H3" || fail "batch wrong: $(prompt_any | cut -c1-300)"
 reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H1"; approve 72 OWNER "$H3"; tick
-prompt_any | grep -q -- '--prs 70,72' && ok "stale head approval on #8 stays out: --prs 70,72" || fail "stale approval batched: $(prompt_any | cut -c1-300)"
+prompt_any | grep -q -- "--prs 70:$H1,72:$H3" && ok "stale head approval on #8 stays out: --prs 70:H1,72:H3" || fail "stale approval batched: $(prompt_any | cut -c1-300)"
 
 # ── 4. chỉ một thẻ đã duyệt → đường merge-only cũ, không train
 reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; tick
@@ -107,7 +107,7 @@ prompt_any | grep -q 'merge-train' && fail "SB_REVIEW_TRAIN=0 still batched" || 
 # ── 6. thẻ khoá/đã có worker khác không bị kéo vào đợt
 reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"
 sleep 300 & OTHER=$!; printf 'PID=%s\nLANE=review\nSTARTED=now\nWORKER_LOG=x\n' "$OTHER" > "$INFLIGHT_DIR/8"; tick
-prompt_any | grep -q -- '--prs 70,72' && ok "a card already locked by another worker (#8) is left alone: --prs 70,72" || fail "locked card batched: $(prompt_any | cut -c1-300)"
+prompt_any | grep -q -- "--prs 70:$H1,72:$H3" && ok "a card already locked by another worker (#8) is left alone: --prs 70:H1,72:H3" || fail "locked card batched: $(prompt_any | cut -c1-300)"
 kill "$OTHER" 2>/dev/null; wait "$OTHER" 2>/dev/null
 
 # ── 7. zombie: thẻ đầu sang Done trong khi các thẻ khác còn ở Review thì worker train sống; hết thẻ Review thì bị thu hồi
@@ -117,6 +117,35 @@ items Done Review Review; check_lane_zombie review Review
 kill -0 "$TP" 2>/dev/null && ok "primary card merged (Done), #8 #9 still in Review: the train worker is not killed" || fail "train worker killed while two cards were still in Review"
 items Done Done Done; check_lane_zombie review Review
 kill -0 "$TP" 2>/dev/null && fail "train worker kept after every card left Review" || ok "every card left Review: the zombie sweep frees the lane"
+
+# ── 9. R2: bộ lọc đợt phải bằng top_card_in_column — thẻ cần người (needs-you) hoặc thẻ cần thiết bị khi không có thiết bị không vào đợt
+reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"
+PROJECT_ITEMS_JSON="{\"items\":[$(card 7 Review),$(card 8 Review | sed 's/"labels":\[\]/"labels":["needs-you"]/'),$(card 9 Review)]}"; tick
+prompt_any | grep -q -- "--prs 70:$H1,72:$H3" && ok "a needs-you card (#8) stays out of the batch" || fail "needs-you card batched: $(prompt_any | cut -c1-300)"
+reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"
+PROJECT_ITEMS_JSON="{\"items\":[$(card 7 Review),$(card 8 Review | sed 's/"labels":\[\]/"labels":["needs-device"]/'),$(card 9 Review)]}"
+NO_DEVICE=true; tick; NO_DEVICE=false
+prompt_any | grep -q -- "--prs 70:$H1,71:$H2,72:$H3" && ok "needs-device is not held in Review (same as top_card_in_column): #8 stays in the batch" || fail "needs-device card dropped from Review batch: $(prompt_any | cut -c1-300)"
+
+# ── 10. R3: nhiều lock cùng PID (worker train) khi runner khởi động lại = MỘT worker nhận lại, không N mục REVIEW_EXTRA
+reset; items Review Review Review
+bash -c 'sleep 300; : "Run one merge-train worker on issues #7, #8, #9 (PRs 70,71,72) for super-board run"' & TW=$!
+sleep 1
+for i in 7 8 9; do printf 'PID=%s\nLANE=review\nSTARTED=%s\nWORKER_LOG=x\n' "$TW" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/$i"; done
+adopt_live_locks
+{ [ "$REVIEW_PID" = "$TW" ] && [ -z "$REVIEW_EXTRA" ]; } && ok "one train worker with three locks: adopted once, no extra slots (pid=$REVIEW_PID extra='$REVIEW_EXTRA')" || fail "adoption: REVIEW_PID=$REVIEW_PID REVIEW_EXTRA='$REVIEW_EXTRA' (want $TW and none)"
+[ -f "$INFLIGHT_DIR/8" ] && [ -f "$INFLIGHT_DIR/9" ] && ok "  … the locks of #8 #9 are kept" || fail "locks of the batch were dropped"
+kill "$TW" 2>/dev/null; wait "$TW" 2>/dev/null; REVIEW_PID=""; REVIEW_EXTRA=""
+
+# ── 11. R4: đợt co về 1 thẻ sau claim → đường merge-only (không train 1 PR), có log
+reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"
+eval "$(declare -f try_claim_assignee | sed '1s/.*/orig_try_claim_assignee ()/')"
+try_claim_assignee() { case "$1" in 8|9) return 1 ;; esac; orig_try_claim_assignee "$@"; }
+tick
+prompt_any | grep -q 'merge-train' && fail "a batch of one still ran the train" || ok "batch shrank to one card: no train"
+prompt_any | grep -q 'merge-only' && ok "  … it runs the merge-only path for #7" || fail "shrunk batch has no merge-only: $(prompt_any | cut -c1-200)"
+grep -q 'train shrank' "$TMP/log" && ok "  … and logs that the train shrank" || fail "no 'train shrank' log: $(tr '\n' '|' < "$TMP/log")"
+eval "$(declare -f orig_try_claim_assignee | sed '1s/.*/try_claim_assignee ()/')"
 
 # ── 8. hợp đồng viết: run.md nói runner gom đợt và worker route từng dòng train-result:
 grep -q 'one merge-train worker' "$ROOT/.claude/skills/super-board/references/run.md" \

@@ -933,15 +933,20 @@ review_train_batch() {
   [ "${SB_REVIEW_TRAIN:-1}" != "0" ] || return 0
   local n=0 max="${SB_TRAIN_MAX:-8}" rows="" issue row cands
   case "$max" in ''|*[!0-9]*) max=8 ;; esac
-  cands=$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "${BOT_LOGIN:-}" '
+  # Cùng bộ lọc với top_card_in_column (#95): thẻ cần người / cần thiết bị không đi vào đợt (R2).
+  cands=$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
     .items[] | select(.status == "Review" and .content.type == "Issue")
     | select(((.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
+    | select((for_a_person or held_for_device(.status)) | not)
     | .content.number')
   for issue in $cands; do
     [ "$n" -lt "$max" ] || break
     issue_locked "$issue" && continue
     early_backoff "$issue" Review && continue
-    issue_is_open "$issue" || continue
+    local open_rc=0
+    issue_is_open "$issue" || open_rc=$?   # rc 1 = đã đóng (bỏ qua); lỗi đọc >1 đi lên như top_card_in_column, không nuốt
+    [ "$open_rc" -le 1 ] || exit "$open_rc"
+    [ "$open_rc" -eq 0 ] || continue
     row=$(review_approved_head "$issue") || continue
     rows="${rows}${issue} ${row}"$'\n'; n=$((n + 1))
   done
@@ -1078,18 +1083,22 @@ dispatch_lane() {
     return 0
   fi
   # #228: thẻ còn lại của đợt merge train cũng phải nhận được claim; thẻ thua đua bị bỏ khỏi đợt (lock chỉ ghi cho thẻ đã claim).
-  local train_rows="" train_issues="" train_prs="" train_heads="" t_issue t_pr t_head
+  local train_rows="" train_issues="" train_prs="" train_heads="" t_issue t_pr t_head train_n=0
   if [ "$lane" = "review" ] && [ -n "${TRAIN_BATCH:-}" ]; then
     while read -r t_issue t_pr t_head; do
       [ -n "$t_issue" ] || continue
       [ "$t_issue" = "$issue" ] || try_claim_assignee "$t_issue" || continue
-      train_rows="${train_rows}${t_issue} ${t_pr} ${t_head}"$'\n'
+      train_rows="${train_rows}${t_issue} ${t_pr} ${t_head}"$'\n'; train_n=$((train_n + 1))
       train_issues="${train_issues:+$train_issues }${t_issue}"
-      train_prs="${train_prs:+$train_prs,}${t_pr}"
+      train_prs="${train_prs:+$train_prs,}${t_pr}:${t_head}"   # N:sha — train từ chối PR có head đã dời khỏi head đã duyệt (R1)
       train_heads="${train_heads:+$train_heads, }PR #${t_pr}=${t_head}"
     done <<EOF
 $TRAIN_BATCH
 EOF
+    if [ "$train_n" -lt 2 ]; then   # R4: thua claim hết, chỉ còn thẻ chính — đường merge-only như cũ, không train 1 PR
+      log "review lane: train shrank to ${train_n} card(s) after the claims — #${issue} takes the single-card path"
+      train_rows=""; train_issues=""; train_prs=""; train_heads=""
+    fi
   fi
   # Chuyển ngay thẻ Ready sang cột Building trên GitHub Project Board khi giao cho Builder để bảng hiển thị tức thì.
   if [ "$lane" = "build" ] && [ -n "$PROJECT_OWNER" ] && [ "${PROJECT_NUMBER:-0}" -gt 0 ]; then
@@ -1104,7 +1113,7 @@ EOF
       local merge_only="" mo_pr mo_head
       if [ -n "$train_rows" ]; then
         log "review lane: merge-train for #${train_issues// /, #} (PRs ${train_prs}) — one worker, one verify, no fresh review"
-        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. For each PR check the head is still the approved one (gh pr view <PR> --json headRefOid); a PR whose head moved leaves the batch and its card stays in Review for a fresh review. Mark the rest ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (without any PR whose head moved) and route every train-result line exactly as the Merge protocol says: merged → confirm it landed, close the issue, card Review → Done; red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
+        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done; red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
       elif merge_only=$(review_approved_head "$issue"); then
         read -r mo_pr mo_head <<EOF
 $merge_only
@@ -1476,6 +1485,7 @@ adopt_live_locks() {
     # issue_locked thấy PID sống và bỏ qua thẻ mãi). Tiến trình lạ đó không bao giờ bị gửi tín hiệu.
     case "$cmdline" in
       *"issue #${issue} for super-board run"*) ;;
+      *"merge-train worker on issues "*"#${issue}"[,\ ]*) ;;   # worker train của đợt (#228): prompt liệt kê cả đợt, không có "issue #N for"
       *)
         # Dòng lệnh không khớp chưa đủ: chỉ gỡ khi tiến trình khởi động sau STARTED của lock (chắc chắn PID tái
         # dùng); nếu không, có thể là worker thật đã đổi tiêu đề tiến trình, giữ lock như trước.
@@ -1490,6 +1500,8 @@ adopt_live_locks() {
         log "reaped lock on #${issue}: pid=${PID} is alive but no super-board worker (recycled PID)${BOT_LOGIN:+; swept assignee}"
         continue ;;
     esac
+    # R3: worker merge train giữ lock của MỌI thẻ trong đợt cùng một PID: nhận lại một lần, lock còn lại giữ nguyên (không thêm slot).
+    case " ${ADOPTED_PIDS:-} " in *" $PID "*) log "lock on #${issue} belongs to the already adopted worker pid=${PID} (merge train batch)"; continue ;; esac
     case "$LANE" in
       build)
         if lane_idle "${BUILD_PID:-}"; then BUILD_PID="$PID"; BUILD_ISSUE="$issue"

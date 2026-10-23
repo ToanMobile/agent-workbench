@@ -149,4 +149,27 @@ reset_run
 [ "$rc" -eq 6 ] && ok "missing pinned head: exit 6 (head moved)" || fail "missing pinned head: exit $rc (want 6): $(tail -4 "$TMP/t9.log")"
 [ -z "$(merged_list)" ] && ok "missing pinned head: nothing merged" || fail "missing pinned head: merged $(merged_list)"
 
+# ── 10. #228 R1: `--prs N:sha` ghim head đã duyệt; PR có head đã dời khỏi sha đó rời đợt (exit 6), không bao giờ merge head chưa ai review.
+card_branch 20 p20; card_branch 21 p21; card_branch 22 p22
+OLD20=$(cat "$TMP/pr20.head"); OLD21=$(cat "$TMP/pr21.head"); OLD22=$(cat "$TMP/pr22.head")
+echo more > "$W/issue-21-build/p21b"; git -C "$W/issue-21-build" add p21b; git -C "$W/issue-21-build" commit -qm "card 21 moved"
+git -C "$W/issue-21-build" push -q origin issue-21-x
+git -C "$R" rev-parse issue-21-x > "$TMP/pr21.head"
+git -C "$R" diff origin/main issue-21-x > "$TMP/pr21.diff"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs "20:$OLD20,21:$OLD21,22:$OLD22" ) >"$TMP/t10.log" 2>&1; rc=$?
+[ "$(merged_list)" = "20 22 " ] && ok "pinned heads: #21 (head moved after approval) did not merge, #20 #22 did" || fail "pinned heads: merged $(merged_list): $(tail -6 "$TMP/t10.log")"
+grep -q "train-result: 21 head-moved" "$TMP/t10.log" && ok "pinned heads: #21 reported head-moved" || fail "pinned heads: no head-moved line: $(grep train "$TMP/t10.log")"
+[ "$rc" -eq 6 ] && ok "pinned heads: train exit 6" || fail "pinned heads: exit $rc (want 6)"
+if origin_has p21b; then fail "pinned heads: the unreviewed head reached origin/main"; else ok "pinned heads: the unreviewed head never reached origin/main"; fi
+# Mọi PR dời head: không merge gì, exit 6.
+card_branch 23 p23; card_branch 24 p24
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs "23:$OLD20,24:$OLD21" ) >"$TMP/t11.log" 2>&1; rc=$?
+[ "$rc" -eq 6 ] && [ -z "$(merged_list)" ] && ok "every head moved: exit 6, nothing merged" || fail "every head moved: exit $rc merged=$(merged_list)"
+# Một PR có ghim: đường gate thường với --expect-head; head dời thì gate từ chối (exit 6) và không merge.
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs "21:$OLD21" ) >"$TMP/t12.log" 2>&1; rc=$?
+[ "$rc" -eq 6 ] && [ -z "$(merged_list)" ] && ok "single pinned PR with a moved head: gate refuses (exit 6)" || fail "single pinned PR: exit $rc merged=$(merged_list): $(tail -4 "$TMP/t12.log")"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train: all passed" || { echo "❌ test_merge_train: $FAILS failed"; exit 1; }
