@@ -827,6 +827,20 @@ lane_dispatch_tick() {
   [ "$before" -gt 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
 }
 
+tick_is_cheap() {
+  # #288: 0 khi tick này không giao được gì nên khỏi đọc board (GraphQL): ACTIVE=MAX và mỗi lane QA/Review hoặc đã đủ worker, hoặc đang rảnh
+  # (lane rảnh bị trần max_workers chặn, lane_dispatch_tick). Trước đây lane rảnh làm tick không bao giờ rẻ khi max_workers < 3.
+  [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ] || return 1
+  { [ "$QA_COUNT" -ge "$QA_WORKERS" ] || [ "$QA_COUNT" -eq 0 ]; } || return 1
+  { [ "$REVIEW_COUNT" -ge "$REVIEW_WORKERS" ] || [ "$REVIEW_COUNT" -eq 0 ]; } || return 1
+}
+
+ready_qa_lane_free() {
+  # #288: $1 = số thẻ Ready. Lane QA nhận được thẻ `qa` từ Ready khi Ready có thẻ và lane còn chỗ; Ready trống thì không hỏi (mỗi tick
+  # một lần lane_slot_free + một dòng log vô ích).
+  [ "${1:-0}" -gt 0 ] && lane_slot_free qa
+}
+
 tick_sleep() {
   # $1 = số giây. Một `sleep` bị kill không được kết thúc runner: 17/10 12:17 cả 5 runner chết với
   # `Terminated: 15 sleep "$TICK_SECONDS"` (sleep rc 143 dưới `set -e`) và nằm chết 2 ngày. Chỉ stop marker của
@@ -1605,6 +1619,8 @@ reap_finished_locks() {
       note_worker_exit "$issue"
       note_early_death "$issue"
       note_worker_end "$issue"
+      # #288: PID chết rời danh sách "đã thấy ở QA": Tester mới tái dùng PID đó phải bắt đầu sạch (ân hạn Ready → QA).
+      [ -z "$PID" ] || QA_SEEN_IN_QA=$(printf '%s\n' ${QA_SEEN_IN_QA:-} | grep -vxF -- "$PID" | tr '\n' ' ') || true
       [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
@@ -1940,6 +1956,35 @@ swept_add() {
   printf '%s\n' "$1" >> "$(sweep_ledger)" 2>/dev/null || log "⚠ cannot write the sweep ledger $(sweep_ledger)"
 }
 
+WAITING_LABEL="⏳ chờ thẻ khác"
+sync_waiting_labels() {
+  # #235: $1 = plan JSON. Thẻ Blocked chỉ chờ thẻ khác (plan `pending`) mang nhãn WAITING_LABEL để board phân biệt với thẻ cần người;
+  # nhãn ở bất kỳ thẻ nào không còn trong `pending` (sweep vừa thả, kéo tay đi chỗ khác, thành 🙋) bị gỡ. Plan không có khoá `pending`
+  # (planner cũ) thì không đụng nhãn nào. Nhãn không bao giờ là căn cứ chặn hay thả thẻ: chỉ hiển thị.
+  local plan="$1" n
+  printf '%s' "$plan" | jq -e 'has("pending")' >/dev/null 2>&1 || return 0
+  local pending
+  pending=$(printf '%s' "$plan" | jq -c '[.pending[]?.number]' 2>/dev/null) || return 0
+  for n in $(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson p "$pending" --arg l "$WAITING_LABEL" '
+      .items[] | select(.status == "Blocked") | .content.number as $n | select($p | index($n))
+      | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index($l) | not)
+      | $n' 2>/dev/null); do
+    if [ "${WAITING_LABEL_READY:-0}" != 1 ]; then
+      gh_write_once label create "$WAITING_LABEL" --color FBCA04 --description "Blocked only on other open cards; the sweep releases it" --force >/dev/null 2>&1 \
+        && WAITING_LABEL_READY=1
+    fi
+    gh_write_once issue edit "$n" --add-label "$WAITING_LABEL" >/dev/null 2>&1 || true
+    log "⏳ #${n}: label '${WAITING_LABEL}' (waits on other cards)"
+  done
+  for n in $(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson p "$pending" --arg l "$WAITING_LABEL" '
+      .items[] | .content.number as $n | select($p | index($n) | not)
+      | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index($l))
+      | $n' 2>/dev/null); do
+    gh_write_once issue edit "$n" --remove-label "$WAITING_LABEL" >/dev/null 2>&1 || true
+    log "⏳ #${n}: label '${WAITING_LABEL}' removed"
+  done
+}
+
 sweep_blocked_cards() {
   # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
   # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
@@ -1955,6 +2000,7 @@ sweep_blocked_cards() {
     return 2
   fi
   local next key
+  sync_waiting_labels "$plan"
   while IFS=$'\t' read -r issue cleared; do
     # Không có blocker nào (thẻ bị kéo tay sang Blocked, body ghi None): không có gì vừa đóng, để người quyết.
     [ -n "$issue" ] && [ -n "$cleared" ] || continue
@@ -1998,7 +2044,8 @@ maybe_sweep_blocked() {
   # thử lại sau SWEEP_RETRY_SECONDS, không phải đợi tới lần có thẻ về Done kế tiếp.
   # ponytail: blocker đóng ngoài board (tập Done không đổi) phải chờ lần về Done sau; sweep theo sự kiện issue nếu việc này gây kẹt.
   local sig rc=0
-  sig=$(done_signature)
+  # #235: cộng thêm tập thẻ Blocked để thẻ vừa bị chặn được gắn nhãn chờ ngay, không phải đợi thẻ Done kế tiếp.
+  sig="$(done_signature)|$(echo "$PROJECT_ITEMS_JSON" | jq -r '[.items[] | select(.status == "Blocked") | .content.number // empty] | sort | @csv' 2>/dev/null)"
   if [ "$sig" = "${SWEEP_DONE_SIG-<none>}" ]; then
     [ "${SWEEP_RETRY_AT:-0}" -gt 0 ] && [ "$(date +%s)" -ge "$SWEEP_RETRY_AT" ] || return 1
   fi
@@ -2463,7 +2510,7 @@ while true; do
   #    The board can't change in a way that helps us until a lane frees up.
   #    QA/Review còn chỗ thêm worker (qa_workers/review_workers > số đang chạy) thì KHÔNG coi là đầy: worker thêm không tốn slot lane (#209).
   #    Trần mặc định 1 thì QA_COUNT>=QA_WORKERS khi lane bận, nên điều kiện này đúng như cũ.
-  if [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ] && [ "$QA_COUNT" -ge "$QA_WORKERS" ] && [ "$REVIEW_COUNT" -ge "$REVIEW_WORKERS" ]; then
+  if tick_is_cheap; then
     log "tick — cap reached (${ACTIVE_WORKERS}/${MAX_WORKERS} busy) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
     tick_sleep "$TICK_SECONDS"
     continue
@@ -2531,7 +2578,7 @@ while true; do
   QA_FREE=0; QA_DISPATCHED=0
   if [ "$QA" -gt 0 ]; then lane_dispatch_tick qa QA; QA_DISPATCHED=$LANE_DISPATCHED; fi
   # Thẻ Ready mang nhãn `qa` đi vào lane QA: chỉ khi tick này lane QA chưa nhận thẻ nào và còn chỗ.
-  if [ "$QA_DISPATCHED" -eq 0 ] && lane_slot_free qa; then QA_FREE=1; fi
+  if [ "$QA_DISPATCHED" -eq 0 ] && ready_qa_lane_free "$READY"; then QA_FREE=1; fi
   # Ready: the top card's label picks the lane — `qa` skips Building (Tester),
   # anything else is built first. A busy lane waits for the next tick.
   # Lane build: worker đầu như trước; worker thêm (build_workers > 1) chỉ khi tải máy cho phép (build_slot_free, một worker mỗi tick).

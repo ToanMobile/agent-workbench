@@ -172,4 +172,22 @@ reset_run
 ( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs "21:$OLD21" ) >"$TMP/t12.log" 2>&1; rc=$?
 [ "$rc" -eq 6 ] && [ -z "$(merged_list)" ] && ok "single pinned PR with a moved head: gate refuses (exit 6)" || fail "single pinned PR: exit $rc merged=$(merged_list): $(tail -4 "$TMP/t12.log")"
 
+# ── 11. #288: nhánh chậm hơn base (main đi tiếp sau khi #30 rẽ ra) + biên nhận đúng: một lần verify cho cả đợt, gate không verify lại.
+card_branch 30 q30
+git -C "$R" fetch -q origin; git -C "$R" worktree add -q --detach "$W/adv" origin/main
+echo adv > "$W/adv/adv"; git -C "$W/adv" add adv; git -C "$W/adv" commit -qm "main moves on"; git -C "$W/adv" push -q origin HEAD:main
+git -C "$R" worktree remove --force "$W/adv"
+card_branch 31 q31
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs 30,31 ) >"$TMP/t13.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(merged_list)" = "30 31 " ] && ok "branch behind base: both PRs merged" || fail "behind base: exit $rc merged=$(merged_list): $(tail -6 "$TMP/t13.log")"
+[ "$(runs)" = 1 ] && ok "  … one verify for the batch (the receipt skipped the gates' own)" || fail "behind base: verify ran $(runs) times"
+grep -q "verify skipped" "$TMP/t13.log" && ok "  … and the gate says it skipped verify" || fail "behind base: no 'verify skipped' line"
+grep -q "verified green against main (0 command(s) run here" "$TMP/t13.log" \
+  && ok "  … without claiming it ran a command" || fail "behind base: $(grep 'verified green' "$TMP/t13.log" | head -2)"
+
+# ── 12. #288: ghi chú ponytail đầu file mô tả đúng hành vi: PR bị gate chặn đã ra khỏi chuỗi trước khi verify (R11), không "vẫn nằm trong chuỗi".
+grep -q "vẫn nằm trong chuỗi verify" "$TRAIN" && fail "the ponytail note at the top still says a gate-blocked PR stays in the verify chain" \
+  || ok "ponytail note matches R11 (blocked PRs leave the chain before verify)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train: all passed" || { echo "❌ test_merge_train: $FAILS failed"; exit 1; }
