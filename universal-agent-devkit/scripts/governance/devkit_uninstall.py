@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -692,33 +693,47 @@ def main(argv):
         except OSError:
             pass
 
-    # 4c. The regression-matrix merge driver from `agent-kit githooks install` (#221, githooks.sh MATRIX_ATTR): its line in
-    #     .gitattributes — the file goes when that line was all it held, other lines stay byte for byte — and the repo config
-    #     section merge.devkit-matrix. Without this the project kept a .gitattributes the installer created (test_uninstall
-    #     red on main since the driver landed, 23/10).
-    attrs = os.path.join(project, ".gitattributes")
+    # 4c. The regression-matrix merge driver from `agent-kit githooks install` (#221, githooks.sh MATRIX_ATTR): its line in the git
+    #     root's .gitattributes (where the installer wrote it, also when uninstall runs from a subdirectory) — the file goes when that
+    #     line was all it held, other lines stay byte for byte, written atomically — and the repo config section merge.devkit-matrix.
+    #     A file we cannot read or write, or a symlink, is kept and reported. Without this the project kept a .gitattributes the
+    #     installer created (test_uninstall red on main since the driver landed, 23/10).
+    top = subprocess.run(["git", "-C", project, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    attrs = os.path.join(top.stdout.strip() if top.returncode == 0 and top.stdout.strip() else project, ".gitattributes")
     matrix_attr = ".agents/regression_matrix.active.json merge=devkit-matrix"
-    if os.path.isfile(attrs) and not os.path.islink(attrs):
+    if os.path.islink(attrs):
+        plan.keep(attrs, "symlink — dòng merge driver (nếu có) giữ nguyên", "symlink — a merge driver line, if any, stays")
+    elif os.path.isfile(attrs):
         try:
             with open(attrs, encoding="utf-8", newline="") as f:
                 lines = f.read().splitlines(keepends=True)
+            if any(ln.rstrip("\r\n") == matrix_attr for ln in lines):
+                rest = [ln for ln in lines if ln.rstrip("\r\n") != matrix_attr]
+                if not "".join(rest).strip():
+                    plan.remove(attrs)
+                else:
+                    if apply:
+                        tmp_path = attrs + ".devkit-tmp"
+                        try:
+                            with open(tmp_path, "w", encoding="utf-8", newline="") as f:
+                                f.write("".join(rest))
+                            shutil.copymode(attrs, tmp_path)
+                            os.replace(tmp_path, attrs)
+                        finally:
+                            if os.path.exists(tmp_path):
+                                os.unlink(tmp_path)
+                    plan.say("đã sửa" if apply else "sẽ sửa", "cleaned" if apply else "would clean", attrs,
+                             tr(" (bỏ dòng merge driver của ma trận)", " (matrix merge driver line removed)"))
+                    plan.removed += 1
         except (OSError, UnicodeDecodeError) as exc:
-            lines = None
-            plan.keep(attrs, f"không đọc được ({exc!r})", f"unreadable ({exc!r})")
-        if lines is not None and any(ln.rstrip("\r\n") == matrix_attr for ln in lines):
-            rest = [ln for ln in lines if ln.rstrip("\r\n") != matrix_attr]
-            if not "".join(rest).strip():
-                plan.remove(attrs)
-            else:
-                if apply:
-                    with open(attrs, "w", encoding="utf-8", newline="") as f:
-                        f.write("".join(rest))
-                plan.say("đã sửa" if apply else "sẽ sửa", "cleaned" if apply else "would clean", attrs,
-                         tr(" (bỏ dòng merge driver của ma trận)", " (matrix merge driver line removed)"))
-                plan.removed += 1
-    if apply:
-        # no section (never installed, or already gone): git exits non-zero, nothing to do
-        subprocess.run(["git", "-C", project, "config", "--remove-section", "merge.devkit-matrix"], capture_output=True, text=True)
+            plan.keep(attrs, f"không đọc/ghi được ({exc!r})", f"cannot read/write ({exc!r})")
+    cfg = subprocess.run(["git", "-C", project, "config", "--get-regexp", r"^merge\.devkit-matrix\."], capture_output=True, text=True)
+    if cfg.returncode == 0 and cfg.stdout.strip():
+        if apply:
+            subprocess.run(["git", "-C", project, "config", "--remove-section", "merge.devkit-matrix"], capture_output=True, text=True)
+        verb_cfg = tr("đã gỡ", "removed") if apply else tr("sẽ gỡ", "would remove")
+        print(f"  {verb_cfg:<9} git config merge.devkit-matrix")
+        plan.removed += 1
 
     # 5. Directories the installer created and that are now empty.
     if apply:
