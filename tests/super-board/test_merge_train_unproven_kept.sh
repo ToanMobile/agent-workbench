@@ -77,6 +77,9 @@ for n in 21 22 23 24; do
 done
 grep -q "train-result: 23 timeout" "$TMP/t.log" && grep -q "train-result: 24 timeout" "$TMP/t.log" \
   && ok "unproven #23 and #24 are reported as timeout" || fail "unproven PRs not reported as timeout: $(grep train "$TMP/t.log" | tr '\n' '|')"
+grep -q "^train-result: 22 gate-exit-7$" "$TMP/t.log" && ok "#22 is reported as blocked by the policy (gate-exit-7)" \
+  || fail "#22 outcome is not gate-exit-7: $(grep '^train-result: 22' "$TMP/t.log")"
+if [ -f "$TMP/merged" ] && grep -qE "^(22|23|24)$" "$TMP/merged"; then fail "an unproven or blocked PR was merged: $(tr '\n' ' ' < "$TMP/merged")"; else ok "only the proved PR was merged (#22, #23, #24 were not)"; fi
 [ "$rc" -eq 7 ] && ok "train exit 7: the policy block keeps precedence over the timeout" || fail "train exit $rc (want 7): $(tail -4 "$TMP/t.log")"
 grep -q "train-result: 21 merged" "$TMP/t.log" && ok "#21 (proved green) still merges" || fail "#21 not merged: $(grep train "$TMP/t.log" | tr '\n' '|')"
 
