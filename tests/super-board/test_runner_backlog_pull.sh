@@ -31,6 +31,8 @@ log() { echo "$*" >> "$TMP/log"; }
 fetch_project_items() { :; }
 issue_is_open() { ! grep -qx "$1" "$TMP/closed" 2>/dev/null; }
 backlog_issue_body() { cat "$TMP/body-$1"; }   # móc test cho lần đọc REST body của một thẻ
+backlog_issue_comments() { cat "$TMP/comments-$1" 2>/dev/null || echo '[]'; }   # móc test cho lần đọc REST comment (mảng [{id,body}])
+backlog_mark_needs_you() { echo "needs-you $1" >> "$TMP/writes"; }
 
 GOOD=$'## Problem\nlỗi\n\n## Fix\nsửa\n\n## Acceptance Criteria\n- [ ] test đỏ rồi xanh\n\n## Risk\nthấp\n'
 NOAC=$'## Problem\nlỗi\n\n## Fix\nsửa\n\n## Risk\nthấp\n'
@@ -43,7 +45,7 @@ add_body() { printf '%s' "$2" > "$TMP/body-$1"; }
 board() { PROJECT_ITEMS_JSON="{\"items\":[$CARDS]}"; }
 reset_case() {
   : > "$TMP/writes"; : > "$TMP/log"; : > "$TMP/closed"
-  rm -rf "$INFLIGHT_DIR"/* "$TMP"/body-* "$TMP/load"
+  rm -rf "$INFLIGHT_DIR"/* "$TMP"/body-* "$TMP"/comments-* "$TMP/load"
   CARDS=""; BUILD_WORKERS=10; BUILD_COUNT=0; READY=0; BUILD_LOAD_MAX=60
   unset SB_BACKLOG_PULL; CONFIG_PATH=/dev/null
   SB_BUILD_LOAD_FILE="$TMP/load"; echo 1.0 > "$TMP/load"
@@ -142,6 +144,56 @@ reset_case
 card 391 Backlog '["wontfix"]'; card 392 Backlog '[]' '["alice"]'; add_body 391 "$GOOD"; add_body 392 "$GOOD"; board
 pull_backlog_cards >/dev/null
 if [ "$(moved_to_ready)" = 0 ]; then ok "F2: chỉ còn wontfix + thẻ có assignee -> không kéo"; else fail "F2: moved=$(moved_to_ready)"; fi
+
+# ── G/H/I/J (#232): thẻ đã bị đỗ / bị builder chặn không bị kéo lại; thẻ bị kéo rồi chặn 2 lần dừng hẳn + needs-you.
+BLOCK=$'[builder] [blocker] 🛑 blocked · 📦 wrong-place\nCard: #1\nReason tag:  📦\nblocked-by:  -'
+PULL=$'[orchestrator] [report] ⬆️ Backlog → Ready · build lane idle\nNext: builder'
+PARK=$'[orchestrator] [report] đã đưa thẻ về Backlog vì sai board'
+
+# G1: block comment 📦 mới nhất -> không kéo. G2: body bị sửa sau comment đó -> kéo.
+reset_case
+card 401 Backlog '[]'; add_body 401 "$GOOD"; board
+printf '%s' "[{\"id\":7,\"body\":$(printf '%s' "$BLOCK" | jq -Rs .)}]" > "$TMP/comments-401"
+pull_backlog_cards >/dev/null
+g1=$(moved_to_ready)
+add_body 401 "${GOOD}
+## Ghi chú
+đã sửa"
+pull_backlog_cards >/dev/null
+g2=$(moved_to_ready)
+if [ "$g1" = 0 ] && [ "$g2" = 1 ]; then ok "G: block 📦 mới nhất -> không kéo; sửa body sau đó -> kéo"; else fail "G: trước sửa moved=$g1 sau sửa moved=$g2 (muốn 0 rồi 1)"; fi
+
+# G3: comment của người mới hơn block -> kéo.
+reset_case
+card 402 Backlog '[]'; add_body 402 "$GOOD"; board
+printf '%s' "[{\"id\":7,\"body\":$(printf '%s' "$BLOCK" | jq -Rs .)},{\"id\":8,\"body\":\"đã đúng board, kéo lại đi\"}]" > "$TMP/comments-402"
+pull_backlog_cards >/dev/null
+if [ "$(moved_to_ready)" = 1 ]; then ok "G3: comment người mới hơn block -> kéo"; else fail "G3: moved=$(moved_to_ready)"; fi
+
+# I: orchestrator 'về Backlog' chưa bị thay thế -> không kéo.
+reset_case
+card 403 Backlog '[]'; add_body 403 "$GOOD"; board
+printf '%s' "[{\"id\":9,\"body\":$(printf '%s' "$PARK" | jq -Rs .)}]" > "$TMP/comments-403"
+pull_backlog_cards >/dev/null
+if [ "$(moved_to_ready)" = 0 ]; then ok "I: comment orchestrator 'về Backlog' -> không kéo"; else fail "I: moved=$(moved_to_ready)"; fi
+
+# H: kéo -> chặn -> kéo -> chặn (2 lần) -> không kéo dù body mới sửa, needs-you đúng một lần cho thẻ.
+reset_case
+card 404 Backlog '[]'; add_body 404 "$GOOD"; board
+printf '%s' "[{\"id\":1,\"body\":$(printf '%s' "$PULL" | jq -Rs .)},{\"id\":2,\"body\":$(printf '%s' "$BLOCK" | jq -Rs .)},{\"id\":3,\"body\":$(printf '%s' "$PULL" | jq -Rs .)},{\"id\":4,\"body\":$(printf '%s' "$BLOCK" | jq -Rs .)}]" > "$TMP/comments-404"
+pull_backlog_cards >/dev/null
+add_body 404 "${GOOD}
+## Ghi chú
+sửa lần nữa"
+pull_backlog_cards >/dev/null
+if [ "$(moved_to_ready)" = 0 ] && grep -q "^needs-you 404$" "$TMP/writes"; then ok "H: bị kéo rồi chặn 2 lần -> dừng kéo, needs-you"; else fail "H: moved=$(moved_to_ready) writes: $(tr '\n' ';' < "$TMP/writes")"; fi
+
+# J: bị kéo rồi chặn đúng 1 lần, body đã sửa sau block -> vẫn kéo được (chưa tới 2 lần).
+reset_case
+card 405 Backlog '[]'; add_body 405 "$GOOD"; board
+printf '%s' "[{\"id\":1,\"body\":$(printf '%s' "$PULL" | jq -Rs .)},{\"id\":2,\"body\":$(printf '%s' "$BLOCK" | jq -Rs .)},{\"id\":3,\"body\":\"đã sửa body\"}]" > "$TMP/comments-405"
+pull_backlog_cards >/dev/null
+if [ "$(moved_to_ready)" = 1 ] && ! grep -q "^needs-you" "$TMP/writes"; then ok "J: 1 lần chặn + comment người mới hơn -> kéo, không needs-you"; else fail "J: moved=$(moved_to_ready)"; fi
 
 # ── W: dây nối trong vòng chính.
 wire=$(grep -n 'pull_backlog_cards' "$RUNNER" | tail -1 | cut -d: -f1)
