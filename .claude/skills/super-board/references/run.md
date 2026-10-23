@@ -514,6 +514,10 @@ on the base branch**.
      bash .claude/bin/super-board-merge-gate.sh --config <config> --pr <N> --expect-head "$HEAD" \
        --subject "<PR title>" --body-file <msg.md>
    <msg.md> = the PR's commit bullets, deduplicated, plus `Closes #<issue>` (writing-standard.md § 1).
+   **Before the gate, post the approval** on the PR as its own NEW comment (not the `[reviewer] [report]` comment, and never an in-place edit of it as in step 8) whose line is exactly `approved-head:$HEAD`
+   (full 40-hex sha, `$HEAD` above). The runner reads the latest such comment from an OWNER/MEMBER/COLLABORATOR: a card still in
+   Review whose PR head equals it (gate exit 4, a lock or conflict, not code) gets a **merge-only** worker next tick — this step 5 only,
+   `--expect-head` pinned, no new review. A push changes the head, so the approval lapses and the next tick reviews the new head (#227).
    Several PRs ready in the same wave: `bash .claude/bin/super-board-merge-train.sh --config <config> --prs <N,M,…>`
    verifies their combined tree once (bisecting to the red PR when it fails), then runs this same gate for each good PR
    with `--train-receipt`, which skips only the verify the train already proved (the full chain's final tree; the intermediate main between two merges is not verified on its own). Exit 11 + `train-red: <N>` lines = those PRs go back to Build;
