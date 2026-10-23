@@ -110,6 +110,7 @@ sleep 300 & OTHER=$!; printf 'PID=%s\nLANE=review\nSTARTED=now\nWORKER_LOG=x\n' 
 prompt_any | grep -q -- "--prs 70:$H1,72:$H3" && ok "a card already locked by another worker (#8) is left alone: --prs 70:H1,72:H3" || fail "locked card batched: $(prompt_any | cut -c1-300)"
 kill "$OTHER" 2>/dev/null; wait "$OTHER" 2>/dev/null
 
+SB_ZOMBIE_GRACE=0  # test kill trực tiếp, không chờ ân hạn (#237)
 # ── 7. zombie: thẻ đầu sang Done trong khi các thẻ khác còn ở Review thì worker train sống; hết thẻ Review thì bị thu hồi
 reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"; tick
 TP="$REVIEW_PID"
