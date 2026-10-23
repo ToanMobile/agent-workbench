@@ -1256,6 +1256,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "worktree-essentials-block-remove",
+      "trigger_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_essentials_block.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-WT-ESSENTIALS-BLOCK-01",
+          "name": "worktree remove/discard gỡ được worktree chỉ lệch ở khối devkit-essentials của AGENTS.md; sửa ngoài khối vẫn bị từ chối (#234)",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_essentials_block.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

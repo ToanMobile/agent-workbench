@@ -375,3 +375,5 @@
 3 tests/worktree_git/test_worktree_merge_tree_no_leak.sh
 # 2026-10-23: test của b604e3d3 (createTask gom thẻ, #315 #305) cũng thiếu dòng; đo một mình lúc tải ~90 (13.6 s).
 14 tests/verification/test_create_task_batch.sh
+# 2026-10-23: #234 — remove/discard gỡ worktree chỉ lệch ở khối devkit-essentials của AGENTS.md (4 worktree thật, đo ước 20 s).
+20 tests/worktree_git/test_worktree_remove_essentials_block.sh
