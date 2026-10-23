@@ -502,11 +502,126 @@ def build_qa_clipboard():
     return join(p, "QAClipboard")
 
 
+def led(x, y, z, ok):
+    return cube((0.012, 0.025, 0.025), (x, y, z), mat("LedOK", (88, 220, 130), 0.3) if ok else mat("LedBad", (240, 80, 80), 0.3), bevel=0)
+
+
+def build_qa_devicerack():
+    metal = mat("RackMetal", (70, 76, 90), 0.5)
+    shelf = mat("RackShelf", (130, 136, 150), 0.5)
+    cable = mat("Cable", (40, 42, 48), 0.8)
+    up = (0, math.pi / 2, 0)  # upright, screen facing the person (-x)
+    p = []
+    for zc in (-0.62, 0.62):
+        for dz in (-0.5, 0.5):
+            for dx in (0.7, 1.05):
+                p.append(cube((0.05, 2.1, 0.05), (dx, 1.05, zc + dz), metal, bevel=0.004))
+        p.append(cube((0.4, 0.04, 1.1), (0.875, 2.1, zc), metal, bevel=0.004))
+        for lvl, y in enumerate((0.45, 0.95, 1.45, 1.95)):
+            p.append(cube((0.4, 0.03, 1.05), (0.875, y - 0.1, zc), shelf, bevel=0.004))
+            for k in range(4):
+                ok = (lvl * 4 + k + (zc > 0)) % 7 != 3
+                p += phone(0.8, y + 0.06, zc - 0.36 + k * 0.24, ok, rot=up)
+                p.append(led(0.7, y - 0.07, zc - 0.36 + k * 0.24, ok))
+            p.append(cube((0.012, 0.02, 0.9), (0.69, y - 0.16, zc), cable, bevel=0))
+    p.append(cube((0.1, 0.1, 0.5), (0.95, 2.2, 0), mat("Safety", (240, 190, 50), 0.5), bevel=0.01))  # beacon between the racks
+    return join(p, "QADeviceRack")
+
+
+def log_screen(x, y, z, w, h, rows=9, seed=0):
+    bg = mat("EditorBg", (30, 34, 44), 0.5)
+    ok, bad = mat("ScreenOK", (88, 196, 120), 0.4), mat("ScreenBad", (224, 82, 82), 0.4)
+    ink = mat("CodeGrey", (150, 156, 170), 0.6)
+    p = [cube((0.014, h, w), (x, y, z), bg, bevel=0)]
+    step = (h - 0.12) / (rows - 1)
+    for i in range(rows):
+        yy = y + h / 2 - 0.06 - i * step
+        fail = (i + seed) % 5 == 3
+        p.append(cube((0.016, 0.026, 0.07), (x - 0.002, yy, z - w / 2 + 0.07), bad if fail else ok, bevel=0))      # PASS / FAIL chip
+        p.append(cube((0.016, 0.02, w * (0.3 + 0.08 * ((i * 5 + seed) % 5))), (x - 0.002, yy, z - w / 2 + 0.17 + w * (0.3 + 0.08 * ((i * 5 + seed) % 5)) / 2), ink, bevel=0))
+    return p
+
+
+def build_qa_logstation():
+    dark = mat("Bezel", (36, 40, 50), 0.4)
+    metal = mat("Metal", (150, 156, 166), 0.35)
+    top = mat("BenchTop", (226, 222, 214), 0.7)
+    key = mat("LaptopBody", (176, 180, 188), 0.4)
+    p = [cube((0.8, 0.05, 2.0), (0.5, 1.05, 0), top, bevel=0.01, seg=2)]
+    for z in (-0.9, 0.9):
+        p.append(cube((0.7, 0.04, 0.06), (0.5, 0.02, z), metal, bevel=0.004))
+        p.append(cube((0.07, 1.03, 0.07), (0.5, 0.515, z), metal, bevel=0.004))
+    for z, seed in ((-0.55, 0), (0.55, 2)):
+        p += [cube((0.05, 0.62, 0.95), (0.85, 1.7, z), dark, bevel=0.015, seg=2), cube((0.05, 0.1, 0.1), (0.85, 1.28, z), metal, bevel=0.004),
+              cube((0.2, 0.02, 0.3), (0.85, 1.09, z), metal, bevel=0.004)]
+        p += log_screen(0.82, 1.7, z, 0.86, 0.54, rows=9, seed=seed)
+    p += [cube((0.16, 0.015, 0.4), (0.4, 1.09, 0.0), key, bevel=0.004), cube((0.06, 0.02, 0.1), (0.4, 1.09, 0.36), key, bevel=0.006)]
+    for k, ok in enumerate((True, False)):
+        p.append(cube((0.1, 0.012, 0.1), (0.5, 1.086, -0.5 - k * 0.2), metal, bevel=0.003))
+        p += phone(0.5, 1.14, -0.5 - k * 0.2, ok, rot=(0, math.radians(75), 0))
+    p += mug(0.55, 1.08, 0.7, (222, 74, 74))
+    return join(p, "QALogStation")
+
+
+def build_qa_controlpanel():
+    body = mat("ConsoleBody", (96, 128, 176), 0.5)
+    deck = mat("ConsoleDeck", (214, 220, 232), 0.5)
+    ink = mat("CodeGrey", (150, 156, 170), 0.6)
+    bg = mat("EditorBg", (30, 34, 44), 0.5)
+    ok, bad, yel = mat("ScreenOK", (88, 196, 120), 0.3), mat("ScreenBad", (224, 82, 82), 0.3), mat("LampYel", (240, 190, 50), 0.3)
+    p = [cube((0.9, 0.9, 2.0), (0.55, 0.45, 0), body, bevel=0.012), cube((0.55, 0.07, 1.96), (0.42, 0.935, 0), deck, bevel=0.01),     # base + front deck
+         cube((0.4, 0.28, 1.96), (0.72, 1.1, 0), body, bevel=0.012), cube((0.12, 0.62, 1.96), (0.9, 1.5, 0), body, bevel=0.012)]       # steps
+    for k, (c, s) in enumerate(((ok, 0.07), (ok, 0.07), (bad, 0.07), (yel, 0.07), (ok, 0.07), (ok, 0.07), (bad, 0.07))):  # push buttons
+        for r in range(2):
+            col = (bad if (k + r) % 5 == 3 else yel if (k + r) % 7 == 5 else ok)
+            p.append(cyl(0.035, 0.03, (0.3, 0.985, -0.85 + k * 0.26 + r * 0.0), col, verts=14) if r == 0 else cyl(0.03, 0.03, (0.4, 0.985, -0.85 + k * 0.26), ink, verts=14))
+    for k in range(5):  # sliders
+        p.append(cube((0.2, 0.012, 0.03), (0.5, 0.975, -0.2 + k * 0.2), bg, bevel=0))
+        p.append(cube((0.05, 0.03, 0.045), (0.46 + 0.03 * ((k * 3) % 4), 0.99, -0.2 + k * 0.2), ink, bevel=0.004))
+    for z, mode in ((-0.6, 'bars'), (0.0, 'ring'), (0.6, 'list')):  # three small screens on the riser
+        p.append(cube((0.02, 0.2, 0.56), (0.515, 1.15, z), bg, bevel=0))
+        if mode == 'bars':
+            for b in range(5):
+                hh = 0.05 + 0.03 * ((b * 3) % 4)
+                p.append(cube((0.022, hh, 0.06), (0.5, 1.07 + hh / 2, z - 0.2 + b * 0.1), bad if b == 3 else ok, bevel=0))
+        elif mode == 'ring':
+            p.append(cyl(0.08, 0.022, (0.5, 1.16, z), ok, rot=(0, 0, math.pi / 2), verts=20))
+            p.append(cyl(0.05, 0.024, (0.498, 1.16, z), bg, rot=(0, 0, math.pi / 2), verts=20))
+        else:
+            for r in range(4):
+                p.append(cube((0.022, 0.02, 0.35 - 0.05 * r), (0.5, 1.23 - r * 0.045, z + 0.04), ink, bevel=0))
+    for k, c in enumerate((bad, yel, ok)):  # big release lamps on the top riser
+        p.append(cyl(0.12, 0.05, (0.82, 1.62 - k * 0.0, -0.5 + k * 0.5), c, rot=(0, 0, math.pi / 2), verts=18))
+    p.append(cube((0.03, 0.12, 1.6), (0.83, 1.8, 0), bg, bevel=0))
+    return join(p, "QAControlPanel")
+
+
+def build_qa_devicetower():
+    metal = mat("Metal", (150, 156, 166), 0.35)
+    dark = mat("Bezel", (36, 40, 50), 0.4)
+    ok, bad = mat("ScreenOK", (88, 196, 120), 0.3), mat("ScreenBad", (224, 82, 82), 0.3)
+    ring = mat("Led", (110, 210, 255), 0.3)
+    cx, cz = 0.7, 0.0
+    p = [cyl(0.62, 0.06, (cx, 0.03, cz), metal, verts=32), cyl(0.36, 1.9, (cx, 0.98, cz), dark, verts=24), cyl(0.45, 0.06, (cx, 1.95, cz), metal, verts=28),
+         cyl(0.47, 0.025, (cx, 2.0, cz), ring, verts=32)]
+    n = 8
+    for lvl, y in enumerate((0.5, 1.0, 1.5)):
+        for k in range(n):
+            a = k * 2 * math.pi / n + lvl * 0.45
+            R = 0.37
+            px, pz = cx + R * math.cos(a), cz + R * math.sin(a)
+            good = (lvl * n + k) % 6 != 4
+            p.append(cube((0.02, 0.3, 0.19), (px, y, pz), mat("PhoneBody", (34, 36, 42), 0.4), bevel=0.004, rot=(0, 0, -a)))
+            p.append(cube((0.016, 0.26, 0.16), (cx + (R + 0.012) * math.cos(a), y, cz + (R + 0.012) * math.sin(a)), ok if good else bad, bevel=0, rot=(0, 0, -a)))
+    return join(p, "QADeviceTower")
+
+
 def preview(png):
     rows = [["QABench", "QACheckboard", "QADeviceWall", "QABugBoard", "QAMonitorWall"],
             ["ReviewWall", "ReviewDiffScreen", "ReviewHuddle", "ReviewFlowBoard"],
             ["ReviewDiffSplit", "ReviewCockpit", "ReviewGlassWall"],
-            ["QAKiosk", "QAMatrix", "QAClipboard"]]
+            ["QAKiosk", "QAMatrix", "QAClipboard"],
+            ["QADeviceRack", "QALogStation", "QAControlPanel", "QADeviceTower"]]
     for r, names in enumerate(rows):
         for i, n in enumerate(names):
             bpy.data.objects[n].location = G(r * 3.6, 0, (i - 2) * 2.8)
@@ -538,7 +653,8 @@ if __name__ == "__main__":
     for build in (build_qa_bench, build_qa_checkboard, build_qa_devicewall, build_qa_bugboard, build_qa_monitorwall,
                   build_review_wall, build_review_diffscreen, build_review_huddle, build_review_flowboard,
                   build_review_diffsplit, build_review_cockpit, build_review_glasswall,
-                  build_qa_kiosk, build_qa_matrix, build_qa_clipboard):
+                  build_qa_kiosk, build_qa_matrix, build_qa_clipboard,
+                  build_qa_devicerack, build_qa_logstation, build_qa_controlpanel, build_qa_devicetower):
         build()
     B.export()
     if PREVIEW:
