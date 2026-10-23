@@ -1,8 +1,10 @@
 #!/bin/bash
 # Probe: real `worktree finish` on a main that diverged from origin (issue #308 unverified item).
-S=/private/tmp/claude-501/-Volumes-Data-Toan-agent-workbench/68fe48a4-edb9-49c0-9966-968bbc202989/scratchpad/probe308
-WT=/Volumes/Data/Toan/agent-workbench/.claude/worktrees/issue-308-qa/.agents/devkit/scripts/git/worktree.py
-rm -rf "$S"; mkdir -p "$S"
+# Chạy từ bất kỳ đâu trong repo: đường dẫn tính từ git rev-parse, thư mục tạm là mktemp -d (dọn khi thoát).
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+S=$(mktemp -d "${TMPDIR:-/tmp}/probe308.XXXXXX") || exit 1
+trap 'rm -rf "$S"' EXIT
+WT="$ROOT/.agents/devkit/scripts/git/worktree.py"
 G="git -c user.email=a@b.c -c user.name=t"
 git init -q --bare -b main "$S/origin.git"
 git clone -q "$S/origin.git" "$S/main" 2>/dev/null

@@ -106,4 +106,11 @@ mkrepo; ( cd "$C/repo" && echo '# local' >> "$REL" && git commit -qam local-runn
 push_other $'#!/usr/bin/env bash\necho v2'; git fetch -q origin; real_finish; rc=$?
 [ "$rc" != 0 ] && [ "$(git rev-parse HEAD)" = "$before" ] && [ -z "$(git status --porcelain)" ] && ok "real finish with a conflict: non-zero, main untouched" || fail "real conflict: rc=$rc"
 
+# ── 9. (#325) finish thành công đã gỡ worktree: không log cảnh báo giả "worktree remove failed"; worktree cũ cùng PID không chặn lần sau
+mkrepo; ( cd "$C/repo" && echo local >> other.txt && git add -A && git commit -qm local )
+( cd "$C/repo" && python3 "$WTPY" add ".claude/worktrees/self-reload-$$" >/dev/null 2>&1 )   # bản mồ côi của lần reload trước (cùng PID)
+push_other $'#!/usr/bin/env bash\necho v2'; git fetch -q origin; : > "$TMP/log"; real_finish; rc=$?
+[ "$rc" = 0 ] && grep -q v2 "$RELOAD_SELF" && ok "stale self-reload-PID worktree does not block the next reload" || fail "stale worktree blocked reload: rc=$rc ($(tail -2 "$TMP/log" | tr '\n' ' '))"
+! grep -q "worktree remove" "$TMP/log" && ok "  … no false 'worktree remove failed' after a successful finish" || fail "false warning: $(cat "$TMP/log")"
+
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }
