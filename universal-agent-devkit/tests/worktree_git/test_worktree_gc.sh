@@ -260,4 +260,19 @@ python3 "$WT" gc > "$TMP/gc10.out" 2>&1
   && ok "  … one holding a file never committed is kept and names it (#327)" || fail "leftover-unique deleted or unnamed: $(cat "$TMP/gc10.out")"
 [ -e "$WD/registered" ] && { [ "$CASEVAR" = 0 ] || [ -e "$WD/casevar" ]; } && G "$R" worktree list --porcelain | grep -q "$WD/registered" \
   && ok "  … a worktree git still registers under .claude/worktrees is not gc's (#327)" || fail "registered worktree touched: $(cat "$TMP/gc10.out")"
+# issue #327 (b): a worktree locked `devkit-kept` by a session whose pid is dead stays locked for ever (only `remove` opened it): gc reports
+# it (--dry-run) and opens it; a lock whose pid still answers is never touched
+sleep 300 & LIVEPID=$!
+DEADPID=$(python3 -c 'import os,subprocess; p=subprocess.Popen(["true"]); p.wait(); print(p.pid)')
+G "$R" worktree add -q --detach "$TMP/kept-dead" && G "$R" worktree lock --reason "devkit-kept session=s1 pid=$DEADPID" "$TMP/kept-dead"
+G "$R" worktree add -q --detach "$TMP/kept-live" && G "$R" worktree lock --reason "devkit-kept session=s2 pid=$LIVEPID" "$TMP/kept-live"
+locked() { G "$R" worktree list --porcelain | awk -v p="/$(basename "$1")" '$1=="worktree"{c=(substr($2,length($2)-length(p)+1)==p)} c&&$1=="locked"{f=1} END{exit !f}'; }
+python3 "$WT" gc --dry-run > "$TMP/gc11d.out" 2>&1
+grep -q "kept-dead" "$TMP/gc11d.out" && locked "$TMP/kept-dead" && ! grep -q "kept-live" "$TMP/gc11d.out" \
+  && ok "--dry-run names a devkit-kept lock of a dead pid and opens nothing (#327 b)" || fail "dry-run kept-lock report wrong: $(cat "$TMP/gc11d.out")"
+python3 "$WT" gc > "$TMP/gc11.out" 2>&1
+! locked "$TMP/kept-dead" && grep -q "kept-dead" "$TMP/gc11.out" && ok "gc opens and names a devkit-kept lock of a dead pid (#327 b)" \
+  || fail "dead kept lock not opened: $(cat "$TMP/gc11.out")"
+locked "$TMP/kept-live" && ok "  … a lock whose pid is alive is not touched (#327 b)" || fail "live kept lock was opened"
+kill "$LIVEPID" 2>/dev/null
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc: all passed" || { echo "❌ test_worktree_gc: $FAILS failed"; exit 1; }
