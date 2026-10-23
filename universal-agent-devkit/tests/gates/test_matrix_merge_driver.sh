@@ -163,4 +163,27 @@ OUT="$(git merge --no-edit b 2>&1)"
 echo "$OUT" | grep -qi "can't open file" && bad "12: driver errored without a kit copy: $OUT" || ok "12: no kit copy: git's text merge runs instead of an error"
 git merge --abort >/dev/null 2>&1
 
+# 13 (#302): two branches that each append a different timing line to the tail of tests/lib/test_durations.txt merge clean and
+# keep both; the root .gitattributes of THIS repo routes the file to git's built-in union driver
+D="universal-agent-devkit/tests/lib/test_durations.txt"
+ATTR_FILE="$DEVKIT_DIR/../.gitattributes"
+make_repo
+mkdir -p "$(dirname "$D")" && printf 'a 1\nb 2\n' > "$D"
+if [ -f "$ATTR_FILE" ] && grep -qxF "$D merge=union" "$ATTR_FILE"; then echo "$D merge=union" >> .gitattributes; fi
+git add -A && git commit -qm base
+for br in x y; do git checkout -q -b $br main && printf '%s 9\n' "t-$br" >> "$D" && git commit -qam "add $br"; done
+git checkout -q x
+if git merge --no-edit y >/dev/null 2>&1 && grep -q '^t-x 9$' "$D" && grep -q '^t-y 9$' "$D" && ! grep -q '^<<<<<<<' "$D"; then
+  ok "13: two appended timing lines merge clean, both kept"
+else bad "13: test_durations.txt conflicts or loses a line (tracked attribute missing in the repo .gitattributes?)"; fi
+git merge --abort >/dev/null 2>&1
+# 13b: the very same line appended on both sides stays once
+make_repo
+mkdir -p "$(dirname "$D")" && printf 'a 1\n' > "$D"
+if [ -f "$ATTR_FILE" ] && grep -qxF "$D merge=union" "$ATTR_FILE"; then echo "$D merge=union" >> .gitattributes; fi
+git add -A && git commit -qm base
+for br in x y; do git checkout -q -b $br main && printf 'same 5\n' >> "$D" && git commit -qam "add $br"; done
+git checkout -q x
+git merge --no-edit y >/dev/null 2>&1; [ "$(grep -c '^same 5$' "$D")" = 1 ] && ok "13b: a line added on both sides stays once" || bad "13b: duplicate line after merge: $(cat "$D")"
+
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }
