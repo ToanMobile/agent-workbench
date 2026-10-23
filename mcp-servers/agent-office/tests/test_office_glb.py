@@ -1,5 +1,5 @@
 """Bộ nội thất office.glb (dựng bằng blender/build_office.py) phải có đủ các khối mà trang nhân bản theo tên."""
-import json, os, struct, unittest
+import json, os, re, struct, unittest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GLB = os.environ.get("OFFICE_GLB") or os.path.join(HERE, "web", "models", "office.glb")  # biến môi trường: chạy thử trên file khác để thấy test bắt lỗi
@@ -31,6 +31,18 @@ class OfficeGlbTest(unittest.TestCase):
 
     def test_small_enough(self):
         self.assertLess(os.path.getsize(GLB), 400_000)
+
+
+class StationsGlbTest(unittest.TestCase):
+    """Trang dựng trạm đứng của lane QA và Review bằng cách nhân bản khối theo tên trong stations.glb."""
+    def test_every_station_the_page_uses_exists(self):
+        j = glb_json(os.path.join(HERE, "web", "models", "stations.glb"))
+        roots = {j["nodes"][i].get("name") for i in j["scenes"][0]["nodes"]}
+        with open(os.path.join(HERE, "web", "index.html"), encoding="utf-8") as f:
+            page = f.read()
+        used = set(re.findall(r"station: '(\w+)'", page))
+        self.assertEqual(used, {"QAMatrix", "ReviewCockpit"})
+        self.assertTrue(used <= roots, used - roots)
 
 
 if __name__ == "__main__":

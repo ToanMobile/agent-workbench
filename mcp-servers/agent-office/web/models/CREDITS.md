@@ -13,4 +13,4 @@ Copied unchanged from https://github.com/tinhthanh/vetgo-3d-demo/tree/main/model
 
 `office.glb` (desk, swivel chair, monitor, keyboard, mouse, mug, plant, card shelf) is built in this repo by `../blender/build_office.py` (Blender 5.2, headless); its helper functions are adapted from https://github.com/tinhthanh/vetgo-3d-demo/blob/main/blender/build_characters.py.
 
-`stations.glb` (nine QA and review stations for a software team: test bench, checklist, device wall, bug board, dashboards, PR wall, diff screen, huddle table, flow board) is built by `../blender/build_stations.py` (Blender 5.2, headless), reusing the helpers of `build_office.py`. Samples only: not loaded by the page yet.
+`stations.glb` (QAMatrix and ReviewCockpit, the standing stations of the QA and Review lanes) is built by `../blender/build_stations.py` (Blender 5.2, headless), reusing the helpers of `build_office.py`. The page clones them for the QA and Review runner lanes. The people are the Quaternius models above with a chibi look applied in `index.html` (`CHIBI`: bigger head, shorter body).
