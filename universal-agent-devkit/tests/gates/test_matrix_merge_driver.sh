@@ -127,4 +127,40 @@ else
 fi
 cd "$H" && git worktree remove --force "$W" >/dev/null 2>&1
 
+# 9 (#272 R2): the same test id on both sides with different content must leave git's conflict markers in the file
+# (a `git add` right after the failed merge must not silently keep only ours' rule).
+make_repo
+branch_add a "$(rule D-1 'echo a')"; branch_add b "$(rule D-1 'echo b')"
+git checkout -q a
+git merge --no-edit b >/dev/null 2>&1
+if grep -q '^<<<<<<<' "$M" && grep -q '^>>>>>>>' "$M"; then ok "9: duplicate id leaves conflict markers in the file"; else bad "9: no conflict markers after a duplicate id (the file is ours-only)"; fi
+git merge --abort >/dev/null 2>&1
+
+# 10 (#272 R3): a .gitattributes without a final newline still gets the attribute on its own line
+H10="$(mktemp -d "$TMP/hooks10.XXXXXX")" && cd "$H10" && git init -q . && git config user.email t@t && git config user.name t
+printf '*.txt text' > .gitattributes
+bash "$DEVKIT_DIR/scripts/git/githooks.sh" install "$H10" >/dev/null 2>&1
+grep -qxF '*.txt text' .gitattributes && grep -qxF "$M merge=devkit-matrix" .gitattributes \
+  && ok "10: attribute appended on its own line after a file with no final newline" || bad "10: attribute glued to the last line: $(cat .gitattributes)"
+
+# 11 (#272 R4): origin/main holds a matrix that is not an object (a JSON array): the driver must not crash
+make_repo
+branch_add a "$(rule A-1 true)"; branch_add b "$(rule B-1 true)"
+git checkout -q main && printf '[]\n' > "$M" && git commit -qam weird && git update-ref refs/remotes/origin/main main
+git checkout -q a
+OUT="$(git merge --no-edit b 2>&1)"
+echo "$OUT" | grep -q Traceback && bad "11: driver crashed on a non-object origin matrix" || ok "11: non-object origin matrix does not crash the driver"
+git merge --abort >/dev/null 2>&1
+
+# 12 (#272 R1): the command githooks.sh registers, run where no kit copy exists anywhere, falls back to git's own
+# text merge instead of failing with "can't open file"
+DRV12="$(git -C "$H" config --get merge.devkit-matrix.driver)"
+make_repo
+git config merge.devkit-matrix.driver "$DRV12"
+branch_add a "$(rule A-1 true)"; branch_add b "$(rule B-1 true)"
+git checkout -q a
+OUT="$(git merge --no-edit b 2>&1)"
+echo "$OUT" | grep -qi "can't open file" && bad "12: driver errored without a kit copy: $OUT" || ok "12: no kit copy: git's text merge runs instead of an error"
+git merge --abort >/dev/null 2>&1
+
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }
