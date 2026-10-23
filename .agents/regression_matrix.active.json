@@ -1241,6 +1241,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-guard-heredoc-text",
+      "watch_files": [
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/worktree_guard.sh",
+        "universal-agent-devkit/tests/gates/test_guard_heredoc_text_not_command.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-HEREDOC-TEXT-01",
+          "name": "chữ rm -rf / git nằm trong heredoc là dữ liệu: hardware_safety_gate và worktree_guard không chặn nhầm, rm -rf / và ghi vào main thật vẫn bị chặn (#299 b, c)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_heredoc_text_not_command.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
