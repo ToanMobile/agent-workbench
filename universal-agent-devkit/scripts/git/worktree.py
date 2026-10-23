@@ -67,6 +67,7 @@ and its commits are kept (a detached worktree's commits must be brought back fir
 Only the recorded setup and ignored files (copied config, hook logs) go with the folder.
 """
 
+import collections
 import contextlib
 import errno
 import filecmp
@@ -1828,11 +1829,12 @@ def cmd_diff(cwd, args):
     return 0
 
 
-def _iter_blockers(cwd, wt, shown, budget):
+def _iter_blockers(cwd, wt, shown, budget, rows=None):
     """The reasons a worktree must NOT be removed, one at a time, in the order `remove` has always checked them. Yields
     (exit code, kind, text, detail lines). Lazy: a check that cannot run (not made by `worktree add`) is only reached when
     nothing earlier blocked. kind: unregistered | busy | unreachable | submodule | not_ours | main | uncommitted | secret."""
-    rows = inventory(cwd, only=wt, budget=budget)
+    if rows is None:
+        rows = inventory(cwd, only=wt, budget=budget)
     if not rows and os.path.isdir(wt):
         # git does not list this directory as a linked worktree (a subdirectory of one, the main checkout, a plain folder, a name the
         # listing could not tie to it): the busy / reflog / unreachable checks have nothing to run on, so nothing may be assumed safe
@@ -2219,6 +2221,38 @@ def _content_in_trunk(main, ref):
                if git(main, "rev-parse", "-q", "--verify", f"{tip}^{{commit}}", check=False).returncode == 0)
 
 
+def _same_patches_verbatim(cwd, tip, head, cap=300):
+    """Như `_same_patches_in_main` nhưng so `git patch-id --verbatim`: patch-id mặc định bỏ khoảng trắng nên `a2` và `a 2` coi như một,
+    còn discard xoá thật. Mọi commit của `head` mà `tip` chưa có phải có patch-id y hệt một commit của tip (từ merge-base). Có merge
+    commit, quá `cap` commit, lỗi git: False."""
+    base = git(cwd, "merge-base", tip, head, check=False).stdout.strip()
+    if not base:
+        return False
+    merges = git(cwd, "rev-list", "--merges", "--count", f"{base}..{head}", check=False)
+    total = git(cwd, "rev-list", "--count", f"{base}..{tip}", check=False)
+    if merges.returncode or merges.stdout.strip() != "0" or total.returncode or not total.stdout.strip().isdigit() or int(total.stdout) > cap:
+        return False
+
+    def ids(rng):   # BYTES: text mode đổi \r\n thành \n trước patch-id; --submodule=short: commit chỉ đổi gitlink vẫn có patch-id
+        log = _git_bytes(cwd, "log", "-p", "--no-merges", "--no-color", "--no-ext-diff", "--no-textconv", "--submodule=short",
+                         "--ignore-submodules=none", "--full-index", "--binary", "--format=commit %H", rng)
+        pid = _git_bytes(cwd, "patch-id", "--verbatim", inp=log.stdout) if log.returncode == 0 else None
+        return collections.Counter(l.split()[0] for l in pid.stdout.splitlines() if l.strip()) if pid is not None and pid.returncode == 0 else None
+    mine, theirs = ids(f"{base}..{head}"), ids(f"{base}..{tip}")
+    return mine is not None and theirs is not None and not (mine - theirs)   # đếm số lần: add, delete, add lại không bằng add, delete
+
+
+def _chain_in_trunk(main, head):
+    """Mọi commit `head` có hơn một đầu trunk (local hoặc origin/<trunk>) đã được tích hợp theo cách `remove` tính: là tổ tiên, gộp thử
+    ra đúng cây trunk, cùng patch-id với một commit ở đó, hoặc cả patch đã nằm trong trunk (squash). Commit rỗng, lỗi git: False."""
+    trunk = _trunk_branch(main)
+    for ref in ((f"refs/heads/{trunk}", f"refs/remotes/origin/{trunk}") if trunk else ()):
+        tip = git(main, "rev-parse", "-q", "--verify", f"{ref}^{{commit}}", check=False).stdout.strip()
+        if tip and (_is_ancestor(main, head, tip) or _merges_to(main, tip, head) or _same_patches_verbatim(main, tip, head)) and not _empty_commit_between(main, tip, head):
+            return True
+    return False
+
+
 def _merged_pr_at(main, branch, tip):
     """Số PR MERGED VÀO TRUNK (baseRefName = trunk, không phải PR từ fork) có head là `branch` và headRefOid đúng `tip` (không còn commit mới
     sau lần gộp), theo `gh`; None khi không có, không biết trunk, gh không chạy được, quá 15 s hay trả gì đọc không được (không nói được =
@@ -2343,13 +2377,20 @@ def cmd_discard(cwd, args):
     live = _live_holder(main, wt)
     if live:
         die(tr(f"{wt}: {live} — để yên", f"{wt}: {live} - left alone"), 1)
+    head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()
     try:
-        refused = [text for _code, kind, text, _detail in _iter_blockers(cwd, wt, args[0], None) if kind != "uncommitted"]
+        in_trunk = bool(head) and _chain_in_trunk(main, head)
+        # `remove` so commit của worktree với HEAD của main checkout, mà PR squash trên origin để lại phía sau: UNREACHABLE của nó chỉ nói
+        # "hơn main local". Bỏ qua khi trunk (local hoặc origin) đã giữ cả chuỗi và không commit nào chỉ còn trong reflog
+        rows = inventory(cwd, only=wt, budget=None)   # một kiểm kê cho cả waive lẫn blocker: không lệch nhau giữa hai lần đọc
+        waive = in_trunk and [r["reflog"] for r in rows] == [[]] \
+            and git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip() == head   # HEAD không đổi giữa hai lần đọc
+        refused = [text for _code, kind, text, _detail in _iter_blockers(cwd, wt, args[0], None, rows=rows)
+                   if kind != "uncommitted" and not (waive and kind == "unreachable")]
         refused += _discard_leftovers(wt)
     except UnicodeError as e:
         die(tr(f"không kiểm tra được {wt} (tên file không phải UTF-8: {e}) — không gỡ", f"cannot check {wt} (a file name that is not UTF-8: {e}) - nothing removed"), 1)
-    head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()
-    if not head or not _content_in_trunk(main, head):   # một nhánh có tên giữ commit của nó, nhưng discard chỉ cho HEAD trunk đã có (audit T0044)
+    if not in_trunk:   # một nhánh có tên giữ commit của nó, nhưng discard chỉ cho HEAD trunk đã có (audit T0044)
         refused.append(tr(f"{wt}: HEAD ({head[:12] or '?'}) có commit trunk chưa có (không là tổ tiên, gộp thử squash cũng thêm vào): đem về hoặc PR trước",
                           f"{wt}: HEAD ({head[:12] or '?'}) holds commits the trunk lacks (neither an ancestor nor a squash): bring them back or PR them first"))
     try:
