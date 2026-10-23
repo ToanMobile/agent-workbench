@@ -1195,6 +1195,22 @@
       ]
     },
     {
+      "component": "super-board-total-worker-cap",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/super-board/configs/agent-workbench.json",
+        "tests/super-board/test_runner_total_cap.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TOTAL-CAP-01",
+          "name": "một trần worker duy nhất: build+qa+review của mọi repo trên máy <= max_workers (5), đếm qua thư mục slot chung, PID chết tự trả slot; tải CPU, WIP, gate_max không còn chi phối",
+          "command": "bash tests/super-board/test_runner_total_cap.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-merge-gate-verified-tree",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
