@@ -27,6 +27,11 @@ class InstallAutostart(unittest.TestCase):
             self.assertTrue(os.path.isdir(os.path.join(app_dir, "web")))
             self.assertEqual(plist["WorkingDirectory"], app_dir)
             self.assertEqual(plist["KeepAlive"], {"SuccessfulExit": False})
+            # bản chép ở ~/.agent-office/app không nằm trong repo: server phải được chỉ tới ai-factory.sh thật,
+            # không thì nút "Tạo mã mới" của menu Điện thoại gọi một file không có
+            factory = plist["EnvironmentVariables"].get("AGENT_OFFICE_FACTORY_SCRIPT", "")
+            self.assertEqual(os.path.realpath(factory), os.path.realpath(os.path.join(HERE, "..", "..", "ai-factory.sh")))
+            self.assertTrue(os.path.isfile(factory), factory)
 
 
 if __name__ == "__main__":

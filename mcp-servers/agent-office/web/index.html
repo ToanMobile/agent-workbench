@@ -325,6 +325,10 @@
   dialog.dlg .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   dialog.dlg .hint { font-size: 12.5px; color: var(--muted); margin: 0 0 14px; }
   dialog.dlg .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  /* menu Điện thoại: QR luôn trên nền trắng (camera điện thoại đọc được cả ở Ca đêm) */
+  dialog.dlg .qr { display: grid; place-items: center; min-height: 220px; margin: 0 0 12px; font-size: 13px; color: var(--muted); text-align: center; }
+  dialog.dlg .qr svg { width: min(260px, 70vw); height: auto; background: #fff; border-radius: 12px; padding: 8px; }
+  dialog.dlg .phone-url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; text-align: center; }
 
   @media (max-width: 900px) {
     .board { left: 12px; right: 12px !important; top: calc(var(--top-h, 120px) + 10px); bottom: calc(var(--bot-h, 64px) + 8px); }
@@ -396,6 +400,7 @@
   <button type="button" class="sec" id="btnNext">Agent kế tiếp</button>
   <button type="button" class="sec" id="btnDesk" aria-expanded="false" aria-controls="deskPicker">Kiểu bàn</button>
   <button type="button" class="sec" id="btnTheme">Ca đêm</button>
+  <button type="button" class="sec" id="btnPhone" aria-haspopup="dialog" aria-controls="phoneDlg">Điện thoại</button>
   <button type="button" class="sec" id="btnRefresh">Tải lại GitHub</button>
   <button type="button" class="more-btn" id="btnMore" aria-expanded="false">Khác</button>
 </div>
@@ -432,6 +437,18 @@
       <button type="submit" class="btn primary" id="createSubmit">Tạo việc</button>
     </div>
   </form>
+</dialog>
+
+<dialog class="dlg" id="phoneDlg" aria-labelledby="phoneTitle">
+  <h2 id="phoneTitle">Mở trên điện thoại</h2>
+  <p class="hint" id="phoneHint"></p>
+  <div class="qr" id="phoneQr" role="img" aria-label="Mã QR mở xưởng trên điện thoại" aria-live="polite"></div>
+  <p class="hint phone-url" id="phoneUrl"></p>
+  <div class="actions">
+    <button type="button" class="btn" id="phoneNew">Tạo mã mới</button>
+    <button type="button" class="btn" id="phoneCopy">Chép link</button>
+    <button type="button" class="btn primary" id="phoneClose" autofocus>Đóng</button>
+  </div>
 </dialog>
 
 <script src="vendor/three.min.js"></script>
@@ -1744,7 +1761,7 @@ $('#labels').addEventListener('click', (e) => { if (suppressLabelClick) { e.stop
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
-  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable], #drawer, #board, .rail')) || $('#createDlg').open) return;
+  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable], #drawer, #board, .rail')) || $('#createDlg').open || $('#phoneDlg').open) return;
   const act = { ArrowLeft: () => panBy(-70, 0), ArrowRight: () => panBy(70, 0), ArrowUp: () => panBy(0, -70), ArrowDown: () => panBy(0, 70),
     '+': () => zoomBy(0.85), '=': () => zoomBy(0.85), '-': () => zoomBy(1 / 0.85) }[e.key];
   if (act) { e.preventDefault(); act(); }
@@ -1836,7 +1853,7 @@ function updateSelectionVisuals() {
 }
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#deskPicker').hidden) { $('#deskPicker').hidden = true; $('#btnDesk').setAttribute('aria-expanded', 'false'); $('#btnDesk').focus(); return; }
-  if (e.key === 'Escape' && !selection && boardOpen && !$('#createDlg').open) { boardOpen = false; $('#btnBoard').textContent = 'Dạng bảng'; renderBoard(); return; }
+  if (e.key === 'Escape' && !selection && boardOpen && !($('#createDlg').open || $('#phoneDlg').open)) { boardOpen = false; $('#btnBoard').textContent = 'Dạng bảng'; renderBoard(); return; }
   if (e.key === 'Escape' && selection) { selection = null; renderDrawer(); renderRail(); updateSelectionVisuals(); } });
 
 // ------------------------------------------------------------ UI
@@ -2506,12 +2523,55 @@ $('#btnTheme').onclick = () => {
   syncThemeBtn(); if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
 };
 $('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() }).catch(() => {}); $('#btnRefresh').textContent = 'Đang tải…'; setTimeout(() => { $('#btnRefresh').textContent = 'Tải lại GitHub'; }, 2500); };
+
+// Menu "Điện thoại" (chỉ trên máy Mac): QR của Cloudflare tunnel kèm key để mở xưởng trên điện thoại ở mạng khác.
+// Server chỉ trả link cho chính máy Mac; mở qua tunnel thì ẩn nút (server cũng trả 403).
+const PHONE_HINT = 'Quét bằng camera điện thoại. Dùng được cả khi điện thoại ở mạng khác (4G, Wi-Fi khác). Tạo mã mới thì mã cũ hết hiệu lực.';
+let phoneLink = '';
+if (location.hostname.endsWith('.trycloudflare.com')) $('#btnPhone').hidden = true;
+function showPhone(d) {
+  const qr = $('#phoneQr');
+  phoneLink = d && d.live ? d.link : '';
+  qr.textContent = '';
+  if (!d || !d.ok) qr.textContent = 'Không đọc được trạng thái kết nối từ xa.';
+  else if (!d.live) qr.textContent = 'Chưa có kết nối từ xa (hoặc kết nối cũ đã hết hạn). Bấm "Tạo mã mới".';
+  else if (d.svg) qr.innerHTML = d.svg;   // SVG do qrencode trên chính máy này tạo từ link
+  else qr.textContent = 'Máy chưa cài qrencode (brew install qrencode): dùng nút "Chép link".';
+  $('#phoneUrl').textContent = d && d.live ? d.url : '';
+  $('#phoneCopy').disabled = !phoneLink;
+}
+async function loadPhone(fresh) {
+  const btn = $('#phoneNew');
+  if (fresh) { btn.disabled = true; btn.textContent = 'Đang tạo…'; $('#phoneQr').textContent = 'Đang mở kết nối, chờ khoảng 10–30 giây…'; }
+  try {
+    const res = await fetch('api/phone', fresh
+      ? { method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json', 'X-Agent-Office': '1' }), body: '{}' }
+      : { cache: 'no-store', headers: apiHeaders() });
+    const d = await res.json().catch(() => null);
+    if (!res.ok) { showPhone(null); $('#phoneQr').textContent = (d && d.error) || ('Lỗi ' + res.status); return; }
+    showPhone(d);
+    if (fresh && d && d.live) $('#phoneHint').textContent = 'Mã mới đã sẵn sàng. Điện thoại báo không mở được thì đợi thêm 30 giây rồi quét lại (Cloudflare cần thời gian bật tên miền).';
+  } catch (e) {
+    showPhone(null);
+  } finally {
+    if (fresh) setTimeout(() => { btn.disabled = false; btn.textContent = 'Tạo mã mới'; }, 1000);
+  }
+}
+$('#btnPhone').onclick = () => { $('#phoneHint').textContent = PHONE_HINT; $('#phoneDlg').showModal(); loadPhone(false); };
+$('#phoneNew').onclick = () => loadPhone(true);
+$('#phoneClose').onclick = () => $('#phoneDlg').close();
+$('#phoneCopy').onclick = async () => {
+  if (!phoneLink) return;
+  try { await navigator.clipboard.writeText(phoneLink); $('#phoneCopy').textContent = 'Đã chép'; }
+  catch (e) { $('#phoneCopy').textContent = 'Không chép được'; }
+  setTimeout(() => { $('#phoneCopy').textContent = 'Chép link'; }, 1500);
+};
 const SHORTCUTS = { w: '#btnAgents', e: '#btnEvents', f: '#btnFit', z: '#btnZoom', b: '#btnBoard', a: '#btnAdd', n: '#btnNext', t: '#btnTheme', r: '#btnRail', d: '#btnDesk' };
 Object.entries(SHORTCUTS).forEach(([k, q]) => { const btn = $(q); btn.setAttribute('aria-keyshortcuts', k.toUpperCase()); btn.title = 'Phím tắt: ' + k.toUpperCase(); });
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
   const t = e.target;
-  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable]')) || $('#createDlg').open) return;
+  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable]')) || $('#createDlg').open || $('#phoneDlg').open) return;
   const q = SHORTCUTS[(e.key || '').toLowerCase()]; if (!q) return;
   e.preventDefault(); $(q).click();
 });
