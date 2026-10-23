@@ -92,27 +92,27 @@ class Person:
         for v in verts:
             v[self.dl][gi] = 1.0
 
-    def sphere(self, r, loc, mat, bone, sc=(1, 1, 1), rot=(0, 0, 0), u=20, v=12):
+    def sphere(self, r, loc, mat, bone, sc=(1, 1, 1), rot=(0, 0, 0), u=30, v=18):
         """rot: (tilt forward, roll sideways, turn) in degrees in the (x, front, z) frame."""
         R = Euler((math.radians(-rot[0]), math.radians(rot[1]), math.radians(rot[2])), 'XYZ').to_matrix().to_4x4()
         m = Matrix.Translation(loc) @ R @ Matrix.Diagonal((r * sc[0], r * sc[1], r * sc[2], 1))
         self._tag(bmesh.ops.create_uvsphere(self.bm, u_segments=u, v_segments=v, radius=1.0, matrix=m)["verts"], mat, bone)
 
-    def limb(self, p0, p1, r0, r1, mat, bone, seg=12, caps=True):
+    def limb(self, p0, p1, r0, r1, mat, bone, seg=20, caps=True, cap_uv=(18, 12)):
         d = p1 - p0
         m = Matrix.Translation((p0 + p1) / 2) @ d.normalized().to_track_quat('Z', 'Y').to_matrix().to_4x4()
         self._tag(bmesh.ops.create_cone(self.bm, cap_ends=True, cap_tris=False, segments=seg, radius1=r0, radius2=r1,
                                         depth=d.length, matrix=m)["verts"], mat, bone)
         if caps:  # round joints so bends never show a cut end
-            self.sphere(r0, p0, mat, bone, u=12, v=8)
-            self.sphere(r1, p1, mat, bone, u=12, v=8)
+            self.sphere(r0, p0, mat, bone, u=cap_uv[0], v=cap_uv[1])
+            self.sphere(r1, p1, mat, bone, u=cap_uv[0], v=cap_uv[1])
 
     def tube(self, pts, r, mat, bone):
         """A drawn stroke: chain of rounded segments through pts (used for the mouth, lashes and ahoge)."""
         for a, b in zip(pts, pts[1:]):
-            self.limb(a, b, r, r, mat, bone, seg=8)
+            self.limb(a, b, r, r, mat, bone, seg=12, cap_uv=(10, 6))  # thin strokes: small caps stay round at fewer faces
 
-    def shell(self, centre, r, sc, mat, bone, keep, u=48, v=30):
+    def shell(self, centre, r, sc, mat, bone, keep, u=64, v=36):
         m = Matrix.Translation(centre) @ Matrix.Diagonal((r * sc[0], r * sc[1], r * sc[2], 1))
         res = bmesh.ops.create_uvsphere(self.bm, u_segments=u, v_segments=v, radius=1.0, matrix=m)["verts"]
         dead = []
@@ -190,7 +190,7 @@ def hair(P):
     if c["girl"]:
         tie = ("HairTie", c["tie"])
         for sx in (-1, 1):  # big drooping twin tails with pink ties
-            P.sphere(0.1, B(sx * 0.34, -0.03, HC - 0.03), hairm, "Head", sc=(0.75, 0.8, 1.75), rot=(0, sx * -38, 0), u=22, v=14)
+            P.sphere(0.1, B(sx * 0.34, -0.03, HC - 0.03), hairm, "Head", sc=(0.75, 0.8, 1.75), rot=(0, sx * -38, 0), u=36, v=22)
             P.sphere(0.045, B(sx * 0.255, -0.02, HC + 0.09), tie, "Head")
         P.star(on_head(0.14, HC + 0.16, 0.03, HR + 0.02), Vector((0.45, -0.75, 0.5)), 0.05, ("Star", (250, 210, 80)), "Head")
     else:
@@ -203,7 +203,7 @@ def build_body(P):
     c = P.cfg
     skin, shirt, white = ("Skin", SKIN), ("Shirt", (148, 214, 196)), ("Collar", (255, 255, 255))
     bottom, sock, shoe = ("Bottom", c["bottom"]), ("Sock", (255, 255, 255)), ("Shoes", c["shoes"])
-    P.sphere(HR, B(0, 0, HC), skin, "Head", sc=(1.04, 0.98, 0.97), u=32, v=20)
+    P.sphere(HR, B(0, 0, HC), skin, "Head", sc=(1.04, 0.98, 0.97), u=48, v=28)
     for sx in (-1, 1):
         P.sphere(0.04, B(sx * (HR - 0.005), -0.01, HC - 0.04), skin, "Head", sc=(0.5, 0.8, 1.0))
     face(P)
@@ -213,7 +213,7 @@ def build_body(P):
     P.sphere(0.04, B(0, 0.095, 0.37), white, "Spine", sc=(0.75, 0.4, 1.4))                              # white collar tab
     P.sphere(0.024, B(0.06, 0.09, 0.31), ("Badge", (255, 255, 255)), "Spine", sc=(1.4, 0.4, 1.0))       # little name badge
     if c["girl"]:
-        P.limb(B(0, 0, 0.27), B(0, 0, 0.15), 0.1, 0.165, bottom, "Hips", seg=16, caps=False)             # flared skirt
+        P.limb(B(0, 0, 0.27), B(0, 0, 0.15), 0.1, 0.165, bottom, "Hips", seg=32, caps=False)             # flared skirt
     else:
         P.sphere(0.11, B(0, 0, 0.24), bottom, "Hips", sc=(1.0, 0.85, 0.6))                              # shorts
     for sd, sx in (("L", 1), ("R", -1)):
@@ -315,7 +315,8 @@ def export(arm, mesh, path):
     arm.select_set(True)
     mesh.select_set(True)
     kw = dict(filepath=path, export_format='GLB', export_yup=True, use_selection=True, export_animations=True,
-              export_materials='EXPORT', export_skins=True, export_lights=False, export_cameras=False)
+              export_materials='EXPORT', export_skins=True, export_lights=False, export_cameras=False,
+              export_texcoords=False)
     try:
         bpy.ops.export_scene.gltf(export_animation_mode='NLA_TRACKS', **kw)
     except TypeError:

@@ -64,7 +64,7 @@ class ChibiGlbTest(unittest.TestCase):
             self.assertEqual({a["name"].lower() for a in j["animations"]}, {"idle", "walk"})
             mats = [m["name"] for m in j["materials"]]
             self.assertTrue(any(m.startswith("Shirt") for m in mats) and any(m.startswith("Hair") for m in mats), (name, mats))
-            self.assertLess(os.path.getsize(path), 800_000)  # hai người cộng lại vẫn nhẹ hơn bộ Quaternius cũ (khoảng 3,3 MB)
+            self.assertLess(os.path.getsize(path), 1_500_000)  # lưới dày cho mịn; hai người cộng lại vẫn nhẹ hơn bộ Quaternius cũ (khoảng 3,3 MB)
 
 if __name__ == "__main__":
     unittest.main()

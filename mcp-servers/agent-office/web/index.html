@@ -2766,6 +2766,10 @@ function frame(now) {
     stepWalkers(dt);
     updateLive(now);
     for (const a of actors) if (a.live) { a.mixer.update(dt); applySit(a, now / 1000); }
+    { // viền chỉ bật khi người đủ lớn trên màn hình: nhìn xa nó mảnh dưới 1 pixel nên thành răng cưa
+      const d = camera.position.distanceTo(controls.target), px = canvas.clientHeight * 2.3 / (2 * d * Math.tan(camera.fov * Math.PI / 360));
+      OUTLINE_MAT.visible = px > 70;
+    }
     const t = now / 1000;
     for (const r of rigs) {
       if (r.head.children[0] && !r.head.children[0].visible) continue; // người hộp đã được người glTF thay chỗ: không ai thấy, khỏi tính
