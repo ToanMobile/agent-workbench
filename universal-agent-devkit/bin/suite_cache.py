@@ -47,6 +47,7 @@ BIG_FILE_BYTES = 8 << 20         # như tree_fp: file lớn hơn thì băm theo 
 # Đổi một file khớp danger list là đổi khoá của MỌI suite (bảo thủ: thư viện test dùng chung, mã của gate/hook, ma trận).
 DANGER = ("**/tests/lib/**", "tests/lib/**", "**/clean_git_env.sh",
           "universal-agent-devkit/bin/post-fix-gate.py", "universal-agent-devkit/bin/heavy_slot.py",
+          "universal-agent-devkit/bin/capacity.py",   # mặc định song song / ngưỡng tải của gate, heavy_slot và run_impacted (T0052)
           "universal-agent-devkit/bin/suite_cache.py", "universal-agent-devkit/bin/tree_fp.py",
           "universal-agent-devkit/bin/regression_checklist.py", "universal-agent-devkit/hooks/**",
           # config mà công cụ đọc ngầm, không lệnh nào nêu tên (review 20/10)

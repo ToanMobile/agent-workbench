@@ -16,7 +16,8 @@ Why: lanes that start in input order leave the long one for last (the 15/10 batc
 was the critical path for five hours) and every lane runs its own test suites, so seven agents at once pushed the load to 37 on a
 machine whose tests then crawled. The plan starts, whenever a slot is free, the ready lane with the longest path to the end of the batch
 (its own estimate plus the chain that waits for it); a heuristic, so when the listed order happens to end sooner the plan says so and
-uses it. `slots` caps the parallelism by the free CPU, never below 1 and never above MAX_SLOTS (the 3-4 agents that run suites at once).
+uses it. `slots` caps the parallelism by the free CPU, never below 1 and never above capacity lane_slots_max (T0052: bin/capacity.py,
+lõi/3 × DEVKIT_CAPACITY — 12 lõi: 4, 64 lõi: 21; kit thiếu capacity.py thì MAX_SLOTS = 4).
 
 LANE_PLAN_CORES / LANE_PLAN_LOAD override the machine reading, LANE_PLAN_HISTORY the history file (default
 <git common dir>/devkit/lane_times.jsonl: shared by every worktree, never tracked, never swept into a merge). Python stdlib
@@ -24,6 +25,7 @@ only, 3.9 compatible.
 """
 import errno
 import heapq
+import importlib.util
 import json
 import math
 import os
@@ -34,7 +36,7 @@ import time
 
 DEFAULT_EST = 30.0
 MAX_EST = 1e6       # minutes: a bigger number is a typo (1e308 would also put Infinity in the --json output)
-MAX_SLOTS = 4       # the repo's rule: at most 3-4 agents running test suites at once
+MAX_SLOTS = 4       # trần khi không nạp được bin/capacity.py; mặc định là capacity.lane_slots_max (T0052, 12 lõi: 4)
 JOBS_PER_LANE = 4   # a lane that runs the gate starts several test processes of its own
 # files every lane touches and git merges as a union: not a reason to warn (matched at the end of a path: the kit sits in a folder)
 SHARED = ("tests/impact_map.txt", "tests/lib/test_durations.txt", ".agents/CHECKLIST.md", ".agents/regression_status.json")
@@ -67,18 +69,75 @@ def _num(value, name):
     return v
 
 
-def slots(jobs_per_lane=JOBS_PER_LANE):
-    """(slots, cores, load): free CPU divided by what one lane uses, between 1 and MAX_SLOTS."""
-    cores = int(_num(os.environ.get("LANE_PLAN_CORES", os.cpu_count() or 1), "LANE_PLAN_CORES"))
+def _capacity():
+    """bin/capacity.py của kit chứa script này (T0052), nạp theo đường dẫn; None khi không nạp được (bản sao LP_KIT thiếu bin/):
+    chỗ gọi dùng đọc máy cũ và MAX_SLOTS."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "bin", "capacity.py")
+    try:
+        spec = importlib.util.spec_from_file_location("devkit_capacity", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không làm chết lane_plan
+        sys.stderr.write("lane_plan: không nạp được bin/capacity.py (%r); trần %d lane\n" % (exc, MAX_SLOTS))
+        return None
+
+
+_BROKEN = object()   # _cap_call: capacity vắng hay hỏng (khác None, giá trị hợp lệ của load() khi không đọc được tải)
+
+
+def _cap_call(cap, name, ok, *args):
+    """capacity.<name>(*args) khi giá trị qua ok(); capacity vắng thì _BROKEN; hàm thiếu (file 0 byte), ném lỗi hay trả ngoài miền thì
+    _BROKEN và một dòng stderr — chỗ gọi dùng đọc máy cũ / MAX_SLOTS (Antigravity audit 23/10: AttributeError làm lane_plan chết)."""
+    if cap is None:
+        return _BROKEN
+    try:
+        value = getattr(cap, name)(*args)
+        if ok(value):
+            return value
+        why = "trả %r" % (value,)
+    except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì cũng không làm chết lane_plan
+        why = repr(exc)
+    sys.stderr.write("lane_plan: capacity %s hỏng (%s); dùng đọc máy cũ / trần %d lane\n" % (name, why, MAX_SLOTS))
+    return _BROKEN
+
+
+def _pos_int(v):
+    return type(v) is int and v >= 1
+
+
+def _load_ok(v):
+    return v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and 0 <= v != float("inf"))
+
+
+def slots(jobs_per_lane=None):
+    """(slots, cores, load): free CPU divided by what one lane uses, between 1 and capacity lane_slots_max (MAX_SLOTS without it).
+    LANE_PLAN_CORES / LANE_PLAN_LOAD, khi đặt, vẫn qua _num (rác: exit 2) rồi mới vào capacity; không đặt thì capacity.cores() /
+    capacity.load() (DEVKIT_CAPACITY_CORES / DEVKIT_CAPACITY_LOAD rồi máy thật); capacity vắng hay hỏng thì đọc máy như cũ."""
+    jobs_per_lane = JOBS_PER_LANE if jobs_per_lane is None else jobs_per_lane
+    cap = _capacity()
+    if "LANE_PLAN_CORES" in os.environ:
+        cores = int(_num(os.environ["LANE_PLAN_CORES"], "LANE_PLAN_CORES"))
+    else:
+        cores = _cap_call(cap, "cores", _pos_int)
+        if cores is _BROKEN:
+            cores = int(_num(os.cpu_count() or 1, "LANE_PLAN_CORES"))
     if "LANE_PLAN_LOAD" in os.environ:
         load = _num(os.environ["LANE_PLAN_LOAD"], "LANE_PLAN_LOAD")
     else:
-        try:
-            load = os.getloadavg()[0]
-        except (OSError, AttributeError):
+        load = _cap_call(cap, "load", _load_ok)
+        if load is _BROKEN:
+            try:
+                load = os.getloadavg()[0]
+            except (OSError, AttributeError):
+                load = 0.0   # no reading: do not throttle on a guess
+        elif load is None:
             load = 0.0   # no reading: do not throttle on a guess
+    max_slots = _cap_call(cap, "lane_slots_max", _pos_int, cores)
+    if max_slots is _BROKEN:
+        max_slots = MAX_SLOTS
     free = max(0.0, cores - load)
-    return max(1, min(MAX_SLOTS, int(free // max(1, jobs_per_lane)))), cores, load
+    return max(1, min(max_slots, int(free // max(1, jobs_per_lane)))), cores, load
 
 
 def _git_common_dir():
