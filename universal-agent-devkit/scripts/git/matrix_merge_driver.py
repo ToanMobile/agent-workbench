@@ -43,7 +43,8 @@ def _origin_rules(path):
         try:
             out = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True, text=True, timeout=10)
             if out.returncode == 0:
-                return json.loads(out.stdout).get("rules")
+                data = json.loads(out.stdout)
+                return data.get("rules") if isinstance(data, dict) else None   # a non-object matrix is "no origin"
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
     return None
@@ -87,10 +88,10 @@ def main(argv):
         return 0
     label = argv[4] if len(argv) > 4 else "regression matrix"
     print(f"matrix_merge_driver: {label}: {reason[4:] if reason.startswith('id:') else reason}", file=sys.stderr)
-    if reason.startswith("id:"):
-        return 1
-    # Not an append: let git's text merge decide (clean when the edits do not overlap, markers when they do).
-    return 1 if subprocess.run(["git", "merge-file", ours_p, base_p, theirs_p]).returncode else 0
+    # Not an append: git's text merge decides (clean when the edits do not overlap, markers when they do). A duplicate
+    # id fails whatever it says, but it still writes the markers, so a `git add` right after cannot keep only ours' rule.
+    text_conflict = subprocess.run(["git", "merge-file", ours_p, base_p, theirs_p]).returncode
+    return 1 if text_conflict or reason.startswith("id:") else 0
 
 
 if __name__ == "__main__":

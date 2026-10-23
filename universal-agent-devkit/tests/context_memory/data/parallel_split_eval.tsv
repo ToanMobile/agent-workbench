@@ -1,0 +1,143 @@
+# expected: 1 = request splits across agents (author labelling 2026-10-23); actual: parallel_split() result at this commit
+# prompts: real user prompts from session transcripts, masked (paths, URLs, names, hashes), cut at 200 chars; no personal data
+# Result (137 rows = 62 of the 63 prompts parallel_split flagged in 1409 distinct prompts, plus 75 random unflagged ones that mention a count/"all"/"and"):
+#   flagged 62: 53 right, 9 wrong (questions/status asks) -> false alarm 9/62 = 14.5% (one long prompt left out: cut at 200 chars it no longer splits)
+#   unflagged sample 75: 7 should have split -> miss 7/75 = 9.3%; scaled to the 522 unflagged prompts with such a word that is about 49 misses, recall about 51/(51+49) = 51%
+#   the misses name repos by name (OfficeReader, GeelyEx2), a numbered list "1,2,3,4", "1-5", or two platforms (Android và iOS)
+1	1	Đóng PR #99 và #120 kèm comment giải thích (nội dung đã có trong main).
+1	1	sửa 3 lỗi prototype đi
+1	1	sửa nốt 2 lỗi P3 đi
+1	1	ko ý tôi là giữ --allow-no-tests  trong cả 5 repo á
+1	1	tạo nhiều agent chạy cho nhanh giúp tao chỉ mở đầu xe 30 phút
+1	1	sửa 4 lỗi kit phiên Office nhờ đi
+1	1	tiếp tục port 5 repo và restart runner
+1	1	làm hết 3 việc đó luôn
+1	1	2 bay tự chia việc sao cho migrate hoàn hảo đi tối ưu dev kit cho cả 3 project lên cao nhất cho tôi.
+1	1	hiện tôi chỉ dùng 3 project đó với claude với gemini codex remove ra đi tôi ko dùng
+1	1	fix cả 3 project để chạy dev kit full cho tôi
+1	1	dự kiến tầm bao lâu xong vậy tạo nhiều agent làm cho nhanh đi
+1	1	Main local chưa có #132 và #88 merge vô luôn đi
+0	1	lượt bớt chạy thừa đi nha chỉ chạy khi cần thôi tôi dùng 4,5 repo nên chạy lag lắm
+1	1	audit, review cho tôi 5 repo <URL> hiện nhiều task bị blocked,ready  ko chạy được tìm nguyên nhân và fix cho tôi đi
+1	1	làm tiếp 3 repo kia
+1	1	trunk mode mặc định true trên all repo sau này init repo mới cũng vậy
+1	1	commit đi sau đó cài lại dev kit cho 3 project của tôi
+0	1	Hiện dev kit đã hoàn hảo và 3 project đã có update mới nhất dev kit ở phiên mới r đúng ko
+1	1	sẵn audit thêm 3 repo đang chạy chính dev kit có đang chạy ổn ko có update tối ưu gì thêm cho tốt hơn nữa ko
+1	1	mặc định là bật cho tất cả các repo cũng như devkit init
+1	1	chạy init lại 3 repo
+1	1	xong rồi, kiểm lại nhánh 4 repo đi
+1	1	cài lên 3 repo cho tôi đi
+1	1	List mcp hiện có mcp nào ko chạy được trên 5 repo
+1	1	codebase-memory-mcp, context7, agentmemory,  play-store,  replicant-mcp, open code review đều phải chạy trên cả 5 repo này
+0	1	tôi luôn làm nhiều phiên cùng lúc audit thêm có nên mặc định mỗi phiên 1 worktree riêng xong nào thì merge vô main tránh bị khoá ko
+0	1	mặc định 3 repo của tôi là gì note vô luôn đi ngoài ra thêm 1 repo này nữa là 4 nha <PATH> lần sau tôi nhắc 4 repo tự hiểu 4 cái nào
+0	1	tôi đang hỏi chất lượng dev kit ko hỏi vấn đề của project đó bị gì 3 repo đó là tham khảo để cải thiện chất lượng dev kit thôi
+0	1	dev kit đã xong hết rồi à đợi 3 repo chạy thử rồi kiểm tra sau đúng ko
+1	1	Tôi đã thêm quyền Bash cho `gh issue comment` rồi, bạn làm tiếp: comment done trên #40 và #80, rồi bổ sung hai dòng cho #19.
+1	1	mở nhiều worker build song song đi
+1	1	đồng bộ lại cả 5 repo đi
+1	1	push và commit settings 3 project luôn đi
+1	1	cài lại dev kit cho 3 project đi
+1	1	có viết test cho 4 bug critical đi
+1	1	có sửa luôn 2 bug đó đi
+1	1	có sửa luôn 2 lỗi OfficeReader đi
+1	1	làm  Luật "1 dev, 1 nhánh" và các hook chống lệch nhánh cho dev kit sau đó update lại dev kit cả 3 project này đi
+1	1	tôi cần tạo 3 agent chạy song song tạo dev kit hoàn chỉnh cho 3 project này với 3 profile tương ứng <PATH> <PATH> <PATH> sau đó chạy install lên các project này cho tôi
+1	1	Tôi đã nhắn session kia rồi bạn hãy check xem nó hiểu đúng ko và merge vs nhau lại cho chuẩn bị việc của bạn là migrate 3 project thôi
+1	1	sửa luôn các lỗi trong audit của 3 project đi
+1	1	làm luôn 9 bug bị hạ đi
+1	1	cho chạy 2 job song song đi
+1	1	làm tiếp tục check trên 4 repo đi
+0	1	4 repo này đưa vào white list là repo chính tôi dùng tôi kêu 4 repo tự hiểu là 4 cái này
+0	1	OCR giờ chạy với mọi repo được luôn rồi đúng ko
+1	1	làm luôn 4 việc đó đi
+1	1	init devkit cho cả 3 repo rồi commit push luôn
+1	1	init lại 3 repo rồi commit push luôn
+1	1	có mở nhiều agent làm song song cho nhanh được ko
+1	1	không cần ưu tiên chất lượng tốt nhất cứ chạy cho tới khi xong nhưng cần devkit có cơ chế sử dụng nhiều agent hoặc tối ưu sao để làm xong task nhanh nhất có thể vd đưa task nặng lên chạy trước rồi nhẹ
+1	1	init dev kit lại cho 3 repo đi
+1	1	init 3 repo cho tôi
+1	1	xong init 5 repo cho tôi lên devkit mới nhất
+1	1	commit hết 4 repo còn lại đi
+0	1	hiện devkit mới nhất đã có trên cả 5 repo hết rồi đúng ko
+1	1	sắp xong toàn bộ chưa? Chạy nhiều agent cho nhanh xong được ko lâu quá
+1	1	ko chạy nhiều agent để làm cho nhanh được à? Moá lâu vãi mất 2 ngày rồi á
+1	1	xong hết chưa? Init cho 3 repo đi
+1	1	tôi muốn 5 repo khác làm cho xong done task đang dở dọn dẹp hết worktree, branch thừa các board này sau đó stop hết 5 repo chỉ chạy duy nhất 1 repo là agent workbench thôi cho tôi
+1	1	hiện nhiều phiên đang chồng lên nhau có thể báo cáo prompt cho tôi để tôi chạy lại sau đi đóng hết lệnh hiện tại đang chạy lại
+0	0	làm tiếp fix lỗi Android 7 đi
+0	0	update vào <FILE> test luôn 1 lần
+0	0	nếu cần thì gộp ko thì remove worktree đó đi ưu tiên chất lượng hơn và update nào liên quan tới devkit thì fix ở đầu devkit ko fix riêng từng repo
+0	0	kiểm từng mục 7.1 7.2 7.3 trên máy thật đi
+0	0	1. Bỏ đi  ⏎ 2. thu lại
+0	0	Tự chấm: 88/100. Trừ điểm vì 3 lần lỗi do chính thay đổi của tôi gây ra, đều được review bắt và sửa trước khi push-> là sao ý tôi là chất lượng điểm số cuối cùng á chứ
+0	0	check <FILE> hiện giai đoạan 6 xong chưa?
+0	0	hiện có quá nhiều config max 3 rồi 100 rồi 36 rồi 24 v.v.. Tổng kết hết lại cho tôi thống nhất lại 1 con số tối ưu update hết luôn 1 lần và gom lại đi hiện rối quá được thì làm nó dynamic theo tình hì
+0	0	hiện xử lý xong hết chưa đóng phiên được chưa
+0	0	làm lần lượt cả 3 việc đi
+0	0	đang có 1 phiên đang bị limit ko chạy tiếp được hãy làm tiếp hộ tôi đi trước đó của profile finos_team
+0	0	Đóng phiên này được chưa? Merge hết vào main chưa và những gì còn sót chưa làm đưa vào <FILE> chưa
+0	0	làm luôn giai đoạan 7 đi
+0	0	viết test cho các bug còn lại luôn đi
+0	0	cho 2 icon bookmark với note nên để ở đâu ui,ux ổn nhất mà ko che màn đọc file, ngoài ra current/total cho nó nhỏ lại lớn quá che nội dung
+0	0	worktree đã merge và xoá rồi đúng ko
+1	0	làm tiếp 80 bug và 38 bug chưa có test của geely
+0	0	update lại <FILE> những gì xong thì xoá đi giữ những gì còn phải làm thôi
+0	0	update hết làm sao để tự động nhiều nhất có thể mà chất lượng vẫn tốt
+0	0	tạo 1 agent chơi thử đánh giá game trên thang điểm 100
+0	0	xong hết giai đoạn 5 chưa?
+0	0	Tự xử lý hết đi
+0	0	đồng bộ xong hết chưa?
+0	0	giữ giúp tôi geely ex2 skill /release /dondepsupabase và skill /fixbugs update lại tên skill cho chuẩn hơn audit, review luôn logic từng skill xem ok chưa luôn. Mỗi lần /fixbug mà phát hiện bugs mới h
+0	0	fix hết tất cả các suite chỗ này chưa
+0	0	cắm lại rồi, kiểm 7.1 7.2 7.3 đi
+1	0	đồng ý làm hết 1-5 luôn đi và cả "Hi Geely"
+0	0	moá sao mất hết rồi chuyển qua session mới đã
+0	0	fix hết tất cả nhưng ưu tiên ko giảm chất lượng
+0	0	mở bằng VS Code và dùng extension claude code
+0	0	thêm agentmemory vô 3 repo chưa
+0	0	gom tất cả phiên về 1 để chạy -full luôn đc ko
+0	0	Claude tự lưu rất nhiều chỗ nhiều file mày tự audit, review phân loại chuyển sang  instincts đi
+0	0	push hết lên origin đi
+0	0	fix hết toàn bộ những việc chưa cần xe đi
+0	0	hiện xong hết rồi đúng ko còn -full thôi à
+0	0	hiện thấy bên đó hiển thị đúng? Vậy trước h mày dùng bản 3.1 pro à?
+0	0	hiện tôi mở có 3 phiên thôi mà sao lại đầy rồi?
+0	0	sửa tiếp đi lại qua cửa và cầu thang
+0	0	Thêm 2 luật đó vô và làm hết cho tôi đi
+0	0	làm hết theo thứ tự đó đi
+0	0	3 dịch vụ trợ năng ECARX là gì thế? Tác dụng gì
+0	0	fix devkit đi vì devkit là đứa rule tạo nhiều worktree nên nó là rootcause
+0	0	tại sao phải nhả phiên đó rõ ràng đã fix lại 2 phiên tách rời rồi mà
+0	0	Tiếp tục việc DevKit W1 của phiên <SHA> (đã đóng). Đọc file này và làm đúng theo nó: ⏎ <PATH> ⏎ Rồi đọc thêm handoff-2026-10-15-session-<SHA>-to-new.md cùng thư mục claude-auto/ trong .agents/local/me
+0	0	gửi tôi plan fix và update toàn bộ các issues tôi duyệt rồi mới làm
+0	0	viết test thật cho 3 bug VACUOUS đi
+0	0	có 1 phiên khác đang chạy mà
+0	0	quay lại task chính đã fix xong hết chưa?
+0	0	làm tiếp các mục P3 bảo mật
+1	0	audit lại 3 project xem dev kit hoạt động như thế nào
+0	0	mở cốp và "nghỉ trưa" khi xe chạy cần khoá
+0	0	audit, review kỹ lại tôi thấy chưa đạt doc edit chỉ text cũ tạo hàng mới chưa được, ui,ux khó dùng, xlsl thì edit xong bị text ko hiển thị có vẻ màu bị trùng background, các cột ngang bị mất cột mất h
+0	0	xong rồi, commit và push
+0	0	Làm đi và merge push chưa
+0	0	theo khuyến nghị, phân tích 634 lượt miss thật và check vậy có khi nào quạt mức 5 mới khác biệt ko?
+0	0	siết luôn push --all và --tags đi
+0	0	chạy xong hết chưa?
+0	0	là trunk đang chứa code mới nhất chưa? Có giai đoạn 7 đã làm chưa
+0	0	merge xong và push code hết chưa?
+1	0	tạo thêm 100 kịch bản cho Android và iOS
+0	0	điều tra nguyên nhân khách mở google map lên xong bị crash trong video bugs/2.mp4
+1	0	cải tiến 1,2,3,4 cho tôi còn số 5 tôi tự làm sau, ngoài ra phần hiệu năng đang rất kém focus kỹ vào phần này đẩy 10/10 cho tôi cho cả 3
+1	0	chạy agent-kit sync cho OfficeReader, GeelyEx2 và Goods luôn đi
+0	0	hộp thoại ko thấy hiện, ko hiển thị camera và dẫn đường đúng
+0	0	update vào <FILE> test luôn sau
+0	0	xong hết chưa đóng phiên được chưa?
+1	0	Xoay 90° ở Organize, Chớp một frame nền xám, Ảnh quá dẹt,  Thẻ ghim có ảnh bìa lưu sẵn, - Chưa thử trên máy thật: Quét nhanh (SpeedScan), và hai loại Xlsb, Audiobook vì không có file mẫu. fix mấy này 
+0	0	ko push được tự chạy commit và push lên cho tôi
+0	0	Skill /create-task is already loaded above; instructions unchanged. Arguments: chuyển đổi toàn bộ các file ở đây thành task đưa vào backlog docs/plan cho tôi đi
+0	0	commit và push luôn
+0	0	dev kit giờ đã hoàn hảo trên 3 repo chưa
+0	0	session trước đó bị mất đang làm giai đoạn 7 là session nào mở lại resume giúp tôi
+0	0	fix  Lớp lỗi AppKv.of đọc MMKV trên main (treo 11,7 s, khoảng 20 lớp Settings)
+0	0	làm luôn giai đoạn 9

@@ -1621,6 +1621,70 @@ def remote_key(path: str) -> str:
     return _key_cache["key"]
 
 
+# Menu "Điện thoại": máy Mac lấy link + QR của quick tunnel để quét bằng điện thoại ở mạng khác, và mở tunnel mới khi
+# tunnel cũ đã chết (quick tunnel không sống mãi: sau khi máy ngủ Cloudflare trả "Tunnel not found").
+FACTORY_SCRIPT = os.environ.get("AGENT_OFFICE_FACTORY_SCRIPT") or os.path.join(os.path.dirname(os.path.dirname(HERE)), "ai-factory.sh")
+TUNNEL_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+
+
+def tunnel_alive(state_dir: str) -> bool:
+    """PID trong tunnel.pid còn sống VÀ vẫn là cloudflared (sau khi khởi động lại máy, số PID có thể thuộc chương trình khác)."""
+    try:
+        with open(os.path.join(state_dir, "tunnel.pid"), encoding="utf-8") as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return False
+    try:
+        out = subprocess.run(["ps", "-p", str(pid), "-o", "args="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        warn("ps tunnel", exc)
+        return False
+    return "cloudflared" in out
+
+
+def phone_info(state_dir: str, key_file: str) -> dict:
+    """{live, url, link, svg}. Tunnel chết, chưa có url hay chưa có key: live=False và KHÔNG trả key."""
+    url = ""
+    try:
+        with open(os.path.join(state_dir, "tunnel.log"), encoding="utf-8", errors="replace") as f:
+            url = next((m for m in TUNNEL_URL_RE.findall(f.read()) if not m.startswith("https://api.")), "")
+    except FileNotFoundError:
+        url = ""   # chưa từng mở tunnel trên máy này: không phải lỗi
+    except OSError as exc:
+        warn("tunnel log", exc)
+    key = remote_key(key_file)
+    if not (url and key and tunnel_alive(state_dir)):
+        return {"ok": True, "live": False}
+    link = f"{url}/#key={key}"
+    svg = None
+    qr = shutil.which("qrencode")
+    if qr:
+        try:
+            r = subprocess.run([qr, "-t", "SVG", "-m", "2", "-o", "-", link], capture_output=True, text=True, timeout=5)
+            svg = r.stdout if r.returncode == 0 and "<svg" in r.stdout else None
+        except (OSError, subprocess.SubprocessError) as exc:
+            warn("qrencode", exc)
+    return {"ok": True, "live": True, "url": url, "link": link, "svg": svg}
+
+
+def open_phone_tunnel(state_dir: str) -> str:
+    """Chạy `ai-factory.sh phone` (tunnel + key mới, không đụng runner). Trả "" khi chạy được, hoặc lý do lỗi cho UI.
+    stdout của script có QR chứa key: không log stdout, chỉ log mã thoát."""
+    if not os.path.isfile(FACTORY_SCRIPT):
+        warn("ai-factory phone", f"không có {FACTORY_SCRIPT}")
+        return f"Không tìm thấy ai-factory.sh ({FACTORY_SCRIPT}): cài lại autostart (install-autostart.sh) hoặc chạy ai-factory"
+    try:
+        r = subprocess.run(["bash", FACTORY_SCRIPT, "phone"], env=dict(os.environ, AGENT_OFFICE_STATE=state_dir),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=90)
+    except (OSError, subprocess.SubprocessError) as exc:
+        warn("ai-factory phone", exc)
+        return f"ai-factory phone không chạy được: {exc}"
+    if r.returncode != 0:
+        print(f"[phone] ai-factory phone rc={r.returncode}: {r.stderr.strip()[-300:]}", flush=True)
+        return f"ai-factory phone lỗi (mã {r.returncode}): xem ~/.agent-office/tunnel.log"
+    return ""
+
+
 def make_handler(app: App):
     extra = app.cfg.get("allowedHosts") or []
     if isinstance(extra, str):
@@ -1630,12 +1694,18 @@ def make_handler(app: App):
     if bind not in ("", "0.0.0.0", "::"):
         allowed.add(bind)
     key_file = os.path.expanduser(os.environ.get("AGENT_OFFICE_KEY_FILE") or "~/.agent-office/remote-key")
+    state_dir = os.path.dirname(key_file)
+    phone_busy = threading.Lock()   # một lần mở tunnel một lúc: bấm "Tạo mã mới" hai lần không mở hai tunnel
+
+    def from_mac(headers) -> bool:
+        """Chính máy Mac, không qua tunnel: link có key không bao giờ đi ra qua tunnel, kể cả khi người gọi có key."""
+        return host_name(headers.get("Host")) in allowed and not any(headers.get(h) for h in TUNNEL_HEADERS)
 
     def refusal(headers, api: bool):
         """None when the request may go on, else the HTTP status that refuses it."""
-        host = host_name(headers.get("Host"))
-        if host in allowed and not any(headers.get(h) for h in TUNNEL_HEADERS):
+        if from_mac(headers):
             return None  # this Mac itself
+        host = host_name(headers.get("Host"))
         key = remote_key(key_file)
         if not key or not (host in allowed or host.endswith(".trycloudflare.com")):
             return 403
@@ -1664,6 +1734,10 @@ def make_handler(app: App):
             code = refusal(self.headers, path.startswith("/api/"))
             if code:
                 return self.send(code, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+            if path == "/api/phone":
+                if not from_mac(self.headers):
+                    return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+                return self.send(200, json.dumps(phone_info(state_dir, key_file)).encode("utf-8"), CTYPES[".json"])
             if path == "/api/state":
                 with app.lock:
                     body = app.state_bytes
@@ -1690,6 +1764,18 @@ def make_handler(app: App):
             code = refusal(self.headers, True)
             if code:
                 return self.send(code, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+            if path == "/api/phone":
+                if not from_mac(self.headers):
+                    return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+                if not phone_busy.acquire(blocking=False):
+                    return self.send(409, '{"ok":false,"error":"Đang tạo mã, chờ vài giây"}'.encode("utf-8"), CTYPES[".json"])
+                try:
+                    err = open_phone_tunnel(state_dir)
+                finally:
+                    phone_busy.release()
+                if err:
+                    return self.send(502, json.dumps({"ok": False, "error": err}, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                return self.send(200, json.dumps(phone_info(state_dir, key_file)).encode("utf-8"), CTYPES[".json"])
             n = int(self.headers.get("Content-Length") or 0)
             if n > 200_000:
                 return self.send(413, b'{"ok":false,"error":"too large"}', CTYPES[".json"])
