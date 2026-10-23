@@ -1019,6 +1019,36 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-github-read-reconcile",
+      "watch_files": [
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_github_read_reconcile.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GITHUB-RECONCILE-01",
+          "name": "github-read --halt --verify / --reconcile: đọc lại lần ghi chưa rõ kết quả; đã áp dụng thì lưu trữ halt, chưa áp dụng hay không kiểm chứng được thì giữ halt",
+          "command": "bash tests/super-board/test_github_read_reconcile.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-gh-write-once-marker",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_gh_write_once_marker.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WRITE-MARKER-01",
+          "name": "gh_write_once: comment ghi chưa rõ kết quả mang marker duy nhất cho mỗi lần, comment cố định lặp không làm reconcile báo đã áp dụng nhầm",
+          "command": "bash tests/super-board/test_gh_write_once_marker.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

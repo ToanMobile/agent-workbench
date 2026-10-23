@@ -41,8 +41,20 @@ SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github
 gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
 gh_write_once() {
   gh_checkpoint
-  gh "$@" || {
-    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" >&2 || true
+  # #190: comment ghi chưa rõ kết quả → kèm cách đọc lại. Marker là token DUY NHẤT gắn vào cuối body (comment HTML ẩn): comment
+  # cố định lặp trên cùng issue (back to Ready · …) không được làm reconcile báo "đã áp dụng" nhầm.
+  local args=("$@") token="" i
+  if [ "$1 $2" = "issue comment" ]; then
+    token="sb-write:$(date +%s)-$$-$RANDOM"
+    for ((i = 0; i < ${#args[@]} - 1; i++)); do
+      [ "${args[i]}" = --body ] && { args[i+1]="${args[i+1]}"$'\n'"<!-- ${token} -->"; break; }
+    done
+  fi
+  gh "${args[@]}" || {
+    local verify=() spec=""
+    [ -z "$token" ] || spec=$(jq -nc --argjson n "$3" --arg m "$token" '{kind:"comment",issue:$n,marker:$m}' 2>/dev/null) || spec=""
+    [ -z "$spec" ] || verify=(--verify "$spec")
+    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 || true
     exit 79
   }
 }
