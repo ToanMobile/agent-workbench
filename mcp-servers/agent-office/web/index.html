@@ -2178,6 +2178,15 @@ async function moveItem(it, colName) {
   try { await api('set-field', { itemId: it.id, field: STATE.project.statusField, option: colName }); toast('Đã chuyển ' + itemLabel(it) + ' sang ' + colName); }
   catch (err) { it.status = prev; rerender(); toast('Không chuyển được ' + itemLabel(it) + ': ' + err.message, 'error'); }
 }
+async function moveAll(from, to, n, repo) {
+  if (!canWrite() || !confirm('Chuyển ' + n + ' thẻ' + (repo ? ' của ' + repo : '') + ' từ "' + from + '" sang "' + to + '"? Runner sẽ nhận các thẻ này ngay.')) return;
+  try {
+    const r = await api('move-all', { from, to, repo });
+    STATE.items.forEach((it) => { if (it.status === from && (!repo || it.repo === repo) && !r.failedCount) it.status = to; });
+    VERSION = null; poll(true);
+    toast('Đã chuyển ' + r.moved + ' thẻ sang ' + to + (r.failedCount ? ', ' + r.failedCount + ' thẻ lỗi: ' + r.failed.join('; ') : ''), r.failedCount ? 'error' : undefined);
+  } catch (err) { toast('Không chuyển được hàng loạt: ' + err.message, 'error'); }
+}
 async function setField(it, field, option) {
   const prev = (it.fields || {})[field];
   it.fields = Object.assign({}, it.fields, { [field]: option }); renderDrawer(true);
@@ -2199,8 +2208,9 @@ function openCreate(repoName, status) {
   const draft = h('option', null, 'Bản nháp, không gắn repo'); draft.value = ''; rs.append(draft);
   rs.value = repoName && STATE.repos.some((r) => r.name === repoName) ? repoName : (rs.options[0] ? rs.options[0].value : '');
   const ss = f.elements.status; ss.textContent = '';
-  STATE.columns.forEach((c) => { const o = h('option', null, c.name); o.value = c.name; ss.append(o); });
-  const ready = STATE.columns.find((c) => c.kind === 'ready') || STATE.columns.find((c) => c.kind === 'backlog') || STATE.columns[0];
+  const real = STATE.columns.filter((c) => !c.noStatus);
+  real.forEach((c) => { const o = h('option', null, c.name); o.value = c.name; ss.append(o); });
+  const ready = real.find((c) => c.kind === 'backlog') || real[0];
   ss.value = status || (ready ? ready.name : '');
   updateCreateHint();
   $('#createDlg').showModal();
@@ -2508,6 +2518,11 @@ function drawStation(key) {
   if (!ws.length) { d.append(h('p', 'empty', 'Không còn agent nào ở đây.')); return; }
   ws.forEach((w) => d.append(agentRow(w)));
 }
+function tintBtn(b, col) {
+  const c = colColor(col);
+  b.style.color = colText(col); b.style.borderColor = 'color-mix(in srgb, ' + c + ' 45%, transparent)';
+  b.style.background = 'color-mix(in srgb, ' + c + ' 14%, transparent)'; b.style.fontWeight = '600';
+}
 function drawColumn(name) {
   const S = STATE; const col = S.columns.find((c) => c.name === name);
   if (!col) { $('#drawer').hidden = true; return; }
@@ -2525,9 +2540,20 @@ function drawColumn(name) {
     if (noReason) d.append(h('p', 'readonly', noReason + ' thẻ chưa có lý do chặn trên GitHub.'));
   }
   if (!its.length) { d.append(h('p', 'empty', 'Cột này đang trống.')); return; }
+  const target = S.columns.find((c) => c.kind === 'ready');
+  if (target && target.name !== name && canWrite()) {
+    const ra = h('div', 'row-actions'); const bt = h('button', 'btn', 'Chuyển tất cả ' + its.length + ' thẻ sang ' + target.name); bt.type = 'button'; tintBtn(bt, target);
+    bt.onclick = () => moveAll(name, target.name, its.length);
+    ra.append(bt); d.append(ra);
+  }
   groups.forEach(([repo, list]) => {
     const head = h('div', 'colhead'); const sw = h('span', 'sw'); sw.style.background = colColor(col);
-    head.append(sw, h('span', null, repo), h('span', 'n', String(list.length))); d.append(head);
+    head.append(sw, h('span', null, repo), h('span', 'n', String(list.length)));
+    d.append(head);
+    if (target && target.name !== name && canWrite() && groups.length > 1) {
+      const ra = h('div', 'row-actions'); const rb = h('button', 'btn', 'Chuyển ' + list.length + ' thẻ ' + repo + ' sang ' + target.name); rb.type = 'button'; tintBtn(rb, target);
+      rb.onclick = () => moveAll(name, target.name, list.length, repo); ra.append(rb); d.append(ra);
+    }
     const ul = h('ul', 'row-list wrap');
     list.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).forEach((it) => {
       const li = h('li'); const b = h('button'); b.type = 'button';

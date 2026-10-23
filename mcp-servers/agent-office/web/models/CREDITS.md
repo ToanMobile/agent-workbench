@@ -12,3 +12,5 @@ Copied unchanged from https://github.com/tinhthanh/vetgo-3d-demo/tree/main/model
 | beach.glb | Beach Character | Quaternius | CC0 1.0 | https://poly.pizza/m/DojKLcO34E |
 
 `office.glb` (desk, swivel chair, monitor, keyboard, mouse, mug, plant, card shelf) is built in this repo by `../blender/build_office.py` (Blender 5.2, headless); its helper functions are adapted from https://github.com/tinhthanh/vetgo-3d-demo/blob/main/blender/build_characters.py.
+
+`stations.glb` (nine QA and review stations for a software team: test bench, checklist, device wall, bug board, dashboards, PR wall, diff screen, huddle table, flow board) is built by `../blender/build_stations.py` (Blender 5.2, headless), reusing the helpers of `build_office.py`. Samples only: not loaded by the page yet.
