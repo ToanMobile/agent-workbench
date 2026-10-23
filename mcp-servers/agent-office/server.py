@@ -276,6 +276,20 @@ VIEW_BLOCK = """view(number: $view) { name layout filter
         groupByFields(first: 3) { nodes { %FIELD% } } }"""
 
 
+def models_version(web_dir=WEB_DIR) -> str:
+    """Newest mtime under web/models: the page appends it to model URLs so a rebuilt GLB is not served from the browser's one-day cache."""
+    d = os.path.join(web_dir, "models")
+    try:
+        return str(int(max(os.path.getmtime(os.path.join(d, f)) for f in os.listdir(d))))
+    except (OSError, ValueError) as e:
+        warn("models_version", e)
+        return "0"
+
+
+def fill_models_version(page: bytes, version: str) -> bytes:
+    return page.replace(b"__MODELS_V__", version.encode())
+
+
 def warn(context, err) -> None:
     print(f"[agent-office] {context}: {err}", file=sys.stderr, flush=True)
 
@@ -466,7 +480,7 @@ def normalize_project(p: dict, items_raw: list, gcfg: dict) -> dict:
             "pid": p.get("id"),
         })
     if any(not it["status"] for it in items):
-        columns.insert(0, {"name": NO_STATUS, "kind": "backlog", "ghColor": "GRAY"})
+        columns.insert(0, {"name": NO_STATUS, "kind": "backlog", "ghColor": "GRAY", "noStatus": True})
         for it in items:
             if not it["status"]:
                 it["status"] = NO_STATUS
@@ -1182,6 +1196,7 @@ class App:
         self.sessions, self.sess_info, self.file_ticks = [], {"ok": False}, []
         self.state_bytes = b"{}"
         self.refresh_evt = threading.Event()
+        self.backfilled = set()  # thẻ đã thử đặt Backlog, mỗi thẻ chỉ thử một lần
         self.demo_manifests = None
         # nhật ký sự kiện: lưu ra file để còn nguyên khi tải lại trang hoặc khởi động lại server
         self.events, self.prev_rows, self.prev_items, self.user_moves = [], None, None, {}
@@ -1318,6 +1333,31 @@ class App:
             gh_graphql(M_SET, {"p": part["id"], "i": item_id, "f": f["id"], "o": opt["id"]})
         return f, opt
 
+    def _default_status(self, part):
+        """Cột mặc định của thẻ mới: Backlog thật của Project đó, không bao giờ để 'Chưa có trạng thái'."""
+        f = next((x for x in (part.get("selectFields") or []) if x["name"] == part.get("statusField")), None)
+        return next((o["name"] for o in (f or {}).get("options", []) if column_kind(o["name"]) == "backlog"), None)
+
+    def backfill_backlog(self, proj):
+        """Thẻ vào Project mà chưa có Status (issue tự thêm, createTask) được đặt Backlog ngay trên GitHub."""
+        if self.demo:
+            return
+        for it in proj["items"]:
+            if it["status"] != NO_STATUS or it["id"] in self.backfilled:
+                continue
+            self.backfilled.add(it["id"])
+            part = (proj.get("parts") or {}).get(it.get("pid")) or proj
+            name = self._default_status(part)
+            if not name:
+                continue
+            try:
+                self._set(it["id"], part["statusField"], name, part)
+                it["status"] = name
+            except (ValueError, GhError, KeyError) as e:
+                warn(f"đặt Backlog cho {it.get('number') or it['id']}", e)
+        if not any(i["status"] == NO_STATUS for i in proj["items"]):
+            proj["columns"] = [c for c in proj["columns"] if not c.get("noStatus")]
+
     def act(self, action: str, body: dict) -> dict:
         if not self.demo and not (self.project.get("id") and self.gh_meta.get("ok")):
             raise ValueError("Chưa kết nối được GitHub Project nên chưa sửa được.")
@@ -1363,7 +1403,7 @@ class App:
                 item_id = gh_graphql(M_ADD, {"p": part["id"], "c": content_id})["addProjectV2ItemById"]["item"]["id"]
             else:
                 item_id = gh_graphql(M_DRAFT, {"p": part["id"], "t": title, "b": text})["addProjectV2DraftIssue"]["projectItem"]["id"]
-            status = body.get("status") or None
+            status = body.get("status") or self._default_status(part)
             if status and status_field:
                 self._set(item_id, status_field, status, part)
             with self.lock:
@@ -1374,6 +1414,26 @@ class App:
                     "pid": part.get("id"),
                 })
             result = {"ok": True, "itemId": item_id, "number": number, "url": url}
+        elif action == "move-all":
+            src, dst = str(body.get("from") or ""), str(body.get("to") or "")
+            if not src or not dst or src == dst:
+                raise ValueError("Cần cột nguồn và cột đích khác nhau.")
+            with self.lock:
+                repo = str(body.get("repo") or "")
+                todo = [x for x in self.project.get("items", []) if x["status"] == src and (not repo or x["repo"] == repo)]
+            moved, failed = 0, []
+            for it in todo:
+                part = self._part(it)
+                try:
+                    self._set(it["id"], part.get("statusField") or status_field, dst, part)
+                except (ValueError, GhError) as e:
+                    failed.append(f"{it.get('number') or it['id']}: {e}")
+                    continue
+                with self.lock:
+                    it["status"], it["updatedAt"] = dst, now()
+                    self.user_moves[it["id"]] = dst
+                moved += 1
+            result = {"ok": True, "moved": moved, "failed": failed[:5], "failedCount": len(failed)}
         elif action == "comment":
             it = self._item(body["itemId"])
             text = str(body.get("body") or "").strip()
@@ -1406,6 +1466,7 @@ class App:
             changed = True  # an error also needs a rebuild, so the notice shows
             try:
                 proj = fetch_projects(self.cfg["github"])
+                self.backfill_backlog(proj)
                 with self.lock:
                     self.project = proj
                     self.gh_meta = {"ok": True, "error": "; ".join(proj.get("partialErrors") or []) or None,
@@ -1547,7 +1608,10 @@ def make_handler(app: App):
             if not full.startswith(os.path.realpath(WEB_DIR) + os.sep) or not os.path.isfile(full):
                 return self.send(404, b"not found", "text/plain")
             with open(full, "rb") as f:
-                return self.send(200, f.read(), CTYPES.get(os.path.splitext(full)[1], "application/octet-stream"))
+                data = f.read()
+            if rel == "index.html":
+                data = fill_models_version(data, models_version())
+            return self.send(200, data, CTYPES.get(os.path.splitext(full)[1], "application/octet-stream"))
 
         def do_POST(self):
             path = urlparse(self.path).path

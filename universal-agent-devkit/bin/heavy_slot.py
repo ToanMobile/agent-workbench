@@ -405,7 +405,7 @@ _ENGINE = {"gradlew": "gradle", "gradle": "gradle", "xcodebuild": "xcode", "unit
 _UNITY_FLAGS = {"-runTests", "-batchmode"}
 _CPU = {"go": {"test", "build", "vet"}, "cargo": {"test", "build"}, "mvn": None, "mvnw": None, "dotnet": {"test", "build"},
         "swift": {"test", "build"}}
-_FAN_OUT = {"run_impacted.sh"}   # tự mở tới 10 job song song
+_FAN_OUT = {"run_impacted.sh"}   # tự mở nhiều job song song (run_impacted.sh --jobs)
 _SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "source", "."}
 _ASSIGN = re.compile(r"^[A-Za-z_]\w*=")
 _SHELL_C = re.compile(r"-[A-Za-z]*c[A-Za-z]*")   # -c, -lc, -euc …: cờ chạy mã trên dòng lệnh
