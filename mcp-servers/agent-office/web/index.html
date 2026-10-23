@@ -2544,11 +2544,11 @@ function drawColumn(name) {
   groups.forEach(([repo, list]) => {
     const head = h('div', 'colhead'); const sw = h('span', 'sw'); sw.style.background = colColor(col);
     head.append(sw, h('span', null, repo), h('span', 'n', String(list.length)));
-    if (target && target.name !== name && canWrite() && groups.length > 1) {
-      const rb = h('button', 'btn', '→ ' + target.name); rb.type = 'button'; rb.title = 'Chuyển ' + list.length + ' thẻ của ' + repo + ' sang ' + target.name;
-      rb.onclick = () => moveAll(name, target.name, list.length, repo); head.append(rb);
-    }
     d.append(head);
+    if (target && target.name !== name && canWrite() && groups.length > 1) {
+      const ra = h('div', 'row-actions'); const rb = h('button', 'btn', 'Chuyển ' + list.length + ' thẻ ' + repo + ' sang ' + target.name); rb.type = 'button';
+      rb.onclick = () => moveAll(name, target.name, list.length, repo); ra.append(rb); d.append(ra);
+    }
     const ul = h('ul', 'row-list wrap');
     list.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).forEach((it) => {
       const li = h('li'); const b = h('button'); b.type = 'button';
