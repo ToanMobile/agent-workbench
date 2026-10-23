@@ -998,7 +998,11 @@ PY
         # so-và-đổi nguyên tử cho trường hợp này: commit lọt vào khe đó vẫn nằm trong reflog.
         local_tip=$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null) || local_tip=""
         origin_tree=$(git -C "$MAIN_PATH" rev-parse "$TARGET_SHA^{tree}" 2>/dev/null) || origin_tree=""
-        merged_tree=$(git -C "$MAIN_PATH" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
+        # #309: cwd = $SCRATCH (cleanup() deletes it): a merge driver killed with the gate leaves its .merge_file_* there, never in $MAIN_PATH.
+        # --attr-source keeps the repo's merge drivers applying, as `git -C "$MAIN_PATH"` did.
+        main_gd=$(git -C "$MAIN_PATH" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || main_gd=""
+        merged_tree=""
+        [ -z "$main_gd" ] || merged_tree=$(cd "$SCRATCH" && git --git-dir="$main_gd" --attr-source="$TARGET_SHA" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
         # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
         if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "$TARGET_SHA" "$local_tip" 2>/dev/null; then merged_tree="$origin_tree"; fi
         # `reset --keep` cũng đặt lại INDEX về commit đích: file phiên khác đã stage (khác HEAD) sẽ rơi khỏi index (thành untracked).
