@@ -707,6 +707,15 @@ printf 'ls src/lnk33\n' > "$R33/src/a.py"; ln -s data "$R33/src/lnk33"; echo u >
 git -C "$R33" add -A && git -C "$R33" commit -qm init
 r=$(probe_key "$R33" src/unrelated.txt 'changed')
 [ "$r" = same ] && ok "33f. symlink thư mục không cắt khoá chính xác" || fail "33f. symlink thư mục bị tính là file không đọc được ⇒ khoá chính xác bị cắt ($r)"
+# 33g. tests/lib/test_durations.txt (a line of timings per new DevKit test) only orders run_impacted: it must not change the key
+#      of every suite (issue #315 item 3), while any other tests/lib file still does (case 4)
+R33="$TMP/r33g"; mk33 "$R33"; mkdir -p "$R33/tests/lib"
+echo 'a = 1' > "$R33/src/a.py"; echo "t 1" > "$R33/tests/lib/test_durations.txt"; echo "h 1" > "$R33/tests/lib/helper33.sh"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" tests/lib/test_durations.txt 't 2')
+[ "$r" = same ] && ok "33g. đổi tests/lib/test_durations.txt không đổi khoá của suite" || fail "33g. test_durations.txt vẫn là DANGER: đổi một dòng thời lượng đổi khoá mọi suite ($r)"
+r=$(probe_key "$R33" tests/lib/helper33.sh 'h 2')
+[ "$r" = diff ] && ok "33g. đổi file tests/lib khác vẫn đổi khoá" || fail "33g. file tests/lib khác không còn là DANGER ($r)"
 }
 
 # Run the groups at the same time (job control on only for these launches: every group is its own process group, which `cleanup`

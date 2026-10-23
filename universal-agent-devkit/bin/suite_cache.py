@@ -58,6 +58,9 @@ DANGER = ("**/tests/lib/**", "tests/lib/**", "**/clean_git_env.sh",
           "**/Pipfile.lock", "**/Cargo.lock", "**/go.sum", "**/requirements*.txt",
           "**/jest.config.*", "**/vitest.config.*", "**/vitest.workspace.*", "**/babel.config.*", "**/.babelrc*", "**/.mocharc*",
           "**/.nvmrc", "**/.node-version", "**/.python-version", "**/.tool-versions")
+# Khớp DANGER mà không phải input của suite nào: chỉ xếp thứ tự test cho run_impacted.sh (suite đó không cache theo khoá),
+# mỗi test DevKit mới thêm một dòng ⇒ đổi khoá của MỌI suite (issue #315).
+DANGER_EXEMPT = ("tests/lib/test_durations.txt",)
 # Suite không cache theo khoá: chọn test theo lịch sử git / đồng hồ (run_impacted.sh), hoặc đọc mạng ngay trong lệnh.
 DIFF_DEPENDENT = re.compile(r"(?:^|[\s/;&|(])run_impacted\.sh\b")
 NETWORK = re.compile(r"\b(?:curl|wget)\b[^\n;|&]*\bhttps?://|\bnpx\s+(?:-y|--yes)\b|\bnpm\s+(?:i|install|ci)\b|\bpip3?\s+install\b"
@@ -468,7 +471,7 @@ class SuiteCache:
         self.learned = learned if learned is not None else self.load_learned()
         self.idx = Index(self.cmap or {})
         self.matrix_digest = _file_digest(matrix_path) if matrix_path and os.path.isfile(matrix_path) else "none"
-        danger = sorted(p for pat in DANGER for p in self.idx.glob(pat))
+        danger = sorted(p for pat in DANGER for p in self.idx.glob(pat) if not p.endswith(DANGER_EXEMPT))
         self.danger_files = danger
         self.matrix_path = matrix_path
         h = hashlib.sha256()
