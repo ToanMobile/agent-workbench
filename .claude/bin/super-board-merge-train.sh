@@ -207,7 +207,9 @@ solve() {
 # chạy policy/approval); PR bị chặn ra khỏi chuỗi và phần còn lại được chứng minh lại. Lặp tối đa số PR lần.
 # ponytail: gate chặn sau preflight (đua với người duyệt/chờ khoá) vẫn có thể để main ở cây đã verify của tiền tố chuỗi trước đó; nâng lên khi
 #           cần tuyệt đối: merge các PR bằng một ref-update duy nhất thay vì từng gate.
+in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
 DRYRC=0
+PENDING=()   # PR chưa chứng minh vì verify hết giờ ở lượt solve trước; vòng preflight ghi đè CANDS nên phải giữ riêng
 while [ "${#GOOD[@]}" -gt 0 ]; do
   : >"$RECEIPT"
   for p in "${GOOD[@]}"; do
@@ -225,13 +227,15 @@ while [ "${#GOOD[@]}" -gt 0 ]; do
     esac
   done
   [ "$DROPPED" -eq 1 ] || break
+  for p in "${CANDS[@]+"${CANDS[@]}"}"; do
+    in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} || PENDING+=("$p")
+  done
   CANDS=(${NEWGOOD[@]+"${NEWGOOD[@]}"}); GOOD=(); ABORT=0
   [ "${#CANDS[@]}" -eq 0 ] || solve "${CANDS[@]}"
 done
 # PR chưa được chứng minh xanh/đỏ/conflict vì verify hết giờ.
-in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
 TIMEDOUT=()
-for p in "${CANDS[@]+"${CANDS[@]}"}"; do
+for p in "${PENDING[@]+"${PENDING[@]}"}" "${CANDS[@]+"${CANDS[@]}"}"; do
   in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} || TIMEDOUT+=("$p")
 done
 
