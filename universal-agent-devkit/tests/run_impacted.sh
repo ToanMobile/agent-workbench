@@ -15,8 +15,11 @@ set -u
 DK="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DK" || exit 2
 
-# Tests started at once: DEVKIT_TEST_JOBS when it is a positive integer, else min(cores - 2, 10) with a floor of 4, the old default, so a small machine runs as before (cores from
-# nproc, sysctl hw.ncpu or python3; none answers: 4, the old default). 2026-10-04: `--all` took 301 s for 102 tests at 4 jobs on 12 cores (bound by the job count: about 20 min of tests / 4).
+# Tests started at once: DEVKIT_TEST_JOBS when it is a positive integer, else min(cores + cores/3, 16) with a floor of 4, the old default (3 cores or fewer keep 4; only 12 cores was measured) (cores
+# from nproc, sysctl hw.ncpu or python3; none answers: 4, the old default). 2026-10-04: `--all` took 301 s for 102 tests at 4 jobs on 12 cores (bound by the job count: about 20 min of
+# tests / 4). 2026-10-23, 12 cores, the same 127 tests: at 10 jobs the pool kept about 7 cores busy (1822 s CPU in 272 s), so more jobs fill the time the tests wait; 2 runs per
+# setting, alternating: 272/326 s at 10 jobs, 240/263 s at 16, 0 red tests in 6 runs (tests/verification/test_run_impacted_order.sh (f)). ponytail: 2 runs per setting on one
+# 12-core machine; measure >= 5 alternating pairs (and on 4-8 cores) before raising the cap again.
 # DEVKIT_TEST_CORES pretends a core count (tests only). `--jobs` prints the number a run would use.
 pint() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ $((10#$1)) -gt 0 ]; }   # 10# so 08 is eight, 00 is not "unlimited"
 default_jobs() {
@@ -25,7 +28,7 @@ default_jobs() {
   pint "$c" || c="$(sysctl -n hw.ncpu 2>/dev/null)"
   pint "$c" || c="$(python3 -c 'import os; print(os.cpu_count() or 0)' 2>/dev/null)"
   pint "$c" || { echo 4; return; }
-  c=$((10#$c - 2)); [ "$c" -gt 10 ] && c=10; [ "$c" -lt 4 ] && c=4
+  c=$((10#$c + 10#$c / 3)); [ "$c" -gt 16 ] && c=16; [ "$c" -lt 4 ] && c=4
   echo "$c"
 }
 jobs_now() { # what a run uses: the override when valid, else the default
