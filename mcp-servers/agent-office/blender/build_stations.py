@@ -6,6 +6,7 @@ x=-0.8 facing +X, Z is sideways):
   QACheckboard  checklist board on legs (green ticks, red crosses) with a device tray
   ReviewLectern lectern with a sloped top, an open diff sheet, magnifier and an APPROVED stamp
   ReviewWall    pinboard of diff sheets with a stamp stand in front
+  QALab / QAConveyor / QADeviceWall / ReviewJudge / ReviewCheckpoint / ReviewEasel: more variants
 
 Run from mcp-servers/agent-office/:
     blender -b --factory-startup --python blender/build_stations.py
@@ -167,18 +168,124 @@ def build_review_wall():
     return join(p, "ReviewWall")
 
 
+def build_qa_lab():
+    top = mat("LabTop", (236, 238, 240), 0.5)
+    frame = mat("BenchFrame", (58, 61, 68), 0.6)
+    metal = mat("Metal", (150, 156, 166), 0.35)
+    glass = mat("JarGlass", (170, 222, 200), 0.2)
+    bug = mat("Bug", (84, 168, 88), 0.6)
+    p = [cube((0.9, 0.05, 1.7), (0.4, 0.95, 0), top, bevel=0.01, seg=2),
+         cube((0.8, 0.5, 1.6), (0.4, 0.5, 0), mat("LabCab", (120, 168, 200), 0.7), bevel=0.01)]
+    p += [cube((0.22, 0.03, 0.26), (0.5, 0.995, -0.45), frame, bevel=0.005),            # microscope
+          cube((0.04, 0.34, 0.05), (0.57, 1.17, -0.45), metal, bevel=0.004),
+          cyl(0.03, 0.26, (0.5, 1.2, -0.45), metal, rot=(0, math.radians(-18), 0), verts=12),
+          cyl(0.02, 0.07, (0.46, 1.37, -0.45), frame, rot=(0, math.radians(-18), 0), verts=10),
+          cube((0.12, 0.012, 0.12), (0.5, 1.04, -0.45), frame, bevel=0.002)]
+    p += [cyl(0.07, 0.012, (0.3, 0.99, -0.1), glass, verts=18), ball(0.035, (0.3, 1.0, -0.1), bug, (1, 0.5, 1))]  # petri dish
+    for k, col in enumerate(((84, 168, 88), (84, 168, 88), (224, 82, 82), (84, 168, 88))):  # test-tube rack
+        tm = mat("Tube%d" % k, col, 0.3)
+        p.append(cyl(0.022, 0.16, (0.55, 1.05, 0.15 + k * 0.1), glass, verts=10))
+        p.append(cyl(0.018, 0.09, (0.55, 1.02, 0.15 + k * 0.1), tm, verts=10))
+    p.append(cube((0.1, 0.02, 0.42), (0.55, 0.985, 0.25), frame, bevel=0.003))
+    p += magnifier(0.2, 1.2, 0.55)
+    return join(p, "QALab")
+
+
+def build_qa_conveyor():
+    frame = mat("BenchFrame", (58, 61, 68), 0.6)
+    belt = mat("Belt", (44, 46, 52), 0.8)
+    yel = mat("Safety", (240, 190, 50), 0.5)
+    ok, bad = mat("ScreenOK", (88, 196, 120), 0.3), mat("ScreenBad", (224, 82, 82), 0.3)
+    p = [cube((0.5, 0.12, 2.3), (0.4, 0.88, 0), belt, bevel=0.01), cube((0.56, 0.04, 2.34), (0.4, 0.82, 0), yel, bevel=0.004)]
+    for z in (-1.0, 1.0):
+        p.append(cube((0.06, 0.8, 0.06), (0.15, 0.4, z), frame, bevel=0.004))
+        p.append(cube((0.06, 0.8, 0.06), (0.65, 0.4, z), frame, bevel=0.004))
+        p.append(cyl(0.07, 0.5, (0.4, 0.94, z * 1.12), frame, rot=(math.pi / 2, 0, 0), verts=12))
+    for i, z in enumerate((-0.8, -0.35, 0.05, 0.45)):
+        p += phone(0.4, 0.953, z, ok=i != 2)
+    p += [cube((0.06, 0.62, 0.06), (0.15, 1.25, -0.1), frame, bevel=0.004), cube((0.06, 0.62, 0.06), (0.65, 1.25, -0.1), frame, bevel=0.004),
+          cube((0.6, 0.07, 0.1), (0.4, 1.58, -0.1), frame, bevel=0.004), cube((0.45, 0.012, 0.012), (0.4, 1.54, -0.1), mat("Laser", (255, 70, 70), 0.3), bevel=0)]  # scanner arch
+    p += [cube((0.34, 0.3, 0.3), (0.4, 0.28, 1.35), ok, bevel=0.008), cube((0.34, 0.3, 0.3), (0.4, 0.28, 1.7), bad, bevel=0.008)]  # pass / fail bins
+    return join(p, "QAConveyor")
+
+
+def build_qa_devicewall():
+    frame = mat("BoardFrame", (58, 61, 68), 0.6)
+    face = mat("WallFace", (52, 58, 70), 0.8)
+    ok, bad = mat("ScreenOK", (88, 196, 120), 0.3), mat("ScreenBad", (224, 82, 82), 0.3)
+    p = [cube((0.05, 1.45, 2.0), (0.9, 1.3, 0), face, bevel=0.004),
+         cube((0.07, 0.07, 2.1), (0.9, 0.55, 0), frame, bevel=0.004), cube((0.07, 0.07, 2.1), (0.9, 2.05, 0), frame, bevel=0.004)]
+    for z in (-1.0, 1.0):
+        p.append(cube((0.06, 2.1, 0.07), (0.9, 1.05, z), frame, bevel=0.004))
+        p.append(cube((0.5, 0.05, 0.08), (0.9, 0.025, z), frame, bevel=0.004))
+    for r in range(4):
+        for c in range(6):
+            p += phone(0.86, 0.88 + r * 0.3, -0.75 + c * 0.3, ok=(r * 6 + c) not in (4, 13, 20), rot=(0, 0, math.pi / 2))
+    p += [cube((0.08, 0.14, 0.9), (0.9, 2.2, -0.5), ok, bevel=0.006), cube((0.08, 0.14, 0.9), (0.9, 2.2, 0.55), bad, bevel=0.006)]
+    return join(p, "QADeviceWall")
+
+
+def build_review_judge():
+    wood = mat("LecternWood", (140, 98, 66), 0.7)
+    light = mat("LecternLight", (176, 130, 90), 0.7)
+    brass = mat("Brass", (212, 170, 84), 0.4)
+    p = [cube((0.5, 0.95, 1.5), (0.5, 0.475, 0), wood, bevel=0.01, seg=2), cube((0.62, 0.06, 1.62), (0.45, 0.98, 0), light, bevel=0.01, seg=2),
+         cube((0.1, 0.5, 1.5), (0.78, 1.25, 0), wood, bevel=0.01), cube((0.1, 0.5, 0.1), (0.78, 1.7, 0), wood, bevel=0.01)]
+    p += [cube((0.2, 0.05, 0.2), (0.4, 1.035, 0.4), wood, bevel=0.005), cyl(0.035, 0.16, (0.4, 1.12, 0.4), light, rot=(math.pi / 2, 0, 0), verts=12),
+          cyl(0.012, 0.22, (0.4, 1.12, 0.4 - 0.12), brass, rot=(0, math.radians(35), 0), verts=8)]  # gavel on its block
+    p += [cyl(0.012, 0.5, (0.62, 1.28, -0.4), brass, verts=8), cube((0.02, 0.02, 0.5), (0.62, 1.53, -0.4), brass, bevel=0),     # scales
+          cyl(0.07, 0.012, (0.62, 1.4, -0.65), brass, verts=14), cyl(0.07, 0.012, (0.62, 1.4, -0.15), brass, verts=14),
+          cyl(0.1, 0.03, (0.62, 1.04, -0.4), brass, verts=14)]
+    p += sheet((0.35, 1.03, -0.35), (0.3, 0.05, 0.22), (0, 0, 0))
+    return join(p, "ReviewJudge")
+
+
+def build_review_checkpoint():
+    frame = mat("BenchFrame", (58, 61, 68), 0.6)
+    booth = mat("Booth", (226, 222, 214), 0.8)
+    red, grn, yel = mat("LampRed", (226, 70, 70), 0.4), mat("LampGreen", (70, 200, 110), 0.4), mat("LampYel", (240, 190, 50), 0.4)
+    stripe = mat("StripeRed", (214, 64, 64), 0.6)
+    p = [cube((0.55, 1.0, 0.9), (0.5, 0.5, -0.5), booth, bevel=0.01), cube((0.65, 0.05, 1.0), (0.5, 1.025, -0.5), frame, bevel=0.008)]
+    p += sheet((0.4, 1.06, -0.5), (0.3, 0.012, 0.4), (0, 0, 0))
+    p += stamp(0.45, 1.09, -0.15)
+    p += [cube((0.12, 2.0, 0.12), (0.75, 1.0, -0.5), frame, bevel=0.006), cube((0.16, 0.7, 0.16), (0.75, 1.7, -0.5), frame, bevel=0.01),
+          cyl(0.055, 0.04, (0.67, 1.9, -0.5), red, rot=(0, 0, math.pi / 2), verts=14), cyl(0.055, 0.04, (0.67, 1.7, -0.5), yel, rot=(0, 0, math.pi / 2), verts=14),
+          cyl(0.055, 0.04, (0.67, 1.5, -0.5), grn, rot=(0, 0, math.pi / 2), verts=14)]
+    p += [cube((0.14, 0.9, 0.14), (0.5, 0.45, 0.7), frame, bevel=0.006), cube((0.08, 0.08, 1.5), (0.5, 0.9, 1.45), booth, bevel=0.004)]
+    for k in range(5):
+        p.append(cube((0.082, 0.082, 0.15), (0.5, 0.9, 0.9 + k * 0.3), stripe, bevel=0))
+    return join(p, "ReviewCheckpoint")
+
+
+def build_review_easel():
+    wood = mat("LecternWood", (176, 130, 90), 0.7)
+    pencil = mat("PencilRed", (214, 64, 64), 0.6)
+    p = [cube((0.05, 1.9, 0.06), (0.62, 0.95, -0.55), wood, bevel=0.004, rot=(0, math.radians(8), 0)),
+         cube((0.05, 1.9, 0.06), (0.62, 0.95, 0.55), wood, bevel=0.004, rot=(0, math.radians(8), 0)),
+         cube((0.05, 1.7, 0.06), (1.0, 0.85, 0.0), wood, bevel=0.004, rot=(0, math.radians(-14), 0)),
+         cube((0.06, 0.06, 1.2), (0.58, 0.8, 0.0), wood, bevel=0.004), cube((0.06, 0.06, 1.2), (0.6, 1.9, 0.0), wood, bevel=0.004)]
+    p += [cube((0.12, 0.04, 1.2), (0.52, 0.76, 0.0), wood, bevel=0.004)]
+    p += vsheet(0.55, 1.4, 0.0, 0.95, 1.1)
+    p += [cyl(0.008, 0.2, (0.5, 0.8, 0.2), pencil, rot=(0, math.radians(80), 0), verts=6)]
+    p += stamp(0.5, 0.83, -0.35)
+    return join(p, "ReviewEasel")
+
+
 def preview(png):
-    for i, n in enumerate(["QABench", "QACheckboard", "ReviewLectern", "ReviewWall"]):
-        bpy.data.objects[n].location = G(0, 0, (i - 1.5) * 2.7)
+    rows = [["QABench", "QACheckboard", "QALab", "QAConveyor", "QADeviceWall"],
+            ["ReviewLectern", "ReviewWall", "ReviewJudge", "ReviewCheckpoint", "ReviewEasel"]]
+    for r, names in enumerate(rows):
+        for i, n in enumerate(names):
+            bpy.data.objects[n].location = G(r * 3.6, 0, (i - 2) * 2.8)
     bpy.ops.mesh.primitive_plane_add(size=24, location=(0, 0, 0))
     bpy.context.object.data.materials.append(mat("PreviewFloor", (205, 201, 194)))
     cam_d = bpy.data.cameras.new("cam")
     cam_d.type = 'ORTHO'
-    cam_d.ortho_scale = 11.5
+    cam_d.ortho_scale = 15
     cam = bpy.data.objects.new("cam", cam_d)
     bpy.context.scene.collection.objects.link(cam)
-    cam.location = Vector(G(-7.0, 5.0, 3.5))
-    cam.rotation_euler = (Vector(G(0.5, 0.8, 0)) - cam.location).to_track_quat('-Z', 'Y').to_euler()
+    cam.location = Vector(G(-6.0, 6.0, 4.5))
+    cam.rotation_euler = (Vector(G(1.8, 0.8, 0)) - cam.location).to_track_quat('-Z', 'Y').to_euler()
     sc = bpy.context.scene
     sc.camera = cam
     sc.render.engine = 'BLENDER_WORKBENCH'
@@ -187,7 +294,7 @@ def preview(png):
     sh.color_type = 'MATERIAL'
     sh.show_shadows = True
     sh.show_cavity = True
-    sc.render.resolution_x, sc.render.resolution_y = 1500, 560
+    sc.render.resolution_x, sc.render.resolution_y = 1700, 900
     sc.render.filepath = png
     bpy.ops.render.render(write_still=True)
     print("PREVIEW", png)
@@ -195,7 +302,8 @@ def preview(png):
 
 if __name__ == "__main__":
     B.reset()
-    for build in (build_qa_bench, build_qa_checkboard, build_review_lectern, build_review_wall):
+    for build in (build_qa_bench, build_qa_checkboard, build_review_lectern, build_review_wall, build_qa_lab,
+                  build_qa_conveyor, build_qa_devicewall, build_review_judge, build_review_checkpoint, build_review_easel):
         build()
     B.export()
     if PREVIEW:
