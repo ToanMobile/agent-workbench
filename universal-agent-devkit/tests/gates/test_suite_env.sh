@@ -60,4 +60,12 @@ for v in DEVKIT_ALLOW_BRANCH WORKTREE_MERGE_GATE POSTFIX_GATE_FORCE_FULL POSTFIX
   printf '%s\n' "$switches" | grep -qx "$v" && fail "suite_env keeps $v (the caller's gate switch)" || ok "suite_env drops $v"
 done
 
+# CI=true của worker super-board cũng ép --full (force_full_reason). Lọt vào suite thì gate lồng
+# trong test_postfix_gate.sh chặn file test mới (exit 2) dù ca đó chờ exit 0.
+ci_kept="$(probe CI=true DEVKIT_PROBE_KEEP=1)"
+printf '%s\n' "$ci_kept" | grep -qx DEVKIT_PROBE_KEEP || { echo "✖ CI probe returned no environment"; exit 1; }
+printf '%s\n' "$ci_kept" | grep -qx CI && fail "suite_env keeps CI (worker CI=true forces a nested full run)" || ok "suite_env drops CI"
+ci_left="$(env CI=true bash -c '. "$1"; printf %s "${CI-unset}"' _ "$DEVKIT_DIR/tests/lib/clean_git_env.sh")"
+[ "$ci_left" = unset ] && ok "clean_git_env unsets CI" || fail "clean_git_env keeps CI ($ci_left)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_suite_env: all passed" || { echo "❌ test_suite_env: $FAILS failed"; exit 1; }
