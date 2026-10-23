@@ -807,6 +807,25 @@ PY
   [ "$rc" -ne 4 ]
 }
 
+review_approved_head() {
+  # $1 = issue. Thẻ Review đã được duyệt đúng head PR hiện tại (#227): in "<PR> <sha>" và trả 0, để lượt này chỉ chạy lại merge gate
+  # (exit 4/conflict/not mergeable không phải lỗi code, review lại tốn 15-30 phút). Duyệt = comment `approved-head:<sha>` của người
+  # có quyền ghi (OWNER/MEMBER/COLLABORATOR), comment cuối cùng thắng; head PR đổi thì sha không khớp nên duyệt tự mất hiệu lực.
+  # Đọc GitHub hỏng hay thiếu dữ liệu → trả 1 = review đầy đủ như cũ (không bao giờ bỏ qua review vì lỗi đọc). Gate vẫn ghim --expect-head
+  # và áp merge_policy nguyên vẹn: hàm này chỉ chọn việc cho worker, không nới luật merge.
+  local prs pr head approved
+  prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json number,headRefName,headRefOid 2>/dev/null) || return 1
+  read -r pr head <<EOF
+$(printf '%s' "$prs" | jq -r --arg p "issue-$1-" '[.[] | select(.headRefName | startswith($p))][0] | select(. != null) | "\(.number) \(.headRefOid)"' 2>/dev/null)
+EOF
+  [ -n "${pr:-}" ] && [ -n "${head:-}" ] || return 1
+  approved=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r '
+    [.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
+      | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty' 2>/dev/null) || return 1
+  [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
+  printf '%s %s' "$pr" "$head"
+}
+
 claude_model_for_tier() {
   # model_tier của config -> --model của `claude -p` (#254: trước đây không truyền, mọi lượt chạy model mặc định đắt nhất).
   # low=haiku, high=opus; medium, thiếu hoặc lạ = sonnet.
@@ -944,7 +963,17 @@ dispatch_lane() {
   case "$lane" in
     build)  prompt="Run super-build on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Builder lifecycle. Config: ${CONFIG_PATH}." ;;
     qa)     prompt="Run super-qa on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Tester lifecycle. Config: ${CONFIG_PATH}." ;;
-    review) prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done." ;;
+    review)
+      local merge_only="" mo_pr mo_head
+      if merge_only=$(review_approved_head "$issue"); then
+        read -r mo_pr mo_head <<EOF
+$merge_only
+EOF
+        log "review lane issue=#${issue}: PR #${mo_pr} approved at head ${mo_head} — merge-only, no fresh review"
+        prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
+      else
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done."
+      fi ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac
   prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt $(lane_worktree_hint "$lane" "$issue") Emulator policy: NEVER launch an Android emulator without -no-window (always run headless in background with -no-window -no-audio -no-boot-anim, or via python3 .agents/devkit/bin/proof-capture.py)."

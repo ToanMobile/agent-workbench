@@ -9,6 +9,7 @@
 #   5. a non-additive edit (both branches change the same existing rule) falls back to the text merge, which conflicts
 #   7. merging origin/main INTO a PR branch keeps the matrix append-only against origin/main (what the gate compares), main's rules first
 #   6. githooks.sh install registers the driver and .gitattributes routes the matrix file to it
+#   8. the registered driver runs in a linked worktree with no .agents/devkit (the merge gate's scratch, #282)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -104,5 +105,26 @@ H="$(mktemp -d "$TMP/hooks.XXXXXX")" && cd "$H" && git init -q . && git config u
 bash "$DEVKIT_DIR/scripts/git/githooks.sh" install "$H" >/dev/null 2>&1
 git config --get merge.devkit-matrix.driver | grep -q matrix_merge_driver.py && grep -q "regression_matrix.active.json merge=devkit-matrix" .gitattributes \
   && ok "6: githooks install registers the driver and the attribute" || bad "6: driver/attribute missing"
+
+# 8 (#282): the driver githooks.sh registers must run in a checkout that has no .agents/devkit (the merge gate's
+# .merge-scratch-* worktree: the kit symlink is untracked). A relative ".agents/devkit/…" command fails there and git
+# falls back to the text merge, so two appended rules conflict.
+# The main checkout has the kit (untracked symlink, as installed); the linked worktree the merge runs in does not.
+mkdir -p "$H/.agents" && cd "$H" || exit 1
+printf '.agents/devkit\n' > .gitignore
+write_matrix "$(rule BASE-1 true)" && git add -A && { git commit -qm base >/dev/null 2>&1 || bad "8: setup commit base refused"; }
+ln -s "$DEVKIT_DIR" "$H/.agents/devkit"
+git branch a8; git branch b8
+W="$TMP/scratch8" && git worktree add -q "$W" a8 && cd "$W" || exit 1
+write_matrix "$(rule BASE-1 true)" "$(rule A-8 true)"; git commit -qam a8 >/dev/null 2>&1 || bad "8: setup commit a8 refused"
+git checkout -q b8; write_matrix "$(rule BASE-1 true)" "$(rule B-8 true)"; git commit -qam b8 >/dev/null 2>&1 || bad "8: setup commit b8 refused"
+git checkout -q a8
+[ ! -e "$W/.agents/devkit" ] || bad "8: setup — .agents/devkit must not exist in the worktree"
+if git merge --no-edit b8 >/dev/null 2>&1 && [ "$(ids)" = "BASE-1 A-8 B-8" ]; then
+  ok "8: the installed driver merges appended rules in a worktree without .agents/devkit"
+else
+  bad "8: merge conflicted in a worktree without .agents/devkit (driver: $(git config --get merge.devkit-matrix.driver))"
+fi
+cd "$H" && git worktree remove --force "$W" >/dev/null 2>&1
 
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }
