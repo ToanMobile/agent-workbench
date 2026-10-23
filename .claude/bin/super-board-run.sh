@@ -2055,11 +2055,13 @@ if [ "${SB_LIB_ONLY:-0}" = "1" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
-# A readiness/read failure stops only workers launched by this dispatcher. Keep their
+# A readiness failure (9, 10) stops only workers launched by this dispatcher. Keep their
 # locks, worktrees, claims, and approval evidence for explicit recovery.
+# A GitHub halt (79) does NOT stop workers (#306): they share the github-read layer and stop themselves at
+# check_halt, and the next runner adopts the survivors as after a crash. Killing them lost the work done mid-lane.
 halt_cleanup() {
   local rc=$?
-  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || ! python3 "$SB_GITHUB_READ" --check >/dev/null 2>&1; then
+  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ]; then
     for pid in $(own_lane_pids); do
       kill -TERM "$pid" 2>/dev/null || true
     done
