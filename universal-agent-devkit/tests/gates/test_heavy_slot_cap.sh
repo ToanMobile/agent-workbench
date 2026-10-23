@@ -168,10 +168,10 @@ for body in BROKEN:
         with open(os.path.join(d, "capacity.py"), "w") as f:
             f.write(body)
         r = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import heavy_slot as h; "
-                            "print(h.load_max(), h.heavy_max(), h.load_max())", d], capture_output=True, text=True, timeout=30,
-                           env={k: v for k, v in os.environ.items() if k not in ("DEVKIT_SLOT_LOAD_MAX", "DEVKIT_SLOT_HEAVY_MAX")})
-        # load_max gọi hai lần: mỗi khoá báo đúng MỘT dòng (OCR 23/10: bỏ chống lặp hay mất hẳn cảnh báo thì ca này phải đỏ)
-        if not (r.returncode == 0 and r.stdout.split() == ["100.0", "3", "100.0"] and "Traceback" not in r.stderr
+                            "print(h.load_max(), h.heavy_max(), h.heavy_max(), h.load_max())", d], capture_output=True, text=True,
+                           timeout=30, env={k: v for k, v in os.environ.items() if k not in ("DEVKIT_SLOT_LOAD_MAX", "DEVKIT_SLOT_HEAVY_MAX")})
+        # mỗi khoá gọi hai lần, báo đúng MỘT dòng (OCR 23/10: bỏ chống lặp hay mất hẳn cảnh báo thì ca này phải đỏ)
+        if not (r.returncode == 0 and r.stdout.split() == ["100.0", "3", "3", "100.0"] and "Traceback" not in r.stderr
                 and r.stderr.count("capacity hold_load") == 1 and r.stderr.count("capacity heavy_max") == 1):
             bad.append(f"{body!r}: rc={r.returncode} out={r.stdout.strip()!r} err={r.stderr.strip()[-160:]!r}")
 check("11b. capacity.py rỗng / thiếu hàm / hàm ném lỗi / trả 0, inf, nan, chuỗi, bool, âm, lẻ: load_max 100, heavy_max 3, "
