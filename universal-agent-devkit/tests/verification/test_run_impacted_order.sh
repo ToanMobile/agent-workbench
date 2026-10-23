@@ -134,25 +134,27 @@ peak="$(grep -v '^test_budgets ' "$RUN_LOG" | cut -d' ' -f2 | sort -n | tail -1)
 [ "$(grep '^test_budgets ' "$RUN_LOG")" = "test_budgets 1" ] && ok "the timing test (test_budgets) runs alone, after everything else" || fail "test_budgets not alone: $(grep '^test_budgets ' "$RUN_LOG")"
 [ "$RC" = 0 ] && ok "fixture 2 passes (exit 0) in $((t1 - t0)) s" || fail "fixture 2 rc=$RC: $OUT"
 
-# ── (f) the default job count: min(cores-2, 10), floor 4 (a small machine keeps the old default of 4); DEVKIT_TEST_JOBS overrides; --jobs prints what a run uses ─
+# ── (f) the default job count: min(cores + cores/3, 16), floor 4 (3 cores or fewer keep the old default of 4); DEVKIT_TEST_JOBS overrides; --jobs prints what a run uses ─
+# 2026-10-23, 12 cores, the same 127 tests (a post-fix-gate.py change), alternating 10/14/16/16/14/10: median 299 s at 10 jobs, 252 s at 16, 0 red tests in all 6 runs
 J="$TMP/jobs"; mk_kit "$J"
 jobs_of() { (cd "$J" && env "$@" bash tests/run_impacted.sh --jobs 2>&1); }
 bad=""
-for pair in 1:4 2:4 3:4 4:4 5:4 6:4 8:6 11:9 12:10 13:10 64:10; do
+# 08 and 012: a leading zero is read as decimal (10#) on both operands, never as octal ("value too great for base", or 15 for 012)
+for pair in 1:4 2:4 3:4 4:5 5:6 6:8 8:10 08:10 11:14 12:16 012:16 13:16 64:16; do
   c="${pair%%:*}"; w="${pair##*:}"; g="$(jobs_of DEVKIT_TEST_CORES="$c")"
   [ "$g" = "$w" ] || bad="$bad ${c}cores->'$g'(want $w)"
 done
-[ -z "$bad" ] && ok "f: default jobs = min(cores-2, 10), floor 4 = the old default (1,2,3,4,5,6,8,11,12,13,64 cores)" || fail "f: formula:$bad"
+[ -z "$bad" ] && ok "f: default jobs = min(cores + cores/3, 16), floor 4: 3 cores or fewer keep the old default (1,2,3,4,5,6,8,08,11,12,012,13,64 cores)" || fail "f: formula:$bad"
 # on THIS machine: the formula applied to a core count the machine itself reports
 exp=""; for c in "$(sysctl -n hw.ncpu 2>/dev/null)" "$(nproc 2>/dev/null)" "$(python3 -c 'import os; print(os.cpu_count() or 0)' 2>/dev/null)"; do
   case "$c" in ''|*[!0-9]*|0) continue ;; esac
-  j=$((c - 2)); [ "$j" -gt 10 ] && j=10; [ "$j" -lt 4 ] && j=4; exp="$exp $j"
+  j=$((c + c / 3)); [ "$j" -gt 16 ] && j=16; [ "$j" -lt 4 ] && j=4; exp="$exp $j"
 done
 real="$(jobs_of A=1)"
 case "$real:$exp " in [0-9]*:*" $real "*) ok "f: on this machine the default is $real jobs (formula candidates:$exp)" ;; *) fail "f: this machine's default is '$real', formula says:$exp" ;; esac
 [ "$(jobs_of DEVKIT_TEST_JOBS=3 DEVKIT_TEST_CORES=12)" = 3 ] && [ "$(jobs_of DEVKIT_TEST_JOBS=40 DEVKIT_TEST_CORES=12)" = 40 ] \
   && ok "e: DEVKIT_TEST_JOBS overrides the formula (3 and 40 on 12 cores)" || fail "e: override: '$(jobs_of DEVKIT_TEST_JOBS=3 DEVKIT_TEST_CORES=12)' '$(jobs_of DEVKIT_TEST_JOBS=40 DEVKIT_TEST_CORES=12)'"
-bad=""; for v in abc 0 00 -3 1.5 ""; do g="$(jobs_of DEVKIT_TEST_JOBS="$v" DEVKIT_TEST_CORES=12)"; [ "$g" = 10 ] || bad="$bad '$v'->'$g'"; done
+bad=""; for v in abc 0 00 -3 1.5 ""; do g="$(jobs_of DEVKIT_TEST_JOBS="$v" DEVKIT_TEST_CORES=12)"; [ "$g" = 16 ] || bad="$bad '$v'->'$g'"; done
 [ -z "$bad" ] && ok "e: an invalid DEVKIT_TEST_JOBS (abc, 0, 00, -3, 1.5, empty) falls back to the default, never to 0 = unlimited" || fail "e: invalid override:$bad"
 # no way to count cores (no nproc, sysctl or python3 on PATH): the old default 4
 STUB="$TMP/stub"; mkdir -p "$STUB"; ln -s "$(command -v dirname)" "$STUB/dirname"
