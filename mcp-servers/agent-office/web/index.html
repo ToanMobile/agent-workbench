@@ -1430,7 +1430,9 @@ function computePresent(root, idle) {
   };
   const aim = (b, dir) => { const pa = V(), pb = V(); b.getWorldPosition(pa); endOf(b).getWorldPosition(pb); toWorld(b, Q().setFromUnitVectors(pb.sub(pa).normalize(), dir.normalize())); };
   const out = [], touched = [];
-  const step = (n, group, fn) => { const b = bone(n); if (!b || !b.parent || !endOf(b)) return; const q0 = b.quaternion.clone(); touched.push([b, q0]); fn(b); out.push({ name: n, group, off: q0.clone().invert().multiply(b.quaternion) }); };
+  // track hằng/vắng thì mixer không ghi lại xương đó: lưu base để applySit đặt lại mỗi khung (như computePose), không cộng dồn
+  const animated = new Set(idle ? idle.tracks.filter((tr) => tr.values.some((v, k) => Math.abs(v - tr.values[k % tr.getValueSize()]) > 1e-6)).map((tr) => tr.name) : []);
+  const step = (n, group, fn) => { const b = bone(n); if (!b || !b.parent || !endOf(b)) return; const q0 = b.quaternion.clone(); touched.push([b, q0]); fn(b); out.push({ name: n, group, off: q0.clone().invert().multiply(b.quaternion), still: !animated.has(n + '.quaternion'), base: q0.clone() }); };
   step('UpperArmR', 'point', (b) => aim(b, V().set(-0.92, 0.32, -0.22)));   // tay phải giơ ngang vai, chỉ ra sau vào bảng
   step('LowerArmR', 'point', (b) => aim(b, V().set(-0.78, 0.55, -0.3)));
   step('Head', 'point', (b) => toWorld(b, Q().setFromAxisAngle(V().set(0, 1, 0), -0.55)));  // ngoái đầu về phía tay chỉ
@@ -1482,9 +1484,9 @@ function applySit(a, t) { // gọi ngay sau mixer.update: nhân độ lệch tư
     if (e.offB && a.typing) _sq2.slerpQuaternions(e.off, e.offB, Math.max(0, Math.sin(t * 15 + a.ph + e.ph))); else _sq2.copy(e.off);
     b.quaternion.multiply(_sq.copy(_SQID).slerp(_sq2, aw));
   }
-  if (a.present && a.presentW > 0) { // sau vòng tay (nó đặt lại xương hằng số về gốc), nên không cộng dồn. Thuyết trình: cứ ~7 s chỉ vào bảng một lần, giữa chừng tay trái giải thích
+  if (a.present) { // sau vòng tay (nó đặt lại xương hằng số về gốc), nên không cộng dồn. Thuyết trình: cứ ~7 s chỉ vào bảng một lần, giữa chừng tay trái giải thích
     const tc = (t + a.ph) % 7, wp = a.presentW * bump(tc, 0.4, 3.2), we = a.presentW * (0.55 + 0.45 * Math.sin(t * 2.4 + a.ph)) * (1 - 0.6 * wp);
-    for (const e of a.present) { const b = a.bm.get(e.name); const k = e.group === 'point' ? wp : we; if (b && k > 0) b.quaternion.multiply(_sq.copy(_SQID).slerp(e.off, k)); }
+    for (const e of a.present) { const b = a.bm.get(e.name); if (!b) continue; if (e.still) b.quaternion.copy(e.base); const k = e.group === 'point' ? wp : we; if (k > 0) b.quaternion.multiply(_sq.copy(_SQID).slerp(e.off, k)); }
   }
 }
 function play(a, name, fade) {
@@ -1544,12 +1546,12 @@ const WALK_VMAX = 4.4, WALK_TARGET_S = 14; // đường xa (qua hành lang) thì
 const WALK_V = 2.6, WALK_ACC = 3.2, WALK_REF = 1.9, TURN_RATE = 7, WAYPOINT_R = 0.35, AVOID_R = 1.2, MAX_WALKERS = 8;
 function snapshotPeople() {
   const byId = new Map(), byIssue = new Map();
-  const put = (w, pos, sat, yaw, sc, desk) => {
-    const v = { pos, sat, yaw, sc, desk };
+  const put = (w, pos, sat, yaw, sc, desk, faceOut) => {
+    const v = { pos, sat, yaw, sc, desk, faceOut: !!faceOut };
     byId.set(w.id, v);
     if (w.issue) byIssue.set(w.repo + '#' + w.issue, v);
   };
-  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone(), !!d.sits, seatYaw(d), d.sc, d.desk);   // đang ngồi
+  for (const d of deskAt.values()) if (d.pg.visible) put(d.w, d.pos.clone(), !!d.sits, seatYaw(d), d.sc, d.desk, d.faceOut);   // đang ngồi
   for (const k of walkers) put(k.dest.w, new THREE.Vector3(k.x, 0, k.z), false, k.yaw, k.obj.scale.x);             // đang đi dở: bắt đầu từ chỗ đang đứng
   return { byId, byIssue };
 }
@@ -1570,7 +1572,7 @@ function startWalks(snap) {
     let a = null, obj, yawOff = 0;
     if (HAS_GLTF && c.state === 'ready') {
       a = spawnActor(c, i, w); a.walker = true; obj = a.root;
-      if (old.desk) { a.pose = poseFor(c, old.desk.seatTop, old.desk.top, old.desk.standing); a.sitW = old.sat ? 1 : 0; a.armW = 1; }
+      if (old.desk) { a.pose = poseFor(c, old.desk.seatTop, old.desk.top, old.desk.standing); a.sitW = old.sat ? 1 : 0; a.armW = old.faceOut ? 0 : 1; if (old.faceOut) { a.present = presentFor(c); a.presentW = 1; } } // trạm: tay thuyết trình, không phải tay gõ
       play(a, 'idle', 0); a.mixer.update(0); applySit(a, 0);
     } else { // model chưa có (đang tải, lỗi, hoặc thiếu thư viện): người hộp đi cùng đường
       obj = new THREE.Group(); makePerson(obj, { x: 0, standing: true }, w, T, []); yawOff = -Math.PI / 2; // người hộp nhìn theo +x
@@ -1579,7 +1581,7 @@ function startWalks(snap) {
     d.pg.visible = false;
     walkers.push({ a, obj, yawOff, dest: d, from: old.pos.clone(), to: d.pos.clone(), pts, total: Math.max(0.01, OfficePath.pathLength(pts)), seg: 1, vmax: Math.min(WALK_VMAX, Math.max(WALK_V, OfficePath.pathLength(pts) / WALK_TARGET_S)),
       x: old.pos.x, z: old.pos.z, yaw: old.yaw, speed: 0, sp: 0, s0: old.sc, s1: d.sc,
-      phase: 'rise', t: 0, riseT: a && a.armW > 0 ? SIT_T : 0.05, fade: 0.35 }); // đứng dậy khỏi ghế rồi mới bước
+      phase: 'rise', fromFaceOut: !!old.faceOut, t: 0, riseT: a && (a.armW > 0 || a.presentW > 0) ? SIT_T : 0.05, fade: 0.35 }); // đứng dậy khỏi ghế rồi mới bước
   }
 }
 function finishWalk(k) {
@@ -1595,8 +1597,8 @@ function stepWalkers(dt) {
     const k = walkers[n], a = k.a, p = k.pts;
     if (k.phase === 'rise') {
       k.t += dt;
-      if (a && a.pose) { const u = 1 - smooth01(k.t / SIT_T); a.sitW = Math.min(a.sitW, u); a.armW = u; } // rời bàn phím, đứng dậy khỏi ghế cũ
-      if (k.t >= k.riseT) { k.phase = 'walk'; if (a) { a.sitW = 0; a.armW = 0; a.pose = null; play(a, 'walk', k.fade); } } // bỏ tư thế bàn để clip Walk điều khiển cả tay chân
+      if (a && a.pose) { const u = 1 - smooth01(k.t / SIT_T); a.sitW = Math.min(a.sitW, u); a.armW = k.fromFaceOut ? 0 : u; if (k.fromFaceOut) a.presentW = u; } // rời bàn phím, đứng dậy khỏi ghế cũ
+      if (k.t >= k.riseT) { k.phase = 'walk'; if (a) { a.sitW = 0; a.armW = 0; a.presentW = 0; a.pose = null; play(a, 'walk', k.fade); } } // bỏ tư thế bàn để clip Walk điều khiển cả tay chân
     } else if (k.phase === 'walk') {
       const nPts = p.length / 2, last = k.seg >= nPts - 1;
       let dx = p[2 * k.seg] - k.x, dz = p[2 * k.seg + 1] - k.z, dist = Math.hypot(dx, dz);
