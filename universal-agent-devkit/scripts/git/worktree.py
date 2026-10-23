@@ -2241,8 +2241,12 @@ def _same_patches_verbatim(cwd, tip, head, cap=300):
     if not base:
         return False
     merges = git(cwd, "rev-list", "--merges", "--count", f"{base}..{head}", check=False)
+    mine_n = git(cwd, "rev-list", "--count", f"{base}..{head}", check=False)
     total = git(cwd, "rev-list", "--count", f"{base}..{tip}", check=False)
-    if merges.returncode or merges.stdout.strip() != "0" or total.returncode or not total.stdout.strip().isdigit() or int(total.stdout) > cap:
+    if merges.returncode or merges.stdout.strip() != "0":
+        return False
+    # cap áp cho CẢ hai chuỗi: chuỗi head dài cũng chạy `git log -p` + patch-id không giới hạn (#326)
+    if any(r.returncode or not r.stdout.strip().isdigit() or int(r.stdout) > cap for r in (total, mine_n)):
         return False
 
     def ids(rng):   # BYTES: text mode đổi \r\n thành \n trước patch-id; --submodule=short: commit chỉ đổi gitlink vẫn có patch-id
