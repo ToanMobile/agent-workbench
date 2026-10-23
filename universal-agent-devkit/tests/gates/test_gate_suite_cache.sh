@@ -657,4 +657,71 @@ for grp in $GROUPS_IN_ORDER; do
   if [ -f "$ROOT/fails.$grp" ]; then FAILS=$((FAILS + $(cat "$ROOT/fails.$grp"))); else fail "group $grp did not finish"; fi
 done
 
+# 33. Bao đóng input của khoá chính xác (issue #151): probe tính khoá của REG-P trước/sau khi đổi một file, in "same" hoặc "diff".
+#     Ma trận: REG-P watch src/a.py, lệnh `true` (lệnh không nêu tên file nào: mọi input đến từ watch_files).
+probe_key() {   # probe_key <repo> <file đổi> <nội dung mới>
+  ( cd "$1" && python3 - "$DEVKIT_DIR/bin" "$1" "$2" "$3" <<'PY'
+import json, os, sys
+bindir, repo, rel, text = sys.argv[1:]
+sys.path.insert(0, bindir)
+import suite_cache as sc
+mp = os.path.join(repo, "matrix.json")
+rules = json.load(open(mp))["rules"]
+test = rules[0]["mandatory_regression_tests"][0]
+def key():
+    return sc.SuiteCache(repo, rules, mp, {}, "L", "rf", "", learned={}).keys(test)
+k0 = key()
+with open(os.path.join(repo, rel), "w") as f:
+    f.write(text)
+print("same" if k0[0] == key()[0] else "diff")
+PY
+  ); }
+mk33() {   # mk33 <thư mục>: repo git với matrix REG-P (watch src/a.py, lệnh true)
+  mkdir -p "$1/src/data" "$1/tests"; git -C "$1" init -q -b main . && git -C "$1" config user.email t@t && git -C "$1" config user.name t
+  printf '{"project":"t","rules":[{"component":"P","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-P","name":"p","command":"true"}]}]}\n' > "$1/matrix.json"
+}
+# 33a. helper chỉ được import bởi file trong watch_files: đổi helper ⇒ khoá phải đổi
+R33="$TMP/r33a"; mk33 "$R33"
+printf 'import helper33\n' > "$R33/src/a.py"; echo 'v = 1' > "$R33/src/helper33.py"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/helper33.py 'v = 2')
+[ "$r" = diff ] && ok "33a. import của file watch_files là input: đổi helper ⇒ khoá đổi" || fail "33a. helper chỉ import bởi file watch_files đổi mà khoá giữ nguyên ($r)"
+# 33b. script (watch_files) đọc src/data/*.txt: đổi một file trong đó ⇒ khoá đổi
+R33="$TMP/r33b"; mk33 "$R33"
+printf 'cat src/data/*.txt\n' > "$R33/src/a.py"; echo one > "$R33/src/data/1.txt"; echo two > "$R33/src/data/2.txt"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/data/2.txt 'changed')
+[ "$r" = diff ] && ok "33b. token glob src/data/*.txt: đổi một file khớp ⇒ khoá đổi" || fail "33b. file khớp glob đổi mà khoá giữ nguyên ($r)"
+# 33c. script nguồn một file > 1 MB (không quét được): khoá chính xác lùi về khoá cả cây ⇒ đổi file không liên quan cũng đổi khoá
+R33="$TMP/r33c"; mk33 "$R33"
+printf '. src/big33.sh\n' > "$R33/src/a.py"; python3 -c "import sys; open(sys.argv[1], 'w').write('# pad\n' * 250000 + 'echo hi\n')" "$R33/src/big33.sh"
+echo u > "$R33/src/unrelated.txt"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/unrelated.txt 'changed')
+[ "$r" = diff ] && ok "33c. file script > 1 MB không đọc được: khoá chính xác lùi về khoá cả cây" || fail "33c. file > 1 MB bị bỏ qua mà không đánh dấu cắt ($r)"
+# 33d. lockfile / config runner / pin phiên bản: đổi ⇒ khoá của mọi suite đổi (suite chỉ watch src/a.py, lệnh true)
+for f33 in package-lock.json yarn.lock pnpm-lock.yaml uv.lock poetry.lock requirements.txt requirements-dev.txt jest.config.js vitest.config.ts babel.config.js .babelrc .mocharc.json .nvmrc .python-version .tool-versions; do
+  R33="$TMP/r33d-$f33"; mk33 "$R33"
+  echo 'a = 1' > "$R33/src/a.py"; echo v1 > "$R33/$f33"
+  git -C "$R33" add -A && git -C "$R33" commit -qm init
+  r=$(probe_key "$R33" "$f33" 'v2')
+  [ "$r" = diff ] && ok "33d. đổi $f33 ⇒ khoá đổi" || fail "33d. đổi $f33 mà khoá giữ nguyên ($r)"
+done
+# 33e. `cd ../..` trong script không phải input và không làm mất khoá chính xác: đổi file không liên quan ⇒ khoá GIỮ NGUYÊN
+#      (script ở deep/bulk/sub/: "../.." resolve ra deep/bulk, thư mục > DIR_EXPAND_MAX file ⇒ trước đây cắt khoá chính xác)
+R33="$TMP/r33e"; mk33 "$R33"; mkdir -p "$R33/deep/bulk/sub"
+printf '{"project":"t","rules":[{"component":"P","watch_files":["deep/bulk/sub/a.py"],"mandatory_regression_tests":[{"id":"REG-P","name":"p","command":"true"}]}]}\n' > "$R33/matrix.json"
+printf 'cd ../..\n' > "$R33/deep/bulk/sub/a.py"
+python3 -c "import sys; [open('%s/deep/bulk/f%d.txt' % (sys.argv[1], i), 'w').write('x') for i in range(250)]" "$R33"
+echo u > "$R33/src/unrelated.txt"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/unrelated.txt 'changed')
+[ "$r" = same ] && ok "33e. 'cd ../..' không cắt khoá chính xác" || fail "33e. 'cd ../..' bị coi là input gốc quá lớn ⇒ khoá chính xác bị cắt ($r)"
+# 33f. symlink tới thư mục được script nhắc tên không phải file không đọc được: không cắt khoá chính xác
+R33="$TMP/r33f"; mk33 "$R33"
+printf 'ls src/lnk33\n' > "$R33/src/a.py"; ln -s data "$R33/src/lnk33"; echo u > "$R33/src/unrelated.txt"; echo d > "$R33/src/data/d.txt"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/unrelated.txt 'changed')
+[ "$r" = same ] && ok "33f. symlink thư mục không cắt khoá chính xác" || fail "33f. symlink thư mục bị tính là file không đọc được ⇒ khoá chính xác bị cắt ($r)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_suite_cache: all passed" || { echo "❌ test_gate_suite_cache: $FAILS failed"; exit 1; }
