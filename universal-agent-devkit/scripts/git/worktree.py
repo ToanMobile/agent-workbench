@@ -4011,7 +4011,8 @@ def _gc_why(unique):
 def cmd_gc(cwd, args):
     """Delete the folders DevKit worktrees left behind that git no longer knows, only when nothing in them is unique
     (docs/workflow-improvements.md I.0 R5b): `<repo>-*` siblings whose `.git` pointer dangles into this repo, or with no `.git` that hold
-    DevKit bookkeeping only; every file is checked (_gc_unique). An agent cannot `rm -rf` them (hardware_safety_gate), so before gc they
+    DevKit bookkeeping only, and any folder of main's own `.claude/worktrees/` git does not register (#327); every file is checked
+    (_gc_unique). An agent cannot `rm -rf` them (hardware_safety_gate), so before gc they
     waited for the user. Registered worktrees are never gc's: worktree_merge_gate (Stop) and `worktree remove` judge those (review 3,
     13/10: removing them from gc opened data-loss holes round after round). Kept: anything with work not in main, a unique file, a secret
     only there, a folder changed in the last GC_MIN_AGE_S, a person's folder or clone. --dry-run deletes nothing."""
@@ -4029,22 +4030,29 @@ def cmd_gc(cwd, args):
         print("• gc: " + tr(f"không khoá được ({e}); chạy không khoá", f"no lock ({e}); running unlocked"))
     here = os.path.realpath(cwd)
     deleted, kept, notes = [], [], {}
-    registered = {os.path.realpath(e["path"]) for e in _worktree_entries(main)}
+    registered = [e["path"] for e in _worktree_entries(main)]   # compared with _same_path: realpath keeps APFS case spellings apart (#327 review)
     parent, prefix = os.path.dirname(main), os.path.basename(main) + "-"
     try:
         siblings = sorted(os.listdir(parent))
     except OSError:
         siblings = []
-    for name in siblings:
-        top = os.path.join(parent, name)
+    # (path, owned): `<repo>-*` siblings, then what sits in main's own .claude/worktrees/ (#327: git dropped the registration but the
+    # folder stayed, and with no `.git` left it was never a candidate). There every file is judged as in a dangling orphan.
+    cands = [(os.path.join(parent, n), False) for n in siblings if n.startswith(prefix)]
+    wt_home = os.path.join(main, ".claude", "worktrees")
+    try:
+        cands += [(os.path.join(wt_home, n), True) for n in sorted(os.listdir(wt_home))]
+    except OSError:
+        pass
+    for top, owned in cands:
         real = os.path.realpath(top)
-        if not name.startswith(prefix) or os.path.islink(top) or not os.path.isdir(top) or real in registered \
+        if os.path.islink(top) or not os.path.isdir(top) or any(_same_path(p, top) for p in registered) \
                 or real == os.path.realpath(main) or here == real or here.startswith(real + os.sep):
             continue
         gitp = os.path.join(top, ".git")
         if os.path.isdir(gitp) or _gc_young(top, gitp):
             continue   # a clone or a copy of its own: never ours; or just changed
-        dangling = False
+        dangling = owned and not os.path.isfile(gitp)
         if os.path.isfile(gitp):
             try:
                 with open(gitp, encoding="utf-8") as fh:
