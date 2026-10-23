@@ -166,6 +166,6 @@ grep -n 'QA_IDLE=\|REVIEW_IDLE=' "$RUNNER" | grep -q 'lane_idle "\$QA_PID"\|lane
 # T0052: config agent-workbench bỏ qa_workers / review_workers; kết quả đọc qua resolve_lane_workers vẫn là 3/3 trên 12 lõi (capacity)
 AW_CFG="$ROOT/.claude/super-board/configs/agent-workbench.json"
 cfg="$(resolve_lane_workers "$AW_CFG" qa_workers) $(resolve_lane_workers "$AW_CFG" review_workers)"
-[ "$cfg" = "3 3" ] && ok "agent-workbench config resolves to qa_workers=3, review_workers=3 (12 cores)" || fail "agent-workbench config resolves to '$cfg' (want 3 3)"
+[ "$cfg" = "1 1" ] && ok "agent-workbench config pins qa_workers=1, review_workers=1 (23/10: machine overloaded, user lowered the load)" || fail "agent-workbench config resolves to '$cfg' (want 1 1)"
 
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }
