@@ -368,3 +368,6 @@
 3 tests/gates/test_matrix_merge_driver.sh
 # 2026-10-23 (T0052 nguồn sức chứa chung bin/capacity.py): đo một mình trên máy này (1.5 s).
 2 tests/gates/test_capacity.sh
+# 2026-10-23: test của #309 (59a469ff) vào main thiếu dòng này, test_run_impacted_order.sh đỏ "unlisted tests start first"; đo một
+# mình trên máy này (3.1 s).
+3 tests/worktree_git/test_worktree_merge_tree_no_leak.sh
