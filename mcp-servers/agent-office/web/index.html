@@ -2239,7 +2239,7 @@ async function moveAll(from, to, n, repo) {
     const r = await api('move-all', { from, to, repo });
     STATE.items.forEach((it) => { if (it.status === from && (!repo || it.repo === repo) && !r.failedCount) it.status = to; });
     VERSION = null; poll(true);
-    toast('Đã chuyển ' + r.moved + ' thẻ sang ' + to + (r.failedCount ? ', ' + r.failedCount + ' thẻ lỗi: ' + r.failed.join('; ') : ''), r.failedCount ? 'error' : undefined);
+    toast('Đã chuyển ' + r.moved + ' thẻ sang ' + to + (r.remaining ? ', còn ' + r.remaining + ' thẻ: bấm lại để chuyển tiếp' : '') + (r.failedCount ? ', ' + r.failedCount + ' thẻ lỗi: ' + r.failed.join('; ') : ''), r.failedCount ? 'error' : undefined);
   } catch (err) { toast('Không chuyển được hàng loạt: ' + err.message, 'error'); }
 }
 async function setField(it, field, option) {
@@ -2596,7 +2596,8 @@ function drawColumn(name) {
   }
   if (!its.length) { d.append(h('p', 'empty', 'Cột này đang trống.')); return; }
   const target = S.columns.find((c) => c.kind === 'ready');
-  if (target && target.name !== name && canWrite()) {
+  const fromBacklog = col.noStatus || (col.kind || kindOf(col.name)) === 'backlog'; // chỉ đẩy việc chờ sang Ready: Done/Building/Blocked đẩy về là giao lại việc cho runner
+  if (target && fromBacklog && canWrite()) {
     const ra = h('div', 'row-actions'); const bt = h('button', 'btn', 'Chuyển tất cả ' + its.length + ' thẻ sang ' + target.name); bt.type = 'button'; tintBtn(bt, target);
     bt.onclick = () => moveAll(name, target.name, its.length);
     ra.append(bt); d.append(ra);
@@ -2605,7 +2606,7 @@ function drawColumn(name) {
     const head = h('div', 'colhead'); const sw = h('span', 'sw'); sw.style.background = colColor(col);
     head.append(sw, h('span', null, repo), h('span', 'n', String(list.length)));
     d.append(head);
-    if (target && target.name !== name && canWrite() && groups.length > 1) {
+    if (target && fromBacklog && canWrite() && groups.length > 1) {
       const ra = h('div', 'row-actions'); const rb = h('button', 'btn', 'Chuyển ' + list.length + ' thẻ ' + repo + ' sang ' + target.name); rb.type = 'button'; tintBtn(rb, target);
       rb.onclick = () => moveAll(name, target.name, list.length, repo); ra.append(rb); d.append(ra);
     }

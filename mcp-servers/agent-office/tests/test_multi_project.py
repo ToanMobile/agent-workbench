@@ -166,6 +166,47 @@ class NewCardsAndBulkMove(unittest.TestCase):
         self.assertEqual(it["status"], "Backlog")
         self.assertFalse(any(c.get("noStatus") for c in self.app.project["columns"]))
 
+    def _no_status(self, state="OPEN"):
+        it = self.app.project["items"][0]
+        it["status"], it["state"] = server.NO_STATUS, state
+        self.app.backfilled = set()
+        return it
+
+    def test_closed_cards_without_status_are_left_alone(self):
+        it = self._no_status("CLOSED")
+        calls = []
+        with mock.patch.object(server, "gh_graphql", side_effect=lambda q, v: calls.append(v) or {}):
+            self.app.backfill_backlog(self.app.project)
+        self.assertEqual(calls, [])
+        self.assertEqual(it["status"], server.NO_STATUS)
+
+    def test_a_transient_github_error_is_retried_on_the_next_poll(self):
+        it = self._no_status()
+        with mock.patch.object(server, "gh_graphql", side_effect=server.GhError("HTTP 502")):
+            self.app.backfill_backlog(self.app.project)
+        with mock.patch.object(server, "gh_graphql", side_effect=lambda q, v: {}):
+            self.app.backfill_backlog(self.app.project)
+        self.assertEqual(it["status"], "Backlog")
+
+    def test_backfill_writes_at_most_a_few_cards_per_poll(self):
+        for it in self.app.project["items"]:
+            it["status"], it["state"] = server.NO_STATUS, "OPEN"
+        self.app.backfilled = set()
+        calls = []
+        with mock.patch.object(server, "BACKFILL_PER_POLL", 2), \
+                mock.patch.object(server, "gh_graphql", side_effect=lambda q, v: calls.append(v) or {}):
+            self.app.backfill_backlog(self.app.project)
+        self.assertEqual(len(calls), 2)
+
+    def test_move_all_reports_github_errors_in_friendly_words(self):
+        for it in self.app.project["items"]:
+            it["status"] = "Backlog"
+        with mock.patch.object(server, "gh_graphql", side_effect=server.GhError("raw gh stderr")), \
+                mock.patch.object(server, "friendly", side_effect=lambda m: "FRIENDLY"):
+            r = self.app.act("move-all", {"from": "Backlog", "to": "Ready"})
+        self.assertEqual(r["failedCount"], 3)
+        self.assertTrue(all("FRIENDLY" in f for f in r["failed"]), r["failed"])
+
 
 if __name__ == "__main__":
     unittest.main()
