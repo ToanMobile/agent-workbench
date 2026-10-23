@@ -286,6 +286,11 @@ DEVICE_JQ='def held_for_device($col): $nodev and ([((.labels // []) + (.content.
   | index("needs-device") != null and ($col == "QA" or ($col == "Ready" and index("qa") != null)));'
 NO_DEVICE=false
 
+# #202: dispatch order of Ready cards: priority:high < medium < low < none, then `bug` first, then the issue number ascending.
+READY_RANK_JQ='def ready_rank: ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]) as $l
+  | [(if ($l | index("priority:high")) then 0 elif ($l | index("priority:medium")) then 1 elif ($l | index("priority:low")) then 2 else 3 end),
+     (if ($l | index("bug")) then 0 else 1 end), .content.number];'
+
 refresh_device_state() {
   # Sets NO_DEVICE for this tick. adb is asked only while an unclaimed card would be held (a board with none never runs it);
   # a change is logged once, not every tick.
@@ -394,6 +399,87 @@ card_lane() {
     | if index("qa") then "qa" else "build" end' 2>/dev/null || echo build
 }
 
+ready_card_held() {
+  # #202: $1 = Ready issue, $2 = its project item id. Returns 0 when the card must NOT be dispatched this tick.
+  #  - its body points at another repo (a github.com/<owner>/<repo> or <owner>/<repo>#N other than config.repo.remote, or an absolute
+  #    checkout path outside this repo): a worker here cannot do it -> Blocked with the block template;
+  #  - its `## Fix` section does the work of another card still open in Ready/Building (#N): commented once per runner process, left in Ready.
+  # An unreadable or empty body is no verdict (returns 1): the card is dispatched as before.
+  local issue="$1" item_id="$2" body self other refs dup r fixlines
+  body=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json body -q .body 2>/dev/null) || return 1
+  [ -n "$body" ] || return 1
+  self=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##' | tr '[:upper:]' '[:lower:]')
+  other=""
+  if [ -n "$self" ]; then
+    # Only forms that name a repo unambiguously: github.com/<o>/<r>/(issues|pull|blob|tree|...) and a standalone <o>/<r>#N.
+    # user-attachments/orgs/settings URLs and relative paths (docs/notes.md#12, docs/x#3) are not another repo.
+    local cand owner repo
+    while IFS= read -r cand; do
+      [ -n "$cand" ] || continue
+      owner="${cand%%/*}"; repo="${cand#*/}"
+      case "$repo" in *.md|*.sh|*.py|*.js|*.ts|*.json|*.yml|*.yaml|*.txt|*.html|*.css|*.kt|*.java|*.swift|*.go|*.rs) continue ;; esac
+      [ -e "$REPO_ROOT/$owner" ] && continue
+      [ "$cand" = "$self" ] && continue
+      other="$cand"; break
+    done < <( {
+        printf '%s\n' "$body" | grep -oE 'github\.com/[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+/(issues|pull|pulls|blob|tree|commit|commits|actions)([^A-Za-z0-9_-]|$)' \
+          | sed -E 's#^github\.com/([^/]+/[^/]+)/.*#\1#'
+        printf '%s\n' "$body" | grep -oE '(^|[[:space:](`"])[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+#[0-9]+' \
+          | sed -E 's#^[^A-Za-z0-9]##; s/#[0-9]+$//'
+      } | sed -E 's#\.git$##; s#\.$##' | tr '[:upper:]' '[:lower:]' | sort -u )
+  fi
+  if [ -z "$other" ]; then
+    # A checkout path counts only in the card's own Fix/Context (not stack traces or prose in Problem) and must go below the disk/user dir.
+    other=$( { printf '%s\n' "$body" | awk '/^## /{f = ($0 ~ /^## (Fix|Context)[[:space:]]*$/); next} f' \
+        | grep -oE '/(Volumes|Users|home)/[^/[:space:]]+/[^][:space:])`"<>]+' || true; } \
+      | grep -vF -e "$REPO_ROOT" -e "${HOME:-/nonexistent}/.claude" | head -1 || true)
+  fi
+  if [ -n "$other" ]; then
+    log "hold #${issue} in Ready: its body points at another repo/checkout (${other}) — Blocked, not dispatched"
+    if set_card_status "$item_id" "Blocked"; then
+      gh_checkpoint
+      gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ❓ card targets another repo
+Card:        #${issue}
+Reason tag:  ❓
+Why blocked: the body points at \`${other}\`, not at this repo (${self:-unknown}); a worker here would edit the wrong tree
+Evidence:    body of #${issue} (\`${other}\`)
+Checked:     runner Ready guard (#202) before any claim or worktree
+What blocks: the card names a repo or checkout this board does not own
+Why I (bot) cannot decide:
+             moving the work to another repo's board is a person's call
+To unblock:  [ ] Re-file the card on the board of \`${other}\`, or reword it if it is really about this repo
+Owner:       repo admin
+Move back:   drag this card to Ready once its body is about this repo
+blocked-by:  -" >/dev/null 2>&1 || true
+    else
+      gh_checkpoint
+      log "⚠ could not move #${issue} to Blocked — it is skipped this tick only"
+    fi
+    return 0
+  fi
+  fixlines=$(printf '%s\n' "$body" | awk '/^## /{f = ($0 ~ /^## Fix[[:space:]]*$/); next} f' \
+    | grep -viE '(^|[^[:alnum:]_])(blocked|depends|after|sau khi)([^[:alnum:]_]|$)' || true)
+  refs=$( { printf '%s\n' "$fixlines" | grep -oE '#[0-9]+' || true; } | tr -d '#' | sort -un)
+  dup=""
+  for r in $refs; do
+    [ "$r" -lt "$issue" ] || continue   # A<->B: only the higher-numbered card is held, the lower one proceeds
+    if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$r" '[.items[] | select(.content.number == $n and (.status == "Ready" or .status == "Building"))] | length > 0' >/dev/null 2>&1; then
+      dup="${dup:+$dup }#${r}"
+    fi
+  done
+  [ -n "$dup" ] || return 1
+  local noted="$(dirname "$INFLIGHT_DIR")/dup-noted" key="${issue}:${dup// /,}"   # state file: survives a runner restart
+  if ! grep -qxF "$key" "$noted" 2>/dev/null; then
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] 👯 not dispatched · its Fix covers ${dup}
+Did: runner Ready guard (#202) found ${dup} still open in Ready/Building and named in this card's Fix
+❌ Not done: no worker was started for #${issue}, to avoid building the same change twice
+Next: Eric — merge this card into ${dup}, or cut the overlap from its Fix" >/dev/null 2>&1 || true
+    log "hold #${issue} in Ready: its Fix covers ${dup}, still open — not dispatched"
+    echo "$key" >> "$noted" 2>/dev/null || log "⚠ could not record the duplicate note for #${issue} (${noted})"
+  fi
+  return 0
+}
+
 top_card_in_column() {
   # Sets TOP_ISSUE / TOP_ITEM_ID to the FIRST dispatchable card in column $1:
   # no assignee, no local in-flight lock, and the underlying issue still OPEN.
@@ -429,11 +515,12 @@ top_card_in_column() {
       rm -f "$INFLIGHT_DIR/$issue"
       continue
     fi
+    if [ "$col" = "Ready" ] && ready_card_held "$issue" "$item_id"; then continue; fi   # #202
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
-    .items[]
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$READY_RANK_JQ"'
+    [.items[]
     | select(.status == $col and .content.type == "Issue")
     # Chỉ bỏ qua thẻ đang giao cho người khác; thẻ chỉ mang assignee của chính BOT_LOGIN nhưng không có lock sống sẽ được lọc ở issue_locked phía trên để không bị kẹt.
     | select(((.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
@@ -441,8 +528,10 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}"
     # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
     # still on (run.md → resume). Removing the label releases the card.
     | select($col != "Ready" or (for_a_person | not))
-    | select(held_for_device($col) | not)   # #95: its QA needs a real device and none is online (refresh_device_state)
-    | [(.content.number | tostring), (.id // "")] | @tsv')
+    | select(held_for_device($col) | not)]   # #95: its QA needs a real device and none is online (refresh_device_state)
+    # #202: Ready is taken by priority label, then bug before the rest, then the lower (older) issue number; other columns keep board order.
+    | (if $col == "Ready" then sort_by(ready_rank) else . end)
+    | .[] | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
   return 1
 }
