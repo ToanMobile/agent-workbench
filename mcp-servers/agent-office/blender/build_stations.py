@@ -9,7 +9,7 @@ Run from mcp-servers/agent-office/:
     blender -b --factory-startup --python blender/build_stations.py
     blender -b --factory-startup --python blender/build_stations.py -- --preview /path/out.png
 """
-import bpy, sys, os, math
+import bpy, sys, os
 from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

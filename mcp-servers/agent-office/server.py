@@ -1374,6 +1374,8 @@ class App:
             done += 1
             with self.lock:
                 it["status"] = name
+                if getattr(self, "prev_items", None) is not None and it["id"] in self.prev_items:
+                    self.prev_items[it["id"]] = name  # việc máy tự làm: không ghi thành sự kiện chuyển cột hay cộng vào tally
         with self.lock:
             if not any(i["status"] == NO_STATUS for i in proj["items"]):
                 proj["columns"] = [c for c in proj["columns"] if not c.get("noStatus")]

@@ -2237,7 +2237,7 @@ async function moveAll(from, to, n, repo) {
   if (!canWrite() || !confirm('Chuyển ' + n + ' thẻ' + (repo ? ' của ' + repo : '') + ' từ "' + from + '" sang "' + to + '"? Runner sẽ nhận các thẻ này ngay.')) return;
   try {
     const r = await api('move-all', { from, to, repo });
-    STATE.items.forEach((it) => { if (it.status === from && (!repo || it.repo === repo) && !r.failedCount) it.status = to; });
+    if (!r.failedCount && !r.remaining) STATE.items.forEach((it) => { if (it.status === from && (!repo || it.repo === repo)) it.status = to; }); // chuyển dở thì để lần đọc lại vẽ đúng
     VERSION = null; poll(true);
     toast('Đã chuyển ' + r.moved + ' thẻ sang ' + to + (r.remaining ? ', còn ' + r.remaining + ' thẻ: bấm lại để chuyển tiếp' : '') + (r.failedCount ? ', ' + r.failedCount + ' thẻ lỗi: ' + r.failed.join('; ') : ''), r.failedCount ? 'error' : undefined);
   } catch (err) { toast('Không chuyển được hàng loạt: ' + err.message, 'error'); }
