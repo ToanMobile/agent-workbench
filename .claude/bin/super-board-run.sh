@@ -2103,15 +2103,16 @@ reload_finish_main() {
   local ak wt rc out
   if [ -n "${SB_WORKTREE_CMD:-}" ]; then read -r -a ak <<<"$SB_WORKTREE_CMD"
   elif command -v agent-kit >/dev/null 2>&1; then ak=(agent-kit worktree); else ak=(python3 .agents/devkit/scripts/git/worktree.py); fi
-  wt=".claude/worktrees/self-reload-$$"
+  wt=".claude/worktrees/self-reload-$$-$(date +%s)"   # exec giữ PID: hậu tố thời gian để bản mồ côi của lần trước không chặn lần này
   out=$("${ak[@]}" add "$wt" 2>&1) || { log "⚠ self-reload: cannot create worktree $wt: $(printf '%s' "$out" | tail -c 300)"; return 1; }
   if git -C "$wt" merge --no-edit -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
-    "${ak[@]}" finish "$wt" >/dev/null 2>&1; rc=$?
+    out=$("${ak[@]}" finish "$wt" 2>&1); rc=$?
   else
     git -C "$wt" merge --abort >/dev/null 2>&1; rc=1
   fi
-  [ "$rc" -eq 0 ] || log "⚠ self-reload: merge origin/${BASE_BRANCH} / worktree finish $wt failed (rc=$rc)"
-  "${ak[@]}" remove "$wt" >/dev/null 2>&1 || log "⚠ self-reload: worktree remove $wt failed; left for the cleanup hook"
+  [ "$rc" -eq 0 ] || log "⚠ self-reload: merge origin/${BASE_BRANCH} / worktree finish $wt failed (rc=$rc): $(printf '%s' "$out" | tail -c 300)"
+  # finish thành công đã gỡ worktree; chỉ gỡ khi thư mục còn đó
+  [ ! -d "$wt" ] || "${ak[@]}" remove "$wt" >/dev/null 2>&1 || log "⚠ self-reload: worktree remove $wt failed; left for the cleanup hook"
   return "$rc"
 }
 self_reload_tick() {

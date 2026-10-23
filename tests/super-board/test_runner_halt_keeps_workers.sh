@@ -32,7 +32,7 @@ eval "$fn"
 # $1 = rc mà runner thoát; in "alive" hoặc "dead" cho worker (sleep) của lần chạy này.
 # halt_cleanup đọc rc từ $? khi trap chạy: `( exit rc )` đặt $? ngay trước khi gọi hàm.
 sim() {
-  sleep 300 & WORKER_PID=$!; echo "$WORKER_PID" >> "$GH_READ.pids"
+  sleep 300 >/dev/null 2>&1 </dev/null & WORKER_PID=$!; echo "$WORKER_PID" >> "$GH_READ.pids"
   ( exit "$1" ); halt_cleanup
   sleep 0.3
   if kill -0 "$WORKER_PID" 2>/dev/null; then echo alive; else echo dead; fi
