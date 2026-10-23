@@ -433,10 +433,19 @@ fi
 # Nhánh chậm hơn base nhưng merge scratch sạch: đẩy fast-forward lên đúng nhánh PR
 # rồi mới verify. Timeout phía dưới vẫn thử lại một lần. Không --force.
 MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
-TRAIN_PROVED=0
+TRAIN_PROVED=0; TREE_PROVED=0
 if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
   TRAIN_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
   [ -z "$TRAIN_TREE" ] || [ "$TRAIN_TREE" != "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" ] || TRAIN_PROVED=1
+fi
+# #226 gap 7: biên nhận theo cây gộp. Verify xanh ghi <git common dir>/super-board/verified-trees/<sha256(tree + lệnh verify)>; lượt gate sau
+# (vd. lượt trước thoát exit 4 sau verify) trên đúng cây gộp và đúng bộ lệnh bỏ verify. Base đổi, head đổi hay lệnh đổi: khoá khác, verify đủ.
+TREE_RECEIPT=""
+TREE_COMMON=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P || true)
+if [ -n "$TREE_COMMON" ]; then
+  TREE_KEY=$({ git -C "$SCRATCH" rev-parse 'HEAD^{tree}'; printf '%s\n' "${VERIFY[@]}"; } | shasum -a 256 | cut -d' ' -f1)
+  TREE_RECEIPT="$TREE_COMMON/super-board/verified-trees/$TREE_KEY"
+  if [ "$TRAIN_PROVED" -eq 0 ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
 fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
 if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
@@ -743,6 +752,7 @@ red_only_on_base() {
 }
 
 for cmd in "${VERIFY[@]}"; do
+  if [ "$TREE_PROVED" -eq 1 ]; then say "verify skipped: this exact merged tree was already verified green with the same commands (receipt ${TREE_KEY:0:12})"; break; fi
   if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
   cmd=$(sb_verify_inject_flags "$cmd" "$BASE")
   run_cmd=$(sb_verify_inject_flags "$cmd" "$BASE" json)   # #251 R1: chạy kèm --json, hiển thị/so sánh không có
@@ -765,6 +775,7 @@ for cmd in "${VERIFY[@]}"; do
   if [ "$VRC" -ne 0 ] && red_only_on_base "$VRC" "$VERIFY_LOG" "$cmd"; then
     say "verify red only on suites that are red on origin/${BASE} too (#251): not rejecting the PR"
     VRC=0
+    TREE_RECEIPT=""   # verify tolerated red suites: no receipt, the next gate checks them against the base again
   fi
   if [ "$VRC" -ne 0 ]; then
     say "FAILED: ${cmd}"
@@ -796,6 +807,9 @@ for cmd in "${VERIFY[@]}"; do
   fi
 done
 say "verified green against ${BASE} (${#VERIFY[@]} command(s))"
+if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ]; then
+  mkdir -p "${TREE_RECEIPT%/*}" && : > "$TREE_RECEIPT" || say "could not write the verified-tree receipt ${TREE_RECEIPT}; the next gate verifies again"
+fi
 own_lock_or_stop   # verify dài có thể đã để gate khác chiếm khoá: không merge song song với nó
 
 python3 "$GITHUB_READ" --check
