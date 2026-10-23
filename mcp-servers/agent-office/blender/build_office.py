@@ -332,10 +332,11 @@ def preview(png):
     print("PREVIEW", png)
 
 
-reset()
-for build in (build_desk, build_chair, build_monitor, build_keyboard, build_mouse,
-              build_plant, build_mug, build_shelf):
-    build()
-export()
-if PREVIEW:
-    preview(PREVIEW)
+if __name__ == "__main__":  # build_stations.py imports the helpers above without rebuilding the office
+    reset()
+    for build in (build_desk, build_chair, build_monitor, build_keyboard, build_mouse,
+                  build_plant, build_mug, build_shelf):
+        build()
+    export()
+    if PREVIEW:
+        preview(PREVIEW)
