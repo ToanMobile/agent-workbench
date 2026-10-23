@@ -1070,4 +1070,5 @@ while :; do
   fi
   sleep "$MERGE_RECHECK_DELAY"
 done
-python3 "$GITHUB_READ" --halt "Merge response failed and GitHub has not confirmed a merge; reconcile PR #${PR} before restarting. No merge was retried."
+python3 "$GITHUB_READ" --halt "Merge response failed and GitHub has not confirmed a merge; reconcile PR #${PR} before restarting. No merge was retried." \
+  --verify "{\"kind\":\"pr-merged\",\"pr\":${PR}}"
