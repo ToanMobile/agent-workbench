@@ -26,6 +26,7 @@ export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_D
 # #252: số gate thật trên máy không được chi phối test; 0 = không có gate nào đang chạy
 printf "0\n" > "$TMP/gates0"; export SB_GATE_COUNT_FILE="$TMP/gates0"
 unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX
+export SB_ZOMBIE_GRACE=0  # test kill trực tiếp, không chờ ân hạn (#237)
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
 SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"
