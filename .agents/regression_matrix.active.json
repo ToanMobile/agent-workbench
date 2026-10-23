@@ -39,7 +39,8 @@
         {
           "id": "REG-AUTO-ANTIGRAVITY-PM-MCP-01",
           "name": "antigravity-pm-mcp: package.json test script",
-          "command": "cd mcp-servers/antigravity-pm-mcp && npm test"
+          "command": "cd mcp-servers/antigravity-pm-mcp && npm test",
+          "parallel_safe": true
         }
       ]
     },
@@ -78,7 +79,8 @@
         {
           "id": "REG-AUTO-PLAY-STORE-MCP-01",
           "name": "play-store-mcp: pytest",
-          "command": "cd mcp-servers/play-store-mcp && uv run --frozen --extra dev pytest -q"
+          "command": "cd mcp-servers/play-store-mcp && uv run --frozen --extra dev pytest -q",
+          "parallel_safe": true
         }
       ]
     },
@@ -208,7 +210,8 @@
         {
           "id": "REG-WB-CONFIG-01",
           "name": "agent-kit health: every registered hook exists, imports resolve, context in sync",
-          "command": "bash universal-agent-devkit/bin/agent-kit health -t ."
+          "command": "bash universal-agent-devkit/bin/agent-kit health -t .",
+          "parallel_safe": true
         }
       ]
     },
@@ -221,12 +224,14 @@
         {
           "id": "REG-SB-GITHUB-READ-01",
           "name": "super-board github-read helper",
-          "command": "bash tests/super-board/test_github_read.sh"
+          "command": "bash tests/super-board/test_github_read.sh",
+          "parallel_safe": true
         },
         {
           "id": "REG-SB-RUNNER-LANES-01",
           "name": "super-board runner lanes",
-          "command": "bash tests/super-board/test_runner_lanes.sh"
+          "command": "bash tests/super-board/test_runner_lanes.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -239,7 +244,8 @@
         {
           "id": "REG-SB-MERGE-GATE-STALE-01",
           "name": "merge gate says stale only when the branch is behind base",
-          "command": "bash tests/super-board/test_merge_gate_stale_message.sh"
+          "command": "bash tests/super-board/test_merge_gate_stale_message.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -256,7 +262,8 @@
         {
           "id": "REG-SB-PREFLIGHT-TOO-BIG-01",
           "name": "preflight holds too-big cards before a builder pass, proceeds on normal ones",
-          "command": "bash tests/super-board/test_preflight_too_big.sh"
+          "command": "bash tests/super-board/test_preflight_too_big.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -275,7 +282,8 @@
         {
           "id": "REG-SB-RUNNER-WATCHDOG-01",
           "name": "super-board runner survives a killed sleep; durable stop marker; launchd watchdog never restarts a stopped board",
-          "command": "bash tests/super-board/test_runner_watchdog.sh"
+          "command": "bash tests/super-board/test_runner_watchdog.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -292,12 +300,14 @@
         {
           "id": "REG-SB-MERGE-POLICY-NL-01",
           "name": "merge-policy sees always_human keywords after VT/FF/CR/NEL/U+2028, in ++ lines and across odd whitespace",
-          "command": "bash tests/super-board/test_merge_policy_odd_newlines.sh"
+          "command": "bash tests/super-board/test_merge_policy_odd_newlines.sh",
+          "parallel_safe": true
         },
         {
           "id": "REG-SB-UPSTREAM-66-67-01",
           "name": "github-read keeps odd-newline diffs byte-exact without halting; approval links body issues off the default base",
-          "command": "bash tests/super-board/test_upstream_66_67.sh"
+          "command": "bash tests/super-board/test_upstream_66_67.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -311,7 +321,8 @@
         {
           "id": "REG-AUTO-CC-SWITCHER-MCP-01",
           "name": "cc-switcher-mcp: package.json test script",
-          "command": "cd mcp-servers/cc-switcher-mcp && npm test"
+          "command": "cd mcp-servers/cc-switcher-mcp && npm test",
+          "parallel_safe": true
         }
       ]
     },
@@ -345,7 +356,8 @@
         {
           "id": "REG-SB-NEEDS-YOU-SKIP-01",
           "name": "runner, planner and status leave Ready cards that wait for a person (needs-you / human-gated) to the person",
-          "command": "bash tests/super-board/test_needs_you_skip.sh"
+          "command": "bash tests/super-board/test_needs_you_skip.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -407,7 +419,8 @@
         {
           "id": "REG-SB-POST-MERGE-CLEAN-01",
           "name": "post-merge clean and --sweep remove merged lane worktrees, keep work, one sweep at a time, salvage leaves no junk",
-          "command": "bash tests/super-board/test_post_merge_clean.sh && bash tests/super-board/test_post_merge_squash_leftovers.sh && bash tests/super-board/test_post_merge_sweep_wiring.sh"
+          "command": "bash tests/super-board/test_post_merge_clean.sh && bash tests/super-board/test_post_merge_squash_leftovers.sh && bash tests/super-board/test_post_merge_sweep_wiring.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -440,7 +453,8 @@
         {
           "id": "REG-SB-NEEDS-DEVICE-01",
           "name": "runner, planner and status hold needs-device QA cards while no real device is online (emulator, denylist, no adb)",
-          "command": "bash tests/super-board/test_needs_device_skip.sh"
+          "command": "bash tests/super-board/test_needs_device_skip.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -468,7 +482,8 @@
         {
           "id": "REG-SB-MERGE-LOAD-WAIT-01",
           "name": "merge gate waits (bounded, inside the lock before the base is pinned, lock stamp refreshed) for the machine load to drop, then verifies anyway",
-          "command": "bash tests/super-board/test_merge_gate_load_wait.sh"
+          "command": "bash tests/super-board/test_merge_gate_load_wait.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -535,7 +550,8 @@
         {
           "id": "REG-SB-MERGE-TIMEOUT-RETRY-01",
           "name": "merge gate retries a post-fix-gate verify once only when every red suite is TIMEOUT (REJECT exit 1, static checks passed); a real FAIL, UNTESTED or static finding is not retried; verify exit 124 still retried once",
-          "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh"
+          "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -568,7 +584,8 @@
         {
           "id": "REG-DK-SLOT-CLASSES-01",
           "name": "quyền chạy theo tải máy của từng suite (P1b): bỏ 2 slot engine; tải cao thì chờ rồi vẫn chạy, không UNTESTED; chờ tải không ăn vào thời gian chờ khoá; khoá Unity (độc quyền) vẫn chặn, không còn khoá thiết bị; bash -lc nhận ra Unity; hàng đợi ưu tiên + SJF; suite STALE bị SLOT không lọt PASS",
-          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_classes.sh"
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_classes.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -583,7 +600,8 @@
         {
           "id": "REG-SB-HEAVY-SLOT-01",
           "name": "heavy slot theo tải máy (P1b): CLI/wrapper super-board chạy ngay khi tải < DEVKIT_SLOT_LOAD_MAX, chờ rồi vẫn chạy khi tải cao, --nonblock không chạy khi tải cao, DEVKIT_SLOT_LOAD_WAIT_S=0 không chờ, suite Unity lồng trong CLI vẫn xin khoá Unity; --force-full với suite nhẹ không chờ",
-          "command": "bash tests/super-board/test_heavy_slot.sh"
+          "command": "bash tests/super-board/test_heavy_slot.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -900,12 +918,14 @@
         {
           "id": "REG-SB-RED-ON-BASE-01",
           "name": "merge gate: suite đỏ cả trên origin/base không REJECT PR, mở thẻ riêng; suite do PR làm đỏ vẫn exit 11 (#251)",
-          "command": "bash tests/super-board/test_merge_gate_red_on_base.sh"
+          "command": "bash tests/super-board/test_merge_gate_red_on_base.sh",
+          "parallel_safe": true
         },
         {
           "id": "REG-SB-VERIFY-CMD-01",
           "name": "QA in đúng lệnh verify của merge gate (cùng hàm chèn --diff/--force-full) (#251)",
-          "command": "bash tests/super-board/test_verify_cmd_same_as_gate.sh"
+          "command": "bash tests/super-board/test_verify_cmd_same_as_gate.sh",
+          "parallel_safe": true
         }
       ]
     },
@@ -967,6 +987,21 @@
           "id": "REG-DK-SESSION-ENV-01",
           "name": "test_multi_session_gate + test_gate_stop_reuse_race xanh khi id phiên của máy thật (CLAUDE_CODE_SESSION_ID, DEVKIT_SESSION_ID) rò vào môi trường (#240)",
           "command": "bash universal-agent-devkit/tests/gates/test_multi_session_gate_session_env.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "mcp-servers/agent-office/blender",
+      "watch_files": [
+        "mcp-servers/agent-office/blender/*",
+        "mcp-servers/agent-office/web/models/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-02",
+          "name": "agent-office: bộ nội thất office.glb dựng bằng Blender còn đủ khối có tên (Desk, Chair, Monitor/Screen có UV, Shelf...) và đủ nhỏ",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_office_glb",
           "parallel_safe": true
         }
       ]

@@ -10,3 +10,5 @@ Copied unchanged from https://github.com/tinhthanh/vetgo-3d-demo/tree/main/model
 | woman2.glb | Woman Casual | Quaternius | CC0 1.0 | https://poly.pizza/m/jpKRgGDxhk |
 | woman3.glb | Woman in Dress | Quaternius | CC0 1.0 | https://poly.pizza/m/zMyPlQXBzq |
 | beach.glb | Beach Character | Quaternius | CC0 1.0 | https://poly.pizza/m/DojKLcO34E |
+
+`office.glb` (desk, swivel chair, monitor, keyboard, mouse, mug, plant, card shelf) is built in this repo by `../blender/build_office.py` (Blender 5.2, headless); its helper functions are adapted from https://github.com/tinhthanh/vetgo-3d-demo/blob/main/blender/build_characters.py.
