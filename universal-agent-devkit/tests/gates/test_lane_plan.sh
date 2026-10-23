@@ -331,13 +331,16 @@ BROKEN = ("", "def cores():\n    raise RuntimeError('x')\ndef load():\n    raise
           "def cores():\n    return 0\ndef load():\n    return 'abc'\ndef lane_slots_max(c):\n    return 0\n",
           "def cores():\n    return True\ndef load():\n    return float('nan')\ndef lane_slots_max(c):\n    return -3\n")
 want_b = str(min(4, max(1, os.cpu_count() or 1)))
+# BASE_ENV ghim cả LANE_PLAN_CORES lẫn LANE_PLAN_LOAD: bỏ cả hai rồi mới đặt đúng một cái, không thì cap.cores() / cap.load() hỏng không
+# bao giờ được gọi (OCR 23/10)
+UNPINNED = dict((k, v) for k, v in BASE_ENV.items() if k not in ("LANE_PLAN_CORES", "LANE_PLAN_LOAD"))
 bad = []
 for body in BROKEN:
     with open(os.path.join(TMP, "nokit", "bin", "capacity.py"), "w") as fh:
         fh.write(body)
     for tag, extra, want in (("A", {"LANE_PLAN_CORES": "512"}, "4"), ("B", {"LANE_PLAN_LOAD": "0"}, want_b)):
         r = subprocess.run([PY, os.path.join(nokit, "lane_plan.py"), "slots", "--quiet", "--jobs-per-lane", "1"], capture_output=True,
-                           text=True, env=dict(BASE_ENV, **extra), cwd=TMP, timeout=60)
+                           text=True, env=dict(UNPINNED, **extra), cwd=TMP, timeout=60)
         if not (r.returncode == 0 and r.stdout.strip() == want and "Traceback" not in r.stderr):
             bad.append("%s %r: rc=%s out=%r err=%r" % (tag, body[:24], r.returncode, r.stdout.strip(), r.stderr.strip()[-120:]))
 chk(not bad, "slots: capacity.py rỗng / hàm ném lỗi / trả 0, bool, chuỗi, nan, âm: đọc máy cũ, trần 4, không traceback", "; ".join(bad[:3]))
