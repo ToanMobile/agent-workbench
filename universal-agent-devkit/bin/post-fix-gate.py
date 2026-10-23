@@ -5960,7 +5960,7 @@ def main():
     # suite. DEVKIT_GATE_PARALLEL=0 turns it off; a number caps the group (default 6).
     # ponytail: a flaky re-run of a grouped suite sees os.environ's DEVKIT_GATE_DONE, the scripts of the suites run alone
     # before it, not its group mates' (it re-runs them: slower, never less checked); upgrade if grouped suites retry often.
-    # run_impacted.sh không vào nhóm này (may_join): 10 job của nó cộng GATE/HOOK đẩy suite quá 900 s.
+    # run_impacted.sh không vào nhóm này (may_join): các job của nó (run_impacted.sh --jobs) cộng GATE/HOOK đẩy suite quá 900 s.
     # ponytail: a grouped suite's recorded duration is wall time under contention (GATE-02 20 s alone, 26 s in the group), so
     # pre-commit's "skip a suite that took > DEVKIT_PRECOMMIT_MAX_S" can fire earlier; the Stop and push gates still run it.
     try:
@@ -5981,7 +5981,7 @@ def main():
     def may_join(t):
         # flagged, and not a suite that must run alone: Gradle/Unity/device runs share build state (build/test-results)
         c = t.get("command") or ""
-        # run_impacted.sh tự mở tới 10 job. Nhét nó vào nhóm parallel_safe (cùng GATE/HOOK) đo được
+        # run_impacted.sh tự mở nhiều job (run_impacted.sh --jobs). Nhét nó vào nhóm parallel_safe (cùng GATE/HOOK) đo được
         # ~330 s một mình thành TIMEOUT đúng 900 s (runs.jsonl 19/10, wall 15–20 phút).
         # ponytail: chỉ script này; suite fan-out khác vẫn phải bỏ cờ. Nâng cấp khi có script thứ hai.
         if re.search(r"(?:^|[\s;|&])(?:\S*/)?run_impacted\.sh(?:$|[\s;|&])", c):
