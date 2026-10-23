@@ -110,28 +110,6 @@ board_notify() {
   python3 "$SCRIPT_DIR/super-board-notify.py" "$@" || true
 }
 
-resolve_build_workers() {
-  # $1 = đường dẫn config. Khoá build_workers (số nguyên >= 1); thiếu hoặc sai thì 10 (người dùng 21/10); đặt 1 để về một worker.
-  local v
-  v=$(jq -r '.build_workers // empty' "$1" 2>/dev/null || true)
-  case "$v" in ''|*[!0-9]*) v=10 ;; esac
-  [ "${#v}" -le 6 ] || v=10   # số quá dài tràn phép tính bash (OCR 21/10)
-  v=$((10#$v))
-  [ "$v" -ge 1 ] || v=10      # 0, 00, 000
-  printf '%s\n' "$v"
-}
-
-resolve_lane_workers() {
-  # $1 = đường dẫn config; $2 = khoá (qa_workers | review_workers). Số nguyên >= 1; thiếu hoặc sai thì 1 = hành vi cũ, một worker mỗi lane (#209).
-  local v
-  v=$(jq -r --arg k "$2" '.[$k] // empty' "$1" 2>/dev/null || true)
-  case "$v" in ''|*[!0-9]*) v=1 ;; esac
-  [ "${#v}" -le 6 ] || v=1
-  v=$((10#$v))
-  [ "$v" -ge 1 ] || v=1
-  printf '%s\n' "$v"
-}
-
 resolve_pos_int() {
   # $1 = đường dẫn config; $2 = khoá; $3 = mặc định. Số nguyên >= 1; thiếu hoặc sai thì mặc định (#252).
   local v
@@ -142,19 +120,7 @@ resolve_pos_int() {
   [ "$v" -ge 1 ] || v=$3
   printf '%s\n' "$v"
 }
-resolve_wip_k() { resolve_pos_int "$1" build_wip_k 2; }    # k: build chỉ giao khi (QA+Review chờ) < k × (qa_workers + review_workers)
-resolve_gate_max() { resolve_pos_int "$1" gate_max 6; }    # trần số post-fix-gate chạy cùng lúc trên máy (mọi repo)
 
-resolve_build_load_max() {
-  # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, rồi 100. Mỗi nguồn phải là số
-  # DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không nhảy thẳng về 100 (OCR 21/10).
-  local v="" cand
-  for cand in "${SB_BUILD_LOAD_MAX:-}" "$(jq -r '.build_load_max // empty' "$1" 2>/dev/null || true)" "${DEVKIT_SLOT_LOAD_MAX:-}"; do
-    case "$cand" in ''|*[!0-9.]*|*.*.*|.) continue ;; esac
-    if awk -v m="$cand" 'BEGIN { exit !(m > 0) }'; then v="$cand"; break; fi
-  done
-  printf '%s\n' "${v:-100}"
-}
 
 if [ "${SB_LIB_ONLY:-0}" != "1" ]; then
 CONFIG_PATH=".claude/super-board/configs/${CONFIG_SLUG}.json"
@@ -179,18 +145,13 @@ HUMAN_APPROVES=$(jq -r '.human_approves_merge // false' "$CONFIG_PATH")
 REBUILD_CAP=$(jq -r '.rebuild_cap // 2' "$CONFIG_PATH")
 BLOCK_ALERT_PCT=$(jq -r '.block_rate_alert_pct // 30' "$CONFIG_PATH")
 TICK_SECONDS=$(jq -r '.tick_seconds // 120' "$CONFIG_PATH")
-MAX_WORKERS=$(jq -r '.max_workers // 3' "$CONFIG_PATH")
-# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định 10 (đặt 1 để về một worker). build_load_max (hoặc env
-# SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này; mặc định DEVKIT_SLOT_LOAD_MAX, thiếu nữa thì 100
-# (người dùng 21/10: "tải máy dưới 100 thì cho chạy"). Giá trị sai thì dùng mặc định.
-BUILD_WORKERS=$(resolve_build_workers "$CONFIG_PATH")
-BUILD_LOAD_MAX=$(resolve_build_load_max "$CONFIG_PATH")
-# Lane QA và Review cũng chạy nhiều worker (#209): qa_workers / review_workers = trần mỗi lane, mặc định 1; worker thêm dùng chung cổng tải build_load_max.
-QA_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" qa_workers)
-REVIEW_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" review_workers)
-# #252: chỉ giao build khi hàng QA+Review chưa dài (build_wip_k), và không giao worker mới khi số gate đang chạy đã chạm gate_max.
-WIP_K=$(resolve_wip_k "$CONFIG_PATH")
-GATE_MAX=$(resolve_gate_max "$CONFIG_PATH")
+# Một trần duy nhất (23/10, người dùng: "tổng số task chạy cùng trên Building + QA + Review tối đa là 5", tính trên cả 6 repo, không đo CPU):
+# max_workers (mặc định 5) = tổng worker build + qa + review của MỌI repo trên máy, đếm qua thư mục slot chung (at_worker_cap).
+# Mỗi lane được dùng cả max_workers slot; thứ tự giao trong một tick vẫn là Review → QA → Build.
+MAX_WORKERS=$(resolve_pos_int "$CONFIG_PATH" max_workers 5)
+BUILD_WORKERS=$MAX_WORKERS
+QA_WORKERS=$MAX_WORKERS
+REVIEW_WORKERS=$MAX_WORKERS
 BOT_LOGIN=$(jq -r '.notifications.bot_identity // .bot_identity // ""' "$CONFIG_PATH")
 WORKER_BACKEND=$(jq -r '.worker_backend // "workflow"' "$CONFIG_PATH")
 # Runaway controls (issue #8). NO_PROGRESS_CYCLES counts dispatch cycles with no
@@ -700,58 +661,62 @@ build_workers_count() {
   for e in $keep; do BUILD_COUNT=$((BUILD_COUNT + 1)); done
 }
 
-build_load_now() {
-  # Tải 1 phút của máy, một số thập phân; trống khi không đọc được. SB_BUILD_LOAD_FILE: móc test.
-  if [ -n "${SB_BUILD_LOAD_FILE:-}" ]; then { tr -d '[:space:]' < "$SB_BUILD_LOAD_FILE"; } 2>/dev/null || true
-  else python3 -c 'import os; print(os.getloadavg()[0])' 2>/dev/null || true; fi
+active_total() {
+  # ACTIVE_WORKERS = số worker sống của repo này trên cả 3 lane (đếm từ PID, không cộng dồn nên không lệch).
+  build_workers_count; lane_workers_count qa; lane_workers_count review
+  ACTIVE_WORKERS=$(( ${BUILD_COUNT:-0} + ${QA_COUNT:-0} + ${REVIEW_COUNT:-0} ))
 }
 
-gates_running() {
-  # Số post-fix-gate.py đang chạy trên máy (mọi repo); trống khi không đếm được. SB_GATE_COUNT_FILE: móc test.
-  # Đếm tiến trình python có script post-fix-gate.py trong argv, không đếm shell bọc ngoài.
-  if [ -n "${SB_GATE_COUNT_FILE:-}" ]; then { tr -d '[:space:]' < "$SB_GATE_COUNT_FILE"; } 2>/dev/null || true
-  else ps -axo command= 2>/dev/null | awk '$1 ~ /[Pp]ython/ && ($2 ~ /post-fix-gate\.py$/ || $3 ~ /post-fix-gate\.py$/) { n++ } END { print n + 0 }'; fi
+# Chốt lib mode LÚC SOURCE: test gọi `SB_LIB_ONLY=1 . runner`, mà bash chỉ giữ biến gán kèm lệnh `.` trong lúc source — hàm chạy về sau
+# không còn thấy SB_LIB_ONLY (23/10: test merge train đếm slot sống của test khác trong HOME thật và bị giữ "3/3 running").
+SB_SLOT_LIB_MODE="${SB_LIB_ONLY:-0}"
+global_slot_dir() {
+  # Thư mục slot chung của mọi repo. Lib mode (test source runner) mà không đặt SB_GLOBAL_SLOT_DIR thì trả rỗng = không đếm, không ghi:
+  # test chạy song song không được đếm worker của nhau hay của board thật.
+  if [ -n "${SB_GLOBAL_SLOT_DIR:-}" ]; then printf '%s\n' "$SB_GLOBAL_SLOT_DIR"
+  elif [ "$SB_SLOT_LIB_MODE" = "1" ]; then printf '\n'
+  else printf '%s\n' "$HOME/.claude/super-board-slots"; fi
 }
 
-gates_at_cap() {
-  # 0 (và log lý do) khi số gate đang chạy >= GATE_MAX. Đếm không ra thì không chặn: heuristic không được làm chết lane. $1 = nhãn lane.
-  local g
-  g=$(gates_running)
-  case "$g" in ''|*[!0-9]*) return 1 ;; esac
-  [ "$g" -ge "${GATE_MAX:-6}" ] || return 1
-  log "$1 workers: gates ${g} >= ${GATE_MAX:-6}: holding"
+global_slots_used() {
+  # Số worker sống của MỌI repo trên máy: mỗi worker một file <pid> trong thư mục chung; file của PID đã chết bị xoá khi đếm.
+  local d f n=0
+  d=$(global_slot_dir); { [ -n "$d" ] && [ -d "$d" ]; } || { echo 0; return 0; }
+  for f in "$d"/[0-9]*; do
+    [ -e "$f" ] || continue
+    if kill -0 "${f##*/}" 2>/dev/null; then n=$((n + 1)); else rm -f -- "$f"; fi
+  done
+  echo "$n"
+}
+
+global_slot_register() {
+  # $1 = pid, $2 = nhãn lane#issue. Lỗi ghi slot không được làm chết lane (trần chung chỉ là heuristic): log rồi đi tiếp.
+  local d; d=$(global_slot_dir); [ -n "$d" ] || return 0
+  { mkdir -p "$d" && printf '%s:%s\n' "${CONFIG_SLUG:-repo}" "$2" > "$d/$1"; } 2>/dev/null || log "⚠ cannot register worker slot in $d"
+}
+
+at_worker_cap() {
+  # 0 (và log lý do) khi máy đã đủ max_workers worker: số file slot sống của mọi repo, hoặc số worker của repo này nếu lớn hơn
+  # (slot không ghi được thì vẫn có trần). $1 = nhãn lane. Không đo tải CPU. Đặt ACTIVE_WORKERS (repo này) và MACHINE_WORKERS.
+  active_total
+  MACHINE_WORKERS=$(global_slots_used)
+  [ "$MACHINE_WORKERS" -ge "$ACTIVE_WORKERS" ] || MACHINE_WORKERS=$ACTIVE_WORKERS
+  [ "$MACHINE_WORKERS" -ge "${MAX_WORKERS:-5}" ] || return 1
+  log "$1 workers: ${MACHINE_WORKERS}/${MAX_WORKERS:-5} running on the machine (${ACTIVE_WORKERS} here): holding"
   return 0
 }
 
 build_slot_free() {
-  # BUILD_FREE=1 (và trả 0) khi lane build được khởi một worker ở tick này. Worker đầu tiên không bị tải chặn; worker thêm chỉ khi
-  # còn dưới trần build_workers và tải đọc được và dưới build_load_max. Tối đa một worker mỗi tick (vòng chính giao một thẻ), nên
-  # tải kịp phản ứng trước lần khởi kế. Không bao giờ kill worker đang chạy. Mỗi tick log quyết định khi trần > 1.
-  local load wip wip_max
+  # BUILD_FREE=1 (và trả 0) khi lane build được khởi một worker ở tick này: máy còn dưới max_workers (at_worker_cap).
+  # Tối đa một worker mỗi tick (vòng chính giao một thẻ). Không đo tải CPU, không kill worker đang chạy.
   build_workers_count
   BUILD_FREE=0
   if [ "$BUILD_COUNT" -ge "$BUILD_WORKERS" ]; then
     [ "$BUILD_WORKERS" -le 1 ] || log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: at the cap, not starting"
     return 1
   fi
-  # #252: hàng QA+Review dài thì build mới chỉ đẻ thêm việc cho lane đã nghẽn; gate chạm trần thì build mới chỉ chạy chậm hơn. Cả hai chặn cả worker đầu.
-  wip=$(( ${QA:-0} + ${REVIEW:-0} )); wip_max=$(( ${WIP_K:-2} * (${QA_WORKERS:-1} + ${REVIEW_WORKERS:-1}) ))
-  if [ "$wip" -ge "$wip_max" ]; then
-    log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: WIP ${wip} >= ${wip_max} (QA+Review waiting): holding"
-    return 1
-  fi
-  gates_at_cap build && return 1
-  if [ "$BUILD_COUNT" -eq 0 ]; then BUILD_FREE=1; return 0; fi
-  load=$(build_load_now)
-  case "$load" in
-    ''|*[!0-9.]*|*.*.*|.) log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: load unreadable ('${load}') — holding at the first worker"; return 1 ;;
-  esac
-  if awk -v l="$load" -v m="$BUILD_LOAD_MAX" 'BEGIN { exit !(l < m) }'; then
-    log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}, load ${load} < ${BUILD_LOAD_MAX}: starting #$((BUILD_COUNT + 1))"
-    BUILD_FREE=1; return 0
-  fi
-  log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: load ${load} >= ${BUILD_LOAD_MAX}: holding"
-  return 1
+  at_worker_cap build && return 1
+  BUILD_FREE=1; return 0
 }
 
 # Lane QA / Review: worker thứ nhất ở QA_PID/QA_ISSUE (REVIEW_*), worker thêm ở QA_EXTRA / REVIEW_EXTRA ("pid:issue ..."), cùng dạng BUILD_EXTRA (#209).
@@ -781,23 +746,13 @@ lane_workers_count() {
 }
 
 lane_slot_free() {
-  # 0 khi lane $1 (qa|review) được khởi thêm một worker ở tick này. Như build_slot_free: worker đầu không bị tải chặn; worker thêm chỉ khi
-  # còn dưới trần của lane, tải đọc được và dưới build_load_max. Không bao giờ kill worker đang chạy. Trần 1 thì im lặng (hành vi cũ).
-  local lane="$1" load
-  lane_workers_count "$lane" || return 1
-  if [ "$LANE_COUNT" -ge "$L_CAP" ]; then
-    [ "$L_CAP" -le 1 ] || log "${lane} workers ${LANE_COUNT}/${L_CAP}: at the cap, not starting"
-    return 1
-  fi
-  [ "$LANE_COUNT" -ne 0 ] || return 0
-  gates_at_cap "$lane" && return 1
-  load=$(build_load_now)
-  case "$load" in
-    ''|*[!0-9.]*|*.*.*|.) log "${lane} workers ${LANE_COUNT}/${L_CAP}: load unreadable ('${load}') — holding at the first worker"; return 1 ;;
-  esac
-  if awk -v l="$load" -v m="$BUILD_LOAD_MAX" 'BEGIN { exit !(l < m) }'; then return 0; fi
-  log "${lane} workers ${LANE_COUNT}/${L_CAP}: load ${load} >= ${BUILD_LOAD_MAX}: holding"
-  return 1
+  # 0 khi lane $1 (qa|review) được khởi một worker ở tick này: máy còn dưới max_workers (at_worker_cap).
+  # Không đo tải CPU, không bao giờ kill worker đang chạy.
+  local lane="$1"
+  at_worker_cap "$lane" && return 1
+  lane_workers_count "$lane" || return 1   # sau at_worker_cap: nó đếm cả 3 lane và ghi đè LANE_COUNT / L_CAP
+  [ "$LANE_COUNT" -lt "$L_CAP" ] || return 1
+  return 0
 }
 
 lane_dispatch_tick() {
@@ -809,7 +764,6 @@ lane_dispatch_tick() {
   dispatch_paused && return 0
   lane_slot_free "$lane" || return 0
   before=$LANE_COUNT
-  if [ "$before" -eq 0 ] && [ "${ACTIVE_WORKERS:-0}" -ge "${MAX_WORKERS:-3}" ]; then return 0; fi
   TRAIN_BATCH=""
   [ "$lane" != "review" ] || review_train_batch   # #228: ≥2 thẻ đã duyệt thì một worker merge train cho cả đợt
   if [ -n "$TRAIN_BATCH" ]; then
@@ -823,15 +777,14 @@ lane_dispatch_tick() {
   lane_workers_count "$lane"
   [ "$LANE_COUNT" -gt "$before" ] || return 0
   LANE_DISPATCHED=1
-  [ "$before" -gt 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+  ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
 }
 
 tick_is_cheap() {
-  # #288: 0 khi tick này không giao được gì nên khỏi đọc board (GraphQL): ACTIVE=MAX và mỗi lane QA/Review hoặc đã đủ worker, hoặc đang rảnh
-  # (lane rảnh bị trần max_workers chặn, lane_dispatch_tick). Trước đây lane rảnh làm tick không bao giờ rẻ khi max_workers < 3.
-  [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ] || return 1
-  { [ "$QA_COUNT" -ge "$QA_WORKERS" ] || [ "$QA_COUNT" -eq 0 ]; } || return 1
-  { [ "$REVIEW_COUNT" -ge "$REVIEW_WORKERS" ] || [ "$REVIEW_COUNT" -eq 0 ]; } || return 1
+  # #288: 0 khi tick này không giao được gì nên khỏi đọc board (GraphQL): máy (mọi repo) đã đủ max_workers worker.
+  local m; m=$(global_slots_used)
+  [ "$m" -ge "$ACTIVE_WORKERS" ] || m=$ACTIVE_WORKERS
+  [ "$m" -ge "$MAX_WORKERS" ]
 }
 
 ready_qa_lane_free() {
@@ -1206,6 +1159,7 @@ EOF
     nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!
+  global_slot_register "$pid" "${lane}#${issue}"
   DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
   DISPATCH_LOG="${DISPATCH_LOG}${issue}
 "
@@ -1990,24 +1944,15 @@ pull_backlog_cards() {
   # #189: Ready rỗng mà lane build còn worker rảnh thì kéo thẻ Backlog lên Ready (bug trước, rồi thứ tự bảng), tối đa
   # BUILD_WORKERS - BUILD_COUNT - READY thẻ. Chỉ kéo thẻ không assignee, không chờ người (needs-you/human-gated), không wontfix /
   # loop:halted, đủ Problem/Fix/AC; thẻ thiếu bị comment lý do MỘT lần mỗi nội dung (sổ $INFLIGHT_DIR/backlog-skip). Thẻ đã CLOSED
-  # về Done, không đếm vào trần. Tải máy >= build_load_max (hoặc không đọc được) chỉ cho kéo 1 thẻ khi lane rỗng hẳn.
+  # về Done, không đếm vào trần.
   # Trả 0 khi bảng đã đổi (caller đọc lại), 1 khi không có gì.
   # ponytail: tối đa 20 thẻ xét mỗi tick (mỗi thẻ 2 lần đọc REST); Backlog dài hơn thì tick sau xét tiếp từ đầu — đổi sang con trỏ khi cần.
-  local want load moved=1 tried=0 issue item_id body gaps stamp issue_rc cap_one=0 busy
+  local want moved=1 tried=0 issue item_id body gaps stamp issue_rc busy
   backlog_pull_enabled || return 1
   [ "${BUILD_COUNT:-0}" -lt "$BUILD_WORKERS" ] || return 1
   busy=$(( ${BUILD_COUNT:-0} + ${READY:-0} ))
   want=$(( BUILD_WORKERS - busy ))
   [ "$want" -gt 0 ] || return 1
-  load=$(build_load_now)
-  case "$load" in
-    ''|*[!0-9.]*|*.*.*|.) cap_one=1 ;;
-    *) awk -v l="$load" -v m="$BUILD_LOAD_MAX" 'BEGIN { exit !(l < m) }' || cap_one=1 ;;
-  esac
-  if [ "$cap_one" -eq 1 ]; then
-    [ "$busy" -eq 0 ] || return 1
-    want=1
-  fi
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] && [ -n "$item_id" ] || continue
     [ "$want" -gt 0 ] && [ "$tried" -lt 20 ] || break
@@ -2394,10 +2339,7 @@ while true; do
   [ "$QA_COUNT" -eq 0 ] || QA_IDLE=0
   [ "$REVIEW_COUNT" -eq 0 ] || REVIEW_IDLE=0
 
-  ACTIVE_WORKERS=0
-  [ "$BUILD_COUNT" -eq 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))   # lane build = 1 slot của max_workers dù chạy N worker: build_workers là trần riêng, không bỏ đói QA/Review
-  [ "$QA_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
-  [ "$REVIEW_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+  ACTIVE_WORKERS=$(( BUILD_COUNT + QA_COUNT + REVIEW_COUNT ))   # một trần chung cho cả 3 lane
 
   # Rảnh hoàn toàn (không worker nào): nạp lại code nếu super-board-run.sh trên origin đã đổi (#229). Có thể exec và không quay lại.
   self_reload_tick
@@ -2417,7 +2359,7 @@ while true; do
   #    QA/Review còn chỗ thêm worker (qa_workers/review_workers > số đang chạy) thì KHÔNG coi là đầy: worker thêm không tốn slot lane (#209).
   #    Trần mặc định 1 thì QA_COUNT>=QA_WORKERS khi lane bận, nên điều kiện này đúng như cũ.
   if tick_is_cheap; then
-    log "tick — cap reached (${ACTIVE_WORKERS}/${MAX_WORKERS} busy) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
+    log "tick — cap reached (machine at ${MAX_WORKERS} workers, ${ACTIVE_WORKERS} here) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
     tick_sleep "$TICK_SECONDS"
     continue
   fi
@@ -2437,10 +2379,7 @@ while true; do
   lane_workers_count qa; lane_workers_count review
   [ "$QA_COUNT" -eq 0 ] || QA_IDLE=0
   [ "$REVIEW_COUNT" -eq 0 ] || REVIEW_IDLE=0
-  ACTIVE_WORKERS=0
-  [ "$BUILD_COUNT" -eq 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))   # lane build = 1 slot của max_workers dù chạy N worker: build_workers là trần riêng, không bỏ đói QA/Review
-  [ "$QA_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
-  [ "$REVIEW_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+  ACTIVE_WORKERS=$(( BUILD_COUNT + QA_COUNT + REVIEW_COUNT ))   # một trần chung cho cả 3 lane
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   if maybe_sweep_blocked; then tick_fetch || continue; fi

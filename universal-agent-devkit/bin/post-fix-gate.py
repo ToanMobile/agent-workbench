@@ -4703,7 +4703,9 @@ def suite_env():
             "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",  # `git -c k=v commit` reaches the hook as GIT_CONFIG_PARAMETERS
             "DEVKIT_LEDGER_ROOT",  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
             "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH",
-            "DEVKIT_GATE_MERGE_CHECK"}   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
+            "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
+            # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
+            "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD"}
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
@@ -5050,6 +5052,24 @@ def _gate_busy(run_tests, lock_held, read_only, regression_tests):
     One formula for the --json summary (the Stop hook says "run again later" and caches nothing) and for the run log (hooks/stop_hook_times.py and
     bin/gate_runs_report.py count a busy run as a lock wait)."""
     return bool(run_tests and ((not lock_held and not read_only) or any(t.get("label") == "STALE" for t in regression_tests)))
+
+
+def default_gate_parallel() -> int:
+    """Cỡ nhóm suite parallel_safe khi DEVKIT_GATE_PARALLEL không đặt / rác: bin/capacity.py gate_parallel (T0052). capacity vắng, hỏng
+    lúc nạp, thiếu hàm, ném lỗi hay trả không phải int ≥ 1 (None / chuỗi từng làm BoundedSemaphore ném TypeError sập gate, ≤ 0 tắt ngầm
+    chạy song song — Antigravity audit 23/10) thì 6 như cũ, kèm cảnh báo."""
+    try:
+        _bin = str(Path(__file__).resolve().parent)
+        if _bin not in sys.path:
+            sys.path.insert(0, _bin)
+        import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+        value = _capacity.gate_parallel()
+        if type(value) is not int or value < 1:
+            raise ValueError(f"gate_parallel trả {value!r}")
+        return value
+    except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không làm chết gate
+        log_warn(f"capacity: {exc!r}; DEVKIT_GATE_PARALLEL mặc định 6")
+        return 6
 
 
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
@@ -5928,16 +5948,18 @@ def main():
     # run side by side as one group: the DevKit's five independent suites took the SUM of their times. A suite without
     # the flag is a barrier: the group before it finishes first, so nothing runs next to it. Only mode "full" joins a
     # group, which keeps vacuity_revert (it rewrites production files in the tree) from ever running next to another
-    # suite. DEVKIT_GATE_PARALLEL=0 turns it off; a number caps the group (default 6).
+    # suite. DEVKIT_GATE_PARALLEL=0 turns it off; a number caps the group (default: capacity gate_parallel, 6 on 12 idle cores).
     # ponytail: a flaky re-run of a grouped suite sees os.environ's DEVKIT_GATE_DONE, the scripts of the suites run alone
     # before it, not its group mates' (it re-runs them: slower, never less checked); upgrade if grouped suites retry often.
     # run_impacted.sh không vào nhóm này (may_join): các job của nó (run_impacted.sh --jobs) cộng GATE/HOOK đẩy suite quá 900 s.
     # ponytail: a grouped suite's recorded duration is wall time under contention (GATE-02 20 s alone, 26 s in the group), so
     # pre-commit's "skip a suite that took > DEVKIT_PRECOMMIT_MAX_S" can fire earlier; the Stop and push gates still run it.
+    # T0052: không đặt / rỗng / không phải số nguyên thì bin/capacity.py gate_parallel (lõi/2 × DEVKIT_CAPACITY × phần máy rảnh, sàn 2;
+    # 12 lõi rảnh: 6), không nạp được capacity thì 6 như cũ. Số đã đặt dùng nguyên: 0 và 1 vẫn là công tắc chạy tuần tự.
     try:
-        parallel_cap = int(os.environ.get("DEVKIT_GATE_PARALLEL", "6"))
+        parallel_cap = int(os.environ.get("DEVKIT_GATE_PARALLEL", "").strip())
     except ValueError:
-        parallel_cap = 6
+        parallel_cap = default_gate_parallel()
     slots = threading.BoundedSemaphore(max(parallel_cap, 1))
     group, group_ts, deferred = [], set(), []
 
@@ -5993,8 +6015,8 @@ def main():
     def take_slots(t, cmd):
         """P1 (20/10): quyền chạy của CHÍNH suite này (heavy_slot.classify), giữ trong lúc nó chạy — kể cả lần chạy lại flaky và
         vacuity revert. --full không còn giữ slot cả lượt (đo 20/10: một lượt --full chỉ suite bash/python chờ 30+ phút mà không chạy
-        suite nào); P1b (người dùng 20/10): không còn 2 slot — tải máy dưới DEVKIT_SLOT_LOAD_MAX (100) thì chạy, chỉ Unity còn khoá
-        độc quyền. None: không có heavy_slot."""
+        suite nào); P1b (người dùng 20/10): không còn 2 slot — tải máy dưới DEVKIT_SLOT_LOAD_MAX (mặc định capacity hold_load,
+        12 lõi: 96) thì chạy, chỉ Unity còn khoá độc quyền. None: không có heavy_slot."""
         if not slot_mod:
             try:
                 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -6532,9 +6554,12 @@ def main():
                             "pre-existing failure (KNOWN-RED), not part of the verdict; fix it separately"))
             else:
                 log_warn(tr(f"{t.get('id')}: suite cached-full FAIL, chưa có bằng chứng nó cũng FAIL trên {BASE_REF} — vào kết luận. Lỗi có sẵn thì "
-                            f"ghi bằng chứng: chạy post-fix-gate.py --run-tests --full --diff HEAD~1 trên checkout sạch ở {BASE_REF}",
+                            f"ghi bằng chứng: tạo worktree detached ở {BASE_REF} (agent-kit worktree add ../<repo>-baseline), chạy post-fix-gate.py "
+                            "--run-tests --full --diff HEAD~1 trong đó (sổ khoá ở git common dir nên bằng chứng dùng chung), rồi agent-kit worktree remove",
                             f"{t.get('id')}: cached-full suite FAILED, no evidence it also FAILS on {BASE_REF} — part of the verdict. If it is "
-                            f"pre-existing, record the evidence: run post-fix-gate.py --run-tests --full --diff HEAD~1 on a clean checkout at {BASE_REF}"))
+                            f"pre-existing, record the evidence: create a detached worktree at {BASE_REF} (agent-kit worktree add ../<repo>-baseline), run "
+                            "post-fix-gate.py --run-tests --full --diff HEAD~1 in it (the key store lives in the git common dir, so the evidence "
+                            "is shared), then agent-kit worktree remove"))
     # P2: suite cached-full thêm vào (keyed_full) mà QUÁ GIỜ: --full trước P2 không chạy nó, và quá giờ dưới tải không chứng minh lỗi của thay
     # đổi (REG-DK-ALL-01 quá 900 s ở merge gate dưới tải, 19/10) — UNTESTED ngoài kết luận, được nêu tên, chạy lại lượt sau; FAIL thật của nó
     # vẫn vào kết luận. Không ghi vào sổ khoá (record_keyed chỉ ghi PASS/FAIL). tests/gates/test_gate_suite_cache.sh ca 15.

@@ -143,8 +143,9 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    times out is named, outside the verdict). Gradle/Unity/device suites, `run_impacted.sh`, network commands and
    `"cache": false` keep the old selection; `--no-cache` runs them all. When the repo's last real full run is over 24 h old,
    a `--full` (not a merge gate) uses no content key (sentinel). A push needs the receipt of the pushed content (usually
-   zero suites to run). Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 100
-   (`DEVKIT_SLOT_LOAD_MAX`) they start at once, above it they wait up to 600 s and run anyway; only Unity and device
+   zero suites to run). Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores
+   (`bin/capacity.py` hold_load, 96 on 12 cores; `DEVKIT_SLOT_LOAD_MAX` overrides, `DEVKIT_CAPACITY` scales every limit)
+   they start at once, above it they wait up to 600 s and run anyway; only Unity and device
    suites hold an exclusive lock.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a
    screen: the profile was backend when the turn started (committed, or an uncommitted profile

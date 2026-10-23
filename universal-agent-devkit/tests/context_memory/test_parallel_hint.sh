@@ -111,6 +111,15 @@ CASES = [
     ("crash when you fix 3 bugs in a row", False),
     ("make the test runner run in parallel", False),
     ("sửa crash ở dòng #12, #15 của log", False),
+    # #75: the one file named is a LIST of work (Markdown / txt), not the file to edit: the count still splits
+    ("fix hết 5 bug trong docs/issues-bugs.md", True),
+    ("làm 3 việc trong TODO.md", True),
+    ("fix all 4 issues listed in notes/backlog.txt", True),
+    # …but a source file named with several steps, or a count of edits inside one non-list file, stays one lane
+    ("sửa hooks/proof_gate.sh:\n1. đổi regex của XONG\n2. thêm log khi chặn", False),
+    ("sửa 3 lỗi trong hooks/proof_gate.sh", False),
+    ("sửa lỗi 3 chỗ trong README.md", False),
+    ("fix hết 5 bug trong docs/issues-bugs.md: tại sao lại đỏ?", False),
 ]
 for prompt, want in CASES:
     got = split(prompt)
@@ -180,6 +189,17 @@ chk(rc == 0 and "- Song song" in out, "hook: the same split request twice in a s
 pos = sorted(hook("làm 3 thẻ đang Ready trên super-board", "lat-%d" % i)[2] for i in range(5))[2]
 neg = sorted(hook("cảm ơn, làm tốt lắm", "lat-n-%d" % i)[2] for i in range(5))[2]
 print("ℹ hook wall time (median of 5): split request %.0f ms, chit-chat %.0f ms" % (pos, neg), flush=True)
+
+# #231: the measured table (real prompts, masked) stays true to the detector: its "actual" column is what parallel_split says today,
+# it has >=100 rows, and no row carries a path, URL, mention, key or hash.
+import re
+rows = [l.rstrip("\n").split("\t", 2) for l in open(os.path.join(KIT, "tests", "context_memory", "data", "parallel_split_eval.tsv"),
+                                                    encoding="utf-8") if not l.startswith("#") and l.strip()]
+chk(len(rows) >= 100, "eval table: at least 100 prompts (%d)" % len(rows))
+stale = [r[2][:40] for r in rows if int(r[1]) != (1 if split(r[2]) else 0)]
+chk(not stale, "eval table: the 'actual' column matches parallel_split today", "; ".join(stale[:3]))
+leak = [r[2][:40] for r in rows if re.search(r"https?://|/Volumes/|/Users/|@\w|sk-|\b[0-9a-f]{7,40}\b", r[2])]
+chk(not leak, "eval table: no path, URL, mention, key or hash in a prompt", "; ".join(leak[:3]))
 
 sys.exit(1 if fails else 0)
 PY
