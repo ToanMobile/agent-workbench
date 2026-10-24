@@ -100,11 +100,11 @@ printf '{"session_id":"A","hook_event_name":"Stop","transcript_path":"%s","cwd":
 stop B "$TRB"; rc=$?
 [ "$rc" = 0 ] && [ -d "$TMP/wt-feat4" ] && [ ! -f "$P/f4.txt" ] && ok "  … and bystander B neither holds nor merges a worktree its owner is working in" || fail "  … B touched A's worktree (rc=$rc): $(cat "$TMP/err")"
 
-# 7: the merge takes longer than the hook may wait (a slow pre-commit in the worktree): the Stop passes at once, the merge goes on in the
+# 7: the merge takes longer than the hook may wait (a slow post-merge hook: finish no longer commits by itself, #366): the Stop passes at once, the merge goes on in the
 # background and the worktree stays OWED, so a conflict it ends in is still found by the next Stop
 sleep 1.2
-mention feat5 "$TMP/wt-feat5"; G "$P" worktree add -q -b feat5 "$TMP/wt-feat5" && echo five > "$TMP/wt-feat5/f5.txt"      # uncommitted: the commit in the worktree runs the pre-commit hook
-mkdir -p "$P/.git/hooks" && printf '#!/bin/sh\nsleep 3\nexit 0\n' > "$P/.git/hooks/pre-commit" && chmod +x "$P/.git/hooks/pre-commit"
+mention feat5 "$TMP/wt-feat5"; G "$P" worktree add -q -b feat5 "$TMP/wt-feat5" && echo five > "$TMP/wt-feat5/f5.txt" && G "$TMP/wt-feat5" add f5.txt && G "$TMP/wt-feat5" commit -qm feat5   # committed by hand: finish refuses uncommitted work
+mkdir -p "$P/.git/hooks" && printf '#!/bin/sh\nsleep 3\nexit 0\n' > "$P/.git/hooks/post-merge" && chmod +x "$P/.git/hooks/post-merge"
 T0=$(python3 -c 'import time;print(time.time())')
 WORKTREE_AUTO_MERGE_WAIT_S=1 stop A "$TRA"; rc=$?
 T1=$(python3 -c 'import time;print(time.time())')
@@ -116,19 +116,19 @@ WORKTREE_AUTO_MERGE_WAIT_S=1 stop A "$TRA"; rc=$?
 [ "$rc" = 0 ] && ok "  … a second Stop while it runs passes (not a hold, not counted)" || fail "  … second Stop held (rc=$rc): $(cat "$TMP/err")"
 for i in $(seq 1 30); do [ -d "$TMP/wt-feat5" ] || break; sleep 1; done
 [ ! -d "$TMP/wt-feat5" ] && [ -f "$P/f5.txt" ] && ok "  … the background merge finished by itself: main has the work, the worktree is gone" || fail "  … background merge did not finish"
-rm -f "$P/.git/hooks/pre-commit"
+rm -f "$P/.git/hooks/post-merge"
 
 # 8: a wait budget larger than the hook's own alarm must not make the alarm pass the Stop in silence: the hook answers before it fires
 sleep 1.2
-mention feat6 "$TMP/wt-feat6"; G "$P" worktree add -q -b feat6 "$TMP/wt-feat6" && echo six > "$TMP/wt-feat6/f6.txt"
-printf '#!/bin/sh\nsleep 20\nexit 0\n' > "$P/.git/hooks/pre-commit" && chmod +x "$P/.git/hooks/pre-commit"
+mention feat6 "$TMP/wt-feat6"; G "$P" worktree add -q -b feat6 "$TMP/wt-feat6" && echo six > "$TMP/wt-feat6/f6.txt" && G "$TMP/wt-feat6" add f6.txt && G "$TMP/wt-feat6" commit -qm feat6
+printf '#!/bin/sh\nsleep 20\nexit 0\n' > "$P/.git/hooks/post-merge" && chmod +x "$P/.git/hooks/post-merge"
 T0=$(python3 -c 'import time;print(time.time())')
 WORKTREE_AUTO_MERGE_WAIT_S=100 stop A "$TRA"; rc=$?
 T1=$(python3 -c 'import time;print(time.time())')
 python3 -c 'import sys;sys.exit(0 if float(sys.argv[2])-float(sys.argv[1]) < 13 else 1)' "$T0" "$T1" && grep -q "đang tự gộp ở nền" "$TMP/out" \
   && ok "8: a 100 s wait budget is cut to the hook's alarm: the Stop answers (with the background note) before the alarm would pass it silently" || fail "8: waited or lost the note (rc=$rc): $(cat "$TMP/out") $(cat "$TMP/err")"
 for i in $(seq 1 40); do [ -d "$TMP/wt-feat6" ] || break; sleep 1; done
-rm -f "$P/.git/hooks/pre-commit"
+rm -f "$P/.git/hooks/post-merge"
 
 # 9: a <worktreePath> that appears only in TOOL OUTPUT (the agent read it somewhere) is not a worktree the session made: never merged
 sleep 1.2
@@ -136,5 +136,21 @@ G "$P" worktree add -q -b feat7 "$TMP/wt-feat7" && echo seven > "$TMP/wt-feat7/f
 python3 -c 'import json,sys;print(json.dumps({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"x","content":"<worktree><worktreePath>"+sys.argv[1]+"</worktreePath></worktree>"}]}}))' "$TMP/wt-feat7" >> "$TRA"
 stop A "$TRA"; rc=$?
 [ "$rc" = 0 ] && [ -d "$TMP/wt-feat7" ] && [ ! -f "$P/f7.txt" ] && ok "9: a worktreePath seen only in tool output is not this session's: not merged, not removed" || fail "9: (rc=$rc): $(cat "$TMP/err") $(cat "$TMP/out")"
+
+# 10: a worktree whose session ENDED with uncommitted files: nobody will ever commit them, so it must not hold every later session 3 times
+# (the per-session cap) for ever: a note, no hold. The session that made it is still held while it lives (its own debt, case 2).
+sleep 1.2
+mention feat8 "$TMP/wt-feat8"; G "$P" worktree add -q -b feat8 "$TMP/wt-feat8" && echo e > "$TMP/wt-feat8/e1.txt" && G "$TMP/wt-feat8" add e1.txt && G "$TMP/wt-feat8" commit -qm feat8
+echo dirty > "$TMP/wt-feat8/dirty.txt"
+live A
+stop A "$TRA"; rc=$?
+[ "$rc" = 2 ] && grep -q "dirty.txt" "$TMP/err" && ok "10: the session that made a dirty worktree is held while it lives (its own debt)" || fail "10: owner not held (rc=$rc): $(cat "$TMP/err")"
+gone A
+TRC="$TMP/trc.jsonl"; mk_tr "$TRC"; live C
+for i in 1 2; do
+  stop C "$TRC"; rc=$?
+  [ "$rc" = 0 ] && [ -d "$TMP/wt-feat8" ] && grep -q "dirty.txt" "$TMP/out" && ok "  … a later session is NOT held by the ended session's dirty worktree (stop $i: note only)" \
+    || fail "  … later session held / no note (stop $i, rc=$rc): $(cat "$TMP/err") $(cat "$TMP/out")"
+done
 
 [ "$FAILS" -eq 0 ] && echo "worktree merge gate owner + automerge: all checks passed" || { echo "worktree merge gate owner + automerge: $FAILS FAILED"; exit 1; }

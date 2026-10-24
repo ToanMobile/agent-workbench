@@ -152,7 +152,7 @@
     "always_human": {
       "money":  { "labels": ["money", "payments", "billing", "pricing"],
                   "paths": ["**/billing/**", "**/payments/**", "**/stripe/**", "**/checkout/**"],
-                  "keywords": ["stripe.", "payment_intent", "price_id", "invoice.create"] },
+                  "keywords": ["api.stripe.com", "payment_intent", "price_id", "invoice.create"] },
       "auth":   { "labels": ["auth", "security"],
                   "paths": ["**/auth/**", "**/authz/**", "**/permissions/**"],
                   "keywords": ["jwt.sign", "bcrypt", "password_hash", "service_role"] },

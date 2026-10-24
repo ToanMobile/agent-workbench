@@ -2726,7 +2726,7 @@ async function loadPhone(fresh) {
     if (fresh) setTimeout(() => { btn.disabled = false; btn.textContent = 'Tạo mã mới'; }, 1000);
   }
 }
-$('#btnPhone').onclick = () => { $('#phoneHint').textContent = PHONE_HINT; $('#phoneDlg').showModal(); loadPhone(false); };
+$('#btnPhone').onclick = () => { $('#phoneHint').textContent = PHONE_HINT; $('#phoneQr').textContent = 'Đang lấy mã…'; $('#phoneUrl').textContent = ''; $('#phoneDlg').showModal(); loadPhone(false); };
 $('#phoneNew').onclick = () => loadPhone(true);
 $('#phoneClose').onclick = () => $('#phoneDlg').close();
 $('#phoneCopy').onclick = async () => {

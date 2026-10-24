@@ -359,9 +359,35 @@ project_node_id() {
 issue_is_open() {
   # $1 = issue number. Returns 0 when OPEN, 1 when CLOSED.
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
-  local state
+  local state reason
   state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
-  [ "$state" != "CLOSED" ]
+  [ "$state" = "CLOSED" ] || return 0
+  # T0054: thẻ mang nhãn ac-open đã merge một PR nhưng còn AC chưa chứng minh (merge gate gắn nhãn). Worker vẫn có thể
+  # `gh issue close` nó; mọi đường reconcile CLOSED → Done đều qua đây, nên coi nó là OPEN (và mở lại issue) thay vì Done.
+  # Nhãn đọc từ snapshot board đã có (card.sh items trả labels): issue đóng không nhãn không tốn thêm lần đọc nào.
+  # Người đóng có chủ đích (NOT_PLANNED, run.md §5 "dropped on purpose") thì để yên.
+  echo "${PROJECT_ITEMS_JSON:-{\}}" | jq -e --argjson n "$1" 'any(.items[]?; .content.number == $n
+      and any(((.labels // []) + (.content.labels // []))[]; ((if type == "object" then .name else . end) // "" | ascii_downcase) == "ac-open"))' >/dev/null 2>&1 \
+    || return 1
+  # Snapshot có thể cũ: merge gate gỡ nhãn ngay trước khi merge đủ AC rồi Closes đóng thẻ. Đọc nhãn + lý do đóng trực tiếp;
+  # nhãn đã gỡ thì CLOSED như thường. Không đọc được: không mở lại (có thể người đã bỏ thẻ) nhưng cũng không đưa vào Done.
+  if ! reason=$(gh issue view "$1" --json stateReason,labels \
+       -q '(.stateReason // "") + " " + ([.labels[].name | ascii_downcase] | join(","))' 2>/dev/null); then
+    log "⚠ #$1 closed with label ac-open; close reason unreadable — not reopened, kept out of Done this tick"
+    return 0
+  fi
+  case ",${reason#* }," in *,ac-open,*) ;; *) return 1 ;; esac
+  reason="${reason%% *}"
+  if [ "$reason" = "NOT_PLANNED" ]; then
+    log "#$1 has label ac-open but was closed as not planned — left closed"
+    return 1
+  fi
+  if gh_write_once issue reopen "$1" >/dev/null 2>&1; then
+    log "#$1 was closed with label ac-open (AC not proven yet) — reopened, not moved to Done"
+  else
+    log "⚠ #$1 closed with label ac-open could not be reopened — kept out of Done; reopen it or remove the label"
+  fi
+  return 0
 }
 
 TOP_ISSUE=""
@@ -715,6 +741,11 @@ build_slot_free() {
   # Tối đa một worker mỗi tick (vòng chính giao một thẻ). Không đo tải CPU, không kill worker đang chạy.
   build_workers_count
   BUILD_FREE=0
+  if fuse_paused; then   # #363; log chỉ khi đổi trạng thái (không tràn log mỗi tick)
+    [ -n "${FUSE_PAUSE_LOGGED:-}" ] || log "🔌 suite fuse: Builder dispatch paused (merged card still Blocked)"
+    FUSE_PAUSE_LOGGED=1; return 1
+  fi
+  FUSE_PAUSE_LOGGED=""
   if [ "$BUILD_COUNT" -ge "$BUILD_WORKERS" ]; then
     [ "$BUILD_WORKERS" -le 1 ] || log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: at the cap, not starting"
     return 1
@@ -1139,7 +1170,7 @@ EOF
       if [ -n "$train_rows" ]; then
         noop_judge=0
         log "review lane: merge-train for #${train_issues// /, #} (PRs ${train_prs}) — one worker, one verify, no fresh review"
-        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done; red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
+        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done (not when the gate printed ac-open: #N — that card stays open, the gate moved it to Ready); red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
       elif merge_only=$(review_approved_head "$issue"); then
         noop_judge=0
         read -r mo_pr mo_head <<EOF
@@ -1148,7 +1179,7 @@ EOF
         log "review lane issue=#${issue}: PR #${mo_pr} approved at head ${mo_head} — merge-only, no fresh review"
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
       else
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac
@@ -1227,6 +1258,19 @@ issue_status() {
     .items[] | select(.content.number == ($n | tonumber)) | .status' | head -1
 }
 
+started_older_than() {
+  # 0 khi mốc $1 (STARTED của lock, ISO UTC) cách nay hơn $2 giây. Mốc trống hoặc sai dạng: 1 (không đo được thì không coi là quá hạn).
+  python3 -c 'import calendar, sys, time
+sys.exit(0 if time.time() - calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")) > float(sys.argv[2]) else 1)' "${1:-}" "$2" 2>/dev/null
+}
+
+quiet_longer_than() {
+  # 0 khi worker im lặng quá $3 giây: tính từ lần ghi cuối của log worker $1 (nhịp tim; stream-json ghi liên tục khi worker còn làm việc).
+  # Log không đọc được mtime thì dùng mốc STARTED $2 như trước (started_older_than); cả hai không đo được: 1 (không coi là quá hạn).
+  local mt
+  if mt=$(file_mtime "${1:-}"); then [ $(( $(date +%s) - mt )) -gt "$3" ]; else started_older_than "${2:-}" "$3"; fi
+}
+
 check_lane_zombie() {
   # $1 = lane name (build|qa|review); $2 = space-separated list of expected source columns.
   # If the lane's worker PID is alive but its claimed issue has already moved to a column
@@ -1264,11 +1308,20 @@ check_lane_zombie() {
   done
   # #228: worker của đợt merge train giữ lock của mọi thẻ trong đợt (TRAIN): thẻ đầu sang Done không làm nó thành zombie khi thẻ khác
   # của đợt còn ở cột nguồn.
+  # #358 mục 6: worker train treo mà còn một thẻ ở Review (head đổi, hoãn, timeout giữ ở Review có chủ đích) thì found=1 mãi và lane không bao
+  # giờ được giải phóng; im lặng quá SB_TRAIN_MAX_AGE_S (mặc định 3 giờ, tính từ lần ghi cuối của log worker, không phải STARTED: train khoẻ chạy lâu vẫn ghi log) thì không còn được che bởi thẻ Review.
+  # Lock đọc trong subshell: read_lock ghi đè PID/LANE/STARTED/WORKER_LOG toàn cục của vòng chính, mà đây chỉ là kiểm tra.
   if [ "$found" -eq 0 ] && [ "$lane" = review ]; then
-    read_lock "$issue" || true
-    for t in ${TRAIN:-}; do
+    local lk_info lk_train lk_started lk_log
+    lk_info=$(read_lock "$issue" && printf '%s|%s|%s' "${TRAIN:-}" "${STARTED:-}" "${WORKER_LOG:-}") || lk_info="||"
+    lk_train="${lk_info%%|*}"; lk_info="${lk_info#*|}"; lk_started="${lk_info%%|*}"; lk_log="${lk_info#*|}"
+    for t in $lk_train; do
       [ "$(issue_status "$t")" = "Review" ] && found=1
     done
+    if [ "$found" -eq 1 ] && quiet_longer_than "$lk_log" "$lk_started" "${SB_TRAIN_MAX_AGE_S:-10800}"; then
+      log "⏱ merge-train worker on #${issue} (pid=${pid}) wrote nothing to its log for over ${SB_TRAIN_MAX_AGE_S:-10800}s (started ${lk_started}) with cards still in Review: treated as hung"
+      found=0
+    fi
   fi
   # Thẻ về cột cũ: bỏ mốc ân hạn để lần rời cột sau tính lại từ đầu.
   [ "$found" -eq 0 ] || ZOMBIE_SEEN=$(printf '%s\n' ${ZOMBIE_SEEN:-} | grep -v "^${pid}:" | tr '\n' ' ' || true)
@@ -1984,6 +2037,21 @@ sync_waiting_labels() {
   done
 }
 
+log_unreadable_blocked_by() {
+  # #386: $1 = plan JSON. Thẻ Blocked có dòng blocked-by deps không đọc được (vd `#377`) không bao giờ được thả: ghi log một lần mỗi
+  # (thẻ, lý do), bền qua lần khởi động lại như sổ sweep. Không đoán thay người viết, không đổi trạng thái thẻ.
+  local n why key
+  while IFS=$'\t' read -r n why; do
+    [ -n "$n" ] || continue
+    key="${n}:unreadable:$(printf '%s' "$why" | cksum | cut -d' ' -f1)"
+    swept_seen "$key" && continue
+    swept_add "$key"
+    log "⚠ #${n}: blocked-by line unreadable, the sweep will not release it — ${why}"
+  done <<EOF
+$(printf '%s' "$1" | jq -r '.flag[]? | [(.number | tostring), ((.why // "") | gsub("[\t\n]"; " "))] | @tsv' 2>/dev/null)
+EOF
+}
+
 sweep_blocked_cards() {
   # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
   # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
@@ -2000,6 +2068,7 @@ sweep_blocked_cards() {
   fi
   local next key
   sync_waiting_labels "$plan"
+  log_unreadable_blocked_by "$plan"
   while IFS=$'\t' read -r issue cleared; do
     # Không có blocker nào (thẻ bị kéo tay sang Blocked, body ghi None): không có gì vừa đóng, để người quyết.
     [ -n "$issue" ] && [ -n "$cleared" ] || continue
@@ -2078,6 +2147,142 @@ maybe_sweep_blocked() {
   sweep_blocked_cards || rc=$?
   [ "$rc" -ne 2 ] || SWEEP_RETRY_AT=$(( $(date +%s) + SWEEP_RETRY_SECONDS ))
   return "$rc"
+}
+
+# ── #363: cầu chì suite. ≥2 thẻ bị Blocked cùng một suite id (REG-…) trong SB_FUSE_WINDOW_H giờ là một nguyên nhân gốc, không phải hai thẻ:
+# giữ MỘT thẻ (số nhỏ nhất, hay thẻ đang giữ cờ ngưng), các thẻ còn lại ghi `blocked-by: <thẻ giữ>` và ở nguyên Blocked để sweep thả về khi
+# thẻ giữ đóng; NGƯNG giao Builder mới tới khi mọi thẻ giữ rời Blocked. KHÔNG BAO GIỜ đóng thẻ hay chuyển Done (suy đoán sai thì mất thẻ).
+# Suite id chỉ lấy từ comment `[builder|qa|reviewer] [blocker]` MỚI NHẤT có cả REG-… lẫn TIMEOUT/FAIL/HANG (không lấy từ comment pass/unblock
+# hay tiêu đề); mốc Blocked = createdAt của comment đó (không phải lúc runner thấy: lần triển khai đầu / mất sổ không đóng dấu "bây giờ").
+# Thẻ 🙋 needs-you / human-gated và thẻ đã có `blocked-by:` là số thì bỏ qua. Sổ $INFLIGHT_DIR/fuse/blocked.tsv: `issue<TAB>epoch<TAB>suite|-`
+# (đọc MỘT lần khi thẻ vào Blocked; thẻ rời Blocked bị xoá khỏi sổ). folded.tsv: thẻ đã ghi blocked-by (ghi TRƯỚC khi gọi gh: comment
+# một lần dù board lỗi; thẻ rời Blocked thì xoá). Cờ ngưng $INFLIGHT_DIR/fuse/pause: mỗi thẻ giữ một dòng `keep<TAB>suite<TAB>epoch`.
+# ponytail: chỉ lane Builder bị ngưng — QA/Review vẫn chạy; nâng khi cần.
+SB_FUSE_WINDOW_H="${SB_FUSE_WINDOW_H:-6}"
+fuse_dir() { printf '%s/fuse' "$INFLIGHT_DIR"; }
+
+fuse_card_json() {
+  # $1 = issue. In JSON {title, comments[{body,createdAt}]}; exit khác 0 khi đọc hỏng (caller thử lại tick sau, không ghi sổ).
+  python3 "$SB_GITHUB_READ" --kind object -- issue view "$1" --json title,comments
+}
+
+fuse_card_info() {
+  # $1 = issue. In `epoch<TAB>bb|-<TAB>suite suite…` của comment blocker mới nhất ghép suite với TIMEOUT/FAIL/HANG; không có thì in `-`.
+  # bb = comment đó đã có `blocked-by:` là số (thẻ chờ thẻ khác, không phải việc của cầu chì).
+  local json
+  json=$(fuse_card_json "$1") || return $?
+  printf '%s' "$json" | jq -r '[.comments[]? | select(.body | test("^\\s*\\[(builder|qa|reviewer)\\]\\s*\\[blocker\\]"))] | reverse
+    | map(select(.body | test("TIMEOUT|FAIL|HANG"; "i"))
+        | {t: (.createdAt | fromdateiso8601), s: ([.body | scan("REG-[A-Z0-9]+(?:-[A-Z0-9]+)*")] | unique),
+           b: (([.body | scan("(?:^|\\n)[ \\t]*blocked-by:[ \\t]*([^\\n]*)"; "i")] | last // [""]) | .[0])}
+        | select(.s | length > 0))
+    | first // empty
+    | "\(.t)\t\(if (.b | test("[0-9]")) then "bb" else "-" end)\t\(.s | join(" "))"' | grep . || echo "-"
+}
+
+fuse_paused() {
+  # 0 khi cầu chì đang ngưng giao Builder: còn thẻ giữ ở Blocked. Mọi thẻ giữ rời Blocked (người đã xử lý) thì gỡ cờ. Board rỗng/đọc hỏng thì
+  # giữ ngưng (không đoán). Chỉ ghi lại file khi bớt thẻ giữ.
+  local f line keep cnt rest="" gone=0
+  f="$(fuse_dir)/pause"; [ -f "$f" ] || return 1
+  while IFS= read -r line; do
+    keep=${line%%$'\t'*}
+    case "$keep" in ''|*[!0-9]*) gone=1; continue ;; esac   # dòng rác không được ngưng build mãi
+    cnt=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -r --argjson n "$keep" '[.items[] | select(.content.number == $n and .status == "Blocked")] | length' 2>/dev/null)
+    case "$cnt" in ''|*[!0-9]*) return 0 ;; esac
+    if [ "$cnt" -gt 0 ]; then rest="${rest}${line}"$'\n'; else gone=1; fi
+  done < "$f"
+  if [ -n "$rest" ]; then
+    [ "$gone" -eq 0 ] || printf '%s' "$rest" > "$f"
+    return 0
+  fi
+  rm -f "$f"; FUSE_PAUSE_LOGGED=""
+  log "🔌 suite fuse released: every merged card left Blocked — Builder dispatch resumes"
+  return 1
+}
+
+suite_fuse_tick() {
+  # Luôn trả 1: cầu chì không đổi cột của thẻ nào (caller không cần đọc lại board).
+  local dir led fol now blocked n info suites s window suite nums keep dups d dl claimed="" members m fresh repo bline orc pauses rc _e bb
+  dir=$(fuse_dir); led="$dir/blocked.tsv"; fol="$dir/folded.tsv"; now=$(date +%s)
+  mkdir -p "$dir" 2>/dev/null || { log "⚠ suite fuse: cannot create $dir"; return 1; }
+  blocked=$(echo "$PROJECT_ITEMS_JSON" | jq -r '.items[] | select(.status == "Blocked") | .content.number // empty' 2>/dev/null) || return 1
+  : >> "$led"; : >> "$fol"
+  # thẻ rời Blocked ra khỏi sổ và khỏi folded
+  while IFS=$'\t' read -r n _e _s; do
+    printf '%s\n' "$blocked" | grep -qx "$n" && printf '%s\t%s\t%s\n' "$n" "$_e" "$_s"
+  done < "$led" > "$led.new" || true
+  mv -f "$led.new" "$led"
+  while IFS= read -r n; do
+    printf '%s\n' "$blocked" | grep -qx "$n" && printf '%s\n' "$n"
+  done < "$fol" > "$fol.new" || true
+  mv -f "$fol.new" "$fol"
+  for n in $blocked; do
+    cut -f1 "$led" | grep -qx "$n" && continue
+    rc=0; info=$(fuse_card_info "$n" 2>>"$RUN_MANIFEST") || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      case "$RUNNER_HALT_CODES" in *" $rc "*) exit "$rc" ;; esac
+      log "⚠ suite fuse: cannot read #${n} (exit ${rc}); retry next tick"; continue
+    fi
+    IFS=$'\t' read -r _e bb suites <<EOF
+$info
+EOF
+    if [ "$info" = "-" ] || [ "$bb" != "-" ] || [ -z "$suites" ]; then printf '%s\t0\t-\n' "$n" >> "$led"
+    else for s in $suites; do printf '%s\t%s\t%s\n' "$n" "$_e" "$s" >> "$led"; done; fi
+  done
+  window=$(( SB_FUSE_WINDOW_H * 3600 ))
+  repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+  pauses=""; [ -f "$dir/pause" ] && pauses=$(cut -f1 "$dir/pause")
+  while IFS=$'\t' read -r suite nums; do
+    [ -n "$suite" ] || continue
+    # thẻ đã gộp, thẻ 🙋, thẻ đã dùng ở nhóm trước (thẻ nhiều suite chỉ vào một nhóm) không nhập nhóm
+    members=""
+    for m in $nums; do
+      case " $claimed " in *" $m "*) continue ;; esac
+      grep -qx "$m" "$fol" && continue
+      echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$m" "$FOR_A_PERSON_JQ"' [.items[] | select(.content.number == $n) | for_a_person] | any' >/dev/null 2>&1 && continue
+      members="$members $m"
+    done
+    keep=""
+    for m in $members; do case " $pauses " in *" $m "*) keep=$m; break ;; esac; done   # thẻ đang giữ cờ ngưng là thẻ giữ
+    [ -n "$keep" ] || keep=$(printf '%s\n' $members | sort -n | head -1)
+    dups=""; for d in $members; do [ "$d" = "$keep" ] || dups="$dups $d"; done
+    [ -n "$dups" ] || continue
+    claimed="$claimed $members"
+    fresh=0; dl=""
+    for d in $dups; do
+      # dòng `blocked-by:` qua helper (số đã đóng bị bỏ; 79 = không đọc được, thử lại tick sau, không ghi sổ)
+      if [ -n "$repo" ] && [ -f "$(dirname "$SB_GITHUB_READ")/super-board-blocked-by.py" ]; then
+        orc=0; bline=$(python3 "$(dirname "$SB_GITHUB_READ")/super-board-blocked-by.py" line --repo "$repo" "$keep" 2>>"$RUN_MANIFEST") || orc=$?
+        if [ "$orc" -ne 0 ]; then log "⚠ suite fuse: blocker check for #${keep} failed (exit ${orc}) — #${d} retried next tick"; continue; fi
+      else bline="blocked-by: ${keep}"; fi
+      [ "$bline" != "blocked-by: -" ] || continue   # thẻ giữ đã đóng giữa chừng: không còn gì để chờ
+      printf '%s\n' "$d" >> "$fol" || { log "⚠ suite fuse: cannot write $fol"; continue; }
+      fresh=1; dl="${dl:+$dl, }#${d}"
+      gh_checkpoint
+      gh_write_once issue comment "$d" --body "[orchestrator] [blocker] 🛑 blocked · 🔌 suite fuse · same suite ${suite} as #${keep}
+Card:        #${d}
+Reason tag:  🔌
+Why blocked: ≥2 cards blocked on ${suite} within ${SB_FUSE_WINDOW_H}h — one root cause, handled in #${keep}
+Evidence:    newest [blocker] comment of each card names ${suite} with TIMEOUT/FAIL/HANG
+Owner:       whoever takes #${keep}
+Move back:   the sweep returns this card to Ready when #${keep} closes
+${bline}" >/dev/null 2>&1 || true
+    done
+    [ "$fresh" -eq 1 ] || continue
+    case " $pauses " in *" $keep "*) ;; *)
+      printf '%s\t%s\t%s\n' "$keep" "$suite" "$now" >> "$dir/pause"; pauses="$pauses $keep"
+      gh_checkpoint
+      gh_write_once issue comment "$keep" --body "[orchestrator] [report] 🔌 suite fuse · ${suite}
+Did: cards blocked on ${suite} within ${SB_FUSE_WINDOW_H}h (${dl}) now wait on this one (blocked-by: ${keep}); none closed
+✅ Done: new Builder dispatch is paused
+Next: fix ${suite}, then move this card out of Blocked — Builder dispatch resumes" >/dev/null 2>&1 || true ;;
+    esac
+    log "🔌 suite fuse: ${suite} blocked ≥2 cards within ${SB_FUSE_WINDOW_H}h (${dl} wait on #${keep}) — Builder dispatch paused until #${keep} leaves Blocked"
+  done <<EOF
+$(awk -F'\t' -v now="$now" -v w="$window" '$3 != "-" && now - $2 <= w { c[$3] = c[$3] " " $1; k[$3]++ } END { for (s in c) if (k[s] >= 2) print s "\t" substr(c[s], 2) }' "$led" | sort)
+EOF
+  return 1
 }
 
 backlog_pull_enabled() {
@@ -2243,11 +2448,13 @@ LANDED_COUNT=0
 DISPATCH_LOG=""
 
 # ── Tự nạp lại code mới (#229, gap 4 của #226). Runner là bash chạy dài: PR sửa chính super-board-run.sh merge xong mà tiến trình vẫn
-# chạy bản cũ cho tới khi ai đó dừng/chạy lại tay. Lúc rảnh (không worker nào, lock nào) mỗi tick fetch origin/<base>; blob của script trên
+# chạy bản cũ cho tới khi ai đó dừng/chạy lại tay. Mỗi tick fetch origin/<base>; blob của script trên
 # origin khác blob đang chạy thì: main checkout fast-forward được (đang ở <base>, HEAD là tổ tiên của origin) → ff rồi exec lại chính nó
 # (cùng PID, nên bản ghi watchdog vẫn đúng; SB_WATCHDOG_START=1 nạp lại bộ đếm và không xoá stop marker). Gộp xung đột/gate đỏ, ff không áp
 # được hoặc bản mới sai cú pháp → notify một lần cho mỗi bản origin, tiếp tục chạy bản cũ: không restart mù, không chạy code cũ im lặng.
-# ponytail: chỉ nạp lại khi rảnh hoàn toàn; board luôn có worker thì chờ tới lúc rảnh, nâng lên khi thấy board bận liên tục.
+# #379: nạp lại cả khi còn worker sống (board luôn bận thì không bao giờ rảnh: 24/10 runner chạy code cũ 5 giờ). exec giữ PID, worker là
+# tiến trình con độc lập nên sống tiếp; runner mới chạy startup_reconcile → adopt_live_locks nhận lại. Không giao việc mới bằng code cũ:
+# tick chạy self_reload_tick trước mọi dispatch, nên exec xảy ra trước khi giao.
 RELOAD_SELF="${RELOAD_SELF:-$SCRIPT_DIR/super-board-run.sh}"
 RELOAD_RUN_SUM="${RELOAD_RUN_SUM:-$(git hash-object "$RELOAD_SELF" 2>/dev/null || true)}"
 RELOAD_WARNED=""
@@ -2283,7 +2490,6 @@ reload_finish_main() {
 }
 self_reload_tick() {
   local now new disk rel cur
-  [ "${ACTIVE_WORKERS:-0}" -eq 0 ] || return 0
   [ -n "$RELOAD_RUN_SUM" ] || return 0
   now=$(date +%s)
   [ "$now" -ge "$RELOAD_NEXT_CHECK" ] || return 0
@@ -2313,7 +2519,7 @@ self_reload_tick() {
     [ "$disk" = "$new" ] || { reload_warn "$new" "after the fast-forward the file on disk still differs from origin"; return 0; }
   fi
   bash -n "$RELOAD_SELF" 2>/dev/null || { reload_warn "$new" "the new script fails bash -n"; return 0; }
-  log "♻ self-reload: origin/${BASE_BRANCH} changed super-board-run.sh (${RELOAD_RUN_SUM:0:7} → ${new:0:7}) and no worker is running — restarting on the new code"
+  log "♻ self-reload: origin/${BASE_BRANCH} changed super-board-run.sh (${RELOAD_RUN_SUM:0:7} → ${new:0:7}) — restarting on the new code (${ACTIVE_WORKERS:-0} live worker(s) will be adopted)"
   reload_exec "$RELOAD_SELF"
 }
 
@@ -2507,7 +2713,7 @@ while true; do
 
   ACTIVE_WORKERS=$(( BUILD_COUNT + QA_COUNT + REVIEW_COUNT ))   # một trần chung cho cả 3 lane
 
-  # Rảnh hoàn toàn (không worker nào): nạp lại code nếu super-board-run.sh trên origin đã đổi (#229). Có thể exec và không quay lại.
+  # Nạp lại code (kể cả khi còn worker, #379) nếu super-board-run.sh trên origin đã đổi (#229). Có thể exec và không quay lại.
   self_reload_tick
 
   # Đang hoãn sau RUNAWAY: không giao được gì nên chỉ đọc board thưa (paused_tick). Kiểm trước nhánh cap-reached:
@@ -2552,6 +2758,8 @@ while true; do
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   if maybe_sweep_blocked; then tick_fetch || continue; fi
+  # #363: ≥2 thẻ Blocked cùng suite id trong N giờ → một thẻ + ngưng giao Builder (suite_fuse_tick).
+  if suite_fuse_tick; then tick_fetch || continue; fi
 
   count_board
 

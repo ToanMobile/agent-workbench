@@ -37,4 +37,16 @@ m1=$(sed -n 1p "$HALT_LOG" | jq -r .marker); m2=$(sed -n 2p "$HALT_LOG" | jq -r 
 [ -n "$m1" ] && [ "$m1" != "$m2" ] && ok "same fixed comment twice → two different markers" || fail "markers repeat: '$m1' vs '$m2'"
 grep -qF -- "$m1" "$GH_LOG" && ok "the posted body carries the marker it will be verified by" || fail "marker '$m1' absent from the posted body"
 grep -q 'back to Ready' "$GH_LOG" && ok "the original comment text is still posted" || fail "original text lost"
+# #355: gh_write_once THẬT (hàm trích từ runner) + super-board-github-read.py THẬT, gh giả luôn lỗi. Bản ghi halt lưu được thì
+# thoát 79 và có file; thư mục halt không ghi được thì thoát 76 (không có bản ghi để watchdog đọc).
+real_once() {
+  ( SB_GITHUB_READ="$ROOT/.claude/bin/super-board-github-read.py"; SB_GITHUB_HALT_FILE="$1"; export SB_GITHUB_HALT_FILE
+    gh_checkpoint() { :; }; log() { echo "$*" >&2; }; . "$TMP/fn.sh"; gh_write_once issue edit 1 --title x ) >/dev/null 2>&1
+}
+real_once "$TMP/halt-ok/halt.json"; rc=$?
+[ "$rc" = 79 ] && [ -s "$TMP/halt-ok/halt.json" ] && ok "gh_write_once: failed write + writable halt dir → rc 79 and a halt file" \
+  || fail "gh_write_once writable: rc=$rc file=$([ -s "$TMP/halt-ok/halt.json" ] && echo saved || echo missing)"
+: > "$TMP/notadir"
+real_once "$TMP/notadir/halt.json"; rc=$?
+[ "$rc" = 76 ] && ok "gh_write_once: failed write + unwritable halt dir → rc 76" || fail "gh_write_once unwritable: rc=$rc (want 76)"
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" = 0 ]
