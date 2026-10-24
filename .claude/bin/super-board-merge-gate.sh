@@ -364,7 +364,8 @@ if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
     say "a PR closes only its own card: back to Build to fix the closing keywords"
     exit 11
   fi
-  if [ "$(echo "$AC_JSON" | jq -r .ac)" = true ]; then
+  # Có khối sb:ac, hoặc không có mà PR vẫn tự Closes thẻ (nén về 0 dòng): đối chiếu với AC của thẻ.
+  if [ "$(echo "$AC_JSON" | jq -r '.ac or .closes_own')" = true ]; then
     python3 "$GITHUB_READ" --kind issue -- issue view "$AC_CARD" ${REPO:+--repo "$REPO"} --json number,title,body,labels > "$AC_DIR/issue.json"
     jq -r '.body // ""' "$AC_DIR/issue.json" > "$AC_DIR/issue.md"
     jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' "$AC_DIR/issue.json" >/dev/null && AC_HAS_LABEL=true
@@ -958,6 +959,9 @@ fi
 # (gh pr edit, không đổi head) và trong message squash (bản chép; không có --body-file thì message chỉ "Refs #<thẻ>").
 # Ghi body hỏng thì không merge: thẻ sẽ bị đóng với AC chưa chứng minh — đúng lỗi này chặn. Lần sau gate chạy lại.
 if [ -n "$AC_UNTICKED" ]; then
+  # Đọc lại body ngay trước khi ghi: verify có thể đã chạy > 900 s, ghi bản cũ sẽ đè sửa đổi của lane khác trong lúc đó.
+  gh pr view "$PR" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/pr.md" \
+    || { say "could not re-read the PR body before turning Closes #${AC_CARD} into Refs; not merging"; exit 4; }
   if [ "$(python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/pr.md" --card "$AC_CARD")" = rewritten ]; then
     gh pr edit "$PR" ${REPO:+--repo "$REPO"} --body-file "$AC_DIR/pr.md" >/dev/null \
       || { say "could not rewrite Closes #${AC_CARD} in the PR body; not merging (the card would close with unproven AC)"; exit 4; }
@@ -966,17 +970,16 @@ if [ -n "$AC_UNTICKED" ]; then
   python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/msg.md" --card "$AC_CARD" >/dev/null
   grep -q "#${AC_CARD}\b" "$AC_DIR/msg.md" || printf '\nRefs #%s\n' "$AC_CARD" >> "$AC_DIR/msg.md"
   MSG_FILE="$AC_DIR/msg.md"
+elif [ "$AC_HAS_LABEL" = true ]; then
+  # Đủ AC: gỡ nhãn TRƯỚC merge — sau merge `Closes` đã đóng issue, runner thấy CLOSED + ac-open sẽ mở lại nó.
+  gh issue edit "$AC_CARD" ${REPO:+--repo "$REPO"} --remove-label ac-open >/dev/null 2>&1 \
+    && say "card #${AC_CARD}: every AC proven — label ac-open removed" \
+    || { say "could not remove label ac-open from #${AC_CARD}; not merging (the runner would reopen the closed card)"; exit 4; }
 fi
 # Sau merge (cả khi phản hồi merge bị mất mà GitHub xác nhận MERGED): còn AC chưa tick → nhãn ac-open, mở lại nếu đã đóng,
 # comment liệt kê, thẻ về Ready, in `ac-open: #N` cho lane. Đủ AC mà nhãn còn → gỡ nhãn. Lỗi ở đây chỉ cảnh báo: đã merge rồi.
 ac_after_merge() {
-  [ -n "$AC_CARD" ] || return 0
-  if [ -z "$AC_UNTICKED" ]; then
-    [ "$AC_HAS_LABEL" = true ] || return 0
-    gh issue edit "$AC_CARD" ${REPO:+--repo "$REPO"} --remove-label ac-open >/dev/null 2>&1 \
-      && say "card #${AC_CARD}: every AC proven — label ac-open removed" || say "warning: could not remove label ac-open from #${AC_CARD}"
-    return 0
-  fi
+  [ -n "$AC_CARD" ] && [ -n "$AC_UNTICKED" ] || return 0   # đủ AC: nhãn đã gỡ trước merge
   echo "ac-open: #${AC_CARD}"
   gh label create ac-open ${REPO:+--repo "$REPO"} --color FBCA04 --description "PR merged, acceptance criteria not all proven" >/dev/null 2>&1 || true
   gh issue edit "$AC_CARD" ${REPO:+--repo "$REPO"} --add-label ac-open >/dev/null 2>&1 || say "warning: could not label #${AC_CARD} ac-open"

@@ -53,6 +53,7 @@ case " $* " in
   *" pr view "*"state,mergeCommit,headRefOid"*) printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$(cat "$FAKE_DIR/pr$n.head")" ;;
   *" pr view "*"labels,files"*) cat "$FAKE_DIR/pr$n.meta" ;;
   *" pr view "*"title"*) echo "t" ;;
+  *" pr view "*"--json body"*) jq -r '.body' "$FAKE_DIR/pr$n.meta" ;;
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
   *" pr edit "*) f=$(printf '%s\n' "$@" | sed -n '/^--body-file$/{n;p;}'); cp "$f" "$FAKE_DIR/pr$n.edited" ;;
   *" pr merge "*) f=$(printf '%s\n' "$@" | sed -n '/^--body-file$/{n;p;}'); [ -n "$f" ] && cp "$f" "$FAKE_DIR/merge$n.msg"; echo merged ;;
@@ -123,13 +124,22 @@ card 24 "$TMP/b24.md" "$TMP/issue3.md" '[{"name":"ac-open"}]'
 rc=$(gate 24)
 [ "$rc" = 0 ] && grep -q 'issue edit 24 --remove-label ac-open' "$TMP/calls" && ! grep -q '^ac-open:' "$TMP/gate24.out" \
   && ! grep -q 'pr edit 24' "$TMP/calls" && ok "D: đủ AC → merge, gỡ nhãn ac-open, không sửa body" || fail "D: rc=$rc $(tr '\n' '|' < "$TMP/calls")"
+awk '/remove-label ac-open/{e=NR} /pr merge 24/{m=NR} END{exit !(e && m && e < m)}' "$TMP/calls" \
+  && ok "D: gỡ nhãn TRƯỚC merge (runner không mở lại issue vừa được Closes đóng)" || fail "D: order"
 
-# E — không có sb:ac: như cũ.
-printf 'Closes #25\n' > "$TMP/b25.md"
+# E — không có sb:ac, không tự Closes thẻ: như cũ, không đọc issue.
+printf 'PR tay, Refs #25\n' > "$TMP/b25.md"
 card 25 "$TMP/b25.md" "$TMP/issue3.md" '[]'
 rc=$(gate 25)
 [ "$rc" = 0 ] && ! grep -q 'issue ' "$TMP/calls" && ! grep -q 'pr edit' "$TMP/calls" \
-  && ok "E: PR không có sb:ac → merge như cũ, không đụng issue" || fail "E: rc=$rc $(tr '\n' '|' < "$TMP/calls")"
+  && ok "E: PR không có sb:ac, không Closes → merge như cũ, không đụng issue" || fail "E: rc=$rc $(tr '\n' '|' < "$TMP/calls")"
+
+# G — không có sb:ac mà vẫn Closes #27 (nén về 0 dòng) trong khi thẻ có 3 AC → exit 11, không merge.
+printf 'Closes #27\n' > "$TMP/b27.md"
+card 27 "$TMP/b27.md" "$TMP/issue3.md" '[]'
+rc=$(gate 27)
+[ "$rc" = 11 ] && grep -q 'ac-check: card #27 has 3' "$TMP/gate27.out" && ! grep -q 'pr merge' "$TMP/calls" \
+  && ok "G: không có sb:ac mà Closes thẻ có AC → exit 11" || fail "G: rc=$rc out=$(tail -2 "$TMP/gate27.out")"
 
 # F — không --body-file: message squash lấy từ commit của nhánh; commit có "Closes #315" (thẻ lạ) → exit 11, không merge.
 printf 'không có khối ac\n' > "$TMP/b26.md"

@@ -88,6 +88,14 @@ out=$(python3 "$AC" --issue-body "$T/i319.md" --extra-issue-body "344=$T/i315.md
 [ "$(printf '%s' "$out" | field indirect)" = "[338, 344]" ] && [ "$(printf '%s' "$out" | field issue_ac)" = 5 ] \
   && ok "AC của #344, #338: 3 (đọc được) + 1 (#338 chưa đọc) + 1 gate = 5" || fail "multi indirect: $out"
 
+# Chỉ số thẻ liền sau "AC của": "(xem PR #343)" không phải thẻ tham chiếu. sb:ac đánh số "1. [x]" vẫn là dòng AC.
+printf '## Acceptance Criteria\n- [ ] AC của thẻ #315 đạt (xem PR #343, như #300)\n' > "$T/i320.md"
+printf '<!-- sb:ac -->\n1. [x] a\n2) [ ] b\n<!-- /sb:ac -->\n' > "$T/num.md"
+out=$(python3 "$AC" --issue-body "$T/i320.md" --pr-body "$T/num.md" --branch issue-320-x)
+[ "$(printf '%s' "$out" | field indirect)" = "[315]" ] && [ "$(printf '%s' "$out" | field pr_ac)" = 2 ] \
+  && [ "$(printf '%s' "$out" | field unticked)" = '["b"]' ] \
+  && ok "chỉ #315 là thẻ tham chiếu; sb:ac '1. [x]' / '2) [ ]' được đếm" || fail "refs/numbered: $out"
+
 # "## …" trong code fence của mục AC không cắt mục AC.
 printf '## Acceptance Criteria\n- [ ] A\n```\n## không phải heading\n- trong fence\n```\n- [ ] B\n## Risk\n- r\n' > "$T/fence.md"
 out=$(python3 "$AC" --issue-body "$T/fence.md" --pr-body "$T/pr343.md" --branch issue-1-x)
@@ -97,10 +105,13 @@ printf 'bullets\n\nCloses #318\nFixes: ToanMobile/agent-workbench#315\nresolved 
 out=$(python3 "$AC" --issue-body "$T/issue.md" --pr-body "$T/full.md" --msg "$T/msg.md" --branch issue-377-perf)
 [ "$(printf '%s' "$out" | field foreign_closes)" = "[315, 318]" ] \
   && ok "Closes/Fixes:/owner/repo#N thẻ khác trong message squash → foreign_closes" || fail "foreign closes: $out"
-out=$(python3 "$AC" --issue-body "$T/issue.md" --pr-body "$T/msg.md" --branch issue-377-perf)
+out=$(python3 "$AC" --pr-body "$T/msg.md" --branch issue-377-perf)
 [ "$(printf '%s' "$out" | field ac)" = false ] && [ "$(printf '%s' "$out" | field foreign_closes)" = "[315, 318]" ] \
-  && [ "$(printf '%s' "$out" | field collapsed)" = null ] \
-  && ok "PR không có sb:ac: vẫn kiểm Closes lạ, không đếm AC" || fail "no-block: $out"
+  && [ "$(printf '%s' "$out" | field collapsed)" = null ] && [ "$(printf '%s' "$out" | field closes_own)" = true ] \
+  && ok "PR không có sb:ac, chưa đưa body issue: vẫn kiểm Closes lạ, báo closes_own, không đếm AC" || fail "no-block: $out"
+out=$(python3 "$AC" --issue-body "$T/issue.md" --pr-body "$T/msg.md" --branch issue-377-perf)
+[ "$(printf '%s' "$out" | field collapsed)" = true ] && [ "$(printf '%s' "$out" | field pr_ac)" = 0 ] \
+  && ok "không có sb:ac mà đóng thẻ có 4 AC: collapsed (nén về 0 dòng)" || fail "no-block collapsed: $out"
 out=$(python3 "$AC" --issue-body "$T/issue.md" --pr-body "$T/full.md" --branch fix-githooks-main-fallback)
 [ "$(printf '%s' "$out" | field skip)" = true ] && ok "nhánh không mang issue-<N> → skip" || fail "non-card branch not skipped: $out"
 out=$(python3 "$AC" --issue-body "$T/issue.md" --pr-body "$T/full.md" --branch issue-3770-x)

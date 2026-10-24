@@ -19,14 +19,15 @@ import sys
 
 # Mục AC cấp 1 (không thụt lề) — cùng dạng super-board-preflight.sh nhận (#283): `-`, `*`, `1.`, `1)`; năm (2026.) không phải mục.
 AC_ITEM = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]+\S")
-CHECKBOX = re.compile(r"^[-*][ \t]*\[([ xX])\][ \t]*(.*)$")
+CHECKBOX = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]*\[([ xX])\][ \t]*(.*)$")
 AC_HEADING = re.compile(r"^##[ \t]+Acceptance Criteria(?!\w)", re.I)
 AC_BLOCK = re.compile(r"<!--\s*sb:ac\s*-->(.*?)<!--\s*/sb:ac\s*-->", re.S)
 CARD_FROM_BRANCH = re.compile(r"(?:^|/)issue-(\d+)(?:\D|$)")
 # GitHub's closing keywords, the same expression as super-board-approval.py: KEYWORD[:] #N or KEYWORD[:] owner/repo#N.
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
-# "AC của thẻ #315", "AC của #344, #338", "AC of card #12": mọi số thẻ trên dòng đó.
-INDIRECT = re.compile(r"\bAC\s+(?:của|of)\s+(?:(?:thẻ|card|issue)\s+)?#\d+", re.I)
+# "AC của thẻ #315", "AC của #344, #338", "AC of cards #12 and #13": chỉ các số thẻ đứng liền sau cụm đó
+# ("AC của thẻ #315 đạt (xem PR #343)": #343 không phải thẻ được tham chiếu).
+INDIRECT = re.compile(r"\bAC\s+(?:của|of)\s+(?:(?:các\s+)?(?:thẻ|cards?|issues?)\s+)?(#\d+(?:\s*(?:,|và|and|&)\s*#\d+)*)", re.I)
 CARD_REF = re.compile(r"#(\d+)")
 
 
@@ -58,7 +59,7 @@ def ac_items(body):
 
 
 def indirect_cards(items, card):
-    return sorted({int(n) for it in items if INDIRECT.search(it) for n in CARD_REF.findall(it)} - {card})
+    return sorted({int(n) for it in items for m in INDIRECT.finditer(it) for n in CARD_REF.findall(m.group(1))} - {card})
 
 
 def check(issue_body, pr_body, msg, branch, extra_bodies=()):
@@ -67,12 +68,15 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=()):
         return {"skip": True, "reason": "branch carries no issue-<N>"}
     card = int(card.group(1))
     closes = {int(n) for _, n in CLOSES.findall((pr_body or "") + "\n" + (msg or ""))}
-    out = {"skip": False, "card": card, "foreign_closes": sorted(closes - {card})}
+    out = {"skip": False, "card": card, "foreign_closes": sorted(closes - {card}), "closes_own": card in closes}
     m = AC_BLOCK.search(pr_body or "")
     out["ac"] = bool(m)
-    if not m:
-        return out
     items = ac_items(issue_body)
+    if not m:
+        # Không có khối sb:ac mà vẫn đóng thẻ (merge gate chỉ đưa body issue khi closes_own): nén về 0 dòng.
+        if issue_body:
+            out.update({"issue_ac": len(items), "pr_ac": 0, "collapsed": bool(items), "unticked": [], "indirect": []})
+        return out
     indirect = indirect_cards(items, card)
     # Dòng "AC của thẻ #X" là chỗ đứng của mọi AC của #X: thay nó bằng số AC của từng thẻ được nhắc (ít nhất 1 mỗi thẻ,
     # kể cả khi body #X không đọc được hay viết văn xuôi), nên mở rộng không bao giờ làm giảm số AC phải chứng minh.

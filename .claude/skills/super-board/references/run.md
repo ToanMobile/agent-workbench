@@ -325,6 +325,8 @@ call is cut by the Bash timeout and the whole run is repeated (#249). The runner
    --reason completed`, release the claim and clean up the worktree. The runner moves the closed
    card (still in Building) straight to Done (`reclaim_stranded_building`); the wave workflow's
    Reconcile step does the same for a card that ends closed. Any AC not yet met → continue with step 4 (never close on a partial match).
+   Not for a card labelled `ac-open` (T0054): the runner reopens it once closed. Open a proof PR whose `sb:ac` lists every AC
+   line instead (earlier ones `[x]` citing their PR); its merge gate removes the label.
 4. Implement smallest safe change covering ACs, under the PR size cap
    (`merge_policy.auto_max_lines`, default 400 changed lines). Growing past it mid-build → stop,
    push what you have, propose the split (vertical slices via `/to-tickets`) in a PR comment and

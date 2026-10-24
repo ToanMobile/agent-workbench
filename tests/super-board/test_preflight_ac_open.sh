@@ -16,6 +16,7 @@ cat > "$TMP/bin/gh" <<'SH'
 case " $* " in
   *" api rate_limit "*) echo '{"resources":{"graphql":{"remaining":5000,"reset":0},"core":{"remaining":5000,"reset":0}}}' ;;
   *" pr list "*"merged"*) echo '[{"number":90,"title":"⚡ [perf] gate: cache REG-DK-ALL-01 và chạy hết khi đã bắt đầu","body":"Refs #77","url":"u"}]' ;;
+  *" issue list "*"closed"*) if [ "${DUP:-0}" = 1 ]; then echo '[{"number":66,"title":"⚡ [perf] gate: cache REG-DK-ALL-01 và chạy hết khi đã bắt đầu","body":"","stateReason":"COMPLETED"}]'; else echo '[]'; fi ;;
   *" pr list "*|*" issue list "*) echo '[]' ;;
   *" issue view "*) printf '{"number":77,"title":"⚡ [perf] gate: cache REG-DK-ALL-01 và chạy hết khi đã bắt đầu","body":"## Acceptance Criteria\\n- [ ] a\\n","labels":%s}\n' "$LABELS" ;;
   *) echo "unexpected gh $*" >&2; exit 1 ;;
@@ -30,6 +31,11 @@ out=$(LABELS='[{"name":"feature"}]' bash "$PREFLIGHT" --repo o/r --issues 77 2>"
 out=$(LABELS='[{"name":"feature"},{"name":"ac-open"}]' bash "$PREFLIGHT" --repo o/r --issues 77 2>"$TMP/err")
 [ "$(printf '%s' "$out" | jq -r '."77".verdict')" = proceed ] && ok "nhãn ac-open: không coi là đã giao → proceed" \
   || fail "ac-open: $out $(cat "$TMP/err")"
+
+out=$(DUP=1 LABELS='[{"name":"ac-open"}]' bash "$PREFLIGHT" --repo o/r --issues 77 2>"$TMP/err")
+[ "$(printf '%s' "$out" | jq -r '."77".tag')" = done ] && printf '%s' "$out" | jq -r '."77".evidence[]' | grep -q '^issue #66' \
+  && ! printf '%s' "$out" | jq -r '."77".evidence[]' | grep -q '^PR #90' \
+  && ok "ac-open nhưng issue khác đã đóng trùng thật: vẫn hold done (chỉ bỏ bằng chứng PR merged)" || fail "dup kept: $out"
 
 [ "$FAILS" -eq 0 ] && { echo "preflight ac-open: all checks passed"; exit 0; }
 echo "preflight ac-open: $FAILS FAILED"; exit 1

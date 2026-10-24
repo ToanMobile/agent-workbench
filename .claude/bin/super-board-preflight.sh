@@ -229,8 +229,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
       + [ $closed[] | select(.number != $n and .stateReason != "NOT_PLANNED")
           | select(sim(.title; $i.title) >= $th or (($myfp | length) > 0 and (fps - (fps - $myfp) | length) > 0))
           | "issue #\(.number) closed: \"\(.title)\"" ] )
-    # T0054: nhãn ac-open = PR của chính thẻ đã merge nhưng còn AC chưa chứng minh; PR đó giống tiêu đề thẻ, không phải "đã giao".
-    | (if any($i.labels[]?; (.name // . | ascii_downcase) == "ac-open") then [] else . end) as $done
+    # T0054: nhãn ac-open = PR của chính thẻ đã merge nhưng còn AC chưa chứng minh; PR merged (giống tiêu đề / fingerprint)
+    # không phải "đã giao". Bằng chứng issue khác đã đóng (trùng thật) vẫn giữ.
+    | (if any($i.labels[]?; (.name // . | ascii_downcase) == "ac-open") then map(select(startswith("issue #"))) else . end) as $done
 
     | ( [ $others[] | select(closes($n)) | "open PR #\(.number) (\(.headRefName)) already closes #\($n)" ]
       + [ $others[] | select(closes($n) | not) | select(sim(.title; $i.title) >= $th)
