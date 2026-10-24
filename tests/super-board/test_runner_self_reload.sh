@@ -54,9 +54,9 @@ mkrepo; push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
 [ "$(execs)" = 1 ] && [ "$(cat "$TMP/exec")" = "$RELOAD_SELF" ] && ok "new script on origin, main fast-forwardable: exec'd itself" || fail "exec=$(execs) ($(cat "$TMP/exec"))"
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && grep -q v2 "$RELOAD_SELF" && ok "  … main checkout was fast-forwarded to origin first" || fail "HEAD not at origin/main or file not v2"
 
-# ── 3. còn worker: không fetch, không ff, không exec
-mkrepo; push_other $'#!/usr/bin/env bash\necho v2'; ACTIVE_WORKERS=1; self_reload_tick
-[ "$(execs)" = 0 ] && grep -q v1 "$RELOAD_SELF" && ok "a worker is alive: nothing touched" || fail "busy: exec=$(execs)"
+# ── 3. (#379) còn worker sống: vẫn nạp bản mới (exec giữ PID, runner mới adopt lại worker), không chờ tới lúc rảnh
+mkrepo; push_other $'#!/usr/bin/env bash\necho v2'; ACTIVE_WORKERS=2; self_reload_tick
+[ "$(execs)" = 1 ] && [ "$(cat "$TMP/exec")" = "$RELOAD_SELF" ] && grep -q v2 "$RELOAD_SELF" && ok "workers alive: still reloads the new script (adopt picks them up)" || fail "busy: exec=$(execs)"
 
 # ── 4. main có commit local KHÔNG đụng runner (#308): gộp origin qua finish rồi exec, commit local còn nguyên
 mkrepo; ( cd "$C/repo" && echo local >> other.txt && git commit -qam local ); : > "$TMP/finish"
