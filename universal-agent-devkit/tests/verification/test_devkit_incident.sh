@@ -284,6 +284,26 @@ echo '[19:00:02] ⚠ #5 in Review — review worker is a no-op 2 times but the c
 scan >/dev/null
 [ "$(creates)" = $((n + 2)) ] && ok "runner không chặn được thẻ no-op → thẻ" || fail "no-op không chặn được mà không có thẻ: create=$(creates)"
 
+# 23. Manifest do git theo dõi: checkout / ff ghi lại file (inode mới, birthtime mới) cùng nội dung — không đếm lại,
+#     không mở thẻ "hồi quy" giả sau khi thẻ đã đóng; manifest mới (pull) chỉ chứa dòng cũ cũng vậy.
+#     Tên nhánh của repo app (runner in "on branch '<x>'") không lên issue public và không tách chữ ký.
+RM="$A/docs/super-board/runs/2026-10-26-OfficeReader.md"
+echo '[20:00:00] 🛑 halt — RUNAWAY: no card reached Done in 60 dispatch cycles' > "$RM"
+scan >/dev/null
+RW=$(python3 -c 'import json,sys; print(next(i["issue"] for i in json.load(open(sys.argv[1]))["incidents"].values() if i["rule"] == "runaway"))' "$TMP/home/ledger.json")
+n=$(creates)
+sleep 1; RCLOSED=$(date -u +%Y-%m-%dT%H:%M:%SZ); sleep 1                                               # thẻ đóng (đã sửa)
+cp "$RM" "$TMP/rm.bak"; rm -f "$RM"; cat "$TMP/rm.bak" > "$RM"; echo '[20:01:00] tick — Ready=0' >> "$RM"   # SAU đó git ghi lại file
+cp "$RM" "$A/docs/super-board/runs/2026-10-27-OfficeReader.md"                                          # pull mang file mới, dòng cũ
+FAKE_CLOSED=$RW FAKE_CLOSED_AT=$RCLOSED scan >/dev/null
+[ "$(creates)" = "$n" ] && ok "manifest ghi lại / file mới chỉ có dòng cũ → không thẻ hồi quy giả" \
+  || fail "ghi lại manifest sinh thẻ hồi quy giả: create=$(creates) (trước $n)"
+printf "[20:02:00] ⚠ self-reload: origin/main has a newer super-board-run.sh but this runner keeps the old code — main checkout is on branch 'feat/PRIVBRANCH-acme', not main\n" >> "$MA"
+printf "[20:02:30] ⚠ self-reload: origin/main has a newer super-board-run.sh but this runner keeps the old code — main checkout is on branch 'fix/OTHERBR-x', not main\n" >> "$MB"
+n=$(creates); scan >/dev/null
+grep -q 'PRIVBRANCH\|OTHERBR' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "tên nhánh repo app lọt lên issue" || ok "tên nhánh được che"
+[ "$(creates)" = $((n + 1)) ] && ok "hai tên nhánh → một chữ ký" || fail "tên nhánh tách chữ ký: create=$(creates) (trước $n)"
+
 # 14. Mỗi sự cố một thẻ riêng (--new-card): không gom vào thẻ bug khác.
 grep '"issue", "create"' "$FAKE_LOG" >/dev/null && python3 - "$FAKE_LOG" <<'PY' && ok "--new-card: không gom vào thẻ khác" || fail "thiếu --new-card"
 import json, sys
