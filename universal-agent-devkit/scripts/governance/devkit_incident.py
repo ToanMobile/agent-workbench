@@ -248,7 +248,9 @@ def record(incidents: dict, fp: str, rule: str, title: str, min_count: int, repo
     inc = incidents.setdefault(fp, {"rule": rule, "title": mask(title), "min_count": min_count, "count": 0, "repos": [],
                                     "first": now, "evidence": [], "issue": None, "last_comment": 0, "reported_count": 0})
     if STAMPED.match(raw_line):
-        uid = hashlib.sha1(raw_line.strip().encode()).hexdigest()[:12]
+        # ponytail: manifest chỉ in giờ, không in ngày — cùng câu đúng cùng giây ở hai ngày khác nhau của MỘT repo bị coi là
+        # một lần gặp; thêm ngày (tên manifest) vào khoá khi thấy hồi quy bị bỏ sót vì vậy.
+        uid = hashlib.sha1(f"{repo.name}|{raw_line.strip()}".encode()).hexdigest()[:12]
         if uid in inc.setdefault("seen", []):
             return
         inc["seen"] = (inc["seen"] + [uid])[-SEEN_MAX:]
