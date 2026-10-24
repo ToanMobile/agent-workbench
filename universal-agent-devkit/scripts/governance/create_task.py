@@ -123,13 +123,24 @@ BATCH_HEADING = "## Gộp thêm: "
 PATH_RE = re.compile(r"[\w.\-]+(?:/[\w.\-]+)+\.\w{1,5}")
 
 # Mỗi lệnh gh có hạn (#305): mạng treo không được làm createTask treo theo. Quá hạn = lỗi exit 124 (như lệnh thất bại).
-GH_TIMEOUT_S = float(os.environ.get("CREATE_TASK_GH_TIMEOUT_S", "60"))
+def gh_timeout_s():
+    """Đọc lúc gọi, không lúc import (#330): rỗng/rác/≤ 0 → 60 kèm cảnh báo, không traceback trước argparse."""
+    raw = os.environ.get("CREATE_TASK_GH_TIMEOUT_S", "60")
+    try:
+        v = float(raw)
+        if v > 0 and v == v:
+            return v
+    except ValueError:
+        pass
+    print(f"   ⚠️  CREATE_TASK_GH_TIMEOUT_S={raw!r} không hợp lệ: dùng 60s.", file=sys.stderr)
+    return 60.0
 
 def run_cmd(cmd, check=True):
+    limit = gh_timeout_s()
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=GH_TIMEOUT_S)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=limit)
     except subprocess.TimeoutExpired:
-        r = subprocess.CompletedProcess(cmd, 124, "", f"quá {GH_TIMEOUT_S:g}s không phản hồi")
+        r = subprocess.CompletedProcess(cmd, 124, "", f"quá {limit:g}s không phản hồi")
     if check and r.returncode != 0:
         raise RuntimeError(f"Command failed ({' '.join(cmd)}):\n{r.stderr.strip()}")
     return r
@@ -601,7 +612,9 @@ def main():
             else:
                 res = run_cmd(["gh", "issue", "edit", str(n), "--repo", repo, "--body", merge_body(current, title, body)],
                               check=False)
-                if f"{BATCH_HEADING}{title}" in (fresh_body(repo, n) or ""):
+                mark = f"{BATCH_HEADING}{title}"
+                # Ghi thành công = edit exit 0 VÀ số mục cùng tên tăng (thẻ đã có mục trùng tên thì "có mặt" chưa chứng minh gì, #330).
+                if res.returncode == 0 and (fresh_body(repo, n) or "").count(mark) > current.count(mark):
                     print(f"\n🧺 Đã gom \"{title}\" vào thẻ Backlog #{n} ({card['title']}): một PR, một gate. "
                           "Việc độc lập cần PR riêng thì thêm --new-card \"<lý do>\".")
                     sys.exit(0)

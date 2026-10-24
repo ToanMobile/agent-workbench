@@ -322,4 +322,25 @@ PY
 rc=$(run "${NEWARGS[@]}")
 grep -q "bị cắt" "$TMP/out" && ok "28 board vượt giới hạn đọc → cảnh báo" || fail "28 thiếu cảnh báo cắt"
 
+# 29. #330 mục 1: thẻ đã có mục "Gộp thêm: <cùng tên>" mà gh issue edit lỗi → KHÔNG báo "Đã gom" (việc mới mất im lặng); tạo thẻ mới.
+python3 - <<'PY'
+import json, os
+t = "✨ [feature] hooks: thêm việc B"
+open(os.environ["FAKE_ITEMS"], "w").write(json.dumps({"items": [{"status": "Backlog", "labels": ["feature"],
+    "content": {"type": "Issue", "repository": "ToanMobile/agent-workbench", "number": 7, "title": "t",
+                "body": "## Problem\nx\n\n## Acceptance Criteria\n- [ ] cũ\n\n## Gộp thêm: " + t + "\n### Problem\ncũ\n"}}]}))
+PY
+export FAKE_EDIT_FAIL=1
+rc=$(run "${NEWARGS[@]}")
+unset FAKE_EDIT_FAIL
+! grep -q "Đã gom" "$TMP/out" && [ "$(called issue create)" = "1" ] && ok "29 edit lỗi + mục trùng tên → không báo Đã gom, tạo thẻ mới" || fail "29 rc=$rc: $(cat "$TMP/out")"
+
+# 30. #330 mục 2: CREATE_TASK_GH_TIMEOUT_S rỗng / rác ('60s') / ≤ 0 → dùng 60 kèm cảnh báo, không traceback lúc import.
+items '[{"n":7}]'
+for v in "" "60s" "0" "-5"; do
+    : > "$FAKE_LOG"; rm -f "$FAKE_EDITED"
+    (cd "$TMP/repo" && CREATE_TASK_GH_TIMEOUT_S="$v" python3 "$CT" "${NEWARGS[@]}") >"$TMP/out" 2>&1; rc=$?
+    ! grep -q Traceback "$TMP/out" && [ "$rc" = "0" ] && [ "$(called issue edit)" = "1" ] && ok "30 CREATE_TASK_GH_TIMEOUT_S='$v' → vẫn gom" || fail "30 '$v' rc=$rc: $(head -5 "$TMP/out")"
+done
+
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
