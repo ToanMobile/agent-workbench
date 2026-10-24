@@ -134,9 +134,8 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    then the same oracle GREEN after. Keep the command log and the exit code.
 3. From the repo root, once:
    `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`
-   Exit 0 is required. Khi làm việc qua nhiều prompt hoặc nhiều agent, gate tự động tối ưu:
-   chỉ chạy test ca đang làm (impacted mode) khi còn các phiên khác đang chạy, và chỉ chạy toàn diện
-   `--full` khi đây là phiên cuối cùng duy nhất hoàn tất công việc. Một lượt hoãn/impacted in "CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU", không ghi receipt và KHÔNG phải bằng chứng cho bước 5: phiên cuối chạy `--full`, hoặc thêm `--force-full` khi phải nghiệm thu ngay. Any other exit: paste the last
+   Exit 0 is required. Còn phiên khác đang chạy thì gate chỉ chạy test ca đang làm (impacted mode);
+   chỉ phiên cuối cùng chạy `--full`. Một lượt hoãn/impacted in "CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU", không ghi receipt và KHÔNG phải bằng chứng cho bước 5: phiên cuối chạy `--full`, hoặc thêm `--force-full` khi phải nghiệm thu ngay. Any other exit: paste the last
    30 log lines, fix, and repeat this step. A dry-run, `--help`, or a single Gradle test does not replace this command.
    `--full` is cached-full: every cacheable light/cpu matrix suite is considered too; one whose content key (its inputs +
    environment, `bin/suite_cache.py`, shared by every worktree) already PASSed is reused, the rest run (an added suite that
@@ -144,9 +143,8 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    `"cache": false` keep the old selection; `--no-cache` runs them all. When the repo's last real full run is over 24 h old,
    a `--full` (not a merge gate) uses no content key (sentinel). A push needs the receipt of the pushed content (usually
    zero suites to run). Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores
-   (`bin/capacity.py` hold_load, 96 on 12 cores; `DEVKIT_SLOT_LOAD_MAX` overrides, `DEVKIT_CAPACITY` scales every limit)
-   they start at once, above it they wait up to 600 s and run anyway; only Unity and device
-   suites hold an exclusive lock.
+   (`bin/capacity.py`; `DEVKIT_SLOT_LOAD_MAX` / `DEVKIT_CAPACITY` override) they start at once, above it they
+   wait up to 600 s and run anyway; only Unity and device suites hold an exclusive lock.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a
    screen: the profile was backend when the turn started (committed, or an uncommitted profile
    file written before the turn), or every file changed since HEAD at
