@@ -90,7 +90,7 @@ CARDS="[]"
 
 TARGETS="[]"
 for n in ${ISSUES//,/ }; do
-  one=$(python3 "$HERE/super-board-github-read.py" --kind issue -- issue view "$n" --repo "$REPO" --json number,title,body ) || exit $?
+  one=$(python3 "$HERE/super-board-github-read.py" --kind issue -- issue view "$n" --repo "$REPO" --json number,title,body,labels ) || exit $?
   TARGETS=$(jq -c --argjson one "$one" '. + [$one]' <<<"$TARGETS")
 done
 
@@ -222,13 +222,17 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     # Own branch = this card coming back (rebuild, rebase); never its own duplicate.
     | [ $open[] | select((.headRefName // "") | startswith("issue-\($n)-") | not) ] as $others
 
-    | ( [ $merged[] | select(closes($n)) | "PR #\(.number) merged and closes #\($n)" ]
+    | ( ( [ $merged[] | select(closes($n)) | "PR #\(.number) merged and closes #\($n)" ]
       + [ $merged[] | select(($myfp | length) > 0 and (fps - (fps - $myfp) | length) > 0)
           | "PR #\(.number) merged with the same fingerprint" ]
       + [ $merged[] | select(sim(.title; $i.title) >= $th) | "PR #\(.number) merged: \"\(.title)\"" ]
       + [ $closed[] | select(.number != $n and .stateReason != "NOT_PLANNED")
           | select(sim(.title; $i.title) >= $th or (($myfp | length) > 0 and (fps - (fps - $myfp) | length) > 0))
-          | "issue #\(.number) closed: \"\(.title)\"" ] ) as $done
+          | "issue #\(.number) closed: \"\(.title)\"" ] )
+        # T0054: nhãn ac-open = PR của chính thẻ đã merge nhưng còn AC chưa chứng minh; PR merged (giống tiêu đề /
+        # fingerprint) không phải "đã giao". Bằng chứng issue khác đã đóng (trùng thật) vẫn giữ. Lọc trong ngoặc: `.` sau
+        # dòng này vẫn là thẻ $i như trước.
+        | (if any($i.labels[]?; (.name // . | ascii_downcase) == "ac-open") then map(select(startswith("issue #"))) else . end) ) as $done
 
     | ( [ $others[] | select(closes($n)) | "open PR #\(.number) (\(.headRefName)) already closes #\($n)" ]
       + [ $others[] | select(closes($n) | not) | select(sim(.title; $i.title) >= $th)

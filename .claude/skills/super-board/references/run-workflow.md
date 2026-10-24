@@ -271,7 +271,9 @@ Repeat until a done condition or halt gate fires:
    for EVERY card in the wave, release the assignee
    (`gh issue edit <n> --remove-assignee <bot_identity>`, idempotent).
    A card whose issue is now CLOSED (builder "already met" exit, run.md step 3c) moves to Done:
-   `.claude/bin/super-board-card.sh --config <cfg> move <N> Done`.
+   `.claude/bin/super-board-card.sh --config <cfg> move <N> Done`. Exit 5 = the card carries label `ac-open` (T0054: a PR
+   merged with AC still unproven): reopen the issue (`gh issue reopen <N>`, unless it was closed as not planned) and move it
+   to Ready instead — never Done.
    Append one line per card to the run manifest
    `docs/super-board/runs/<date>-<slug>.md`:
    `| #N | <lanesRun> | <finalStatus> | <column> | <detail> |`.

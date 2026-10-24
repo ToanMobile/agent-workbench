@@ -300,4 +300,19 @@ SH
 fi
 
 echo
+# Ca HANG: post-fix-gate in `[ ] TIMEOUT (HANG) |` cho suite quá giờ lúc máy rảnh (#370); vẫn là chỉ-TIMEOUT nên chạy lại 1 lần.
+{ row "TIMEOUT (HANG)" REG-DK-ALL-01 "DevKit full suite"; reject "đạt"; } > "$TMP/red-hang.log"
+mkpr 41
+run_case 41 "$TMP/red-hang.log" 1 "$TMP/green.log" 0
+[ "$CASE_RC" -eq 0 ] && [ "$CASE_RUNS" -eq 2 ] && grep -q "retrying once" "$TMP/gate41.log" \
+  && ok "HANG-labelled timeout-only red: retried once (exit 0, runs=2)" \
+  || fail "HANG-labelled timeout-only red (rc=$CASE_RC runs=$CASE_RUNS, want 0 and 2): $(why 41)"
+# HANG kèm một suite FAIL thật: không chạy lại.
+{ row "TIMEOUT (HANG)" REG-DK-ALL-01 "DevKit full suite"; row FAIL REG-SB-01 "super-board suite"; reject "đạt"; } > "$TMP/red-hang-mixed.log"
+mkpr 42
+run_case 42 "$TMP/red-hang-mixed.log" 1 "$TMP/green.log" 0
+[ "$CASE_RC" -eq 11 ] && [ "$CASE_RUNS" -eq 1 ] \
+  && ok "HANG + real FAIL: not retried (exit 11, runs=1)" \
+  || fail "HANG + real FAIL (rc=$CASE_RC runs=$CASE_RUNS, want 11 and 1): $(why 42)"
+
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_timeout_retry: PASS"; exit 0; } || { echo "test_merge_gate_timeout_retry: FAIL ($FAILS)"; exit 1; }

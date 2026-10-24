@@ -307,6 +307,27 @@ def reason_for(body: str) -> tuple[str, str]:
     return "🚫", "other"
 
 
+_BLOCKED_BY_LINE = re.compile(r"^[ \t]*blocked-by:(.*)$", re.I | re.M)
+_BLOCKED_BY_OK = re.compile(r"^(-|[0-9]+(,[0-9]+)*)?$")
+
+
+def split_unreadable_blocked_by(
+    blockers: list[dict[str, Any]], comments: dict[int, list[dict[str, Any]]]
+) -> tuple[dict[int, str], list[dict[str, Any]]]:
+    """#386: split Blocked cards into ({number: why} whose newest `blocked-by:` line deps.sh cannot parse, the rest). Same rule as
+    super-board-deps.sh: `-`, empty or issue numbers alone are readable; `#377` or a sentence is not."""
+    bad: dict[int, str] = {}
+    for it in blockers:
+        ordered = sorted(comments.get(it["number"], []), key=lambda c: c.get("createdAt", ""))
+        lines = [m.group(1) for c in ordered for m in _BLOCKED_BY_LINE.finditer(c.get("body") or "")]
+        if not lines:
+            continue
+        value = re.sub(r"[ \t\r]", "", lines[-1])
+        if not _BLOCKED_BY_OK.match(value):
+            bad[it["number"]] = f'`blocked-by:` reads "{value}" — it must be issue numbers alone, or `-`'
+    return bad, [it for it in blockers if it["number"] not in bad]
+
+
 def field_status(node: dict[str, Any]) -> str:
     """Read the `Status` single-select field from a project-item node."""
     for fv in (node.get("fieldValues", {}).get("nodes") or []):
@@ -625,6 +646,7 @@ def main() -> int:
     # snapshot. The body is capped at 4000 chars; emojis in the locked
     # vocabulary land at the top of any well-formed reason-tag comment.
     reasons: dict[int, str] = {}
+    blocked_comments: dict[int, list[dict[str, Any]]] = {}
     for it in by_status["Blocked"]:
         n = it["number"]
         out = gh("issue", "view", str(n), "--json", "comments", check=False)
@@ -635,6 +657,7 @@ def main() -> int:
         except json.JSONDecodeError:
             continue
         comments.sort(key=lambda c: c.get("createdAt", ""))
+        blocked_comments[n] = comments
         body = (comments[-1].get("body") if comments else "") or ""
         reasons[n] = body[:4000]
 
@@ -763,8 +786,11 @@ def main() -> int:
     waiting_cards = [it for it in waiting_on_cards(items) if it["number"] not in person_numbers]
     waiting_numbers = {it["number"] for it in waiting_cards}
     blockers = [it for it in by_status["Blocked"] if it["number"] not in person_numbers | waiting_numbers]
+    unreadable, blockers = split_unreadable_blocked_by(blockers, blocked_comments)
     print(f"   {WAITING_LABEL} ×{len(waiting_cards)}  (the sweep releases them when the blocker closes — nothing to do)"
           + ("  " + ", ".join(f"#{it['number']}" for it in waiting_cards) if waiting_cards else ""))
+    for n, why in sorted(unreadable.items(), reverse=True):
+        print(f"   ⚠ blocked-by không đọc được  #{n}  {why}")
     if not blockers:
         print("   (none)")
     else:

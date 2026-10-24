@@ -40,7 +40,7 @@ fin "$W"; rc=$?
   && ok "  … nothing was committed in the worktree or merged into main" || fail "  … something moved: main '$(G "$P" log -1 --format=%s)'"
 main_intact && ok "  … main's real node_modules/ and its files are intact" || fail "  … main's node_modules was replaced: $(ls -la "$P" | grep node_modules)"
 if [ -d "$W" ]; then
-  rm -f "$W/node_modules"
+  rm -f "$W/node_modules"; G "$W" add w.txt && G "$W" commit -qm "w by hand"   # finish never commits real work (#366)
   fin "$W"; rc=$?; [ "$rc" = 0 ] && [ -f "$P/w.txt" ] && main_intact && ok "  … without the link the rest goes through" || fail "  … after removing the link (rc=$rc): $(cat "$TMP/out")"
 fi
 
@@ -83,6 +83,7 @@ fin "$W"; rc=$?
   || fail "5: (rc=$rc, main moved: $([ "$(G "$P" rev-parse HEAD)" = "$H5" ] && echo no || echo yes), main's config.json: $(ls -la "$P/config.json" 2>&1)): $(cat "$TMP/out")"
 if [ -d "$W" ]; then
   rm "$W/config.json" && echo '{"k": 2}' > "$W/config.json" && ln -sfn b.txt "$W/cur"   # settled: a real edit, and a link HEAD holds as a link retargeted
+  G "$W" add config.json cur && G "$W" commit -qm "settled by hand"   # finish never commits real work (#366)
   fin "$W"; rc=$?
   [ "$rc" = 0 ] && [ ! -L "$P/config.json" ] && [ "$(cat "$P/config.json")" = '{"k": 2}' ] && [ "$(readlink "$P/cur")" = b.txt ] && [ ! -d "$W" ] \
     && ok "  … a real edit of it and a retargeted tracked link are ordinary work: merged, the worktree removed" || fail "  … after settling (rc=$rc): $(cat "$TMP/out")"

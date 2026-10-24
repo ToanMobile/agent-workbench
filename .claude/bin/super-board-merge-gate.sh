@@ -76,6 +76,8 @@
 #   11 verification failed after merging the base cleanly into the scratch tree —
 #      rebasing changes nothing: back to Build to fix the failing verify (the gate
 #      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
+#      — also when the newest `[qa] [report]` comment still has a non-empty `❌ Not done:` line, or a `- [x]` AC of the PR body has
+#      no `↳ <proof>` line (super-board-qa-report.py, #364); stdout lists each `qa-report: <reason>`
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
 #      — or the merge call failed while GitHub still shows the PR OPEN at the verified head (nothing merged; next wave retries)
@@ -85,6 +87,7 @@
 #      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
 #      the card goes back to Review (not Blocked, not a rebase pass)
+#   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
 #   7  merge policy says a human merges this one (money / auth / destructive
 #      schema, a diff over auto_max_lines — default 400, "big PR — please
 #      review" — or merge_policy.default "human"). Stdout lists each
@@ -267,7 +270,7 @@ MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //
 BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
-cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}"; release; }
+cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}" "${AC_DIR:-}"; release; }
 trap cleanup EXIT
 
 # ---- the head guard --------------------------------------------------------
@@ -306,7 +309,22 @@ META=$(mktemp); DIFF=$(mktemp)
 # Log của lệnh verify cũng ngoài $SCRATCH (18/10, GeelyEx2): trong cây, ở repo không ignore *.log, nó là file chưa track trong dấu vân tay
 # cây (bin/tree_fp.py), nên post-fix-gate không mượn được biên nhận --full của worktree đã PASS đúng nội dung đó và chạy lại mọi suite.
 VERIFY_LOG=$(mktemp)
-python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
+python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body,comments,author > "$META"
+# #364: report QA mới nhất của người đáng tin còn "❌ Not done" nêu tên một AC, hay AC [x] không có dòng bằng chứng ↳: không merge,
+# thẻ về Build (exit 11). Checker thoát 2 (metadata không đọc được), crash, hay thoát 1 mà không in dòng "qa-report:" nào là
+# KHÔNG quyết định được: cùng đường với policy không đọc được (exit 7, người duyệt), không phải lỗi build của thẻ.
+QA_REPORT_RC=0
+QA_REPORT_OUT=$(python3 "$HERE/super-board-qa-report.py" --meta "$META" 2>/dev/null) || QA_REPORT_RC=$?
+if [ "$QA_REPORT_RC" -ne 0 ]; then
+  if [ "$QA_REPORT_RC" -eq 1 ] && printf '%s\n' "$QA_REPORT_OUT" | grep -q '^qa-report: '; then
+    printf '%s\n' "$QA_REPORT_OUT"
+    say "QA report/AC not clean — nothing merged; the card goes back to Build"
+    exit 11
+  fi
+  echo "human-gate: qa-report — could not evaluate the QA report / AC (checker exit ${QA_REPORT_RC}; metadata unreadable or checker crashed)"
+  say "QA report could not be evaluated — a human merges this one"
+  exit 7
+fi
 python3 "$GITHUB_READ" --kind diff --meta "$META" -- pr diff "$PR" ${REPO:+--repo "$REPO"} > "$DIFF"
 PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
   echo "human-gate: policy — could not classify the PR (unreadable metadata)"
@@ -344,6 +362,53 @@ if [ -n "$HUMAN" ] && [ "$APPROVED" != true ]; then
   say "merge policy: waiting for a trusted human to approve this exact head"
   needs_you_notify
   exit 7
+fi
+
+# ---- AC của thẻ (T0054, 24/10) ---------------------------------------------------
+# #315 đóng khi AC "cache REG-DK-ALL-01" chưa ai làm: #318 chỉ ghi "AC của thẻ #315", PR #343 nén 7 AC thành 3 dòng
+# đã tick, `Closes` đóng thẻ. super-board-ac-check.py đọc body; trước verify (rẻ, builder sửa được):
+#   Closes thẻ khác thẻ của nhánh issue-<N>, hoặc khối sb:ac ít dòng hơn số AC của thẻ → exit 11 (về Build viết lại).
+# Còn dòng AC chưa tick (đo số sau merge, thiết bị, người): vẫn merge, nhưng Closes → Refs và thẻ ở lại (ac_after_merge).
+# Nhánh không mang issue-<N>: bỏ qua. Không có khối sb:ac: chỉ kiểm Closes lạ, không đọc issue (PR tay giữ hành vi cũ).
+AC_DIR=$(mktemp -d); AC_CARD=""; AC_UNTICKED=""; AC_HAS_LABEL=false
+jq -r '.body // ""' "$META" > "$AC_DIR/pr.md"
+# Subject của commit squash cũng đóng thẻ ("Fix #23: …"): --subject, không có thì tiêu đề PR — kiểm cùng message.
+AC_SUBJECT="${SUBJECT:-$(pr_title)}"
+{ printf '%s\n\n' "$AC_SUBJECT"; [ -z "$MSG_FILE" ] || cat "$MSG_FILE"; } > "$AC_DIR/check-msg.md"
+AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") \
+  || { say "ac-check could not run"; exit 9; }
+if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
+  AC_CARD=$(echo "$AC_JSON" | jq -r .card)
+  foreign=$(echo "$AC_JSON" | jq -r '.foreign_closes | map("#\(.)") | join(", ")')
+  if [ -n "$foreign" ]; then
+    echo "ac-check: the PR or its squash message closes ${foreign}, but branch ${HEAD_REF} is card #${AC_CARD} — close only #${AC_CARD}; reference the others with Refs"
+    say "a PR closes only its own card: back to Build to fix the closing keywords"
+    exit 11
+  fi
+  # Có khối sb:ac, hoặc không có mà PR vẫn tự Closes thẻ (nén về 0 dòng): đối chiếu với AC của thẻ.
+  if [ "$(echo "$AC_JSON" | jq -r '.ac or .closes_own')" = true ]; then
+    python3 "$GITHUB_READ" --kind issue -- issue view "$AC_CARD" ${REPO:+--repo "$REPO"} --json number,title,body,labels > "$AC_DIR/issue.json"
+    jq -r '.body // ""' "$AC_DIR/issue.json" > "$AC_DIR/issue.md"
+    jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' "$AC_DIR/issue.json" >/dev/null && AC_HAS_LABEL=true
+    extra=()
+    # "AC của thẻ #X": các AC của #X tính vào thẻ này. Danh sách #X lấy từ AC của chính thẻ (lần gọi có --issue-body; lần đầu
+    # chưa có body nên luôn rỗng — OCR 24/10). Đọc #X thường, không qua github-read: không đọc được thì ac-check vẫn tính nó
+    # ít nhất 1 AC, không đáng halt cả board.
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" \
+      --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
+    for x in $(echo "$AC_JSON" | jq -r '(.indirect // [])[]'); do
+      gh issue view "$x" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/x$x.md" 2>/dev/null || : > "$AC_DIR/x$x.md"
+      extra+=(--extra-issue-body "$x=$AC_DIR/x$x.md")
+    done
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} \
+      --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
+    if [ "$(echo "$AC_JSON" | jq -r .collapsed)" = true ]; then
+      echo "ac-check: card #${AC_CARD} has $(echo "$AC_JSON" | jq -r .issue_ac) acceptance criteria (cards it refers to included) but the PR's sb:ac block lists $(echo "$AC_JSON" | jq -r .pr_ac) — one line per criterion, each ticked with its own proof or left unticked with the reason"
+      say "AC collapsed into fewer lines than the card has: back to Build to rewrite the sb:ac block"
+      exit 11
+    fi
+    AC_UNTICKED=$(echo "$AC_JSON" | jq -r '(.unticked // [])[] | "- " + .')
+  fi
 fi
 
 # ---- chờ máy bớt tải trước verify ------------------------------------------------
@@ -440,6 +505,35 @@ git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet
 # verify có thể đã bị phiên khác fetch đi; suy từ HEAD^2 thì sai khi merge là fast-forward lên một merge commit (OCR 18/10).
 BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || {
   say "cannot resolve origin/${BASE} after fetch"; exit 1; }
+
+# T0054: không có --body-file thì GitHub lấy message squash từ các commit của nhánh — từ khoá Closes trong đó cũng đóng thẻ.
+# Đọc bằng `git log` trên các ref vừa fetch: Closes thẻ lạ → exit 11; còn AC chưa tick thì log này (đã đổi Closes → Refs) thành
+# message squash, giữ danh sách commit và trailer (Co-Authored-By, Test-approved-by).
+if [ -n "$AC_CARD" ] && [ -z "$MSG_FILE" ]; then
+  git -C "$REPO_PATH" log --reverse --format='* %s%n%n%b' "${BASE_SHA}..${HEAD_SHA}" > "$AC_DIR/log.md" 2>/dev/null || : > "$AC_DIR/log.md"
+  LOG_JSON=$(python3 "$HERE/super-board-ac-check.py" --pr-body /dev/null --msg "$AC_DIR/log.md" --branch "$HEAD_REF") || LOG_JSON='{}'
+  foreign=$(echo "$LOG_JSON" | jq -r '(.foreign_closes // []) | map("#\(.)") | join(", ")')
+  if [ -n "$foreign" ]; then
+    # Commit đã push thì builder không sửa được message mà không viết lại lịch sử (force-push bị chặn): exit 11 sẽ lặp.
+    # Gate tự dùng log đó làm message squash, từ khoá đóng thẻ khác đổi thành Refs.
+    python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/log.md" --card "$AC_CARD" --foreign >/dev/null
+    MSG_FILE="$AC_DIR/log.md"
+    say "a commit on ${HEAD_REF} closes ${foreign}; the squash message turns those into Refs (only card #${AC_CARD} may close)"
+  fi
+  # Chỉ commit tự `Closes #<thẻ>` (body không có sb:ac, không Closes) thì AC chưa được đối chiếu ở trên: thẻ có AC → nén về 0 dòng.
+  if [ "$(echo "$LOG_JSON" | jq -r '.closes_own // false')" = true ] && [ ! -s "$AC_DIR/issue.md" ] \
+     && [ "$(echo "$AC_JSON" | jq -r '.ac // false')" = false ]; then
+    python3 "$GITHUB_READ" --kind issue -- issue view "$AC_CARD" ${REPO:+--repo "$REPO"} --json number,title,body,labels > "$AC_DIR/issue.json"
+    jq -r '.body // ""' "$AC_DIR/issue.json" > "$AC_DIR/issue.md"
+    n_ac=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" --pr-body /dev/null --msg "$AC_DIR/log.md" \
+      --branch "$HEAD_REF" | jq -r '.issue_ac // 0')
+    if [ "${n_ac:-0}" -gt 0 ]; then
+      echo "ac-check: a commit on ${HEAD_REF} closes card #${AC_CARD} (${n_ac} acceptance criteria) but the PR has no sb:ac block — list every criterion in it, one line each"
+      say "AC collapsed into fewer lines than the card has: back to Build to rewrite the sb:ac block"
+      exit 11
+    fi
+  fi
+fi
 
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
   say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
@@ -600,7 +694,7 @@ run_verify_cmd_inner() {
 # Gate post-fix-gate đỏ CHỈ vì suite quá giờ (#142, 18/10: REG-DK-ALL-01 TIMEOUT 900 s khi máy tải cao): exit 1 với kết luận REJECT
 # (exit 1 còn là CHƯA XÁC MINH khi project bị gỡ), dòng "Lớp tĩnh … : đạt" / "Static checks … : passed", có ít nhất một dòng suite
 # `[ ] TIMEOUT |` và không dòng suite đỏ nào khác. Dòng suite = đầu dòng (sau khoảng trắng) là `[ ] <bất kỳ> |` sau khi bỏ mã màu:
-# trạng thái lạ (FAIL_INFRA…) vẫn bị đếm là đỏ khác (fail-closed); dòng đuôi output của suite bắt đầu bằng "|" nên không bị đếm.
+# `TIMEOUT (HANG)` (post-fix-gate #370: quá giờ lúc máy rảnh) cũng là TIMEOUT nên được chạy lại; trạng thái lạ (FAIL_INFRA…) vẫn bị đếm là đỏ khác (fail-closed); dòng đuôi output của suite bắt đầu bằng "|" nên không bị đếm.
 # Thiếu dòng lớp tĩnh, kết luận không REJECT hay không có dòng suite nào: không phân loại được → không chạy lại.
 gate_red_only_by_timeout() {
   local rc="$1" log_file="$2"
@@ -611,7 +705,7 @@ gate_red_only_by_timeout() {
       if (static != 2) static = ($0 ~ /: (đạt|passed)[[:space:]]*$/) ? 1 : 2
     }
     /^[[:space:]]*\[ \] [^|]*\|/ {
-      if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT[[:space:]]*\|/) t++; else other++
+      if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT( \(HANG\))?[[:space:]]*\|/) t++; else other++
     }
     END { exit !(rej && static == 1 && t > 0 && other == 0) }'
 }
@@ -895,9 +989,59 @@ fi
 
 # ---- the merge -------------------------------------------------------------
 if [ "$DRY" -eq 1 ]; then
+  [ -z "$AC_UNTICKED" ] || say "dry run: card #${AC_CARD} has unproven AC — would turn Closes into Refs and keep the card open (ac-open)"
   say "dry run: would squash-merge PR #${PR}"
   exit 0
 fi
+
+# T0054: còn dòng AC chưa tick → GitHub không được tự đóng thẻ khi merge. Đổi từ khoá đóng #<thẻ> thành Refs trong body PR
+# (gh pr edit, không đổi head) và trong message squash (bản chép; không có --body-file thì message chỉ "Refs #<thẻ>").
+# Ghi body hỏng thì không merge: thẻ sẽ bị đóng với AC chưa chứng minh — đúng lỗi này chặn. Lần sau gate chạy lại.
+if [ -n "$AC_UNTICKED" ]; then
+  # Trước mọi lần ghi lên GitHub: không có subject đã kiểm thì không merge (và không để PR bị sửa dở).
+  if [ -z "$SUBJECT" ] && [ -z "$AC_SUBJECT" ]; then
+    say "could not read the PR title for the squash subject; not merging (GitHub would use a title nobody checked for Closes)"
+    exit 4
+  fi
+  # Đọc lại body ngay trước khi ghi: verify có thể đã chạy > 900 s, ghi bản cũ sẽ đè sửa đổi của lane khác trong lúc đó.
+  gh pr view "$PR" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/pr.md" \
+    || { say "could not re-read the PR body before turning Closes #${AC_CARD} into Refs; not merging"; exit 4; }
+  if [ "$(python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/pr.md" --card "$AC_CARD")" = rewritten ]; then
+    gh pr edit "$PR" ${REPO:+--repo "$REPO"} --body-file "$AC_DIR/pr.md" >/dev/null \
+      || { say "could not rewrite Closes #${AC_CARD} in the PR body; not merging (the card would close with unproven AC)"; exit 4; }
+  fi
+  if [ -n "$MSG_FILE" ]; then cp "$MSG_FILE" "$AC_DIR/msg.md"; else cp "$AC_DIR/log.md" "$AC_DIR/msg.md" 2>/dev/null || : > "$AC_DIR/msg.md"; fi
+  python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/msg.md" --card "$AC_CARD" >/dev/null
+  grep -q "#${AC_CARD}\b" "$AC_DIR/msg.md" || printf '\nRefs #%s\n' "$AC_CARD" >> "$AC_DIR/msg.md"
+  MSG_FILE="$AC_DIR/msg.md"
+  # Subject squash: --subject, không có thì tiêu đề PR như GitHub vẫn dùng ("<tiêu đề> (#PR)") — Closes trong đó cũng đổi.
+  [ -n "$SUBJECT" ] || SUBJECT="${AC_SUBJECT} (#${PR})"
+  printf '%s\n' "$SUBJECT" > "$AC_DIR/subject.md"
+  python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/subject.md" --card "$AC_CARD" >/dev/null
+  SUBJECT=$(head -1 "$AC_DIR/subject.md")
+elif [ "$AC_HAS_LABEL" = true ]; then
+  # Đủ AC: gỡ nhãn TRƯỚC merge — sau merge `Closes` đã đóng issue, runner thấy CLOSED + ac-open sẽ mở lại nó.
+  gh issue edit "$AC_CARD" ${REPO:+--repo "$REPO"} --remove-label ac-open >/dev/null 2>&1 \
+    && say "card #${AC_CARD}: every AC proven — label ac-open removed" \
+    || { say "could not remove label ac-open from #${AC_CARD}; not merging (the runner would reopen the closed card)"; exit 4; }
+fi
+# Sau merge (cả khi phản hồi merge bị mất mà GitHub xác nhận MERGED): còn AC chưa tick → nhãn ac-open, mở lại nếu đã đóng,
+# comment liệt kê, thẻ về Ready, in `ac-open: #N` cho lane. Đủ AC mà nhãn còn → gỡ nhãn. Lỗi ở đây chỉ cảnh báo: đã merge rồi.
+ac_after_merge() {
+  [ -n "$AC_CARD" ] && [ -n "$AC_UNTICKED" ] || return 0   # đủ AC: nhãn đã gỡ trước merge
+  echo "ac-open: #${AC_CARD}"
+  gh label create ac-open ${REPO:+--repo "$REPO"} --color FBCA04 --description "PR merged, acceptance criteria not all proven" >/dev/null 2>&1 || true
+  gh issue edit "$AC_CARD" ${REPO:+--repo "$REPO"} --add-label ac-open >/dev/null 2>&1 || say "warning: could not label #${AC_CARD} ac-open"
+  gh issue reopen "$AC_CARD" ${REPO:+--repo "$REPO"} >/dev/null 2>&1 || true   # đã mở thì gh báo lỗi vô hại
+  printf '%s\n' "[merge-gate] [report] ⏳ PR #${PR} merged · AC chưa chứng minh hết — thẻ ở lại" \
+    "Did: merge ${HEAD_SHA:0:12}; Closes #${AC_CARD} đổi thành Refs để thẻ không tự đóng" \
+    "❌ Chưa chứng minh:" "$AC_UNTICKED" \
+    "Next: PR sau của thẻ chép ĐỦ mọi dòng AC vào khối sb:ac — dòng đã chứng minh giữ [x] kèm PR #${PR}, dòng còn lại chứng minh ở PR đó. Dòng chỉ người/thiết bị làm được: block-template 🙋. Thẻ không vào Done khi còn nhãn ac-open." \
+    > "$AC_DIR/comment.md"
+  gh issue comment "$AC_CARD" ${REPO:+--repo "$REPO"} --body-file "$AC_DIR/comment.md" >/dev/null 2>&1 || say "warning: could not comment on #${AC_CARD}"
+  bash "$HERE/super-board-card.sh" --config "$CONFIG" move "$AC_CARD" Ready >&2 || say "warning: could not move #${AC_CARD} to Ready"
+  say "card #${AC_CARD} keeps label ac-open: $(printf '%s\n' "$AC_UNTICKED" | grep -c .) AC line(s) not proven — do not close it or move it to Done"
+}
 
 # --match-head-commit makes GitHub refuse if anything was pushed after HEAD_SHA,
 # including during the verification run above.
@@ -907,6 +1051,7 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
+  ac_after_merge
   board_notify send --card "PR #${PR}" --repo "$REPO" --title "$(pr_title)" --text "✅ đã merge ${HEAD_SHA}"
   # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
   # (không bao giờ của thẻ khác), để không phải dọn tay. worktree_merge_gate.state là sổ nợ worktree toàn repo
@@ -1040,7 +1185,13 @@ PY
         # --attr-source keeps the repo's merge drivers applying, as `git -C "$MAIN_PATH"` did.
         main_gd=$(git -C "$MAIN_PATH" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || main_gd=""
         merged_tree=""
-        [ -z "$main_gd" ] || merged_tree=$(cd "$SCRATCH" && git --git-dir="$main_gd" --attr-source="$TARGET_SHA" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
+        [ -z "$main_gd" ] || merged_tree=$(cd "$SCRATCH" && git --git-dir="$main_gd" --attr-source="$TARGET_SHA" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>"$SCRATCH/mt.err") || merged_tree=""
+        # git 2.38-2.41 có merge-tree --write-tree nhưng không có --attr-source (exit 129, "unknown option"): thử lại không cờ đó (#358).
+        if [ -z "$merged_tree" ] && grep -q 'attr-source' "$SCRATCH/mt.err" 2>/dev/null; then
+          # Như lệnh chính (#309): cwd = $SCRATCH và --git-dir thay cho cờ -C vào checkout của người dùng (-C đổi cwd về đó,
+          # merge driver bị giết sẽ để .merge_file_* ở đó). main_gd chắc có giá trị: lần thử đầu chỉ đỏ vì lỗi attr-source.
+          merged_tree=$(cd "$SCRATCH" && git --git-dir="$main_gd" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
+        fi
         # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
         if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "$TARGET_SHA" "$local_tip" 2>/dev/null; then merged_tree="$origin_tree"; fi
         # `reset --keep` cũng đặt lại INDEX về commit đích: file phiên khác đã stage (khác HEAD) sẽ rơi khỏi index (thành untracked).
@@ -1100,6 +1251,7 @@ while :; do
   STATE=$(pr_state) || exit $?
   if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then
     say "merge response was lost; GitHub confirms the merge commit"
+    ac_after_merge
     exit 0
   fi
   NOW_SHA=$(echo "$STATE" | jq -r .headRefOid)

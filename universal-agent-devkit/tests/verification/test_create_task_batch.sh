@@ -19,6 +19,8 @@ cat > "$TMP/bin/gh" <<'PY'
 import json, os, sys
 a = sys.argv[1:]
 open(os.environ["FAKE_LOG"], "a").write(json.dumps({"gh": a}, ensure_ascii=False) + "\n")
+if os.environ.get("FAKE_HANG") == " ".join(a[:2]):
+    import time; time.sleep(30)
 if a[:2] == ["issue", "create"]:
     print("https://github.com/ToanMobile/agent-workbench/issues/99"); sys.exit(0)
 if a[:2] == ["project", "item-add"]:
@@ -55,7 +57,7 @@ import json, os, sys
 out = []
 for c in json.loads(sys.argv[1]):
     out.append({"status": c.get("status", "Backlog"), "labels": c.get("labels") or [c.get("label", "feature")],
-                "content": {"type": "Issue", "repository": c.get("repo", "ToanMobile/agent-workbench"), "number": c["n"], "title": c.get("title", "thẻ %d" % c["n"]),
+                "content": {"type": "Issue", "repository": c.get("repo", "ToanMobile/agent-workbench"), "number": c["n"], "title": c.get("title", "✨ [feature] hooks: thẻ %d" % c["n"]),
                             "body": c.get("body", "## Problem\nx\n\n## Acceptance Criteria\n- [ ] cũ\n\n## Risk\n🟢\n")}})
 open(os.environ["FAKE_ITEMS"], "w").write(json.dumps({"items": out}))
 PY
@@ -173,10 +175,26 @@ items '[{"n":7}]'
 rc=$(run --from-file "$TMP/backlog.md" --ticket 1)
 [ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && [ "$(edited)" = "NONE" ] && ok "12 --from-file --ticket không bị gom" || fail "12 rc=$rc"
 
-# 13. Câu tóm tắt nhanh cũng gom.
+# 13. T0054: câu tóm tắt nhanh có scope chung chung ("task") → không biết chủ đề, không gom vào thẻ "hooks" (thẻ mới);
+#     cùng câu đó mà trùng một đường dẫn với thẻ thì vẫn gom.
 items '[{"n":7}]'
 rc=$(run "thêm log cho review_gate")
-[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && ok "13 tóm tắt nhanh cũng gom" || fail "13 rc=$rc edit=$(edited)"
+[ "$rc" = "0" ] && [ "$(edited)" = "NONE" ] && [ "$(called issue create)" = "1" ] && ok "13 tóm tắt nhanh không rõ chủ đề → thẻ mới" || fail "13 rc=$rc edit=$(edited)"
+items '[{"n":7,"body":"## Problem\nsửa universal-agent-devkit/hooks/review_gate.sh\n\n## Acceptance Criteria\n- [ ] cũ\n\n## Risk\n🟢\n"}]'
+rc=$(run "thêm log cho universal-agent-devkit/hooks/review_gate.sh")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && ok "13b tóm tắt nhanh trùng đường dẫn với thẻ → gom" || fail "13b rc=$rc edit=$(edited)"
+
+# 13c. T0054: khác scope, không trùng đường dẫn → không gom (#344 cache gate từng bị gom vào #319 khác chủ đề).
+items '[{"n":7,"title":"🐛 [fix] gate: bằng chứng test"}]'
+rc=$(run --title "⚡ [feature] suite-cache: cache REG-DK-ALL-01" --problem p --ac "- [ ] A")
+[ "$rc" = "0" ] && [ "$(edited)" = "NONE" ] && ok "13c khác scope, không trùng file → thẻ mới" || fail "13c rc=$rc edit=$(edited)"
+
+# 13d. T0054: trần đếm MỤC AC cấp 1 (SB_MAX_CARD_AC=8): 7 mục + 2 > 8 → không gom; + 1 (= 8) thì gom.
+items '[{"n":7,"body":"## Problem\nx\n\n## Acceptance Criteria\n- [ ] a\n- [ ] b\n- c\n1. d\n- [ ] e\n- [ ] f\n- [ ] g\n\n## Risk\n🟢\n"}]'
+rc=$(SB_MAX_CARD_AC=8 run --title "✨ [feature] hooks: việc X" --problem p --ac $'- [ ] X1\n- [ ] X2')
+[ "$rc" = "0" ] && [ "$(edited)" = "NONE" ] && ok "13d 7 + 2 mục AC > 8 → thẻ mới" || fail "13d rc=$rc edit=$(edited)"
+rc=$(SB_MAX_CARD_AC=8 run --title "✨ [feature] hooks: việc Y" --problem p --ac "- [ ] Y1")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && ok "13d 7 + 1 mục AC = 8 → gom" || fail "13d' rc=$rc edit=$(edited)"
 
 # 14. Thẻ Backlog đang chờ người (nhãn needs-you) không nhận thêm việc của lane.
 python3 - <<'PY'
@@ -233,7 +251,7 @@ import json, os
 body = ("## Problem\nx\n\n## Acceptance Criteria\n- [ ] cũ\n\n## Risk\n🟢\n\n## Blocked by\n- None.\n\n"
         "## Gộp thêm: việc A\n### Problem\nPA\n### Fix\nFA\n")
 open(os.environ["FAKE_ITEMS"], "w").write(json.dumps({"items": [{"status": "Backlog", "labels": ["feature"],
-    "content": {"type": "Issue", "repository": "ToanMobile/agent-workbench", "number": 7, "title": "t", "body": body}}]}))
+    "content": {"type": "Issue", "repository": "ToanMobile/agent-workbench", "number": 7, "title": "✨ [feature] hooks: t", "body": body}}]}))
 PY
 rc=$(run "${NEWARGS[@]}")
 body="$(edited_body)"
@@ -252,7 +270,7 @@ case "$body" in *"- [ ] [hooks] AC-MỚI-B"*) ok "18b dòng AC mới mang tên v
 python3 - <<'PY'
 import json, os
 open(os.environ["FAKE_ITEMS"], "w").write(json.dumps({"items": [{"status": "Backlog", "labels": ["feature"],
-    "content": {"type": "Issue", "repository": "ToanMobile/agent-workbench", "number": 7, "title": "t", "body": "## Problem\nx\n"}}]}))
+    "content": {"type": "Issue", "repository": "ToanMobile/agent-workbench", "number": 7, "title": "✨ [feature] hooks: t", "body": "## Problem\nx\n"}}]}))
 PY
 rc=$(run "${NEWARGS[@]}")
 body="$(edited_body)"
@@ -316,7 +334,7 @@ for lbl in human-gated wontfix loop:halted; do
 done
 
 # 26. Tên phạm vi có dấu \ không làm script chết (re.sub), AC mang tên đúng.
-items '[{"n":7}]'
+items '[{"n":7,"title":"✨ [feature] scripts\\gov: thẻ 7"}]'
 rc=$(run --title '✨ [feature] scripts\gov: việc B' --problem b --ac "- [ ] AC-B")
 [ "$rc" = "0" ] && [ "$(edited)" = "7" ] && case "$(edited_body)" in *'[scripts\gov] AC-B'*) ok "26 tên phạm vi có dấu \\ gom được" ;; *) fail "26 AC sai" ;; esac || fail "26 rc=$rc"
 
@@ -336,12 +354,25 @@ PY
 python3 - <<'PY'
 import json, os
 open(os.environ["FAKE_ITEMS"], "w").write(json.dumps({"totalCount": 900, "items": [{"status": "Backlog", "labels": ["feature"],
-    "content": {"type": "Issue", "repository": "ToanMobile/agent-workbench", "number": 7, "title": "t", "body": "## Problem\nx\n\n## Acceptance Criteria\n- [ ] cũ\n"}}]}))
+    "content": {"type": "Issue", "repository": "ToanMobile/agent-workbench", "number": 7, "title": "✨ [feature] hooks: t", "body": "## Problem\nx\n\n## Acceptance Criteria\n- [ ] cũ\n"}}]}))
 PY
 rc=$(run "${NEWARGS[@]}")
 grep -q "bị cắt" "$TMP/out" && ok "28 board vượt giới hạn đọc → cảnh báo" || fail "28 thiếu cảnh báo cắt"
 
-# 29. #330 mục 1: thẻ đã có mục "Gộp thêm: <cùng tên>" mà gh issue edit lỗi → KHÔNG báo "Đã gom" (việc mới mất im lặng); tạo thẻ mới.
+# 29. field-list treo quá hạn (#305): dùng ID cột Backlog dự phòng + cảnh báo, createTask vẫn xong (item-edit chạy).
+items '[{"n":7,"label":"qa"}]'
+export FAKE_HANG="project field-list" CREATE_TASK_GH_TIMEOUT_S=1
+rc=$(run "${NEWARGS[@]}" --new-card "test hết hạn")
+unset FAKE_HANG CREATE_TASK_GH_TIMEOUT_S
+[ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && [ "$(called project item-edit)" = "1" ] && grep -q "dự phòng" "$TMP/out" && grep -q "thoát 124" "$TMP/out" && ok "29 field-list treo → ID dự phòng + cảnh báo, vẫn xong" || fail "29 rc=$rc"
+
+# 30. issue create treo quá hạn (#305): thoát khác 0 kèm thông báo rõ, không treo, không đẩy lên board.
+export FAKE_HANG="issue create" CREATE_TASK_GH_TIMEOUT_S=1
+rc=$(run "${NEWARGS[@]}" --new-card "test hết hạn")
+unset FAKE_HANG CREATE_TASK_GH_TIMEOUT_S
+[ "$rc" != "0" ] && grep -q "quá 1s không phản hồi" "$TMP/out" && [ "$(called project item-add)" = "0" ] && ok "30 issue create treo → thoát khác 0 + thông báo" || fail "30 rc=$rc"
+
+# 31. #330 mục 1: thẻ đã có mục "Gộp thêm: <cùng tên>" mà gh issue edit lỗi → KHÔNG báo "Đã gom" (việc mới mất im lặng); tạo thẻ mới.
 python3 - <<'PY'
 import json, os
 t = "✨ [feature] hooks: thêm việc B"
@@ -352,14 +383,30 @@ PY
 export FAKE_EDIT_FAIL=1
 rc=$(run "${NEWARGS[@]}")
 unset FAKE_EDIT_FAIL
-! grep -q "Đã gom" "$TMP/out" && [ "$(called issue create)" = "1" ] && ok "29 edit lỗi + mục trùng tên → không báo Đã gom, tạo thẻ mới" || fail "29 rc=$rc: $(cat "$TMP/out")"
+! grep -q "Đã gom" "$TMP/out" && [ "$(called issue create)" = "1" ] && ok "31 edit lỗi + mục trùng tên → không báo Đã gom, tạo thẻ mới" || fail "31 rc=$rc: $(cat "$TMP/out")"
 
-# 30. #330 mục 2: CREATE_TASK_GH_TIMEOUT_S rỗng / rác ('60s') / ≤ 0 → dùng 60 kèm cảnh báo, không traceback lúc import.
+# 32. #330 mục 2: CREATE_TASK_GH_TIMEOUT_S rỗng / rác ('60s') / ≤ 0 → dùng 60 kèm cảnh báo, không traceback lúc import.
 items '[{"n":7}]'
 for v in "" "60s" "0" "-5"; do
     : > "$FAKE_LOG"; rm -f "$FAKE_EDITED"
     (cd "$TMP/repo" && CREATE_TASK_GH_TIMEOUT_S="$v" python3 "$CT" "${NEWARGS[@]}") >"$TMP/out" 2>&1; rc=$?
-    ! grep -q Traceback "$TMP/out" && [ "$rc" = "0" ] && [ "$(called issue edit)" = "1" ] && ok "30 CREATE_TASK_GH_TIMEOUT_S='$v' → vẫn gom" || fail "30 '$v' rc=$rc: $(head -5 "$TMP/out")"
+    ! grep -q Traceback "$TMP/out" && [ "$rc" = "0" ] && [ "$(called issue edit)" = "1" ] && ok "32 CREATE_TASK_GH_TIMEOUT_S='$v' → vẫn gom" || fail "32 '$v' rc=$rc: $(head -5 "$TMP/out")"
 done
+
+# 31. #369: trần dòng AC mỗi thẻ gom (MAX_CARD_AC, mặc định 12, SB_MAX_CARD_AC ghi đè): thẻ đã có đủ AC thì việc kế mở thẻ mới
+# (thẻ gom #323/#330 phình tới build 7873 s). Việc mới có 1 dòng AC: thẻ 11 AC vẫn nhận (11 + 1 = 12), thẻ 12 AC thì không.
+acs() { python3 -c 'import sys; print("\\n".join("- [ ] ac %d" % i for i in range(int(sys.argv[1]))))' "$1"; }
+items "[{\"n\":7,\"body\":\"## Problem\\nx\\n\\n## Acceptance Criteria\\n$(acs 11)\\n\\n## Risk\\n🟢\\n\"}]"
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && [ "$(called issue create)" = "0" ] && ok "31a thẻ 11 AC + 1 AC mới = 12 → vẫn gom" || fail "31a rc=$rc edit=$(edited)"
+items "[{\"n\":7,\"body\":\"## Problem\\nx\\n\\n## Acceptance Criteria\\n$(acs 12)\\n\\n## Risk\\n🟢\\n\"}]"
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "NONE" ] && [ "$(called issue create)" = "1" ] && ok "31b thẻ 12 AC + 1 AC mới > 12 → thẻ mới" || fail "31b rc=$rc edit=$(edited) create=$(called issue create)"
+: > "$FAKE_LOG"; rm -f "$FAKE_EDITED"
+(cd "$TMP/repo" && SB_MAX_CARD_AC=20 python3 "$CT" "${NEWARGS[@]}") >"$TMP/out" 2>&1
+[ "$(edited)" = "7" ] && ok "31c SB_MAX_CARD_AC=20 nâng trần → gom lại" || fail "31c edit=$(edited): $(head -5 "$TMP/out")"
+: > "$FAKE_LOG"; rm -f "$FAKE_EDITED"
+(cd "$TMP/repo" && SB_MAX_CARD_AC=abc python3 "$CT" "${NEWARGS[@]}") >"$TMP/out" 2>&1; rc=$?
+! grep -q Traceback "$TMP/out" && [ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && ok "31d SB_MAX_CARD_AC rác → trần mặc định 12, không traceback" || fail "31d rc=$rc: $(head -5 "$TMP/out")"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
