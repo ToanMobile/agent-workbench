@@ -133,9 +133,9 @@ run_one() { # <test> <out dir>
   # Slot riêng từng bài: --full của `sh`/`echo` không được chờ 2 slot Gradle/Unity của máy (Stop ngắt ở 600s).
   # Bài nào tự export SB_HEAVY_SLOT_DIR thì dùng dir của nó (test_heavy_slot.sh).
   # 24/10: mỗi bài chạy qua tests/lib/run_bounded.py: cả nhóm tiến trình của bài bị giết khi quá DEVKIT_TEST_TIMEOUT_S (mặc định
-  # 600: gấp 4 bài chậm nhất từng đo — 150 s, test_durations.txt — và dưới trần 900 s của cả suite REG-DK-ALL-01, để bài treo được nêu
-  # tên "killed after 600s" thay vì cả suite TIMEOUT không rõ bài nào; 0 = không hạn), khi tiến trình gọi helper chết, khi Ctrl-C /
-  # SIGTERM tới nhóm này, hay khi
+  # 1800 = gấp đôi trần 900 s của cả suite REG-DK-ALL-01: khi gate còn sống, TIMEOUT của suite luôn tới trước và giữ nguyên nghĩa
+  # TIMEOUT mà merge gate / KNOWN-RED xử lý riêng — đo 24/10, tải 96–100: hạn 600 s cắt 7 bài chỉ chậm, biến TIMEOUT thành FAIL; hạn
+  # này chặn mồ côi khi gate đã chết; 0 = không hạn), khi tiến trình gọi helper chết, khi Ctrl-C / SIGTERM tới nhóm này, hay khi
   # chính helper bị SIGKILL (watchdog). Runner này bị SIGKILL riêng thì xargs vẫn chạy nốt, nhưng mỗi bài vẫn dừng ở hạn của nó.
   # Trước đó `bash "$1"` trần: ca FIFO của test_gate_robustness.sh kẹt trong open(), runner phía trên mất, hai post-fix-gate.py
   # sống 18h và các gate khác báo BUSY.
@@ -149,8 +149,8 @@ export -f run_one
 # helper vắng (bản kit cũ) hay không có python3: chạy trần như trước, không chặn cả lượt test
 DEVKIT_RUN_BOUNDED=""
 [ -f "$DK/tests/lib/run_bounded.py" ] && command -v python3 >/dev/null 2>&1 && DEVKIT_RUN_BOUNDED="$DK/tests/lib/run_bounded.py"
-DEVKIT_TEST_TIMEOUT_S="${DEVKIT_TEST_TIMEOUT_S:-600}"
-case "$DEVKIT_TEST_TIMEOUT_S" in *[!0-9]*) echo "run_impacted.sh: DEVKIT_TEST_TIMEOUT_S must be whole seconds; using 600" >&2; DEVKIT_TEST_TIMEOUT_S=600 ;; esac
+DEVKIT_TEST_TIMEOUT_S="${DEVKIT_TEST_TIMEOUT_S:-1800}"
+case "$DEVKIT_TEST_TIMEOUT_S" in *[!0-9]*) echo "run_impacted.sh: DEVKIT_TEST_TIMEOUT_S must be whole seconds; using 1800" >&2; DEVKIT_TEST_TIMEOUT_S=1800 ;; esac
 export DEVKIT_RUN_BOUNDED DEVKIT_TEST_TIMEOUT_S
 parallel="" alone=""
 for t in $selected; do
