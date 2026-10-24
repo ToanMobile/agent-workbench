@@ -163,10 +163,14 @@ def read_new(path: Path, offsets: dict, since: float):
     return chunk[head:end].decode("utf-8", "replace").splitlines(), after
 
 
+BRANCH = re.compile(r"\bbranch '[^']*'")   # runner: "main checkout is on branch '<x>', not main"
+
+
 def classify_board(line: str):
     # Chữ sau "last log line:" là output của worker (việc của repo app, hook riêng của người dùng như `tuios`), không
     # phải lời runner: không phân loại theo nó.
     line = line.split("last log line:", 1)[0]
+    line = BRANCH.sub("branch «branch»", line)   # tên nhánh của repo app: không lên issue public, không tách chữ ký
     if IGNORE.search(line):
         return None
     for rid, rx, title, min_count, group in RULES:
@@ -231,12 +235,23 @@ def save_ledger(home: Path, data: dict) -> None:
     os.replace(tmp, home / "ledger.json")
 
 
+STAMPED = re.compile(r"^\[[\d:\- ]{8,19}\] ")   # "[07:32:45] …" (manifest) / "[2026-10-24 13:00:00] …" (watchdog)
+SEEN_MAX = 2000                                    # dấu vân tay dòng đã đếm, mỗi sự cố
+
+
 def record(incidents: dict, fp: str, rule: str, title: str, min_count: int, repo: Path, src: Path, evidence: str,
-           after: float) -> None:
-    """after = mốc mà lần gặp này chắc chắn được GHI sau (mtime của file ở lần đọc trước): so với lúc thẻ đóng."""
+           after: float, raw_line: str = "") -> None:
+    """after = mốc mà lần gặp này chắc chắn được GHI sau (lúc đọc trước của file): so với lúc thẻ đóng.
+    Dòng có dấu thời gian của runner/watchdog ("[HH:MM:SS] …") là một sự kiện duy nhất: đã thấy thì bỏ qua — manifest do git
+    theo dõi được checkout / ff ghi lại (inode mới, đọc lại từ đầu) mà không được đếm lại hay mở thẻ hồi quy giả."""
     now = int(time.time())
     inc = incidents.setdefault(fp, {"rule": rule, "title": mask(title), "min_count": min_count, "count": 0, "repos": [],
                                     "first": now, "evidence": [], "issue": None, "last_comment": 0, "reported_count": 0})
+    if STAMPED.match(raw_line):
+        uid = hashlib.sha1(raw_line.strip().encode()).hexdigest()[:12]
+        if uid in inc.setdefault("seen", []):
+            return
+        inc["seen"] = (inc["seen"] + [uid])[-SEEN_MAX:]
     inc["count"] += 1
     inc["last"] = now
     inc["last_after"] = max(inc.get("last_after", 0.0), after)
@@ -428,7 +443,7 @@ def scan(quiet: bool) -> int:
                     hit = classify_board(line) if kind == "board" else classify_shell(line)
                     if hit:
                         rid, title, mc, key, ev = hit   # ev: self-reload bỏ output lệnh thô sau dấu ":" (repo app)
-                        record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev.strip(), after)
+                        record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev.strip(), after, line)
         data["offsets"] = {k: v for k, v in data["offsets"].items() if Path(k).exists()}   # file log đã xoá: bỏ offset
         save_ledger(home, data)     # offsets trước: GitHub hỏng giữa chừng thì dòng đã đọc vẫn nằm trong spool
         flush(home, data, quiet)
