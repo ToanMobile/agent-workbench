@@ -282,6 +282,19 @@
   .appr textarea { min-height: 52px; margin-top: 4px; }
   .appr-act .btn { flex: 1 1 0; max-width: 240px; min-height: 48px; font-size: 15px; } /* điện thoại: chia đôi hàng; máy tính bảng/màn to: không kéo dài quá */
   .appr-ok { margin: 6px 0 0; font-size: 14px; font-weight: 600; color: var(--t-done); }
+  /* ô "Nhắn agent": ngăn bằng đường kẻ như khung duyệt, nút to cho ngón tay */
+  .msg { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 12px; }
+  .msg h3 { margin: 0 0 4px; }
+  .msg textarea { min-height: 64px; margin-top: 8px; }
+  .msg .msg-code { margin-top: 8px; font-size: 20px; letter-spacing: .3em; text-align: center; min-height: 48px; }
+  .msg .msg-act .btn { flex: 1 1 0; max-width: 240px; min-height: 48px; font-size: 15px; }
+  .msg .msg-act .btn:active:not(:disabled) { transform: scale(.98); }
+  .msg ul { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+  .msg li { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+  .msg li b { font-weight: 600; margin-right: 6px; }
+  .msg li b.read, .msg li b.done { color: var(--t-done); }
+  .msg li b.unread, .msg li b.failed { color: var(--t-blocked); }
+  .msg li time { color: var(--muted); margin-left: 6px; font-size: 12px; }
   .toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 12px); padding: 10px 16px; font-size: 13.5px; font-weight: 500; z-index: 20; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; max-width: min(560px, 90vw); }
   .toast.on { opacity: 1; transform: translate(-50%, 0); }
   .toast.error { border-color: var(--c-blocked); color: var(--t-blocked); }
@@ -2100,12 +2113,23 @@ function renderDrawer(force) {
   const sig = JSON.stringify([selection, document.documentElement.dataset.theme,
     selection.type === 'approvals' ? [canWrite(), S.items.filter(needsApproval).map((i) => [i.id, i.status, i.approval, i.lastComment, APPROVAL_UI.get(i.id)])]
     : selection.type === 'repo' ? [idx.repo.get(selection.id), S.workers.filter((w) => w.repo === selection.id), S.items.filter((i) => i.repo === selection.id)]
-    : selection.type === 'item' ? [idx.item.get(selection.id), S.workers] : selection.type === 'column' ? [S.items.filter((i) => i.status === selection.id), S.workers.map((w) => [w.id, w.status, w.issue])] : selection.type === 'station' ? stationWorkers(selection.id).map((w) => [w.id, w.status, describe(w).doing]) : idx.worker.get(selection.id)]);
+    : selection.type === 'item' ? [idx.item.get(selection.id), S.workers, S.messages] : selection.type === 'worker' ? [idx.worker.get(selection.id), S.messages] : selection.type === 'column' ? [S.items.filter((i) => i.status === selection.id), S.workers.map((w) => [w.id, w.status, w.issue])] : selection.type === 'station' ? stationWorkers(selection.id).map((w) => [w.id, w.status, describe(w).doing]) : idx.worker.get(selection.id)]);
   if (!force && sig === drawerSig && !d.hidden) return;
+  // đang gõ trong ô "Nhắn agent" / ô mã: không dựng lại bảng theo nhịp poll (mất chữ đang ghép của bộ gõ tiếng Việt);
+  // sig giữ giá trị cũ nên lần poll đầu sau khi rời ô sẽ vẽ lại
+  const typing = document.activeElement;
+  if (!force && !d.hidden && typing && d.contains(typing) && typing.dataset && typing.dataset.keep) return;
   drawerSig = sig;
   const keep = d.scrollTop;
+  // ô đang gõ (data-keep) giữ con trỏ khi bảng vẽ lại theo dữ liệu mới
+  const ae = document.activeElement, keepId = ae && d.contains(ae) && ae.dataset ? ae.dataset.keep : null;
+  const sel = keepId ? [ae.selectionStart, ae.selectionEnd] : null;
   renderDrawerNow();
   d.scrollTop = keep;
+  if (keepId) {
+    const n = [...d.querySelectorAll('[data-keep]')].find((x) => x.dataset.keep === keepId);
+    if (n && !n.disabled) { n.focus({ preventScroll: true }); try { n.setSelectionRange(sel[0], sel[1]); } catch (e) { /* ô không hỗ trợ chọn chữ */ } }
+  }
 }
 function renderDrawerNow() {
   const S = STATE; const d = $('#drawer');
@@ -2296,6 +2320,12 @@ function drawItem(it) {
     b.append(ln, h('span', 'lv', WORKER_STATE[w.status] + (ev ? ': ' + clip(ev.kind === 'tool' ? ev.name + ' ' + shortPath(ev.text, idx.repo.get(w.repo)) : ev.text, 80) : '')));
     b.onclick = () => select({ type: 'worker', id: w.id }); d.append(b);
   });
+  // worker lane của runner trước; phiên khác chỉ khi không có (phiên gõ tay nhắc tới thẻ bị server từ chối)
+  const hasSess = (w) => w.session && !w.session.subagent;
+  const live = ws.find((w) => w.kind === 'lane' && hasSess(w)) || ws.find(hasSess);
+  const last = live || !it.number ? null : cardSession(it);
+  if (live) d.append(msgComposer(live.session.id, workerName(live), live.status === 'working'));
+  else if (last) d.append(msgComposer(last.sid, 'Agent ' + last.lane + ' gần nhất của thẻ', false));
   afterAgents();
 }
 
@@ -2329,6 +2359,7 @@ function drawWorker(w) {
     const q = h('p', 'say'); q.append(document.createTextNode(lastText.text)); q.append(h('small', null, clock(lastText.ts) + ', ' + ago(lastText.ts)));
     d.append(q);
   }
+  if (!s.subagent) d.append(msgComposer(s.id, workerName(w), w.status === 'working'));
   const events = [];
   (s.texts || []).slice(0, -1).forEach((t) => events.push({ ts: t.ts, k: 'Nói', v: t.text }));
   (s.tools || []).forEach((t) => events.push({ ts: t.ts, k: t.name, v: shortPath(t.summary, repo), tool: true }));
@@ -2822,6 +2853,80 @@ function drawEvents() {
   d.append(h('h3', null, evs.length + ' sự kiện gần nhất'), ul);
 }
 $('#btnEvents').onclick = () => select({ type: 'events' }, false);
+
+// ---- "Nhắn agent": agent đang chạy đọc lệnh qua hộp thư (hook sau mỗi bước), agent đã dừng thì server resume phiên.
+// Qua tunnel (điện thoại) server đòi mã 6 số hiện trong thông báo trên Mac rồi mới gửi.
+const MSG_UI = new Map(); // session id -> { text, code, pendingId, busy }: giữ chữ đang gõ qua các lần vẽ lại
+const msgUi = (sid) => { if (!MSG_UI.has(sid)) MSG_UI.set(sid, {}); return MSG_UI.get(sid); };
+const MSG_STATE = { sent: 'Đã gửi, chờ agent đọc', read: 'Agent đã đọc', unread: 'Agent dừng trước khi đọc', resuming: 'Đang resume', done: 'Resume xong', failed: 'Resume lỗi' };
+const CARD_SESS = new Map(); // "repo#số" -> { at, s }: phiên worker gần nhất của thẻ không còn agent cầm
+function cardSession(it) {
+  const key = it.repo + '#' + it.number, hit = CARD_SESS.get(key);
+  if (hit && Date.now() - hit.at < 30000) return hit.s;
+  if (!hit || !hit.loading) {
+    CARD_SESS.set(key, { at: hit ? hit.at : 0, s: hit ? hit.s : null, loading: true });
+    fetch('api/card-session?repo=' + encodeURIComponent(it.repo) + '&issue=' + encodeURIComponent(it.number), { headers: apiHeaders() })
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      .then((s) => { CARD_SESS.set(key, { at: Date.now(), s: s && s.sid ? s : null }); if (selection && selection.type === 'item' && selection.id === it.id) renderDrawer(true); });
+  }
+  return hit ? hit.s : null;
+}
+function msgComposer(sid, who, live) {
+  const ui = msgUi(sid);
+  const box = h('section', 'msg'); box.setAttribute('aria-label', 'Nhắn ' + who);
+  // server mới biết chắc agent còn chạy hay đã dừng (ps), trang chỉ đoán theo lần hoạt động cuối
+  box.append(h('h3', null, 'Nhắn agent'), h('p', 'readonly', live
+    ? who + ' đọc lệnh sau bước đang chạy, thường trong vài giây (bước dài như chạy test thì chờ bước đó xong). Nếu nó đã dừng, server tự mở lại phiên (resume).'
+    : who + ' đã dừng: gửi lệnh sẽ mở lại phiên (resume) để làm tiếp.'));
+  const ta = h('textarea'); ta.rows = 3; ta.maxLength = 4000; ta.dataset.keep = 'msg-' + sid; ta.value = ui.text || ''; ta.disabled = !!ui.busy || !!ui.pendingId;
+  ta.placeholder = 'Ví dụ: dừng sửa file X, chạy lại test rồi báo kết quả'; ta.setAttribute('aria-label', 'Lệnh cho ' + who);
+  ta.oninput = () => { ui.text = ta.value; };
+  box.append(ta);
+  const els = [];
+  if (ui.pendingId) {
+    const code = h('input', 'msg-code'); code.type = 'text'; code.inputMode = 'numeric'; code.maxLength = 6; code.autocomplete = 'one-time-code';
+    code.dataset.keep = 'code-' + sid; code.value = ui.code || ''; code.placeholder = '______'; code.disabled = !!ui.busy;
+    code.setAttribute('aria-label', 'Mã 6 số trong thông báo trên Mac'); code.oninput = () => { ui.code = code.value.replace(/\D/g, ''); };
+    box.append(h('p', 'readonly', 'Lệnh từ điện thoại cần mã 6 số vừa hiện trong thông báo trên Mac (hạn 2 phút).'), code);
+    els.push(code);
+  }
+  const send = h('button', 'btn primary', ui.busy ? 'Đang gửi…' : ui.pendingId ? 'Xác nhận mã' : 'Gửi cho agent'); send.type = 'button'; send.disabled = !!ui.busy;
+  const ra = h('div', 'row-actions msg-act'); ra.append(send);
+  if (ui.pendingId) {
+    const cancel = h('button', 'btn', 'Huỷ'); cancel.type = 'button'; cancel.disabled = !!ui.busy;
+    cancel.onclick = () => { ui.pendingId = null; ui.code = ''; renderDrawer(true); }; ra.append(cancel);
+  }
+  send.onclick = () => sendMsg(sid, [send, ta, ...els]);
+  box.append(ra);
+  const mine = (STATE.messages || []).filter((m) => m.sid === sid).slice(-4).reverse();
+  if (mine.length) {
+    const ul = h('ul');
+    mine.forEach((m) => { const li = h('li'); li.append(h('b', m.state, MSG_STATE[m.state] || m.state), document.createTextNode(clip(m.preview, 140)), h('time', null, clock(m.ts))); ul.append(li); });
+    box.append(ul);
+  }
+  return box;
+}
+async function sendMsg(sid, els) {
+  const ui = msgUi(sid);
+  if (ui.busy) return; // bấm lần hai trong lúc đang gửi: bỏ qua
+  const body = ui.pendingId ? { pendingId: ui.pendingId, code: (ui.code || '').trim() } : { sessionId: sid, text: (ui.text || '').trim() };
+  if (ui.pendingId ? body.code.length !== 6 : !body.text) { toast(ui.pendingId ? 'Nhập đủ 6 số.' : 'Lệnh đang trống.', 'hint'); return; }
+  ui.busy = true; els.forEach((e) => { e.disabled = true; }); els[0].textContent = 'Đang gửi…';
+  const t0 = Date.now();
+  try {
+    const res = await fetch('api/agent-message', { method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json', 'X-Agent-Office': '1' }), body: JSON.stringify(body) });
+    let data = null; try { data = await res.json(); } catch (e) { data = null; }
+    if (res.status === 202 && data && data.needCode) { ui.pendingId = data.pendingId; ui.code = ''; toast(data.error, 'hint'); }
+    else if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ('Server trả lỗi ' + res.status));
+    else { ui.text = ''; ui.code = ''; ui.pendingId = null; toast(data.mode === 'resume' ? 'Đã gửi: đang mở lại phiên agent' : 'Đã gửi vào hộp thư của agent'); }
+  } catch (err) {
+    toast('Chưa gửi được: ' + err.message, 'error');
+    if (/hết hạn|huỷ|đã gửi/.test(err.message)) { ui.pendingId = null; ui.code = ''; }
+  }
+  const left = 1000 - (Date.now() - t0); // khoá nút ít nhất 1000 ms kể cả khi server trả lời nhanh
+  if (left > 0) await new Promise((r) => setTimeout(r, left));
+  ui.busy = false; VERSION = null; poll(true); renderDrawer(true);
+}
 
 // ---- khung "Cần bạn duyệt": Duyệt = comment đúng chữ done (server tự đặt chữ), Từ chối = comment lý do, thẻ ở lại Blocked
 const APPROVAL_UI = new Map(); // id thẻ -> { ticked, reason, busy }: giữ ô tick và lý do đang gõ qua các lần vẽ lại
