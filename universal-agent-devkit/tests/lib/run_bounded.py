@@ -21,6 +21,7 @@ away, and two post-fix-gate.py processes lived on for 18 h (state S, 0 % CPU) wh
   whose reader died (`OUT="$(… 2>&1)"` in the group that was just signalled) raised BrokenPipeError before the group was ended.
 - A usage error exits 64: never 2, which a gate under test uses for UNVERIFIED and a caller could take for the command's verdict.
 """
+import fcntl
 import os
 import signal
 import subprocess
@@ -89,6 +90,15 @@ def _end_group(pgid: int, grace: float, leader=None) -> None:
             pass
 
 
+def _above_stdio(fd: int) -> int:
+    """`fd` moved to 3 or above (close-on-exec, as os.pipe makes it); the low fd is closed."""
+    if fd > 2:
+        return fd
+    high = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 3)
+    os.close(fd)
+    return high
+
+
 def _start_watchdog(grace: float) -> tuple:
     """Fork the watchdog and wait until it sits in a session of its own (a group kill aimed at our caller can no longer reach it),
     all before the command exists: no instant is left where the command would run unwatched (OCR, review round 2). stdin/stdout go
@@ -96,8 +106,10 @@ def _start_watchdog(grace: float) -> tuple:
     pipe the command writes itself before exec, ends that group once this helper is gone, and exits once the group is empty.
     (watchdog pid, write end of the pgid pipe)."""
     helper = os.getpid()
-    pg_r, pg_w = os.pipe()
-    ready_r, ready_w = os.pipe()
+    # fds 3 and up: a helper started with stdin / stdout closed (`<&-`) gets pipe fds 0-2, which the watchdog's dup2 of /dev/null onto
+    # 0 and 1 would overwrite — it then read EOF at once and left the command unwatched (review round 4). /dev/null is not opened onto
+    # 0-2 instead: that would change the stdio the command inherits compared with a bare run.
+    pg_r, pg_w, ready_r, ready_w = (_above_stdio(fd) for fd in (*os.pipe(), *os.pipe()))
     pid = os.fork()
     if pid:
         os.close(pg_r)

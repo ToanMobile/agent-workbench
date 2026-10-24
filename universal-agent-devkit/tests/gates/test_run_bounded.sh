@@ -26,6 +26,11 @@ pidof_file() { # <file>: in pid ghi trong file (chờ tối đa 10 s), rỗng kh
 gone_within() { # <pid> <tenths>: chờ pid chết, tối đa <tenths>/10 s
   local i=0; while alive "$1" && [ "$i" -lt "$2" ]; do sleep 0.1; i=$((i + 1)); done; ! alive "$1"
 }
+kill_group_of() { # <pid>: nhánh fail — giết cả nhóm tiến trình của pid (không bao giờ nhóm của chính test), rồi chính pid
+  local pg; pg=$(ps -o pgid= -p "$1" 2>/dev/null | tr -d ' ')
+  [ "${pg:-0}" -gt 1 ] 2>/dev/null && [ "$pg" != "$(ps -o pgid= -p $$ | tr -d ' ')" ] && kill -KILL -- "-$pg" 2>/dev/null
+  if alive "$1"; then kill -KILL "$1" 2>/dev/null; fi
+}
 hang_script() { # <file> <pidfile> [trap-TERM]: một bash ghi pid của nó rồi chờ 300 s (bỏ qua TERM nếu có đối số 3)
   { echo '#!/bin/bash'; [ -n "${3:-}" ] && echo "trap '' TERM"; echo "echo \$\$ > '$2'"; echo 'sleep 300 & wait'; } > "$1"
 }
@@ -40,7 +45,7 @@ if [ -z "$gc" ]; then skip "b1 hung command"
 elif [ "$rc" = 124 ] && [ "$took" -le 15 ] && gone_within "$gc" 20 && grep -q "killed after 2s" "$TMP/b1.out"; then
   ok "b1 a hung command is killed at its deadline (rc=124, ${took}s), its grandchild dies too"
 else bad "b1 hung command (rc=$rc, ${took}s, grandchild alive=$(alive "$gc" && echo yes || echo no))"; cat "$TMP/b1.out"; fi
-if alive "$gc"; then kill -KILL "$gc" 2>/dev/null; fi
+if alive "$gc"; then kill_group_of "$gc"; fi
 
 # b2: xong sớm trả đúng exit code, không chờ hết hạn
 start=$(date +%s)
@@ -91,7 +96,7 @@ else
      && grep -q "killed after 3s" "$TMP/b6.out" && { [ -z "$g6" ] || gone_within "$g6" 20; }; then
     ok "b6 run_impacted.sh cuts a hung test at DEVKIT_TEST_TIMEOUT_S, says why, kills its grandchild, the other test still passes"
   else bad "b6 run_impacted.sh with a hung test (rc=$rc6)"; cat "$TMP/b6.out"; fi
-  if alive "$g6"; then kill -KILL "$g6" 2>/dev/null; fi
+  if alive "$g6"; then kill_group_of "$g6"; fi
 fi
 
 # b7: bài kết thúc BÌNH THƯỜNG nhưng để lại tiến trình nền (quên dọn): exit code giữ nguyên, tiến trình nền vẫn bị dọn
@@ -160,5 +165,15 @@ for how in TERM KILL; do
   elif gone_within "$c" 80; then ok "b13 $how to a group whose stderr reader dies too: the command is still killed (no BrokenPipe orphan)"
   else bad "b13 $how: command $c survived because logging to a dead stderr pipe aborted the cleanup"; kill -KILL -- "-$c" "$c" 2>/dev/null; fi
 done
+
+# b14: helper khởi động với stdin ĐÃ ĐÓNG (`<&-`): os.pipe() trả fd 0, và watchdog đặt /dev/null vào fd 0 không được đè lên ống
+#      pgid của chính nó (review vòng 4: watchdog thoát lặng, helper bị SIGKILL thì lệnh mồ côi)
+hang_script "$TMP/h14.sh" "$TMP/c14.pid"
+RUN_BOUNDED_GRACE_S=1 python3 -I "$RB" 0 -- bash "$TMP/h14.sh" <&- >/dev/null 2>&1 & hp14=$!
+c=$(pidof_file "$TMP/c14.pid")
+kill -KILL "$hp14" 2>/dev/null; wait "$hp14" 2>/dev/null
+if [ -z "$c" ]; then skip "b14 closed stdin"
+elif gone_within "$c" 80; then ok "b14 a helper started with stdin closed still has a working watchdog (SIGKILLed helper: command ended)"
+else bad "b14 command $c outlived a SIGKILLed helper started with stdin closed (watchdog lost its pipe)"; kill -KILL -- "-$c" "$c" 2>/dev/null; fi
 
 [ "$FAILS" -eq 0 ] && echo "run_bounded: all checks passed" || { echo "run_bounded: $FAILS FAILED"; exit 1; }
