@@ -17,6 +17,17 @@ set -u
 DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 [ -d "$DEVKIT_ROOT/profiles" ] || DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$DEVKIT_ROOT/scripts/governance/i18n.sh" 2>/dev/null || source "$DEVKIT_ROOT/scripts/i18n.sh"
+# The hooks are shared by every worktree of a repo. Run from a LINKED worktree, the kit path above is that worktree's: once
+# it is removed every commit and merge through the hooks fails (#307, 24/10). Write the main checkout's copy instead.
+_kit_top="$(git -C "$DEVKIT_ROOT" rev-parse --show-toplevel 2>/dev/null)"
+_kit_common="$(git -C "$DEVKIT_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+if [ -n "$_kit_top" ] && [ "${_kit_common##*/}" = .git ]; then
+  _main_top="$(cd "${_kit_common%/.git}" 2>/dev/null && pwd -P)"
+  _kit_top="$(cd "$_kit_top" 2>/dev/null && pwd -P)"
+  if [ -n "$_main_top" ] && [ "$_kit_top" != "$_main_top" ] && [ -d "$_main_top${DEVKIT_ROOT#"$_kit_top"}/scripts" ]; then
+    DEVKIT_ROOT="$_main_top${DEVKIT_ROOT#"$_kit_top"}"
+  fi
+fi
 MARKER="universal-agent-devkit:githook"
 BODY="$DEVKIT_ROOT/scripts/git/git-pre-commit.sh"
 [ -f "$BODY" ] || BODY="$DEVKIT_ROOT/scripts/git-pre-commit.sh"
