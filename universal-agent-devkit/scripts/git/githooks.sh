@@ -26,11 +26,14 @@ if [ -n "$_kit_top" ] && [ -n "$_main_top" ]; then
   _main_top="$(cd "$_main_top" 2>/dev/null && pwd -P)"
   _kit_top="$(cd "$_kit_top" 2>/dev/null && pwd -P)"
   _main_kit="$_main_top${DEVKIT_ROOT#"$_kit_top"}"
-  # Only when main's copy has the hook body itself (an older main may lack the scripts the hooks run).
-  if [ -n "$_main_top" ] && [ "$_kit_top" != "$_main_top" ] \
-    && { [ -f "$_main_kit/scripts/git/git-pre-commit.sh" ] || [ -f "$_main_kit/scripts/git-pre-commit.sh" ]; }; then
-    DEVKIT_ROOT="$_main_kit"
-  fi
+  # Only when main's copy has every body the hooks run (an older main may lack one); new or legacy layout each.
+  _has() { [ -f "$_main_kit/scripts/$1/$2" ] || [ -f "$_main_kit/scripts/$2" ]; }
+  case "$DEVKIT_ROOT" in "$_kit_top"/*)
+    if [ -n "$_kit_top" ] && [ -n "$_main_top" ] && [ "$_kit_top" != "$_main_top" ] && _has git git-pre-commit.sh \
+      && _has git git-commit-msg.sh && _has governance relink_check.py; then
+      DEVKIT_ROOT="$_main_kit"
+    fi ;;
+  esac
 fi
 MARKER="universal-agent-devkit:githook"
 BODY="$DEVKIT_ROOT/scripts/git/git-pre-commit.sh"

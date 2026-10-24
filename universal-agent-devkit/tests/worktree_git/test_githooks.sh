@@ -118,7 +118,8 @@ python3 "$_uninst" "$TMP/repo" --apply >/dev/null 2>&1
 # The fallback must name the main checkout's copy of the kit when it has one.
 PT="$(cd "$TMP" && pwd -P)"   # macOS: /var → /private/var; the hook stores physical paths
 M="$PT/mainrepo"; mkdir -p "$M/kit/profiles" "$M/kit/scripts/git" "$M/kit/scripts/governance"
-for f in scripts/git/githooks.sh scripts/git/git-pre-commit.sh scripts/git/git-commit-msg.sh scripts/governance/i18n.sh; do
+for f in scripts/git/githooks.sh scripts/git/git-pre-commit.sh scripts/git/git-commit-msg.sh scripts/governance/i18n.sh \
+  scripts/governance/relink_check.py; do
   cp "$DEVKIT_DIR/$f" "$M/kit/$f" 2>/dev/null
 done
 touch "$M/kit/profiles/.keep"
@@ -131,11 +132,12 @@ if grep -q "$PT/wt-fallback" "$HOOKS/pre-commit" "$HOOKS/commit-msg" 2>/dev/null
 else
   grep -q "$M/kit/scripts/git/git-commit-msg.sh" "$HOOKS/commit-msg" 2>/dev/null \
     && grep -q "$M/kit/scripts/git/git-pre-commit.sh" "$HOOKS/pre-commit" 2>/dev/null \
+    && grep -q "$M/kit/scripts/governance/relink_check.py" "$HOOKS/post-merge" 2>/dev/null \
     && ok "hooks installed from a worktree fall back to the main checkout's kit" \
     || fail "fallback names neither the worktree nor main ($(tail -2 "$TMP/setup.log" "$TMP/install.log" 2>/dev/null | tr "\n" " "))"
 fi
-# Main's copy lacks the hook body (older main): keep the worktree's own path rather than one that does not exist.
-rm -f "$M/kit/scripts/git/git-pre-commit.sh"
+# Main's copy lacks one hook body (older main, here commit-msg): keep the worktree's own paths, never one that does not exist.
+rm -f "$M/kit/scripts/git/git-commit-msg.sh"
 bash "$PT/wt-fallback/kit/scripts/git/githooks.sh" install "$PT/wt-fallback" >"$TMP/install.log" 2>&1
 grep -q "$PT/wt-fallback/kit/scripts/git/git-pre-commit.sh" "$HOOKS/pre-commit" 2>/dev/null \
   && ok "main without the hook body: the worktree's kit path is kept" \
