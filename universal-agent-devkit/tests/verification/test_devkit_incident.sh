@@ -196,6 +196,16 @@ mkfifo "$A/.claude/audit-gate/proof_gate.fifo.log"
 echo '.claude/bin/super-board-run.sh: line 912: lane_slot_frees: command not found' >> "$A/docs/super-board/runner.log"
 n=$(creates); scan >/dev/null
 [ "$(creates)" = $((n + 1)) ] && ok "stderr runner: command not found → thẻ; FIFO bỏ qua" || fail "stderr runner: create=$(creates) (trước $n)"
+grep -q 'super-board-run.sh: lane_slot_frees command not found' "$TMP/home/ledger.json" \
+  && ok "thẻ lỗi shell nêu cả script lẫn lệnh thiếu" || fail "thẻ lỗi shell thiếu tên script hoặc lệnh"
+
+# 16b. Thiếu bộ che secret chung của kit (bin/ hỏng): không đăng gì, sự cố ở lại spool.
+mkdir -p "$TMP/kitcopy/bin" "$TMP/kitcopy/scripts/governance"   # bin/ rỗng: regression_checklist không import được
+cp "$DI" "$DEVKIT_DIR/scripts/governance/create_task.py" "$TMP/kitcopy/scripts/governance/"
+echo '[18:30:00] ⚠ self-reload: fail-closed probe' >> "$MA"
+n=$(creates); python3 "$TMP/kitcopy/scripts/governance/devkit_incident.py" scan >/dev/null 2>&1
+[ "$(creates)" = "$n" ] && grep -q 'fail-closed probe' "$TMP/home/ledger.json" && ok "thiếu bộ che chung → không đăng, giữ spool" \
+  || fail "thiếu bộ che chung mà vẫn đăng (create=$(creates), trước $n)"
 
 # 17. Hook SessionStart: công tắc DEVKIT_INCIDENT=0 không quét; bật thì quét (nền); không repo nào trong danh sách → im.
 hook_scan() {   # hook_scan <home> [env…]: chạy session_context.sh trong một repo nháp, chờ scan nền tối đa 10 s

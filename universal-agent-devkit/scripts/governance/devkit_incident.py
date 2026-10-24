@@ -70,8 +70,10 @@ RULES = [
      "worker lane {0} kết thúc không làm gì lặp lại", 1, 1),
     ("early-death", re.compile(r"\(lane (\w+)\) ended \d+s after dispatch .* early end ([2-9]|\d\d) of this lane"),
      "worker lane {0} chết sớm lặp lại", 1, 1),
-    ("shell-error", re.compile(r"([\w./-]+): (?:line \d+: )?(command not found|unbound variable|syntax error)"),
-     "script lỗi shell: {0}: {1}", 1, 0),   # khoá = cả "<script>: <lỗi>" (cùng script, khác lỗi = khác thẻ)
+    # bash: "<script>: line N: [<lệnh|biến>: ]<lỗi>" — khoá = cả cụm (cùng script, khác lệnh/lỗi = khác thẻ)
+    ("shell-error", re.compile(r"([\w./-]+\.(?:sh|bash|py)): (?:line \d+: )?(?:([^:\s]+): )?"
+                               r"(command not found|unbound variable|syntax error)"),
+     "script lỗi shell: {0}: {1} {2}", 1, 0),
 ]
 TRACEBACK = re.compile(r"^Traceback \(most recent call last\):")
 EXC_LINE = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt|Exit)\b.*)$")
@@ -166,7 +168,7 @@ def classify_board(line: str):
         m = rx.search(line)
         if m:
             key = group if isinstance(group, str) else m.group(group) if group is not None else line
-            return rid, title.format(*m.groups()), min_count, key
+            return rid, title.format(*(g or "" for g in m.groups())), min_count, key
     return None
 
 
@@ -174,7 +176,7 @@ def classify_shell(line: str):
     """stderr của runner / watchdog: chỉ lỗi shell (lời runner đã nằm trong manifest, đọc ở đó, không đếm đôi)."""
     rid, rx, title, min_count, group = next(r for r in RULES if r[0] == "shell-error")
     m = rx.search(line)
-    return (rid, title.format(*m.groups()), min_count, m.group(group)) if m else None
+    return (rid, title.format(*(g or "" for g in m.groups())), min_count, m.group(group)) if m else None
 
 
 def classify_tracebacks(lines: list[str]):
@@ -240,11 +242,12 @@ def record(incidents: dict, fp: str, rule: str, title: str, min_count: int, repo
 # chung của kit (bin/regression_checklist.py), thêm phần riêng của đường này: khoá=giá trị ngắn, URL có mật khẩu, khoá PEM,
 # đường dẫn tuyệt đối của máy, và chữ tự do sau "last log line:" (nội dung việc trong repo private).
 _KIT_BIN = Path(__file__).resolve().parents[2] / "bin"
+REDACT_ERROR = ""
 try:
     sys.path.insert(0, str(_KIT_BIN))
     from regression_checklist import redact_secrets   # noqa: E402
-except ImportError as _e:   # kit cài thiếu bin/: vẫn che bằng các mẫu dưới, ghi rõ vào stderr
-    print(f"devkit_incident: kit redact_secrets unavailable ({_e}); using local patterns only", file=sys.stderr)
+except ImportError as _e:   # kit cài thiếu bin/: KHÔNG đăng gì lên repo public (flush dừng, sự cố ở lại spool)
+    REDACT_ERROR = f"kit redact_secrets unavailable: {_e}"
 
     def redact_secrets(text):
         return text
@@ -331,6 +334,9 @@ def create_card(fp: str, inc: dict):
 
 
 def flush(home: Path, data: dict, quiet: bool) -> None:
+    if REDACT_ERROR:   # fail closed: không có bộ che secret chung thì không đăng lên repo PUBLIC
+        log(home, f"not posting ({REDACT_ERROR}); incidents stay in the spool")
+        return
     now, made = int(time.time()), 0
     for fp, inc in sorted(data["incidents"].items(), key=lambda kv: kv[1].get("first", 0)):
         if inc["count"] < inc.get("min_count", 1):
