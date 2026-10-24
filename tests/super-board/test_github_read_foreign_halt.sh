@@ -83,6 +83,28 @@ out=$(check_with)
 printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":{"args":["api","graphql","-F","owner=ToanMobile","-F","repo=home","-F","pr=7"],"kind":"approval"}}' > "$HALT"
 out=$(check_with)
 printf '%s\n' "$out" | grep -qx ReadHalted && [ -e "$HALT" ] && ok "check_halt: a home-repo halt still stops the board" || fail "home halt on read: out=$out"
+# Race: another worker replaces the foreign halt with a REAL home halt between the read and the rename.
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":{"args":["api","graphql","-F","owner=o","-F","repo=r","-F","pr=7"],"kind":"approval"}}' > "$HALT"
+race_check() {
+  ( cd "$R" && python3 - "$READ" "$HALT" <<'PY' 2>&1 )
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('gr', sys.argv[1]); mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+real = mod._home_repo
+def racing_home():
+    open(sys.argv[2], 'w').write('{"reason":"real","attempts":1,"at":2,"operation":{"args":["api","graphql","-F","owner=ToanMobile","-F","repo=home"]}}')
+    return real()
+mod._home_repo = racing_home
+try:
+    mod.check_halt(); print('ok')
+except mod.ReadHalted:
+    print('ReadHalted')
+PY
+}
+out=$(race_check)
+{ printf '%s\n' "$out" | grep -qx ReadHalted && grep -q '"real"' "$HALT" 2>/dev/null; } \
+  && ok "check_halt race: a real halt written between read and rename is put back and still stops the board" \
+  || fail "race: out=$out halt=$(cat "$HALT" 2>/dev/null | head -c 60)"
 printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":null}' > "$HALT"
 out=$(check_with)
 printf '%s\n' "$out" | grep -qx ReadHalted && [ -e "$HALT" ] && ok "check_halt: a halt with no recorded read (uncertain write) still stops the board" || fail "op-null halt: out=$out"
