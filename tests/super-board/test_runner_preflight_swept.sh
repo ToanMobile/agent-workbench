@@ -189,4 +189,45 @@ SH
 sweep_blocked_cards >/dev/null 2>&1
 [ "$(grep -c "move PVTI_7 Ready" "$TMP/writes")" = 1 ] && ok "a different blocker set is still swept" || fail "new blocker set was not swept: $(cat "$TMP/writes")"
 
+# 24/10 (#321): a 🙋 card a trusted human approved (`done`) is in the planner's `resume` list. The legacy runner read only
+# `sweep`, so the approval was never acted on and #321 stayed Blocked for ~18 h. It goes to Review (the reviewer re-checks
+# the approval at the merge gate), once per card, needs-you label or not.
+: > "$TMP/writes"
+cat > "$TMP/bin/super-board-wave-plan.sh" <<'SH'
+#!/usr/bin/env bash
+echo '{"sweep":[],"resume":[{"number":7,"title":"card seven","key":"aaa:101","why":"trusted human confirmed the current request"}]}'
+SH
+PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_7","status":"Blocked","labels":["needs-you"],"content":{"type":"Issue","number":7,"assignees":[]}}]}'
+sweep_blocked_cards >/dev/null 2>&1
+[ "$(grep -c "move PVTI_7 Review" "$TMP/writes")" = 1 ] && ok "approved 🙋 card (resume) moves Blocked → Review" || fail "resume not acted on: $(cat "$TMP/writes")"
+: > "$TMP/writes"
+sweep_blocked_cards >/dev/null 2>&1
+! grep -q "move PVTI_7" "$TMP/writes" && ok "the same approval is not acted on twice" || fail "resume repeated: $(cat "$TMP/writes")"
+# A NEW approval (new head / new request after a rebuild) must move the card again, not be skipped by the old key.
+: > "$TMP/writes"
+cat > "$TMP/bin/super-board-wave-plan.sh" <<'SH'
+#!/usr/bin/env bash
+echo '{"sweep":[],"resume":[{"number":7,"title":"card seven","key":"bbb:202","why":"policy cleared: the current merge policy no longer asks for a human"}]}'
+SH
+sweep_blocked_cards >/dev/null 2>&1
+[ "$(grep -c "move PVTI_7 Review" "$TMP/writes")" = 1 ] && ok "a second approval for a new head moves the card again" || fail "new approval skipped: $(cat "$TMP/writes")"
+grep -q "policy cleared" "$TMP/writes" && ! grep -q "trusted collaborator answered" "$TMP/writes" \
+  && ok "the comment states why (policy cleared), not a human done that did not happen" || fail "comment wording: $(grep -o 'Did:[^"]*' "$TMP/writes" | head -1)"
+
+# 24/10: preflight gets the board's own merge line cap (merge_policy.auto_max_lines, read as the merge gate reads it),
+# so a board with no cap never has a card held as too big. Unset → 400; 0, "0", -1, false → 0.
+CFG_BASE='"repo":{"remote":"https://github.com/acme/widgets"}'
+# A value int() cannot read ("many", "1.5") is unreadable to the merge policy too: preflight keeps the 400 default.
+for spec in 'none:400' '0:0' '"0":0' '-1:0' 'false:0' '1500:1500' '"many":400' '"1.5":400' '1e17:1000000000'; do
+  val="${spec%:*}"; want="${spec##*:}"
+  if [ "$val" = none ]; then echo "{$CFG_BASE}" > "$CONFIG_PATH"
+  else echo "{$CFG_BASE,\"merge_policy\":{\"auto_max_lines\":$val}}" > "$CONFIG_PATH"; fi
+  reset
+  export STUB_PREFLIGHT_RC=0 STUB_PREFLIGHT_JSON='{"7":{"number":7,"verdict":"hold","tag":"done","reason":"x","evidence":["x"],"blockedBy":[]}}'
+  SB_PREFLIGHT="$PF" dispatch_lane build 7 >/dev/null 2>&1
+  grep -q -- "--cap $want\$" "$TMP/preflight-calls" 2>/dev/null \
+    && ok "auto_max_lines $val → preflight --cap $want" || fail "auto_max_lines $val: calls $(cat "$TMP/preflight-calls" 2>/dev/null)"
+done
+echo "{$CFG_BASE}" > "$CONFIG_PATH"
+
 [ "$FAILS" -eq 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }
