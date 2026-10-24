@@ -113,7 +113,8 @@ bash .claude/bin/super-board-verify-cmd.sh --config .claude/super-board/configs/
 # 9b/9c (OCR O1): "the whole verify is one gate line" is the SHAPE of the command, not a substring: a chained command or one that carries its own flags is refused.
 for BAD in 'python3 bin/post-fix-gate.py --full && npm test' 'make lint; python3 bin/post-fix-gate.py --full' 'python3 bin/post-fix-gate.py --full | tee out' \
            "python3 \$(echo x)/post-fix-gate.py --full" 'true post-fix-gate.py' 'echo post-fix-gate.py' 'python3 other.py --x post-fix-gate.py' \
-           'python3 bin/post-fix-gate.py --full --lang $X'; do
+           'python3 bin/post-fix-gate.py --full --lang $X' 'python3 tools/not-post-fix-gate.py --x' './evil_post-fix-gate.py --full' \
+           'FOO=/x/post-fix-gate.py --full' 'python3 bin/post-fix-gate.py --full # x'; do
   make_repo with-config
   jq --arg c "$BAD" '.verify_commands = [$c]' .claude/super-board/configs/t.json > "$TMP/cfg" && mv "$TMP/cfg" .claude/super-board/configs/t.json
   git add -A && git commit -qm cfg4

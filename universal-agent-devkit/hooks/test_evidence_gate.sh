@@ -942,11 +942,15 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         # A kit test that exits 0 on its skip path ("skip: no scripts here") or prints nothing checked nothing (OCR 24/10): empty output, or output
         # whose every line is a `skip` line, is no run. Any other output counts, whatever its summary style (✔, `ok: …`, `pass=5 fail=0`, `ALL OK`:
         # 21 kit tests print none of ✔ / "all passed"), and a run with a skipped optional case among passes is still a run.
-        lines = [l for l in ANSI_RX.sub("", txt).splitlines() if l.strip()]
-        # ...but its own failure summary still counts: `pass=2 fail=1`, `failed: 3`, a `FAIL: x` line (OCR P4: without the ✔ requirement only "N failed" was caught)
-        kit_fail = re.search(r"(?i)\bfail(?:ed|ures?|ing)?\s*[:=]\s*[1-9]\d*|^\s*FAIL(?:ED)?\b", ANSI_RX.sub("", txt), re.M)
-        if not is_error and _command_is_direct_bash_kit(command) and lines and not kit_fail and not all(re.match(r"\s*skip\b", l, re.I) for l in lines):
-            return "green"
+        if not is_error and _command_is_direct_bash_kit(command):
+            clean = ANSI_RX.sub("", txt)
+            lines = [l for l in clean.splitlines() if l.strip()]
+            # Its own failure summary is a RED verdict (it replaces an earlier green, which `None` would not): `pass=2 fail=1`, `failed: 3`, `errors=2`,
+            # a TAP `not ok`, an uppercase FAIL/ERROR line. The counter forms are case-insensitive, the anchored line forms are not (`fail-closed … ✔` passes).
+            if re.search(r"(?i:\b(?:fail(?:ed|ures?|ing)?|errors?)\s*[:=]\s*[1-9]\d*)|^\s*(?:FAIL(?:ED)?|ERRORS?)\b|(?i:^not ok\b)", clean, re.M):
+                return "red"
+            if lines and not all(re.match(r"\s*skip\b", l, re.I) for l in lines):
+                return "green"
         return None
     if pm_run:
         codes = PM_RUN_EXIT_RX.findall(txt)
