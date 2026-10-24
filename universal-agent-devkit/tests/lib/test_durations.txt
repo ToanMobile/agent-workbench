@@ -387,3 +387,5 @@
 # 2026-10-24: #377 (#344) — đo 10 s và 13 s trên máy 12 lõi tải ~60
 10 tests/gates/test_gate_suite_cache_void.sh
 13 tests/gates/test_gate_suite_cache_selection.sh
+# #377 (#338)
+15 tests/gates/test_gate_slot_started.sh

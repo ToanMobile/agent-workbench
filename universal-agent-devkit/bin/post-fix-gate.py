@@ -6098,8 +6098,18 @@ def main():
 
     slot_rec = _recorded_seconds() if run_tests and lock_held else {}
     slot_mod = []
+    # #338: lượt đã có suite được cho chạy thì chạy cho xong. started_run: không chờ tải lại ở các suite sau; heavy_lease: slot nặng giữ nguyên
+    # giữa hai suite nặng TUẦN TỰ liền nhau (gate khác không chen được; suite trong nhóm song song vẫn xin slot riêng, nên tổng suite nặng
+    # chạy cùng lúc không vượt heavy_max). Nhả khi tới suite không nặng, trước một job song song (nó chờ chính slot này sẽ treo tới hạn chờ) và
+    # hết vòng suite.
+    started_run, heavy_lease = [], []
 
-    def take_slots(t, cmd):
+    def drop_lease():
+        if heavy_lease and slot_mod and slot_mod[0] is not None:
+            slot_mod[0].release_pool(heavy_lease.pop())
+        heavy_lease.clear()
+
+    def take_slots(t, cmd, sequential=False):
         """P1 (20/10): quyền chạy của CHÍNH suite này (heavy_slot.classify), giữ trong lúc nó chạy — kể cả lần chạy lại flaky và
         vacuity revert. --full không còn giữ slot cả lượt (đo 20/10: một lượt --full chỉ suite bash/python chờ 30+ phút mà không chạy
         suite nào); P1b (người dùng 20/10): không còn 2 slot — tải máy dưới DEVKIT_SLOT_LOAD_MAX (mặc định capacity hold_load,
@@ -6117,25 +6127,31 @@ def main():
             return None
         rec = slot_rec.get(t.get("id"))
         info = hs.classify(cmd, str(project_dir), rec, device=bool(HARD_DEVICE_SUITE.search(cmd or "")))
+        lease = heavy_lease[0] if (sequential and heavy_lease and info["cls"] in hs.HEAVY_CLASSES) else None
+        if heavy_lease and lease is None:
+            drop_lease()   # suite này không dùng slot nặng đang giữ (không nặng, hay chạy trong nhóm song song): không giữ chỗ của người khác
         # GATE_TOTAL_BUDGET_S (Stop hook: 900 s, hạn cứng 1800 s): lần chờ slot không được vượt ngân sách còn lại (review 20/10)
         left = budget_s - (time.monotonic() - budget_start) if budget_s > 0 else None
         slots = hs.acquire_for_suite(info, est_s=rec or estimated_suite_seconds(cmd), max_wait=left,
-                                     label=f"{os.path.basename(str(project_dir))}:{t.get('id')} ({info['cls']})")
+                                     label=f"{os.path.basename(str(project_dir))}:{t.get('id')} ({info['cls']})",
+                                     started=bool(started_run), lease=lease)
+        if slots.admitted:
+            started_run.append(1)
         for note in slots.notes:
             log_warn(f"{t.get('id')}: {note}")
         return slots
 
-    def run_suite(t, cmd, mode, env):
+    def run_suite(t, cmd, mode, env, sequential=False):
         k = lookup_key(t) if (sc is not None and keyed_ok and mode == "full") else None
         if not k:
-            return run_suite_slotted(t, cmd, mode, env)
+            return run_suite_slotted(t, cmd, mode, env, sequential)
         with sc.inflight(k, slot_rec.get(t.get("id"))) as state:
             if state == "recheck":
                 rec = sc.hit(k, t)
                 if rec:   # một gate khác vừa chạy đúng khoá này và PASS
                     mark_keyed(t, rec)
                     return None
-            run_suite_slotted(t, cmd, mode, env)
+            run_suite_slotted(t, cmd, mode, env, sequential)
             record_keyed(t)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này
             return None
 
@@ -6201,8 +6217,8 @@ def main():
         except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu: không bao giờ đổi kết luận của lượt này
             log_warn(f"suite_cache record {t.get('id')}: {e!r}")
 
-    def run_suite_slotted(t, cmd, mode, env):
-        slots = take_slots(t, cmd)
+    def run_suite_slotted(t, cmd, mode, env, sequential=False):
+        slots = take_slots(t, cmd, sequential)
         if slots is not None and not slots.admitted:
             log_warn(tr(f"heavy-slot SLOT: {t.get('id')}: khoá độc quyền (Unity) bận hết thời gian chờ — không chạy suite",
                         f"heavy-slot SLOT: {t.get('id')}: its exclusive lock (Unity) stayed busy past the wait — suite not started"))
@@ -6219,7 +6235,9 @@ def main():
             _run_suite(t, cmd, mode, env)
         finally:
             if slots is not None:
-                slot_mod[0].release_suite(slots)
+                kept = slot_mod[0].release_suite(slots, keep_heavy=sequential)
+                if sequential:
+                    heavy_lease[:] = [kept] if kept is not None else []
 
     def _run_suite(t, cmd, mode, env):
         started = time.perf_counter()
@@ -6426,6 +6444,7 @@ def main():
                 env = suite_env()
                 if done_scripts:
                     env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
+                drop_lease()
                 start_job(t, cmd, mode, env)
                 ran_cmds[key] = t
                 if not t.get("keyed_full"):   # suite cached-full có thể thành PASS theo khoá chính xác: không bảo runner bỏ script
@@ -6434,7 +6453,7 @@ def main():
             drain()
             if done_scripts:
                 os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
-            run_suite(t, cmd, mode, suite_env())
+            run_suite(t, cmd, mode, suite_env(), sequential=True)
             ran_cmds[key] = t
             if not t.get("matrix_added") and not precise_hit(t):   # chỉ-thêm / PASS theo khoá chính xác: không bảo runner bỏ script
                 note_ran(cmd)
@@ -6442,6 +6461,7 @@ def main():
             t["status"] = "FAIL"
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
     drain()
+    drop_lease()
     restore_local_configs(_config_snaps)
     _lap("suites")
     # Lượt không cưỡng bức (Stop hook) không tra khoá, nhưng FAIL thật của nó phải vào sổ khoá: không thì --full sau đó dùng lại PASS cũ
