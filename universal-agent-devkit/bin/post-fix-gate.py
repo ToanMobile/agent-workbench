@@ -6172,12 +6172,13 @@ def main():
                     mark_keyed(t, rec)
                     return None
             run_suite_slotted(t, cmd, mode, env, sequential)
-            record_keyed(t)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này
+            record_keyed(t, final=False)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này (trừ PASS của suite phụ thuộc diff: ghi ở lượt cuối)
             return None
 
 
-    def record_keyed(t):
-        """Ghi kết quả một lượt chạy THẬT lệnh đầy đủ vào sổ khoá — chỉ khi input không đổi trong lúc chạy (khoá đọc lại bằng nhau)."""
+    def record_keyed(t, final=True):
+        """Ghi kết quả một lượt chạy THẬT lệnh đầy đủ vào sổ khoá — chỉ khi input không đổi trong lúc chạy (khoá đọc lại bằng nhau).
+        final=False (ngay sau khi chính suite chạy xong, các suite khác có thể chưa chạy): PASS của suite phụ thuộc diff chưa được ghi."""
         ks = KEYS.get(id(t))
         st = t.get("status")
         void_due = sc is not None and id(t) in really_ran and st != "PASS" and id(t) not in voided
@@ -6196,8 +6197,11 @@ def main():
                 void_suite()   # không ghi được khoá nào: không có gì giữ FAIL này lại (đã ghi ở lần gọi trước thì FAIL đó đang giữ nó)
             return
         if st == "PASS" and suite_cache_mod().DIFF_DEPENDENT.search(t.get("full_command") or t.get("command") or "") \
-                and any(x is not t and x.get("status") not in ("PASS", "NOT_RUN") for x in regression_tests):
-            return   # run_impacted.sh bỏ qua script của suite đã chạy trước nó (DEVKIT_GATE_DONE): PASS của nó chỉ đáng ghi khi các suite đó cũng PASS
+                and (not final or any(x is not t and x.get("status") not in ("PASS", "NOT_RUN") for x in regression_tests)):
+            # run_impacted.sh bỏ qua script của suite đã chạy trước nó (DEVKIT_GATE_DONE): PASS của nó chỉ đáng ghi khi các suite đó cũng PASS.
+            # Ngay sau khi nó chạy xong (final=False) các suite khác có thể CHƯA chạy (gate gộp, DEVKIT_SLOT_PRIORITY=merge, đổi thứ tự): phán
+            # quyết chỉ ở lượt ghi cuối, khi mọi suite đã có kết quả (tests/gates/test_gate_suite_cache_selection.sh ca S5m).
+            return
         if st == "PASS" and suite_cache_mod().selection_keyable(t):
             # R3: tập chọn nằm trong khoá, đọc lúc tính khoá; cửa sổ `git log --since` của run_impacted.sh trượt theo giờ (cây không đổi) nên
             # suite có thể đã chạy tập khác tập trong khoá: PASS ghi dưới khoá tập lớn hơn là PASS giả. Đọc lại, khác thì không ghi.

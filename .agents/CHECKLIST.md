@@ -1,12 +1,12 @@
 # 🧪 Regression Checklist
 
-**An toàn 7% (18/245)** · ❌ 114 · 🔁 0 · 🚫 0 · 🟡 66 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 42 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 70 · ma trận chờ duyệt: không
+**An toàn 7% (18/245)** · ❌ 114 · 🔁 0 · 🚫 0 · 🟡 66 cần chạy lại · ⚠️ 2 cần test · ⚠️ 4 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 42 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 70 · ma trận chờ duyệt: không
 
-> Sinh tự động lúc 2026-10-25 01:06:39 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
+> Sinh tự động lúc 2026-10-25 01:26:14 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
 
 **Bug không có test hồi quy nào chặn tái phát: 2** (0 chưa có test · 2 có test nhưng gate không chạy)
 
-## 🚨 Cần xử lý (185)
+## 🚨 Cần xử lý (189)
 
 | Trạng thái | ID | Tính năng / Bug | Component | Việc cần làm |
 |---|---|---|---|---|
@@ -195,6 +195,10 @@
 | 🐞 chưa sửa | BUG-20261023-test-chap-chon-flaky-reg-sb-runner-recla | Test chập chờn (flaky): REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01 | super-board-runner-reclaim-dead-build | sửa theo ĐỎ→XANH rồi `agent-kit bugs link` |
 | ⚠️ có test, gate không chạy | BUG-20261013-bug-capture-copied-a-pasted-secret | Bug capture copied an API key pasted in a prompt into regression_status.json and CHECKLIST.md (title and id unredacted) | checklist | test có nhưng gate không chạy — đưa vào ma trận hoặc link suite của ma trận |
 | ⚠️ có test, gate không chạy | BUG-20261013-regression-gate-held-skip-ignored-writers | regression_gate skipped the Stop for a payload without session_id or with DEVKIT_ALLOW_SHARED_CHECKOUT=1 while another session held the lock | gates | test có nhưng gate không chạy — đưa vào ma trận hoặc link suite của ma trận |
+| ⚠️ test có thể không suite nào chạy | ORPHAN_TEST:mcp-servers/agent-office/tests/approval_test.js | mcp-servers/agent-office/tests/approval_test.js | - | dò lệnh suite không thấy suite nào chạy test này (có thể sai) — kiểm lại; nếu đúng: gọi nó trong lệnh / script của một suite ma trận, hoặc thêm thư mục của nó vào watch_files của suite chạy nó |
+| ⚠️ test có thể không suite nào chạy | ORPHAN_TEST:mcp-servers/agent-office/tests/pathing_test.js | mcp-servers/agent-office/tests/pathing_test.js | - | dò lệnh suite không thấy suite nào chạy test này (có thể sai) — kiểm lại; nếu đúng: gọi nó trong lệnh / script của một suite ma trận, hoặc thêm thư mục của nó vào watch_files của suite chạy nó |
+| ⚠️ test có thể không suite nào chạy | ORPHAN_TEST:mcp-servers/agent-office/tests/present_pose_test.js | mcp-servers/agent-office/tests/present_pose_test.js | - | dò lệnh suite không thấy suite nào chạy test này (có thể sai) — kiểm lại; nếu đúng: gọi nó trong lệnh / script của một suite ma trận, hoặc thêm thư mục của nó vào watch_files của suite chạy nó |
+| ⚠️ test có thể không suite nào chạy | ORPHAN_TEST:mcp-servers/agent-office/tests/repo_label_test.js | mcp-servers/agent-office/tests/repo_label_test.js | - | dò lệnh suite không thấy suite nào chạy test này (có thể sai) — kiểm lại; nếu đúng: gọi nó trong lệnh / script của một suite ma trận, hoặc thêm thư mục của nó vào watch_files của suite chạy nó |
 
 ## 🧩 Phân hệ
 

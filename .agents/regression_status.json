@@ -13199,6 +13199,46 @@
         "tests/super-board/test_runner_reconcile_ac_open.sh",
         "tests/super-board/test_preflight_ac_open.sh"
       ]
+    },
+    "ORPHAN_TEST:mcp-servers/agent-office/tests/pathing_test.js": {
+      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/pathing_test.js",
+      "kind": "orphan",
+      "title": "mcp-servers/agent-office/tests/pathing_test.js",
+      "component": "-",
+      "file": "mcp-servers/agent-office/tests/pathing_test.js",
+      "created_at": "2026-10-22 15:09:50",
+      "last": null,
+      "history": []
+    },
+    "ORPHAN_TEST:mcp-servers/agent-office/tests/present_pose_test.js": {
+      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/present_pose_test.js",
+      "kind": "orphan",
+      "title": "mcp-servers/agent-office/tests/present_pose_test.js",
+      "component": "-",
+      "file": "mcp-servers/agent-office/tests/present_pose_test.js",
+      "created_at": "2026-10-24 07:36:29",
+      "last": null,
+      "history": []
+    },
+    "ORPHAN_TEST:mcp-servers/agent-office/tests/approval_test.js": {
+      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/approval_test.js",
+      "kind": "orphan",
+      "title": "mcp-servers/agent-office/tests/approval_test.js",
+      "component": "-",
+      "file": "mcp-servers/agent-office/tests/approval_test.js",
+      "created_at": "2026-10-24 13:07:22",
+      "last": null,
+      "history": []
+    },
+    "ORPHAN_TEST:mcp-servers/agent-office/tests/repo_label_test.js": {
+      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/repo_label_test.js",
+      "kind": "orphan",
+      "title": "mcp-servers/agent-office/tests/repo_label_test.js",
+      "component": "-",
+      "file": "mcp-servers/agent-office/tests/repo_label_test.js",
+      "created_at": "2026-10-24 13:07:22",
+      "last": null,
+      "history": []
     }
   },
   "meta": {
