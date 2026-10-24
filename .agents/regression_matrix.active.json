@@ -1292,6 +1292,69 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "post-fix-gate-tree-mode",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_tree_mode.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-TREE-01",
+          "name": "post-fix-gate --tree HEAD: cây sạch chạy đủ suite và exit 0, tin ma trận đã commit, từ chối cây bẩn, biên nhận theo cây cho proof_gate (#307)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_tree_mode.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-guard-kill-by-name",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/tests/gates/test_guard_kill_by_name.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-KILL-BY-NAME-01",
+          "name": "git guard chặn pkill / killall / pgrep -f (kill theo tên trúng mọi board); kill <PID>, pgrep không -f và chữ pkill trong echo/grep/commit -m vẫn qua (#144)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_kill_by_name.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-settings-read-deny-apk",
+      "watch_files": [
+        "universal-agent-devkit/templates/claude_settings.json",
+        "universal-agent-devkit/.claude/settings.json",
+        ".claude/settings.json",
+        "universal-agent-devkit/tests/verification/test_settings_template_read_deny.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SETTINGS-READ-DENY-APK-01",
+          "name": "luật deny Read của settings không chặn build/outputs và *.apk (worker QA liệt kê, cài APK debug), vẫn chặn build/intermediates, build/tmp, *.aab, *.hprof",
+          "command": "bash universal-agent-devkit/tests/verification/test_settings_template_read_deny.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-guard-heredoc-text",
+      "watch_files": [
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/worktree_guard.sh",
+        "universal-agent-devkit/tests/gates/test_guard_heredoc_text_not_command.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-HEREDOC-TEXT-01",
+          "name": "chữ rm -rf / git nằm trong heredoc là dữ liệu: hardware_safety_gate và worktree_guard không chặn nhầm, rm -rf / và ghi vào main thật vẫn bị chặn (#299 b, c)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_heredoc_text_not_command.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
