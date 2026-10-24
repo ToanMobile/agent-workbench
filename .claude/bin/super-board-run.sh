@@ -359,9 +359,25 @@ project_node_id() {
 issue_is_open() {
   # $1 = issue number. Returns 0 when OPEN, 1 when CLOSED.
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
-  local state
+  local state labels
   state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
-  [ "$state" != "CLOSED" ]
+  [ "$state" = "CLOSED" ] || return 0
+  # T0054: thẻ mang nhãn ac-open đã merge một PR nhưng còn AC chưa chứng minh (merge gate gắn nhãn). Worker vẫn có thể
+  # `gh issue close` nó; mọi đường reconcile CLOSED → Done đều qua đây, nên mở lại issue và coi như OPEN thay vì đưa vào Done.
+  # Đọc nhãn hỏng: hành vi cũ (CLOSED), kèm log — không halt cả board vì một lần đọc phụ.
+  if labels=$(gh issue view "$1" --json labels -q '[.labels[].name] | join(",")' 2>/dev/null); then
+    case ",$(printf '%s' "$labels" | tr '[:upper:]' '[:lower:]')," in
+      *,ac-open,*)
+        if gh_write_once issue reopen "$1" >/dev/null 2>&1; then
+          log "#$1 was closed with label ac-open (AC not proven yet) — reopened, not moved to Done"
+          return 0
+        fi
+        log "⚠ #$1 closed with label ac-open but could not be reopened — treated as closed" ;;
+    esac
+  else
+    log "⚠ could not read labels of closed #$1 — ac-open not checked"
+  fi
+  return 1
 }
 
 TOP_ISSUE=""
