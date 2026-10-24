@@ -4,6 +4,7 @@
 #    "diff hunk data missing" → 3 lần thử rồi halt cả board. Chỉ được tách theo \n, và đọc stdout của gh dạng bytes.
 # 2. approval: GitHub chỉ điền closingIssuesReferences cho PR vào nhánh mặc định; PR vào nhánh khác (staging) thì lấy
 #    "fixes/closes/resolves #N" cùng repo trong body, đọc trong cùng snapshot ghim head. Tham chiếu repo khác bị bỏ.
+#    Từ 24/10 body cũng được đọc ở nhánh mặc định (GitHub bỏ `Closes #N` trong code span: #321).
 # Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -66,8 +67,12 @@ got="$(issues staging 'Fixes #12 and closes: #14; resolves other/repo#99')"
 [ "$got" = "12,14" ] && ok "PR vào staging: lấy fixes/closes cùng repo từ body, bỏ repo khác" || fail "PR vào staging: got '$got', want '12,14'"
 got="$(issues staging 'mentions #12 without a keyword')"
 [ "$got" = "none" ] && ok "PR vào staging: #N không kèm từ khoá thì không liên kết" || fail "không từ khoá: got '$got', want 'none'"
-got="$(issues main 'Fixes #12')"
-[ "$got" = "3" ] && ok "PR vào nhánh mặc định: chỉ dùng closingIssuesReferences như cũ" || fail "nhánh mặc định: got '$got', want '3'"
+got="$(issues main 'no keyword here')"
+[ "$got" = "3" ] && ok "PR vào nhánh mặc định: closingIssuesReferences vẫn được dùng" || fail "nhánh mặc định: got '$got', want '3'"
+# 24/10 (#321, PR #342): builder viết `Closes #321` trong code span; GitHub bỏ liên kết, approval báo "not linked" và
+# thẻ 🙋 kẹt mãi dù người đã comment done. Từ khoá trong body (cùng snapshot ghim head) cũng được tính ở nhánh mặc định.
+got="$(issues main 'status · `Closes #12` · head')"
+[ "$got" = "3,12" ] && ok "PR vào nhánh mặc định: Closes #N trong code span của body vẫn liên kết" || fail "code span: got '$got', want '3,12'"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_upstream_66_67: PASS"; exit 0; } || { echo "test_upstream_66_67: FAIL ($FAILS)"; exit 1; }

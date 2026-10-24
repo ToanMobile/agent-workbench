@@ -54,7 +54,10 @@ gh_write_once() {
     local verify=() spec=""
     [ -z "$token" ] || spec=$(jq -nc --argjson n "$3" --arg m "$token" '{kind:"comment",issue:$n,marker:$m}' 2>/dev/null) || spec=""
     [ -z "$spec" ] || verify=(--verify "$spec")
-    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 || true
+    # --halt exits 79 (HALTED) once its record is saved; any other code means the record is not on disk.
+    local hrc=0
+    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 || hrc=$?
+    [ "$hrc" -eq 79 ] || { log "halt record NOT written for the uncertain GitHub $1 $2 write (github-read rc=$hrc): exiting 76, the watchdog will not restart it blind"; exit 76; }
     exit 79
   }
 }
@@ -976,7 +979,16 @@ preflight_gate() {
   inf=$(mktemp "${TMPDIR:-/tmp}/sb-inflight.XXXXXX")
   printf '%s' "$PROJECT_ITEMS_JSON" | jq -c '[.items[] | select(.status == "Building" or .status == "QA" or .status == "Review" or .status == "Ready")
     | {number: .content.number, title: (.content.title // ""), status: .status}]' > "$inf" 2>/dev/null || echo '[]' > "$inf"
-  out=$(bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" 2>>"$RUN_MANIFEST") || rc=$?
+  # The board's own merge line cap: 0 means one card is one PR whatever its size, so preflight never asks to split it.
+  # Read it like super-board-merge-policy.py: unset → 400, else a whole number, and any value <= 0 is "no cap".
+  # A value the merge policy cannot read (a word) falls back to 400 here; the merge gate then sends that PR to a human.
+  local cap; cap=$(jq -r '.merge_policy.auto_max_lines as $c
+    | if $c == null then 400 elif $c == false then 0 elif $c == true then 1
+      elif ($c | type) == "number" then ($c | floor)
+      elif ($c | type) == "string" and ($c | test("^\\s*[-+]?[0-9]+\\s*$")) then ($c | gsub("\\s"; "") | tonumber)
+      else 400 end
+    | if . <= 0 then 0 elif . > 1000000000 then 1000000000 else . end' "$CONFIG_PATH" 2>/dev/null) || cap=400
+  out=$(bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" --cap "${cap:-400}" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$inf"
   if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
   if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
@@ -2002,6 +2014,32 @@ Next: ${next} (next tick)" >/dev/null 2>&1 || true
   done <<EOF
 $(printf '%s' "$plan" | jq -r '.sweep[]? | [(.number | tostring), ((.clearedBy // []) | unique | map("#" + tostring) | join(", "))] | @tsv' 2>/dev/null)
 EOF
+  # 24/10 (#321): `resume` = a 🙋 card whose current-head request a trusted human answered `done` (super-board-approval.py,
+  # verified by the deps helper). Only the workflow backend read it, so the legacy runner never acted on an approval and
+  # #321 sat Blocked ~18 h. Back to Review, where the Reviewer re-checks the approval at the merge gate. Once per card.
+  local akey why
+  while IFS=$'\t' read -r issue akey why; do
+    [ -n "$issue" ] || continue
+    key="${issue}:resume:${akey:-none}"   # one move per approval (head + request id): a later approval moves it again
+    if swept_seen "$key"; then continue; fi
+    item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+    [ -n "$item_id" ] || continue
+    if ! set_card_status "$item_id" "Review"; then
+      gh_checkpoint
+      log "⚠ blocked sweep: could not move approved #${issue} to Review"
+      continue
+    fi
+    swept_add "$key"
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Review · approval verified
+Did: super-board-approval.py: ${why:-approval verified}
+✅ Done: card moved Blocked → Review
+Next: reviewer re-checks the approval and merges through the merge gate" >/dev/null 2>&1 || true
+    log "↩ approved #${issue}: Blocked → Review (${why:-approval verified})"
+    moved=0
+  done <<EOF
+$(printf '%s' "$plan" | jq -r '.resume[]? | [(.number | tostring), (if (.key // "") == "" then "none" else .key end), (.why // "")] | @tsv' 2>/dev/null)
+EOF
   return "$moved"
 }
 
@@ -2123,9 +2161,9 @@ EOF
 # đích) · stopped (người dùng dừng: có stop marker <slug>.stopped của super-board-stop.sh). Watchdog chỉ khởi động lại
 # running/crashed khi không có marker.
 # Mã dừng có chủ đích sau khi trap EXIT được đặt: 9 verification-ready (mỗi tick) · 10 skills-readiness · 73 worker mồ
-# côi / worktree cũ / runner khác còn sống · 74 wave lock · 75 guard production-merge · 79 GitHub halt. 64 không có ở đây:
+# côi / worktree cũ / runner khác còn sống · 74 wave lock · 75 guard production-merge · 76 GitHub halt whose record could not be written (never restarted: the uncertain write needs a person) · 79 GitHub halt. 64 không có ở đây:
 # nó cũng là lỗi đọc của github-read (payload sai dạng 3 lần), thường tạm thời, nên watchdog thử lại có backoff và trần.
-RUNNER_HALT_CODES=" 9 10 73 74 75 79 "
+RUNNER_HALT_CODES=" 9 10 73 74 75 76 79 "
 # Môi trường runner trả lại khi watchdog khởi động lại (toolchain + cấu hình pool/account). Token và secret cố ý không
 # ghi xuống đĩa: gh và claude đọc chúng từ keychain, mà launchd agent trong phiên GUI của người dùng vẫn đọc được.
 RUNNER_ENV_KEYS="PATH JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT SB_ACCOUNT_POOL SB_STATE_DIR CLAUDE_CONFIG_DIR DEVKIT_LANG"
@@ -2272,7 +2310,7 @@ fi
 # check_halt, and the next runner adopts the survivors as after a crash. Killing them lost the work done mid-lane.
 halt_cleanup() {
   local rc=$?
-  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ]; then
+  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || [ "$rc" -eq 76 ]; then   # 76: no halt record on disk, so workers cannot see a halt: stop them here
     for pid in $(own_lane_pids); do
       kill -TERM "$pid" 2>/dev/null || true
     done
