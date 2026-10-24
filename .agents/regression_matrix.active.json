@@ -1242,6 +1242,21 @@
       ]
     },
     {
+      "component": "super-board-merge-gate-verified-tree",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_verified_tree.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-TREE-01",
+          "name": "merge gate: cây gộp đã verify xanh với cùng bộ lệnh thì lượt gate sau bỏ verify; base đổi, lệnh đổi hoặc verify đỏ thì verify đủ (#226 gap 7)",
+          "command": "bash tests/super-board/test_merge_gate_verified_tree.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "durations-union-merge",
       "trigger_files": [
         ".gitattributes",
