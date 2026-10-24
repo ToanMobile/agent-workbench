@@ -6145,6 +6145,7 @@ def main():
         k = lookup_key(t) if (sc is not None and keyed_ok and mode == "full") else None
         if not k:
             return run_suite_slotted(t, cmd, mode, env, sequential)
+        drop_lease()   # R1: chờ marker của gate khác không giữ slot nặng — chủ marker có thể đang xếp hàng đúng slot này (hai bên chờ nhau)
         with sc.inflight(k, slot_rec.get(t.get("id"))) as state:
             if state == "recheck":
                 rec = sc.hit(k, t)
@@ -6178,6 +6179,15 @@ def main():
         if st == "PASS" and suite_cache_mod().DIFF_DEPENDENT.search(t.get("full_command") or t.get("command") or "") \
                 and any(x is not t and x.get("status") not in ("PASS", "NOT_RUN") for x in regression_tests):
             return   # run_impacted.sh bỏ qua script của suite đã chạy trước nó (DEVKIT_GATE_DONE): PASS của nó chỉ đáng ghi khi các suite đó cũng PASS
+        if st == "PASS" and suite_cache_mod().selection_keyable(t):
+            # R3: tập chọn nằm trong khoá, đọc lúc tính khoá; cửa sổ `git log --since` của run_impacted.sh trượt theo giờ (cây không đổi) nên
+            # suite có thể đã chạy tập khác tập trong khoá: PASS ghi dưới khoá tập lớn hơn là PASS giả. Đọc lại, khác thì không ghi.
+            cmd0 = t.get("full_command") or t.get("command")
+            parts = sc.key_parts.get((t.get("id"), cmd0))
+            if parts is not None and json.loads(parts[0]).get("selection") != suite_cache_mod().selection_list(project_dir, cmd0):
+                log_warn(tr(f"{t.get('id')}: tập test chọn đổi trong lúc chạy — PASS không ghi vào cache",
+                            f"{t.get('id')}: the selected test set changed while it ran — PASS not recorded in the cache"))
+                return
         recorded.add(id(t))
         meta = {"duration": t.get("duration"), "log": t.get("log"), "project": os.path.basename(str(project_dir))[:64],
                 "head": _head_sha(project_dir), "inputs_n": sc.inputs.get(t.get("id"))}

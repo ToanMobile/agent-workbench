@@ -121,4 +121,19 @@ PY
 if [ "$res3" = "lease_kept=True b_blocked=True a2_reused=True b_still_blocked=True b_after_a2=True" ]; then ok "G3. keep_heavy giữ slot giữa hai suite nặng: B không chen, suite 2 dùng lại (lease), B vào sau khi A nhả hết"
 else fail "G3. ($res3)"; fi
 
+# ── G4 (review R1). Suite theo khoá nội dung vào `sc.inflight` (chờ marker của gate khác cùng khoá) TRƯỚC khi xin slot. Lease giữ qua lần chờ đó
+#    thì gate A (giữ slot nặng, chờ marker) và gate B (giữ marker, xếp hàng đúng slot ấy) chờ nhau tới hết hạn marker. Luật: run_suite nhả lease
+#    TRƯỚC `with sc.inflight(`. Ghim thứ tự trong mã (ponytail: dựng hai gate tranh một khoá thật cần đồng bộ theo thời gian, test thành flaky;
+#    nâng lên e2e khi harness có điểm dừng trong inflight).
+if python3 - "$GATE" <<'PY'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+m = re.search(r"    def run_suite\(t, cmd, mode, env, sequential=False\):\n(.*?)\n\n", src, re.S)
+body = m.group(1) if m else ""
+i, j = body.find("drop_lease()"), body.find("sc.inflight(")
+sys.exit(0 if 0 <= i < j else 1)
+PY
+then ok "G4. run_suite nhả lease slot nặng trước khi chờ marker cùng khoá (không giữ slot trong lúc chờ gate khác)"
+else fail "G4. run_suite phải gọi drop_lease() trước sc.inflight(...): lease giữ qua lần chờ marker → hai gate chờ nhau"; fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_slot_started: all passed" || { echo "❌ test_gate_slot_started: $FAILS failed"; exit 1; }
