@@ -52,8 +52,8 @@ case " $* " in
   *" pr view "*"headRefName,headRefOid"*) echo "issue-$n-x $(cat "$FAKE_DIR/pr$n.head")" ;;
   *" pr view "*"state,mergeCommit,headRefOid"*) printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$(cat "$FAKE_DIR/pr$n.head")" ;;
   *" pr view "*"labels,files"*) cat "$FAKE_DIR/pr$n.meta" ;;
-  *" pr view "*"title"*) cat "$FAKE_DIR/pr$n.title" 2>/dev/null || echo "t" ;;
-  *" pr view "*"--json body"*) jq -r '.body' "$FAKE_DIR/pr$n.meta" ;;
+  *" pr view "*"title"*) [ -e "$FAKE_DIR/pr$n.title.fail" ] && exit 1; cat "$FAKE_DIR/pr$n.title" 2>/dev/null || echo "t" ;;
+  *" pr view "*"--json body"*) if [ -e "$FAKE_DIR/pr$n.body2" ]; then cat "$FAKE_DIR/pr$n.body2"; else jq -r '.body' "$FAKE_DIR/pr$n.meta"; fi ;;
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
   *" pr edit "*) f=$(printf '%s\n' "$@" | sed -n '/^--body-file$/{n;p;}'); cp "$f" "$FAKE_DIR/pr$n.edited" ;;
   *" pr merge "*) f=$(printf '%s\n' "$@" | sed -n '/^--body-file$/{n;p;}'); [ -n "$f" ] && cp "$f" "$FAKE_DIR/merge$n.msg"; echo merged ;;
@@ -66,7 +66,7 @@ SH
 chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" SB_CARD_CACHE_DIR="$TMP/cache" SB_NOTIFY_SKIP=1
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_MERGE_RECHECK_DELAY_S=0 SB_MERGE_LOAD_MAX=100000
-printf '{"projectId":"P","fieldId":"F","options":{"Ready":"o-r","Done":"o-d"},"items":{"21":"I21","23":"I23","24":"I24"}}' > "$TMP/cache/board-o-1.json"
+printf '{"projectId":"P","fieldId":"F","options":{"Ready":"o-r","Done":"o-d"},"items":{"21":"I21","23":"I23","24":"I24","41":"I41"}}' > "$TMP/cache/board-o-1.json"
 CFG="$TMP/cfg.json"
 echo '{"base_branch":"main","repo":{"path":".","remote":""},"project":{"owner":"o","number":1},"verify_commands":["true"]}' > "$CFG"
 gate() {  # $1 = PR; stdout → gate$1.out, stderr → gate$1.err; echo rc
@@ -190,6 +190,29 @@ rc=$(gate 26)
   && ! grep -qi 'closes #315' "$TMP/merge26.msg" && grep -q '^Closes #26$' "$TMP/merge26.msg" \
   && ok "F: commit Closes thẻ lạ → message squash 'Refs #315', giữ 'Closes #26' của chính thẻ, không exit 11 lặp" \
   || fail "F: rc=$rc msg=$(cat "$TMP/merge26.msg" 2>/dev/null) err=$(tail -2 "$TMP/gate26.err")"
+
+# L (#319, T0054 edge 3) — the PR title cannot be read (network) while the branch is a card: exit 4 for a later wave, never a merge whose
+#     subject nobody checked for Closes.
+printf '<!-- sb:ac -->\n- [x] a\n- [x] b\n- [x] c\n<!-- /sb:ac -->\nCloses #40\n' > "$TMP/b40.md"
+card 40 "$TMP/b40.md" "$TMP/issue3.md" '[]'; : > "$TMP/pr40.title.fail"
+rc=$(gate 40)
+[ "$rc" = 4 ] && ! grep -q 'pr merge' "$TMP/calls" && ok "L: tiêu đề PR không đọc được → exit 4, không merge" || fail "L: rc=$rc $(tr '\n' '|' < "$TMP/calls")"
+
+# M (#319, T0054 edge 2) — the PR body changes while verify runs (a reviewer unticks a line): the AC verdict is taken again right before
+#     the merge. Ticked at the start, one line unticked by merge time → Refs, ac-open, no label removal (the card must stay open).
+printf 'Closes #41\n<!-- sb:ac -->\n- [x] Test: khoá B → HIT\n- [x] Test: lượt 2 dùng lại REG-DK-ALL-01\n- [x] Đo tỷ lệ dùng lại ≥ 50%%\n<!-- /sb:ac -->\n' > "$TMP/b41.md"
+sed 's/- \[x\] Đo/- [ ] Đo/' "$TMP/b41.md" > "$TMP/b41.now"
+card 41 "$TMP/b41.md" "$TMP/issue3.md" '[{"name":"ac-open"}]'; cp "$TMP/b41.now" "$TMP/pr41.body2"
+rc=$(gate 41)
+[ "$rc" = 0 ] && grep -q '^ac-open: #41$' "$TMP/gate41.out" && grep -q '^Refs #41$' "$TMP/merge41.msg" 2>/dev/null && ! grep -qi 'closes #41' "$TMP/merge41.msg" \
+  && ! grep -q 'remove-label ac-open' "$TMP/calls" && ok "M: AC bỏ tick trong lúc verify → Refs + ac-open, không gỡ nhãn" \
+  || fail "M: rc=$rc msg=$(cat "$TMP/merge41.msg" 2>/dev/null) calls=$(tr '\n' '|' < "$TMP/calls")"
+# N — the body collapsed to fewer lines during verify: exit 11, no merge.
+printf 'Closes #42\n<!-- sb:ac -->\n- [x] gộp tất cả\n<!-- /sb:ac -->\n' > "$TMP/b42.now"
+sed 's/#41/#42/' "$TMP/b41.md" > "$TMP/b42.md"
+card 42 "$TMP/b42.md" "$TMP/issue3.md" '[]'; cp "$TMP/b42.now" "$TMP/pr42.body2"
+rc=$(gate 42)
+[ "$rc" = 11 ] && ! grep -q 'pr merge' "$TMP/calls" && ok "N: body nén lại trong lúc verify → exit 11, không merge" || fail "N: rc=$rc $(tr '\n' '|' < "$TMP/calls")"
 
 [ "$FAILS" -eq 0 ] && { echo "merge gate ac-check: all checks passed"; exit 0; }
 echo "merge gate ac-check: $FAILS FAILED"; exit 1

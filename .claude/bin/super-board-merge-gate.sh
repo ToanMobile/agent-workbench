@@ -370,7 +370,7 @@ fi
 #   Closes thẻ khác thẻ của nhánh issue-<N>, hoặc khối sb:ac ít dòng hơn số AC của thẻ → exit 11 (về Build viết lại).
 # Còn dòng AC chưa tick (đo số sau merge, thiết bị, người): vẫn merge, nhưng Closes → Refs và thẻ ở lại (ac_after_merge).
 # Nhánh không mang issue-<N>: bỏ qua. Không có khối sb:ac: chỉ kiểm Closes lạ, không đọc issue (PR tay giữ hành vi cũ).
-AC_DIR=$(mktemp -d); AC_CARD=""; AC_UNTICKED=""; AC_HAS_LABEL=false
+AC_DIR=$(mktemp -d); AC_CARD=""; AC_UNTICKED=""; AC_HAS_LABEL=false; AC_RECHECK=false; extra=()
 jq -r '.body // ""' "$META" > "$AC_DIR/pr.md"
 # Subject của commit squash cũng đóng thẻ ("Fix #23: …"): --subject, không có thì tiêu đề PR — kiểm cùng message.
 AC_SUBJECT="${SUBJECT:-$(pr_title)}"
@@ -387,6 +387,9 @@ if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
   fi
   # Có khối sb:ac, hoặc không có mà PR vẫn tự Closes thẻ (nén về 0 dòng): đối chiếu với AC của thẻ.
   if [ "$(echo "$AC_JSON" | jq -r '.ac or .closes_own')" = true ]; then
+    # #319 (T0054): a title lost to a network error is empty, so it was never checked for Closes: wait for the next wave, do not merge on it.
+    # Only a PR that carries AC (sb:ac block or an own Closes): a hand-made PR keeps the old behaviour (case E).
+    [ -n "$AC_SUBJECT" ] || { say "could not read the PR title; not merging (a squash subject nobody checked for Closes)"; exit 4; }
     python3 "$GITHUB_READ" --kind issue -- issue view "$AC_CARD" ${REPO:+--repo "$REPO"} --json number,title,body,labels > "$AC_DIR/issue.json"
     jq -r '.body // ""' "$AC_DIR/issue.json" > "$AC_DIR/issue.md"
     jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' "$AC_DIR/issue.json" >/dev/null && AC_HAS_LABEL=true
@@ -408,6 +411,7 @@ if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
       exit 11
     fi
     AC_UNTICKED=$(echo "$AC_JSON" | jq -r '(.unticked // [])[] | "- " + .')
+    AC_RECHECK=true
   fi
 fi
 
@@ -992,6 +996,23 @@ if [ "$DRY" -eq 1 ]; then
   [ -z "$AC_UNTICKED" ] || say "dry run: card #${AC_CARD} has unproven AC — would turn Closes into Refs and keep the card open (ac-open)"
   say "dry run: would squash-merge PR #${PR}"
   exit 0
+fi
+
+# #319 (T0054): verify may have run > 900 s and a reviewer may have edited the PR body meanwhile. Take the AC verdict again from the body as it
+# is now (the card's own AC and the cards it refers to were read before verify): collapsed or foreign closes → back to Build, a newly unticked
+# line → the Refs branch below. Unreadable body → not merging, the next wave tries again.
+if [ "$AC_RECHECK" = true ]; then
+  gh pr view "$PR" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/pr.md" \
+    || { say "could not re-read the PR body before merging; not merging (the AC verdict may be stale)"; exit 4; }
+  AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} \
+    --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
+  foreign=$(echo "$AC_JSON" | jq -r '.foreign_closes | map("#\(.)") | join(", ")')
+  if [ -n "$foreign" ] || [ "$(echo "$AC_JSON" | jq -r .collapsed)" = true ]; then
+    echo "ac-check: the PR body changed during verify and now ${foreign:+closes ${foreign}}${foreign:+ / }lists fewer AC lines than card #${AC_CARD} has"
+    say "back to Build: fix the closing keywords and the sb:ac block"
+    exit 11
+  fi
+  AC_UNTICKED=$(echo "$AC_JSON" | jq -r '(.unticked // [])[] | "- " + .')
 fi
 
 # T0054: còn dòng AC chưa tick → GitHub không được tự đóng thẻ khi merge. Đổi từ khoá đóng #<thẻ> thành Refs trong body PR

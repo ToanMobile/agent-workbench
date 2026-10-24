@@ -12,7 +12,15 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 T=$(mktemp -d "${TMPDIR:-/tmp}/sb-reconcile-acopen.XXXXXX"); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin"
-printf '#!/bin/sh\necho CLOSED\n' > "$T/read.py"   # github-read giả: issue luôn CLOSED
+# github-read giả: --kind state luôn CLOSED; lần đọc stateReason,labels (#319: qua helper, không gọi gh trực tiếp) trả JSON dựng từ gh giả
+cat > "$T/read.py" <<'SH'
+#!/bin/sh
+case "$*" in
+  *stateReason*) out=$(gh issue view 7 --json stateReason,labels) || exit 1
+    printf '{"stateReason":"%s","labels":[{"name":"%s"}]}\n' "${out%% *}" "${out#* }" ;;
+  *) echo CLOSED ;;
+esac
+SH
 cat > "$T/bin/gh" <<SH
 #!/bin/sh
 echo "gh \$*" >> "$T/calls"

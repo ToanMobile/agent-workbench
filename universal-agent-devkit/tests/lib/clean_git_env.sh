@@ -29,6 +29,8 @@ export ANTIGRAVITY_PM_GLOBAL_CONFIG=/dev/null/agpm-test-no-global-config/.antigr
 # DEVKIT_LANG=en (user shell, a super-board runner or merge-gate verify) turned test_multi_session_gate.sh red (2026-10-16).
 # A test that wants en sets it itself after sourcing (none sets it before).
 export DEVKIT_LANG=vi
+# CI=true của worker super-board cũng ép --full (force_full_reason). Gate lồng trong test phải thấy chế độ thường.
+unset CI
 # The machine's two heavy-verify slots (~/.claude/super-board/locks) belong to real merge gates and --full runs: a test's fake verify
 # (echo) queued behind them for up to 3600 s whenever no gate holding a slot started it (2026-10-20, test_merge_gate_ff.sh).
 # A test runs as if its caller held the slot; test_heavy_slot.sh unsets this to test the slots themselves.
