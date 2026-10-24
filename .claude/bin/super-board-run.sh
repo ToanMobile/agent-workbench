@@ -2406,11 +2406,13 @@ LANDED_COUNT=0
 DISPATCH_LOG=""
 
 # ── Tự nạp lại code mới (#229, gap 4 của #226). Runner là bash chạy dài: PR sửa chính super-board-run.sh merge xong mà tiến trình vẫn
-# chạy bản cũ cho tới khi ai đó dừng/chạy lại tay. Lúc rảnh (không worker nào, lock nào) mỗi tick fetch origin/<base>; blob của script trên
+# chạy bản cũ cho tới khi ai đó dừng/chạy lại tay. Mỗi tick fetch origin/<base>; blob của script trên
 # origin khác blob đang chạy thì: main checkout fast-forward được (đang ở <base>, HEAD là tổ tiên của origin) → ff rồi exec lại chính nó
 # (cùng PID, nên bản ghi watchdog vẫn đúng; SB_WATCHDOG_START=1 nạp lại bộ đếm và không xoá stop marker). Gộp xung đột/gate đỏ, ff không áp
 # được hoặc bản mới sai cú pháp → notify một lần cho mỗi bản origin, tiếp tục chạy bản cũ: không restart mù, không chạy code cũ im lặng.
-# ponytail: chỉ nạp lại khi rảnh hoàn toàn; board luôn có worker thì chờ tới lúc rảnh, nâng lên khi thấy board bận liên tục.
+# #379: nạp lại cả khi còn worker sống (board luôn bận thì không bao giờ rảnh: 24/10 runner chạy code cũ 5 giờ). exec giữ PID, worker là
+# tiến trình con độc lập nên sống tiếp; runner mới chạy startup_reconcile → adopt_live_locks nhận lại. Không giao việc mới bằng code cũ:
+# tick chạy self_reload_tick trước mọi dispatch, nên exec xảy ra trước khi giao.
 RELOAD_SELF="${RELOAD_SELF:-$SCRIPT_DIR/super-board-run.sh}"
 RELOAD_RUN_SUM="${RELOAD_RUN_SUM:-$(git hash-object "$RELOAD_SELF" 2>/dev/null || true)}"
 RELOAD_WARNED=""
@@ -2446,7 +2448,6 @@ reload_finish_main() {
 }
 self_reload_tick() {
   local now new disk rel cur
-  [ "${ACTIVE_WORKERS:-0}" -eq 0 ] || return 0
   [ -n "$RELOAD_RUN_SUM" ] || return 0
   now=$(date +%s)
   [ "$now" -ge "$RELOAD_NEXT_CHECK" ] || return 0
@@ -2476,7 +2477,7 @@ self_reload_tick() {
     [ "$disk" = "$new" ] || { reload_warn "$new" "after the fast-forward the file on disk still differs from origin"; return 0; }
   fi
   bash -n "$RELOAD_SELF" 2>/dev/null || { reload_warn "$new" "the new script fails bash -n"; return 0; }
-  log "♻ self-reload: origin/${BASE_BRANCH} changed super-board-run.sh (${RELOAD_RUN_SUM:0:7} → ${new:0:7}) and no worker is running — restarting on the new code"
+  log "♻ self-reload: origin/${BASE_BRANCH} changed super-board-run.sh (${RELOAD_RUN_SUM:0:7} → ${new:0:7}) — restarting on the new code (${ACTIVE_WORKERS:-0} live worker(s) will be adopted)"
   reload_exec "$RELOAD_SELF"
 }
 
@@ -2670,7 +2671,7 @@ while true; do
 
   ACTIVE_WORKERS=$(( BUILD_COUNT + QA_COUNT + REVIEW_COUNT ))   # một trần chung cho cả 3 lane
 
-  # Rảnh hoàn toàn (không worker nào): nạp lại code nếu super-board-run.sh trên origin đã đổi (#229). Có thể exec và không quay lại.
+  # Nạp lại code (kể cả khi còn worker, #379) nếu super-board-run.sh trên origin đã đổi (#229). Có thể exec và không quay lại.
   self_reload_tick
 
   # Đang hoãn sau RUNAWAY: không giao được gì nên chỉ đọc board thưa (paused_tick). Kiểm trước nhánh cap-reached:
