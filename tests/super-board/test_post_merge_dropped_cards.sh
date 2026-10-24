@@ -111,6 +111,10 @@ printf '{"number":130,"headRefName":"issue-13-nofield","headRefOid":"x","baseRef
 # 14: bị bỏ, PR từ FORK tên issue-14-… (của người ngoài) → không bao giờ đóng
 card 14 issue-14-fork; issue 14 CLOSED NOT_PLANNED "$OLD"
 printf '{"number":140,"headRefName":"issue-14-fork","headRefOid":"x","baseRefName":"main","isCrossRepository":true}\n' >> "$TMP/open.jsonl"
+# 15: bị bỏ, nhánh ĐÃ push rồi bị xoá trên origin (GitHub xoá nhánh, chưa ai fetch --prune): ref theo dõi local cũ vẫn chứa tip, nhưng
+#     origin không còn bản nào → nhánh local là bản duy nhất: GIỮ (OCR: kiểm "đã push" phải hỏi origin thật, không ref cũ)
+card 15 issue-15-gone; issue 15 CLOSED NOT_PLANNED "$OLD"
+git -C "$O" update-ref -d refs/heads/issue-15-gone
 # 12: đóng kiểu COMPLETED mà PR vẫn mở (không phải thẻ bị bỏ) → không đụng
 card 12 issue-12-done; pr_open 120 issue-12-done; issue 12 CLOSED COMPLETED "$OLD"
 
@@ -128,6 +132,9 @@ grep -q "pr close 50 .*--comment" "$TMP/gh.calls" && ok "d2b the PR is closed wi
 has_branch issue-11-solo && [ "$(git -C "$R" rev-parse issue-11-solo)" = "$TIP11" ] && grep -Eq "issue-11-solo.*(never pushed|chưa push)" "$TMP/sweep.log" \
   && ok "d5 a branch with commits never pushed is KEPT (asking first is the project rule), with the reason" \
   || { fail "d5 branch issue-11-solo with unpushed commits was deleted or no reason logged"; grep -a "issue-11" "$TMP/sweep.log"; }
+has_branch issue-15-gone && git -C "$R" show-ref --verify --quiet refs/remotes/origin/issue-15-gone \
+  && ok "d5c a branch deleted on origin (stale local tracking ref) is KEPT: origin, not a stale ref, decides 'pushed'" \
+  || { fail "d5c branch issue-15-gone deleted although origin no longer holds it"; grep -a "issue-15" "$TMP/sweep.log"; }
 case " $(open_prs) " in *" 130 "*) case " $(open_prs) " in *" 140 "*) ok "d5b a PR row without isCrossRepository, and a fork PR, are not closed (fail-closed)" ;; *) fail "d5b fork PR #140 was closed" ;; esac ;; *) fail "d5b PR #130 (no isCrossRepository) was closed" ;; esac
 case " $(open_prs) " in *" 70 "*) fail "d6 PR #70 still open" ;; *) ok "d6 a dropped card with a dirty worktree still gets its PR closed" ;; esac
 [ -d "$W/issue-7-build" ] && has_branch issue-7-dirty && [ "$(tail -1 "$W/issue-7-build/src/x.c")" = "real fix" ] \
