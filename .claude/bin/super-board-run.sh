@@ -359,9 +359,35 @@ project_node_id() {
 issue_is_open() {
   # $1 = issue number. Returns 0 when OPEN, 1 when CLOSED.
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
-  local state
+  local state reason
   state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
-  [ "$state" != "CLOSED" ]
+  [ "$state" = "CLOSED" ] || return 0
+  # T0054: thẻ mang nhãn ac-open đã merge một PR nhưng còn AC chưa chứng minh (merge gate gắn nhãn). Worker vẫn có thể
+  # `gh issue close` nó; mọi đường reconcile CLOSED → Done đều qua đây, nên coi nó là OPEN (và mở lại issue) thay vì Done.
+  # Nhãn đọc từ snapshot board đã có (card.sh items trả labels): issue đóng không nhãn không tốn thêm lần đọc nào.
+  # Người đóng có chủ đích (NOT_PLANNED, run.md §5 "dropped on purpose") thì để yên.
+  echo "${PROJECT_ITEMS_JSON:-{\}}" | jq -e --argjson n "$1" 'any(.items[]?; .content.number == $n
+      and any(((.labels // []) + (.content.labels // []))[]; ((if type == "object" then .name else . end) // "" | ascii_downcase) == "ac-open"))' >/dev/null 2>&1 \
+    || return 1
+  # Snapshot có thể cũ: merge gate gỡ nhãn ngay trước khi merge đủ AC rồi Closes đóng thẻ. Đọc nhãn + lý do đóng trực tiếp;
+  # nhãn đã gỡ thì CLOSED như thường. Không đọc được: không mở lại (có thể người đã bỏ thẻ) nhưng cũng không đưa vào Done.
+  if ! reason=$(gh issue view "$1" --json stateReason,labels \
+       -q '(.stateReason // "") + " " + ([.labels[].name | ascii_downcase] | join(","))' 2>/dev/null); then
+    log "⚠ #$1 closed with label ac-open; close reason unreadable — not reopened, kept out of Done this tick"
+    return 0
+  fi
+  case ",${reason#* }," in *,ac-open,*) ;; *) return 1 ;; esac
+  reason="${reason%% *}"
+  if [ "$reason" = "NOT_PLANNED" ]; then
+    log "#$1 has label ac-open but was closed as not planned — left closed"
+    return 1
+  fi
+  if gh_write_once issue reopen "$1" >/dev/null 2>&1; then
+    log "#$1 was closed with label ac-open (AC not proven yet) — reopened, not moved to Done"
+  else
+    log "⚠ #$1 closed with label ac-open could not be reopened — kept out of Done; reopen it or remove the label"
+  fi
+  return 0
 }
 
 TOP_ISSUE=""
@@ -1144,7 +1170,7 @@ EOF
       if [ -n "$train_rows" ]; then
         noop_judge=0
         log "review lane: merge-train for #${train_issues// /, #} (PRs ${train_prs}) — one worker, one verify, no fresh review"
-        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done; red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
+        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done (not when the gate printed ac-open: #N — that card stays open, the gate moved it to Ready); red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
       elif merge_only=$(review_approved_head "$issue"); then
         noop_judge=0
         read -r mo_pr mo_head <<EOF
@@ -1153,7 +1179,7 @@ EOF
         log "review lane issue=#${issue}: PR #${mo_pr} approved at head ${mo_head} — merge-only, no fresh review"
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
       else
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac
