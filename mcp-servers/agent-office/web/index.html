@@ -357,7 +357,12 @@
     .board-head select, .board-head input { flex: 1 1 140px; }
     .board-head .count { width: 100%; margin-left: 0; }
     .board-head .hint { display: none; }
-    .controls button { padding: 8px 10px; }
+    .controls button { padding: 8px 10px; min-height: 44px; }
+    /* điện thoại: thanh nút một hàng cuộn ngang thay vì ba hàng chiếm 1/5 màn hình */
+    .controls { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+    .controls::-webkit-scrollbar { display: none; }
+    /* thông báo: trên điện thoại không chạy lệnh terminal được, chỉ giữ câu và nút Ẩn */
+    .notice code, .notice .copy { display: none; }
   }
   @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
 </style>
@@ -529,6 +534,10 @@ function rowState(repo) {
   if (rs === 'stale') return { key: 'stale', label: 'Mất tín hiệu', detail: 'tick cuối ' + ago(rn.tick.at) };
   if (rs === 'finished') return { key: 'stopped', label: 'Đã dừng', detail: 'dừng sau tick ' + rn.tick.time.slice(0, 5) };
   return { key: 'stopped', label: 'Không chạy', detail: 'chưa thấy runner' };
+}
+// Repo đã dừng không dựng nhãn bên trái (hàng đã tối + chữ trên sàn); vẫn hiện khi runner còn chờ bạn
+function repoLabelShown(repo) {
+  return rowState(repo).key !== 'stopped' || !!(repo.runner && repo.runner.tick && repo.runner.tick.waiting > 0);
 }
 const ITEM_STATE = { OPEN: 'Đang mở', CLOSED: 'Đã đóng', MERGED: 'Đã merge' };
 const ITEM_TYPE = { Issue: 'Issue', PullRequest: 'Pull request', DraftIssue: 'Bản nháp' };
@@ -875,13 +884,13 @@ function buildRow(S, repo, r, cols, T) {
     const off = flat(L.width - 0.4, SIZE.ROW_D - 0.3, T.dark ? '#000000' : '#2f3a4d', T.dark ? 0.32 : 0.1, 0, 0.024, z); off.material.depthWrite = false;
     const { c, ctx, tex } = canvasTex(1024, 128);
     ctx.font = F(700, 64); ctx.fillStyle = T.dark ? 'rgba(255,255,255,0.32)' : 'rgba(47,58,77,0.34)'; ctx.textAlign = 'center';
-    ctx.fillText(rsx.key === 'stale' ? 'Runner mất tín hiệu' : 'Runner đang dừng', c.width / 2, 86); tex.needsUpdate = true;
+    ctx.fillText(rsx.key === 'stale' ? 'Runner mất tín hiệu' : repo.name + ': runner đang dừng', c.width / 2, 86); tex.needsUpdate = true;
     const tag = new THREE.Mesh(GEO.plane, track(new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })));
     tag.scale.set(9, 1.1, 1); tag.rotation.x = -Math.PI / 2; tag.position.set(L.x0 + SIZE.OFFICE_W + 5, 0.03, z + 0.2); world.add(tag);
   }
   if (rn && rn.tick && rn.tick.waiting > 0) lbl.append(h('span', 'you', 'Chờ bạn ' + rn.tick.waiting));
   lbl.addEventListener('click', () => select({ type: 'repo', id: repo.name }));
-  addLabel('lbl-repo', new THREE.Vector3(L.x0 - 0.6, 0.05, z), lbl, 'left');
+  if (repoLabelShown(repo)) addLabel('lbl-repo', new THREE.Vector3(L.x0 - 0.6, 0.05, z), lbl, 'left');
 
   const dim = rsx.key === 'stopped' || rsx.key === 'stale';
   cols.forEach((c, ci) => buildStation(S, repo, c, ci, z, T, dim));
@@ -1950,16 +1959,21 @@ function renderDash(S) {
   box.scrollTop = keepScroll;
 }
 $('#btnDash').onclick = () => { const d = $('#dash'); d.hidden = !d.hidden; $('#btnDash').setAttribute('aria-pressed', String(!d.hidden)); if (LAST_S) renderDash(LAST_S); };
-const dismissed = new Set();
+// Thông báo đã Ẩn nhớ qua lần tải lại (trước đây quay lại mỗi lần mở trang)
+const dismissed = (() => { try { return new Set(JSON.parse(localStorage.getItem('ao-dismissed') || '[]')); } catch (e) { return new Set(); } })();
 function renderNotices(S, offline) {
   const box = $('#notices'); box.textContent = '';
   const list = (S ? S.notices : []).slice();
-  if (offline) list.unshift({ level: 'error', text: 'Mất kết nối tới server.py. Kiểm tra cửa sổ terminal đang chạy server.' });
+  if (offline) list.unshift({ level: 'error', text: 'Mất kết nối tới server.py. Kiểm tra cửa sổ terminal đang chạy server.', transient: true });
   list.filter((n) => !dismissed.has(n.text)).forEach((n) => {
     const el = h('div', 'notice ' + n.level); el.append(h('span', null, n.text));
-    const x = h('button', null, 'Ẩn'); x.type = 'button'; x.onclick = () => { dismissed.add(n.text); el.remove(); };
+    const x = h('button', null, 'Ẩn'); x.type = 'button'; x.onclick = () => {
+      el.remove(); if (n.transient) return; // mất kết nối: chỉ ẩn lần này, lần mất sau vẫn báo
+      dismissed.add(n.text); if (n.level !== 'info') return; // lỗi/cảnh báo thật: mở lại trang vẫn báo
+      try { localStorage.setItem('ao-dismissed', JSON.stringify([...dismissed])); } catch (e) { /* storage blocked: chỉ ẩn trong lần mở này */ }
+    };
     if (n.cmd) {
-      const code = h('code', null, n.cmd); const b = h('button', null, 'Chép lệnh'); b.type = 'button';
+      const code = h('code', null, n.cmd); const b = h('button', 'copy', 'Chép lệnh'); b.type = 'button';
       b.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(n.cmd).then(() => { b.textContent = 'Đã chép'; }); };
       el.append(code, b);
     }
