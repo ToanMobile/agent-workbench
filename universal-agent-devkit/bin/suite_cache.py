@@ -66,6 +66,12 @@ DANGER = ("**/tests/lib/**", "tests/lib/**", "**/clean_git_env.sh",
 DANGER_EXEMPT = ("tests/lib/test_durations.txt",)
 # Suite không cache theo khoá: chọn test theo lịch sử git / đồng hồ (run_impacted.sh), hoặc đọc mạng ngay trong lệnh.
 DIFF_DEPENDENT = re.compile(r"(?:^|[\s/;&|(])run_impacted\.sh\b")
+# Ngoại lệ có điều kiện (#344): đúng `bash <đường dẫn>/run_impacted.sh [--all]` của CHÍNH DevKit (script có dòng SELECTION_MARK: `--list` chỉ in
+# tập test được chọn, không chạy gì) được cache theo khoá cả cây + tập `--list` in ra. Script trùng tên của dự án khác có thể chạy test ngay
+# khi bị hỏi `--list`: không dấu thì không hỏi, không cache.
+SELECTION_CMD = re.compile(r"^\s*bash\s+(?:\./)?((?:[\w.-]+/)*run_impacted\.sh)(?:\s+--all)?\s*$")
+SELECTION_MARK = "devkit-selection-list:"
+SELECTION_TIMEOUT_S = 60
 NETWORK = re.compile(r"\b(?:curl|wget)\b[^\n;|&]*\bhttps?://|\bnpx\s+(?:-y|--yes)\b|\bnpm\s+(?:i|install|ci)\b|\bpip3?\s+install\b"
                      r"|\buv\b[^\n;|&]*\s--with\b|\bgit\s+(?:clone|fetch|ls-remote|pull)\b[^\n;|&]*(?:https?://|git@|ssh://)")
 _SCAN_EXT = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".ts", ""}
@@ -454,6 +460,47 @@ def cacheable(test, device):
     return True, ""
 
 
+def void_needed(status, *, flaky=False, vacuous=False, tree_unchanged=True, recorded=True) -> bool:
+    """Một lần chạy THẬT vừa xong có vô hiệu mọi PASS cũ của id (mọi khoá) không (#344). PASS: không. FAIL thật — xác định (không
+    chập chờn, không VACUOUS), trên cây không đổi trong lúc chạy, và đã dính vào một khoá (fail_n): không — nó chỉ nói về nội dung đó, một
+    nội dung khác từng PASS vẫn đúng (khoá khác ⇒ HIT như cũ). Mọi thứ còn lại (TIMEOUT, hạ tầng, chập chờn, cây đổi, FAIL không ghi
+    được khoá nào): có — khoá nào cũng không còn tin được."""
+    if status == "PASS":
+        return False
+    return not (status == "FAIL" and not flaky and not vacuous and tree_unchanged and recorded)
+
+
+def selection_keyable(test) -> bool:
+    """True khi suite là run_impacted.sh chuẩn của DevKit (SELECTION_CMD) mà ma trận không tắt cache: được cache theo khoá cả cây + tập
+    chọn, nhưng KHÔNG vào phần cached-full thêm vào của gate (cacheable() vẫn False: mọi --full sẽ phải chạy nó lần đầu)."""
+    return test.get("cache") is not False and bool(SELECTION_CMD.match(test.get("command") or ""))
+
+
+def selection_list(project_dir, command):
+    """Tập test (đã sắp) mà `run_impacted.sh --list` chọn lúc này trong project_dir; None khi không hỏi được: lệnh không đúng dạng chuẩn,
+    script không có SELECTION_MARK, không nằm trong cây, `--list` lỗi hay quá SELECTION_TIMEOUT_S. Hỏi không kèm DEVKIT_GATE_DONE (tập
+    chọn đầy đủ, chưa trừ suite đã chạy trong lượt) và không kèm DEVKIT_IMPACT_TEST_CHANGED (móc test: giả vờ file đổi)."""
+    m = SELECTION_CMD.match(command or "")
+    if not m:
+        return None
+    script = os.path.normpath(os.path.join(str(project_dir), m.group(1)))
+    root = os.path.realpath(str(project_dir))
+    real = os.path.realpath(script)
+    if not (real.startswith(root + os.sep) and os.path.isfile(real)):
+        return None
+    try:
+        with open(real, encoding="utf-8", errors="replace") as f:
+            if SELECTION_MARK not in f.read(4096):
+                return None
+        env = {k: v for k, v in os.environ.items() if k not in ("DEVKIT_GATE_DONE", "DEVKIT_IMPACT_TEST_CHANGED")}
+        arg = ["--all"] if "--all" in command.split() else []
+        r = subprocess.run(["bash", real, "--list", *arg], cwd=str(project_dir), capture_output=True, text=True, env=env,
+                           timeout=SELECTION_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return sorted(set(r.stdout.split())) if r.returncode == 0 else None
+
+
 def store_dir(project_dir):
     r = _git(project_dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if r.returncode != 0:
@@ -539,8 +586,15 @@ class SuiteCache:
         seen, ext, tools, cut = closure(self.project_dir, self.idx, named | watched, ext_seeds)
         cut = cut or self.idx.skips > skips0
         files |= seen
+        sel = None
+        if DIFF_DEPENDENT.search(cmd):   # tập test chọn theo lịch sử git: không có tập thì không có khoá; có thì chỉ khoá cả cây (ponytail: mọi
+            # file đổi ⇒ chạy lại; khoá theo nội dung của riêng tập chọn cần biết test nào đọc file nào — nâng cấp khi đo tỉ lệ dùng lại thấp)
+            sel = selection_list(self.project_dir, cmd)
+            if sel is None:
+                return None, None
+            cut = True
         head = json.dumps({
-            "fmt": SUITE_CACHE_FORMAT, "rf": self.result_format, "id": sid, "command": cmd,
+            "fmt": SUITE_CACHE_FORMAT, "rf": self.result_format, "id": sid, "command": cmd, "selection": sel,
             "untested_exit": test.get("untested_exit"), "local": self.local_sha, "sel": self.selection_env,
             "danger": self.danger_digest, "matrix": self.matrix_digest, "env": env_fingerprint(tools | _tools_in(cmd)),
         }, sort_keys=True).encode()
