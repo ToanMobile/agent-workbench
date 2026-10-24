@@ -36,7 +36,15 @@ node_modules/}" > "$P/.gitignore"; echo a > "$P/a.txt"
   G "$P" add -A && G "$P" commit -qm init
 }
 wt() { (cd "$P" && python3 "$WTPY" add "$1" --no-init >/dev/null 2>&1) || fail "setup: worktree add $1"; }
-fin() { (cd "$P" && python3 "$WTPY" finish "$@" >"$TMP/out" 2>&1); return $?; }
+# finish never commits real work (#366): the plain work of a case (the top-level *.txt files) is committed by hand first; secrets and the
+# other files are left as they are, so the checks on them still see what they saw before.
+fin() {
+  if [ -d "${1:-}" ]; then
+    for f in "$1"/*.txt; do [ -f "$f" ] && G "$1" add -- "$(basename "$f")"; done
+    G "$1" diff --cached --quiet || G "$1" commit -qm "work by hand"
+  fi
+  (cd "$P" && python3 "$WTPY" finish "$@" >"$TMP/out" 2>&1); return $?
+}
 clean_status() { [ -z "$(G "$P" status --porcelain)" ]; }
 
 # 1: the Neighbours case
@@ -86,7 +94,7 @@ fi
 
 # 5: an untracked key.properties that git does NOT ignore: never committed
 new_main m5 '*.jks'; W="$TMP/sc-e"; wt "$W"
-mkdir -p "$W/android" && printf 'storePassword=s3cr3t-Passw0rd\n' > "$W/android/key.properties"; echo e > "$W/e.txt"
+mkdir -p "$W/android" && printf 'storePassword=s3cr3t-Passw0rd\n' > "$W/android/key.properties"; echo e > "$W/e.txt"; G "$W" add e.txt && G "$W" commit -qm "e by hand"   # (so the worktree's HEAD is the same before and after fin)
 H5="$(G "$P" rev-parse HEAD)"; WH5="$(G "$W" rev-parse HEAD)"
 fin "$W"; rc=$?
 [ "$rc" = 1 ] && grep -q "android/key.properties" "$TMP/out" && [ "$(G "$P" rev-parse HEAD)" = "$H5" ] && [ "$(G "$W" rev-parse HEAD 2>&1)" = "$WH5" ] \

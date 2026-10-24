@@ -76,6 +76,8 @@
 #   11 verification failed after merging the base cleanly into the scratch tree —
 #      rebasing changes nothing: back to Build to fix the failing verify (the gate
 #      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
+#      — also when the newest `[qa] [report]` comment still has a non-empty `❌ Not done:` line, or a `- [x]` AC of the PR body has
+#      no `↳ <proof>` line (super-board-qa-report.py, #364); stdout lists each `qa-report: <reason>`
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
 #      — or the merge call failed while GitHub still shows the PR OPEN at the verified head (nothing merged; next wave retries)
@@ -85,6 +87,7 @@
 #      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
 #      the card goes back to Review (not Blocked, not a rebase pass)
+#   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
 #   7  merge policy says a human merges this one (money / auth / destructive
 #      schema, a diff over auto_max_lines — default 400, "big PR — please
 #      review" — or merge_policy.default "human"). Stdout lists each
@@ -306,7 +309,22 @@ META=$(mktemp); DIFF=$(mktemp)
 # Log của lệnh verify cũng ngoài $SCRATCH (18/10, GeelyEx2): trong cây, ở repo không ignore *.log, nó là file chưa track trong dấu vân tay
 # cây (bin/tree_fp.py), nên post-fix-gate không mượn được biên nhận --full của worktree đã PASS đúng nội dung đó và chạy lại mọi suite.
 VERIFY_LOG=$(mktemp)
-python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body > "$META"
+python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} --json labels,files,additions,deletions,changedFiles,body,comments,author > "$META"
+# #364: report QA mới nhất của người đáng tin còn "❌ Not done" nêu tên một AC, hay AC [x] không có dòng bằng chứng ↳: không merge,
+# thẻ về Build (exit 11). Checker thoát 2 (metadata không đọc được), crash, hay thoát 1 mà không in dòng "qa-report:" nào là
+# KHÔNG quyết định được: cùng đường với policy không đọc được (exit 7, người duyệt), không phải lỗi build của thẻ.
+QA_REPORT_RC=0
+QA_REPORT_OUT=$(python3 "$HERE/super-board-qa-report.py" --meta "$META" 2>/dev/null) || QA_REPORT_RC=$?
+if [ "$QA_REPORT_RC" -ne 0 ]; then
+  if [ "$QA_REPORT_RC" -eq 1 ] && printf '%s\n' "$QA_REPORT_OUT" | grep -q '^qa-report: '; then
+    printf '%s\n' "$QA_REPORT_OUT"
+    say "QA report/AC not clean — nothing merged; the card goes back to Build"
+    exit 11
+  fi
+  echo "human-gate: qa-report — could not evaluate the QA report / AC (checker exit ${QA_REPORT_RC}; metadata unreadable or checker crashed)"
+  say "QA report could not be evaluated — a human merges this one"
+  exit 7
+fi
 python3 "$GITHUB_READ" --kind diff --meta "$META" -- pr diff "$PR" ${REPO:+--repo "$REPO"} > "$DIFF"
 PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$META" --diff "$DIFF") || {
   echo "human-gate: policy — could not classify the PR (unreadable metadata)"
@@ -600,7 +618,7 @@ run_verify_cmd_inner() {
 # Gate post-fix-gate đỏ CHỈ vì suite quá giờ (#142, 18/10: REG-DK-ALL-01 TIMEOUT 900 s khi máy tải cao): exit 1 với kết luận REJECT
 # (exit 1 còn là CHƯA XÁC MINH khi project bị gỡ), dòng "Lớp tĩnh … : đạt" / "Static checks … : passed", có ít nhất một dòng suite
 # `[ ] TIMEOUT |` và không dòng suite đỏ nào khác. Dòng suite = đầu dòng (sau khoảng trắng) là `[ ] <bất kỳ> |` sau khi bỏ mã màu:
-# trạng thái lạ (FAIL_INFRA…) vẫn bị đếm là đỏ khác (fail-closed); dòng đuôi output của suite bắt đầu bằng "|" nên không bị đếm.
+# `TIMEOUT (HANG)` (post-fix-gate #370: quá giờ lúc máy rảnh) cũng là TIMEOUT nên được chạy lại; trạng thái lạ (FAIL_INFRA…) vẫn bị đếm là đỏ khác (fail-closed); dòng đuôi output của suite bắt đầu bằng "|" nên không bị đếm.
 # Thiếu dòng lớp tĩnh, kết luận không REJECT hay không có dòng suite nào: không phân loại được → không chạy lại.
 gate_red_only_by_timeout() {
   local rc="$1" log_file="$2"
@@ -611,7 +629,7 @@ gate_red_only_by_timeout() {
       if (static != 2) static = ($0 ~ /: (đạt|passed)[[:space:]]*$/) ? 1 : 2
     }
     /^[[:space:]]*\[ \] [^|]*\|/ {
-      if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT[[:space:]]*\|/) t++; else other++
+      if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT( \(HANG\))?[[:space:]]*\|/) t++; else other++
     }
     END { exit !(rej && static == 1 && t > 0 && other == 0) }'
 }
@@ -1040,7 +1058,13 @@ PY
         # --attr-source keeps the repo's merge drivers applying, as `git -C "$MAIN_PATH"` did.
         main_gd=$(git -C "$MAIN_PATH" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || main_gd=""
         merged_tree=""
-        [ -z "$main_gd" ] || merged_tree=$(cd "$SCRATCH" && git --git-dir="$main_gd" --attr-source="$TARGET_SHA" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
+        [ -z "$main_gd" ] || merged_tree=$(cd "$SCRATCH" && git --git-dir="$main_gd" --attr-source="$TARGET_SHA" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>"$SCRATCH/mt.err") || merged_tree=""
+        # git 2.38-2.41 có merge-tree --write-tree nhưng không có --attr-source (exit 129, "unknown option"): thử lại không cờ đó (#358).
+        if [ -z "$merged_tree" ] && grep -q 'attr-source' "$SCRATCH/mt.err" 2>/dev/null; then
+          # Như lệnh chính (#309): cwd = $SCRATCH và --git-dir thay cho cờ -C vào checkout của người dùng (-C đổi cwd về đó,
+          # merge driver bị giết sẽ để .merge_file_* ở đó). main_gd chắc có giá trị: lần thử đầu chỉ đỏ vì lỗi attr-source.
+          merged_tree=$(cd "$SCRATCH" && git --git-dir="$main_gd" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
+        fi
         # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
         if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "$TARGET_SHA" "$local_tip" 2>/dev/null; then merged_tree="$origin_tree"; fi
         # `reset --keep` cũng đặt lại INDEX về commit đích: file phiên khác đã stage (khác HEAD) sẽ rơi khỏi index (thành untracked).

@@ -385,3 +385,7 @@
 1 tests/verification/test_settings_template_read_deny.sh
 # 2026-10-24: test của #307 (--tree) thiếu dòng sau khi gộp origin/main; đo 31 s lúc tải ~90.
 31 tests/gates/test_gate_tree_mode.sh
+8 tests/worktree_git/test_worktree_remove_durations.sh
+9 tests/gates/test_guard_secrets.sh
+6 tests/worktree_git/test_githooks_heal.sh
+5 tests/gates/test_suite_cache_store_fifo.sh

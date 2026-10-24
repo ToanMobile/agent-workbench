@@ -35,18 +35,18 @@ PY
 # fixture: DevKit (symlink mode, lang vi) + a git-ignored local guard hook that the project settings register, like the 5 app repos
 P="$TMP/app"; mkdir -p "$P" && G "$P" init -q -b main . && echo x > "$P/a" && G "$P" add a && G "$P" commit -qm init
 bash "$DEVKIT_DIR/bin/install.sh" -t "$P" -a claude -p backend -y --lang=vi >/dev/null 2>&1 || { fail "install (fixture)"; exit 1; }
-printf 'import sys\nsys.exit(0)\n' > "$P/.claude/hooks/guard-secrets.py"; chmod +x "$P/.claude/hooks/guard-secrets.py"
+printf 'import sys\nsys.exit(0)\n' > "$P/.claude/hooks/guard-key-literals.py"; chmod +x "$P/.claude/hooks/guard-key-literals.py"
 ln -s "../../a" "$P/.claude/hooks/rel-link.sh"   # a RELATIVE link: copied as-is it would dangle one folder deeper (NFH #18)
 python3 - "$P/.claude/settings.json" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
 s.setdefault("hooks", {}).setdefault("PreToolUse", []).append(
-    {"matcher": "Bash", "hooks": [{"type": "command", "command": 'python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard-secrets.py'}]})
+    {"matcher": "Bash", "hooks": [{"type": "command", "command": 'python3 "$CLAUDE_PROJECT_DIR"/.claude/hooks/guard-key-literals.py'}]})
 json.dump(s, open(sys.argv[1], "w"), indent=2)
 PY
 printf '/.claude/hooks/guard-*.py\n/.claude/hooks/rel-link.sh\n' >> "$P/.git/info/exclude"
 G "$P" add -A >/dev/null 2>&1; G "$P" commit -qm devkit >/dev/null 2>&1
-G "$P" check-ignore -q .claude/hooks/guard-secrets.py && grep -q '"lang": "vi"' "$P/.agents/active-profile.json" \
+G "$P" check-ignore -q .claude/hooks/guard-key-literals.py && grep -q '"lang": "vi"' "$P/.agents/active-profile.json" \
   || { fail "fixture: guard hook not ignored or lang not vi"; exit 1; }
 
 # 1 + 2: a lane worktree made by the kit has the local hook, a working copy of the relative link, a clean status and health without
@@ -54,8 +54,8 @@ G "$P" check-ignore -q .claude/hooks/guard-secrets.py && grep -q '"lang": "vi"' 
 B="$P/.claude/worktrees/issue-5-build"
 add env DEVKIT_LANG=en python3 "$WT" add "$B" issue-5-fix --lane=build; rc=$?
 [ "$rc" = 0 ] || fail "add --lane=build failed (rc $rc): $(tail -5 "$TMP/out")"
-if [ -f "$B/.claude/hooks/guard-secrets.py" ] && cmp -s "$P/.claude/hooks/guard-secrets.py" "$B/.claude/hooks/guard-secrets.py" \
-    && [ -x "$B/.claude/hooks/guard-secrets.py" ]; then
+if [ -f "$B/.claude/hooks/guard-key-literals.py" ] && cmp -s "$P/.claude/hooks/guard-key-literals.py" "$B/.claude/hooks/guard-key-literals.py" \
+    && [ -x "$B/.claude/hooks/guard-key-literals.py" ]; then
   ok "add copies a git-ignored local hook of main (same bytes, executable)"
 else
   fail "the local hook is missing or differs in the kit worktree"
@@ -74,7 +74,7 @@ grep -q "Score: 100/100" "$TMP/health" && ok "  … and health scores 100/100 (#
 H="$P/.claude/worktrees/issue-6-build"
 G "$P" worktree add -q -b issue-6-x "$H" HEAD
 (cd "$H" && python3 "$WT" heal --devkit="$DEVKIT_DIR" > "$TMP/out" 2>&1)
-if [ -f "$H/.claude/hooks/guard-secrets.py" ] && [ -f "$H/.claude/hooks/block-dangerous-git.sh" ] && [ -e "$H/.claude/hooks/rel-link.sh" ]; then
+if [ -f "$H/.claude/hooks/guard-key-literals.py" ] && [ -f "$H/.claude/hooks/block-dangerous-git.sh" ] && [ -e "$H/.claude/hooks/rel-link.sh" ]; then
   ok "heal after a plain git worktree add: DevKit hook links and the local hook are there"
 else
   fail "heal left hooks missing: $(ls "$H/.claude/hooks" 2>&1 | tr '\n' ' ' | cut -c1-200)"
