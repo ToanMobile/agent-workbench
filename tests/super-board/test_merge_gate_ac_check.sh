@@ -214,5 +214,16 @@ card 42 "$TMP/b42.md" "$TMP/issue3.md" '[]'; cp "$TMP/b42.now" "$TMP/pr42.body2"
 rc=$(gate 42)
 [ "$rc" = 11 ] && ! grep -q 'pr merge' "$TMP/calls" && ok "N: body nén lại trong lúc verify → exit 11, không merge" || fail "N: rc=$rc $(tr '\n' '|' < "$TMP/calls")"
 
+# N2 (OCR 24/10) — the recheck message names only the problem that exists: a collapsed block says so and does not claim a foreign close.
+! grep -qi 'closes' "$TMP/gate42.out" && grep -q 'lists 1 AC lines but card #42 has 3' "$TMP/gate42.out" \
+  && ok "N2: nén lại trong lúc verify → thông báo chỉ nói số dòng AC, không nói đóng thẻ lạ" || fail "N2: out=$(cat "$TMP/gate42.out")"
+# O — only a foreign Closes appeared during verify (the block still lists every AC): exit 11 and the message must NOT say the block lists fewer lines.
+sed 's/#41/#43/' "$TMP/b41.md" > "$TMP/b43.md"
+{ cat "$TMP/b43.md"; printf 'Closes #315\n'; } > "$TMP/b43.now"
+card 43 "$TMP/b43.md" "$TMP/issue3.md" '[]'; cp "$TMP/b43.now" "$TMP/pr43.body2"
+rc=$(gate 43)
+[ "$rc" = 11 ] && ! grep -q 'pr merge' "$TMP/calls" && grep -q 'closes #315' "$TMP/gate43.out" && ! grep -q 'fewer AC lines\|lists .* AC lines' "$TMP/gate43.out" \
+  && ok "O: chỉ có Closes thẻ lạ trong lúc verify → exit 11, thông báo không nói thiếu dòng AC" || fail "O: rc=$rc out=$(cat "$TMP/gate43.out")"
+
 [ "$FAILS" -eq 0 ] && { echo "merge gate ac-check: all checks passed"; exit 0; }
 echo "merge gate ac-check: $FAILS FAILED"; exit 1

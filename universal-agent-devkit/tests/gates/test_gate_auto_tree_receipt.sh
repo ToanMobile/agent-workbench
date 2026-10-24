@@ -79,4 +79,41 @@ run_gate; rc=$?
 [ "$rc" = 0 ] && [ -z "$(git -C "$TMP/repo" rev-parse --git-common-dir | xargs -I{} sh -c 'ls {}/super-board/verified-trees 2>/dev/null')" ] \
   && ok "no board config writes nothing" || fail "no-config run wrote a receipt (rc=$rc)"
 
+# OCR 24/10 (F1-F3): the mark vouches for what the board's merge gate would run. It must not be written when this run is not that verify:
+# 6. the config lists a second verify command: this one run proves only the gate line -> no receipt
+make_repo with-config
+jq --arg c "echo second-suite" '.verify_commands += [$c]' .claude/super-board/configs/t.json > "$TMP/cfg" && mv "$TMP/cfg" .claude/super-board/configs/t.json
+git add -A && git commit -qm cfg2
+R=$(receipt_path); run_gate
+bash .claude/bin/super-board-verify-cmd.sh --config .claude/super-board/configs/t.json >/dev/null 2>&1   # config valid
+RC2=$( ( . .claude/bin/super-board-verify-flags.sh; sb_verified_tree_receipt "$(git rev-parse 'HEAD^{tree}')" main "$TMP/repo" "$VERIFY_CMD" "echo second-suite" ) )
+[ ! -e "$RC2" ] && ok "two verify commands: the one gate run writes no receipt" || fail "receipt written for a config with two verify commands ($RC2)"
+
+# 7. a relaxing flag in this run (--allow-no-tests): the merge gate's own verify would not accept it -> no receipt
+make_repo with-config
+R=$(receipt_path)
+CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --matrix "$TMP/repo/matrix.json" --run-tests --full --force-full --lang en --allow-no-tests --diff origin/main > "$TMP/out" 2>&1
+[ ! -e "$R" ] && ok "--allow-no-tests run writes no receipt" || fail "receipt written by a run with a relaxing flag"
+
+# 8. the tree changed after the run began (a commit or merge while --full ran): the verifier refuses to key the NEW tree
+make_repo with-config
+OLDTREE=$(git rev-parse 'HEAD^{tree}')
+printf 'y = 2\n' > later.py && git add later.py && git commit -qm "after the run began"
+R=$(receipt_path)
+bash .claude/bin/super-board-verify-cmd.sh --config .claude/super-board/configs/t.json --mark --tree "$OLDTREE" >/dev/null 2>"$TMP/err"; rc=$?
+[ "$rc" = 65 ] && [ ! -e "$R" ] && ok "--mark --tree: a tree that moved on gets no receipt (exit 65)" || fail "exit $rc, receipt present=$([ -e "$R" ] && echo yes || echo no): $(cat "$TMP/err")"
+
+# 9. a single verify command that is not post-fix-gate: nothing this gate ran vouches for it
+make_repo with-config
+jq '.verify_commands = ["npm test"]' .claude/super-board/configs/t.json > "$TMP/cfg" && mv "$TMP/cfg" .claude/super-board/configs/t.json
+git add -A && git commit -qm cfg3
+TREE=$(git rev-parse 'HEAD^{tree}')
+bash .claude/bin/super-board-verify-cmd.sh --config .claude/super-board/configs/t.json --mark --tree "$TREE" >/dev/null 2>"$TMP/err"; rc=$?
+[ "$rc" = 65 ] && ok "--mark with a verify command that is not post-fix-gate.py: exit 65" || fail "exit $rc: $(cat "$TMP/err")"
+
+# 10. --record together with --mark is a usage error, not a silent skip of the commands
+make_repo with-config
+bash .claude/bin/super-board-verify-cmd.sh --config .claude/super-board/configs/t.json --record --mark >/dev/null 2>&1; rc=$?
+[ "$rc" = 64 ] && ok "--record --mark: usage error (exit 64)" || fail "--record --mark exit $rc (want 64)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_auto_tree_receipt: all passed" || { echo "❌ test_gate_auto_tree_receipt: $FAILS failed"; exit 1; }

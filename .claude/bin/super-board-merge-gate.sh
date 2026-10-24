@@ -1007,8 +1007,13 @@ if [ "$AC_RECHECK" = true ]; then
   AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} \
     --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
   foreign=$(echo "$AC_JSON" | jq -r '.foreign_closes | map("#\(.)") | join(", ")')
-  if [ -n "$foreign" ] || [ "$(echo "$AC_JSON" | jq -r .collapsed)" = true ]; then
-    echo "ac-check: the PR body changed during verify and now ${foreign:+closes ${foreign}}${foreign:+ / }lists fewer AC lines than card #${AC_CARD} has"
+  collapsed=$(echo "$AC_JSON" | jq -r .collapsed)
+  if [ -n "$foreign" ] || [ "$collapsed" = true ]; then
+    # Each clause only when its own condition holds (OCR 24/10): a foreign Closes alone must not tell Build to rewrite a sb:ac block that is fine.
+    msg=""
+    [ -n "$foreign" ] && msg="closes ${foreign} (branch is card #${AC_CARD})"
+    [ "$collapsed" = true ] && msg="${msg:+$msg / }lists $(echo "$AC_JSON" | jq -r .pr_ac) AC lines but card #${AC_CARD} has $(echo "$AC_JSON" | jq -r .issue_ac)"
+    echo "ac-check: the PR body changed during verify and now ${msg}"
     say "back to Build: fix the closing keywords and the sb:ac block"
     exit 11
   fi

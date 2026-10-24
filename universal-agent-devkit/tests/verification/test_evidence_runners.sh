@@ -170,6 +170,12 @@ case("bash kit test exit 0 that prints a failure summary is still red",
      [E, ["bash", KIT_BASH, "✔ one\n1 failed\n"]], 2, NO, msg="test PASS")
 case("deeper bash test that prints FAIL stays red",
      [E, ["bash", "bash tests/a/b/test_deep.sh", "FAIL tests/a/b/test_deep.sh"]], 2, NO, msg="test PASS")
+case("direct bash kit test exit 0 with EMPTY output checked nothing (OCR 24/10)",
+     [E, ["bash", KIT_BASH, ""]], 2, NO, msg="test PASS")
+case("direct bash kit test exit 0 that only prints a skip line checked nothing",
+     [E, ["bash", KIT_BASH, "skip: no super-board scripts at /x\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test exit 0 with output but no check mark proves nothing",
+     [E, ["bash", KIT_BASH, "running…\ndone\n"]], 2, NO, msg="test PASS")
 case("hooks/tests exit 0 whose check name contains FAIL is still a pass",
      [E, ["bash", "sh hooks/tests/plain_helper.sh", "✔ FAIL on secrets\n"]], 0, msg="test PASS")
 case("bash kit test chained with ; true is not a pass",
