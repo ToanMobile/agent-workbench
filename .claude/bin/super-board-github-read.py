@@ -100,7 +100,50 @@ def check_verify_spec(spec):
     return spec
 
 
+def _op_repo(operation):
+    """owner/name the operation reads, from `--repo X` or `-F owner=… -F repo=…`; None when it names none."""
+    args = (operation or {}).get('args') or []
+    owner = name = None
+    slug = None
+    for i, a in enumerate(args):
+        if a in ('--repo', '-R') and i + 1 < len(args):
+            slug = str(args[i + 1])
+            break
+        if isinstance(a, str) and a.startswith('--repo='):
+            slug = a[len('--repo='):]
+            break
+        if isinstance(a, str) and a.startswith('owner='):
+            owner = a[6:]
+        elif isinstance(a, str) and a.startswith('repo='):
+            name = a[5:]
+    if slug is None:
+        slug = f'{owner}/{name}' if owner and name else None
+    if slug is None:
+        return None
+    # gh accepts OWNER/REPO, HOST/OWNER/REPO and URLs: reduce to owner/name; anything else is not provably foreign.
+    slug = re.sub(r'\.git/?$', '', re.sub(r'^(?:https?://)?(?:www\.)?github\.com/', '', slug.strip(), flags=re.I))
+    return slug.lower() if re.fullmatch(r'[\w.-]+/[\w.-]+', slug) else None
+
+
+def _home_repo():
+    """owner/name of the checkout's origin, or None when it cannot be read (then the halt is written: fail closed)."""
+    try:
+        url = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True, timeout=5,
+                             cwd=os.environ.get('SB_REPO_PATH')).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r'github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$', url)
+    return f'{m.group(1)}/{m.group(2)}'.lower() if m else None
+
+
 def halt(reason, attempts, operation=None, verify=None):
+    # A read of ANOTHER repository (a test fixture such as o/r, run from a worktree whose git-common-dir is the real
+    # checkout) must not halt this board: it halted the real board twice on 24/10. The caller still gets ReadHalted.
+    target, home = _op_repo(operation), (None if os.environ.get('SB_GITHUB_HALT_FILE') else _home_repo())
+    if target and home and target != home:
+        print(f'[github-read] HALT not recorded: the failed read targets {target}, not this checkout ({home})',
+              file=sys.stderr)
+        raise ReadHalted(reason)
     path = halt_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     # Exclusive creation keeps the first failure's evidence when workers trip together.

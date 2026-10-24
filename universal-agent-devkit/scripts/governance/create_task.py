@@ -275,8 +275,24 @@ def merge_body(old, title, new):
         lines[end:end] = new_ac
     else:
         lines += ["", "## Acceptance Criteria"] + new_ac
+    # The card's own `## Risk` is what preflight and readers see: raise it when the merged item is riskier.
+    def rank(text):   # emoji first; without one, the first word of the label (High/Cao, Medium/Trung bình, Low/Thấp)
+        by_emoji = max((i for i, e in enumerate("🟢🟡🔴") if e in text), default=-1)
+        if by_emoji >= 0:
+            return by_emoji
+        m = re.match(r"\W*(high|cao|medium|trung\s+bình|low|thấp)\b", text, re.I)
+        return -1 if not m else 2 if m.group(1).lower() in ("high", "cao") else 0 if m.group(1).lower() in ("low", "thấp") else 1
+    new_risk = [l for l in section(new, "Risk") if l.strip()]
+    risk_heads = [i for i, l in enumerate(lines) if re.match(r"^##\s+Risk\s*$", l, re.I)]
+    if new_risk and risk_heads:
+        r0 = risk_heads[0]
+        r_end = next((i for i in range(r0 + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+        old_rank = rank("\n".join(l for l in lines[r0 + 1:r_end] if l.strip()))
+        if old_rank >= 0 and rank("\n".join(new_risk)) > old_rank:   # an unreadable card risk is never overwritten
+            old = [l for l in lines[r0 + 1:r_end] if l.strip()]
+            lines[r0 + 1:r_end] = new_risk + [f"Trước khi gom: {l.strip()}" for l in old] + [""]   # keep the card's own risk text
     detail = [f"{BATCH_HEADING}{title}"]
-    for name in ("Problem", "Fix"):
+    for name in ("Problem", "Fix", "Risk"):   # Risk: a 🟡 item merged into a 🟢 card must not read as low risk
         detail += [f"### {name}"] + [l for l in section(new, name) if l.strip()]
     return "\n".join(lines + [""] + detail) + "\n"
 
@@ -585,8 +601,12 @@ def main():
                 print(f"   ⚠️  AC có vẻ cần người nhưng {e}: chưa đánh dấu; truyền --needs-you \"<việc cụ thể>\".")
 
     # Gom: thẻ thường (không cần người, không từ file có chủ đích, không --new-card) nhập vào thẻ Backlog hợp nhất.
-    # Không gom việc có --blocked-by hoặc rủi ro khác 🟢: blocker và mức rủi ro của một việc không tách được khỏi thẻ chứa nó.
-    low_risk = not args.risk or "🟢" in args.risk
+    # Không gom việc có --blocked-by hoặc rủi ro 🔴: blocker và rủi ro cao của một việc không tách được khỏi thẻ chứa nó.
+    # 24/10: trước đây chỉ 🟢 mới gom, mà gần như mọi thẻ ghi 🟡 nên không bao giờ gom (người dùng: "gom … không hoạt động").
+    # Only the risk LABEL counts, not the description after it: an emoji wins; without one, the first word (High / Cao).
+    risk = args.risk or ""
+    high = "🔴" in risk or ("🟡" not in risk and "🟢" not in risk and re.match(r"\W*(?:high|cao)\b", risk, re.I))
+    low_risk = not high
     # Nhãn ngoài bug/feature/qa (needs-device…) có tác dụng với runner; đường gom không áp nhãn lên thẻ cũ → thẻ riêng.
     plain_labels = set(auto_labels(title, args.labels)) <= KINDS
     if (needs_you is None and args.new_card is None and not (args.from_file and args.ticket)

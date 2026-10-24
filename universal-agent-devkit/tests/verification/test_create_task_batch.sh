@@ -200,6 +200,25 @@ rc=$(run --risk "🔴 **High** · đụng auth" "${NEWARGS[@]}")
 [ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && [ "$(edited)" = "NONE" ] && ok "16b rủi ro cao → thẻ riêng" || fail "16b rc=$rc"
 rc=$(run --risk "🟢 **Low** · cục bộ" "${NEWARGS[@]}")
 [ "$rc" = "0" ] && [ "$(edited)" = "7" ] && ok "16c rủi ro 🟢 vẫn gom" || fail "16c rc=$rc"
+# 24/10 (người dùng: "gom task … hiện không hoạt động"): gần như mọi thẻ ghi 🟡 Medium nên trước đây không bao giờ gom.
+# Chỉ 🔴 High mới tách thẻ riêng; 🟡 gom như 🟢.
+rc=$(run --risk "🟡 **Medium** · chạm gate" "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && [ "$(called issue create)" = "0" ] && ok "16d rủi ro 🟡 cũng gom" || fail "16d rc=$rc edited=$(edited)"
+edited_body | grep -q "🟡" && ok "16d thẻ gom mang theo rủi ro 🟡 của việc mới (không còn ghi 🟢 sai)" || fail "16d body không có 🟡"
+edited_body | awk '/^## Risk/{f=1;next} /^## /{f=0} f' | grep -q "🟡" \
+  && ok "16d mục ## Risk chính của thẻ được nâng lên 🟡 (preflight đọc mục này)" || fail "16d ## Risk chính vẫn không có 🟡"
+edited_body | awk '/^## Risk/{f=1;next} /^## /{f=0} f' | grep -q "🟢" \
+  && ok "16d rủi ro cũ của thẻ vẫn được giữ lại trong ## Risk" || fail "16d rủi ro cũ (🟢) bị xoá khỏi ## Risk"
+rc=$(run --risk "**High** · đụng auth" "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && [ "$(edited)" = "NONE" ] && ok "16e High viết không emoji → thẻ riêng" || fail "16e rc=$rc"
+rc=$(run --risk "🟡 **Medium** · nâng cao độ phủ test, high traffic path" "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && ok "16f chữ cao/high trong mô tả của thẻ 🟡 không biến nó thành High" || fail "16f rc=$rc edited=$(edited)"
+# Thẻ đích ghi "High" bằng chữ (không emoji): gom một việc 🟡 không được hạ ## Risk của thẻ xuống.
+items '[{"n":7,"body":"## Problem\nx\n\n## Acceptance Criteria\n- [ ] cũ\n\n## Risk\n**High** · đụng auth\n"}]'
+rc=$(run --risk "🟡 **Medium** · chạm gate" "${NEWARGS[@]}")
+edited_body | awk '/^## Risk/{f=1;next} /^## /{f=0} f' | grep -v '^\s*$' | head -1 | grep -q "^\*\*High\*\*" \
+  && ok "16g thẻ ghi High bằng chữ không bị hạ xuống 🟡" || fail "16g ## Risk của thẻ bị đổi: $(edited_body | awk '/^## Risk/{f=1;next} /^## /{f=0} f' | head -2)"
+items '[{"n":7}]'
 
 # 17. gh issue edit lỗi → việc KHÔNG mất: cảnh báo và tạo thẻ mới.
 items '[{"n":7}]'
