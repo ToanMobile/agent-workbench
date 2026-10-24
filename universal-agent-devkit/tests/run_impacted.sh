@@ -46,7 +46,9 @@ jobs_now() { # what a run uses: the override when valid, else the default
 
 trunk_ref=""
 for t in "$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master origin/trunk; do
-  [ -n "$t" ] && git rev-parse -q --verify "$t^{commit}" >/dev/null 2>&1 && { trunk_ref="$t"; break; }
+  # only a trunk HEAD shares history with: no merge-base (shallow clone, rewritten trunk) would empty the change set silently
+  [ -n "$t" ] && git rev-parse -q --verify "$t^{commit}" >/dev/null 2>&1 && git merge-base "$t" HEAD >/dev/null 2>&1 \
+    && { trunk_ref="$t"; break; }
 done
 if git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
   # a diff from the merge-base, not `git log --name-only`: that prints no file for a merge commit, so a conflict resolution that
