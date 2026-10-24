@@ -173,6 +173,22 @@ kname="api""_key"   # ghép lúc chạy: fixture giả, không phải secret tĩ
 printf '[16:00:00] ⚠ self-reload: config {"%s": "zz9-secret-value"} for ToanMobile/OfficeReader#77 rejected\n' "$kname" >> "$MA"
 scan >/dev/null
 grep -q 'zz9-secret-value' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "khoá JSON lọt" || ok "khoá dạng JSON được che"
+pname="pass""word"
+printf '[16:00:01] ⚠ self-reload: retry {"%s": "horse9 battery9 staple9"} denied\n' "$pname" >> "$MA"
+scan >/dev/null
+grep -q 'battery9\|staple9' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "phần sau dấu cách của mật khẩu lọt" \
+  || ok "giá trị trong ngoặc có dấu cách được che trọn"
+
+# 21. Log ít ghi: mtime cũ hơn lúc thẻ đóng, lỗi được ghi SAU lúc đóng → vẫn là hồi quy (thẻ mới).
+#     Thứ tự: các lần gặp cũ < lúc đóng thẻ < lần đọc trước (log im, mtime 2020) < lỗi mới được ghi.
+WL="$A/.claude/super-board/runner/OfficeReader.watchdog.log"
+sleep 1; CLOSED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ); sleep 1
+touch -t 202001010000 "$WL"; scan >/dev/null      # lần đọc này: mtime 2020, lúc đọc = sau lúc đóng thẻ
+CL=$(python3 -c 'import json,sys; print(next(i["issue"] for i in json.load(open(sys.argv[1]))["incidents"].values() if i["rule"] == "crash-loop"))' "$TMP/home/ledger.json")
+n=$(creates)
+echo '[x] runner died 5 times in a row — gave up (crash loop)' >> "$WL"
+FAKE_CLOSED=$CL FAKE_CLOSED_AT=$CLOSED_AT scan >/dev/null
+[ "$(creates)" = $((n + 1)) ] && ok "log ít ghi: lỗi sau lúc đóng thẻ → thẻ mới" || fail "log ít ghi bỏ lỡ hồi quy: create=$(creates) (trước $n)"
 grep -q 'OfficeReader#77' "$FAKE_LOG" && fail "owner/repo#N của repo app lọt lên thẻ" || ok "owner/repo#N của repo app được bỏ"
 
 # 16. stderr của runner (docs/super-board/runner.log): lỗi shell thành thẻ; FIFO trong audit-gate không làm treo scan.

@@ -123,6 +123,7 @@ def read_new(path: Path, offsets: dict, since: float):
     """(dòng mới đủ \\n, mốc thời gian mà mọi dòng đó được ghi SAU nó). Chỉ file thường: một FIFO trong audit-gate
     (proof_gate.sh) mà open() thì treo."""
     key = str(path)
+    read_at = time.time()       # trước stat: mọi byte vượt quá kích thước sắp đọc được ghi sau mốc này
     try:
         st = path.stat()
     except OSError:
@@ -139,7 +140,9 @@ def read_new(path: Path, offsets: dict, since: float):
     elif prev.get("ino") != st.st_ino or prev.get("off", 0) > st.st_size:
         start, after = 0, born or 0.0                 # file bị thay / cắt: đọc lại từ đầu
     else:
-        start, after = prev["off"], prev.get("mtime", 0.0)
+        # byte sau offset đã đọc chắc chắn được ghi SAU lần stat trước: mốc là lúc đọc trước, không phải mtime
+        # (log ít ghi có mtime cũ hơn nhiều so với lúc đọc)
+        start, after = prev["off"], prev.get("read_at", prev.get("mtime", 0.0))
     start = max(start, st.st_size - MAX_READ)
     try:
         with open(path, "rb") as f:
@@ -149,7 +152,7 @@ def read_new(path: Path, offsets: dict, since: float):
         print(f"devkit_incident: skip {path}: {e}", file=sys.stderr)   # không mất các file khác của lượt quét
         return [], 0.0
     end = chunk.rfind(b"\n") + 1                      # dòng đang ghi dở (chưa có \n) cũng để lượt sau
-    offsets[key] = {"ino": st.st_ino, "off": start + end, "mtime": st.st_mtime}
+    offsets[key] = {"ino": st.st_ino, "off": start + end, "mtime": st.st_mtime, "read_at": read_at}
     return chunk[:end].decode("utf-8", "replace").splitlines(), after
 
 
@@ -250,8 +253,9 @@ finally:
         sys.path.pop(0)
 EXTRA_SECRETS = [
     # khoá=giá trị, kể cả dạng JSON / repr có ngoặc: "api_key": "x", {'password': 'y'}
-    (re.compile(r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTHORIZATION)[A-Z0-9_]*)(['\"]?\s*[=:]\s*)['\"]?"
-                r"(?:(?:bearer|token|basic)\s+)?[^\s'\",}]+['\"]?"), r"\1\2«redacted»"),
+    # giá trị trong ngoặc được che trọn tới ngoặc đóng (mật khẩu có dấu cách); không ngoặc thì tới khoảng trắng
+    (re.compile(r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTHORIZATION)[A-Z0-9_]*)(['\"]?\s*[=:]\s*)"
+                r"(?:\"[^\"\n]*\"?|'[^'\n]*'?|(?:(?:bearer|token|basic)\s+)?[^\s'\",}]+)"), r"\1\2«redacted»"),
     # runner (ready_card_held) giữ thẻ nêu thẻ / PR của repo khác: chỉ giữ tên ngắn, bỏ owner và số
     (re.compile(r"(?i)https?://github\.com/(?!toanmobile/agent-workbench\b)[\w.-]+/([\w.-]+)/\S*"), r"«\1 link»"),
     (re.compile(r"(?i)\b(?!toanmobile/agent-workbench#)[\w.-]+/([\w.-]+)#\d+"), r"«\1 issue»"),
