@@ -980,6 +980,11 @@ fi
 # (gh pr edit, không đổi head) và trong message squash (bản chép; không có --body-file thì message chỉ "Refs #<thẻ>").
 # Ghi body hỏng thì không merge: thẻ sẽ bị đóng với AC chưa chứng minh — đúng lỗi này chặn. Lần sau gate chạy lại.
 if [ -n "$AC_UNTICKED" ]; then
+  # Trước mọi lần ghi lên GitHub: không có subject đã kiểm thì không merge (và không để PR bị sửa dở).
+  if [ -z "$SUBJECT" ] && [ -z "$AC_SUBJECT" ]; then
+    say "could not read the PR title for the squash subject; not merging (GitHub would use a title nobody checked for Closes)"
+    exit 4
+  fi
   # Đọc lại body ngay trước khi ghi: verify có thể đã chạy > 900 s, ghi bản cũ sẽ đè sửa đổi của lane khác trong lúc đó.
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/pr.md" \
     || { say "could not re-read the PR body before turning Closes #${AC_CARD} into Refs; not merging"; exit 4; }
@@ -992,10 +997,6 @@ if [ -n "$AC_UNTICKED" ]; then
   grep -q "#${AC_CARD}\b" "$AC_DIR/msg.md" || printf '\nRefs #%s\n' "$AC_CARD" >> "$AC_DIR/msg.md"
   MSG_FILE="$AC_DIR/msg.md"
   # Subject squash: --subject, không có thì tiêu đề PR như GitHub vẫn dùng ("<tiêu đề> (#PR)") — Closes trong đó cũng đổi.
-  if [ -z "$SUBJECT" ] && [ -z "$AC_SUBJECT" ]; then
-    say "could not read the PR title for the squash subject; not merging (GitHub would use a title nobody checked for Closes)"
-    exit 4
-  fi
   [ -n "$SUBJECT" ] || SUBJECT="${AC_SUBJECT} (#${PR})"
   printf '%s\n' "$SUBJECT" > "$AC_DIR/subject.md"
   python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/subject.md" --card "$AC_CARD" >/dev/null
