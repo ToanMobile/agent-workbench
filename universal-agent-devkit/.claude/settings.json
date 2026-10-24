@@ -1,12 +1,12 @@
 {
   "permissions": {
     "deny": [
-      "Read(**/build/**)",
+      "Read(**/build/intermediates/**)",
+      "Read(**/build/tmp/**)",
       "Read(**/.gradle/**)",
       "Read(**/node_modules/**)",
       "Read(**/dist/**)",
       "Read(**/generated/**)",
-      "Read(**/*.apk)",
       "Read(**/*.aab)",
       "Read(**/*.hprof)"
     ]
