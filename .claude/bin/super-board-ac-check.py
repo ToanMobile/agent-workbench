@@ -1,26 +1,31 @@
 #!/usr/bin/env python3
 """super-board-ac-check.py — đối chiếu AC của thẻ với khối sb:ac của PR, trước khi merge gate merge (T0054, 24/10).
 
-Vì sao: #315 có AC "lượt 2 dùng lại REG-DK-ALL-01" chưa ai làm mà thẻ vẫn đóng — PR #343 nén 10+ AC thành 3 dòng tóm tắt
-đã tick, và `Closes #N` đóng thẻ dù AC chưa chứng minh. Script này chỉ ĐỌC (file body issue, body PR, message squash) và
-in một JSON; merge gate quyết định:
-  collapsed      khối sb:ac có ít dòng hơn số AC của thẻ (AC bị nén/thiếu)        → exit 11, builder viết lại
-  foreign_closes Closes/Fixes/Resolves #X với X khác thẻ của nhánh issue-<N>      → exit 11
-  unticked       dòng AC chưa tick (đo số sau merge, thiết bị, người)           → vẫn merge, thẻ ở lại (ac-open)
-PR không có khối sb:ac, hoặc nhánh không mang số thẻ: {"skip": true} — PR làm tay giữ hành vi cũ.
+Vì sao: #315 có AC "lượt 2 dùng lại REG-DK-ALL-01" chưa ai làm mà thẻ vẫn đóng — #318 chỉ ghi "AC của thẻ #315 (xem thẻ
+đó)", PR #343 nén 7 AC của #318 thành 3 dòng tóm tắt đã tick, và `Closes #N` đóng thẻ dù AC chưa chứng minh. Script chỉ
+ĐỌC file (body issue, body PR, message squash) và in một JSON; merge gate quyết định:
+  foreign_closes Closes/Fixes/Resolves thẻ khác thẻ của nhánh issue-<N>       → exit 11 (kiểm cả khi PR không có sb:ac)
+  collapsed      khối sb:ac ít dòng hơn số AC của thẻ (+ AC của thẻ tham chiếu) → exit 11, builder viết lại mỗi AC một dòng
+  unticked       dòng AC chưa tick (đo số sau merge, thiết bị, người)          → vẫn merge, thẻ ở lại (nhãn ac-open)
+  indirect       số thẻ mà AC ghi "AC của thẻ #X": merge gate đọc #X rồi chạy lại với --extra-issue-body
+Nhánh không mang số thẻ: {"skip": true}. PR không có sb:ac: chỉ có foreign_closes ("ac": false).
 
-  --rewrite-closes <file> --card N : đổi `Closes #N` (và Fixes/Resolves) thành `Refs #N` tại chỗ, để GitHub không tự đóng.
+  --rewrite-closes <file> --card N : đổi từ khoá đóng #N (mọi dạng GitHub nhận) thành `Refs #N` tại chỗ.
 """
 import argparse
 import json
 import re
 import sys
 
-CHECKBOX = re.compile(r"^\s*[-*]\s*\[([ xX])\]\s*(.*)$")
+# Mục AC cấp 1 (không thụt lề) — cùng dạng super-board-preflight.sh nhận (#283): `-`, `*`, `1.`, `1)`; năm (2026.) không phải mục.
+AC_ITEM = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]+\S")
+CHECKBOX = re.compile(r"^[-*][ \t]*\[([ xX])\][ \t]*(.*)$")
+AC_HEADING = re.compile(r"^##[ \t]+Acceptance Criteria(?!\w)", re.I)
 AC_BLOCK = re.compile(r"<!--\s*sb:ac\s*-->(.*?)<!--\s*/sb:ac\s*-->", re.S)
 CARD_FROM_BRANCH = re.compile(r"(?:^|/)issue-(\d+)(?:\D|$)")
-# GitHub's closing keywords; `owner/repo#N` closes too, so the number after any repo prefix counts.
-CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+(?:[\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
+# GitHub's closing keywords, the same expression as super-board-approval.py: KEYWORD[:] #N or KEYWORD[:] owner/repo#N.
+CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
+INDIRECT = re.compile(r"\bAC\s+(?:của|of)\s+(?:thẻ|card|issue)\s+#(\d+)", re.I)
 
 
 def read(path):
@@ -30,30 +35,54 @@ def read(path):
         return fh.read()
 
 
-def check(issue_body, pr_body, msg, branch):
-    m = AC_BLOCK.search(pr_body or "")
+def ac_items(body):
+    """Mục AC cấp 1 dưới heading `## Acceptance Criteria` CUỐI CÙNG tới `## ` kế tiếp; bỏ code fence."""
+    lines = (body or "").splitlines()
+    heads = [i for i, line in enumerate(lines) if AC_HEADING.match(line)]
+    if not heads:
+        return []
+    items, fence = [], False
+    for line in lines[heads[-1] + 1:]:
+        if line.startswith("## "):
+            break
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if not fence and AC_ITEM.match(line):
+            items.append(line.strip())
+    return items
+
+
+def check(issue_body, pr_body, msg, branch, extra_bodies=()):
     card = CARD_FROM_BRANCH.search(branch or "")
-    if not m or not card:
-        return {"skip": True, "reason": "no sb:ac block" if not m else "branch carries no issue-<N>"}
+    if not card:
+        return {"skip": True, "reason": "branch carries no issue-<N>"}
     card = int(card.group(1))
-    issue_ac = [c.group(2).strip() for c in map(CHECKBOX.match, (issue_body or "").splitlines()) if c]
+    closes = {int(n) for _, n in CLOSES.findall((pr_body or "") + "\n" + (msg or ""))}
+    out = {"skip": False, "card": card, "foreign_closes": sorted(closes - {card})}
+    m = AC_BLOCK.search(pr_body or "")
+    out["ac"] = bool(m)
+    if not m:
+        return out
+    items = ac_items(issue_body)
+    indirect = sorted({int(n) for it in items for n in INDIRECT.findall(it)} - {card})
+    # Một dòng "AC của thẻ #X" là chỗ đứng của mọi AC của #X: thay nó bằng các AC đó khi đã đọc được #X.
+    extra = [it for b in extra_bodies for it in ac_items(b)]
+    issue_ac = (len([it for it in items if not INDIRECT.search(it)]) + len(extra)) if extra_bodies else len(items)
     pr_ac = [c for c in map(CHECKBOX.match, m.group(1).splitlines()) if c]
-    closes = {int(n) for n in CLOSES.findall((pr_body or "") + "\n" + (msg or ""))}
-    return {
-        "skip": False,
-        "card": card,
-        "issue_ac": len(issue_ac),
+    out.update({
+        "issue_ac": issue_ac,
         "pr_ac": len(pr_ac),
-        "collapsed": len(pr_ac) < len(issue_ac),
-        "unticked": [c.group(2).rstrip("\\ \t") for c in pr_ac if c.group(1) == " "],   # trailing `\` = markdown line break
-        "foreign_closes": sorted(closes - {card}),
-    }
+        "collapsed": len(pr_ac) < issue_ac,
+        "unticked": [c.group(2).rstrip("\\ \t") for c in pr_ac if c.group(1) == " "],   # trailing `\` = markdown break
+        "indirect": indirect,
+    })
+    return out
 
 
 def rewrite_closes(path, card):
     text = read(path)
-    new = re.sub(rf"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(\s*:?\s+(?:[\w.-]+/[\w.-]+)?#{card})\b",
-                 r"Refs\1", text, flags=re.I)
+    new = CLOSES.sub(lambda m: f"Refs {m.group(1) or ''}#{m.group(2)}" if int(m.group(2)) == card else m.group(0), text)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(new)
     return new != text
@@ -62,6 +91,7 @@ def rewrite_closes(path, card):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--issue-body")
+    ap.add_argument("--extra-issue-body", action="append", default=[], help="body of a card the AC refers to (repeat)")
     ap.add_argument("--pr-body")
     ap.add_argument("--msg")
     ap.add_argument("--branch", default="")
@@ -73,7 +103,8 @@ def main():
             ap.error("--rewrite-closes needs --card")
         print("rewritten" if rewrite_closes(a.rewrite_closes, a.card) else "unchanged")
         return 0
-    print(json.dumps(check(read(a.issue_body), read(a.pr_body), read(a.msg), a.branch), ensure_ascii=False))
+    extra = [read(p) for p in a.extra_issue_body]
+    print(json.dumps(check(read(a.issue_body), read(a.pr_body), read(a.msg), a.branch, extra), ensure_ascii=False))
     return 0
 
 
