@@ -158,7 +158,7 @@ read it — re-read, then redo the edit. Builder opens the PR with every block f
 | `status` (alert card) | writes | rewrites on exit | rewrites on exit |
 | `problem` (lettered steps under Where, screenshot embedded) | writes from the ticket's Context | — | — |
 | `solution` (plain bullets, `Docs:` bullets last) | writes, updates on rebuild | — | — |
-| `ac` (checklist + one proof line each) | writes all unchecked | ticks with proof, or leaves unchecked with the reason | unticks one it disproved |
+| `ac` (checklist + one proof line each) | writes all unchecked — ONE line per AC item of the card (and of every card its AC refers to as "AC của thẻ #X"), never a summary line; on an `ac-open` card, every line again, proven ones kept `[x]` citing the earlier PR | ticks with proof, or leaves unchecked with the reason | unticks one it disproved |
 | `history` (Lane · Done · Time · Details) | appends a row | appends a row | appends a row |
 | `visual` (Before \| After, UI only) | — | writes | — |
 | `risk` (🟢/🟡/🔴 + one line) | writes | — | adjusts |
@@ -507,7 +507,10 @@ on the base branch**.
      gh pr view <PR> --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "none")'
      Expect: MERGED <sha>.  Then verify the sha is reachable from the base branch:
      git fetch origin <base> && git merge-base --is-ancestor <sha> origin/<base>
-4. Only after step 3 passes: close the issue, move card Review → Done, rewrite `status` (`> [!TIP]` ✅ Merged) and append the `history` row, post the `[reviewer] [report] ✅ merged` comment
+4. Only after step 3 passes — and only when the gate printed no `ac-open: #N` line (T0054: the PR merged with
+   AC lines still unproven; the gate kept the issue open, labelled it `ac-open`, commented the open lines and moved the
+   card to Ready; `super-board-card.sh move N Done` refuses exit 5 and the runner reopens a closed `ac-open` issue):
+   close the issue, move card Review → Done, rewrite `status` (`> [!TIP]` ✅ Merged) and append the `history` row, post the `[reviewer] [report] ✅ merged` comment
    citing the merge commit sha.
 5. Merge through the gate, never with a bare `gh pr merge`. Record the head you
    reviewed when review passes, and hand it to the gate:

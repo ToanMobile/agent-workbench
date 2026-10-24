@@ -160,7 +160,7 @@ move() {  # $1 = issue, $2 = Status name
   # (reviewer từng đóng thẻ #315 khi AC cache chưa ai làm). Chỉ tốn 1 lần đọc, và chỉ khi move sang Done.
   if [ "$name" = Done ]; then
     labels=$(gh_read issue view "$issue" ${REPO:+--repo "$REPO"} --json labels) || return $?
-    if echo "$labels" | jq -e 'any(.labels[]?; .name == "ac-open")' >/dev/null; then
+    if echo "$labels" | jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' >/dev/null; then
       echo "refused: #$issue has label ac-open (AC not proven yet) — keep it out of Done; a PR proving the rest removes the label" >&2
       return 5
     fi

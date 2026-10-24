@@ -264,6 +264,9 @@ def run_card(card):
             if result['status'] != 'advanced':
                 break
             expected = {'build': 'QA', 'qa': 'Review', 'review': 'Done'}[lane]
+            # T0054: merge gate in `ac-open: #N` = đã merge nhưng còn AC chưa chứng minh; thẻ về Ready, không Done.
+            if lane == 'review' and result['column'] == 'Ready':
+                expected = 'Ready'
             if result['column'] != expected:
                 history[-1].update(status='failed', detail=f'{lane} claimed advanced without reaching {expected}')
                 break

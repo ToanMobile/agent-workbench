@@ -78,9 +78,20 @@ EOF
 out=$(python3 "$AC" --issue-body "$T/i318.md" --pr-body "$T/pr343.md" --branch issue-318-build)
 [ "$(printf '%s' "$out" | field indirect)" = "[315]" ] && [ "$(printf '%s' "$out" | field collapsed)" = false ] \
   && ok "chưa đọc thẻ tham chiếu: báo indirect [315]" || fail "indirect: $out"
-out=$(python3 "$AC" --issue-body "$T/i318.md" --extra-issue-body "$T/i315.md" --pr-body "$T/pr343.md" --branch issue-318-build)
+out=$(python3 "$AC" --issue-body "$T/i318.md" --extra-issue-body "315=$T/i315.md" --pr-body "$T/pr343.md" --branch issue-318-build)
 [ "$(printf '%s' "$out" | field issue_ac)" = 4 ] && [ "$(printf '%s' "$out" | field collapsed)" = true ] \
   && ok "đọc #315: 3 AC của #315 + 1 dòng gate = 4 > 2 dòng sb:ac → collapsed (đúng ca #318/#343)" || fail "indirect expand: $out"
+
+# Nhiều thẻ trên một dòng, "AC của #X" không chữ "thẻ"; thẻ không đọc được vẫn tính ít nhất 1 AC (không bao giờ giảm).
+printf '## Acceptance Criteria\n- [ ] AC của #344, #338 đạt\n- [ ] Gate\n' > "$T/i319.md"
+out=$(python3 "$AC" --issue-body "$T/i319.md" --extra-issue-body "344=$T/i315.md" --pr-body "$T/pr343.md" --branch issue-319-x)
+[ "$(printf '%s' "$out" | field indirect)" = "[338, 344]" ] && [ "$(printf '%s' "$out" | field issue_ac)" = 5 ] \
+  && ok "AC của #344, #338: 3 (đọc được) + 1 (#338 chưa đọc) + 1 gate = 5" || fail "multi indirect: $out"
+
+# "## …" trong code fence của mục AC không cắt mục AC.
+printf '## Acceptance Criteria\n- [ ] A\n```\n## không phải heading\n- trong fence\n```\n- [ ] B\n## Risk\n- r\n' > "$T/fence.md"
+out=$(python3 "$AC" --issue-body "$T/fence.md" --pr-body "$T/pr343.md" --branch issue-1-x)
+[ "$(printf '%s' "$out" | field issue_ac)" = 2 ] && ok "## trong code fence không kết thúc mục AC (đếm A và B)" || fail "fence heading: $out"
 
 printf 'bullets\n\nCloses #318\nFixes: ToanMobile/agent-workbench#315\nresolved #377\n' > "$T/msg.md"
 out=$(python3 "$AC" --issue-body "$T/issue.md" --pr-body "$T/full.md" --msg "$T/msg.md" --branch issue-377-perf)

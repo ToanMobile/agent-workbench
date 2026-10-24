@@ -25,7 +25,9 @@ AC_BLOCK = re.compile(r"<!--\s*sb:ac\s*-->(.*?)<!--\s*/sb:ac\s*-->", re.S)
 CARD_FROM_BRANCH = re.compile(r"(?:^|/)issue-(\d+)(?:\D|$)")
 # GitHub's closing keywords, the same expression as super-board-approval.py: KEYWORD[:] #N or KEYWORD[:] owner/repo#N.
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
-INDIRECT = re.compile(r"\bAC\s+(?:của|of)\s+(?:thẻ|card|issue)\s+#(\d+)", re.I)
+# "AC của thẻ #315", "AC của #344, #338", "AC of card #12": mọi số thẻ trên dòng đó.
+INDIRECT = re.compile(r"\bAC\s+(?:của|of)\s+(?:(?:thẻ|card|issue)\s+)?#\d+", re.I)
+CARD_REF = re.compile(r"#(\d+)")
 
 
 def read(path):
@@ -43,14 +45,20 @@ def ac_items(body):
         return []
     items, fence = [], False
     for line in lines[heads[-1] + 1:]:
-        if line.startswith("## "):
-            break
-        if line.lstrip().startswith("```"):
+        if line.lstrip().startswith("```"):   # fence trước: "## …" trong code fence không kết thúc mục AC
             fence = not fence
             continue
-        if not fence and AC_ITEM.match(line):
+        if fence:
+            continue
+        if line.startswith("## "):
+            break
+        if AC_ITEM.match(line):
             items.append(line.strip())
     return items
+
+
+def indirect_cards(items, card):
+    return sorted({int(n) for it in items if INDIRECT.search(it) for n in CARD_REF.findall(it)} - {card})
 
 
 def check(issue_body, pr_body, msg, branch, extra_bodies=()):
@@ -65,10 +73,12 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=()):
     if not m:
         return out
     items = ac_items(issue_body)
-    indirect = sorted({int(n) for it in items for n in INDIRECT.findall(it)} - {card})
-    # Một dòng "AC của thẻ #X" là chỗ đứng của mọi AC của #X: thay nó bằng các AC đó khi đã đọc được #X.
-    extra = [it for b in extra_bodies for it in ac_items(b)]
-    issue_ac = (len([it for it in items if not INDIRECT.search(it)]) + len(extra)) if extra_bodies else len(items)
+    indirect = indirect_cards(items, card)
+    # Dòng "AC của thẻ #X" là chỗ đứng của mọi AC của #X: thay nó bằng số AC của từng thẻ được nhắc (ít nhất 1 mỗi thẻ,
+    # kể cả khi body #X không đọc được hay viết văn xuôi), nên mở rộng không bao giờ làm giảm số AC phải chứng minh.
+    by_card = dict(extra_bodies or {})
+    direct = [it for it in items if not INDIRECT.search(it)]
+    issue_ac = max(len(items), len(direct) + sum(max(1, len(ac_items(by_card.get(x, "")))) for x in indirect))
     pr_ac = [c for c in map(CHECKBOX.match, m.group(1).splitlines()) if c]
     out.update({
         "issue_ac": issue_ac,
@@ -91,7 +101,8 @@ def rewrite_closes(path, card):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--issue-body")
-    ap.add_argument("--extra-issue-body", action="append", default=[], help="body of a card the AC refers to (repeat)")
+    ap.add_argument("--extra-issue-body", action="append", default=[], metavar="N=FILE",
+                    help="body of card #N that the AC refers to (repeat)")
     ap.add_argument("--pr-body")
     ap.add_argument("--msg")
     ap.add_argument("--branch", default="")
@@ -103,7 +114,12 @@ def main():
             ap.error("--rewrite-closes needs --card")
         print("rewritten" if rewrite_closes(a.rewrite_closes, a.card) else "unchanged")
         return 0
-    extra = [read(p) for p in a.extra_issue_body]
+    extra = {}
+    for spec in a.extra_issue_body:
+        n, sep, path = spec.partition("=")
+        if not sep or not n.isdigit():
+            ap.error(f"--extra-issue-body wants N=FILE, got {spec!r}")
+        extra[int(n)] = read(path)
     print(json.dumps(check(read(a.issue_body), read(a.pr_body), read(a.msg), a.branch, extra), ensure_ascii=False))
     return 0
 

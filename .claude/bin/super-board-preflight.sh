@@ -90,7 +90,7 @@ CARDS="[]"
 
 TARGETS="[]"
 for n in ${ISSUES//,/ }; do
-  one=$(python3 "$HERE/super-board-github-read.py" --kind issue -- issue view "$n" --repo "$REPO" --json number,title,body ) || exit $?
+  one=$(python3 "$HERE/super-board-github-read.py" --kind issue -- issue view "$n" --repo "$REPO" --json number,title,body,labels ) || exit $?
   TARGETS=$(jq -c --argjson one "$one" '. + [$one]' <<<"$TARGETS")
 done
 
@@ -228,7 +228,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
       + [ $merged[] | select(sim(.title; $i.title) >= $th) | "PR #\(.number) merged: \"\(.title)\"" ]
       + [ $closed[] | select(.number != $n and .stateReason != "NOT_PLANNED")
           | select(sim(.title; $i.title) >= $th or (($myfp | length) > 0 and (fps - (fps - $myfp) | length) > 0))
-          | "issue #\(.number) closed: \"\(.title)\"" ] ) as $done
+          | "issue #\(.number) closed: \"\(.title)\"" ] )
+    # T0054: nhãn ac-open = PR của chính thẻ đã merge nhưng còn AC chưa chứng minh; PR đó giống tiêu đề thẻ, không phải "đã giao".
+    | (if any($i.labels[]?; (.name // . | ascii_downcase) == "ac-open") then [] else . end) as $done
 
     | ( [ $others[] | select(closes($n)) | "open PR #\(.number) (\(.headRefName)) already closes #\($n)" ]
       + [ $others[] | select(closes($n) | not) | select(sim(.title; $i.title) >= $th)

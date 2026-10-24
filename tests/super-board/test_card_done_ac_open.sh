@@ -27,7 +27,7 @@ chmod +x "$TMP/bin/gh"
 run() { rm -f "$TMP/calls"; LABELS="$1" PATH="$TMP/bin:$PATH" SB_CARD_CACHE_DIR="$TMP/cache" SB_GITHUB_RETRY_DELAY=0 \
   SB_GITHUB_HALT_FILE="$TMP/github-halt.json" bash "$CARD" --owner o --number 1 --repo o/r move 7 "$2" >"$TMP/out" 2>"$TMP/err"; }
 
-run '{"name":"bug"},{"name":"ac-open"}' Done; rc=$?
+run '{"name":"bug"},{"name":"AC-Open"}' Done; rc=$?   # so khớp không phân biệt hoa thường
 [ "$rc" -eq 5 ] && ! grep -q mutation "$TMP/calls" && grep -q 'ac-open' "$TMP/err" \
   && ok "nhãn ac-open: move Done exit 5, không mutation" || fail "ac-open: exit $rc; calls: $(tr '\n' '|' < "$TMP/calls" 2>/dev/null)"
 
