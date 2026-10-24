@@ -105,12 +105,6 @@
         "mcp-servers/antigravity-pm-mcp/*.vue"
       ],
       "impacted_at": "2026-10-20 00:14:58",
-      "stale_since": "2026-10-20 00:14:58",
-      "stale_files": [
-        "mcp-servers/antigravity-pm-mcp/src/lint-diff.js",
-        "mcp-servers/antigravity-pm-mcp/src/report.js",
-        "mcp-servers/antigravity-pm-mcp/tests/report-lint-diff.test.js"
-      ],
       "red_proof": {
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
@@ -224,11 +218,7 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827850.766148
-      },
-      "stale_since": "2026-10-24 14:45:03",
-      "stale_files": [
-        "mcp-servers/play-store-mcp/tests/test_integration_credentials.py"
-      ]
+      }
     },
     "REG-DK-GATE-01": {
       "id": "REG-DK-GATE-01",
@@ -318,8 +308,7 @@
       },
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
-        "universal-agent-devkit/bin/post-fix-gate.py",
-        "universal-agent-devkit/bin/tree_fp.py"
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-GATE-02": {
@@ -410,8 +399,7 @@
       },
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
-        "universal-agent-devkit/bin/post-fix-gate.py",
-        "universal-agent-devkit/bin/tree_fp.py"
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-HOOK-01": {
@@ -492,14 +480,6 @@
         "universal-agent-devkit/hooks/*"
       ],
       "impacted_at": "2026-10-20 00:14:58",
-      "stale_since": "2026-10-20 00:14:58",
-      "stale_files": [
-        "universal-agent-devkit/hooks/agent_bridge.sh",
-        "universal-agent-devkit/hooks/block-dangerous-git.sh",
-        "universal-agent-devkit/hooks/guard-protected-push.py",
-        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
-        "universal-agent-devkit/hooks/proof_gate.sh"
-      ],
       "red_proof": {
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
@@ -584,14 +564,6 @@
         "universal-agent-devkit/hooks/*"
       ],
       "impacted_at": "2026-10-20 00:14:58",
-      "stale_since": "2026-10-20 00:14:58",
-      "stale_files": [
-        "universal-agent-devkit/hooks/agent_bridge.sh",
-        "universal-agent-devkit/hooks/block-dangerous-git.sh",
-        "universal-agent-devkit/hooks/guard-protected-push.py",
-        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
-        "universal-agent-devkit/hooks/proof_gate.sh"
-      ],
       "red_proof": {
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
@@ -676,10 +648,6 @@
         "universal-agent-devkit/bin/agent-health.py"
       ],
       "impacted_at": "2026-10-20 00:14:58",
-      "stale_since": "2026-10-20 00:14:58",
-      "stale_files": [
-        "universal-agent-devkit/bin/agent-health.py"
-      ],
       "red_proof": {
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
@@ -897,7 +865,6 @@
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
         ".claude/settings.json",
-        ".mcp.json",
         "AGENTS.md"
       ]
     },
@@ -1312,8 +1279,7 @@
       },
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
-        "universal-agent-devkit/bin/post-fix-gate.py",
-        "universal-agent-devkit/bin/session_lock.py"
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-SANDBOX-01": {
@@ -1481,11 +1447,7 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827850.856241
-      },
-      "stale_since": "2026-10-24 14:45:03",
-      "stale_files": [
-        "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
-      ]
+      }
     },
     "BUG-20261002-proof-gate-reinit-same-profile": {
       "id": "BUG-20261002-proof-gate-reinit-same-profile",
@@ -2212,8 +2174,8 @@
       "red_proof": {
         "at": "2026-10-09 19:26:37",
         "ts": 1791548797.233579,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/worktree_git/test_worktree_automerge_reason.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -5382,11 +5344,11 @@
       },
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
-        ".claude/bin/super-board-approval.py",
-        ".claude/bin/super-board-blocked-by.py",
-        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-ac-check.py",
         ".claude/bin/super-board-card.sh",
-        ".claude/bin/super-board-codex-lane.sh"
+        ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-codex-wave.sh",
+        ".claude/bin/super-board-drift.py"
       ]
     },
     "REG-SB-RUNNER-LANES-01": {
@@ -5474,11 +5436,11 @@
       },
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
-        ".claude/bin/super-board-approval.py",
-        ".claude/bin/super-board-blocked-by.py",
-        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-ac-check.py",
         ".claude/bin/super-board-card.sh",
-        ".claude/bin/super-board-codex-lane.sh"
+        ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-codex-wave.sh",
+        ".claude/bin/super-board-drift.py"
       ]
     },
     "REG-SB-MERGE-SYNC-01": {
@@ -5557,14 +5519,6 @@
       "command": "bash tests/super-board/test_merge_gate_identical_sync.sh && bash tests/super-board/test_merge_gate_squash_sync.sh",
       "watch_files": [
         ".claude/bin/super-board-*"
-      ],
-      "stale_since": "2026-10-19 23:42:19",
-      "stale_files": [
-        ".claude/bin/super-board-approval.py",
-        ".claude/bin/super-board-blocked-by.py",
-        ".claude/bin/super-board-capacity.py",
-        ".claude/bin/super-board-card.sh",
-        ".claude/bin/super-board-codex-lane.sh"
       ],
       "red_proof": {
         "status": "N/A",
@@ -5772,11 +5726,7 @@
       },
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
-        ".claude/bin/super-board-github-read.py",
-        ".claude/bin/super-board-preflight.sh",
-        "tests/super-board/fixtures/preflight-too-big/Synthetic-908.json",
-        "tests/super-board/fixtures/preflight-too-big/Synthetic-909.json",
-        "tests/super-board/fixtures/preflight-too-big/Synthetic-910.json"
+        ".claude/bin/super-board-preflight.sh"
       ]
     },
     "REG-SB-RUNNER-WATCHDOG-01": {
@@ -5867,15 +5817,7 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827852.15577
-      },
-      "stale_since": "2026-10-24 14:45:03",
-      "stale_files": [
-        ".claude/bin/super-board-run.sh",
-        ".claude/bin/super-board-setup.py",
-        ".claude/bin/super-board-stop.sh",
-        ".claude/bin/super-board-watchdog.sh",
-        "tests/super-board/test_runner_watchdog.sh"
-      ]
+      }
     },
     "REG-SB-MERGE-POLICY-NL-01": {
       "id": "REG-SB-MERGE-POLICY-NL-01",
@@ -5965,10 +5907,7 @@
       },
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
-        ".claude/bin/super-board-approval.py",
-        ".claude/bin/super-board-github-read.py",
-        ".claude/bin/super-board-merge-policy.py",
-        "tests/super-board/test_upstream_66_67.sh"
+        ".claude/bin/super-board-merge-policy.py"
       ]
     },
     "REG-SB-UPSTREAM-66-67-01": {
@@ -6059,10 +5998,7 @@
       },
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
-        ".claude/bin/super-board-approval.py",
-        ".claude/bin/super-board-github-read.py",
-        ".claude/bin/super-board-merge-policy.py",
-        "tests/super-board/test_upstream_66_67.sh"
+        ".claude/bin/super-board-merge-policy.py"
       ]
     },
     "REG-AUTO-CC-SWITCHER-MCP-01": {
@@ -6148,7 +6084,13 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827850.53205
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        "mcp-servers/cc-switcher-mcp/src/telegram.js",
+        "mcp-servers/cc-switcher-mcp/tests/super-board-approve-head.test.js",
+        "mcp-servers/cc-switcher-mcp/tests/super-board-approve.test.js"
+      ]
     },
     "REG-SB-NEEDS-YOU-01": {
       "id": "REG-SB-NEEDS-YOU-01",
@@ -6234,14 +6176,7 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827851.747038
-      },
-      "stale_since": "2026-10-24 14:45:03",
-      "stale_files": [
-        ".claude/bin/super-board-approval.py",
-        ".claude/bin/super-board-deps.sh",
-        ".claude/bin/super-board-needs-you.py",
-        "tests/super-board/test_needs_you.sh"
-      ]
+      }
     },
     "REG-SB-NEEDS-YOU-SKIP-01": {
       "id": "REG-SB-NEEDS-YOU-SKIP-01",
@@ -6332,11 +6267,8 @@
       },
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
-        ".claude/bin/super-board-needs-you.py",
         ".claude/bin/super-board-run.sh",
-        ".claude/bin/super-board-status.py",
-        ".claude/bin/super-board-wave-plan.sh",
-        "tests/super-board/test_needs_you_skip.sh"
+        ".claude/bin/super-board-status.py"
       ]
     },
     "REG-SB-WATCHDOG-PATHS-01": {
@@ -6422,12 +6354,7 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827852.450708
-      },
-      "stale_since": "2026-10-24 14:45:03",
-      "stale_files": [
-        ".claude/bin/super-board-watchdog.sh",
-        "tests/super-board/test_watchdog_path_sanitize.sh"
-      ]
+      }
     },
     "REG-SB-RUN-STOP-MTIME-01": {
       "id": "REG-SB-RUN-STOP-MTIME-01",
@@ -6691,7 +6618,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827851.794077
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-post-merge-clean.sh"
+      ]
     },
     "BUG-20261019-hien-con-nhieu-branch-dang-bi-mo-coi-ngu": {
       "id": "BUG-20261019-hien-con-nhieu-branch-dang-bi-mo-coi-ngu",
@@ -7122,10 +7053,7 @@
       "stale_since": "2026-10-24 14:45:03",
       "stale_files": [
         ".claude/bin/super-board-run.sh",
-        ".claude/bin/super-board-status.py",
-        ".claude/bin/super-board-wave-plan.sh",
-        "tests/super-board/test_needs_device_skip.sh",
-        "universal-agent-devkit/bin/proof-capture.py"
+        ".claude/bin/super-board-status.py"
       ]
     },
     "BUG-20261019-108-88-duyet-a-con-worktree-treo-nao-mo": {
@@ -7391,12 +7319,7 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827851.66661
-      },
-      "stale_since": "2026-10-24 14:45:03",
-      "stale_files": [
-        ".claude/bin/super-board-merge-gate.sh",
-        "tests/super-board/test_merge_gate_load_wait.sh"
-      ]
+      }
     },
     "BUG-20261020-no-ket-stop-hook-prompt-cua-toi-ko-run-d": {
       "id": "BUG-20261020-no-ket-stop-hook-prompt-cua-toi-ko-run-d",
@@ -7577,7 +7500,12 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.247846
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        "universal-agent-devkit/scripts/governance/super_board_all.py"
+      ]
     },
     "REG-DK-VERIFY-PY-01": {
       "id": "REG-DK-VERIFY-PY-01",
@@ -7922,7 +7850,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.8586109
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        "universal-agent-devkit/bin/heavy_slot.py"
+      ]
     },
     "REG-DK-SLOT-CLASSES-01": {
       "id": "REG-DK-SLOT-CLASSES-01",
@@ -8008,7 +7940,14 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827914.648362
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_classes.sh"
+      ]
     },
     "REG-SB-HEAVY-SLOT-01": {
       "id": "REG-SB-HEAVY-SLOT-01",
@@ -8093,7 +8032,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827915.589138
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        "universal-agent-devkit/bin/heavy_slot.py"
+      ]
     },
     "REG-DK-SUITE-CACHE-01": {
       "id": "REG-DK-SUITE-CACHE-01",
@@ -8178,7 +8121,13 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827914.811476
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/gates/test_gate_suite_cache.sh"
+      ]
     },
     "REG-DK-SENTINEL-01": {
       "id": "REG-DK-SENTINEL-01",
@@ -8264,7 +8213,13 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827914.0021381
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py"
+      ]
     },
     "REG-SB-BUILD-WORKERS-01": {
       "id": "REG-SB-BUILD-WORKERS-01",
@@ -8348,7 +8303,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827915.0757551
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-DK-HEAVY-CAP-01": {
       "id": "REG-DK-HEAVY-CAP-01",
@@ -8432,7 +8391,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.659112
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        "universal-agent-devkit/bin/heavy_slot.py"
+      ]
     },
     "REG-SB-WATCHDOG-LOCK-ATOMIC-01": {
       "id": "REG-SB-WATCHDOG-LOCK-ATOMIC-01",
@@ -8686,7 +8649,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827917.4962718
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/workflows/super-board-wave.js"
+      ]
     },
     "REG-SB-MERGE-CALL-FAILED-01": {
       "id": "REG-SB-MERGE-CALL-FAILED-01",
@@ -8770,7 +8737,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827915.831546
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
+      ]
     },
     "REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01": {
       "id": "REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01",
@@ -8854,7 +8825,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.7417989
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-SB-MERGE-DEAD-HOLDER-01": {
       "id": "REG-SB-MERGE-DEAD-HOLDER-01",
@@ -8938,7 +8913,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827915.86615
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
+      ]
     },
     "REG-SB-MERGE-TRAIN-01": {
       "id": "REG-SB-MERGE-TRAIN-01",
@@ -9023,7 +9002,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.209121
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
+      ]
     },
     "REG-SB-LANE-WORKERS-01": {
       "id": "REG-SB-LANE-WORKERS-01",
@@ -9107,7 +9090,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827915.624725
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-AGENT-OFFICE-01": {
       "id": "REG-AGENT-OFFICE-01",
@@ -9196,7 +9183,15 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827912.680681
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        "mcp-servers/agent-office/server.py",
+        "mcp-servers/agent-office/tests/describe_cmd_test.js",
+        "mcp-servers/agent-office/tests/test_agent_workload.py",
+        "mcp-servers/agent-office/tests/test_describe_cmd.py",
+        "mcp-servers/agent-office/tests/test_phone_loading.py"
+      ]
     },
     "REG-SB-CARD-ITEMS-RETRY-01": {
       "id": "REG-SB-CARD-ITEMS-RETRY-01",
@@ -9281,7 +9276,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827915.104415
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-card.sh"
+      ]
     },
     "REG-SB-RUNNER-READ-RETRY-01": {
       "id": "REG-SB-RUNNER-READ-RETRY-01",
@@ -9365,7 +9364,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.6736078
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-DK-MATRIX-MERGE-01": {
       "id": "REG-DK-MATRIX-MERGE-01",
@@ -9536,7 +9539,12 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.6321862
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-SB-BLOCKED-BY-OPEN-ONLY-01": {
       "id": "REG-SB-BLOCKED-BY-OPEN-ONLY-01",
@@ -9704,7 +9712,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827917.581867
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-SB-RED-ON-BASE-01": {
       "id": "REG-SB-RED-ON-BASE-01",
@@ -9791,7 +9803,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.501299
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
+      ]
     },
     "REG-SB-VERIFY-CMD-01": {
       "id": "REG-SB-VERIFY-CMD-01",
@@ -9878,7 +9894,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827917.005281
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
+      ]
     },
     "REG-SB-SELF-RELOAD-01": {
       "id": "REG-SB-SELF-RELOAD-01",
@@ -9962,7 +9982,12 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.769863
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload.sh"
+      ]
     },
     "REG-SB-PREFLIGHT-STALE-OVERLAP-01": {
       "id": "REG-SB-PREFLIGHT-STALE-OVERLAP-01",
@@ -10046,7 +10071,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.4558332
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-preflight.sh"
+      ]
     },
     "REG-SB-PREFLIGHT-NUMBERED-AC-01": {
       "id": "REG-SB-PREFLIGHT-NUMBERED-AC-01",
@@ -10131,7 +10160,12 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.4093068
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-AGENT-OFFICE-02": {
       "id": "REG-AGENT-OFFICE-02",
@@ -10299,7 +10333,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.5318851
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-SB-RUNNER-READY-ORDER-01": {
       "id": "REG-SB-RUNNER-READY-ORDER-01",
@@ -10383,7 +10421,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.704561
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-SB-GITHUB-RECONCILE-01": {
       "id": "REG-SB-GITHUB-RECONCILE-01",
@@ -10551,7 +10593,12 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827917.6637802
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_gh_write_once_marker.sh"
+      ]
     },
     "REG-DK-DISCARD-SQUASH-01": {
       "id": "REG-DK-DISCARD-SQUASH-01",
@@ -10635,7 +10682,12 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.452115
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_discard_squash.sh"
+      ]
     },
     "REG-DK-MERGE-TREE-NOLEAK-01": {
       "id": "REG-DK-MERGE-TREE-NOLEAK-01",
@@ -10721,7 +10773,12 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.969692
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
     },
     "REG-SB-REVIEW-MERGE-TRAIN-01": {
       "id": "REG-SB-REVIEW-MERGE-TRAIN-01",
@@ -10805,7 +10862,12 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.5748951
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_review_merge_train.sh"
+      ]
     },
     "REG-SB-STATUS-NEEDS-YOU-01": {
       "id": "REG-SB-STATUS-NEEDS-YOU-01",
@@ -10856,7 +10918,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.819304
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-status.py"
+      ]
     },
     "REG-SB-WAITING-LABEL-01": {
       "id": "REG-SB-WAITING-LABEL-01",
@@ -10946,7 +11012,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827912.950739
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh"
+      ]
     },
     "REG-CAPACITY-RUNNER-01": {
       "id": "REG-CAPACITY-RUNNER-01",
@@ -10999,7 +11069,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.2084212
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh"
+      ]
     },
     "REG-CAPACITY-RUNNER-02": {
       "id": "REG-CAPACITY-RUNNER-02",
@@ -11052,7 +11126,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.2484999
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh"
+      ]
     },
     "REG-CAPACITY-RUNNER-03": {
       "id": "REG-CAPACITY-RUNNER-03",
@@ -11105,7 +11183,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.342857
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh"
+      ]
     },
     "REG-CAPACITY-MERGE-HOLD-01": {
       "id": "REG-CAPACITY-MERGE-HOLD-01",
@@ -11158,7 +11240,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.0078678
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh"
+      ]
     },
     "REG-CAPACITY-SLOTS-01": {
       "id": "REG-CAPACITY-SLOTS-01",
@@ -11211,7 +11297,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.366718
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh"
+      ]
     },
     "REG-CAPACITY-SLOTS-02": {
       "id": "REG-CAPACITY-SLOTS-02",
@@ -11264,7 +11354,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.40006
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh"
+      ]
     },
     "REG-CAPACITY-SLOTS-03": {
       "id": "REG-CAPACITY-SLOTS-03",
@@ -11317,7 +11411,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.432571
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh"
+      ]
     },
     "REG-CAPACITY-OFFICE-01": {
       "id": "REG-CAPACITY-OFFICE-01",
@@ -11370,7 +11468,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.042034
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh"
+      ]
     },
     "REG-SB-TOTAL-CAP-01": {
       "id": "REG-SB-TOTAL-CAP-01",
@@ -11455,7 +11557,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.891399
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-SB-RUNNER-NOOP-WORKER-01": {
       "id": "REG-SB-RUNNER-NOOP-WORKER-01",
@@ -11495,7 +11601,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827916.601856
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-DK-SESSION-ENV-01": {
       "id": "REG-DK-SESSION-ENV-01",
@@ -11598,7 +11708,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827915.9064891
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
+      ]
     },
     "REG-SB-GITHUB-READ-FOREIGN-HALT-01": {
       "id": "REG-SB-GITHUB-READ-FOREIGN-HALT-01",
@@ -11679,7 +11793,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827914.869571
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-AGENT-OFFICE-INBOX-02": {
       "id": "REG-AGENT-OFFICE-INBOX-02",
@@ -11720,7 +11838,11 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827912.735591
-      }
+      },
+      "stale_since": "2026-10-25 01:06:34",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-DK-GATE-TREE-01": {
       "id": "REG-DK-GATE-TREE-01",
@@ -11795,66 +11917,6 @@
         "status": "N/A",
         "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
         "ts": 1792827913.497196
-      }
-    },
-    "ORPHAN_TEST:mcp-servers/agent-office/tests/approval_test.js": {
-      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/approval_test.js",
-      "kind": "orphan",
-      "title": "mcp-servers/agent-office/tests/approval_test.js",
-      "component": "-",
-      "file": "mcp-servers/agent-office/tests/approval_test.js",
-      "created_at": "2026-10-24 14:45:03",
-      "last": null,
-      "history": [],
-      "red_proof": {
-        "status": "N/A",
-        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
-        "ts": 1792827912.290637
-      }
-    },
-    "ORPHAN_TEST:mcp-servers/agent-office/tests/pathing_test.js": {
-      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/pathing_test.js",
-      "kind": "orphan",
-      "title": "mcp-servers/agent-office/tests/pathing_test.js",
-      "component": "-",
-      "file": "mcp-servers/agent-office/tests/pathing_test.js",
-      "created_at": "2026-10-24 14:45:03",
-      "last": null,
-      "history": [],
-      "red_proof": {
-        "status": "N/A",
-        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
-        "ts": 1792827912.463989
-      }
-    },
-    "ORPHAN_TEST:mcp-servers/agent-office/tests/present_pose_test.js": {
-      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/present_pose_test.js",
-      "kind": "orphan",
-      "title": "mcp-servers/agent-office/tests/present_pose_test.js",
-      "component": "-",
-      "file": "mcp-servers/agent-office/tests/present_pose_test.js",
-      "created_at": "2026-10-24 14:45:03",
-      "last": null,
-      "history": [],
-      "red_proof": {
-        "status": "N/A",
-        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
-        "ts": 1792827912.5152378
-      }
-    },
-    "ORPHAN_TEST:mcp-servers/agent-office/tests/repo_label_test.js": {
-      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/repo_label_test.js",
-      "kind": "orphan",
-      "title": "mcp-servers/agent-office/tests/repo_label_test.js",
-      "component": "-",
-      "file": "mcp-servers/agent-office/tests/repo_label_test.js",
-      "created_at": "2026-10-24 14:45:03",
-      "last": null,
-      "history": [],
-      "red_proof": {
-        "status": "N/A",
-        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
-        "ts": 1792827912.549091
       }
     },
     "BUG-20261020-voi-6-repo-thi-co-bi-2000-lan-ko": {
@@ -12771,14 +12833,21 @@
       "component": "-",
       "created_at": "2026-10-24 21:07:35",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
       "last": null,
       "history": [],
-      "state": "reported",
-      "fixed": null,
+      "state": "confirmed",
+      "fixed": true,
       "touched_at": "2026-10-24 21:07:35",
       "sessions": [
         "9f234dce-b543-4e19-9522-05145208f0be"
+      ],
+      "linked_at": "2026-10-25 01:06:38",
+      "linked_ts": 1792865198.3846872,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_run_bounded.sh"
       ]
     },
     "BUG-20261024-fix-dev-kit-de-lan-sau-ko-bi-loi-nghiem": {
@@ -12789,14 +12858,21 @@
       "component": "-",
       "created_at": "2026-10-24 21:10:06",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
       "last": null,
       "history": [],
-      "state": "reported",
-      "fixed": null,
+      "state": "confirmed",
+      "fixed": true,
       "touched_at": "2026-10-24 21:10:06",
       "sessions": [
         "9f234dce-b543-4e19-9522-05145208f0be"
+      ],
+      "linked_at": "2026-10-25 01:06:33",
+      "linked_ts": 1792865193.706209,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_run_bounded.sh"
       ]
     },
     "BUG-20261024-antigravity-2-tien-trinh-da-chay-03-35-1": {
@@ -12833,6 +12909,295 @@
       "touched_at": "2026-10-24 22:39:04",
       "sessions": [
         "f5fddcac-ddcf-452e-95a0-5449b8b89192"
+      ]
+    },
+    "REG-DK-GATE-ROBUSTNESS-01": {
+      "id": "REG-DK-GATE-ROBUSTNESS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "gate không sập, không treo, không để rác: repo lồng, tên file non-UTF-8, tín hiệu giết suite, không có git, killpg bị từ chối; suite quá giờ lúc máy rảnh ghi HANG kèm test cuối và ảnh chụp tiến trình, lúc tải cao vẫn TIMEOUT (#370)",
+      "component": "devkit-gate-robustness",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_robustness.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_robustness.sh"
+      ]
+    },
+    "REG-SB-SUITE-FUSE-01": {
+      "id": "REG-SB-SUITE-FUSE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "cầu chì suite của runner: ≥2 thẻ Blocked cùng suite id trong N giờ gộp một thẻ và ngưng giao Builder tới khi thẻ gộp rời Blocked; khác suite hay ngoài cửa sổ giờ không gộp (#363)",
+      "component": "sb-runner-suite-fuse",
+      "command": "bash tests/super-board/test_runner_suite_fuse.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_suite_fuse.sh"
+      ]
+    },
+    "REG-SB-QA-REPORT-01": {
+      "id": "REG-SB-QA-REPORT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate từ chối report QA còn ❌ Not done và AC [x] không bằng chứng (#364)",
+      "component": "issue-363-batch",
+      "command": "bash tests/super-board/test_merge_gate_qa_report.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-SB-DRIFT-01": {
+      "id": "REG-SB-DRIFT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "phát hiện bản sao super-board ở repo app bị lệch hash (#368)",
+      "component": "issue-363-batch",
+      "command": "bash tests/super-board/test_drift.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-SB-REVIEW-SLOT-01": {
+      "id": "REG-SB-REVIEW-SLOT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "lane Review không bị bỏ đói slot (#369)",
+      "component": "issue-363-batch",
+      "command": "bash tests/super-board/test_runner_review_slot.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-GUARD-SECRETS-01": {
+      "id": "REG-DK-GUARD-SECRETS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "guard-secrets không chặn nhầm thông điệp commit, vẫn chặn đọc dotenv (#367)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-SUITE-CACHE-FIFO-01": {
+      "id": "REG-DK-SUITE-CACHE-FIFO-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "suite_cache không treo trên FIFO ở learned_inputs/.run/prune.stamp (#371)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-GITHOOKS-HEAL-01": {
+      "id": "REG-DK-GITHOOKS-HEAL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "githooks cài từ worktree rồi xoá worktree vẫn chạy; heal cài lại hook trỏ đường mất (#363)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-GIT241-ATTR-01": {
+      "id": "REG-DK-GIT241-ATTR-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "worktree prune-branch không từ chối nhầm trên git 2.41 thiếu --attr-source (#371)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-WT-REMOVE-DURATIONS-01": {
+      "id": "REG-DK-WT-REMOVE-DURATIONS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "worktree remove không bị chặn bởi diff chỉ ở test_durations.txt (#365)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-SB-AC-CHECK-01": {
+      "id": "REG-SB-AC-CHECK-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "ac-check (T0054): đếm mọi dạng mục AC, mở rộng AC gián tiếp 'AC của thẻ #X', bắt AC nén (#318/PR #343), Closes thẻ lạ, dòng chưa tick, đổi Closes → Refs",
+      "component": "super-board-ac-proven-before-close",
+      "command": "bash tests/super-board/test_ac_check.sh",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_ac_check.sh",
+        "tests/super-board/test_merge_gate_ac_check.sh",
+        "tests/super-board/test_card_done_ac_open.sh",
+        "tests/super-board/test_runner_reconcile_ac_open.sh",
+        "tests/super-board/test_preflight_ac_open.sh"
+      ]
+    },
+    "REG-SB-MERGE-GATE-AC-01": {
+      "id": "REG-SB-MERGE-GATE-AC-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate (T0054): AC nén / Closes thẻ lạ (body, message, commit) → exit 11; còn AC chưa tick → merge nhưng Refs, nhãn ac-open, thẻ về Ready; đủ AC → gỡ nhãn; PR không sb:ac như cũ",
+      "component": "super-board-ac-proven-before-close",
+      "command": "bash tests/super-board/test_merge_gate_ac_check.sh",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_ac_check.sh",
+        "tests/super-board/test_merge_gate_ac_check.sh",
+        "tests/super-board/test_card_done_ac_open.sh",
+        "tests/super-board/test_runner_reconcile_ac_open.sh",
+        "tests/super-board/test_preflight_ac_open.sh"
+      ]
+    },
+    "REG-SB-AC-OPEN-NOT-DONE-01": {
+      "id": "REG-SB-AC-OPEN-NOT-DONE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "thẻ ac-open không vào Done (T0054): card.sh move Done exit 5; runner mở lại issue đóng còn ac-open thay vì reconcile Done; preflight không coi là đã giao",
+      "component": "super-board-ac-proven-before-close",
+      "command": "bash tests/super-board/test_card_done_ac_open.sh && bash tests/super-board/test_runner_reconcile_ac_open.sh && bash tests/super-board/test_preflight_ac_open.sh",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_ac_check.sh",
+        "tests/super-board/test_merge_gate_ac_check.sh",
+        "tests/super-board/test_card_done_ac_open.sh",
+        "tests/super-board/test_runner_reconcile_ac_open.sh",
+        "tests/super-board/test_preflight_ac_open.sh"
       ]
     }
   },
