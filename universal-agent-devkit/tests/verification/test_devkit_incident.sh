@@ -311,6 +311,7 @@ echo '[21:00:00] ⚠ worker of #3 (lane qa) ended 20s after dispatch — early e
 scan >/dev/null
 grep -q 'WORKERPRIV' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "lỗi shell trong 'last log line:' của runner.log thành thẻ / lọt" \
   || ok "runner.log: phần 'last log line:' của worker bị bỏ qua"
+[ "$(creates)" = "$n" ] && ok "runner.log: dòng log() của runner không thành thẻ" || fail "runner.log: dòng log() thành thẻ: create=$(creates) (trước $n)"
 masked=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import devkit_incident as d
 print(d.mask("fetch https://bot:p@ss@w0rdZZ@example.com/x.git and github.com/ToanMobile/OfficeReader/pull/12 failed"))' \
   "$DEVKIT_DIR/scripts/governance")
