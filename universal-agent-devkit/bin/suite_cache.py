@@ -281,6 +281,8 @@ def _external(project_dir, tok, here):
 def _file_digest(path):
     try:
         st = os.stat(path)
+        if not os.path.isfile(path):   # a FIFO/socket/device blocks open() forever (#353)
+            return "unreadable"
         if st.st_size >= BIG_FILE_BYTES:
             return f"big {st.st_size}:{st.st_mtime_ns}"
         with open(path, "rb") as f:
@@ -291,7 +293,7 @@ def _file_digest(path):
 
 def _read_text(path):
     try:
-        if os.path.getsize(path) > SCAN_MAX_BYTES:
+        if not os.path.isfile(path) or os.path.getsize(path) > SCAN_MAX_BYTES:   # a FIFO blocks open() forever (#353)
             return None
         with open(path, encoding="utf-8", errors="replace") as f:
             text = f.read()
