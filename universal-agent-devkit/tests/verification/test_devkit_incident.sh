@@ -304,6 +304,19 @@ n=$(creates); scan >/dev/null
 grep -q 'PRIVBRANCH\|OTHERBR' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "tên nhánh repo app lọt lên issue" || ok "tên nhánh được che"
 [ "$(creates)" = $((n + 1)) ] && ok "hai tên nhánh → một chữ ký" || fail "tên nhánh tách chữ ký: create=$(creates) (trước $n)"
 
+# 24. runner.log cũng nhận dòng log() của runner (tee ra stdout): lỗi shell trong phần "last log line:" của worker không là
+#     thẻ, chữ của worker không lên issue; URL có mật khẩu chứa '@' và link github.com không có https:// được che.
+n=$(creates)
+echo '[21:00:00] ⚠ worker of #3 (lane qa) ended 20s after dispatch — early end 1 of this lane in 600s; last log line: app/build.sh: line 4: WORKERPRIV: command not found' >> "$A/docs/super-board/runner.log"
+scan >/dev/null
+grep -q 'WORKERPRIV' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "lỗi shell trong 'last log line:' của runner.log thành thẻ / lọt" \
+  || ok "runner.log: phần 'last log line:' của worker bị bỏ qua"
+masked=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import devkit_incident as d
+print(d.mask("fetch https://bot:p@ss@w0rdZZ@example.com/x.git and github.com/ToanMobile/OfficeReader/pull/12 failed"))' \
+  "$DEVKIT_DIR/scripts/governance")
+case "$masked" in *w0rdZZ*|*ss@*) fail "mật khẩu URL có '@' lọt: $masked" ;; *) ok "URL có mật khẩu chứa '@' được che" ;; esac
+case "$masked" in *OfficeReader/pull/12*) fail "link github.com trần của repo app lọt: $masked" ;; *) ok "link github.com trần được che" ;; esac
+
 # 14. Mỗi sự cố một thẻ riêng (--new-card): không gom vào thẻ bug khác.
 grep '"issue", "create"' "$FAKE_LOG" >/dev/null && python3 - "$FAKE_LOG" <<'PY' && ok "--new-card: không gom vào thẻ khác" || fail "thiếu --new-card"
 import json, sys
