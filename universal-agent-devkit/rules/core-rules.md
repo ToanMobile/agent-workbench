@@ -173,7 +173,7 @@ Mọi tác vụ thực thi BẮT BUỘC phải tuân thủ 5 nguyên tắc vàng
 3. **Phẫu Thuật Mã Nguồn Tối Thiểu (Surgical Diffs vs Full-File Rewrite):**
    - Nghiêm cấm ghi đè toàn bộ tệp tin (Full-file rewrite) khi thực hiện sửa đổi cục bộ. Bắt buộc dùng công cụ thay thế khối liên tục (`replace_file_content`), chỉ sinh đúng phần diff cần thiết để tiết kiệm đến 95% output tokens.
 4. **Cô Lập Thư Mục Rác & Giới Hạn Quyền Đọc (Permissions Deny Gate):**
-   - Cấm Agent đọc các thư mục tự sinh và tệp nhị phân (`build/`, `.gradle/`, `node_modules/`, `dist/`, `*.apk`, `*.hprof`).
+   - Cấm Agent đọc các thư mục tự sinh và tệp nhị phân cồng kềnh (`build/intermediates/`, `build/tmp/`, `.gradle/`, `node_modules/`, `dist/`, `*.aab`, `*.hprof`). Không chặn `build/outputs/` và `*.apk`: worker QA phải liệt kê và cài APK debug (issue #139).
 5. **Chống Phình Ngữ Cảnh:** quy tắc gốc ở §7 (ngưỡng >50% → checkpoint + `/compact`/handoff trước refactor nhiều file).
 
 ## 18. Cơ Chế Cộng Tác Claude ↔ Antigravity (CHỈ DÀNH CHO TASK LỚN & RỦI RO CAO)
