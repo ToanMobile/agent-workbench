@@ -51,7 +51,13 @@ AGENT_DOABLE_RULES = (
         re.compile(
             r"thử\s+pr\s+#\d+|chạy\s+lại\s+gate|gate\s+--full|cổng\s+perf|chờ\s+load|dừng\s+gradle|"
             r"kiểm\s+không\s+hồi\s+quy|chạy\s+d2\b|bật\s+lại\s+máy\s+ảo|máy\s+ảo\s+phoneconnect|"
-            r"roborazzi\s+baseline\s+record|run\s+workflow\s+trên\s+main|\bchmod\b",
+            r"roborazzi\s+baseline\s+record|run\s+workflow\s+trên\s+main|\bchmod\b|"
+            # 24/10 #319: một suite quá giờ là test treo/tải máy cần điều tra, không phải quyết định của người. Chỉ khi câu
+            # nói về gate/suite (REG-, suite, gate): "nâng timeout Lambda trên AWS" vẫn là việc của người.
+            r"(?=[^\n]*\b(?:nâng|tăng|nới|đặt|raise[sd]?|bump(?:ed)?|increas(?:e|ed|ing)|extend(?:ed)?|set)\b)"
+            r"(?=[^\n]*(?:timeout|giới\s+hạn|thời\s+gian|\blimit\b))(?=[^\n]*(?:\bREG-[A-Z]|\bgate\b|post-fix-gate|test\s+suite))|"
+            r"(?=[^\n]*\b(?:chấp\s+nhận|accept)\b)(?=[^\n]*\btimeout\b)(?=[^\n]*\bREG-[A-Z])|"
+            r"thay\s+(?:cho\s+)?(?:exit\s*0\s+của\s+gate|gate\s+exit)|instead\s+of\s+a\s+gate\s+exit",
             re.I,
         ),
         "test/verify PR trên máy hoặc máy ảo, chạy gate/perf hoặc workflow CI là việc của agent (Builder/QA/Reviewer)",
@@ -83,7 +89,7 @@ GENUINE_HUMAN_RE = re.compile(
     r"api[ _-]?key|supabase\s+(?:login|secrets)|play\s+console|apple\s+(?:developer|team\s+id)|"
     r"nđ\s*147|botfather|keystore|admob|firebase|\b[3-9]\s+người\s+chơi\s+thật|"
     r"iarc|pháp\s+nhân|elm327|trên\s+xe\s+thật|ngồi\s+xe|lái\s+một\s+buổi|bật\s+xe|"
-    r"cho\s+xe\s+online|đăng\s+nhập\s+vietmap",
+    r"cho\s+xe\s+online|đăng\s+nhập\s+vietmap|spending\s+limit|giới\s+hạn\s+chi\s+tiêu|\b(?:postgres|database|db)\s+production\b|\bproduction\s+(?:db|database)\b",
     re.I,
 )
 TIMEOUT = 60
