@@ -2037,6 +2037,21 @@ sync_waiting_labels() {
   done
 }
 
+log_unreadable_blocked_by() {
+  # #386: $1 = plan JSON. Thẻ Blocked có dòng blocked-by deps không đọc được (vd `#377`) không bao giờ được thả: ghi log một lần mỗi
+  # (thẻ, lý do), bền qua lần khởi động lại như sổ sweep. Không đoán thay người viết, không đổi trạng thái thẻ.
+  local n why key
+  while IFS=$'\t' read -r n why; do
+    [ -n "$n" ] || continue
+    key="${n}:unreadable:$(printf '%s' "$why" | cksum | cut -d' ' -f1)"
+    swept_seen "$key" && continue
+    swept_add "$key"
+    log "⚠ #${n}: blocked-by line unreadable, the sweep will not release it — ${why}"
+  done <<EOF
+$(printf '%s' "$1" | jq -r '.flag[]? | [(.number | tostring), ((.why // "") | gsub("[\t\n]"; " "))] | @tsv' 2>/dev/null)
+EOF
+}
+
 sweep_blocked_cards() {
   # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
   # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
@@ -2053,6 +2068,7 @@ sweep_blocked_cards() {
   fi
   local next key
   sync_waiting_labels "$plan"
+  log_unreadable_blocked_by "$plan"
   while IFS=$'\t' read -r issue cleared; do
     # Không có blocker nào (thẻ bị kéo tay sang Blocked, body ghi None): không có gì vừa đóng, để người quyết.
     [ -n "$issue" ] && [ -n "$cleared" ] || continue

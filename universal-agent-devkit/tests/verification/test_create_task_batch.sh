@@ -19,6 +19,8 @@ cat > "$TMP/bin/gh" <<'PY'
 import json, os, sys
 a = sys.argv[1:]
 open(os.environ["FAKE_LOG"], "a").write(json.dumps({"gh": a}, ensure_ascii=False) + "\n")
+if os.environ.get("FAKE_HANG") == " ".join(a[:2]):
+    import time; time.sleep(30)
 if a[:2] == ["issue", "create"]:
     print("https://github.com/ToanMobile/agent-workbench/issues/99"); sys.exit(0)
 if a[:2] == ["project", "item-add"]:
@@ -357,7 +359,20 @@ PY
 rc=$(run "${NEWARGS[@]}")
 grep -q "bị cắt" "$TMP/out" && ok "28 board vượt giới hạn đọc → cảnh báo" || fail "28 thiếu cảnh báo cắt"
 
-# 29. #330 mục 1: thẻ đã có mục "Gộp thêm: <cùng tên>" mà gh issue edit lỗi → KHÔNG báo "Đã gom" (việc mới mất im lặng); tạo thẻ mới.
+# 29. field-list treo quá hạn (#305): dùng ID cột Backlog dự phòng + cảnh báo, createTask vẫn xong (item-edit chạy).
+items '[{"n":7,"label":"qa"}]'
+export FAKE_HANG="project field-list" CREATE_TASK_GH_TIMEOUT_S=1
+rc=$(run "${NEWARGS[@]}" --new-card "test hết hạn")
+unset FAKE_HANG CREATE_TASK_GH_TIMEOUT_S
+[ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && [ "$(called project item-edit)" = "1" ] && grep -q "dự phòng" "$TMP/out" && grep -q "thoát 124" "$TMP/out" && ok "29 field-list treo → ID dự phòng + cảnh báo, vẫn xong" || fail "29 rc=$rc"
+
+# 30. issue create treo quá hạn (#305): thoát khác 0 kèm thông báo rõ, không treo, không đẩy lên board.
+export FAKE_HANG="issue create" CREATE_TASK_GH_TIMEOUT_S=1
+rc=$(run "${NEWARGS[@]}" --new-card "test hết hạn")
+unset FAKE_HANG CREATE_TASK_GH_TIMEOUT_S
+[ "$rc" != "0" ] && grep -q "quá 1s không phản hồi" "$TMP/out" && [ "$(called project item-add)" = "0" ] && ok "30 issue create treo → thoát khác 0 + thông báo" || fail "30 rc=$rc"
+
+# 31. #330 mục 1: thẻ đã có mục "Gộp thêm: <cùng tên>" mà gh issue edit lỗi → KHÔNG báo "Đã gom" (việc mới mất im lặng); tạo thẻ mới.
 python3 - <<'PY'
 import json, os
 t = "✨ [feature] hooks: thêm việc B"
@@ -368,14 +383,14 @@ PY
 export FAKE_EDIT_FAIL=1
 rc=$(run "${NEWARGS[@]}")
 unset FAKE_EDIT_FAIL
-! grep -q "Đã gom" "$TMP/out" && [ "$(called issue create)" = "1" ] && ok "29 edit lỗi + mục trùng tên → không báo Đã gom, tạo thẻ mới" || fail "29 rc=$rc: $(cat "$TMP/out")"
+! grep -q "Đã gom" "$TMP/out" && [ "$(called issue create)" = "1" ] && ok "31 edit lỗi + mục trùng tên → không báo Đã gom, tạo thẻ mới" || fail "31 rc=$rc: $(cat "$TMP/out")"
 
-# 30. #330 mục 2: CREATE_TASK_GH_TIMEOUT_S rỗng / rác ('60s') / ≤ 0 → dùng 60 kèm cảnh báo, không traceback lúc import.
+# 32. #330 mục 2: CREATE_TASK_GH_TIMEOUT_S rỗng / rác ('60s') / ≤ 0 → dùng 60 kèm cảnh báo, không traceback lúc import.
 items '[{"n":7}]'
 for v in "" "60s" "0" "-5"; do
     : > "$FAKE_LOG"; rm -f "$FAKE_EDITED"
     (cd "$TMP/repo" && CREATE_TASK_GH_TIMEOUT_S="$v" python3 "$CT" "${NEWARGS[@]}") >"$TMP/out" 2>&1; rc=$?
-    ! grep -q Traceback "$TMP/out" && [ "$rc" = "0" ] && [ "$(called issue edit)" = "1" ] && ok "30 CREATE_TASK_GH_TIMEOUT_S='$v' → vẫn gom" || fail "30 '$v' rc=$rc: $(head -5 "$TMP/out")"
+    ! grep -q Traceback "$TMP/out" && [ "$rc" = "0" ] && [ "$(called issue edit)" = "1" ] && ok "32 CREATE_TASK_GH_TIMEOUT_S='$v' → vẫn gom" || fail "32 '$v' rc=$rc: $(head -5 "$TMP/out")"
 done
 
 # 31. #369: trần dòng AC mỗi thẻ gom (MAX_CARD_AC, mặc định 12, SB_MAX_CARD_AC ghi đè): thẻ đã có đủ AC thì việc kế mở thẻ mới
