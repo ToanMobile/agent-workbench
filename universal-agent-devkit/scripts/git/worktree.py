@@ -451,12 +451,47 @@ def load_state(wt):
         return _adopted_state(wt)
 
 
+ESSENTIALS_START = "<!-- devkit-essentials:start"   # scripts/governance/context_sync.py MARK_START / MARK_END
+ESSENTIALS_END = "<!-- devkit-essentials:end -->"
+
+
+def _outside_essentials(text):
+    """`text` without the DevKit-generated essentials section (the start/end marker lines stay), or None when it has no intact pair."""
+    i = text.find(ESSENTIALS_START)
+    j = text.find(ESSENTIALS_END, i) if i >= 0 else -1
+    if i < 0 or j < 0:
+        return None
+    eol = text.find("\n", i)
+    keep = j if eol < 0 or eol > j else eol + 1
+    return text[:keep] + text[j:]
+
+
+def _essentials_block_only(wt):
+    """True when the tracked AGENTS.md differs from HEAD's ONLY inside the devkit-essentials block that context_sync.py generates: the
+    installer run in a lane / merge-gate scratch worktree rewrites it (#234), and it is no work. Anything else (a symlink, no markers on
+    either side, a byte outside the block, a git error) is False: the file counts as work, as before."""
+    path = os.path.join(wt, "AGENTS.md")
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return False
+        with open(path, encoding="utf-8", newline="") as f:
+            now = f.read()
+        head = git(wt, "show", "HEAD:AGENTS.md", check=False)
+        if head.returncode != 0:
+            return False
+        a, b = _outside_essentials(now), _outside_essentials(head.stdout)
+    except (OSError, UnicodeError, SystemExit):
+        return False
+    return a is not None and a == b
+
+
 def changes_since(wt, state):
     """Uncommitted paths whose content differs from the recorded setup. A state written before the executable bit was part of
     the fingerprint (no "fp" marker) holds "F:<sha>" for every file: for those, the bit is not compared."""
     base, exact = state["baseline"], state.get("fp") == FP_VERSION
     moved = [p for p, fp in snapshot(wt).items()
              if base.get(p) != fp and (exact or not (fp.startswith("F:") and fp.endswith(":x")) or base.get(p) != fp[:-2])]
+    moved = [p for p in moved if not (p == "AGENTS.md" and _essentials_block_only(wt))]   # #234: the DevKit's own generated block is install state
     if not any(os.path.islink(os.path.join(wt, p)) for p in moved):
         return sorted(moved)
     main = main_checkout(wt)   # one place for diff / status / inventory / finish / remove: DevKit's own links into main's kit are not work
@@ -2255,8 +2290,12 @@ def _same_patches_verbatim(cwd, tip, head, cap=300):
     if not base:
         return False
     merges = git(cwd, "rev-list", "--merges", "--count", f"{base}..{head}", check=False)
+    mine_n = git(cwd, "rev-list", "--count", f"{base}..{head}", check=False)
     total = git(cwd, "rev-list", "--count", f"{base}..{tip}", check=False)
-    if merges.returncode or merges.stdout.strip() != "0" or total.returncode or not total.stdout.strip().isdigit() or int(total.stdout) > cap:
+    if merges.returncode or merges.stdout.strip() != "0":
+        return False
+    # cap áp cho CẢ hai chuỗi: chuỗi head dài cũng chạy `git log -p` + patch-id không giới hạn (#326)
+    if any(r.returncode or not r.stdout.strip().isdigit() or int(r.stdout) > cap for r in (total, mine_n)):
         return False
 
     def ids(rng):   # BYTES: text mode đổi \r\n thành \n trước patch-id; --submodule=short: commit chỉ đổi gitlink vẫn có patch-id
