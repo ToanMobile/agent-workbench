@@ -210,7 +210,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       resume: [ $all[]
                 | select(.status == "Blocked")
                 | select(dep(.number) != null and (dep(.number).needsYouDone // false))
-                | { number, title } ],
+                | { number, title, key: (dep(.number).approvalKey // ""), why: (dep(.number).approvalWhy // "") } ],
 
       # Changed code while Blocked needs a new review/request, never approval.
       refreshApproval: [ $all[]

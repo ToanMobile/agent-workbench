@@ -40,6 +40,8 @@ Mỗi thẻ là một PR, một merge-gate và một lần `post-fix-gate --full
 - Mở thẻ riêng chỉ khi có lý do thật và nói rõ bằng `--new-card "<lý do>"`: việc độc lập cần PR riêng, khác repo (`--repo`),
   hoặc thẻ Backlog hiện có đã đủ 6 việc gộp (`MAX_BATCH`, vì PR > 400 dòng đổi phải người duyệt). Thẻ cần người (`--needs-you`),
   khác loại với mọi thẻ Backlog, `--from-file` và Backlog trống thì script tự tạo thẻ mới. Không đọc được board thì tạo thẻ mới và cảnh báo.
+- Rủi ro 🟢 và 🟡 đều gom; chỉ việc 🔴 High, hoặc có `--blocked-by`, mới thành thẻ riêng (24/10: trước đây chỉ 🟢 gom, mà gần
+  như mọi thẻ ghi 🟡 nên cơ chế gom không bao giờ chạy).
 - Thẻ đã ở Building / QA / Review / Done không nhận thêm việc: việc mới nhập vào thẻ Backlog khác hoặc mở thẻ mới.
 
 ---

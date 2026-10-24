@@ -74,4 +74,17 @@ ulist | grep -qx "tests/verification/test_glue.sh" && ok "upstream: a file chang
   || fail "upstream merge resolution: $(ulist | tr '\n' ' ')"
 ulist | grep -qx "tests/verification/test_foo.sh" && ok "upstream: the unpushed commits' files are still selected" || fail "upstream: $(ulist | tr '\n' ' ')"
 
+# 24/10 (#319 TIMEOUT x4, #240 "331 tests"): a branch whose upstream is an OLD branch selected every file the trunk changed
+# since then. The change is what the branch adds over origin/<trunk>, not over a stale upstream.
+trunk_br="$(cd "$U" && git branch --show-current)"
+( cd "$U" && init=$(git rev-list --max-parents=0 HEAD) && git push -q origin HEAD \
+  && git push -q origin "$init:refs/heads/old" && git fetch -q origin \
+  && git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/$trunk_br" \
+  && git checkout -q -b feat "origin/$trunk_br" && echo 'foo = 9' > scripts/foo.py && git commit -qam "feat: foo only" \
+  && git branch -q --set-upstream-to=origin/old ) >"$TMP/stale-setup.log" 2>&1 || fail "stale upstream setup: $(tail -2 "$TMP/stale-setup.log")"
+sel="$(ulist | tr '\n' ' ')"
+printf '%s' "$sel" | grep -q "tests/verification/test_foo.sh" && ! printf '%s' "$sel" | grep -q "tests/verification/test_glue.sh" \
+  && ok "stale upstream: only the branch's own change over origin/<trunk> is selected (glue from trunk is not)" \
+  || fail "stale upstream selected: $sel"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_run_impacted_since: all passed" || { echo "❌ test_run_impacted_since: $FAILS failed"; exit 1; }
