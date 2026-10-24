@@ -1272,6 +1272,43 @@
       ]
     },
     {
+      "component": "agent-office-agent-message",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "mcp-servers/agent-office/inbox_hook.py",
+        "tests/super-board/test_runner_agent_office_inbox.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AGENT-OFFICE-INBOX-01",
+          "name": "runner: có bản cài ~/.agent-office/app/inbox_hook.py thì worker claude mang --session-id, --settings (hook PostToolUse hộp thư) và system prompt có nonce, ghi session id vào log; không có hoặc hook lỗi thì lệnh bật như cũ; agy/grok không đổi",
+          "command": "bash tests/super-board/test_runner_agent_office_inbox.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-AGENT-OFFICE-INBOX-02",
+          "name": "agent-office: hook hộp thư lệnh (rỗng, có lệnh, sai session, file hỏng, subagent, thiếu nonce, song song) và POST /api/agent-message (rate limit, tunnel cần mã, resume bị từ chối khi phiên còn chạy hoặc thẻ còn worker)",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_inbox_hook tests.test_agent_message",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "post-fix-gate-tree-mode",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_tree_mode.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-TREE-01",
+          "name": "post-fix-gate --tree HEAD: cây sạch chạy đủ suite và exit 0, tin ma trận đã commit, từ chối cây bẩn, biên nhận theo cây cho proof_gate (#307)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_tree_mode.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-guard-kill-by-name",
       "watch_files": [
         "universal-agent-devkit/hooks/block-dangerous-git.sh",

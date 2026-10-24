@@ -18,9 +18,11 @@ import argparse
 import glob
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -35,7 +37,9 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+import inbox_hook  # cùng thư mục: hook hộp thư lệnh, cờ --settings và system prompt dùng chung với runner
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(HERE, "web")
@@ -1266,6 +1270,136 @@ def mac_notify(text: str):
         warn("osascript", exc)
 
 
+# ---- nhắn lệnh cho agent super-board: hộp thư đọc bằng hook PostToolUse (agent đang chạy) hoặc resume (đã dừng)
+MSG_MAX = 4000                 # ký tự mỗi lệnh
+MSG_RATE, MSG_WINDOW = 6, 60.0  # tối đa 6 request mỗi phút, tính cả request bị từ chối và lần nhập mã
+CODE_TTL, CODE_TRIES = 120.0, 3  # mã xác nhận lệnh từ điện thoại: hạn 2 phút, sai 3 lần thì huỷ
+PENDING_MAX = 5                  # lệnh chờ mã cùng lúc: hơn thế là có ai đang bắn thông báo mã lên Mac
+MSG_KEEP = 50
+WORKER_LOG_GLOB = os.path.join("docs", "super-board", "runs", "*-workers", "worker-*.log")
+DISPATCH_RE = re.compile(r"^=== dispatch lane=(\S+) issue=#(\d+)", re.M)
+SECTION_SID_RE = re.compile(r'^agent_office: session_id=([0-9a-f-]{36})$|"session_id":"([0-9a-f-]{36})"', re.M)
+POOL_CFG_RE = re.compile(r"^account_pool: engine=claude account=\S+ config_dir=(\S+)$", re.M)
+PROC_SID_RE = re.compile(r"--(?:session-id|resume)[ =]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b")
+
+
+class RateLimited(ValueError):
+    """Quá MSG_RATE lệnh trong MSG_WINDOW giây: handler trả HTTP 429."""
+
+
+def find_worker_session(sid: str, repo_paths: dict, max_age_days: float = 7):
+    """Phiên worker super-board có session id `sid`: repo, thẻ, lane, config_dir, cwd và model lúc giao, lấy từ log worker.
+    Chỉ phiên chính của một lần giao (session id đầu tiên sau dòng `=== dispatch`), không phải subagent. Không thấy: None."""
+    needle, cutoff = sid.encode(), now() - max_age_days * 86400
+    for repo, rp in repo_paths.items():
+        logs = []
+        for p in glob.glob(os.path.join(rp, WORKER_LOG_GLOB)):
+            try:
+                if os.path.getmtime(p) >= cutoff:
+                    logs.append(p)
+            except OSError:
+                continue
+        for log in logs:
+            try:
+                with open(log, "rb") as f:
+                    data = f.read()
+            except OSError as e:
+                warn("đọc log worker " + log, e)
+                continue
+            if needle not in data:
+                continue
+            text = data.decode("utf-8", "replace")
+            heads = list(DISPATCH_RE.finditer(text))
+            for i, h in enumerate(heads):
+                sec = text[h.start(): heads[i + 1].start() if i + 1 < len(heads) else len(text)]
+                m = SECTION_SID_RE.search(sec)
+                if not m or (m.group(1) or m.group(2)) != sid:
+                    continue
+                pool = POOL_CFG_RE.search(sec)
+                cwd, model = None, None
+                for line in sec.splitlines():
+                    if line.startswith('{"type":"system","subtype":"init"'):
+                        try:
+                            init = json.loads(line)
+                            cwd, model = init.get("cwd"), init.get("model")
+                        except ValueError as e:  # dòng init hỏng: không có cwd nên _target từ chối resume
+                            warn("dòng init trong log worker " + log, e)
+                        break
+                return {"repo": repo, "repoPath": rp, "log": log, "lane": h.group(1), "issue": h.group(2),
+                        "configDir": pool.group(1) if pool else None, "cwd": cwd, "model": model,
+                        "hasInbox": bool(m.group(1))}
+    return None
+
+
+def latest_card_session(repo_path: str, issue: str, max_age_days: float = 7):
+    """Phiên chính của lần giao gần nhất cho thẻ `issue` (log worker mới nhất của thẻ): đích để nhắn/resume thẻ đã dừng."""
+    cutoff, best = now() - max_age_days * 86400, None
+    for p in glob.glob(os.path.join(repo_path, "docs", "super-board", "runs", "*-workers", f"worker-*-{issue}.log")):
+        try:
+            mt = os.path.getmtime(p)
+        except OSError:
+            continue
+        if mt >= cutoff and (best is None or mt > best[0]):
+            best = (mt, p)
+    if not best:
+        return None
+    try:
+        with open(best[1], "rb") as f:
+            text = f.read().decode("utf-8", "replace")
+    except OSError as e:
+        warn("đọc log worker " + best[1], e)
+        return None
+    heads = list(DISPATCH_RE.finditer(text))
+    if not heads:
+        return None
+    m = SECTION_SID_RE.search(text, heads[-1].start())
+    if not m:
+        return None
+    return {"sid": m.group(1) or m.group(2), "lane": heads[-1].group(1), "at": best[0]}
+
+
+def inflight_live(repo_path: str, issue: str) -> bool:
+    """Thẻ còn worker của runner (lock .claude/super-board/inflight/<số thẻ>, INFLIGHT_DIR của super-board-run.sh, PID sống),
+    lane nào cũng tính. Lock đọc lỗi hoặc PID không đọc được thì coi như còn chạy: không resume (fail closed)."""
+    p = os.path.join(repo_path, ".claude", "super-board", "inflight", issue)
+    try:
+        with open(p, encoding="utf-8", errors="replace") as f:
+            kv = dict(line.split("=", 1) for line in f.read().splitlines() if "=" in line)
+        os.kill(int(kv.get("PID", "").strip()), 0)
+        return True
+    except FileNotFoundError:
+        return False
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # tiến trình có thật nhưng của người khác
+    except (OSError, ValueError) as e:
+        warn("đọc lock " + p, e)
+        return True
+
+
+def local_request(headers, client_ip: str, allowed: set) -> bool:
+    """Chính máy Mac: kết nối từ loopback, Host trong danh sách cho phép, không có header của tunnel. Chỉ tin header thì
+    máy khác trong LAN (khi server bind 0.0.0.0) giả được `Host: 127.0.0.1` để thành "từ Mac"."""
+    try:
+        loop = ipaddress.ip_address(str(client_ip).split("%")[0]).is_loopback
+    except ValueError:
+        return False
+    return loop and host_name(headers.get("Host")) in allowed and not any(headers.get(h) for h in TUNNEL_HEADERS)
+
+
+def ps_claude_sids() -> set:
+    """Session id của mọi tiến trình claude đang chạy với --session-id/--resume. Lỗi thì ném lên (không gửi)."""
+    out = subprocess.run(["ps", "-axww", "-o", "command="], capture_output=True, text=True, timeout=5, check=True).stdout
+    return {m.group(1) for line in out.splitlines() if "claude" in line for m in PROC_SID_RE.finditer(line)}
+
+
+def spawn_detached(argv, env, cwd, log):
+    with open(log, "ab") as f:
+        return subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+
+
 ROW_FROM_RUNNER = {"running": "idle", "idle": "idle", "stale": "stale", "finished": "stopped"}
 
 
@@ -1285,6 +1419,14 @@ class App:
         self.prev_needs = None   # thẻ 🙋 chờ duyệt ở lần dựng trước: thẻ mới vào thì báo (toast, thông báo trình duyệt và macOS)
         self.deciding = set()    # thẻ đang gửi Duyệt/Từ chối: bấm lần hai (máy Mac và điện thoại cùng lúc) bị từ chối
         self.demo_manifests = None
+        # nhắn lệnh cho agent: lệnh đã gửi (id -> trạng thái), lệnh từ điện thoại chờ mã, resume đang chạy, mốc rate limit
+        self.msgs, self.pending, self.resumes, self.msg_times = {}, {}, {}, {}
+        self.msg_lock = threading.Lock()  # một lệnh một lúc: hai lần gửi không resume cùng một phiên hai lần
+        self._ps_sids, self._spawn = ps_claude_sids, spawn_detached
+        # inboxDir khác mặc định chỉ hợp cho test và phiên resume (server truyền AGENT_OFFICE_INBOX); worker của runner
+        # không có biến này nên hook của nó luôn đọc ~/.agent-office/inbox
+        self.inbox_dir = expand(cfg.get("inboxDir") or "~/.agent-office/inbox")
+        self.resume_dir = expand(cfg.get("resumeLogDir") or "~/.agent-office/resume")
         # nhật ký sự kiện: lưu ra file để còn nguyên khi tải lại trang hoặc khởi động lại server
         self.events, self.prev_rows, self.prev_items, self.user_moves = [], None, None, {}
         self.started_at, self.tally = time.time(), {"moves": 0, "done": 0, "blocked": 0}  # thống kê phiên: từ lúc server chạy
@@ -1305,6 +1447,10 @@ class App:
             st["events"] = self.events[-120:]
             if self.events:
                 st["version"] = hashlib.sha1((st["version"] + self.events[-1]["id"]).encode()).hexdigest()[:12]
+            st["messages"] = self.messages_view()
+            if st["messages"]:  # lệnh đổi trạng thái (đã đọc, resume xong) thì trang phải vẽ lại ô "Nhắn agent"
+                sig = "".join(m["id"] + m["state"] for m in st["messages"])
+                st["version"] = hashlib.sha1((st["version"] + sig).encode()).hexdigest()[:12]
             # ngoài mã phiên bản: số đổi liên tục mà không bắt trang dựng lại cảnh
             st["host"] = host_stats()
             st["session"] = dict(self.tally, since=self.started_at)
@@ -1548,6 +1694,214 @@ class App:
             self.approvals.pop(it["id"], None)  # comment mới đổi updatedAt: lần đọc sau đọc lại
         return {"ok": True}
 
+    # ---- nhắn lệnh cho agent
+    def agent_message(self, body: dict, remote: bool) -> dict:
+        """POST /api/agent-message. {sessionId, text}: gửi (từ Mac) hoặc chờ mã (qua tunnel). {pendingId, code}: gửi lệnh
+        đã chờ mã. Lỗi gì cũng ném lên và không gửi (fail closed): lệnh ở đây là chạy code tuỳ ý trên Mac."""
+        with self.msg_lock:
+            t = now()
+            # điện thoại và Mac đếm riêng: ai có link QR cũng không khoá được người ngồi ở Mac
+            src = "remote" if remote else "local"
+            times = self.msg_times[src] = [x for x in self.msg_times.get(src, []) if t - x < MSG_WINDOW]
+            if len(times) >= MSG_RATE:
+                raise RateLimited(f"Gửi quá {MSG_RATE} lệnh một phút, chờ chút rồi gửi lại.")
+            times.append(t)
+            self.pending = {k: p for k, p in self.pending.items() if p["exp"] > t}
+            if body.get("pendingId"):
+                sid, text = self._take_pending(str(body["pendingId"]), str(body.get("code") or ""))
+                return self._deliver(sid, text, *self._target(sid))
+            sid = body.get("sessionId")
+            text = str(body.get("text") or "").strip()
+            if not text:
+                raise ValueError("Lệnh đang trống.")
+            if len(text) > MSG_MAX:
+                raise ValueError(f"Lệnh dài quá {MSG_MAX} ký tự.")
+            mode, info = self._target(sid)
+            if remote:
+                return self._ask_code(sid, text, info)
+            return self._deliver(sid, text, mode, info)
+
+    def card_session(self, repo: str, issue: str):
+        if not re.fullmatch(r"\d{1,7}", issue or ""):
+            return None
+        rp = next((p for name, p in self._repo_paths().items() if name.lower() == (repo or "").lower()), None)
+        return latest_card_session(rp, issue) if rp else None
+
+    def _msg_sel(self, repo, issue):
+        """Sự kiện của lệnh nhắn trỏ tới thẻ trên Project (bấm là mở thẻ); thẻ không có trên Project thì không trỏ."""
+        it = next((x for x in self.project.get("items", []) if str(x.get("number")) == str(issue)
+                   and str(x.get("repo", "")).lower() == str(repo).lower()), None)
+        return {"type": "item", "id": it["id"]} if it else None
+
+    def _repo_paths(self):
+        names = list(self.cfg.get("repos") or []) + sorted({it["repo"] for it in self.project.get("items", [])})
+        return self.scanner.repo_paths(names)
+
+    def _target(self, sid):
+        """("inbox"|"resume", info) cho một phiên worker super-board; không gửi được thì ValueError kèm lý do."""
+        if not isinstance(sid, str) or not inbox_hook.SID_RE.fullmatch(sid):
+            raise ValueError("Mã phiên không hợp lệ.")
+        info = find_worker_session(sid, self._repo_paths())
+        if not info:
+            raise ValueError("Chỉ nhắn được cho phiên worker super-board; không thấy phiên này trong log worker 7 ngày qua.")
+        try:
+            running = self._ps_sids()
+        except (OSError, subprocess.SubprocessError) as e:
+            raise ValueError(f"Không kiểm được tiến trình agent ({e}), chưa gửi.") from e
+        own = self.resumes.get(sid)
+        rc = own["proc"].poll() if own else None
+        if own and rc is not None:
+            self._close_resume(sid, rc)  # resume trước đã xong mà chưa tới nhịp poll: chốt nó trước khi resume tiếp
+        own_alive = bool(own and rc is None)
+        label = f"#{info['issue']} {info['repo']}"
+        if sid in running:
+            if info["hasInbox"] or own_alive:
+                return "inbox", info
+            raise ValueError(f"Phiên của {label} đang chạy nhưng chưa có hộp thư (runner cũ). Chờ nó dừng rồi gửi để resume.")
+        if own_alive:
+            raise ValueError(f"Đang khởi động lại phiên của {label}, chờ vài giây rồi gửi lại.")
+        if inflight_live(info["repoPath"], info["issue"]):
+            raise ValueError(f"{label} đang có worker khác chạy; resume lúc này sẽ tách đôi việc. Nhắn worker đang chạy.")
+        if not info["cwd"] or not os.path.isdir(info["cwd"]):
+            raise ValueError(f"Thư mục làm việc của phiên {label} không còn, không resume được.")
+        return "resume", info
+
+    def _ask_code(self, sid, text, info) -> dict:
+        if len(self.pending) >= PENDING_MAX:
+            raise ValueError(f"Đang có {PENDING_MAX} lệnh chờ mã; nhập mã hoặc chờ 2 phút cho chúng hết hạn.")
+        pid, code = secrets.token_urlsafe(12), "%06d" % secrets.randbelow(10 ** 6)
+        self.pending[pid] = {"sid": sid, "text": text, "code": code, "exp": now() + CODE_TTL, "tries": 0}
+        label = f"#{info['issue']} {info['repo']}"
+        mac_notify(f"Mã {code} — lệnh từ điện thoại cho {label}: {redact(text)[:80]}")
+        with self.lock:
+            self._log_event(f"Lệnh từ điện thoại cho {label} chờ mã xác nhận trên Mac", "idle", self._msg_sel(info["repo"], info["issue"]), False)
+        return {"ok": False, "needCode": True, "pendingId": pid, "expiresIn": int(CODE_TTL),
+                "error": "Nhập mã 6 số vừa hiện trong thông báo trên Mac."}
+
+    def _take_pending(self, pid, code):
+        p = self.pending.get(pid)
+        if not p:
+            raise ValueError("Mã hết hạn hoặc lệnh đã gửi; gõ lại lệnh.")
+        if not hmac.compare_digest(code.strip().encode(), p["code"].encode()):
+            p["tries"] += 1
+            left = CODE_TRIES - p["tries"]
+            if left <= 0:
+                self.pending.pop(pid, None)
+                raise ValueError("Sai mã 3 lần, lệnh đã huỷ.")
+            raise ValueError(f"Sai mã, còn {left} lần.")
+        self.pending.pop(pid, None)
+        return p["sid"], p["text"]
+
+    def _deliver(self, sid, text, mode, info) -> dict:
+        t = now()
+        mid = "%013d-%s" % (int(t * 1000), secrets.token_hex(4))
+        label = f"#{info['issue']} {info['repo']}"
+        preview = redact(text)[:160]
+        if mode == "inbox":
+            box = os.path.join(self.inbox_dir, sid)
+            os.makedirs(box, mode=0o700, exist_ok=True)
+            os.chmod(self.inbox_dir, 0o700)
+            os.chmod(box, 0o700)
+            tmp = os.path.join(box, "." + mid + ".tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"id": mid, "text": text, "ts": t}, f, ensure_ascii=False)
+            os.replace(tmp, os.path.join(box, mid + ".json"))
+            state, ev = "sent", f"Bạn nhắn {label}: {preview}"
+        else:
+            nonce = secrets.token_hex(16)
+            # tiền tố cố định: lệnh không bao giờ mở đầu bằng "-" nên claude không hiểu nhầm thành cờ
+            prompt = "Lệnh mới từ người dùng qua Agent Office (phiên đã dừng nên được mở lại): " + text
+            argv = [expand(self.cfg.get("claudeBin") or "~/.local/bin/claude"), "--resume", sid, "-p", prompt]
+            if info.get("model"):
+                argv += ["--model", info["model"]]
+            argv += ["--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose",
+                     "--settings", inbox_hook.settings_json(os.path.join(HERE, "inbox_hook.py")),
+                     "--append-system-prompt", inbox_hook.system_prompt(nonce)]
+            env = dict(os.environ, AGENT_OFFICE_NONCE=nonce, AGENT_OFFICE_INBOX=self.inbox_dir,
+                       DEVKIT_ALLOW_BRANCH="1", WORKTREE_MERGE_GATE="0",
+                       CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="0", BASH_DEFAULT_TIMEOUT_MS="3600000",
+                       BASH_MAX_TIMEOUT_MS="3600000")
+            env.pop("CLAUDE_CONFIG_DIR", None)  # log không ghi config_dir: tài khoản mặc định như runner, không lấy của server
+            if info.get("configDir"):
+                env["CLAUDE_CONFIG_DIR"] = info["configDir"]
+            # launchd chạy server với PATH không có ~/.local/bin (nơi cài claude): phiên resume cần nó cho lệnh con
+            local_bin = os.path.expanduser("~/.local/bin")
+            if local_bin not in env.get("PATH", "").split(os.pathsep):
+                env["PATH"] = local_bin + os.pathsep + env.get("PATH", "")
+            os.makedirs(self.resume_dir, mode=0o700, exist_ok=True)
+            log = os.path.join(self.resume_dir, f"{sid}-{int(t)}.log")
+            # ponytail: runner vẫn có thể giao lại thẻ này trong lúc resume (không sửa logic chọn thẻ); resume chạy nice 10
+            # như server. Nâng lên khi thấy hai worker cùng thẻ thật.
+            # lệnh cũ còn sót trong hộp thư (server khởi động lại trước khi kịp bỏ) không được giao cho lần resume này
+            for stale in glob.glob(os.path.join(self.inbox_dir, sid, "*.json")):
+                try:
+                    os.unlink(stale)
+                except OSError as e:
+                    raise ValueError(f"Không dọn được lệnh cũ trong hộp thư ({e}), chưa resume.") from e
+            proc = self._spawn(argv, env, info["cwd"], log)
+            self.resumes[sid] = {"proc": proc, "mid": mid, "log": log}
+            state, ev = "resuming", f"Bạn nhắn {label} (phiên đã dừng, đang resume): {preview}"
+        self.msgs[mid] = {"id": mid, "sid": sid, "repo": info["repo"], "issue": info["issue"], "lane": info["lane"],
+                          "preview": preview, "state": state, "mode": mode, "ts": t}
+        while len(self.msgs) > MSG_KEEP:
+            self.msgs.pop(next(iter(self.msgs)))
+        with self.lock:
+            self._log_event(ev, "running", self._msg_sel(info["repo"], info["issue"]), False)
+        return {"ok": True, "id": mid, "mode": mode, "state": state}
+
+    def poll_messages(self):
+        """Hook đã đọc (ack) → "read"; phiên dừng trước khi đọc → "unread" và bỏ lệnh; resume xong → "done"/"failed"."""
+        with self.msg_lock:
+            sent = [m for m in self.msgs.values() if m["state"] == "sent"]
+            try:
+                running = self._ps_sids() if sent else set()
+            except (OSError, subprocess.SubprocessError) as e:
+                warn("ps", e)
+                running = None
+            for m in sent:
+                label = f"#{m['issue']} {m['repo']}"
+                ack = os.path.join(self.inbox_dir, m["sid"], "acks", m["id"])
+                if os.path.exists(ack):
+                    m["state"] = "read"
+                    try:
+                        os.unlink(ack)
+                    except OSError as e:
+                        warn("xoá ack " + ack, e)
+                    with self.lock:
+                        self._log_event(f"Agent {label} đã đọc lệnh của bạn", "running", self._msg_sel(m["repo"], m["issue"]), False)
+                elif running is not None and m["sid"] not in running:
+                    try:
+                        os.unlink(os.path.join(self.inbox_dir, m["sid"], m["id"] + ".json"))
+                        m["state"] = "unread"
+                    except FileNotFoundError:
+                        m["state"] = "read"  # file đã mất = hook đã nhận lệnh, chỉ chưa kịp ghi ack trước khi phiên dừng
+                    except OSError as e:
+                        warn("bỏ lệnh chưa đọc", e)
+                        m["state"] = "unread"
+                    with self.lock:
+                        self._log_event(f"Agent {label} đã nhận lệnh rồi dừng" if m["state"] == "read" else
+                                        f"Agent {label} dừng trước khi đọc lệnh; gửi lại để resume",
+                                        "running" if m["state"] == "read" else "stale", self._msg_sel(m["repo"], m["issue"]), False)
+            for sid, r in list(self.resumes.items()):
+                rc = r["proc"].poll()
+                if rc is not None:
+                    self._close_resume(sid, rc)
+
+    def _close_resume(self, sid, rc):
+        """Resume của `sid` đã thoát với mã `rc`: lệnh của nó thành done/failed (gọi trong msg_lock)."""
+        r = self.resumes.pop(sid, None)
+        m = self.msgs.get(r["mid"]) if r else None
+        if m:
+            m["state"] = "done" if rc == 0 else "failed"
+            with self.lock:
+                self._log_event(f"Resume #{m['issue']} {m['repo']} " + ("xong" if rc == 0 else f"lỗi (mã {rc}), xem {r['log']}"),
+                                "finished" if rc == 0 else "stale", self._msg_sel(m["repo"], m["issue"]), rc != 0)
+
+    def messages_view(self) -> list:
+        keys = ("id", "sid", "repo", "issue", "lane", "preview", "state", "mode", "ts")
+        return [{k: m[k] for k in keys} for m in list(self.msgs.values())[-30:]]
+
     def act(self, action: str, body: dict) -> dict:
         if not self.demo and not (self.project.get("id") and self.gh_meta.get("ok")):
             raise ValueError("Chưa kết nối được GitHub Project nên chưa sửa được.")
@@ -1690,6 +2044,10 @@ class App:
                     self.sessions, self.sess_info, self.file_ticks = sessions, info, file_ticks
             except Exception as e:  # noqa: BLE001
                 print(f"[local] lỗi: {e}", file=sys.stderr, flush=True)
+            try:
+                self.poll_messages()
+            except Exception as e:  # noqa: BLE001
+                print(f"[nhắn] lỗi theo dõi lệnh: {e}", file=sys.stderr, flush=True)
             self.rebuild()
             time.sleep(float(self.cfg["localSeconds"]))
 
@@ -1821,13 +2179,14 @@ def make_handler(app: App):
     state_dir = os.path.dirname(key_file)
     phone_busy = threading.Lock()   # một lần mở tunnel một lúc: bấm "Tạo mã mới" hai lần không mở hai tunnel
 
-    def from_mac(headers) -> bool:
+    def from_mac(handler) -> bool:
         """Chính máy Mac, không qua tunnel: link có key không bao giờ đi ra qua tunnel, kể cả khi người gọi có key."""
-        return host_name(headers.get("Host")) in allowed and not any(headers.get(h) for h in TUNNEL_HEADERS)
+        return local_request(handler.headers, handler.client_address[0], allowed)
 
-    def refusal(headers, api: bool):
+    def refusal(handler, api: bool):
         """None when the request may go on, else the HTTP status that refuses it."""
-        if from_mac(headers):
+        headers = handler.headers
+        if from_mac(handler):
             return None  # this Mac itself
         host = host_name(headers.get("Host"))
         key = remote_key(key_file)
@@ -1855,17 +2214,21 @@ def make_handler(app: App):
 
         def do_GET(self):
             path = urlparse(self.path).path
-            code = refusal(self.headers, path.startswith("/api/"))
+            code = refusal(self, path.startswith("/api/"))
             if code:
                 return self.send(code, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
             if path == "/api/phone":
-                if not from_mac(self.headers):
+                if not from_mac(self):
                     return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
                 return self.send(200, json.dumps(phone_info(state_dir, key_file)).encode("utf-8"), CTYPES[".json"])
             if path == "/api/state":
                 with app.lock:
                     body = app.state_bytes
                 return self.send(200, body, CTYPES[".json"])
+            if path == "/api/card-session":  # phiên worker gần nhất của một thẻ: để nhắn / resume thẻ không còn agent cầm
+                q = parse_qs(urlparse(self.path).query)
+                res = app.card_session((q.get("repo") or [""])[0], (q.get("issue") or [""])[0])
+                return self.send(200, json.dumps(res or {}, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
             if path == "/api/refresh":
                 app.refresh_evt.set()
                 return self.send(200, b'{"ok":true}', CTYPES[".json"])
@@ -1885,11 +2248,11 @@ def make_handler(app: App):
             path = urlparse(self.path).path
             if self.headers.get("X-Agent-Office") != "1":
                 return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
-            code = refusal(self.headers, True)
+            code = refusal(self, True)
             if code:
                 return self.send(code, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
             if path == "/api/phone":
-                if not from_mac(self.headers):
+                if not from_mac(self):
                     return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
                 if not phone_busy.acquire(blocking=False):
                     return self.send(409, '{"ok":false,"error":"Đang tạo mã, chờ vài giây"}'.encode("utf-8"), CTYPES[".json"])
@@ -1909,6 +2272,20 @@ def make_handler(app: App):
                     raise ValueError("body")
             except ValueError:
                 return self.send(400, b'{"ok":false,"error":"bad json"}', CTYPES[".json"])
+            if path == "/api/agent-message":  # nhắn lệnh cho agent: qua tunnel thì phải có mã xác nhận hiện trên Mac
+                try:
+                    res, code = app.agent_message(body, remote=not from_mac(self)), 200
+                    if res.get("needCode"):
+                        code = 202
+                except RateLimited as e:
+                    res, code = {"ok": False, "error": str(e)}, 429
+                except (KeyError, ValueError, TypeError) as e:
+                    res, code = {"ok": False, "error": str(e).strip("'\"")}, 400
+                except Exception as e:  # noqa: BLE001 — lỗi lạ cũng không gửi, báo rõ cho người gõ
+                    warn("agent-message", e)
+                    res, code = {"ok": False, "error": f"Lỗi máy chủ, chưa gửi: {e}"}, 500
+                print(f"[nhắn] {'ok' if res.get('ok') else res.get('error')}", flush=True)
+                return self.send(code, json.dumps(res, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
             action = path[len("/api/"):] if path.startswith("/api/") else ""
             try:
                 res, code = app.act(action, body), 200

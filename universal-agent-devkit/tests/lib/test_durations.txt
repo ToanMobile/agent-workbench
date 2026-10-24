@@ -378,3 +378,5 @@
 1 tests/gates/test_guard_heredoc_text_not_command.sh
 3 tests/gates/test_guard_kill_by_name.sh
 1 tests/verification/test_settings_template_read_deny.sh
+# 2026-10-24: test của #307 (--tree) thiếu dòng sau khi gộp origin/main; đo 31 s lúc tải ~90.
+31 tests/gates/test_gate_tree_mode.sh
