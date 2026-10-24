@@ -22,6 +22,13 @@ FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 PY="$(python3 -c 'import sys; print(sys.executable)')"
+# 24/10: mỗi lần chạy gate ở đây có hạn giờ (tests/lib/run_bounded.py). Gate kẹt (ca A3 control: open() một FIFO) thì bài FAIL với
+# exit 124, không treo mãi và không để post-fix-gate.py mồ côi (hai tiến trình như vậy từng sống 18h).
+# Hạn mỗi lần gọi: 120 s (một lần gate ở đây ~5 s, máy tải cao ~30 s). Giá trị lạ thì dùng 120: helper lỗi cách dùng thoát 64, và
+# một giá trị hỏng không bao giờ được biến thành exit 2 mà các ca A3/A8/A10 chờ (xanh giả khi gate chưa hề chạy).
+case "${GATE_ROBUSTNESS_DEADLINE_S:-}" in ''|*[!0-9]*) GATE_ROBUSTNESS_DEADLINE_S=120 ;; esac
+[ "$((10#$GATE_ROBUSTNESS_DEADLINE_S))" -gt 0 ] || GATE_ROBUSTNESS_DEADLINE_S=120   # 0, 00, 000 = "no deadline" in the helper: refused
+BOUND=("$PY" -I "$DEVKIT_DIR/tests/lib/run_bounded.py" "$GATE_ROBUSTNESS_DEADLINE_S" --)
 
 mk() {
   local d="$TMP/$1"
@@ -36,7 +43,7 @@ JSON
   git add -A && git commit -qm init
 }
 gate() {
-  OUT="$(CLAUDE_PROJECT_DIR="$PWD" POSTFIX_GATE_FORCE_FULL=1 "$PY" "$GATE" --matrix "$PWD/matrix.json" --lang en "$@" 2>&1)"; RC=$?
+  OUT="$(CLAUDE_PROJECT_DIR="$PWD" POSTFIX_GATE_FORCE_FULL=1 "${BOUND[@]}" "$PY" "$GATE" --matrix "$PWD/matrix.json" --lang en "$@" 2>&1)"; RC=$?
 }
 expect_rc() {
   if [ "$RC" = "$2" ]; then ok "$1 (exit $RC)"
@@ -114,7 +121,7 @@ mk nogit
 printf 'def f():\n    return 2\n' > src/core.py
 mkdir -p "$TMP/nogit-bin"
 for mode in "" "--brief"; do
-  OUT="$(PATH="$TMP/nogit-bin" CLAUDE_PROJECT_DIR="$PWD" "$PY" "$GATE" --matrix "$PWD/matrix.json" --lang en --run-tests --full $mode 2>&1)"; RC=$?
+  OUT="$(PATH="$TMP/nogit-bin" CLAUDE_PROJECT_DIR="$PWD" "${BOUND[@]}" "$PY" "$GATE" --matrix "$PWD/matrix.json" --lang en --run-tests --full $mode 2>&1)"; RC=$?
   expect_rc "A10: no git on PATH ${mode:-(plain)}: UNVERIFIED" 2
   printf '%s\n' "$OUT" | grep -q Traceback && bad "A10 ${mode:-(plain)}: a traceback was printed" \
     || { printf '%s\n' "$OUT" | grep -qi "git" && ok "A10 ${mode:-(plain)}: a clear message names git" || bad "A10 ${mode:-(plain)}: no message about git"; }

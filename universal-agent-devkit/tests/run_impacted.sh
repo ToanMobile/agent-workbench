@@ -131,12 +131,26 @@ run_one() { # <test> <out dir>
   # Bài thử nào cần Grok thì tự gán các biến đó. Không gỡ DEVKIT_GATE_DONE: gate truyền danh sách suite đã chạy.
   # Slot riêng từng bài: --full của `sh`/`echo` không được chờ 2 slot Gradle/Unity của máy (Stop ngắt ở 600s).
   # Bài nào tự export SB_HEAVY_SLOT_DIR thì dùng dir của nó (test_heavy_slot.sh).
+  # 24/10: mỗi bài chạy qua tests/lib/run_bounded.py: cả nhóm tiến trình của bài bị giết khi quá DEVKIT_TEST_TIMEOUT_S (mặc định
+  # 600: gấp 4 bài chậm nhất từng đo — 150 s, test_durations.txt — và dưới trần 900 s của cả suite REG-DK-ALL-01, để bài treo được nêu
+  # tên "killed after 600s" thay vì cả suite TIMEOUT không rõ bài nào; 0 = không hạn), khi tiến trình gọi helper chết, khi Ctrl-C /
+  # SIGTERM tới nhóm này, hay khi
+  # chính helper bị SIGKILL (watchdog). Runner này bị SIGKILL riêng thì xargs vẫn chạy nốt, nhưng mỗi bài vẫn dừng ở hạn của nó.
+  # Trước đó `bash "$1"` trần: ca FIFO của test_gate_robustness.sh kẹt trong open(), runner phía trên mất, hai post-fix-gate.py
+  # sống 18h và các gate khác báo BUSY.
   mkdir -p "$o.slots"
   if env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
        SB_HEAVY_SLOT_DIR="$o.slots" \
+       ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
        bash "$1" >"$o.log" 2>&1; then echo 0 >"$o.rc"; else echo 1 >"$o.rc"; fi
 }
 export -f run_one
+# helper vắng (bản kit cũ) hay không có python3: chạy trần như trước, không chặn cả lượt test
+DEVKIT_RUN_BOUNDED=""
+[ -f "$DK/tests/lib/run_bounded.py" ] && command -v python3 >/dev/null 2>&1 && DEVKIT_RUN_BOUNDED="$DK/tests/lib/run_bounded.py"
+DEVKIT_TEST_TIMEOUT_S="${DEVKIT_TEST_TIMEOUT_S:-600}"
+case "$DEVKIT_TEST_TIMEOUT_S" in *[!0-9]*) echo "run_impacted.sh: DEVKIT_TEST_TIMEOUT_S must be whole seconds; using 600" >&2; DEVKIT_TEST_TIMEOUT_S=600 ;; esac
+export DEVKIT_RUN_BOUNDED DEVKIT_TEST_TIMEOUT_S
 parallel="" alone=""
 for t in $selected; do
   [ -f "$t" ] || continue

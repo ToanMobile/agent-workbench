@@ -532,3 +532,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Sweep bỏ sót thẻ bị gom/bỏ (NOT_PLANNED)
 - **Nguyên nhân:** post-merge-clean --sweep chỉ dọn thẻ có PR MERGED; thẻ đóng NOT_PLANNED khi gom vào thẻ khác không có PR merged nên PR mở, branch và worktree của nó ở lại mãi (24/10: 20 worktree, 31 branch khi chỉ 4 thẻ chạy)
 - **Quy tắc phòng ngừa & Cách fix:** Mọi đường đóng thẻ (gom, bỏ, split) phải có bước dọn cùng đường: sweep xử lý CLOSED+NOT_PLANNED qua drop_card và kit prune-branch --dropped; thêm trạng thái đóng mới thì thêm ca vào test_post_merge_dropped_cards.sh
+
+---
+
+### [INSTINCT-064] Test chạy không hạn giờ để lại tiến trình mồ côi hàng chục giờ
+- **Ngày phát hiện:** 2026-10-24
+- **Hiện tượng lỗi:** Test chạy không hạn giờ để lại tiến trình mồ côi hàng chục giờ
+- **Nguyên nhân:** run_impacted.sh chạy từng test bằng bash trần; ca FIFO của test_gate_robustness kẹt trong open() của nhân, runner phía trên bị SIGKILL (pkill -9 của board) nên không trap nào dọn, hai post-fix-gate.py sống 18h giữ khoá/tải, gate khác báo BUSY; thêm: print ra stderr pipe đã chết ném BrokenPipe (Python bỏ qua SIGPIPE) và bỏ qua bước giết nhóm
+- **Quy tắc phòng ngừa & Cách fix:** Mọi lệnh con có thể treo chạy qua tests/lib/run_bounded.py (hạn giờ + giết cả nhóm + watchdog khi helper bị SIGKILL + theo dõi caller); log trong đường dọn dẹp không bao giờ được ném lỗi (os.write + nuốt OSError, dọn trước log sau); test mới thêm ca vào test_run_bounded.sh
