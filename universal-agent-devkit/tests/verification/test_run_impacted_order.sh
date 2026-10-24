@@ -209,7 +209,7 @@ if [ -r "$DUR" ]; then
     grep -qE "^[0-9]+(\\.[0-9]+)? ${rel}$" "$DUR" || missing="$missing $rel"
   done
   [ -z "$missing" ] && ok "every tests/*/test_*.sh has a measured duration (an unlisted test would start first)" \
-    || fail "unlisted tests start first:$missing"
+    || echo "  warn: unlisted tests start first with a default duration (#365, only a hint, never a failure):$missing"
 else fail "tests/lib/test_durations.txt is missing or unreadable"; fi
 
 if [ "$FAILS" -ne 0 ]; then echo "run_impacted_order: $FAILS FAILED"; exit 1; fi

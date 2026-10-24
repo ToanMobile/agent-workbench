@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import bisect
 import contextlib
+import errno
 import fcntl
 import fnmatch
 import hashlib
@@ -27,6 +28,7 @@ import json
 import os
 import platform
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -459,6 +461,19 @@ def store_dir(project_dir):
     return os.path.join(os.fsdecode(r.stdout.strip()), "postfix-gate", "suite_cache")
 
 
+def _open_regular(path, flags, mode=0o600):
+    """fd của một FILE THƯỜNG: mở O_NONBLOCK|O_NOFOLLOW rồi fstat. Một FIFO đặt tại file phụ của kho (agent ghi được thư mục này)
+    không chặn open() mãi; mọi thứ không phải file thường là OSError (người gọi coi như không có file)."""
+    fd = os.open(path, flags | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0), mode)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "không phải file thường", path)
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
 class SuiteCache:
     """Khoá + kho của một lượt gate. Mọi lỗi đọc/ghi chỉ tắt việc dùng lại (suite chạy), không bao giờ thành PASS."""
 
@@ -605,10 +620,11 @@ class SuiteCache:
         return bool(rec and isinstance(rec.get("fail_n"), int) and rec["fail_n"] > 0) or self.quarantined(sid, now)
 
     def record(self, key, test, status, meta=None, at=None):
-        """Ghi kết quả một lượt chạy THẬT: PASS ⇒ pass_n+1, FAIL ⇒ fail_n+1 (vĩnh viễn). Đọc–sửa–ghi dưới flock của khoá kho
-        (store.lock: một file cho cả kho, không bao giờ bị xoá — ghi hiếm, mỗi lượt chạy suite một lần)."""
+        """Ghi kết quả một lượt chạy THẬT: PASS ⇒ pass_n+1, FAIL ⇒ fail_n+1 (vĩnh viễn), TIMEOUT ⇒ timeout_n+1 (#363: chỉ là bằng
+        chứng base cho KNOWN-RED; không đụng pass_n/fail_n nên không bao giờ thành HIT hay làm khoá "blocked"). Đọc–sửa–ghi dưới flock
+        của khoá kho (store.lock: một file cho cả kho, không bao giờ bị xoá — ghi hiếm, mỗi lượt chạy suite một lần)."""
         path = self._path(key)
-        if not path or status not in ("PASS", "FAIL"):
+        if not path or status not in ("PASS", "FAIL", "TIMEOUT"):
             return None
         try:
             os.makedirs(self.store, mode=0o700, exist_ok=True)
@@ -624,8 +640,10 @@ class SuiteCache:
                 rec.update({"v": SUITE_CACHE_FORMAT, "id": test.get("id"), "command": test.get("command") or "",
                             "pass_n": int(rec.get("pass_n") or 0) + (status == "PASS"),
                             "fail_n": int(rec.get("fail_n") or 0) + (status == "FAIL")})
-                rec["last_pass_at" if status == "PASS" else "last_fail_at"] = now
-                rec.update({k: v for k, v in (meta or {}).items() if k not in ("pass_n", "fail_n", "id", "command")})
+                if status == "TIMEOUT":
+                    rec["timeout_n"] = int(rec.get("timeout_n") or 0) + 1
+                rec["last_" + {"PASS": "pass", "FAIL": "fail", "TIMEOUT": "timeout"}[status] + "_at"] = now
+                rec.update({k: v for k, v in (meta or {}).items() if k not in ("pass_n", "fail_n", "timeout_n", "id", "command")})
                 fd, tmp = tempfile.mkstemp(prefix=".tmp_sc.", dir=self.store)
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -654,7 +672,8 @@ class SuiteCache:
             return
         for p in names:
             rec = self.read(os.path.basename(p)[:-5]) or {}
-            if rec.get("id") == sid and not (isinstance(rec.get("fail_n"), int) and rec["fail_n"] > 0):
+            if (rec.get("id") == sid and not (isinstance(rec.get("fail_n"), int) and rec["fail_n"] > 0)
+                    and not (isinstance(rec.get("timeout_n"), int) and rec["timeout_n"] > 0 and not rec.get("pass_n"))):   # hit() bỏ qua timeout_n: bản ghi còn pass_n > 0 vẫn là PASS dùng lại được, phải gỡ
                 with contextlib.suppress(OSError):
                     os.remove(p)
 
@@ -703,8 +722,7 @@ class SuiteCache:
         except OSError:
             pass
         try:
-            with open(stamp, "w"):
-                pass
+            os.close(_open_regular(stamp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC))   # chỉ chạm mốc; FIFO thì OSError → bỏ lượt dọn
             entries = []
             for e in os.scandir(self.store):
                 if re.fullmatch(r"[0-9a-f]{64}\.json", e.name):
@@ -758,11 +776,14 @@ class SuiteCache:
                 except FileExistsError:
                     pass
                 try:
-                    with open(path, encoding="utf-8") as f:
+                    age = time.time() - os.lstat(path).st_mtime   # tuổi tính trước khi đọc: marker FIFO/hỏng cũ quá 10 s thì bị bỏ, không chờ mãi
+                except OSError:
+                    age = 0.0
+                try:
+                    with os.fdopen(_open_regular(path, os.O_RDONLY), encoding="utf-8") as f:
                         other = json.load(f)
-                    age = time.time() - os.stat(path).st_mtime
                 except (OSError, ValueError):
-                    other, age = None, 0.0
+                    other = None
                 if not isinstance(other, dict):   # chủ vừa tạo, chưa ghi xong: còn sống trong 10 s đầu
                     if age > 10:
                         with contextlib.suppress(OSError):
@@ -790,7 +811,7 @@ class SuiteCache:
         finally:
             if mine:   # chỉ xoá marker còn là của chính tiến trình này (một lượt khác có thể đã thay nó khi coi nó quá hạn)
                 try:
-                    with open(path, encoding="utf-8") as f:
+                    with os.fdopen(_open_regular(path, os.O_RDONLY), encoding="utf-8") as f:
                         still = json.load(f).get("pid") == os.getpid()
                 except (OSError, ValueError, AttributeError):
                     still = False
@@ -805,7 +826,7 @@ class SuiteCache:
     def _load_side(self, name):
         path = self._side(name)
         try:
-            with open(path, encoding="utf-8") as f:
+            with os.fdopen(_open_regular(path, os.O_RDONLY), encoding="utf-8") as f:
                 data = json.load(f)
             return data if isinstance(data, dict) else {}
         except (OSError, ValueError, TypeError):
@@ -888,7 +909,8 @@ class SuiteCache:
                 msg = f"{sid}: cache nói PASS nhưng chạy thật FAIL, không file nào đổi — trôi ngoài file; cách ly, không cache"
         try:
             os.makedirs(self.store, mode=0o700, exist_ok=True)
-            with open(os.path.join(self.store, "sentinel_report.jsonl"), "a", encoding="utf-8") as f:
+            with os.fdopen(_open_regular(os.path.join(self.store, "sentinel_report.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT),
+                           "a", encoding="utf-8") as f:   # FIFO ở đây: OSError (ENXIO/EINVAL) → in lỗi, không treo
                 f.write(json.dumps({"at": time.time(), "id": sid, "key": key, "flaky": bool(flaky), "learned": learned,
                                     "msg": msg}, ensure_ascii=False) + "\n")
         except OSError as exc:

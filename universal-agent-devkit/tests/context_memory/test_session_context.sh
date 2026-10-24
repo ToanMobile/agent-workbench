@@ -123,10 +123,13 @@ out="$(ctx "$TMP/trusted")"
 repo unreach && git add -A && git commit -qm init && git branch -M main \
   && git remote add origin ssh://git@10.255.255.1/unreach.git && git update-ref refs/remotes/origin/main HEAD \
   && git branch -q -u origin/main
-start=$(date +%s); ctx "$TMP/unreach" >/dev/null; secs=$(( $(date +%s) - start ))
+# Fetch bị giới hạn 6 s; ca này đo CHÊNH LỆCH so với cùng lượt chạy SESSION_FETCH=0 (cùng tải máy) và cho phép +8 s, kèm trần tuyệt đối
+# 25 s: nếu cả hai lượt cùng chậm thì chênh lệch che mất lỗi, trần này vẫn bắt được.
+start=$(date +%s); printf '{"session_id":"sc","hook_event_name":"SessionStart"}' | SESSION_FETCH=0 CLAUDE_PROJECT_DIR="$TMP/unreach" bash "$HOOK" >/dev/null 2>&1; base=$(( $(date +%s) - start ))
+start=$(date +%s); ctx "$TMP/unreach" >/dev/null; secs=$(( $(date +%s) - start )); delta=$(( secs - base ))
 if pgrep -f "10.255.255.1" >/dev/null; then orphan=yes; pkill -f "10.255.255.1"; else orphan=no; fi
-[ "$orphan" = no ] && [ "$secs" -le 20 ] && ok "unreachable remote: bounded fetch, no orphan ssh (${secs}s)" \
-  || fail "unreachable remote: orphan=$orphan secs=$secs"
+[ "$orphan" = no ] && [ "$delta" -le 8 ] && [ "$secs" -le 25 ] && ok "unreachable remote: bounded fetch, no orphan ssh (+${delta}s over a no-fetch run of ${base}s)" \
+  || fail "unreachable remote: orphan=$orphan secs=$secs base=$base delta=$delta"
 
 # The fetch keeps the user's own ssh command (core.sshCommand: a custom key) and adds BatchMode to it.
 printf '#!/bin/sh\necho "$@" >> "%s/ssh-args"\nexit 255\n' "$TMP" > "$TMP/fake-ssh" && chmod +x "$TMP/fake-ssh"

@@ -584,6 +584,14 @@ devkit_link_local_skill_commands() {
   done
 }
 
+# _devkit_tracked_in_worktree <file> — a regular file git tracks, inside a LINKED worktree (its git dir is not the common one).
+_devkit_tracked_in_worktree() {
+  local d f="$1" gd cd_
+  d="$(dirname "$f")"
+  gd="$(git -C "$d" rev-parse --absolute-git-dir 2>/dev/null)" && cd_="$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  [ "$gd" != "$cd_" ] && git -C "$d" ls-files --error-unmatch -- "$(basename "$f")" >/dev/null 2>&1
+}
+
 devkit_place() {
   local src="$1" dst="$2" mode="$3" parent_p root_p target_p
   # Guard: a symlinked project dir (e.g. .claude/commands -> DEVKIT/commands) or a
@@ -633,6 +641,11 @@ devkit_place() {
   elif [ -e "$dst" ]; then
     if cmp -s "$src" "$dst" || is_recorded_devkit_file "$dst"; then
       rm -f "$dst"
+    elif _devkit_tracked_in_worktree "$dst"; then
+      # #157: a linked worktree keeps the project's own tracked file (other bytes than the kit's): swapping it made the tree
+      # the gate tested differ from the tree main pushes, so no receipt covered the push.
+      echo "  - $(L "Worktree: giữ file đã track của dự án" "Worktree: kept the project's tracked file") ${dst#"${TARGET_DIR:-}"/}"
+      return 0
     else
       backup_conflict "$dst" "${DEVKIT_ROOT:-}" || return 1
     fi

@@ -3,7 +3,7 @@
 # làm việc trong worktree gọi đúng lệnh nhưng bị từ chối và phải đoán lại. Giờ: cwd là một worktree của cùng repo thì finish tự
 # dùng main checkout; các kiểm tra khác (đường dẫn không phải worktree, ...) giữ nguyên.
 #   1 commit trong worktree, `finish .` từ trong worktree: gộp vào main, worktree bị gỡ
-#   2 sửa chưa commit, `finish <đường dẫn tuyệt đối>` từ một thư mục con của worktree: cũng gộp
+#   2 file mới đã commit tay (finish không tự commit việc thật, #366), `finish <đường dẫn tuyệt đối>` từ một thư mục con của worktree: cũng gộp
 #   3 từ trong worktree, một đường dẫn không phải worktree: vẫn bị từ chối như cũ
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -25,11 +25,12 @@ wt a; echo a > "$TMP/fi-a/a-new.txt"; G "$TMP/fi-a" add -A && G "$TMP/fi-a" comm
 [ "$rc" = 0 ] && [ ! -d "$TMP/fi-a" ] && [ "$(G "$P" rev-parse HEAD)" = "$WH" ] && [ -f "$P/a-new.txt" ] && ! grep -q "MAIN checkout" "$TMP/out" \
   && ok "1: finish . from inside the worktree: merged into main, the worktree is removed" || fail "1: (rc=$rc): $(cat "$TMP/out")"
 
-# 2: sửa chưa commit, finish với đường dẫn tuyệt đối từ một thư mục con của worktree
+# 2: file mới commit tay (finish không tự commit việc thật, #366), finish với đường dẫn tuyệt đối từ một thư mục con của worktree
 wt b; mkdir -p "$TMP/fi-b/sub"; echo b > "$TMP/fi-b/sub/b.txt"
+G "$TMP/fi-b" add -A && G "$TMP/fi-b" commit -qm "b by hand"   # finish never commits real work (#366)
 (cd "$TMP/fi-b/sub" && bash "$KIT" worktree finish "$TMP/fi-b" >"$TMP/out" 2>&1); rc=$?
 [ "$rc" = 0 ] && [ ! -d "$TMP/fi-b" ] && [ -f "$P/sub/b.txt" ] && [ -z "$(G "$P" status --porcelain --untracked-files=no)" ] \
-  && ok "2: finish <abs path> from a subfolder of the worktree: uncommitted work committed, merged, removed" || fail "2: (rc=$rc): $(cat "$TMP/out")"
+  && ok "2: finish <abs path> from a subfolder of the worktree: merged, removed" || fail "2: (rc=$rc): $(cat "$TMP/out")"
 
 # 3: các kiểm tra khác vẫn còn: từ trong worktree, đường dẫn không phải worktree đã đăng ký thì bị từ chối
 wt c

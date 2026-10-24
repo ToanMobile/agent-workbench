@@ -186,4 +186,36 @@ gate 11; rc=$?
   || fail "5: main $(git -C "$R" rev-parse --short main) != origin/main $(git -C "$R" rev-parse --short origin/main)"
 [ -f "$R/u" ] && [ -f "$R/f" ] && ok "5: both the other PR's file and this PR's file are in main" || fail "5: tree lost a file"
 
+# ── 6. #358 mục 4: git 2.38-2.41 có merge-tree --write-tree nhưng không có `--attr-source` (exit 129). Như ca 5 (origin nhận PR khác trước, cây
+#    main local khác cây origin nên so cây thuần không đủ) với một `git` giả tự nhận 2.41.0 và từ chối --attr-source: gate vẫn phải nhận ra
+#    main local đã tích hợp và đưa nó về origin/main.
+mkdir -p "$TMP/git241"
+REAL_GIT="$(command -v git)"
+cat > "$TMP/git241/git" <<STUB
+#!/bin/sh
+case "\$1" in version|--version) echo "git version 2.41.0"; exit 0 ;; esac
+for a in "\$@"; do
+  case "\$a" in --attr-source*) : > "$TMP/git241/attr-rejected"; echo "unknown option: \$a" >&2; exit 129 ;; esac
+done
+# Mô phỏng merge driver bị giết (#309): lần merge-tree thử lại sau khi --attr-source bị từ chối để lại .merge_file_* ở cwd hiệu lực của nó
+# (cwd, hay đích của -C). Lệnh merge-tree khác của gate (dự đoán cây ở đầu gate) chạy trước nên không có dấu attr-rejected.
+case " \$* " in *" merge-tree "*) [ -e "$TMP/git241/attr-rejected" ] || exec "$REAL_GIT" "\$@"
+  d="\$PWD"; [ "\$1" = "-C" ] && d="\$2"
+  : > "\$d/.merge_file_stub\$\$" ;;
+esac
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$TMP/git241/git"
+git -C "$R" fetch -q origin; git -C "$R" reset -q --hard origin/main
+branch 16 k sixteen; land 16
+git -C "$R" checkout -q -b unrelated2 origin/main; echo u2 > "$R/u2"; git -C "$R" add u2; git -C "$R" commit -qm "unrelated PR 2"
+git -C "$R" push -q origin unrelated2:refs/heads/main; git -C "$R" checkout -q main; git -C "$R" fetch -q origin
+( cd "$TMP/lw" && PATH="$TMP/git241:$PATH" bash "$GATE" --config "$CFG" --pr 16 --expect-head "$(cat "$TMP/pr16.head")" ) >"$TMP/gate16.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "6: the PR merged under git 2.41 (exit 0)" || fail "6: gate exit $rc: $(tail -5 "$TMP/gate16.log")"
+[ "$(git -C "$R" rev-parse main)" = "$(git -C "$R" rev-parse origin/main)" ] && ok "6: git 2.41: main local, already integrated, still moved to origin/main" \
+  || fail "6: git 2.41 refused an integrated main: $(grep -i warning "$TMP/gate16.log" | cut -c1-200)"
+# #309: ngay cả đường lùi cho git cũ cũng không được để .merge_file_* trong checkout main của người dùng.
+[ -z "$(ls -A "$R" "$R/.git" 2>/dev/null | grep '^\.merge_file_')" ] && ok "6: no .merge_file_* left in the main checkout" \
+  || fail "6: merge-driver leftovers in the main checkout: $(ls -A "$R" "$R/.git" | grep '^\.merge_file_' | tr '\n' ' ')"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_gate_squash_sync: all passed" || { echo "❌ test_merge_gate_squash_sync: $FAILS failed"; exit 1; }

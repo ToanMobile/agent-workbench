@@ -8,14 +8,15 @@
 # Chạy offline qua lane_dispatch_tick thật: gh/claude là stub, đọc GitHub qua SB_GITHUB_READ giả. Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-RUNNER="$ROOT/.claude/bin/super-board-run.sh"
+RUNNER="${SB_TEST_RUNNER:-$ROOT/.claude/bin/super-board-run.sh}"
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-review-train.XXXXXX")"
-# the stub claude is `exec sleep 301` (unique length): killing the worker wrapper orphans it and it holds the gate's pipe open
-cleanup() { for p in $(pgrep -f "$TMP/path/claude" 2>/dev/null); do kill "$p" 2>/dev/null; done; pkill -f '^sleep 301$' 2>/dev/null; rm -rf "$TMP"; }
+# the stub claude is `exec sleep 301`: killing the worker wrapper orphans it and it holds the gate's pipe open. It records its own PID
+# (exec keeps it) in $TMP/stub-pids and cleanup kills only those PIDs, so a `sleep 301` outside this run is never touched.
+cleanup() { for p in $(cat "$TMP/stub-pids" 2>/dev/null); do kill "$p" 2>/dev/null; done; rm -rf "$TMP"; }
 trap cleanup EXIT
 mkdir -p "$TMP/bin" "$TMP/path" "$TMP/repo/docs/super-board" "$TMP/repo/wl"
 # SB_GITHUB_READ giả: pr list → $STUB_DIR/prs.json; pr view <N> --json comments → $STUB_DIR/comments-<N>.json; thiếu file = đọc hỏng.
@@ -30,7 +31,7 @@ if not os.path.exists(f): sys.exit(1)
 sys.stdout.write(open(f).read())
 PY
 printf 'print("ok")\n' > "$TMP/bin/super-board-skills-ready.py"
-printf '#!/usr/bin/env bash\nexec sleep 301\n' > "$TMP/path/claude"
+printf '#!/usr/bin/env bash\necho $$ >> "%s/stub-pids"\nexec sleep 301\n' "$TMP" > "$TMP/path/claude"
 chmod +x "$TMP/path/claude"
 export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_DISK_WARN_GIB=0
 
@@ -119,6 +120,25 @@ items Done Review Review; check_lane_zombie review Review
 kill -0 "$TP" 2>/dev/null && ok "primary card merged (Done), #8 #9 still in Review: the train worker is not killed" || fail "train worker killed while two cards were still in Review"
 items Done Done Done; check_lane_zombie review Review
 kill -0 "$TP" 2>/dev/null && fail "train worker kept after every card left Review" || ok "every card left Review: the zombie sweep frees the lane"
+
+# ── 8. #358 mục 6: worker train treo mà còn thẻ ở Review (giữ có chủ đích) → lane được giải phóng sau trần im lặng (log worker không ghi nữa)
+reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"; tick
+TP="$REVIEW_PID"
+items Done Review Review   # thẻ đầu đã Done, #8 #9 được giữ ở Review: chỉ lock của đợt (TRAIN) còn che worker
+check_lane_zombie review Review
+kill -0 "$TP" 2>/dev/null && ok "a young train worker with cards still in Review is kept" || fail "young train worker killed"
+for i in 7 8 9; do sed -i.bak 's/^STARTED=.*/STARTED=2020-01-01T00:00:00Z/' "$INFLIGHT_DIR/$i"; done
+# tuổi tính từ nhịp tim (lần ghi cuối của log worker), không từ STARTED: train khoẻ chạy lâu hơn trần vẫn ghi log nên không bị giết giữa merge
+TLOG=$(sed -n 's/^WORKER_LOG=//p' "$INFLIGHT_DIR/7" | head -1); touch "$TLOG"
+check_lane_zombie review Review
+kill -0 "$TP" 2>/dev/null && ok "a train past the cap since STARTED but still writing its log (fresh heartbeat) is kept" || fail "healthy long train killed by STARTED-based age"
+touch -t 202001010000 "$TLOG"
+PID=sentinel-pid; STARTED=sentinel-started; LANE=sentinel-lane
+check_lane_zombie review Review
+{ [ "$PID" = sentinel-pid ] && [ "$STARTED" = sentinel-started ] && [ "$LANE" = sentinel-lane ]; } \
+  && ok "the zombie check leaves the runner's PID/STARTED/LANE untouched" || fail "check_lane_zombie overwrote PID/STARTED/LANE: $PID $STARTED $LANE"
+if kill -0 "$TP" 2>/dev/null; then fail "train worker older than the age cap kept its lane while cards sat in Review"; else ok "train worker past the age cap is treated as hung: the lane is freed although cards remain in Review"; fi
+kill "$TP" 2>/dev/null; wait "$TP" 2>/dev/null; REVIEW_PID=""; REVIEW_ISSUE=""
 
 # ── 9. R2: bộ lọc đợt phải bằng top_card_in_column — thẻ cần người (needs-you) hoặc thẻ cần thiết bị khi không có thiết bị không vào đợt
 reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"
