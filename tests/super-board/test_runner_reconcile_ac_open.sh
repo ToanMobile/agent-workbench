@@ -16,7 +16,7 @@ printf '#!/bin/sh\necho CLOSED\n' > "$T/read.py"   # github-read giả: issue lu
 cat > "$T/bin/gh" <<SH
 #!/bin/sh
 echo "gh \$*" >> "$T/calls"
-case "\$*" in *stateReason*) echo "\$REASON" ;; esac
+case "\$*" in *stateReason*) [ "\$REASON" = FAIL ] && exit 1; echo "\$REASON" ;; esac
 SH
 chmod +x "$T/bin/gh"
 
@@ -26,7 +26,8 @@ run() {  # $1 = nhãn của thẻ 7 trên snapshot (JSON list), $2 = stateReason
     R="$1" READ="$2" D="$3" L="$4"; set --
     . "$R" >/dev/null 2>&1
     SB_GITHUB_READ="$READ"; python3() { sh "$@"; }
-    PROJECT_ITEMS_JSON="{\"items\":[{\"content\":{\"number\":7},\"labels\":$L},{\"content\":{\"number\":8},\"labels\":[\"ac-open\"]}]}"
+    case "$L" in content:*) C="${L#content:}"; PROJECT_ITEMS_JSON="{\"items\":[{\"content\":{\"number\":7,\"labels\":$C}}]}" ;;
+      *) PROJECT_ITEMS_JSON="{\"items\":[{\"content\":{\"number\":7},\"labels\":$L},{\"content\":{\"number\":8},\"labels\":[\"ac-open\"]}]}" ;; esac
     log() { echo "log: $*" >> "$D/calls"; }
     gh_write_once() { echo "write: $*" >> "$D/calls"; [ "$REOPEN_FAIL" = 1 ] && return 1; return 0; }
     if issue_is_open 7; then echo "rc=0"; else echo "rc=$?"; fi' _ "$RUNNER" "$T/read.py" "$T" "$1"
@@ -43,6 +44,13 @@ out=$(run '["ac-open"]' NOT_PLANNED)
 out=$(run '[{"name":"ac-open"}]' COMPLETED 1)
 [ "$out" = "rc=0" ] && grep -q 'could not be reopened' "$T/calls" \
   && ok "mở lại thất bại: vẫn OPEN (không vào Done), có log; nhãn dạng {name}" || fail "reopen fail: $out; $(tr '\n' '|' < "$T/calls")"
+
+out=$(run 'content:[{"name":"ac-open"}]' COMPLETED)
+[ "$out" = "rc=0" ] && grep -q 'write: issue reopen 7' "$T/calls" \
+  && ok "nhãn chỉ nằm ở content.labels: vẫn nhận ra ac-open" || fail "content labels: $out"
+out=$(run '["ac-open"]' FAIL)
+[ "$out" = "rc=0" ] && ! grep -q 'write: issue reopen' "$T/calls" && grep -q 'close reason unreadable' "$T/calls" \
+  && ok "đọc lý do đóng hỏng: không mở lại (có thể người bỏ), nhưng giữ ngoài Done" || fail "reason fail: $out; $(tr '\n' '|' < "$T/calls")"
 
 [ "$FAILS" -eq 0 ] && { echo "reconcile ac-open: all checks passed"; exit 0; }
 echo "reconcile ac-open: $FAILS FAILED"; exit 1

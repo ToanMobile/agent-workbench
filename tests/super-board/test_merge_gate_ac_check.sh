@@ -52,11 +52,12 @@ case " $* " in
   *" pr view "*"headRefName,headRefOid"*) echo "issue-$n-x $(cat "$FAKE_DIR/pr$n.head")" ;;
   *" pr view "*"state,mergeCommit,headRefOid"*) printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$(cat "$FAKE_DIR/pr$n.head")" ;;
   *" pr view "*"labels,files"*) cat "$FAKE_DIR/pr$n.meta" ;;
-  *" pr view "*"title"*) echo "t" ;;
+  *" pr view "*"title"*) cat "$FAKE_DIR/pr$n.title" 2>/dev/null || echo "t" ;;
   *" pr view "*"--json body"*) jq -r '.body' "$FAKE_DIR/pr$n.meta" ;;
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
   *" pr edit "*) f=$(printf '%s\n' "$@" | sed -n '/^--body-file$/{n;p;}'); cp "$f" "$FAKE_DIR/pr$n.edited" ;;
   *" pr merge "*) f=$(printf '%s\n' "$@" | sed -n '/^--body-file$/{n;p;}'); [ -n "$f" ] && cp "$f" "$FAKE_DIR/merge$n.msg"; echo merged ;;
+  *" issue view "*"-q .body"*) jq -r '.body' "$FAKE_DIR/issue$n.json" ;;
   *" issue view "*) cat "$FAKE_DIR/issue$n.json" ;;
   *" issue "*|*" label "*) : ;;
   *) echo "fake gh: unexpected $*" >&2; exit 1 ;;
@@ -140,6 +141,28 @@ card 27 "$TMP/b27.md" "$TMP/issue3.md" '[]'
 rc=$(gate 27)
 [ "$rc" = 11 ] && grep -q 'ac-check: card #27 has 3' "$TMP/gate27.out" && ! grep -q 'pr merge' "$TMP/calls" \
   && ok "G: không có sb:ac mà Closes thẻ có AC → exit 11" || fail "G: rc=$rc out=$(tail -2 "$TMP/gate27.out")"
+
+# H — đúng ca #318/PR #343: thẻ chỉ ghi "AC của thẻ #315" + 1 dòng gate; #315 có 3 AC; sb:ac 2 dòng đã tick → exit 11.
+printf '## Acceptance Criteria\n- [ ] AC của thẻ #315 đạt (xem Acceptance Criteria trong thẻ đó)\n- [ ] Gate --full exit 0\n' > "$TMP/i28.md"
+jq -n --rawfile b "$TMP/issue3.md" '{number:315,title:"t",body:$b,labels:[]}' > "$TMP/issue315.json"
+printf 'Closes #28\n<!-- sb:ac -->\n- [x] AC #315 mục 3 đạt\n- [x] Gate --full exit 0\n<!-- /sb:ac -->\n' > "$TMP/b28.md"
+card 28 "$TMP/b28.md" "$TMP/i28.md" '[]'
+rc=$(gate 28)
+[ "$rc" = 11 ] && grep -q 'ac-check: card #28 has 4' "$TMP/gate28.out" && grep -q 'issue view 315' "$TMP/calls" && ! grep -q 'pr merge' "$TMP/calls" \
+  && ok "H: AC gián tiếp 'AC của thẻ #315' được mở rộng ở gate (3 + 1 = 4 > 2) → exit 11 (ca #318/#343)" \
+  || fail "H: rc=$rc out=$(tail -2 "$TMP/gate28.out") err=$(tail -2 "$TMP/gate28.err")"
+
+# I — tiêu đề PR "Fix #29: …" (thành subject squash) + còn AC chưa tick → subject merge đổi thành "Refs #29"; tiêu đề
+#     "Fix #315: …" (thẻ lạ) → exit 11.
+sed 's/#23/#29/' "$TMP/b23.md" > "$TMP/b29.md"; printf 'Fix #29: cache gate\n' > "$TMP/pr29.title"
+card 29 "$TMP/b29.md" "$TMP/issue3.md" '[]'
+rc=$(gate 29)
+[ "$rc" = 0 ] && grep -q 'pr merge 29.*--subject Refs #29: cache gate (#29)' "$TMP/calls" \
+  && ok "I: tiêu đề 'Fix #29' thành subject squash đã đổi sang Refs" || fail "I: rc=$rc $(grep 'pr merge 29' "$TMP/calls")"
+printf '<!-- sb:ac -->\n- [x] a\n- [x] b\n- [x] c\n<!-- /sb:ac -->\n' > "$TMP/b30.md"; printf 'Fix #315: cache gate\n' > "$TMP/pr30.title"
+card 30 "$TMP/b30.md" "$TMP/issue3.md" '[]'
+rc=$(gate 30)
+[ "$rc" = 11 ] && grep -q 'closes #315' "$TMP/gate30.out" && ok "I: tiêu đề PR đóng thẻ lạ → exit 11" || fail "I': rc=$rc $(tail -2 "$TMP/gate30.out")"
 
 # F — không --body-file: message squash lấy từ commit của nhánh; commit có "Closes #315" (thẻ lạ) → exit 11, không merge.
 printf 'không có khối ac\n' > "$TMP/b26.md"

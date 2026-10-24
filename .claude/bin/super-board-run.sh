@@ -367,9 +367,13 @@ issue_is_open() {
   # Nhãn đọc từ snapshot board đã có (card.sh items trả labels): issue đóng không nhãn không tốn thêm lần đọc nào.
   # Người đóng có chủ đích (NOT_PLANNED, run.md §5 "dropped on purpose") thì để yên.
   echo "${PROJECT_ITEMS_JSON:-{\}}" | jq -e --argjson n "$1" 'any(.items[]?; .content.number == $n
-      and any((.labels // [])[]; ((if type == "object" then .name else . end) // "" | ascii_downcase) == "ac-open"))' >/dev/null 2>&1 \
+      and any(((.labels // []) + (.content.labels // []))[]; ((if type == "object" then .name else . end) // "" | ascii_downcase) == "ac-open"))' >/dev/null 2>&1 \
     || return 1
-  reason=$(gh issue view "$1" --json stateReason -q '.stateReason' 2>/dev/null) || reason=""
+  # Không đọc được lý do đóng: không mở lại (có thể người đã bỏ thẻ có chủ đích) nhưng cũng không đưa vào Done.
+  if ! reason=$(gh issue view "$1" --json stateReason -q '.stateReason' 2>/dev/null); then
+    log "⚠ #$1 closed with label ac-open; close reason unreadable — not reopened, kept out of Done this tick"
+    return 0
+  fi
   if [ "$reason" = "NOT_PLANNED" ]; then
     log "#$1 has label ac-open but was closed as not planned — left closed"
     return 1
@@ -1166,7 +1170,7 @@ EOF
         log "review lane issue=#${issue}: PR #${mo_pr} approved at head ${mo_head} — merge-only, no fresh review"
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
       else
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac

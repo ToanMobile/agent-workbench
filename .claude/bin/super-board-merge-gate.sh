@@ -354,7 +354,10 @@ fi
 # Nhánh không mang issue-<N>: bỏ qua. Không có khối sb:ac: chỉ kiểm Closes lạ, không đọc issue (PR tay giữ hành vi cũ).
 AC_DIR=$(mktemp -d); AC_CARD=""; AC_UNTICKED=""; AC_HAS_LABEL=false
 jq -r '.body // ""' "$META" > "$AC_DIR/pr.md"
-AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --pr-body "$AC_DIR/pr.md" ${MSG_FILE:+--msg "$MSG_FILE"} --branch "$HEAD_REF") \
+# Subject của commit squash cũng đóng thẻ ("Fix #23: …"): --subject, không có thì tiêu đề PR — kiểm cùng message.
+AC_SUBJECT="${SUBJECT:-$(pr_title)}"
+{ printf '%s\n\n' "$AC_SUBJECT"; [ -z "$MSG_FILE" ] || cat "$MSG_FILE"; } > "$AC_DIR/check-msg.md"
+AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") \
   || { say "ac-check could not run"; exit 9; }
 if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
   AC_CARD=$(echo "$AC_JSON" | jq -r .card)
@@ -370,14 +373,17 @@ if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
     jq -r '.body // ""' "$AC_DIR/issue.json" > "$AC_DIR/issue.md"
     jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' "$AC_DIR/issue.json" >/dev/null && AC_HAS_LABEL=true
     extra=()
-    # "AC của thẻ #X": các AC của #X tính vào thẻ này. Đọc thường, không qua github-read: #X không đọc được thì ac-check vẫn
-    # tính nó ít nhất 1 AC, không đáng halt cả board.
-    for x in $(echo "$AC_JSON" | jq -r '.indirect[]'); do
+    # "AC của thẻ #X": các AC của #X tính vào thẻ này. Danh sách #X lấy từ AC của chính thẻ (lần gọi có --issue-body; lần đầu
+    # chưa có body nên luôn rỗng — OCR 24/10). Đọc #X thường, không qua github-read: không đọc được thì ac-check vẫn tính nó
+    # ít nhất 1 AC, không đáng halt cả board.
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" \
+      --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
+    for x in $(echo "$AC_JSON" | jq -r '(.indirect // [])[]'); do
       gh issue view "$x" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/x$x.md" 2>/dev/null || : > "$AC_DIR/x$x.md"
       extra+=(--extra-issue-body "$x=$AC_DIR/x$x.md")
     done
     AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} \
-      --pr-body "$AC_DIR/pr.md" ${MSG_FILE:+--msg "$MSG_FILE"} --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
+      --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
     if [ "$(echo "$AC_JSON" | jq -r .collapsed)" = true ]; then
       echo "ac-check: card #${AC_CARD} has $(echo "$AC_JSON" | jq -r .issue_ac) acceptance criteria (cards it refers to included) but the PR's sb:ac block lists $(echo "$AC_JSON" | jq -r .pr_ac) — one line per criterion, each ticked with its own proof or left unticked with the reason"
       say "AC collapsed into fewer lines than the card has: back to Build to rewrite the sb:ac block"
@@ -970,6 +976,11 @@ if [ -n "$AC_UNTICKED" ]; then
   python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/msg.md" --card "$AC_CARD" >/dev/null
   grep -q "#${AC_CARD}\b" "$AC_DIR/msg.md" || printf '\nRefs #%s\n' "$AC_CARD" >> "$AC_DIR/msg.md"
   MSG_FILE="$AC_DIR/msg.md"
+  # Subject squash: --subject, không có thì tiêu đề PR như GitHub vẫn dùng ("<tiêu đề> (#PR)") — Closes trong đó cũng đổi.
+  [ -n "$SUBJECT" ] || SUBJECT="${AC_SUBJECT} (#${PR})"
+  printf '%s\n' "$SUBJECT" > "$AC_DIR/subject.md"
+  python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/subject.md" --card "$AC_CARD" >/dev/null
+  SUBJECT=$(head -1 "$AC_DIR/subject.md")
 elif [ "$AC_HAS_LABEL" = true ]; then
   # Đủ AC: gỡ nhãn TRƯỚC merge — sau merge `Closes` đã đóng issue, runner thấy CLOSED + ac-open sẽ mở lại nó.
   gh issue edit "$AC_CARD" ${REPO:+--repo "$REPO"} --remove-label ac-open >/dev/null 2>&1 \
