@@ -1432,6 +1432,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-matrix-driver-refresh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/githooks.sh",
+        "universal-agent-devkit/hooks/session_context.sh",
+        "universal-agent-devkit/tests/worktree_git/test_matrix_driver_refresh.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MATRIX-DRIVER-REFRESH-01",
+          "name": "githooks refresh-matrix-driver (SessionStart): lệnh merge driver cũ được ghi lại bản mới; lệnh đã đúng thì im lặng, không ghi config; repo chưa cài driver thì không bị cài",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_matrix_driver_refresh.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
