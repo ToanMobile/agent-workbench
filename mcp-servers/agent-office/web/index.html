@@ -59,7 +59,9 @@
   .sync { display: flex; gap: 6px; align-items: center; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-done); flex: none; }
   .dot.warn { background: var(--c-building); } .dot.err { background: var(--c-blocked); }
-  .legend { margin-left: auto; padding: 8px; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: min(760px, 60vw); }
+  .legend { margin-left: auto; padding: 8px; display: flex; gap: 2px; flex-wrap: nowrap; justify-content: flex-start; max-width: min(900px, 64vw); overflow-x: auto; scrollbar-width: none; } /* một hàng như thanh dưới; hẹp quá thì cuộn ngang */
+  .legend::-webkit-scrollbar { display: none; }
+  .legend .chip { flex: none; padding: 5px 8px 5px 7px; gap: 5px; }
   .chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 8px; border-radius: 999px; font-size: 13px; white-space: nowrap; }
   .chip .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
   .chip b { font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -173,7 +175,9 @@
   .controls { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 4px; padding: 6px; z-index: 5; }
   .controls button { border: 0; background: transparent; padding: 8px 14px; border-radius: 11px; cursor: pointer; font-weight: 500; white-space: nowrap; }
   .controls button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
-  .controls { flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 24px); }
+  .controls { flex-wrap: nowrap; justify-content: flex-start; max-width: calc(100vw - 24px); overflow-x: auto; scrollbar-width: none; } /* một hàng dài: hẹp quá thì cuộn ngang, không xuống dòng */
+  .controls::-webkit-scrollbar { display: none; }
+  .controls button { flex: none; padding: 8px 11px; }
   .controls .sec { display: none; }
   .controls.more .sec { display: inline-block; }
   .controls .more-btn { color: var(--muted); }
@@ -326,6 +330,22 @@
   .dash .meter { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 10%, transparent); margin-top: 5px; overflow: hidden; }
   .dash .meter i { display: block; height: 100%; border-radius: 3px; background: var(--c-done); }
   .dash .meter i.warn { background: var(--c-building); } .dash .meter i.bad { background: var(--c-blocked); }
+  .dash .ld-row { display: grid; grid-template-columns: 92px 1fr 28px; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; }
+  .dash .ld-k { color: var(--muted); } .dash .ld-v { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+  .dash .ld-bar { position: relative; height: 10px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 14%, transparent); overflow: hidden; }
+  .dash .ld-bar i { display: block; height: 100%; border-radius: 5px; background: var(--c-ready); }
+  .dash .ld-bar i.warn { background: var(--c-building); } .dash .ld-bar i.bad { background: var(--c-blocked); }
+  .dash .ld-bar b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); opacity: .85; }
+  .dash .wl { margin-bottom: 14px; }
+  .dash .wl h3 { margin: 10px 0 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .dash .wl-row { display: grid; grid-template-columns: 1fr auto; column-gap: 8px; align-items: baseline; padding: 5px 0; }
+  .dash .wl-name { font-size: 13px; font-weight: 600; } .dash .wl-cpu { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .dash .wl-bar { grid-column: 1 / -1; height: 10px; margin: 3px 0; border-radius: 5px; background: color-mix(in srgb, var(--ink) 14%, transparent); overflow: hidden; }
+  .dash .wl-bar i { display: block; height: 100%; border-radius: 5px; background: var(--c-ready); }
+  .dash .wl-bar i.warn { background: var(--c-building); } .dash .wl-bar i.bad { background: var(--c-blocked); }
+  .dash .wl-row.sub { margin-left: 12px; padding: 3px 0 3px 8px; border-left: 2px solid color-mix(in srgb, var(--ink) 16%, transparent); }
+  .dash .wl-row.sub .wl-name { font-weight: 500; font-size: 12.5px; overflow-wrap: anywhere; } .dash .wl-row.sub .wl-bar { height: 6px; }
+  .dash .wl-meta { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
   .dash svg { width: 100%; height: 34px; display: block; margin-top: 4px; }
   .zoom-ctl { position: fixed; right: 12px; bottom: calc(var(--bot-h, 64px) + 10px); z-index: 5; display: flex; flex-direction: column; padding: 4px; gap: 2px; border-radius: 12px; }
   .zoom-ctl button { width: 38px; height: 38px; border: 0; background: transparent; border-radius: 9px; font-size: 22px; line-height: 1; cursor: pointer; color: var(--ink); }
@@ -1329,17 +1349,34 @@ function makeDesk(w, x, z, T, sc, opts) {
 
 const TOOL_VERB = { Read: 'đọc', Edit: 'sửa', MultiEdit: 'sửa', Write: 'tạo', NotebookEdit: 'sửa notebook', Grep: 'tìm trong code', Glob: 'tìm file',
   Task: 'giao việc cho agent phụ', Agent: 'giao việc cho agent phụ', WebFetch: 'đọc trang web', WebSearch: 'tìm trên web', TodoWrite: 'cập nhật kế hoạch',
-  EnterWorktree: 'vào worktree', ExitWorktree: 'rời worktree' };
+  EnterWorktree: 'vào worktree', ExitWorktree: 'rời worktree', SubagentHandback: 'báo kết quả về cho agent chính', SendMessage: 'nhắn cho agent khác', Skill: 'dùng một kỹ năng',
+  ToolSearch: 'tìm công cụ', AskUserQuestion: 'hỏi bạn', Monitor: 'theo dõi tiến trình', ScheduleWakeup: 'hẹn giờ làm tiếp', Artifact: 'đăng trang lên artifact' };
 const baseName = (p) => String(p || '').replace(/\/+$/, '').split('/').pop();
+// Lệnh shell → câu tự nhiên ("chạy gate kiểm thử", "đẩy code lên GitHub") thay vì chép nguyên dòng lệnh.
+const GIT_VERB = { status: 'xem trạng thái git', diff: 'xem phần code đã đổi', log: 'xem lịch sử commit', show: 'xem một commit', commit: 'commit code', push: 'đẩy code lên GitHub',
+  pull: 'lấy code mới về', fetch: 'lấy code mới về', add: 'chuẩn bị commit', checkout: 'đổi nhánh', switch: 'đổi nhánh', merge: 'gộp nhánh', rebase: 'ghép lại nhánh', worktree: 'quản lý worktree',
+  branch: 'xem nhánh', stash: 'cất tạm code', reset: 'đặt lại code', restore: 'khôi phục file', 'rev-parse': 'kiểm tra nhánh hiện tại' };
+const prettyName = (p) => baseName(p).replace(/\.(py|sh|js|mjs|cjs|ts)$/, '').replace(/^tests\./, '').replace(/^test_|_test$/g, '').replace(/[_-]+/g, ' ');
 function describeCmd(cmd) {
-  const c = String(cmd || '').trim().replace(/^(cd\s+[^&;]+(&&|;)\s*)+/, '');
-  const first = c.split(/&&|;|\|/)[0].trim(); const w = first.split(/\s+/);
-  const script = (first.match(/(?:bash|sh|python3?|node|npx|pytest)\s+([^\s"']+)/) || [])[1];
-  if (/\bpytest\b|\btest\b/.test(first) || (script && /test/i.test(script))) return 'chạy test ' + baseName(script || w[1] || '');
-  if (w[0] === 'git') return 'chạy git ' + (w[1] || '') + (w[2] && !w[2].startsWith('-') ? ' ' + baseName(w[2]) : '');
-  if (w[0] === 'gh') return 'gọi GitHub (gh ' + w.slice(1, 3).join(' ') + ')';
-  if (['grep', 'rg', 'sed', 'cat', 'head', 'tail', 'ls', 'find'].includes(w[0])) return 'xem code: ' + clip(first, 48);
-  return 'chạy ' + clip(first, 52);
+  const c = String(cmd || '').trim().replace(/^(cd\s+[^&;]+(&&|;)\s*)+/, '').replace(/^(?:\w+=(?:"[^"]*"|'[^']*'|\S+)\s+)+/, ''); // bỏ MỌI biến môi trường đứng đầu lệnh: giá trị của chúng không hiện lên
+  const first = c.split(/&&|;|\|/)[0].trim(); const w = first.split(/\s+/); const arg = w.slice(1).filter((x) => !x.startsWith('-') && !/^\d*[<>&]/.test(x));
+  const interp = /^(?:bash|sh|zsh|python3?|node|npx|pytest)$/.test(baseName(w[0]));  // chỉ khi lệnh CHÍNH là trình thông dịch (ssh/rsync -e ssh không tính)
+  const script = interp ? (first.match(/^\S+\s+(?:-\S+\s+)*([^\s"'-][^\s"']*)/) || [])[1] : undefined;
+  if (interp && /^\S+\s+-[ce]\b/.test(first)) return 'chạy một đoạn code ' + baseName(w[0]);
+  if (/post-fix-gate/.test(first)) return 'chạy gate kiểm thử';
+  if (/\bunittest\b|\bpytest\b|\bnpm (run )?test\b|\bgo test\b|\bcargo test\b/.test(first)) return 'chạy bộ test' + (arg.length ? ' ' + prettyName(arg[arg.length - 1]) : '');
+  if (script && /test/i.test(script)) return 'chạy test ' + prettyName(script);
+  if (w[0] === 'git') return (Object.hasOwn(GIT_VERB, w[1]) ? GIT_VERB[w[1]] : '') || 'dùng git' + (w[1] ? ' ' + w[1] : '');
+  if (w[0] === 'gh') return /^(pr|issue|project)$/.test(w[1]) ? 'làm việc với ' + (w[1] === 'pr' ? 'pull request' : 'thẻ GitHub') : 'gọi GitHub';
+  if (['grep', 'rg', 'find'].includes(w[0])) { const q = (first.match(/["']([^"']{2,40})["']/) || [])[1] || arg[0]; return 'tìm trong code' + (q && w[0] !== 'find' ? ' “' + clip(q, 30) + '”' : ''); }
+  if (['sed', 'cat', 'head', 'tail', 'awk'].includes(w[0])) return arg.length ? 'đọc file ' + baseName(arg[arg.length - 1]) : 'đọc file';
+  if (w[0] === 'ls') return 'xem thư mục';
+  if (w[0] === 'curl') return 'gọi API';
+  if (w[0] === 'sleep') return 'chờ một lúc';
+  if (w[0] === 'kill') return 'dừng một tiến trình';
+  if (['npm', 'npx', 'yarn', 'pnpm'].includes(w[0])) return 'chạy ' + w[0] + (arg[0] ? ' ' + arg[0] : '');
+  if (script) return 'chạy script ' + prettyName(script);
+  return 'chạy lệnh ' + baseName(w[0]);
 }
 function describe(w) {
   const it = itemFor(w.repo, w.issue); const task = it ? it.title : null;
@@ -1349,7 +1386,7 @@ function describe(w) {
   if (ev.kind === 'tool') {
     if (ev.name === 'Bash') what = describeCmd(ev.text);
     else if (['Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(ev.name)) what = TOOL_VERB[ev.name] + ' ' + baseName(ev.text);
-    else what = (TOOL_VERB[ev.name] || ev.name) + (ev.text ? ': ' + clip(shortPath(ev.text, idx.repo.get(w.repo)), 44) : '');
+    else what = ((Object.hasOwn(TOOL_VERB, ev.name) ? TOOL_VERB[ev.name] : '') || (/^mcp__/.test(ev.name) ? 'dùng công cụ ' + ev.name.split('__').pop().replace(/_/g, ' ') : ev.name)) + (ev.text && !/^[{\[]/.test(ev.text.trim()) ? ': ' + clip(shortPath(ev.text, idx.repo.get(w.repo)), 44) : ''); // JSON thô không hiện lên cho người đọc
   } else what = 'nói: ' + clip(ev.text.split(/(?<=[.!?:])\s/)[0], 96);
   const age = Date.now() / 1000 - (ev.ts || 0);
   const prefix = w.status !== 'working' ? 'Lần cuối ' : age < 180 ? 'Đang ' : 'Vừa ';
@@ -1806,7 +1843,7 @@ function zoomAt(f, cx, cy) { // phóng vào đúng điểm dưới con trỏ, nh
 }
 const zoomBy = (f) => zoomAt(f, innerWidth / 2, innerHeight / 2);
 addEventListener('wheel', (e) => { // nghe cả trang để cuộn trên bóng thoại hay nhãn vẫn di chuyển được
-  if (e.target.closest && e.target.closest('#drawer, #board, .rail, dialog, .desk-picker, .notices')) return; // các khung có thanh cuộn riêng
+  if (e.target.closest && e.target.closest('#drawer, #board, #dash, .rail, dialog, .desk-picker, .notices')) return; // các khung có thanh cuộn riêng
   e.preventDefault(); e.stopPropagation();
   const k = e.deltaMode === 1 ? 32 : e.deltaMode === 2 ? innerHeight : 1;
   const sideways = Math.abs(e.deltaX) > 0.5 && Math.abs(e.deltaX) > Math.abs(e.deltaY) * 0.5; // vuốt ngang/chéo trên trackpad
@@ -1964,7 +2001,7 @@ function renderTop(S) {
   renderDash(S);
 }
 // ---- bảng chỉ số: máy, agent theo lane, board, phiên (số lấy từ /api/state mỗi lần hỏi, lịch sử tải giữ ở trình duyệt)
-const loadHist = []; let LAST_S = null;
+let LAST_S = null;
 function renderDash(S) {
   const host = S.host, ses = S.session;
   const box = $('#dash'); if (box.hidden) return;
@@ -1978,22 +2015,46 @@ function renderDash(S) {
   // cls (nếu có): màu thanh đo theo đúng mức của chữ trên ô
   const meter = (t, frac, cls) => { const m = h('div', 'meter'), i = h('i', cls !== undefined ? cls : frac >= 0.9 ? 'bad' : frac >= 0.7 ? 'warn' : null); i.style.width = Math.min(100, Math.round(frac * 100)) + '%'; m.append(i); t.append(m); return t; };
   const section = (title, right, tiles) => { const hd = h('h2', null, title); if (right) hd.append(h('span', null, right)); const g = h('div', 'tiles'); tiles.forEach((x) => g.append(x)); box.append(hd, g); };
-  if (host) {
-    const pct = host.load[0] / host.cpus, gate = host.load[0] / host.loadMax;
-    const busy = pct >= 2 ? 'Quá tải' : pct >= 1 ? 'Bận' : 'Bình thường';
-    const cpu = meter(tile('Mức bận CPU', busy, null, 'Khoảng ' + Math.round(host.load[0]) + ' việc đang tranh ' + host.cpus + ' nhân CPU' + (pct >= 1 ? ' (gấp ' + pct.toFixed(1).replace('.', ',') + ' lần, việc phải xếp hàng)' : '') + '. Dưới ' + host.cpus + ' là bình thường.', pct >= 2 ? 'bad' : pct >= 1 ? 'warn' : null, true), pct / 3, pct >= 2 ? 'bad' : pct >= 1 ? 'warn' : null);
-    const trend = tile('Tải 1 · 5 · 15 phút', host.load.map((x) => Math.round(x)).join(' · '), null, null, null);
-    if (loadHist.length > 1) { // biểu đồ nhỏ tải 1 phút trong ~3 phút gần nhất
-      const mx = Math.max(host.loadMax, ...loadHist), w = 100, ht = 30, pts = loadHist.map((y, i) => (i / (loadHist.length - 1) * w).toFixed(1) + ',' + (ht - y / mx * ht).toFixed(1)).join(' ');
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 100 30'); svg.setAttribute('preserveAspectRatio', 'none');
-      const el = (tag, attrs) => { const n = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) n.setAttribute(k, attrs[k]); svg.append(n); };
-      const yMax = (ht - host.loadMax / mx * ht).toFixed(1);
-      el('line', { x1: 0, x2: 100, y1: yMax, y2: yMax, stroke: 'var(--c-blocked)', 'stroke-dasharray': '2 2', 'stroke-width': 0.6 }); // vạch ngưỡng gate
-      el('polyline', { fill: 'none', stroke: 'var(--c-ready)', 'stroke-width': 1.4, points: pts });
-      svg.setAttribute('aria-hidden', 'true'); trend.append(svg);
+  if (host) { // mô tả bằng lời thường: máy có bao nhiêu nhân, bao nhiêu việc đang tranh, đang tăng hay giảm, gate chạy ngay hay phải chờ
+    const c = host.cpus, [l1, l5, l15] = host.load, ratio = l1 / c, fmt = (x) => String(Math.round(x));
+    const lvl = ratio >= 2 ? 'bad' : ratio >= 1 ? 'warn' : null, word = ratio >= 2 ? 'Quá tải' : ratio >= 1 ? 'Hơi bận' : 'Thoải mái';
+    const cpu = tile('Máy đang', word, null, fmt(l1) + ' việc đang cùng chạy hoặc xếp hàng chờ, trong khi máy chỉ làm được ' + c + ' việc cùng lúc (' + c + ' nhân CPU). ' + (ratio >= 1 ? 'Nên mỗi việc phải chờ lâu gấp khoảng ' + ratio.toFixed(1).replace('.', ',') + ' lần bình thường.' : 'Không việc nào phải chờ.'), lvl, true);
+    const dir = l1 < l15 * 0.8 ? 'Đang giảm ↓' : l1 > l15 * 1.2 ? 'Đang tăng ↑' : 'Ổn định →', mx = Math.max(l1, l5, l15, c * 3);
+    const trend = tile('Đang nặng thêm hay nhẹ bớt?', dir, null, 'Số việc trung bình ở từng khoảng thời gian (vạch trắng = ' + c + ', mức máy vừa đủ sức):', dir.startsWith('Đang tăng') ? 'warn' : null, true);
+    [['1 phút vừa qua', l1], ['5 phút qua', l5], ['15 phút qua', l15]].forEach(([name, v]) => {
+      const r = h('div', 'ld-row'), bar = h('div', 'ld-bar'), fill = h('i', v >= c * 2 ? 'bad' : v >= c ? 'warn' : null), mark = h('b');
+      fill.style.width = Math.max(2, Math.round(v / mx * 100)) + '%'; mark.style.left = Math.round(c / mx * 100) + '%'; bar.append(fill, mark);
+      r.append(h('span', 'ld-k', name), bar, h('span', 'ld-v', fmt(v))); trend.append(r);
+    });
+    const wait = l1 >= host.loadMax;
+    const gt = tile('Gate (kiểm thử tự động)', wait ? 'Đang phải chờ' : 'Chạy ngay', null, 'Gate chỉ bắt đầu khi số việc dưới ' + host.loadMax + '; hiện là ' + fmt(l1) + '.', wait ? 'bad' : null, true);
+    const heavy = tile('Gate / test nặng', host.slotsHeld, 'đang chạy', 'cùng lúc trên máy này', host.slotsHeld >= 3 ? 'warn' : null, true);
+    const w = host.workload, tiles = [cpu, trend, gt, heavy];
+    if (w && w.totalCpu > 0) { // tổng chịu tải: CPU cả máy đang dùng bao nhiêu % và ai chiếm (agent hay app khác)
+      const used = w.totalCpu / (c * 100), agentCpu = Math.max(0, w.totalCpu - (w.otherCpu || 0)), lv = used >= 0.9 ? 'bad' : used >= 0.7 ? 'warn' : null;
+      const tot = tile('Tổng CPU đang dùng', Math.round(used * 100), '% công suất máy', 'Ước tính từ ps: ' + Math.round(w.totalCpu) + '% trên tổng ' + c * 100 + '% (' + c + ' nhân × 100%).', lv, true);
+      meter(tot, used, lv);
+      tot.append(h('div', 's', 'Agent (Claude, Antigravity, gate...): ' + Math.round(agentCpu) + '% · App khác: ' + Math.round(w.otherCpu || 0) + '%' + ((w.others || []).length ? ' (' + w.others.slice(0, 3).map((o) => o.label + ' ' + Math.round(o.cpu) + '%').join(', ') + ')' : '')));
+      tiles.unshift(tot);
     }
-    const gt = meter(tile('Ngưỡng chạy gate', Math.round(host.load[0]) + ' / ' + host.loadMax, null, gate >= 1 ? 'Quá ngưỡng: gate phải xếp hàng chờ' : 'Dưới ngưỡng: gate chạy ngay', gate >= 1 ? 'bad' : gate >= 0.8 ? 'warn' : null), gate, gate >= 1 ? 'bad' : gate >= 0.8 ? 'warn' : null);
-    section('Sức khoẻ máy', null, [cpu, trend, gt, tile('Khoá việc nặng', host.slotsHeld, null, 'gate / test nặng (pool heavy, unity) đang giữ', host.slotsHeld >= 3 ? 'warn' : null)]);
+    section('Sức khoẻ máy', c + ' nhân CPU', tiles);
+  }
+  const wl = host && host.workload;
+  if (wl && wl.groups.length) { // ai đang ăn CPU: tổng theo loại agent, rồi từng VIỆC cụ thể (ps gộp theo script + nơi làm việc, đo 30 giây một lần)
+    const totalCpu = wl.groups.reduce((a, g) => a + g.cpu, 0) || 1;
+    const row = (name, meta, cpu, frac, cls) => {
+      const r = h('div', 'wl-row'), bar = h('div', 'wl-bar'), fill = h('i', cls || null); fill.style.width = Math.max(2, Math.round(frac * 100)) + '%'; bar.append(fill);
+      r.append(h('div', 'wl-name', name), h('div', 'wl-cpu', Math.round(cpu) + '%'), bar, h('div', 'wl-meta', meta)); return r;
+    };
+    const hd = h('h2', null, 'Máy đang bận vì ai'); hd.append(h('span', null, Math.round(totalCpu) + '% CPU gộp (100% = 1 nhân)'));
+    const box2 = h('div', 'wl'), tasks = wl.tasks || [];
+    wl.groups.forEach((g) => { // mỗi loại agent một dòng tổng, ngay dưới là các VIỆC cụ thể làm nên con số đó (nặng nhất trước)
+      const share = g.cpu / totalCpu;
+      box2.append(row(g.label, g.count + ' tiến trình · ' + g.rssMb + ' MB RAM · chiếm ' + Math.round(share * 100) + '% phần của agent', g.cpu, share, share >= 0.5 ? 'bad' : share >= 0.3 ? 'warn' : null));
+      const mine = tasks.filter((t) => t.group === g.id), maxT = Math.max(1, ...mine.map((t) => t.cpu));
+      mine.forEach((t) => { const r = row(t.label, [t.where, t.count + ' tiến trình', 'đã chạy ' + t.etime].filter(Boolean).join(' · '), t.cpu, t.cpu / maxT); r.classList.add('sub'); box2.append(r); });
+    });
+    box.append(hd, box2);
   }
   const lanes = { Build: [0, 0], QA: [0, 0], Review: [0, 0] };
   let sessions = 0, working = 0, idle = 0, away = 0;
@@ -3016,14 +3077,16 @@ function apply(S, force) {
   }
 }
 let pollTimer = null;
+document.addEventListener('visibilitychange', () => { if (!document.hidden && typeof poll === 'function') poll(); }); // tab hiện lại: báo view=1 ngay, không đợi nhịp 3 giây bị trình duyệt làm chậm
 async function poll(once) {
   if (!once) clearTimeout(pollTimer);
   try {
-    const res = await fetch('api/state', { cache: 'no-store', headers: apiHeaders() });
+    const res = await fetch('api/state' + (document.hidden ? '' : '?view=1'), { // view=1: tab đang hiện, server mới đo workload (ps)
+ cache: 'no-store', headers: apiHeaders() });
     if (res.status === 401 || res.status === 403) { $('#boot').hidden = false; $('#boot').textContent = 'Mã truy cập đã hết hạn. Quét mã QR mới trên máy Mac (chạy lại ai-factory).'; return; }
     if (!res.ok) throw new Error(res.status);
     const S = await res.json();
-    LAST_S = S; if (S.host) { loadHist.push(S.host.load[0]); if (loadHist.length > 60) loadHist.shift(); } // tải 1 phút ~3 phút gần nhất
+    LAST_S = S;
     if (S.version !== VERSION) { VERSION = S.version; apply(S); }
     else renderTop(S);
     if ($('#notices').dataset.offline === '1') { $('#notices').dataset.offline = '0'; dismissed.delete(OFFLINE_NOTICE); renderNotices(STATE, false); } // lần mất kết nối sau vẫn báo
