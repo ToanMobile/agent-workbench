@@ -58,4 +58,34 @@ done
 out=$(halt_with '["project","item-list","1","--owner","ToanMobile"]')
 [ -s "$HALT" ] && ok "a read that names no repository still halts the board (fail closed)" || fail "repo-less read wrote no halt"
 
+rm -f "$HALT"
+
+# READ side (24/10 10:22, after the write-side fix merged): worktrees still on OLD code keep writing o/r halts into the
+# real checkout. check_halt() must not stop this board on a halt whose recorded read targets another repository: it
+# archives it (github-halt-foreign-*.json) and carries on. A halt for the home repository still stops it.
+check_with() {   # prints ReadHalted when check_halt() raised, else ok
+  ( cd "$R" && python3 - "$READ" <<'PY' 2>&1 )
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('gr', sys.argv[1]); mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    mod.check_halt(); print('ok')
+except mod.ReadHalted:
+    print('ReadHalted')
+PY
+}
+mkdir -p "$(dirname "$HALT")"
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":{"args":["api","graphql","-F","owner=o","-F","repo=r","-F","pr=7"],"kind":"approval"}}' > "$HALT"
+out=$(check_with)
+{ printf '%s\n' "$out" | grep -qx ok && [ ! -e "$HALT" ] && ls "$(dirname "$HALT")"/github-halt-foreign-*.json >/dev/null 2>&1; } \
+  && ok "check_halt: a foreign halt left by old code is archived, the board is not stopped" \
+  || fail "foreign halt on read: out=$out halt=$([ -e "$HALT" ] && echo kept || echo gone)"
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":{"args":["api","graphql","-F","owner=ToanMobile","-F","repo=home","-F","pr=7"],"kind":"approval"}}' > "$HALT"
+out=$(check_with)
+printf '%s\n' "$out" | grep -qx ReadHalted && [ -e "$HALT" ] && ok "check_halt: a home-repo halt still stops the board" || fail "home halt on read: out=$out"
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":null}' > "$HALT"
+out=$(check_with)
+printf '%s\n' "$out" | grep -qx ReadHalted && [ -e "$HALT" ] && ok "check_halt: a halt with no recorded read (uncertain write) still stops the board" || fail "op-null halt: out=$out"
+rm -f "$HALT"
+
 [ "$FAILS" -eq 0 ] && echo "test_github_read_foreign_halt: PASS" || { echo "test_github_read_foreign_halt: FAIL ($FAILS)"; exit 1; }

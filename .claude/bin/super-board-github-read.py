@@ -68,8 +68,27 @@ def halt_path():
 
 
 def check_halt():
-    if halt_path().exists():
-        raise ReadHalted('GitHub reads are halted; inspect the saved reason and explicitly restart the run')
+    path = halt_path()
+    if not path.exists():
+        return
+    # Worktrees still on OLD code keep writing fixture halts (o/r) into the real checkout (24/10, 4 halts in a day). A halt
+    # whose recorded read targets another repository is set aside, not obeyed. Anything unreadable still halts.
+    if not os.environ.get('SB_GITHUB_HALT_FILE'):
+        try:
+            record = json.loads(path.read_text())
+            target, home = _op_repo(record.get('operation')), _home_repo()
+        except (OSError, ValueError, AttributeError):
+            target = home = None
+        if target and home and target != home:
+            aside = path.with_name(f'github-halt-foreign-{time.time_ns()}.json')
+            try:
+                os.replace(path, aside)
+                print(f'[github-read] ignored a halt for {target} (not this checkout, {home}); kept at {aside}',
+                      file=sys.stderr)
+                return
+            except OSError as error:
+                print(f'[github-read] could not set aside the foreign halt: {error}', file=sys.stderr)
+    raise ReadHalted('GitHub reads are halted; inspect the saved reason and explicitly restart the run')
 
 
 def archive_reconciled(path, text, why):
