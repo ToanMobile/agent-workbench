@@ -43,7 +43,7 @@ Chỉ cần Python 3.8+ có sẵn trên macOS và GitHub CLI (`gh`). Three.js đ
 - **Nhãn repo bên trái mỗi hàng:**
   - Xanh lá: "Đang làm", kèm số agent và các thẻ.
   - Cam: "Chờ việc", runner vẫn chạy nhưng chưa có thẻ.
-  - Xám: "Đã dừng". Cả hàng tối lại, thẻ chuyển xám.
+  - Repo đã dừng hoặc không có runner thì không có nhãn: cả hàng tối lại, thẻ chuyển xám, trên sàn ghi "<tên repo>: runner đang dừng". Nhãn hiện lại khi runner chờ bạn. Mở repo đó bằng "Danh sách repo" (phím R).
   - Đỏ: "Mất tín hiệu", quá 5 phút không có tick.
 - **Agent đang làm** có vòng sáng xanh dưới chân và bóng thoại viền xanh. Bấm vào bóng thoại để xem chi tiết.
 - **Khi phóng to vào một hàng:** bàn trống ghi "Build rảnh", agent đang nghỉ ghi "Nghỉ, 12 phút".
@@ -84,7 +84,7 @@ Thanh dưới đáy có 5 nút chính: Ai đang làm gì, Toàn cảnh, Dạng b
 
 ## Phím tắt
 
-W ai đang làm gì, F toàn cảnh, Z phóng to, B dạng bảng, A thêm việc, N agent kế tiếp, T ca ngày hoặc ca đêm, R danh sách repo, D chọn kiểu bàn, E xem "Vừa xảy ra", Esc đóng bảng chi tiết hoặc dạng bảng. Phím Tab đi qua các nút, rồi tới nhãn repo và bóng thoại của từng agent trong xưởng.
+W ai đang làm gì, F toàn cảnh, Z phóng to, B dạng bảng, A thêm việc, N agent kế tiếp, T ca ngày hoặc ca đêm, R danh sách repo, D chọn kiểu bàn, E xem "Vừa xảy ra", Esc đóng bảng chi tiết hoặc dạng bảng. Phím Tab đi qua các nút, rồi tới nhãn repo (repo đã dừng không có nhãn: dùng Danh sách repo) và bóng thoại của từng agent trong xưởng.
 
 ## Agent đang làm gì lấy từ đâu
 

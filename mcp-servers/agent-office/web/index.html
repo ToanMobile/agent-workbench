@@ -256,6 +256,32 @@
   .btn:disabled { opacity: .5; cursor: default; }
   .row-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .readonly { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  /* khung "Cần bạn duyệt": mỗi thẻ ngăn bằng đường kẻ (không card lồng panel), nút to cho ngón tay */
+  .controls #btnApprove { color: var(--t-you); font-weight: 700; }
+  .controls #btnApprove.pending { background: color-mix(in srgb, var(--c-you) 14%, transparent); }
+  /* băng nhắc: luôn hiện khi còn thẻ 🙋 chờ, bấm là mở khung duyệt (máy tính và điện thoại như nhau) */
+  .appr-banner { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; margin-top: 10px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--c-you) 40%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--c-you) 12%, var(--panel-solid)); color: var(--t-you); font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: transform .08s; }
+  .appr-banner[hidden] { display: none; }
+  .appr-banner:hover { background: color-mix(in srgb, var(--c-you) 18%, var(--panel-solid)); }
+  .appr-banner:active { transform: scale(.98); }
+  .appr-banner .ab-n { flex: none; display: grid; place-items: center; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 14px; background: var(--c-you); color: #fff; font-weight: 700; font-size: 14px; animation: apprpulse 1.6s ease-in-out infinite; }
+  .appr-banner .ab-t { flex: 1; min-width: 0; font-weight: 600; line-height: 1.35; }
+  .appr-banner .ab-t small { display: block; font-weight: 500; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .appr-banner .ab-go { flex: none; font-weight: 700; white-space: nowrap; }
+  @keyframes apprpulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c-you) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+  @media (prefers-reduced-motion: reduce) { .appr-banner .ab-n { animation: none; } }
+  .appr { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+  .appr-h { display: flex; gap: 8px; align-items: baseline; width: 100%; min-height: 44px; padding: 4px 0; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+  .appr-h .num { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+  .appr-h .t { font-weight: 600; overflow-wrap: anywhere; }
+  .appr .why-line { margin: 4px 0 8px; }
+  .appr h3 { margin: 12px 0 6px; }
+  .appr-cmd { display: block; margin: 0 0 6px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--ink) 6%, transparent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; overflow-wrap: anywhere; user-select: all; }
+  .appr-tick { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; cursor: pointer; }
+  .appr-tick input { width: 22px; height: 22px; margin: 0; flex: none; }
+  .appr textarea { min-height: 52px; margin-top: 4px; }
+  .appr-act .btn { flex: 1 1 0; max-width: 240px; min-height: 48px; font-size: 15px; } /* điện thoại: chia đôi hàng; máy tính bảng/màn to: không kéo dài quá */
+  .appr-ok { margin: 6px 0 0; font-size: 14px; font-weight: 600; color: var(--t-done); }
   .toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 12px); padding: 10px 16px; font-size: 13.5px; font-weight: 500; z-index: 20; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; max-width: min(560px, 90vw); }
   .toast.on { opacity: 1; transform: translate(-50%, 0); }
   .toast.error { border-color: var(--c-blocked); color: var(--t-blocked); }
@@ -357,7 +383,12 @@
     .board-head select, .board-head input { flex: 1 1 140px; }
     .board-head .count { width: 100%; margin-left: 0; }
     .board-head .hint { display: none; }
-    .controls button { padding: 8px 10px; }
+    .controls button { padding: 8px 10px; min-height: 44px; }
+    /* điện thoại: thanh nút một hàng cuộn ngang thay vì ba hàng chiếm 1/5 màn hình */
+    .controls { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+    .controls::-webkit-scrollbar { display: none; }
+    /* thông báo: trên điện thoại không chạy lệnh terminal được, chỉ giữ câu và nút Ẩn */
+    .notice code, .notice .copy { display: none; }
   }
   @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
 </style>
@@ -373,6 +404,7 @@
     <div class="sync" id="sync"><span class="dot warn"></span><span>Chưa có dữ liệu</span></div>
     <div class="states" id="states" aria-label="Tình trạng"></div>
     <div class="notices" id="notices"></div>
+    <button type="button" class="appr-banner" id="apprBanner" aria-controls="drawer" hidden></button>
   </div>
   <div class="legend panel" id="legend" aria-label="Tổng số việc theo cột"></div>
 </header>
@@ -389,6 +421,7 @@
 <aside class="drawer panel" id="drawer" hidden aria-live="polite"></aside>
 
 <div class="controls panel" role="toolbar" aria-label="Điều khiển">
+  <button type="button" id="btnApprove" aria-controls="drawer" hidden>Cần bạn duyệt</button>
   <button type="button" id="btnAgents" aria-pressed="true">Ai đang làm gì</button>
   <button type="button" id="btnFit">Toàn cảnh</button>
   <button type="button" class="sec" id="btnZoom">Phóng to</button>
@@ -529,6 +562,26 @@ function rowState(repo) {
   if (rs === 'stale') return { key: 'stale', label: 'Mất tín hiệu', detail: 'tick cuối ' + ago(rn.tick.at) };
   if (rs === 'finished') return { key: 'stopped', label: 'Đã dừng', detail: 'dừng sau tick ' + rn.tick.time.slice(0, 5) };
   return { key: 'stopped', label: 'Không chạy', detail: 'chưa thấy runner' };
+}
+// Repo đã dừng không dựng nhãn bên trái (hàng đã tối + chữ trên sàn); vẫn hiện khi runner còn chờ bạn
+function repoLabelShown(repo) {
+  return rowState(repo).key !== 'stopped' || !!(repo.runner && repo.runner.tick && repo.runner.tick.waiting > 0);
+}
+// Thẻ 🙋 chờ người: cột Blocked + nhãn needs-you, issue còn mở (server đọc bước needs-you từ comment của issue)
+function needsApproval(it) {
+  const c = ((STATE && STATE.columns) || []).find((x) => x.name === it.status);
+  return ((c && c.kind) || kindOf(it.status)) === 'blocked' && (it.labels || []).some((l) => l.name === 'needs-you')
+    && (!it.state || it.state === 'OPEN') && it.type === 'Issue';
+}
+// Thẻ 🙋 còn chờ bạn (đã duyệt, đang chờ wave sau thì không nhắc nữa): băng nhắc và số trên nút đếm từ đây
+function pendingApprovals(items) {
+  return (items || []).filter((it) => needsApproval(it) && !(it.approval && it.approval.approved));
+}
+// Duyệt chỉ bật khi đã đọc được bước, đã tick "đã chạy xong" nếu có lệnh, chưa duyệt và không đang gửi
+function approveState(it, ui) {
+  const a = it.approval || (STATE && STATE.demo ? { steps: [], approved: false } : null);
+  const steps = (a && a.steps) || [], approved = !!(a && a.approved), busy = !!ui.busy;
+  return { known: !!a, steps, approved, canApprove: !!a && !approved && !busy && (!steps.length || !!ui.ticked), canReject: !approved && !busy };
 }
 const ITEM_STATE = { OPEN: 'Đang mở', CLOSED: 'Đã đóng', MERGED: 'Đã merge' };
 const ITEM_TYPE = { Issue: 'Issue', PullRequest: 'Pull request', DraftIssue: 'Bản nháp' };
@@ -875,13 +928,13 @@ function buildRow(S, repo, r, cols, T) {
     const off = flat(L.width - 0.4, SIZE.ROW_D - 0.3, T.dark ? '#000000' : '#2f3a4d', T.dark ? 0.32 : 0.1, 0, 0.024, z); off.material.depthWrite = false;
     const { c, ctx, tex } = canvasTex(1024, 128);
     ctx.font = F(700, 64); ctx.fillStyle = T.dark ? 'rgba(255,255,255,0.32)' : 'rgba(47,58,77,0.34)'; ctx.textAlign = 'center';
-    ctx.fillText(rsx.key === 'stale' ? 'Runner mất tín hiệu' : 'Runner đang dừng', c.width / 2, 86); tex.needsUpdate = true;
+    ctx.fillText(rsx.key === 'stale' ? 'Runner mất tín hiệu' : repo.name + ': runner đang dừng', c.width / 2, 86, c.width - 32); tex.needsUpdate = true;
     const tag = new THREE.Mesh(GEO.plane, track(new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })));
     tag.scale.set(9, 1.1, 1); tag.rotation.x = -Math.PI / 2; tag.position.set(L.x0 + SIZE.OFFICE_W + 5, 0.03, z + 0.2); world.add(tag);
   }
   if (rn && rn.tick && rn.tick.waiting > 0) lbl.append(h('span', 'you', 'Chờ bạn ' + rn.tick.waiting));
   lbl.addEventListener('click', () => select({ type: 'repo', id: repo.name }));
-  addLabel('lbl-repo', new THREE.Vector3(L.x0 - 0.6, 0.05, z), lbl, 'left');
+  if (repoLabelShown(repo)) addLabel('lbl-repo', new THREE.Vector3(L.x0 - 0.6, 0.05, z), lbl, 'left');
 
   const dim = rsx.key === 'stopped' || rsx.key === 'stale';
   cols.forEach((c, ci) => buildStation(S, repo, c, ci, z, T, dim));
@@ -1884,6 +1937,16 @@ function renderTop(S) {
     chip.append(sw, h('span', null, c.name), h('b', null, String(n))); lg.append(chip);
   });
   const waiting = S.repos.reduce((a, r) => a + ((r.runner && r.runner.tick && r.runner.tick.waiting) || 0), 0);
+  const nAppr = S.items.filter(needsApproval).length; const pend = pendingApprovals(S.items); const ba = $('#btnApprove');
+  ba.hidden = !nAppr; ba.textContent = 'Cần bạn duyệt (' + pend.length + ')'; ba.classList.toggle('pending', pend.length > 0);
+  const bn = $('#apprBanner'); bn.dataset.n = String(pend.length); syncApprBanner();
+  if (pend.length) {
+    const first = pend.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+    bn.textContent = ''; const t = h('span', 'ab-t', pend.length + ' thẻ chờ bạn duyệt');
+    t.append(h('small', null, first.repo + ' ' + itemLabel(first) + ': ' + first.title));
+    bn.append(h('span', 'ab-n', String(pend.length)), t, h('span', 'ab-go', 'Duyệt ›'));
+    bn.setAttribute('aria-label', pend.length + ' thẻ chờ bạn duyệt. Mở khung duyệt');
+  }
   if (waiting) { const c = h('button', 'chip you'); c.type = 'button'; c.onclick = () => select({ type: 'events' }, false); c.append(h('span', null, 'Đang chờ bạn'), h('b', null, String(waiting))); lg.append(c); }
   renderDash(S);
 }
@@ -1950,16 +2013,25 @@ function renderDash(S) {
   box.scrollTop = keepScroll;
 }
 $('#btnDash').onclick = () => { const d = $('#dash'); d.hidden = !d.hidden; $('#btnDash').setAttribute('aria-pressed', String(!d.hidden)); if (LAST_S) renderDash(LAST_S); };
-const dismissed = new Set();
+// Thông báo info đã Ẩn nhớ qua lần tải lại; lỗi/cảnh báo/mất kết nối chỉ ẩn trong lần mở này
+const savedNotices = (() => { try { return new Set(JSON.parse(localStorage.getItem('ao-dismissed-info') || '[]')); } catch (e) { return new Set(); } })();
+const dismissed = new Set(savedNotices);
+const OFFLINE_NOTICE = 'Mất kết nối tới server.py. Kiểm tra cửa sổ terminal đang chạy server.';
+function dismissNotice(n) {
+  dismissed.add(n.text);
+  if (n.level !== 'info' || n.transient) return;
+  savedNotices.add(n.text);
+  try { localStorage.setItem('ao-dismissed-info', JSON.stringify([...savedNotices])); } catch (e) { /* storage blocked: chỉ ẩn trong lần mở này */ }
+}
 function renderNotices(S, offline) {
   const box = $('#notices'); box.textContent = '';
   const list = (S ? S.notices : []).slice();
-  if (offline) list.unshift({ level: 'error', text: 'Mất kết nối tới server.py. Kiểm tra cửa sổ terminal đang chạy server.' });
+  if (offline) list.unshift({ level: 'error', text: OFFLINE_NOTICE, transient: true });
   list.filter((n) => !dismissed.has(n.text)).forEach((n) => {
     const el = h('div', 'notice ' + n.level); el.append(h('span', null, n.text));
-    const x = h('button', null, 'Ẩn'); x.type = 'button'; x.onclick = () => { dismissed.add(n.text); el.remove(); };
+    const x = h('button', null, 'Ẩn'); x.type = 'button'; x.onclick = () => { dismissNotice(n); el.remove(); };
     if (n.cmd) {
-      const code = h('code', null, n.cmd); const b = h('button', null, 'Chép lệnh'); b.type = 'button';
+      const code = h('code', null, n.cmd); const b = h('button', 'copy', 'Chép lệnh'); b.type = 'button';
       b.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(n.cmd).then(() => { b.textContent = 'Đã chép'; }); };
       el.append(code, b);
     }
@@ -2023,9 +2095,11 @@ let drawerSig = null;
 function renderDrawer(force) {
   const S = STATE; const d = $('#drawer');
   document.body.classList.toggle('drawer-open', !!selection && !!S);
+  syncApprBanner();
   if (!selection || !S) { d.hidden = true; drawerSig = null; return; }
   const sig = JSON.stringify([selection, document.documentElement.dataset.theme,
-    selection.type === 'repo' ? [idx.repo.get(selection.id), S.workers.filter((w) => w.repo === selection.id), S.items.filter((i) => i.repo === selection.id)]
+    selection.type === 'approvals' ? [canWrite(), S.items.filter(needsApproval).map((i) => [i.id, i.status, i.approval, i.lastComment, APPROVAL_UI.get(i.id)])]
+    : selection.type === 'repo' ? [idx.repo.get(selection.id), S.workers.filter((w) => w.repo === selection.id), S.items.filter((i) => i.repo === selection.id)]
     : selection.type === 'item' ? [idx.item.get(selection.id), S.workers] : selection.type === 'column' ? [S.items.filter((i) => i.status === selection.id), S.workers.map((w) => [w.id, w.status, w.issue])] : selection.type === 'station' ? stationWorkers(selection.id).map((w) => [w.id, w.status, describe(w).doing]) : idx.worker.get(selection.id)]);
   if (!force && sig === drawerSig && !d.hidden) return;
   drawerSig = sig;
@@ -2036,6 +2110,7 @@ function renderDrawer(force) {
 function renderDrawerNow() {
   const S = STATE; const d = $('#drawer');
   if (selection.type === 'events') return drawEvents();
+  if (selection.type === 'approvals') return drawApprovals();
   if (selection.type === 'column') return drawColumn(selection.id);
   if (selection.type === 'station') return drawStation(selection.id);
   if (selection.type === 'repo') return drawRepo(idx.repo.get(selection.id));
@@ -2748,13 +2823,70 @@ function drawEvents() {
 }
 $('#btnEvents').onclick = () => select({ type: 'events' }, false);
 
+// ---- khung "Cần bạn duyệt": Duyệt = comment đúng chữ done (server tự đặt chữ), Từ chối = comment lý do, thẻ ở lại Blocked
+const APPROVAL_UI = new Map(); // id thẻ -> { ticked, reason, busy }: giữ ô tick và lý do đang gõ qua các lần vẽ lại
+const approvalUi = (id) => { if (!APPROVAL_UI.has(id)) APPROVAL_UI.set(id, {}); return APPROVAL_UI.get(id); };
+function drawApprovals() {
+  const S = STATE; const d = drawerShell();
+  const its = S.items.filter(needsApproval).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  d.append(h('div', 'kicker', 'Thẻ 🙋 ở cột Blocked'), h('h2', null, its.length ? its.length + ' thẻ cần bạn duyệt' : 'Không còn thẻ nào cần bạn duyệt'));
+  d.append(h('p', 'readonly', 'Duyệt gửi đúng một chữ done lên issue, wave sau tự chạy tiếp. Từ chối gửi lý do, thẻ ở lại Blocked.'));
+  if (!canWrite()) d.append(h('p', 'readonly', 'Đang ở chế độ chỉ xem vì chưa kết nối được GitHub Project để sửa.'));
+  its.forEach((it) => {
+    const ui = approvalUi(it.id); const st = approveState(it, ui);
+    const box = h('section', 'appr'); box.setAttribute('aria-label', 'Duyệt ' + it.repo + ' ' + itemLabel(it));
+    const head = h('button', 'appr-h'); head.type = 'button';
+    head.append(h('span', 'num', it.repo + ' ' + itemLabel(it)), h('span', 't', it.title));
+    head.onclick = () => select({ type: 'item', id: it.id }); box.append(head);
+    if (it.lastComment && it.lastComment.body) box.append(h('div', 'why-line', clip(it.lastComment.body, 220)));
+    if (st.approved) { box.append(h('p', 'appr-ok', 'Đã duyệt, chờ wave sau chạy tiếp.')); d.append(box); return; }
+    if (!st.known) box.append(h('p', 'readonly', 'Chưa đọc được các bước trên GitHub, chờ lần đọc sau rồi mới duyệt được.'));
+    if (st.steps.length) {
+      box.append(h('h3', null, 'Lệnh bạn phải tự chạy trên máy trước'));
+      st.steps.forEach((cmd) => box.append(h('code', 'appr-cmd', cmd)));
+      const tick = h('label', 'appr-tick'); const cb = h('input'); cb.type = 'checkbox'; cb.checked = !!ui.ticked; cb.disabled = !!ui.busy;
+      cb.onchange = () => { ui.ticked = cb.checked; renderDrawer(true); };
+      tick.append(cb, h('span', null, 'Đã chạy xong các lệnh trên')); box.append(tick);
+    }
+    const ta = h('textarea'); ta.rows = 2; ta.placeholder = 'Lý do từ chối (không bắt buộc)'; ta.value = ui.reason || ''; ta.disabled = !!ui.busy;
+    ta.setAttribute('aria-label', 'Lý do từ chối ' + itemLabel(it)); ta.oninput = () => { ui.reason = ta.value; };
+    const ok = h('button', 'btn primary', ui.busy === 'approve' ? 'Đang gửi…' : 'Duyệt'); ok.type = 'button'; ok.disabled = !st.canApprove || !canWrite();
+    const no = h('button', 'btn danger', ui.busy === 'reject' ? 'Đang gửi…' : 'Từ chối'); no.type = 'button'; no.disabled = !st.canReject || !canWrite();
+    ok.onclick = () => decide(it, 'approve', [ok, no, ta]); no.onclick = () => decide(it, 'reject', [ok, no, ta]);
+    const ra = h('div', 'row-actions appr-act'); ra.append(ok, no); box.append(ta, ra); d.append(box);
+  });
+}
+async function decide(it, kind, els) {
+  const ui = approvalUi(it.id);
+  if (ui.busy || !canWrite()) return; // bấm lần hai trong lúc đang gửi: bỏ qua
+  els.forEach((e) => { e.disabled = true; }); ui.busy = kind; els[kind === 'approve' ? 0 : 1].textContent = 'Đang gửi…';
+  const t0 = Date.now();
+  try {
+    if (kind === 'approve') {
+      await api('approve', { itemId: it.id, stepsDone: !!ui.ticked });
+      it.approval = Object.assign({ steps: [] }, it.approval, { approved: true });
+      toast('Đã duyệt ' + it.repo + ' ' + itemLabel(it) + ': đã comment done');
+    } else {
+      await api('reject', { itemId: it.id, reason: ui.reason || '' });
+      ui.reason = ''; toast('Đã từ chối ' + it.repo + ' ' + itemLabel(it) + ', thẻ ở lại Blocked');
+    }
+  } catch (err) { toast((kind === 'approve' ? 'Chưa duyệt được ' : 'Chưa từ chối được ') + itemLabel(it) + ': ' + err.message, 'error'); }
+  const left = 1000 - (Date.now() - t0); // khoá nút ít nhất 1000 ms kể cả khi server trả lời nhanh
+  if (left > 0) await new Promise((r) => setTimeout(r, left));
+  ui.busy = false; VERSION = null; poll(true); renderDrawer(true);
+}
+// băng nhắc ẩn khi khung duyệt đang mở, hiện lại ngay khi đóng hoặc chọn thứ khác
+function syncApprBanner() { const bn = $('#apprBanner'); bn.hidden = !+(bn.dataset.n || 0) || !!(selection && selection.type === 'approvals'); }
+$('#btnApprove').onclick = () => select({ type: 'approvals' }, false);
+$('#apprBanner').onclick = () => select({ type: 'approvals' }, false);
+
 function apply(S, force) {
   STATE = S; indexState(S);
   handleEvents(S);
   const key = layoutKey(S);
   if (force || key !== LAYOUT_KEY) { LAYOUT_KEY = key; const snap = snapshotPeople(); buildWorld(S); startWalks(snap); } else refreshDynamic(S);
   if (selection) {
-    const exists = selection.type === 'events' || selection.type === 'station' || (selection.type === 'column' && S.columns.some((c) => c.name === selection.id)) || (selection.type === 'repo' ? idx.repo.has(selection.id) : selection.type === 'item' ? idx.item.has(selection.id) : idx.worker.has(selection.id));
+    const exists = selection.type === 'events' || selection.type === 'approvals' || selection.type === 'station' || (selection.type === 'column' && S.columns.some((c) => c.name === selection.id)) || (selection.type === 'repo' ? idx.repo.has(selection.id) : selection.type === 'item' ? idx.item.has(selection.id) : idx.worker.has(selection.id));
     if (!exists) selection = null;
   }
   if (pendingSelect && idx.item.has(pendingSelect)) { selection = { type: 'item', id: pendingSelect }; pendingSelect = null; drawerSig = null; requestAnimationFrame(focusSelection); }
@@ -2789,7 +2921,7 @@ async function poll(once) {
     LAST_S = S; if (S.host) { loadHist.push(S.host.load[0]); if (loadHist.length > 60) loadHist.shift(); } // tải 1 phút ~3 phút gần nhất
     if (S.version !== VERSION) { VERSION = S.version; apply(S); }
     else renderTop(S);
-    if ($('#notices').dataset.offline === '1') { $('#notices').dataset.offline = '0'; renderNotices(STATE, false); }
+    if ($('#notices').dataset.offline === '1') { $('#notices').dataset.offline = '0'; dismissed.delete(OFFLINE_NOTICE); renderNotices(STATE, false); } // lần mất kết nối sau vẫn báo
   } catch (e) {
     console.error('Agent Office: không áp được dữ liệu', e);
     $('#notices').dataset.offline = '1'; renderNotices(STATE, true);
