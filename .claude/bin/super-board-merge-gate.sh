@@ -496,9 +496,11 @@ if [ -n "$AC_CARD" ] && [ -z "$MSG_FILE" ]; then
   LOG_JSON=$(python3 "$HERE/super-board-ac-check.py" --pr-body /dev/null --msg "$AC_DIR/log.md" --branch "$HEAD_REF") || LOG_JSON='{}'
   foreign=$(echo "$LOG_JSON" | jq -r '(.foreign_closes // []) | map("#\(.)") | join(", ")')
   if [ -n "$foreign" ]; then
-    echo "ac-check: a commit on ${HEAD_REF} closes ${foreign}, but the branch is card #${AC_CARD} — reword it to Refs (the squash message is built from these commits)"
-    say "a PR closes only its own card: back to Build to fix the closing keywords"
-    exit 11
+    # Commit đã push thì builder không sửa được message mà không viết lại lịch sử (force-push bị chặn): exit 11 sẽ lặp.
+    # Gate tự dùng log đó làm message squash, từ khoá đóng thẻ khác đổi thành Refs.
+    python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/log.md" --card "$AC_CARD" --foreign >/dev/null
+    MSG_FILE="$AC_DIR/log.md"
+    say "a commit on ${HEAD_REF} closes ${foreign}; the squash message turns those into Refs (only card #${AC_CARD} may close)"
   fi
   # Chỉ commit tự `Closes #<thẻ>` (body không có sb:ac, không Closes) thì AC chưa được đối chiếu ở trên: thẻ có AC → nén về 0 dòng.
   if [ "$(echo "$LOG_JSON" | jq -r '.closes_own // false')" = true ] && [ ! -s "$AC_DIR/issue.md" ] \
@@ -990,6 +992,10 @@ if [ -n "$AC_UNTICKED" ]; then
   grep -q "#${AC_CARD}\b" "$AC_DIR/msg.md" || printf '\nRefs #%s\n' "$AC_CARD" >> "$AC_DIR/msg.md"
   MSG_FILE="$AC_DIR/msg.md"
   # Subject squash: --subject, không có thì tiêu đề PR như GitHub vẫn dùng ("<tiêu đề> (#PR)") — Closes trong đó cũng đổi.
+  if [ -z "$SUBJECT" ] && [ -z "$AC_SUBJECT" ]; then
+    say "could not read the PR title for the squash subject; not merging (GitHub would use a title nobody checked for Closes)"
+    exit 4
+  fi
   [ -n "$SUBJECT" ] || SUBJECT="${AC_SUBJECT} (#${PR})"
   printf '%s\n' "$SUBJECT" > "$AC_DIR/subject.md"
   python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/subject.md" --card "$AC_CARD" >/dev/null

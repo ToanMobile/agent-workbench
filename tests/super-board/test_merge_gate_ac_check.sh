@@ -184,8 +184,11 @@ card 26 "$TMP/b26.md" "$TMP/issue3.md" '[]' "fix: thứ gì đó
 
 Closes #315"
 rc=$(gate 26)
-[ "$rc" = 11 ] && grep -q 'a commit on issue-26-x closes #315' "$TMP/gate26.out" && ! grep -q 'pr merge' "$TMP/calls" \
-  && ok "F: commit trên nhánh Closes thẻ lạ (message squash) → exit 11" || fail "F: rc=$rc out=$(tail -2 "$TMP/gate26.out")"
+# Commit đã push không sửa được nếu không viết lại lịch sử: gate không trả về Build (sẽ lặp) mà tự đổi sang Refs.
+[ "$rc" = 0 ] && grep -q 'pr merge 26.*--body-file' "$TMP/calls" && grep -q '^Refs #315$' "$TMP/merge26.msg" \
+  && ! grep -qi 'closes #315' "$TMP/merge26.msg" \
+  && ok "F: commit Closes thẻ lạ → merge với message squash 'Refs #315', không exit 11 lặp" \
+  || fail "F: rc=$rc msg=$(cat "$TMP/merge26.msg" 2>/dev/null) err=$(tail -2 "$TMP/gate26.err")"
 
 [ "$FAILS" -eq 0 ] && { echo "merge gate ac-check: all checks passed"; exit 0; }
 echo "merge gate ac-check: $FAILS FAILED"; exit 1

@@ -31,6 +31,15 @@ INDIRECT = re.compile(r"\bAC\s+(?:của|of)\s+(?:(?:các\s+)?(?:thẻ|cards?|iss
 CARD_REF = re.compile(r"#(\d+)")
 
 
+FENCE_BLOCK = re.compile(r"^[ \t]*```.*?^[ \t]*```[^\n]*$", re.S | re.M)
+CODE_SPAN = re.compile(r"`[^`\n]*`")
+
+
+def prose(text):
+    """Văn bản không có code fence và code span: GitHub không đóng issue theo từ khoá nằm trong code."""
+    return CODE_SPAN.sub("", FENCE_BLOCK.sub("", text or ""))
+
+
 def read(path):
     if not path:
         return ""
@@ -67,7 +76,7 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=()):
     if not card:
         return {"skip": True, "reason": "branch carries no issue-<N>"}
     card = int(card.group(1))
-    closes = {int(n) for _, n in CLOSES.findall((pr_body or "") + "\n" + (msg or ""))}
+    closes = {int(n) for _, n in CLOSES.findall(prose(pr_body) + "\n" + prose(msg))}
     out = {"skip": False, "card": card, "foreign_closes": sorted(closes - {card}), "closes_own": card in closes}
     m = AC_BLOCK.search(pr_body or "")
     out["ac"] = bool(m)
@@ -83,7 +92,7 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=()):
     by_card = dict(extra_bodies or {})
     direct = [it for it in items if not INDIRECT.search(it)]
     issue_ac = max(len(items), len(direct) + sum(max(1, len(ac_items(by_card.get(x, "")))) for x in indirect))
-    pr_ac = [c for c in map(CHECKBOX.match, m.group(1).splitlines()) if c]
+    pr_ac = [c for c in map(CHECKBOX.match, FENCE_BLOCK.sub("", m.group(1)).splitlines()) if c]
     out.update({
         "issue_ac": issue_ac,
         "pr_ac": len(pr_ac),
@@ -94,9 +103,11 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=()):
     return out
 
 
-def rewrite_closes(path, card):
+def rewrite_closes(path, card, foreign=False):
+    """Đổi từ khoá đóng #card thành `Refs` (foreign=True: đổi mọi thẻ KHÁC #card, giữ Closes của chính thẻ)."""
     text = read(path)
-    new = CLOSES.sub(lambda m: f"Refs {m.group(1) or ''}#{m.group(2)}" if int(m.group(2)) == card else m.group(0), text)
+    new = CLOSES.sub(lambda m: f"Refs {m.group(1) or ''}#{m.group(2)}" if (int(m.group(2)) != card) == foreign else m.group(0),
+                     text)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(new)
     return new != text
@@ -112,11 +123,12 @@ def main():
     ap.add_argument("--branch", default="")
     ap.add_argument("--rewrite-closes")
     ap.add_argument("--card", type=int)
+    ap.add_argument("--foreign", action="store_true", help="with --rewrite-closes: rewrite every card but --card")
     a = ap.parse_args()
     if a.rewrite_closes:
         if a.card is None:
             ap.error("--rewrite-closes needs --card")
-        print("rewritten" if rewrite_closes(a.rewrite_closes, a.card) else "unchanged")
+        print("rewritten" if rewrite_closes(a.rewrite_closes, a.card, a.foreign) else "unchanged")
         return 0
     extra = {}
     for spec in a.extra_issue_body:

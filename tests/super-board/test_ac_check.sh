@@ -96,6 +96,17 @@ out=$(python3 "$AC" --issue-body "$T/i320.md" --pr-body "$T/num.md" --branch iss
   && [ "$(printf '%s' "$out" | field unticked)" = '["b"]' ] \
   && ok "chỉ #315 là thẻ tham chiếu; sb:ac '1. [x]' / '2) [ ]' được đếm" || fail "refs/numbered: $out"
 
+# Từ khoá trong code span / code fence không đóng issue trên GitHub: không phải foreign_closes. Dòng "- [ ]" trong fence của
+# khối sb:ac không phải dòng AC.
+printf 'Quy ước: viết `Closes #315` trong PR.\n```\nCloses #318\n```\n<!-- sb:ac -->\n- [x] a\n```\n- [ ] ví dụ\n```\n<!-- /sb:ac -->\n' > "$T/code.md"
+out=$(python3 "$AC" --issue-body "$T/i320.md" --pr-body "$T/code.md" --branch issue-320-x)
+[ "$(printf '%s' "$out" | field foreign_closes)" = "[]" ] && [ "$(printf '%s' "$out" | field pr_ac)" = 1 ] \
+  && ok "Closes trong code span/fence bị bỏ qua; '- [ ]' trong fence của sb:ac không đếm" || fail "code: $out"
+printf 'x\n\nCloses #315\nFixes #377\n' > "$T/fmsg.md"
+python3 "$AC" --rewrite-closes "$T/fmsg.md" --card 377 --foreign >/dev/null
+grep -q '^Refs #315$' "$T/fmsg.md" && grep -q '^Fixes #377$' "$T/fmsg.md" && ok "--foreign: đổi thẻ lạ sang Refs, giữ Closes của chính thẻ" \
+  || fail "foreign rewrite: $(cat "$T/fmsg.md")"
+
 # "## …" trong code fence của mục AC không cắt mục AC.
 printf '## Acceptance Criteria\n- [ ] A\n```\n## không phải heading\n- trong fence\n```\n- [ ] B\n## Risk\n- r\n' > "$T/fence.md"
 out=$(python3 "$AC" --issue-body "$T/fence.md" --pr-body "$T/pr343.md" --branch issue-1-x)
