@@ -134,9 +134,9 @@ def read_new(path: Path, offsets: dict, since: float):
     try:
         st = path.stat()
     except OSError:
-        return [], 0.0
+        return [], 0.0, 0
     if not stat.S_ISREG(st.st_mode):
-        return [], 0.0
+        return [], 0.0, 0
     prev = offsets.get(key)
     born = getattr(st, "st_birthtime", None)   # thiếu trường này (docs os.stat_result: chỉ một số nền tảng có) thì không backfill
     if prev is None:
@@ -153,20 +153,22 @@ def read_new(path: Path, offsets: dict, since: float):
         # byte sau offset đã đọc chắc chắn được ghi SAU lần stat trước: mốc là lúc đọc trước, không phải mtime
         # (log ít ghi có mtime cũ hơn nhiều so với lúc đọc)
         start, after = prev["off"], prev.get("read_at", prev.get("mtime", 0.0))
-    start = max(start, st.st_size - MAX_READ)
+    clamped = start < st.st_size - MAX_READ
+    if clamped:
+        start = st.st_size - MAX_READ
     try:
         with open(path, "rb") as f:
             f.seek(start)
             chunk = f.read(st.st_size - start)        # đúng tới kích thước đã stat: phần ghi thêm lúc đọc để lượt sau
     except OSError as e:                              # không quyền đọc / file bị xoay giữa stat và open: bỏ file này,
         print(f"devkit_incident: skip {path}: {e}", file=sys.stderr)   # không mất các file khác của lượt quét
-        return [], 0.0
+        return [], 0.0, 0
     end = chunk.rfind(b"\n") + 1                      # dòng đang ghi dở (chưa có \n) cũng để lượt sau
     offsets[key] = {"ino": st.st_ino, "off": start + end, "mtime": st.st_mtime, "read_at": read_at}
     head = 0
-    if start == st.st_size - MAX_READ and start > 0:  # bị kẹp vào giữa một dòng: bỏ mẩu dòng cụt ở đầu
+    if clamped:                                       # bị kẹp vào giữa một dòng: bỏ mẩu dòng cụt ở đầu
         head = chunk.find(b"\n") + 1
-    return chunk[head:end].decode("utf-8", "replace").splitlines(), after
+    return chunk[head:end].decode("utf-8", "replace").splitlines(), after, start + head   # + byte offset dòng đầu
 
 
 BRANCH = re.compile(r"\bbranch '[^']*'")   # runner: "main checkout is on branch '<x>', not main"
@@ -216,7 +218,7 @@ def classify_tracebacks(lines: list[str]):
                 # có thể mang dữ liệu của repo app (đường dẫn tương đối, giá trị, tên khoá).
                 exc = em.group(1).split(":")[0]
                 frame = frames[-1] if frames else "?"
-                out.append(("traceback", f"Python {exc} trong {frame}", 1, f"{frame} {exc}",
+                out.append(("traceback", f"Python {exc} trong {frame}", 1, f"{frame} {exc}", i,
                             "Traceback: " + " → ".join(frames[-8:]) + f" → {exc}"))
                 found = True
                 break
@@ -250,7 +252,7 @@ SEEN_MAX = 2000                                    # dấu vân tay dòng đã �
 
 
 def record(incidents: dict, fp: str, rule: str, title: str, min_count: int, repo: Path, src: Path, evidence: str,
-           after: float, raw_line: str = "") -> None:
+           after: float, raw_line: str = "", pos: int = -1) -> None:
     """after = mốc mà lần gặp này chắc chắn được GHI sau (lúc đọc trước của file): so với lúc thẻ đóng.
     Dòng có dấu thời gian của runner/watchdog ("[HH:MM:SS] …") là một sự kiện duy nhất: đã thấy thì bỏ qua — manifest do git
     theo dõi được checkout / ff ghi lại (inode mới, đọc lại từ đầu) mà không được đếm lại hay mở thẻ hồi quy giả."""
@@ -261,9 +263,11 @@ def record(incidents: dict, fp: str, rule: str, title: str, min_count: int, repo
     if raw_line and (stamped or src.parent.name == "runs"):
         # ponytail: manifest chỉ in giờ, không in ngày — cùng câu đúng cùng giây ở hai ngày khác nhau của MỘT repo bị coi là
         # một lần gặp; thêm ngày (tên manifest) vào khoá khi thấy hồi quy bị bỏ sót vì vậy.
-        # Dòng KHÔNG dấu thời gian trong manifest (stderr runner ghi thẳng vào): khoá gồm tên manifest (một file mỗi ngày), nên
-        # git checkout về bản cũ / ghi lại không đếm lại; cùng lỗi nguyên văn lặp trong CÙNG một ngày chỉ đếm một lần.
-        uid = hashlib.sha1(f"{repo.name}|{'' if stamped else src.name}|{raw_line.strip()}".encode()).hexdigest()[:12]
+        # Dòng KHÔNG dấu thời gian trong manifest (stderr runner ghi thẳng vào): khoá = tên manifest + VỊ TRÍ BYTE của dòng —
+        # git checkout / ghi lại cùng nội dung giữ nguyên vị trí (không đếm lại), lỗi nguyên văn ghi thêm sau đó nằm ở vị trí
+        # mới (vẫn là một lần gặp, kể cả hồi quy sau khi thẻ đóng trong cùng ngày).
+        key = f"{repo.name}|{raw_line.strip()}" if stamped else f"{repo.name}|{src.name}|{pos}|{raw_line.strip()}"
+        uid = hashlib.sha1(key.encode()).hexdigest()[:12]
         if uid in inc.setdefault("seen", []):
             return
         inc["seen"] = (inc["seen"] + [uid])[-SEEN_MAX:]
@@ -449,16 +453,20 @@ def scan(quiet: bool) -> int:
         since = data.setdefault("since", time.time())   # lần quét đầu tiên của máy: mốc "file có từ trước"
         for repo in repos():
             for path, kind in log_files(repo):
-                lines, after = read_new(path, data["offsets"], since)
-                for rid, title, mc, key, ev in classify_tracebacks(lines):
-                    record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev, after, ev)
+                lines, after, base = read_new(path, data["offsets"], since)
+                offs, o = [], base                # byte offset của từng dòng: khoá lần gặp của dòng không dấu thời gian
+                for ln in lines:
+                    offs.append(o)
+                    o += len(ln.encode("utf-8")) + 1
+                for rid, title, mc, key, at, ev in classify_tracebacks(lines):
+                    record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev, after, ev, offs[at])
                 if kind == "hook":
                     continue
-                for line in lines:
+                for idx, line in enumerate(lines):
                     hit = classify_board(line) if kind == "board" else classify_shell(line)
                     if hit:
                         rid, title, mc, key, ev = hit   # ev: self-reload bỏ output lệnh thô sau dấu ":" (repo app)
-                        record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev.strip(), after, line)
+                        record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev.strip(), after, line, offs[idx])
         data["offsets"] = {k: v for k, v in data["offsets"].items() if Path(k).exists()}   # file log đã xoá: bỏ offset
         save_ledger(home, data)     # offsets trước: GitHub hỏng giữa chừng thì dòng đã đọc vẫn nằm trong spool
         flush(home, data, quiet)

@@ -337,6 +337,14 @@ cat "$TMP/um.bak" > "$UM"                                                       
 FAKE_CLOSED=$SHN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
 [ "$(creates)" = "$n" ] && ok "manifest ghi lại / cắt ngắn: dòng không dấu thời gian không bị đếm lại" \
   || fail "manifest ghi lại sinh thẻ hồi quy giả cho dòng không dấu thời gian: create=$(creates) (trước $n)"
+FAKE_CLOSED=$TBN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+[ "$(creates)" = "$n" ] && ok "cắt ngắn: Traceback cũ không bị đếm lại" || fail "cắt ngắn: Traceback cũ thành thẻ hồi quy giả: create=$(creates)"
+# … nhưng CÙNG lỗi nguyên văn quay lại trong CÙNG ngày (ghi thêm vào cùng manifest) sau lúc đóng thẻ = hồi quy thật.
+cat "$TMP/um.bak" >> "$UM"
+FAKE_CLOSED=$SHN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+FAKE_CLOSED=$TBN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+[ "$(creates)" = $((n + 2)) ] && ok "lỗi nguyên văn quay lại cùng ngày sau khi đóng → thẻ hồi quy (shell + Traceback)" \
+  || fail "lỗi quay lại cùng ngày bị bỏ sót: create=$(creates) (kỳ vọng $((n + 2)))"
 
 # 14. Mỗi sự cố một thẻ riêng (--new-card): không gom vào thẻ bug khác.
 grep '"issue", "create"' "$FAKE_LOG" >/dev/null && python3 - "$FAKE_LOG" <<'PY' && ok "--new-card: không gom vào thẻ khác" || fail "thiếu --new-card"
