@@ -1150,6 +1150,13 @@ def suite_cacheable(test):
     return mod.cacheable(test, bool(DEVICE_SUITE.search((test or {}).get("command") or "")))
 
 
+def suite_keyable(test):
+    """Được tính khoá cho suite ĐÃ ĐƯỢC CHỌN (cacheable, hay run_impacted.sh chuẩn của DevKit: theo khoá cả cây + tập chọn). Phần cached-full
+    thêm vào vẫn chỉ dùng suite_cacheable: suite chọn theo lịch sử git không vào đó."""
+    mod = suite_cache_mod()
+    return suite_cacheable(test)[0] or bool(mod is not None and mod.selection_keyable(test or {}))
+
+
 def suite_cache_for(project_dir, rules, matrix_path, covers):
     """SuiteCache của project_dir dựng y như lượt gate (cùng local_state_sha, RESULT_FORMAT, biến môi trường chọn test): khoá của
     stale_rerun.run_one (nightly) trùng khoá của gate. None khi tắt (DEVKIT_SUITE_CACHE=0) hoặc không dựng được."""
@@ -5755,7 +5762,7 @@ def main():
     if sc is not None:
         for t in regression_tests:
             src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t)   # "cache": false
-            if t.get("command") and not t.get("matrix_added") and suite_cacheable(src)[0]:
+            if t.get("command") and not t.get("matrix_added") and suite_keyable(src):
                 try:
                     KEYS[id(t)] = sc.keys(t)
                 except Exception as e:   # noqa: BLE001 - khoá không tính được: suite này chạy
@@ -6152,6 +6159,9 @@ def main():
             if void_due and id(t) not in recorded:
                 void_suite()   # không ghi được khoá nào: không có gì giữ FAIL này lại (đã ghi ở lần gọi trước thì FAIL đó đang giữ nó)
             return
+        if st == "PASS" and suite_cache_mod().DIFF_DEPENDENT.search(t.get("full_command") or t.get("command") or "") \
+                and any(x is not t and x.get("status") not in ("PASS", "NOT_RUN") for x in regression_tests):
+            return   # run_impacted.sh bỏ qua script của suite đã chạy trước nó (DEVKIT_GATE_DONE): PASS của nó chỉ đáng ghi khi các suite đó cũng PASS
         recorded.add(id(t))
         meta = {"duration": t.get("duration"), "log": t.get("log"), "project": os.path.basename(str(project_dir))[:64],
                 "head": _head_sha(project_dir), "inputs_n": sc.inputs.get(t.get("id"))}
@@ -6450,7 +6460,7 @@ def main():
             for t in failed if sc is not None else ():
                 full_t = dict(t, command=t.get("full_command") or t.get("command"))   # lệnh của ma trận, không phải lệnh thu hẹp
                 src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == full_t["command"]), full_t)
-                if suite_cacheable(src)[0]:
+                if suite_keyable(src):
                     try:
                         KEYS[id(t)] = sc.keys(full_t)
                     except Exception as e:   # noqa: BLE001 - khoá không tính được: FAIL này không vào sổ
