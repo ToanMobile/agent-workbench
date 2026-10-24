@@ -54,7 +54,10 @@ gh_write_once() {
     local verify=() spec=""
     [ -z "$token" ] || spec=$(jq -nc --argjson n "$3" --arg m "$token" '{kind:"comment",issue:$n,marker:$m}' 2>/dev/null) || spec=""
     [ -z "$spec" ] || verify=(--verify "$spec")
-    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 || true
+    # --halt exits 79 (HALTED) once its record is saved; any other code means the record is not on disk.
+    local hrc=0
+    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 || hrc=$?
+    [ "$hrc" -eq 79 ] || { log "halt record NOT written for the uncertain GitHub $1 $2 write (github-read rc=$hrc): exiting 76, the watchdog will not restart it blind"; exit 76; }
     exit 79
   }
 }
@@ -2123,9 +2126,9 @@ EOF
 # đích) · stopped (người dùng dừng: có stop marker <slug>.stopped của super-board-stop.sh). Watchdog chỉ khởi động lại
 # running/crashed khi không có marker.
 # Mã dừng có chủ đích sau khi trap EXIT được đặt: 9 verification-ready (mỗi tick) · 10 skills-readiness · 73 worker mồ
-# côi / worktree cũ / runner khác còn sống · 74 wave lock · 75 guard production-merge · 79 GitHub halt. 64 không có ở đây:
+# côi / worktree cũ / runner khác còn sống · 74 wave lock · 75 guard production-merge · 76 GitHub halt whose record could not be written (never restarted: the uncertain write needs a person) · 79 GitHub halt. 64 không có ở đây:
 # nó cũng là lỗi đọc của github-read (payload sai dạng 3 lần), thường tạm thời, nên watchdog thử lại có backoff và trần.
-RUNNER_HALT_CODES=" 9 10 73 74 75 79 "
+RUNNER_HALT_CODES=" 9 10 73 74 75 76 79 "
 # Môi trường runner trả lại khi watchdog khởi động lại (toolchain + cấu hình pool/account). Token và secret cố ý không
 # ghi xuống đĩa: gh và claude đọc chúng từ keychain, mà launchd agent trong phiên GUI của người dùng vẫn đọc được.
 RUNNER_ENV_KEYS="PATH JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT SB_ACCOUNT_POOL SB_STATE_DIR CLAUDE_CONFIG_DIR DEVKIT_LANG"
@@ -2272,7 +2275,7 @@ fi
 # check_halt, and the next runner adopts the survivors as after a crash. Killing them lost the work done mid-lane.
 halt_cleanup() {
   local rc=$?
-  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ]; then
+  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || [ "$rc" -eq 76 ]; then   # 76: no halt record on disk, so workers cannot see a halt: stop them here
     for pid in $(own_lane_pids); do
       kill -TERM "$pid" 2>/dev/null || true
     done
