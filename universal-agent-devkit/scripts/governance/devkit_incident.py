@@ -6,7 +6,10 @@ Script board ở repo app là bản COPY (.claude/bin), còn kit là symlink (.a
 chỉ ĐỌC những gì board đã ghi, không sửa repo app:
   a. docs/super-board/runs/*.md            manifest của runner (log() tee vào đây)
   b. .claude/super-board/runner/*.watchdog.log
-  c. .claude/audit-gate/*.log              chỉ Traceback (hook / gate của kit vỡ)
+  c. docs/super-board/runner.log, runner/*.start.log, runner/*.watchdog.launchd.log   stderr runner/watchdog: Traceback + lỗi shell
+  d. .claude/audit-gate/*.log              chỉ Traceback (hook / gate của kit vỡ)
+Lên issue (repo PUBLIC) chỉ có bằng chứng đã che: secret, đường dẫn tuyệt đối, tên nhánh, link/số thẻ repo app, chữ của worker
+sau "last log line:", output lệnh thô của self-reload; Traceback chỉ mang tên file:hàm từng frame + loại exception.
 Mỗi file chỉ đọc phần MỚI (offset trong ledger); lần đầu thấy một file thì bắt đầu ở cuối file (không báo lại lỗi cũ).
 Mỗi dòng khớp một luật trong RULES thành một sự cố có chữ ký (luật + văn bản đã bỏ số, sha, đường dẫn; KHÔNG gồm tên
 repo: cùng lỗi ở nhiều repo là một thẻ). Sự cố nằm trong spool của ledger tới khi lên được GitHub; chữ ký đã có thẻ mở
@@ -141,8 +144,11 @@ def read_new(path: Path, offsets: dict, since: float):
         # SAU đó (manifest ngày mới, log hook mới) thì đọc từ đầu, không bỏ lỡ lỗi ghi trước lượt quét kế tiếp.
         start = 0 if born is not None and born >= since else st.st_size
         after = born or 0.0
-    elif prev.get("ino") != st.st_ino or prev.get("off", 0) > st.st_size:
-        start, after = 0, born or 0.0                 # file bị thay / cắt: đọc lại từ đầu
+    elif prev.get("ino") != st.st_ino:
+        start, after = 0, born or 0.0                 # file bị thay (inode mới): đọc lại từ đầu
+    elif prev.get("off", 0) > st.st_size:
+        # cắt ngắn tại chỗ (ghi lại bằng `>`): mọi byte hiện có được ghi sau lần đọc trước
+        start, after = 0, prev.get("read_at", prev.get("mtime", 0.0))
     else:
         # byte sau offset đã đọc chắc chắn được ghi SAU lần stat trước: mốc là lúc đọc trước, không phải mtime
         # (log ít ghi có mtime cũ hơn nhiều so với lúc đọc)
@@ -182,7 +188,11 @@ def classify_board(line: str):
 
 
 def classify_shell(line: str):
-    """stderr của runner / watchdog: chỉ lỗi shell (lời runner đã nằm trong manifest, đọc ở đó, không đếm đôi)."""
+    """stderr của runner / watchdog: chỉ lỗi shell. Dòng log() có dấu thời gian của runner (tee ra stdout nên cũng vào
+    runner.log) đã đọc ở manifest — bỏ, không đếm đôi và không quét phần "last log line:" của worker trong nó."""
+    if STAMPED.match(line):
+        return None
+    line = line.split("last log line:", 1)[0]
     rid, rx, title, min_count, group = next(r for r in RULES if r[0] == "shell-error")
     m = rx.search(line)
     return (rid, title.format(*(g or "" for g in m.groups())), min_count, m.group(group), m.group(0)) if m else None
@@ -286,11 +296,11 @@ EXTRA_SECRETS = [
     (re.compile(r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTHORIZATION)[A-Z0-9_]*)(['\"]?\s*[=:]\s*)"
                 r"(?:\"[^\"\n]*\"?|'[^'\n]*'?|(?:(?:bearer|token|basic)\s+)?[^\s'\",}]+)"), r"\1\2«redacted»"),
     # runner (ready_card_held) giữ thẻ nêu thẻ / PR của repo khác: chỉ giữ tên ngắn, bỏ owner và số
-    (re.compile(r"(?i)https?://github\.com/(?!toanmobile/agent-workbench\b)[\w.-]+/([\w.-]+)/\S*"), r"«\1 link»"),
+    (re.compile(r"(?i)(?:https?://)?github\.com/(?!toanmobile/agent-workbench\b)[\w.-]+/([\w.-]+)/\S*"), r"«\1 link»"),
     (re.compile(r"(?i)\b(?!toanmobile/agent-workbench#)[\w.-]+/([\w.-]+)#\d+"), r"«\1 issue»"),
     (re.compile(r"\b(gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[A-Za-z0-9_\-]{6,}"), r"\1«redacted»"),
     (re.compile(r"(?i)\b(bearer)\s+\S+"), r"\1 «redacted»"),
-    (re.compile(r"://[^/\s:@]+:[^/\s@]+@"), "://«redacted»@"),
+    (re.compile(r"://[^/\s:@]+:[^/\s]*@"), "://«redacted»@"),   # tới '@' CUỐI trước host: mật khẩu có '@' không lọt
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(-----END [A-Z ]*PRIVATE KEY-----|$)", re.S), "«redacted key»"),
     (re.compile(r"(?:/Volumes|/Users|/home|/private|/var|/tmp)(?:/[^\s\"'`:,)]+)+"), "«path»"),
     (re.compile(r"(last log line:).*"), r"\1 «bỏ — nội dung repo private»"),

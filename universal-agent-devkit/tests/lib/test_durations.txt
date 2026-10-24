@@ -398,3 +398,5 @@
 5 tests/gates/test_suite_cache_store_fifo.sh
 # 2026-10-25: T0055 devkit_incident (lỗi do kit ở board 5 repo thành thẻ); đo 12 s.
 12 tests/verification/test_devkit_incident.sh
+# 2026-10-25: T0055 devkit_incident (lỗi do kit ở board 5 repo thành thẻ); đo 31 s.
+31 tests/verification/test_devkit_incident.sh
