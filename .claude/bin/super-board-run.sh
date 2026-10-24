@@ -359,7 +359,7 @@ project_node_id() {
 issue_is_open() {
   # $1 = issue number. Returns 0 when OPEN, 1 when CLOSED.
   # Unreadable is distinct from both OPEN and CLOSED: exit 79 halts the run.
-  local state reason
+  local state reason raw
   state=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind state -- issue view "$1" --json state -q '.state') || return 79
   [ "$state" = "CLOSED" ] || return 0
   # T0054: thẻ mang nhãn ac-open đã merge một PR nhưng còn AC chưa chứng minh (merge gate gắn nhãn). Worker vẫn có thể
@@ -371,8 +371,10 @@ issue_is_open() {
     || return 1
   # Snapshot có thể cũ: merge gate gỡ nhãn ngay trước khi merge đủ AC rồi Closes đóng thẻ. Đọc nhãn + lý do đóng trực tiếp;
   # nhãn đã gỡ thì CLOSED như thường. Không đọc được: không mở lại (có thể người đã bỏ thẻ) nhưng cũng không đưa vào Done.
-  if ! reason=$(gh issue view "$1" --json stateReason,labels \
-       -q '(.stateReason // "") + " " + ([.labels[].name | ascii_downcase] | join(","))' 2>/dev/null); then
+  # #319 (T0054): through the bounded github-read helper (not STRICT: a shape error must not halt the board for this optional read), the
+  # read failure below is still "not reopened, kept out of Done".
+  if ! raw=$(python3 "$SB_GITHUB_READ" --kind json -- issue view "$1" --json stateReason,labels 2>/dev/null) \
+     || ! reason=$(printf '%s' "$raw" | jq -r '(.stateReason // "") + " " + ([.labels[].name | ascii_downcase] | join(","))' 2>/dev/null); then
     log "⚠ #$1 closed with label ac-open; close reason unreadable — not reopened, kept out of Done this tick"
     return 0
   fi

@@ -39,7 +39,7 @@ count >> "$RUN_LOG"
 sleep 0.3
 count >> "$RUN_LOG"
 rmdir "$CONC_DIR/$$"
-printf '{"status":"blocked","column":"QA","detail":"t"}\n'
+if [ -n "${LANE_RESULT:-}" ]; then printf '%s\n' "$LANE_RESULT"; else printf '{"status":"blocked","column":"QA","detail":"t"}\n'; fi
 SH
 mk_cap() { printf '#!/bin/sh\n%s\n' "$2" > "$TMP/caps/$1"; chmod +x "$TMP/caps/$1"; }
 mk_cap two 'echo 2'
@@ -125,5 +125,20 @@ g="$(SB_REPO_PATH="$TMP/wrap" DEVKIT_CAPACITY_CORES=12 python3 "$WRAP" build_wor
 # max_workers sai vẫn bị từ chối như cũ (exit 2 của argparse)
 wave '"x"' SB_CAPACITY="$TMP/caps/two"
 [ "$RC" = 2 ] && grep -q 'max_workers must be a non-negative integer' "$TMP/err.$RUN_N" && ok "max_workers sai vẫn bị từ chối (exit 2)" || fail "max_workers sai: rc=$RC err=$ERR"
+
+# T0054 (#319): review lane ends "advanced" in Ready only when detail carries `ac-open: #<this card>`; otherwise the claim fails.
+ac_open() { # ac_open <card> <detail> → history status / column of the card
+  local saved="$CARDS" res
+  CARDS="[{\"number\":$1,\"status\":\"Review\"}]"
+  res=$(printf '{"status":"advanced","column":"Ready","detail":"%s"}' "$2")
+  wave 1 EXPECT=1 SB_CAPACITY="$TMP/caps/two" LANE_RESULT="$res"
+  CARDS="$saved"
+}
+ac_open 12 'merge ok; ac-open: #12'
+grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && fail "ac-open advanced: rejected: $(cat "$TMP/out.$RUN_N" | head -c 300)" || ok "ac-open: #12 on card 12 → advanced to Ready"
+ac_open 12 'merge ok, no marker line'
+grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && ok "no ac-open line → failed (advanced without reaching Done)" || fail "missing line accepted: $(head -c 300 "$TMP/out.$RUN_N")"
+ac_open 12 'merge ok; ac-open: #123'
+grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && ok "ac-open: #123 for card 12 → failed (number prefix is not a match)" || fail "wrong number accepted: $(head -c 300 "$TMP/out.$RUN_N")"
 
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }

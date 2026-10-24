@@ -819,10 +819,40 @@ def _has_gate_flag(words):
 def _invokes_gate_words(words):
     return any(_argv0(w) == "post-fix-gate.py" for w in words) and _has_gate_flag(words)
 
+# File kit chạy thẳng bằng bash/sh: tests/**/test_*.sh hoặc hooks/tests/*.sh.
+# bash -c và cat không phải lần chạy (issue #74). ponytail: vòng for vẫn cần dòng tóm tắt.
+_KIT_BASH_FILE = re.compile(
+    r"(?:^|/)(?:tests(?:/[\w.-]+)*/test_[\w.-]+\.sh|hooks/tests/[\w.-]+\.sh)$")
+
+def _bash_runs_command_string(words):
+    """True when bash/sh does not run the file as a test: -c (command string) or -n/--noexec (syntax check only, exit 0)."""
+    for w in words[1:]:
+        if w == "--":
+            break
+        if w == "--noexec" or w == "noexec":
+            return True
+        if w == "-c" or (w.startswith("-") and not w.startswith("--") and ("c" in w[1:] or "n" in w[1:])):
+            return True
+    return False
+
+def _direct_bash_kit(seg):
+    words = _strip_assigns(_words(seg))
+    if len(words) < 2 or _argv0(words[0]) not in ("bash", "sh"):
+        return False
+    if _bash_runs_command_string(words):
+        return False
+    # | và & làm exit của tool không còn là exit của file test (; && || đã tách segment).
+    if any(w in ("|", "|&", "&") for w in words):
+        return False
+    script = next((w for w in words[1:] if not w.startswith("-")), "")
+    return bool(_KIT_BASH_FILE.search(script))
+
 def _simple_runner(seg):
     words = _strip_assigns(_words(seg))
     if not words or _is_reader(words) or _is_python_c(words):
         return False
+    if _direct_bash_kit(seg):
+        return True
     if TEST_RUNNER_RX.search(seg) or SCRIPT_RUNNER_RX.search(seg) or GATE_RUN_RX.search(seg) or _invokes_gate_words(words):
         return True
     return any(c in seg for c in MATRIX_CMDS)
@@ -858,8 +888,24 @@ def _is_test_runner(cmd):
 def _command_invokes_gate(cmd):
     return any(_segment_invokes_gate(seg) for seg in _command_segments(cmd))
 
+def _command_is_direct_bash_kit(cmd):
+    segs = [s for s in _command_segments(cmd) if s.strip()]
+    # Một segment: exit của tool là exit của file. ; true / || true không được tính xanh.
+    return len(segs) == 1 and _direct_bash_kit(segs[0])
+
+_HOOKS_TESTS_FILE = re.compile(r"(?:^|/)hooks/tests/[\w.-]+\.sh$")
+
+def _direct_hooks_tests(seg):
+    """hooks/tests/*.sh chạy thẳng. tests/** đã là suite hoặc script runner, không phân loại lại."""
+    words = _strip_assigns(_words(seg))
+    if len(words) < 2 or _argv0(words[0]) not in ("bash", "sh") or _bash_runs_command_string(words):
+        return False
+    script = next((w for w in words[1:] if not w.startswith("-")), "")
+    return bool(_HOOKS_TESTS_FILE.search(script.replace("\\", "/")))
+
 def _command_is_suite(cmd):
-    return any(_segment_is_runner(seg) and DEVKIT_SUITE_RX.search(seg) for seg in _command_segments(cmd))
+    return any(_segment_is_runner(seg) and (DEVKIT_SUITE_RX.search(seg) or _direct_hooks_tests(seg))
+               for seg in _command_segments(cmd))
 # Failure markers. Counts only when non-zero ("fail 0", "0 failed" are green), and the
 # bare words only in the capitals runners print (FAIL, FAILED, ERROR) — a passing test
 # named "shows error message" or node's "ℹ fail 0" summary must not read as red.
@@ -890,7 +936,12 @@ def runner_state(is_error, txt, pm_run=False, command=""):
     if command and _command_is_suite(command):
         if is_error or DEVKIT_SUITE_RED.search(txt):
             return "red"
-        return "green" if DEVKIT_SUITE_GREEN.search(txt) else None
+        if DEVKIT_SUITE_GREEN.search(txt):
+            return "green"
+        # Exit 0 của tool là xanh khi bash/sh chạy thẳng file kit, dù không có "all passed".
+        if not is_error and _command_is_direct_bash_kit(command):
+            return "green"
+        return None
     if pm_run:
         codes = PM_RUN_EXIT_RX.findall(txt)
         if not codes:
