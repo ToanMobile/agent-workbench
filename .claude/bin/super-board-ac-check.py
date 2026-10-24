@@ -76,7 +76,8 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=()):
     if not card:
         return {"skip": True, "reason": "branch carries no issue-<N>"}
     card = int(card.group(1))
-    closes = {int(n) for _, n in CLOSES.findall(prose(pr_body) + "\n" + prose(msg))}
+    # Body PR là Markdown: từ khoá trong code không đóng issue. Message commit là văn bản thô: mọi từ khoá đều tính.
+    closes = {int(n) for _, n in CLOSES.findall(prose(pr_body) + "\n" + (msg or ""))}
     out = {"skip": False, "card": card, "foreign_closes": sorted(closes - {card}), "closes_own": card in closes}
     m = AC_BLOCK.search(pr_body or "")
     out["ac"] = bool(m)

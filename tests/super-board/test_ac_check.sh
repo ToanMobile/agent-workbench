@@ -102,6 +102,9 @@ printf 'Quy ước: viết `Closes #315` trong PR.\n```\nCloses #318\n```\n<!-- 
 out=$(python3 "$AC" --issue-body "$T/i320.md" --pr-body "$T/code.md" --branch issue-320-x)
 [ "$(printf '%s' "$out" | field foreign_closes)" = "[]" ] && [ "$(printf '%s' "$out" | field pr_ac)" = 1 ] \
   && ok "Closes trong code span/fence bị bỏ qua; '- [ ]' trong fence của sb:ac không đếm" || fail "code: $out"
+printf 'x\n\n```\nCloses #315\n```\n' > "$T/cmsg.md"   # message commit là văn bản thô: ``` không che từ khoá
+out=$(python3 "$AC" --pr-body "$T/code.md" --msg "$T/cmsg.md" --branch issue-320-x)
+[ "$(printf '%s' "$out" | field foreign_closes)" = "[315]" ] && ok "message commit: từ khoá trong \`\`\` vẫn tính (văn bản thô)" || fail "commit fence: $out"
 printf 'x\n\nCloses #315\nFixes #377\n' > "$T/fmsg.md"
 python3 "$AC" --rewrite-closes "$T/fmsg.md" --card 377 --foreign >/dev/null
 grep -q '^Refs #315$' "$T/fmsg.md" && grep -q '^Fixes #377$' "$T/fmsg.md" && ok "--foreign: đổi thẻ lạ sang Refs, giữ Closes của chính thẻ" \
