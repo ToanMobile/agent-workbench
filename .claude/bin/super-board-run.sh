@@ -979,7 +979,16 @@ preflight_gate() {
   inf=$(mktemp "${TMPDIR:-/tmp}/sb-inflight.XXXXXX")
   printf '%s' "$PROJECT_ITEMS_JSON" | jq -c '[.items[] | select(.status == "Building" or .status == "QA" or .status == "Review" or .status == "Ready")
     | {number: .content.number, title: (.content.title // ""), status: .status}]' > "$inf" 2>/dev/null || echo '[]' > "$inf"
-  out=$(bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" 2>>"$RUN_MANIFEST") || rc=$?
+  # The board's own merge line cap: 0 means one card is one PR whatever its size, so preflight never asks to split it.
+  # Read it like super-board-merge-policy.py: unset → 400, else a whole number, and any value <= 0 is "no cap".
+  # A value the merge policy cannot read (a word) falls back to 400 here; the merge gate then sends that PR to a human.
+  local cap; cap=$(jq -r '.merge_policy.auto_max_lines as $c
+    | if $c == null then 400 elif $c == false then 0 elif $c == true then 1
+      elif ($c | type) == "number" then ($c | floor)
+      elif ($c | type) == "string" and ($c | test("^\\s*[-+]?[0-9]+\\s*$")) then ($c | gsub("\\s"; "") | tonumber)
+      else 400 end
+    | if . <= 0 then 0 elif . > 1000000000 then 1000000000 else . end' "$CONFIG_PATH" 2>/dev/null) || cap=400
+  out=$(bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" --cap "${cap:-400}" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$inf"
   if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
   if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
@@ -2004,6 +2013,32 @@ Next: ${next} (next tick)" >/dev/null 2>&1 || true
     moved=0
   done <<EOF
 $(printf '%s' "$plan" | jq -r '.sweep[]? | [(.number | tostring), ((.clearedBy // []) | unique | map("#" + tostring) | join(", "))] | @tsv' 2>/dev/null)
+EOF
+  # 24/10 (#321): `resume` = a 🙋 card whose current-head request a trusted human answered `done` (super-board-approval.py,
+  # verified by the deps helper). Only the workflow backend read it, so the legacy runner never acted on an approval and
+  # #321 sat Blocked ~18 h. Back to Review, where the Reviewer re-checks the approval at the merge gate. Once per card.
+  local akey why
+  while IFS=$'\t' read -r issue akey why; do
+    [ -n "$issue" ] || continue
+    key="${issue}:resume:${akey:-none}"   # one move per approval (head + request id): a later approval moves it again
+    if swept_seen "$key"; then continue; fi
+    item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+    [ -n "$item_id" ] || continue
+    if ! set_card_status "$item_id" "Review"; then
+      gh_checkpoint
+      log "⚠ blocked sweep: could not move approved #${issue} to Review"
+      continue
+    fi
+    swept_add "$key"
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Review · approval verified
+Did: super-board-approval.py: ${why:-approval verified}
+✅ Done: card moved Blocked → Review
+Next: reviewer re-checks the approval and merges through the merge gate" >/dev/null 2>&1 || true
+    log "↩ approved #${issue}: Blocked → Review (${why:-approval verified})"
+    moved=0
+  done <<EOF
+$(printf '%s' "$plan" | jq -r '.resume[]? | [(.number | tostring), (if (.key // "") == "" then "none" else .key end), (.why // "")] | @tsv' 2>/dev/null)
 EOF
   return "$moved"
 }

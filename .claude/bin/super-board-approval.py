@@ -168,8 +168,8 @@ class GitHub:
         # Paginate linked issues too: an omitted newer request must never make
         # an older approval authoritative. Remote-repository links are ignored.
         # GitHub fills closingIssuesReferences only for PRs into the default
-        # branch, so a PR into another base takes its body's closing keywords,
-        # read in this same head-pinned snapshot.
+        # branch; the body's closing keywords, read in this same head-pinned
+        # snapshot, are added on every base (see below).
         query = '''query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
           repository(owner:$owner,name:$repo){defaultBranchRef{name}
             pullRequest(number:$pr){headRefOid state baseRefName body
@@ -200,8 +200,9 @@ class GitHub:
         head, base, body, default = snapshots.pop()
         if not all(isinstance(v, str) for v in (head, base, body, default)) or not SHA.fullmatch(head):
             raise ValueError("unreadable PR head, base or body")
-        if base != default:
-            issues |= body_links(body, self.repo)
+        # The body's closing keywords count on every base: GitHub skips one written in a code span (`Closes #N`),
+        # which left #321 approved by a human yet "not linked" forever (24/10). Same head-pinned snapshot, same authors.
+        issues |= body_links(body, self.repo)
         return head, issues
 
     def policy_cleared(self, number, config):
@@ -275,6 +276,8 @@ def main():
                 if request is None or request["repo"] != github.repo:
                     continue
                 result = github.check(request["pr"], head=request["head"], issue=entry["number"])
+                # Identifies THIS approval (head + request comment) so the runner acts on it once, and on a later one again.
+                entry["approvalKey"] = f"{request['head'][:12]}:{latest.get('id', '')}"
                 entry["needsYouDone"] = result["approved"]
                 entry["approvalRefresh"] = result.get("headChanged", False)
                 entry["approvalWhy"] = result["why"]

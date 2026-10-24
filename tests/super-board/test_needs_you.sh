@@ -14,6 +14,7 @@ FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+export SB_GITHUB_HALT_FILE="$TMP/github-halt.json"   # never the real checkout's board halt (24/10: o/r halted the board)
 mkdir -p "$TMP/bin"
 export FAKE_GH_STATE="$TMP/state.json"
 

@@ -1257,6 +1257,21 @@
       ]
     },
     {
+      "component": "super-board-github-read-foreign-halt",
+      "watch_files": [
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_github_read_foreign_halt.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GITHUB-READ-FOREIGN-HALT-01",
+          "name": "github-read: a failed read of ANOTHER repository (test fixture o/r from a worktree) never writes the real board halt; a read of the checkout's own repository, or one naming no repository, still halts",
+          "command": "bash tests/super-board/test_github_read_foreign_halt.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "durations-union-merge",
       "trigger_files": [
         ".gitattributes",
