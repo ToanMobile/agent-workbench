@@ -1547,6 +1547,41 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-ac-proven-before-close",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_ac_check.sh",
+        "tests/super-board/test_merge_gate_ac_check.sh",
+        "tests/super-board/test_card_done_ac_open.sh",
+        "tests/super-board/test_runner_reconcile_ac_open.sh",
+        "tests/super-board/test_preflight_ac_open.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AC-CHECK-01",
+          "name": "ac-check (T0054): đếm mọi dạng mục AC, mở rộng AC gián tiếp 'AC của thẻ #X', bắt AC nén (#318/PR #343), Closes thẻ lạ, dòng chưa tick, đổi Closes → Refs",
+          "command": "bash tests/super-board/test_ac_check.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-GATE-AC-01",
+          "name": "merge gate (T0054): AC nén / Closes thẻ lạ (body, message, commit) → exit 11; còn AC chưa tick → merge nhưng Refs, nhãn ac-open, thẻ về Ready; đủ AC → gỡ nhãn; PR không sb:ac như cũ",
+          "command": "bash tests/super-board/test_merge_gate_ac_check.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-AC-OPEN-NOT-DONE-01",
+          "name": "thẻ ac-open không vào Done (T0054): card.sh move Done exit 5; runner mở lại issue đóng còn ac-open thay vì reconcile Done; preflight không coi là đã giao",
+          "command": "bash tests/super-board/test_card_done_ac_open.sh && bash tests/super-board/test_runner_reconcile_ac_open.sh && bash tests/super-board/test_preflight_ac_open.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

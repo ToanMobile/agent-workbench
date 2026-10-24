@@ -175,7 +175,7 @@ const lanePrompt = (lane, card) => [
     : []),
   ``,
   `Report your exit via structured output:`,
-  `- status=advanced  → card moved forward (Building→QA/Review/Done, QA→Review/Done, Review→Done/merged)`,
+  `- status=advanced  → card moved forward (Building→QA/Review/Done, QA→Review/Done, Review→Done/merged, or Review→Ready when the merge gate printed ac-open: #N — merged with AC still unproven, never close it)`,
   `- status=bounced   → card moved backward (QA fail → Ready, Reviewer bounce → Ready/QA)`,
   `- status=blocked or human-gate → you wrote the Block template and moved the card to Blocked`,
   `- status=halted    → required service evidence or verification configuration is unavailable; leave card state unchanged and stop the run`,

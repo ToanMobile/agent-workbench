@@ -43,6 +43,13 @@ Mỗi thẻ là một PR, một merge-gate và một lần `post-fix-gate --full
 - Rủi ro 🟢 và 🟡 đều gom; chỉ việc 🔴 High, hoặc có `--blocked-by`, mới thành thẻ riêng (24/10: trước đây chỉ 🟢 gom, mà gần
   như mọi thẻ ghi 🟡 nên cơ chế gom không bao giờ chạy).
 - Thẻ đã ở Building / QA / Review / Done không nhận thêm việc: việc mới nhập vào thẻ Backlog khác hoặc mở thẻ mới.
+- **Chỉ gom cùng chủ đề** (T0054, 24/10): thẻ nhận gom phải cùng scope cụ thể trong tiêu đề (`🐛 [fix] gate: …`; scope chung
+  chung `task`/`misc`/`general`/`chore` không tính) hoặc trùng ít nhất một đường dẫn file; tổng mục AC sau gom không vượt `MAX_CARD_AC` (trên).
+  Script tự áp; khác chủ đề thì ra thẻ mới. (#344 cache gate bị gom vào #319 "bằng chứng test" rồi kẹt; #315 ôm 10+ AC, builder
+  làm một phần rồi đóng cả thẻ.)
+- **Gom tay (orchestrator gộp thẻ có sẵn) phải chép AC NGUYÊN VĂN** vào mục `## Acceptance Criteria` của thẻ nhận (giống
+  `merge_body`), rồi mới đóng thẻ nguồn kèm link. Cấm dòng AC kiểu "AC của thẻ #X đạt (xem thẻ đó)": AC ở thẻ khác là AC không
+  ai đếm (merge gate có đọc #X để đếm, nhưng builder vẫn dễ bỏ sót). Cấm gom phần còn lại của một thẻ vào thẻ khác chủ đề.
 
 ---
 
