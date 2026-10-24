@@ -374,3 +374,5 @@
 3 tests/worktree_git/test_worktree_merge_tree_no_leak.sh
 # 2026-10-23: test của b604e3d3 (createTask gom thẻ, #315 #305) cũng thiếu dòng; đo một mình lúc tải ~90 (13.6 s).
 14 tests/verification/test_create_task_batch.sh
+# 2026-10-24: test của #307 (--tree) thiếu dòng sau khi gộp origin/main; đo 31 s lúc tải ~90.
+31 tests/gates/test_gate_tree_mode.sh
