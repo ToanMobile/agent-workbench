@@ -964,6 +964,23 @@ claude_model_for_tier() {
   esac
 }
 
+agent_office_args() {
+  # Agent Office (mcp-servers/agent-office): có bản cài hook hộp thư thì worker claude nhận lệnh người dùng gõ giữa chừng
+  # (hook PostToolUse qua --settings, system prompt mang nonce) và Agent Office biết session id ($1 = log worker).
+  # Không có bản cài hoặc tạo cờ lỗi: AO_ARGS rỗng, worker bật y như cũ.
+  AO_ARGS=(); AO_NONCE=""
+  local hook="$HOME/.agent-office/app/inbox_hook.py" sid nonce settings sys_prompt
+  [ -f "$hook" ] || return 0
+  sid=$(python3 -I -S -c 'import uuid; print(uuid.uuid4())' 2>/dev/null) || return 0
+  nonce=$(python3 -I -S -c 'import uuid; print(uuid.uuid4().hex)' 2>/dev/null) || return 0
+  settings=$(python3 -I -S "$hook" --settings-json 2>/dev/null) || return 0
+  sys_prompt=$(python3 -I -S "$hook" --system-prompt "$nonce" 2>/dev/null) || return 0
+  [ -n "$sid" ] && [ -n "$settings" ] && [ -n "$sys_prompt" ] || return 0
+  AO_ARGS=(--session-id "$sid" --settings "$settings" --append-system-prompt "$sys_prompt")
+  AO_NONCE="$nonce"
+  printf 'agent_office: session_id=%s\n' "$sid" >> "$1" 2>/dev/null || true
+}
+
 preflight_gate() {
   # #253: chạy super-board-preflight.sh TRƯỚC khi nhận thẻ build; trước đây LLM mới chạy nó (09:58Z #200 mới thấy "hold" sau khi
   # đã tốn một lượt). Trả 0 = giao, 1 = không giao (thẻ đã sang Blocked, hoặc còn Ready để thử lại tick sau). Chỉ chặn trên bằng chứng CHÍNH XÁC: PR đã merge / đang mở
@@ -1171,9 +1188,11 @@ EOF
   elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
     nohup "$SB_WORKER_WRAP" "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
-    CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose -p "$prompt" >> "$worker_log" 2>&1 &
+    agent_office_args "$worker_log"
+    AGENT_OFFICE_NONCE="$AO_NONCE" CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
   else
-    nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose -p "$prompt" >> "$worker_log" 2>&1 &
+    agent_office_args "$worker_log"
+    AGENT_OFFICE_NONCE="$AO_NONCE" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose ${AO_ARGS[@]+"${AO_ARGS[@]}"} -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!
   global_slot_register "$pid" "${lane}#${issue}"
