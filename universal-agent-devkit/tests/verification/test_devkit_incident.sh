@@ -318,6 +318,26 @@ print(d.mask("fetch https://bot:p@ss@w0rdZZ@example.com/x.git and github.com/Toa
 case "$masked" in *w0rdZZ*|*ss@*) fail "mật khẩu URL có '@' lọt: $masked" ;; *) ok "URL có mật khẩu chứa '@' được che" ;; esac
 case "$masked" in *OfficeReader/pull/12*) fail "link github.com trần của repo app lọt: $masked" ;; *) ok "link github.com trần được che" ;; esac
 
+# 25. Runner ghi stderr KHÔNG dấu thời gian thẳng vào manifest (lỗi shell, Traceback). Git ghi lại manifest (inode mới) hay
+#     cắt ngắn rồi ghi lại cùng nội dung sau khi thẻ đóng: phần đã đọc không được đếm lại, không thẻ hồi quy giả.
+UM="$B/docs/super-board/runs/2026-10-28-GeelyEx2.md"
+{ echo '.claude/bin/super-board-blocked-by.sh: line 7: jqq: command not found'
+  echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-blocked-by.py", line 2, in scan'
+  echo 'KeyError: x'; } > "$UM"
+scan >/dev/null
+n=$(creates)
+sleep 1; UCLOSED=$(date -u +%Y-%m-%dT%H:%M:%SZ); sleep 1
+cp "$UM" "$TMP/um.bak"; rm -f "$UM"; cat "$TMP/um.bak" > "$UM"; echo '[22:00:00] tick — Ready=0' >> "$UM"   # git: inode mới
+SHN=$(python3 -c 'import json,sys; print(next(i["issue"] for i in json.load(open(sys.argv[1]))["incidents"].values() if i["rule"] == "shell-error" and "jqq" in i["title"]))' "$TMP/home/ledger.json")
+TBN=$(python3 -c 'import json,sys; print(next(i["issue"] for i in json.load(open(sys.argv[1]))["incidents"].values() if "blocked-by.py:scan" in i["title"]))' "$TMP/home/ledger.json")
+FAKE_CLOSED=$SHN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+FAKE_CLOSED=$TBN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+cat "$TMP/um.bak" > "$UM"                                                                            # cắt ngắn tại chỗ, ghi lại
+FAKE_CLOSED=$SHN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+[ "$(creates)" = "$n" ] && ok "manifest ghi lại / cắt ngắn: dòng không dấu thời gian không bị đếm lại" \
+  || fail "manifest ghi lại sinh thẻ hồi quy giả cho dòng không dấu thời gian: create=$(creates) (trước $n)"
+
 # 14. Mỗi sự cố một thẻ riêng (--new-card): không gom vào thẻ bug khác.
 grep '"issue", "create"' "$FAKE_LOG" >/dev/null && python3 - "$FAKE_LOG" <<'PY' && ok "--new-card: không gom vào thẻ khác" || fail "thiếu --new-card"
 import json, sys

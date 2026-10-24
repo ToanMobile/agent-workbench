@@ -145,7 +145,7 @@ def read_new(path: Path, offsets: dict, since: float):
         start = 0 if born is not None and born >= since else st.st_size
         after = born or 0.0
     elif prev.get("ino") != st.st_ino:
-        start, after = 0, born or 0.0                 # file bị thay (inode mới): đọc lại từ đầu
+        start, after = 0, born or 0.0                 # file bị thay (inode mới), nội dung khác: đọc lại từ đầu
     elif prev.get("off", 0) > st.st_size:
         # cắt ngắn tại chỗ (ghi lại bằng `>`): mọi byte hiện có được ghi sau lần đọc trước
         start, after = 0, prev.get("read_at", prev.get("mtime", 0.0))
@@ -257,10 +257,13 @@ def record(incidents: dict, fp: str, rule: str, title: str, min_count: int, repo
     now = int(time.time())
     inc = incidents.setdefault(fp, {"rule": rule, "title": mask(title), "min_count": min_count, "count": 0, "repos": [],
                                     "first": now, "evidence": [], "issue": None, "last_comment": 0, "reported_count": 0})
-    if STAMPED.match(raw_line):
+    stamped = bool(STAMPED.match(raw_line))
+    if raw_line and (stamped or src.parent.name == "runs"):
         # ponytail: manifest chỉ in giờ, không in ngày — cùng câu đúng cùng giây ở hai ngày khác nhau của MỘT repo bị coi là
         # một lần gặp; thêm ngày (tên manifest) vào khoá khi thấy hồi quy bị bỏ sót vì vậy.
-        uid = hashlib.sha1(f"{repo.name}|{raw_line.strip()}".encode()).hexdigest()[:12]
+        # Dòng KHÔNG dấu thời gian trong manifest (stderr runner ghi thẳng vào): khoá gồm tên manifest (một file mỗi ngày), nên
+        # git checkout về bản cũ / ghi lại không đếm lại; cùng lỗi nguyên văn lặp trong CÙNG một ngày chỉ đếm một lần.
+        uid = hashlib.sha1(f"{repo.name}|{'' if stamped else src.name}|{raw_line.strip()}".encode()).hexdigest()[:12]
         if uid in inc.setdefault("seen", []):
             return
         inc["seen"] = (inc["seen"] + [uid])[-SEEN_MAX:]
@@ -448,7 +451,7 @@ def scan(quiet: bool) -> int:
             for path, kind in log_files(repo):
                 lines, after = read_new(path, data["offsets"], since)
                 for rid, title, mc, key, ev in classify_tracebacks(lines):
-                    record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev, after)
+                    record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev, after, ev)
                 if kind == "hook":
                     continue
                 for line in lines:
