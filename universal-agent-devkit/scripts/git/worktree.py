@@ -1436,6 +1436,64 @@ def _branch_reflog_shas(wt):
     return set(r.stdout.split()) if r.returncode == 0 else None
 
 
+def _clean_merges(wt, unheld):
+    """#386: the merge commits among `unheld` (commits no ref and not main holds) that carry nothing of their own: every parent is held
+    (not in `unheld`) or itself such a merge, and `git show --cc` prints no hunk (a conflict resolution or any edit made in the merge
+    would show). Losing one loses no content. Fail closed: over 200 commits, or any git trouble, vouches for none."""
+    if not unheld or len(unheld) > 200:
+        return set()
+    r = git(wt, "rev-list", "--parents", "--no-walk=unsorted", "--stdin", inp="\n".join(sorted(unheld)) + "\n", check=False)
+    if r.returncode != 0:
+        return set()
+    merges = {}
+    for line in r.stdout.splitlines():
+        sha, *parents = line.split()
+        if len(parents) >= 2:
+            merges[sha] = parents
+    for sha in list(merges):
+        shown = git(wt, "show", "--cc", "--format=", "--ignore-submodules=none", sha, check=False)
+        if shown.returncode != 0 or shown.stdout.strip():
+            del merges[sha]
+    ok, grew = set(), True
+    while grew:
+        grew = False
+        for sha, parents in merges.items():
+            if sha not in ok and all(p not in unheld or p in ok for p in parents):
+                ok.add(sha)
+                grew = True
+    return ok
+
+
+def _same_on_origin(wt, paths):
+    """#386: the subset of `paths` whose bytes AND executable bit equal the file at the same path on the tip of some origin branch
+    (remote-tracking, already fetched): that content is on the remote, a removal loses nothing. Only plain files; any trouble: none."""
+    paths = [p for p in paths if "\n" not in p and not p.startswith('"') and os.path.isfile(os.path.join(wt, p)) and not os.path.islink(os.path.join(wt, p))]
+    if not paths or len(paths) > 500:
+        return set()
+    tips = git(wt, "for-each-ref", "--format=%(objectname)", "refs/remotes/origin", check=False)
+    if tips.returncode != 0:
+        return set()
+    h = _git_bytes(wt, "hash-object", "--stdin-paths", inp=("\n".join(paths) + "\n").encode("utf-8", "surrogateescape"))
+    ids = h.stdout.decode("utf-8", "surrogateescape").split()
+    if h.returncode != 0 or len(ids) != len(paths):
+        return set()
+    want = {p: (blob, "100755" if os.stat(os.path.join(wt, p)).st_mode & 0o111 else "100644") for p, blob in zip(paths, ids)}
+    found = set()
+    for tip in dict.fromkeys(tips.stdout.split()):
+        left = [p for p in want if p not in found]
+        if not left:
+            break
+        t = git(wt, "ls-tree", "-z", tip, "--", *left, check=False, env=dict(os.environ, GIT_LITERAL_PATHSPECS="1"))
+        if t.returncode != 0:
+            continue
+        for rec in t.stdout.split("\0"):
+            meta, _, path = rec.partition("\t")
+            parts = meta.split()
+            if path in want and len(parts) == 3 and (want[path][1], want[path][0]) == (parts[0], parts[2]):
+                found.add(path)
+    return found
+
+
 def _is_ancestor(wt, a, b):
     return git(wt, "merge-base", "--is-ancestor", a, b, check=False).returncode == 0   # rc 1 (no) and any trouble: no
 
@@ -1495,7 +1553,7 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False, 
         tips = [c for c in tips if c not in named]
     if len(tips) > 40:
         return tips   # too many to vouch for one by one
-    lost, chain_ok, memo = [], [], {}
+    lost, chain_ok, memo, clean = [], [], {}, None
     for sha in tips:   # newest first
         if _spent():   # the shared deadline of this inventory is gone: what is not judged yet is NOT clean (held), never waved through
             lost.append(sha)
@@ -1513,7 +1571,10 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False, 
             wt, "--no-optional-locks", "diff", "--quiet", "--ignore-submodules=none", main_head, sha, "--", *files, check=False,
             env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode == 0
         if not any(diff_names):   # an empty commit (or a merge) has no patch to compare: its message would be lost
-            lost.append(sha)
+            if clean is None:
+                clean = _clean_merges(wt, unreachable)   # #386: a merge with no hunk of its own and held parents loses nothing (asked once, lazily)
+            if sha not in clean:
+                lost.append(sha)
             continue
         # `git cherry <up> <sha>` lists every commit from the merge base, oldest first: only the line of THIS commit counts (only asked when the bytes differ)
         if not same_bytes and not any(("- " + sha) in git(wt, "cherry", up, sha, check=False).stdout.splitlines() for up in (main_head, head) if up):
@@ -1626,7 +1687,10 @@ def _inventory(cwd, only, budget):
         reflog = []        # commits only this worktree's own reflog names; None: git could not say
         if head and e["detached"]:   # a branch keeps the commits made ON it reachable; a detached HEAD does not
             rev_in = [head] + ["^" + r for r in refs] + (["^" + main_head] if main_head else [])
-            held_only = _count(cwd, stdin="\n".join(rev_in) + "\n")
+            unheld = git(cwd, "rev-list", "--stdin", inp="\n".join(rev_in) + "\n", check=False)
+            if unheld.returncode == 0:
+                ids = set(unheld.stdout.split())
+                held_only = len(ids - _clean_merges(cwd, ids))   # #386: clean merges of held parents lose nothing
         if head:   # also a worktree on a branch: it can detach, commit, and go back (the commit is then named by its reflog only)
             try:
                 reflog = _reflog_only(path, head, main_head, refs, attached=not e["detached"], reflog_lines=rl) if os.path.isdir(path) else None
@@ -2008,6 +2072,9 @@ def _iter_blockers(cwd, wt, shown, budget, rows=None):
     # holds the same bytes (and executable bit) at the same path (a deleted file: missing in both).
     lost = [p for p in dict.fromkeys(changed + (hidden or [])) if not _same_in_main(wt, main, p)
             and not _is_durations_hint(p)]   # #365: file gợi ý thứ tự test, không phải công việc
+    if lost:   # #386: the same bytes and mode already sit on an origin branch tip (the PR's own branch): the remote holds them
+        on_origin = _same_on_origin(wt, lost)
+        lost = [p for p in lost if p not in on_origin]
     # Bookkeeping the gate and the checklist sync regenerate is no work (GeelyEx2 #41, 21/10: it alone held a lane worktree and the
     # card went to Blocked); cmd_remove keeps a fallback copy first. A row a person made, or an edit git hides, still counts.
     if any(p in BOOKKEEPING and p not in (hidden or ()) for p in lost) and _bookkeeping_regenerated(wt, main):

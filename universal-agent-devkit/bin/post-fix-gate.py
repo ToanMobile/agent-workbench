@@ -1150,6 +1150,13 @@ def suite_cacheable(test):
     return mod.cacheable(test, bool(DEVICE_SUITE.search((test or {}).get("command") or "")))
 
 
+def suite_keyable(test):
+    """Được tính khoá cho suite ĐÃ ĐƯỢC CHỌN (cacheable, hay run_impacted.sh chuẩn của DevKit: theo khoá cả cây + tập chọn). Phần cached-full
+    thêm vào vẫn chỉ dùng suite_cacheable: suite chọn theo lịch sử git không vào đó."""
+    mod = suite_cache_mod()
+    return suite_cacheable(test)[0] or bool(mod is not None and mod.selection_keyable(test or {}))
+
+
 def suite_cache_for(project_dir, rules, matrix_path, covers):
     """SuiteCache của project_dir dựng y như lượt gate (cùng local_state_sha, RESULT_FORMAT, biến môi trường chọn test): khoá của
     stale_rerun.run_one (nightly) trùng khoá của gate. None khi tắt (DEVKIT_SUITE_CACHE=0) hoặc không dựng được."""
@@ -5774,7 +5781,7 @@ def main():
     if sc is not None:
         for t in regression_tests:
             src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t)   # "cache": false
-            if t.get("command") and not t.get("matrix_added") and suite_cacheable(src)[0]:
+            if t.get("command") and not t.get("matrix_added") and suite_keyable(src):
                 try:
                     KEYS[id(t)] = sc.keys(t)
                 except Exception as e:   # noqa: BLE001 - khoá không tính được: suite này chạy
@@ -6110,8 +6117,18 @@ def main():
 
     slot_rec = _recorded_seconds() if run_tests and lock_held else {}
     slot_mod = []
+    # #338: lượt đã có suite được cho chạy thì chạy cho xong. started_run: không chờ tải lại ở các suite sau; heavy_lease: slot nặng giữ nguyên
+    # giữa hai suite nặng TUẦN TỰ liền nhau (gate khác không chen được; suite trong nhóm song song vẫn xin slot riêng, nên tổng suite nặng
+    # chạy cùng lúc không vượt heavy_max). Nhả khi tới suite không nặng, trước một job song song (nó chờ chính slot này sẽ treo tới hạn chờ) và
+    # hết vòng suite.
+    started_run, heavy_lease = [], []
 
-    def take_slots(t, cmd):
+    def drop_lease():
+        if heavy_lease and slot_mod and slot_mod[0] is not None:
+            slot_mod[0].release_pool(heavy_lease.pop())
+        heavy_lease.clear()
+
+    def take_slots(t, cmd, sequential=False):
         """P1 (20/10): quyền chạy của CHÍNH suite này (heavy_slot.classify), giữ trong lúc nó chạy — kể cả lần chạy lại flaky và
         vacuity revert. --full không còn giữ slot cả lượt (đo 20/10: một lượt --full chỉ suite bash/python chờ 30+ phút mà không chạy
         suite nào); P1b (người dùng 20/10): không còn 2 slot — tải máy dưới DEVKIT_SLOT_LOAD_MAX (mặc định capacity hold_load,
@@ -6129,25 +6146,32 @@ def main():
             return None
         rec = slot_rec.get(t.get("id"))
         info = hs.classify(cmd, str(project_dir), rec, device=bool(HARD_DEVICE_SUITE.search(cmd or "")))
+        lease = heavy_lease[0] if (sequential and heavy_lease and info["cls"] in hs.HEAVY_CLASSES) else None
+        if heavy_lease and lease is None:
+            drop_lease()   # suite này không dùng slot nặng đang giữ (không nặng, hay chạy trong nhóm song song): không giữ chỗ của người khác
         # GATE_TOTAL_BUDGET_S (Stop hook: 900 s, hạn cứng 1800 s): lần chờ slot không được vượt ngân sách còn lại (review 20/10)
         left = budget_s - (time.monotonic() - budget_start) if budget_s > 0 else None
         slots = hs.acquire_for_suite(info, est_s=rec or estimated_suite_seconds(cmd), max_wait=left,
-                                     label=f"{os.path.basename(str(project_dir))}:{t.get('id')} ({info['cls']})")
+                                     label=f"{os.path.basename(str(project_dir))}:{t.get('id')} ({info['cls']})",
+                                     started=bool(started_run), lease=lease)
+        if slots.admitted:
+            started_run.append(1)
         for note in slots.notes:
             log_warn(f"{t.get('id')}: {note}")
         return slots
 
-    def run_suite(t, cmd, mode, env):
+    def run_suite(t, cmd, mode, env, sequential=False):
         k = lookup_key(t) if (sc is not None and keyed_ok and mode == "full") else None
         if not k:
-            return run_suite_slotted(t, cmd, mode, env)
+            return run_suite_slotted(t, cmd, mode, env, sequential)
+        drop_lease()   # R1: chờ marker của gate khác không giữ slot nặng — chủ marker có thể đang xếp hàng đúng slot này (hai bên chờ nhau)
         with sc.inflight(k, slot_rec.get(t.get("id"))) as state:
             if state == "recheck":
                 rec = sc.hit(k, t)
                 if rec:   # một gate khác vừa chạy đúng khoá này và PASS
                     mark_keyed(t, rec)
                     return None
-            run_suite_slotted(t, cmd, mode, env)
+            run_suite_slotted(t, cmd, mode, env, sequential)
             record_keyed(t)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này
             return None
 
@@ -6156,8 +6180,10 @@ def main():
         """Ghi kết quả một lượt chạy THẬT lệnh đầy đủ vào sổ khoá — chỉ khi input không đổi trong lúc chạy (khoá đọc lại bằng nhau)."""
         ks = KEYS.get(id(t))
         st = t.get("status")
-        if sc is not None and id(t) in really_ran and st != "PASS" and id(t) not in voided:
-            voided.add(id(t))   # mọi không-PASS của lần chạy thật (FAIL, TIMEOUT, hạ tầng, env): PASS cũ của suite này hết dùng lại
+        void_due = sc is not None and id(t) in really_ran and st != "PASS" and id(t) not in voided
+
+        def void_suite():
+            voided.add(id(t))   # PASS cũ của suite này (mọi khoá) hết dùng lại, trừ FAIL thật đã ghi dưới khoá của nó (suite_cache.void_needed)
             try:
                 sc.void(t.get("id"))
             except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu
@@ -6166,12 +6192,27 @@ def main():
                 or (st in ("PASS", "TIMEOUT") and t.get("mode") != "full")
                 or (st == "FAIL" and t.get("mode") not in ("full", "impacted", "package", "module"))
                 or t.get("infra_retry") or t.get("env_blocked") or t.get("infra")):
+            if void_due and id(t) not in recorded:
+                void_suite()   # không ghi được khoá nào: không có gì giữ FAIL này lại (đã ghi ở lần gọi trước thì FAIL đó đang giữ nó)
             return
+        if st == "PASS" and suite_cache_mod().DIFF_DEPENDENT.search(t.get("full_command") or t.get("command") or "") \
+                and any(x is not t and x.get("status") not in ("PASS", "NOT_RUN") for x in regression_tests):
+            return   # run_impacted.sh bỏ qua script của suite đã chạy trước nó (DEVKIT_GATE_DONE): PASS của nó chỉ đáng ghi khi các suite đó cũng PASS
+        if st == "PASS" and suite_cache_mod().selection_keyable(t):
+            # R3: tập chọn nằm trong khoá, đọc lúc tính khoá; cửa sổ `git log --since` của run_impacted.sh trượt theo giờ (cây không đổi) nên
+            # suite có thể đã chạy tập khác tập trong khoá: PASS ghi dưới khoá tập lớn hơn là PASS giả. Đọc lại, khác thì không ghi.
+            cmd0 = t.get("full_command") or t.get("command")
+            parts = sc.key_parts.get((t.get("id"), cmd0))
+            if parts is not None and json.loads(parts[0]).get("selection") != suite_cache_mod().selection_list(project_dir, cmd0):
+                log_warn(tr(f"{t.get('id')}: tập test chọn đổi trong lúc chạy — PASS không ghi vào cache",
+                            f"{t.get('id')}: the selected test set changed while it ran — PASS not recorded in the cache"))
+                return
         recorded.add(id(t))
         meta = {"duration": t.get("duration"), "log": t.get("log"), "project": os.path.basename(str(project_dir))[:64],
                 "head": _head_sha(project_dir), "inputs_n": sc.inputs.get(t.get("id"))}
         rt = dict(t, command=t.get("full_command") or t.get("command"))   # bản ghi mang lệnh của ma trận (khoá tính từ lệnh đó)
         keys_now = list(ks)
+        tree_same = True
         if st == "TIMEOUT":
             # #363: TIMEOUT của lệnh đầy đủ, thật, trên cây không đổi trong lúc chạy là bằng chứng base cho KNOWN-RED — CHỈ dưới khoá cả
             # cây (không có khoá chính xác: quá giờ không chứng minh gì về input của suite, và không bao giờ HIT)
@@ -6182,12 +6223,15 @@ def main():
             # FAIL dưới khoá cả cây là bằng chứng lỗi có sẵn cho KNOWN-RED: chỉ khi FAIL là của lệnh đầy đủ, thật (không phải VACUOUS — lệnh
             # PASS mà không phát hiện thay đổi —, không chập chờn — chạy lại PASS, OCR 21/10), trên cây không đổi trong lúc chạy (audit #4
             # 21/10); còn lại chỉ khoá chính xác (hẹp lại),
-            # bao đóng bị cắt (khoá chính xác LÀ khoá cả cây) thì không ghi — void ở trên đã chặn PASS cũ
+            # bao đóng bị cắt (khoá chính xác LÀ khoá cả cây) thì không ghi — void ở dưới chặn PASS cũ
             mod = suite_cache_mod()
             cmf = mod.content_map(project_dir) if mod is not None else None
-            if (t.get("mode") != "full" or t.get("label") == "VACUOUS" or t.get("flaky")
-                    or not (cmf is not None and mod.tree_digest(cmf) == sc.tree_digest)):
+            tree_same = cmf is not None and mod.tree_digest(cmf) == sc.tree_digest
+            if t.get("mode") != "full" or t.get("label") == "VACUOUS" or t.get("flaky") or not tree_same:
                 keys_now = [ks[0]] if ks[0] != ks[1] else []
+        if void_due and suite_cache_mod().void_needed(st, flaky=bool(t.get("flaky")), vacuous=t.get("label") == "VACUOUS",
+                                                      tree_unchanged=tree_same, recorded=bool(keys_now)):
+            void_suite()   # #344: FAIL thật ghi dưới khoá của nó thì thôi; TIMEOUT, hạ tầng, chập chờn, cây đổi: PASS cũ của id hết dùng lại
         cm = None
         if st == "PASS":   # một content_map cho cả hai phép kiểm (cây không đổi, input của suite không đổi)
             mod = suite_cache_mod()
@@ -6208,8 +6252,8 @@ def main():
         except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu: không bao giờ đổi kết luận của lượt này
             log_warn(f"suite_cache record {t.get('id')}: {e!r}")
 
-    def run_suite_slotted(t, cmd, mode, env):
-        slots = take_slots(t, cmd)
+    def run_suite_slotted(t, cmd, mode, env, sequential=False):
+        slots = take_slots(t, cmd, sequential)
         if slots is not None and not slots.admitted:
             log_warn(tr(f"heavy-slot SLOT: {t.get('id')}: khoá độc quyền (Unity) bận hết thời gian chờ — không chạy suite",
                         f"heavy-slot SLOT: {t.get('id')}: its exclusive lock (Unity) stayed busy past the wait — suite not started"))
@@ -6226,7 +6270,9 @@ def main():
             _run_suite(t, cmd, mode, env)
         finally:
             if slots is not None:
-                slot_mod[0].release_suite(slots)
+                kept = slot_mod[0].release_suite(slots, keep_heavy=sequential)
+                if sequential:
+                    heavy_lease[:] = [kept] if kept is not None else []
 
     def hang_report(t, out):
         """#370: a suite that timed out while the machine was NOT busy hung — it was not slow. Marks it (t["hang"], label HANG) and puts the
@@ -6455,6 +6501,7 @@ def main():
                 env = suite_env()
                 if done_scripts:
                     env["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
+                drop_lease()
                 start_job(t, cmd, mode, env)
                 ran_cmds[key] = t
                 if not t.get("keyed_full"):   # suite cached-full có thể thành PASS theo khoá chính xác: không bảo runner bỏ script
@@ -6463,7 +6510,7 @@ def main():
             drain()
             if done_scripts:
                 os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
-            run_suite(t, cmd, mode, suite_env())
+            run_suite(t, cmd, mode, suite_env(), sequential=True)
             ran_cmds[key] = t
             if not t.get("matrix_added") and not precise_hit(t):   # chỉ-thêm / PASS theo khoá chính xác: không bảo runner bỏ script
                 note_ran(cmd)
@@ -6471,6 +6518,7 @@ def main():
             t["status"] = "FAIL"
             t["output_tail"] = tr("Matrix không khai báo command cho test này", "The matrix declares no command for this test")
     drain()
+    drop_lease()
     restore_local_configs(_config_snaps)
     _lap("suites")
     # Lượt không cưỡng bức (Stop hook) không tra khoá, nhưng FAIL thật của nó phải vào sổ khoá: không thì --full sau đó dùng lại PASS cũ
@@ -6489,7 +6537,7 @@ def main():
             for t in failed if sc is not None else ():
                 full_t = dict(t, command=t.get("full_command") or t.get("command"))   # lệnh của ma trận, không phải lệnh thu hẹp
                 src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == full_t["command"]), full_t)
-                if suite_cacheable(src)[0]:
+                if suite_keyable(src):
                     try:
                         KEYS[id(t)] = sc.keys(full_t)
                     except Exception as e:   # noqa: BLE001 - khoá không tính được: FAIL này không vào sổ

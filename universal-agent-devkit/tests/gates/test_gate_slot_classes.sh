@@ -273,8 +273,9 @@ PY
 echo 150 > "$TMP/load"
 DEVKIT_SLOT_LOAD_WAIT_S=2 DEVKIT_SLOT_ADVISORY_BUDGET_S=2 run_gate "$S9"
 waits=$(printf '%s\n' "$OUT" | grep -c "chờ tải xuống")
-if [ "$RC" = 0 ] && [ "$waits" = 1 ] && printf '%s\n' "$OUT" | grep -q "ngân sách chờ tải"; then
-  ok "9. hết ngân sách chờ tải: suite sau chạy luôn (1 lần chờ, có ghi chú)"
+# #338: lượt đã có suite chạy thì các suite sau không chờ tải lại — không còn cần tới ghi chú "hết ngân sách" ở suite 2 (test_gate_slot_started.sh)
+if [ "$RC" = 0 ] && [ "$waits" = 1 ]; then
+  ok "9. tải cao mãi: chỉ suite đầu chờ tải (1 lần chờ), suite sau chạy luôn"
 else
   fail "9. ngân sách chờ tải (exit $RC, số lần chờ $waits, mong 1)"
 fi
