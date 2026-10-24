@@ -28,7 +28,7 @@ if [ -n "$_kit_top" ] && [ -n "$_main_top" ]; then
   _main_kit="$_main_top${DEVKIT_ROOT#"$_kit_top"}"
   # Only when main's copy has every body the hooks run (an older main may lack one); new or legacy layout each.
   _has() { [ -f "$_main_kit/scripts/$1/$2" ] || [ -f "$_main_kit/scripts/$2" ]; }
-  case "$DEVKIT_ROOT" in "$_kit_top"/*)
+  case "$DEVKIT_ROOT" in "$_kit_top" | "$_kit_top"/*)   # the kit is the repo itself, or a folder in it
     if [ -n "$_kit_top" ] && [ -n "$_main_top" ] && [ "$_kit_top" != "$_main_top" ] && _has git git-pre-commit.sh \
       && _has git git-commit-msg.sh && _has governance relink_check.py; then
       DEVKIT_ROOT="$_main_kit"

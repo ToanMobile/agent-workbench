@@ -120,7 +120,7 @@ PT="$(cd "$TMP" && pwd -P)"   # macOS: /var → /private/var; the hook stores ph
 M="$PT/mainrepo"; mkdir -p "$M/kit/profiles" "$M/kit/scripts/git" "$M/kit/scripts/governance"
 for f in scripts/git/githooks.sh scripts/git/git-pre-commit.sh scripts/git/git-commit-msg.sh scripts/governance/i18n.sh \
   scripts/governance/relink_check.py; do
-  cp "$DEVKIT_DIR/$f" "$M/kit/$f" 2>/dev/null
+  cp "$DEVKIT_DIR/$f" "$M/kit/$f" || fail "fixture: cannot copy $f"
 done
 touch "$M/kit/profiles/.keep"
 ( cd "$M" && git init -q . && git config user.email t@t && git config user.name t \
@@ -143,6 +143,22 @@ grep -q "$PT/wt-fallback/kit/scripts/git/git-pre-commit.sh" "$HOOKS/pre-commit" 
   && ok "main without the hook body: the worktree's kit path is kept" \
   || fail "main without the hook body: pre-commit fallback is $(grep -ho '/[^ ]*git-pre-commit.sh' "$HOOKS/pre-commit" | head -1)"
 git -C "$M" worktree remove --force "$PT/wt-fallback" >/dev/null 2>&1
+
+# The kit IS the repo (a clone of universal-agent-devkit itself): the same fallback applies.
+K="$PT/kitrepo"; mkdir -p "$K/profiles" "$K/scripts/git" "$K/scripts/governance"
+for f in scripts/git/githooks.sh scripts/git/git-pre-commit.sh scripts/git/git-commit-msg.sh scripts/governance/i18n.sh \
+  scripts/governance/relink_check.py; do
+  cp "$DEVKIT_DIR/$f" "$K/$f" || fail "fixture: cannot copy $f"
+done
+touch "$K/profiles/.keep"
+( cd "$K" && git init -q . && git config user.email t@t && git config user.name t \
+  && git add -A && git commit -qm init --no-verify && git worktree add -q "$PT/wt-kitroot" HEAD ) >"$TMP/setup.log" 2>&1
+bash "$PT/wt-kitroot/scripts/git/githooks.sh" install "$PT/wt-kitroot" >"$TMP/install.log" 2>&1
+HOOKS="$(git -C "$K" rev-parse --path-format=absolute --git-common-dir)/hooks"
+grep -q "$K/scripts/git/git-commit-msg.sh" "$HOOKS/commit-msg" 2>/dev/null && ! grep -q "$PT/wt-kitroot" "$HOOKS/commit-msg" \
+  && ok "kit at the repo root: hooks installed from a worktree fall back to main" \
+  || fail "kit at the repo root: commit-msg fallback is $(grep -ho '/[^ ]*git-commit-msg.sh' "$HOOKS/commit-msg" | head -1)"
+git -C "$K" worktree remove --force "$PT/wt-kitroot" >/dev/null 2>&1
 
 if [ "$FAILS" -ne 0 ]; then
   echo "githooks: $FAILS FAILED"; exit 1
