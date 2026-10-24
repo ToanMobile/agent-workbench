@@ -258,7 +258,7 @@ in a sub-agent, before touching a worktree.
 [ ] build the in-flight list: .claude/bin/super-board-card.sh --config <cfg> items (one call) → [{number,title,status}] for
     Building / QA / Review / Ready cards; save it to a temp file
 [ ] bash .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> \
-         --inflight <file> [--files <paths you expect to touch>]
+         --inflight <file> --cap <merge_policy.auto_max_lines, 400 when unset> [--files <paths you expect to touch>]
 [ ] judge each card: the script's verdict, then its `candidates` (near-misses) semantically
 [ ] act on the outcome below, then return one verdict per card
 ```

@@ -83,4 +83,28 @@ done
 got=$(verdict Synthetic 903)
 [ "$got" = hold/unclear ] && ok "Synthetic #903: thiếu AC báo unclear trước too-big" || fail "Synthetic #903: muốn hold/unclear, được $got"
 
+# 24/10 (người dùng: "gom lại nhiều nhất có thể, đỡ chạy gate nhiều lần"): board không có trần dòng merge
+# (merge_policy.auto_max_lines = 0, --cap 0) thì không giữ thẻ vì nhiều việc: một thẻ = một PR = một gate.
+# Tín hiệu agent không tự làm được (máy thật, người thật) vẫn giữ.
+bash "$PREFLIGHT" --repo ToanMobile/Neighbours-From-Hell --issues 16 --cap 0 >"$TMP/cap0.json" 2>"$TMP/cap0.err" \
+  || fail "--cap 0: preflight exit $? ($(tail -1 "$TMP/cap0.err"))"
+got=$(jq -r '.["16"] | "\(.verdict)/\(.tag)"' "$TMP/cap0.json" 2>/dev/null)
+[ "$got" = proceed/clean ] && ok "--cap 0: thẻ nhiều việc (#16) proceed, không đòi tách" || fail "--cap 0 #16: muốn proceed/clean, được $got"
+bash "$PREFLIGHT" --repo ToanMobile/Synthetic --issues 909 --cap 0 >"$TMP/cap0d.json" 2>/dev/null
+got=$(jq -r '.["909"] | "\(.verdict)/\(.tag)"' "$TMP/cap0d.json" 2>/dev/null)
+[ "$got" = hold/too-big ] && ok "--cap 0: AC cần máy thật (#909) vẫn hold" || fail "--cap 0 #909: muốn hold/too-big, được $got"
+jq -e '.["909"] | (.reason | test("merge cap") | not) and (.split | all(test("vertical slices") | not))' "$TMP/cap0d.json" >/dev/null \
+  && ok "--cap 0: lý do và gợi ý không nhắc trần dòng hay tách lát" || fail "--cap 0 #909: $(jq -c '.["909"] | {reason, split}' "$TMP/cap0d.json")"
+bash "$PREFLIGHT" --repo ToanMobile/Neighbours-From-Hell --issues 16 --cap 300 >"$TMP/cap300.json" 2>/dev/null
+jq -e '.["16"] | (.evidence | any(test("300-line"))) and (.evidence | all(test("400-line") | not))' "$TMP/cap300.json" >/dev/null \
+  && ok "--cap 300: thông điệp nói đúng trần 300" || fail "--cap 300: $(jq -c '.["16"].evidence' "$TMP/cap300.json")"
+
+# Trần lớn (--cap 2000): 5 việc ngắn (~500 dòng) dưới trần thì tín hiệu "nhiều việc ở Fix" không tính (trần thật trong
+# thông điệp được kiểm ở ca --cap 300 phía trên).
+bash "$PREFLIGHT" --repo ToanMobile/Neighbours-From-Hell --issues 16 --cap 2000 >"$TMP/cap2k.json" 2>/dev/null
+jq -e '.["16"] | (.evidence | any(test("separate deliverables")) | not)' "$TMP/cap2k.json" >/dev/null \
+  && ok "--cap 2000: Fix 5 việc (~500 dòng) dưới trần không còn là tín hiệu" || fail "--cap 2000: vẫn tính Fix 5 việc"
+bash "$PREFLIGHT" --repo ToanMobile/Neighbours-From-Hell --issues 16 --cap abc >/dev/null 2>&1; rc=$?
+[ "$rc" = 64 ] && ok "--cap không phải số: exit 64" || fail "--cap abc: exit $rc (muốn 64)"
+
 [ "$FAILS" -eq 0 ] && echo "PASS: preflight too-big" || { echo "FAIL: $FAILS ca"; exit 1; }
