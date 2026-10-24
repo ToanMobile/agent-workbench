@@ -884,7 +884,7 @@ function buildRow(S, repo, r, cols, T) {
     const off = flat(L.width - 0.4, SIZE.ROW_D - 0.3, T.dark ? '#000000' : '#2f3a4d', T.dark ? 0.32 : 0.1, 0, 0.024, z); off.material.depthWrite = false;
     const { c, ctx, tex } = canvasTex(1024, 128);
     ctx.font = F(700, 64); ctx.fillStyle = T.dark ? 'rgba(255,255,255,0.32)' : 'rgba(47,58,77,0.34)'; ctx.textAlign = 'center';
-    ctx.fillText(rsx.key === 'stale' ? 'Runner mất tín hiệu' : repo.name + ': runner đang dừng', c.width / 2, 86); tex.needsUpdate = true;
+    ctx.fillText(rsx.key === 'stale' ? 'Runner mất tín hiệu' : repo.name + ': runner đang dừng', c.width / 2, 86, c.width - 32); tex.needsUpdate = true;
     const tag = new THREE.Mesh(GEO.plane, track(new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })));
     tag.scale.set(9, 1.1, 1); tag.rotation.x = -Math.PI / 2; tag.position.set(L.x0 + SIZE.OFFICE_W + 5, 0.03, z + 0.2); world.add(tag);
   }
@@ -1959,19 +1959,23 @@ function renderDash(S) {
   box.scrollTop = keepScroll;
 }
 $('#btnDash').onclick = () => { const d = $('#dash'); d.hidden = !d.hidden; $('#btnDash').setAttribute('aria-pressed', String(!d.hidden)); if (LAST_S) renderDash(LAST_S); };
-// Thông báo đã Ẩn nhớ qua lần tải lại (trước đây quay lại mỗi lần mở trang)
-const dismissed = (() => { try { return new Set(JSON.parse(localStorage.getItem('ao-dismissed') || '[]')); } catch (e) { return new Set(); } })();
+// Thông báo info đã Ẩn nhớ qua lần tải lại; lỗi/cảnh báo/mất kết nối chỉ ẩn trong lần mở này
+const savedNotices = (() => { try { return new Set(JSON.parse(localStorage.getItem('ao-dismissed-info') || '[]')); } catch (e) { return new Set(); } })();
+const dismissed = new Set(savedNotices);
+const OFFLINE_NOTICE = 'Mất kết nối tới server.py. Kiểm tra cửa sổ terminal đang chạy server.';
+function dismissNotice(n) {
+  dismissed.add(n.text);
+  if (n.level !== 'info' || n.transient) return;
+  savedNotices.add(n.text);
+  try { localStorage.setItem('ao-dismissed-info', JSON.stringify([...savedNotices])); } catch (e) { /* storage blocked: chỉ ẩn trong lần mở này */ }
+}
 function renderNotices(S, offline) {
   const box = $('#notices'); box.textContent = '';
   const list = (S ? S.notices : []).slice();
-  if (offline) list.unshift({ level: 'error', text: 'Mất kết nối tới server.py. Kiểm tra cửa sổ terminal đang chạy server.', transient: true });
+  if (offline) list.unshift({ level: 'error', text: OFFLINE_NOTICE, transient: true });
   list.filter((n) => !dismissed.has(n.text)).forEach((n) => {
     const el = h('div', 'notice ' + n.level); el.append(h('span', null, n.text));
-    const x = h('button', null, 'Ẩn'); x.type = 'button'; x.onclick = () => {
-      el.remove(); if (n.transient) return; // mất kết nối: chỉ ẩn lần này, lần mất sau vẫn báo
-      dismissed.add(n.text); if (n.level !== 'info') return; // lỗi/cảnh báo thật: mở lại trang vẫn báo
-      try { localStorage.setItem('ao-dismissed', JSON.stringify([...dismissed])); } catch (e) { /* storage blocked: chỉ ẩn trong lần mở này */ }
-    };
+    const x = h('button', null, 'Ẩn'); x.type = 'button'; x.onclick = () => { dismissNotice(n); el.remove(); };
     if (n.cmd) {
       const code = h('code', null, n.cmd); const b = h('button', 'copy', 'Chép lệnh'); b.type = 'button';
       b.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(n.cmd).then(() => { b.textContent = 'Đã chép'; }); };
@@ -2803,7 +2807,7 @@ async function poll(once) {
     LAST_S = S; if (S.host) { loadHist.push(S.host.load[0]); if (loadHist.length > 60) loadHist.shift(); } // tải 1 phút ~3 phút gần nhất
     if (S.version !== VERSION) { VERSION = S.version; apply(S); }
     else renderTop(S);
-    if ($('#notices').dataset.offline === '1') { $('#notices').dataset.offline = '0'; renderNotices(STATE, false); }
+    if ($('#notices').dataset.offline === '1') { $('#notices').dataset.offline = '0'; dismissed.delete(OFFLINE_NOTICE); renderNotices(STATE, false); } // lần mất kết nối sau vẫn báo
   } catch (e) {
     console.error('Agent Office: không áp được dữ liệu', e);
     $('#notices').dataset.offline = '1'; renderNotices(STATE, true);
