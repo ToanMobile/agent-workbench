@@ -10,7 +10,7 @@ PY="$(command -v python3 || true)"
 if [ -z "$PY" ]; then echo "Không thấy python3. Cài Xcode Command Line Tools: xcode-select --install"; exit 1; fi
 mkdir -p "$HOME/Library/LaunchAgents" "$APP"
 rm -rf "$APP/web"
-cp -R "$SRC/server.py" "$SRC/config.json" "$SRC/web" "$APP/"
+cp -R "$SRC/server.py" "$SRC/inbox_hook.py" "$SRC/config.json" "$SRC/web" "$APP/"
 chmod 700 "$HOME/.agent-office" "$APP"
 # Bản chép không nằm trong repo: chỉ cho server đường dẫn ai-factory.sh thật (nút "Tạo mã mới" của menu Điện thoại gọi nó).
 FACTORY="$(cd "$SRC/../.." && pwd)/ai-factory.sh"

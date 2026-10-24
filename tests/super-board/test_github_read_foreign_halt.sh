@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Regression test (24/10): a GitHub read for ANOTHER repository must never write the shared board halt.
+# Tests run from a linked worktree resolve halt_path() through `git rev-parse --git-common-dir` to the MAIN checkout;
+# three approval tests read `o/r` PR 7 against the real gh and wrote .claude/super-board/github-halt.json there twice
+# (05:21 and 07:45), halting the real board for hours. github-read now refuses to write a halt whose operation names a
+# repository other than the checkout's origin; a read of the checkout's own repository still halts as before.
+# Bash 3.2 compatible.
+set -u
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+READ="$ROOT/.claude/bin/super-board-github-read.py"
+FAILS=0
+ok() { echo "✔ $1"; }
+fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-foreign-halt.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+R="$TMP/home"
+mkdir -p "$R"
+git -C "$R" init -q -b main . && git -C "$R" remote add origin https://github.com/ToanMobile/home.git
+unset SB_GITHUB_HALT_FILE SB_REPO_PATH
+
+halt_with() {   # $1 = operation args as JSON list → prints the exception type halt() raised
+  ( cd "$R" && python3 - "$READ" "$1" <<'PY' 2>&1 )
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location('gr', sys.argv[1]); mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    mod.halt('test', 1, {'args': json.loads(sys.argv[2]), 'kind': 'approval', 'meta': None})
+except mod.ReadHalted:
+    print('ReadHalted')
+PY
+}
+HALT="$R/.claude/super-board/github-halt.json"
+
+out=$(halt_with '["api","graphql","-F","owner=o","-F","repo=r","-F","pr=7"]')
+printf '%s\n' "$out" | grep -qx ReadHalted && ok "foreign read still raises ReadHalted for its caller" || fail "foreign read: $out"
+printf '%s\n' "$out" | grep -q "HALT not recorded" && ok "foreign read says why no halt was recorded" || fail "no notice: $out"
+[ ! -e "$HALT" ] && ok "foreign read (o/r) writes no shared board halt" || fail "foreign read wrote $HALT: $(head -c 160 "$HALT")"
+rm -f "$HALT"
+
+for form in '"--repo","other/repo"' '"-R","other/repo"' '"--repo=other/repo"'; do
+  out=$(halt_with "[\"pr\",\"view\",\"7\",$form]")
+  { [ ! -e "$HALT" ] && printf '%s\n' "$out" | grep -qx ReadHalted; } \
+    && ok "foreign $form writes no shared board halt and still raises ReadHalted" || fail "foreign $form: halt=$([ -e "$HALT" ] && echo written || echo none) out=$out"
+  rm -f "$HALT"
+done
+
+out=$(halt_with '["api","graphql","-F","owner=ToanMobile","-F","repo=home","-F","pr=7"]')
+[ -s "$HALT" ] && ok "a read of the checkout's own repository still halts the board" || fail "home read wrote no halt"
+rm -f "$HALT"
+
+for home_form in "https://github.com/ToanMobile/home" "github.com/ToanMobile/home" "https://github.com/toanmobile/HOME.git"; do
+  out=$(halt_with "[\"pr\",\"view\",\"7\",\"--repo\",\"$home_form\"]")
+  [ -s "$HALT" ] && ok "home repo written as $home_form still halts (no fail-open)" || fail "$home_form was treated as foreign"
+  rm -f "$HALT"
+done
+
+out=$(halt_with '["project","item-list","1","--owner","ToanMobile"]')
+[ -s "$HALT" ] && ok "a read that names no repository still halts the board (fail closed)" || fail "repo-less read wrote no halt"
+
+rm -f "$HALT"
+
+# READ side (24/10 10:22, after the write-side fix merged): worktrees still on OLD code keep writing o/r halts into the
+# real checkout. check_halt() must not stop this board on a halt whose recorded read targets another repository: it
+# archives it (github-halt-foreign-*.json) and carries on. A halt for the home repository still stops it.
+check_with() {   # prints ReadHalted when check_halt() raised, else ok
+  ( cd "$R" && python3 - "$READ" <<'PY' 2>&1 )
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('gr', sys.argv[1]); mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    mod.check_halt(); print('ok')
+except mod.ReadHalted:
+    print('ReadHalted')
+PY
+}
+mkdir -p "$(dirname "$HALT")"
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":{"args":["api","graphql","-F","owner=o","-F","repo=r","-F","pr=7"],"kind":"approval"}}' > "$HALT"
+out=$(check_with)
+{ printf '%s\n' "$out" | grep -qx ok && [ ! -e "$HALT" ] && ls "$(dirname "$HALT")"/github-halt-foreign-*.json >/dev/null 2>&1; } \
+  && ok "check_halt: a foreign halt left by old code is archived, the board is not stopped" \
+  || fail "foreign halt on read: out=$out halt=$([ -e "$HALT" ] && echo kept || echo gone)"
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":{"args":["api","graphql","-F","owner=ToanMobile","-F","repo=home","-F","pr=7"],"kind":"approval"}}' > "$HALT"
+out=$(check_with)
+printf '%s\n' "$out" | grep -qx ReadHalted && [ -e "$HALT" ] && ok "check_halt: a home-repo halt still stops the board" || fail "home halt on read: out=$out"
+# Race: another worker replaces the foreign halt with a REAL home halt between the read and the rename.
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":{"args":["api","graphql","-F","owner=o","-F","repo=r","-F","pr=7"],"kind":"approval"}}' > "$HALT"
+race_check() {
+  ( cd "$R" && python3 - "$READ" "$HALT" <<'PY' 2>&1 )
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('gr', sys.argv[1]); mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+real = mod._home_repo
+def racing_home():
+    open(sys.argv[2], 'w').write('{"reason":"real","attempts":1,"at":2,"operation":{"args":["api","graphql","-F","owner=ToanMobile","-F","repo=home"]}}')
+    return real()
+mod._home_repo = racing_home
+try:
+    mod.check_halt(); print('ok')
+except mod.ReadHalted:
+    print('ReadHalted')
+PY
+}
+out=$(race_check)
+{ printf '%s\n' "$out" | grep -qx ReadHalted && grep -q '"real"' "$HALT" 2>/dev/null; } \
+  && ok "check_halt race: a real halt written between read and rename is put back and still stops the board" \
+  || fail "race: out=$out halt=$(cat "$HALT" 2>/dev/null | head -c 60)"
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":{"args":5}}' > "$HALT"
+out=$(check_with)
+printf '%s\n' "$out" | grep -qx ReadHalted && ok "check_halt: a malformed record still halts (no TypeError crash)" || fail "malformed record: out=$out"
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":null}' > "$HALT"
+out=$(check_with)
+printf '%s\n' "$out" | grep -qx ReadHalted && [ -e "$HALT" ] && ok "check_halt: a halt with no recorded read (uncertain write) still stops the board" || fail "op-null halt: out=$out"
+rm -f "$HALT"
+
+[ "$FAILS" -eq 0 ] && echo "test_github_read_foreign_halt: PASS" || { echo "test_github_read_foreign_halt: FAIL ($FAILS)"; exit 1; }

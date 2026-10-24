@@ -5,6 +5,8 @@
 # session does --full execute.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -euo pipefail
+# Id phiên của máy thật (phiên Claude, worker board) không được quyết định ca nào ở đây (#240): gate ưu tiên DEVKIT_SESSION_ID hơn CLAUDE_CODE_SESSION_ID.
+unset DEVKIT_SESSION_ID CLAUDE_SESSION_ID CLAUDE_CODE_SESSION_ID
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
