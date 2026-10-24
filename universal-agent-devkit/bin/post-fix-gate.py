@@ -1644,6 +1644,29 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         log_err(f"full-pass receipt not written: {e}")
 
 
+def mark_merge_gate_receipt(project_dir, diff_ref):
+    """#319: a --full PASS against origin/<base> on a clean tree that holds it is also the merge gate's verify of this tree: the board's
+    super-board-verify-cmd.sh --mark writes the tree receipt under the key the merge gate reads (one key function, not copied here), so a PR runs
+    --full once instead of twice. It refuses a dirty tree or a base not in the tree itself; no board config or script = the old behaviour."""
+    if not diff_ref or not diff_ref.startswith("origin/"):
+        return
+    root = Path(project_dir)
+    script = root / ".claude" / "bin" / "super-board-verify-cmd.sh"
+    configs = sorted((root / ".claude" / "super-board" / "configs").glob("*.json"))
+    if not script.is_file() or len(configs) != 1:
+        return
+    try:
+        base = json.loads(configs[0].read_text(encoding="utf-8")).get("base_branch") or "main"
+        if diff_ref != f"origin/{base}":
+            return
+        r = subprocess.run(["bash", str(script), "--config", str(configs[0]), "--mark"], cwd=str(root),
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode not in (0, 65):   # 65 = dirty tree / base not merged: the documented "no receipt"
+            log_err(f"tree receipt not written (exit {r.returncode}): {r.stderr.strip()[-200:]}")
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        log_err(f"tree receipt not written: {e}")
+
+
 # What a Stop run that spent GATE_TOTAL_BUDGET_S leaves for the next Stop on the same content (Goods, 2026-10-14: REG-GAME-02 +
 # REG-GAME-03 took 901-967 s of a 900 s budget, REG-GAME-04 never started, and the next four Stops on the same fingerprint ran
 # both again from the start: 63 min in 72 h). The Stop hook has no --full, so its run is "partial" and never records its own suite
@@ -4778,7 +4801,8 @@ def suite_env():
             "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE",
             "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",  # `git -c k=v commit` reaches the hook as GIT_CONFIG_PARAMETERS
             "DEVKIT_LEDGER_ROOT",  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
-            "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH",
+            # CI=true của worker ép --full. Để lọt vào suite thì gate lồng (test_postfix_gate) chặn file test mới.
+            "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH", "CI",
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
             "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD"}
@@ -5347,6 +5371,7 @@ def main():
             if up and ahead.isdigit() and int(ahead) > 0:
                 args.diff = up
                 print(f"    {CYAN}▶ {tr(f'Working tree sạch, HEAD đi trước upstream {ahead} commit: kiểm {up[:12]}..HEAD (nội dung sẽ push)', f'Clean working tree, HEAD {ahead} commit(s) ahead of upstream: auditing {up[:12]}..HEAD (what a push sends)')}{RESET}")
+    diff_ref = args.diff   # as typed or defaulted, before the merge-base rewrite below: the tree receipt needs to know it was origin/<base>
     base_ref = args.diff if args.diff and ".." not in args.diff else "HEAD"
     if args.diff and ".." in args.diff:   # A..B / A...B: the change is B against A (merge base for ...)
         left, right = args.diff.split("...", 1) if "..." in args.diff else args.diff.split("..", 1)
@@ -5356,6 +5381,13 @@ def main():
                                 capture_output=True, text=True).stdout.strip()
             left = mb or left
         base_ref = left
+    elif args.diff:
+        # #300: a plain ref is the TIP of that branch; commits that landed on it after this branch was cut (another PR's test or
+        # matrix edit) would read as this change's own edits. Audit against merge-base(ref, HEAD), as `A...B` does.
+        mb = subprocess.run(["git", "-C", str(get_project_dir()), "merge-base", args.diff, "HEAD"],
+                            capture_output=True, text=True).stdout.strip()
+        if mb:
+            args.diff = base_ref = mb
 
     global STAGED, BASE_REF, VACUITY_BASE
     STAGED = args.staged or bool(args.commit_msg)
@@ -6978,6 +7010,8 @@ def main():
                                     tested_fp=tested_fp, untested=receipt_untested, partial=partial or read_only,
                                     locked=lock_fh is not None,   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
                                     keep_same=merge_check)
+        if exit_code == 0 and run_tests and not partial and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy:
+            mark_merge_gate_receipt(project_dir, diff_ref)
         # The budget record (BUDGET_RECORD) is a file of its own, so the receipt above stays byte for byte whatever happens here:
         # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).
         if run_tests and any(t.get("status") in ("FAIL", "TIMEOUT") for t in regression_tests):
