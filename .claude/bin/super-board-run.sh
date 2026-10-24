@@ -741,6 +741,11 @@ build_slot_free() {
   # Tối đa một worker mỗi tick (vòng chính giao một thẻ). Không đo tải CPU, không kill worker đang chạy.
   build_workers_count
   BUILD_FREE=0
+  if fuse_paused; then   # #363; log chỉ khi đổi trạng thái (không tràn log mỗi tick)
+    [ -n "${FUSE_PAUSE_LOGGED:-}" ] || log "🔌 suite fuse: Builder dispatch paused (merged card still Blocked)"
+    FUSE_PAUSE_LOGGED=1; return 1
+  fi
+  FUSE_PAUSE_LOGGED=""
   if [ "$BUILD_COUNT" -ge "$BUILD_WORKERS" ]; then
     [ "$BUILD_WORKERS" -le 1 ] || log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: at the cap, not starting"
     return 1
@@ -1253,6 +1258,19 @@ issue_status() {
     .items[] | select(.content.number == ($n | tonumber)) | .status' | head -1
 }
 
+started_older_than() {
+  # 0 khi mốc $1 (STARTED của lock, ISO UTC) cách nay hơn $2 giây. Mốc trống hoặc sai dạng: 1 (không đo được thì không coi là quá hạn).
+  python3 -c 'import calendar, sys, time
+sys.exit(0 if time.time() - calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")) > float(sys.argv[2]) else 1)' "${1:-}" "$2" 2>/dev/null
+}
+
+quiet_longer_than() {
+  # 0 khi worker im lặng quá $3 giây: tính từ lần ghi cuối của log worker $1 (nhịp tim; stream-json ghi liên tục khi worker còn làm việc).
+  # Log không đọc được mtime thì dùng mốc STARTED $2 như trước (started_older_than); cả hai không đo được: 1 (không coi là quá hạn).
+  local mt
+  if mt=$(file_mtime "${1:-}"); then [ $(( $(date +%s) - mt )) -gt "$3" ]; else started_older_than "${2:-}" "$3"; fi
+}
+
 check_lane_zombie() {
   # $1 = lane name (build|qa|review); $2 = space-separated list of expected source columns.
   # If the lane's worker PID is alive but its claimed issue has already moved to a column
@@ -1290,11 +1308,20 @@ check_lane_zombie() {
   done
   # #228: worker của đợt merge train giữ lock của mọi thẻ trong đợt (TRAIN): thẻ đầu sang Done không làm nó thành zombie khi thẻ khác
   # của đợt còn ở cột nguồn.
+  # #358 mục 6: worker train treo mà còn một thẻ ở Review (head đổi, hoãn, timeout giữ ở Review có chủ đích) thì found=1 mãi và lane không bao
+  # giờ được giải phóng; im lặng quá SB_TRAIN_MAX_AGE_S (mặc định 3 giờ, tính từ lần ghi cuối của log worker, không phải STARTED: train khoẻ chạy lâu vẫn ghi log) thì không còn được che bởi thẻ Review.
+  # Lock đọc trong subshell: read_lock ghi đè PID/LANE/STARTED/WORKER_LOG toàn cục của vòng chính, mà đây chỉ là kiểm tra.
   if [ "$found" -eq 0 ] && [ "$lane" = review ]; then
-    read_lock "$issue" || true
-    for t in ${TRAIN:-}; do
+    local lk_info lk_train lk_started lk_log
+    lk_info=$(read_lock "$issue" && printf '%s|%s|%s' "${TRAIN:-}" "${STARTED:-}" "${WORKER_LOG:-}") || lk_info="||"
+    lk_train="${lk_info%%|*}"; lk_info="${lk_info#*|}"; lk_started="${lk_info%%|*}"; lk_log="${lk_info#*|}"
+    for t in $lk_train; do
       [ "$(issue_status "$t")" = "Review" ] && found=1
     done
+    if [ "$found" -eq 1 ] && quiet_longer_than "$lk_log" "$lk_started" "${SB_TRAIN_MAX_AGE_S:-10800}"; then
+      log "⏱ merge-train worker on #${issue} (pid=${pid}) wrote nothing to its log for over ${SB_TRAIN_MAX_AGE_S:-10800}s (started ${lk_started}) with cards still in Review: treated as hung"
+      found=0
+    fi
   fi
   # Thẻ về cột cũ: bỏ mốc ân hạn để lần rời cột sau tính lại từ đầu.
   [ "$found" -eq 0 ] || ZOMBIE_SEEN=$(printf '%s\n' ${ZOMBIE_SEEN:-} | grep -v "^${pid}:" | tr '\n' ' ' || true)
@@ -2106,6 +2133,142 @@ maybe_sweep_blocked() {
   return "$rc"
 }
 
+# ── #363: cầu chì suite. ≥2 thẻ bị Blocked cùng một suite id (REG-…) trong SB_FUSE_WINDOW_H giờ là một nguyên nhân gốc, không phải hai thẻ:
+# giữ MỘT thẻ (số nhỏ nhất, hay thẻ đang giữ cờ ngưng), các thẻ còn lại ghi `blocked-by: <thẻ giữ>` và ở nguyên Blocked để sweep thả về khi
+# thẻ giữ đóng; NGƯNG giao Builder mới tới khi mọi thẻ giữ rời Blocked. KHÔNG BAO GIỜ đóng thẻ hay chuyển Done (suy đoán sai thì mất thẻ).
+# Suite id chỉ lấy từ comment `[builder|qa|reviewer] [blocker]` MỚI NHẤT có cả REG-… lẫn TIMEOUT/FAIL/HANG (không lấy từ comment pass/unblock
+# hay tiêu đề); mốc Blocked = createdAt của comment đó (không phải lúc runner thấy: lần triển khai đầu / mất sổ không đóng dấu "bây giờ").
+# Thẻ 🙋 needs-you / human-gated và thẻ đã có `blocked-by:` là số thì bỏ qua. Sổ $INFLIGHT_DIR/fuse/blocked.tsv: `issue<TAB>epoch<TAB>suite|-`
+# (đọc MỘT lần khi thẻ vào Blocked; thẻ rời Blocked bị xoá khỏi sổ). folded.tsv: thẻ đã ghi blocked-by (ghi TRƯỚC khi gọi gh: comment
+# một lần dù board lỗi; thẻ rời Blocked thì xoá). Cờ ngưng $INFLIGHT_DIR/fuse/pause: mỗi thẻ giữ một dòng `keep<TAB>suite<TAB>epoch`.
+# ponytail: chỉ lane Builder bị ngưng — QA/Review vẫn chạy; nâng khi cần.
+SB_FUSE_WINDOW_H="${SB_FUSE_WINDOW_H:-6}"
+fuse_dir() { printf '%s/fuse' "$INFLIGHT_DIR"; }
+
+fuse_card_json() {
+  # $1 = issue. In JSON {title, comments[{body,createdAt}]}; exit khác 0 khi đọc hỏng (caller thử lại tick sau, không ghi sổ).
+  python3 "$SB_GITHUB_READ" --kind object -- issue view "$1" --json title,comments
+}
+
+fuse_card_info() {
+  # $1 = issue. In `epoch<TAB>bb|-<TAB>suite suite…` của comment blocker mới nhất ghép suite với TIMEOUT/FAIL/HANG; không có thì in `-`.
+  # bb = comment đó đã có `blocked-by:` là số (thẻ chờ thẻ khác, không phải việc của cầu chì).
+  local json
+  json=$(fuse_card_json "$1") || return $?
+  printf '%s' "$json" | jq -r '[.comments[]? | select(.body | test("^\\s*\\[(builder|qa|reviewer)\\]\\s*\\[blocker\\]"))] | reverse
+    | map(select(.body | test("TIMEOUT|FAIL|HANG"; "i"))
+        | {t: (.createdAt | fromdateiso8601), s: ([.body | scan("REG-[A-Z0-9]+(?:-[A-Z0-9]+)*")] | unique),
+           b: (([.body | scan("(?:^|\\n)[ \\t]*blocked-by:[ \\t]*([^\\n]*)"; "i")] | last // [""]) | .[0])}
+        | select(.s | length > 0))
+    | first // empty
+    | "\(.t)\t\(if (.b | test("[0-9]")) then "bb" else "-" end)\t\(.s | join(" "))"' | grep . || echo "-"
+}
+
+fuse_paused() {
+  # 0 khi cầu chì đang ngưng giao Builder: còn thẻ giữ ở Blocked. Mọi thẻ giữ rời Blocked (người đã xử lý) thì gỡ cờ. Board rỗng/đọc hỏng thì
+  # giữ ngưng (không đoán). Chỉ ghi lại file khi bớt thẻ giữ.
+  local f line keep cnt rest="" gone=0
+  f="$(fuse_dir)/pause"; [ -f "$f" ] || return 1
+  while IFS= read -r line; do
+    keep=${line%%$'\t'*}
+    case "$keep" in ''|*[!0-9]*) gone=1; continue ;; esac   # dòng rác không được ngưng build mãi
+    cnt=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -r --argjson n "$keep" '[.items[] | select(.content.number == $n and .status == "Blocked")] | length' 2>/dev/null)
+    case "$cnt" in ''|*[!0-9]*) return 0 ;; esac
+    if [ "$cnt" -gt 0 ]; then rest="${rest}${line}"$'\n'; else gone=1; fi
+  done < "$f"
+  if [ -n "$rest" ]; then
+    [ "$gone" -eq 0 ] || printf '%s' "$rest" > "$f"
+    return 0
+  fi
+  rm -f "$f"; FUSE_PAUSE_LOGGED=""
+  log "🔌 suite fuse released: every merged card left Blocked — Builder dispatch resumes"
+  return 1
+}
+
+suite_fuse_tick() {
+  # Luôn trả 1: cầu chì không đổi cột của thẻ nào (caller không cần đọc lại board).
+  local dir led fol now blocked n info suites s window suite nums keep dups d dl claimed="" members m fresh repo bline orc pauses rc _e bb
+  dir=$(fuse_dir); led="$dir/blocked.tsv"; fol="$dir/folded.tsv"; now=$(date +%s)
+  mkdir -p "$dir" 2>/dev/null || { log "⚠ suite fuse: cannot create $dir"; return 1; }
+  blocked=$(echo "$PROJECT_ITEMS_JSON" | jq -r '.items[] | select(.status == "Blocked") | .content.number // empty' 2>/dev/null) || return 1
+  : >> "$led"; : >> "$fol"
+  # thẻ rời Blocked ra khỏi sổ và khỏi folded
+  while IFS=$'\t' read -r n _e _s; do
+    printf '%s\n' "$blocked" | grep -qx "$n" && printf '%s\t%s\t%s\n' "$n" "$_e" "$_s"
+  done < "$led" > "$led.new" || true
+  mv -f "$led.new" "$led"
+  while IFS= read -r n; do
+    printf '%s\n' "$blocked" | grep -qx "$n" && printf '%s\n' "$n"
+  done < "$fol" > "$fol.new" || true
+  mv -f "$fol.new" "$fol"
+  for n in $blocked; do
+    cut -f1 "$led" | grep -qx "$n" && continue
+    rc=0; info=$(fuse_card_info "$n" 2>>"$RUN_MANIFEST") || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      case "$RUNNER_HALT_CODES" in *" $rc "*) exit "$rc" ;; esac
+      log "⚠ suite fuse: cannot read #${n} (exit ${rc}); retry next tick"; continue
+    fi
+    IFS=$'\t' read -r _e bb suites <<EOF
+$info
+EOF
+    if [ "$info" = "-" ] || [ "$bb" != "-" ] || [ -z "$suites" ]; then printf '%s\t0\t-\n' "$n" >> "$led"
+    else for s in $suites; do printf '%s\t%s\t%s\n' "$n" "$_e" "$s" >> "$led"; done; fi
+  done
+  window=$(( SB_FUSE_WINDOW_H * 3600 ))
+  repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+  pauses=""; [ -f "$dir/pause" ] && pauses=$(cut -f1 "$dir/pause")
+  while IFS=$'\t' read -r suite nums; do
+    [ -n "$suite" ] || continue
+    # thẻ đã gộp, thẻ 🙋, thẻ đã dùng ở nhóm trước (thẻ nhiều suite chỉ vào một nhóm) không nhập nhóm
+    members=""
+    for m in $nums; do
+      case " $claimed " in *" $m "*) continue ;; esac
+      grep -qx "$m" "$fol" && continue
+      echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$m" "$FOR_A_PERSON_JQ"' [.items[] | select(.content.number == $n) | for_a_person] | any' >/dev/null 2>&1 && continue
+      members="$members $m"
+    done
+    keep=""
+    for m in $members; do case " $pauses " in *" $m "*) keep=$m; break ;; esac; done   # thẻ đang giữ cờ ngưng là thẻ giữ
+    [ -n "$keep" ] || keep=$(printf '%s\n' $members | sort -n | head -1)
+    dups=""; for d in $members; do [ "$d" = "$keep" ] || dups="$dups $d"; done
+    [ -n "$dups" ] || continue
+    claimed="$claimed $members"
+    fresh=0; dl=""
+    for d in $dups; do
+      # dòng `blocked-by:` qua helper (số đã đóng bị bỏ; 79 = không đọc được, thử lại tick sau, không ghi sổ)
+      if [ -n "$repo" ] && [ -f "$(dirname "$SB_GITHUB_READ")/super-board-blocked-by.py" ]; then
+        orc=0; bline=$(python3 "$(dirname "$SB_GITHUB_READ")/super-board-blocked-by.py" line --repo "$repo" "$keep" 2>>"$RUN_MANIFEST") || orc=$?
+        if [ "$orc" -ne 0 ]; then log "⚠ suite fuse: blocker check for #${keep} failed (exit ${orc}) — #${d} retried next tick"; continue; fi
+      else bline="blocked-by: ${keep}"; fi
+      [ "$bline" != "blocked-by: -" ] || continue   # thẻ giữ đã đóng giữa chừng: không còn gì để chờ
+      printf '%s\n' "$d" >> "$fol" || { log "⚠ suite fuse: cannot write $fol"; continue; }
+      fresh=1; dl="${dl:+$dl, }#${d}"
+      gh_checkpoint
+      gh_write_once issue comment "$d" --body "[orchestrator] [blocker] 🛑 blocked · 🔌 suite fuse · same suite ${suite} as #${keep}
+Card:        #${d}
+Reason tag:  🔌
+Why blocked: ≥2 cards blocked on ${suite} within ${SB_FUSE_WINDOW_H}h — one root cause, handled in #${keep}
+Evidence:    newest [blocker] comment of each card names ${suite} with TIMEOUT/FAIL/HANG
+Owner:       whoever takes #${keep}
+Move back:   the sweep returns this card to Ready when #${keep} closes
+${bline}" >/dev/null 2>&1 || true
+    done
+    [ "$fresh" -eq 1 ] || continue
+    case " $pauses " in *" $keep "*) ;; *)
+      printf '%s\t%s\t%s\n' "$keep" "$suite" "$now" >> "$dir/pause"; pauses="$pauses $keep"
+      gh_checkpoint
+      gh_write_once issue comment "$keep" --body "[orchestrator] [report] 🔌 suite fuse · ${suite}
+Did: cards blocked on ${suite} within ${SB_FUSE_WINDOW_H}h (${dl}) now wait on this one (blocked-by: ${keep}); none closed
+✅ Done: new Builder dispatch is paused
+Next: fix ${suite}, then move this card out of Blocked — Builder dispatch resumes" >/dev/null 2>&1 || true ;;
+    esac
+    log "🔌 suite fuse: ${suite} blocked ≥2 cards within ${SB_FUSE_WINDOW_H}h (${dl} wait on #${keep}) — Builder dispatch paused until #${keep} leaves Blocked"
+  done <<EOF
+$(awk -F'\t' -v now="$now" -v w="$window" '$3 != "-" && now - $2 <= w { c[$3] = c[$3] " " $1; k[$3]++ } END { for (s in c) if (k[s] >= 2) print s "\t" substr(c[s], 2) }' "$led" | sort)
+EOF
+  return 1
+}
+
 backlog_pull_enabled() {
   # #189: env SB_BACKLOG_PULL (0 tắt, 1 bật) thắng khoá `backlog_pull` của config; thiếu cả hai thì bật.
   case "${SB_BACKLOG_PULL:-}" in 0) return 1 ;; 1) return 0 ;; esac
@@ -2578,6 +2741,8 @@ while true; do
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   if maybe_sweep_blocked; then tick_fetch || continue; fi
+  # #363: ≥2 thẻ Blocked cùng suite id trong N giờ → một thẻ + ngưng giao Builder (suite_fuse_tick).
+  if suite_fuse_tick; then tick_fetch || continue; fi
 
   count_board
 

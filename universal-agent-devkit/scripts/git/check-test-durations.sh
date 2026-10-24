@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# check-test-durations.sh — called by git-pre-commit.sh. Rejects (exit 1) a commit that ADDS a
+# check-test-durations.sh — called by git-pre-commit.sh. WARNS (stderr, exit 0, #365) about a commit that ADDS a
 # tests/*/test_*.sh of the DevKit which tests/lib/test_durations.txt does not list, and prints the line to
-# add. test_run_impacted_order.sh fails on exactly that gap, but only at the gate --full (15-25 min a round;
-# #155 and #157, 2026-10-22). Same list, same line format `<seconds> <path>` as that test; the list is read
+# add. The list is only a start-order hint (a test it does not list starts first), so a gap never blocks a
+# commit. Same list, same line format `<seconds> <path>` as run_impacted.sh; the list is read
 # from the INDEX, so a line staged in the same commit counts and one left in the working tree does not.
 # Nothing to compare (kit outside the repo, no staged list, no added test, any git error): exit 0.
 # DEVKIT_ROOT overrides the kit folder (tests). bash 3.2 compatible.
@@ -31,8 +31,8 @@ EOF
 [ -z "$missing" ] && exit 0
 
 {
-  echo "tests/lib/test_durations.txt does not list the new test(s); test_run_impacted_order.sh would fail at the QA gate."
+  echo "warning: tests/lib/test_durations.txt does not list the new test(s); they start first (default duration), nothing is blocked."
   echo "Add to ${DUR} and stage it (seconds = a rough measured duration; only the start order uses it):"
   for rel in $missing; do printf '    5 %s\n' "$rel"; done
 } >&2
-exit 1
+exit 0

@@ -1450,6 +1450,105 @@
       ]
     },
     {
+      "component": "devkit-gate-robustness",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_robustness.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-ROBUSTNESS-01",
+          "name": "gate không sập, không treo, không để rác: repo lồng, tên file non-UTF-8, tín hiệu giết suite, không có git, killpg bị từ chối; suite quá giờ lúc máy rảnh ghi HANG kèm test cuối và ảnh chụp tiến trình, lúc tải cao vẫn TIMEOUT (#370)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_robustness.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "sb-runner-suite-fuse",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_suite_fuse.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SUITE-FUSE-01",
+          "name": "cầu chì suite của runner: ≥2 thẻ Blocked cùng suite id trong N giờ gộp một thẻ và ngưng giao Builder tới khi thẻ gộp rời Blocked; khác suite hay ngoài cửa sổ giờ không gộp (#363)",
+          "command": "bash tests/super-board/test_runner_suite_fuse.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "issue-363-batch",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QA-REPORT-01",
+          "name": "merge gate từ chối report QA còn ❌ Not done và AC [x] không bằng chứng (#364)",
+          "command": "bash tests/super-board/test_merge_gate_qa_report.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-DRIFT-01",
+          "name": "phát hiện bản sao super-board ở repo app bị lệch hash (#368)",
+          "command": "bash tests/super-board/test_drift.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-REVIEW-SLOT-01",
+          "name": "lane Review không bị bỏ đói slot (#369)",
+          "command": "bash tests/super-board/test_runner_review_slot.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-GUARD-SECRETS-01",
+          "name": "guard-secrets không chặn nhầm thông điệp commit, vẫn chặn đọc dotenv (#367)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-SUITE-CACHE-FIFO-01",
+          "name": "suite_cache không treo trên FIFO ở learned_inputs/.run/prune.stamp (#371)",
+          "command": "bash universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-GITHOOKS-HEAL-01",
+          "name": "githooks cài từ worktree rồi xoá worktree vẫn chạy; heal cài lại hook trỏ đường mất (#363)",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-GIT241-ATTR-01",
+          "name": "worktree prune-branch không từ chối nhầm trên git 2.41 thiếu --attr-source (#371)",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-WT-REMOVE-DURATIONS-01",
+          "name": "worktree remove không bị chặn bởi diff chỉ ở test_durations.txt (#365)",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-ac-proven-before-close",
       "watch_files": [
         ".claude/bin/super-board-ac-check.py",

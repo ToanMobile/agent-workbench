@@ -38,13 +38,13 @@ Mỗi thẻ là một PR, một merge-gate và một lần `post-fix-gate --full
 - Việc phát hiện giữa chừng mà không gấp: nhập vào thẻ Backlog đang có (bằng chính lệnh tạo thẻ), không mở thẻ lẻ.
 - Sửa một lỗi gốc cho nhiều chỗ, hay một nhóm suite/test cùng nguyên nhân: **một thẻ, nhiều commit**, không một thẻ mỗi chỗ.
 - Mở thẻ riêng chỉ khi có lý do thật và nói rõ bằng `--new-card "<lý do>"`: việc độc lập cần PR riêng, khác repo (`--repo`),
-  hoặc thẻ Backlog hiện có đã đủ 6 việc gộp (`MAX_BATCH`, vì PR > 400 dòng đổi phải người duyệt). Thẻ cần người (`--needs-you`),
+  hoặc thẻ Backlog hiện có đã đủ 6 việc gộp (`MAX_BATCH`, vì PR > 400 dòng đổi phải người duyệt). Thẻ cũng không nhận thêm khi tổng dòng AC (cũ + mới) vượt trần `MAX_CARD_AC` (mặc định 12, đặt `SB_MAX_CARD_AC=<số>` để đổi; #369: thẻ gom phình tới build 7873 s). Thẻ cần người (`--needs-you`),
   khác loại với mọi thẻ Backlog, `--from-file` và Backlog trống thì script tự tạo thẻ mới. Không đọc được board thì tạo thẻ mới và cảnh báo.
 - Rủi ro 🟢 và 🟡 đều gom; chỉ việc 🔴 High, hoặc có `--blocked-by`, mới thành thẻ riêng (24/10: trước đây chỉ 🟢 gom, mà gần
   như mọi thẻ ghi 🟡 nên cơ chế gom không bao giờ chạy).
 - Thẻ đã ở Building / QA / Review / Done không nhận thêm việc: việc mới nhập vào thẻ Backlog khác hoặc mở thẻ mới.
 - **Chỉ gom cùng chủ đề** (T0054, 24/10): thẻ nhận gom phải cùng scope cụ thể trong tiêu đề (`🐛 [fix] gate: …`; scope chung
-  chung `task`/`misc`/`general`/`chore` không tính) hoặc trùng ít nhất một đường dẫn file; tổng mục AC sau gom ≤ 8 (`MAX_AC`).
+  chung `task`/`misc`/`general`/`chore` không tính) hoặc trùng ít nhất một đường dẫn file; tổng mục AC sau gom không vượt `MAX_CARD_AC` (trên).
   Script tự áp; khác chủ đề thì ra thẻ mới. (#344 cache gate bị gom vào #319 "bằng chứng test" rồi kẹt; #315 ôm 10+ AC, builder
   làm một phần rồi đóng cả thẻ.)
 - **Gom tay (orchestrator gộp thẻ có sẵn) phải chép AC NGUYÊN VĂN** vào mục `## Acceptance Criteria` của thẻ nhận (giống

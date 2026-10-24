@@ -114,8 +114,6 @@ HUMAN_ONLY = re.compile("|".join([
 # (load 112 trên 12 lõi). Thẻ mới cùng loại mặc định NHẬP vào thẻ Backlog đang có; mở thẻ riêng phải có --new-card.
 # ponytail: trần 6 việc/thẻ vì PR > 400 dòng đổi phải người duyệt (merge gate); nâng khi đo thấy PR gộp vẫn nhỏ.
 MAX_BATCH = 6
-# T0054: thẻ gom quá nhiều AC (#315: 10+) thì builder làm một phần rồi đóng cả thẻ. Trần trên số mục AC sau gom.
-MAX_AC = 8
 AC_ITEM_RE = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]+\S")
 GENERIC_SCOPES = {"", "task", "misc", "general", "chore"}   # create_task "<tóm tắt>" sinh "[bug] task: …" cho mọi việc
 KINDS = {"bug", "feature", "qa"}   # "cùng loại" = cùng một trong ba nhãn này; nhãn khác (priority:high…) không tính
@@ -138,6 +136,18 @@ def gh_timeout_s():
         pass
     print(f"   ⚠️  CREATE_TASK_GH_TIMEOUT_S={raw!r} không hợp lệ: dùng 60s.", file=sys.stderr)
     return 60.0
+
+def max_card_ac():
+    """Trần dòng AC mỗi thẻ gom (#369; thẻ #323/#330 phình tới build 7873 s). SB_MAX_CARD_AC ghi đè; rác/≤ 0 → 12 kèm cảnh báo."""
+    raw = os.environ.get("SB_MAX_CARD_AC", "12")
+    try:
+        v = int(raw)
+        if v > 0:
+            return v
+    except ValueError:
+        pass
+    print(f"   ⚠️  SB_MAX_CARD_AC={raw!r} không hợp lệ: dùng 12.", file=sys.stderr)
+    return 12
 
 def run_cmd(cmd, check=True):
     limit = gh_timeout_s()
@@ -266,16 +276,16 @@ def ac_count(body):
     return sum(1 for l in ac_lines(body) if AC_ITEM_RE.match(l))
 
 def pick_card(cards, labels, text, title="", new_ac=0):
-    """Thẻ Backlog nhận thêm việc: cùng loại (bug/feature/qa), runner build được, chưa đủ MAX_BATCH việc và MAX_AC mục AC
+    """Thẻ Backlog nhận thêm việc: cùng loại (bug/feature/qa), runner build được, chưa đủ MAX_BATCH việc và max_card_ac() mục AC
     sau gom, VÀ cùng chủ đề — cùng scope cụ thể trong tiêu đề hoặc trùng ≥1 đường dẫn file (T0054: #344 cache gate từng
     bị gom vào #319 khác chủ đề rồi kẹt). Trùng đường dẫn nhiều nhất, hòa thì thẻ mới nhất. None khi không có thẻ nào hợp."""
     paths = set(PATH_RE.findall(text))
-    scope = scope_of(title)
+    scope, cap = scope_of(title), max_card_ac()
     fits = [c for c in cards
             if set(labels) & set(c["labels"]) and not NOT_BUILDABLE & set(c["labels"])
             and [l.strip() for l in section(c["body"], "Blocked by") if l.strip()] in ([], ["- None."])
             and c["body"].count(BATCH_HEADING) + 1 < MAX_BATCH   # +1: việc gốc của thẻ cũng tính
-            and ac_count(c["body"]) + new_ac <= MAX_AC
+            and ac_count(c["body"]) + new_ac <= cap
             and ((scope and scope_of(c.get("title", "")) == scope) or paths & set(PATH_RE.findall(c["body"])))]
     return max(fits, key=lambda c: (len(paths & set(PATH_RE.findall(c["body"]))), c["number"]), default=None)
 
