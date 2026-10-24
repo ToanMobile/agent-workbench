@@ -339,6 +339,17 @@ FAKE_CLOSED=$SHN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
   || fail "manifest ghi lại sinh thẻ hồi quy giả cho dòng không dấu thời gian: create=$(creates) (trước $n)"
 FAKE_CLOSED=$TBN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
 [ "$(creates)" = "$n" ] && ok "cắt ngắn: Traceback cũ không bị đếm lại" || fail "cắt ngắn: Traceback cũ thành thẻ hồi quy giả: create=$(creates)"
+# Vị trí byte phải khớp file thật dù trong manifest có \r (tiến trình git fetch): đọc tiếp và đọc lại từ đầu cho cùng khoá.
+#     Thứ tự cần: dòng có \r TRƯỚC dòng lỗi, dòng lỗi đọc tiếp (vị trí thật), rồi git ghi lại (đọc từ đầu).
+RM2="$B/docs/super-board/runs/2026-10-29-GeelyEx2.md"
+printf 'progress 10%%\rprogress 100%%\r\n' > "$RM2"; scan >/dev/null
+echo '.claude/bin/super-board-wave.sh: line 2: zzq: command not found' >> "$RM2"; scan >/dev/null
+ZQ=$(python3 -c 'import json,sys; print(next(i["issue"] for i in json.load(open(sys.argv[1]))["incidents"].values() if "zzq" in i["title"]))' "$TMP/home/ledger.json")
+m=$(creates); sleep 1; ZCLOSED=$(date -u +%Y-%m-%dT%H:%M:%SZ); sleep 1
+cp "$RM2" "$TMP/rm2.bak"; rm -f "$RM2"; cat "$TMP/rm2.bak" > "$RM2"   # git ghi lại: đọc lại từ đầu
+FAKE_CLOSED=$ZQ FAKE_CLOSED_AT=$ZCLOSED scan >/dev/null
+[ "$(creates)" = "$m" ] && ok "manifest có \\r: vị trí byte ổn định, ghi lại không đếm lại" || fail "\\r làm lệch vị trí byte: create=$(creates) (trước $m)"
+n=$(creates)
 # … nhưng CÙNG lỗi nguyên văn quay lại trong CÙNG ngày (ghi thêm vào cùng manifest) sau lúc đóng thẻ = hồi quy thật.
 cat "$TMP/um.bak" >> "$UM"
 FAKE_CLOSED=$SHN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null

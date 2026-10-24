@@ -127,16 +127,16 @@ def log_files(repo: Path) -> list[tuple[Path, str]]:
 
 
 def read_new(path: Path, offsets: dict, since: float):
-    """(dòng mới đủ \\n, mốc thời gian mà mọi dòng đó được ghi SAU nó). Chỉ file thường: một FIFO trong audit-gate
+    """(dòng mới đủ \\n, mốc thời gian mà mọi dòng đó được ghi SAU nó, vị trí byte từng dòng). Chỉ file thường: một FIFO trong audit-gate
     (proof_gate.sh) mà open() thì treo."""
     key = str(path)
     read_at = time.time()       # trước stat: mọi byte vượt quá kích thước sắp đọc được ghi sau mốc này
     try:
         st = path.stat()
     except OSError:
-        return [], 0.0, 0
+        return [], 0.0, []
     if not stat.S_ISREG(st.st_mode):
-        return [], 0.0, 0
+        return [], 0.0, []
     prev = offsets.get(key)
     born = getattr(st, "st_birthtime", None)   # thiếu trường này (docs os.stat_result: chỉ một số nền tảng có) thì không backfill
     if prev is None:
@@ -162,13 +162,19 @@ def read_new(path: Path, offsets: dict, since: float):
             chunk = f.read(st.st_size - start)        # đúng tới kích thước đã stat: phần ghi thêm lúc đọc để lượt sau
     except OSError as e:                              # không quyền đọc / file bị xoay giữa stat và open: bỏ file này,
         print(f"devkit_incident: skip {path}: {e}", file=sys.stderr)   # không mất các file khác của lượt quét
-        return [], 0.0, 0
+        return [], 0.0, []
     end = chunk.rfind(b"\n") + 1                      # dòng đang ghi dở (chưa có \n) cũng để lượt sau
     offsets[key] = {"ino": st.st_ino, "off": start + end, "mtime": st.st_mtime, "read_at": read_at}
     head = 0
     if clamped:                                       # bị kẹp vào giữa một dòng: bỏ mẩu dòng cụt ở đầu
         head = chunk.find(b"\n") + 1
-    return chunk[head:end].decode("utf-8", "replace").splitlines(), after, start + head   # + byte offset dòng đầu
+    # tách đúng theo b"\n" trên byte (splitlines còn tách \r, \x0b…): vị trí byte từng dòng khớp file thật dù đọc từ đâu
+    lines, offs, o = [], [], start + head
+    for seg in chunk[head:end].split(b"\n")[:-1]:
+        lines.append(seg.decode("utf-8", "replace"))
+        offs.append(o)
+        o += len(seg) + 1
+    return lines, after, offs
 
 
 BRANCH = re.compile(r"\bbranch '[^']*'")   # runner: "main checkout is on branch '<x>', not main"
@@ -453,11 +459,7 @@ def scan(quiet: bool) -> int:
         since = data.setdefault("since", time.time())   # lần quét đầu tiên của máy: mốc "file có từ trước"
         for repo in repos():
             for path, kind in log_files(repo):
-                lines, after, base = read_new(path, data["offsets"], since)
-                offs, o = [], base                # byte offset của từng dòng: khoá lần gặp của dòng không dấu thời gian
-                for ln in lines:
-                    offs.append(o)
-                    o += len(ln.encode("utf-8")) + 1
+                lines, after, offs = read_new(path, data["offsets"], since)   # offs: vị trí byte từng dòng
                 for rid, title, mc, key, at, ev in classify_tracebacks(lines):
                     record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev, after, ev, offs[at])
                 if kind == "hook":
