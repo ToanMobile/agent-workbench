@@ -176,11 +176,12 @@ PY
 case "$WHY" in "True covered by the gate receipt of the linked worktree"*) ok "L14: a linked worktree whose check raises is skipped, the next one covers the push" ;;
   *) bad "L14: a raising linked worktree broke the fallback: $(printf '%s' "$WHY" | tail -3)" ;; esac
 
-# a receipt carried into main is judged by the linked rules too: its gate passed on UNCOMMITTED work that `worktree finish` committed;
+# a receipt carried into main is judged by the linked rules too: its gate passed on UNCOMMITTED work that was then committed by hand and carried by `worktree finish`;
 # main then reverts that work, so the pushed tree (back to the base) is not the tested one even though head..rev changes nothing
 newrepo
 echo "fun ok() = 2" > "$W/src/Core.kt"
 CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 || bad "L15 setup: gate --full failed: $(tail -3 "$TMP/gate.out")"
+git -C "$W" commit -qam "task work 2 (by hand: finish never commits real work, #366)" || bad "L15 setup: commit failed"
 (cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L15 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
 grep -qF "carried_from" "$(git -C "$R" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json" 2>/dev/null \
   || bad "L15 setup: finish carried no receipt into main: $(tail -3 "$TMP/finish.out")"

@@ -49,8 +49,8 @@ regression_status.json, …) is left out too, and named on stderr: two worktrees
 each rewrote it conflict when brought back; --with-checklist keeps it. Bring it
 back with: agent-kit worktree diff <path> | git apply --3way
 
-finish / automerge (run from the main checkout; the Stop gate runs automerge by itself): the worktree's uncommitted work is
-committed IN the worktree; main is merged INTO the worktree (so a conflict is resolved there, in a folder nobody else touches);
+finish / automerge (run from the main checkout; the Stop gate runs automerge by itself): uncommitted work in the worktree is
+REFUSED, files named (#366: it is never auto-committed as a `wip` commit; commit it there first); main is merged INTO the worktree (so a conflict is resolved there, in a folder nobody else touches);
 then — after the gate on what the worktree brings (_merge_gate, W1 R3) — the main branch only FAST-FORWARDS to the
 worktree's HEAD (`git merge --ff-only`: git itself refuses when main has uncommitted edits on a file the merge changes, and then
 nothing moved), then `remove` (`--keep`: not). Main moved meanwhile: merged in and gated again, at most MERGE_ROUNDS times. A conflict leaves the merge open in the
@@ -111,6 +111,14 @@ AGENT_MARKERS = (("claude", ".claude/settings.json"), ("codex", ".codex/hooks.js
 # (tests/worktree_git/test_worktree_checklist.sh keeps them in step). INBOX.md is not here: people write it.
 BOOKKEEPING = (".agents/regression_status.json", ".agents/CHECKLIST.md", ".agents/regression_checklist.md",
                ".agents/archive/BUG_ARCHIVE.md", ".agents/instincts-index.md")
+# Gợi ý thứ tự chạy test của kit (#365): một diff chỉ nằm ở đây không phải công việc, không được giữ lại việc gỡ worktree.
+DURATIONS_HINT = "tests/lib/test_durations.txt"
+# chỉ file của chính kit: ở gốc repo kit, hay trong thư mục kit của repo cài (đường dẫn khác tên đó vẫn là việc thật)
+DURATIONS_HINT_PATHS = (DURATIONS_HINT, "universal-agent-devkit/" + DURATIONS_HINT, ".agents/devkit/" + DURATIONS_HINT)
+
+
+def _is_durations_hint(p):
+    return p in DURATIONS_HINT_PATHS
 MEMORY_REL = os.path.join(".agents", "local", "memory", "claude-auto")   # scripts/governance/claude_memory.py REL
 
 
@@ -204,12 +212,17 @@ def _merge_tree(repo, attr_tree, *args):
     """`git merge-tree --write-tree <args>` for `repo`, run with a scratch cwd. An external merge driver (the matrix driver) writes its
     `.merge_file_*` temp files into git's cwd, and a probe killed by its time budget leaves them there: three files in the main checkout
     per kill (#309). `--git-dir` + `--attr-source=<attr_tree>` keep the repo's own attributes, so the driver still applies and the verdict is
-    the one `git -C repo merge-tree` gave. Trouble finding the git dir: the CompletedProcess of that failed call."""
+    the one `git -C repo merge-tree` gave. Trouble finding the git dir: the CompletedProcess of that failed call.
+    git 2.40 / 2.41 take `merge-tree --write-tree` but not `--attr-source` (exit 129, "unknown option"): the probe then runs again as plain
+    `git -C repo merge-tree` (cwd = repo, as before #309), because "cannot say" would refuse a worktree or branch whose work is in the trunk (#358)."""
     gd = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
     if gd.returncode != 0 or not gd.stdout.strip():
         return gd
     with tempfile.TemporaryDirectory(prefix="devkit-merge-tree-") as scratch:
-        return _run(["git", f"--git-dir={gd.stdout.strip()}", f"--attr-source={attr_tree}", "merge-tree", "--write-tree", *args], cwd=scratch)
+        r = _run(["git", f"--git-dir={gd.stdout.strip()}", f"--attr-source={attr_tree}", "merge-tree", "--write-tree", *args], cwd=scratch)
+    if r.returncode == 129 and "attr-source" in (r.stderr or ""):
+        return _run(["git", "-C", repo, "merge-tree", "--write-tree", *args])
+    return r
 
 
 def _read_regular(path, limit=32_000_000):
@@ -1958,7 +1971,8 @@ def _iter_blockers(cwd, wt, shown, budget, rows=None):
         hidden = None
     # Commits stay on the branch. Uncommitted work is safe once the main checkout
     # holds the same bytes (and executable bit) at the same path (a deleted file: missing in both).
-    lost = [p for p in dict.fromkeys(changed + (hidden or [])) if not _same_in_main(wt, main, p)]
+    lost = [p for p in dict.fromkeys(changed + (hidden or [])) if not _same_in_main(wt, main, p)
+            and not _is_durations_hint(p)]   # #365: file gợi ý thứ tự test, không phải công việc
     # Bookkeeping the gate and the checklist sync regenerate is no work (GeelyEx2 #41, 21/10: it alone held a lane worktree and the
     # card went to Blocked); cmd_remove keeps a fallback copy first. A row a person made, or an edit git hides, still counts.
     if any(p in BOOKKEEPING and p not in (hidden or ()) for p in lost) and _bookkeeping_regenerated(wt, main):
@@ -3040,7 +3054,8 @@ def _staged_merge_refusal(wt):
 
 
 def _commit_pending(wt, state):
-    """Commit the worktree's uncommitted work IN the worktree (an isolated folder: nobody else's index). Bookkeeping the gate and the
+    """REFUSE the worktree's uncommitted real work, naming the files (#366: it used to become a `wip(...)` commit that went straight into
+    main without a PR or review). Bookkeeping the gate and the
     hooks regenerate is put back to HEAD (a file HEAD does not have is deleted), except the rows a person made. A local-config or
     secret-looking file, or a symlink HEAD does not have, is NEVER committed on its own: the whole merge stops, naming it, before
     anything is touched (A.4: a `node_modules` link made to run npm test was committed, and the fast-forward put it in place of main's
@@ -3049,7 +3064,7 @@ def _commit_pending(wt, state):
     if not changed:
         return None
     book = [p for p in changed if p in BOOKKEEPING and not (p == STATUS_FILE and _authored_status_changed(wt))]
-    work = [p for p in changed if p not in book]
+    work = [p for p in changed if p not in book and not _is_durations_hint(p)]   # #365: gợi ý thứ tự test, không phải việc (cùng luật với _iter_blockers)
     secret = [p for p in work if _secret_like(p)]
     if secret:
         return ("blocked", tr(f"{len(secret)} file cấu hình cục bộ / giống bí mật sẽ không được tự commit: {', '.join(secret[:6])}. Thêm vào .gitignore, chuyển ra ngoài, "
@@ -3077,6 +3092,12 @@ def _commit_pending(wt, state):
                                   "build cache is not work: delete it (or ignore it with a pattern WITHOUT the trailing slash: `node_modules/` matches a directory, not a "
                                   "link); if the link belongs in the repository, `git add` + `git commit` it in the worktree yourself; nothing was committed or merged"),
                     {"files": new[:20]})
+    if work:   # #366: việc thật chưa commit không bao giờ bị tự gói thành commit wip đưa thẳng vào main (không qua PR/review): từ chối, nêu file
+        return ("blocked", tr(f"{len(work)} file chưa commit trong worktree: {', '.join(work[:6])}. finish không tự commit việc thật: "
+                              f"commit chúng trong {shlex.quote(wt)} (`git add <file>` rồi `git commit`), sau đó chạy lại; chưa có gì bị commit hay gộp",
+                              f"{len(work)} uncommitted file(s) in the worktree: {', '.join(work[:6])}. finish never commits real work for you: "
+                              f"commit them in {shlex.quote(wt)} (`git add <file>` then `git commit`), then run it again; nothing was committed or merged"),
+                {"files": work[:20]})
     if book:
         in_head = set(git(wt, "ls-tree", "-r", "--name-only", "HEAD", "--", *book, check=False).stdout.split("\n"))
         tracked = [p for p in book if p in in_head]
@@ -3088,34 +3109,7 @@ def _commit_pending(wt, state):
                     os.unlink(os.path.join(wt, p))
                 except OSError:
                     pass
-    if not work:
-        return None
-    env = dict(os.environ, GIT_LITERAL_PATHSPECS="1")
-    git(wt, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul", inp="\0".join(work) + "\0", env=env, bounded=False)
-    msg = f"wip({os.path.basename(wt)}): {len(work)} file(s) brought back by the DevKit auto-merge"
-    r = git(wt, "commit", "-q", "-m", msg, "--pathspec-from-file=-", "--pathspec-file-nul", inp="\0".join(work) + "\0", env=env,
-            check=False, bounded=False)
-    if r.returncode != 0:
-        return ("blocked", tr("commit trong worktree bị từ chối (hook pre-commit?): sửa rồi commit ở worktree, lần merge sau sẽ chạy tiếp: ",
-                              "the commit in the worktree was refused (pre-commit hook?): fix it and commit in the worktree, the next merge goes on: ")
-                + _refusal_text(r.stdout + r.stderr), {"files": work[:20]})
     return None
-
-
-_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-_REFUSAL_LINE = re.compile(r"✖|REJECT|BLOCK|refus|error|fatal|từ chối", re.I)
-
-
-def _refusal_text(out, limit=1200):
-    """Why a hook refused a commit, in `limit` characters: the lines that name the refusal (✖ / REJECT / BLOCK / error …) first, then the last
-    lines, colour codes dropped. A gate prints its findings ABOVE a long list of passed checks and a footer, so the last 500 characters said
-    "0 findings" and never the reason (GeelyEx2 2026-10-09, tests/worktree_git/test_worktree_automerge_reason.sh)."""
-    lines = [l.strip() for l in _ANSI.sub("", out).splitlines() if l.strip()]
-    kept = []
-    for l in [l for l in lines if _REFUSAL_LINE.search(l)][:8] + lines[-3:]:
-        if l not in kept:
-            kept.append(l)
-    return " | ".join(kept)[:limit]
 
 
 def _conflict(wt, unmerged):
@@ -3745,6 +3739,68 @@ def _sweep_merge_files(top):
     return out
 
 
+GITHOOK_MARK = "universal-agent-devkit:githook"
+GITHOOK_NAMES = ("pre-commit", "commit-msg", "post-merge", "post-checkout", "post-rewrite")
+# the absolute fallback line `githooks.sh install` writes (`[ -f "$VAR" ] || VAR=<printf %q path>`); the repo-relative lookups above it are quoted
+GITHOOK_FALLBACK = re.compile(r'^\[ -f "\$(?:DEVKIT_HOOK|RELINK)" \] \|\| (?:DEVKIT_HOOK|RELINK)=(/.+|\$\'.+\')$')
+
+
+def _unquote_printf_q(text):
+    """The path `printf %q` wrote: backslash escapes (a space, `$`, …) or the `$'…'` form (a tab, a newline). Nothing is evaluated by a shell.
+    Text that cannot be read back is returned as it is (an unreadable path then reads as gone and the hook is reinstalled)."""
+    try:
+        if text.startswith("$'") and text.endswith("'"):
+            import ast
+            return ast.literal_eval("'" + text[2:-1] + "'")   # \t \n \\ \' \xHH, the escapes %q emits, as a Python literal
+        parts = shlex.split(text)
+        return parts[0] if len(parts) == 1 else text
+    except (ValueError, SyntaxError):
+        return text
+
+
+def _dangling_githooks(hooks_dir):
+    """The DevKit's own hooks in `hooks_dir` whose absolute fallback path no longer exists (the kit they were installed from is gone: a removed
+    worktree, a moved checkout, #363). A project's own hook (no marker) is never listed."""
+    out = []
+    for name in GITHOOK_NAMES:
+        try:
+            with open(os.path.join(hooks_dir, name), encoding="utf-8", errors="replace") as f:
+                lines = f.read().splitlines()
+        except OSError:
+            continue
+        if not any(GITHOOK_MARK in l for l in lines[:3]):
+            continue
+        for l in lines:
+            m = GITHOOK_FALLBACK.match(l)
+            if m:
+                if not os.path.exists(_unquote_printf_q(m.group(1))):
+                    out.append(name)
+                    break
+    return out
+
+
+def _heal_githooks(wt):
+    """SessionStart: a DevKit git hook that points at a kit path that is gone fails every commit and merge of every worktree (#363, 24/10), so
+    it is installed again from the running kit (`githooks.sh install` writes the main checkout's copy, never a worktree's). Only a hook the
+    DevKit wrote and only when its fallback dangles; never an error: a session must start whatever happens here."""
+    try:
+        r = git(wt, "rev-parse", "--path-format=absolute", "--git-path", "hooks", check=False)
+        hooks_dir = r.stdout.strip() if r.returncode == 0 else ""
+        bad = _dangling_githooks(hooks_dir) if hooks_dir else []
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "githooks.sh")
+        if not bad or not os.path.isfile(script):
+            return
+        done = subprocess.run(["bash", script, "install", wt], capture_output=True, text=True, timeout=60)
+        if done.returncode == 0 and not _dangling_githooks(hooks_dir):
+            print(tr(f"git hook của DevKit trỏ tới đường không còn ({', '.join(bad)}): đã cài lại",
+                     f"DevKit git hook pointed at a path that is gone ({', '.join(bad)}): reinstalled"))
+        else:
+            print(tr(f"git hook của DevKit trỏ tới đường không còn ({', '.join(bad)}) và chưa cài lại được: chạy `agent-kit githooks install`",
+                     f"DevKit git hook points at a path that is gone ({', '.join(bad)}) and could not be reinstalled: run `agent-kit githooks install`"))
+    except (OSError, subprocess.SubprocessError, SystemExit) as e:
+        print(tr(f"không kiểm được git hook của DevKit: {e}", f"could not check the DevKit git hooks: {e}"))
+
+
 def cmd_heal(cwd, args):
     """A checkout the HOST made — Grok's worktree session, a separate clone (OfficeReader
     2026-09-28), or a plain `git worktree` — never went through `add`: no .agents/devkit link
@@ -3820,6 +3876,7 @@ def cmd_heal(cwd, args):
                          "trunk mode is ON but the WorktreeCreate/WorktreeRemove hooks could not be wired: run `agent-kit worktree trunk wire` to see why"))
     except (SystemExit, OSError):
         pass   # a session must start whatever happens here
+    _heal_githooks(wt)
     if done:
         print(tr("checkout do host tạo: đã chuẩn bị như `agent-kit worktree add` — ",
                  "host-made checkout: set up like `agent-kit worktree add` — ") + ", ".join(done))

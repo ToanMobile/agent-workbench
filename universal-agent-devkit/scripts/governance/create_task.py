@@ -135,6 +135,18 @@ def gh_timeout_s():
     print(f"   ⚠️  CREATE_TASK_GH_TIMEOUT_S={raw!r} không hợp lệ: dùng 60s.", file=sys.stderr)
     return 60.0
 
+def max_card_ac():
+    """Trần dòng AC mỗi thẻ gom (#369; thẻ #323/#330 phình tới build 7873 s). SB_MAX_CARD_AC ghi đè; rác/≤ 0 → 12 kèm cảnh báo."""
+    raw = os.environ.get("SB_MAX_CARD_AC", "12")
+    try:
+        v = int(raw)
+        if v > 0:
+            return v
+    except ValueError:
+        pass
+    print(f"   ⚠️  SB_MAX_CARD_AC={raw!r} không hợp lệ: dùng 12.", file=sys.stderr)
+    return 12
+
 def run_cmd(cmd, check=True):
     limit = gh_timeout_s()
     try:
@@ -255,10 +267,12 @@ def pick_card(cards, labels, text):
     """Thẻ Backlog nhận thêm việc: cùng loại (bug/feature/qa), runner build được, chưa đủ MAX_BATCH; trùng đường dẫn
     file nhiều nhất, hòa thì thẻ mới nhất. None khi không có thẻ nào hợp."""
     paths = set(PATH_RE.findall(text))
+    cap, new_ac = max_card_ac(), len([l for l in ac_lines(text) if l.strip()])
     fits = [c for c in cards
             if set(labels) & set(c["labels"]) and not NOT_BUILDABLE & set(c["labels"])
             and [l.strip() for l in section(c["body"], "Blocked by") if l.strip()] in ([], ["- None."])
-            and c["body"].count(BATCH_HEADING) + 1 < MAX_BATCH]   # +1: việc gốc của thẻ cũng tính
+            and c["body"].count(BATCH_HEADING) + 1 < MAX_BATCH   # +1: việc gốc của thẻ cũng tính
+            and len([l for l in ac_lines(c["body"]) if l.strip()]) + new_ac <= cap]
     return max(fits, key=lambda c: (len(paths & set(PATH_RE.findall(c["body"]))), c["number"]), default=None)
 
 def merge_body(old, title, new):

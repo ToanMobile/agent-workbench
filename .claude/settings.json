@@ -139,7 +139,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-secrets.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-secrets.py"
           }
         ]
       },
