@@ -389,7 +389,7 @@ if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
       say "AC collapsed into fewer lines than the card has: back to Build to rewrite the sb:ac block"
       exit 11
     fi
-    AC_UNTICKED=$(echo "$AC_JSON" | jq -r '.unticked[] | "- " + .')
+    AC_UNTICKED=$(echo "$AC_JSON" | jq -r '(.unticked // [])[] | "- " + .')
   fi
 fi
 
@@ -493,12 +493,25 @@ BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") 
 # message squash, giữ danh sách commit và trailer (Co-Authored-By, Test-approved-by).
 if [ -n "$AC_CARD" ] && [ -z "$MSG_FILE" ]; then
   git -C "$REPO_PATH" log --reverse --format='* %s%n%n%b' "${BASE_SHA}..${HEAD_SHA}" > "$AC_DIR/log.md" 2>/dev/null || : > "$AC_DIR/log.md"
-  foreign=$(python3 "$HERE/super-board-ac-check.py" --pr-body /dev/null --msg "$AC_DIR/log.md" --branch "$HEAD_REF" \
-    | jq -r '(.foreign_closes // []) | map("#\(.)") | join(", ")') || foreign=""
+  LOG_JSON=$(python3 "$HERE/super-board-ac-check.py" --pr-body /dev/null --msg "$AC_DIR/log.md" --branch "$HEAD_REF") || LOG_JSON='{}'
+  foreign=$(echo "$LOG_JSON" | jq -r '(.foreign_closes // []) | map("#\(.)") | join(", ")')
   if [ -n "$foreign" ]; then
     echo "ac-check: a commit on ${HEAD_REF} closes ${foreign}, but the branch is card #${AC_CARD} — reword it to Refs (the squash message is built from these commits)"
     say "a PR closes only its own card: back to Build to fix the closing keywords"
     exit 11
+  fi
+  # Chỉ commit tự `Closes #<thẻ>` (body không có sb:ac, không Closes) thì AC chưa được đối chiếu ở trên: thẻ có AC → nén về 0 dòng.
+  if [ "$(echo "$LOG_JSON" | jq -r '.closes_own // false')" = true ] && [ ! -s "$AC_DIR/issue.md" ] \
+     && [ "$(echo "$AC_JSON" | jq -r '.ac // false')" = false ]; then
+    python3 "$GITHUB_READ" --kind issue -- issue view "$AC_CARD" ${REPO:+--repo "$REPO"} --json number,title,body,labels > "$AC_DIR/issue.json"
+    jq -r '.body // ""' "$AC_DIR/issue.json" > "$AC_DIR/issue.md"
+    n_ac=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" --pr-body /dev/null --msg "$AC_DIR/log.md" \
+      --branch "$HEAD_REF" | jq -r '.issue_ac // 0')
+    if [ "${n_ac:-0}" -gt 0 ]; then
+      echo "ac-check: a commit on ${HEAD_REF} closes card #${AC_CARD} (${n_ac} acceptance criteria) but the PR has no sb:ac block — list every criterion in it, one line each"
+      say "AC collapsed into fewer lines than the card has: back to Build to rewrite the sb:ac block"
+      exit 11
+    fi
   fi
 fi
 

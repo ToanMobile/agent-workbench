@@ -369,11 +369,15 @@ issue_is_open() {
   echo "${PROJECT_ITEMS_JSON:-{\}}" | jq -e --argjson n "$1" 'any(.items[]?; .content.number == $n
       and any(((.labels // []) + (.content.labels // []))[]; ((if type == "object" then .name else . end) // "" | ascii_downcase) == "ac-open"))' >/dev/null 2>&1 \
     || return 1
-  # Không đọc được lý do đóng: không mở lại (có thể người đã bỏ thẻ có chủ đích) nhưng cũng không đưa vào Done.
-  if ! reason=$(gh issue view "$1" --json stateReason -q '.stateReason' 2>/dev/null); then
+  # Snapshot có thể cũ: merge gate gỡ nhãn ngay trước khi merge đủ AC rồi Closes đóng thẻ. Đọc nhãn + lý do đóng trực tiếp;
+  # nhãn đã gỡ thì CLOSED như thường. Không đọc được: không mở lại (có thể người đã bỏ thẻ) nhưng cũng không đưa vào Done.
+  if ! reason=$(gh issue view "$1" --json stateReason,labels \
+       -q '(.stateReason // "") + " " + ([.labels[].name | ascii_downcase] | join(","))' 2>/dev/null); then
     log "⚠ #$1 closed with label ac-open; close reason unreadable — not reopened, kept out of Done this tick"
     return 0
   fi
+  case ",${reason#* }," in *,ac-open,*) ;; *) return 1 ;; esac
+  reason="${reason%% *}"
   if [ "$reason" = "NOT_PLANNED" ]; then
     log "#$1 has label ac-open but was closed as not planned — left closed"
     return 1

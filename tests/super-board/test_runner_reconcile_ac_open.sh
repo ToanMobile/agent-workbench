@@ -16,7 +16,7 @@ printf '#!/bin/sh\necho CLOSED\n' > "$T/read.py"   # github-read giả: issue lu
 cat > "$T/bin/gh" <<SH
 #!/bin/sh
 echo "gh \$*" >> "$T/calls"
-case "\$*" in *stateReason*) [ "\$REASON" = FAIL ] && exit 1; echo "\$REASON" ;; esac
+case "\$*" in *stateReason*) [ "\$REASON" = FAIL ] && exit 1; echo "\$REASON \${LIVE-ac-open}" ;; esac
 SH
 chmod +x "$T/bin/gh"
 
@@ -48,6 +48,9 @@ out=$(run '[{"name":"ac-open"}]' COMPLETED 1)
 out=$(run 'content:[{"name":"ac-open"}]' COMPLETED)
 [ "$out" = "rc=0" ] && grep -q 'write: issue reopen 7' "$T/calls" \
   && ok "nhãn chỉ nằm ở content.labels: vẫn nhận ra ac-open" || fail "content labels: $out"
+out=$(LIVE=bug run '["ac-open"]' COMPLETED)
+[ "$out" = "rc=1" ] && ! grep -q 'write: issue reopen' "$T/calls" \
+  && ok "snapshot cũ còn ac-open nhưng nhãn thật đã gỡ (gate gỡ trước merge): CLOSED, không mở lại" || fail "stale snapshot: $out"
 out=$(run '["ac-open"]' FAIL)
 [ "$out" = "rc=0" ] && ! grep -q 'write: issue reopen' "$T/calls" && grep -q 'close reason unreadable' "$T/calls" \
   && ok "đọc lý do đóng hỏng: không mở lại (có thể người bỏ), nhưng giữ ngoài Done" || fail "reason fail: $out; $(tr '\n' '|' < "$T/calls")"

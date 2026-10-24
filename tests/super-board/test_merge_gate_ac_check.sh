@@ -164,6 +164,20 @@ card 30 "$TMP/b30.md" "$TMP/issue3.md" '[]'
 rc=$(gate 30)
 [ "$rc" = 11 ] && grep -q 'closes #315' "$TMP/gate30.out" && ok "I: tiêu đề PR đóng thẻ lạ → exit 11" || fail "I': rc=$rc $(tail -2 "$TMP/gate30.out")"
 
+# J — body không có sb:ac, không Closes; chỉ commit "Closes #31" (message squash từ commit) → thẻ có 3 AC → exit 11.
+printf 'mô tả tay\n' > "$TMP/b31.md"
+card 31 "$TMP/b31.md" "$TMP/issue3.md" '[]' "fix: x
+
+Closes #31"
+rc=$(gate 31)
+[ "$rc" = 11 ] && grep -q 'closes card #31 (3 acceptance criteria)' "$TMP/gate31.out" && ! grep -q 'pr merge' "$TMP/calls" \
+  && ok "J: chỉ commit Closes thẻ mình, không có sb:ac → exit 11" || fail "J: rc=$rc out=$(tail -2 "$TMP/gate31.out") err=$(tail -2 "$TMP/gate31.err")"
+# K — không có sb:ac, Closes #32, body thẻ rỗng → không crash (jq), merge như cũ.
+printf 'Closes #32\n' > "$TMP/b32.md"; : > "$TMP/empty.md"
+card 32 "$TMP/b32.md" "$TMP/empty.md" '[]'
+rc=$(gate 32)
+[ "$rc" = 0 ] && grep -q 'pr merge 32' "$TMP/calls" && ok "K: thẻ không có AC, không sb:ac → merge, không crash" || fail "K: rc=$rc err=$(tail -3 "$TMP/gate32.err")"
+
 # F — không --body-file: message squash lấy từ commit của nhánh; commit có "Closes #315" (thẻ lạ) → exit 11, không merge.
 printf 'không có khối ac\n' > "$TMP/b26.md"
 card 26 "$TMP/b26.md" "$TMP/issue3.md" '[]' "fix: thứ gì đó
