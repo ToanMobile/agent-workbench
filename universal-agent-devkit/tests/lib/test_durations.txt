@@ -390,3 +390,5 @@
 13 tests/gates/test_gate_suite_cache_selection.sh
 # #377 (#338)
 15 tests/gates/test_gate_slot_started.sh
+# origin/main (#181) thiếu dòng: test_run_impacted_order bắt
+8 tests/verification/test_red_proof_na.sh
