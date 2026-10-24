@@ -143,7 +143,10 @@ advanced_12 && ! grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "
 # control: a lane that reports blocked is NOT an advance — advanced_12 must say no (the old check would still have printed ok here)
 saved_cards="$CARDS"; CARDS="[{\"number\":12,\"status\":\"Review\"}]"
 wave 1 EXPECT=1 SB_CAPACITY="$TMP/caps/two" LANE_RESULT='{"status":"blocked","column":"Review","detail":"t"}'; CARDS="$saved_cards"
-advanced_12 && fail "control: a blocked review lane counted as advanced" || ok "control: blocked review lane is not an advance"
+# the run itself must have worked and recorded card 12 as blocked (else advanced_12 is false for the wrong reason: a crash, non-JSON output)
+{ [ "$RC" = 0 ] && jq -e '.cards[] | select(.number == 12 and .finalStatus == "blocked")' "$TMP/out.$RUN_N" >/dev/null 2>&1 && ! advanced_12; } \
+  && ok "control: the wave ran, card 12 recorded blocked, and advanced_12 says no" \
+  || fail "control: rc=$RC out=$(head -c 300 "$TMP/out.$RUN_N")"
 ac_open 12 'merge ok, no marker line'
 grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && ok "no ac-open line → failed (advanced without reaching Done)" || fail "missing line accepted: $(head -c 300 "$TMP/out.$RUN_N")"
 ac_open 12 'merge ok; ac-open: #123'

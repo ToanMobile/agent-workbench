@@ -174,8 +174,16 @@ case("direct bash kit test exit 0 with EMPTY output checked nothing (OCR 24/10)"
      [E, ["bash", KIT_BASH, ""]], 2, NO, msg="test PASS")
 case("direct bash kit test exit 0 that only prints a skip line checked nothing",
      [E, ["bash", KIT_BASH, "skip: no super-board scripts at /x\n"]], 2, NO, msg="test PASS")
-case("direct bash kit test exit 0 with output but no check mark proves nothing",
-     [E, ["bash", KIT_BASH, "running…\ndone\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test that prints only `ok: …` lines (test_profile_guardrails.sh style) is a pass",
+     [E, ["bash", KIT_BASH, "ok: missing guardrails are in the profile rules\n"]], 0, msg="test PASS")
+case("direct bash kit test with many check marks and one skipped optional case is still a pass",
+     [E, ["bash", KIT_BASH, "✔ a\n✔ b\nskip: optional device case\n✔ c\n"]], 0, msg="test PASS")
+case("direct bash kit test printing `pass=5 fail=0` (test_gh_write_once_marker.sh style) is a pass",
+     [E, ["bash", KIT_BASH, "pass=5 fail=0\n"]], 0, msg="test PASS")
+case("direct bash kit test printing `ALL OK` (test_proof_gate_before.sh style) is a pass",
+     [E, ["bash", KIT_BASH, "ALL OK\n"]], 0, msg="test PASS")
+case("direct bash kit test whose every line is a skip line checked nothing",
+     [E, ["bash", KIT_BASH, "skip: no scripts\nskip: no device\n"]], 2, NO, msg="test PASS")
 case("hooks/tests exit 0 whose check name contains FAIL is still a pass",
      [E, ["bash", "sh hooks/tests/plain_helper.sh", "✔ FAIL on secrets\n"]], 0, msg="test PASS")
 case("bash kit test chained with ; true is not a pass",

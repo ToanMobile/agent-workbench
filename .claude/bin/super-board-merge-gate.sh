@@ -1014,7 +1014,11 @@ if [ "$AC_RECHECK" = true ]; then
     [ -n "$foreign" ] && msg="closes ${foreign} (branch is card #${AC_CARD})"
     [ "$collapsed" = true ] && msg="${msg:+$msg / }lists $(echo "$AC_JSON" | jq -r .pr_ac) AC lines but card #${AC_CARD} has $(echo "$AC_JSON" | jq -r .issue_ac)"
     echo "ac-check: the PR body changed during verify and now ${msg}"
-    say "back to Build: fix the closing keywords and the sb:ac block"
+    # the hint names only what is wrong too (OCR O2): a foreign Closes is not an sb:ac problem and a collapsed block is not a keyword problem
+    hint=""
+    [ -n "$foreign" ] && hint="fix the closing keywords"
+    [ "$collapsed" = true ] && hint="${hint:+$hint and }rewrite the sb:ac block"
+    say "back to Build: ${hint}"
     exit 11
   fi
   AC_UNTICKED=$(echo "$AC_JSON" | jq -r '(.unticked // [])[] | "- " + .')

@@ -939,9 +939,11 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if DEVKIT_SUITE_GREEN.search(txt):
             return "green"
         # Exit 0 của tool là xanh khi bash/sh chạy thẳng file kit, dù không có "all passed".
-        # Needs at least one ✔ and no `skip` line: a kit test that exits 0 on its skip path ("skip: no scripts here") or prints nothing checked nothing (OCR 24/10).
-        if (not is_error and _command_is_direct_bash_kit(command) and "✔" in txt
-                and not re.search(r"^\s*skip\b", ANSI_RX.sub("", txt), re.M | re.I)):
+        # A kit test that exits 0 on its skip path ("skip: no scripts here") or prints nothing checked nothing (OCR 24/10): empty output, or output
+        # whose every line is a `skip` line, is no run. Any other output counts, whatever its summary style (✔, `ok: …`, `pass=5 fail=0`, `ALL OK`:
+        # 21 kit tests print none of ✔ / "all passed"), and a run with a skipped optional case among passes is still a run.
+        lines = [l for l in ANSI_RX.sub("", txt).splitlines() if l.strip()]
+        if not is_error and _command_is_direct_bash_kit(command) and lines and not all(re.match(r"\s*skip\b", l, re.I) for l in lines):
             return "green"
         return None
     if pm_run:

@@ -35,7 +35,11 @@ if [ "$RECORD" -eq 1 ] || [ "$MARK" -eq 1 ]; then
   if [ "$MARK" -eq 1 ]; then
     # --mark vouches for ONE run the caller already did (post-fix-gate.py --full --diff origin/<base>), so it only stands for a config whose whole
     # verify is that one gate line; with any other verify command nothing ran for it (OCR 24/10, F1/F3). The key covers every command.
-    { [ "${#CMDS[@]}" -eq 1 ] && [[ "${CMDS[0]}" == *post-fix-gate.py* ]]; } || { echo "super-board-verify-cmd: --mark needs exactly one verify command and it must be post-fix-gate.py; no receipt" >&2; exit 65; }
+    # The SHAPE counts, not a substring (OCR O1): no shell operator (`&&`, `;`, `|`, redirect, backtick, `$(`) so nothing else runs in that line.
+    # The flags that relax a run (--auto-approve-tests…) are compared by the caller (post-fix-gate.py mark_merge_gate_receipt) against what it used:
+    # this repo's own verify line carries --auto-approve-tests, so they cannot be refused here.
+    { [ "${#CMDS[@]}" -eq 1 ] && [[ "${CMDS[0]}" == *post-fix-gate.py* ]] && [[ "${CMDS[0]}" != *[\;\&\|\<\>\`]* ]] && [[ "${CMDS[0]}" != *'$('* ]]; } \
+      || { echo "super-board-verify-cmd: --mark needs exactly one verify command: a plain post-fix-gate.py line (no shell operator); no receipt" >&2; exit 65; }
     # The tree the run tested, taken BEFORE it began: a commit or merge during a long --full leaves a clean tree that was never tested (F2).
     [ "$TREE" = "$(git rev-parse 'HEAD^{tree}')" ] || { echo "super-board-verify-cmd: the tree changed after the run began; no receipt" >&2; exit 65; }
   fi
