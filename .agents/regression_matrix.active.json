@@ -1357,6 +1357,83 @@
       ]
     },
     {
+      "component": "durations-union-merge",
+      "trigger_files": [
+        ".gitattributes",
+        "universal-agent-devkit/tests/lib/test_durations.txt",
+        "universal-agent-devkit/tests/gates/test_durations_union_merge.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-DURATIONS-UNION-01",
+          "name": "test_durations.txt gộp bằng merge=union: hai nhánh cùng nối dòng cuối không xung đột, dòng trùng còn một (#302)",
+          "command": "bash universal-agent-devkit/tests/gates/test_durations_union_merge.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "approval-auto-merge-head",
+      "trigger_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_approval_auto_merge_head.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVAL-AUTO-MERGE-01",
+          "name": "duyệt head X vẫn hiệu lực khi merge gate tự gộp main thành Y; commit khác đẩy thêm thì đòi duyệt lại (#262)",
+          "command": "python3 tests/super-board/test_approval_auto_merge_head.py",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "worktree-essentials-block-remove",
+      "trigger_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_essentials_block.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-WT-ESSENTIALS-BLOCK-01",
+          "name": "worktree remove/discard gỡ được worktree chỉ lệch ở khối devkit-essentials của AGENTS.md; sửa ngoài khối vẫn bị từ chối (#234)",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_essentials_block.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-approved-head-receipt",
+      "trigger_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_approved_head_second_run.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVED-HEAD-RECEIPT-01",
+          "name": "gate đẩy merge commit Y rồi thoát: lượt gate thứ hai vẫn nhận duyệt của X qua biên nhận; commit người đẩy thêm thì đòi duyệt lại (#262)",
+          "command": "bash tests/super-board/test_merge_gate_approved_head_second_run.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-scratch-agents-clean",
+      "trigger_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_scratch_agents_clean.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SCRATCH-AGENTS-CLEAN-01",
+          "name": "scratch của merge gate không để AGENTS.md đã track bị sửa sau khi cài DevKit (#234)",
+          "command": "bash tests/super-board/test_merge_gate_scratch_agents_clean.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-ac-proven-before-close",
       "watch_files": [
         ".claude/bin/super-board-ac-check.py",
