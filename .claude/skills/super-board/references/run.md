@@ -375,6 +375,7 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
    `agent-kit worktree add .claude/worktrees/issue-<N>-qa issue-<N>-<slug> --lane=qa --base=origin/<config.base_branch>`.
    A `qa` card has no branch yet: move it Ready → QA, then the same command creates the branch from the base.
 2. `target.url` set → health-check it first. Unhealthy → Block.
+2a. An AC needs a real device and none is online (`adb devices`): label the card `needs-device`, post a `[qa] [blocker]` comment naming the device, and move it to Blocked `📱` before you exit. Never exit silently with the card still in QA: a worker that leaves its card in the column it took it from, with no new comment, counts as a no-op, and the runner parks the card in Blocked after 2 in a row (`SB_NOOP_MAX`, issue #137); merge-only and merge-train dispatches are never counted (leaving the card in Review without a comment is their correct exit).
 3. Read issue + PR + Builder's handoff comment.
 4. Build issue-scoped test plan: one observable test per AC.
 4a. Existing project verifier → follow `../../super-qa/references/project-verifier.md`
