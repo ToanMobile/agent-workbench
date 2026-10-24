@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regression test (issue #181): red_proof.py --pending marks a matrix suite (kind=test) and an
-# orphan test row red_proof = N/A with a reason — a RED proof only exists for a bug/REQ — and never
-# touches a bug row's proof or removes a row.
+# orphan test row red_proof = N/A with a reason — a RED proof only exists for a bug/REQ — and so does
+# a bug/REQ with no linked test (pending again once a test is linked). No row is ever removed.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -33,7 +33,16 @@ field() { python3 -c "import json;print((json.load(open('$P/.agents/regression_s
 [ "$(field REG-CALC status)" = "N/A" ] && ok "a matrix suite (kind=test) gets red_proof N/A" || fail "REG-CALC: $(field REG-CALC status)"
 [ "$(field ORPHAN-X status)" = "N/A" ] && ok "an orphan row gets red_proof N/A" || fail "ORPHAN-X: $(field ORPHAN-X status)"
 [ "$(field REG-CALC reason)" != "-" ] && [ -n "$(field REG-CALC reason)" ] && ok "N/A carries a reason" || fail "N/A without a reason"
-[ "$(field BUG-NOTEST status)" = "-" ] && ok "a bug row is left alone (no proof written)" || fail "BUG-NOTEST: $(field BUG-NOTEST status)"
+[ "$(field BUG-NOTEST status)" = "N/A" ] && ok "a bug with no linked test gets N/A (no oracle to prove RED yet)" || fail "BUG-NOTEST: $(field BUG-NOTEST status)"
+# once a test is linked the N/A bug is pending again (it must not stay N/A for ever)
+python3 - "$DEVKIT_DIR/scripts/testing" <<'PY' && ok "an N/A bug that gets a test is pending again" || fail "N/A bug with a test is not pending"
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import red_proof
+d = json.load(open(".agents/regression_status.json"))
+it = d["items"]["BUG-NOTEST"]; it["tests"] = ["REG-CALC"]; it["red_proof"] = {"status": "N/A"}
+sys.exit(0 if "BUG-NOTEST" in red_proof.pending_ids(d) else 1)
+PY
 python3 -c "import json,sys;sys.exit(0 if 'BUG-NOTEST' in json.load(open('$P/.agents/regression_status.json'))['items'] else 1)" \
   && ok "no row is dropped" || fail "a row vanished"
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }

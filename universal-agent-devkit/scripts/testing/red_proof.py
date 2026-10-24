@@ -11,7 +11,7 @@ working tree is never touched).
   RED + GREEN → PROVEN · GREEN + GREEN → VACUOUS (the test does not depend on the fix)
   anything else → INCONCLUSIVE with the reason; never a guess.
   --pending also marks the matrix suites (kind=test) and orphan test rows red_proof N/A with a
-  reason: a RED proof exists for a bug/REQ only.
+  reason: a RED proof exists for a bug/REQ only. A bug/REQ with no linked test gets N/A too, until one is linked.
 
   Session mode (default): base = HEAD, fix = the uncommitted non-test changes. No such
   change → INCONCLUSIVE (the fix is committed; pass --fix-commit).
@@ -774,7 +774,7 @@ def pending_ids(data: dict, project: Path | None = None) -> list:
         if it.get("kind") not in ("bug", "req") or it.get("fixed") is False or not it.get("tests"):
             continue
         proof = it.get("red_proof") or {}
-        if proof.get("status") in (None, "PENDING", "OUTDATED"):
+        if proof.get("status") in (None, "PENDING", "OUTDATED", "N/A"):
             out.append(bid)
         elif proof.get("status") == "INCONCLUSIVE" and project is not None and proof.get("mode") != "patch" \
                 and patch_of(project, bid):
@@ -783,10 +783,18 @@ def pending_ids(data: dict, project: Path | None = None) -> list:
 
 
 def not_applicable_ids(data: dict) -> list:
-    """Matrix suites (kind=test) and orphan test rows: a RED proof exists for a bug/REQ only, so
-    these rows get red_proof N/A (issue #181) instead of staying empty for ever."""
-    return [i for i, it in sorted(data["items"].items())
-            if it.get("kind") in ("test", "orphan") and (it.get("red_proof") or {}).get("status") != "N/A"]
+    """Rows that cannot have a RED proof (issue #181), so they get red_proof N/A instead of staying
+    empty for ever: matrix suites (kind=test) and orphan test rows (a proof exists for a bug/REQ
+    only), and a bug/REQ with no linked test yet (pending_ids takes it back once one is linked)."""
+    out = []
+    for i, it in sorted(data["items"].items()):
+        proof = (it.get("red_proof") or {}).get("status")
+        if it.get("kind") in ("test", "orphan"):
+            if proof != "N/A":
+                out.append(i)
+        elif it.get("kind") in ("bug", "req") and not it.get("tests") and proof is None:
+            out.append(i)
+    return out
 
 
 def keep_proof(project, bid, result, record):
