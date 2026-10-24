@@ -541,6 +541,10 @@ rm -f "$WD" "$TMP/halt"
 # và board nằm im 5,5 giờ. rc=79 không bao giờ là dừng có chủ đích: hết file halt thì khởi động lại.
 dead_pid; set_state "$D" halted 79; rm -f "$WD" "$TMP/halt"
 expect_restart "halted rc=79 whose halt file is already gone (cleared elsewhere)"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+# rc=76: halt ghi chưa rõ kết quả mà bản ghi halt không ghi được — không được khởi động lại mù.
+dead_pid; set_state "$D" halted 76; rm -f "$WD" "$TMP/halt"
+expect_no_restart "halted rc=76 (uncertain write, halt record not written)"
 rm -f "$WD" "$TMP/halt"
 
 # #190: halt rc=79 do một lần GHI chưa rõ kết quả (22/10 06:31, board đứng 2g47 chờ người --resume --reconciled). Watchdog đọc
