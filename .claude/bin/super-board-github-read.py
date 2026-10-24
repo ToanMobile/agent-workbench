@@ -78,7 +78,9 @@ def check_halt():
             text = path.read_text()
             record = json.loads(text)
             target, home = _op_repo(record.get('operation')), _home_repo()
-        except (OSError, ValueError, AttributeError):
+        except FileNotFoundError:
+            return   # another check set it aside first
+        except (OSError, ValueError, AttributeError, TypeError):
             text, target, home = None, None, None
         if target and home and target != home:
             aside = path.with_name(f'github-halt-foreign-{time.time_ns()}.json')
@@ -92,6 +94,9 @@ def check_halt():
                     return
                 if not path.exists():
                     os.replace(aside, path)
+            except FileNotFoundError:
+                if not path.exists():
+                    return   # another check set the same foreign record aside first
             except OSError as error:
                 print(f'[github-read] could not set aside the foreign halt: {error}', file=sys.stderr)
     raise ReadHalted('GitHub reads are halted; inspect the saved reason and explicitly restart the run')

@@ -105,6 +105,9 @@ out=$(race_check)
 { printf '%s\n' "$out" | grep -qx ReadHalted && grep -q '"real"' "$HALT" 2>/dev/null; } \
   && ok "check_halt race: a real halt written between read and rename is put back and still stops the board" \
   || fail "race: out=$out halt=$(cat "$HALT" 2>/dev/null | head -c 60)"
+printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":{"args":5}}' > "$HALT"
+out=$(check_with)
+printf '%s\n' "$out" | grep -qx ReadHalted && ok "check_halt: a malformed record still halts (no TypeError crash)" || fail "malformed record: out=$out"
 printf '%s' '{"reason":"x","attempts":1,"at":1,"operation":null}' > "$HALT"
 out=$(check_with)
 printf '%s\n' "$out" | grep -qx ReadHalted && [ -e "$HALT" ] && ok "check_halt: a halt with no recorded read (uncertain write) still stops the board" || fail "op-null halt: out=$out"
