@@ -227,7 +227,7 @@ class GitHub:
         plan = json.loads(run.stdout)
         return not plan.get("human") and not plan.get("needs_you")
 
-    def check(self, number, head=None, scope=None, issue=None):
+    def check(self, number, head=None, scope=None, issue=None, approved_head=None):
         current_head, issues = self.pr(number)
         if issue is not None and issue not in issues:
             return {"approved": False, "why": "request issue is not linked to this PR"}
@@ -236,7 +236,9 @@ class GitHub:
         comments = []
         for source in sorted(issues | {number}):
             comments.extend(self.comments(source))
-        expected = {"repo": self.repo, "pr": number, "head": current_head}
+        # #262: `head` là head merge gate vừa tự đẩy (gộp main sạch); duyệt gắn với head người đã duyệt (approved_head), đã chốt
+        # trước khi gate đẩy. Head hiện tại khác `head` (có commit mới) thì đã bị chặn ở trên.
+        expected = {"repo": self.repo, "pr": number, "head": approved_head or current_head}
         if scope is not None:
             expected["scope"] = scope
         return validate(comments, expected, self.permission)
@@ -247,6 +249,7 @@ def main():
     ap.add_argument("--repo", required=True)
     ap.add_argument("--pr", type=int)
     ap.add_argument("--head")
+    ap.add_argument("--approved-head", help="head người đã duyệt khi --head là merge commit gate tự đẩy (#262)")
     ap.add_argument("--plan", help="JSON plan from merge-policy")
     ap.add_argument("--request", action="store_true", help="print a pinned request; no network or writes")
     ap.add_argument("--deps", action="store_true", help="enrich the dependency graph on stdin")
@@ -289,7 +292,7 @@ def main():
     if not args.pr or not args.head or not args.plan:
         ap.error("check requires --pr, --head and --plan")
     try:
-        result = GitHub(args.repo).check(args.pr, args.head, scope_for(json.loads(args.plan)))
+        result = GitHub(args.repo).check(args.pr, args.head, scope_for(json.loads(args.plan)), approved_head=args.approved_head)
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         result = {"approved": False, "why": "approval evidence could not be verified"}
     print(json.dumps(result))

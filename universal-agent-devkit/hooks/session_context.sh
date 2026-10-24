@@ -45,6 +45,10 @@ GATE_HOOK="$(dirname "${SELF}")/regression_gate.sh"
 CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/governance/context_sync.py"
 [ -f "${CTX_SYNC}" ] || CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/context_sync.py"
 [ -f "${CTX_SYNC}" ] && [ -d "${REPO_ROOT}/.agents" ] && (python3 "${CTX_SYNC}" "${REPO_ROOT}" --quiet >/dev/null 2>&1 &)
+# The matrix merge driver command is repo config written only by `githooks install`: rewrite a stale one (#291).
+# Silent and a no-op when it is current or the repo never installed it; the config is shared by every worktree.
+GH_SCRIPT="$(dirname "$(dirname "${SELF}")")/scripts/git/githooks.sh"
+[ -f "${GH_SCRIPT}" ] && bash "${GH_SCRIPT}" refresh-matrix-driver "${REPO_ROOT}" >/dev/null 2>&1
 # A worktree the host made itself (Grok, OfficeReader 2026-09-28) lacks the git-ignored
 # .agents/devkit link and local config: set it up like `agent-kit worktree add` (no-op elsewhere).
 WT_SCRIPT="$(dirname "$(dirname "${SELF}")")/scripts/git/worktree.py"
