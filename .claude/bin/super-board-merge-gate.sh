@@ -317,9 +317,15 @@ PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$M
 # The label is display-only. A request posted before `done` pins the exact head
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
 APPROVED=false
+APPROVED_HEAD=   # #262: head người đã duyệt, chốt trước khi gate tự đẩy merge commit của main lên nhánh PR
+# Gate đẩy Y rồi thoát (verify đỏ, timeout, exit 4): lượt sau đọc head=Y, không đẩy nữa. Biên nhận ghi X theo Y (chỉ gate ghi, khi đã
+# duyệt) để lượt sau vẫn nhận ra Y là merge commit của chính gate; commit người đẩy thêm làm head khác Y thì không có biên nhận.
+AH_DIR=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || AH_DIR=
+[ -z "$AH_DIR" ] || AH_DIR="$AH_DIR/super-board/approved-merge-heads"
+[ -z "$AH_DIR" ] || [ ! -r "$AH_DIR/$HEAD_SHA" ] || APPROVED_HEAD=$(head -1 "$AH_DIR/$HEAD_SHA")
 approval_check() {
   APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --pr "$PR" \
-    --head "$HEAD_SHA" --plan "$PLAN") || APPROVAL='{"approved":false}'
+    --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || APPROVAL='{"approved":false}'
   python3 "$GITHUB_READ" --check || exit $?
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
 }
@@ -465,6 +471,13 @@ if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ];
     say "dry run: ${HEAD_REF} is ${BEHIND_NOW} commit(s) behind ${BASE}; the real run would update it to ${MERGED_SHA} (nothing pushed)"
   elif git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
     say "updated ${HEAD_REF} in place ${HEAD_SHA} -> ${MERGED_SHA} (clean merge of ${BASE}, no --force)"
+    # Duyệt của người gắn với head cũ; merge commit này do chính gate đẩy (cha là head cũ + base) nên duyệt vẫn phủ nó. Commit khác
+    # đẩy thêm sau đó làm head khác MERGED_SHA, approval.py báo headChanged và đòi duyệt lại.
+    if [ "$APPROVED" = true ]; then
+      APPROVED_HEAD=${APPROVED_HEAD:-$HEAD_SHA}
+      [ -z "$AH_DIR" ] || { mkdir -p "$AH_DIR" && printf '%s\n' "$APPROVED_HEAD" > "$AH_DIR/$MERGED_SHA"; } \
+        || say "could not record the approved head for ${MERGED_SHA}: a second gate run will ask for approval again"
+    fi
     HEAD_SHA=$MERGED_SHA
   else
     say "clean merge of ${BASE} could not fast-forward ${HEAD_REF}; not a rebase pass"
