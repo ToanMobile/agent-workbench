@@ -6172,7 +6172,7 @@ def main():
                     mark_keyed(t, rec)
                     return None
             run_suite_slotted(t, cmd, mode, env, sequential)
-            record_keyed(t, final=False)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này
+            record_keyed(t, final=False)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này (trừ PASS của suite phụ thuộc diff: ghi ở lượt cuối)
             return None
 
 
