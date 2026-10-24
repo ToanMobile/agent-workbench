@@ -823,6 +823,8 @@ elif [ "$TRAIN_PROVED" -eq 1 ]; then say "verified green against ${BASE} (0 comm
 else say "verified green against ${BASE} (${#VERIFY[@]} command(s))"; fi
 if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ]; then
   mkdir -p "${TREE_RECEIPT%/*}" && : > "$TREE_RECEIPT" || say "could not write the verified-tree receipt ${TREE_RECEIPT}; the next gate verifies again"
+  # Biên nhận cũ hơn 14 ngày không còn cây nào khớp: dọn để thư mục không lớn mãi (OCR 24/10).
+  find "${TREE_RECEIPT%/*}" -type f -mtime +14 -delete 2>/dev/null || true
 fi
 own_lock_or_stop   # verify dài có thể đã để gate khác chiếm khoá: không merge song song với nó
 

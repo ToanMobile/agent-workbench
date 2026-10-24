@@ -126,6 +126,11 @@ mkpr 31; run_case 31 "$TMP/red-base.log"
   && ok "suite red on base too: PR merged, one bug card filed (exit 0, issues=1)" \
   || fail "red on base (rc=$CASE_RC issues=$CASE_CREATED, want 0 and 1): $(why 31)"
 
+# #226 gap 7 (OCR 24/10): verify xanh nhờ bỏ qua suite đỏ trên base không được ghi biên nhận (lượt sau phải kiểm lại với base)
+[ -z "$(ls "$R/.git/super-board/verified-trees" 2>/dev/null)" ] \
+  && ok "red-on-base pass writes no verified-tree receipt" \
+  || fail "red-on-base pass left a verified-tree receipt: $(ls "$R/.git/super-board/verified-trees")"
+
 mkpr 32; run_case 32 "$TMP/red-base-two.log"
 [ "$CASE_RC" -eq 0 ] && [ "$CASE_CREATED" -eq 2 ] \
   && ok "two suites red on base: merged, one card each (exit 0, issues=2)" \
