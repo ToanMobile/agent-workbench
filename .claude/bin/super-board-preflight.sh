@@ -243,7 +243,10 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | [ $cards[] | select((.status as $s | ["Ready","Building","QA","Review"] | index($s)) != null) | .number ] as $active
     | [ $others[] | select($own | not) | select(closes($n) | not) | select(sim(.title; $i.title) < $th)
         | . as $p | [ ($p.files // [])[] | .path ] as $pf
-        | ($mine - ($mine - $pf)) as $hit
+        # Shared append-only files every PR touches (own merge driver / regenerated): no overlap (#226 sat behind 8 PRs).
+        | ($mine - [".agents/regression_matrix.active.json", "universal-agent-devkit/tests/lib/test_durations.txt",
+                    ".agents/regression_status.json", ".agents/CHECKLIST.md", ".agents/instincts.md"]) as $own_files
+        | ($own_files - ($own_files - $pf)) as $hit
         | select(($hit | length) > 0)
         | { pr: $p.number, files: $hit,
             issues: ($p | closed_refs | if $hasinf then map(select(. as $k | $active | index($k))) else . end) } ] as $overlap

@@ -44,10 +44,16 @@ jobs_now() { # what a run uses: the override when valid, else the default
 }
 [ "${1:-}" = "--jobs" ] && { jobs_now; exit 0; }
 
+trunk_ref=""
+for t in "$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master origin/trunk; do
+  [ -n "$t" ] && git rev-parse -q --verify "$t^{commit}" >/dev/null 2>&1 && { trunk_ref="$t"; break; }
+done
 if git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
   # a diff from the merge-base, not `git log --name-only`: that prints no file for a merge commit, so a conflict resolution that
-  # changed another file went untested (W1 R4, 14/10)
-  unpushed="$(git diff --name-only --relative '@{u}...HEAD' -- . 2>/dev/null)"
+  # changed another file went untested (W1 R4, 14/10). Measured against origin/<trunk> when it exists: a branch whose upstream
+  # is an OLD branch selected everything the trunk changed since (#319 TIMEOUT x4, #240 "331 tests", 24/10).
+  base_ref="$trunk_ref"; [ -n "$base_ref" ] || base_ref='@{u}'   # not ${x:-@{u}}: its `}` ends the expansion
+  unpushed="$(git diff --name-only --relative "$base_ref...HEAD" -- . 2>/dev/null)"
 elif [ "${DEVKIT_IMPACTED_SINCE:-}" = 0 ]; then
   unpushed=""   # a RED-proof sandbox (no upstream, a detached worktree): only the file it reverted is a change, not every commit of the last hours
 elif [ -z "${DEVKIT_IMPACTED_SINCE:-}" ] \
