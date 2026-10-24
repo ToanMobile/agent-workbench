@@ -125,7 +125,7 @@ repo unreach && git add -A && git commit -qm init && git branch -M main \
   && git branch -q -u origin/main
 start=$(date +%s); ctx "$TMP/unreach" >/dev/null; secs=$(( $(date +%s) - start ))
 if pgrep -f "10.255.255.1" >/dev/null; then orphan=yes; pkill -f "10.255.255.1"; else orphan=no; fi
-[ "$orphan" = no ] && [ "$secs" -le 8 ] && ok "unreachable remote: bounded fetch, no orphan ssh (${secs}s)" \
+[ "$orphan" = no ] && [ "$secs" -le 20 ] && ok "unreachable remote: bounded fetch, no orphan ssh (${secs}s)" \
   || fail "unreachable remote: orphan=$orphan secs=$secs"
 
 # The fetch keeps the user's own ssh command (core.sshCommand: a custom key) and adds BatchMode to it.

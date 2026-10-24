@@ -42,6 +42,8 @@
 #                            [--inflight <cards.json>]   # [{number,title,status}] board cards
 #                            [--files a/b.ts,c/d.ts]     # paths the card will touch (else: parsed from body)
 #                            [--threshold 0.6]           # title Jaccard for a duplicate
+#                            [--cap 400]                 # merge_policy.auto_max_lines; 0 = no line cap: a card with many
+#                                                        # deliverables is one PR (one gate), never held as too big
 #
 # Stdout, one object keyed by issue number:
 #   { "14": { "number": 14, "title": "…", "verdict": "proceed|hold|sequence",
@@ -56,7 +58,7 @@ set -euo pipefail
 # Fixed read commands: a malformed payload is GitHub's, so it halts (#32).
 export SB_GITHUB_READ_STRICT=1
 
-REPO=""; ISSUES=""; INFLIGHT=""; FILES=""; THRESHOLD="0.6"
+REPO=""; ISSUES=""; INFLIGHT=""; FILES=""; THRESHOLD="0.6"; CAP="400"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)      REPO="$2"; shift 2 ;;
@@ -64,11 +66,14 @@ while [ $# -gt 0 ]; do
     --inflight)  INFLIGHT="$2"; shift 2 ;;
     --files)     FILES="$2"; shift 2 ;;
     --threshold) THRESHOLD="$2"; shift 2 ;;
+    --cap)       CAP="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
 [ -n "$REPO" ] && [ -n "$ISSUES" ] || { echo "usage: --repo <owner/name> --issues <N[,M…]>" >&2; exit 64; }
 echo "$ISSUES" | grep -Eq '^[0-9]+(,[0-9]+)*$' || { echo "--issues must be numbers: $ISSUES" >&2; exit 64; }
+echo "$CAP" | grep -Eq '^[0-9]{1,10}$' || { echo "--cap must be a whole number of lines: $CAP" >&2; exit 64; }
+CAP=$((10#$CAP))   # 0400 → 400: jq --argjson rejects leading zeros
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 if [ -f "$HERE/super-board-gh-guard.sh" ]; then
@@ -92,7 +97,7 @@ done
 jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$OPEN" \
       --argjson closed "$CLOSED" --argjson cards "$CARDS" --arg files "$FILES" \
       --argjson hasinf "$([ -n "$INFLIGHT" ] && echo true || echo false)" \
-      --argjson th "$THRESHOLD" '
+      --argjson th "$THRESHOLD" --argjson cap "$CAP" '
   def stop: ["the","and","for","with","from","into","when","that","this","add","fix","make","use","should","not","are","can","new"];
   def toks: ascii_downcase | [scan("[a-z0-9]+")] | map(select(length > 2)) | . - stop | unique;
   def sim($a; $b): ($a | toks) as $x | ($b | toks) as $y
@@ -121,8 +126,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   # #98 #102) đều hold, 0/49 thẻ đóng COMPLETED có AC bị hold. Nghiêng về proceed: mọi tín hiệu tính 1 và cần
   # ≥2, trừ `device` tính 2 nên tự nó đủ hold — AC chỉ máy thật chứng minh được kéo theo cả bộ test trên thiết
   # bị (comment builder ở OfficeReader #98: riêng phần chứng minh ~800–1.100 dòng); agent hạ được khi nêu lý do.
-  # Trần 400 là mặc định của merge_policy.auto_max_lines; script không đọc config nên chữ "default" đi kèm.
-  # ponytail: trần cố định trong lời nhắn, thêm tham số --cap (chưa có) khi có board đặt trần khác 400.
+  # Trần dòng là --cap (runner truyền merge_policy.auto_max_lines, mặc định 400); 0 = không trần: bỏ tín hiệu "nhiều việc".
   # Mục "## <tên>" cuối cùng của body (cùng luật tiêu đề với has_acs), tới "## " kế tiếp.
   def sect($h): ((.body // "") / "\n") as $l
     | [ $l | to_entries[] | select(.value | heading($h)) | .key ] as $k
@@ -153,6 +157,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     settings: "\\b(?:settings|cài đặt)\\b",
     native: "\\b(?-i:JNI|NDK)\\b|C\\+\\+",
     content: "\\b(?:[0-9]+ tập|Tập [0-9]|màn [0-9])\\b" };
+  # Shared append-only files every PR touches, each with its own merge driver in .gitattributes: no file overlap
+  # (#226 sat Blocked behind 8 PRs that only shared the matrix).
+  def no_shared: . - [".agents/regression_matrix.active.json", "universal-agent-devkit/tests/lib/test_durations.txt"];
   def too_big:
     sect("Fix") as $fix | sect("Acceptance Criteria") as $ac
     | [ $fix | parts[] | select(test("^#?[0-9]+$|^[0-9a-f]{7,40}$") | not) ] as $items
@@ -176,9 +183,13 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | (($ac + "\n" + (sect("Risk") | gsub("(?i)\\b(?:không|no|not|without)(?:[ \t]+[^\\s,;.]+){0,2}[ \t]+(?:" + $dev + ")"; "")))
        | test("(?i)" + $dev)) as $realdev
     # work: tín hiệu "nhiều việc" (gợi ý tách theo việc); còn lại là AC phải tách ra thẻ `qa` riêng.
+    # The Fix list and the title name the same work: when the Fix list is the signal but fits under a large cap,
+    # the title is not read as a second chance (one signal for one list of work).
     | [ if ($short | length) >= 5 and ($short | length) * 5 >= ($items | length) * 4 then
-          { w: 1, work: true, split: $items,
-            says: "Fix lists \($short | length) separate deliverables: at a rough ~100 changed lines each, ~\($short | length * 100) lines, over the default 400-line merge cap" }
+          (if ($short | length) * 100 > $cap then
+             { w: 1, work: true, split: $items,
+               says: "Fix lists \($short | length) separate deliverables: at a rough ~100 changed lines each, ~\($short | length * 100) lines, over the \($cap)-line merge cap" }
+           else empty end)
         elif ($named | length) >= 3 then
           { w: 1, work: true, split: $named, says: "the title names \($named | length) deliverables" }
         else empty end,
@@ -197,9 +208,11 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
         if ($metric | length) > 0 and $realdev then
           { w: 2, work: false, split: [ $metric[] | "a qa card for: \(.)" ],
             says: "AC only a real device can prove: \($metric | join(" · "))" } else empty end ] as $sig
+    # --cap 0: no merge line cap, so "many deliverables" is no reason to split (one card = one PR = one gate).
+    | (if $cap == 0 then [ $sig[] | select(.work | not) ] else $sig end) as $sig
     | { hold: (([ $sig[].w ] | add // 0) >= 2), evidence: [ $sig[].says ],
         split: (([ $sig[] | select(.work) | .split | select(length > 0) ] | first
-                 // [ "vertical slices, each under the merge cap (default 400 lines)" ])
+                 // (if $cap == 0 then [] else [ "vertical slices, each under the \($cap)-line merge cap" ] end))
                 + [ $sig[] | select(.work | not) | .split[] ]) };
 
   [ $targets[] | . as $i | $i.number as $n
@@ -233,7 +246,8 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | [ $cards[] | select((.status as $s | ["Ready","Building","QA","Review"] | index($s)) != null) | .number ] as $active
     | [ $others[] | select($own | not) | select(closes($n) | not) | select(sim(.title; $i.title) < $th)
         | . as $p | [ ($p.files // [])[] | .path ] as $pf
-        | ($mine - ($mine - $pf)) as $hit
+        | ($mine | no_shared) as $own_files
+        | ($own_files - ($own_files - $pf)) as $hit
         | select(($hit | length) > 0)
         | { pr: $p.number, files: $hit,
             issues: ($p | closed_refs | if $hasinf then map(select(. as $k | $active | index($k))) else . end) } ] as $overlap
@@ -244,7 +258,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
         + [ $cards[] | select(.number != $n) | { ref: "#\(.number)", kind: "card:\(.status)", title, sim: sim(.title; $i.title) } ]
         | map(select(.sim >= 0.25 and .sim < $th)) | sort_by(-.sim) | .[:5] ) as $near
 
-    | { number: $n, title: $i.title, candidates: $near, blockedBy: [], conflictWith: [], _files: $mine, _own: $own }
+    | { number: $n, title: $i.title, candidates: $near, blockedBy: [], conflictWith: [], _files: ($mine | no_shared), _own: $own }
       + ( if ($done | length) > 0 then
             { verdict: "hold", tag: "done", reason: "already delivered", evidence: $done }
           elif ($busy | length) > 0 then
@@ -253,7 +267,8 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
             { verdict: "hold", tag: "unclear", reason: "no `## Acceptance Criteria` items (`-`, `*`, `1.`, `1)`)", evidence: ["issue #\($n) body"] }
           elif $big.hold then
             { verdict: "hold", tag: "too-big", evidence: $big.evidence, split: $big.split,
-              reason: "too big — split it with /to-tickets into cards under the merge cap (default 400 lines) before building" }
+              reason: (if $cap == 0 then "needs a step no agent can do — move it to a qa card, build the rest as one PR"
+                       else "too big — split it with /to-tickets into cards under the \($cap)-line merge cap before building" end) }
           elif ($overlap | length) > 0 then
             { verdict: "sequence", tag: "overlap",
               reason: "open PRs touch the same files — build after them",

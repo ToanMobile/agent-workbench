@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Test (#229, gap 4 của #226): runner chạy dài tự nạp lại code mới khi super-board-run.sh trên origin/<base> đổi.
 #  - rảnh (không worker) + origin có bản script khác bản đang chạy + main fast-forward được → ff rồi exec lại chính nó;
-#  - main lệch origin (commit local chưa push, hoặc ff không áp được) → notify một lần cho mỗi bản origin, KHÔNG exec;
+#  - main có commit local không đụng runner (#308) → gộp origin qua đường finish (stub: git merge) rồi exec; gộp xung đột/hỏng → notify một lần cho mỗi bản origin, KHÔNG exec;
 #  - bản mới sai cú pháp → notify, không exec; còn worker → không đụng gì; origin cùng bản đang chạy → im lặng.
 # Chạy offline: runner source ở lib mode, git origin là repo bare trong thư mục tạm, exec/notify/log là stub. Tương thích bash 3.2.
 set -u
@@ -21,6 +21,9 @@ log() { echo "$*" >> "$TMP/log"; }
 board_notify() { echo "$*" >> "$TMP/notify"; }
 reload_exec() { echo "$1" >> "$TMP/exec"; }
 runner_state_write() { :; }
+reload_finish_main() {   # stub của worktree finish: gộp origin vào main, xung đột thì trả lại nguyên trạng và khác 0
+  echo x >> "$TMP/finish"; git merge -q --no-edit "origin/${BASE_BRANCH}" >/dev/null 2>&1 || { git merge --abort >/dev/null 2>&1; return 3; }
+}
 CONFIG_SLUG="board"; BASE_BRANCH="main"; ACTIVE_WORKERS=0; SB_RELOAD_EVERY=0
 
 REL=".claude/bin/super-board-run.sh"
@@ -55,13 +58,24 @@ mkrepo; push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
 mkrepo; push_other $'#!/usr/bin/env bash\necho v2'; ACTIVE_WORKERS=1; self_reload_tick
 [ "$(execs)" = 0 ] && grep -q v1 "$RELOAD_SELF" && ok "a worker is alive: nothing touched" || fail "busy: exec=$(execs)"
 
-# ── 4. main lệch origin (commit local chưa push): notify MỘT lần, không exec, HEAD giữ nguyên
-mkrepo; ( cd "$C/repo" && echo local >> other.txt && git commit -qam local ); before=$(git rev-parse HEAD)
+# ── 4. main có commit local KHÔNG đụng runner (#308): gộp origin qua finish rồi exec, commit local còn nguyên
+mkrepo; ( cd "$C/repo" && echo local >> other.txt && git commit -qam local ); : > "$TMP/finish"
+push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
+[ "$(execs)" = 1 ] && [ "$(cat "$TMP/exec")" = "$RELOAD_SELF" ] && grep -q v2 "$RELOAD_SELF" && ok "main has a local commit, origin changed the runner: merged through finish and exec'd" || fail "diverged-clean: exec=$(execs)"
+[ "$(wc -l < "$TMP/finish" | tr -d ' ')" = 1 ] && git log --format=%s | grep -qx local && [ "$(notes)" = 0 ] && ok "  … local commit kept, finish used once, no notice" || fail "diverged-clean: finish/local/notice wrong"
+
+# ── 4b. gộp xung đột (commit local cũng sửa runner): giữ code cũ, notify MỘT lần cho hai tick, HEAD giữ nguyên; bản origin mới → notify lại
+mkrepo; ( cd "$C/repo" && echo '# local' >> "$REL" && git commit -qam local-runner ); before=$(git rev-parse HEAD); RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")
 push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick; self_reload_tick
-[ "$(execs)" = 0 ] && [ "$(git rev-parse HEAD)" = "$before" ] && ok "main diverged from origin: no blind restart, HEAD untouched" || fail "diverged: exec=$(execs)"
+[ "$(execs)" = 0 ] && [ "$(git rev-parse HEAD)" = "$before" ] && ok "conflicting merge: no blind restart, HEAD untouched" || fail "conflict: exec=$(execs)"
 [ "$(notes)" = 1 ] && ok "  … one notice for two ticks on the same origin version" || fail "notices: $(notes)"
 push_other $'#!/usr/bin/env bash\necho v3'; self_reload_tick
 [ "$(notes)" = 2 ] && ok "  … a newer origin version notifies again" || fail "notices after v3: $(notes)"
+
+# ── 4c. main checkout đang ở nhánh khác: không gộp, notify, không exec
+mkrepo; ( cd "$C/repo" && git checkout -q -b other-branch ); : > "$TMP/finish"
+push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
+[ "$(execs)" = 0 ] && [ "$(wc -l < "$TMP/finish" | tr -d ' ')" = 0 ] && [ "$(notes)" = 1 ] && ok "main checkout on another branch: finish not called, notified" || fail "other-branch: exec=$(execs) notify=$(notes)"
 
 # ── 5. file trên đĩa đã là bản origin (phiên khác đã ff main): exec ngay, không cần merge
 mkrepo; push_other $'#!/usr/bin/env bash\necho v2'; ( cd "$C/repo" && git pull -q --ff-only origin main 2>/dev/null )
@@ -75,5 +89,28 @@ mkrepo; push_other $'#!/usr/bin/env bash\nif then fi((('; self_reload_tick
 # ── 7. thay đổi local chưa commit chặn ff: notify, không exec
 mkrepo; echo dirty >> "$RELOAD_SELF"; push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
 [ "$(execs)" = 0 ] && [ "$(notes)" = 1 ] && ok "uncommitted edit blocks the fast-forward: notified, not exec'd" || fail "dirty: exec=$(execs) notify=$(notes)"
+
+# ── 8. finish THẬT (không stub) trên main lệch origin (QA v1 #308): main nhận commit của origin, commit local còn nguyên, worktree tạm bị gỡ;
+#    xung đột thật: trả khác 0, main giữ nguyên.
+WTPY="$ROOT/universal-agent-devkit/scripts/git/worktree.py"; [ -f "$WTPY" ] || WTPY="$ROOT/.agents/devkit/scripts/git/worktree.py"
+real_finish() {   # chạy reload_finish_main thật (nạp lại runner trong subshell, bỏ stub) trong $C/repo
+  ( here=$PWD; SB_LIB_ONLY=1 . "$RUNNER"; cd "$here" || exit 1; log() { echo "$*" >> "$TMP/log"; }; BASE_BRANCH=main; SB_WORKTREE_CMD="python3 $WTPY"; reload_finish_main )
+}
+mkrepo; ( cd "$C/repo" && echo local >> other.txt && git add -A && git commit -qm local )
+push_other $'#!/usr/bin/env bash\necho v2'
+git fetch -q origin; real_finish; rc=$?
+[ "$rc" = 0 ] && grep -q v2 "$RELOAD_SELF" && git log --format=%s | grep -qx local && git merge-base --is-ancestor origin/main HEAD \
+  && ok "real finish on diverged main: origin merged in, local commit kept" || fail "real finish: rc=$rc ($(tail -3 "$TMP/log" | tr '\n' ' '))"
+[ -z "$(git -C "$C/repo" worktree list --porcelain | grep worktrees/self-reload-)" ] && ok "  … temporary worktree removed" || fail "worktree left behind"
+mkrepo; ( cd "$C/repo" && echo '# local' >> "$REL" && git commit -qam local-runner ); before=$(git rev-parse HEAD)
+push_other $'#!/usr/bin/env bash\necho v2'; git fetch -q origin; real_finish; rc=$?
+[ "$rc" != 0 ] && [ "$(git rev-parse HEAD)" = "$before" ] && [ -z "$(git status --porcelain)" ] && ok "real finish with a conflict: non-zero, main untouched" || fail "real conflict: rc=$rc"
+
+# ── 9. (#325) finish thành công đã gỡ worktree: không log cảnh báo giả "worktree remove failed"; worktree cũ cùng PID không chặn lần sau
+mkrepo; ( cd "$C/repo" && echo local >> other.txt && git add -A && git commit -qm local )
+( cd "$C/repo" && python3 "$WTPY" add ".claude/worktrees/self-reload-$$" >/dev/null 2>&1 )   # bản mồ côi của lần reload trước (cùng PID)
+push_other $'#!/usr/bin/env bash\necho v2'; git fetch -q origin; : > "$TMP/log"; real_finish; rc=$?
+[ "$rc" = 0 ] && grep -q v2 "$RELOAD_SELF" && ok "stale self-reload-PID worktree does not block the next reload" || fail "stale worktree blocked reload: rc=$rc ($(tail -2 "$TMP/log" | tr '\n' ' '))"
+! grep -q "worktree remove" "$TMP/log" && ok "  … no false 'worktree remove failed' after a successful finish" || fail "false warning: $(cat "$TMP/log")"
 
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }

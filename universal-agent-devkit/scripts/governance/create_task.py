@@ -17,6 +17,7 @@ Sử dụng:
      python3 create_task.py --from-file docs/super-board/backlog-tickets.md --ticket 1
 """
 
+import os
 import sys
 import re
 import json
@@ -109,8 +110,37 @@ HUMAN_ONLY = re.compile("|".join([
     r"cần người (quyết|duyệt|chọn|làm|thử)", r"chủ (repo|sản phẩm|dự án) (quyết|chọn|duyệt|đặt)",
 ]), re.I)
 
+# Gom việc (23/10): mỗi thẻ một PR + một merge-gate + một lần gate --full, nên nhiều thẻ nhỏ làm gate chạy đè nhau
+# (load 112 trên 12 lõi). Thẻ mới cùng loại mặc định NHẬP vào thẻ Backlog đang có; mở thẻ riêng phải có --new-card.
+# ponytail: trần 6 việc/thẻ vì PR > 400 dòng đổi phải người duyệt (merge gate); nâng khi đo thấy PR gộp vẫn nhỏ.
+MAX_BATCH = 6
+KINDS = {"bug", "feature", "qa"}   # "cùng loại" = cùng một trong ba nhãn này; nhãn khác (priority:high…) không tính
+# Thẻ runner không build (nhãn) hoặc chưa build được (Blocked by không phải đúng "- None.") không nhận thêm việc: việc
+# mới vào đó nằm im. Cùng định nghĩa với FOR_A_PERSON_JQ và wave-plan (fail-safe) của super-board.
+NOT_BUILDABLE = {NEEDS_YOU_LABEL, "human-gated", "wontfix", "loop:halted"}
+BATCH_HEADING = "## Gộp thêm: "
+# Đường dẫn file có "/" (tên trơn như server.py quá chung để coi là trùng).
+PATH_RE = re.compile(r"[\w.\-]+(?:/[\w.\-]+)+\.\w{1,5}")
+
+# Mỗi lệnh gh có hạn (#305): mạng treo không được làm createTask treo theo. Quá hạn = lỗi exit 124 (như lệnh thất bại).
+def gh_timeout_s():
+    """Đọc lúc gọi, không lúc import (#330): rỗng/rác/≤ 0 → 60 kèm cảnh báo, không traceback trước argparse."""
+    raw = os.environ.get("CREATE_TASK_GH_TIMEOUT_S", "60")
+    try:
+        v = float(raw)
+        if v > 0 and v == v:
+            return v
+    except ValueError:
+        pass
+    print(f"   ⚠️  CREATE_TASK_GH_TIMEOUT_S={raw!r} không hợp lệ: dùng 60s.", file=sys.stderr)
+    return 60.0
+
 def run_cmd(cmd, check=True):
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    limit = gh_timeout_s()
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=limit)
+    except subprocess.TimeoutExpired:
+        r = subprocess.CompletedProcess(cmd, 124, "", f"quá {limit:g}s không phản hồi")
     if check and r.returncode != 0:
         raise RuntimeError(f"Command failed ({' '.join(cmd)}):\n{r.stderr.strip()}")
     return r
@@ -168,15 +198,103 @@ def build_body(problem, context=None, fix=None, ac=None, risk=None, blocked_by=N
     lines.append("")
     return "\n".join(lines)
 
-def ac_lines(body):
-    """Các dòng sau heading `## Acceptance Criteria` cuối cùng, tới heading `## ` kế tiếp."""
+def section(body, name):
+    """Các dòng sau heading `## <name>` cuối cùng, tới heading `## ` kế tiếp."""
     lines = (body or "").splitlines()
-    heads = [i for i, line in enumerate(lines) if re.match(r"^##\s+Acceptance Criteria\s*$", line)]
+    heads = [i for i, line in enumerate(lines) if re.match(rf"^##\s+{name}\s*$", line, re.I)]
     if not heads:
         return []
     tail = lines[heads[-1] + 1:]
     end = next((i for i, line in enumerate(tail) if line.startswith("## ")), len(tail))
     return tail[:end]
+
+def ac_lines(body):
+    return section(body, "Acceptance Criteria")
+
+def auto_labels(title, labels=None):
+    if labels:
+        return list(labels)
+    lower_title = title.lower()
+    if "[bug]" in lower_title or "lỗi" in lower_title or "fix" in lower_title or "crash" in lower_title:
+        return ["bug"]
+    return ["qa"] if "[qa]" in lower_title else ["feature"]
+
+def backlog_cards(cfg, repo):
+    """Thẻ Issue của `repo` đang ở cột Backlog của board: [{number, title, body, labels}]. Lỗi đọc board → RuntimeError.
+
+    Board có thể chứa issue của repo khác (repo chưa đăng ký dùng Project #1): `gh issue edit N --repo <repo>` lên số
+    issue của repo khác sẽ ghi đè nhầm issue cùng số, nên thẻ không khớp repository (hoặc thiếu) bị bỏ."""
+    res = run_cmd(["gh", "project", "item-list", str(cfg["number"]), "--owner", PROJECT_OWNER,
+                   "--format", "json", "--limit", "500"], check=False)
+    if res.returncode != 0:
+        raise RuntimeError(res.stderr.strip()[:200] or f"gh project item-list thoát {res.returncode}")
+    data = json.loads(res.stdout)
+    if data.get("totalCount", 0) > len(data.get("items", [])):
+        print(f"   ⚠️  Board có {data['totalCount']} item, chỉ đọc được {len(data['items'])}: danh sách thẻ Backlog bị cắt, "
+              "thẻ mới nhất có thể bị bỏ sót.", file=sys.stderr)
+    cards = []
+    for it in data.get("items", []):
+        c = it.get("content") or {}
+        card_repo = str(c.get("repository") or "").rstrip("/").split("github.com/")[-1].lower()
+        if (it.get("status") == "Backlog" and c.get("type") == "Issue" and c.get("number")
+                and card_repo == repo.lower()):
+            cards.append({"number": c["number"], "title": c.get("title", ""), "body": c.get("body") or "",
+                          "labels": it.get("labels") or []})
+    return cards
+
+def fresh_body(repo, n):
+    """Body hiện tại của issue #n nếu còn mở, ngược lại None (không đọc được, đã đóng)."""
+    res = run_cmd(["gh", "issue", "view", str(n), "--repo", repo, "--json", "body,state"], check=False)
+    try:
+        d = json.loads(res.stdout) if res.returncode == 0 else {}
+    except ValueError:
+        d = {}
+    return d.get("body") if d.get("state") == "OPEN" else None
+
+def pick_card(cards, labels, text):
+    """Thẻ Backlog nhận thêm việc: cùng loại (bug/feature/qa), runner build được, chưa đủ MAX_BATCH; trùng đường dẫn
+    file nhiều nhất, hòa thì thẻ mới nhất. None khi không có thẻ nào hợp."""
+    paths = set(PATH_RE.findall(text))
+    fits = [c for c in cards
+            if set(labels) & set(c["labels"]) and not NOT_BUILDABLE & set(c["labels"])
+            and [l.strip() for l in section(c["body"], "Blocked by") if l.strip()] in ([], ["- None."])
+            and c["body"].count(BATCH_HEADING) + 1 < MAX_BATCH]   # +1: việc gốc của thẻ cũng tính
+    return max(fits, key=lambda c: (len(paths & set(PATH_RE.findall(c["body"]))), c["number"]), default=None)
+
+def merge_body(old, title, new):
+    """Body thẻ cũ + việc mới: dòng AC mới vào mục AC của thẻ (lane chỉ đọc mục đó), Problem/Fix thành mục Gộp thêm."""
+    lines = old.rstrip().splitlines()
+    # Dòng AC mang tên việc: lane đọc mỗi mục AC của thẻ, và AC mặc định ("đã sửa đúng nguyên nhân gốc") giống nhau ở mọi việc.
+    tag = (re.search(r"\]\s*([^:]+):", title) or re.match(r"(.{0,40})", title)).group(1).strip()
+    new_ac = [re.sub(r"^(\s*-\s*\[ \]\s*)", lambda m: f"{m.group(1)}[{tag}] ", l) for l in ac_lines(new) if l.strip()]
+    heads = [i for i, l in enumerate(lines) if re.match(r"^##\s+Acceptance Criteria\s*$", l, re.I)]
+    if heads:
+        end = next((i for i in range(heads[-1] + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+        while end > heads[-1] + 1 and not lines[end - 1].strip():
+            end -= 1
+        lines[end:end] = new_ac
+    else:
+        lines += ["", "## Acceptance Criteria"] + new_ac
+    # The card's own `## Risk` is what preflight and readers see: raise it when the merged item is riskier.
+    def rank(text):   # emoji first; without one, the first word of the label (High/Cao, Medium/Trung bình, Low/Thấp)
+        by_emoji = max((i for i, e in enumerate("🟢🟡🔴") if e in text), default=-1)
+        if by_emoji >= 0:
+            return by_emoji
+        m = re.match(r"\W*(high|cao|medium|trung\s+bình|low|thấp)\b", text, re.I)
+        return -1 if not m else 2 if m.group(1).lower() in ("high", "cao") else 0 if m.group(1).lower() in ("low", "thấp") else 1
+    new_risk = [l for l in section(new, "Risk") if l.strip()]
+    risk_heads = [i for i, l in enumerate(lines) if re.match(r"^##\s+Risk\s*$", l, re.I)]
+    if new_risk and risk_heads:
+        r0 = risk_heads[0]
+        r_end = next((i for i in range(r0 + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+        old_rank = rank("\n".join(l for l in lines[r0 + 1:r_end] if l.strip()))
+        if old_rank >= 0 and rank("\n".join(new_risk)) > old_rank:   # an unreadable card risk is never overwritten
+            old = [l for l in lines[r0 + 1:r_end] if l.strip()]
+            lines[r0 + 1:r_end] = new_risk + [f"Trước khi gom: {l.strip()}" for l in old] + [""]   # keep the card's own risk text
+    detail = [f"{BATCH_HEADING}{title}"]
+    for name in ("Problem", "Fix", "Risk"):   # Risk: a 🟡 item merged into a 🟢 card must not read as low risk
+        detail += [f"### {name}"] + [l for l in section(new, name) if l.strip()]
+    return "\n".join(lines + [""] + detail) + "\n"
 
 
 def detect_needs_you(text):
@@ -292,7 +410,7 @@ def backlog_target(cfg):
 
 def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_you=None, needs_you_next=NEEDS_YOU_NEXT):
     repo = repo or detect_repo()
-    labels = labels or []
+    labels = auto_labels(title, labels)
     if needs_you:
         body = with_needs_you_section(body, needs_you, needs_you_next)
 
@@ -301,16 +419,6 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
     project_name = cfg["name"]
     project_id = cfg.get("project_id", "")
     project_url = f"https://github.com/users/{PROJECT_OWNER}/projects/{project_number}/views/2"
-
-    # Auto label detection
-    lower_title = title.lower()
-    if not labels:
-        if "[bug]" in lower_title or "lỗi" in lower_title or "fix" in lower_title or "crash" in lower_title:
-            labels.append("bug")
-        elif "[qa]" in lower_title:
-            labels.append("qa")
-        else:
-            labels.append("feature")
 
     print(f"\n🚀 {'[DRY-RUN] ' if dry_run else ''}Chuẩn bị tạo Task:")
     print(f"   📌 Tiêu đề : {title}")
@@ -419,7 +527,12 @@ def main():
     parser.add_argument("--needs-you-next", help="Người làm xong thì làm gì tiếp (mặc định: --needs-you thì "
                         f"'{NEEDS_YOU_NEXT}', tự đánh dấu thì '{NEEDS_YOU_DONE_NEXT}')")
     parser.add_argument("--no-needs-you", action="store_true", help="Không tự đánh dấu cần người dù AC khớp cụm từ")
+    parser.add_argument("--new-card", metavar="LÝ DO",
+                        help="Mở thẻ riêng thay vì nhập vào thẻ Backlog đang có (bắt buộc nêu lý do: việc độc lập, cần PR riêng…)")
     args = parser.parse_args()
+    if args.new_card is not None and not args.new_card.strip():
+        print("❌ --new-card cần lý do (vì sao việc này không nhập vào thẻ Backlog đang có).", file=sys.stderr)
+        sys.exit(64)
 
     title = None
     body = None
@@ -486,6 +599,47 @@ def main():
                       "hoặc --no-needs-you nếu lane tự làm được.")
             except ValueError as e:
                 print(f"   ⚠️  AC có vẻ cần người nhưng {e}: chưa đánh dấu; truyền --needs-you \"<việc cụ thể>\".")
+
+    # Gom: thẻ thường (không cần người, không từ file có chủ đích, không --new-card) nhập vào thẻ Backlog hợp nhất.
+    # Không gom việc có --blocked-by hoặc rủi ro 🔴: blocker và rủi ro cao của một việc không tách được khỏi thẻ chứa nó.
+    # 24/10: trước đây chỉ 🟢 mới gom, mà gần như mọi thẻ ghi 🟡 nên không bao giờ gom (người dùng: "gom … không hoạt động").
+    # Only the risk LABEL counts, not the description after it: an emoji wins; without one, the first word (High / Cao).
+    risk = args.risk or ""
+    high = "🔴" in risk or ("🟡" not in risk and "🟢" not in risk and re.match(r"\W*(?:high|cao)\b", risk, re.I))
+    low_risk = not high
+    # Nhãn ngoài bug/feature/qa (needs-device…) có tác dụng với runner; đường gom không áp nhãn lên thẻ cũ → thẻ riêng.
+    plain_labels = set(auto_labels(title, args.labels)) <= KINDS
+    if (needs_you is None and args.new_card is None and not (args.from_file and args.ticket)
+            and not args.blocked_by and low_risk and plain_labels):
+        repo = args.repo or detect_repo()
+        try:
+            card = pick_card(backlog_cards(resolve_project_config(repo), repo), auto_labels(title, args.labels),
+                             f"{title}\n{body}")
+        except (RuntimeError, ValueError, OSError) as e:
+            card = None
+            print(f"   ⚠️  Không gom được vào thẻ Backlog (không đọc được board: {e}): tạo thẻ mới.", file=sys.stderr)
+        if card:
+            n = card["number"]
+            if args.dry_run:
+                print(f"\n🧺 [DRY-RUN] Sẽ gom \"{title}\" vào thẻ Backlog #{n} ({card['title']}).")
+                sys.exit(0)
+            # ponytail: GitHub không có ghi-có-điều-kiện; đọc lại ngay trước khi ghi thu hẹp khoảng hở còn một lời gọi,
+            # và đọc lại sau khi ghi bắt lần ghi của mình bị phiên khác đè (việc không mất: tạo thẻ mới). Nâng cấp khi
+            # va chạm xảy ra thật (khoá file theo số thẻ).
+            current = fresh_body(repo, n)
+            if current is None:
+                print(f"   ⚠️  Không gom được vào #{n} (đã đóng hoặc không đọc lại được): tạo thẻ mới.", file=sys.stderr)
+            else:
+                res = run_cmd(["gh", "issue", "edit", str(n), "--repo", repo, "--body", merge_body(current, title, body)],
+                              check=False)
+                mark = f"{BATCH_HEADING}{title}"
+                # Ghi thành công = edit exit 0 VÀ số mục cùng tên tăng (thẻ đã có mục trùng tên thì "có mặt" chưa chứng minh gì, #330).
+                if res.returncode == 0 and (fresh_body(repo, n) or "").count(mark) > current.count(mark):
+                    print(f"\n🧺 Đã gom \"{title}\" vào thẻ Backlog #{n} ({card['title']}): một PR, một gate. "
+                          "Việc độc lập cần PR riêng thì thêm --new-card \"<lý do>\".")
+                    sys.exit(0)
+                print(f"   ⚠️  Không gom được vào #{n} (gh issue edit thoát {res.returncode}: {res.stderr.strip()[:200]}, "
+                      "hoặc lần ghi bị phiên khác đè): tạo thẻ mới.", file=sys.stderr)
 
     result = create_and_push(title, body, labels=args.labels, repo=args.repo, dry_run=args.dry_run,
                              needs_you=needs_you, needs_you_next=needs_you_next)

@@ -25,8 +25,15 @@ class InstallAutostart(unittest.TestCase):
             self.assertTrue(os.path.isfile(script))
             self.assertTrue(os.path.isfile(os.path.join(app_dir, "config.json")))
             self.assertTrue(os.path.isdir(os.path.join(app_dir, "web")))
+            # server import inbox_hook, và runner đọc hook hộp thư lệnh ở đúng chỗ này
+            self.assertTrue(os.path.isfile(os.path.join(app_dir, "inbox_hook.py")))
             self.assertEqual(plist["WorkingDirectory"], app_dir)
             self.assertEqual(plist["KeepAlive"], {"SuccessfulExit": False})
+            # bản chép ở ~/.agent-office/app không nằm trong repo: server phải được chỉ tới ai-factory.sh thật,
+            # không thì nút "Tạo mã mới" của menu Điện thoại gọi một file không có
+            factory = plist["EnvironmentVariables"].get("AGENT_OFFICE_FACTORY_SCRIPT", "")
+            self.assertEqual(os.path.realpath(factory), os.path.realpath(os.path.join(HERE, "..", "..", "ai-factory.sh")))
+            self.assertTrue(os.path.isfile(factory), factory)
 
 
 if __name__ == "__main__":

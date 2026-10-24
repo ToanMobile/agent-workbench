@@ -206,6 +206,31 @@ gate_max env SB_MERGE_LOAD_MAX=50 >"$TMP/gate15.log" 2>&1; rc=$?
 grep -q "waiting for load 60 to drop below 50 before verify" "$TMP/gate15.log" \
   && ok "SB_MERGE_LOAD_MAX=50 overrides config merge_load_max=100" || fail "env did not override the config: $(grep merge-gate "$TMP/gate15.log" | head -3)"
 
+# Ca 15b (T0052): config không đặt merge_load_max và SB_MERGE_LOAD_MAX không đặt → ngưỡng chung capacity hold_load (8 × lõi, máy giả
+# 12 lõi: 96, cùng ngưỡng heavy_slot; verify là việc BẮT BUỘC — người dùng 20/10: "dưới 100 thì cho chạy", không phải busy_load 36);
+# capacity vắng (SB_CAPACITY=/nonexistent) → cùng công thức 8 × số lõi thật (review 23/10: 2 × lõi cũ = 24 không bao giờ đạt, mọi PR
+# chờ hết giờ). Tải 95 / 96 đúng biên của phép so `-lt` (OCR 23/10: đổi sang `-le` hay lệch công thức thì ca biên đỏ).
+CFG_NOMAX="$TMP/cfg-nomax.json"; jq '.merge_load_wait_s = 3' "$CFG" > "$CFG_NOMAX"
+gate_nomax() { ( unset SB_MERGE_LOAD_WAIT_S SB_MERGE_LOAD_MAX DEVKIT_CAPACITY SB_CAPACITY; cd "$WT" && SB_MERGE_LOAD_POLL_S=1 \
+  DEVKIT_CAPACITY_CORES=12 "$@" bash "$GATE" --config "$CFG_NOMAX" --pr 5 --expect-head "$H" ); }
+echo 95 > "$LOADF"; rm -f "$STARTED"
+gate_nomax env >"$TMP/gate15b.log" 2>&1; rc=$?
+if ! grep -q "waiting for load" "$TMP/gate15b.log" && ran "$rc"; then ok "không có merge_load_max, 12 lõi, tải 95 < hold_load 96: không chờ, verify chạy"
+else fail "không có merge_load_max, tải 95: rc=$rc $(grep merge-gate "$TMP/gate15b.log" | head -3)"; fi
+echo 96 > "$LOADF"; rm -f "$STARTED"
+gate_nomax env >"$TMP/gate15c.log" 2>&1; rc=$?
+grep -q "waiting for load 96 to drop below 96 before verify" "$TMP/gate15c.log" \
+  && ok "không có merge_load_max, 12 lõi, tải 96 (= hold_load): chờ" || fail "không có merge_load_max, tải 96: $(grep merge-gate "$TMP/gate15c.log" | head -3)"
+EIGHT_X=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)') * 8 ))
+echo $((EIGHT_X - 1)) > "$LOADF"; rm -f "$STARTED"
+gate_nomax env SB_CAPACITY=/nonexistent >"$TMP/gate15d.log" 2>&1; rc=$?
+if ! grep -q "waiting for load" "$TMP/gate15d.log" && ran "$rc"; then ok "capacity vắng: tải $((EIGHT_X - 1)) < 8 × số lõi (${EIGHT_X}): không chờ"
+else fail "capacity vắng, tải $((EIGHT_X - 1)): rc=$rc $(grep merge-gate "$TMP/gate15d.log" | head -3)"; fi
+echo "$EIGHT_X" > "$LOADF"; rm -f "$STARTED"
+gate_nomax env SB_CAPACITY=/nonexistent >"$TMP/gate15e.log" 2>&1; rc=$?
+grep -q "waiting for load ${EIGHT_X} to drop below ${EIGHT_X} before verify" "$TMP/gate15e.log" \
+  && ok "capacity vắng: chờ ở 8 × số lõi (${EIGHT_X})" || fail "capacity vắng, tải ${EIGHT_X}: $(grep merge-gate "$TMP/gate15e.log" | head -3)"
+
 # Ca 16: lệnh verify chạy với DEVKIT_SLOT_PRIORITY=merge (bin/heavy_slot.py: merge đứng đầu hàng đợi khoá Unity;
 # post-fix-gate không chạy sentinel hằng ngày trong merge gate). DEVKIT_SLOT_LOAD_WAIT_S=0 CHỈ khi chính gate đã bật chờ tải ở trên
 # (cap > 0): OCR 20/10 — cap = 0 (config thiếu merge_load_wait_s, mặc định của hầu hết board, hay SB_MERGE_LOAD_WAIT_S=0) từng vẫn ép 0,
@@ -253,6 +278,19 @@ grep -q "cannot read the machine load" "$TMP/gate17.log" && ok "17: the gate saw
   || fail "17: no unreadable-load message: $(grep merge-gate "$TMP/gate17.log" | tail -3)"
 [ "$(cat "$PRIOF" 2>/dev/null)" = "merge unset" ] && ok "17: verify sees DEVKIT_SLOT_LOAD_WAIT_S unset after a mid-wait load read failure" \
   || fail "17: verify env '$(cat "$PRIOF" 2>/dev/null)' (want 'merge unset')"
+
+# Ca 18 (#288): biên nhận của merge train đã chứng minh đúng cây này ⇒ gate không verify, nên cũng không được chờ tải (mỗi PR của đợt
+# từng chờ tới SB_MERGE_LOAD_WAIT_S rồi bỏ verify). Dòng cuối không được khoe đã chạy lệnh nào; tiền tố `verified green against` giữ
+# nguyên vì proof_gate.sh đọc nó làm bằng chứng merge.
+printf '%s %s\n' "$H" "$(git -C "$R" rev-parse "${H}^{tree}")" > "$TMP/good.receipt"
+echo 99 > "$LOADF"; rm -f "$STARTED"
+SB_MERGE_LOAD_WAIT_S=3 SB_MERGE_LOAD_POLL_S=1 gate --train-receipt "$TMP/good.receipt" >"$TMP/gate18.log" 2>&1
+grep -q "verify skipped" "$TMP/gate18.log" && [ ! -f "$STARTED" ] \
+  && ok "18: a matching train receipt skips verify" || fail "18: verify not skipped: $(grep merge-gate "$TMP/gate18.log" | head -4)"
+grep -q "waiting for load" "$TMP/gate18.log" \
+  && fail "18: the gate waited for the load although verify is skipped" || ok "18: no load wait when the train receipt proves the tree"
+grep -q "verified green against main (0 command(s) run here" "$TMP/gate18.log" \
+  && ok "18: the final line says no command ran here" || fail "18: final line: $(grep 'verified green' "$TMP/gate18.log")"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_load_wait: PASS"; exit 0; } || { echo "test_merge_gate_load_wait: FAIL ($FAILS)"; exit 1; }

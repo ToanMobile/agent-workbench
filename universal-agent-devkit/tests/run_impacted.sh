@@ -15,15 +15,23 @@ set -u
 DK="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DK" || exit 2
 
-# Tests started at once: DEVKIT_TEST_JOBS when it is a positive integer, else min(cores + cores/3, 16) with a floor of 4, the old default (3 cores or fewer keep 4; only 12 cores was measured) (cores
+# Tests started at once: DEVKIT_TEST_JOBS when it is a positive integer, else bin/capacity.py test_jobs (T0052, below), else min(cores + cores/3, 16) with a floor of 4, the old default (3 cores or fewer keep 4; only 12 cores was measured) (cores
 # from nproc, sysctl hw.ncpu or python3; none answers: 4, the old default). 2026-10-04: `--all` took 301 s for 102 tests at 4 jobs on 12 cores (bound by the job count: about 20 min of
 # tests / 4). 2026-10-23, 12 cores, the same 127 tests: at 10 jobs the pool kept about 7 cores busy (1822 s CPU in 272 s), so more jobs fill the time the tests wait; 2 runs per
-# setting, alternating: 272/326 s at 10 jobs, 240/263 s at 16, 0 red tests in 6 runs (tests/verification/test_run_impacted_order.sh (f)). ponytail: 2 runs per setting on one
-# 12-core machine; measure >= 5 alternating pairs (and on 4-8 cores) before raising the cap again.
+# setting, alternating: 272/326 s at 10 jobs, 240/263 s at 16, 0 red tests in 6 runs (tests/verification/test_run_impacted_order.sh (f)).
 # DEVKIT_TEST_CORES pretends a core count (tests only). `--jobs` prints the number a run would use.
+# T0052: mặc định lấy từ nguồn sức chứa chung bin/capacity.py test_jobs = max(4, ⌊lõi × 4/3 × DEVKIT_CAPACITY⌋), không còn trần 16
+# (13 lõi: 17, 64 lõi: 85), không co theo tải (người dùng 23/10: máy bận thì chờ trước khi chạy); DEVKIT_TEST_CORES đi vào capacity
+# dưới tên DEVKIT_CAPACITY_CORES.
+# ponytail: không còn trần trên — số job chỉ đo trên một máy 12 lõi (16 job); máy lớn (64 lõi: 85, DEVKIT_CAPACITY=4: 341) chưa đo,
+# thêm trần vào capacity.test_jobs khi máy lớn báo hết fd/tiến trình hoặc test quá giờ.
+# capacity.py vắng / hỏng / không có python3: công thức shell cũ bên dưới.
 pint() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ $((10#$1)) -gt 0 ]; }   # 10# so 08 is eight, 00 is not "unlimited"
 default_jobs() {
-  local c="${DEVKIT_TEST_CORES:-}"
+  local c="${DEVKIT_TEST_CORES:-}" j
+  if pint "$c"; then j="$(DEVKIT_CAPACITY_CORES=$((10#$c)) python3 "$DK/bin/capacity.py" test_jobs 2>/dev/null)"
+  else j="$(python3 "$DK/bin/capacity.py" test_jobs 2>/dev/null)"; fi
+  pint "$j" && { echo $((10#$j)); return; }
   pint "$c" || c="$(nproc 2>/dev/null)"
   pint "$c" || c="$(sysctl -n hw.ncpu 2>/dev/null)"
   pint "$c" || c="$(python3 -c 'import os; print(os.cpu_count() or 0)' 2>/dev/null)"
@@ -36,10 +44,18 @@ jobs_now() { # what a run uses: the override when valid, else the default
 }
 [ "${1:-}" = "--jobs" ] && { jobs_now; exit 0; }
 
+trunk_ref=""
+for t in "$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master origin/trunk; do
+  # only a trunk HEAD shares history with: no merge-base (shallow clone, rewritten trunk) would empty the change set silently
+  [ -n "$t" ] && git rev-parse -q --verify "$t^{commit}" >/dev/null 2>&1 && git merge-base "$t" HEAD >/dev/null 2>&1 \
+    && { trunk_ref="$t"; break; }
+done
 if git rev-parse -q --verify '@{u}' >/dev/null 2>&1; then
   # a diff from the merge-base, not `git log --name-only`: that prints no file for a merge commit, so a conflict resolution that
-  # changed another file went untested (W1 R4, 14/10)
-  unpushed="$(git diff --name-only --relative '@{u}...HEAD' -- . 2>/dev/null)"
+  # changed another file went untested (W1 R4, 14/10). Measured against origin/<trunk> when it exists: a branch whose upstream
+  # is an OLD branch selected everything the trunk changed since (#319 TIMEOUT x4, #240 "331 tests", 24/10).
+  base_ref="$trunk_ref"; [ -n "$base_ref" ] || base_ref='@{u}'   # not ${x:-@{u}}: its `}` ends the expansion
+  unpushed="$(git diff --name-only --relative "$base_ref...HEAD" -- . 2>/dev/null)"
 elif [ "${DEVKIT_IMPACTED_SINCE:-}" = 0 ]; then
   unpushed=""   # a RED-proof sandbox (no upstream, a detached worktree): only the file it reverted is a change, not every commit of the last hours
 elif [ -z "${DEVKIT_IMPACTED_SINCE:-}" ] \

@@ -421,7 +421,7 @@ set_state "$D" running; printf 'STOPPED_AT=test\n' > "$MARK"
 expect_no_restart "dead runner, stop marker set"
 rm -f "$MARK"
 set_state "$D" finished 0;  expect_no_restart "clean finish (STATE=finished)"
-set_state "$D" halted 79;   expect_no_restart "deliberate halt (STATE=halted rc=79)"
+set_state "$D" halted 9;    expect_no_restart "deliberate halt (STATE=halted rc=9)"
 set_state "$D" crashed 143; : > "$TMP/halt"
 expect_no_restart "GitHub reads halted (github-halt.json)"
 rm -f "$TMP/halt"
@@ -536,6 +536,23 @@ L=$(grep '^gh project edit 1 --owner o --description' "$TMP/calls" | tail -1)
 case "$L" in *"🟢 đang chạy từ"*) fail "restarted board shows the dead runner's start time: $L" ;;
   *"🟢 đang chạy"*) ok "restarted board does not show the dead runner's start time" ;; *) fail "restart status: '$L'" ;; esac
 kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+rm -f "$WD" "$TMP/halt"
+# 24/10 02:40: runner halted rc=79, rồi file halt đã biến mất (replay/archive ở nơi khác) → watchdog ghi "ended on purpose"
+# và board nằm im 5,5 giờ. rc=79 không bao giờ là dừng có chủ đích: hết file halt thì khởi động lại.
+dead_pid; set_state "$D" halted 79; rm -f "$WD" "$TMP/halt"
+expect_restart "halted rc=79 whose halt file is already gone (cleared elsewhere)"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+# rc=76: halt ghi chưa rõ kết quả mà bản ghi halt không ghi được — không được khởi động lại mù.
+dead_pid; set_state "$D" halted 76; rm -f "$WD" "$TMP/halt"
+expect_no_restart "halted rc=76 (uncertain write, halt record not written)"
+# Hợp đồng mà gh_write_once dựa vào (OCR 24/10): `--halt` thoát 79 khi bản ghi đã lưu; bản ghi không ghi được thì thoát khác 79.
+RGR="$ROOT/.claude/bin/super-board-github-read.py"
+SB_GITHUB_HALT_FILE="$TMP/halt-contract/halt.json" python3 "$RGR" --halt "t" >/dev/null 2>&1; hrc=$?
+[ "$hrc" = 79 ] && [ -s "$TMP/halt-contract/halt.json" ] && ok "--halt saves its record and exits 79" || fail "--halt rc=$hrc, record $([ -s "$TMP/halt-contract/halt.json" ] && echo saved || echo missing)"
+: > "$TMP/notadir"
+SB_GITHUB_HALT_FILE="$TMP/notadir/halt.json" python3 "$RGR" --halt "t" >/dev/null 2>&1; hrc=$?
+[ "$hrc" != 79 ] && [ "$hrc" != 0 ] && ok "--halt that cannot save its record does not exit 79 (rc=$hrc)" || fail "--halt with an unwritable path exited $hrc (want not 79)"
+grep -q 'hrc" -eq 79 \] || {' "$ROOT/.claude/bin/super-board-run.sh" && ok "gh_write_once exits 76 unless --halt returned 79" || fail "gh_write_once does not branch on the --halt exit code"
 rm -f "$WD" "$TMP/halt"
 
 # #190: halt rc=79 do một lần GHI chưa rõ kết quả (22/10 06:31, board đứng 2g47 chờ người --resume --reconciled). Watchdog đọc

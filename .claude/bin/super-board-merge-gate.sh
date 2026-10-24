@@ -342,8 +342,8 @@ fi
 
 # ---- chờ máy bớt tải trước verify ------------------------------------------------
 # 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
-# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX, không đặt thì `merge_load_max` của config board, thiếu nữa thì 2 × số lõi
-# (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX, không đặt thì `merge_load_max` của config board, thiếu nữa thì capacity
+# hold_load (T0052, 8 × lõi, 12 lõi: 96 — verify là việc bắt buộc), capacity vắng thì cùng công thức 8 × số lõi (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 2 × lõi = 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
 # đa SB_MERGE_LOAD_WAIT_S, không đặt thì
 # `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
 # không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
@@ -379,8 +379,13 @@ wait_for_load() {
   else say "SB_MERGE_LOAD_POLL_S='${poll}' is not a positive number; polling every 30s"; poll=30; fi
   if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
   else
-    [ -n "$max" ] && say "${max_src}='${max}' is not a positive number; using 2 x cores"
-    max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
+    [ -n "$max" ] && say "${max_src}='${max}' is not a positive number; using the capacity hold load"
+    # T0052: ngưỡng của việc bắt buộc capacity hold_load (8 × lõi, 12 lõi: 96, cùng ngưỡng với heavy_slot; busy_load 36 chỉ cho
+    # worker tùy chọn của runner); capacity vắng, lỗi hay in rác thì cùng công thức 8 × số lõi (review 23/10: 2 × lõi cũ = 24 không
+    # bao giờ đạt trên máy này, mọi PR lại chờ hết merge_load_wait_s — đúng lỗi T0052 sửa).
+    max=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" hold_load 2>/dev/null) || max=""
+    if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
+    else max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 8 )); fi
   fi
   while :; do
     # Khoá được giữ cả lúc chờ: làm mới mốc "at" để gate khác không coi nó là khoá bỏ quên. Ghi hỏng không phải lý do bỏ verify.
@@ -400,7 +405,17 @@ wait_for_load() {
     sleep "$nap"; waited=$(( waited + nap )); LOAD_WAITED=$waited
   done
 }
-wait_for_load
+# #288: biên nhận của merge train đã chứng minh đúng cây này thì verify bị bỏ, nên không chờ tải: mỗi PR của đợt từng chờ tới
+# merge_load_wait_s để rồi không chạy gì. Cây dự kiến = merge-tree(base, head), đúng cây train ghi (và cây merge scratch bên dưới).
+SKIP_LOAD_WAIT=0
+if [ "$DRY" -ne 1 ] && [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
+  PRE_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
+  if [ -n "$PRE_TREE" ] && git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null; then
+    [ "$PRE_TREE" != "$(git -C "$REPO_PATH" merge-tree --write-tree "origin/${BASE}" "$HEAD_SHA" 2>/dev/null)" ] || SKIP_LOAD_WAIT=1
+  fi
+fi
+if [ "$SKIP_LOAD_WAIT" -eq 1 ]; then LOAD_WAITED=0; LOAD_WAIT_ON=0; say "train receipt matches the tree to merge: verify will be skipped, not waiting for the load"
+else wait_for_load; fi
 # Đã chờ thì PR có thể đã đổi: đọc lại head và trạng thái, không verify code không còn là PR.
 if [ "${LOAD_WAITED:-0}" -gt 0 ]; then
   NOW_HEAD=$(pr_head) || exit $?
@@ -433,11 +448,16 @@ fi
 # Nhánh chậm hơn base nhưng merge scratch sạch: đẩy fast-forward lên đúng nhánh PR
 # rồi mới verify. Timeout phía dưới vẫn thử lại một lần. Không --force.
 MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
-TRAIN_PROVED=0
+TRAIN_PROVED=0; TREE_PROVED=0
 if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
   TRAIN_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
   [ -z "$TRAIN_TREE" ] || [ "$TRAIN_TREE" != "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" ] || TRAIN_PROVED=1
 fi
+# #226 gap 7: biên nhận theo cây gộp. Verify xanh ghi <git common dir>/super-board/verified-trees/<sha256(tree + lệnh verify)>; lượt gate sau
+# (vd. lượt trước thoát exit 4 sau verify) trên đúng cây gộp và đúng bộ lệnh bỏ verify. Base đổi, head đổi hay lệnh đổi: khoá khác, verify đủ.
+TREE_RECEIPT=$(sb_verified_tree_receipt "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
+TREE_KEY=${TREE_RECEIPT##*/}
+if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
 if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
   if [ "$DRY" -eq 1 ]; then
@@ -743,6 +763,7 @@ red_only_on_base() {
 }
 
 for cmd in "${VERIFY[@]}"; do
+  if [ "$TREE_PROVED" -eq 1 ]; then say "verify skipped: this exact merged tree was already verified green with the same commands (receipt ${TREE_KEY:0:12})"; break; fi
   if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
   cmd=$(sb_verify_inject_flags "$cmd" "$BASE")
   run_cmd=$(sb_verify_inject_flags "$cmd" "$BASE" json)   # #251 R1: chạy kèm --json, hiển thị/so sánh không có
@@ -765,6 +786,7 @@ for cmd in "${VERIFY[@]}"; do
   if [ "$VRC" -ne 0 ] && red_only_on_base "$VRC" "$VERIFY_LOG" "$cmd"; then
     say "verify red only on suites that are red on origin/${BASE} too (#251): not rejecting the PR"
     VRC=0
+    TREE_RECEIPT=""   # verify tolerated red suites: no receipt, the next gate checks them against the base again
   fi
   if [ "$VRC" -ne 0 ]; then
     say "FAILED: ${cmd}"
@@ -795,7 +817,13 @@ for cmd in "${VERIFY[@]}"; do
     exit 11
   fi
 done
-say "verified green against ${BASE} (${#VERIFY[@]} command(s))"
+# #288: tiền tố `verified green against` giữ nguyên (proof_gate.sh đọc nó); phần sau nói thật số lệnh đã chạy ở đây.
+if [ "$TREE_PROVED" -eq 1 ]; then say "verified green against ${BASE} (0 command(s) run here; a receipt of this exact merged tree and commands exists)"
+elif [ "$TRAIN_PROVED" -eq 1 ]; then say "verified green against ${BASE} (0 command(s) run here; the merge train proved this exact tree)"
+else say "verified green against ${BASE} (${#VERIFY[@]} command(s))"; fi
+if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ]; then
+  mkdir -p "${TREE_RECEIPT%/*}" && : > "$TREE_RECEIPT" || say "could not write the verified-tree receipt ${TREE_RECEIPT}; the next gate verifies again"
+fi
 own_lock_or_stop   # verify dài có thể đã để gate khác chiếm khoá: không merge song song với nó
 
 python3 "$GITHUB_READ" --check
@@ -993,7 +1021,11 @@ PY
         # so-và-đổi nguyên tử cho trường hợp này: commit lọt vào khe đó vẫn nằm trong reflog.
         local_tip=$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null) || local_tip=""
         origin_tree=$(git -C "$MAIN_PATH" rev-parse "$TARGET_SHA^{tree}" 2>/dev/null) || origin_tree=""
-        merged_tree=$(git -C "$MAIN_PATH" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
+        # #309: cwd = $SCRATCH (cleanup() deletes it): a merge driver killed with the gate leaves its .merge_file_* there, never in $MAIN_PATH.
+        # --attr-source keeps the repo's merge drivers applying, as `git -C "$MAIN_PATH"` did.
+        main_gd=$(git -C "$MAIN_PATH" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || main_gd=""
+        merged_tree=""
+        [ -z "$main_gd" ] || merged_tree=$(cd "$SCRATCH" && git --git-dir="$main_gd" --attr-source="$TARGET_SHA" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
         # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
         if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "$TARGET_SHA" "$local_tip" 2>/dev/null; then merged_tree="$origin_tree"; fi
         # `reset --keep` cũng đặt lại INDEX về commit đích: file phiên khác đã stage (khác HEAD) sẽ rơi khỏi index (thành untracked).

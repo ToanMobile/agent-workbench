@@ -118,6 +118,9 @@ Each block closes with `<!-- /sb:<name> -->`.
 
 A partial PR writes `Refs #N`, never `Closes #N`.
 
+Write the closing keyword as plain text, never inside backticks: GitHub does not link an issue from a code span, so
+a 🙋 card's `done` was never honoured (#321, 24/10). The table above shows the line in a code span only to display it.
+
 **Problem** — lettered steps under Where. GitHub has no lettered-list syntax, so type the letter:
 
 ```
