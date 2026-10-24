@@ -6137,8 +6137,10 @@ def main():
         """Ghi kết quả một lượt chạy THẬT lệnh đầy đủ vào sổ khoá — chỉ khi input không đổi trong lúc chạy (khoá đọc lại bằng nhau)."""
         ks = KEYS.get(id(t))
         st = t.get("status")
-        if sc is not None and id(t) in really_ran and st != "PASS" and id(t) not in voided:
-            voided.add(id(t))   # mọi không-PASS của lần chạy thật (FAIL, TIMEOUT, hạ tầng, env): PASS cũ của suite này hết dùng lại
+        void_due = sc is not None and id(t) in really_ran and st != "PASS" and id(t) not in voided
+
+        def void_suite():
+            voided.add(id(t))   # PASS cũ của suite này (mọi khoá) hết dùng lại, trừ FAIL thật đã ghi dưới khoá của nó (suite_cache.void_needed)
             try:
                 sc.void(t.get("id"))
             except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu
@@ -6147,22 +6149,28 @@ def main():
                 or (st == "PASS" and t.get("mode") != "full")
                 or (st == "FAIL" and t.get("mode") not in ("full", "impacted", "package", "module"))
                 or t.get("infra_retry") or t.get("env_blocked") or t.get("infra")):
+            if void_due and id(t) not in recorded:
+                void_suite()   # không ghi được khoá nào: không có gì giữ FAIL này lại (đã ghi ở lần gọi trước thì FAIL đó đang giữ nó)
             return
         recorded.add(id(t))
         meta = {"duration": t.get("duration"), "log": t.get("log"), "project": os.path.basename(str(project_dir))[:64],
                 "head": _head_sha(project_dir), "inputs_n": sc.inputs.get(t.get("id"))}
         rt = dict(t, command=t.get("full_command") or t.get("command"))   # bản ghi mang lệnh của ma trận (khoá tính từ lệnh đó)
         keys_now = list(ks)
+        tree_same = True
         if st == "FAIL":
             # FAIL dưới khoá cả cây là bằng chứng lỗi có sẵn cho KNOWN-RED: chỉ khi FAIL là của lệnh đầy đủ, thật (không phải VACUOUS — lệnh
             # PASS mà không phát hiện thay đổi —, không chập chờn — chạy lại PASS, OCR 21/10), trên cây không đổi trong lúc chạy (audit #4
             # 21/10); còn lại chỉ khoá chính xác (hẹp lại),
-            # bao đóng bị cắt (khoá chính xác LÀ khoá cả cây) thì không ghi — void ở trên đã chặn PASS cũ
+            # bao đóng bị cắt (khoá chính xác LÀ khoá cả cây) thì không ghi — void ở dưới chặn PASS cũ
             mod = suite_cache_mod()
             cmf = mod.content_map(project_dir) if mod is not None else None
-            if (t.get("mode") != "full" or t.get("label") == "VACUOUS" or t.get("flaky")
-                    or not (cmf is not None and mod.tree_digest(cmf) == sc.tree_digest)):
+            tree_same = cmf is not None and mod.tree_digest(cmf) == sc.tree_digest
+            if t.get("mode") != "full" or t.get("label") == "VACUOUS" or t.get("flaky") or not tree_same:
                 keys_now = [ks[0]] if ks[0] != ks[1] else []
+        if void_due and suite_cache_mod().void_needed(st, flaky=bool(t.get("flaky")), vacuous=t.get("label") == "VACUOUS",
+                                                      tree_unchanged=tree_same, recorded=bool(keys_now)):
+            void_suite()   # #344: FAIL thật ghi dưới khoá của nó thì thôi; TIMEOUT, hạ tầng, chập chờn, cây đổi: PASS cũ của id hết dùng lại
         cm = None
         if st == "PASS":   # một content_map cho cả hai phép kiểm (cây không đổi, input của suite không đổi)
             mod = suite_cache_mod()

@@ -452,6 +452,16 @@ def cacheable(test, device):
     return True, ""
 
 
+def void_needed(status, *, flaky=False, vacuous=False, tree_unchanged=True, recorded=True) -> bool:
+    """Một lần chạy THẬT vừa xong có vô hiệu mọi PASS cũ của id (mọi khoá) không (#344). PASS: không. FAIL thật — xác định (không
+    chập chờn, không VACUOUS), trên cây không đổi trong lúc chạy, và đã dính vào một khoá (fail_n): không — nó chỉ nói về nội dung đó, một
+    nội dung khác từng PASS vẫn đúng (khoá khác ⇒ HIT như cũ). Mọi thứ còn lại (TIMEOUT, hạ tầng, chập chờn, cây đổi, FAIL không ghi
+    được khoá nào): có — khoá nào cũng không còn tin được."""
+    if status == "PASS":
+        return False
+    return not (status == "FAIL" and not flaky and not vacuous and tree_unchanged and recorded)
+
+
 def store_dir(project_dir):
     r = _git(project_dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if r.returncode != 0:
