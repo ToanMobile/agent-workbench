@@ -54,8 +54,10 @@ gh_write_once() {
     local verify=() spec=""
     [ -z "$token" ] || spec=$(jq -nc --argjson n "$3" --arg m "$token" '{kind:"comment",issue:$n,marker:$m}' 2>/dev/null) || spec=""
     [ -z "$spec" ] || verify=(--verify "$spec")
-    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 \
-      || { log "halt record NOT written for the uncertain GitHub $1 $2 write: exiting 76 so the watchdog does not restart blind"; exit 76; }
+    # --halt exits 79 (HALTED) once its record is saved; any other code means the record is not on disk.
+    local hrc=0
+    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 || hrc=$?
+    [ "$hrc" -eq 79 ] || { log "halt record NOT written for the uncertain GitHub $1 $2 write (github-read rc=$hrc): exiting 76, the watchdog will not restart it blind"; exit 76; }
     exit 79
   }
 }
@@ -2273,7 +2275,7 @@ fi
 # check_halt, and the next runner adopts the survivors as after a crash. Killing them lost the work done mid-lane.
 halt_cleanup() {
   local rc=$?
-  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ]; then
+  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || [ "$rc" -eq 76 ]; then   # 76: no halt record on disk, so workers cannot see a halt: stop them here
     for pid in $(own_lane_pids); do
       kill -TERM "$pid" 2>/dev/null || true
     done
