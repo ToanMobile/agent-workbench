@@ -60,6 +60,21 @@ Bấm vào một cột ở góc phải trên (ví dụ "Blocked 39") hoặc nhã
 
 Khung bên trái (phím W) liệt kê từng agent: lane, số thẻ, repo, tên việc và việc đang làm bằng lời thường, ví dụ "Đang sửa worktree.py" hay "Đang chạy test test_worktree_checklist.sh". Bóng thoại trên đầu agent trong xưởng cũng hiện đủ 3 dòng đó. Bấm vào một dòng để camera bay tới agent.
 
+## Nhắn agent
+
+Bảng chi tiết của một agent hoặc một thẻ có ô **Nhắn agent**. Lệnh gõ ở đây đi tới worker super-board như một tin nhắn mới trong Claude Code.
+
+- **Agent đang chạy:** server ghi lệnh vào `~/.agent-office/inbox/<session id>/`. Sau bước (tool call) đang chạy, hook `inbox_hook.py` trao lệnh cho agent, thường trong vài giây; bước dài như chạy test thì chờ bước đó xong. Agent đọc xong thì ô hiện "Agent đã đọc".
+- **Agent đã dừng:** server chạy `claude --resume <session id>` với đúng tài khoản (`config_dir`), thư mục và model của lần giao, log ở `~/.agent-office/resume/`. Không resume khi phiên còn tiến trình, khi thẻ còn worker khác của runner, hay khi đang có một resume khác của phiên đó.
+- **Chỉ phiên worker:** đích phải là phiên chính của một lần giao trong log worker `docs/super-board/runs/*-workers/` (7 ngày gần nhất), không phải phiên Claude Code mở tay hay subagent.
+- **Cần runner mới:** chỉ worker do runner có hàm `agent_office_args` bật (và đã chạy `install-autostart.sh` để có `~/.agent-office/app/inbox_hook.py`) mới có hộp thư. Worker cũ đang chạy thì chờ nó dừng rồi gửi để resume.
+
+Lệnh gửi tới worker là chạy code tuỳ ý trên máy (worker chạy `--dangerously-skip-permissions`), nên:
+
+- Từ điện thoại (qua tunnel), server không gửi ngay mà bắn mã 6 số lên thông báo macOS; nhập đúng mã trong 2 phút mới gửi, sai 3 lần thì huỷ, tối đa 5 lệnh chờ mã. Chọn cách này vì key nằm trong link QR (có thể lộ qua lịch sử, ảnh chụp), còn mã chỉ hiện trên Mac là yếu tố thứ hai không nằm trong link, và không cần thêm màn đặt PIN. Giới hạn: phải ở gần Mac để đọc mã.
+- Tối đa 6 lệnh mỗi phút (điện thoại và Mac đếm riêng), 4000 ký tự mỗi lệnh. Mỗi lệnh ghi vào "Vừa xảy ra" (`events.jsonl`) với token và mật khẩu đã che.
+- Lệnh tới agent mang một nonce mà chỉ runner và server biết; chữ giả trong issue, comment hay trang web không có nonce nên agent bỏ qua. Code mà chính worker chạy vẫn đọc được nonce: nonce chặn chữ tĩnh, không chặn code chạy dưới cùng tài khoản.
+
 ## Cảnh báo và lý do chặn
 
 - **Vừa xảy ra** (phím E): nhật ký sự kiện. Server ghi vào `~/.agent-office/events.jsonl`, nên vẫn còn khi tải lại trang và ghi cả lúc trang đóng. Gồm agent bắt đầu hoặc dừng, repo mất tín hiệu, runner chờ bạn, thẻ chuyển cột, bị chặn hoặc xong. Tab trình duyệt hiện số sự kiện chưa xem.
@@ -107,6 +122,8 @@ W ai đang làm gì, F toàn cảnh, Z phóng to, B dạng bảng, A thêm việ
 ## An toàn
 
 Server chỉ nghe `127.0.0.1`. Mọi yêu cầu ghi phải mang header riêng của trang, nên trang web khác mở trong trình duyệt không gửi thay được. Server dùng quyền của tài khoản `gh` đang đăng nhập.
+
+"Từ chính Mac" (không cần key, không cần mã khi nhắn agent) nghĩa là kết nối tới từ loopback, Host nằm trong danh sách cho phép và không có header của tunnel. Nếu đổi `host` sang địa chỉ LAN rồi mở trang bằng IP LAN, kể cả ngay trên Mac, trang được coi như từ xa: cần key, và nhắn agent cần mã 6 số.
 
 ## Lỗi thường gặp
 

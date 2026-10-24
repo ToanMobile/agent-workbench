@@ -25,6 +25,8 @@ class InstallAutostart(unittest.TestCase):
             self.assertTrue(os.path.isfile(script))
             self.assertTrue(os.path.isfile(os.path.join(app_dir, "config.json")))
             self.assertTrue(os.path.isdir(os.path.join(app_dir, "web")))
+            # server import inbox_hook, và runner đọc hook hộp thư lệnh ở đúng chỗ này
+            self.assertTrue(os.path.isfile(os.path.join(app_dir, "inbox_hook.py")))
             self.assertEqual(plist["WorkingDirectory"], app_dir)
             self.assertEqual(plist["KeepAlive"], {"SuccessfulExit": False})
             # bản chép ở ~/.agent-office/app không nằm trong repo: server phải được chỉ tới ai-factory.sh thật,
