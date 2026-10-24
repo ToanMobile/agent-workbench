@@ -30,6 +30,8 @@ import sys
 import time
 
 HALTED = 79
+RECONCILE_PENDING = 10   # --reconcile: GitHub shows the uncertain write was NOT applied
+RECONCILE_UNKNOWN = 11   # --reconcile: no spec, or the verifying read failed / was ambiguous
 
 
 class ReadHalted(Exception):
@@ -50,6 +52,7 @@ FORMS = {
     'metadata': 'pr view <N> --json files,labels,body,additions,deletions,changedFiles',
     'state': 'issue view <N> --json state --jq .state',
 }
+JSON_SHAPED_KINDS = ('issue', 'comments', 'metadata')   # FORMS của các kind này là JSON thô, không --jq; kind body nhận --jq ra JSON (super-board-pr-body.sh)
 
 
 def halt_path():
@@ -86,16 +89,99 @@ def archive_reconciled(path, text, why):
     print(f'[github-read] halt reconciled ({why}); record kept at {archive}', file=sys.stderr)
 
 
-def halt(reason, attempts, operation=None):
+def check_verify_spec(spec):
+    """A halt for an uncertain write may carry how to READ its outcome back (#190). Kinds: pr-merged {pr}, comment {issue, marker}."""
+    ok = (isinstance(spec, dict) and (
+        (spec.get('kind') == 'pr-merged' and isinstance(spec.get('pr'), int) and spec['pr'] > 0)
+        or (spec.get('kind') == 'comment' and isinstance(spec.get('issue'), int) and spec['issue'] > 0
+            and isinstance(spec.get('marker'), str) and 0 < len(spec['marker'].strip()) <= 200)))
+    if not ok:
+        raise ValueError("--verify needs JSON {\"kind\":\"pr-merged\",\"pr\":N} or {\"kind\":\"comment\",\"issue\":N,\"marker\":\"text\"}")
+    return spec
+
+
+def _op_repo(operation):
+    """owner/name the operation reads, from `--repo X` or `-F owner=… -F repo=…`; None when it names none."""
+    args = (operation or {}).get('args') or []
+    owner = name = None
+    slug = None
+    for i, a in enumerate(args):
+        if a in ('--repo', '-R') and i + 1 < len(args):
+            slug = str(args[i + 1])
+            break
+        if isinstance(a, str) and a.startswith('--repo='):
+            slug = a[len('--repo='):]
+            break
+        if isinstance(a, str) and a.startswith('owner='):
+            owner = a[6:]
+        elif isinstance(a, str) and a.startswith('repo='):
+            name = a[5:]
+    if slug is None:
+        slug = f'{owner}/{name}' if owner and name else None
+    if slug is None:
+        return None
+    # gh accepts OWNER/REPO, HOST/OWNER/REPO and URLs: reduce to owner/name; anything else is not provably foreign.
+    slug = re.sub(r'\.git/?$', '', re.sub(r'^(?:https?://)?(?:www\.)?github\.com/', '', slug.strip(), flags=re.I))
+    return slug.lower() if re.fullmatch(r'[\w.-]+/[\w.-]+', slug) else None
+
+
+def _home_repo():
+    """owner/name of the checkout's origin, or None when it cannot be read (then the halt is written: fail closed)."""
+    try:
+        url = subprocess.run(['git', 'remote', 'get-url', 'origin'], capture_output=True, text=True, timeout=5,
+                             cwd=os.environ.get('SB_REPO_PATH')).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r'github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$', url)
+    return f'{m.group(1)}/{m.group(2)}'.lower() if m else None
+
+
+def halt(reason, attempts, operation=None, verify=None):
+    # A read of ANOTHER repository (a test fixture such as o/r, run from a worktree whose git-common-dir is the real
+    # checkout) must not halt this board: it halted the real board twice on 24/10. The caller still gets ReadHalted.
+    target, home = _op_repo(operation), (None if os.environ.get('SB_GITHUB_HALT_FILE') else _home_repo())
+    if target and home and target != home:
+        print(f'[github-read] HALT not recorded: the failed read targets {target}, not this checkout ({home})',
+              file=sys.stderr)
+        raise ReadHalted(reason)
     path = halt_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     # Exclusive creation keeps the first failure's evidence when workers trip together.
     try:
         with path.open('x') as stream:
-            json.dump({'reason': reason, 'attempts': attempts, 'at': int(time.time()), 'operation': operation}, stream)
+            json.dump({'reason': reason, 'attempts': attempts, 'at': int(time.time()), 'operation': operation,
+                       **({'verify': verify} if verify else {})}, stream)
     except FileExistsError:
         pass
     raise ReadHalted(reason)
+
+
+def verify_write(spec):
+    """One direct read of the uncertain write's outcome -> (0 applied | RECONCILE_PENDING | RECONCILE_UNKNOWN, evidence).
+    No retry, no halt: a failed read is 'unknown' and leaves the board halted."""
+    if not isinstance(spec, dict):
+        return RECONCILE_UNKNOWN, 'the halt record carries no verify spec (cannot read the write back)'
+    try:
+        if spec.get('kind') == 'pr-merged':
+            result = run_gh(['pr', 'view', str(int(spec['pr'])), '--json', 'state'])
+            state = json.loads(result.stdout)['state'] if not result.returncode else None
+            if state == 'MERGED':
+                return 0, f"PR #{spec['pr']} is MERGED on GitHub"
+            if state == 'OPEN':
+                return RECONCILE_PENDING, f"PR #{spec['pr']} is still OPEN on GitHub"
+            return RECONCILE_UNKNOWN, f"PR #{spec['pr']} state could not be read as MERGED or OPEN ({state})"
+        if spec.get('kind') == 'comment':
+            result = run_gh(['api', f"repos/{{owner}}/{{repo}}/issues/{int(spec['issue'])}/comments", '--paginate', '--slurp'])
+            if result.returncode:
+                return RECONCILE_UNKNOWN, f"comments of #{spec['issue']} could not be read"
+            pages = json.loads(result.stdout)
+            bodies = [c.get('body') or '' for page in pages for c in page]
+            if any(spec['marker'] in body for body in bodies):
+                return 0, f"the comment with marker {spec['marker'][:60]!r} is present on #{spec['issue']}"
+            return RECONCILE_PENDING, f"no comment with marker {spec['marker'][:60]!r} on #{spec['issue']} ({len(bodies)} comments read)"
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as error:
+        return RECONCILE_UNKNOWN, f'the verifying read failed ({type(error).__name__})'
+    return RECONCILE_UNKNOWN, 'unsupported verify kind'
 
 
 def read_only(args):
@@ -364,11 +450,20 @@ def read(args, kind='json', meta=None, recovering=False):
     # kind quota kiểm JSON rate_limit thô; --jq/--template in thứ khác nên lần nào cũng hỏng. Lỗi của người gọi biết trước
     # khi gọi gh (OfficeReader 17/10 00:22: worker QA tự viết dòng gh-quota-on-exit): exit 64 ngay, không retry, không
     # halt kể cả STRICT, để file halt không lưu một lệnh mà --resume phát lại lần nào cũng hỏng.
-    if kind == 'quota' and any(a in ('--jq', '-q', '--template', '-t') or a.startswith(('--jq=', '--template=', '-q', '-t'))
-                               for a in args):
+    shaped = any(a in ('--jq', '-q', '--template', '-t') or a.startswith(('--jq=', '--template=', '-q', '-t')) for a in args)
+    if kind == 'quota' and shaped:
         raise ValueError('kind quota validates the raw `api rate_limit` JSON, so --jq/--template cannot pass; this call '
                          'failed, the run continues. For the gh-quota-on-exit line run sb_gh_guard_summary '
                          '(source .claude/bin/super-board-gh-guard.sh); for the payload use --kind quota -- api rate_limit')
+    # Cùng lỗi với quota ở các kind có hình dạng JSON cố định trong FORMS: `--kind issue -- issue view 32 --json body -q .body`
+    # in chữ thường, bước kiểm JSON hỏng 3 lần, STRICT halt cả board và --resume phát lại lần nào cũng hỏng (22 và 23/10).
+    # kind head/state cần --jq in chuỗi và kind json/object cho phép --jq ra JSON, nên không nằm trong tập này.
+    if kind in JSON_SHAPED_KINDS and shaped:
+        # Khi recovering (--resume phát lại lệnh đã lưu) run đang dừng, không "tiếp tục": nói đúng cách thoát.
+        outcome = ('this recovery read can never pass; the halt record is kept. Resume with: --resume --kind '
+                   f'{kind} -- <valid read>.' if recovering else 'this call failed, the run continues.')
+        raise ValueError(f'kind {kind} validates the raw JSON of --json, so --jq/-q/--template cannot pass; {outcome} '
+                         f'Valid form: --kind {kind} -- {FORMS[kind]}')
     if not recovering:
         check_halt()
     operation = {'args': args, 'kind': kind, 'meta': meta}
@@ -438,6 +533,8 @@ def main():
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--halt', help='record an unresolved mutation outcome and stop; never retry it')
     parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--verify', metavar='JSON', help='with --halt: how to read the uncertain write back (see check_verify_spec)')
+    parser.add_argument('--reconcile', action='store_true', help='read the uncertain write of a halt back from GitHub: exit 0 applied (halt archived with the evidence), 10 not applied, 11 cannot tell; the halt is kept for 10/11')
     parser.add_argument('--reconciled', metavar='WHY', help='with --resume: restart after a halt with no saved read (an uncertain write) once its GitHub outcome was checked; WHY is kept in the archived record')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -445,8 +542,23 @@ def main():
     try:
         if args.reconciled is not None and (not args.resume or command or not args.reconciled.strip()):
             raise ValueError('--reconciled needs --resume, no read command, and a non-blank reason: what was checked on GitHub')
+        if args.verify is not None and not args.halt:
+            raise ValueError('--verify belongs to --halt')
         if args.halt:
-            halt(args.halt, 1)
+            halt(args.halt, 1, verify=check_verify_spec(json.loads(args.verify)) if args.verify is not None else None)
+        if args.reconcile:
+            path = halt_path()
+            if not path.exists():
+                return 0
+            text = path.read_text()
+            record = json.loads(text)
+            if isinstance(record.get('operation'), dict):
+                raise ValueError('this halt saved a read to replay: use --resume, not --reconcile')
+            code, evidence = verify_write(record.get('verify'))
+            print(f'[github-read] reconcile: {evidence}', file=sys.stderr)
+            if code == 0:
+                archive_reconciled(path, text, f'auto: {evidence}')
+            return code
         if args.resume:
             path = halt_path()
             if path.exists():

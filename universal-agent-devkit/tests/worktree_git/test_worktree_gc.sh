@@ -228,4 +228,51 @@ exists main-orphan-young && grep -q "main-orphan-young.*config/app.json" "$TMP/g
   || fail "main-orphan-young deleted or unnamed: $(cat "$TMP/gc9.out")"
 [ "$rc" = 0 ] && ! exists main-orphan-old && ok "  … the same orphan with every file old is deleted (the age check keeps only what is new)" \
   || fail "main-orphan-old stranded (rc=$rc): $(cat "$TMP/gc9.out")"
+# issue #327: a folder under main's own .claude/worktrees/ that git no longer registers is a leftover too (23/10: issue-249-qa kept 2509
+# files, issue-123-review 624, neither with a `.git`, and gc only swept `<repo>-*` siblings). There the missing `.git` is judged like a
+# dangling pointer: every file must be provably not unique. A registered worktree, a young folder and a unique file stay.
+WD="$R/.claude/worktrees"; mkdir -p "$WD"
+mkdir -p "$WD/orphan-nogit/build" && cp "$R/app.txt" "$WD/orphan-nogit/" && echo v1 > "$WD/orphan-nogit/lib.txt" && echo bin > "$WD/orphan-nogit/build/o.bin"   # same bytes as main, an old committed blob, a build output
+mkdir -p "$WD/orphan-empty/sub/deeper"                                                        # nothing at all (the vibrant-meninsky case)
+mkdir -p "$WD/leftover-unique" && echo "work only here" > "$WD/leftover-unique/notes.md"          # never committed: work
+G "$R" worktree add -q --detach "$WD/registered" && rm -f "$WD/registered/.git"               # git still registers it (prunable, no `.git` left): never gc's
+CASEVAR=0
+if [ -d "$R/.CLAUDE" ]; then   # a case-insensitive volume: git may spell a registered path another way, the folder is the same inode
+  G "$R" worktree add -q --detach "$R/.CLAUDE/worktrees/casevar" && rm -f "$WD/casevar/.git" && CASEVAR=1
+fi
+mkdir -p "$WD/fresh-empty"                                                                    # a scratch dir a gate made a moment ago, nothing in it yet
+mkdir -p "$WD/orphan-young" && echo v1 > "$WD/orphan-young/lib.txt"
+python3 "$WT" gc --dry-run > "$TMP/gc10d.out" 2>&1
+grep -q "orphan-nogit" "$TMP/gc10d.out" && [ -e "$WD/orphan-nogit" ] && ok "--dry-run lists an unregistered .claude/worktrees folder and deletes nothing (#327)" \
+  || fail "--dry-run did not list orphan-nogit: $(cat "$TMP/gc10d.out")"
+find "$WD/orphan-nogit" "$WD/orphan-empty" "$WD/leftover-unique" "$WD/registered" -exec touch -h -t 202601010000 {} +   # old: only the age guard may tell them from the young two
+[ "$CASEVAR" = 0 ] || find "$WD/casevar" -exec touch -h -t 202601010000 {} +
+find "$WD/orphan-young" -exec touch -h {} +
+WORKTREE_GC_MIN_AGE_S=600 python3 "$WT" gc > "$TMP/gc10y.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$WD/orphan-nogit" ] && [ ! -e "$WD/orphan-empty" ] \
+  && ok "an unregistered .claude/worktrees folder with nothing unique (or nothing at all) is deleted once it is older than the age guard (#327)" \
+  || fail "orphan-nogit / orphan-empty stranded (rc=$rc): $(cat "$TMP/gc10y.out")"
+[ -e "$WD/orphan-young" ] && [ -e "$WD/fresh-empty" ] && ok "  … while one younger than the age guard is left alone, an empty one too (#327)" \
+  || fail "orphan-young / fresh-empty was deleted: $(cat "$TMP/gc10y.out")"
+[ "$CASEVAR" = 0 ] || { [ -e "$WD/casevar" ] && ok "  … a registered worktree git spells with another case is the same folder, not gc's (#327)" || fail "casevar deleted: $(cat "$TMP/gc10y.out")"; }
+python3 "$WT" gc > "$TMP/gc10.out" 2>&1
+[ -e "$WD/leftover-unique" ] && grep -q "leftover-unique.*notes.md" "$TMP/gc10.out" \
+  && ok "  … one holding a file never committed is kept and names it (#327)" || fail "leftover-unique deleted or unnamed: $(cat "$TMP/gc10.out")"
+[ -e "$WD/registered" ] && { [ "$CASEVAR" = 0 ] || [ -e "$WD/casevar" ]; } && G "$R" worktree list --porcelain | grep -q "$WD/registered" \
+  && ok "  … a worktree git still registers under .claude/worktrees is not gc's (#327)" || fail "registered worktree touched: $(cat "$TMP/gc10.out")"
+# issue #327 (b): a worktree locked `devkit-kept` by a session whose pid is dead stays locked for ever (only `remove` opened it): gc reports
+# it (--dry-run) and opens it; a lock whose pid still answers is never touched
+sleep 300 & LIVEPID=$!
+DEADPID=$(python3 -c 'import os,subprocess; p=subprocess.Popen(["true"]); p.wait(); print(p.pid)')
+G "$R" worktree add -q --detach "$TMP/kept-dead" && G "$R" worktree lock --reason "devkit-kept session=s1 pid=$DEADPID" "$TMP/kept-dead"
+G "$R" worktree add -q --detach "$TMP/kept-live" && G "$R" worktree lock --reason "devkit-kept session=s2 pid=$LIVEPID" "$TMP/kept-live"
+locked() { G "$R" worktree list --porcelain | awk -v p="/$(basename "$1")" '$1=="worktree"{c=(substr($2,length($2)-length(p)+1)==p)} c&&$1=="locked"{f=1} END{exit !f}'; }
+python3 "$WT" gc --dry-run > "$TMP/gc11d.out" 2>&1
+grep -q "kept-dead" "$TMP/gc11d.out" && locked "$TMP/kept-dead" && ! grep -q "kept-live" "$TMP/gc11d.out" \
+  && ok "--dry-run names a devkit-kept lock of a dead pid and opens nothing (#327 b)" || fail "dry-run kept-lock report wrong: $(cat "$TMP/gc11d.out")"
+python3 "$WT" gc > "$TMP/gc11.out" 2>&1
+! locked "$TMP/kept-dead" && grep -q "kept-dead" "$TMP/gc11.out" && ok "gc opens and names a devkit-kept lock of a dead pid (#327 b)" \
+  || fail "dead kept lock not opened: $(cat "$TMP/gc11.out")"
+locked "$TMP/kept-live" && ok "  … a lock whose pid is alive is not touched (#327 b)" || fail "live kept lock was opened"
+kill "$LIVEPID" 2>/dev/null
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc: all passed" || { echo "❌ test_worktree_gc: $FAILS failed"; exit 1; }

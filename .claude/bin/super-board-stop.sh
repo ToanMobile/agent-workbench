@@ -168,6 +168,7 @@ kill_pid() {
     waited=$((waited + 1))
   done
   if kill -0 "$pid" 2>/dev/null; then
+    pkill -KILL -P "$pid" 2>/dev/null || true   # pid trong lock là wrapper (#237): diệt worker con trước, không để mồ côi
     kill -KILL "$pid" 2>/dev/null || true
     log "  ☠ ${name} pid=${pid} SIGKILLed (didn't respond to SIGTERM)"
   else

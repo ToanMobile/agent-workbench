@@ -77,9 +77,20 @@ if '--resume' in args:
     if kind == 'read':
         os.remove(h)
         sys.exit(0)
-    if kind == 'write':   # câu của super-board-github-read.py thật cho halt không có lần đọc đã lưu
+    if kind.startswith('write'):   # câu của super-board-github-read.py thật cho halt không có lần đọc đã lưu
         print('[github-read] HALT: saved failure needs manual outcome reconciliation before restart', file=sys.stderr)
     sys.exit(79)
+# --reconcile (#190): đối chiếu halt do một lần GHI chưa rõ kết quả bằng cách ĐỌC lại GitHub. Loại halt = nội dung file halt giả:
+# write-applied = ghi đã xảy ra (lưu trữ halt, exit 0); write-pending = đọc xác minh ghi CHƯA xảy ra (exit 10); write khác =
+# không kiểm chứng được (exit 11). Hai loại sau không đụng file halt.
+if '--reconcile' in args:
+    h = os.environ['STUB_HALT']
+    kind = open(h).read().strip() if os.path.exists(h) else ''
+    if kind == 'write-applied':
+        os.remove(h)
+        print('[github-read] reconciled: PR #7 is MERGED', file=sys.stderr)
+        sys.exit(0)
+    sys.exit(10 if kind == 'write-pending' else 11)
 if 'quota' in args:
     print('{"resources":{"graphql":{"remaining":5000,"reset":0},"core":{"remaining":5000}}}')
     sys.exit(0)
@@ -113,6 +124,12 @@ case "$*" in
 esac
 SH
 printf '#!/usr/bin/env bash\necho %s\n' "'{}'" > "$BIN/super-board-wave-plan.sh"
+# Stub thông báo Telegram: ghi lại mỗi lần gửi (watchdog phải báo khi giữ halt vì không kiểm chứng được).
+cat > "$BIN/super-board-notify.py" <<'PY'
+#!/usr/bin/env python3
+import os, sys
+open(os.environ["STUB_CALLS"], "a").write("notify " + " ".join(sys.argv[1:]) + "\n")
+PY
 for c in gh claude; do printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_CALLS"; exit 1\n' "$c" > "$TMP/stub/$c"; done
 # `gh project edit` (watchdog ghi trạng thái board lên mô tả Project) thành công, trừ khi STUB_EDIT_FAIL=1.
 cat > "$TMP/stub/gh" <<'SH'
@@ -404,7 +421,7 @@ set_state "$D" running; printf 'STOPPED_AT=test\n' > "$MARK"
 expect_no_restart "dead runner, stop marker set"
 rm -f "$MARK"
 set_state "$D" finished 0;  expect_no_restart "clean finish (STATE=finished)"
-set_state "$D" halted 79;   expect_no_restart "deliberate halt (STATE=halted rc=79)"
+set_state "$D" halted 9;    expect_no_restart "deliberate halt (STATE=halted rc=9)"
 set_state "$D" crashed 143; : > "$TMP/halt"
 expect_no_restart "GitHub reads halted (github-halt.json)"
 rm -f "$TMP/halt"
@@ -520,6 +537,56 @@ case "$L" in *"🟢 đang chạy từ"*) fail "restarted board shows the dead ru
   *"🟢 đang chạy"*) ok "restarted board does not show the dead runner's start time" ;; *) fail "restart status: '$L'" ;; esac
 kill_tree "$RP"; wait_for 10 '! alive "$RP"'
 rm -f "$WD" "$TMP/halt"
+# 24/10 02:40: runner halted rc=79, rồi file halt đã biến mất (replay/archive ở nơi khác) → watchdog ghi "ended on purpose"
+# và board nằm im 5,5 giờ. rc=79 không bao giờ là dừng có chủ đích: hết file halt thì khởi động lại.
+dead_pid; set_state "$D" halted 79; rm -f "$WD" "$TMP/halt"
+expect_restart "halted rc=79 whose halt file is already gone (cleared elsewhere)"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+# rc=76: halt ghi chưa rõ kết quả mà bản ghi halt không ghi được — không được khởi động lại mù.
+dead_pid; set_state "$D" halted 76; rm -f "$WD" "$TMP/halt"
+expect_no_restart "halted rc=76 (uncertain write, halt record not written)"
+# Hợp đồng mà gh_write_once dựa vào (OCR 24/10): `--halt` thoát 79 khi bản ghi đã lưu; bản ghi không ghi được thì thoát khác 79.
+RGR="$ROOT/.claude/bin/super-board-github-read.py"
+SB_GITHUB_HALT_FILE="$TMP/halt-contract/halt.json" python3 "$RGR" --halt "t" >/dev/null 2>&1; hrc=$?
+[ "$hrc" = 79 ] && [ -s "$TMP/halt-contract/halt.json" ] && ok "--halt saves its record and exits 79" || fail "--halt rc=$hrc, record $([ -s "$TMP/halt-contract/halt.json" ] && echo saved || echo missing)"
+: > "$TMP/notadir"
+SB_GITHUB_HALT_FILE="$TMP/notadir/halt.json" python3 "$RGR" --halt "t" >/dev/null 2>&1; hrc=$?
+[ "$hrc" != 79 ] && [ "$hrc" != 0 ] && ok "--halt that cannot save its record does not exit 79 (rc=$hrc)" || fail "--halt with an unwritable path exited $hrc (want not 79)"
+grep -q 'hrc" -eq 79 \] || {' "$ROOT/.claude/bin/super-board-run.sh" && ok "gh_write_once exits 76 unless --halt returned 79" || fail "gh_write_once does not branch on the --halt exit code"
+rm -f "$WD" "$TMP/halt"
+
+# #190: halt rc=79 do một lần GHI chưa rõ kết quả (22/10 06:31, board đứng 2g47 chờ người --resume --reconciled). Watchdog đọc
+# lại GitHub: ghi đã xảy ra → tự --reconcile + khởi động lại (có log lý do); xác minh ghi chưa xảy ra hay không kiểm chứng
+# được → giữ halt, KHÔNG resume mù, báo notify đúng một lần; quá 3 lần tự đối chiếu mỗi giờ → dừng và báo.
+notifies() { local n; n=$(grep -c '^notify ' "$TMP/calls" 2>/dev/null); echo "${n:-0}"; }
+RECON="$RUNDIR/t.reconcile.log"
+rm -f "$WD" "$RECON"; dead_pid; set_state "$D" halted 79
+printf 'write-applied\n' > "$TMP/halt"; expect_restart "halt on an uncertain write that GitHub shows was applied"
+[ ! -e "$TMP/halt" ] && grep -q 'auto-reconciled' "$WLOG" 2>/dev/null && grep -q 'MERGED' "$WLOG" 2>/dev/null \
+  && ok "applied write → halt archived and the reason logged (what GitHub showed)" \
+  || fail "applied write not reconciled/logged: $(tail -2 "$WLOG" 2>/dev/null | tr '\n' ' ')"
+[ "$(wc -l < "$RECON" 2>/dev/null | tr -d ' ')" = 1 ] && ok "auto-reconcile is counted against the hourly budget" || fail "reconcile budget file: $(cat "$RECON" 2>/dev/null)"
+kill_tree "$RP"; wait_for 10 '! alive "$RP"'
+rm -f "$WD" "$RECON"; dead_pid; set_state "$D" halted 79; n0=$(notifies)
+printf 'write-pending\n' > "$TMP/halt"; expect_no_restart "halt on an uncertain write verified NOT applied (no blind resume)"
+[ -e "$TMP/halt" ] && [ "$(field VERDICT "$WD")" = write-not-applied ] && ok "not-applied write → halt kept, verdict write-not-applied" \
+  || fail "not-applied verdict: $(field VERDICT "$WD") halt=$([ -e "$TMP/halt" ] && echo kept || echo gone)"
+[ "$(notifies)" = $((n0 + 1)) ] && ok "not-applied halt → one notify" || fail "notify count $(notifies) vs $n0"
+wd; [ "$(notifies)" = $((n0 + 1)) ] && ok "the same halt is not notified again on the next check" || fail "notify repeated: $(notifies)"
+n0=$(notifies); rm -f "$WD"
+printf 'write\n' > "$TMP/halt"; expect_no_restart "halt on an uncertain write GitHub cannot confirm"
+[ -e "$TMP/halt" ] && [ "$(notifies)" = $((n0 + 1)) ] && grep -q '^notify send' "$TMP/calls" \
+  && ok "unverifiable write → halt kept and a notify sent" || fail "unverifiable: notifies=$(notifies) vs $n0"
+# R3: verdict trước đó đã là github-halt (nhánh "reads halted") thì lần giữ halt vì không kiểm chứng được vẫn phải báo người.
+n0=$(notifies); printf 'RESTARTS=0\nLAST_RESTART=1\nVERDICT=github-halt\n' > "$WD"
+printf 'write\n' > "$TMP/halt"; expect_no_restart "unverifiable write while the previous verdict was already github-halt"
+[ "$(notifies)" = $((n0 + 1)) ] && ok "unverifiable halt after a github-halt verdict → notify still sent" || fail "no notify after github-halt verdict: $(notifies) vs $n0"
+wd; [ "$(notifies)" = $((n0 + 1)) ] && ok "…and the next check does not notify again (NOTIFIED persisted)" || fail "notify repeated after github-halt verdict: $(notifies)"
+n0=$(notifies); rm -f "$WD"; printf '%s\n%s\n%s\n' "$(date +%s)" "$(date +%s)" "$(date +%s)" > "$RECON"
+printf 'write-applied\n' > "$TMP/halt"; expect_no_restart "auto-reconcile budget (3 per hour) exhausted"
+[ -e "$TMP/halt" ] && [ "$(field VERDICT "$WD")" = reconcile-budget ] && [ "$(notifies)" = $((n0 + 1)) ] \
+  && ok "over budget → halt kept, verdict reconcile-budget, notify sent" || fail "budget: verdict=$(field VERDICT "$WD") notifies=$(notifies)"
+rm -f "$WD" "$TMP/halt" "$RECON"
 
 # Trạng thái board hiện trên GitHub (người dùng 20/10: "thể hiện lên board 1 icon … chứ để mấy giờ sau mới phát hiện được"
 # và "thêm thời gian để biết task chạy được bao lâu, bắt đầu từ khi nào"): mỗi check ghi icon, worker đang chạy kèm giờ
@@ -667,7 +734,7 @@ kill_tree "$FR3"; rm -f "$WD" "$BST" "$STATE" "$R/.claude/super-board/inflight/1
 
 # Runner do watchdog khởi động crash trước tick đầu (đọc board hỏng): bản ghi vẫn mang bộ đếm RUNAWAY đã chuyển sang.
 rm -f "$WD"; dead_pid; set_state "$D" crashed 143
-start_runner "$TMP/run11.out" SB_WATCHDOG_START=1 SB_DAEMON=1 STUB_CARD_FAIL=1
+start_runner "$TMP/run11.out" SB_WATCHDOG_START=1 SB_DAEMON=1 STUB_CARD_FAIL=1 SB_FETCH_RETRY_DELAYS=   # #256: không đọc lại, crash ngay như trước
 wait_for 20 '! alive "$RP"' || kill_tree "$RP"
 [ "$(field STATE "$STATE")" = crashed ] && [ "$(field NO_PROGRESS "$STATE")" = 4 ] \
   && ok "a restarted runner crashing before its first tick keeps the carried no-progress count (4)" \
@@ -718,7 +785,7 @@ if [ -f "$SBA" ]; then
   python3 - "$SBA" "$TMP/all" > "$TMP/all.out" 2>&1 <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("sba", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-m.REPOS = [{"slug": "zz-none", "name": "test", "dir": sys.argv[2], "tuios_window": "x", "url": "x"}]
+m.REPOS = [{"slug": "zz-none", "name": "test", "dir": sys.argv[2], "url": "x"}]
 m.get_running_pids = lambda slug: []
 m.stop_all()
 PY
@@ -731,7 +798,7 @@ PY
   python3 - "$SBA" "$TMP/all" > "$TMP/all.status" 2>&1 <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("sba", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-m.REPOS = [{"slug": "zz-none", "name": "test", "dir": sys.argv[2], "tuios_window": "x", "url": "x"}]
+m.REPOS = [{"slug": "zz-none", "name": "test", "dir": sys.argv[2], "url": "x"}]
 m.get_running_pids = lambda slug: []
 m.status_all()
 PY
@@ -742,7 +809,7 @@ PY
   python3 - "$SBA" "$TMP/all2" > "$TMP/all2.out" 2>&1 <<'PY'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("sba", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-m.REPOS = [{"slug": "zz-nostop", "name": "test", "dir": sys.argv[2], "tuios_window": "x", "url": "x"}]
+m.REPOS = [{"slug": "zz-nostop", "name": "test", "dir": sys.argv[2], "url": "x"}]
 m.get_running_pids = lambda slug: []
 m.stop_all()
 PY

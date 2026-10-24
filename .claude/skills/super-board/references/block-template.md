@@ -14,6 +14,10 @@ the wave planner sweeps `Blocked` at the start of every wave, and any card whose
 issues have all closed is moved back to `Ready` automatically, with a comment saying what cleared
 it. Everything else — credentials, permissions, product decisions — still waits for a person.
 
+The runner marks those cards with the label `⏳ chờ thẻ khác` (planner `pending`), so the board tells
+"waiting on another card, nothing to do" from "needs a person"; it removes the label when the sweep
+frees the card. `super-board status` lists the two groups apart.
+
 That sweep is why the `blocked-by:` line below is mandatory. Before it existed, `Blocked` was
 terminal: on 2026-08-20 five cards sat there long after their blockers had merged, because the only
 record of what they were waiting for was English prose in a comment nobody re-read.
@@ -61,6 +65,11 @@ same rule: **prose above for the human, one parseable line below for the loop.**
 - `blocked-by: -` — nothing on this board clears it. It waits for a person, and the sweep leaves it
   alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
 
+Write only issues that are still OPEN: generate the line with
+`python3 .claude/bin/super-board-blocked-by.py line --repo <owner/name> <N,M…>` (closed numbers are dropped, its stderr gives the
+reason for the Block comment; nothing open prints `blocked-by: -`; exit 79 = state unreadable, write nothing). A closed blocker on
+the line frees the card at once and the Builder rebuilds it (agent-workbench#253: #200 built 6 times).
+
 Write the numbers alone. **Never `blocked-by: none — but #26 must merge first`**: a line that says
 none and then names an issue is read as *no blocker* by the sweep and as *one blocker* by a human,
 and the sweep is the one that acts. That exact shape shipped on a real board and is the reason
@@ -81,7 +90,7 @@ Every Block whose `blocked-by:` is `-` because a person must act — reason tags
 
 > **Iron Law of Autonomous Execution (`NEVER` mark `needs-you` for agent-doable work):**
 > `needs-you` is strictly reserved for steps an agent **cannot** perform without a human (missing passwords/API keys/secrets, Play Console / App Store / Supabase / `@BotFather` login, legal/company filings, live DB migrations outside `allowed_envs`, ≥5 real human playtesters, or physical car/hardware driving).
-> Agents MUST **NEVER** mark `needs-you` or move to `Blocked` for work agents can do themselves: testing a PR on a machine or Android/iOS emulator (`PhoneConnect`, Xcode Simulator), rerunning `post-fix-gate --full` or waiting for CPU load, cleaning up dirty worktrees, auto-approving test/regression matrices (`AUTO-APPROVE`), making technical/UI/architecture/scope decisions ("Decide, don't ask"), splitting oversized tickets (`< 400` lines), or running local CLI / GitHub Actions workflows (`gh workflow run`, `kokoro_vi.py`, `chmod +x`). `super-board-needs-you.py mark` mechanically rejects these actions with exit `64`.
+> Agents MUST **NEVER** mark `needs-you` or move to `Blocked` for work agents can do themselves: testing a PR on a machine or Android/iOS emulator (`PhoneConnect`, Xcode Simulator), rerunning `post-fix-gate --full` or waiting for CPU load, a suite that keeps timing out (it hangs or the machine is loaded: find which test hangs — `PYTHONFAULTHANDLER=1` + `kill -ABRT` — fix it or file a card; never ask a person to raise the limit or accept evidence instead of exit 0), cleaning up dirty worktrees, auto-approving test/regression matrices (`AUTO-APPROVE`), making technical/UI/architecture/scope decisions ("Decide, don't ask"), splitting oversized tickets (`< 400` lines), or running local CLI / GitHub Actions workflows (`gh workflow run`, `kokoro_vi.py`, `chmod +x`). `super-board-needs-you.py mark` mechanically rejects these actions with exit `64`.
 
 ```
 python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> \

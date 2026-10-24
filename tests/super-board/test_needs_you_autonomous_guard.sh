@@ -46,6 +46,19 @@ reject_actions=(
   "Chốt vị trí nút Lưu cho form PDF trong reader: menu Thêm hay chip nổi"
   "Chọn A cho PR #41: giữ phạm vi dữ liệu + sim, sửa chữ AC3 thành UfoField.Hash"
   "Actions -> Roborazzi Baseline Record -> Run workflow trên main với reference DEC-02"
+  # 24/10: lọt qua bộ chặn, #319 nằm Blocked chờ người dù gốc là một test treo (REG-DK-ALL-01 TIMEOUT, #353)
+  "Nâng giới hạn 900s của REG-DK-ALL-01 hoặc xác nhận bằng chứng thay gate exit 0"
+  "Raise the REG-DK-ALL-01 timeout or accept the evidence above instead of a gate exit 0"
+  "Nâng giới hạn thời gian của suite REG-DK-ALL-01 lên 1800s"
+  "Raise the timeout of REG-DK-ALL-01 to 1800s"
+  "Raise the REG-DK-ALL-01 suite timeout"
+  "Tăng timeout của REG-DK-ALL-01 lên 1800s"
+  "Nâng giới hạn của suite REG-DK-ALL-01"
+  "Chấp nhận kết quả của Builder thay cho exit 0 của gate"
+  "REG-DK-ALL-01 timeout should be increased to 1800s"
+  "Chấp nhận TIMEOUT của REG-DK-ALL-01 như PASS"
+  # một từ billing/thanh toán trong câu không biến việc test/chốt của agent thành việc của người
+  "Thử PR #12 luồng billing trên máy ảo"
 )
 
 for act in "${reject_actions[@]}"; do
@@ -67,6 +80,21 @@ allow_actions=(
   "Tạo 3 product ID Play Billing trên Play Console (1 tháng, 1 năm, trọn đời)"
   "Tìm 5 người chơi thật, cho chơi APK từ HEAD theo production/qa/playtest-2026-10.md"
   "Tạo/xác nhận tài khoản Google Play và Apple Developer, nộp hồ sơ phát hành VN theo NĐ 147/2024"
+  # 24/10 review: mẫu "nâng giới hạn" của gate không được chặn nhầm việc billing/quota thật
+  "Nâng giới hạn chi tiêu (spending limit) tài khoản OpenAI trong trang billing"
+  "Raise the spending limit on the Anthropic console billing page"
+  "Nâng giới hạn quota Google Maps API trên Cloud Console"
+  "Xác nhận bằng chứng minh nhân dân cho tài khoản Stripe"
+  "Raise the Lambda timeout in the AWS console"
+  "Nâng giới hạn timeout của Cloudflare Worker trên dashboard"
+  "Nâng giới hạn thời gian dùng thử trên App Store Connect"
+  "Xác nhận bằng chứng chuyển khoản của khách hàng"
+  "Chấp nhận bằng chứng sở hữu tên miền"
+  "Tăng giới hạn người dùng G Suite"
+  "Raise the Office suite license limit"
+  "Raise the GitHub Actions spending limit so the gate can run"
+  "Tăng giới hạn chi tiêu GitHub Actions để gate CI chạy được"
+  "Nâng giới hạn kết nối Postgres production để test suite tải chạy được"
 )
 
 for act in "${allow_actions[@]}"; do

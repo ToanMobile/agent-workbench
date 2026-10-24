@@ -10,10 +10,11 @@
 #   5. a failing flagged suite fails the gate and does not hide its sibling's PASS
 #   6. the flag is read from the base-ref matrix only: a working-copy edit that adds it changes nothing
 #   7. DEVKIT_GATE_PARALLEL=0 turns it off (the kill switch)
+#  7b. T0052: không đặt / rỗng / rác thì cỡ nhóm = bin/capacity.py gate_parallel (12 lõi: 6, 4 lõi: 2)
 #   8. a flagged suite is told (DEVKIT_GATE_DONE) which test scripts the flagged suites before it run, per job, so
 #      run_impacted.sh still skips them
 #   8b. a script nested under tests/<dir>/ is recorded too (tests/gates/*.sh was invisible)
-#  15. a flagged run_impacted.sh does not join the group: it fans out to 10 jobs and was the 900 s timeout
+#  15. a flagged run_impacted.sh does not join the group: it fans out to many jobs (run_impacted.sh --jobs) and was the 900 s timeout
 #   9. GATE_TOTAL_BUDGET_S still counts the time of the group before a suite that cannot join it
 #  10. a Gradle/Unity/device command is never grouped, whatever the flag says
 #  11. a suite that waited for a group slot past the budget is not started
@@ -24,10 +25,17 @@
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 export VACUITY_REVERT=0
+# T0052: cỡ nhóm mặc định đến từ bin/capacity.py gate_parallel (co theo tải): ghim máy giả 12 lõi rảnh = 6, như hằng cũ
+unset DEVKIT_GATE_PARALLEL DEVKIT_CAPACITY   # DEVKIT_CAPACITY: nút hệ số của người gọi (suite_env của gate cha giữ nó) không được lái cỡ nhóm
+export DEVKIT_CAPACITY_CORES=12 DEVKIT_CAPACITY_LOAD=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# DEVKIT_CAPACITY_CORES cũng đổi ngưỡng chờ tải của heavy_slot trong gate (hold_load: 4 lõi 32, 12 lõi 96) mà heavy_slot đọc tải THẬT:
+# máy tải 45–100 thì ca 4 lõi chờ tới 600 s, ca 12 lõi lệch giờ bắt đầu làm hẹn ba bên hỏng (OCR 23/10). Ghim tải giả 0.
+echo 0 > "$TMP/load"
+export DEVKIT_SLOT_LOAD_FILE="$TMP/load"
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -55,6 +63,10 @@ make_repo() {
   printf 'exit 0\n' > tests/fine.sh
   printf 'printf "%%s" "$DEVKIT_GATE_DONE" > "$MARK/done_seen"\n' > tests/see_done.sh
   printf 'sleep 1\n' > tests/first.sh
+  # hẹn ba bên: mỗi suite chờ tối đa 3 s cho đủ 3 suite cùng bắt đầu (chỉ qua khi nhóm chạy được 3 suite một lúc)
+  for me in x y z; do
+    printf 'touch "$MARK/r3_%s"\ni=0\nwhile [ "$(ls "$MARK" | grep -c "^r3_")" -lt 3 ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done\n[ "$(ls "$MARK" | grep -c "^r3_")" -ge 3 ]\n' "$me" > "tests/rv3_$me.sh"
+  done
   for n in slow2 slow2b slow2c; do printf 'sleep 2\n' > "tests/$n.sh"; done
   for n in a b; do printf 'touch "$MARK/long_%s.started"\nsleep 25\n' "$n" > "tests/long_$n.sh"; done   # outlive the Ctrl-C of case 12
   printf '{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],"mandatory_regression_tests":[%s]}]}\n' "$1" > matrix.json
@@ -151,6 +163,47 @@ run_gate
 if [ "$RC" = 0 ] && passed REG-A && passed REG-B; then ok "10: a flagged suite whose command is Gradle runs alone, the flagged suite after it starts when it is done"
 else bad "10: a flagged Gradle command ran next to its sibling (exit $RC)"; printf '%s\n' "$OUT" | tail -15; fi
 
+# 7b. T0052: DEVKIT_GATE_PARALLEL không đặt / rỗng / rác = capacity gate_parallel: 12 lõi (6) chạy được 3 suite hẹn nhau, 4 lõi (2) thì không
+for v in unset "" abc; do
+  make_repo "$(suite REG-X 'sh tests/rv3_x.sh' p),$(suite REG-Y 'sh tests/rv3_y.sh' p),$(suite REG-Z 'sh tests/rv3_z.sh' p)"
+  if [ "$v" = unset ]; then run_gate; else OUT="$(DEVKIT_GATE_PARALLEL=$v CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests 2>&1)"; RC=$?; fi
+  if [ "$RC" = 0 ] && passed REG-X && passed REG-Y && passed REG-Z; then ok "7b: DEVKIT_GATE_PARALLEL=$v, 12 lõi: capacity cho nhóm 6, ba suite hẹn nhau cùng chạy"
+  else bad "7b: DEVKIT_GATE_PARALLEL=$v, 12 lõi: ba suite không chạy cùng lúc (exit $RC)"; printf '%s\n' "$OUT" | tail -15; fi
+done
+make_repo "$(suite REG-X 'sh tests/rv3_x.sh' p),$(suite REG-Y 'sh tests/rv3_y.sh' p),$(suite REG-Z 'sh tests/rv3_z.sh' p)"
+OUT="$(FLAKY_RETRY=0 DEVKIT_CAPACITY_CORES=4 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests 2>&1)"; RC=$?
+if [ "$RC" != 0 ] && { failed REG-X || failed REG-Y || failed REG-Z; }; then ok "7b: 4 lõi: capacity gate_parallel = 2, suite thứ ba phải chờ (hẹn ba bên hỏng)"
+else bad "7b: 4 lõi: nhóm vẫn chạy 3 suite một lúc (exit $RC) — cỡ nhóm không theo capacity"; printf '%s\n' "$OUT" | tail -15; fi
+# 7c. capacity nạp được nhưng gate_parallel hỏng (Antigravity audit 23/10): thiếu hàm, ném lỗi, trả None / chuỗi / bool / số lẻ / ≤ 0 →
+# 6 như cũ (None hay chuỗi từng làm BoundedSemaphore ném TypeError sập gate; ≤ 0 từng tắt ngầm chạy song song); số tốt dùng nguyên
+OUT7C="$(python3 - "$GATE" <<'PY' 2>&1
+import importlib.util, sys, types
+spec = importlib.util.spec_from_file_location("post_fix_gate", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+def fake(fn):
+    m = types.ModuleType("capacity")
+    if fn is not None:
+        m.gate_parallel = fn
+    return m
+def boom():
+    raise RuntimeError("x")
+cases = [(None, 6), (boom, 6), (lambda: None, 6), (lambda: "abc", 6), (lambda: True, 6), (lambda: 2.5, 6), (lambda: 0, 6),
+         (lambda: -2, 6), (lambda: 4, 4)]
+bad = []
+for fn, want in cases:
+    sys.modules["capacity"] = fake(fn)
+    try:
+        got = mod.default_gate_parallel()
+    except Exception as exc:
+        got = repr(exc)
+    if got != want or type(got) is not int:
+        bad.append(f"{getattr(fn, '__name__', fn)}->{got!r}(muốn {want})")
+print("BAD " + "; ".join(bad) if bad else "OK")
+PY
+)"
+case "$OUT7C" in *OK) ok "7c: capacity gate_parallel thiếu / ném lỗi / None / chuỗi / bool / lẻ / ≤ 0 → 6, số tốt (4) dùng nguyên" ;;
+  *) bad "7c: default_gate_parallel: $(printf '%s' "$OUT7C" | tail -3)" ;; esac
+
 # 11. a suite that waited for a slot past GATE_TOTAL_BUDGET_S is not started (cap 2, three 2 s suites, budget 1 s)
 make_repo "$(suite REG-A 'sh tests/slow2.sh' p),$(suite REG-B 'sh tests/slow2b.sh' p),$(suite REG-C 'sh tests/slow2c.sh' p)"
 OUT="$(DEVKIT_GATE_PARALLEL=2 GATE_TOTAL_BUDGET_S=1 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests 2>&1)"; RC=$?
@@ -219,7 +272,7 @@ PY
 if [ "$res" = "skip skip skip skip skip" ]; then ok "14: vacuity_revert skips a mode \"full\" suite for every VACUITY_REVERT setting (a group never holds a reverting suite)"
 else bad "14: vacuity_revert acted on a mode \"full\" suite: '$res'"; fi
 
-# 15. run_impacted.sh tự mở tới 10 job. Cờ parallel_safe không được nhét nó vào nhóm đang chạy GATE/HOOK:
+# 15. run_impacted.sh tự mở nhiều job (run_impacted.sh --jobs). Cờ parallel_safe không được nhét nó vào nhóm đang chạy GATE/HOOK:
 # need_a chỉ xanh khi slow_a đã xong, nên chạy chồng là đỏ.
 make_repo "$(suite REG-A 'sh tests/slow_a.sh' p),$(suite REG-B 'sh tests/need_a.sh run_impacted.sh' p)"
 run_gate

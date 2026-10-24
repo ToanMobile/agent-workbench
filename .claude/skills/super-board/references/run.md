@@ -258,7 +258,7 @@ in a sub-agent, before touching a worktree.
 [ ] build the in-flight list: .claude/bin/super-board-card.sh --config <cfg> items (one call) → [{number,title,status}] for
     Building / QA / Review / Ready cards; save it to a temp file
 [ ] bash .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> \
-         --inflight <file> [--files <paths you expect to touch>]
+         --inflight <file> --cap <merge_policy.auto_max_lines, 400 when unset> [--files <paths you expect to touch>]
 [ ] judge each card: the script's verdict, then its `candidates` (near-misses) semantically
 [ ] act on the outcome below, then return one verdict per card
 ```
@@ -291,13 +291,20 @@ do not make this card big (the listed items are one small change, the device che
 | `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: Eric (close as duplicate) · `blocked-by: -` |
 | `hold` — in progress | move card to Blocked | `👯` · names the open PR / card · `blocked-by: <the issue that PR or card closes>` — the sweep returns it when that closes, and pre-flight then finds it done |
 | `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
-| `hold` — too big | move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
-| `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy>` — the wave-start sweep frees it |
+| `hold` — too big | the Builder splits it with `/createTask` (super-build → "Too big → split"); only when it cannot, move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
+| `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy, open issues only — generate with `super-board-blocked-by.py line`>. Run the helper BEFORE moving the card: it prints `blocked-by: -` (no blocker still open) → treat as `blockedBy` empty, card stays Ready; it exits 79 (state unreadable) → leave the card untouched and return `skipped`, never Blocked with an empty line` — the wave-start sweep frees it |
 | `sequence` — `blockedBy` empty | proceed (card stays Ready, return column `Ready`), comment `⚠️ expected conflict with PR #<P> on <files> — the merge gate will rebase` | — |
 | `halted` | script exit 79: required evidence unavailable; leave the card untouched, stop this run, resume explicitly after recovery | — |
 
 A card the pre-flight agent returns no verdict for is treated as `skipped` (a verdict, not a
 column), never built unchecked. `qa` cards are not pre-flighted: nothing is built.
+
+### Running the gate and the merge gate (every lane)
+
+`post-fix-gate.py --run-tests --full` and `super-board-merge-gate.sh` can wait up to 600 s for a heavy slot before they
+start. Run them with the Bash tool's `run_in_background: true` from the first attempt, then poll the output; a foreground
+call is cut by the Bash timeout and the whole run is repeated (#249). The runner also exports
+`BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` = 3600000 to every worker as a second line of defence.
 
 ### Builder (first pass)
 
@@ -312,6 +319,12 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
 3. Read issue body + ALL comments + PROJECT.md.
 3b. Touches a third-party API/SDK, an upgrade, or auth/billing? Read the current official docs
     for the installed version first (super-build → "Docs before outside-tool code").
+3c. **Already met (exit without a PR).** Before writing code, run each AC's check against
+   `origin/<config.base_branch>`. Every AC already holds there → no branch, no PR: post one issue
+   comment with the command and its output per AC (proof, not a claim), run `gh issue close <N>
+   --reason completed`, release the claim and clean up the worktree. The runner moves the closed
+   card (still in Building) straight to Done (`reclaim_stranded_building`); the wave workflow's
+   Reconcile step does the same for a card that ends closed. Any AC not yet met → continue with step 4 (never close on a partial match).
 4. Implement smallest safe change covering ACs, under the PR size cap
    (`merge_policy.auto_max_lines`, default 400 changed lines). Growing past it mid-build → stop,
    push what you have, propose the split (vertical slices via `/to-tickets`) in a PR comment and
@@ -362,12 +375,14 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
    `agent-kit worktree add .claude/worktrees/issue-<N>-qa issue-<N>-<slug> --lane=qa --base=origin/<config.base_branch>`.
    A `qa` card has no branch yet: move it Ready → QA, then the same command creates the branch from the base.
 2. `target.url` set → health-check it first. Unhealthy → Block.
+2a. An AC needs a real device and none is online (`adb devices`): label the card `needs-device`, post a `[qa] [blocker]` comment naming the device, and move it to Blocked `📱` before you exit. Never exit silently with the card still in QA: a worker that leaves its card in the column it took it from, with no new comment, counts as a no-op, and the runner parks the card in Blocked after 2 in a row (`SB_NOOP_MAX`, issue #137); merge-only and merge-train dispatches are never counted (leaving the card in Review without a comment is their correct exit).
 3. Read issue + PR + Builder's handoff comment.
 4. Build issue-scoped test plan: one observable test per AC.
 4a. Existing project verifier → follow `../../super-qa/references/project-verifier.md`
 for affected feature selection, actual host readiness and new run-owned proof.
 Record uncovered/stale optional coverage alongside ordinary issue AC checks.
 4b. **Test-gap check** (super-qa → "Test-gap check (after build)"): map every AC to unit / component / e2e tests, hunt edge cases, write the High gaps red-first. A High gap that needs app code changed → Fail (step 7) with the gap list. Medium/Low go in the handoff under `Test gaps (not written)`.
+4c. **Same suites as the merge gate (#251).** In the QA worktree run `git merge --no-edit origin/<config.base_branch>` (the tree the gate verifies), then run every line of `.claude/bin/super-board-verify-cmd.sh --config <cfg>` (all green on a clean tree: run it once more with `--record`, so the merge gate skips the same verify on this exact tree, #226): it prints the `verify_commands` with ` --diff origin/<base> --force-full` already inserted, by the same function the merge gate uses. Never a hand-built `post-fix-gate.py` line. A red suite is rerun once on `origin/<base>`; red there too = red on base, not this PR (the merge gate files its own card), so QA does not fail the card for it.
 5. Run the tests. Capture evidence to `docs/super-board/runs/issue-<N>-qa-v<N>/`. For UI/visual ACs, capture screenshots at the standard viewports (1920×1080 desktop, 1024×768 tablet, 375×667 mobile). Commit the screenshots to the issue branch BEFORE writing the comment (the markdown image URLs depend on the files being present on the branch).
    **Evidence stays small** (Goods PR #48, 19/10: 17k lines of raw test XML and logs with ANSI colour codes made `gh pr diff` fail and halted the board). Commit the screenshots plus one `summary.md` of at most 40 lines: the command, its exit code, the pass/fail counts and the failing lines quoted. Never commit raw runner output over 200 lines (`*.log`, JUnit/NUnit `*.xml`, HAR): keep it in `$(git rev-parse --git-common-dir)/super-board/evidence/issue-<N>/`, outside the branch. Strip ANSI colour codes from anything you commit (`LC_ALL=C sed $'s/\x1b\\[[0-9;]*m//g'`). Comments stay short and plain: what passed, what failed, the evidence path (writing-standard.md § 4, at most 8 lines).
 6. **Pass** → commit test files + screenshots to same branch + push → tick the `ac` block with proof lines, write `visual` for UI, append a `history` row, rewrite `status` → `[qa] [report] ✅` PR comment with results + evidence path **+ inline screenshot embeds** (see "Screenshot embed format" below) → issue comment with the SAME inline screenshot embeds → move card QA → Review. Clean up worktree.
@@ -433,6 +448,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
 5. **Reviewer-side test rerun** (always — closes the Tester self-verification gap):
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the test command Tester used (recorded in Tester's PR handoff comment as `Local tests:` line).
+   - Exception: the DevKit gate (`post-fix-gate.py … --full`) is never rerun here — never rerun post-fix-gate --full; read its exit 0 for this head SHA from QA's report. The merge gate's `--force-full` verifies the merged tree.
    - Tests green → continue to step 6.
    - Tests red → open new `[qa]`-prefixed PR thread quoting the failure output, move card Review → QA with `loop:rebuild-N`, exit. Tester wrote a broken suite; QA owns the fix.
 6. **Adversarial mode** (per `truth_gate`): when triggered, spawn 2 sub-agents in parallel:
@@ -499,6 +515,15 @@ on the base branch**.
      bash .claude/bin/super-board-merge-gate.sh --config <config> --pr <N> --expect-head "$HEAD" \
        --subject "<PR title>" --body-file <msg.md>
    <msg.md> = the PR's commit bullets, deduplicated, plus `Closes #<issue>` (writing-standard.md § 1).
+   **Before the gate, post the approval** on the PR as its own NEW comment (not the `[reviewer] [report]` comment, and never an in-place edit of it as in step 8) whose line is exactly `approved-head:$HEAD`
+   (full 40-hex sha, `$HEAD` above). The runner reads the latest such comment from an OWNER/MEMBER/COLLABORATOR: a card still in
+   Review whose PR head equals it (gate exit 4, a lock or conflict, not code) gets a **merge-only** worker next tick — this step 5 only,
+   `--expect-head` pinned, no new review. A push changes the head, so the approval lapses and the next tick reviews the new head (#227).
+   The runner batches by itself (#228): when two or more Review cards carry a valid `approved-head:` (above), it hands them to
+   **one merge-train worker** (`super-board-merge-train.sh --prs <N:sha,…>` in board order, each `sha` the approved head, up to `SB_TRAIN_MAX`, default 8) instead of one
+   reviewer per card, each running its own gate; every card of the batch holds a lock with the same PID, so the zombie sweep keeps that worker
+   while any of them is still in Review. That worker reviews nothing; the train itself drops a PR whose head moved off its `sha` (`train-result: <N> head-moved`, exit 6, the card stays in Review for a fresh review),
+   runs the train once and routes every `train-result: <PR> <state>` line below. `SB_REVIEW_TRAIN=0` goes back to one worker per card.
    Several PRs ready in the same wave: `bash .claude/bin/super-board-merge-train.sh --config <config> --prs <N,M,…>`
    verifies their combined tree once (bisecting to the red PR when it fails), then runs this same gate for each good PR
    with `--train-receipt`, which skips only the verify the train already proved (the full chain's final tree; the intermediate main between two merges is not verified on its own). Exit 11 + `train-red: <N>` lines = those PRs go back to Build;
@@ -866,6 +891,6 @@ Every tick — both cheap and expensive — `sweep_lane_zombies` runs `check_lan
 | qa      | QA                      | zombie                |
 | review  | Review                  | zombie                |
 
-On zombie detection: `SIGTERM` + 1s + `SIGKILL` the PID, remove the inflight lock, idempotently sweep the assignee, clear the lane PID/issue vars, log `💀 zombie <lane> worker on #<N> (pid=<P>) — card moved to '<col>'; killing`. Uses the cached project items only — zero extra API calls per tick.
+On zombie detection: wait a grace period (`SB_ZOMBIE_GRACE`, default 60 s from first sighting) so the worker can print its final report and exit; after that `SIGTERM` + 1s + `SIGKILL` the PID, remove the inflight lock, idempotently sweep the assignee, clear the lane PID/issue vars, log `💀 zombie <lane> worker on #<N> (pid=<P>) — card moved to '<col>'; killing`. Uses the cached project items only — zero extra API calls per tick.
 
 Trade-off: if someone (human or external tool) manually moves a card out of its source column while a worker is legitimately mid-work, the watchdog will kill that worker. Acceptable — manual board edits during an active run are an anti-pattern, and the worker would fail on its own column-move anyway.

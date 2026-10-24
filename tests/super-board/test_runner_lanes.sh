@@ -37,6 +37,7 @@ chmod +x "$TMP/bin/super-board-wave-plan.sh"
 export STUB_DIR="$TMP"
 
 unset SB_GITHUB_READ_STRICT   # merge gate export biến này cho verify của nó; test không thừa hưởng
+export SB_ZOMBIE_GRACE=0  # test kill trực tiếp, không chờ ân hạn (#237)
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e   # runner đặt -euo pipefail; các kiểm tra bên dưới tự xét lỗi
 SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"
@@ -47,6 +48,7 @@ gh_checkpoint() { :; }
 gh_write_once() { echo "gh $*" >> "$TMP/writes"; }
 set_card_status() { echo "move $1 $2" >> "$TMP/writes"; }
 log() { echo "$*" >> "$TMP/log"; }
+issue_is_open() { return 0; }   # #254: reclaim_stranded_building đọc state issue; mọi thẻ ở đây là issue mở (bản thật được nạp lại ở ca 79 bên dưới)
 
 items() {   # items <number> <status> [labels-json]: a one-card board snapshot
   PROJECT_ITEMS_JSON="{\"items\":[{\"id\":\"PVTI_$1\",\"status\":\"$2\",\"labels\":${3:-[]},\"content\":{\"type\":\"Issue\",\"number\":$1,\"assignees\":[]}}]}"
@@ -281,6 +283,7 @@ printf '#!/usr/bin/env bash\necho "unknown flag: --renamed" >&2\nexit 1\n' > "$T
 ( SB_GITHUB_READ="$ROOT/.claude/bin/super-board-github-read.py"
   export PATH="$TMP/ghbin:$PATH" SB_GITHUB_HALT_FILE="$TMP/runner-halt2.json" SB_GITHUB_RETRY_DELAY=0
   unset SB_GITHUB_READ_STRICT
+  SB_LIB_ONLY=1 . "$RUNNER"; set +e   # nạp lại issue_is_open thật (đầu file đã stub)
   issue_is_open 7 ) >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 79 ] && [ -e "$TMP/runner-halt2.json" ] && ok "runner's own issue-state read with a broken flag: halt file written (79)" \
   || fail "runner's own issue-state read with a broken flag: rc=$rc halt=$([ -e "$TMP/runner-halt2.json" ] && echo yes || echo no) (exit 79 without a halt file: a restart fails again without the reason)"
@@ -341,10 +344,10 @@ RUNAWAY_PAUSE_UNTIL=0
 #    dòng lệnh thật (`claude --dangerously-skip-permissions -p …`, agy/grok cũng vậy) và không giới hạn theo repo:
 #    21:52 nó khớp một tiến trình khác nên runner OfficeReader và Goods từ chối khởi động. Worker còn sống có lock
 #    đã được adopt_live_locks nhận lại, nên chỉ worker CỦA REPO NÀY mà không có lock mới chặn. Bảng tiến trình giả
-#    lập theo đúng dạng `ps -ww -A -o pid=,command=` đo ngày 16/10.
+#    lập theo đúng dạng `ps -ww -A -o pid=,ppid=,command=` đo ngày 16/10.
 R="/Volumes/X/Repo"
 wl() {   # wl <pid> <argv0 + cờ> <root> <issue>: một dòng worker đúng dạng prompt của dispatch_lane
-  printf "%s %s -p First operation: run .claude/bin/super-board-skills-ready.py --root '%s' --host claude --cards - --lane 'build' --hydrate with [] as stdin. Run super-build on issue #%s for super-board run. Config: x.\n" "$1" "$2" "$3" "$4"
+  printf "%s 1 %s -p First operation: run .claude/bin/super-board-skills-ready.py --root '%s' --host claude --cards - --lane 'build' --hydrate with [] as stdin. Run super-build on issue #%s for super-board run. Config: x.\n" "$1" "$2" "$3" "$4"
 }
 {
   wl 4101 "claude --dangerously-skip-permissions" "$R" 5             # repo này, có lock
@@ -353,8 +356,8 @@ wl() {   # wl <pid> <argv0 + cờ> <root> <issue>: một dòng worker đúng d�
   wl 4104 "claude --dangerously-skip-permissions" "$R-2" 8           # repo khác có tên bắt đầu bằng tên repo này
   wl 4105 "/Users/u/.local/bin/agy --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions" "$R" 9
   wl 4106 "/Users/u/.grok/bin/grok -m grok-4.7" "$R" 10
-  echo "4107 /bin/zsh -c grep -c \"claude -p --root '$R' for super-board run\" runner.log"   # shell chẩn đoán, không phải worker
-  echo "4108 bash $R/.claude/bin/super-board-run.sh repo"
+  echo "4107 1 /bin/zsh -c grep -c \"claude -p --root '$R' for super-board run\" runner.log"   # shell chẩn đoán, không phải worker
+  echo "4108 1 bash $R/.claude/bin/super-board-run.sh repo"
 } > "$TMP/ps.txt"
 ps() { case "$*" in *command=*) cat "$TMP/ps.txt" ;; *) command ps "$@" ;; esac; }
 pgrep() {   # pgrep -f <mẫu> trên bảng giả

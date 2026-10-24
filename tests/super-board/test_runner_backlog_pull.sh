@@ -4,7 +4,7 @@
 #  A  Ready=0, Backlog 3 thẻ đủ Problem/Fix/AC + 1 thẻ needs-you -> kéo đúng 3 thẻ lên Ready, không kéo needs-you; comment [orchestrator].
 #  B  Thẻ thiếu AC (hoặc Problem/Fix) không bị kéo; comment nêu lý do đúng một lần cho cùng nội dung (tick sau im lặng).
 #  C  Thẻ CLOSED trong Backlog -> Done, không kéo lên Ready.
-#  D  Không kéo vượt số worker rảnh: BUILD_WORKERS - BUILD_COUNT - READY; tải >= build_load_max chỉ cho kéo 1 thẻ khi lane rỗng hẳn.
+#  D  Không kéo vượt số worker rảnh: BUILD_WORKERS - BUILD_COUNT - READY; tải máy không còn ảnh hưởng.
 #  E  Cờ tắt (SB_BACKLOG_PULL=0 hoặc backlog_pull:false trong config) -> không đọc, không kéo.
 #  F  Thứ tự: thẻ `bug` trước, còn lại theo thứ tự bảng; thẻ wontfix / có assignee người bị bỏ qua.
 #  W  Dây nối: vòng chính gọi pull_backlog_cards sau count_board rồi đọc lại bảng.
@@ -44,7 +44,7 @@ board() { PROJECT_ITEMS_JSON="{\"items\":[$CARDS]}"; }
 reset_case() {
   : > "$TMP/writes"; : > "$TMP/log"; : > "$TMP/closed"
   rm -rf "$INFLIGHT_DIR"/* "$TMP"/body-* "$TMP/load"
-  CARDS=""; BUILD_WORKERS=10; BUILD_COUNT=0; READY=0; BUILD_LOAD_MAX=60
+  CARDS=""; BUILD_WORKERS=10; BUILD_COUNT=0; READY=0; 
   unset SB_BACKLOG_PULL; CONFIG_PATH=/dev/null
   SB_BUILD_LOAD_FILE="$TMP/load"; echo 1.0 > "$TMP/load"
 }
@@ -100,24 +100,17 @@ for n in 331 332 333 334 335 336 337 338; do card $n Backlog '[]'; add_body $n "
 board; BUILD_COUNT=3; READY=2
 pull_backlog_cards >/dev/null
 if [ "$(moved_to_ready)" = 5 ]; then ok "D1: kéo đúng 5 = 10 worker - 3 chạy - 2 Ready"; else fail "D1: moved=$(moved_to_ready)"; fi
-# D2: tải trên ngưỡng, đã có worker -> không kéo thêm.
+# D2: lane đã đủ worker (BUILD_COUNT = trần) -> không kéo; tải máy không còn ảnh hưởng.
 reset_case
 for n in 341 342 343; do card $n Backlog '[]'; add_body $n "$GOOD"; done
-board; BUILD_COUNT=1; READY=0; echo 99 > "$TMP/load"
+board; BUILD_COUNT=10; READY=0; echo 999 > "$TMP/load"
 pull_backlog_cards >/dev/null
-if [ "$(moved_to_ready)" = 0 ]; then ok "D2: tải 99 >= 60 và lane đã bận -> không kéo"; else fail "D2: moved=$(moved_to_ready)"; fi
-# D3: tải trên ngưỡng, lane rỗng hẳn -> chỉ 1 thẻ.
+if [ "$(moved_to_ready)" = 0 ]; then ok "D2: lane đủ worker -> không kéo"; else fail "D2: moved=$(moved_to_ready)"; fi
 reset_case
 for n in 351 352 353; do card $n Backlog '[]'; add_body $n "$GOOD"; done
-board; echo 99 > "$TMP/load"
+board; echo 999 > "$TMP/load"
 pull_backlog_cards >/dev/null
-if [ "$(moved_to_ready)" = 1 ]; then ok "D3: tải cao, lane rỗng -> kéo đúng 1 thẻ"; else fail "D3: moved=$(moved_to_ready)"; fi
-# D4: tải đọc không được -> như tải cao.
-reset_case
-for n in 361 362; do card $n Backlog '[]'; add_body $n "$GOOD"; done
-board; BUILD_COUNT=1; : > "$TMP/load"
-pull_backlog_cards >/dev/null
-if [ "$(moved_to_ready)" = 0 ]; then ok "D4: tải không đọc được, lane bận -> không kéo"; else fail "D4: moved=$(moved_to_ready)"; fi
+if [ "$(moved_to_ready)" = 3 ]; then ok "D3: tải 999 không chặn: lane rỗng kéo đủ 3 thẻ (không đo CPU)"; else fail "D3: moved=$(moved_to_ready)"; fi
 
 # ── E: cờ tắt.
 reset_case
@@ -146,7 +139,7 @@ if [ "$(moved_to_ready)" = 0 ]; then ok "F2: chỉ còn wontfix + thẻ có assi
 # ── W: dây nối trong vòng chính.
 wire=$(grep -n 'pull_backlog_cards' "$RUNNER" | tail -1 | cut -d: -f1)
 cnt=$(grep -n '^  count_board$' "$RUNNER" | tail -1 | cut -d: -f1)
-if [ -n "$wire" ] && [ -n "$cnt" ] && [ "$wire" -gt "$cnt" ] && sed -n "${wire},$((wire + 2))p" "$RUNNER" | grep -q 'fetch_project_items'; then
+if [ -n "$wire" ] && [ -n "$cnt" ] && [ "$wire" -gt "$cnt" ] && sed -n "${wire},$((wire + 2))p" "$RUNNER" | grep -qE 'fetch_project_items|tick_fetch'; then   # #256: vòng chính đọc qua tick_fetch
   ok "W: vòng chính gọi pull_backlog_cards sau count_board rồi đọc lại bảng"
 else
   fail "W: pull_backlog_cards chưa được nối vào vòng chính (wire=${wire:-none} count_board=${cnt:-none})"

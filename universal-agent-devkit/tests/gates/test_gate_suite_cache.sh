@@ -12,10 +12,22 @@ unset DEVKIT_GATE_CACHE DEVKIT_GATE_CACHE_MAX_S DEVKIT_SUITE_CACHE_MAX_S DEVKIT_
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-export SB_HEAVY_SLOT_DIR="$TMP/slots"
-mkdir -p "$SB_HEAVY_SLOT_DIR"
+# Fast, and safe next to other tests (#255, DevKit speed): the cases are split into GROUPS (grp_*) that run at the same time, each
+# under its own $ROOT/<group> (own repos, worktrees, counters, suite store, heavy-slot dir). A group that needs the main repo of cases
+# 0-13 builds its own copy (setup_main); a group body is the original cases in the original order, verbatim. The groups' output is
+# printed after all of them finished. Case 0 (cold cache) only holds for the group that runs it: it is in grp_chain, whose first gate
+# run is that case.
+ROOT="$(mktemp -d)" || exit 1
+PIDS=""   # the groups' process-group ids while they run
+cleanup() {   # normal end, a failure, Ctrl-C or TERM: stop every group whole (its own process group; never `kill 0`), then remove the run dir
+  local p
+  for p in $PIDS; do kill -TERM -- "-$p" 2>/dev/null; done
+  wait 2>/dev/null
+  if [ -n "$ROOT" ]; then rm -rf "$ROOT"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # sentinel P3: mọi ca ở đây coi lần chạy thật gần nhất là vừa xong (ca sentinel nằm ở test_gate_sentinel.sh)
 export DEVKIT_SENTINEL_MAX_S=999999999
 FAILS=0
@@ -23,6 +35,8 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 n() { [ -f "$TMP/count.$1" ] && wc -l < "$TMP/count.$1" | tr -d ' ' || echo 0; }
 
+# The main repo of cases 0-13, built in the group's own $TMP (R, extdir, matrix, two commits).
+setup_main() {
 R="$TMP/repo"
 mkdir -p "$R/src" "$R/tests/lib" "$R/ext-in"
 mkdir -p "$TMP/extdir"
@@ -54,7 +68,9 @@ git add -A && git commit -qm init
 echo 'a = 2' > src/a.py && echo 'b = 2' > src/b.py && echo 'c = 2' > src/c.py
 git commit -qam change
 COMMON="$(git rev-parse --path-format=absolute --git-common-dir)"
+}
 
+# --- helpers shared by the groups (moved verbatim from between the cases) ---
 # gate --full ở thư mục $1 trên HEAD~1..cây (như merge gate: --diff tường minh); output vào $OUT, exit vào $RC
 gate() { local d="$1"; shift; OUT="$( cd "$d" && CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --matrix "$d/matrix.json" --run-tests --full \
   --diff HEAD~1 --no-checklist "$@" 2>&1 )"; RC=$?; }
@@ -72,7 +88,18 @@ expect() {   # expect <tên> <thêm REG-1> <thêm REG-2> <thêm REG-3> <thêm RE
   if [ "$d1 $d2 $d3 $dn" = "$2 $3 $4 $5" ] && [ "$RC" = "$6" ]; then ok "$1"
   else fail "$1 (chạy thêm REG-1/2/3/N = $d1 $d2 $d3 $dn, mong $2 $3 $4 $5; exit $RC, mong $6)"; printf '%s\n' "$OUT" | grep -E "REG-|KẾT LUẬN" | tail -8; fi
 }
+newrepo() { # <thư mục>: repo có src/x.py, src/y.py, src/hidden.txt=good, tests/x.sh đọc hidden.txt qua đường dẫn ghép
+  local r="$1"; mkdir -p "$r/src" "$r/tests"
+  git -C "$r" init -q -b main . && git -C "$r" config user.email t@t && git -C "$r" config user.name t
+  echo 'x = 1' > "$r/src/x.py"; echo 'y = 1' > "$r/src/y.py"; echo good > "$r/src/hidden.txt"
+  printf 'd=src; f=hid; f="${f}den.txt"; grep -qx good "$d/$f"\n' > "$r/tests/x.sh"
+}
+gq() { local d="$1"; shift; ( cd "$d" && FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --matrix "$d/matrix.json" \
+  --run-tests --full --no-checklist "$@" >"$TMP/outq" 2>&1 ); }
+wtq() { git -C "$1" worktree add -q --detach "$2" HEAD || fail "setup: worktree $2"; mkdir -p "$2/.claude/audit-gate"; : > "$2/.claude/audit-gate/test_run.lock"; }
 
+grp_chain() {   # cases 0-7: cold cache, whole-tree reuse, cached-full, danger list, FAIL sticks, --no-cache
+  setup_main
 # 0. Main checkout: mọi suite chạy thật một lần (cache lạnh) và ghi PASS theo khoá.
 snap; gate "$R"; expect "0. cache lạnh: mọi suite chạy" 1 1 1 1 0
 
@@ -132,7 +159,11 @@ snap; ( cd "$TMP/w7b" && CLAUDE_PROJECT_DIR="$TMP/w7b" python3 "$GATE" --matrix 
 d1=$(( $(n 1) - B1 )); d2=$(( $(n 2) - B2 )); d3=$(( $(n 3) - B3 ))
 [ "$d1 $d2 $d3" = "0 0 0" ] && ok "7b. worktree cùng nội dung: 0 suite cacheable chạy" \
   || { fail "7b. (REG-1/2/3 chạy $d1 $d2 $d3, mong 0 0 0)"; grep -E "REG-|KẾT LUẬN" "$TMP/out7b" | tail -6; }
+}
 
+grp_coalesce() {   # case 8: two gates on one key run the suite once
+  setup_main
+  gate "$R"   # warm the key ledger as cases 0-7 did: the other suites are hits, so both gates reach REG-S together (cold, they reach it apart)
 # 8. Hai gate cùng lúc trên cùng khoá: suite chạy MỘT lần, lượt kia chờ rồi dùng lại (coalescing).
 python3 - "$R/matrix.json" "$TMP" <<'PY'
 import json, sys
@@ -152,7 +183,10 @@ P8=$!
 wait "$P8"
 [ $(( $(n S) - BS )) = 1 ] && ok "8. hai gate cùng khoá cùng lúc: suite chạy đúng 1 lần" \
   || fail "8. coalescing: REG-S chạy $(( $(n S) - BS )) lần, mong 1"
+}
 
+grp_mutate_prune() {   # cases 9-11: a suite that edits its input, cache off, store pruning
+  setup_main
 # 9. Suite tự sửa input của nó trong lúc chạy ⇒ khoá sau khi chạy khác khoá trước ⇒ KHÔNG ghi PASS (worktree sau cùng nội dung ban
 #    đầu vẫn phải chạy nó).
 python3 - "$R/matrix.json" "$TMP" <<'PY'
@@ -199,7 +233,10 @@ ok = f"{0:064x}.json" in left and len(left) == 2
 print(("✔" if ok else "✖") + f" 11. prune giữ bản ghi FAIL, bỏ PASS thừa (còn {len(left)} bản ghi)")
 sys.exit(0 if ok else 1)
 PY
+}
 
+grp_cover() {   # cases 12, 13, 20: covered_by, a FAIL written after the lookup
+  setup_main
 # 12. covered_by: suite được phủ chỉ COVERED khi cover chạy lệnh đầy đủ trên đúng nội dung này (chạy thật hoặc dùng lại theo khoá CẢ
 #     CÂY); cover dùng lại theo khoá CHÍNH XÁC (phần cached-full thêm) không phủ được — khoá đó không thấy input của suite được phủ
 #     (review 20/10, P0-1: GeelyEx2 REG-SHARED-01 covered_by REG-CAR-01). Bỏ rule REG-M của ca 9 (suite sửa cây trong lúc chạy làm
@@ -265,7 +302,23 @@ else fail "13. exit $RC (mong 4), REG-CV chạy $(( $(n CV) - BCV )) lần (mong
 BCV=$(n CV); run12 w13b
 [ "$(( $(n CV) - BCV ))" = 1 ] && ok "13. lượt sau: khoá đã FAIL không HIT, REG-CV chạy thật" \
   || fail "13. lượt sau: REG-CV chạy $(( $(n CV) - BCV )) lần, mong 1"
+# 20. B1 (Antigravity 20/10): suite cached-full dùng lại theo khoá chính xác, rồi một lượt khác ghi FAIL lên đúng khoá đó trước kết luận:
+#     recheck lật nó thành UNTESTED/STALE — phải vào kết luận (exit 4), không đứng ngoài như suite "không chạy được ở máy này".
+R20="$TMP/r20"; mkdir -p "$R20/src"
+git -C "$R20" init -q -b main . && git -C "$R20" config user.email t@t && git -C "$R20" config user.name t
+echo 'a = 1' > "$R20/src/a.py"; echo 'k = 1' > "$R20/src/k.py"
+printf '{"project":"t","rules":[{"component":"A","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"true"}]},{"component":"K","watch_files":["src/k.py"],"mandatory_regression_tests":[{"id":"REG-K","name":"k","command":"echo run >> %s/count.20"}]}]}\n' "$TMP" > "$R20/matrix.json"
+git -C "$R20" add -A && git -C "$R20" commit -qm init
+wtq "$R20" "$TMP/w20a"; echo 'a = 2' > "$TMP/w20a/src/a.py"; gq "$TMP/w20a"   # REG-K cached-full chạy, PASS theo khoá chính xác
+sed 's/"REG-CV"/"REG-K"/' "$TMP/l13.py" > "$TMP/l20.py"
+wtq "$R20" "$TMP/w20b"; echo 'a = 3' > "$TMP/w20b/src/a.py"
+( cd "$TMP/w20b" && FLAKY_RETRY=0 CLAUDE_PROJECT_DIR="$TMP/w20b" python3 "$TMP/l20.py" "$GATE" --matrix "$TMP/w20b/matrix.json" --run-tests \
+  --full --no-checklist >"$TMP/out20" 2>&1 ); rc=$?
+[ "$rc" = 4 ] && ok "20. suite cached-full bị lật STALE trước kết luận: exit 4 (vào kết luận)" \
+  || { fail "20. exit $rc (mong 4): STALE của suite cached-full đứng ngoài kết luận"; grep -E "REG-K|KẾT LUẬN" "$TMP/out20" | tail -3; }
+}
 
+grp_stop_timeout() {   # cases 14-15: a Stop-hook FAIL enters the key ledger, a cached-full timeout
 # 14. FAIL của lượt KHÔNG cưỡng bức (Stop hook) cũng vào sổ khoá: (1) --full, REG-E PASS (khoá được ghi); (2) lượt kiểu Stop, biên nhận
 #     quá tuổi (DEVKIT_GATE_CACHE_MAX_S=0, như Stop sau 6 h), FAILE=1: REG-E chạy và FAIL; (3) --full, FAILE=1 vẫn đặt: REG-E phải chạy
 #     lại và FAIL (exit 1) như --full trước P2 — dùng lại PASS cũ theo khoá thì exit 0 (review 20/10). Repo riêng, một suite.
@@ -298,18 +351,9 @@ else fail "15. suite cached-full quá giờ: exit $r (mong 0)"; grep -E "REG-T|K
 echo 't = 2' > "$R15/src/t.py"; g15; r=$?
 [ "$r" = 1 ] && ok "15. đối chứng: suite được chọn mà quá giờ vẫn exit 1" \
   || { fail "15. đối chứng: suite được chọn quá giờ, exit $r (mong 1)"; grep -E "REG-T|KẾT LUẬN|VERDICT" "$TMP/out15" | tail -3; }
-
-# ── Ca 16–19: review principal 20/10. Mỗi ca một repo riêng; input ngầm (đường dẫn ghép lúc chạy) mà quét tĩnh không thấy.
-newrepo() { # <thư mục>: repo có src/x.py, src/y.py, src/hidden.txt=good, tests/x.sh đọc hidden.txt qua đường dẫn ghép
-  local r="$1"; mkdir -p "$r/src" "$r/tests"
-  git -C "$r" init -q -b main . && git -C "$r" config user.email t@t && git -C "$r" config user.name t
-  echo 'x = 1' > "$r/src/x.py"; echo 'y = 1' > "$r/src/y.py"; echo good > "$r/src/hidden.txt"
-  printf 'd=src; f=hid; f="${f}den.txt"; grep -qx good "$d/$f"\n' > "$r/tests/x.sh"
 }
-gq() { local d="$1"; shift; ( cd "$d" && FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$d" python3 "$GATE" --matrix "$d/matrix.json" \
-  --run-tests --full --no-checklist "$@" >"$TMP/outq" 2>&1 ); }
-wtq() { git -C "$1" worktree add -q --detach "$2" HEAD || fail "setup: worktree $2"; mkdir -p "$2/.claude/audit-gate"; : > "$2/.claude/audit-gate/test_run.lock"; }
 
+grp_exact_key() {   # cases 16-19: exact-key PASS vs receipt and DEVKIT_GATE_DONE, TIMEOUT voids, self-editing suite
 # 16. P0-A: PASS theo khoá CHÍNH XÁC (REG-X cached-full, input ngầm hidden.txt đã đổi) không vào biên nhận như PASS thật. Lượt sau trên
 #     cùng cây CHỌN REG-X (--diff HEAD~1) phải chạy nó và FAIL (exit 1) — như --full trước P2 (biên nhận không có REG-X).
 R16="$TMP/r16"; newrepo "$R16"
@@ -365,22 +409,9 @@ wtq "$R19" "$TMP/w19b"; echo 'a = 2' > "$TMP/w19b/src/a.py"
 B=$(n 19); gq "$TMP/w19b"
 [ "$(( $(n 19) - B ))" = 1 ] && ok "19. suite cached-full sửa input chính xác của nó: không ghi PASS, worktree sau chạy lại" \
   || fail "19. REG-M chạy $(( $(n 19) - B )) lần ở worktree sau, mong 1 (PASS bị ghi dưới khoá chính xác cũ)"
+}
 
-# 20. B1 (Antigravity 20/10): suite cached-full dùng lại theo khoá chính xác, rồi một lượt khác ghi FAIL lên đúng khoá đó trước kết luận:
-#     recheck lật nó thành UNTESTED/STALE — phải vào kết luận (exit 4), không đứng ngoài như suite "không chạy được ở máy này".
-R20="$TMP/r20"; mkdir -p "$R20/src"
-git -C "$R20" init -q -b main . && git -C "$R20" config user.email t@t && git -C "$R20" config user.name t
-echo 'a = 1' > "$R20/src/a.py"; echo 'k = 1' > "$R20/src/k.py"
-printf '{"project":"t","rules":[{"component":"A","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"true"}]},{"component":"K","watch_files":["src/k.py"],"mandatory_regression_tests":[{"id":"REG-K","name":"k","command":"echo run >> %s/count.20"}]}]}\n' "$TMP" > "$R20/matrix.json"
-git -C "$R20" add -A && git -C "$R20" commit -qm init
-wtq "$R20" "$TMP/w20a"; echo 'a = 2' > "$TMP/w20a/src/a.py"; gq "$TMP/w20a"   # REG-K cached-full chạy, PASS theo khoá chính xác
-sed 's/"REG-CV"/"REG-K"/' "$TMP/l13.py" > "$TMP/l20.py"
-wtq "$R20" "$TMP/w20b"; echo 'a = 3' > "$TMP/w20b/src/a.py"
-( cd "$TMP/w20b" && FLAKY_RETRY=0 CLAUDE_PROJECT_DIR="$TMP/w20b" python3 "$TMP/l20.py" "$GATE" --matrix "$TMP/w20b/matrix.json" --run-tests \
-  --full --no-checklist >"$TMP/out20" 2>&1 ); rc=$?
-[ "$rc" = 4 ] && ok "20. suite cached-full bị lật STALE trước kết luận: exit 4 (vào kết luận)" \
-  || { fail "20. exit $rc (mong 4): STALE của suite cached-full đứng ngoài kết luận"; grep -E "REG-K|KẾT LUẬN" "$TMP/out20" | tail -3; }
-
+grp_units() {   # cases 21-27, 29: FAIL key of a narrowed command, ./.claude path token, bin/suite_cache.py units
 # 21. B2 (Antigravity 20/10): FAIL của lượt Stop chạy lệnh THU HẸP (impacted/package/module) ghi lên khoá của LỆNH ĐẦY ĐỦ của ma trận (khoá
 #     lượt --full tra), không lên khoá của lệnh thu hẹp. Launcher ép plan_test_run trả lệnh thu hẹp; kiểm lệnh của bản ghi FAIL trong kho.
 R21="$TMP/r21"; mkdir -p "$R21/src"
@@ -500,7 +531,32 @@ finally:
 check("27. ghi FAIL / void thất bại (ENOSPC): PASS cũ của REG-27 không còn dùng lại được", c.hit(k27, t27) is None)
 sys.exit(0 if ok else 1)
 PY
+# 29. File input đã commit mà content_map ghi khác cách đọc đĩa (≥ 8 MiB: content_map ghi "<mode> <blob>", đọc đĩa ra "big size:mtime"):
+#     inputs_unchanged phải nói KHÔNG đổi khi không có gì đổi — không thì PASS không bao giờ được ghi (cache tắt ngầm; LFS / eol cũng vậy).
+R29="$TMP/r29"; mkdir -p "$R29/src"
+git -C "$R29" init -q -b main . && git -C "$R29" config user.email t@t && git -C "$R29" config user.name t
+python3 -c "import sys; open(sys.argv[1], 'wb').write(b'x' * (9 << 20))" "$R29/src/big.bin"
+printf '{"project":"t","rules":[{"component":"B","watch_files":["src/big.bin"],"mandatory_regression_tests":[{"id":"REG-B","name":"b","command":"true"}]}]}\n' > "$R29/matrix.json"
+git -C "$R29" add -A && git -C "$R29" commit -qm init
+res29="$( cd "$R29" && CLAUDE_PROJECT_DIR="$R29" python3 - "$GATE" "$R29" <<'PY'
+import importlib.util, json, os, sys
+gate, repo = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("pfg29", gate)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+mp = os.path.join(repo, "matrix.json")
+rules = json.load(open(mp))["rules"]
+sc = m.suite_cache_for(repo, rules, mp, {})
+t = dict(rules[0]["mandatory_regression_tests"][0])
+sc.keys(t)
+print("unchanged=%s" % sc.inputs_unchanged(t))
+PY
+)"
+[ "$res29" = "unchanged=True" ] && ok "29. file input ≥ 8 MiB đã commit, không đổi: inputs_unchanged đúng (PASS ghi được)" \
+  || fail "29. inputs_unchanged sai với file lớn đã commit ($res29): cache tắt ngầm cho suite đó"
+}
 
+grp_known_red() {   # cases 28, 30-32: KNOWN-RED needs evidence
 # 28. KNOWN-RED theo BẰNG CHỨNG (audit 21/10: bao đóng tĩnh không bao giờ đủ để chứng minh "không chạm input"): suite cached-full FAIL
 #     chỉ được xếp lỗi có sẵn (ngoài kết luận) khi sổ khoá có FAIL thật của chính suite đó trên nội dung BASE_REF (khoá cả cây của base),
 #     và chưa từng PASS ở đó. Bằng chứng có từ một lượt gate mà cây lúc đó đúng bằng nội dung base sau này (thay đổi được gate rồi commit
@@ -546,7 +602,8 @@ gq "$R30"; r30=$?
 [ "$r30" = 1 ] && ok "30. không có bằng chứng base, input bị sót đổi làm suite FAIL ⇒ FAIL vào kết luận (exit 1)" \
   || { fail "30. FAIL do chính thay đổi (input bao đóng tĩnh không thấy) bị xếp KNOWN-RED (exit $r30, mong 1)"; grep -E "REG-X|KNOWN" "$TMP/outq" | tail -3; }
 grep -q -- "--diff HEAD~1" "$TMP/outq" && grep -Eq "REG-X.*(chưa có bằng chứng|no evidence)" "$TMP/outq" \
-  && ok "30. FAIL chưa có bằng chứng: gate nói cách ghi bằng chứng lỗi có sẵn (--diff HEAD~1 trên checkout sạch)" \
+  && grep -Eq "(worktree)" "$TMP/outq" \
+  && ok "30. FAIL chưa có bằng chứng: gate nói cách ghi bằng chứng lỗi có sẵn (--diff HEAD~1 trong worktree ở base, main trunk mode bị khoá)" \
   || fail "30. thiếu hướng dẫn ghi bằng chứng cho FAIL cached-full: $(grep -E 'REG-X' "$TMP/outq" | tail -2)"
 
 # 31. FAIL của chính lượt này không bao giờ là bằng chứng của nó (audit #4 21/10): thay đổi chỉ chạm file EXCLUDE (.agents/instincts.md —
@@ -581,29 +638,101 @@ echo 'a = 3' > "$R32/src/a.py"; echo bad > "$R32/src/dep.txt"
 gq "$R32"; r32=$?
 [ "$r32" = 1 ] && ok "32. FAIL chập chờn trên base không là bằng chứng lỗi có sẵn: FAIL thật sau thay đổi vào kết luận (exit 1)" \
   || { fail "32. FAIL chập chờn thành bằng chứng KNOWN-RED (exit $r32, mong 1)"; grep -E "REG-X|KNOWN" "$TMP/outq" | tail -3; }
+}
 
-# 29. File input đã commit mà content_map ghi khác cách đọc đĩa (≥ 8 MiB: content_map ghi "<mode> <blob>", đọc đĩa ra "big size:mtime"):
-#     inputs_unchanged phải nói KHÔNG đổi khi không có gì đổi — không thì PASS không bao giờ được ghi (cache tắt ngầm; LFS / eol cũng vậy).
-R29="$TMP/r29"; mkdir -p "$R29/src"
-git -C "$R29" init -q -b main . && git -C "$R29" config user.email t@t && git -C "$R29" config user.name t
-python3 -c "import sys; open(sys.argv[1], 'wb').write(b'x' * (9 << 20))" "$R29/src/big.bin"
-printf '{"project":"t","rules":[{"component":"B","watch_files":["src/big.bin"],"mandatory_regression_tests":[{"id":"REG-B","name":"b","command":"true"}]}]}\n' > "$R29/matrix.json"
-git -C "$R29" add -A && git -C "$R29" commit -qm init
-res29="$( cd "$R29" && CLAUDE_PROJECT_DIR="$R29" python3 - "$GATE" "$R29" <<'PY'
-import importlib.util, json, os, sys
-gate, repo = sys.argv[1:]
-spec = importlib.util.spec_from_file_location("pfg29", gate)
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
+grp_closure() {
+# 33. Bao đóng input của khoá chính xác (issue #151): probe tính khoá của REG-P trước/sau khi đổi một file, in "same" hoặc "diff".
+#     Ma trận: REG-P watch src/a.py, lệnh `true` (lệnh không nêu tên file nào: mọi input đến từ watch_files).
+probe_key() {   # probe_key <repo> <file đổi> <nội dung mới>
+  ( cd "$1" && python3 - "$DEVKIT_DIR/bin" "$1" "$2" "$3" <<'PY'
+import json, os, sys
+bindir, repo, rel, text = sys.argv[1:]
+sys.path.insert(0, bindir)
+import suite_cache as sc
 mp = os.path.join(repo, "matrix.json")
 rules = json.load(open(mp))["rules"]
-sc = m.suite_cache_for(repo, rules, mp, {})
-t = dict(rules[0]["mandatory_regression_tests"][0])
-sc.keys(t)
-print("unchanged=%s" % sc.inputs_unchanged(t))
+test = rules[0]["mandatory_regression_tests"][0]
+def key():
+    return sc.SuiteCache(repo, rules, mp, {}, "L", "rf", "", learned={}).keys(test)
+k0 = key()
+with open(os.path.join(repo, rel), "w") as f:
+    f.write(text)
+print("same" if k0[0] == key()[0] else "diff")
 PY
-)"
-[ "$res29" = "unchanged=True" ] && ok "29. file input ≥ 8 MiB đã commit, không đổi: inputs_unchanged đúng (PASS ghi được)" \
-  || fail "29. inputs_unchanged sai với file lớn đã commit ($res29): cache tắt ngầm cho suite đó"
+  ); }
+mk33() {   # mk33 <thư mục>: repo git với matrix REG-P (watch src/a.py, lệnh true)
+  mkdir -p "$1/src/data" "$1/tests"; git -C "$1" init -q -b main . && git -C "$1" config user.email t@t && git -C "$1" config user.name t
+  printf '{"project":"t","rules":[{"component":"P","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-P","name":"p","command":"true"}]}]}\n' > "$1/matrix.json"
+}
+# 33a. helper chỉ được import bởi file trong watch_files: đổi helper ⇒ khoá phải đổi
+R33="$TMP/r33a"; mk33 "$R33"
+printf 'import helper33\n' > "$R33/src/a.py"; echo 'v = 1' > "$R33/src/helper33.py"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/helper33.py 'v = 2')
+[ "$r" = diff ] && ok "33a. import của file watch_files là input: đổi helper ⇒ khoá đổi" || fail "33a. helper chỉ import bởi file watch_files đổi mà khoá giữ nguyên ($r)"
+# 33b. script (watch_files) đọc src/data/*.txt: đổi một file trong đó ⇒ khoá đổi
+R33="$TMP/r33b"; mk33 "$R33"
+printf 'cat src/data/*.txt\n' > "$R33/src/a.py"; echo one > "$R33/src/data/1.txt"; echo two > "$R33/src/data/2.txt"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/data/2.txt 'changed')
+[ "$r" = diff ] && ok "33b. token glob src/data/*.txt: đổi một file khớp ⇒ khoá đổi" || fail "33b. file khớp glob đổi mà khoá giữ nguyên ($r)"
+# 33c. script nguồn một file > 1 MB (không quét được): khoá chính xác lùi về khoá cả cây ⇒ đổi file không liên quan cũng đổi khoá
+R33="$TMP/r33c"; mk33 "$R33"
+printf '. src/big33.sh\n' > "$R33/src/a.py"; python3 -c "import sys; open(sys.argv[1], 'w').write('# pad\n' * 250000 + 'echo hi\n')" "$R33/src/big33.sh"
+echo u > "$R33/src/unrelated.txt"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/unrelated.txt 'changed')
+[ "$r" = diff ] && ok "33c. file script > 1 MB không đọc được: khoá chính xác lùi về khoá cả cây" || fail "33c. file > 1 MB bị bỏ qua mà không đánh dấu cắt ($r)"
+# 33d. lockfile / config runner / pin phiên bản: đổi ⇒ khoá của mọi suite đổi (suite chỉ watch src/a.py, lệnh true)
+for f33 in package-lock.json yarn.lock pnpm-lock.yaml uv.lock poetry.lock requirements.txt requirements-dev.txt jest.config.js vitest.config.ts babel.config.js .babelrc .mocharc.json .nvmrc .python-version .tool-versions; do
+  R33="$TMP/r33d-$f33"; mk33 "$R33"
+  echo 'a = 1' > "$R33/src/a.py"; echo v1 > "$R33/$f33"
+  git -C "$R33" add -A && git -C "$R33" commit -qm init
+  r=$(probe_key "$R33" "$f33" 'v2')
+  [ "$r" = diff ] && ok "33d. đổi $f33 ⇒ khoá đổi" || fail "33d. đổi $f33 mà khoá giữ nguyên ($r)"
+done
+# 33e. `cd ../..` trong script không phải input và không làm mất khoá chính xác: đổi file không liên quan ⇒ khoá GIỮ NGUYÊN
+#      (script ở deep/bulk/sub/: "../.." resolve ra deep/bulk, thư mục > DIR_EXPAND_MAX file ⇒ trước đây cắt khoá chính xác)
+R33="$TMP/r33e"; mk33 "$R33"; mkdir -p "$R33/deep/bulk/sub"
+printf '{"project":"t","rules":[{"component":"P","watch_files":["deep/bulk/sub/a.py"],"mandatory_regression_tests":[{"id":"REG-P","name":"p","command":"true"}]}]}\n' > "$R33/matrix.json"
+printf 'cd ../..\n' > "$R33/deep/bulk/sub/a.py"
+python3 -c "import sys; [open('%s/deep/bulk/f%d.txt' % (sys.argv[1], i), 'w').write('x') for i in range(250)]" "$R33"
+echo u > "$R33/src/unrelated.txt"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/unrelated.txt 'changed')
+[ "$r" = same ] && ok "33e. 'cd ../..' không cắt khoá chính xác" || fail "33e. 'cd ../..' bị coi là input gốc quá lớn ⇒ khoá chính xác bị cắt ($r)"
+# 33f. symlink tới thư mục được script nhắc tên không phải file không đọc được: không cắt khoá chính xác
+R33="$TMP/r33f"; mk33 "$R33"
+printf 'ls src/lnk33\n' > "$R33/src/a.py"; ln -s data "$R33/src/lnk33"; echo u > "$R33/src/unrelated.txt"; echo d > "$R33/src/data/d.txt"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" src/unrelated.txt 'changed')
+[ "$r" = same ] && ok "33f. symlink thư mục không cắt khoá chính xác" || fail "33f. symlink thư mục bị tính là file không đọc được ⇒ khoá chính xác bị cắt ($r)"
+# 33g. tests/lib/test_durations.txt (a line of timings per new DevKit test) only orders run_impacted: it must not change the key
+#      of every suite (issue #315 item 3), while any other tests/lib file still does (case 4)
+R33="$TMP/r33g"; mk33 "$R33"; mkdir -p "$R33/tests/lib"
+echo 'a = 1' > "$R33/src/a.py"; echo "t 1" > "$R33/tests/lib/test_durations.txt"; echo "h 1" > "$R33/tests/lib/helper33.sh"
+git -C "$R33" add -A && git -C "$R33" commit -qm init
+r=$(probe_key "$R33" tests/lib/test_durations.txt 't 2')
+[ "$r" = same ] && ok "33g. đổi tests/lib/test_durations.txt không đổi khoá của suite" || fail "33g. test_durations.txt vẫn là DANGER: đổi một dòng thời lượng đổi khoá mọi suite ($r)"
+r=$(probe_key "$R33" tests/lib/helper33.sh 'h 2')
+[ "$r" = diff ] && ok "33g. đổi file tests/lib khác vẫn đổi khoá" || fail "33g. file tests/lib khác không còn là DANGER ($r)"
+}
+
+# Run the groups at the same time (job control on only for these launches: every group is its own process group, which `cleanup`
+# stops whole). A group that dies before its end leaves no fails file: that is a failure, never a silent pass.
+GROUPS_IN_ORDER="chain coalesce mutate_prune cover stop_timeout exact_key units known_red closure"
+set -m
+for grp in $GROUPS_IN_ORDER; do
+  ( TMP="$ROOT/$grp"; mkdir -p "$TMP"; export SB_HEAVY_SLOT_DIR="$TMP/slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"; FAILS=0
+    "grp_$grp"; echo "$FAILS" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &
+  PIDS="$PIDS $!"
+done
+set +m
+wait
+PIDS=""
+for grp in $GROUPS_IN_ORDER; do
+  cat "$ROOT/out.$grp"
+  if [ -f "$ROOT/fails.$grp" ]; then FAILS=$((FAILS + $(cat "$ROOT/fails.$grp"))); else fail "group $grp did not finish"; fi
+done
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_suite_cache: all passed" || { echo "❌ test_gate_suite_cache: $FAILS failed"; exit 1; }

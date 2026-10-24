@@ -19,14 +19,16 @@
 #      Điều biên nhận chứng minh là cây của CHUỖI đầy đủ (đích cuối của đợt) đã qua verify; trạng thái trung gian của main giữa hai
 #      lần merge (mới PR đầu) không được verify riêng.
 #
-# Usage: super-board-merge-train.sh --config <config.json> --prs <N,M,...> [gate flags: --lock-timeout S --stale-after S ...]
+# Usage: super-board-merge-train.sh --config <config.json> --prs <N[:sha],M[:sha],...> [gate flags: --lock-timeout S --stale-after S ...]
 #
 # Exit: 0 mọi PR đã merge · 11 có PR đỏ (về Build; dòng `train-red: <N>`) · mã thoát gate đầu tiên khác 0 (gate chặn PR) ·
 #       12 verify hết giờ sau một lần chạy lại: PR chưa chứng minh ở lại Review, wave sau thử lại, không PR nào bị quy là đỏ ·
 #       5 có PR conflict, không PR nào đỏ/hết giờ · 79/9 của github-read và readiness đi thẳng tới caller.
-#       Mỗi PR một dòng `train-result: <N> <merged|red|conflict|deferred|timeout|gate-exit-K>` trên stdout.
-# ponytail: PR bị gate chặn (policy cần người duyệt) vẫn nằm trong chuỗi verify, nên cây của các PR sau nó lệch biên nhận và chúng verify như thường;
-#           nâng lên khi nhiều PR cần người duyệt hay đi chung đợt: gate --dry-run từng PR trước khi dựng chuỗi.
+#       6 có PR đã dời head khỏi sha duyệt (`--prs N:sha`): PR đó rời đợt, dòng `head-moved`, ở lại Review chờ review lại.
+#       Mỗi PR một dòng `train-result: <N> <merged|red|conflict|deferred|timeout|head-moved|gate-exit-K>` trên stdout.
+# ponytail: gate --dry-run từng PR chạy SAU lượt verify đầu (R11): PR bị gate chặn (policy cần người duyệt) ra khỏi chuỗi rồi phần còn lại
+#           verify lại, tức thêm một lượt verify mỗi vòng có PR bị chặn; nâng lên khi hay có PR cần người duyệt đi chung đợt:
+#           gate --dry-run từng PR trước khi dựng chuỗi đầu tiên.
 set -euo pipefail
 export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -42,20 +44,22 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$CONFIG" ] && [ -e "$CONFIG" ] || { echo "config not found: ${CONFIG:-<unset>}" >&2; exit 66; }
-LIST=()
+LIST=(); WANT=()
 IFS=',' read -r -a RAW <<<"$PRS"
 for p in "${RAW[@]}"; do
-  [[ "$p" =~ ^[0-9]+$ ]] || { echo "--prs wants comma-separated PR numbers, got '${p}'" >&2; exit 64; }
-  LIST+=("$p")
+  # `N` hoặc `N:<sha40>` (#228 R1): sha là head đã duyệt; PR có head hiện tại khác sha đó rời đợt, không bao giờ merge head chưa ai review.
+  [[ "$p" =~ ^[0-9]+(:[0-9a-f]{40})?$ ]] || { echo "--prs wants comma-separated PR numbers (N or N:<head sha>), got '${p}'" >&2; exit 64; }
+  LIST+=("${p%%:*}"); WANT+=("$([[ "$p" == *:* ]] && echo "${p#*:}" || echo "")")
 done
 [ "${#LIST[@]}" -gt 0 ] || { echo "--prs <N,M,...> is required" >&2; exit 64; }
 
 # Một PR: đường cũ, không dòng nào của train.
 if [ "${#LIST[@]}" -eq 1 ]; then
-  exec bash "$GATE" --config "$CONFIG" --pr "${LIST[0]}" ${PASS[@]+"${PASS[@]}"}
+  exec bash "$GATE" --config "$CONFIG" --pr "${LIST[0]}" ${WANT[0]:+--expect-head "${WANT[0]}"} ${PASS[@]+"${PASS[@]}"}
 fi
 
 say() { echo "[merge-train] $*" >&2; }
+. "$HERE/super-board-verify-flags.sh"
 CONFIG_JSON=$(cat "$CONFIG")
 printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
@@ -79,15 +83,23 @@ cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || 
 trap cleanup EXIT
 
 # Head của từng PR, ghim một lần: verify và biên nhận thuộc đúng commit này (gate còn --match-head-commit lúc merge).
-HEADS=(); REFS=()
-for p in "${LIST[@]}"; do
+HEADS=(); REFS=(); KEEP=(); MOVED=()
+for i in "${!LIST[@]}"; do
+  p="${LIST[$i]}"
   # Lấy output trước rồi mới `read`: `read <<<"$(…)" || exit $?` kiểm exit của `read`, mất exit 79 (halt) / 9 của github-read.
   head_out=$(python3 "$GITHUB_READ" --kind head -- pr view "$p" ${REPO:+--repo "$REPO"} --json headRefName,headRefOid \
                -q '.headRefName + " " + .headRefOid') || exit $?
   read -r ref sha <<<"$head_out"
   [ -n "${sha:-}" ] || { say "could not read the head of PR #${p}"; exit 1; }
-  REFS+=("$ref"); HEADS+=("$sha")
+  if [ -n "${WANT[$i]}" ] && [ "${WANT[$i]}" != "$sha" ]; then
+    say "PR #${p} head is ${sha}, not the approved ${WANT[$i]}: it leaves the batch and needs a fresh review"
+    MOVED+=("$p"); continue
+  fi
+  KEEP+=("$p"); REFS+=("$ref"); HEADS+=("$sha")
 done
+for p in ${MOVED[@]+"${MOVED[@]}"}; do echo "train-result: $p head-moved"; done
+[ "${#KEEP[@]}" -gt 0 ] || exit 6
+LIST=("${KEEP[@]}")
 git -C "$REPO_PATH" fetch origin "$BASE" ${REFS[@]+"${REFS[@]}"} --quiet
 # R9: nhánh bị force-push sau lúc đọc head thì SHA đã ghim không còn trong repo: đó là head đã dời (exit 6 như gate), không phải conflict.
 for i in "${!HEADS[@]}"; do
@@ -149,10 +161,7 @@ verify_set() {
   build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]"; return 2; }
   merged=$(git -C "$SCRATCH" rev-parse HEAD)
   for cmd in "${VERIFY[@]}"; do
-    if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
-      [[ "$cmd" == *"--diff"* ]] || cmd="$cmd --diff origin/${BASE}"
-      [[ "$cmd" == *"--force-full"* ]] || cmd="$cmd --force-full"
-    fi
+    cmd=$(sb_verify_inject_flags "$cmd" "$BASE")
     try=1
     while :; do
       say "verify [$*]: ${cmd}"
@@ -209,7 +218,9 @@ solve() {
 # chạy policy/approval); PR bị chặn ra khỏi chuỗi và phần còn lại được chứng minh lại. Lặp tối đa số PR lần.
 # ponytail: gate chặn sau preflight (đua với người duyệt/chờ khoá) vẫn có thể để main ở cây đã verify của tiền tố chuỗi trước đó; nâng lên khi
 #           cần tuyệt đối: merge các PR bằng một ref-update duy nhất thay vì từng gate.
+in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
 DRYRC=0
+PENDING=()   # PR chưa chứng minh vì verify hết giờ ở lượt solve trước; vòng preflight ghi đè CANDS nên phải giữ riêng
 while [ "${#GOOD[@]}" -gt 0 ]; do
   : >"$RECEIPT"
   for p in "${GOOD[@]}"; do
@@ -227,13 +238,15 @@ while [ "${#GOOD[@]}" -gt 0 ]; do
     esac
   done
   [ "$DROPPED" -eq 1 ] || break
+  for p in "${CANDS[@]+"${CANDS[@]}"}"; do
+    in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} || PENDING+=("$p")
+  done
   CANDS=(${NEWGOOD[@]+"${NEWGOOD[@]}"}); GOOD=(); ABORT=0
   [ "${#CANDS[@]}" -eq 0 ] || solve "${CANDS[@]}"
 done
 # PR chưa được chứng minh xanh/đỏ/conflict vì verify hết giờ.
-in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
 TIMEDOUT=()
-for p in "${CANDS[@]+"${CANDS[@]}"}"; do
+for p in "${PENDING[@]+"${PENDING[@]}"}" "${CANDS[@]+"${CANDS[@]}"}"; do
   in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} || TIMEDOUT+=("$p")
 done
 
@@ -268,4 +281,5 @@ if [ "${#RED[@]}" -gt 0 ] || [ "${#GATERED[@]}" -gt 0 ]; then exit 11; fi
 if [ "$RC" -ne 0 ]; then exit "$RC"; fi
 if [ "${#TIMEDOUT[@]}" -gt 0 ]; then exit 12; fi
 if [ "${#CONFLICT[@]}" -gt 0 ]; then exit 5; fi
+if [ "${#MOVED[@]}" -gt 0 ]; then exit 6; fi
 exit 0

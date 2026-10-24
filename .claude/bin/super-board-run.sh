@@ -34,14 +34,30 @@ set -euo pipefail
 # Mốc ra đời của runner, đặt trước mọi bước đọc config: stop marker ghi từ giây này trở đi là super-board-stop.sh chạy
 # trùng lúc runner đang khởi động, và stop thắng (khởi động tường minh không xoá marker đó).
 RUNNER_BORN=$(date +%s)
+SB_WORKER_WRAP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-worker-wrap.sh"
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
 # của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
 gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
 gh_write_once() {
   gh_checkpoint
-  gh "$@" || {
-    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" >&2 || true
+  # #190: comment ghi chưa rõ kết quả → kèm cách đọc lại. Marker là token DUY NHẤT gắn vào cuối body (comment HTML ẩn): comment
+  # cố định lặp trên cùng issue (back to Ready · …) không được làm reconcile báo "đã áp dụng" nhầm.
+  local args=("$@") token="" i
+  if [ "$1 $2" = "issue comment" ]; then
+    token="sb-write:$(date +%s)-$$-$RANDOM"
+    for ((i = 0; i < ${#args[@]} - 1; i++)); do
+      [ "${args[i]}" = --body ] && { args[i+1]="${args[i+1]}"$'\n'"<!-- ${token} -->"; break; }
+    done
+  fi
+  gh "${args[@]}" || {
+    local verify=() spec=""
+    [ -z "$token" ] || spec=$(jq -nc --argjson n "$3" --arg m "$token" '{kind:"comment",issue:$n,marker:$m}' 2>/dev/null) || spec=""
+    [ -z "$spec" ] || verify=(--verify "$spec")
+    # --halt exits 79 (HALTED) once its record is saved; any other code means the record is not on disk.
+    local hrc=0
+    python3 "$SB_GITHUB_READ" --halt "GitHub $1 $2 response failed; reconcile the write before restarting" ${verify[@]+"${verify[@]}"} >&2 || hrc=$?
+    [ "$hrc" -eq 79 ] || { log "halt record NOT written for the uncertain GitHub $1 $2 write (github-read rc=$hrc): exiting 76, the watchdog will not restart it blind"; exit 76; }
     exit 79
   }
 }
@@ -97,38 +113,17 @@ board_notify() {
   python3 "$SCRIPT_DIR/super-board-notify.py" "$@" || true
 }
 
-resolve_build_workers() {
-  # $1 = đường dẫn config. Khoá build_workers (số nguyên >= 1); thiếu hoặc sai thì 10 (người dùng 21/10); đặt 1 để về một worker.
-  local v
-  v=$(jq -r '.build_workers // empty' "$1" 2>/dev/null || true)
-  case "$v" in ''|*[!0-9]*) v=10 ;; esac
-  [ "${#v}" -le 6 ] || v=10   # số quá dài tràn phép tính bash (OCR 21/10)
-  v=$((10#$v))
-  [ "$v" -ge 1 ] || v=10      # 0, 00, 000
-  printf '%s\n' "$v"
-}
-
-resolve_lane_workers() {
-  # $1 = đường dẫn config; $2 = khoá (qa_workers | review_workers). Số nguyên >= 1; thiếu hoặc sai thì 1 = hành vi cũ, một worker mỗi lane (#209).
+resolve_pos_int() {
+  # $1 = đường dẫn config; $2 = khoá; $3 = mặc định. Số nguyên >= 1; thiếu hoặc sai thì mặc định (#252).
   local v
   v=$(jq -r --arg k "$2" '.[$k] // empty' "$1" 2>/dev/null || true)
-  case "$v" in ''|*[!0-9]*) v=1 ;; esac
-  [ "${#v}" -le 6 ] || v=1
+  case "$v" in ''|*[!0-9]*) v=$3 ;; esac
+  [ "${#v}" -le 6 ] || v=$3
   v=$((10#$v))
-  [ "$v" -ge 1 ] || v=1
+  [ "$v" -ge 1 ] || v=$3
   printf '%s\n' "$v"
 }
 
-resolve_build_load_max() {
-  # $1 = đường dẫn config. Thứ tự: env SB_BUILD_LOAD_MAX, khoá build_load_max, env DEVKIT_SLOT_LOAD_MAX, rồi 100. Mỗi nguồn phải là số
-  # DƯƠNG (như heavy_slot.load_max: 0 không phải ngưỡng); nguồn sai thì xét nguồn kế, không nhảy thẳng về 100 (OCR 21/10).
-  local v="" cand
-  for cand in "${SB_BUILD_LOAD_MAX:-}" "$(jq -r '.build_load_max // empty' "$1" 2>/dev/null || true)" "${DEVKIT_SLOT_LOAD_MAX:-}"; do
-    case "$cand" in ''|*[!0-9.]*|*.*.*|.) continue ;; esac
-    if awk -v m="$cand" 'BEGIN { exit !(m > 0) }'; then v="$cand"; break; fi
-  done
-  printf '%s\n' "${v:-100}"
-}
 
 if [ "${SB_LIB_ONLY:-0}" != "1" ]; then
 CONFIG_PATH=".claude/super-board/configs/${CONFIG_SLUG}.json"
@@ -153,15 +148,13 @@ HUMAN_APPROVES=$(jq -r '.human_approves_merge // false' "$CONFIG_PATH")
 REBUILD_CAP=$(jq -r '.rebuild_cap // 2' "$CONFIG_PATH")
 BLOCK_ALERT_PCT=$(jq -r '.block_rate_alert_pct // 30' "$CONFIG_PATH")
 TICK_SECONDS=$(jq -r '.tick_seconds // 120' "$CONFIG_PATH")
-MAX_WORKERS=$(jq -r '.max_workers // 3' "$CONFIG_PATH")
-# Lane build chạy nhiều worker theo tải máy (21/10). build_workers = trần trên, mặc định 10 (đặt 1 để về một worker). build_load_max (hoặc env
-# SB_BUILD_LOAD_MAX): chỉ khởi THÊM worker khi tải 1 phút dưới mức này; mặc định DEVKIT_SLOT_LOAD_MAX, thiếu nữa thì 100
-# (người dùng 21/10: "tải máy dưới 100 thì cho chạy"). Giá trị sai thì dùng mặc định.
-BUILD_WORKERS=$(resolve_build_workers "$CONFIG_PATH")
-BUILD_LOAD_MAX=$(resolve_build_load_max "$CONFIG_PATH")
-# Lane QA và Review cũng chạy nhiều worker (#209): qa_workers / review_workers = trần mỗi lane, mặc định 1; worker thêm dùng chung cổng tải build_load_max.
-QA_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" qa_workers)
-REVIEW_WORKERS=$(resolve_lane_workers "$CONFIG_PATH" review_workers)
+# Một trần duy nhất (23/10, người dùng: "tổng số task chạy cùng trên Building + QA + Review tối đa là 5", tính trên cả 6 repo, không đo CPU):
+# max_workers (mặc định 5) = tổng worker build + qa + review của MỌI repo trên máy, đếm qua thư mục slot chung (at_worker_cap).
+# Mỗi lane được dùng cả max_workers slot; thứ tự giao trong một tick vẫn là Review → QA → Build.
+MAX_WORKERS=$(resolve_pos_int "$CONFIG_PATH" max_workers 5)
+BUILD_WORKERS=$MAX_WORKERS
+QA_WORKERS=$MAX_WORKERS
+REVIEW_WORKERS=$MAX_WORKERS
 BOT_LOGIN=$(jq -r '.notifications.bot_identity // .bot_identity // ""' "$CONFIG_PATH")
 WORKER_BACKEND=$(jq -r '.worker_backend // "workflow"' "$CONFIG_PATH")
 # Runaway controls (issue #8). NO_PROGRESS_CYCLES counts dispatch cycles with no
@@ -199,9 +192,58 @@ fetch_project_items() {
   # One board read per tick; all column lookups read from this cache.
   # super-board-card.sh items: ~1 GraphQL point per 100 cards, where
   # `gh project item-list` spends 101 per 100.
-  local fresh
-  fresh=$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || return $?
-  PROJECT_ITEMS_JSON="$fresh"
+  # #256: một lần đọc board hỏng tạm thời (card.sh exit 69: số item lệch totalCount, 22/10 22:05 sau khi máy khởi động
+  # lại) từng giết runner ngay. Đọc lại có backoff + jitter (SB_FETCH_RETRY_DELAYS, giây). Mã halt có chủ đích
+  # (RUNNER_HALT_CODES, vd 79: github-read halt sau lỗi mạng lặp lại) trả về ngay, không đọc lại.
+  # Hỏng hết lượt: trả mã của lần đọc cuối, cache cũ giữ nguyên.
+  local fresh rc=0 d pause delays
+  read -r -a delays <<< "${SB_FETCH_RETRY_DELAYS-10 30 60}"   # tách theo khoảng trắng, không glob ("*" là một giá trị)
+  for d in ${delays[@]+"${delays[@]}"} ""; do
+    rc=0
+    fresh=$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || rc=$?
+    if [ "$rc" -eq 0 ]; then PROJECT_ITEMS_JSON="$fresh"; return 0; fi
+    case "$RUNNER_HALT_CODES" in *" $rc "*) return "$rc" ;; esac
+    [ -n "$d" ] || break
+    case "$d" in *[!0-9]*|?????*) d=10 ;; esac   # giá trị lạ (1.5, chữ, quá dài): dùng 10s, không để lỗi số học giết runner
+    d=$((10#$d))                                  # 08/09 không bị đọc thành bát phân
+    pause=$(( d + RANDOM % (d / 2 + 1) ))   # jitter: các board khởi động lại cùng lúc không đọc cùng nhịp
+    log "⚠ board read failed (rc=$rc) — reading again in ${pause}s"
+    tick_sleep "$pause"
+  done
+  return "$rc"
+}
+
+READ_SKIPS=0
+tick_read_failed() {
+  # $1 = mã của lần đọc hỏng, $2 = "nosleep" khi người gọi tự ngủ. Một lần đọc GitHub hỏng trong vòng lặp chính (board
+  # hoặc quota) bỏ tick này thay vì để `set -e` giết runner (#256); mã halt có chủ đích vẫn dừng runner như trước. Lỗi kéo
+  # dài (quyền Project đổi, lệch số mãi) không được che: quá SB_READ_SKIP_MAX tick bỏ liên tiếp thì thoát với mã của lần
+  # đọc (không phải halt) để watchdog khởi động lại có backoff và trần như một lần crash. Luôn trả 1.
+  local rc="$1" max="${SB_READ_SKIP_MAX:-5}"
+  case "$max" in ''|*[!0-9]*|????*) max=5 ;; esac   # giá trị lạ không được lặng lẽ tắt trần
+  case "$RUNNER_HALT_CODES" in *" $rc "*) exit "$rc" ;; esac
+  READ_SKIPS=$((READ_SKIPS + 1))
+  if [ "$READ_SKIPS" -gt "$((10#$max))" ]; then
+    log "✖ GitHub read failed ${READ_SKIPS} ticks in a row (rc=$rc) — exiting so the watchdog restarts the runner"
+    exit "$rc"
+  fi
+  log "⚠ GitHub read still failing (rc=$rc) — skipping this tick (${READ_SKIPS}/${max}), runner keeps going"
+  [ "${2:-}" = nosleep ] || tick_sleep "${TICK_SECONDS:-30}"
+  return 1
+}
+
+tick_fetch() {  # $1 = "nosleep" tuỳ chọn. Trả 1 khi bỏ tick (vòng lặp `continue`).
+  local rc=0
+  fetch_project_items || rc=$?
+  if [ "$rc" -eq 0 ]; then READ_SKIPS=0; return 0; fi
+  tick_read_failed "$rc" "${1:-}"
+}
+
+tick_guard() {  # gh_rate_guard trong vòng lặp: lỗi đọc quota tạm thời (vd 64) cũng chỉ bỏ tick. $1 = "nosleep" tuỳ chọn.
+  local rc=0
+  gh_rate_guard || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  tick_read_failed "$rc" "${1:-}"
 }
 
 column_count() {
@@ -220,6 +262,11 @@ FOR_A_PERSON_JQ='def for_a_person: [((.labels // []) + (.content.labels // []))[
 DEVICE_JQ='def held_for_device($col): $nodev and ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
   | index("needs-device") != null and ($col == "QA" or ($col == "Ready" and index("qa") != null)));'
 NO_DEVICE=false
+
+# #202: dispatch order of Ready cards: priority:high < medium < low < none, then `bug` first, then the issue number ascending.
+READY_RANK_JQ='def ready_rank: ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]) as $l
+  | [(if ($l | index("priority:high")) then 0 elif ($l | index("priority:medium")) then 1 elif ($l | index("priority:low")) then 2 else 3 end),
+     (if ($l | index("bug")) then 0 else 1 end), .content.number];'
 
 refresh_device_state() {
   # Sets NO_DEVICE for this tick. adb is asked only while an unclaimed card would be held (a board with none never runs it);
@@ -329,6 +376,100 @@ card_lane() {
     | if index("qa") then "qa" else "build" end' 2>/dev/null || echo build
 }
 
+ready_card_held() {
+  # #202: $1 = Ready issue, $2 = its project item id. Returns 0 when the card must NOT be dispatched this tick.
+  #  - its body points at another repo (a github.com/<owner>/<repo> or <owner>/<repo>#N other than config.repo.remote, or an absolute
+  #    checkout path outside this repo): a worker here cannot do it -> Blocked with the block template;
+  #  - its `## Fix` section does the work of another card still open in Ready/Building (#N): commented once per runner process, left in Ready.
+  # An unreadable or empty body is no verdict (returns 1): the card is dispatched as before.
+  local issue="$1" item_id="$2" body self other refs dup r fixlines
+  # Dạng đúng của kind issue là --json number,title,body (github-read từ chối -q/--jq: lệnh cũ `--json body -q .body` in chữ thô,
+  # bước kiểm JSON hỏng, hàm này không bao giờ ra verdict và ở chế độ STRICT làm halt cả board, 22 và 23/10).
+  # #303: stderr của github-read vào log (không 2>/dev/null) và exit 79 (halt) đi lên như gh_checkpoint: một halt không phải "không có verdict".
+  local errf out rc
+  errf=$(mktemp "${TMPDIR:-/tmp}/sb-ready-held.XXXXXX") || return 1
+  rc=0; out=$(python3 "$SB_GITHUB_READ" --kind issue -- issue view "$issue" --json number,title,body 2>"$errf") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "ready_card_held #${issue}: github-read exit ${rc}: $(tail -n 1 "$errf" | cut -c1-300)"
+    rm -f "$errf"
+    [ "$rc" -eq 79 ] && exit 79
+    return 1
+  fi
+  rm -f "$errf"
+  body=$(printf '%s' "$out" | jq -r '.body // empty' 2>/dev/null) || return 1
+  [ -n "$body" ] || return 1
+  self=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##' | tr '[:upper:]' '[:lower:]')
+  other=""
+  if [ -n "$self" ]; then
+    # Only forms that name a repo unambiguously: github.com/<o>/<r>/(issues|pull|blob|tree|...) and a standalone <o>/<r>#N.
+    # user-attachments/orgs/settings URLs and relative paths (docs/notes.md#12, docs/x#3) are not another repo.
+    local cand owner repo
+    while IFS= read -r cand; do
+      [ -n "$cand" ] || continue
+      owner="${cand%%/*}"; repo="${cand#*/}"
+      case "$repo" in *.md|*.sh|*.py|*.js|*.ts|*.json|*.yml|*.yaml|*.txt|*.html|*.css|*.kt|*.java|*.swift|*.go|*.rs) continue ;; esac
+      [ -e "$REPO_ROOT/$owner" ] && continue
+      [ "$cand" = "$self" ] && continue
+      other="$cand"; break
+    done < <( {
+        printf '%s\n' "$body" | grep -oE 'github\.com/[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+/(issues|pull|pulls|blob|tree|commit|commits|actions)([^A-Za-z0-9_-]|$)' \
+          | sed -E 's#^github\.com/([^/]+/[^/]+)/.*#\1#'
+        printf '%s\n' "$body" | grep -oE '(^|[[:space:](`"])[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+#[0-9]+' \
+          | sed -E 's#^[^A-Za-z0-9]##; s/#[0-9]+$//'
+      } | sed -E 's#\.git$##; s#\.$##' | tr '[:upper:]' '[:lower:]' | sort -u )
+  fi
+  if [ -z "$other" ]; then
+    # A checkout path counts only in the card's own Fix/Context (not stack traces or prose in Problem) and must go below the disk/user dir.
+    other=$( { printf '%s\n' "$body" | awk '/^## /{f = ($0 ~ /^## (Fix|Context)[[:space:]]*$/); next} f' \
+        | grep -oE '/(Volumes|Users|home)/[^/[:space:]]+/[^][:space:])`"<>]+' || true; } \
+      | grep -vF -e "$REPO_ROOT" -e "${HOME:-/nonexistent}/.claude" | head -1 || true)
+  fi
+  if [ -n "$other" ]; then
+    log "hold #${issue} in Ready: its body points at another repo/checkout (${other}) — Blocked, not dispatched"
+    if set_card_status "$item_id" "Blocked"; then
+      gh_checkpoint
+      gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ❓ card targets another repo
+Card:        #${issue}
+Reason tag:  ❓
+Why blocked: the body points at \`${other}\`, not at this repo (${self:-unknown}); a worker here would edit the wrong tree
+Evidence:    body of #${issue} (\`${other}\`)
+Checked:     runner Ready guard (#202) before any claim or worktree
+What blocks: the card names a repo or checkout this board does not own
+Why I (bot) cannot decide:
+             moving the work to another repo's board is a person's call
+To unblock:  [ ] Re-file the card on the board of \`${other}\`, or reword it if it is really about this repo
+Owner:       repo admin
+Move back:   drag this card to Ready once its body is about this repo
+blocked-by:  -" >/dev/null 2>&1 || true
+    else
+      gh_checkpoint
+      log "⚠ could not move #${issue} to Blocked — it is skipped this tick only"
+    fi
+    return 0
+  fi
+  fixlines=$(printf '%s\n' "$body" | awk '/^## /{f = ($0 ~ /^## Fix[[:space:]]*$/); next} f' \
+    | grep -viE '(^|[^[:alnum:]_])(blocked|depends|after|sau khi)([^[:alnum:]_]|$)' || true)
+  refs=$( { printf '%s\n' "$fixlines" | grep -oE '#[0-9]+' || true; } | tr -d '#' | sort -un)
+  dup=""
+  for r in $refs; do
+    [ "$r" -lt "$issue" ] || continue   # A<->B: only the higher-numbered card is held, the lower one proceeds
+    if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$r" '[.items[] | select(.content.number == $n and (.status == "Ready" or .status == "Building"))] | length > 0' >/dev/null 2>&1; then
+      dup="${dup:+$dup }#${r}"
+    fi
+  done
+  [ -n "$dup" ] || return 1
+  local noted="$(dirname "$INFLIGHT_DIR")/dup-noted" key="${issue}:${dup// /,}"   # state file: survives a runner restart
+  if ! grep -qxF "$key" "$noted" 2>/dev/null; then
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] 👯 not dispatched · its Fix covers ${dup}
+Did: runner Ready guard (#202) found ${dup} still open in Ready/Building and named in this card's Fix
+❌ Not done: no worker was started for #${issue}, to avoid building the same change twice
+Next: Eric — merge this card into ${dup}, or cut the overlap from its Fix" >/dev/null 2>&1 || true
+    log "hold #${issue} in Ready: its Fix covers ${dup}, still open — not dispatched"
+    echo "$key" >> "$noted" 2>/dev/null || log "⚠ could not record the duplicate note for #${issue} (${noted})"
+  fi
+  return 0
+}
+
 top_card_in_column() {
   # Sets TOP_ISSUE / TOP_ITEM_ID to the FIRST dispatchable card in column $1:
   # no assignee, no local in-flight lock, and the underlying issue still OPEN.
@@ -364,11 +505,12 @@ top_card_in_column() {
       rm -f "$INFLIGHT_DIR/$issue"
       continue
     fi
+    if [ "$col" = "Ready" ] && ready_card_held "$issue" "$item_id"; then continue; fi   # #202
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
-    .items[]
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$READY_RANK_JQ"'
+    [.items[]
     | select(.status == $col and .content.type == "Issue")
     # Chỉ bỏ qua thẻ đang giao cho người khác; thẻ chỉ mang assignee của chính BOT_LOGIN nhưng không có lock sống sẽ được lọc ở issue_locked phía trên để không bị kẹt.
     | select(((.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
@@ -376,8 +518,10 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}"
     # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
     # still on (run.md → resume). Removing the label releases the card.
     | select($col != "Ready" or (for_a_person | not))
-    | select(held_for_device($col) | not)   # #95: its QA needs a real device and none is online (refresh_device_state)
-    | [(.content.number | tostring), (.id // "")] | @tsv')
+    | select(held_for_device($col) | not)]   # #95: its QA needs a real device and none is online (refresh_device_state)
+    # #202: Ready is taken by priority label, then bug before the rest, then the lower (older) issue number; other columns keep board order.
+    | (if $col == "Ready" then sort_by(ready_rank) else . end)
+    | .[] | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
   return 1
 }
@@ -386,7 +530,7 @@ read_lock() {
   # Reads $INFLIGHT_DIR/$1 (bash-assignment format) into PID/LANE/STARTED/WORKER_LOG.
   # Sets empty strings if the file is missing or legacy single-PID format.
   local lock="$INFLIGHT_DIR/$1"
-  PID=""; LANE=""; STARTED=""; WORKER_LOG=""
+  PID=""; LANE=""; STARTED=""; WORKER_LOG=""; TRAIN=""; FROM_COL=""; COMMENTS0=""
   [ -f "$lock" ] || return 1
   if grep -q '^PID=' "$lock" 2>/dev/null; then
     # shellcheck disable=SC1090
@@ -408,7 +552,9 @@ issue_locked() {
     return 0
   fi
   [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
+  note_worker_exit "$issue"
   note_early_death "$issue"   # the second place a dead lock goes (a worker that died after this tick's reap): same ledger (#94)
+  note_worker_end "$issue"
   [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
   rm -f "$lock"
   return 1
@@ -434,7 +580,7 @@ import datetime, json, os, re, sys, time
 log, state = sys.argv[1], sys.argv[2]
 section = open(log, errors='replace').read().rsplit('=== dispatch ', 1)[-1]
 acct = re.search(r'^account_pool: engine=\S+ account=([A-Za-z0-9_.-]+)', section, re.M)
-tail = '\n'.join([l for l in section.splitlines() if l.strip()][-3:])
+tail = '\n'.join([l for l in section.splitlines() if l.strip() and not l.startswith('worker_exit:')][-3:])
 # Claude Code: "You've hit your session limit · resets 10:50pm (Asia/Saigon)" (đo 16/10). Ba mẫu sau là mã quota của
 # Gemini/xAI, chưa đo trên agy/grok thật.
 hit = re.search(r"hit your (?:\w+ )?limit|usage limit reached|RESOURCE_EXHAUSTED|quota exceeded|rate limit exceeded", tail, re.I)
@@ -519,34 +665,62 @@ build_workers_count() {
   for e in $keep; do BUILD_COUNT=$((BUILD_COUNT + 1)); done
 }
 
-build_load_now() {
-  # Tải 1 phút của máy, một số thập phân; trống khi không đọc được. SB_BUILD_LOAD_FILE: móc test.
-  if [ -n "${SB_BUILD_LOAD_FILE:-}" ]; then { tr -d '[:space:]' < "$SB_BUILD_LOAD_FILE"; } 2>/dev/null || true
-  else python3 -c 'import os; print(os.getloadavg()[0])' 2>/dev/null || true; fi
+active_total() {
+  # ACTIVE_WORKERS = số worker sống của repo này trên cả 3 lane (đếm từ PID, không cộng dồn nên không lệch).
+  build_workers_count; lane_workers_count qa; lane_workers_count review
+  ACTIVE_WORKERS=$(( ${BUILD_COUNT:-0} + ${QA_COUNT:-0} + ${REVIEW_COUNT:-0} ))
+}
+
+# Chốt lib mode LÚC SOURCE: test gọi `SB_LIB_ONLY=1 . runner`, mà bash chỉ giữ biến gán kèm lệnh `.` trong lúc source — hàm chạy về sau
+# không còn thấy SB_LIB_ONLY (23/10: test merge train đếm slot sống của test khác trong HOME thật và bị giữ "3/3 running").
+SB_SLOT_LIB_MODE="${SB_LIB_ONLY:-0}"
+global_slot_dir() {
+  # Thư mục slot chung của mọi repo. Lib mode (test source runner) mà không đặt SB_GLOBAL_SLOT_DIR thì trả rỗng = không đếm, không ghi:
+  # test chạy song song không được đếm worker của nhau hay của board thật.
+  if [ -n "${SB_GLOBAL_SLOT_DIR:-}" ]; then printf '%s\n' "$SB_GLOBAL_SLOT_DIR"
+  elif [ "$SB_SLOT_LIB_MODE" = "1" ]; then printf '\n'
+  else printf '%s\n' "$HOME/.claude/super-board-slots"; fi
+}
+
+global_slots_used() {
+  # Số worker sống của MỌI repo trên máy: mỗi worker một file <pid> trong thư mục chung; file của PID đã chết bị xoá khi đếm.
+  local d f n=0
+  d=$(global_slot_dir); { [ -n "$d" ] && [ -d "$d" ]; } || { echo 0; return 0; }
+  for f in "$d"/[0-9]*; do
+    [ -e "$f" ] || continue
+    if kill -0 "${f##*/}" 2>/dev/null; then n=$((n + 1)); else rm -f -- "$f"; fi
+  done
+  echo "$n"
+}
+
+global_slot_register() {
+  # $1 = pid, $2 = nhãn lane#issue. Lỗi ghi slot không được làm chết lane (trần chung chỉ là heuristic): log rồi đi tiếp.
+  local d; d=$(global_slot_dir); [ -n "$d" ] || return 0
+  { mkdir -p "$d" && printf '%s:%s\n' "${CONFIG_SLUG:-repo}" "$2" > "$d/$1"; } 2>/dev/null || log "⚠ cannot register worker slot in $d"
+}
+
+at_worker_cap() {
+  # 0 (và log lý do) khi máy đã đủ max_workers worker: số file slot sống của mọi repo, hoặc số worker của repo này nếu lớn hơn
+  # (slot không ghi được thì vẫn có trần). $1 = nhãn lane. Không đo tải CPU. Đặt ACTIVE_WORKERS (repo này) và MACHINE_WORKERS.
+  active_total
+  MACHINE_WORKERS=$(global_slots_used)
+  [ "$MACHINE_WORKERS" -ge "$ACTIVE_WORKERS" ] || MACHINE_WORKERS=$ACTIVE_WORKERS
+  [ "$MACHINE_WORKERS" -ge "${MAX_WORKERS:-5}" ] || return 1
+  log "$1 workers: ${MACHINE_WORKERS}/${MAX_WORKERS:-5} running on the machine (${ACTIVE_WORKERS} here): holding"
+  return 0
 }
 
 build_slot_free() {
-  # BUILD_FREE=1 (và trả 0) khi lane build được khởi một worker ở tick này. Worker đầu tiên không bị tải chặn; worker thêm chỉ khi
-  # còn dưới trần build_workers và tải đọc được và dưới build_load_max. Tối đa một worker mỗi tick (vòng chính giao một thẻ), nên
-  # tải kịp phản ứng trước lần khởi kế. Không bao giờ kill worker đang chạy. Mỗi tick log quyết định khi trần > 1.
-  local load
+  # BUILD_FREE=1 (và trả 0) khi lane build được khởi một worker ở tick này: máy còn dưới max_workers (at_worker_cap).
+  # Tối đa một worker mỗi tick (vòng chính giao một thẻ). Không đo tải CPU, không kill worker đang chạy.
   build_workers_count
   BUILD_FREE=0
   if [ "$BUILD_COUNT" -ge "$BUILD_WORKERS" ]; then
     [ "$BUILD_WORKERS" -le 1 ] || log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: at the cap, not starting"
     return 1
   fi
-  if [ "$BUILD_COUNT" -eq 0 ]; then BUILD_FREE=1; return 0; fi
-  load=$(build_load_now)
-  case "$load" in
-    ''|*[!0-9.]*|*.*.*|.) log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: load unreadable ('${load}') — holding at the first worker"; return 1 ;;
-  esac
-  if awk -v l="$load" -v m="$BUILD_LOAD_MAX" 'BEGIN { exit !(l < m) }'; then
-    log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}, load ${load} < ${BUILD_LOAD_MAX}: starting #$((BUILD_COUNT + 1))"
-    BUILD_FREE=1; return 0
-  fi
-  log "build workers ${BUILD_COUNT}/${BUILD_WORKERS}: load ${load} >= ${BUILD_LOAD_MAX}: holding"
-  return 1
+  at_worker_cap build && return 1
+  BUILD_FREE=1; return 0
 }
 
 # Lane QA / Review: worker thứ nhất ở QA_PID/QA_ISSUE (REVIEW_*), worker thêm ở QA_EXTRA / REVIEW_EXTRA ("pid:issue ..."), cùng dạng BUILD_EXTRA (#209).
@@ -576,22 +750,13 @@ lane_workers_count() {
 }
 
 lane_slot_free() {
-  # 0 khi lane $1 (qa|review) được khởi thêm một worker ở tick này. Như build_slot_free: worker đầu không bị tải chặn; worker thêm chỉ khi
-  # còn dưới trần của lane, tải đọc được và dưới build_load_max. Không bao giờ kill worker đang chạy. Trần 1 thì im lặng (hành vi cũ).
-  local lane="$1" load
-  lane_workers_count "$lane" || return 1
-  if [ "$LANE_COUNT" -ge "$L_CAP" ]; then
-    [ "$L_CAP" -le 1 ] || log "${lane} workers ${LANE_COUNT}/${L_CAP}: at the cap, not starting"
-    return 1
-  fi
-  [ "$LANE_COUNT" -ne 0 ] || return 0
-  load=$(build_load_now)
-  case "$load" in
-    ''|*[!0-9.]*|*.*.*|.) log "${lane} workers ${LANE_COUNT}/${L_CAP}: load unreadable ('${load}') — holding at the first worker"; return 1 ;;
-  esac
-  if awk -v l="$load" -v m="$BUILD_LOAD_MAX" 'BEGIN { exit !(l < m) }'; then return 0; fi
-  log "${lane} workers ${LANE_COUNT}/${L_CAP}: load ${load} >= ${BUILD_LOAD_MAX}: holding"
-  return 1
+  # 0 khi lane $1 (qa|review) được khởi một worker ở tick này: máy còn dưới max_workers (at_worker_cap).
+  # Không đo tải CPU, không bao giờ kill worker đang chạy.
+  local lane="$1"
+  at_worker_cap "$lane" && return 1
+  lane_workers_count "$lane" || return 1   # sau at_worker_cap: nó đếm cả 3 lane và ghi đè LANE_COUNT / L_CAP
+  [ "$LANE_COUNT" -lt "$L_CAP" ] || return 1
+  return 0
 }
 
 lane_dispatch_tick() {
@@ -603,14 +768,33 @@ lane_dispatch_tick() {
   dispatch_paused && return 0
   lane_slot_free "$lane" || return 0
   before=$LANE_COUNT
-  if [ "$before" -eq 0 ] && [ "${ACTIVE_WORKERS:-0}" -ge "${MAX_WORKERS:-3}" ]; then return 0; fi
-  top_card_in_column "$col" || return 0
-  [ -n "$TOP_ISSUE" ] || return 0
+  TRAIN_BATCH=""
+  [ "$lane" != "review" ] || review_train_batch   # #228: ≥2 thẻ đã duyệt thì một worker merge train cho cả đợt
+  if [ -n "$TRAIN_BATCH" ]; then
+    TOP_ISSUE=${TRAIN_BATCH%% *}
+  else
+    top_card_in_column "$col" || return 0
+    [ -n "$TOP_ISSUE" ] || return 0
+  fi
   dispatch_lane "$lane" "$TOP_ISSUE"
+  TRAIN_BATCH=""
   lane_workers_count "$lane"
   [ "$LANE_COUNT" -gt "$before" ] || return 0
   LANE_DISPATCHED=1
-  [ "$before" -gt 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+  ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+}
+
+tick_is_cheap() {
+  # #288: 0 khi tick này không giao được gì nên khỏi đọc board (GraphQL): máy (mọi repo) đã đủ max_workers worker.
+  local m; m=$(global_slots_used)
+  [ "$m" -ge "$ACTIVE_WORKERS" ] || m=$ACTIVE_WORKERS
+  [ "$m" -ge "$MAX_WORKERS" ]
+}
+
+ready_qa_lane_free() {
+  # #288: $1 = số thẻ Ready. Lane QA nhận được thẻ `qa` từ Ready khi Ready có thẻ và lane còn chỗ; Ready trống thì không hỏi (mỗi tick
+  # một lần lane_slot_free + một dòng log vô ích).
+  [ "${1:-0}" -gt 0 ] && lane_slot_free qa
 }
 
 tick_sleep() {
@@ -633,10 +817,13 @@ gh_rate_guard() {
   local payload remaining reset now wait
   payload=$(SB_GITHUB_READ_STRICT=1 python3 "$SB_GITHUB_READ" --kind quota -- api rate_limit) || return $?
   # REST misreports the GraphQL bucket; super-board-gh-guard.sh → sb_gh_quota_merge.
-  payload=$(. "$(dirname "$SB_GITHUB_READ")/super-board-gh-guard.sh" && sb_gh_quota_merge "$payload")
-  remaining=$(echo "$payload" | jq -r '.resources.graphql.remaining // 5000')
+  payload=$(. "$(dirname "$SB_GITHUB_READ")/super-board-gh-guard.sh" && sb_gh_quota_merge "$payload") || return $?
+  # #256: tick_guard gọi hàm này trong ngữ cảnh `||` (errexit tắt), nên payload hỏng phải tự trả lỗi, không lặng lẽ bỏ guard.
+  remaining=$(echo "$payload" | jq -r '.resources.graphql.remaining // 5000') || return 64
+  case "$remaining" in ''|*[!0-9]*) return 64 ;; esac
   if [ "$remaining" -lt 200 ]; then
-    reset=$(echo "$payload" | jq -r '.resources.graphql.reset // 0')
+    reset=$(echo "$payload" | jq -r '.resources.graphql.reset // 0') || reset=0
+    case "$reset" in ''|*[!0-9]*) reset=0 ;; esac   # reset lạ: ngủ mức sàn 60s, không lỗi số học
     now=$(date +%s)
     wait=$((reset - now + 10))
     [ "$wait" -lt 60 ] && wait=60
@@ -714,6 +901,152 @@ PY
   [ "$rc" -ne 4 ]
 }
 
+review_approved_head() {
+  # $1 = issue. Thẻ Review đã được duyệt đúng head PR hiện tại (#227): in "<PR> <sha>" và trả 0, để lượt này chỉ chạy lại merge gate
+  # (exit 4/conflict/not mergeable không phải lỗi code, review lại tốn 15-30 phút). Duyệt = comment `approved-head:<sha>` của người
+  # có quyền ghi (OWNER/MEMBER/COLLABORATOR), comment cuối cùng thắng; head PR đổi thì sha không khớp nên duyệt tự mất hiệu lực.
+  # Đọc GitHub hỏng hay thiếu dữ liệu → trả 1 = review đầy đủ như cũ (không bao giờ bỏ qua review vì lỗi đọc). Gate vẫn ghim --expect-head
+  # và áp merge_policy nguyên vẹn: hàm này chỉ chọn việc cho worker, không nới luật merge.
+  local prs pr head approved
+  prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json number,headRefName,headRefOid 2>/dev/null) || return 1
+  read -r pr head <<EOF
+$(printf '%s' "$prs" | jq -r --arg p "issue-$1-" '[.[] | select(.headRefName | startswith($p))][0] | select(. != null) | "\(.number) \(.headRefOid)"' 2>/dev/null)
+EOF
+  [ -n "${pr:-}" ] && [ -n "${head:-}" ] || return 1
+  approved=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r '
+    [.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
+      | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty' 2>/dev/null) || return 1
+  [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
+  printf '%s %s' "$pr" "$head"
+}
+
+review_train_batch() {
+  # #228: ≥2 thẻ Review đã duyệt đúng head (review_approved_head, #227) đi cùng MỘT worker chạy super-board-merge-train.sh (verify một
+  # lần cho cả đợt) thay vì mỗi reviewer tự chạy merge gate nối tiếp qua merge.lock. Đặt TRAIN_BATCH = các dòng "<issue> <PR> <head>"
+  # theo thứ tự bảng (tối đa SB_TRAIN_MAX, mặc định 8); rỗng khi dưới 2 thẻ đủ điều kiện hoặc SB_REVIEW_TRAIN=0 (đường từng thẻ như cũ).
+  # Thẻ đủ điều kiện = không khoá, không chết sớm, không giao cho người khác, issue còn mở, và đã duyệt đúng head. Đọc GitHub hỏng thì
+  # review_approved_head trả 1 nên thẻ ra khỏi đợt (không bao giờ bỏ qua review vì lỗi đọc). Luật merge không đổi: gate vẫn áp từng PR.
+  # ponytail: mỗi thẻ ứng viên tốn một lần `pr list` + `pr view` (Review thường chỉ vài thẻ); nâng lên khi cột Review quá 10 thẻ: đọc pr list một lần.
+  TRAIN_BATCH=""
+  [ "${SB_REVIEW_TRAIN:-1}" != "0" ] || return 0
+  local n=0 max="${SB_TRAIN_MAX:-8}" rows="" issue row cands
+  case "$max" in ''|*[!0-9]*) max=8 ;; esac
+  # Cùng bộ lọc với top_card_in_column (#95): thẻ cần người / cần thiết bị không đi vào đợt (R2).
+  cands=$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
+    .items[] | select(.status == "Review" and .content.type == "Issue")
+    | select(((.content.assignees // []) - (if $bot == "" then [] else [$bot] end)) | length == 0)
+    | select((for_a_person or held_for_device(.status)) | not)
+    | .content.number')
+  for issue in $cands; do
+    [ "$n" -lt "$max" ] || break
+    issue_locked "$issue" && continue
+    early_backoff "$issue" Review && continue
+    local open_rc=0
+    issue_is_open "$issue" || open_rc=$?   # rc 1 = đã đóng (bỏ qua); lỗi đọc >1 đi lên như top_card_in_column, không nuốt
+    [ "$open_rc" -le 1 ] || exit "$open_rc"
+    [ "$open_rc" -eq 0 ] || continue
+    row=$(review_approved_head "$issue") || continue
+    rows="${rows}${issue} ${row}"$'\n'; n=$((n + 1))
+  done
+  [ "$n" -ge 2 ] || return 0
+  TRAIN_BATCH="${rows%$'\n'}"
+}
+
+claude_model_for_tier() {
+  # model_tier của config -> --model của `claude -p` (#254: trước đây không truyền, mọi lượt chạy model mặc định đắt nhất).
+  # low=haiku, high=opus; medium, thiếu hoặc lạ = sonnet.
+  local tier
+  tier=$(jq -r '.model_tier // "medium"' "$CONFIG_PATH" 2>/dev/null || echo medium)
+  case "$tier" in
+    low) echo haiku ;;
+    high) echo opus ;;
+    *) echo sonnet ;;
+  esac
+}
+
+preflight_gate() {
+  # #253: chạy super-board-preflight.sh TRƯỚC khi nhận thẻ build; trước đây LLM mới chạy nó (09:58Z #200 mới thấy "hold" sau khi
+  # đã tốn một lượt). Trả 0 = giao, 1 = không giao (thẻ đã sang Blocked, hoặc còn Ready để thử lại tick sau). Chỉ chặn trên bằng chứng CHÍNH XÁC: PR đã merge / đang mở
+  # có `closes #N`, thiếu AC, hoặc `sequence` có blocker còn MỞ. Hold dựa trên độ giống tiêu đề / fingerprint / thẻ khác / too-big
+  # là phán đoán ("agent hạ được khi nêu lý do", run.md): giao như cũ để Builder bước 0 xét. Exit 79 khi không đọc được bằng chứng
+  # GitHub (preflight mù không bao giờ nói proceed); lỗi khác của preflight hoặc không có verdict: log và giao như cũ (không chặn lane,
+  # không crash-loop). Thiếu repo.remote trong config: giao như cũ.
+  # ponytail: hold chính xác chỉ ghi `blocked-by:` rồi chờ người, không gắn needs-you (mark từ chối việc agent làm được); nâng khi cần.
+  local issue="$1" pf repo inf out rc=0 v verdict tag reason blocked title item_id exact tagline csv bline orc
+  pf="${SB_PREFLIGHT:-$(dirname "$SB_GITHUB_READ")/super-board-preflight.sh}"
+  repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+  if [ -z "$repo" ] || [ ! -f "$pf" ]; then log "preflight skipped for #${issue}: no repo.remote in config or no ${pf}"; return 0; fi
+  inf=$(mktemp "${TMPDIR:-/tmp}/sb-inflight.XXXXXX")
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -c '[.items[] | select(.status == "Building" or .status == "QA" or .status == "Review" or .status == "Ready")
+    | {number: .content.number, title: (.content.title // ""), status: .status}]' > "$inf" 2>/dev/null || echo '[]' > "$inf"
+  # The board's own merge line cap: 0 means one card is one PR whatever its size, so preflight never asks to split it.
+  # Read it like super-board-merge-policy.py: unset → 400, else a whole number, and any value <= 0 is "no cap".
+  # A value the merge policy cannot read (a word) falls back to 400 here; the merge gate then sends that PR to a human.
+  local cap; cap=$(jq -r '.merge_policy.auto_max_lines as $c
+    | if $c == null then 400 elif $c == false then 0 elif $c == true then 1
+      elif ($c | type) == "number" then ($c | floor)
+      elif ($c | type) == "string" and ($c | test("^\\s*[-+]?[0-9]+\\s*$")) then ($c | gsub("\\s"; "") | tonumber)
+      else 400 end
+    | if . <= 0 then 0 elif . > 1000000000 then 1000000000 else . end' "$CONFIG_PATH" 2>/dev/null) || cap=400
+  out=$(bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" --cap "${cap:-400}" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$inf"
+  if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
+  if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
+  v=$(printf '%s' "$out" | jq -c --arg n "$issue" '.[$n] // empty' 2>/dev/null)
+  [ -n "$v" ] || { log "⚠ preflight returned no verdict for #${issue} — dispatching without it"; return 0; }
+  verdict=$(printf '%s' "$v" | jq -r '.verdict'); tag=$(printf '%s' "$v" | jq -r '.tag // ""')
+  reason=$(printf '%s' "$v" | jq -r '.reason // ""')
+  blocked=""
+  case "$verdict" in
+    proceed) return 0 ;;
+    sequence)
+      # blockedBy đọc từ body PR, không kiểm trạng thái: chỉ số issue còn MỞ mới chặn (số đã đóng là đúng mẫu #200). Một lệnh
+      # super-board-blocked-by.py cho cả danh sách: nó không đi qua file halt, số gõ nhầm / số PR không dừng board (review P1/P2).
+      csv=$(printf '%s' "$v" | jq -r '(.blockedBy // []) | map(tostring) | join(",")')
+      if [ -n "$csv" ]; then
+        orc=0
+        bline=$(python3 "$(dirname "$SB_GITHUB_READ")/super-board-blocked-by.py" line --repo "$repo" "$csv" 2>>"$RUN_MANIFEST") || orc=$?
+        # Không đọc được trạng thái blocker (gh lỗi thoáng qua): không giao, không chặn, thử lại tick sau. Không exit 79: helper không ghi
+        # file halt nên watchdog sẽ không tự resume (máy ngủ dậy rồi board chết, #253 review).
+        [ "$orc" -ne 79 ] || { log "preflight #${issue}: blocker state unreadable — not dispatched this tick, retrying next"; return 1; }
+        if [ "$orc" -ne 0 ]; then log "⚠ preflight #${issue}: blocker check failed (exit ${orc}) — dispatching without it"; return 0; fi
+        blocked="${bline#blocked-by: }"; [ "$blocked" != "-" ] || blocked=""
+      fi
+      [ -n "$blocked" ] || { log "preflight #${issue}: ${reason} — proceeding (merge gate rebases)"; return 0; }
+      tagline="⏳" ;;
+    hold)
+      exact=$(printf '%s' "$v" | jq -r --arg n "$issue" '
+        if .tag == "unclear" then "yes"
+        elif .tag == "done" or .tag == "in-progress" then
+          (if ([.evidence[]? | select(test("closes #" + $n + "$"))] | length) > 0 then "yes" else "no" end)
+        else "no" end')
+      if [ "$exact" != "yes" ]; then
+        log "preflight ${verdict}/${tag} for #${issue} rests on similarity or size (${reason}) — dispatching, Builder step 0 judges"
+        return 0
+      fi
+      case "$tag" in unclear) tagline="❓" ;; *) tagline="👯" ;; esac ;;
+    *) log "⚠ preflight verdict '${verdict}' for #${issue} not understood — dispatching without it"; return 0 ;;
+  esac
+  title=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .content.title][0] // ""')
+  item_id=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+  log "preflight ${verdict}/${tag} for #${issue}: ${reason} — not dispatched, card to Blocked"
+  # Chuyển thẻ TRƯỚC, comment chỉ khi chuyển được: chuyển hỏng thì thẻ còn Ready và tick sau sẽ comment lại (#253 review F6).
+  gh_checkpoint
+  if [ -z "$item_id" ] || ! set_card_status "$item_id" "Blocked"; then
+    log "⚠ preflight: could not move #${issue} to Blocked — not dispatched, no comment"
+    return 1
+  fi
+  gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tagline} pre-flight ${verdict} (${tag})
+Card:        #${issue} ${title}
+Reason tag:  ${tagline}
+Why blocked: ${reason}
+Evidence:    super-board-preflight.sh → $(printf '%s' "$v" | jq -c '.evidence // []')
+Owner:       Eric
+Move back:   drag this card to Ready once the evidence above is resolved
+blocked-by:  ${blocked:--}" >/dev/null 2>&1 || true
+  return 1
+}
+
 dispatch_lane() {
   # $1 = lane (build|qa|review); $2 = issue number
   local lane="$1" issue="$2" prompt pid
@@ -751,8 +1084,28 @@ dispatch_lane() {
     board_notify accounts-limited --card "${CONFIG_SLUG:-board}" --accounts "${POOL_RESETS:-all}" --state-dir "${SB_NOTIFY_STATE_DIR:-$HOME/.claude/super-board}"
     return 0
   fi
+  # Sau các kiểm tra đĩa/account (không tốn một lượt preflight mỗi tick khi chưa giao được), trước khi nhận thẻ.
+  if [ "$lane" = "build" ]; then preflight_gate "$issue" || return 0; fi
   if ! try_claim_assignee "$issue"; then
     return 0
+  fi
+  # #228: thẻ còn lại của đợt merge train cũng phải nhận được claim; thẻ thua đua bị bỏ khỏi đợt (lock chỉ ghi cho thẻ đã claim).
+  local train_rows="" train_issues="" train_prs="" train_heads="" t_issue t_pr t_head train_n=0
+  if [ "$lane" = "review" ] && [ -n "${TRAIN_BATCH:-}" ]; then
+    while read -r t_issue t_pr t_head; do
+      [ -n "$t_issue" ] || continue
+      [ "$t_issue" = "$issue" ] || try_claim_assignee "$t_issue" || continue
+      train_rows="${train_rows}${t_issue} ${t_pr} ${t_head}"$'\n'; train_n=$((train_n + 1))
+      train_issues="${train_issues:+$train_issues }${t_issue}"
+      train_prs="${train_prs:+$train_prs,}${t_pr}:${t_head}"   # N:sha — train từ chối PR có head đã dời khỏi head đã duyệt (R1)
+      train_heads="${train_heads:+$train_heads, }PR #${t_pr}=${t_head}"
+    done <<EOF
+$TRAIN_BATCH
+EOF
+    if [ "$train_n" -lt 2 ]; then   # R4: thua claim hết, chỉ còn thẻ chính — đường merge-only như cũ, không train 1 PR
+      log "review lane: train shrank to ${train_n} card(s) after the claims — #${issue} takes the single-card path"
+      train_rows=""; train_issues=""; train_prs=""; train_heads=""
+    fi
   fi
   # Chuyển ngay thẻ Ready sang cột Building trên GitHub Project Board khi giao cho Builder để bảng hiển thị tức thì.
   if [ "$lane" = "build" ] && [ -n "$PROJECT_OWNER" ] && [ "${PROJECT_NUMBER:-0}" -gt 0 ]; then
@@ -760,19 +1113,36 @@ dispatch_lane() {
     build_item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n and .status == "Ready") | .id][0] // empty' 2>/dev/null || true)
     [ -z "$build_item_id" ] || set_card_status "$build_item_id" "Building" || true
   fi
+  local noop_judge=1 baseline
   case "$lane" in
     build)  prompt="Run super-build on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Builder lifecycle. Config: ${CONFIG_PATH}." ;;
     qa)     prompt="Run super-qa on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Tester lifecycle. Config: ${CONFIG_PATH}." ;;
-    review) prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done." ;;
+    review)
+      local merge_only="" mo_pr mo_head
+      if [ -n "$train_rows" ]; then
+        noop_judge=0
+        log "review lane: merge-train for #${train_issues// /, #} (PRs ${train_prs}) — one worker, one verify, no fresh review"
+        prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done; red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
+      elif merge_only=$(review_approved_head "$issue"); then
+        noop_judge=0
+        read -r mo_pr mo_head <<EOF
+$merge_only
+EOF
+        log "review lane issue=#${issue}: PR #${mo_pr} approved at head ${mo_head} — merge-only, no fresh review"
+        prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
+      else
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done."
+      fi ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac
-  prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt $(lane_worktree_hint "$lane" "$issue") Emulator policy: NEVER launch an Android emulator without -no-window (always run headless in background with -no-window -no-audio -no-boot-anim, or via python3 .agents/devkit/bin/proof-capture.py)."
+  prompt="First operation: run .claude/bin/super-board-skills-ready.py --root '$PWD' --host claude --cards - --lane '$lane' --hydrate with $card as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. $prompt $(lane_worktree_hint "$lane" "$issue") $(resume_hint "${WORKER_LOG_DIR}/worker-${lane}-${issue}.log") Emulator policy: NEVER launch an Android emulator without -no-window (always run headless in background with -no-window -no-audio -no-boot-anim, or via python3 .agents/devkit/bin/proof-capture.py)."
   if [ -f "$REPO_ROOT/.agents/active-profile.json" ] && grep -q '"lang": "vi"' "$REPO_ROOT/.agents/active-profile.json" 2>/dev/null; then
     prompt="$prompt Language policy: This repository uses Vietnamese ('lang': 'vi'). Write all PR descriptions, problem/solution/AC explanations, status comments, and review notes in Vietnamese (Tiếng Việt); identifiers/symbols remain English."
   fi
   # Worker output goes to a per-worker log, not /dev/null (issue #13). Redirect at the
   # `claude` invocation itself — no wrapping subshell, no `exec` — so the wire to the
   # file survives and `$!` names the worker process rather than a bash stub.
+  baseline=$(dispatch_baseline "$issue" "$lane" "$noop_judge")
   mkdir -p "$WORKER_LOG_DIR"
   local worker_log="${WORKER_LOG_DIR}/worker-${lane}-${issue}.log"
   local worker_log_abs
@@ -791,24 +1161,33 @@ dispatch_lane() {
   [ -n "$pool_acct" ] && printf 'account_pool: engine=%s account=%s config_dir=%s\n' "$pool_engine" "$pool_acct" "$pool_cfg" >> "$worker_log"
   # CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0: ngăn `claude -p` tự huỷ tác vụ nền (như red_proof.py --pending) sau 10 phút.
   export DEVKIT_ALLOW_BRANCH=1 WORKTREE_MERGE_GATE=0 DEVKIT_LANG="${DEVKIT_LANG:-vi}" CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS:-0}"
+  # BASH_*_TIMEOUT_MS=1h: Bash tool của worker mặc định bị cắt ở 10 phút, đúng lúc gate còn chờ heavy_slot (≤600 s) (#249).
+  export BASH_DEFAULT_TIMEOUT_MS="${BASH_DEFAULT_TIMEOUT_MS:-3600000}" BASH_MAX_TIMEOUT_MS="${BASH_MAX_TIMEOUT_MS:-3600000}"
   unset POSTFIX_GATE_FORCE_FULL
+  local claude_model
+  claude_model=$(claude_model_for_tier)
   if [ "$pool_engine" = "antigravity" ] && [ -x "$HOME/.local/bin/agy" ]; then
-    nohup "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup "$SB_WORKER_WRAP" "$HOME/.local/bin/agy" --model gemini-4-argon-high --effort xhigh --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ "$pool_engine" = "grok" ] && [ -x "$HOME/.grok/bin/grok" ]; then
-    nohup "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup "$SB_WORKER_WRAP" "$HOME/.grok/bin/grok" -m grok-4.7 -p "$prompt" >> "$worker_log" 2>&1 &
   elif [ -n "$pool_cfg" ]; then
-    CLAUDE_CONFIG_DIR="$pool_cfg" nohup claude --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    CLAUDE_CONFIG_DIR="$pool_cfg" nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose -p "$prompt" >> "$worker_log" 2>&1 &
   else
-    nohup claude --dangerously-skip-permissions -p "$prompt" >> "$worker_log" 2>&1 &
+    nohup "$SB_WORKER_WRAP" claude --model "$claude_model" --dangerously-skip-permissions --output-format stream-json --verbose -p "$prompt" >> "$worker_log" 2>&1 &
   fi
   pid=$!
+  global_slot_register "$pid" "${lane}#${issue}"
   DISPATCH_COUNT=$((DISPATCH_COUNT + 1))
   DISPATCH_LOG="${DISPATCH_LOG}${issue}
 "
   # v1.3.0+ lock format: bash-assignment style so `super-board stop` can source it
   # to recover lane + dispatch time. issue_locked()/reap_finished_locks() still work
   # because PID= is the first line.
-  printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\n' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" > "$INFLIGHT_DIR/$issue"
+  printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\nTRAIN="%s"\n%s' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" "$train_issues" "$baseline" > "$INFLIGHT_DIR/$issue"
+  # #228: cả đợt cùng một worker: mỗi thẻ có lock riêng (cùng PID) để issue_locked và reap_finished_locks xử lý từng thẻ như thường.
+  for t_issue in $train_issues; do
+    [ "$t_issue" = "$issue" ] || printf 'PID=%s\nLANE=%s\nSTARTED=%s\nWORKER_LOG=%s\nTRAIN="%s"\n' "$pid" "$lane" "$(date -u +%FT%TZ)" "$worker_log_abs" "$train_issues" > "$INFLIGHT_DIR/$t_issue"
+  done
   case "$lane" in
     build)
       if lane_idle "${BUILD_PID:-}"; then BUILD_PID="$pid"; BUILD_ISSUE="$issue"
@@ -846,7 +1225,7 @@ check_lane_zombie() {
   [ -z "$pid" ] && return 0
   [ -z "$issue" ] && return 0
   kill -0 "$pid" 2>/dev/null || return 0   # already dead → reap_finished_locks handles it
-  local cur found=0 col
+  local cur found=0 col t
   cur=$(issue_status "$issue")
   [ -z "$cur" ] && return 0                # not in cache (closed/deleted/race) → don't kill
   # Thẻ `qa` được giao từ Ready và Tester tự chuyển Ready → QA sau khi khởi động (run.md, Tester lượt đầu).
@@ -864,12 +1243,32 @@ check_lane_zombie() {
   for col in $expected; do
     [ "$cur" = "$col" ] && found=1
   done
+  # #228: worker của đợt merge train giữ lock của mọi thẻ trong đợt (TRAIN): thẻ đầu sang Done không làm nó thành zombie khi thẻ khác
+  # của đợt còn ở cột nguồn.
+  if [ "$found" -eq 0 ] && [ "$lane" = review ]; then
+    read_lock "$issue" || true
+    for t in ${TRAIN:-}; do
+      [ "$(issue_status "$t")" = "Review" ] && found=1
+    done
+  fi
+  # Thẻ về cột cũ: bỏ mốc ân hạn để lần rời cột sau tính lại từ đầu.
+  [ "$found" -eq 0 ] || ZOMBIE_SEEN=$(printf '%s\n' ${ZOMBIE_SEEN:-} | grep -v "^${pid}:" | tr '\n' ' ' || true)
   if [ "$found" -eq 0 ]; then
+    # Ân hạn (#237): worker vừa chuyển thẻ còn đang in báo cáo cuối; kill ngay xoá báo cáo đó khỏi log.
+    # ZOMBIE_SEEN = "pid:epoch" lần đầu thấy; kill khi quá SB_ZOMBIE_GRACE giây (mặc định 60).
+    local seen_at now
+    now=$(date +%s)
+    seen_at=$(printf '%s\n' ${ZOMBIE_SEEN:-} | sed -n "s/^${pid}://p" | head -1)
+    if [ -z "$seen_at" ]; then seen_at="$now"; ZOMBIE_SEEN="${ZOMBIE_SEEN:+$ZOMBIE_SEEN }${pid}:${now}"; fi
+    [ $(( now - seen_at )) -ge "${SB_ZOMBIE_GRACE:-60}" ] || return 0
     gh_checkpoint
     log "💀 zombie ${lane} worker on #${issue} (pid=${pid}) — card moved to '${cur}'; killing"
+    # #237: pid trong lock là wrapper; kill -9 chỉ trúng wrapper còn worker con sống tiếp → diệt con trước.
     kill "$pid" 2>/dev/null || true
     sleep 1 || true
+    pkill -9 -P "$pid" 2>/dev/null || true
     kill -9 "$pid" 2>/dev/null || true
+    ZOMBIE_SEEN=$(printf '%s\n' ${ZOMBIE_SEEN:-} | grep -v "^${pid}:" | tr '\n' ' ' || true)
     gh_checkpoint
     [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
     gh_checkpoint
@@ -982,12 +1381,43 @@ paused_tick() {
   # bỏ hẳn lần đọc) thì worker có thẻ đã sang cột khác trong lúc hoãn giữ lane tới hết hạn chót.
   PAUSED_TICKS=$(( ${PAUSED_TICKS:-0} + 1 ))
   [ $(( PAUSED_TICKS % PAUSED_READ_EVERY )) -eq 0 ] || return 0
-  gh_rate_guard
-  fetch_project_items
+  tick_guard nosleep || return 0
+  tick_fetch nosleep || return 0
   sweep_lane_zombies
 }
 
 # A folder in inflight/ (git-ignored in every board repo); every reader of inflight/ skips folders and non-numeric names, as merge.lock
+# #237: super-board-worker-wrap.sh ends every worker log section with `worker_exit: exit=<mã> signal=<tên> elapsed=<s>s`.
+worker_exit_line() {
+  awk '/^=== dispatch /{l=""} /^worker_exit: /{l=$0} END{print l}' "$1" 2>/dev/null || true
+}
+
+note_worker_exit() {
+  # $1 = issue; the lock just read (LANE) is the worker that died. Logs its exit record and, unless it exited 0, comments on the card.
+  # No record = the wrapper itself was killed (SIGKILL, host asleep) or the worker predates the wrapper.
+  local line role
+  line=$(worker_exit_line "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}")
+  log "worker of #${1} (lane ${LANE:-?}) exit record: ${line:-none — wrapper killed or host asleep}"
+  # exit=0: finished; exit=143: stopped by the runner itself (super-board stop sends TERM), not a death worth a card comment.
+  case "$line" in *"exit=0 "*|*"exit=143 "*) return 0 ;; esac
+  case "${LANE:-}" in qa) role=qa ;; review) role=reviewer ;; *) role=builder ;; esac
+  # A diagnostic comment must never halt the board: gh_write_once exits 79 on a gh failure and `|| true` cannot catch an exit.
+  gh_checkpoint
+  gh issue comment "$1" --body "[${role}] [report] ⚠️ worker chết giữa chừng
+Did: runner thấy worker lane ${LANE:-?} đã dừng, thẻ sẽ được giao lại.
+Exit record: ${line:-không có (wrapper bị kill hoặc máy ngủ)}
+Next: lượt giao lại tiếp tục từ commit/comment cuối" >/dev/null 2>&1 || true
+}
+
+resume_hint() {
+  # $1 = worker log. Words for the next prompt when the previous dispatch of this card died (exit != 0, or no record): continue, never restart.
+  local line
+  [ -f "$1" ] && grep -q '^=== dispatch ' "$1" || return 0
+  line=$(worker_exit_line "$1")
+  case "$line" in *"exit=0 "*) return 0 ;; esac
+  printf 'Resume: the previous worker of this card died (%s). Do not start over: read the issue comments and PR threads, run git log in the lane worktree, and continue from the last commit and evidence.' "${line:-no exit record}"
+}
+
 early_death_file() { printf '%s/early-deaths/%s' "$INFLIGHT_DIR" "$1"; }
 
 note_early_death() {
@@ -1020,7 +1450,7 @@ print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED
   { tail -n 19 "$f" 2>/dev/null || true; echo "$now ${LANE:-?}"; } > "$f.tmp" 2>/dev/null \
     && mv "$f.tmp" "$f" 2>/dev/null || return 0
   # the log may be gone or empty (the 19/10 shape): grep exits 1/2, which pipefail would turn into the runner's exit
-  last=$( { grep -v '^[[:space:]]*$' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
+  last=$( { grep -Ev '^[[:space:]]*$|^worker_exit: ' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
   n=$( { awk -v from=$((now - ${SB_EARLY_WINDOW_S:-600})) -v l="${LANE:-?}" '$1 >= from && $2 == l' "$f" 2>/dev/null || true; } | wc -l | tr -d ' ')
   log "⚠ worker of #${1} (lane ${LANE:-?}) ended ${age}s after dispatch (a crash or a very quick exit) — early end ${n} of this lane in ${SB_EARLY_WINDOW_S:-600}s; last log line: ${last:-<no worker log at ${wlog}>}"
 }
@@ -1047,6 +1477,109 @@ early_backoff() {
   [ "${n:-0}" -ge 2 ] || [ "${total:-0}" -ge "${SB_EARLY_MAX_TOTAL:-3}" ]
 }
 
+# #137 (20/10, OfficeReader): a QA worker that needed a real device exited after 60–120 s, moved nothing and wrote nothing, and the
+# runner handed the card to the next worker five times in 40 minutes. dispatch_lane stamps the card's column and its issue comment
+# count into the lock; when the worker's lock dies (qa/review lanes only: a build worker moves its card to Building at dispatch, and
+# reclaim_dead_builds already caps those) block_noop_workers compares them with the board. Still in that column with no new comment is
+# a no-op, one line `<epoch> <lane> <column> <count>` in inflight/noops/<issue>; SB_NOOP_MAX (2) of them inside SB_NOOP_WINDOW_S (24 h) park the card in Blocked instead
+# of a third dispatch. Bookkeeping only: nothing here may end the runner.
+issue_comment_count() {
+  # $1 = issue. Prints its comment count; prints nothing when GitHub cannot say (the caller then concludes nothing).
+  python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1" --jq .comments 2>/dev/null | tr -dc '0-9' || true
+}
+
+dispatch_baseline() {
+  # $1 = issue, $2 = lane, $3 = 1 when the dispatch is judged. Called BEFORE the worker starts (a worker that comments at once would
+  # inflate COMMENTS0, #316 R8); prints the FROM_COL/COMMENTS0 lines for dispatch_lane to write into the lock in the same write as PID=.
+  # Nothing is printed for a baseline we cannot read, for the build lane, or for merge-only / merge-train (the right exit there is
+  # "leave the card in Review", with no comment, #316 R5): that lock is never judged.
+  local issue="$1" lane="$2" judge="${3:-1}" col count last_col last_count
+  [ "$judge" = 1 ] || return 0
+  case "$lane" in qa|review) ;; *) return 0 ;; esac
+  col=$(issue_status "$issue")
+  count=$(issue_comment_count "$issue")
+  [ -n "$col" ] && [ -n "$count" ] || return 0
+  # #316 R6: the card moved or got a comment since the last no-op (its ledger line holds column and count): that no-op is stale.
+  read -r _ _ last_col last_count <<EOF
+$( { tail -n 1 "$INFLIGHT_DIR/noops/$issue" 2>/dev/null || true; } )
+EOF
+  if [ -n "${last_col:-}" ] && { [ "$last_col" != "$col" ] || [ "${last_count:-0}" -lt "$count" ]; }; then
+    rm -f "$INFLIGHT_DIR/noops/$issue" 2>/dev/null || true
+  fi
+  printf 'FROM_COL=%s\nCOMMENTS0=%s\n' "$col" "$count"
+}
+
+note_worker_end() {
+  # $1 = issue; the lock just read (LANE, FROM_COL, COMMENTS0) is the worker that ended. Queued for block_noop_workers.
+  case "${LANE:-}" in qa|review) ;; *) return 0 ;; esac
+  [ -n "${FROM_COL:-}" ] && [ -n "${COMMENTS0:-}" ] || return 0
+  NOOP_CHECK="${NOOP_CHECK:-} ${1}:${LANE}:${FROM_COL}:${COMMENTS0}"
+}
+
+block_noop_workers() {
+  # Expensive tick, after fetch_project_items: judge the workers queued by note_worker_end. Sets NOOP_MOVED=1 when a card was moved.
+  local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
+  local entry issue lane from c0 col count f now n item_id title wlog last tag
+  NOOP_CHECK=""
+  for entry in $pending; do
+    IFS=: read -r issue lane from c0 <<EOF
+$entry
+EOF
+    [ -n "$issue" ] && [ -n "$c0" ] || continue
+    issue_locked "$issue" && continue
+    f="$INFLIGHT_DIR/noops/$issue"
+    col=$(issue_status "$issue")
+    [ -n "$col" ] || continue
+    count=$(issue_comment_count "$issue")
+    [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
+    if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
+      rm -f "$f" 2>/dev/null || true   # it moved the card or wrote something: progress
+      continue
+    fi
+    now=$(date +%s)
+    mkdir -p "$INFLIGHT_DIR/noops" 2>/dev/null || true
+    { { tail -n 19 "$f" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now $lane $col $count"; } > "$f.tmp" 2>/dev/null \
+      && mv "$f.tmp" "$f" 2>/dev/null || true
+    n=$( { wc -l < "$f"; } 2>/dev/null | tr -d ' ')
+    wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
+    last=$( { grep -Ev '^[[:space:]]*$|^worker_exit: ' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
+    if [ "${n:-0}" -lt "$max" ]; then
+      log "⚠ #${issue} (lane ${lane}): worker ended with the card still in ${col} and no new comment — no-op ${n} of ${max}; last log line: ${last:-<no worker log at ${wlog}>}"
+      continue
+    fi
+    item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty' 2>/dev/null || true)
+    title=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .content.title][0] // empty' 2>/dev/null || true)
+    tag="❓"
+    printf '%s' "$last" | grep -qiE 'máy thật|thiết bị|real device|device|adb' && tag="📱"
+    if [ -n "$item_id" ] && set_card_status "$item_id" "Blocked"; then
+      NOOP_MOVED=1
+      rm -f "$f" 2>/dev/null || true
+      [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+      gh_checkpoint
+      gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tag} ${lane} worker exited ${n} times without moving the card or commenting
+Card:        #${issue}${title:+ ${title}}
+Reason tag:  ${tag}
+Why blocked: the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment
+Evidence:    ${wlog}; last log line: ${last:-<empty>}
+Checked:     inflight lock reaped; card still in ${col}; issue comment count unchanged since dispatch (${c0})
+What blocks: the worker cannot finish this card${last:+ — its last log line is quoted above}
+Why I (bot) cannot decide:
+             dispatching it again would repeat the same exit and keep the ${lane} lane busy while other cards wait
+To unblock:  read the worker log and give the worker what it lacked
+             [ ] Inspect ${wlog}
+             [ ] Fix the cause (connect the device, label the card needs-device), then drag #${issue} back to ${from}
+Owner:       repo admin
+Move back:   drag this card to ${from} after the steps above are done
+blocked-by:  -" >/dev/null 2>&1 || true
+      log "🛑 #${issue} ${col} → Blocked: ${lane} worker exited ${n} times without a card move or comment"
+    else
+      gh_checkpoint
+      log "⚠ #${issue} in ${col} — ${lane} worker is a no-op ${n} times but the card could not be moved to Blocked; drag it by hand"
+    fi
+  done
+  return 0
+}
+
 reap_finished_locks() {
   # Sweep inflight/ for dead PIDs; remove locks AND sweep stale assignees so the
   # next dispatch can re-claim the card if the worker crashed without releasing.
@@ -1063,7 +1596,11 @@ reap_finished_locks() {
     read_lock "$issue"
     if [ -z "$PID" ] || ! kill -0 "$PID" 2>/dev/null; then
       [ -z "$LANE" ] || note_worker_limit "${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE}-${issue}.log}"
+      note_worker_exit "$issue"
       note_early_death "$issue"
+      note_worker_end "$issue"
+      # #288: PID chết rời danh sách "đã thấy ở QA": Tester mới tái dùng PID đó phải bắt đầu sạch (ân hạn Ready → QA).
+      [ -z "$PID" ] || QA_SEEN_IN_QA=$(printf '%s\n' ${QA_SEEN_IN_QA:-} | grep -vxF -- "$PID" | tr '\n' ' ') || true
       [ "${LANE:-}" = "build" ] && RECLAIM_BUILDING="${RECLAIM_BUILDING:-} ${issue}" || true
       gh_checkpoint
       if [ -n "$BOT_LOGIN" ]; then
@@ -1110,6 +1647,7 @@ adopt_live_locks() {
     # issue_locked thấy PID sống và bỏ qua thẻ mãi). Tiến trình lạ đó không bao giờ bị gửi tín hiệu.
     case "$cmdline" in
       *"issue #${issue} for super-board run"*) ;;
+      *"merge-train worker on issues "*"#${issue}"[,\ ]*) ;;   # worker train của đợt (#228): prompt liệt kê cả đợt, không có "issue #N for"
       *)
         # Dòng lệnh không khớp chưa đủ: chỉ gỡ khi tiến trình khởi động sau STARTED của lock (chắc chắn PID tái
         # dùng); nếu không, có thể là worker thật đã đổi tiêu đề tiến trình, giữ lock như trước.
@@ -1124,6 +1662,8 @@ adopt_live_locks() {
         log "reaped lock on #${issue}: pid=${PID} is alive but no super-board worker (recycled PID)${BOT_LOGIN:+; swept assignee}"
         continue ;;
     esac
+    # R3: worker merge train giữ lock của MỌI thẻ trong đợt cùng một PID: nhận lại một lần, lock còn lại giữ nguyên (không thêm slot).
+    case " ${ADOPTED_PIDS:-} " in *" $PID "*) log "lock on #${issue} belongs to the already adopted worker pid=${PID} (merge train batch)"; continue ;; esac
     case "$LANE" in
       build)
         if lane_idle "${BUILD_PID:-}"; then BUILD_PID="$PID"; BUILD_ISSUE="$issue"
@@ -1167,14 +1707,16 @@ startup_orphan_workers() {
     [ -n "$PID" ] && locked="${locked}${PID} "
   done
   # ps lỗi thì không có dòng nào: không chặn khởi động (adopt_live_locks vẫn chạy sau đó).
-  while read -r pid cmd; do
+  while read -r pid ppid cmd; do
     [ -n "$pid" ] && [ "$pid" != "$$" ] || continue
+    # #237: worker chạy dưới wrapper (pid trong lock) — con của một PID đã khoá không phải orphan.
+    case "$locked" in *" $ppid "*) continue ;; esac
     case "$cmd" in *"--root '${root}'"*"for super-board run"*) ;; *) continue ;; esac
     exe=${cmd%% *}
     case "${exe##*/}" in claude|agy|grok) ;; *) continue ;; esac
     case "$locked" in *" $pid "*) continue ;; esac
     echo "$pid"
-  done < <(ps -ww -A -o pid= -o command= 2>/dev/null || true)
+  done < <(ps -ww -A -o pid= -o ppid= -o command= 2>/dev/null || true)
 }
 
 check_legacy_worktrees() {
@@ -1230,6 +1772,22 @@ reclaim_stranded_building() {
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
+    # #254: builder đóng issue khi AC đã đạt sẵn trên main (không PR) — thẻ đóng ở Building đi thẳng Done, không quay về Ready.
+    local issue_rc=0
+    issue_is_open "$issue" || issue_rc=$?
+    [ "$issue_rc" -le 1 ] || exit "$issue_rc"
+    if [ "$issue_rc" -eq 1 ]; then
+      if set_card_status "$item_id" "Done"; then
+        gh_checkpoint
+        [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+        rm -f "$INFLIGHT_DIR/$issue"
+        log "reconciled closed #${issue} -> Done (was 'Building') — builder closed it, AC already met"
+      else
+        gh_checkpoint
+        log "⚠ closed #${issue} in Building — could not move it to Done; drag it by hand"
+      fi
+      continue
+    fi
     # Chỉ để ghi vào comment: ls-remote lỗi (mạng, không có remote) dưới pipefail không được giết runner.
     branch=$(git ls-remote --heads origin "issue-${issue}-*" 2>/dev/null | head -1 | sed 's#.*refs/heads/##') || branch=""
     wt=".claude/worktrees/issue-${issue}-build"
@@ -1366,6 +1924,47 @@ sweep_merged_lanes() {
     >>"$RUN_MANIFEST" 2>&1 </dev/null &
 }
 
+sweep_ledger() { printf '%s/swept-cards' "$INFLIGHT_DIR"; }
+swept_seen() {
+  # #253: sổ (thẻ, bộ blocker) đã sweep nằm ở file, không chỉ RAM: runner khởi động lại (4 lần trong ngày 22/10) không được
+  # sweep lại đúng cặp đó rồi build lại thẻ vừa bị chặn. $1 = "<issue>:<blockers>". SWEPT_CARDS giữ làm cache RAM.
+  case " ${SWEPT_CARDS:-} " in *" $1 "*) return 0 ;; esac
+  grep -qxF -- "$1" "$(sweep_ledger)" 2>/dev/null
+}
+swept_add() {
+  SWEPT_CARDS="${SWEPT_CARDS:-} $1"
+  printf '%s\n' "$1" >> "$(sweep_ledger)" 2>/dev/null || log "⚠ cannot write the sweep ledger $(sweep_ledger)"
+}
+
+WAITING_LABEL="⏳ chờ thẻ khác"
+sync_waiting_labels() {
+  # #235: $1 = plan JSON. Thẻ Blocked chỉ chờ thẻ khác (plan `pending`) mang nhãn WAITING_LABEL để board phân biệt với thẻ cần người;
+  # nhãn ở bất kỳ thẻ nào không còn trong `pending` (sweep vừa thả, kéo tay đi chỗ khác, thành 🙋) bị gỡ. Plan không có khoá `pending`
+  # (planner cũ) thì không đụng nhãn nào. Nhãn không bao giờ là căn cứ chặn hay thả thẻ: chỉ hiển thị.
+  local plan="$1" n
+  printf '%s' "$plan" | jq -e 'has("pending")' >/dev/null 2>&1 || return 0
+  local pending
+  pending=$(printf '%s' "$plan" | jq -c '[.pending[]?.number]' 2>/dev/null) || return 0
+  for n in $(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson p "$pending" --arg l "$WAITING_LABEL" '
+      .items[] | select(.status == "Blocked") | .content.number as $n | select($p | index($n))
+      | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index($l) | not)
+      | $n' 2>/dev/null); do
+    if [ "${WAITING_LABEL_READY:-0}" != 1 ]; then
+      gh_write_once label create "$WAITING_LABEL" --color FBCA04 --description "Blocked only on other open cards; the sweep releases it" --force >/dev/null 2>&1 \
+        && WAITING_LABEL_READY=1
+    fi
+    gh_write_once issue edit "$n" --add-label "$WAITING_LABEL" >/dev/null 2>&1 || true
+    log "⏳ #${n}: label '${WAITING_LABEL}' (waits on other cards)"
+  done
+  for n in $(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson p "$pending" --arg l "$WAITING_LABEL" '
+      .items[] | .content.number as $n | select($p | index($n) | not)
+      | select([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)] | index($l))
+      | $n' 2>/dev/null); do
+    gh_write_once issue edit "$n" --remove-label "$WAITING_LABEL" >/dev/null 2>&1 || true
+    log "⏳ #${n}: label '${WAITING_LABEL}' removed"
+  done
+}
+
 sweep_blocked_cards() {
   # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
   # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
@@ -1381,13 +1980,14 @@ sweep_blocked_cards() {
     return 2
   fi
   local next key
+  sync_waiting_labels "$plan"
   while IFS=$'\t' read -r issue cleared; do
     # Không có blocker nào (thẻ bị kéo tay sang Blocked, body ghi None): không có gì vừa đóng, để người quyết.
     [ -n "$issue" ] && [ -n "$cleared" ] || continue
-    # Mỗi (thẻ, bộ blocker) một lần mỗi lần chạy: bị park lại với CÙNG blocker là việc người cần xem, không phải
+    # Mỗi (thẻ, bộ blocker) một lần, bền qua lần khởi động lại (người gỡ sổ swept-cards nếu muốn sweep lại): bị park lại với CÙNG blocker là việc người cần xem, không phải
     # vòng lặp; bị chặn bởi blocker KHÁC (daemon chạy nhiều ngày) thì vẫn được sweep khi blocker mới đóng.
     key="${issue}:$(printf '%s' "$cleared" | tr -d ' #')"
-    case " ${SWEPT_CARDS:-} " in *" $key "*) log "blocked sweep: #${issue} already swept this run for ${cleared} — left Blocked"; continue ;; esac
+    if swept_seen "$key"; then log "blocked sweep: #${issue} already swept for ${cleared} — left Blocked"; continue; fi
     # `needs-you` là quyết định của người, kể cả khi planner thả thẻ (planner chỉ đọc 8 comment cuối).
     if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
          | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
@@ -1401,7 +2001,7 @@ sweep_blocked_cards() {
       log "⚠ blocked sweep: could not move #${issue} to Ready"
       continue
     fi
-    SWEPT_CARDS="${SWEPT_CARDS:-} $key"
+    swept_add "$key"
     next=builder; [ "$(card_lane "$issue")" = qa ] && next=tester
     # Định dạng comment: writing-standard.md § 4.
     gh_checkpoint
@@ -1414,6 +2014,32 @@ Next: ${next} (next tick)" >/dev/null 2>&1 || true
   done <<EOF
 $(printf '%s' "$plan" | jq -r '.sweep[]? | [(.number | tostring), ((.clearedBy // []) | unique | map("#" + tostring) | join(", "))] | @tsv' 2>/dev/null)
 EOF
+  # 24/10 (#321): `resume` = a 🙋 card whose current-head request a trusted human answered `done` (super-board-approval.py,
+  # verified by the deps helper). Only the workflow backend read it, so the legacy runner never acted on an approval and
+  # #321 sat Blocked ~18 h. Back to Review, where the Reviewer re-checks the approval at the merge gate. Once per card.
+  local akey why
+  while IFS=$'\t' read -r issue akey why; do
+    [ -n "$issue" ] || continue
+    key="${issue}:resume:${akey:-none}"   # one move per approval (head + request id): a later approval moves it again
+    if swept_seen "$key"; then continue; fi
+    item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+    [ -n "$item_id" ] || continue
+    if ! set_card_status "$item_id" "Review"; then
+      gh_checkpoint
+      log "⚠ blocked sweep: could not move approved #${issue} to Review"
+      continue
+    fi
+    swept_add "$key"
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Review · approval verified
+Did: super-board-approval.py: ${why:-approval verified}
+✅ Done: card moved Blocked → Review
+Next: reviewer re-checks the approval and merges through the merge gate" >/dev/null 2>&1 || true
+    log "↩ approved #${issue}: Blocked → Review (${why:-approval verified})"
+    moved=0
+  done <<EOF
+$(printf '%s' "$plan" | jq -r '.resume[]? | [(.number | tostring), (if (.key // "") == "" then "none" else .key end), (.why // "")] | @tsv' 2>/dev/null)
+EOF
   return "$moved"
 }
 
@@ -1424,7 +2050,8 @@ maybe_sweep_blocked() {
   # thử lại sau SWEEP_RETRY_SECONDS, không phải đợi tới lần có thẻ về Done kế tiếp.
   # ponytail: blocker đóng ngoài board (tập Done không đổi) phải chờ lần về Done sau; sweep theo sự kiện issue nếu việc này gây kẹt.
   local sig rc=0
-  sig=$(done_signature)
+  # #235: cộng thêm tập thẻ Blocked để thẻ vừa bị chặn được gắn nhãn chờ ngay, không phải đợi thẻ Done kế tiếp.
+  sig="$(done_signature)|$(echo "$PROJECT_ITEMS_JSON" | jq -r '[.items[] | select(.status == "Blocked") | .content.number // empty] | sort | @csv' 2>/dev/null)"
   if [ "$sig" = "${SWEEP_DONE_SIG-<none>}" ]; then
     [ "${SWEEP_RETRY_AT:-0}" -gt 0 ] && [ "$(date +%s)" -ge "$SWEEP_RETRY_AT" ] || return 1
   fi
@@ -1456,7 +2083,7 @@ backlog_ticket_gaps() {
             | (if $e == null then $t else $t[:$e] end) end;
       [ (if (sect("Problem") // [] | any(.[]; test("\\S"))) then empty else "Problem" end),
         (if (sect("Fix") // [] | any(.[]; test("\\S"))) then empty else "Fix" end),
-        (if (sect("Acceptance Criteria") // [] | any(.[]; test("^[ \t]*[-*][ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
+        (if (sect("Acceptance Criteria") // [] | any(.[]; test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
       | join(", ")'
 }
 
@@ -1464,24 +2091,15 @@ pull_backlog_cards() {
   # #189: Ready rỗng mà lane build còn worker rảnh thì kéo thẻ Backlog lên Ready (bug trước, rồi thứ tự bảng), tối đa
   # BUILD_WORKERS - BUILD_COUNT - READY thẻ. Chỉ kéo thẻ không assignee, không chờ người (needs-you/human-gated), không wontfix /
   # loop:halted, đủ Problem/Fix/AC; thẻ thiếu bị comment lý do MỘT lần mỗi nội dung (sổ $INFLIGHT_DIR/backlog-skip). Thẻ đã CLOSED
-  # về Done, không đếm vào trần. Tải máy >= build_load_max (hoặc không đọc được) chỉ cho kéo 1 thẻ khi lane rỗng hẳn.
+  # về Done, không đếm vào trần.
   # Trả 0 khi bảng đã đổi (caller đọc lại), 1 khi không có gì.
   # ponytail: tối đa 20 thẻ xét mỗi tick (mỗi thẻ 2 lần đọc REST); Backlog dài hơn thì tick sau xét tiếp từ đầu — đổi sang con trỏ khi cần.
-  local want load moved=1 tried=0 issue item_id body gaps stamp issue_rc cap_one=0 busy
+  local want moved=1 tried=0 issue item_id body gaps stamp issue_rc busy
   backlog_pull_enabled || return 1
   [ "${BUILD_COUNT:-0}" -lt "$BUILD_WORKERS" ] || return 1
   busy=$(( ${BUILD_COUNT:-0} + ${READY:-0} ))
   want=$(( BUILD_WORKERS - busy ))
   [ "$want" -gt 0 ] || return 1
-  load=$(build_load_now)
-  case "$load" in
-    ''|*[!0-9.]*|*.*.*|.) cap_one=1 ;;
-    *) awk -v l="$load" -v m="$BUILD_LOAD_MAX" 'BEGIN { exit !(l < m) }' || cap_one=1 ;;
-  esac
-  if [ "$cap_one" -eq 1 ]; then
-    [ "$busy" -eq 0 ] || return 1
-    want=1
-  fi
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] && [ -n "$item_id" ] || continue
     [ "$want" -gt 0 ] && [ "$tried" -lt 20 ] || break
@@ -1505,7 +2123,7 @@ pull_backlog_cards() {
         gh_checkpoint
         gh_write_once issue comment "$issue" --body "[orchestrator] [report] ⏸ not pulled from Backlog · ticket incomplete
 Did: checked the body before moving it to Ready
-❌ Not done: missing section(s): ${gaps} (Problem, Fix and Acceptance Criteria with at least one bullet are required)
+❌ Not done: missing section(s): ${gaps} (Problem, Fix and Acceptance Criteria with at least one item, a dash or star bullet or a numbered line such as 1. or 1), are required)
 Next: fill the missing section(s); the next tick pulls it" >/dev/null 2>&1 || true
         printf '%s' "$stamp" > "$INFLIGHT_DIR/backlog-skip/$issue"
         log "backlog pull: #${issue} skipped — missing ${gaps}"
@@ -1543,9 +2161,9 @@ EOF
 # đích) · stopped (người dùng dừng: có stop marker <slug>.stopped của super-board-stop.sh). Watchdog chỉ khởi động lại
 # running/crashed khi không có marker.
 # Mã dừng có chủ đích sau khi trap EXIT được đặt: 9 verification-ready (mỗi tick) · 10 skills-readiness · 73 worker mồ
-# côi / worktree cũ / runner khác còn sống · 74 wave lock · 75 guard production-merge · 79 GitHub halt. 64 không có ở đây:
+# côi / worktree cũ / runner khác còn sống · 74 wave lock · 75 guard production-merge · 76 GitHub halt whose record could not be written (never restarted: the uncertain write needs a person) · 79 GitHub halt. 64 không có ở đây:
 # nó cũng là lỗi đọc của github-read (payload sai dạng 3 lần), thường tạm thời, nên watchdog thử lại có backoff và trần.
-RUNNER_HALT_CODES=" 9 10 73 74 75 79 "
+RUNNER_HALT_CODES=" 9 10 73 74 75 76 79 "
 # Môi trường runner trả lại khi watchdog khởi động lại (toolchain + cấu hình pool/account). Token và secret cố ý không
 # ghi xuống đĩa: gh và claude đọc chúng từ keychain, mà launchd agent trong phiên GUI của người dùng vẫn đọc được.
 RUNNER_ENV_KEYS="PATH JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT SB_ACCOUNT_POOL SB_STATE_DIR CLAUDE_CONFIG_DIR DEVKIT_LANG"
@@ -1605,17 +2223,94 @@ RECLAIM_MOVED=0
 LANDED_COUNT=0
 DISPATCH_LOG=""
 
+# ── Tự nạp lại code mới (#229, gap 4 của #226). Runner là bash chạy dài: PR sửa chính super-board-run.sh merge xong mà tiến trình vẫn
+# chạy bản cũ cho tới khi ai đó dừng/chạy lại tay. Lúc rảnh (không worker nào, lock nào) mỗi tick fetch origin/<base>; blob của script trên
+# origin khác blob đang chạy thì: main checkout fast-forward được (đang ở <base>, HEAD là tổ tiên của origin) → ff rồi exec lại chính nó
+# (cùng PID, nên bản ghi watchdog vẫn đúng; SB_WATCHDOG_START=1 nạp lại bộ đếm và không xoá stop marker). Gộp xung đột/gate đỏ, ff không áp
+# được hoặc bản mới sai cú pháp → notify một lần cho mỗi bản origin, tiếp tục chạy bản cũ: không restart mù, không chạy code cũ im lặng.
+# ponytail: chỉ nạp lại khi rảnh hoàn toàn; board luôn có worker thì chờ tới lúc rảnh, nâng lên khi thấy board bận liên tục.
+RELOAD_SELF="${RELOAD_SELF:-$SCRIPT_DIR/super-board-run.sh}"
+RELOAD_RUN_SUM="${RELOAD_RUN_SUM:-$(git hash-object "$RELOAD_SELF" 2>/dev/null || true)}"
+RELOAD_WARNED=""
+RELOAD_NEXT_CHECK=0
+reload_exec() {
+  runner_state_write running
+  SB_WATCHDOG_START=1 SB_RELOADED=1 exec bash "$1" "$CONFIG_SLUG"
+}
+reload_warn() {
+  # $1 = blob của script trên origin, $2 = lý do. Một cảnh báo cho mỗi bản origin.
+  [ "$RELOAD_WARNED" != "$1" ] || return 0
+  RELOAD_WARNED="$1"
+  log "⚠ self-reload: origin/${BASE_BRANCH} has a newer super-board-run.sh but this runner keeps the old code — $2"
+  board_notify send --card "$CONFIG_SLUG" --text "runner đang chạy code cũ: origin/${BASE_BRANCH} có super-board-run.sh mới nhưng không nạp được — $2"
+}
+reload_finish_main() {
+  # Worktree tạm tại HEAD của main (không phải origin/<base>: finish coi worktree ở origin là PR đã squash và từ chối), gộp origin vào đó
+  # rồi finish (gate, fast-forward main). Xung đột/gate đỏ → khác 0, main giữ nguyên.
+  local ak wt rc out
+  if [ -n "${SB_WORKTREE_CMD:-}" ]; then read -r -a ak <<<"$SB_WORKTREE_CMD"
+  elif command -v agent-kit >/dev/null 2>&1; then ak=(agent-kit worktree); else ak=(python3 .agents/devkit/scripts/git/worktree.py); fi
+  wt=".claude/worktrees/self-reload-$$-$(date +%s)"   # exec giữ PID: hậu tố thời gian để bản mồ côi của lần trước không chặn lần này
+  out=$("${ak[@]}" add "$wt" 2>&1) || { log "⚠ self-reload: cannot create worktree $wt: $(printf '%s' "$out" | tail -c 300)"; return 1; }
+  if git -C "$wt" merge --no-edit -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
+    out=$("${ak[@]}" finish "$wt" 2>&1); rc=$?
+  else
+    git -C "$wt" merge --abort >/dev/null 2>&1; rc=1
+  fi
+  [ "$rc" -eq 0 ] || log "⚠ self-reload: merge origin/${BASE_BRANCH} / worktree finish $wt failed (rc=$rc): $(printf '%s' "$out" | tail -c 300)"
+  # finish thành công đã gỡ worktree; chỉ gỡ khi thư mục còn đó
+  [ ! -d "$wt" ] || "${ak[@]}" remove "$wt" >/dev/null 2>&1 || log "⚠ self-reload: worktree remove $wt failed; left for the cleanup hook"
+  return "$rc"
+}
+self_reload_tick() {
+  local now new disk rel cur
+  [ "${ACTIVE_WORKERS:-0}" -eq 0 ] || return 0
+  [ -n "$RELOAD_RUN_SUM" ] || return 0
+  now=$(date +%s)
+  [ "$now" -ge "$RELOAD_NEXT_CHECK" ] || return 0
+  RELOAD_NEXT_CHECK=$((now + ${SB_RELOAD_EVERY:-${TICK_SECONDS:-120}}))
+  rel=$(git ls-files --full-name -- "$RELOAD_SELF" 2>/dev/null | head -1) || rel=""
+  [ -n "$rel" ] || return 0
+  git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 fetch -q origin "$BASE_BRANCH" >/dev/null 2>&1 \
+    || { log "⚠ self-reload: git fetch origin ${BASE_BRANCH} failed; retrying next check"; return 0; }
+  new=$(git rev-parse -q --verify "origin/${BASE_BRANCH}:${rel}" 2>/dev/null) || return 0
+  [ "$new" != "$RELOAD_RUN_SUM" ] || return 0
+  disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
+  if [ "$disk" != "$new" ]; then
+    cur=$(git symbolic-ref -q --short HEAD 2>/dev/null) || cur=""
+    if [ "$cur" != "$BASE_BRANCH" ]; then
+      reload_warn "$new" "main checkout is on branch '${cur:-detached}', not ${BASE_BRANCH}; bring it level, then the next idle tick reloads"
+      return 0
+    fi
+    if git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null; then
+      git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1 \
+        || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+    else
+      # Main có commit cục bộ của phiên khác (#308): gộp origin vào main bằng đường finish (worktree tạm + gate + ff), không đụng tay.
+      reload_finish_main \
+        || { reload_warn "$new" "main has local commits and merging origin/${BASE_BRANCH} through worktree finish failed (conflict, red gate or dirty files in the way)"; return 0; }
+    fi
+    disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || disk=""
+    [ "$disk" = "$new" ] || { reload_warn "$new" "after the fast-forward the file on disk still differs from origin"; return 0; }
+  fi
+  bash -n "$RELOAD_SELF" 2>/dev/null || { reload_warn "$new" "the new script fails bash -n"; return 0; }
+  log "♻ self-reload: origin/${BASE_BRANCH} changed super-board-run.sh (${RELOAD_RUN_SUM:0:7} → ${new:0:7}) and no worker is running — restarting on the new code"
+  reload_exec "$RELOAD_SELF"
+}
+
 # Sourced by the gate tests (`SB_LIB_ONLY=1 . scripts/super-board-run.sh`) to exercise
 # the helpers above without starting a run. Executing the script normally is unaffected.
 if [ "${SB_LIB_ONLY:-0}" = "1" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
-# A readiness/read failure stops only workers launched by this dispatcher. Keep their
+# A readiness failure (9, 10) stops only workers launched by this dispatcher. Keep their
 # locks, worktrees, claims, and approval evidence for explicit recovery.
+# A GitHub halt (79) does NOT stop workers (#306): they share the github-read layer and stop themselves at
+# check_halt, and the next runner adopts the survivors as after a crash. Killing them lost the work done mid-lane.
 halt_cleanup() {
   local rc=$?
-  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || ! python3 "$SB_GITHUB_READ" --check >/dev/null 2>&1; then
+  if [ "$rc" -eq 9 ] || [ "$rc" -eq 10 ] || [ "$rc" -eq 76 ]; then   # 76: no halt record on disk, so workers cannot see a halt: stop them here
     for pid in $(own_lane_pids); do
       kill -TERM "$pid" 2>/dev/null || true
     done
@@ -1652,6 +2347,8 @@ stop_in_flight() {
 }
 if [ "${SB_WATCHDOG_START:-0}" = "1" ]; then
   START_TAG=" (watchdog restart)"
+  [ "${SB_RELOADED:-0}" != "1" ] || START_TAG=" (self-reload)"
+  unset SB_RELOADED
   if [ -e "$STOP_MARK" ]; then
     log "🛑 watchdog restart refused: board ${CONFIG_SLUG} was stopped by the user ($STOP_MARK); only an explicit super-board run starts it"
     exit 0
@@ -1789,10 +2486,10 @@ while true; do
   [ "$QA_COUNT" -eq 0 ] || QA_IDLE=0
   [ "$REVIEW_COUNT" -eq 0 ] || REVIEW_IDLE=0
 
-  ACTIVE_WORKERS=0
-  [ "$BUILD_COUNT" -eq 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))   # lane build = 1 slot của max_workers dù chạy N worker: build_workers là trần riêng, không bỏ đói QA/Review
-  [ "$QA_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
-  [ "$REVIEW_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+  ACTIVE_WORKERS=$(( BUILD_COUNT + QA_COUNT + REVIEW_COUNT ))   # một trần chung cho cả 3 lane
+
+  # Rảnh hoàn toàn (không worker nào): nạp lại code nếu super-board-run.sh trên origin đã đổi (#229). Có thể exec và không quay lại.
+  self_reload_tick
 
   # Đang hoãn sau RUNAWAY: không giao được gì nên chỉ đọc board thưa (paused_tick). Kiểm trước nhánh cap-reached:
   # runaway thường xảy ra khi cả 3 lane đều bận, và lúc đó vẫn phải quét zombie trên dữ liệu mới.
@@ -1808,39 +2505,39 @@ while true; do
   #    The board can't change in a way that helps us until a lane frees up.
   #    QA/Review còn chỗ thêm worker (qa_workers/review_workers > số đang chạy) thì KHÔNG coi là đầy: worker thêm không tốn slot lane (#209).
   #    Trần mặc định 1 thì QA_COUNT>=QA_WORKERS khi lane bận, nên điều kiện này đúng như cũ.
-  if [ "$ACTIVE_WORKERS" -ge "$MAX_WORKERS" ] && [ "$QA_COUNT" -ge "$QA_WORKERS" ] && [ "$REVIEW_COUNT" -ge "$REVIEW_WORKERS" ]; then
-    log "tick — cap reached (${ACTIVE_WORKERS}/${MAX_WORKERS} busy) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
+  if tick_is_cheap; then
+    log "tick — cap reached (machine at ${MAX_WORKERS} workers, ${ACTIVE_WORKERS} here) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
     tick_sleep "$TICK_SECONDS"
     continue
   fi
 
   # ── Expensive-tick path: we have capacity, fetch real state.
-  gh_rate_guard
-  fetch_project_items
+  tick_guard || continue
+  tick_fetch || continue
 
   # Re-sweep zombies against fresh cache; the previous sweep used stale data.
   sweep_lane_zombies
   RECLAIM_MOVED=0
   reclaim_dead_builds
-  if [ "$RECLAIM_MOVED" = 1 ]; then fetch_project_items; fi
+  if [ "$RECLAIM_MOVED" = 1 ]; then tick_fetch || continue; fi
+  NOOP_MOVED=0
+  block_noop_workers
+  if [ "$NOOP_MOVED" = 1 ]; then tick_fetch || continue; fi
   BUILD_IDLE=1; QA_IDLE=1; REVIEW_IDLE=1
   build_workers_count
   [ "$BUILD_COUNT" -eq 0 ] || BUILD_IDLE=0
   lane_workers_count qa; lane_workers_count review
   [ "$QA_COUNT" -eq 0 ] || QA_IDLE=0
   [ "$REVIEW_COUNT" -eq 0 ] || REVIEW_IDLE=0
-  ACTIVE_WORKERS=0
-  [ "$BUILD_COUNT" -eq 0 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))   # lane build = 1 slot của max_workers dù chạy N worker: build_workers là trần riêng, không bỏ đói QA/Review
-  [ "$QA_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
-  [ "$REVIEW_IDLE" -eq 1 ] || ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
+  ACTIVE_WORKERS=$(( BUILD_COUNT + QA_COUNT + REVIEW_COUNT ))   # một trần chung cho cả 3 lane
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
-  if maybe_sweep_blocked; then fetch_project_items; fi
+  if maybe_sweep_blocked; then tick_fetch || continue; fi
 
   count_board
 
   # #189: lane build còn worker rảnh mà Ready không đủ việc thì kéo thẻ Backlog đủ AC lên (cờ backlog_pull).
-  if pull_backlog_cards; then fetch_project_items; count_board; fi
+  if pull_backlog_cards; then tick_fetch || continue; count_board; fi
 
   log "tick — Ready=$READY Building=$BUILDING QA=$QA Review=$REVIEW Blocked=$BLOCKED lanes: b_idle=$BUILD_IDLE(#${BUILD_ISSUE:-_}${BUILD_EXTRA:+ +${BUILD_EXTRA}}) b_workers=${BUILD_COUNT}/${BUILD_WORKERS} q_idle=$QA_IDLE(#${QA_ISSUE:-_}${QA_EXTRA:+ +${QA_EXTRA}}) q_workers=${QA_COUNT}/${QA_WORKERS} r_idle=$REVIEW_IDLE(#${REVIEW_ISSUE:-_}${REVIEW_EXTRA:+ +${REVIEW_EXTRA}}) r_workers=${REVIEW_COUNT}/${REVIEW_WORKERS} waiting_on_you=$WAITING"
 
@@ -1873,7 +2570,7 @@ while true; do
   QA_FREE=0; QA_DISPATCHED=0
   if [ "$QA" -gt 0 ]; then lane_dispatch_tick qa QA; QA_DISPATCHED=$LANE_DISPATCHED; fi
   # Thẻ Ready mang nhãn `qa` đi vào lane QA: chỉ khi tick này lane QA chưa nhận thẻ nào và còn chỗ.
-  if [ "$QA_DISPATCHED" -eq 0 ] && lane_slot_free qa; then QA_FREE=1; fi
+  if [ "$QA_DISPATCHED" -eq 0 ] && ready_qa_lane_free "$READY"; then QA_FREE=1; fi
   # Ready: the top card's label picks the lane — `qa` skips Building (Tester),
   # anything else is built first. A busy lane waits for the next tick.
   # Lane build: worker đầu như trước; worker thêm (build_workers > 1) chỉ khi tải máy cho phép (build_slot_free, một worker mỗi tick).

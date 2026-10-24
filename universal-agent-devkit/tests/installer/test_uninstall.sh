@@ -163,6 +163,33 @@ ls "$P/.claude/" | grep -q "settings_old.uninstall-" && ok "settings.json backed
 refs="$(dangling_hook_refs "$P")"
 [ -z "$refs" ] && ok "edited project: no settings entry points at a removed hook" || bad "dangling hook refs: $refs"
 
+# .gitattributes of the matrix merge driver (23/10, review): the user's other lines survive byte for byte (CRLF, no final newline),
+# a dry-run changes neither the file nor the repo config, a symlinked .gitattributes is kept, an unwritable one is kept (no crash),
+# and a run from a subdirectory of the git root finds the file the installer wrote.
+ATTR=".agents/regression_matrix.active.json merge=devkit-matrix"
+mkattr() { # <dir> <content-printf-format>: a git project with the driver config and a .gitattributes
+  mkdir -p "$1" && git -C "$1" init -q . && git -C "$1" config merge.devkit-matrix.driver "true %O"
+  printf "$2" > "$1/.gitattributes"
+}
+A="$TMP/attr1"; mkattr "$A" "*.png binary\r\n$ATTR\r\nfoo"
+sum_before="$(shasum < "$A/.gitattributes")"
+bash "$DEVKIT/bin/agent-kit" uninstall "$A" >/dev/null 2>&1
+[ "$(shasum < "$A/.gitattributes")" = "$sum_before" ] && [ -n "$(git -C "$A" config --get merge.devkit-matrix.driver)" ] \
+  && ok "attr: dry-run leaves .gitattributes and merge.devkit-matrix config alone" || bad "attr: dry-run changed something"
+bash "$DEVKIT/bin/agent-kit" uninstall "$A" --apply >/dev/null 2>&1
+[ "$(cat "$A/.gitattributes")" = "$(printf '*.png binary\r\nfoo')" ] && [ -z "$(git -C "$A" config --get merge.devkit-matrix.driver)" ] \
+  && ok "attr: --apply drops only the driver line (CRLF, no final newline kept) and the config section" || bad "attr: apply result: $(od -c "$A/.gitattributes" | head -3)"
+A="$TMP/attr2"; mkdir -p "$A/sub"; mkattr "$A" "$ATTR\n"
+bash "$DEVKIT/bin/agent-kit" uninstall "$A/sub" --apply >/dev/null 2>&1
+[ ! -e "$A/.gitattributes" ] && ok "attr: from a subdirectory the git root's file is found and removed when it held only that line" || bad "attr: subdirectory run left the file"
+A="$TMP/attr3"; mkattr "$A" "x\n"; printf '%s\n' "$ATTR" > "$TMP/attr3-target"; rm "$A/.gitattributes"; ln -s "$TMP/attr3-target" "$A/.gitattributes"
+bash "$DEVKIT/bin/agent-kit" uninstall "$A" --apply >/dev/null 2>&1
+[ "$(cat "$TMP/attr3-target")" = "$ATTR" ] && ok "attr: a symlinked .gitattributes is kept, its target untouched" || bad "attr: symlink target changed"
+A="$TMP/attr4"; mkattr "$A" "keep\n$ATTR\n"; chmod 444 "$A/.gitattributes"; chmod 555 "$A"
+out="$(bash "$DEVKIT/bin/agent-kit" uninstall "$A" --apply 2>&1)"; rc=$?
+chmod 755 "$A"; chmod 644 "$A/.gitattributes"
+[ "$rc" -eq 0 ] && ! echo "$out" | grep -q Traceback && ok "attr: an unwritable .gitattributes is reported, no traceback" || bad "attr: unwritable: rc=$rc $(echo "$out" | tail -3)"
+
 # CLI guards
 bash "$DEVKIT/bin/agent-kit" uninstall "$DEVKIT" --apply >/dev/null 2>&1
 [ $? -eq 2 ] && ok "refuses to uninstall the DevKit from itself (exit 2)" || bad "uninstall on the DevKit itself"

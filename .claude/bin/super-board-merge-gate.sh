@@ -157,6 +157,8 @@ fi
 CONFIG_JSON=$(cat "$CONFIG")
 printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
+PROJECT_OWNER=$(echo "$CONFIG_JSON" | jq -r '.project.owner // ""')
+PROJECT_NUMBER=$(echo "$CONFIG_JSON" | jq -r '.project.number // ""')
 REPO=$(echo "$CONFIG_JSON" | jq -r '.repo.remote // ""' | sed -E 's#^https?://github\.com/##; s#\.git$##')
 REPO_PATH=$(echo "$CONFIG_JSON" | jq -r '.repo.path // "."')
 export SB_REPO_PATH="$REPO_PATH"
@@ -177,6 +179,7 @@ python3 "$GITHUB_READ" --check
 LOCK_DIR="${REPO_PATH}/.claude/super-board/inflight/merge.lock"
 mkdir -p "$(dirname "$LOCK_DIR")"
 
+. "$HERE/super-board-verify-flags.sh"
 say() { echo "[merge-gate #${PR}] $*" >&2; }
 # Notices use the existing bot config. A missing token, or SB_NOTIFY_SKIP=1, does not change the exit.
 board_notify() {
@@ -339,8 +342,8 @@ fi
 
 # ---- chờ máy bớt tải trước verify ------------------------------------------------
 # 19/10: verify --full chạy lúc tải 1 phút ~60 (5 board cùng build), REG-DK-ALL-01 của PR #87 chọn 127 test và quá 900 s, thẻ #12
-# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX, không đặt thì `merge_load_max` của config board, thiếu nữa thì 2 × số lõi
-# (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
+# quay về Ready mãi. Chờ tải xuống dưới SB_MERGE_LOAD_MAX, không đặt thì `merge_load_max` của config board, thiếu nữa thì capacity
+# hold_load (T0052, 8 × lõi, 12 lõi: 96 — verify là việc bắt buộc), capacity vắng thì cùng công thức 8 × số lõi (20/10, người dùng: "dưới 100 thì cho chạy" — máy tải 45–86 cả ngày, 2 × lõi = 24 không bao giờ đạt nên PR nào cũng chờ hết giờ chờ); tối
 # đa SB_MERGE_LOAD_WAIT_S, không đặt thì
 # `merge_load_wait_s` của config board (thiếu = 0 = không chờ: board tự bật; test dựng config tạm không có khoá nên không chờ, và
 # không phải đặt biến trong thư viện test dùng chung — sửa file đó kéo cả 291 test DevKit vào REG-DK-ALL-01, 19/10).
@@ -376,8 +379,13 @@ wait_for_load() {
   else say "SB_MERGE_LOAD_POLL_S='${poll}' is not a positive number; polling every 30s"; poll=30; fi
   if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
   else
-    [ -n "$max" ] && say "${max_src}='${max}' is not a positive number; using 2 x cores"
-    max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 2 ))
+    [ -n "$max" ] && say "${max_src}='${max}' is not a positive number; using the capacity hold load"
+    # T0052: ngưỡng của việc bắt buộc capacity hold_load (8 × lõi, 12 lõi: 96, cùng ngưỡng với heavy_slot; busy_load 36 chỉ cho
+    # worker tùy chọn của runner); capacity vắng, lỗi hay in rác thì cùng công thức 8 × số lõi (review 23/10: 2 × lõi cũ = 24 không
+    # bao giờ đạt trên máy này, mọi PR lại chờ hết merge_load_wait_s — đúng lỗi T0052 sửa).
+    max=$("${SB_CAPACITY:-$HERE/super-board-capacity.py}" hold_load 2>/dev/null) || max=""
+    if [[ "$max" =~ ^[0-9]{1,6}$ ]] && [ $((10#$max)) -gt 0 ]; then max=$((10#$max))
+    else max=$(( $(python3 -c 'import os; print(os.cpu_count() or 4)' 2>/dev/null || echo 4) * 8 )); fi
   fi
   while :; do
     # Khoá được giữ cả lúc chờ: làm mới mốc "at" để gate khác không coi nó là khoá bỏ quên. Ghi hỏng không phải lý do bỏ verify.
@@ -397,7 +405,17 @@ wait_for_load() {
     sleep "$nap"; waited=$(( waited + nap )); LOAD_WAITED=$waited
   done
 }
-wait_for_load
+# #288: biên nhận của merge train đã chứng minh đúng cây này thì verify bị bỏ, nên không chờ tải: mỗi PR của đợt từng chờ tới
+# merge_load_wait_s để rồi không chạy gì. Cây dự kiến = merge-tree(base, head), đúng cây train ghi (và cây merge scratch bên dưới).
+SKIP_LOAD_WAIT=0
+if [ "$DRY" -ne 1 ] && [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
+  PRE_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
+  if [ -n "$PRE_TREE" ] && git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null; then
+    [ "$PRE_TREE" != "$(git -C "$REPO_PATH" merge-tree --write-tree "origin/${BASE}" "$HEAD_SHA" 2>/dev/null)" ] || SKIP_LOAD_WAIT=1
+  fi
+fi
+if [ "$SKIP_LOAD_WAIT" -eq 1 ]; then LOAD_WAITED=0; LOAD_WAIT_ON=0; say "train receipt matches the tree to merge: verify will be skipped, not waiting for the load"
+else wait_for_load; fi
 # Đã chờ thì PR có thể đã đổi: đọc lại head và trạng thái, không verify code không còn là PR.
 if [ "${LOAD_WAITED:-0}" -gt 0 ]; then
   NOW_HEAD=$(pr_head) || exit $?
@@ -430,14 +448,22 @@ fi
 # Nhánh chậm hơn base nhưng merge scratch sạch: đẩy fast-forward lên đúng nhánh PR
 # rồi mới verify. Timeout phía dưới vẫn thử lại một lần. Không --force.
 MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
-TRAIN_PROVED=0
+TRAIN_PROVED=0; TREE_PROVED=0
 if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
   TRAIN_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
   [ -z "$TRAIN_TREE" ] || [ "$TRAIN_TREE" != "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" ] || TRAIN_PROVED=1
 fi
+# #226 gap 7: biên nhận theo cây gộp. Verify xanh ghi <git common dir>/super-board/verified-trees/<sha256(tree + lệnh verify)>; lượt gate sau
+# (vd. lượt trước thoát exit 4 sau verify) trên đúng cây gộp và đúng bộ lệnh bỏ verify. Base đổi, head đổi hay lệnh đổi: khoá khác, verify đủ.
+TREE_RECEIPT=$(sb_verified_tree_receipt "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
+TREE_KEY=${TREE_RECEIPT##*/}
+if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
 if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
-  if git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
+  if [ "$DRY" -eq 1 ]; then
+    # --dry-run không ghi lên remote: đầu PR đổi thì --expect-head của lần gọi thật sau đó thoát exit 6 (head moved).
+    say "dry run: ${HEAD_REF} is ${BEHIND_NOW} commit(s) behind ${BASE}; the real run would update it to ${MERGED_SHA} (nothing pushed)"
+  elif git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
     say "updated ${HEAD_REF} in place ${HEAD_SHA} -> ${MERGED_SHA} (clean merge of ${BASE}, no --force)"
     HEAD_SHA=$MERGED_SHA
   else
@@ -598,35 +624,153 @@ is_verify_timeout() {
   fi
   grep -aqE "TIMEOUT after|quá giới hạn" "$wt_log" 2>/dev/null
 }
-for cmd in "${VERIFY[@]}"; do
-  if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
-  if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
-    flags=""
-    [[ "$cmd" == *"--diff"* ]] || flags=" --diff origin/${BASE}"
-    [[ "$cmd" == *"--force-full"* ]] || flags="$flags --force-full"
-    if [ -n "$flags" ]; then
-      # Cờ chèn ngay sau token post-fix-gate.py (#102): nối vào cuối thì `… post-fix-gate.py --run-tests && npm test` đưa cờ cho npm,
-      # `bash -c '…'` đưa cờ cho bash. Lệnh chỉ có một lệnh (phần sau token không có ; & | < > " ' ) }) giữ như cũ: cờ ở cuối.
-      # Không tách được token: để nguyên và cảnh báo (không nối cờ vào lệnh khác).
-      pfg_re="(^|[[:space:]\"'\`(){};&|=<>])[^[:space:]\"'\`(){};&|=<>]*post-fix-gate[.]py(\$|[[:space:]\"'\`(){};&|<>])"
-      if [[ "$cmd" =~ $pfg_re ]]; then
-        pfg_after="${cmd#*"${BASH_REMATCH[0]}"}"
-        pfg_end=$(( ${#cmd} - ${#pfg_after} - ${#BASH_REMATCH[2]} ))
-        pfg_rest="${cmd:$pfg_end}"
-        if [[ "$pfg_rest" == *[\;\&\|\<\>\"\'\)\}]* ]]; then
-          cmd="${cmd:0:$pfg_end}${flags}${pfg_rest}"
-        else
-          cmd="$cmd$flags"
-        fi
-      else
-        say "warning: cannot locate the post-fix-gate.py token in the verify command; --diff/--force-full not added: ${cmd}"
-      fi
-    fi
-    # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
+# #251: verify đỏ vì suite đã đỏ SẴN trên origin/<base> không phải lỗi của PR. Suite đỏ = dòng `[ ] FAIL | <id>` trong log gate
+# đã REJECT (exit 1) với lớp tĩnh "đạt"; trạng thái khác (TIMEOUT, UNTESTED, NOT RUN, FAIL_INFRA…) hay thiếu dòng kết luận → không phân loại
+# được (fail-closed). In ra id suite, mỗi dòng một id; thoát 1 khi không có suite đỏ hoặc không phân loại được.
+gate_red_suite_ids() {
+  local log_file="$1"
+  LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$log_file" 2>/dev/null | LC_ALL=C awk '
+    /(KẾT LUẬN CỔNG POST-FIX AUDIT|POST-FIX AUDIT GATE VERDICT):.*REJECT/ { rej = 1 }
+    /^[[:space:]]*• (Lớp tĩnh|Static checks) \(.*\): / {
+      if (static != 2) static = ($0 ~ /: (đạt|passed)[[:space:]]*$/) ? 1 : 2
+    }
+    /^[[:space:]]*\[ \] [^|]*\|/ {
+      split($0, parts, "|"); st = parts[1]; sub(/^[[:space:]]*\[ \][[:space:]]*/, "", st); sub(/[[:space:]]+$/, "", st)
+      if (st != "FAIL") odd = 1
+      id = parts[2]; sub(/^[[:space:]]+/, "", id); sub(/[[:space:]].*$/, "", id)
+      if (id == "") odd = 1; else ids[++n] = id
+    }
+    END { if (!(rej && static == 1 && n > 0 && !odd)) exit 1; for (i = 1; i <= n; i++) print ids[i] }'
+}
+
+# Chạy lệnh suite trên cây base trong scratch (giới hạn 900 s như gate), trong nhóm tiến trình riêng bị kill cả nhóm khi quá giờ,
+# env không có GIT_* / POSTFIX_GATE_FORCE_FULL: 1 = đỏ thật, 0 = xanh, 2 = không chạy được (126/127), 124 = quá giờ.
+run_suite_on_base() {
+  ( cd "$SCRATCH" && python3 -I -c '
+import os, signal, subprocess, sys
+env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "POSTFIX_GATE_FORCE_FULL"}
+p = subprocess.Popen(sys.argv[1], shell=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+try:
+    rc = p.wait(timeout=900)
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL)
+    p.wait()
+    sys.exit(124)
+sys.exit(2 if rc in (126, 127) else (1 if rc else 0))' "$1" )
+}
+
+# Mở thẻ bug riêng cho suite đỏ sẵn trên base (không trùng: bỏ qua nếu đã có thẻ mở nhắc id đó). Lỗi mở thẻ → return 1.
+file_red_on_base_card() {
+  local id="$1" name="$2" url found
+  if [ "$DRY" -eq 1 ]; then say "dry run: would file a bug card for ${id} (red on origin/${BASE})"; return 0; fi
+  found=$(gh issue list ${REPO:+--repo "$REPO"} --state open --label bug --search "\"${id}\" in:title" --json number --jq length 2>/dev/null) || found=""
+  # Tra cứu lỗi (mạng, rate limit) không phải "chưa có thẻ": mở thẻ ở đây có thể trùng; không chứng minh được → giữ PR đỏ.
+  if ! [[ "$found" =~ ^[0-9]+$ ]]; then say "could not look up open cards for ${id}; not filing, PR stays red"; return 1; fi
+  if [ "$found" != 0 ]; then
+    say "open card for ${id} already exists; not filing another"; return 0
   fi
+  url=$(gh issue create ${REPO:+--repo "$REPO"} --label bug \
+    --title "🐛 [fix] suite ${id} đỏ sẵn trên ${BASE}" \
+    --body "## Problem
+Merge gate (PR #${PR}) thấy suite \`${id}\` (${name}) đỏ cả trên cây gộp lẫn trên origin/${BASE}: lỗi có sẵn, không do PR. PR vẫn được merge.
+
+## Context
+- **Where:** suite \`${id}\` trong \`.agents/regression_matrix.active.json\`
+  - a. Phát hiện ở merge gate PR #${PR} (#251)
+- **Who:** Lập trình viên / Agent
+
+## Fix
+Tìm nguyên nhân gốc vì sao \`${id}\` đỏ trên ${BASE} và sửa tại đó.
+
+## Acceptance Criteria
+- [ ] Test: \`${id}\` xanh trên origin/${BASE}.
+- [ ] Gate --full exit 0.
+
+## Risk
+🟡 Medium
+
+## Blocked by
+- None." 2>/dev/null) || { say "could not file the bug card for ${id}"; return 1; }
+  say "filed ${url} for ${id} (red on origin/${BASE})"
+  if [ -n "$PROJECT_OWNER" ] && [ -n "$PROJECT_NUMBER" ]; then
+    gh project item-add "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --url "$url" >/dev/null 2>&1 \
+      || say "could not add ${url} to project ${PROJECT_OWNER}/${PROJECT_NUMBER}; the issue exists"
+  fi
+  return 0
+}
+
+# #251 R1: post-fix-gate.py xét REJECT TRƯỚC các điều kiện CHƯA XÁC MINH (ma trận không tin được, test đã có bị sửa, file không đọc được, test
+# mới mồ côi, code chưa có test, không suite nào khớp): khi có suite đỏ, log chỉ còn REJECT và các điều kiện đó chưa từng được đánh giá. Dòng JSON
+# cuối của `--json` vẫn mang chúng. Chỉ khi JSON có mặt và mọi điều kiện sạch (trường thiếu = không sạch) mới coi REJECT là chỉ do suite đỏ.
+gate_masked_conditions_clean() {
+  local line
+  line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$1" 2>/dev/null | tail -1) || return 1
+  [ -n "$line" ] || return 1
+  printf '%s' "$line" | jq -e '(.matrix_problem // "x") == "" and ((.tests_touched // ["x"]) | length) == 0 and ((.unreadable // ["x"]) | length) == 0
+    and ((.uncovered // ["x"]) | length) == 0 and ((.orphan_tests // ["x"]) | length) == 0 and (.busy == false) and (.budget_exhausted == false)
+    and ((.regression_tests // []) | length) > 0' >/dev/null 2>&1
+}
+
+# Verify đỏ (exit $1, log $2, lệnh $3): mọi suite đỏ cũng đỏ trên origin/<base> (scratch reset về BASE_SHA, chạy lệnh trong ma trận
+# CỦA BASE, rồi trả về MERGED_SHA)? Có → mở thẻ cho từng suite, return 0 (không REJECT PR). Mọi trường hợp khác → return 1: giữ kết quả
+# đỏ như cũ. Fail-closed: lệnh verify ghép nhiều lệnh (`; & | < >` hay xuống dòng: lệnh khác có thể chưa chạy hay đỏ vì PR); suite
+# không có trong ma trận của base hay có lệnh khác với cây gộp (PR thêm/sửa suite thì PR chịu); suite xanh, quá giờ hay không chạy
+# được trên base.
+red_only_on_base() {
+  local rc="$1" log_file="$2" vcmd="$3" ids id bcmd mcmd name p all_red=1 sr pfg_cmd_re
+  local base_matrix="$SCRATCH/.red-on-base-matrix.json" merged_matrix="$SCRATCH/.agents/regression_matrix.active.json"
+  local jqq='[.. | objects | select(.id? == $id and (.command? | type) == "string")] | first // empty'
+  local ids_list=() names=() cmds=()
+  [ "$rc" -eq 1 ] || return 1
+  case "$vcmd" in *[\;\&\|\<\>]*|*$'\n'*) return 1 ;; esac
+  # R2: không ghép lệnh là chưa đủ: `./scripts/verify.sh`, `make verify` có thể chạy post-fix-gate rồi bước khác cũng exit 1. Phải là chính
+  # post-fix-gate.py (tuỳ chọn biến môi trường VAR=x và python/python3 đứng trước).
+  pfg_cmd_re='^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*(python3?[[:space:]]+(-[A-Za-z]+[[:space:]]+)*)?[^[:space:]]*post-fix-gate[.]py([[:space:]]|$)'
+  [[ "$vcmd" =~ $pfg_cmd_re ]] || return 1
+  gate_masked_conditions_clean "$log_file" || { say "the gate log carries no clean --json (or an UNVERIFIED condition hidden by REJECT); red stays red"; return 1; }
+  [ -f "$merged_matrix" ] || return 1
+  git -C "$SCRATCH" show "${BASE_SHA}:.agents/regression_matrix.active.json" >"$base_matrix" 2>/dev/null || { rm -f "$base_matrix"; return 1; }
+  ids=$(gate_red_suite_ids "$log_file") || { rm -f "$base_matrix"; return 1; }
+  while IFS= read -r id; do
+    bcmd=$(jq -r --arg id "$id" "$jqq | .command" "$base_matrix" 2>/dev/null) || bcmd=""
+    mcmd=$(jq -r --arg id "$id" "$jqq | .command" "$merged_matrix" 2>/dev/null) || mcmd=""
+    if [ -z "$bcmd" ] || [ "$bcmd" != "$mcmd" ]; then
+      say "red suite ${id} is not the same suite in the matrix of origin/${BASE}; the PR owns it"; rm -f "$base_matrix"; return 1
+    fi
+    name=$(jq -r --arg id "$id" "$jqq | .name // \"\"" "$base_matrix" 2>/dev/null) || name=""
+    ids_list+=("$id"); names+=("$name"); cmds+=("$bcmd")
+  done <<<"$ids"
+  rm -f "$base_matrix"
+  git -C "$SCRATCH" reset -q --hard "$BASE_SHA" 2>/dev/null || return 1
+  for p in "${!ids_list[@]}"; do
+    sr=0; run_suite_on_base "${cmds[$p]}" || sr=$?
+    if [ "$sr" -ne 1 ]; then
+      all_red=0
+      if [ "$sr" -eq 0 ]; then say "${ids_list[$p]} is green on origin/${BASE}: the PR broke it"
+      else say "${ids_list[$p]} did not run to a red result on origin/${BASE} (exit ${sr})"; fi
+      break
+    fi
+  done
+  # reset --hard trả file đã track; clean bỏ file chưa track do suite base tạo (file bị ignore như DevKit giữ nguyên).
+  git -C "$SCRATCH" reset -q --hard "$MERGED_SHA" 2>/dev/null && git -C "$SCRATCH" clean -fdq 2>/dev/null \
+    || { say "scratch tree could not be restored to ${MERGED_SHA}"; return 1; }
+  [ "$all_red" -eq 1 ] || return 1
+  for p in "${!ids_list[@]}"; do
+    file_red_on_base_card "${ids_list[$p]}" "${names[$p]}" || return 1
+    say "${ids_list[$p]} is red on origin/${BASE} too: not this PR's fault"
+  done
+  return 0
+}
+
+for cmd in "${VERIFY[@]}"; do
+  if [ "$TREE_PROVED" -eq 1 ]; then say "verify skipped: this exact merged tree was already verified green with the same commands (receipt ${TREE_KEY:0:12})"; break; fi
+  if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
+  cmd=$(sb_verify_inject_flags "$cmd" "$BASE")
+  run_cmd=$(sb_verify_inject_flags "$cmd" "$BASE" json)   # #251 R1: chạy kèm --json, hiển thị/so sánh không có
+  # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
   say "verify: ${cmd}"
   VRC=0
-  run_verify_cmd "$cmd" || VRC=$?
+  run_verify_cmd "$run_cmd" || VRC=$?
   if [ "$VRC" -ne 0 ] && is_verify_timeout "$VRC" "$VERIFY_LOG"; then
     # Suite bị giết giữa chừng có thể để lại file đã track bị sửa, `git add` hay cả commit trong scratch: trả cây và index về đúng
     # commit đã merge (file bị ignore như DevKit, config cục bộ giữ nguyên). Không trả được thì giữ kết quả đỏ của lần 1 (chạy lại
@@ -634,10 +778,15 @@ for cmd in "${VERIFY[@]}"; do
     if git -C "$SCRATCH" reset -q --hard "$MERGED_SHA" 2>/dev/null; then
       say "verify timed out (exit ${VRC}); retrying once: ${cmd}"
       VRC=0
-      run_verify_cmd "$cmd" || VRC=$?
+      run_verify_cmd "$run_cmd" || VRC=$?
     else
       say "verify timed out (exit ${VRC}) but the scratch tree could not be reset; not retrying"
     fi
+  fi
+  if [ "$VRC" -ne 0 ] && red_only_on_base "$VRC" "$VERIFY_LOG" "$cmd"; then
+    say "verify red only on suites that are red on origin/${BASE} too (#251): not rejecting the PR"
+    VRC=0
+    TREE_RECEIPT=""   # verify tolerated red suites: no receipt, the next gate checks them against the base again
   fi
   if [ "$VRC" -ne 0 ]; then
     say "FAILED: ${cmd}"
@@ -668,7 +817,13 @@ for cmd in "${VERIFY[@]}"; do
     exit 11
   fi
 done
-say "verified green against ${BASE} (${#VERIFY[@]} command(s))"
+# #288: tiền tố `verified green against` giữ nguyên (proof_gate.sh đọc nó); phần sau nói thật số lệnh đã chạy ở đây.
+if [ "$TREE_PROVED" -eq 1 ]; then say "verified green against ${BASE} (0 command(s) run here; a receipt of this exact merged tree and commands exists)"
+elif [ "$TRAIN_PROVED" -eq 1 ]; then say "verified green against ${BASE} (0 command(s) run here; the merge train proved this exact tree)"
+else say "verified green against ${BASE} (${#VERIFY[@]} command(s))"; fi
+if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ]; then
+  mkdir -p "${TREE_RECEIPT%/*}" && : > "$TREE_RECEIPT" || say "could not write the verified-tree receipt ${TREE_RECEIPT}; the next gate verifies again"
+fi
 own_lock_or_stop   # verify dài có thể đã để gate khác chiếm khoá: không merge song song với nó
 
 python3 "$GITHUB_READ" --check
@@ -866,7 +1021,11 @@ PY
         # so-và-đổi nguyên tử cho trường hợp này: commit lọt vào khe đó vẫn nằm trong reflog.
         local_tip=$(git -C "$MAIN_PATH" rev-parse "refs/heads/$BASE" 2>/dev/null) || local_tip=""
         origin_tree=$(git -C "$MAIN_PATH" rev-parse "$TARGET_SHA^{tree}" 2>/dev/null) || origin_tree=""
-        merged_tree=$(git -C "$MAIN_PATH" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
+        # #309: cwd = $SCRATCH (cleanup() deletes it): a merge driver killed with the gate leaves its .merge_file_* there, never in $MAIN_PATH.
+        # --attr-source keeps the repo's merge drivers applying, as `git -C "$MAIN_PATH"` did.
+        main_gd=$(git -C "$MAIN_PATH" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || main_gd=""
+        merged_tree=""
+        [ -z "$main_gd" ] || merged_tree=$(cd "$SCRATCH" && git --git-dir="$main_gd" --attr-source="$TARGET_SHA" merge-tree --write-tree "$TARGET_SHA" "$local_tip" 2>/dev/null) || merged_tree=""
         # git < 2.38 không có merge-tree --write-tree: rơi về so cây hai nhánh.
         if [ -z "$merged_tree" ] && git -C "$MAIN_PATH" diff --quiet "$TARGET_SHA" "$local_tip" 2>/dev/null; then merged_tree="$origin_tree"; fi
         # `reset --keep` cũng đặt lại INDEX về commit đích: file phiên khác đã stage (khác HEAD) sẽ rơi khỏi index (thành untracked).
@@ -943,4 +1102,5 @@ while :; do
   fi
   sleep "$MERGE_RECHECK_DELAY"
 done
-python3 "$GITHUB_READ" --halt "Merge response failed and GitHub has not confirmed a merge; reconcile PR #${PR} before restarting. No merge was retried."
+python3 "$GITHUB_READ" --halt "Merge response failed and GitHub has not confirmed a merge; reconcile PR #${PR} before restarting. No merge was retried." \
+  --verify "{\"kind\":\"pr-merged\",\"pr\":${PR}}"

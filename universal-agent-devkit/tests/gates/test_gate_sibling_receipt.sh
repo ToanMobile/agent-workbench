@@ -52,7 +52,8 @@ check() {   # check <tên> <exit mong đợi> <số lần suite chạy THÊM mon
   else echo "✖ $1 (exit $6, mong $2; suite chạy thêm $delta lần, mong $3; nhắc anh em $sib, mong $4)"; printf '%s\n' "$7" | tail -12; FAILS=$((FAILS + 1)); fi
 }
 # xoá mọi biên nhận full-pass của repo (main checkout + mọi worktree): ca sau chỉ còn đúng biên nhận nó tự đặt
-wipe_receipts() { rm -f "$COMMON/postfix-gate/full_pass.json" "$COMMON"/worktrees/*/postfix-gate/full_pass.json; }
+# + store theo cây (#247, tests/gates/test_gate_tree_store_reuse.sh): nó giữ PASS thật của lượt setup nên ca "không mượn được" sẽ mượn từ đó
+wipe_receipts() { rm -f "$COMMON/postfix-gate/full_pass.json" "$COMMON"/worktrees/*/postfix-gate/full_pass.json "$COMMON"/postfix-gate/tree_receipts/*.json; }
 
 b=$(runs); out="$(run_gate "$R")"; rc=$?
 check "setup: --full ở main checkout PASS, suite chạy" 0 1 no "$b" "$rc" "$out"
@@ -74,7 +75,7 @@ printf '%s\n' "$out" | grep -qF "($SIB_MSG: $MAIN_RECEIPT)" && echo "✔ 1. outp
   || fail "2. tiền đề: wt-b không có biên nhận (ca dây chuyền vô nghĩa)"
 grep -q '"project":"wt-b".*"verdict":"REUSED"' "$COMMON/postfix-gate/runs.jsonl" && echo "✔ 2. tiền đề: run-log ghi lượt của wt-b là REUSED" \
   || fail "2. tiền đề: run-log không có dòng REUSED của wt-b"
-rm -f "$MAIN_RECEIPT"
+rm -f "$MAIN_RECEIPT" "$COMMON"/postfix-gate/tree_receipts/*.json   # store theo cây (#247) cũng giữ PASS thật của main checkout
 add_wt wt-c
 b=$(runs); out="$(run_gate "$TMP/wt-c")"; rc=$?
 check "2. biên nhận anh em từ lượt REUSED không được cho mượn: chạy suite" 0 1 no "$b" "$rc" "$out"
@@ -185,6 +186,7 @@ recs=[json.loads(l) for l in open(sys.argv[3]) if l.strip()]
 e=[x["epoch"] for x in recs if x.get("project")=="repo" and x.get("verdict")=="REUSED"][-1]
 r=json.load(open(sys.argv[1])); r["time"]=r["tested_at"]=e-0.5; json.dump(r, open(sys.argv[2], "w"))' \
   "$LEND" "$MAIN_RECEIPT" "$COMMON/postfix-gate/runs.jsonl" || fail "14. setup"
+rm -f "$COMMON"/postfix-gate/tree_receipts/*.json   # #247: store theo cây giữ PASS thật của main checkout; ca này chỉ xét luật run-log của biên nhận anh em
 add_wt wt-o
 b=$(runs); out="$(run_gate "$TMP/wt-o")"; rc=$?
 check "14. dòng run-log đầu tiên sau biên nhận là REUSED: không cho mượn, chạy suite" 0 1 no "$b" "$rc" "$out"
@@ -226,7 +228,7 @@ printf '%s\n' "$out" | grep -qF "chạy thật 1 suite" && echo "✔ 18. output 
 #      reused_full_pass của dòng run-log chặn.
 python3 -c 'import json,sys; p=sys.argv[1]; r=json.load(open(p)); r["tested_at"]=r["time"]-1; json.dump(r, open(p, "w"))' "$(receipt_of "$TMP/wt-t")" \
   || fail "18b. setup: không sửa được tested_at của wt-t"
-rm -f "$MAIN_RECEIPT"   # chỉ còn biên nhận của wt-t
+rm -f "$MAIN_RECEIPT" "$COMMON"/postfix-gate/tree_receipts/*.json   # chỉ còn biên nhận của wt-t (store theo cây #247 giữ bản chép dây chuyền của nó, hợp lệ: tests/gates/test_gate_tree_store_reuse.sh ca 2)
 add_wt wt-u
 b=$(runs); b2=$(runs2); out="$(run_gate "$TMP/wt-u")"; rc=$?
 check "18b. biên nhận của lượt mượn một phần không cho mượn tiếp: REG-1 chạy" 0 1 no "$b" "$rc" "$out"
@@ -306,7 +308,7 @@ COMMON2="$(git -C "$R2" rev-parse --path-format=absolute --git-common-dir)"
 WT2A_RECEIPT="$COMMON2/worktrees/wt2-a/postfix-gate/full_pass.json"
 cp "$WT2A_RECEIPT" "$TMP/wt2a.json" || fail "22. setup: wt2-a không có biên nhận"
 for bad in 5 '{"gen/overlay.bin": 1}'; do
-  rm -f "$COMMON2"/worktrees/*/postfix-gate/full_pass.json   # chỉ còn biên nhận giả
+  rm -f "$COMMON2"/worktrees/*/postfix-gate/full_pass.json "$COMMON2"/postfix-gate/tree_receipts/*.json   # chỉ còn biên nhận giả (kể cả store theo cây #247)
   python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); r["local_regen"]=json.loads(sys.argv[3]); json.dump(r, open(sys.argv[2], "w"))' \
     "$TMP/wt2a.json" "$WT2A_RECEIPT" "$bad" || fail "22. setup $bad"
   n=$(( ${n22:-0} + 1 )); n22=$n

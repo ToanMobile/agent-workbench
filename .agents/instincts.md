@@ -486,3 +486,41 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** .claude/bin/super-board-heavy-slot.py tìm bin/heavy_slot.py ở main worktree TRƯỚC (main_wt/universal-agent-devkit), nên test gọi wrapper (test_tests_skip_machine_slots.sh, test_heavy_slot.sh) trong worktree chạy code CŨ của main: P1 bỏ 2 slot mà REG-SB-TEST-SLOT-ISO-01 vẫn XANH ở worktree, ĐỎ ngay khi main được fast-forward (21/10)
 - **Quy tắc phòng ngừa & Cách fix:** Sửa universal-agent-devkit/bin/heavy_slot.py thì chạy lại các test gọi .claude/bin/super-board-heavy-slot.py SAU khi main có code mới (sau worktree finish), trước khi push
 - **Lệnh kiểm tra:** `grep -rlE 'super-board-heavy-slot.py|SLOT_BIN' tests/`
+
+---
+
+### [INSTINCT-058] Một lần đọc GitHub hỏng tạm thời dưới set -e giết runner, watchdog crash-loop rồi bỏ cuộc
+- **Ngày phát hiện:** 2026-10-22
+- **Hiện tượng lỗi:** Một lần đọc GitHub hỏng tạm thời dưới set -e giết runner, watchdog crash-loop rồi bỏ cuộc
+- **Nguyên nhân:** super-board-run.sh chạy set -euo pipefail; fetch_project_items/gh_rate_guard gọi trần trong vòng lặp nên một lần card.sh exit 69 (đọc board lệch số sau khi máy khởi động lại) làm runner chết; watchdog khởi động lại 5 lần, lần nào cũng chết ở lần đọc đầu, rồi bỏ cuộc (22/10 22:05-22:15, #256)
+- **Quy tắc phòng ngừa & Cách fix:** Mọi lệnh đọc mạng trong vòng lặp daemon chạy set -e phải đi qua wrapper: đọc lại có backoff+jitter, hỏng hết lượt thì bỏ tick, có trần số tick bỏ liên tiếp rồi mới thoát; mã halt có chủ đích vẫn dừng. Hàm gọi trong ngữ cảnh || mất errexit nên phải tự kiểm payload. Đổi tên biến bằng sed toàn file shell lớn dễ trúng hàm khác: sửa theo dòng/hàm cụ thể
+
+### [INSTINCT-059] Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu
+- **Ngày phát hiện:** 2026-10-22
+- **Hiện tượng lỗi:** Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu
+- **Nguyên nhân:** Memo hoa cau tra loi dia chi thu muc quan tri ca tien trinh nen khi worktree bi go giua luot gate van dung duong dan cu va tao lai thu muc quan tri (test_gate_project_removed_midrun do); cache in_linked_worktree lam ca commondir bi trong doc cau tra loi cu nen mutant van xanh. Hai loi chi lo khi reviewer chay test co san tren diff; test RED moi cua minh van xanh.
+- **Quy tắc phòng ngừa & Cách fix:** Chi memo hoa cau tra loi tinh va kiem lai thu muc con ton tai (os.path.isdir) truoc khi dung; khong cache trong ham ma test hien co doi bo cuc giua hai lan goi; chay lai test gate va worktree ke can cung mot mutant truoc khi tin test RED sang GREEN cua chinh minh.
+
+---
+
+### [INSTINCT-060] Model 3D cache cũ sau khi dựng lại
+- **Ngày phát hiện:** 2026-10-23
+- **Hiện tượng lỗi:** Model 3D cache cũ sau khi dựng lại
+- **Nguyên nhân:** server trả web/models/*.glb với Cache-Control max-age 1 ngày dưới URL cố định; dựng lại GLB cùng tên thì trình duyệt vẫn dùng bản cũ, nhìn như sửa không có tác dụng
+- **Quy tắc phòng ngừa & Cách fix:** URL tài nguyên tĩnh được cache lâu phải mang dấu vân tay nội dung (tên+kích thước+mtime_ns hoặc hash) do server điền vào trang; kiểm thay đổi hình ảnh bằng chính renderer cuối (three.js trong trang), không bằng ảnh render của công cụ dựng
+
+---
+
+### [INSTINCT-061] Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source
+- **Ngày phát hiện:** 2026-10-23
+- **Hiện tượng lỗi:** Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source
+- **Nguyên nhân:** Test gọi SB_LIB_ONLY=1 . super-board-run.sh; bash giữ phép gán đứng trước builtin '.' chỉ trong lúc source, nên hàm gọi về sau không thấy SB_LIB_ONLY và test đếm slot worker thật trong ~/.claude/super-board-slots (23/10: merge-train bị giữ 3/3 running)
+- **Quy tắc phòng ngừa & Cách fix:** Cần biết lib mode ở thời điểm gọi hàm thì chốt nó bằng một dòng top-level chạy lúc source (SB_SLOT_LIB_MODE="${SB_LIB_ONLY:-0}"); test lib mode bằng một HOME giả có slot sống và kiểm đột biến
+
+---
+
+### [INSTINCT-062] Mở file người dùng ghi được bằng open() không kiểm loại file
+- **Ngày phát hiện:** 2026-10-24
+- **Hiện tượng lỗi:** Mở file người dùng ghi được bằng open() không kiểm loại file
+- **Nguyên nhân:** suite_cache._read_text/_file_digest mở FIFO bằng open() nên chờ mãi; test_gate_robustness treo, REG-DK-ALL-01 TIMEOUT ở mọi giới hạn kể cả máy rảnh. Nới timeout không chữa được; watchdog thì coi halted rc=79 mất file halt là dừng có chủ đích nên board nằm im 5,5 giờ
+- **Quy tắc phòng ngừa & Cách fix:** Mọi chỗ đọc file trong gate/cache kiểm os.path.isfile (hoặc mở O_NONBLOCK) trước; timeout vô hạn dù máy rảnh nghĩa là treo, dùng PYTHONFAULTHANDLER=1 + kill -ABRT lấy stack thay vì tăng giới hạn; rc=79 của runner không bao giờ là dừng có chủ đích

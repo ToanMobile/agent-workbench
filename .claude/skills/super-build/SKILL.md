@@ -15,7 +15,7 @@ Inside `super-board run`, Super Build is the Builder lane: a lane agent in the i
 
 Super Build is the canonical builder. Do not use a separate `build-feature` workflow. If the user wants a one-off feature, first create or curate a GitHub issue/card with clear acceptance criteria, move it to `Ready`, then let Super Build execute it.
 
-Super Build may implement, test, commit, push, open PRs, and move project cards to `QA`. It never merges, closes issues, or moves cards to `Done` — the Reviewer does that through the merge gate. It should not invent new product scope beyond the issue body. If the issue needs product/design/security judgment, apply the human-gate or WIP-partial path instead of guessing.
+Super Build may implement, test, commit, push, open PRs, and move project cards to `QA`. It never merges or moves cards to `Done` — the Reviewer does that through the merge gate. One exception to closing: when every AC is already met on the base branch (checked with a command, output pasted in an issue comment), it closes the issue with no PR (`run.md` → Builder step 3c, "already met") and the runner's reconcile moves the card to Done. It should not invent new product scope beyond the issue body. If the issue needs product/design/security judgment, apply the human-gate or WIP-partial path instead of guessing.
 
 **GitHub budget** — every "move card" is `.claude/bin/super-board-card.sh --config <cfg> move <N> <Status>` (1 GraphQL point; `gh project item-list` / `field-list` cost ~100–200). Comments, labels and PR reads go over REST; [rate-limit-etiquette.md](../super-board/references/rate-limit-etiquette.md) → "Price list" has the calls.
 
@@ -133,7 +133,7 @@ handoff complete. Add file summaries and critical inline notes on the PR, not in
 
 **On dispatcher exit 0 (success):**
 - `git -C .claude/worktrees/issue-N push -u origin loop/issue-N`
-- `gh pr create --draft --base <base-branch> --head loop/issue-N --title "<emoji> [<type>] <scope>: <subject>" --body-file <body.md>` — title in commit-subject format, body = the marker-block template from `skills/super-board/references/run.md` (writing-standard.md § 2), `Closes #N` in the status card, `Docs:` bullets in Solution
+- `gh pr create --draft --base <base-branch> --head loop/issue-N --title "<emoji> [<type>] <scope>: <subject>" --body-file <body.md>` — title in commit-subject format, body = the marker-block template from `skills/super-board/references/run.md` (writing-standard.md § 2), `Closes #N` in the status card (plain text, never in backticks: GitHub does not link a code span), `Docs:` bullets in Solution
 - `gh issue edit N --remove-label loop:in-progress`
 - `gh issue comment N --body "[builder] [report] ✅ built · PR <URL>"` (Next line: `qa`)
 - Move the project card to `QA`. The Tester and Reviewer take it from there; the issue closes when the Reviewer merges through the merge gate.
@@ -302,5 +302,16 @@ Hash inputs (joined with `|`): lane (`build`) | error class | first 3 unique nor
 ### Never merge
 Builder NEVER squash-merges. Reviewer owns merge.
 
+### Too big → split, don't park (#253)
+A card over the size cap that is agent-doable is split by the Builder, not blocked for a person: file each vertical slice with
+`/createTask` (under the cap, own ACs, `Blocked by` the earlier slice), keep the first slice on this card, and say so in the
+`[builder] [report]`. `super-board-needs-you.py mark` refuses "split the card" as a person's step, so a Block ❓ that only says
+"too big" has no way out (#181 sat Blocked two ways on 22/10).
+
+**No line cap → never split for size (24/10, user: "gom lại nhiều nhất có thể, đỡ chạy gate nhiều lần").** When the board's
+`merge_policy.auto_max_lines` is `0`, a card with many deliverables or many AC items is built as ONE PR with ONE `--full`
+gate; never propose child cards, batches "≤ N items per PR" or a split to keep a diff small. Commit per deliverable inside the
+one branch instead. Only a step no agent can do (a real device, real people, a credential) leaves the card, as a `qa` card.
+
 ### Block exits use the §4 mandatory template
-When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template from `.claude/skills/super-board/references/block-template.md`. A 1-line "needs creds" comment is a contract violation. When a person must act (🙋 🧑 🔐 🔑 💳 🎨 🛡, or ❓ waiting on a person's decision), also run `super-board-needs-you.py mark` in the same step (block-template.md → "A person must act").
+When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template (its `blocked-by:` line from `super-board-blocked-by.py`, open issues only) from `.claude/skills/super-board/references/block-template.md`. A 1-line "needs creds" comment is a contract violation. When a person must act (🙋 🧑 🔐 🔑 💳 🎨 🛡, or ❓ waiting on a person's decision), also run `super-board-needs-you.py mark` in the same step (block-template.md → "A person must act").

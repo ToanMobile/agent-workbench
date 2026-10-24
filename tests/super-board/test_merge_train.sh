@@ -149,4 +149,45 @@ reset_run
 [ "$rc" -eq 6 ] && ok "missing pinned head: exit 6 (head moved)" || fail "missing pinned head: exit $rc (want 6): $(tail -4 "$TMP/t9.log")"
 [ -z "$(merged_list)" ] && ok "missing pinned head: nothing merged" || fail "missing pinned head: merged $(merged_list)"
 
+# ── 10. #228 R1: `--prs N:sha` ghim head đã duyệt; PR có head đã dời khỏi sha đó rời đợt (exit 6), không bao giờ merge head chưa ai review.
+card_branch 20 p20; card_branch 21 p21; card_branch 22 p22
+OLD20=$(cat "$TMP/pr20.head"); OLD21=$(cat "$TMP/pr21.head"); OLD22=$(cat "$TMP/pr22.head")
+echo more > "$W/issue-21-build/p21b"; git -C "$W/issue-21-build" add p21b; git -C "$W/issue-21-build" commit -qm "card 21 moved"
+git -C "$W/issue-21-build" push -q origin issue-21-x
+git -C "$R" rev-parse issue-21-x > "$TMP/pr21.head"
+git -C "$R" diff origin/main issue-21-x > "$TMP/pr21.diff"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs "20:$OLD20,21:$OLD21,22:$OLD22" ) >"$TMP/t10.log" 2>&1; rc=$?
+[ "$(merged_list)" = "20 22 " ] && ok "pinned heads: #21 (head moved after approval) did not merge, #20 #22 did" || fail "pinned heads: merged $(merged_list): $(tail -6 "$TMP/t10.log")"
+grep -q "train-result: 21 head-moved" "$TMP/t10.log" && ok "pinned heads: #21 reported head-moved" || fail "pinned heads: no head-moved line: $(grep train "$TMP/t10.log")"
+[ "$rc" -eq 6 ] && ok "pinned heads: train exit 6" || fail "pinned heads: exit $rc (want 6)"
+if origin_has p21b; then fail "pinned heads: the unreviewed head reached origin/main"; else ok "pinned heads: the unreviewed head never reached origin/main"; fi
+# Mọi PR dời head: không merge gì, exit 6.
+card_branch 23 p23; card_branch 24 p24
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs "23:$OLD20,24:$OLD21" ) >"$TMP/t11.log" 2>&1; rc=$?
+[ "$rc" -eq 6 ] && [ -z "$(merged_list)" ] && ok "every head moved: exit 6, nothing merged" || fail "every head moved: exit $rc merged=$(merged_list)"
+# Một PR có ghim: đường gate thường với --expect-head; head dời thì gate từ chối (exit 6) và không merge.
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs "21:$OLD21" ) >"$TMP/t12.log" 2>&1; rc=$?
+[ "$rc" -eq 6 ] && [ -z "$(merged_list)" ] && ok "single pinned PR with a moved head: gate refuses (exit 6)" || fail "single pinned PR: exit $rc merged=$(merged_list): $(tail -4 "$TMP/t12.log")"
+
+# ── 11. #288: nhánh chậm hơn base (main đi tiếp sau khi #30 rẽ ra) + biên nhận đúng: một lần verify cho cả đợt, gate không verify lại.
+card_branch 30 q30
+git -C "$R" fetch -q origin; git -C "$R" worktree add -q --detach "$W/adv" origin/main
+echo adv > "$W/adv/adv"; git -C "$W/adv" add adv; git -C "$W/adv" commit -qm "main moves on"; git -C "$W/adv" push -q origin HEAD:main
+git -C "$R" worktree remove --force "$W/adv"
+card_branch 31 q31
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs 30,31 ) >"$TMP/t13.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(merged_list)" = "30 31 " ] && ok "branch behind base: both PRs merged" || fail "behind base: exit $rc merged=$(merged_list): $(tail -6 "$TMP/t13.log")"
+[ "$(runs)" = 1 ] && ok "  … one verify for the batch (the receipt skipped the gates' own)" || fail "behind base: verify ran $(runs) times"
+grep -q "verify skipped" "$TMP/t13.log" && ok "  … and the gate says it skipped verify" || fail "behind base: no 'verify skipped' line"
+grep -q "verified green against main (0 command(s) run here" "$TMP/t13.log" \
+  && ok "  … without claiming it ran a command" || fail "behind base: $(grep 'verified green' "$TMP/t13.log" | head -2)"
+
+# ── 12. #288: ghi chú ponytail đầu file mô tả đúng hành vi: PR bị gate chặn đã ra khỏi chuỗi trước khi verify (R11), không "vẫn nằm trong chuỗi".
+grep -q "vẫn nằm trong chuỗi verify" "$TRAIN" && fail "the ponytail note at the top still says a gate-blocked PR stays in the verify chain" \
+  || ok "ponytail note matches R11 (blocked PRs leave the chain before verify)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train: all passed" || { echo "❌ test_merge_train: $FAILS failed"; exit 1; }
