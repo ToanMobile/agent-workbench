@@ -157,6 +157,9 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     settings: "\\b(?:settings|cài đặt)\\b",
     native: "\\b(?-i:JNI|NDK)\\b|C\\+\\+",
     content: "\\b(?:[0-9]+ tập|Tập [0-9]|màn [0-9])\\b" };
+  # Shared append-only files every PR touches, each with its own merge driver in .gitattributes: no file overlap
+  # (#226 sat Blocked behind 8 PRs that only shared the matrix).
+  def no_shared: . - [".agents/regression_matrix.active.json", "universal-agent-devkit/tests/lib/test_durations.txt"];
   def too_big:
     sect("Fix") as $fix | sect("Acceptance Criteria") as $ac
     | [ $fix | parts[] | select(test("^#?[0-9]+$|^[0-9a-f]{7,40}$") | not) ] as $items
@@ -243,9 +246,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | [ $cards[] | select((.status as $s | ["Ready","Building","QA","Review"] | index($s)) != null) | .number ] as $active
     | [ $others[] | select($own | not) | select(closes($n) | not) | select(sim(.title; $i.title) < $th)
         | . as $p | [ ($p.files // [])[] | .path ] as $pf
-        # Shared append-only files every PR touches (own merge driver / regenerated): no overlap (#226 sat behind 8 PRs).
-        | ($mine - [".agents/regression_matrix.active.json", "universal-agent-devkit/tests/lib/test_durations.txt",
-                    ".agents/regression_status.json", ".agents/CHECKLIST.md", ".agents/instincts.md"]) as $own_files
+        | ($mine | no_shared) as $own_files
         | ($own_files - ($own_files - $pf)) as $hit
         | select(($hit | length) > 0)
         | { pr: $p.number, files: $hit,
@@ -257,7 +258,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
         + [ $cards[] | select(.number != $n) | { ref: "#\(.number)", kind: "card:\(.status)", title, sim: sim(.title; $i.title) } ]
         | map(select(.sim >= 0.25 and .sim < $th)) | sort_by(-.sim) | .[:5] ) as $near
 
-    | { number: $n, title: $i.title, candidates: $near, blockedBy: [], conflictWith: [], _files: $mine, _own: $own }
+    | { number: $n, title: $i.title, candidates: $near, blockedBy: [], conflictWith: [], _files: ($mine | no_shared), _own: $own }
       + ( if ($done | length) > 0 then
             { verdict: "hold", tag: "done", reason: "already delivered", evidence: $done }
           elif ($busy | length) > 0 then

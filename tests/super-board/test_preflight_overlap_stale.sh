@@ -104,6 +104,13 @@ body3=$'## Problem\nx\n\n## Context\n- **Where:** `.agents/regression_matrix.act
 jq -n --arg b "$body3" '{number:900,title:"runner worker exit diagnostics",body:$b}' > "$TMP/issue-900.json"
 jq -n '[{number:71,title:"unrelated change 71",body:"Closes #901",url:"u",headRefName:"issue-901-x",files:[{path:".agents/regression_matrix.active.json"},{path:".claude/bin/super-board-run.sh"}]}]' > "$TMP/j.json"
 run "$(cat "$TMP/j.json")" '[{"number":900,"title":"runner worker exit diagnostics","status":"Ready"},{"number":901,"title":"other","status":"Building"}]'
-[ "$(blocked)" = "[901]" ] && ok "I: a real code file in the same PR still sequences" || fail "I2: blockedBy=$(blocked), want [901]"
+[ "$(blocked)" = "[901]" ] && ok "I2: a real code file in the same PR still sequences" || fail "I2: blockedBy=$(blocked), want [901]"
+# I3: two cards checked together that only share the matrix are not sequenced behind each other (peer overlap).
+jq -n --arg b "$body2" '{number:899,title:"another kit change",body:$b}' > "$TMP/issue-899.json"
+jq -n --arg b "$body2" '{number:900,title:"runner worker exit diagnostics",body:$b}' > "$TMP/issue-900.json"
+echo '[]' > "$TMP/open.json"; echo '[]' > "$TMP/inflight.json"
+SB_OPEN="$TMP/open.json" bash "$PREFLIGHT" --repo o/r --issues 899,900 --inflight "$TMP/inflight.json" > "$TMP/out.json" 2> "$TMP/err"
+v=$(jq -r '.["900"].verdict' "$TMP/out.json" 2>/dev/null)
+[ "$v" = proceed ] && ok "I3: peers sharing only the matrix are not sequenced" || fail "I3: verdict=$v blockedBy=$(blocked), want proceed"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_preflight_overlap_stale: all passed" || { echo "❌ $FAILS failed"; exit 1; }
