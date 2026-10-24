@@ -80,7 +80,7 @@ fast_allow() { # $1 = trigger ERE
 # ERE has no \b (glibc adds it, macOS regcomp need not). A process substitution <(…) can be a shell's script (`bash <(curl …)`,
 # 2026-10-09, tests/gates/test_git_guard_process_subst.sh): the parser reads it too, and so does `tee >(sh)`, a shell that reads
 # what an output process substitution is fed (tests/gates/test_git_guard_shell_subst.sh). `bash -c "$(…)"` has a `$`: the parser.
-fast_allow 'git|eval|devkit_precommit|hookspath|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
+fast_allow 'git|eval|devkit_precommit|hookspath|pkill|killall|pgrep|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2
@@ -869,6 +869,13 @@ def analyse_simple(tokens, depth):
         CUR_DIR[0] = None if unknown else os.path.join(CUR_DIR[0], os.path.expanduser(tgt))
     if prog == "export" and ALLOW_BRANCH_ENV in rest:
         ALLOW_BRANCH[0] = True
+    # (2026-10-22, #144) kill / wait by process NAME reaches every session on the machine: `pkill -f post-fix-gate` killed the gates
+    # of other boards, `pgrep -f "git push"` matched the push of another session. A PID the session recorded (`kill $pid`, `wait $pid`)
+    # and a plain `pgrep NAME` lookup stay allowed. tests/gates/test_guard_kill_by_name.sh
+    lp = prog.lower()
+    if lp in ("pkill", "killall") or (lp == "pgrep" and any(
+            a == "--full" or (a.startswith("-") and not a.startswith("--") and "f" in a[1:]) for a in rest)):
+        return f"kill theo tên ({lp}) trúng tiến trình của mọi phiên/board khác trên máy"
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there
     # (`$(echo gi)t reset --hard`, 2026-10-09): its output is the program name.
     if prog.startswith("$") or SUBST in prog:
@@ -1507,6 +1514,10 @@ if reason and any(reason.startswith(h) for h in SOLO_HIT):
           "`git push origin <nhánh>`; không push `<sha>:<nhánh>` mà local chưa chứa. Nhánh/worktree mới chỉ khi "
           "User yêu cầu: chạy lại với DEVKIT_ALLOW_BRANCH=1 trước lệnh git. Ngoại lệ đã duyệt sẵn: checkout đang bị phiên khác giữ "
           "-> TỰ chạy `agent-kit worktree add ../<repo>-<việc>` (không phải git worktree add), xong `agent-kit worktree finish <đường dẫn>`.", file=sys.stderr)
+    sys.exit(2)
+if reason and reason.startswith("kill theo tên"):
+    print(f"BLOCKED: {cmd!r} — {reason}. Chạy lệnh nền rồi giữ PID của chính nó: `cmd & pid=$!`, sau đó `wait $pid` / `kill -0 $pid` / "
+          "`kill $pid`. Nếu thực sự cần, User sẽ tự chạy qua prefix \"!\".", file=sys.stderr)
     sys.exit(2)
 if reason:
     # K2/K4 (18/10): ba lệnh kit tự chứng minh không mất gì rồi mới làm đúng việc này; dạng git trần vẫn bị chặn ở đây
