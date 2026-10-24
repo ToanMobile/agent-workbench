@@ -112,8 +112,8 @@ QA="$R/.claude/worktrees/qa-43"; git -C "$R" worktree add -q --detach "$QA" "iss
 git -C "$QA" merge -q --no-edit origin/main
 mkcfg() { python3 -c 'import json,sys; print(json.dumps({"base_branch":"main","repo":{"path":"."},"verify_commands":[sys.argv[1]]}))' "$2" > "$1"; }
 mkcfg "$TMP/cfgqa.json" "$CMD"
-BEFORE=$(runs)
 ( cd "$QA" && bash "$ROOT/.claude/bin/super-board-verify-cmd.sh" --config "$TMP/cfgqa.json" --record ) >"$TMP/qa.out" 2>&1; QRC=$?
+BEFORE=$(runs)   # --record chạy lệnh verify một lần; từ đây merge gate không được chạy thêm
 [ "$QRC" -eq 0 ] && grep -q "recorded" "$TMP/qa.out" && ok "QA --record on a clean merged tree writes a receipt" || fail "QA record (rc=$QRC): $(cat "$TMP/qa.out")"
 gate 43 "$CMD"; F=$(runs)
 [ "$GATE_RC" -eq 0 ] && [ "$F" -eq "$BEFORE" ] && ok "QA recorded this exact tree: merge gate skips verify (runs unchanged)" || fail "gate after QA record (rc=$GATE_RC runs=$F, want 0 and $BEFORE): $(tail -3 "$TMP/gate43.log")"
@@ -142,5 +142,29 @@ mkcfg "$TMP/cfgqc.json" "$CMD"
 python3 -c 'import json; print(json.dumps({"base_branch":"main","repo":{"path":"."},"verify_commands":[]}))' > "$TMP/cfgempty.json"
 ( cd "$QC" && git merge -q --no-edit origin/main && /bin/bash "$ROOT/.claude/bin/super-board-verify-cmd.sh" --config "$TMP/cfgempty.json" --record ) >"$TMP/qe.out" 2>&1; ERC=$?
 [ "$ERC" -eq 0 ] && ok "QA --record with no verify commands exits 0 without a receipt" || fail "empty-commands record (rc=$ERC, want 0): $(cat "$TMP/qe.out")"
+
+# OCR 24/10: --record chạy lệnh verify và chỉ ghi biên nhận khi tất cả exit 0
+mkpr 46
+QD="$R/.claude/worktrees/qa-46"; git -C "$R" worktree add -q --detach "$QD" "issue-46-x"; git -C "$QD" merge -q --no-edit origin/main
+echo 1 > "$TMP/verify-rc"
+mkcfg "$TMP/cfgqd.json" "$CMD"
+N0=$(ls "$R/.git/super-board/verified-trees" | wc -l)
+( cd "$QD" && bash "$ROOT/.claude/bin/super-board-verify-cmd.sh" --config "$TMP/cfgqd.json" --record ) >"$TMP/qd.out" 2>&1; XRC=$?
+N1=$(ls "$R/.git/super-board/verified-trees" | wc -l)
+[ "$XRC" -eq 11 ] && [ "$N1" -eq "$N0" ] && ok "--record with a red verify command: exit 11, no receipt" || fail "red record (rc=$XRC receipts $N0->$N1, want 11 and unchanged): $(tail -3 "$TMP/qd.out")"
+echo 0 > "$TMP/verify-rc"
+
+# OCR 24/10: đổi module cạnh post-fix-gate.py (suite_cache.py…) đổi khoá; thiếu công cụ sha256 thì không có đường dẫn
+K="$TMP/kitrepo"; mkdir -p "$K/.agents/devkit/bin"; git init -q "$K"; echo x > "$K/.agents/devkit/bin/post-fix-gate.py"; echo m1 > "$K/.agents/devkit/bin/suite_cache.py"
+. "$ROOT/.claude/bin/super-board-verify-flags.sh"
+K1=$(sb_verified_tree_receipt tree1 main "$K" "$CMD"); echo m2 > "$K/.agents/devkit/bin/suite_cache.py"; K2=$(sb_verified_tree_receipt tree1 main "$K" "$CMD")
+[ -n "$K1" ] && [ "$K1" != "$K2" ] && ok "editing a kit module next to post-fix-gate.py changes the receipt key" || fail "kit module edit left the key unchanged ($K1 vs $K2)"
+NOSHA="$TMP/nosha"; mkdir -p "$NOSHA"; for t in git cut sort dirname; do ln -s "$(command -v $t)" "$NOSHA/$t"; done
+K3=$(PATH="$NOSHA" sb_verified_tree_receipt tree1 main "$K" "$CMD"); [ -z "$K3" ] && ok "no sha256 tool: no receipt path (never a bare directory)" || fail "no sha256 tool printed '$K3'"
+
+# OCR 24/10: biên nhận cũ hơn 14 ngày bị dọn khi một verify xanh ghi biên nhận mới
+VT="$R/.git/super-board/verified-trees"; : > "$VT/stale-old"; touch -t 202001010000 "$VT/stale-old"
+mkpr 47; gate 47 "$CMD"
+[ ! -e "$VT/stale-old" ] && ok "a green verify prunes receipts older than 14 days" || fail "stale receipt survived the prune"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_gate_verified_tree: all passed" || { echo "❌ test_merge_gate_verified_tree: $FAILS failed"; exit 1; }
