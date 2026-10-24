@@ -17,6 +17,24 @@ set -u
 DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 [ -d "$DEVKIT_ROOT/profiles" ] || DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$DEVKIT_ROOT/scripts/governance/i18n.sh" 2>/dev/null || source "$DEVKIT_ROOT/scripts/i18n.sh"
+# The hooks are shared by every worktree of a repo. Run from a LINKED worktree, the kit path above is that worktree's: once
+# it is removed every commit and merge through the hooks fails (#307, 24/10). Write the main checkout's copy instead.
+# Main = the first `git worktree list` entry (handles separate-git-dir; a bare entry has no kit and fails the -f below).
+_kit_top="$(git -C "$DEVKIT_ROOT" rev-parse --show-toplevel 2>/dev/null)"
+_main_top="$(git -C "$DEVKIT_ROOT" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+if [ -n "$_kit_top" ] && [ -n "$_main_top" ]; then
+  _main_top="$(cd "$_main_top" 2>/dev/null && pwd -P)"
+  _kit_top="$(cd "$_kit_top" 2>/dev/null && pwd -P)"
+  _main_kit="$_main_top${DEVKIT_ROOT#"$_kit_top"}"
+  # Only when main's copy has every body the hooks run (an older main may lack one); new or legacy layout each.
+  _has() { [ -f "$_main_kit/scripts/$1/$2" ] || [ -f "$_main_kit/scripts/$2" ]; }
+  case "$DEVKIT_ROOT" in "$_kit_top" | "$_kit_top"/*)   # the kit is the repo itself, or a folder in it
+    if [ -n "$_kit_top" ] && [ -n "$_main_top" ] && [ "$_kit_top" != "$_main_top" ] && _has git git-pre-commit.sh \
+      && _has git git-commit-msg.sh && _has governance relink_check.py; then
+      DEVKIT_ROOT="$_main_kit"
+    fi ;;
+  esac
+fi
 MARKER="universal-agent-devkit:githook"
 BODY="$DEVKIT_ROOT/scripts/git/git-pre-commit.sh"
 [ -f "$BODY" ] || BODY="$DEVKIT_ROOT/scripts/git-pre-commit.sh"
