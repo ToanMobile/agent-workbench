@@ -155,7 +155,10 @@ def read_new(path: Path, offsets: dict, since: float):
         return [], 0.0
     end = chunk.rfind(b"\n") + 1                      # dòng đang ghi dở (chưa có \n) cũng để lượt sau
     offsets[key] = {"ino": st.st_ino, "off": start + end, "mtime": st.st_mtime, "read_at": read_at}
-    return chunk[:end].decode("utf-8", "replace").splitlines(), after
+    head = 0
+    if start == st.st_size - MAX_READ and start > 0:  # bị kẹp vào giữa một dòng: bỏ mẩu dòng cụt ở đầu
+        head = chunk.find(b"\n") + 1
+    return chunk[head:end].decode("utf-8", "replace").splitlines(), after
 
 
 def classify_board(line: str):
@@ -186,15 +189,19 @@ def classify_tracebacks(lines: list[str]):
         if not TRACEBACK.match(lines[i]):
             i += 1
             continue
-        frame, j, found = "", i + 1, False
+        frames, j, found = [], i + 1, False
         while j < len(lines) and j < i + 200 and not (j > i + 1 and TRACEBACK.match(lines[j])):
             fm = FRAME.match(lines[j])
             if fm:
-                frame = f"{Path(fm.group(1)).name}:{fm.group(2)}"
+                frames.append(f"{Path(fm.group(1)).name}:{fm.group(2)}")
             em = EXC_LINE.match(lines[j])
             if em and not lines[j].startswith(" "):
-                out.append(("traceback", f"Python lỗi trong {frame or '?'}: {em.group(1)[:60]}", 1,
-                            f"{frame} {em.group(1).split(':')[0]}", "\n".join(lines[i:j + 1])))
+                # Lên repo PUBLIC chỉ có tên file:hàm của từng frame + LOẠI exception: thông điệp lỗi và dòng code
+                # có thể mang dữ liệu của repo app (đường dẫn tương đối, giá trị, tên khoá).
+                exc = em.group(1).split(":")[0]
+                frame = frames[-1] if frames else "?"
+                out.append(("traceback", f"Python {exc} trong {frame}", 1, f"{frame} {exc}",
+                            "Traceback: " + " → ".join(frames[-8:]) + f" → {exc}"))
                 found = True
                 break
             j += 1
@@ -438,6 +445,11 @@ def status() -> int:
 def main() -> int:
     args = sys.argv[1:]
     cmd = args[0] if args and not args[0].startswith("-") else "scan"
+    if cmd == "scan" and "--quiet" in args:   # chạy nền từ hook: tách khỏi nhóm tiến trình của hook, không bị giết theo nó
+        try:
+            os.setsid()
+        except OSError as e:                  # đã là trưởng session (chạy tay): giữ nguyên
+            print(f"devkit_incident: setsid skipped: {e}", file=sys.stderr)
     try:
         if cmd == "status":
             return status()

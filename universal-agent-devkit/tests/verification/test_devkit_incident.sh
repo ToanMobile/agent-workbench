@@ -243,14 +243,20 @@ n=$(creates)
 echo "[18:00:00] .claude/bin/super-board-card.sh: line 99: syntax error near unexpected token \`done'" >> "$MB"
 scan >/dev/null
 [ "$(creates)" = $((n + 2)) ] && ok "shell-error: 2 script → 2 thẻ, cùng script → 1" || fail "shell-error chữ ký: create=$(creates) (trước $n)"
+# Dòng manifest dài: khoá nằm >1200 ký tự trước đuôi giá trị — cắt trước rồi mới che thì mất tên khoá, đuôi LEAKMARK7 lọt.
+kname="api""_key"   # ghép lúc chạy: fixture giả, không phải secret tĩnh trong file
+printf '[18:10:00] ⚠ self-reload: long config {"%s": "%sLEAKMARK7"}\n' "$kname" "$(printf 'p%.0s' $(seq 1 1300))" >> "$MA"
+# Traceback: thông điệp exception và dòng code (dữ liệu repo app) không lên issue public, chỉ frame + loại exception.
 { echo 'Traceback (most recent call last):'
   echo "  File \"/x/.agents/devkit/hooks/review_gate.py\", line 5, in main"
-  # khoá nằm >1200 ký tự trước đuôi giá trị: cắt trước rồi mới che thì mất tên khoá, đuôi LEAKMARK7 lọt
-  kname="api""_key"   # ghép lúc chạy: fixture giả, không phải secret tĩnh trong file
-  printf '    cfg = {"%s": "%sLEAKMARK7"}\n' "$kname" "$(printf 'p%.0s' $(seq 1 1300))"
-  echo 'ValueError: bad config'; } >> "$A/.claude/audit-gate/review_gate.log"
+  echo '    open("docs/private-feature/plan-SECRETAPP.md")'
+  echo "FileNotFoundError: [Errno 2] No such file: 'docs/private-feature/plan-SECRETAPP.md'"; } >> "$A/.claude/audit-gate/review_gate.log"
 scan >/dev/null
 grep -q 'LEAKMARK7' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "secret bị cắt đôi rồi lọt" || ok "che trước khi cắt: secret không lọt"
+grep -q 'SECRETAPP' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "thông điệp exception / dòng code lọt lên issue" \
+  || ok "Traceback chỉ mang frame + loại exception"
+grep -q 'FileNotFoundError trong review_gate.py:main' "$TMP/home/ledger.json" && ok "tiêu đề Traceback: loại exception + frame" \
+  || fail "tiêu đề Traceback sai"
 
 # 20. Traceback cụt (không có dòng exception) ngay trước một Traceback đầy đủ: cái sau vẫn thành thẻ;
 #     một file log không đọc được (chmod 000) không làm mất sự cố của các file khác trong cùng lượt.
