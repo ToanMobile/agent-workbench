@@ -122,7 +122,7 @@ for f in scripts/git/githooks.sh scripts/git/git-pre-commit.sh scripts/git/git-c
   cp "$DEVKIT_DIR/$f" "$M/kit/$f" 2>/dev/null
 done
 touch "$M/kit/profiles/.keep"
-( cd "$M" && git init -q -b main . && git config user.email t@t && git config user.name t \
+( cd "$M" && git init -q . && git config user.email t@t && git config user.name t \
   && git add -A && git commit -qm init --no-verify && git worktree add -q "$PT/wt-fallback" HEAD ) >"$TMP/setup.log" 2>&1
 bash "$PT/wt-fallback/kit/scripts/git/githooks.sh" install "$PT/wt-fallback" >"$TMP/install.log" 2>&1
 HOOKS="$(git -C "$M" rev-parse --path-format=absolute --git-common-dir)/hooks"
@@ -130,9 +130,16 @@ if grep -q "$PT/wt-fallback" "$HOOKS/pre-commit" "$HOOKS/commit-msg" 2>/dev/null
   fail "hooks installed from a worktree point at that worktree: $(grep -h "$PT/wt-fallback" "$HOOKS/commit-msg" | head -1)"
 else
   grep -q "$M/kit/scripts/git/git-commit-msg.sh" "$HOOKS/commit-msg" 2>/dev/null \
+    && grep -q "$M/kit/scripts/git/git-pre-commit.sh" "$HOOKS/pre-commit" 2>/dev/null \
     && ok "hooks installed from a worktree fall back to the main checkout's kit" \
-    || fail "commit-msg fallback names neither the worktree nor main ($(tail -2 "$TMP/setup.log" "$TMP/install.log" 2>/dev/null | tr "\n" " "))"
+    || fail "fallback names neither the worktree nor main ($(tail -2 "$TMP/setup.log" "$TMP/install.log" 2>/dev/null | tr "\n" " "))"
 fi
+# Main's copy lacks the hook body (older main): keep the worktree's own path rather than one that does not exist.
+rm -f "$M/kit/scripts/git/git-pre-commit.sh"
+bash "$PT/wt-fallback/kit/scripts/git/githooks.sh" install "$PT/wt-fallback" >"$TMP/install.log" 2>&1
+grep -q "$PT/wt-fallback/kit/scripts/git/git-pre-commit.sh" "$HOOKS/pre-commit" 2>/dev/null \
+  && ok "main without the hook body: the worktree's kit path is kept" \
+  || fail "main without the hook body: pre-commit fallback is $(grep -ho '/[^ ]*git-pre-commit.sh' "$HOOKS/pre-commit" | head -1)"
 git -C "$M" worktree remove --force "$PT/wt-fallback" >/dev/null 2>&1
 
 if [ "$FAILS" -ne 0 ]; then
