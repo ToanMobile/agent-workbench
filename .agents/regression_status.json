@@ -110,7 +110,12 @@
         "mcp-servers/antigravity-pm-mcp/src/lint-diff.js",
         "mcp-servers/antigravity-pm-mcp/src/report.js",
         "mcp-servers/antigravity-pm-mcp/tests/report-lint-diff.test.js"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827850.510806
+      }
     },
     "REG-AUTO-PLAY-STORE-MCP-01": {
       "id": "REG-AUTO-PLAY-STORE-MCP-01",
@@ -170,6 +175,15 @@
         "mcp-servers/play-store-mcp/*.ts",
         "mcp-servers/play-store-mcp/*.tsx",
         "mcp-servers/play-store-mcp/*.vue"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827850.766148
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        "mcp-servers/play-store-mcp/tests/test_integration_credentials.py"
       ]
     },
     "REG-DK-GATE-01": {
@@ -252,7 +266,17 @@
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827850.881621
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/tree_fp.py"
+      ]
     },
     "REG-DK-GATE-02": {
       "id": "REG-DK-GATE-02",
@@ -334,7 +358,17 @@
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827850.906226
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/tree_fp.py"
+      ]
     },
     "REG-DK-HOOK-01": {
       "id": "REG-DK-HOOK-01",
@@ -416,8 +450,17 @@
       "impacted_at": "2026-10-20 00:14:58",
       "stale_since": "2026-10-20 00:14:58",
       "stale_files": [
-        "universal-agent-devkit/hooks/regression_gate.sh"
-      ]
+        "universal-agent-devkit/hooks/agent_bridge.sh",
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/guard-protected-push.py",
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/proof_gate.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.271446
+      }
     },
     "REG-DK-HOOK-02": {
       "id": "REG-DK-HOOK-02",
@@ -499,8 +542,17 @@
       "impacted_at": "2026-10-20 00:14:58",
       "stale_since": "2026-10-20 00:14:58",
       "stale_files": [
-        "universal-agent-devkit/hooks/regression_gate.sh"
-      ]
+        "universal-agent-devkit/hooks/agent_bridge.sh",
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/guard-protected-push.py",
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/proof_gate.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.290696
+      }
     },
     "REG-DK-HEALTH-01": {
       "id": "REG-DK-HEALTH-01",
@@ -583,7 +635,12 @@
       "stale_since": "2026-10-20 00:14:58",
       "stale_files": [
         "universal-agent-devkit/bin/agent-health.py"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.1593118
+      }
     },
     "REG-DK-ALL-01": {
       "id": "REG-DK-ALL-01",
@@ -662,7 +719,12 @@
       "watch_files": [
         "universal-agent-devkit/*"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827850.8343942
+      }
     },
     "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du": {
       "id": "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du",
@@ -782,6 +844,17 @@
         ".mcp.json",
         "mcp_config.json",
         "AGENTS.md"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827852.4815612
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/settings.json",
+        ".mcp.json",
+        "AGENTS.md"
       ]
     },
     "BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh": {
@@ -811,18 +884,12 @@
         "universal-agent-devkit/hooks/tests/hook_contract_test.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 18:07:03",
-        "ts": 1791544023.8331158,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/hooks/tests/hook_contract_test.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 11:39:15",
+        "ts": 1792816755.040663,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/hooks/tests/hook_contract_test.sh": "5e3dc258af8ad418",
-          ".agents/local/red-patches/BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh.patch": "8386d44460352e4a"
-        },
-        "log": ".agents/evidence/redproof-BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh/20261009-181041.log",
-        "patch": ".agents/local/red-patches/BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh.patch"
+        "patch": ".agents/local/red-patches/BUG-20260926-dev-kit-lam-tao-branch-push-lung-tung-kh.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/hooks/block-dangerous-git.sh"
       }
     },
     "BUG-20260928-san-check-luon-chat-luong-dev-kit-workfl": {
@@ -850,18 +917,12 @@
         "universal-agent-devkit/tests/gates/test_gate_friction.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 18:01:07",
-        "ts": 1791543667.210471,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_gate_friction.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 11:40:55",
+        "ts": 1792816855.746091,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/gates/test_gate_friction.sh": "43eeb5e0c671d9df",
-          ".agents/local/red-patches/BUG-20260928-san-check-luon-chat-luong-dev-kit-workfl.patch": "17ebf98e963428f7"
-        },
-        "log": ".agents/evidence/redproof-BUG-20260928-san-check-luon-chat-luong-dev-kit-workfl/20261009-180602.log",
-        "patch": ".agents/local/red-patches/BUG-20260928-san-check-luon-chat-luong-dev-kit-workfl.patch"
+        "patch": ".agents/local/red-patches/BUG-20260928-san-check-luon-chat-luong-dev-kit-workfl.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/hooks/regression_gate.sh"
       }
     },
     "BUG-20260928-audit-review-them-geely-ex2-hien-no-bao": {
@@ -889,18 +950,12 @@
         "universal-agent-devkit/tests/gates/test_gate_friction.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:55:24",
-        "ts": 1791543324.794452,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_gate_friction.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 11:39:16",
+        "ts": 1792816756.498455,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/gates/test_gate_friction.sh": "43eeb5e0c671d9df",
-          ".agents/local/red-patches/BUG-20260928-audit-review-them-geely-ex2-hien-no-bao.patch": "17ebf98e963428f7"
-        },
-        "log": ".agents/evidence/redproof-BUG-20260928-audit-review-them-geely-ex2-hien-no-bao/20261009-180103.log",
-        "patch": ".agents/local/red-patches/BUG-20260928-audit-review-them-geely-ex2-hien-no-bao.patch"
+        "patch": ".agents/local/red-patches/BUG-20260928-audit-review-them-geely-ex2-hien-no-bao.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/hooks/regression_gate.sh"
       }
     },
     "BUG-20260928-push-geely-va-fix-luon-loi-red-proof": {
@@ -928,17 +983,17 @@
         "universal-agent-devkit/tests/verification/test_red_proof.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:38:20",
-        "ts": 1791542300.4999292,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/verification/test_red_proof.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 11:39:19",
+        "ts": 1792816759.4316642,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/verification/test_red_proof.sh": "2e7d76faf72495d0",
+          "universal-agent-devkit/tests/verification/test_red_proof.sh": "8c5231f1cafbbca8",
           ".agents/local/red-patches/BUG-20260928-push-geely-va-fix-luon-loi-red-proof.patch": "769f1e4de8bae050"
         },
-        "log": ".agents/evidence/redproof-BUG-20260928-push-geely-va-fix-luon-loi-red-proof/20261009-174029.log",
+        "log": ".agents/evidence/redproof-BUG-20260928-push-geely-va-fix-luon-loi-red-proof/20261024-114055.log",
         "patch": ".agents/local/red-patches/BUG-20260928-push-geely-va-fix-luon-loi-red-proof.patch"
       }
     },
@@ -967,18 +1022,12 @@
         "universal-agent-devkit/tests/gates/test_gate_friction.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 18:25:03",
-        "ts": 1791545103.595975,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_gate_friction.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 11:39:17",
+        "ts": 1792816757.933328,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/gates/test_gate_friction.sh": "43eeb5e0c671d9df",
-          ".agents/local/red-patches/BUG-20260928-fix-luon-loi-git-guard-chan-grep-di-ngoa.patch": "5b6e8fc0ac78a602"
-        },
-        "log": ".agents/evidence/redproof-BUG-20260928-fix-luon-loi-git-guard-chan-grep-di-ngoa/20261009-182605.log",
-        "patch": ".agents/local/red-patches/BUG-20260928-fix-luon-loi-git-guard-chan-grep-di-ngoa.patch"
+        "patch": ".agents/local/red-patches/BUG-20260928-fix-luon-loi-git-guard-chan-grep-di-ngoa.patch",
+        "reason": "patch không áp được lên code hiện tại: error: repository lacks the necessary blob to perform 3-way merge.\nFalling back to direct application...\nerror: patch failed: universal-agent-devkit/hooks/block"
       }
     },
     "BUG-VACUITY-SINCE-BASE": {
@@ -1041,12 +1090,18 @@
         "universal-agent-devkit/tests/gates/test_regression_gate_hook.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:55:19",
-        "ts": 1791543319.9059782,
-        "status": "INCONCLUSIVE",
-        "mode": "revert",
-        "fix_commit": "a49bc13",
-        "reason": "revert a49bc13 xung đột với code hiện tại: universal-agent-devkit/bin/post-fix-gate.py"
+        "at": "2026-10-24 11:40:56",
+        "ts": 1792816856.526734,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/gates/test_regression_gate_hook.sh": "cf95303295c24990",
+          ".agents/local/red-patches/BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses.patch": "b27949d3a0223e37"
+        },
+        "log": ".agents/evidence/redproof-BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses/20261024-114634.log",
+        "patch": ".agents/local/red-patches/BUG-20260929-audit-review-nguyen-nhan-tai-sao-cac-ses.patch"
       }
     },
     "BUG-20261001-lam-luon-fix-bug-worktree-di": {
@@ -1113,17 +1168,17 @@
         "universal-agent-devkit/tests/installer/test_platform_rules.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:48:38",
-        "ts": 1791542918.065422,
+        "at": "2026-10-24 14:45:17",
+        "ts": 1792827917.786345,
         "status": "PROVEN",
         "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/installer/test_platform_rules.sh": "b7cf38142281f985",
+          "universal-agent-devkit/tests/installer/test_platform_rules.sh": "fa8f98ed504e4c56",
           ".agents/local/red-patches/BUG-20261001-sua-luon-bug-init-xoa-mcp-server-di.patch": "af18ece8a80b9291"
         },
-        "log": ".agents/evidence/redproof-BUG-20261001-sua-luon-bug-init-xoa-mcp-server-di/20261009-175104.log",
+        "log": ".agents/evidence/redproof-BUG-20261001-sua-luon-bug-init-xoa-mcp-server-di/20261024-145202.log",
         "patch": ".agents/local/red-patches/BUG-20261001-sua-luon-bug-init-xoa-mcp-server-di.patch"
       }
     },
@@ -1205,7 +1260,17 @@
         "universal-agent-devkit/bin/session_lock.py",
         "universal-agent-devkit/bin/post-fix-gate.py"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.335572
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/session_lock.py"
+      ]
     },
     "REG-DK-SANDBOX-01": {
       "id": "REG-DK-SANDBOX-01",
@@ -1284,7 +1349,12 @@
       "watch_files": [
         "universal-agent-devkit/scripts/git/worktree_sandbox.py"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.3136268
+      }
     },
     "REG-DK-COST-01": {
       "id": "REG-DK-COST-01",
@@ -1406,6 +1476,15 @@
       "command": "bash universal-agent-devkit/tests/context_memory/test_token_cost_tracker.sh",
       "watch_files": [
         "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827850.856241
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        "universal-agent-devkit/scripts/governance/token_cost_tracker.py"
       ]
     },
     "BUG-20261002-proof-gate-reinit-same-profile": {
@@ -1429,18 +1508,10 @@
         "universal-agent-devkit/tests/gates/test_proof_gate.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:01:35",
-        "ts": 1791540095.7422879,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_proof_gate.sh đã đổi sau lần chứng minh",
-        "mode": "revert",
-        "fix_commit": "0d30b5c",
-        "files": {
-          "universal-agent-devkit/tests/gates/test_proof_gate.sh": "3b6d2ecc1f98cc1a",
-          ".agents/local/red-patches/BUG-20261002-proof-gate-reinit-same-profile.patch": null
-        },
-        "log": ".agents/evidence/redproof-BUG-20261002-proof-gate-reinit-same-profile/20261009-170334.log",
-        "patch": ".agents/local/red-patches/BUG-20261002-proof-gate-reinit-same-profile.patch"
+        "at": "2026-10-24 12:00:20",
+        "ts": 1792818020.334497,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
       }
     },
     "BUG-20261002-evidence-gate-foreign-xml-nonrunner": {
@@ -1466,17 +1537,17 @@
         "universal-agent-devkit/hooks/tests/hook_contract_test.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 18:58:52",
-        "ts": 1791547132.2431989,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/hooks/tests/hook_contract_test.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 11:47:38",
+        "ts": 1792817258.8373399,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/hooks/tests/hook_contract_test.sh": "5e3dc258af8ad418",
+          "universal-agent-devkit/hooks/tests/hook_contract_test.sh": "f116b90a8ffaf78b",
           ".agents/local/red-patches/BUG-20261002-evidence-gate-foreign-xml-nonrunner.patch": "6b2f0420ff56461d"
         },
-        "log": ".agents/evidence/redproof-BUG-20261002-evidence-gate-foreign-xml-nonrunner/20261009-190334.log",
+        "log": ".agents/evidence/redproof-BUG-20261002-evidence-gate-foreign-xml-nonrunner/20261024-120020.log",
         "patch": ".agents/local/red-patches/BUG-20261002-evidence-gate-foreign-xml-nonrunner.patch"
       }
     },
@@ -1505,18 +1576,12 @@
         "universal-agent-devkit/tests/gates/test_regression_gate_hook.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:32:35",
-        "ts": 1791541955.373462,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_regression_gate_hook.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 11:47:37",
+        "ts": 1792817257.785196,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/gates/test_regression_gate_hook.sh": "4956c540ac5c240d",
-          ".agents/local/red-patches/BUG-20261002-chay-finagling-running-stop-hooks-8-9-27.patch": "51aef5a18e7a18bd"
-        },
-        "log": ".agents/evidence/redproof-BUG-20261002-chay-finagling-running-stop-hooks-8-9-27/20261009-173819.log",
-        "patch": ".agents/local/red-patches/BUG-20261002-chay-finagling-running-stop-hooks-8-9-27.patch"
+        "patch": ".agents/local/red-patches/BUG-20261002-chay-finagling-running-stop-hooks-8-9-27.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/bin/post-fix-gate.py, universal-agent-devkit/hooks/regression_gate.sh"
       }
     },
     "BUG-20261002-sessionstart-skips-the-checklist-block-a": {
@@ -1613,7 +1678,21 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_run_impacted.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 11:46:35",
+        "ts": 1792817195.0729501,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/verification/test_run_impacted.sh": "8cdcaee0128bdb32",
+          ".agents/local/red-patches/BUG-20261002-agent-kit-health-run-tests-scores-96-100.patch": "4134bfc34efe45bf"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261002-agent-kit-health-run-tests-scores-96-100/20261024-114737.log",
+        "patch": ".agents/local/red-patches/BUG-20261002-agent-kit-health-run-tests-scores-96-100.patch"
+      }
     },
     "BUG-20261008-sua-4-loi-kit-phien-office-nho-di": {
       "id": "BUG-20261008-sua-4-loi-kit-phien-office-nho-di",
@@ -1641,19 +1720,10 @@
         "universal-agent-devkit/tests/worktree_git/test_worktree_automerge.sh"
       ],
       "red_proof": {
-        "at": "2026-10-08 23:45:10",
-        "ts": 1791477910.249443,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/worktree_git/test_worktree_automerge.sh đã đổi sau lần chứng minh",
-        "mode": "revert",
-        "fix_commit": "68ccbd01480e",
-        "files": {
-          "universal-agent-devkit/tests/gates/test_session_lock_target_repo.sh": "92ed0d45678eafc3",
-          "universal-agent-devkit/tests/worktree_git/test_worktree_automerge.sh": "ddd4ac78e963fd51",
-          ".agents/local/red-patches/BUG-20261008-sua-4-loi-kit-phien-office-nho-di.patch": null
-        },
-        "log": ".agents/evidence/redproof-BUG-20261008-sua-4-loi-kit-phien-office-nho-di/20261008-235601.log",
-        "patch": ".agents/local/red-patches/BUG-20261008-sua-4-loi-kit-phien-office-nho-di.patch"
+        "at": "2026-10-24 12:00:20",
+        "ts": 1792818020.3726048,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
       }
     },
     "BUG-20261009-session-lock-an-idle-holder-turn-over-wa": {
@@ -1678,18 +1748,12 @@
         "universal-agent-devkit/tests/context_memory/test_session_lock.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 20:33:28",
-        "ts": 1791552808.794166,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:18:58",
+        "ts": 1792819138.994364,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "7030d05eb20ea38a",
-          ".agents/local/red-patches/BUG-20261009-session-lock-an-idle-holder-turn-over-wa.patch": "ceac962355043653"
-        },
-        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-an-idle-holder-turn-over-wa/20261009-203838.log",
-        "patch": ".agents/local/red-patches/BUG-20261009-session-lock-an-idle-holder-turn-over-wa.patch"
+        "patch": ".agents/local/red-patches/BUG-20261009-session-lock-an-idle-holder-turn-over-wa.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/bin/session_lock.py, universal-agent-devkit/hooks/worktree_merge_gate.sh"
       }
     },
     "BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout": {
@@ -1714,17 +1778,17 @@
         "universal-agent-devkit/tests/context_memory/test_session_lock.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 20:32:19",
-        "ts": 1791552739.2442508,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:12:48",
+        "ts": 1792818768.1571908,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "7030d05eb20ea38a",
+          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "29183205d2bb19e4",
           ".agents/local/red-patches/BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout.patch": "1813313c630aeb62"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout/20261009-203323.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout/20261024-121858.log",
         "patch": ".agents/local/red-patches/BUG-20261009-session-lock-a-cp-rc-copy-of-a-checkout.patch"
       }
     },
@@ -1750,18 +1814,12 @@
         "universal-agent-devkit/tests/context_memory/test_scratch_cleanup.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 17:14:03",
-        "ts": 1791540843.530536,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/context_memory/test_scratch_cleanup.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:12:47",
+        "ts": 1792818767.356896,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/context_memory/test_scratch_cleanup.sh": "bd5940a44573d689",
-          ".agents/local/red-patches/BUG-20261009-scratch-cleanup-prune-could-delete-a-liv.patch": "b835302d97dabd0f"
-        },
-        "log": ".agents/evidence/redproof-BUG-20261009-scratch-cleanup-prune-could-delete-a-liv/20261009-171413.log",
-        "patch": ".agents/local/red-patches/BUG-20261009-scratch-cleanup-prune-could-delete-a-liv.patch"
+        "patch": ".agents/local/red-patches/BUG-20261009-scratch-cleanup-prune-could-delete-a-liv.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/scripts/governance/scratch_cleanup.py"
       }
     },
     "BUG-20261009-session-lock-case-only-path": {
@@ -1786,17 +1844,17 @@
         "universal-agent-devkit/tests/context_memory/test_session_lock.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 20:28:17",
-        "ts": 1791552497.3749871,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:19:02",
+        "ts": 1792819142.3340921,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "7030d05eb20ea38a",
+          "universal-agent-devkit/tests/context_memory/test_session_lock.sh": "29183205d2bb19e4",
           ".agents/local/red-patches/BUG-20261009-session-lock-case-only-path.patch": "eadff5f0caaf6ca2"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-case-only-path/20261009-202937.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-session-lock-case-only-path/20261024-122913.log",
         "patch": ".agents/local/red-patches/BUG-20261009-session-lock-case-only-path.patch"
       }
     },
@@ -1822,18 +1880,12 @@
         "universal-agent-devkit/tests/gates/test_worktree_merge_gate_vanished.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 18:16:20",
-        "ts": 1791544580.0016901,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_worktree_merge_gate_vanished.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:12:37",
+        "ts": 1792818757.334593,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/gates/test_worktree_merge_gate_vanished.sh": "ae3b361c54ff04d5",
-          ".agents/local/red-patches/BUG-20261009-merge-gate-held-vanished-worktree.patch": "88c72b04e1d1fdc2"
-        },
-        "log": ".agents/evidence/redproof-BUG-20261009-merge-gate-held-vanished-worktree/20261009-181812.log",
-        "patch": ".agents/local/red-patches/BUG-20261009-merge-gate-held-vanished-worktree.patch"
+        "patch": ".agents/local/red-patches/BUG-20261009-merge-gate-held-vanished-worktree.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/hooks/worktree_merge_gate.sh"
       }
     },
     "BUG-20261009-git-guard-bash-c-subst-tee-shell": {
@@ -1858,18 +1910,12 @@
         "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 22:08:47",
-        "ts": 1791558527.419274,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:12:35",
+        "ts": 1792818755.8786812,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/gates/test_git_guard_shell_subst.sh": "c5e186f5d0bbde6a",
-          ".agents/local/red-patches/BUG-20261009-git-guard-bash-c-subst-tee-shell.patch": "f98629168451d988"
-        },
-        "log": ".agents/evidence/redproof-BUG-20261009-git-guard-bash-c-subst-tee-shell/20261009-220947.log",
-        "patch": ".agents/local/red-patches/BUG-20261009-git-guard-bash-c-subst-tee-shell.patch"
+        "patch": ".agents/local/red-patches/BUG-20261009-git-guard-bash-c-subst-tee-shell.patch",
+        "reason": "patch không áp được lên code hiện tại: error: repository lacks the necessary blob to perform 3-way merge.\nFalling back to direct application...\nerror: patch failed: universal-agent-devkit/hooks/block"
       }
     },
     "BUG-20261009-hardware-find-negated-or-unfiltered": {
@@ -1894,18 +1940,12 @@
         "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 21:32:10",
-        "ts": 1791556330.778254,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:12:36",
+        "ts": 1792818756.585152,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/gates/test_hardware_find_not_or.sh": "b65ce9bc44d42a41",
-          ".agents/local/red-patches/BUG-20261009-hardware-find-negated-or-unfiltered.patch": "187ecac34b33d722"
-        },
-        "log": ".agents/evidence/redproof-BUG-20261009-hardware-find-negated-or-unfiltered/20261009-213309.log",
-        "patch": ".agents/local/red-patches/BUG-20261009-hardware-find-negated-or-unfiltered.patch"
+        "patch": ".agents/local/red-patches/BUG-20261009-hardware-find-negated-or-unfiltered.patch",
+        "reason": "patch không áp được lên code hiện tại: error: repository lacks the necessary blob to perform 3-way merge.\nFalling back to direct application...\nerror: patch failed: universal-agent-devkit/hooks/hardw"
       }
     },
     "BUG-20261009-review-timing-guard-env-payload": {
@@ -1930,17 +1970,17 @@
         "universal-agent-devkit/tests/gates/test_review_timing_guard_big_payload.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 18:15:53",
-        "ts": 1791544553.077399,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_review_timing_guard_big_payload.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:12:38",
+        "ts": 1792818758.189547,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_review_timing_guard_big_payload.sh": "5aadec580c31f4f6",
+          "universal-agent-devkit/tests/gates/test_review_timing_guard_big_payload.sh": "95677eef2dcf4ab6",
           ".agents/local/red-patches/BUG-20261009-review-timing-guard-env-payload.patch": "9b5bc563993f81df"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-review-timing-guard-env-payload/20261009-181603.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-review-timing-guard-env-payload/20261024-121246.log",
         "patch": ".agents/local/red-patches/BUG-20261009-review-timing-guard-env-payload.patch"
       }
     },
@@ -1964,7 +2004,15 @@
       "linked_ts": 1791539976.141431,
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_run_impacted_since.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:12:46",
+        "ts": 1792818766.6131608,
+        "status": "INCONCLUSIVE",
+        "mode": "patch",
+        "patch": ".agents/local/red-patches/BUG-20261009-run-impacted-recent-commits-in-sandbox.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/tests/run_impacted.sh"
+      }
     },
     "BUG-20261009-comment-claim-docstring-trailing": {
       "id": "BUG-20261009-comment-claim-docstring-trailing",
@@ -1988,17 +2036,17 @@
         "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 21:07:54",
-        "ts": 1791554874.346621,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:00:21",
+        "ts": 1792818021.880536,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh": "61190ff8c4d5b252",
+          "universal-agent-devkit/tests/gates/test_comment_claim_docstring_trailing.sh": "f633e43c955e9025",
           ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch": "faf26fedefe7c8a5"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-comment-claim-docstring-trailing/20261009-210844.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-comment-claim-docstring-trailing/20261024-120145.log",
         "patch": ".agents/local/red-patches/BUG-20261009-comment-claim-docstring-trailing.patch"
       }
     },
@@ -2024,17 +2072,17 @@
         "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 21:08:45",
-        "ts": 1791554925.009863,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:07:41",
+        "ts": 1792818461.244647,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh": "d4f16177fd1751a1",
+          "universal-agent-devkit/tests/gates/test_gate_runner_no_errexit.sh": "07241383fca693a6",
           ".agents/local/red-patches/BUG-20261009-gate-runner-no-errexit-append.patch": "5cecd13ecdabc1e8"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-gate-runner-no-errexit-append/20261009-211102.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-gate-runner-no-errexit-append/20261024-121235.log",
         "patch": ".agents/local/red-patches/BUG-20261009-gate-runner-no-errexit-append.patch"
       }
     },
@@ -2060,17 +2108,17 @@
         "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 21:11:02",
-        "ts": 1791555062.796758,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:01:45",
+        "ts": 1792818105.048918,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh": "6d9134e81e793ee4",
+          "universal-agent-devkit/tests/gates/test_gate_js_describe_scope.sh": "f54f024c5b90780b",
           ".agents/local/red-patches/BUG-20261009-gate-js-describe-title-false-flag.patch": "5cecd13ecdabc1e8"
         },
-        "log": ".agents/evidence/redproof-BUG-20261009-gate-js-describe-title-false-flag/20261009-211414.log",
+        "log": ".agents/evidence/redproof-BUG-20261009-gate-js-describe-title-false-flag/20261024-120741.log",
         "patch": ".agents/local/red-patches/BUG-20261009-gate-js-describe-title-false-flag.patch"
       }
     },
@@ -2132,18 +2180,12 @@
         "universal-agent-devkit/tests/gates/test_churn_guard_fast_path.sh"
       ],
       "red_proof": {
-        "at": "2026-10-09 19:04:33",
-        "ts": 1791547473.95009,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_churn_guard_fast_path.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:00:20",
+        "ts": 1792818020.401477,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/gates/test_churn_guard_fast_path.sh": "aa5ff9438bdb9d1a",
-          ".agents/local/red-patches/BUG-20261009-churn-guard-no-fast-path.patch": "c168d8f3e9b0ac5d"
-        },
-        "log": ".agents/evidence/redproof-BUG-20261009-churn-guard-no-fast-path/20261009-190532.log",
-        "patch": ".agents/local/red-patches/BUG-20261009-churn-guard-no-fast-path.patch"
+        "patch": ".agents/local/red-patches/BUG-20261009-churn-guard-no-fast-path.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/hooks/churn_guard.sh"
       }
     },
     "BUG-20261009-automerge-refusal-reason-lost": {
@@ -2378,17 +2420,17 @@
         "universal-agent-devkit/tests/verification/test_red_proof_patch_cap.sh"
       ],
       "red_proof": {
-        "at": "2026-10-10 10:54:45",
-        "ts": 1791604485.042022,
+        "at": "2026-10-24 14:52:02",
+        "ts": 1792828322.813132,
         "status": "PROVEN",
         "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/verification/test_red_proof_patch_cap.sh": "8534d8aa78bc95d8",
+          "universal-agent-devkit/tests/verification/test_red_proof_patch_cap.sh": "fa5abd92cb77e14a",
           ".agents/local/red-patches/BUG-20261010-red-proof-keeps-a-patch-of-any-size-in-a.patch": "8f9dabb6f03897a4"
         },
-        "log": ".agents/evidence/redproof-BUG-20261010-red-proof-keeps-a-patch-of-any-size-in-a/20261010-110336.log",
+        "log": ".agents/evidence/redproof-BUG-20261010-red-proof-keeps-a-patch-of-any-size-in-a/20261024-145355.log",
         "patch": ".agents/local/red-patches/BUG-20261010-red-proof-keeps-a-patch-of-any-size-in-a.patch"
       }
     },
@@ -2483,18 +2525,12 @@
         "universal-agent-devkit/tests/gates/test_regression_gate_repeat_cache.sh"
       ],
       "red_proof": {
-        "at": "2026-10-10 18:30:31",
-        "ts": 1791631831.959299,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/gates/test_regression_gate_repeat_cache.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:29:13",
+        "ts": 1792819753.864563,
+        "status": "INCONCLUSIVE",
         "mode": "patch",
-        "fix_commit": null,
-        "files": {
-          "universal-agent-devkit/tests/gates/test_regression_gate_repeat_cache.sh": "be4bab010fe2d660",
-          ".agents/local/red-patches/BUG-20261010-regression-gate-re-runs-every-suite-on-a.patch": "a03b166df04d29a3"
-        },
-        "log": ".agents/evidence/redproof-BUG-20261010-regression-gate-re-runs-every-suite-on-a/20261010-183218.log",
-        "patch": ".agents/local/red-patches/BUG-20261010-regression-gate-re-runs-every-suite-on-a.patch"
+        "patch": ".agents/local/red-patches/BUG-20261010-regression-gate-re-runs-every-suite-on-a.patch",
+        "reason": "patch không áp được lên code hiện tại: universal-agent-devkit/hooks/regression_gate.sh"
       }
     },
     "BUG-20261010-testsourceset-gate-compiles-the-test-sou": {
@@ -2827,17 +2863,17 @@
         "universal-agent-devkit/tests/context_memory/test_session_lock_worktree_hint.sh"
       ],
       "red_proof": {
-        "at": "2026-10-12 21:04:39",
-        "ts": 1791813879.959284,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock_worktree_hint.sh đã đổi sau lần chứng minh",
+        "at": "2026-10-24 12:29:17",
+        "ts": 1792819757.6763608,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
         "mode": "patch",
         "fix_commit": null,
         "files": {
-          "universal-agent-devkit/tests/context_memory/test_session_lock_worktree_hint.sh": "7b540401215c2aff",
+          "universal-agent-devkit/tests/context_memory/test_session_lock_worktree_hint.sh": "3bc9632a16575b8a",
           ".agents/local/red-patches/BUG-20261012-a-session-blocked-by-a-held-checkout-sto.patch": "870063a98bff33d2"
         },
-        "log": ".agents/evidence/redproof-BUG-20261012-a-session-blocked-by-a-held-checkout-sto/20261012-210656.log",
+        "log": ".agents/evidence/redproof-BUG-20261012-a-session-blocked-by-a-held-checkout-sto/20261024-123721.log",
         "patch": ".agents/local/red-patches/BUG-20261012-a-session-blocked-by-a-held-checkout-sto.patch"
       }
     },
@@ -3265,7 +3301,12 @@
       "evidence": "13/10 workbench: REPORTED row held a pasted key; redact_secrets at register_bug/register_req/import_bugs + capture_bug",
       "test_refs": [
         "tests/verification/test_bug_secret_redaction.sh"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.138011
+      }
     },
     "BUG-20261013-regression-gate-held-skip-ignored-writers": {
       "id": "BUG-20261013-regression-gate-held-skip-ignored-writers",
@@ -3283,7 +3324,12 @@
       "evidence": "OpenCodeReview of Dot 29 (13/10): held-by-other skip ignored the cases session_lock lets write",
       "test_refs": [
         "tests/gates/test_regression_gate_held_by_other.sh"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.2717388
+      }
     },
     "BUG-20261013-merge-gate-vanished-worktree-race": {
       "id": "BUG-20261013-merge-gate-vanished-worktree-race",
@@ -3304,7 +3350,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_worktree_merge_gate_vanished.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.2807739,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261013-merge-gate-folder-deleted-before-stop — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261013-agent-test-approval-claude-transcript": {
       "id": "BUG-20261013-agent-test-approval-claude-transcript",
@@ -3325,7 +3377,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_gate_approval_content_hash.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.199237,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261013-test-approval-from-foreign-records": {
       "id": "BUG-20261013-test-approval-from-foreign-records",
@@ -3346,7 +3404,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_gate_approval_content_hash.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.199237,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261013-agent-test-approval-claude-transcript — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261013-merge-gate-folder-deleted-before-stop": {
       "id": "BUG-20261013-merge-gate-folder-deleted-before-stop",
@@ -3367,7 +3431,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_worktree_merge_gate_vanished.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.2807739,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261013-worktree-gc-deletes-unique-work": {
       "id": "BUG-20261013-worktree-gc-deletes-unique-work",
@@ -3388,7 +3458,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/worktree_git/test_worktree_gc.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.4289129,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261014-gate-recreates-removed-project": {
       "id": "BUG-20261014-gate-recreates-removed-project",
@@ -3409,7 +3485,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_gate_project_removed_midrun.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.172884,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261014-review-gate-ocr-scope": {
       "id": "BUG-20261014-review-gate-ocr-scope",
@@ -3430,7 +3512,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_review_gate_ocr.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:35",
+        "ts": 1792821095.366542,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261014-ocr-endpoint-rejected-holds-stop": {
       "id": "BUG-20261014-ocr-endpoint-rejected-holds-stop",
@@ -3451,7 +3539,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/installer/test_ocr_review_helper.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.372146,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261014-lock-file-stale-takeover-race": {
       "id": "BUG-20261014-lock-file-stale-takeover-race",
@@ -3472,7 +3566,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/worktree_git/test_worktree_lock_helper.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.329503,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc": {
       "id": "BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc",
@@ -3495,18 +3595,10 @@
         "universal-agent-devkit/tests/context_memory/test_session_lock_file_writes.sh"
       ],
       "red_proof": {
-        "at": "2026-10-14 13:40:05",
-        "ts": 1791960005.099575,
-        "status": "OUTDATED",
-        "reason": "universal-agent-devkit/tests/context_memory/test_session_lock_file_writes.sh đã đổi sau lần chứng minh",
-        "mode": "revert",
-        "fix_commit": "7a1c6de9bb1f",
-        "files": {
-          "universal-agent-devkit/tests/context_memory/test_session_lock_file_writes.sh": "ec6c52c0e2c49bf7",
-          ".agents/local/red-patches/BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc.patch": null
-        },
-        "log": ".agents/evidence/redproof-BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc/20261014-134259.log",
-        "patch": ".agents/local/red-patches/BUG-20261014-session-lock-let-cp-mv-rm-tee-sed-i-touc.patch"
+        "at": "2026-10-24 12:51:35",
+        "ts": 1792821095.391972,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
       }
     },
     "BUG-20261014-automerge-gate-result-not-object": {
@@ -3529,7 +3621,13 @@
       "linked_ts": 1791973810.996778,
       "runs_in_suite": [
         "universal-agent-devkit/tests/worktree_git/test_worktree_trunk_merge.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.939889,
+        "status": "INCONCLUSIVE",
+        "reason": "commit fix mơ hồ — evidence nêu 2 commit đổi code: 1111bcd, 7528cc9 (chạy --fix-commit <sha>)"
+      }
     },
     "BUG-20261014-goal-set-fix-het-toan-bo-roi-xoa-issues": {
       "id": "BUG-20261014-goal-set-fix-het-toan-bo-roi-xoa-issues",
@@ -3547,7 +3645,12 @@
       "touched_at": "2026-10-14 19:09:28",
       "sessions": [
         "11cbd0c7-4c0b-43e4-a5d7-4b0b6578d36c"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.324723
+      }
     },
     "BUG-20261014-budget-cut-forgets-passed-suites": {
       "id": "BUG-20261014-budget-cut-forgets-passed-suites",
@@ -3569,7 +3672,15 @@
       "linked_ts": 1791993697.5497432,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_gate_budget_resume.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:22",
+        "ts": 1792820242.2525172,
+        "status": "INCONCLUSIVE",
+        "mode": "revert",
+        "fix_commit": "a859959",
+        "reason": "revert a859959 xung đột với code hiện tại: universal-agent-devkit/bin/post-fix-gate.py"
+      }
     },
     "BUG-20261014-proof-report-label-variants": {
       "id": "BUG-20261014-proof-report-label-variants",
@@ -3591,7 +3702,13 @@
       "linked_ts": 1791993697.792769,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_proof_gate_report_labels.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.837337,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261014-evidence-outcome-quoted-mention": {
       "id": "BUG-20261014-evidence-outcome-quoted-mention",
@@ -3613,7 +3730,13 @@
       "linked_ts": 1791993698.016602,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_evidence_outcome_mention.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:24",
+        "ts": 1792820244.6235242,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261014-red-proof-runner-under-tests-read-as-test": {
       "id": "BUG-20261014-red-proof-runner-under-tests-read-as-test",
@@ -3635,7 +3758,21 @@
       "linked_ts": 1791993698.240289,
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_red_proof.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.99128,
+        "status": "PROVEN",
+        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "mode": "patch",
+        "fix_commit": null,
+        "files": {
+          "universal-agent-devkit/tests/verification/test_red_proof.sh": "8c5231f1cafbbca8",
+          ".agents/local/red-patches/BUG-20261014-red-proof-runner-under-tests-read-as-test.patch": "75f2fd1edfee5d82"
+        },
+        "log": ".agents/evidence/redproof-BUG-20261014-red-proof-runner-under-tests-read-as-test/20261024-125135.log",
+        "patch": ".agents/local/red-patches/BUG-20261014-red-proof-runner-under-tests-read-as-test.patch"
+      }
     },
     "BUG-20261014-automerge-untracked-symlink": {
       "id": "BUG-20261014-automerge-untracked-symlink",
@@ -3657,7 +3794,13 @@
       "linked_ts": 1791998148.278162,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-worktree-reflog-gone-folder": {
       "id": "BUG-20261014-worktree-reflog-gone-folder",
@@ -3679,7 +3822,13 @@
       "linked_ts": 1791998148.49981,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-worktree-secret-carry": {
       "id": "BUG-20261014-worktree-secret-carry",
@@ -3701,7 +3850,13 @@
       "linked_ts": 1791998148.7247932,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-fifo-harness-canary-false-green": {
       "id": "BUG-20261014-fifo-harness-canary-false-green",
@@ -3723,7 +3878,13 @@
       "linked_ts": 1791998148.9519591,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-fifo-harness-cleanup-kill-gone": {
       "id": "BUG-20261014-fifo-harness-cleanup-kill-gone",
@@ -3745,7 +3906,13 @@
       "linked_ts": 1791998149.177778,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-fifo-harness-grandchild": {
       "id": "BUG-20261014-fifo-harness-grandchild",
@@ -3767,7 +3934,13 @@
       "linked_ts": 1791998149.401827,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-fifo-harness-killpg-eperm": {
       "id": "BUG-20261014-fifo-harness-killpg-eperm",
@@ -3789,7 +3962,13 @@
       "linked_ts": 1791998149.637643,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-python-isolation-heartbeat-age": {
       "id": "BUG-20261014-python-isolation-heartbeat-age",
@@ -3811,7 +3990,13 @@
       "linked_ts": 1791998149.8791249,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-shell-writes-env-split-escapes": {
       "id": "BUG-20261014-shell-writes-env-split-escapes",
@@ -3833,7 +4018,13 @@
       "linked_ts": 1791998150.1037812,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-shell-writes-env-split-sq-escape": {
       "id": "BUG-20261014-shell-writes-env-split-sq-escape",
@@ -3855,7 +4046,13 @@
       "linked_ts": 1791998150.330389,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-shell-writes-env-split-string": {
       "id": "BUG-20261014-shell-writes-env-split-string",
@@ -3877,7 +4074,13 @@
       "linked_ts": 1791998150.5665128,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-shell-writes-git-c-tilde": {
       "id": "BUG-20261014-shell-writes-git-c-tilde",
@@ -3899,7 +4102,13 @@
       "linked_ts": 1791998150.803509,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-testsourceset-lock-fifo-hang": {
       "id": "BUG-20261014-testsourceset-lock-fifo-hang",
@@ -3921,7 +4130,13 @@
       "linked_ts": 1791998151.039904,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-agpm-global-config-guessable-tmp — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-agpm-global-config-guessable-tmp": {
       "id": "BUG-20261014-agpm-global-config-guessable-tmp",
@@ -3943,7 +4158,13 @@
       "linked_ts": 1791998151.277727,
       "runs_in_suite": [
         ""
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:21",
+        "ts": 1792820241.5640059,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261014-pm-agy-init-compact-json-only": {
       "id": "BUG-20261014-pm-agy-init-compact-json-only",
@@ -3966,7 +4187,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261014-pm-agy-lock-takeover-race": {
       "id": "BUG-20261014-pm-agy-lock-takeover-race",
@@ -3989,7 +4216,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-pm-agy-prune-budget-breaks-loop": {
       "id": "BUG-20261014-pm-agy-prune-budget-breaks-loop",
@@ -4012,7 +4245,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-pm-doctor-agy-only-default-model": {
       "id": "BUG-20261014-pm-doctor-agy-only-default-model",
@@ -4035,7 +4274,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-pm-ping-kills-reused-pid": {
       "id": "BUG-20261014-pm-ping-kills-reused-pid",
@@ -4058,7 +4303,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-pm-status-agy-by-task-model": {
       "id": "BUG-20261014-pm-status-agy-by-task-model",
@@ -4081,7 +4332,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-pm-tests-guessable-agy-path": {
       "id": "BUG-20261014-pm-tests-guessable-agy-path",
@@ -4104,7 +4361,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-android-rules-reach": {
       "id": "BUG-20261015-android-rules-reach",
@@ -4125,7 +4388,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/context_memory/test_profile_split.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:37",
+        "ts": 1792821097.810804,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261015-churn-guard-p6": {
       "id": "BUG-20261015-churn-guard-p6",
@@ -4146,7 +4415,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_untracked_edit_warning.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:37",
+        "ts": 1792821097.853801,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261015-generic-traps-id": {
       "id": "BUG-20261015-generic-traps-id",
@@ -4167,7 +4442,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_android_generic_traps.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:37",
+        "ts": 1792821097.9785652,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261015-generic-traps-round2": {
       "id": "BUG-20261015-generic-traps-round2",
@@ -4188,7 +4469,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_android_generic_traps.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:37",
+        "ts": 1792821097.9785652,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261015-generic-traps-id — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-lens-pin": {
       "id": "BUG-20261015-lens-pin",
@@ -4209,7 +4496,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_state_matrix_lens.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:38",
+        "ts": 1792821098.155581,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261015-nightly-idle-holder": {
       "id": "BUG-20261015-nightly-idle-holder",
@@ -4230,7 +4523,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_nightly.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:38",
+        "ts": 1792821098.193907,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261015-nightly-round2": {
       "id": "BUG-20261015-nightly-round2",
@@ -4251,7 +4550,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_nightly.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:38",
+        "ts": 1792821098.193907,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261015-nightly-idle-holder — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-nightly-run-paths": {
       "id": "BUG-20261015-nightly-run-paths",
@@ -4272,7 +4577,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_nightly.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:38",
+        "ts": 1792821098.193907,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261015-nightly-idle-holder — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-rule-titles-noise": {
       "id": "BUG-20261015-rule-titles-noise",
@@ -4293,7 +4604,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/context_memory/test_profile_split.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:37",
+        "ts": 1792821097.810804,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261015-android-rules-reach — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-wiring-pin-detect": {
       "id": "BUG-20261015-wiring-pin-detect",
@@ -4314,7 +4631,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_wiring_pin.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:38",
+        "ts": 1792821098.445079,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261015-wiring-pin-round2": {
       "id": "BUG-20261015-wiring-pin-round2",
@@ -4335,7 +4658,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_wiring_pin.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:38",
+        "ts": 1792821098.445079,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261015-wiring-pin-detect — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-wiring-pin-scan": {
       "id": "BUG-20261015-wiring-pin-scan",
@@ -4356,7 +4685,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_wiring_pin.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:38",
+        "ts": 1792821098.445079,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261015-wiring-pin-detect — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-wiring-pin-verify": {
       "id": "BUG-20261015-wiring-pin-verify",
@@ -4377,7 +4712,13 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/verification/test_wiring_pin.sh"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:51:38",
+        "ts": 1792821098.445079,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261015-wiring-pin-detect — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-agy-orphan-sigkill": {
       "id": "BUG-20261015-agy-orphan-sigkill",
@@ -4398,7 +4739,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-agy-reaper-stale-snapshot-kill": {
       "id": "BUG-20261015-agy-reaper-stale-snapshot-kill",
@@ -4419,7 +4766,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-agy-pending-leak-final-write": {
       "id": "BUG-20261015-agy-pending-leak-final-write",
@@ -4440,7 +4793,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-agy-droppending-always-writes": {
       "id": "BUG-20261015-agy-droppending-always-writes",
@@ -4461,7 +4820,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-agy-selftag-after-spawn": {
       "id": "BUG-20261015-agy-selftag-after-spawn",
@@ -4482,7 +4847,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-agy-reaper-same-key-kill": {
       "id": "BUG-20261015-agy-reaper-same-key-kill",
@@ -4503,7 +4874,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-agy-reaper-recheck-before-kill": {
       "id": "BUG-20261015-agy-reaper-recheck-before-kill",
@@ -4524,7 +4901,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-agy-droppending-foreign-entry": {
       "id": "BUG-20261015-agy-droppending-foreign-entry",
@@ -4545,7 +4928,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261015-agy-null-selftag-accepted": {
       "id": "BUG-20261015-agy-null-selftag-accepted",
@@ -4566,7 +4955,13 @@
       "runs_in_suite": [
         "mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js"
       ],
-      "state": "confirmed"
+      "state": "confirmed",
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.4549508,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-pm-agy-init-compact-json-only — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-heredoc-data-false-block": {
       "id": "BUG-20261014-heredoc-data-false-block",
@@ -4588,7 +4983,13 @@
       "linked_ts": 1792110393.780591,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_guard_shell_norm.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.226348,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261014-guard-shell-norm-fail-open — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261014-guard-shell-norm-fail-open": {
       "id": "BUG-20261014-guard-shell-norm-fail-open",
@@ -4610,7 +5011,13 @@
       "linked_ts": 1792110394.014142,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_guard_shell_norm.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:37:25",
+        "ts": 1792820245.226348,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha>"
+      }
     },
     "BUG-20261016-proof-gate-recursion-fail-open": {
       "id": "BUG-20261016-proof-gate-recursion-fail-open",
@@ -4632,7 +5039,13 @@
       "linked_ts": 1792123296.910506,
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_proof_gate.sh"
-      ]
+      ],
+      "red_proof": {
+        "at": "2026-10-24 12:00:20",
+        "ts": 1792818020.334497,
+        "status": "INCONCLUSIVE",
+        "reason": "không có commit fix trong evidence — bug cũ không lấy thay đổi chưa commit làm bản sửa; chạy --bug <ID> --fix-commit <sha> (cùng test và bản sửa với BUG-20261002-proof-gate-reinit-same-profile — dùng chung lần chứng minh)"
+      }
     },
     "BUG-20261016-first-operation-run-claude-bin-super-boa": {
       "id": "BUG-20261016-first-operation-run-claude-bin-super-boa",
@@ -4669,7 +5082,12 @@
         "ac109c43-dece-4f9b-a751-7c50ad36a611",
         "e599299e-ca17-4fa8-93ca-5f90fb9684ad",
         "dc44de49-5e9a-4fcb-93df-77e84853c0a3"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.649666
+      }
     },
     "BUG-20261015-hien-dang-co-phien-dang-chay-do-bi-limit": {
       "id": "BUG-20261015-hien-dang-co-phien-dang-chay-do-bi-limit",
@@ -4687,7 +5105,12 @@
       "touched_at": "2026-10-15 20:28:30",
       "sessions": [
         "ed61f731-9cb8-47ea-8537-4ba35cfa51c7"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.494368
+      }
     },
     "BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs": {
       "id": "BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs",
@@ -4705,7 +5128,12 @@
       "touched_at": "2026-10-16 11:21:24",
       "sessions": [
         "ed61f731-9cb8-47ea-8537-4ba35cfa51c7"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.739948
+      }
     },
     "BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs-2": {
       "id": "BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs-2",
@@ -4723,7 +5151,12 @@
       "touched_at": "2026-10-16 11:22:11",
       "sessions": [
         "ed61f731-9cb8-47ea-8537-4ba35cfa51c7"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.766098
+      }
     },
     "BUG-20261016-audit-review-cho-toi-5-repo-https-github": {
       "id": "BUG-20261016-audit-review-cho-toi-5-repo-https-github",
@@ -4742,7 +5175,12 @@
       "sessions": [
         "65a4fe98-7231-4010-b30e-e6f8f94b18b8",
         "a13f8e8d-85d9-4242-8cf5-e49085f8b11a"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.581088
+      }
     },
     "BUG-20261016-background-from-the-session-that-started": {
       "id": "BUG-20261016-background-from-the-session-that-started",
@@ -4760,7 +5198,12 @@
       "touched_at": "2026-10-16 19:53:56",
       "sessions": [
         "e5b728b1-4fa5-46da-9204-8d13f6f035bd"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.615394
+      }
     },
     "BUG-20261016-phien-sort-task-backlog-cua-account-kia": {
       "id": "BUG-20261016-phien-sort-task-backlog-cua-account-kia",
@@ -4778,7 +5221,12 @@
       "touched_at": "2026-10-16 20:56:35",
       "sessions": [
         "26051942-4b4e-410e-b464-cea92b089132"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.7151859
+      }
     },
     "BUG-20261016-gan-label-theo-thu-tu-uu-tien-da-lap-va": {
       "id": "BUG-20261016-gan-label-theo-thu-tu-uu-tien-da-lap-va",
@@ -4796,7 +5244,12 @@
       "touched_at": "2026-10-16 20:57:33",
       "sessions": [
         "26051942-4b4e-410e-b464-cea92b089132"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.68868
+      }
     },
     "BUG-20261017-them-watch-files-cho-super-board-vao-reg": {
       "id": "BUG-20261017-them-watch-files-cho-super-board-vao-reg",
@@ -4814,7 +5267,12 @@
       "touched_at": "2026-10-17 08:02:27",
       "sessions": [
         "71bf3cd7-c81f-4f52-afa9-13cf27a07d4a"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.839663
+      }
     },
     "BUG-20261017-toi-se-chi-file-hoac-config-co-duong-dan": {
       "id": "BUG-20261017-toi-se-chi-file-hoac-config-co-duong-dan",
@@ -4832,7 +5290,12 @@
       "touched_at": "2026-10-17 08:23:46",
       "sessions": [
         "71bf3cd7-c81f-4f52-afa9-13cf27a07d4a"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.941616
+      }
     },
     "REG-SB-GITHUB-READ-01": {
       "id": "REG-SB-GITHUB-READ-01",
@@ -4911,7 +5374,20 @@
       "watch_files": [
         ".claude/bin/super-board-*"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.6014268
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-blocked-by.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-codex-lane.sh"
+      ]
     },
     "REG-SB-RUNNER-LANES-01": {
       "id": "REG-SB-RUNNER-LANES-01",
@@ -4990,7 +5466,20 @@
       "watch_files": [
         ".claude/bin/super-board-*"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827852.119359
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-blocked-by.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-codex-lane.sh"
+      ]
     },
     "REG-SB-MERGE-SYNC-01": {
       "id": "REG-SB-MERGE-SYNC-01",
@@ -5071,9 +5560,18 @@
       ],
       "stale_since": "2026-10-19 23:42:19",
       "stale_files": [
-        ".claude/bin/super-board-merge-gate.sh",
-        ".claude/bin/super-board-run.sh"
-      ]
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-blocked-by.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-codex-lane.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.704972
+      },
+      "retired": true
     },
     "BUG-20261019-hoc-tu-kandev-centralized-daemon-global": {
       "id": "BUG-20261019-hoc-tu-kandev-centralized-daemon-global",
@@ -5091,7 +5589,12 @@
       "touched_at": "2026-10-19 16:41:26",
       "sessions": [
         "01a15320-8be7-7c61-a626-c6d8ff01e97c"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.473801
+      }
     },
     "REG-SB-MERGE-GATE-STALE-01": {
       "id": "REG-SB-MERGE-GATE-STALE-01",
@@ -5170,7 +5673,16 @@
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.646275
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
+      ]
     },
     "REG-SB-PREFLIGHT-TOO-BIG-01": {
       "id": "REG-SB-PREFLIGHT-TOO-BIG-01",
@@ -5230,6 +5742,19 @@
         ".claude/bin/super-board-gh-guard.sh",
         "tests/super-board/test_preflight_too_big.sh",
         "tests/super-board/fixtures/preflight-too-big/*"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.86143
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-github-read.py",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/fixtures/preflight-too-big/Synthetic-908.json",
+        "tests/super-board/fixtures/preflight-too-big/Synthetic-909.json",
+        "tests/super-board/fixtures/preflight-too-big/Synthetic-910.json"
       ]
     },
     "REG-SB-RUNNER-WATCHDOG-01": {
@@ -5315,7 +5840,20 @@
         "universal-agent-devkit/scripts/governance/super_board_all.py",
         "tests/super-board/test_runner_watchdog.sh"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827852.15577
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-setup.py",
+        ".claude/bin/super-board-stop.sh",
+        ".claude/bin/super-board-watchdog.sh",
+        "tests/super-board/test_runner_watchdog.sh"
+      ]
     },
     "REG-SB-MERGE-POLICY-NL-01": {
       "id": "REG-SB-MERGE-POLICY-NL-01",
@@ -5363,6 +5901,18 @@
         ".claude/bin/super-board-github-read.py",
         ".claude/bin/super-board-approval.py",
         "tests/super-board/test_merge_policy_odd_newlines.sh",
+        "tests/super-board/test_upstream_66_67.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.686673
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-github-read.py",
+        ".claude/bin/super-board-merge-policy.py",
         "tests/super-board/test_upstream_66_67.sh"
       ]
     },
@@ -5412,6 +5962,18 @@
         ".claude/bin/super-board-github-read.py",
         ".claude/bin/super-board-approval.py",
         "tests/super-board/test_merge_policy_odd_newlines.sh",
+        "tests/super-board/test_upstream_66_67.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827852.406977
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-github-read.py",
+        ".claude/bin/super-board-merge-policy.py",
         "tests/super-board/test_upstream_66_67.sh"
       ]
     },
@@ -5493,7 +6055,12 @@
         "mcp-servers/cc-switcher-mcp/*.js",
         "mcp-servers/cc-switcher-mcp/*.json"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827850.53205
+      }
     },
     "REG-SB-NEEDS-YOU-01": {
       "id": "REG-SB-NEEDS-YOU-01",
@@ -5551,6 +6118,18 @@
         ".claude/bin/super-board-needs-you.py",
         ".claude/bin/super-board-approval.py",
         ".claude/bin/super-board-deps.sh",
+        "tests/super-board/test_needs_you.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.747038
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py",
         "tests/super-board/test_needs_you.sh"
       ]
     },
@@ -5635,7 +6214,20 @@
         ".claude/bin/super-board-needs-you.py",
         "tests/super-board/test_needs_you_skip.sh"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.7673721
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-status.py",
+        ".claude/bin/super-board-wave-plan.sh",
+        "tests/super-board/test_needs_you_skip.sh"
+      ]
     },
     "REG-SB-WATCHDOG-PATHS-01": {
       "id": "REG-SB-WATCHDOG-PATHS-01",
@@ -5682,6 +6274,16 @@
         ".claude/bin/super-board-watchdog.sh",
         "tests/super-board/test_watchdog_path_sanitize.sh",
         "tests/super-board/test_watchdog_lock_mtime.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827852.450708
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-watchdog.sh",
+        "tests/super-board/test_watchdog_path_sanitize.sh"
       ]
     },
     "REG-SB-RUN-STOP-MTIME-01": {
@@ -5762,7 +6364,16 @@
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_run_stop_mark_mtime.sh"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.8894641
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-SB-SETUP-BIN-01": {
       "id": "REG-SB-SETUP-BIN-01",
@@ -5808,6 +6419,15 @@
       "watch_files": [
         ".claude/bin/super-board-setup.py",
         "tests/super-board/test_setup_bin_list.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827852.376878
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-setup.py"
       ]
     },
     "REG-SB-POST-MERGE-CLEAN-01": {
@@ -5868,7 +6488,12 @@
         "tests/super-board/test_post_merge_squash_leftovers.sh",
         "tests/super-board/test_post_merge_sweep_wiring.sh"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.794077
+      }
     },
     "BUG-20261019-hien-con-nhieu-branch-dang-bi-mo-coi-ngu": {
       "id": "BUG-20261019-hien-con-nhieu-branch-dang-bi-mo-coi-ngu",
@@ -5886,7 +6511,12 @@
       "touched_at": "2026-10-19 16:53:00",
       "sessions": [
         "dd5b5fec-39dd-45b9-85f2-f82a9ce5678b"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.450331
+      }
     },
     "BUG-20261018-https-github-com-toanmobile-neighbours-f": {
       "id": "BUG-20261018-https-github-com-toanmobile-neighbours-f",
@@ -5904,7 +6534,12 @@
       "touched_at": "2026-10-18 20:28:30",
       "sessions": [
         "0066c134-de16-4e8b-bcaa-f1f5533d913c"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827898.979129
+      }
     },
     "BUG-20261018-lam-cho-toi-89-vs-76": {
       "id": "BUG-20261018-lam-cho-toi-89-vs-76",
@@ -5922,7 +6557,12 @@
       "touched_at": "2026-10-18 21:18:33",
       "sessions": [
         "6ca65ad7-3c6e-4060-9fbe-bccd01b14dbe"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.252786
+      }
     },
     "BUG-20261018-kiem-tra-cac-task-dang-bi-blocked-cho-to": {
       "id": "BUG-20261018-kiem-tra-cac-task-dang-bi-blocked-cho-to",
@@ -5940,7 +6580,12 @@
       "touched_at": "2026-10-18 21:57:27",
       "sessions": [
         "fb3a73f2-d51c-4a1e-91ca-c23107bf8798"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.03172
+      }
     },
     "BUG-20261019-qua-nhieu-task-bi-blocked-tim-nguyen-nha": {
       "id": "BUG-20261019-qua-nhieu-task-bi-blocked-tim-nguyen-nha",
@@ -5958,7 +6603,12 @@
       "touched_at": "2026-10-19 07:23:33",
       "sessions": [
         "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.513843
+      }
     },
     "BUG-20261019-update-lai-cac-pr-log-comment-don-gian-t": {
       "id": "BUG-20261019-update-lai-cac-pr-log-comment-don-gian-t",
@@ -5976,7 +6626,12 @@
       "touched_at": "2026-10-19 07:34:55",
       "sessions": [
         "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827900.023062
+      }
     },
     "BUG-20261019-hien-cac-task-dang-bi-ket-o-cac-luong-re": {
       "id": "BUG-20261019-hien-cac-task-dang-bi-ket-o-cac-luong-re",
@@ -5994,7 +6649,12 @@
       "touched_at": "2026-10-19 09:07:27",
       "sessions": [
         "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.4184089
+      }
     },
     "BUG-20261019-sao-bi-ket-hoai-vay-truoc-do-chay-test-2": {
       "id": "BUG-20261019-sao-bi-ket-hoai-vay-truoc-do-chay-test-2",
@@ -6012,7 +6672,12 @@
       "touched_at": "2026-10-19 09:10:06",
       "sessions": [
         "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.549655
+      }
     },
     "BUG-20261019-ok-da-tao-phien-fix-loi-nay-chua": {
       "id": "BUG-20261019-ok-da-tao-phien-fix-loi-nay-chua",
@@ -6030,7 +6695,12 @@
       "touched_at": "2026-10-19 10:44:50",
       "sessions": [
         "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.4941492
+      }
     },
     "BUG-20261019-tao-worktree-cho": {
       "id": "BUG-20261019-tao-worktree-cho",
@@ -6048,7 +6718,12 @@
       "touched_at": "2026-10-19 14:50:08",
       "sessions": [
         "01a15320-8be7-7c61-a626-c6d8ff01e97c"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.956099
+      }
     },
     "BUG-20261019-dong-y-sao-luu-2-file-trang-thai-abort-m": {
       "id": "BUG-20261019-dong-y-sao-luu-2-file-trang-thai-abort-m",
@@ -6066,47 +6741,12 @@
       "touched_at": "2026-10-19 16:38:19",
       "sessions": [
         "ff4a47a7-4071-46aa-aad4-4d1bb1d7d77a"
-      ]
-    },
-    "ORPHAN_TEST:tests/super-board/test_notify.py": {
-      "id": "ORPHAN_TEST:tests/super-board/test_notify.py",
-      "kind": "orphan",
-      "title": "tests/super-board/test_notify.py",
-      "component": "-",
-      "file": "tests/super-board/test_notify.py",
-      "created_at": "2026-10-19 18:29:35",
-      "last": null,
-      "history": []
-    },
-    "ORPHAN_TEST:tests/super-board/test_super_board_all_slots.py": {
-      "id": "ORPHAN_TEST:tests/super-board/test_super_board_all_slots.py",
-      "kind": "orphan",
-      "title": "tests/super-board/test_super_board_all_slots.py",
-      "component": "-",
-      "file": "tests/super-board/test_super_board_all_slots.py",
-      "created_at": "2026-10-19 18:29:35",
-      "last": null,
-      "history": []
-    },
-    "ORPHAN_TEST:universal-agent-devkit/tests/verification/test_proof_run_before.py": {
-      "id": "ORPHAN_TEST:universal-agent-devkit/tests/verification/test_proof_run_before.py",
-      "kind": "orphan",
-      "title": "universal-agent-devkit/tests/verification/test_proof_run_before.py",
-      "component": "-",
-      "file": "universal-agent-devkit/tests/verification/test_proof_run_before.py",
-      "created_at": "2026-10-19 18:29:35",
-      "last": null,
-      "history": []
-    },
-    "ORPHAN_TEST:universal-agent-devkit/tests/verification/test_unity_compile_skip.py": {
-      "id": "ORPHAN_TEST:universal-agent-devkit/tests/verification/test_unity_compile_skip.py",
-      "kind": "orphan",
-      "title": "universal-agent-devkit/tests/verification/test_unity_compile_skip.py",
-      "component": "-",
-      "file": "universal-agent-devkit/tests/verification/test_unity_compile_skip.py",
-      "created_at": "2026-10-19 18:29:35",
-      "last": null,
-      "history": []
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.392988
+      }
     },
     "REG-SB-SCRATCH-CONFIG-01": {
       "id": "REG-SB-SCRATCH-CONFIG-01",
@@ -6186,7 +6826,12 @@
         ".claude/bin/super-board-scratch-config.sh",
         "tests/super-board/test_scratch_config.sh"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827852.241142
+      }
     },
     "REG-SB-NEEDS-DEVICE-01": {
       "id": "REG-SB-NEEDS-DEVICE-01",
@@ -6270,7 +6915,20 @@
         "universal-agent-devkit/bin/proof-capture.py",
         "tests/super-board/test_needs_device_skip.sh"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.727185
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-status.py",
+        ".claude/bin/super-board-wave-plan.sh",
+        "tests/super-board/test_needs_device_skip.sh",
+        "universal-agent-devkit/bin/proof-capture.py"
+      ]
     },
     "BUG-20261019-108-88-duyet-a-con-worktree-treo-nao-mo": {
       "id": "BUG-20261019-108-88-duyet-a-con-worktree-treo-nao-mo",
@@ -6288,7 +6946,12 @@
       "touched_at": "2026-10-19 21:44:31",
       "sessions": [
         "dd5b5fec-39dd-45b9-85f2-f82a9ce5678b"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.293598
+      }
     },
     "BUG-20261019-tao-5-agent-quet-toan-bo-xem-con-toi-uu": {
       "id": "BUG-20261019-tao-5-agent-quet-toan-bo-xem-con-toi-uu",
@@ -6306,7 +6969,12 @@
       "touched_at": "2026-10-19 21:54:26",
       "sessions": [
         "01a15320-8be7-7c61-a626-c6d8ff01e97c"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.63805
+      }
     },
     "BUG-20261019-ban-tiep-quan-mot-viec-do-trong-repo-vol": {
       "id": "BUG-20261019-ban-tiep-quan-mot-viec-do-trong-repo-vol",
@@ -6324,7 +6992,12 @@
       "touched_at": "2026-10-19 22:37:59",
       "sessions": [
         "01a154cf-c637-7e21-9843-056b01f6afba"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.357661
+      }
     },
     "BUG-20261019-tiep-quan-agent-workbench-19-10-2026-22": {
       "id": "BUG-20261019-tiep-quan-agent-workbench-19-10-2026-22",
@@ -6342,7 +7015,12 @@
       "touched_at": "2026-10-19 22:38:14",
       "sessions": [
         "01a154d0-2060-7b41-94b4-1012cb7e4ab7"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827899.992369
+      }
     },
     "REG-SB-RUN-SWEEP-TICK-01": {
       "id": "REG-SB-RUN-SWEEP-TICK-01",
@@ -6377,7 +7055,16 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827852.0209532
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
+      ]
     },
     "REG-SB-MERGE-LOAD-WAIT-01": {
       "id": "REG-SB-MERGE-LOAD-WAIT-01",
@@ -6413,7 +7100,17 @@
         ".claude/bin/super-board-merge-gate.sh",
         "tests/super-board/test_merge_gate_load_wait.sh"
       ],
-      "impacted_at": "2026-10-20 00:14:58"
+      "impacted_at": "2026-10-20 00:14:58",
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827851.66661
+      },
+      "stale_since": "2026-10-24 14:45:03",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_load_wait.sh"
+      ]
     },
     "BUG-20261020-no-ket-stop-hook-prompt-cua-toi-ko-run-d": {
       "id": "BUG-20261020-no-ket-stop-hook-prompt-cua-toi-ko-run-d",
@@ -6431,7 +7128,12 @@
       "touched_at": "2026-10-20 00:02:14",
       "sessions": [
         "01a154d1-f7e9-7670-a2bc-3f25a7cda5e3"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827900.1320262
+      }
     },
     "BUG-20261020-la-sao-fix-chua-do-hien-van-ket-phai-bam": {
       "id": "BUG-20261020-la-sao-fix-chua-do-hien-van-ket-phai-bam",
@@ -6449,7 +7151,12 @@
       "touched_at": "2026-10-20 00:07:23",
       "sessions": [
         "01a154d1-f7e9-7670-a2bc-3f25a7cda5e3"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827900.095223
+      }
     },
     "BUG-20261020-hien-van-bi-ket-tin-nhan": {
       "id": "BUG-20261020-hien-van-bi-ket-tin-nhan",
@@ -6467,7 +7174,12 @@
       "touched_at": "2026-10-20 00:17:04",
       "sessions": [
         "01a154d1-f7e9-7670-a2bc-3f25a7cda5e3"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827900.071669
+      }
     },
     "BUG-20261020-commit-di-khong-chay-gate": {
       "id": "BUG-20261020-commit-di-khong-chay-gate",
@@ -6485,7 +7197,1229 @@
       "touched_at": "2026-10-20 00:37:23",
       "sessions": [
         "01a154d1-f7e9-7670-a2bc-3f25a7cda5e3"
-      ]
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827900.0513651
+      }
+    },
+    "REG-SB-NOTIFY-SLOTS-01": {
+      "id": "REG-SB-NOTIFY-SLOTS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "notify blocks test/lib/runaway Telegram spam; super_board_all covers all 6 repos; monitor scans worktree transcripts; claim loop caps total early deaths",
+      "component": "super-board-notify-and-slots",
+      "command": "python3 tests/super-board/test_notify.py && python3 tests/super-board/test_super_board_all_slots.py && bash tests/super-board/test_runner_claim_loop.sh",
+      "watch_files": [
+        ".claude/bin/super-board-notify.py",
+        ".claude/bin/super-board-run.sh",
+        "universal-agent-devkit/scripts/governance/super_board_all.py",
+        "universal-agent-devkit/scripts/governance/super_board_monitor.py",
+        "tests/super-board/test_notify.py",
+        "tests/super-board/test_super_board_all_slots.py",
+        "tests/super-board/test_runner_claim_loop.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.247846
+      }
+    },
+    "REG-DK-VERIFY-PY-01": {
+      "id": "REG-DK-VERIFY-PY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "unity compile skip when editmode/playmode runs + proof-capture run-before under device lock",
+      "component": "devkit-verification-py",
+      "command": "python3 universal-agent-devkit/tests/verification/test_unity_compile_skip.py && python3 universal-agent-devkit/tests/verification/test_proof_run_before.py",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/proof-capture.py",
+        "universal-agent-devkit/tests/verification/test_proof_run_before.py",
+        "universal-agent-devkit/tests/verification/test_unity_compile_skip.py"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.834391
+      }
+    },
+    "REG-SB-BOARD-HEARTBEAT-01": {
+      "id": "REG-SB-BOARD-HEARTBEAT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "GitHub Actions cron marks a 🟢/🟠 board ⚫ when the watchdog's 'cập nhật HH:MM dd/MM' is stale; leaves ⏸️/⚪/⚫ and foreign descriptions alone",
+      "component": "super-board-board-heartbeat",
+      "command": "bash tests/super-board/test_board_heartbeat.sh",
+      "watch_files": [
+        ".github/scripts/board_heartbeat.py",
+        ".github/workflows/board-heartbeat.yml",
+        "tests/super-board/test_board_heartbeat.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.9820669
+      }
+    },
+    "REG-SB-MERGE-TIMEOUT-RETRY-01": {
+      "id": "REG-SB-MERGE-TIMEOUT-RETRY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate retries a post-fix-gate verify once only when every red suite is TIMEOUT (REJECT exit 1, static checks passed); a real FAIL, UNTESTED or static finding is not retried; verify exit 124 still retried once",
+      "component": "super-board-merge-gate-timeout-retry",
+      "command": "bash tests/super-board/test_merge_gate_timeout_retry.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_timeout_retry.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.934913
+      }
+    },
+    "REG-SB-TEST-SLOT-ISO-01": {
+      "id": "REG-SB-TEST-SLOT-ISO-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "tests never queue behind the machine's real heavy-verify slots",
+      "component": "test-heavy-slot-isolation",
+      "command": "bash tests/super-board/test_tests_skip_machine_slots.sh",
+      "watch_files": [
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        ".claude/bin/super-board-heavy-slot.py",
+        "tests/super-board/test_tests_skip_machine_slots.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.8586109
+      }
+    },
+    "REG-DK-SLOT-CLASSES-01": {
+      "id": "REG-DK-SLOT-CLASSES-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "quyền chạy theo tải máy của từng suite (P1b): bỏ 2 slot engine; tải cao thì chờ rồi vẫn chạy, không UNTESTED; chờ tải không ăn vào thời gian chờ khoá; khoá Unity (độc quyền) vẫn chặn, không còn khoá thiết bị; bash -lc nhận ra Unity; hàng đợi ưu tiên + SJF; suite STALE bị SLOT không lọt PASS",
+      "component": "devkit-slot-classes",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_classes.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_classes.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.648362
+      }
+    },
+    "REG-SB-HEAVY-SLOT-01": {
+      "id": "REG-SB-HEAVY-SLOT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "heavy slot theo tải máy (P1b): CLI/wrapper super-board chạy ngay khi tải < DEVKIT_SLOT_LOAD_MAX, chờ rồi vẫn chạy khi tải cao, --nonblock không chạy khi tải cao, DEVKIT_SLOT_LOAD_WAIT_S=0 không chờ, suite Unity lồng trong CLI vẫn xin khoá Unity; --force-full với suite nhẹ không chờ",
+      "component": "super-board-heavy-slot",
+      "command": "bash tests/super-board/test_heavy_slot.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        ".claude/bin/super-board-heavy-slot.py",
+        "tests/super-board/test_heavy_slot.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.589138
+      }
+    },
+    "REG-DK-SUITE-CACHE-01": {
+      "id": "REG-DK-SUITE-CACHE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "cache PASS theo khoá nội dung từng suite (cached-full): chỉ suite có input đổi chạy lại; khoá chính xác chỉ cho suite thêm vào, suite được chọn theo khoá cả cây; FAIL dính khoá, không-PASS vô hiệu PASS cũ; PASS theo khoá chính xác không vào biên nhận / DEVKIT_GATE_DONE; gộp lượt trùng khoá; suite tự sửa input không được ghi",
+      "component": "devkit-suite-cache",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_suite_cache.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_suite_cache.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.811476
+      }
+    },
+    "REG-DK-SENTINEL-01": {
+      "id": "REG-DK-SENTINEL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "sentinel: lần chạy thật > 24 h thì --full không dùng khoá (không ở merge gate), suite quá giờ không đóng mốc; cache sai thì học input thiếu hoặc cách ly flaky; run_one/nightly ghi cùng sổ khoá",
+      "component": "devkit-suite-cache-sentinel",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_sentinel.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py",
+        "universal-agent-devkit/tests/gates/test_gate_sentinel.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.0021381
+      }
+    },
+    "REG-SB-BUILD-WORKERS-01": {
+      "id": "REG-SB-BUILD-WORKERS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "lane build chạy nhiều worker theo tải máy: trần build_workers, tối đa một worker mới mỗi tick, tải >= build_load_max hoặc không đọc được thì giữ, quét mồ côi/zombie/dừng khẩn nhận ra N worker",
+      "component": "super-board-build-workers",
+      "command": "bash tests/super-board/test_runner_build_workers.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_build_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.0757551
+      }
+    },
+    "REG-DK-HEAVY-CAP-01": {
+      "id": "REG-DK-HEAVY-CAP-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "trần 3 suite nặng (cpu/gradle/xcode) cùng lúc: hết slot thì xếp hàng chờ không lỗi, hết ngân sách vẫn chạy kèm ghi chú, suite nhẹ/lồng không bị đếm, slot nặng không làm held",
+      "component": "devkit-heavy-slot-cap",
+      "command": "bash universal-agent-devkit/tests/gates/test_heavy_slot_cap.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_heavy_slot_cap.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.659112
+      }
+    },
+    "REG-SB-WATCHDOG-LOCK-ATOMIC-01": {
+      "id": "REG-SB-WATCHDOG-LOCK-ATOMIC-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "8 check cùng gặp khoá check cũ quá 120 s thì đúng một check giữ được khoá (không khởi động 2 runner)",
+      "component": "super-board-watchdog-lock-atomic",
+      "command": "bash tests/super-board/test_watchdog_lock_atomic.sh",
+      "watch_files": [
+        ".claude/bin/super-board-watchdog.sh",
+        "tests/super-board/test_watchdog_lock_atomic.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827917.370558
+      }
+    },
+    "REG-DK-SENTINEL-MERGE-ENV-01": {
+      "id": "REG-DK-SENTINEL-MERGE-ENV-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "test_gate_sentinel.sh xanh khi DEVKIT_SLOT_PRIORITY=merge / DEVKIT_SLOT_LOAD_WAIT_S=0 rò từ merge gate vào verify (#167)",
+      "component": "devkit-sentinel-merge-env",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_sentinel_merge_env.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/tests/gates/test_gate_sentinel.sh",
+        "universal-agent-devkit/tests/gates/test_gate_sentinel_merge_env.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.2721531
+      }
+    },
+    "REG-SB-WAVE-NEEDSYOU-01": {
+      "id": "REG-SB-WAVE-NEEDSYOU-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "wave.js: prompt exit 7 và exit 8 của merge gate gọi super-board-needs-you.py mark với --next comment done (#106)",
+      "component": "super-board-wave-needs-you-mark",
+      "command": "bash tests/super-board/test_wave_needs_you_mark.sh",
+      "watch_files": [
+        ".claude/workflows/super-board-wave.js",
+        "tests/super-board/test_wave_needs_you_mark.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827917.4962718
+      }
+    },
+    "REG-SB-MERGE-CALL-FAILED-01": {
+      "id": "REG-SB-MERGE-CALL-FAILED-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate: gh pr merge lỗi mà PR vẫn OPEN đúng head → exit 4, không halt board; đọc lại lỗi/CLOSED vẫn halt; MERGED muộn exit 0; head đổi exit 6",
+      "component": "super-board-merge-call-failed",
+      "command": "bash tests/super-board/test_merge_gate_merge_call_failed.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_merge_call_failed.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.831546
+      }
+    },
+    "REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01": {
+      "id": "REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner trả thẻ Building có worker build chết giữa lượt chạy về lại Ready kèm sổ reclaims; quá trần trong cửa sổ thì chuyển sang Blocked có dòng blocked-by: -",
+      "component": "super-board-runner-reclaim-dead-build",
+      "command": "bash tests/super-board/test_runner_reclaim_dead_build.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_reclaim_dead_build.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.7417989
+      }
+    },
+    "REG-SB-MERGE-DEAD-HOLDER-01": {
+      "id": "REG-SB-MERGE-DEAD-HOLDER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate: khoá merge có pid đã chết (gate bị giết trước trap EXIT) được reap ngay, không chờ stale-after; pid còn sống và khoá không có pid vẫn chờ như cũ (exit 4)",
+      "component": "super-board-merge-gate-dead-holder",
+      "command": "bash tests/super-board/test_merge_gate_dead_holder.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_dead_holder.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.86615
+      }
+    },
+    "REG-SB-MERGE-TRAIN-01": {
+      "id": "REG-SB-MERGE-TRAIN-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge train: 3 PR sẵn sàng thì verify đúng một lần và cả 3 merge; một PR đỏ được chia đôi tìm ra (exit 11) và hai PR còn lại vẫn merge; một PR chạy như gate thường (#110)",
+      "component": "super-board-merge-train",
+      "command": "bash tests/super-board/test_merge_train.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_train.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.209121
+      }
+    },
+    "REG-SB-LANE-WORKERS-01": {
+      "id": "REG-SB-LANE-WORKERS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "lane QA và Review chạy nhiều worker (qa_workers / review_workers, mặc định 1): một worker mới mỗi tick, cổng tải build_load_max, zombie/reap/dừng khẩn/nhận lại nhận ra cả worker thêm, worker thêm không bị trần max_workers chặn",
+      "component": "super-board-lane-workers",
+      "command": "bash tests/super-board/test_runner_lane_workers.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_lane_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.624725
+      }
+    },
+    "REG-AGENT-OFFICE-01": {
+      "id": "REG-AGENT-OFFICE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "agent-office: unittest (server, redact, host check) và tìm đường A* của người đi trong xưởng (node)",
+      "component": "mcp-servers/agent-office",
+      "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests",
+      "watch_files": [
+        "mcp-servers/agent-office/server.py",
+        "mcp-servers/agent-office/web/index.html",
+        "mcp-servers/agent-office/web/pathing.js",
+        "mcp-servers/agent-office/web/vendor/*",
+        "mcp-servers/agent-office/*.sh",
+        "ai-factory.sh",
+        "mcp-servers/agent-office/tests/*"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827912.680681
+      }
+    },
+    "REG-SB-CARD-ITEMS-RETRY-01": {
+      "id": "REG-SB-CARD-ITEMS-RETRY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "card.sh items đọc lại 1 lần khi số item lệch totalCount (không chết runner); lệch cả hai lần vẫn exit 69; stop.sh ghi marker trước kill (#256)",
+      "component": "super-board-card-items-retry",
+      "command": "bash tests/super-board/test_card_items_count_retry.sh",
+      "watch_files": [
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-stop.sh",
+        "tests/super-board/test_card_items_count_retry.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.104415
+      }
+    },
+    "REG-SB-RUNNER-READ-RETRY-01": {
+      "id": "REG-SB-RUNNER-READ-RETRY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner đọc lại board có backoff khi lần đọc hỏng tạm thời; hỏng hết lượt thì bỏ tick thay vì chết; halt 79 vẫn dừng; vòng chính chỉ đọc qua tick_fetch (#256)",
+      "component": "super-board-runner-board-read-retry",
+      "command": "bash tests/super-board/test_runner_board_read_retry.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_board_read_retry.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.6736078
+      }
+    },
+    "REG-DK-MATRIX-MERGE-01": {
+      "id": "REG-DK-MATRIX-MERGE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge driver ma trận hồi quy: hai nhánh cùng nối rule khác nhau vào cuối thì gộp không conflict và gate vẫn tin ma trận chỉ-thêm; cùng id khác nội dung thì lỗi rõ; sửa rule cũ vẫn conflict; githooks install cài driver",
+      "component": "devkit-matrix-merge-driver",
+      "command": "bash universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/matrix_merge_driver.py",
+        "universal-agent-devkit/scripts/git/githooks.sh",
+        "universal-agent-devkit/tests/gates/test_matrix_merge_driver.sh",
+        ".gitattributes"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.931235
+      }
+    },
+    "REG-SB-RUNNER-PREFLIGHT-SWEPT-01": {
+      "id": "REG-SB-RUNNER-PREFLIGHT-SWEPT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner chạy preflight trước khi nhận thẻ build (hold/sequence có blockedBy: không claim, thẻ sang Blocked kèm blocked-by; exit 79 dừng run) và sổ SWEPT_CARDS bền qua lần khởi động lại (#253)",
+      "component": "super-board-runner-preflight-swept",
+      "command": "bash tests/super-board/test_runner_preflight_swept.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_runner_preflight_swept.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.6321862
+      }
+    },
+    "REG-SB-BLOCKED-BY-OPEN-ONLY-01": {
+      "id": "REG-SB-BLOCKED-BY-OPEN-ONLY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "dòng blocked-by: chỉ ghi issue còn mở; số đã đóng bị bỏ kèm lý do, không còn số mở thì `-`, không đọc được trạng thái thì exit 79 (#253)",
+      "component": "super-board-blocked-by-open-only",
+      "command": "python3 tests/super-board/test_blocked_by_open_only.py",
+      "watch_files": [
+        ".claude/bin/super-board-blocked-by.py",
+        "tests/super-board/test_blocked_by_open_only.py"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.912382
+      }
+    },
+    "REG-SB-WIP-LIMIT-01": {
+      "id": "REG-SB-WIP-LIMIT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner giới hạn WIP (#252): không giao build khi QA+Review chờ >= build_wip_k × (qa_workers+review_workers); không giao build / worker QA-Review thêm khi số post-fix-gate đang chạy >= gate_max; log lý do; số gate không đếm được thì không chặn",
+      "component": "super-board-wip-limit",
+      "command": "bash tests/super-board/test_runner_wip_limit.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_wip_limit.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827917.581867
+      }
+    },
+    "REG-SB-RED-ON-BASE-01": {
+      "id": "REG-SB-RED-ON-BASE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate: suite đỏ cả trên origin/base không REJECT PR, mở thẻ riêng; suite do PR làm đỏ vẫn exit 11 (#251)",
+      "component": "super-board-red-on-base",
+      "command": "bash tests/super-board/test_merge_gate_red_on_base.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-verify-cmd.sh",
+        "tests/super-board/test_merge_gate_red_on_base.sh",
+        "tests/super-board/test_verify_cmd_same_as_gate.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.501299
+      }
+    },
+    "REG-SB-VERIFY-CMD-01": {
+      "id": "REG-SB-VERIFY-CMD-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "QA in đúng lệnh verify của merge gate (cùng hàm chèn --diff/--force-full) (#251)",
+      "component": "super-board-red-on-base",
+      "command": "bash tests/super-board/test_verify_cmd_same_as_gate.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        ".claude/bin/super-board-verify-cmd.sh",
+        "tests/super-board/test_merge_gate_red_on_base.sh",
+        "tests/super-board/test_verify_cmd_same_as_gate.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827917.005281
+      }
+    },
+    "REG-SB-SELF-RELOAD-01": {
+      "id": "REG-SB-SELF-RELOAD-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner rảnh tự nạp lại super-board-run.sh khi origin đổi: ff main rồi exec lại; main lệch origin / ff hỏng / sai cú pháp thì notify một lần, không restart mù; còn worker thì không đụng",
+      "component": "super-board-self-reload",
+      "command": "bash tests/super-board/test_runner_self_reload.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.769863
+      }
+    },
+    "REG-SB-PREFLIGHT-STALE-OVERLAP-01": {
+      "id": "REG-SB-PREFLIGHT-STALE-OVERLAP-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "preflight câu 3: PR của thẻ Backlog/Blocked không chặn; PR của thẻ đang chạy vẫn chặn; thẻ có PR riêng không bị sequence lại; không --inflight giữ hành vi cũ (#280)",
+      "component": "super-board-preflight-stale-overlap",
+      "command": "bash tests/super-board/test_preflight_overlap_stale.sh",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_preflight_overlap_stale.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.4558332
+      }
+    },
+    "REG-SB-PREFLIGHT-NUMBERED-AC-01": {
+      "id": "REG-SB-PREFLIGHT-NUMBERED-AC-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "AC đánh số 1) / 1. được nhận ở preflight (không hold unclear) và ở luật kéo Backlog; AC chỉ văn xuôi vẫn bị chặn (#283)",
+      "component": "super-board-preflight-numbered-ac",
+      "command": "bash tests/super-board/test_preflight_numbered_ac.sh",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_preflight_numbered_ac.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.4093068
+      }
+    },
+    "REG-AGENT-OFFICE-02": {
+      "id": "REG-AGENT-OFFICE-02",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "agent-office: bộ nội thất office.glb dựng bằng Blender còn đủ khối có tên (Desk, Chair, Monitor/Screen có UV, Shelf...) và đủ nhỏ",
+      "component": "mcp-servers/agent-office/blender",
+      "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_office_glb",
+      "watch_files": [
+        "mcp-servers/agent-office/blender/*",
+        "mcp-servers/agent-office/web/models/*"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827912.709929
+      }
+    },
+    "REG-SB-REVIEW-APPROVED-HEAD-01": {
+      "id": "REG-SB-REVIEW-APPROVED-HEAD-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner: thẻ Review đã duyệt đúng head (comment approved-head:<sha> của OWNER/MEMBER/COLLABORATOR) chỉ chạy merge-only với --expect-head, kể cả sau merge gate exit 4; head đổi, người ngoài duyệt hay đọc GitHub hỏng thì review đầy đủ (#227)",
+      "component": "super-board-review-approved-head",
+      "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_review_approved_head.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.5318851
+      }
+    },
+    "REG-SB-RUNNER-READY-ORDER-01": {
+      "id": "REG-SB-RUNNER-READY-ORDER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner giao thẻ Ready theo priority label, bug trước, số issue tăng dần; thẻ body nhắm repo khác → Blocked kèm block-template; thẻ có Fix trùng thẻ đang mở → comment một lần, không giao",
+      "component": "super-board-runner-ready-order",
+      "command": "bash tests/super-board/test_runner_ready_order.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_ready_order.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.704561
+      }
+    },
+    "REG-SB-GITHUB-RECONCILE-01": {
+      "id": "REG-SB-GITHUB-RECONCILE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "github-read --halt --verify / --reconcile: đọc lại lần ghi chưa rõ kết quả; đã áp dụng thì lưu trữ halt, chưa áp dụng hay không kiểm chứng được thì giữ halt",
+      "component": "super-board-github-read-reconcile",
+      "command": "bash tests/super-board/test_github_read_reconcile.sh",
+      "watch_files": [
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_github_read_reconcile.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.240798
+      }
+    },
+    "REG-SB-WRITE-MARKER-01": {
+      "id": "REG-SB-WRITE-MARKER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "gh_write_once: comment ghi chưa rõ kết quả mang marker duy nhất cho mỗi lần, comment cố định lặp không làm reconcile báo đã áp dụng nhầm",
+      "component": "super-board-gh-write-once-marker",
+      "command": "bash tests/super-board/test_gh_write_once_marker.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_gh_write_once_marker.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827917.6637802
+      }
+    },
+    "REG-DK-DISCARD-SQUASH-01": {
+      "id": "REG-DK-DISCARD-SQUASH-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "worktree discard: chuỗi commit đã squash vào origin/<trunk> (main local chưa pull) + file xoá thì gỡ được kèm refs/devkit/discarded; còn commit trunk chưa có patch hoặc có file bị sửa thì vẫn từ chối",
+      "component": "worktree-discard-squash",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_discard_squash.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_discard_squash.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.452115
+      }
+    },
+    "REG-DK-MERGE-TREE-NOLEAK-01": {
+      "id": "REG-DK-MERGE-TREE-NOLEAK-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge-tree dò bị kill giữa chừng không để .merge_file_* ở cây làm việc (cwd tạm), kết luận 'đã tích hợp' không đổi khi driver chạy kịp (#309)",
+      "component": "kit-merge-tree-no-leak",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_merge_tree_no_leak.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_merge_tree_no_leak.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.969692
+      }
+    },
+    "REG-SB-REVIEW-MERGE-TRAIN-01": {
+      "id": "REG-SB-REVIEW-MERGE-TRAIN-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner: từ 2 thẻ Review đã duyệt đúng head trở lên thì một worker chạy super-board-merge-train.sh --prs cho cả đợt (lock chung PID, không bị coi là zombie khi thẻ đầu đã Done); thẻ chưa duyệt, sai head, đã khoá hay SB_REVIEW_TRAIN=0 thì đường từng thẻ như cũ (#228)",
+      "component": "super-board-review-merge-train",
+      "command": "bash tests/super-board/test_runner_review_merge_train.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_review_merge_train.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.5748951
+      }
+    },
+    "REG-SB-STATUS-NEEDS-YOU-01": {
+      "id": "REG-SB-STATUS-NEEDS-YOU-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "status: option Needs You của Project vẽ thành ô riêng và vào nhóm Waiting on you; không có thẻ Needs You thì đầu ra không đổi",
+      "component": "super-board-status-needs-you-column",
+      "command": "bash tests/super-board/test_status_needs_you_column.sh",
+      "watch_files": [
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_status_needs_you_column.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.819304
+      }
+    },
+    "REG-SB-WAITING-LABEL-01": {
+      "id": "REG-SB-WAITING-LABEL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "thẻ Blocked chỉ chờ thẻ khác mang nhãn '⏳ chờ thẻ khác' (planner pending, runner gắn/gỡ), thẻ 🙋 không có nhãn, status tách hai nhóm (#235)",
+      "component": "super-board-waiting-label",
+      "command": "bash tests/super-board/test_waiting_label.sh",
+      "watch_files": [],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827917.0459971
+      }
+    },
+    "REG-CAPACITY-CODEX-WAVE-01": {
+      "id": "REG-CAPACITY-CODEX-WAVE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "codex-wave: số lane Codex = min(max_workers, capacity build_workers); max_workers 0 lấy capacity; capacity vắng/hỏng/rác thì công thức cũ",
+      "component": "capacity",
+      "command": "bash tests/super-board/test_codex_wave_workers.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827912.950739
+      }
+    },
+    "REG-CAPACITY-RUNNER-01": {
+      "id": "REG-CAPACITY-RUNNER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "super-board-run resolve_build_*: config vắng thì build_workers và build_load_max (busy_load) lấy từ capacity, capacity vắng thì số cũ (lệnh trùng REG-SB-BUILD-WORKERS-01: gate gộp, không chạy hai lần)",
+      "component": "capacity",
+      "command": "bash tests/super-board/test_runner_build_workers.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.2084212
+      }
+    },
+    "REG-CAPACITY-RUNNER-02": {
+      "id": "REG-CAPACITY-RUNNER-02",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "super-board-run resolve_lane_workers: config vắng thì lane_workers từ capacity, capacity vắng thì 1 (lệnh trùng REG-SB-LANE-WORKERS-01)",
+      "component": "capacity",
+      "command": "bash tests/super-board/test_runner_lane_workers.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.2484999
+      }
+    },
+    "REG-CAPACITY-RUNNER-03": {
+      "id": "REG-CAPACITY-RUNNER-03",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "super-board-run resolve_gate_max: config vắng thì gate_max từ capacity (4 lõi: 2), capacity vắng thì 6 (lệnh trùng REG-SB-WIP-LIMIT-01)",
+      "component": "capacity",
+      "command": "bash tests/super-board/test_runner_wip_limit.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.342857
+      }
+    },
+    "REG-CAPACITY-MERGE-HOLD-01": {
+      "id": "REG-CAPACITY-MERGE-HOLD-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate: config thiếu merge_load_max thì chờ theo capacity hold_load (12 lõi: 96, biên 95/96), capacity vắng thì cùng công thức 8 × lõi (lệnh trùng REG-SB-MERGE-LOAD-WAIT-01)",
+      "component": "capacity",
+      "command": "bash tests/super-board/test_merge_gate_load_wait.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.0078678
+      }
+    },
+    "REG-CAPACITY-SLOTS-01": {
+      "id": "REG-CAPACITY-SLOTS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "heavy_slot CLI / wrapper super-board: ngưỡng tải mặc định là capacity hold_load (lệnh trùng REG-SB-HEAVY-SLOT-01)",
+      "component": "capacity",
+      "command": "bash tests/super-board/test_heavy_slot.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.366718
+      }
+    },
+    "REG-CAPACITY-SLOTS-02": {
+      "id": "REG-CAPACITY-SLOTS-02",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "test super-board không xếp hàng sau slot thật của máy khi ngưỡng tải đến từ capacity (lệnh trùng REG-SB-TEST-SLOT-ISO-01)",
+      "component": "capacity",
+      "command": "bash tests/super-board/test_tests_skip_machine_slots.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.40006
+      }
+    },
+    "REG-CAPACITY-SLOTS-03": {
+      "id": "REG-CAPACITY-SLOTS-03",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "super_board_all: dòng khởi động in ngưỡng hold_load của capacity, nút DEVKIT_CAPACITY không lái test (lệnh trùng REG-SB-NOTIFY-SLOTS-01)",
+      "component": "capacity",
+      "command": "python3 tests/super-board/test_notify.py && python3 tests/super-board/test_super_board_all_slots.py && bash tests/super-board/test_runner_claim_loop.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.432571
+      }
+    },
+    "REG-CAPACITY-OFFICE-01": {
+      "id": "REG-CAPACITY-OFFICE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "agent-office dashboard: hiển thị ngưỡng tải hold_load từ capacity, capacity hỏng không làm sập dashboard",
+      "component": "capacity",
+      "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_dashboard_stats",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.042034
+      }
+    },
+    "REG-SB-TOTAL-CAP-01": {
+      "id": "REG-SB-TOTAL-CAP-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "một trần worker duy nhất: build+qa+review của mọi repo trên máy <= max_workers (5), đếm qua thư mục slot chung, PID chết tự trả slot; tải CPU, WIP, gate_max không còn chi phối",
+      "component": "super-board-total-worker-cap",
+      "command": "bash tests/super-board/test_runner_total_cap.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/super-board/configs/agent-workbench.json",
+        "tests/super-board/test_runner_total_cap.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.891399
+      }
+    },
+    "REG-SB-RUNNER-NOOP-WORKER-01": {
+      "id": "REG-SB-RUNNER-NOOP-WORKER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner: worker qa/review thoát mà thẻ vẫn ở cột cũ và không comment mới thì tính no-op; 2 lần liên tiếp thì thẻ sang Blocked (📱 nếu log nhắc máy thật, còn lại ❓) kèm dòng cuối log, không giao lại; chuyển cột hoặc có comment thì không tính",
+      "component": "super-board-runner-noop-worker",
+      "command": "bash tests/super-board/test_runner_noop_worker.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_noop_worker.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827916.601856
+      }
+    },
+    "REG-DK-SESSION-ENV-01": {
+      "id": "REG-DK-SESSION-ENV-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "test_multi_session_gate + test_gate_stop_reuse_race xanh khi id phiên của máy thật (CLAUDE_CODE_SESSION_ID, DEVKIT_SESSION_ID) rò vào môi trường (#240)",
+      "component": "devkit-multi-session-gate-env",
+      "command": "bash universal-agent-devkit/tests/gates/test_multi_session_gate_session_env.sh",
+      "watch_files": [
+        "universal-agent-devkit/tests/gates/test_multi_session_gate.sh",
+        "universal-agent-devkit/tests/gates/test_gate_stop_reuse_race.sh",
+        "universal-agent-devkit/tests/gates/test_multi_session_gate_session_env.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.3933282
+      }
+    },
+    "REG-SB-MERGE-GATE-TREE-01": {
+      "id": "REG-SB-MERGE-GATE-TREE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate: cây gộp đã verify xanh với cùng bộ lệnh thì lượt gate sau bỏ verify; base đổi, lệnh đổi hoặc verify đỏ thì verify đủ (#226 gap 7)",
+      "component": "super-board-merge-gate-verified-tree",
+      "command": "bash tests/super-board/test_merge_gate_verified_tree.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_verified_tree.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.9064891
+      }
+    },
+    "REG-SB-GITHUB-READ-FOREIGN-HALT-01": {
+      "id": "REG-SB-GITHUB-READ-FOREIGN-HALT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "github-read: a failed read of ANOTHER repository (test fixture o/r from a worktree) never writes the real board halt; a read of the checkout's own repository, or one naming no repository, still halts",
+      "component": "super-board-github-read-foreign-halt",
+      "command": "bash tests/super-board/test_github_read_foreign_halt.sh",
+      "watch_files": [
+        ".claude/bin/super-board-github-read.py",
+        "tests/super-board/test_github_read_foreign_halt.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827915.20019
+      }
+    },
+    "REG-SB-AGENT-OFFICE-INBOX-01": {
+      "id": "REG-SB-AGENT-OFFICE-INBOX-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "runner: có bản cài ~/.agent-office/app/inbox_hook.py thì worker claude mang --session-id, --settings (hook PostToolUse hộp thư) và system prompt có nonce, ghi session id vào log; không có hoặc hook lỗi thì lệnh bật như cũ; agy/grok không đổi",
+      "component": "agent-office-agent-message",
+      "command": "bash tests/super-board/test_runner_agent_office_inbox.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "mcp-servers/agent-office/inbox_hook.py",
+        "tests/super-board/test_runner_agent_office_inbox.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.869571
+      }
+    },
+    "REG-AGENT-OFFICE-INBOX-02": {
+      "id": "REG-AGENT-OFFICE-INBOX-02",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "agent-office: hook hộp thư lệnh (rỗng, có lệnh, sai session, file hỏng, subagent, thiếu nonce, song song) và POST /api/agent-message (rate limit, tunnel cần mã, resume bị từ chối khi phiên còn chạy hoặc thẻ còn worker)",
+      "component": "agent-office-agent-message",
+      "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_inbox_hook tests.test_agent_message",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "mcp-servers/agent-office/inbox_hook.py",
+        "tests/super-board/test_runner_agent_office_inbox.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827912.735591
+      }
+    },
+    "REG-DK-GATE-TREE-01": {
+      "id": "REG-DK-GATE-TREE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "post-fix-gate --tree HEAD: cây sạch chạy đủ suite và exit 0, tin ma trận đã commit, từ chối cây bẩn, biên nhận theo cây cho proof_gate (#307)",
+      "component": "post-fix-gate-tree-mode",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_tree_mode.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_tree_mode.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.4732249
+      }
+    },
+    "REG-DK-GUARD-KILL-BY-NAME-01": {
+      "id": "REG-DK-GUARD-KILL-BY-NAME-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "git guard chặn pkill / killall / pgrep -f (kill theo tên trúng mọi board); kill <PID>, pgrep không -f và chữ pkill trong echo/grep/commit -m vẫn qua (#144)",
+      "component": "devkit-guard-kill-by-name",
+      "command": "bash universal-agent-devkit/tests/gates/test_guard_kill_by_name.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/tests/gates/test_guard_kill_by_name.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.630327
+      }
+    },
+    "REG-DK-SETTINGS-READ-DENY-APK-01": {
+      "id": "REG-DK-SETTINGS-READ-DENY-APK-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "luật deny Read của settings không chặn build/outputs và *.apk (worker QA liệt kê, cài APK debug), vẫn chặn build/intermediates, build/tmp, *.aab, *.hprof",
+      "component": "devkit-settings-read-deny-apk",
+      "command": "bash universal-agent-devkit/tests/verification/test_settings_template_read_deny.sh",
+      "watch_files": [
+        "universal-agent-devkit/templates/claude_settings.json",
+        "universal-agent-devkit/.claude/settings.json",
+        ".claude/settings.json",
+        "universal-agent-devkit/tests/verification/test_settings_template_read_deny.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827914.417075
+      }
+    },
+    "REG-DK-GUARD-HEREDOC-TEXT-01": {
+      "id": "REG-DK-GUARD-HEREDOC-TEXT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "chữ rm -rf / git nằm trong heredoc là dữ liệu: hardware_safety_gate và worktree_guard không chặn nhầm, rm -rf / và ghi vào main thật vẫn bị chặn (#299 b, c)",
+      "component": "devkit-guard-heredoc-text",
+      "command": "bash universal-agent-devkit/tests/gates/test_guard_heredoc_text_not_command.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/hooks/worktree_guard.sh",
+        "universal-agent-devkit/tests/gates/test_guard_heredoc_text_not_command.sh"
+      ],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827913.497196
+      }
+    },
+    "ORPHAN_TEST:mcp-servers/agent-office/tests/approval_test.js": {
+      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/approval_test.js",
+      "kind": "orphan",
+      "title": "mcp-servers/agent-office/tests/approval_test.js",
+      "component": "-",
+      "file": "mcp-servers/agent-office/tests/approval_test.js",
+      "created_at": "2026-10-24 14:45:03",
+      "last": null,
+      "history": [],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827912.290637
+      }
+    },
+    "ORPHAN_TEST:mcp-servers/agent-office/tests/pathing_test.js": {
+      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/pathing_test.js",
+      "kind": "orphan",
+      "title": "mcp-servers/agent-office/tests/pathing_test.js",
+      "component": "-",
+      "file": "mcp-servers/agent-office/tests/pathing_test.js",
+      "created_at": "2026-10-24 14:45:03",
+      "last": null,
+      "history": [],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827912.463989
+      }
+    },
+    "ORPHAN_TEST:mcp-servers/agent-office/tests/present_pose_test.js": {
+      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/present_pose_test.js",
+      "kind": "orphan",
+      "title": "mcp-servers/agent-office/tests/present_pose_test.js",
+      "component": "-",
+      "file": "mcp-servers/agent-office/tests/present_pose_test.js",
+      "created_at": "2026-10-24 14:45:03",
+      "last": null,
+      "history": [],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827912.5152378
+      }
+    },
+    "ORPHAN_TEST:mcp-servers/agent-office/tests/repo_label_test.js": {
+      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/repo_label_test.js",
+      "kind": "orphan",
+      "title": "mcp-servers/agent-office/tests/repo_label_test.js",
+      "component": "-",
+      "file": "mcp-servers/agent-office/tests/repo_label_test.js",
+      "created_at": "2026-10-24 14:45:03",
+      "last": null,
+      "history": [],
+      "red_proof": {
+        "status": "N/A",
+        "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+        "ts": 1792827912.549091
+      }
     }
   },
   "meta": {
