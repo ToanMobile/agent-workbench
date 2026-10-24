@@ -8,9 +8,10 @@
 #      `super-board run` tường minh mới xoá);
 #   2. bản ghi của chính runner (<slug>.state) nói board đang chạy: STATE=running (bị SIGKILL, không kịp ghi) hoặc
 #      crashed (thoát ngoài ý muốn). Không có bản ghi (board dừng trước khi có watchdog) = không làm gì; finished,
-#      halted (mã 9/10/73/74/75/79) hoặc stopped = runner tự dừng có chủ đích, không khởi động lại — trừ halt 79 có
-#      github-halt.json lưu một lần ĐỌC: mỗi lượt thử `super-board-github-read.py --resume` (chỉ đọc), phát lại được
-#      thì khởi động lại (lỗi mạng tạm, vd. máy ngủ dậy);
+#      halted (mã 9/10/73/74/75/76/79) hoặc stopped = runner tự dừng có chủ đích, không khởi động lại — trừ halt 79:
+#      còn github-halt.json lưu một lần ĐỌC thì mỗi lượt thử `super-board-github-read.py --resume` (chỉ đọc), phát lại
+#      được thì khởi động lại (lỗi mạng tạm, vd. máy ngủ dậy); hết file halt (đã phát lại/xoá ở nơi khác) thì khởi động
+#      lại thẳng, theo backoff + trần. Mã 76 = halt ghi chưa rõ kết quả mà bản ghi halt không ghi được: không khởi động lại;
 #   3. PID trong bản ghi không còn là một super-board-run.sh đang chạy;
 #   4. PATH có đủ công cụ runner cần để đọc board và giao việc (gh, jq, python3, claude, git);
 #   5. GitHub không bị halt. Halt 79 do một lần GHI chưa rõ kết quả (#190): watchdog ĐỌC lại GitHub bằng `--reconcile` (PR đã
@@ -504,10 +505,12 @@ check() {
     # rate_limit` hỏng 3 lần → cả 5 board halt và nằm im 3,5 giờ. Halt có lần ĐỌC đã lưu thì `--resume` phát lại được an
     # toàn (chỉ đọc); halt do một lần ghi chưa rõ kết quả thì --resume tự từ chối (cần người đối chiếu).
     halted)
-      if [ "$rc" != 79 ] || (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1); then
+      if [ "$rc" != 79 ]; then
         verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0
       fi
-      halt_resume=1 ;;
+      # rc 79 không bao giờ là dừng có chủ đích. Hết file halt (đã phát lại/lưu trữ ở nơi khác) thì không còn gì để
+      # resume: khởi động lại thẳng (24/10 02:40 board nằm im 5,5 giờ vì nhánh này ghi "ended on purpose").
+      (PATH="$env_path"; python3 "$SCRIPT_DIR/super-board-github-read.py" --check >/dev/null 2>&1) || halt_resume=1 ;;
     *) verdict "ended-$state" "runner ended on purpose (STATE=${state:-?} rc=${rc:-?}) — not restarted"; return 0 ;;
   esac
   # Runner watchdog vừa khởi động đã chết trước khi ghi bản ghi của nó (lỗi config, verification-readiness, trước trap

@@ -516,3 +516,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source
 - **Nguyên nhân:** Test gọi SB_LIB_ONLY=1 . super-board-run.sh; bash giữ phép gán đứng trước builtin '.' chỉ trong lúc source, nên hàm gọi về sau không thấy SB_LIB_ONLY và test đếm slot worker thật trong ~/.claude/super-board-slots (23/10: merge-train bị giữ 3/3 running)
 - **Quy tắc phòng ngừa & Cách fix:** Cần biết lib mode ở thời điểm gọi hàm thì chốt nó bằng một dòng top-level chạy lúc source (SB_SLOT_LIB_MODE="${SB_LIB_ONLY:-0}"); test lib mode bằng một HOME giả có slot sống và kiểm đột biến
+
+---
+
+### [INSTINCT-062] Mở file người dùng ghi được bằng open() không kiểm loại file
+- **Ngày phát hiện:** 2026-10-24
+- **Hiện tượng lỗi:** Mở file người dùng ghi được bằng open() không kiểm loại file
+- **Nguyên nhân:** suite_cache._read_text/_file_digest mở FIFO bằng open() nên chờ mãi; test_gate_robustness treo, REG-DK-ALL-01 TIMEOUT ở mọi giới hạn kể cả máy rảnh. Nới timeout không chữa được; watchdog thì coi halted rc=79 mất file halt là dừng có chủ đích nên board nằm im 5,5 giờ
+- **Quy tắc phòng ngừa & Cách fix:** Mọi chỗ đọc file trong gate/cache kiểm os.path.isfile (hoặc mở O_NONBLOCK) trước; timeout vô hạn dù máy rảnh nghĩa là treo, dùng PYTHONFAULTHANDLER=1 + kill -ABRT lấy stack thay vì tăng giới hạn; rc=79 của runner không bao giờ là dừng có chủ đích
