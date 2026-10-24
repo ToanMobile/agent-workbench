@@ -72,7 +72,7 @@ wt s4 s4a src/x.py 'x = 2'; gate "$TMP/s4a"; wt s4 s4b src/x.py 'x = 2'; gate "$
 if [ "$(n s4)" = 2 ] && ! grep -q -- '--list' "$TMP/count.s4"; then ok "S4. script không có dấu devkit-selection-list: không bị hỏi --list, không cache (2 lượt = 2 lần chạy)"
 else fail "S4. count.s4 = $(n s4) dòng, nội dung: $(tr '\n' '|' < "$TMP/count.s4") (mong 2 dòng rỗng, không --list)"; fi
 
-# S5. Gate đỏ không ghi PASS của REG-ALL: lượt 1 REG-X FAIL (cờ ngoài cây) trong khi REG-ALL PASS; lượt 2 cùng cây, hết cờ: REG-ALL phải chạy lại.
+# S5 (cũng là review R5: khoá không chứa DEVKIT_GATE_DONE). Gate đỏ không ghi PASS của REG-ALL: lượt 1 REG-X FAIL (cờ ngoài cây) trong khi REG-ALL PASS; lượt 2 cùng cây, hết cờ: REG-ALL phải chạy lại.
 repo s5 ',{"component":"X","watch_files":["universal-agent-devkit/bin/*.py"],"mandatory_regression_tests":[{"id":"REG-X","name":"x","command":"test ! -f '"$TMP"'/flag5"}]}'
 : > "$TMP/flag5"
 wt s5 s5a $LIB 'a = 2'; gate "$TMP/s5a"; r1=$?; c1=$(n s5)
@@ -109,5 +109,16 @@ else fail "S7. exit $rc (mong 0); số mục cache của REG-ALL: $n7 (mong 0)";
 s7 s7b 3600 1
 if [ "$rc" = 0 ] && [ "$n7" -ge 1 ]; then ok "S7b. đối chứng: tập chọn không đổi trong lúc chạy ⇒ PASS vẫn được ghi ($n7 mục)"
 else fail "S7b. exit $rc (mong 0); số mục cache của REG-ALL: $n7 (mong ≥ 1)"; grep -E "REG-ALL|suite_cache" "$TMP/out" | tail -3; fi
+
+# S8 (review R6). run_impacted.sh đọc LỊCH SỬ git (merge-base, `git log`), khoá cả cây chỉ băm NỘI DUNG + tập `--list`. Hai worktree cùng nội dung,
+#    KHÁC lịch sử (HEAD khác nhau: c1 đổi other/o.txt rồi c2 trả về), cùng tập chọn ⇒ dùng lại PASS (kết quả của run_impacted.sh chỉ phụ thuộc
+#    tập chọn + nội dung; S6 đã ghim chiều ngược lại: khác tập chọn ⇒ chạy lại).
+repo s8; old8=$(git -C "$TMP/s8" rev-parse HEAD)
+wt s8 s8a $LIB 'a = 2' "$old8"; gate "$TMP/s8a"; r1=$?; c1=$(n s8)
+echo 2 > "$TMP/s8/other/o.txt"; git -C "$TMP/s8" commit -qam c1; echo 1 > "$TMP/s8/other/o.txt"; git -C "$TMP/s8" commit -qam c2
+wt s8 s8b $LIB 'a = 2'; h8a=$(git -C "$TMP/s8a" rev-parse HEAD); h8b=$(git -C "$TMP/s8b" rev-parse HEAD)
+gate "$TMP/s8b"; r2=$?; c2=$(n s8)
+if [ "$r1 $r2" = "0 0" ] && [ "$h8a" != "$h8b" ] && [ "$c1" -ge 2 ] && [ "$c2" = "$c1" ]; then ok "S8. cùng nội dung, khác lịch sử, cùng tập chọn: dùng lại REG-ALL (test chạy $c1 → $c2)"
+else fail "S8. exit $r1 $r2 (mong 0 0); HEAD $h8a / $h8b (mong khác nhau); test của REG-ALL chạy $c1 rồi $c2 (mong ≥2 rồi bằng nhau)"; grep -E "REG-ALL|suite_cache" "$TMP/out" | tail -3; fi
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_suite_cache_selection: all passed" || { echo "❌ test_gate_suite_cache_selection: $FAILS failed"; exit 1; }
