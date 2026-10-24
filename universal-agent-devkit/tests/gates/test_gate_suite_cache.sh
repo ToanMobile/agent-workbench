@@ -554,9 +554,26 @@ PY
 )"
 [ "$res29" = "unchanged=True" ] && ok "29. file input ≥ 8 MiB đã commit, không đổi: inputs_unchanged đúng (PASS ghi được)" \
   || fail "29. inputs_unchanged sai với file lớn đã commit ($res29): cache tắt ngầm cho suite đó"
+# 29b. #363: _purge_pass giữ bản ghi bằng chứng TIMEOUT thuần (pass_n = 0), nhưng bản ghi vừa timeout_n > 0 vừa pass_n > 0 vẫn là PASS
+#      dùng lại được (hit() bỏ qua timeout_n) nên phải bị gỡ; bản ghi FAIL luôn ở lại.
+res29b="$( cd "$R29" && python3 - "$DEVKIT_DIR/bin" "$R29" <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import suite_cache as sc
+repo = sys.argv[2]
+c = sc.SuiteCache(repo, [], os.path.join(repo, "matrix.json"), {}, "L", "rf", "", learned={})
+os.makedirs(c.store, exist_ok=True)
+for ch, rec in (("a", {"pass_n": 1, "timeout_n": 1}), ("b", {"pass_n": 0, "timeout_n": 1}), ("c", {"pass_n": 0, "fail_n": 1})):
+    json.dump(dict(rec, id="S"), open(c._path(ch * 64), "w"))
+c._purge_pass("S")
+print(" ".join("%s=%s" % (ch, os.path.exists(c._path(ch * 64))) for ch in "abc"))
+PY
+)"
+[ "$res29b" = "a=False b=True c=True" ] && ok "29b. _purge_pass: gỡ PASS lẫn timeout_n, giữ TIMEOUT thuần và FAIL" \
+  || fail "29b. _purge_pass sai ($res29b, mong a=False b=True c=True)"
 }
 
-grp_known_red() {   # cases 28, 30-32: KNOWN-RED needs evidence
+grp_known_red() {   # cases 28, 30-32, 34: KNOWN-RED needs evidence (FAIL, and since #363 TIMEOUT too)
 # 28. KNOWN-RED theo BẰNG CHỨNG (audit 21/10: bao đóng tĩnh không bao giờ đủ để chứng minh "không chạm input"): suite cached-full FAIL
 #     chỉ được xếp lỗi có sẵn (ngoài kết luận) khi sổ khoá có FAIL thật của chính suite đó trên nội dung BASE_REF (khoá cả cây của base),
 #     và chưa từng PASS ở đó. Bằng chứng có từ một lượt gate mà cây lúc đó đúng bằng nội dung base sau này (thay đổi được gate rồi commit
@@ -638,6 +655,83 @@ echo 'a = 3' > "$R32/src/a.py"; echo bad > "$R32/src/dep.txt"
 gq "$R32"; r32=$?
 [ "$r32" = 1 ] && ok "32. FAIL chập chờn trên base không là bằng chứng lỗi có sẵn: FAIL thật sau thay đổi vào kết luận (exit 1)" \
   || { fail "32. FAIL chập chờn thành bằng chứng KNOWN-RED (exit $r32, mong 1)"; grep -E "REG-X|KNOWN" "$TMP/outq" | tail -3; }
+
+# 34. #363: KNOWN-RED nhận cả TIMEOUT, chỉ khi sổ khoá có TIMEOUT thật của chính suite đó trên nội dung BASE_REF (khoá cả cây) và chưa
+#     từng PASS ở đó. tests/x.sh ngủ 6 s khi src/dep.txt = slow (--timeout 2 ⇒ TIMEOUT), PASS khi good.
+#     (a) thay đổi 1 (dep=slow): chưa có bằng chứng base — TIMEOUT của chính lượt này không tự làm bằng chứng — nên KHÔNG KNOWN-RED; commit;
+#         thay đổi 2: base có TIMEOUT ⇒ KNOWN-RED. (b) đối chứng (không xanh giả): base từng PASS (dep=good), thay đổi 2 làm TIMEOUT ⇒
+#         vẫn nhãn TIMEOUT, không KNOWN-RED.
+mk34() { # <thư mục> <nội dung src/dep.txt>
+  local r="$1"; mkdir -p "$r/src" "$r/tests"
+  git -C "$r" init -q -b main . && git -C "$r" config user.email t@t && git -C "$r" config user.name t
+  echo 'a = 1' > "$r/src/a.py"; echo 'x = 1' > "$r/src/x.py"; echo "$2" > "$r/src/dep.txt"
+  printf 'if grep -qx slow src/dep.txt; then sleep 6; fi\ngrep -qx good src/dep.txt\n' > "$r/tests/x.sh"
+  printf '{"project":"t","rules":[{"component":"A","watch_files":["src/a.py"],"mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"true"}]},{"component":"X","watch_files":["src/x.py"],"mandatory_regression_tests":[{"id":"REG-X","name":"x","command":"bash tests/x.sh"}]}]}\n' > "$r/matrix.json"
+  git -C "$r" add -A && git -C "$r" commit -qm init
+}
+R34="$TMP/r34"; mk34 "$R34" slow
+echo 'a = 2' > "$R34/src/a.py"
+gq "$R34" --timeout 2; r34a=$?
+if [ "$r34a" = 0 ] && grep -q "REG-X" "$TMP/outq" && ! grep -q "KNOWN-RED" "$TMP/outq"; then ok "34a. TIMEOUT chưa có bằng chứng base: UNTESTED như cũ, không KNOWN-RED (TIMEOUT của chính lượt này không tự làm bằng chứng)"
+else fail "34a. lượt đầu: exit $r34a (mong 0, không có KNOWN-RED)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; fi
+git -C "$R34" commit -qam "thay đổi 1"
+echo 'a = 3' > "$R34/src/a.py"
+gq "$R34" --timeout 2; r34b=$?
+if [ "$r34b" = 0 ] && grep -q "KNOWN-RED" "$TMP/outq"; then ok "34a. TIMEOUT có sẵn (sổ khoá có TIMEOUT trên nội dung base): KNOWN-RED, ngoài kết luận (exit 0)"
+else fail "34a. TIMEOUT có bằng chứng base: exit $r34b (mong 0, có dòng KNOWN-RED)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; fi
+R34="$TMP/r34b"; mk34 "$R34" good
+echo 'a = 2' > "$R34/src/a.py"
+gq "$R34" --timeout 2; git -C "$R34" commit -qam "thay đổi 1"   # base PASS được ghi dưới khoá cả cây của cây này
+echo 'a = 3' > "$R34/src/a.py"; echo slow > "$R34/src/dep.txt"
+gq "$R34" --timeout 2; r34c=$?
+if [ "$r34c" = 0 ] && grep -q "REG-X" "$TMP/outq" && ! grep -q "KNOWN-RED" "$TMP/outq"; then ok "34b. đối chứng: base từng PASS, thay đổi làm TIMEOUT ⇒ không KNOWN-RED (nhãn TIMEOUT như cũ)"
+else fail "34b. base PASS mà TIMEOUT sau thay đổi bị xếp KNOWN-RED (exit $r34c)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; fi
+# 34c. đối chứng: base vừa TIMEOUT vừa từng PASS (suite chập chờn: cờ ngủ nằm ngoài cây) ⇒ không phải lỗi có sẵn, TIMEOUT sau đó không KNOWN-RED.
+R34="$TMP/r34c"; mk34 "$R34" good
+printf 'if [ -f "%s/slow34" ]; then sleep 6; fi\ngrep -qx good src/dep.txt\n' "$TMP" > "$R34/tests/x.sh"; git -C "$R34" commit -qam "x.sh theo cờ"
+echo 'a = 2' > "$R34/src/a.py"
+: > "$TMP/slow34"; gq "$R34" --timeout 2    # base: TIMEOUT dưới khoá cả cây của cây này …
+rm -f "$TMP/slow34"; gq "$R34" --timeout 2  # … rồi PASS dưới đúng khoá đó
+git -C "$R34" commit -qam "thay đổi 1"
+echo 'a = 3' > "$R34/src/a.py"
+: > "$TMP/slow34"; gq "$R34" --timeout 2; r34d=$?
+if [ "$r34d" = 0 ] && grep -q "REG-X" "$TMP/outq" && ! grep -q "KNOWN-RED" "$TMP/outq"; then ok "34c. đối chứng: base có TIMEOUT nhưng từng PASS ⇒ không KNOWN-RED"
+else fail "34c. base chập chờn (TIMEOUT rồi PASS) bị xếp KNOWN-RED (exit $r34d)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; fi
+
+# 35. #363 (AC thật): suite do LUẬT CHỌN CŨ chọn (src/x.py đổi ⇒ REG-X được chọn, không phải keyed_full) mà TIMEOUT là chỗ chặn thật
+#     (REG-DK-ALL-01 quá 900 s, exit 1). Có bằng chứng base TIMEOUT (khoá cả cây của BASE_REF, chưa từng PASS) ⇒ KNOWN-RED, exit ĐỔI 1 → 0.
+#     (a) chưa có bằng chứng base ⇒ exit 1 (TIMEOUT của chính lượt này không tự làm bằng chứng); commit; thay đổi 2 ⇒ KNOWN-RED, exit 0.
+#     (b) đối chứng: base từng PASS ⇒ exit 1.  (c) đối chứng: bằng chứng chỉ do chính lượt này ghi (thay đổi chỉ chạm file EXCLUDE ⇒ khoá cả
+#     cây của base = khoá của lượt này) ⇒ exit 1 cả hai lượt.
+R35="$TMP/r35"; mk34 "$R35" slow
+echo 'x = 2' > "$R35/src/x.py"
+gq "$R35" --timeout 2; r35a=$?
+[ "$r35a" = 1 ] && ok "35a. suite luật cũ TIMEOUT, chưa có bằng chứng base ⇒ vào kết luận (exit 1)" \
+  || { fail "35a. lượt đầu: exit $r35a (mong 1)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; }
+git -C "$R35" commit -qam "thay đổi 1"
+echo 'x = 3' > "$R35/src/x.py"
+gq "$R35" --timeout 2; r35b=$?
+if [ "$r35b" = 0 ] && grep -q "KNOWN-RED" "$TMP/outq"; then ok "35a. suite luật cũ TIMEOUT có bằng chứng base: KNOWN-RED, exit đổi 1 → 0"
+else fail "35a. TIMEOUT luật cũ có bằng chứng base: exit $r35b (mong 0, có dòng KNOWN-RED)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; fi
+R35="$TMP/r35b"; mk34 "$R35" good
+echo 'x = 2' > "$R35/src/x.py"
+gq "$R35" --timeout 2; git -C "$R35" commit -qam "thay đổi 1"   # base PASS dưới khoá cả cây của cây này
+echo 'x = 3' > "$R35/src/x.py"; echo slow > "$R35/src/dep.txt"
+gq "$R35" --timeout 2; r35c=$?
+[ "$r35c" = 1 ] && ok "35b. đối chứng: base từng PASS, TIMEOUT sau thay đổi ⇒ vào kết luận (exit 1)" \
+  || { fail "35b. base PASS mà TIMEOUT luật cũ bị xếp ngoài kết luận (exit $r35c, mong 1)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; }
+R35="$TMP/r35c"; mkdir -p "$R35/src" "$R35/.agents"
+git -C "$R35" init -q -b main . && git -C "$R35" config user.email t@t && git -C "$R35" config user.name t
+echo 'x = 1' > "$R35/src/x.py"; echo good > "$R35/.agents/instincts.md"
+printf 'if grep -qx slow .agents/instincts.md; then sleep 6; fi\ngrep -qx good .agents/instincts.md\n' > "$R35/x.sh"
+printf '{"project":"t","rules":[{"component":"X","watch_files":[".agents/instincts.md"],"mandatory_regression_tests":[{"id":"REG-X","name":"x","command":"bash x.sh"}]}]}\n' > "$R35/matrix.json"
+git -C "$R35" add -A && git -C "$R35" commit -qm init
+echo slow > "$R35/.agents/instincts.md"
+gq "$R35" --timeout 2; r35d=$?
+git -C "$R35" commit -qam "instincts"
+gq "$R35" --timeout 2 --diff HEAD~1; r35e=$?
+[ "$r35d$r35e" = 11 ] && ok "35c. bằng chứng TIMEOUT do chính lượt này ghi không tự làm KNOWN-RED (exit 1 cả hai lượt)" \
+  || { fail "35c. TIMEOUT tự làm bằng chứng của chính nó: $r35d, $r35e (mong 1, 1)"; grep -E "REG-X|KNOWN|KẾT LUẬN" "$TMP/outq" | tail -3; }
 }
 
 grp_closure() {

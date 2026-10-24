@@ -362,4 +362,20 @@ for v in "" "60s" "0" "-5"; do
     ! grep -q Traceback "$TMP/out" && [ "$rc" = "0" ] && [ "$(called issue edit)" = "1" ] && ok "30 CREATE_TASK_GH_TIMEOUT_S='$v' → vẫn gom" || fail "30 '$v' rc=$rc: $(head -5 "$TMP/out")"
 done
 
+# 31. #369: trần dòng AC mỗi thẻ gom (MAX_CARD_AC, mặc định 12, SB_MAX_CARD_AC ghi đè): thẻ đã có đủ AC thì việc kế mở thẻ mới
+# (thẻ gom #323/#330 phình tới build 7873 s). Việc mới có 1 dòng AC: thẻ 11 AC vẫn nhận (11 + 1 = 12), thẻ 12 AC thì không.
+acs() { python3 -c 'import sys; print("\\n".join("- [ ] ac %d" % i for i in range(int(sys.argv[1]))))' "$1"; }
+items "[{\"n\":7,\"body\":\"## Problem\\nx\\n\\n## Acceptance Criteria\\n$(acs 11)\\n\\n## Risk\\n🟢\\n\"}]"
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && [ "$(called issue create)" = "0" ] && ok "31a thẻ 11 AC + 1 AC mới = 12 → vẫn gom" || fail "31a rc=$rc edit=$(edited)"
+items "[{\"n\":7,\"body\":\"## Problem\\nx\\n\\n## Acceptance Criteria\\n$(acs 12)\\n\\n## Risk\\n🟢\\n\"}]"
+rc=$(run "${NEWARGS[@]}")
+[ "$rc" = "0" ] && [ "$(edited)" = "NONE" ] && [ "$(called issue create)" = "1" ] && ok "31b thẻ 12 AC + 1 AC mới > 12 → thẻ mới" || fail "31b rc=$rc edit=$(edited) create=$(called issue create)"
+: > "$FAKE_LOG"; rm -f "$FAKE_EDITED"
+(cd "$TMP/repo" && SB_MAX_CARD_AC=20 python3 "$CT" "${NEWARGS[@]}") >"$TMP/out" 2>&1
+[ "$(edited)" = "7" ] && ok "31c SB_MAX_CARD_AC=20 nâng trần → gom lại" || fail "31c edit=$(edited): $(head -5 "$TMP/out")"
+: > "$FAKE_LOG"; rm -f "$FAKE_EDITED"
+(cd "$TMP/repo" && SB_MAX_CARD_AC=abc python3 "$CT" "${NEWARGS[@]}") >"$TMP/out" 2>&1; rc=$?
+! grep -q Traceback "$TMP/out" && [ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && ok "31d SB_MAX_CARD_AC rác → trần mặc định 12, không traceback" || fail "31d rc=$rc: $(head -5 "$TMP/out")"
+
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

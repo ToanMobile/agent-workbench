@@ -3936,6 +3936,24 @@ def _signal_group(proc, sig) -> None:
             proc.send_signal(sig)
 
 
+# #370: run_in_group appends this marker and a `ps` snapshot of the suite's process group to the output of a suite it had to stop,
+# taken BEFORE the TERM — afterwards the stuck process is gone and "where it hung" with it. _run_suite splits it off again.
+HANG_SNAPSHOT_MARK = "\n# --- process snapshot at timeout (ps) ---\n"
+# a line of the suite output that names a test (the last one is where it hung); with none, the last line of output
+HANG_TEST_LINE = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")
+
+
+def _timeout_snapshot(pgid: int) -> str:
+    """`ps` lines (header + every process) of the process group pgid; the failure itself when ps cannot run (nothing is hidden)."""
+    try:
+        r = subprocess.run(["ps", "-axo", "pid,ppid,pgid,stat,etime,command"], capture_output=True, text=True, errors="replace", timeout=5)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"(ps failed: {exc!r})"
+    lines = r.stdout.splitlines()
+    mine = [ln for ln in lines[1:] if len(ln.split(None, 3)) >= 3 and ln.split(None, 3)[2] == str(pgid)]
+    return "\n".join(lines[:1] + mine[:12])
+
+
 def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
     """(exit code, output, timed out) of a shell command in its own session/process group, so a timeout kills the
     whole tree (gradle daemons, test workers), not just the shell. The group is in _VACUITY_PGIDS while it runs: a
@@ -3949,6 +3967,7 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
             out, _ = proc.communicate(timeout=timeout)
             return proc.returncode, out, False
         except subprocess.TimeoutExpired:
+            snap = HANG_SNAPSHOT_MARK + _timeout_snapshot(proc.pid) + "\n"   # before any signal: the stuck process is still there
             # TERM first: the suite's EXIT traps remove their temp dirs and fixture worktrees (2026-10-19: a bare SIGKILL
             # skipped them and ~8 GiB of test dirs piled up in TMPDIR). KILL whatever is left after the grace.
             _signal_group(proc, signal.SIGTERM)
@@ -3969,7 +3988,7 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
                         with contextlib.suppress(OSError, AttributeError):
                             pipe.close()
                     out = "(output cut: a child process still held the output pipe after SIGKILL)"
-            return proc.returncode, out, True
+            return proc.returncode, (out or "") + snap, True
     finally:
         with _VACUITY_LOCK:
             _VACUITY_PGIDS.discard(proc.pid)
@@ -6169,8 +6188,8 @@ def main():
                 sc.void(t.get("id"))
             except Exception as e:   # noqa: BLE001 - sổ cache chỉ là dữ liệu
                 log_warn(f"suite_cache void {t.get('id')}: {e!r}")
-        if (sc is None or not ks or id(t) in recorded or id(t) not in really_ran or st not in ("PASS", "FAIL")
-                or (st == "PASS" and t.get("mode") != "full")
+        if (sc is None or not ks or id(t) in recorded or id(t) not in really_ran or st not in ("PASS", "FAIL", "TIMEOUT")
+                or (st in ("PASS", "TIMEOUT") and t.get("mode") != "full")
                 or (st == "FAIL" and t.get("mode") not in ("full", "impacted", "package", "module"))
                 or t.get("infra_retry") or t.get("env_blocked") or t.get("infra")):
             if void_due and id(t) not in recorded:
@@ -6194,6 +6213,12 @@ def main():
         rt = dict(t, command=t.get("full_command") or t.get("command"))   # bản ghi mang lệnh của ma trận (khoá tính từ lệnh đó)
         keys_now = list(ks)
         tree_same = True
+        if st == "TIMEOUT":
+            # #363: TIMEOUT của lệnh đầy đủ, thật, trên cây không đổi trong lúc chạy là bằng chứng base cho KNOWN-RED — CHỈ dưới khoá cả
+            # cây (không có khoá chính xác: quá giờ không chứng minh gì về input của suite, và không bao giờ HIT)
+            mod = suite_cache_mod()
+            cmf = mod.content_map(project_dir) if mod is not None else None
+            keys_now = [ks[1]] if (cmf is not None and mod.tree_digest(cmf) == sc.tree_digest and not t.get("flaky")) else []
         if st == "FAIL":
             # FAIL dưới khoá cả cây là bằng chứng lỗi có sẵn cho KNOWN-RED: chỉ khi FAIL là của lệnh đầy đủ, thật (không phải VACUOUS — lệnh
             # PASS mà không phát hiện thay đổi —, không chập chờn — chạy lại PASS, OCR 21/10), trên cây không đổi trong lúc chạy (audit #4
@@ -6248,6 +6273,27 @@ def main():
                 kept = slot_mod[0].release_suite(slots, keep_heavy=sequential)
                 if sequential:
                     heavy_lease[:] = [kept] if kept is not None else []
+
+    def hang_report(t, out):
+        """#370: a suite that timed out while the machine was NOT busy hung — it was not slow. Marks it (t["hang"], label HANG) and puts the
+        last test line it printed plus the `ps` snapshot of its process group in output_tail; under load it stays a plain TIMEOUT."""
+        body, _, snap = (out or "").partition(HANG_SNAPSHOT_MARK)
+        try:
+            import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+            load, busy = _capacity.load(), _capacity.busy_load()
+        except Exception as exc:   # noqa: BLE001 - capacity.py hỏng thì không biết tải: giữ TIMEOUT, nói rõ lý do
+            log_warn(f"capacity: {exc!r}; {t.get('id')}: timeout stays TIMEOUT (load unknown)")
+            return
+        if load is None or load >= busy:
+            return
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+        last = next((ln for ln in reversed(lines) if HANG_TEST_LINE.search(ln)), lines[-1] if lines else "(no output)")
+        t["hang"] = True
+        t["output_tail"] = "\n".join(snap.strip().splitlines()[:7] + [
+            tr(f"HANG (tải {load:.1f} < {busy}): test cuối suite in ra: {last[:200]}",
+               f"HANG (load {load:.1f} < {busy}): last test line the suite printed: {last[:200]}")])
+        log_warn(tr(f"{t.get('id')}: quá giờ lúc máy rảnh (tải {load:.1f}) — TREO, không phải chậm; test cuối: {last[:120]}",
+                    f"{t.get('id')}: timed out on an idle machine (load {load:.1f}) — a HANG, not slow; last test: {last[:120]}"))
 
     def _run_suite(t, cmd, mode, env):
         started = time.perf_counter()
@@ -6306,6 +6352,7 @@ def main():
             t["fail_lines"] = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)][:8]
         else:
             t["status"] = "TIMEOUT"
+            hang_report(t, out)
         t["duration"] = f"{time.perf_counter() - started:.2f}s"
         SUITE_RAN_AT[t.get("id")] = time.time()
         t["log"] = keep_evidence(project_dir, t, cmd, out)
@@ -6314,7 +6361,7 @@ def main():
         elif t["status"] == "PASS" and mode in ("package", "module"):
             t["label"] = f"PASS ({mode})"
         else:
-            t["label"] = t["status"]
+            t["label"] = "HANG" if t.get("hang") else t["status"]
         _v0 = time.monotonic()
         proved = vacuity_revert(project_dir, t, args.timeout, env=env)
         if proved != "skip":
@@ -6538,7 +6585,7 @@ def main():
         elif st == "NOT_RUN":
             status_icon = f"{YELLOW}[ ] NOT RUN{RESET}"
         else:
-            status_icon = f"{RED}[ ] {st}{RESET}"
+            status_icon = f"{RED}[ ] {st}{' (HANG)' if t.get('hang') else ''}{RESET}"
         print(f"    {status_icon} | {BOLD}{t['id']:<15}{RESET} : {t['name']}")
         extra = f", exit={t['exit_code']}" if "exit_code" in t else ""
         print(f"           {DIM}{tr('Lệnh chạy', 'Command')}: {t['command']} ({t['duration']}{extra}){RESET}")
@@ -6661,26 +6708,33 @@ def main():
     # lúc chạy, import động), nên FAIL do chính thay đổi từng bị xếp KNOWN-RED. Không có bằng chứng (base chưa ai chạy, base từng PASS,
     # --since nhiều base) ⇒ FAIL vào kết luận. GeelyEx2 20/10: 2 suite FAIL sẵn — một lượt --full trên main sạch ghi bằng chứng cho mọi
     # thay đổi sau. tests/gates/test_gate_suite_cache.sh ca 28, 30; test_gate_sentinel.sh ca 2b'.
-    known_red = [t for t in regression_tests if t.get("keyed_full") and t.get("status") == "FAIL" and not precise_hit(t)]
+    # #363: TIMEOUT cũng được, nhưng chỉ khi base có TIMEOUT thật (timeout_n ≥ 1) và chưa từng PASS ở đó; FAIL cần FAIL của base như cũ.
+    # TIMEOUT áp cho MỌI suite có khoá (kể cả suite do luật chọn cũ chọn — chỗ chặn thật REG-DK-ALL-01 quá 900 s, exit 1), FAIL chỉ cho
+    # keyed_full: FAIL của suite luật cũ luôn là kết luận.
+    known_red = [t for t in regression_tests if not precise_hit(t) and (
+        (t.get("keyed_full") and t.get("status") == "FAIL")
+        or (t.get("status") == "TIMEOUT" and KEYS.get(id(t)) and t.get("mode") == "full"))]
     if sc is not None and known_red and not getattr(args, "since", None) and not _BASE_REF_FOR:
         mod = suite_cache_mod()
         base_map = mod.content_map_at(project_dir, BASE_REF) if mod is not None else None
         digest = mod.tree_digest(base_map) if base_map is not None else None
         if digest == sc.tree_digest:
-            # base trùng cây hiện tại (thay đổi chỉ chạm file EXCLUDE, hay chỉ index): khoá cả cây của base LÀ khoá của lượt này — FAIL
+            # base trùng cây hiện tại (thay đổi chỉ chạm file EXCLUDE, hay chỉ index): khoá cả cây của base LÀ khoá của lượt này — FAIL/TIMEOUT
             # vừa ghi sẽ tự làm bằng chứng của chính nó (audit #4 21/10) ⇒ không có bằng chứng
             digest = None
         for t in known_red:
+            timed_out = t.get("status") == "TIMEOUT"
             bk = sc.tree_key_at(t.get("id"), t.get("full_command") or t.get("command") or "", digest)
             rec = sc.read(bk) if bk else None
-            fail_n, pass_n = (rec or {}).get("fail_n"), (rec or {}).get("pass_n", 0)
-            if isinstance(fail_n, int) and fail_n >= 1 and pass_n in (0, None):
-                t.update({"status": "UNTESTED", "label": "KNOWN-RED"})
-                log_warn(tr(f"{t.get('id')}: suite cached-full FAIL, và cũng FAIL trên nội dung {BASE_REF} (sổ khoá) — lỗi có sẵn (KNOWN-RED), "
+            evid_n, pass_n = (rec or {}).get("timeout_n" if timed_out else "fail_n"), (rec or {}).get("pass_n", 0)
+            what_vi, what_en = ("quá giờ", "timed out") if timed_out else ("FAIL", "FAILED")
+            if isinstance(evid_n, int) and evid_n >= 1 and pass_n in (0, None):
+                t.update({"status": "UNTESTED", "label": "KNOWN-RED", "known_red": True})
+                log_warn(tr(f"{t.get('id')}: suite {what_vi}, và cũng {what_vi} trên nội dung {BASE_REF} (sổ khoá) — lỗi có sẵn (KNOWN-RED), "
                             "ngoài kết luận; sửa riêng",
-                            f"{t.get('id')}: cached-full suite FAILED, and it also FAILED on the {BASE_REF} content (key store) — a "
-                            "pre-existing failure (KNOWN-RED), not part of the verdict; fix it separately"))
-            else:
+                            f"{t.get('id')}: suite {what_en}, and it also {what_en} on the {BASE_REF} content (key store) — a "
+                            "pre-existing problem (KNOWN-RED), not part of the verdict; fix it separately"))
+            elif not timed_out:
                 log_warn(tr(f"{t.get('id')}: suite cached-full FAIL, chưa có bằng chứng nó cũng FAIL trên {BASE_REF} — vào kết luận. Lỗi có sẵn thì "
                             f"ghi bằng chứng: tạo worktree detached ở {BASE_REF} (agent-kit worktree add ../<repo>-baseline), chạy post-fix-gate.py "
                             "--run-tests --full --diff HEAD~1 trong đó (sổ khoá ở git common dir nên bằng chứng dùng chung), rồi agent-kit worktree remove",
@@ -6688,12 +6742,13 @@ def main():
                             f"pre-existing, record the evidence: create a detached worktree at {BASE_REF} (agent-kit worktree add ../<repo>-baseline), run "
                             "post-fix-gate.py --run-tests --full --diff HEAD~1 in it (the key store lives in the git common dir, so the evidence "
                             "is shared), then agent-kit worktree remove"))
+            # TIMEOUT không có bằng chứng: keyed_full → vòng lặp bên dưới (UNTESTED như cũ); suite luật cũ → vào kết luận
     # P2: suite cached-full thêm vào (keyed_full) mà QUÁ GIỜ: --full trước P2 không chạy nó, và quá giờ dưới tải không chứng minh lỗi của thay
     # đổi (REG-DK-ALL-01 quá 900 s ở merge gate dưới tải, 19/10) — UNTESTED ngoài kết luận, được nêu tên, chạy lại lượt sau; FAIL thật của nó
     # vẫn vào kết luận. Không ghi vào sổ khoá (record_keyed chỉ ghi PASS/FAIL). tests/gates/test_gate_suite_cache.sh ca 15.
     for t in regression_tests:
         if t.get("keyed_full") and t.get("status") == "TIMEOUT":
-            t.update({"status": "UNTESTED", "label": "TIMEOUT"})
+            t.update({"status": "UNTESTED", "label": "HANG" if t.get("hang") else "TIMEOUT"})
             log_warn(tr(f"{t.get('id')}: suite cached-full quá giờ — UNTESTED, không tính vào kết luận (luật chọn cũ không chạy nó); chạy lại lượt sau",
                         f"{t.get('id')}: cached-full suite timed out — UNTESTED, not part of the verdict (the old selection does not run it); it runs again next time"))
     # Final Summary Verdict
@@ -6707,7 +6762,7 @@ def main():
     _not_here = ("SLOT", "BUSY", "BUDGET", "STALE")
     # suite cached-full (keyed_full) cùng luật: STALE (recheck thấy FAIL mới trên khoá của nó) phải vào kết luận (Antigravity 20/10)
     stale_skipped = [t for t in regression_tests if t["status"] == "UNTESTED"
-                     and (t.get("stale_rerun") or t.get("keyed_full")) and t.get("label") not in _not_here]
+                     and (t.get("stale_rerun") or t.get("keyed_full") or t.get("known_red")) and t.get("label") not in _not_here]
     tests_untested = [t for t in regression_tests if t["status"] == "UNTESTED" and t not in stale_skipped]
     if stale_skipped:
         log_warn(tr("Suite STALE không chạy được trên máy này (vẫn STALE, không tính vào kết luận): ",

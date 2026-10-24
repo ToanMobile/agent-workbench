@@ -4,13 +4,13 @@
 # TOLD the agent to run diff | git apply, commit, remove: a worktree `worktree add` did not make (EnterWorktree, a subagent's) was
 # refused by diff / remove outright, a patch onto a dirty shared main failed, and nothing ever finished the job.
 # `agent-kit worktree finish <path>` (and `automerge`, the same with one JSON line) merges it by itself, from the main checkout:
-#   - uncommitted work is committed IN the worktree; main is merged INTO the worktree (a conflict is resolved there, in a folder
+#   - uncommitted work is REFUSED (#366: never auto-committed as `wip`); main is merged INTO the worktree (a conflict is resolved there, in a folder
 #     nobody else touches); main only FAST-FORWARDS (another session's dirty / staged files are never touched); then the removal
-#   1 committed work, main unchanged            2 uncommitted edit + new file          3 main moved on: merge commit
+#   1 committed work, main unchanged            2 uncommitted edit + new file: refused, then committed by hand   3 main moved on: merge commit
 #   4 main holds another session's dirty + staged files: they survive untouched
 #   5 conflict: exit 3, main untouched, markers in the worktree; resolving it and running again finishes the job
 #   6 main has uncommitted edits on a file the worktree changed: nothing moves, exit 1; after the edit is committed it goes through
-#   7 a worktree git made on its own (no devkit state, with harness files)   8 a refused pre-commit hook   9 refusals: busy, detached main,
+#   7 a worktree git made on its own (no devkit state, with harness files)   8 uncommitted work: refused, no commit hook runs   9 refusals: busy, detached main,
 #   not a worktree, a live lock (from inside the worktree: no refusal since K4)    10 the JSON line of `automerge`
 # Independent review 2026-10-08 (each was a real defect of the first version):
 #   11 work under .claude/ in an adopted worktree is WORK (agent memory, agent definitions), never "setup"   12 an unreadable state file
@@ -39,6 +39,7 @@ G "$P" add -A && G "$P" commit -qm init
 wt() { bash "$KIT" worktree add "../am-$1" --no-init >/dev/null 2>&1 || fail "add am-$1"; }
 fin() { (cd "$P" && bash "$KIT" worktree finish "$@" >"$TMP/out" 2>&1); return $?; }
 listed() { G "$P" worktree list | grep -q "$1"; }
+wcom() { G "$TMP/am-$1" add -A -- "${@:3}" && G "$TMP/am-$1" commit -qm "$2"; }   # wcom <name> <message> [paths]: commit by hand (finish never does, #366)
 clean_main() { [ -z "$(G "$P" status --porcelain --untracked-files=no)" ]; }
 
 # 1: committed work, main did not move -> a pure fast-forward
@@ -49,9 +50,15 @@ fin ../am-a; rc=$?
 
 # 2: uncommitted work (an edit and a new file)
 wt b; printf '1\n2\n3\n4\nB5\n' > "$TMP/am-b/b.txt"; echo n > "$TMP/am-b/n.txt"
+HEAD2="$(G "$P" rev-parse HEAD)"; WHEAD2="$(G "$TMP/am-b" rev-parse HEAD)"
 fin ../am-b; rc=$?
-[ "$rc" = 0 ] && [ ! -d "$TMP/am-b" ] && grep -q "^B5$" "$P/b.txt" && [ -f "$P/n.txt" ] && G "$P" log -1 --format=%s | grep -q "wip(am-b)" && clean_main \
-  && ok "2: uncommitted edit + new file: committed in the worktree, merged, removed" || fail "2: (rc=$rc): $(cat "$TMP/out")"
+[ "$rc" = 1 ] && [ -d "$TMP/am-b" ] && grep -q "b.txt" "$TMP/out" && grep -q "n.txt" "$TMP/out" && [ "$(G "$P" rev-parse HEAD)" = "$HEAD2" ] && [ "$(G "$TMP/am-b" rev-parse HEAD)" = "$WHEAD2" ] \
+  && [ -f "$TMP/am-b/n.txt" ] && ! G "$TMP/am-b" log --format=%s | grep -q "^wip" \
+  && ok "2: uncommitted edit + new file: refused (exit 1), both files named, no wip commit, nothing moved" || fail "2: refusal (rc=$rc): $(cat "$TMP/out")"
+wcom b "b5 and n"
+fin ../am-b; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$TMP/am-b" ] && grep -q "^B5$" "$P/b.txt" && [ -f "$P/n.txt" ] && clean_main \
+  && ok "  … once committed by hand: merged, removed" || fail "  … after the commit (rc=$rc): $(cat "$TMP/out")"
 
 # 3: main moved on (an unrelated commit): main is merged INTO the worktree, then main fast-forwards
 wt c; printf 'new\n' > "$TMP/am-c/c-new.txt"; G "$TMP/am-c" add -A && G "$TMP/am-c" commit -qm "c-new"
@@ -92,17 +99,19 @@ fin ../am-f; rc=$?
 # 7: a worktree git made by itself: no devkit state, and harness files in it
 mkdir -p "$P/.claude" && echo '{}' > "$P/.claude/settings.local.json"      # main's own local settings (untracked); a worktree copy of it is SETUP
 G "$P" worktree add -q --detach "$TMP/am-raw" && mkdir -p "$TMP/am-raw/.claude" && echo '{}' > "$TMP/am-raw/.claude/settings.local.json" && echo raw > "$TMP/am-raw/raw.txt"
+G "$TMP/am-raw" add raw.txt && G "$TMP/am-raw" commit -qm raw   # by hand: only the work, never the setup file
 fin ../am-raw; rc=$?
 [ "$rc" = 0 ] && [ ! -d "$TMP/am-raw" ] && [ -f "$P/raw.txt" ] && [ -z "$(G "$P" ls-files .claude/settings.local.json)" ] \
   && ok "7: a worktree 'worktree add' did not make is adopted: merged and removed, the setup file (same bytes as main's) is not carried" || fail "7: (rc=$rc): $(cat "$TMP/out")"
 
-# 8: the repo's pre-commit hook refuses the worktree's commit: held, nothing lost, goes through once fixed
+# 8: uncommitted work: finish refuses and runs no commit hook of its own (#366); committed by hand, it goes through
 mkdir -p "$P/.git/hooks" && printf '#!/bin/sh\necho "pre-commit says no" >&2\nexit 1\n' > "$P/.git/hooks/pre-commit" && chmod +x "$P/.git/hooks/pre-commit"
 wt h; echo h > "$TMP/am-h/h.txt"
 fin ../am-h; rc=$?
-[ "$rc" = 1 ] && [ -d "$TMP/am-h" ] && [ -f "$TMP/am-h/h.txt" ] && grep -q "pre-commit says no" "$TMP/out" && ok "8: a refused commit holds it (exit 1), the work is still in the worktree, the reason is shown" || fail "8: (rc=$rc): $(cat "$TMP/out")"
+[ "$rc" = 1 ] && [ -d "$TMP/am-h" ] && [ -f "$TMP/am-h/h.txt" ] && grep -q "h.txt" "$TMP/out" && ! grep -q "pre-commit says no" "$TMP/out" && ok "8: uncommitted work holds it (exit 1), the file is named, the work is still in the worktree, no commit was tried" || fail "8: (rc=$rc): $(cat "$TMP/out")"
 rm -f "$P/.git/hooks/pre-commit"
-fin ../am-h; rc=$?; [ "$rc" = 0 ] && [ ! -d "$TMP/am-h" ] && [ -f "$P/h.txt" ] && ok "  … and once the hook allows it, it goes through" || fail "  … retry after the hook (rc=$rc): $(cat "$TMP/out")"
+wcom h h
+fin ../am-h; rc=$?; [ "$rc" = 0 ] && [ ! -d "$TMP/am-h" ] && [ -f "$P/h.txt" ] && ok "  … committed by hand, it goes through" || fail "  … retry after the commit (rc=$rc): $(cat "$TMP/out")"
 
 # 9: refusals
 wt i; touch "$(G "$TMP/am-i" rev-parse --absolute-git-dir)/BISECT_LOG"
@@ -122,18 +131,22 @@ if hold "$LOCKF"; then   # a holder that never took the lock is a failure alread
 fi
 if hold "$LOCKF"; then
   kill -9 "$HOLD_PID"; wait "$HOLD_PID" 2>/dev/null; HOLD_PID=""   # the merge was killed: no clean-up ran
-  echo i > "$TMP/am-i/i.txt"
+  echo i > "$TMP/am-i/i.txt"; wcom i i
   fin ../am-i; rc=$?; [ "$rc" = 0 ] && [ ! -d "$TMP/am-i" ] && ok "  … the lock of a merge that was killed is free at once" || fail "  … killed holder's lock (rc=$rc): $(cat "$TMP/out")"
 fi
 
 # 10: the machine form
-wt j; echo j > "$TMP/am-j/j.txt"
+wt j; echo j > "$TMP/am-j/j.txt"; wcom j j
 J="$(cd "$P" && bash "$KIT" worktree automerge ../am-j 2>/dev/null | tail -1)"; rc=$?
 python3 -c 'import json,sys;d=json.loads(sys.argv[1]);sys.exit(0 if d["status"]=="merged" and d["path"].endswith("am-j") else 1)' "$J" && [ ! -d "$TMP/am-j" ] && ok "10: automerge prints one JSON line {status: merged, path, message}" || fail "10: automerge output: $J"
 
 # 11: tracked file edited and a new note under .claude/ in an adopted worktree: that is the agent's WORK
 mkdir -p "$P/.claude/agents" && echo "agent v1" > "$P/.claude/agents/x.md" && G "$P" add .claude/agents/x.md && G "$P" commit -qm "an agent definition"
 G "$P" worktree add -q --detach "$TMP/am-agent"; echo "agent v2" > "$TMP/am-agent/.claude/agents/x.md"; mkdir -p "$TMP/am-agent/.claude/agent-memory/r" && echo "a lesson" > "$TMP/am-agent/.claude/agent-memory/r/new.md"
+fin ../am-agent; rc=$?   # FIRST uncommitted: the oracle that .claude/ files are WORK (not setup) — finish refuses and names both (#366)
+[ "$rc" = 1 ] && [ -d "$TMP/am-agent" ] && grep -q ".claude/agents/x.md" "$TMP/out" && grep -q ".claude/agent-memory/r/new.md" "$TMP/out" \
+  && ok "11: uncommitted agent definition and agent-memory note under .claude/ are WORK: refused, both named" || fail "11: .claude/ work not refused/named (rc=$rc): $(cat "$TMP/out")"
+G "$TMP/am-agent" add .claude/agents/x.md .claude/agent-memory/r/new.md && G "$TMP/am-agent" commit -qm "agent work"   # by hand: the work, not the setup
 fin ../am-agent; rc=$?
 [ "$rc" = 0 ] && grep -q "agent v2" "$P/.claude/agents/x.md" && [ -f "$P/.claude/agent-memory/r/new.md" ] && [ -n "$(G "$P" ls-files .claude/agent-memory/r/new.md)" ] \
   && ok "11: an edited agent definition and a new agent-memory note under .claude/ reach main (committed), nothing silently dropped" || fail "11: (rc=$rc): $(cat "$TMP/out") / $(G "$P" status --short)"
@@ -160,11 +173,11 @@ HEAD14="$(G "$P" rev-parse HEAD)"; WHEAD14="$(G "$TMP/am-n" rev-parse HEAD)"
 fin ../am-n; rc=$?
 [ "$rc" = 1 ] && grep -q ".env.local" "$TMP/out" && [ "$(G "$P" rev-parse HEAD)" = "$HEAD14" ] && [ "$(G "$TMP/am-n" rev-parse HEAD)" = "$WHEAD14" ] && [ -f "$TMP/am-n/.env.local" ] \
   && ok "14: a .env.local in the worktree: exit 1, named, nothing committed anywhere" || fail "14: (rc=$rc): $(cat "$TMP/out")"
-rm -f "$TMP/am-n/.env.local"
+rm -f "$TMP/am-n/.env.local"; wcom n feat
 fin ../am-n; rc=$?; [ "$rc" = 0 ] && [ -f "$P/feature.txt" ] && ok "  … without it the rest goes through" || fail "  … after removing it (rc=$rc): $(cat "$TMP/out")"
 
 # 15: untracked bookkeeping files (regenerated by the gate and hooks) are dropped, they do not strand the removal
-wt o; mkdir -p "$TMP/am-o/.agents" && echo "# generated" > "$TMP/am-o/.agents/CHECKLIST.md" && echo real > "$TMP/am-o/real.txt"
+wt o; mkdir -p "$TMP/am-o/.agents" && echo "# generated" > "$TMP/am-o/.agents/CHECKLIST.md" && echo real > "$TMP/am-o/real.txt"; wcom o real real.txt
 fin ../am-o; rc=$?
 [ "$rc" = 0 ] && [ ! -d "$TMP/am-o" ] && [ -f "$P/real.txt" ] && [ -z "$(G "$P" ls-files .agents/CHECKLIST.md)" ] && ok "15: untracked generated bookkeeping does not strand the removal, and is not carried" || fail "15: (rc=$rc): $(cat "$TMP/out")"
 
@@ -187,7 +200,7 @@ G "$P" worktree remove --force "$TMP/am-rel" 2>/dev/null
 
 # round 2 #3: notes in the worktree's own (git-ignored) agent memory are copied into main's before the removal
 echo ".agents/local/memory/" >> "$P/.gitignore"; G "$P" add .gitignore; G "$P" commit -qm "ignore agent memory"
-wt q; mkdir -p "$TMP/am-q/.agents/local/memory/claude-auto" && echo "a lesson" > "$TMP/am-q/.agents/local/memory/claude-auto/lesson.md" && echo qq > "$TMP/am-q/q.txt"
+wt q; mkdir -p "$TMP/am-q/.agents/local/memory/claude-auto" && echo "a lesson" > "$TMP/am-q/.agents/local/memory/claude-auto/lesson.md" && echo qq > "$TMP/am-q/q.txt"; wcom q qq q.txt
 fin ../am-q; rc=$?
 [ "$rc" = 0 ] && [ ! -d "$TMP/am-q" ] && [ "$(cat "$P/.agents/local/memory/claude-auto/lesson.md" 2>/dev/null)" = "a lesson" ] \
   && ok "17: the worktree's own memory note is saved into main's before it goes" || fail "17: (rc=$rc): $(cat "$TMP/out")"
@@ -197,15 +210,17 @@ for secret in id_ecdsa .netrc serviceAccountKey.json AuthKey_ABC.p8 id_dsa; do
   wt s; echo "x" > "$TMP/am-s/$secret"; echo f > "$TMP/am-s/other.txt"; HS="$(G "$P" rev-parse HEAD)"
   fin ../am-s; rc=$?
   [ "$rc" = 1 ] && grep -q "$secret" "$TMP/out" && [ "$(G "$P" rev-parse HEAD)" = "$HS" ] && ok "18: $secret is never committed automatically" || fail "18: $secret (rc=$rc): $(cat "$TMP/out")"
-  rm -f "$TMP/am-s/$secret"; fin ../am-s >/dev/null 2>&1
+  rm -f "$TMP/am-s/$secret"; wcom s other other.txt; fin ../am-s >/dev/null 2>&1
 done
 wt t; echo "KEY=" > "$TMP/am-t/.env.example"; fin ../am-t; rc=$?
-[ "$rc" = 0 ] && [ -n "$(G "$P" ls-files .env.example)" ] && ok "  … a .env.example template is not a secret" || fail "  … template (rc=$rc): $(cat "$TMP/out")"
+[ "$rc" = 1 ] && ! grep -q "never committed automatically" "$TMP/out" && ok "  … a .env.example template is not called a secret (only plain uncommitted work)" || fail "  … template flagged as a secret (rc=$rc): $(cat "$TMP/out")"
+wcom t tmpl; fin ../am-t; rc=$?
+[ "$rc" = 0 ] && [ -n "$(G "$P" ls-files .env.example)" ] && ok "  … committed by hand, the template goes through" || fail "  … template (rc=$rc): $(cat "$TMP/out")"
 
 # round 2 #1: several automatic merges AT ONCE (a Stop with many subagent worktrees) must not corrupt main's index
 for round in 1 2; do
   pids=()
-  for n in 0 1 2 3; do G "$P" worktree add -q --detach "$TMP/am-par$round$n"; echo "p" > "$TMP/am-par$round$n/par$round$n.txt"; done
+  for n in 0 1 2 3; do G "$P" worktree add -q --detach "$TMP/am-par$round$n"; echo "p" > "$TMP/am-par$round$n/par$round$n.txt"; G "$TMP/am-par$round$n" add -A && G "$TMP/am-par$round$n" commit -qm "par$round$n"; done
   for n in 0 1 2 3; do ( cd "$P" && exec bash "$KIT" worktree automerge "../am-par$round$n" >"$TMP/par$round$n.out" 2>&1 ) & pids+=($!); done
   for p in "${pids[@]}"; do wait "$p"; done
   all=1; for n in 0 1 2 3; do [ -f "$P/par$round$n.txt" ] && [ -n "$(G "$P" ls-files "par$round$n.txt")" ] && [ ! -d "$TMP/am-par$round$n" ] || all=0; done
