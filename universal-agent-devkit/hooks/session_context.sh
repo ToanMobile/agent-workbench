@@ -45,6 +45,12 @@ GATE_HOOK="$(dirname "${SELF}")/regression_gate.sh"
 CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/governance/context_sync.py"
 [ -f "${CTX_SYNC}" ] || CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/context_sync.py"
 [ -f "${CTX_SYNC}" ] && [ -d "${REPO_ROOT}/.agents" ] && (python3 "${CTX_SYNC}" "${REPO_ROOT}" --quiet >/dev/null 2>&1 &)
+# Errors the DevKit causes while a board / workflow runs in a whitelisted repo become 🐛 cards on the DevKit board
+# (Project #1). Detached in the background (never delays SessionStart); every board worker is a session too, so it runs
+# while boards run. One machine-wide ledger, a lock and at least 300 s between scans. DEVKIT_INCIDENT=0: off.
+INCIDENT_PY="$(dirname "$(dirname "${SELF}")")/scripts/governance/devkit_incident.py"
+[ "${DEVKIT_INCIDENT:-1}" != "0" ] && [ -f "${INCIDENT_PY}" ] \
+  && (python3 "${INCIDENT_PY}" scan --quiet </dev/null >/dev/null 2>&1 &)
 # The matrix merge driver command is repo config written only by `githooks install`: rewrite a stale one (#291).
 # Silent and a no-op when it is current or the repo never installed it; the config is shared by every worktree.
 GH_SCRIPT="$(dirname "$(dirname "${SELF}")")/scripts/git/githooks.sh"

@@ -1582,6 +1582,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-incident-reporter",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/devkit_incident.py",
+        "universal-agent-devkit/scripts/governance/create_task.py",
+        "universal-agent-devkit/hooks/session_context.sh",
+        "universal-agent-devkit/tests/verification/test_devkit_incident.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-INCIDENT-01",
+          "name": "lỗi do DevKit trong log board/watchdog/hook của repo app thành đúng 1 thẻ trên ToanMobile/agent-workbench; trùng chữ ký không thêm thẻ; nhiễu không thành thẻ; gh hỏng giữ spool, exit 0",
+          "command": "bash universal-agent-devkit/tests/verification/test_devkit_incident.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
