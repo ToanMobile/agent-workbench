@@ -10,6 +10,8 @@ working tree is never touched).
   GREEN run = base code + the test files + the fix    → must pass (the sandbox works)
   RED + GREEN → PROVEN · GREEN + GREEN → VACUOUS (the test does not depend on the fix)
   anything else → INCONCLUSIVE with the reason; never a guess.
+  --pending also marks the matrix suites (kind=test) and orphan test rows red_proof N/A with a
+  reason: a RED proof exists for a bug/REQ only.
 
   Session mode (default): base = HEAD, fix = the uncommitted non-test changes. No such
   change → INCONCLUSIVE (the fix is committed; pass --fix-commit).
@@ -780,6 +782,13 @@ def pending_ids(data: dict, project: Path | None = None) -> list:
     return out
 
 
+def not_applicable_ids(data: dict) -> list:
+    """Matrix suites (kind=test) and orphan test rows: a RED proof exists for a bug/REQ only, so
+    these rows get red_proof N/A (issue #181) instead of staying empty for ever."""
+    return [i for i, it in sorted(data["items"].items())
+            if it.get("kind") in ("test", "orphan") and (it.get("red_proof") or {}).get("status") != "N/A"]
+
+
 def keep_proof(project, bid, result, record):
     """Put the proof on the bug row: in the tracked checklist, or (record False: a LINKED worktree) in the worktree's own state."""
     with rc.locked(project):
@@ -874,6 +883,10 @@ def main(argv=None) -> int:
         mf = project / ".agents" / "regression_matrix.active.json"
         if mf.is_file():
             rc.sync_from_matrix(data, json.loads(mf.read_text(encoding="utf-8")))
+        if pending:
+            for nid in not_applicable_ids(data):
+                keep_proof(project, nid, {"status": "N/A", "reason": "dòng suite/orphan không phải bug/REQ — red_proof chỉ áp cho bug/REQ",
+                                          "ts": time.time()}, record)
         ids = resolved + (pending_ids(data, project) if pending else [])
         shared = {}
         for bid in dict.fromkeys(ids):
