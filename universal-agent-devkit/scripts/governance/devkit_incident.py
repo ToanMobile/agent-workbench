@@ -66,8 +66,10 @@ RULES = [
     ("crash-loop", re.compile(r"gave up \(crash loop\)"), "watchdog bỏ cuộc: runner crash loop", 1, "crash-loop"),
     # Hai luật dưới dùng bộ đếm CÓ CỬA SỔ mà runner tự in: runner ngắt thẻ ở lần thứ 2 (early_backoff: 2 lần chết sớm / 10
     # phút; SB_NOOP_MAX: 2 no-op / 24 h). Lần 1 lẻ tẻ (worker xong nhanh hợp lệ, hook SessionEnd của người dùng) không báo.
-    ("worker-noop", re.compile(r"\(lane (\w+)\): worker ended with the card still in .* no-op ([2-9]|\d\d) of"),
-     "worker lane {0} kết thúc không làm gì lặp lại", 1, 1),
+    # no-op: runner chỉ in "no-op N of max" khi CÒN DƯỚI ngưỡng, tới ngưỡng thì tự chuyển thẻ sang Blocked (block_noop_workers,
+    # super-board-run.sh); lỗi thật của pipeline là khi việc chuyển đó thất bại.
+    ("worker-noop", re.compile(r"— (\w+) worker is a no-op \d+ times but the card could not be moved to Blocked"),
+     "worker lane {0} no-op lặp lại mà runner không chặn được thẻ", 1, 1),
     ("early-death", re.compile(r"\(lane (\w+)\) ended \d+s after dispatch .* early end ([2-9]|\d\d) of this lane"),
      "worker lane {0} chết sớm lặp lại", 1, 1),
     # bash: "<script>: line N: [<lệnh|biến>: ]<lỗi>" — khoá = cả cụm (cùng script, khác lệnh/lỗi = khác thẻ)
@@ -171,7 +173,7 @@ def classify_board(line: str):
         m = rx.search(line)
         if m:
             key = group if isinstance(group, str) else m.group(group) if group is not None else line
-            return rid, title.format(*(g or "" for g in m.groups())), min_count, key
+            return rid, title.format(*(g or "" for g in m.groups())), min_count, key, line[:m.end()] if rid == "self-reload" else line
     return None
 
 
@@ -179,7 +181,7 @@ def classify_shell(line: str):
     """stderr của runner / watchdog: chỉ lỗi shell (lời runner đã nằm trong manifest, đọc ở đó, không đếm đôi)."""
     rid, rx, title, min_count, group = next(r for r in RULES if r[0] == "shell-error")
     m = rx.search(line)
-    return (rid, title.format(*(g or "" for g in m.groups())), min_count, m.group(group)) if m else None
+    return (rid, title.format(*(g or "" for g in m.groups())), min_count, m.group(group), m.group(0)) if m else None
 
 
 def classify_tracebacks(lines: list[str]):
@@ -425,8 +427,8 @@ def scan(quiet: bool) -> int:
                 for line in lines:
                     hit = classify_board(line) if kind == "board" else classify_shell(line)
                     if hit:
-                        rid, title, mc, key = hit
-                        record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, line.strip(), after)
+                        rid, title, mc, key, ev = hit   # ev: self-reload bỏ output lệnh thô sau dấu ":" (repo app)
+                        record(data["incidents"], signature(rid, key), rid, title, mc, repo, path, ev.strip(), after)
         data["offsets"] = {k: v for k, v in data["offsets"].items() if Path(k).exists()}   # file log đã xoá: bỏ offset
         save_ledger(home, data)     # offsets trước: GitHub hỏng giữa chừng thì dòng đã đọc vẫn nằm trong spool
         flush(home, data, quiet)

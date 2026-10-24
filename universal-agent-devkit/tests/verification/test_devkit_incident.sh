@@ -272,6 +272,18 @@ chmod 644 "$A/.claude/audit-gate/locked.log"
 [ "$(creates)" = $((n + 1)) ] && ok "Traceback sau một Traceback cụt vẫn thành thẻ; file không đọc được bị bỏ qua" \
   || fail "Traceback cụt / file khoá: create=$(creates) (trước $n)"
 
+# 22. Output lệnh thô sau "self-reload: …:" (worktree add / finish, có thể mang nội dung repo app) không lên issue;
+#     no-op: dòng "no-op 1 of 2" (còn dưới ngưỡng) không là thẻ, runner KHÔNG chặn được thẻ no-op thì là thẻ.
+n=$(creates)
+echo '[19:00:00] ⚠ self-reload: cannot create worktree .claude/worktrees/self-reload-9-9: fatal: PRIVATEOUT branch feat/secret-app' >> "$MB"
+echo '[19:00:01] ⚠ #5 (lane review): worker ended with the card still in Review and no new comment — no-op 1 of 2; last log line: x' >> "$MA"
+scan >/dev/null
+grep -q 'PRIVATEOUT' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "output lệnh thô của self-reload lọt" || ok "self-reload: bỏ output lệnh thô"
+[ "$(creates)" = $((n + 1)) ] && ok "no-op dưới ngưỡng → không thẻ (chỉ thẻ self-reload)" || fail "no-op dưới ngưỡng: create=$(creates) (trước $n)"
+echo '[19:00:02] ⚠ #5 in Review — review worker is a no-op 2 times but the card could not be moved to Blocked; drag it by hand' >> "$MA"
+scan >/dev/null
+[ "$(creates)" = $((n + 2)) ] && ok "runner không chặn được thẻ no-op → thẻ" || fail "no-op không chặn được mà không có thẻ: create=$(creates)"
+
 # 14. Mỗi sự cố một thẻ riêng (--new-card): không gom vào thẻ bug khác.
 grep '"issue", "create"' "$FAKE_LOG" >/dev/null && python3 - "$FAKE_LOG" <<'PY' && ok "--new-card: không gom vào thẻ khác" || fail "thiếu --new-card"
 import json, sys
