@@ -46,5 +46,18 @@ mk g; printf '{"project":"t","rules":[{"component":"SB","watch_files":[".claude/
   > .agents/regression_matrix.active.json; git add -A && git commit -qm matrix
 mkdir -p .claude/bin; echo "echo merge" > .claude/bin/super-board-merge-gate.sh
 expect g "a watched super-board script with a failing suite still fails" 1
+# 21/10 (agent-workbench #78): bản chép skill super-board / super-review và workflow super-board-wave.js (config-schema.json nằm
+# trong skill) kẹt UNTESTED (exit 2) ở OfficeReader, Goods, Neighbours. Miễn đúng các đường dẫn đó; tiền tố rộng hơn vẫn cần test.
+mk h; mkdir -p .claude/skills/super-board; echo "{}" > .claude/skills/super-board/config-schema.json
+expect h "a deployed .claude/skills/super-board file only" 0
+mk i; mkdir -p .claude/skills/super-review; echo "x" > .claude/skills/super-review/SKILL.md
+echo "ok" > .claude/skills/super-review/review.json
+expect i "a deployed .claude/skills/super-review file only" 0
+mk j; mkdir -p .claude/workflows; echo "export const meta = {}" > .claude/workflows/super-board-wave.js
+expect j "the deployed .claude/workflows/super-board-wave.js only" 0
+mk k; mkdir -p .claude/workflows .claude/skills/other; echo "export const x = 1" > .claude/workflows/release.js; echo "{}" > .claude/skills/other/tool.json
+expect k "another workflow and another skill still need a test" 2
+mk l; mkdir -p .claude/skills/super-board; echo "{}" > .claude/skills/super-board/config-schema.json; echo "fun lib() = 2" > lib/X.kt
+expect l "super-board skill + code no rule covers still stops" 2
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_gitignore_no_test: all passed" || { echo "❌ test_gate_gitignore_no_test: $FAILS failed"; exit 1; }

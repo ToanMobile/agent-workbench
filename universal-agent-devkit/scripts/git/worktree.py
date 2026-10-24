@@ -4093,6 +4093,12 @@ def cmd_gc(cwd, args):
         if log:
             _gc_log(log, (["== " + time.strftime("%Y-%m-%d %H:%M:%S")] if len(deleted) == 1 else [])
                     + ["✔ gc: " + tr("đã xoá ", "deleted ") + top + notes.get(top, "")])
+    for e in _worktree_entries(main)[1:]:   # #327 b: a devkit-kept lock of a dead pid was opened only by `remove`; a live pid's lock is never touched
+        k = None if e["broken"] else kept_lock(main, e["path"])
+        if k and not k[2]:
+            why = f"devkit-kept session={k[0]} pid={k[1]}"
+            if dry or git(main, "worktree", "unlock", e["path"], check=False).returncode == 0:
+                print(("• gc (dry-run): " + tr("sẽ mở khoá ", "would unlock ") if dry else "✔ gc: " + tr("đã mở khoá ", "unlocked ")) + e["path"] + f" ({why}, " + tr("pid đã chết)", "pid is dead)"))
     oldest = time.strftime("%Y%m%d", time.localtime(time.time() - DISCARD_KEEP_DAYS * 86400))
     for ref in git(main, "for-each-ref", "--format=%(refname)", DISCARD_REF, check=False).stdout.split():
         m = DISCARD_REF_DATE_RE.fullmatch(ref)   # bản cất của `worktree discard` quá DISCARD_KEEP_DAYS ngày; tên không có ngày thì để yên
