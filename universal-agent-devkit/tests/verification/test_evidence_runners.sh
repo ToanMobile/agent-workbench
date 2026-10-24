@@ -182,6 +182,10 @@ case("direct bash kit test printing `pass=5 fail=0` (test_gh_write_once_marker.s
      [E, ["bash", KIT_BASH, "pass=5 fail=0\n"]], 0, msg="test PASS")
 case("direct bash kit test printing `ALL OK` (test_proof_gate_before.sh style) is a pass",
      [E, ["bash", KIT_BASH, "ALL OK\n"]], 0, msg="test PASS")
+case("direct bash kit test exit 0 that prints `pass=2 fail=1` is not a pass (OCR P4)",
+     [E, ["bash", KIT_BASH, "pass=2 fail=1\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test exit 0 that prints a `FAIL: x` line is not a pass",
+     [E, ["bash", KIT_BASH, "ok: a\nFAIL: x\n"]], 2, NO, msg="test PASS")
 case("direct bash kit test whose every line is a skip line checked nothing",
      [E, ["bash", KIT_BASH, "skip: no scripts\nskip: no device\n"]], 2, NO, msg="test PASS")
 case("hooks/tests exit 0 whose check name contains FAIL is still a pass",

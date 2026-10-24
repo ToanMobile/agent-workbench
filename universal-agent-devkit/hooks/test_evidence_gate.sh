@@ -943,7 +943,9 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         # whose every line is a `skip` line, is no run. Any other output counts, whatever its summary style (✔, `ok: …`, `pass=5 fail=0`, `ALL OK`:
         # 21 kit tests print none of ✔ / "all passed"), and a run with a skipped optional case among passes is still a run.
         lines = [l for l in ANSI_RX.sub("", txt).splitlines() if l.strip()]
-        if not is_error and _command_is_direct_bash_kit(command) and lines and not all(re.match(r"\s*skip\b", l, re.I) for l in lines):
+        # ...but its own failure summary still counts: `pass=2 fail=1`, `failed: 3`, a `FAIL: x` line (OCR P4: without the ✔ requirement only "N failed" was caught)
+        kit_fail = re.search(r"(?i)\bfail(?:ed|ures?|ing)?\s*[:=]\s*[1-9]\d*|^\s*FAIL(?:ED)?\b", ANSI_RX.sub("", txt), re.M)
+        if not is_error and _command_is_direct_bash_kit(command) and lines and not kit_fail and not all(re.match(r"\s*skip\b", l, re.I) for l in lines):
             return "green"
         return None
     if pm_run:

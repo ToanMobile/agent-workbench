@@ -1674,8 +1674,14 @@ def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
         base = cfg.get("base_branch") or "main"
         if diff_ref != f"origin/{base}":
             return
-        verify_line = " ".join(str(c) for c in (cfg.get("verify_commands") or []))
-        if any(flag not in verify_line for flag in relaxing):
+        # Whole tokens of the line as the shell reads it (a flag inside a `# comment` or glued into a longer word is not carried by it).
+        carried = set()
+        for c in cfg.get("verify_commands") or []:
+            try:
+                carried.update(shlex.split(str(c), comments=True))
+            except ValueError:   # an unbalanced quote: the line cannot be read as the shell does, so it carries nothing
+                pass
+        if any(flag not in carried for flag in relaxing):
             return
         r = subprocess.run(["bash", str(script), "--config", str(configs[0]), "--mark", "--tree", tested_tree], cwd=str(root),
                            capture_output=True, text=True, timeout=30)

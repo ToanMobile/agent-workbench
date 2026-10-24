@@ -38,8 +38,11 @@ if [ "$RECORD" -eq 1 ] || [ "$MARK" -eq 1 ]; then
     # The SHAPE counts, not a substring (OCR O1): no shell operator (`&&`, `;`, `|`, redirect, backtick, `$(`) so nothing else runs in that line.
     # The flags that relax a run (--auto-approve-tests…) are compared by the caller (post-fix-gate.py mark_merge_gate_receipt) against what it used:
     # this repo's own verify line carries --auto-approve-tests, so they cannot be refused here.
-    { [ "${#CMDS[@]}" -eq 1 ] && [[ "${CMDS[0]}" == *post-fix-gate.py* ]] && [[ "${CMDS[0]}" != *[\;\&\|\<\>\`]* ]] && [[ "${CMDS[0]}" != *'$('* ]]; } \
-      || { echo "super-board-verify-cmd: --mark needs exactly one verify command: a plain post-fix-gate.py line (no shell operator); no receipt" >&2; exit 65; }
+    # The line must START with the gate (`[python3 ]<path>/post-fix-gate.py`): `true post-fix-gate.py` or `python3 other.py --x post-fix-gate.py` mention it without running it.
+    # No `$` either: a variable or `$(…)` hides what runs.
+    pfg_head='^[[:space:]]*(python3?[[:space:]]+)?[^[:space:]]*post-fix-gate\.py([[:space:]]|$)'
+    { [ "${#CMDS[@]}" -eq 1 ] && [[ "${CMDS[0]}" =~ $pfg_head ]] && [[ "${CMDS[0]}" != *[\;\&\|\<\>\`\$]* ]]; } \
+      || { echo "super-board-verify-cmd: --mark needs exactly one verify command: a plain post-fix-gate.py line (no shell operator, no \$); no receipt" >&2; exit 65; }
     # The tree the run tested, taken BEFORE it began: a commit or merge during a long --full leaves a clean tree that was never tested (F2).
     [ "$TREE" = "$(git rev-parse 'HEAD^{tree}')" ] || { echo "super-board-verify-cmd: the tree changed after the run began; no receipt" >&2; exit 65; }
   fi

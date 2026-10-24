@@ -112,7 +112,8 @@ bash .claude/bin/super-board-verify-cmd.sh --config .claude/super-board/configs/
 
 # 9b/9c (OCR O1): "the whole verify is one gate line" is the SHAPE of the command, not a substring: a chained command or one that carries its own flags is refused.
 for BAD in 'python3 bin/post-fix-gate.py --full && npm test' 'make lint; python3 bin/post-fix-gate.py --full' 'python3 bin/post-fix-gate.py --full | tee out' \
-           "python3 \$(echo x)/post-fix-gate.py --full"; do
+           "python3 \$(echo x)/post-fix-gate.py --full" 'true post-fix-gate.py' 'echo post-fix-gate.py' 'python3 other.py --x post-fix-gate.py' \
+           'python3 bin/post-fix-gate.py --full --lang $X'; do
   make_repo with-config
   jq --arg c "$BAD" '.verify_commands = [$c]' .claude/super-board/configs/t.json > "$TMP/cfg" && mv "$TMP/cfg" .claude/super-board/configs/t.json
   git add -A && git commit -qm cfg4
@@ -148,6 +149,14 @@ make_repo with-config
 R=$(receipt_path)
 DEVKIT_AUTO_APPROVE_TESTS=1 CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --matrix "$TMP/repo/matrix.json" --run-tests --full --force-full --lang en --diff origin/main > "$TMP/out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ ! -e "$R" ] && ok "DEVKIT_AUTO_APPROVE_TESTS=1 with a verify line lacking the flag: no receipt" || fail "rc=$rc, receipt present=$([ -e "$R" ] && echo yes || echo no)"
+
+# 12c. the flag only inside a shell comment of the verify line is not carried by it (OCR P3): no receipt for a run that used the flag
+VERIFY_CMD="python3 $GATE --run-tests --full --brief # --allow-no-tests"
+make_repo with-config
+R=$(receipt_path)
+CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --matrix "$TMP/repo/matrix.json" --run-tests --full --force-full --lang en --allow-no-tests --diff origin/main > "$TMP/out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$R" ] && ok "a flag named only in a comment of the verify line: no receipt" || fail "rc=$rc, receipt present=$([ -e "$R" ] && echo yes || echo no)"
+VERIFY_CMD="python3 $GATE --run-tests --full --brief"
 
 # 13. a commit made WHILE the run executes (the tree at the end is clean but was never tested): the receipt keys the tree the run STARTED on, so none is written
 make_repo with-config
