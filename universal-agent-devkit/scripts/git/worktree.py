@@ -2588,6 +2588,26 @@ def cmd_restore(cwd, args):
     return 0
 
 
+def _dropped_card(main, branch):
+    """Số thẻ N khi `branch` (issue-<N>-…) là của một thẻ BỊ BỎ: issue CLOSED với stateReason NOT_PLANNED (gom vào thẻ khác, hết cần) và
+    không còn PR MỞ nào của nhánh, theo `gh`; None khi không phải, gh không chạy được, quá 15 s hay trả gì đọc không được (không nói
+    được = không xoá). Sweep của merge gate đóng PR mở của thẻ bị bỏ trước khi gọi."""
+    m = re.match(r"issue-([0-9]+)-", branch)
+    if not m:
+        return None
+    try:
+        r = subprocess.run(["gh", "issue", "view", m.group(1), "--json", "state,stateReason"], cwd=main, capture_output=True, text=True, timeout=15)
+        info = json.loads(r.stdout or "{}") if r.returncode == 0 else {}
+        p = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "20"],
+                           cwd=main, capture_output=True, text=True, timeout=15)
+        opened = json.loads(p.stdout) if p.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if isinstance(info, dict) and info.get("state") == "CLOSED" and info.get("stateReason") in ("NOT_PLANNED", "DUPLICATE") and opened == []:
+        return m.group(1)
+    return None
+
+
 def cmd_prune_branch(cwd, args):
     """`git branch -D <nhánh>` khi không mất gì: tip của nó đã nằm trong trunk (tổ tiên, hoặc squash: gộp thử ra đúng cây của trunk), hoặc một
     PR MERGED vào trunk có head đúng tip đó (gh); commit chỉ reflog của nhánh còn giữ được cất trước (_delete_branch). Không bao giờ: trunk
@@ -2595,9 +2615,10 @@ def cmd_prune_branch(cwd, args):
     (`git push --delete` mà guard chặn ở dạng trần), chỉ khi PR MERGED vào trunk có headRefOid đúng tip của nhánh REMOTE (ls-remote) và
     lệnh xoá kèm --force-with-lease đúng tip đó; kiểm cả hai phía trước, một phía không qua thì không xoá gì."""
     remote = "--remote" in args
-    rest = [a for a in args if a != "--remote"]
-    if len(rest) != 1:
-        die("usage: agent-kit worktree prune-branch [--remote] <branch>")
+    dropped = "--dropped" in args
+    rest = [a for a in args if a not in ("--remote", "--dropped")]
+    if len(rest) != 1 or (remote and dropped):
+        die("usage: agent-kit worktree prune-branch [--remote | --dropped] <branch>")
     name = rest[0]
     if name.startswith("-") or git(cwd, "check-ref-format", "--branch", name, check=False).returncode:
         die(tr(f"tên nhánh không hợp lệ: {name}", f"not a valid branch name: {name}"))
@@ -2615,7 +2636,16 @@ def cmd_prune_branch(cwd, args):
     if tip:
         in_trunk = _content_in_trunk(main, ref)
         pr = None if in_trunk else _merged_pr_at(main, name, tip)
-        if pr is None and not in_trunk:
+        if pr is None and not in_trunk and dropped:
+            # thẻ bị bỏ: chỉ xoá khi tip đã có trên origin (commit chưa từng push là việc chưa ai thấy: luật dự án bắt hỏi trước, review 24/10)
+            if not _dropped_card(main, name):
+                print("✖ worktree prune-branch --dropped: " + tr(f"{name} không phải nhánh của thẻ bị bỏ theo gh (issue chưa đóng NOT_PLANNED, còn PR mở, hoặc gh không đọc được): giữ",
+                                                                 f"{name} is not a dropped card's branch per gh (issue not closed as not planned, an open PR, or gh unreadable): kept"), file=sys.stderr)
+                return 1
+            if git(main, "merge-base", "--is-ancestor", tip, f"refs/remotes/origin/{name}", check=False).returncode:
+                print("✖ worktree prune-branch --dropped: " + tr(f"{name} ({tip[:12]}) có commit chưa push lên origin: giữ", f"{name} ({tip[:12]}) holds commits never pushed to origin: kept"), file=sys.stderr)
+                return 1
+        elif pr is None and not in_trunk:
             print("✖ worktree prune-branch: " + tr(f"{name} ({tip[:12]}) còn commit trunk chưa có và không có PR MERGED vào trunk đúng tip đó: giữ",
                                                    f"{name} ({tip[:12]}) holds commits the trunk lacks and no PR merged into the trunk at that tip: kept"), file=sys.stderr)
             return 1
@@ -2645,7 +2675,8 @@ def cmd_prune_branch(cwd, args):
         if not ok:
             die(f"{name}: {kept}" + (tr(" (nhánh trên origin đã xoá)", " (the origin branch is deleted)") if done else ""), 1)
         done.append(f"{name} ({tip[:12]}) " + (tr(f"PR #{pr} đã MERGED đúng tip này", f"PR #{pr} merged at this tip") if pr is not None
-                                               else tr("đã nằm trong trunk", "is in the trunk"))
+                                               else tr("đã nằm trong trunk", "is in the trunk") if in_trunk
+                                               else tr("của thẻ bị bỏ (issue đóng NOT_PLANNED, không còn PR mở)", "belongs to a dropped card (issue closed not planned, no open PR)"))
                     + (tr(f"; commit chỉ nhánh giữ đã cất ở {kept} ({DISCARD_KEEP_DAYS} ngày)",
                           f"; commits only the branch held are kept in {kept} ({DISCARD_KEEP_DAYS} days)") if kept else ""))
     print("✔ prune-branch: " + "; ".join(done) + tr(", đã xoá", ", deleted"))
