@@ -259,8 +259,9 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
         meta = {"duration": duration, "log": t["log"], "project": project.name[:64],
                 "head": (rc._git_lines(project, "rev-parse", "HEAD") or [""])[0] or None, "by": mode}
         try:
-            if status != "PASS":
-                sc.void(tid)   # mọi không-PASS của lần chạy thật: PASS cũ của suite này hết dùng lại (như gate)
+            # không-PASS của lần chạy thật: PASS cũ của suite này hết dùng lại (như gate); riêng FAIL thật đã ghi dưới khoá của nó thì không (#344)
+            if status != "PASS" and _gate_module().suite_cache_mod().void_needed(status, flaky=flaky or broke, recorded=keys[0] != keys[1] and not infra):
+                sc.void(tid)
             if status in ("PASS", "FAIL") and not infra:
                 # PASS: khoá cả cây chỉ khi cây không đổi trong lúc chạy (như gate). FAIL: chỉ khoá chính xác (vẫn chặn HIT) — FAIL dưới khoá
                 # cả cây là bằng chứng lỗi có sẵn của KNOWN-RED, mà lượt chạy lại nền không lọc FAIL chập chờn / hạ tầng / cây đổi như gate

@@ -113,6 +113,53 @@ _uninst="$DEVKIT_DIR/scripts/governance/devkit_uninstall.py"; [ -f "$_uninst" ] 
 python3 "$_uninst" "$TMP/repo" --apply >/dev/null 2>&1
 [ ! -e .git/hooks/pre-commit ] && ok "agent-kit uninstall removes the hook" || fail "agent-kit uninstall left the hook"
 
+# 24/10 (#307 blocked 3 rounds): `githooks install` run from a LINKED WORKTREE wrote that worktree's kit path as the
+# fallback into the hooks every worktree shares; once the worktree was removed every commit/merge through them failed.
+# The fallback must name the main checkout's copy of the kit when it has one.
+PT="$(cd "$TMP" && pwd -P)"   # macOS: /var → /private/var; the hook stores physical paths
+M="$PT/mainrepo"; mkdir -p "$M/kit/profiles" "$M/kit/scripts/git" "$M/kit/scripts/governance"
+for f in scripts/git/githooks.sh scripts/git/git-pre-commit.sh scripts/git/git-commit-msg.sh scripts/governance/i18n.sh \
+  scripts/governance/relink_check.py; do
+  cp "$DEVKIT_DIR/$f" "$M/kit/$f" || fail "fixture: cannot copy $f"
+done
+touch "$M/kit/profiles/.keep"
+( cd "$M" && git init -q . && git config user.email t@t && git config user.name t \
+  && git add -A && git commit -qm init --no-verify && git worktree add -q "$PT/wt-fallback" HEAD ) >"$TMP/setup.log" 2>&1
+bash "$PT/wt-fallback/kit/scripts/git/githooks.sh" install "$PT/wt-fallback" >"$TMP/install.log" 2>&1
+HOOKS="$(git -C "$M" rev-parse --path-format=absolute --git-common-dir)/hooks"
+if grep -q "$PT/wt-fallback" "$HOOKS/pre-commit" "$HOOKS/commit-msg" 2>/dev/null; then
+  fail "hooks installed from a worktree point at that worktree: $(grep -h "$PT/wt-fallback" "$HOOKS/commit-msg" | head -1)"
+else
+  grep -q "$M/kit/scripts/git/git-commit-msg.sh" "$HOOKS/commit-msg" 2>/dev/null \
+    && grep -q "$M/kit/scripts/git/git-pre-commit.sh" "$HOOKS/pre-commit" 2>/dev/null \
+    && grep -q "$M/kit/scripts/governance/relink_check.py" "$HOOKS/post-merge" 2>/dev/null \
+    && ok "hooks installed from a worktree fall back to the main checkout's kit" \
+    || fail "fallback names neither the worktree nor main ($(tail -2 "$TMP/setup.log" "$TMP/install.log" 2>/dev/null | tr "\n" " "))"
+fi
+# Main's copy lacks one hook body (older main, here commit-msg): keep the worktree's own paths, never one that does not exist.
+rm -f "$M/kit/scripts/git/git-commit-msg.sh"
+bash "$PT/wt-fallback/kit/scripts/git/githooks.sh" install "$PT/wt-fallback" >"$TMP/install.log" 2>&1
+grep -q "$PT/wt-fallback/kit/scripts/git/git-pre-commit.sh" "$HOOKS/pre-commit" 2>/dev/null \
+  && ok "main without the hook body: the worktree's kit path is kept" \
+  || fail "main without the hook body: pre-commit fallback is $(grep -ho '/[^ ]*git-pre-commit.sh' "$HOOKS/pre-commit" | head -1)"
+git -C "$M" worktree remove --force "$PT/wt-fallback" >/dev/null 2>&1
+
+# The kit IS the repo (a clone of universal-agent-devkit itself): the same fallback applies.
+K="$PT/kitrepo"; mkdir -p "$K/profiles" "$K/scripts/git" "$K/scripts/governance"
+for f in scripts/git/githooks.sh scripts/git/git-pre-commit.sh scripts/git/git-commit-msg.sh scripts/governance/i18n.sh \
+  scripts/governance/relink_check.py; do
+  cp "$DEVKIT_DIR/$f" "$K/$f" || fail "fixture: cannot copy $f"
+done
+touch "$K/profiles/.keep"
+( cd "$K" && git init -q . && git config user.email t@t && git config user.name t \
+  && git add -A && git commit -qm init --no-verify && git worktree add -q "$PT/wt-kitroot" HEAD ) >"$TMP/setup.log" 2>&1
+bash "$PT/wt-kitroot/scripts/git/githooks.sh" install "$PT/wt-kitroot" >"$TMP/install.log" 2>&1
+HOOKS="$(git -C "$K" rev-parse --path-format=absolute --git-common-dir)/hooks"
+grep -q "$K/scripts/git/git-commit-msg.sh" "$HOOKS/commit-msg" 2>/dev/null && ! grep -q "$PT/wt-kitroot" "$HOOKS/commit-msg" \
+  && ok "kit at the repo root: hooks installed from a worktree fall back to main" \
+  || fail "kit at the repo root: commit-msg fallback is $(grep -ho '/[^ ]*git-commit-msg.sh' "$HOOKS/commit-msg" | head -1)"
+git -C "$K" worktree remove --force "$PT/wt-kitroot" >/dev/null 2>&1
+
 if [ "$FAILS" -ne 0 ]; then
   echo "githooks: $FAILS FAILED"; exit 1
 fi

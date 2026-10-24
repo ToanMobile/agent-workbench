@@ -13,6 +13,7 @@
 #   s10. (âm) commit chỉ đổi con trỏ gitlink, diff.submodule=log + ignoreSubmodules=all: từ chối (ghim kết quả; chặn bằng cả blocker submodule,
 #        nên mutant bỏ cờ --submodule=short vẫn sống: cờ đó là lớp phòng thủ thứ hai, chưa có ca riêng)
 #   s11. (âm) .gitattributes merge=ours: gộp thử giữ bản trunk nên trông như đã có, discard vẫn từ chối
+#   s12. (âm) chuỗi head dài hơn cap: _same_patches_verbatim trả False mà không chạy `git log -p` (#326)
 #   s6. (âm) chuỗi đã squash + một commit chỉ còn trong reflog của worktree: từ chối
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -42,7 +43,6 @@ chain w-sq; chain w-new; chain w-mod; chain w-rb; chain w-em; chain w-rl
 mk w-gl; G "$TMP/w-gl" checkout -q --detach
 printf 'a2\n' > "$TMP/w-gl/a.txt"; G "$TMP/w-gl" commit -qam c1
 G "$TMP/w-gl" update-index --add --cacheinfo 160000,"$(G "$R" rev-parse HEAD)",sub; G "$TMP/w-gl" commit -qm bump-gitlink
-G "$TMP/w-gl" config diff.submodule log; G "$TMP/w-gl" config diff.ignoreSubmodules all
 mk w-mg; G "$TMP/w-mg" checkout -q --detach
 printf 'b2\nonly-in-worktree\n' > "$TMP/w-mg/b.txt"; G "$TMP/w-mg" commit -qam mergeours
 mk w-crlf; G "$TMP/w-crlf" checkout -q --detach
@@ -110,10 +110,33 @@ done
 
 # thuộc tính merge chỉ bật từ đây: b.txt có merge=ours thì mọi ca trên (cùng đổi b.txt) bị từ chối vì lý do khác
 mkdir -p "$R/.git/info"; printf 'b.txt merge=ours\n' > "$R/.git/info/attributes"; G "$R" config merge.ours.driver true
+G "$R" config diff.submodule log; G "$R" config diff.ignoreSubmodules all   # chỉ s10 cần; gỡ ngay sau vòng này (config của worktree là config chung)
 for w in w-gl w-mg; do
   tag=s10; [ "$w" = w-mg ] && tag=s11
   bash "$KIT" worktree discard "../$w" >"$TMP/$tag.out" 2>&1; rc=$?
-  [ "$rc" != 0 ] && [ -e "$TMP/$w" ] && ok "$tag discard refuses $w (rc=$rc)" || { fail "$tag discard dropped $w (rc=$rc)"; cat "$TMP/$tag.out"; }
+  # s11 phải bị từ chối ĐÚNG vì chuỗi chưa vào trunk (không phải lý do khác); s10 bị chặn bởi blocker submodule nên giữ phép kiểm cũ
+  need=''; [ "$tag" = s11 ] && need='holds commits the trunk lacks'
+  [ "$rc" != 0 ] && [ -e "$TMP/$w" ] && grep -q "$need" "$TMP/$tag.out" && ok "$tag discard refuses $w (rc=$rc)" || { fail "$tag discard dropped $w (rc=$rc)"; cat "$TMP/$tag.out"; }
 done
+
+G "$R" config --unset diff.submodule; G "$R" config --unset diff.ignoreSubmodules
+# #358 mục 7: cấu hình của w-gl chỉ phục vụ s10; sau s10 config chung của repo không còn mang nó (không rò sang ca khác)
+leak=$(G "$R" config --get-regexp '^diff\.(submodule|ignoresubmodules)$' 2>/dev/null)
+[ -z "$leak" ] && ok "config chung không còn diff.submodule / diff.ignoreSubmodules sau s10" || fail "config chung còn lại sau s10: $leak"
+
+# s12 (#326): cap áp cho CẢ base..head, không chỉ base..tip — chuỗi head dài không được chạy `git log -p` + patch-id
+if python3 - "$DEVKIT_DIR/scripts/git" "$R" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1]); import worktree as w
+main = sys.argv[2]; calls = []; orig = w._git_bytes
+w._git_bytes = lambda cwd, *a, **k: (calls.append(a), orig(cwd, *a, **k))[1]
+g = lambda *a: w.git(main, "-c", "user.email=t@t", "-c", "user.name=t", *a)
+base = g("rev-parse", "HEAD").stdout.strip()
+for i in range(3):
+    open(main + "/cap.txt", "w").write(f"{i}\n"); g("add", "cap.txt"); g("commit", "-qm", f"cap{i}")
+head = g("rev-parse", "HEAD").stdout.strip(); g("reset", "-q", "--hard", base)
+ok = w._same_patches_verbatim(main, base, head, cap=2)
+sys.exit(0 if ok is False and not any(a[0] == "log" for a in calls) else 1)
+PY
+then ok "s12 a head chain over the cap returns False without git log -p"; else fail "s12 head chain over the cap still ran git log -p"; fi
 
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }

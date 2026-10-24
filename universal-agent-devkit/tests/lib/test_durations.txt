@@ -367,6 +367,9 @@
 5 tests/gates/test_multi_session_gate_session_env.sh
 3 tests/gates/test_gate_git_spawn_budget.sh
 3 tests/gates/test_matrix_merge_driver.sh
+5 tests/worktree_git/test_matrix_driver_refresh.sh
+3 tests/gates/test_durations_union_merge.sh
+1 tests/installer/test_place_keeps_tracked_in_worktree.sh
 # 2026-10-23 (T0052 nguồn sức chứa chung bin/capacity.py): đo một mình trên máy này (1.5 s).
 2 tests/gates/test_capacity.sh
 # 2026-10-23: test của #309 (59a469ff) vào main thiếu dòng này, test_run_impacted_order.sh đỏ "unlisted tests start first"; đo một
@@ -374,9 +377,22 @@
 3 tests/worktree_git/test_worktree_merge_tree_no_leak.sh
 # 2026-10-23: test của b604e3d3 (createTask gom thẻ, #315 #305) cũng thiếu dòng; đo một mình lúc tải ~90 (13.6 s).
 14 tests/verification/test_create_task_batch.sh
+# 2026-10-23: #234 — remove/discard gỡ worktree chỉ lệch ở khối devkit-essentials của AGENTS.md (4 worktree thật, đo ước 20 s).
+20 tests/worktree_git/test_worktree_remove_essentials_block.sh
 # 2026-10-24 (#320): ba test của PR gom hooks/settings; đo một mình.
 1 tests/gates/test_guard_heredoc_text_not_command.sh
 3 tests/gates/test_guard_kill_by_name.sh
 1 tests/verification/test_settings_template_read_deny.sh
 # 2026-10-24: test của #307 (--tree) thiếu dòng sau khi gộp origin/main; đo 31 s lúc tải ~90.
 31 tests/gates/test_gate_tree_mode.sh
+# 2026-10-24: #377 (#344) — đo 10 s và 13 s trên máy 12 lõi tải ~60
+10 tests/gates/test_gate_suite_cache_void.sh
+13 tests/gates/test_gate_suite_cache_selection.sh
+# #377 (#338)
+15 tests/gates/test_gate_slot_started.sh
+# origin/main (#181) thiếu dòng: test_run_impacted_order bắt
+8 tests/verification/test_red_proof_na.sh
+8 tests/worktree_git/test_worktree_remove_durations.sh
+9 tests/gates/test_guard_secrets.sh
+6 tests/worktree_git/test_githooks_heal.sh
+5 tests/gates/test_suite_cache_store_fifo.sh

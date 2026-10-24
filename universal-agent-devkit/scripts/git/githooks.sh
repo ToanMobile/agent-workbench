@@ -17,6 +17,24 @@ set -u
 DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 [ -d "$DEVKIT_ROOT/profiles" ] || DEVKIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$DEVKIT_ROOT/scripts/governance/i18n.sh" 2>/dev/null || source "$DEVKIT_ROOT/scripts/i18n.sh"
+# The hooks are shared by every worktree of a repo. Run from a LINKED worktree, the kit path above is that worktree's: once
+# it is removed every commit and merge through the hooks fails (#307, 24/10). Write the main checkout's copy instead.
+# Main = the first `git worktree list` entry (handles separate-git-dir; a bare entry has no kit and fails the -f below).
+_kit_top="$(git -C "$DEVKIT_ROOT" rev-parse --show-toplevel 2>/dev/null)"
+_main_top="$(git -C "$DEVKIT_ROOT" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+if [ -n "$_kit_top" ] && [ -n "$_main_top" ]; then
+  _main_top="$(cd "$_main_top" 2>/dev/null && pwd -P)"
+  _kit_top="$(cd "$_kit_top" 2>/dev/null && pwd -P)"
+  _main_kit="$_main_top${DEVKIT_ROOT#"$_kit_top"}"
+  # Only when main's copy has every body the hooks run (an older main may lack one); new or legacy layout each.
+  _has() { [ -f "$_main_kit/scripts/$1/$2" ] || [ -f "$_main_kit/scripts/$2" ]; }
+  case "$DEVKIT_ROOT" in "$_kit_top" | "$_kit_top"/*)   # the kit is the repo itself, or a folder in it
+    if [ -n "$_kit_top" ] && [ -n "$_main_top" ] && [ "$_kit_top" != "$_main_top" ] && _has git git-pre-commit.sh \
+      && _has git git-commit-msg.sh && _has governance relink_check.py; then
+      DEVKIT_ROOT="$_main_kit"
+    fi ;;
+  esac
+fi
 MARKER="universal-agent-devkit:githook"
 BODY="$DEVKIT_ROOT/scripts/git/git-pre-commit.sh"
 [ -f "$BODY" ] || BODY="$DEVKIT_ROOT/scripts/git-pre-commit.sh"
@@ -27,8 +45,8 @@ DEVKIT_LANG="$(devkit_resolve_lang "" "$TARGET")"; export DEVKIT_LANG
 
 die() { echo "✖ githooks: $1" >&2; exit "${2:-1}"; }
 
-case "$ACTION" in install|uninstall|status|state) ;; *)
-  die "$(L "lệnh không hợp lệ '$ACTION' (install | uninstall | status | state)" "unknown action '$ACTION' (install | uninstall | status | state)")" 2 ;;
+case "$ACTION" in install|uninstall|status|state|refresh-matrix-driver) ;; *)
+  die "$(L "lệnh không hợp lệ '$ACTION' (install | uninstall | status | state | refresh-matrix-driver)" "unknown action '$ACTION' (install | uninstall | status | state | refresh-matrix-driver)")" 2 ;;
 esac
 [ -d "$TARGET" ] || die "$(L "không có thư mục: $TARGET" "no such directory: $TARGET")" 2
 git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1 \
@@ -93,13 +111,22 @@ install_msg_hook() {
 # one to merge conflicts (agent-workbench #221). A union merge driver joins the appended rules; the attribute routes the
 # matrix file to it. The driver is repo config (shared by every worktree), the attribute a tracked line.
 MATRIX_ATTR=".agents/regression_matrix.active.json merge=devkit-matrix"
-install_matrix_driver() {
+matrix_driver_cmd() {
   # #282: a relative ".agents/devkit/…" did not exist in the merge gate's .merge-scratch-* worktree (the kit symlink
   # is untracked), so the driver failed and git fell back to a text merge. The config is shared by every worktree, so
   # the command finds the kit of the MAIN checkout at merge time (first entry of `git worktree list`: any git version,
   # submodules and separate git dirs included), then the worktree's own copy.
   # shellcheck disable=SC2016
-  local drv='d="$(git worktree list --porcelain | sed -n "1s/^worktree //p")/.agents/devkit/scripts/git/matrix_merge_driver.py"; [ -f "$d" ] || d=.agents/devkit/scripts/git/matrix_merge_driver.py; if [ -f "$d" ]; then python3 "$d" %O %A %B %P; else git merge-file %A %O %B; fi'
+  echo 'd="$(git worktree list --porcelain | sed -n "1s/^worktree //p")/.agents/devkit/scripts/git/matrix_merge_driver.py"; [ -f "$d" ] || d=.agents/devkit/scripts/git/matrix_merge_driver.py; if [ -f "$d" ]; then python3 "$d" %O %A %B %P; else git merge-file %A %O %B; fi'
+}
+# #291: `install` is the only writer, so a repo installed before a change of the command above kept the old one.
+# SessionStart runs this: rewrite the command only when the repo has one and it differs (a repo never opted in stays out).
+refresh_matrix_driver() {
+  local cur; cur="$(git -C "$TARGET" config --get merge.devkit-matrix.driver 2>/dev/null)" || return 0
+  [ "$cur" = "$(matrix_driver_cmd)" ] || git -C "$TARGET" config merge.devkit-matrix.driver "$(matrix_driver_cmd)"
+}
+install_matrix_driver() {
+  local drv; drv="$(matrix_driver_cmd)"
   git -C "$TARGET" config merge.devkit-matrix.name "DevKit regression matrix union merge" \
     && git -C "$TARGET" config merge.devkit-matrix.driver "$drv" || return 0
   local root; root="$(git -C "$TARGET" rev-parse --show-toplevel 2>/dev/null)" || return 0
@@ -174,6 +201,9 @@ case "$ACTION" in
     ;;
   state)
     pre_commit_state
+    ;;
+  refresh-matrix-driver)
+    refresh_matrix_driver
     ;;
   install)
     mkdir -p "$HOOKS_DIR" 2>/dev/null

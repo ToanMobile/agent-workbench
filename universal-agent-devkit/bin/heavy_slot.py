@@ -199,7 +199,8 @@ def priority_name() -> str:
 
 # ── Hàng đợi vé (một thư mục mỗi pool) ─────────────────────────────────────────────────────────────────────────
 def queue_order(tickets: list, now: float) -> list:
-    """Thứ tự phục vụ: (mức ưu tiên, thời lượng ước tính − thời gian đã chờ, lúc đến). Việc dài chờ lâu dần lên đầu."""
+    """Thứ tự phục vụ: (mức ưu tiên, vé của lượt đã bắt đầu trước, thời lượng ước tính − thời gian đã chờ, lúc đến). Việc dài chờ lâu dần lên
+    đầu; một lượt đã chạy suite đầu thì chạy cho xong, không nhường lại cho lượt mới đến (#338)."""
     def key(t):
         try:
             est = float(t.get("est_s"))
@@ -209,7 +210,8 @@ def queue_order(tickets: list, now: float) -> list:
             t0 = float(t.get("t0"))
         except (TypeError, ValueError):
             t0 = now
-        return (PRIORITY.get(t.get("prio"), PRIORITY["interactive"]), est - max(0.0, now - t0), t0, str(t.get("name") or ""))
+        return (PRIORITY.get(t.get("prio"), PRIORITY["interactive"]), 0 if t.get("cont") else 1, est - max(0.0, now - t0), t0,
+                str(t.get("name") or ""))
     return sorted(tickets, key=key)
 
 
@@ -269,7 +271,7 @@ def _read_tickets(qdir: str, now: float) -> list:
     return out
 
 
-def _write_ticket(qdir: str, prio: str, est_s: float, wait_s: float, label: str) -> Optional[str]:
+def _write_ticket(qdir: str, prio: str, est_s: float, wait_s: float, label: str, cont: bool = False) -> Optional[str]:
     """Ghi vé của tiến trình này; None khi không ghi được (khi đó không xếp hàng, chỉ tranh khoá như trước)."""
     try:
         os.makedirs(qdir, mode=0o700, exist_ok=True)
@@ -277,7 +279,7 @@ def _write_ticket(qdir: str, prio: str, est_s: float, wait_s: float, label: str)
         tmp = os.path.join(qdir, "." + name + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"pid": os.getpid(), "prio": prio, "est_s": float(est_s), "t0": time.time(), "wait_s": float(wait_s),
-                       "label": str(label)[:120]}, f)
+                       "label": str(label)[:120], "cont": bool(cont)}, f)
         os.replace(tmp, os.path.join(qdir, name))
         return name
     except OSError as exc:
@@ -348,7 +350,7 @@ def pool_paths(pool: str, capacity: int, lock_dir: Optional[str] = None) -> list
 
 
 def acquire_pool(pool: str, paths: list, *, wait_s: float, prio: Optional[str] = None, est_s: Optional[float] = None,
-                 label: str = "") -> PoolHandle:
+                 label: str = "", cont: bool = False) -> PoolHandle:
     """Lấy một khoá trong `paths` theo hàng đợi vé của pool. Không bao giờ đụng os.environ (gọi được từ nhiều luồng).
     SB_HEAVY_SLOT_HELD=1: tiến trình cha đã giữ slot cho cả cây tiến trình — trả ngay, không lấy thêm (gate lồng trong suite)."""
     if os.environ.get("SB_HEAVY_SLOT_HELD") == "1":
@@ -366,7 +368,7 @@ def acquire_pool(pool: str, paths: list, *, wait_s: float, prio: Optional[str] =
     jitter_max = min(0.5, poll_s * 0.25)
     t_start = time.monotonic()
     deadline = t_start + max(0.0, wait_s)
-    ticket = _write_ticket(qdir, prio or priority_name(), DEFAULT_EST_S if est_s is None else est_s, wait_s, label)
+    ticket = _write_ticket(qdir, prio or priority_name(), DEFAULT_EST_S if est_s is None else est_s, wait_s, label, cont)
     logged = False
     try:
         while True:
@@ -618,14 +620,17 @@ class SuiteSlots:
     held: bool = False
     notes: tuple = ()
     advisory: bool = False
+    reused: Optional[PoolHandle] = None   # slot nặng của lượt này dùng lại từ suite trước (lease): suite này không xếp hàng lại
 
 
 def acquire_for_suite(info: dict, *, est_s: Optional[float] = None, label: str = "", prio: Optional[str] = None,
-                      max_wait: Optional[float] = None) -> SuiteSlots:
+                      max_wait: Optional[float] = None, started: bool = False, lease: Optional[PoolHandle] = None) -> SuiteSlots:
     """Cho suite chạy theo TẢI MÁY (người dùng 20/10: bỏ 2 slot): tải dưới load_max() thì chạy ngay, cao hơn thì chờ tải xuống tối đa
     DEVKIT_SLOT_LOAD_WAIT_S rồi vẫn chạy (cả tiến trình chờ tải tổng cộng tối đa DEVKIT_SLOT_ADVISORY_BUDGET_S). Rồi suite Unity xin
     khoá độc quyền Unity: hết SB_HEAVY_SLOT_WAIT_S (tính sau lần chờ tải) thì không chạy, như trước. Suite thiết bị không khoá gì.
-    max_wait: trần TỔNG cho mọi lần chờ của suite này (ngân sách còn lại của gate, timeout của run_one đang giữ test_run.lock)."""
+    max_wait: trần TỔNG cho mọi lần chờ của suite này (ngân sách còn lại của gate, timeout của run_one đang giữ test_run.lock).
+    started (#338): lượt này đã có suite được cho chạy ⇒ không chờ tải lại (tải đã được chờ một lần, ở suite đầu), và vé xếp hàng slot nặng đứng
+    trước vé của lượt mới đến. lease: slot nặng suite trước của lượt này còn giữ — suite nặng này dùng nó, không xếp hàng, không nhường."""
     if os.environ.get("SB_HEAVY_SLOT_HELD") == "1":
         return SuiteSlots([], admitted=True, held=True)
     t_start = time.monotonic()
@@ -635,7 +640,7 @@ def acquire_for_suite(info: dict, *, est_s: Optional[float] = None, label: str =
     # tiến trình cha đã được cho chạy theo tải (gate lồng trong suite, wrapper CLI): không chờ lại. Merge gate super-board đã bật chờ tải
     # (merge_load_wait_s > 0) thì chờ một lần trước verify rồi đặt DEVKIT_SLOT_LOAD_WAIT_S=0; không bật (mặc định của hầu hết board) hay
     # worktree finish (không tự chờ trước) thì chờ ở đây như mọi lượt.
-    if os.environ.get("DEVKIT_SLOT_ADVISORY_HELD") != "1":
+    if os.environ.get("DEVKIT_SLOT_ADVISORY_HELD") != "1" and not started:
         wait_s = _env_float("DEVKIT_SLOT_LOAD_WAIT_S", LOAD_WAIT_S)
         # Ngân sách là giây ĐỒNG HỒ tiến trình chờ tải (OCR 20/10 + 21/10): suite vào lúc khác đang chờ thì chờ tới cùng mốc hết ngân sách
         # (chờ chồng nhau tính một lần, suite nào cũng chờ), không phải mỗi suite một ngân sách trọn, cũng không phải suite đầu giữ hết.
@@ -663,11 +668,16 @@ def acquire_for_suite(info: dict, *, est_s: Optional[float] = None, label: str =
             if note:
                 notes.append(note)
     got = []
+    reused = None
     # Trần suite nặng (người dùng 21/10: 10 worker build, 3 suite nặng cùng lúc): xếp hàng ở pool "heavy" theo hàng đợi vé như Unity.
     # Hết ngân sách chờ thì VẪN chạy kèm ghi chú (như chờ tải: trần không bao giờ làm suite thành UNTESTED). Suite lồng trong suite
     # đã được cho chạy (DEVKIT_SLOT_ADVISORY_HELD=1) không xin: cha giữ slot mà con chờ slot là bế tắc. Slot này không làm `held`
     # (gate lồng vẫn phải xin khoá Unity).
-    if info.get("cls") in HEAVY_CLASSES and os.environ.get("DEVKIT_SLOT_ADVISORY_HELD") != "1":
+    if (info.get("cls") in HEAVY_CLASSES and os.environ.get("DEVKIT_SLOT_ADVISORY_HELD") != "1" and lease is not None
+            and lease.fh is not None and lease.pool == "heavy"):
+        got.append(lease)   # slot nặng của suite nặng liền trước trong lượt này: giữ nguyên, gate khác không chen được giữa hai suite
+        reused = lease
+    elif info.get("cls") in HEAVY_CLASSES and os.environ.get("DEVKIT_SLOT_ADVISORY_HELD") != "1":
         # Chờ hàng đợi tối đa như chờ tải (600 s), không phải 3600 s của khoá Unity: hết giờ suite vẫn chạy, nên chờ cả giờ chỉ làm merge
         # gate (SIGTERM sau 3600 s) và khoá merge (5400 s) quá hạn. Ngân sách chờ là của cả tiến trình (DEVKIT_SLOT_HEAVY_BUDGET_S): k suite
         # nối nhau không chờ k × giới hạn. Không thừa hưởng DEVKIT_SLOT_LOAD_WAIT_S=0: đó chỉ là "đã chờ TẢI", chưa chờ slot.
@@ -678,7 +688,7 @@ def acquire_for_suite(info: dict, *, est_s: Optional[float] = None, label: str =
         if max_wait is not None:
             hv_deadline = min(hv_deadline, t_start + max(0.0, max_wait))
         hv = acquire_pool("heavy", pool_paths("heavy", heavy_max()), wait_s=max(0.0, hv_deadline - time.monotonic()), prio=prio,
-                          est_s=est_s, label=label)
+                          est_s=est_s, label=label, cont=started)
         with _ADVISORY_LOCK:
             _HEAVY_WAIT["spent"] += hv.waited_s
         if hv.timed_out:
@@ -696,19 +706,27 @@ def acquire_for_suite(info: dict, *, est_s: Optional[float] = None, label: str =
                          label=label)
         if h.timed_out:
             for g in got:
-                release_pool(g)
-            return SuiteSlots([], admitted=False, held=False,
+                if g is not reused:   # lease không phải của suite này: người gọi giữ hoặc nhả nó
+                    release_pool(g)
+            return SuiteSlots([], admitted=False, held=False, reused=reused,
                               notes=tuple(notes) + (f"khoá unity bận hết {h.waited_s:.1f}s — suite không chạy",))
         got.append(h)
     held = any(h.fh is not None and h.pool != "heavy" for h in got)
-    return SuiteSlots(got, admitted=True, held=held, advisory=not held, notes=tuple(notes))
+    return SuiteSlots(got, admitted=True, held=held, advisory=not held, notes=tuple(notes), reused=reused)
 
 
-def release_suite(slots: Optional[SuiteSlots]) -> None:
+def release_suite(slots: Optional[SuiteSlots], keep_heavy: bool = False) -> Optional[PoolHandle]:
+    """Nhả mọi slot của suite. keep_heavy: slot nặng KHÔNG nhả mà trả về cho người gọi giữ cho suite nặng kế tiếp của lượt (lease); None khi
+    không có slot nặng nào để giữ."""
+    kept = None
     if slots is not None:
         for h in reversed(slots.handles):
+            if keep_heavy and h.pool == "heavy" and h.fh is not None and kept is None:
+                kept = h
+                continue
             release_pool(h)
         slots.handles = []
+    return kept
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

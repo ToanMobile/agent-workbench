@@ -158,7 +158,7 @@ read it — re-read, then redo the edit. Builder opens the PR with every block f
 | `status` (alert card) | writes | rewrites on exit | rewrites on exit |
 | `problem` (lettered steps under Where, screenshot embedded) | writes from the ticket's Context | — | — |
 | `solution` (plain bullets, `Docs:` bullets last) | writes, updates on rebuild | — | — |
-| `ac` (checklist + one proof line each) | writes all unchecked | ticks with proof, or leaves unchecked with the reason | unticks one it disproved |
+| `ac` (checklist + one proof line each) | writes all unchecked — ONE line per AC item of the card (and of every card its AC refers to as "AC của thẻ #X"), never a summary line; on an `ac-open` card, every line again, proven ones kept `[x]` citing the earlier PR | ticks with proof, or leaves unchecked with the reason | unticks one it disproved |
 | `history` (Lane · Done · Time · Details) | appends a row | appends a row | appends a row |
 | `visual` (Before \| After, UI only) | — | writes | — |
 | `risk` (🟢/🟡/🔴 + one line) | writes | — | adjusts |
@@ -325,6 +325,8 @@ call is cut by the Bash timeout and the whole run is repeated (#249). The runner
    --reason completed`, release the claim and clean up the worktree. The runner moves the closed
    card (still in Building) straight to Done (`reclaim_stranded_building`); the wave workflow's
    Reconcile step does the same for a card that ends closed. Any AC not yet met → continue with step 4 (never close on a partial match).
+   Not for a card labelled `ac-open` (T0054): the runner reopens it once closed. Open a proof PR whose `sb:ac` lists every AC
+   line instead (earlier ones `[x]` citing their PR); its merge gate removes the label.
 4. Implement smallest safe change covering ACs, under the PR size cap
    (`merge_policy.auto_max_lines`, default 400 changed lines). Growing past it mid-build → stop,
    push what you have, propose the split (vertical slices via `/to-tickets`) in a PR comment and
@@ -354,7 +356,7 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
 3. **Column `Review` & `Done` — Smart Fast-Track vs Cross-Review (`open-code-review` + `deep-module-design`):**
    - Move card `QA -> Review`: `.claude/bin/super-board-card.sh --config <cfg> move <N> Review`.
    - **Adversarial Review Discipline:** Apply **Blind-First Pass** (read AC + raw `git diff` and form 2–4 failure hypotheses before reading Builder summary), **Review Remembers** (on rework rounds, grade prior `R1..Rn` findings `fixed`/`not fixed` first), and **Taste Never Blocks** (`Over-engineering`/`Deepening opportunity` is `Should fix`, never blocks a test-green diff).
-   - **Small/Medium Task (`< 3` files, `<= 200` LOC net diff, no `auth`/`payment`/`migration`/`security`):** Run `open-code-review` self-audit, post `[reviewer] [report] ✅ merge-ready (DevKit Fast-Track)` + the 4-item Acceptance Report (`core-rules §1.3`), run `gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`, and move card `Review -> Done` (`column='Done'`).
+   - **Small/Medium Task (`< 3` files, `<= 200` LOC net diff, no `auth`/`payment`/`migration`/`security`):** Run `open-code-review` self-audit, post `[reviewer] [report] ✅ merge-ready (DevKit Fast-Track)` + the 4-item Acceptance Report (`core-rules §1.3`), run `gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`, and move card `Review -> Done` (`column='Done'`) — unless the gate printed `ac-open: #N` (merged with AC still unproven: the card stays open in Ready, never Done).
    - **Large/High-Risk Task (`>= 2` modules, `>= 3` files, `> 200` LOC net diff, or `auth`/`payment`/`migration`/`security`):** Leave card in `Review` (`column='Review'`) so the independent Reviewer lane (2nd agent / Antigravity `audit`) performs cross-review before merging to `Done`.
 <!-- universal-agent-devkit-workflow:end -->
 
@@ -382,7 +384,7 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
 for affected feature selection, actual host readiness and new run-owned proof.
 Record uncovered/stale optional coverage alongside ordinary issue AC checks.
 4b. **Test-gap check** (super-qa → "Test-gap check (after build)"): map every AC to unit / component / e2e tests, hunt edge cases, write the High gaps red-first. A High gap that needs app code changed → Fail (step 7) with the gap list. Medium/Low go in the handoff under `Test gaps (not written)`.
-4c. **Same suites as the merge gate (#251).** In the QA worktree run `git merge --no-edit origin/<config.base_branch>` (the tree the gate verifies), then run every line of `.claude/bin/super-board-verify-cmd.sh --config <cfg>` (all green on a clean tree: run it once more with `--record`, so the merge gate skips the same verify on this exact tree, #226): it prints the `verify_commands` with ` --diff origin/<base> --force-full` already inserted, by the same function the merge gate uses. Never a hand-built `post-fix-gate.py` line. A red suite is rerun once on `origin/<base>`; red there too = red on base, not this PR (the merge gate files its own card), so QA does not fail the card for it.
+4c. **Same suites as the merge gate (#251).** In the QA worktree run `git merge --no-edit origin/<config.base_branch>` (the tree the gate verifies), then run every line of `.claude/bin/super-board-verify-cmd.sh --config <cfg>` (on a clean tree run them with `--record` instead: it runs the same lines itself and writes the receipt only when every one exits 0, so the merge gate skips the same verify on this exact tree, #226): it prints the `verify_commands` with ` --diff origin/<base> --force-full` already inserted, by the same function the merge gate uses. Never a hand-built `post-fix-gate.py` line. A red suite is rerun once on `origin/<base>`; red there too = red on base, not this PR (the merge gate files its own card), so QA does not fail the card for it.
 5. Run the tests. Capture evidence to `docs/super-board/runs/issue-<N>-qa-v<N>/`. For UI/visual ACs, capture screenshots at the standard viewports (1920×1080 desktop, 1024×768 tablet, 375×667 mobile). Commit the screenshots to the issue branch BEFORE writing the comment (the markdown image URLs depend on the files being present on the branch).
    **Evidence stays small** (Goods PR #48, 19/10: 17k lines of raw test XML and logs with ANSI colour codes made `gh pr diff` fail and halted the board). Commit the screenshots plus one `summary.md` of at most 40 lines: the command, its exit code, the pass/fail counts and the failing lines quoted. Never commit raw runner output over 200 lines (`*.log`, JUnit/NUnit `*.xml`, HAR): keep it in `$(git rev-parse --git-common-dir)/super-board/evidence/issue-<N>/`, outside the branch. Strip ANSI colour codes from anything you commit (`LC_ALL=C sed $'s/\x1b\\[[0-9;]*m//g'`). Comments stay short and plain: what passed, what failed, the evidence path (writing-standard.md § 4, at most 8 lines).
 6. **Pass** → commit test files + screenshots to same branch + push → tick the `ac` block with proof lines, write `visual` for UI, append a `history` row, rewrite `status` → `[qa] [report] ✅` PR comment with results + evidence path **+ inline screenshot embeds** (see "Screenshot embed format" below) → issue comment with the SAME inline screenshot embeds → move card QA → Review. Clean up worktree.
@@ -507,7 +509,10 @@ on the base branch**.
      gh pr view <PR> --json state,mergeCommit -q '.state + " " + (.mergeCommit.oid // "none")'
      Expect: MERGED <sha>.  Then verify the sha is reachable from the base branch:
      git fetch origin <base> && git merge-base --is-ancestor <sha> origin/<base>
-4. Only after step 3 passes: close the issue, move card Review → Done, rewrite `status` (`> [!TIP]` ✅ Merged) and append the `history` row, post the `[reviewer] [report] ✅ merged` comment
+4. Only after step 3 passes — and only when the gate printed no `ac-open: #N` line (T0054: the PR merged with
+   AC lines still unproven; the gate kept the issue open, labelled it `ac-open`, commented the open lines and moved the
+   card to Ready; `super-board-card.sh move N Done` refuses exit 5 and the runner reopens a closed `ac-open` issue):
+   close the issue, move card Review → Done, rewrite `status` (`> [!TIP]` ✅ Merged) and append the `history` row, post the `[reviewer] [report] ✅ merged` comment
    citing the merge commit sha.
 5. Merge through the gate, never with a bare `gh pr merge`. Record the head you
    reviewed when review passes, and hand it to the gate:

@@ -33,14 +33,25 @@ sb_verify_inject_flags() {
 
 # #226 gap 7 (R1/R3): biên nhận "cây gộp đã verify xanh". Một nguồn khoá cho merge gate (đọc/ghi) và QA (ghi, super-board-verify-cmd.sh --record).
 # sb_verified_tree_receipt <tree-sha> <base-branch> <repo-path> <command>... → in đường dẫn biên nhận; rỗng khi không có git common dir.
-# Khoá = sha256(tree, từng lệnh SAU khi chèn cờ, hash post-fix-gate.py của kit): kit chạy ngoài cây nên đổi kit phải đổi khoá.
+# Khoá = sha256(tree, từng lệnh SAU khi chèn cờ, hash mọi bin/*.py của kit): kit chạy ngoài cây nên đổi kit phải đổi khoá, và
+# post-fix-gate.py nạp các module cùng thư mục (suite_cache.py…), nên băm riêng một file thì sửa module không đổi khoá (OCR 24/10).
+# ponytail: chỉ bin/*.py ở cấp một; module nạp từ thư mục khác của kit không vào khoá, nâng lên khi post-fix-gate nạp thêm thư mục.
+# Không có công cụ sha256 thì in rỗng (không biên nhận), không bao giờ in đường dẫn thiếu khoá.
 sb_verified_tree_receipt() {
-  local tree="$1" base="$2" repo="$3" common kit key c; shift 3
+  local tree="$1" base="$2" repo="$3" common kit key c f kdir hasher; shift 3
   common=$(cd "$repo" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || return 0
   [ -n "$common" ] || return 0
+  if command -v shasum >/dev/null 2>&1; then hasher="shasum -a 256"
+  elif command -v sha256sum >/dev/null 2>&1; then hasher="sha256sum"
+  else return 0; fi
   # R4: kit thiếu ở $repo (worktree không link) thì dùng kit của chính checkout chứa script này; cả hai thiếu mới là `none`.
-  kit=$(git hash-object "$repo/.agents/devkit/bin/post-fix-gate.py" 2>/dev/null \
-    || git hash-object "$(dirname "${BASH_SOURCE[0]}")/../../.agents/devkit/bin/post-fix-gate.py" 2>/dev/null || echo none)
-  key=$({ printf '%s\n%s\n' "$tree" "$kit"; for c in "$@"; do sb_verify_inject_flags "$c" "$base"; echo; done; } | shasum -a 256 | cut -d' ' -f1)
+  kit=none
+  for kdir in "$repo/.agents/devkit/bin" "$(dirname "${BASH_SOURCE[0]}")/../../.agents/devkit/bin"; do
+    [ -f "$kdir/post-fix-gate.py" ] || continue
+    kit=$(for f in "$kdir"/*.py; do git hash-object "$f"; done | $hasher | cut -d' ' -f1)
+    break
+  done
+  key=$({ printf '%s\n%s\n' "$tree" "$kit"; for c in "$@"; do sb_verify_inject_flags "$c" "$base"; echo; done; } | $hasher | cut -d' ' -f1)
+  [ -n "$key" ] || return 0
   printf '%s/super-board/verified-trees/%s' "$common" "$key"
 }

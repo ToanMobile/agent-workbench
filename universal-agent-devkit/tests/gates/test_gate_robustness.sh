@@ -273,4 +273,24 @@ printf '%s\n' "$res" | grep -q "raised=no status=TIMEOUT" \
   && ok "A13: stale_rerun._execute with killpg refused (EPERM): TIMEOUT, no crash" \
   || bad "A13: stale_rerun._execute crashed on EPERM: $(printf '%s' "$res" | tail -1)"
 
+# ── A14 (#370): a suite that times out while the machine is idle is a HANG, not "slow": the gate names the last test the suite printed
+# and snapshots the suite's process group (ps) before it kills it. Under a busy machine the same timeout stays a plain TIMEOUT. ────
+mk hang
+cat > matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-H","name":"hang","command":"echo \"running tests/test_slow_$(echo thing).sh\"; exec sleep $((30+1))"}]}]}
+JSON
+git add -A && git commit -qm matrix
+printf 'def f():\n    return 2\n' > src/core.py
+DEVKIT_CAPACITY_LOAD=0.5 gate --run-tests --full --timeout 2
+expect_rc "A14: a suite timed out on an idle machine fails the gate" 1
+printf '%s\n' "$OUT" | grep -q "HANG" && ok "A14: low load: the timeout is reported as HANG" || bad "A14: low load: no HANG in the output"
+printf '%s\n' "$OUT" | grep -q "tests/test_slow_thing.sh" && ok "A14: HANG names the last test the suite printed" || bad "A14: HANG does not name the last test"
+printf '%s\n' "$OUT" | grep -q "sleep 31" && ok "A14: HANG carries the process snapshot (ps) of the stuck suite" || bad "A14: HANG has no process snapshot"
+DEVKIT_CAPACITY_LOAD=9999 gate --run-tests --full --timeout 2
+# the control must prove the suite really RAN and TIMED OUT (a BUSY / SLOT / early failure has no HANG either and would pass for the wrong reason)
+printf '%s\n' "$OUT" | grep -qE "TIMEOUT.*REG-H" && ! printf '%s\n' "$OUT" | grep -qE "(BUSY|SLOT|BUDGET).*REG-H" && [ "$RC" = 1 ] \
+  && ok "A14: control: heavy load, the suite ran and TIMED OUT (status TIMEOUT, exit 1)" || bad "A14: control: no TIMEOUT status for REG-H under heavy load (rc=$RC): $(printf '%s' "$OUT" | grep REG-H | head -3)"
+printf '%s\n' "$OUT" | grep -q "HANG" && bad "A14: control: a timeout under heavy load must not be called HANG" || ok "A14: control: heavy load, the timeout is not called HANG"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_robustness: all tests passed" || { echo "❌ test_gate_robustness: $FAILS failed"; exit 1; }

@@ -468,6 +468,7 @@ def gone_folder_reason(path):
     return f"thư mục đã bị xoá nhưng commit {sha[:10]} chưa có trong main: đem về ({how})"
 
 raw_owed = {os.path.realpath(p) for p in (state.get("owed") or []) if isinstance(p, str)} | trunk_gone   # owed before the live filter
+adopted = set()   # worktree của phiên đã hết (nợ nhận lại): việc chưa commit trong đó chỉ là ghi chú, không giữ Stop của mọi phiên sau
 pr_notes = []   # K1: worktree của board / nhánh đã publish bị bỏ khỏi nợ mà còn việc chưa lên remote: chỉ báo
 for path in paths:
     real = os.path.realpath(path)
@@ -530,6 +531,8 @@ for path in paths:
     if here == real or here.startswith(real + os.sep):
         owed.add(real)   # the session is in it right now (EnterWorktree, or a cd to look): owed, held once it leaves
         continue
+    if real not in finished and not made_here:
+        adopted.add(real)
     owners[real] = sid   # held now: it is this session's to bring back (a dead owner's debt is adopted)
     want.append(path)
 try:   # ONE inventory for all of them (the ref tips are read once, not once per worktree)
@@ -615,6 +618,13 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
                 pending.remove(r)
                 owed.discard(real_path)
                 owners.pop(real_path, None)
+            elif res.get("status") == "blocked" and res.get("files") and real_path in adopted:
+                # việc CHƯA COMMIT của phiên đã hết: không phiên nào còn commit nó, nên giữ Stop thì mọi phiên sau bị giữ 3 lần mãi mãi
+                # (cap theo phiên). Chỉ ghi chú; vẫn là nợ (owed) để lần sau còn nhắc. Lý do khác (xung đột, lỗi, main bận) vẫn giữ.
+                pending.remove(r)
+                owed.add(real_path)
+                pr_notes.append(f"⚠ {r['path']}: worktree của phiên đã hết còn file chưa commit ({', '.join(str(f) for f in res['files'][:3])}) — "
+                                "không phiên nào commit nó; cần người xem: `agent-kit worktree status`")
             else:
                 r["am"] = str(res.get("message") or res.get("status"))
                 r["am_status"] = res.get("status")

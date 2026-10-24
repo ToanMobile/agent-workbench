@@ -271,6 +271,24 @@ def status_all():
         print(f"{status_icon:<14} {name:<32} {pid_info}")
         print(f"   Board: {url}")
         print(watchdog_line(rdir, slug))
+        print(drift_line(rdir))
+
+
+def drift_line(rdir, source=None):
+    # #368: bản sao super-board ở repo app lệch bản nguồn (repo đầu của REPOS) thì in tên file, không để trôi âm thầm.
+    source = source or REPOS[0]["dir"]
+    script = os.path.join(source, ".claude", "bin", "super-board-drift.py")
+    if os.path.realpath(rdir) == os.path.realpath(source) or not os.path.isfile(script):
+        return "   Drift: -"
+    try:
+        r = subprocess.run([sys.executable, script, "--source", source, "--target", rdir],
+                           capture_output=True, text=True, timeout=30)
+        res = json.loads(r.stdout)["targets"][rdir]
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
+        return f"   Drift: không đọc được ({type(exc).__name__})"
+    names = res["changed"] + res["missing"]
+    return "   Drift: khớp bản nguồn" if not names else \
+        f"   Drift: ⚠️ {len(names)} file lệch bản nguồn ({', '.join(os.path.basename(n) for n in names[:3])}{'…' if len(names) > 3 else ''})"
 
 
 def watchdog_line(rdir, slug):
