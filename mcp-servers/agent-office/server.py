@@ -1116,7 +1116,15 @@ def demo_data(cfg: dict):
                     "repo": repo, "repoFull": f"ToanMobile/{repo}", "status": col, "assignees": [], "labels": [],
                     "fields": {}, "updatedAt": t0 - 3600,
                 })
+    you = {("agent-workbench", "60"): ["npx prisma migrate deploy  # database live"], ("agent-workbench", "63"): [], ("GeelyEx2", "41"): []}
     for it in items:
+        steps = you.get((it["repo"], it["number"]))
+        if steps is not None:  # thẻ 🙋 mẫu cho khung "Cần bạn duyệt"
+            it["labels"] = [{"name": NEEDS_YOU_LABEL, "color": "D93F0B"}]
+            it["approval"] = {"steps": steps, "approved": False}
+        if it["repo"] == "agent-workbench" and it["number"] == "60":
+            it["title"] = "Thêm cột plan vào bảng đơn hàng"
+            it["lastComment"] = {"body": "🙋 Cần bạn: chạy migration trên database live (robot không được chạm) · xong thì comment đúng một chữ done trên issue để duyệt", "author": "review-agent", "at": at("13:40:00")}
         if it["repo"] == "GeelyEx2" and it["number"] == "41":
             it["lastComment"] = {"body": "CHƯA XONG: worktree build cũ của #41 còn 2 file sổ sách chưa về main. Hook của người dùng chặn `git checkout --` nên tôi không lách. Theo quy trình, worktree còn thay đổi thì chặn thẻ và nêu lý do. Cần bạn xem 2 file trong .agents/CHECKLIST rồi gỡ chặn.", "author": "build-agent", "at": at("13:57:20")}
     for c in columns:
@@ -1207,6 +1215,34 @@ M_ISSUE = """mutation($r: ID!, $t: String!, $b: String) {
 M_ADD = """mutation($p: ID!, $c: ID!) { addProjectV2ItemById(input: {projectId: $p, contentId: $c}) { item { id } } }"""
 M_COMMENT = """mutation($s: ID!, $b: String!) { addComment(input: {subjectId: $s, body: $b}) { clientMutationId } }"""
 M_ARCHIVE = """mutation($p: ID!, $i: ID!) { archiveProjectV2Item(input: {projectId: $p, itemId: $i}) { item { id } } }"""
+Q_COMMENTS = """query($id: ID!) { node(id: $id) { ... on Issue { comments(last: 15) { nodes { body createdAt author { login } } } } } }"""
+
+# Khung "Cần bạn duyệt" (block-template.md, mục 🙋): lệnh chỉ người được chạy là dòng `needs-you: <lệnh>` của merge gate
+# hoặc mục checklist "- [ ] Run `<lệnh>`"; chỉ một comment đúng chữ `done` sau yêu cầu mới nhất mới cho wave sau chạy tiếp.
+NEEDS_YOU_LABEL = "needs-you"
+APPROVE_TEXT = "done"
+STEP_GATE_RE = re.compile(r"^[^\n`]*?(?<![\w-])needs-you:[ \t]*(?!done\b)(\S.*?)\s*$", re.I | re.M)
+STEP_RUN_RE = re.compile(r"^\s*[-*]\s*\[ \]\s*Run\s+`([^`\n]+)`", re.I | re.M)
+REQUEST_RE = re.compile(r"super-board:needs-you|🙋|approval-request:|needs-you:[ \t]*(?!done\b)\S", re.I)
+APPROVAL_MAX_FETCH = 20   # thẻ 🙋 đọc comment mỗi lần đọc board (thẻ không đổi dùng lại kết quả cũ)
+
+
+def approval_info(comments: list) -> dict:
+    """Từ comment của issue (cũ trước mới sau): lệnh của yêu cầu 🙋 mới nhất, và đã có `done` sau yêu cầu đó chưa.
+    ponytail: chỉ đọc 15 comment cuối, không đọc thân PR; dòng needs-you chỉ nằm trong PR thì không thấy, khi đó thêm bước đọc PR."""
+    steps, approved = [], False
+    for c in comments:
+        body = (c or {}).get("body") or ""
+        if body.strip() == APPROVE_TEXT:
+            approved = True
+            continue
+        if not REQUEST_RE.search(body):
+            continue
+        approved = False  # yêu cầu mới: `done` cũ không còn tính
+        found = [m.strip().strip("`").strip() for m in STEP_GATE_RE.findall(body)] + STEP_RUN_RE.findall(body)
+        if found:
+            steps = list(dict.fromkeys(s for s in found if s))
+    return {"steps": steps[:8], "approved": approved}
 
 
 def friendly(err: str) -> str:
@@ -1245,6 +1281,9 @@ class App:
         self.state_bytes = b"{}"
         self.refresh_evt = threading.Event()
         self.backfilled = set()  # thẻ đã thử đặt Backlog, mỗi thẻ chỉ thử một lần
+        self.approvals = {}      # thẻ 🙋: item id -> (updatedAt, approval_info) để không đọc lại comment của thẻ không đổi
+        self.prev_needs = None   # thẻ 🙋 chờ duyệt ở lần dựng trước: thẻ mới vào thì báo (toast, thông báo trình duyệt và macOS)
+        self.deciding = set()    # thẻ đang gửi Duyệt/Từ chối: bấm lần hai (máy Mac và điện thoại cùng lúc) bị từ chối
         self.demo_manifests = None
         # nhật ký sự kiện: lưu ra file để còn nguyên khi tải lại trang hoặc khởi động lại server
         self.events, self.prev_rows, self.prev_items, self.user_moves = [], None, None, {}
@@ -1333,6 +1372,13 @@ class App:
         items = {it["id"]: it for it in st["items"]}
         if not items:
             return
+        needs = {iid for iid, it in items.items() if self._needs_you(it) and not (it.get("approval") or {}).get("approved")}
+        if self.prev_needs is not None:
+            for iid in sorted(needs - self.prev_needs, key=lambda k: str(items[k].get("number"))):
+                it = items[iid]
+                self._log_event(f"#{it.get('number')} {it['repo']} cần bạn duyệt: {it.get('title') or ''}"[:160],
+                                "stale", {"type": "approvals"}, True)
+        self.prev_needs = needs
         if self.prev_items is not None:
             kinds = {c["name"]: c["kind"] for c in st["columns"]}
             self.tally = tally_moves(self.prev_items, {k: v["status"] for k, v in items.items()}, kinds, self.tally)
@@ -1422,6 +1468,86 @@ class App:
                 proj["columns"] = [c for c in proj["columns"] if not c.get("noStatus")]
         return done
 
+    @staticmethod
+    def _needs_you(it) -> bool:
+        return (column_kind(it.get("status")) == "blocked"
+                and any(l.get("name") == NEEDS_YOU_LABEL for l in it.get("labels") or []) and it.get("state") in (None, "OPEN"))
+
+    def fill_approvals(self, proj) -> None:
+        """Thẻ 🙋 mang `approval` = {steps, approved} đọc từ comment. Đọc lỗi thì thẻ không có `approval`:
+        nút Duyệt khoá (không biết có lệnh nào phải chạy trước) cho tới lần đọc sau."""
+        fetched = 0
+        for it in proj["items"]:
+            if not self._needs_you(it) or it.get("type") != "Issue" or not it.get("contentId"):
+                continue
+            hit = self.approvals.get(it["id"])
+            if hit and hit[0] == it.get("updatedAt"):
+                with self.lock:
+                    it["approval"] = dict(hit[1])
+                continue
+            if fetched >= APPROVAL_MAX_FETCH:
+                continue
+            fetched += 1
+            try:
+                node = gh_graphql(Q_COMMENTS, {"id": it["contentId"]}).get("node") or {}
+            except GhError as e:
+                warn(f"đọc bước 🙋 của #{it.get('number')} (sẽ thử lại)", e)
+                continue
+            info = approval_info(((node.get("comments") or {}).get("nodes")) or [])
+            with self.lock:
+                self.approvals[it["id"]] = (it.get("updatedAt"), info)
+                it["approval"] = dict(info)
+
+    def _comment(self, it, text: str) -> None:
+        if not self.demo:
+            if not it.get("contentId") or it.get("type") not in ("Issue", "PullRequest"):
+                raise ValueError("Bản nháp trên Project không nhận bình luận.")
+            gh_graphql(M_COMMENT, {"s": it["contentId"], "b": text[:60000]})
+        with self.lock:
+            it["lastComment"] = {"body": text[:1500], "author": "bạn", "at": now()}
+
+    def _decide(self, action: str, body: dict) -> dict:
+        """Duyệt: comment đúng chữ `done` (không lấy chữ của client). Từ chối: comment lý do, thẻ ở nguyên Blocked.
+        gh lỗi thì ném GhError lên (HTTP 502): không ghi là đã duyệt."""
+        it = self._item(body["itemId"])
+        label = f"#{it.get('number')} {it['repo']}"
+        if not self._needs_you(it):
+            raise ValueError(f"{label} không còn là thẻ 🙋 chờ duyệt (Blocked, nhãn {NEEDS_YOU_LABEL}).")
+        info = it.get("approval")
+        if action == "approve":
+            if info is None and not self.demo:
+                raise ValueError(f"Chưa đọc được các bước của {label} trên GitHub, chờ lần đọc sau rồi duyệt.")
+            if (info or {}).get("steps") and body.get("stepsDone") is not True:
+                raise ValueError(f"{label} có lệnh phải chạy trên máy: chạy xong rồi tick ô đã chạy xong.")
+            text, reason = APPROVE_TEXT, ""
+        else:
+            reason = " ".join(str(body.get("reason") or "").split())[:2000]
+            text = "🚫 Từ chối duyệt qua Agent Office" + (f": {reason}" if reason else "") + ". Thẻ giữ ở Blocked."
+        with self.lock:
+            if it["id"] in self.deciding:
+                raise ValueError(f"{label} đang được gửi, chờ vài giây.")
+            self.deciding.add(it["id"])
+        sel = {"type": "item", "id": it["id"]}
+        try:
+            self._comment(it, text)
+        except GhError as e:
+            with self.lock:
+                self._log_event(f"{'Duyệt' if action == 'approve' else 'Từ chối'} {label} lỗi, chưa gửi lên GitHub: {friendly(str(e))}",
+                                "stale", sel, False)
+            raise
+        finally:
+            with self.lock:
+                self.deciding.discard(it["id"])
+        with self.lock:
+            if action == "approve":
+                if info is not None:
+                    info["approved"] = True
+                self._log_event(f"Bạn duyệt {label}: đã comment done, wave sau chạy tiếp", "running", sel, False)
+            else:
+                self._log_event(f"Bạn từ chối {label}" + (f": {reason[:120]}" if reason else ""), "stale", sel, False)
+            self.approvals.pop(it["id"], None)  # comment mới đổi updatedAt: lần đọc sau đọc lại
+        return {"ok": True}
+
     def act(self, action: str, body: dict) -> dict:
         if not self.demo and not (self.project.get("id") and self.gh_meta.get("ok")):
             raise ValueError("Chưa kết nối được GitHub Project nên chưa sửa được.")
@@ -1508,13 +1634,10 @@ class App:
             text = str(body.get("body") or "").strip()
             if not text:
                 raise ValueError("Bình luận đang trống.")
-            if not self.demo:
-                if not it.get("contentId") or it.get("type") not in ("Issue", "PullRequest"):
-                    raise ValueError("Bản nháp trên Project không nhận bình luận.")
-                gh_graphql(M_COMMENT, {"s": it["contentId"], "b": text[:60000]})
-            with self.lock:
-                it["lastComment"] = {"body": text[:1500], "author": "bạn", "at": now()}
+            self._comment(it, text)
             result = {"ok": True}
+        elif action in ("approve", "reject"):
+            result = self._decide(action, body)
         elif action == "archive":
             it = self._item(body["itemId"])
             if not self.demo:
@@ -1535,6 +1658,7 @@ class App:
             changed = True  # an error also needs a rebuild, so the notice shows
             try:
                 proj = fetch_projects(self.cfg["github"])
+                self.fill_approvals(proj)  # trước khi thay board: thẻ 🙋 không mất bước giữa hai lần đọc
                 with self.lock:
                     self.project = proj
                     self.gh_meta = {"ok": True, "error": "; ".join(proj.get("partialErrors") or []) or None,
