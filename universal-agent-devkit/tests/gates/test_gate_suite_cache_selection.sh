@@ -90,4 +90,24 @@ wt s6 s6a $LIB 'a = 2' "$old6"; gate "$TMP/s6a"; r2=$?; c2=$(n s6)
 if [ "$r1 $r2" = "0 0" ] && [ "$c2" -gt "$c1" ]; then ok "S6. cùng cây, tập chọn lớn hơn: không dùng lại PASS của tập nhỏ (test chạy $c1 → $c2)"
 else fail "S6. exit $r1 $r2 (mong 0 0); test của REG-ALL chạy $c1 rồi $c2 (mong tăng)"; grep -E "REG-ALL|suite_cache" "$TMP/out" | tail -3; fi
 
+# S7 (review R3). Tập chọn đọc LÚC TÍNH KHOÁ (`--list`), suite chạy SAU: cửa sổ `git log --since=6.hours` của run_impacted.sh trượt giữa hai lúc
+#    đó (cây không đổi) thì suite đã chạy tập NHỎ hơn tập trong khoá — PASS ghi dưới khoá tập lớn là PASS giả. Ghi chỉ khi `--list` lúc ghi
+#    vẫn bằng tập trong khoá. Repo thường (không worktree, không upstream ⇒ cửa sổ theo giờ), commit sửa lib_a.py mang ngày = mép cửa sổ + $2 giây;
+#    test_a.sh ngủ $3 giây (> $2) nên lúc ghi commit đã ra khỏi cửa sổ. Ca đối chứng (commit mới, trong cửa sổ cả hai lúc) vẫn phải ghi.
+# s7 <tên> <giây còn trong cửa sổ> <giây test ngủ>: chạy gate ở thư mục gốc repo, in số mục cache của REG-ALL
+s7() {
+  repo "$1"; local r="$TMP/$1" d; d=$(( $(date +%s) - 21600 + $2 ))
+  printf '# names lib_a.py\nsleep %s\necho a >> %s/count.%s\n' "$3" "$TMP" "$1" > "$r/universal-agent-devkit/tests/verification/test_a.sh"
+  echo 'a = 2' > "$r/$LIB"
+  GIT_AUTHOR_DATE="$d +0000" GIT_COMMITTER_DATE="$d +0000" git -C "$r" commit -qam a2
+  gate "$r" --diff HEAD~1; rc=$?
+  n7=$(grep -l '"REG-ALL"' "$r"/.git/postfix-gate/suite_cache/*.json 2>/dev/null | wc -l | tr -d ' ')
+}
+s7 s7a 14 20
+if [ "$rc" = 0 ] && [ "$n7" = 0 ]; then ok "S7. cửa sổ chọn trượt giữa khoá và lần chạy: PASS không ghi dưới khoá tập lớn hơn"
+else fail "S7. exit $rc (mong 0); số mục cache của REG-ALL: $n7 (mong 0)"; grep -E "REG-ALL|suite_cache" "$TMP/out" | tail -3; fi
+s7 s7b 3600 1
+if [ "$rc" = 0 ] && [ "$n7" -ge 1 ]; then ok "S7b. đối chứng: tập chọn không đổi trong lúc chạy ⇒ PASS vẫn được ghi ($n7 mục)"
+else fail "S7b. exit $rc (mong 0); số mục cache của REG-ALL: $n7 (mong ≥ 1)"; grep -E "REG-ALL|suite_cache" "$TMP/out" | tail -3; fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_suite_cache_selection: all passed" || { echo "❌ test_gate_suite_cache_selection: $FAILS failed"; exit 1; }
