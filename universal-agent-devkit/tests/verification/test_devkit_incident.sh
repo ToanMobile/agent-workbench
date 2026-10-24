@@ -318,6 +318,45 @@ print(d.mask("fetch https://bot:p@ss@w0rdZZ@example.com/x.git and github.com/Toa
 case "$masked" in *w0rdZZ*|*ss@*) fail "mật khẩu URL có '@' lọt: $masked" ;; *) ok "URL có mật khẩu chứa '@' được che" ;; esac
 case "$masked" in *OfficeReader/pull/12*) fail "link github.com trần của repo app lọt: $masked" ;; *) ok "link github.com trần được che" ;; esac
 
+# 25. Runner ghi stderr KHÔNG dấu thời gian thẳng vào manifest (lỗi shell, Traceback). Git ghi lại manifest (inode mới) hay
+#     cắt ngắn rồi ghi lại cùng nội dung sau khi thẻ đóng: phần đã đọc không được đếm lại, không thẻ hồi quy giả.
+UM="$B/docs/super-board/runs/2026-10-28-GeelyEx2.md"
+{ echo '.claude/bin/super-board-blocked-by.sh: line 7: jqq: command not found'
+  echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-blocked-by.py", line 2, in scan'
+  echo 'KeyError: x'; } > "$UM"
+scan >/dev/null
+n=$(creates)
+sleep 1; UCLOSED=$(date -u +%Y-%m-%dT%H:%M:%SZ); sleep 1
+cp "$UM" "$TMP/um.bak"; rm -f "$UM"; cat "$TMP/um.bak" > "$UM"; echo '[22:00:00] tick — Ready=0' >> "$UM"   # git: inode mới
+SHN=$(python3 -c 'import json,sys; print(next(i["issue"] for i in json.load(open(sys.argv[1]))["incidents"].values() if i["rule"] == "shell-error" and "jqq" in i["title"]))' "$TMP/home/ledger.json")
+TBN=$(python3 -c 'import json,sys; print(next(i["issue"] for i in json.load(open(sys.argv[1]))["incidents"].values() if "blocked-by.py:scan" in i["title"]))' "$TMP/home/ledger.json")
+FAKE_CLOSED=$SHN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+FAKE_CLOSED=$TBN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+cat "$TMP/um.bak" > "$UM"                                                                            # cắt ngắn tại chỗ, ghi lại
+FAKE_CLOSED=$SHN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+[ "$(creates)" = "$n" ] && ok "manifest ghi lại / cắt ngắn: dòng không dấu thời gian không bị đếm lại" \
+  || fail "manifest ghi lại sinh thẻ hồi quy giả cho dòng không dấu thời gian: create=$(creates) (trước $n)"
+FAKE_CLOSED=$TBN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+[ "$(creates)" = "$n" ] && ok "cắt ngắn: Traceback cũ không bị đếm lại" || fail "cắt ngắn: Traceback cũ thành thẻ hồi quy giả: create=$(creates)"
+# Vị trí byte phải khớp file thật dù trong manifest có \r (tiến trình git fetch): đọc tiếp và đọc lại từ đầu cho cùng khoá.
+#     Thứ tự cần: dòng có \r TRƯỚC dòng lỗi, dòng lỗi đọc tiếp (vị trí thật), rồi git ghi lại (đọc từ đầu).
+RM2="$B/docs/super-board/runs/2026-10-29-GeelyEx2.md"
+printf 'progress 10%%\rprogress 100%%\r\n' > "$RM2"; scan >/dev/null
+echo '.claude/bin/super-board-wave.sh: line 2: zzq: command not found' >> "$RM2"; scan >/dev/null
+ZQ=$(python3 -c 'import json,sys; print(next(i["issue"] for i in json.load(open(sys.argv[1]))["incidents"].values() if "zzq" in i["title"]))' "$TMP/home/ledger.json")
+m=$(creates); sleep 1; ZCLOSED=$(date -u +%Y-%m-%dT%H:%M:%SZ); sleep 1
+cp "$RM2" "$TMP/rm2.bak"; rm -f "$RM2"; cat "$TMP/rm2.bak" > "$RM2"   # git ghi lại: đọc lại từ đầu
+FAKE_CLOSED=$ZQ FAKE_CLOSED_AT=$ZCLOSED scan >/dev/null
+[ "$(creates)" = "$m" ] && ok "manifest có \\r: vị trí byte ổn định, ghi lại không đếm lại" || fail "\\r làm lệch vị trí byte: create=$(creates) (trước $m)"
+n=$(creates)
+# … nhưng CÙNG lỗi nguyên văn quay lại trong CÙNG ngày (ghi thêm vào cùng manifest) sau lúc đóng thẻ = hồi quy thật.
+cat "$TMP/um.bak" >> "$UM"
+FAKE_CLOSED=$SHN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+FAKE_CLOSED=$TBN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
+[ "$(creates)" = $((n + 2)) ] && ok "lỗi nguyên văn quay lại cùng ngày sau khi đóng → thẻ hồi quy (shell + Traceback)" \
+  || fail "lỗi quay lại cùng ngày bị bỏ sót: create=$(creates) (kỳ vọng $((n + 2)))"
+
 # 14. Mỗi sự cố một thẻ riêng (--new-card): không gom vào thẻ bug khác.
 grep '"issue", "create"' "$FAKE_LOG" >/dev/null && python3 - "$FAKE_LOG" <<'PY' && ok "--new-card: không gom vào thẻ khác" || fail "thiếu --new-card"
 import json, sys
