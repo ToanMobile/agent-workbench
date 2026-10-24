@@ -115,11 +115,13 @@ printf '{"number":140,"headRefName":"issue-14-fork","headRefOid":"x","baseRefNam
 #     origin không còn bản nào → nhánh local là bản duy nhất: GIỮ (OCR: kiểm "đã push" phải hỏi origin thật, không ref cũ)
 card 15 issue-15-gone; issue 15 CLOSED NOT_PLANNED "$OLD"
 git -C "$O" update-ref -d refs/heads/issue-15-gone
+# 16: đóng kiểu DUPLICATE (gom vào thẻ khác), nhánh đã push và origin còn giữ, PR 160 mở → PR đóng, nhánh xoá (như NOT_PLANNED)
+card 16 issue-16-dup; pr_open 160 issue-16-dup; issue 16 CLOSED DUPLICATE "$OLD"
 # 12: đóng kiểu COMPLETED mà PR vẫn mở (không phải thẻ bị bỏ) → không đụng
 card 12 issue-12-done; pr_open 120 issue-12-done; issue 12 CLOSED COMPLETED "$OLD"
 
 bash "$CLEAN" --sweep "$R" --dry-run --min-interval 0 >"$TMP/dry.log" 2>&1
-[ -d "$W/issue-5-build" ] && has_branch issue-5-gom && [ "$(open_prs)" = "100 120 130 140 50 60 70 90" ] \
+[ -d "$W/issue-5-build" ] && has_branch issue-5-gom && [ "$(open_prs)" = "100 120 130 140 160 50 60 70 90" ] \
   && ok "d0 --dry-run changes nothing" || { fail "d0 --dry-run changed something"; cat "$TMP/dry.log"; }
 grep -q "would close PR #50" "$TMP/dry.log" && ok "d0b --dry-run names the PR it would close" || { fail "d0b dry-run does not name PR #50"; cat "$TMP/dry.log"; }
 
@@ -133,8 +135,12 @@ has_branch issue-11-solo && [ "$(git -C "$R" rev-parse issue-11-solo)" = "$TIP11
   && ok "d5 a branch with commits never pushed is KEPT (asking first is the project rule), with the reason" \
   || { fail "d5 branch issue-11-solo with unpushed commits was deleted or no reason logged"; grep -a "issue-11" "$TMP/sweep.log"; }
 has_branch issue-15-gone && git -C "$R" show-ref --verify --quiet refs/remotes/origin/issue-15-gone \
+  && grep -Eq "issue-15-gone.*(deleted on origin|đã xoá trên origin)" "$TMP/sweep.log" \
   && ok "d5c a branch deleted on origin (stale local tracking ref) is KEPT: origin, not a stale ref, decides 'pushed'" \
   || { fail "d5c branch issue-15-gone deleted although origin no longer holds it"; grep -a "issue-15" "$TMP/sweep.log"; }
+case " $(open_prs) " in *" 160 "*) fail "d5d PR #160 of a card closed as DUPLICATE is still open" ;; *) has_branch issue-16-dup \
+  && { fail "d5d branch issue-16-dup of a DUPLICATE card (pushed, on origin) was kept"; grep -a "issue-16" "$TMP/sweep.log"; } \
+  || ok "d5d a card closed as DUPLICATE is cleaned up like a dropped one (PR closed, pushed branch deleted)" ;; esac
 case " $(open_prs) " in *" 130 "*) case " $(open_prs) " in *" 140 "*) ok "d5b a PR row without isCrossRepository, and a fork PR, are not closed (fail-closed)" ;; *) fail "d5b fork PR #140 was closed" ;; esac ;; *) fail "d5b PR #130 (no isCrossRepository) was closed" ;; esac
 case " $(open_prs) " in *" 70 "*) fail "d6 PR #70 still open" ;; *) ok "d6 a dropped card with a dirty worktree still gets its PR closed" ;; esac
 [ -d "$W/issue-7-build" ] && has_branch issue-7-dirty && [ "$(tail -1 "$W/issue-7-build/src/x.c")" = "real fix" ] \
