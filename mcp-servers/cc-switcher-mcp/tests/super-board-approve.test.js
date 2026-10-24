@@ -39,6 +39,7 @@ test('matching chat comments done on the approval-request source and does not me
     apiCaller: async (bot, method, body) => { apiCalls.push({ method, body }); },
     callbackOpts: {
       approvalsDir: approvals,
+      ghRead: async () => JSON.stringify({ headRefOid: HEAD, body: '', closingIssuesReferences: [] }),
       readComments: async () => [{
         source: 34,
         body: `approval-request: {"head":"${HEAD}","pr":12,"repo":"owner/repo"}`,
