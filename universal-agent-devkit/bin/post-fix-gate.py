@@ -6222,6 +6222,9 @@ def main():
     late_notes = []   # (suite, lệnh) trong nhóm song song mà may_note chỉ biết được sau khi nhóm xong
 
     slot_rec = _recorded_seconds(median=True) if run_tests and lock_held else {}   # lớp slot: trung vị, không phải lần dài nhất (B7)
+    # Hạn marker gộp lượt (suite_cache.inflight: est×1.5+60 s) theo lần DÀI NHẤT: trung vị làm hạn ngắn hơn lần chạy thật (REG-DK-HEALTH-01:
+    # 389 s → 163 s), một gate --full thứ hai cùng khoá xoá marker của chủ còn sống và chạy song song (review 25/10).
+    inflight_rec = _recorded_seconds() if run_tests and lock_held else {}
     slot_mod = []
     # #338: lượt đã có suite được cho chạy thì chạy cho xong. started_run: không chờ tải lại ở các suite sau; heavy_lease: slot nặng giữ nguyên
     # giữa hai suite nặng TUẦN TỰ liền nhau (gate khác không chen được; suite trong nhóm song song vẫn xin slot riêng, nên tổng suite nặng
@@ -6271,7 +6274,7 @@ def main():
         if not k:
             return run_suite_slotted(t, cmd, mode, env, sequential)
         drop_lease()   # R1: chờ marker của gate khác không giữ slot nặng — chủ marker có thể đang xếp hàng đúng slot này (hai bên chờ nhau)
-        with sc.inflight(k, slot_rec.get(t.get("id"))) as state:
+        with sc.inflight(k, inflight_rec.get(t.get("id"))) as state:
             if state == "recheck":
                 rec = sc.hit(k, t)
                 if rec:   # một gate khác vừa chạy đúng khoá này và PASS
