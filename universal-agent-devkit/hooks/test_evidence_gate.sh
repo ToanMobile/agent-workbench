@@ -417,12 +417,26 @@ def quoted_mention(sentence, match):
         return k >= 0 and spans[k][0] < i < spans[k][1] - 1
     return inside(match.start()) and inside(match.end() - 1)
 
+# Each match re-reads its sentence (the prefix regexes, the cycle-name and quote checks), so N matches in one long clause cost N × its
+# length: 1 340 negated phrases in one 40 KB sentence took 8-13 s of CPU (2026-10-25), and a Stop hook past its 30 s cap lets the Stop
+# through. A reply gets _EXEMPT_BUDGET characters of that re-reading (~0.1 s); past it every further match is an ASSERTION (fail-closed).
+# ponytail: a reply that only holds exempt phrases past the budget (hundreds in one clause) now blocks; make the per-match checks local
+# to a window if a real reply ever does.
+_EXEMPT_BUDGET = 500_000
+_exempt_spent = 0
+
 def is_nonassertive(sentence, match, kind):
     """Only explicit grammar may exempt a matched result/outcome phrase.
 
     Default is ASSERTION. Generic `chưa/không/thì` elsewhere in the sentence
     cannot erase an independent claim.
     """
+    global _exempt_spent
+    _exempt_spent += len(sentence)
+    if _exempt_spent > _EXEMPT_BUDGET:
+        if _exempt_spent - len(sentence) <= _EXEMPT_BUDGET:
+            logline(f"[{ts}] exemption budget of {_EXEMPT_BUDGET} chars spent: every further match is a claim")
+        return False
     prefix = re.sub(r"[`\"“”]", "", sentence[:match.start()])
     matched_text = match.group(0)
     if GOVERNING_PREFIX.search(prefix):
@@ -991,15 +1005,76 @@ PM_RUN_EXIT_RX = re.compile(r"^exit=(-?\d+|null)", re.M)
 # command (no pipe, `&`, `;` or loop: `$?` would be the pipe's last command, the background launch or the last iteration), the NEXT
 # segment is `echo "<label>=$?"`, and the label is printed exactly once.
 _ECHO_RC_RX = re.compile(r"""echo\s+(["']?)([A-Za-z_][\w.-]*)=\$\?\1\s*$""")
+# A positive pass summary of a common runner (pytest / jest / vitest "N passed", mocha "N passing", cargo, go, unittest, XCTest, rspec,
+# phpunit, dotnet, xcodebuild): what a masked run below needs for a green when its exit code cannot be bound.
+RUNNER_PASS_RX = re.compile(r"\b[1-9]\d*\s+(?:tests?\s+)?(?:passed|passing)\b|\btest result: ok\b"
+                            r"|^ok[^\S\n]+\S+[^\S\n]+(?:[\d.]+s|\(cached\))|\bRan [1-9]\d* tests? in [\d.]+s\s+OK\b"
+                            r"|\bExecuted [1-9]\d* tests?, with 0 failures\b|\b[1-9]\d* examples?, 0 failures\b"
+                            r"|^OK \([1-9]\d* tests?\b|^Passed!\s|\*\* TEST SUCCEEDED \*\*", re.M)
+_STATUS_READ = re.compile(r"\$\?|\$\{\?\}|PIPESTATUS")
+_COMPOUND = re.compile(r"\s*(?:for|while|until|if|case)\b")
+# A redirection of stdout to a file (`>`, `1>`, `>>`, `&>`): not `2>…`, not `>&2` / `2>&1`.
+_STDOUT_AWAY = re.compile(r"(?:^|[^\d&>])(?:1?>>?|&>>?)(?!&)")
 
 def _single_command(seg):
     s = re.sub(r"\"[^\"]*\"|'[^']*'", "", seg)     # quoted text is data
     s = re.sub(r"\d*>&\d+|&>>?|>&", " ", s)         # 2>&1, &>log: redirections, not job control
     return not re.match(r"\s*(?:for|while|until|if|case)\b", s) and not re.search(r"[;|&\n]", s)
 
-def _echoed_exit(cmd, txt):
+def _head_starts(words):
+    """Where the command proper may start: 0, and after each leading wrapper that hands back the wrapped command's own exit code
+    (timeout, env, time, nice, `uv|poetry|pipenv|pdm|hatch run`, npx, bunx, yarn, `pnpm exec`)."""
+    out, i = [0], 0
+    while i < len(words):
+        a = _argv0(words[i])
+        if a in ("timeout", "gtimeout", "env", "time", "nice"):
+            i += 1
+            while i < len(words) and (words[i].startswith("-") or (a == "env" and re.match(r"[A-Za-z_]\w*=", words[i]))):
+                i += 2 if words[i] in ("-s", "-k", "-n", "-u") else 1
+            i += 1 if a in ("timeout", "gtimeout") else 0     # the duration
+        elif a in ("uv", "poetry", "pipenv", "pdm", "hatch") and words[i + 1:i + 2] == ["run"]:
+            i += 2
+        elif a in ("npx", "bunx", "yarn"):
+            i += 1
+        elif a == "pnpm" and words[i + 1:i + 2] == ["exec"]:
+            i += 2
+        else:
+            break
+        out.append(i)
+    return out
+
+def _runs_as_command(seg):
+    """The runner IS the command of this segment (2026-10-25, fail-open of a pytest run sent to a log, then `echo "rc=$?"`): its words,
+    from the start or after wrappers, match a runner pattern anchored at the head. `! pytest`, `eval "pytest"`, `bash -c "pytest || true"`,
+    `pip install pytest` only name a runner: their exit code is not a test run's."""
+    words = _strip_assigns(_words(seg))
+    for i in _head_starts(words):
+        head = words[i:]
+        if not head:
+            break
+        for w0 in {head[0][2:] if head[0].startswith("./") else head[0], _argv0(head[0])}:
+            text = " ".join([w0] + head[1:])
+            if TEST_RUNNER_RX.match(text) or SCRIPT_RUNNER_RX.match(text) or any(text.startswith(c) for c in MATRIX_CMDS):
+                return True
+    return False
+
+def _masked_run(cmd, txt):
+    """(compound, masked) for a non-suite runner command. compound: a runner runs inside for/while/until/if/case. masked: the tool's
+    exit code is not the run's and the run may be hidden, so no green from the mere absence of a failure marker: a segment from the first
+    runner on reads `$?` (an echoed code only binds as in _echoed_exit), or a compound runner left blank output or sent its stdout to a
+    file (the tool's exit is the last iteration's). A compound whose output is in the result keeps the plain rule."""
+    segs = _command_segments(cmd)
+    runners = [i for i, s in enumerate(segs) if _segment_is_runner(s)]
+    if not runners:
+        return False, False
+    compound = [segs[i] for i in runners if _COMPOUND.match(segs[i])]
+    masked = (any(_STATUS_READ.search(s) for s in segs[runners[0]:])
+              or any(not txt.strip() or _STDOUT_AWAY.search(re.sub(r"\"[^\"]*\"|'[^']*'", "", s)) for s in compound))
+    return bool(compound), masked
+
+def _echoed_exit(cmd, txt, binds=None):
     """"red" when an echoed exit code of a runner segment is not 0, "green" when EVERY runner segment of the command is bound to an
-    echoed 0, else None."""
+    echoed 0, else None. binds(seg): may this runner segment be bound at all (default: a direct `bash|sh <kit test file>` run)."""
     segs = _command_segments(cmd)
     codes, unbound = [], False
     for i, seg in enumerate(segs):
@@ -1007,8 +1082,9 @@ def _echoed_exit(cmd, txt):
             continue
         # Only a direct `bash|sh <kit test file>` run binds (2026-10-25 review of af339645, P1): `bash -n`, `shellcheck`, `[ -f … ]`,
         # `chmod +x`, `bash -c "…"`, `eval`, `! bash …` name a test file and run no test, so their rc=0 is no green, their rc=1 no RED.
+        # A non-suite runner binds when it is the command of its segment (_runs_as_command).
         m = (_ECHO_RC_RX.match(segs[i + 1])
-             if i + 1 < len(segs) and _single_command(seg) and _direct_bash_kit(seg) else None)
+             if i + 1 < len(segs) and _single_command(seg) and (binds or _direct_bash_kit)(seg) else None)
         hits = re.findall(r"(?m)^[^\S\n]*" + re.escape(m.group(2)) + r"=(\d+)\s*$", txt) if m else []
         if len(hits) != 1:
             unbound = True
@@ -1063,7 +1139,18 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if is_error or "CHUA TINH" in run_txt or RUNNER_FAIL_RX.search(run_txt):
             return None
         return "green"
-    return "red" if (is_error or RUNNER_FAIL_RX.search(txt)) else "green"
+    compound, masked = _masked_run(command, txt) if command else (False, False)
+    if is_error or RUNNER_FAIL_RX.search(txt) or ((compound or masked) and DEVKIT_SUITE_RED.search(txt)):
+        return "red"
+    if masked:
+        # 2026-10-25 fail-opens: `python3 -m pytest > log 2>&1; echo "rc=$?"` printing rc=1, and a glob loop `for f in tests/a/test_*.sh;
+        # do bash "$f" > /dev/null; done`, read as green (no failure marker in the result). A bound non-zero code is red; green needs every
+        # runner bound to 0, or a pass summary in the result.
+        echoed = _echoed_exit(command, txt, _runs_as_command)
+        if echoed:
+            return echoed
+        return "green" if (RUNNER_PASS_RX.search(txt) or DEVKIT_SUITE_GREEN.search(txt)) else None
+    return "green"
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
            ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
 # A file the session wrote in a TEMP dir that is not the project itself (the scratchpad the harness tells every agent to use, /tmp,

@@ -15,6 +15,12 @@
 # The audit's option D (the gate's full-pass receipt backs a claim) is left out on purpose (leader, 2026-10-25), so it has no case.
 # The review of that fix (2026-10-25) added must-still-block cases to A, B and E (fail-opens of the first version) and P: a tool result
 # of 30 000 blank lines must be read in ≤ 2 s (a `^\s*` line anchor made it 4-68 s, the Stop hook is cut at 30 s).
+# Two older fail-opens closed next (2026-10-25): F. a non-suite runner whose output went to a log (`python3 -m pytest > l 2>&1;
+# echo "rc=$?"` printing rc=1) read as green, so it backed a pass claim and was the GREEN half of check 7's pair; G. a loop or other
+# compound (`for f in tests/a/test_*.sh; do bash "$f"; done`) read as green whenever its output carried no failure marker. Q: a long
+# reply whose one clause holds many exempt phrases took 8-13 s of CPU (each exempt match re-read the whole clause before it).
+# Time bounds count the CPU seconds of the hook process tree (getrusage), not wall-clock: run_impacted.sh runs suites in parallel at a
+# load near 70, where a wall bound fails a fast hook. A 30 s wall timeout only ends a hang.
 # Run: bash tests/gates/test_evidence_false_blocks.sh   (TE_HOOK=<path> tests another copy of the hook)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -40,6 +46,38 @@ run() {
   rc=$?
   grep -q Traceback "$TMP/err" && rc=99
   if [ "$rc" = "$want" ]; then ok "rc $rc: $label"; else fail "rc $rc (want $want): $label"; fi
+}
+# run_cpu <want rc> <transcript> <reply> <label> <cpu cap s>: run(), plus a bound on the CPU seconds (user + sys) of the hook and every
+# process it waited for. A hook still running after 30 s of wall time is killed with its process group and counts as a fail.
+run_cpu() {
+  local want="$1" tr="$2" text="$3" label="$4" cap="$5" out rc cpu
+  N=$((N + 1))
+  out="$(CLAUDE_PROJECT_DIR="$P" python3 - "$HOOK" "$tr" "$text" "$N" <<'PY'
+import json, os, resource, signal, subprocess, sys
+hook, tr, text, n = sys.argv[1:5]
+data = json.dumps({"session_id": "te-fb-" + n, "transcript_path": tr, "last_assistant_message": text})
+r0 = resource.getrusage(resource.RUSAGE_CHILDREN)
+p = subprocess.Popen(["bash", hook], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                     text=True, start_new_session=True)
+try:
+    _, err = p.communicate(data, timeout=30)
+    rc = 99 if "Traceback" in err else p.returncode
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL)
+    p.communicate()
+    rc = "timeout"
+r1 = resource.getrusage(resource.RUSAGE_CHILDREN)
+print(rc, f"{r1.ru_utime - r0.ru_utime + r1.ru_stime - r0.ru_stime:.2f}")
+PY
+)"
+  rc="${out%% *}"; cpu="${out##* }"
+  [ "$rc" = timeout ] && cpu=999   # killed: its CPU was never reaped
+  if [ "$rc" = "$want" ]; then ok "rc $rc: $label"; else fail "rc $rc (want $want): $label"; fi
+  if python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)' "$cpu" "$cap" 2>/dev/null; then
+    ok "CPU ${cpu} s ≤ ${cap} s: $label"
+  else
+    fail "CPU ${cpu} s > ${cap} s: $label"
+  fi
 }
 EMPTY="$TMP/empty.jsonl"; : > "$EMPTY"
 # transcript <file> <json list of steps>: step = ["bash", cmd, output, is_error] | ["edit", path]
@@ -178,21 +216,92 @@ run 2 "$EMPTY" "I'm not exaggerating when I say that tests pass on every platfor
 run 2 "$EMPTY" "We don't hesitate to call it fixed."
 run 2 "$EMPTY" "Never have I been more confident to say that 12/12 tests pass."
 
+# pair2 <red cmd> <red output> <green cmd> <green output>: a FAILING run (is_error), an edit of src/a.py, then the second command.
+pair2() { python3 -c 'import json,sys; a=sys.argv; print(json.dumps([["bash",a[2],a[3],True],["edit",a[1]],["bash",a[4],a[5],False]]))' "$P/src/a.py" "$1" "$2" "$3" "$4"; }
+PYRED=$'FAILED tests/test_a.py::test_x - assert 1 == 2\n1 failed in 0.12s'
+KITRED=$'✖ case 1\n1 failed of 3'
+echo "-- F. a non-suite runner whose output went to a log: its echoed exit code decides (fail-open: rc=1 read as green)"
+for c in 'python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"' 'npm test > /tmp/l 2>&1; echo "rc=$?"'; do
+  transcript "$TMP/f1.jsonl" "$(steps_after_edit "$c" 'rc=1')"
+  run 2 "$TMP/f1.jsonl" "$PASSCLAIM" "rc=1 after \`$c\`: $PASSCLAIM"
+done
+transcript "$TMP/f2.jsonl" "$(pair2 'python3 -m pytest' "$PYRED" 'python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"' 'rc=1')"
+run 2 "$TMP/f2.jsonl" "$FIXCLAIM" "real red, edit, then rc=1 of \`python3 -m pytest > /tmp/l 2>&1\` (no GREEN half): $FIXCLAIM"
+echo "-- F. must block: an echoed \$? that cannot be bound to the runner gives no green (the P1 list of section B, for pytest)"
+for c in 'python3 -m pytest 2>&1 | tail -3; echo "rc=$?"@@rc=0' \
+         'python3 -m pytest > /tmp/l 2>&1; true; echo "rc=$?"@@rc=0' \
+         'python3 -m pytest > /tmp/l 2>&1; echo $?@@0' \
+         'python3 -m pytest > /tmp/l 2>&1; echo "exit: $?"@@exit: 0' \
+         'python3 -m pytest > /tmp/l 2>&1; printf "%s\n" $?@@0' \
+         'python3 -m pytest > /tmp/l 2>&1 || echo "rc=$?"@@' \
+         '! python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"@@rc=0' \
+         'bash -c "python3 -m pytest || true" > /tmp/l 2>&1; echo "rc=$?"@@rc=0' \
+         'eval "python3 -m pytest; true" > /tmp/l 2>&1; echo "rc=$?"@@rc=0' \
+         'pip install pytest > /tmp/l 2>&1; echo "rc=$?"@@rc=0' \
+         'go test ./... > /tmp/l 2>&1; echo "rc=${PIPESTATUS[0]}"@@rc=1' \
+         'python3 -m pytest a > /tmp/l 2>&1; python3 -m pytest b > /tmp/m 2>&1; echo "rc=$?"@@rc=0'; do
+  transcript "$TMP/f3.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/f3.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+transcript "$TMP/f4.jsonl" "$(pair '! python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"' 'rc=1' 'rc=0')"
+run 2 "$TMP/f4.jsonl" "$FIXCLAIM" "pair rc=1 / rc=0 of \`! python3 -m pytest\`: $FIXCLAIM"
+echo "-- F. a runner bound to its echoed 0, or a visible pass summary, still is the evidence"
+for c in 'python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"@@rc=0' \
+         'npm test > /tmp/l 2>&1; echo "rc=$?"@@rc=0' \
+         'PYTHONPATH=src timeout 600 python3 -m pytest -q > /tmp/l 2>&1; echo "rc=$?"@@rc=0' \
+         'python3 -m pytest -q 2>&1 | tail -3; echo "rc=$?"@@5 passed in 0.10s
+rc=0' \
+         'go test ./... 2>&1 | tail -3; echo "rc=${PIPESTATUS[0]}"@@ok  	example.com/pkg	0.12s
+rc=0' \
+         'python3 -m pytest -q@@5 passed in 0.10s'; do
+  transcript "$TMP/f5.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 0 "$TMP/f5.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+transcript "$TMP/f6.jsonl" "$(pair 'python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"' 'rc=1' 'rc=0')"
+run 0 "$TMP/f6.jsonl" "$FIXCLAIM" "pair rc=1 / rc=0 of \`python3 -m pytest > /tmp/l 2>&1; echo \"rc=\$?\"\`: $FIXCLAIM"
+
+echo "-- G. a loop / compound runner gives no green from the absence of a failure marker (fail-open: glob loop always green)"
+for c in 'for f in tests/a/test_*.sh; do bash "$f"; done@@' \
+         'for f in tests/a/test_*.sh; do bash "$f" > /dev/null 2>&1; done@@' \
+         'for f in tests/a/test_*.sh; do bash "$f"; done@@✔ case 1
+✖ case 2' \
+         'for f in $KIT/tests/gates/test_*.sh; do bash "$f" > /dev/null 2>&1; done@@' \
+         'for t in $(ls tests/a/test_*.sh); do bash $t > /dev/null; done@@' \
+         'for d in a b; do (cd $d && python3 -m pytest -q > /dev/null 2>&1); done@@' \
+         'if [ -d tests ]; then python3 -m pytest -q > /dev/null 2>&1; fi@@'; do
+  transcript "$TMP/g1.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/g1.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+transcript "$TMP/g2.jsonl" "$(pair2 'bash tests/a/test_x.sh' "$KITRED" 'for f in tests/a/test_*.sh; do bash "$f" > /dev/null 2>&1; done' '')"
+run 2 "$TMP/g2.jsonl" "$FIXCLAIM" "real red, edit, then a silent glob loop (no GREEN half): $FIXCLAIM"
+echo "-- G. a loop that prints a recognised summary still counts by it"
+for c in 'for f in tests/a/test_*.sh; do bash "$f" | tail -1; done@@all passed (5)
+all passed (7)' \
+         'for d in a b; do python3 -m pytest -q $d; done@@3 passed in 0.10s
+2 passed in 0.09s'; do
+  transcript "$TMP/g3.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 0 "$TMP/g3.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+transcript "$TMP/g4.jsonl" "$(pair2 'bash tests/a/test_x.sh' "$KITRED" 'for f in tests/a/test_*.sh; do bash "$f" | tail -1; done' 'all passed (3)')"
+run 0 "$TMP/g4.jsonl" "$FIXCLAIM" "real red, edit, then a glob loop printing 'all passed': $FIXCLAIM"
+
 echo "-- P. a long blank run in a tool result is read in linear time (2026-10-25 review, P3: 30k blank lines took 4.5 s; Stop hook cap 30 s)"
 # blank_run <cmd> <last line>: one Bash call whose output is 30 000 blank lines, then the line.
 blank_run() { python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],"\n" * 30000 + sys.argv[2],False]]))' "$1" "$2"; }
-now() { python3 -c 'import time; print(time.time())'; }
 for c in 'bash tests/a/test_x.sh > /tmp/l 2>&1; echo "rc=$?"|rc=0' 'bash tests/a/test_x.sh|ok: done' 'python3 -m pytest tests|1 passed in 0.10s'; do
   transcript "$TMP/p1.jsonl" "$(blank_run "${c%%|*}" "${c#*|}")"
-  t0="$(now)"
-  run 0 "$TMP/p1.jsonl" 'Đã chạy lại: 12/12 test pass.' "30k blank lines + ${c#*|} from \`${c%%|*}\`"
-  t1="$(now)"
-  if python3 -c 'import sys; sys.exit(0 if float(sys.argv[2]) - float(sys.argv[1]) <= 2.0 else 1)' "$t0" "$t1"; then
-    ok "≤ 2 s: \`${c%%|*}\`"
-  else
-    fail "> 2 s ($(python3 -c 'import sys; print(round(float(sys.argv[2]) - float(sys.argv[1]), 1))' "$t0" "$t1") s): \`${c%%|*}\`"
-  fi
+  run_cpu 0 "$TMP/p1.jsonl" 'Đã chạy lại: 12/12 test pass.' "30k blank lines + ${c#*|} from \`${c%%|*}\`" 2.0
 done
+
+echo "-- Q. a long reply whose clause holds many exempt phrases ends well inside the Stop cap and still blocks the claim in it"
+# ~40 KB, one sentence: 1 340 negated phrases took 8-13 s of CPU (each re-read the whole clause before it). A reply that is ONLY such
+# phrases may block (fail-closed budget); it is no case here on purpose.
+long() { python3 -c 'import sys; print(sys.argv[1] + sys.argv[2] * int(sys.argv[3]) + sys.argv[4], end="")' "$1" "$2" "$3" "$4"; }
+run_cpu 2 "$EMPTY" "$(long '' 'Tôi không gọi chúng là đã fix ' 1340 'Đã fix bug X.')" '1 340 × "Tôi không gọi chúng là đã fix " + "Đã fix bug X."' 2.0
+run_cpu 2 "$EMPTY" "$(long 'Đã fix bug X ' 'Tôi không gọi chúng là đã fix ' 1340 '')" '"Đã fix bug X " + 1 340 × "Tôi không gọi chúng là đã fix "' 2.0
+run_cpu 2 "$EMPTY" "$(long '' 'Tôi không nói 12/12 test pass ' 1340 ', 12/12 test pass.')" '1 340 × "Tôi không nói 12/12 test pass " + ", 12/12 test pass."' 2.0
+run_cpu 2 "$EMPTY" "$(long '' 'Kế hoạch: viết test ĐỎ→XANH ' 1340 '. Đã chạy test ĐỎ→XANH.')" '1 340 × "Kế hoạch: viết test ĐỎ→XANH ", then "Đã chạy test ĐỎ→XANH."' 2.0
+run_cpu 2 "$EMPTY" "$(long "$(python3 -c 'print("lorem ipsum dolor " * 2400, end="")')" 'Tôi không gọi chúng là đã fix ' 300 'Đã fix bug X.')" '40 KB of plain words, 300 exempt phrases, then "Đã fix bug X."' 2.0
 
 [ "$FAILS" -eq 0 ] && { echo "all passed ($N)"; exit 0; }
 echo "$FAILS failed of $N"; exit 1
