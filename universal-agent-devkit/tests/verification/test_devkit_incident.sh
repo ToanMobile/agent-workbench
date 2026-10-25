@@ -391,6 +391,65 @@ scan >/dev/null
 [ "$(creates)" = "$n" ] && ok "dòng lạ sau Traceback không bị lấy làm exception" || fail "dòng lạ thành thẻ exception: create=$(creates) (trước $n)"
 grep -q 'PRIVPKG\|Python fatal' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "tên package / 'fatal' lọt lên issue" || ok "không lộ tên package app"
 
+# 28. #391: (a) hơn 2000 lần gặp MỘT lỗi trong một manifest không làm dấu vân tay bị đẩy khỏi seen: git ghi lại sau khi đóng thẻ
+#     thì không thẻ hồi quy giả. (b) "\r" giữa dòng (tiến trình git fetch) và CRLF không làm Traceback bị bỏ sót.
+BM="$B/docs/super-board/runs/2026-11-01-GeelyEx2.md"
+: > "$BM"; scan >/dev/null                     # file mới sinh sau lần quét đầu: đọc từ đầu ở lượt sau
+python3 -c "print('\n'.join(['.claude/bin/super-board-blocked-by.sh: line 7: flood391: command not found'] * 2105))" > "$BM"
+scan >/dev/null
+FL=$(python3 -c 'import json,sys; print(next(i["issue"] for i in json.load(open(sys.argv[1]))["incidents"].values() if "flood391" in i["title"]))' "$TMP/home/ledger.json")
+n=$(creates); sleep 1; FCLOSED=$(date -u +%Y-%m-%dT%H:%M:%SZ); sleep 1
+cp "$BM" "$TMP/bm.bak"; rm -f "$BM"; cat "$TMP/bm.bak" > "$BM"   # git ghi lại: inode mới, đọc lại từ đầu
+FAKE_CLOSED=$FL FAKE_CLOSED_AT=$FCLOSED scan >/dev/null
+[ "$(creates)" = "$n" ] && ok ">2000 lần gặp một lỗi: git ghi lại sau khi đóng thẻ không mở thẻ hồi quy giả" \
+  || fail ">2000 lần gặp: thẻ hồi quy giả sau khi git ghi lại: create=$(creates) (trước $n)"
+n=$(creates)
+{ printf 'progress 10%%\rTraceback (most recent call last):\n'
+  echo '  File "/x/.claude/bin/super-board-card.py", line 4, in crlfmid391'
+  echo 'KeyError: x'
+  printf 'Traceback (most recent call last):\r\n'
+  printf '  File "/x/.claude/bin/super-board-card.py", line 5, in crlfend391\r\n'
+  printf 'KeyboardInterrupt\r\n'
+  echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-card.py", line 6, in crinmsg391'
+  printf 'RuntimeError: git fetch failed: 10%%\r100%% done\n'
+  echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-card.py", line 7, in crsp391'
+  printf 'RuntimeError: dl: 10%%\r 100%%\n'
+  echo 'com.finos.PRIVPKG2'
+  echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-card.py", line 8, in msghdr391'
+  printf 'RuntimeError: child failed: 10%%\rTraceback (most recent call last):\n'; } >> "$B/docs/super-board/runner.log"
+scan >/dev/null; scan >/dev/null   # MAX_NEW_CARDS_PER_SCAN = 3: thẻ thứ 4, 5 lên ở lượt sau
+[ "$(creates)" = $((n + 5)) ] && grep -q 'crlfmid391' "$TMP/home/ledger.json" && grep -q 'crlfend391' "$TMP/home/ledger.json" \
+  && grep -q 'RuntimeError trong super-board-card.py:crinmsg391' "$TMP/home/ledger.json" \
+  && grep -q 'RuntimeError trong super-board-card.py:crsp391' "$TMP/home/ledger.json" \
+  && grep -q 'RuntimeError trong super-board-card.py:msghdr391' "$TMP/home/ledger.json" \
+  && ! grep -q 'PRIVPKG2' "$FAKE_LOG" "$TMP/home/ledger.json" \
+  && ok "'progress\\rTraceback', Traceback CRLF (KeyboardInterrupt\\r) và \\r trong thông điệp exception đều thành thẻ" \
+  || fail "\\r giữa dòng / CRLF / \\r trong thông điệp làm mất hay lệch Traceback: create=$(creates) (kỳ vọng $((n + 5)))"
+
+# 29. #391: read_new bị kẹp ở MAX_READ — dòng đầu đầy đủ được giữ khi vị trí đọc đúng bằng size - MAX_READ; kẹp giữa dòng thì bỏ mẩu cụt.
+python3 - "$DEVKIT_DIR/scripts/governance" "$TMP" <<'PY' && ok "read_new: kẹp đúng đầu dòng giữ dòng đầu, kẹp giữa dòng bỏ mẩu cụt, biên size - MAX_READ không kẹp" \
+  || fail "read_new clamp sai ở biên MAX_READ"
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import devkit_incident as d
+f = os.path.join(sys.argv[2], "clamp.log")
+data = "".join("L%017d\n" % i for i in range(20)).encode()   # 19 byte mỗi dòng
+open(f, "wb").write(data)
+st = os.stat(f)
+def read(off, max_read):
+    d.MAX_READ = max_read
+    offsets = {f: {"ino": st.st_ino, "off": off, "read_at": 0.0}}
+    return d.read_new(__import__("pathlib").Path(f), offsets, 0.0)[0]
+want = ["L%017d" % i for i in range(15, 20)]
+assert read(len(data) - 95, 95) == want, "biên start == size - MAX_READ: bỏ mất dòng đầu đầy đủ"
+assert read(0, 95) == want, "kẹp đúng đầu dòng: bỏ nhầm dòng đầu đầy đủ"
+got = read(0, 90)                                   # kẹp giữa dòng 15 (cách đầu dòng 5 byte)
+assert got == want[1:], got
+PY
+
 # 27. Danh sách repo của bộ quét = danh sách board của super_board_all.py (25/10: Idle-Plaza-3D thay Neighbours-From-Hell).
 python3 - "$DEVKIT_DIR/scripts/governance" <<'PY' && ok "DEFAULT_REPOS khớp REPOS của super_board_all, có Idle, không có Neighbours" \
   || fail "danh sách repo của bộ quét lệch danh sách board"
