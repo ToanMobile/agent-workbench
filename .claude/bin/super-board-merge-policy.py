@@ -55,7 +55,13 @@ DEFAULT_ALWAYS_HUMAN = {
         # sent PR #224 to a person): import/require, api.stripe.com, live keys, a `Stripe(` call. `added` is lower-cased.
         "keywords": ["api.stripe.com", "payment_intent", "price_id", "invoice.create"],
         "patterns": [r"\b(?:import|from)\s+stripe\b", r"from\s+['\"]stripe['\"]", r"require\(\s*['\"]stripe['\"]",
-                     r"\b[sp]k_live_", r"\bstripe\("],
+                     r"\b[sp]k_live_", r"\bstripe\(",
+                     # Lời gọi SDK trong file đã import Stripe từ trước (import không nằm trong diff): `stripe.api_key = …`,
+                     # `stripe.Charge.create(`, `stripe.refunds.create(`. Theo hình dạng (tài nguyên + động từ API + `(`) vì
+                     # `added` đã hạ chữ thường; `stripe.material.depthWrite`, `stripe.mesh.updateMatrix()` (#261) vẫn auto.
+                     r"\bstripe\.api_?key\b",
+                     r"\bstripe(?:\.[a-z_]+)+\.(?:create|retrieve|update|modify|list|del|delete|cancel|capture|confirm"
+                     r"|search|construct_?event)\s*\("],
     },
     "auth": {
         "labels": ["auth", "security"],

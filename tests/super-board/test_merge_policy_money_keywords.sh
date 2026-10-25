@@ -54,6 +54,16 @@ check "payment_intent vẫn bắt" 'const p = payment_intent.id;' '' money
 check "price_id vẫn bắt" 'const p = price_id;' '' money
 check "invoice.create vẫn bắt" 'stripeClient.invoice.create({})' '' money
 check "đối chứng âm: chỉ dòng '-' có import stripe" 'const a = 1;' "import Stripe from 'stripe';" auto
+# Sau #321: file đã import Stripe từ trước, PR chỉ thêm lời gọi SDK (import không nằm trong diff) vẫn phải cần người duyệt.
+check "stripe.Charge.create (python, import có sẵn)" 'charge = stripe.Charge.create(amount=100, currency="usd")' '' money
+check "stripe.PaymentIntent.create" 'const pi = await stripe.PaymentIntent.create({ amount: 1 });' '' money
+check "stripe.api_key = ..." 'stripe.api_key = os.environ["K"]' '' money
+check "stripe.refunds.create (node)" 'await stripe.refunds.create({ charge: id });' '' money
+check "stripe.checkout.sessions.create" 'const s = await stripe.checkout.sessions.create({ mode: "payment" });' '' money
+check "stripe.webhooks.constructEvent" 'const e = stripe.webhooks.constructEvent(body, sig, secret);' '' money
+check "đối chứng âm: stripe.mesh.updateMatrix() (three.js)" 'stripe.mesh.updateMatrix();' '' auto
+check "đối chứng âm: stripe.position.set(...)" 'stripe.position.set(0, 0, 0);' '' auto
+check "đối chứng âm: stripe.geometry.dispose()" 'stripe.geometry.dispose();' '' auto
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_policy_money_keywords: PASS"; exit 0; } || { echo "test_merge_policy_money_keywords: FAIL ($FAILS)"; exit 1; }
