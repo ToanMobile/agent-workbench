@@ -822,6 +822,8 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
             if created or json.dumps(data["items"][bid], sort_keys=True) != before:
                 if _linked(rc, project_root):   # a LINKED worktree leaves the tracked checklist files alone: its own state
                     rc.overlay_save_rows(project_root, data, [bid])
+                elif getattr(rc, "trunk_main", lambda _p: False)(project_root):   # main ở trunk mode chỉ nhận gộp: dòng chờ trong sổ ngoài git, main không bẩn
+                    rc.pending_save_rows(project_root, data, [bid])
                 else:
                     rc.save(project_root, data, stale=False)
             status = rc.effective_status(data, data["items"][bid])

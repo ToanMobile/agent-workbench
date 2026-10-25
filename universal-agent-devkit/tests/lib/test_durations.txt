@@ -401,3 +401,5 @@
 12 tests/verification/test_devkit_incident.sh
 # 2026-10-25: T0055 devkit_incident (lỗi do kit ở board 5 repo thành thẻ); đo 31 s.
 31 tests/verification/test_devkit_incident.sh
+# 2026-10-25: main trunk mode không ghi dòng REPORTED vào checklist track (sổ chờ pending_rows.json); đo 9 s.
+9 tests/worktree_git/test_trunk_main_reported_pending.sh
