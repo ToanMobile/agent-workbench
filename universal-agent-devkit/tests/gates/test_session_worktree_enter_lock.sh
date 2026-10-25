@@ -229,6 +229,15 @@ start_src "$TMP/l" ownerwt s60 resume
 lk="$(lock_of "$TMP/l" ownerwt)"
 [ "$lk" = "devkit-kept session=s60 pid=$$" ] && ok "E18: the owner resuming in its worktree re-locks it even while a live guest session's record names it" \
   || fail "E18: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E18b (OCR PR #415 follow-up): sans state file — the lock already carrying this session id is what makes it the owner
+repo o true; G "$TMP/o" worktree add -q --detach "$TMP/o/.claude/worktrees/nostate"
+G "$TMP/o" worktree lock --reason "devkit-kept session=s90 pid=$DEAD" "$TMP/o/.claude/worktrees/nostate"
+mkdir -p "$TMP/o/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/o/.claude/worktrees/nostate" "$SLEEPER" > "$TMP/o/.claude/audit-gate/session_worktree/s91"
+start_src "$TMP/o" nostate s90 resume
+lk="$(lock_of "$TMP/o" nostate)"
+[ "$lk" = "devkit-kept session=s90 pid=$$" ] && ok "E18b: … also with no state file: its old lock carrying its id makes it the owner" \
+  || fail "E18b: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
 # E19 (review PR #415): record của CHÍNH sid này (pid đã chết: resume từ shell giữ id) không phải "chủ khác còn sống"
 repo m true; G "$TMP/m" worktree add -q --detach "$TMP/m/.claude/worktrees/recself"   # own repo: E18's lock carries this shell's pid
 mkdir -p "$TMP/m/.claude/audit-gate/session_worktree"
