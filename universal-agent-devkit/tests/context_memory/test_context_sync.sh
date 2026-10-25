@@ -60,5 +60,28 @@ import sys; p = sys.argv[1]; s = open(p).read(); open(p, "w").write(s.replace("#
 PY
 python3 "$SYNC" "$P" --quiet --context-only; grep -q "other branch" "$P/AGENTS.md" && ok "--context-only (relink after checkout) leaves the tracked AGENTS.md alone" || fail "--context-only rewrote AGENTS.md"
 
+# The block header (template text above the essentials markers) loads in every session next to the essentials: it must not
+# say again what they say (2026-10-25 audit: its "On demand —" and "Post-fix gate" lines, ~700 B per load, repeated the
+# essentials' read-on-demand list, gate command and proof rule). It keeps the two @-imports, the markers and the one rule the
+# essentials do not carry (the capture ban on a serial in .adb-denylist or forbidden by a project rule).
+python3 - "$DEVKIT_DIR/templates/agents_injection_block.md" "$DEVKIT_DIR/rules/essentials.md" <<'PY' && ok "block header: no repeat of the essentials, imports + markers + capture ban kept" || fail "block header"
+import sys
+head = open(sys.argv[1], encoding="utf-8").read().split("<!-- devkit-essentials:start")[0]
+ess = open(sys.argv[2], encoding="utf-8").read()
+said = ["post-fix-gate.py --run-tests --full --brief", ".agents/devkit/rules/core-rules.md", ".agents/devkit/AGENTS.md",
+        ".agents/instincts.md", "proof PNG"]
+bad = [s for s in said if s in ess and s in head]
+need = [s for s in ("@.agents/context/profile-rules.md", "@.agents/context/rules-index.md", ".adb-denylist", "forbidden by a project rule")
+        if s not in head]
+markers = open(sys.argv[1], encoding="utf-8").read().count("devkit-essentials:")
+for s in bad:
+    print("  ✖ the header repeats the essentials: %r" % s)
+for s in need:
+    print("  ✖ the header lost %r" % s)
+if markers != 2:
+    print("  ✖ essentials markers: %d (want 2)" % markers)
+sys.exit(1 if bad or need or markers != 2 else 0)
+PY
+
 if [ "$FAILS" -ne 0 ]; then echo "context_sync: $FAILS FAILED"; exit 1; fi
 echo "context_sync: all checks passed"

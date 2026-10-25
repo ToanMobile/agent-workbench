@@ -81,9 +81,14 @@ for f in $changed; do
   tests="$tests $(grep -l -F -- "$(basename "$f")" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
   # …or its stem as a whole word: tests reach scripts through commands ("agent-kit githooks
   # install" → scripts/githooks.sh; test_githooks went unrun on 2026-09-26).
-  stem="$(basename "$f")"; stem="${stem%.*}"
-  [ -n "$stem" ] && [ "$stem" != "$(basename "$f")" ] \
-    && tests="$tests $(grep -l -w -F -- "$stem" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
+  # 25/10: chỉ file CODE (.sh .py .bash .mjs .js; file không đuôi thì stem = tên, đã khớp ở trên). Stem của tài liệu là chữ thường:
+  # commands/test.md chọn 273 test qua "test", commands/fix.md 202 qua "fix", hooks/hooks.json 198 qua "hooks" — người đọc thật của
+  # tài liệu khai trong tests/impact_map.txt.
+  case "$f" in
+    *.sh|*.py|*.bash|*.mjs|*.js)
+      stem="$(basename "$f")"; stem="${stem%.*}"
+      [ -n "$stem" ] && tests="$tests $(grep -l -w -F -- "$stem" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')" ;;
+  esac
   # …and the tests tests/impact_map.txt declares for a file they exercise without naming it.
   while read -r glob rest; do
     case "$glob" in ''|'#'*) continue ;; esac
