@@ -3734,8 +3734,8 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
     if kept and kept[2]:   # K11 (18/10): phiên rời worktree bằng ExitWorktree "keep" và còn sống: gộp thì được, gỡ thì không
         head = (tr("đã gộp vào main", "merged into main") if status == "merged"
                 else tr("không có gì chưa về main", "nothing that was not in main"))
-        return status, head + tr(f"; worktree giữ lại (ExitWorktree keep của phiên {kept[0]} còn sống)",
-                                 f"; the worktree is kept (ExitWorktree keep by session {kept[0]}, still alive)") + receipt_note, {"kept": True}
+        return status, head + tr(f"; worktree giữ lại bởi phiên còn sống (khoá devkit-kept session={kept[0]} pid={kept[1]})",
+                                 f"; the worktree is kept by a live session (devkit-kept lock session={kept[0]} pid={kept[1]})") + receipt_note, {"kept": True}
     saved = []
     try:
         for rel in _unsaved_memory(wt, main):   # notes only the worktree's own (git-ignored) agent-memory folder holds: a removal would delete them

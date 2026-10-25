@@ -426,6 +426,16 @@ def _kept_lock(main, wt, sid, pid, unlock=False):
 _BOARD_WT = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
 
 
+def _state_owner(wt):
+    """The session worktree `wt`'s devkit-worktree.json names (scripts/git/worktree.py _owner), None when none or unreadable."""
+    try:
+        gd = subprocess.run(["git", "-C", wt, "rev-parse", "--absolute-git-dir"], capture_output=True, text=True, timeout=5).stdout.strip()
+        o = json.loads(_read_small(os.path.join(gd, "devkit-worktree.json")) or "").get("session") if gd else None
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+        return None
+    return o if isinstance(o, str) and o else None
+
+
 def lock_started_worktree(main, here, sid, pid, env=None):
     """SessionStart (bin/session_lock.py; review 25/10): a session that STARTS — or /clear, /resume — inside a linked worktree of a
     trunk-mode repo (a Desktop worktree session, `claude --worktree`) never calls EnterWorktree, so it takes the same devkit-kept lock
@@ -438,6 +448,9 @@ def lock_started_worktree(main, here, sid, pid, env=None):
         return None
     if _BOARD_WT.fullmatch(os.path.basename(t[0])) and os.path.basename(os.path.dirname(t[0])) in ("worktrees", ".worktrees"):
         return None
+    rec = raw_record(main, sid)   # #406 N1: only the owner locks - by its devkit-worktree.json (`add --session`), or its record (reown() moved it to this sid on /clear)
+    if _state_owner(t[0]) != sid and not (rec and os.path.realpath(rec) == os.path.realpath(t[0])):
+        return None   # cwd inside ANOTHER session's worktree (or one nobody owns): a lock by this pid would pin it until this session ends
     return t[0] if _kept_lock(main, t[0], sid, pid) else None
 
 

@@ -711,7 +711,7 @@ testing_notes = ["… một lần chạy test đang giữ worktree, chưa gộp 
 if not pending:
     if set(state.get("owed") or []) != owed or am_done or am_kept:
         save()   # removed worktrees leave the debt list
-    notes = ["✔ đã tự gộp vào main và gỡ: " + p for p in am_done] + ["✔ đã tự gộp vào main, worktree giữ lại (ExitWorktree keep): " + p for p in am_kept] + ["… đang tự gộp ở nền (kết quả: lần dừng sau; log trong git dir): " + p for p in am_running]
+    notes = ["✔ đã tự gộp vào main và gỡ: " + p for p in am_done] + ["✔ đã tự gộp vào main, worktree giữ lại bởi phiên còn sống (khoá devkit-kept): " + p for p in am_kept] + ["… đang tự gộp ở nền (kết quả: lần dừng sau; log trong git dir): " + p for p in am_running]
     notes += testing_notes
     if notes:
         print(json.dumps({"systemMessage": "WORKTREE-MERGE GATE:\n" + "\n".join(notes)}, ensure_ascii=False))

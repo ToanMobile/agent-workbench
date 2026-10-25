@@ -88,6 +88,13 @@ lk="$(lock_of "$TMP/e" issue-12-build)"
 [ -z "$lk" ] && ok "E8: a super-board lane worktree (issue-12-build) is not locked at SessionStart (the board removes it itself)" \
   || fail "E8: board lane worktree locked '$lk'"
 
+# E9 (#406 N1): phiên s12 đứng trong worktree của phiên s11 khác (cd vào rồi gặp SessionStart do compact/clear) không phải chủ của nó:
+#    record devkit-worktree.json ghi s11, không ghi s12 -> không khoá bằng pid của s12 (khoá đó giữ worktree của người khác tới khi s12 chết)
+wtadd "$TMP/e" others s11; start_in "$TMP/e" others s12
+lk="$(lock_of "$TMP/e" others)"
+[ -z "$lk" ] && ok "E9: a session standing in ANOTHER session's worktree (record names s11, not s12) does not lock it at SessionStart" \
+  || fail "E9: foreign worktree locked '$lk'"
+
 echo
 [ "$FAILS" = 0 ] && { echo "test_session_worktree_enter_lock: PASS"; exit 0; }
 echo "test_session_worktree_enter_lock: $FAILS FAIL"; exit 1
