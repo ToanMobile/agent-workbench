@@ -467,8 +467,15 @@ def complete_pr_files(args, stdout):
         full = run_gh(['api', path, '--paginate', '--slurp'])
         if full.returncode:
             return stdout
-        value['files'] = [{'path': f['filename'], 'additions': f['additions'], 'deletions': f['deletions']}
-                          for page in json.loads(full.stdout) for f in page]
+        # One path can be two REST entries (a file that became a symlink: removed + added, PR #424) while changedFiles
+        # counts it once: merge them by path, so the list length means changed files, not entries.
+        merged = {}
+        for page in json.loads(full.stdout):
+            for f in page:
+                entry = merged.setdefault(f['filename'], {'path': f['filename'], 'additions': 0, 'deletions': 0})
+                entry['additions'] += f['additions']
+                entry['deletions'] += f['deletions']
+        value['files'] = list(merged.values())
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
         return stdout
     return json.dumps(value)
