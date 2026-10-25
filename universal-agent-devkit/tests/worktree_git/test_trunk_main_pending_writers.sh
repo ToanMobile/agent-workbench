@@ -21,6 +21,8 @@ export HOME="$TMP/home" SESSION_FETCH=0 VACUITY_REVERT=0; mkdir -p "$HOME"
 
 # mk_calc <dir> [no-status]: dự án calc (add trừ thay vì cộng), ma trận REG-CALC, checklist track (trừ khi no-status); trunk mode mặc định
 mk_calc() {
+  # Mỗi ca một thư mục mới: dùng lại thư mục cũ thì sổ chờ / journal của ca trước còn đó và ca sau xanh nhờ dữ liệu sót (OCR 25/10).
+  [ -e "$1" ] && { echo "✖ mk_calc: $1 đã tồn tại (hai ca dùng chung thư mục)"; exit 1; }
   mkdir -p "$1/src" "$1/tests" "$1/.agents" && cd "$1" || exit 1
   git init -q -b main . && git config user.email t@t && git config user.name t
   printf 'def add(a, b):\n    return a - b\n' > src/calc.py
@@ -206,7 +208,7 @@ with r.locked(p):
   || fail "8g: rc=$rc8g linked_by='$(view "$M6" "$X6" linked_by)' tests='$(view "$M6" "$X6" tests)' dirty='$(dirty "$M6")'"
 
 # 8h. (vòng 3) báo lại bằng hook mới (phiên s-new, touched mới hơn) trước khi migrate: phiên mới không mất
-M7="$TMP/migrate-session"; mk_old "$M7"; old_hook "$M7"
+M7="$TMP/migrate-reported-again"; mk_old "$M7"; old_hook "$M7"
 X7="$(python3 -c "import json, sys; d = json.load(open(sys.argv[1] + '/.agents/regression_status.json'))['items']
 print(next(k for k, v in d.items() if v.get('title') == 'Lỗi hai khi mở'))" "$M7")"
 python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r
