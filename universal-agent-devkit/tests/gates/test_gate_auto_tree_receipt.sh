@@ -168,7 +168,7 @@ for GOOD in 'post-fix-gate.py --full' './post-fix-gate.py --full' 'python3 ./pos
 done
 
 # 12d (OCR U11). A board config that is valid JSON but not an object (a half-written `[]` or `null`): the gate still ends with its own verdict, no traceback, no receipt.
-for BADCFG in '[]' 'null' '"text"' '{"base_branch":"main","verify_commands":5}' '{"base_branch":"main","verify_commands":true}' '{"base_branch":7,"verify_commands":[3,null]}'; do
+for BADCFG in '[]' 'null' '"text"' '{"base_branch":"main","verify_commands":5}' '{"base_branch":"main","verify_commands":true}' '{"base_branch":7,"verify_commands":["x"]}' '{"base_branch":"main","verify_commands":[3,null]}'; do   # the last one reaches the per-item loop (base matches)
   make_repo with-config
   printf '%s' "$BADCFG" > .claude/super-board/configs/t.json
   git add -A && git commit -qm cfg-bad
