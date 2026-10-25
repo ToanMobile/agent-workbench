@@ -276,7 +276,10 @@ except OSError:
     pass
 chk(len(recs) == 1 and len(raw) <= 3000 and good_steps(r.get("steps")), "S5: a 40-suite run with long ids still logs one line under the cap, steps kept (%d bytes)" % len(raw),
     "records=%d bytes=%d steps=%r" % (len(recs), len(raw), r.get("steps")))
-chk(r.get("suites_cut") is True or len(r.get("suites", [])) == 40, "S5: the cap cuts `suites` (suites_cut) rather than dropping the line or the steps", "cut=%r n=%d" % (r.get("suites_cut"), len(r.get("suites", []))))
+# B9 (25/10): a PASS re-used without a run (here: 39 suites share the command `true`) is counted in suites_reused, not listed
+chk(r.get("suites_cut") is True or len(r.get("suites", [])) + (r.get("suites_reused") or 0) == 40,
+    "S5: the cap cuts `suites` (suites_cut) rather than dropping the line or the steps; every suite is listed or counted",
+    "cut=%r n=%d reused=%r" % (r.get("suites_cut"), len(r.get("suites", [])), r.get("suites_reused")))
 
 # S6: readers
 root = os.path.join(TMP, "readers")

@@ -810,11 +810,88 @@ r=$(probe_key "$R33" tests/lib/test_durations.txt 't 2')
 [ "$r" = same ] && ok "33g. đổi tests/lib/test_durations.txt không đổi khoá của suite" || fail "33g. test_durations.txt vẫn là DANGER: đổi một dòng thời lượng đổi khoá mọi suite ($r)"
 r=$(probe_key "$R33" tests/lib/helper33.sh 'h 2')
 [ "$r" = diff ] && ok "33g. đổi file tests/lib khác vẫn đổi khoá" || fail "33g. file tests/lib khác không còn là DANGER ($r)"
+# 37. B8 (audit 25/10): khoá chính xác theo MỤC CỦA CHÍNH suite trong ma trận (mọi rule có id đó, nguyên văn; covers của id; version của
+#     ma trận), không theo digest cả file ma trận — thêm một rule không liên quan (ma trận chỉ-thêm, việc hằng ngày) từng đổi khoá mọi suite.
+#     probe37 <đổi>: khoá chính xác của REG-P trước/sau khi ghi lại matrix.json với thay đổi đó, in "same" hoặc "diff".
+R37="$TMP/r37"; mk33 "$R37"; echo 'a = 1' > "$R37/src/a.py"
+git -C "$R37" add -A && git -C "$R37" commit -qm init
+probe37() {   # probe37 <đổi> [tree]: "tree" so khoá cả cây thay vì khoá chính xác
+  ( cd "$R37" && python3 - "$DEVKIT_DIR/bin" "$R37" "$1" "${2:-precise}" <<'PY'
+import copy, json, os, sys
+bindir, repo, change, which = sys.argv[1:]
+sys.path.insert(0, bindir)
+import suite_cache as sc
+mp = os.path.join(repo, "matrix.json")
+base = json.load(open(mp))
+def key(m, covers=None):
+    with open(mp, "w") as f:
+        json.dump(m, f)
+    rules = m["rules"]
+    test = next(t for r in rules for t in r["mandatory_regression_tests"] if t["id"] == "REG-P")
+    return sc.SuiteCache(repo, rules, mp, covers or {}, "L", "rf", "", learned={}).keys(test)[1 if which == "tree" else 0]
+k0 = key(copy.deepcopy(base))
+m = copy.deepcopy(base)
+covers = None
+p = m["rules"][0]
+if change == "append":
+    m["rules"].append({"component": "Q", "watch_files": ["src/q.py"], "mandatory_regression_tests": [{"id": "REG-Q", "name": "q", "command": "echo q"}]})
+elif change == "command":
+    p["mandatory_regression_tests"][0]["command"] = "true; true"
+elif change == "watch":
+    p["watch_files"].append("src/b.py")
+elif change == "untested_exit":
+    p["mandatory_regression_tests"][0]["untested_exit"] = 0
+elif change == "covers":
+    covers = {"REG-P": ["src/none.py"]}
+elif change == "version":
+    m["version"] = "9.9.9"
+k1 = key(m, covers)
+json.dump(base, open(mp, "w"))
+print("same" if k0 == k1 else "diff")
+PY
+  ); }
+r=$(probe37 append)
+[ "$r" = same ] && ok "37a. thêm một rule không liên quan vào ma trận: khoá chính xác của suite giữ nguyên" \
+  || fail "37a. thêm rule không liên quan đổi khoá chính xác của REG-P ($r): digest cả file ma trận vẫn nằm trong khoá"
+for c37 in command watch untested_exit covers version; do
+  r=$(probe37 "$c37")
+  [ "$r" = diff ] && ok "37b. đổi $c37 của chính suite ⇒ khoá chính xác đổi" || fail "37b. đổi $c37 của REG-P mà khoá chính xác giữ nguyên ($r)"
+done
+# 37c. covers đến từ .agents/regression_status.json của TỪNG checkout (ngoài dấu vân tay cây): chỉ vào khoá chính xác. Khoá cả cây chỉ theo
+#      nội dung cây — hai worktree cùng cây khác covers vẫn dùng chung PASS theo khoá cả cây (ca 1b, stale_rerun nightly).
+r=$(probe37 covers tree)
+[ "$r" = same ] && ok "37c. covers khác (sổ của checkout) không đổi khoá cả cây" \
+  || fail "37c. covers khác đổi khoá cả cây ($r): hai worktree cùng cây không còn dùng chung PASS"
+}
+
+grp_inflight_est() {   # case 36: hạn marker gộp lượt (inflight) theo lần chạy DÀI NHẤT, không theo trung vị của lớp slot
+# 36. Lịch sử 5 lần 5,5,5,5,60 s: trung vị (lớp slot, audit B7) là 5 s, hạn marker est×1.5+60 = 67 s — một gate --full thứ hai cùng khoá
+#     coi marker của chủ còn sống (đang chạy lần 60 s) là quá hạn, xoá nó và chạy song song (review 25/10). est_s trong marker phải là 60.
+R36="$TMP/r36"; mkdir -p "$R36/src" "$R36/.agents"
+git -C "$R36" init -q -b main . && git -C "$R36" config user.email t@t && git -C "$R36" config user.name t
+echo 'w = 1' > "$R36/src/w.py"
+printf '{"project":"t","rules":[{"component":"W","watch_files":["src/w.py"],"mandatory_regression_tests":[{"id":"REG-W","name":"w","command":"cat %s/.git/postfix-gate/suite_cache/*.run > %s/marker.W 2>/dev/null; true"}]}]}\n' "$R36" "$TMP" > "$R36/matrix.json"
+git -C "$R36" add -A && git -C "$R36" commit -qm init
+echo 'w = 2' > "$R36/src/w.py" && git -C "$R36" commit -qam change
+python3 - "$R36/.agents/regression_status.json" <<'PY'
+import json, sys
+runs = [{"status": "PASS", "ts": str(1792000000 + i), "duration": f"{d:.2f}s"} for i, d in enumerate((5, 5, 5, 5, 60))]
+json.dump({"items": {"REG-W": {"id": "REG-W", "kind": "test", "history": runs, "last": runs[-1]}}}, open(sys.argv[1], "w"))
+PY
+# Lượt đầu của repo là lượt sentinel (không khoá nội dung, không marker): chạy một lần, rồi đổi cây để lượt sau chạy thật theo khoá mới.
+( cd "$R36" && FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R36" python3 "$GATE" --matrix "$R36/matrix.json" --run-tests --full \
+  --diff HEAD~1 --no-checklist >"$TMP/out36a" 2>&1 )
+rm -f "$TMP/marker.W"; echo 'w = 3' > "$R36/src/w.py"
+( cd "$R36" && FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R36" python3 "$GATE" --matrix "$R36/matrix.json" --run-tests --full \
+  --diff HEAD~1 --no-checklist >"$TMP/out36" 2>&1 ); rc=$?
+est=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("est_s"))' "$TMP/marker.W" 2>/dev/null)
+[ "$rc" = 0 ] && [ "$est" = "60.0" ] && ok "36. marker inflight mang est_s = lần dài nhất (60 s), không phải trung vị (5 s)" \
+  || { fail "36. est_s trong marker inflight = '$est' (mong 60.0), exit $rc"; grep -E "REG-W|KẾT LUẬN" "$TMP/out36" | tail -3; }
 }
 
 # Run the groups at the same time (job control on only for these launches: every group is its own process group, which `cleanup`
 # stops whole). A group that dies before its end leaves no fails file: that is a failure, never a silent pass.
-GROUPS_IN_ORDER="chain coalesce mutate_prune cover stop_timeout exact_key units known_red closure"
+GROUPS_IN_ORDER="chain coalesce mutate_prune cover stop_timeout exact_key units known_red closure inflight_est"
 set -m
 for grp in $GROUPS_IN_ORDER; do
   ( TMP="$ROOT/$grp"; mkdir -p "$TMP"; export SB_HEAVY_SLOT_DIR="$TMP/slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"; FAILS=0

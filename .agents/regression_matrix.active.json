@@ -1621,7 +1621,9 @@
       "component": "super-board-agents-md-block",
       "watch_files": [
         ".claude/skills/super-board/references/agents-md-block.md",
-        ".claude/skills/super-build/references/worker-preamble.md"
+        ".claude/skills/super-build/references/worker-preamble.md",
+        ".claude/skills/super-board/references/run.md",
+        "tests/super-board/test_agents_md_block_size.sh"
       ],
       "mandatory_regression_tests": [
         {
