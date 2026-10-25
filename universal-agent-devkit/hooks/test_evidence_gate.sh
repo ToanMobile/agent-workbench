@@ -304,8 +304,11 @@ NEG_RUN = re.compile(
 # claiming a test pass"; 2026-10-25 audit: 46 check-7 blocks; cases in tests/gates/test_evidence_false_blocks.sh, section E). Anchored at
 # the END of the clause before the match, with only a closed filler between the verb and the match, so "gọi" / "call" exempt only as
 # "gọi chúng là …" / "call it …": "Không ai gọi API này nữa vì đã fix", "I'm not claiming victory yet since 12/12 tests pass" stay claims.
+# The gap between the negator and the verb is a closed list too (2026-10-25 review of af339645): any word there let an emphatic or
+# double-negative ASSERTION through ("Không cần phải nói là đã fix", "It's not an overstatement to say 12/12 tests pass").
 NEG_ASSERT = re.compile(
-    r"(?:\b(?:không|chưa|chẳng|not|never)\b|n't)\s+(?:[^\s,;:]+\s+){0,6}?"
+    r"(?:\b(?:không|chưa|chẳng|not|never)\b|n't)\s+"
+    r"(?:(?:có|đủ|để|bằng\s+chứng|cơ\s+sở|thể|dám|được|hề|yet|going\s+to|able\s+to|ready\s+to)\s+){0,6}?"
     r"(?:gọi|nói|tuyên\s+bố|khẳng\s+định|chốt|kết\s+luận|claim(?:s|ed|ing)?|call(?:s|ed|ing)?|say(?:s|ing)?)"
     r"(?:\s+(?:chúng|nó|họ|là|rằng|it|them|this|that|a|an|the|[^\s,;:]+\s+(?:hay|or)))*\s*$", re.I)
 
@@ -337,19 +340,38 @@ CYCLE_DONE = re.compile(r"\b(?:đã|rồi|xong|done|ran|passed)\b|✅|✔|✓", 
 #   • the agent's own proposal verb before the name: "Tôi đề xuất …, mỗi việc có test ĐỎ→XANH", "I suggest …", a leading "Đề xuất:";
 #   • a sequencing ", rồi <verb>" after the name: "kèm test RED→GREEN, rồi đồng bộ sang các repo". That "rồi" is "then", not
 #     "already", so it is no done word; a particle after it ("rồi nhé", "rồi đó") and every other "rồi" still are.
+# Tightened by the review of af339645 (2026-10-25; must-block cases in tests/gates/test_evidence_false_blocks.sh, section A):
+#   • the prohibition does not count once lifted: "Sau khi gỡ luật chặn chạy test ĐỎ→XANH thì mọi ca đều qua" reports a run;
+#   • the proposal opens the sentence ("Sửa theo đúng những gì tôi đề xuất, có test ĐỎ→XANH" reports a done fix), and what follows a
+#     ":" / ";" / dash or a reason word after it may be its justification ("Tôi đề xuất merge luôn: mỗi sửa đều có test ĐỎ→XANH"), so
+#     it needs a plan marker then;
+#   • Vietnamese has no tense: a bare ", rồi <verb>" reads the same in a done report ("Mỗi sửa có test ĐỎ→XANH, rồi merge vào main"),
+#     so it is a plan only next to an explicit plan marker (leader's decision), and only then is its "rồi" no done word.
 CYCLE_PROHIBIT_RUN = re.compile(r"\b(?:chặn|ngăn|cấm|block(?:s|ed|ing)?|prevent(?:s|ed|ing)?|forbid(?:s|den)?)\s+"
                                 r"(?:(?:luôn|cả|việc|the|from)\s+)*(?:chạy|run(?:s|ning)?)\s*$", re.I)
-CYCLE_PROPOSE = re.compile(r"\b(?:tôi|mình|em|chúng\s+(?:tôi|ta|mình)|I|we)(?:'d|\s+(?:would|xin|muốn))?\s+"
-                           r"(?:đề\s+xuất|propose|suggest|recommend)\b|^\s*(?:đề\s+xuất|proposal|suggestion|recommendation)\s*:", re.I)
-CYCLE_THEN = re.compile(r",\s*rồi(?=\s+(?!(?:nhé|nha|nhỉ|đó|đấy|ạ|mà|luôn|hết|chứ)\b)\w)", re.I)
+CYCLE_PROHIBIT_LIFTED = re.compile(r"\b(?:gỡ|bỏ|tắt|xoá|xóa|hủy|huỷ|remov(?:e[sd]?|ing)|lift(?:s|ed|ing)?|disabl(?:e[sd]?|ing)"
+                                   r"|drop(?:s|ped|ping)?)\s+(?:[^\s,;:]+\s+){0,3}$", re.I)
+CYCLE_PROPOSE = re.compile(r"^[\s>*•+#-]*(?:(?:tôi|mình|em|chúng\s+(?:tôi|ta|mình)|I|we)(?:'d|\s+(?:would|xin|muốn))?\s+"
+                           r"(?:đề\s+xuất|propose|suggest|recommend)\b|(?:đề\s+xuất|proposal|suggestion|recommendation)\s*:)", re.I)
+CYCLE_PROPOSE_BREAK = re.compile(r"[:;—–]|\s-\s|\b(?:vì|bởi\s+vì|since|because|nhưng|but|tuy\s+nhiên|however)\b", re.I)
+CYCLE_THEN = re.compile(r",\s*rồi(?=\s+(?!(?:nhé|nha|nhá|nhỉ|đó|đấy|đây|ạ|à|á|mà|ha|hen|nè|vậy|thôi|luôn|hết|chứ"
+                        r"|anh|chị|em|sếp|bạn|ông|bà|cô|chú)\b)\w)", re.I)
+# "định" only as "dự định" / "<tôi> định": alone it is also "ổn định", "xác định", "khẳng định".
+CYCLE_PLAN_MARK = re.compile(r"\b(?:sẽ|cần|nên|dự\s+định|(?:tôi|mình|em|ta)\s+định|kế\s+hoạch|bước\s+tiếp|tiếp\s+theo"
+                             r"|will|should|plan(?:s|ned)?|next)\b", re.I)
 
 def cycle_name_only(sentence, match):
     if not RED_GREEN_NAME.search(match.group(0)):
         return False
     before, after = sentence[:match.start()], sentence[match.end():]
-    planned = (CYCLE_PLAN.search(sentence) or CYCLE_PROHIBIT_RUN.search(before) or CYCLE_PROPOSE.search(before)
-               or CYCLE_THEN.search(after))
-    if not planned or CYCLE_DONE.search(sentence[:match.end()] + CYCLE_THEN.sub(" ", after)):
+    marked = CYCLE_PLAN_MARK.search(sentence)
+    prohibit, proposal = CYCLE_PROHIBIT_RUN.search(before), CYCLE_PROPOSE.search(before)
+    then = bool(marked and CYCLE_THEN.search(after))
+    planned = (CYCLE_PLAN.search(sentence)
+               or (prohibit and not CYCLE_PROHIBIT_LIFTED.search(before, 0, prohibit.start()))
+               or (proposal and (marked or not CYCLE_PROPOSE_BREAK.search(before, proposal.end())))
+               or then)
+    if not planned or CYCLE_DONE.search(sentence[:match.end()] + (CYCLE_THEN.sub(" ", after) if then else after)):
         return False
     rest = RED_GREEN_NAME.sub(" ", sentence[match.start():])
     return not re.search(r"pass|xanh|green|thành\s+công|đạt|\d+\s*/\s*\d+", rest, re.I)
@@ -695,7 +717,9 @@ DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)*(?:test_[\w.-]+|\$\{?\w+\}?)\
 # the verdict is the summary: red on "N failed/FAILED", "N deviating" (N > 0), "❌" or a "✖"
 # line ("✘" too: test_repo_consistency, test_uninstall, test_restore_old print their failures with it);
 # green only on an explicit pass summary; anything else is not a verdict.
-DEVKIT_SUITE_RED = re.compile(r"\b[1-9]\d*\s+(failed|FAILED|deviating)\b|❌|^\s*[✖✘] ", re.M)
+# A line-start anchor under re.M takes `[^\S\n]*`, never `\s*`: `\s*` runs on across blank lines from every line start, so a tool result
+# with 30 000 blank lines took 18-68 s, past the Stop hook's 30 s cap (2026-10-25 review of af339645, P3; section P of the test).
+DEVKIT_SUITE_RED = re.compile(r"\b[1-9]\d*\s+(failed|FAILED|deviating)\b|❌|^[^\S\n]*[✖✘] ", re.M)
 DEVKIT_SUITE_GREEN = re.compile(r"all (checks )?passed|ALL [\w ,-]*PASSED|\b0 deviating\b|: all passed", re.I)
 # A command is a runner only in the segment that actually runs it. `&&` / `||` / `;` split segments
 # (not inside quotes, or inside for/while/until/if/case … done/fi/esac). A reader (echo, grep, git,
@@ -951,7 +975,7 @@ def _command_is_suite(cmd):
 # NUnit 3 (Unity) prints its verdict as `<test-run … failed="N">`: red only when N > 0.
 RUNNER_FAIL_RX = re.compile(
     r"(?i:\b[1-9]\d*\s+(failed|failing|failures?|errors?)\b)|(?i:\btests?:\s+[1-9]\d*\s+failed)|"
-    r"(?i:^\s*(?:[#ℹ*•-]\s*)?(fail|failures?|errors?)\s*[:=]?\s*[1-9]\d*\b)|"
+    r"(?i:^[^\S\n]*(?:[#ℹ*•-]\s*)?(fail|failures?|errors?)\s*[:=]?\s*[1-9]\d*\b)|"
     r"<test-run\b[^>\n]*\sfailed=\"[1-9]\d*\"|"
     # JUnit XML summary printed by the agent (`<testsuite … failures="5">`) after sending the
     # runner's own output to a log (GeelyEx2 2026-09-28: every real red read as green).
@@ -981,8 +1005,11 @@ def _echoed_exit(cmd, txt):
     for i, seg in enumerate(segs):
         if not _segment_is_runner(seg):
             continue
-        m = _ECHO_RC_RX.match(segs[i + 1]) if i + 1 < len(segs) and _single_command(seg) else None
-        hits = re.findall(r"(?m)^\s*" + re.escape(m.group(2)) + r"=(\d+)\s*$", txt) if m else []
+        # Only a direct `bash|sh <kit test file>` run binds (2026-10-25 review of af339645, P1): `bash -n`, `shellcheck`, `[ -f … ]`,
+        # `chmod +x`, `bash -c "…"`, `eval`, `! bash …` name a test file and run no test, so their rc=0 is no green, their rc=1 no RED.
+        m = (_ECHO_RC_RX.match(segs[i + 1])
+             if i + 1 < len(segs) and _single_command(seg) and _direct_bash_kit(seg) else None)
+        hits = re.findall(r"(?m)^[^\S\n]*" + re.escape(m.group(2)) + r"=(\d+)\s*$", txt) if m else []
         if len(hits) != 1:
             unbound = True
             continue
@@ -1018,9 +1045,9 @@ def runner_state(is_error, txt, pm_run=False, command=""):
             # Its own failure SUMMARY is a RED verdict (the RED of a RED→GREEN pair; `None` would drop it): `pass=2 fail=1`, a line that STARTS with
             # `failed: 3` / `errors=2`, a TAP `not ok` (indented too), an uppercase FAIL line. Anchored on purpose (OCR R1/R5): a passing test may print
             # `Error: 401 key rejected` (singular, a diagnostic), `ok: linter reports errors=2 on bad fixture`, or echo another tool's `ERROR: x`.
-            if re.search(r"(?i:^\s*(?:[#ℹ*•-]\s*)?(?:fail(?:ed|ures?|ing)?|errors)\s*[:=]\s*[1-9]\d*\b)"
+            if re.search(r"(?i:^[^\S\n]*(?:[#ℹ*•-]\s*)?(?:fail(?:ed|ures?|ing)?|errors)\s*[:=]\s*[1-9]\d*\b)"
                          r"|(?i:\bpass(?:ed)?\s*[:=]\s*\d+\s+fail(?:ed|ures?)?\s*[:=]\s*[1-9]\d*\b)"
-                         r"|^\s*FAIL(?:ED)?\b|(?i:^\s*not ok\b)", clean, re.M):
+                         r"|^[^\S\n]*FAIL(?:ED)?\b|(?i:^[^\S\n]*not ok\b)", clean, re.M):
                 return "red"
             if lines and not all(re.match(r"\s*skip(?:ped|ping)?\b", l, re.I) for l in lines):
                 return "green"
