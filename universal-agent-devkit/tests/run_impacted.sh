@@ -164,7 +164,7 @@ DEVKIT_RUN_BOUNDED=""
 DEVKIT_TEST_TIMEOUT_S="${DEVKIT_TEST_TIMEOUT_S:-1800}"
 case "$DEVKIT_TEST_TIMEOUT_S" in *[!0-9]*) echo "run_impacted.sh: DEVKIT_TEST_TIMEOUT_S must be whole seconds; using 1800" >&2; DEVKIT_TEST_TIMEOUT_S=1800 ;; esac
 export DEVKIT_RUN_BOUNDED DEVKIT_TEST_TIMEOUT_S
-# B2 (audit 25/10): sổ PASS theo từng test (tests/lib/per_test_cache.py, kho của bin/suite_cache.py, khoá = bao đóng của chính test). Chỉ khi
+# B2 (audit 25/10): sổ PASS theo từng test (tests/lib/per_test_cache.py, kho của bin/suite_cache.py, khoá = cả cây + đường dẫn test). Chỉ khi
 # gate bật (DEVKIT_PER_TEST_CACHE=1: dùng lại + ghi; record: chỉ ghi — lượt sentinel / --no-cache); `agent-kit test` không đặt biến: chạy hết.
 # `--list` ở trên không đổi (khoá của gate và lần kiểm lại R3 cần tập chọn đầy đủ). Helper vắng / lỗi: mọi test chạy như trước.
 DEVKIT_PTC=""; reused=""
@@ -211,7 +211,7 @@ for t in $selected; do
   o="$out/$(printf '%s' "$t" | tr '/' '_')"
   if is_reused "$t"; then
     age="$(awk -F'\t' -v t="$t" '$1 == "reuse" && $2 == t { print $3; exit }' "$out/ptc.plan")"
-    echo "↺ $t (PASS dùng lại theo khoá của chính test, chạy thật $((${age:-0} / 60)) phút trước)"
+    echo "↺ $t (PASS dùng lại trên cùng cây, chạy thật $((${age:-0} / 60)) phút trước)"
     continue
   fi
   [ -s "$o.ptc" ] && sed 's/^/    /' "$o.ptc"

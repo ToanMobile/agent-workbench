@@ -2,11 +2,13 @@
 """per_test_cache.py — sổ PASS theo TỪNG test của run_impacted.sh (audit DevKit 25/10, mục B2).
 
 Một TIMEOUT của REG-DK-ALL-01 (run_impacted.sh, trần 900 s của gate) vô hiệu mọi PASS bên trong nó: lượt sau chạy lại cả tập, lại quá giờ
-(54 TIMEOUT = 14,3 h trong 54 h đo ở workbench). Nay mỗi test PASS được ghi NGAY khi nó xong, vào kho của bin/suite_cache.py theo khoá bao
-đóng của chính test đó (cùng máy khoá: SuiteCache.keys của lệnh `bash <test>`); lượt sau bỏ qua test có PASS trên đúng khoá của nó.
+(54 TIMEOUT = 14,3 h trong 54 h đo ở workbench). Nay mỗi test PASS được ghi NGAY khi nó xong, vào kho của bin/suite_cache.py theo khoá CẢ
+CÂY của lệnh `bash <test>` (SuiteCache.keys()[1]: nội dung mọi file + đường dẫn test + môi trường + đích ngoài cây); lượt sau trên đúng cây đó
+bỏ qua test đã PASS (sau TIMEOUT, worktree anh em cùng cây, merge gate cùng cây). Không khoá theo bao đóng tĩnh: nó bỏ sót "$D/lib/x" ở kit
+lồng và `import` trong heredoc python của file .sh (review 26/10, F1).
 
   per_test_cache.py plan <kit> <out> <test>...   in "reuse<TAB><test><TAB><tuổi giây>" cho test dùng lại; test phải chạy thì ghi ảnh
-                                                  khoá <out>/<test, "/"→"_">.ptc.json (+ ảnh nội dung chung <out>/ptc.base.json)
+                                                  khoá <out>/<test, "/"→"_">.ptc.json (+ dấu vân tay cây chung <out>/ptc.base.json)
   per_test_cache.py record <out> <test> <rc>     ghi kết quả của một lần chạy THẬT (rc của test)
 
 Chỉ chạy khi gate bật (DEVKIT_PER_TEST_CACHE, post-fix-gate.py: "1" dùng lại + ghi theo khoá nội dung, "record" chỉ ghi — lượt sentinel /
@@ -14,10 +16,10 @@ Chỉ chạy khi gate bật (DEVKIT_PER_TEST_CACHE, post-fix-gate.py: "1" dùng 
 <kho suite>/per_test để không đẩy bản ghi suite ra khỏi STORE_MAX):
   - dùng lại ⇔ PASS trên đúng khoá (pass_n ≥ 1, fail_n = 0, trong tuổi tối đa, không cách ly, không bị void) VÀ lần chạy THẬT đó chưa quá
     DEVKIT_SENTINEL_MAX_S (24 h; 0 tắt): sentinel theo test — một test được dùng lại phải chạy thật ít nhất một lần mỗi 24 h;
-  - record ghi PASS khi input của khoá y nguyên sau khi test chạy; ghi FAIL lên khoá (SuiteCache.hit đòi fail_n = 0) và, khi khoá đang có
-    PASS, gọi SuiteCache.contradiction (học input thiếu hoặc cách ly); PASS trên khoá có fail_n > 0 (cùng nội dung, chập chờn): cách ly
-    id (QUARANTINE_S); TIMEOUT (124 của run_bounded) ghi timeout_n và void id; rc ≥ 128 (tín hiệu: gate giết cả nhóm khi REG-DK-ALL-01
-    quá giờ) hay 64 (lỗi dùng run_bounded) là kết luận của bên ngoài: record bỏ qua.
+  - record ghi PASS khi cả cây (và đích ngoài cây) y nguyên sau khi test chạy; ghi FAIL lên khoá (SuiteCache.hit đòi fail_n = 0) và, khi
+    khoá đang có PASS, gọi SuiteCache.contradiction (cùng cây mà khác kết quả: cách ly); PASS trên khoá có fail_n > 0 (cùng nội dung, chập
+    chờn): cách ly id (QUARANTINE_S); TIMEOUT (124 của run_bounded) ghi timeout_n và void id; rc ≥ 128 (tín hiệu: crash của chính test,
+    hay gate giết cả nhóm khi REG-DK-ALL-01 quá giờ) hay 64 (lỗi dùng run_bounded): không ghi kết quả, void id (review 26/10, F2).
   - plan không ghi ảnh khoá cho test có lệnh mạng (suite_cache.NETWORK): test đó chạy mỗi lượt.
 Lỗi của helper (ngoại lệ, kho không đọc được) làm plan không in "reuse": test chạy.
 """
@@ -73,12 +75,8 @@ def plan(kit, out, tests):
         return 0
     sc.store = os.path.join(sc.store, "per_test")
     sc.learned = sc.load_learned()   # input học được của kho per_test, không của kho suite
-    # Ảnh nội dung lúc tính khoá: MỘT file chung (đường dẫn + giá trị content_map), mỗi test chỉ giữ mặt nạ bit các input của nó — ảnh đầy đủ
-    # theo từng test là ~143 KB × 370 test = 53 MB mỗi lượt ở workbench (đo 26/10), và gate giết nhóm bằng SIGKILL thì trap không dọn được.
-    paths = sorted(sc.cmap)
-    pos = {p: i for i, p in enumerate(paths)}
-    base = {"v": 1, "project": project, "store": sc.store, "head": _head(project), "paths": paths,
-            "values": [sc.cmap[p] for p in paths], "danger": [pos[p] for p in sc.danger_files if p in pos]}
+    # Ảnh lúc tính khoá: một file chung (dấu vân tay cả cây) + mỗi test khoá và đích ngoài cây của nó; record so lại cả cây sau khi test chạy.
+    base = {"v": 2, "project": project, "store": sc.store, "head": _head(project), "tree": sc.tree_digest}
     if not _write(os.path.join(out, "ptc.base.json"), base):
         return 0
     now = time.time()
@@ -91,18 +89,18 @@ def plan(kit, out, tests):
         entry = {"id": ID_PREFIX + rel, "command": "bash " + rel}
         if mod.NETWORK.search(mod._read_text(full) or ""):
             continue   # đọc mạng ngay trong test: khoá nội dung không nói gì về kết quả
-        precise = sc.keys(entry)[0]
-        if not precise:
+        # KHOÁ CẢ CÂY (nội dung mọi file + đường dẫn test + môi trường), không khoá theo bao đóng: bao đóng tĩnh bỏ sót "$D/lib/x" ở kit lồng
+        # và `import` trong heredoc python của file .sh (review 26/10, F1) — PASS chỉ dùng lại khi đúng cây đó chạy lại (sau TIMEOUT, worktree
+        # anh em cùng cây, merge gate trên cùng cây).
+        key = sc.keys(entry)[1]
+        if not key:
             continue
-        rec = sc.hit(precise, entry, now) if mode == "1" else None
+        rec = sc.hit(key, entry, now) if mode == "1" else None
         if rec and not (max_s > 0 and now - rec["last_pass_at"] > max_s):
             print(f"reuse\t{test}\t{int(now - rec['last_pass_at'])}")
             continue
-        files, ext = sc.input_values[(entry["id"], entry["command"])]
-        if any(p not in pos for p in files):
-            continue   # input ngoài content_map: không có giá trị để kiểm lại sau khi chạy ⇒ không ghi ảnh, test chạy và không ghi gì
-        _write(_snap_path(out, test), {"id": entry["id"], "command": entry["command"], "key": precise, "ext": ext,
-                                       "inputs": format(sum(1 << pos[p] for p in files), "x")})
+        _write(_snap_path(out, test), {"id": entry["id"], "command": entry["command"], "key": key,
+                                       "ext": sc.input_values[(entry["id"], entry["command"])][1]})
     return 0
 
 
@@ -122,37 +120,32 @@ def record(out, test, rc):
             snap = json.load(f)
         with open(os.path.join(out, "ptc.base.json"), encoding="utf-8") as f:
             base = json.load(f)
-        bits = format(int(snap["inputs"], 16), "b")[::-1]   # bit i = paths[i] là input của test
-        paths, values = base["paths"], base["values"]
-        snap["files"] = {paths[i]: values[i] for i, b in enumerate(bits) if b == "1"}
-        snap["danger"] = {paths[i]: values[i] for i in base["danger"]}
-        snap.update(project=base["project"], store=base["store"], head=base["head"])
-    except (OSError, ValueError, KeyError, TypeError, IndexError):
-        return 0   # không có ảnh khoá (lượt không bật cache, test đọc mạng…) hay ảnh hỏng: không ghi gì
-    try:
+        project, store, tree = base["project"], base["store"], base["tree"]
         rc = int(rc)
-    except ValueError:
-        return 0
-    if rc >= 128 or rc == 64:
-        return 0   # bị giết từ ngoài / lỗi helper: không phải kết luận của test
-    status = "PASS" if rc == 0 else ("TIMEOUT" if rc == 124 else "FAIL")
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0   # không có ảnh khoá (lượt không bật cache, test đọc mạng…) hay ảnh hỏng: không ghi gì
     finished = time.time()
     mod = _suite_cache(os.path.dirname(os.path.dirname(HERE)))
-    sc = mod.SuiteCache(snap["project"], [], None, {}, "per-test-record", 0, {}, learned={})
-    sc.store = snap["store"]
+    sc = mod.SuiteCache(project, [], None, {}, "per-test-record", 0, {}, learned={})
+    sc.store = store
     entry = {"id": snap["id"], "command": snap["command"]}
+    if rc >= 128 or rc == 64:
+        # tín hiệu (crash 139/134 của chính test, hay gate giết nhóm) / lỗi dùng run_bounded: không phải kết luận PASS/FAIL, nhưng PASS cũ của
+        # test này không còn đáng tin (review 26/10, F2) — void: lượt sau chạy thật
+        sc.void(entry["id"], finished)
+        print(f"per_test_cache: {entry['id']}: rc {rc} (tín hiệu / helper) — PASS cũ của test này hết dùng lại")
+        return 0
+    status = "PASS" if rc == 0 else ("TIMEOUT" if rc == 124 else "FAIL")
     if status == "PASS":
-        cmap = sc.cmap or {}
-        same = all(cmap.get(p) == v for p, v in list(snap["files"].items()) + list(snap["danger"].items()))
+        same = sc.cmap is not None and mod.tree_digest(sc.cmap) == tree
         for tok, dig in snap["ext"].items():
-            hit = mod._external(snap["project"], tok, "")
+            hit = mod._external(project, tok, "")
             same = same and bool(hit) and mod._file_digest(hit[1]) == dig
         if not same:
-            print(f"per_test_cache: input của {test} đổi trong lúc chạy — không ghi PASS")
+            print(f"per_test_cache: cây đổi trong lúc {test} chạy — không ghi PASS")
             return 0
-    sc.input_values[(entry["id"], entry["command"])] = (snap["files"], snap["ext"])
-    # chỉ khoá chính xác (= khoá cả cây khi bao đóng bị cắt): plan chỉ tra khoá này, bản ghi theo khoá cả cây chỉ chiếm chỗ trong STORE_MAX
-    prev = sc.record(snap["key"], entry, status, {"head": snap.get("head")}, at=finished)
+    sc.input_values[(entry["id"], entry["command"])] = (dict.fromkeys(sc.cmap or {}), snap["ext"])   # input = cả cây (contradiction)
+    prev = sc.record(snap["key"], entry, status, {"head": base.get("head")}, at=finished)
     if status == "TIMEOUT":
         sc.void(entry["id"], finished)
     elif status == "FAIL":
