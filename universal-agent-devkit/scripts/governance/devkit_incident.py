@@ -82,8 +82,10 @@ RULES = [
 ]
 TRACEBACK = re.compile(r"^Traceback \(most recent call last\):")
 # Dòng cuối của một Traceback: "<module.>*<Class>" hoặc "<module.>*<Class>: <thông điệp>", đoạn cuối viết hoa theo quy ước class
-# Python — mọi tên (subprocess.TimeoutExpired, StopIteration…), không chỉ đuôi Error/Exception (25/10: runner OfficeReader chết vì
-# TimeoutExpired), nhưng không nhận "fatal: …", tên package "com.x.app", URL. Nó chỉ được xét ở dòng không thụt lề ĐẦU TIÊN sau frame.
+# Python — mọi tên kiểu subprocess.TimeoutExpired / StopIteration, không chỉ đuôi Error/Exception (25/10: runner OfficeReader chết vì
+# TimeoutExpired). Chỉ xét ở dòng không thụt lề ĐẦU TIÊN sau frame; loại đoạn cuối viết thường ("fatal: …", "com.x.app", URL).
+# ponytail: đánh đổi về phía không đăng nhầm lên repo public — bỏ sót exception tên viết thường (socket.gaierror, struct.error) và
+# vẫn nhận một từ viết hoa đứng ngay sau frame (Killed); nới khi thấy Traceback thật bị bỏ sót trong log board.
 EXC_LINE = re.compile(r"^((?:[A-Za-z_]\w*\.)*[A-Z]\w*(?::.*)?)$")
 FRAME = re.compile(r'^\s*File "([^"]+)", line \d+, in (\S+)')
 
