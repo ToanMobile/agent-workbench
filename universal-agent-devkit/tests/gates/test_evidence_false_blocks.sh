@@ -259,6 +259,17 @@ rc=0' \
 done
 transcript "$TMP/f6.jsonl" "$(pair 'python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"' 'rc=1' 'rc=0')"
 run 0 "$TMP/f6.jsonl" "$FIXCLAIM" "pair rc=1 / rc=0 of \`python3 -m pytest > /tmp/l 2>&1; echo \"rc=\$?\"\`: $FIXCLAIM"
+echo "-- F. the same next to a kit suite in one command: the kit's summary says nothing of the other runner"
+for c in 'bash tests/a/test_x.sh; python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"@@all passed (3)
+rc=1' \
+         'bash tests/a/test_x.sh; python3 -m pytest > /tmp/l 2>&1; echo $?@@all passed (3)
+1' \
+         'bash tests/a/test_x.sh; for d in a b; do python3 -m pytest -q $d > /dev/null 2>&1; done@@all passed (3)'; do
+  transcript "$TMP/f7.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/f7.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+transcript "$TMP/f8.jsonl" "$(steps_after_edit 'bash tests/a/test_x.sh; python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"' $'all passed (3)\nrc=0')"
+run 0 "$TMP/f8.jsonl" "$PASSCLAIM" "'all passed (3) / rc=0' after \`bash tests/a/test_x.sh; python3 -m pytest > /tmp/l 2>&1; echo \"rc=\$?\"\`: $PASSCLAIM"
 
 echo "-- G. a loop / compound runner gives no green from the absence of a failure marker (fail-open: glob loop always green)"
 for c in 'for f in tests/a/test_*.sh; do bash "$f"; done@@' \

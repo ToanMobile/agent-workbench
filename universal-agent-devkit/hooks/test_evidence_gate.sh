@@ -980,9 +980,11 @@ def _direct_hooks_tests(seg):
     script = next((w for w in words[1:] if not w.startswith("-")), "")
     return bool(_HOOKS_TESTS_FILE.search(script.replace("\\", "/")))
 
+def _is_suite_seg(seg):
+    return _segment_is_runner(seg) and bool(DEVKIT_SUITE_RX.search(seg) or _direct_hooks_tests(seg))
+
 def _command_is_suite(cmd):
-    return any(_segment_is_runner(seg) and (DEVKIT_SUITE_RX.search(seg) or _direct_hooks_tests(seg))
-               for seg in _command_segments(cmd))
+    return any(_is_suite_seg(seg) for seg in _command_segments(cmd))
 # Failure markers. Counts only when non-zero ("fail 0", "0 failed" are green), and the
 # bare words only in the capitals runners print (FAIL, FAILED, ERROR) — a passing test
 # named "shows error message" or node's "ℹ fail 0" summary must not read as red.
@@ -1058,41 +1060,40 @@ def _runs_as_command(seg):
                 return True
     return False
 
-def _masked_run(cmd, txt):
-    """(compound, masked) for a non-suite runner command. compound: a runner runs inside for/while/until/if/case. masked: the tool's
-    exit code is not the run's and the run may be hidden, so no green from the mere absence of a failure marker: a segment from the first
-    runner on reads `$?` (an echoed code only binds as in _echoed_exit), or a compound runner left blank output or sent its stdout to a
-    file (the tool's exit is the last iteration's). A compound whose output is in the result keeps the plain rule."""
-    segs = _command_segments(cmd)
-    runners = [i for i, s in enumerate(segs) if _segment_is_runner(s)]
-    if not runners:
-        return False, False
-    compound = [segs[i] for i in runners if _COMPOUND.match(segs[i])]
-    masked = (any(_STATUS_READ.search(s) for s in segs[runners[0]:])
-              or any(not txt.strip() or _STDOUT_AWAY.search(re.sub(r"\"[^\"]*\"|'[^']*'", "", s)) for s in compound))
-    return bool(compound), masked
+def _hidden(segs, i, txt):
+    """Runner segment i may hide its result, so the absence of a failure marker says nothing of it: a segment from it on reads `$?`
+    (the tool's exit is then the reader's; the code counts only when bound, _echoed_codes), or it is a compound (for/while/until/if/case:
+    the tool's exit is the last iteration's) that left blank output or sent its stdout to a file. A compound whose output is in the
+    result keeps the plain rule."""
+    s = segs[i]
+    return bool(any(_STATUS_READ.search(t) for t in segs[i:])
+                or (_COMPOUND.match(s) and (not txt.strip() or _STDOUT_AWAY.search(re.sub(r"\"[^\"]*\"|'[^']*'", "", s)))))
 
-def _echoed_exit(cmd, txt, binds=None):
-    """"red" when an echoed exit code of a runner segment is not 0, "green" when EVERY runner segment of the command is bound to an
-    echoed 0, else None. binds(seg): may this runner segment be bound at all (default: a direct `bash|sh <kit test file>` run)."""
+def _echoed_codes(cmd, txt, binds):
+    """(segments, [(i, code)]) for each runner segment i: the exit code its next segment `echo "<label>=$?"` printed when it binds, else
+    None. binds(seg): may this runner segment be bound at all."""
     segs = _command_segments(cmd)
-    codes, unbound = [], False
+    out = []
     for i, seg in enumerate(segs):
         if not _segment_is_runner(seg):
             continue
-        # Only a direct `bash|sh <kit test file>` run binds (2026-10-25 review of af339645, P1): `bash -n`, `shellcheck`, `[ -f … ]`,
-        # `chmod +x`, `bash -c "…"`, `eval`, `! bash …` name a test file and run no test, so their rc=0 is no green, their rc=1 no RED.
-        # A non-suite runner binds when it is the command of its segment (_runs_as_command).
         m = (_ECHO_RC_RX.match(segs[i + 1])
-             if i + 1 < len(segs) and _single_command(seg) and (binds or _direct_bash_kit)(seg) else None)
+             if i + 1 < len(segs) and _single_command(seg) and binds(seg) else None)
         hits = re.findall(r"(?m)^[^\S\n]*" + re.escape(m.group(2)) + r"=(\d+)\s*$", txt) if m else []
-        if len(hits) != 1:
-            unbound = True
-            continue
-        codes.append(int(hits[0]))
-    if any(c != 0 for c in codes):
+        out.append((i, int(hits[0]) if len(hits) == 1 else None))
+    return segs, out
+
+def _echoed_verdict(res):
+    """"red" when a bound code is not 0, "green" when EVERY runner segment is bound to 0, else None."""
+    if any(c not in (None, 0) for _, c in res):
         return "red"
-    return "green" if codes and not unbound else None
+    return "green" if res and all(c == 0 for _, c in res) else None
+
+def _suite_binds(seg):
+    """In a kit-suite command: a kit segment binds only as a direct `bash|sh <kit test file>` run (2026-10-25 review of af339645, P1:
+    `bash -n`, `shellcheck`, `[ -f … ]`, `chmod +x`, `bash -c "…"`, `eval`, `! bash …` name a test file and run no test, so their rc=0 is no
+    green, their rc=1 no RED); any other runner binds as the command of its segment (_runs_as_command)."""
+    return _direct_bash_kit(seg) if _is_suite_seg(seg) else _runs_as_command(seg)
 
 def runner_state(is_error, txt, pm_run=False, command=""):
     """"red", "green", "gate-green" (the DevKit gate: a green for checks 2 and 7, not for auto_link), or None (not a verdict) for one runner tool_result."""
@@ -1106,9 +1107,14 @@ def runner_state(is_error, txt, pm_run=False, command=""):
     if command and _command_is_suite(command):
         if is_error or DEVKIT_SUITE_RED.search(txt):
             return "red"
-        echoed = _echoed_exit(command, txt)
+        segs, res = _echoed_codes(command, txt, _suite_binds)
+        echoed = _echoed_verdict(res)
         if echoed:
             return echoed
+        # Another runner of the command that hides its result (`bash tests/…/test_x.sh; pytest > log; echo $?`): the kit summary
+        # says nothing of it, only its own pass summary can.
+        if any(c is None and not _is_suite_seg(segs[i]) and _hidden(segs, i, txt) for i, c in res):
+            return "green" if RUNNER_PASS_RX.search(txt) else None
         if DEVKIT_SUITE_GREEN.search(txt):
             return "green"
         # Exit 0 của tool là xanh khi bash/sh chạy thẳng file kit, dù không có "all passed".
@@ -1139,14 +1145,16 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if is_error or "CHUA TINH" in run_txt or RUNNER_FAIL_RX.search(run_txt):
             return None
         return "green"
-    compound, masked = _masked_run(command, txt) if command else (False, False)
+    segs, res = _echoed_codes(command, txt, _runs_as_command) if command else ([], [])
+    compound = any(_COMPOUND.match(segs[i]) for i, _ in res)
+    masked = any(_hidden(segs, i, txt) for i, _ in res)
     if is_error or RUNNER_FAIL_RX.search(txt) or ((compound or masked) and DEVKIT_SUITE_RED.search(txt)):
         return "red"
     if masked:
         # 2026-10-25 fail-opens: `python3 -m pytest > log 2>&1; echo "rc=$?"` printing rc=1, and a glob loop `for f in tests/a/test_*.sh;
         # do bash "$f" > /dev/null; done`, read as green (no failure marker in the result). A bound non-zero code is red; green needs every
         # runner bound to 0, or a pass summary in the result.
-        echoed = _echoed_exit(command, txt, _runs_as_command)
+        echoed = _echoed_verdict(res)
         if echoed:
             return echoed
         return "green" if (RUNNER_PASS_RX.search(txt) or DEVKIT_SUITE_GREEN.search(txt)) else None
