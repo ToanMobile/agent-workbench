@@ -440,12 +440,30 @@ export function superBoardApprovalsDir(override) {
   return path.join(os.homedir(), '.claude', 'super-board', 'approvals');
 }
 
-function approvalRequestSource(comments, head) {
-  if (!/^[0-9a-f]{40}$/.test(String(head || ''))) return null;
+// Chỉ người có quyền mới đăng được request được tin (cùng luật approved-head của super-board-run.sh). Thân PR (`closes #N`)
+// do tác giả PR sửa, ai cũng comment được trên issue: không lọc thì comment người ngoài lái `done` của chủ repo sang issue
+// chung, nơi request tin cậy của PR khác đang chờ — validate() của super-board-approval.py sẽ duyệt PR đó.
+// ponytail: author_association MEMBER/COLLABORATOR có thể chỉ có quyền đọc; gate (approval.py) vẫn đòi write/maintain/admin.
+const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
+// Đúng một dòng `approval-request: {json}` (như parse_request của approval.py), khớp repo/PR/head của phiếu.
+function requestMatches(body, record) {
+  const lines = body.split('\n').filter((line) => line.startsWith('approval-request: '));
+  if (lines.length !== 1) return false;
+  try {
+    const value = JSON.parse(lines[0].slice('approval-request: '.length));
+    return value?.head === record.head && value?.pr === Number(record.pr)
+      && String(value?.repo || '').toLowerCase() === String(record.repo).toLowerCase();
+  } catch {
+    return false; // JSON hỏng: không phải request hợp lệ, bỏ qua comment này
+  }
+}
+
+function approvalRequestSource(comments, record) {
+  if (!/^[0-9a-f]{40}$/.test(String(record?.head || ''))) return null;
   for (const comment of comments || []) {
-    const body = String(comment?.body || '');
-    if (!body.includes('approval-request:')) continue;
-    if (!body.includes(head)) continue;
+    if (!TRUSTED_ASSOCIATIONS.has(String(comment?.author_association || ''))) continue;
+    if (!requestMatches(String(comment?.body || ''), record)) continue;
     const source = Number(comment.source);
     if (!Number.isInteger(source) || source < 1) continue;
     return source;
@@ -477,13 +495,15 @@ async function readPrState(record, ghRead) {
 
 async function readApprovalComments(record, issues, ghRead) {
   const sources = [...new Set([record.source, record.pr, ...issues].filter((n) => Number(n) > 0))];
+  // Đọc song song (mỗi lời gọi gh vẫn timeout 15 s): đọc tuần tự N nguồn cộng dồn N×15 s trước khi trả lời callback.
+  // Promise.all giữ thứ tự nguồn, nên thứ tự chọn request không đổi.
+  const outs = await Promise.all(sources.map((source) => ghRead(['api', '--paginate', '--slurp', `repos/${record.repo}/issues/${source}/comments?per_page=100`])));
   const all = [];
-  for (const source of sources) {
-    const out = await ghRead(['api', '--paginate', '--slurp', `repos/${record.repo}/issues/${source}/comments?per_page=100`]);
-    for (const page of JSON.parse(out || '[]')) {
+  sources.forEach((source, i) => {
+    for (const page of JSON.parse(outs[i] || '[]')) {
       for (const comment of Array.isArray(page) ? page : []) all.push({ ...comment, source: Number(source) });
     }
-  }
+  });
   return all;
 }
 
@@ -527,10 +547,12 @@ export async function approveSuperBoardCallback(token, opts = {}) {
       };
     }
     comments = opts.readComments ? await opts.readComments(record) : await readApprovalComments(record, pr.issues, ghRead);
-  } catch {
+  } catch (err) {
+    // Toast giữ chung cho người bấm; nguyên nhân thật (gh thiếu, timeout 15 s, JSON hỏng) ghi log để khoanh vùng.
+    logStructured('warn', 'sb_approve_read_failed', { repo, pr: record.pr, error: err?.killed ? 'gh timeout (15 s)' : err?.message });
     return { toastText: 'Không đọc được approval-request.', showAlert: true };
   }
-  const source = approvalRequestSource(comments, head);
+  const source = approvalRequestSource(comments, record);
   if (!source) {
     return { toastText: `Chưa có approval-request cho head ${head.slice(0, 7)}: đăng request trên issue liên kết hoặc PR rồi bấm lại.`, showAlert: true };
   }

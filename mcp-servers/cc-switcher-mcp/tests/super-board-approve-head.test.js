@@ -30,7 +30,7 @@ function fakeGh(prHead, calls) {
       });
     }
     if (flat.includes('issues/164/comments?')) return JSON.stringify([[{ body: 'status comment' }]]);
-    if (flat.includes('issues/236/comments?')) return JSON.stringify([[{ body: request(prHead) }]]);
+    if (flat.includes('issues/236/comments?')) return JSON.stringify([[{ author_association: 'OWNER', body: request(prHead) }]]);
     return '';
   };
 }
