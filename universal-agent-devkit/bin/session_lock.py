@@ -108,7 +108,8 @@ def _gate_run(seg):
     return True
 SEPARATOR = _Re(r"(&&|\|\||[;|&\n])")
 CD_ONLY = _Re(r"^\s*(?:builtin\s+)?cd\s+(?:--\s+)?(\"[^\"]*\"|'[^']*'|[^\s;&|()<>$`\\]+)\s*$")
-PROJECT_DIR = _Re(r"\bCLAUDE_PROJECT_DIR=(\"[^\"]*\"|'[^']*'|\S+)")
+# the whole shell word (audit 25/10 A.4: `"$PWD"/../..` read as `"$PWD"` dropped the `/../..` that leads back into main)
+PROJECT_DIR = _Re(r"\bCLAUDE_PROJECT_DIR=((?:\"[^\"]*\"|'[^']*'|[^\s\"';&|()<>])*)")
 ALLOW_FLAG = "devkit-allow-shared"
 # A directory change the segment walk cannot follow (subshell, `bash -c`, eval, pushd, a cd with a redirect, GIT_DIR=...): the directory
 # is UNKNOWN from there on, so every later write fails closed (review 2026-10-08: `cd B && (cd A && git commit)` slipped through).
@@ -1273,21 +1274,81 @@ def _target(path):
     return os.path.realpath(top), gdir
 
 
-def _resolve(base, word):
-    """A cd / -C argument as an absolute path from `base` (None when base is unknown)."""
-    word = _unquote(word)
+_WORD_PART = _Re(r"\"([^\"]*)\"|'([^']*)'|([^\"']+)")
+_VAR_REF = _Re(r"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})")
+_SAFE_BARE = _Re(r"[\w./@%+:,=-]*")   # a value that word splitting and globbing leave as it is
+
+
+def _shell_word(word, known=None):
+    """One shell word with its quotes removed and each $NAME / ${NAME} that `known` holds replaced by its literal value - in double quotes
+    any value, unquoted only one word splitting and globbing leave alone. Single-quoted text, a part with a backslash and any other
+    variable or substitution keep their `$` / backtick, which _target cannot resolve (fail closed); an unbalanced quote: None."""
+    def value(ref, bare):
+        val = known.get(ref.group(1) or ref.group(2))
+        return ref.group(0) if val is None or (bare and not _SAFE_BARE.fullmatch(val)) else val
+
+    out, end = [], 0
+    for m in _WORD_PART.finditer(word):
+        if m.start() != end:
+            return None
+        end = m.end()
+        part = m.group(1) if m.group(1) is not None else m.group(3)
+        if part is None or "\\" in part or not known:   # single quotes: no expansion
+            out.append(m.group(2) if part is None else part)
+            continue
+        bare = m.group(3) is not None
+        out.append(_VAR_REF.sub(lambda ref: value(ref, bare), part))
+    return "".join(out) if end == len(word) else None
+
+
+def _resolve(base, word, known=None):
+    """A cd / -C / CLAUDE_PROJECT_DIR word as an absolute path from `base` (None when base is unknown); `known`: _shell_word."""
+    word = _shell_word(word, known)
+    if word is None:
+        return None
     if os.path.isabs(word):
         return word
     return os.path.join(base, word) if base else None
 
 
-def _git_target(cur, opts):
-    """The directory a git command acts on: `cur` moved by each `-C <dir>` in order; None (unknown) with --git-dir / --work-tree."""
+def _git_target(cur, opts, known=None):
+    """The directory a git command acts on: `cur` moved by each `-C <dir>` (the whole shell word) in order; None (unknown) with --git-dir /
+    --work-tree."""
     if re.search(r"--(?:git-dir|work-tree)", opts):
         return None
-    for d in re.findall(r"-C\s+(\"[^\"]*\"|'[^']*'|\S+)", opts):
-        cur = _resolve(cur, d)
+    for d in re.findall(r"-C\s+((?:\"[^\"]*\"|'[^']*'|[^\s\"'])+)", opts):
+        cur = _resolve(cur, d, known)
     return cur
+
+
+# audit 25/10 A.4: `W=<dir>; git -C $W …` - a variable is known only from a segment that is nothing but a literal assignment, run in this shell
+# for sure; a compound command (if / for / while / case / { }) can assign it on a path the walk does not follow: no variable is known there.
+_ASSIGN_ONLY = _Re(r"^\s*(?:export\s+)?([A-Za-z_]\w*)=(\"[^\"$`\\]*\"|'[^']*'|[^\s\"'$`\\;&|()<>~]*)\s*$")
+_SHELL_COMPOUND = _Re(r"(?:^|[\s;&|(])(?:if|then|elif|else|fi|for|select|while|until|do|done|case|esac|function|coproc|[{}])(?=$|[\s;&|()<>])")
+_SOURCES = _Re(r"^\s*(?:source|\.|eval)(?:\s|$)")
+
+
+def _name_bound(name, text):
+    """`text` names the variable other than as a plain $NAME / ${NAME} reference (`NAME=x cmd`, `read NAME`, `${NAME:=x}`, `for NAME in`)."""
+    rest = re.sub(r"\$(?:%s(?!\w)|\{%s\})" % (name, name), "", text)
+    return re.search(r"(?<!\w)%s(?!\w)" % name, rest) is not None
+
+
+def _track_vars(values, seg, sure):
+    """Update `values` (the variables known so far, None: none can be) by one segment: `NAME=literal` / `export NAME=literal` alone that
+    runs for `sure` in this shell sets NAME; any other mention of a known name forgets it (a conditional, piped or subshell assignment
+    too), and `source` / `.` / `eval` forget them all.
+    ponytail: a shell function or alias that assigns a variable is not seen; read the function body if one is ever met."""
+    if values is None:
+        return
+    a = _ASSIGN_ONLY.match(seg)
+    if a and sure:
+        values[a.group(1)] = _unquote(a.group(2))
+    elif _SOURCES.match(seg):
+        values.clear()
+    else:
+        for name in [n for n in values if _name_bound(n, seg)]:
+            values.pop(name)
 
 
 def write_hits_locked(cmd, top, cwd, sid=""):
@@ -1297,25 +1358,39 @@ def write_hits_locked(cmd, top, cwd, sid=""):
     inside quotes): a segment that is only `cd <dir>` moves the working directory for the segments after it, but only when it runs in
     the same shell (followed by && ; or a newline); a cd that may not have run (before | & ||) and any directory change the walk cannot
     follow (DIR_CHANGE) make the directory unknown; each write is judged by the toplevel of its `git -C <dir>` / `CLAUDE_PROJECT_DIR=<dir>`
-    / working directory."""
+    / working directory. In those words $PWD / ${PWD} is the directory the walk tracks (unknown when the line names PWD otherwise) and
+    $NAME a variable _track_vars knows (audit 25/10 A.4)."""
     locked = os.path.realpath(top) if top else None
     cur = cwd or top
     pieces = _split_segments(cmd)   # segment, separator, segment, ...
-    seen, hits_top, foreign, named = False, False, None, False
+    pwd_ok = not _name_bound("PWD", cmd)
+    values = None if _SHELL_COMPOUND.search(cmd) else {}
+
+    def known():
+        k = {n: v for n, v in (values or {}).items() if n != "PWD"}
+        if pwd_ok and cur:
+            k["PWD"] = cur
+        return k
+
+    seen, hits_top, foreign, named, opened = False, False, None, False, False
     for i in range(0, len(pieces), 2):
         seg = pieces[i]
         sep = pieces[i + 1] if i + 1 < len(pieces) else ""
+        # runs for sure in this shell: after the line start, `;` or a newline, before `;`, `&&`, a newline or the end, and no `(` / `$(` /
+        # backtick before it (the segment walk splits inside a substitution: `x=$(true; W=…` is a subshell's W)
+        _track_vars(values, seg, (pieces[i - 1] if i else "") in ("", ";", "\n") and sep in ("", ";", "&&", "\n") and not opened)
+        opened = opened or "(" in seg or "`" in seg
         cd = CD_ONLY.match(seg)
         if cd:
-            cur = _resolve(cur, cd.group(1)) if sep in ("&&", ";", "\n", "") else None
+            cur = _resolve(cur, cd.group(1), known()) if sep in ("&&", ";", "\n", "") else None
             continue
         if DIR_CHANGE.search(seg):
             cur = None
         named = named or bool(GIT_WRITE.search(seg) or GATE.search(seg))
-        targets = [_git_target(cur, m.group("opts")) for m in GIT_WRITE.finditer(seg)]
+        targets = [_git_target(cur, m.group("opts"), known()) for m in GIT_WRITE.finditer(seg)]
         if _gate_run(seg):
             pd = PROJECT_DIR.search(seg)
-            targets.append(_resolve(cur, pd.group(1)) if pd else cur)
+            targets.append(_resolve(cur, pd.group(1), known()) if pd else cur)
         for target in targets:
             seen = True
             tl, tgdir = _target(target)
@@ -1461,6 +1536,8 @@ def _trunk_sync(seg):
     --ff-only` with no remote or `origin` and no refspec that names a local ref (`pull --ff-only . branch` fast-forwards main onto any local
     branch, past the integrator's gate; OCR 9, 14/10). ponytail: a remote CONFIGURED to a local path (`remote.origin.url = .`) is not looked up."""
     verb, args = _git_verb(seg)
+    if not any(c in seg for c in "'\"\\"):   # `2>&1`, `> log` are redirects, not the remote (audit 25/10 A.4); quoted or escaped, `>` is a word
+        args = _drop_redirects(args)
     pos = [a for a in args if not a.startswith("-")]
     if verb not in ("fetch", "push", "pull") or _updates_checked_out_branch(seg) or (pos and _LOCAL_REMOTE.match(pos[0])):
         return False
@@ -1469,6 +1546,18 @@ def _trunk_sync(seg):
 
 _TRUNK_WRAP = _Re(r"^\s*(?:nohup|time(?:\s+-p)?)\s+")
 _TRUNK_REDIR = _Re(r"\d*>>?|&>>?|\d*>>?\S+|&>>?\S+|\d*>&\d+")
+
+
+def _drop_redirects(words):
+    """`words` without its output redirects (`2>&1`, `>log`, and a bare `>` / `2>` with the target word after it)."""
+    out, k = [], 0
+    while k < len(words):
+        if _TRUNK_REDIR.fullmatch(words[k]):
+            k += 2 if re.fullmatch(r"\d*>>?|&>>?", words[k]) else 1
+            continue
+        out.append(words[k])
+        k += 1
+    return out
 
 
 def _trunk_unwrap(seg):

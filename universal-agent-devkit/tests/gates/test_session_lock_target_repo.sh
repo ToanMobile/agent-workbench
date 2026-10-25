@@ -89,6 +89,12 @@ cases = [
     ("git -C B push", lambda: bash(f"git -C {B} push origin main"), 0),
     ("post-fix-gate with CLAUDE_PROJECT_DIR=B", lambda: bash(f"CLAUDE_PROJECT_DIR={B} python3 {GATE} --run-tests --full"), 0),
     ("cd B && post-fix-gate", lambda: bash(f"cd {B} && python3 {GATE} --run-tests"), 0),
+    # audit 25/10 A.4: "$PWD" is the directory the walk tracks (AGENTS.md §7.1 `cd <wt> && CLAUDE_PROJECT_DIR="$PWD" …post-fix-gate.py`)
+    ("cd B && CLAUDE_PROJECT_DIR=\"$PWD\" post-fix-gate", lambda: bash(f'cd {B} && CLAUDE_PROJECT_DIR="$PWD" python3 {GATE} --run-tests --full'), 0),
+    ("from B: cd A && CLAUDE_PROJECT_DIR=\"$PWD\" post-fix-gate", lambda: bash(f'cd {A} && CLAUDE_PROJECT_DIR="$PWD" python3 {GATE} --run-tests --full', cwd=B), 2),
+    ("from B: CLAUDE_PROJECT_DIR=\"$PWD\"/../locked post-fix-gate", lambda: bash(f'CLAUDE_PROJECT_DIR="$PWD"/../locked python3 {GATE} --run-tests --full', cwd=B), 2),
+    ("W=B; git -C $W commit", lambda: bash(f"W={B}; git -C $W commit -m x"), 0),
+    ("from B: W=A; git -C $W commit", lambda: bash(f"W={A}; git -C $W commit -m x", cwd=B), 2),
     ("git merge-base --is-ancestor (read-only)", lambda: bash("git merge-base --is-ancestor a b"), 0),
     ("git merge-tree --write-tree (read-only)", lambda: bash("git merge-tree --write-tree a b"), 0),
     ("git commit-tree (writes an object, no ref)", lambda: bash("git commit-tree T -p a -m m"), 0),
