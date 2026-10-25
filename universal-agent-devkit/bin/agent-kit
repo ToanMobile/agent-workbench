@@ -212,7 +212,8 @@ case "$CMD" in
       restore) shift; "${RC[@]}" restore "$@" ;;
       check) "${RC[@]}" check ;;
       show) "${RC[@]}" show ;;
-      *) echo "agent-kit checklist: restore [--list | --dismiss | <snapshot>] | check | show" >&2; exit 2 ;;
+      migrate-pending) "${RC[@]}" migrate-pending ;;
+      *) echo "agent-kit checklist: restore [--list | --dismiss | <snapshot>] | check | show | migrate-pending" >&2; exit 2 ;;
     esac
     ;;
   req|reqs)
@@ -367,6 +368,10 @@ Commands:
                       per row by time, links = union minus recorded unlinks, rows added since kept
                       (never a blind copy). --list: snapshots; --dismiss: keep the file as it is
   checklist check     Exit 1 with the warning when a rollback is open
+  checklist migrate-pending
+                      Trunk-mode main: the rows an old prompt hook left uncommitted in the tracked
+                      checklist go to the pending store (outside git), checked row by row, then the
+                      two files return to HEAD so main fast-forwards again (SessionStart runs it)
   req add "<title>" --criterion "…" [--criterion …] [--module M] [--source TEXT] [--inbox KEY] [--reason R]
                       A requirement with acceptance criteria, written BEFORE the code and locked
                       by hash (changing them needs --reason). NEEDS_TEST until every criterion has

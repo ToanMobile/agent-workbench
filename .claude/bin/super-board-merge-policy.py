@@ -53,9 +53,41 @@ DEFAULT_ALWAYS_HUMAN = {
         "paths": ["**/billing/**", "**/payments/**", "**/stripe/**", "**/checkout/**"],
         # Stripe is matched by its real context, not the bare word `stripe.` (#261: `stripe.material`, a colour-stripe variable,
         # sent PR #224 to a person): import/require, api.stripe.com, live keys, a `Stripe(` call. `added` is lower-cased.
-        "keywords": ["api.stripe.com", "payment_intent", "price_id", "invoice.create"],
-        "patterns": [r"\b(?:import|from)\s+stripe\b", r"from\s+['\"]stripe['\"]", r"require\(\s*['\"]stripe['\"]",
-                     r"\b[sp]k_live_", r"\bstripe\("],
+        # Go/Java/Kotlin: import SDK (`github.com/stripe/stripe-go`, `import com.stripe.`), gói Go `paymentintent.New(`,
+        # `stripe.NewClient(`. Stripe.js: gói `@stripe/…`, `loadStripe(`, `useStripe(`. Mobile: PaymentSheet (iOS/Android/RN),
+        # `PaymentConfiguration.init(`, `StripeAPI.`. Tiền ngoài Stripe: Google Play Billing, Unity IAP.
+        # ponytail: danh sách theo SDK, receiver tên khác (`stripeService.charges.create(`) vẫn lọt; thêm khi gặp SDK/tên mới.
+        "keywords": ["api.stripe.com", "payment_intent", "price_id", "invoice.create",
+                     "github.com/stripe/stripe-go", "import com.stripe.", "paymentintent.new(",
+                     "stripe.newclient(", "@stripe/", "loadstripe(", "usestripe(", "paymentsheet",
+                     "paymentconfiguration.init(", "stripeapi.", "com.android.billingclient", "launchbillingflow(",
+                     "unityengine.purchasing", "initiatepurchase("],
+        # `require 'stripe'` (Ruby) và `require('stripe')` (Node), giữ dấu đóng để `require('striped-table')` vẫn auto;
+        # `new StripeClient(` (Node/PHP v2).
+        "patterns": [r"\b(?:import|from)\s+stripe\b", r"from\s+['\"]stripe['\"]", r"require\s*\(?\s*['\"]stripe['\"/]",
+                     r"\b[sp]k_live_", r"\bstripe(?:client)?\(",
+                     # Lời gọi SDK trong file đã import Stripe từ trước (import không nằm trong diff): `stripe.api_key = …`,
+                     # Go `stripe.Key = …`, `stripe.Charge.create(`, `stripeClient.charges.create(`, Ruby `Stripe::Charge.create(`,
+                     # PHP `$stripe->charges->create(` / `\Stripe\Charge::create(`, Python `create_async(`. Theo hình dạng
+                     # (receiver stripe / stripe_client + phân cách `.` `::` `->` `\` + động từ API + `(`) vì `added` đã hạ
+                     # chữ thường. Auto (#261): `stripe.material.depthWrite`, `stripe.mesh.updateMatrix()`, `stripes.delete(`,
+                     # `stripeCache.delete(`, `stripedRows.update(`, `key={stripe.key}` (Go chỉ khi gán `stripe.key =`),
+                     # `stripe.update(color)`: động từ cần ít nhất một đoạn tài nguyên ở giữa (`+`), SDK không có
+                     # `stripe.update(`; lời gọi trực tiếp của Stripe.js có tên riêng (`confirmCardPayment`, `redirectToCheckout`…),
+                     # `stripe.confirmSelection(` thì không. `stripe.key = \`row-${i}\`` (template literal JS có `${`) là khoá
+                     # danh sách; Go raw string `stripe.Key = \`sk_test_…\`` vẫn là khoá API.
+                     r"\bstripe\w*(?:\.|::|->|\\)(?:api_?key|set_?api_?key)\b", r"\bstripe\.key\s*=(?!=)(?!\s*`[^`]*\$\{)",
+                     r"\bstripe(?:_?client)?\b(?:(?:\.|::|->|\\)\w+)+(?:\.|::|->|\\)(?:create|retrieve|update|modify|list"
+                     r"|del|delete|cancel|capture|confirm|search|construct_?event)(?:_async)?\s*\(",
+                     r"\bstripe\.(?:confirm\w*(?:payment|setup)|redirecttocheckout|createpaymentmethod|createtoken"
+                     r"|handle(?:card|next)action|retrieve(?:payment|setup)intent|paymentrequest|init\w*checkout)\s*\(",
+                     # Go `&stripe.ChargeParams{` (literal luôn có `{`; `&stripe.drawParams)` là con trỏ đồ hoạ), gói Go
+                     # `charge.New(`/`refund.New(` theo ranh giới từ (`recharge.New(` vẫn auto), Java khi import nằm ngoài diff:
+                     # `PaymentIntent.create(`, `Charge.create(`, `SessionCreateParams`. Không có `.` đứng trước: thuộc tính
+                     # của model khác (`battery.charge.create(`) vẫn auto; `stripe.Charge.create(` đã có luật động từ ở trên.
+                     r"&stripe\.\w+params\s*\{", r"(?<![\w.])(?:charge|refund)\.new\(",
+                     r"(?<![\w.])(?:paymentintent|charge|refund)\.create\(",
+                     r"\b(?:paymentintent|charge|refund|session|subscription|invoice|customer|price|product)createparams\b"],
     },
     "auth": {
         "labels": ["auth", "security"],

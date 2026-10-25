@@ -939,8 +939,21 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if DEVKIT_SUITE_GREEN.search(txt):
             return "green"
         # Exit 0 của tool là xanh khi bash/sh chạy thẳng file kit, dù không có "all passed".
+        # A kit test that exits 0 on its skip path ("skip: no scripts here") or prints nothing checked nothing (OCR 24/10): empty output, or output
+        # whose every line is a `skip` line, is no run. Any other output counts, whatever its summary style (✔, `ok: …`, `pass=5 fail=0`, `ALL OK`:
+        # 21 kit tests print none of ✔ / "all passed"), and a run with a skipped optional case among passes is still a run.
         if not is_error and _command_is_direct_bash_kit(command):
-            return "green"
+            clean = ANSI_RX.sub("", txt)
+            lines = [l for l in clean.splitlines() if l.strip()]
+            # Its own failure SUMMARY is a RED verdict (the RED of a RED→GREEN pair; `None` would drop it): `pass=2 fail=1`, a line that STARTS with
+            # `failed: 3` / `errors=2`, a TAP `not ok` (indented too), an uppercase FAIL line. Anchored on purpose (OCR R1/R5): a passing test may print
+            # `Error: 401 key rejected` (singular, a diagnostic), `ok: linter reports errors=2 on bad fixture`, or echo another tool's `ERROR: x`.
+            if re.search(r"(?i:^\s*(?:[#ℹ*•-]\s*)?(?:fail(?:ed|ures?|ing)?|errors)\s*[:=]\s*[1-9]\d*\b)"
+                         r"|(?i:\bpass(?:ed)?\s*[:=]\s*\d+\s+fail(?:ed|ures?)?\s*[:=]\s*[1-9]\d*\b)"
+                         r"|^\s*FAIL(?:ED)?\b|(?i:^\s*not ok\b)", clean, re.M):
+                return "red"
+            if lines and not all(re.match(r"\s*skip\b", l, re.I) for l in lines):
+                return "green"
         return None
     if pm_run:
         codes = PM_RUN_EXIT_RX.findall(txt)
@@ -1848,8 +1861,6 @@ def bug_link_reminder():
     try:
         items = json.load(open(os.path.join(repo, ".agents", "regression_status.json"), encoding="utf-8"))["items"]
     except Exception:
-        if not linked_worktree():
-            return None
         items = {}   # (as in session_bug_rows)
     items = with_overlay(items)   # a linked worktree: the auto-link and the REPORTED rows its hooks kept in its own state
     raw_sid = str(d.get("session_id") or "")
@@ -1901,16 +1912,24 @@ def linked_worktree():
 
 def with_overlay(items):
     """In a LINKED worktree the rows its hooks kept in the worktree's own state (an auto-link, a RED-proof, a REPORTED bug) join the
-    tracked ones, so the reminders and the VACUOUS hold below behave as in the main checkout."""
-    if not linked_worktree():
-        return items
+    tracked ones, so the reminders and the VACUOUS hold below behave as in the main checkout. Ở mọi checkout: cả các dòng REPORTED
+    main trunk mode giữ ngoài git (regression_checklist.apply_pending), như load_view thấy."""
+    linked = linked_worktree()   # (cũng đưa bin/ của kit vào sys.path)
+    view = {"items": dict(items)}
     try:
         import regression_checklist as rc
-        view = {"items": dict(items)}
-        rc.apply_overlay(view, repo)
-        return view["items"]
-    except Exception:  # noqa: BLE001 — unreadable overlay: the tracked rows alone
+    except Exception:  # noqa: BLE001 — no kit module: the tracked rows alone
         return items
+    try:   # sổ chờ và overlay đọc riêng (như load_view): một cái hỏng không làm mất cái kia
+        getattr(rc, "apply_pending", lambda _d, _p: None)(view, repo)
+    except Exception:  # noqa: BLE001 — unreadable pending store: without it
+        pass
+    if linked:
+        try:
+            rc.apply_overlay(view, repo)
+        except Exception:  # noqa: BLE001 — unreadable overlay: without it
+            pass
+    return view["items"]
 
 def auto_link():
     if not fix_proven or os.environ.get("AUTO_LINK", "1") == "0":
@@ -1945,8 +1964,8 @@ def auto_link():
             data["items"][unlinked[0]]["linked_by"] = "auto"
             if linked_worktree():
                 rc.overlay_save_rows(repo, data, [unlinked[0]])   # the worktree's own state, read back by with_overlay
-            else:
-                rc.save(_P(repo), data)
+            else:   # đúng dòng vừa link, không bao giờ cả sổ chờ của view (main trunk mode: vào sổ chờ, file track không đổi)
+                getattr(rc, "save_view_rows", lambda p, dd, _ids: rc.save(p, dd))(_P(repo), data, [unlinked[0]])
         logline(f"[{ts}] auto-link {unlinked[0]} → {rel} ({in_matrix})")
     except Exception as e:  # noqa: BLE001 — never fail the Stop over the convenience link
         logline(f"[{ts}] auto-link failed: {e!r}")
@@ -1958,9 +1977,7 @@ def session_bug_rows():
     try:
         items = json.load(open(os.path.join(repo, ".agents", "regression_status.json"), encoding="utf-8"))["items"]
     except Exception:
-        if not linked_worktree():
-            return {}
-        items = {}   # a linked worktree whose tracked checklist is not there: the rows of its own state still count
+        items = {}   # no tracked checklist (or unreadable): the worktree's own state and the pending store still count
     raw_sid = str(d.get("session_id") or "")
     items = with_overlay(items)
     return {bid: it for bid, it in items.items() if isinstance(it, dict) and it.get("kind") in ("bug", "req")

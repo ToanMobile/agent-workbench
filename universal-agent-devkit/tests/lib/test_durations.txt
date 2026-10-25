@@ -396,7 +396,12 @@
 9 tests/gates/test_guard_secrets.sh
 6 tests/worktree_git/test_githooks_heal.sh
 5 tests/gates/test_suite_cache_store_fifo.sh
+10 tests/gates/test_run_bounded.sh
 # 2026-10-25: T0055 devkit_incident (lỗi do kit ở board 5 repo thành thẻ); đo 12 s.
 12 tests/verification/test_devkit_incident.sh
 # 2026-10-25: T0055 devkit_incident (lỗi do kit ở board 5 repo thành thẻ); đo 31 s.
 31 tests/verification/test_devkit_incident.sh
+# 2026-10-25: main trunk mode không ghi dòng REPORTED vào checklist track (sổ chờ pending_rows.json); đo 15 s.
+15 tests/worktree_git/test_trunk_main_reported_pending.sh
+# 2026-10-25: người ghi tự động khác ở main trunk mode (auto-link, red_proof, SessionStart, hộp thư, migrate-pending); đo 70 s lúc máy tải cao.
+70 tests/worktree_git/test_trunk_main_pending_writers.sh

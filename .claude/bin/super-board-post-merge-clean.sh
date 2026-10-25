@@ -533,6 +533,70 @@ for r in json.load(sys.stdin):
 }
 prune_salvage
 
+# drop_card <N>: thẻ BỊ BỎ (gom vào thẻ khác, hết cần) = issue CLOSED với stateReason NOT_PLANNED quá GRACE giây. Không có PR MERGED để
+# dựa vào, nên merged_rows trả rỗng và sweep trước đây bỏ qua mãi: 24/10 repo này có 20 worktree / 31 nhánh khi chỉ 4 thẻ chạy, 14 nhánh
+# là của thẻ đã gom (issue đóng 23/10, PR vẫn MỞ). Đóng PR mở của thẻ (kèm lời nhắn), gỡ worktree bằng kit (còn sửa thật thì kit từ chối:
+# giữ), xoá nhánh local bằng `prune-branch --dropped` (kit tự kiểm lại issue + không còn PR mở, cất commit riêng vào refs/devkit/discarded
+# 30 ngày). 0 = thẻ bị bỏ (đã xử lý), 1 = không phải. Lane còn sống đã bị loại trước khi gọi.
+drop_card() {
+  local n="$1" info st age prs p i wt br co
+  info=$(gh_t issue view "$n" --json state,stateReason,closedAt 2>/dev/null) || return 1
+  st=$(printf '%s' "$info" | python3 -I -c '
+import calendar, json, sys, time
+try:
+    d = json.load(sys.stdin)
+    age = time.time() - calendar.timegm(time.strptime(d["closedAt"], "%Y-%m-%dT%H:%M:%SZ"))
+    print(d["state"], d["stateReason"], int(age))
+except (KeyError, TypeError, ValueError):
+    print("? ? 0")') || return 1
+  age="${st##* }"
+  case "$st" in "CLOSED NOT_PLANNED "*|"CLOSED DUPLICATE "*) ;; *) return 1 ;; esac
+  if [ "$age" -lt "$GRACE" ]; then echo "kept card $n: closed as not planned under ${GRACE}s ago" >&2; return 0; fi
+  # Không có kit: không gỡ worktree / nhánh bằng git trần (bỏ qua luật không-mất-việc của kit); PR mở vẫn đóng được, nhưng chỉ sau khi đọc được danh sách
+  [ -n "$KIT_WT" ] || { echo "kept card $n: no DevKit (agent-kit worktree) to prove its worktrees and branches safe" >&2; return 0; }
+  prs=$(gh_t pr list --state open --search "head:issue-$n-" --limit 100 --json number,headRefName,isCrossRepository 2>/dev/null) \
+    || { echo "kept card $n: gh pr list failed; nothing closed or removed" >&2; return 0; }
+  prs=$(printf '%s' "$prs" | python3 -I -c '
+import json, re, sys
+try:
+    for r in json.load(sys.stdin):
+        if re.match(r"issue-" + sys.argv[1] + r"-", r["headRefName"]) and r.get("isCrossRepository") is False:
+            print(r["number"])
+except (KeyError, TypeError, ValueError):
+    sys.exit(1)' "$n") || { echo "kept card $n: gh pr list gave an unreadable answer; nothing closed or removed" >&2; return 0; }
+  for p in $prs; do
+    if [ "$DRY" -eq 1 ]; then echo "would close PR #$p (card $n closed as not planned)" >&2
+    elif gh_t pr close "$p" --comment "Closed by the sweep: card #$n was closed as not planned (folded into another card or dropped). Its pushed branch stays recoverable from this PR (refs/pull/$p/head); a local branch is deleted only once pushed." >/dev/null 2>&1
+    then echo "closed PR #$p (card $n closed as not planned)" >&2
+    else echo "kept card $n: gh pr close #$p failed; its worktrees and branches stay" >&2; return 0; fi
+  done
+  i=0
+  while [ "$i" -lt "${#WT_P[@]}" ]; do
+    wt="${WT_P[$i]}"; i=$((i + 1))
+    [ "${WT_N[$((i - 1))]}" = "$n" ] && [ -d "$wt" ] || continue
+    case "$HERE_PWD/" in "$(cd "$wt" && pwd -P)"/*) echo "kept $wt: it holds this sweep's working directory" >&2; continue ;; esac
+    # worktree issue-<N>-… mà đang ở nhánh của thẻ khác (việc của thẻ gom tiếp tục ở checkout cũ): không phải của thẻ bị bỏ
+    br=$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null) || br=""
+    case "$br" in ""|"issue-$n-"*) ;; *) echo "kept $wt: it is on branch $br, not a branch of card $n" >&2; continue ;; esac
+    if session_held "$wt"; then echo "kept $wt: a live session holds its checkout lock" >&2; continue; fi
+    if p=$(locked_by_other "$wt"); then echo "kept $wt: locked ($p), not touched" >&2; continue; fi
+    if [ "$DRY" -eq 1 ]; then echo "would ask agent-kit to remove $wt (card $n closed as not planned; kept if it holds real work)" >&2; DRY_GONE="$DRY_GONE$wt"$'\n'
+    else remove_wt "$wt"; fi
+  done
+  while IFS= read -r br; do
+    [ -n "$br" ] || continue
+    co=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | awk -v b="branch refs/heads/$br" '/^worktree /{w=substr($0,10)} $0==b{print w; exit}')
+    if [ -n "$co" ] && ! printf '%s' "$DRY_GONE" | grep -qxF "$co"; then echo "kept branch $br: still checked out at $co" >&2; continue; fi
+    if [ -z "$KIT_WT" ]; then echo "kept branch $br: no DevKit (agent-kit worktree prune-branch) to prove it safe" >&2
+    elif [ "$DRY" -eq 1 ]; then echo "would ask agent-kit prune-branch --dropped for $br (card $n closed as not planned; deleted only if pushed and no open PR)" >&2
+    else
+      p=$(cd "$REPO_PATH" && python3 "$KIT_WT" prune-branch --dropped "$br" 2>&1) || p="kept branch $br: $(printf '%s\n' "$p" | grep -m1 '✖' | cut -c1-300)"
+      printf '%s\n' "$p" >&2
+    fi
+  done < <(git -C "$REPO_PATH" for-each-ref --format='%(refname:short)' "refs/heads/issue-$n-*" 2>/dev/null)
+  return 0
+}
+
 READ_OK=0
 # Mỗi thẻ là một lần gọi search API của GitHub (~30 lần/phút): một lượt xử lý tối đa 20 thẻ, thứ tự xáo ngẫu nhiên, để lượt dừng giữa
 # chừng (giới hạn, gh hỏng) không bỏ đói mãi các thẻ cuối danh sách (OCR). Thẻ chưa tới lượt thì lần sweep sau.
@@ -543,7 +607,10 @@ for n in $NS; do
   # gh hỏng / treo: dừng cả lượt (các thẻ sau cũng sẽ hỏng), không gỡ gì thêm
   rows=$(merged_rows "$n") || { echo "sweep: gh pr list failed (card $n); stopping, nothing more removed" >&2; break; }
   READ_OK=1
-  if [ -z "$rows" ]; then [ "$DRY" -eq 0 ] || echo "kept card $n: no merged PR of it into $BASE" >&2; continue; fi
+  if [ -z "$rows" ]; then
+    drop_card "$n" || { [ "$DRY" -eq 0 ] || echo "kept card $n: no merged PR of it into $BASE" >&2; }
+    continue
+  fi
   if printf '%s\n' "$rows" | grep -q $'\tyoung$'; then echo "kept card $n: a PR of it merged under ${GRACE}s ago (Reviewer's post-merge steps)" >&2; continue; fi
   st=$(gh_t issue view "$n" --json state -q .state 2>/dev/null) || st="?"
   [ "$st" = CLOSED ] || { echo "kept card $n: issue state ${st:-?}, not CLOSED" >&2; continue; }

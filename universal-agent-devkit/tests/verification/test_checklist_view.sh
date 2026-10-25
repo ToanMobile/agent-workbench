@@ -9,6 +9,7 @@
 #  - archive: a bug PASS for ≥ 30 days and ≥ 30 commits since its link moves to
 #    .agents/archive/BUG_ARCHIVE.md (view only — still checked); back in the alert zone when red
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
+export WORKTREE_TRUNK_MODE=0   # checklist kiểu cũ: ở trunk mode (mặc định) lệnh bugs/req ở main ghi sổ chờ ngoài git (tests/worktree_git/test_trunk_main_pending_writers.sh kiểm đường đó)
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; KIT="$DEVKIT_DIR/bin/agent-kit"; RC="$DEVKIT_DIR/bin/regression_checklist.py"

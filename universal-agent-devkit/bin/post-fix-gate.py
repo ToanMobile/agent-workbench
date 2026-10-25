@@ -1644,11 +1644,25 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         log_err(f"full-pass receipt not written: {e}")
 
 
-def mark_merge_gate_receipt(project_dir, diff_ref):
+def head_tree(project_dir):
+    """The tree object HEAD points at ('' when git cannot say): taken BEFORE a run, it names the tree that run tested."""
+    try:
+        r = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "HEAD^{tree}"], capture_output=True, text=True, timeout=15)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
     """#319: a --full PASS against origin/<base> on a clean tree that holds it is also the merge gate's verify of this tree: the board's
     super-board-verify-cmd.sh --mark writes the tree receipt under the key the merge gate reads (one key function, not copied here), so a PR runs
     --full once instead of twice. It refuses a dirty tree or a base not in the tree itself; no board config or script = the old behaviour."""
-    if not diff_ref or not diff_ref.startswith("origin/"):
+    # OCR 24/10: not a receipt for what this run did not prove: no tree taken before the run, or a run that relaxed a check (`relaxing`: the
+    # --allow-no-tests / --allow-orphan-tests / --auto-approve-tests flags it used, DEVKIT_AUTO_APPROVE_TESTS=1 as the last) that the board's
+    # verify line does not carry itself — the merge gate runs that line, so a flag it carries relaxes both runs the same way (this repo's own
+    # line carries --auto-approve-tests: refusing every relaxing run would never write a receipt).
+    # ponytail: a custom --matrix is not compared with the verify command's (it has none); compare when a board's gate line names its matrix.
+    if not diff_ref or not diff_ref.startswith("origin/") or not tested_tree:
         return
     root = Path(project_dir)
     script = root / ".claude" / "bin" / "super-board-verify-cmd.sh"
@@ -1656,10 +1670,20 @@ def mark_merge_gate_receipt(project_dir, diff_ref):
     if not script.is_file() or len(configs) != 1:
         return
     try:
-        base = json.loads(configs[0].read_text(encoding="utf-8")).get("base_branch") or "main"
+        cfg = json.loads(configs[0].read_text(encoding="utf-8"))
+        base = cfg.get("base_branch") or "main"
         if diff_ref != f"origin/{base}":
             return
-        r = subprocess.run(["bash", str(script), "--config", str(configs[0]), "--mark"], cwd=str(root),
+        # Whole tokens of the line as the shell reads it (a flag inside a `# comment` or glued into a longer word is not carried by it).
+        carried = set()
+        for c in cfg.get("verify_commands") or []:
+            try:
+                carried.update(shlex.split(str(c), comments=True))
+            except ValueError:   # an unbalanced quote: the line cannot be read as the shell does, so it carries nothing
+                pass
+        if any(flag not in carried for flag in relaxing):
+            return
+        r = subprocess.run(["bash", str(script), "--config", str(configs[0]), "--mark", "--tree", tested_tree], cwd=str(root),
                            capture_output=True, text=True, timeout=30)
         if r.returncode not in (0, 65):   # 65 = dirty tree / base not merged: the documented "no receipt"
             log_err(f"tree receipt not written (exit {r.returncode}): {r.stderr.strip()[-200:]}")
@@ -3959,7 +3983,7 @@ def _signal_group(proc, sig) -> None:
             proc.send_signal(sig)
 
 
-# #370: run_in_group appends this marker and a `ps` snapshot of the suite's process group to the output of a suite it had to stop,
+# #370: run_in_group appends this marker and a `ps` snapshot of the suite's process tree to the output of a suite it had to stop,
 # taken BEFORE the TERM — afterwards the stuck process is gone and "where it hung" with it. _run_suite splits it off again.
 HANG_SNAPSHOT_MARK = "\n# --- process snapshot at timeout (ps) ---\n"
 # a line of the suite output that names a test (the last one is where it hung); with none, the last line of output
@@ -3967,14 +3991,30 @@ HANG_TEST_LINE = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")
 
 
 def _timeout_snapshot(pgid: int) -> str:
-    """`ps` lines (header + every process) of the process group pgid; the failure itself when ps cannot run (nothing is hidden)."""
+    """`ps` lines (header + at most 12 processes) of the suite pgid: its process group AND every descendant of its leader by ppid,
+    leaves first, deepest first; the failure itself when ps cannot run (nothing is hidden). 25/10: run_impacted.sh runs each test
+    through tests/lib/run_bounded.py, whose command sits in a session of its own (setsid) — filtered by pgid alone the snapshot kept
+    only the runner and the helper, never the stuck leaf (a gate under test blocked in open() of a FIFO) nor the test's name."""
     try:
         r = subprocess.run(["ps", "-axo", "pid,ppid,pgid,stat,etime,command"], capture_output=True, text=True, errors="replace", timeout=5)
     except (OSError, subprocess.SubprocessError) as exc:
         return f"(ps failed: {exc!r})"
     lines = r.stdout.splitlines()
-    mine = [ln for ln in lines[1:] if len(ln.split(None, 3)) >= 3 and ln.split(None, 3)[2] == str(pgid)]
-    return "\n".join(lines[:1] + mine[:12])
+    rows = [(f[0], f[1], f[2], ln) for ln in lines[1:] for f in [ln.split(None, 5)] if len(f) >= 3 and f[0].isdigit() and f[1].isdigit()]
+    kids: dict = {}
+    for pid, ppid, _, _ in rows:
+        kids.setdefault(ppid, []).append(pid)
+    depth, todo = {str(pgid): 0}, [str(pgid)]   # leader pid == pgid (start_new_session); visited = depth's keys
+    while todo:
+        p = todo.pop()
+        for c in kids.get(p, ()):
+            if c not in depth:
+                depth[c] = depth[p] + 1
+                todo.append(c)
+    mine = [row for row in rows if row[0] in depth or row[2] == str(pgid)]
+    parents = {ppid for _, ppid, _, _ in mine}
+    mine.sort(key=lambda row: (row[0] in parents, -depth.get(row[0], 0)))   # stable: ps order on ties
+    return "\n".join(lines[:1] + [row[3] for row in mine[:12]])
 
 
 def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
@@ -5676,6 +5716,7 @@ def main():
             immutable_guards_protected.append((comp_name, guard))
     impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
     project_dir = get_project_dir()
+    run_start_tree = head_tree(project_dir)   # the tree this run tests; mark_merge_gate_receipt keys the receipt to THIS tree, not to whatever HEAD is after the run
     force_reason = force_full_reason(args)
     # Acceptance was asked for (--full), not a Stop-hook style check: if it is deferred
     # below, the exit code must say "not accepted" (5), because an agent reading only the code would call 0 a PASS.
@@ -6204,12 +6245,13 @@ def main():
                     mark_keyed(t, rec)
                     return None
             run_suite_slotted(t, cmd, mode, env, sequential)
-            record_keyed(t)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này
+            record_keyed(t, final=False)   # ngay, vẫn giữ marker: lượt đang chờ cùng khoá tra lại là thấy kết quả này (trừ PASS của suite phụ thuộc diff: ghi ở lượt cuối)
             return None
 
 
-    def record_keyed(t):
-        """Ghi kết quả một lượt chạy THẬT lệnh đầy đủ vào sổ khoá — chỉ khi input không đổi trong lúc chạy (khoá đọc lại bằng nhau)."""
+    def record_keyed(t, final=True):
+        """Ghi kết quả một lượt chạy THẬT lệnh đầy đủ vào sổ khoá — chỉ khi input không đổi trong lúc chạy (khoá đọc lại bằng nhau).
+        final=False (ngay sau khi chính suite chạy xong, các suite khác có thể chưa chạy): PASS của suite phụ thuộc diff chưa được ghi."""
         ks = KEYS.get(id(t))
         st = t.get("status")
         void_due = sc is not None and id(t) in really_ran and st != "PASS" and id(t) not in voided
@@ -6228,8 +6270,11 @@ def main():
                 void_suite()   # không ghi được khoá nào: không có gì giữ FAIL này lại (đã ghi ở lần gọi trước thì FAIL đó đang giữ nó)
             return
         if st == "PASS" and suite_cache_mod().DIFF_DEPENDENT.search(t.get("full_command") or t.get("command") or "") \
-                and any(x is not t and x.get("status") not in ("PASS", "NOT_RUN") for x in regression_tests):
-            return   # run_impacted.sh bỏ qua script của suite đã chạy trước nó (DEVKIT_GATE_DONE): PASS của nó chỉ đáng ghi khi các suite đó cũng PASS
+                and (not final or any(x is not t and x.get("status") not in ("PASS", "NOT_RUN") for x in regression_tests)):
+            # run_impacted.sh bỏ qua script của suite đã chạy trước nó (DEVKIT_GATE_DONE): PASS của nó chỉ đáng ghi khi các suite đó cũng PASS.
+            # Ngay sau khi nó chạy xong (final=False) các suite khác có thể CHƯA chạy (gate gộp, DEVKIT_SLOT_PRIORITY=merge, đổi thứ tự): phán
+            # quyết chỉ ở lượt ghi cuối, khi mọi suite đã có kết quả (tests/gates/test_gate_suite_cache_selection.sh ca S5m).
+            return
         if st == "PASS" and suite_cache_mod().selection_keyable(t):
             # R3: tập chọn nằm trong khoá, đọc lúc tính khoá; cửa sổ `git log --since` của run_impacted.sh trượt theo giờ (cây không đổi) nên
             # suite có thể đã chạy tập khác tập trong khoá: PASS ghi dưới khoá tập lớn hơn là PASS giả. Đọc lại, khác thì không ghi.
@@ -7011,7 +7056,9 @@ def main():
                                     locked=lock_fh is not None,   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
                                     keep_same=merge_check)
         if exit_code == 0 and run_tests and not partial and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy:
-            mark_merge_gate_receipt(project_dir, diff_ref)
+            mark_merge_gate_receipt(project_dir, diff_ref, run_start_tree, relaxing=[
+                flag for flag, on in (("--allow-no-tests", args.allow_no_tests), ("--allow-orphan-tests", args.allow_orphan_tests),
+                                      ("--auto-approve-tests", args.auto_approve_tests or os.environ.get("DEVKIT_AUTO_APPROVE_TESTS") == "1")) if on])
         # The budget record (BUDGET_RECORD) is a file of its own, so the receipt above stays byte for byte whatever happens here:
         # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).
         if run_tests and any(t.get("status") in ("FAIL", "TIMEOUT") for t in regression_tests):

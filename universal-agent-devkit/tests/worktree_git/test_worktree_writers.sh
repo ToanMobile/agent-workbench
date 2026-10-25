@@ -79,6 +79,7 @@ prompt() {  # prompt <checkout> <text> → the hook's context
 
 # ── session_context.sh: the STALE flag is saved back in the main checkout only ───────────────────────────────────────
 pair c1
+git -C "$P" config devkit.trunkMode false   # đối chứng là main kiểu cũ (main trunk mode: SessionStart không ghi file track, test_trunk_main_pending_writers.sh)
 s_p="$(sig "$P")"; s_w="$(sig "$W")"
 out_p="$(STALE_RERUN=0 session "$P")"; out_w="$(STALE_RERUN=0 session "$W")"
 [ "$(sig "$P")" != "$s_p" ] && ok "control: SessionStart in the main checkout saves the STALE flag back" || fail "control did not write: $out_p"
@@ -90,6 +91,7 @@ s_w="$(sig "$W")"; DEVKIT_WORKTREE_CHECKLIST=1 STALE_RERUN=0 session "$W" >/dev/
 
 # ── session_context.sh: no background re-run is claimed (its results would be written to the checklist) ──────────────
 pair c2
+git -C "$P" config devkit.trunkMode false   # đối chứng là main kiểu cũ (main trunk mode: không chạy lại nền, kết quả sẽ ghi file track của main)
 out_p="$(session "$P")"; out_w="$(session "$W")"
 printf '%s' "$out_p" | grep -q "chạy lại nền" && ok "control: the main checkout's SessionStart starts the background re-run and says so" || fail "control: $out_p"
 printf '%s' "$out_w" | grep -q "chạy lại nền" && fail "linked worktree: SessionStart claims a background re-run" || ok "linked worktree: no background re-run claimed"
@@ -221,6 +223,7 @@ python3 "$NIGHTLY" run > "$TMP/nightly.out" 2>&1
 
 # ── enrich_context.py: a bug prompt -> a REPORTED row ────────────────────────────────────────────────────────────────
 pair c5
+git -C "$P" config devkit.trunkMode false   # đối chứng là main checkout kiểu cũ: main trunk mode giữ dòng REPORTED ngoài git (test_trunk_main_reported_pending.sh)
 s_p="$(sig "$P")"; s_w="$(sig "$W")"
 b_p="$(prompt "$P" "App bị crash khi cộng hai số" | grep -o 'BUG-[A-Za-z0-9_-]*' | head -1)"
 b_w="$(prompt "$W" "App bị crash khi cộng hai số" | grep -o 'BUG-[A-Za-z0-9_-]*' | head -1)"
@@ -235,6 +238,7 @@ print(len([k for k, v in r.load_view(pathlib.Path('$W'))['items'].items() if v.g
 
 # ── enrich_context.py: the user's INBOX ──────────────────────────────────────────────────────────────────────────────
 pair c6
+git -C "$P" config devkit.trunkMode false   # đối chứng là main kiểu cũ (main trunk mode: khoá "đã thấy" vào sổ chờ, test_trunk_main_pending_writers.sh)
 s_p="$(sig "$P")"; s_w="$(sig "$W")"
 out_p="$(prompt "$P" "xem giúp tình hình dự án thế nào")"; out_w="$(prompt "$W" "xem giúp tình hình dự án thế nào")"
 printf '%s' "$out_p" | grep -q "Xuất hoá đơn PDF" && [ "$(sig "$P")" != "$s_p" ] && ok "control: the main checkout's prompt hook lists the new INBOX item once and remembers it" || fail "control: $out_p"
@@ -284,6 +288,7 @@ stop() {  # stop <dir> [env…]: the Stop hook for a session that claims a RED->
          | env CLAUDE_PROJECT_DIR="$d" LESSON_REMINDER=0 "$@" bash "$STOP_GATE" 2>&1 >/dev/null)"; RC=$?
 }
 P="$TMP/c7"; W="$TMP/c7-wt"; mk_calc "$P"
+git -C "$P" config devkit.trunkMode false   # đối chứng là main kiểu cũ (main trunk mode: auto-link vào sổ chờ, test_trunk_main_pending_writers.sh)
 ( cd "$P" && CLAUDE_PROJECT_DIR="$P" python3 "$DEVKIT_DIR/bin/regression_checklist.py" render >/dev/null 2>&1 && git add -A && git commit -qm "the project tracks its checklist" )
 git -C "$P" worktree add -q --detach "$W" >/dev/null 2>&1 || fail "worktree add c7"
 s_p="$(sig "$P")"; s_w="$(sig "$W")"
@@ -305,6 +310,7 @@ wait_idle "$W"
 
 # ── red_proof.py: the proof is printed, not recorded ─────────────────────────────────────────────────────────────────
 P="$TMP/c8"; W="$TMP/c8-wt"; mk_calc "$P"
+git -C "$P" config devkit.trunkMode false   # đối chứng là main kiểu cũ (main trunk mode: red_proof không ghi file track, test_trunk_main_pending_writers.sh)
 printf 'import os, sys, unittest\nsys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))\nimport calc\nclass TestAdd(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(calc.add(2, 2), 4)\n' > "$P/tests/test_calc.py"
 B="$(CLAUDE_PROJECT_DIR="$P" bash "$KIT" bugs add "add trừ thay vì cộng" --fixed --test tests/test_calc.py 2>&1 | grep -o 'BUG-[A-Za-z0-9_-]*' | head -1)"
 git -C "$P" add .agents && git -C "$P" commit -qm "bug row" && git -C "$P" worktree add -q --detach "$W" >/dev/null 2>&1 || fail "worktree add c8"
