@@ -219,7 +219,8 @@ def pid_start_token(pid):
     lock records it; None when unknown. #406: the OS hands a dead session's pid to another process later - only the start time tells them apart."""
     try:
         s = _session_lock().pid_start(pid)
-    except Exception:  # noqa: BLE001 - unknown start time: the lock is written without one and read as before (pid only)
+    except Exception as e:  # noqa: BLE001 - unknown start time: the lock is written without one and read as before (pid only)
+        print(f"session_worktree: start time of pid {pid} unknown ({e!r}): pid reuse is not detected", file=sys.stderr)
         return None
     return re.sub(r"\s+", "_", s.strip()) if isinstance(s, str) and s.strip() else None
 
@@ -500,6 +501,7 @@ def _kept_lock(main, wt, sid, pid, unlock=False):
         return False
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
         return False
+    start = pid_start_token(pid)   # trước khi mở khoá (review 25/10): lần gọi ps không nới khoảng worktree không khoá giữa unlock và lock
     if reason is not None:
         if not reason.startswith(KEPT_PREFIX):
             return False   # khoá của người khác: để yên
@@ -507,7 +509,7 @@ def _kept_lock(main, wt, sid, pid, unlock=False):
         if m and m.group(1) != sid and lock_pid_alive(int(m.group(2)), kept_start(wt, int(m.group(2)))):
             return True   # một phiên KHÁC còn sống đã giữ nó: khoá đó vẫn giữ worktree, không thay (OCR 18/10)
         g("worktree", "unlock", wt)   # khoá devkit-kept của chính phiên, hay của pid đã chết / đã bị cấp lại: thay bằng pid hiện tại
-    _write_kept_start(wt, pid, pid_start_token(pid))   # trước khi khoá: không lúc nào khoá mới đứng cạnh thời điểm khởi động cũ của pid đó
+    _write_kept_start(wt, pid, start)   # trước khi khoá: không lúc nào khoá mới đứng cạnh thời điểm khởi động cũ của pid đó
     r = g("worktree", "lock", "--reason", f"{KEPT_PREFIX}{sid} pid={pid}", wt)
     return r is not None and r.returncode == 0
 
@@ -515,7 +517,17 @@ def _kept_lock(main, wt, sid, pid, unlock=False):
 _BOARD_WT = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
 
 
-def lock_started_worktree(main, here, sid, pid, env=None, source=None):
+def _state_owner(wt):
+    """The session the worktree's devkit-worktree.json names (`worktree add --session`, scripts/git/worktree.py _owner); None: none, unreadable."""
+    d = _admin_dir(wt)
+    try:
+        o = json.loads(_read_small(os.path.join(d, "devkit-worktree.json"), 4_000_000) or "null").get("session") if d else None
+    except (ValueError, AttributeError):
+        return None
+    return o if isinstance(o, str) and o else None
+
+
+def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_alive=None):
     """SessionStart (bin/session_lock.py; review 25/10): a session that STARTS inside a linked worktree of a trunk-mode repo (a Desktop
     worktree session, `claude --worktree`, `claude --resume` there) never calls EnterWorktree, so it takes the same devkit-kept lock
     there. A super-board lane worktree (.claude/worktrees/issue-<N>[-build|-qa|-review]) is the board's: its runner removes it with a
@@ -524,7 +536,9 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None):
     at EnterWorktree) still holds - a new one there would lock whatever worktree the session merely stands in, another session's
     included. So only a new process (startup, resume, fork; no source: as before) locks, and a resume / fork not when its pid already
     holds a devkit-kept lock on another worktree of the repo (an in-session /resume after a `cd`; a fresh startup can match a lock's pid
-    only through pid reuse, OCR 25/10)."""
+    only through pid reuse, OCR 25/10). Never a worktree another session owns (its record - after reown - or its state names it) while
+    `owner_alive(that session)` (bin/session_lock.py: a pid of it answers) - a session standing there would hold it from its owner; a gone
+    owner's worktree is taken, as reown takes its record (the work is never lost)."""
     if source in ("compact", "clear") or not main or not here or not trunk_mode(main, env):
         return None
     t = tree_of(here)
@@ -532,9 +546,14 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None):
         return None
     if _BOARD_WT.fullmatch(os.path.basename(t[0])) and os.path.basename(os.path.dirname(t[0])) in ("worktrees", ".worktrees"):
         return None
+    real = os.path.realpath(t[0])
+    others = {o for o, wt in records(main).items() if o != sid and os.path.realpath(wt) == real}
+    others |= {o for o in (_state_owner(t[0]),) if o and o != sid}
+    if owner_alive is not None and any(owner_alive(o) for o in others):
+        return None
     for path, reason in (_worktree_locks(_git_in(main)) or {}).items() if source in ("resume", "fork") else ():
         m = KEPT_RE.fullmatch(reason)
-        if m and path != os.path.realpath(t[0]) and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)):
+        if m and path != real and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)):
             return None
     return t[0] if _kept_lock(main, t[0], sid, pid) else None
 

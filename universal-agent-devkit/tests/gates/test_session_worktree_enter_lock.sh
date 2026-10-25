@@ -184,6 +184,35 @@ printf '%s %s\n' "$$" "$BOGUS" > "$sf"; side NEW_START replace-fails
   || fail "R7: stale '$(cat "$sf")' left beside the new lock; err=$(head -c 200 "$TMP/side.err")"
 [ -z "$(ls "$(dirname "$sf")" | grep 'devkit-kept.start\..*\.tmp')" ] && ok "  … and no temp file is left in the worktree's git dir" \
   || fail "R7: temp file left: $(ls "$(dirname "$sf")" | grep tmp)"
+
+# E14 (OCR 25/10): /resume của một phiên CHƯA giữ khoá nào (đang ở main, cd vào worktree khác): worktree có chủ khác CÒN SỐNG (registry
+#   mang pid trả lời) thì không khoá. E14b đối chứng: chủ đã chết (không pid nào sống) thì nhận như reown (worktree không mất việc).
+repo j true
+wtadd "$TMP/j" peer2 s41; mkdir -p "$TMP/j/.git/devkit-sessions"
+printf '{"session_id": "s41", "agent": "claude", "pid": %s}\n' "$SLEEPER" > "$TMP/j/.git/devkit-sessions/s41.json"
+start_src "$TMP/j" peer2 s42 resume
+lk="$(lock_of "$TMP/j" peer2)"
+[ -z "$lk" ] && ok "E14: a resume that holds no lock does not lock a worktree whose owner session is alive" \
+  || fail "E14: live owner's worktree locked '$lk' err=$(head -c 300 "$TMP/start.err")"
+wtadd "$TMP/j" gone s43; start_src "$TMP/j" gone s44 resume
+lk="$(lock_of "$TMP/j" gone)"
+[ "$lk" = "devkit-kept session=s44 pid=$$" ] && ok "E14b: … but one whose owner is gone (no live pid) is taken over, as reown does" \
+  || fail "E14b: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+
+# R8 (review 25/10): thời điểm khởi động ghi một kiểu (/proc) mà đọc kiểu khác (ps), hay ngược lại: không so được = còn sống
+OTHERFMT="proc:1"; [ -r "/proc/$SLEEPER/stat" ] && OTHERFMT="Mon_Jan__1_00:00:00_2001"
+wtadd "$TMP/r" xfmt s45; lock_with xfmt s45 "$SLEEPER" "$OTHERFMT"
+(cd "$TMP/r" && python3 -I "$WTPY" remove "$TMP/r/.claude/worktrees/xfmt" > "$TMP/rm.out" 2>&1); rc=$?
+[ "$rc" != 0 ] && [ -d "$TMP/r/.claude/worktrees/xfmt" ] && ok "R8: a start time recorded in the other format (/proc vs ps) reads alive: the worktree stays" \
+  || fail "R8 (rc $rc): removed on a start time it cannot compare"
+# E15 (review 25/10): resume mà pid trùng một khoá ở worktree khác nhưng thời điểm khởi động khác (pid đó đã bị cấp lại): vẫn khoá
+repo k true
+wtadd "$TMP/k" held s46; G "$TMP/k" worktree lock --reason "devkit-kept session=s46 pid=$$" "$TMP/k/.claude/worktrees/held"
+printf '%s %s\n' "$$" "$BOGUS" > "$(start_file "$TMP/k" held)"
+wtadd "$TMP/k" newer s47; start_src "$TMP/k" newer s48 resume
+lk="$(lock_of "$TMP/k" newer)"
+[ "$lk" = "devkit-kept session=s48 pid=$$" ] && ok "E15: a resume whose pid matches a lock elsewhere with another start time (pid reused) still locks" \
+  || fail "E15: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
 # R3: thời điểm khởi động không đọc được (ps hỏng) = còn sống — ở cả remove của kit lẫn EnterWorktree. Linux đọc /proc trước, không qua ps: bỏ qua
 if [ -r "/proc/$SLEEPER/stat" ]; then
   ok "R3/R3b: skipped (this system reads start times from /proc, a broken ps cannot hide them)"

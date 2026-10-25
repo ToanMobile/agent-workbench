@@ -895,7 +895,8 @@ def kept_lock(main, wt):
                 try:
                     sw = _session_worktree()
                     alive = sw.lock_pid_alive(pid, sw.kept_start(e["path"], pid))
-                except Exception:  # noqa: BLE001 - module unreadable: the pid alone decides, as before #406
+                except Exception as ex:  # noqa: BLE001 - module unreadable: the pid alone decides, as before #406
+                    print(f"• worktree: pid reuse not checked for {e['path']} ({ex!r})", file=sys.stderr)
                     alive = True
             return m.group(1), pid, alive
     return None
