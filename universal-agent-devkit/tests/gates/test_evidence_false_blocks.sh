@@ -21,6 +21,11 @@
 # reply whose one clause holds many exempt phrases took 8-13 s of CPU (each exempt match re-read the whole clause before it).
 # Time bounds count the CPU seconds of the hook process tree (getrusage), not wall-clock: run_impacted.sh runs suites in parallel at a
 # load near 70, where a wall bound fails a fast hook. A 30 s wall timeout only ends a hang.
+# The review of 9c1a3cb3 (2026-10-26) added: H. a kit summary or a kit "N passed" line backing another runner whose result is hidden (P1);
+# I. one transcript record the scan cannot read (int() of a 5 000-digit `rc=`, a malformed Edit) ending the whole scan, so an older green
+# backed the claim (P3a); M. a reply of 8 570 outcome claims in one clause taking 1.1 GB (P3b, a bound on max RSS); D. honest runs blocked
+# by 322b19db: Gradle / node --test / Maven summaries behind `| tail`, `echo "rc=$?"` on the next line, `echo … >> ran.txt` beside the run
+# in a loop (P2); N. "not all tests passed" read as a kit pass summary (R2-M1).
 # Run: bash tests/gates/test_evidence_false_blocks.sh   (TE_HOOK=<path> tests another copy of the hook)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -47,10 +52,11 @@ run() {
   grep -q Traceback "$TMP/err" && rc=99
   if [ "$rc" = "$want" ]; then ok "rc $rc: $label"; else fail "rc $rc (want $want): $label"; fi
 }
-# run_cpu <want rc> <transcript> <reply> <label> <cpu cap s>: run(), plus a bound on the CPU seconds (user + sys) of the hook and every
-# process it waited for. A hook still running after 30 s of wall time is killed with its process group and counts as a fail.
+# run_cpu <want rc> <transcript> <reply> <label> <cpu cap s> [max RSS cap MB]: run(), plus a bound on the CPU seconds (user + sys) of the
+# hook and every process it waited for, and optionally on the largest RSS among them. A hook still running after 30 s of wall time is
+# killed with its process group and counts as a fail.
 run_cpu() {
-  local want="$1" tr="$2" text="$3" label="$4" cap="$5" out rc cpu
+  local want="$1" tr="$2" text="$3" label="$4" cap="$5" rss_cap="${6:-}" out rc cpu rss
   N=$((N + 1))
   out="$(CLAUDE_PROJECT_DIR="$P" python3 - "$HOOK" "$tr" "$text" "$N" <<'PY'
 import json, os, resource, signal, subprocess, sys
@@ -67,10 +73,11 @@ except subprocess.TimeoutExpired:
     p.communicate()
     rc = "timeout"
 r1 = resource.getrusage(resource.RUSAGE_CHILDREN)
-print(rc, f"{r1.ru_utime - r0.ru_utime + r1.ru_stime - r0.ru_stime:.2f}")
+rss_mb = r1.ru_maxrss / (1048576 if sys.platform == "darwin" else 1024)   # ru_maxrss: bytes on macOS, KiB on Linux
+print(rc, f"{r1.ru_utime - r0.ru_utime + r1.ru_stime - r0.ru_stime:.2f}", f"{rss_mb:.0f}")
 PY
 )"
-  rc="${out%% *}"; cpu="${out##* }"
+  rc="${out%% *}"; rss="${out##* }"; cpu="${out% *}"; cpu="${cpu##* }"
   [ "$rc" = timeout ] && cpu=999   # killed: its CPU was never reaped
   if [ "$rc" = "$want" ]; then ok "rc $rc: $label"; else fail "rc $rc (want $want): $label"; fi
   if python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)' "$cpu" "$cap" 2>/dev/null; then
@@ -78,9 +85,15 @@ PY
   else
     fail "CPU ${cpu} s > ${cap} s: $label"
   fi
+  [ -n "$rss_cap" ] || return 0
+  if [ "$rc" != timeout ] && [ "$rss" -le "$rss_cap" ] 2>/dev/null; then
+    ok "max RSS ${rss} MB ≤ ${rss_cap} MB: $label"
+  else
+    fail "max RSS ${rss} MB > ${rss_cap} MB: $label"
+  fi
 }
 EMPTY="$TMP/empty.jsonl"; : > "$EMPTY"
-# transcript <file> <json list of steps>: step = ["bash", cmd, output, is_error] | ["edit", path]
+# transcript <file> <json list of steps>: step = ["bash", cmd, output, is_error] | ["edit", path] | ["raw", transcript record]
 transcript() {
   python3 - "$1" "$2" <<'PY'
 import json, sys
@@ -90,6 +103,8 @@ with open(out, "w") as fh:
         if st[0] == "bash":
             fh.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {"command": st[1]}}]}}) + "\n")
             fh.write(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": st[2], "is_error": st[3]}]}}) + "\n")
+        elif st[0] == "raw":
+            fh.write(json.dumps(st[1]) + "\n")
         else:
             fh.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"t{i}", "name": "Edit", "input": {"file_path": st[1], "old_string": "x = 1", "new_string": "x = 2"}}]}}) + "\n")
             fh.write(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": "ok"}]}}) + "\n")
@@ -313,6 +328,110 @@ run_cpu 2 "$EMPTY" "$(long 'Đã fix bug X ' 'Tôi không gọi chúng là đã 
 run_cpu 2 "$EMPTY" "$(long '' 'Tôi không nói 12/12 test pass ' 1340 ', 12/12 test pass.')" '1 340 × "Tôi không nói 12/12 test pass " + ", 12/12 test pass."' 2.0
 run_cpu 2 "$EMPTY" "$(long '' 'Kế hoạch: viết test ĐỎ→XANH ' 1340 '. Đã chạy test ĐỎ→XANH.')" '1 340 × "Kế hoạch: viết test ĐỎ→XANH ", then "Đã chạy test ĐỎ→XANH."' 2.0
 run_cpu 2 "$EMPTY" "$(long "$(python3 -c 'print("lorem ipsum dolor " * 2400, end="")')" 'Tôi không gọi chúng là đã fix ' 300 'Đã fix bug X.')" '40 KB of plain words, 300 exempt phrases, then "Đã fix bug X."' 2.0
+
+echo "-- H. a kit summary says nothing of another runner whose result is hidden (2026-10-26 review of 9c1a3cb3, P1: any \"N passed\" counted)"
+# B1 B3 B6 B8 of the review, then two the review's own fix (kit summary AND any \"N passed\") still let through: a kit check line that
+# quotes a runner summary (this very suite prints them) and a second kit's \"name: N passed, 0 failed\" summary.
+for c in 'bash tests/a/test_x.sh > /dev/null 2>&1; python3 -m pytest -q; echo $?@@5 passed in 0.10s
+0' \
+         '[ -f tests/a/test_x.sh ]; python3 -m pytest > /tmp/l 2>&1; echo $?; echo "5 passed"@@1
+5 passed' \
+         'bash tests/installer/test_uninstall.sh; python3 -m pytest > /tmp/l 2>&1; echo $?@@uninstall: 9 passed, 0 failed
+1' \
+         'bash tests/installer/test_uninstall.sh; for d in a b; do python3 -m pytest -q $d > /dev/null 2>&1; done@@uninstall: 9 passed, 0 failed' \
+         'bash tests/gates/test_evidence_false_blocks.sh; python3 -m pytest > /tmp/l 2>&1; echo $?@@✔ rc 0: '"'"'5 passed in 0.10s'"'"' after `python3 -m pytest -q`
+all passed (120)
+1' \
+         'bash tests/a/test_x.sh; bash tests/installer/test_uninstall.sh; python3 -m pytest > /tmp/l 2>&1; echo $?@@all passed (3)
+uninstall: 9 passed, 0 failed
+1'; do
+  transcript "$TMP/h1.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/h1.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+echo "-- H. the kit's summary and the other runner's own summary, both in the result, still are the evidence"
+transcript "$TMP/h2.jsonl" "$(steps_after_edit 'bash tests/a/test_x.sh; python3 -m pytest -q 2>&1 | tail -3; echo "rc=${PIPESTATUS[0]}"' $'all passed (3)\n5 passed in 0.10s\nrc=0')"
+run 0 "$TMP/h2.jsonl" "$PASSCLAIM" "'all passed (3) / 5 passed / rc=0' after \`bash tests/a/test_x.sh; python3 -m pytest -q 2>&1 | tail -3; echo \"rc=\${PIPESTATUS[0]}\"\`: $PASSCLAIM"
+
+echo "-- I. one transcript record the scan cannot read is skipped, not the rest of the transcript (2026-10-26 review, P3a)"
+# int() of the 5 000-digit `rc=111…` raised (Python's 4 300-digit limit) inside the scan's single try: the scan ended, the edit after it was
+# never seen, and the green run before it backed the claim.
+i_steps() { python3 -c 'import json,sys; print(json.dumps([["bash","python3 -m pytest -q","5 passed in 0.10s",False],["bash",sys.argv[2],"xrc=1\nrc="+"1"*5000,False],["edit",sys.argv[1]]]))' "$P/src/a.py" "$1"; }
+transcript "$TMP/i1.jsonl" "$(i_steps 'printf x; python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"; python3 -c '"'"'print("rc="+"1"*5000)'"'"'')"
+run 2 "$TMP/i1.jsonl" "$PASSCLAIM" "green, then rc=<5 000 digits> of \`python3 -m pytest > /tmp/l\`, then an edit: $PASSCLAIM"
+BADEDIT='["raw",{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tbad","name":"Edit","input":["not a dict"]}]}}]'
+GREEN1='["bash","python3 -m pytest -q","5 passed in 0.10s",false]'
+transcript "$TMP/i2.jsonl" "[$GREEN1,$BADEDIT,[\"edit\",\"$P/src/a.py\"]]"
+run 2 "$TMP/i2.jsonl" "$PASSCLAIM" "green, an Edit record the scan cannot read, then an edit: $PASSCLAIM"
+if grep -q "transcript line [0-9]* block [0-9]* skipped (tool_use Edit)" "$P/.claude/audit-gate/test_evidence_gate.log" 2>/dev/null; then
+  ok "the skipped record is logged with its line, block and tool"
+else
+  fail "the skipped record is not in $P/.claude/audit-gate/test_evidence_gate.log"
+fi
+transcript "$TMP/i3.jsonl" "[$GREEN1,$BADEDIT]"
+run 2 "$TMP/i3.jsonl" "$PASSCLAIM" "green, then an Edit record the scan cannot read (still a source edit: fail-closed): $PASSCLAIM"
+
+echo "-- M. one clause of many outcome claims keeps memory flat (2026-10-26 review, P3b: 8 570 × \" đã fix\" took 1.1 GB of RSS)"
+run_cpu 2 "$EMPTY" "$(long '' ' đã fix' 8570 '')" '8 570 × " đã fix" (60 KB, one clause)' 2.0 300
+
+echo "-- D. honest runs whose code is read through PIPESTATUS or on the next line still are the evidence (2026-10-26 review, P2 of 322b19db)"
+transcript "$TMP/d1.jsonl" "$(pair2 './gradlew test' $'FAILED\nBUILD FAILED in 2s' './gradlew test 2>&1 | tail -5; echo "exit=${PIPESTATUS[0]}"' $'BUILD SUCCESSFUL in 3s\nexit=0')"
+run 0 "$TMP/d1.jsonl" "$FIXCLAIM" "Gradle red, edit, then BUILD SUCCESSFUL of \`./gradlew test 2>&1 | tail -5; echo \"exit=\${PIPESTATUS[0]}\"\`: $FIXCLAIM"
+for c in 'node --test 2>&1 | tail -8; echo "rc=${PIPESTATUS[0]}"@@ℹ tests 5
+ℹ pass 5
+ℹ fail 0
+rc=0' \
+         'mvn test | tail -5; echo "rc=${PIPESTATUS[0]}"@@Tests run: 5, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+rc=0' \
+         'python3 -m pytest -q > /tmp/l 2>&1
+echo "rc=$?"@@rc=0' \
+         'cat > /tmp/x.py <<'"'"'EOF'"'"'
+# don'"'"'t
+EOF
+python3 -m pytest -q > /tmp/l 2>&1; echo "rc=$?"@@rc=0' \
+         'for f in tests/a/test_*.sh; do echo "== $f" >> /tmp/ran.txt; bash "$f"; done@@✔ case 1
+ok: done
+✔ case 2'; do
+  transcript "$TMP/d2.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 0 "$TMP/d2.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+echo "-- D. must still block: those summaries for another runner or a red run, a next line that is not the run's echo, a heredoc body,"
+echo "   a loop whose run (or the whole loop) writes stdout to a file"
+for c in './gradlew test 2>&1 | tail -3; echo "g=${PIPESTATUS[0]}"; python3 -m pytest > /tmp/l 2>&1; echo $?@@BUILD SUCCESSFUL in 3s
+g=0
+1' \
+         'python3 -m pytest 2>&1 | tail -1; echo "rc=${PIPESTATUS[0]}"@@BUILD SUCCESSFUL in 3s
+rc=0' \
+         'mvn test | tail -5; echo "rc=${PIPESTATUS[0]}"@@Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.1 s - in a.ATest
+Tests run: 5, Failures: 1, Errors: 0, Skipped: 0
+BUILD FAILURE
+rc=1' \
+         'mvn test | tail -3; echo "rc=${PIPESTATUS[0]}"@@Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.1 s - in a.ATest
+Tests run: 5, Failures: 0, Errors: 2, Skipped: 0
+rc=1' \
+         'node --test 2>&1 | tail -1; echo "rc=${PIPESTATUS[0]}"@@ℹ pass 5
+rc=1' \
+         'python3 -m pytest > /tmp/l 2>&1
+cd /tmp
+echo "rc=$?"@@rc=0' \
+         'python3 -m pytest > /tmp/l 2>&1 || true
+echo "rc=$?"@@rc=0' \
+         'cat > /tmp/t.sh <<'"'"'EOF'"'"'
+python3 -m pytest > /tmp/l 2>&1
+echo "rc=$?"
+EOF
+echo "rc=0"@@rc=0' \
+         'for f in tests/a/test_*.sh; do bash "$f" > /dev/null; done@@warning: x' \
+         'for f in tests/a/test_*.sh; do echo "== $f"; bash "$f" > /dev/null; done@@== tests/a/test_x.sh' \
+         'for f in tests/a/test_*.sh; do bash "$f"; done > /tmp/all.log@@warning: x' \
+         'for d in a b; do if [ -d $d ]; then python3 -m pytest -q $d > /tmp/$d.log; fi; done@@warning: x'; do
+  transcript "$TMP/d3.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/d3.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+
+echo "-- N. \"not all tests passed\" is no pass summary (2026-10-26 review, R2-M1)"
+transcript "$TMP/n1.jsonl" "$(steps_after_edit 'for d in a b; do python3 -m pytest -q $d > /dev/null 2>&1 || echo "not all tests passed in $d"; done' 'not all tests passed in a')"
+run 2 "$TMP/n1.jsonl" "$PASSCLAIM" "'not all tests passed in a' after a loop of \`python3 -m pytest -q \$d > /dev/null 2>&1 || echo …\`: $PASSCLAIM"
 
 [ "$FAILS" -eq 0 ] && { echo "all passed ($N)"; exit 0; }
 echo "$FAILS failed of $N"; exit 1
