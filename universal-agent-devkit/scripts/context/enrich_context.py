@@ -815,6 +815,7 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
         title = getattr(rc, "redact_secrets", lambda t: t)(title)   # before find_bug: the stored title is redacted too
         if len(title) > TITLE_MAX:   # after the redaction: a key cut at the limit leaves a stub no pattern matches (OCR, 13/10)
             title = title[:TITLE_MAX - 1].rstrip() + "…"
+        note = ""
         with rc.locked(project_root):
             data = getattr(rc, "load_view", rc.load)(project_root)   # + the rows this worktree kept in its overlay
             before = json.dumps(data["items"].get(rc.find_bug(data, title, open_only=True) or ""), sort_keys=True)
@@ -823,14 +824,19 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
                 if _linked(rc, project_root):   # a LINKED worktree leaves the tracked checklist files alone: its own state
                     rc.overlay_save_rows(project_root, data, [bid])
                 elif getattr(rc, "trunk_main", lambda _p: False)(project_root):   # main ở trunk mode chỉ nhận gộp: dòng chờ trong sổ ngoài git, main không bẩn
-                    rc.pending_save_rows(project_root, data, [bid])
+                    note = rc.pending_save_rows(project_root, data, [bid], count=["reported_total"] if created else ())
+                elif hasattr(rc, "save_view_rows"):   # đúng dòng này, không bao giờ cả sổ chờ của view
+                    rc.save_view_rows(project_root, data, [bid], stale=False)
                 else:
                     rc.save(project_root, data, stale=False)
             status = rc.effective_status(data, data["items"][bid])
-    except Exception:  # noqa: BLE001 — a corrupt checklist must never break the prompt
-        return ""
+    except Exception as e:  # noqa: BLE001 — a corrupt checklist must never break the prompt, but it is said (no silent loss)
+        print(f"capture_bug: {type(e).__name__}: {e}", file=sys.stderr)
+        return (f"- ⚠️ Prompt tả bug nhưng KHÔNG ghi được vào checklist ({type(e).__name__}: {str(e)[:160]}) — "
+                "ghi tay: `agent-kit bugs add \"<tiêu đề>\"`")
     return (f"- Bug đã ghi vào checklist: {bid} ({status}) — link test ĐỎ→XANH khi sửa xong: "
-            f"`agent-kit bugs link {bid} <test>`; không phải bug: `agent-kit bugs drop {bid}`")
+            f"`agent-kit bugs link {bid} <test>`; không phải bug: `agent-kit bugs drop {bid}`"
+            + (f"\n- ⚠️ {note}" if note else ""))
 
 
 def _linked(rc, project_root):
@@ -856,10 +862,13 @@ def watch_inbox(project_root):
         import regression_checklist as rc
         if _linked(rc, project_root):
             return ""   # a LINKED worktree writes no "seen" keys, so the item would be listed (and "@làm" ordered) on EVERY prompt: the INBOX is the main checkout's
+        trunk = getattr(rc, "trunk_main", lambda _p: False)(project_root)
         with rc.locked(project_root):
-            data = rc.load(project_root)
+            data = rc.load_view(project_root) if trunk else rc.load(project_root)   # trunk mode: + khoá "đã thấy" trong sổ chờ
             new = rc.inbox_new(data, project_root)
-            if new:
+            if new and trunk:   # main ở trunk mode chỉ nhận gộp: khoá "đã thấy" vào sổ chờ ngoài git, main không bẩn
+                rc.pending_save_rows(project_root, data, [], inbox={key: data["inbox"][key] for key, _, _ in new})
+            elif new:
                 rc.save(project_root, data, stale=False)
     except Exception:  # noqa: BLE001 — the inbox must never break the prompt
         return ""

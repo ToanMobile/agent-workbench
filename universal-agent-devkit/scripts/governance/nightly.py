@@ -255,7 +255,9 @@ def weekly(projects: list) -> str | None:
         except (OSError, ValueError):
             continue
         st = rc.summary(data)
-        stats = data.get("stats") or {}
+        stats = dict(data.get("stats") or {})
+        for k, v in getattr(rc, "read_pending_store", lambda _p: {"stats": {}})(project)["stats"].items():   # dòng REPORTED vào sổ chờ (main trunk mode)
+            stats[k] = int(stats.get(k, 0)) + v
         line = (f"{project.name}: cần người {human_touches(project, now - 7 * 86400)} lần · REPORTED bị drop "
                 f"{stats.get('reported_dropped', 0)}/{stats.get('reported_total', 0)} · FLAKY {st.get('FLAKY', 0)} · "
                 f"TEST VÔ HIỆU {st.get('VACUOUS', 0)} · ✅ {st.get('PASS', 0)}")

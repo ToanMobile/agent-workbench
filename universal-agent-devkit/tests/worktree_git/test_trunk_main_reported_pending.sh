@@ -27,7 +27,7 @@ mk() {
   cat > .agents/regression_matrix.active.json <<'JSON'
 {"adopted": true, "rules":[{"component":"Calc","watch_files":["src/*.py"],"mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"true"}]}]}
 JSON
-  printf '.claude/\n.agents/regression_journal/\n' > .gitignore
+  printf '.claude/\n.agents/regression_journal/\n.agents/evidence/\n' > .gitignore
   python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r; r.save(pathlib.Path(sys.argv[2]), {'version': 1, 'items': {}}, stale=False)" \
     "$DEVKIT_DIR/bin" "$1" || fail "dựng $1: save hỏng"
   git add -A && git commit -qm init
@@ -116,6 +116,35 @@ DW="$TMP/reopen-wt"; git -C "$D" worktree add -q --detach "$DW" >/dev/null 2>&1 
 st8="$(python3 -c "import json, sys; print(json.load(open(sys.argv[1] + '/.agents/regression_status.json'))['items'].get('BUG-20260101-old', {}).get('state'))" "$DW" 2>/dev/null)"
 [ "$st8" = auto_closed ] && ok "8b: bugs add một bug khác: dòng track bị bản chờ che vẫn nguyên trong file của worktree (auto_closed)" \
   || fail "8b: dòng track BUG-20260101-old trong worktree thành '$st8'"
+# 8c. bugs drop dòng 💤 bị bản chờ mới hơn che: xoá cả dòng track của worktree và bản chờ (không in "đã xoá" mà dòng còn đó)
+( cd "$DW" && bash "$KIT" bugs drop BUG-20260101-old >/dev/null 2>&1 ) || fail "8c: bugs drop trong worktree hỏng"
+st8="$(python3 -c "import json, sys; print(json.load(open(sys.argv[1] + '/.agents/regression_status.json'))['items'].get('BUG-20260101-old', {}).get('state'))" "$DW" 2>/dev/null)"
+[ "$st8" = None ] && [ "$(view "$DW" BUG-20260101-old state)" = MISSING ] && case " $(pending "$D") " in *" BUG-20260101-old "*) false ;; *) true ;; esac \
+  && ok "8c: bugs drop dòng 💤 bị bản chờ che: mất khỏi file track của worktree, khỏi sổ chờ và view của worktree" \
+  || fail "8c: track='$st8' view='$(view "$DW" BUG-20260101-old state)' pending='$(pending "$D")'"
+
+# 9. đếm reported_total: dòng mới vào sổ chờ được đếm trong sổ, báo cáo tuần của nightly cộng vào (P: B1, B2 và dòng của ca 5)
+n9="$(python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r
+print(r.read_pending_store(pathlib.Path(sys.argv[2]))['stats'].get('reported_total'))" "$DEVKIT_DIR/bin" "$P" 2>/dev/null)"
+w9="$(python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import nightly; print(nightly.weekly([sys.argv[2]]))" "$DEVKIT_DIR/scripts/governance" "$P" 2>/dev/null)"
+[ "$n9" = 3 ] && printf '%s' "$w9" | grep -q "REPORTED bị drop [0-9]*/3 " && ok "9: reported_total của dòng vào sổ chờ được đếm (3) và báo cáo tuần thấy nó" \
+  || fail "9: reported_total='$n9' weekly='$w9'"
+
+# 10. sổ hỏng không im lặng: đọc thì cảnh báo; lần ghi tới cất file hỏng sang bên (giữ lại), ghi sổ mới, nói trong ngữ cảnh
+store="$(git -C "$P" rev-parse --absolute-git-dir)/postfix-gate/pending_rows.json"
+printf '{hỏng' > "$store"
+err10="$(python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r; r.load_view(pathlib.Path(sys.argv[2]))" "$DEVKIT_DIR/bin" "$P" 2>&1 >/dev/null)"
+printf '%s' "$err10" | grep -q "sổ chờ" && ok "10: sổ chờ hỏng: load_view cảnh báo trên stderr (không im lặng)" || fail "10: không cảnh báo: '$err10'"
+out="$(prompt "$P" s4 "Nút xuất PDF bị crash khi bấm hai lần")"; B10="$(bug_id "$out")"
+bad="$(ls "$(dirname "$store")" | grep -c '^pending_rows.json.bad-')"
+[ -n "$B10" ] && [ "$bad" = 1 ] && printf '%s' "$out" | grep -q "sổ chờ hỏng" && [ "$(view "$P" "$B10" state)" = reported ] && [ -z "$(dirty "$P")" ] \
+  && ok "10b: ghi sau khi sổ hỏng: file hỏng cất sang .bad-*, sổ mới giữ dòng mới, ngữ cảnh báo việc đó" \
+  || fail "10b: id='$B10' bad=$bad state='$(view "$P" "${B10:-x}" state)' out='$out'"
+
+# 11. dòng chờ không ai đụng 14 ngày: 💤 auto_closed trong view như dòng track (không còn nằm REPORTED mãi)
+python3 -c "import json, sys; p = sys.argv[1]; d = json.load(open(p)); d['rows'][sys.argv[2]]['touched_at'] = '2026-01-01 00:00:00'; json.dump(d, open(p, 'w'))" "$store" "$B10" \
+  || fail "11: không sửa được sổ"
+[ "$(view "$P" "$B10" state)" = auto_closed ] && ok "11: dòng chờ 14 ngày không ai đụng hiện 💤 auto_closed" || fail "11: state='$(view "$P" "$B10" state)'"
 
 # 7. đối chứng: main checkout kiểu cũ (trunk mode tắt) vẫn ghi dòng vào checklist track, không có sổ chờ
 C="$TMP/classic"; mk "$C"; git -C "$C" config devkit.trunkMode false
