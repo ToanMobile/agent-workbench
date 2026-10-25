@@ -4413,6 +4413,14 @@ def _reap_merged(main, here, dry, log, logged):
             if not why:
                 why = _integrated(main, p)
             if not why:
+                # review U2 F2 (26/10): notes only the worktree's own (git-ignored) claude-auto folder holds would go with it, and the
+                # hook throws away remove's warning; kept, as discard refuses (an exception here: the except below keeps it too)
+                notes = _unsaved_memory(p, main)
+                if notes:
+                    shown = ", ".join(notes[:3]) + (" …" if len(notes) > 3 else "")
+                    why = tr(f"{len(notes)} memory note chỉ có trong claude-auto riêng của nó (main chưa có): {shown}; chép vào {os.path.join(main, MEMORY_REL)} trước",
+                             f"{len(notes)} memory note(s) only its own claude-auto folder holds (main's lacks them): {shown}; copy them into {os.path.join(main, MEMORY_REL)} first")
+            if not why:
                 blockers = removal_blockers(main, p)
                 why = blockers[0].split("\n", 1)[0] if blockers else ""
         except (Exception, SystemExit) as ex:  # noqa: BLE001 - a check that cannot run never reads as "safe"

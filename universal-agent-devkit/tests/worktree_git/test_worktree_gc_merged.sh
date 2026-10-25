@@ -55,6 +55,13 @@ echo sq > "$R/sq.txt"; G "$R" add sq.txt && G "$R" commit -qm "sq (squash)"
 add_br pr-merged feat-closed                    # m7c đã publish, PR không còn mở: gỡ worktree, nhánh giữ (remote còn ref)
 G "$R" push -q origin feat-closed 2>/dev/null
 add_det here                                    # m10 lệnh chạy từ đây: giữ
+# m14 (review U2 F2, 26/10): memory note bị ignore chỉ thư mục claude-auto RIÊNG của worktree có (worktree do hook dựng trỏ
+# autoMemoryDirectory vào chính nó): gc --merged gỡ nó rồi chỉ cảnh báo trên stderr mà hook bỏ đi — note mất. Giữ, nói lý do.
+# m14b: cùng note, đúng từng byte, đã có trong claude-auto của main: không mất gì, gỡ.
+printf '.agents/local/memory/\n' >> "$R/.git/info/exclude"
+MEM=".agents/local/memory/claude-auto"
+add_det mem-only; mkdir -p "$H/mem-only/$MEM"; echo "handoff: only here" > "$H/mem-only/$MEM/handoff.md"
+add_det mem-same; mkdir -p "$H/mem-same/$MEM" "$R/$MEM"; echo "same note" > "$H/mem-same/$MEM/same.md"; cp "$H/mem-same/$MEM/same.md" "$R/$MEM/same.md"
 # --- phải được GIỮ ---
 add_br ahead ahead-1                            # m3 commit main chưa có (nhánh giữ commit: remove thường vẫn gỡ được, gc --merged thì không)
 echo ahead > "$H/ahead/ahead.txt"; G "$H/ahead" add ahead.txt && G "$H/ahead" commit -qm ahead
@@ -98,11 +105,13 @@ kept done-branch && kept done-detached && ok "B a worktree made minutes ago with
 (cd "$R" && WORKTREE_GC_FRESH_S=0 python3 "$WT" gc --merged --dry-run >"$TMP/c.out" 2>&1)
 kept done-branch && grep -q "would remove $H/done-branch" "$TMP/c.out" && has_branch done-1 \
   && ok "C --dry-run removes nothing and names what it would remove" || { fail "C dry-run"; cat "$TMP/c.out"; }
+grep -q "kept $H/mem-only: 1 memory note" "$TMP/c.out" && ! grep -q "would remove $H/mem-only" "$TMP/c.out" \
+  && ok "C --dry-run keeps a worktree whose own claude-auto holds a note main lacks, saying why" || { fail "C dry-run mem-only"; grep -a mem-only "$TMP/c.out"; }
 
 # D. lượt thật, chạy từ worktree "here"
 (cd "$H/here" && WORKTREE_GC_FRESH_S=0 python3 "$WT" gc --merged --log="$TMP/gc.log" >"$TMP/d.out" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "D exit 0" || { fail "D exit $rc"; cat "$TMP/d.out"; }
-for w in done-branch done-detached done-squash pr-merged; do
+for w in done-branch done-detached done-squash pr-merged mem-same; do
   gone "$w" && ok "D integrated, clean, unheld $w is removed" || { fail "D integrated $w kept"; grep -a "$w" "$TMP/d.out"; }
 done
 grep -q "$H/done-branch" "$TMP/gc.log" 2>/dev/null && ok "D the removal is recorded in the gc log" || fail "D no gc log record: $(cat "$TMP/gc.log" 2>&1)"
@@ -111,6 +120,9 @@ grep -q "$H/done-branch" "$TMP/gc.log" 2>/dev/null && ok "D the removal is recor
   && ok "D the squash-merged branch is deleted, its commit kept in refs/devkit/discarded" || fail "D squash branch: deleted without a fallback copy, or kept"
 has_branch feat-closed && ok "D a published branch is kept (the remote holds it)" || fail "D published branch feat-closed deleted"
 kept here && ok "D the worktree the command runs in is kept" || fail "D the caller's own worktree removed"
+kept mem-only && [ "$(cat "$H/mem-only/$MEM/handoff.md" 2>/dev/null)" = "handoff: only here" ] && grep -q "kept $H/mem-only: 1 memory note" "$TMP/d.out" \
+  && ok "D a worktree whose own claude-auto holds a memory note main lacks is kept, with the memory reason" \
+  || { fail "D memory note only the worktree holds: removed, or kept for another reason"; grep -a mem-only "$TMP/d.out"; }
 kept ahead && has_branch ahead-1 && ok "D a worktree with a commit not in main is kept" || fail "D worktree with an unmerged commit removed"
 kept dirty && [ "$(cat "$H/dirty/new.txt" 2>/dev/null)" = "only here" ] && ok "D a worktree with only uncommitted files is kept" || fail "D uncommitted file lost"
 kept reflog && [ "$(G "$R" cat-file -t "$LOST" 2>/dev/null)" = commit ] && ok "D a worktree holding a reflog-only commit is kept" || fail "D reflog-only commit's worktree removed"
