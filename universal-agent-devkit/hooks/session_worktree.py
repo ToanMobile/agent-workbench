@@ -547,9 +547,11 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_gon
     only through pid reuse, OCR 25/10). Never a worktree another session owns - a session standing there would hold it from its owner.
     `owner_gone(session)` is bin/session_lock.py owner_gone's (dead, why): a session whose record (after reown) names the worktree owns it
     unless it is proven gone, the rule reown keeps its record by; one only the state names owns it while a pid of it answers (a state-only
-    owner has no record age and would read "unknown" forever). A gone owner's worktree is taken (the work is never lost). The session the worktree belongs to - its state names
-    this session, or its devkit-kept lock already carries this session id - is never held off by a guest's record (review PR #415: an
-    EnterWorktree path= / a Stop reown leaves a record with no lock; the owner's shell resume then left its dead-pid lock for gc to open)."""
+    owner has no record age and would read "unknown" forever). A gone owner's worktree is taken (the work is never lost). The session the worktree belongs to is never held off by
+    a guest's record (review PR #415: an EnterWorktree path= / a Stop reown leaves a record with no lock; the owner's shell resume then
+    left its dead-pid lock for gc to open): its state names this session; or - unless the state names another LIVE session - its
+    devkit-kept lock carries this session id, or this session's own record names it with the lock's pid (the process before /clear, whose
+    record reown moved here). A lock a LIVE process holds (another session, the same id twice, the process before /clear) is never touched."""
     if source in ("compact", "clear") or not main or not here or not trunk_mode(main, env):
         return None
     t = tree_of(here)
@@ -559,11 +561,15 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_gon
         return None
     real, locks, owner = os.path.realpath(t[0]), _worktree_locks(_git_in(main)) or {}, _state_owner(t[0])
     held = KEPT_RE.fullmatch(locks.get(real) or "")
-    if owner_gone is not None and owner != sid and not (held and held.group(1) == sid):
+    hp = int(held.group(2)) if held else None
+    if held and hp != pid and lock_pid_alive(hp, kept_start(t[0], hp)):
+        return None   # a live process holds it (review 09a017a8): replacing its lock leaves a dead one when this process exits first
+    state_live = bool(owner and owner != sid and owner_gone is not None and owner_gone(owner)[1] == "alive")
+    mine = owner == sid or (held is not None and not state_live and (
+        held.group(1) == sid or (raw_pid(main, sid) == hp and os.path.realpath(read_record(main, sid) or os.sep) == real)))
+    if owner_gone is not None and not mine:
         recs = {o for o, wt in records(main).items() if o != sid and os.path.realpath(wt) == real}
-        live = [o for o in recs if not owner_gone(o)[0]]
-        if owner and owner not in recs and owner_gone(owner)[1] == "alive":
-            live.append(owner)
+        live = [o for o in recs if not owner_gone(o)[0]] + ([owner] if state_live and owner not in recs else [])
         if live:
             print(f"session_worktree: {t[0]} not locked: live session {live[0]} owns it", file=sys.stderr)
             return None

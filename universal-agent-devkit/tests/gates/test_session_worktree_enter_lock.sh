@@ -238,6 +238,32 @@ start_src "$TMP/o" nostate s90 resume
 lk="$(lock_of "$TMP/o" nostate)"
 [ "$lk" = "devkit-kept session=s90 pid=$$" ] && ok "E18b: … also with no state file: its old lock carrying its id makes it the owner" \
   || fail "E18b: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E21 (review 09a017a8): khoá cùng sid mà pid của nó CÒN SỐNG (tiến trình trước /clear, hay tiến trình thứ hai cùng id) thì SessionStart
+#   không thay — thay bằng pid của tiến trình mới thì nó thoát trước là khoá chết, gc mở, cleanup-wt gỡ worktree dưới chân tiến trình cũ
+repo p true   # own repo: this shell's pid holds no lock here (else the resume pid rule would decide, not the rule under test)
+wtadd "$TMP/p" twoproc s94; G "$TMP/p" worktree lock --reason "devkit-kept session=s94 pid=$SLEEPER" "$TMP/p/.claude/worktrees/twoproc"
+start_src "$TMP/p" twoproc s94 resume
+lk="$(lock_of "$TMP/p" twoproc)"
+[ "$lk" = "devkit-kept session=s94 pid=$SLEEPER" ] && ok "E21: a lock of the same id whose pid is alive (another process) is left in place" \
+  || fail "E21: lock='$lk' (a live process's lock was replaced) err=$(head -c 300 "$TMP/start.err")"
+# E22 (review 09a017a8): khoá mang sid của một KHÁCH (pid đã chết) không biến khách thành chủ khi state nêu một chủ khác còn sống
+repo q true; wtadd "$TMP/q" guested s95; mkdir -p "$TMP/q/.git/devkit-sessions"
+printf '{"session_id": "s95", "agent": "claude", "pid": %s}\n' "$SLEEPER" > "$TMP/q/.git/devkit-sessions/s95.json"
+G "$TMP/q" worktree lock --reason "devkit-kept session=s96 pid=$DEAD" "$TMP/q/.claude/worktrees/guested"
+start_src "$TMP/q" guested s96 resume
+lk="$(lock_of "$TMP/q" guested)"
+[ "$lk" = "devkit-kept session=s96 pid=$DEAD" ] && ok "E22: a guest's old lock does not make it the owner while the state names another live session" \
+  || fail "E22: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E23 (review 09a017a8): chủ sau /clear (id mới sB; reown đã chuyển record của sA sang sB, giữ pid cũ = pid của khoá) resume từ shell
+#   trong lúc record của một khách còn sống nêu worktree: record của chính nó mang đúng pid của khoá là bằng chứng chủ -> khoá lại
+repo s true; wtadd "$TMP/s" cleared2 sA; G "$TMP/s" worktree lock --reason "devkit-kept session=sA pid=$DEAD" "$TMP/s/.claude/worktrees/cleared2"
+mkdir -p "$TMP/s/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/s/.claude/worktrees/cleared2" "$DEAD" > "$TMP/s/.claude/audit-gate/session_worktree/sB"
+printf '%s\npid %s\n' "$TMP/s/.claude/worktrees/cleared2" "$SLEEPER" > "$TMP/s/.claude/audit-gate/session_worktree/s97"
+start_src "$TMP/s" cleared2 sB resume
+lk="$(lock_of "$TMP/s" cleared2)"
+[ "$lk" = "devkit-kept session=sB pid=$$" ] && ok "E23: the owner under its post-/clear id (its record carries the lock's pid) re-locks despite a live guest record" \
+  || fail "E23: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
 # E19 (review PR #415): record của CHÍNH sid này (pid đã chết: resume từ shell giữ id) không phải "chủ khác còn sống"
 repo m true; G "$TMP/m" worktree add -q --detach "$TMP/m/.claude/worktrees/recself"   # own repo: E18's lock carries this shell's pid
 mkdir -p "$TMP/m/.claude/audit-gate/session_worktree"
