@@ -46,13 +46,16 @@ def main():
         return 0
     if len(prompt.strip()) < 8 or prompt.lstrip().startswith("/"):
         return 0
-    if prompt.lstrip().startswith("First operation"):   # maybe a super-board lane: route its card's words, not the runner's text
+    if prompt.lstrip().startswith(("First operation", "Run super-")):   # maybe a super-board lane (Claude / Codex): route its card's words, not the runner's text
         try:
             from enrich_context import lane_card_text   # same folder; the one rule for what a lane opener is
             card = lane_card_text(prompt)
             prompt = prompt if card is None else card
         except ImportError as e:
             print(f"rule_context: lane check unavailable ({e})", file=sys.stderr)
+        except RecursionError:   # a lane check that still recursed too deep: route nothing rather than the runner's text or a traceback
+            print("rule_context: lane check recursed too deep; no rule routed", file=sys.stderr)
+            return 0
     root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     want = words(prompt)
     if not want:

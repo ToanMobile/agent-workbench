@@ -73,6 +73,17 @@ c="$(printf '{"prompt":"%s","session_id":"fixed-s"}' "giải quyết conflict kh
 printf '%s' "$c" | grep -q "MERGE_CONFLICT" || fail "5b: setup — the second prompt did not change the hook text: $c"
 printf '%s' "$c" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "5b: the order was repeated for another prompt of the same session" \
   || ok "5b: another prompt of the same session does not repeat the order"
+# 5c (OCR 25/10): a chit-chat prompt whose only hook text was the order, asked again after another prompt of the same session, left a
+#    bare "[DevKit] Ngữ cảnh tự động …:" header with nothing under it once the order was deduped: no text at all then.
+s5c() { printf '{"prompt":"%s","session_id":"s5c"}' "$1" | bash "$HOOK" 2>&1; }
+CHAT="bạn khỏe không hôm nay thế nào"
+c1="$(s5c "$CHAT")"; s5c "giải quyết conflict khi merge nhánh release" >/dev/null; c3="$(s5c "$CHAT")"
+printf '%s' "$c1" | grep -q "GIAO MẶC ĐỊNH BẬT" || fail "5c: setup — the chit-chat prompt carries no order the first time: $c1"
+[ -z "$c3" ] && ok "5c: the same chit-chat prompt later in the session, its order already sent → no text (no bare header)" \
+  || fail "5c: a bare header with nothing under it: '$c3'"
+c4="$(s5c "sửa lỗi nút Lưu bị bấm hai lần")"
+printf '%s' "$c4" | grep -q "Ngữ cảnh tự động" && printf '%s' "$c4" | grep -q "BUG_FIX" \
+  && ok "  … while a prompt with its own context in that session still gets its header and lines (control)" || fail "  … control lost: '$c4'"
 
 # 3b: the PROJECT file wins even when it is the broken one (OpenCodeReview + reviewer 14/10: a typo there used to fall through to a global true,
 #     so delegation was ON while the notice said "coi như false")
@@ -102,6 +113,12 @@ o7="$(lane_out "$LANE")"
 printf '%s' "$o7" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "7: a super-board lane got the giao order: $o7" || ok "7: a super-board lane opener gets no giao order"
 printf '%s' "$o7" | grep -q "Antigravity" && fail "7: a super-board lane was told to call Antigravity: $o7" || ok "  … nor the Claude ↔ Antigravity review order ('migration' is the harness's word)"
 printf '%s' "$(lane_out "$P")" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "  … while a user prompt in the same project keeps the order (control)" || fail "  … control: the user prompt lost the order"
+# 7b: the Codex lane (.claude/bin/super-board-codex-lane.sh; fixture tests/lib/codex_lane_prompt.py) gets no order either, while a prompt
+#     that only mentions a Codex lane keeps it.
+o7b="$(lane_out "$(python3 "$DEVKIT_DIR/tests/lib/codex_lane_prompt.py" "Sửa tài liệu cài đặt" "Cập nhật mục cài đặt trong README.")")"
+printf '%s' "$o7b" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "7b: a Codex lane got the giao order: $o7b" || ok "7b: a Codex lane opener gets no giao order"
+printf '%s' "$(lane_out "cập nhật tài liệu cài đặt cho Codex lane worker của dự án")" | grep -q "GIAO MẶC ĐỊNH BẬT" \
+  && ok "  … while a user prompt mentioning a Codex lane keeps the order (control)" || fail "  … control: the Codex-mention prompt lost the order"
 
 # 6: the "no user config" pin of tests/lib/clean_git_env.sh itself (OpenCodeReview 14/10, workflow-improvements I.4 #1). It was
 #    ${TMPDIR:-/tmp}/agpm-test-no-global-config/.antigravity-pm.json: a guessable path in a shared /tmp that another user, or an old run,

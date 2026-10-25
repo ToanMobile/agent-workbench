@@ -422,6 +422,70 @@ rules "viết PR description bằng tiếng Việt theo Vietnamese repository po
 o="$(rules "$RUNNER")"
 [ -z "$o" ] && ok "rule_context: runner lane opener → no rule section from the harness's 'Language policy' sentence" \
   || fail "rule_context: runner lane opener still routed: $o"
+# OCR 25/10: the opener regex (two lazy [^\n]*? around super-board-skills-ready.py) backtracked quadratically: "First operation: " +
+# "super-board-skills-ready.py " * 4000 (112 KB) took 6.17 s, and the hook runs the check up to 3 times under a 10 s timeout.
+# CPU time (process_time), not wall clock: a wall bound flakes in run_impacted's parallel pool.
+python3 - "$ENRICH" <<'PY' && ok "lane opener check is linear: 112 KB of skills-ready repeats, no --cards -, < 0.5 s CPU each, no lane" \
+  || fail "lane opener check: quadratic or wrong on the pathological prompt"
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+p = "First operation: " + "super-board-skills-ready.py " * 4000
+for name, call, lane in (("lane_card_text", ec.lane_card_text, None), ("harness_prompt", ec.harness_prompt, "super-board lane opener")):
+    t0 = time.process_time(); got = call(p); cpu = time.process_time() - t0
+    assert cpu < 0.5, "%s: %.2f s CPU" % (name, cpu)
+    assert got != lane if lane else got is None, "%s: %r" % (name, got)
+# the same check still finds the opener when the line does carry --cards - (after the repeats)
+assert ec.lane_card_text(p + "--cards - with [] as stdin") == "", "opener after the repeats not found"
+PY
+# OCR 25/10: a lane opener followed by 200 000 "[" made raw_decode raise RecursionError (only ValueError was caught): the prompt hook
+# and rule_context.py died with a traceback. The card part degrades to no words; both exit 0, no traceback.
+python3 -c 'import json; print(json.dumps({"prompt": "First operation: run .claude/bin/super-board-skills-ready.py --cards - with " + "[" * 200000, "session_id": "deep-1"}))' > "$TMP/deep.json"
+o="$(bash "$HOOK" < "$TMP/deep.json" 2>&1)"; rc=$?
+r="$(CLAUDE_PROJECT_DIR="$TMP/p_lane" python3 "$(dirname "$ENRICH")/rule_context.py" < "$TMP/deep.json" 2>&1)"; rr=$?
+[ "$rc" = 0 ] && [ "$rr" = 0 ] && ! printf '%s\n%s' "$o" "$r" | grep -q 'Traceback' \
+  && ok "lane opener + 200 000 '[' (RecursionError in raw_decode): prompt hook and rule_context exit 0, no traceback" \
+  || fail "deeply nested lane card: hook rc=$rc rule_context rc=$rr: $(printf '%s\n%s' "$o" "$r" | grep -m2 -E 'Traceback|Error')"
+# Codex lane (.claude/bin/super-board-codex-lane.sh, fixture tests/lib/codex_lane_prompt.py): line 1 "Run super-<lane> for issue #N as a
+# Codex lane worker.", line 2 the same skills-ready opener (--host codex), the card a JSON object on its own "Card: " line after a skills
+# report that holds arrays. Its fixed sentences (worktree, claims, approval, merge, review) were classified as a request; now only the
+# card's title/body, as for the Claude lanes. A prompt that mentions a Codex lane mid-text, or whose line 2 is no opener, is a request.
+CODEX_FX="$DEVKIT_DIR/tests/lib/codex_lane_prompt.py"
+CODEX="$(python3 "$CODEX_FX" "" "Xem mục cài đặt trong tài liệu hướng dẫn.")"
+o="$(lctx "Lane Codex bị kẹt, log của nó: $CODEX")"
+printf '%s\n' "$o" | grep -q 'INSTINCT-F09' && ok "Codex lane text quoted mid-message: classified as before (F09 shown)" \
+  || fail "quoted Codex lane text lost its trap: $o"
+o="$(lctx "$(python3 "$CODEX_FX" "" "Xem mục cài đặt trong tài liệu hướng dẫn." "First operation: read the board, then pick a card.")")"
+printf '%s\n' "$o" | grep -q 'INSTINCT-F09' && ok "Codex first line without the skills-ready opener on line 2: a request as before (F09 shown)" \
+  || fail "Codex line 1 alone taken for a lane: $o"
+o="$(lctx "$CODEX")"
+[ -z "$o" ] && ok "Codex lane opener (card body, no title, no kind of work) → no hook text: no traps, no UI door, no intents" \
+  || fail "Codex lane opener still classified as a request: $o"
+o="$(lctx "$(python3 "$CODEX_FX" "Nút Lưu trên màn hình cài đặt bị bấm hai lần" "Người dùng double click nút Lưu.")")"
+zs "$o" && printf '%s\n' "$o" | grep -q 'BUG_FIX' && ! printf '%s\n' "$o" | grep -q 'INSTINCT-F09' \
+  && ! printf '%s\n' "$o" | grep -qE 'CODE_AND_QA_REVIEW|MERGE_CONFLICT' \
+  && ok "Codex lane: the card title/body are classified (UI door + BUG_FIX), the runner text is not (no F09, no review/merge)" \
+  || fail "Codex lane with a UI bug card → '$o'"
+python3 - "$ENRICH" <<'PY' && ok "Codex lane check is linear too: line 1 + 112 KB of skills-ready repeats, < 0.5 s CPU, no lane" \
+  || fail "Codex lane check: quadratic or wrong on the pathological prompt"
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+p = "Run super-build for issue #1 as a Codex lane worker.\nFirst operation: " + "super-board-skills-ready.py " * 4000
+t0 = time.process_time(); got = ec.lane_card_text(p); cpu = time.process_time() - t0
+assert cpu < 0.5 and got is None, (cpu, got)
+PY
+# rule_context: a rule keyed on the Codex runner's own words (worktree, merge, GitHub quota) is not routed for a Codex lane.
+mkdir -p "$TMP/p_codex/.agents/context"
+printf '%s\n' '## `.agents/local/rules/10-lane.md`' '- Worktree, merge gate và GitHub quota của lane (Lane Worktree Merge Quota) L1-9' \
+  > "$TMP/p_codex/.agents/context/rules-index.md"
+crules() { python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1]}))' "$1" \
+  | CLAUDE_PROJECT_DIR="$TMP/p_codex" python3 "$(dirname "$ENRICH")/rule_context.py"; }
+crules "dọn worktree của lane rồi merge gate, nhớ quota GitHub" | grep -q 'Lane Worktree Merge Quota' \
+  && ok "rule_context: a user prompt naming the lane rule gets it (control)" || fail "rule_context Codex control lost the rule"
+o="$(crules "$CODEX")"
+[ -z "$o" ] && ok "rule_context: Codex lane opener → no rule section from the runner's sentences" \
+  || fail "rule_context: Codex lane opener still routed: $o"
 
 # ── 2. Recall ────────────────────────────────────────────────────────────────
 r="$(refs "mở file DOCX bị lỗi XML")"

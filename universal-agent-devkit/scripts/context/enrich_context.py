@@ -194,8 +194,38 @@ def giao_default(project_root):
 # on the card JSON array. Replayed on 40 real lanes (2026-10-25): its fixed sentences matched the same 4 traps in 38-40 of 40, opened
 # the UI door ("card") in all, and the runner opener was captured as a bug. Only the opener at the very start counts: a user's
 # prompt that quotes it, or starts "First operation after login…", is a request as before.
-LANE_OPENER_RE = re.compile(r"First operation\b[^\n]*?super-board-skills-ready\.py[^\n]*?--cards -(?!\S)")
+# Linear on purpose (OCR 25/10): the regex it replaces, two lazy [^\n]*? around the script name, backtracked quadratically ("First
+# operation: " + "super-board-skills-ready.py " * 4000 = 112 KB took 6.17 s; the hook runs the check up to 3 times under a 10 s timeout).
+_LANE_HEAD_RE = re.compile(r"First operation\b")
+_LANE_SCRIPT = "super-board-skills-ready.py"
+_LANE_CARDS_RE = re.compile(r"--cards -(?!\S)")
+# The Codex lane (.claude/bin/super-board-codex-lane.sh) opens with "Run super-<lane skill> for issue #N as a Codex lane worker." and
+# puts the same opener on line 2 (--host codex). Its card is one JSON object on its own "Card: " line, after a skills report that holds
+# arrays (the "[" search of the other lanes would read that report). Anchored the same way: line 1 at the very start, then line 2.
+_CODEX_LANE_RE = re.compile(r"Run super-(?:build|qa|review) for issue #\d+ as a Codex lane worker\.\n")
+_CODEX_CARD_RE = re.compile(r"^Card: (?=\{)", re.M)
 ISSUE_SECTION_RE = re.compile(r"^# Issue #\d+ — ([^\n]*)\n(.*?)(?=^---$|\Z)", re.M | re.S)   # super-build-dispatch.sh: title + body
+
+
+def _opener_line_end(text, pos):
+    """Index just past `--cards -` when the line of text that starts at pos is the lane opener ("First operation" there, then
+    super-board-skills-ready.py, then `--cards -` on that same line), else -1. One pass over that line: no backtracking."""
+    if not _LANE_HEAD_RE.match(text, pos):
+        return -1
+    nl = text.find("\n", pos)
+    end = len(text) if nl < 0 else nl
+    i = text.find(_LANE_SCRIPT, pos, end)
+    if i < 0:
+        return -1
+    m = _LANE_CARDS_RE.search(text, i + len(_LANE_SCRIPT), end)   # endpos = end of line: `--cards -` at the line end still counts
+    return m.end() if m else -1
+
+
+def lane_opener_end(text):
+    """Index just past the lane opener at the very start of text (already left-stripped), -1 when text opens with none. The Codex
+    lane's opener is its line 2, right after its "Run … as a Codex lane worker." line 1."""
+    codex = _CODEX_LANE_RE.match(text)
+    return _opener_line_end(text, codex.end() if codex else 0)
 
 
 def lane_card_text(prompt):
@@ -203,15 +233,22 @@ def lane_card_text(prompt):
     number/status/labels/lane only), or None when the prompt is no lane opener. Labels are not words of the card: a `bug` label
     made 33 of 40 lanes BUG_FIX."""
     text = prompt.lstrip()
-    m = LANE_OPENER_RE.match(text)
-    if not m:
+    opener_end = lane_opener_end(text)
+    if opener_end < 0:
         return None
     words = []
-    start = text.find("[", m.end())   # the array the opener hands to --cards - as stdin
+    codex = _CODEX_LANE_RE.match(text)
+    if codex:   # the card object on its "Card: " line
+        card_at = _CODEX_CARD_RE.search(text, opener_end)
+        start = card_at.end() if card_at else -1
+    else:
+        start = text.find("[", opener_end)   # the array the opener hands to --cards - as stdin
     try:
         cards = json.JSONDecoder().raw_decode(text, start)[0] if start >= 0 else []
-    except ValueError:
+    except (ValueError, RecursionError):   # RecursionError: a card part nested past the recursion limit ("[" * 200000, OCR 25/10)
         cards = []
+    if codex:
+        cards = [cards]
     for card in cards if isinstance(cards, list) else []:
         if isinstance(card, dict):
             words += [card[k] for k in ("title", "body") if isinstance(card.get(k), str)]
@@ -812,7 +849,7 @@ def harness_prompt(prompt, payload=None, env=None):
     """Why this prompt is an agent or harness prompt rather than a user's report, or "".
     Decided by the prompt's content only: the agent that runs the hook (Grok, Codex, Gemini,
     Cursor) says nothing — a user's bug report is recorded under every agent (2026-09-25)."""
-    if LANE_OPENER_RE.match(prompt.lstrip()):
+    if lane_opener_end(prompt.lstrip()) >= 0:
         return "super-board lane opener"   # BUG-20261016-first-operation-run-claude-bin-super-boa: the card is already the ticket
     first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
     if ROLE_OPENING.match(first):
@@ -1194,6 +1231,7 @@ ONCE_PER_SESSION = ("- Yêu cầu ngầm định: ", "- Bẫy đã gặp: ", "- 
                     "ZERO-SLOP UI MANDATE", "• ",  # these two: the lines of ZERO_SLOP_MANDATE
                     "- GIAO MẶC ĐỊNH BẬT")  # the giaoDefault order (2026-10-25: ~370 B re-sent on every prompt, 19.6 KB a session)
 SAME_AS_BEFORE = "(ngữ cảnh DevKit như lượt trước)"
+CONTEXT_HEADER = "[DevKit] Ngữ cảnh tự động"   # compact()'s first line, and the one the hook adds when only extra lines follow
 COMPACT_MARKS = (b'"subtype":"compact_boundary"', b'"subtype": "compact_boundary"')  # Claude Code transcript line after a compaction
 NO_TRANSCRIPT_CAP = 20  # without a transcript a compaction is invisible: resend after 20 prompts
 
@@ -1258,6 +1296,8 @@ def dedupe_session(text, project_dir, session_id, payload):
         out = "\n".join([SAME_AS_BEFORE] + [l for l in lines if l.startswith(("- Bắt buộc: ", "- Song song "))])
     else:
         out = "\n".join(l for l in lines if not (l.startswith(ONCE_PER_SESSION) and h(l) in sent))
+        if all(l.startswith(CONTEXT_HEADER) for l in out.split("\n") if l.strip()):
+            out = ""   # OCR 25/10: only the header left (its one line, the giao order, already sent): a bare header says nothing
     sent.update(h(l) for l in lines if l.startswith(ONCE_PER_SESSION))
     st = {"sent": sorted(sent), "last": h(text), "n": int(st.get("n") or 0) + 1,
           "offset": size if size is not None else 0}
