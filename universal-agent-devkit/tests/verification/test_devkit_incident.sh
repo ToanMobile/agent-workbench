@@ -383,6 +383,18 @@ scan >/dev/null
 [ "$(creates)" = "$n" ] && ok "dòng lạ sau Traceback không bị lấy làm exception" || fail "dòng lạ thành thẻ exception: create=$(creates) (trước $n)"
 grep -q 'PRIVPKG\|Python fatal' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "tên package / 'fatal' lọt lên issue" || ok "không lộ tên package app"
 
+# 27. Danh sách repo của bộ quét = danh sách board của super_board_all.py (25/10: Idle-Plaza-3D thay Neighbours-From-Hell).
+python3 - "$DEVKIT_DIR/scripts/governance" <<'PY' && ok "DEFAULT_REPOS khớp REPOS của super_board_all, có Idle, không có Neighbours" \
+  || fail "danh sách repo của bộ quét lệch danh sách board"
+import sys
+sys.path.insert(0, sys.argv[1])
+import devkit_incident as d, super_board_all as b
+boards = {r["dir"] for r in b.REPOS}
+assert set(d.DEFAULT_REPOS) == boards, (sorted(set(d.DEFAULT_REPOS) ^ boards))
+assert any(p.endswith("/Idle-Plaza-3D") for p in d.DEFAULT_REPOS)
+assert not any("Neighbours" in p for p in d.DEFAULT_REPOS)
+PY
+
 # 14. Mỗi sự cố một thẻ riêng (--new-card): không gom vào thẻ bug khác.
 grep '"issue", "create"' "$FAKE_LOG" >/dev/null && python3 - "$FAKE_LOG" <<'PY' && ok "--new-card: không gom vào thẻ khác" || fail "thiếu --new-card"
 import json, sys

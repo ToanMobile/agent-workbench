@@ -15,7 +15,9 @@ FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); 
 
 new_project() {  # new_project <command>
   P="$TMP/p$RANDOM"; mkdir -p "$P/src" "$P/tests" "$P/.agents"
-  ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t
+  # main checkout kiểu cũ: ở trunk mode (mặc định) người ghi tự động không ghi file track của main, dòng chờ vào sổ ngoài git
+  # (tests/worktree_git/test_trunk_main_pending_writers.sh kiểm đường đó)
+  ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t && git config devkit.trunkMode false
     printf 'def add(a, b):\n    return a - b\n' > src/calc.py
     python3 -c 'import json,sys; json.dump({"adopted": True, "rules": [{"component": "Calc", "watch_files": ["src/*.py", "tests/*.py"],
       "mandatory_regression_tests": [{"id": "REG-CALC", "name": "calc", "command": sys.argv[1]}]}]},

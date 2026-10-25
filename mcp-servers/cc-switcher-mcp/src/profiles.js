@@ -654,8 +654,8 @@ export const DEFAULT_REPOS = [
     defaultAccount: 'finos',
   },
   {
-    name: 'Neighbours-From-Hell',
-    path: '/Volumes/Data/Toan/Game/Neighbours-From-Hell',
+    name: 'Idle-Plaza-3D',
+    path: '/Volumes/Data/Toan/Game/Idle-Plaza-3D',
     defaultAccount: 'finos',
   },
   {

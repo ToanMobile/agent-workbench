@@ -4,6 +4,7 @@
 #     still held `{`…`}` — so a literal ${ENV_VAR} in the suite command made it fall back to running the whole suite.
 #  2. SIGTERM / SIGINT left the red-proof-* worktree and the test's process group behind (only SIGKILL on timeout).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
+export WORKTREE_TRUNK_MODE=0   # checklist kiểu cũ: ở trunk mode (mặc định) lệnh bugs/req ở main ghi sổ chờ ngoài git (tests/worktree_git/test_trunk_main_pending_writers.sh kiểm đường đó)
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 PROOF="${RED_PROOF_UNDER_TEST:-$DEVKIT_DIR/scripts/testing/red_proof.py}"

@@ -22,6 +22,13 @@ FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 PY="$(python3 -c 'import sys; print(sys.executable)')"
+# 24/10: mỗi lần chạy gate ở đây có hạn giờ (tests/lib/run_bounded.py). Gate kẹt (ca A3 control: open() một FIFO) thì bài FAIL với
+# exit 124, không treo mãi và không để post-fix-gate.py mồ côi (hai tiến trình như vậy từng sống 18h).
+# Hạn mỗi lần gọi: 120 s (một lần gate ở đây ~5 s, máy tải cao ~30 s). Giá trị lạ thì dùng 120: helper lỗi cách dùng thoát 64, và
+# một giá trị hỏng không bao giờ được biến thành exit 2 mà các ca A3/A8/A10 chờ (xanh giả khi gate chưa hề chạy).
+case "${GATE_ROBUSTNESS_DEADLINE_S:-}" in ''|*[!0-9]*) GATE_ROBUSTNESS_DEADLINE_S=120 ;; esac
+[ "$((10#$GATE_ROBUSTNESS_DEADLINE_S))" -gt 0 ] || GATE_ROBUSTNESS_DEADLINE_S=120   # 0, 00, 000 = "no deadline" in the helper: refused
+BOUND=("$PY" -I "$DEVKIT_DIR/tests/lib/run_bounded.py" "$GATE_ROBUSTNESS_DEADLINE_S" --)
 
 mk() {
   local d="$TMP/$1"
@@ -36,7 +43,7 @@ JSON
   git add -A && git commit -qm init
 }
 gate() {
-  OUT="$(CLAUDE_PROJECT_DIR="$PWD" POSTFIX_GATE_FORCE_FULL=1 "$PY" "$GATE" --matrix "$PWD/matrix.json" --lang en "$@" 2>&1)"; RC=$?
+  OUT="$(CLAUDE_PROJECT_DIR="$PWD" POSTFIX_GATE_FORCE_FULL=1 "${BOUND[@]}" "$PY" "$GATE" --matrix "$PWD/matrix.json" --lang en "$@" 2>&1)"; RC=$?
 }
 expect_rc() {
   if [ "$RC" = "$2" ]; then ok "$1 (exit $RC)"
@@ -114,7 +121,7 @@ mk nogit
 printf 'def f():\n    return 2\n' > src/core.py
 mkdir -p "$TMP/nogit-bin"
 for mode in "" "--brief"; do
-  OUT="$(PATH="$TMP/nogit-bin" CLAUDE_PROJECT_DIR="$PWD" "$PY" "$GATE" --matrix "$PWD/matrix.json" --lang en --run-tests --full $mode 2>&1)"; RC=$?
+  OUT="$(PATH="$TMP/nogit-bin" CLAUDE_PROJECT_DIR="$PWD" "${BOUND[@]}" "$PY" "$GATE" --matrix "$PWD/matrix.json" --lang en --run-tests --full $mode 2>&1)"; RC=$?
   expect_rc "A10: no git on PATH ${mode:-(plain)}: UNVERIFIED" 2
   printf '%s\n' "$OUT" | grep -q Traceback && bad "A10 ${mode:-(plain)}: a traceback was printed" \
     || { printf '%s\n' "$OUT" | grep -qi "git" && ok "A10 ${mode:-(plain)}: a clear message names git" || bad "A10 ${mode:-(plain)}: no message about git"; }
@@ -292,5 +299,24 @@ DEVKIT_CAPACITY_LOAD=9999 gate --run-tests --full --timeout 2
 printf '%s\n' "$OUT" | grep -qE "TIMEOUT.*REG-H" && ! printf '%s\n' "$OUT" | grep -qE "(BUSY|SLOT|BUDGET).*REG-H" && [ "$RC" = 1 ] \
   && ok "A14: control: heavy load, the suite ran and TIMED OUT (status TIMEOUT, exit 1)" || bad "A14: control: no TIMEOUT status for REG-H under heavy load (rc=$RC): $(printf '%s' "$OUT" | grep REG-H | head -3)"
 printf '%s\n' "$OUT" | grep -q "HANG" && bad "A14: control: a timeout under heavy load must not be called HANG" || ok "A14: control: heavy load, the timeout is not called HANG"
+
+# ── A15 (#370 sau dda818bb): run_impacted.sh chạy mỗi bài qua tests/lib/run_bounded.py, lệnh của bài nằm trong session / process group
+# RIÊNG. Ảnh chụp ps lúc quá giờ lọc theo pgid của suite thì chỉ còn shell và helper, mất đúng tiến trình lá đang kẹt. Ảnh phải đi theo
+# cây tiến trình (ppid). Số 307 chỉ được tính trong tiến trình lá ($((300+7))), nên "sleep 307" không có trong argv của tổ tiên nào.
+mk hangleaf
+"$PY" - "$PY" "$DEVKIT_DIR/tests/lib/run_bounded.py" > matrix.json <<'EOF'
+import json, shlex, sys
+cmd = 'echo "running tests/test_stuck_leaf.sh"; ' + shlex.join([sys.argv[1], "-I", sys.argv[2], "300", "--", "sh", "-c", "exec sleep $((300+7))"])
+print(json.dumps({"project": "t", "rules": [{"component": "Core", "watch_files": ["src/*"],
+                  "mandatory_regression_tests": [{"id": "REG-L", "name": "leaf", "command": cmd}]}]}))
+EOF
+git add -A && git commit -qm matrix
+printf 'def f():\n    return 2\n' > src/core.py
+DEVKIT_CAPACITY_LOAD=0.5 gate --run-tests --full --timeout 3
+expect_rc "A15: a suite whose stuck process sits in its own session fails the gate" 1
+printf '%s\n' "$OUT" | grep -q "HANG" && printf '%s\n' "$OUT" | grep -q "tests/test_stuck_leaf.sh" \
+  && ok "A15: the timeout is reported as HANG with the last test line" || bad "A15: no HANG / last test line: $(printf '%s' "$OUT" | grep REG-L | head -3)"
+printf '%s\n' "$OUT" | grep -q "sleep 307" && ok "A15: the snapshot carries the stuck leaf in its own session (process tree, not pgid)" \
+  || bad "A15: the snapshot lost the stuck leaf in its own session: $(printf '%s' "$OUT" | grep -A8 'HANG\|PPID' | head -12)"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_robustness: all tests passed" || { echo "❌ test_gate_robustness: $FAILS failed"; exit 1; }

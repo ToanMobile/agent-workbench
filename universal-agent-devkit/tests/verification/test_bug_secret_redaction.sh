@@ -6,6 +6,7 @@
 # The bug title (and cause / evidence) is now redacted where every path meets, register_bug, and the prompt hook redacts its
 # title before it dedupes: a key, token or password never reaches the checklist, the id or the context line.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
+export WORKTREE_TRUNK_MODE=0   # checklist kiểu cũ: ở trunk mode (mặc định) lệnh bugs/req ở main ghi sổ chờ ngoài git (tests/worktree_git/test_trunk_main_pending_writers.sh kiểm đường đó)
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 KIT="$DEVKIT_DIR/bin/agent-kit"

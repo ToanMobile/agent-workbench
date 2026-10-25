@@ -803,8 +803,8 @@ def keep_proof(project, bid, result, record):
         fresh = rc.load_view(project)
         if bid in fresh["items"]:
             fresh["items"][bid]["red_proof"] = result
-            if record:
-                rc.save(project, fresh, stale=False)
+            if record:   # đúng dòng này, không bao giờ cả sổ chờ của view (main trunk mode: vào sổ chờ, file track không đổi)
+                rc.save_view_rows(project, fresh, [bid], stale=False)
             else:
                 rc.overlay_save_rows(project, fresh, [bid])
 

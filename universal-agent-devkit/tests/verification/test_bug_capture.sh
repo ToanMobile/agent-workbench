@@ -32,6 +32,9 @@ unset PROMPT_CONTEXT BUG_CAPTURE GROK_HOOK_EVENT GROK_HOOK_NAME GROK_SESSION_ID 
 
 P="$TMP/p"; mkdir -p "$P/src" "$P/tests" "$P/.agents"
 cd "$P" && git init -q . && git config user.email t@t && git config user.name t
+# main checkout kiểu cũ: ở trunk mode (mặc định) dòng REPORTED vào sổ chờ ngoài git, không vào file track
+# (tests/worktree_git/test_trunk_main_reported_pending.sh kiểm đường đó)
+git config devkit.trunkMode false
 echo "def total(): return 1" > src/cart.py
 echo "def test_total(): pass" > tests/test_cart.py
 cat > .agents/regression_matrix.active.json <<'JSON'

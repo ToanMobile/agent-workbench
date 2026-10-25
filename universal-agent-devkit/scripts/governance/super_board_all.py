@@ -5,7 +5,7 @@ super_board_all.py — Quản lý đồng thời toàn bộ 6 Super-Board Runner
   2. officereader                ➔ Project #2
   3. goods-triple-shelf-match-3d ➔ Project #3
   4. geelyex2                    ➔ Project #4
-  5. neighbours-from-hell        ➔ Project #5
+  5. idle-plaza-3d               ➔ Project #5
   6. humans-vs-ufos              ➔ Project #6
 
 Cách dùng:
@@ -49,9 +49,9 @@ REPOS = [
         "url": "https://github.com/users/ToanMobile/projects/4/views/2"
     },
     {
-        "slug": "neighbours-from-hell",
-        "name": "Neighbours From Hell (#5)",
-        "dir": "/Volumes/Data/Toan/Game/Neighbours-From-Hell",
+        "slug": "idle-plaza-3d",
+        "name": "Idle Plaza 3D (#5)",
+        "dir": "/Volumes/Data/Toan/Game/Idle-Plaza-3D",
         "url": "https://github.com/users/ToanMobile/projects/5/views/2"
     },
     {

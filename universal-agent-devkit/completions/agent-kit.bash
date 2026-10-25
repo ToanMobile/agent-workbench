@@ -71,7 +71,7 @@ _agent_kit() {
         || COMPREPLY=( $(compgen -f -- "${cur}") ) ;;
     checklist)
       if [ "${COMP_CWORD}" -eq 2 ]; then
-        COMPREPLY=( $(compgen -W "restore check show" -- "${cur}") )
+        COMPREPLY=( $(compgen -W "restore check show migrate-pending" -- "${cur}") )
       elif [ "${COMP_WORDS[2]}" = "restore" ]; then
         COMPREPLY=( $(compgen -W "--list --dismiss $(ls .agents/regression_journal/snapshots 2>/dev/null)" -- "${cur}") )
       fi ;;

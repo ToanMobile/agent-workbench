@@ -20,6 +20,7 @@ unset PROMPT_CONTEXT BUG_CAPTURE AUTO_LINK
 new_project() {
   P="$TMP/p$RANDOM"; mkdir -p "$P/src" "$P/tests" "$P/.agents"
   ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t
+    git config devkit.trunkMode false   # main checkout kiểu cũ: ở trunk mode dòng REPORTED vào sổ chờ (test_trunk_main_reported_pending.sh)
     printf 'def add(a, b):\n    return a - b\n' > src/calc.py
     cat > .agents/regression_matrix.active.json <<'JSON'
 {"adopted": true, "rules":[{"component":"Calc","watch_files":["src/*.py","tests/*.py"],

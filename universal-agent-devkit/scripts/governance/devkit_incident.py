@@ -35,13 +35,14 @@ from datetime import datetime
 from pathlib import Path
 
 DEVKIT_REPO = "ToanMobile/agent-workbench"
-# Whitelist "5 repo" của người dùng (memory default-four-repos, 24/10). ponytail: danh sách cứng, đọc từ một file cấu hình
+# Whitelist "6 repo" của người dùng (memory default-four-repos, 25/10: Idle-Plaza-3D thay Neighbours-From-Hell). ponytail: danh sách cứng, đọc từ một file cấu hình
 # khi người dùng thêm/bớt repo thường xuyên hơn.
 DEFAULT_REPOS = [
     "/Volumes/Data/Toan/OfficeReader/OfficeReader",
     "/Volumes/Data/Toan/GeelyEx2",
     "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D",
     "/Volumes/Data/Toan/Game/Humans-vs.-UFOs",
+    "/Volumes/Data/Toan/Game/Idle-Plaza-3D",
     "/Volumes/Data/Toan/agent-workbench",
 ]
 CREATE_TASK = Path(__file__).resolve().parent / "create_task.py"

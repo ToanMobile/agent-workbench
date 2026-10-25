@@ -54,7 +54,7 @@ DEFAULTS = {
         "includeArchived": False,
     },
     "root": "/Volumes/Data/Toan",
-    "repos": ["agent-workbench", "GeelyEx2", "OfficeReader", "Goods-Triple", "Neighbours"],
+    "repos": ["agent-workbench", "GeelyEx2", "OfficeReader", "Goods-Triple", "Idle-Plaza"],
     "repoPaths": {},
     "claudeProjectsDir": "~/.claude/projects",
     "runnerLogGlobs": ["~/.agent-office/logs/*.log"],

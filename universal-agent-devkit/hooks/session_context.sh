@@ -180,7 +180,20 @@ try:
         sys.path.insert(0, os.path.join(_top, "bin"))
         sys.dont_write_bytecode = True
         import regression_checklist as rc  # the same status rules the checklist view uses
-        _skip = getattr(rc, "skip_bookkeeping", lambda p: False)   # a LINKED worktree leaves the tracked checklist files alone
+        _trunk = getattr(rc, "trunk_main", lambda p: False)(root)   # main trunk mode chỉ nhận gộp: không ghi file track ở đây
+        _skip = (lambda p: True) if _trunk else getattr(rc, "skip_bookkeeping", lambda p: False)   # a LINKED worktree leaves the tracked checklist files alone
+        if _trunk:   # bản cũ của prompt hook để dòng REPORTED chưa commit ở main: vào sổ chờ, kiểm, rồi trả file về HEAD (main ff được)
+            try:
+                _moved, _refused = rc.migrate_pending(root, lock_wait=0)   # SessionStart không chờ khoá gộp; lệnh tay chờ 10 s
+                if _moved:
+                    out.append(f"Checklist: {len(_moved)} dòng chưa commit ở main đã vào sổ chờ ngoài git, file track về HEAD (main sạch để gộp).")
+                if _refused:
+                    out.append("⚠️ Checklist: migrate-pending chưa chạy được — " + "; ".join(_refused))
+            except Exception as _e:  # noqa: BLE001 - nói ra, không chặn session start
+                out.append(f"⚠️ Checklist: migrate-pending lỗi ({type(_e).__name__}: {_e})")
+            _bad = rc.pending_problem(root)
+            if _bad:
+                out.append(f"⚠️ Sổ chờ checklist đọc không được ({_bad}): lần ghi tới cất nó sang bên (.bad-*) rồi ghi sổ mới.")
         with rc.locked(root):   # code changed since a PASS → STALE, written back only when it changed
             data = rc.load(root)
             before = json.dumps(data, sort_keys=True)
@@ -188,7 +201,9 @@ try:
             rc.auto_close_reported(data)
             if json.dumps(data, sort_keys=True) != before and not _skip(root):
                 rc.save(root, data, stale=False)
-        counts = rc.summary(data)
+        _view = {**data, "items": dict(data["items"])}
+        getattr(rc, "apply_pending", lambda d, p: None)(_view, root)   # số đếm có cả dòng REPORTED đang ở sổ chờ (chỉ để đếm, không ghi)
+        counts = rc.summary(_view)
         out.extend(filter(None, [rc.rollback_warning(root)]))  # checklist rolled back outside the DevKit
         try:
             _gov = os.path.dirname(indexer)    # scripts/governance (scripts/ before the regrouping)

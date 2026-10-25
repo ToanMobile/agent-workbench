@@ -19,7 +19,9 @@ FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); 
 unset PROMPT_CONTEXT BUG_CAPTURE INBOX_WATCH
 
 P="$TMP/p"; mkdir -p "$P/src" "$P/tests" "$P/.agents"
-cd "$P" && git init -q . && git config user.email t@t && git config user.name t
+# main checkout kiểu cũ: ở trunk mode (mặc định) người ghi tự động không ghi file track của main, dòng chờ vào sổ ngoài git
+# (tests/worktree_git/test_trunk_main_pending_writers.sh kiểm đường đó)
+cd "$P" && git init -q . && git config user.email t@t && git config user.name t && git config devkit.trunkMode false
 printf 'def total(items):\n    return 0\n' > src/cart.py
 cat > .agents/regression_matrix.active.json <<'JSON'
 {"adopted": true, "rules":[{"component":"Cart","watch_files":["src/*.py","tests/*.py"],
