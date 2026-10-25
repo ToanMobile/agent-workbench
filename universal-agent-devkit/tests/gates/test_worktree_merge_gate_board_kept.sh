@@ -81,6 +81,9 @@ stop "$TMP/c" s1 "$TMP/c" "$TMP/t3.jsonl"; rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/c/three.txt" ] && [ -d "$TMP/c/.claude/worktrees/kept" ] \
   && ok "K11: ExitWorktree keep: Stop merges into main and keeps the worktree while its session lives" \
   || fail "K11 kept (rc $rc, merged: $( [ -f "$TMP/c/three.txt" ] && echo yes || echo no), dir: $( [ -d "$TMP/c/.claude/worktrees/kept" ] && echo kept || echo removed)): out=$(head -c 300 "$TMP/out") err=$(head -c 300 "$TMP/err")"
+# #406 N3: khoá giờ còn do EnterWorktree / SessionStart đặt — câu báo nói lý do thật (phiên còn sống đang dùng), không "ExitWorktree keep"
+grep -q "phiên còn sống đang dùng nó" "$TMP/out" && ! grep -q "ExitWorktree keep" "$TMP/out" \
+  && ok "  … the Stop note says a live session is using the worktree (not 'ExitWorktree keep')" || fail "K11 note: out=$(head -c 400 "$TMP/out")"
 
 # 4 K11: khoá devkit-kept của pid đã chết: worktree remove mở khoá rồi gỡ (công việc đã ở main)
 G "$TMP/c" worktree unlock "$TMP/c/.claude/worktrees/kept" 2>/dev/null

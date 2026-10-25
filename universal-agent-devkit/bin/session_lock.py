@@ -1862,7 +1862,8 @@ def main():
             except Exception as e:  # noqa: BLE001 - a record that cannot be moved: the Stop hook tries again (worktree_merge_gate)
                 print(f"session_lock: worktree record not moved ({e!r})", file=sys.stderr)
             try:   # review 25/10: a session that starts in its worktree (no EnterWorktree) holds it too, or cleanup-wt removes it mid-gate
-                _sw.lock_started_worktree(main_top, cwd, sid, holder_pid())
+                _sw.lock_started_worktree(main_top, cwd, sid, holder_pid(), source=str(d.get("source") or "") or None,
+                                          owner_alive=lambda o: owner_gone(cwd, o, _sw, main_top)[1] == "alive")
             except Exception as e:  # noqa: BLE001 - SessionStart never blocks: said on stderr, the worktree stays as unprotected as before
                 print(f"session_lock: session worktree not locked ({e!r})", file=sys.stderr)
         if trunk and _same_dir(top, trunk):
