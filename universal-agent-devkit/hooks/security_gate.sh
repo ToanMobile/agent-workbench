@@ -452,9 +452,10 @@ refused = set()       # K3 (18/10): tool_use id whose tool_result says it never 
 reviews, bashes = [], []   # (idx, tool_use id): a review or Bash call that never ran neither covers an edit nor dates one (OCR 18/10)
 # Anchored at the start: a command's own output cannot start a result (a failed one begins "Exit code N"). "Permission to use" may span
 # lines (a heredoc command is quoted in it). A user rejection / Esc is NOT in it: the call may have run in part (OCR 18/10): an edit.
+# A subagent gets "This agent is isolated …" for the same refusal (25/10); test_evidence_gate.sh carries the same pattern.
 NOT_RUN_RX = re.compile(r"(PreToolUse:\S+ hook error|Permission to use \S[\s\S]*? has been denied"
                         r"|Permission for this action was denied by the Claude Code auto mode classifier"
-                        r"|This session is isolated in the worktree [^\n]* Refusing to run it)")
+                        r"|This (?:session|agent) is isolated in the worktree [^\n]* Refusing to run it)")
 errored = set()       # every tool_use id whose result is an error: a REVIEW that errored never finished (Unknown skill, denied, cut) -> covers nothing
 def _result_text(c):
     if isinstance(c, str):

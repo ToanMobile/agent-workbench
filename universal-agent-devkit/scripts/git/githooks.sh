@@ -84,7 +84,19 @@ msg_is_chained() { [ -f "$MSG_HOOK" ] && grep -qF "$CHAIN_MARK" "$MSG_HOOK"; }
 msg_target() { python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$MSG_HOOK" 2>/dev/null || echo "$MSG_HOOK"; }
 install_msg_hook() {
   if [ -e "$MSG_HOOK" ] && ! msg_is_ours; then
-    msg_is_chained && { echo "✔ commit-msg: $(L "hook riêng của dự án, đã nối luật DevKit" "the project's own hook, DevKit rule chained")"; return 0; }
+    if msg_is_chained; then
+      local cf; cf="$(msg_target)"
+      grep -qxF "$CHAIN_LINE" "$cf" && { echo "✔ commit-msg: $(L "hook riêng của dự án, đã nối luật DevKit" "the project's own hook, DevKit rule chained")"; return 0; }
+      # A chain line an older kit wrote (before 02/10 it called only the flat scripts/git-commit-msg.sh; once that path went,
+      # `[ -f "$D" ]` was false and the rule stopped in silence, audit 25/10 B6): rewrite it in place, after the #!, once.
+      # awk reads the line from the environment: -v would expand backslashes, and sed treats & | / in it as syntax.
+      cp -p "$cf" "$cf.devkit-tmp" \
+        && DEVKIT_CHAIN_LINE="$CHAIN_LINE" awk -v m="$CHAIN_MARK" 'NR == 1 { print; print ENVIRON["DEVKIT_CHAIN_LINE"]; next } !index($0, m)' \
+          "$cf" > "$cf.devkit-tmp" \
+        && mv "$cf.devkit-tmp" "$cf" \
+        && echo "✔ commit-msg: $(L "hook riêng của dự án: đã thay dòng nối luật DevKit cũ" "the project's own hook: stale DevKit chain line rewritten")"
+      return 0
+    fi
     if ! head -1 "$MSG_HOOK" | grep -qE '^#!.*(/|env[[:space:]]+)(ba|z|da)?sh([[:space:]]|$)'; then
       echo "• commit-msg: $(L "hook riêng của dự án không phải shell — giữ nguyên; muốn thêm luật DevKit, gọi:" "the project's own hook is not a shell script — kept; to add the DevKit rule, call:") $CHAIN_LINE"
       return 0

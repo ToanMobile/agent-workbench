@@ -9,10 +9,22 @@ COMMANDS_DIR="$ROOT_DIR/commands"
 
 mkdir -p "$COMMANDS_DIR"
 
+# Skills with no slash command on purpose: the agent picks them from context, nobody types them. The three Sprite Forge
+# media skills are also excluded by every profile (2D assets gave way to Blender 3D, 15/10), so their link was only ever
+# an untracked file after a sync (audit 25/10). parallel-lanes too: the prompt hook's "Song song" line starts it, and a NEW
+# command makes `agent-kit health` FAIL in every installed repo until each runs `agent-kit init` (no SessionStart relink adds
+# one). Space-separated skill names.
+NO_COMMAND_SKILLS="generate2dmedia generate2dsprite video2dsprite parallel-lanes"
+
 # 1. Link each canonical skill
 for skill_dir in "$SKILLS_DIR"/*; do
   [ -d "$skill_dir" ] || continue
   skill_name="$(basename "$skill_dir")"
+  case " $NO_COMMAND_SKILLS " in *" $skill_name "*)
+    # The link an older sync made goes (its .claude/commands link then dangles and is swept below); a hand-written file stays.
+    if [ -L "$COMMANDS_DIR/${skill_name}.md" ]; then rm -f "$COMMANDS_DIR/${skill_name}.md"; fi
+    continue ;;
+  esac
   if [ -f "$skill_dir/SKILL.md" ]; then
     if [ -e "$COMMANDS_DIR/${skill_name}.md" ] && [ ! -L "$COMMANDS_DIR/${skill_name}.md" ]; then
       echo "⚠ commands/${skill_name}.md is a hand-written command — left untouched." >&2
@@ -54,17 +66,14 @@ ALIASES=(
   "done:verification-before-completion"
 )
 
-# Deprecated aliases (1.1.0), kept ONE release as stub commands that point to the new name,
-# then removed in 1.2.0. /review collided with the agent's built-in /review; the others
-# duplicated an existing alias of the same skill. Format: "old:new-command:skill".
-DEPRECATED_ALIASES=(
-  "review:plan-tests:qa-review"
-  "qa:check:qc"
-  "test:check:qc"
-  "bugs:fix:fixbugs"
-  "crashlytics:fix:fixbugs"
-)
-DEPRECATED_MARKER="<!-- devkit:deprecated-alias -->"
+# The 1.1.0 renames kept one release as redirect stubs (/review /qa /test /bugs /crashlytics) and are
+# removed in 1.2.0: delete a stub an older sync wrote (it carries the marker); a hand-written file stays.
+for old_name in review qa test bugs crashlytics; do
+  stub_path="$COMMANDS_DIR/${old_name}.md"
+  if [ -f "$stub_path" ] && [ ! -L "$stub_path" ] && grep -qF "<!-- devkit:deprecated-alias -->" "$stub_path"; then
+    rm -f "$stub_path"
+  fi
+done
 
 # Aliases of hand-written commands (commands/<target>.md, not a skill).
 COMMAND_ALIASES=(
@@ -99,34 +108,6 @@ for mapping in "${COMMAND_ALIASES[@]}"; do
     continue
   fi
   ln -sfn "${target_cmd}.md" "$alias_path"
-done
-
-for mapping in "${DEPRECATED_ALIASES[@]}"; do
-  old_name="${mapping%%:*}"
-  rest="${mapping#*:}"
-  new_name="${rest%%:*}"
-  target_skill="${rest##*:}"
-  stub_path="$COMMANDS_DIR/${old_name}.md"
-  [ -f "$SKILLS_DIR/$target_skill/SKILL.md" ] || continue
-  if [ -e "$stub_path" ] && [ ! -L "$stub_path" ] && ! grep -qF "$DEPRECATED_MARKER" "$stub_path"; then
-    echo "⚠ commands/${old_name}.md is a hand-written command — deprecated stub /${old_name} NOT written." >&2
-    continue
-  fi
-  rm -f "$stub_path"
-  cat > "$stub_path" <<EOF
----
-description: "Deprecated alias: /${old_name} was renamed to /${new_name} (skill ${target_skill}); removed in DevKit 1.2.0."
----
-${DEPRECATED_MARKER}
-# /${old_name} → /${new_name}
-
-\`/${old_name}\` is a deprecated DevKit alias. Use \`/${new_name}\` (skill \`${target_skill}\`) from now on.
-
-Run the \`${target_skill}\` skill now: read \`skills/${target_skill}/SKILL.md\` (in an installed
-project: \`.agents/skills/${target_skill}/SKILL.md\`) and follow it for: \$ARGUMENTS
-
-Tell the user once, in one line, that \`/${old_name}\` is deprecated and \`/${new_name}\` replaces it.
-EOF
 done
 
 # If .claude/commands exists, synchronize commands there as well

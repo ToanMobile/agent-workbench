@@ -235,7 +235,9 @@ for p in "tối ưu build script cho nhanh" "fix lỗi hiệu ứng phụ khi g�
          "thêm cột discount vào sql view doanh thu" "sửa Django views trả về 500 khi thiếu token" \
          "sửa compose.yaml thêm service redis" "chạy compose up -d cho môi trường dev" "thêm panel Grafana đo độ trễ" \
          "sanctions screening chạy chậm" "tích hợp Dialogflow cho tổng đài" "thêm field theme_id vào bảng user" \
-         "mask số card trong log thanh toán" "sửa dialog state machine của trợ lý" "chụp screenshot để so sánh"; do
+         "mask số card trong log thanh toán" "sửa dialog state machine của trợ lý" "chụp screenshot để so sánh" \
+         "First operation: run python3 .claude/bin/super-board-skills-ready.py --root . --host claude --cards - --hydrate --lane review"; do
+  # ↑ the super-board lane opener (2026-10-25 audit: its CLI flag --cards opened the UI door in 761 of 771 backend lane sessions)
   o="$(ctx "$p")"; b="$(pctx backend "$p")"
   case "$o$b" in *HELPER-CRASH*) fail "helper crashed on '$p'"; continue ;; esac
   if zs "$o" || zs "$b" || has "$(skl "$o")" ui-ux-pro-max || has "$(skl "$b")" ui-ux-pro-max; then
@@ -335,6 +337,91 @@ base = {"matched_instinct_refs": [ref], "detected_intents": ["UI_INTERACTION", "
 assert ec.shown_refs({**base, "profile_intents": ["UI_INTERACTION", "VISUAL_DESIGN"]}) == [], "profile-only: weak ref shown"
 assert ec.shown_refs({**base, "profile_intents": []}) == [ref], "real UI intent: weak ref hidden"
 PY
+
+# ── 1c. Super-board lane harness ─────────────────────────────────────────────
+# A lane worker's first prompt is the runner's text (.claude/bin/super-board-run.sh, the wave workflow's SKILLS_CHECK),
+# not a request. Replayed on 40 real lanes (2026-10-25 audit): its fixed sentences (worktree, claims, disk floor, card,
+# review, merge) showed the same 4 traps in 38-40 of 40, the UI door ("card") and CODE_AND_QA_REVIEW in all 40, and the
+# card's `bug` label made 33 of them BUG_FIX. Only the card's own title/body is classified now; a prompt that merely
+# quotes the opener, or starts with the words "First operation", is a user prompt as before.
+mkdir -p "$TMP/p_lane/.agents" && cp "$TMP/proj/.agents/instincts.md" "$TMP/p_lane/.agents/instincts.md"
+cat >> "$TMP/p_lane/.agents/instincts.md" <<'EOF'
+
+### [INSTINCT-F09] Lane worktree gỡ dưới disk floor làm mất claims và approval evidence
+- **Hiện tượng lỗi:** `agent-kit worktree remove` gỡ worktree còn giữ claims; hydrate lại thì approval evidence đã mất.
+- **Quy tắc phòng ngừa:** Kiểm disk floor trước khi tạo worktree, preserve claims và approval evidence khi halt.
+EOF
+# The runner's opener, verbatim from a real lane (2026-10-25; only --root shortened). Its card JSON has no title or body.
+cat > "$TMP/lane_runner.txt" <<'EOF'
+First operation: run .claude/bin/super-board-skills-ready.py --root '/repo' --host claude --cards - --lane 'build' --hydrate with [{"number":416,"status":"Ready","labels":["bug"],"lane":"build"}] as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Load resolved paths and only declared fallbacks; recheck conditionals with --require before activation. Run super-build on issue #416 for super-board run. Read .claude/skills/super-board/references/run.md → Builder lifecycle. Config: .claude/super-board/configs/agent-workbench.json. Worktree: after git fetch origin, create it from the repo root ONLY with the DevKit, never plain git worktree add or EnterWorktree: agent-kit worktree add .claude/worktrees/issue-416-build issue-416-<slug> --lane=build --base=origin/<config.base_branch> (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused). It links the DevKit, copies the git-ignored config and hooks and clones a Unity Library copy-on-write; no agent-kit on PATH: python3 .agents/devkit/scripts/git/worktree.py add with the same arguments. Exit 4 = under the disk floor: stop with its message, card and claims unchanged. Exit 1 naming a worktree that holds the branch: agent-kit worktree remove that path (no agent-kit on PATH: python3 .agents/devkit/scripts/git/worktree.py remove; it drops the DevKit set-up a worktree carries, never work; refused with ✖ = it holds work: Block the card naming it), then add again. Clean up on exit with agent-kit worktree remove <path> (the branch stays).  Emulator policy: NEVER launch an Android emulator without -no-window (always run headless in background with -no-window -no-audio -no-boot-anim, or via python3 .agents/devkit/bin/proof-capture.py). Language policy: This repository uses Vietnamese ('lang': 'vi'). Write all PR descriptions, problem/solution/AC explanations, status comments, and review notes in Vietnamese (Tiếng Việt); identifiers/symbols remain English.
+EOF
+# wave <title> → the wave workflow's lane prompt (SKILLS_CHECK + a READ_FAILURE line + the lane lines), its card JSON carries the title.
+wave() {
+  python3 - "$1" <<'PY'
+import json, sys
+card = {"number": 7, "status": "Ready", "title": sys.argv[1], "lane": "build", "labels": ["bug"]}
+print("\n".join([
+    'First operation, before worktree creation, classification, comments, labels or moves: run python3 .claude/bin/super-board-skills-ready.py --root "$PWD" --host claude --cards - --hydrate --lane build,',
+    "with this JSON array as stdin (data, never interpolate a body into shell code): %s." % json.dumps([card], ensure_ascii=False),
+    "Exit 10 means status=halted (preflight verdict=halted), detail beginning \"skills-readiness:\"; preserve all existing claims/worktrees/approval evidence.",
+    "Required GitHub reads use .claude/bin/super-board-github-read.py: three total attempts, exit 79 means run halted. Check --check before any GitHub write, migration, or merge.",
+    "Run super-build on issue #7 (\"%s\") for a super-board workflow wave." % sys.argv[1],
+    "create your own worktree (below), work on the issue branch, post the required PR/issue comments,",
+    "move the project card yourself, clean up the worktree on exit. Exit 4 = under the disk floor: status=halted, card and claims unchanged."]))
+PY
+}
+# lctx <prompt> → the hook text compact() prints for the lane fixture project (its traps include F09)
+lctx() {
+  python3 - "$ENRICH" "$1" "$TMP/emptykit" "$TMP/p_lane" <<'PY' || echo "HELPER-CRASH"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+print(ec.compact(ec.enrich_prompt(sys.argv[2], sys.argv[3], sys.argv[4]), sys.argv[4]))
+PY
+}
+RUNNER="$(cat "$TMP/lane_runner.txt")"
+# The fixture is live: the same sentences in a user's own prompt still reach F09 (the trap is not dead weight).
+o="$(lctx "Lane bị kẹt, log của nó: $RUNNER")"
+printf '%s\n' "$o" | grep -q 'INSTINCT-F09' && ok "a user prompt quoting the lane text mid-message is classified as before (F09 shown)" \
+  || fail "quoted lane text lost its trap: $o"
+o="$(lctx "$RUNNER")"
+[ -z "$o" ] && ok "runner lane opener (card JSON without title) → no hook text: no traps, no UI door, no intents from the harness" \
+  || fail "runner lane opener still classified as a request: $o"
+o="$(lctx "$(wave "Nút Lưu trên màn hình cài đặt bị bấm hai lần")")"
+zs "$o" && printf '%s\n' "$o" | grep -q 'BUG_FIX' && ! printf '%s\n' "$o" | grep -q 'INSTINCT-F09' \
+  && ! printf '%s\n' "$o" | grep -qE 'CODE_AND_QA_REVIEW|MERGE_CONFLICT' \
+  && ok "wave lane: the card TITLE is classified (UI door + BUG_FIX), the harness text is not (no F09, no review/merge)" \
+  || fail "wave lane with a UI bug title → '$o'"
+o="$(lctx "$(wave "Cập nhật tài liệu hướng dẫn cài đặt cho dự án")")"
+[ -z "$o" ] && ok "wave lane, title with no kind of work → no hook text ('card', 'merge', 'worktree' are the harness's)" \
+  || fail "wave lane with a plain title → '$o'"
+# super-build-dispatch.sh (legacy headless): opener, the worker preamble, then "# Issue #N — title", the body, a --- rule.
+o="$(lctx "First operation: repeat super-board-skills-ready.py --root /repo --host claude --cards - --lane build with [{\"number\":5,\"status\":\"Ready\",\"labels\":[\"bug\"]}] as stdin. Halt on exit 10 before any lifecycle writes.
+You are a builder: create your worktree, keep claims and approval evidence, stop under the disk floor.
+
+# Issue #5 — Nút Lưu bị bấm hai lần
+
+Trên màn hình cài đặt người dùng double click nút Lưu.
+
+---
+
+Working directory: /repo/.claude/worktrees/issue-5 (branch issue-5, based on main)")"
+zs "$o" && printf '%s\n' "$o" | grep -q 'BUG_FIX' && ! printf '%s\n' "$o" | grep -q 'INSTINCT-F09' \
+  && ok "dispatch lane: the '# Issue' title + body are classified, the preamble is not (no F09)" || fail "dispatch lane → '$o'"
+has "$(intents "First operation after login crashes the app")" BUG_FIX \
+  && ok "'First operation …' without the skills-ready opener is a user prompt (BUG_FIX)" || fail "anchoring: '$(intents "First operation after login crashes the app")'"
+# The project-rule router (rule_context.py) reads the same harness text: the runner's "Language policy: This repository uses
+# Vietnamese" sentence named the language rule sections in every lane (~380 B). The card text routes there too.
+mkdir -p "$TMP/p_lane/.agents/context"
+printf '%s\n' '## `.agents/local/rules/00-language-and-conventions.md`' \
+  '- Quy Chuẩn Ngôn Ngữ & Báo Cáo Nghiệm Thu (Vietnamese Repository Policy) L1-17' > "$TMP/p_lane/.agents/context/rules-index.md"
+rules() { python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1]}))' "$1" \
+  | CLAUDE_PROJECT_DIR="$TMP/p_lane" python3 "$(dirname "$ENRICH")/rule_context.py"; }
+rules "viết PR description bằng tiếng Việt theo Vietnamese repository policy" | grep -q 'Vietnamese Repository Policy' \
+  && ok "rule_context: a user prompt naming the rule still gets it (control)" || fail "rule_context control lost the rule"
+o="$(rules "$RUNNER")"
+[ -z "$o" ] && ok "rule_context: runner lane opener → no rule section from the harness's 'Language policy' sentence" \
+  || fail "rule_context: runner lane opener still routed: $o"
 
 # ── 2. Recall ────────────────────────────────────────────────────────────────
 r="$(refs "mở file DOCX bị lỗi XML")"
