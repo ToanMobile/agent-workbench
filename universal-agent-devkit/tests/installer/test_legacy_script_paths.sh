@@ -21,6 +21,12 @@ check_path() {
   fi
 }
 check_path scripts/red_proof.py scripts/testing/red_proof.py
+# Git hooks written by `agent-kit githooks install` before the split (2026-09-29) call these flat paths and nothing else:
+# eSign's pre-commit then refused every commit ("not found ... exit 1"), GeelyEx2's .githooks/commit-msg skipped the DevKit
+# rule in silence (2026-10-25 audit). A reinstall rewrites a hook, an old chain line is not refreshed: the kit keeps them.
+check_path scripts/git-pre-commit.sh scripts/git/git-pre-commit.sh
+check_path scripts/git-commit-msg.sh scripts/git/git-commit-msg.sh
+check_path scripts/relink_check.py scripts/governance/relink_check.py
 
 # the repo-side link GeelyEx2 committed, in a symlink-mode install
 R="$TMP/repo"; mkdir -p "$R/.agents" "$R/scripts"
@@ -31,5 +37,15 @@ ln -s ../.agents/devkit/scripts/red_proof.py "$R/scripts/red_proof.py"
 a="$(python3 "$R/scripts/red_proof.py" "$TMP/nowhere" --pending 2>&1 | head -1)"
 b="$(python3 "$DEVKIT_DIR/scripts/testing/red_proof.py" "$TMP/nowhere" --pending 2>&1 | head -1)"
 [ -n "$b" ] && [ "$a" = "$b" ] && ok "the old path runs the same tool ($b)" || fail "old path output '$a' differs from '$b'"
+
+# An old hook's commit-msg body, called as the hook calls it (repo/.agents/devkit/scripts/git-commit-msg.sh), finds the kit
+# and reaches the gate: same verdict on a fix commit without Bug:/No-Guard: as the current path, not "not found".
+git -C "$R" init -q
+printf 'fix: x\n' > "$TMP/msg"
+(cd "$R" && bash .agents/devkit/scripts/git-commit-msg.sh "$TMP/msg" >"$TMP/old.out" 2>&1); oc=$?
+(cd "$R" && bash .agents/devkit/scripts/git/git-commit-msg.sh "$TMP/msg" >"$TMP/new.out" 2>&1); nc=$?
+[ -e "$R/.agents/devkit/scripts/git-commit-msg.sh" ] && [ "$oc" = "$nc" ] && ! grep -q "No such file" "$TMP/old.out" \
+  && ok "an old hook's commit-msg path runs the gate like the current one (exit $oc)" \
+  || fail "old commit-msg path: exit $oc vs $nc — $(head -2 "$TMP/old.out" | tr '\n' ' ')"
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

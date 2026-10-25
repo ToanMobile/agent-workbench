@@ -7,8 +7,7 @@ Loaded at every session start. Claude Code and Gemini CLI expand the `@` lines. 
 - Domain profile rules: @.agents/context/profile-rules.md
 - Project rules index (`.agents/local/rules/`): @.agents/context/rules-index.md
 
-On demand — everything agent-related lives in `.agents/`: master rules `.agents/devkit/AGENTS.md` · engineering standards `.agents/devkit/rules/core-rules.md` · skills `.agents/skills/` · traps from past bugs `.agents/instincts.md` · profile `.agents/active-profile.json`.
-Post-fix gate: `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` — only exit `0` counts as PASS. A turn that changes app source on a profile with a screen also attaches a real proof PNG from this turn before the reply may open with XONG. Standing text: the top of this file and the essentials below ("Every prompt"). A serial in `.adb-denylist`, or forbidden by a project rule, is never captured.
+A device serial in `.adb-denylist`, or forbidden by a project rule, is never captured.
 
 <!-- devkit-essentials:start — generated from the DevKit's rules/essentials.md by scripts/context_sync.py; do not edit -->
 # DevKit Essentials — always loaded
@@ -34,25 +33,18 @@ or user instruction); (2) the real source you will touch, read now — never a s
 (3) every consumer of a signature/public API/shared object you change, tests included;
 (4) the failure mechanism and how you will PROVE the change alters observable behaviour,
 decided before editing; (5) what stays unverified.
-- **Claude ↔ Antigravity cross-review (chỉ dành cho task lớn & rủi ro cao)**: Cơ chế phản biện
-  song phương Claude ↔ Antigravity (qua `antigravity-pm` `plan_review` / `pm_plan` trước khi code
-  và `audit` sau khi xong) CHỈ ÁP DỤNG cho các task lớn: chạm ≥2 modules, ≥3 files, >200 LOC net diff,
-  hoặc luồng rủi ro cao (auth, payment, database migration, production crashlytics triage, thay đổi
-  kiến trúc cốt lõi) theo 7 tiêu chuẩn vàng:
-  (1) *Chính xác phẫu thuật:* diff tối thiểu, Zero Blast Radius, không làm xước mô xung quanh.
-  (2) *Tất định & Tự kiểm chứng:* paired test RED → GREEN, bịt kín mọi failure mode.
-  (3) *Hiển nhiên & Tối giản:* không múa code phức tạp, on-call đọc hiểu cơ chế trong 10 giây.
-  (4) *Kỷ luật tài nguyên:* không nghẽn UI, không O(N²), dọn sạch stream/listener/leak.
-  (5) *Thấu suốt vận hành:* log có cấu trúc, không nuốt ngoại lệ, khoanh vùng lỗi trong 5 phút.
-  (6) *Phòng thủ ranh giới:* zero-trust, validate biên nghiêm ngặt, không lộ secret/PII.
-  (7) *Dễ tiêu hủy & Tiến hóa:* module khép kín, sẵn sàng xóa sạch, tương thích ngược.
-  Đối với TASK ĐƠN GIẢN / TRUNG BÌNH (bug fix cục bộ, tinh chỉnh UI, cập nhật test, sửa script,
-  logic 1-2 file): gọi agent nào (Claude hoặc Antigravity) thì agent đó TỰ LÀM LUÔN TỪ A-Z cho
-  nhanh, tự kiểm chứng (paired test RED→GREEN, gate exit 0), KHÔNG CẦN gọi agent thứ 2 review để
-  tránh lãng phí thời gian và token.
-- ≥2 modules, ≥3 files, >200 LOC or a risky flow (crash, parsing, auth, navigation, lifecycle,
+- ≥2 modules, ≥3 files, >200 LOC net diff or a risky flow (crash, parsing, auth, navigation, lifecycle,
   security, module boundary): review the plan before code; only the "ask the user" list under
-  Working style needs the user's go-ahead.
+  Working style needs the user's go-ahead. **Claude ↔ Antigravity cross-review, large tasks only**: the
+  same size thresholds, or auth, payment, database migration, production Crashlytics triage, core
+  architecture: `antigravity-pm` `plan_review` / `pm_plan` before code; after the gate exits 0, an
+  independent Antigravity `audit` (or the `/giao` flow) of the whole diff and code safety. Judge it by
+  the 7 golden standards (surgical, deterministic, boring, resource hygiene, operability, zero-trust
+  boundary, deletable; core-rules §18 has them and the /100 scoring); the bilateral review record is
+  required for large tasks only.
+- Simple or medium task (local bug fix, UI tweak, test update, script fix, 1–2 file logic): the agent
+  that was called, Claude or Antigravity, does it A to Z and verifies it itself (paired test RED→GREEN,
+  gate exit 0), with no second-agent review. Trivia: choose, ask no one.
 
 ## Lazy senior: build less, never check less
 Once the change is understood (read the code, trace the flow, grep every caller), stop at
@@ -108,19 +100,10 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   `agent-kit worktree trunk off` turns it off): main is merge-only and nobody holds it — every session works in its own worktree (Claude Code: the
   tool EnterWorktree; others: `agent-kit worktree add`), and only `agent-kit worktree finish` moves main.
 - **Done means verified**: run the post-fix gate
-  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only) and
-  attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the
-  reply may open with XONG. Với task lớn (≥2 modules, ≥3 files, >200 LOC hoặc rủi ro cao), sau khi
-  gate PASS (exit 0) gọi Antigravity audit / review check độc lập (qua `antigravity-pm` `audit` hoặc
-  quy trình như `/giao`) để rà soát toàn bộ diff và an toàn mã nguồn. Với task đơn giản, agent tự hoàn
-  tất và nghiệm thu ngay khi gate PASS (exit 0) mà không cần gọi thêm agent khác.
-  Khi chạy nhiều agent / nhiều prompt song song: chỉ test đúng ca đang làm (`--run-tests --brief`).
-  Cổng kiểm thử tự động kiểm tra toàn bộ sessions và chỉ kích hoạt kiểm tra toàn diện (`--full`)
-  khi xác nhận đây là phiên cuối cùng duy nhất đang làm việc (tránh lock contention và chạy lặp).
-  The Stop hooks enforce the gate on hosts that have them. They do not take the screenshot; on
-  Claude Code `proof_gate.sh` refuses a reply opening with XONG unless this turn has a `--full`
-  exit 0 on the current code and, for app source on a profile with a screen, names a fresh proof
-  PNG.
+  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only, on the
+  current code) and attach a real proof PNG from this turn (when step 4 of "Every prompt" applies)
+  before the reply may open with XONG. The Stop hooks enforce this where the host has them, but
+  no hook takes the screenshot.
 
 ## Every prompt (standing law)
 Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok, to every turn that
@@ -173,14 +156,14 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    - The command exits non-zero when it cannot open a device. Open with CHƯA XONG and
      paste that error. Do not draw, reuse an old image, or substitute a test XML.
 5. The reply may open with XONG only when this turn has exit 0 from step 3 and, when step 4
-   applies, its PNG. Line 1: XONG or CHƯA XONG. Line 2: what the user gets. Line 3: gate
-   exit code, then image path and serial, or "ảnh: không cần — <reason>".
+   applies, its PNG. Line 1: XONG, CHƯA XONG or CHỜ DUYỆT (English: DONE / NOT DONE /
+   AWAITING APPROVAL). Line 2: what the user gets. Line 3: gate exit code, then image path and
+   serial, or "ảnh: không cần — <reason>"; then the next step. Stay short.
    Every handover — an XONG, or any turn that runs `git push` — then carries the acceptance
    report (core-rules §1.3), 1–2 lines each: 1. Đã fix gì (lỗi, nguyên nhân gốc, RED→GREEN)
    · 2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS) · 3. Nguy cơ bug mới
    (caller, module liên đới đã rà) · 4. An toàn mã nguồn (secret, placeholder, OCR).
-   Kèm điểm đánh giá chất lượng Agent trên thang 100 (ngưỡng $\ge 95/100$); biên bản phản
-   biện song phương Claude ↔ Antigravity chỉ bắt buộc với task lớn.
+   Kèm điểm đánh giá chất lượng Agent trên thang 100 (ngưỡng $\ge 95/100$, core-rules §18).
    `proof_gate.sh` refuses the reply without all four.
    A change of Markdown (`.md/.rst/.adoc`) or LICENSE-type files only needs no regression
    test: the gate passes it.
@@ -234,21 +217,12 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   kể cả `main`, mở và merge PR thường, sửa test, sửa code: agent tự làm, không hỏi, không đưa
   lệnh `!`. Khi đúng việc phải hỏi: một lần AskUserQuestion (phương án khuyến nghị trước),
   rồi tự làm tiếp nếu được duyệt.
-- Quyết định kiến trúc / kỹ thuật lớn: Task lớn (≥2 modules, ≥3 files, >200 LOC hoặc luồng rủi
-  ro) trao đổi với Antigravity (`plan_review` / `audit`) để thống nhất giải pháp tối ưu. Task đơn
-  giản: agent được gọi tự làm từ A-Z, không cần 2-agent review. Trivia: choose, ask no one.
 - An edited existing test: Agent tự thẩm định và tự auto-duyệt (auto-approve, cờ `--auto-approve-tests`
   hoặc một dòng riêng `AUTO-APPROVE: <đường dẫn test>` trong câu trả lời — câu văn xuôi không được tính) khi thấy thay đổi là tốt hơn, cần thiết, hợp lý và test
   chạy PASS; tuyệt đối KHÔNG hỏi phiền người dùng bằng AskUserQuestion.
-- **Language baseline**: By default, all code comments, acceptance reports, handovers, PR notes,
-  and commit messages are in **English**. For projects configured with `"lang": "vi"` (in
-  `.agents/active-profile.json` or project rules), code comments, reports (báo cáo nghiệm thu 4 mục),
-  and commit messages use **Vietnamese** (`tiếng Việt`). User-facing conversation replies match the
-  user's language (Vietnamese when they write Vietnamese); identifiers, commands, and paths stay English.
-- Reports open with three lines: status (`XONG` / `CHƯA XONG` / `CHỜ DUYỆT`, or `DONE` / `NOT DONE` /
-  `AWAITING APPROVAL`), what the user gets, next step; stay short — a handover adds the 4-item report
-  of "Every prompt" step 5. XONG also requires the full-gate exit 0 and, when it applies, the
-  proof PNG in "Every prompt".
+- **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
+  with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
+  are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).
 - Long session or a big refactor ahead: checkpoint and compact instead of filling the window.
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.
 <!-- devkit-essentials:end -->
@@ -295,26 +269,4 @@ Board: Backlog · Ready · Building · QA · Review · Blocked · Done. Labels r
 - NEVER chain steps with arrows. One step per line, lettered under Where.
 - NEVER link screenshots. Embed a raw URL pinned to a sha.
 - DON'T repeat file lists in status comments. DON'T write "Not verified" or "Next" in a PR body.
-
-<!-- universal-agent-devkit-workflow:start -->
-## Universal Agent DevKit Mandatory Pipeline & Real-Time 7-Column UI Sync (Zero Duplication)
-
-Every worker running in a Universal Agent DevKit repository MUST execute the DevKit pipeline in a single worktree while updating the GitHub Project UI column in real-time (`super-board-card.sh --config <cfg> move <N> <Column>`) so all columns (`Backlog`, `Ready`, `Building`, `QA`, `Review`, `Blocked`, `Done`) reflect live progress without spawning duplicate test/review workers:
-
-1. **Column `Building` — 5D Context, Codebase Graph & Paired TDD (`context-enricher` + `codebase-memory` + `tdd-workflow` / `fixbugs`):**
-   - Move card `Ready -> Building`: `.claude/bin/super-board-card.sh --config <cfg> move <N> Building`.
-   - Read `AGENTS.md`, `.agents/context/profile-rules.md`, `.agents/context/rules-index.md`, `.agents/instincts.md` and query `codebase-memory-mcp` (`search_graph`, `trace_path`, `get_code_snippet`, `check_index_coverage`).
-   - Run the failing test at the real boundary (**RED**) before editing production code, then implement with Engineering & Zero-Slop Guardrails (**GREEN**).
-   - **Surviving Mutant & Anti-Tautology Guard:** If a new test passes on its first run (`First-run Green`), mutate the guarded production line once to confirm **RED**, then restore **GREEN**; never assert on a test's own mock or copy the implementation formula into `expected`.
-2. **Column `QA` — DevKit Post-Fix Gate & Visual Proof (`qc` + `verification-before-completion`):**
-   - Move card `Building -> QA`: `.claude/bin/super-board-card.sh --config <cfg> move <N> QA`.
-   - Execute `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` (must exit `0`) and capture screenshot proof via `python3 .agents/devkit/bin/proof-capture.py` when app/UI source changes.
-   - **Non-Blank, Terminal-State & A/B Perf Guards:** UI proof requires rendered data/empty-state + `0` `console.error`/`pageerror`/uncaught exceptions + `0` background `5xx`/`401`/`403`; async/queue/upload/eSign flows must verify terminal state + persisted destination record (Toast/HTTP 200 alone is never PASS); performance claims require alternating `AB, BA` (>= 5 pairs after warmup).
-   - Push branch, open/update PR, and post `[builder] [report]` + `[qa] [report] ✅` with gate output and embedded proof screenshot.
-3. **Column `Review` & `Done` — Smart Fast-Track vs Cross-Review (`open-code-review` + `deep-module-design`):**
-   - Move card `QA -> Review`: `.claude/bin/super-board-card.sh --config <cfg> move <N> Review`.
-   - **Adversarial Review Discipline:** Apply **Blind-First Pass** (read AC + raw `git diff` and form 2–4 failure hypotheses before reading Builder summary), **Review Remembers** (on rework rounds, grade prior `R1..Rn` findings `fixed`/`not fixed` first), and **Taste Never Blocks** (`Over-engineering`/`Deepening opportunity` is `Should fix`, never blocks a test-green diff).
-   - **Small/Medium Task (`< 3` files, `<= 200` LOC net diff, no `auth`/`payment`/`migration`/`security`):** Run `open-code-review` self-audit, post `[reviewer] [report] ✅ merge-ready (DevKit Fast-Track)` + the 4-item Acceptance Report (`core-rules §1.3`), run `gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`, and move card `Review -> Done` (`column='Done'`) — unless the gate printed `ac-open: #N` (merged with AC still unproven: the card stays open in Ready, never Done).
-   - **Large/High-Risk Task (`>= 2` modules, `>= 3` files, `> 200` LOC net diff, or `auth`/`payment`/`migration`/`security`):** Leave card in `Review` (`column='Review'`) so the independent Reviewer lane (2nd agent / Antigravity `audit`) performs cross-review before merging to `Done`.
-<!-- universal-agent-devkit-workflow:end -->
 <!-- super-board:end -->

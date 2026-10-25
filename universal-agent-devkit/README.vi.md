@@ -101,7 +101,7 @@ DevKit cung cấp một hệ sinh thái khép kín:
 4. **Cổng hậu sửa lỗi (`/audit-gate`, `agent-kit gate`, `postfix-gate`):** cổng kiểm tra diff tĩnh. Thứ làm nó fail: 6 kiểm tra tĩnh trên các file thay đổi (secret, placeholder lười biếng, dependency — version thả nổi như `1.+`/`latest`/`*` và nguồn tải `http://` — anti-pattern hiệu năng, nuốt lỗi, log thô) cộng với, khi có `--run-tests`, các test hồi quy trong ma trận đang active. DESIGN.md/a11y, bằng chứng RED→GREEN, ảnh/thiết bị và OpenCodeReview chỉ được in ra để nhắc — gate không xác minh chúng. Các kiểm tra tĩnh đó cũng chạy làm git pre-commit hook trên nội dung đã stage (`agent-kit init` tự cài trong dự án git, hoặc `agent-kit githooks install`), nên `git commit` gõ tay ở terminal/IDE cũng bị kiểm (bạn bỏ qua 1 lần được bằng `git commit --no-verify`; agent thì không — git guard chặn); `agent-kit learn "<bẫy>" --cause=… --rule=…` ghi bài học vào `.agents/instincts.md` với id `[INSTINCT-NNN]` kế tiếp. Với `--json`, dòng stdout cuối liệt kê mọi phát hiện tĩnh dạng `{category, rule, message, file, line, snippet}` (secret: chỉ có số dòng, không bao giờ in giá trị), để agent nhảy thẳng tới `file:line`.
 
    **Những gì tự chạy (hook):** mở phiên mới là nạp mục lục bẫy trong `.agents/instincts.md` và trạng thái checklist hồi quy; mỗi yêu cầu được chèn các bẫy khớp và, nếu là sửa bug, luật RED→GREEN; Bash chặn git nguy hiểm, `--no-verify` và lệnh làm hỏng thiết bị; khi dừng thì chạy ma trận hồi quy (tự sinh từ test runner của dự án khi profile chỉ có ma trận mẫu — `agent-kit matrix`), không cho nói "test pass" khi test mới viết chưa từng đỏ, không cho nói "đã fix" nếu phiên chưa có cặp test đỏ→xanh, không cho dừng khi code đổi mà chưa review context sạch, và sau khi sửa bug xong thì nhắc một lần ghi bài học (`agent-kit learn`). Claude Code có đủ, kể cả guard worktree (`worktree_guard.sh`): agent làm trong git worktree không ghi được vào checkout chính (`DEVKIT_WORKTREE=<đường dẫn>` khai báo tay, `WORKTREE_GUARD=0` tắt); OpenAI Codex, Gemini CLI và Cursor có phần ngữ cảnh, guard và test hồi quy qua `hooks/agent_bridge.sh` (Grok đọc cùng `AGENTS.md`; installer không ghi file riêng cho Grok); Antigravity chỉ có luật (`AGENTS.md` §7). Lệnh Bash vô hại đi qua guard trong ~5 ms (fast path bằng bash); `agent-kit clean` dọn log và bản sao lưu cũ của hook.
-5. **10 Hội đồng Review:** các prompt reviewer trong `agents/councils/` (cô lập shared flow, kiến trúc/blast radius, TDD, OpenCodeReview, bảo mật, game/Unity/Blender, hiệu năng/ANR, quản trị bộ nhớ, quy trình solo-dev, chuẩn/bàn giao) được profile kích hoạt. Các script `scripts/audit_*` là kiểm tra tự nhất quán dựa trên grep trên chính file của DevKit, không phải reviewer code.
+5. **10 Hội đồng Review:** các prompt reviewer trong `agents/councils/` (cô lập shared flow, kiến trúc/blast radius, TDD, OpenCodeReview, bảo mật, game/Unity/Blender, hiệu năng/ANR, quản trị bộ nhớ, quy trình solo-dev, chuẩn/bàn giao) được profile kích hoạt. Các script `scripts/audits/audit_*` là kiểm tra tự nhất quán dựa trên grep trên chính file của DevKit, không phải reviewer code.
 6. **35 Kỹ Năng Tinh Gọn (Curated Engineering Skills):** Chuẩn hóa theo định dạng `SKILL.md`, chia 5 nhóm, gồm `impeccable` (thiết kế UI/UX & chống AI slop), hai skill hiệu năng domain `compose-recomp-audit` và `unity-gc-audit`, cùng wrapper cho CLI **Alibaba OpenCodeReview (`ocr`)**.
 7. **Cơ Chế Bảo Vệ Cách Ly X_old (X_old Conflict Isolation):** Cài đặt không ghi đè vào dự án cũ. Skill/command/agent/hook cùng tên được chuyển vào tầng dự án `.agents/local/` (DevKit thắng, bản của bạn vẫn được commit và được link lại khi tên không trùng); file gốc bị trùng (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`) có bản chụp `*_old`; thư mục gốc `commands/`, `rules/`, `skills/` chứa nội dung agent được chuyển vào `.agents/local/` (thư mục source code giữ nguyên, item DevKit được đặt vào trong). File rule trong `.agents/local/rules/` vẫn có hiệu lực: mỗi lần cài, chúng được liệt kê dạng import `@.agents/local/rules/<file>` trong khối DevKit của `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `CODEX.md` và `AGENTS.md` riêng của bạn; chúng bổ sung cho rule DevKit, chỗ nào mâu thuẫn với `AGENTS.md` §6 hoặc `rules/core-rules.md` thì rule DevKit thắng. Xem bằng `agent-kit list-old`, khôi phục bằng `agent-kit restore-old`.
 8. **Hệ thống Thiết kế & Ký ức Thất bại:** Chuẩn hóa Design Tokens giao diện (`DESIGN.md`, Touch Target $\ge 48\text{dp}$, WCAG AA, Debounce nút bấm) kết hợp cùng kinh nghiệm phòng ngừa bẫy mã nguồn lịch sử (`.agents/instincts.md`).
@@ -397,8 +397,8 @@ Chạy trước khi coi một thay đổi là xong. Gate chỉ xét các file th
 Kết quả: **PASS** (exit 0), **REJECT** (exit 1, có phát hiện ở mục chặn), **UNVERIFIED** (exit 2, ví dụ chưa chạy test nào, thiếu ma trận hoặc ma trận bị sửa). Link DevKit và các file trong `.claude/`/`.agents/` do DevKit cài không bị tính là thay đổi của bạn.
 
 ### Linter regex (theo profile)
-- **`scripts/lint_compose_stability.py`**: linter dựa trên regex cho Jetpack Compose — tham số không ổn định (`List<T>`, `Set<T>`, `Map<T>`) thiếu `@Immutable` / `ImmutableList`, và khởi tạo nặng (`SimpleDateFormat`, `Regex`) không bọc `remember` trong `@Composable` (hỗ trợ chữ ký hàm nhiều dòng).
-- **`scripts/lint_unity_gc.py`**: linter dựa trên regex cho vòng lặp khung hình C# — cấp phát `new`, `GameObject.Find`/`GetComponent`, LINQ và hàm vật lý có cấp phát trong `Update()`, `FixedUpdate()`, `LateUpdate()`.
+- **`scripts/linters/lint_compose_stability.py`**: linter dựa trên regex cho Jetpack Compose — tham số không ổn định (`List<T>`, `Set<T>`, `Map<T>`) thiếu `@Immutable` / `ImmutableList`, và khởi tạo nặng (`SimpleDateFormat`, `Regex`) không bọc `remember` trong `@Composable` (hỗ trợ chữ ký hàm nhiều dòng).
+- **`scripts/linters/lint_unity_gc.py`**: linter dựa trên regex cho vòng lặp khung hình C# — cấp phát `new`, `GameObject.Find`/`GetComponent`, LINQ và hàm vật lý có cấp phát trong `Update()`, `FixedUpdate()`, `LateUpdate()`.
 Cả hai thoát 2 khi đường dẫn không tồn tại và chỉ bỏ qua thư mục test (`test/`, `tests/`, `androidTest/`, `*Test.kt`, …).
 
 ### Cách kích hoạt Cổng Kiểm Toán
@@ -452,7 +452,7 @@ Mỗi lần gate chạy sẽ cập nhật `.agents/CHECKLIST.md` (dashboard; `.a
 | 9 | `09-solo-dev-workflow.md` | Debounce/khóa nút tức thì, ảnh minh chứng, audit trail, tách DEMO/LIVE. |
 | 10 | `10-standards-compliance-delivery.md` | Truy vết yêu cầu, toàn vẹn dữ liệu, a11y, chịu lỗi offline, bàn giao. |
 
-**Kiểm tra tự nhất quán:** `scripts/audit_*_agents.py` và `scripts/adversarial_chaos_test_10_agents.py` là các kiểm tra dựa trên grep rằng tài liệu và script của chính DevKit vẫn chứa những gì cần có; chúng in `N/M checks passed` và không review code của bạn. Bài test sự thật ở cấp repo là `tests/verification/test_repo_consistency.sh` (link, JSON, frontmatter, lệnh và con số trong tài liệu).
+**Kiểm tra tự nhất quán:** `scripts/audits/audit_*_agents.py` và `scripts/audits/adversarial_chaos_test_10_agents.py` là các kiểm tra dựa trên grep rằng tài liệu và script của chính DevKit vẫn chứa những gì cần có; chúng in `N/M checks passed` và không review code của bạn. Bài test sự thật ở cấp repo là `tests/verification/test_repo_consistency.sh` (link, JSON, frontmatter, lệnh và con số trong tài liệu).
 
 > **Health check:** `agent-kit health` chấm điểm cài đặt và cấu hình (profile, rules, skills, hội đồng, hooks, MCP của profile đang active). Mặc định **không** chạy test (`tests: not run`); `agent-kit health --run-tests` chạy `agent-kit test` và trừ điểm khi có suite fail.
 
@@ -576,7 +576,7 @@ Kho 35 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter 
 
 ## ⌨️ Danh Mục Đầy Đủ Slash Commands
 
-Toàn bộ 35 skills, lệnh đổi profile và cổng hậu sửa lỗi đều được ánh xạ thành slash command kèm alias gõ tắt (`agent-kit commands` liệt kê đầy đủ):
+31 trong 35 skills (trừ ba skill media Sprite Forge và parallel-lanes, agent tự chọn theo ngữ cảnh), lệnh đổi profile và cổng hậu sửa lỗi đều được ánh xạ thành slash command kèm alias gõ tắt (`agent-kit commands` liệt kê đầy đủ):
 
 | Lệnh Slash Command | Tên Viết Tắt (Aliases) | Kỹ Năng / Đích Ánh Xạ | Chức Năng Cốt Lõi |
 |---|---|---|---|
@@ -623,8 +623,6 @@ Chạy theo thứ tự — **plan-tests → review-code → check → done**:
 | 2. Soát code (tìm lỗi trên diff) | `/review-code` | `open-code-review` | Chạy CLI OpenCodeReview trên diff | Cần cài `ocr` |
 | 3. Kiểm tra (check của chính dự án) | `/check` | `qc` | Phát hiện build tool, chạy test/lint | Không đánh giá diff |
 | 4. Xong (trước khi nói "xong") | `/done`, rồi `/audit-gate` | `verification-before-completion` + post-fix gate | `post-fix-gate.py --run-tests --full` (exit 0) và PNG nghiệm thu của lượt này, trừ khi thay đổi chắc chắn không lên màn hình (`rules/essentials.md` bước 4) | Gate không tự chụp ảnh và không chứng minh RED→GREEN |
-
-> **Đổi tên từ 1.1.0:** `/review` → `/plan-tests` (trùng lệnh `/review` có sẵn của agent); `/qa`, `/test` → `/check`; `/bugs`, `/crashlytics` → `/fix`. Tên cũ còn giữ dưới dạng stub deprecated tự chuyển hướng trong một phiên bản và bị xoá ở 1.2.0.
 
 ---
 
