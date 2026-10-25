@@ -11920,14 +11920,21 @@
       "component": "-",
       "created_at": "2026-10-24 21:16:48",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-AGENT-OFFICE-01"
+      ],
       "last": null,
       "history": [],
-      "state": "reported",
-      "fixed": null,
+      "state": "confirmed",
+      "fixed": true,
       "touched_at": "2026-10-24 21:16:48",
       "sessions": [
         "f5fddcac-ddcf-452e-95a0-5449b8b89192"
+      ],
+      "linked_at": "2026-10-25 14:01:28",
+      "linked_ts": 1792911688.036627,
+      "runs_in_suite": [
+        "mcp-servers/agent-office/tests/test_agent_workload.py"
       ]
     },
     "BUG-20261024-dieu-tra-tai-sao-test-gate-suite-cache-s": {
@@ -11938,14 +11945,21 @@
       "component": "-",
       "created_at": "2026-10-24 22:39:04",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
       "last": null,
       "history": [],
-      "state": "reported",
-      "fixed": null,
+      "state": "confirmed",
+      "fixed": true,
       "touched_at": "2026-10-24 22:39:04",
       "sessions": [
         "f5fddcac-ddcf-452e-95a0-5449b8b89192"
+      ],
+      "linked_at": "2026-10-25 14:01:28",
+      "linked_ts": 1792911688.4709709,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_gate_suite_cache_selection.sh"
       ]
     },
     "REG-DK-GATE-ROBUSTNESS-01": {
