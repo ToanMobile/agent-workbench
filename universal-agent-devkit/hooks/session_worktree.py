@@ -533,16 +533,6 @@ def _kept_lock(main, wt, sid, pid, unlock=False, locks=None):
 _BOARD_WT = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
 
 
-def _state_owner(wt):
-    """The session the worktree's devkit-worktree.json names (`worktree add --session`, scripts/git/worktree.py _owner); None: none, unreadable."""
-    d = _admin_dir(wt)
-    try:
-        o = json.loads(_read_small(os.path.join(d, "devkit-worktree.json"), 4_000_000) or "null").get("session") if d else None
-    except (ValueError, AttributeError, RecursionError):   # (RecursionError: nested too deep, as worktree.py _read_state)
-        return None
-    return o if isinstance(o, str) and o else None
-
-
 def _pid_holds_kept_lock(locks, pid, skip=None):
     """`pid` still holds a devkit-kept lock (alive, start time matching) on a worktree of `locks` ({path: reason}) other than `skip`."""
     for path, reason in locks.items():
@@ -571,18 +561,19 @@ def _lock_or_report(main, wt, sid, pid, problems, locks):
     return None
 
 
-def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_alive=None, problems=None):
+def lock_started_worktree(main, here, sid, pid, env=None, source=None, problems=None):
     """SessionStart (bin/session_lock.py; review 25/10): a session that STARTS inside a linked worktree of a trunk-mode repo (a Desktop
     worktree session, `claude --worktree`, `claude --resume` there) never calls EnterWorktree, so it takes the same devkit-kept lock
     there. A super-board lane worktree (.claude/worktrees/issue-<N>[-build|-qa|-review]) is the board's: its runner removes it with a
     plain `git worktree remove`, which a lock left by a dead worker would block. Returns the worktree locked, None otherwise.
     #406: the payload cwd follows the session's `cd`. compact and /clear keep the same claude process, whose lock (taken at its start or
     at EnterWorktree) still holds - a new one there would lock whatever worktree the session merely stands in, another session's
-    included. So only a new process (startup, resume, fork; no source: as before) locks from the cwd, and a resume / fork not when its pid
-    already holds a devkit-kept lock on another worktree of the repo (an in-session /resume after a `cd`; a fresh startup can match a lock's
-    pid only through pid reuse, OCR 25/10). Never a worktree another session owns (its record - after reown - or its state names it) while
-    `owner_alive(that session)` (bin/session_lock.py: a pid of it answers) - a session standing there would hold it from its owner; a gone
-    owner's worktree is taken, as reown takes its record (the work is never lost).
+    included. So only a new process (startup, resume, fork; no source: as before) locks.
+    No veto beyond that (#415 had two - "another session owns this worktree", and "this pid already holds a lock elsewhere" for an
+    in-session /resume after a `cd` - both reverted 25/10 after seven review rounds): owner identity at SessionStart rests on weak signals
+    (state sid, lock sid, record pid, locks gc already opened), and every refinement left a session's real worktree unlocked - cleanup-wt
+    then removes it mid-gate, the incident #406 is about. Without them a resumed session locks the worktree it stands in, a peer's
+    included: that worktree is kept too long, nothing is lost. Accepted, fail-safe trade-off (#413).
     #413: compact / clear lock again the session's OWN starting worktree - the one its record names (reown moved it to the new id), never the
     cwd - when the startup lock failed and the pid holds no live devkit-kept lock. problems: a list that receives one line per lock that
     could not be taken, for the caller to print."""
@@ -603,15 +594,7 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_ali
         return None
     if _BOARD_WT.fullmatch(os.path.basename(t[0])) and os.path.basename(os.path.dirname(t[0])) in ("worktrees", ".worktrees"):
         return None
-    real = os.path.realpath(t[0])
-    others = {o for o, wt in records(main).items() if o != sid and os.path.realpath(wt) == real}
-    others |= {o for o in (_state_owner(t[0]),) if o and o != sid}
-    if owner_alive is not None and any(owner_alive(o) for o in others):
-        return None
-    locks = _worktree_locks(_git_in(main))
-    if source in ("resume", "fork") and locks is not None and _pid_holds_kept_lock(locks, pid, skip=real):
-        return None
-    return _lock_or_report(main, t[0], sid, pid, problems, locks)
+    return _lock_or_report(main, t[0], sid, pid, problems, _worktree_locks(_git_in(main)))
 
 
 def _agent_worktree(payload, main):

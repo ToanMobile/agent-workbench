@@ -1868,8 +1868,7 @@ def main():
                 print(f"session_lock: worktree record not moved ({e!r})", file=sys.stderr)
             problems = []   # #413: a lock that could not be taken is said on stdout (SessionStart context), not only on stderr
             try:   # review 25/10: a session that starts in its worktree (no EnterWorktree) holds it too, or cleanup-wt removes it mid-gate
-                _sw.lock_started_worktree(main_top, cwd, sid, holder_pid(), source=str(d.get("source") or "") or None,
-                                          owner_alive=lambda o: owner_gone(cwd, o, _sw, main_top)[1] == "alive", problems=problems)
+                _sw.lock_started_worktree(main_top, cwd, sid, holder_pid(), source=str(d.get("source") or "") or None, problems=problems)
             except Exception as e:  # noqa: BLE001 - SessionStart never blocks: said on stderr, the worktree stays as unprotected as before
                 print(f"session_lock: session worktree not locked ({e!r})", file=sys.stderr)
                 problems.append(f"NOT LOCKED: the session worktree lock failed ({e!r}): cleanup-wt may remove it while this session works")
