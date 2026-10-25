@@ -134,8 +134,19 @@ ac_open() { # ac_open <card> <detail> → history status / column of the card
   wave 1 EXPECT=1 SB_CAPACITY="$TMP/caps/two" LANE_RESULT="$res"
   CARDS="$saved"
 }
+# The positive case must SHOW the claim was accepted (OCR 24/10): a wave that crashed, exited non-zero or never ran the review lane has no
+# rejection string either. Accepted = exit 0 and card 12 recorded as advanced into Ready by the review lane.
+advanced_12() { [ "$RC" = 0 ] && jq -e '.cards[] | select(.number == 12 and .finalStatus == "advanced" and .column == "Ready" and .lastLane == "review")' "$TMP/out.$RUN_N" >/dev/null 2>&1; }
 ac_open 12 'merge ok; ac-open: #12'
-grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && fail "ac-open advanced: rejected: $(cat "$TMP/out.$RUN_N" | head -c 300)" || ok "ac-open: #12 on card 12 → advanced to Ready"
+advanced_12 && ! grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && ok "ac-open: #12 on card 12 → advanced to Ready (exit 0, card recorded advanced/Ready by the review lane)" \
+  || fail "ac-open advanced: rc=$RC out=$(head -c 300 "$TMP/out.$RUN_N") err=$(head -c 200 "$TMP/err.$RUN_N")"
+# control: a lane that reports blocked is NOT an advance — advanced_12 must say no (the old check would still have printed ok here)
+saved_cards="$CARDS"; CARDS="[{\"number\":12,\"status\":\"Review\"}]"
+wave 1 EXPECT=1 SB_CAPACITY="$TMP/caps/two" LANE_RESULT='{"status":"blocked","column":"Review","detail":"t"}'; CARDS="$saved_cards"
+# the run itself must have worked and recorded card 12 as blocked (else advanced_12 is false for the wrong reason: a crash, non-JSON output)
+{ [ "$RC" = 0 ] && jq -e '.cards[] | select(.number == 12 and .finalStatus == "blocked")' "$TMP/out.$RUN_N" >/dev/null 2>&1 && ! advanced_12; } \
+  && ok "control: the wave ran, card 12 recorded blocked, and advanced_12 says no" \
+  || fail "control: rc=$RC out=$(head -c 300 "$TMP/out.$RUN_N")"
 ac_open 12 'merge ok, no marker line'
 grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && ok "no ac-open line → failed (advanced without reaching Done)" || fail "missing line accepted: $(head -c 300 "$TMP/out.$RUN_N")"
 ac_open 12 'merge ok; ac-open: #123'

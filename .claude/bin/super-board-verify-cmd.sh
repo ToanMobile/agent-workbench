@@ -3,16 +3,20 @@
 # ` --diff origin/<base> --force-full`. QA chạy các lệnh này trên cây gộp base hiện tại để bắt cùng lỗi merge gate sẽ bắt (#251).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG=""; RECORD=0; MARK=0
+CONFIG=""; RECORD=0; MARK=0; TREE=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --config) CONFIG="${2:-}"; shift 2 ;;
     --record) RECORD=1; shift ;;
     --mark) MARK=1; shift ;;
-    *) echo "usage: super-board-verify-cmd.sh --config <cfg> [--record|--mark]" >&2; exit 64 ;;
+    --tree) TREE="${2:-}"; shift 2 ;;
+    *) echo "usage: super-board-verify-cmd.sh --config <cfg> [--record | --mark --tree <tree-sha>]" >&2; exit 64 ;;
   esac
 done
 [ -f "$CONFIG" ] || { echo "super-board-verify-cmd: --config <file> required" >&2; exit 64; }
+# --record runs the commands, --mark runs nothing: both together would quietly skip the commands (OCR 24/10)
+{ [ "$RECORD" -eq 1 ] && [ "$MARK" -eq 1 ]; } && { echo "super-board-verify-cmd: --record and --mark are exclusive" >&2; exit 64; }
+{ [ "$MARK" -eq 1 ] && [ -z "$TREE" ]; } && { echo "super-board-verify-cmd: --mark needs --tree <the tree sha the run tested>" >&2; exit 64; }
 . "$HERE/super-board-verify-flags.sh"
 BASE=$(jq -r '.base_branch // "main"' "$CONFIG")
 [ "$MARK" -eq 1 ] || jq -r '.verify_commands[] | select(test("\\S"))' "$CONFIG" | while IFS= read -r c; do
@@ -22,11 +26,28 @@ done
 # (OCR 24/10: bản cũ tin lời người gọi, không ai kiểm lệnh đã chạy/đạt). Base đổi thì khoá khác.
 # --mark (#319): post-fix-gate.py calls it after its own --full exit 0 (same --diff origin/<base>): same preconditions and key as --record, nothing run.
 if [ "$RECORD" -eq 1 ] || [ "$MARK" -eq 1 ]; then
-  [ -z "$(git status --porcelain 2>/dev/null)" ] || { echo "super-board-verify-cmd: --record needs a clean merged tree" >&2; exit 65; }
+  MODE="--record"; [ "$MARK" -eq 1 ] && MODE="--mark"
+  [ -z "$(git status --porcelain 2>/dev/null)" ] || { echo "super-board-verify-cmd: $MODE needs a clean merged tree" >&2; exit 65; }
   # Cây phải chứa origin/<base> hiện tại: khoá theo tree, nhưng QA chưa gộp base mới thì cây này không phải cây merge gate sẽ dựng.
-  git merge-base --is-ancestor "origin/$BASE" HEAD 2>/dev/null || { echo "super-board-verify-cmd: --record needs origin/$BASE merged into this tree" >&2; exit 65; }
+  git merge-base --is-ancestor "origin/$BASE" HEAD 2>/dev/null || { echo "super-board-verify-cmd: $MODE needs origin/$BASE merged into this tree" >&2; exit 65; }
   CMDS=(); while IFS= read -r c; do CMDS+=("$c"); done < <(jq -r '.verify_commands[] | select(test("\\S"))' "$CONFIG")
   [ "${#CMDS[@]}" -gt 0 ] || { echo "super-board-verify-cmd: no verify commands; no receipt" >&2; exit 0; }   # bash 3.2: "${CMDS[@]}" rỗng lỗi unbound
+  if [ "$MARK" -eq 1 ]; then
+    # --mark vouches for ONE run the caller already did (post-fix-gate.py --full --diff origin/<base>), so it only stands for a config whose whole
+    # verify is that one gate line; with any other verify command nothing ran for it (OCR 24/10, F1/F3). The key covers every command.
+    # The SHAPE counts, not a substring (OCR O1): no shell operator (`&&`, `;`, `|`, redirect, backtick, `$(`) so nothing else runs in that line.
+    # The flags that relax a run (--auto-approve-tests…) are compared by the caller (post-fix-gate.py mark_merge_gate_receipt) against what it used:
+    # this repo's own verify line carries --auto-approve-tests, so they cannot be refused here.
+    # The line must START with the gate (`[python3 ]<path>/post-fix-gate.py`): `true post-fix-gate.py` or `python3 other.py --x post-fix-gate.py` mention it without running it.
+    # No `$` either: a variable or `$(…)` hides what runs.
+    # The script's basename is exactly post-fix-gate.py (start of the word or right after a `/`: not-post-fix-gate.py is another script), the first word
+    # holds no `=` (`FOO=/x/post-fix-gate.py` is an assignment that runs nothing), and no `#` (it would comment out the --diff/--force-full the merge gate appends).
+    pfg_head='^[[:space:]]*(python3?[[:space:]]+)?([^[:space:]=]*/)?post-fix-gate\.py([[:space:]]|$)'
+    { [ "${#CMDS[@]}" -eq 1 ] && [[ "${CMDS[0]}" =~ $pfg_head ]] && [[ "${CMDS[0]}" != *[\;\&\|\<\>\`\$\#]* ]]; } \
+      || { echo "super-board-verify-cmd: --mark needs exactly one verify command: a plain post-fix-gate.py line (no shell operator, no \$ or #); no receipt" >&2; exit 65; }
+    # The tree the run tested, taken BEFORE it began: a commit or merge during a long --full leaves a clean tree that was never tested (F2).
+    [ "$TREE" = "$(git rev-parse 'HEAD^{tree}')" ] || { echo "super-board-verify-cmd: the tree changed after the run began; no receipt" >&2; exit 65; }
+  fi
   RECEIPT=$(sb_verified_tree_receipt "$(git rev-parse 'HEAD^{tree}')" "$BASE" "." "${CMDS[@]}")
   [ -n "$RECEIPT" ] || { echo "super-board-verify-cmd: no git common dir or sha256 tool; no receipt" >&2; exit 66; }
   [ "$MARK" -eq 1 ] || for c in "${CMDS[@]}"; do

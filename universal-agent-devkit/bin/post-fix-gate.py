@@ -1644,11 +1644,25 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         log_err(f"full-pass receipt not written: {e}")
 
 
-def mark_merge_gate_receipt(project_dir, diff_ref):
+def head_tree(project_dir):
+    """The tree object HEAD points at ('' when git cannot say): taken BEFORE a run, it names the tree that run tested."""
+    try:
+        r = subprocess.run(["git", "-C", str(project_dir), "rev-parse", "HEAD^{tree}"], capture_output=True, text=True, timeout=15)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
     """#319: a --full PASS against origin/<base> on a clean tree that holds it is also the merge gate's verify of this tree: the board's
     super-board-verify-cmd.sh --mark writes the tree receipt under the key the merge gate reads (one key function, not copied here), so a PR runs
     --full once instead of twice. It refuses a dirty tree or a base not in the tree itself; no board config or script = the old behaviour."""
-    if not diff_ref or not diff_ref.startswith("origin/"):
+    # OCR 24/10: not a receipt for what this run did not prove: no tree taken before the run, or a run that relaxed a check (`relaxing`: the
+    # --allow-no-tests / --allow-orphan-tests / --auto-approve-tests flags it used, DEVKIT_AUTO_APPROVE_TESTS=1 as the last) that the board's
+    # verify line does not carry itself — the merge gate runs that line, so a flag it carries relaxes both runs the same way (this repo's own
+    # line carries --auto-approve-tests: refusing every relaxing run would never write a receipt).
+    # ponytail: a custom --matrix is not compared with the verify command's (it has none); compare when a board's gate line names its matrix.
+    if not diff_ref or not diff_ref.startswith("origin/") or not tested_tree:
         return
     root = Path(project_dir)
     script = root / ".claude" / "bin" / "super-board-verify-cmd.sh"
@@ -1656,10 +1670,20 @@ def mark_merge_gate_receipt(project_dir, diff_ref):
     if not script.is_file() or len(configs) != 1:
         return
     try:
-        base = json.loads(configs[0].read_text(encoding="utf-8")).get("base_branch") or "main"
+        cfg = json.loads(configs[0].read_text(encoding="utf-8"))
+        base = cfg.get("base_branch") or "main"
         if diff_ref != f"origin/{base}":
             return
-        r = subprocess.run(["bash", str(script), "--config", str(configs[0]), "--mark"], cwd=str(root),
+        # Whole tokens of the line as the shell reads it (a flag inside a `# comment` or glued into a longer word is not carried by it).
+        carried = set()
+        for c in cfg.get("verify_commands") or []:
+            try:
+                carried.update(shlex.split(str(c), comments=True))
+            except ValueError:   # an unbalanced quote: the line cannot be read as the shell does, so it carries nothing
+                pass
+        if any(flag not in carried for flag in relaxing):
+            return
+        r = subprocess.run(["bash", str(script), "--config", str(configs[0]), "--mark", "--tree", tested_tree], cwd=str(root),
                            capture_output=True, text=True, timeout=30)
         if r.returncode not in (0, 65):   # 65 = dirty tree / base not merged: the documented "no receipt"
             log_err(f"tree receipt not written (exit {r.returncode}): {r.stderr.strip()[-200:]}")
@@ -5692,6 +5716,7 @@ def main():
             immutable_guards_protected.append((comp_name, guard))
     impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
     project_dir = get_project_dir()
+    run_start_tree = head_tree(project_dir)   # the tree this run tests; mark_merge_gate_receipt keys the receipt to THIS tree, not to whatever HEAD is after the run
     force_reason = force_full_reason(args)
     # Acceptance was asked for (--full), not a Stop-hook style check: if it is deferred
     # below, the exit code must say "not accepted" (5), because an agent reading only the code would call 0 a PASS.
@@ -7031,7 +7056,9 @@ def main():
                                     locked=lock_fh is not None,   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
                                     keep_same=merge_check)
         if exit_code == 0 and run_tests and not partial and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy:
-            mark_merge_gate_receipt(project_dir, diff_ref)
+            mark_merge_gate_receipt(project_dir, diff_ref, run_start_tree, relaxing=[
+                flag for flag, on in (("--allow-no-tests", args.allow_no_tests), ("--allow-orphan-tests", args.allow_orphan_tests),
+                                      ("--auto-approve-tests", args.auto_approve_tests or os.environ.get("DEVKIT_AUTO_APPROVE_TESTS") == "1")) if on])
         # The budget record (BUDGET_RECORD) is a file of its own, so the receipt above stays byte for byte whatever happens here:
         # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).
         if run_tests and any(t.get("status") in ("FAIL", "TIMEOUT") for t in regression_tests):

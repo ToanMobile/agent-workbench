@@ -939,8 +939,21 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if DEVKIT_SUITE_GREEN.search(txt):
             return "green"
         # Exit 0 của tool là xanh khi bash/sh chạy thẳng file kit, dù không có "all passed".
+        # A kit test that exits 0 on its skip path ("skip: no scripts here") or prints nothing checked nothing (OCR 24/10): empty output, or output
+        # whose every line is a `skip` line, is no run. Any other output counts, whatever its summary style (✔, `ok: …`, `pass=5 fail=0`, `ALL OK`:
+        # 21 kit tests print none of ✔ / "all passed"), and a run with a skipped optional case among passes is still a run.
         if not is_error and _command_is_direct_bash_kit(command):
-            return "green"
+            clean = ANSI_RX.sub("", txt)
+            lines = [l for l in clean.splitlines() if l.strip()]
+            # Its own failure SUMMARY is a RED verdict (the RED of a RED→GREEN pair; `None` would drop it): `pass=2 fail=1`, a line that STARTS with
+            # `failed: 3` / `errors=2`, a TAP `not ok` (indented too), an uppercase FAIL line. Anchored on purpose (OCR R1/R5): a passing test may print
+            # `Error: 401 key rejected` (singular, a diagnostic), `ok: linter reports errors=2 on bad fixture`, or echo another tool's `ERROR: x`.
+            if re.search(r"(?i:^\s*(?:[#ℹ*•-]\s*)?(?:fail(?:ed|ures?|ing)?|errors)\s*[:=]\s*[1-9]\d*\b)"
+                         r"|(?i:\bpass(?:ed)?\s*[:=]\s*\d+\s+fail(?:ed|ures?)?\s*[:=]\s*[1-9]\d*\b)"
+                         r"|^\s*FAIL(?:ED)?\b|(?i:^\s*not ok\b)", clean, re.M):
+                return "red"
+            if lines and not all(re.match(r"\s*skip\b", l, re.I) for l in lines):
+                return "green"
         return None
     if pm_run:
         codes = PM_RUN_EXIT_RX.findall(txt)

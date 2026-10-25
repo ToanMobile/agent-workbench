@@ -1007,9 +1007,18 @@ if [ "$AC_RECHECK" = true ]; then
   AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} \
     --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
   foreign=$(echo "$AC_JSON" | jq -r '.foreign_closes | map("#\(.)") | join(", ")')
-  if [ -n "$foreign" ] || [ "$(echo "$AC_JSON" | jq -r .collapsed)" = true ]; then
-    echo "ac-check: the PR body changed during verify and now ${foreign:+closes ${foreign}}${foreign:+ / }lists fewer AC lines than card #${AC_CARD} has"
-    say "back to Build: fix the closing keywords and the sb:ac block"
+  collapsed=$(echo "$AC_JSON" | jq -r .collapsed)
+  if [ -n "$foreign" ] || [ "$collapsed" = true ]; then
+    # Each clause only when its own condition holds (OCR 24/10): a foreign Closes alone must not tell Build to rewrite a sb:ac block that is fine.
+    msg=""
+    [ -n "$foreign" ] && msg="closes ${foreign} (branch is card #${AC_CARD})"
+    [ "$collapsed" = true ] && msg="${msg:+$msg / }lists $(echo "$AC_JSON" | jq -r .pr_ac) AC lines but card #${AC_CARD} has $(echo "$AC_JSON" | jq -r .issue_ac)"
+    echo "ac-check: the PR body changed during verify and now ${msg}"
+    # the hint names only what is wrong too (OCR O2): a foreign Closes is not an sb:ac problem and a collapsed block is not a keyword problem
+    hint=""
+    [ -n "$foreign" ] && hint="fix the closing keywords"
+    [ "$collapsed" = true ] && hint="${hint:+$hint and }rewrite the sb:ac block"
+    say "back to Build: ${hint}"
     exit 11
   fi
   AC_UNTICKED=$(echo "$AC_JSON" | jq -r '(.unticked // [])[] | "- " + .')
