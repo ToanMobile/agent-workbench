@@ -520,22 +520,7 @@ def _kept_lock(main, wt, sid, pid, unlock=False):
 _BOARD_WT = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
 
 
-def _state_owner(wt):
-    """The session the worktree's devkit-worktree.json names (`worktree add --session`, scripts/git/worktree.py _owner); None: none, unreadable."""
-    d = _admin_dir(wt)
-    raw = _read_small(os.path.join(d, "devkit-worktree.json"), 4_000_000) if d else None
-    if raw is None:
-        return None   # no state file (a worktree made without the kit), or not a regular file
-    try:
-        data = json.loads(raw)
-    except (ValueError, RecursionError) as e:   # (RecursionError: nested too deep, as worktree.py _read_state)
-        print(f"session_worktree: owner of {wt} unreadable ({type(e).__name__}): read as none", file=sys.stderr)
-        return None
-    o = data.get("session") if isinstance(data, dict) else None
-    return o if isinstance(o, str) and o else None
-
-
-def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_gone=None):
+def lock_started_worktree(main, here, sid, pid, env=None, source=None):
     """SessionStart (bin/session_lock.py; review 25/10): a session that STARTS inside a linked worktree of a trunk-mode repo (a Desktop
     worktree session, `claude --worktree`, `claude --resume` there) never calls EnterWorktree, so it takes the same devkit-kept lock
     there. A super-board lane worktree (.claude/worktrees/issue-<N>[-build|-qa|-review]) is the board's: its runner removes it with a
@@ -544,14 +529,12 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_gon
     at EnterWorktree) still holds - a new one there would lock whatever worktree the session merely stands in, another session's
     included. So only a new process (startup, resume, fork; no source: as before) locks, and a resume / fork not when its pid already
     holds a devkit-kept lock on another worktree of the repo (an in-session /resume after a `cd`; a fresh startup can match a lock's pid
-    only through pid reuse, OCR 25/10). Never a worktree another session owns - a session standing there would hold it from its owner.
-    `owner_gone(session)` is bin/session_lock.py owner_gone's (dead, why): a session whose record (after reown) names the worktree owns it
-    unless it is proven gone, the rule reown keeps its record by; one only the state names owns it while a pid of it answers (a state-only
-    owner has no record age and would read "unknown" forever). A gone owner's worktree is taken (the work is never lost). The session the worktree belongs to is never held off by
-    a guest's record (review PR #415: an EnterWorktree path= / a Stop reown leaves a record with no lock; the owner's shell resume then
-    left its dead-pid lock for gc to open): its state names this session; or - unless the state names another LIVE session - its
-    devkit-kept lock carries this session id, or this session's own record names it with the lock's pid (the process before /clear, whose
-    record reown moved here). A lock a LIVE process holds (another session, the same id twice, the process before /clear) is never touched."""
+    only through pid reuse, OCR 25/10).
+    No veto by "another session owns this worktree" (#415 had one, reverted 25/10 after seven review rounds): owner identity at
+    SessionStart rests on weak signals (state sid, lock sid, record pid, locks gc already opened), and every refinement left a real owner
+    unlocked - cleanup-wt then removes its merged worktree mid-gate, the incident #406 is about. Without it a session that holds no lock,
+    `cd`s into a peer's unlocked worktree and resumes there locks it: the peer's worktree is kept too long, nothing is lost. Accepted,
+    fail-safe trade-off (#413)."""
     if source in ("compact", "clear") or not main or not here or not trunk_mode(main, env):
         return None
     t = tree_of(here)
@@ -559,21 +542,8 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_gon
         return None
     if _BOARD_WT.fullmatch(os.path.basename(t[0])) and os.path.basename(os.path.dirname(t[0])) in ("worktrees", ".worktrees"):
         return None
-    real, locks, owner = os.path.realpath(t[0]), _worktree_locks(_git_in(main)) or {}, _state_owner(t[0])
-    held = KEPT_RE.fullmatch(locks.get(real) or "")
-    hp = int(held.group(2)) if held else None
-    if held and hp != pid and lock_pid_alive(hp, kept_start(t[0], hp)):
-        return None   # a live process holds it (review 09a017a8): replacing its lock leaves a dead one when this process exits first
-    state_live = bool(owner and owner != sid and owner_gone is not None and owner_gone(owner)[1] == "alive")
-    mine = owner == sid or (held is not None and not state_live and (
-        held.group(1) == sid or (raw_pid(main, sid) == hp and os.path.realpath(read_record(main, sid) or os.sep) == real)))
-    if owner_gone is not None and not mine:
-        recs = {o for o, wt in records(main).items() if o != sid and os.path.realpath(wt) == real}
-        live = [o for o in recs if not owner_gone(o)[0]] + ([owner] if state_live and owner not in recs else [])
-        if live:
-            print(f"session_worktree: {t[0]} not locked: live session {live[0]} owns it", file=sys.stderr)
-            return None
-    for path, reason in locks.items() if source in ("resume", "fork") else ():
+    real = os.path.realpath(t[0])
+    for path, reason in (_worktree_locks(_git_in(main)) or {}).items() if source in ("resume", "fork") else ():
         m = KEPT_RE.fullmatch(reason)
         if m and path != real and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)):
             return None
