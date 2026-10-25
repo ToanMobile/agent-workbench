@@ -81,7 +81,9 @@ RULES = [
      "script lỗi shell: {0}: {1} {2}", 1, 0),
 ]
 TRACEBACK = re.compile(r"^Traceback \(most recent call last\):")
-EXC_LINE = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt|Exit)\b.*)$")
+# Dòng cuối của một Traceback: dòng KHÔNG thụt lề đầu tiên sau các frame, "<Tên.có.chấm>" hoặc "<Tên>: <thông điệp>" — mọi tên
+# (subprocess.TimeoutExpired, StopIteration…), không chỉ đuôi Error/Exception (25/10: runner OfficeReader chết vì TimeoutExpired).
+EXC_LINE = re.compile(r"^([A-Za-z_][\w.]*(?::.*)?)$")
 FRAME = re.compile(r'^\s*File "([^"]+)", line \d+, in (\S+)')
 
 
@@ -219,7 +221,7 @@ def classify_tracebacks(lines: list[str]):
             if fm:
                 frames.append(f"{Path(fm.group(1)).name}:{fm.group(2)}")
             em = EXC_LINE.match(lines[j])
-            if em and not lines[j].startswith(" "):
+            if em and frames and not lines[j].startswith((" ", "\t")):
                 # Lên repo PUBLIC chỉ có tên file:hàm của từng frame + LOẠI exception: thông điệp lỗi và dòng code
                 # có thể mang dữ liệu của repo app (đường dẫn tương đối, giá trị, tên khoá).
                 exc = em.group(1).split(":")[0]

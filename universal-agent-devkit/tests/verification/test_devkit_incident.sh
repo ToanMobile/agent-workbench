@@ -357,6 +357,17 @@ FAKE_CLOSED=$TBN FAKE_CLOSED_AT=$UCLOSED scan >/dev/null
 [ "$(creates)" = $((n + 2)) ] && ok "lỗi nguyên văn quay lại cùng ngày sau khi đóng → thẻ hồi quy (shell + Traceback)" \
   || fail "lỗi quay lại cùng ngày bị bỏ sót: create=$(creates) (kỳ vọng $((n + 2)))"
 
+# 26. Exception có tên không đuôi Error/Exception (subprocess.TimeoutExpired, StopIteration…) vẫn là Traceback: runner
+#     OfficeReader chết 25/10 vì super-board-github-read.py không bắt TimeoutExpired của `git rev-parse` khi máy quá tải.
+n=$(creates)
+{ echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-github-read.py", line 62, in halt_path'
+  echo '  File "/usr/lib/python3/subprocess.py", line 1268, in _check_timeout'
+  echo "subprocess.TimeoutExpired: Command '['git', 'rev-parse', '--git-common-dir']' timed out after 5 seconds"; } >> "$B/docs/super-board/runner.log"
+scan >/dev/null
+[ "$(creates)" = $((n + 1)) ] && grep -q 'TimeoutExpired' "$TMP/home/ledger.json" \
+  && ok "Traceback kết thúc bằng subprocess.TimeoutExpired → thẻ" || fail "TimeoutExpired bị bỏ sót: create=$(creates) (trước $n)"
+
 # 14. Mỗi sự cố một thẻ riêng (--new-card): không gom vào thẻ bug khác.
 grep '"issue", "create"' "$FAKE_LOG" >/dev/null && python3 - "$FAKE_LOG" <<'PY' && ok "--new-card: không gom vào thẻ khác" || fail "thiếu --new-card"
 import json, sys
