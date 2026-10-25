@@ -438,6 +438,14 @@ for name, call, lane in (("lane_card_text", ec.lane_card_text, None), ("harness_
 # the same check still finds the opener when the line does carry --cards - (after the repeats)
 assert ec.lane_card_text(p + "--cards - with [] as stdin") == "", "opener after the repeats not found"
 PY
+# OCR 25/10: a lane opener followed by 200 000 "[" made raw_decode raise RecursionError (only ValueError was caught): the prompt hook
+# and rule_context.py died with a traceback. The card part degrades to no words; both exit 0, no traceback.
+python3 -c 'import json; print(json.dumps({"prompt": "First operation: run .claude/bin/super-board-skills-ready.py --cards - with " + "[" * 200000, "session_id": "deep-1"}))' > "$TMP/deep.json"
+o="$(bash "$HOOK" < "$TMP/deep.json" 2>&1)"; rc=$?
+r="$(CLAUDE_PROJECT_DIR="$TMP/p_lane" python3 "$(dirname "$ENRICH")/rule_context.py" < "$TMP/deep.json" 2>&1)"; rr=$?
+[ "$rc" = 0 ] && [ "$rr" = 0 ] && ! printf '%s\n%s' "$o" "$r" | grep -q 'Traceback' \
+  && ok "lane opener + 200 000 '[' (RecursionError in raw_decode): prompt hook and rule_context exit 0, no traceback" \
+  || fail "deeply nested lane card: hook rc=$rc rule_context rc=$rr: $(printf '%s\n%s' "$o" "$r" | grep -m2 -E 'Traceback|Error')"
 # Codex lane (.claude/bin/super-board-codex-lane.sh, fixture tests/lib/codex_lane_prompt.py): line 1 "Run super-<lane> for issue #N as a
 # Codex lane worker.", line 2 the same skills-ready opener (--host codex), the card a JSON object on its own "Card: " line after a skills
 # report that holds arrays. Its fixed sentences (worktree, claims, approval, merge, review) were classified as a request; now only the

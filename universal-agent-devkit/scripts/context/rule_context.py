@@ -53,6 +53,9 @@ def main():
             prompt = prompt if card is None else card
         except ImportError as e:
             print(f"rule_context: lane check unavailable ({e})", file=sys.stderr)
+        except RecursionError:   # a lane check that still recursed too deep: route nothing rather than the runner's text or a traceback
+            print("rule_context: lane check recursed too deep; no rule routed", file=sys.stderr)
+            return 0
     root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     want = words(prompt)
     if not want:

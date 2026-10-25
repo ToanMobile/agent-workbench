@@ -245,7 +245,7 @@ def lane_card_text(prompt):
         start = text.find("[", opener_end)   # the array the opener hands to --cards - as stdin
     try:
         cards = json.JSONDecoder().raw_decode(text, start)[0] if start >= 0 else []
-    except ValueError:
+    except (ValueError, RecursionError):   # RecursionError: a card part nested past the recursion limit ("[" * 200000, OCR 25/10)
         cards = []
     if codex:
         cards = [cards]
