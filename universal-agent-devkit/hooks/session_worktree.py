@@ -31,6 +31,7 @@ import time
 RECORD_DIR = os.path.join(".claude", "audit-gate", "session_worktree")
 _SID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")   # first char alphanumeric: a dotted temp name (write_record) is never a session id
 _PID_LINE = re.compile(r"pid ([0-9]{1,10})")
+_START_LINE = re.compile(r"start (\S{1,128})")   # line 3 of a record: the start time of the pid on line 2 (pid_start_token form)
 _TRUE = {"true", "yes", "on", "1"}
 
 
@@ -186,6 +187,15 @@ def raw_pid(main, sid):
     return int(m.group(1)) if m and int(m.group(1)) > 1 else None
 
 
+def raw_pid_start(main, sid):
+    """The start time of the record's pid (line 3, `start <token>`, #413): tells a pid the OS has handed to another process from the session
+    it was written under. None when the record has none (older kit, start time unknown)."""
+    p = _record_path(main, sid)
+    lines = (_read_small(p) or "").splitlines()[2:3] if p else []
+    m = _START_LINE.fullmatch(lines[0].strip()) if lines else None
+    return m.group(1) if m else None
+
+
 def record_age(main, sid, now=None):
     """Seconds since a session's record was last written, None when unreadable (a symlink or FIFO there counts as unreadable)."""
     p = _record_path(main, sid)
@@ -231,9 +241,10 @@ def read_record(main, sid):
     return _same_repo_worktree(main, wt) if wt else None
 
 
-def write_record(main, sid, wt, pid=None):
+def write_record(main, sid, wt, pid=None, start=None):
     """Record that session `sid` works in worktree `wt`. pid: the claude process of that session (holder_pid), line 2 - what the merge gate
-    judges the owner dead by. Never the pid of the process writing here when that is a hook's child (the merge gate's python): it dies at once."""
+    judges the owner dead by. Never the pid of the process writing here when that is a hook's child (the merge gate's python): it dies at once.
+    start: that pid's start time (pid_start_token), line 3, only beside a valid pid (#413: a pid the OS reused is told apart from the session)."""
     p = _record_path(main, sid)
     if not p or not _same_repo_worktree(main, wt):
         return False
@@ -242,8 +253,10 @@ def write_record(main, sid, wt, pid=None):
     if os.path.lexists(tmp):
         os.unlink(tmp)   # (a leftover of a killed hook with this pid, or a symlink planted there: never written through)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    pid_ok = isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(os.path.realpath(wt) + "\n" + (f"pid {int(pid)}\n" if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 else ""))
+        fh.write(os.path.realpath(wt) + "\n" + (f"pid {int(pid)}\n" if pid_ok else "")
+                 + (f"start {start}\n" if pid_ok and isinstance(start, str) and _START_LINE.fullmatch(f"start {start}") else ""))
     os.replace(tmp, p)
     return True
 
@@ -314,11 +327,11 @@ def reown(main, sid, here, is_alive, me=None):
         rp = os.path.realpath(wt)
         if osid == sid or not (here == rp or here.startswith(rp + os.sep)):
             continue
-        rec_pid = raw_pid(main, osid)
+        rec_pid, rec_start = raw_pid(main, osid), raw_pid_start(main, osid)
         # Trade-off (OCR2 5): a /resume gets a new pid, so only "the owner is gone" tells it from a bystander; a session with no record that merely
         # stands (cd) in a dead peer's worktree takes it over too. It then merges that worktree with --keep and keeps it - the work is never lost.
         if not is_alive(osid) or (me and rec_pid == me):
-            if write_record(main, sid, rp, pid=rec_pid):
+            if write_record(main, sid, rp, pid=rec_pid, start=rec_start):
                 clear_record(main, osid)
                 return rp
     return None
@@ -357,7 +370,7 @@ def on_tool_use(payload, env=None):
         wt = _entered_path(payload)
         t = tree_of(wt) if isinstance(wt, str) and wt else None
         pid = holder_pid()
-        if t and t[1] and write_record(main, sid, t[0], pid=pid):
+        if t and t[1] and write_record(main, sid, t[0], pid=pid, start=pid_start_token(pid) if pid else None):
             if trunk_mode(main, env):
                 # 25/10: cleanup-wt (mọi bản đã cài chỉ chừa worktree bị khoá) gỡ worktree đã gộp ngay lúc phiên đang chạy gate trong đó.
                 # Khoá devkit-kept suốt lúc phiên ở trong: ExitWorktree remove đi qua WorktreeRemove -> `worktree remove` của kit, lệnh
@@ -530,19 +543,54 @@ def _state_owner(wt):
     return o if isinstance(o, str) and o else None
 
 
-def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_alive=None):
+def _pid_holds_kept_lock(locks, pid, skip=None):
+    """`pid` still holds a devkit-kept lock (alive, start time matching) on a worktree of `locks` ({path: reason}) other than `skip`."""
+    for path, reason in locks.items():
+        m = KEPT_RE.fullmatch(reason)
+        if m and path != skip and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)):
+            return True
+    return False
+
+
+def _lock_or_report(main, wt, sid, pid, problems):
+    """Lock `wt` for the session. No lock (no pid, git refused or timed out; #413): a record of the session's own worktree is written, so a
+    later compact / clear can lock it again (it has no other trace of where the session started), and the failure goes to `problems` -
+    SessionStart prints it, the model hears it. A worktree under someone else's lock is held already: nothing to say. Returns `wt` locked."""
+    if _kept_lock(main, wt, sid, pid):
+        return wt
+    reason = (_worktree_locks(_git_in(main)) or {}).get(os.path.realpath(wt))
+    if reason is not None and not reason.startswith(KEPT_PREFIX):
+        return None
+    write_record(main, sid, wt, pid=pid, start=pid_start_token(pid) if pid else None)
+    if problems is not None:
+        problems.append(f"NOT LOCKED: {wt} (no pid / git refused or timed out): cleanup-wt may remove it while this session works; "
+                        "the next compact or clear tries to lock it again")
+    return None
+
+
+def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_alive=None, problems=None):
     """SessionStart (bin/session_lock.py; review 25/10): a session that STARTS inside a linked worktree of a trunk-mode repo (a Desktop
     worktree session, `claude --worktree`, `claude --resume` there) never calls EnterWorktree, so it takes the same devkit-kept lock
     there. A super-board lane worktree (.claude/worktrees/issue-<N>[-build|-qa|-review]) is the board's: its runner removes it with a
     plain `git worktree remove`, which a lock left by a dead worker would block. Returns the worktree locked, None otherwise.
     #406: the payload cwd follows the session's `cd`. compact and /clear keep the same claude process, whose lock (taken at its start or
     at EnterWorktree) still holds - a new one there would lock whatever worktree the session merely stands in, another session's
-    included. So only a new process (startup, resume, fork; no source: as before) locks, and a resume / fork not when its pid already
-    holds a devkit-kept lock on another worktree of the repo (an in-session /resume after a `cd`; a fresh startup can match a lock's pid
-    only through pid reuse, OCR 25/10). Never a worktree another session owns (its record - after reown - or its state names it) while
+    included. So only a new process (startup, resume, fork; no source: as before) locks from the cwd, and a resume / fork not when its pid
+    already holds a devkit-kept lock on another worktree of the repo (an in-session /resume after a `cd`; a fresh startup can match a lock's
+    pid only through pid reuse, OCR 25/10). Never a worktree another session owns (its record - after reown - or its state names it) while
     `owner_alive(that session)` (bin/session_lock.py: a pid of it answers) - a session standing there would hold it from its owner; a gone
-    owner's worktree is taken, as reown takes its record (the work is never lost)."""
-    if source in ("compact", "clear") or not main or not here or not trunk_mode(main, env):
+    owner's worktree is taken, as reown takes its record (the work is never lost).
+    #413: compact / clear lock again the session's OWN starting worktree - the one its record names (reown moved it to the new id), never the
+    cwd - when the startup lock failed and the pid holds no live devkit-kept lock. problems: a list that receives one line per lock that
+    could not be taken, for the caller to print."""
+    if not main or not trunk_mode(main, env):
+        return None
+    if source in ("compact", "clear"):
+        wt = read_record(main, sid)
+        if not wt or _pid_holds_kept_lock(_worktree_locks(_git_in(main)) or {}, pid):
+            return None
+        return _lock_or_report(main, wt, sid, pid, problems)
+    if not here:
         return None
     t = tree_of(here)
     if not t or not t[1] or os.path.realpath(main_of(t[0]) or "") != os.path.realpath(main):
@@ -554,11 +602,9 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_ali
     others |= {o for o in (_state_owner(t[0]),) if o and o != sid}
     if owner_alive is not None and any(owner_alive(o) for o in others):
         return None
-    for path, reason in (_worktree_locks(_git_in(main)) or {}).items() if source in ("resume", "fork") else ():
-        m = KEPT_RE.fullmatch(reason)
-        if m and path != real and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)):
-            return None
-    return t[0] if _kept_lock(main, t[0], sid, pid) else None
+    if source in ("resume", "fork") and _pid_holds_kept_lock(_worktree_locks(_git_in(main)) or {}, pid, skip=real):
+        return None
+    return _lock_or_report(main, t[0], sid, pid, problems)
 
 
 def _agent_worktree(payload, main):
