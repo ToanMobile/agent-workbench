@@ -36,7 +36,11 @@ const cases = [
   ['A=1 MYVAR=s3cr3tvalue mytool --x', 'chạy lệnh mytool'],
   ['X="a b" foo', 'chạy lệnh foo'],
   ['git constructor', 'dùng git constructor'],
+  ['cd x && API_TOKEN=abc123', 'chạy lệnh '],
+  ['API_TOKEN=abc123; pytest tests/test_x.py', 'chạy bộ test x'],
+  ['FOO=abc123 && ls', 'xem thư mục'],
 ];
+for (const c of ['cd x && API_TOKEN=abc123', 'cd x && X_TOKEN=giá-trị', 'API_TOKEN=abc123; ls', 'A=1 && B=hunter2zz']) assert.ok(!/abc123|giá-trị|hunter2/.test(d(c)), 'lộ giá trị: ' + c);
 assert.ok(!/s3cr3t|hunter2/.test(d('FOO=1 DB_PASS_X=hunter2hunter2 ./run.sh')));
 for (const [cmd, want] of cases) assert.strictEqual(d(cmd), want, cmd);
 // lệnh lạ: không chép cả dòng lệnh dài
