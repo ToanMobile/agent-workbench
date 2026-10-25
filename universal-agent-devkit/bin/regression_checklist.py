@@ -1813,6 +1813,16 @@ def _pending_wins(row, tracked) -> bool:
     return str(row.get("touched_at") or row.get("created_at") or "") > str(tracked.get("touched_at") or tracked.get("created_at") or "")
 
 
+def _store_ahead(stored, row) -> bool:
+    """Bản ở sổ chờ `stored` đi trước bản `row` của cùng id, bất kể trạng thái của `row` (migrate: dòng bẩn đã xác nhận mà auto-link mới
+    đã link trong sổ): sổ có test/test_refs mà `row` không có, hay sổ mới hơn (touched_at, không có thì created_at)."""
+    if not isinstance(stored, dict):
+        return False
+    if (stored.get("tests") or stored.get("test_refs")) and not (row.get("tests") or row.get("test_refs")):
+        return True
+    return str(stored.get("touched_at") or stored.get("created_at") or "") > str(row.get("touched_at") or row.get("created_at") or "")
+
+
 def apply_pending(data: dict, project_dir) -> list:
     """Thêm các dòng chờ mà checklist đọc từ file track chưa có, và thay dòng track chưa xác nhận bằng bản chờ đi trước nó (_pending_wins);
     còn lại dòng track thắng. Dòng chờ 14 ngày không ai đụng: 💤 như dòng track (auto_close_reported). Khoá hộp thư đã thấy thêm vào
@@ -1911,8 +1921,12 @@ def pending_save_rows(project_dir, data: dict, ids, drop=(), *, count=(), stats=
             store["stats"][key] = store["stats"].get(key, 0) + 1
         for key, n in (stats or {}).items():
             store["stats"][key] = store["stats"].get(key, 0) + int(n)
-        for key, seen in (inbox or {}).items():
-            store["inbox"].setdefault(key, seen)
+        for key, seen in (inbox or {}).items():   # khoá đã có: giá trị mới khác None thắng (`req add --inbox` ghi req), None không xoá
+            old = store["inbox"].get(key)
+            if isinstance(old, dict) and isinstance(seen, dict):
+                store["inbox"][key] = {**old, **{k: v for k, v in seen.items() if v is not None}}
+            elif old is None:
+                store["inbox"][key] = seen
         head = (_main_head_data(path.parent.parent) or {"items": {}})["items"]
         store["rows"] = {k: v for k, v in rows.items() if k not in head or _pending_wins(v, head[k])}
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".pending_rows.")
@@ -2019,7 +2033,7 @@ def migrate_pending(project_dir, lock_wait: float | None = None) -> tuple:
             keep = {}
             for rid in moved:
                 row, sr = disk["items"][rid], before.get(rid)
-                kept = json.loads(json.dumps(sr if isinstance(sr, dict) and _pending_wins(sr, row) else row))   # sổ có bản mới hơn: giữ nó
+                kept = json.loads(json.dumps(sr if _store_ahead(sr, row) else row))   # sổ có bản đi trước (link, mới hơn): giữ nó
                 sessions = list(dict.fromkeys(list(row.get("sessions") or []) + list((sr if isinstance(sr, dict) else {}).get("sessions") or [])))
                 if sessions:
                     kept["sessions"] = sessions[-SESSIONS_LIMIT:]
@@ -3223,6 +3237,7 @@ def _bug_command(args, project: Path) -> int:
         tracked = dict(data["items"])
         stats0 = dict(data.get("stats") or {})
         pending = apply_pending(data, project)
+        inbox0 = json.loads(json.dumps(data.get("inbox") or {}))   # register_req sửa data["inbox"][key] tại chỗ: so với bản chụp này
         trunk = trunk_main(project)
 
         def store(acted=()):
@@ -3234,8 +3249,9 @@ def _bug_command(args, project: Path) -> int:
                                      "chạy lệnh này trong worktree của phiên (cd <worktree>; agent-kit bugs …) rồi commit cùng việc")
                 delta = {k: int(v) - int(stats0.get(k, 0)) for k, v in (data.get("stats") or {}).items()
                          if isinstance(v, int) and int(v) > int(stats0.get(k, 0))}
+                box = {k: v for k, v in (data.get("inbox") or {}).items() if inbox0.get(k) != v}   # `req add --inbox`: KEY → REQ
                 pending_save_rows(project, data, [rid for rid in acted if rid in data["items"]],
-                                  drop=[rid for rid in acted if rid not in data["items"]], stats=delta)
+                                  drop=[rid for rid in acted if rid not in data["items"]], stats=delta, inbox=box)
                 return
             for rid in pending:
                 if rid not in acted:   # dòng chờ lệnh này không đụng: không ghi; dòng track nó che đi thì trả lại nguyên như cũ

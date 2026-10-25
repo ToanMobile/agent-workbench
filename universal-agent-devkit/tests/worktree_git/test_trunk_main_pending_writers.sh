@@ -280,6 +280,63 @@ printf '%s' "$out8m" | grep -q "đang được gộp" && ! printf '%s' "$out8m" 
   && ok "8m: SessionStart không chờ khoá gộp đang bị giữ (${t8m} s), nói lý do với tiền tố trung tính" \
   || fail "8m: ${t8m} s, out='$(printf '%s' "$out8m" | grep -i 'checklist' | head -2)'"
 
+# 8n/8o (review vòng 4): repo trunk mode tối thiểu, chạy thẳng regression_checklist (như probe của reviewer)
+mini() {   # mini <dir> [inbox]: checklist rỗng đã commit; inbox → .agents/INBOX.md có một mục
+  mkdir -p "$1/.agents" && git -C "$1" init -q -b main . && git -C "$1" config user.email t@t && git -C "$1" config user.name t
+  printf '.claude/\n.agents/regression_journal/\n' > "$1/.gitignore"
+  [ "${2:-}" = inbox ] && printf '# Inbox\n\n- [ ] Xuat hoa don PDF\n' > "$1/.agents/INBOX.md"
+  python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r; r.save(pathlib.Path(sys.argv[2]), {'version': 1, 'items': {}}, stale=False)" "$DEVKIT_DIR/bin" "$1"
+  git -C "$1" add -A && git -C "$1" commit -qm init
+}
+
+# 8n. dòng ĐÃ XÁC NHẬN (bugs add bản cũ ghi thẳng ở main, chưa link) bẩn trong main; auto-link mới đưa bản đã link vào sổ chờ;
+#     migrate không được đè bản đã link bằng bản bẩn chưa link (_pending_wins chỉ xét dòng REPORTED)
+M13="$TMP/migrate-confirmed-linked"; mini "$M13"
+out8n="$(python3 - "$DEVKIT_DIR/bin" "$M13" <<'PY'
+import pathlib, sys
+sys.path.insert(0, sys.argv[1]); import regression_checklist as rc
+p = pathlib.Path(sys.argv[2])
+d = rc.load(p)
+bid, _ = rc.register_bug(d, "App crash khi cong hai so", fixed=False, session="s-old")
+rc.save(p, d, stale=False)                      # bản cũ: file track của main bẩn
+with rc.locked(p):                               # auto-link mới ở main
+    v = rc.load_view(p)
+    v["items"][bid]["tests"] = ["tests/test_calc.py"]
+    v["items"][bid]["linked_by"] = "auto"
+    rc.save_view_rows(p, v, [bid])
+moved, why = rc.migrate_pending(p)
+row = rc.load_view(p)["items"].get(bid, {})
+print(f"moved={moved} why={why} tests={row.get('tests')} linked_by={row.get('linked_by')}")
+PY
+)"
+printf '%s' "$out8n" | grep -q "tests=\['tests/test_calc.py'\] linked_by=auto" && [ -z "$(dirty "$M13")" ] \
+  && ok "8n: migrate giữ bản chờ đã link của dòng đã xác nhận, main sạch" \
+  || fail "8n: $out8n dirty='$(dirty "$M13")'"
+
+# 8o. `req add --inbox KEY` ở main trunk mode (khoá đã 'thấy' trong sổ chờ): sổ chờ và view phải ghi KEY → REQ
+M14="$TMP/req-inbox-trunk"; mini "$M14" inbox
+out8o="$(python3 - "$DEVKIT_DIR/bin" "$M14" <<'PY'
+import pathlib, subprocess, sys
+sys.path.insert(0, sys.argv[1]); import regression_checklist as rc
+p = pathlib.Path(sys.argv[2])
+with rc.locked(p):                               # = watch_inbox ở main trunk mode
+    v = rc.load_view(p)
+    new = rc.inbox_new(v, p)
+    rc.pending_save_rows(p, v, [], inbox={key: v["inbox"][key] for key, _, _ in new})
+key = next(iter(rc.read_pending_store(p)["inbox"]))
+r = subprocess.run([sys.executable, sys.argv[1] + "/regression_checklist.py", "--project", str(p), "req-add", "Xuat hoa don",
+                    "--criterion", "co nut PDF", "--inbox", key], capture_output=True, text=True)
+v = rc.load_view(p)
+req = next((i for i, it in v["items"].items() if it.get("kind") == "req"), None)
+print(f"rc={r.returncode} req={req} view={(v.get('inbox') or {}).get(key, {}).get('req')} "
+      f"store={rc.read_pending_store(p)['inbox'].get(key, {}).get('req')}")
+PY
+)"
+req8o="$(printf '%s' "$out8o" | sed -n 's/.* req=\([^ ]*\) .*/\1/p')"
+[ -n "$req8o" ] && [ "$req8o" != None ] && printf '%s' "$out8o" | grep -q "rc=0 .*view=$req8o store=$req8o" && [ -z "$(dirty "$M14")" ] \
+  && ok "8o: req add --inbox ở main trunk mode ghi khoá hộp thư → $req8o vào sổ chờ, main sạch" \
+  || fail "8o: $out8o dirty='$(dirty "$M14")'"
+
 # 8d. SessionStart ở main trunk mode tự chạy migrate
 M3="$TMP/migrate-session"; mk_old "$M3"; old_hook "$M3"
 out8d="$(echo '{}' | CLAUDE_PROJECT_DIR="$M3" bash "$SESSION_HOOK" 2>&1)"
