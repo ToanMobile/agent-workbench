@@ -367,6 +367,21 @@ n=$(creates)
 scan >/dev/null
 [ "$(creates)" = $((n + 1)) ] && grep -q 'TimeoutExpired' "$TMP/home/ledger.json" \
   && ok "Traceback kết thúc bằng subprocess.TimeoutExpired → thẻ" || fail "TimeoutExpired bị bỏ sót: create=$(creates) (trước $n)"
+# … nhưng dòng không thụt lề đầu tiên sau frame KẾT THÚC Traceback: không khớp (class cục bộ <locals>) thì không ghi gì, không
+# quét tiếp tới dòng lạ phía sau (git "fatal: …", tên package app, URL) — tên đó sẽ lên issue public.
+n=$(creates)
+{ echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-card.py", line 3, in f'
+  echo 'f.<locals>.MyErr: x'
+  echo 'fatal: not a git repository'
+  echo 'com.finos.PRIVPKG'
+  echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-card.py", line 9, in g'
+  echo 'fatal: bad ref'
+  echo 'ValueError: boom'; } >> "$B/docs/super-board/runner.log"
+scan >/dev/null
+[ "$(creates)" = "$n" ] && ok "dòng lạ sau Traceback không bị lấy làm exception" || fail "dòng lạ thành thẻ exception: create=$(creates) (trước $n)"
+grep -q 'PRIVPKG\|Python fatal' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "tên package / 'fatal' lọt lên issue" || ok "không lộ tên package app"
 
 # 14. Mỗi sự cố một thẻ riêng (--new-card): không gom vào thẻ bug khác.
 grep '"issue", "create"' "$FAKE_LOG" >/dev/null && python3 - "$FAKE_LOG" <<'PY' && ok "--new-card: không gom vào thẻ khác" || fail "thiếu --new-card"
