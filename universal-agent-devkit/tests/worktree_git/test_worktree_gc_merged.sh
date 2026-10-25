@@ -15,8 +15,8 @@ export DEVKIT_LANG=en
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 WT="$DEVKIT_DIR/scripts/git/worktree.py"
 TMP="$(mktemp -d)"; TMP="$(cd "$TMP" && pwd -P)"
-SL=""
-trap '[ -n "$SL" ] && kill "$SL" 2>/dev/null; chmod -R u+rwX "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
+SL=""; HOLDERS=""   # HOLDERS: the flock holders of section J
+trap '[ -n "$SL" ] && kill "$SL" 2>/dev/null; [ -z "$HOLDERS" ] || kill $HOLDERS 2>/dev/null; chmod -R u+rwX "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 G() { git -C "$1" -c user.email=t@t -c user.name=t "${@:2}"; }
 has_branch() { G "$R" show-ref --verify --quiet "refs/heads/$1"; }
@@ -35,6 +35,7 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >> "$FAKE_DIR/gh.calls"
+[ ! -x "$FAKE_DIR/gh.hook" ] || "$FAKE_DIR/gh.hook"   # section J: something happens while gc waits for gh
 [ -z "${FAKE_GH_DOWN:-}" ] || exit 1
 case " $* " in
   *" pr list "*"--state open"*) cat "$FAKE_DIR/open.json" ;;
@@ -225,6 +226,62 @@ G "$R2" worktree add -q --detach "$R2/.claude/worktrees/linked" main
 [ -d "$TMP/elsewhere-wt/linked" ] && grep -q "symlink" "$TMP/i.out" \
   && ok "I gc --merged removes no worktree when .claude/worktrees is a symlink, saying why" \
   || { fail "I a worktree behind a symlinked .claude/worktrees was reaped"; cat "$TMP/i.out"; }
+
+# J. (review U2 F3, 26/10) gc --merged gỡ worktree 3 s tuổi đang bị giữ: (1) _held / _live_holder bỏ qua khoá của chính kit —
+#    <wt>/.claude/audit-gate/test_run.lock (gate đang test cây đó) và <git dir>/devkit-automerge.lock (một lần gộp tự động); (2) _fresh
+#    chỉ so mtime commondir với thời điểm commit của HEAD, nên checkout / ff sang commit trunk MỚI HƠN làm nó mất tác dụng; (3) giữa lần
+#    kiểm đầu và lúc gỡ (gh, merge-tree, removal_blockers) một gate có thể bắt đầu. Repo riêng; gh giả bắt đầu gate đó (gh.hook).
+cat > "$TMP/hold.py" <<'PY'
+import fcntl, sys, time
+f = open(sys.argv[1], "a")
+fcntl.flock(f, fcntl.LOCK_EX)
+open(sys.argv[2], "w").close()
+time.sleep(300)
+PY
+ready() { for _ in $(seq 1 200); do [ -e "$1" ] && return 0; sleep 0.05; done; return 1; }
+O3="$TMP/origin3.git"; git init -q --bare -b main "$O3"
+R3="$TMP/repo3"; mkdir -p "$R3" && G "$R3" init -q -b main . && echo c > "$R3/c.txt" && G "$R3" add c.txt && G "$R3" commit -qm init
+G "$R3" remote add origin "$O3" && G "$R3" push -q -u origin main 2>/dev/null
+H3="$R3/.claude/worktrees"; mkdir -p "$H3"
+for w in gate-busy merge-busy synced; do G "$R3" worktree add -q --detach "$H3/$w" main; done
+G "$R3" worktree add -q -b feat-late "$H3/late" main; G "$R3" push -q origin feat-late 2>/dev/null
+sleep 2   # the trunk moves on after the worktrees were made: its new commit is newer than their registration
+echo d > "$R3/d.txt"; G "$R3" add d.txt && G "$R3" commit -qm two
+G "$H3/synced" checkout -q --detach main
+mkdir -p "$H3/gate-busy/.claude/audit-gate"; printf '*\n' > "$H3/gate-busy/.claude/audit-gate/.gitignore"
+python3 -I "$TMP/hold.py" "$H3/gate-busy/.claude/audit-gate/test_run.lock" "$TMP/j1.ready" >/dev/null 2>&1 </dev/null & HOLDERS="$HOLDERS $!"; disown $! 2>/dev/null
+python3 -I "$TMP/hold.py" "$(G "$H3/merge-busy" rev-parse --absolute-git-dir)/devkit-automerge.lock" "$TMP/j2.ready" >/dev/null 2>&1 </dev/null & HOLDERS="$HOLDERS $!"; disown $! 2>/dev/null
+ready "$TMP/j1.ready" && ready "$TMP/j2.ready" || fail "J setup: the lock holders did not start"
+(cd "$R3" && python3 "$WT" held "$H3/gate-busy" >"$TMP/jh1.out" 2>&1); rc=$?
+[ "$rc" -eq 3 ] && grep -q "test_run.lock" "$TMP/jh1.out" && ok "J held: a test run holding the worktree's test_run.lock holds it" || { fail "J held gate-busy rc=$rc"; cat "$TMP/jh1.out"; }
+(cd "$R3" && python3 "$WT" held "$H3/merge-busy" >"$TMP/jh2.out" 2>&1); rc=$?
+[ "$rc" -eq 3 ] && grep -q "devkit-automerge.lock" "$TMP/jh2.out" && ok "J held: an automatic merge holding devkit-automerge.lock holds it" || { fail "J held merge-busy rc=$rc"; cat "$TMP/jh2.out"; }
+# (2) the default-like fresh window: a worktree seconds old that has just synced with a newer trunk commit is fresh (used)
+(cd "$R3" && WORKTREE_GC_FRESH_S=86400 python3 "$WT" gc --merged >"$TMP/ja.out" 2>&1)
+[ -d "$H3/synced" ] && grep -q "kept $H3/synced: made or used" "$TMP/ja.out" \
+  && ok "J a worktree that checked out a newer trunk commit seconds ago is fresh (recent HEAD / index / reflog activity)" \
+  || { fail "J a just-synced worktree was not fresh"; grep -a synced "$TMP/ja.out"; }
+# (1) + (3): fresh off; the gh call (late's branch is published) starts a gate in `late` after its first check
+cat > "$TMP/gh.hook" <<SH
+#!/usr/bin/env bash
+rm -f "$TMP/gh.hook"
+mkdir -p "$H3/late/.claude/audit-gate" && printf '*\n' > "$H3/late/.claude/audit-gate/.gitignore"
+python3 -I "$TMP/hold.py" "$H3/late/.claude/audit-gate/test_run.lock" "$TMP/j3.ready" >/dev/null 2>&1 </dev/null &
+echo \$! > "$TMP/j3.pid"
+for _ in \$(seq 1 200); do [ -e "$TMP/j3.ready" ] && break; sleep 0.05; done
+SH
+chmod +x "$TMP/gh.hook"
+(cd "$R3" && WORKTREE_GC_FRESH_S=0 python3 "$WT" gc --merged >"$TMP/jb.out" 2>&1)
+HOLDERS="$HOLDERS $(cat "$TMP/j3.pid" 2>/dev/null)"
+[ -d "$H3/gate-busy" ] && grep -q "kept $H3/gate-busy: .*test_run.lock" "$TMP/jb.out" \
+  && ok "J gc --merged keeps a worktree whose test_run.lock a gate holds" || { fail "J gate-busy reaped or kept for another reason"; grep -a gate-busy "$TMP/jb.out"; }
+[ -d "$H3/merge-busy" ] && grep -q "kept $H3/merge-busy: .*devkit-automerge.lock" "$TMP/jb.out" \
+  && ok "J gc --merged keeps a worktree an automatic merge holds" || { fail "J merge-busy reaped or kept for another reason"; grep -a merge-busy "$TMP/jb.out"; }
+[ -e "$TMP/j3.ready" ] && [ -d "$H3/late" ] && grep -q "kept $H3/late: .*test_run.lock" "$TMP/jb.out" \
+  && ok "J a gate that starts while gc waits on gh is seen right before the removal (re-checked): kept" \
+  || { fail "J late: the gate that started mid-check was not seen (hook ran: $([ -e "$TMP/j3.ready" ] && echo yes || echo no))"; grep -a late "$TMP/jb.out"; }
+[ ! -e "$H3/synced" ] && ok "J control: with fresh off, the unheld integrated worktree is removed" || { fail "J control: synced kept"; grep -a synced "$TMP/jb.out"; }
+kill $HOLDERS 2>/dev/null; HOLDERS=""
 
 kill "$SL" 2>/dev/null
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc_merged: all passed" || { echo "❌ test_worktree_gc_merged: $FAILS failed"; exit 1; }

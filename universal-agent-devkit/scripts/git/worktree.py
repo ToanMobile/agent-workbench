@@ -2673,13 +2673,36 @@ def _live_holder(main, wt):
     return ""
 
 
+def _flock_busy(path):
+    """True when somebody holds an flock on `path`, or it cannot be probed (held); False when the file is not there or the probe gets it.
+    A shared non-blocking flock released at once (every holder of these locks retries, as session_lock.test_run_active's probe relies
+    on); the file is never created (no O_CREAT), a FIFO never blocks (O_NONBLOCK) and a link is not followed."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    try:
+        import fcntl  # noqa: PLC0415 - POSIX only; no fcntl = cannot probe = busy
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except (OSError, ImportError):
+        return True
+    finally:
+        os.close(fd)
+
+
 def _held(main, wt):
     """U2 (audit 25/10): why `wt` must not be TOUCHED now - before any file of it is moved, reverted or removed -, '' when nothing holds
     it. The one rule the board's clean-up after a merge (`held`, before its lane-junk salvage) and `gc --merged` share; it replaced the
     board's bash copies (session_held, locked_by_other). Held: a folder git does not list as a linked worktree (it cannot be judged, and
     `git -C` there acts on the checkout around it); a `git worktree lock` other than devkit-kept (a person's); a devkit-kept lock whose
     session pid lives and is not this process or one of its ancestors (_ancestor_pids: a session may clear its own keep, as `remove`
-    does); a checkout lock (devkit-session.lock) of a live pid, or one that cannot be read. Anything that cannot be told: held."""
+    does); a checkout lock (devkit-session.lock) of a live pid, or one that cannot be read; the kit's own flocks - a test run's
+    <wt>/.claude/audit-gate/test_run.lock, an automatic merge's <git dir>/devkit-automerge.lock (review U2 F3) - held now. Anything that
+    cannot be told: held."""
     try:
         entry = next((e for e in _worktree_entries(main)[1:] if not e["broken"] and _same_path(e["path"], wt)), None)
         if entry is None:
@@ -2703,6 +2726,11 @@ def _held(main, wt):
             if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and session_lock.is_pid_alive(pid):
                 return tr(f"phiên {lock.get('session_id', '?')} giữ khoá checkout của nó (pid {pid} còn sống)",
                           f"session {lock.get('session_id', '?')} holds its checkout lock (pid {pid} is alive)")
+        # review U2 F3 (26/10): the kit's own locks - a test run of that tree (post-fix gate, Stop gates, stale re-run) and an automatic merge
+        if _flock_busy(os.path.join(entry["path"], ".claude", "audit-gate", TEST_RUN_LOCK)):
+            return tr(f"một lượt test (gate) đang giữ .claude/audit-gate/{TEST_RUN_LOCK} của nó", f"a test run (gate) holds its .claude/audit-gate/{TEST_RUN_LOCK}")
+        if _flock_busy(os.path.join(gd, AUTOMERGE_LOCK)):
+            return tr(f"một lần gộp tự động đang giữ nó ({AUTOMERGE_LOCK})", f"an automatic merge holds it ({AUTOMERGE_LOCK})")
     except (Exception, SystemExit) as e:  # noqa: BLE001 - cannot tell who holds it: held
         return tr(f"không kiểm được ai đang giữ nó ({e!r})", f"cannot tell who holds it ({e!r})")
     return ""
@@ -4383,15 +4411,22 @@ def _gc_why(unique):
 
 def _fresh(wt):
     """True when `wt` was registered less than GC_FRESH_S ago and HEAD has no commit made since (the rule cleanup-wt had): a worktree just
-    made for a session or a subagent, before its first commit or lock, is clean and "integrated" and must not be reaped. Unreadable: True."""
+    made for a session or a subagent, before its first commit or lock, is clean and "integrated" and must not be reaped. Also True when
+    its HEAD, index or HEAD reflog (in its admin dir, like _gc_young) changed less than GC_FRESH_S ago (review U2 F3, 26/10: a checkout or
+    fast-forward to a NEWER trunk commit made `committed > made` and a worktree seconds old read as stale). gc's own checks run with
+    --no-optional-locks, so they never touch the index. Unreadable: True."""
     if not GC_FRESH_S:
         return False
     try:
-        made = os.lstat(os.path.join(git_dir(wt), "commondir")).st_mtime
+        gd = git_dir(wt)
+        made = os.lstat(os.path.join(gd, "commondir")).st_mtime
         committed = int(git(wt, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
+        used = max(os.lstat(x).st_mtime for x in (os.path.join(gd, "HEAD"), os.path.join(gd, "index"), os.path.join(gd, "logs", "HEAD"))
+                   if os.path.lexists(x))
     except (OSError, ValueError, SystemExit):
         return True
-    return time.time() - made < GC_FRESH_S and committed <= made
+    now = time.time()
+    return (now - made < GC_FRESH_S and committed <= made) or now - used < GC_FRESH_S
 
 
 def _remote_ref(main, branch):
@@ -4464,7 +4499,7 @@ def _reap_merged(main, here, dry, log, logged):
             else:
                 why = _held(main, p) or _live_holder(main, p)
             if not why and _fresh(p):
-                why = tr(f"mới tạo (dưới {GC_FRESH_S} s) và chưa có commit nào sau đó", f"made under {GC_FRESH_S} s ago, no commit since")
+                why = tr(f"mới tạo hoặc mới dùng (HEAD / index / reflog đổi trong {GC_FRESH_S} s qua)", f"made or used in the last {GC_FRESH_S} s (HEAD / index / reflog)")
             if not why and branch and _remote_ref(main, branch):
                 if not prs:
                     prs.append(_open_pr_names(main))   # one gh call, only when a branch can have a PR
@@ -4493,6 +4528,13 @@ def _reap_merged(main, here, dry, log, logged):
         if dry:
             print("• gc (dry-run): " + tr("sẽ gỡ ", "would remove ") + p)
             acted += 1
+            continue
+        try:   # review U2 F3: asked again right before the removal - gh, the trial merge and removal_blockers took time, a gate may have started
+            why = _held(main, p) or _live_holder(main, p)
+        except (Exception, SystemExit) as ex:  # noqa: BLE001 - cannot tell: kept
+            why = tr(f"không kiểm được ({ex})", f"cannot check it ({ex})")
+        if why:
+            print("• gc: " + tr("giữ ", "kept ") + p + ": " + why)
             continue
         try:
             _remove_after_checks(main, p)
