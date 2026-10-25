@@ -4091,10 +4091,18 @@ def _timeout_snapshot(pgid: int) -> str:
     return "\n".join(lines[:1] + [row[3] for row in mine[:12]])
 
 
+PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh của lượt này (đặt sau khi biết keyed_ok)
+
+
 def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
     """(exit code, output, timed out) of a shell command in its own session/process group, so a timeout kills the
     whole tree (gradle daemons, test workers), not just the shell. The group is in _VACUITY_PGIDS while it runs: a
     signal handler (_vacuity_on_signal) can end it from any thread."""
+    mod = suite_cache_mod() if PER_TEST_CACHE["mode"] != "0" else None
+    if mod is not None and env is not None and mod.SELECTION_CMD.match(cmd or ""):
+        # chỉ `bash <kit>/tests/run_impacted.sh [--all]` (suite_env bỏ biến này khỏi mọi suite khác: một test chạy run_impacted.sh
+        # thật trong suite riêng không được thừa hưởng chế độ dùng lại của gate)
+        env = dict(env, DEVKIT_PER_TEST_CACHE=PER_TEST_CACHE["mode"])
     with _VACUITY_LOCK:   # registered in the same step as the start: a signal in between still finds it
         proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, errors="replace", start_new_session=True, env=env)
@@ -4928,7 +4936,8 @@ def suite_env():
             "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH", "CI",
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
-            "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD"}
+            "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD",
+            "DEVKIT_PER_TEST_CACHE"}   # B2: chỉ run_in_group đặt nó, cho lệnh run_impacted.sh chuẩn của lượt này
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
@@ -6022,6 +6031,11 @@ def main():
     # sentinel chỉ tắt khoá nội dung (keyed_ok); biên nhận cả cây (đúng nội dung này, như --full trước P2) vẫn dùng lại được. Lượt dùng lại
     # biên nhận không đóng mốc sentinel (stamp_sentinel cần mọi suite cache được chạy thật), nên lượt cưỡng bức sau vẫn là sentinel.
     keyed_ok = use_cache and not sentinel_run
+    # B2 (audit 25/10): sổ PASS theo từng test của run_impacted.sh (tests/lib/per_test_cache.py) theo đúng chế độ khoá của lượt này: "1" dùng
+    # lại + ghi, "record" chỉ ghi (sentinel, --no-cache, DEVKIT_GATE_CACHE=0), "0" tắt (không có sc: DEVKIT_SUITE_CACHE=0, lượt không cưỡng bức;
+    # hay người dùng đặt sẵn DEVKIT_PER_TEST_CACHE=0). run_in_group chỉ đưa nó cho lệnh run_impacted.sh chuẩn. tests/gates/test_gate_per_test_cache.sh.
+    if os.environ.get("DEVKIT_PER_TEST_CACHE") != "0":
+        PER_TEST_CACHE["mode"] = "0" if sc is None else ("1" if keyed_ok else "record")
     if sentinel_run:
         print(f"    {CYAN}▶ {tr('sentinel: lần chạy thật đủ suite gần nhất của repo đã quá hạn — lượt này không dùng khoá nội dung, chạy thật mọi suite cache được để kiểm cache', 'sentinel: the repo’s last real full run is too old — this run uses no content key and runs every cacheable suite for real to check the cache')}{RESET}")
     overlay_pre = capture_overlay_pre(args, matrix, project_dir, regression_tests) if run_tests else None   # BEFORE any suite runs
