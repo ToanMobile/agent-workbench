@@ -2709,13 +2709,26 @@ def _held(main, wt):
 
 
 def cmd_held(cwd, args):
-    """`held <path>`: exit 0 when nothing holds the worktree, 3 with the reason on stdout when something does; any other exit
-    (a usage error, a crash): cannot tell, the caller keeps it. Read-only. The rule is gc --merged's own (review U2 P3): _held, then
-    _live_holder (an owner session in its state not proven gone)."""
-    if len(args) != 1 or args[0].startswith("-"):
-        die("usage: agent-kit worktree held <path>")
-    main, wt = main_checkout(cwd), os.path.abspath(os.path.join(cwd, args[0]))
+    """`held [--merged[=<sha>]] <path>`: exit 0 when nothing holds the worktree, 3 with the reason on stdout when something does; any
+    other exit (a usage error, a crash): cannot tell, the caller keeps it. Read-only. The rule is gc --merged's own (review U2 P3): _held,
+    then _live_holder (an owner session in its state not proven gone). --merged[=<sha>] (review U2 F5): also 3 when HEAD is not integrated
+    (_integrated, the rule `remove --merged` applies), so the board decides that BEFORE its tidy moves a file."""
+    merged, rest = None, []
+    for a in args:
+        if a == "--merged" or a.startswith("--merged="):
+            merged = a.partition("=")[2]
+        else:
+            rest.append(a)
+    if len(rest) != 1 or rest[0].startswith("-") or (merged and not SHA_RE.fullmatch(merged)):
+        die("usage: agent-kit worktree held [--merged[=<merged head sha>]] <path>")
+    main, wt = main_checkout(cwd), os.path.abspath(os.path.join(cwd, rest[0]))
     why = _held(main, wt) or _live_holder(main, wt)
+    if not why and merged is not None:
+        try:
+            why = _integrated(main, wt, merged or None)
+            why = tr(f"chưa tích hợp ({why})", f"not integrated ({why})") if why else ""
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - cannot tell: held
+            why = tr(f"không kiểm được đã tích hợp chưa ({e!r})", f"cannot tell whether it is integrated ({e!r})")
     if why:
         print(why)
         return 3

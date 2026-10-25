@@ -68,13 +68,16 @@ command -v python3 >/dev/null 2>&1 && for c in "$HERE_UP/universal-agent-devkit"
   fi
 done
 NO_KIT="no DevKit (agent-kit worktree, with python3) to prove it safe to remove; nothing removed"
-# kit_held <wt>: 0 (và in lý do) khi KHÔNG được đụng <wt>: kit `held` nói một phiên / khoá giữ nó (exit 3), hay không trả lời được (không
-# có kit, kit chết, mã khác) — hỏi TRƯỚC khi tidy dời / trả file về HEAD. 1 khi không ai giữ (exit 0). Luật nằm ở kit (_held): khoá
-# devkit-kept của phiên khác còn sống (của chính phiên gọi hay pid đã chết thì không), khoá git khác, khoá checkout còn sống.
+# kit_held <wt> [<merged-sha>]: 0 (và in lý do) khi KHÔNG được đụng <wt>: kit `held` nói một phiên / khoá giữ nó (exit 3), hay không trả
+# lời được (không có kit, kit chết, mã khác) — hỏi TRƯỚC khi tidy dời / trả file về HEAD. 1 khi không ai giữ (exit 0). Luật nằm ở kit
+# (_held, _live_holder): khoá devkit-kept của phiên khác còn sống (của chính phiên gọi hay pid đã chết thì không), khoá git khác, khoá
+# checkout còn sống, phiên chủ chưa chứng minh đã dừng. Có đối số 2 (kể cả rỗng): `held --merged=<sha>`, "chưa tích hợp" (luật của
+# `remove --merged`) cũng là giữ — quyết định chỉ-đọc đó đi TRƯỚC tidy (review U2 F5, 26/10: trước đây tidy cất / trả file về HEAD rồi
+# `remove --merged` mới từ chối).
 kit_held() {
   local out rc=0
   [ -n "$KIT_WT" ] || { echo "$NO_KIT"; return 0; }
-  out=$(cd "$REPO_PATH" && python3 "$KIT_WT" held "$1" 2>&1) || rc=$?
+  out=$(cd "$REPO_PATH" && python3 "$KIT_WT" held ${2+"--merged=$2"} "$1" 2>&1) || rc=$?
   case "$rc" in
     0) return 1 ;;
     3) printf '%s\n' "$out" | head -1 | cut -c1-300 ;;
@@ -339,7 +342,7 @@ untidy() {
 # --merged=<merged-head>: chỉ khi HEAD đã tích hợp).
 clean_wt() {
   local wt="$1" head why
-  if why=$(kit_held "$wt"); then echo "kept $wt: $why; not touched" >&2; return 0; fi
+  if why=$(kit_held "$wt" "$3"); then echo "kept $wt: $why; not touched" >&2; return 0; fi   # cả "chưa tích hợp": trước khi tidy đụng file
   HOLD_WHY=""
   if ! hold_head "$wt" "$2" "$3"; then
     # Commit trên HEAD detached mà không nhánh/remote nào chứa (vd repro Tester chưa push) sẽ chỉ còn trong reflog.

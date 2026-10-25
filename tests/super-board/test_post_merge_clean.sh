@@ -61,7 +61,8 @@ git -C "$R" worktree add -q "$W/issue-9-build" issue-9-late
 git -C "$R" worktree add -q --detach "$W/issue-9-qa" main
 echo late > "$W/issue-9-build/b"; git -C "$W/issue-9-build" add b; git -C "$W/issue-9-build" commit -qm late
 echo dirty > "$W/issue-9-qa/a"
-bash "$CLEAN" "$R" issue-9-late "$MERGED9" >/dev/null 2>&1
+mkdir -p "$W/issue-9-build/.agents/local"; echo "lane note 9" > "$W/issue-9-build/.agents/local/note.md"   # KEEP_RE: tidy would salvage it
+bash "$CLEAN" "$R" issue-9-late "$MERGED9" >/dev/null 2>"$TMP/k9late.err"
 [ -d "$W/issue-9-qa" ] && [ "$(cat "$W/issue-9-qa/a")" = dirty ] && ok "worktree with uncommitted edits kept" \
   || fail "worktree with uncommitted edits removed (edit lost)"
 git -C "$R" rev-parse --verify -q refs/heads/issue-9-late >/dev/null && ok "branch with commits after the merged head kept" \
@@ -70,6 +71,12 @@ git -C "$R" rev-parse --verify -q refs/heads/issue-9-late >/dev/null && ok "bran
 # gỡ, kể cả khi nhánh còn giữ commit đó (sweep đã giữ đúng ca này: "not the head of a merged PR"). Trước đây post mode gỡ nó.
 [ -d "$W/issue-9-build" ] && ok "Builder worktree with a commit after the merged head kept (work the trunk lacks)" \
   || fail "Builder worktree with a commit after the merged head REMOVED (work the trunk lacks)"
+# F5 (review U2, 26/10): integration is decided read-only (kit `held --merged=<sha>`) BEFORE tidy moves a file: a worktree the kit then
+# keeps as "not integrated" was salvaged / reverted first and put back by untidy. Nothing is moved, no salvage record is written.
+! grep -q "salvaged .*/issue-9-build" "$TMP/k9late.err" && [ -z "$(ls "$R/.git/super-board/salvage" 2>/dev/null | grep '^issue-9-build')" ] \
+  && grep -q "kept .*/issue-9-build: \(not integrated\|chưa tích hợp\)" "$TMP/k9late.err" && [ "$(cat "$W/issue-9-build/.agents/local/note.md" 2>/dev/null)" = "lane note 9" ] \
+  && ok "F5 a worktree that is not integrated is kept before tidy touches a file (no salvage, note untouched, reason given)" \
+  || { fail "F5 tidy moved files of a worktree the kit then kept as not integrated"; cat "$TMP/k9late.err"; }
 
 # Thẻ 12: Tester commit trên HEAD detached (repro chưa push), worktree sạch; Builder còn sửa dở trên nhánh đã merge.
 git -C "$R" branch issue-12-y
