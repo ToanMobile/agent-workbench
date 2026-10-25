@@ -54,6 +54,7 @@ import shlex
 import shutil
 import signal
 import stat
+import statistics
 import subprocess
 import tempfile
 import sys
@@ -4782,13 +4783,16 @@ def _env_float(name, default):
         return float(default)
 
 
-def _recorded_seconds() -> dict:
+def _recorded_seconds(median=False) -> dict:
     """Suite id → seconds the pre-commit gate believes it takes (.agents/regression_status.json): the
     LONGEST PASS/FAIL run in its history, else its last run. The last run alone made the same commit run a
     suite or skip it depending on the previous gate run (REG-DK-ALL-01, whose length follows the diff:
     165 s, 164 s, 23 s, 17 s). A suite with only untested / busy / cached runs has no belief.
     ponytail: biased towards skipping, and the history window (5 runs) lets a suite that really got faster
-    drift back in after five fast runs; declare the length in the matrix if that ever matters."""
+    drift back in after five fast runs; declare the length in the matrix if that ever matters.
+    median=True (lớp slot của heavy_slot, audit B7 25/10): trung vị median_high của các lần chạy — một lần chậm (máy tải cao) không
+    còn biến suite nhẹ thành cpu và xếp hàng slot nặng của cả máy; `last` trùng history[0] (cùng lúc, kết quả, độ dài) chỉ tính một lần.
+    Pre-commit vẫn đọc số dài nhất (tests/gates/test_precommit_duration.sh)."""
     try:
         items = json.loads((get_project_dir() / ".agents" / "regression_status.json").read_text(encoding="utf-8")).get("items", {})
     except (OSError, ValueError, AttributeError):
@@ -4800,10 +4804,16 @@ def _recorded_seconds() -> dict:
 
     out = {}
     for sid, it in items.items():
-        runs = [seconds(r) for r in [*((it or {}).get("history") or []), (it or {}).get("last")]]
-        runs = [r for r in runs if r is not None]
+        runs, seen = [], set()
+        for r in [*((it or {}).get("history") or []), (it or {}).get("last")]:
+            s = seconds(r)
+            k = (r.get("ts") or r.get("at"), r.get("status"), r.get("duration")) if isinstance(r, dict) else None
+            if s is None or k in seen:
+                continue
+            seen.add(k)
+            runs.append(s)
         if runs:
-            out[sid] = max(runs)
+            out[sid] = statistics.median_high(runs) if median else max(runs)
     return out
 
 
@@ -5800,7 +5810,7 @@ def main():
             except Exception as e:   # noqa: BLE001 - không phân lớp được: không thêm gì (luật chọn cũ)
                 log_warn(f"heavy_slot: {e!r}")
                 _hs_x = None
-            rec_x = _recorded_seconds() if _hs_x is not None else {}
+            rec_x = _recorded_seconds(median=True) if _hs_x is not None else {}
             for rule in rules:
                 for test in rule.get("mandatory_regression_tests", []):
                     tid = test.get("id")
@@ -6211,7 +6221,7 @@ def main():
         return not (t.get("keyed_full") or t.get("stale_rerun")) or (id(t) in really_ran and t.get("status") == "PASS")
     late_notes = []   # (suite, lệnh) trong nhóm song song mà may_note chỉ biết được sau khi nhóm xong
 
-    slot_rec = _recorded_seconds() if run_tests and lock_held else {}
+    slot_rec = _recorded_seconds(median=True) if run_tests and lock_held else {}   # lớp slot: trung vị, không phải lần dài nhất (B7)
     slot_mod = []
     # #338: lượt đã có suite được cho chạy thì chạy cho xong. started_run: không chờ tải lại ở các suite sau; heavy_lease: slot nặng giữ nguyên
     # giữa hai suite nặng TUẦN TỰ liền nhau (gate khác không chen được; suite trong nhóm song song vẫn xin slot riêng, nên tổng suite nặng
