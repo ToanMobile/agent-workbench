@@ -416,3 +416,5 @@
 2 tests/worktree_git/test_worktree_nonutf8_output.sh
 # 2026-10-26: gc --merged (U2) và các bản sửa review F2-F4/P3 (đo 32-84 s tuỳ tải máy).
 45 tests/worktree_git/test_worktree_gc_merged.sh
+# 2026-10-26: textconv lossy làm thay đổi nhị phân vô hình với show / diff của worktree.py (OCR review).
+3 tests/worktree_git/test_worktree_textconv.sh

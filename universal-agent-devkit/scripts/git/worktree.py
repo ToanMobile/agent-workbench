@@ -1296,7 +1296,8 @@ def _patch_already_in_main(cwd, main_head, head, memo=None):
     files = [f for f in files if f and f not in ign]   # the gate and hooks rewrite those: not work (authored rows are)
     if not files or len(files) > 500:
         return False
-    return git(cwd, "--no-optional-locks", "diff", "--quiet", "--ignore-submodules=none", main_head, head, "--", *files, check=False,
+    # --no-textconv --no-ext-diff: a lossy diff.<drv>.textconv (docx/pdf -> text) makes a binary change read as "same" (OCR 26/10)
+    return git(cwd, "--no-optional-locks", "diff", "--quiet", "--no-textconv", "--no-ext-diff", "--ignore-submodules=none", main_head, head, "--", *files, check=False,
                env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode == 0
 
 
@@ -1473,7 +1474,7 @@ def _clean_merges(wt, unheld):
     for sha in list(merges):
         # bytes: a hunk may hold a byte that is not UTF-8 (a Latin-1 file); a strict text decode raised UnicodeDecodeError here and
         # the Stop gate held every worktree with "gate error" (2026-10-26). Only "is there any hunk" is read.
-        shown = _git_bytes(wt, "show", "--cc", "--format=", "--ignore-submodules=none", sha)
+        shown = _git_bytes(wt, "show", "--cc", "--no-textconv", "--no-ext-diff", "--format=", "--ignore-submodules=none", sha)   # a lossy textconv hides a binary hunk
         if shown.returncode != 0 or shown.stdout.strip():
             del merges[sha]
     ok, grew = set(), True
@@ -1592,7 +1593,7 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False, 
                                      check=False).stdout.split("\0") if f]
         files = [f for f in diff_names if f not in ign]
         same_bytes = bool(files) and len(files) <= 500 and bool(main_head) and git(
-            wt, "--no-optional-locks", "diff", "--quiet", "--ignore-submodules=none", main_head, sha, "--", *files, check=False,
+            wt, "--no-optional-locks", "diff", "--quiet", "--no-textconv", "--no-ext-diff", "--ignore-submodules=none", main_head, sha, "--", *files, check=False,
             env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode == 0
         if not any(diff_names):   # an empty commit (or a merge) has no patch to compare: its message would be lost
             if clean is None:
@@ -1957,7 +1958,7 @@ def cmd_diff(cwd, args):
                 keep, carried = [STATUS_FILE], True   # the rows people made (bugs, REQs, links) replace that file's content in the patch
                 left_out = [p for p in left_out if p != STATUS_FILE]
             spec = [":/"] + [":(top,exclude,literal)" + p for p in BOOKKEEPING if p not in keep]   # magic: GIT_LITERAL_PATHSPECS off below
-        out = subprocess.run(["git", "-C", wt, "diff", "--cached", "--binary", state["base"], "--", *spec],
+        out = subprocess.run(["git", "-C", wt, "diff", "--cached", "--binary", "--no-textconv", "--no-ext-diff", state["base"], "--", *spec],   # the bytes, never a textconv's text
                              capture_output=True, env=dict(env, GIT_LITERAL_PATHSPECS="0"))
         if out.returncode != 0:
             die(out.stderr.decode("utf-8", "replace").strip(), 1)
@@ -2819,8 +2820,8 @@ def cmd_restore(cwd, args):
         die(tr(f"không phải commit: {rev}", f"not a commit: {rev}"))
     lit, bad = ("--literal-pathspecs",), []
     for p in paths:
-        for d in (git(cwd, *lit, "diff", "--quiet", "--ignore-submodules=none", "HEAD", "--", p, check=False),               # cây làm việc so với HEAD
-                  git(cwd, *lit, "diff", "--cached", "--quiet", "--ignore-submodules=none", "HEAD", "--", p, check=False)):  # index so với HEAD (OCR 18/10)
+        for d in (git(cwd, *lit, "diff", "--quiet", "--no-textconv", "--no-ext-diff", "--ignore-submodules=none", "HEAD", "--", p, check=False),               # cây làm việc so với HEAD
+                  git(cwd, *lit, "diff", "--cached", "--quiet", "--no-textconv", "--no-ext-diff", "--ignore-submodules=none", "HEAD", "--", p, check=False)):  # index so với HEAD (OCR 18/10)
             if d.returncode:
                 bad.append(f"{p}: " + (tr("có thay đổi chưa commit", "has uncommitted changes") if d.returncode == 1 else (d.stderr or "").strip()[-200:]))
                 break
@@ -3698,7 +3699,7 @@ def _sync_main_to(main, origin):
             why = "" if r.returncode == 0 else (r.stderr or r.stdout).strip()[-300:]
         elif _in_progress(main):
             why = tr(f"main đang dở một {_in_progress(main)}", f"a {_in_progress(main)} is in progress in main")
-        elif git(main, "diff", "--cached", "--quiet", "--ita-visible-in-index", check=False).returncode != 0:
+        elif git(main, "diff", "--cached", "--quiet", "--no-textconv", "--no-ext-diff", "--ita-visible-in-index", check=False).returncode != 0:
             why = tr("index của main có thay đổi đã stage (của phiên khác): reset sẽ làm rơi chúng", "main's index holds staged changes (another session's): a reset would drop them")
         elif not _merges_to(main, origin, head) and not _extras_in_merged_prs(main, head, origin):   # gọi gh (mạng) sau các kiểm tra rẻ
             why = tr("main local có commit origin chưa có và không thuộc PR nào đã merge vào trunk (đẩy / PR chúng trước)",
