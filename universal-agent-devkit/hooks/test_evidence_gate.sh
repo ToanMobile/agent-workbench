@@ -952,7 +952,7 @@ def runner_state(is_error, txt, pm_run=False, command=""):
                          r"|(?i:\bpass(?:ed)?\s*[:=]\s*\d+\s+fail(?:ed|ures?)?\s*[:=]\s*[1-9]\d*\b)"
                          r"|^\s*FAIL(?:ED)?\b|(?i:^\s*not ok\b)", clean, re.M):
                 return "red"
-            if lines and not all(re.match(r"\s*skip\b", l, re.I) for l in lines):
+            if lines and not all(re.match(r"\s*skip(?:ped|ping)?\b", l, re.I) for l in lines):
                 return "green"
         return None
     if pm_run:

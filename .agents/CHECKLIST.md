@@ -1,8 +1,8 @@
 # 🧪 Regression Checklist
 
-**An toàn 7% (17/246)** · ❌ 114 · 🔁 0 · 🚫 0 · 🟡 67 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 43 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 69 · ma trận chờ duyệt: không
+**An toàn 7% (17/248)** · ❌ 114 · 🔁 0 · 🚫 0 · 🟡 67 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 45 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 67 · ma trận chờ duyệt: không
 
-> Sinh tự động lúc 2026-10-25 13:16:10 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
+> Sinh tự động lúc 2026-10-25 14:01:28 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
 
 **Bug không có test hồi quy nào chặn tái phát: 2** (0 chưa có test · 2 có test nhưng gate không chạy)
 
@@ -785,7 +785,7 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-DK-WT-ESSENTIALS-BLOCK-01 | worktree remove/discard gỡ được worktree chỉ lệch ở khối devkit-essentials của AGENTS.md; sửa ngoài khối vẫn bị từ chối (#234) | chưa chạy | bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_essentials_block.sh |
 
-## 📒 Sổ tay bug (135)
+## 📒 Sổ tay bug (137)
 
 | Trạng thái | Mã | Mô tả | Component | Test bảo vệ | Bằng chứng |
 |---|---|---|---|---|---|
@@ -921,11 +921,13 @@
 | ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-reaper-same-key-kill | pm-mcp: reaper re-check compared only the pid under a pid-keyed entry, so a rewritten pending entry (pid reuse) was killed | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
 | ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-reaper-stale-snapshot-kill | pm-mcp: orphan reaper killed from a stale registry snapshot, so an agy a PM had just registered could be killed | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
 | ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-selftag-after-spawn | pm-mcp: the PM read its own ps fingerprint after spawning agy, widening the untracked window | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| ⏳ chưa chạy | BUG-20261024-antigravity-2-tien-trinh-da-chay-03-35-1 | Antigravity · / · 2 tiến trình · đã chạy 03:35:14 chạy 26 tiến trình có đúng ko hay là lỗi | - | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_agent_workload.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
+| ⏳ chưa chạy | BUG-20261024-dieu-tra-tai-sao-test-gate-suite-cache-s | Điều tra tại sao test_gate_suite_cache_selection S5 đỏ khi chạy trong gate gộp nhưng xanh khi chạy lẻ, sửa nếu là lỗi c… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_suite_cache_selection.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261024-fix-dev-kit-de-lan-sau-ko-bi-loi-nghiem | fix dev kit để lần sau ko bị lỗi nghiêm trọng này nữa, đây là lỗi tuyệt đối nghiêm trọng sau này ko đc phép bị lại nữa | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_run_bounded.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261024-fix-het-cac-cho-bi-ket-luon-di | Fix hết các chỗ bị kẹt luôn đi | - | REG-DK-ALL-01, tests/gates/test_gate_robustness.sh (ngoài matrix) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261024-tai-sao-tien-trinh-bi-ket-check-fix-dev | tại sao tiến trình bị kẹt check fix dev kit | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_run_bounded.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 
-## 🟡 REPORTED — bug báo qua prompt, chưa xác nhận (69)
+## 🟡 REPORTED — bug báo qua prompt, chưa xác nhận (67)
 
 > Chưa tính là bug. Xác nhận: `agent-kit bugs add "<tiêu đề>" --id <ID>` · có test ĐỎ→XANH: `agent-kit bugs link <ID> <TEST>` · không phải bug: `agent-kit bugs drop <ID>`
 
@@ -988,12 +990,10 @@
 | BUG-20261023-tiep-tuc-307-super-build-doc-claude-audi | Tiếp tục #307 super-build: đọc .claude/audit-gate/gate307c.log trong worktree issue-307-build (gate --full --diff origi… | 2026-10-23 16:04:03 |
 | BUG-20261023-update-them-toi-muon-cai-ban-xoay-lai-hu | update thêm tôi muốn cái bàn xoay lại hướng tôi hiện bị quay lưng rồi | 2026-10-23 11:46:11 |
 | BUG-20261023-vay-thi-giu-van-dc-toi-tuong-no-la-bug | vậy thì giữ vẫn đc tôi tưởng nó là bug | 2026-10-23 11:48:00 |
-| BUG-20261024-antigravity-2-tien-trinh-da-chay-03-35-1 | Antigravity · / · 2 tiến trình · đã chạy 03:35:14 chạy 26 tiến trình có đúng ko hay là lỗi | 2026-10-24 21:16:48 |
 | BUG-20261024-check-cac-task-blocked-sao-lai-bi-block | check các task blocked sao lại bị block? | 2026-10-24 09:15:06 |
 | BUG-20261024-check-gate-run-2-for-issue-320-build-gre | Check gate run 2 for issue #320 build: grep GATE_RC in /tmp/gate320b.log (task bndrj2p0u). If GATE_RC=0 push issue-320-… | 2026-10-24 11:57:00 |
 | BUG-20261024-con-task-nao-dang-bi-blocked-nua-ko | Còn task nào đang bị blocked nữa ko | 2026-10-24 12:25:34 |
 | BUG-20261024-dang-comment-chan-moi-tren-319-voi-dong | Đăng comment chặn mới trên #319 với dòng cuối `blocked-by: 377` (dùng super-board-blocked-by.py), rồi tạo thẻ Backlog c… | 2026-10-24 17:39:57 |
-| BUG-20261024-dieu-tra-tai-sao-test-gate-suite-cache-s | Điều tra tại sao test_gate_suite_cache_selection S5 đỏ khi chạy trong gate gộp nhưng xanh khi chạy lẻ, sửa nếu là lỗi c… | 2026-10-24 22:39:04 |
 | BUG-20261024-first-operation-run-claude-bin-super-boa | First operation: run .claude/bin/super-board-skills-ready.py --root '/Volumes/Data/Toan/agent-workbench' --host claude… | 2026-10-24 16:48:41 |
 | BUG-20261024-http-ai-factory-localhost-4317-hien-chay | http://ai-factory.localhost:4317/ hiện chạy trên phone hơi khó xem audit, review lại ui,ux. repo nào dừng thì nên tắt l… | 2026-10-24 07:30:30 |
 | BUG-20261024-kiem-tra-cac-task-bi-blocked | kiểm tra. các task bị blocked | 2026-10-24 17:19:51 |
