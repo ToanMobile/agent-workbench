@@ -234,4 +234,23 @@ rc=$(BIGPR_SHORT=1 SB_GITHUB_READ_STRICT=1 PATH="$TMP/bigpr:$PATH" run --kind me
 [ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && ok "REST list still short of changedFiles → still incomplete evidence (halt in strict mode)" || fail "short REST list accepted: rc=$rc"
 rm -f "$TMP/halt.json"
 
+# #425 (PR #424 của DevKit, 156 file, 26/10): REST liệt kê một file đổi loại (symlink thành file thường) thành HAI mục cùng
+# filename, còn changedFiles đếm một: 157 mục cho 156 file. So số mục thô thì halt cả board dù danh sách đủ. Đếm theo path duy
+# nhất; thiếu path thật vẫn halt (ca BIGPR_SHORT ở trên).
+cat > "$TMP/bigpr/gh" <<'SH'
+#!/usr/bin/env bash
+echo "$*" >> "$GH_CALLS"
+case " $* " in
+  *" pr view 171 "*) python3 -c 'import json; print(json.dumps({"labels": [], "body": "b", "additions": 206, "deletions": 0, "changedFiles": 103, "files": [{"path": "f%d" % i, "additions": 2, "deletions": 0} for i in range(100)]}))' ;;
+  *" api repos/o/r/pulls/171/files "*) python3 -c 'import json; files = [{"filename": "f%d" % i, "additions": 2, "deletions": 0} for i in range(103)]; files.insert(6, {"filename": "f5", "additions": 0, "deletions": 2}); print(json.dumps([files[:100], files[100:]]))' ;;
+  *" api rate_limit "*) echo '{"resources":{}}' ;;
+  *) echo 'unexpected' >&2; exit 1 ;;
+esac
+SH
+rc=$(SB_GITHUB_READ_STRICT=1 PATH="$TMP/bigpr:$PATH" run --kind metadata -- pr view 171 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+n=$(python3 -c 'import json,sys; print(len({f["path"] for f in json.load(open(sys.argv[1]))["files"]}))' "$TMP/out" 2>/dev/null)
+[ "$rc" = 0 ] && [ "$n" = 103 ] && [ ! -e "$TMP/halt.json" ] && ok "PR whose REST list repeats a path (type change): 103 unique paths, no halt" \
+  || fail "REST path repeated: rc=$rc paths=$n halt=$( [ -e "$TMP/halt.json" ] && echo yes || echo no) err=$(head -c 200 "$TMP/err")"
+rm -f "$TMP/halt.json"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_github_read: all passed" || { echo "❌ test_github_read: $FAILS failed"; exit 1; }

@@ -467,8 +467,15 @@ def complete_pr_files(args, stdout):
         full = run_gh(['api', path, '--paginate', '--slurp'])
         if full.returncode:
             return stdout
-        value['files'] = [{'path': f['filename'], 'additions': f['additions'], 'deletions': f['deletions']}
-                          for page in json.loads(full.stdout) for f in page]
+        # Một file đổi loại (symlink thành file thường) là HAI mục cùng filename ở REST nhưng MỘT file ở changedFiles
+        # (#425, DevKit PR #424: 157 mục cho 156 file): gộp theo path, cộng additions/deletions để tổng vẫn khớp.
+        merged = {}
+        for page in json.loads(full.stdout):
+            for f in page:
+                row = merged.setdefault(f['filename'], {'path': f['filename'], 'additions': 0, 'deletions': 0})
+                row['additions'] += f['additions']
+                row['deletions'] += f['deletions']
+        value['files'] = list(merged.values())
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
         return stdout
     return json.dumps(value)
