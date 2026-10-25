@@ -238,6 +238,42 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "worktree: W=; : ${W:=<main>}; git -C $W commit (a default assignment)", w, B(f"W=; : ${{W:={m}}}; git -C $W commit -qm x")),
     (True, "worktree: W=<wt>/l[m] unquoted: the glob picks the link to main, not the dir named l[m]", w, B(f"W={w}/l[m]; git -C $W commit -qm x")),
     (False, "worktree: W=<wt>/l[m] in double quotes: the dir named l[m] (no glob)", w, B(f'W={w}/l[m]; git -C "$W" commit -qm x')),
+    # 25/10 lỗ 2: `cd` trong $( ) / backtick / ( ) / <( ) chạy ở subshell, không dời thư mục của lệnh ngoài - walk đi theo nó nên gate chạy ở
+    # main được coi như chạy ở worktree. cd ở độ sâu > 0 làm thư mục thành "không biết" (fail closed)
+    (True, "main: x=$(<nl>cd <wt><nl>); gate (the cd runs in the substitution's subshell)", m, B(f"x=$(\ncd {w}\n); {G}")),
+    (True, "main: x=`<nl>cd <wt><nl>`; gate (backticks)", m, B(f"x=`\ncd {w}\n`; {G}")),
+    (True, "main: (<nl>cd <wt><nl>); gate (a subshell)", m, B(f"(\ncd {w}\n); {G}")),
+    (True, "main: x=$(true; cd <wt>; true); gate", m, B(f"x=$(true; cd {w}; true); {G}")),
+    (True, "main: cat <(<nl>cd <wt><nl>); git commit (a process substitution)", m, B(f"cat <(\ncd {w}\n); git commit -qm x")),
+    (True, "main: x=$(echo ')' <nl>cd <wt><nl>); gate (a quoted paren closes nothing)", m, B(f"x=$(echo ')'\ncd {w}\n); {G}")),
+    (False, "main: x=$(date); cd <wt> && gate (the substitution closed before the cd)", m, B(f"x=$(date); cd {w} && {G}")),
+    (False, "main: x=$(<nl>cd <wt> && pwd<nl>); cd <wt> && CLAUDE_PROJECT_DIR=\"$PWD\" gate", m, B(f'x=$(\ncd {w} && pwd\n); cd {w} && CLAUDE_PROJECT_DIR="$PWD" {G}')),
+    (False, "worktree: git commit -qm \"fix (#419)\" && gate (a paren in a message)", w, B(f'git commit -qm "fix (#419)" && {G}')),
+    # 25/10 lỗ 3: CLAUDE_PROJECT_DIR (hay TARGET_DIR, biến thứ hai của get_project_dir) gán ở segment TRƯỚC gate là nơi gate chạy - walk chỉ
+    # tìm nó trong segment của gate nên gate bị xét theo cwd. Giá trị tính lúc gán ($PWD lúc đó); gate xét theo giá trị đó VÀ cwd (biến không
+    # export thì gate theo cwd); giá trị không biết thì fail closed
+    (True, "worktree: export CLAUDE_PROJECT_DIR=<main>; gate", w, B(f"export CLAUDE_PROJECT_DIR={m}; {G}")),
+    (True, "worktree: export CLAUDE_PROJECT_DIR=<main> && gate", w, B(f"export CLAUDE_PROJECT_DIR={m} && {G}")),
+    (True, "worktree: CLAUDE_PROJECT_DIR=<main> (no export) <nl> gate", w, B(f"CLAUDE_PROJECT_DIR={m}\n{G}")),
+    (True, "worktree: cd <main> && export CLAUDE_PROJECT_DIR=\"$PWD\"; cd <wt> && gate ($PWD at the export)", w, B(f'cd {m} && export CLAUDE_PROJECT_DIR="$PWD"; cd {w} && {G}')),
+    (True, "worktree: export CLAUDE_PROJECT_DIR=$X; gate (a value the line does not tell)", w, B(f"export CLAUDE_PROJECT_DIR=$X; {G}")),
+    (True, "worktree: export CLAUDE_PROJECT_DIR=\"$PWD\"/../../..; gate (.. back into main)", w, B(f'export CLAUDE_PROJECT_DIR="$PWD"/../../..; {G}')),
+    (True, "worktree: read CLAUDE_PROJECT_DIR; gate", w, B(f"read CLAUDE_PROJECT_DIR; {G}")),
+    (True, "worktree: false || export CLAUDE_PROJECT_DIR=<main>; gate (the export may run)", w, B(f"false || export CLAUDE_PROJECT_DIR={m}; {G}")),
+    (True, "worktree: export CLAUDE_PROJECT_DIR=<wt>; export CLAUDE_PROJECT_DIR=<main>; gate (the last one)", w, B(f"export CLAUDE_PROJECT_DIR={w}; export CLAUDE_PROJECT_DIR={m}; {G}")),
+    (True, "worktree: export TARGET_DIR=<main>; gate (the gate's second variable)", w, B(f"export TARGET_DIR={m}; {G}")),
+    (True, "worktree: TARGET_DIR=<main> gate (inline)", w, B(f"TARGET_DIR={m} {G}")),
+    (True, "worktree: CLAUDE_PROJECT_DIR= TARGET_DIR=<main> gate (an empty first variable)", w, B(f"CLAUDE_PROJECT_DIR= TARGET_DIR={m} {G}")),
+    (False, "worktree: export CLAUDE_PROJECT_DIR=\"$PWD\"; gate (as sessions write it)", w, B(f'export CLAUDE_PROJECT_DIR="$PWD"; {G}')),
+    (False, "worktree: export CLAUDE_PROJECT_DIR=$PWD && gate > log 2>&1", w, B(f"export CLAUDE_PROJECT_DIR=$PWD && {G} > {tmp}/g.log 2>&1")),
+    (False, "main: cd <wt> && export CLAUDE_PROJECT_DIR=\"$PWD\" && gate", m, B(f'cd {w} && export CLAUDE_PROJECT_DIR="$PWD" && {G}')),
+    (False, "worktree: export CLAUDE_PROJECT_DIR=<wt>; gate", w, B(f"export CLAUDE_PROJECT_DIR={w}; {G}")),
+    (False, "worktree: export CLAUDE_PROJECT_DIR=\"$PWD\" DEVKIT_IMPACTED_SINCE=0; gate (several at once, as sessions write it)", w, B(f'export CLAUDE_PROJECT_DIR="$PWD" DEVKIT_IMPACTED_SINCE=0; {G}')),
+    (False, "worktree: export SB_HEAVY_SLOT_DIR=$(mktemp -d) CLAUDE_PROJECT_DIR=\"$PWD\" && gate", w, B(f'export SB_HEAVY_SLOT_DIR=$(mktemp -d) CLAUDE_PROJECT_DIR="$PWD" && {G}')),
+    (False, "worktree: grep -n CLAUDE_PROJECT_DIR <file>; gate (reading the name sets nothing)", w, B(f"grep -n CLAUDE_PROJECT_DIR {m}/README.md; {G}")),
+    (True, "worktree: export A=1 CLAUDE_PROJECT_DIR=<main>; gate (several at once)", w, B(f"export A=1 CLAUDE_PROJECT_DIR={m}; {G}")),
+    (True, "worktree: CLAUDE_PROJECT_DIR=<main> true; gate (a prefix of another command: fail closed)", w, B(f"CLAUDE_PROJECT_DIR={m} true; {G}")),
+    (False, "worktree: export CLAUDE_PROJECT_DIR=<main>; CLAUDE_PROJECT_DIR=\"$PWD\" gate (inline wins)", w, B(f'export CLAUDE_PROJECT_DIR={m}; CLAUDE_PROJECT_DIR="$PWD" {G}')),
 ]
 bad = 0
 for want, label, cwd, (tool, ti, cmd) in cases:
