@@ -170,6 +170,13 @@ cases = [
     ("a heredoc line 'cd B' is data, the push runs where it ran", lambda: bash(f"git -C {B} commit -m \"$(cat <<'EOF'\nRepro:\ncd {B}\nEOF\n)\" && git push origin main"), 2),
     ("/usr/bin/git commit", lambda: bash("/usr/bin/git commit -m x"), 2),
     ("echo \"&& cd B &&\" ; git commit (separators inside quotes)", lambda: bash(f"echo \"&& cd {B} &&\" ; git commit -m x"), 2),
+    # 25/10 lỗ 2: cd trong $( ) chạy ở subshell - commit vẫn ở A (đang bị giữ), walk từng coi nó ở B
+    ("x=$(<nl>cd B<nl>); git commit: the cd ran in the substitution", lambda: bash(f"x=$(\ncd {B}\n); git commit -m x"), 2),
+    ("x=`<nl>cd B<nl>`; git commit: the cd ran in backticks", lambda: bash(f"x=`\ncd {B}\n`; git commit -m x"), 2),
+    # 25/10 lỗ 3: CLAUDE_PROJECT_DIR export ở segment trước là nơi gate chạy (từ B rảnh vào A đang bị giữ)
+    ("from B: export CLAUDE_PROJECT_DIR=A; post-fix-gate", lambda: bash(f"export CLAUDE_PROJECT_DIR={A}; python3 {GATE} --run-tests", cwd=B), 2),
+    ("from B: export TARGET_DIR=A && post-fix-gate", lambda: bash(f"export TARGET_DIR={A} && python3 {GATE} --run-tests", cwd=B), 2),
+    ("from B: export CLAUDE_PROJECT_DIR=\"$PWD\"; post-fix-gate (B itself)", lambda: bash(f'export CLAUDE_PROJECT_DIR="$PWD"; python3 {GATE} --run-tests --full', cwd=B), 0),
 ]
 bad = 0
 for label, run, want in cases:
@@ -280,6 +287,42 @@ with open(FLAG, "w", encoding="utf-8") as f:
     json.dump({"until": time.time() + 300, "granted": time.time(), "by": "user"}, f)
 check("  … and the user's approval for that repo lets it through", free(f"git -C {A} commit -m x"), 0)
 os.unlink(FLAG)
+
+# 25/10 lỗ 1: một đích không biết ($X, ~, cd trong subshell) chỉ được tính vào checkout của CHÍNH phiên gọi, nên từ một worktree rảnh
+# `cd $X && git commit` lọt vào checkout cùng repo mà phiên khác đang giữ. Nay: đích không biết bị chặn khi một phiên khác còn sống giữ
+# BẤT KỲ checkout nào của repo đó (main hay worktree), trunk mode tắt (trunk mode đã chặn mọi đích không biết)
+FM = repo("family")                                   # main checkout of the family, held by another live session
+FW = os.path.join(tmp, "family-wt")                   # a linked worktree of it, free: the tested session works here
+sh("git", "-C", FM, "worktree", "add", "-q", "--detach", FW)
+FLOCK = os.path.join(FM, ".git", "devkit-session.lock")
+with open(FLOCK, "w", encoding="utf-8") as f:
+    json.dump({"session_id": "holder4", "started": now, "heartbeat": time.time(), "cwd": FM, "pid": os.getpid()}, f)
+fam = lambda cmd: hook({"tool_name": "Bash", "tool_input": {"command": cmd}}, sid="me", cwd=FW)
+check("family main held, own worktree free: cd $X && git commit is blocked", fam("cd $X && git commit -m x"), 2)
+check("  … git -C ~/nowhere commit", fam("git -C ~/nowhere commit -m x"), 2)
+check("  … CLAUDE_PROJECT_DIR=$X post-fix-gate", fam(f"CLAUDE_PROJECT_DIR=$X python3 {GATE} --run-tests"), 2)
+check("  … x=$(<nl>cd <main><nl>); git commit", fam(f"x=$(\ncd {FM}\n); git commit -m x"), 2)
+check("  … but git commit in the own free worktree passes", fam("git commit -m x"), 0)
+check("  … and CLAUDE_PROJECT_DIR=\"$PWD\" post-fix-gate there passes (the kit's own gate line)", fam(f'CLAUDE_PROJECT_DIR="$PWD" python3 {GATE} --run-tests --full --brief'), 0)
+FFLAG = os.path.join(FM, ".git", "devkit-allow-shared")
+with open(FFLAG, "w", encoding="utf-8") as f:
+    json.dump({"until": time.time() + 300, "granted": time.time(), "by": "user"}, f)
+check("  … the user's approval for the held checkout lets the unknown target through", fam("cd $X && git commit -m x"), 0)
+os.unlink(FFLAG)
+with open(FLOCK, "w", encoding="utf-8") as f:   # the holder finished its turn (idle): it holds nothing
+    json.dump({"session_id": "holder4", "started": now, "heartbeat": time.time(), "cwd": FM, "pid": os.getpid(), "idle_since": time.time()}, f)
+check("  … an idle holder does not count", fam("cd $X && git commit -m x"), 0)
+os.unlink(FLOCK)
+check("  … nobody else holds a checkout of the repo: the unknown target passes, as before", fam("cd $X && git commit -m x"), 0)
+FW2 = os.path.join(tmp, "family-wt2")                 # a SIBLING worktree held by another session also counts (seen from main)
+sh("git", "-C", FM, "worktree", "add", "-q", "--detach", FW2)
+FW2GD = sh("git", "-C", FW2, "rev-parse", "--absolute-git-dir").strip()
+with open(os.path.join(FW2GD, "devkit-session.lock"), "w", encoding="utf-8") as f:
+    json.dump({"session_id": "holder5", "started": now, "heartbeat": time.time(), "cwd": FW2, "pid": os.getpid(), "gitdir": FW2GD}, f)
+fam_main = lambda cmd: hook({"tool_name": "Bash", "tool_input": {"command": cmd}}, sid="me", cwd=FM)
+check("sibling worktree held: from the free main, cd $X && git commit is blocked", fam_main("cd $X && git commit -m x"), 2)
+check("  … and from the other free worktree too", fam("cd $X && git commit -m x"), 2)
+check("  … git commit in the own checkout still passes", fam_main("git commit -m x"), 0)
 
 # a FIFO planted where the approval flag belongs must not hang the hook
 fifo = os.path.join(A, ".git", "devkit-allow-shared")
