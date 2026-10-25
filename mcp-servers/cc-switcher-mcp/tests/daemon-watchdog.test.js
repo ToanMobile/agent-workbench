@@ -92,6 +92,30 @@ test('thoát giữa batch: khởi động lại không phát lại update đã n
   }
 });
 
+test('offset gắn với bot: đổi bot token thì không dùng offset của bot cũ (điều khiển Telegram không chết im lặng)', async () => {
+  // Review vòng 2 (N2): offset của bot cũ lớn hơn update_id của bot mới -> mọi update của bot mới bị bỏ qua và xác nhận mất.
+  const stateDir = stateDirWithToken();
+  fs.writeFileSync(path.join(stateDir, 'telegram.env'), 'TELEGRAM_BOT_TOKEN=222:new-bot\nTELEGRAM_CHAT_ID=1\n');
+  fs.writeFileSync(path.join(stateDir, 'telegram.offset'), '111:900000\n');   // offset của bot 111 (token cũ)
+  const offsets = [];
+  const d = await startSwitcherDaemon({
+    stateDir,
+    logFile: path.join(stateDir, 'none.log'),
+    pollIntervalMs: 20,
+    tickTimeoutMs: 2000,
+    ensureMenu: () => {},
+    fetchUpdates: async (_token, offset) => { offsets.push(offset); return []; },
+    exit: () => {},
+  });
+  try {
+    await waitFor(() => offsets.length > 0, 2000);
+    assert.equal(offsets[0], 0, `bot mới poll từ offset ${offsets[0]} của bot cũ: update của nó sẽ bị bỏ qua`);
+  } finally {
+    d.stop();
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('đối chứng: poll trả về bình thường thì watchdog không bắn', async () => {
   const stateDir = stateDirWithToken();
   const exits = [];

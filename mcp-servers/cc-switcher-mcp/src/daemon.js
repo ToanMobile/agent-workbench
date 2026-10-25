@@ -189,24 +189,31 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
   return nextOffset;
 }
 
-// Offset getUpdates qua các lần khởi động (số nguyên >= 0 trong <stateDir>/telegram.offset); thiếu / hỏng = 0 như trước.
-function readTelegramOffset(file) {
+// Offset getUpdates qua các lần khởi động: `<botId>:<offset>` trong <stateDir>/telegram.offset. botId = phần trước ':' của token (định
+// danh công khai của bot, không phải bí mật): đổi bot thì offset của bot cũ không được dùng (review N2: update của bot mới bị bỏ qua).
+// Thiếu / hỏng / bot khác = 0 như trước.
+function botIdOf(token) {
+  return String(token || '').split(':')[0];
+}
+
+function readTelegramOffset(file, botId) {
   try {
-    const n = Number.parseInt(fs.readFileSync(file, 'utf8').trim(), 10);
-    return Number.isSafeInteger(n) && n > 0 ? n : 0;
+    const m = /^([^:\s]+):(\d{1,15})$/.exec(fs.readFileSync(file, 'utf8').trim());
+    return m && m[1] === botId ? Number(m[2]) : 0;
   } catch (err) {
     if (err?.code !== 'ENOENT') logStructured('warn', 'telegram_offset_read_failed', { error: err?.message });
     return 0;
   }
 }
 
-function writeTelegramOffset(file, offset) {
+function writeTelegramOffset(file, botId, offset) {
   const tmp = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(tmp, `${offset}\n`);
+    fs.writeFileSync(tmp, `${botId}:${offset}\n`);
     fs.renameSync(tmp, file);   // nguyên tử: một lần thoát giữa chừng không để file offset dở
   } catch (err) {
     logStructured('warn', 'telegram_offset_write_failed', { error: err?.message });
+    fs.rmSync(tmp, { force: true });
   }
 }
 
@@ -231,7 +238,8 @@ export async function startSwitcherDaemon(opts = {}) {
   let inFlight = false;
   let tickStartedAt = 0;
   let lastAutoRotateAtMs = 0;
-  let telegramUpdateOffset = readTelegramOffset(offsetFile);
+  let telegramUpdateOffset = 0;
+  let offsetBot = null;   // bot của telegramUpdateOffset: token đổi (switcher_telegram_setup) thì nạp offset của bot mới
   const logReader = createLogTailReader(logFile);
 
   logStructured('info', 'daemon_started', { stateDir, logFile, pollIntervalMs });
@@ -274,13 +282,18 @@ export async function startSwitcherDaemon(opts = {}) {
     if (stopped) return;
     const cfg = loadTelegramConfig(stateDir);
     if (!cfg.botToken) return;
+    const botId = botIdOf(cfg.botToken);
+    if (botId !== offsetBot) {
+      telegramUpdateOffset = readTelegramOffset(offsetFile, botId);
+      offsetBot = botId;
+    }
     try {
       const updates = await fetchUpdates(cfg.botToken, telegramUpdateOffset);
       telegramUpdateOffset = await processIncomingTelegramUpdates(updates, {
         stateDir,
         currentOffset: telegramUpdateOffset,
         apiCaller: opts.apiCaller,
-        onOffset: (offset) => writeTelegramOffset(offsetFile, offset),
+        onOffset: (offset) => writeTelegramOffset(offsetFile, botId, offset),
       });
     } catch (err) {
       logStructured('warn', 'daemon_telegram_poll_error', {
