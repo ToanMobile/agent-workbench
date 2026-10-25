@@ -261,10 +261,13 @@ bad = 0
 
 
 def too_slow(*_):
-    raise TimeoutError("over 10 s")
+    raise TimeoutError("over 30 s")
 
 
-signal.signal(signal.SIGALRM, too_slow)   # a quadratic walk would run for minutes: give up after 10 s and fail
+# A quadratic walk runs for minutes: the wall-clock alarm only stops a hang (30 s), the bound itself is CPU time of this
+# process (time.process_time), which a loaded machine does not inflate — the 2 s wall bound failed inside run_impacted.sh's
+# parallel pool at load ~70 (gate 25/10) while the walk took 0.4 s alone.
+signal.signal(signal.SIGALRM, too_slow)
 for label, body in (("20000 x `W=/tmp/x; `", "W=/tmp/x; " * 20000), ("20000 distinct `W<i>=/x; `", "".join(f"W{i}=/x; " for i in range(20000))),
                     # every segment that is no assignment used to scan every known name (and compile two regexes for it): 2000 pairs took 57 s
                     ("15000 x `W<i>=/x; : ; `", "".join(f"W{i}=/x; : ; " for i in range(15000))),
@@ -272,15 +275,15 @@ for label, body in (("20000 x `W=/tmp/x; `", "W=/tmp/x; " * 20000), ("20000 dist
     cmd = body + f"W={m}; git -C $W commit -qm x"
     for fn, call in (("write_hits_locked", lambda: sl.write_hits_locked(cmd, m, w, "s")[0]),
                      ("_bash_trunk_write", lambda: sl._bash_trunk_write(cmd, w, main, sw, "s", 0))):
-        t0 = time.monotonic()
-        signal.alarm(10)
+        t0 = time.process_time()
+        signal.alarm(30)
         try:
             got = call()
         except TimeoutError:
             got = None
         finally:
             signal.alarm(0)
-        dt = time.monotonic() - t0
+        dt = time.process_time() - t0
         print(f"{'✔' if got and dt < 2 else '✖'} {fn} on {label} ({len(cmd) // 1024} KB): {dt:.2f} s, blocked={got}")
         bad += not (got and dt < 2)
 print(f"perf-bad={bad}")
