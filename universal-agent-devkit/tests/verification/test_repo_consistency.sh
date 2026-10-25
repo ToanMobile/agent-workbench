@@ -16,6 +16,7 @@
 #       totals) are gone
 #   R8  no references to files of another repo (.Codex/, rulebook/NN-…)
 #   R9  the tests live in tests/<group>/test_*.sh and every glob that enumerates them agrees
+#   R10 every hooks/, bin/, scripts/ path the docs name (AGENTS.md, READMEs, CLAUDE.md, rules/) exists
 #
 # Red means a doc, a file or a link is wrong: fix that, do not relax the check.
 # Usage: bash tests/verification/test_repo_consistency.sh      (needs python3; uses ruby for YAML if present)
@@ -205,6 +206,42 @@ shadowed = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', sync, re
             and not os.path.islink(os.path.join(ROOT, "commands", a + ".md"))]
 check(not shadowed, "R5 every alias in sync_commands.sh is a link, not a hand-written file", ", ".join(shadowed))
 
+# `agent-kit commands --sync` on the repo must change nothing: a link it makes that is not committed shows up as an
+# untracked file after every sync (2026-10-25: generate2dmedia, generate2dsprite, video2dsprite are command-less on
+# purpose, parallel-lanes was never committed). Run on a copy, never on the real tree: other sessions share it. An
+# older sync's link for a command-less skill (planted below) must be removed again.
+import tempfile
+def _cmd_map(d):
+    if not os.path.isdir(d):
+        return {}
+    return {n: ("-> " + os.readlink(os.path.join(d, n))) if os.path.islink(os.path.join(d, n)) else "file"
+            for n in os.listdir(d)}
+with tempfile.TemporaryDirectory() as td:
+    for sub in ("commands", ".claude/commands"):
+        if os.path.isdir(os.path.join(ROOT, sub)):
+            shutil.copytree(os.path.join(ROOT, sub), os.path.join(td, sub), symlinks=True)
+    for sk in glob.glob(os.path.join(ROOT, "skills/*/SKILL.md")):
+        os.makedirs(os.path.join(td, os.path.dirname(os.path.relpath(sk, ROOT))), exist_ok=True)
+        shutil.copy2(sk, os.path.join(td, os.path.relpath(sk, ROOT)))
+    os.makedirs(os.path.join(td, "rules"))
+    shutil.copy2(os.path.join(ROOT, "rules/essentials.md"), os.path.join(td, "rules/essentials.md"))
+    os.makedirs(os.path.join(td, "scripts/governance"))
+    shutil.copy2(_sync_path, os.path.join(td, "scripts/governance/sync_commands.sh"))
+    _before = {s: _cmd_map(os.path.join(td, s)) for s in ("commands", ".claude/commands")}
+    if os.path.isfile(os.path.join(td, "skills/generate2dmedia/SKILL.md")):
+        os.symlink("../skills/generate2dmedia/SKILL.md", os.path.join(td, "commands/generate2dmedia.md"))
+        if os.path.isdir(os.path.join(td, ".claude/commands")):
+            os.symlink("../../commands/generate2dmedia.md", os.path.join(td, ".claude/commands/generate2dmedia.md"))
+    _r = subprocess.run(["bash", os.path.join(td, "scripts/governance/sync_commands.sh")],
+                        capture_output=True, text=True, timeout=120)
+    _after = {s: _cmd_map(os.path.join(td, s)) for s in ("commands", ".claude/commands")}
+_drift = [f"{s}/{n}: {_before[s].get(n, 'absent')} => {_after[s].get(n, 'absent')}"
+          for s in _before for n in sorted(set(_before[s]) | set(_after[s])) if _before[s].get(n) != _after[s].get(n)]
+check(_r.returncode == 0 and not _drift,
+      "R5 sync_commands.sh changes nothing in commands/ or .claude/commands/ (every link it makes is committed)",
+      (f"rc={_r.returncode} {_r.stderr.strip()[:160]} " if _r.returncode else "") + "; ".join(_drift[:8])
+      + (f" (+{len(_drift) - 8})" if len(_drift) > 8 else ""))
+
 # A script a skill or command tells the agent to run must run in an INSTALLED repo, where the kit is .agents/devkit/:
 # universal-agent-devkit/<path> exists only in agent-workbench, and a pre-reorg flat path (scripts/X before the
 # scripts/<group>/ split, 2026-10-02) nowhere (2026-10-25: /sandbox, /gen-prompt, /createTask, /unity-test, /check).
@@ -363,6 +400,24 @@ check('run_impacted.sh" --all' in _ak and "tests/*/test_*.sh" in _ri   # (hooks/
 _ev = re.findall(r'DEVKIT_SUITE_RX = re\.compile\(r"([^"]+)"\)', open(os.path.join(ROOT, "hooks", "test_evidence_gate.sh"), encoding="utf-8").read())
 check(bool(_ev) and re.search(_ev[0], "bash tests/gate/test_x.sh") is not None and re.search(_ev[0], "bash tests/test_x.sh") is not None,
       "R9 test_evidence_gate counts tests/<group>/test_*.sh (and a flat one) as a DevKit suite")
+
+# R10 a kit script the docs name exists: after the scripts/<group>/ split (2026-10-02) AGENTS.md and the READMEs kept 13
+# flat paths (scripts/nightly.py, scripts/lint_*.py, …) until the 2026-10-25 audit. A path that resolves inside a skill
+# folder (ui-ux-pro-max's scripts/search.py) is that skill's own script.
+DOC_PATH = re.compile(r"(?<![\w./-])((?:hooks|bin|scripts)/[\w./*-]*(?:\.py|\.sh|\*))")
+skill_dirs = sorted(glob.glob(os.path.join(ROOT, "skills", "*")))
+def _resolves(p):
+    hit = (lambda q: bool(glob.glob(q))) if "*" in p else os.path.exists
+    return hit(os.path.join(ROOT, p)) or any(hit(os.path.join(d, p)) for d in skill_dirs)
+dead_paths = []
+for d in ["AGENTS.md", "README.md", "README.vi.md", "CLAUDE.md"] + sorted(glob.glob(os.path.join(ROOT, "rules", "*.md"))):
+    path = d if os.path.isabs(d) else os.path.join(ROOT, d)
+    for i, line in enumerate(open(path, encoding="utf-8"), 1):
+        for m in DOC_PATH.finditer(line):
+            if not _resolves(m.group(1)):
+                dead_paths.append(f"{os.path.relpath(path, ROOT)}:{i} {m.group(1)}")   # `rel` is rebound by R5/R6
+check(not dead_paths, "R10 every hooks/ bin/ scripts/ path the docs name exists",
+      "; ".join(dead_paths[:8]) + (f" (+{len(dead_paths) - 8})" if len(dead_paths) > 8 else ""))
 
 print()
 print(f"repo consistency: {PASS} passed, {FAIL} failed")

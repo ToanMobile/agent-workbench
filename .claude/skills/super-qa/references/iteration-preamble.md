@@ -623,7 +623,7 @@ detection (do NOT batch at end of iter):
 
 2. **File the issue + auto-promote to Ready:**
    ```bash
-   ISSUE_N=$(scripts/super-qa-file-bug.sh \
+   ISSUE_N=$(.claude/bin/super-qa-file-bug.sh \
      --title "<one-line title>" \
      --body-file /tmp/super-qa-iter-${N}-bug-${slug}.md \
      --kind bug \

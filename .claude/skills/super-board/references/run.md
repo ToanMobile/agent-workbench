@@ -2,7 +2,7 @@
 
 **Scope:** the lane lifecycles (Builder, Tester, Reviewer) that both backends use, and the legacy `claude-p` runner (`worker_backend: "claude-p"`). The default in-session wave loop is in `run-workflow.md`.
 
-**Where the legacy runner runs:** headless. Spawned as a `nohup`-backgrounded process; the current Claude session exits immediately after dispatch. The runner script (`scripts/super-board-run.sh`) is a pure shell while-loop that dispatches one `claude -p` worker per lane and never holds Claude session state. Each `claude -p` worker is its own short-lived headless context — load this file at the start of every lane.
+**Where the legacy runner runs:** headless. Spawned as a `nohup`-backgrounded process; the current Claude session exits immediately after dispatch. The runner script (`.claude/bin/super-board-run.sh`) is a pure shell while-loop that dispatches one `claude -p` worker per lane and never holds Claude session state. Each `claude -p` worker is its own short-lived headless context — load this file at the start of every lane.
 
 ## Required GitHub reads can pause a run
 
@@ -22,7 +22,7 @@ checkpoint limitations: [run-workflow.md](run-workflow.md#required-github-eviden
 **Super-board is an autonomous trader. The interactive Claude session that invokes `super-board run` is an orchestrator, NOT a worker.** Its only jobs are:
 
 1. Verify preconditions (see table below).
-2. Spawn the headless `nohup ./scripts/super-board-run.sh <slug> &` runner. An explicit start clears the stop marker
+2. Spawn the headless `nohup .claude/bin/super-board-run.sh <slug> &` runner. An explicit start clears the stop marker
    and installs the repo's launchd watchdog (`.claude/bin/super-board-watchdog.sh`): every 60 s it restarts a runner
    that died without a deliberate end, never one stopped with `super-board stop`, with backoff and a cap of 5
    restarts in a row. Status: `.claude/bin/super-board-watchdog.sh status <slug>`.

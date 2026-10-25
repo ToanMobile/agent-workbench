@@ -6,6 +6,7 @@
 #   3 đối chứng: cùng lệnh Bash đã chạy (kết quả thường): chặn
 #   4 lệnh đã chạy nhưng exit khác 0 ("Exit code 1"): vẫn tính (có thể đã ghi một phần), chặn
 #   5 một lần chặn của lệnh KHÁC không xoá được lần ghi đã chạy: chặn
+#   17-18 lời từ chối cách ly worktree của SUBAGENT ("This agent is isolated …", 25/10): lệnh không chạy, không chặn
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -48,6 +49,12 @@ w("t14.jsonl", [("assistant", sed("d1")), ("user", res("d1", "", False)), ("assi
                 ("user", res("d2", "<tool_use_error>Unknown skill: security-checklist</tool_use_error>", True))])
 w("t15.jsonl", [("assistant", sed("d3")), ("user", res("d3", "Permission for this action was denied by the Claude Code auto mode classifier. Reason: x", True))])
 w("t16.jsonl", [("assistant", sed("d4")), ("user", res("d4", "Permission to use Bash with command cat <<'EOF'\nline\nEOF\n has been denied.", True))])
+# A SUBAGENT gets "This agent is isolated …" for the same refusal (25/10, agent-workbench audit D.7): not a run either.
+w("t17.jsonl", [("assistant", sed("d5")), ("user", res("d5", "This agent is isolated in the worktree /x, but this command names git in a form too complex to verify that "
+                                                         "it stays inside the worktree. Refusing to run it — a worktree-isolated agent's git operations must target its own worktree. "
+                                                         "Split it into plain, separate commands and run them from /x.", True))])
+w("t18.jsonl", [("assistant", sed("d6")), ("user", res("d6", "This agent is isolated in the worktree /x, but this command changes directory to a location computed at "
+                                                         "runtime before running git. Refusing to run it — a worktree-isolated agent's git operations must target its own worktree.", True))])
 w("t13.jsonl", [("assistant", sed("c6")), ("user", res("c6", "", False)), ("assistant", scan("c7")),
                 ("user", res("c7", "The user doesn't want to proceed with this tool use. The tool use was rejected", True))])
 PY
@@ -69,6 +76,8 @@ run s13 t13.jsonl; rc=$?; [ "$rc" = 2 ] && ok "a security review the user reject
 run s14 t14.jsonl; rc=$?; [ "$rc" = 2 ] && ok "a review that errored (Unknown skill) covers nothing (rc 2)" || fail "errored review counted (rc $rc)"
 run s15 t15.jsonl; rc=$?; [ "$rc" = 0 ] && ok "a write the auto-mode classifier denied: not an edit" || fail "classifier-denied write counted (rc $rc)"
 run s16 t16.jsonl; rc=$?; [ "$rc" = 0 ] && ok "a multi-line (heredoc) Bash the permission system denied: not an edit" || fail "multi-line denied write counted (rc $rc)"
+run s17 t17.jsonl; rc=$?; [ "$rc" = 0 ] && ok "a write a SUBAGENT's worktree isolation refused ('This agent is isolated …'): not an edit" || fail "subagent isolation-refused write counted (rc $rc)"
+run s18 t18.jsonl; rc=$?; [ "$rc" = 0 ] && ok "  … also the 'changes directory … computed at runtime' refusal" || fail "subagent cd-refused write counted (rc $rc)"
 run s12 t12.jsonl; rc=$?; [ "$rc" = 2 ] && ok "refusal wording in a result that is NOT an error: the write still counts (rc 2)" || fail "non-error refusal text dropped the write (rc $rc)"
 
 echo

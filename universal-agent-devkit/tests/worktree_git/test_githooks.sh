@@ -113,6 +113,27 @@ _uninst="$DEVKIT_DIR/scripts/governance/devkit_uninstall.py"; [ -f "$_uninst" ] 
 python3 "$_uninst" "$TMP/repo" --apply >/dev/null 2>&1
 [ ! -e .git/hooks/pre-commit ] && ok "agent-kit uninstall removes the hook" || fail "agent-kit uninstall left the hook"
 
+# 25/10 (audit D, B6): a project's own commit-msg chained by a kit before 02/10 calls only the flat
+# .agents/devkit/scripts/git-commit-msg.sh; once that path went, `[ -f "$D" ]` was false and the DevKit rule stopped in
+# silence (GeelyEx2). `install` returned early on ANY chain line, so a reinstall never fixed it: it must rewrite a stale
+# chain line in place, once, and leave a current one byte-identical (the hook may be tracked).
+new_repo
+MSGH="$(git rev-parse --path-format=absolute --git-path hooks)/commit-msg"
+# shellcheck disable=SC2016
+OLD_CHAIN='D="$(git rev-parse --show-toplevel)/.agents/devkit/scripts/git-commit-msg.sh"; [ -f "$D" ] && { bash "$D" "$1" || exit 1; }  # universal-agent-devkit-chain:commit-msg'
+printf '#!/bin/sh\n%s\n# project hook\nexit 0\n' "$OLD_CHAIN" > "$MSGH" && chmod 755 "$MSGH"
+bash "$KIT" githooks install >"$TMP/install.log" 2>&1
+sed -n 2p "$MSGH" | grep -q 'scripts/git/git-commit-msg.sh' && [ "$(grep -c 'universal-agent-devkit-chain:commit-msg' "$MSGH")" = 1 ] \
+  && ok "reinstall rewrites a stale DevKit chain line in the project's commit-msg (line 2, once)" \
+  || fail "stale chain line kept: $(sed -n 2p "$MSGH")"
+head -1 "$MSGH" | grep -qx '#!/bin/sh' && grep -qx '# project hook' "$MSGH" && grep -qx 'exit 0' "$MSGH" \
+  && [ "$(wc -l < "$MSGH" | tr -d ' ')" = 4 ] \
+  && [ "$(stat -c %a "$MSGH" 2>/dev/null || stat -f %Lp "$MSGH")" = 755 ] \
+  && ok "  … the project's own lines and the file mode are kept" || fail "project hook changed: $(cat "$MSGH")"
+cp -p "$MSGH" "$TMP/msg.after"
+bash "$KIT" githooks install >/dev/null 2>&1
+cmp -s "$MSGH" "$TMP/msg.after" && ok "  … a second install leaves a current chain line byte-identical" || fail "reinstall churned the chained hook"
+
 # 24/10 (#307 blocked 3 rounds): `githooks install` run from a LINKED WORKTREE wrote that worktree's kit path as the
 # fallback into the hooks every worktree shares; once the worktree was removed every commit/merge through them failed.
 # The fallback must name the main checkout's copy of the kit when it has one.
