@@ -666,7 +666,7 @@ GATE_COUNT_RX = re.compile(r"(?:Test hồi quy đạt|Regression tests passed)\s
 ANSI_RX = re.compile(r"\x1b\[[0-9;]*m")
 def is_test_runner(cmd):
     return _is_test_runner(cmd)
-DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)?(?:test_[\w.-]+|\$\{?\w+\}?)\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
+DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)*(?:test_[\w.-]+|\$\{?\w+\}?)\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
 # Their check names may carry FAIL / REJECT / ERROR in capitals ("✔ REJECT on secrets"), so
 # the verdict is the summary: red on "N failed/FAILED", "N deviating" (N > 0), "❌" or a "✖"
 # line; green only on an explicit pass summary; anything else is not a verdict.
@@ -825,14 +825,28 @@ _KIT_BASH_FILE = re.compile(
     r"(?:^|/)(?:tests(?:/[\w.-]+)*/test_[\w.-]+\.sh|hooks/tests/[\w.-]+\.sh)$")
 
 def _bash_runs_command_string(words):
-    """True when bash/sh does not run the file as a test: -c (command string) or -n/--noexec (syntax check only, exit 0)."""
-    for w in words[1:]:
-        if w == "--":
+    """True when bash/sh does not run the file as a test: -c (command string) or -n/--noexec (syntax check only, exit 0).
+    Only bash's OWN options count: they end at the first word that is not an option (the script), and what follows is the script's
+    arguments (`bash tests/a/test_x.sh -n 3` runs the test; `bash -n tests/a/test_x.sh` does not)."""
+    args = words[1:]
+    i = 0
+    while i < len(args):
+        w = args[i]
+        if w == "--" or not (w.startswith("-") or w.startswith("+")):
             break
-        if w == "--noexec" or w == "noexec":
+        if w in ("-o", "+o"):   # `set -o NAME`: the next word is an option NAME, not the script
+            if i + 1 < len(args) and args[i + 1] == "noexec":
+                return True
+            i += 2
+            continue
+        if w in ("-O", "+O", "--rcfile", "--init-file"):   # takes a value (shopt name / file): that word is not the script
+            i += 2
+            continue
+        if w == "--noexec":
             return True
         if w == "-c" or (w.startswith("-") and not w.startswith("--") and ("c" in w[1:] or "n" in w[1:])):
             return True
+        i += 1
     return False
 
 def _direct_bash_kit(seg):

@@ -50,6 +50,8 @@ case " $* " in
   *" pr view "*"headRefName,headRefOid"*) echo "issue-$n-x $head" ;;
   *" pr view "*"state,mergeCommit,headRefOid"*) printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$head" ;;
   *" pr view "*"labels,files"*) cat "$FAKE_DIR/pr$n.meta" ;;
+  *" pr view "*"--json body"*) jq -r '.body // ""' "$FAKE_DIR/pr$n.meta" ;;   # the pre-merge recheck of a card branch without AC (W8)
+  *" pr view "*"--json title"*) echo "fix: t" ;;
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
   *" pr merge "*) echo "merged #$n" ;;
   *) echo "fake gh: unexpected $*" >&2; exit 1 ;;
