@@ -54,6 +54,7 @@ import shlex
 import shutil
 import signal
 import stat
+import statistics
 import subprocess
 import tempfile
 import sys
@@ -4782,13 +4783,16 @@ def _env_float(name, default):
         return float(default)
 
 
-def _recorded_seconds() -> dict:
+def _recorded_seconds(median=False) -> dict:
     """Suite id → seconds the pre-commit gate believes it takes (.agents/regression_status.json): the
     LONGEST PASS/FAIL run in its history, else its last run. The last run alone made the same commit run a
     suite or skip it depending on the previous gate run (REG-DK-ALL-01, whose length follows the diff:
     165 s, 164 s, 23 s, 17 s). A suite with only untested / busy / cached runs has no belief.
     ponytail: biased towards skipping, and the history window (5 runs) lets a suite that really got faster
-    drift back in after five fast runs; declare the length in the matrix if that ever matters."""
+    drift back in after five fast runs; declare the length in the matrix if that ever matters.
+    median=True (lớp slot của heavy_slot, audit B7 25/10): trung vị median_high của các lần chạy — một lần chậm (máy tải cao) không
+    còn biến suite nhẹ thành cpu và xếp hàng slot nặng của cả máy; `last` trùng history[0] (cùng lúc, kết quả, độ dài) chỉ tính một lần.
+    Pre-commit vẫn đọc số dài nhất (tests/gates/test_precommit_duration.sh)."""
     try:
         items = json.loads((get_project_dir() / ".agents" / "regression_status.json").read_text(encoding="utf-8")).get("items", {})
     except (OSError, ValueError, AttributeError):
@@ -4800,10 +4804,16 @@ def _recorded_seconds() -> dict:
 
     out = {}
     for sid, it in items.items():
-        runs = [seconds(r) for r in [*((it or {}).get("history") or []), (it or {}).get("last")]]
-        runs = [r for r in runs if r is not None]
+        runs, seen = [], set()
+        for r in [*((it or {}).get("history") or []), (it or {}).get("last")]:
+            s = seconds(r)
+            k = (r.get("ts") or r.get("at"), r.get("status"), r.get("duration")) if isinstance(r, dict) else None
+            if s is None or k in seen:
+                continue
+            seen.add(k)
+            runs.append(s)
         if runs:
-            out[sid] = max(runs)
+            out[sid] = statistics.median_high(runs) if median else max(runs)
     return out
 
 
@@ -5800,7 +5810,7 @@ def main():
             except Exception as e:   # noqa: BLE001 - không phân lớp được: không thêm gì (luật chọn cũ)
                 log_warn(f"heavy_slot: {e!r}")
                 _hs_x = None
-            rec_x = _recorded_seconds() if _hs_x is not None else {}
+            rec_x = _recorded_seconds(median=True) if _hs_x is not None else {}
             for rule in rules:
                 for test in rule.get("mandatory_regression_tests", []):
                     tid = test.get("id")
@@ -5821,6 +5831,15 @@ def main():
             if extra:
                 print(f"  • {tr('Cached-full: xét thêm suite không bị chọn (chạy khi chưa có PASS cho khoá nội dung hiện tại)', 'Cached-full: also considering unselected suites (run unless their content key already passed)')}: "
                       f"{len(extra)}")
+
+    # 25/10 (audit B1): run_impacted.sh (DIFF_DEPENDENT) chỉ bỏ script của suite chạy TRƯỚC nó (DEVKIT_GATE_DONE). Đứng giữa ma trận, hay
+    # trước suite STALE / cached-full thêm vào cuối ở trên, nó chạy lại đúng các script đó lần hai (REG-DK-ALL-01: 44 % thời gian gate của
+    # workbench trong 54 h). Chạy nó SAU mọi suite khác; đuôi chỉ-thêm (matrix_added) ngay dưới vẫn là cuối cùng.
+    if run_tests and suite_cache_mod() is not None:
+        _dd = suite_cache_mod().DIFF_DEPENDENT
+        _late = [t for t in regression_tests if _dd.search(t.get("command") or "")]
+        if _late:
+            regression_tests[:] = [t for t in regression_tests if not _dd.search(t.get("command") or "")] + _late
 
     if run_tests and matrix_added:
         # Ma trận chỉ-thêm được tin với điều kiện test thêm chạy XANH ở đây: chạy cả khi không file nào khớp watch_files của rule mới, và
@@ -6193,7 +6212,16 @@ def main():
         for m in RAN_SCRIPT.finditer(cmd):
             done_scripts.append(os.path.realpath(os.path.join(str(project_dir), m.group(1) or m.group(2))))
 
-    slot_rec = _recorded_seconds() if run_tests and lock_held else {}
+    def may_note(t):
+        """Script của suite này được báo cho run_impacted.sh chạy sau (DEVKIT_GATE_DONE) không. Suite STALE / cached-full (keyed_full) chỉ
+        khi CHẠY THẬT trong lượt này và PASS (audit B1, 25/10): giờ chúng đứng trước run_impacted.sh, mà FAIL / quá giờ / UNTESTED của chúng
+        có thể ra ngoài kết luận (KNOWN-RED, untested_exit) — script đó phải còn được run_impacted.sh chạy. PASS theo khoá chính xác: không."""
+        if t.get("matrix_added") or precise_hit(t):
+            return False
+        return not (t.get("keyed_full") or t.get("stale_rerun")) or (id(t) in really_ran and t.get("status") == "PASS")
+    late_notes = []   # (suite, lệnh) trong nhóm song song mà may_note chỉ biết được sau khi nhóm xong
+
+    slot_rec = _recorded_seconds(median=True) if run_tests and lock_held else {}   # lớp slot: trung vị, không phải lần dài nhất (B7)
     slot_mod = []
     # #338: lượt đã có suite được cho chạy thì chạy cho xong. started_run: không chờ tải lại ở các suite sau; heavy_lease: slot nặng giữ nguyên
     # giữa hai suite nặng TUẦN TỰ liền nhau (gate khác không chen được; suite trong nhóm song song vẫn xin slot riêng, nên tổng suite nặng
@@ -6491,6 +6519,10 @@ def main():
         group_ts.clear()
         if errors:   # before sharing: a worker that died left its suite without a status
             raise errors[0]
+        for t, c in late_notes:
+            if may_note(t):
+                note_ran(c)
+        late_notes.clear()
         for t, prev in deferred:
             share_result(t, prev)
         deferred.clear()
@@ -6586,7 +6618,9 @@ def main():
                 drop_lease()
                 start_job(t, cmd, mode, env)
                 ran_cmds[key] = t
-                if not t.get("keyed_full"):   # suite cached-full có thể thành PASS theo khoá chính xác: không bảo runner bỏ script
+                if t.get("keyed_full") or t.get("stale_rerun"):   # kết quả chưa có: may_note quyết sau khi nhóm xong (drain)
+                    late_notes.append((t, cmd))
+                else:
                     note_ran(cmd)
                 continue
             drain()
@@ -6594,7 +6628,7 @@ def main():
                 os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
             run_suite(t, cmd, mode, suite_env(), sequential=True)
             ran_cmds[key] = t
-            if not t.get("matrix_added") and not precise_hit(t):   # chỉ-thêm / PASS theo khoá chính xác: không bảo runner bỏ script
+            if may_note(t):   # chỉ-thêm / PASS theo khoá chính xác / STALE, cached-full chưa PASS thật: không bảo runner bỏ script
                 note_ran(cmd)
         elif run_tests:
             t["status"] = "FAIL"

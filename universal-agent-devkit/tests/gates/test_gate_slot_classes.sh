@@ -531,4 +531,94 @@ print(("✔ 19b. " if good else "✖ 19b. ") + f"lần chờ 0 s trả lại ch�
 sys.exit(0 if good else 1)
 PY
 
+# ── 20. (audit B4, 25/10) run_impacted.sh (tự mở nhiều job) không còn LUÔN là lớp cpu: lớp theo tổng giây tập `--list` của nó lúc này
+#       (tests/lib/test_durations.txt cạnh script, tuần tự), dưới DEVKIT_SLOT_CPU_S (300 s) là nhẹ — không xếp hàng slot nặng của máy, kể cả
+#       khi lịch sử của suite dài (REG-DK-ALL-01: độ dài theo diff, 17 s … 900 s). Không biết tập (lệnh ghép, script không có dấu
+#       devkit-selection-list, --list lỗi, một test chưa có dòng thời lượng) thì vẫn cpu như cũ.
+FK="$TMP/fk"; mkdir -p "$FK/kit/tests/verification" "$FK/kit/tests/lib"
+cp "$DEVKIT_DIR/tests/run_impacted.sh" "$FK/kit/tests/"
+echo 'echo ok' > "$FK/kit/tests/verification/test_repo_consistency.sh"
+echo '3 tests/verification/test_repo_consistency.sh' > "$FK/kit/tests/lib/test_durations.txt"
+( cd "$FK" && git init -q . && git config user.email t@t && git config user.name t && git add -A && git commit -qm init ) \
+  || { echo "✖ setup: fk"; exit 1; }
+DEVKIT_IMPACTED_SINCE=0 python3 - "$DEVKIT_DIR/bin" "$FK" <<'PY' || FAILS=$((FAILS + 1))
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import heavy_slot as hs
+fk = sys.argv[2]
+dur = os.path.join(fk, "kit", "tests", "lib", "test_durations.txt")
+script = os.path.join(fk, "kit", "tests", "run_impacted.sh")
+real = open(script, encoding="utf-8").read()
+ok = True
+CMD = "bash kit/tests/run_impacted.sh"
+
+
+def case(name, want, durations, cmd=CMD, body=None, recorded=None):
+    global ok
+    with open(dur, "w", encoding="utf-8") as f:
+        f.write(durations)
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(real if body is None else body)
+    cls = hs.classify(cmd, fk, recorded)["cls"]
+    good = cls == want
+    ok = ok and good
+    print(("✔ 20. " if good else "✖ 20. ") + f"{name}: {cmd!r} → {cls} (mong {want})")
+
+
+small, big = "3 tests/verification/test_repo_consistency.sh\n", "400 tests/verification/test_repo_consistency.sh\n"
+case("tập --list 3 s", "light", small)
+case("tập --list 3 s, lịch sử 900 s (tập quyết định)", "light", small, recorded=900.0)
+case("tập --list 400 s", "cpu", big)
+case("test được chọn chưa có dòng thời lượng", "cpu", "3 tests/verification/test_other.sh\n")
+case("lệnh ghép (không hỏi --list được)", "cpu", small, cmd="cd kit && bash tests/run_impacted.sh")
+case("script không có dấu devkit-selection-list", "cpu", small, body=real.replace("devkit-selection-list:", "selection-list:"))
+case("--list lỗi", "cpu", small, body="#!/usr/bin/env bash\n# devkit-selection-list: test\nexit 1\n")
+sys.exit(0 if ok else 1)
+PY
+
+# ── 21. (audit B7, 25/10) Lớp slot theo TRUNG VỊ (median_high, lần `last` trùng history[0] chỉ tính một lần) các lần chạy PASS/FAIL, không
+#       theo lần dài nhất: một lần chậm (máy tải cao) từng biến suite nhẹ thành cpu, xếp hàng slot nặng của cả máy. Pre-commit vẫn tin số
+#       dài nhất (thiên về bỏ qua: tests/gates/test_precommit_duration.sh).
+#  a. đơn vị: _recorded_seconds(median=True) — lẻ, chẵn (median_high), `last` trùng; mặc định (pre-commit) vẫn là số dài nhất
+mkdir -p "$TMP/medu/.agents"
+python3 - "$TMP/medu/.agents/regression_status.json" <<'PY'
+import json, sys
+def h(*ds):
+    return [{"status": "PASS", "duration": f"{d}s", "ts": 100 - i} for i, d in enumerate(ds)]
+items = {"REG-ODD": {"history": h(400, 20, 25, 30, 22)}, "REG-EVEN-HI": {"history": h(10, 20, 400, 500)},
+         "REG-EVEN-LO": {"history": h(10, 20, 30, 900)}}
+for it in items.values():
+    it["last"] = dict(it["history"][0])   # như gate ghi: last là history[0]
+items["REG-DUP"] = {"last": {"status": "PASS", "duration": "900s", "ts": 7}, "history": [{"status": "PASS", "duration": "900s", "ts": 7},
+                    {"status": "PASS", "duration": "5s", "ts": 6}, {"status": "PASS", "duration": "6s", "ts": 5}]}
+json.dump({"items": items}, open(sys.argv[1], "w"))
+PY
+res="$(CLAUDE_PROJECT_DIR="$TMP/medu" python3 - "$GATE" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("pfg", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+med, mx = m._recorded_seconds(median=True), m._recorded_seconds()
+print(" ".join(f"{k}={med.get(k)}/{mx.get(k)}" for k in ("REG-ODD", "REG-EVEN-HI", "REG-EVEN-LO", "REG-DUP")))
+PY
+)"
+want="REG-ODD=25.0/400.0 REG-EVEN-HI=400.0/500.0 REG-EVEN-LO=30.0/900.0 REG-DUP=6.0/900.0"
+[ "$res" = "$want" ] && ok "21a. trung vị (median_high, last không tính hai lần) cho slot, số dài nhất cho pre-commit: $res" \
+  || fail "21a. _recorded_seconds: '$res' (mong '$want')"
+#  b. gate: suite nhẹ có MỘT lần 900 s trong 5 lần, slot nặng duy nhất của máy đang bị giữ ⇒ suite chạy ngay, không xếp hàng
+make_repo "$TMP/med" "touch '$TMP/med_ran'"
+mkdir -p "$TMP/med/.agents"
+python3 - "$TMP/med/.agents/regression_status.json" <<'PY'
+import json, sys
+h = [{"status": "PASS", "duration": f"{d}s", "ts": 100 - i} for i, d in enumerate((5.0, 900.0, 6.0, 4.0, 5.5))]
+json.dump({"items": {"REG-1": {"kind": "test", "last": dict(h[0]), "history": h}}}, open(sys.argv[1], "w"))
+PY
+hold heavy-1.lock
+DEVKIT_SLOT_HEAVY_MAX=1 DEVKIT_SLOT_HEAVY_WAIT_S=3 run_gate "$TMP/med" --full --no-cache
+if [ "$RC" = 0 ] && [ -f "$TMP/med_ran" ] && ! printf '%s\n' "$OUT" | grep -q "xếp hàng"; then
+  ok "21b. một lần chạy chậm trong lịch sử không làm suite nhẹ xếp hàng slot nặng (${WALL}s)"
+else
+  fail "21b. suite nhẹ có một lần 900 s (exit $RC, ${WALL}s, chạy: $([ -f "$TMP/med_ran" ] && echo có || echo không), xếp hàng: $(printf '%s\n' "$OUT" | grep -c 'xếp hàng'))"
+  printf '%s\n' "$OUT" | grep -E "heavy-slot|xếp hàng|KẾT LUẬN" | head -4
+fi
+release_all
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_slot_classes: all passed" || { echo "❌ test_gate_slot_classes: $FAILS failed"; exit 1; }
