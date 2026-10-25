@@ -450,6 +450,20 @@ got = read(0, 90)                                   # kẹp giữa dòng 15 (cá
 assert got == want[1:], got
 PY
 
+# 30. #391: dòng NGAY sau frame cuối mà đoạn cuối toàn chữ HOA ("WARNING: …", com.finos.PRIVPKG3) không phải tên class exception:
+#     không thành thẻ, tên package không lên issue public.
+n=$(creates)
+{ echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-card.py", line 4, in h'
+  echo 'com.finos.PRIVPKG3'
+  echo 'Traceback (most recent call last):'
+  echo '  File "/x/.claude/bin/super-board-card.py", line 5, in k'
+  echo 'WARNING: disk almost full'; } >> "$B/docs/super-board/runner.log"
+scan >/dev/null
+[ "$(creates)" = "$n" ] && ! grep -q 'PRIVPKG3\|disk almost' "$FAKE_LOG" "$TMP/home/ledger.json" \
+  && ok "đoạn cuối toàn chữ HOA (WARNING, com.x.PRIVPKG3) sau frame cuối không thành thẻ" \
+  || fail "dòng chữ HOA sau frame cuối thành thẻ exception: create=$(creates) (trước $n)"
+
 # 27. Danh sách repo của bộ quét = danh sách board của super_board_all.py (25/10: Idle-Plaza-3D thay Neighbours-From-Hell).
 python3 - "$DEVKIT_DIR/scripts/governance" <<'PY' && ok "DEFAULT_REPOS khớp REPOS của super_board_all, có Idle, không có Neighbours" \
   || fail "danh sách repo của bộ quét lệch danh sách board"
