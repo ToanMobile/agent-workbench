@@ -119,14 +119,20 @@ git -C "$O" update-ref -d refs/heads/issue-15-gone
 card 16 issue-16-dup; pr_open 160 issue-16-dup; issue 16 CLOSED DUPLICATE "$OLD"
 # 12: đóng kiểu COMPLETED mà PR vẫn mở (không phải thẻ bị bỏ) → không đụng
 card 12 issue-12-done; pr_open 120 issue-12-done; issue 12 CLOSED COMPLETED "$OLD"
+# 17: bị bỏ, PR 170 mở, nhưng worktree của thẻ bị người dùng khoá → KHÔNG đóng PR, không gỡ gì (W4: trước đây PR bị đóng
+#     rồi mới thấy worktree bị khoá, lane đang làm bị cắt giữa chừng)
+card 17 issue-17-locked; git -C "$R" worktree add -q "$W/issue-17-build" issue-17-locked; pr_open 170 issue-17-locked; issue 17 CLOSED NOT_PLANNED "$OLD"
+git -C "$R" worktree lock --reason "user is working here" "$W/issue-17-build"
 
 bash "$CLEAN" --sweep "$R" --dry-run --min-interval 0 >"$TMP/dry.log" 2>&1
-[ -d "$W/issue-5-build" ] && has_branch issue-5-gom && [ "$(open_prs)" = "100 120 130 140 160 50 60 70 90" ] \
+[ -d "$W/issue-5-build" ] && has_branch issue-5-gom && [ "$(open_prs)" = "100 120 130 140 160 170 50 60 70 90" ] \
   && ok "d0 --dry-run changes nothing" || { fail "d0 --dry-run changed something"; cat "$TMP/dry.log"; }
 grep -q "would close PR #50" "$TMP/dry.log" && ok "d0b --dry-run names the PR it would close" || { fail "d0b dry-run does not name PR #50"; cat "$TMP/dry.log"; }
 
 bash "$CLEAN" --sweep "$R" --min-interval 0 >"$TMP/sweep.log" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "d1 sweep exit 0" || fail "d1 sweep exit $rc"
+case " $(open_prs) " in *" 170 "*) ok "d2c a locked worktree keeps the whole card: its PR stays open (W4)" ;; *) fail "d2c PR #170 closed although its worktree is locked" ;; esac
+[ -d "$W/issue-17-build" ] && has_branch issue-17-locked && ok "d2d the locked worktree and its branch stay" || fail "d2d locked worktree or branch of card 17 removed"
 case " $(open_prs) " in *" 50 "*) fail "d2 PR #50 of a dropped card is still open" ;; *) ok "d2 the open PR of a dropped card is closed" ;; esac
 grep -q "pr close 50 .*--comment" "$TMP/gh.calls" && ok "d2b the PR is closed with a comment saying why" || fail "d2b no comment on the closed PR"
 [ ! -d "$W/issue-5-build" ] && ok "d3 the clean worktree of a dropped card is removed" || { fail "d3 worktree of dropped card #5 kept"; grep -a "issue-5" "$TMP/sweep.log"; }

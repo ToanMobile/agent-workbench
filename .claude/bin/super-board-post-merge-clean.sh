@@ -564,6 +564,18 @@ try:
             print(r["number"])
 except (KeyError, TypeError, ValueError):
     sys.exit(1)' "$n") || { echo "kept card $n: gh pr list gave an unreadable answer; nothing closed or removed" >&2; return 0; }
+  # A live session or a lock on one of the card's worktrees: leave the whole card as it is. Closing its PRs first and keeping the worktree after
+  # would cut off a lane that is still working (W4, OCR 25/10).
+  i=0
+  while [ "$i" -lt "${#WT_P[@]}" ]; do
+    wt="${WT_P[$i]}"; i=$((i + 1))
+    [ "${WT_N[$((i - 1))]}" = "$n" ] && [ -d "$wt" ] || continue
+    # Same exemptions as the removal loop below: a worktree on another card's branch (folded work continues there) is not this card's lane.
+    br=$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null) || br=""
+    case "$br" in ""|"issue-$n-"*) ;; *) continue ;; esac
+    if session_held "$wt"; then echo "kept card $n: a live session holds $wt; nothing closed or removed" >&2; return 0; fi
+    if p=$(locked_by_other "$wt"); then echo "kept card $n: $wt is locked ($p); nothing closed or removed" >&2; return 0; fi
+  done
   for p in $prs; do
     if [ "$DRY" -eq 1 ]; then echo "would close PR #$p (card $n closed as not planned)" >&2
     elif gh_t pr close "$p" --comment "Closed by the sweep: card #$n was closed as not planned (folded into another card or dropped). Its pushed branch stays recoverable from this PR (refs/pull/$p/head); a local branch is deleted only once pushed." >/dev/null 2>&1
@@ -587,8 +599,7 @@ except (KeyError, TypeError, ValueError):
     [ -n "$br" ] || continue
     co=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | awk -v b="branch refs/heads/$br" '/^worktree /{w=substr($0,10)} $0==b{print w; exit}')
     if [ -n "$co" ] && ! printf '%s' "$DRY_GONE" | grep -qxF "$co"; then echo "kept branch $br: still checked out at $co" >&2; continue; fi
-    if [ -z "$KIT_WT" ]; then echo "kept branch $br: no DevKit (agent-kit worktree prune-branch) to prove it safe" >&2
-    elif [ "$DRY" -eq 1 ]; then echo "would ask agent-kit prune-branch --dropped for $br (card $n closed as not planned; deleted only if pushed and no open PR)" >&2
+    if [ "$DRY" -eq 1 ]; then echo "would ask agent-kit prune-branch --dropped for $br (card $n closed as not planned; deleted only if pushed and no open PR)" >&2
     else
       p=$(cd "$REPO_PATH" && python3 "$KIT_WT" prune-branch --dropped "$br" 2>&1) || p="kept branch $br: $(printf '%s\n' "$p" | grep -m1 '✖' | cut -c1-300)"
       printf '%s\n' "$p" >&2
