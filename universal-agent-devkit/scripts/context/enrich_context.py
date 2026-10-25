@@ -380,11 +380,23 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
 
     # Visual design: the UI door (a UI or aesthetic word, an app profile) — the Zero-Slop mandate points at
     # ui-ux-pro-max. Last, so it follows qa-visual; compact() keeps it inside the 5 skills it prints.
+    impeccable_craft = mentions(p_route, [
+        "impeccable", "ux", "ui/ux", "critique", "polish", "typeset", "colorize", "distill",
+        "ai slop", "anti-slop", "chống phèn", "phèn", "làm đẹp", "chỉnh thẩm mỹ",
+        "bảng màu", "palette", "typography", "font chữ", "design system",
+        "dựng màn hình", "tạo màn hình", "làm giao diện",
+        "thiết kế giao diện", "thiết kế lại giao diện", "thiết kế lại màn hình",
+        "tinh chỉnh giao diện", "nâng cấp giao diện"
+    ])
     if ui_door:
         dossier["detected_intents"].append("VISUAL_DESIGN")
         if not ui_words:
             dossier["profile_intents"].append("VISUAL_DESIGN")
         dossier["recommended_skills"].append("ui-ux-pro-max")
+        # Định tuyến Smart On-Demand: chỉ gợi ý impeccable khi người dùng yêu cầu thiết kế/làm đẹp/phê bình thẩm mỹ UI
+        # trên các profile có giao diện (tránh làm nhiễu các ca sửa bug logic thông thường).
+        if impeccable_craft and dossier["active_profile"] not in ("backend", "game"):
+            dossier["recommended_skills"].append("impeccable")
         # The four game-feel lines stay with the aesthetic words: the profile alone would tax every game prompt with them.
         if aesthetic and (dossier["active_profile"] == "game" or mentions(p_lower, ["game", "unity", "godot", "unreal", "blender", "ugui"])):
             dossier["injected_nfrs"].append("Anti-Phèn Visual Standard: Studio-grade aesthetics; no raw unlit primitives or flat single-color boxes.")
@@ -598,6 +610,13 @@ def compact(dossier, project_root, limit=4):
         # one that is not a tool audit (the list is deduplicated, so at most 3 of the 5 are).
         shown.remove(next((s for s in reversed(shown) if s not in KEEP_SKILLS), shown[-1]))
         shown.append("ui-ux-pro-max")
+    if "impeccable" in skills and "impeccable" not in shown:
+        # Giữ impeccable trong 5 skill hiển thị khi người dùng chủ động yêu cầu thiết kế/polish UI,
+        # nhưng không bao giờ đẩy KEEP_SKILLS hoặc ui-ux-pro-max ra ngoài.
+        evict = next((s for s in reversed(shown) if s not in KEEP_SKILLS and s != "ui-ux-pro-max"), None)
+        if evict is not None:
+            shown.remove(evict)
+            shown.append("impeccable")
     if shown:
         out.append("- Skill phù hợp: " + ", ".join(shown))
     return "\n".join(out)

@@ -204,8 +204,8 @@ Whenever the user asks to fix a bug, refactor code, or change behavior in a comp
 > | `automotive` | AAOS, CAN, Vehicle HAL | `unity-gc-audit` |
 > | `ios` | Swift 6, SwiftUI | Android/Unity skills |
 > | `web` | TypeScript, React/Next.js | Android/Unity skills + `taste-mobile-app` |
-> | `backend` | API services (Python/Go/Rust/Node) | Android/Unity skills + `qa-visual` |
-> | `game` | Unity 6, Zero-GC | Android skills + `taste-mobile-app` |
+> | `backend` | API services (Python/Go/Rust/Node) | Android/Unity skills + `qa-visual`, `impeccable` |
+> | `game` | Unity 6, Zero-GC | Android skills + `taste-mobile-app`, `impeccable` |
 > | `voice-assistant` | edge audio AI | `compose-recomp-audit`, `unity-gc-audit` |
 > | `universal` | anything else | Android/Unity skills |
 >
@@ -236,6 +236,7 @@ The agent MUST trigger these skills from context by itself and NEVER ask the use
 | **4. Device & Visual QA** | `compose-recomp-audit` | Tối ưu Compose 120 FPS, loại bỏ Recomposition thừa | Tự động audit tính ổn định tham số (@Stable/@Immutable), derivedStateOf, deferred state reads, LazyColumn keying. |
 | **4. Device & Visual QA** | `unity-gc-audit` | Triệt tiêu GC Alloc trong Unity 6, hướng tới Zero-GC Update loop | Tự động quét LINQ/boxing trong frame loops, NonAlloc physics APIs, cache coroutines, chống rò rỉ C# events khi đổi Scene. |
 | **4. Device & Visual QA** | `taste-mobile-app` | Thiết kế màn hình, luồng mobile mới hoặc làm lại UI rập khuôn | Tự động áp dụng nguyên lý 3 dial, 4 trạng thái, touch target, edge-to-edge và chống slop. |
+| **4. Device & Visual QA** | `impeccable` | Thiết kế, tinh chỉnh hoặc audit giao diện Web / Mobile (typography, màu OKLCH, bố cục, chống AI slop) | Tự động áp dụng 24 verb thiết kế (`/impeccable shape`, `/impeccable critique`, `/impeccable audit`, `/impeccable polish`) và trình quét `impeccable detect` (62 rule slop & quality). |
 | **4. Device & Visual QA** | `qa-visual` | Kiểm tra giao diện, audit layout, chống vỡ màn hình | Tự động audit tràn khung, lệch align, touch target >= 48dp, upload screenshot lên R2. |
 | **4. Device & Visual QA** | `qa-review` | Chuẩn bị trước khi tạo PR / bàn giao Tech Lead | Tự động chất vấn diff, tạo acceptance criteria kiểm chứng được và dựng ma trận test scenario. |
 | **5. Acceptance & Delivery** | `merge-conflict-resolver` | Xung đột git khi merge, rebase, cherry-pick | Tự động phân tích AST và ngữ cảnh để giải quyết xung đột mà không làm mất mát logic. |

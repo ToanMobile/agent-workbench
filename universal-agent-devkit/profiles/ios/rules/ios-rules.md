@@ -79,4 +79,4 @@ Quy chuẩn kỹ thuật bắt buộc dành cho AI Agent khi phát triển, tố
 - **Bàn phím & Navigation**: Bàn phím không được che khuất input (SwiftUI tự xử lý nếu dùng đúng form/scroll view). Sheet nên dùng `.presentationDetents([.medium, .large])` (iOS 16+) để người dùng dễ vuốt đóng.
 - **Mandatory 4 trạng thái**: Mọi màn hình phải có đủ 4 trạng thái thiết kế: Loading (dùng skeleton/redacted thay vì spinner), Empty (kèm CTA), Error (kèm Thử lại), Populated.
 - **Zero-Slop & Vùng chạm**: Hit area $\ge 44\times 44\text{pt}$ (xem lại §3). Cấm thiết kế rập khuôn: Card lồng Card, dùng `Color.gray` trần, gradient tím-indigo mặc định, và câu chào sáo rỗng "Welcome back 👋".
-- Quy trình chuẩn: Sử dụng skill `taste-mobile-app` để định hướng thẩm mỹ và kiểm tra UI/UX.
+- Quy trình chuẩn: Sử dụng skill `taste-mobile-app` kết hợp `impeccable` (`skills/impeccable/reference/ios.md`) để định hướng thẩm mỹ Apple HIG, phân cấp typography và kiểm tra UI/UX chống slop.
