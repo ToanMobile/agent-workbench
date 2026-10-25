@@ -1,2 +1,2 @@
-- [Worktree-isolated Bash limits](worktree-isolated-bash-limits.md) — guard refuses cd&&/git -C/".git"/computed sed/bash -c text/pgrep; use plain git + scratchpad .py/.sh probes
+- [Worktree-isolated Bash limits](worktree-isolated-bash-limits.md) — guard refuses cd&&/git -C/".git"/computed sed/bash -c/pgrep/"$var" targets; use scratch .py/.sh
 - [load_view is written back](load-view-written-back.md) — red_proof.keep_proof + auto_link save() load_view: a new source in it leaks into tracked checklist
