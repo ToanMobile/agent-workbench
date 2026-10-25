@@ -55,19 +55,19 @@ PY
 }
 
 # 1. Tiêu đề nêu repo khác, không --repo → từ chối, không tạo issue.
-rc=$(run --title "🔧 [chore] Neighbours-From-Hell: đồng bộ card #28" --problem "Repo hết slot worktree" --ac "- [ ] runner-bw đã gỡ")
-[ "$rc" = "64" ] && ok "1a nêu Neighbours-From-Hell, không --repo → exit 64" || fail "1a exit $rc (want 64)"
+rc=$(run --title "🔧 [chore] Idle-Plaza-3D: đồng bộ card #28" --problem "Repo hết slot worktree" --ac "- [ ] runner-bw đã gỡ")
+[ "$rc" = "64" ] && ok "1a nêu Idle-Plaza-3D, không --repo → exit 64" || fail "1a exit $rc (want 64)"
 [ "$(created_in)" = "NONE" ] && ok "1b không gọi gh issue create" || fail "1b đã tạo issue ở $(created_in)"
-grep -q -- "--repo ToanMobile/Neighbours-From-Hell" "$TMP/out" && ok "1c thông báo chỉ đúng lệnh --repo" || fail "1c thông báo thiếu gợi ý --repo"
+grep -q -- "--repo ToanMobile/Idle-Plaza-3D" "$TMP/out" && ok "1c thông báo chỉ đúng lệnh --repo" || fail "1c thông báo thiếu gợi ý --repo"
 
 # 2. Chỉ nêu repo khác trong body (Problem) cũng bị bắt.
 rc=$(run --title "🐛 [bug] runner: kẹt thẻ" --problem "PR #82 ở Goods-Triple-Shelf-Match-3D chưa merge" --ac "- [ ] merge")
 [ "$rc" = "64" ] && [ "$(created_in)" = "NONE" ] && ok "2 tên repo trong Problem → từ chối" || fail "2 exit $rc, created=$(created_in)"
 
 # 3. --repo đúng → tạo ở repo đó, đẩy vào board của repo đó (Project #5).
-rc=$(run --repo ToanMobile/Neighbours-From-Hell --title "🔧 [chore] Neighbours-From-Hell: đồng bộ card #28" --problem "x" --ac "- [ ] y")
+rc=$(run --repo ToanMobile/Idle-Plaza-3D --title "🔧 [chore] Idle-Plaza-3D: đồng bộ card #28" --problem "x" --ac "- [ ] y")
 [ "$rc" = "0" ] && ok "3a --repo → exit 0" || fail "3a exit $rc"
-[ "$(created_in)" = "ToanMobile/Neighbours-From-Hell" ] && ok "3b issue tạo ở Neighbours-From-Hell" || fail "3b tạo ở $(created_in)"
+[ "$(created_in)" = "ToanMobile/Idle-Plaza-3D" ] && ok "3b issue tạo ở Idle-Plaza-3D" || fail "3b tạo ở $(created_in)"
 [ "$(board_of)" = "5" ] && ok "3c đẩy vào Project #5" || fail "3c board $(board_of)"
 
 # 4. --here: chủ ý để ở repo đang đứng dù nêu tên repo khác (thẻ về kit, lấy repo khác làm ví dụ).
@@ -102,13 +102,13 @@ rc=$(run --title "🔧 [chore] GeelyEx2: port #185 từ agent-workbench" --probl
 [ "$rc" = "0" ] && [ "$(created_in)" = "ToanMobile/GeelyEx2" ] && ok "9 thẻ app nhắc kit → ở repo app" || fail "9 exit $rc, created=$(created_in)"
 git -C "$TMP/repo" remote set-url origin https://github.com/ToanMobile/agent-workbench.git
 
-# 10. Tên NFH viết có dấu cách (tên trong registry) cũng bị bắt.
-rc=$(run --title "🔧 [chore] đồng bộ card" --problem "Neighbours From Hell hết slot" --ac "- [ ] x")
-[ "$rc" = "64" ] && ok "10 'Neighbours From Hell' → từ chối" || fail "10 exit $rc"
+# 10. Tên Idle Plaza 3D viết có dấu cách (tên trong registry) cũng bị bắt.
+rc=$(run --title "🔧 [chore] đồng bộ card" --problem "Idle Plaza 3D hết slot" --ac "- [ ] x")
+[ "$rc" = "64" ] && ok "10 'Idle Plaza 3D' → từ chối" || fail "10 exit $rc"
 
-# 11. Ranh giới từ áp cho cả hai vế của "Neighbours-From-Hell|NFH": NFH dính vào chữ khác không tính.
-rc=$(run --title "🐛 [bug] hooks: biến XNFH sai" --problem "x" --ac "- [ ] y")
-[ "$rc" = "0" ] && [ "$(created_in)" = "ToanMobile/agent-workbench" ] && ok "11 'XNFH' không bị coi là NFH" || fail "11 exit $rc, created=$(created_in)"
+# 11. Ranh giới từ: tên repo dính vào chữ khác không tính.
+rc=$(run --title "🐛 [bug] hooks: biến XIdle-Plaza-3D sai" --problem "x" --ac "- [ ] y")
+[ "$rc" = "0" ] && [ "$(created_in)" = "ToanMobile/agent-workbench" ] && ok "11 'XIdle-Plaza-3D' không bị coi là tên repo" || fail "11 exit $rc, created=$(created_in)"
 
 # 12. --from-file chỉ miễn khi ticket thật sự đọc từ file (có --ticket); chỉ có --from-file mà thẻ lấy từ --title vẫn bị kiểm.
 rc=$(run --from-file "$TMP/backlog.md" --title "🔧 [chore] GeelyEx2: rebase PR" --problem "x" --ac "- [ ] y")

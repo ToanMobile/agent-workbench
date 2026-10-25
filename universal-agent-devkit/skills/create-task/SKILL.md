@@ -94,7 +94,7 @@ python3 universal-agent-devkit/scripts/governance/create_task.py \
 
 ### 1c. Thẻ về repo khác: luôn chỉ repo đích
 Mặc định thẻ nằm ở repo của checkout đang đứng (theo `git origin`) và đi vào board của repo đó. Thẻ có việc ở repo
-khác (Goods, NFH, GeelyEx2, OfficeReader) phải đi với `--repo`, để issue và card nằm ở đúng repo và đúng board:
+khác (Goods, Idle-Plaza-3D, GeelyEx2, OfficeReader, Humans-vs.-UFOs) phải đi với `--repo`, để issue và card nằm ở đúng repo và đúng board:
 ```bash
 python3 universal-agent-devkit/scripts/governance/create_task.py --repo ToanMobile/GeelyEx2 \
   --title "🔧 [chore] GeelyEx2: merge PR #82" --problem "..." --ac "- [ ] PR #82 merged"
