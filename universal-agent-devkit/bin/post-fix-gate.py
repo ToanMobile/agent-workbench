@@ -1671,6 +1671,8 @@ def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
         return
     try:
         cfg = json.loads(configs[0].read_text(encoding="utf-8"))
+        if not isinstance(cfg, dict):   # valid JSON that is not an object (a half-written `[]`, `null`): no board config = the old behaviour
+            return
         base = cfg.get("base_branch") or "main"
         if diff_ref != f"origin/{base}":
             return
