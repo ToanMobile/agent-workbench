@@ -1217,6 +1217,7 @@ ONCE_PER_SESSION = ("- Yêu cầu ngầm định: ", "- Bẫy đã gặp: ", "- 
                     "ZERO-SLOP UI MANDATE", "• ",  # these two: the lines of ZERO_SLOP_MANDATE
                     "- GIAO MẶC ĐỊNH BẬT")  # the giaoDefault order (2026-10-25: ~370 B re-sent on every prompt, 19.6 KB a session)
 SAME_AS_BEFORE = "(ngữ cảnh DevKit như lượt trước)"
+CONTEXT_HEADER = "[DevKit] Ngữ cảnh tự động"   # compact()'s first line, and the one the hook adds when only extra lines follow
 COMPACT_MARKS = (b'"subtype":"compact_boundary"', b'"subtype": "compact_boundary"')  # Claude Code transcript line after a compaction
 NO_TRANSCRIPT_CAP = 20  # without a transcript a compaction is invisible: resend after 20 prompts
 
@@ -1281,6 +1282,8 @@ def dedupe_session(text, project_dir, session_id, payload):
         out = "\n".join([SAME_AS_BEFORE] + [l for l in lines if l.startswith(("- Bắt buộc: ", "- Song song "))])
     else:
         out = "\n".join(l for l in lines if not (l.startswith(ONCE_PER_SESSION) and h(l) in sent))
+        if all(l.startswith(CONTEXT_HEADER) for l in out.split("\n") if l.strip()):
+            out = ""   # OCR 25/10: only the header left (its one line, the giao order, already sent): a bare header says nothing
     sent.update(h(l) for l in lines if l.startswith(ONCE_PER_SESSION))
     st = {"sent": sorted(sent), "last": h(text), "n": int(st.get("n") or 0) + 1,
           "offset": size if size is not None else 0}

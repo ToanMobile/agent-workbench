@@ -73,6 +73,17 @@ c="$(printf '{"prompt":"%s","session_id":"fixed-s"}' "giải quyết conflict kh
 printf '%s' "$c" | grep -q "MERGE_CONFLICT" || fail "5b: setup — the second prompt did not change the hook text: $c"
 printf '%s' "$c" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "5b: the order was repeated for another prompt of the same session" \
   || ok "5b: another prompt of the same session does not repeat the order"
+# 5c (OCR 25/10): a chit-chat prompt whose only hook text was the order, asked again after another prompt of the same session, left a
+#    bare "[DevKit] Ngữ cảnh tự động …:" header with nothing under it once the order was deduped: no text at all then.
+s5c() { printf '{"prompt":"%s","session_id":"s5c"}' "$1" | bash "$HOOK" 2>&1; }
+CHAT="bạn khỏe không hôm nay thế nào"
+c1="$(s5c "$CHAT")"; s5c "giải quyết conflict khi merge nhánh release" >/dev/null; c3="$(s5c "$CHAT")"
+printf '%s' "$c1" | grep -q "GIAO MẶC ĐỊNH BẬT" || fail "5c: setup — the chit-chat prompt carries no order the first time: $c1"
+[ -z "$c3" ] && ok "5c: the same chit-chat prompt later in the session, its order already sent → no text (no bare header)" \
+  || fail "5c: a bare header with nothing under it: '$c3'"
+c4="$(s5c "sửa lỗi nút Lưu bị bấm hai lần")"
+printf '%s' "$c4" | grep -q "Ngữ cảnh tự động" && printf '%s' "$c4" | grep -q "BUG_FIX" \
+  && ok "  … while a prompt with its own context in that session still gets its header and lines (control)" || fail "  … control lost: '$c4'"
 
 # 3b: the PROJECT file wins even when it is the broken one (OpenCodeReview + reviewer 14/10: a typo there used to fall through to a global true,
 #     so delegation was ON while the notice said "coi như false")
