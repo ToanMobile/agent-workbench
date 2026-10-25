@@ -533,13 +533,11 @@ def _kept_lock(main, wt, sid, pid, unlock=False, locks=None):
 _BOARD_WT = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
 
 
-def _pid_holds_kept_lock(locks, pid, skip=None):
-    """`pid` still holds a devkit-kept lock (alive, start time matching) on a worktree of `locks` ({path: reason}) other than `skip`."""
-    for path, reason in locks.items():
-        m = KEPT_RE.fullmatch(reason)
-        if m and path != skip and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)):
-            return True
-    return False
+def _pid_holds_kept_lock(locks, pid, wt):
+    """`pid` still holds a live devkit-kept lock (start time matching) on `wt`; `locks`: {path: reason}."""
+    path = os.path.realpath(wt)
+    m = KEPT_RE.fullmatch(locks.get(path) or "")
+    return bool(m and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)))
 
 
 def _lock_or_report(main, wt, sid, pid, problems, locks):
@@ -557,7 +555,7 @@ def _lock_or_report(main, wt, sid, pid, problems, locks):
     write_record(main, sid, wt, pid=pid, start=pid_start_token(pid) if pid else None)
     if problems is not None:
         problems.append(f"NOT LOCKED: {wt} (no pid / git refused or timed out): cleanup-wt may remove it while this session works; "
-                        "the next compact or clear tries to lock it again")
+                        "the next compact (or clear from inside it) tries to lock it again")
     return None
 
 
@@ -568,14 +566,14 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, problems=
     plain `git worktree remove`, which a lock left by a dead worker would block. Returns the worktree locked, None otherwise.
     #406: the payload cwd follows the session's `cd`. compact and /clear keep the same claude process, whose lock (taken at its start or
     at EnterWorktree) still holds - a new one there would lock whatever worktree the session merely stands in, another session's
-    included. So only a new process (startup, resume, fork; no source: as before) locks.
+    included. So only a new process (startup, resume, fork; no source: as before) locks from the cwd (compact / clear: #413 below).
     No veto beyond that (#415 had two - "another session owns this worktree", and "this pid already holds a lock elsewhere" for an
     in-session /resume after a `cd` - both reverted 25/10 after seven review rounds): owner identity at SessionStart rests on weak signals
     (state sid, lock sid, record pid, locks gc already opened), and every refinement left a session's real worktree unlocked - cleanup-wt
     then removes it mid-gate, the incident #406 is about. Without them a resumed session locks the worktree it stands in, a peer's
     included: that worktree is kept too long, nothing is lost. Accepted, fail-safe trade-off (#413).
     #413: compact / clear lock again the session's OWN starting worktree - the one its record names (reown moved it to the new id), never the
-    cwd - when the startup lock failed and the pid holds no live devkit-kept lock. problems: a list that receives one line per lock that
+    cwd - when the startup lock failed and the pid holds no live devkit-kept lock on it. problems: a list that receives one line per lock that
     could not be taken, for the caller to print."""
     if not main or not trunk_mode(main, env):
         return None
@@ -584,7 +582,7 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, problems=
         if not wt:
             return None
         locks = _worktree_locks(_git_in(main))
-        if locks is not None and _pid_holds_kept_lock(locks, pid):
+        if locks is not None and _pid_holds_kept_lock(locks, pid, wt):
             return None
         return _lock_or_report(main, wt, sid, pid, problems, locks)
     if not here:
