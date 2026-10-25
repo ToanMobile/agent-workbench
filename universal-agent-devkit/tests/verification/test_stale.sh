@@ -8,6 +8,7 @@
 #  - the gate selected the suite but ran only part of it (impacted) after the PASS → STALE
 #  - a new real run clears it; SessionStart reports the count
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
+export WORKTREE_TRUNK_MODE=0   # checklist kiểu cũ: ở trunk mode (mặc định) lệnh bugs/req ở main ghi sổ chờ ngoài git (tests/worktree_git/test_trunk_main_pending_writers.sh kiểm đường đó)
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; RC="$DEVKIT_DIR/bin/regression_checklist.py"
