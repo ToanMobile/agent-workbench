@@ -548,3 +548,30 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Test chạy không hạn giờ để lại tiến trình mồ côi hàng chục giờ
 - **Nguyên nhân:** run_impacted.sh chạy từng test bằng bash trần; ca FIFO của test_gate_robustness kẹt trong open() của nhân, runner phía trên bị SIGKILL (pkill -9 của board) nên không trap nào dọn, hai post-fix-gate.py sống 18h giữ khoá/tải, gate khác báo BUSY; thêm: print ra stderr pipe đã chết ném BrokenPipe (Python bỏ qua SIGPIPE) và bỏ qua bước giết nhóm
 - **Quy tắc phòng ngừa & Cách fix:** Mọi lệnh con có thể treo chạy qua tests/lib/run_bounded.py (hạn giờ + giết cả nhóm + watchdog khi helper bị SIGKILL + theo dõi caller); log trong đường dọn dẹp không bao giờ được ném lỗi (os.write + nuốt OSError, dọn trước log sau); test mới thêm ca vào test_run_bounded.sh
+
+---
+
+### [INSTINCT-066] Gate gộp đổi thứ tự suite làm PASS của suite phụ thuộc diff vào cache trước khi suite khác đỏ
+- **Ngày phát hiện:** 2026-10-25
+- **Hiện tượng lỗi:** worktree finish đỏ ở test_gate_suite_cache_selection ca S5: lượt sau dùng lại PASS của REG-ALL dù gate lượt trước đỏ (số lần chạy test đứng ở 2 rồi 2)
+- **Nguyên nhân:** worktree finish đặt DEVKIT_SLOT_PRIORITY=merge, đổi thứ tự suite; record_keyed ghi PASS của suite phụ thuộc diff ngay sau khi nó chạy xong, lúc suite khác chưa chạy nên điều kiện suite khác không PASS chưa đúng
+- **Quy tắc phòng ngừa & Cách fix:** PASS của suite phụ thuộc diff (run_impacted.sh) chỉ ghi ở lượt ghi cuối, khi mọi suite đã có kết quả (record_keyed final=False không ghi); mọi test của gate phải có ca chạy với DEVKIT_SLOT_PRIORITY=merge
+- **Lệnh kiểm tra:** `bash universal-agent-devkit/tests/gates/test_gate_suite_cache_selection.sh (ca S5m)`
+
+---
+
+### [INSTINCT-067] Tính phần chênh lệch của PR bằng origin/main so với ngọn nhánh cũ sẽ hoàn tác việc mới của phiên khác
+- **Ngày phát hiện:** 2026-10-25
+- **Hiện tượng lỗi:** dựng lại PR từ origin/main chỉ với phần chênh lệch: pre-commit đỏ ở test_gate_robustness ca A15 vì bản vá xoá các dòng #370 của phiên khác
+- **Nguyên nhân:** chênh lệch git diff origin/main ngọn-nhánh-cũ gồm cả việc origin/main đã nhận sau lần gộp gần nhất, đảo chiều thành xoá
+- **Quy tắc phòng ngừa & Cách fix:** tính chênh lệch so với điểm gốc chung (git merge-base nhánh-cũ origin/main) rồi áp bằng 3 chiều lên origin/main; sau khi áp kiểm các dòng bị xoá chỉ là bản cũ của chính mình (git diff --cached -U0 và xem dòng bắt đầu bằng dấu trừ)
+- **Lệnh kiểm tra:** `git diff --cached -U0 | grep -E '^-' | grep -vE '^---' phải chỉ chứa bản cũ của chính các dòng mình sửa`
+
+---
+
+### [INSTINCT-068] Chuỗi bí mật giả trong test vẫn bị công cụ quét báo vì nó đọc diff chứ không đọc lúc chạy
+- **Ngày phát hiện:** 2026-10-25
+- **Hiện tượng lỗi:** GitGuardian báo sk-..., token=..., Bearer ... trong test dùng giá trị giả để chứng minh việc che bí mật, kiểm tra PR đỏ
+- **Nguyên nhân:** chuỗi giống khóa nằm nguyên khối trong mã nguồn; công cụ quét từng commit nên sửa mã mới không xoá được sự cố nằm ở commit cũ
+- **Quy tắc phòng ngừa & Cách fix:** ghép giá trị giả lúc chạy từ nhiều mảnh (tiền tố + phần còn lại), không bao giờ viết nguyên khối; làm ngay từ commit đầu vì sửa sau không xoá được lịch sử, chỉ còn đánh dấu dương tính giả hoặc dựng lại nhánh
+- **Lệnh kiểm tra:** `git diff origin/main -U0 | grep -E '^\+' | grep -E 'sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{10,}|Bearer [A-Za-z0-9]{10,}|(token|secret)=[A-Za-z0-9]{10,}' phải rỗng`
