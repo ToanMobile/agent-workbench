@@ -7,7 +7,11 @@
 # (run.md); worktree đang chứa cwd của lệnh này cũng được giữ. --sweep gỡ chúng sau (xem dưới).
 # Không bao giờ đụng thẻ khác: ngày 2026-10-16 bản đầu khớp mọi issue-*-qa / issue-*-review và xoá --force
 # thư mục mà worker của thẻ khác đang dùng. Không mất gì ngoài phần đã merge: worktree còn sửa thật được giữ,
-# nhánh chỉ bị xoá khi đầu nhánh vẫn đúng <merged-sha> (đường DevKit: luật của kit, xem remove_wt bên dưới).
+# nhánh chỉ được đem cho kit xét khi đầu nhánh vẫn đúng <merged-sha>.
+# U2 (audit 25/10): script này chỉ chọn worktree / nhánh NÀO thuộc lần merge (thẻ, PR, lane, thời gian chờ, cất rác lane); quyết định
+# "đã tích hợp và gỡ được an toàn" là của DevKit, một chỗ duy nhất: `worktree.py held` (phiên / khoá nào giữ, hỏi TRƯỚC khi đụng file),
+# `remove --merged=<sha>` (HEAD đã trong trunk hoặc là head đã merge, rồi luật không-mất-việc của `remove`), `prune-branch` (nhánh,
+# commit chỉ reflog giữ được cất). Không có kit chạy được thì không gỡ gì (không còn đường `git worktree remove` / `git branch -D` trần).
 # Làm hết sức có thể: không bao giờ làm hỏng lần merge đã xảy ra (luôn exit 0).
 #
 # 19/10 (issue #96): worktree lane của thẻ đã merge không bao giờ được gỡ, 5 repo đầy đĩa (OfficeReader 28G / 21 worktree).
@@ -50,33 +54,45 @@ HERE_PWD=$(pwd -P)
 # 18/10 (NFH PR #38, #45, Geely PR #59): phiên rời worktree của PR bằng ExitWorktree "keep" (khoá devkit-kept) rồi tự chạy merge gate;
 # `git worktree remove` trần từ chối worktree bị khoá và phiên phải unlock tay. Có DevKit thì gỡ bằng `worktree.py remove`: nó mở khoá
 # devkit-kept của chính phiên gọi hoặc của pid đã chết (khoá của phiên khác còn sống thì git vẫn từ chối) và giữ luật không-mất-việc.
-# Nó cũng xoá nhánh của worktree theo luật của kit, KHÔNG theo chốt MERGED_SHA dưới: nội dung đã trong trunk hoặc origin/<trunk> (tổ
-# tiên, hay gộp thử ra đúng cây của trunk) và không còn ref remote; mọi commit chỉ nhánh giữ được cất vào refs/devkit/discarded 30 ngày.
-# Không có python3: đường git như cũ (OCR 18/10).
+# Nó cũng xoá nhánh của worktree theo luật của kit: nội dung đã trong trunk hoặc origin/<trunk> (tổ tiên, hay gộp thử ra đúng cây của
+# trunk) và không còn ref remote; mọi commit chỉ nhánh giữ được cất vào refs/devkit/discarded 30 ngày.
+# Không có python3 hay kit không chạy được: KHÔNG gỡ gì, nói lý do (U2 25/10: đường `git worktree remove` trần cũ xoá im lặng bí mật bị
+# ignore chỉ worktree có, và chạy cả khi kit chết giữa chừng).
 KIT_WT=""
 # Kit đi cùng script trước (đã review cùng nó), bản của repo sau — như sync_identical của merge gate.
 HERE_UP=$(cd "$(dirname "$0")/../.." && pwd)
 command -v python3 >/dev/null 2>&1 && for c in "$HERE_UP/universal-agent-devkit" "$HERE_UP/.agents/devkit" "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit"; do
-  # thử chạy một lần (`list` chỉ đọc): kit có mà không chạy được (cú pháp, python quá cũ) thì đường git như cũ, không giữ mọi thứ lại
+  # thử chạy một lần (`list` chỉ đọc): kit có mà không chạy được (cú pháp, python quá cũ) thì thử bản kế tiếp; không bản nào: không gỡ gì
   if [ -f "$c/scripts/git/worktree.py" ] && (cd "$REPO_PATH" && python3 "$c/scripts/git/worktree.py" list >/dev/null 2>&1); then
     KIT_WT="$c/scripts/git/worktree.py"; break
   fi
 done
+NO_KIT="no DevKit (agent-kit worktree, with python3) to prove it safe to remove; nothing removed"
+# kit_held <wt>: 0 (và in lý do) khi KHÔNG được đụng <wt>: kit `held` nói một phiên / khoá giữ nó (exit 3), hay không trả lời được (không
+# có kit, kit chết, mã khác) — hỏi TRƯỚC khi tidy dời / trả file về HEAD. 1 khi không ai giữ (exit 0). Luật nằm ở kit (_held): khoá
+# devkit-kept của phiên khác còn sống (của chính phiên gọi hay pid đã chết thì không), khoá git khác, khoá checkout còn sống.
+kit_held() {
+  local out rc=0
+  [ -n "$KIT_WT" ] || { echo "$NO_KIT"; return 0; }
+  out=$(cd "$REPO_PATH" && python3 "$KIT_WT" held "$1" 2>&1) || rc=$?
+  case "$rc" in
+    0) return 1 ;;
+    3) printf '%s\n' "$out" | head -1 | cut -c1-300 ;;
+    *) echo "cannot tell who holds it (agent-kit worktree held exit $rc: $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | tail -1; } | cut -c1-200))" ;;
+  esac
+  return 0
+}
+# remove_wt <wt> [<merged-sha>]: gỡ bằng kit. Có đối số 2 (kể cả rỗng): `remove --merged=<sha>`, chỉ khi HEAD đã tích hợp (trunk có nó, hay
+# là head đã merge / tổ tiên của nó). Kit từ chối (✖) hay chết: giữ, nói lý do.
 remove_wt() {
-  local out rc=2
-  if [ -n "$KIT_WT" ]; then
-    # thành công: in lại lời kit (nhánh đã xoá, commit cất ở refs/devkit/discarded 30 ngày, ⚠ memory note đi theo worktree) — OCR 18/10
-    out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove "$1" 2>&1) && { printf '%s\n' "$out" >&2; return 0; }
-    rc=$?
-    # Có dòng ✖ (exit 1, hay 2 của die(): có việc sẽ mất, git lỗi khi dò bí mật, state không đọc được…) = kit TỪ CHỐI: giữ, git trần không
-    # thấy hết những thứ đó. Không có dòng ✖ (kit chết giữa chừng: traceback): đường git như cũ — git vẫn từ chối worktree bẩn hay bị khoá.
-    if printf '%s\n' "$out" | grep -q '✖'; then
-      echo "kept $1: agent-kit worktree remove refused: $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | head -1; } | cut -c1-300)" >&2
-      return 0
-    fi
-    [ -e "$1" ] || { echo "removed $1 (agent-kit exited $rc after removing it: $(printf '%s\n' "$out" | tail -1 | cut -c1-200))" >&2; return 0; }
-  fi
-  git -C "$REPO_PATH" worktree remove "$1" 2>/dev/null || echo "kept $1: git worktree remove failed" >&2
+  local out rc=0
+  [ -n "$KIT_WT" ] || { echo "kept $1: $NO_KIT" >&2; return 0; }
+  # thành công: in lại lời kit (nhánh đã xoá, commit cất ở refs/devkit/discarded 30 ngày, ⚠ memory note đi theo worktree) — OCR 18/10
+  out=$(cd "$REPO_PATH" && python3 "$KIT_WT" remove ${2+"--merged=$2"} "$1" 2>&1) && { printf '%s\n' "$out" >&2; return 0; }
+  rc=$?
+  [ -e "$1" ] || { echo "removed $1 (agent-kit exited $rc after removing it: $(printf '%s\n' "$out" | tail -1 | cut -c1-200))" >&2; return 0; }
+  # Có dòng ✖ (có việc sẽ mất, chưa tích hợp, git lỗi khi dò bí mật…) = kit TỪ CHỐI; không có (kit chết giữa chừng): không nói được = giữ.
+  echo "kept $1: agent-kit worktree remove $( [ "$rc" -eq 1 ] || [ "$rc" -eq 2 ] && echo refused || echo "failed (exit $rc)"): $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | tail -1; } | cut -c1-300)" >&2
 }
 
 COMMON_DIR=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || COMMON_DIR=""
@@ -106,42 +122,7 @@ lane_live() {
   kill -0 "$pid" 2>/dev/null || return 1
   echo "$pid ${lane:-?}"
 }
-# session_held <wt>: 0 khi khoá checkout của DevKit (devkit-session.lock trong git dir của worktree) mang pid còn sống, như
-# _live_holder của kit; khoá có mà không đọc được cũng coi là còn giữ.
-session_held() {
-  local gd pid
-  gd=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-  [ -f "$gd/devkit-session.lock" ] || return 1
-  pid=$(python3 -I -c 'import json, sys
-v = json.load(open(sys.argv[1])).get("pid")
-print(v if type(v) is int else "")' "$gd/devkit-session.lock" 2>/dev/null) || return 0
-  [ -n "$pid" ] && [ "$pid" -gt 1 ] && kill -0 "$pid" 2>/dev/null
-}
-# locked_by_other <wt>: 0 (và in lý do khoá) khi `git worktree lock` giữ <wt> mà kit sẽ không mở: khoá devkit-kept của một pid còn
-# sống không phải tổ tiên của lệnh này (phiên khác), hay khoá khác devkit-kept (người dùng). Khi đó không đụng gì vào worktree: tidy
-# sẽ trả phần rác về HEAD trước khi kit từ chối (review 19/10). Khoá của chính phiên gọi hay của pid đã chết: kit mở, 1.
-locked_by_other() {
-  local reason pid a line ppid comm i=0 re='^devkit-kept session=[A-Za-z0-9][A-Za-z0-9._-]{0,127} pid=([0-9]{1,10})$'
-  reason=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null \
-    | awk -v w="worktree $1" '$0 == w { f = 1; next } /^worktree / { f = 0 } f && /^locked/ { print "L" substr($0, 7); exit }')
-  [ -n "$reason" ] || return 1
-  reason=${reason#L}; reason=${reason# }
-  # Đúng luật kit (worktree.py KEPT_LOCK_RE.fullmatch, kept_lock, _ancestor_pids — OCR): chỉ khoá devkit-kept đúng dạng mới có thể được mở
-  [[ "$reason" =~ $re ]] || { echo "${reason:-no reason}"; return 0; }
-  pid=${BASH_REMATCH[1]}
-  [ "$pid" -gt 1 ] || return 1   # pid 0/1: khoá vô hiệu, kit gỡ
-  kill -0 "$pid" 2>/dev/null || ps -p "$pid" >/dev/null 2>&1 || return 1   # ps: pid của user khác (EPERM) vẫn là còn sống (OCR)
-  # Tổ tiên của lệnh này, DỪNG ở tiến trình `claude` gần nhất (phía trên là app / terminal / launchd mọi phiên dùng chung)
-  a=$$
-  while [ "$i" -lt 64 ] && [ -n "$a" ] && [ "$a" -gt 1 ] 2>/dev/null; do
-    [ "$a" = "$pid" ] && return 1
-    line=$(ps -ww -o ppid=,comm= -p "$a" 2>/dev/null) || break
-    read -r ppid comm <<<"$line"
-    [ "${comm##*/}" = claude ] && break
-    a=$ppid; i=$((i + 1))
-  done
-  echo "$reason"
-}
+# (session_held / locked_by_other — bản bash chép luật khoá của kit — đã thay bằng kit_held ở trên: U2 25/10)
 # run_t <giây> <lệnh…>: chạy với hạn giờ thật. Hết giờ: SIGTERM cả nhóm tiến trình (git kịp dọn file .lock), 5 s sau SIGKILL; exit 124.
 # perl alarm không đủ: gh là binary Go và runtime Go bỏ qua SIGALRM (review 19/10 đo: alarm 1 s, binary Go vẫn chạy đủ 4 s).
 run_t() {
@@ -354,11 +335,11 @@ untidy() {
     echo "restored $1: it stays, so its lane edits, junk and deletions are back as they were (no salvage record kept)" >&2
   else echo "kept $1: it stays, but putting its lane edits back failed: they are in $TIDY_NAME.txt / .dropped/" >&2; fi
 }
-# clean_wt <wt> <pr> <merged-head>: phần chung của hai chế độ cho một worktree đã được chọn: khoá phiên, ref giữ head, rác, gỡ.
+# clean_wt <wt> <pr> <merged-head>: phần chung của hai chế độ cho một worktree đã được chọn: ai giữ (kit), ref giữ head, rác, gỡ (kit,
+# --merged=<merged-head>: chỉ khi HEAD đã tích hợp).
 clean_wt() {
   local wt="$1" head why
-  if session_held "$wt"; then echo "kept $wt: a live session holds its checkout lock" >&2; return 0; fi
-  if why=$(locked_by_other "$wt"); then echo "kept $wt: locked ($why), not touched" >&2; return 0; fi
+  if why=$(kit_held "$wt"); then echo "kept $wt: $why; not touched" >&2; return 0; fi
   HOLD_WHY=""
   if ! hold_head "$wt" "$2" "$3"; then
     # Commit trên HEAD detached mà không nhánh/remote nào chứa (vd repro Tester chưa push) sẽ chỉ còn trong reflog.
@@ -374,7 +355,7 @@ clean_wt() {
   if [ "$DRY" -eq 1 ]; then
     echo "would remove $wt" >&2; DRY_GONE="$DRY_GONE$wt"$'\n'; rm -f "$TIDY_DL" "$TIDY_SDEL" "$TIDY_DROPZ"; return 0
   fi
-  remove_wt "$wt"
+  remove_wt "$wt" "$3"
   if [ -n "$TIDY_NAME" ] && [ -d "$wt" ]; then
     untidy "$wt"   # kit (hay git) từ chối gỡ — reflog, rebase dở, submodule, bí mật chỉ worktree có…: trả lại mọi thứ đã dời / cất
   elif [ -n "$TIDY_NAME" ]; then
@@ -435,7 +416,14 @@ if [ "$MODE" = post ]; then
   done < <(printf '%s\n' ${CANDS[@]+"${CANDS[@]}"} | wt_order)
   tip=$(git -C "$REPO_PATH" rev-parse --verify -q "refs/heads/$HEAD_REF" 2>/dev/null || true)
   if [ -n "$tip" ] && [ -n "$MERGED_SHA" ] && [ "$tip" = "$MERGED_SHA" ]; then
-    git -C "$REPO_PATH" branch -D "$HEAD_REF" >/dev/null 2>&1 || echo "kept branch $HEAD_REF: still checked out" >&2
+    # Chốt của board: chỉ nhánh còn đúng head đã merge. Xoá hay giữ là của kit (prune-branch: trunk có nội dung, hay PR MERGED đúng tip;
+    # không worktree nào checkout; commit chỉ reflog nhánh nêu được cất vào refs/devkit/discarded) — U2 25/10, thay `git branch -D` trần.
+    if [ -z "$KIT_WT" ]; then echo "kept branch $HEAD_REF: $NO_KIT" >&2
+    else
+      out=$(cd "$REPO_PATH" && python3 "$KIT_WT" prune-branch "$HEAD_REF" 2>&1) \
+        || out="kept branch $HEAD_REF: $( { printf '%s\n' "$out" | grep -m1 '✖' || printf '%s\n' "$out" | tail -1; } | cut -c1-300)"
+      printf '%s\n' "$out" >&2
+    fi
   elif [ -n "$tip" ]; then
     echo "kept branch $HEAD_REF: its tip ${tip} is not the merged ${MERGED_SHA:-<unknown>}" >&2
   fi
@@ -573,8 +561,7 @@ except (KeyError, TypeError, ValueError):
     # Same exemptions as the removal loop below: a worktree on another card's branch (folded work continues there) is not this card's lane.
     br=$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null) || br=""
     case "$br" in ""|"issue-$n-"*) ;; *) continue ;; esac
-    if session_held "$wt"; then echo "kept card $n: a live session holds $wt; nothing closed or removed" >&2; return 0; fi
-    if p=$(locked_by_other "$wt"); then echo "kept card $n: $wt is locked ($p); nothing closed or removed" >&2; return 0; fi
+    if p=$(kit_held "$wt"); then echo "kept card $n: $wt is held ($p); nothing closed or removed" >&2; return 0; fi
   done
   for p in $prs; do
     if [ "$DRY" -eq 1 ]; then echo "would close PR #$p (card $n closed as not planned)" >&2
@@ -590,8 +577,7 @@ except (KeyError, TypeError, ValueError):
     # worktree issue-<N>-… mà đang ở nhánh của thẻ khác (việc của thẻ gom tiếp tục ở checkout cũ): không phải của thẻ bị bỏ
     br=$(git -C "$wt" symbolic-ref -q --short HEAD 2>/dev/null) || br=""
     case "$br" in ""|"issue-$n-"*) ;; *) echo "kept $wt: it is on branch $br, not a branch of card $n" >&2; continue ;; esac
-    if session_held "$wt"; then echo "kept $wt: a live session holds its checkout lock" >&2; continue; fi
-    if p=$(locked_by_other "$wt"); then echo "kept $wt: locked ($p), not touched" >&2; continue; fi
+    if p=$(kit_held "$wt"); then echo "kept $wt: $p; not touched" >&2; continue; fi
     if [ "$DRY" -eq 1 ]; then echo "would ask agent-kit to remove $wt (card $n closed as not planned; kept if it holds real work)" >&2; DRY_GONE="$DRY_GONE$wt"$'\n'
     else remove_wt "$wt"; fi
   done

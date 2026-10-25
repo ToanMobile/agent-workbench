@@ -1301,10 +1301,9 @@ PY
     say "note: ${BASE} in ${MAIN_PATH} not fast-forwarded (main checkout is not on ${BASE})"
   fi
   # Số PR: worktree detached ở head đã squash mà không ref nào còn giữ thì bước dọn giữ tạm head bằng refs/pull/<PR>/head (19/10, #96).
+  # Bộ dọn DUY NHẤT sau merge (U2, audit 25/10): nó hỏi worktree.py từng bước gỡ. Không còn gọi .claude/hooks/cleanup-wt.py --post-merge
+  # (hook người dùng tự cài, luật "merged" riêng, `git worktree remove` / `git branch -D` trần) ngay sau nó.
   bash "$HERE/super-board-post-merge-clean.sh" "$REPO_PATH" "$HEAD_REF" "$HEAD_SHA" "$PR" >&2 || true
-  if [ -f "$REPO_PATH/.claude/hooks/cleanup-wt.py" ]; then
-    ( cd "$REPO_PATH" && python3 .claude/hooks/cleanup-wt.py --post-merge --base "$BASE" </dev/null ) >&2 || true
-  fi
   exit 0
 fi
 # gh pr merge lỗi (vd. GraphQL 5xx tạm thời của GitHub, 22/10 PR #176): đọc lại PR vài lần có giãn cách (GitHub có thể vừa merge

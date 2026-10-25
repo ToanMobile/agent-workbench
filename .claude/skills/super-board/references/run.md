@@ -540,8 +540,9 @@ on the base branch**.
    exit 79/9 from the GitHub read or readiness check pass through unchanged; one PR in `--prs` is exactly the plain gate.
    The gate takes the merge mutex, checks the PR head is still $HEAD, merges the CURRENT
    base into a scratch worktree at $HEAD, runs `config.verify_commands`, and only then
-   squash-merges with `--match-head-commit $HEAD`. After a merge it runs `cleanup-wt --post-merge`
-   when the `.claude/hooks/cleanup-wt.py` hook is installed (local only; a cleanup failure never changes the exit). Route by exit code:
+   squash-merges with `--match-head-commit $HEAD`. After a merge it runs `super-board-post-merge-clean.sh` for the card's own
+   worktrees and branch; every removal is decided by the DevKit's `worktree.py` (`held`, `remove --merged`, `prune-branch`), and a
+   cleanup failure never changes the exit. Route by exit code:
      9 → verification-readiness: halt the run and preserve card, approval, claims, and worktree. Repair `config.verify_commands` with the project's real checks — or, when the gate says the scratch tree has no `post-fix-gate.py`, the DevKit install of the main checkout (`.agents/devkit`) — then restart explicitly. Never bounce to Build, retry a rebase, or bypass the gate.
      0 → merged; continue to step 4
      2 → verify failed on a branch BEHIND the base (the gate says "stale against <base>")
