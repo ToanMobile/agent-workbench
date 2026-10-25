@@ -498,14 +498,14 @@ def _git_in(main):
     return g
 
 
-def _kept_lock(main, wt, sid, pid, unlock=False):
+def _kept_lock(main, wt, sid, pid, unlock=False, locks=None):
     """K11 (18/10): ExitWorktree "keep" = phiên muốn giữ worktree. Khoá nó bằng `git worktree lock --reason "devkit-kept session=<sid> pid=<pid
     claude>"`: gộp vẫn được, nhưng automerge của Stop (scripts/git/worktree.py kept_lock) và cleanup-wt (bỏ qua worktree bị khoá) không gỡ nó
     khi pid đó còn sống; pid chết thì `worktree remove` mở khoá. unlock=True: mở khoá devkit-kept của chính phiên `sid` (EnterWorktree lại);
     không có pid hợp lệ khi khoá thì không làm gì (không bao giờ mở khoá ở nhánh này).
     Khoá do người khác đặt (không phải devkit-kept) không bao giờ bị đụng. Trả True khi đã khoá; lỗi git: False, không chặn tool."""
     g = _git_in(main)
-    locks = _worktree_locks(g)
+    locks = _worktree_locks(g) if locks is None else locks   # locks: the caller listed them already (one `git worktree list` per hook run)
     if locks is None:
         return False
     reason = locks.get(os.path.realpath(wt))
@@ -552,13 +552,16 @@ def _pid_holds_kept_lock(locks, pid, skip=None):
     return False
 
 
-def _lock_or_report(main, wt, sid, pid, problems):
-    """Lock `wt` for the session. No lock (no pid, git refused or timed out; #413): a record of the session's own worktree is written, so a
-    later compact / clear can lock it again (it has no other trace of where the session started), and the failure goes to `problems` -
-    SessionStart prints it, the model hears it. A worktree under someone else's lock is held already: nothing to say. Returns `wt` locked."""
-    if _kept_lock(main, wt, sid, pid):
+def _lock_or_report(main, wt, sid, pid, problems, locks):
+    """Lock `wt` for the session; `locks`: {path: reason} listed once by the caller, None when git could not list them (then nothing more is
+    run: each git call may take its 5 s and the SessionStart hook is killed at 10 s, before it could print). No lock (no pid, git refused or
+    timed out; #413): a record of the session's own worktree is written, so a later compact / clear can lock it again (it has no other trace
+    of where the session started - unlike a lock taken, it is the one case a record is written here, and the merge gate then adopts that
+    worktree when the session is gone), and the failure goes to `problems` - SessionStart prints it, the model hears it. A worktree under
+    someone else's lock is held already: nothing to say. Returns `wt` locked."""
+    reason = (locks or {}).get(os.path.realpath(wt))
+    if locks is not None and _kept_lock(main, wt, sid, pid, locks=locks):
         return wt
-    reason = (_worktree_locks(_git_in(main)) or {}).get(os.path.realpath(wt))
     if reason is not None and not reason.startswith(KEPT_PREFIX):
         return None
     write_record(main, sid, wt, pid=pid, start=pid_start_token(pid) if pid else None)
@@ -587,9 +590,12 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_ali
         return None
     if source in ("compact", "clear"):
         wt = read_record(main, sid)
-        if not wt or _pid_holds_kept_lock(_worktree_locks(_git_in(main)) or {}, pid):
+        if not wt:
             return None
-        return _lock_or_report(main, wt, sid, pid, problems)
+        locks = _worktree_locks(_git_in(main))
+        if locks is not None and _pid_holds_kept_lock(locks, pid):
+            return None
+        return _lock_or_report(main, wt, sid, pid, problems, locks)
     if not here:
         return None
     t = tree_of(here)
@@ -602,9 +608,10 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_ali
     others |= {o for o in (_state_owner(t[0]),) if o and o != sid}
     if owner_alive is not None and any(owner_alive(o) for o in others):
         return None
-    if source in ("resume", "fork") and _pid_holds_kept_lock(_worktree_locks(_git_in(main)) or {}, pid, skip=real):
+    locks = _worktree_locks(_git_in(main))
+    if source in ("resume", "fork") and locks is not None and _pid_holds_kept_lock(locks, pid, skip=real):
         return None
-    return _lock_or_report(main, t[0], sid, pid, problems)
+    return _lock_or_report(main, t[0], sid, pid, problems, locks)
 
 
 def _agent_worktree(payload, main):

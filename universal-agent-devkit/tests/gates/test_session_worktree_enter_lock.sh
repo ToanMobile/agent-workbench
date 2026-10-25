@@ -268,10 +268,20 @@ start_src "$TMP/n" bad s60 compact; lk="$(lock_of "$TMP/n" bad)"
 [ "$lk" = "devkit-kept session=s60 pid=$$" ] && ok "N2: compact after a failed startup lock locks the session's own starting worktree" \
   || fail "N2: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
 wtadd "$TMP/n" bad2 s62; start_bad "$TMP/n" bad2 s63 startup   # s63: lock failed, record kept
-G "$TMP/n" worktree unlock "$TMP/n/.claude/worktrees/bad" 2>/dev/null; G "$TMP/n" worktree lock --reason "x-someone-else" "$TMP/n/.claude/worktrees/bad" 2>/dev/null
+G "$TMP/n" worktree unlock "$TMP/n/.claude/worktrees/bad"   # (the test shell is every session's pid: free it, or "the pid holds a lock" skips)
 start_src "$TMP/n" peer s63 compact   # cwd = another session's worktree
-[ -z "$(lock_of "$TMP/n" peer)" ] && ok "N2b: compact with the cwd moved into another session's worktree does not lock that one" \
-  || fail "N2b: peer worktree locked '$(lock_of "$TMP/n" peer)'"
+[ -z "$(lock_of "$TMP/n" peer)" ] && [ "$(lock_of "$TMP/n" bad2)" = "devkit-kept session=s63 pid=$$" ] \
+  && ok "N2b: compact with the cwd moved into another session's worktree locks the session's own one (its record), not that one" \
+  || fail "N2b: peer='$(lock_of "$TMP/n" peer)' own='$(lock_of "$TMP/n" bad2)'"
+# N1b: git que não responde (lista de worktrees > 5 s): o aviso sai antes de os 10 s do hook, sem mais chamadas git
+mkdir -p "$TMP/slowgit"
+printf '#!/bin/sh\ncase " $* " in *" worktree list "*) sleep 6;; esac\nexec "%s" "$@"\n' "$REALGIT" > "$TMP/slowgit/git"; chmod +x "$TMP/slowgit/git"
+wtadd "$TMP/n" slow s64; t0=$SECONDS
+python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"hook_event_name":"SessionStart","cwd":sys.argv[2],"source":"startup"}))' \
+  s64 "$TMP/n/.claude/worktrees/slow" | PATH="$TMP/slowgit:$PATH" CLAUDE_PROJECT_DIR="$TMP/n/.claude/worktrees/slow" DEVKIT_SCRATCH_CLEANUP=0 python3 -I "$DEVKIT_DIR/bin/session_lock.py" > "$TMP/start.out" 2> "$TMP/start.err"
+[ $((SECONDS - t0)) -lt 10 ] && grep -q "NOT LOCKED" "$TMP/start.out" \
+  && ok "N1b: git that hangs on the worktree list: NOT LOCKED printed within the hook's 10 s budget ($((SECONDS - t0)) s)" \
+  || fail "N1b: took $((SECONDS - t0)) s out=$(head -c 200 "$TMP/start.out")"
 
 # #413 N3: pid của chủ còn sống nhưng đã bị cấp lại (thời điểm khởi động khác) = chủ đã đi: phiên mới vẫn khoá. Đối chứng: đúng thời điểm = còn sống.
 REGBOGUS="${BOGUS//_/ }"; [ -r "/proc/$SLEEPER/stat" ] && REGBOGUS="proc:1"
