@@ -168,12 +168,14 @@ lk="$(lock_of "$TMP/r" taken)"; st="$(cat "$(start_file "$TMP/r" taken)" 2>/dev/
 #   khoá của phiên đang sống đọc thành chết và remove/gc/automerge gỡ worktree dưới chân nó. R6: không biết thời điểm khởi động mới: file cũ
 #   bị xoá. R7: ghi file mới hỏng (đĩa đầy, os.replace lỗi): file cũ cũng không còn.
 wtadd "$TMP/r" stale s38; sf="$(start_file "$TMP/r" stale)"
-side() {   # side <start|None> [replace-fails]: _write_kept_start(worktree stale, pid of this shell, start), os.replace broken on demand
+side() {   # side <start|None> [replace-fails|tmp-blocked]: _write_kept_start(worktree stale, pid of this shell, start), a fault on demand
   python3 -I -c 'import os, sys
 sys.path.append(sys.argv[1]); import session_worktree as sw
-if sys.argv[5:]:
+if sys.argv[5:] == ["replace-fails"]:
     def broken(*a, **k): raise OSError(28, "No space left on device")
     os.replace = broken
+if sys.argv[5:] == ["tmp-blocked"]:   # an entry that cannot be unlinked where the temp file goes
+    os.makedirs(os.path.join(sw._admin_dir(sys.argv[2]), sw.KEPT_START + f".{os.getpid()}.tmp", "x"))
 sw._write_kept_start(sys.argv[2], int(sys.argv[3]), None if sys.argv[4] == "None" else sys.argv[4])' \
     "$DEVKIT_DIR/hooks" "$TMP/r/.claude/worktrees/stale" "$$" "$@" 2> "$TMP/side.err"
 }
@@ -184,6 +186,10 @@ printf '%s %s\n' "$$" "$BOGUS" > "$sf"; side NEW_START replace-fails
   || fail "R7: stale '$(cat "$sf")' left beside the new lock; err=$(head -c 200 "$TMP/side.err")"
 [ -z "$(ls "$(dirname "$sf")" | grep 'devkit-kept.start\..*\.tmp')" ] && ok "  … and no temp file is left in the worktree's git dir" \
   || fail "R7: temp file left: $(ls "$(dirname "$sf")" | grep tmp)"
+printf '%s %s\n' "$$" "$BOGUS" > "$sf"; side NEW_START tmp-blocked
+[ ! -e "$sf" ] || [ "$(cat "$sf")" = "$$ NEW_START" ] && ok "R7b: an entry that cannot be removed where the temp file goes: the older start time is gone all the same" \
+  || fail "R7b: stale '$(cat "$sf")' left beside the new lock; err=$(head -c 200 "$TMP/side.err")"
+rm -rf "$(dirname "$sf")"/devkit-kept.start.*.tmp
 
 # E14 (OCR 25/10): /resume của một phiên CHƯA giữ khoá nào (đang ở main, cd vào worktree khác): worktree có chủ khác CÒN SỐNG (registry
 #   mang pid trả lời) thì không khoá. E14b đối chứng: chủ đã chết (không pid nào sống) thì nhận như reown (worktree không mất việc).
@@ -196,8 +202,23 @@ lk="$(lock_of "$TMP/j" peer2)"
   || fail "E14: live owner's worktree locked '$lk' err=$(head -c 300 "$TMP/start.err")"
 wtadd "$TMP/j" gone s43; start_src "$TMP/j" gone s44 resume
 lk="$(lock_of "$TMP/j" gone)"
-[ "$lk" = "devkit-kept session=s44 pid=$$" ] && ok "E14b: … but one whose owner is gone (no live pid) is taken over, as reown does" \
+[ "$lk" = "devkit-kept session=s44 pid=$$" ] && ok "E14b: … but one whose owner has no live pid anywhere is taken over (the work is never lost)" \
   || fail "E14b: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E16 (OCR 25/10): chủ được nêu qua RECORD session_worktree (EnterWorktree), không qua state: record mang pid còn sống thì cũng không khoá
+G "$TMP/j" worktree add -q --detach "$TMP/j/.claude/worktrees/recowned"
+mkdir -p "$TMP/j/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/j/.claude/worktrees/recowned" "$SLEEPER" > "$TMP/j/.claude/audit-gate/session_worktree/s50"
+start_src "$TMP/j" recowned s51 startup
+lk="$(lock_of "$TMP/j" recowned)"
+[ -z "$lk" ] && ok "E16: a worktree a live session's record names (no state owner) is not locked by a session standing in it" \
+  || fail "E16: locked '$lk' err=$(head -c 300 "$TMP/start.err")"
+# E17 (OCR 25/10): devkit-worktree.json lồng quá sâu (hỏng, hay agent ghi): đọc như không có chủ — phiên khởi động trong đó vẫn khoá
+wtadd "$TMP/j" deep s52
+python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 200000)' "$(G "$TMP/j/.claude/worktrees/deep" rev-parse --absolute-git-dir)/devkit-worktree.json"
+start_src "$TMP/j" deep s52 startup
+lk="$(lock_of "$TMP/j" deep)"
+[ "$lk" = "devkit-kept session=s52 pid=$$" ] && ok "E17: a state file nested too deep reads as no owner: the session starting there still locks it" \
+  || fail "E17: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
 
 # R8 (review 25/10): thời điểm khởi động ghi một kiểu (/proc) mà đọc kiểu khác (ps), hay ngược lại: không so được = còn sống
 OTHERFMT="proc:1"; [ -r "/proc/$SLEEPER/stat" ] && OTHERFMT="Mon_Jan__1_00:00:00_2001"

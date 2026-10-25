@@ -418,10 +418,13 @@ def _write_kept_start(wt, pid, start):
         return
     p = os.path.join(d, KEPT_START)
     tmp = f"{p}.{os.getpid()}.tmp"
-    try:
-        for old in (tmp, p):
+    for old in (p, tmp):   # p first, each on its own: an entry stuck at the temp name must not keep the older start time (OCR 25/10)
+        try:
             if os.path.lexists(old):
                 os.unlink(old)
+        except OSError as e:
+            print(f"session_worktree: {old} not removed ({e!r})", file=sys.stderr)
+    try:
         if start:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -522,7 +525,7 @@ def _state_owner(wt):
     d = _admin_dir(wt)
     try:
         o = json.loads(_read_small(os.path.join(d, "devkit-worktree.json"), 4_000_000) or "null").get("session") if d else None
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, RecursionError):   # (RecursionError: nested too deep, as worktree.py _read_state)
         return None
     return o if isinstance(o, str) and o else None
 
