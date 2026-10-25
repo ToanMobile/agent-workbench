@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (534 dòng, 62.7 KB) · 66 mục
+> **Tệp gốc:** `.agents/instincts.md` (550 dòng, 64.5 KB) · 68 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -67,5 +67,7 @@
 - [INSTINCT-060] Model 3D cache cũ sau khi dựng lại — `sed -n '506,513p' .agents/instincts.md`
 - [INSTINCT-061] Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source — `sed -n '514,521p' .agents/instincts.md`
 - [INSTINCT-062] Mở file người dùng ghi được bằng open() không kiểm loại file — `sed -n '522,529p' .agents/instincts.md`
-- [INSTINCT-063] KNOWN-RED chỉ nhận FAIL và guard che message commit mở cửa — `sed -n '530,534p' .agents/instincts.md`
+- [INSTINCT-063] KNOWN-RED chỉ nhận FAIL và guard che message commit mở cửa — `sed -n '530,537p' .agents/instincts.md`
+- [INSTINCT-064] Sweep bỏ sót thẻ bị gom/bỏ (NOT_PLANNED) — `sed -n '538,545p' .agents/instincts.md`
+- [INSTINCT-065] Test chạy không hạn giờ để lại tiến trình mồ côi hàng chục giờ — `sed -n '546,550p' .agents/instincts.md`
 
