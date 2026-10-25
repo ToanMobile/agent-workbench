@@ -335,7 +335,7 @@ call is cut by the Bash timeout and the whole run is repeated (#249). The runner
 6. Open draft PR linked to the issue with the PR description template (title in commit-subject format, every block filled).
 7. Follow [PR author notes](pr-author-notes.md), then post the `[builder] [report]` PR comment (see "Commenting cadence").
 8. Post a short status comment on the issue with the PR URL.
-9. Clean up worktree. Keep branch + PR open.
+9. Clean up worktree. Keep branch + PR open. Only tracked `.claude/agent-memory/` notes left (a subagent such as `principal-code-reviewer` wrote them): commit them on the branch (`📝 [docs] agent-memory: notes`) and push before `worktree remove`; main is merge-only in trunk mode, so never `worktree diff | git apply` into it (#416). That is agent work, never a `🙋` needs-you.
 10. Move card Building → QA.
 
 <!-- universal-agent-devkit-workflow:start -->
