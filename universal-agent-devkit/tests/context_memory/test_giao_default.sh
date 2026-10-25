@@ -92,6 +92,17 @@ printf '%s' "$(out)" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "3b: a valid pro
 clear; setg '{"giaoDefault": true}'
 [ -z "$(printf '{"prompt":"/giao tạo task mới","session_id":"t"}' | bash "$HOOK" 2>&1)" ] && ok "4: a slash command is still left alone" || fail "4: the hook answered a slash command"
 
+# 7: a super-board lane worker never hands its card to Antigravity (2026-10-25 audit: the order reached 759 of 760 lane sessions).
+#    The lane's first prompt is the runner's opener + card JSON (quotes inside: the payload is built with json.dumps). The flag is
+#    still on, so the user's own prompt in the same project keeps the order (control).
+lane_out() {
+  python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2]}))' "$1" "s7-$RANDOM$RANDOM" | bash "$HOOK" 2>&1; }
+LANE="First operation: run .claude/bin/super-board-skills-ready.py --root '/repo' --host claude --cards - --lane 'build' --hydrate with [{\"number\":416,\"status\":\"Ready\",\"title\":\"Sửa tài liệu cài đặt\",\"labels\":[\"bug\"],\"lane\":\"build\"}] as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Run super-build on issue #416 for super-board run. Check --check before any GitHub write, migration, or merge."
+o7="$(lane_out "$LANE")"
+printf '%s' "$o7" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "7: a super-board lane got the giao order: $o7" || ok "7: a super-board lane opener gets no giao order"
+printf '%s' "$o7" | grep -q "Antigravity" && fail "7: a super-board lane was told to call Antigravity: $o7" || ok "  … nor the Claude ↔ Antigravity review order ('migration' is the harness's word)"
+printf '%s' "$(lane_out "$P")" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "  … while a user prompt in the same project keeps the order (control)" || fail "  … control: the user prompt lost the order"
+
 # 6: the "no user config" pin of tests/lib/clean_git_env.sh itself (OpenCodeReview 14/10, workflow-improvements I.4 #1). It was
 #    ${TMPDIR:-/tmp}/agpm-test-no-global-config/.antigravity-pm.json: a guessable path in a shared /tmp that another user, or an old run,
 #    could create with giaoDefault: true, and then every test that sources the lib was steered. The plant is tried in a PRIVATE TMPDIR

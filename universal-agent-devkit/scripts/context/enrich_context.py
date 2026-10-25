@@ -189,6 +189,38 @@ def giao_default(project_root):
     return False, ""
 
 
+# The first prompt of a super-board lane worker is the runner's text, not a request (.claude/bin/super-board-run.sh dispatch_lane,
+# the wave workflow's SKILLS_CHECK, super-build-dispatch.sh): it opens with "First operation…" running super-board-skills-ready.py
+# on the card JSON array. Replayed on 40 real lanes (2026-10-25): its fixed sentences matched the same 4 traps in 38-40 of 40, opened
+# the UI door ("card") in all, and the runner opener was captured as a bug. Only the opener at the very start counts: a user's
+# prompt that quotes it, or starts "First operation after login…", is a request as before.
+LANE_OPENER_RE = re.compile(r"First operation\b[^\n]*?super-board-skills-ready\.py[^\n]*?--cards -(?!\S)")
+ISSUE_SECTION_RE = re.compile(r"^# Issue #\d+ — ([^\n]*)\n(.*?)(?=^---$|\Z)", re.M | re.S)   # super-build-dispatch.sh: title + body
+
+
+def lane_card_text(prompt):
+    """The card's own words (title, body) of a super-board lane prompt, "" when its card JSON carries none (the runner's card is
+    number/status/labels/lane only), or None when the prompt is no lane opener. Labels are not words of the card: a `bug` label
+    made 33 of 40 lanes BUG_FIX."""
+    text = prompt.lstrip()
+    m = LANE_OPENER_RE.match(text)
+    if not m:
+        return None
+    words = []
+    start = text.find("[", m.end())   # the array the opener hands to --cards - as stdin
+    try:
+        cards = json.JSONDecoder().raw_decode(text, start)[0] if start >= 0 else []
+    except ValueError:
+        cards = []
+    for card in cards if isinstance(cards, list) else []:
+        if isinstance(card, dict):
+            words += [card[k] for k in ("title", "body") if isinstance(card.get(k), str)]
+    issue = ISSUE_SECTION_RE.search(text)
+    if issue:
+        words += [issue.group(1), issue.group(2).strip()]
+    return "\n".join(words)
+
+
 def enrich_prompt(prompt, devkit_root=".", project_root=None):
     dossier = {
         "dossier_type": "5D_CONTEXT_DOSSIER",
@@ -217,6 +249,10 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         except Exception:
             pass
 
+    card_text = lane_card_text(prompt)
+    if card_text is not None:   # a super-board lane: everything below reads the card's own words only (user_prompt keeps the whole text)
+        dossier["lane_card"] = card_text
+        prompt = card_text
     p_lower = normalize(prompt)
     # Phrases where an ambiguous routing word means something else ("tối ưu nhất" = best,
     # "docker compose", "thẩm mỹ viện" = beauty salon); removed before the keyword match only.
@@ -297,7 +333,7 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
     giao_on, giao_note = giao_default(project_root or devkit_root)
     if giao_note:
         dossier.setdefault("notices", []).append(giao_note)   # printed even when nothing else matched: a bad flag must not be silent
-    if giao_on:
+    if giao_on and "lane_card" not in dossier:   # a lane worker never hands its card to Antigravity (759 of 760 lanes got it, 2026-10-25)
         # An ORDER, not a classification: a real intent here turned off shown_refs()'s noise filter (weak instinct matches on every chit-chat prompt)
         # and the GENERAL_TASK fallback (OpenCodeReview 14/10). No slot in the skill line: it shows five, and `giao` there pushed compose-recomp-audit / qa-visual out (INSTINCT-022); the order below names it.
         dossier.setdefault("orders", []).append(
@@ -757,6 +793,8 @@ def harness_prompt(prompt, payload=None, env=None):
     """Why this prompt is an agent or harness prompt rather than a user's report, or "".
     Decided by the prompt's content only: the agent that runs the hook (Grok, Codex, Gemini,
     Cursor) says nothing — a user's bug report is recorded under every agent (2026-09-25)."""
+    if LANE_OPENER_RE.match(prompt.lstrip()):
+        return "super-board lane opener"   # BUG-20261016-first-operation-run-claude-bin-super-boa: the card is already the ticket
     first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
     if ROLE_OPENING.match(first):
         return "role-play opening"
@@ -965,8 +1003,8 @@ def antigravity_collab_hint(prompt, dossier, project_root):
     """Claude ↔ Antigravity: Scope cross-review strictly to LARGE/RISKY tasks (≥2 modules,
     ≥3 files, >200 LOC, architecture, security, auth, migration). For simple tasks, whichever
     agent is invoked executes directly without two-agent review overhead."""
-    if len(prompt.strip()) < 8 or prompt.strip().startswith("/"):
-        return ""
+    if len(prompt.strip()) < 8 or prompt.strip().startswith("/") or "lane_card" in dossier:
+        return ""   # a super-board lane: the board's own Reviewer lane reviews it, never a hand-off to Antigravity
     # Only trigger for large/risky tasks or explicit multi-agent requests
     norm = normalize(prompt)
     is_large = bool(LARGE_TASK_RE.search(norm))
@@ -1274,10 +1312,11 @@ if __name__ == "__main__":
         if is_hook:
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
             write_turn_class(project_dir, session_id, res)
+            asked = res.get("lane_card", prompt_input)   # a super-board lane: the card's words, not the runner's text
             extra = [l for l in (antigravity_collab_hint(prompt_input, res, project_dir), parallel_hint(prompt_input),
                                  capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
-                                 req_hint(prompt_input, res, project_dir), watch_inbox(project_dir),
-                                 command_words(prompt_input, project_dir),
+                                 req_hint(asked, res, project_dir), watch_inbox(project_dir),
+                                 command_words(asked, project_dir),
                                  context_note(hook_payload, project_dir, session_id)) if l]
             if extra:
                 text = "\n".join(([text] if text else [f"[DevKit] Ngữ cảnh tự động (profile: {res['active_profile']}):"])
