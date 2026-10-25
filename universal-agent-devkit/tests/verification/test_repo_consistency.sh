@@ -190,21 +190,20 @@ alias_missing = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', syn
                  if not os.path.exists(os.path.join(ROOT, "commands", a + ".md"))]
 check(not alias_missing, "R5 every alias in sync_commands.sh has commands/<alias>.md", ", ".join(alias_missing))
 
-# /review collides with the agent's built-in /review: commands/review.md may only be the
-# deprecated redirect stub (never a live link to a skill). Same for every deprecated alias.
-MARKER = "<!-- devkit:deprecated-alias -->"
-dep_block = re.search(r"DEPRECATED_ALIASES=\((.*?)\)", sync, re.S)
-deprecated = re.findall(r'"([a-z0-9-]+):', dep_block.group(1)) if dep_block else []
-bad_dep = []
-for name in sorted(set(deprecated) | {"review"}):
-    p = os.path.join(ROOT, "commands", name + ".md")
-    if not os.path.lexists(p):
-        continue
-    if os.path.islink(p) or MARKER not in open(p, encoding="utf-8").read():
-        bad_dep.append(name)
-check("review" in deprecated and not bad_dep,
-      "R5 commands/review.md is only a deprecated stub; deprecated aliases are stubs",
-      ", ".join(bad_dep) or "review missing from DEPRECATED_ALIASES")
+# The 1.1.0 renames (/review /qa /test /bugs /crashlytics) were removed in 1.2.0 and stay gone:
+# /review would shadow the agent's built-in /review, the others listed a second entry every session.
+gone = [n for n in ("review", "qa", "test", "bugs", "crashlytics")
+        if os.path.lexists(os.path.join(ROOT, "commands", n + ".md"))]
+check(not gone and "DEPRECATED_ALIASES" not in sync,
+      "R5 removed deprecated aliases stay removed (commands/review.md would shadow the built-in /review)",
+      ", ".join(gone) or "DEPRECATED_ALIASES still in sync_commands.sh")
+
+# An alias is a link to its skill: a hand-written file under the alias name drifts from the skill and
+# lists a second entry (commands/sandbox.md, 2026-10-25: hard-coded universal-agent-devkit/ paths).
+shadowed = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', sync, re.M)
+            if os.path.lexists(os.path.join(ROOT, "commands", a + ".md"))
+            and not os.path.islink(os.path.join(ROOT, "commands", a + ".md"))]
+check(not shadowed, "R5 every alias in sync_commands.sh is a link, not a hand-written file", ", ".join(shadowed))
 
 # ── R6 profiles ────────────────────────────────────────────────────────────────
 mcp_names = set()
