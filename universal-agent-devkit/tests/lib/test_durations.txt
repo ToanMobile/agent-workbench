@@ -411,3 +411,10 @@
 # 2026-10-25: test_evidence_gate chặn nhầm (tên chu trình trong kế hoạch, mã thoát in bằng echo, lệnh bị từ chối, động từ khẳng định bị phủ định); đo 22 s lúc máy tải 53 (12 nhân).
 # 2026-10-25 (review af339645): 40 → 77 ca + 3 ca giới hạn thời gian; đo 77 s lúc máy tải 45 (12 nhân).
 77 tests/gates/test_evidence_false_blocks.sh
+# 2026-10-25 (review mục B4): 5 test kit chưa có dòng nào — heavy_slot.selection_seconds coi cả tập run_impacted là "không biết" ⇒ cpu;
+# đo mỗi bài một lần, chạy một mình, máy tải 36-43 (12 nhân).
+40 tests/gates/test_gate_auto_tree_receipt.sh
+14 tests/worktree_git/test_worktree_remove_origin_safe.sh
+4 tests/gates/test_gate_diff_merge_base.sh
+2 hooks/tests/test_git_guard_ansi_c_quote.sh
+2 tests/worktree_git/test_worktree_git241_attr_source.sh

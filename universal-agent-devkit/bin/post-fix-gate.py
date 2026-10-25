@@ -6254,7 +6254,10 @@ def main():
         if hs is None:
             return None
         rec = slot_rec.get(t.get("id"))
-        info = hs.classify(cmd, str(project_dir), rec, device=bool(HARD_DEVICE_SUITE.search(cmd or "")))
+        # tập `run_impacted.sh --list` đọc lúc tính khoá của ĐÚNG lệnh này (cùng lượt): không sinh thêm một --list chỉ để phân lớp (review
+        # 25/10); lệnh khác (thu hẹp) hay chưa có khoá thì classify tự hỏi. Lần kiểm lại trước khi ghi PASS (R3) vẫn hỏi mới.
+        sel = sc.selections.get((t.get("id"), cmd)) if sc is not None else None
+        info = hs.classify(cmd, str(project_dir), rec, device=bool(HARD_DEVICE_SUITE.search(cmd or "")), selection=sel)
         lease = heavy_lease[0] if (sequential and heavy_lease and info["cls"] in hs.HEAVY_CLASSES) else None
         if heavy_lease and lease is None:
             drop_lease()   # suite này không dùng slot nặng đang giữ (không nặng, hay chạy trong nhóm song song): không giữ chỗ của người khác

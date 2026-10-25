@@ -548,6 +548,7 @@ class SuiteCache:
         self.inputs = {}   # id → số input của khoá gần nhất (cho log)
         self.input_values = {}   # (id, lệnh) → ({file: "mode sha"}, {token ngoài cây: digest}) lúc tính khoá
         self.key_parts = {}   # (id, lệnh) → (phần đầu, đích ngoài cây) của khoá: tính khoá cả cây trên nội dung khác (tree_key_at)
+        self.selections = {}   # (id, lệnh) → tập `--list` đọc lúc tính khoá: phân lớp slot cùng lượt dùng lại (heavy_slot.classify)
 
     # ── khoá ──
     def key(self, test):
@@ -592,6 +593,7 @@ class SuiteCache:
             sel = selection_list(self.project_dir, cmd)
             if sel is None:
                 return None, None
+            self.selections[(sid, cmd)] = sel
             cut = True
         head = json.dumps({
             "fmt": SUITE_CACHE_FORMAT, "rf": self.result_format, "id": sid, "command": cmd, "selection": sel,
