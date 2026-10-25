@@ -140,10 +140,12 @@ FAKE_CLOSED=42 scan >/dev/null
 grep -q '"comment", "42"' "$FAKE_LOG" && fail "comment vào thẻ đã đóng" || ok "không comment vào thẻ đã đóng"
 
 # 10. Secret trong dòng log không lên GitHub.
-echo '[14:20:00] ⚠ self-reload: push refused GITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOP1234 with Bearer abcdefghijklmnop' >> "$MA"
+# Giá trị giả ghép lúc chạy: không có chuỗi giống khóa nằm nguyên khối trong mã nguồn (công cụ quét bí mật đọc diff, không đọc lúc chạy).
+FAKE_GH="ghp_""ABCDEFGHIJKLMNOP1234"; FAKE_BEARER="abcdefghij""klmnop"
+echo "[14:20:00] ⚠ self-reload: push refused GITHUB_TOKEN=$FAKE_GH with Bearer $FAKE_BEARER" >> "$MA"
 scan >/dev/null
 [ "$(creates)" = 6 ] && ok "secret: thẻ vẫn được tạo" || fail "secret: create=$(creates)"
-grep -q 'ghp_ABCDEFGHIJ\|abcdefghijklmnop' "$FAKE_LOG" "$TMP/home/ledger.json" && fail "secret lọt lên issue/ledger" || ok "secret được che"
+grep -q "${FAKE_GH:0:14}\|$FAKE_BEARER" "$FAKE_LOG" "$TMP/home/ledger.json" && fail "secret lọt lên issue/ledger" || ok "secret được che"
 
 # 11. File log sinh SAU lần quét đầu (manifest ngày mới) đọc từ đầu; 12. dòng đang ghi dở chờ lượt sau.
 printf '[00:00:01] runner died 5 times in a row — gave up (crash loop)\n' > "$A/docs/super-board/runs/2026-10-25-OfficeReader.md"

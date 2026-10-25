@@ -207,6 +207,8 @@ case("a test written this session: a failing direct kit run (`pass=2 fail=1`) th
      [TE, ["bash", KIT_BASH, "pass=2 fail=1\n"], ["bash", KIT_BASH, "ok: a\n"]], 0, msg="test PASS")
 case("control: the same test written this session with only the green run is blocked (no RED before it)",
      [TE, ["bash", KIT_BASH, "ok: a\n"]], 2, "ĐỎ", msg="test PASS")
+case("direct bash kit test that prints only `skipped: no device` / `skipping …` lines checked nothing (OCR U5)",
+     [E, ["bash", KIT_BASH, "skipped: no device\nSKIPPING optional case\n"]], 2, NO, msg="test PASS")
 case("direct bash kit test whose every line is a skip line checked nothing",
      [E, ["bash", KIT_BASH, "skip: no scripts\nskip: no device\n"]], 2, NO, msg="test PASS")
 case("hooks/tests exit 0 whose check name contains FAIL is still a pass",

@@ -167,6 +167,15 @@ for GOOD in 'post-fix-gate.py --full' './post-fix-gate.py --full' 'python3 ./pos
   [ "$rc" = 0 ] && ok "--mark accepts the plain gate line '$GOOD'" || fail "'$GOOD': exit $rc: $(cat "$TMP/err")"
 done
 
+# 12d (OCR U11). A board config that is valid JSON but not an object (a half-written `[]` or `null`): the gate still ends with its own verdict, no traceback, no receipt.
+for BADCFG in '[]' 'null' '"text"' '{"base_branch":"main","verify_commands":5}' '{"base_branch":"main","verify_commands":true}' '{"base_branch":7,"verify_commands":["x"]}' '{"base_branch":"main","verify_commands":[3,null]}'; do   # the last one reaches the per-item loop (base matches)
+  make_repo with-config
+  printf '%s' "$BADCFG" > .claude/super-board/configs/t.json
+  git add -A && git commit -qm cfg-bad
+  run_gate; rc=$?
+  [ "$rc" = 0 ] && ! grep -q Traceback "$TMP/out" && ok "board config '$BADCFG': gate PASSes, no traceback" || fail "config '$BADCFG': rc=$rc $(grep -E 'Traceback|Error' "$TMP/out" | head -2 | tr '\n' '|')"
+done
+
 # 13. a commit made WHILE the run executes (the tree at the end is clean but was never tested): the receipt keys the tree the run STARTED on, so none is written
 make_repo with-config
 COMMIT_DURING_RUN=1 run_gate; rc=$?

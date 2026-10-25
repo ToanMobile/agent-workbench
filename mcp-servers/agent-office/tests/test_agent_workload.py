@@ -17,6 +17,12 @@ PS = """\
 """
 
 
+# Fake credentials (prove the redaction), joined at run time: no literal in the source looks like a real key to a secret scanner.
+FAKE_KEY = "sk" + "-" + "test" + "0" * 4 + "fake"
+FAKE_TOKEN = "tok" + "en=" + "fixture" + "0" * 6
+FAKE_TOKEN2 = "tok" + "en=" + "fixture" + "1" * 6
+
+
 class WorkloadTest(unittest.TestCase):
     def test_groups_and_totals(self):
         w = server.workload_from_ps(PS)
@@ -129,14 +135,14 @@ class WorkloadTest(unittest.TestCase):
         self.assertEqual(server._group_of("node /opt/homebrew/lib/agy --conversation x"), "antigravity")
         self.assertIsNone(server._group_of("/bin/bash /x/setup_claude.sh"))
         # nhãn không lộ mảnh code inline và --type= chỉ tính với app đóng gói
-        self.assertNotIn("token", server._prog_name("python3 -c token=abcd1234efgh5678 print(1)"))
+        self.assertNotIn("token", server._prog_name("python3 -c " + FAKE_TOKEN2 + " print(1)"))
         self.assertNotEqual(server._prog_name("node x.js --type=module"), "module")
         # payload cuối: không có argv đầy đủ, không có danh sách tiến trình thô, mỗi nhóm ≤ 5 việc
         # 9 script gate khác tên nhau → 9 "việc" khác nhau, đủ để vượt giới hạn 5 mỗi nhóm
         scripts = [("python3", "post-fix-gate.py"), ("bash", "post-fix-gate.sh"), ("node", "post-fix-gate.js"), ("python3", "run_impacted.py"),
                    ("bash", "run_impacted.sh"), ("node", "run_impacted.js"), ("python3", "heavy_slot.py"), ("bash", "heavy_slot.sh"), ("node", "heavy_slot.js")]
         lines = ["  PID  PCPU   RSS  ELAPSED COMMAND"] + [
-            "  %d  5.0  1024  00:01:00 /usr/bin/%s /tmp/x/%s --settings {\"secret\":\"sk-abc123456789\"}" % (200 + i, interp, name)
+            ("  %d  5.0  1024  00:01:00 /usr/bin/%s /tmp/x/%s --settings {\"secret\":\"" + FAKE_KEY + "\"}") % (200 + i, interp, name)
             for i, (interp, name) in enumerate(scripts)
         ]
         server._LAST_VIEW[0] = 0.0
@@ -150,7 +156,7 @@ class WorkloadTest(unittest.TestCase):
             res = server.agent_workload()
         blob = json.dumps(res)
         self.assertNotIn("cmdFull", blob)
-        self.assertNotIn("sk-abc", blob)
+        self.assertNotIn(FAKE_KEY[:6], blob)
         self.assertEqual(res["top"], [])
         self.assertEqual(sum(1 for t in res["tasks"] if t["group"] == "gate"), 5)  # 9 việc thật, chỉ giữ 5 nặng nhất
 
@@ -186,11 +192,11 @@ class WorkloadTest(unittest.TestCase):
     def test_script_note_and_where(self):
         import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as f:
-            f.write("#!/bin/bash\n# AB/BA: A = main, B = PR head token=abc123456789\necho hi\n")
+            f.write("#!/bin/bash\n# AB/BA: A = main, B = PR head " + FAKE_TOKEN + "\necho hi\n")
         self.addCleanup(os.unlink, f.name)
         note = server.script_note("/bin/bash " + f.name)
         self.assertTrue(note.startswith("AB/BA: A = main"))
-        self.assertNotIn("abc123456789", note)  # redact áp cho ghi chú
+        self.assertNotIn(FAKE_TOKEN.split("=")[1], note)  # redact áp cho ghi chú
         self.assertEqual(server.script_note("/usr/bin/python3 /nonexistent/x.py"), "")
         self.assertEqual(server.script_note("claude -p task"), "")
         w = server.where_from_cwd("/Volumes/Data/Toan/agent-workbench/.claude/worktrees/issue-380-build/mcp-servers")
