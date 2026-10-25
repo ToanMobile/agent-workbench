@@ -19,13 +19,13 @@
     "GeelyEx2",
     "OfficeReader",
     "Goods-Triple-Shelf-Match-3D",
-    "Neighbours-From-Hell",
+    "Idle-Plaza-3D",
     "Humans-vs.-UFOs"
   ],
   "repoPaths": {
     "OfficeReader": "/Volumes/Data/Toan/OfficeReader/OfficeReader",
     "Goods-Triple-Shelf-Match-3D": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D",
-    "Neighbours-From-Hell": "/Volumes/Data/Toan/Game/Neighbours-From-Hell",
+    "Idle-Plaza-3D": "/Volumes/Data/Toan/Game/Idle-Plaza-3D",
     "Humans-vs.-UFOs": "/Volumes/Data/Toan/Game/Humans-vs.-UFOs"
   },
   "claudeProjectsDir": "~/.claude/projects",
