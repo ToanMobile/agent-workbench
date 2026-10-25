@@ -1,7 +1,7 @@
 # Web Application Engineering Rules (Frontend / Full-Stack JS)
 
 ## 1. Solo-Dev & Git Security (BẮT BUỘC)
-- Việc xong (gate `--full` exit 0, ảnh khi cần, báo cáo nghiệm thu) thì TỰ commit đúng các file của mình và push nhánh hiện tại, không hỏi (quy trình pull/test lại/push: `rules/essentials.md` mục Git). Chỉ hỏi người dùng trước: force-push hoặc viết lại lịch sử đã chia sẻ, xoá file hoặc dữ liệu cực kỳ quan trọng không khôi phục được từ origin (dữ liệu người dùng thật, migration phá LIVE, nhánh/tag còn commit chưa có trên remote), và việc cực kỳ nguy hiểm (phát hành store / deploy production, đổi hoặc in secret đang dùng, thao tác billing, cấp quyền camera/location/danh bạ/PII, phá API công khai đã phát hành, làm yếu gate bảo mật khi lượt này chưa được yêu cầu). Commit, push fast-forward kể cả main, PR thường, sửa test và sửa code: tự làm, không hỏi.
+- Tự commit/push khi xong và danh sách việc phải hỏi người dùng trước: DevKit essentials trong `AGENTS.md`, mục Git và Working style.
 - Không commit `.env*` (trừ `.env.example` chỉ chứa placeholder), token, cookie, service account.
 - Biến môi trường lộ ra trình duyệt (`NEXT_PUBLIC_*`, `VITE_*`) là **công khai** — tuyệt đối không đặt secret vào đó.
 
