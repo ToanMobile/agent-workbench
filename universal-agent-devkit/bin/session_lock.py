@@ -1394,9 +1394,10 @@ _GATE_DIR_MAX = 4   # possible values kept per variable; more: unknown (a line t
 
 def _gate_dirs(seg, cur, known, earlier):
     """The directories a gate run in `seg` may audit (post-fix-gate.get_project_dir: CLAUDE_PROJECT_DIR, else TARGET_DIR, else the cwd's
-    repository). A non-empty value on the gate's own command line is the one it gets (as before); for a variable not given there every
-    value an earlier segment of the line may have left counts (`earlier`: _track_gate_dirs, None = unknown), and so does the cwd unless a
-    value was given - a variable that is not exported never reaches the gate (lỗ 3, 25/10)."""
+    repository). A non-empty CLAUDE_PROJECT_DIR on the gate's own command line is the one it gets (as before); otherwise a non-empty
+    value given there, every value an earlier segment of the line may have left for a variable not given there (`earlier`:
+    _track_gate_dirs, None = unknown) and the cwd all count - a variable that is not exported never reaches the gate, and the cwd is what
+    was judged before, so nothing blocked before passes now (lỗ 3, 25/10)."""
     given = {m.group(1): m.group(2) for m in PROJECT_DIR.finditer(seg)}
     out = []
     for name in _GATE_DIR_VARS:
@@ -1404,7 +1405,8 @@ def _gate_dirs(seg, cur, known, earlier):
             out.extend(earlier.get(name, ()))
         elif _shell_word(given[name], known) != "":
             out.append(_resolve(cur, given[name], known))
-            return out
+            if name == "CLAUDE_PROJECT_DIR":
+                return out
     out.append(cur)
     return out
 
@@ -2165,7 +2167,9 @@ def main():
             return 0   # nothing written into main: nothing to take (main has no holder in trunk mode)
     # lỗ 1 (25/10): a git write / gate run whose target the line does not tell used to count against this session's OWN checkout only, so
     # from a free checkout `cd $X && git commit` reached one of the same repository another session holds. Trunk mode refuses such a
-    # target already (trunk_write); here it is refused while another live session holds any checkout of this repository.
+    # target already (trunk_write), except in the sync / integrator segments it lets through (`git -C "$X" pull --ff-only` from a worktree
+    # still passes: ponytail, judge those by family_held too if a sibling is ever hit; refusing them all would stop every lane's push);
+    # here, trunk mode off, it is refused while another live session holds any checkout of this repository.
     held = family_held(gdir, sid, now) if notes.get("unknown") and not trunk else None
     if held:
         htop, hgdir, hlock = held

@@ -264,6 +264,7 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "worktree: export TARGET_DIR=<main>; gate (the gate's second variable)", w, B(f"export TARGET_DIR={m}; {G}")),
     (True, "worktree: TARGET_DIR=<main> gate (inline)", w, B(f"TARGET_DIR={m} {G}")),
     (True, "worktree: CLAUDE_PROJECT_DIR= TARGET_DIR=<main> gate (an empty first variable)", w, B(f"CLAUDE_PROJECT_DIR= TARGET_DIR={m} {G}")),
+    (True, "main: TARGET_DIR=<wt> gate (the cwd still counts, as before: only CLAUDE_PROJECT_DIR on the line replaces it)", m, B(f"TARGET_DIR={w} {G}")),
     (False, "worktree: export CLAUDE_PROJECT_DIR=\"$PWD\"; gate (as sessions write it)", w, B(f'export CLAUDE_PROJECT_DIR="$PWD"; {G}')),
     (False, "worktree: export CLAUDE_PROJECT_DIR=$PWD && gate > log 2>&1", w, B(f"export CLAUDE_PROJECT_DIR=$PWD && {G} > {tmp}/g.log 2>&1")),
     (False, "main: cd <wt> && export CLAUDE_PROJECT_DIR=\"$PWD\" && gate", m, B(f'cd {w} && export CLAUDE_PROJECT_DIR="$PWD" && {G}')),
