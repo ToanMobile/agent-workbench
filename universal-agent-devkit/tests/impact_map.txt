@@ -33,3 +33,21 @@ scripts/governance/devkit_i18n.py   tests/installer/test_i18n_profiles.sh
 # 23/10 (T0052): bin/capacity.py cho mặc định của heavy_slot.py (ngưỡng tải, trần suite nặng), post-fix-gate.py (nhóm suite song song) và
 # lane_plan.py (trần lane); test của các file đó chạy qua mặc định ấy mà không gọi tên capacity.py.
 bin/capacity.py   tests/gates/test_capacity.sh tests/gates/test_heavy_slot_cap.sh tests/gates/test_gate_slot_classes.sh tests/gates/test_gate_parallel_suites.sh tests/gates/test_lane_plan.sh
+# 25/10 (audit B6): run_impacted.sh khớp stem (tên bỏ đuôi) như một từ CHỈ cho file code; tài liệu dưới đây trước đó chỉ tới được người đọc
+# thật của nó qua stem (chữ thường: "fix", "hooks", "profile"…). Người đọc thật: cài đặt / profile / health / gỡ cài đặt đọc file đó.
+# commands/: bin/install.sh nối lệnh của kit vào .claude/commands; các test này liệt kê / so khớp commands/ của kit (repo consistency luôn chạy).
+commands/*   tests/installer/test_install_cli.sh tests/installer/test_install_idempotency.sh tests/installer/test_install_safety.sh tests/installer/test_install_alias.sh tests/installer/test_install_user_data.sh tests/installer/test_uninstall.sh tests/installer/test_i18n_profiles.sh tests/context_memory/test_local_tier.sh tests/worktree_git/test_restore_old.sh tests/worktree_git/test_x_old_conflict_isolation.sh
+.claude/commands/*   tests/installer/test_install_cli.sh tests/installer/test_install_idempotency.sh tests/installer/test_install_safety.sh tests/installer/test_install_alias.sh tests/installer/test_install_user_data.sh tests/installer/test_uninstall.sh tests/installer/test_i18n_profiles.sh tests/context_memory/test_local_tier.sh tests/worktree_git/test_restore_old.sh tests/worktree_git/test_x_old_conflict_isolation.sh
+# hooks/hooks.json (và link .claude/hooks/hooks.json): adapters/setup_claude.sh sinh hook của .claude/settings.json từ nó, devkit_uninstall.py đọc nó;
+# các test này đọc hook đã cài (test nêu tên hooks.json đã được chọn theo tên).
+*hooks/hooks.json   tests/installer/test_prompt_hook_missing.sh tests/installer/test_agent_health.sh tests/gates/test_guard_secrets.sh tests/installer/test_uninstall.sh tests/installer/test_install_idempotency.sh tests/installer/test_install_safety.sh tests/installer/test_platform_rules.sh
+# hai cặp audit 25/10 nêu tên (test chỉ nhắc tài liệu, giữ nguyên độ phủ cũ)
+AGENTS.md   tests/worktree_git/test_worktree.sh
+rules/core-rules.md   tests/gates/test_postfix_gate.sh tests/gates/test_proof_gate.sh tests/gates/test_proof_gate_report_after_push.sh
+# scripts/governance/context_sync.py chép rules/essentials.md vào khối AGENTS.md lúc cài / đổi profile
+rules/essentials.md   tests/installer/test_platform_rules.sh tests/context_memory/test_profile_split.sh
+# bin/install.sh, agent-config.py (agent-kit init|profile) đọc profile.json; agent-config chép regression_matrix.json của profile; agent-health
+# parse template ma trận; devkit_uninstall.py so ma trận của dự án với các ma trận của kit
+profiles/*/profile.json   tests/installer/test_install_cli.sh tests/installer/test_install_claude_only.sh tests/context_memory/test_completion.sh tests/gates/test_regression_gate_hook.sh tests/verification/test_matrix_detect.sh tests/worktree_git/test_relink_skills.sh
+profiles/*/regression_matrix.json   tests/installer/test_agent_config.sh tests/installer/test_uninstall.sh
+templates/regression_matrix.json   tests/installer/test_agent_health.sh tests/installer/test_uninstall.sh

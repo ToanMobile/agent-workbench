@@ -55,5 +55,33 @@ out="$(sel scripts/governance/devkit_i18n.py)"
 printf '%s\n' "$out" | grep -qx "tests/installer/test_i18n_profiles.sh" && ok "devkit_i18n.py change selects test_i18n_profiles.sh" || fail "devkit_i18n.py change does not select test_i18n_profiles.sh"
 out="$(sel LICENSE)"
 printf '%s\n' "$out" | grep -qx "hooks/tests/test_prompt_dedupe.sh" && fail "an unrelated change selects a mapped test" || ok "an unrelated change selects nothing from the map"
+# 25/10 (audit B6): the stem (name without extension) of a changed file is matched as a word only for a CODE file (.sh .py .bash .mjs
+# .js): a test reaches a script through a command ("$KIT githooks install" → scripts/git/githooks.sh). For a doc the stem is a common
+# word: commands/test.md selected 273 tests through "test", commands/fix.md 202 through "fix". A doc's real readers sit in the map.
+out="$(sel commands/fix.md)"; n="$(printf '%s\n' "$out" | grep -c .)"
+[ "$n" -le 20 ] && ok "commands/fix.md selects $n tests (≤ 20: a doc's stem is no word match)" || fail "commands/fix.md selects $n tests (> 20: its stem 'fix' matched as a word)"
+CMD_TESTS="tests/installer/test_install_cli.sh tests/installer/test_install_idempotency.sh tests/installer/test_install_safety.sh tests/installer/test_install_alias.sh tests/installer/test_install_user_data.sh tests/installer/test_uninstall.sh tests/installer/test_i18n_profiles.sh tests/context_memory/test_local_tier.sh tests/worktree_git/test_restore_old.sh tests/worktree_git/test_x_old_conflict_isolation.sh"
+for f in commands/fix.md .claude/commands/review.md; do
+  out="$(sel "$f")"; miss=""
+  for t in $CMD_TESTS; do printf '%s\n' "$out" | grep -qx "$t" || miss="$miss $t"; done
+  [ -z "$miss" ] && ok "$f selects the tests that read the kit's commands/" || fail "$f does not select:$miss"
+done
+out="$(sel scripts/git/githooks.sh)"
+for t in tests/worktree_git/test_githooks.sh tests/worktree_git/test_commit_hygiene.sh; do
+  printf '%s\n' "$out" | grep -qx "$t" && ok "githooks.sh (code) still selects $t" || fail "githooks.sh does not select $t (test_commit_hygiene names only the stem: \$KIT githooks install)"
+done
+# the doc readers that only the stem used to reach: install / profile / health / uninstall read them (and the two the audit named)
+chk_doc() { # <file> <test>...
+  local f="$1" o miss=""; shift; o="$(sel "$f")"
+  for t in "$@"; do printf '%s\n' "$o" | grep -qx "$t" || miss="$miss $t"; done
+  [ -z "$miss" ] && ok "$f selects its readers" || fail "$f does not select:$miss"
+}
+chk_doc hooks/hooks.json tests/installer/test_prompt_hook_missing.sh tests/installer/test_agent_health.sh tests/gates/test_guard_secrets.sh tests/installer/test_uninstall.sh
+chk_doc AGENTS.md tests/worktree_git/test_worktree.sh
+chk_doc rules/core-rules.md tests/gates/test_postfix_gate.sh tests/gates/test_proof_gate.sh tests/gates/test_proof_gate_report_after_push.sh
+chk_doc rules/essentials.md tests/installer/test_platform_rules.sh tests/context_memory/test_profile_split.sh
+chk_doc profiles/web/profile.json tests/installer/test_install_cli.sh tests/verification/test_matrix_detect.sh tests/worktree_git/test_relink_skills.sh
+chk_doc profiles/game/regression_matrix.json tests/installer/test_agent_config.sh tests/installer/test_uninstall.sh
+chk_doc templates/regression_matrix.json tests/installer/test_agent_health.sh tests/installer/test_uninstall.sh
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_impact_map: all passed" || { echo "❌ test_impact_map: $FAILS failed"; exit 1; }
