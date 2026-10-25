@@ -195,9 +195,16 @@ export async function startSwitcherDaemon(opts = {}) {
   const stateDir = resolveStateDir(opts.stateDir);
   const logFile = opts.logFile || path.join(stateDir, 'logs', 'cc-switch.log');
   const pollIntervalMs = opts.pollIntervalMs || 4000;
+  // 25/10: một await không bao giờ trả về giữ inFlight true mãi -> mọi lượt sau return ngay, daemon im lặng 5 giờ, bỏ qua nút Approve.
+  // Lượt kẹt quá ngưỡng: ghi lỗi và thoát khác 0, launchd (KeepAlive) khởi động lại daemon sạch.
+  const tickTimeoutMs = opts.tickTimeoutMs || 120_000;
+  const fetchUpdates = opts.fetchUpdates || fetchUpdatesSafely;
+  const ensureMenu = opts.ensureMenu || ensureTelegramBotMenu;
+  const exit = opts.exit || ((code) => process.exit(code));
 
   let stopped = false;
   let inFlight = false;
+  let tickStartedAt = 0;
   let lastAutoRotateAtMs = 0;
   let telegramUpdateOffset = 0;
   const logReader = createLogTailReader(logFile);
@@ -206,7 +213,7 @@ export async function startSwitcherDaemon(opts = {}) {
 
   const initCfg = loadTelegramConfig(stateDir);
   if (initCfg.botToken) {
-    void ensureTelegramBotMenu(initCfg.botToken);
+    void ensureMenu(initCfg.botToken);
   }
 
   const checkLogStep = async () => {
@@ -243,7 +250,7 @@ export async function startSwitcherDaemon(opts = {}) {
     const cfg = loadTelegramConfig(stateDir);
     if (!cfg.botToken) return;
     try {
-      const updates = await fetchUpdatesSafely(cfg.botToken, telegramUpdateOffset);
+      const updates = await fetchUpdates(cfg.botToken, telegramUpdateOffset);
       telegramUpdateOffset = await processIncomingTelegramUpdates(updates, {
         stateDir,
         currentOffset: telegramUpdateOffset,
@@ -256,8 +263,18 @@ export async function startSwitcherDaemon(opts = {}) {
   };
 
   const timer = setInterval(async () => {
-    if (stopped || inFlight) return;
+    if (stopped) return;
+    if (inFlight) {
+      const stuckMs = Date.now() - tickStartedAt;
+      if (stuckMs > tickTimeoutMs) {
+        logStructured('error', 'daemon_tick_stuck', { stuckMs, tickTimeoutMs });
+        stop();
+        exit(1);
+      }
+      return;
+    }
     inFlight = true;
+    tickStartedAt = Date.now();
     try {
       await checkLogStep();
       await pollTelegramStep();
