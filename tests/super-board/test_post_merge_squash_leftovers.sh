@@ -172,6 +172,17 @@ empty=$(find "$SALV" -type f -empty 2>/dev/null)
   && ok "A10 the merge gate no longer runs .claude/hooks/cleanup-wt.py (worktree.py decides alone)" \
   || fail "A10 the merge gate ran cleanup-wt.py: $(cat "$R/.claude/hooks/cleanup-wt.py.called" "$W/issue-7-review/.claude/hooks/cleanup-wt.py.called" 2>/dev/null)"
 rm -rf "$R/.claude/hooks" "$W/issue-7-review/.claude/hooks"
+# A10b (review U2, 26/10): SessionStart của .claude/settings.json (được track) vẫn chạy `cleanup-wt.py --auto --fetch` bên cạnh
+# `worktree.py gc --merged`, nên bộ dọn cũ (git worktree remove / git branch -D trần) vẫn gỡ worktree mỗi lần mở phiên. Không hook nào
+# của settings được gọi cleanup-wt.py --auto.
+cw=$(python3 -I - "$ROOT/.claude/settings.json" <<'PY' 2>&1
+import json, re, sys
+cmds = [h.get("command", "") for evs in json.load(open(sys.argv[1], encoding="utf-8")).get("hooks", {}).values()
+        for g in evs for h in g.get("hooks", [])]
+print("\n".join(c for c in cmds if re.search(r"cleanup-wt\.py\b.*--auto", c)))
+PY
+) && [ -z "$cw" ] && ok "A10b .claude/settings.json runs no cleanup-wt.py --auto (gc --merged is the one merged-worktree cleaner)" \
+  || fail "A10b .claude/settings.json still runs the old cleaner: $cw"
 
 # ── B. --sweep: worktree còn sót của các thẻ đã merge trước đó.
 OLD="2026-01-01T00:00:00Z"; NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
