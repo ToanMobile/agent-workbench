@@ -414,3 +414,5 @@
 77 tests/gates/test_evidence_false_blocks.sh
 # 2026-10-26: git output với byte không phải UTF-8 (worktree.py _run surrogateescape).
 2 tests/worktree_git/test_worktree_nonutf8_output.sh
+# 2026-10-26: gc --merged (U2) và các bản sửa review F2-F4/P3 (đo 32-84 s tuỳ tải máy).
+45 tests/worktree_git/test_worktree_gc_merged.sh
