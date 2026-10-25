@@ -266,8 +266,9 @@ META_QUOTE_PREFIX = re.compile(
 #     xanh", "not fixed"), or the same clause says the tests were not run / the result is not
 #     known ("chưa chạy test", "chưa biết test có pass"). A clause break (comma, nhưng, so, nên, …)
 #     ends it, so "Không chạy smoke, nhưng unit tests passed" stays a claim.
+# "vì / bởi vì / since / because" open a reason clause (2026-10-25): "I did not run the old suite because 12/12 tests pass" is a claim.
 _CONTRAST = (r"\b(?:nhưng|but|and|và|còn|mà|however|tuy\s+nhiên|song|so|nên|vì\s+vậy|therefore|while"
-             r"|whereas|rồi|then|giờ|bây\s+giờ|now)\b")
+             r"|whereas|rồi|then|giờ|bây\s+giờ|now|bởi\s+vì|vì|since|because)\b")
 # A comma or ": " also ends the attributed part: "User reported X, fixed it" — the report is
 # theirs, the claim after the comma is the agent's own ("08:41" has no space, it stays).
 # Not a ":" right after the reporting verb, which opens the quote ("The user said: …", "Phiên
@@ -299,6 +300,14 @@ NEG_RUN = re.compile(
     r"(?:\b(?:chưa|không|chẳng|never|not|did\s+not|have\s+not|has\s+not|cannot|không\s+thể|chưa\s+thể)|n't)"
     r"\s+(?:(?:được|hề|yet|been|thể)\s+)?"
     r"(?:chạy|run|ran|running|execute[sd]?|biết|know|khẳng\s+định|claim|say|nói|xác\s+nhận|confirm|chắc)\b", re.I)
+# A negated ASSERTION verb right before the result disowns it ("chưa chốt đã fix", "chưa có bằng chứng đủ để nói đã fix", "I'm not
+# claiming a test pass"; 2026-10-25 audit: 46 check-7 blocks; cases in tests/gates/test_evidence_false_blocks.sh, section E). Anchored at
+# the END of the clause before the match, with only a closed filler between the verb and the match, so "gọi" / "call" exempt only as
+# "gọi chúng là …" / "call it …": "Không ai gọi API này nữa vì đã fix", "I'm not claiming victory yet since 12/12 tests pass" stay claims.
+NEG_ASSERT = re.compile(
+    r"(?:\b(?:không|chưa|chẳng|not|never)\b|n't)\s+(?:[^\s,;:]+\s+){0,6}?"
+    r"(?:gọi|nói|tuyên\s+bố|khẳng\s+định|chốt|kết\s+luận|claim(?:s|ed|ing)?|call(?:s|ed|ing)?|say(?:s|ing)?)"
+    r"(?:\s+(?:chúng|nó|họ|là|rằng|it|them|this|that|a|an|the|[^\s,;:]+\s+(?:hay|or)))*\s*$", re.I)
 
 def _tail(prefix, breaker):
     cut = 0
@@ -311,7 +320,8 @@ def attributed_or_negated(prefix, matched_text):
         return True
     if NEG_BEFORE_RESULT.search(prefix) or NEG_IN_MATCH.search(matched_text):
         return True
-    return bool(NEG_RUN.search(_tail(prefix, CLAUSE_BREAK)))
+    clause = _tail(prefix, CLAUSE_BREAK)
+    return bool(NEG_RUN.search(clause) or NEG_ASSERT.search(clause))
 
 # "test RED→GREEN" in a plan names the TDD cycle the rules demand, it reports no run (2026-09-27:
 # an audit reply that only planned one was blocked twice). Exempt only when the sentence says it
@@ -321,11 +331,25 @@ RED_GREEN_NAME = re.compile(r"\b(?:red|đỏ)\s*(?:→|->|=>)\s*(?:green|xanh)\b
 CYCLE_PLAN = re.compile(r"\b(?:sẽ|kế\s+hoạch|cần|nên|phải|chưa|will|plan(?:ned)?|need|must|should"
                         r"|not\s+yet|before)\b|trước\s+khi", re.I)
 CYCLE_DONE = re.compile(r"\b(?:đã|rồi|xong|done|ran|passed)\b|✅|✔|✓", re.I)
+# Three more plan signals (2026-10-25 audit, real blocked plans). Each must GOVERN the cycle name, a word elsewhere in the sentence does
+# not: "Guard chặn push có test ĐỎ→XANH", "Sửa theo đề xuất của reviewer, có test ĐỎ→XANH" stay claims.
+#   • a prohibition of RUNNING it, right before the name: "luật sandbox chặn luôn việc chạy test ĐỎ→XANH";
+#   • the agent's own proposal verb before the name: "Tôi đề xuất …, mỗi việc có test ĐỎ→XANH", "I suggest …", a leading "Đề xuất:";
+#   • a sequencing ", rồi <verb>" after the name: "kèm test RED→GREEN, rồi đồng bộ sang các repo". That "rồi" is "then", not
+#     "already", so it is no done word; a particle after it ("rồi nhé", "rồi đó") and every other "rồi" still are.
+CYCLE_PROHIBIT_RUN = re.compile(r"\b(?:chặn|ngăn|cấm|block(?:s|ed|ing)?|prevent(?:s|ed|ing)?|forbid(?:s|den)?)\s+"
+                                r"(?:(?:luôn|cả|việc|the|from)\s+)*(?:chạy|run(?:s|ning)?)\s*$", re.I)
+CYCLE_PROPOSE = re.compile(r"\b(?:tôi|mình|em|chúng\s+(?:tôi|ta|mình)|I|we)(?:'d|\s+(?:would|xin|muốn))?\s+"
+                           r"(?:đề\s+xuất|propose|suggest|recommend)\b|^\s*(?:đề\s+xuất|proposal|suggestion|recommendation)\s*:", re.I)
+CYCLE_THEN = re.compile(r",\s*rồi(?=\s+(?!(?:nhé|nha|nhỉ|đó|đấy|ạ|mà|luôn|hết|chứ)\b)\w)", re.I)
 
 def cycle_name_only(sentence, match):
     if not RED_GREEN_NAME.search(match.group(0)):
         return False
-    if not CYCLE_PLAN.search(sentence) or CYCLE_DONE.search(sentence):
+    before, after = sentence[:match.start()], sentence[match.end():]
+    planned = (CYCLE_PLAN.search(sentence) or CYCLE_PROHIBIT_RUN.search(before) or CYCLE_PROPOSE.search(before)
+               or CYCLE_THEN.search(after))
+    if not planned or CYCLE_DONE.search(sentence[:match.end()] + CYCLE_THEN.sub(" ", after)):
         return False
     rest = RED_GREEN_NAME.sub(" ", sentence[match.start():])
     return not re.search(r"pass|xanh|green|thành\s+công|đạt|\d+\s*/\s*\d+", rest, re.I)
@@ -669,8 +693,9 @@ def is_test_runner(cmd):
 DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)*(?:test_[\w.-]+|\$\{?\w+\}?)\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
 # Their check names may carry FAIL / REJECT / ERROR in capitals ("✔ REJECT on secrets"), so
 # the verdict is the summary: red on "N failed/FAILED", "N deviating" (N > 0), "❌" or a "✖"
-# line; green only on an explicit pass summary; anything else is not a verdict.
-DEVKIT_SUITE_RED = re.compile(r"\b[1-9]\d*\s+(failed|FAILED|deviating)\b|❌|^\s*✖ ", re.M)
+# line ("✘" too: test_repo_consistency, test_uninstall, test_restore_old print their failures with it);
+# green only on an explicit pass summary; anything else is not a verdict.
+DEVKIT_SUITE_RED = re.compile(r"\b[1-9]\d*\s+(failed|FAILED|deviating)\b|❌|^\s*[✖✘] ", re.M)
 DEVKIT_SUITE_GREEN = re.compile(r"all (checks )?passed|ALL [\w ,-]*PASSED|\b0 deviating\b|: all passed", re.I)
 # A command is a runner only in the segment that actually runs it. `&&` / `||` / `;` split segments
 # (not inside quotes, or inside for/while/until/if/case … done/fi/esac). A reader (echo, grep, git,
@@ -937,6 +962,34 @@ RUNNER_FAIL_RX = re.compile(
 # evidence check did not accept as green). No `exit=` line = the tool refused before
 # running anything, which is neither red nor green.
 PM_RUN_EXIT_RX = re.compile(r"^exit=(-?\d+|null)", re.M)
+# `bash tests/…/test_x.sh > log 2>&1; echo "rc=$?"`: the segment right after a run prints that run's exit code (2026-10-25 audit: the
+# kit suite runs of f294e5d9 printed rc=0 and still read as no verdict). A runner segment is bound to its code only when it is ONE simple
+# command (no pipe, `&`, `;` or loop: `$?` would be the pipe's last command, the background launch or the last iteration), the NEXT
+# segment is `echo "<label>=$?"`, and the label is printed exactly once.
+_ECHO_RC_RX = re.compile(r"""echo\s+(["']?)([A-Za-z_][\w.-]*)=\$\?\1\s*$""")
+
+def _single_command(seg):
+    s = re.sub(r"\"[^\"]*\"|'[^']*'", "", seg)     # quoted text is data
+    s = re.sub(r"\d*>&\d+|&>>?|>&", " ", s)         # 2>&1, &>log: redirections, not job control
+    return not re.match(r"\s*(?:for|while|until|if|case)\b", s) and not re.search(r"[;|&\n]", s)
+
+def _echoed_exit(cmd, txt):
+    """"red" when an echoed exit code of a runner segment is not 0, "green" when EVERY runner segment of the command is bound to an
+    echoed 0, else None."""
+    segs = _command_segments(cmd)
+    codes, unbound = [], False
+    for i, seg in enumerate(segs):
+        if not _segment_is_runner(seg):
+            continue
+        m = _ECHO_RC_RX.match(segs[i + 1]) if i + 1 < len(segs) and _single_command(seg) else None
+        hits = re.findall(r"(?m)^\s*" + re.escape(m.group(2)) + r"=(\d+)\s*$", txt) if m else []
+        if len(hits) != 1:
+            unbound = True
+            continue
+        codes.append(int(hits[0]))
+    if any(c != 0 for c in codes):
+        return "red"
+    return "green" if codes and not unbound else None
 
 def runner_state(is_error, txt, pm_run=False, command=""):
     """"red", "green", "gate-green" (the DevKit gate: a green for checks 2 and 7, not for auto_link), or None (not a verdict) for one runner tool_result."""
@@ -950,6 +1003,9 @@ def runner_state(is_error, txt, pm_run=False, command=""):
     if command and _command_is_suite(command):
         if is_error or DEVKIT_SUITE_RED.search(txt):
             return "red"
+        echoed = _echoed_exit(command, txt)
+        if echoed:
+            return echoed
         if DEVKIT_SUITE_GREEN.search(txt):
             return "green"
         # Exit 0 của tool là xanh khi bash/sh chạy thẳng file kit, dù không có "all passed".
@@ -1073,6 +1129,13 @@ def workflow_producer(use):
         return False
     return inp.get("name") == "multi-lens-audit" or canonical_workflow_script(inp.get("script"))
 
+# A call a hook, the permission system or the worktree isolation REFUSED never ran: it is no red and no green, so never the RED half of
+# check 7's pair (2026-10-25 audit: such results were recorded as RED runs, a fail-open). The pattern of hooks/security_gate.sh
+# (NOT_RUN_RX, anchored: a command's own failing output starts "Exit code N"), plus the subagent wording "This agent is isolated …".
+NOT_RUN_RX = re.compile(r"(PreToolUse:\S+ hook error|Permission to use \S[\s\S]*? has been denied"
+                        r"|Permission for this action was denied by the Claude Code auto mode classifier"
+                        r"|This (?:session|agent) is isolated in the worktree [^\n]* Refusing to run it)")
+
 tp = d.get("transcript_path")
 if tp and os.path.exists(tp):
     try:
@@ -1123,7 +1186,9 @@ if tp and os.path.exists(tp):
                         if (use and use["name"] == "Bash"
                                 and BUGS_CMD_RX.search(str(use["input"].get("command", "")))):
                             bugs_touched.update(BUG_ID_RX.findall(txt))
-                        if (use and use["name"] == "Bash"
+                        if blk.get("is_error") is True and NOT_RUN_RX.match(txt.lstrip()):
+                            pass    # refused: never ran (NOT_RUN_RX)
+                        elif (use and use["name"] == "Bash"
                                 and is_test_runner(str(use["input"].get("command", "")))):
                             cmd = str(use["input"].get("command", ""))
                             st = runner_state(blk.get("is_error") is True, txt, command=cmd)
