@@ -423,6 +423,34 @@ def git_tracks(p):
 HOME = os.path.realpath(os.path.expanduser("~"))
 SYS_PART_DIRS = {"/" + d for d in ("system", "vendor", "boot", "product", "odm", "data", "persist", "efs")}
 PWD_VAR = re.compile(r"\$(?:PWD\b|\{PWD\})")
+# The agent own scratch folder (audit 2026-10-25 A7). A literal path there is allowed like any /tmp path, but one SPELLED under it must
+# also END under it: `rm -rf /private/tmp/claude-501/../x` and `rm -rf <scratch>/link/` (a trailing slash makes BSD rm delete what the
+# link points at: measured on macOS 25/10, the target folder went, the link stayed) left it unchecked. Every other path: unchanged.
+SCRATCH_ROOTS = tuple(r + "/claude-" + str(os.getuid()) for r in ("/private/tmp", "/tmp"))
+
+def scratch_escape(t):
+    """Why rm -rf of t, spelled as a path in the agent scratch folder, reaches outside it; None when it stays or is not spelled there.
+    A `..` part is refused. Without a trailing slash rm removes the last name itself (a link, not its target); with one it follows it.
+    A glob is judged on what it matches now (at most 2000) and on the folder before it."""
+    root = next((r for r in SCRATCH_ROOTS if t == r or t.startswith(r + "/")), None)
+    if root is None:
+        return None
+    parts = t.split("/")
+    if ".." in parts:
+        return f"đường dẫn trong thư mục scratch có `..` (ra khỏi {root})"
+    follow = t.endswith("/")
+    def reach(path):
+        q = path.rstrip("/") or "/"
+        return os.path.realpath(q) if follow else os.path.join(os.path.realpath(os.path.dirname(q)), os.path.basename(q))
+    if GLOB.search(t):
+        import glob as _glob, itertools as _it
+        k = next(i for i, x in enumerate(parts) if GLOB.search(x))
+        hits = [reach(m) for m in _it.islice(_glob.iglob(t), 2000)] + [os.path.realpath("/".join(parts[:k]) or "/")]
+    else:
+        hits = [reach(t)]
+    real = os.path.realpath(root)
+    out = next((p for p in hits if p != real and not p.startswith(real + "/")), None)
+    return f"ra khỏi thư mục scratch {root} (tới {out})" if out else None
 
 def rm_target_problem(t, cwds, env, forced=True):
     """Why removing target t recursively is refused, or None. Without -f (forced=False; 2026-10-09,
@@ -444,6 +472,10 @@ def rm_target_problem(t, cwds, env, forced=True):
     t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
     if "$" in t or "`" in t:
         return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)" if forced else None
+    if forced:   # A7: a path spelled in the scratch folder must stay in it (scratch_escape); any other path is judged as before
+        esc = scratch_escape(t)
+        if esc:
+            return f"{orig}: {esc}"
     glob = bool(GLOB.search(t))
     if glob:  # judged as its directory: rm -rf src/* empties src
         parts = t.split("/")

@@ -16,6 +16,7 @@ import filecmp
 import sys
 import subprocess
 import shutil
+import tempfile
 import argparse
 import json
 import re
@@ -246,6 +247,14 @@ def compare_sandboxes(name_a: str, name_b: str) -> None:
     print("💡 Tiêu chí chọn Winner: Exit 0 trên Post-Fix Gate + Diff phẫu thuật ít dòng hơn.")
 
 
+def _setup_copy(rel: str, s_path: Path, repo_root: Path, included: List[str]) -> bool:
+    """An untracked file create_sandbox put in the sandbox and nobody changed (disposable): the recorded setup file .sandbox-env.sh, or a
+    byte-identical copy of a .worktreeinclude file."""
+    under_include = any(rel == i or rel.startswith(i + "/") for i in included)
+    src, dst = Path(repo_root) / rel, Path(s_path) / rel
+    return rel == ".sandbox-env.sh" or (under_include and src.is_file() and dst.is_file() and filecmp.cmp(src, dst, shallow=False))
+
+
 def sandbox_unsaved_work(s_path: Path, repo_root: Path) -> Optional[str]:
     """Why this sandbox must not be deleted silently, or None when only disposable setup files are left.
     Fail closed: an unreadable status (broken worktree admin dir, a folder that is not a worktree) is unsaved work."""
@@ -259,13 +268,8 @@ def sandbox_unsaved_work(s_path: Path, repo_root: Path) -> Optional[str]:
     left = []
     for line in proc.stdout.splitlines():
         rel = line[3:].strip()
-        if line.startswith("??") and not rel.startswith('"'):   # a quoted (odd) name is never assumed disposable
-            under_include = any(rel == i or rel.startswith(i + "/") for i in included)
-            src, dst = Path(repo_root) / rel, Path(s_path) / rel
-            # Disposable only when it is the recorded setup file, or a byte-identical copy of an included file.
-            if rel == ".sandbox-env.sh" or (under_include and src.is_file() and dst.is_file()
-                                            and filecmp.cmp(src, dst, shallow=False)):
-                continue
+        if line.startswith("??") and not rel.startswith('"') and _setup_copy(rel, s_path, repo_root, included):   # a quoted (odd) name never is
+            continue
         left.append(line)
     # Review #12: file bị git ignore không hiện ở `status` trên, rmtree xoá mất bản duy nhất. Theo luật `worktree remove` / gc: file bí
     # mật bị ignore (`_ignored_secrets`, bỏ qua thư mục build/dependency) và file .worktreeinclude bị ignore là việc riêng khi khác bản ở
@@ -538,6 +542,46 @@ def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force
     return kept
 
 
+def _trunk_main(repo_root: Path) -> bool:
+    """U1 (audit 25/10): repo_root is the MAIN checkout of a repo in trunk mode (worktree.py `_trunk_mode`, the default). There main is
+    merge-only: it moves through `worktree.py finish` alone. A linked (session) worktree is not main: merge-winner merges into it as before."""
+    wm = _worktree_module()
+    main = wm.main_checkout(str(repo_root))
+    return bool(wm._same_path(main, str(repo_root)) and wm._trunk_mode(main))
+
+
+def _finish_into_main(name: str, s_path: Path, repo_root: Path) -> None:
+    """U1: hand the sandbox to `worktree.py finish <sandbox> --keep` (the merge gate on what it brings, then a fast-forward of main under
+    finish's lock): reused, not rewritten. finish refuses any untracked file, and the setup files create_sandbox wrote are no work
+    (_setup_copy): they are moved aside for that run and put back after it, whatever it answered. finish refusing raises (main unchanged)."""
+    included = [i.rstrip("/") for i in parse_worktree_include(repo_root)]
+    status = run_cmd(["git", "status", "--porcelain", "-uall"], cwd=s_path, check=False)
+    if status.returncode != 0:
+        raise RuntimeError(f"Không merge sandbox '{name}': git status lỗi rc={status.returncode}: {status.stderr.strip()}")
+    setup = [l[3:].strip() for l in status.stdout.splitlines()
+             if l.startswith("??") and not l[3:].strip().startswith('"') and _setup_copy(l[3:].strip(), s_path, repo_root, included)]
+    hold = Path(tempfile.mkdtemp(prefix=f"sandbox-{name}-setup."))
+    moved = []
+    try:
+        for rel in setup:
+            (hold / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(s_path / rel), str(hold / rel))
+            moved.append(rel)
+        finish = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "worktree.py"), "finish", str(s_path), "--keep"],
+                                cwd=str(repo_root), capture_output=True, text=True)
+    finally:
+        for rel in moved:   # back in place: cleanup judges them disposable, and a sandbox finish refused stays whole
+            (s_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(hold / rel), str(s_path / rel))
+        shutil.rmtree(hold, ignore_errors=True)
+    said = (finish.stdout + finish.stderr).strip()
+    if said:
+        print("   " + said.replace("\n", "\n   "))
+    if finish.returncode != 0:
+        raise RuntimeError(f"Không merge sandbox '{name}': trunk mode — main chỉ đi qua `agent-kit worktree finish`, và finish từ chối "
+                           f"(lý do ở dòng trên, rc={finish.returncode}). Main không đổi, sandbox giữ nguyên: sửa trong sandbox rồi chạy lại.")
+
+
 def merge_winner(name: str, squash: bool = False, clean_others: bool = False) -> None:
     """
     Merge sandbox thắng cuộc vào main branch và TỰ ĐỘNG DỌN DẸP SẠCH SẼ.
@@ -574,16 +618,30 @@ def merge_winner(name: str, squash: bool = False, clean_others: bool = False) ->
         why = base_name if not base_ref else f"checkout chính đang ở HEAD tách rời, merge sẽ chỉ nằm trên HEAD đó, không vào {base_name}"
         raise RuntimeError(f"Không merge sandbox '{name}': {why}. Chuyển checkout về nhánh (`git checkout <nhánh>`) rồi chạy lại.")
 
-    # 2. Merge vào main repo
-    print(f"🔄 [1/3] Đang tiến hành merge branch '{branch_name}' vào nhánh chính...")
-    merge_cmd = ["git", "merge", branch_name]
-    if squash:
-        merge_cmd.append("--squash")
+    # U1 (audit 25/10): trunk mode, run from the main checkout — main is merge-only, `worktree finish` is its one door (merge gate, then a
+    # fast-forward). The sandbox is handed to it instead of `git merge` here. Not known whether trunk mode is on: nothing is merged.
+    try:
+        trunk_main = _trunk_main(repo_root)
+    except (Exception, SystemExit) as e:  # noqa: BLE001 - worktree.git(check=True) raises SystemExit
+        raise RuntimeError(f"Không merge sandbox '{name}': không xác định được checkout này có phải main ở trunk mode không ({e}); không đổi gì.")
+    if trunk_main and squash:
+        raise RuntimeError(f"Không merge sandbox '{name}' với --squash: trunk mode — main chỉ đi qua `agent-kit worktree finish`, mà finish không "
+                           f"squash. Chạy lại không có --squash (hoặc tự gộp commit trong sandbox trước).")
 
-    merge_res = run_cmd(merge_cmd, cwd=repo_root, check=False)
-    if merge_res.returncode != 0:
-        run_cmd(["git", "merge", "--abort"], cwd=repo_root, check=False)
-        raise RuntimeError(f"Merge thất bại! Có xung đột (conflict). Đã tự động rollback repo chính bằng 'git merge --abort'. Sandbox '{name}' được bảo toàn để giải quyết xung đột:\n{merge_res.stderr or merge_res.stdout}")
+    # 2. Merge vào main repo
+    if trunk_main:
+        print(f"🔄 [1/3] Trunk mode: giao sandbox '{name}' cho `agent-kit worktree finish {sandbox_path}` (gate gộp, rồi fast-forward main)...")
+        _finish_into_main(name, sandbox_path, repo_root)
+    else:
+        print(f"🔄 [1/3] Đang tiến hành merge branch '{branch_name}' vào nhánh chính...")
+        merge_cmd = ["git", "merge", branch_name]
+        if squash:
+            merge_cmd.append("--squash")
+
+        merge_res = run_cmd(merge_cmd, cwd=repo_root, check=False)
+        if merge_res.returncode != 0:
+            run_cmd(["git", "merge", "--abort"], cwd=repo_root, check=False)
+            raise RuntimeError(f"Merge thất bại! Có xung đột (conflict). Đã tự động rollback repo chính bằng 'git merge --abort'. Sandbox '{name}' được bảo toàn để giải quyết xung đột:\n{merge_res.stderr or merge_res.stdout}")
 
     print(f"✅ [2/3] Merge thành công vào nhánh chính.")
 

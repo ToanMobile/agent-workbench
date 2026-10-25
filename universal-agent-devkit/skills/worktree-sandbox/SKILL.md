@@ -21,6 +21,7 @@ python3 .agents/devkit/scripts/git/worktree_sandbox.py list
 python3 .agents/devkit/scripts/git/worktree_sandbox.py compare <name_a> <name_b>
 
 # Merge giải pháp thắng cuộc và TỰ ĐỘNG DỌN DẸP SẠCH TOÀN BỘ RÁC
+# (trunk mode, chạy ở checkout main: giao cho `agent-kit worktree finish` — gate gộp rồi fast-forward; không có --squash)
 python3 .agents/devkit/scripts/git/worktree_sandbox.py merge-winner <name> [--squash]
 
 # Dọn dẹp thủ công toàn bộ bất kỳ lúc nào

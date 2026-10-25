@@ -95,7 +95,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-protected-push.py"
+            "command": "f=\"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-protected-push.py; if [ -f \"$f\" ]; then exec python3 \"$f\"; else echo \"⚠ DevKit: hook file missing, guard-protected-push.py NOT run (not blocked): $f\" >&2; fi"
           }
         ]
       },
@@ -139,7 +139,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-secrets.py"
+            "command": "f=\"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-secrets.py; if [ -f \"$f\" ]; then exec python3 \"$f\"; else echo \"⚠ DevKit: hook file missing, guard-secrets.py NOT run (not blocked): $f\" >&2; fi"
           }
         ]
       },

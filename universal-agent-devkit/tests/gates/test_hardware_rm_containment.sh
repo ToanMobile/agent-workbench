@@ -72,4 +72,30 @@ check 0 'find . -name "*.kt" | xargs wc -l'
 check 0 'find . -name "*.kt" -exec wc -l {} +'
 check 0 'git ls-files | xargs rm -f'
 
+# 3. audit 2026-10-25 A7: the agent's own scratch (/private/tmp/claude-<uid>/, /tmp/claude-<uid>/). A literal path there stays allowed, but a
+#    path SPELLED under it must also end under it: no `..` out of it, and no link it reaches through (a trailing slash makes BSD rm follow
+#    the link: `rm -rf link/` empties the link target — measured on macOS 25/10). Variables stay as they were (`rm -rf $X` refused).
+U="$(id -u)"; mkdir -p "/tmp/claude-$U" && SCR="$(mktemp -d "/tmp/claude-$U/devkit-hw-test.XXXXXX")" || { fail "no scratch dir"; SCR=""; }
+if [ -n "$SCR" ]; then
+  trap 'rm -rf "$TMP" "$SCR"' EXIT
+  SCRP="$(cd "$SCR" && pwd -P)"; SB="$(basename "$SCR")"
+  mkdir -p "$SCR/inner" && ln -s "$HOME" "$SCR/home" && ln -s "$TMP/work/other" "$SCR/elsewhere" && ln -s "$SCRP/inner" "$SCR/inside"
+  check 0 "rm -rf $SCRP/kitcopy"                              # literal, /private/tmp spelling
+  check 0 "rm -rf /tmp/claude-$U/$SB/stage $SCRP/inner"        # literal, /tmp spelling, two targets
+  check 0 "rm -rf $SCRP/kit*"                                 # a glob that stays in the folder
+  check 0 "rm -rf $SCRP/home"                                 # no trailing slash: rm removes the link, not $HOME
+  check 0 "rm -rf $SCRP/inside/"                              # a link that stays in the scratch folder
+  check 2 "rm -rf /private/tmp/claude-$U/../x"
+  check 2 "rm -rf /tmp/claude-$U/$SB/../../x"
+  check 2 "rm -rf $SCRP/../*"
+  check 2 "rm -rf $SCRP/home/"                                # trailing slash through a link to $HOME
+  check 2 "rm -rf $SCRP/elsewhere/"                           # … or to a folder outside the scratch folder
+  check 2 "rm -rf $SCRP/home/Documents"
+  check 2 "rm -rf $SCRP/*/Documents"                          # a glob whose match is the link to \$HOME
+  check 2 "rm -rf $SCRP/*/"                                   # … with a trailing slash: rm follows every matched link
+  check 2 'rm -rf /'
+  check 2 'rm -rf ~'
+  check 2 'rm -rf $X'
+fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_containment: all passed" || { echo "❌ test_hardware_rm_containment: $FAILS failed"; exit 1; }
