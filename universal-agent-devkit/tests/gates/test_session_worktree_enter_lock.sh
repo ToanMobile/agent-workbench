@@ -123,11 +123,12 @@ start_src "$TMP/h" resumed s25 resume
 lk="$(lock_of "$TMP/h" resumed)"
 [ "$lk" = "devkit-kept session=s25 pid=$$" ] && ok "E11: a shell resume (new process) in its worktree takes the lock over from the dead pid" \
   || fail "E11: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
-# E12: /resume trong phiên (cùng tiến trình) sau khi cd vào worktree khác: pid đã giữ khoá worktree của nó, không khoá thêm
+# E12 (review 81b920db): /resume trong phiên (cùng tiến trình) sau khi cd vào worktree khác: vẫn khoá nơi nó đứng (fail-safe, #413) —
+#   bỏ qua thì cleanup-wt có thể gỡ worktree đó giữa gate; khoá worktree cũ của nó vẫn nguyên
 repo i true; wtadd "$TMP/i" own s26; enter "$TMP/i" own s26; wtadd "$TMP/i" other s27
 start_src "$TMP/i" other s28 resume
 lk="$(lock_of "$TMP/i" other)"
-[ -z "$lk" ] && [ -n "$(lock_of "$TMP/i" own)" ] && ok "E12: an in-session /resume after a cd does not lock a second worktree (the pid already holds one)" \
+[ "$lk" = "devkit-kept session=s28 pid=$$" ] && [ -n "$(lock_of "$TMP/i" own)" ] && ok "E12: an in-session /resume after a cd locks where it stands (its earlier worktree keeps its lock)" \
   || fail "E12: other='$lk' own='$(lock_of "$TMP/i" own)'"
 # E13 (OCR 25/10): một tiến trình MỚI (startup) chỉ trùng pid với khoá ở worktree khác khi pid bị cấp lại: nó vẫn khoá worktree của nó
 wtadd "$TMP/i" fresh s29; start_src "$TMP/i" fresh s29 startup
@@ -191,34 +192,73 @@ printf '%s %s\n' "$$" "$BOGUS" > "$sf"; side NEW_START tmp-blocked
   || fail "R7b: stale '$(cat "$sf")' left beside the new lock; err=$(head -c 200 "$TMP/side.err")"
 rm -rf "$(dirname "$sf")"/devkit-kept.start.*.tmp
 
-# E14 (OCR 25/10): /resume của một phiên CHƯA giữ khoá nào (đang ở main, cd vào worktree khác): worktree có chủ khác CÒN SỐNG (registry
-#   mang pid trả lời) thì không khoá. E14b đối chứng: chủ đã chết (không pid nào sống) thì nhận như reown (worktree không mất việc).
-repo j true
-wtadd "$TMP/j" peer2 s41; mkdir -p "$TMP/j/.git/devkit-sessions"
-printf '{"session_id": "s41", "agent": "claude", "pid": %s}\n' "$SLEEPER" > "$TMP/j/.git/devkit-sessions/s41.json"
-start_src "$TMP/j" peer2 s42 resume
-lk="$(lock_of "$TMP/j" peer2)"
-[ -z "$lk" ] && ok "E14: a resume that holds no lock does not lock a worktree whose owner session is alive" \
-  || fail "E14: live owner's worktree locked '$lk' err=$(head -c 300 "$TMP/start.err")"
-wtadd "$TMP/j" gone s43; start_src "$TMP/j" gone s44 resume
-lk="$(lock_of "$TMP/j" gone)"
-[ "$lk" = "devkit-kept session=s44 pid=$$" ] && ok "E14b: … but one whose owner has no live pid anywhere is taken over (the work is never lost)" \
-  || fail "E14b: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
-# E16 (OCR 25/10): chủ được nêu qua RECORD session_worktree (EnterWorktree), không qua state: record mang pid còn sống thì cũng không khoá
-G "$TMP/j" worktree add -q --detach "$TMP/j/.claude/worktrees/recowned"
-mkdir -p "$TMP/j/.claude/audit-gate/session_worktree"
-printf '%s\npid %s\n' "$TMP/j/.claude/worktrees/recowned" "$SLEEPER" > "$TMP/j/.claude/audit-gate/session_worktree/s50"
-start_src "$TMP/j" recowned s51 startup
-lk="$(lock_of "$TMP/j" recowned)"
-[ -z "$lk" ] && ok "E16: a worktree a live session's record names (no state owner) is not locked by a session standing in it" \
-  || fail "E16: locked '$lk' err=$(head -c 300 "$TMP/start.err")"
-# E17 (OCR 25/10): devkit-worktree.json lồng quá sâu (hỏng, hay agent ghi): đọc như không có chủ — phiên khởi động trong đó vẫn khoá
-wtadd "$TMP/j" deep s52
-python3 -c 'import sys; open(sys.argv[1], "w").write("[" * 200000)' "$(G "$TMP/j/.claude/worktrees/deep" rev-parse --absolute-git-dir)/devkit-worktree.json"
-start_src "$TMP/j" deep s52 startup
-lk="$(lock_of "$TMP/j" deep)"
-[ "$lk" = "devkit-kept session=s52 pid=$$" ] && ok "E17: a state file nested too deep reads as no owner: the session starting there still locks it" \
-  || fail "E17: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E18 (review PR #415): phiên KHÁCH còn sống có record nêu worktree (EnterWorktree path=, reown lúc Stop) không được chặn CHỦ khoá lại:
+#   chủ (state nêu nó, khoá cũ mang sid của nó) resume từ shell thì thay khoá pid đã chết bằng pid mới — không thì gc mở khoá chết đó
+repo l true
+wtadd "$TMP/l" ownerwt s60; G "$TMP/l" worktree lock --reason "devkit-kept session=s60 pid=$DEAD" "$TMP/l/.claude/worktrees/ownerwt"
+mkdir -p "$TMP/l/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/l/.claude/worktrees/ownerwt" "$SLEEPER" > "$TMP/l/.claude/audit-gate/session_worktree/s61"
+start_src "$TMP/l" ownerwt s60 resume
+lk="$(lock_of "$TMP/l" ownerwt)"
+[ "$lk" = "devkit-kept session=s60 pid=$$" ] && ok "E18: the owner resuming in its worktree re-locks it even while a live guest session's record names it" \
+  || fail "E18: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E18b (OCR PR #415 follow-up): sans state file — the lock already carrying this session id is what makes it the owner
+repo o true; G "$TMP/o" worktree add -q --detach "$TMP/o/.claude/worktrees/nostate"
+G "$TMP/o" worktree lock --reason "devkit-kept session=s90 pid=$DEAD" "$TMP/o/.claude/worktrees/nostate"
+mkdir -p "$TMP/o/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/o/.claude/worktrees/nostate" "$SLEEPER" > "$TMP/o/.claude/audit-gate/session_worktree/s91"
+start_src "$TMP/o" nostate s90 resume
+lk="$(lock_of "$TMP/o" nostate)"
+[ "$lk" = "devkit-kept session=s90 pid=$$" ] && ok "E18b: … also with no state file: its old lock carrying its id makes it the owner" \
+  || fail "E18b: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E23 (review 09a017a8): chủ sau /clear (id mới sB; reown đã chuyển record của sA sang sB, giữ pid cũ = pid của khoá) resume từ shell
+#   trong lúc record của một khách còn sống nêu worktree: record của chính nó mang đúng pid của khoá là bằng chứng chủ -> khoá lại
+repo s true; wtadd "$TMP/s" cleared2 sA; G "$TMP/s" worktree lock --reason "devkit-kept session=sA pid=$DEAD" "$TMP/s/.claude/worktrees/cleared2"
+mkdir -p "$TMP/s/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/s/.claude/worktrees/cleared2" "$DEAD" > "$TMP/s/.claude/audit-gate/session_worktree/sB"
+printf '%s\npid %s\n' "$TMP/s/.claude/worktrees/cleared2" "$SLEEPER" > "$TMP/s/.claude/audit-gate/session_worktree/s97"
+start_src "$TMP/s" cleared2 sB resume
+lk="$(lock_of "$TMP/s" cleared2)"
+[ "$lk" = "devkit-kept session=sB pid=$$" ] && ok "E23: the owner under its post-/clear id (its record carries the lock's pid) re-locks despite a live guest record" \
+  || fail "E23: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E24 (review 45bb1ab2): sau khi gc đã mở khoá chết (mỗi SessionStart ở main chạy gc), chủ sau /clear resume từ shell trong lúc record
+#   của một khách còn sống nêu worktree: không còn khoá nào để nhận chủ — SessionStart vẫn phải khoá (trước #415 nó luôn khoá)
+repo u true; wtadd "$TMP/u" aftergc sA2; mkdir -p "$TMP/u/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/u/.claude/worktrees/aftergc" "$DEAD" > "$TMP/u/.claude/audit-gate/session_worktree/sB2"
+printf '%s\npid %s\n' "$TMP/u/.claude/worktrees/aftergc" "$SLEEPER" > "$TMP/u/.claude/audit-gate/session_worktree/sG2"
+start_src "$TMP/u" aftergc sB2 resume
+lk="$(lock_of "$TMP/u" aftergc)"
+[ "$lk" = "devkit-kept session=sB2 pid=$$" ] && ok "E24: the owner resuming after gc opened its dead lock still locks, a live guest record notwithstanding" \
+  || fail "E24: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+G "$TMP/u" worktree add -q --detach "$TMP/u/.claude/worktrees/aftergc2"   # E24b: the same with no kit state at all
+printf '%s\npid %s\n' "$TMP/u/.claude/worktrees/aftergc2" "$DEAD" > "$TMP/u/.claude/audit-gate/session_worktree/sB3"
+printf '%s\npid %s\n' "$TMP/u/.claude/worktrees/aftergc2" "$SLEEPER" > "$TMP/u/.claude/audit-gate/session_worktree/sG3"
+start_src "$TMP/u" aftergc2 sB3 startup
+lk="$(lock_of "$TMP/u" aftergc2)"
+[ "$lk" = "devkit-kept session=sB3 pid=$$" ] && ok "E24b: … and with no kit state (a fresh start there)" \
+  || fail "E24b: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E25 (review 19b991f8): luật pid của resume chỉ xét khoá mang pid CỦA tiến trình này — khoá của một tiến trình khác còn sống ở worktree
+#   khác không chặn khoá
+repo v true; wtadd "$TMP/v" otherheld s103; G "$TMP/v" worktree lock --reason "devkit-kept session=s103 pid=$SLEEPER" "$TMP/v/.claude/worktrees/otherheld"
+wtadd "$TMP/v" here25 s104; start_src "$TMP/v" here25 s105 resume
+lk="$(lock_of "$TMP/v" here25)"
+[ "$lk" = "devkit-kept session=s105 pid=$$" ] && ok "E25: a resume still locks when another live process holds a lock elsewhere in the repo" \
+  || fail "E25: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E26 (review 19b991f8): khoá mang pid trùng pid này mà KHÔNG có thời điểm khởi động cạnh nó (kit trước #406, ps lỗi lúc ghi) không phải
+#   bằng chứng tiến trình này giữ nó (pid có thể đã bị cấp lại): resume vẫn khoá — chỉ bỏ qua khi thời điểm khởi động khớp
+repo w true; wtadd "$TMP/w" nostart s106; G "$TMP/w" worktree lock --reason "devkit-kept session=s106 pid=$$" "$TMP/w/.claude/worktrees/nostart"
+wtadd "$TMP/w" here26 s107; start_src "$TMP/w" here26 s108 resume
+lk="$(lock_of "$TMP/w" here26)"
+[ "$lk" = "devkit-kept session=s108 pid=$$" ] && ok "E26: a lock carrying this pid with no start time beside it does not stop a resume from locking" \
+  || fail "E26: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E19 (review PR #415): record của CHÍNH sid này (pid đã chết: resume từ shell giữ id) không phải "chủ khác còn sống"
+repo m true; G "$TMP/m" worktree add -q --detach "$TMP/m/.claude/worktrees/recself"   # own repo: E18's lock carries this shell's pid
+mkdir -p "$TMP/m/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/m/.claude/worktrees/recself" "$DEAD" > "$TMP/m/.claude/audit-gate/session_worktree/s70"
+start_src "$TMP/m" recself s70 resume
+lk="$(lock_of "$TMP/m" recself)"
+[ "$lk" = "devkit-kept session=s70 pid=$$" ] && ok "E19: a resume keeping its id locks the worktree its own record names" \
+  || fail "E19: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
 
 # R8 (review 25/10): thời điểm khởi động ghi một kiểu (/proc) mà đọc kiểu khác (ps), hay ngược lại: không so được = còn sống
 OTHERFMT="proc:1"; [ -r "/proc/$SLEEPER/stat" ] && OTHERFMT="Mon_Jan__1_00:00:00_2001"
