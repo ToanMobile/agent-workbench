@@ -42,6 +42,7 @@ DEFAULT_REPOS = [
     "/Volumes/Data/Toan/GeelyEx2",
     "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D",
     "/Volumes/Data/Toan/Game/Humans-vs.-UFOs",
+    "/Volumes/Data/Toan/Game/Idle-Plaza-3D",
     "/Volumes/Data/Toan/agent-workbench",
 ]
 CREATE_TASK = Path(__file__).resolve().parent / "create_task.py"
