@@ -545,7 +545,8 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None):
     real = os.path.realpath(t[0])
     for path, reason in (_worktree_locks(_git_in(main)) or {}).items() if source in ("resume", "fork") else ():
         m = KEPT_RE.fullmatch(reason)
-        if m and path != real and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)):
+        st = kept_start(path, pid) if m and path != real and int(m.group(2)) == pid else None
+        if st and pid_start_token(pid) == st:   # positive proof only (review 19b991f8): no start time, or ps failing, locks as before #415
             return None
     return t[0] if _kept_lock(main, t[0], sid, pid) else None
 

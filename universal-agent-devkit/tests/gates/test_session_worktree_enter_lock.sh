@@ -236,6 +236,20 @@ start_src "$TMP/u" aftergc2 sB3 startup
 lk="$(lock_of "$TMP/u" aftergc2)"
 [ "$lk" = "devkit-kept session=sB3 pid=$$" ] && ok "E24b: … and with no kit state (a fresh start there)" \
   || fail "E24b: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E25 (review 19b991f8): luật pid của resume chỉ xét khoá mang pid CỦA tiến trình này — khoá của một tiến trình khác còn sống ở worktree
+#   khác không chặn khoá
+repo v true; wtadd "$TMP/v" otherheld s103; G "$TMP/v" worktree lock --reason "devkit-kept session=s103 pid=$SLEEPER" "$TMP/v/.claude/worktrees/otherheld"
+wtadd "$TMP/v" here25 s104; start_src "$TMP/v" here25 s105 resume
+lk="$(lock_of "$TMP/v" here25)"
+[ "$lk" = "devkit-kept session=s105 pid=$$" ] && ok "E25: a resume still locks when another live process holds a lock elsewhere in the repo" \
+  || fail "E25: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E26 (review 19b991f8): khoá mang pid trùng pid này mà KHÔNG có thời điểm khởi động cạnh nó (kit trước #406, ps lỗi lúc ghi) không phải
+#   bằng chứng tiến trình này giữ nó (pid có thể đã bị cấp lại): resume vẫn khoá — chỉ bỏ qua khi thời điểm khởi động khớp
+repo w true; wtadd "$TMP/w" nostart s106; G "$TMP/w" worktree lock --reason "devkit-kept session=s106 pid=$$" "$TMP/w/.claude/worktrees/nostart"
+wtadd "$TMP/w" here26 s107; start_src "$TMP/w" here26 s108 resume
+lk="$(lock_of "$TMP/w" here26)"
+[ "$lk" = "devkit-kept session=s108 pid=$$" ] && ok "E26: a lock carrying this pid with no start time beside it does not stop a resume from locking" \
+  || fail "E26: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
 # E19 (review PR #415): record của CHÍNH sid này (pid đã chết: resume từ shell giữ id) không phải "chủ khác còn sống"
 repo m true; G "$TMP/m" worktree add -q --detach "$TMP/m/.claude/worktrees/recself"   # own repo: E18's lock carries this shell's pid
 mkdir -p "$TMP/m/.claude/audit-gate/session_worktree"
