@@ -39,7 +39,7 @@ Skills live in `skills/` (source of truth); `.agents/skills/` and `commands/` li
 | `/audit-gate`, `/postfix-gate` | [audit-gate](commands/audit-gate.md) | Post-fix static diff gate (secrets, placeholders, dependencies, perf, swallowed errors, raw logs) + matrix regression tests | Post-Fix Gate |
 | `/devkit-audit` | [devkit-audit](skills/devkit-audit/SKILL.md) | Daily audit, independent review and optimisation of the DevKit itself on the installed repos (Stop-hook cost first, 100-point rubric, read-only audit agents) | DevKit Maintenance |
 
-**QA ladder:** `/plan-tests` → `/review-code` → `/check` → `/done` + `/audit-gate`. Deprecated stubs (removed in 1.2.0): `/review` → `/plan-tests`, `/qa` & `/test` → `/check`, `/bugs` & `/crashlytics` → `/fix`.
+**QA ladder:** `/plan-tests` → `/review-code` → `/check` → `/done` + `/audit-gate`.
 
 ---
 

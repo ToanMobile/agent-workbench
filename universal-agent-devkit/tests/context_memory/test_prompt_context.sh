@@ -235,7 +235,9 @@ for p in "tối ưu build script cho nhanh" "fix lỗi hiệu ứng phụ khi g�
          "thêm cột discount vào sql view doanh thu" "sửa Django views trả về 500 khi thiếu token" \
          "sửa compose.yaml thêm service redis" "chạy compose up -d cho môi trường dev" "thêm panel Grafana đo độ trễ" \
          "sanctions screening chạy chậm" "tích hợp Dialogflow cho tổng đài" "thêm field theme_id vào bảng user" \
-         "mask số card trong log thanh toán" "sửa dialog state machine của trợ lý" "chụp screenshot để so sánh"; do
+         "mask số card trong log thanh toán" "sửa dialog state machine của trợ lý" "chụp screenshot để so sánh" \
+         "First operation: run python3 .claude/bin/super-board-skills-ready.py --root . --host claude --cards - --hydrate --lane review"; do
+  # ↑ the super-board lane opener (2026-10-25 audit: its CLI flag --cards opened the UI door in 761 of 771 backend lane sessions)
   o="$(ctx "$p")"; b="$(pctx backend "$p")"
   case "$o$b" in *HELPER-CRASH*) fail "helper crashed on '$p'"; continue ;; esac
   if zs "$o" || zs "$b" || has "$(skl "$o")" ui-ux-pro-max || has "$(skl "$b")" ui-ux-pro-max; then

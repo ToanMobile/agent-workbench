@@ -1599,6 +1599,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-agents-md-block",
+      "watch_files": [
+        ".claude/skills/super-board/references/agents-md-block.md",
+        ".claude/skills/super-build/references/worker-preamble.md"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AGENTS-MD-BLOCK-01",
+          "name": "super-board AGENTS.md block stays within 40 lines and does not repeat the worker pipeline",
+          "command": "bash tests/super-board/test_agents_md_block_size.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

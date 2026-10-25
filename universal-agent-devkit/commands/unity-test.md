@@ -4,7 +4,7 @@ Chạy bộ kiểm thử tự động của Unity (EditMode / PlayMode) ở ch�
 
 ## Cách dùng:
 ```bash
-python3 .agents/devkit/scripts/run_unity_tests.py [--platform editmode|playmode] [--project .] [--output reports/unity-test-results.xml]
+python3 .agents/devkit/scripts/testing/run_unity_tests.py [--platform editmode|playmode] [--project .] [--output reports/unity-test-results.xml]
 ```
 
 ## Luồng thực thi:
