@@ -66,6 +66,13 @@ a="$(same)"; b="$(same)"
 printf '%s' "$a" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "5: the first prompt of a session carries the order" || fail "5: first prompt has no order: $a"
 printf '%s' "$b" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "5: the order was repeated in the same session (dedupe changed?)" || ok "  … the same text again in that session collapses to a stub (the order stays in context)"
 printf '%s' "$(out)" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "  … and a NEW session gets the order again" || fail "  … new session lost the order"
+# 5b: a DIFFERENT prompt later in the same session does not repeat it either (2026-10-25 audit: a 50-prompt interactive session got the
+#     ~370-byte order on every prompt, 19.6 KB, because the whole text differed and only identical text collapsed).
+#     The prompt must change the hook text (its own "Loại việc"), or the identical-text stub hides the repeat.
+c="$(printf '{"prompt":"%s","session_id":"fixed-s"}' "giải quyết conflict khi merge nhánh release" | bash "$HOOK" 2>&1)"
+printf '%s' "$c" | grep -q "MERGE_CONFLICT" || fail "5b: setup — the second prompt did not change the hook text: $c"
+printf '%s' "$c" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "5b: the order was repeated for another prompt of the same session" \
+  || ok "5b: another prompt of the same session does not repeat the order"
 
 # 3b: the PROJECT file wins even when it is the broken one (OpenCodeReview + reviewer 14/10: a typo there used to fall through to a global true,
 #     so delegation was ON while the notice said "coi như false")
@@ -84,6 +91,17 @@ printf '%s' "$(out)" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "3b: a valid pro
 
 clear; setg '{"giaoDefault": true}'
 [ -z "$(printf '{"prompt":"/giao tạo task mới","session_id":"t"}' | bash "$HOOK" 2>&1)" ] && ok "4: a slash command is still left alone" || fail "4: the hook answered a slash command"
+
+# 7: a super-board lane worker never hands its card to Antigravity (2026-10-25 audit: the order reached 759 of 760 lane sessions).
+#    The lane's first prompt is the runner's opener + card JSON (quotes inside: the payload is built with json.dumps). The flag is
+#    still on, so the user's own prompt in the same project keeps the order (control).
+lane_out() {
+  python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1], "session_id": sys.argv[2]}))' "$1" "s7-$RANDOM$RANDOM" | bash "$HOOK" 2>&1; }
+LANE="First operation: run .claude/bin/super-board-skills-ready.py --root '/repo' --host claude --cards - --lane 'build' --hydrate with [{\"number\":416,\"status\":\"Ready\",\"title\":\"Sửa tài liệu cài đặt\",\"labels\":[\"bug\"],\"lane\":\"build\"}] as stdin. Halt on exit 10 before worktree creation or lifecycle writes; preserve claims and approval evidence. Run super-build on issue #416 for super-board run. Check --check before any GitHub write, migration, or merge."
+o7="$(lane_out "$LANE")"
+printf '%s' "$o7" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "7: a super-board lane got the giao order: $o7" || ok "7: a super-board lane opener gets no giao order"
+printf '%s' "$o7" | grep -q "Antigravity" && fail "7: a super-board lane was told to call Antigravity: $o7" || ok "  … nor the Claude ↔ Antigravity review order ('migration' is the harness's word)"
+printf '%s' "$(lane_out "$P")" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "  … while a user prompt in the same project keeps the order (control)" || fail "  … control: the user prompt lost the order"
 
 # 6: the "no user config" pin of tests/lib/clean_git_env.sh itself (OpenCodeReview 14/10, workflow-improvements I.4 #1). It was
 #    ${TMPDIR:-/tmp}/agpm-test-no-global-config/.antigravity-pm.json: a guessable path in a shared /tmp that another user, or an old run,
