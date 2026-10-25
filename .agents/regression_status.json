@@ -288,6 +288,10 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-GATE-02": {
@@ -369,6 +373,10 @@
         "universal-agent-devkit/bin/tree_fp.py",
         "universal-agent-devkit/scripts/linters/assertion_lint.py",
         "universal-agent-devkit/bin/postfix-gate"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-HOOK-01": {
@@ -525,6 +533,13 @@
       "command": "bash universal-agent-devkit/tests/gates/test_proof_gate.sh",
       "watch_files": [
         "universal-agent-devkit/hooks/*"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/hooks/session_context.sh",
+        "universal-agent-devkit/hooks/test_evidence_gate.sh",
+        "universal-agent-devkit/hooks/worktree_merge_gate.sh"
       ]
     },
     "REG-DK-HEALTH-01": {
@@ -707,8 +722,8 @@
       "red_proof": {
         "at": "2026-10-09 18:57:53",
         "ts": 1791547073.901273,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/verification/test_bug_capture.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -800,6 +815,11 @@
         ".claude/settings.json",
         ".mcp.json",
         "mcp_config.json",
+        "AGENTS.md"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/settings.json",
         "AGENTS.md"
       ]
     },
@@ -1223,6 +1243,10 @@
       "watch_files": [
         "universal-agent-devkit/bin/session_lock.py",
         "universal-agent-devkit/bin/post-fix-gate.py"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py"
       ]
     },
     "REG-DK-SANDBOX-01": {
@@ -1516,8 +1540,8 @@
       "red_proof": {
         "at": "2026-10-09 17:23:02",
         "ts": 1791541382.889197,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/verification/test_stale.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2143,8 +2167,8 @@
       "red_proof": {
         "at": "2026-10-09 19:26:37",
         "ts": 1791548797.233579,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/worktree_git/test_worktree_automerge_reason.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -2989,8 +3013,8 @@
       "red_proof": {
         "at": "2026-10-12 22:23:41",
         "ts": 1791818621.208092,
-        "status": "PROVEN",
-        "reason": "đỏ khi áp patch đưa bug trở lại, xanh trên HEAD",
+        "status": "OUTDATED",
+        "reason": "universal-agent-devkit/tests/verification/test_bug_untracked_test_ref.sh đã đổi sau lần chứng minh",
         "mode": "patch",
         "fix_commit": null,
         "files": {
@@ -4846,6 +4870,14 @@
       "command": "bash tests/super-board/test_github_read.sh",
       "watch_files": [
         ".claude/bin/super-board-*"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-codex-wave.sh",
+        ".claude/bin/super-board-drift.py"
       ]
     },
     "REG-SB-RUNNER-LANES-01": {
@@ -4924,6 +4956,14 @@
       "command": "bash tests/super-board/test_runner_lanes.sh",
       "watch_files": [
         ".claude/bin/super-board-*"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-codex-wave.sh",
+        ".claude/bin/super-board-drift.py"
       ]
     },
     "REG-SB-MERGE-SYNC-01": {
@@ -5099,6 +5139,10 @@
       "command": "bash tests/super-board/test_merge_gate_stale_message.sh",
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
       ]
     },
     "REG-SB-PREFLIGHT-TOO-BIG-01": {
@@ -5181,6 +5225,10 @@
         ".claude/bin/super-board-gh-guard.sh",
         "tests/super-board/test_preflight_too_big.sh",
         "tests/super-board/fixtures/preflight-too-big/*"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-preflight.sh"
       ]
     },
     "REG-SB-RUNNER-WATCHDOG-01": {
@@ -5347,6 +5395,10 @@
         ".claude/bin/super-board-approval.py",
         "tests/super-board/test_merge_policy_odd_newlines.sh",
         "tests/super-board/test_upstream_66_67.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-policy.py"
       ]
     },
     "REG-SB-UPSTREAM-66-67-01": {
@@ -5429,6 +5481,10 @@
         ".claude/bin/super-board-approval.py",
         "tests/super-board/test_merge_policy_odd_newlines.sh",
         "tests/super-board/test_upstream_66_67.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-policy.py"
       ]
     },
     "REG-AUTO-CC-SWITCHER-MCP-01": {
@@ -5508,6 +5564,14 @@
       "watch_files": [
         "mcp-servers/cc-switcher-mcp/*.js",
         "mcp-servers/cc-switcher-mcp/*.json"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "mcp-servers/cc-switcher-mcp/src/profiles.js",
+        "mcp-servers/cc-switcher-mcp/src/telegram.js",
+        "mcp-servers/cc-switcher-mcp/tests/super-board-approve-head.test.js",
+        "mcp-servers/cc-switcher-mcp/tests/super-board-approve-trust.test.js",
+        "mcp-servers/cc-switcher-mcp/tests/super-board-approve.test.js"
       ]
     },
     "REG-SB-NEEDS-YOU-01": {
@@ -5671,6 +5735,11 @@
         ".claude/bin/super-board-status.py",
         ".claude/bin/super-board-needs-you.py",
         "tests/super-board/test_needs_you_skip.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-status.py"
       ]
     },
     "REG-SB-WATCHDOG-PATHS-01": {
@@ -5830,6 +5899,10 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_run_stop_mark_mtime.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "REG-SB-SETUP-BIN-01": {
@@ -5909,6 +5982,10 @@
       "watch_files": [
         ".claude/bin/super-board-setup.py",
         "tests/super-board/test_setup_bin_list.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-setup.py"
       ]
     },
     "REG-SB-POST-MERGE-CLEAN-01": {
@@ -5990,6 +6067,10 @@
         "tests/super-board/test_post_merge_clean.sh",
         "tests/super-board/test_post_merge_squash_leftovers.sh",
         "tests/super-board/test_post_merge_sweep_wiring.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-post-merge-clean.sh"
       ]
     },
     "BUG-20261019-hien-con-nhieu-branch-dang-bi-mo-coi-ngu": {
@@ -6350,6 +6431,11 @@
         ".claude/bin/super-board-device-online.py",
         "universal-agent-devkit/bin/proof-capture.py",
         "tests/super-board/test_needs_device_skip.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-status.py"
       ]
     },
     "BUG-20261019-108-88-duyet-a-con-worktree-treo-nao-mo": {
@@ -6499,6 +6585,10 @@
       "component": "super-board-run-sweep-wiring",
       "command": "bash tests/super-board/test_post_merge_sweep_wiring.sh",
       "watch_files": [
+        ".claude/bin/super-board-run.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
         ".claude/bin/super-board-run.sh"
       ]
     },
@@ -6753,6 +6843,11 @@
         "tests/super-board/test_notify.py",
         "tests/super-board/test_super_board_all_slots.py",
         "tests/super-board/test_runner_claim_loop.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        "universal-agent-devkit/scripts/governance/super_board_all.py"
       ]
     },
     "REG-DK-VERIFY-PY-01": {
@@ -7114,6 +7209,11 @@
         "universal-agent-devkit/bin/heavy_slot.py",
         ".claude/bin/super-board-heavy-slot.py",
         "tests/super-board/test_tests_skip_machine_slots.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh"
       ]
     },
     "REG-DK-SLOT-CLASSES-01": {
@@ -7191,6 +7291,13 @@
       "component": "devkit-slot-classes",
       "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_classes.sh",
       "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_classes.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
         "universal-agent-devkit/bin/heavy_slot.py",
         "universal-agent-devkit/bin/post-fix-gate.py",
         "universal-agent-devkit/scripts/testing/stale_rerun.py",
@@ -7275,6 +7382,10 @@
         "universal-agent-devkit/bin/heavy_slot.py",
         ".claude/bin/super-board-heavy-slot.py",
         "tests/super-board/test_heavy_slot.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/bin/heavy_slot.py"
       ]
     },
     "REG-DK-SUITE-CACHE-01": {
@@ -7354,6 +7465,12 @@
       "watch_files": [
         "universal-agent-devkit/bin/suite_cache.py",
         "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_suite_cache.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
         "universal-agent-devkit/tests/gates/test_gate_suite_cache.sh"
       ]
     },
@@ -7436,6 +7553,12 @@
         "universal-agent-devkit/bin/post-fix-gate.py",
         "universal-agent-devkit/scripts/testing/stale_rerun.py",
         "universal-agent-devkit/tests/gates/test_gate_sentinel.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/testing/stale_rerun.py"
       ]
     },
     "BUG-20261021-xu-ly-cho-xong-nhung-issues-bi-ket-het-c": {
@@ -7587,6 +7710,10 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_build_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "BUG-20261021-co-co-che-neu-full-tai-3-thi-no-doi-de-v": {
@@ -7684,6 +7811,10 @@
       "watch_files": [
         "universal-agent-devkit/bin/heavy_slot.py",
         "universal-agent-devkit/tests/gates/test_heavy_slot_cap.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/bin/heavy_slot.py"
       ]
     },
     "REG-SB-WATCHDOG-LOCK-ATOMIC-01": {
@@ -7923,6 +8054,10 @@
       "watch_files": [
         ".claude/workflows/super-board-wave.js",
         "tests/super-board/test_wave_needs_you_mark.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/workflows/super-board-wave.js"
       ]
     },
     "BUG-20261022-audit-review-devkit-board-dang-bi-ket-ch": {
@@ -8020,6 +8155,10 @@
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
         "tests/super-board/test_merge_gate_merge_call_failed.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
       ]
     },
     "BUG-20261022-check-cac-case-nay-tao-task-tren-backlog": {
@@ -8171,6 +8310,10 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_reclaim_dead_build.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "REG-SB-MERGE-DEAD-HOLDER-01": {
@@ -8250,6 +8393,10 @@
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
         "tests/super-board/test_merge_gate_dead_holder.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
       ]
     },
     "REG-AGENT-OFFICE-01": {
@@ -8334,17 +8481,15 @@
         "mcp-servers/agent-office/*.sh",
         "ai-factory.sh",
         "mcp-servers/agent-office/tests/*"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "mcp-servers/agent-office/server.py",
+        "mcp-servers/agent-office/tests/describe_cmd_test.js",
+        "mcp-servers/agent-office/tests/test_agent_workload.py",
+        "mcp-servers/agent-office/tests/test_describe_cmd.py",
+        "mcp-servers/agent-office/tests/test_phone_loading.py"
       ]
-    },
-    "ORPHAN_TEST:mcp-servers/agent-office/tests/pathing_test.js": {
-      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/pathing_test.js",
-      "kind": "orphan",
-      "title": "mcp-servers/agent-office/tests/pathing_test.js",
-      "component": "-",
-      "file": "mcp-servers/agent-office/tests/pathing_test.js",
-      "created_at": "2026-10-22 15:09:50",
-      "last": null,
-      "history": []
     },
     "BUG-20261022-tuong-nam-hang-doc-sai-roi-tuong-phai-ha": {
       "id": "BUG-20261022-tuong-nam-hang-doc-sai-roi-tuong-phai-ha",
@@ -8625,6 +8770,10 @@
         ".claude/bin/super-board-merge-train.sh",
         ".claude/bin/super-board-merge-gate.sh",
         "tests/super-board/test_merge_train.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
       ]
     },
     "REG-SB-LANE-WORKERS-01": {
@@ -8704,6 +8853,10 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_lane_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "REG-SB-CARD-ITEMS-RETRY-01": {
@@ -8784,6 +8937,10 @@
         ".claude/bin/super-board-card.sh",
         ".claude/bin/super-board-stop.sh",
         "tests/super-board/test_card_items_count_retry.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-card.sh"
       ]
     },
     "REG-SB-RUNNER-READ-RETRY-01": {
@@ -8863,6 +9020,10 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_board_read_retry.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "REG-AGENT-OFFICE-02": {
@@ -9103,6 +9264,11 @@
         ".claude/bin/super-board-run.sh",
         ".claude/bin/super-board-preflight.sh",
         "tests/super-board/test_runner_preflight_swept.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "REG-SB-BLOCKED-BY-OPEN-ONLY-01": {
@@ -9261,6 +9427,10 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_wip_limit.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "REG-SB-RED-ON-BASE-01": {
@@ -9343,6 +9513,11 @@
         ".claude/bin/super-board-verify-cmd.sh",
         "tests/super-board/test_merge_gate_red_on_base.sh",
         "tests/super-board/test_verify_cmd_same_as_gate.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-verify-cmd.sh"
       ]
     },
     "REG-SB-VERIFY-CMD-01": {
@@ -9425,6 +9600,11 @@
         ".claude/bin/super-board-verify-cmd.sh",
         "tests/super-board/test_merge_gate_red_on_base.sh",
         "tests/super-board/test_verify_cmd_same_as_gate.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-verify-cmd.sh"
       ]
     },
     "REG-SB-SELF-RELOAD-01": {
@@ -9502,6 +9682,11 @@
       "component": "super-board-self-reload",
       "command": "bash tests/super-board/test_runner_self_reload.sh",
       "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_self_reload.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_self_reload.sh"
       ]
@@ -9583,6 +9768,10 @@
       "watch_files": [
         ".claude/bin/super-board-preflight.sh",
         "tests/super-board/test_preflight_overlap_stale.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-preflight.sh"
       ]
     },
     "REG-SB-PREFLIGHT-NUMBERED-AC-01": {
@@ -9663,6 +9852,11 @@
         ".claude/bin/super-board-preflight.sh",
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_preflight_numbered_ac.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "REG-SB-REVIEW-APPROVED-HEAD-01": {
@@ -9742,6 +9936,10 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_review_approved_head.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "BUG-20261023-cac-loi-o-devkit-trong-qua-trinh-chay-da": {
@@ -9839,6 +10037,10 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_ready_order.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "REG-SB-GITHUB-RECONCILE-01": {
@@ -9997,6 +10199,11 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_gh_write_once_marker.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_gh_write_once_marker.sh"
       ]
     },
     "BUG-20261023-update-them-toi-muon-cai-ban-xoay-lai-hu": {
@@ -10130,6 +10337,11 @@
       "watch_files": [
         "universal-agent-devkit/scripts/git/worktree.py",
         "universal-agent-devkit/tests/worktree_git/test_worktree_discard_squash.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_discard_squash.sh"
       ]
     },
     "BUG-20261023-chay-kiem-tra-di-neu-loi-thi-fix-devkit": {
@@ -10247,6 +10459,11 @@
         "universal-agent-devkit/hooks/proof_gate.sh",
         ".claude/bin/super-board-merge-gate.sh",
         "universal-agent-devkit/tests/worktree_git/test_worktree_merge_tree_no_leak.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/scripts/git/worktree.py"
       ]
     },
     "REG-SB-REVIEW-MERGE-TRAIN-01": {
@@ -10324,6 +10541,11 @@
       "component": "super-board-review-merge-train",
       "command": "bash tests/super-board/test_runner_review_merge_train.sh",
       "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_review_merge_train.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_review_merge_train.sh"
       ]
@@ -10418,6 +10640,10 @@
       "watch_files": [
         ".claude/bin/super-board-status.py",
         "tests/super-board/test_status_needs_you_column.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-status.py"
       ]
     },
     "REG-SB-WAITING-LABEL-01": {
@@ -10498,6 +10724,11 @@
         ".claude/bin/super-board-capacity.py",
         ".claude/bin/super-board-codex-wave.sh",
         "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
       ]
     },
     "REG-CAPACITY-RUNNER-01": {
@@ -10544,6 +10775,11 @@
       "watch_files": [
         "universal-agent-devkit/bin/capacity.py",
         ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
         ".claude/bin/super-board-codex-wave.sh",
         "tests/super-board/test_codex_wave_workers.sh"
       ]
@@ -10594,6 +10830,11 @@
         ".claude/bin/super-board-capacity.py",
         ".claude/bin/super-board-codex-wave.sh",
         "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
       ]
     },
     "REG-CAPACITY-RUNNER-03": {
@@ -10640,6 +10881,11 @@
       "watch_files": [
         "universal-agent-devkit/bin/capacity.py",
         ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
         ".claude/bin/super-board-codex-wave.sh",
         "tests/super-board/test_codex_wave_workers.sh"
       ]
@@ -10690,6 +10936,11 @@
         ".claude/bin/super-board-capacity.py",
         ".claude/bin/super-board-codex-wave.sh",
         "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
       ]
     },
     "REG-CAPACITY-SLOTS-01": {
@@ -10736,6 +10987,11 @@
       "watch_files": [
         "universal-agent-devkit/bin/capacity.py",
         ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
         ".claude/bin/super-board-codex-wave.sh",
         "tests/super-board/test_codex_wave_workers.sh"
       ]
@@ -10786,6 +11042,11 @@
         ".claude/bin/super-board-capacity.py",
         ".claude/bin/super-board-codex-wave.sh",
         "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
       ]
     },
     "REG-CAPACITY-SLOTS-03": {
@@ -10834,6 +11095,11 @@
         ".claude/bin/super-board-capacity.py",
         ".claude/bin/super-board-codex-wave.sh",
         "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
       ]
     },
     "REG-CAPACITY-OFFICE-01": {
@@ -10880,6 +11146,11 @@
       "watch_files": [
         "universal-agent-devkit/bin/capacity.py",
         ".claude/bin/super-board-capacity.py",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_codex_wave_workers.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
         ".claude/bin/super-board-codex-wave.sh",
         "tests/super-board/test_codex_wave_workers.sh"
       ]
@@ -10962,6 +11233,10 @@
         ".claude/bin/super-board-run.sh",
         ".claude/super-board/configs/agent-workbench.json",
         "tests/super-board/test_runner_total_cap.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "BUG-20261024-fix-root-cause-devkit-de-sau-nay-ko-bi-l": {
@@ -11074,17 +11349,11 @@
       "watch_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_noop_worker.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
-    },
-    "ORPHAN_TEST:mcp-servers/agent-office/tests/present_pose_test.js": {
-      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/present_pose_test.js",
-      "kind": "orphan",
-      "title": "mcp-servers/agent-office/tests/present_pose_test.js",
-      "component": "-",
-      "file": "mcp-servers/agent-office/tests/present_pose_test.js",
-      "created_at": "2026-10-24 07:36:29",
-      "last": null,
-      "history": []
     },
     "BUG-20261024-sua-logic-need-you-o-dev-kit-de-tranh-la": {
       "id": "BUG-20261024-sua-logic-need-you-o-dev-kit-de-tranh-la",
@@ -11285,6 +11554,10 @@
       "watch_files": [
         ".claude/bin/super-board-merge-gate.sh",
         "tests/super-board/test_merge_gate_verified_tree.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-merge-gate.sh"
       ]
     },
     "REG-SB-GITHUB-READ-FOREIGN-HALT-01": {
@@ -11356,6 +11629,10 @@
         ".claude/bin/super-board-run.sh",
         "mcp-servers/agent-office/inbox_hook.py",
         "tests/super-board/test_runner_agent_office_inbox.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
     },
     "REG-AGENT-OFFICE-INBOX-02": {
@@ -11392,27 +11669,11 @@
         ".claude/bin/super-board-run.sh",
         "mcp-servers/agent-office/inbox_hook.py",
         "tests/super-board/test_runner_agent_office_inbox.sh"
+      ],
+      "stale_since": "2026-10-25 13:16:02",
+      "stale_files": [
+        ".claude/bin/super-board-run.sh"
       ]
-    },
-    "ORPHAN_TEST:mcp-servers/agent-office/tests/approval_test.js": {
-      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/approval_test.js",
-      "kind": "orphan",
-      "title": "mcp-servers/agent-office/tests/approval_test.js",
-      "component": "-",
-      "file": "mcp-servers/agent-office/tests/approval_test.js",
-      "created_at": "2026-10-24 13:07:22",
-      "last": null,
-      "history": []
-    },
-    "ORPHAN_TEST:mcp-servers/agent-office/tests/repo_label_test.js": {
-      "id": "ORPHAN_TEST:mcp-servers/agent-office/tests/repo_label_test.js",
-      "kind": "orphan",
-      "title": "mcp-servers/agent-office/tests/repo_label_test.js",
-      "component": "-",
-      "file": "mcp-servers/agent-office/tests/repo_label_test.js",
-      "created_at": "2026-10-24 13:07:22",
-      "last": null,
-      "history": []
     },
     "REG-DK-GATE-TREE-01": {
       "id": "REG-DK-GATE-TREE-01",
@@ -11609,32 +11870,46 @@
       "component": "-",
       "created_at": "2026-10-24 21:07:35",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
       "last": null,
       "history": [],
-      "state": "reported",
-      "fixed": null,
+      "state": "confirmed",
+      "fixed": true,
       "touched_at": "2026-10-24 21:07:35",
       "sessions": [
         "9f234dce-b543-4e19-9522-05145208f0be"
+      ],
+      "linked_at": "2026-10-25 13:16:02",
+      "linked_ts": 1792908962.81323,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_run_bounded.sh"
       ]
     },
     "BUG-20261024-fix-dev-kit-de-lan-sau-ko-bi-loi-nghiem": {
       "id": "BUG-20261024-fix-dev-kit-de-lan-sau-ko-bi-loi-nghiem",
       "kind": "bug",
-      "title": "fix dev kit để lần sau ko bị lỗi nghiêm trọng này nữa, đây là lỗi tuyệt đối nghiêm trọng sau này ko đc phép bị lại nữa…",
+      "title": "fix dev kit để lần sau ko bị lỗi nghiêm trọng này nữa, đây là lỗi tuyệt đối nghiêm trọng sau này ko đc phép bị lại nữa",
       "cause": null,
       "component": "-",
       "created_at": "2026-10-24 21:10:06",
       "task": null,
-      "tests": [],
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
       "last": null,
       "history": [],
-      "state": "reported",
-      "fixed": null,
+      "state": "confirmed",
+      "fixed": true,
       "touched_at": "2026-10-24 21:10:06",
       "sessions": [
         "9f234dce-b543-4e19-9522-05145208f0be"
+      ],
+      "linked_at": "2026-10-25 13:16:10",
+      "linked_ts": 1792908970.2803562,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_run_bounded.sh"
       ]
     },
     "BUG-20261024-antigravity-2-tien-trinh-da-chay-03-35-1": {
@@ -11671,6 +11946,310 @@
       "touched_at": "2026-10-24 22:39:04",
       "sessions": [
         "f5fddcac-ddcf-452e-95a0-5449b8b89192"
+      ]
+    },
+    "REG-DK-GATE-ROBUSTNESS-01": {
+      "id": "REG-DK-GATE-ROBUSTNESS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "gate không sập, không treo, không để rác: repo lồng, tên file non-UTF-8, tín hiệu giết suite, không có git, killpg bị từ chối; suite quá giờ lúc máy rảnh ghi HANG kèm test cuối và ảnh chụp tiến trình, lúc tải cao vẫn TIMEOUT (#370)",
+      "component": "devkit-gate-robustness",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_robustness.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_robustness.sh"
+      ]
+    },
+    "REG-SB-SUITE-FUSE-01": {
+      "id": "REG-SB-SUITE-FUSE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "cầu chì suite của runner: ≥2 thẻ Blocked cùng suite id trong N giờ gộp một thẻ và ngưng giao Builder tới khi thẻ gộp rời Blocked; khác suite hay ngoài cửa sổ giờ không gộp (#363)",
+      "component": "sb-runner-suite-fuse",
+      "command": "bash tests/super-board/test_runner_suite_fuse.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_suite_fuse.sh"
+      ]
+    },
+    "REG-SB-QA-REPORT-01": {
+      "id": "REG-SB-QA-REPORT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate từ chối report QA còn ❌ Not done và AC [x] không bằng chứng (#364)",
+      "component": "issue-363-batch",
+      "command": "bash tests/super-board/test_merge_gate_qa_report.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-SB-DRIFT-01": {
+      "id": "REG-SB-DRIFT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "phát hiện bản sao super-board ở repo app bị lệch hash (#368)",
+      "component": "issue-363-batch",
+      "command": "bash tests/super-board/test_drift.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-SB-REVIEW-SLOT-01": {
+      "id": "REG-SB-REVIEW-SLOT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "lane Review không bị bỏ đói slot (#369)",
+      "component": "issue-363-batch",
+      "command": "bash tests/super-board/test_runner_review_slot.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-GUARD-SECRETS-01": {
+      "id": "REG-DK-GUARD-SECRETS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "guard-secrets không chặn nhầm thông điệp commit, vẫn chặn đọc dotenv (#367)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-SUITE-CACHE-FIFO-01": {
+      "id": "REG-DK-SUITE-CACHE-FIFO-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "suite_cache không treo trên FIFO ở learned_inputs/.run/prune.stamp (#371)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-GITHOOKS-HEAL-01": {
+      "id": "REG-DK-GITHOOKS-HEAL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "githooks cài từ worktree rồi xoá worktree vẫn chạy; heal cài lại hook trỏ đường mất (#363)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-GIT241-ATTR-01": {
+      "id": "REG-DK-GIT241-ATTR-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "worktree prune-branch không từ chối nhầm trên git 2.41 thiếu --attr-source (#371)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-DK-WT-REMOVE-DURATIONS-01": {
+      "id": "REG-DK-WT-REMOVE-DURATIONS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "worktree remove không bị chặn bởi diff chỉ ở test_durations.txt (#365)",
+      "component": "issue-363-batch",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+      "watch_files": [
+        "tests/super-board/test_merge_gate_qa_report.sh",
+        "tests/super-board/test_drift.sh",
+        "tests/super-board/test_runner_review_slot.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh",
+        "universal-agent-devkit/tests/gates/test_suite_cache_store_fifo.sh",
+        "universal-agent-devkit/tests/worktree_git/test_githooks_heal.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_git241_attr_source.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_durations.sh",
+        ".claude/bin/super-board-qa-report.py",
+        ".claude/bin/super-board-drift.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/scripts/git/worktree.py"
+      ]
+    },
+    "REG-SB-AC-CHECK-01": {
+      "id": "REG-SB-AC-CHECK-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "ac-check (T0054): đếm mọi dạng mục AC, mở rộng AC gián tiếp 'AC của thẻ #X', bắt AC nén (#318/PR #343), Closes thẻ lạ, dòng chưa tick, đổi Closes → Refs",
+      "component": "super-board-ac-proven-before-close",
+      "command": "bash tests/super-board/test_ac_check.sh",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_ac_check.sh",
+        "tests/super-board/test_merge_gate_ac_check.sh",
+        "tests/super-board/test_card_done_ac_open.sh",
+        "tests/super-board/test_runner_reconcile_ac_open.sh",
+        "tests/super-board/test_preflight_ac_open.sh"
+      ]
+    },
+    "REG-SB-MERGE-GATE-AC-01": {
+      "id": "REG-SB-MERGE-GATE-AC-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "merge gate (T0054): AC nén / Closes thẻ lạ (body, message, commit) → exit 11; còn AC chưa tick → merge nhưng Refs, nhãn ac-open, thẻ về Ready; đủ AC → gỡ nhãn; PR không sb:ac như cũ",
+      "component": "super-board-ac-proven-before-close",
+      "command": "bash tests/super-board/test_merge_gate_ac_check.sh",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_ac_check.sh",
+        "tests/super-board/test_merge_gate_ac_check.sh",
+        "tests/super-board/test_card_done_ac_open.sh",
+        "tests/super-board/test_runner_reconcile_ac_open.sh",
+        "tests/super-board/test_preflight_ac_open.sh"
+      ]
+    },
+    "REG-SB-AC-OPEN-NOT-DONE-01": {
+      "id": "REG-SB-AC-OPEN-NOT-DONE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "thẻ ac-open không vào Done (T0054): card.sh move Done exit 5; runner mở lại issue đóng còn ac-open thay vì reconcile Done; preflight không coi là đã giao",
+      "component": "super-board-ac-proven-before-close",
+      "command": "bash tests/super-board/test_card_done_ac_open.sh && bash tests/super-board/test_runner_reconcile_ac_open.sh && bash tests/super-board/test_preflight_ac_open.sh",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_ac_check.sh",
+        "tests/super-board/test_merge_gate_ac_check.sh",
+        "tests/super-board/test_card_done_ac_open.sh",
+        "tests/super-board/test_runner_reconcile_ac_open.sh",
+        "tests/super-board/test_preflight_ac_open.sh"
+      ]
+    },
+    "REG-DK-INCIDENT-01": {
+      "id": "REG-DK-INCIDENT-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "lỗi do DevKit trong log board/watchdog/hook của repo app thành đúng 1 thẻ trên ToanMobile/agent-workbench; trùng chữ ký không thêm thẻ; nhiễu không thành thẻ; gh hỏng giữ spool, exit 0",
+      "component": "devkit-incident-reporter",
+      "command": "bash universal-agent-devkit/tests/verification/test_devkit_incident.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/devkit_incident.py",
+        "universal-agent-devkit/scripts/governance/create_task.py",
+        "universal-agent-devkit/hooks/session_context.sh",
+        "universal-agent-devkit/tests/verification/test_devkit_incident.sh"
       ]
     }
   },

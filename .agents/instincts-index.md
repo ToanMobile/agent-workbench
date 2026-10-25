@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (444 dòng, 53.0 KB) · 55 mục
+> **Tệp gốc:** `.agents/instincts.md` (550 dòng, 64.5 KB) · 68 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -56,5 +56,18 @@
 - [INSTINCT-049] Gỡ một lần git từ chối có thể lộ ra việc ghi đè file bị ignore — `sed -n '415,422p' .agents/instincts.md`
 - [INSTINCT-050] Gate tin lệnh do chính thay đổi thêm vào: lệnh đó chạy trước suite base thì vô hiệu được suite base — `sed -n '423,431p' .agents/instincts.md`
 - [INSTINCT-051] Khoá dùng lại kết quả test băm cả file mà chính suite ghi lại thì không bao giờ khớp giữa hai checkout — `sed -n '432,439p' .agents/instincts.md`
-- [INSTINCT-052] Worktree do công cụ tự tạo thiếu phần cài DevKit bị ignore, và bài thử pass trên đường khác đường chạy… — `sed -n '440,444p' .agents/instincts.md`
+- [INSTINCT-052] Worktree do công cụ tự tạo thiếu phần cài DevKit bị ignore, và bài thử pass trên đường khác đường chạy… — `sed -n '440,447p' .agents/instincts.md`
+- [INSTINCT-053] Halt vì lỗi đọc tạm thời không ai tự gỡ: máy ngủ dậy làm chết mọi board hàng giờ — `sed -n '448,455p' .agents/instincts.md`
+- [INSTINCT-054] Guard đường dẫn chạy SAU bước phá huỷ, hoặc leo tổ tiên theo chuỗi để lọt '..' — `sed -n '456,464p' .agents/instincts.md`
+- [INSTINCT-055] Chạy gate dưới nohup làm test SIGHUP đỏ giả — `sed -n '465,473p' .agents/instincts.md`
+- [INSTINCT-056] killpg bị macOS từ chối (EPERM) làm gate chết khi suite quá giờ, biên nhận cũ ở lại thành xanh giả — `sed -n '474,482p' .agents/instincts.md`
+- [INSTINCT-057] Test super-board chạy trong worktree dùng heavy_slot của main checkout, không phải bản đang sửa — `sed -n '483,491p' .agents/instincts.md`
+- [INSTINCT-058] Một lần đọc GitHub hỏng tạm thời dưới set -e giết runner, watchdog crash-loop rồi bỏ cuộc — `sed -n '492,497p' .agents/instincts.md`
+- [INSTINCT-059] Memo hoa trang thai repo trong mot tien trinh pha hop dong thu muc bi go giua luot va lam mu test cu — `sed -n '498,505p' .agents/instincts.md`
+- [INSTINCT-060] Model 3D cache cũ sau khi dựng lại — `sed -n '506,513p' .agents/instincts.md`
+- [INSTINCT-061] Biến gán kèm lệnh source (VAR=1 . file) chỉ sống trong lúc source — `sed -n '514,521p' .agents/instincts.md`
+- [INSTINCT-062] Mở file người dùng ghi được bằng open() không kiểm loại file — `sed -n '522,529p' .agents/instincts.md`
+- [INSTINCT-063] KNOWN-RED chỉ nhận FAIL và guard che message commit mở cửa — `sed -n '530,537p' .agents/instincts.md`
+- [INSTINCT-064] Sweep bỏ sót thẻ bị gom/bỏ (NOT_PLANNED) — `sed -n '538,545p' .agents/instincts.md`
+- [INSTINCT-065] Test chạy không hạn giờ để lại tiến trình mồ côi hàng chục giờ — `sed -n '546,550p' .agents/instincts.md`
 
