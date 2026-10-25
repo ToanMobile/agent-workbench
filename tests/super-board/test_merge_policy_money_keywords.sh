@@ -117,6 +117,10 @@ check "google play launchBillingFlow(" 'billingClient.launchBillingFlow(activity
 check "google play import billingclient" 'import com.android.billingclient.api.BillingClient' '' money
 check "unity using UnityEngine.Purchasing" 'using UnityEngine.Purchasing;' '' money
 check "unity InitiatePurchase(" 'controller.InitiatePurchase(productId);' '' money
+# OCR vòng 4: Go raw string là cách viết hằng thường gặp — chỉ template literal JS có `${…}` mới là khoá danh sách.
+check "go stripe.Key = \`sk_test_…\` (raw string)" 'stripe.Key = `sk_test_abc123`' '' money
+# Luật `&stripe.XxxParams{` có ca dương riêng (ca charge.New( ở trên còn khớp luật gói Go).
+check "go &stripe.PaymentIntentParams{ đứng riêng" 'params := &stripe.PaymentIntentParams{Amount: stripe.Int64(100)}' '' money
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_policy_money_keywords: PASS"; exit 0; } || { echo "test_merge_policy_money_keywords: FAIL ($FAILS)"; exit 1; }

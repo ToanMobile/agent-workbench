@@ -74,8 +74,9 @@ DEFAULT_ALWAYS_HUMAN = {
                      # `stripeCache.delete(`, `stripedRows.update(`, `key={stripe.key}` (Go chỉ khi gán `stripe.key =`),
                      # `stripe.update(color)`: động từ cần ít nhất một đoạn tài nguyên ở giữa (`+`), SDK không có
                      # `stripe.update(`; lời gọi trực tiếp của Stripe.js có tên riêng (`confirmCardPayment`, `redirectToCheckout`…),
-                     # `stripe.confirmSelection(` thì không. `stripe.key = \`row-…\`` (template literal JS) là khoá danh sách.
-                     r"\bstripe\w*(?:\.|::|->|\\)(?:api_?key|set_?api_?key)\b", r"\bstripe\.key\s*=(?!=)(?!\s*`)",
+                     # `stripe.confirmSelection(` thì không. `stripe.key = \`row-${i}\`` (template literal JS có `${`) là khoá
+                     # danh sách; Go raw string `stripe.Key = \`sk_test_…\`` vẫn là khoá API.
+                     r"\bstripe\w*(?:\.|::|->|\\)(?:api_?key|set_?api_?key)\b", r"\bstripe\.key\s*=(?!=)(?!\s*`[^`]*\$\{)",
                      r"\bstripe(?:_?client)?\b(?:(?:\.|::|->|\\)\w+)+(?:\.|::|->|\\)(?:create|retrieve|update|modify|list"
                      r"|del|delete|cancel|capture|confirm|search|construct_?event)(?:_async)?\s*\(",
                      r"\bstripe\.(?:confirm\w*(?:payment|setup)|redirecttocheckout|createpaymentmethod|createtoken"

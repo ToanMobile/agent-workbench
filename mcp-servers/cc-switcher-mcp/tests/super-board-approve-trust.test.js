@@ -155,7 +155,7 @@ test('nguồn như gate: `Closes other/repo#9` (repo khác) không phải nguồ
 
 // Review vòng 4 (25/10): \b, \s của JS là ASCII / có U+FEFF, còn CLOSES của Python theo Unicode. Python (oracle) KHÔNG liên kết
 // ba body này; JS không được đọc nguồn mà gate không đọc.
-for (const body of ['écloses #9', 'Closes﻿#9', 'Closes #9é']) {
+for (const body of ['écloses #9', 'Closes\uFEFF#9', 'Closes #9é']) {
   test(`nguồn như gate: ${JSON.stringify(body)} không liên kết #9 (Python CLOSES cũng không)`, async () => {
     const { posted } = await press({ 9: [comment('owner', request(164, HEAD), 0)] }, { body });
     assert.deepEqual(posted, []);
