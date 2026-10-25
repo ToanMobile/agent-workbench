@@ -46,6 +46,13 @@ def main():
         return 0
     if len(prompt.strip()) < 8 or prompt.lstrip().startswith("/"):
         return 0
+    if prompt.lstrip().startswith("First operation"):   # maybe a super-board lane: route its card's words, not the runner's text
+        try:
+            from enrich_context import lane_card_text   # same folder; the one rule for what a lane opener is
+            card = lane_card_text(prompt)
+            prompt = prompt if card is None else card
+        except ImportError as e:
+            print(f"rule_context: lane check unavailable ({e})", file=sys.stderr)
     root = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     want = words(prompt)
     if not want:

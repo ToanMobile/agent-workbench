@@ -253,7 +253,7 @@ Các bản vá tự động trong script:
 | 2 | `super-board-skills-ready.py` | Tìm skill cả trong `.agents/skills/` và ánh xạ tên skill super-board sang skill DevKit. |
 | 3 | `super-board-setup.py` | Nhận bản cài trong `~/.claude/`; tự thêm `verify_commands` chạy DevKit gate khi config còn trống. |
 | 4 | `super-board-agents-md.py` | Nâng giới hạn dòng lên 600 và không đề nghị gộp đè `AGENTS.md` do DevKit quản lý. |
-| 5 | `worker-preamble.md`, `agents-md-block.md`, `run.md` | Chèn quy trình DevKit và lệnh chuyển cột vào lời dặn của mọi worker. |
+| 5 | `worker-preamble.md`, `run.md` | Chèn quy trình DevKit và lệnh chuyển cột vào lời dặn của mọi worker (không chèn vào `agents-md-block.md`: khối AGENTS.md giữ ≤ 40 dòng, worker đọc pipeline ở `run.md`). |
 
 ```bash
 # === BOOTSTRAP_START ===
@@ -877,7 +877,7 @@ for am_path in [
     with open(am_path, "w") as f:
         f.write(am)
 
-# 5. Inject Universal Agent DevKit 6-Step Autonomous Pipeline + Real-Time 7-Column UI Sync into worker-preamble.md, agents-md-block.md & run.md
+# 5. Inject Universal Agent DevKit 6-Step Autonomous Pipeline + Real-Time 7-Column UI Sync into worker-preamble.md & run.md (not agents-md-block.md: the AGENTS.md block stays ≤ 40 lines)
 devkit_pipeline = """
 <!-- universal-agent-devkit-workflow:start -->
 ## Universal Agent DevKit Mandatory Pipeline & Real-Time 7-Column UI Sync (Zero Duplication)
@@ -904,10 +904,8 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
 
 for md_path in [
     os.path.expanduser("~/.claude/skills/super-build/references/worker-preamble.md"),
-    os.path.expanduser("~/.claude/skills/super-board/references/agents-md-block.md"),
     os.path.expanduser("~/.claude/skills/super-board/references/run.md"),
     os.path.expanduser("~/.local/share/super-board/skills/super-build/references/worker-preamble.md"),
-    os.path.expanduser("~/.local/share/super-board/skills/super-board/references/agents-md-block.md"),
     os.path.expanduser("~/.local/share/super-board/skills/super-board/references/run.md"),
 ]:
     if not os.path.exists(md_path):
@@ -928,6 +926,26 @@ for md_path in [
         mtxt = mtxt.rstrip() + "\n\n" + devkit_pipeline.strip() + "\n"
     with open(md_path, "w") as f:
         f.write(mtxt)
+
+# The AGENTS.md block template only loses the pipeline (an older bootstrap put it there): it is rendered into every
+# session's AGENTS.md, writing-standard §5 caps it at 40 lines, and workers read the pipeline in run.md.
+for md_path in [
+    os.path.expanduser("~/.claude/skills/super-board/references/agents-md-block.md"),
+    os.path.expanduser("~/.local/share/super-board/skills/super-board/references/agents-md-block.md"),
+]:
+    if not os.path.exists(md_path):
+        continue
+    with open(md_path, "r") as f:
+        mtxt = f.read()
+    stripped = re.sub(
+        r"\n*<!-- universal-agent-devkit-workflow:start -->.*?<!-- universal-agent-devkit-workflow:end -->\n?",
+        "\n",
+        mtxt,
+        flags=re.DOTALL,
+    ).rstrip("\n") + "\n"
+    if stripped != mtxt:
+        with open(md_path, "w") as f:
+            f.write(stripped)
 PY
 }
 
