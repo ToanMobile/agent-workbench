@@ -801,6 +801,8 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                      cwd=repo, capture_output=True, text=True, errors="replace",
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo, "DEVKIT_LEDGER_ROOT": ledger_root,
                           "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
+                          # B5 (audit 25/10): khoá do một lượt gate CÒN SỐNG giữ thì chỉ chờ DEVKIT_REUSE_LOCK_WAIT_S (3 s) rồi BUSY
+                          "TEST_RUN_LOCK_BUSY_FAST": os.environ.get("TEST_RUN_LOCK_BUSY_FAST", "1"),
                           "GATE_TOTAL_BUDGET_S": budget_s,
                           # P1 (20/10): lượt Stop xếp sau merge/push/interactive ở hàng đợi khoá Unity; P1b: tải máy
                           # cao thì chỉ chờ ngắn rồi vẫn chạy (hook có hạn 1800 s, ngân sách suite 900 s). Tổng giây chờ tải của

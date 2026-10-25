@@ -4406,13 +4406,57 @@ def _env_seconds(name, default):
     return value if math.isfinite(value) else default
 
 
+# Audit 2026-10-25 B5: 41 BUSY Stop runs in 54 h, each after the whole 45 s wait (1.47 h; six Stops in a row behind one gate). The gate that
+# holds test_run.lock writes who it is into the lock file (pid + start time, under the flock; emptied before it lets go). A Stop run
+# (TEST_RUN_LOCK_BUSY_FAST=1, set by hooks/regression_gate.sh) that finds a LIVE gate there — the pid still the process with that start time,
+# the check session_lock makes of its own holder — waits only DEVKIT_REUSE_LOCK_WAIT_S (3 s) and says BUSY: that holder is a whole gate run,
+# minutes long. A holder it cannot name (stale_rerun / testsourceset / worktree.py write no record, a dead or recycled pid, a record a
+# killed gate left) keeps the long wait; a lock nobody holds is taken at once, as before. The CLI never sets the flag: it keeps its wait.
+# ponytail: stale_rerun opens the file with "w" and empties a gate's record while it waits for the lock; the next Stop then waits 45 s again.
+def _write_test_run_lock_holder(fh, clear=False):
+    """Record this run as the holder of the test_run.lock `fh` it holds (clear=True: empty the record, still under the flock). Data only:
+    a failure leaves the record empty or stale, which a waiter reads as an unknown holder (the long wait)."""
+    try:
+        os.ftruncate(fh.fileno(), 0)
+        if not clear:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import session_lock  # noqa: PLC0415 - sibling module in bin/
+            fh.write(json.dumps({"pid": os.getpid(), "pid_start": session_lock.pid_start(os.getpid())}) + "\n")
+        fh.flush()
+        return True
+    except (OSError, ImportError, AttributeError, ValueError) as e:
+        print(f"    {DIM}test_run.lock holder record not written ({e!r}): a waiter sees an unknown holder{RESET}", flush=True)
+        return False
+
+
+def _test_run_lock_live_gate(path):
+    """The record in test_run.lock names a gate run that is still alive: pid > 1 with a recorded start time, and that pid is still the process
+    started then (session_lock.is_pid_alive). No record, another writer's bytes, an unknown start, a dead or recycled pid: False."""
+    try:
+        fd = _state_fd(path, "r")
+        try:
+            raw = os.read(fd, 4096)
+        finally:
+            os.close(fd)
+        rec = json.loads(raw.decode("utf-8", "replace") or "null")
+        pid, start = (rec.get("pid"), rec.get("pid_start")) if isinstance(rec, dict) else (None, None)
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1 or not isinstance(start, str) or not start:
+            return False
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import session_lock  # noqa: PLC0415 - sibling module in bin/
+        return pid != os.getpid() and session_lock.is_pid_alive(pid, start)
+    except (OSError, ValueError, ImportError, AttributeError):
+        return False
+
+
 def acquire_test_run_lock(project_dir, cap=None):
     """(file handle, held) — the per-project test-run flock under .claude/audit-gate/. Waits at
     most TEST_RUN_LOCK_WAIT_S (default 900 from the CLI; hooks/regression_gate.sh passes 45 so
     the wait plus the suites stay inside the Stop hook's own 1800 s timeout) for another run, or
     `cap` seconds when that is less (a run with nothing left to run: see main);
     not held → the tests are BUSY (summary "busy"). (None, True) when the lock file cannot be
-    made (never worse than no lock)."""
+    made (never worse than no lock). TEST_RUN_LOCK_BUSY_FAST=1 (the Stop hook) and a live gate holds
+    it: DEVKIT_REUSE_LOCK_WAIT_S (3 s) at most (B5 above). Held: this run's record is written into it."""
     import fcntl  # noqa: PLC0415
     state = Path(project_dir) / ".claude" / "audit-gate"
     try:
@@ -4426,12 +4470,16 @@ def acquire_test_run_lock(project_dir, cap=None):
     wait = _env_seconds("TEST_RUN_LOCK_WAIT_S", 900.0)
     if cap is not None:
         wait = min(wait, cap)
-    deadline, said = time.monotonic() + wait, False
+    t0 = time.monotonic()
+    deadline, said = t0 + wait, False
     while True:
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _write_test_run_lock_holder(fh)
             return fh, True
         except OSError:
+            if not said and os.environ.get("TEST_RUN_LOCK_BUSY_FAST") == "1" and _test_run_lock_live_gate(state / TEST_RUN_LOCK):
+                deadline = min(deadline, t0 + _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0))
             if time.monotonic() >= deadline:
                 fh.close()
                 return None, False
@@ -7121,6 +7169,7 @@ def main():
         # checklist update below does not run under it. A BUSY run holds no lock (lock_fh is None); a kill before
         # this line frees the lock with the process.
         if lock_fh:
+            _write_test_run_lock_holder(lock_fh, clear=True)   # B5: a later waiter must not take a finished run for a live holder
             lock_fh.close()
     _lap("receipt")
 
