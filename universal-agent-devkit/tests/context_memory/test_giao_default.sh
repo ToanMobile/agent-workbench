@@ -66,6 +66,13 @@ a="$(same)"; b="$(same)"
 printf '%s' "$a" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "5: the first prompt of a session carries the order" || fail "5: first prompt has no order: $a"
 printf '%s' "$b" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "5: the order was repeated in the same session (dedupe changed?)" || ok "  … the same text again in that session collapses to a stub (the order stays in context)"
 printf '%s' "$(out)" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "  … and a NEW session gets the order again" || fail "  … new session lost the order"
+# 5b: a DIFFERENT prompt later in the same session does not repeat it either (2026-10-25 audit: a 50-prompt interactive session got the
+#     ~370-byte order on every prompt, 19.6 KB, because the whole text differed and only identical text collapsed).
+#     The prompt must change the hook text (its own "Loại việc"), or the identical-text stub hides the repeat.
+c="$(printf '{"prompt":"%s","session_id":"fixed-s"}' "giải quyết conflict khi merge nhánh release" | bash "$HOOK" 2>&1)"
+printf '%s' "$c" | grep -q "MERGE_CONFLICT" || fail "5b: setup — the second prompt did not change the hook text: $c"
+printf '%s' "$c" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "5b: the order was repeated for another prompt of the same session" \
+  || ok "5b: another prompt of the same session does not repeat the order"
 
 # 3b: the PROJECT file wins even when it is the broken one (OpenCodeReview + reviewer 14/10: a typo there used to fall through to a global true,
 #     so delegation was ON while the notice said "coi như false")

@@ -190,21 +190,44 @@ alias_missing = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', syn
                  if not os.path.exists(os.path.join(ROOT, "commands", a + ".md"))]
 check(not alias_missing, "R5 every alias in sync_commands.sh has commands/<alias>.md", ", ".join(alias_missing))
 
-# /review collides with the agent's built-in /review: commands/review.md may only be the
-# deprecated redirect stub (never a live link to a skill). Same for every deprecated alias.
-MARKER = "<!-- devkit:deprecated-alias -->"
-dep_block = re.search(r"DEPRECATED_ALIASES=\((.*?)\)", sync, re.S)
-deprecated = re.findall(r'"([a-z0-9-]+):', dep_block.group(1)) if dep_block else []
-bad_dep = []
-for name in sorted(set(deprecated) | {"review"}):
-    p = os.path.join(ROOT, "commands", name + ".md")
-    if not os.path.lexists(p):
-        continue
-    if os.path.islink(p) or MARKER not in open(p, encoding="utf-8").read():
-        bad_dep.append(name)
-check("review" in deprecated and not bad_dep,
-      "R5 commands/review.md is only a deprecated stub; deprecated aliases are stubs",
-      ", ".join(bad_dep) or "review missing from DEPRECATED_ALIASES")
+# The 1.1.0 renames (/review /qa /test /bugs /crashlytics) were removed in 1.2.0 and stay gone:
+# /review would shadow the agent's built-in /review, the others listed a second entry every session.
+gone = [n for n in ("review", "qa", "test", "bugs", "crashlytics")
+        if os.path.lexists(os.path.join(ROOT, "commands", n + ".md"))]
+check(not gone and "DEPRECATED_ALIASES" not in sync,
+      "R5 removed deprecated aliases stay removed (commands/review.md would shadow the built-in /review)",
+      ", ".join(gone) or "DEPRECATED_ALIASES still in sync_commands.sh")
+
+# An alias is a link to its skill: a hand-written file under the alias name drifts from the skill and
+# lists a second entry (commands/sandbox.md, 2026-10-25: hard-coded universal-agent-devkit/ paths).
+shadowed = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', sync, re.M)
+            if os.path.lexists(os.path.join(ROOT, "commands", a + ".md"))
+            and not os.path.islink(os.path.join(ROOT, "commands", a + ".md"))]
+check(not shadowed, "R5 every alias in sync_commands.sh is a link, not a hand-written file", ", ".join(shadowed))
+
+# A script a skill or command tells the agent to run must run in an INSTALLED repo, where the kit is .agents/devkit/:
+# universal-agent-devkit/<path> exists only in agent-workbench, and a pre-reorg flat path (scripts/X before the
+# scripts/<group>/ split, 2026-10-02) nowhere (2026-10-25: /sandbox, /gen-prompt, /createTask, /unity-test, /check).
+RUN = re.compile(r"(?:python3|bash|sh|node)\s+((?:universal-agent-devkit|\.agents/devkit)/[\w./-]+\.(?:py|sh|js|mjs))")
+bad_run = []
+for f in sorted(set(glob.glob(os.path.join(ROOT, "skills/*/SKILL.md")) +
+                    [p for p in glob.glob(os.path.join(ROOT, "commands/*.md")) if not os.path.islink(p)])):
+    for n, line in enumerate(open(f, encoding="utf-8"), 1):
+        for m in RUN.finditer(line):
+            p = m.group(1)
+            rel = p.split("/", 2)[2] if p.startswith(".agents/devkit/") else p.split("/", 1)[1]
+            if p.startswith("universal-agent-devkit/") or not os.path.exists(os.path.join(ROOT, rel)):
+                bad_run.append(f"{os.path.relpath(f, ROOT)}:{n} {p}")
+check(not bad_run, "R5 skills/commands run kit scripts by a path that exists in an installed repo (.agents/devkit/…)",
+      "; ".join(bad_run[:8]) + (f" (+{len(bad_run) - 8})" if len(bad_run) > 8 else ""))
+
+# The kit's own CLAUDE.md is a NESTED instruction file for every session of the repo that holds the kit: an @import in it
+# loads the 60 KB master AGENTS.md + 32 KB core-rules the first time an agent reads any kit file (2026-10-25: 180 of
+# ~1,156 agent-workbench transcripts in 7 days, 18.8 MB). Those files are on-demand (essentials: "Read on demand").
+kit_claude = os.path.join(ROOT, "CLAUDE.md")
+imports = [l.strip() for l in open(kit_claude, encoding="utf-8")
+           if re.search(r"(^|\s)@[\w./-]+", l)] if os.path.isfile(kit_claude) else []
+check(not imports, "R5 the kit CLAUDE.md imports nothing (its targets are read on demand)", "; ".join(imports))
 
 # ── R6 profiles ────────────────────────────────────────────────────────────────
 mcp_names = set()

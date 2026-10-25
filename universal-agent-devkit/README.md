@@ -623,8 +623,6 @@ Run them in this order — **plan-tests → review-code → check → done**:
 | 3. Check (the project's own checks) | `/check` | `qc` | Detects the build tool and runs tests/lint | Does not judge the diff |
 | 4. Done (before saying "done") | `/done`, then `/audit-gate` | `verification-before-completion` + post-fix gate | Evidence checklist, then static diff checks + matrix regression tests (`postfix-gate --run-tests`, PASS/REJECT/UNVERIFIED) | Does not verify UI, devices or RED→GREEN |
 
-> **Renamed in 1.1.0:** `/review` → `/plan-tests` (it collided with the agent's built-in `/review`); `/qa`, `/test` → `/check`; `/bugs`, `/crashlytics` → `/fix`. The old names remain as deprecated stubs that redirect for one release and are removed in 1.2.0.
-
 ---
 
 ## 🌐 Universal Multi-Agent Matrix
