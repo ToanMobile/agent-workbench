@@ -49,6 +49,49 @@ test('lượt poll treo mãi: daemon ghi lỗi và thoát mã 1 (launchd khởi 
   }
 });
 
+test('thoát giữa batch: khởi động lại không phát lại update đã nhận (offset lưu xuống đĩa TRƯỚC khi xử lý)', async () => {
+  // Review 25/10: offset chỉ trong bộ nhớ, gán sau cả batch -> watchdog thoát giữa batch thì khởi động lại với offset 0, Telegram trả
+  // lại đúng batch đó: act:rotate / act:swap_repos / `done` chạy lại lần nữa, và update gây treo làm daemon crash-loop.
+  const stateDir = stateDirWithToken();
+  const exits = [];
+  let served = false;
+  const d1 = await startSwitcherDaemon({
+    stateDir,
+    logFile: path.join(stateDir, 'none.log'),
+    pollIntervalMs: 20,
+    tickTimeoutMs: 150,
+    ensureMenu: () => {},
+    fetchUpdates: async () => {
+      if (served) return [];
+      served = true;
+      return [{ update_id: 41, message: { chat: { id: 1 }, text: '/status' } }];
+    },
+    apiCaller: () => new Promise(() => {}),   // gửi trả lời treo: lượt kẹt ngay giữa batch
+    exit: (code) => exits.push(code),
+  });
+  const offsets = [];
+  try {
+    await waitFor(() => exits.length > 0, 3000);
+    d1.stop();
+    assert.deepEqual(exits, [1], 'setup: watchdog không thoát khi xử lý update treo');
+    const d2 = await startSwitcherDaemon({
+      stateDir,
+      logFile: path.join(stateDir, 'none.log'),
+      pollIntervalMs: 20,
+      tickTimeoutMs: 2000,
+      ensureMenu: () => {},
+      fetchUpdates: async (_token, offset) => { offsets.push(offset); return []; },
+      exit: () => {},
+    });
+    await waitFor(() => offsets.length > 0, 2000);
+    d2.stop();
+    assert.equal(offsets[0], 42, `khởi động lại poll từ offset ${offsets[0]}: update 41 sẽ bị xử lý lại`);
+  } finally {
+    d1.stop();
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test('đối chứng: poll trả về bình thường thì watchdog không bắn', async () => {
   const stateDir = stateDirWithToken();
   const exits = [];
