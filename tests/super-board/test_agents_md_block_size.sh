@@ -19,5 +19,11 @@ if grep -q "universal-agent-devkit-workflow:start" "$BLOCK"; then fail "the DevK
 else ok "the DevKit pipeline is not in the managed block"; fi
 if grep -q "Mandatory Pipeline" "$SB/super-build/references/worker-preamble.md"; then ok "worker-preamble.md still carries the pipeline"
 else fail "worker-preamble.md lost the pipeline"; fi
+# Wave lanes read only their own run.md section; Tester and Reviewer sit after the pipeline, so the section every lane
+# reads must point at it (before this cut they got it from AGENTS.md).
+RUN_MD="${RUN_MD:-$SB/super-board/references/run.md}"
+if awk '/^### Running the gate and the merge gate \(every lane\)/{f=1;next} /^#/{f=0} f' "$RUN_MD" | grep -q "Mandatory"; then
+  ok "run.md: the every-lane section points every lane at the pipeline"
+else fail "run.md: the every-lane section does not point Tester/Reviewer lanes at the pipeline"; fi
 
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }

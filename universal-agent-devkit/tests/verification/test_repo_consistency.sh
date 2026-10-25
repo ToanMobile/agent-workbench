@@ -205,6 +205,30 @@ shadowed = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', sync, re
             and not os.path.islink(os.path.join(ROOT, "commands", a + ".md"))]
 check(not shadowed, "R5 every alias in sync_commands.sh is a link, not a hand-written file", ", ".join(shadowed))
 
+# A script a skill or command tells the agent to run must run in an INSTALLED repo, where the kit is .agents/devkit/:
+# universal-agent-devkit/<path> exists only in agent-workbench, and a pre-reorg flat path (scripts/X before the
+# scripts/<group>/ split, 2026-10-02) nowhere (2026-10-25: /sandbox, /gen-prompt, /createTask, /unity-test, /check).
+RUN = re.compile(r"(?:python3|bash|sh|node)\s+((?:universal-agent-devkit|\.agents/devkit)/[\w./-]+\.(?:py|sh|js|mjs))")
+bad_run = []
+for f in sorted(set(glob.glob(os.path.join(ROOT, "skills/*/SKILL.md")) +
+                    [p for p in glob.glob(os.path.join(ROOT, "commands/*.md")) if not os.path.islink(p)])):
+    for n, line in enumerate(open(f, encoding="utf-8"), 1):
+        for m in RUN.finditer(line):
+            p = m.group(1)
+            rel = p.split("/", 2)[2] if p.startswith(".agents/devkit/") else p.split("/", 1)[1]
+            if p.startswith("universal-agent-devkit/") or not os.path.exists(os.path.join(ROOT, rel)):
+                bad_run.append(f"{os.path.relpath(f, ROOT)}:{n} {p}")
+check(not bad_run, "R5 skills/commands run kit scripts by a path that exists in an installed repo (.agents/devkit/…)",
+      "; ".join(bad_run[:8]) + (f" (+{len(bad_run) - 8})" if len(bad_run) > 8 else ""))
+
+# The kit's own CLAUDE.md is a NESTED instruction file for every session of the repo that holds the kit: an @import in it
+# loads the 60 KB master AGENTS.md + 32 KB core-rules the first time an agent reads any kit file (2026-10-25: 180 of
+# ~1,156 agent-workbench transcripts in 7 days, 18.8 MB). Those files are on-demand (essentials: "Read on demand").
+kit_claude = os.path.join(ROOT, "CLAUDE.md")
+imports = [l.strip() for l in open(kit_claude, encoding="utf-8")
+           if re.search(r"(^|\s)@[\w./-]+", l)] if os.path.isfile(kit_claude) else []
+check(not imports, "R5 the kit CLAUDE.md imports nothing (its targets are read on demand)", "; ".join(imports))
+
 # ── R6 profiles ────────────────────────────────────────────────────────────────
 mcp_names = set()
 for f in ("mcp/.mcp.json", "mcp/mcp_config.json"):

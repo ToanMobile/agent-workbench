@@ -56,16 +56,16 @@ Mỗi thẻ là một PR, một merge-gate và một lần `post-fix-gate --full
 ## 🛠️ Công Cụ Thực Thi
 
 Công cụ cốt lõi được đặt tại:
-[`universal-agent-devkit/scripts/governance/create_task.py`](file:///Volumes/Data/Toan/agent-workbench/universal-agent-devkit/scripts/governance/create_task.py)
+`.agents/devkit/scripts/governance/create_task.py`
 
 ### 1. Tạo từ mô tả nhanh của người dùng
 Khi người dùng gõ `/createTask <nội dung>`:
 ```bash
-python3 universal-agent-devkit/scripts/governance/create_task.py "$ARGUMENTS"
+python3 .agents/devkit/scripts/governance/create_task.py "$ARGUMENTS"
 ```
 Agent có thể tự làm giàu nội dung thành đầy đủ 6 phần (Problem, Context, Fix, AC, Risk, Blocked by) rồi gọi:
 ```bash
-python3 universal-agent-devkit/scripts/governance/create_task.py \
+python3 .agents/devkit/scripts/governance/create_task.py \
   --title "🐛 [bug] <scope>: <what>" \
   --problem "<nội dung problem>" \
   --fix "<nội dung fix>" \
@@ -86,7 +86,7 @@ chỉ in gợi ý, QA/Review đánh dấu khi thẻ dừng ở bước của ng�
 dấu có bước sau mặc định "dán bằng chứng vào issue rồi đóng issue" (không còn việc cho lane).
 Repo chưa có helper: vẫn gắn nhãn lúc tạo issue và in cảnh báo. Đánh dấu thất bại: issue đã tạo, exit 3.
 ```bash
-python3 universal-agent-devkit/scripts/governance/create_task.py \
+python3 .agents/devkit/scripts/governance/create_task.py \
   --title "🧪 [test] viewer: kiểm DOCX 20 MB trên máy thật" --problem "..." \
   --ac "- [ ] Mở DOCX 20 MB trên thiết bị thật không crash" \
   --needs-you "Cắm Pixel 7 thật, mở file DOCX 20 MB, chụp màn hình kết quả vào issue"
@@ -96,7 +96,7 @@ python3 universal-agent-devkit/scripts/governance/create_task.py \
 Mặc định thẻ nằm ở repo của checkout đang đứng (theo `git origin`) và đi vào board của repo đó. Thẻ có việc ở repo
 khác (Goods, Idle-Plaza-3D, GeelyEx2, OfficeReader, Humans-vs.-UFOs) phải đi với `--repo`, để issue và card nằm ở đúng repo và đúng board:
 ```bash
-python3 universal-agent-devkit/scripts/governance/create_task.py --repo ToanMobile/GeelyEx2 \
+python3 .agents/devkit/scripts/governance/create_task.py --repo ToanMobile/GeelyEx2 \
   --title "🔧 [chore] GeelyEx2: merge PR #82" --problem "..." --ac "- [ ] PR #82 merged"
 ```
 Tiêu đề hoặc body nhắc tên repo khác mà thiếu `--repo` thì script thoát exit 64 và chưa tạo gì. Việc chạm hai repo:
@@ -106,7 +106,7 @@ Chế độ `--from-file` (mục 2) không bị kiểm: ticket thuộc backlog c
 ### 2. Đẩy một ticket có sẵn từ file backlog
 Khi người dùng muốn đẩy ticket số N từ file [`docs/super-board/backlog-tickets.md`](file:///Volumes/Data/Toan/agent-workbench/docs/super-board/backlog-tickets.md):
 ```bash
-python3 universal-agent-devkit/scripts/governance/create_task.py \
+python3 .agents/devkit/scripts/governance/create_task.py \
   --from-file docs/super-board/backlog-tickets.md \
   --ticket <N>
 ```

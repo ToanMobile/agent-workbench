@@ -301,6 +301,9 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
 
 ### Running the gate and the merge gate (every lane)
 
+In a Universal Agent DevKit repo every lane also follows the step for its column in "Universal Agent DevKit Mandatory
+Pipeline" below (between Builder first pass and Builder rebuild); AGENTS.md no longer repeats it.
+
 `post-fix-gate.py --run-tests --full` and `super-board-merge-gate.sh` can wait up to 600 s for a heavy slot before they
 start. Run them with the Bash tool's `run_in_background: true` from the first attempt, then poll the output; a foreground
 call is cut by the Bash timeout and the whole run is repeated (#249). The runner also exports

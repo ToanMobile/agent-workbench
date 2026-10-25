@@ -295,5 +295,4 @@ Board: Backlog · Ready · Building · QA · Review · Blocked · Done. Labels r
 - NEVER chain steps with arrows. One step per line, lettered under Where.
 - NEVER link screenshots. Embed a raw URL pinned to a sha.
 - DON'T repeat file lists in status comments. DON'T write "Not verified" or "Next" in a PR body.
-
 <!-- super-board:end -->
