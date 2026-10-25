@@ -2709,11 +2709,13 @@ def _held(main, wt):
 
 
 def cmd_held(cwd, args):
-    """`held <path>`: exit 0 when nothing holds the worktree (_held), 3 with the reason on stdout when something does; any other exit
-    (a usage error, a crash): cannot tell, the caller keeps it. Read-only."""
+    """`held <path>`: exit 0 when nothing holds the worktree, 3 with the reason on stdout when something does; any other exit
+    (a usage error, a crash): cannot tell, the caller keeps it. Read-only. The rule is gc --merged's own (review U2 P3): _held, then
+    _live_holder (an owner session in its state not proven gone)."""
     if len(args) != 1 or args[0].startswith("-"):
         die("usage: agent-kit worktree held <path>")
-    why = _held(main_checkout(cwd), os.path.abspath(os.path.join(cwd, args[0])))
+    main, wt = main_checkout(cwd), os.path.abspath(os.path.join(cwd, args[0]))
+    why = _held(main, wt) or _live_holder(main, wt)
     if why:
         print(why)
         return 3
@@ -4423,6 +4425,11 @@ def _reap_merged(main, here, dry, log, logged):
         print("• gc --merged: " + tr("không biết trunk (origin/HEAD, main, master, trunk): không gỡ gì", "trunk unknown (origin/HEAD, main, master, trunk): nothing removed"))
         return 0
     acted, prs = 0, []
+    # review U2 P3 (26/10): a symlinked .claude or .claude/worktrees makes the realpath "home" below the link's target, so worktrees that
+    # live there (a person's, another repo's) would read as this checkout's session worktrees: none is removed then (branches still go)
+    linked = [d for d in (os.path.join(main, ".claude"), os.path.join(main, ".claude", "worktrees")) if os.path.islink(d)]
+    if linked:
+        print("• gc --merged: " + tr(f"{linked[0]} là symlink: không gỡ worktree nào", f"{linked[0]} is a symlink: no worktree removed"))
 
     def record(line):
         nonlocal logged
@@ -4430,7 +4437,7 @@ def _reap_merged(main, here, dry, log, logged):
             _gc_log(log, ([] if logged else ["== " + time.strftime("%Y-%m-%d %H:%M:%S")]) + [line])
             logged = True
 
-    for e in entries[1:]:
+    for e in ([] if linked else entries[1:]):
         p, branch = e["path"], e.get("branch")
         real = os.path.realpath(p)
         if e["broken"] or os.path.islink(p) or os.path.dirname(real) != home or not os.path.isdir(real):

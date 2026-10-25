@@ -166,6 +166,12 @@ G "$R" worktree lock --reason "devkit-kept session=me pid=$$" "$H/dirty"
 (cd "$R" && python3 "$WT" held "$H/dirty" >"$TMP/f6.out" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "F held: the caller's own devkit-kept lock does not hold it" || { fail "F held own lock rc=$rc"; cat "$TMP/f6.out"; }
 G "$R" worktree unlock "$H/dirty"
+# F7 (review U2 P3, 26/10): `held` dùng ĐÚNG luật của gc (_held hoặc _live_holder). Worktree có phiên chủ trong state (`add --session`)
+#    chưa chứng minh đã dừng (không pid nào, state chưa quá 24 h): gc giữ, `held` cũ lại nói "không ai giữ" (exit 0) và board đụng vào nó.
+add_det owned; printf '{"session":"sess-p3-owner"}\n' > "$(G "$H/owned" rev-parse --absolute-git-dir)/devkit-worktree.json"
+(cd "$R" && python3 "$WT" held "$H/owned" >"$TMP/f7.out" 2>&1); rc=$?
+[ "$rc" -eq 3 ] && grep -q "sess-p3-owner" "$TMP/f7.out" && ok "F held: a worktree whose owner session is not proven gone is held (gc's rule)" \
+  || { fail "F held owner session rc=$rc"; cat "$TMP/f7.out"; }
 
 # G. `remove --merged[=<sha>]`: gỡ chỉ khi đã tích hợp
 (cd "$R" && python3 "$WT" remove --merged "$H/ahead" >"$TMP/g.out" 2>&1); rc=$?
@@ -209,6 +215,16 @@ has_branch rb && has_branch bis && ! has_branch idle-merged \
   || { fail "H prune-branch bis rc=$rc"; cat "$TMP/h4.out"; }
 G "$TMP/repo-rebasing" rebase --continue >"$TMP/h5.out" 2>&1 && [ "$(G "$TMP/repo-rebasing" branch --show-current)" = rb ] \
   && ok "H the rebase still finishes on its branch" || { fail "H rebase --continue failed"; cat "$TMP/h5.out"; }
+
+# I. (review U2 P3, 26/10) .claude/worktrees là symlink sang chỗ khác: realpath của "nhà" theo link, nên worktree ở đích của link được
+#    coi như của phiên và bị gỡ. Repo riêng, để không đụng bố cục chung ở trên. Link ở .claude hay .claude/worktrees: không gỡ worktree nào.
+R2="$TMP/repo-link"; mkdir -p "$R2" "$TMP/elsewhere-wt" "$R2/.claude" && G "$R2" init -q -b main . && echo b > "$R2/b.txt" && G "$R2" add b.txt && G "$R2" commit -qm init
+ln -s "$TMP/elsewhere-wt" "$R2/.claude/worktrees"
+G "$R2" worktree add -q --detach "$R2/.claude/worktrees/linked" main
+(cd "$R2" && WORKTREE_GC_FRESH_S=0 python3 "$WT" gc --merged >"$TMP/i.out" 2>&1)
+[ -d "$TMP/elsewhere-wt/linked" ] && grep -q "symlink" "$TMP/i.out" \
+  && ok "I gc --merged removes no worktree when .claude/worktrees is a symlink, saying why" \
+  || { fail "I a worktree behind a symlinked .claude/worktrees was reaped"; cat "$TMP/i.out"; }
 
 kill "$SL" 2>/dev/null
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc_merged: all passed" || { echo "❌ test_worktree_gc_merged: $FAILS failed"; exit 1; }
