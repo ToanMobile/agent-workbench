@@ -81,7 +81,12 @@ RULES = [
      "script lỗi shell: {0}: {1} {2}", 1, 0),
 ]
 TRACEBACK = re.compile(r"^Traceback \(most recent call last\):")
-EXC_LINE = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Interrupt|Exit)\b.*)$")
+# Dòng cuối của một Traceback: "<module.>*<Class>" hoặc "<module.>*<Class>: <thông điệp>", đoạn cuối viết hoa theo quy ước class
+# Python — mọi tên kiểu subprocess.TimeoutExpired / StopIteration, không chỉ đuôi Error/Exception (25/10: runner OfficeReader chết vì
+# TimeoutExpired). Chỉ xét ở dòng không thụt lề ĐẦU TIÊN sau frame; loại đoạn cuối viết thường ("fatal: …", "com.x.app", URL).
+# ponytail: đánh đổi về phía không đăng nhầm lên repo public — bỏ sót exception tên viết thường (socket.gaierror, struct.error) và
+# vẫn nhận một từ viết hoa đứng ngay sau frame (Killed); nới khi thấy Traceback thật bị bỏ sót trong log board.
+EXC_LINE = re.compile(r"^((?:[A-Za-z_]\w*\.)*[A-Z]\w*(?::.*)?)$")
 FRAME = re.compile(r'^\s*File "([^"]+)", line \d+, in (\S+)')
 
 
@@ -218,12 +223,16 @@ def classify_tracebacks(lines: list[str]):
             fm = FRAME.match(lines[j])
             if fm:
                 frames.append(f"{Path(fm.group(1)).name}:{fm.group(2)}")
-            em = EXC_LINE.match(lines[j])
-            if em and not lines[j].startswith(" "):
+            if frames and lines[j].strip() and not lines[j].startswith((" ", "\t")):
+                # Dòng không thụt lề đầu tiên sau frame KẾT THÚC Traceback: không khớp tên exception (class cục bộ <locals>,
+                # màu ANSI, dòng tiến trình khác chen vào) thì bỏ qua cả Traceback, không quét tiếp tới dòng lạ phía sau.
+                em = EXC_LINE.match(lines[j])
+                if not em:
+                    break
                 # Lên repo PUBLIC chỉ có tên file:hàm của từng frame + LOẠI exception: thông điệp lỗi và dòng code
                 # có thể mang dữ liệu của repo app (đường dẫn tương đối, giá trị, tên khoá).
                 exc = em.group(1).split(":")[0]
-                frame = frames[-1] if frames else "?"
+                frame = frames[-1]
                 out.append(("traceback", f"Python {exc} trong {frame}", 1, f"{frame} {exc}", i,
                             "Traceback: " + " → ".join(frames[-8:]) + f" → {exc}"))
                 found = True
