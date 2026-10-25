@@ -54,6 +54,8 @@ CLI:
 REPORTED rows come from the UserPromptSubmit hook (scripts/enrich_context.py): a prompt
 classified as a bug fix, not yet confirmed. The classifier has false positives, so they
 are shown apart and not counted as bugs until linked to a test or confirmed with --id.
+Ở main checkout của trunk mode (chỉ nhận gộp) hook không ghi file track: dòng chờ trong <git common dir>/postfix-gate/
+pending_rows.json (read_pending, load_view thấy ở main và mọi worktree) tới khi `bugs link|add --id|drop` trong worktree xử lý nó.
 
 100% standard library.
 """
@@ -1677,8 +1679,13 @@ def apply_overlay(data: dict, project_dir, bind=None) -> None:
 
 def load_view(project_dir) -> dict:
     """load(), plus (in a LINKED worktree) the rows this worktree's hooks recorded in its overlay: what a hook there must read
-    to behave as it does in the main checkout. Never written back through save()."""
+    to behave as it does in the main checkout. Never written back through save(). Thêm các dòng main ở trunk mode giữ ngoài git
+    (read_pending), đọc được ở main và mọi worktree: dòng trong file track thắng, dòng overlay thắng cả hai."""
     data = load(project_dir)
+    try:
+        apply_pending(data, project_dir)
+    except Exception:  # noqa: BLE001 - sổ chờ đọc không được thì coi như không có: chỉ các dòng track, như trước
+        pass
     if skip_bookkeeping(project_dir):
         try:
             apply_overlay(data, project_dir)
@@ -1698,6 +1705,127 @@ def _common_dir_is_bare(project_dir) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return c.returncode == 0 and r.returncode == 0 and r.stdout.strip() == "true"
+
+
+# ── Trunk mode: dòng hook không được ghi vào main checkout chỉ-để-gộp (agent-workbench 24-25/10) ───────────────────────────
+# CLAUDE_PROJECT_DIR vẫn là main sau EnterWorktree, nên prompt hook ghi mọi dòng REPORTED vào checklist ĐƯỢC TRACK của main: main luôn
+# bẩn đúng hai file mà gần như mọi lần gộp đều chạm, `git pull --ff-only` / `worktree finish` bị từ chối. Merge driver không cứu được
+# (git từ chối fast-forward đè lên sửa đổi chưa commit TRƯỚC khi chạy driver nào), nên main không bị ghi nữa.
+PENDING_FILE = "pending_rows.json"   # <git common dir>/postfix-gate/: không bao giờ track, không hạn tuổi, một sổ cho main và mọi worktree
+_SW: list = []
+
+
+def _session_worktree():
+    """hooks/session_worktree.py (tree_of, trunk_mode: MỘT cách đọc trunk mode, như bin/session_lock.py), nạp một lần theo đường dẫn."""
+    if not _SW:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("devkit_session_worktree", Path(__file__).resolve().parent.parent / "hooks" / "session_worktree.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _SW.append(mod)
+    return _SW[0]
+
+
+def trunk_main(project_dir) -> bool:
+    """True khi project_dir là MAIN checkout của repo ở trunk mode (mặc định; `devkit.trunkMode false` hay WORKTREE_TRUNK_MODE=0 tắt):
+    main chỉ nhận gộp, nên hook để vào sổ chờ thứ nó định ghi ở đó. Lỗi bất kỳ: False (ghi như cũ)."""
+    try:
+        sw = _session_worktree()
+        t = sw.tree_of(str(project_dir))
+        return bool(t and not t[1] and os.path.samefile(t[0], str(project_dir)) and sw.trunk_mode(t[0]))
+    except Exception:  # noqa: BLE001 - kit thiếu hooks/session_worktree.py, thư mục đã mất: hành vi cũ
+        return False
+
+
+def _pending_path(project_dir):
+    try:
+        t = _session_worktree().tree_of(str(project_dir))
+    except Exception:  # noqa: BLE001 - không đọc được cây git: không có sổ
+        return None
+    return Path(t[2]) / "postfix-gate" / PENDING_FILE if t else None
+
+
+def _read_pending_strict(path) -> dict:
+    """{id: dòng} của sổ; {} khi chưa có file. File có mà đọc không được (hỏng, quá lớn, không phải file thường): ValueError - người ghi
+    không bao giờ ghi đè nó bằng sổ rỗng."""
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return {}
+    if not stat.S_ISREG(st.st_mode) or st.st_size > _OVERLAY_MAX_BYTES:   # một FIFO sẽ treo người đọc
+        raise ValueError(f"{path}: không phải file thường hoặc quá lớn")
+    rows = json.loads(Path(path).read_text(encoding="utf-8")).get("rows")
+    if not isinstance(rows, dict):
+        raise ValueError(f"{path}: không có khoá rows")
+    return {k: v for k, v in rows.items() if isinstance(v, dict)}
+
+
+def read_pending(project_dir) -> dict:
+    """{id: dòng} các hook giữ cho repo chứa project_dir (pending_save_rows). Thiếu, đọc không được hay sai định dạng: {}."""
+    path = _pending_path(project_dir)
+    try:
+        return _read_pending_strict(path) if path else {}
+    except (OSError, ValueError, RecursionError, AttributeError):
+        return {}
+
+
+def _newer_report(row, tracked) -> bool:
+    """Dòng chờ `row` mới hơn dòng track `tracked` mà vẫn chưa ai xác nhận (REPORTED/💤, không test): báo lại một bug đã có trong file
+    track (mở lại, thêm phiên) chỉ nằm ở sổ chờ. Dòng track đã xác nhận/link, hay mới bằng hoặc hơn: dòng track thắng."""
+    if not isinstance(tracked, dict) or tracked.get("state") not in ("reported", "auto_closed") or tracked.get("tests") or tracked.get("test_refs"):
+        return False
+    return str(row.get("touched_at") or row.get("created_at") or "") > str(tracked.get("touched_at") or tracked.get("created_at") or "")
+
+
+def apply_pending(data: dict, project_dir) -> list:
+    """Thêm các dòng chờ mà checklist đọc từ file track chưa có, và thay dòng track chưa xác nhận bằng bản chờ mới hơn (_newer_report);
+    còn lại dòng track thắng (người và gate đã đi tiếp trên nó). Trả về id lấy từ sổ chờ."""
+    items = data.setdefault("items", {})
+    added = []
+    for rid, row in read_pending(project_dir).items():
+        if rid not in items or _newer_report(row, items[rid]):
+            items[rid] = row
+            added.append(rid)
+    return added
+
+
+def _main_head_items(common: Path):
+    """Các dòng checklist trong commit HEAD của main checkout (HEAD của common dir); None khi git không nói được."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "--git-dir", str(common), "show", f"HEAD:{STATUS_FILE.as_posix()}"], capture_output=True, timeout=10,
+                           env=_clean_git_env())
+        items = json.loads(r.stdout.decode("utf-8")).get("items") if r.returncode == 0 else None
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+        return None
+    return items if isinstance(items, dict) else None
+
+
+def pending_save_rows(project_dir, data: dict, ids, drop=()) -> None:
+    """Giữ các dòng `ids` của `data` mà hook tạo ở main trunk mode (trunk_main), và quên `drop` (người chạy `bugs drop`). Một dòng chỉ
+    rời sổ khi HEAD của main đã có id đó với bản không cũ hơn hay đã xác nhận (nó về qua một commit: `agent-kit bugs link|add --id`
+    trong worktree ghi đúng dòng đó vào checklist của worktree; _newer_report) hoặc người đã drop nó - không bao giờ vì tuổi, nên không
+    mất bug nào đã báo."""
+    path = _pending_path(project_dir)
+    if path is None:
+        raise FileNotFoundError(f"không có git dir cho {project_dir}: dòng không được giữ")
+    import fcntl
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(str(path) + ".lock", "a") as lk:   # main và mọi worktree dùng chung sổ: đọc-sửa-ghi dưới khoá riêng của nó
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        rows = _read_pending_strict(path)
+        for rid in ids:
+            item = (data.get("items") or {}).get(rid)
+            if isinstance(item, dict):
+                rows[rid] = item
+        for rid in drop:
+            rows.pop(rid, None)
+        head = _main_head_items(path.parent.parent) or {}
+        rows = {k: v for k, v in rows.items() if k not in head or _newer_report(v, head[k])}
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".pending_rows.")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"rows": rows}, f, ensure_ascii=False)
+        os.replace(tmp, path)
 
 
 _WORKTREE = "\0worktree"   # key of the worktree-vs-HEAD listing in mark_stale's diff memo
@@ -2874,17 +3002,30 @@ def _bug_command(args, project: Path) -> int:
     """add / bug-link / drop: one row, under the lock, the id first on the result line."""
     with locked(project):
         data = load(project)
+        # trunk mode: dòng prompt hook giữ ngoài git (read_pending) tìm/khử trùng được ở đây; chỉ dòng lệnh này đụng tới mới vào checklist
+        tracked = dict(data["items"])
+        pending = apply_pending(data, project)
+
+        def store(acted=()):
+            for rid in pending:
+                if rid not in acted:   # dòng chờ lệnh này không đụng: không ghi; dòng track nó che đi thì trả lại nguyên như cũ
+                    if rid in tracked:
+                        data["items"][rid] = tracked[rid]
+                    else:
+                        data["items"].pop(rid, None)
+            save(project, data)
+
         _sync_matrix(data, project)
         if args.cmd == "bug-unlink":
             removed = unlink_bug(data, args.bug_id, args.test_ref, project=project)
-            save(project, data)
+            store([args.bug_id])
             print(f"{args.bug_id} {effective_status(data, data['items'][args.bug_id])} — đã gỡ link: {', '.join(removed)}"
                   " (RED-proof cũ → OUTDATED, chứng minh lại)")
             return 0
         if args.cmd == "req-add":
             rid, created = register_req(data, args.title, args.criterion, component=args.module, source=args.source,
                                         inbox=args.inbox, reason=args.reason, req_id=args.req_id)
-            save(project, data)
+            store()
             it = data["items"][rid]
             print(f"{rid} {effective_status(data, it)} — {'đã thêm' if created else 'đã có, cập nhật'}: {it['title']} "
                   f"({len(it['criteria'])} tiêu chí, hash {it['criteria_hash']})")
@@ -2892,7 +3033,7 @@ def _bug_command(args, project: Path) -> int:
             return 0
         if args.cmd == "req-link":
             in_matrix, outside = link_req(data, args.req_id, args.which, args.test_ref, project=project)
-            save(project, data)
+            store()
             st = effective_status(data, data["items"][args.req_id])
             print(f"{args.req_id} {st} — tiêu chí {args.which} → " + (", ".join(in_matrix) if in_matrix else
                   f"{args.test_ref} (ngoài matrix: gate không chạy)"))
@@ -2907,7 +3048,7 @@ def _bug_command(args, project: Path) -> int:
             except ValueError:
                 pass
             item["on_car"], item["repeat_proof"] = True, rp
-            save(project, data)
+            store([args.bug_id])
             ok_ = rp["failed"] == 0 and rp["passed"] >= REPEAT_MIN
             print(f"{args.bug_id} {effective_status(data, item)} — chạy lặp trên xe: {rp['passed']} đạt, "
                   f"{rp['failed']} hỏng, {rp['unmeasured']} không đo được ({', '.join(rp['scenarios'])})"
@@ -2915,12 +3056,14 @@ def _bug_command(args, project: Path) -> int:
             return 0 if ok_ else 1
         if args.cmd == "drop":
             item = drop(data, args.bug_id)
-            save(project, data)
+            store()
+            if args.bug_id in read_pending(project):   # người đã drop: sổ chờ quên nó luôn, không thì nó hiện lại ở mọi view
+                pending_save_rows(project, data, [], drop=[args.bug_id])
             print(f"{args.bug_id} — đã xoá khỏi checklist: {item.get('title')}")
             return 0
         if args.cmd == "bug-link":
             in_matrix, outside = link_bug(data, args.bug_id, args.test_ref, project=project)
-            save(project, data)
+            store([args.bug_id])
             st = effective_status(data, data["items"][args.bug_id])
             if in_matrix:
                 print(f"{args.bug_id} {st} — đã link {args.test_ref} → {', '.join(in_matrix)} "
@@ -2940,7 +3083,7 @@ def _bug_command(args, project: Path) -> int:
             for v in vals:
                 if v not in item.setdefault(key, []):
                     item[key].append(v)
-        save(project, data)
+        store([bid])
         st = effective_status(data, item)
         print(f"{bid} {st} — {'đã thêm vào checklist' if created else 'đã có sẵn, cập nhật (không thêm trùng)'}: "
               f"{item['title']}")

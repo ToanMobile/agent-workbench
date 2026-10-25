@@ -221,6 +221,7 @@ python3 "$NIGHTLY" run > "$TMP/nightly.out" 2>&1
 
 # ── enrich_context.py: a bug prompt -> a REPORTED row ────────────────────────────────────────────────────────────────
 pair c5
+git -C "$P" config devkit.trunkMode false   # đối chứng là main checkout kiểu cũ: main trunk mode giữ dòng REPORTED ngoài git (test_trunk_main_reported_pending.sh)
 s_p="$(sig "$P")"; s_w="$(sig "$W")"
 b_p="$(prompt "$P" "App bị crash khi cộng hai số" | grep -o 'BUG-[A-Za-z0-9_-]*' | head -1)"
 b_w="$(prompt "$W" "App bị crash khi cộng hai số" | grep -o 'BUG-[A-Za-z0-9_-]*' | head -1)"

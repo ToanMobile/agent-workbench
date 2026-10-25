@@ -1901,13 +1901,15 @@ def linked_worktree():
 
 def with_overlay(items):
     """In a LINKED worktree the rows its hooks kept in the worktree's own state (an auto-link, a RED-proof, a REPORTED bug) join the
-    tracked ones, so the reminders and the VACUOUS hold below behave as in the main checkout."""
-    if not linked_worktree():
-        return items
+    tracked ones, so the reminders and the VACUOUS hold below behave as in the main checkout. Ở mọi checkout: cả các dòng REPORTED
+    main trunk mode giữ ngoài git (regression_checklist.apply_pending), như load_view thấy."""
+    linked = linked_worktree()   # (cũng đưa bin/ của kit vào sys.path)
     try:
         import regression_checklist as rc
         view = {"items": dict(items)}
-        rc.apply_overlay(view, repo)
+        getattr(rc, "apply_pending", lambda _d, _p: None)(view, repo)
+        if linked:
+            rc.apply_overlay(view, repo)
         return view["items"]
     except Exception:  # noqa: BLE001 — unreadable overlay: the tracked rows alone
         return items
