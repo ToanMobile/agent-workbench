@@ -406,3 +406,5 @@
 15 tests/worktree_git/test_trunk_main_reported_pending.sh
 # 2026-10-25: người ghi tự động khác ở main trunk mode (auto-link, red_proof, SessionStart, hộp thư, migrate-pending); đo 70 s lúc máy tải cao.
 70 tests/worktree_git/test_trunk_main_pending_writers.sh
+# 2026-10-25: tích hợp skill impeccable v4.7.1; đo ~2 s.
+2 tests/verification/test_impeccable_skill.sh

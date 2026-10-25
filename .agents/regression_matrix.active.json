@@ -1599,6 +1599,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-impeccable-skill",
+      "watch_files": [
+        "universal-agent-devkit/skills/impeccable/*",
+        "universal-agent-devkit/profiles/*/profile.json",
+        "universal-agent-devkit/profiles/web/rules/web-rules.md",
+        "universal-agent-devkit/tests/verification/test_impeccable_skill.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-IMPECCABLE-01",
+          "name": "skill impeccable v4.7.1: SKILL.md frontmatter + Apache-2.0/MIT NOTICE, launcher tắt telemetry mặc định & probe cô lập exit 127, đủ reference/JSON 62 rule, 3 lớp bảo vệ DevKit (billing, hook/.grok, .adb-denylist), lọc profile và đồng bộ tài liệu 35 skills",
+          "command": "bash universal-agent-devkit/tests/verification/test_impeccable_skill.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
