@@ -408,3 +408,5 @@
 70 tests/worktree_git/test_trunk_main_pending_writers.sh
 # 2026-10-25: tích hợp skill impeccable v4.7.1; đo ~2 s.
 2 tests/verification/test_impeccable_skill.sh
+# 2026-10-25: test_evidence_gate chặn nhầm (tên chu trình trong kế hoạch, mã thoát in bằng echo, lệnh bị từ chối, động từ khẳng định bị phủ định); đo 22 s lúc máy tải 53 (12 nhân).
+22 tests/gates/test_evidence_false_blocks.sh
