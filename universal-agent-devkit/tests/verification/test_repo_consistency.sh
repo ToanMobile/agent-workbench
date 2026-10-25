@@ -16,6 +16,7 @@
 #       totals) are gone
 #   R8  no references to files of another repo (.Codex/, rulebook/NN-…)
 #   R9  the tests live in tests/<group>/test_*.sh and every glob that enumerates them agrees
+#   R10 every hooks/, bin/, scripts/ path the docs name (AGENTS.md, READMEs, CLAUDE.md, rules/) exists
 #
 # Red means a doc, a file or a link is wrong: fix that, do not relax the check.
 # Usage: bash tests/verification/test_repo_consistency.sh      (needs python3; uses ruby for YAML if present)
@@ -399,6 +400,24 @@ check('run_impacted.sh" --all' in _ak and "tests/*/test_*.sh" in _ri   # (hooks/
 _ev = re.findall(r'DEVKIT_SUITE_RX = re\.compile\(r"([^"]+)"\)', open(os.path.join(ROOT, "hooks", "test_evidence_gate.sh"), encoding="utf-8").read())
 check(bool(_ev) and re.search(_ev[0], "bash tests/gate/test_x.sh") is not None and re.search(_ev[0], "bash tests/test_x.sh") is not None,
       "R9 test_evidence_gate counts tests/<group>/test_*.sh (and a flat one) as a DevKit suite")
+
+# R10 a kit script the docs name exists: after the scripts/<group>/ split (2026-10-02) AGENTS.md and the READMEs kept 13
+# flat paths (scripts/nightly.py, scripts/lint_*.py, …) until the 2026-10-25 audit. A path that resolves inside a skill
+# folder (ui-ux-pro-max's scripts/search.py) is that skill's own script.
+DOC_PATH = re.compile(r"(?<![\w./-])((?:hooks|bin|scripts)/[\w./*-]*(?:\.py|\.sh|\*))")
+skill_dirs = sorted(glob.glob(os.path.join(ROOT, "skills", "*")))
+def _resolves(p):
+    hit = (lambda q: bool(glob.glob(q))) if "*" in p else os.path.exists
+    return hit(os.path.join(ROOT, p)) or any(hit(os.path.join(d, p)) for d in skill_dirs)
+dead_paths = []
+for d in ["AGENTS.md", "README.md", "README.vi.md", "CLAUDE.md"] + sorted(glob.glob(os.path.join(ROOT, "rules", "*.md"))):
+    path = d if os.path.isabs(d) else os.path.join(ROOT, d)
+    for i, line in enumerate(open(path, encoding="utf-8"), 1):
+        for m in DOC_PATH.finditer(line):
+            if not _resolves(m.group(1)):
+                dead_paths.append(f"{os.path.relpath(path, ROOT)}:{i} {m.group(1)}")   # `rel` is rebound by R5/R6
+check(not dead_paths, "R10 every hooks/ bin/ scripts/ path the docs name exists",
+      "; ".join(dead_paths[:8]) + (f" (+{len(dead_paths) - 8})" if len(dead_paths) > 8 else ""))
 
 print()
 print(f"repo consistency: {PASS} passed, {FAIL} failed")

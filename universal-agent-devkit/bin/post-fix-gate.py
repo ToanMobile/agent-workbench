@@ -5194,8 +5194,8 @@ def _rotate_run_log(path):
 def _gate_busy(run_tests, lock_held, read_only, regression_tests):
     """Tests not run because another run interfered: it held test_run.lock past the wait, or it replaced / dropped the file a re-used PASS came from
     (STALE). A read-only run (every suite re-used, no lock, nothing written) is no such case: its re-used PASS stands and it waited for nothing.
-    One formula for the --json summary (the Stop hook says "run again later" and caches nothing) and for the run log (hooks/stop_hook_times.py and
-    bin/gate_runs_report.py count a busy run as a lock wait)."""
+    One formula for the --json summary (the Stop hook says "run again later" and caches nothing) and for the run log (scripts/governance/stop_hook_times.py and
+    scripts/governance/gate_runs_report.py count a busy run as a lock wait)."""
     return bool(run_tests and ((not lock_held and not read_only) or any(t.get("label") == "STALE" for t in regression_tests)))
 
 
