@@ -243,17 +243,46 @@ def git_gate_wiring(target: Path, score: Score):
                                   "No pre-commit hook: commits skip the static checks (agent-kit githooks install)"), warn_only=True)
 
 
+# A script a hook command runs from the project: a path after $CLAUDE_PROJECT_DIR / ${CLAUDE_PROJECT_DIR:-…}
+# (`bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/x.sh"`, `python3 "$CLAUDE_PROJECT_DIR"/universal-agent-devkit/hooks/x.py`),
+# or a bare .claude/hooks/ or .agents/devkit/ path (`cd "$CLAUDE_PROJECT_DIR" && python3 .claude/hooks/x.py`).
+HOOK_PATH_RX = re.compile(r"""(?:\$\{CLAUDE_PROJECT_DIR[^}]*\}|\$CLAUDE_PROJECT_DIR)["']?/([\w.-]+(?:/[\w.-]+)*)"""
+                          r"""|(?:^|[\s"'])((?:\.claude/hooks|\.agents/devkit)/[\w.-]+(?:/[\w.-]+)*)""")
+# Only a script counts: `>> "$CLAUDE_PROJECT_DIR/.claude/hook.log"` names a file the hook writes, not one it needs.
+HOOK_SCRIPT_EXTS = (".sh", ".bash", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl")
+
+
+def registered_hook_scripts(settings) -> list:
+    """Project-relative script paths the hook commands of a parsed `.claude/settings*.json` run, in order. Shared by
+    project_wiring() and bin/post-fix-gate.py (a settings-only change, INSTINCT-015). ValueError when "hooks" is not the
+    {event: [{"hooks": [{"command": …}]}]} shape Claude Code reads: the hooks then do not run either."""
+    hooks = settings.get("hooks") if isinstance(settings, dict) else None
+    if hooks is None:
+        return []
+    if not isinstance(hooks, dict):
+        raise ValueError('"hooks" is not an object')
+    paths = []
+    for event, matchers in hooks.items():
+        if not isinstance(matchers, list) or not all(isinstance(m, dict) and isinstance(m.get("hooks", []), list) for m in matchers):
+            raise ValueError(f'"hooks.{event}" is not a list of {{"hooks": [...]}} entries')
+        for m in matchers:
+            for h in m.get("hooks", []):
+                cmd = h.get("command") if isinstance(h, dict) else None
+                for found in HOOK_PATH_RX.findall(cmd if isinstance(cmd, str) else ""):
+                    rel = found[0] or found[1]
+                    if ".." not in rel.split("/") and (rel.startswith(".claude/hooks/") or rel.endswith(HOOK_SCRIPT_EXTS)):
+                        paths.append(rel)
+    return paths
+
+
 def project_wiring(target: Path, score: Score):
     """What the project actually runs with — the DevKit's own dirs can be fine while the
     project's hooks are missing, its imports dangle or the gate distrusts its matrix."""
     settings, _ = load_json(target / ".claude" / "settings.json")
-    missing = []
-    for ev in ((settings or {}).get("hooks") or {}).values():
-        for m in ev:
-            for h in m.get("hooks", []):
-                for rel in re.findall(r"(?:^|[\s\"'/])(\.claude/hooks/[\w.-]+)", h.get("command", "")):
-                    if not (target / rel).exists():
-                        missing.append(rel)
+    try:
+        missing = [rel for rel in registered_hook_scripts(settings) if not (target / rel).exists()]
+    except ValueError as e:
+        missing = [str(e)]
     if missing:
         # A registered hook with no file exits 127 on every call — non-blocking, so every
         # guard and gate is silently off. Never a PASS.

@@ -26,7 +26,8 @@ session holds the checkout (do not edit it), 0 when free, stale, its own, or not
 
 Writes are judged by their TARGET (OfficeReader 2026-10-08, three hours lost): a git write or gate run aimed at ANOTHER
 repository (`cd /clone && git commit`, `git -C /clone push`, `CLAUDE_PROJECT_DIR=/clone post-fix-gate`) and an Edit/Write of a
-path outside this checkout never collide; a target that cannot be resolved ($VAR, ~, a missing directory) still does.
+path outside this checkout never collide; a target that cannot be resolved ($VAR, ~, a missing directory, a cd inside a subshell) still
+does - and is refused outright while another live session holds any checkout of this repository (main or a linked worktree, 25/10).
 
 Escape hatches (both logged to <git dir>/devkit-session.log): DEVKIT_ALLOW_SHARED_CHECKOUT=1 in the hook's own environment, and
 the user's approval for a RUNNING session: `! agent-kit allow-shared [--minutes N]` (default 60) writes
@@ -46,6 +47,7 @@ import re
 import stat
 import sys
 import time
+from collections import ChainMap   # `re` imports collections already: no extra import cost per hook call
 # subprocess is imported where git really has to run (2026-10-09: it cost ~7 ms of every PreToolUse call; see _find_git)
 
 LOCK = "devkit-session.lock"
@@ -108,7 +110,15 @@ def _gate_run(seg):
     return True
 SEPARATOR = _Re(r"(&&|\|\||[;|&\n])")
 CD_ONLY = _Re(r"^\s*(?:builtin\s+)?cd\s+(?:--\s+)?(\"[^\"]*\"|'[^']*'|[^\s;&|()<>$`\\]+)\s*$")
-PROJECT_DIR = _Re(r"\bCLAUDE_PROJECT_DIR=(\"[^\"]*\"|'[^']*'|\S+)")
+# the whole shell word (audit 25/10 A.4: `"$PWD"/../..` read as `"$PWD"` dropped the `/../..` that leads back into main). TARGET_DIR: the
+# gate's second variable (post-fix-gate.get_project_dir: CLAUDE_PROJECT_DIR, else TARGET_DIR, else the cwd's repository)
+_GATE_DIR_VARS = ("CLAUDE_PROJECT_DIR", "TARGET_DIR")
+PROJECT_DIR = _Re(r"\b(CLAUDE_PROJECT_DIR|TARGET_DIR)=((?:\"[^\"]*\"|'[^']*'|[^\s\"';&|()<>])*)")
+# a segment that is only assignments (`[export] A=x B="$PWD" C=$(mktemp -d)`, sessions export several at once) and each of them; the
+# assignments are split by whitespace (`\s+`, never `\s*`: `a=a=a…` must not backtrack exponentially in a hook that runs on every call)
+_ASSIGN_VALUE = r"(?:\"[^\"]*\"|'[^']*'|\$\([^()]*\)|[^\s\"';&|()<>])*"
+_ASSIGN_PAIR = _Re(rf"([A-Za-z_]\w*)=({_ASSIGN_VALUE})")
+_ASSIGNS_ONLY = _Re(rf"^\s*(?:export\s+)?[A-Za-z_]\w*={_ASSIGN_VALUE}(?:\s+[A-Za-z_]\w*={_ASSIGN_VALUE})*\s*$")
 ALLOW_FLAG = "devkit-allow-shared"
 # A directory change the segment walk cannot follow (subshell, `bash -c`, eval, pushd, a cd with a redirect, GIT_DIR=...): the directory
 # is UNKNOWN from there on, so every later write fails closed (review 2026-10-08: `cd B && (cd A && git commit)` slipped through).
@@ -1273,52 +1283,218 @@ def _target(path):
     return os.path.realpath(top), gdir
 
 
-def _resolve(base, word):
-    """A cd / -C argument as an absolute path from `base` (None when base is unknown)."""
-    word = _unquote(word)
+_WORD_PART = _Re(r"\"([^\"]*)\"|'([^']*)'|([^\"']+)")
+_VAR_REF = _Re(r"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})")
+_SAFE_BARE = _Re(r"[\w./@%+:,=-]*")   # a value that word splitting and globbing leave as it is
+
+
+def _shell_word(word, known=None):
+    """One shell word with its quotes removed and each $NAME / ${NAME} that `known` holds replaced by its literal value - in double quotes
+    any value, unquoted only one word splitting and globbing leave alone. Single-quoted text, a part with a backslash and any other
+    variable or substitution keep their `$` / backtick, which _target cannot resolve (fail closed); an unbalanced quote: None."""
+    def value(ref, bare):
+        val = known.get(ref.group(1) or ref.group(2))
+        return ref.group(0) if val is None or (bare and not _SAFE_BARE.fullmatch(val)) else val
+
+    out, end = [], 0
+    for m in _WORD_PART.finditer(word):
+        if m.start() != end:
+            return None
+        end = m.end()
+        part = m.group(1) if m.group(1) is not None else m.group(3)
+        if part is None or "\\" in part or not known:   # single quotes: no expansion
+            out.append(m.group(2) if part is None else part)
+            continue
+        bare = m.group(3) is not None
+        out.append(_VAR_REF.sub(lambda ref: value(ref, bare), part))
+    return "".join(out) if end == len(word) else None
+
+
+def _resolve(base, word, known=None):
+    """A cd / -C / CLAUDE_PROJECT_DIR word as an absolute path from `base` (None when base is unknown); `known`: _shell_word."""
+    word = _shell_word(word, known)
+    if word is None:
+        return None
     if os.path.isabs(word):
         return word
     return os.path.join(base, word) if base else None
 
 
-def _git_target(cur, opts):
-    """The directory a git command acts on: `cur` moved by each `-C <dir>` in order; None (unknown) with --git-dir / --work-tree."""
+def _git_target(cur, opts, known=None):
+    """The directory a git command acts on: `cur` moved by each `-C <dir>` (the whole shell word) in order; None (unknown) with --git-dir /
+    --work-tree."""
     if re.search(r"--(?:git-dir|work-tree)", opts):
         return None
-    for d in re.findall(r"-C\s+(\"[^\"]*\"|'[^']*'|\S+)", opts):
-        cur = _resolve(cur, d)
+    for d in re.findall(r"-C\s+((?:\"[^\"]*\"|'[^']*'|[^\s\"'])+)", opts):
+        cur = _resolve(cur, d, known)
     return cur
 
 
-def write_hits_locked(cmd, top, cwd, sid=""):
+# audit 25/10 A.4: `W=<dir>; git -C $W …` - a variable is known only from a segment that is nothing but a literal assignment, run in this shell
+# for sure; a compound command (if / for / while / case / { }) can assign it on a path the walk does not follow: no variable is known there.
+_ASSIGN_ONLY = _Re(r"^\s*(?:export\s+)?([A-Za-z_]\w*)=(\"[^\"$`\\]*\"|'[^']*'|[^\s\"'$`\\;&|()<>~]*)\s*$")
+_SHELL_COMPOUND = _Re(r"(?:^|[\s;&|(])(?:if|then|elif|else|fi|for|select|while|until|do|done|case|esac|function|coproc|[{}])(?=$|[\s;&|()<>])")
+_SOURCES = _Re(r"^\s*(?:source|\.|eval)(?:\s|$)")
+
+
+_IDENT = _Re(r"(?<!\w)[A-Za-z_]\w*")
+
+
+def _names_bound(text):
+    """The variable names `text` mentions other than as a plain $NAME / ${NAME} reference (`NAME=x cmd`, `read NAME`, `${NAME:=x}`,
+    `for NAME in`). One pass over the text: a walk that tested every known name per segment was quadratic (review 25/10)."""
+    return set(_IDENT.findall(_VAR_REF.sub("", text)))
+
+
+def _track_vars(values, seg, sure):
+    """Update `values` (the variables known so far, None: none can be) by one segment: `NAME=literal` / `export NAME=literal` alone that
+    runs for `sure` in this shell sets NAME; any other mention of a known name forgets it (a conditional, piped or subshell assignment
+    too), and `source` / `.` / `eval` forget them all.
+    ponytail: a shell function or alias that assigns a variable is not seen; read the function body if one is ever met."""
+    if values is None:
+        return
+    a = _ASSIGN_ONLY.match(seg)
+    if a and sure:
+        values[a.group(1)] = _unquote(a.group(2))
+    elif _SOURCES.match(seg):
+        values.clear()
+    else:
+        for name in _names_bound(seg) & values.keys():
+            values.pop(name)
+
+
+def _nesting(seg, depth, ticks):
+    """(depth, ticks) after `seg`: depth counts the open `(` / `$(` / `<(` / `>(` of the line, ticks is True inside backticks. Quoted
+    text and escaped characters do not count - a segment never ends inside quotes (_split_segments) - so this is one linear pass.
+    ponytail: a `case` pattern's lone `)` closes one level early; give the walk a real parser if that is ever met."""
+    quote, i, n = None, 0, len(seg)
+    while i < n:
+        c = seg[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c == "\\":
+            i += 1
+        elif c in "\"'":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth = max(depth - 1, 0)
+        elif c == "`":
+            ticks = not ticks
+        i += 1
+    return depth, ticks
+
+
+_GATE_DIR_MAX = 4   # possible values kept per variable; more: unknown (a line that sets it again and again on paths the walk cannot pick)
+
+
+def _gate_dirs(seg, cur, known, earlier):
+    """The directories a gate run in `seg` may audit (post-fix-gate.get_project_dir: CLAUDE_PROJECT_DIR, else TARGET_DIR, else the cwd's
+    repository). A non-empty CLAUDE_PROJECT_DIR on the gate's own command line is the one it gets (as before); otherwise a non-empty
+    value given there, every value an earlier segment of the line may have left for a variable not given there (`earlier`:
+    _track_gate_dirs, None = unknown) and the cwd all count - a variable that is not exported never reaches the gate, and the cwd is what
+    was judged before, so nothing blocked before passes now (lỗ 3, 25/10)."""
+    given = {m.group(1): m.group(2) for m in PROJECT_DIR.finditer(seg)}
+    out = []
+    for name in _GATE_DIR_VARS:
+        if name not in given:
+            out.extend(earlier.get(name, ()))
+        elif _shell_word(given[name], known) != "":
+            out.append(_resolve(cur, given[name], known))
+            if name == "CLAUDE_PROJECT_DIR":
+                return out
+    out.append(cur)
+    return out
+
+
+_GATE_DIR_ASSIGN = _Re(r"\b(CLAUDE_PROJECT_DIR|TARGET_DIR)(?::?=|\+=)")   # NAME=, ${NAME:=…}, ${NAME=…}, NAME+=
+_GATE_DIR_WORD = _Re(r"\b(CLAUDE_PROJECT_DIR|TARGET_DIR)\b")
+_BINDS_NAMED = _Re(r"\b(?:read|unset|export|declare|typeset|local|readonly|for|select|getopts|printf|mapfile|readarray)\b")
+
+
+def _track_gate_dirs(dirs, seg, cur, known, sure):
+    """Update `dirs` (CLAUDE_PROJECT_DIR / TARGET_DIR -> the directories earlier segments may have set) by one segment that runs no gate:
+    `[export] NAME=<word>` in a segment of assignments only sets NAME to the word as it reads there ($PWD: the directory at that point) -
+    replacing what was set when it runs for `sure` in this shell, else one more possibility; an empty word unsets it. Anything else that
+    can set NAME (an assignment in front of a command or in a subshell, ${NAME:=…}, read / unset / export / declare … NAME, source / eval)
+    leaves it unknown; a mention that only reads it (`grep CLAUDE_PROJECT_DIR f`, `echo $CLAUDE_PROJECT_DIR`) changes nothing."""
+    if _SOURCES.match(seg):
+        for name in _GATE_DIR_VARS:
+            dirs[name] = [None]
+        return
+    if "_DIR" not in seg:
+        return
+    if _ASSIGNS_ONLY.match(seg):
+        for a in _ASSIGN_PAIR.finditer(seg):
+            if a.group(1) in _GATE_DIR_VARS:
+                new = [] if _shell_word(a.group(2), known) == "" else [_resolve(cur, a.group(2), known)]
+                old = [] if sure else dirs.get(a.group(1), [])
+                dirs[a.group(1)] = (old + [d for d in new if d not in old]) if len(old) < _GATE_DIR_MAX else [None]
+        return
+    bare = _VAR_REF.sub("", seg)
+    hit = {m.group(1) for m in _GATE_DIR_ASSIGN.finditer(bare)}
+    if _BINDS_NAMED.search(bare):
+        hit.update(m.group(1) for m in _GATE_DIR_WORD.finditer(bare))
+    for name in hit:
+        dirs[name] = [None]
+
+
+def write_hits_locked(cmd, top, cwd, sid="", notes=None):
     """(hits_top, foreign): hits_top - a git write / gate run in `cmd` can land in the locked checkout `top`, or its target cannot be told
-    (fail closed); foreign - (toplevel, git dir, lock) of ANOTHER checkout the command writes to that ANOTHER live session holds (it
+    (fail closed; `notes`, a dict, gets "unknown": True then - main() refuses that too while another session holds a checkout of the
+    repository); foreign - (toplevel, git dir, lock) of ANOTHER checkout the command writes to that ANOTHER live session holds (it
     counts even when the session's own checkout is free). The command is walked segment by segment (&&, ||, ;, |, &, newline; not
     inside quotes): a segment that is only `cd <dir>` moves the working directory for the segments after it, but only when it runs in
-    the same shell (followed by && ; or a newline); a cd that may not have run (before | & ||) and any directory change the walk cannot
-    follow (DIR_CHANGE) make the directory unknown; each write is judged by the toplevel of its `git -C <dir>` / `CLAUDE_PROJECT_DIR=<dir>`
-    / working directory."""
+    the same shell (followed by && ; or a newline, and not inside a `( )` / `$( )` / backtick subshell: lỗ 2, 25/10); a cd that may not have
+    run (before | & ||), a cd in a subshell and any directory change the walk cannot follow (DIR_CHANGE) make the directory unknown; each
+    write is judged by the toplevel of its `git -C <dir>` / working directory, a gate run by _gate_dirs (CLAUDE_PROJECT_DIR / TARGET_DIR,
+    on its own line or set by an earlier segment, and the working directory). In those words $PWD / ${PWD} is the directory the walk
+    tracks (unknown when the line names PWD otherwise) and $NAME a variable _track_vars knows (audit 25/10 A.4)."""
     locked = os.path.realpath(top) if top else None
     cur = cwd or top
-    pieces = _split_segments(cmd)   # segment, separator, segment, ...
-    seen, hits_top, foreign, named = False, False, None, False
+    # the walk reads the line without its comments, as trunk mode's _bash_trunk_write does: bash ignores `# note; W=B`, the split did not
+    # (review 25/10: from B, `W=A <nl> # note; W=B <nl> git -C $W commit` passed while A was held)
+    text = _clean(cmd)
+    pieces = _split_segments(text)   # segment, separator, segment, ...
+    pwd_ok = "PWD" not in _names_bound(text)
+    values = None if _SHELL_COMPOUND.search(text) else {}
+
+    def known():   # a view, not a copy per segment (review 25/10: copying every known name per cd / git segment was quadratic)
+        return ChainMap({"PWD": cur if pwd_ok and cur else None}, values or {})
+
+    seen, hits_top, foreign, named, opened = False, False, None, False, False
+    depth, ticks, gate_dirs = 0, False, {}
     for i in range(0, len(pieces), 2):
         seg = pieces[i]
         sep = pieces[i + 1] if i + 1 < len(pieces) else ""
+        # runs for sure in this shell: after the line start, `;` or a newline, before `;`, `&&`, a newline or the end, and no `(` / `$(` /
+        # backtick before it (the segment walk splits inside a substitution: `x=$(true; W=…` is a subshell's W)
+        sure = (pieces[i - 1] if i else "") in ("", ";", "\n") and sep in ("", ";", "&&", "\n") and not opened
+        _track_vars(values, seg, sure)
+        opened = opened or "(" in seg or "`" in seg
+        nested = depth > 0 or ticks   # this segment runs inside a subshell / substitution the line opened before it
+        depth, ticks = _nesting(seg, depth, ticks)
         cd = CD_ONLY.match(seg)
         if cd:
-            cur = _resolve(cur, cd.group(1)) if sep in ("&&", ";", "\n", "") else None
+            cur = _resolve(cur, cd.group(1), known()) if sep in ("&&", ";", "\n", "") and not nested else None
             continue
         if DIR_CHANGE.search(seg):
             cur = None
         named = named or bool(GIT_WRITE.search(seg) or GATE.search(seg))
-        targets = [_git_target(cur, m.group("opts")) for m in GIT_WRITE.finditer(seg)]
+        targets = [_git_target(cur, m.group("opts"), known()) for m in GIT_WRITE.finditer(seg)]
         if _gate_run(seg):
-            pd = PROJECT_DIR.search(seg)
-            targets.append(_resolve(cur, pd.group(1)) if pd else cur)
+            targets.extend(_gate_dirs(seg, cur, known(), gate_dirs))
+        else:
+            _track_gate_dirs(gate_dirs, seg, cur, known(), sure)
         for target in targets:
             seen = True
             tl, tgdir = _target(target)
+            if tl is None and notes is not None:
+                notes["unknown"] = True
             if tl is None or tl == locked or _same_dir(tl, locked):
                 hits_top = True
                 continue
@@ -1461,6 +1637,8 @@ def _trunk_sync(seg):
     --ff-only` with no remote or `origin` and no refspec that names a local ref (`pull --ff-only . branch` fast-forwards main onto any local
     branch, past the integrator's gate; OCR 9, 14/10). ponytail: a remote CONFIGURED to a local path (`remote.origin.url = .`) is not looked up."""
     verb, args = _git_verb(seg)
+    if not any(c in seg for c in "'\"\\"):   # `2>&1`, `> log` are redirects, not the remote (audit 25/10 A.4); quoted or escaped, `>` is a word
+        args = _drop_redirects(args)
     pos = [a for a in args if not a.startswith("-")]
     if verb not in ("fetch", "push", "pull") or _updates_checked_out_branch(seg) or (pos and _LOCAL_REMOTE.match(pos[0])):
         return False
@@ -1469,6 +1647,18 @@ def _trunk_sync(seg):
 
 _TRUNK_WRAP = _Re(r"^\s*(?:nohup|time(?:\s+-p)?)\s+")
 _TRUNK_REDIR = _Re(r"\d*>>?|&>>?|\d*>>?\S+|&>>?\S+|\d*>&\d+")
+
+
+def _drop_redirects(words):
+    """`words` without its output redirects (`2>&1`, `>log`, and a bare `>` / `2>` with the target word after it)."""
+    out, k = [], 0
+    while k < len(words):
+        if _TRUNK_REDIR.fullmatch(words[k]):
+            k += 2 if re.fullmatch(r"\d*>>?|&>>?", words[k]) else 1
+            continue
+        out.append(words[k])
+        k += 1
+    return out
 
 
 def _trunk_unwrap(seg):
@@ -1667,12 +1857,12 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
     return False
 
 
-def bash_collides(cmd, top, cwd=None, sid=""):
-    """(hits_top, foreign) - see write_hits_locked; a redirect or a file write (_file_write_hits) into the locked checkout also counts
-    as hits_top."""
+def bash_collides(cmd, top, cwd=None, sid="", notes=None):
+    """(hits_top, foreign) - see write_hits_locked (and its `notes`); a redirect or a file write (_file_write_hits) into the locked
+    checkout also counts as hits_top."""
     hits_top, foreign = False, None
     if GIT_WRITE.search(cmd) or GATE.search(cmd):
-        hits_top, foreign = write_hits_locked(cmd, top, cwd, sid)
+        hits_top, foreign = write_hits_locked(cmd, top, cwd, sid, notes)
     if not hits_top and ">" in cmd:
         for target in _redirect_targets(cmd):
             if not target or target.startswith("&"):
@@ -1686,6 +1876,29 @@ def bash_collides(cmd, top, cwd=None, sid=""):
     if not hits_top and top and _file_write_hits(cmd, top, cwd):
         hits_top = True
     return hits_top, foreign
+
+
+def family_held(gdir, sid, now):
+    """(checkout, git dir, lock) of a checkout of the repository of `gdir` other than `gdir` itself - its main checkout or a linked
+    worktree, all under one common git dir - that ANOTHER live session holds; None when none does (lỗ 1, 25/10). Read only when a write
+    target cannot be told: such a write may land in any of them."""
+    common = gdir
+    try:
+        with open(os.path.join(gdir, "commondir"), encoding="utf-8") as f:
+            common = os.path.realpath(os.path.join(gdir, f.read(4096).strip()))
+    except OSError:
+        pass   # no commondir: gdir is the repository's own git dir
+    try:
+        names = sorted(os.listdir(os.path.join(common, "worktrees")))
+    except OSError:
+        names = []
+    for g in [common] + [os.path.join(common, "worktrees", n) for n in names]:
+        if _same_dir(g, gdir):
+            continue
+        lock = read_checkout_lock(g)
+        if not is_free_for(lock, sid, now):
+            return str(lock.get("cwd") or g), g, lock
+    return None
 
 
 def _guard(gdir):
@@ -1928,11 +2141,11 @@ def main():
         print("⛔ [DevKit] Công tắc trunk mode là của NGƯỜI DÙNG: agent không ghi WORKTREE_TRUNK_MODE (khác 1) vào file settings của Claude (khối `env` "
               "của settings*.json là môi trường của hook ở phiên sau). Cần tắt: nhờ người dùng chạy `! agent-kit worktree trunk off`.", file=sys.stderr)
         return 2
-    foreign = None
+    foreign, notes = None, {}
     if tool in EDIT_TOOLS:
         collides = edit_hits_locked(d.get("tool_input"), top, cwd, gdir)
     elif tool == "Bash":
-        collides, foreign = bash_collides(command, top, cwd, sid)
+        collides, foreign = bash_collides(command, top, cwd, sid, notes)
     else:
         return 0
     if foreign:   # a write into ANOTHER checkout that another live session holds: judged by THAT lock, whatever this session's own checkout says
@@ -1952,6 +2165,24 @@ def main():
             return 2
         if _same_dir(top, trunk):
             return 0   # nothing written into main: nothing to take (main has no holder in trunk mode)
+    # lỗ 1 (25/10): a git write / gate run whose target the line does not tell used to count against this session's OWN checkout only, so
+    # from a free checkout `cd $X && git commit` reached one of the same repository another session holds. Trunk mode refuses such a
+    # target already (trunk_write), except in the sync / integrator segments it lets through (`git -C "$X" pull --ff-only` from a worktree
+    # still passes: ponytail, judge those by family_held too if a sibling is ever hit; refusing them all would stop every lane's push);
+    # here, trunk mode off, it is refused while another live session holds any checkout of this repository.
+    held = family_held(gdir, sid, now) if notes.get("unknown") and not trunk else None
+    if held:
+        htop, hgdir, hlock = held
+        if os.environ.get("DEVKIT_ALLOW_SHARED_CHECKOUT") == "1" or allow_shared_until(hgdir) > now:
+            log(hgdir, f"{sid} ghi song song khi {hlock.get('session_id')} đang giữ (được cho phép, đích không xác định): {tool}")
+        else:
+            print(f"⛔ [DevKit] Một thư mục — một phiên: lệnh này ghi (git / gate) vào một thư mục mà dòng lệnh không cho biết ($BIẾN không gán "
+                  f"trong lệnh, ~, cd trong $( ) / ( ) / backtick, …), trong khi checkout {htop} của cùng repo đang do {describe(hlock, now)} "
+                  f"giữ: lệnh có thể ghi vào đó. Viết đường dẫn thật (`cd <thư mục> && …`, `git -C <thư mục> …`, "
+                  f"`CLAUDE_PROJECT_DIR=\"$PWD\" …`) rồi chạy lại; cần ghi vào checkout đang bị giữ thì TỰ làm trong worktree riêng "
+                  f"(`agent-kit worktree add ../<repo>-<việc>`), hoặc chờ phiên kia xong lượt.", file=sys.stderr)
+            log(gdir, f"{sid} chặn ghi vào đích không xác định khi {hlock.get('session_id')} giữ {htop} ({tool})")
+            return 2
 
     # D1: read, decide and take under the guard - two sessions starting their first write together used to both read "free"
     guard, why = _guard(gdir)

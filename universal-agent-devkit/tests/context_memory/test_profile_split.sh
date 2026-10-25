@@ -3,8 +3,11 @@
 # imported by AGENTS.md) and an ON-DEMAND reference (.agents/context/profile-reference.md, never imported). Rubric dim 5
 # caps the bytes a session loads (AGENTS.md + profile-rules.md + rules-index.md) at 40 KB; the game and android profiles
 # alone were 21-23 KB. User decisions (12-13/10): no rule sentence is deleted, MUST/CẤM/BẮT BUỘC/bất biến lines stay
-# always-loaded, essentials are not trimmed. This test is the oracle for those promises. automotive (ctx5, 14/10): every line
+# always-loaded, essentials are not trimmed. 25/10 the user approved de-duplicating the essentials ("Xử lý hết cho tôi"): a sentence
+# that repeats another one of the same loaded text is merged into one place, no rule is dropped (section H pins each obligation).
+# This test is the oracle for those promises. automotive (ctx5, 14/10): every line
 # is an obligation, a car-safety line or the scope that says which apps they bind, so none is cut; B2 pins that by line.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"
@@ -142,6 +145,10 @@ for p, needles in LOADED.items():
     loaded = cs.wanted(project(p))["profile-rules.md"]
     gone = [n for n in needles if n not in loaded]
     say(not gone, "%s: guardrails still loaded at session start %s" % (p, gone or ""))
+# backend §7 (25/10): the SSRF rule binds every server-side fetch of a user-supplied URL, so it is loaded at session start
+ssrf = [n for n in ("169.254.169.254", "không phân giải DNS lần hai", "redirect", "socket.getaddrinfo")
+        if n not in cs.wanted(project("backend"))["profile-rules.md"]]
+say(not ssrf, "backend: the SSRF rule (§7) is loaded at session start %s" % (ssrf or ""))
 
 # B2. by LINE, not by keyword (ctx5; user 13/10 ~10:50: every MUST / CẤM / bất biến / car-safety line stays loaded; INSTINCT-037:
 # a keyword lint cannot see an obligation phrased without one). Every non-blank line of the source outside its markers is still
@@ -277,6 +284,54 @@ for prompt in ("fix the search bar crash on the home screen", "translate the app
     say("  - §12 " not in out_g and "  - §16 " not in out_g, "rule_context names neither §12 nor §16 for the ordinary prompt %r" % prompt)
 say(hook(os.path.join(TMP, "no-such-project"), "fix the Room migration crash after the schema export change") == "",
     "rule_context is silent without profile-reference.md and rules-index.md")
+
+# H. essentials de-duplicated, no rule dropped (user 25/10 "Xử lý hết cho tôi", DevKit audit C.4; INSTINCT-037). The text read is the
+# LOADED one: the essentials block context_sync writes into a project's AGENTS.md. Each sentence that repeated another one of the same
+# loaded text was merged into ONE place; each obligation of the merged lines (read line by line: phải, không, luôn, chỉ khi, hỏi trước)
+# is pinned below by its own words, whitespace-folded so a re-wrap does not break it. The counts fail when a merged clause is copied back.
+ess_root = os.path.join(TMP, "ess")
+os.makedirs(os.path.join(ess_root, ".agents"), exist_ok=True)
+with open(os.path.join(ess_root, "AGENTS.md"), "w", encoding="utf-8") as f:
+    f.write("<!-- universal-agent-devkit:start -->\n<!-- devkit-essentials:start -->\n<!-- devkit-essentials:end -->\n<!-- universal-agent-devkit:end -->\n")
+_w = cs.agents_md_wanted(ess_root)[2]
+loaded_ess = _w[_w.index("\n", _w.index(cs.MARK_START)) + 1:_w.index(cs.MARK_END)]
+flat = " ".join(loaded_ess.split())
+every = " ".join(loaded_ess[loaded_ess.index("## Every prompt"):loaded_ess.index("\n## ", loaded_ess.index("## Every prompt") + 3)].split())
+PINNED = ["## Lazy senior", "## Every prompt", "agent-kit worktree add", "agent-kit worktree finish", "pre-authorized",
+          # the four Claude <-> Antigravity cross-review copies (pre-code gate, Done means verified, step 5, Working style) and the
+          # plan-review line: two triggers in one bullet, each with its OWN risk list (merging the lists would widen who calls Antigravity)
+          "≥2 modules, ≥3 files, >200 LOC", "flow (crash, parsing, auth, navigation, lifecycle, security, module boundary): review the plan before code",
+          "same size thresholds, or auth, payment, database migration, production Crashlytics triage, core architecture", "plan_review",
+          "after the gate exits 0", "Antigravity `audit`", "/giao", "whole diff", "7 golden standards", "core-rules §18",
+          "required for large tasks only", 'Only the "ask the user" list', "A to Z", "no second-agent review", "Trivia: choose, ask no one",
+          "95/100",
+          # step 5 + the old "Reports open with three lines" bullet
+          "CHỜ DUYỆT", "AWAITING APPROVAL", "the next step", "Stay short", "ảnh: không cần", "Đã fix gì", "Chặn bug cũ", "Nguy cơ bug mới",
+          "An toàn mã nguồn", "refuses the reply without all four",
+          # step 3 holds the parallel-session rule the Done-means-verified bullet repeated
+          "impacted mode", "chỉ phiên cuối cùng chạy `--full`", "CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU",
+          # what Done means verified kept from its Stop-hook sentence
+          "on the current code", "no hook takes the screenshot",
+          # language: one line, every obligation of the old five
+          '"lang": "vi"', "English by default", "user's language", "stay English",
+          # the ask-the-user list the three profiles repeated
+          "Hỏi người dùng CHỈ KHI", "push fast-forward kể cả `main`"]
+gone = [n for n in PINNED if n not in flat]
+say(not gone, "essentials: every pinned obligation is in the loaded block %s" % (gone or ""))
+gone = [n for n in ("CHỜ DUYỆT", "AWAITING APPROVAL", "the next step", "Stay short") if n not in every]
+say(not gone, "essentials: the status words, next step and stay-short live in 'Every prompt' step 5 %s" % (gone or ""))
+ONCE = ["≥3 files", "200 LOC", "plan_review", "phiên cuối cùng", "CHỜ DUYỆT", "AWAITING APPROVAL", '"lang": "vi"', "95/100", "Trivia"]
+twice = ["%s x%d" % (n, flat.count(n)) for n in ONCE if flat.count(n) != 1]
+say(not twice, "essentials: each merged clause is stated once %s" % (twice or ""))
+# A ratchet, not a goal (25/10: 21449 bytes before the merge, 18.4 KB after): it fails when the essentials grow back.
+ESS_BUDGET = 19 * 1024
+size = len(loaded_ess.encode())
+say(size <= ESS_BUDGET, "essentials: loaded block is %d bytes (budget %d)" % (size, ESS_BUDGET))
+# backend / web / universal opened their §1 with the essentials' commit-push + ask-the-user bullet, word for word; both are loaded at once.
+for p in ("backend", "web", "universal"):
+    loaded = cs.wanted(project(p))["profile-rules.md"]
+    say("Chỉ hỏi người dùng trước" not in loaded and "essentials" in loaded,
+        "%s: profile-rules.md points to the essentials instead of repeating their Git / ask-the-user bullet" % p)
 PY
 
 while IFS= read -r line; do

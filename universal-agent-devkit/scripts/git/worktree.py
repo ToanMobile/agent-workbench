@@ -189,7 +189,9 @@ def _timeout():
 def _run(argv, inp=None, text=True, env=None, bounded=True, cwd=None):
     """subprocess.run with a bounded time. On timeout the child is killed and a CompletedProcess with returncode 124 comes back; so it does
     when the shared deadline of the running inventory() is spent (nothing is started then). `bounded=False` for a call that CHANGES the repo or the
-    disk (worktree add / remove --force, the temp-index work of `diff`): killed midway it leaves a half checkout or a half-deleted folder."""
+    disk (worktree add / remove --force, the temp-index work of `diff`): killed midway it leaves a half checkout or a half-deleted folder.
+    Text output stays a STRICT decode on purpose: a path that is not UTF-8 must raise, and the removal checks refuse on it
+    (tests/worktree_git/test_worktree_remove_safety.sh). A caller that reads content (diff bodies) uses _git_bytes instead."""
     if not bounded:
         return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env, cwd=cwd)
     if _spent():
@@ -1465,7 +1467,9 @@ def _clean_merges(wt, unheld):
         if len(parents) >= 2:
             merges[sha] = parents
     for sha in list(merges):
-        shown = git(wt, "show", "--cc", "--format=", "--ignore-submodules=none", sha, check=False)
+        # bytes: a hunk may hold a byte that is not UTF-8 (a Latin-1 file); a strict text decode raised UnicodeDecodeError here and
+        # the Stop gate held every worktree with "gate error" (2026-10-26). Only "is there any hunk" is read.
+        shown = _git_bytes(wt, "show", "--cc", "--format=", "--ignore-submodules=none", sha)
         if shown.returncode != 0 or shown.stdout.strip():
             del merges[sha]
     ok, grew = set(), True

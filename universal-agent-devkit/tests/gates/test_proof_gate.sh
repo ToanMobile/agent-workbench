@@ -76,6 +76,8 @@ $REPORT"
     "last_assistant_message":sys.argv[2],"stop_hook_active":sys.argv[3]=="1"}))' "$TR" "$reply" "${2:-0}" \
   | CLAUDE_PROJECT_DIR="$REPO" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
 reset() { rm -f "$REPO/.claude/audit-gate/proof_gate.state"; }
+receipt() { echo "$(git -C "$REPO" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json"; }
+set_status() { python3 -c 'import json,sys; p=sys.argv[1]; r=json.load(open(p)); r["tests"][0]["status"]=sys.argv[2]; json.dump(r,open(p,"w"))' "$(receipt)" "$1"; }   # one suite of the exit-0 receipt
 prof() { echo "{\"profile\":\"$1\"}" > "$REPO/.agents/active-profile.json"; (cd "$REPO" && git add -A && git commit -qm "profile $1"); }
 
 grp_receipt() {   # the full-gate receipt: missing, stale, from an earlier turn
@@ -106,12 +108,52 @@ stop "XONG
 ảnh $P2"; rc=$?
 [ "$rc" = 2 ] && grep -q "code đã đổi" "$TMP/err" && ok "code changed after the full gate run: blocked" || fail "stale receipt accepted (rc=$rc err=$(head -3 "$TMP/err"))"
 
-# Full run in an earlier turn only.
-reset; gate_full; turn_start
-P3="reports/proof-20260924-101520.png"; png "$REPO/$P3" 20000
+# Full run in an earlier turn only, on the SAME code, every suite PASS (audit 25/10 A item 4: 303 blocks in 14 days made the agent
+# re-run a long gate on code that had not changed): the receipt still holds. The block cases are in grp_earlier.
+reset; gate_full; g=$?; sleep 2; turn_start
+P3="reports/proof-$(date +%Y%m%d-%H%M%S).png"; png "$REPO/$P3" 20000
 stop "XONG
 ảnh $P3"; rc=$?
-[ "$rc" = 2 ] && grep -q "trước lượt" "$TMP/err" && ok "full gate run from an earlier turn: blocked" || fail "old receipt accepted (rc=$rc err=$(head -3 "$TMP/err"))"
+[ "$g" = 0 ] && [ "$rc" = 0 ] && grep -q "earlier-turn" "$REPO/.claude/audit-gate/proof_gate.log" \
+  && ok "full gate exit 0 (every suite PASS) from an earlier turn, same code: allowed" \
+  || fail "earlier-turn receipt of unchanged code refused (gate=$g rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+}
+grp_earlier() {   # an earlier turn's receipt holds only for the same tree with every suite PASS; any change since voids it
+reset; prof backend; sleep 2; echo "fun ok() = 60" > "$REPO/src/Core.kt"
+gate_full; g=$?; sleep 2; turn_start
+XR="XONG
+Đã sửa lỗi X.
+Gate exit 0 · ảnh: không cần (profile backend)"
+stop "$XR"; rc=$?
+[ "$g" = 0 ] && [ "$rc" = 0 ] && ok "backend: earlier-turn full receipt, same tree: allowed" \
+  || fail "backend earlier-turn receipt refused (gate=$g rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+reset; echo "fun ok() = 61" > "$REPO/src/Core.kt"
+stop "$XR"; rc=$?
+[ "$rc" = 2 ] && grep -q "trước lượt" "$TMP/err" && grep -q "code đã đổi" "$TMP/err" \
+  && ok "earlier-turn receipt, one tracked file edited since: blocked" || fail "edited tracked file accepted (rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+reset; echo "fun ok() = 60" > "$REPO/src/Core.kt"; echo "fun extra() = 1" > "$REPO/src/Extra.kt"
+stop "$XR"; rc=$?
+[ "$rc" = 2 ] && grep -q "code đã đổi" "$TMP/err" \
+  && ok "earlier-turn receipt, one untracked file added since: blocked" || fail "new untracked file accepted (rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+reset; rm -f "$REPO/src/Extra.kt"
+stop "$XR"; rc=$?
+[ "$rc" = 0 ] && ok "control: the tree back to the gated content, the earlier-turn receipt holds again" \
+  || fail "control: restored tree refused (rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+# A suite of the receipt that is not PASS (UNTESTED: KEYED / STALE / KNOWN-RED / untested_exit; BUSY) is no proof for a later turn.
+for st in UNTESTED BUSY; do
+  cp "$(receipt)" "$TMP/receipt.bak"; set_status "$st"; reset
+  stop "$XR"; rc=$?
+  [ "$rc" = 2 ] && grep -q "trước lượt" "$TMP/err" && grep -q "$st" "$TMP/err" \
+    && ok "earlier-turn receipt with a suite $st: blocked" || fail "earlier-turn receipt with a $st suite accepted (rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
+  cp "$TMP/receipt.bak" "$(receipt)"
+done
+# Impacted (non-full) run on edited code after the earlier full run: it leaves the full receipt of the OLD tree, never one of its own.
+reset; echo "fun ok() = 62" > "$REPO/src/Core.kt"; sleep 1
+CLAUDE_PROJECT_DIR="$REPO" SB_HEAVY_SLOT_DIR="$TMP/heavy-slots" python3 "$GATE" --run-tests --no-checklist >"$TMP/gate.imp" 2>&1; gi=$?
+turn_start; stop "$XR"; rc=$?
+[ "$rc" = 2 ] && grep -q "code đã đổi" "$TMP/err" \
+  && ok "impacted run (exit $gi) on edited code, earlier-turn full receipt of the old tree: blocked" \
+  || fail "impacted run accepted as the gate (gate=$gi rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
 }
 grp_gate_exit_png() {   # a failing full run leaves no receipt; the PNG checks (size, age, bytes, missing)
 # A failing full run leaves no receipt.
@@ -196,8 +238,8 @@ reset; prof backend; sleep 2; echo "fun ok() = 9" > "$REPO/src/Core.kt"
 turn_start; gate_full; stop "XONG
 Gate exit 0 · ảnh reports/proof-20260925-000001.png"; rc=$?
 [ "$rc" = 2 ] && grep -q "không có file này" "$TMP/err" && ok "waived image, but a cited PNG that does not exist: blocked" || fail "bogus cited PNG passed (rc=$rc)"
-reset; turn_start; stop "XONG
-Gate exit 0"; rc=$?
+reset; echo "fun ok() = 90" > "$REPO/src/Core.kt"; turn_start; stop "XONG
+Gate exit 0"; rc=$?   # code edited after the gate: the gate is the only thing missing (an unchanged tree now keeps the earlier receipt)
 [ "$rc" = 2 ] && ! grep -q "proof-capture" "$TMP/err" && ok "backend blocked on the gate only: no screenshot instruction" || fail "backend told to capture (rc=$rc)"
 }
 grp_commit_keeps() {   # committing the gated code in the same turn keeps the receipt
@@ -427,7 +469,9 @@ append_user() { # <origin kind> <content>
   python3 -c 'import datetime,json,sys
 t=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 print(json.dumps({"type":"user","timestamp":t,"origin":{"kind":sys.argv[1]},"message":{"role":"user","content":sys.argv[2]}}))' "$1" "$2" >> "$TR"; }
-reset; turn_start; echo "fun ok() = 41" > "$REPO/src/Core.kt"; gate_full; g=$?; sleep 1
+# A suite of each receipt is UNTESTED (set_status): such a receipt holds in its own turn only, so these two rows still tell a
+# task-notification from a real prompt now that an all-PASS receipt of unchanged code also holds in a later turn.
+reset; turn_start; echo "fun ok() = 41" > "$REPO/src/Core.kt"; gate_full; g=$?; set_status UNTESTED; sleep 1
 append_user task-notification "<task-notification>
 <task-id>b1</task-id>
 <status>completed</status>
@@ -438,7 +482,7 @@ stop "XONG
 Gate exit 0 · ảnh $P"; rc=$?
 [ "$g" = 0 ] && [ "$rc" = 0 ] && ok "a task-notification after the gate does not start a new turn: receipt of this turn accepted" \
   || fail "background-gate receipt refused after its task-notification (gate=$g rc=$rc err=$(head -3 "$TMP/err" | tr '\n' ' '))"
-reset; turn_start; echo "fun ok() = 42" > "$REPO/src/Core.kt"; gate_full; g=$?; sleep 1
+reset; turn_start; echo "fun ok() = 42" > "$REPO/src/Core.kt"; gate_full; g=$?; set_status UNTESTED; sleep 1
 append_user human "push luôn đi"
 P="reports/proof-$(date +%Y%m%d-%H%M%S).png"; png "$REPO/$P" 20000
 stop "XONG
@@ -507,7 +551,7 @@ Gate exit 0"; rc=$?
 # Run the groups at the same time (job control on only for these launches: every group is its own process group, which `cleanup`
 # stops whole). A group body sets short variables (g, rc, P, i ...), so the loop variable is `grp`, which none of them uses. A group
 # that dies before its end leaves no fails file: that is a failure, never a silent pass.
-GROUPS_IN_ORDER="receipt gate_exit_png image_scope waiver commit_keeps ir_py1 redated future ir_py2 objects handover push_fail loop_notif untested nested"
+GROUPS_IN_ORDER="receipt earlier gate_exit_png image_scope waiver commit_keeps ir_py1 redated future ir_py2 objects handover push_fail loop_notif untested nested"
 set -m
 for grp in $GROUPS_IN_ORDER; do
   ( TMP="$ROOT/$grp"; mkdir -p "$TMP"; mkrepo; "grp_$grp"; echo "$FAILS" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &

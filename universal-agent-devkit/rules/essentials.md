@@ -21,25 +21,18 @@ or user instruction); (2) the real source you will touch, read now — never a s
 (3) every consumer of a signature/public API/shared object you change, tests included;
 (4) the failure mechanism and how you will PROVE the change alters observable behaviour,
 decided before editing; (5) what stays unverified.
-- **Claude ↔ Antigravity cross-review (chỉ dành cho task lớn & rủi ro cao)**: Cơ chế phản biện
-  song phương Claude ↔ Antigravity (qua `antigravity-pm` `plan_review` / `pm_plan` trước khi code
-  và `audit` sau khi xong) CHỈ ÁP DỤNG cho các task lớn: chạm ≥2 modules, ≥3 files, >200 LOC net diff,
-  hoặc luồng rủi ro cao (auth, payment, database migration, production crashlytics triage, thay đổi
-  kiến trúc cốt lõi) theo 7 tiêu chuẩn vàng:
-  (1) *Chính xác phẫu thuật:* diff tối thiểu, Zero Blast Radius, không làm xước mô xung quanh.
-  (2) *Tất định & Tự kiểm chứng:* paired test RED → GREEN, bịt kín mọi failure mode.
-  (3) *Hiển nhiên & Tối giản:* không múa code phức tạp, on-call đọc hiểu cơ chế trong 10 giây.
-  (4) *Kỷ luật tài nguyên:* không nghẽn UI, không O(N²), dọn sạch stream/listener/leak.
-  (5) *Thấu suốt vận hành:* log có cấu trúc, không nuốt ngoại lệ, khoanh vùng lỗi trong 5 phút.
-  (6) *Phòng thủ ranh giới:* zero-trust, validate biên nghiêm ngặt, không lộ secret/PII.
-  (7) *Dễ tiêu hủy & Tiến hóa:* module khép kín, sẵn sàng xóa sạch, tương thích ngược.
-  Đối với TASK ĐƠN GIẢN / TRUNG BÌNH (bug fix cục bộ, tinh chỉnh UI, cập nhật test, sửa script,
-  logic 1-2 file): gọi agent nào (Claude hoặc Antigravity) thì agent đó TỰ LÀM LUÔN TỪ A-Z cho
-  nhanh, tự kiểm chứng (paired test RED→GREEN, gate exit 0), KHÔNG CẦN gọi agent thứ 2 review để
-  tránh lãng phí thời gian và token.
-- ≥2 modules, ≥3 files, >200 LOC or a risky flow (crash, parsing, auth, navigation, lifecycle,
+- ≥2 modules, ≥3 files, >200 LOC net diff or a risky flow (crash, parsing, auth, navigation, lifecycle,
   security, module boundary): review the plan before code; only the "ask the user" list under
-  Working style needs the user's go-ahead.
+  Working style needs the user's go-ahead. **Claude ↔ Antigravity cross-review, large tasks only**: the
+  same size thresholds, or auth, payment, database migration, production Crashlytics triage, core
+  architecture: `antigravity-pm` `plan_review` / `pm_plan` before code; after the gate exits 0, an
+  independent Antigravity `audit` (or the `/giao` flow) of the whole diff and code safety. Judge it by
+  the 7 golden standards (surgical, deterministic, boring, resource hygiene, operability, zero-trust
+  boundary, deletable; core-rules §18 has them and the /100 scoring); the bilateral review record is
+  required for large tasks only.
+- Simple or medium task (local bug fix, UI tweak, test update, script fix, 1–2 file logic): the agent
+  that was called, Claude or Antigravity, does it A to Z and verifies it itself (paired test RED→GREEN,
+  gate exit 0), with no second-agent review. Trivia: choose, ask no one.
 
 ## Lazy senior: build less, never check less
 Once the change is understood (read the code, trace the flow, grep every caller), stop at
@@ -95,19 +88,10 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   `agent-kit worktree trunk off` turns it off): main is merge-only and nobody holds it — every session works in its own worktree (Claude Code: the
   tool EnterWorktree; others: `agent-kit worktree add`), and only `agent-kit worktree finish` moves main.
 - **Done means verified**: run the post-fix gate
-  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only) and
-  attach a real proof PNG from this turn (when step 4 of "Every prompt" applies) before the
-  reply may open with XONG. Với task lớn (≥2 modules, ≥3 files, >200 LOC hoặc rủi ro cao), sau khi
-  gate PASS (exit 0) gọi Antigravity audit / review check độc lập (qua `antigravity-pm` `audit` hoặc
-  quy trình như `/giao`) để rà soát toàn bộ diff và an toàn mã nguồn. Với task đơn giản, agent tự hoàn
-  tất và nghiệm thu ngay khi gate PASS (exit 0) mà không cần gọi thêm agent khác.
-  Khi chạy nhiều agent / nhiều prompt song song: chỉ test đúng ca đang làm (`--run-tests --brief`).
-  Cổng kiểm thử tự động kiểm tra toàn bộ sessions và chỉ kích hoạt kiểm tra toàn diện (`--full`)
-  khi xác nhận đây là phiên cuối cùng duy nhất đang làm việc (tránh lock contention và chạy lặp).
-  The Stop hooks enforce the gate on hosts that have them. They do not take the screenshot; on
-  Claude Code `proof_gate.sh` refuses a reply opening with XONG unless this turn has a `--full`
-  exit 0 on the current code and, for app source on a profile with a screen, names a fresh proof
-  PNG.
+  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only, on the
+  current code) and attach a real proof PNG from this turn (when step 4 of "Every prompt" applies)
+  before the reply may open with XONG. The Stop hooks enforce this where the host has them, but
+  no hook takes the screenshot.
 
 ## Every prompt (standing law)
 Applies to Claude Code, Gemini CLI, Antigravity, Codex, Cursor and Grok, to every turn that
@@ -160,14 +144,14 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    - The command exits non-zero when it cannot open a device. Open with CHƯA XONG and
      paste that error. Do not draw, reuse an old image, or substitute a test XML.
 5. The reply may open with XONG only when this turn has exit 0 from step 3 and, when step 4
-   applies, its PNG. Line 1: XONG or CHƯA XONG. Line 2: what the user gets. Line 3: gate
-   exit code, then image path and serial, or "ảnh: không cần — <reason>".
+   applies, its PNG. Line 1: XONG, CHƯA XONG or CHỜ DUYỆT (English: DONE / NOT DONE /
+   AWAITING APPROVAL). Line 2: what the user gets. Line 3: gate exit code, then image path and
+   serial, or "ảnh: không cần — <reason>"; then the next step. Stay short.
    Every handover — an XONG, or any turn that runs `git push` — then carries the acceptance
    report (core-rules §1.3), 1–2 lines each: 1. Đã fix gì (lỗi, nguyên nhân gốc, RED→GREEN)
    · 2. Chặn bug cũ (test hồi quy / immutable_guards chạy lại PASS) · 3. Nguy cơ bug mới
    (caller, module liên đới đã rà) · 4. An toàn mã nguồn (secret, placeholder, OCR).
-   Kèm điểm đánh giá chất lượng Agent trên thang 100 (ngưỡng $\ge 95/100$); biên bản phản
-   biện song phương Claude ↔ Antigravity chỉ bắt buộc với task lớn.
+   Kèm điểm đánh giá chất lượng Agent trên thang 100 (ngưỡng $\ge 95/100$, core-rules §18).
    `proof_gate.sh` refuses the reply without all four.
    A change of Markdown (`.md/.rst/.adoc`) or LICENSE-type files only needs no regression
    test: the gate passes it.
@@ -221,20 +205,11 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   kể cả `main`, mở và merge PR thường, sửa test, sửa code: agent tự làm, không hỏi, không đưa
   lệnh `!`. Khi đúng việc phải hỏi: một lần AskUserQuestion (phương án khuyến nghị trước),
   rồi tự làm tiếp nếu được duyệt.
-- Quyết định kiến trúc / kỹ thuật lớn: Task lớn (≥2 modules, ≥3 files, >200 LOC hoặc luồng rủi
-  ro) trao đổi với Antigravity (`plan_review` / `audit`) để thống nhất giải pháp tối ưu. Task đơn
-  giản: agent được gọi tự làm từ A-Z, không cần 2-agent review. Trivia: choose, ask no one.
 - An edited existing test: Agent tự thẩm định và tự auto-duyệt (auto-approve, cờ `--auto-approve-tests`
   hoặc một dòng riêng `AUTO-APPROVE: <đường dẫn test>` trong câu trả lời — câu văn xuôi không được tính) khi thấy thay đổi là tốt hơn, cần thiết, hợp lý và test
   chạy PASS; tuyệt đối KHÔNG hỏi phiền người dùng bằng AskUserQuestion.
-- **Language baseline**: By default, all code comments, acceptance reports, handovers, PR notes,
-  and commit messages are in **English**. For projects configured with `"lang": "vi"` (in
-  `.agents/active-profile.json` or project rules), code comments, reports (báo cáo nghiệm thu 4 mục),
-  and commit messages use **Vietnamese** (`tiếng Việt`). User-facing conversation replies match the
-  user's language (Vietnamese when they write Vietnamese); identifiers, commands, and paths stay English.
-- Reports open with three lines: status (`XONG` / `CHƯA XONG` / `CHỜ DUYỆT`, or `DONE` / `NOT DONE` /
-  `AWAITING APPROVAL`), what the user gets, next step; stay short — a handover adds the 4-item report
-  of "Every prompt" step 5. XONG also requires the full-gate exit 0 and, when it applies, the
-  proof PNG in "Every prompt".
+- **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
+  with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
+  are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).
 - Long session or a big refactor ahead: checkpoint and compact instead of filling the window.
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.

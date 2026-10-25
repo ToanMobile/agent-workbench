@@ -527,7 +527,9 @@ def _scan_programs(text: str, project_dir: str, top: bool, cwd0: str, found: dic
             if base in _ENGINE:
                 found["engine"].add(_ENGINE[base])
             sub = _CPU.get(base, False)
-            if base in _FAN_OUT or sub is None or (sub and len(words) > 1 and words[1] in sub):
+            if base in _FAN_OUT:
+                found["fan_out"] = True   # lớp theo tập --list của nó (classify), không còn luôn là cpu
+            if sub is None or (sub and len(words) > 1 and words[1] in sub):
                 found["cpu"] = True
             script = None
             if base in _SHELLS and len(words) > 1:
@@ -554,7 +556,7 @@ def _scan_programs(text: str, project_dir: str, top: bool, cwd0: str, found: dic
             if sbase in _ENGINE:
                 found["engine"].add(_ENGINE[sbase])
             if sbase in _FAN_OUT:
-                found["cpu"] = True
+                found["fan_out"] = True
             if not top or "$" in script or "`" in script:
                 continue   # một cấp: script trong script không được theo
             path = script if os.path.isabs(script) else os.path.join(project_dir, cwd, script)
@@ -585,7 +587,7 @@ def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] =
     device None: tự nhận theo HARD_DEVICE (stale_rerun.run_one); gate truyền kết quả HARD_DEVICE_SUITE của nó."""
     if device is None:
         device = bool(HARD_DEVICE.search(command or ""))
-    found = {"engine": set(), "cpu": False}
+    found = {"engine": set(), "cpu": False, "fan_out": False}
     try:
         _scan_programs(command or "", project_dir, True, "", found)
     except Exception as exc:   # noqa: BLE001 - không đọc được lệnh: coi là unity (khoá độc quyền), không bao giờ nhẹ hơn thực tế
@@ -601,11 +603,48 @@ def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] =
         cls = "device"
     elif engine:
         cls = engine
-    elif found["cpu"] or (recorded_s is not None and recorded_s > _env_float("DEVKIT_SLOT_CPU_S", CPU_HEAVY_S)):
+    elif found["cpu"]:
+        cls = "cpu"
+    elif found["fan_out"]:
+        # 25/10 (audit B4): run_impacted.sh theo tập nó chọn LÚC NÀY, không theo lịch sử (độ dài theo diff: 17 s … 900 s); trước đây luôn cpu
+        # nên một lượt chỉ repo consistency (3 s) cũng xếp hàng slot nặng của cả máy. Không biết tập: cpu như cũ.
+        sel_s = selection_seconds(command, project_dir)
+        cls = "cpu" if sel_s is None or sel_s > _env_float("DEVKIT_SLOT_CPU_S", CPU_HEAVY_S) else "light"
+    elif recorded_s is not None and recorded_s > _env_float("DEVKIT_SLOT_CPU_S", CPU_HEAVY_S):
         cls = "cpu"
     else:
         cls = "light"
     return {"cls": cls, "engine": engine, "serial": serial}
+
+
+def selection_seconds(command: str, project_dir: str = ".") -> Optional[float]:
+    """Tổng giây (tuần tự, tests/lib/test_durations.txt cạnh script) của tập test mà `run_impacted.sh --list` chọn lúc này; None khi không
+    biết: lệnh không đúng dạng `bash <đường dẫn>/run_impacted.sh [--all]` của DevKit, `--list` lỗi / quá giờ (suite_cache.selection_list),
+    hay một test được chọn chưa có dòng thời lượng.
+    ponytail: test chưa có dòng thời lượng ⇒ cả tập là cpu (an toàn); đổi sang một mức mặc định mỗi test nếu thấy REG-DK-ALL-01 hay xếp
+    hàng chỉ vì test mới thiếu dòng."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import suite_cache  # noqa: PLC0415 - module anh em trong bin/
+        m = suite_cache.SELECTION_CMD.match(command or "")
+        sel = suite_cache.selection_list(project_dir, command) if m else None
+        if sel is None:
+            return None
+        durations = {}
+        with open(os.path.join(os.path.dirname(os.path.join(str(project_dir), m.group(1))), "lib", "test_durations.txt"),
+                  encoding="utf-8") as f:
+            for line in f:
+                p = line.split()
+                if len(p) >= 2 and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", p[0]):
+                    durations[p[1]] = max(durations.get(p[1], 0.0), float(p[0]))
+    except Exception as exc:   # noqa: BLE001 - không hỏi được tập: None (cpu, như trước)
+        print(f"[heavy-slot] không đọc được tập --list của run_impacted.sh ({exc}); coi là cpu", file=sys.stderr, flush=True)
+        return None
+    if any(t not in durations for t in sel):
+        return None
+    return sum(durations[t] for t in sel)
 
 
 @dataclass
