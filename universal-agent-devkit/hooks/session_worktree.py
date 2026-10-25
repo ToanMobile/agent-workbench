@@ -340,8 +340,16 @@ def on_tool_use(payload, env=None):
     if tool == "EnterWorktree":
         wt = _entered_path(payload)
         t = tree_of(wt) if isinstance(wt, str) and wt else None
-        if t and t[1] and write_record(main, sid, t[0], pid=holder_pid()):
-            _kept_lock(main, t[0], sid, None, unlock=True)   # quay lại worktree đã "keep": bản ghi phiên lại giữ nó, bỏ khoá để ExitWorktree remove gỡ được
+        pid = holder_pid()
+        if t and t[1] and write_record(main, sid, t[0], pid=pid):
+            if trunk_mode(main, env):
+                # 25/10: cleanup-wt (mọi bản đã cài chỉ chừa worktree bị khoá) gỡ worktree đã gộp ngay lúc phiên đang chạy gate trong đó.
+                # Khoá devkit-kept suốt lúc phiên ở trong: ExitWorktree remove đi qua WorktreeRemove -> `worktree remove` của kit, lệnh
+                # này mở khoá của chính phiên gọi; pid chết thì khoá vô hiệu (automerge / remove mở như K11).
+                if not _kept_lock(main, t[0], sid, pid):   # nói ra, không im lặng (OCR 25/10): cleanup-wt có thể gỡ nó giữa chừng
+                    return "entered " + t[0] + "; NOT LOCKED (no pid / git refused): cleanup-wt may remove it while the session works"
+            else:   # trunk mode tắt: harness tự `git worktree remove` khi ExitWorktree remove, khoá sẽ chặn nó (như trước)
+                _kept_lock(main, t[0], sid, None, unlock=True)
             return "entered " + t[0]
         return ""
     if tool == "ExitWorktree":
@@ -352,6 +360,10 @@ def on_tool_use(payload, env=None):
             if _kept_lock(main, wt, sid, holder_pid()):
                 return "left, kept " + wt
             return "left; KEEP NOT RECORDED (no lock): the Stop may merge and remove " + wt   # nói ra, không im lặng (OCR 18/10)
+        if wt and trunk_mode(main, env):
+            # review 25/10: rời không "keep" mà worktree còn đó (WorktreeRemove từ chối: việc chưa vào main) -> mở khoá Enter của phiên này
+            # (theo sid, hay theo pid sau /clear), để Stop gộp rồi gỡ nó như worktree mồ côi thay vì báo "kept by a live session" mãi
+            _kept_lock(main, wt, sid, holder_pid(), unlock=True)
         return "left"
     return ""
 
@@ -392,8 +404,10 @@ def _kept_lock(main, wt, sid, pid, unlock=False):
             cur = line[len("worktree "):]
         elif (line == "locked" or line.startswith("locked ")) and cur and os.path.realpath(cur) == os.path.realpath(wt):
             reason = line[len("locked "):]
-    if unlock:
-        if reason is not None and reason.startswith(KEPT_PREFIX + sid + " "):
+    if unlock:   # khoá devkit-kept của chính phiên: cùng sid, hay (pid hợp lệ được truyền) cùng tiến trình claude — /clear đổi sid, giữ pid
+        m = re.fullmatch(r"devkit-kept session=(\S+) pid=([0-9]{1,10})", reason or "")
+        mine_by_pid = isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and m is not None and int(m.group(2)) == pid
+        if m and (m.group(1) == sid or mine_by_pid):
             g("worktree", "unlock", wt)
         return False
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
@@ -407,6 +421,24 @@ def _kept_lock(main, wt, sid, pid, unlock=False):
         g("worktree", "unlock", wt)   # khoá devkit-kept của chính phiên, hay của pid đã chết: thay bằng pid hiện tại
     r = g("worktree", "lock", "--reason", f"{KEPT_PREFIX}{sid} pid={pid}", wt)
     return r is not None and r.returncode == 0
+
+
+_BOARD_WT = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
+
+
+def lock_started_worktree(main, here, sid, pid, env=None):
+    """SessionStart (bin/session_lock.py; review 25/10): a session that STARTS — or /clear, /resume — inside a linked worktree of a
+    trunk-mode repo (a Desktop worktree session, `claude --worktree`) never calls EnterWorktree, so it takes the same devkit-kept lock
+    there. A super-board lane worktree (.claude/worktrees/issue-<N>[-build|-qa|-review]) is the board's: its runner removes it with a
+    plain `git worktree remove`, which a lock left by a dead worker would block. Returns the worktree locked, None otherwise."""
+    if not main or not here or not trunk_mode(main, env):
+        return None
+    t = tree_of(here)
+    if not t or not t[1] or os.path.realpath(main_of(t[0]) or "") != os.path.realpath(main):
+        return None
+    if _BOARD_WT.fullmatch(os.path.basename(t[0])) and os.path.basename(os.path.dirname(t[0])) in ("worktrees", ".worktrees"):
+        return None
+    return t[0] if _kept_lock(main, t[0], sid, pid) else None
 
 
 def _agent_worktree(payload, main):
@@ -496,7 +528,7 @@ def main(argv):
             return 0
         if did:
             print(f"session_worktree: {did}", file=sys.stderr)
-            if "KEEP NOT RECORDED" in did:   # stderr của hook thoát 0 không tới model: nói qua additionalContext (review 18/10)
+            if "KEEP NOT RECORDED" in did or "NOT LOCKED" in did:   # stderr của hook thoát 0 không tới model: nói qua additionalContext (review 18/10)
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "session_worktree: " + did}}))
         return 0
     print("usage: session_worktree.py trunk-mode [path] | project | record   (payload JSON on fd 3 or stdin)", file=sys.stderr)

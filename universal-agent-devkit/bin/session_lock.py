@@ -1861,6 +1861,10 @@ def main():
                 _sw.reown(main_top, sid, cwd, lambda o: not owner_gone(cwd, o, _sw, main_top)[0], me=holder_pid())
             except Exception as e:  # noqa: BLE001 - a record that cannot be moved: the Stop hook tries again (worktree_merge_gate)
                 print(f"session_lock: worktree record not moved ({e!r})", file=sys.stderr)
+            try:   # review 25/10: a session that starts in its worktree (no EnterWorktree) holds it too, or cleanup-wt removes it mid-gate
+                _sw.lock_started_worktree(main_top, cwd, sid, holder_pid())
+            except Exception as e:  # noqa: BLE001 - SessionStart never blocks: said on stderr, the worktree stays as unprotected as before
+                print(f"session_lock: session worktree not locked ({e!r})", file=sys.stderr)
         if trunk and _same_dir(top, trunk):
             return 0   # W1 R1 v6: a trunk-mode main checkout has no holder - nothing to take, nobody to wait for
         guard, why = _guard(gdir)
