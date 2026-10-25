@@ -53,15 +53,30 @@ DEFAULT_ALWAYS_HUMAN = {
         "paths": ["**/billing/**", "**/payments/**", "**/stripe/**", "**/checkout/**"],
         # Stripe is matched by its real context, not the bare word `stripe.` (#261: `stripe.material`, a colour-stripe variable,
         # sent PR #224 to a person): import/require, api.stripe.com, live keys, a `Stripe(` call. `added` is lower-cased.
-        "keywords": ["api.stripe.com", "payment_intent", "price_id", "invoice.create"],
-        "patterns": [r"\b(?:import|from)\s+stripe\b", r"from\s+['\"]stripe['\"]", r"require\(\s*['\"]stripe['\"]",
-                     r"\b[sp]k_live_", r"\bstripe\(",
+        # Go/Java/Kotlin: import SDK (`github.com/stripe/stripe-go`, `import com.stripe.`) và gói Go `paymentintent.New(`,
+        # `charge.New(`, `refund.New(`, `stripe.NewClient(`. Stripe.js: gói `@stripe/…` và `loadStripe(`.
+        "keywords": ["api.stripe.com", "payment_intent", "price_id", "invoice.create",
+                     "github.com/stripe/stripe-go", "import com.stripe.", "paymentintent.new(",
+                     "charge.new(", "refund.new(", "stripe.newclient(", "@stripe/", "loadstripe("],
+        # `require 'stripe'` (Ruby) và `require('stripe')` (Node), giữ dấu đóng để `require('striped-table')` vẫn auto;
+        # `new StripeClient(` (Node/PHP v2).
+        "patterns": [r"\b(?:import|from)\s+stripe\b", r"from\s+['\"]stripe['\"]", r"require\s*\(?\s*['\"]stripe['\"/]",
+                     r"\b[sp]k_live_", r"\bstripe(?:client)?\(",
                      # Lời gọi SDK trong file đã import Stripe từ trước (import không nằm trong diff): `stripe.api_key = …`,
-                     # `stripe.Charge.create(`, `stripe.refunds.create(`. Theo hình dạng (tài nguyên + động từ API + `(`) vì
-                     # `added` đã hạ chữ thường; `stripe.material.depthWrite`, `stripe.mesh.updateMatrix()` (#261) vẫn auto.
-                     r"\bstripe\.api_?key\b",
-                     r"\bstripe(?:\.[a-z_]+)+\.(?:create|retrieve|update|modify|list|del|delete|cancel|capture|confirm"
-                     r"|search|construct_?event)\s*\("],
+                     # Go `stripe.Key = …`, `stripe.Charge.create(`, `stripeClient.charges.create(`, Ruby `Stripe::Charge.create(`,
+                     # PHP `$stripe->charges->create(` / `\Stripe\Charge::create(`, Python `create_async(`. Theo hình dạng
+                     # (receiver stripe / stripe_client + phân cách `.` `::` `->` `\` + động từ API + `(`) vì `added` đã hạ
+                     # chữ thường. Auto (#261): `stripe.material.depthWrite`, `stripe.mesh.updateMatrix()`, `stripes.delete(`,
+                     # `stripeCache.delete(`, `stripedRows.update(`, `key={stripe.key}` (Go chỉ khi gán `stripe.key =`),
+                     # `stripe.update(color)`: động từ cần ít nhất một đoạn tài nguyên ở giữa (`+`), SDK không có
+                     # `stripe.update(`; lời gọi trực tiếp của Stripe.js có tên riêng (`confirmCardPayment`, `redirectToCheckout`…).
+                     r"\bstripe\w*(?:\.|::|->|\\)(?:api_?key|set_?api_?key)\b", r"\bstripe\.key\s*=(?!=)",
+                     r"\bstripe(?:_?client)?\b(?:(?:\.|::|->|\\)\w+)+(?:\.|::|->|\\)(?:create|retrieve|update|modify|list"
+                     r"|del|delete|cancel|capture|confirm|search|construct_?event)(?:_async)?\s*\(",
+                     r"\bstripe\.(?:confirm\w+|redirecttocheckout|createpaymentmethod|createtoken|handle(?:card|next)action"
+                     r"|retrieve(?:payment|setup)intent)\s*\(",
+                     # Go `&stripe.ChargeParams{`, Java khi import nằm ngoài diff: `PaymentIntent.create(`, `Charge.create(`.
+                     r"&stripe\.\w+params\b", r"\b(?:paymentintent|charge|refund)\.create\("],
     },
     "auth": {
         "labels": ["auth", "security"],

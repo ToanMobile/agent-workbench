@@ -64,6 +64,39 @@ check "stripe.webhooks.constructEvent" 'const e = stripe.webhooks.constructEvent
 check "đối chứng âm: stripe.mesh.updateMatrix() (three.js)" 'stripe.mesh.updateMatrix();' '' auto
 check "đối chứng âm: stripe.position.set(...)" 'stripe.position.set(0, 0, 0);' '' auto
 check "đối chứng âm: stripe.geometry.dispose()" 'stripe.geometry.dispose();' '' auto
+# Biến thể client/ngôn ngữ khác vẫn là gọi Stripe thật (review aa269cd2).
+check "stripeClient.charges.create" 'const c = await stripeClient.charges.create({ amount: 1 });' '' money
+check "stripe_client.v1.charges.create" 'c = stripe_client.v1.charges.create(params)' '' money
+check "new StripeClient(...)" 'const client = new StripeClient(process.env.K);' '' money
+check "ruby Stripe::Charge.create" 'Stripe::Charge.create(amount: 100)' '' money
+check "ruby require 'stripe'" "require 'stripe'" '' money
+check "php \$stripe->charges->create" '$stripe->charges->create(["amount" => 100]);' '' money
+check "php \\Stripe\\Charge::create" '\Stripe\Charge::create(["amount" => 100]);' '' money
+check "python create_async" 'charge = await stripe.Charge.create_async(amount=100)' '' money
+check "go stripe.Key =" 'stripe.Key = os.Getenv("K")' '' money
+check "đối chứng âm: stripeMaterial.dispose()" 'stripeMaterial.dispose();' '' auto
+# Dương tính giả kiểu #261 (biến dải màu/bảng kẻ sọc, không phải Stripe): phải auto.
+check "đối chứng âm: stripes.delete(...)" 'stripes.delete(id);' '' auto
+check "đối chứng âm: stripeCache.delete(...)" 'stripeCache.delete(key);' '' auto
+check "đối chứng âm: stripedRows.update(...)" 'stripedRows.update(row);' '' auto
+check "đối chứng âm: key={stripe.key}" '<li key={stripe.key}>{stripe.label}</li>' '' auto
+check "đối chứng âm: require('striped-table')" "const t = require('striped-table');" '' auto
+# Go/Java: import SDK và lời gọi gói paymentintent.
+check "go import stripe-go" 'import "github.com/stripe/stripe-go/v76"' '' money
+check "go paymentintent.New(" 'pi, err := paymentintent.New(params)' '' money
+check "java import com.stripe." 'import com.stripe.model.Charge;' '' money
+# Review vòng 4 (25/10): lời gọi tiền vẫn auto-merge (lỗ có từ trước) — Stripe.js, Go params/gói, Java khi import ngoài diff.
+check "stripe.js import @stripe/stripe-js" "import { loadStripe } from '@stripe/stripe-js';" '' money
+check "stripe.js loadStripe(" 'const stripe = await loadStripe(PK);' '' money
+check "stripe.js confirmCardPayment" 'const r = await stripe.confirmCardPayment(secret);' '' money
+check "stripe.js redirectToCheckout" 'await stripe.redirectToCheckout({ sessionId });' '' money
+check "go &stripe.ChargeParams" 'ch, _ := charge.New(&stripe.ChargeParams{Amount: stripe.Int64(100)})' '' money
+check "go refund.New(" 're, _ := refund.New(params)' '' money
+check "java PaymentIntent.create (import ngoài diff)" 'PaymentIntent pi = PaymentIntent.create(params);' '' money
+check "java Charge.create (import ngoài diff)" 'Charge c = Charge.create(params);' '' money
+# Dương tính giả kiểu #261: lời gọi trực tiếp trên biến dải màu, không có đoạn tài nguyên — phải auto.
+check "đối chứng âm: stripe.update(color)" 'stripe.update(color);' '' auto
+check "đối chứng âm: table.stripe.update(rows)" 'table.stripe.update(rows);' '' auto
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_policy_money_keywords: PASS"; exit 0; } || { echo "test_merge_policy_money_keywords: FAIL ($FAILS)"; exit 1; }

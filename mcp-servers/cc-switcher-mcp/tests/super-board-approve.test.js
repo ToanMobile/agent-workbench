@@ -39,11 +39,17 @@ test('matching chat comments done on the approval-request source and does not me
     apiCaller: async (bot, method, body) => { apiCalls.push({ method, body }); },
     callbackOpts: {
       approvalsDir: approvals,
-      ghRead: async () => JSON.stringify({ headRefOid: HEAD, body: '', closingIssuesReferences: [] }),
+      ghRead: async (args) => (args.join(' ').includes('/collaborators/owner/permission')
+        ? JSON.stringify({ permission: 'admin' })
+        : JSON.stringify({ headRefOid: HEAD, state: 'OPEN', body: '', closingIssuesReferences: [] })),
       readComments: async () => [{
         source: 34,
+        id: 1,
+        user: { login: 'owner', type: 'User' },
         author_association: 'OWNER',
-        body: `approval-request: {"head":"${HEAD}","pr":12,"repo":"owner/repo"}`,
+        created_at: '2026-10-25T10:00:00Z',
+        updated_at: '2026-10-25T10:00:00Z',
+        body: `approval-request: {"head":"${HEAD}","pr":12,"repo":"owner/repo","scope":"${'0'.repeat(64)}"}`,
       }],
       gh: async (args) => { ghCalls.push(args); },
     },

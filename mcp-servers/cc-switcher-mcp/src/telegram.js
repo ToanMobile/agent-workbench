@@ -440,35 +440,80 @@ export function superBoardApprovalsDir(override) {
   return path.join(os.homedir(), '.claude', 'super-board', 'approvals');
 }
 
-// Chỉ người có quyền mới đăng được request được tin (cùng luật approved-head của super-board-run.sh). Thân PR (`closes #N`)
-// do tác giả PR sửa, ai cũng comment được trên issue: không lọc thì comment người ngoài lái `done` của chủ repo sang issue
-// chung, nơi request tin cậy của PR khác đang chờ — validate() của super-board-approval.py sẽ duyệt PR đó.
-// ponytail: author_association MEMBER/COLLABORATOR có thể chỉ có quyền đọc; gate (approval.py) vẫn đòi write/maintain/admin.
-const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+// Nút chỉ ghi `done` khi validate() của super-board-approval.py sẽ đọc đúng `done` đó cho đúng PR này, nên chọn nguồn theo
+// cùng luật: block tin cậy MỚI NHẤT (`approval-request:` hoặc `Reason tag: …🙋`) trên mọi nguồn của PR, người đăng có quyền
+// write/maintain/admin (collaborators/{login}/permission, không phải author_association), request chưa sửa, đủ trường như
+// parse_request. Issue có thể chung nhiều PR và thân PR (`closes #N`) do tác giả sửa: chọn request khớp ĐẦU TIÊN thì `done`
+// duyệt hộ block mới nhất của PR khác (probe validate(): #9 có request cho 164 rồi cho 20, `done` lên #9 ⇒ PR 20 duyệt).
+const REQUEST_PREFIX = 'approval-request: ';
+// `(?:^|\n)` thay cờ `m` để khớp đúng tập đầu dòng của BLOCK (re.M) trong super-board-approval.py. Đo 25/10: Python re.M
+// khớp sau \n, trượt sau \r và U+2028; JS có `m` khớp cả ba; mẫu này khớp đầu body và sau \n, trượt sau \r và U+2028.
+const APPROVAL_BLOCK = /Reason tag:[^\n]*🙋|(?:^|\n)approval-request:/u;
+const WRITE_PERMISSIONS = new Set(['write', 'maintain', 'admin']);
 
-// Đúng một dòng `approval-request: {json}` (như parse_request của approval.py), khớp repo/PR/head của phiếu.
-function requestMatches(body, record) {
-  const lines = body.split('\n').filter((line) => line.startsWith('approval-request: '));
-  if (lines.length !== 1) return false;
+// Như parse_request của approval.py: đúng một dòng request, JSON đủ repo/pr/head/scope hợp lệ; không thì null.
+function parseApprovalRequest(body) {
+  const lines = body.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/).filter((line) => line.startsWith(REQUEST_PREFIX));
+  if (lines.length !== 1) return null;
+  let value;
   try {
-    const value = JSON.parse(lines[0].slice('approval-request: '.length));
-    return value?.head === record.head && value?.pr === Number(record.pr)
-      && String(value?.repo || '').toLowerCase() === String(record.repo).toLowerCase();
+    value = JSON.parse(lines[0].slice(REQUEST_PREFIX.length));
   } catch {
-    return false; // JSON hỏng: không phải request hợp lệ, bỏ qua comment này
+    return null; // JSON hỏng: gate cũng coi là request không khớp
   }
+  const ok = value && typeof value === 'object' && !Array.isArray(value)
+    && typeof value.repo === 'string' && /^[^/\s]+\/[^/\s]+$/.test(value.repo)
+    && Number.isInteger(value.pr) && value.pr >= 1
+    && typeof value.head === 'string' && /^[0-9a-f]{40}$/.test(value.head)
+    && typeof value.scope === 'string' && /^[0-9a-f]{64}$/.test(value.scope);
+  return ok ? value : null;
 }
 
-function approvalRequestSource(comments, record) {
-  if (!/^[0-9a-f]{40}$/.test(String(record?.head || ''))) return null;
-  for (const comment of comments || []) {
-    if (!TRUSTED_ASSOCIATIONS.has(String(comment?.author_association || ''))) continue;
-    if (!requestMatches(String(comment?.body || ''), record)) continue;
-    const source = Number(comment.source);
-    if (!Number.isInteger(source) || source < 1) continue;
-    return source;
+// Thời điểm comment phải có múi giờ (như timestamp() của approval.py); sai thì ném, người gọi từ chối.
+function commentTime(value) {
+  const t = typeof value === 'string' && /(?:Z|[+-]\d\d:\d\d)$/.test(value) ? Date.parse(value) : NaN;
+  if (Number.isNaN(t)) throw new Error('comment timestamp missing or lacks timezone');
+  return t;
+}
+
+// { source } khi gate sẽ nhận `done` ghi lên source cho đúng phiếu; ngược lại { why } để báo người bấm.
+async function approvalSource(comments, record, permission) {
+  const head7 = record.head.slice(0, 7);
+  const blocks = (comments || []).filter((c) => APPROVAL_BLOCK.test(String(c?.body || '')));
+  if (blocks.some((c) => !c?.user?.login || !['User', 'Bot'].includes(c.user.type))) {
+    return { why: 'Không xác minh được người đăng yêu cầu duyệt.' };
   }
-  return null;
+  const perms = await Promise.all(blocks.map((c) => permission(c.user.login)));
+  const trusted = blocks.filter((_, i) => WRITE_PERMISSIONS.has(perms[i]));
+  if (!trusted.length) {
+    return { why: `Chưa có approval-request cho head ${head7} của người có quyền ghi: đăng request trên issue liên kết hoặc PR rồi bấm lại.` };
+  }
+  const times = trusted.map((c) => commentTime(c.created_at));
+  const latestTime = Math.max(...times);
+  const latest = trusted.filter((_, i) => times[i] === latestTime);
+  if (latest.length !== 1) return { why: 'Hai yêu cầu duyệt mới nhất trùng thời điểm: đăng request mới rồi bấm lại.' };
+  const req = latest[0];
+  const value = parseApprovalRequest(String(req.body || ''));
+  if (!value || value.repo !== record.repo.toLowerCase() || value.pr !== Number(record.pr) || value.head !== record.head) {
+    return { why: `Yêu cầu duyệt mới nhất không phải cho PR #${record.pr} head ${head7}: đăng request mới rồi bấm lại.` };
+  }
+  if (commentTime(req.updated_at) !== latestTime) return { why: 'Request đã bị sửa: đăng request mới rồi bấm lại.' };
+  const source = Number(req.source);
+  if (!Number.isInteger(source) || source < 1 || !req.id) return { why: 'Request thiếu nguồn hoặc id.' };
+  return { source };
+}
+
+// Quyền hiện tại của login trên repo (một lời gọi gh mỗi login). Login lạ: null (không tin), như GitHub.permission().
+function permissionLookup(repo, ghRead) {
+  const cache = new Map();
+  return (login) => {
+    if (!/^[A-Za-z0-9_-]+(?:\[bot\])?$/.test(login)) return Promise.resolve(null);
+    if (!cache.has(login)) {
+      cache.set(login, ghRead(['api', `repos/${repo}/collaborators/${login}/permission`])
+        .then((out) => JSON.parse(out || '{}').permission ?? null));
+    }
+    return cache.get(login);
+  };
 }
 
 async function defaultGhRead(args) {
@@ -478,23 +523,27 @@ async function defaultGhRead(args) {
   return stdout;
 }
 
-const SAME_REPO_CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b/gi;
+// Như CLOSES/body_links của super-board-approval.py: `KEYWORD[:] #N` hoặc `KEYWORD[:] owner/repo#N` cùng repo (không phân biệt hoa/thường).
+const SAME_REPO_CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+\/[\w.-]+)?#(\d+)\b/gi;
 
 // Head hien tai cua PR va cac issue no dong (request chinh tac nam tren issue, block-template.md).
 async function readPrState(record, ghRead) {
-  const out = await ghRead(['pr', 'view', String(record.pr), '--repo', record.repo, '--json', 'headRefOid,body,closingIssuesReferences']);
+  const out = await ghRead(['pr', 'view', String(record.pr), '--repo', record.repo, '--json', 'headRefOid,state,body,closingIssuesReferences']);
   const pr = JSON.parse(out || '{}');
   const repo = String(record.repo).toLowerCase();
   const issues = new Set();
   for (const ref of pr.closingIssuesReferences || []) {
     if (String(ref?.repository?.nameWithOwner || '').toLowerCase() === repo) issues.add(Number(ref.number));
   }
-  for (const m of String(pr.body || '').matchAll(SAME_REPO_CLOSES)) issues.add(Number(m[1]));
-  return { head: String(pr.headRefOid || ''), issues: [...issues].filter((n) => n > 0) };
+  for (const m of String(pr.body || '').matchAll(SAME_REPO_CLOSES)) {
+    if (!m[1] || m[1].toLowerCase() === repo) issues.add(Number(m[2]));
+  }
+  return { head: String(pr.headRefOid || ''), state: String(pr.state || ''), issues: [...issues].filter((n) => n > 0) };
 }
 
 async function readApprovalComments(record, issues, ghRead) {
-  const sources = [...new Set([record.source, record.pr, ...issues].filter((n) => Number(n) > 0))];
+  // Đúng tập nguồn GitHub.check() của gate đọc (issue liên kết | {PR}); record.source không nằm trong đó thì `done` ở đó vô hiệu.
+  const sources = [...new Set([record.pr, ...issues].filter((n) => Number(n) > 0))];
   // Đọc song song (mỗi lời gọi gh vẫn timeout 15 s): đọc tuần tự N nguồn cộng dồn N×15 s trước khi trả lời callback.
   // Promise.all giữ thứ tự nguồn, nên thứ tự chọn request không đổi.
   const outs = await Promise.all(sources.map((source) => ghRead(['api', '--paginate', '--slurp', `repos/${record.repo}/issues/${source}/comments?per_page=100`])));
@@ -536,26 +585,29 @@ export async function approveSuperBoardCallback(token, opts = {}) {
   }
   const ghRead = opts.ghRead || defaultGhRead;
   const gh = opts.gh || defaultGh;
-  let comments;
+  let picked;
   try {
     const pr = await readPrState(record, ghRead);
     if (!/^[0-9a-f]{40}$/.test(pr.head)) throw new Error('unreadable head');
+    // Gate (approval.py GitHub.pr) không duyệt PR đã đóng/merge: `done` lúc đó chỉ còn duyệt hộ PR khác chung issue.
+    if (pr.state !== 'OPEN') {
+      return { toastText: `PR #${record.pr} không còn mở (${pr.state || 'không rõ trạng thái'}): không ghi done.`, showAlert: true };
+    }
     if (pr.head !== head) {
       return {
         toastText: `Head đã đổi (${head.slice(0, 7)} → ${pr.head.slice(0, 7)}). Dùng tin mới nhất của PR này.`,
         showAlert: true,
       };
     }
-    comments = opts.readComments ? await opts.readComments(record) : await readApprovalComments(record, pr.issues, ghRead);
+    const comments = opts.readComments ? await opts.readComments(record) : await readApprovalComments(record, pr.issues, ghRead);
+    picked = await approvalSource(comments, { ...record, repo, head }, permissionLookup(repo, ghRead));
   } catch (err) {
-    // Toast giữ chung cho người bấm; nguyên nhân thật (gh thiếu, timeout 15 s, JSON hỏng) ghi log để khoanh vùng.
+    // Toast giữ chung cho người bấm; nguyên nhân thật (gh thiếu, timeout 15 s, JSON/thời điểm hỏng) ghi log để khoanh vùng.
     logStructured('warn', 'sb_approve_read_failed', { repo, pr: record.pr, error: err?.killed ? 'gh timeout (15 s)' : err?.message });
     return { toastText: 'Không đọc được approval-request.', showAlert: true };
   }
-  const source = approvalRequestSource(comments, record);
-  if (!source) {
-    return { toastText: `Chưa có approval-request cho head ${head.slice(0, 7)}: đăng request trên issue liên kết hoặc PR rồi bấm lại.`, showAlert: true };
-  }
+  if (!picked.source) return { toastText: picked.why, showAlert: true };
+  const source = picked.source;
   try {
     await gh(['api', '--method', 'POST', `repos/${repo}/issues/${source}/comments`, '-f', 'body=done']);
   } catch {
