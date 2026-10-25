@@ -614,7 +614,7 @@ if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != 
             # landed(): the previous Stop's background merge landed this worktree and removed it while this run read it, so this run
             # died on the missing folder (tests/gates/test_worktree_merge_gate_vanished.sh, cases 2 and 3): done, not a hold
             if res.get("status") in ("merged", "nothing") or landed(r):
-                (am_kept if res.get("kept") else am_done).append(r["path"])   # K11: kept = ExitWorktree keep của phiên còn sống, không gỡ
+                (am_kept if res.get("kept") else am_done).append(r["path"])   # K11: kept = phiên còn sống đang dùng (--keep, khoá devkit-kept), không gỡ
                 pending.remove(r)
                 owed.discard(real_path)
                 owners.pop(real_path, None)
@@ -711,7 +711,7 @@ testing_notes = ["… một lần chạy test đang giữ worktree, chưa gộp 
 if not pending:
     if set(state.get("owed") or []) != owed or am_done or am_kept:
         save()   # removed worktrees leave the debt list
-    notes = ["✔ đã tự gộp vào main và gỡ: " + p for p in am_done] + ["✔ đã tự gộp vào main, worktree giữ lại (ExitWorktree keep): " + p for p in am_kept] + ["… đang tự gộp ở nền (kết quả: lần dừng sau; log trong git dir): " + p for p in am_running]
+    notes = ["✔ đã tự gộp vào main và gỡ: " + p for p in am_done] + ["✔ đã tự gộp vào main, worktree giữ lại (phiên còn sống đang dùng nó): " + p for p in am_kept] + ["… đang tự gộp ở nền (kết quả: lần dừng sau; log trong git dir): " + p for p in am_running]
     notes += testing_notes
     if notes:
         print(json.dumps({"systemMessage": "WORKTREE-MERGE GATE:\n" + "\n".join(notes)}, ensure_ascii=False))
