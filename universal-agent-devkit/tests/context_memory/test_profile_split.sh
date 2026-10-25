@@ -145,6 +145,10 @@ for p, needles in LOADED.items():
     loaded = cs.wanted(project(p))["profile-rules.md"]
     gone = [n for n in needles if n not in loaded]
     say(not gone, "%s: guardrails still loaded at session start %s" % (p, gone or ""))
+# backend §7 (25/10): the SSRF rule binds every server-side fetch of a user-supplied URL, so it is loaded at session start
+ssrf = [n for n in ("169.254.169.254", "không phân giải DNS lần hai", "redirect", "socket.getaddrinfo")
+        if n not in cs.wanted(project("backend"))["profile-rules.md"]]
+say(not ssrf, "backend: the SSRF rule (§7) is loaded at session start %s" % (ssrf or ""))
 
 # B2. by LINE, not by keyword (ctx5; user 13/10 ~10:50: every MUST / CẤM / bất biến / car-safety line stays loaded; INSTINCT-037:
 # a keyword lint cannot see an obligation phrased without one). Every non-blank line of the source outside its markers is still

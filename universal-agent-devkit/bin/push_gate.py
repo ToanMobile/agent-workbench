@@ -260,14 +260,16 @@ def blobs(top, rev, paths):
     return {p: e[1] for p, e in entries(top, rev, paths).items()}
 
 
-def untestable_only(top, project, paths, rules_dir=None):
+def untestable_only(top, project, paths, rules_dir=None, rev=None):
     """True when every path (repo-relative) is a file post-fix-gate's needs_no_test() says needs no
     test (docs, agent state, the agents' harness config) AND no rule of the project's active matrix
     watches it. The gate's own classifier and matcher are used — never a second rule (INSTINCT-015).
     2026-09-29 (Goods): a commit of .claude/settings.json alone could not be pushed without a full
     gate, which REJECTed unrelated WIP in the working tree. Any doubt → False (a receipt is needed).
     rules_dir: where the matrix and the checklist (`covers` links) are read from, default `project`; issue #5: the receipt
-    of a linked worktree is judged by main's matrix and checklist, never by the worktree's own."""
+    of a linked worktree is judged by main's matrix and checklist, never by the worktree's own.
+    No suite is not no check (25/10): a pushed .claude/settings*.json must also pass the gate's settings_problems() on its
+    blob at `rev` (the working tree when rev is None), or the push needs a receipt — and the gate REJECTs it."""
     import importlib.util  # noqa: PLC0415
     rules_dir = rules_dir or project
     prefix = os.path.relpath(project, top).replace(os.sep, "/")
@@ -287,7 +289,20 @@ def untestable_only(top, project, paths, rules_dir=None):
         pfg.get_project_dir = lambda: pathlib.Path(rules_dir)
         covers = pfg.checklist_covers()
         pats = [w for r in rules if isinstance(r, dict) for w in pfg.rule_watch(r, covers)]
-        return all(pfg.needs_no_test(p) and not any(pfg.match_pattern(p, w) for w in pats) for p in rel)
+        if not all(pfg.needs_no_test(p) and not any(pfg.match_pattern(p, w) for w in pats) for p in rel):
+            return False
+        for p in (p for p in rel if p in pfg.SETTINGS_FILES):
+            if rev:
+                rc, text = git(top, "cat-file", "blob", f"{rev}:{prefix}{p}")
+                text = text if rc == 0 else None   # not in rev: deleted by the push
+            else:
+                full = os.path.join(project, p)
+                text = pathlib.Path(full).read_text(encoding="utf-8", errors="replace") if os.path.isfile(full) else None
+            problems = pfg.settings_problems(p, text, pathlib.Path(project))
+            if problems:
+                print(f"push_gate: {p}: {pfg._L(problems[0])} — cần biên nhận gate", file=sys.stderr)
+                return False
+        return True
     except Exception as e:  # noqa: BLE001 — cannot classify: fall back to requiring a receipt
         print(f"push_gate: không phân loại được file sắp push ({e}) — cần biên nhận gate", file=sys.stderr)
         return False
@@ -622,7 +637,7 @@ def _own_check(cwd, rev, tag_remote, linked):
             return True, why_not
         # --no-renames: a rename is also a delete of the old path (src/Foo.kt -> docs/Foo.md is code leaving)
         rc, out = git(top, "diff", "--name-only", "--no-renames", "-z", "@{u}", rev)
-        if rc == 0 and untestable_only(top, homes[0], [p for p in out.split("\0") if p]):
+        if rc == 0 and untestable_only(top, homes[0], [p for p in out.split("\0") if p], rev=rev):
             return True, "only files that need no test (docs / agent config), none watched by the matrix"
         return False, ("chưa có biên nhận gate --full exit 0 (có head) cho code sắp push"
                        + (f" (biên nhận hiện có không hợp lệ: {problem})" if problem else "") + (f"; {why_not}" if why_not else ""))
@@ -665,7 +680,7 @@ def _own_check(cwd, rev, tag_remote, linked):
         main_top = listing.split("\n", 1)[0][9:] if rc == 0 and listing.startswith("worktree ") else ""
         rules_dir = os.path.normpath(os.path.join(main_top, os.path.relpath(project, top))) if main_top else os.devnull
     # linked: main quyết, và quy tắc chặt hơn mà riêng worktree có (liên kết covers git-ignored của nó) cũng giữ file lại (ca L19)
-    if bad and untestable_only(top, project, bad, rules_dir) and (not linked or untestable_only(top, project, bad)):
+    if bad and untestable_only(top, project, bad, rules_dir, rev=rev) and (not linked or untestable_only(top, project, bad, rev=rev)):
         return True, "files changed since the gate need no test (docs / agent config), none watched by the matrix"
     if bad:
         return False, (f"{len(bad)} file sắp push khác bản gate đã test (sửa/commit sau lần gate PASS): "

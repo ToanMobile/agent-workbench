@@ -38,6 +38,10 @@ thuần chưa phải vulnerability. Không in secret value trong output.
 Fix surgical theo pattern đã verify; dependency/library behavior phải dựa official docs. Authority theo
 `AGENTS.md`.
 
+Tham chiếu chỉ mở khi thay đổi chạm đúng vùng (Cloudflare security-audit-skill, MIT; không nạp sẵn):
+- `references/MEMORY-SAFETY-AND-BINARY.md`: C/C++/JNI/NDK, Rust `unsafe`/FFI hoặc parse dữ liệu nhị phân.
+- `references/DESKTOP-MOBILE-AND-LOCAL-IPC.md`: Intent/IPC, deep link, local socket hoặc IPC desktop (XPC, D-Bus, named pipe).
+
 ## Verification
 
 - Targeted tests cho malicious/denied/malformed/oversized input và từng exposed entry point.

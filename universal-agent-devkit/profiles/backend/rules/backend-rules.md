@@ -32,6 +32,8 @@
 ## 7. Bảo mật
 - AuthN ở middleware, AuthZ kiểm tra theo **từng tài nguyên** (chống IDOR).
 - Rate limit cho endpoint đăng nhập/gửi mã; không trả khác biệt thông báo giữa "sai user" và "sai mật khẩu".
+- Server fetch URL do người dùng đưa (chống SSRF): phân giải host một lần, từ chối địa chỉ private / loopback / link-local / metadata (`169.254.169.254`), kết nối đúng IP đã kiểm (không phân giải DNS lần hai) và kiểm lại từng redirect.
+- Không monkeypatch `socket.getaddrinfo` toàn tiến trình để chặn SSRF (không an toàn đa luồng); ghim IP ở kết nối của chính request.
 
 ## 8. Kiến trúc Hexagonal / DDD (nguồn: Sairyss/domain-driven-hexagon)
 - Phụ thuộc chỉ hướng vào trong: domain (entity, aggregate, value object, domain service/event) không import controller/DTO/ORM/framework. CI bắt bằng dependency-cruiser (`no-domain-deps`, severity error) hoặc ArchUnit (Java).

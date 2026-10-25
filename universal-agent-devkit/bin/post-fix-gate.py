@@ -3160,6 +3160,74 @@ def needs_no_test(rel_file: str) -> bool:
             or clean.lower().endswith(".log"))
 
 
+# Exempt from regression SUITES above, not from every check (25/10): 11 of 11 app repos have no matrix rule watching
+# .claude/settings.json, so a commit that dropped the Stop hook wiring passed with none. run_settings_audit() checks it.
+SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
+_AGENT_HEALTH = []
+
+
+def _registered_hook_scripts(settings) -> list:
+    """bin/agent-health.py's reader of the hook script paths (one copy, INSTINCT-015), loaded on first use."""
+    if not _AGENT_HEALTH:
+        import importlib.util  # noqa: PLC0415 - hyphenated sibling module in bin/
+        spec = importlib.util.spec_from_file_location("agent_health", Path(__file__).resolve().parent / "agent-health.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _AGENT_HEALTH.append(mod)
+    return _AGENT_HEALTH[0].registered_hook_scripts(settings)
+
+
+def settings_problems(rel_file: str, text, root: Path) -> list:
+    """(vi, en) labels of what breaks the hook wiring in this content of .claude/settings.json or settings.local.json;
+    [] when sound. text None = the file is deleted. Shared with bin/push_gate.py, which passes the blob it pushes.
+    settings.local.json usually holds permissions only, so it needs no hooks of its own (core-rules §3 must-allow).
+    ponytail: settings.json must keep a non-empty "hooks" block, so a project that wires no Claude hook on purpose (the kit
+    installed for other agents only) is refused any edit of it; key the rule on the base version having hooks when one shows up."""
+    is_main = rel_file.replace("\\", "/") == ".claude/settings.json"
+    if text is None:
+        return [("đã xoá: mọi hook Claude Code của dự án thôi chạy", "deleted: every Claude Code hook of the project stops running")] if is_main else []
+    try:
+        settings = json.loads(text)
+    except ValueError as e:
+        return [(f"không phải JSON hợp lệ ({e})", f"not valid JSON ({e})")]
+    if not isinstance(settings, dict):
+        return [("không phải một object JSON", "not a JSON object")]
+    if is_main and not (isinstance(settings.get("hooks"), dict) and settings["hooks"]):
+        return [('"hooks" rỗng hoặc thiếu: không hook nào chạy (chạy lại agent-kit init)',
+                 '"hooks" is empty or missing: no hook runs (re-run agent-kit init)')]
+    try:
+        scripts = _registered_hook_scripts(settings)
+    except ValueError as e:
+        return [(f"khối hooks sai dạng, Claude Code không đọc được: {e}", f"malformed hooks block Claude Code cannot read: {e}")]
+    except Exception as e:   # noqa: BLE001 - agent-health.py not loadable: the wiring cannot be judged, never a silent pass
+        return [(f"không kiểm được dây nối hook ({e!r})", f"cannot check the hook wiring ({e!r})")]
+    kit_hooks = get_devkit_dir() / "hooks"
+    missing = []
+    for rel in dict.fromkeys(scripts):
+        name = rel[len(".claude/hooks/"):] if rel.startswith(".claude/hooks/") else ""
+        # .claude/hooks/ holds the git-ignored links `agent-kit init` makes: a hook the kit ships is wired once it is installed
+        if (root / rel).exists() or (name and "/" not in name and (kit_hooks / name).is_file()):
+            continue
+        missing.append(rel)
+    return [(f"hook chạy file không tồn tại: {rel}", f"hook runs a file that does not exist: {rel}") for rel in missing]
+
+
+def run_settings_audit(modified_files: list) -> tuple:
+    """The static check of a changed .claude/settings*.json: valid JSON, settings.json keeps a non-empty "hooks", every hook
+    script it runs from the project or .agents/devkit exists. Content as the other checks read it (the staged blob with --staged)."""
+    findings = []
+    for rel_file in modified_files:
+        if rel_file.replace("\\", "/") not in SETTINGS_FILES:
+            continue
+        text = read_changed_text(rel_file)
+        if text is None and rel_file not in DELETED_FILES:
+            continue   # a link or an unreadable file: the unreadable check names it
+        for label in settings_problems(rel_file, text, get_project_dir()):
+            findings.append((rel_file, _L(label)))
+            _record("settings", rel_file, label)
+    return len(findings) == 0, findings
+
+
 # A document a test READS stays a test even as Markdown (OfficeReader: androidTest/assets/test_files/*.md).
 FIXTURE_DIR_NAMES = {"assets", "resources", "fixtures", "testfixtures", "testdata", "test_files", "samples"}
 
@@ -4966,6 +5034,7 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
         ("perf", tr("Anti-pattern hiệu năng", "Performance anti-patterns"), run_performance_audit),
         ("resilience", tr("Nuốt lỗi", "Swallowed errors"), run_resilience_audit),
         ("logging", tr("Log thô", "Raw logging"), run_logging_audit),
+        ("settings", tr("Dây nối hook trong .claude/settings*.json", "Hook wiring in .claude/settings*.json"), run_settings_audit),
     ]
     counts = {}
     for key, label, check in checks:
@@ -5619,6 +5688,7 @@ def main():
     hygiene_ok, secrets = run_git_hygiene_audit(modified_files + state_files)
     anti_laziness_ok, lazy_findings = run_anti_laziness_audit(modified_files)
     deps_ok, dep_findings = run_dependency_audit(modified_files)
+    settings_ok, settings_findings = run_settings_audit(modified_files)
     instincts_ok, instincts_msg = check_instincts_memory()
 
     print(f"  • {tr('Phạm vi thay đổi', 'Changed files')}: {BOLD}{len(modified_files)} files{RESET}"
@@ -5645,6 +5715,8 @@ def main():
     else:
         for f, lbl in dep_findings:
             log_err(f"{f}: {lbl}")
+    for f, lbl in settings_findings:   # silent when no .claude/settings*.json changed
+        log_err(f"{f}: {lbl}")
 
     if instincts_ok:
         log_ok(f"{tr('Bộ nhớ bài học kinh nghiệm (Instincts Memory)', 'Instincts memory')}: {instincts_msg}")
@@ -6869,7 +6941,7 @@ def main():
                         f"{t.get('id')}: cached-full suite timed out — UNTESTED, not part of the verdict (the old selection does not run it); it runs again next time"))
     # Final Summary Verdict
     static_ok = (hygiene_ok and anti_laziness_ok and deps_ok and perf_ok and resilience_ok
-                 and logging_ok and hw_ok and assert_ok and proof_ok)
+                 and logging_ok and hw_ok and assert_ok and proof_ok and settings_ok)
     tests_passed = sum(1 for t in regression_tests if t["status"] == "PASS")
     # A STALE suite of another component that cannot run on this machine stays STALE and is
     # named; it is not the verdict of this change (only a failure of it is). Chỉ UNTESTED do chính suite báo "không chạy được ở
@@ -7219,7 +7291,8 @@ def main():
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),
                        "perf": len(perf_findings),
-                       "resilience": len(resilience_findings), "logging": len(logging_findings)},
+                       "resilience": len(resilience_findings), "logging": len(logging_findings),
+                       "settings": len(settings_findings)},
             "findings": FINDINGS,
             "advisories": advisories,  # lazy-senior warnings, never blocking
             "report": str(report_file),

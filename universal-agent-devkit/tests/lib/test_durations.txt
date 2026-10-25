@@ -73,6 +73,7 @@
 3 tests/installer/test_quick_install.sh
 3 tests/gates/test_gate_nontest_docs.sh
 3 tests/gates/test_gate_gitignore_no_test.sh
+10 tests/gates/test_gate_settings_hooks.sh
 3 tests/gates/test_gate_diff_state_only.sh
 31 tests/gates/test_proof_gate_foreign_dirty.sh
 30 tests/gates/test_proof_gate_merged_trunk.sh
