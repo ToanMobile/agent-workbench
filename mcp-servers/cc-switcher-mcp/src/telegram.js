@@ -524,7 +524,9 @@ async function defaultGhRead(args) {
 }
 
 // Như CLOSES/body_links của super-board-approval.py: `KEYWORD[:] #N` hoặc `KEYWORD[:] owner/repo#N` cùng repo (không phân biệt hoa/thường).
-const SAME_REPO_CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+\/[\w.-]+)?#(\d+)\b/gi;
+// Python re theo Unicode: ranh giới từ là chữ/số Unicode (`écloses #9`, `#9é` không liên kết), `\s` không gồm U+FEFF, `ſ` gập thành `s`.
+// JS `\b`/`\s` thì khác, nên viết tường minh; JS chỉ được liên kết ít hơn Python (`\d` ASCII), không bao giờ nhiều hơn.
+const SAME_REPO_CLOSES = /(?<![\p{L}\p{N}_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?[^\S﻿]+([\w.-]+\/[\w.-]+)?#(\d+)(?![\p{L}\p{N}_])/giu;
 
 // Head hien tai cua PR va cac issue no dong (request chinh tac nam tren issue, block-template.md).
 async function readPrState(record, ghRead) {

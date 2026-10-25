@@ -53,11 +53,15 @@ DEFAULT_ALWAYS_HUMAN = {
         "paths": ["**/billing/**", "**/payments/**", "**/stripe/**", "**/checkout/**"],
         # Stripe is matched by its real context, not the bare word `stripe.` (#261: `stripe.material`, a colour-stripe variable,
         # sent PR #224 to a person): import/require, api.stripe.com, live keys, a `Stripe(` call. `added` is lower-cased.
-        # Go/Java/Kotlin: import SDK (`github.com/stripe/stripe-go`, `import com.stripe.`) và gói Go `paymentintent.New(`,
-        # `charge.New(`, `refund.New(`, `stripe.NewClient(`. Stripe.js: gói `@stripe/…` và `loadStripe(`.
+        # Go/Java/Kotlin: import SDK (`github.com/stripe/stripe-go`, `import com.stripe.`), gói Go `paymentintent.New(`,
+        # `stripe.NewClient(`. Stripe.js: gói `@stripe/…`, `loadStripe(`, `useStripe(`. Mobile: PaymentSheet (iOS/Android/RN),
+        # `PaymentConfiguration.init(`, `StripeAPI.`. Tiền ngoài Stripe: Google Play Billing, Unity IAP.
+        # ponytail: danh sách theo SDK, receiver tên khác (`stripeService.charges.create(`) vẫn lọt; thêm khi gặp SDK/tên mới.
         "keywords": ["api.stripe.com", "payment_intent", "price_id", "invoice.create",
                      "github.com/stripe/stripe-go", "import com.stripe.", "paymentintent.new(",
-                     "charge.new(", "refund.new(", "stripe.newclient(", "@stripe/", "loadstripe("],
+                     "stripe.newclient(", "@stripe/", "loadstripe(", "usestripe(", "paymentsheet",
+                     "paymentconfiguration.init(", "stripeapi.", "com.android.billingclient", "launchbillingflow(",
+                     "unityengine.purchasing", "initiatepurchase("],
         # `require 'stripe'` (Ruby) và `require('stripe')` (Node), giữ dấu đóng để `require('striped-table')` vẫn auto;
         # `new StripeClient(` (Node/PHP v2).
         "patterns": [r"\b(?:import|from)\s+stripe\b", r"from\s+['\"]stripe['\"]", r"require\s*\(?\s*['\"]stripe['\"/]",
@@ -69,14 +73,18 @@ DEFAULT_ALWAYS_HUMAN = {
                      # chữ thường. Auto (#261): `stripe.material.depthWrite`, `stripe.mesh.updateMatrix()`, `stripes.delete(`,
                      # `stripeCache.delete(`, `stripedRows.update(`, `key={stripe.key}` (Go chỉ khi gán `stripe.key =`),
                      # `stripe.update(color)`: động từ cần ít nhất một đoạn tài nguyên ở giữa (`+`), SDK không có
-                     # `stripe.update(`; lời gọi trực tiếp của Stripe.js có tên riêng (`confirmCardPayment`, `redirectToCheckout`…).
-                     r"\bstripe\w*(?:\.|::|->|\\)(?:api_?key|set_?api_?key)\b", r"\bstripe\.key\s*=(?!=)",
+                     # `stripe.update(`; lời gọi trực tiếp của Stripe.js có tên riêng (`confirmCardPayment`, `redirectToCheckout`…),
+                     # `stripe.confirmSelection(` thì không. `stripe.key = \`row-…\`` (template literal JS) là khoá danh sách.
+                     r"\bstripe\w*(?:\.|::|->|\\)(?:api_?key|set_?api_?key)\b", r"\bstripe\.key\s*=(?!=)(?!\s*`)",
                      r"\bstripe(?:_?client)?\b(?:(?:\.|::|->|\\)\w+)+(?:\.|::|->|\\)(?:create|retrieve|update|modify|list"
                      r"|del|delete|cancel|capture|confirm|search|construct_?event)(?:_async)?\s*\(",
-                     r"\bstripe\.(?:confirm\w+|redirecttocheckout|createpaymentmethod|createtoken|handle(?:card|next)action"
-                     r"|retrieve(?:payment|setup)intent)\s*\(",
-                     # Go `&stripe.ChargeParams{`, Java khi import nằm ngoài diff: `PaymentIntent.create(`, `Charge.create(`.
-                     r"&stripe\.\w+params\b", r"\b(?:paymentintent|charge|refund)\.create\("],
+                     r"\bstripe\.(?:confirm\w*(?:payment|setup)|redirecttocheckout|createpaymentmethod|createtoken"
+                     r"|handle(?:card|next)action|retrieve(?:payment|setup)intent|paymentrequest|init\w*checkout)\s*\(",
+                     # Go `&stripe.ChargeParams{` (literal luôn có `{`; `&stripe.drawParams)` là con trỏ đồ hoạ), gói Go
+                     # `charge.New(`/`refund.New(` theo ranh giới từ (`recharge.New(` vẫn auto), Java khi import nằm ngoài diff:
+                     # `PaymentIntent.create(`, `Charge.create(`, `SessionCreateParams`.
+                     r"&stripe\.\w+params\s*\{", r"\b(?:charge|refund)\.new\(", r"\b(?:paymentintent|charge|refund)\.create\(",
+                     r"\b(?:paymentintent|charge|refund|session|subscription|invoice|customer|price|product)createparams\b"],
     },
     "auth": {
         "labels": ["auth", "security"],

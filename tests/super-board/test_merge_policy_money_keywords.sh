@@ -97,6 +97,26 @@ check "java Charge.create (import ngoài diff)" 'Charge c = Charge.create(params
 # Dương tính giả kiểu #261: lời gọi trực tiếp trên biến dải màu, không có đoạn tài nguyên — phải auto.
 check "đối chứng âm: stripe.update(color)" 'stripe.update(color);' '' auto
 check "đối chứng âm: table.stripe.update(rows)" 'table.stripe.update(rows);' '' auto
+# OCR 25/10: gói Go khớp theo ranh giới từ, không theo chuỗi con (`recharge.New(` của pin, `surcharge.New(`).
+check "đối chứng âm: battery recharge.New(" 'b := recharge.New(cell)' '' auto
+check "đối chứng âm: autorefund.New(" 'q := autorefund.New(cfg)' '' auto
+# Review vòng 4: dương tính giả của luật mới — con trỏ tới tham số đồ hoạ, phương thức confirm không phải tiền, template literal.
+check "đối chứng âm: glUniform(&stripe.drawParams)" 'glUniform(&stripe.drawParams);' '' auto
+check "đối chứng âm: stripe.confirmSelection(row)" 'stripe.confirmSelection(row);' '' auto
+check "đối chứng âm: stripe.key = \`row-\${i}\`" 'stripe.key = `row-${i}`;' '' auto
+# Review vòng 4: tiền ngoài Stripe server (Stripe.js khi import ngoài diff, SDK mobile, Java params, Google Play Billing, Unity IAP).
+check "stripe.js paymentRequest(" 'const pr = stripe.paymentRequest({ country: "US" });' '' money
+check "stripe.js initEmbeddedCheckout(" 'const co = await stripe.initEmbeddedCheckout({ fetchClientSecret });' '' money
+check "react useStripe()" 'const stripe = useStripe();' '' money
+check "react-native presentPaymentSheet()" 'const { error } = await presentPaymentSheet();' '' money
+check "android PaymentConfiguration.init(" 'PaymentConfiguration.init(context, pk)' '' money
+check "ios import StripePaymentSheet" 'import StripePaymentSheet' '' money
+check "ios StripeAPI.defaultPublishableKey" 'StripeAPI.defaultPublishableKey = pk' '' money
+check "java SessionCreateParams" 'SessionCreateParams params = SessionCreateParams.builder().build();' '' money
+check "google play launchBillingFlow(" 'billingClient.launchBillingFlow(activity, params)' '' money
+check "google play import billingclient" 'import com.android.billingclient.api.BillingClient' '' money
+check "unity using UnityEngine.Purchasing" 'using UnityEngine.Purchasing;' '' money
+check "unity InitiatePurchase(" 'controller.InitiatePurchase(productId);' '' money
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_policy_money_keywords: PASS"; exit 0; } || { echo "test_merge_policy_money_keywords: FAIL ($FAILS)"; exit 1; }
