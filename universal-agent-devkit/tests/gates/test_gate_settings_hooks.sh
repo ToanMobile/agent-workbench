@@ -63,6 +63,9 @@ expect g "a hooks block Claude Code cannot read (event is not a list)" 1 "hooks.
 local_base() { echo '{"permissions":{"allow":[]}}' > .claude/settings.local.json && git add -f .claude/settings.local.json && git commit -qm local; }
 mk h; local_base; echo '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "bash .claude/hooks/missing_local.sh"}]}]}}' > .claude/settings.local.json
 expect h "settings.local.json hook that does not exist" 1 ".claude/hooks/missing_local.sh"
+mk h2; hook 'bash ./.claude/hooks/dot_gone.sh' 'bash "$PWD/.claude/hooks/pwd_gone.sh"' > .claude/settings.json
+expect h2 "./.claude/hooks/ and \$PWD/.claude/hooks/ paths that do not exist (the old reader caught both)" 1 ".claude/hooks/pwd_gone.sh"
+grep -qF ".claude/hooks/dot_gone.sh" "$TMP/h2.out" && ok "  … and it names ./.claude/hooks/dot_gone.sh too" || fail "./.claude/hooks/dot_gone.sh is not named"
 
 # ── post-fix-gate: must allow ──
 mk i; hook 'bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/stop.sh"' 'bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/stop.sh" record' > .claude/settings.json
