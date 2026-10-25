@@ -2673,6 +2673,27 @@ def _live_holder(main, wt):
     return ""
 
 
+def _owner_is_caller(main, wt):
+    """True when the session that owns `wt` (its state, `add --session`) is the one this process runs under: a pid its session_worktree
+    record or its registry entry names is this process or an ancestor up to the nearest `claude` (_ancestor_pids). `held` - the board's
+    clean-up a session runs after merging its own PR (test_post_merge_clean k2b) - does not count the caller's own session as a holder,
+    as _held does not count its own devkit-kept lock; discard and gc keep the stricter _live_holder. No pid, unreadable: False."""
+    owner = _owner(wt)
+    if not owner:
+        return False
+    for d in (os.path.join(DEVKIT, "bin"), os.path.join(DEVKIT, "hooks")):
+        if d not in sys.path:
+            sys.path.append(d)   # after the stdlib: nothing in bin/ hooks/ shadows it
+    try:
+        import session_lock  # noqa: PLC0415
+        import session_worktree  # noqa: PLC0415
+        pids = (session_worktree.raw_pid(main, owner), (session_lock.read_session(main, owner) or {}).get("pid"))
+    except Exception:  # noqa: BLE001 - cannot tell: not the caller's (held stays held)
+        return False
+    mine = _ancestor_pids()
+    return any(isinstance(p, int) and not isinstance(p, bool) and p > 1 and p in mine for p in pids)
+
+
 def _flock_busy(path):
     """True when somebody holds an flock on `path`, or it cannot be probed (held); False when the file is not there or the probe gets it.
     A shared non-blocking flock released at once (every holder of these locks retries, as session_lock.test_run_active's probe relies
@@ -2739,7 +2760,8 @@ def _held(main, wt):
 def cmd_held(cwd, args):
     """`held [--merged[=<sha>]] <path>`: exit 0 when nothing holds the worktree, 3 with the reason on stdout when something does; any
     other exit (a usage error, a crash): cannot tell, the caller keeps it. Read-only. The rule is gc --merged's own (review U2 P3): _held,
-    then _live_holder (an owner session in its state not proven gone). --merged[=<sha>] (review U2 F5): also 3 when HEAD is not integrated
+    then _live_holder (an owner session in its state not proven gone) - unless that owner is the caller's own session (_owner_is_caller,
+    as _held lets the caller's own devkit-kept lock go). --merged[=<sha>] (review U2 F5): also 3 when HEAD is not integrated
     (_integrated, the rule `remove --merged` applies), so the board decides that BEFORE its tidy moves a file."""
     merged, rest = None, []
     for a in args:
@@ -2750,7 +2772,7 @@ def cmd_held(cwd, args):
     if len(rest) != 1 or rest[0].startswith("-") or (merged and not SHA_RE.fullmatch(merged)):
         die("usage: agent-kit worktree held [--merged[=<merged head sha>]] <path>")
     main, wt = main_checkout(cwd), os.path.abspath(os.path.join(cwd, rest[0]))
-    why = _held(main, wt) or _live_holder(main, wt)
+    why = _held(main, wt) or ("" if _owner_is_caller(main, wt) else _live_holder(main, wt))
     if not why and merged is not None:
         try:
             why = _integrated(main, wt, merged or None)

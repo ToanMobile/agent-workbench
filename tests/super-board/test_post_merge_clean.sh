@@ -126,6 +126,27 @@ bash "$CLEAN" "$R" feat-own "$MERGEDF" >/dev/null 2>&1
 [ ! -d "$W/feat-own" ] && ok "k2 the session's own worktree on a merged non-card branch is removed" \
   || fail "k2 the session's own worktree on a merged non-card branch kept"
 git -C "$R" rev-parse --verify -q refs/heads/feat-own >/dev/null && fail "k2 merged non-card branch kept" || ok "k2 merged non-card branch deleted"
+# k2b (review U2 P3, 26/10): như k2, nhưng worktree do hook WorktreeCreate dựng (`add --session`: state ghi phiên chủ, bản ghi
+#     session_worktree mang pid của phiên). `held` nay hỏi cả _live_holder; phiên chủ là CHÍNH phiên gọi (pid tổ tiên) thì không phải
+#     "đang giữ" — như khoá devkit-kept của chính nó. Phiên chủ KHÁC còn sống: vẫn giữ.
+mkdir -p "$R/.claude/audit-gate/session_worktree"
+git -C "$R" branch feat-own2; MERGEDF2="$(git -C "$R" rev-parse feat-own2)"
+git -C "$R" worktree add -q "$W/feat-own2" feat-own2
+git -C "$R" worktree lock --reason "devkit-kept session=sess-me pid=$$" "$W/feat-own2"
+printf '{"session":"sess-me","branch":"feat-own2","baseline":{},"fp":2}\n' > "$(git -C "$W/feat-own2" rev-parse --absolute-git-dir)/devkit-worktree.json"
+printf '%s\npid %s\n' "$W/feat-own2" "$$" > "$R/.claude/audit-gate/session_worktree/sess-me"
+bash "$CLEAN" "$R" feat-own2 "$MERGEDF2" >/dev/null 2>"$TMP/k2b.err"
+[ ! -d "$W/feat-own2" ] && ok "k2b the caller's own session (its state owner) does not hold its merged worktree: removed" \
+  || { fail "k2b the caller's own hook-made worktree is kept as held by its own session"; cat "$TMP/k2b.err"; }
+sleep 300 & SL2=$!; disown "$SL2" 2>/dev/null
+git -C "$R" branch feat-other2; MERGEDO2="$(git -C "$R" rev-parse feat-other2)"
+git -C "$R" worktree add -q "$W/feat-other2" feat-other2
+printf '{"session":"sess-other","branch":"feat-other2","baseline":{},"fp":2}\n' > "$(git -C "$W/feat-other2" rev-parse --absolute-git-dir)/devkit-worktree.json"
+printf '%s\npid %s\n' "$W/feat-other2" "$SL2" > "$R/.claude/audit-gate/session_worktree/sess-other"
+bash "$CLEAN" "$R" feat-other2 "$MERGEDO2" >/dev/null 2>"$TMP/k2c.err"
+[ -d "$W/feat-other2" ] && grep -q "sess-other" "$TMP/k2c.err" && ok "k2b … a worktree another live session owns is kept, naming it" \
+  || { fail "k2b a worktree another live session owns was removed"; cat "$TMP/k2c.err"; }
+kill "$SL2" 2>/dev/null
 # k3. khoá keep của một phiên KHÁC còn sống: giữ (không bao giờ gỡ worktree từ dưới chân phiên khác)
 sleep 300 & SL=$!; disown "$SL" 2>/dev/null
 git -C "$R" branch issue-15-o
