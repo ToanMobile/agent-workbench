@@ -582,9 +582,11 @@ HARD_DEVICE = re.compile(r"\badb\b|connected\w*(?:Test|Check)|\bemulator\b|\bsim
                          r"\bxcodebuild\b[^\n]*\btest\b|replicant|-testPlatform[ =]+(?!EditMode\b|PlayMode\b)\w+", re.I)
 
 
-def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] = None, device: Optional[bool] = None) -> dict:
+def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] = None, device: Optional[bool] = None,
+             selection: Optional[list] = None) -> dict:
     """{"cls": unity|gradle|xcode|device|cpu|light, "engine": unity|gradle|xcode|None, "serial": serial|None}.
-    device None: tự nhận theo HARD_DEVICE (stale_rerun.run_one); gate truyền kết quả HARD_DEVICE_SUITE của nó."""
+    device None: tự nhận theo HARD_DEVICE (stale_rerun.run_one); gate truyền kết quả HARD_DEVICE_SUITE của nó.
+    selection: tập `run_impacted.sh --list` người gọi vừa đọc cho ĐÚNG lệnh này (gate: lúc tính khoá); None thì tự hỏi."""
     if device is None:
         device = bool(HARD_DEVICE.search(command or ""))
     found = {"engine": set(), "cpu": False, "fan_out": False}
@@ -608,7 +610,7 @@ def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] =
     elif found["fan_out"]:
         # 25/10 (audit B4): run_impacted.sh theo tập nó chọn LÚC NÀY, không theo lịch sử (độ dài theo diff: 17 s … 900 s); trước đây luôn cpu
         # nên một lượt chỉ repo consistency (3 s) cũng xếp hàng slot nặng của cả máy. Không biết tập: cpu như cũ.
-        sel_s = selection_seconds(command, project_dir)
+        sel_s = selection_seconds(command, project_dir, selection)
         cls = "cpu" if sel_s is None or sel_s > _env_float("DEVKIT_SLOT_CPU_S", CPU_HEAVY_S) else "light"
     elif recorded_s is not None and recorded_s > _env_float("DEVKIT_SLOT_CPU_S", CPU_HEAVY_S):
         cls = "cpu"
@@ -617,10 +619,11 @@ def classify(command: str, project_dir: str = ".", recorded_s: Optional[float] =
     return {"cls": cls, "engine": engine, "serial": serial}
 
 
-def selection_seconds(command: str, project_dir: str = ".") -> Optional[float]:
+def selection_seconds(command: str, project_dir: str = ".", selection: Optional[list] = None) -> Optional[float]:
     """Tổng giây (tuần tự, tests/lib/test_durations.txt cạnh script) của tập test mà `run_impacted.sh --list` chọn lúc này; None khi không
     biết: lệnh không đúng dạng `bash <đường dẫn>/run_impacted.sh [--all]` của DevKit, `--list` lỗi / quá giờ (suite_cache.selection_list),
-    hay một test được chọn chưa có dòng thời lượng.
+    hay một test được chọn chưa có dòng thời lượng. selection (không None): tập người gọi đã đọc cho lệnh này — không sinh thêm một `--list`
+    (gate: tập của khoá, cùng lượt; review 25/10).
     ponytail: test chưa có dòng thời lượng ⇒ cả tập là cpu (an toàn); đổi sang một mức mặc định mỗi test nếu thấy REG-DK-ALL-01 hay xếp
     hàng chỉ vì test mới thiếu dòng."""
     try:
@@ -629,7 +632,7 @@ def selection_seconds(command: str, project_dir: str = ".") -> Optional[float]:
             sys.path.insert(0, here)
         import suite_cache  # noqa: PLC0415 - module anh em trong bin/
         m = suite_cache.SELECTION_CMD.match(command or "")
-        sel = suite_cache.selection_list(project_dir, command) if m else None
+        sel = (selection if selection is not None else suite_cache.selection_list(project_dir, command)) if m else None
         if sel is None:
             return None
         durations = {}

@@ -4091,10 +4091,18 @@ def _timeout_snapshot(pgid: int) -> str:
     return "\n".join(lines[:1] + [row[3] for row in mine[:12]])
 
 
+PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh của lượt này (đặt sau khi biết keyed_ok)
+
+
 def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
     """(exit code, output, timed out) of a shell command in its own session/process group, so a timeout kills the
     whole tree (gradle daemons, test workers), not just the shell. The group is in _VACUITY_PGIDS while it runs: a
     signal handler (_vacuity_on_signal) can end it from any thread."""
+    mod = suite_cache_mod() if PER_TEST_CACHE["mode"] != "0" else None
+    if mod is not None and env is not None and mod.SELECTION_CMD.match(cmd or ""):
+        # chỉ `bash <kit>/tests/run_impacted.sh [--all]` (suite_env bỏ biến này khỏi mọi suite khác: một test chạy run_impacted.sh
+        # thật trong suite riêng không được thừa hưởng chế độ dùng lại của gate)
+        env = dict(env, DEVKIT_PER_TEST_CACHE=PER_TEST_CACHE["mode"])
     with _VACUITY_LOCK:   # registered in the same step as the start: a signal in between still finds it
         proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, errors="replace", start_new_session=True, env=env)
@@ -4928,7 +4936,8 @@ def suite_env():
             "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH", "CI",
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
-            "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD"}
+            "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD",
+            "DEVKIT_PER_TEST_CACHE"}   # B2: chỉ run_in_group đặt nó, cho lệnh run_impacted.sh chuẩn của lượt này
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
@@ -5102,8 +5111,16 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
 # `fp` is the tree fingerprint main() already took (24 hex, or "") and `exit_reason` is a short token (pass, fail, uncovered, …).
 # Neither carries a path. push_gate still matches the old fields only. Rotation: above RUN_LOG_MAX_BYTES the newest lines are kept.
 # `steps` (_lap, below): a fixed set of 12 phase names with seconds rounded to 0.1, ~200 bytes; the size cap below cuts `suites`, never them.
-# Retention (measured line sizes: 2 suites ~400 B, 12 suites ~760 B, 40 suites ~1.8 KB (cut to 3 KB)): RUN_LOG_KEEP_BYTES 1 MiB holds
-# ~2600 / ~1380 / ~580 runs, and a rotation (a rewrite of ~1 MiB) happens about every 650 / 350 / 150 runs.
+# B9 (audit 25/10): `suites` lists only the suites that really ran (seconds) or did not PASS; the PASS ones re-used without a run (receipt,
+# content key, a shared command) are only counted (`suites_reused`). `slot_wait_s` {id: seconds}: heavy-slot waits (load / Unity lock),
+# waits only. Over RUN_LOG_LINE_MAX the cut drops the SHORTEST PASS entries first (the old halving dropped the tail, where REG-DK-ALL-01
+# runs since B1: 129 of 411 full lines of agent-workbench lost it), then the rest from the end, then all but the 5 longest waits.
+# Retention, measured on agent-workbench's own log 25/10 (585 lines over 59 h, median 2219 B, p90 2799 B, 432 of them cut at 3 KB —
+# every suite was listed, ~30 of them really ran): RUN_LOG_KEEP_BYTES 1 MiB held ~495 runs (~54 h of that repo). Re-measured on those
+# lines with only the ran / non-PASS entries kept: ~616 runs per MiB (median ~1.9 KB: most listed suites really ran there, because its
+# content keys are whole-tree keys). A repo whose suites are mostly re-used logs ~600 B lines (~1700 runs per MiB).
+# ponytail: 1 MiB still holds ~2.5 days of agent-workbench; raise RUN_LOG_KEEP_BYTES (the gate's own reader scans the last 4 MiB) if a
+# week of history is needed.
 RUN_LOG_NAME = "runs.jsonl"
 RUN_LOG_MAX_BYTES = 1280 * 1024   # rotate above this ...
 RUN_LOG_KEEP_BYTES = 1024 * 1024  # ... keeping at most this much (always below RUN_LOG_MAX_BYTES, so the next run does not rotate again)
@@ -5176,6 +5193,43 @@ def _run_log_suites(regression_tests, ran_cmds):
                 secs = None
         out.append([str(t.get("id") or "?")[:40], str(t.get("status") or "?")[:16], secs])
     return out
+
+
+def _run_log_slot_waits(regression_tests, slot_waits):
+    """{id: seconds} of the heavy-slot waits of this run (B9): waits of 0.1 s and more, in suite order. slot_waits: id(suite) → seconds
+    (take_slots in main)."""
+    out = {}
+    for t in regression_tests:
+        w = (slot_waits or {}).get(id(t))
+        if isinstance(w, (int, float)) and w >= 0.1:
+            out[str(t.get("id") or "?")[:40]] = round(float(w), 1)
+    return out
+
+
+def _run_log_fit(rec):
+    """The line of rec under RUN_LOG_LINE_MAX, or None (B9). Cuts rec["suites"] in this order: PASS entries, shortest first (a re-used
+    PASS has no entry here); then the other entries from the end; then slot_wait_s down to its 5 longest waits. The longest suites —
+    REG-DK-ALL-01, which runs last since B1 — stay longest; `suites_cut` says the list is not whole."""
+    def dump():
+        return (json.dumps(rec, separators=(",", ":")) + "\n").encode("ascii")
+    data = dump()
+    suites = rec["suites"]
+    order = sorted(range(len(suites)), key=lambda i: (suites[i][1] != "PASS",
+                                                      suites[i][2] if suites[i][1] == "PASS" and suites[i][2] is not None else -i))
+    k = 0
+    while len(data) > RUN_LOG_LINE_MAX and k < len(order):
+        excess = len(data) - RUN_LOG_LINE_MAX
+        while excess > 0 and k < len(order):   # drop about as many entries as the excess, then measure again
+            excess -= len(json.dumps(suites[order[k]], separators=(",", ":"))) + 1
+            k += 1
+        keep = set(order[k:])
+        rec["suites"] = [s for j, s in enumerate(suites) if j in keep]
+        rec["suites_cut"] = True
+        data = dump()
+    if len(data) > RUN_LOG_LINE_MAX and rec.get("slot_wait_s"):
+        rec["slot_wait_s"] = dict(sorted(rec["slot_wait_s"].items(), key=lambda kv: -kv[1])[:5])
+        data = dump()
+    return data if len(data) <= RUN_LOG_LINE_MAX else None
 
 
 def _end_torn_line(fd):
@@ -5297,7 +5351,8 @@ def default_gate_parallel() -> int:
 
 
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
-                  cache, run_tests, force_reason, no_test_only, project_dir, git_dir, read_only=False, log_fp="", exit_reason=""):
+                  cache, run_tests, force_reason, no_test_only, project_dir, git_dir, read_only=False, log_fp="", exit_reason="",
+                  slot_waits=None):
     """Append the run log line (see above). Takes only values the gate already has and reads nothing; `no_test_only` is main()'s own
     `docs_only` (every changed file passes needs_no_test()), while the logged `docs_only` is stricter: every changed file, rename source
     included, is documentation by DOC_EXT / DOC_NAMES. `log_fp` and `exit_reason` are values main() already holds: this function does not
@@ -5327,6 +5382,8 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             verdict = "PASS"
         else:
             verdict = "UNTESTED"   # exit 2 (UNVERIFIED), 3, 4 (untested_exit / BUDGET): the exit code says which
+        # B9: the verdict and suites_wall above read every suite; the line lists only those that ran or did not PASS
+        listed = [s for s in suites if s[2] is not None or s[1] != "PASS"]
         z = time.strftime("%z")
         rec = {
             "v": 1,
@@ -5348,23 +5405,23 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             # needs_no_test() is the gate's own flag over modified_files; it would read the profile for a reports/ source, so a
             # rename source counts only when it is documentation itself (never turns a False into a True)
             "no_test_only": bool(files) and bool(no_test_only) and all(f in docs for f in sources),
-            "suites": suites,
+            "suites": listed,
+            "suites_reused": len(suites) - len(listed),
             "suites_wall_s": suites_wall,
             "force_full": bool(getattr(args, "force_full", False)),
             "impacted_run": bool(impacted_run),
         }
+        waits = _run_log_slot_waits(regression_tests, slot_waits)
+        if waits:
+            rec["slot_wait_s"] = waits
         if _MAIN_T0 is not None:
             rec["total_wall_s"] = round(time.monotonic() - _MAIN_T0, 2)
         with _STEP_LOCK:   # seconds per phase (see _lap); a copy, so the record never changes after this line
             steps = {k: round(v, 1) for k, v in _STEPS.items()}
         if steps:
             rec["steps"] = steps
-        data = (json.dumps(rec, separators=(",", ":")) + "\n").encode("ascii")
-        while len(data) > RUN_LOG_LINE_MAX and rec["suites"]:
-            rec["suites"] = rec["suites"][:len(rec["suites"]) // 2]
-            rec["suites_cut"] = True
-            data = (json.dumps(rec, separators=(",", ":")) + "\n").encode("ascii")
-        if len(data) <= RUN_LOG_LINE_MAX:
+        data = _run_log_fit(rec)
+        if data is not None:
             _append_run_log(_run_log_dir(git_dir), data)
     except Exception:  # noqa: BLE001 — the log is only data: it must never change the gate's result, and prints nothing
         return
@@ -5974,6 +6031,11 @@ def main():
     # sentinel chỉ tắt khoá nội dung (keyed_ok); biên nhận cả cây (đúng nội dung này, như --full trước P2) vẫn dùng lại được. Lượt dùng lại
     # biên nhận không đóng mốc sentinel (stamp_sentinel cần mọi suite cache được chạy thật), nên lượt cưỡng bức sau vẫn là sentinel.
     keyed_ok = use_cache and not sentinel_run
+    # B2 (audit 25/10): sổ PASS theo từng test của run_impacted.sh (tests/lib/per_test_cache.py) theo đúng chế độ khoá của lượt này: "1" dùng
+    # lại + ghi, "record" chỉ ghi (sentinel, --no-cache, DEVKIT_GATE_CACHE=0), "0" tắt (không có sc: DEVKIT_SUITE_CACHE=0, lượt không cưỡng bức;
+    # hay người dùng đặt sẵn DEVKIT_PER_TEST_CACHE=0). run_in_group chỉ đưa nó cho lệnh run_impacted.sh chuẩn. tests/gates/test_gate_per_test_cache.sh.
+    if os.environ.get("DEVKIT_PER_TEST_CACHE") != "0":
+        PER_TEST_CACHE["mode"] = "0" if sc is None else ("1" if keyed_ok else "record")
     if sentinel_run:
         print(f"    {CYAN}▶ {tr('sentinel: lần chạy thật đủ suite gần nhất của repo đã quá hạn — lượt này không dùng khoá nội dung, chạy thật mọi suite cache được để kiểm cache', 'sentinel: the repo’s last real full run is too old — this run uses no content key and runs every cacheable suite for real to check the cache')}{RESET}")
     overlay_pre = capture_overlay_pre(args, matrix, project_dir, regression_tests) if run_tests else None   # BEFORE any suite runs
@@ -6294,6 +6356,10 @@ def main():
     late_notes = []   # (suite, lệnh) trong nhóm song song mà may_note chỉ biết được sau khi nhóm xong
 
     slot_rec = _recorded_seconds(median=True) if run_tests and lock_held else {}   # lớp slot: trung vị, không phải lần dài nhất (B7)
+    # Hạn marker gộp lượt (suite_cache.inflight: est×1.5+60 s) theo lần DÀI NHẤT: trung vị làm hạn ngắn hơn lần chạy thật (REG-DK-HEALTH-01:
+    # 389 s → 163 s), một gate --full thứ hai cùng khoá xoá marker của chủ còn sống và chạy song song (review 25/10).
+    inflight_rec = _recorded_seconds() if run_tests and lock_held else {}
+    slot_waits = {}   # id(suite) → giây chờ slot (tải máy / khoá Unity) của lượt này: vào runs.jsonl (slot_wait_s, audit B9)
     slot_mod = []
     # #338: lượt đã có suite được cho chạy thì chạy cho xong. started_run: không chờ tải lại ở các suite sau; heavy_lease: slot nặng giữ nguyên
     # giữa hai suite nặng TUẦN TỰ liền nhau (gate khác không chen được; suite trong nhóm song song vẫn xin slot riêng, nên tổng suite nặng
@@ -6323,15 +6389,20 @@ def main():
         if hs is None:
             return None
         rec = slot_rec.get(t.get("id"))
-        info = hs.classify(cmd, str(project_dir), rec, device=bool(HARD_DEVICE_SUITE.search(cmd or "")))
+        # tập `run_impacted.sh --list` đọc lúc tính khoá của ĐÚNG lệnh này (cùng lượt): không sinh thêm một --list chỉ để phân lớp (review
+        # 25/10); lệnh khác (thu hẹp) hay chưa có khoá thì classify tự hỏi. Lần kiểm lại trước khi ghi PASS (R3) vẫn hỏi mới.
+        sel = sc.selections.get((t.get("id"), cmd)) if sc is not None else None
+        info = hs.classify(cmd, str(project_dir), rec, device=bool(HARD_DEVICE_SUITE.search(cmd or "")), selection=sel)
         lease = heavy_lease[0] if (sequential and heavy_lease and info["cls"] in hs.HEAVY_CLASSES) else None
         if heavy_lease and lease is None:
             drop_lease()   # suite này không dùng slot nặng đang giữ (không nặng, hay chạy trong nhóm song song): không giữ chỗ của người khác
         # GATE_TOTAL_BUDGET_S (Stop hook: 900 s, hạn cứng 1800 s): lần chờ slot không được vượt ngân sách còn lại (review 20/10)
         left = budget_s - (time.monotonic() - budget_start) if budget_s > 0 else None
+        wait0 = time.monotonic()
         slots = hs.acquire_for_suite(info, est_s=rec or estimated_suite_seconds(cmd), max_wait=left,
                                      label=f"{os.path.basename(str(project_dir))}:{t.get('id')} ({info['cls']})",
                                      started=bool(started_run), lease=lease)
+        slot_waits[id(t)] = slot_waits.get(id(t), 0.0) + (time.monotonic() - wait0)
         if slots.admitted:
             started_run.append(1)
         for note in slots.notes:
@@ -6343,7 +6414,7 @@ def main():
         if not k:
             return run_suite_slotted(t, cmd, mode, env, sequential)
         drop_lease()   # R1: chờ marker của gate khác không giữ slot nặng — chủ marker có thể đang xếp hàng đúng slot này (hai bên chờ nhau)
-        with sc.inflight(k, slot_rec.get(t.get("id"))) as state:
+        with sc.inflight(k, inflight_rec.get(t.get("id"))) as state:
             if state == "recheck":
                 rec = sc.hit(k, t)
                 if rec:   # một gate khác vừa chạy đúng khoá này và PASS
@@ -7317,7 +7388,7 @@ def main():
         log_fp = tree_fp_of(project_dir)
     _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
                   cache or (keyed_hits or None), run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
-                  log_fp=log_fp, exit_reason=exit_reason)
+                  log_fp=log_fp, exit_reason=exit_reason, slot_waits=slot_waits)
     return exit_code
 
 
