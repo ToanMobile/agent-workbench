@@ -308,7 +308,6 @@ start_src "$TMP/n" bad s60 compact; lk="$(lock_of "$TMP/n" bad)"
 [ "$lk" = "devkit-kept session=s60 pid=$$" ] && ok "N2: compact after a failed startup lock locks the session's own starting worktree" \
   || fail "N2: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
 wtadd "$TMP/n" bad2 s62; start_bad "$TMP/n" bad2 s63 startup   # s63: lock failed, record kept
-G "$TMP/n" worktree unlock "$TMP/n/.claude/worktrees/bad"   # (the test shell is every session's pid: free it, or "the pid holds a lock" skips)
 start_src "$TMP/n" peer s63 compact   # cwd = another session's worktree
 [ -z "$(lock_of "$TMP/n" peer)" ] && [ "$(lock_of "$TMP/n" bad2)" = "devkit-kept session=s63 pid=$$" ] \
   && ok "N2b: compact with the cwd moved into another session's worktree locks the session's own one (its record), not that one" \
