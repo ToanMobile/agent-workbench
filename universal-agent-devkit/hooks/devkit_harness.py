@@ -707,6 +707,39 @@ def files_since(repo, vh):
     return [f for f in out.splitlines() if f and os.path.exists(os.path.join(repo, f))]
 
 
+def mid_work(payload, info=None, pushed=None, repo=None, env=None):
+    """regression_gate's handover decision, one definition for every Stop gate that runs only at the handover (regression_gate, and
+    testsourceset_gate since audit 2026-10-25 A5). "" = a handover (run the gate); else why it is the middle of the work:
+      "wip"     — work_in_progress(status_optional=True) and none of this branch's unverified commits is on the upstream;
+      "midwork" — any agent: the reply is unfinished or has no status line, claims nothing (OUTCOME_WIDE) and, for a Claude
+                  transcript, ran no git push after the turn's last edit (Gemini / Grok have no transcript to read a push from).
+    info: detect(payload) (computed when None). pushed: pushed_unverified of verified_head (computed from `repo`, read only, when None;
+    no repo: False). DEVKIT_GATE_EVERY_STOP=1 or a payload that is not an object: "" (fail closed)."""
+    env = os.environ if env is None else env
+    if not isinstance(payload, dict) or env.get("DEVKIT_GATE_EVERY_STOP") == "1":
+        return ""
+    if info is None:
+        info = detect(payload, env)
+    if pushed is None:
+        vh, head, _why = verified_head(repo, write=False) if repo else ("", "", "")
+        pushed = bool(head and vh and head != vh) and pushed_unverified(repo, vh)
+    if not pushed and work_in_progress(payload, env, status_optional=True):
+        return "wip"
+    reply = payload.get("last_assistant_message")
+    if not isinstance(reply, str) or not reply.strip():
+        reply = payload.get("lastAssistantMessage")   # Grok's camelCase (regression_gate log 20/10)
+    if not isinstance(reply, str) or not reply.strip():
+        return ""
+    if reply_status(reply) not in ("NOT_DONE", "NONE") or OUTCOME_WIDE.search(MIDWORK_WORDS.sub("", reply)):
+        return ""
+    if info.get("agent") == "claude" and info.get("transcript") == "claude":
+        tp = payload.get("transcript_path") or payload.get("transcriptPath")
+        start = turn_start(tp) if isinstance(tp, str) else None
+        if start is not None and push_after_last_edit(tp, start):
+            return ""
+    return "midwork"
+
+
 def _cli(argv, stdin):
     """Shell entry points (bash hooks). Prints the answer; never raises."""
     cmd = argv[0] if argv else ""

@@ -168,11 +168,12 @@ fi
 
 [ -n "${CHANGED}" ] || { log "PASS — no uncommitted Kotlin/Java changes"; exit 0; }
 
-# A reply that declares itself unfinished (CHƯA XONG / CHỜ DUYỆT …), claims no outcome and ran no git push this turn: the test
-# source sets are compiled at the handover turn, not on every stop of the work (DevKit backlog #3, the extension of Dot 11 that
+# Only the handover turn compiles the test source sets, not every stop of the work (DevKit backlog #3, the extension of Dot 11 that
 # regression_gate has: user 2026-10-09 "chỉ test khi bàn giao"; 8 of 15 minutes of Stop-hook time after Dot 11 were this hook on such
-# turns). The rule is hooks/devkit_harness.py work_in_progress. Commit, push and proof gates hold every handover.
-# TESTSOURCESET_WIP_SKIP=0 or DEVKIT_GATE_EVERY_STOP=1: compile on every stop as before.
+# turns). Audit 2026-10-25 A5 (p90 22-25 s per Stop on OfficeReader / GeelyEx2, 3 real blocks in 14 days): the decision is
+# regression_gate's own, hooks/devkit_harness.py mid_work — an unfinished reply or one with no status line, no outcome claimed, no git
+# push after the turn's last edit, no unverified commit on the upstream. Commit, push and proof gates hold every handover.
+# TESTSOURCESET_WIP_SKIP=0 or DEVKIT_GATE_EVERY_STOP=1: compile on every stop as before. Any error: compiled (fail closed).
 if [ "${TESTSOURCESET_WIP_SKIP:-1}" != "0" ] && [ -n "${HARNESS}" ] && [ "${HAVE_PY}" = 1 ] && [ -n "${INPUT}" ]; then
   WIP="$(printf '%s' "${INPUT}" | python3 -I -c '
 import json, os, sys
@@ -180,12 +181,12 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(sys.argv[1])))
 sys.dont_write_bytecode = True
 try:
     import devkit_harness
-    print("1" if devkit_harness.work_in_progress(json.load(sys.stdin)) else "")
+    print("1" if devkit_harness.mid_work(json.load(sys.stdin), repo=sys.argv[2]) else "")
 except Exception:
     print("")
-' "${HARNESS}" 2>/dev/null || true)"
+' "${HARNESS}" "${TREE_ROOT}" 2>/dev/null || true)"
   if [ "${WIP}" = "1" ]; then
-    log "SKIP — work in progress (the reply declares itself unfinished and claims no outcome): compiled at the handover turn"
+    log "SKIP — work in progress (no handover: regression_gate rule, devkit_harness.mid_work): compiled at the handover turn"
     { printf '%s\n' "${CHANGED}" >> "${SKIPPED_FILE}" && sort -u "${SKIPPED_FILE}" -o "${SKIPPED_FILE}"; } 2>/dev/null || true
     exit 0
   fi
