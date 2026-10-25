@@ -170,6 +170,45 @@ case("bash kit test exit 0 that prints a failure summary is still red",
      [E, ["bash", KIT_BASH, "✔ one\n1 failed\n"]], 2, NO, msg="test PASS")
 case("deeper bash test that prints FAIL stays red",
      [E, ["bash", "bash tests/a/b/test_deep.sh", "FAIL tests/a/b/test_deep.sh"]], 2, NO, msg="test PASS")
+case("direct bash kit test exit 0 with EMPTY output checked nothing (OCR 24/10)",
+     [E, ["bash", KIT_BASH, ""]], 2, NO, msg="test PASS")
+case("direct bash kit test exit 0 that only prints a skip line checked nothing",
+     [E, ["bash", KIT_BASH, "skip: no super-board scripts at /x\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test that prints only `ok: …` lines (test_profile_guardrails.sh style) is a pass",
+     [E, ["bash", KIT_BASH, "ok: missing guardrails are in the profile rules\n"]], 0, msg="test PASS")
+case("direct bash kit test with many check marks and one skipped optional case is still a pass",
+     [E, ["bash", KIT_BASH, "✔ a\n✔ b\nskip: optional device case\n✔ c\n"]], 0, msg="test PASS")
+case("direct bash kit test printing `pass=5 fail=0` (test_gh_write_once_marker.sh style) is a pass",
+     [E, ["bash", KIT_BASH, "pass=5 fail=0\n"]], 0, msg="test PASS")
+case("direct bash kit test printing `ALL OK` (test_proof_gate_before.sh style) is a pass",
+     [E, ["bash", KIT_BASH, "ALL OK\n"]], 0, msg="test PASS")
+case("direct bash kit test exit 0 that prints `pass=2 fail=1` is not a pass (OCR P4)",
+     [E, ["bash", KIT_BASH, "pass=2 fail=1\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test exit 0 that prints a `FAIL: x` line is not a pass",
+     [E, ["bash", KIT_BASH, "ok: a\nFAIL: x\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test: `failed: 3` is a failure summary", [E, ["bash", KIT_BASH, "ok: a\nfailed: 3\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test: `fail=10` (two digits) is a failure summary", [E, ["bash", KIT_BASH, "pass=1 fail=10\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test: TAP `not ok 3 - x` is a failure", [E, ["bash", KIT_BASH, "ok 1 - a\nnot ok 3 - x\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test: `errors=2` is a failure summary", [E, ["bash", KIT_BASH, "ok: a\nerrors=2\n"]], 2, NO, msg="test PASS")
+case("direct bash kit test: indented TAP `    not ok 2 - x` is a failure", [E, ["bash", KIT_BASH, "ok 1 - a\n    not ok 2 - x\n"]], 2, NO, msg="test PASS")
+case("boundary: `Error: 401 key rejected` printed by a passing test (test_ocr_review_helper.sh stub) stays green",
+     [E, ["bash", KIT_BASH, "Error: 401 key rejected\nok: helper falls back\n"]], 0, msg="test PASS")
+case("boundary: a passing line that REPORTS an expected count mid-line (`errors=2 on bad fixture`) stays green",
+     [E, ["bash", KIT_BASH, "ok: linter reports errors=2 on bad fixture ✔\n"]], 0, msg="test PASS")
+case("boundary: an uppercase `ERROR: x` line is not a verdict (a test may echo another tool's output)",
+     [E, ["bash", KIT_BASH, "ok: a\nERROR: x\n"]], 0, msg="test PASS")
+case("boundary: `failures: 0` and `fail=0` stay green", [E, ["bash", KIT_BASH, "ok: a\nfailures: 0\npass=3 fail=0\n"]], 0, msg="test PASS")
+case("boundary: a line that merely starts with lowercase `fail-closed` stays green",
+     [E, ["bash", KIT_BASH, "fail-closed when the token is missing ✔\nfailed login is rejected: ok\n"]], 0, msg="test PASS")
+case("boundary: FAIL in the middle of a passing check line stays green", [E, ["bash", KIT_BASH, "✔ FAIL on secrets\n"]], 0, msg="test PASS")
+# (check 2 takes ANY green run after the last edit as backing, for every runner: a later red does not undo it. That is the existing policy, not changed here.)
+# red vs None: a test file written this session needs a RED run before the green (the RED-check). A failing direct kit run IS that RED.
+case("a test written this session: a failing direct kit run (`pass=2 fail=1`) then a green one passes the RED-check",
+     [TE, ["bash", KIT_BASH, "pass=2 fail=1\n"], ["bash", KIT_BASH, "ok: a\n"]], 0, msg="test PASS")
+case("control: the same test written this session with only the green run is blocked (no RED before it)",
+     [TE, ["bash", KIT_BASH, "ok: a\n"]], 2, "ĐỎ", msg="test PASS")
+case("direct bash kit test whose every line is a skip line checked nothing",
+     [E, ["bash", KIT_BASH, "skip: no scripts\nskip: no device\n"]], 2, NO, msg="test PASS")
 case("hooks/tests exit 0 whose check name contains FAIL is still a pass",
      [E, ["bash", "sh hooks/tests/plain_helper.sh", "✔ FAIL on secrets\n"]], 0, msg="test PASS")
 case("bash kit test chained with ; true is not a pass",

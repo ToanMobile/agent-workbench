@@ -1,0 +1,1 @@
+- [ps parsing traps on macOS](ps-parsing-traps-macos.md) — UnicodeDecodeError escapes SubprocessError; Python.app argv0; locale comma in pcpu; node CLIs show as node

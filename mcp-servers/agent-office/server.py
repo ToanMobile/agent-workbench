@@ -791,7 +791,7 @@ def _default_load_max() -> float:
     return 100.0
 
 
-def host_stats(lock_dir: str = "") -> dict:
+def host_stats(lock_dir: str = "", workload: bool = True) -> dict:
     """Sức khoẻ máy cho bảng chỉ số: tải 1/5/15 phút, số nhân, ngưỡng tải gate, số khoá việc nặng đang giữ. Chỉ đọc, rất rẻ."""
     try:
         load = [round(float(x), 2) for x in os.getloadavg()]
@@ -805,7 +805,280 @@ def host_stats(lock_dir: str = "") -> dict:
         load_max = 0.0
     if not 0 < load_max < float("inf"):  # nan/inf/âm: inf sẽ ra "Infinity" làm hỏng JSON của cả trang
         load_max = _default_load_max()
-    return {"load": load, "cpus": os.cpu_count() or 1, "loadMax": load_max, "slotsHeld": _held_locks(lock_dir)}
+    return {"load": load, "cpus": os.cpu_count() or 1, "loadMax": load_max, "slotsHeld": _held_locks(lock_dir), "workload": agent_workload() if workload else {"groups": [], "top": [], "tasks": []}}
+
+
+_AGENT_GROUPS = (  # (id, nhãn, dấu hiệu trong argv0 hoặc đường dẫn script): khớp đầu tiên thắng
+    ("claude", "Claude", ("claude",)),
+    ("antigravity", "Antigravity", ("antigravity", "agy")),
+    ("grok", "Grok", ("grok",)),
+    ("gemini", "Gemini", ("gemini",)),
+    ("codex", "Codex", ("codex",)),
+    ("gate", "Gate · test · benchmark", ("post-fix-gate", "run_impacted", "run.sh", "pytest", "heavy_slot")),
+)
+_NOT_AGENT = {"grep", "rg", "ps", "awk", "sed", "tail", "head", "cat", "find", "sleep"}  # nhắc tên agent trong đối số, không phải agent
+
+
+def _group_of(command: str):
+    parts = command.split()
+    if not parts:
+        return None
+    a0 = os.path.basename(parts[0]).lower()
+    if a0 in _NOT_AGENT:
+        return None
+    app = re.search(r"/([^/]+)\.app/Contents/", command)  # app đóng gói (kể cả Resources/bin/language_server): tên .app ngoài cùng
+    app_name = app.group(1).lower() if app else ""
+    interp = re.fullmatch(r"python[\d.]*|bash|sh|zsh|node", a0) is not None
+    if interp or app_name == "python":  # trình thông dịch (kể cả Homebrew Python.app): xét script nó chạy, không xét chính nó
+        args = parts[1:] if interp else command.split(".app/Contents/MacOS/", 1)[-1].split()[1:]
+        head = [os.path.basename(x).lower() for x in args[:2] if not x.startswith("-")]
+    elif app_name:
+        head = [app_name]
+    else:
+        head = [a0]  # chương trình thường: chỉ tên chương trình; đối số (vd. CLAUDE.md) không làm nó thành agent
+    script_run = interp or app_name == "python"  # script tên "setup_claude.sh" không phải agent Claude: script chỉ vào nhóm gate/test
+    for gid, _label, keys in _AGENT_GROUPS:
+        if script_run and gid != "gate":
+            if not any(os.path.splitext(h)[0] in keys for h in head):  # CLI viết bằng node/python: script tên đúng agent (gemini, agy)
+                continue
+        if any(re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", h) for k in keys for h in head):  # nguyên từ: "agy" không khớp "legacy"
+            return gid
+    return None
+
+
+def workload_from_ps(text: str, top_n: int = 8) -> dict:
+    """Gom đầu ra `ps -Ao pid=,pcpu=,rss=,etime=,command=` thành tải từng nhóm agent + các tiến trình nặng nhất."""
+    labels = {gid: label for gid, label, _ in _AGENT_GROUPS}
+    groups: dict = {}
+    procs = []
+    total = other_cpu = 0.0
+    others: dict = {}
+    for line in text.splitlines():
+        parts = line.split(None, 4)
+        if len(parts) < 5 or not parts[0].isdigit():
+            continue
+        try:
+            pid, cpu, rss = int(parts[0]), float(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+        total += cpu
+        gid = _group_of(parts[4])
+        if gid is None:  # ngoài agent (trình duyệt, WindowServer...): chỉ cộng vào tổng và nhóm theo tên để biết ai nặng
+            if cpu >= 1.0:
+                m = re.search(r"/([^/]+)\.app/Contents/", parts[4])  # app khác: gọi theo tên app (Brave Browser), không theo vai trò (GPU...)
+                name = m.group(1) if m else _prog_name(parts[4])
+                others[name] = round(others.get(name, 0.0) + cpu, 1)
+            other_cpu += cpu
+            continue
+        g = groups.setdefault(gid, {"id": gid, "label": labels[gid], "count": 0, "cpu": 0.0, "rssMb": 0})
+        g["count"] += 1
+        g["cpu"] = round(g["cpu"] + cpu, 1)
+        g["rssMb"] += round(rss / 1024)
+        procs.append({"pid": pid, "group": gid, "cpu": cpu, "rssMb": round(rss / 1024), "etime": parts[3], "cmd": redact(parts[4])[:110], "cmdFull": parts[4]})
+    procs.sort(key=lambda p: -p["cpu"])
+    top_others = [{"label": k, "cpu": v} for k, v in sorted(others.items(), key=lambda kv: -kv[1])[:4]]
+    return {"groups": sorted(groups.values(), key=lambda g: -g["cpu"]), "top": procs[:top_n],
+            "totalCpu": round(total, 1), "otherCpu": round(other_cpu, 1), "others": top_others}
+
+
+def script_note(command: str, cwd: str = "") -> str:
+    """Dòng chú thích đầu tiên (`# ...`) của script mà tiến trình đang chạy: cho biết tiến trình đó làm việc gì."""
+    parts = command.split()
+    if not parts or not (os.path.basename(parts[0]).lower().startswith(("python", "bash", "sh", "zsh", "node"))):
+        return ""
+    script = next((p for p in parts[1:4] if not p.startswith("-")), "")
+    if script and not os.path.isabs(script):
+        script = os.path.join(cwd, script) if cwd else ""  # đường dẫn tương đối tính theo cwd của TIẾN TRÌNH, không theo cwd của server
+    if not script or not os.path.isfile(script):
+        return ""
+    try:
+        with open(script, encoding="utf-8", errors="replace") as f:
+            for _ in range(8):
+                line = f.readline().strip()
+                if line.startswith("#") and not line.startswith("#!"):
+                    return redact(line.lstrip("# ").strip())[:160]
+    except OSError:
+        return ""
+    return ""
+
+
+def where_from_cwd(cwd: str) -> str:
+    """Thư mục làm việc → "repo" hoặc "repo · worktree tên" (worktree của phiên/thẻ nằm dưới <repo>/.claude/worktrees/)."""
+    if not cwd or cwd == os.sep:
+        return ""
+    m = re.match(r"(.*?)/\.claude/worktrees/([^/]+)", cwd)
+    if m:
+        return f"{os.path.basename(m.group(1))} · worktree {m.group(2)}"
+    d = cwd
+    while d and d != os.sep:
+        if os.path.exists(os.path.join(d, ".git")):
+            return os.path.basename(d)
+        d = os.path.dirname(d)
+    return os.path.basename(cwd.rstrip("/")) or cwd
+
+
+_TEMP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/")
+
+
+def resolve_where(pid: int, cwds: dict, ppids: dict, depth: int = 8) -> str:
+    """Nơi làm việc của tiến trình; cwd là thư mục tạm (gate/test chạy trong repo giả) thì leo lên tiến trình cha cho tới khi gặp
+    thư mục thật. Rỗng nếu không tổ tiên nào có."""
+    seen = set()
+    while pid and pid not in seen and depth > 0:
+        seen.add(pid)
+        cwd = cwds.get(pid, "")
+        if cwd and cwd != os.sep and not (cwd + os.sep).startswith(_TEMP_PREFIXES):
+            return where_from_cwd(cwd)
+        pid, depth = ppids.get(pid, 0), depth - 1
+    return ""
+
+
+def proc_ppids() -> dict:
+    """pid → ppid của mọi tiến trình (một lần ps); lỗi thì rỗng."""
+    try:
+        out = subprocess.run(["ps", "-Ao", "pid=,ppid="], capture_output=True, timeout=5, check=True, env=_PS_ENV()).stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.SubprocessError) as exc:
+        warn("không đọc được cây tiến trình (ps ppid)", repr(exc))
+        return {}
+    res = {}
+    for line in out.splitlines():
+        a = line.split()
+        if len(a) == 2 and a[0].isdigit() and a[1].isdigit():
+            res[int(a[0])] = int(a[1])
+    return res
+
+
+def proc_cwds(pids: list) -> dict:
+    """pid → thư mục làm việc, một lần lsof cho cả nhóm; lỗi thì rỗng (workload vẫn hiện, chỉ thiếu chỗ làm việc)."""
+    if not pids:
+        return {}
+    try:
+        out = subprocess.run(["lsof", "-a", "-d", "cwd", "-Fpn", "-p", ",".join(str(p) for p in pids)],
+                             capture_output=True, timeout=5).stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.SubprocessError) as exc:
+        warn("không đọc được thư mục làm việc của tiến trình (lsof)", repr(exc))
+        return {}
+    res, cur = {}, None
+    for line in out.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            cur = int(line[1:])
+        elif line.startswith("n") and cur is not None:
+            res[cur] = line[1:]
+    return res
+
+
+def _prog_name(command: str) -> str:
+    """Tên dễ đọc của chương trình: script mà trình thông dịch chạy, hay tên .app, hay tên lệnh."""
+    t = re.search(r"--type=([\w-]+)", command) if ".app/Contents/" in command else None  # Electron/Chromium: một app chạy nhiều tiến trình vai trò khác nhau
+    if t:
+        sub = re.search(r"--utility-sub-type=([\w.]+)", command)
+        if t.group(1) == "utility" and sub:
+            s = sub.group(1).lower()
+            return "Dịch vụ mạng" if "network" in s else "Âm thanh" if "audio" in s else "Camera" if "video" in s else "Dịch vụ " + s.split(".")[0]
+        return {"renderer": "Giao diện cửa sổ (renderer)", "gpu-process": "Đồ hoạ (GPU)", "utility": "Dịch vụ phụ"}.get(t.group(1), t.group(1))
+    parts = command.split()
+    a0 = os.path.basename(parts[0]) if parts else ""
+    if a0 == "language_server":
+        return "language_server (AI backend)"
+    if len(parts) == 1 and re.search(r"/Applications/[^/]+\.app/Contents/MacOS/", command):
+        return "Cửa sổ chính"
+    if re.fullmatch(r"python[\d.]*|bash|sh|zsh|node", a0.lower()):
+        script = next((x for x in parts[1:3] if not x.startswith("-")), "")
+        if parts[1:2] in (["-c"], ["-e"]):  # mã inline: không dùng làm nhãn
+            return a0
+        return redact(os.path.basename(script)) or a0
+    app = re.search(r"/([^/]+)\.app/Contents/MacOS/", command)
+    helper = re.search(r"/([^/]+)\.app/Contents/MacOS/[^/]+ (\S+\.(?:c?js|mjs|py))", command)  # helper Electron chạy một file script
+    if helper:
+        return os.path.basename(helper.group(2))
+    if app and app.group(1).lower() == "python":
+        rest = command.split(".app/Contents/MacOS/", 1)[-1].split()[1:]
+        return os.path.basename(next((x for x in rest[:2] if not x.startswith("-")), "")) or "python"
+    return (app.group(1) if app else a0).lower() or "?"
+
+
+def build_tasks(procs: list) -> list:
+    """Gộp tiến trình thành "việc": cùng chú thích/script + cùng nơi làm việc là một dòng (7 vòng lặp run.sh = 1 benchmark)."""
+    tasks: dict = {}
+    for p in procs:
+        label = p.get("note") or _prog_name(p["cmdFull"])
+        key = (p["group"], label, p.get("where", ""))
+        t = tasks.setdefault(key, {"label": label, "group": p["group"], "where": p.get("where", ""), "count": 0, "cpu": 0.0, "rssMb": 0, "etime": p["etime"]})
+        t["count"] += 1
+        t["cpu"] = round(t["cpu"] + p["cpu"], 1)
+        t["rssMb"] += p["rssMb"]
+        if (len(p["etime"]), p["etime"]) > (len(t["etime"]), t["etime"]):
+            t["etime"] = p["etime"]  # chạy lâu nhất trong nhóm = mốc bắt đầu của việc
+    return sorted(tasks.values(), key=lambda t: -t["cpu"])
+
+
+_WORKLOAD_CACHE: list = [0.0, {"groups": [], "top": [], "tasks": []}]  # [lúc đo, kết quả]: ps tốn ~50 ms, đo 30 s một lần
+
+
+_LAST_VIEW = [0.0]  # lúc gần nhất có trang MỞ (tab đang hiện) hỏi /api/state?view=1
+VIEW_GRACE = 45.0   # quá ngần này không ai xem thì thôi đo ps
+
+
+def viewing() -> bool:
+    return time.time() - _LAST_VIEW[0] <= VIEW_GRACE
+
+
+def mark_viewed() -> bool:
+    """Ghi nhận có người xem; True nếu vừa chuyển từ không ai xem sang có người xem (cần đánh thức vòng đọc nền)."""
+    was = viewing()
+    _LAST_VIEW[0] = time.time()
+    return not was
+
+
+def loop_wait(base: float, floor: float, mult: float) -> float:
+    """Nhịp nghỉ của vòng đọc nền: có người xem thì nhịp gốc; không ai xem thì chậm đi (≥ floor, hoặc base × mult nếu lớn hơn).
+    Không dừng hẳn: thông báo Mac "cần bạn duyệt" và việc giao lệnh cho agent vẫn chạy trong lúc tab đóng."""
+    return base if viewing() else max(floor, base * mult)
+
+
+_WORKLOAD_LOCK = threading.Lock()
+
+
+def _PS_ENV() -> dict:
+    return {**os.environ, "LC_ALL": "C"}  # ps in số thập phân bằng dấu chấm dù locale máy là gì
+
+
+def agent_workload(ttl: float = 30.0) -> dict:
+    now = time.time()
+    if not viewing():  # không ai đang xem (tab ẩn / đóng): giữ số cũ, không chạy ps
+        return _WORKLOAD_CACHE[1]
+    if now - _WORKLOAD_CACHE[0] < ttl:
+        return _WORKLOAD_CACHE[1]
+    if not _WORKLOAD_LOCK.acquire(blocking=False):  # vòng khác đang đo: dùng số hiện có, không đo trùng
+        return _WORKLOAD_CACHE[1]
+    try:
+        out = subprocess.run(["ps", "-Ao", "pid=,pcpu=,rss=,etime=,command="], capture_output=True, timeout=5, check=True, env=_PS_ENV()).stdout.decode("utf-8", "replace")  # argv không UTF-8 không được làm chết vòng đọc
+        wl = workload_from_ps(out, top_n=200)  # đủ cả nhóm agent để gộp theo việc (vài chục tiến trình)
+        ppids = proc_ppids()
+        wanted = set()  # chính tiến trình + tổ tiên (tối đa 8 đời) để tìm nơi làm việc thật
+        for p in wl["top"]:
+            q, n = p["pid"], 0
+            while q and q not in wanted and n < 8:
+                wanted.add(q)
+                q, n = ppids.get(q, 0), n + 1
+        cwds = proc_cwds(sorted(wanted))
+        notes: dict = {}  # cùng script thì chỉ đọc chú thích một lần
+        for p in wl["top"]:
+            p["where"] = resolve_where(p["pid"], cwds, ppids)
+            key = (p["cmdFull"], cwds.get(p["pid"], ""))
+            if key not in notes:
+                notes[key] = script_note(p["cmdFull"], cwds.get(p["pid"], ""))
+            p["note"] = notes[key]
+        per_group: dict = {}
+        wl["tasks"] = [t for t in build_tasks(wl["top"]) if per_group.setdefault(t["group"], []).append(1) or len(per_group[t["group"]]) <= 5]  # mỗi nhóm 5 việc nặng nhất
+        wl["top"] = []  # danh sách tiến trình thô không còn cần cho giao diện
+        _WORKLOAD_CACHE[1] = wl
+    except (OSError, subprocess.SubprocessError) as exc:
+        warn("không đo được workload theo agent (ps)", repr(exc))
+    finally:
+        _WORKLOAD_LOCK.release()
+    _WORKLOAD_CACHE[0] = now
+    return _WORKLOAD_CACHE[1]
 
 
 _LOCK_CACHE: dict = {}  # thư mục -> (lúc đo, số khoá): dò 15 s một lần để ít va với heavy_slot
@@ -1414,6 +1687,7 @@ class App:
         self.sessions, self.sess_info, self.file_ticks = [], {"ok": False}, []
         self.state_bytes = b"{}"
         self.refresh_evt = threading.Event()
+        self.wake_evt = threading.Event()  # đánh thức local_loop khi có người xem trở lại (github_loop dùng refresh_evt)
         self.backfilled = set()  # thẻ đã thử đặt Backlog, mỗi thẻ chỉ thử một lần
         self.approvals = {}      # thẻ 🙋: item id -> (updatedAt, approval_info) để không đọc lại comment của thẻ không đổi
         self.prev_needs = None   # thẻ 🙋 chờ duyệt ở lần dựng trước: thẻ mới vào thì báo (toast, thông báo trình duyệt và macOS)
@@ -1438,6 +1712,7 @@ class App:
             self.sess_info = {"ok": True, "dir": "(demo)", "files": len(self.sessions)}
 
     def rebuild(self):
+        host = host_stats(workload=not self.demo)  # ps/lsof chạy ngoài app.lock; demo không lộ tiến trình thật
         with self.lock:
             if self.demo:  # dời mốc thời gian để ảnh chụp luôn "vừa xảy ra"; giữ nguyên project để sửa được
                 _, self.sessions, self.demo_manifests = demo_data(self.cfg)
@@ -1452,7 +1727,7 @@ class App:
                 sig = "".join(m["id"] + m["state"] for m in st["messages"])
                 st["version"] = hashlib.sha1((st["version"] + sig).encode()).hexdigest()[:12]
             # ngoài mã phiên bản: số đổi liên tục mà không bắt trang dựng lại cảnh
-            st["host"] = host_stats()
+            st["host"] = host
             st["session"] = dict(self.tally, since=self.started_at)
             self.state_bytes = json.dumps(st, ensure_ascii=False).encode("utf-8")
 
@@ -2030,7 +2305,8 @@ class App:
                 print(f"[github] lỗi: {e}", file=sys.stderr, flush=True)
             if changed:
                 self.rebuild()
-            if self.refresh_evt.wait(poll_interval(float(self.cfg["githubSeconds"]), unchanged)):
+            # không ai xem thì nghỉ ≥ 5 phút (ngân sách GraphQL dùng chung với runner); tab mở lại đánh thức qua refresh_evt
+            if self.refresh_evt.wait(loop_wait(poll_interval(float(self.cfg["githubSeconds"]), unchanged), 300, 4)):
                 unchanged = 0  # the user acted or asked for a refresh: back to the base rate
             self.refresh_evt.clear()
 
@@ -2049,7 +2325,8 @@ class App:
             except Exception as e:  # noqa: BLE001
                 print(f"[nhắn] lỗi theo dõi lệnh: {e}", file=sys.stderr, flush=True)
             self.rebuild()
-            time.sleep(float(self.cfg["localSeconds"]))
+            self.wake_evt.wait(loop_wait(float(self.cfg["localSeconds"]), 30, 6))  # không ai xem: ≥ 30 s
+            self.wake_evt.clear()
 
     def start(self):
         if self.demo:
@@ -2222,6 +2499,8 @@ def make_handler(app: App):
                     return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
                 return self.send(200, json.dumps(phone_info(state_dir, key_file)).encode("utf-8"), CTYPES[".json"])
             if path == "/api/state":
+                if "view=1" in (urlparse(self.path).query or "").split("&") and mark_viewed():
+                    app.wake_evt.set(); app.refresh_evt.set()  # tab vừa mở lại: đọc ngay, không đợi nhịp nền chậm
                 with app.lock:
                     body = app.state_bytes
                 return self.send(200, body, CTYPES[".json"])

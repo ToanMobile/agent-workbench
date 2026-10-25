@@ -81,6 +81,16 @@ wt s5 s5b $LIB 'a = 2'; gate "$TMP/s5b"; r2=$?; c2=$(n s5)
 if [ "$r1 $r2" = "1 0" ] && [ "$c2" -gt "$c1" ]; then ok "S5. gate đỏ không ghi PASS của REG-ALL: lượt sau chạy lại (test chạy $c1 → $c2)"
 else fail "S5. exit $r1 $r2 (mong 1 0); test của REG-ALL chạy $c1 rồi $c2 (mong tăng)"; grep -E "REG-ALL|REG-X" "$TMP/out" | tail -3; fi
 
+# S5m. Như S5 nhưng ở gate GỘP (DEVKIT_SLOT_PRIORITY=merge, đúng môi trường `worktree finish`): priority đổi thứ tự suite, REG-ALL có thể chạy xong TRƯỚC khi
+#      REG-X đỏ. PASS của REG-ALL vẫn không được ghi (record_keyed chỉ ghi sau khi mọi suite đã có kết quả), lượt sau phải chạy lại.
+repo s5m ',{"component":"X","watch_files":["universal-agent-devkit/bin/*.py"],"mandatory_regression_tests":[{"id":"REG-X","name":"x","command":"test ! -f '"$TMP"'/flag5m"}]}'
+: > "$TMP/flag5m"
+wt s5m s5ma $LIB 'a = 2'; DEVKIT_SLOT_PRIORITY=merge gate "$TMP/s5ma"; r1=$?; c1=$(n s5m)
+rm -f "$TMP/flag5m"
+wt s5m s5mb $LIB 'a = 2'; DEVKIT_SLOT_PRIORITY=merge gate "$TMP/s5mb"; r2=$?; c2=$(n s5m)
+if [ "$r1 $r2" = "1 0" ] && [ "$c2" -gt "$c1" ]; then ok "S5m. gate gộp đỏ không ghi PASS của REG-ALL: lượt sau chạy lại (test chạy $c1 → $c2)"
+else fail "S5m. exit $r1 $r2 (mong 1 0); test của REG-ALL chạy $c1 rồi $c2 (mong tăng)"; grep -E "REG-ALL|REG-X" "$TMP/out" | tail -3; fi
+
 # S6. Cùng cây, khác tập chọn: tập chọn nằm trong khoá. Lượt 1 chọn {consistency} (đổi đã commit và main đã tiến tới commit đó: không còn gì "chưa
 #     đẩy"), lượt 2 cùng nội dung nhưng chưa commit chọn {consistency, a}: một PASS của tập nhỏ không nói gì về tập lớn, lượt 2 phải chạy.
 repo s6; old6=$(git -C "$TMP/s6" rev-parse HEAD)

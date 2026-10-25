@@ -25,12 +25,17 @@ function fakeGh(prHead, calls) {
     if (args[0] === 'pr' && args[1] === 'view') {
       return JSON.stringify({
         headRefOid: prHead,
+        state: 'OPEN',
         body: 'Closes #236',
         closingIssuesReferences: [{ number: 236, repository: { nameWithOwner: 'owner/repo' } }],
       });
     }
+    if (flat.includes('/collaborators/owner/permission')) return JSON.stringify({ permission: 'admin' });
     if (flat.includes('issues/164/comments?')) return JSON.stringify([[{ body: 'status comment' }]]);
-    if (flat.includes('issues/236/comments?')) return JSON.stringify([[{ body: request(prHead) }]]);
+    if (flat.includes('issues/236/comments?')) {
+      const at = '2026-10-25T10:00:00Z';
+      return JSON.stringify([[{ id: 1, user: { login: 'owner', type: 'User' }, author_association: 'OWNER', created_at: at, updated_at: at, body: request(prHead) }]]);
+    }
     return '';
   };
 }
@@ -70,7 +75,7 @@ test('current head without a request says the request is not posted yet', async 
   const dir = approvals(NEW);
   const posted = [];
   const ghRead = async (args) => {
-    if (args[0] === 'pr') return JSON.stringify({ headRefOid: NEW, body: '', closingIssuesReferences: [] });
+    if (args[0] === 'pr') return JSON.stringify({ headRefOid: NEW, state: 'OPEN', body: '', closingIssuesReferences: [] });
     return JSON.stringify([[{ body: 'status comment' }]]);
   };
   const result = await approveSuperBoardCallback(ID, { approvalsDir: dir, ghRead, gh: async (a) => { posted.push(a); } });

@@ -98,7 +98,8 @@ bash "$KIT" worktree diff ../rm-C 2>/dev/null | git apply --3way >/dev/null 2>&1
 rm_wt C; rc=$?; [ "$rc" = 0 ] && [ ! -d "$TMP/rm-C" ] && ok "remove: the commit's checklist bookkeeping change (left out by diff) does not keep the worktree for ever" || fail "bookkeeping in the commit (rc=$rc): $(cat "$TMP/rm-C.out")"
 
 # ── a committed bug row (agent-kit bugs add) is WORK: the checklist file is bookkeeping, its authored rows are not ──────
-( CLAUDE_PROJECT_DIR="$R" bash "$KIT" bugs add "seed row" --fixed >/dev/null 2>&1 ); G "$R" add -A && G "$R" commit -qm "checklist with a seed row"
+# (gieo dòng seed vào file track của main như repo kiểu cũ: ở trunk mode, lệnh bugs ở main ghi sổ chờ ngoài git)
+( WORKTREE_TRUNK_MODE=0 CLAUDE_PROJECT_DIR="$R" bash "$KIT" bugs add "seed row" --fixed >/dev/null 2>&1 ); G "$R" add -A && G "$R" commit -qm "checklist with a seed row"
 wt q; ( cd "$TMP/rm-q" && CLAUDE_PROJECT_DIR="$TMP/rm-q" bash "$KIT" bugs add "bug found in the worktree" --fixed >/dev/null 2>&1 ); wcommit q "bug row"
 SHA_Q="$(G "$TMP/rm-q" rev-parse HEAD)"
 rm_wt q; rc=$?

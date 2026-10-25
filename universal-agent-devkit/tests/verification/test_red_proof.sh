@@ -37,7 +37,9 @@ class TestNothing(unittest.TestCase):
 '
 new_project() {  # new_project <command>
   P="$(mktemp -d "$TMP/p.XXXXXX")"; mkdir -p "$P/src" "$P/tests" "$P/.agents"   # not $RANDOM: 22 projects, a clash re-used an old repo
-  ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t
+  # main checkout kiểu cũ: ở trunk mode (mặc định) người ghi tự động không ghi file track của main, dòng chờ vào sổ ngoài git
+  # (tests/worktree_git/test_trunk_main_pending_writers.sh kiểm đường đó)
+  ( cd "$P" && git init -q . && git config user.email t@t && git config user.name t && git config devkit.trunkMode false
     printf 'def add(a, b):\n    return a - b\n' > src/calc.py
     python3 -c 'import json,sys; json.dump({"adopted": True, "rules": [{"component": "Calc", "watch_files": ["src/*.py", "tests/*.py"],
       "mandatory_regression_tests": [{"id": "REG-CALC", "name": "calc", "command": sys.argv[1]}]}]},
@@ -287,7 +289,7 @@ python3 "$PROOF" "$P" --bug "$B8" --wait >/dev/null 2>&1
 
 # ── monorepo: the Gradle module path is relative to the Gradle root the command cds into ─
 M="$TMP/mono"; mkdir -p "$M/CarConnect/app/src/main/kotlin/pkg" "$M/CarConnect/app/src/test/kotlin/pkg" "$M/.agents"
-( cd "$M" && git init -q . && git config user.email t@t && git config user.name t
+( cd "$M" && git init -q . && git config user.email t@t && git config user.name t && git config devkit.trunkMode false
   printf 'rootProject.name = "CarConnect"\ninclude(":app")\n' > CarConnect/settings.gradle.kts
   printf 'plugins { id("x") }\n' > CarConnect/app/build.gradle.kts
   printf 'package pkg\nfun add(a: Int, b: Int) = a - b\n' > CarConnect/app/src/main/kotlin/pkg/Calc.kt
