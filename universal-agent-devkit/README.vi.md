@@ -622,8 +622,6 @@ Chạy theo thứ tự — **plan-tests → review-code → check → done**:
 | 3. Kiểm tra (check của chính dự án) | `/check` | `qc` | Phát hiện build tool, chạy test/lint | Không đánh giá diff |
 | 4. Xong (trước khi nói "xong") | `/done`, rồi `/audit-gate` | `verification-before-completion` + post-fix gate | `post-fix-gate.py --run-tests --full` (exit 0) và PNG nghiệm thu của lượt này, trừ khi thay đổi chắc chắn không lên màn hình (`rules/essentials.md` bước 4) | Gate không tự chụp ảnh và không chứng minh RED→GREEN |
 
-> **Đổi tên từ 1.1.0:** `/review` → `/plan-tests` (trùng lệnh `/review` có sẵn của agent); `/qa`, `/test` → `/check`; `/bugs`, `/crashlytics` → `/fix`. Tên cũ còn giữ dưới dạng stub deprecated tự chuyển hướng trong một phiên bản và bị xoá ở 1.2.0.
-
 ---
 
 ## 🌐 Universal Multi-Agent Matrix

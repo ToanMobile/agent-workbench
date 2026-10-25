@@ -121,7 +121,8 @@ NON_TECHNICAL_PHRASES = re.compile(
     r"(?:lựa chọn|phương án) tối ưu|tối ưu nhất|docker[ -]compose|thẩm mỹ viện"
     # UI words that mean something else in backend work (the UI door reads p_route):
     r"|(?<!\w)compose(?:\.ya?ml|\s+up(?!\s+to\b))(?!\w)|(?:sql|materialized|django) views?|views\.py|grafana panels?|panels? grafana"
-    r"|(?:credit|debit|payment|bank|gift|sim|sd) cards?|card numbers?|số card|dialog (?:state|manager|system)")
+    r"|(?:credit|debit|payment|bank|gift|sim|sd) cards?|card numbers?|số card|dialog (?:state|manager|system)"
+    r"|(?<![\w-])--cards?(?!\w)")  # a CLI flag: the super-board lane opener passes --cards (2026-10-25: UI door in 761/771 lanes)
 
 # The UI door (docs/workflow-improvements.md II.C): a UI word in the prompt, or an app
 # profile, switches on UI_INTERACTION + VISUAL_DESIGN, the Zero-Slop mandate and ui-ux-pro-max.
@@ -1133,7 +1134,8 @@ def context_note(payload, project_dir, session_id):
 # 492 injections — the same ~700-char requirements line re-sent 43.9k chars, each copy re-read
 # on every API call). "Loại việc" and the RED→GREEN rule are short and stay every time.
 ONCE_PER_SESSION = ("- Yêu cầu ngầm định: ", "- Bẫy đã gặp: ", "- Skill phù hợp: ",
-                    "ZERO-SLOP UI MANDATE", "• ")  # the last two: the lines of ZERO_SLOP_MANDATE
+                    "ZERO-SLOP UI MANDATE", "• ",  # these two: the lines of ZERO_SLOP_MANDATE
+                    "- GIAO MẶC ĐỊNH BẬT")  # the giaoDefault order (2026-10-25: ~370 B re-sent on every prompt, 19.6 KB a session)
 SAME_AS_BEFORE = "(ngữ cảnh DevKit như lượt trước)"
 COMPACT_MARKS = (b'"subtype":"compact_boundary"', b'"subtype": "compact_boundary"')  # Claude Code transcript line after a compaction
 NO_TRANSCRIPT_CAP = 20  # without a transcript a compaction is invisible: resend after 20 prompts
