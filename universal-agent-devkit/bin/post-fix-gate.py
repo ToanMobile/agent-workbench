@@ -1678,9 +1678,12 @@ def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
             return
         # Whole tokens of the line as the shell reads it (a flag inside a `# comment` or glued into a longer word is not carried by it).
         carried = set()
-        for c in cfg.get("verify_commands") or []:
+        verify = cfg.get("verify_commands")   # any JSON type can sit here (5, true, a dict): only a list of strings is a verify list
+        for c in (verify if isinstance(verify, list) else []):
+            if not isinstance(c, str):
+                continue
             try:
-                carried.update(shlex.split(str(c), comments=True))
+                carried.update(shlex.split(c, comments=True))
             except ValueError:   # an unbalanced quote: the line cannot be read as the shell does, so it carries nothing
                 pass
         if any(flag not in carried for flag in relaxing):
