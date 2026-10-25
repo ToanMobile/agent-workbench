@@ -199,6 +199,11 @@ def giao_default(project_root):
 _LANE_HEAD_RE = re.compile(r"First operation\b")
 _LANE_SCRIPT = "super-board-skills-ready.py"
 _LANE_CARDS_RE = re.compile(r"--cards -(?!\S)")
+# The Codex lane (.claude/bin/super-board-codex-lane.sh) opens with "Run super-<lane skill> for issue #N as a Codex lane worker." and
+# puts the same opener on line 2 (--host codex). Its card is one JSON object on its own "Card: " line, after a skills report that holds
+# arrays (the "[" search of the other lanes would read that report). Anchored the same way: line 1 at the very start, then line 2.
+_CODEX_LANE_RE = re.compile(r"Run super-(?:build|qa|review) for issue #\d+ as a Codex lane worker\.\n")
+_CODEX_CARD_RE = re.compile(r"^Card: (?=\{)", re.M)
 ISSUE_SECTION_RE = re.compile(r"^# Issue #\d+ — ([^\n]*)\n(.*?)(?=^---$|\Z)", re.M | re.S)   # super-build-dispatch.sh: title + body
 
 
@@ -217,8 +222,10 @@ def _opener_line_end(text, pos):
 
 
 def lane_opener_end(text):
-    """Index just past the lane opener at the very start of text (already left-stripped), -1 when text opens with none."""
-    return _opener_line_end(text, 0)
+    """Index just past the lane opener at the very start of text (already left-stripped), -1 when text opens with none. The Codex
+    lane's opener is its line 2, right after its "Run … as a Codex lane worker." line 1."""
+    codex = _CODEX_LANE_RE.match(text)
+    return _opener_line_end(text, codex.end() if codex else 0)
 
 
 def lane_card_text(prompt):
@@ -230,11 +237,18 @@ def lane_card_text(prompt):
     if opener_end < 0:
         return None
     words = []
-    start = text.find("[", opener_end)   # the array the opener hands to --cards - as stdin
+    codex = _CODEX_LANE_RE.match(text)
+    if codex:   # the card object on its "Card: " line
+        card_at = _CODEX_CARD_RE.search(text, opener_end)
+        start = card_at.end() if card_at else -1
+    else:
+        start = text.find("[", opener_end)   # the array the opener hands to --cards - as stdin
     try:
         cards = json.JSONDecoder().raw_decode(text, start)[0] if start >= 0 else []
     except ValueError:
         cards = []
+    if codex:
+        cards = [cards]
     for card in cards if isinstance(cards, list) else []:
         if isinstance(card, dict):
             words += [card[k] for k in ("title", "body") if isinstance(card.get(k), str)]

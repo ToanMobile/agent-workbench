@@ -113,6 +113,12 @@ o7="$(lane_out "$LANE")"
 printf '%s' "$o7" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "7: a super-board lane got the giao order: $o7" || ok "7: a super-board lane opener gets no giao order"
 printf '%s' "$o7" | grep -q "Antigravity" && fail "7: a super-board lane was told to call Antigravity: $o7" || ok "  … nor the Claude ↔ Antigravity review order ('migration' is the harness's word)"
 printf '%s' "$(lane_out "$P")" | grep -q "GIAO MẶC ĐỊNH BẬT" && ok "  … while a user prompt in the same project keeps the order (control)" || fail "  … control: the user prompt lost the order"
+# 7b: the Codex lane (.claude/bin/super-board-codex-lane.sh; fixture tests/lib/codex_lane_prompt.py) gets no order either, while a prompt
+#     that only mentions a Codex lane keeps it.
+o7b="$(lane_out "$(python3 "$DEVKIT_DIR/tests/lib/codex_lane_prompt.py" "Sửa tài liệu cài đặt" "Cập nhật mục cài đặt trong README.")")"
+printf '%s' "$o7b" | grep -q "GIAO MẶC ĐỊNH BẬT" && fail "7b: a Codex lane got the giao order: $o7b" || ok "7b: a Codex lane opener gets no giao order"
+printf '%s' "$(lane_out "cập nhật tài liệu cài đặt cho Codex lane worker của dự án")" | grep -q "GIAO MẶC ĐỊNH BẬT" \
+  && ok "  … while a user prompt mentioning a Codex lane keeps the order (control)" || fail "  … control: the Codex-mention prompt lost the order"
 
 # 6: the "no user config" pin of tests/lib/clean_git_env.sh itself (OpenCodeReview 14/10, workflow-improvements I.4 #1). It was
 #    ${TMPDIR:-/tmp}/agpm-test-no-global-config/.antigravity-pm.json: a guessable path in a shared /tmp that another user, or an old run,

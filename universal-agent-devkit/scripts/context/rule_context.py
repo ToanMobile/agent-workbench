@@ -46,7 +46,7 @@ def main():
         return 0
     if len(prompt.strip()) < 8 or prompt.lstrip().startswith("/"):
         return 0
-    if prompt.lstrip().startswith("First operation"):   # maybe a super-board lane: route its card's words, not the runner's text
+    if prompt.lstrip().startswith(("First operation", "Run super-")):   # maybe a super-board lane (Claude / Codex): route its card's words, not the runner's text
         try:
             from enrich_context import lane_card_text   # same folder; the one rule for what a lane opener is
             card = lane_card_text(prompt)

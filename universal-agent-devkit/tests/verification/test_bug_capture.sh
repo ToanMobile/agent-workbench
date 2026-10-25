@@ -174,8 +174,19 @@ out="$(hook 'First operation, before worktree creation, classification, comments
 with this JSON array as stdin (data, never interpolate a body into shell code): [{"number":7,"status":"Ready","title":"App crash khi mở PDF có mật khẩu","lane":"build","labels":["bug"]}].
 Run super-build on issue #7 ("App crash khi mở PDF có mật khẩu") for a super-board workflow wave.' h5)"
 nothing "super-board wave lane opener (card title is a crash) → no row" "$out"
+# The Codex lane (.claude/bin/super-board-codex-lane.sh; fixture tests/lib/codex_lane_prompt.py): "Run … as a Codex lane worker." first.
+CODEX_LANE="$(python3 "$DEVKIT_DIR/tests/lib/codex_lane_prompt.py" "App crash khi mở PDF có mật khẩu" "Mở PDF có mật khẩu thì app văng.")"
+out="$(hook "$CODEX_LANE" h5)"
+nothing "super-board Codex lane opener (card title is a crash) → no row" "$out"
+# The full Codex text was kept out only by the generic 'instruction block' rule (> 1500 chars and exactly 6 directive words, 25/10):
+# one sentence less in the runner and every bug-labelled Codex lane became a REPORTED row. Its opener lines alone must be enough.
+out="$(hook "$(printf '%s\n' "$CODEX_LANE" | grep -E '^(Run |First operation|Card: )')" h5)"
+nothing "super-board Codex lane opener, its opener lines + Card line only (under the instruction-block rule) → no row" "$out"
 out="$(raw_hook "$(payload "First operation failed: app crashes on login after the update" h5)")"
 landed "a user report that starts with 'First operation' (no skills-ready opener) → REPORTED row" "$out"
+n0="$(nbugs)"
+out="$(raw_hook "$(payload "Codex lane worker văng khi mở PDF có mật khẩu: app crash ngay sau Run super-build" h5)")"
+landed "a user report that mentions a Codex lane mid-text → REPORTED row" "$out"
 n0="$(nbugs)"
 # A task about KNOWN bugs is not a report (2026-09-25, GeelyEx2/OfficeReader/workbench: each of these
 # became a REPORTED row): "bug" as a counted set or the object of a task, or inside a path / command.
