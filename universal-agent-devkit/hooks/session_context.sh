@@ -184,11 +184,11 @@ try:
         _skip = (lambda p: True) if _trunk else getattr(rc, "skip_bookkeeping", lambda p: False)   # a LINKED worktree leaves the tracked checklist files alone
         if _trunk:   # bản cũ của prompt hook để dòng REPORTED chưa commit ở main: vào sổ chờ, kiểm, rồi trả file về HEAD (main ff được)
             try:
-                _moved, _refused = rc.migrate_pending(root)
+                _moved, _refused = rc.migrate_pending(root, lock_wait=0)   # SessionStart không chờ khoá gộp; lệnh tay chờ 10 s
                 if _moved:
                     out.append(f"Checklist: {len(_moved)} dòng chưa commit ở main đã vào sổ chờ ngoài git, file track về HEAD (main sạch để gộp).")
                 if _refused:
-                    out.append("⚠️ Checklist: main bẩn ở file sổ sách, chưa trả về HEAD — " + "; ".join(_refused))
+                    out.append("⚠️ Checklist: migrate-pending chưa chạy được — " + "; ".join(_refused))
             except Exception as _e:  # noqa: BLE001 - nói ra, không chặn session start
                 out.append(f"⚠️ Checklist: migrate-pending lỗi ({type(_e).__name__}: {_e})")
             _bad = rc.pending_problem(root)

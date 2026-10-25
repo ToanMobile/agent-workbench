@@ -1878,11 +1878,6 @@ def _main_head_data(common: Path):
     return data if isinstance(data, dict) and isinstance(data.get("items"), dict) else None
 
 
-def _main_head_items(common: Path):
-    data = _main_head_data(common)
-    return data["items"] if data else None
-
-
 def pending_save_rows(project_dir, data: dict, ids, drop=(), *, count=(), stats=None, inbox=None) -> str:
     """Giữ các dòng `ids` của `data` mà hook tạo ở main trunk mode (trunk_main), quên `drop` (người chạy `bugs drop`), cộng `count` (mỗi
     khoá +1) và `stats` ({khoá: số}) vào số đếm của sổ (reported_total: báo cáo tuần của nightly cộng nó), thêm khoá hộp thư `inbox`.
@@ -1918,7 +1913,7 @@ def pending_save_rows(project_dir, data: dict, ids, drop=(), *, count=(), stats=
             store["stats"][key] = store["stats"].get(key, 0) + int(n)
         for key, seen in (inbox or {}).items():
             store["inbox"].setdefault(key, seen)
-        head = _main_head_items(path.parent.parent) or {}
+        head = (_main_head_data(path.parent.parent) or {"items": {}})["items"]
         store["rows"] = {k: v for k, v in rows.items() if k not in head or _pending_wins(v, head[k])}
         fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".pending_rows.")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -1967,20 +1962,23 @@ def _main_merge_lock(common, wait: float = 10.0):
                 fcntl.flock(fh, fcntl.LOCK_UN)
 
 
-def migrate_pending(project_dir) -> tuple:
+def migrate_pending(project_dir, lock_wait: float | None = None) -> tuple:
     """Một lần khi lên bản có sổ chờ (`agent-kit checklist migrate-pending`; SessionStart tự chạy ở main trunk mode): những gì prompt hook
-    bản cũ để CHƯA commit trong file track của main trunk mode (dòng REPORTED, mở lại, khoá hộp thư, reported_total) vào sổ chờ, kiểm từng
-    dòng đã ở sổ, rồi mới trả .agents/regression_status.json + CHECKLIST.md về HEAD (main sạch để fast-forward). Một dòng người làm
-    (_person_made) mà sổ chờ không giữ được - HEAD có bản đã xác nhận, hay dòng test đổi `covers` - thì không chuyển, không trả gì về, nêu
+    bản cũ để CHƯA commit trong file track của main trunk mode (dòng REPORTED, mở lại, thêm phiên, khoá hộp thư, reported_total) vào sổ
+    chờ, kiểm từng dòng đã ở sổ, rồi mới trả .agents/regression_status.json + CHECKLIST.md về HEAD (main sạch để fast-forward). Sổ đã có
+    bản MỚI HƠN của một dòng (auto-link, báo lại bằng hook mới): giữ bản đó, gộp phiên. Một dòng người làm (_person_made) mà sổ chờ không
+    giữ được - HEAD có bản đã xác nhận, dòng test đổi `covers`, hay dòng HEAD có mà main đã xoá - thì không chuyển, không trả gì về, nêu
     tên; một lần chạy RED-proof thật (không phải N/A) mới hơn bản ở HEAD trên dòng sổ không giữ được cũng vậy (trạng thái tính lại, như
-    PROVEN → OUTDATED cùng ts, thì không). Phần chỉ được sinh lại (kết quả test, STALE, phiên) thì bỏ. Đọc HEAD và ghi file trong khoá gộp
-    của main (_main_merge_lock): automerge không fast-forward chen vào giữa. Trả về (id đã chuyển, lý do từ chối); ([], []) khi không có gì."""
+    PROVEN → OUTDATED cùng ts, thì không). Phần chỉ được sinh lại (kết quả test, STALE) thì bỏ. Số đếm chỉ ghi SAU khi file đã về HEAD
+    (một lần chạy hỏng giữa chừng không đếm hai lần). Đọc HEAD và ghi file trong khoá gộp của main (_main_merge_lock), chờ `lock_wait` giây
+    (None: DEVKIT_MIGRATE_LOCK_WAIT_S, mặc định 10; SessionStart không chờ). Trả về (id đã chuyển, lý do từ chối); ([], []) khi không có gì."""
     project_dir = Path(project_dir)
     if not trunk_main(project_dir):
         raise ValueError("migrate-pending chỉ chạy ở main checkout của trunk mode")
     views = [STATUS_FILE.as_posix(), VIEW_FILE.as_posix(), OLD_VIEW_FILE.as_posix()]
     common = _pending_path(project_dir).parent.parent
-    with _main_merge_lock(common, _env_int("DEVKIT_MIGRATE_LOCK_WAIT_S", 10)) as held:
+    wait = _env_int("DEVKIT_MIGRATE_LOCK_WAIT_S", 10) if lock_wait is None else lock_wait
+    with _main_merge_lock(common, wait) as held:
         if not held:
             return [], ["main đang được gộp (finish / automerge giữ khoá gộp): chạy lại sau"]
         st = _git_quiet(project_dir, "status", "--porcelain", "--", *views)
@@ -2005,29 +2003,45 @@ def migrate_pending(project_dir) -> tuple:
                 if mine is None and not new_proof:
                     continue
                 if h is not None and _person_made(h) == mine and not new_proof:
+                    if row.get("kind") in ("bug", "req") and _pending_wins(row, h):   # hook cũ chỉ thêm phiên / touched_at: giữ liên kết phiên
+                        moved.append(rid)
                     continue
                 if row.get("kind") in ("bug", "req") and (h is None or _pending_wins(row, h)):
                     moved.append(rid)
                 else:
                     lost.append(rid)
+            # dòng người làm HEAD có mà main đã xoá (bugs drop ở main, test bỏ covers): trả về HEAD sẽ khôi phục nó im lặng
+            lost += [rid for rid, h in head["items"].items() if rid not in disk["items"] and _person_made(h) is not None]
             if lost:
                 return [], [f"{len(lost)} dòng người làm (hay có lần chạy RED-proof mới) mà sổ chờ không giữ được (HEAD có bản đã xác nhận / "
-                            f"đổi covers): {', '.join(lost[:8])} - commit chúng qua một worktree hoặc bỏ đi, rồi chạy lại"]
+                            f"đổi covers / đã xoá ở main): {', '.join(lost[:8])} - commit chúng qua một worktree hoặc bỏ đi, rồi chạy lại"]
+            before = read_pending_store(project_dir)["rows"]
+            keep = {}
+            for rid in moved:
+                row, sr = disk["items"][rid], before.get(rid)
+                kept = json.loads(json.dumps(sr if isinstance(sr, dict) and _pending_wins(sr, row) else row))   # sổ có bản mới hơn: giữ nó
+                sessions = list(dict.fromkeys(list(row.get("sessions") or []) + list((sr if isinstance(sr, dict) else {}).get("sessions") or [])))
+                if sessions:
+                    kept["sessions"] = sessions[-SESSIONS_LIMIT:]
+                keep[rid] = kept
             seen = {k: v for k, v in (disk.get("inbox") or {}).items() if k not in (head.get("inbox") or {})}
-            extra = {k: int(v) - int((head.get("stats") or {}).get(k, 0)) for k, v in (disk.get("stats") or {}).items()
-                     if isinstance(v, int) and int(v) > int((head.get("stats") or {}).get(k, 0))}
-            if moved or seen or extra:
-                pending_save_rows(project_dir, disk, moved, stats=extra, inbox=seen)
+            if keep or seen:
+                pending_save_rows(project_dir, {"items": keep}, list(keep), inbox=seen)
             store = read_pending_store(project_dir)
-            missing = [rid for rid in moved if store["rows"].get(rid) != disk["items"][rid]] + \
-                      [k for k in seen if k not in store["inbox"]]
+            missing = [rid for rid in keep if store["rows"].get(rid) != keep[rid]] + [k for k in seen if k not in store["inbox"]]
             if missing:
                 return [], [f"sổ chờ không giữ được {', '.join(missing[:8])}: không trả file về HEAD"]
             save(project_dir, head, stale=False)   # qua save(): nhật ký ghi nhận bản mới, không thành cảnh báo rollback
-            still = _git_quiet(project_dir, "diff", "--name-only", "HEAD", "--", *views)
-            left = [p for p in still.stdout.splitlines() if p]
+            left = [p for p in _git_quiet(project_dir, "diff", "--name-only", "HEAD", "--", *views).stdout.splitlines() if p]
             if left:   # view render lại khác byte bản ở HEAD (hay JSON không do save() viết): trả đúng bản HEAD, các dòng đã ở sổ chờ
                 _git_quiet(project_dir, "checkout", "HEAD", "--", *left)
+            left = [p for p in _git_quiet(project_dir, "diff", "--name-only", "HEAD", "--", *views).stdout.splitlines() if p]
+            if left:
+                return [], [f"không trả được {', '.join(left)} về HEAD (dòng đã ở sổ chờ; số đếm chưa ghi): chạy lại"]
+            extra = {k: int(v) - int((head.get("stats") or {}).get(k, 0)) for k, v in (disk.get("stats") or {}).items()
+                     if isinstance(v, int) and int(v) > int((head.get("stats") or {}).get(k, 0))}
+            if extra:   # chỉ sau khi file đã về HEAD: lần sau không còn chênh lệch để đếm lại
+                pending_save_rows(project_dir, {"items": {}}, [], stats=extra)
     return moved, []
 
 
@@ -3207,9 +3221,22 @@ def _bug_command(args, project: Path) -> int:
         data = load(project)
         # trunk mode: dòng prompt hook giữ ngoài git (read_pending) tìm/khử trùng được ở đây; chỉ dòng lệnh này đụng tới mới vào checklist
         tracked = dict(data["items"])
+        stats0 = dict(data.get("stats") or {})
         pending = apply_pending(data, project)
+        trunk = trunk_main(project)
 
         def store(acted=()):
+            if trunk:   # main trunk mode chỉ nhận gộp: dòng vào sổ chờ khi sổ giữ được, không thì từ chối TRƯỚC khi ghi gì
+                head = (_main_head_data(_pending_path(project).parent.parent) or {"items": {}})["items"]
+                bad = [rid for rid in acted if rid in head and (rid not in data["items"] or not _pending_wins(data["items"][rid], head[rid]))]
+                if bad:
+                    raise ValueError(f"main ở trunk mode chỉ nhận gộp: {', '.join(bad)} đã có ở HEAD, sổ chờ không giữ được thay đổi này - "
+                                     "chạy lệnh này trong worktree của phiên (cd <worktree>; agent-kit bugs …) rồi commit cùng việc")
+                delta = {k: int(v) - int(stats0.get(k, 0)) for k, v in (data.get("stats") or {}).items()
+                         if isinstance(v, int) and int(v) > int(stats0.get(k, 0))}
+                pending_save_rows(project, data, [rid for rid in acted if rid in data["items"]],
+                                  drop=[rid for rid in acted if rid not in data["items"]], stats=delta)
+                return
             for rid in pending:
                 if rid not in acted:   # dòng chờ lệnh này không đụng: không ghi; dòng track nó che đi thì trả lại nguyên như cũ
                     if rid in tracked:
@@ -3228,7 +3255,7 @@ def _bug_command(args, project: Path) -> int:
         if args.cmd == "req-add":
             rid, created = register_req(data, args.title, args.criterion, component=args.module, source=args.source,
                                         inbox=args.inbox, reason=args.reason, req_id=args.req_id)
-            store()
+            store([rid])
             it = data["items"][rid]
             print(f"{rid} {effective_status(data, it)} — {'đã thêm' if created else 'đã có, cập nhật'}: {it['title']} "
                   f"({len(it['criteria'])} tiêu chí, hash {it['criteria_hash']})")
@@ -3236,7 +3263,7 @@ def _bug_command(args, project: Path) -> int:
             return 0
         if args.cmd == "req-link":
             in_matrix, outside = link_req(data, args.req_id, args.which, args.test_ref, project=project)
-            store()
+            store([args.req_id])
             st = effective_status(data, data["items"][args.req_id])
             print(f"{args.req_id} {st} — tiêu chí {args.which} → " + (", ".join(in_matrix) if in_matrix else
                   f"{args.test_ref} (ngoài matrix: gate không chạy)"))
@@ -3433,10 +3460,11 @@ def main(argv=None) -> int:
         else:
             print((project / VIEW_FILE).read_text(encoding="utf-8") if (project / VIEW_FILE).exists()
                   else "Chưa có checklist — chạy post-fix-gate --run-tests một lần.")
-            view = {"items": {}}
-            for rid in apply_pending(view, project):   # trunk mode: dòng chờ không có trong CHECKLIST.md (không ai render ở main)
+            view = load(project)
+            where = " (trong worktree của phiên: main ở trunk mode chỉ nhận gộp)" if trunk_main(project) else ""
+            for rid in apply_pending(view, project):   # trunk mode: dòng chờ không có trong CHECKLIST.md; chỉ dòng view lấy từ sổ (bản track thắng thì không)
                 it = view["items"][rid]
-                print(f"🟡 sổ chờ: {rid} ({effective_status(view, it)}) {it.get('title', '')} — `agent-kit bugs link|add --id|drop {rid}`")
+                print(f"🟡 sổ chờ: {rid} ({effective_status(view, it)}) {it.get('title', '')} — `agent-kit bugs link|add --id|drop {rid}`{where}")
     except (KeyError, ValueError, OSError) as e:
         print(f"✖ {e}", file=sys.stderr)
         return 1

@@ -191,6 +191,93 @@ kill "$LPID" 2>/dev/null; wait "$LPID" 2>/dev/null
 [ "$rc8f" != 0 ] && printf '%s' "$out8f" | grep -q "đang được gộp" && [ "$(shasum < "$M5/.agents/regression_status.json")" = "$sum5" ] && [ -z "$(pending "$M5")" ] \
   && ok "8f: khoá gộp của main đang bị giữ: migrate-pending không đọc HEAD / ghi file, bảo chạy lại" || fail "8f: rc=$rc8f out='$out8f'"
 
+# 8g. (vòng 3) dòng bẩn mà sổ chờ đã có bản MỚI HƠN (auto-link ở main sau hook cũ): migrate giữ bản chờ (tests, linked_by), không đè
+M6="$TMP/migrate-newer"; mk_old "$M6"; old_hook "$M6"
+X6="$(python3 -c "import json, sys; d = json.load(open(sys.argv[1] + '/.agents/regression_status.json'))['items']
+print(next(k for k, v in d.items() if v.get('title') == 'Lỗi một khi lưu'))" "$M6")"
+python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r
+p = pathlib.Path(sys.argv[2])
+with r.locked(p):
+    v = r.load_view(p); v['items'][sys.argv[3]]['tests'] = ['tests/test_calc.py']; v['items'][sys.argv[3]]['linked_by'] = 'auto'
+    r.save_view_rows(p, v, [sys.argv[3]])" "$DEVKIT_DIR/bin" "$M6" "$X6" || fail "8g: dựng auto-link"
+( cd "$M6" && bash "$KIT" checklist migrate-pending >/dev/null 2>&1 ); rc8g=$?
+[ "$rc8g" = 0 ] && [ "$(view "$M6" "$X6" linked_by)" = auto ] && [ "$(view "$M6" "$X6" tests)" = "['tests/test_calc.py']" ] && [ -z "$(dirty "$M6")" ] \
+  && ok "8g: migrate giữ bản chờ mới hơn (auto-link: tests, linked_by), không đè bằng bản bẩn cũ" \
+  || fail "8g: rc=$rc8g linked_by='$(view "$M6" "$X6" linked_by)' tests='$(view "$M6" "$X6" tests)' dirty='$(dirty "$M6")'"
+
+# 8h. (vòng 3) báo lại bằng hook mới (phiên s-new, touched mới hơn) trước khi migrate: phiên mới không mất
+M7="$TMP/migrate-session"; mk_old "$M7"; old_hook "$M7"
+X7="$(python3 -c "import json, sys; d = json.load(open(sys.argv[1] + '/.agents/regression_status.json'))['items']
+print(next(k for k, v in d.items() if v.get('title') == 'Lỗi hai khi mở'))" "$M7")"
+python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r
+p = pathlib.Path(sys.argv[2]); d = r.load(p); d['items'][sys.argv[3]]['touched_at'] = '2026-10-20 10:00:00'; r.save(p, d, stale=False)
+with r.locked(p):
+    v = r.load_view(p); b, _ = r.register_bug(v, 'Lỗi hai khi mở', state='reported', session='s-new', open_only=True); r.pending_save_rows(p, v, [b])" \
+  "$DEVKIT_DIR/bin" "$M7" "$X7" || fail "8h: dựng báo lại"
+( cd "$M7" && bash "$KIT" checklist migrate-pending >/dev/null 2>&1 ); rc8h=$?
+[ "$rc8h" = 0 ] && printf '%s' "$(view "$M7" "$X7" sessions)" | grep -q "s-new" && printf '%s' "$(view "$M7" "$X7" sessions)" | grep -q "s0" && [ -z "$(dirty "$M7")" ] \
+  && ok "8h: migrate giữ phiên của lần báo lại mới hơn (s-new) cùng phiên cũ (s0)" || fail "8h: rc=$rc8h sessions='$(view "$M7" "$X7" sessions)'"
+
+# 8i. (vòng 3) dòng HEAD có mà file bẩn đã xoá (bugs drop ở main): từ chối, nêu tên, không trả về HEAD im lặng, không đếm gì vào sổ
+M8="$TMP/migrate-dropped"; mk_old "$M8"
+python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r
+p = pathlib.Path(sys.argv[2]); d = r.load(p); r.drop(d, 'BUG-20260101-z'); r.save(p, d, stale=False)" "$DEVKIT_DIR/bin" "$M8"
+out8i="$( cd "$M8" && bash "$KIT" checklist migrate-pending 2>&1 )"; rc8i=$?
+st8i="$(python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r; print(r.read_pending_store(pathlib.Path(sys.argv[2]))['stats'])" "$DEVKIT_DIR/bin" "$M8" 2>/dev/null)"
+[ "$rc8i" != 0 ] && printf '%s' "$out8i" | grep -q "BUG-20260101-z" && [ -n "$(dirty "$M8")" ] && [ "$st8i" = "{}" ] \
+  && ok "8i: dòng HEAD có mà main đã xoá: migrate từ chối (nêu tên), file để nguyên, sổ không đếm reported_dropped" \
+  || fail "8i: rc=$rc8i out='$out8i' dirty='$(dirty "$M8")' stats='$st8i'"
+
+# 8j. (vòng 3) dòng REPORTED HEAD có mà hook cũ chỉ thêm phiên / touched_at: chuyển vào sổ, liên kết phiên không mất
+M9="$TMP/migrate-touch"; mk_calc "$M9"
+python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r
+p = pathlib.Path(sys.argv[2]); d = r.load(p)
+d['items']['BUG-20260101-r'] = {'id': 'BUG-20260101-r', 'kind': 'bug', 'title': 'Báo', 'component': '-', 'tests': [], 'state': 'reported',
+  'created_at': '2026-01-01 00:00:00', 'touched_at': '2026-01-01 00:00:00', 'sessions': ['s0'], 'last': None, 'history': []}
+r.save(p, d, stale=False)" "$DEVKIT_DIR/bin" "$M9" && git -C "$M9" add -A .agents && git -C "$M9" commit -qm "reported row" || fail "8j: dựng"
+python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r
+p = pathlib.Path(sys.argv[2]); d = r.load(p); r.touch_session(d['items']['BUG-20260101-r'], 's-new'); r.save(p, d, stale=False)" "$DEVKIT_DIR/bin" "$M9"
+( cd "$M9" && bash "$KIT" checklist migrate-pending >/dev/null 2>&1 ); rc8j=$?
+[ "$rc8j" = 0 ] && printf '%s' "$(view "$M9" BUG-20260101-r sessions)" | grep -q "s-new" && [ -z "$(dirty "$M9")" ] \
+  && ok "8j: dòng REPORTED HEAD có, hook cũ chỉ thêm phiên: phiên mới vào sổ chờ, main sạch" || fail "8j: rc=$rc8j sessions='$(view "$M9" BUG-20260101-r sessions)' dirty='$(dirty "$M9")'"
+
+# 8k. (vòng 3) số đếm không cộng hai lần: lần migrate hỏng giữa chừng (ghi file về HEAD lỗi) không ghi số đếm, lần sau ghi đúng một lần
+M10="$TMP/migrate-idem"; mk_old "$M10"; old_hook "$M10"
+n8k="$(python3 -c "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import regression_checklist as r
+p = pathlib.Path(sys.argv[2]); orig = r.save
+def boom(*a, **k): raise OSError('disk full')
+r.save = boom
+try:
+    r.migrate_pending(p)
+except OSError:
+    pass
+r.save = orig
+s1 = r.read_pending_store(p)['stats'].get('reported_total', 0)
+r.migrate_pending(p)
+print(s1, r.read_pending_store(p)['stats'].get('reported_total', 0))" "$DEVKIT_DIR/bin" "$M10" 2>/dev/null)"
+[ "$n8k" = "0 2" ] && ok "8k: lần migrate hỏng không ghi số đếm; lần thành công ghi reported_total đúng một lần (2)" || fail "8k: số đếm (sau lần hỏng, sau lần thành công) = '$n8k', cần '0 2'"
+
+# 8l. (vòng 3) `agent-kit bugs` chạy ở main trunk mode không làm main bẩn: bug mới vào sổ chờ; đổi dòng HEAD đã xác nhận: từ chối, chỉ sang worktree
+M11="$TMP/bugs-at-main"; mk_old "$M11"
+o8l="$( cd "$M11" && bash "$KIT" bugs add "Nút in hoá đơn không phản hồi" --module ui 2>&1 )"; B8l="$(bug_id "$o8l")"
+o8l2="$( cd "$M11" && bash "$KIT" bugs link BUG-20260101-c tests/test_other.py 2>&1 )"; rc8l2=$?
+[ -n "$B8l" ] && [ -z "$(dirty "$M11")" ] && case " $(pending "$M11") " in *" $B8l "*) true ;; *) false ;; esac \
+  && [ "$rc8l2" != 0 ] && printf '%s' "$o8l2" | grep -q "worktree" \
+  && ok "8l: bugs add ở main trunk mode vào sổ chờ, main sạch; bugs link dòng HEAD đã xác nhận bị từ chối kèm chỉ dẫn worktree" \
+  || fail "8l: id='$B8l' dirty='$(dirty "$M11")' pending='$(pending "$M11")' link rc=$rc8l2 out='$o8l2'"
+
+# 8m. (OCR vòng 3) SessionStart không chờ khoá gộp (lệnh tay chờ 10 s), lời từ chối có tiền tố trung tính
+M12="$TMP/migrate-session-locked"; mk_old "$M12"; old_hook "$M12"
+LOCKF2="$(git -C "$M12" rev-parse --absolute-git-dir)/devkit-automerge-main.lock"
+python3 -c "import fcntl, sys, time; fh = open(sys.argv[1], 'a'); fcntl.flock(fh, fcntl.LOCK_EX); open(sys.argv[2], 'w').close(); time.sleep(45)" "$LOCKF2" "$TMP/locked2.flag" &
+LPID2=$!; i=0; while [ ! -e "$TMP/locked2.flag" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+# khoá chờ của lệnh tay đặt 30 s: SessionStart mà chờ thì mất >= 30 s, không chờ thì xong sớm hơn nhiều kể cả lúc máy tải cao
+t0=$(date +%s); out8m="$(echo '{}' | CLAUDE_PROJECT_DIR="$M12" DEVKIT_MIGRATE_LOCK_WAIT_S=30 bash "$SESSION_HOOK" 2>&1)"; t8m=$(( $(date +%s) - t0 ))
+kill "$LPID2" 2>/dev/null; wait "$LPID2" 2>/dev/null
+printf '%s' "$out8m" | grep -q "đang được gộp" && ! printf '%s' "$out8m" | grep -q "main bẩn ở file sổ sách" && [ "$t8m" -lt 25 ] \
+  && ok "8m: SessionStart không chờ khoá gộp đang bị giữ (${t8m} s), nói lý do với tiền tố trung tính" \
+  || fail "8m: ${t8m} s, out='$(printf '%s' "$out8m" | grep -i 'checklist' | head -2)'"
+
 # 8d. SessionStart ở main trunk mode tự chạy migrate
 M3="$TMP/migrate-session"; mk_old "$M3"; old_hook "$M3"
 out8d="$(echo '{}' | CLAUDE_PROJECT_DIR="$M3" bash "$SESSION_HOOK" 2>&1)"

@@ -80,6 +80,13 @@ out="$(prompt "$P" s1 "Lỗi tràn số khi nhân số rất lớn bị crash")"
 [ "$(view "$W" "$B1" fixed)" = True ] && [ "$(view "$P" "$B1" state)" = reported ] \
   && ok "4b: worktree đọc dòng (đã link) của chính nó, main vẫn đọc dòng chờ" || fail "4b: worktree fixed='$(view "$W" "$B1" fixed)' main='$(view "$P" "$B1" state)'"
 
+# 4c. (vòng 3) `checklist show`: chỉ liệt kê dòng mà view lấy từ sổ chờ - không liệt kê dòng file track đã giữ (bản track thắng);
+#     ở main trunk mode lời gợi ý nói rõ lệnh phải chạy trong worktree
+sw="$( cd "$W" && bash "$KIT" checklist show 2>/dev/null | grep '🟡 sổ chờ' )"; sp="$( cd "$P" && bash "$KIT" checklist show 2>/dev/null | grep '🟡 sổ chờ' )"
+! printf '%s' "$sw" | grep -q "$B1" && printf '%s' "$sw" | grep -q "$B2" && printf '%s' "$sp" | grep -q "$B1" && printf '%s' "$sp" | grep -q "worktree" \
+  && ok "4c: checklist show liệt kê đúng dòng lấy từ sổ chờ (không dòng file track đã giữ), ở main nói chạy trong worktree" \
+  || fail "4c: worktree='$sw' main='$sp'"
+
 # 5. việc về main (fast-forward: main sạch nên không bị từ chối); dòng đó rời sổ, dòng khác ở lại
 git -C "$W" add -A .agents >/dev/null 2>&1 && git -C "$W" commit -qm "link $B1" >/dev/null 2>&1 || fail "5: worktree không có gì để commit"
 WH="$(git -C "$W" rev-parse HEAD)"

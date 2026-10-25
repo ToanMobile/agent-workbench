@@ -403,5 +403,5 @@
 31 tests/verification/test_devkit_incident.sh
 # 2026-10-25: main trunk mode không ghi dòng REPORTED vào checklist track (sổ chờ pending_rows.json); đo 15 s.
 15 tests/worktree_git/test_trunk_main_reported_pending.sh
-# 2026-10-25: người ghi tự động khác ở main trunk mode (auto-link, red_proof, SessionStart, hộp thư, migrate-pending); đo 50 s lúc máy tải cao.
-50 tests/worktree_git/test_trunk_main_pending_writers.sh
+# 2026-10-25: người ghi tự động khác ở main trunk mode (auto-link, red_proof, SessionStart, hộp thư, migrate-pending); đo 70 s lúc máy tải cao.
+70 tests/worktree_git/test_trunk_main_pending_writers.sh
