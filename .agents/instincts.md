@@ -524,3 +524,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Mở file người dùng ghi được bằng open() không kiểm loại file
 - **Nguyên nhân:** suite_cache._read_text/_file_digest mở FIFO bằng open() nên chờ mãi; test_gate_robustness treo, REG-DK-ALL-01 TIMEOUT ở mọi giới hạn kể cả máy rảnh. Nới timeout không chữa được; watchdog thì coi halted rc=79 mất file halt là dừng có chủ đích nên board nằm im 5,5 giờ
 - **Quy tắc phòng ngừa & Cách fix:** Mọi chỗ đọc file trong gate/cache kiểm os.path.isfile (hoặc mở O_NONBLOCK) trước; timeout vô hạn dù máy rảnh nghĩa là treo, dùng PYTHONFAULTHANDLER=1 + kill -ABRT lấy stack thay vì tăng giới hạn; rc=79 của runner không bao giờ là dừng có chủ đích
+
+---
+
+### [INSTINCT-063] KNOWN-RED chỉ nhận FAIL và guard che message commit mở cửa
+- **Ngày phát hiện:** 2026-10-24
+- **Hiện tượng lỗi:** KNOWN-RED chỉ nhận FAIL và guard che message commit mở cửa
+- **Nguyên nhân:** gate coi TIMEOUT là lỗi của thay đổi dù base cũng TIMEOUT; guard secrets xoá trắng cả -m và heredoc nên lệnh con trong message lọt
+- **Quy tắc phòng ngừa & Cách fix:** bằng chứng base phải ghi cả TIMEOUT dưới khoá cả cây, không dùng bản ghi của chính lượt này; guard chỉ che message khi không có lệnh con và heredoc có delimiter quote, lỗi parser thì xét nguyên lệnh
