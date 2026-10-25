@@ -161,6 +161,20 @@ PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_41","status":"Ready","labels":[],"cont
 top_card_in_column "Ready" >/dev/null 2>&1
 [ -s "$INFLIGHT_DIR/early-deaths/41" ] && ok "a dead lock cleared by issue_locked (no reap) is an early death too" || fail "issue_locked dropped a dead lock without recording it"
 
+# ── 6b. #393: a worker that ended quickly because it moved the card to Blocked (hold / sequence / too big) exited on purpose:
+#    no early-death record and no "early end" line (the incident rule `early-death` files a kit card from that line). A card the
+#    board still shows in a working column stays an early death.
+rm -f "$INFLIGHT_DIR"/early-deaths/*; : > "$TMP/log"
+printf '#!/usr/bin/env bash\ncase "$*" in *"status 70") echo Blocked ;; *"status 71") echo Building ;; *) exit 1 ;; esac\n' > "$TMP/bin/super-board-card.sh"
+chmod +x "$TMP/bin/super-board-card.sh"
+for n in 70 71; do printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/$n"; done
+( reap_finished_locks )
+[ ! -s "$INFLIGHT_DIR/early-deaths/70" ] && ! grep -q "#70.*early end" "$TMP/log" \
+  && ok "a quick exit after moving the card to Blocked is not an early death (#393)" \
+  || fail "#393: a worker that blocked its card on purpose was counted as an early death: $(grep '#70' "$TMP/log" | tail -1)"
+[ -s "$INFLIGHT_DIR/early-deaths/71" ] && ok "  … but a card still in Building stays an early death" || fail "#393: a card still in Building was not counted"
+rm -f "$TMP/bin/super-board-card.sh"
+
 # ── 7. per lane: two quick build deaths hold the card back from the Builder, not from its Reviewer
 now=$(date +%s); mkdir -p "$INFLIGHT_DIR/early-deaths"; printf '%s build\n%s build\n' "$now" "$now" > "$INFLIGHT_DIR/early-deaths/50"
 PROJECT_ITEMS_JSON='{"items":[{"id":"PVTI_50","status":"Review","labels":[],"content":{"type":"Issue","number":50,"assignees":[]}}]}'
