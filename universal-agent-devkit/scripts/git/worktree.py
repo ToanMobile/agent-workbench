@@ -1547,10 +1547,12 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False, 
         on_file = _reflog_file_entries(wt) if reflog_lines is False else reflog_lines   # BEFORE git reads that file: a FIFO there would block `git log -g`
         if on_file is None:
             return None
-        r = git(wt, "log", "-g", "--format=%H%x09%gs", "HEAD", check=False)
+        # bytes: the reflog keeps a `git commit -m` subject raw (a Latin-1 one made the strict decode raise and the worktree read as
+        # "reflog could not be read", review 26/10); only the subject is read from it, never a path
+        r = _git_bytes(wt, "log", "-g", "--format=%H%x09%gs", "HEAD")
         if r.returncode != 0:
             return None
-        entries = [(l.split("\t", 1) + [""])[:2] for l in r.stdout.splitlines() if l]
+        entries = [(l.split("\t", 1) + [""])[:2] for l in r.stdout.decode("utf-8", "replace").splitlines() if l]
         if on_file > len(entries):
             return None   # git skipped lines it could not read: what they named is unknown
     superseded = {entries[i + 1][0] for i in range(len(entries) - 1)
