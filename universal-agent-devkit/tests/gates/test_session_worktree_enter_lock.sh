@@ -219,6 +219,31 @@ start_src "$TMP/j" deep s52 startup
 lk="$(lock_of "$TMP/j" deep)"
 [ "$lk" = "devkit-kept session=s52 pid=$$" ] && ok "E17: a state file nested too deep reads as no owner: the session starting there still locks it" \
   || fail "E17: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E18 (review PR #415): phiên KHÁCH còn sống có record nêu worktree (EnterWorktree path=, reown lúc Stop) không được chặn CHỦ khoá lại:
+#   chủ (state nêu nó, khoá cũ mang sid của nó) resume từ shell thì thay khoá pid đã chết bằng pid mới — không thì gc mở khoá chết đó
+repo l true
+wtadd "$TMP/l" ownerwt s60; G "$TMP/l" worktree lock --reason "devkit-kept session=s60 pid=$DEAD" "$TMP/l/.claude/worktrees/ownerwt"
+mkdir -p "$TMP/l/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/l/.claude/worktrees/ownerwt" "$SLEEPER" > "$TMP/l/.claude/audit-gate/session_worktree/s61"
+start_src "$TMP/l" ownerwt s60 resume
+lk="$(lock_of "$TMP/l" ownerwt)"
+[ "$lk" = "devkit-kept session=s60 pid=$$" ] && ok "E18: the owner resuming in its worktree re-locks it even while a live guest session's record names it" \
+  || fail "E18: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E19 (review PR #415): record của CHÍNH sid này (pid đã chết: resume từ shell giữ id) không phải "chủ khác còn sống"
+repo m true; G "$TMP/m" worktree add -q --detach "$TMP/m/.claude/worktrees/recself"   # own repo: E18's lock carries this shell's pid
+mkdir -p "$TMP/m/.claude/audit-gate/session_worktree"
+printf '%s\npid %s\n' "$TMP/m/.claude/worktrees/recself" "$DEAD" > "$TMP/m/.claude/audit-gate/session_worktree/s70"
+start_src "$TMP/m" recself s70 resume
+lk="$(lock_of "$TMP/m" recself)"
+[ "$lk" = "devkit-kept session=s70 pid=$$" ] && ok "E19: a resume keeping its id locks the worktree its own record names" \
+  || fail "E19: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+# E20 (OCR PR #415): record của phiên khác không mang pid, còn mới (không biết sống hay chết): như reown, coi là còn chủ — không khoá
+repo n true; wtadd "$TMP/n" owned2 s80; mkdir -p "$TMP/n/.claude/audit-gate/session_worktree"
+printf '%s\n' "$TMP/n/.claude/worktrees/owned2" > "$TMP/n/.claude/audit-gate/session_worktree/s80"
+start_src "$TMP/n" owned2 s81 startup
+lk="$(lock_of "$TMP/n" owned2)"
+[ -z "$lk" ] && ok "E20: a young pid-less record of another session (alive or not cannot be told) keeps a standing session from locking" \
+  || fail "E20: locked '$lk' err=$(head -c 300 "$TMP/start.err")"
 
 # R8 (review 25/10): thời điểm khởi động ghi một kiểu (/proc) mà đọc kiểu khác (ps), hay ngược lại: không so được = còn sống
 OTHERFMT="proc:1"; [ -r "/proc/$SLEEPER/stat" ] && OTHERFMT="Mon_Jan__1_00:00:00_2001"
