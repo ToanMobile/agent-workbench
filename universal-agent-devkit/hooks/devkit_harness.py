@@ -244,7 +244,7 @@ class SessionGuard:
 # The heavy Stop gates (tests, fresh-context review) cost a model round per block and re-read the
 # whole context: GeelyEx2 blocked 204 times in ~4 days, mostly on progress replies. They are
 # skipped for a reply that declares itself unfinished in its status line (regression_gate since 2026-10-09: or has
-# no status line at all), claims no outcome and ran no git push in the turn. Anything else — no reply, no Claude
+# no status line at all), claims no outcome and ran no git push after the turn's last edit. Anything else — no reply, no Claude
 # transcript, a claim, a push — keeps them (fail closed). DEVKIT_GATE_EVERY_STOP=1 restores a gate on every stop.
 # Claim words in any case (review 2026-10-09: "Đã fix …", "Fixed …", "Done.", "Xong: …", "Hoàn tất …" read as no claim once a reply
 # without a status line counted as mid-work); `XONG` and `PASS` stay uppercase so "pass the value" is no claim. Callers strip
@@ -545,11 +545,51 @@ def git_writes_in_turn(tp, start):
     return found
 
 
+# Audit 2026-10-25 A3: an early `git push` made every later Stop of the user's turn a handover, and a turn spans many Stops (a reply that
+# waits for a background task ends a Stop; the <task-notification> is no new prompt): review_gate held 261 of its 454 blocks on such
+# mid-task "waiting" replies. Only a push that no edit of the turn follows carried the turn's work; one followed by more edits is mid-work.
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
+
+def push_after_last_edit(tp, start):
+    """True when the turn (tool calls after `start`, epoch) ran a `git push` (git_writes) that no Edit / Write / MultiEdit / NotebookEdit
+    call of the turn comes after, in transcript order. An edit the transcript does not show as such (Bash, a subagent) is not seen, so the
+    push then reads as the last step: a handover, held as before (fail closed). A read error after the first pass saw a push: True."""
+    import datetime
+    if "push" not in git_writes_in_turn(tp, start):   # the cheap pass (lines naming commit / push only): most turns end here
+        return False
+    n, last_push, last_edit = 0, -1, -1
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if '"tool_use"' not in raw or ("push" not in raw and not any('"%s"' % t in raw for t in EDIT_TOOLS)):
+                    continue
+                try:
+                    e = json.loads(raw)
+                    t = datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError):
+                    continue
+                if t < start or e.get("type") != "assistant":
+                    continue
+                for c in (e.get("message") or {}).get("content") or []:
+                    if not isinstance(c, dict) or c.get("type") != "tool_use":
+                        continue
+                    n += 1
+                    if c.get("name") in EDIT_TOOLS:
+                        last_edit = n
+                    elif "push" in git_writes((c.get("input") or {}).get("command", "")):
+                        last_push = n
+    except OSError:
+        return True   # cut off mid-read: the push the first pass saw may be the last step (fail closed)
+    return last_push > last_edit
+
+
 def work_in_progress(payload, env=None, status_optional=False):
     """True only for a reply that declares itself unfinished (status line), claims no outcome
-    and ran no git commit/push this turn — then the heavy Stop gates may skip. False otherwise.
+    and ran no git push after the last edit of this turn (push_after_last_edit) — then the heavy Stop gates may skip. False otherwise.
     status_optional=True (regression_gate: user 2026-10-09, "chỉ test khi bàn giao", tested once at the
-    handover over every change since the last PASS): a reply with NO status line is unfinished too."""
+    handover over every change since the last PASS): a reply with NO status line is unfinished too.
+    A push followed by more edits is no handover here; review_gate still holds when that push carried code no review covered."""
     env = os.environ if env is None else env
     if env.get("DEVKIT_GATE_EVERY_STOP") == "1" or not isinstance(payload, dict):
         return False
@@ -569,8 +609,8 @@ def work_in_progress(payload, env=None, status_optional=False):
         return False
     start = turn_start(tp)
     # A local commit is fine mid-work (its range is tested at the handover, --since the verified
-    # HEAD); a push is a handover (Antigravity review of T0003 v3).
-    return start is not None and "push" not in git_writes_in_turn(tp, start)
+    # HEAD); a push is a handover (Antigravity review of T0003 v3) when it came after the turn's last edit (audit 2026-10-25 A3).
+    return start is not None and not push_after_last_edit(tp, start)
 
 
 # ── verified HEAD (T0003) ────────────────────────────────────────────────────────────────────

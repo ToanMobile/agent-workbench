@@ -271,7 +271,8 @@ if info is not None and not probe and not pushed:
 # Claude, Gemini, Grok: lời giữa chừng không mở suite. work_in_progress() phía trên bỏ qua Claude
 # khi commit đã nằm trên remote (`pushed`), và luôn false với Gemini/Grok (transcript không phải Claude).
 # XONG hoặc câu nhận đã xong vẫn chạy suite. Commit đã đẩy mà chưa kiểm vẫn nợ tới lượt bàn giao.
-# Claude: một `git push` ngay trong lượt này vẫn là bàn giao, dù lời không nhận đã xong.
+# Claude: một `git push` ngay trong lượt này vẫn là bàn giao, dù lời không nhận đã xong — khi không có lần sửa nào sau nó
+# (devkit_harness.push_after_last_edit, audit 25/10 A3; push_gate đã đòi biên nhận gate cho nội dung được push).
 if info is not None and not probe and os.environ.get("DEVKIT_GATE_EVERY_STOP") != "1":
     try:
         reply = data.get("last_assistant_message")
@@ -283,7 +284,7 @@ if info is not None and not probe and os.environ.get("DEVKIT_GATE_EVERY_STOP") !
                 if info.get("agent") == "claude" and info.get("transcript") == "claude":
                     tp = data.get("transcript_path") or data.get("transcriptPath")
                     start = devkit_harness.turn_start(tp) if isinstance(tp, str) else None
-                    if start is not None and "push" in devkit_harness.git_writes_in_turn(tp, start):
+                    if start is not None and devkit_harness.push_after_last_edit(tp, start):
                         turn_pushed = True
                 if not turn_pushed:
                     note("skip: mid-work (no handover) agent=%s sid=%s" % (info.get("agent") or "?", sid))

@@ -503,6 +503,64 @@ rv_none="$(rv14 "Đang chờ Antigravity phản biện kế hoạch.")"
 [ "$rv_none" = 0 ] && ok "review_gate: a reply with no status line is work in progress, not held (issue #2, same rule as the regression gate)" \
   || fail "review_gate held a no-status reply (rc=$rv_none)"
 
+# ── 12b. audit 2026-10-25 A3: a push that more edits followed is no handover ────
+# A turn spans many Stops (a reply waiting for a background task ends one; its <task-notification> is no prompt): one early `git push`
+# made every later "waiting" Stop a handover (review_gate: 261 of 454 blocks mid-task). Only a push that no Edit/Write of the turn
+# follows is one; review_gate still holds when that push carried code edited since the last review. Replies are real transcript lines.
+tra3() {   # tra3 <transcript> <session> <item>…   B:<command> (Bash) · E:<file> (Edit) · R (principal-code-reviewer)
+  python3 - "$@" <<'PY'
+import json, sys, time
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t)); now = time.time() - 60
+tr, sid = sys.argv[1], sys.argv[2]
+recs = [{"type": "user", "sessionId": sid, "timestamp": iso(now - 1), "message": {"role": "user", "content": "làm tiếp"}}]
+for i, it in enumerate(sys.argv[3:]):
+    if it.startswith("B:"):
+        tu = {"type": "tool_use", "id": "b%d" % i, "name": "Bash", "input": {"command": it[2:]}}
+    elif it.startswith("E:"):
+        tu = {"type": "tool_use", "id": "e%d" % i, "name": "Edit", "input": {"file_path": it[2:], "old_string": "1", "new_string": "2"}}
+    else:
+        tu = {"type": "tool_use", "id": "r%d" % i, "name": "Agent", "input": {"subagent_type": "principal-code-reviewer", "prompt": "review"}}
+    recs.append({"type": "assistant", "sessionId": sid, "timestamp": iso(now + i), "message": {"content": [tu]}})
+open(tr, "w").write("".join(json.dumps(r) + "\n" for r in recs))
+PY
+}
+WAIT_A3="CHƯA XONG — card #1 vẫn đang chờ gate lần 3."
+WAIT_A3B="Cổng \`--full\` đang chạy nền. Khi xong, nếu exit 0 tôi sẽ push, mở PR nháp và chuyển thẻ #137 sang QA."
+setm3() { python3 -c 'import os, sys, time; t = time.time() + float(sys.argv[2]); os.utime(sys.argv[1], (t, t))' "$1" "$2"; }
+# regression_gate: a red suite watches the changed file, so a run blocks
+RA3="$TMP/ra3"; mkdir -p "$RA3/src" "$RA3/.agents"; git -C "$RA3" init -q; git -C "$RA3" config user.email t@t; git -C "$RA3" config user.name t
+echo "fun ok() = 1" > "$RA3/src/Core.kt"
+python3 -c 'import json,sys; json.dump({"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
+  "mandatory_regression_tests":[{"id":"REG-RED","name":"red","command":"echo red-suite; exit 1"}]}]}, open(sys.argv[1],"w"))' "$RA3/.agents/regression_matrix.active.json"
+git -C "$RA3" add -A; git -C "$RA3" commit -qm init; echo "fun ok() = 2" > "$RA3/src/Core.kt"
+TRA3="$TMP/tra3.jsonl"
+rga3() { python3 -c 'import json,sys; print(json.dumps({"session_id":"sa3","hook_event_name":"Stop","transcript_path":sys.argv[1],"last_assistant_message":sys.argv[2]}))' "$TRA3" "$1" \
+  | CLAUDE_PROJECT_DIR="$RA3" REGRESSION_GATE_MAX_ATTEMPTS=100 FLAKY_RETRY=0 bash "$DEVKIT_DIR/hooks/regression_gate.sh" >/dev/null 2>&1; echo $?; }
+tra3 "$TRA3" sa3 "E:$RA3/src/Core.kt" "B:git push origin main" "E:$RA3/src/Core.kt"; ra_after="$(rga3 "$WAIT_A3")"; ra_after_b="$(rga3 "$WAIT_A3B")"
+tra3 "$TRA3" sa3 "E:$RA3/src/Core.kt" "B:git push origin main"; ra_last="$(rga3 "$WAIT_A3")"
+tra3 "$TRA3" sa3 "B:git push origin main" "B:sed -i '' s/2/3/ src/Core.kt"; ra_bash="$(rga3 "$WAIT_A3")"
+[ "$ra_after" = 0 ] && [ "$ra_after_b" = 0 ] && ok "regression_gate: a push that more edits followed is no handover — a waiting reply runs no suite" \
+  || fail "regression_gate held a waiting reply after an early push (CHƯA XONG rc=$ra_after, no status rc=$ra_after_b)"
+[ "$ra_last" = 2 ] && [ "$ra_bash" = 2 ] && ok "  … a push after the turn's last edit, or one only Bash edits followed (not seen as edits), is still a handover" \
+  || fail "push handover lost: push last rc=$ra_last, Bash edit after push rc=$ra_bash"
+# review_gate: src/A.kt is a changed code file; its mtime is set per case (Bash-window authorship reads it)
+VA3="$TMP/va3"; mkdir -p "$VA3/src"; git -C "$VA3" init -q; git -C "$VA3" config user.email t@t; git -C "$VA3" config user.name t
+echo "fun a() = 1" > "$VA3/src/A.kt"; git -C "$VA3" add -A; git -C "$VA3" commit -qm init; echo "fun a() = 2" > "$VA3/src/A.kt"
+A3K="$VA3/src/A.kt"
+rva3() { python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[4],"transcript_path":sys.argv[1],"last_assistant_message":sys.argv[2],"cwd":sys.argv[3]}))' "$TRA3" "$2" "$VA3" "$1" \
+  | CLAUDE_PROJECT_DIR="$VA3" REVIEW_GATE_OCR=0 REVIEW_GATE_REQUIRE_OCR=0 bash "$DEVKIT_DIR/hooks/review_gate.sh" >/dev/null 2>&1; echo $?; }
+setm3 "$A3K" -3600   # no Bash window holds this change: only the transcript's own edits count
+tra3 "$TRA3" va1 "E:$A3K" R "B:git add src/A.kt && git commit -qm wip -- src/A.kt" "B:git push origin main" "E:$A3K"; rv_ok="$(rva3 va1 "$WAIT_A3")"
+tra3 "$TRA3" va2 "E:$A3K" "B:git push origin main" "E:$A3K"; rv_unrev="$(rva3 va2 "$WAIT_A3")"
+tra3 "$TRA3" va3 "E:$A3K" R "B:sed -i '' s/2/3/ src/A.kt" "B:git push origin main" "E:$A3K"; rv_sed="$(rva3 va3 "$WAIT_A3")"
+tra3 "$TRA3" va4 "E:$A3K" "B:git push origin main"; rv_last="$(rva3 va4 "$WAIT_A3")"
+tra3 "$TRA3" va5 "E:$A3K" R "B:git push origin main" "B:sed -i '' s/2/3/ src/A.kt"; setm3 "$A3K" -56; rv_bash_after="$(rva3 va5 "$WAIT_A3")"
+[ "$rv_ok" = 0 ] && ok "review_gate: edit → review → commit → push → edit, waiting reply: not held (the push carried reviewed code)" \
+  || fail "review_gate held a waiting reply after a push of reviewed code (rc=$rv_ok)"
+[ "$rv_unrev" = 2 ] && [ "$rv_sed" = 2 ] && [ "$rv_last" = 2 ] && [ "$rv_bash_after" = 2 ] \
+  && ok "  … held: an unreviewed edit pushed (Edit, or a sed -i after the review), a push as the last step, a Bash edit after the push" \
+  || fail "review_gate fail-open: unreviewed push rc=$rv_unrev, sed before push rc=$rv_sed, push last rc=$rv_last, bash edit after rc=$rv_bash_after"
+
 echo
 [ "$FAILS" -eq 0 ] && echo "test_gate_friction: all checks passed" || echo "test_gate_friction: $FAILS failed"
 exit "$FAILS"

@@ -133,8 +133,11 @@ except Exception as e:
     logline(f"[{ts}] stdin parse fail: {e!r} — fail-open")
     sys.exit(0)
 
-# A progress reply (status line CHƯA XONG / CHỜ DUYỆT …, no outcome claimed, no git commit/push
-# this turn): the fresh-context review is asked at the handover turn, not on every stop (T0003).
+# A progress reply (status line CHƯA XONG / CHỜ DUYỆT …, no outcome claimed, no git push after the
+# turn's last edit): the fresh-context review is asked at the handover turn, not on every stop (T0003).
+# Audit 2026-10-25 A3: a push this turn that more edits followed is no handover (devkit_harness.push_after_last_edit), but the code it
+# carried must have been reviewed: such a Stop skips only after the scan below finds no push of code edited since the last review.
+wip_push_start = None
 for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             os.path.dirname(os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "review_gate.sh"))),
             os.path.join(repo, ".agents", "devkit", "hooks")):
@@ -144,8 +147,12 @@ for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             sys.dont_write_bytecode = True
             import devkit_harness
             if devkit_harness.work_in_progress(d, status_optional=True):
-                logline(f"[{ts}] skip: work in progress — review at the handover turn")
-                sys.exit(0)
+                _tp0 = d.get("transcript_path")
+                _st0 = devkit_harness.turn_start(_tp0)
+                if _st0 is None or "push" not in devkit_harness.git_writes_in_turn(_tp0, _st0):
+                    logline(f"[{ts}] skip: work in progress — review at the handover turn")
+                    sys.exit(0)
+                wip_push_start = _st0
         except SystemExit:
             raise
         except Exception as e:
@@ -328,6 +335,7 @@ def in_diff(fp):
 tp = d.get("transcript_path")
 last_edit_idx = -1
 last_review_idx = -1
+edit_marks, review_marks, push_marks = [], [], []   # every edit / review index, and this turn's pushes (wip_push_start only)
 session_unreviewed = set()   # diff paths edited by me this session
 idx = 0
 # OpenCodeReview (2026-10-13): a FULL review that succeeded counts as the fresh review. The command must START a command segment
@@ -499,17 +507,23 @@ if tp and os.path.exists(tp):
                         hit = in_diff(fp)
                         if hit:
                             last_edit_idx = idx
+                            edit_marks.append(idx)
                             session_unreviewed.add(hit)
                 elif name in ("Agent", "Task"):
                     st = inp.get("subagent_type", "")
                     if st in REVIEW_AGENTS:
                         last_review_idx = idx
+                        review_marks.append(idx)
                 elif name == "Skill":
                     sk = inp.get("skill", "") or inp.get("command", "")
                     if sk in REVIEW_SKILLS:
                         last_review_idx = idx
+                        review_marks.append(idx)
                 elif name == "Bash":
                     _bts = _tt
+                    if wip_push_start is not None and _tt is not None and _tt >= wip_push_start \
+                            and "push" in devkit_harness.git_writes(str(inp.get("command") or "")):
+                        push_marks.append(idx)
                     if _bts is not None:
                         bash_runs.append([idx, _bts, None, str(inp.get("command") or "")])
                         if blk.get("id") and not inp.get("run_in_background"):   # in the background: no end time
@@ -523,6 +537,7 @@ if tp and os.path.exists(tp):
                     scr = inp.get("script", "") or ""
                     if wf in REVIEW_WORKFLOWS or "multi-lens-audit" in scr:
                         last_review_idx = idx
+                        review_marks.append(idx)
 
 # Code changed through Bash (a script, `sed -i`, a heredoc) never passes through Edit/Write (issue #13, 13/10: worktree.py rewritten
 # by Python only, no BLOCK). A diff file counts as edited at the latest Bash command that names it and was RUNNING when the file last
@@ -594,12 +609,14 @@ def _writes(cmd, rel):
 
 _READ_ONLY = frozenset(("grep", "rg", "cat", "head", "tail", "ls", "wc", "diff", "stat", "file", "less", "nl", "sed", "find"))
 _GIT_READ = frozenset(("diff", "status", "log", "show", "blame", "ls-files", "grep", "rev-parse", "cat-file", "ls-tree", "shortlog"))
+_GIT_NEUTRAL = _GIT_READ | {"add", "commit", "push", "fetch"}   # record or send a file, never change what it holds (the A3 push check)
 _REDIRECT = re.compile(r"(?<![0-9&])>|>>")
 
 
-def _read_only(cmd):
+def _read_only(cmd, git_ok=_GIT_READ):
     """Every segment of `cmd` only reads (`git diff f`, `grep f`, `cat f | head`, `dotnet test`) and nothing is redirected: naming a file
-    there is no edit of it (issue #2: 43 auto-releases). A heredoc body, an interpreter or any word not listed makes it not read-only."""
+    there is no edit of it (issue #2: 43 auto-releases). A heredoc body, an interpreter or any word not listed makes it not read-only.
+    git_ok: the git subcommands that count as reading (_GIT_NEUTRAL adds add / commit / push / fetch)."""
     sa = _authorship()
     if sa is None or _REDIRECT.search(re.sub(r"\d?>&\d|&>|\d?>\s*/dev/null", " ", sa.QUOTED_RE.sub(" ", cmd))):
         return False
@@ -613,7 +630,7 @@ def _read_only(cmd):
             rest = words[1:]
             while rest and rest[0].startswith("-"):
                 rest = rest[2:] if rest[0] in ("-C", "-c") else rest[1:]
-            if not rest or rest[0] not in _GIT_READ:
+            if not rest or rest[0] not in git_ok:
                 return False
         elif c == "dotnet":
             if len(words) < 2 or words[1] not in ("test", "build"):
@@ -653,6 +670,7 @@ for _rel in (changed if bash_runs else ()):
             continue
         if _at > last_edit_idx:
             last_edit_idx = _at
+        edit_marks.append(_at)
         if _rel not in session_unreviewed:
             logline(f"[{ts}] {_rel}: changed by Bash #{_bi}, which names it — edited this session (at #{_at})")
         session_unreviewed.add(_rel)
@@ -671,6 +689,7 @@ if ocr_reports:
     for _at, _rp, _argv in ocr_reports:
         if _valid_ocr_report(_rp, _newest):
             last_review_idx = max(last_review_idx, _at)
+            review_marks.append(_at)
             if any(w in ("--from", "--commit", "-c") for w in _argv[:-1]):
                 if _covers_since(_argv):
                     last_ocr_range_idx = max(last_ocr_range_idx, _at)
@@ -680,6 +699,25 @@ if ocr_reports:
                 last_ocr_ws_idx = max(last_ocr_ws_idx, _at)
         else:
             logline(f"[{ts}] OCR run at #{_at} named {_rp}: not a fresh OCR report — not counted")
+
+# A3 (audit 2026-10-25): the reply is work in progress and this turn's push came before more edits. It skips only when every push of
+# the turn carried reviewed code: no edit between the last review before it and it. Edits counted: Edit / Write of a changed code file,
+# a Bash run that changed one (above), and — fail closed — any Bash run before the push that names a changed code file and does more
+# than read or `git add / commit / push / fetch` it (a `sed -i` whose change a later edit overwrote leaves no mtime to find it by).
+if wip_push_start is not None:
+    def _may_edit(cmd):
+        return not _read_only(cmd, _GIT_NEUTRAL) and any(
+            os.path.basename(_r) in cmd and _names(cmd, _r, os.path.basename(_r)) for _r in changed)
+    _unreviewed_push = None if push_marks else "?"   # the push the harness saw is not found here: gate (fail closed)
+    for _p in push_marks:
+        _rv = max([r for r in review_marks if r < _p], default=-1)
+        if any(_rv < e < _p for e in edit_marks) or any(_rv < _bi < _p and _may_edit(_bc) for _bi, _s, _e, _bc in bash_runs):
+            _unreviewed_push = _p
+            break
+    if _unreviewed_push is None:
+        logline(f"[{ts}] skip: work in progress — this turn pushed reviewed code, then went on editing; review at the handover turn")
+        sys.exit(0)
+    logline(f"[{ts}] work in progress, but push #{_unreviewed_push} of this turn carried code edited after the last review — gated")
 
 # No .kt edited by me this session (the dirty files are pre-existing /
 # someone else's) → nothing of mine to gate.
