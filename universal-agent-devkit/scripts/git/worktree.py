@@ -189,13 +189,16 @@ def _timeout():
 def _run(argv, inp=None, text=True, env=None, bounded=True, cwd=None):
     """subprocess.run with a bounded time. On timeout the child is killed and a CompletedProcess with returncode 124 comes back; so it does
     when the shared deadline of the running inventory() is spent (nothing is started then). `bounded=False` for a call that CHANGES the repo or the
-    disk (worktree add / remove --force, the temp-index work of `diff`): killed midway it leaves a half checkout or a half-deleted folder."""
+    disk (worktree add / remove --force, the temp-index work of `diff`): killed midway it leaves a half checkout or a half-deleted folder.
+    Text output is decoded with surrogateescape: a non-UTF-8 byte in a diff or a path (Latin-1 file, binary-ish fixture) used to raise
+    UnicodeDecodeError and hold every worktree at the Stop gate (2026-10-26); `errors` is passed only in text mode (it switches text on)."""
+    errs = "surrogateescape" if text else None
     if not bounded:
-        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env, cwd=cwd)
+        return subprocess.run(argv, capture_output=True, text=text, errors=errs, input=inp, env=env, cwd=cwd)
     if _spent():
         return subprocess.CompletedProcess(argv, 124, "" if text else b"", "inventory deadline spent")
     try:
-        return subprocess.run(argv, capture_output=True, text=text, input=inp, env=env, timeout=_timeout(), cwd=cwd)
+        return subprocess.run(argv, capture_output=True, text=text, errors=errs, input=inp, env=env, timeout=_timeout(), cwd=cwd)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(argv, 124, "" if text else b"", "timed out")
 
