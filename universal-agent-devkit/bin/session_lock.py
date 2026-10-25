@@ -132,10 +132,11 @@ RUNS_BODY = {"bash", "sh", "zsh", "dash", "ksh", "python", "python3", "perl", "r
 SHELL_BODY = {"bash", "sh", "zsh", "dash", "ksh", "eval", "source", "."}   # ... and these run it as SHELL code (a `>` there redirects)
 
 
-def _strip_heredocs(cmd, shell_only=False):
+def _strip_heredocs(cmd, shell_only=False, kept=None):
     """Drop the body of every heredoc that feeds a data command (cat, a commit message, a patch): its lines are text, not commands. A
     heredoc fed to a shell or an interpreter keeps its body - those lines run. shell_only: keep only bodies a SHELL runs (the redirect
-    check: `print(1 > 0)` fed to python is not a shell redirect)."""
+    check: `print(1 > 0)` fed to python is not a shell redirect). kept (a set): gets the index, in the text returned, of every line of a
+    body kept."""
     lines = cmd.split("\n")
     out, i = [], 0
     while i < len(lines):
@@ -153,6 +154,8 @@ def _strip_heredocs(cmd, shell_only=False):
         while j < len(lines) and lines[j].strip() != m.group(2):
             j += 1
         if runs:
+            if kept is not None:
+                kept.update(range(len(out), len(out) + j - i))
             out.extend(lines[i:j])
         i = j
     return "\n".join(out)
@@ -1459,6 +1462,14 @@ def write_hits_locked(cmd, top, cwd, sid="", notes=None):
     # the walk reads the line without its comments, as trunk mode's _bash_trunk_write does: bash ignores `# note; W=B`, the split did not
     # (review 25/10: from B, `W=A <nl> # note; W=B <nl> git -C $W commit` passed while A was held)
     text = _clean(cmd)
+    # the lines of a heredoc body fed to a shell / an interpreter (`bash <<EOF`, `python3 - <<EOF`) run in a CHILD process: a `W=…` or a
+    # `cd` there never reaches the segments after the body (OCR 26/10: `W=<held> <nl> bash <<EOF <nl> W=<own> <nl> EOF <nl> git -C $W
+    # commit` was judged as <own>). Such a segment counts as nested: what it binds becomes unknown, a cd there makes the directory unknown
+    # (a body fed to source / . / eval runs in this shell: unknown all the same, never the value the walk read before it).
+    # ponytail: a $NAME used INSIDE such a body still reads this shell's value (right for an unquoted <<EOF, the parent expands it; a
+    # quoted <<'EOF' body sees only exported names) - fail closed there too if a body that uses a non-exported name is ever met.
+    body = set()
+    _strip_heredocs(text, kept=body)   # text already lost the bodies of data heredocs: same lines, the kept bodies only marked
     pieces = _split_segments(text)   # segment, separator, segment, ...
     pwd_ok = "PWD" not in _names_bound(text)
     values = None if _SHELL_COMPOUND.search(text) else {}
@@ -1467,16 +1478,17 @@ def write_hits_locked(cmd, top, cwd, sid="", notes=None):
         return ChainMap({"PWD": cur if pwd_ok and cur else None}, values or {})
 
     seen, hits_top, foreign, named, opened = False, False, None, False, False
-    depth, ticks, gate_dirs = 0, False, {}
+    depth, ticks, gate_dirs, line = 0, False, {}, 0   # line: the line of `text` the segment starts on
     for i in range(0, len(pieces), 2):
         seg = pieces[i]
         sep = pieces[i + 1] if i + 1 < len(pieces) else ""
+        in_body, line = line in body, line + seg.count("\n") + sep.count("\n")
         # runs for sure in this shell: after the line start, `;` or a newline, before `;`, `&&`, a newline or the end, and no `(` / `$(` /
         # backtick before it (the segment walk splits inside a substitution: `x=$(true; W=…` is a subshell's W)
-        sure = (pieces[i - 1] if i else "") in ("", ";", "\n") and sep in ("", ";", "&&", "\n") and not opened
+        sure = (pieces[i - 1] if i else "") in ("", ";", "\n") and sep in ("", ";", "&&", "\n") and not opened and not in_body
         _track_vars(values, seg, sure)
         opened = opened or "(" in seg or "`" in seg
-        nested = depth > 0 or ticks   # this segment runs inside a subshell / substitution the line opened before it
+        nested = depth > 0 or ticks or in_body   # this segment runs inside a subshell / substitution / heredoc body run by a child
         depth, ticks = _nesting(seg, depth, ticks)
         cd = CD_ONLY.match(seg)
         if cd:
