@@ -23,7 +23,18 @@ TRA="$TMP/tra.jsonl"
 python3 -c 'import json,datetime;print(json.dumps({"type":"user","timestamp":datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z"),"message":{"content":"go"}}))' > "$TRA"
 sleep 1.2
 mention() { python3 -c 'import json,sys;print(json.dumps({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":sys.argv[1]}}]}}))' "git worktree add -b $1 $2" >> "$TRA"; }
-stop() { printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$2" | CLAUDE_PROJECT_DIR="$P" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"; }
+# Under load (#419: 35-70 parallel gates) the hook's 9 s merge budget runs out and the merge goes to the background ("đang tự gộp ở nền"),
+# whose result is for the NEXT Stop. The case waits for that result: it asks again (at most 12 times, ~1 s apart) while the note is there.
+# No assertion is loosened: the final Stop's rc/output is what each case checks, and a worktree really not in main is still held.
+stop() {
+  local n=0
+  while :; do
+    printf '{"session_id":"%s","hook_event_name":"Stop","transcript_path":"%s"}' "$1" "$2" | CLAUDE_PROJECT_DIR="$P" bash "$HOOK" >"$TMP/out" 2>"$TMP/err"
+    local rc=$?
+    grep -q "ở nền" "$TMP/out" "$TMP/err" 2>/dev/null && [ "$n" -lt 12 ] || return $rc
+    n=$((n + 1)); sleep 1
+  done
+}
 live() { python3 -I "$LOCKPY" --register --session "$1" --pid "$$" "$P"; }
 
 # The worktree is already merged into main (clean, nothing ahead): the Stop would remove it
