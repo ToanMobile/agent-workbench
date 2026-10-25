@@ -505,7 +505,7 @@ python3 -c 'import sys; sys.exit(0 if 0 <= float(sys.argv[1]) < 5 and float(sys.
   && ok "B5: lock held by a live gate run: BUSY after a ${lw} s lock wait (< 5 s; whole Stop ${dt} s), nothing cached" \
   || fail "B5: live gate holder: rc=$rc, lock wait ${lw} s, Stop ${dt} s (want BUSY after < 5 s), out='$(head -2 "$TMP/out")'"
 no_untested_fp || fail "B5: the short BUSY was cached as UNTESTED"
-t0="$(secs)"; ( cd "$B" && TEST_RUN_LOCK_WAIT_S=4 CLAUDE_PROJECT_DIR="$B" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --json >/dev/null 2>&1 )
+t0="$(secs)"; ( cd "$B" && env -u TEST_RUN_LOCK_BUSY_FAST TEST_RUN_LOCK_WAIT_S=4 CLAUDE_PROJECT_DIR="$B" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --json >/dev/null 2>&1 )
 dt="$(python3 -c 'import sys,time; print(round(time.time()-float(sys.argv[1]),1))' "$t0")"
 python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= 4 else 1)' "$dt" && ok "B5: the CLI (no Stop hook) still waits its own TEST_RUN_LOCK_WAIT_S behind a live gate (${dt} s)" \
   || fail "B5: the CLI gave up after ${dt} s behind a live gate (want >= 4 s)"

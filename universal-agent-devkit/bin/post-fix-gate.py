@@ -4907,6 +4907,7 @@ def suite_env():
             # CI=true của worker ép --full. Để lọt vào suite thì gate lồng (test_postfix_gate) chặn file test mới.
             "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH", "CI",
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
+            "TEST_RUN_LOCK_BUSY_FAST",   # B5: the Stop hook's short BUSY wait is for ITS gate run; a gate a suite starts waits as the CLI does
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
             "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD"}
     return {k: v for k, v in os.environ.items()
