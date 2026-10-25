@@ -422,6 +422,22 @@ rules "viết PR description bằng tiếng Việt theo Vietnamese repository po
 o="$(rules "$RUNNER")"
 [ -z "$o" ] && ok "rule_context: runner lane opener → no rule section from the harness's 'Language policy' sentence" \
   || fail "rule_context: runner lane opener still routed: $o"
+# OCR 25/10: the opener regex (two lazy [^\n]*? around super-board-skills-ready.py) backtracked quadratically: "First operation: " +
+# "super-board-skills-ready.py " * 4000 (112 KB) took 6.17 s, and the hook runs the check up to 3 times under a 10 s timeout.
+# CPU time (process_time), not wall clock: a wall bound flakes in run_impacted's parallel pool.
+python3 - "$ENRICH" <<'PY' && ok "lane opener check is linear: 112 KB of skills-ready repeats, no --cards -, < 0.5 s CPU each, no lane" \
+  || fail "lane opener check: quadratic or wrong on the pathological prompt"
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+p = "First operation: " + "super-board-skills-ready.py " * 4000
+for name, call, lane in (("lane_card_text", ec.lane_card_text, None), ("harness_prompt", ec.harness_prompt, "super-board lane opener")):
+    t0 = time.process_time(); got = call(p); cpu = time.process_time() - t0
+    assert cpu < 0.5, "%s: %.2f s CPU" % (name, cpu)
+    assert got != lane if lane else got is None, "%s: %r" % (name, got)
+# the same check still finds the opener when the line does carry --cards - (after the repeats)
+assert ec.lane_card_text(p + "--cards - with [] as stdin") == "", "opener after the repeats not found"
+PY
 
 # ── 2. Recall ────────────────────────────────────────────────────────────────
 r="$(refs "mở file DOCX bị lỗi XML")"

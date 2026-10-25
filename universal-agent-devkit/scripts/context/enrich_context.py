@@ -194,8 +194,31 @@ def giao_default(project_root):
 # on the card JSON array. Replayed on 40 real lanes (2026-10-25): its fixed sentences matched the same 4 traps in 38-40 of 40, opened
 # the UI door ("card") in all, and the runner opener was captured as a bug. Only the opener at the very start counts: a user's
 # prompt that quotes it, or starts "First operation after login…", is a request as before.
-LANE_OPENER_RE = re.compile(r"First operation\b[^\n]*?super-board-skills-ready\.py[^\n]*?--cards -(?!\S)")
+# Linear on purpose (OCR 25/10): the regex it replaces, two lazy [^\n]*? around the script name, backtracked quadratically ("First
+# operation: " + "super-board-skills-ready.py " * 4000 = 112 KB took 6.17 s; the hook runs the check up to 3 times under a 10 s timeout).
+_LANE_HEAD_RE = re.compile(r"First operation\b")
+_LANE_SCRIPT = "super-board-skills-ready.py"
+_LANE_CARDS_RE = re.compile(r"--cards -(?!\S)")
 ISSUE_SECTION_RE = re.compile(r"^# Issue #\d+ — ([^\n]*)\n(.*?)(?=^---$|\Z)", re.M | re.S)   # super-build-dispatch.sh: title + body
+
+
+def _opener_line_end(text, pos):
+    """Index just past `--cards -` when the line of text that starts at pos is the lane opener ("First operation" there, then
+    super-board-skills-ready.py, then `--cards -` on that same line), else -1. One pass over that line: no backtracking."""
+    if not _LANE_HEAD_RE.match(text, pos):
+        return -1
+    nl = text.find("\n", pos)
+    end = len(text) if nl < 0 else nl
+    i = text.find(_LANE_SCRIPT, pos, end)
+    if i < 0:
+        return -1
+    m = _LANE_CARDS_RE.search(text, i + len(_LANE_SCRIPT), end)   # endpos = end of line: `--cards -` at the line end still counts
+    return m.end() if m else -1
+
+
+def lane_opener_end(text):
+    """Index just past the lane opener at the very start of text (already left-stripped), -1 when text opens with none."""
+    return _opener_line_end(text, 0)
 
 
 def lane_card_text(prompt):
@@ -203,11 +226,11 @@ def lane_card_text(prompt):
     number/status/labels/lane only), or None when the prompt is no lane opener. Labels are not words of the card: a `bug` label
     made 33 of 40 lanes BUG_FIX."""
     text = prompt.lstrip()
-    m = LANE_OPENER_RE.match(text)
-    if not m:
+    opener_end = lane_opener_end(text)
+    if opener_end < 0:
         return None
     words = []
-    start = text.find("[", m.end())   # the array the opener hands to --cards - as stdin
+    start = text.find("[", opener_end)   # the array the opener hands to --cards - as stdin
     try:
         cards = json.JSONDecoder().raw_decode(text, start)[0] if start >= 0 else []
     except ValueError:
@@ -812,7 +835,7 @@ def harness_prompt(prompt, payload=None, env=None):
     """Why this prompt is an agent or harness prompt rather than a user's report, or "".
     Decided by the prompt's content only: the agent that runs the hook (Grok, Codex, Gemini,
     Cursor) says nothing — a user's bug report is recorded under every agent (2026-09-25)."""
-    if LANE_OPENER_RE.match(prompt.lstrip()):
+    if lane_opener_end(prompt.lstrip()) >= 0:
         return "super-board lane opener"   # BUG-20261016-first-operation-run-claude-bin-super-boa: the card is already the ticket
     first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
     if ROLE_OPENING.match(first):
