@@ -9,10 +9,20 @@ COMMANDS_DIR="$ROOT_DIR/commands"
 
 mkdir -p "$COMMANDS_DIR"
 
+# Skills with no slash command on purpose: the agent picks them from context, nobody types them. The three Sprite Forge
+# media skills are also excluded by every profile (2D assets gave way to Blender 3D, 15/10), so their link was only ever
+# an untracked file after a sync (audit 25/10). Space-separated skill names.
+NO_COMMAND_SKILLS="generate2dmedia generate2dsprite video2dsprite"
+
 # 1. Link each canonical skill
 for skill_dir in "$SKILLS_DIR"/*; do
   [ -d "$skill_dir" ] || continue
   skill_name="$(basename "$skill_dir")"
+  case " $NO_COMMAND_SKILLS " in *" $skill_name "*)
+    # The link an older sync made goes (its .claude/commands link then dangles and is swept below); a hand-written file stays.
+    if [ -L "$COMMANDS_DIR/${skill_name}.md" ]; then rm -f "$COMMANDS_DIR/${skill_name}.md"; fi
+    continue ;;
+  esac
   if [ -f "$skill_dir/SKILL.md" ]; then
     if [ -e "$COMMANDS_DIR/${skill_name}.md" ] && [ ! -L "$COMMANDS_DIR/${skill_name}.md" ]; then
       echo "⚠ commands/${skill_name}.md is a hand-written command — left untouched." >&2

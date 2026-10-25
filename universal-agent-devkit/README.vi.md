@@ -575,7 +575,7 @@ Kho 34 kỹ năng chuẩn hóa theo định dạng `SKILL.md` (YAML frontmatter 
 
 ## ⌨️ Danh Mục Đầy Đủ Slash Commands
 
-Toàn bộ 34 skills, lệnh đổi profile và cổng hậu sửa lỗi đều được ánh xạ thành slash command kèm alias gõ tắt (`agent-kit commands` liệt kê đầy đủ):
+31 trong 34 skills (trừ ba skill media Sprite Forge, agent tự chọn theo ngữ cảnh), lệnh đổi profile và cổng hậu sửa lỗi đều được ánh xạ thành slash command kèm alias gõ tắt (`agent-kit commands` liệt kê đầy đủ):
 
 | Lệnh Slash Command | Tên Viết Tắt (Aliases) | Kỹ Năng / Đích Ánh Xạ | Chức Năng Cốt Lõi |
 |---|---|---|---|
