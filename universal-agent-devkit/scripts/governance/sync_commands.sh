@@ -11,8 +11,10 @@ mkdir -p "$COMMANDS_DIR"
 
 # Skills with no slash command on purpose: the agent picks them from context, nobody types them. The three Sprite Forge
 # media skills are also excluded by every profile (2D assets gave way to Blender 3D, 15/10), so their link was only ever
-# an untracked file after a sync (audit 25/10). Space-separated skill names.
-NO_COMMAND_SKILLS="generate2dmedia generate2dsprite video2dsprite"
+# an untracked file after a sync (audit 25/10). parallel-lanes too: the prompt hook's "Song song" line starts it, and a NEW
+# command makes `agent-kit health` FAIL in every installed repo until each runs `agent-kit init` (no SessionStart relink adds
+# one). Space-separated skill names.
+NO_COMMAND_SKILLS="generate2dmedia generate2dsprite video2dsprite parallel-lanes"
 
 # 1. Link each canonical skill
 for skill_dir in "$SKILLS_DIR"/*; do

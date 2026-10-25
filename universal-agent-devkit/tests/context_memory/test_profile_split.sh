@@ -7,6 +7,7 @@
 # that repeats another one of the same loaded text is merged into one place, no rule is dropped (section H pins each obligation).
 # This test is the oracle for those promises. automotive (ctx5, 14/10): every line
 # is an obligation, a car-safety line or the scope that says which apps they bind, so none is cut; B2 pins that by line.
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"

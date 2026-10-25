@@ -207,8 +207,8 @@ shadowed = [a for a in re.findall(r'^\s*"([a-z0-9-]+):[a-z0-9-]+"\s*$', sync, re
 check(not shadowed, "R5 every alias in sync_commands.sh is a link, not a hand-written file", ", ".join(shadowed))
 
 # `agent-kit commands --sync` on the repo must change nothing: a link it makes that is not committed shows up as an
-# untracked file after every sync (2026-10-25: generate2dmedia, generate2dsprite, video2dsprite are command-less on
-# purpose, parallel-lanes was never committed). Run on a copy, never on the real tree: other sessions share it. An
+# untracked file after every sync (2026-10-25: generate2dmedia, generate2dsprite, video2dsprite and parallel-lanes are
+# command-less on purpose). Run on a copy, never on the real tree: other sessions share it. An
 # older sync's link for a command-less skill (planted below) must be removed again.
 import tempfile
 def _cmd_map(d):

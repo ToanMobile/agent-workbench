@@ -576,7 +576,7 @@ Standardized under the `SKILL.md` format (YAML frontmatter + Progressive Disclos
 
 ## ⌨️ Complete Slash Commands Catalog
 
-31 of the 34 skills (all but the three Sprite Forge media skills, which the agent picks from context), the profile switcher and the post-fix gate are bound to auto-discovered slash commands with shorthand aliases (`agent-kit commands` lists them):
+30 of the 34 skills (all but the three Sprite Forge media skills and parallel-lanes, which the agent picks from context), the profile switcher and the post-fix gate are bound to auto-discovered slash commands with shorthand aliases (`agent-kit commands` lists them):
 
 | Slash Command | Shorthand Aliases | Backing Skill / Target | Key Functionality |
 |---|---|---|---|
