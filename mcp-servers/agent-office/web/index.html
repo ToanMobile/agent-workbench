@@ -1358,7 +1358,7 @@ const GIT_VERB = { status: 'xem trạng thái git', diff: 'xem phần code đã 
   branch: 'xem nhánh', stash: 'cất tạm code', reset: 'đặt lại code', restore: 'khôi phục file', 'rev-parse': 'kiểm tra nhánh hiện tại' };
 const prettyName = (p) => baseName(p).replace(/\.(py|sh|js|mjs|cjs|ts)$/, '').replace(/^tests\./, '').replace(/^test_|_test$/g, '').replace(/[_-]+/g, ' ');
 function describeCmd(cmd) {
-  const c = String(cmd || '').trim().replace(/^(cd\s+[^&;]+(&&|;)\s*)+/, '').replace(/^(?:\w+=(?:"[^"]*"|'[^']*'|\S+)\s+)+/, ''); // bỏ MỌI biến môi trường đứng đầu lệnh: giá trị của chúng không hiện lên
+  const c = String(cmd || '').trim().replace(/^(cd\s+[^&;]+(&&|;)\s*)+/, '').replace(/^(?:(?:\w+=(?:"[^"]*"|'[^']*'|[^\s;&|]+)|&&|;)(?:\s+|$|(?=[;&|]))\s*)+/, ''); // bỏ MỌI biến môi trường đứng đầu lệnh: giá trị của chúng không hiện lên
   const first = c.split(/&&|;|\|/)[0].trim(); const w = first.split(/\s+/); const arg = w.slice(1).filter((x) => !x.startsWith('-') && !/^\d*[<>&]/.test(x));
   const interp = /^(?:bash|sh|zsh|python3?|node|npx|pytest)$/.test(baseName(w[0]));  // chỉ khi lệnh CHÍNH là trình thông dịch (ssh/rsync -e ssh không tính)
   const script = interp ? (first.match(/^\S+\s+(?:-\S+\s+)*([^\s"'-][^\s"']*)/) || [])[1] : undefined;
@@ -3076,10 +3076,10 @@ function apply(S, force) {
     } else zoomView(0);
   }
 }
-let pollTimer = null;
+let pollTimer = null, pollBusy = false;
 document.addEventListener('visibilitychange', () => { if (!document.hidden && typeof poll === 'function') poll(); }); // tab hiện lại: báo view=1 ngay, không đợi nhịp 3 giây bị trình duyệt làm chậm
 async function poll(once) {
-  if (!once) clearTimeout(pollTimer);
+  if (!once) { if (pollBusy) return; pollBusy = true; clearTimeout(pollTimer); } // một vòng poll tại một thời điểm: tab hiện lại giữa chừng không sinh vòng thứ hai
   try {
     const res = await fetch('api/state' + (document.hidden ? '' : '?view=1'), { // view=1: tab đang hiện, server mới đo workload (ps)
  cache: 'no-store', headers: apiHeaders() });
@@ -3094,7 +3094,7 @@ async function poll(once) {
     console.error('Agent Office: không áp được dữ liệu', e);
     $('#notices').dataset.offline = '1'; renderNotices(STATE, true);
     if (!STATE) $('#boot').textContent = 'Không kết nối được server. Chạy: python3 server.py';
-  } finally { if (!once) pollTimer = setTimeout(poll, 3000); }
+  } finally { if (!once) { pollBusy = false; pollTimer = setTimeout(poll, 3000); } }
 }
 
 // ------------------------------------------------------------ loop
