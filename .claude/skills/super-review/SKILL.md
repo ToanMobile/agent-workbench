@@ -117,7 +117,7 @@ If the input is ambiguous, default to reviewing the current branch against its u
    - If a blocker is an implementation task, hand it to **Super Build**.
    - If a blocker is a functional regression, hand it to **Super QA**.
    - If a blocker is visual/design fidelity, file a UI ticket; a human can run `/ui-refine-loop` (the board never triggers it).
-   - If it is a deepening opportunity, file it with `scripts/super-review-file-refactor.sh` and carry on to the merge decision. Do not open a PR thread for it; do not bounce the card.
+   - If it is a deepening opportunity, file it with `.claude/bin/super-review-file-refactor.sh` and carry on to the merge decision. Do not open a PR thread for it; do not bounce the card.
      `--title` is the bare problem: the filer adds the `♻️ [refactor] <scope>:` prefix, so never pass one.
      The `--body-file` uses the ticket format (writing-standard.md § 3): `## Problem`,
      `## Context` (`- **Where:**` the module and files), `## Fix` — the filer refuses a body
@@ -187,7 +187,7 @@ In a `super-board run` the loop runs through the board:
 2. Each actionable finding becomes a prefixed PR thread (`[builder]`, `[qa]`) and the card bounces to the owning lane — Super Build or Super QA; for visual polish, file a UI ticket; a human can run `/ui-refine-loop`.
 3. The owning lane fixes and verifies its scope.
 4. Super Review runs again against the updated branch, with its last report as `prior_report` — round 1 checks those findings before any fresh pass.
-5. Stop only when no blocking review findings remain, or unresolved items are explicitly human-gated. A clean review merges through `scripts/super-board-merge-gate.sh`, pinned to the head SHA it reviewed.
+5. Stop only when no blocking review findings remain, or unresolved items are explicitly human-gated. A clean review merges through `.claude/bin/super-board-merge-gate.sh`, pinned to the head SHA it reviewed.
 
 Super Review should not silently push fixes during the loop unless the user explicitly grants that authority.
 
@@ -344,7 +344,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
 7. Decide per finding. First apply the Over-engineering rule to every finding collected —
    yours, `ponytail:ponytail-review`'s and the truth-check sub-agents': Over-engineering is
    Should fix, never Blocker, and never on its own a reason to bounce or block. Then:
-   - **Deepening opportunity** → `scripts/super-review-file-refactor.sh`, then keep going. It is not a finding for merge purposes and never bounces a card.
+   - **Deepening opportunity** → `.claude/bin/super-review-file-refactor.sh`, then keep going. It is not a finding for merge purposes and never bounces a card.
    - **No findings (Over-engineering aside) + threads clean + truth ≥ threshold + tests green** → run the **merge protocol** (below). Never move a card to Done any other way.
    - **Over-engineering only** (from `ponytail:ponytail-review`, see super-review step 3) → list it in the report, open no thread, and carry on to the merge decision; it never bounces a card alone. When the card bounces for another finding anyway, open a `[builder]` thread for each Over-engineering finding too, so the rebuild trims it.
    - **Code-side new finding** → new `[builder]`-prefixed thread, move card Review → Ready (`loop:rebuild-N`).
