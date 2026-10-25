@@ -2,7 +2,7 @@
 """Cache PASS theo KHOÁ NỘI DUNG của từng suite hồi quy (P2, 20/10), dùng chung mọi worktree của một repo.
 
 Khoá = sha256 của: định dạng cache + cách gate đọc kết quả (RESULT_FORMAT), id, lệnh, untested_exit, mục ma trận của CHÍNH suite (mọi
-rule có id đó, nguyên văn; covers; version của ma trận — B8 25/10, không còn digest cả file ma trận), nội dung (blob sha) của mọi
+rule có id đó, nguyên văn; version của ma trận; covers chỉ vào khoá chính xác — B8 25/10, không còn digest cả file ma trận), nội dung (blob sha) của mọi
 input của suite, trạng thái cục bộ (local_state_sha của gate), biến môi trường chọn test, môi trường máy (OS, phiên bản công cụ lệnh
 dùng). Input (bảo thủ — thừa thì chỉ giảm số lần dùng lại, thiếu mới hạ chất lượng):
   a. file khớp watch_files + covers của mọi rule có suite này;
@@ -619,12 +619,15 @@ class SuiteCache:
             "fmt": SUITE_CACHE_FORMAT, "rf": self.result_format, "id": sid, "command": cmd, "selection": sel,
             "untested_exit": test.get("untested_exit"), "local": self.local_sha, "sel": self.selection_env,
             "danger": self.danger_digest, "env": env_fingerprint(tools | _tools_in(cmd)),
-            # B8 (audit 25/10): mục của CHÍNH suite (mọi rule có id, nguyên văn: lệnh, watch_files, untested_exit, cache, covered_by…), covers
-            # của id và version của ma trận — không digest cả file: thêm một rule khác (ma trận chỉ-thêm) từng đổi khoá mọi suite.
-            "matrix": {"fmt": MATRIX_KEY_FORMAT, "version": self.matrix_version, "rules": own, "covers": self.covers.get(sid)},
+            # B8 (audit 25/10): mục của CHÍNH suite (mọi rule có id, nguyên văn: lệnh, watch_files, untested_exit, cache, covered_by…) và
+            # version của ma trận — không digest cả file: thêm một rule khác (ma trận chỉ-thêm) từng đổi khoá mọi suite.
+            "matrix": {"fmt": MATRIX_KEY_FORMAT, "version": self.matrix_version, "rules": own},
         }, sort_keys=True, default=str).encode()
         tail = b"".join(b"x\0" + os.fsencode(tok) + b"\0" + ext[tok].encode() + b"\0" for tok in sorted(ext))
         h = hashlib.sha256(b"precise\0" + head)
+        # covers của id: chỉ khoá chính xác — covers đọc từ .agents/regression_status.json của TỪNG checkout (ngoài dấu vân tay cây); khoá cả
+        # cây chỉ theo nội dung cây để hai worktree cùng cây vẫn dùng chung PASS (ca 37c)
+        h.update(b"c\0" + json.dumps(self.covers.get(sid), sort_keys=True, default=str).encode() + b"\0")
         for p in sorted(files):
             h.update(b"f\0" + os.fsencode(p) + b"\0" + (self.cmap.get(p) or "-").encode() + b"\0")
         h.update(tail)

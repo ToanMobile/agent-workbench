@@ -815,10 +815,10 @@ r=$(probe_key "$R33" tests/lib/helper33.sh 'h 2')
 #     probe37 <đổi>: khoá chính xác của REG-P trước/sau khi ghi lại matrix.json với thay đổi đó, in "same" hoặc "diff".
 R37="$TMP/r37"; mk33 "$R37"; echo 'a = 1' > "$R37/src/a.py"
 git -C "$R37" add -A && git -C "$R37" commit -qm init
-probe37() {
-  ( cd "$R37" && python3 - "$DEVKIT_DIR/bin" "$R37" "$1" <<'PY'
+probe37() {   # probe37 <đổi> [tree]: "tree" so khoá cả cây thay vì khoá chính xác
+  ( cd "$R37" && python3 - "$DEVKIT_DIR/bin" "$R37" "$1" "${2:-precise}" <<'PY'
 import copy, json, os, sys
-bindir, repo, change = sys.argv[1:]
+bindir, repo, change, which = sys.argv[1:]
 sys.path.insert(0, bindir)
 import suite_cache as sc
 mp = os.path.join(repo, "matrix.json")
@@ -828,7 +828,7 @@ def key(m, covers=None):
         json.dump(m, f)
     rules = m["rules"]
     test = next(t for r in rules for t in r["mandatory_regression_tests"] if t["id"] == "REG-P")
-    return sc.SuiteCache(repo, rules, mp, covers or {}, "L", "rf", "", learned={}).keys(test)[0]
+    return sc.SuiteCache(repo, rules, mp, covers or {}, "L", "rf", "", learned={}).keys(test)[1 if which == "tree" else 0]
 k0 = key(copy.deepcopy(base))
 m = copy.deepcopy(base)
 covers = None
@@ -857,6 +857,11 @@ for c37 in command watch untested_exit covers version; do
   r=$(probe37 "$c37")
   [ "$r" = diff ] && ok "37b. đổi $c37 của chính suite ⇒ khoá chính xác đổi" || fail "37b. đổi $c37 của REG-P mà khoá chính xác giữ nguyên ($r)"
 done
+# 37c. covers đến từ .agents/regression_status.json của TỪNG checkout (ngoài dấu vân tay cây): chỉ vào khoá chính xác. Khoá cả cây chỉ theo
+#      nội dung cây — hai worktree cùng cây khác covers vẫn dùng chung PASS theo khoá cả cây (ca 1b, stale_rerun nightly).
+r=$(probe37 covers tree)
+[ "$r" = same ] && ok "37c. covers khác (sổ của checkout) không đổi khoá cả cây" \
+  || fail "37c. covers khác đổi khoá cả cây ($r): hai worktree cùng cây không còn dùng chung PASS"
 }
 
 grp_inflight_est() {   # case 36: hạn marker gộp lượt (inflight) theo lần chạy DÀI NHẤT, không theo trung vị của lớp slot
