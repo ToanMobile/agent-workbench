@@ -32,6 +32,15 @@ main, sw = sl.trunk_main(m)
 assert main and sw, "trunk mode not seen"
 E = lambda p: ("Edit", {"file_path": p}, "")
 B = lambda c: ("Bash", {"command": c}, c)
+import os
+tmp = os.path.dirname(m)
+alias = tmp + "/alias_of_main"   # a symlink to main: $PWD / $W through it must still land in main
+if not os.path.islink(alias):
+    os.symlink(m, alias)
+os.makedirs(w + "/l[m]", exist_ok=True)   # a dir literally named l[m] in the worktree, and lm -> main: unquoted, the glob l[m] is lm
+if not os.path.islink(w + "/lm"):
+    os.symlink(m, w + "/lm")
+G = "python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief"
 cases = [   # (want, label, cwd, (tool, input, command))
     (True, "Edit a tracked file of main", m, E(f"{m}/src/a.py")),
     (True, "Write a new (not ignored) file in main", m, E(f"{m}/new.md")),
@@ -167,6 +176,68 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (False, "git -C main pull --ff-only (no remote)", w, B(f"git -C {m} pull --ff-only")),
     (False, "push -u origin <branch>", m, B("git push -u origin feature")),
     (False, "push origin HEAD:refs/heads/x", m, B("git push origin HEAD:refs/heads/x")),
+    # audit 25/10 A.4: lệnh gate mà kit tự dặn (AGENTS.md §7.1 `cd <wt> && CLAUDE_PROJECT_DIR="$PWD" …post-fix-gate.py`) bị chặn khi cwd LÀ
+    # worktree: $PWD không được hiểu là thư mục đang theo dõi (404 lần/14 ngày). $PWD / ${PWD} = cwd của segment; cwd không biết, '$PWD' (nháy
+    # đơn), $OLDPWD, PWD bị gán lại, phần sau dấu nháy (`"$PWD"/../..`) thì vẫn fail closed.
+    (False, "worktree: CLAUDE_PROJECT_DIR=\"$PWD\" gate (AGENTS.md §7.1)", w, B(f'CLAUDE_PROJECT_DIR="$PWD" {G}')),
+    (False, "worktree: CLAUDE_PROJECT_DIR=$PWD gate", w, B(f"CLAUDE_PROJECT_DIR=$PWD {G}")),
+    (False, "worktree: CLAUDE_PROJECT_DIR=${PWD} gate", w, B(f"CLAUDE_PROJECT_DIR=${{PWD}} {G}")),
+    (False, "main: cd <wt> && CLAUDE_PROJECT_DIR=\"$PWD\" gate", m, B(f'cd {w} && CLAUDE_PROJECT_DIR="$PWD" {G}')),
+    (False, "worktree: cd <wt> && CLAUDE_PROJECT_DIR=\"$PWD\" gate > log 2>&1", w, B(f'cd {w} && CLAUDE_PROJECT_DIR="$PWD" {G} > {tmp}/g.log 2>&1')),
+    (False, "worktree: git -C \"$PWD\" commit", w, B('git -C "$PWD" commit -qm x')),
+    (True, "main: CLAUDE_PROJECT_DIR=\"$PWD\" gate", m, B(f'CLAUDE_PROJECT_DIR="$PWD" {G}')),
+    (True, "main: cd <main> && CLAUDE_PROJECT_DIR=\"$PWD\" gate", m, B(f'cd {m} && CLAUDE_PROJECT_DIR="$PWD" {G}')),
+    (True, "worktree: cd <main> && CLAUDE_PROJECT_DIR=\"$PWD\" gate", w, B(f'cd {m} && CLAUDE_PROJECT_DIR="$PWD" {G}')),
+    (True, "worktree: cd <symlink to main> && CLAUDE_PROJECT_DIR=\"$PWD\" gate", w, B(f'cd {alias} && CLAUDE_PROJECT_DIR="$PWD" {G}')),
+    (True, "worktree: CLAUDE_PROJECT_DIR=\"$PWD/../../..\" gate (.. back into main)", w, B(f'CLAUDE_PROJECT_DIR="$PWD/../../.." {G}')),
+    (True, "worktree: CLAUDE_PROJECT_DIR=\"$PWD\"/../../.. gate (the word goes on after the quote)", w, B(f'CLAUDE_PROJECT_DIR="$PWD"/../../.. {G}')),
+    (True, "worktree: git -C \"$PWD\"/../../.. commit (the word goes on after the quote)", w, B('git -C "$PWD"/../../.. commit -qm x')),
+    (True, "worktree: git -C \"<wt>\"/../../.. commit (literal, the word goes on after the quote)", w, B(f'git -C "{w}"/../../.. commit -qm x')),
+    (True, "worktree: CLAUDE_PROJECT_DIR='$PWD' gate (single quotes: no expansion)", w, B(f"CLAUDE_PROJECT_DIR='$PWD' {G}")),
+    (True, "worktree: CLAUDE_PROJECT_DIR=\\$PWD gate (escaped $)", w, B(f"CLAUDE_PROJECT_DIR=\\$PWD {G}")),
+    (True, "worktree: CLAUDE_PROJECT_DIR=$OLDPWD gate", w, B(f"CLAUDE_PROJECT_DIR=$OLDPWD {G}")),
+    (True, "worktree: CLAUDE_PROJECT_DIR=$PWDX gate (another variable)", w, B(f"CLAUDE_PROJECT_DIR=$PWDX {G}")),
+    (True, "worktree: CLAUDE_PROJECT_DIR=${PWD%/*} gate", w, B(f"CLAUDE_PROJECT_DIR=${{PWD%/*}} {G}")),
+    (True, "worktree: cd $X && CLAUDE_PROJECT_DIR=\"$PWD\" gate (cwd unknown)", w, B(f'cd $X && CLAUDE_PROJECT_DIR="$PWD" {G}')),
+    (True, "worktree: PWD=<main>; CLAUDE_PROJECT_DIR=$PWD gate (PWD rebound)", w, B(f"PWD={m}; CLAUDE_PROJECT_DIR=$PWD {G}")),
+    (True, "worktree: (cd <main>; CLAUDE_PROJECT_DIR=$PWD gate) (a subshell)", w, B(f"(cd {m}; CLAUDE_PROJECT_DIR=$PWD {G})")),
+    # audit 25/10 A.4: `git pull --ff-only 2>&1 | tail` ở main bị chặn vì `2>&1` bị đọc như remote (đối số vị trí) trong _trunk_sync
+    (False, "main: git pull --ff-only 2>&1 | tail -5", m, B("git pull --ff-only 2>&1 | tail -5")),
+    (False, "main: git pull --ff-only 2>/dev/null", m, B("git pull --ff-only 2>/dev/null")),
+    (False, "main: git pull --ff-only > <outside>/pull.log 2>&1", m, B(f"git pull --ff-only > {tmp}/pull.log 2>&1")),
+    (False, "main: git pull --ff-only origin 2>&1", m, B("git pull --ff-only origin 2>&1")),
+    (True, "main: git pull --ff-only . feature 2>&1", m, B("git pull --ff-only . feature 2>&1")),
+    (True, "main: git pull --ff-only 2>&1 > README.md", m, B("git pull --ff-only 2>&1 > README.md")),
+    (True, "main: git pull --no-rebase origin main 2>&1 | tail", m, B("git pull --no-rebase origin main 2>&1 | tail")),
+    (True, "main: git push 2>&1 . HEAD:main (a local remote after the redirect)", m, B("git push 2>&1 . HEAD:main")),
+    (True, "main: git pull --ff-only origin \\> feature:main (an escaped >, no redirect)", m, B("git pull --ff-only origin \\> feature:main")),
+    (True, "main: git pull --ff-only origin '>' feature:main (a quoted >, no redirect)", m, B("git pull --ff-only origin '>' feature:main")),
+    (True, "main: git pull --ff-only origin '2>/tmp/x:main' (a quoted refspec into main, no redirect)", m, B("git pull --ff-only origin '2>/tmp/x:main'")),
+    # audit 25/10 A.4: `W=<dir>; git -C $W …` - W gán giá trị chữ ở segment trước, cùng shell, chỉ một lần trước chỗ dùng
+    (False, "worktree: W=<wt>; git -C $W add && git -C $W commit", w, B(f"W={w}; git -C $W add -A && git -C $W commit -qm x")),
+    (False, "main: W=<wt>; git -C \"$W\" commit", m, B(f'W={w}; git -C "$W" commit -qm x')),
+    (False, "main: W=.claude/worktrees/s1 (relative) && git -C $W commit", m, B("W=.claude/worktrees/s1 && git -C $W commit -qm x")),
+    (False, "main: export W=<wt>; git -C ${W} commit", m, B(f"export W={w}; git -C ${{W}} commit -qm x")),
+    (False, "main: W=<wt>; git -C $W add && commit -m \"$(cat <<'EOF' … EOF)\" (a heredoc message after the assignment)", m,
+     B(f"W={w}; git -C $W add -A && git -C $W commit -qm \"$(cat <<'EOF'\nfix: x\nEOF\n)\"")),
+    (True, "main: x=$(true; W=<wt> <newline>); git -C \"$W\" commit (W assigned in a substitution's subshell)", m, B(f"x=$(true; W={w}\n); git -C \"$W\" commit -qm x")),
+    (True, "main: (W=<wt>); git -C \"$W\" commit (W assigned in a subshell)", m, B(f"(W={w}); git -C \"$W\" commit -qm x")),
+    (True, "worktree: W=<main>; git -C $W commit", w, B(f"W={m}; git -C $W commit -qm x")),
+    (True, "worktree: W=<wt>/../../..; git -C $W commit (.. back into main)", w, B(f"W={w}/../../..; git -C $W commit -qm x")),
+    (True, "worktree: W=<symlink to main>; git -C $W commit", w, B(f"W={alias}; git -C $W commit -qm x")),
+    (True, "worktree: W=<main>; git -C $W commit; W=<wt> (assigned again after the use)", w, B(f"W={m}; git -C $W commit -qm x; W={w}")),
+    (True, "worktree: W=<wt>; for W in <main>; do git -C $W commit; done", w, B(f"W={w}; for W in {m}; do git -C $W commit -qm x; done")),
+    (True, "worktree: W=<wt> git -C $W commit (an inline prefix: $W is the old value)", w, B(f"W={w} git -C $W commit -qm x")),
+    (True, "worktree: false || W=<wt>; git -C $W commit (the assignment may not run)", w, B(f"false || W={w}; git -C $W commit -qm x")),
+    (True, "worktree: W=<wt> | true; git -C $W commit (assigned in a pipe subshell)", w, B(f"W={w} | true; git -C $W commit -qm x")),
+    (True, "worktree: if/else assigning W on its own lines (main on the path taken), then git -C $W commit", w, B(f"if true; then\nW={m}\nelse\nW={w}\nfi\ngit -C $W commit -qm x")),
+    (True, "worktree: W=<wt>; read W; git -C $W commit", w, B(f"W={w}; read W; git -C $W commit -qm x")),
+    (True, "worktree: W=<wt>; source x.sh; git -C $W commit", w, B(f"W={w}; source x.sh; git -C $W commit -qm x")),
+    (True, "worktree: W=<wt>; W=$M (chained from an unknown variable)", w, B(f"W={w}; W=$M; git -C $W commit -qm x")),
+    (True, "worktree: W=<main> <nl> # note; W=<wt> <nl> git -C $W commit (a comment assigns nothing)", w, B(f"W={m}\n# note; W={w}\ngit -C $W commit -qm x")),
+    (True, "worktree: W=; : ${W:=<main>}; git -C $W commit (a default assignment)", w, B(f"W=; : ${{W:={m}}}; git -C $W commit -qm x")),
+    (True, "worktree: W=<wt>/l[m] unquoted: the glob picks the link to main, not the dir named l[m]", w, B(f"W={w}/l[m]; git -C $W commit -qm x")),
+    (False, "worktree: W=<wt>/l[m] in double quotes: the dir named l[m] (no glob)", w, B(f'W={w}/l[m]; git -C "$W" commit -qm x')),
 ]
 bad = 0
 for want, label, cwd, (tool, ti, cmd) in cases:
@@ -178,6 +249,44 @@ print(f"unit-bad={bad} of {len(cases)}")
 PY
 grep -q "unit-bad=0 " "$TMP/unit" && ok "trunk_write: $(grep -o 'of [0-9]*' "$TMP/unit") cases (main itself vs nested/sibling worktrees, ignored state, integrator, sync)" \
   || { fail "trunk_write cases"; grep "✖\|Error\|assert" "$TMP/unit" | head -12; }
+
+# 1b review 25/10 (d6b6d57c): theo dõi biến / $PWD không được bậc hai theo độ dài lệnh - ~200 KB (20 000 phép gán) xong dưới 2 s, vẫn chặn
+python3 - "$DEVKIT_DIR" "$M" "$W" > "$TMP/perf" 2>&1 <<'PY'
+import signal, sys, time
+dk, m, w = sys.argv[1:4]
+sys.path.insert(0, dk + "/bin")
+import session_lock as sl
+main, sw = sl.trunk_main(m)
+bad = 0
+
+
+def too_slow(*_):
+    raise TimeoutError("over 10 s")
+
+
+signal.signal(signal.SIGALRM, too_slow)   # a quadratic walk would run for minutes: give up after 10 s and fail
+for label, body in (("20000 x `W=/tmp/x; `", "W=/tmp/x; " * 20000), ("20000 distinct `W<i>=/x; `", "".join(f"W{i}=/x; " for i in range(20000))),
+                    # every segment that is no assignment used to scan every known name (and compile two regexes for it): 2000 pairs took 57 s
+                    ("15000 x `W<i>=/x; : ; `", "".join(f"W{i}=/x; : ; " for i in range(15000))),
+                    ("12000 x `W<i>=/x; cd /tmp; `", "".join(f"W{i}=/x; cd /tmp; " for i in range(12000)))):
+    cmd = body + f"W={m}; git -C $W commit -qm x"
+    for fn, call in (("write_hits_locked", lambda: sl.write_hits_locked(cmd, m, w, "s")[0]),
+                     ("_bash_trunk_write", lambda: sl._bash_trunk_write(cmd, w, main, sw, "s", 0))):
+        t0 = time.monotonic()
+        signal.alarm(10)
+        try:
+            got = call()
+        except TimeoutError:
+            got = None
+        finally:
+            signal.alarm(0)
+        dt = time.monotonic() - t0
+        print(f"{'✔' if got and dt < 2 else '✖'} {fn} on {label} ({len(cmd) // 1024} KB): {dt:.2f} s, blocked={got}")
+        bad += not (got and dt < 2)
+print(f"perf-bad={bad}")
+PY
+grep -q "perf-bad=0" "$TMP/perf" && ok "~200 KB command: write_hits_locked and _bash_trunk_write under 2 s, still blocked ($(grep -o '[0-9.]* s' "$TMP/perf" | tr '\n' ' '))" \
+  || { fail "bounded time on a ~200 KB command"; grep "✖\|Error" "$TMP/perf" | head -6; }
 
 # 2 the hook: a write into main is refused with what to do, and no lock is taken; a read and the integrator pass, also no lock
 hook() {   # hook <event> <cwd> <tool> <json tool_input> [env...]: exit code; stderr in $TMP/err
@@ -196,6 +305,17 @@ hook PreToolUse "$W" Bash '{"command": "echo x > w.txt"}'; rc=$?
 [ "$rc" = 0 ] && lockof "$W" && ! lockof "$M" && ok "a write in the session's worktree: allowed, the WORKTREE's lock taken (one session per worktree, as before)" \
   || fail "write in worktree (rc $rc): $(head -c 200 "$TMP/err")"
 hook SessionStart "$M" "" '{}'; ! lockof "$M" && ok "SessionStart in main: no lock taken" || fail "SessionStart took main's lock in trunk mode"
+# audit 25/10 A.4 qua hook thật: lệnh gate của AGENTS.md §7.1 từ worktree, `git pull --ff-only 2>&1 | tail` ở main (exit 0); cd về main rồi "$PWD" (exit 2)
+ti() { python3 -c 'import json,sys; print(json.dumps({"command": sys.argv[1]}))' "$1"; }   # $PWD trong nháy đơn: hook thấy nguyên chữ $PWD
+hook PreToolUse "$W" Bash "$(ti 'CLAUDE_PROJECT_DIR="$PWD" python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief')"; r1=$?
+hook PreToolUse "$M" Bash "$(ti "cd $W && CLAUDE_PROJECT_DIR=\"\$PWD\" python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief")"; r2=$?
+hook PreToolUse "$M" Bash "$(ti 'git pull --ff-only 2>&1 | tail -5')"; r3=$?
+[ "$r1" = 0 ] && [ "$r2" = 0 ] && [ "$r3" = 0 ] && ! lockof "$M" && ok "hook: CLAUDE_PROJECT_DIR=\"\$PWD\" gate from / into a worktree, pull --ff-only 2>&1 | tail in main -> exit 0" \
+  || fail "hook \$PWD gate / pull 2>&1 (rc $r1 $r2 $r3): $(head -c 300 "$TMP/err")"
+hook PreToolUse "$W" Bash "$(ti "cd $M && CLAUDE_PROJECT_DIR=\"\$PWD\" python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief")"; r1=$?
+hook PreToolUse "$M" Bash "$(ti 'CLAUDE_PROJECT_DIR="$PWD" python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief')"; r2=$?
+[ "$r1" = 2 ] && [ "$r2" = 2 ] && grep -q "Trunk mode" "$TMP/err" && ok "hook: cd <main> && CLAUDE_PROJECT_DIR=\"\$PWD\" gate, and \"\$PWD\" gate run in main -> exit 2 (Trunk mode)" \
+  || fail "hook \$PWD gate into main (rc $r1 $r2): $(head -c 300 "$TMP/err")"
 
 # 2b the USER's switches (R3 review P2-5, like allow-shared): an agent's command may not turn trunk mode off - `agent-kit worktree trunk off`,
 #    `git config devkit.trunkMode <not true>` / --unset ..., WORKTREE_TRUNK_MODE=0 set in the command. `trunk on`, true values and reads only tighten.
