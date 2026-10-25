@@ -63,6 +63,19 @@ mkdir -p "$TMP/gcrepo-left2/.agents/evidence" && : > "$TMP/gcrepo-left2/.agents/
 ctx "$TMP/gcrepo/src" >/dev/null; gc_wait
 grep -q "gcrepo-left2" "$GCLOG" 2>/dev/null && [ ! -e "$TMP/gcrepo/src/.claude/audit-gate/worktree_gc.log" ] \
   && ok "  … and a start in a subfolder records into the checkout's log" || fail "subfolder start: $(ls "$TMP/gcrepo/src/.claude/audit-gate" 2>&1)"
+# U2 (audit 25/10): session start also reaps the integrated, unheld worktrees of .claude/worktrees/ (`gc --merged`, the one merged-worktree
+# cleaner; it replaces the untracked .claude/hooks/cleanup-wt.py --auto). WORKTREE_GC_MERGED=0 turns only that part off.
+git -C "$TMP/gcrepo" worktree add -q --detach "$TMP/gcrepo/.claude/worktrees/merged-wt" 2>/dev/null
+export WORKTREE_GC_FRESH_S=0 WORKTREE_GC_MERGED=0   # (the worktree is seconds old: the fresh guard has its own test)
+ctx "$TMP/gcrepo" >/dev/null; gc_wait
+[ -d "$TMP/gcrepo/.claude/worktrees/merged-wt" ] && ok "WORKTREE_GC_MERGED=0: an integrated session worktree is left alone" \
+  || fail "WORKTREE_GC_MERGED=0 still reaped the integrated worktree"
+unset WORKTREE_GC_MERGED
+ctx "$TMP/gcrepo" >/dev/null; gc_wait
+[ ! -e "$TMP/gcrepo/.claude/worktrees/merged-wt" ] && grep -q "merged-wt" "$GCLOG" 2>/dev/null \
+  && ok "session start reaps an integrated, unheld worktree of .claude/worktrees/ and logs it" \
+  || fail "session start did not reap the integrated worktree: $(tail -3 "$GCLOG" 2>&1)"
+unset WORKTREE_GC_FRESH_S
 gc_wait   # no sweep left running into the EXIT trap
 export WORKTREE_GC=0   # the starts below must not leave background sweeps running while $TMP is removed
 

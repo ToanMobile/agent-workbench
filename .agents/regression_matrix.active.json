@@ -1633,6 +1633,24 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "worktree-merged-cleaner",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/hooks/session_context.sh",
+        ".claude/bin/super-board-post-merge-clean.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_gc_merged.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-WT-MERGED-CLEANER-01",
+          "name": "một bộ dọn worktree đã gộp (U2 25/10): gc --merged / held / remove --merged của worktree.py và post-merge clean của board không gỡ worktree có commit trunk chưa có, chỉ file chưa commit, commit chỉ reflog giữ, phiên sống giữ, nhánh có PR mở; gỡ worktree đã tích hợp sạch; không còn đường git trần",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_gc_merged.sh && bash tests/super-board/test_post_merge_clean.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

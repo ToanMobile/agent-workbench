@@ -134,6 +134,13 @@ JUNK_BLOB=$(git -C "$R" hash-object "$W/issue-7-qa/reports/proof-7.png")
 card 8 18 issue-8-other; git -C "$R" worktree add -q "$W/issue-8-build" issue-8-other
 echo wip > "$W/issue-8-build/f8"                                                     # thẻ khác đang sửa dở
 card 70 170 issue-70-similar; git -C "$R" worktree add -q "$W/issue-70-build" issue-70-similar
+# A10 (U2, audit 25/10): .claude/hooks/cleanup-wt.py (hook người dùng tự cài, chưa track) là bộ dọn thứ hai sau mỗi merge, với luật
+# "merged" riêng yếu hơn kit (git worktree remove / git branch -D trần). Merge gate không còn gọi nó: bản giả chỉ ghi dấu khi bị gọi.
+# Gate chạy với repo.path "." từ worktree review: `worktree add` của kit chép hook bị ignore vào đó (copy_local_hooks), nên cả hai nơi.
+for d in "$R" "$W/issue-7-review"; do
+  mkdir -p "$d/.claude/hooks"
+  printf 'import sys\nopen(sys.argv[0] + ".called", "a").write(" ".join(sys.argv[1:]) + "\\n")\n' > "$d/.claude/hooks/cleanup-wt.py"
+done
 MAIN_STATUS_BEFORE=$(git -C "$R" status --porcelain)
 ( cd "$W/issue-7-review" && bash "$GATE" --config "$CFG" --pr 11 --expect-head "$H7" ) >"$TMP/gateA.log" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "A0 gate squash-merged PR #11 (exit 0)" || { fail "A0 gate exit $rc"; tail -20 "$TMP/gateA.log"; }
@@ -161,6 +168,21 @@ else ok "A8 lane junk is dropped without salvage: no loose object, no patch"; fi
 # A9 (OCR batch): phần không có gì để ghi (build không có file xoá, qa không có file cất) không thành file rỗng / patch rỗng
 empty=$(find "$SALV" -type f -empty 2>/dev/null)
 [ -z "$empty" ] && ok "A9 no empty file (empty patch, empty list) in salvage/" || { fail "A9 empty files in salvage/"; printf '%s\n' "$empty"; }
+[ ! -e "$R/.claude/hooks/cleanup-wt.py.called" ] && [ ! -e "$W/issue-7-review/.claude/hooks/cleanup-wt.py.called" ] \
+  && ok "A10 the merge gate no longer runs .claude/hooks/cleanup-wt.py (worktree.py decides alone)" \
+  || fail "A10 the merge gate ran cleanup-wt.py: $(cat "$R/.claude/hooks/cleanup-wt.py.called" "$W/issue-7-review/.claude/hooks/cleanup-wt.py.called" 2>/dev/null)"
+rm -rf "$R/.claude/hooks" "$W/issue-7-review/.claude/hooks"
+# A10b (review U2, 26/10): SessionStart của .claude/settings.json (được track) vẫn chạy `cleanup-wt.py --auto --fetch` bên cạnh
+# `worktree.py gc --merged`, nên bộ dọn cũ (git worktree remove / git branch -D trần) vẫn gỡ worktree mỗi lần mở phiên. Không hook nào
+# của settings được gọi cleanup-wt.py --auto.
+cw=$(python3 -I - "$ROOT/.claude/settings.json" <<'PY' 2>&1
+import json, re, sys
+cmds = [h.get("command", "") for evs in json.load(open(sys.argv[1], encoding="utf-8")).get("hooks", {}).values()
+        for g in evs for h in g.get("hooks", [])]
+print("\n".join(c for c in cmds if re.search(r"cleanup-wt\.py\b.*--auto", c)))
+PY
+) && [ -z "$cw" ] && ok "A10b .claude/settings.json runs no cleanup-wt.py --auto (gc --merged is the one merged-worktree cleaner)" \
+  || fail "A10b .claude/settings.json still runs the old cleaner: $cw"
 
 # ── B. --sweep: worktree còn sót của các thẻ đã merge trước đó.
 OLD="2026-01-01T00:00:00Z"; NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
