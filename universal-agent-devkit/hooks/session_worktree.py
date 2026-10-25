@@ -196,17 +196,33 @@ def record_age(main, sid, now=None):
     return (time.time() if now is None else now) - st.st_mtime if st and stat.S_ISREG(st.st_mode) else None
 
 
+def _session_lock():
+    """bin/session_lock.py as a module (after the stdlib on sys.path: nothing there may shadow it); raises when it cannot be loaded."""
+    bindir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
+    if bindir not in sys.path:
+        sys.path.append(bindir)
+    import session_lock
+    return session_lock
+
+
 def holder_pid():
     """The claude process this hook runs under (bin/session_lock.holder_pid, which skips the short-lived sh of dash systems), None when that module
     cannot be loaded: a record then carries no pid and is never taken over on a pid."""
     try:
-        bindir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
-        if bindir not in sys.path:
-            sys.path.append(bindir)
-        import session_lock
-        return session_lock.holder_pid()
+        return _session_lock().holder_pid()
     except Exception:  # noqa: BLE001 - no pid recorded is the safe side: the owner then reads as alive until the record is a day old
         return None
+
+
+def pid_start_token(pid):
+    """The start time of `pid` (bin/session_lock.pid_start: /proc on Linux, `ps -o lstart=` in UTC elsewhere) with no blank, as a devkit-kept
+    lock records it; None when unknown. #406: the OS hands a dead session's pid to another process later - only the start time tells them apart."""
+    try:
+        s = _session_lock().pid_start(pid)
+    except Exception as e:  # noqa: BLE001 - unknown start time: the lock is written without one and read as before (pid only)
+        print(f"session_worktree: start time of pid {pid} unknown ({e!r}): pid reuse is not detected", file=sys.stderr)
+        return None
+    return re.sub(r"\s+", "_", s.strip()) if isinstance(s, str) and s.strip() else None
 
 
 def read_record(main, sid):
@@ -369,6 +385,58 @@ def on_tool_use(payload, env=None):
 
 
 KEPT_PREFIX = "devkit-kept session="
+KEPT_RE = re.compile(r"devkit-kept session=(\S+) pid=([0-9]{1,10})")
+# #406: thời điểm khởi động của pid khoá nằm CẠNH khoá, trong git dir của worktree ("<pid> <start>"), không trong lý do khoá: lý do giữ đúng
+# dạng cũ vì .claude/bin/super-board-post-merge-clean.sh của mọi repo board (kit được symlink sang đó) đọc nó bằng regex neo cuối.
+KEPT_START = "devkit-kept.start"
+
+
+def _admin_dir(wt):
+    """The linked worktree's own git dir (<main>/.git/worktrees/<name>), from its `.git` file; None when that cannot be read."""
+    raw = (_read_small(os.path.join(wt, ".git"), 4096) or "").strip()
+    if not raw.startswith("gitdir: "):
+        return None
+    d = raw[len("gitdir: "):].strip()
+    d = d if os.path.isabs(d) else os.path.normpath(os.path.join(wt, d))
+    return d if os.path.isdir(d) else None
+
+
+def kept_start(wt, pid):
+    """The start time recorded beside the devkit-kept lock of `wt` for `pid`; None when there is none (an older kit's lock, a file another
+    pid's lock left)."""
+    d = _admin_dir(wt)
+    parts = (_read_small(os.path.join(d, KEPT_START), 256) or "").split() if d else []
+    return parts[1] if len(parts) == 2 and parts[0] == str(pid) else None
+
+
+def _write_kept_start(wt, pid, start):
+    """Record `pid`'s start time beside the lock about to be taken on `wt`. The older file goes FIRST, whatever happens next: its pid may be
+    the one the OS has handed to this very process, and a new lock beside that older start time would read dead (OCR 25/10). A failure is
+    said on stderr: the lock then reads as before, by its pid alone."""
+    d = _admin_dir(wt)
+    if not d:
+        return
+    p = os.path.join(d, KEPT_START)
+    tmp = f"{p}.{os.getpid()}.tmp"
+    for old in (p, tmp):   # p first, each on its own: an entry stuck at the temp name must not keep the older start time (OCR 25/10)
+        try:
+            if os.path.lexists(old):
+                os.unlink(old)
+        except OSError as e:
+            print(f"session_worktree: {old} not removed ({e!r})", file=sys.stderr)
+    try:
+        if start:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(f"{pid} {start}\n")
+            os.replace(tmp, p)
+    except OSError as e:
+        print(f"session_worktree: start time of the lock not recorded ({e!r})", file=sys.stderr)
+        if os.path.lexists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError as e2:
+                print(f"session_worktree: temp file left behind: {tmp} ({e2!r})", file=sys.stderr)
 
 
 def _pid_alive(pid):
@@ -384,41 +452,67 @@ def _pid_alive(pid):
         return True
 
 
+def lock_pid_alive(pid, start=None):
+    """The process a devkit-kept lock names is still that session: the pid answers and, when the lock recorded a start time, the pid's start
+    time is that one (#406: a different one = the OS reused the pid). A start time that cannot be read now, or one read another way than
+    it was written (/proc vs ps), reads alive (fail closed: a worktree kept too long, never one removed from under a live session)."""
+    if not _pid_alive(pid):
+        return False
+    now = pid_start_token(pid) if start else None
+    return now is None or now.startswith("proc:") != start.startswith("proc:") or now == start
+
+
+def _worktree_locks(g):
+    """{realpath of a linked worktree: its lock reason} from `git worktree list --porcelain` (g: the git runner); None on a git error."""
+    listed = g("worktree", "list", "--porcelain")
+    if listed is None or listed.returncode:
+        return None
+    out, cur = {}, None
+    for line in listed.stdout.splitlines():
+        if line.startswith("worktree "):
+            cur = line[len("worktree "):]
+        elif (line == "locked" or line.startswith("locked ")) and cur:
+            out[os.path.realpath(cur)] = line[len("locked "):]
+    return out
+
+
+def _git_in(main):
+    def g(*args):
+        try:
+            return subprocess.run(["git", "-C", main, *args], capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            return None
+    return g
+
+
 def _kept_lock(main, wt, sid, pid, unlock=False):
     """K11 (18/10): ExitWorktree "keep" = phiên muốn giữ worktree. Khoá nó bằng `git worktree lock --reason "devkit-kept session=<sid> pid=<pid
     claude>"`: gộp vẫn được, nhưng automerge của Stop (scripts/git/worktree.py kept_lock) và cleanup-wt (bỏ qua worktree bị khoá) không gỡ nó
     khi pid đó còn sống; pid chết thì `worktree remove` mở khoá. unlock=True: mở khoá devkit-kept của chính phiên `sid` (EnterWorktree lại);
     không có pid hợp lệ khi khoá thì không làm gì (không bao giờ mở khoá ở nhánh này).
     Khoá do người khác đặt (không phải devkit-kept) không bao giờ bị đụng. Trả True khi đã khoá; lỗi git: False, không chặn tool."""
-    def g(*args):
-        try:
-            return subprocess.run(["git", "-C", main, *args], capture_output=True, text=True, timeout=5)
-        except (OSError, subprocess.SubprocessError):
-            return None
-    listed = g("worktree", "list", "--porcelain")
-    if listed is None or listed.returncode:
+    g = _git_in(main)
+    locks = _worktree_locks(g)
+    if locks is None:
         return False
-    cur, reason = None, None
-    for line in listed.stdout.splitlines():
-        if line.startswith("worktree "):
-            cur = line[len("worktree "):]
-        elif (line == "locked" or line.startswith("locked ")) and cur and os.path.realpath(cur) == os.path.realpath(wt):
-            reason = line[len("locked "):]
+    reason = locks.get(os.path.realpath(wt))
     if unlock:   # khoá devkit-kept của chính phiên: cùng sid, hay (pid hợp lệ được truyền) cùng tiến trình claude — /clear đổi sid, giữ pid
-        m = re.fullmatch(r"devkit-kept session=(\S+) pid=([0-9]{1,10})", reason or "")
+        m = KEPT_RE.fullmatch(reason or "")
         mine_by_pid = isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and m is not None and int(m.group(2)) == pid
         if m and (m.group(1) == sid or mine_by_pid):
             g("worktree", "unlock", wt)
         return False
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
         return False
+    start = pid_start_token(pid)   # trước khi mở khoá (review 25/10): lần gọi ps không nới khoảng worktree không khoá giữa unlock và lock
     if reason is not None:
         if not reason.startswith(KEPT_PREFIX):
             return False   # khoá của người khác: để yên
-        m = re.fullmatch(r"devkit-kept session=(\S+) pid=([0-9]{1,10})", reason)
-        if m and m.group(1) != sid and _pid_alive(int(m.group(2))):
+        m = KEPT_RE.fullmatch(reason)
+        if m and m.group(1) != sid and lock_pid_alive(int(m.group(2)), kept_start(wt, int(m.group(2)))):
             return True   # một phiên KHÁC còn sống đã giữ nó: khoá đó vẫn giữ worktree, không thay (OCR 18/10)
-        g("worktree", "unlock", wt)   # khoá devkit-kept của chính phiên, hay của pid đã chết: thay bằng pid hiện tại
+        g("worktree", "unlock", wt)   # khoá devkit-kept của chính phiên, hay của pid đã chết / đã bị cấp lại: thay bằng pid hiện tại
+    _write_kept_start(wt, pid, start)   # trước khi khoá: không lúc nào khoá mới đứng cạnh thời điểm khởi động cũ của pid đó
     r = g("worktree", "lock", "--reason", f"{KEPT_PREFIX}{sid} pid={pid}", wt)
     return r is not None and r.returncode == 0
 
@@ -426,18 +520,44 @@ def _kept_lock(main, wt, sid, pid, unlock=False):
 _BOARD_WT = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
 
 
-def lock_started_worktree(main, here, sid, pid, env=None):
-    """SessionStart (bin/session_lock.py; review 25/10): a session that STARTS — or /clear, /resume — inside a linked worktree of a
-    trunk-mode repo (a Desktop worktree session, `claude --worktree`) never calls EnterWorktree, so it takes the same devkit-kept lock
+def _state_owner(wt):
+    """The session the worktree's devkit-worktree.json names (`worktree add --session`, scripts/git/worktree.py _owner); None: none, unreadable."""
+    d = _admin_dir(wt)
+    try:
+        o = json.loads(_read_small(os.path.join(d, "devkit-worktree.json"), 4_000_000) or "null").get("session") if d else None
+    except (ValueError, AttributeError, RecursionError):   # (RecursionError: nested too deep, as worktree.py _read_state)
+        return None
+    return o if isinstance(o, str) and o else None
+
+
+def lock_started_worktree(main, here, sid, pid, env=None, source=None, owner_alive=None):
+    """SessionStart (bin/session_lock.py; review 25/10): a session that STARTS inside a linked worktree of a trunk-mode repo (a Desktop
+    worktree session, `claude --worktree`, `claude --resume` there) never calls EnterWorktree, so it takes the same devkit-kept lock
     there. A super-board lane worktree (.claude/worktrees/issue-<N>[-build|-qa|-review]) is the board's: its runner removes it with a
-    plain `git worktree remove`, which a lock left by a dead worker would block. Returns the worktree locked, None otherwise."""
-    if not main or not here or not trunk_mode(main, env):
+    plain `git worktree remove`, which a lock left by a dead worker would block. Returns the worktree locked, None otherwise.
+    #406: the payload cwd follows the session's `cd`. compact and /clear keep the same claude process, whose lock (taken at its start or
+    at EnterWorktree) still holds - a new one there would lock whatever worktree the session merely stands in, another session's
+    included. So only a new process (startup, resume, fork; no source: as before) locks, and a resume / fork not when its pid already
+    holds a devkit-kept lock on another worktree of the repo (an in-session /resume after a `cd`; a fresh startup can match a lock's pid
+    only through pid reuse, OCR 25/10). Never a worktree another session owns (its record - after reown - or its state names it) while
+    `owner_alive(that session)` (bin/session_lock.py: a pid of it answers) - a session standing there would hold it from its owner; a gone
+    owner's worktree is taken, as reown takes its record (the work is never lost)."""
+    if source in ("compact", "clear") or not main or not here or not trunk_mode(main, env):
         return None
     t = tree_of(here)
     if not t or not t[1] or os.path.realpath(main_of(t[0]) or "") != os.path.realpath(main):
         return None
     if _BOARD_WT.fullmatch(os.path.basename(t[0])) and os.path.basename(os.path.dirname(t[0])) in ("worktrees", ".worktrees"):
         return None
+    real = os.path.realpath(t[0])
+    others = {o for o, wt in records(main).items() if o != sid and os.path.realpath(wt) == real}
+    others |= {o for o in (_state_owner(t[0]),) if o and o != sid}
+    if owner_alive is not None and any(owner_alive(o) for o in others):
+        return None
+    for path, reason in (_worktree_locks(_git_in(main)) or {}).items() if source in ("resume", "fork") else ():
+        m = KEPT_RE.fullmatch(reason)
+        if m and path != real and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)):
+            return None
     return t[0] if _kept_lock(main, t[0], sid, pid) else None
 
 

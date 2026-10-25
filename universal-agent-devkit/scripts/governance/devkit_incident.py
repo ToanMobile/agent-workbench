@@ -58,6 +58,7 @@ IGNORE = re.compile("|".join([
     r"git fetch origin main failed",            # mạng tạm, runner tự thử lại
     r"error connecting to api\.github\.com",
     r"block-rate alert",                        # thẻ app bị chặn, không phải kit
+    r"RUNAWAY \(daemon\)",                      # daemon tự hoãn giao việc rồi chạy tiếp (tải máy cao làm worker chậm); chỉ 🛑 halt là thẻ
     r"sleep \d+s killed by signal",
     r"stop marker", r"stopping dispatcher loop", r"refusing to start", r"start overruled",
     r": holding\b", r"\btick —",

@@ -52,7 +52,8 @@ case " $* " in
   *" pr view "*"headRefName,headRefOid"*) echo "issue-$n-x $(cat "$FAKE_DIR/pr$n.head")" ;;
   *" pr view "*"state,mergeCommit,headRefOid"*) printf '{"state":"OPEN","mergeCommit":null,"headRefOid":"%s"}\n' "$(cat "$FAKE_DIR/pr$n.head")" ;;
   *" pr view "*"labels,files"*) cat "$FAKE_DIR/pr$n.meta" ;;
-  *" pr view "*"title"*) [ -e "$FAKE_DIR/pr$n.title.fail" ] && exit 1; cat "$FAKE_DIR/pr$n.title" 2>/dev/null || echo "t" ;;
+  *" pr view "*"title"*) [ -e "$FAKE_DIR/pr$n.title.fail" ] && exit 1
+    if [ -e "$FAKE_DIR/verified" ] && [ -e "$FAKE_DIR/pr$n.title2" ]; then cat "$FAKE_DIR/pr$n.title2"; else cat "$FAKE_DIR/pr$n.title" 2>/dev/null || echo "t"; fi ;;
   *" pr view "*"--json body"*) if [ -e "$FAKE_DIR/pr$n.body2" ]; then cat "$FAKE_DIR/pr$n.body2"; else jq -r '.body' "$FAKE_DIR/pr$n.meta"; fi ;;
   *" pr diff "*) cat "$FAKE_DIR/pr$n.diff" ;;
   *" pr edit "*) f=$(printf '%s\n' "$@" | sed -n '/^--body-file$/{n;p;}'); cp "$f" "$FAKE_DIR/pr$n.edited" ;;
@@ -68,9 +69,9 @@ export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" SB_CARD_CACHE_DIR="$TMP/cache" SB_N
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_MERGE_RECHECK_DELAY_S=0 SB_MERGE_LOAD_MAX=100000
 printf '{"projectId":"P","fieldId":"F","options":{"Ready":"o-r","Done":"o-d"},"items":{"21":"I21","23":"I23","24":"I24","41":"I41"}}' > "$TMP/cache/board-o-1.json"
 CFG="$TMP/cfg.json"
-echo '{"base_branch":"main","repo":{"path":".","remote":""},"project":{"owner":"o","number":1},"verify_commands":["true"]}' > "$CFG"
+echo '{"base_branch":"main","repo":{"path":".","remote":""},"project":{"owner":"o","number":1},"verify_commands":["touch '"$TMP"'/verified"]}' > "$CFG"
 gate() {  # $1 = PR; stdout → gate$1.out, stderr → gate$1.err; echo rc
-  rm -f "$TMP/calls"
+  rm -f "$TMP/calls" "$TMP/verified"
   ( cd "$W/issue-$1-review" && bash "$GATE" --config "$CFG" --pr "$1" --expect-head "$(cat "$TMP/pr$1.head")" ) \
     >"$TMP/gate$1.out" 2>"$TMP/gate$1.err"; echo $?
 }
@@ -226,6 +227,47 @@ rc=$(gate 43)
 [ "$rc" = 11 ] && ! grep -q 'pr merge' "$TMP/calls" && grep -q 'closes #315' "$TMP/gate43.out" && ! grep -q 'fewer AC lines\|lists .* AC lines' "$TMP/gate43.out" \
   && ! grep -q 'sb:ac' "$TMP/gate43.out" "$TMP/gate43.err" && grep -q 'back to Build: fix the closing keywords$' "$TMP/gate43.err" \
   && ok "O: chỉ có Closes thẻ lạ trong lúc verify → exit 11, thông báo không nói thiếu dòng AC" || fail "O: rc=$rc out=$(cat "$TMP/gate43.out")"
+
+# R (W7) — the PR TITLE is edited while verify runs (all AC ticked, no --subject): the title is read again and checked, a foreign Closes in it → exit 11.
+printf 'Closes #44\n<!-- sb:ac -->\n- [x] Test: khoá B → HIT\n- [x] Test: lượt 2 dùng lại REG-DK-ALL-01\n- [x] Đo tỷ lệ dùng lại ≥ 50%%\n<!-- /sb:ac -->\n' > "$TMP/b44.md"
+card 44 "$TMP/b44.md" "$TMP/issue3.md" '[]'; printf 'fix: x Closes #315\n' > "$TMP/pr44.title2"
+rc=$(gate 44)
+[ "$rc" = 11 ] && ! grep -q 'pr merge' "$TMP/calls" && grep -q 'closes #315' "$TMP/gate44.out" \
+  && ok "R: tiêu đề PR đổi sang Closes thẻ lạ trong lúc verify → exit 11, không merge" || fail "R: rc=$rc out=$(cat "$TMP/gate44.out") calls=$(tr '\n' '|' < "$TMP/calls")"
+# R2 — control: a harmless title edit during verify still merges, and the subject is the (re-read, checked) title
+printf 'Closes #48\n<!-- sb:ac -->\n- [x] Test: khoá B → HIT\n- [x] Test: lượt 2 dùng lại REG-DK-ALL-01\n- [x] Đo tỷ lệ dùng lại ≥ 50%%\n<!-- /sb:ac -->\n' > "$TMP/b48.md"
+card 48 "$TMP/b48.md" "$TMP/issue3.md" '[]'; printf 'feat: tiêu đề mới\n' > "$TMP/pr48.title2"
+rc=$(gate 48)
+[ "$rc" = 0 ] && grep -q 'pr merge 48' "$TMP/calls" && grep -q -- '--subject feat: tiêu đề mới (#48)' "$TMP/calls" \
+  && ok "R2: sửa tiêu đề vô hại trong lúc verify → merge, subject là tiêu đề đã đọc lại (#PR)" || fail "R2: rc=$rc calls=$(tr '\n' '|' < "$TMP/calls")"
+
+# S (W8) — a hand-made PR on a card branch (no sb:ac, no Closes when the gate started) gains `Closes #315` during verify → recheck sees it: exit 11.
+printf 'mô tả tay\n' > "$TMP/b45.md"
+card 45 "$TMP/b45.md" "$TMP/issue3.md" '[]'; printf 'Closes #315\n' > "$TMP/pr45.body2"
+rc=$(gate 45)
+[ "$rc" = 11 ] && ! grep -q 'pr merge' "$TMP/calls" && grep -q 'closes #315' "$TMP/gate45.out" \
+  && ok "S: PR tay thêm Closes thẻ lạ trong lúc verify → exit 11, không merge" || fail "S: rc=$rc out=$(cat "$TMP/gate45.out") calls=$(tr '\n' '|' < "$TMP/calls")"
+# T (W8) — the same hand-made PR gains an sb:ac block / own Closes during verify: its AC were never compared with the card's → exit 4, retry next wave.
+printf 'mô tả tay\n' > "$TMP/b46.md"
+card 46 "$TMP/b46.md" "$TMP/issue3.md" '[]'; printf 'Closes #46\n<!-- sb:ac -->\n- [x] một dòng\n<!-- /sb:ac -->\n' > "$TMP/pr46.body2"
+rc=$(gate 46)
+[ "$rc" = 4 ] && ! grep -q 'pr merge' "$TMP/calls" \
+  && ok "T: PR tay có sb:ac/Closes xuất hiện trong lúc verify chưa được đối chiếu AC → exit 4, không merge" || fail "T: rc=$rc out=$(cat "$TMP/gate46.out") calls=$(tr '\n' '|' < "$TMP/calls")"
+# T2 (W8, OCR 25/10) — a hand-made PR gains ONLY its own `Closes #<card>` (no sb:ac block) during verify: same input at gate start goes the heavy path
+#      (collapsed, exit 11), so the light recheck must not let it close the card with unproven AC: exit 4, no merge.
+printf 'mô tả tay\n' > "$TMP/b49.md"
+card 49 "$TMP/b49.md" "$TMP/issue3.md" '[]'; printf 'Closes #49\n' > "$TMP/pr49.body2"
+rc=$(gate 49)
+[ "$rc" = 4 ] && ! grep -q 'pr merge' "$TMP/calls" \
+  && ok "T2: PR tay chỉ thêm Closes thẻ mình trong lúc verify → exit 4, không merge" || fail "T2: rc=$rc calls=$(tr '\n' '|' < "$TMP/calls")"
+# U — the body loses its sb:ac block AND its own Closes during verify while the card carries ac-open: nothing was proven, so the label must stay.
+#     (OCR claimed the label would be removed; it is not: ac-check reports the block as collapsed — 0 lines against the card's 3 — and the gate leaves with 11 before the label.
+#      Pinned here so a later change to that order cannot start removing the label.)
+sed 's/#44/#47/' "$TMP/b44.md" > "$TMP/b47.md"
+card 47 "$TMP/b47.md" "$TMP/issue3.md" '[{"name":"ac-open"}]'; printf 'mô tả tay\n' > "$TMP/pr47.body2"
+rc=$(gate 47)
+[ "$rc" = 11 ] && ! grep -q 'pr merge' "$TMP/calls" && ! grep -q 'remove-label ac-open' "$TMP/calls" && grep -q 'lists 0 AC lines but card #47 has 3' "$TMP/gate47.out" \
+  && ok "U: body mất sb:ac và Closes trong lúc verify → exit 11, KHÔNG gỡ nhãn ac-open, không merge (chưa chứng minh gì)" || fail "U: rc=$rc calls=$(tr '\n' '|' < "$TMP/calls")"
 
 [ "$FAILS" -eq 0 ] && { echo "merge gate ac-check: all checks passed"; exit 0; }
 echo "merge gate ac-check: $FAILS FAILED"; exit 1

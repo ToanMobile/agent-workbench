@@ -370,7 +370,7 @@ fi
 #   Closes thẻ khác thẻ của nhánh issue-<N>, hoặc khối sb:ac ít dòng hơn số AC của thẻ → exit 11 (về Build viết lại).
 # Còn dòng AC chưa tick (đo số sau merge, thiết bị, người): vẫn merge, nhưng Closes → Refs và thẻ ở lại (ac_after_merge).
 # Nhánh không mang issue-<N>: bỏ qua. Không có khối sb:ac: chỉ kiểm Closes lạ, không đọc issue (PR tay giữ hành vi cũ).
-AC_DIR=$(mktemp -d); AC_CARD=""; AC_UNTICKED=""; AC_HAS_LABEL=false; AC_RECHECK=false; extra=()
+AC_DIR=$(mktemp -d); AC_CARD=""; AC_UNTICKED=""; AC_HAS_LABEL=false; AC_RECHECK=false; AC_LIGHT=false; extra=()
 jq -r '.body // ""' "$META" > "$AC_DIR/pr.md"
 # Subject của commit squash cũng đóng thẻ ("Fix #23: …"): --subject, không có thì tiêu đề PR — kiểm cùng message.
 AC_SUBJECT="${SUBJECT:-$(pr_title)}"
@@ -412,6 +412,10 @@ if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
     fi
     AC_UNTICKED=$(echo "$AC_JSON" | jq -r '(.unticked // [])[] | "- " + .')
     AC_RECHECK=true
+  else
+    # A card branch whose PR carried no AC claim when the gate started (a hand-made PR, case E/K): verify can still outlast an edit that adds one,
+    # or a foreign Closes. Recheck it too, lightly (W8, OCR 25/10).
+    AC_LIGHT=true
   fi
 fi
 
@@ -1001,13 +1005,48 @@ fi
 # #319 (T0054): verify may have run > 900 s and a reviewer may have edited the PR body meanwhile. Take the AC verdict again from the body as it
 # is now (the card's own AC and the cards it refers to were read before verify): collapsed or foreign closes → back to Build, a newly unticked
 # line → the Refs branch below. Unreadable body → not merging, the next wave tries again.
-if [ "$AC_RECHECK" = true ]; then
-  gh pr view "$PR" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/pr.md" \
-    || { say "could not re-read the PR body before merging; not merging (the AC verdict may be stale)"; exit 4; }
-  AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} \
-    --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
+CUR_TITLE=""
+# The light recheck only ADDS a guard to a PR that used to merge with none: when GitHub cannot be read for it, fall back to that old behaviour
+# (warn, no exit 4) instead of blocking every hand-made card-branch PR on a read error.
+if [ "$AC_LIGHT" = true ]; then
+  if gh pr view "$PR" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/pr.md" 2>/dev/null \
+     && { [ -n "$SUBJECT" ] || CUR_TITLE=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null) && [ -n "${CUR_TITLE:-$SUBJECT}" ]; }; then :
+  else
+    say "warning: could not re-read the PR body/title for the pre-merge recheck; merging on the pre-verify check"
+    AC_LIGHT=false; CUR_TITLE=""
+  fi
+fi
+if [ "$AC_RECHECK" = true ] || [ "$AC_LIGHT" = true ]; then
+  if [ "$AC_LIGHT" != true ]; then   # light mode read both above
+    gh pr view "$PR" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/pr.md" \
+      || { say "could not re-read the PR body before merging; not merging (the AC verdict may be stale)"; exit 4; }
+  fi
+  # The TITLE is editable during verify too (W7, OCR 25/10): read it again, check it for Closes, and keep it as the squash subject when none was given,
+  # so GitHub cannot pick a title nobody checked. A --subject the caller gave was checked before verify and stays.
+  if [ -z "$SUBJECT" ]; then
+    [ "$AC_LIGHT" = true ] || CUR_TITLE=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true)
+    [ -n "$CUR_TITLE" ] || { say "could not re-read the PR title before merging; not merging (a squash subject nobody checked for Closes)"; exit 4; }
+    { printf '%s\n\n' "$CUR_TITLE"; [ "$AC_LIGHT" = true ] || [ -z "$MSG_FILE" ] || cat "$MSG_FILE"; } > "$AC_DIR/check-msg.md"
+  elif [ "$AC_LIGHT" = true ]; then
+    : > "$AC_DIR/check-msg.md"
+  fi
+  if [ "$AC_RECHECK" = true ]; then
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} \
+      --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
+  else
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") \
+      || { say "ac-check could not run"; exit 9; }
+  fi
   foreign=$(echo "$AC_JSON" | jq -r '.foreign_closes | map("#\(.)") | join(", ")')
-  collapsed=$(echo "$AC_JSON" | jq -r .collapsed)
+  collapsed=$(echo "$AC_JSON" | jq -r '.collapsed // false')
+  if [ "$AC_LIGHT" = true ] && [ -z "$foreign" ] && [ "$(echo "$AC_JSON" | jq -r '.ac or .closes_own')" = true ]; then
+    # Light mode checks the body and the title only (not MSG_FILE, whose commit log may say Closes #<card> legitimately, case F),
+    # so an own Closes or an sb:ac block here is new: the same input at gate start takes the heavy path.
+    say "the PR body or title gained an sb:ac block or Closes #${AC_CARD} during verify; its AC were never compared with the card's. Not merging; the next wave retries"
+    exit 4
+  fi
+  # Pin the squash subject to the title just checked, so GitHub cannot pick a later edit (W7).
+  [ -z "$CUR_TITLE" ] || [ -n "$SUBJECT" ] || SUBJECT="${CUR_TITLE} (#${PR})"
   if [ -n "$foreign" ] || [ "$collapsed" = true ]; then
     # Each clause only when its own condition holds (OCR 24/10): a foreign Closes alone must not tell Build to rewrite a sb:ac block that is fine.
     msg=""

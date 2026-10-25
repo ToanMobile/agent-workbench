@@ -207,6 +207,18 @@ case("a test written this session: a failing direct kit run (`pass=2 fail=1`) th
      [TE, ["bash", KIT_BASH, "pass=2 fail=1\n"], ["bash", KIT_BASH, "ok: a\n"]], 0, msg="test PASS")
 case("control: the same test written this session with only the green run is blocked (no RED before it)",
      [TE, ["bash", KIT_BASH, "ok: a\n"]], 2, "ĐỎ", msg="test PASS")
+# W12: bash stops reading ITS options at the script; what follows belongs to the script
+case("direct bash kit test with its own `-n 3` argument is still a run (the flag is the script's, not bash's)",
+     [E, ["bash", "bash tests/a/test_x.sh -n 3", MARKS]], 0, msg="test PASS")
+case("direct bash kit test with its own `--mode noexec` argument is still a run",
+     [E, ["bash", "bash tests/a/test_x.sh --mode noexec", MARKS]], 0, msg="test PASS")
+case("control: `bash -n` before the script is a syntax check, not a run", [E, ["bash", "bash -n tests/a/test_x.sh", MARKS]], 2, NO, msg="test PASS")
+case("control: `bash -o noexec` before the script is a syntax check, not a run", [E, ["bash", "bash -o noexec tests/a/test_x.sh", MARKS]], 2, NO, msg="test PASS")
+case("`bash -O extglob -n` is still a syntax check: -O takes a value, the scan goes on to -n", [E, ["bash", "bash -O extglob -n tests/a/test_x.sh", MARKS]], 2, NO, msg="test PASS")
+# W11: the empty-output and skip-only guards apply at any depth under tests/
+case("deep path `bash tests/a/b/test_deep.sh` with EMPTY output checked nothing", [E, ["bash", "bash tests/a/b/test_deep.sh", ""]], 2, NO, msg="test PASS")
+case("deep path with only skip lines checked nothing", [E, ["bash", "bash tests/a/b/test_deep.sh", "skip: no device\n"]], 2, NO, msg="test PASS")
+case("deep path with `pass=2 fail=1` is a failure", [E, ["bash", "bash tests/a/b/test_deep.sh", "pass=2 fail=1\n"]], 2, NO, msg="test PASS")
 case("direct bash kit test that prints only `skipped: no device` / `skipping …` lines checked nothing (OCR U5)",
      [E, ["bash", KIT_BASH, "skipped: no device\nSKIPPING optional case\n"]], 2, NO, msg="test PASS")
 case("direct bash kit test whose every line is a skip line checked nothing",

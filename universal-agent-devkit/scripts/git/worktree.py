@@ -858,9 +858,20 @@ def unpushed_or_dirty(wt):
 KEPT_LOCK_RE = re.compile(r"devkit-kept session=([A-Za-z0-9][A-Za-z0-9._-]{0,127}) pid=([0-9]{1,10})")
 
 
+def _session_worktree():
+    """hooks/session_worktree.py as a module (appended after the stdlib on sys.path: nothing in hooks/ may shadow it); raises when unreadable."""
+    hooks = os.path.join(DEVKIT, "hooks")
+    if hooks not in sys.path:
+        sys.path.append(hooks)
+    import session_worktree  # noqa: PLC0415 - only where a session worktree matters
+    return session_worktree
+
+
 def kept_lock(main, wt):
-    """K11 (18/10): khoá `git worktree lock` mà hooks/session_worktree.py đặt khi phiên rời worktree bằng ExitWorktree "keep" — (session, pid,
-    còn sống?) hoặc None. Còn sống: pid tiến trình claude của phiên đó trả lời (os.kill 0); không đủ quyền / lỗi khác thì coi là sống (giữ lại)."""
+    """K11 (18/10): khoá `git worktree lock` devkit-kept mà hooks/session_worktree.py đặt (ExitWorktree keep, EnterWorktree, SessionStart ở
+    trunk mode) — (session, pid, còn sống?) hoặc None. Còn sống: pid tiến trình claude của phiên đó trả lời (os.kill 0) và, khi cạnh khoá có
+    thời điểm khởi động của pid đó (#406, session_worktree.kept_start), pid vẫn khởi động lúc ấy — khác là OS đã cấp pid cho tiến trình khác;
+    không đủ quyền, không đọc được thời điểm khởi động hay lỗi khác thì coi là sống (giữ lại)."""
     try:
         entries = _worktree_entries(main)
     except SystemExit:
@@ -880,6 +891,13 @@ def kept_lock(main, wt):
                 alive = False
             except (OSError, OverflowError):   # PermissionError: tiến trình của người khác vẫn sống; còn lại: không biết = giữ
                 alive = True
+            if alive:   # #406: pid còn trả lời nhưng khởi động lúc khác thời điểm ghi cạnh khoá = OS đã cấp lại pid; không đọc được = vẫn giữ
+                try:
+                    sw = _session_worktree()
+                    alive = sw.lock_pid_alive(pid, sw.kept_start(e["path"], pid))
+                except Exception as ex:  # noqa: BLE001 - module unreadable: the pid alone decides, as before #406
+                    print(f"• worktree: pid reuse not checked for {e['path']} ({ex!r})", file=sys.stderr)
+                    alive = True
             return m.group(1), pid, alive
     return None
 
@@ -914,12 +932,8 @@ def _ancestor_pids():
 def _trunk_mode(path):
     """hooks/session_worktree.py trunk_mode(): no `devkit.trunkMode` key (the default) or `true`, and WORKTREE_TRUNK_MODE not 0 (W1 R1/R7 v6).
     Any failure to tell: False, the old behaviour."""
-    hooks = os.path.join(DEVKIT, "hooks")
-    if hooks not in sys.path:
-        sys.path.append(hooks)   # after the stdlib: nothing in hooks/ may shadow it
     try:
-        import session_worktree  # noqa: PLC0415 - only where trunk mode matters
-        return session_worktree.trunk_mode(path)
+        return _session_worktree().trunk_mode(path)
     except Exception:  # noqa: BLE001 - a module that cannot be read means the old behaviour, never an add that dies
         return False
 
@@ -2224,7 +2238,7 @@ def cmd_remove(cwd, args):
 def _remove_checked(main, wt, branch, note=""):
     """Gỡ `wt` mà người gọi ĐÃ chứng minh là không mất gì (remove: _iter_blockers; discard: chỉ file xoá / rác IDE, hoặc đã cất vào
     refs/devkit/discarded), rồi xoá `branch` khi nó đã nằm trọn trong main. In một dòng ✔; die() khi git từ chối hay thư mục còn sót."""
-    unlocked = _drop_dead_kept_lock(main, wt)   # K11: khoá ExitWorktree keep của phiên đã chết hoặc của CHÍNH phiên gọi; khoá của phiên khác còn sống thì git từ chối
+    unlocked = _drop_dead_kept_lock(main, wt)   # K11: khoá devkit-kept của phiên đã chết hoặc của CHÍNH phiên gọi; khoá của phiên khác còn sống thì git từ chối
     r = git(main, "worktree", "remove", "--force", wt, check=False, bounded=False)
     if r.returncode != 0 and any(_same_path(e["path"], wt) for e in _worktree_entries(main)):
         if unlocked:   # git từ chối trước khi xoá gì: trả khoá vừa mở về như cũ (audit T0044), lần chạy lại vẫn mở được nó
@@ -3731,11 +3745,11 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
         return status, (tr("đã gộp vào main; worktree giữ lại (--keep)", "merged into main; the worktree is kept (--keep)") if status == "merged"
                         else tr("không có gì chưa về main; worktree giữ lại (--keep)", "nothing that was not in main; the worktree is kept (--keep)")) + receipt_note, {"kept": True}
     kept = kept_lock(main, wt)
-    if kept and kept[2]:   # K11 (18/10): phiên rời worktree bằng ExitWorktree "keep" và còn sống: gộp thì được, gỡ thì không
+    if kept and kept[2]:   # K11 (18/10): phiên còn sống giữ khoá devkit-kept (ExitWorktree keep, EnterWorktree, SessionStart): gộp thì được, gỡ thì không
         head = (tr("đã gộp vào main", "merged into main") if status == "merged"
                 else tr("không có gì chưa về main", "nothing that was not in main"))
-        return status, head + tr(f"; worktree giữ lại (ExitWorktree keep của phiên {kept[0]} còn sống)",
-                                 f"; the worktree is kept (ExitWorktree keep by session {kept[0]}, still alive)") + receipt_note, {"kept": True}
+        return status, head + tr(f"; worktree giữ lại (phiên {kept[0]} còn sống giữ khoá devkit-kept của nó, pid {kept[1]})",
+                                 f"; the worktree is kept (live session {kept[0]} holds its devkit-kept lock, pid {kept[1]})") + receipt_note, {"kept": True}
     saved = []
     try:
         for rel in _unsaved_memory(wt, main):   # notes only the worktree's own (git-ignored) agent-memory folder holds: a removal would delete them

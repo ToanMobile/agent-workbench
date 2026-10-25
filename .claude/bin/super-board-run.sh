@@ -1517,6 +1517,9 @@ lived = end - start if end is not None and end > start else None
 early = since < limit + tick and (lived is None or lived < limit)
 print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED:-}" "$wlog" "${SB_EARLY_DEATH_S:-120}" "${TICK_SECONDS:-0}" 2>/dev/null) || return 0
   case "$age" in *" 1") age=${age% *} ;; *) return 0 ;; esac
+  # #393: a worker that moved its card to Blocked (hold, sequence, too big) ended on purpose, not by a crash. The cache predates
+  # that move, so ask the board once (a rare path). Unreadable: keep counting it.
+  [ "$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" status "$1" 2>/dev/null || true)" = "Blocked" ] && return 0
   now=$(date +%s)
   f=$(early_death_file "$1")
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0

@@ -360,8 +360,8 @@ def danger_in_git(sub, args):
     if sub == "worktree" and pos[:1] == ["remove"] and ("f" in short or "--force" in long_):
         return "worktree remove --force mất thay đổi"
     if sub == "worktree" and "lock" in args and any("devkit-kept" in a for a in args):   # (cờ dính liền -r…/-q trước lock: không lệch pos, audit T0044)
-        # discard/remove tin khoá này là bằng chứng "worktree của chính phiên" (OCR 18/10): chỉ hook ExitWorktree keep được đặt nó
-        return "worktree lock devkit-kept giả khoá của phiên (chỉ hook ExitWorktree keep đặt khoá này)"
+        # discard/remove tin khoá này là bằng chứng "worktree của chính phiên" (OCR 18/10): chỉ hook của DevKit được đặt nó
+        return "worktree lock devkit-kept giả khoá của phiên (chỉ hook của DevKit đặt khoá này: EnterWorktree, ExitWorktree keep, SessionStart)"
     return None
 
 skip_wrapper = shell_norm.skip_wrapper
