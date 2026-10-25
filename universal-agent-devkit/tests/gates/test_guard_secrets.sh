@@ -129,5 +129,47 @@ PY
 [ "$rc" = 0 ] && [ -x "$T/.claude/hooks/my-own-hook.sh" ] && [ -e "$T/.claude/hooks/guard-secrets.py" ] && [ -e "$T/.claude/hooks/guard-protected-push.py" ] \
   && ok "install: the user's own hook file is kept and the kit's guard-secrets.py is linked in" || fail "install (rc=$rc): hooks dir = $(ls "$T/.claude/hooks" | head -5 | tr '\n' ' ')"
 
+# 6) (audit 2026-10-25 A6) the checked-in registration of guard-secrets.py / guard-protected-push.py, run as the harness runs it (sh -c):
+#    a MISSING hook file is a loud warning (stderr) and exit 0 — `python3 <missing file>` exits 2, and exit 2 blocks the tool call (805
+#    blocks on 2026-10-18, "can't open file … Errno 2"). Every other outcome of the guard passes through unchanged: its exit 2, its exit 1,
+#    its deny JSON on stdout, and the real guards still deny a dotenv read / a force push to main.
+S6="$(cd "$DEVKIT_DIR/.." && pwd)/.claude/settings.json"
+if [ -f "$S6" ] && git -C "$DEVKIT_DIR" ls-files --error-unmatch "../.claude/settings.json" >/dev/null 2>&1; then
+  for g in guard-secrets.py guard-protected-push.py; do
+    cmd="$(python3 - "$S6" "$g" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(next((h["command"] for ev in d.get("hooks", {}).values() for m in ev for h in m.get("hooks", [])
+            if sys.argv[2] in h.get("command", "")), ""))
+PY
+)"
+    [ -n "$cmd" ] || { fail "settings.json registers no $g"; continue; }
+    run6() {  # run6 <project dir> <payload>: sets RC6 OUT6 ERR6
+      OUT6="$(printf '%s' "$2" | env -u SB_ALLOW_PROTECTED_PUSH CLAUDE_PROJECT_DIR="$1" sh -c "$cmd" 2>"$TMP/err6")"; RC6=$?; ERR6="$(cat "$TMP/err6")"; }
+    P6='{"tool_name":"Bash","tool_input":{"command":"ls"}}'
+    mkdir -p "$TMP/none6"; run6 "$TMP/none6" "$P6"
+    [ "$RC6" = 0 ] && [ -z "$OUT6" ] && printf '%s' "$ERR6" | grep -q "$g" \
+      && ok "$g missing: a warning on stderr naming it, exit 0 (no block)" || fail "$g missing: rc=$RC6 out='$OUT6' err='$ERR6'"
+    for code in 2 1; do
+      mkdir -p "$TMP/stub$code/universal-agent-devkit/hooks"
+      printf 'import sys\nsys.stdin.read()\nsys.stderr.write("stub says no\\n")\nsys.exit(%s)\n' "$code" > "$TMP/stub$code/universal-agent-devkit/hooks/$g"
+      run6 "$TMP/stub$code" "$P6"
+      [ "$RC6" = "$code" ] && ok "$g present, guard exits $code: exit $code passes through" || fail "$g exit $code changed to $RC6 (err='$ERR6')"
+    done
+    mkdir -p "$TMP/stubj/universal-agent-devkit/hooks"
+    printf 'import sys\nsys.stdin.read()\nprint("{\\"hookSpecificOutput\\": {\\"permissionDecision\\": \\"deny\\"}}")\n' > "$TMP/stubj/universal-agent-devkit/hooks/$g"
+    run6 "$TMP/stubj" "$P6"
+    [ "$RC6" = 0 ] && printf '%s' "$OUT6" | grep -q '"permissionDecision": "deny"' && ok "$g present: its deny JSON reaches the harness" || fail "$g deny lost (rc=$RC6 out='$OUT6')"
+  done
+  cmd="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(h["command"] for ev in d["hooks"].values() for m in ev for h in m.get("hooks",[]) if "guard-secrets.py" in h.get("command","")))' "$S6")"
+  run6 "$(cd "$DEVKIT_DIR/.." && pwd)" '{"tool_name":"Read","tool_input":{"file_path":".env"}}'
+  printf '%s' "$OUT6" | grep -q '"permissionDecision": "deny"' && ok "real guard-secrets through the registration: a Read of .env is still denied" \
+    || fail "real guard-secrets through the registration let a .env read through (rc=$RC6 out='$OUT6' err='$ERR6')"
+  cmd="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(h["command"] for ev in d["hooks"].values() for m in ev for h in m.get("hooks",[]) if "guard-protected-push.py" in h.get("command","")))' "$S6")"
+  run6 "$(cd "$DEVKIT_DIR/.." && pwd)" '{"tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+  printf '%s' "$OUT6" | grep -q '"permissionDecision": "deny"' && ok "real guard-protected-push through the registration: a force push to main is still denied" \
+    || fail "real guard-protected-push through the registration let a force push through (rc=$RC6 out='$OUT6' err='$ERR6')"
+fi
+
 if [ "$FAILS" -ne 0 ]; then echo "guard_secrets: $FAILS FAILED"; exit 1; fi
 echo "guard_secrets: all checks passed"
