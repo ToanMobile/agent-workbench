@@ -7,8 +7,8 @@ input của suite, trạng thái cục bộ (local_state_sha của gate), biến
 dùng). Input (bảo thủ — thừa thì chỉ giảm số lần dùng lại, thiếu mới hạ chất lượng):
   a. file khớp watch_files + covers của mọi rule có suite này;
   b. file lệnh nêu tên (theo `cd` của nó); `cd D &&` ⇒ mọi file dưới D;
-  c. bao đóng tĩnh ≤ 3 cấp / ≤ 2000 file của các script đó: đường dẫn nhắc tới (chính xác, theo thư mục file, hoặc theo đuôi đường dẫn),
-     `import X` của python ⇒ mọi X.py;
+  c. bao đóng tĩnh tới điểm dừng / ≤ 2000 file của các script đó: đường dẫn nhắc tới (chính xác, theo thư mục file, hoặc theo đuôi đường
+     dẫn), `import X` của python ⇒ mọi X.py;
   d. đường dẫn đi qua symlink ra ngoài cây (.agents/devkit, .agents/active-profile) ⇒ băm bytes của đích thật;
   e. input học được ở P3 (learned_inputs.json, chỉ thêm);
   f. danger list: đổi một file trong đó là đổi mọi khoá.
@@ -43,8 +43,7 @@ STORE_MAX = 4000                 # bản ghi giữ lại tối đa; cũ hơn STO
 STORE_MAX_AGE_S = 7 * 86400
 FAIL_MAX_AGE_S = 30 * 86400      # bản ghi có FAIL không bị dọn theo số lượng, chỉ theo tuổi này (FAIL là vĩnh viễn với khoá đó)
 QUARANTINE_S = 7 * 86400         # DEVKIT_FLAKY_QUARANTINE_S
-CLOSURE_DEPTH = 3
-CLOSURE_MAX_FILES = 2000
+CLOSURE_MAX_FILES = 2000         # bao đóng đi tới điểm dừng (không còn trần cấp: 3 cấp cắt 109/112 suite của workbench, đo 26/10)
 DIR_EXPAND_MAX = 200             # token chỉ tới thư mục: lấy mọi file dưới nó khi không quá số này
 SCAN_MAX_BYTES = 1_000_000
 BIG_FILE_BYTES = 8 << 20         # như tree_fp: file lớn hơn thì băm theo kích thước + mtime
@@ -222,8 +221,23 @@ class Index:
         d = d.rstrip("/") + "/"
         return self.glob(d + "*")
 
-    def resolve(self, tok, here):
-        """Đường dẫn trong cây mà token có thể chỉ tới (thừa còn hơn thiếu)."""
+    def _phantom(self, base, s):
+        """True khi đường dẫn base/s đi lên ("..") từ một tên KHÔNG là thư mục của cây: `$SRC/../..` thành token "SRC/../.." (regex token bỏ
+        "$"), normpath xoá "SRC" như một thư mục thật và ra một thư mục sai — giá trị biến không biết, nên nó không chỉ tới input nào."""
+        cur = base
+        for part in s.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if cur and cur not in self.dirs:
+                    return True
+                cur = os.path.dirname(cur)
+            else:
+                cur = os.path.join(cur, part) if cur else part
+        return False
+
+    def resolve(self, tok, here, prose=False):
+        """Đường dẫn trong cây mà token có thể chỉ tới (thừa còn hơn thiếu). prose: token chỉ có trong dòng comment của file."""
         tok = tok.strip("'\"`")
         while tok.startswith("./"):   # đúng tiền tố "./": lstrip("./") từng xoá luôn dấu chấm của .claude/…, .agents/… (Antigravity 20/10)
             tok = tok[2:]
@@ -234,7 +248,8 @@ class Index:
         found = set()
         stems = [tok] + ([tok + e for e in (".sh", ".py", ".js", ".mjs", ".ts")] if not os.path.splitext(tok)[1] else [])
         for s in stems:
-            for cand in (os.path.normpath(os.path.join(here, s)), os.path.normpath(s)):
+            for base in (here, ""):
+                cand = os.path.normpath(os.path.join(base, s))
                 if cand in self.cmap:
                     found.add(cand)
                 elif cand in self.dirs and cand not in (".", ""):
@@ -243,7 +258,10 @@ class Index:
                     under = self.under(cand)
                     if len(under) <= DIR_EXPAND_MAX:
                         found |= under
-                    else:
+                    elif not (prose or self._phantom(base, s)):
+                        # B (audit 25/10): chỉ thư mục lớn mà dòng LỆNH nêu thật (ls D, grep -r x D/sub/..) mới cắt khoá chính xác. Thư mục
+                        # lớn chỉ nhắc trong comment (đường dẫn ngắt dòng của test_red_proof.sh) hay đi lên từ tên biến (`$SRC/../..` của
+                        # install-autostart.sh, `$PWD/../../..`) là cwd / tiền tố: file đọc thật qua nó có token riêng (…/tool.sh).
                         self.skips += 1
             for p in self.by_base.get(os.path.basename(s), ()):
                 # đuôi khớp cả hai chiều: "lib/x.sh" ⇒ "tests/lib/x.sh"; "ROOT/.claude/bin/x.sh" (sau $ROOT) ⇒ ".claude/bin/x.sh"
@@ -346,9 +364,12 @@ def command_files(project_dir, idx, command):
 _FILE_MEMO = {}
 
 
-def _file_tokens(full, rel):
-    """(token đường dẫn, công cụ được nhắc) của một file, nhớ theo (đường dẫn, mtime, kích thước): một script dùng chung bởi nhiều
-    suite chỉ quét một lần mỗi lượt. None khi không đọc được / nhị phân / quá lớn."""
+_COMMENT_LINE = re.compile(r"^[ \t]*#.*$", re.M)
+
+
+def _file_scan(full, rel):
+    """(token đường dẫn, công cụ được nhắc, token CHỈ có trong dòng comment `#`) của một file, nhớ theo (đường dẫn, mtime, kích thước): một
+    script dùng chung bởi nhiều suite chỉ quét một lần mỗi lượt. None khi không đọc được / nhị phân / quá lớn."""
     try:
         st = os.stat(full)
     except OSError:
@@ -361,6 +382,7 @@ def _file_tokens(full, rel):
         _FILE_MEMO[memo_key] = None
         return None
     toks = set(_PATH_TOKEN.findall(text))
+    prose = toks - set(_PATH_TOKEN.findall(_COMMENT_LINE.sub("", text)))
     if rel.endswith(".py"):
         for a, b in _PY_IMPORT.findall(text):
             for item in (a or b).split(","):
@@ -368,24 +390,30 @@ def _file_tokens(full, rel):
                 mod = words[0] if words else ""
                 toks.update(part + ".py" for part in mod.split(".") if part)
     tools = _tools_in(text)
-    _FILE_MEMO[memo_key] = (toks, tools)
+    _FILE_MEMO[memo_key] = (toks, tools, frozenset(prose))
     return _FILE_MEMO[memo_key]
+
+
+def _file_tokens(full, rel):
+    """(token đường dẫn, công cụ được nhắc) của một file (_file_scan); None khi không đọc được / nhị phân / quá lớn."""
+    info = _file_scan(full, rel)
+    return None if info is None else info[:2]
 
 
 def _file_refs(project_dir, idx, full, rel, here):
     """(file trong cây, [(token, đích ngoài cây)], công cụ) mà một file nhắc tới; nhớ theo file + thư mục của nó: một script dùng
     chung bởi nhiều suite chỉ phân giải một lần mỗi lượt (đo 20/10: 82k lần gọi _external cho 34 suite khi không nhớ)."""
-    info = _file_tokens(full, rel)
+    info = _file_scan(full, rel)
     if info is None:
         return None
     memo = idx.refs_memo
     memo_key = (full, here, id(info))   # info sống trong _FILE_MEMO suốt tiến trình: id của nó không bị cấp lại
     if memo_key not in memo:
-        toks, tools = info
+        toks, tools, prose = info
         refs, outs = set(), []
         skips0 = idx.skips
         for tok in toks:
-            hits = idx.resolve(tok, here)
+            hits = idx.resolve(tok, here, prose=tok in prose)
             refs |= hits
             if not hits:
                 hit = _external(project_dir, tok, here)
@@ -396,14 +424,15 @@ def _file_refs(project_dir, idx, full, rel, here):
 
 
 def closure(project_dir, idx, seeds, ext_seeds=()):
-    """Bao đóng tĩnh: (file trong cây, {token ngoài cây: digest}, công cụ được nhắc, bị cắt?). Bị cắt (quá CLOSURE_MAX_FILES, hay một
-    token chỉ tới thư mục quá DIR_EXPAND_MAX file): danh sách input không đủ — người gọi không được dùng nó làm khoá chính xác."""
+    """Bao đóng tĩnh tới điểm dừng: (file trong cây, {token ngoài cây: digest}, công cụ được nhắc, bị cắt?). Bị cắt (quá CLOSURE_MAX_FILES,
+    hay một dòng lệnh nêu thư mục quá DIR_EXPAND_MAX file): danh sách input không đủ — người gọi không được dùng nó làm khoá chính xác.
+    Mỗi file chỉ vào level một lần (seen) nên vòng lặp dừng sau tối đa số file của cây; _FILE_MEMO / refs_memo giữ chi phí theo số file."""
     seen, ext, tools, cut = set(seeds), {}, set(), False
     level = [(p, os.path.join(str(project_dir), p), os.path.dirname(p)) for p in sorted(seeds)]
     level += [(tok, real, os.path.dirname(tok)) for tok, real in ext_seeds]
     for tok, real in ext_seeds:
         ext[tok] = _file_digest(real)
-    for _depth in range(CLOSURE_DEPTH):
+    while level:
         nxt = []
         for rel, full, here in level:
             if os.path.splitext(rel)[1] not in _SCAN_EXT:
@@ -432,10 +461,6 @@ def closure(project_dir, idx, seeds, ext_seeds=()):
                     ext[tok] = _file_digest(real)
                     nxt.append((tok, real, os.path.dirname(tok)))
         level = nxt
-        if not level:
-            break
-    else:
-        cut = cut or bool(level)   # còn cấp sâu hơn CLOSURE_DEPTH chưa đọc
     return seen, ext, tools, cut
 
 

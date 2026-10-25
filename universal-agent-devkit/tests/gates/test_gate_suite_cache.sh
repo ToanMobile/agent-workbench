@@ -862,6 +862,55 @@ done
 r=$(probe37 covers tree)
 [ "$r" = same ] && ok "37c. covers khác (sổ của checkout) không đổi khoá cả cây" \
   || fail "37c. covers khác đổi khoá cả cây ($r): hai worktree cùng cây không còn dùng chung PASS"
+# 38. Bao đóng không bị cắt oan (audit 25/10 B: 110/112 suite của workbench có bao đóng bị cắt ⇒ khoá chính xác = khoá cả cây, dùng lại ≈ 0).
+#     Hai nguyên nhân đo được: (1) 5 script nhắc một thư mục > DIR_EXPAND_MAX file mà không đọc nó — `$SRC/../..` (regex token bỏ "$",
+#     normpath xoá tên biến như một thư mục thật), `"$PWD/../../.."` trong chuỗi, `nope/../..`, đường dẫn bị ngắt dòng trong comment;
+#     (2) bao đóng sâu hơn 3 cấp. Mỗi ca: đổi file không liên quan ⇒ khoá chính xác GIỮ NGUYÊN; đổi file script thật sự đọc ⇒ khoá ĐỔI.
+#     Script nằm ở deep/bulk/sub/ (deep/bulk > DIR_EXPAND_MAX file) như install-autostart.sh / test_session_lock_trunk.sh.
+mk38() {   # mk38 <thư mục> <nội dung deep/bulk/sub/run.sh>: repo git, REG-P watch run.sh (lệnh true), deep/bulk có 250 file, deep/tool.sh
+  mkdir -p "$1/deep/bulk/sub" "$1/src"; git -C "$1" init -q -b main . && git -C "$1" config user.email t@t && git -C "$1" config user.name t
+  printf '{"project":"t","rules":[{"component":"P","watch_files":["deep/bulk/sub/run.sh"],"mandatory_regression_tests":[{"id":"REG-P","name":"p","command":"true"}]}]}\n' > "$1/matrix.json"
+  python3 -c "import sys; [open('%s/deep/bulk/f%d.txt' % (sys.argv[1], i), 'w').write('x') for i in range(250)]" "$1"
+  printf '%s\n' "$2" > "$1/deep/bulk/sub/run.sh"; echo 'echo tool' > "$1/deep/tool.sh"; echo 'echo r' > "$1/deep/bulk/runner.sh"
+  echo u > "$1/src/unrelated.txt"
+  git -C "$1" add -A && git -C "$1" commit -qm init
+}
+i38=0
+while IFS='|' read -r name line; do
+  i38=$((i38 + 1)); R38="$TMP/r38-$i38"; mk38 "$R38" "$line"
+  r=$(probe_key "$R38" src/unrelated.txt 'changed')
+  [ "$r" = same ] && ok "38a. $name: không cắt khoá chính xác" || fail "38a. $name: thư mục > DIR_EXPAND_MAX bị coi là input ⇒ khoá chính xác bị cắt ($r)"
+done <<'EOF38'
+$SRC/../.. (install-autostart.sh)|FACTORY="$(cd "$SRC/../.." && pwd)/tool.sh"
+$PWD/../../.. trong chuỗi (test_session_lock_trunk.sh)|echo "CLAUDE_PROJECT_DIR=\"$PWD/../../..\" gate"
+$SCRIPT_DIR/../.. (test_x_old_conflict_isolation.sh)|DEVKIT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+nope/../.. trong comment (test_restore_old.sh)|# `..` in the ledger: `nope/../..` (nope missing) must not lead mkdir out of the project
+đường dẫn ngắt dòng trong comment (test_red_proof.sh)|# A runner that lives there (repo: deep/bulk/
+EOF38
+# 38b. file đọc thật qua tiền tố đó vẫn là input: `$(cd "$SRC/../.." && pwd)/tool.sh` ⇒ đổi deep/tool.sh đổi khoá; tên file ở dòng comment
+#      sau đường dẫn bị ngắt (runner.sh) cũng vậy
+R38="$TMP/r38b"; mk38 "$R38" 'FACTORY="$(cd "$SRC/../.." && pwd)/tool.sh"'
+r=$(probe_key "$R38" deep/tool.sh 'echo tool2')
+[ "$r" = diff ] && ok "38b. tool.sh sau tiền tố \$SRC/../.. vẫn là input" || fail "38b. đổi deep/tool.sh mà khoá giữ nguyên ($r)"
+R38="$TMP/r38b2"; mk38 "$R38" "$(printf '# A runner that lives there (repo: deep/bulk/\n#    runner.sh) could never prove a fix')"
+r=$(probe_key "$R38" deep/bulk/runner.sh 'echo r2')
+[ "$r" = diff ] && ok "38b. runner.sh nêu tên ở comment vẫn là input" || fail "38b. đổi deep/bulk/runner.sh mà khoá giữ nguyên ($r)"
+# 38c. đối chứng: dòng LỆNH thật nhắc thư mục lớn (ls deep/bulk; deep/bulk/sub/.. với sub là thư mục có thật) vẫn cắt khoá chính xác
+for line38 in 'ls deep/bulk' 'grep -r x deep/bulk/sub/..'; do
+  i38=$((i38 + 1)); R38="$TMP/r38c-$i38"; mk38 "$R38" "$line38"
+  r=$(probe_key "$R38" src/unrelated.txt 'changed')
+  [ "$r" = diff ] && ok "38c. '$line38' (đọc thư mục lớn thật) vẫn cắt khoá chính xác" \
+    || fail "38c. '$line38' đọc thư mục lớn mà khoá chính xác không bị cắt ($r): input có thể bị bỏ sót"
+done
+# 38d. chuỗi tham chiếu sâu hơn 3 cấp (c1 → c2 → c3 → c4 → c5): bao đóng đi tới điểm dừng, không cắt; đổi c5.sh (cấp 5) đổi khoá
+R38="$TMP/r38d"; mk33 "$R38"
+printf '{"project":"t","rules":[{"component":"P","watch_files":["src/c1.sh"],"mandatory_regression_tests":[{"id":"REG-P","name":"p","command":"true"}]}]}\n' > "$R38/matrix.json"
+for k in 1 2 3 4; do printf '. src/c%d.sh\n' $((k + 1)) > "$R38/src/c$k.sh"; done; echo 'echo end' > "$R38/src/c5.sh"; echo u > "$R38/src/unrelated.txt"
+git -C "$R38" add -A && git -C "$R38" commit -qm init
+r=$(probe_key "$R38" src/unrelated.txt 'changed')
+[ "$r" = same ] && ok "38d. chuỗi 5 cấp: khoá chính xác không bị cắt" || fail "38d. chuỗi 5 cấp bị cắt ở CLOSURE_DEPTH ($r)"
+r=$(probe_key "$R38" src/c5.sh 'echo end2')
+[ "$r" = diff ] && ok "38d. đổi c5.sh (cấp 5) đổi khoá" || fail "38d. đổi c5.sh mà khoá giữ nguyên ($r)"
 }
 
 grp_inflight_est() {   # case 36: hạn marker gộp lượt (inflight) theo lần chạy DÀI NHẤT, không theo trung vị của lớp slot
