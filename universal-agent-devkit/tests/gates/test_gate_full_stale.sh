@@ -74,4 +74,40 @@ import json; d=json.load(open('.agents/regression_status.json'))['items']
 print(','.join(sorted(t for it in d.values() if it.get('kind')=='bug' and 'lesson only in a' in (it.get('title') or '') for t in it.get('tests', []))))")"
 [ "$tests" = "REG-A" ] && ok "--record-lesson: lesson bug linked to the change's suite only" || fail "lesson linked to: '$tests'"
 
+# (audit B1, 25/10) run_impacted.sh (DIFF_DEPENDENT) now runs after the STALE suites --full re-runs, and skips the scripts it is told
+# (DEVKIT_GATE_DONE). A STALE suite is told only after a real PASS: a FAIL or a TIMEOUT can leave the verdict (KNOWN-RED), so
+# run_impacted.sh must still run that script itself.
+export SB_HEAVY_SLOT_DIR="$TMP/slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"   # the stand-in below is cpu class: never the machine's slot pool
+Q="$TMP/q"; mkdir -p "$Q/src/a" "$Q/src/b" "$Q/.agents" "$Q/tests"
+cd "$Q" && git init -q . && git config user.email t@t && git config user.name t
+echo 1 > src/a/x.py; echo 1 > src/b/y.py
+printf 'printf "%%s" "$DEVKIT_GATE_DONE" > "%s/ri_done"\n' "$TMP" > tests/run_impacted.sh   # a run_impacted.sh stand-in
+printf 'test ! -f "%s/qb-fail"\n' "$TMP" > tests/b.sh
+cat > .agents/regression_matrix.active.json <<JSON
+{"adopted": true, "rules":[
+ {"component":"A","watch_files":["src/a/*"],"mandatory_regression_tests":[{"id":"REG-ALL","name":"all","command":"sh tests/run_impacted.sh"}]},
+ {"component":"B","watch_files":["src/b/*"],"mandatory_regression_tests":[{"id":"REG-QB","name":"b","command":"sh tests/b.sh"}]}]}
+JSON
+git add -A && git commit -qm init
+export CLAUDE_PROJECT_DIR="$Q"
+qstale() { echo "$1" >> src/b/y.py && git add -A && git commit -qm "b $1" && sleep 1.1; python3 "$DEVKIT_DIR/bin/regression_checklist.py" render >/dev/null; }
+echo 2 >> src/a/x.py; echo 2 >> src/b/y.py
+env -u DEVKIT_GATE_DONE python3 "$GATE" --run-tests --full --allow-no-tests >/dev/null 2>&1
+git add -A && git commit -qm ran && sleep 1.1
+for c in fail pass; do
+  qstale "$c"
+  if [ "$c" = fail ]; then touch "$TMP/qb-fail"; else rm -f "$TMP/qb-fail"; fi
+  rm -f "$TMP/ri_done"; echo "$c" >> src/a/x.py
+  env -u DEVKIT_GATE_DONE python3 "$GATE" --run-tests --full --allow-no-tests > "$TMP/q.out" 2>&1; rc=$?
+  seen="$(cat "$TMP/ri_done" 2>/dev/null)"
+  case "$c:$seen" in
+    fail:*"/tests/b.sh"*) fail "--full: a STALE suite that FAILED was told to run_impacted.sh (rc=$rc)" ;;
+    fail:*) [ "$rc" = 1 ] && [ -f "$TMP/ri_done" ] && ok "--full: a STALE FAIL is not told to run_impacted.sh, which runs that script itself" \
+              || fail "--full STALE FAIL: rc=$rc runner ran=$([ -f "$TMP/ri_done" ] && echo yes || echo no) $(grep -E 'REG-' "$TMP/q.out" | tail -3)" ;;
+    pass:*"/tests/b.sh"*) [ "$rc" = 0 ] && ok "--full: a STALE PASS is told to run_impacted.sh, which runs after it" || fail "--full STALE PASS: rc=$rc" ;;
+    pass:*) fail "--full: run_impacted.sh was not told the STALE PASS (DEVKIT_GATE_DONE: '$seen', rc=$rc)"; grep -E 'REG-' "$TMP/q.out" | tail -4 ;;
+  esac
+  git add -A && git commit -qm "a $c" && sleep 1.1
+done
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_full_stale: all passed" || { echo "❌ test_gate_full_stale: $FAILS failed"; exit 1; }

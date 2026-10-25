@@ -142,10 +142,13 @@ python3 "$DK/scripts/governance/merge_markdown.py" "$TMP/blk.md" "$TMP/t.md" >/d
 
 # ---------------------------------------------------------------- M-24 sync never deletes a hand-written command
 rm -f "$DK/commands/test.md"; echo "HANDWRITTEN" > "$DK/commands/test.md"
+# A redirect stub an older sync wrote (1.1.0, removed in 1.2.0) carries the marker: sync deletes it.
+printf -- '---\ndescription: "Deprecated alias"\n---\n<!-- devkit:deprecated-alias -->\n' > "$DK/commands/qa.md"
 cp "$DK/skills/qc/SKILL.md" "$TMP/qc.before"
 bash "$DK/scripts/governance/sync_commands.sh" >/dev/null 2>&1
 [ ! -L "$DK/commands/test.md" ] && grep -qx HANDWRITTEN "$DK/commands/test.md" && cmp -s "$DK/skills/qc/SKILL.md" "$TMP/qc.before" \
   && ok "M-24 sync keeps a hand-written command and never writes through into SKILL.md" || fail "M-24 hand-written command replaced"
+[ ! -e "$DK/commands/qa.md" ] && ok "M-24 sync deletes an old deprecated-alias stub" || fail "M-24 old /qa stub left behind"
 
 if [ "$FAILS" -ne 0 ]; then echo "install cli: $FAILS FAILED"; exit 1; fi
 echo "install cli: all checks passed"

@@ -25,11 +25,11 @@ Lệnh này nhận vào câu yêu cầu ngắn gọn của người dùng và xu
 
 ### 2. Từ dòng lệnh Terminal (CLI):
 ```bash
-python3 universal-agent-devkit/scripts/enrich_context.py "<câu yêu cầu của bạn>" --prompt
+python3 .agents/devkit/scripts/context/enrich_context.py "<câu yêu cầu của bạn>" --prompt
 ```
 
 Ví dụ:
 ```bash
-python3 universal-agent-devkit/scripts/enrich_context.py "tối ưu giảm GC allocation trong Unity" --prompt
+python3 .agents/devkit/scripts/context/enrich_context.py "tối ưu giảm GC allocation trong Unity" --prompt
 ```
 Output in ra khối thẻ XML để bạn copy-paste sử dụng trực tiếp ở bất kỳ nền tảng nào.

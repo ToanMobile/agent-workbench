@@ -39,7 +39,7 @@ Skills live in `skills/` (source of truth); `.agents/skills/` and `commands/` li
 | `/audit-gate`, `/postfix-gate` | [audit-gate](commands/audit-gate.md) | Post-fix static diff gate (secrets, placeholders, dependencies, perf, swallowed errors, raw logs) + matrix regression tests | Post-Fix Gate |
 | `/devkit-audit` | [devkit-audit](skills/devkit-audit/SKILL.md) | Daily audit, independent review and optimisation of the DevKit itself on the installed repos (Stop-hook cost first, 100-point rubric, read-only audit agents) | DevKit Maintenance |
 
-**QA ladder:** `/plan-tests` → `/review-code` → `/check` → `/done` + `/audit-gate`. Deprecated stubs (removed in 1.2.0): `/review` → `/plan-tests`, `/qa` & `/test` → `/check`, `/bugs` & `/crashlytics` → `/fix`.
+**QA ladder:** `/plan-tests` → `/review-code` → `/check` → `/done` + `/audit-gate`.
 
 ---
 
@@ -134,10 +134,10 @@ Every platform also gets the git **pre-commit** gate (`agent-kit githooks instal
   | `RED_PROOF` | sandbox RED-proof of this session's bugs/REQs (background) | Stop, `scripts/red_proof.py` |
   | `FLAKY_RETRY` | re-run a failing suite once: a test failed then passed → 🔁 FLAKY (still FAIL); the build broke with no test failing then passed → PASS flagged `infra_retry` | `post-fix-gate`, nightly, stale re-run |
   | `INFRA_RETRY` | a run that lost its results store (Gradle `EOFException` / `results.bin`) is infrastructure: re-run once whatever its length, never marked 🔁 FLAKY | `post-fix-gate` |
-  | `TEST_RUN_LOCK_WAIT_S` (seconds, default 900 from the CLI; the Stop hook passes 45 unless set) | how long the gate waits for `.claude/audit-gate/test_run.lock`, the per-project lock the gate, stale re-run and nightly hold so two runs never share one build dir; past it the tests are BUSY (exit 4, JSON `"busy": true`), never run side by side — the Stop hook says "another run holds the lock, run again later" and caches nothing. Stale re-run and nightly wait at most their suite timeout instead; once they hold the lock the suite gets its whole timeout, so a recorded TIMEOUT is always the suite's own (a job may take up to twice its timeout) | `post-fix-gate`, `hooks/regression_gate.sh`; `scripts/stale_rerun.py`, nightly (lock only) |
-  | `STALE_RERUN` | re-run light STALE suites in the background | SessionStart, `scripts/stale_rerun.py` |
+  | `TEST_RUN_LOCK_WAIT_S` (seconds, default 900 from the CLI; the Stop hook passes 45 unless set) | how long the gate waits for `.claude/audit-gate/test_run.lock`, the per-project lock the gate, stale re-run and nightly hold so two runs never share one build dir; past it the tests are BUSY (exit 4, JSON `"busy": true`), never run side by side — the Stop hook says "another run holds the lock, run again later" and caches nothing. Stale re-run and nightly wait at most their suite timeout instead; once they hold the lock the suite gets its whole timeout, so a recorded TIMEOUT is always the suite's own (a job may take up to twice its timeout) | `post-fix-gate`, `hooks/regression_gate.sh`; `scripts/testing/stale_rerun.py`, nightly (lock only) |
+  | `STALE_RERUN` | re-run light STALE suites in the background | SessionStart, `scripts/testing/stale_rerun.py` |
   | `EVIDENCE_KEEP` | logs kept per test (default 10) | `post-fix-gate` |
-  | `NIGHTLY_NOTIFY` | notification when a row turns red | `scripts/nightly.py` |
+  | `NIGHTLY_NOTIFY` | notification when a row turns red | `scripts/governance/nightly.py` |
 - **Synchronization:** Run `./bin/agent-kit sync` anytime skills, commands, or hooks are updated.
 
 ### 7.1 One Developer, One Branch — and a Worktree only for Parallel Agents
@@ -271,8 +271,8 @@ Bổ sung từ `agency-agents` & `orca` (chuẩn hóa Zero-Defect DevKit):
 - **`real-device-ui-auditor`:** Thẩm định UI Automator accessibility tree, touch target $\ge 48$dp, xác thực proof image thành công.
 - **`game-gc-rendering-auditor`:** Thẩm định Zero-Allocation Update loop, draw call batching, texture compression, Unity/Blender memory.
 - **`token-cost-telemetry-auditor`:** Thẩm định token usage, bảng giá Claude/Gemini, prompt caching savings, 5-minute root cause telemetry.
-- **APFS Worktree Sandbox (`scripts/worktree_sandbox.py`):** Điều phối worktree song song bằng macOS APFS CoW (<100ms, 0-byte đĩa), nạp `.worktreeinclude`, cô lập dependencies và trọng tài so sánh diff chọn Winner.
-- **Token Cost Engine (`scripts/token_cost_tracker.py`):** Bóc tách transcript JSONL và tính toán chi phí token USD cho báo cáo nghiệm thu.
+- **APFS Worktree Sandbox (`scripts/git/worktree_sandbox.py`):** Điều phối worktree song song bằng macOS APFS CoW (<100ms, 0-byte đĩa), nạp `.worktreeinclude`, cô lập dependencies và trọng tài so sánh diff chọn Winner.
+- **Token Cost Engine (`scripts/governance/token_cost_tracker.py`):** Bóc tách transcript JSONL và tính toán chi phí token USD cho báo cáo nghiệm thu.
 
 ### 8.4 Engineering Excellence & Failure Prevention
 - **`DESIGN.md`, touch targets, instant feedback:** `rules/core-rules.md` §6.
