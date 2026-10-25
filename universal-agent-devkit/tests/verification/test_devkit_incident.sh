@@ -286,6 +286,12 @@ echo '[19:00:02] ⚠ #5 in Review — review worker is a no-op 2 times but the c
 scan >/dev/null
 [ "$(creates)" = $((n + 2)) ] && ok "runner không chặn được thẻ no-op → thẻ" || fail "no-op không chặn được mà không có thẻ: create=$(creates)"
 
+# 22b. #397: RUNAWAY của daemon là cảnh báo vận hành (daemon tự hoãn giao việc 10 tick rồi chạy tiếp; GeelyEx2 25/10: tải máy
+#      137 ≥ 36 làm worker chậm, 240 tick chưa thẻ nào Done) — không phải lỗi kit, không thành thẻ. Dạng 🛑 halt vẫn là thẻ (case 23).
+echo '[08:35:05] ⚠ RUNAWAY (daemon): no card reached Done in 240 dispatch cycles — no new dispatch for 300s' >> "$MA"
+n=$(creates); scan >/dev/null
+[ "$(creates)" = "$n" ] && ok "RUNAWAY (daemon) → không thẻ" || fail "RUNAWAY (daemon) sinh thẻ lỗi kit: create=$(creates) (trước $n)"
+
 # 23. Manifest do git theo dõi: checkout / ff ghi lại file (inode mới, birthtime mới) cùng nội dung — không đếm lại,
 #     không mở thẻ "hồi quy" giả sau khi thẻ đã đóng; manifest mới (pull) chỉ chứa dòng cũ cũng vậy.
 #     Tên nhánh của repo app (runner in "on branch '<x>'") không lên issue public và không tách chữ ký.
