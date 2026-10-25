@@ -86,7 +86,8 @@ TRACEBACK = re.compile(r"^Traceback \(most recent call last\):")
 # Python — mọi tên kiểu subprocess.TimeoutExpired / StopIteration, không chỉ đuôi Error/Exception (25/10: runner OfficeReader chết vì
 # TimeoutExpired). Chỉ xét ở dòng không thụt lề ĐẦU TIÊN sau frame; loại đoạn cuối viết thường ("fatal: …", "com.x.app", URL).
 # ponytail: đánh đổi về phía không đăng nhầm lên repo public — bỏ sót exception tên viết thường (socket.gaierror, struct.error) và
-# vẫn nhận một từ viết hoa đứng ngay sau frame (Killed); nới khi thấy Traceback thật bị bỏ sót trong log board.
+# vẫn nhận một từ viết hoa hoặc tên package kiểu Java (Killed, com.x.PrivApp) đứng NGAY sau frame cuối — chỉ khi một tiến trình khác
+# chen đúng chỗ đó (tên đó SẼ lên issue public); nới khi thấy Traceback thật bị bỏ sót trong log board.
 EXC_LINE = re.compile(r"^((?:[A-Za-z_]\w*\.)*[A-Z]\w*(?::.*)?)$")
 FRAME = re.compile(r'^\s*File "([^"]+)", line \d+, in (\S+)')
 
@@ -161,7 +162,7 @@ def read_new(path: Path, offsets: dict, since: float):
         start, after = prev["off"], prev.get("read_at", prev.get("mtime", 0.0))
     clamped = start < st.st_size - MAX_READ
     if clamped:
-        start = st.st_size - MAX_READ
+        start = st.st_size - MAX_READ - 1               # lấy thêm 1 byte trước điểm kẹp: nếu là \n thì dòng đầu còn nguyên, không bỏ nhầm
     try:
         with open(path, "rb") as f:
             f.seek(start)
@@ -214,9 +215,14 @@ def classify_shell(line: str):
 
 def classify_tracebacks(lines: list[str]):
     """Mỗi Traceback → (frame cuối, dòng exception). Chữ ký theo hai thứ đó, không theo số dòng."""
+    # Mọi thứ khớp trên dòng GỐC (chỉ bỏ "\r" cuối của CRLF), y như trước. Ngoại lệ duy nhất: dòng mở đầu "Traceback" có thể đứng sau
+    # "\r" của tiến trình khác (git fetch ghi đè dòng): header khớp theo phần sau "\r" cuối. Không dùng phần đó cho dòng exception:
+    # "\r" trong THÔNG ĐIỆP exception là chữ của chính dòng đó. Chỉ số dòng giữ nguyên: vị trí byte (offs) theo b"\n".
+    lines = [ln.rstrip("\r") for ln in lines]
+    heads = [ln.rsplit("\r", 1)[-1] for ln in lines]
     out, i = [], 0
     while i < len(lines):
-        if not TRACEBACK.match(lines[i]):
+        if not (TRACEBACK.match(lines[i]) or TRACEBACK.match(heads[i])):
             i += 1
             continue
         frames, j, found = [], i + 1, False
@@ -264,7 +270,7 @@ def save_ledger(home: Path, data: dict) -> None:
 
 
 STAMPED = re.compile(r"^\[[\d:\- ]{8,19}\] ")   # "[07:32:45] …" (manifest) / "[2026-10-24 13:00:00] …" (watchdog)
-SEEN_MAX = 2000                                    # dấu vân tay dòng đã đếm, mỗi sự cố
+SEEN_TTL_S = 14 * 86400   # dấu vân tay dòng đã đếm (mỗi sự cố) sống 14 ngày: theo thời gian, không theo số lượng (#391)
 
 
 def record(incidents: dict, fp: str, rule: str, title: str, min_count: int, repo: Path, src: Path, evidence: str,
@@ -284,9 +290,18 @@ def record(incidents: dict, fp: str, rule: str, title: str, min_count: int, repo
         # mới (vẫn là một lần gặp, kể cả hồi quy sau khi thẻ đóng trong cùng ngày).
         key = f"{repo.name}|{raw_line.strip()}" if stamped else f"{repo.name}|{src.name}|{pos}|{raw_line.strip()}"
         uid = hashlib.sha1(key.encode()).hexdigest()[:12]
-        if uid in inc.setdefault("seen", []):
+        seen = inc.get("seen")
+        if not isinstance(seen, dict):   # ledger cũ: danh sách uid → {uid: lúc thấy}
+            seen = inc["seen"] = {u: now for u in seen or []}
+        if uid in seen:
             return
-        inc["seen"] = (inc["seen"] + [uid])[-SEEN_MAX:]
+        # ponytail: trần theo thời gian thay trần 2000 dòng (lỗi in mỗi tick vượt 2000 lần/ngày làm uid cũ rơi khỏi seen, git ghi
+        # lại manifest thì bị đếm lại); manifest git ghi lại sau 14 ngày bị đếm lại, nâng SEEN_TTL_S khi thấy hồi quy giả như vậy.
+        seen[uid] = now
+        oldest = next(iter(seen))   # dict giữ thứ tự chèn = thứ tự thời gian: bỏ từ đầu tới mục còn hạn, không quét hết
+        while now - seen[oldest] > SEEN_TTL_S:
+            del seen[oldest]
+            oldest = next(iter(seen))
     inc["count"] += 1
     inc["last"] = now
     inc["last_after"] = max(inc.get("last_after", 0.0), after)
