@@ -83,8 +83,10 @@ DEFAULT_ALWAYS_HUMAN = {
                      r"|handle(?:card|next)action|retrieve(?:payment|setup)intent|paymentrequest|init\w*checkout)\s*\(",
                      # Go `&stripe.ChargeParams{` (literal luôn có `{`; `&stripe.drawParams)` là con trỏ đồ hoạ), gói Go
                      # `charge.New(`/`refund.New(` theo ranh giới từ (`recharge.New(` vẫn auto), Java khi import nằm ngoài diff:
-                     # `PaymentIntent.create(`, `Charge.create(`, `SessionCreateParams`.
-                     r"&stripe\.\w+params\s*\{", r"\b(?:charge|refund)\.new\(", r"\b(?:paymentintent|charge|refund)\.create\(",
+                     # `PaymentIntent.create(`, `Charge.create(`, `SessionCreateParams`. Không có `.` đứng trước: thuộc tính
+                     # của model khác (`battery.charge.create(`) vẫn auto; `stripe.Charge.create(` đã có luật động từ ở trên.
+                     r"&stripe\.\w+params\s*\{", r"(?<![\w.])(?:charge|refund)\.new\(",
+                     r"(?<![\w.])(?:paymentintent|charge|refund)\.create\(",
                      r"\b(?:paymentintent|charge|refund|session|subscription|invoice|customer|price|product)createparams\b"],
     },
     "auth": {

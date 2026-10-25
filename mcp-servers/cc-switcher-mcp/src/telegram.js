@@ -456,14 +456,21 @@ function parseApprovalRequest(body) {
   const lines = body.split(/\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/).filter((line) => line.startsWith(REQUEST_PREFIX));
   if (lines.length !== 1) return null;
   let value;
+  // parse_request đòi `type(pr) is int`: json.loads đọc `20.0`/`2e1` thành float và từ chối, JSON.parse thì ra 20. Giữ văn bản
+  // gốc của `pr` (đối số thứ ba của reviver, Node >= 21) để từ chối như gate; Node 20 không có thì như trước (gate vẫn từ chối).
+  const prSources = [];
   try {
-    value = JSON.parse(lines[0].slice(REQUEST_PREFIX.length));
+    value = JSON.parse(lines[0].slice(REQUEST_PREFIX.length), function reviver(key, v, context) {
+      if (key === 'pr') prSources.push([this, context?.source]);
+      return v;
+    });
   } catch {
     return null; // JSON hỏng: gate cũng coi là request không khớp
   }
+  const prSource = prSources.find(([holder]) => holder === value)?.[1];
   const ok = value && typeof value === 'object' && !Array.isArray(value)
     && typeof value.repo === 'string' && /^[^/\s]+\/[^/\s]+$/.test(value.repo)
-    && Number.isInteger(value.pr) && value.pr >= 1
+    && Number.isInteger(value.pr) && value.pr >= 1 && (prSource === undefined || /^\d+$/.test(prSource))
     && typeof value.head === 'string' && /^[0-9a-f]{40}$/.test(value.head)
     && typeof value.scope === 'string' && /^[0-9a-f]{64}$/.test(value.scope);
   return ok ? value : null;

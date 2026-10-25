@@ -121,6 +121,13 @@ check "unity InitiatePurchase(" 'controller.InitiatePurchase(productId);' '' mon
 check "go stripe.Key = \`sk_test_…\` (raw string)" 'stripe.Key = `sk_test_abc123`' '' money
 # Luật `&stripe.XxxParams{` có ca dương riêng (ca charge.New( ở trên còn khớp luật gói Go).
 check "go &stripe.PaymentIntentParams{ đứng riêng" 'params := &stripe.PaymentIntentParams{Amount: stripe.Int64(100)}' '' money
+# OCR vòng cuối: luật gói/lớp trần (`charge.New(`, `Charge.create(`) không bắt thuộc tính của model khác (`battery.charge`).
+check "đối chứng âm: battery.charge.create(cfg)" 'battery.charge.create(cfg);' '' auto
+check "đối chứng âm: ev.charge.New(opts)" 'c := ev.charge.New(opts)' '' auto
+check "đối chứng âm: order.refund.create(x)" 'order.refund.create(x);' '' auto
+# Khoá hành vi: template literal có tiền tố khoá thật vẫn cần người (luật sk_live_); so sánh `==` không phải gán khoá.
+check "stripe.key = \`sk_live_\${suffix}\`" 'stripe.key = `sk_live_${suffix}`;' '' money
+check "đối chứng âm: stripe.key == x" 'if (stripe.key == x) return;' '' auto
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_policy_money_keywords: PASS"; exit 0; } || { echo "test_merge_policy_money_keywords: FAIL ($FAILS)"; exit 1; }

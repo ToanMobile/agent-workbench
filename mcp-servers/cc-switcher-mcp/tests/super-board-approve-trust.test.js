@@ -170,6 +170,15 @@ test('nguồn như gate: `Closes\\u00a0#9` và `cloſes #9` vẫn liên kết #9
   }
 });
 
+// OCR 25/10: parse_request đòi `type(pr) is int`; json.loads đọc `164.0`/`1.64e2` thành float nên gate từ chối request.
+// JSON.parse đọc ra 164 (Number.isInteger đúng) ⇒ nút báo thành công, gate vẫn giữ PR.
+for (const pr of ['164.0', '1.64e2']) {
+  test(`request "pr": ${pr} (gate đọc ra float) không được duyệt`, async () => {
+    const { posted } = await press({ 9: [comment('owner', request(pr, HEAD), 0)] });
+    assert.deepEqual(posted, []);
+  });
+}
+
 test('nguồn như gate: record.source khác PR và không liên kết thì không đọc, không ghi done lên đó', async () => {
   const { posted } = await press({ 77: [comment('owner', request(164, HEAD), 0)] }, { body: '' }, 77);
   assert.deepEqual(posted, []);
