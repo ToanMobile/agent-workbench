@@ -527,14 +527,12 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None):
     plain `git worktree remove`, which a lock left by a dead worker would block. Returns the worktree locked, None otherwise.
     #406: the payload cwd follows the session's `cd`. compact and /clear keep the same claude process, whose lock (taken at its start or
     at EnterWorktree) still holds - a new one there would lock whatever worktree the session merely stands in, another session's
-    included. So only a new process (startup, resume, fork; no source: as before) locks, and a resume / fork not when its pid already
-    holds a devkit-kept lock on another worktree of the repo (an in-session /resume after a `cd`; a fresh startup can match a lock's pid
-    only through pid reuse, OCR 25/10).
-    No veto by "another session owns this worktree" (#415 had one, reverted 25/10 after seven review rounds): owner identity at
-    SessionStart rests on weak signals (state sid, lock sid, record pid, locks gc already opened), and every refinement left a real owner
-    unlocked - cleanup-wt then removes its merged worktree mid-gate, the incident #406 is about. Without it a session that holds no lock,
-    `cd`s into a peer's unlocked worktree and resumes there locks it: the peer's worktree is kept too long, nothing is lost. Accepted,
-    fail-safe trade-off (#413)."""
+    included. So only a new process (startup, resume, fork; no source: as before) locks.
+    No veto beyond that (#415 had two - "another session owns this worktree", and "this pid already holds a lock elsewhere" for an
+    in-session /resume after a `cd` - both reverted 25/10 after seven review rounds): owner identity at SessionStart rests on weak signals
+    (state sid, lock sid, record pid, locks gc already opened), and every refinement left a session's real worktree unlocked - cleanup-wt
+    then removes it mid-gate, the incident #406 is about. Without them a resumed session locks the worktree it stands in, a peer's
+    included: that worktree is kept too long, nothing is lost. Accepted, fail-safe trade-off (#413)."""
     if source in ("compact", "clear") or not main or not here or not trunk_mode(main, env):
         return None
     t = tree_of(here)
@@ -542,12 +540,6 @@ def lock_started_worktree(main, here, sid, pid, env=None, source=None):
         return None
     if _BOARD_WT.fullmatch(os.path.basename(t[0])) and os.path.basename(os.path.dirname(t[0])) in ("worktrees", ".worktrees"):
         return None
-    real = os.path.realpath(t[0])
-    for path, reason in (_worktree_locks(_git_in(main)) or {}).items() if source in ("resume", "fork") else ():
-        m = KEPT_RE.fullmatch(reason)
-        st = kept_start(path, pid) if m and path != real and int(m.group(2)) == pid else None
-        if st and pid_start_token(pid) == st:   # positive proof only (review 19b991f8): no start time, or ps failing, locks as before #415
-            return None
     return t[0] if _kept_lock(main, t[0], sid, pid) else None
 
 

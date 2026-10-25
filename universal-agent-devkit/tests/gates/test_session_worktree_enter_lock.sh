@@ -123,11 +123,12 @@ start_src "$TMP/h" resumed s25 resume
 lk="$(lock_of "$TMP/h" resumed)"
 [ "$lk" = "devkit-kept session=s25 pid=$$" ] && ok "E11: a shell resume (new process) in its worktree takes the lock over from the dead pid" \
   || fail "E11: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
-# E12: /resume trong phiên (cùng tiến trình) sau khi cd vào worktree khác: pid đã giữ khoá worktree của nó, không khoá thêm
+# E12 (review 81b920db): /resume trong phiên (cùng tiến trình) sau khi cd vào worktree khác: vẫn khoá nơi nó đứng (fail-safe, #413) —
+#   bỏ qua thì cleanup-wt có thể gỡ worktree đó giữa gate; khoá worktree cũ của nó vẫn nguyên
 repo i true; wtadd "$TMP/i" own s26; enter "$TMP/i" own s26; wtadd "$TMP/i" other s27
 start_src "$TMP/i" other s28 resume
 lk="$(lock_of "$TMP/i" other)"
-[ -z "$lk" ] && [ -n "$(lock_of "$TMP/i" own)" ] && ok "E12: an in-session /resume after a cd does not lock a second worktree (the pid already holds one)" \
+[ "$lk" = "devkit-kept session=s28 pid=$$" ] && [ -n "$(lock_of "$TMP/i" own)" ] && ok "E12: an in-session /resume after a cd locks where it stands (its earlier worktree keeps its lock)" \
   || fail "E12: other='$lk' own='$(lock_of "$TMP/i" own)'"
 # E13 (OCR 25/10): một tiến trình MỚI (startup) chỉ trùng pid với khoá ở worktree khác khi pid bị cấp lại: nó vẫn khoá worktree của nó
 wtadd "$TMP/i" fresh s29; start_src "$TMP/i" fresh s29 startup
