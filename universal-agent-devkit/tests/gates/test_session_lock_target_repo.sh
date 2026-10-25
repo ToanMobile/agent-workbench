@@ -95,6 +95,11 @@ cases = [
     ("from B: CLAUDE_PROJECT_DIR=\"$PWD\"/../locked post-fix-gate", lambda: bash(f'CLAUDE_PROJECT_DIR="$PWD"/../locked python3 {GATE} --run-tests --full', cwd=B), 2),
     ("W=B; git -C $W commit", lambda: bash(f"W={B}; git -C $W commit -m x"), 0),
     ("from B: W=A; git -C $W commit", lambda: bash(f"W={A}; git -C $W commit -m x", cwd=B), 2),
+    # review 25/10 of d6b6d57c: bash ignores a comment, the walk read it as segments (`# note; W=B` set W=B) - commit went into held A
+    ("from B: W=A <nl> # note; W=B <nl> git -C $W commit", lambda: bash(f"W={A}\n# note; W={B}\ngit -C $W commit -m x", cwd=B), 2),
+    ("from B: W=A # W=B (trailing comment) <nl> git -C $W commit", lambda: bash(f"W={A} # W={B}\ngit -C $W commit -m x", cwd=B), 2),
+    ("from B: cd A # ; cd B <nl> git commit", lambda: bash(f"cd {A} # ; cd {B}\ngit commit -m x", cwd=B), 2),
+    ("from A: W=B # note <nl> git -C $W commit (the comment hides nothing)", lambda: bash(f"W={B} # note\ngit -C $W commit -m x"), 0),
     ("git merge-base --is-ancestor (read-only)", lambda: bash("git merge-base --is-ancestor a b"), 0),
     ("git merge-tree --write-tree (read-only)", lambda: bash("git merge-tree --write-tree a b"), 0),
     ("git commit-tree (writes an object, no ref)", lambda: bash("git commit-tree T -p a -m m"), 0),

@@ -46,6 +46,7 @@ import re
 import stat
 import sys
 import time
+from collections import ChainMap   # `re` imports collections already: no extra import cost per hook call
 # subprocess is imported where git really has to run (2026-10-09: it cost ~7 ms of every PreToolUse call; see _find_git)
 
 LOCK = "devkit-session.lock"
@@ -1328,10 +1329,13 @@ _SHELL_COMPOUND = _Re(r"(?:^|[\s;&|(])(?:if|then|elif|else|fi|for|select|while|u
 _SOURCES = _Re(r"^\s*(?:source|\.|eval)(?:\s|$)")
 
 
-def _name_bound(name, text):
-    """`text` names the variable other than as a plain $NAME / ${NAME} reference (`NAME=x cmd`, `read NAME`, `${NAME:=x}`, `for NAME in`)."""
-    rest = re.sub(r"\$(?:%s(?!\w)|\{%s\})" % (name, name), "", text)
-    return re.search(r"(?<!\w)%s(?!\w)" % name, rest) is not None
+_IDENT = _Re(r"(?<!\w)[A-Za-z_]\w*")
+
+
+def _names_bound(text):
+    """The variable names `text` mentions other than as a plain $NAME / ${NAME} reference (`NAME=x cmd`, `read NAME`, `${NAME:=x}`,
+    `for NAME in`). One pass over the text: a walk that tested every known name per segment was quadratic (review 25/10)."""
+    return set(_IDENT.findall(_VAR_REF.sub("", text)))
 
 
 def _track_vars(values, seg, sure):
@@ -1347,7 +1351,7 @@ def _track_vars(values, seg, sure):
     elif _SOURCES.match(seg):
         values.clear()
     else:
-        for name in [n for n in values if _name_bound(n, seg)]:
+        for name in _names_bound(seg) & values.keys():
             values.pop(name)
 
 
@@ -1362,15 +1366,15 @@ def write_hits_locked(cmd, top, cwd, sid=""):
     $NAME a variable _track_vars knows (audit 25/10 A.4)."""
     locked = os.path.realpath(top) if top else None
     cur = cwd or top
-    pieces = _split_segments(cmd)   # segment, separator, segment, ...
-    pwd_ok = not _name_bound("PWD", cmd)
-    values = None if _SHELL_COMPOUND.search(cmd) else {}
+    # the walk reads the line without its comments, as trunk mode's _bash_trunk_write does: bash ignores `# note; W=B`, the split did not
+    # (review 25/10: from B, `W=A <nl> # note; W=B <nl> git -C $W commit` passed while A was held)
+    text = _clean(cmd)
+    pieces = _split_segments(text)   # segment, separator, segment, ...
+    pwd_ok = "PWD" not in _names_bound(text)
+    values = None if _SHELL_COMPOUND.search(text) else {}
 
-    def known():
-        k = {n: v for n, v in (values or {}).items() if n != "PWD"}
-        if pwd_ok and cur:
-            k["PWD"] = cur
-        return k
+    def known():   # a view, not a copy per segment (review 25/10: copying every known name per cd / git segment was quadratic)
+        return ChainMap({"PWD": cur if pwd_ok and cur else None}, values or {})
 
     seen, hits_top, foreign, named, opened = False, False, None, False, False
     for i in range(0, len(pieces), 2):
