@@ -340,8 +340,15 @@ def on_tool_use(payload, env=None):
     if tool == "EnterWorktree":
         wt = _entered_path(payload)
         t = tree_of(wt) if isinstance(wt, str) and wt else None
-        if t and t[1] and write_record(main, sid, t[0], pid=holder_pid()):
-            _kept_lock(main, t[0], sid, None, unlock=True)   # quay lại worktree đã "keep": bản ghi phiên lại giữ nó, bỏ khoá để ExitWorktree remove gỡ được
+        pid = holder_pid()
+        if t and t[1] and write_record(main, sid, t[0], pid=pid):
+            if trunk_mode(main, env):
+                # 25/10: cleanup-wt (mọi bản đã cài chỉ chừa worktree bị khoá) gỡ worktree đã gộp ngay lúc phiên đang chạy gate trong đó.
+                # Khoá devkit-kept suốt lúc phiên ở trong: ExitWorktree remove đi qua WorktreeRemove -> `worktree remove` của kit, lệnh
+                # này mở khoá của chính phiên gọi; pid chết thì khoá vô hiệu (automerge / remove mở như K11).
+                _kept_lock(main, t[0], sid, pid)
+            else:   # trunk mode tắt: harness tự `git worktree remove` khi ExitWorktree remove, khoá sẽ chặn nó (như trước)
+                _kept_lock(main, t[0], sid, None, unlock=True)
             return "entered " + t[0]
         return ""
     if tool == "ExitWorktree":
