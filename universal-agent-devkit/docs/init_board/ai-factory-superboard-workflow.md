@@ -120,7 +120,7 @@ Vì sao không dùng các cách khác:
 | OfficeReader | `/Volumes/Data/Toan/OfficeReader/OfficeReader` | #2 | `finos_team` |
 | Goods-Triple-Shelf-Match-3D | `/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D` | #3 | `finos` |
 | GeelyEx2 | `/Volumes/Data/Toan/GeelyEx2` | #4 | `finos_team` |
-| Neighbours-From-Hell | `/Volumes/Data/Toan/Game/Neighbours-From-Hell` | #5 | `finos` |
+| Idle-Plaza-3D | `/Volumes/Data/Toan/Game/Idle-Plaza-3D` | #5 | `finos` |
 | Humans-vs.-UFOs | `/Volumes/Data/Toan/Game/Humans-vs.-UFOs` | #6 | `finos` |
 
 Cài super-board vào một repo mới:
@@ -290,7 +290,7 @@ REPOS=(
   "/Volumes/Data/Toan/OfficeReader/OfficeReader:OfficeReader:finos_team"
   "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D:Goods-Triple:finos"
   "/Volumes/Data/Toan/GeelyEx2:GeelyEx2:finos_team"
-  "/Volumes/Data/Toan/Game/Neighbours-From-Hell:Neighbours:finos"
+  "/Volumes/Data/Toan/Game/Idle-Plaza-3D:Idle-Plaza-3D:finos"
   "/Volumes/Data/Toan/Game/Humans-vs.-UFOs:Humans-vs-UFOs:finos"
 )
 
