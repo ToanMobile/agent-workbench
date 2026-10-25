@@ -4455,10 +4455,12 @@ def _reap_merged(main, here, dry, log, logged):
     the REGISTERED worktrees of <main>/.claude/worktrees/ whose work is integrated, and deletes the local branches the trunk holds. A
     worktree goes only when all of this holds, every check made before anything is touched (also with --dry-run): it is a direct child of
     that folder (realpath, not a link); it is not super-board's (board_worktree: the board's sweep judges those with its lanes, grace time
-    and issue state) nor the one this runs in; nobody holds it (_held, _live_holder); it is not fresh (_fresh); its branch is in no open
-    PR, as head or base (with a remote ref and gh unable to say: kept); its HEAD is integrated (_integrated); and removal_blockers() - the
-    rule of `worktree remove` - is empty. The removal is `remove`'s (its branch goes when the trunk holds it and no remote ref is left,
-    with a fallback copy). A local branch no worktree checks out goes (_branch_in_main: the commits only its reflog names are kept in
+    and issue state) nor the one this runs in; nobody holds it (_held, _live_holder - asked again right before the removal); it is not
+    fresh (_fresh: made or used in the last GC_FRESH_S); its branch is in no open PR, as head or base (with a remote ref and gh unable to
+    say: kept); its HEAD is integrated (_integrated); its own claude-auto folder holds no note main lacks (_unsaved_memory); and
+    removal_blockers() - the rule of `worktree remove` - is empty. None when <main>/.claude or .claude/worktrees is a symlink. The removal
+    is `remove`'s (its branch goes when the trunk holds it and no remote ref is left, with a fallback copy). A local branch no worktree
+    uses (_branches_in_use: checked out, mid-rebase, mid-bisect) goes (_branch_in_main: the commits only its reflog names are kept in
     refs/devkit/discarded) when the trunk holds its content and no remote ref is left; never the trunk, a protected or a board branch.
     Not done here: registrations whose folder is gone (`git worktree prune` would delete their HEAD reflog), worktrees outside
     .claude/worktrees/ (a person's), remote branches (`prune-branch --remote`). Returns how many it removed (or would)."""
