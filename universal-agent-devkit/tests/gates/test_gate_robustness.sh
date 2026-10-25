@@ -300,4 +300,23 @@ printf '%s\n' "$OUT" | grep -qE "TIMEOUT.*REG-H" && ! printf '%s\n' "$OUT" | gre
   && ok "A14: control: heavy load, the suite ran and TIMED OUT (status TIMEOUT, exit 1)" || bad "A14: control: no TIMEOUT status for REG-H under heavy load (rc=$RC): $(printf '%s' "$OUT" | grep REG-H | head -3)"
 printf '%s\n' "$OUT" | grep -q "HANG" && bad "A14: control: a timeout under heavy load must not be called HANG" || ok "A14: control: heavy load, the timeout is not called HANG"
 
+# ── A15 (#370 sau dda818bb): run_impacted.sh chạy mỗi bài qua tests/lib/run_bounded.py, lệnh của bài nằm trong session / process group
+# RIÊNG. Ảnh chụp ps lúc quá giờ lọc theo pgid của suite thì chỉ còn shell và helper, mất đúng tiến trình lá đang kẹt. Ảnh phải đi theo
+# cây tiến trình (ppid). Số 307 chỉ được tính trong tiến trình lá ($((300+7))), nên "sleep 307" không có trong argv của tổ tiên nào.
+mk hangleaf
+"$PY" - "$PY" "$DEVKIT_DIR/tests/lib/run_bounded.py" > matrix.json <<'EOF'
+import json, shlex, sys
+cmd = 'echo "running tests/test_stuck_leaf.sh"; ' + shlex.join([sys.argv[1], "-I", sys.argv[2], "300", "--", "sh", "-c", "exec sleep $((300+7))"])
+print(json.dumps({"project": "t", "rules": [{"component": "Core", "watch_files": ["src/*"],
+                  "mandatory_regression_tests": [{"id": "REG-L", "name": "leaf", "command": cmd}]}]}))
+EOF
+git add -A && git commit -qm matrix
+printf 'def f():\n    return 2\n' > src/core.py
+DEVKIT_CAPACITY_LOAD=0.5 gate --run-tests --full --timeout 3
+expect_rc "A15: a suite whose stuck process sits in its own session fails the gate" 1
+printf '%s\n' "$OUT" | grep -q "HANG" && printf '%s\n' "$OUT" | grep -q "tests/test_stuck_leaf.sh" \
+  && ok "A15: the timeout is reported as HANG with the last test line" || bad "A15: no HANG / last test line: $(printf '%s' "$OUT" | grep REG-L | head -3)"
+printf '%s\n' "$OUT" | grep -q "sleep 307" && ok "A15: the snapshot carries the stuck leaf in its own session (process tree, not pgid)" \
+  || bad "A15: the snapshot lost the stuck leaf in its own session: $(printf '%s' "$OUT" | grep -A8 'HANG\|PPID' | head -12)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_robustness: all tests passed" || { echo "❌ test_gate_robustness: $FAILS failed"; exit 1; }

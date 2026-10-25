@@ -3959,7 +3959,7 @@ def _signal_group(proc, sig) -> None:
             proc.send_signal(sig)
 
 
-# #370: run_in_group appends this marker and a `ps` snapshot of the suite's process group to the output of a suite it had to stop,
+# #370: run_in_group appends this marker and a `ps` snapshot of the suite's process tree to the output of a suite it had to stop,
 # taken BEFORE the TERM — afterwards the stuck process is gone and "where it hung" with it. _run_suite splits it off again.
 HANG_SNAPSHOT_MARK = "\n# --- process snapshot at timeout (ps) ---\n"
 # a line of the suite output that names a test (the last one is where it hung); with none, the last line of output
@@ -3967,14 +3967,30 @@ HANG_TEST_LINE = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")
 
 
 def _timeout_snapshot(pgid: int) -> str:
-    """`ps` lines (header + every process) of the process group pgid; the failure itself when ps cannot run (nothing is hidden)."""
+    """`ps` lines (header + at most 12 processes) of the suite pgid: its process group AND every descendant of its leader by ppid,
+    leaves first, deepest first; the failure itself when ps cannot run (nothing is hidden). 25/10: run_impacted.sh runs each test
+    through tests/lib/run_bounded.py, whose command sits in a session of its own (setsid) — filtered by pgid alone the snapshot kept
+    only the runner and the helper, never the stuck leaf (a gate under test blocked in open() of a FIFO) nor the test's name."""
     try:
         r = subprocess.run(["ps", "-axo", "pid,ppid,pgid,stat,etime,command"], capture_output=True, text=True, errors="replace", timeout=5)
     except (OSError, subprocess.SubprocessError) as exc:
         return f"(ps failed: {exc!r})"
     lines = r.stdout.splitlines()
-    mine = [ln for ln in lines[1:] if len(ln.split(None, 3)) >= 3 and ln.split(None, 3)[2] == str(pgid)]
-    return "\n".join(lines[:1] + mine[:12])
+    rows = [(f[0], f[1], f[2], ln) for ln in lines[1:] for f in [ln.split(None, 5)] if len(f) >= 3 and f[0].isdigit() and f[1].isdigit()]
+    kids: dict = {}
+    for pid, ppid, _, _ in rows:
+        kids.setdefault(ppid, []).append(pid)
+    depth, todo = {str(pgid): 0}, [str(pgid)]   # leader pid == pgid (start_new_session); visited = depth's keys
+    while todo:
+        p = todo.pop()
+        for c in kids.get(p, ()):
+            if c not in depth:
+                depth[c] = depth[p] + 1
+                todo.append(c)
+    mine = [row for row in rows if row[0] in depth or row[2] == str(pgid)]
+    parents = {ppid for _, ppid, _, _ in mine}
+    mine.sort(key=lambda row: (row[0] in parents, -depth.get(row[0], 0)))   # stable: ps order on ties
+    return "\n".join(lines[:1] + [row[3] for row in mine[:12]])
 
 
 def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
