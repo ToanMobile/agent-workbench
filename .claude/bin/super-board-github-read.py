@@ -285,7 +285,8 @@ def validate(text, kind, meta=None):
         # Split on \n only: splitlines() also breaks on VT, FF, U+2028 and friends,
         # which can sit inside a changed line and look like missing hunk data.
         lines = text.split('\n')
-        require(sum(line.startswith('diff --git ') for line in lines) == len(files), 'diff file list incomplete')
+        # Distinct headers: a type change (file <-> symlink) is two blocks with one header for one changed file (PR #424).
+        require(len({line for line in lines if line.startswith('diff --git ')}) == len(files), 'diff file list incomplete')
         added = removed = 0
         old_left = new_left = 0
         for line in lines:

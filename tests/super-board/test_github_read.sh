@@ -242,5 +242,31 @@ n=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["files"]
 [ "$rc" = 0 ] && [ "$n" = 103 ] && [ ! -e "$TMP/halt.json" ] && ok "type change (two REST entries, one path): 103 files, no halt" \
   || fail "type-change PR: rc=$rc files=$n halt=$( [ -e "$TMP/halt.json" ] && echo yes || echo no) err=$(head -c 200 "$TMP/err")"
 rm -f "$TMP/halt.json"
+# The diff of that type change also has two `diff --git` blocks with the same header (deleted file + new symlink): one
+# changed file, so the diff check counts distinct headers. A block really missing is still incomplete evidence.
+mkdir -p "$TMP/tcdiff"
+{ printf 'diff --git a/s.md b/s.md\ndeleted file mode 100644\nindex 1111111..0000000\n--- a/s.md\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n'
+  printf 'diff --git a/s.md b/s.md\nnew file mode 120000\nindex 0000000..2222222\n--- /dev/null\n+++ b/s.md\n@@ -0,0 +1 @@\n+../t.md\n\\ No newline at end of file\n'
+  printf 'diff --git a/u.txt b/u.txt\nnew file mode 100644\nindex 0000000..3333333\n--- /dev/null\n+++ b/u.txt\n@@ -0,0 +1 @@\n+u\n'; } > "$TMP/tcdiff/full.diff"
+sed -n '1,16p' "$TMP/tcdiff/full.diff" > "$TMP/tcdiff/short.diff"   # u.txt block cut off
+printf '{"files":[{"path":"s.md"},{"path":"u.txt"}],"additions":2,"deletions":2}' > "$TMP/tcdiff/meta.json"
+cat > "$TMP/tcdiff/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" pr diff 171 "*) cat "$TC_DIR/full.diff" ;;
+  *" pr diff 172 "*) cat "$TC_DIR/short.diff" ;;
+  *" api rate_limit "*) echo '{"resources":{}}' ;;
+  *) echo 'unexpected' >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP/tcdiff/gh"
+rc=$(TC_DIR="$TMP/tcdiff" SB_GITHUB_READ_STRICT=1 PATH="$TMP/tcdiff:$PATH" run --kind diff --meta "$TMP/tcdiff/meta.json" -- pr diff 171 --repo o/r)
+[ "$rc" = 0 ] && [ ! -e "$TMP/halt.json" ] && ok "type-change diff (same header twice, one path): read, no halt" \
+  || fail "type-change diff: rc=$rc halt=$( [ -e "$TMP/halt.json" ] && echo yes || echo no) err=$(head -c 200 "$TMP/err")"
+rm -f "$TMP/halt.json"
+rc=$(TC_DIR="$TMP/tcdiff" SB_GITHUB_READ_STRICT=1 PATH="$TMP/tcdiff:$PATH" run --kind diff --meta "$TMP/tcdiff/meta.json" -- pr diff 172 --repo o/r)
+[ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && ok "diff missing a file's block: still incomplete evidence (halt in strict mode)" \
+  || fail "short diff accepted: rc=$rc"
+rm -f "$TMP/halt.json"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_github_read: all passed" || { echo "❌ test_github_read: $FAILS failed"; exit 1; }
