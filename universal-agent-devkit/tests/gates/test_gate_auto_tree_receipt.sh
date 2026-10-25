@@ -151,13 +151,21 @@ R=$(receipt_path)
 DEVKIT_AUTO_APPROVE_TESTS=1 CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --matrix "$TMP/repo/matrix.json" --run-tests --full --force-full --lang en --diff origin/main > "$TMP/out" 2>&1; rc=$?
 [ "$rc" = 0 ] && [ ! -e "$R" ] && ok "DEVKIT_AUTO_APPROVE_TESTS=1 with a verify line lacking the flag: no receipt" || fail "rc=$rc, receipt present=$([ -e "$R" ] && echo yes || echo no)"
 
-# 12c. the flag only inside a shell comment of the verify line is not carried by it (OCR P3): no receipt for a run that used the flag
-VERIFY_CMD="python3 $GATE --run-tests --full --brief # --allow-no-tests"
+# 12c. a flag only glued into a longer word of the verify line is not a flag it carries (token compare, not substring; OCR P3). A `# comment` never gets
+#      this far: the shape check refuses `#` outright (exit 65), which is also why 12c uses a word instead of a comment.
+VERIFY_CMD="python3 $GATE --run-tests --full --brief --note=--allow-no-tests"
 make_repo with-config
 R=$(receipt_path)
 CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$GATE" --matrix "$TMP/repo/matrix.json" --run-tests --full --force-full --lang en --allow-no-tests --diff origin/main > "$TMP/out" 2>&1; rc=$?
-[ "$rc" = 0 ] && [ ! -e "$R" ] && ok "a flag named only in a comment of the verify line: no receipt" || fail "rc=$rc, receipt present=$([ -e "$R" ] && echo yes || echo no)"
+[ "$rc" = 0 ] && [ ! -e "$R" ] && ok "a flag only inside a longer word of the verify line: no receipt" || fail "rc=$rc, receipt present=$([ -e "$R" ] && echo yes || echo no)"
 VERIFY_CMD="python3 $GATE --run-tests --full --brief"
+for GOOD in 'post-fix-gate.py --full' './post-fix-gate.py --full' 'python3 ./post-fix-gate.py --full --brief'; do
+  make_repo with-config
+  jq --arg c "$GOOD" '.verify_commands = [$c]' .claude/super-board/configs/t.json > "$TMP/cfg" && mv "$TMP/cfg" .claude/super-board/configs/t.json
+  git add -A && git commit -qm cfg5
+  bash .claude/bin/super-board-verify-cmd.sh --config .claude/super-board/configs/t.json --mark --tree "$(git rev-parse 'HEAD^{tree}')" >/dev/null 2>"$TMP/err"; rc=$?
+  [ "$rc" = 0 ] && ok "--mark accepts the plain gate line '$GOOD'" || fail "'$GOOD': exit $rc: $(cat "$TMP/err")"
+done
 
 # 13. a commit made WHILE the run executes (the tree at the end is clean but was never tested): the receipt keys the tree the run STARTED on, so none is written
 make_repo with-config

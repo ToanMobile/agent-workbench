@@ -945,9 +945,12 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if not is_error and _command_is_direct_bash_kit(command):
             clean = ANSI_RX.sub("", txt)
             lines = [l for l in clean.splitlines() if l.strip()]
-            # Its own failure summary is a RED verdict (it replaces an earlier green, which `None` would not): `pass=2 fail=1`, `failed: 3`, `errors=2`,
-            # a TAP `not ok`, an uppercase FAIL/ERROR line. The counter forms are case-insensitive, the anchored line forms are not (`fail-closed … ✔` passes).
-            if re.search(r"(?i:\b(?:fail(?:ed|ures?|ing)?|errors?)\s*[:=]\s*[1-9]\d*)|^\s*(?:FAIL(?:ED)?|ERRORS?)\b|(?i:^not ok\b)", clean, re.M):
+            # Its own failure SUMMARY is a RED verdict (the RED of a RED→GREEN pair; `None` would drop it): `pass=2 fail=1`, a line that STARTS with
+            # `failed: 3` / `errors=2`, a TAP `not ok` (indented too), an uppercase FAIL line. Anchored on purpose (OCR R1/R5): a passing test may print
+            # `Error: 401 key rejected` (singular, a diagnostic), `ok: linter reports errors=2 on bad fixture`, or echo another tool's `ERROR: x`.
+            if re.search(r"(?i:^\s*(?:[#ℹ*•-]\s*)?(?:fail(?:ed|ures?|ing)?|errors)\s*[:=]\s*[1-9]\d*\b)"
+                         r"|(?i:\bpass(?:ed)?\s*[:=]\s*\d+\s+fail(?:ed|ures?)?\s*[:=]\s*[1-9]\d*\b)"
+                         r"|^\s*FAIL(?:ED)?\b|(?i:^\s*not ok\b)", clean, re.M):
                 return "red"
             if lines and not all(re.match(r"\s*skip\b", l, re.I) for l in lines):
                 return "green"
