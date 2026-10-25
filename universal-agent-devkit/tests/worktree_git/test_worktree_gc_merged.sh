@@ -178,5 +178,37 @@ add_det part-of-pr; G "$H/part-of-pr" checkout -q --detach "$AH~0"
 (cd "$R" && python3 "$WT" remove --merged=nothex "$H/ahead" >"$TMP/g3.out" 2>&1); rc=$?
 [ "$rc" -ne 0 ] && kept ahead && ok "G remove --merged=<not a sha> refuses" || { fail "G bad sha rc=$rc"; cat "$TMP/g3.out"; }
 
+# H. (review U2 F4, 26/10) nhánh đang được rebase / bisect ở một worktree khác: worktree đó hiện DETACHED nên không "checkout" nhánh,
+#    và `update-ref -d` không từ chối — sweep của gc --merged (và prune-branch) xoá nó, `rebase --continue` hỏng "cannot lock ref".
+#    Đọc rebase-merge/head-name, rebase-apply/head-name, BISECT_START của mọi worktree: giữ, nói lý do. Đối chứng: nhánh rảnh vẫn bị xoá.
+G "$R" branch rb main; G "$R" worktree add -q "$TMP/repo-rebasing" rb
+GIT_SEQUENCE_EDITOR="sed -i.bak '1i\\
+break
+'" G "$TMP/repo-rebasing" rebase -q -i main >/dev/null 2>&1
+G "$R" branch bis main; G "$R" worktree add -q "$TMP/repo-bisect" bis
+G "$TMP/repo-bisect" bisect start >/dev/null 2>&1; G "$TMP/repo-bisect" checkout -q --detach HEAD
+G "$R" branch idle-merged main
+[ -d "$(G "$TMP/repo-rebasing" rev-parse --absolute-git-dir)/rebase-merge" ] && [ -z "$(G "$TMP/repo-rebasing" branch --show-current)" ] \
+  && [ -z "$(G "$TMP/repo-bisect" branch --show-current)" ] && ok "H setup: rb mid-rebase and bis mid-bisect, both worktrees detached" \
+  || fail "H setup: no rebase / bisect in progress"
+(cd "$R" && WORKTREE_GC_FRESH_S=0 python3 "$WT" gc --merged --dry-run >"$TMP/h.out" 2>&1)
+! grep -qx "• gc (dry-run): would delete branch rb" "$TMP/h.out" && ! grep -qx "• gc (dry-run): would delete branch bis" "$TMP/h.out" \
+  && grep -q "kept branch rb: .*rebase" "$TMP/h.out" && grep -q "kept branch bis: .*bisect" "$TMP/h.out" \
+  && grep -qx "• gc (dry-run): would delete branch idle-merged" "$TMP/h.out" \
+  && ok "H --dry-run keeps a branch mid-rebase / mid-bisect (saying why), still names an idle merged branch" \
+  || { fail "H dry-run: a branch in use would be deleted"; grep -a "branch" "$TMP/h.out"; }
+(cd "$R" && WORKTREE_GC_FRESH_S=0 python3 "$WT" gc --merged >"$TMP/h2.out" 2>&1)
+has_branch rb && has_branch bis && ! has_branch idle-merged \
+  && ok "H gc --merged deletes neither the branch being rebased nor the one being bisected; the idle merged branch goes" \
+  || { fail "H gc --merged: rb=$(has_branch rb && echo kept || echo DELETED) bis=$(has_branch bis && echo kept || echo DELETED) idle=$(has_branch idle-merged && echo kept || echo deleted)"; grep -a "branch" "$TMP/h2.out"; }
+(cd "$R" && python3 "$WT" prune-branch rb >"$TMP/h3.out" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && has_branch rb && grep -q "rebase" "$TMP/h3.out" && ok "H prune-branch refuses a branch being rebased in another worktree" \
+  || { fail "H prune-branch rb rc=$rc"; cat "$TMP/h3.out"; }
+(cd "$R" && python3 "$WT" prune-branch bis >"$TMP/h4.out" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && has_branch bis && grep -q "bisect" "$TMP/h4.out" && ok "H prune-branch refuses a branch being bisected in another worktree" \
+  || { fail "H prune-branch bis rc=$rc"; cat "$TMP/h4.out"; }
+G "$TMP/repo-rebasing" rebase --continue >"$TMP/h5.out" 2>&1 && [ "$(G "$TMP/repo-rebasing" branch --show-current)" = rb ] \
+  && ok "H the rebase still finishes on its branch" || { fail "H rebase --continue failed"; cat "$TMP/h5.out"; }
+
 kill "$SL" 2>/dev/null
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_gc_merged: all passed" || { echo "❌ test_worktree_gc_merged: $FAILS failed"; exit 1; }

@@ -2327,6 +2327,44 @@ def _keep_ref(main, label, tree, parents, message):
     return ref
 
 
+def _branches_in_use(main):
+    """{branch: (worktree, "checkout" | "rebase" | "bisect")} for every local branch a worktree uses: checked out (`worktree list`), or
+    being rebased (rebase-merge/head-name, rebase-apply/head-name) or bisected (BISECT_START) - those two show the worktree DETACHED and
+    `update-ref -d` does not refuse them (review U2 F4, 26/10: gc --merged deleted a branch mid-rebase, `rebase --continue` then failed).
+    Read from every admin dir (<git-common-dir> and <git-common-dir>/worktrees/*: a registration whose folder is gone counts too).
+    None when it cannot be told (git fails, a state file is unreadable or not a regular file): the caller deletes no branch."""
+    try:
+        entries = _worktree_entries(main)
+        common = git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+        try:
+            linked = sorted(os.listdir(os.path.join(common, "worktrees")))
+        except FileNotFoundError:
+            linked = []
+    except (OSError, SystemExit):
+        return None
+    used = {e["branch"]: (e["path"], "checkout") for e in entries if e.get("branch")}
+    for adm in [common] + [os.path.join(common, "worktrees", n) for n in linked]:
+        for rel, what in (("rebase-merge/head-name", "rebase"), ("rebase-apply/head-name", "rebase"), ("BISECT_START", "bisect")):
+            try:
+                name = _read_regular(os.path.join(adm, rel), limit=4096).decode("utf-8", "surrogateescape").strip()
+            except FileNotFoundError:
+                continue
+            except OSError:   # a FIFO, a folder, unreadable: cannot say
+                return None
+            name = name[len("refs/heads/"):] if name.startswith("refs/heads/") else name
+            if not name or name == "detached HEAD":
+                continue
+            if adm == common:
+                where = entries[0]["path"] if entries else adm
+            else:
+                try:   # <admin>/gitdir names <worktree>/.git
+                    where = os.path.dirname(_read_regular(os.path.join(adm, "gitdir"), limit=4096).decode("utf-8", "surrogateescape").strip())
+                except OSError:
+                    where = adm   # the admin dir names it well enough
+            used.setdefault(name, (where, what))
+    return used
+
+
 def _delete_branch(main, name, tip):
     """Xoá refs/heads/<name> chỉ khi nó vẫn ở `tip` (update-ref so-và-xoá: không đua với commit mới), cùng cấu hình branch.<name>. Reflog
     của nhánh đi cùng nó, nên commit mà sau khi xoá không ref nào còn giữ — tip, và commit chỉ reflog đó nêu (commit rồi reset về, amend,
@@ -2807,9 +2845,13 @@ def cmd_prune_branch(cwd, args):
     tip = git(main, "rev-parse", "-q", "--verify", f"{ref}^{{commit}}", check=False).stdout.strip()
     if not tip and not remote:
         die(tr(f"không có nhánh {name}", f"no branch {name}"))
-    holders = [e["path"] for e in _worktree_entries(main) if e.get("branch") == name]
-    if holders:
-        die(tr(f"{name} đang được checkout ở {holders[0]}: gỡ worktree đó trước", f"{name} is checked out in {holders[0]}: remove that worktree first"), 1)
+    used = _branches_in_use(main)   # review U2 F4: also a branch mid-rebase / mid-bisect in a detached worktree
+    if used is None:
+        die(tr(f"không biết worktree nào đang dùng {name}: không xoá", f"cannot tell which worktree uses {name}: not deleted"), 1)
+    if name in used and used[name][1] == "checkout":
+        die(tr(f"{name} đang được checkout ở {used[name][0]}: gỡ worktree đó trước", f"{name} is checked out in {used[name][0]}: remove that worktree first"), 1)
+    if name in used:
+        die(tr(f"{name} đang {used[name][1]} dở ở {used[name][0]}: xong hoặc --abort trước", f"a {used[name][1]} of {name} is in progress in {used[name][0]}: finish or --abort it first"), 1)
     pr = None
     if tip:
         in_trunk = _content_in_trunk(main, ref)
@@ -4445,11 +4487,14 @@ def _reap_merged(main, here, dry, log, logged):
     except SystemExit as e:
         print("• gc --merged: " + tr("không đọc được nhánh / worktree: không xoá nhánh nào: ", "cannot list branches / worktrees: no branch deleted: ") + str(e.code))
         return acted
-    if any(x["broken"] for x in entries):
-        return acted   # which branch a worktree has checked out cannot be told: no branch is deleted
-    out = {x["branch"] for x in entries if x.get("branch")}
+    out = _branches_in_use(main)   # checked out, or mid-rebase / mid-bisect in a (detached) worktree
+    if out is None or any(x["broken"] for x in entries):
+        return acted   # which branch a worktree uses cannot be told: no branch is deleted
     for ref in heads:
         b = ref[len("refs/heads/"):]
+        if b in out and out[b][1] != "checkout":
+            print("• gc: " + tr(f"giữ nhánh {b}: đang {out[b][1]} ở {out[b][0]}", f"kept branch {b}: a {out[b][1]} of it is in progress in {out[b][0]}"))
+            continue
         if b == trunk or b in out or PROTECTED_BRANCH_RE.fullmatch(b) or BOARD_BRANCH_RE.fullmatch(b) or _remote_ref(main, b):
             continue
         if dry:
