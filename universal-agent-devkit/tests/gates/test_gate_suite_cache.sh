@@ -810,6 +810,53 @@ r=$(probe_key "$R33" tests/lib/test_durations.txt 't 2')
 [ "$r" = same ] && ok "33g. đổi tests/lib/test_durations.txt không đổi khoá của suite" || fail "33g. test_durations.txt vẫn là DANGER: đổi một dòng thời lượng đổi khoá mọi suite ($r)"
 r=$(probe_key "$R33" tests/lib/helper33.sh 'h 2')
 [ "$r" = diff ] && ok "33g. đổi file tests/lib khác vẫn đổi khoá" || fail "33g. file tests/lib khác không còn là DANGER ($r)"
+# 37. B8 (audit 25/10): khoá chính xác theo MỤC CỦA CHÍNH suite trong ma trận (mọi rule có id đó, nguyên văn; covers của id; version của
+#     ma trận), không theo digest cả file ma trận — thêm một rule không liên quan (ma trận chỉ-thêm, việc hằng ngày) từng đổi khoá mọi suite.
+#     probe37 <đổi>: khoá chính xác của REG-P trước/sau khi ghi lại matrix.json với thay đổi đó, in "same" hoặc "diff".
+R37="$TMP/r37"; mk33 "$R37"; echo 'a = 1' > "$R37/src/a.py"
+git -C "$R37" add -A && git -C "$R37" commit -qm init
+probe37() {
+  ( cd "$R37" && python3 - "$DEVKIT_DIR/bin" "$R37" "$1" <<'PY'
+import copy, json, os, sys
+bindir, repo, change = sys.argv[1:]
+sys.path.insert(0, bindir)
+import suite_cache as sc
+mp = os.path.join(repo, "matrix.json")
+base = json.load(open(mp))
+def key(m, covers=None):
+    with open(mp, "w") as f:
+        json.dump(m, f)
+    rules = m["rules"]
+    test = next(t for r in rules for t in r["mandatory_regression_tests"] if t["id"] == "REG-P")
+    return sc.SuiteCache(repo, rules, mp, covers or {}, "L", "rf", "", learned={}).keys(test)[0]
+k0 = key(copy.deepcopy(base))
+m = copy.deepcopy(base)
+covers = None
+p = m["rules"][0]
+if change == "append":
+    m["rules"].append({"component": "Q", "watch_files": ["src/q.py"], "mandatory_regression_tests": [{"id": "REG-Q", "name": "q", "command": "echo q"}]})
+elif change == "command":
+    p["mandatory_regression_tests"][0]["command"] = "true; true"
+elif change == "watch":
+    p["watch_files"].append("src/b.py")
+elif change == "untested_exit":
+    p["mandatory_regression_tests"][0]["untested_exit"] = 0
+elif change == "covers":
+    covers = {"REG-P": ["src/none.py"]}
+elif change == "version":
+    m["version"] = "9.9.9"
+k1 = key(m, covers)
+json.dump(base, open(mp, "w"))
+print("same" if k0 == k1 else "diff")
+PY
+  ); }
+r=$(probe37 append)
+[ "$r" = same ] && ok "37a. thêm một rule không liên quan vào ma trận: khoá chính xác của suite giữ nguyên" \
+  || fail "37a. thêm rule không liên quan đổi khoá chính xác của REG-P ($r): digest cả file ma trận vẫn nằm trong khoá"
+for c37 in command watch untested_exit covers version; do
+  r=$(probe37 "$c37")
+  [ "$r" = diff ] && ok "37b. đổi $c37 của chính suite ⇒ khoá chính xác đổi" || fail "37b. đổi $c37 của REG-P mà khoá chính xác giữ nguyên ($r)"
+done
 }
 
 grp_inflight_est() {   # case 36: hạn marker gộp lượt (inflight) theo lần chạy DÀI NHẤT, không theo trung vị của lớp slot

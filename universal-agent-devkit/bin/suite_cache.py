@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Cache PASS theo KHOÁ NỘI DUNG của từng suite hồi quy (P2, 20/10), dùng chung mọi worktree của một repo.
 
-Khoá = sha256 của: định dạng cache + cách gate đọc kết quả (RESULT_FORMAT), id, lệnh, untested_exit, nội dung (blob sha) của mọi
+Khoá = sha256 của: định dạng cache + cách gate đọc kết quả (RESULT_FORMAT), id, lệnh, untested_exit, mục ma trận của CHÍNH suite (mọi
+rule có id đó, nguyên văn; covers; version của ma trận — B8 25/10, không còn digest cả file ma trận), nội dung (blob sha) của mọi
 input của suite, trạng thái cục bộ (local_state_sha của gate), biến môi trường chọn test, môi trường máy (OS, phiên bản công cụ lệnh
 dùng). Input (bảo thủ — thừa thì chỉ giảm số lần dùng lại, thiếu mới hạ chất lượng):
   a. file khớp watch_files + covers của mọi rule có suite này;
@@ -35,6 +36,7 @@ import tempfile
 import time
 
 SUITE_CACHE_FORMAT = 1
+MATRIX_KEY_FORMAT = 1            # cách phần ma trận vào khoá (B8 25/10: mục của chính suite, không digest cả file); đổi cách đó thì tăng số
 MAX_AGE_S = 6 * 3600             # DEVKIT_SUITE_CACHE_MAX_S: tuổi tối đa của một PASS được dùng lại (= DEVKIT_GATE_CACHE_MAX_S của biên nhận)
 PRUNE_EVERY_S = 3600             # dọn kho tối đa một lần mỗi giờ (mốc prune.stamp)
 STORE_MAX = 4000                 # bản ghi giữ lại tối đa; cũ hơn STORE_MAX_AGE_S thì xoá khi dọn
@@ -284,6 +286,21 @@ def _external(project_dir, tok, here):
         except (OSError, ValueError):
             continue
     return None
+
+
+def _matrix_version(path):
+    """Trường "version" (định dạng) của file ma trận, phần của khoá mỗi suite; "none" khi không có file, "unreadable" khi không đọc được
+    (cùng giá trị ⇒ cùng khoá: không bao giờ làm một khoá khớp sai, chỉ bớt dùng lại)."""
+    if not path or not os.path.isfile(path):   # FIFO / socket: open() chặn mãi (#353)
+        return "none"
+    try:
+        if os.path.getsize(path) > 4 * SCAN_MAX_BYTES:
+            return "unreadable"
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, RecursionError):
+        return "unreadable"
+    return str(data.get("version")) if isinstance(data, dict) else "unreadable"
 
 
 def _file_digest(path):
@@ -536,6 +553,7 @@ class SuiteCache:
         self.learned = learned if learned is not None else self.load_learned()
         self.idx = Index(self.cmap or {})
         self.matrix_digest = _file_digest(matrix_path) if matrix_path and os.path.isfile(matrix_path) else "none"
+        self.matrix_version = _matrix_version(matrix_path)
         danger = sorted(p for pat in DANGER for p in self.idx.glob(pat) if not p.endswith(DANGER_EXEMPT))
         self.danger_files = danger
         self.matrix_path = matrix_path
@@ -568,8 +586,10 @@ class SuiteCache:
             return None, None
         sid, cmd = test.get("id"), test.get("command") or ""
         files = set()
+        own = []   # mọi rule có suite này, nguyên văn: phần ma trận của khoá (B8)
         for rule in self.rules:
             if any((t or {}).get("id") == sid for t in rule.get("mandatory_regression_tests") or []):
+                own.append(rule)
                 for pat in list(rule.get("watch_files") or []) + list(self.covers.get(sid) or []):
                     files |= self.idx.glob(pat)
         for pat in self.learned.get(sid) or []:   # đường dẫn học được là đường dẫn thật, không phải glob
@@ -598,8 +618,11 @@ class SuiteCache:
         head = json.dumps({
             "fmt": SUITE_CACHE_FORMAT, "rf": self.result_format, "id": sid, "command": cmd, "selection": sel,
             "untested_exit": test.get("untested_exit"), "local": self.local_sha, "sel": self.selection_env,
-            "danger": self.danger_digest, "matrix": self.matrix_digest, "env": env_fingerprint(tools | _tools_in(cmd)),
-        }, sort_keys=True).encode()
+            "danger": self.danger_digest, "env": env_fingerprint(tools | _tools_in(cmd)),
+            # B8 (audit 25/10): mục của CHÍNH suite (mọi rule có id, nguyên văn: lệnh, watch_files, untested_exit, cache, covered_by…), covers
+            # của id và version của ma trận — không digest cả file: thêm một rule khác (ma trận chỉ-thêm) từng đổi khoá mọi suite.
+            "matrix": {"fmt": MATRIX_KEY_FORMAT, "version": self.matrix_version, "rules": own, "covers": self.covers.get(sid)},
+        }, sort_keys=True, default=str).encode()
         tail = b"".join(b"x\0" + os.fsencode(tok) + b"\0" + ext[tok].encode() + b"\0" for tok in sorted(ext))
         h = hashlib.sha256(b"precise\0" + head)
         for p in sorted(files):
