@@ -1006,9 +1006,29 @@ def _subshell_body(seg):
 _INTERP = re.compile(r"(?:ba|z)?sh|python\d?(?:\.\d+)?|node")
 # File test: dưới tests/; hay tên test_* / *_test ở một thư mục nhóm test (`runtests.sh gates/test_x.sh`) hoặc không thư mục. Không phải
 # `hooks/test_evidence_gate.sh` (một hook mang tên test_). Chỉ xét trong segment mà _base_runner đã thấy.
-_TEST_ARG = re.compile(r"(?:^|/)tests?/(?:[^/\s]+/)*[^/\s]*test[^/\s]*\.(?:sh|py|m?js)$"
-                       r"|(?:(?:^|/)(?:gates|verification|context_memory|worktree_git|installer|super-board|spec|__tests__)/|^)"
-                       r"(?:test[-_][^/\s]*|[^/\s]*[_.]test)\.(?:sh|py|m?js)$")
+# #427 vòng 2: trước đây là một regex `(?:^|/)tests?/(?:[^/\s]+/)*[^/\s]*test[^/\s]*\.(…)$ | …` mà `[^/\s]*test[^/\s]*` quay lui bậc hai
+# trên một thành phần dài (`tests/` + "test" × 20 000: 4,7 s CPU mỗi lần gọi, hook bị cắt ở trần Stop thì claim lọt). Cùng luật, tuyến tính.
+_TEST_GROUP_DIRS = frozenset({"gates", "verification", "context_memory", "worktree_git", "installer", "super-board", "spec", "__tests__"})
+_WS = re.compile(r"\s")
+
+def _test_arg(x):
+    dot = x.rfind(".")
+    if dot < 0 or x[dot + 1:] not in ("sh", "py", "js", "mjs"):
+        return False
+    parts = x.split("/")
+    last = parts[-1]
+    if _WS.search(last):
+        return False
+    stem = last[:last.rfind(".")]
+    if "test" in stem:     # nhánh 1: một thành phần `test` / `tests`, sau nó chỉ thành phần không rỗng, không khoảng trắng
+        for k in range(len(parts) - 2, -1, -1):
+            if parts[k] in ("test", "tests"):
+                return True
+            if not parts[k] or _WS.search(parts[k]):
+                break
+    # nhánh 2: `test-x` / `test_x` / `x_test` / `x.test`, không thư mục hay ngay dưới một thư mục nhóm test
+    return (stem.startswith(("test-", "test_")) or stem.endswith(("_test", ".test"))) and (
+        len(parts) == 1 or parts[-2] in _TEST_GROUP_DIRS)
 
 def _argv_test_run(words):
     """Một trình thông dịch (bash/sh/zsh/python/node, không phải -c / -n / -m / stdin) hay một script chạy theo đường dẫn nhận một file
@@ -1026,7 +1046,7 @@ def _argv_test_run(words):
             continue
         if a == "node" and any(x in ("-", "-e", "-p", "--eval", "--print") for x in words[k + 1:k + 4]):
             continue
-        if any(_TEST_ARG.search(x) or DEVKIT_SUITE_RX.search(x) for x in words[k + 1:]):
+        if any(_test_arg(x) or DEVKIT_SUITE_RX.search(x) for x in words[k + 1:]):
             return True
     return False
 
@@ -1061,6 +1081,10 @@ def _base_runner(seg):
     """Luật phân loại trước #427 (tên runner ở bất kỳ đâu trong segment): tập runner mới là tập con của nó."""
     words = _strip_assigns(_words(seg))
     if not words or _is_reader(words) or _is_python_c(words):
+        return False
+    # #427 vòng 2: một từ hơn 64 thành phần đường dẫn (`tests/` × 15 000) không là đường dẫn test thật; SCRIPT_RUNNER_RX, DEVKIT_SUITE_RX,
+    # _KIT_BASH_FILE thử lại từ mỗi `tests/` của nó (bậc hai: 90 KB quá trần Stop). Không là lần chạy (không XANH, không ĐỎ).
+    if any(w.count("/") > 64 for w in words):
         return False
     return bool(_direct_bash_kit(seg) or TEST_RUNNER_RX.search(seg) or SCRIPT_RUNNER_RX.search(seg) or GATE_RUN_RX.search(seg)
                 or _invokes_gate_words(words) or any(c in seg for c in MATRIX_CMDS))
@@ -1253,11 +1277,46 @@ def _single_command(seg):
 # nó nằm trong _XCRUN_RUN: `xcrun -f tool`, `xcrun --show-sdk-path` không chạy lệnh nào.
 _WRAPPERS = {"xvfb-run": ("-n", "-s", "-f", "-e", "-p", "-w", "--server-num", "--server-args", "--error-file", "--auth-file",
                           "--xauth-protocol", "--wait"),
-             "stdbuf": ("-i", "-o", "-e"), "sudo": ("-u", "-g", "-C", "-h", "-p", "-D", "-R", "-T", "-U", "-r", "-t"),
+             "stdbuf": ("-i", "-o", "-e"), "sudo": ("-u", "-g", "-C", "-h", "-p", "-D", "-R", "-T", "-U", "-r", "-t", "--user", "--group"),
              "exec": ("-a",), "arch": ("-arch", "-e", "-d"), "xcrun": ("--sdk", "--toolchain")}
 _XCRUN_RUN = ("--sdk", "--toolchain", "-v", "--verbose", "-l", "--log", "-n", "--no-cache", "-r", "--run")
 # sudo chỉ với các option này (OCR review #427): `sudo -b` chạy nền và trả 0 ngay, `sudo -l` / `-v` / `-K` không chạy lệnh nào.
-_SUDO_RUN = ("-E", "-H", "-n", "-S", "-k", "-P", "-u", "-g", "--preserve-env", "--non-interactive", "--stdin", "--set-home")
+# #427 vòng 2: `sudo --user x` / `--group x` (giá trị tách rời) như `-u x` / `--user=x`.
+_SUDO_RUN = ("-E", "-H", "-n", "-S", "-k", "-P", "-u", "-g", "--preserve-env", "--non-interactive", "--stdin", "--set-home",
+             "--user", "--group")
+# #427 vòng 2: docker / docker compose chạy lệnh trong container và trả lại mã thoát của nó (`docker compose run --rm -e K=V web pytest -q`,
+# `docker exec ctr pytest -q`). Không khi -d / --detach (chạy nền, trả 0 ngay) hay --entrypoint (đổi thứ được chạy). Option lạ coi là cờ
+# không nhận giá trị: đọc sai thì image thành lệnh, không khớp runner nào (không phải lần chạy, không mở).
+_DOCKER_GLOBAL = ("-H", "--host", "-c", "--context", "--config", "-l", "--log-level", "-f", "--file", "-p", "--project-name", "--profile",
+                  "--env-file", "--project-directory", "--ansi", "--progress", "--parallel")
+_DOCKER_VAL = ("-e", "--env", "--env-file", "-v", "--volume", "-w", "--workdir", "-u", "--user", "--name", "--network", "--net", "-p",
+               "--publish", "-l", "--label", "--label-file", "--mount", "--add-host", "--cpus", "-c", "--cpu-shares", "-m", "--memory",
+               "--memory-swap", "--gpus", "--pull", "--platform", "-h", "--hostname", "--ipc", "--pid", "--cap-add", "--cap-drop",
+               "--device", "--dns", "--tmpfs", "--ulimit", "--shm-size", "--security-opt", "--log-driver", "--log-opt", "--restart",
+               "--runtime", "--stop-signal", "--stop-timeout", "--link", "--volumes-from", "--expose", "--cidfile", "--group-add",
+               "--index", "-a", "--attach", "--detach-keys", "--userns", "--uts", "--sysctl", "--ip", "--network-alias", "--cgroupns",
+               "--isolation", "--health-cmd")
+
+def _docker_opts(words, j, takes):
+    while j < len(words) and words[j].startswith("-") and words[j] != "--":
+        j += 2 if words[j] in takes else 1
+    return j
+
+def _docker_cmd(words, i):
+    """Chỉ số của lệnh chạy trong container của `docker [compose] run|exec …` / `docker-compose run|exec …` bắt đầu ở words[i], else None."""
+    j = _docker_opts(words, i + 1, _DOCKER_GLOBAL)
+    if _argv0(words[i]) == "docker" and words[j:j + 1] == ["compose"]:
+        j = _docker_opts(words, j + 1, _DOCKER_GLOBAL)
+    if words[j:j + 1] not in (["run"], ["exec"]):
+        return None
+    j += 1
+    while j < len(words) and words[j].startswith("-") and words[j] != "--":
+        w = words[j]
+        cluster = re.fullmatch(r"-[a-zA-Z]{2,}", w)
+        if w in ("-d", "--detach", "--entrypoint") or w.startswith(("--detach=", "--entrypoint=")) or (cluster and "d" in w):
+            return None
+        j += 2 if w in _DOCKER_VAL or (cluster and w[-1] in "evwuplchma") else 1
+    return j + 1                     # sau service / image / container
 
 def _head_starts(words):
     """Where the command proper may start: 0, and after each leading wrapper that hands back the wrapped command's own exit code
@@ -1285,6 +1344,11 @@ def _head_starts(words):
             i += 1
         elif a == "pnpm" and words[i + 1:i + 2] == ["exec"]:
             i += 2
+        elif a in ("docker", "docker-compose"):
+            k = _docker_cmd(words, i)
+            if k is None:
+                return out
+            i = k
         elif a in ("bash", "sh") and not _bash_runs_command_string(words[i:]):
             # `bash scripts/unity-test.sh`: bash runs the script file, whose exit is bash's. Not `bash -c` / `bash -n`.
             i += 1
@@ -1310,6 +1374,10 @@ def _py_head(head):
         # Không có `-i`: với stdin đã hết, `python -i` trả 0 dù module lỗi (OCR review #427).
         while j < len(head) and (re.fullmatch(r"-[XW].*|-[bBdEIOPqsSuvRx]+", head[j])):
             j += 2 if head[j] in ("-X", "-W") else 1
+        # #427 vòng 2: cờ gộp với -m (`-um pytest`, `-Bum pytest`, `-mpytest`) tách thành `-m <module>`; `i` / `c` vẫn dừng (`-uim`).
+        mm = re.fullmatch(r"-[bBdEIOPqsSuvRx]*m(.*)", head[j]) if j < len(head) else None
+        if mm and head[j] != "-m":
+            head = head[:j] + ["-m"] + ([mm.group(1)] if mm.group(1) else []) + head[j + 1:]
         if head[j:j + 3] != ["-m", "coverage", "run"]:
             return [head[0]] + head[j:]
         py, rest = head[0], head[j + 3:]
@@ -1424,18 +1492,26 @@ def _late_summary(stage):
             return "node"
         if a == "go" and h[1:2] == ["test"]:
             return "go" if any("..." in w for w in h[2:]) else None
+        if a in ("npm", "yarn", "pnpm", "bun") and (h[1:2] in (["test"], ["t"]) or h[1:3] == ["run", "test"]):
+            return "npm"      # #427 vòng 2: runner bên dưới không biết, _tail_cut xét hình dạng kết quả
     return None
 
 _TAIL_N = re.compile(r"\|\s*tail\b(?:\s+(?:-n\s*|-)(\d+))?")
+# Hình dạng kết quả của mocha (#427 vòng 2): `  12 passing (20ms)`, `  1 failing`, `  2 pending`.
+_MOCHA_SHAPE = re.compile(r"^[^\S\n]*\d+ (?:passing|failing|pending)\b", re.M)
 
 def _tail_cut(seg, txt=None):
     """Loại runner (mocha / node / go) khi segment là pipe đơn chạy nó qua `tail -N`, else None. Với txt: kết quả có ít hơn N dòng thì
-    tail không cắt gì (cả output đã hiện), không tính."""
+    tail không cắt gì (cả output đã hiện), không tính. `npm|yarn|pnpm test | tail -N` (#427 vòng 2): là mocha khi kết quả có hình dạng
+    của mocha, chỉ biết được khi có txt."""
     head = _pipe_head(seg)
     m = _TAIL_N.search(_QUOTED.sub("", seg)) if head is not None and head is not seg else None
     if m is None or (txt is not None and len(txt.splitlines()) < int((m.group(1) or "10")[:7])):
         return None
-    return _late_summary(head)
+    kind = _late_summary(head)
+    if kind == "npm":
+        return "mocha" if txt is not None and _MOCHA_SHAPE.search(txt) else None
+    return kind
 
 # `trap … EXIT` (#427 E4): mã thoát của tool là của trap, không phải của runner, theo cả hai chiều (`trap 'exit 0' EXIT` giấu ĐỎ,
 # `trap 'exit 1' EXIT` làm giả ĐỎ). Ở vị trí lệnh, đâu cũng được trong lệnh; chữ trong ngoặc là dữ liệu, thân heredoc cũng vậy khi
@@ -1544,16 +1620,57 @@ _ZSH_PIPESTATUS = re.compile(r"\$\{?pipestatus\b")      # zsh's ${pipestatus[1]}
 # A pipe stage that passes the run's last lines on unchanged: `tail`, `tail -N`, `tail -n N` (N >= 1), `tee [-a] FILE…`, `cat`.
 _KEEPS_TAIL = re.compile(r"\s*(?:tail(?:\s+(?:-n\s*|-)[1-9]\d*)?|tee(?:\s+-a)?(?:\s+[^\s|;&]+)*|cat)\s*")
 
-def _cuts_summary(seg):
+def _cuts_summary(seg, txt=None):
     """The run's own last lines (its summary) may not reach the result: it is not one simple command, and it is sent to the background
     or piped through a stage other than _KEEPS_TAIL (`| grep -c FAILED`, `| head -1`, `| tail -0`)."""
     if _single_command(seg):
         return False
     body = re.sub(r"\d*>&\d+|&>>?\s*\S+|\d?>>?\s*\S+", " ", _QUOTED.sub("", seg))     # redirections out, quoted text out
     return (bool(re.search(r"[;&\n]", body)) or not all(_KEEPS_TAIL.fullmatch(x) for x in body.split("|")[1:])
-            or bool(_tail_cut(seg)))      # #427 item 8: `tail -N` của mocha / node --test / go test không giữ kết luận
+            or bool(_tail_cut(seg))       # #427 item 8: `tail -N` của mocha / node --test / go test không giữ kết luận
+            or (txt is not None and _tail_cut(seg, txt) == "mocha"))     # #427 vòng 2: `npm test | tail -N` in kết quả của mocha
 
-def _hides(segs, i):
+# Lệnh in nội dung một FILE (#427 vòng 2, mục 3): file đó có thể giữ chữ pass của một lần gọi trước (`pytest | tail -3; cat old.log`).
+_FILE_READERS = frozenset({"cat", "head", "tail", "sed", "less", "more", "nl", "bat", "grep", "egrep", "fgrep", "rg", "awk"})
+_PASSISH = re.compile(r"(?i)pass|\bok\b|succe|green|✔|✓|✅")
+_READER_AT = re.compile(r"(?:^|[;&({\n]|\b(?:do|then|else)\b)[^\S\n]*(?:" + "|".join(sorted(_FILE_READERS)) + r")[^\S\n]+[^\s|;&]")
+
+_READS_MEMO = {}    # segment -> _reads_file: _hides xét mọi segment sau cho TỪNG runner của lệnh
+
+def _reads_file(t):
+    if t not in _READS_MEMO:
+        if len(_READS_MEMO) > 20000:
+            _READS_MEMO.clear()
+        _READS_MEMO[t] = _reads_file_at(t)
+    return _READS_MEMO[t]
+
+def _reads_file_at(t):
+    """Segment t (không phải một chặng pipe: chặng đầu của nó) in một file nêu làm đối số hay qua `<`. Thân heredoc là dữ liệu. Không chắc
+    (lồng, vòng lặp, chạy nền): có lệnh đọc ở vị trí lệnh kèm đối số là đủ (nghi ngờ thì chặn)."""
+    head = _pipe_head(_heredoc_head(t) or t)
+    if head is None:
+        return bool(_READER_AT.search(_QUOTED.sub("x", _heredoc_head(t) or t)))
+    words = _strip_assigns(_words(head))
+    if not words or _argv0(words[0]) not in _FILE_READERS:
+        return False
+    k, a = 1, _argv0(words[0])
+    # grep / rg / awk chỉ in dòng khớp mẫu: chỉ tính khi mẫu có thể khớp một tóm tắt (pass / ok / success). Đo trên corpus: 41 trong 75 lần
+    # chạy xanh bị mất là `grep -n <tên hàm> <file nguồn>` sau lần chạy.
+    if a in ("grep", "egrep", "fgrep", "rg", "awk") and not _PASSISH.search(head):
+        return False
+    while k < len(words):
+        w = words[k]
+        if w == "<" or (w.startswith("<") and not w.startswith("<<")):
+            return True
+        if a in ("head", "tail") and w in ("-n", "-c"):
+            k += 2
+            continue
+        if not w.startswith("-") and not re.match(r"\d*[<>]|&>", w) and not (k > 1 and re.fullmatch(r"\d*>>?|&>>?", words[k - 1])):
+            return True
+        k += 1
+    return False
+
+def _hides(segs, i, txt=None):
     """Runner segment i printed no summary of its own into the result: its stdout went to a file (_away), or its summary may have been
     cut (_cuts_summary; in a loop / if: one of its runs) and a later segment that is not the echo of an exit code may have printed one
     (2026-10-26 OCR review round 3, E2: `pytest a 2>&1 | grep -c FAILED; pytest b`, `pytest | tail -0; echo "5 passed"`). A run piped
@@ -1562,7 +1679,11 @@ def _hides(segs, i):
     s = segs[i]
     if _away(s):
         return True
-    cut = any(_cuts_summary(p) for p in _runner_pieces(s)) if _COMPOUND.match(s) else _cuts_summary(s)
+    # #427 vòng 2, mục 3: một segment sau in một FILE (`cat f`, `tail f`, `sed -n … f`, `head -n 5 f`, `less f`; không phải chặng pipe) đứng
+    # thay tóm tắt: file đó có thể giữ chữ pass của một lần gọi trước. Ghi ra file (_silent) thì không in gì.
+    if any(_reads_file(t) and not _silent(t, segs[i + 2 + k:]) for k, t in enumerate(segs[i + 1:])):
+        return True
+    cut = any(_cuts_summary(p, txt) for p in _runner_pieces(s)) if _COMPOUND.match(s) else _cuts_summary(s, txt)
     piped = (any(not _single_command(p) for p in _runner_pieces(s)) if _COMPOUND.match(s) else not _single_command(s))
     # Uncut pipe: any later segment that is not a runner and carries a pass word stands in for it (`mocha | tail -3; echo / print /
     # python -c … "12 passing"`, `&& git commit -am "… 12 passing"`: git prints the subject). Another runner after it prints its own
@@ -1611,8 +1732,14 @@ _FOR_LIST = re.compile(r"\s*for\s+[A-Za-z_]\w*\s+in\s+([^;\n]*?)\s*[;\n]\s*do\b"
 # Chỉ để đếm, không là xanh.
 _KIT_SUMMARY_EXTRA = re.compile(r"^[\w ./-]+:[^\S\n]+[1-9]\d*[^\S\n]+(?:passed|ok),[^\S\n]+0[^\S\n]+(?:failed|deviating)\b"
                                 r"|^[^\S\n]*ALL[^\S\n]+(?:PASS(?:ED)?|OK)\b|^[^\S\n]*PASS[^\S\n]+test[\w.-]*[^\S\n]*$|\bpass=[1-9]\d*[^\S\n]+fail=0\b"
-                                r"|^[^\S\n]*✅[^\n]*:[^\S\n]+passed\b|:[^\S\n]+PASS(?:ED)?[^\S\n]*$", re.M)
-_PS_LABEL = re.compile(r"([A-Za-z_][\w.-]*)=\$\{(?:PIPESTATUS\[0\]|pipestatus\[1\])\}")
+                                r"|^[^\S\n]*✅[^\n]*:[^\S\n]+passed\b|:[^\S\n]+PASS(?:ED)?[^\S\n]*$"
+                                r"|^[^\S\n]*✅[^\n]*:[^\S\n]+tất cả PASS\b", re.M)     # #427 vòng 2: "✅ test_x: tất cả PASS"
+# Một dòng chỉ có "PASS" (#427 vòng 2): tóm tắt của các suite tests/super-board (`echo "PASS"; exit 0`). Không tính khi nó đứng ngay sau một
+# dòng tóm tắt loại khác ("✅ y: all passed" rồi "PASS": một lần chạy in hai dòng thì không che được cho lần chạy khác).
+_PASS_ALONE = re.compile(r"[^\S\n]*PASS[^\S\n]*")
+# Nhãn bắt đầu ở ranh giới (#427 vòng 2): không có `(?<!…)`, `[\w.-]*` chạy lại từ MỌI vị trí của một từ dài (`tests/` + "test" × 20 000:
+# 24 s CPU).
+_PS_LABEL = re.compile(r"(?<![\w.-])([A-Za-z_][\w.-]*)=\$\{(?:PIPESTATUS\[0\]|pipestatus\[1\])\}")
 
 def _runs_kit_file(seg):
     """Segment chạy CHÍNH một file suite kit (`bash tests/a/test_x.sh 2>&1 | tail -3`, `./tests/a/test_x.sh`, `agent-kit test`), hay là vòng
@@ -1634,21 +1761,70 @@ def _runs_kit_file(seg):
 def _kit_count(seg):
     """Số dòng tóm tắt kit mà segment kit nợ kết quả (#427 P1-4): 1; vòng `for t in a b c; do … done` với danh sách chữ trơn thì một dòng
     cho mỗi chữ × mỗi lần chạy kit trong thân. ponytail: glob, $VAR, $( ), while / until / if / case không biết số vòng nên tính 1; muốn
-    chặt hơn thì phải đếm file khớp glob trên đĩa. Brace dạng dấu phẩy (`guard_{a,b}`: 2 chữ, review #427) thì đếm được; `{1..3}` và
-    brace lồng vẫn tính 1 chữ."""
+    chặt hơn thì phải đếm file khớp glob trên đĩa. Brace dạng dấu phẩy (`guard_{a,b}`: 2 chữ, review #427), `{1..3}` và brace lồng
+    (`a{b,c{d,e}}`: 3, #427 vòng 2) thì đếm được (_brace_count)."""
     if not _COMPOUND.match(seg):
         return 1
     m = _FOR_LIST.match(seg)
     if not m or not m.group(1).strip() or re.search(r"[*?\[$`(]", m.group(1)):
         return 1
+    if len(m.group(1)) > 4096:
+        return _BRACE_CAP       # #427 vòng 2: danh sách dài bất thường; regex đếm cũ cũng bậc hai trên nó
     body = sum(_kit_count(p) for p in _compound_parts(seg)[0] if _is_suite_seg(p) and _runs_kit_file(p))
     n = 0
     for w in _words(m.group(1)):
         k = 1
         for g in re.findall(r"\{([^{}]*,[^{}]*)\}", w):
             k *= g.count(",") + 1
-        n += k
+        n += max(k, _brace_count(w))      # #427 vòng 2: không bao giờ thấp hơn cách đếm cũ
     return n * max(1, body)
+
+_BRACE_CAP = 10 ** 6
+_BRACE_RANGE = re.compile(r"(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?|([A-Za-z])\.\.([A-Za-z])(?:\.\.(-?\d+))?")
+
+def _brace_count(w, depth=0):
+    """Số từ mà brace expansion của bash sinh từ w (#427 vòng 2): `{a,b}` cộng số từ của từng nhánh (lồng: `a{b,c{d,e}}` = 3), `{1..3}`,
+    `{a..e}`, `{1..10..3}` đếm phần tử, các nhóm liên tiếp nhân nhau; `{x}` không nhánh là chữ. Chỉ ĐẾM, không mở rộng; số quá 6 chữ số,
+    lồng quá 16 lớp hay từ quá 256 ký tự thì trả _BRACE_CAP (đếm nhiều = đòi nhiều dòng tóm tắt: nghi ngờ thì chặn)."""
+    if depth > 16 or len(w) > 256:
+        return _BRACE_CAP
+    n, i = 1, 0
+    while i < len(w):
+        if w[i] != "{":
+            i += 1
+            continue
+        d, j, cuts = 0, i, [i]
+        while j < len(w):
+            if w[j] == "{":
+                d += 1
+            elif w[j] == "}":
+                d -= 1
+                if d == 0:
+                    break
+            elif w[j] == "," and d == 1:
+                cuts.append(j)
+            j += 1
+        if j >= len(w):              # `{` không đóng: chữ
+            i += 1
+            continue
+        r = _BRACE_RANGE.fullmatch(w[i + 1:j]) if len(cuts) == 1 else None
+        if len(cuts) > 1:
+            cuts.append(j)
+            n *= sum(_brace_count(w[a + 1:b], depth + 1) for a, b in zip(cuts, cuts[1:]))
+        elif r is not None:
+            nums = [x for x in r.groups() if x is not None]
+            if any(len(x.lstrip("-")) > 6 for x in nums):
+                return _BRACE_CAP
+            lo, hi = (int(r.group(1)), int(r.group(2))) if r.group(1) is not None else (ord(r.group(4)), ord(r.group(5)))
+            step = abs(int(r.group(3) or r.group(6) or 1)) or 1
+            n *= abs(hi - lo) // step + 1
+        else:                        # `{x}`: dấu ngoặc là chữ, brace bên trong vẫn mở rộng
+            i += 1
+            continue
+        if n >= _BRACE_CAP:
+            return _BRACE_CAP
+        i = j + 1
+    return n
 
 def _label_code(m, txt, segs, ran=False):
     """0 / 1 (không 0) / None: dòng `<label>=N` của echo m in ra đúng một lần, và chỉ một echo của lệnh in nhãn đó ở đầu dòng (#427: hai
@@ -1705,8 +1881,95 @@ def _suite_binds(seg):
     green, their rc=1 no RED); any other runner binds as the command of its segment (_runs_as_command)."""
     return _direct_bash_kit(seg) if _is_suite_seg(seg) else _runs_as_command(seg)
 
+# R5 (#427 vòng 2), giả mạo cố ý: máy quét không phải shell, chỉ THU HẸP được, không đóng hẳn.
+# (a) Lệnh đứng sau `||` của một lệnh luôn thành công (`true || pytest`, `: || pytest`, `echo x || pytest`, `x | true || pytest`) không bao
+#     giờ chạy: cả lệnh không là lần chạy, không XANH, không ĐỎ (`true || pytest; exit 1` từng là nửa ĐỎ của check 7). Cả trong `( … )`,
+#     `{ …; }`, `bash -c '…'`, thân vòng lặp / if (sâu tới 8 lớp).
+# (b) Một hàm hay alias định nghĩa lại echo / printf / true / false / : / cat / head / tail / tee / test / exit / builtin / command, một
+#     wrapper hay chính runner (`pytest() { echo '5 passed'; }`), trong lệnh này hay một lệnh Bash trước của phiên (như _env_for): mã thoát
+#     và mọi tóm tắt in ra đều không tin được. Đọc trên lệnh đã bỏ chữ trong ngoặc và thân heredoc.
+# Còn mở: định nghĩa trong `bash -c '…'` / `eval` / `source`, shim qua PATH, `enable -n`, hàm từ profile của shell, `exit 0; pytest`.
+_ALWAYS_OK = re.compile(r"(?:^|\|)[^\S\n]*(?:\{[^\S\n]+)?(?:true|:|echo)(?![\w.:-])[^|]*$")
+
+def _skips_after_ok(segs, seps, depth=0):
+    for i, s in enumerate(segs):
+        # Lệnh luôn thành công đó phải chắc chắn đã chạy (đầu lệnh, sau `;` / xuống dòng) hay mọi đường tới nó đều để lại mã 0 (sau `||`):
+        # `bash t && echo PASS || { echo FAIL; … }` thì nhánh sau `||` vẫn chạy khi t lỗi (corpus #427 vòng 2: 9 ĐỎ thật bị mất).
+        if (i and seps[i - 1] == "||" and (i == 1 or seps[i - 2] in (";", "\n", "||"))
+                and _ALWAYS_OK.search(_QUOTED.sub("", segs[i - 1]))):
+            return True
+        if depth >= 8:
+            continue
+        h = _heredoc_head(s) or s
+        sub = []
+        if _COMPOUND.match(h):
+            parts = _compound_parts(h, sub)[0]
+        else:
+            inner = _subshell_body(h)
+            if inner is None:
+                inner = _command_string(_words(h))
+            parts = _split_segments(inner, sub) if inner is not None else []
+        if parts and _skips_after_ok(parts, sub, depth + 1):
+            return True
+    return False
+
+_DEF_RX = re.compile(r"(?:^|[\s;&|({])(?:function[^\S\n]+([^\s;&|(){}<>=]+)|([^\s;&|(){}<>=]+)[^\S\n]*\([^\S\n]*\)\s*[{(])")
+_ALIAS_RX = re.compile(r"(?:^|[\s;&|({])alias\b([^;&|\n]*)")
+_REDEF_NAMES = frozenset({"echo", "printf", "true", "false", ":", "cat", "head", "tail", "tee", "test", "exit", "builtin", "command",
+                          "timeout", "gtimeout", "env", "time", "nice", "nohup", "caffeinate", "npx", "bunx", "npm", "yarn", "pnpm", "bun",
+                          "uv", "poetry", "pipenv", "pdm", "hatch", "bundle", "coverage", "docker", "docker-compose", "make", "gradle",
+                          "gradlew"}) | frozenset(_WRAPPERS)
+
+def _code_text(cmd):
+    return "\n".join(_heredoc_head(s) or s for s in _split_segments(cmd))
+
+def _defines_spoof(cmd):
+    flat = _QUOTED.sub(lambda q: q.group(0)[0] + "x" * (len(q.group(0)) - 2) + q.group(0)[-1], _code_text(cmd))
+    names = [a or b for a, b in _DEF_RX.findall(flat)]
+    names += [n for m in _ALIAS_RX.finditer(flat) for n in re.findall(r"(?:^|\s)([^\s=]+)=", m.group(1))]
+    return any(n in _REDEF_NAMES or _INTERP.fullmatch(n) or TEST_RUNNER_RX.match(n + " test") for n in names)
+
+_spoof_seen = [0, False]      # (số lệnh của bash_cmds đã đọc, đã gặp một định nghĩa giả mạo)
+
+def _spoofed(cmd):
+    if not _spoof_seen[1]:
+        for earlier in bash_cmds[_spoof_seen[0]:]:
+            if _defines_spoof(earlier):
+                _spoof_seen[1] = True
+                break
+        _spoof_seen[0] = len(bash_cmds)
+    seps = []
+    segs = _split_segments(_expand_vars(cmd, _env_for(cmd)), seps)
+    return _spoof_seen[1] or _defines_spoof(cmd) or _skips_after_ok(segs, seps)
+
+# #427 vòng 2, mục 6: vòng lặp qua suite kit mà không biết số vòng (glob, $VAR, $( ), while / until) đếm 1 dòng tóm tắt; một lần chạy
+# chết im lặng (chỉ để lại dấu lỗi của trình thông dịch) mượn được tóm tắt của lần khác. Dấu lỗi ở dòng không phải của kit: không kết luận.
+_CRASH_RX = re.compile(r"\bline [0-9]+:|unbound variable|command not found|\bTraceback\b|Abort trap|Segmentation fault"
+                       r"|No such file or directory")
+_KIT_GLOB_HDR = re.compile(r"(?:^|[\s\"'])tests/(?:[\w.-]+/)?test_[\w*.${}-]*\.sh|\$\w+/tests/")
+
+def _unsized_kit_loop(seg, depth=0):
+    if not _COMPOUND.match(seg) or depth > 8:
+        return False
+    if re.match(r"\s*(?:for|while|until)\b", seg) and (DEVKIT_SUITE_RX.search(seg) or _KIT_GLOB_HDR.search(seg)):
+        m = _FOR_LIST.match(seg)
+        if not m or not m.group(1).strip() or re.search(r"[*?\[$`(]", m.group(1)):
+            return True
+    return any(_unsized_kit_loop(p, depth + 1) for p in _compound_parts(seg)[0])
+
+# #427 vòng 2, mục 11: trong vòng lặp kit, đếm lỗi `N failed / failing / failures / errors` chỉ khi nó mở đầu dòng (sau một nhãn `x: ` nếu
+# có), như dòng tóm tắt của chính runner (`3 failure(s)`, `test_a: 2 errors`), không phải giữa một dòng mô tả (`linter reports 2 errors`).
+# Mọi dấu khác của RUNNER_FAIL_RX giữ nguyên (`FAIL`, `FAILED`, `ERROR` viết hoa ở đâu cũng tính: corpus vòng 2, một vòng `bash -n` in
+# git diff có `… %d FAILED` sẽ thành XANH nếu nới cả chúng).
+_KIT_FAIL_LINE = re.compile(r"(?i:^(?:[\w ./-]+:[^\S\n]+|[^\S\n]*)[1-9]\d*[^\S\n]+(?:failed|failing|failures?|errors?)\b)"
+                            r"|(?i:\btests?:\s+[1-9]\d*\s+failed)|(?i:^[^\S\n]*(?:[#ℹ*•-]\s*)?(fail|failures?|errors?)\s*[:=]?\s*[1-9]\d*\b)|"
+                            r"<test-run\b[^<>\n]*\sfailed=\"[1-9]\d*\"|\b(?:failures|errors)=\"[1-9]\d*\"|"
+                            r"\bFAIL(ED)?\b|test result: FAILED|^not ok\b|\bpanicked\b|\bERRORS?\b|--- FAIL", re.M)
+
 def runner_state(is_error, txt, pm_run=False, command=""):
     """"red", "green", "gate-green" (the DevKit gate: a green for checks 2 and 7, not for auto_link), or None (not a verdict) for one runner tool_result."""
+    if command and _spoofed(command):
+        return None          # R5 (#427 vòng 2): runner sau `true ||`, hay echo / runner bị định nghĩa lại: không XANH, không ĐỎ
     if command and _command_invokes_gate(command):
         clean = ANSI_RX.sub("", txt)
         verdicts, counts = GATE_VERDICT_RX.findall(clean), GATE_COUNT_RX.findall(clean)
@@ -1724,7 +1987,9 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         echoed = _echoed_verdict(res)
         if echoed:
             return echoed
-        if any(c is None and _hides(segs, i) for i, c in res) and not _exit_is_the_runs(command, segs, res):
+        if any(_unsized_kit_loop(segs[i]) for i, _ in res) and _CRASH_RX.search(_not_kit_lines(txt)):
+            return None          # #427 vòng 2, mục 6
+        if any(c is None and _hides(segs, i, txt) for i, c in res) and not _exit_is_the_runs(command, segs, res):
             return None          # B2: a run (kit or not) whose output went to a file; the summary in the result is another run's
                                  # (`bash tests/…/test_x.sh > log && tail log`: the tool's exit is the run's, the tail its own log)
         seps = _seps(command)
@@ -1746,15 +2011,21 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if any(not _own_exit(command, segs, i, seps) for i in kits):
             # Review #427: vòng lặp kit (`for t in a_{x,y}; do bash tests/…/test_$t.sh | tail -1; done`) mà một lần chạy in lỗi kiểu runner
             # (`3 failure(s)`) ở dòng không phải của kit: DEVKIT_SUITE_RED không đọc dòng đó, 'all passed' của lần sau không gỡ được nó.
-            if any(_COMPOUND.match(segs[i]) for i in kits) and RUNNER_FAIL_RX.search(_not_kit_lines(txt)):
+            # #427 vòng 2, mục 11: chỉ dòng giống lỗi của chính runner (_KIT_FAIL_LINE), không phải `linter reports 2 errors`.
+            if any(_COMPOUND.match(segs[i]) for i in kits) and _KIT_FAIL_LINE.search(_not_kit_lines(txt)):
                 return None
             need = sum(_kit_count(segs[i]) for i in kits if not _away(segs[i]))
             labels = {lab for i in kits for lab in _PS_LABEL.findall(segs[i] + "\n" + (segs[i + 1] if i + 1 < len(segs) else ""))}
             codes = [c for lab in labels for c in re.findall(r"(?m)(?:^|\s)" + re.escape(lab) + r"=(\d+)(?!\S)", txt)]
             if any(c.strip("0") for c in codes):
                 return None
-            lines = txt.splitlines()
-            summaries = sum(1 for line in lines if DEVKIT_SUITE_GREEN.search(line) or _KIT_SUMMARY_EXTRA.search(line))
+            summaries, after = 0, False      # after: dòng không trống trước đó là một tóm tắt loại khác "PASS" (_PASS_ALONE)
+            for line in txt.splitlines():
+                if not line.strip():
+                    continue
+                other = bool(DEVKIT_SUITE_GREEN.search(line) or _KIT_SUMMARY_EXTRA.search(line))
+                summaries += other or (not after and bool(_PASS_ALONE.fullmatch(line)))
+                after = other
             if max(summaries, len(codes)) < need:
                 return None
         if hidden:
@@ -1798,6 +2069,8 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         return "red"
     if is_error:
         return None              # #427 E4: như nhánh suite kit
+    if any(_unsized_kit_loop(segs[i]) for i, _ in res) and _CRASH_RX.search(_not_kit_lines(txt)):
+        return None              # #427 vòng 2, mục 6: `for f in tests/a/test_*.sh; do bash "$f"; done` (không là segment suite kit)
     if masked:
         # 2026-10-25 fail-opens: `python3 -m pytest > log 2>&1; echo "rc=$?"` printing rc=1, and a glob loop `for f in tests/a/test_*.sh;
         # do bash "$f" > /dev/null; done`, read as green (no failure marker in the result). A bound non-zero code is red; green needs every
@@ -1806,7 +2079,7 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if echoed:
             return echoed
         unbound = [i for i, c in res if c is None]
-        if any(_hides(segs, i) for i in unbound) or _late_blocks(txt, segs, unbound):
+        if any(_hides(segs, i, txt) for i in unbound) or _late_blocks(txt, segs, unbound):
             return None          # B2 / E2: its summary went to a file or a pipe, what the result holds is another command's
         return "green" if (_pass_summary(txt, segs, unbound) or DEVKIT_SUITE_GREEN.search(txt)) else None
     return "green"
