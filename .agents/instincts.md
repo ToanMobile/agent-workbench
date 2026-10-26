@@ -707,3 +707,12 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa & Cách fix:** macOS: dùng sed -i '' (hoặc perl -pi -e); thay timeout bằng gtimeout hoặc perl -e 'alarm N; exec @ARGV'.
 - **Lệnh kiểm tra:** `grep -rnE "sed -i [^'\"]|(^|[ ;|&])timeout " scripts .claude 2>/dev/null | grep -v "sed -i ''"`
 - **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-071] Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main
+- **Nguyên nhân:** #425 ghi sai nguyên nhân (giới hạn 100 file); PR #424 của phiên khác đã sửa đúng lỗi, PR #426 của tôi trùng và xung đột
+- **Quy tắc phòng ngừa & Cách fix:** Trước khi sửa lỗi hạ tầng: fetch origin/main, git log -- &lt;file>, tái hiện bằng dữ liệu thật rồi mới viết RED
+- **Nguồn:** phiên sửa #425 (26/10), ghi trong main checkout nhưng chưa commit; đưa nguyên văn lên để main checkout đồng bộ được với origin
