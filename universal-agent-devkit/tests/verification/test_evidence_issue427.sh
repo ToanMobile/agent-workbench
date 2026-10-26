@@ -251,6 +251,8 @@ case("E4 control: a trap inside a heredoc body (a test file written, then run) i
 case("E4 must pass (review): `trap 'rm -rf $T' EXIT` keeps the run's exit: its failure is the RED half of check 7",
      pair("T=$(mktemp -d); trap 'rm -rf $T' EXIT; bash tests/a/test_x.sh", "tests/a/test_x.sh: line 3: FOO: unbound variable",
           "bash tests/a/test_x.sh", "✅ test_x: all passed"), 0, msg=FIX)
+case("E4 must block (review): `trap 'kill $$' EXIT` (the shell kills itself: 143 / 137) forging the RED half of check 7",
+     pair("trap 'kill $$' EXIT; python3 -m pytest -q", PYOK, "python3 -m pytest -q", PYOK), 2, msg=FIX)
 case("E4 control (review): `trap 'rm -rf $T; exit 0' EXIT` with no summary", after("trap 'rm -rf $T; exit 0' EXIT; python3 -m pytest -q", "....F...."), 2)
 case("E4 control (review): `trap cleanup EXIT` (a function: unknown body) with no summary", after("trap cleanup EXIT; python3 -m pytest -q", "....F...."), 2)
 case("E4 control (review): `trap \"rm -rf $(cat d)\" EXIT` (command substitution) with no summary",

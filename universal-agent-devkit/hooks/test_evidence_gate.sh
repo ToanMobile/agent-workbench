@@ -1428,6 +1428,13 @@ def _tail_cut(seg, txt=None):
 # ngoài _TRAP_SAFE (`exit`, `return`, `eval`, `source`…). Đọc trên lệnh chưa thay biến: _expand_vars thay cả `$T` trong ngoặc đơn.
 _EXIT_TRAP = re.compile(r"(?:^|[;&|({\n]|\b(?:do|then|else)\b)[^\S\n]*(trap[^\S\n]+[^;&|\n]*?(?<![\w-])(?:SIG)?(?:EXIT|0))(?![\w-])", re.I)
 _TRAP_SAFE = frozenset({"rm", "rmdir", "unlink", "kill", "wait", "cd", "popd", "echo", "printf", "true", ":"})
+# `kill` nhắm vào chính shell hay nhóm của nó (`kill $$`: zsh thoát 143, `kill -9 $$`: 137; `kill 0`, `kill -- -1`, `$PPID`) đổi mã thoát.
+_KILL_SELF = re.compile(r"\$\$|\$\{\$\}|PPID|^-?0$")
+
+def _trap_piece_safe(words):
+    if words[0] == "kill" and (any(_KILL_SELF.search(w) for w in words[1:]) or "-1" in words[2:]):
+        return False
+    return words[0] in _TRAP_SAFE
 
 def _trap_keeps_exit(stmt):
     """stmt: `trap <action> <tín hiệu…>` gốc. True khi action là một chuỗi trong ngoặc mà mọi lệnh của nó thuộc _TRAP_SAFE."""
@@ -1439,7 +1446,7 @@ def _trap_keeps_exit(stmt):
     except (ValueError, IndexError):
         return False
     return "$(" not in body and "`" not in body and all(
-        _single_command(p) and (_words(p) or [""])[0] in _TRAP_SAFE for p in _split_segments(body))
+        _single_command(p) and _trap_piece_safe(_words(p) or [""]) for p in _split_segments(body))
 
 def _exit_trapped(cmd):
     for s in _split_segments(cmd):
