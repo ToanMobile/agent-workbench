@@ -45,6 +45,10 @@ GATE_HOOK="$(dirname "${SELF}")/regression_gate.sh"
 CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/governance/context_sync.py"
 [ -f "${CTX_SYNC}" ] || CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/context_sync.py"
 [ -f "${CTX_SYNC}" ] && [ -d "${REPO_ROOT}/.agents" ] && (python3 "${CTX_SYNC}" "${REPO_ROOT}" --quiet >/dev/null 2>&1 &)
+# DevKit links: put back the ones a git operation removed and drop the ones the DevKit made obsolete (a command it dropped
+# left a dangling .claude/commands/<name>.md in every repo: health 90-93 until `agent-kit init`, 26/10). Fast, no network.
+RELINK="$(dirname "$(dirname "${SELF}")")/scripts/governance/relink_check.py"
+[ -f "${RELINK}" ] && [ -d "${REPO_ROOT}/.agents" ] && python3 "${RELINK}" "${REPO_ROOT}" --quiet --links-only >/dev/null 2>&1
 # Errors the DevKit causes while a board / workflow runs in a whitelisted repo become 🐛 cards on the DevKit board
 # (Project #1). Detached in the background (never delays SessionStart); every board worker is a session too, so it runs
 # while boards run. One machine-wide ledger, a lock and at least 300 s between scans. DEVKIT_INCIDENT=0: off.
