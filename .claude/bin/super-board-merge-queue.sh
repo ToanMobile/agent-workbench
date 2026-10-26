@@ -27,7 +27,11 @@
 #   head-moved · gate-exit-6      gỡ nhãn, thẻ ở Review chờ review lại
 #   deferred · timeout · gate-exit-4 · gate-exit-K khác · train không in train-result   giữ nhãn, tăng số lần thử trong
 #                                 merge-queue.attempts (<PR> <head> <n> <epoch>; head mới đếm lại); n ≥ 3 → comment, thẻ Blocked 🛡, gỡ nhãn.
-#                                 Kết quả kết thúc (các dòng trên) xoá dòng của PR. Exit 79 của train (GitHub dừng đọc) không tính.
+#                                 Kết quả kết thúc (các dòng trên) xoá dòng của PR. Không tính: exit 79 của train (GitHub dừng đọc) và exit 4
+#                                 không train-result (merge-train.lock bận: một train khác đang chạy, PR chưa chạy).
+# Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh route xong (card_move, đóng issue, nhãn loop:*, needs-you mark). Bước nào lỗi (khác 79): giữ
+#   nhãn, ghi merge-queue.pending (<PR> <head> <kết quả> <nhãn loop:* đã gắn>), tính một lần thử; lượt sau route lại từ đó, không dựng train,
+#   không comment / notify lại.
 # PR đã merge mà còn nhãn (train merge xong rồi queue chết trước khi route): mỗi lượt đọc thêm `pr list --state merged --label merge-queue`
 #   và route `merged` cho PR GitHub xác nhận MERGED (nhãn gỡ sau cùng nên lượt sau thấy lại nếu chết giữa chừng).
 #
@@ -160,15 +164,18 @@ blocked-by: -" || true
 }
 detail_lines() { [ -n "${TOUT:-}" ] && [ -r "$TOUT" ] || return 0; sed -nE "s/^train-detail: $1 //p" "$TOUT"; }
 # rebuild_or_rebase <PR> <issue> <rebuild|rebase> <why>: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
-# Trả 0 chỉ khi các bước bắt buộc (nhãn loop:*, card_move) xong.
+# Trả 0 chỉ khi các bước bắt buộc (nhãn loop:*, card_move) xong. Lượt route lại (RETRY=1): không comment lại; nhãn loop:* đã gắn ở lượt
+# trước (LABEL_DONE=1) thì không gắn lần nữa (không đẩy loop:rebuild-N lên hai lần cho cùng một lần đỏ).
+RETRY=0; LABEL_DONE=0
 rebuild_or_rebase() {
   local p="$1" k="$2" kind="$3" why="$4" ij labs cur rm=() l det
   det=$(detail_lines "$p")
+  if [ "$RETRY" -eq 1 ] && [ "$LABEL_DONE" -eq 1 ]; then card_move "$k" Ready; return; fi
   ij=$(issue_json "$k") || exit $?
   labs=$(printf '%s' "$ij" | jq -r '.labels[].name')
   cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1); cur=${cur:-0}
   if [ "$cur" -ge "$REBUILD_CAP" ]; then
-    block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
+    [ "$RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
       "train-result for PR #${p}: ${why}${det:+
 ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
     card_move "$k" Blocked
@@ -177,14 +184,16 @@ ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
   if [ "$kind" = rebuild ]; then
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
     add_label "$k" "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} || return 1
-    gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ red · PR #${p} back to Build (loop:rebuild-$((cur + 1)))
+    LABEL_DONE=1
+    [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ red · PR #${p} back to Build (loop:rebuild-$((cur + 1)))
 Did: verified the merge-queue batch with super-board-merge-train.sh
 ❌ Not done: ${why}${det:+; the gate / verify lines:
 ${det}}
 Next: Builder fixes the failing verify, QA and Review run again" || true
   else
     add_label "$k" "loop:rebase" || return 1
-    gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · PR #${p} needs a rebase pass (loop:rebase)
+    LABEL_DONE=1
+    [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · PR #${p} needs a rebase pass (loop:rebase)
 Did: merged the PR head into origin/<base> in the merge-queue batch
 ❌ Not done: ${why}
 Next: Builder rebases onto the base, verification green, then Review again" || true
@@ -192,10 +201,14 @@ Next: Builder rebases onto the base, verification green, then Review again" || t
   card_move "$k" Ready
 }
 ATTEMPTS="$QDIR/merge-queue.attempts"; ATTEMPT_MAX=3
-attempt_clear() {   # attempt_clear <PR>: kết quả kết thúc, PR rời bảng đếm
-  [ -f "$ATTEMPTS" ] || return 0
-  awk -v p="$1" '$1 != p' "$ATTEMPTS" > "$ATTEMPTS.tmp" && mv -f "$ATTEMPTS.tmp" "$ATTEMPTS"
+# merge-queue.pending: "<PR> <head> <kết quả> <nhãn loop:* đã gắn 0|1>" — kết quả kết thúc mà một bước bắt buộc của route lỗi. Lượt sau route
+# lại từ dòng này (không dựng train, không verify lại, không comment / notify lại); mỗi lần lỗi tính một lần thử (trần 3 → PR rời hàng).
+PENDING="$QDIR/merge-queue.pending"
+drop_row() {   # drop_row <file> <PR>
+  [ -f "$1" ] || return 0
+  awk -v p="$2" '$1 != p' "$1" > "$1.tmp" && mv -f "$1.tmp" "$1"
 }
+attempt_clear() { drop_row "$ATTEMPTS" "$1"; drop_row "$PENDING" "$1"; }   # PR rời bảng đếm và hàng route lại
 # attempt_retry <PR> <kết quả>: kết quả không kết thúc. n+1 cho dòng <PR> <head> (head khác = đếm lại từ 1); n ≥ 3 → PR rời hàng 🛡.
 attempt_retry() {
   local p="$1" res="$2" head k n why ok=0
@@ -213,14 +226,18 @@ attempt_retry() {
   fi
   gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 left the queue · 🛡 ${why}
 Next: a person looks at why, then labels the PR ${LABEL} again${k:+ (card #$k is Blocked)}" || true
-  [ "$ok" -eq 0 ] || { say "PR #${p}: blocking card #${k} failed; label kept, the next run tries again"; return 0; }
+  # Trần: PR rời hàng dù card_move lỗi, để không route lại vô hạn mỗi tick.
+  [ "$ok" -eq 0 ] || say "PR #${p}: moving card #${k} to Blocked failed too; the PR leaves the queue anyway (comment above)"
   unlabel "$p"; attempt_clear "$p"
 }
 # route_one <PR> <kết quả>: một train-result. Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh trả 0; bước nào lỗi (khác 79, đi thẳng lên)
-# thì giữ nhãn, lượt sau route lại.
+# thì giữ nhãn, ghi merge-queue.pending và tính một lần thử: lượt sau route lại từ pending, chỉ làm lại các bước bắt buộc.
 route_one() {
-  local p="$1" res="$2" k st msha ij det title ok=0
-  k=$(card_of "$p")
+  local p="$1" res="$2" k st msha ij det title ok=0 head prow
+  k=$(card_of "$p"); head=$(head_of "$p")
+  prow=$(awk -v p="$p" -v h="$head" '$1 == p && $2 == h {print $4; exit}' "$PENDING" 2>/dev/null || true)
+  RETRY=0; LABEL_DONE=0
+  if [ -n "$prow" ]; then RETRY=1; [ "$prow" != 1 ] || LABEL_DONE=1; fi
   case "$res" in
     merged)
       st=$(python3 "$GITHUB_READ" --kind merge-state -- pr view "$p" ${REPO:+--repo "$REPO"} --json state,mergeCommit,headRefOid) || exit $?
@@ -232,32 +249,31 @@ route_one() {
         ij=$(issue_json "$k") || exit $?
         if printf '%s' "$ij" | jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' >/dev/null; then
           say "PR #${p} merged; card #${k} carries ac-open: left open (the gate moved it to Ready)"
-        elif [ "$(printf '%s' "$ij" | jq -r '.state // "OPEN"')" = OPEN ]; then
-          gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ✅ merged ${msha} · PR #${p}
+        else
+          # Comment một lần (lượt route đầu); `Closes #K` thường đã làm GitHub đóng issue lúc merge, nên chỉ đóng khi còn mở.
+          [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ✅ merged ${msha} · PR #${p}
 Did: merged through the merge queue (one verify for the batch)
 ✅ Done: PR #${p} merged as ${msha}" || true
-          gh_w issue close "$k" ${REPO:+--repo "$REPO"} || ok=1
+          [ "$(printf '%s' "$ij" | jq -r '.state // "OPEN"')" != OPEN ] || gh_w issue close "$k" ${REPO:+--repo "$REPO"} || ok=1
           card_move "$k" Done || ok=1
-        else
-          card_move "$k" Done || ok=1   # issue đã đóng (lượt trước, hoặc Closes #K): chỉ còn đảm bảo card ở Done, không comment lại
         fi
       fi ;;
     red|gate-exit-11)
       det=$(detail_lines "$p")
-      gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ red · ${res}
+      [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ red · ${res}
 Did: verified the merge-queue batch; this PR is the one that turns it red${det:+
 ${det}}
 Next: back to Build${k:+ (card #$k)}" || true
       [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebuild "${res} (verify red with this PR in the batch)" || ok=1 ;;
     conflict|gate-exit-2|gate-exit-5)
-      gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · ${res}
+      [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · ${res}
 Did: merged this PR into origin/<base> for the merge-queue batch
 Next: rebase pass${k:+ (card #$k)}" || true
       [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebase "${res} (the base does not merge in cleanly)" || ok=1 ;;
     gate-exit-7|gate-exit-8)
       det=$(detail_lines "$p")
       if [ -n "$k" ]; then
-        gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 the merge gate wants a person for PR #${p} (${res})
+        [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 the merge gate wants a person for PR #${p} (${res})
 Card:        #${k}
 PR:          #${p}
 Reason tag:  🙋
@@ -272,21 +288,23 @@ blocked-by: -" || true
           --action "xem PR #${p} (merge gate ${res}) rồi tự merge, hoặc duyệt theo comment 🙋 trên thẻ" \
           --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #${p})" >/dev/null || { say "needs-you mark #${k} failed"; ok=1; }
         card_move "$k" Blocked || ok=1
-        gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 needs a person (${res}); request on issue #${k}" || true
-      else
+        [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 needs a person (${res}); request on issue #${k}" || true
+      elif [ "$RETRY" -eq 0 ]; then
         gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 the merge gate wants a person (${res})
 ${det}" || true
       fi
-      # Một tin Telegram có nút Approve, cùng chữ ký merge gate dùng (needs_you_notify, --source = PR). Lỗi chỉ log, không chặn route.
-      title=$(gh pr view "$p" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true)
-      python3 "$NOTIFY" approve-button --repo "$REPO" --pr "$p" --head "$(head_of "$p")" --source "$p" --card "PR #${p}" --title "$title" \
-        || say "approve-button notify for PR #${p} failed (exit $?)" ;;
+      # Một tin Telegram có nút Approve (lượt route đầu), cùng chữ ký merge gate dùng (needs_you_notify, --source = PR). Lỗi chỉ log.
+      if [ "$RETRY" -eq 0 ]; then
+        title=$(gh pr view "$p" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true)
+        python3 "$NOTIFY" approve-button --repo "$REPO" --pr "$p" --head "$head" --source "$p" --card "PR #${p}" --title "$title" \
+          || say "approve-button notify for PR #${p} failed (exit $?)"
+      fi ;;
     gate-exit-3)
       det=$(detail_lines "$p")
-      gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🔑 the merge gate exited 3 after a green verify (GitHub refused the merge, or the PR is closed)${det:+
+      [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🔑 the merge gate exited 3 after a green verify (GitHub refused the merge, or the PR is closed)${det:+
 ${det}}" || true
       if [ -n "$k" ]; then
-        block_comment "$k" "$p" "🔑" "the merge gate exited 3 for PR #${p} after a green verify (GitHub refused the merge, or the PR is closed)" \
+        [ "$RETRY" -eq 1 ] || block_comment "$k" "$p" "🔑" "the merge gate exited 3 for PR #${p} after a green verify (GitHub refused the merge, or the PR is closed)" \
           "train-result: ${p} gate-exit-3${det:+
 ${det}}" "a person reads the gate lines above, fixes what GitHub refused, or merges PR #${p}"
         card_move "$k" Blocked || ok=1
@@ -297,7 +315,12 @@ Did: the PR head is no longer the approved one (or its branch is gone from origi
 Next: a fresh review of the new head, then a new approved-head and the ${LABEL} label" || true ;;
     deferred|timeout|gate-exit-4|*) attempt_retry "$p" "$res"; return 0 ;;
   esac
-  if [ "$ok" -ne 0 ]; then say "PR #${p} (${res}): a routing step failed; label kept, the next run routes it again"; return 0; fi
+  if [ "$ok" -ne 0 ]; then
+    say "PR #${p} (${res}): a routing step failed; label kept, the next run routes it again from merge-queue.pending"
+    { awk -v p="$p" '$1 != p' "$PENDING" 2>/dev/null || true; echo "$p $head $res $LABEL_DONE"; } > "$PENDING.new" && mv -f "$PENDING.new" "$PENDING"
+    attempt_retry "$p" "routing ${res} failed"
+    return 0
+  fi
   unlabel "$p"; attempt_clear "$p"
 }
 # PR merged còn nhãn (train merge xong, queue chết trước khi route): route `merged` sau khi GitHub xác nhận MERGED. --dry-run chỉ in.
@@ -320,6 +343,20 @@ NOW=$(date +%s)
 # Thứ tự đọc từ rẻ tới đắt (runner gọi --if-due mỗi tick 30 s): một `pr list`; máy rảnh / đủ đợt quyết ngay; mốc gắn nhãn (REST timeline)
 # chỉ đọc khi cần và nhớ trong merge-queue.labeled theo <PR> <head>; comment approved-head (GraphQL) chỉ đọc khi đợt đã tới hạn.
 CANDS=$(printf '%s' "$PRS_JSON" | jq -r '.[] | select(.isDraft != true) | "\(.number) \(.headRefOid) \(.headRefName)"')
+# PR có dòng merge-queue.pending cùng head: kết quả đã có, chỉ route lại các bước bắt buộc, không vào đợt (không verify lại).
+if [ -s "$PENDING" ] && [ -n "$CANDS" ]; then
+  KEEP_CANDS=""
+  while read -r n head ref; do
+    [ -n "${n:-}" ] || continue
+    res=$(awk -v p="$n" -v h="$head" '$1 == p && $2 == h {print $3; exit}' "$PENDING")
+    if [ -z "$res" ]; then KEEP_CANDS="${KEEP_CANDS}${n} ${head} ${ref}"$'\n'; continue; fi
+    if [ "$DRY" -eq 1 ]; then say "would route PR #${n} again (${res}, a routing step failed last run)"; continue; fi
+    ROUTE_ROWS="${ROUTE_ROWS}0 ${n} ${head} ${ref}"$'\n'
+    say "PR #${n}: routing ${res} again (a routing step failed last run)"
+    route_one "$n" "$res" </dev/null
+  done < <(printf '%s\n' "$CANDS")
+  CANDS=${KEEP_CANDS%$'\n'}
+fi
 for n in $(printf '%s' "$PRS_JSON" | jq -r '.[] | select(.isDraft == true) | .number'); do say "PR #${n} is a draft; skipped (label kept)"; done
 N=0; [ -z "$CANDS" ] || N=$(printf '%s\n' "$CANDS" | wc -l | tr -d ' ')
 [ "$N" -gt 0 ] || { say "nothing queued"; exit 0; }

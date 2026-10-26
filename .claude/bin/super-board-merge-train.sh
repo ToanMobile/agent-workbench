@@ -31,6 +31,8 @@
 #       merge) và ≤ 20 dòng cuối của verify đỏ (của train, hoặc stderr của gate khi gate đỏ) in lại thành `train-detail: <N> <dòng>`
 #       để bên gọi (super-board-merge-queue.sh) chép nguyên văn vào comment issue. Mọi lời gọi gate mang SB_MERGE_CALLER=train.
 #       13: queue bật + SB_BOARD_WORKER=1 mà bên gọi không phải queue (SB_MERGE_CALLER=queue): worker gắn nhãn merge-queue thay vì gọi train.
+#       4 không kèm train-result: một train khác giữ <git-common-dir>/super-board/merge-train.lock; chưa PR nào chạy.
+#       PR có head không còn trong repo (nhánh bị force-push / xoá, fork không fetch được): `train-result: <N> gate-exit-6`, phần còn lại chạy tiếp.
 # ponytail: preflight lọc PR bị policy chặn trước verify; gate --dry-run sau verify vẫn còn (R11) cho phần preflight không thấy (người duyệt
 #           đổi ý giữa chừng): PR bị chặn ở đó ra khỏi chuỗi rồi phần còn lại verify lại, thêm một lượt verify mỗi vòng như vậy.
 set -euo pipefail

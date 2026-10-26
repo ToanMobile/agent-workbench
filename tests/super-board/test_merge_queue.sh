@@ -149,7 +149,7 @@ issue() {   # issue <K> [labels comma]
 }
 reset() {
   rm -rf "$F"; mkdir -p "$F/labeled"; PRS_ROWS=""; printf '[]\n' > "$F/prs.json"; : > "$F/writes"; : > "$F/calls"
-  rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled" "$ATT" "$COMMON/super-board/merge-queue.lock.pid"; rm -rf "$INF/merge.lock"
+  rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled" "$ATT" "$COMMON/super-board/merge-queue.lock.pid" "$COMMON/super-board/merge-queue.pending"; rm -rf "$INF/merge.lock"
 }
 run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" "$@" ) >"$TMP/out" 2>"$TMP/err"; }
 calls() { grep -c '^train ' "$F/calls" 2>/dev/null | tr -d ' '; }
@@ -436,6 +436,26 @@ reset; cfg true 6; pr 2 issue-12-b 5; approve 2 OWNER "$(sha 2)"; issue 12
 printf 'train-result: 2 gate-exit-7\n' > "$F/train.out"; echo 7 > "$F/train.rc"; echo 1 > "$F/card.rc"
 run_q
 has_w "pr-unlabel 2" && fail "exit 7 route: card move failed but the label was removed" || ok "exit 7 route with a failed card move: label kept"
+# Lỗi kéo dài: lượt sau route lại từ merge-queue.pending (không train / verify lại, không notify / comment lại); lần thử thứ 3 → PR rời hàng.
+run_q
+has_w "pr-unlabel 2" && fail "exit 7 route: label removed after only 2 failed routes" || ok "  … 2nd failed route: label still kept"
+run_q
+[ "$(calls)" = 1 ] && ok "  … failed routes are retried from merge-queue.pending, no second train" || fail "  … trains: $(calls)"
+[ "$(grep -c '^notify approve-button' "$F/writes")" = 1 ] && ok "  … approve-button sent once over 3 routes" || fail "  … notifies: $(grep -c '^notify approve-button' "$F/writes")"
+[ "$(grep -c '^issue-comment 12 .*🙋' "$F/writes")" = 1 ] && ok "  … the 🙋 issue comment posted once" || fail "  … 🙋 comments: $(grep '^issue-comment 12' "$F/writes")"
+has_w "pr-unlabel 2 merge-queue" && ok "  … 3rd failed route: the PR leaves the queue (no endless retry)" || fail "  … label kept forever: $(cat "$F/writes")"
 rm -f "$F/card.rc"
+# merged + card move lỗi rồi hết lỗi: route lại từ pending, không train lần hai.
+reset; cfg true 6; pr 3 issue-13-c 5; approve 3 OWNER "$(sha 3)"; issue 13
+printf '%s\n' "$(sha 3 c)" > "$F/merged-3"; printf 'train-result: 3 merged\n' > "$F/train.out"; echo 1 > "$F/card.rc"
+run_q; rm -f "$F/card.rc"; run_q
+[ "$(calls)" = 1 ] && has_w "card move 13 Done" && has_w "pr-unlabel 3 merge-queue" && ok "merged + failed card move: retried from pending without a second train" || fail "merged retry: calls=$(calls) $(cat "$F/writes")"
+[ "$(grep -c '^issue-comment 13 .*merged' "$F/writes")" = 1 ] && ok "  … one ✅ merged comment" || fail "  … comments: $(grep '^issue-comment 13' "$F/writes")"
+# Closes #K đã đóng issue lúc merge: comment ✅ merged vẫn có (lượt route đầu).
+reset; cfg true 6; pr 4 issue-14-d 5; approve 4 OWNER "$(sha 4)"; issue 14
+python3 -c 'import json,sys;p=sys.argv[1];d=json.load(open(p));d["state"]="CLOSED";json.dump(d,open(p,"w"))' "$F/issue-14.json"
+printf '%s\n' "$(sha 4 c)" > "$F/merged-4"; printf 'train-result: 4 merged\n' > "$F/train.out"
+run_q
+has_w "issue-comment 14 [merge-queue] [report] ✅ merged" && ! has_w "issue-close 14" && ok "issue already closed by Closes #K: ✅ comment still posted, no second close" || fail "closed issue: $(cat "$F/writes")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue: all passed" || { echo "❌ test_merge_queue: $FAILS failed"; exit 1; }
