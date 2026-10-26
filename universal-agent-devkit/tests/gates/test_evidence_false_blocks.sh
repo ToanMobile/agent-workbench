@@ -26,6 +26,10 @@
 # backed the claim (P3a); M. a reply of 8 570 outcome claims in one clause taking 1.1 GB (P3b, a bound on max RSS); D. honest runs blocked
 # by 322b19db: Gradle / node --test / Maven summaries behind `| tail`, `echo "rc=$?"` on the next line, `echo … >> ran.txt` beside the run
 # in a loop (P2); N. "not all tests passed" read as a kit pass summary (R2-M1).
+# OCR review round 2 (2026-10-26) added R: a run whose exit is not the tool's (`|| true`, `| head -1`, `&`, `!`, `; echo done`, a second
+# line, `true || pytest`) read as green with no failure marker (P1-1), and Gradle's BUILD SUCCESSFUL backing a loop / if that also hides a
+# pytest run (P1-3, a regression of 8c1c695d); the principal review of the same round added B2: a run whose stdout went to a file, then
+# another command's pass summary (`pytest > log; echo "5 passed"`, `pytest a > log; pytest b`, a kit test after it) read as green.
 # Run: bash tests/gates/test_evidence_false_blocks.sh   (TE_HOOK=<path> tests another copy of the hook)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -432,6 +436,70 @@ done
 echo "-- N. \"not all tests passed\" is no pass summary (2026-10-26 review, R2-M1)"
 transcript "$TMP/n1.jsonl" "$(steps_after_edit 'for d in a b; do python3 -m pytest -q $d > /dev/null 2>&1 || echo "not all tests passed in $d"; done' 'not all tests passed in a')"
 run 2 "$TMP/n1.jsonl" "$PASSCLAIM" "'not all tests passed in a' after a loop of \`python3 -m pytest -q \$d > /dev/null 2>&1 || echo …\`: $PASSCLAIM"
+
+echo "-- R. OCR review round 2 (2026-10-26): a run whose exit is not the tool's (P1-1), Gradle's summary for a loop that also hides pytest (P1-3)"
+for c in 'for m in a b; do python3 -m pytest -q $m > /dev/null 2>&1; ./gradlew :$m:test; done@@BUILD SUCCESSFUL in 3s
+BUILD SUCCESSFUL in 2s' \
+         'if ./gradlew test; then python3 -m pytest -q > /dev/null 2>&1; fi@@BUILD SUCCESSFUL in 3s' \
+         '(python3 -m pytest -q > /dev/null 2>&1; ./gradlew test)@@BUILD SUCCESSFUL in 3s' \
+         'python3 -m pytest -q > /tmp/l 2>&1 || true@@' \
+         'python3 -m pytest -q 2>&1 | head -1@@..F.........  [100%]' \
+         'python3 -m pytest -q > /dev/null 2>&1 &@@' \
+         '! python3 -m pytest -q > /tmp/l 2>&1@@' \
+         'python3 -m pytest -q > /tmp/l 2>&1; echo done@@done' \
+         'python3 -m pytest -q > /tmp/l 2>&1 | true@@' \
+         'python3 -m pytest -q > /tmp/l 2>&1
+echo ok@@ok' \
+         'true || python3 -m pytest -q > /tmp/l 2>&1 && echo ok@@ok' \
+         'for m in a b; do python3 -m pytest -q $m | grep -c FAILED; ./gradlew :$m:test 2>&1 | tail -1; done; echo "rc=$?"@@2
+BUILD SUCCESSFUL in 3s
+0
+BUILD SUCCESSFUL in 2s
+rc=0' \
+         '(python3 -m pytest -q | grep -c FAILED; ./gradlew test 2>&1 | tail -1); echo "rc=$?"@@2
+BUILD SUCCESSFUL in 3s
+rc=0'; do
+  transcript "$TMP/r1.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/r1.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+transcript "$TMP/r2.jsonl" "$(pair2 'python3 -m pytest -q' '1 failed in 0.1s' 'python3 -m pytest -q > /tmp/l 2>&1 || true' '')"
+run 2 "$TMP/r2.jsonl" "$FIXCLAIM" "real red, edit, then a silent \`python3 -m pytest -q > /tmp/l 2>&1 || true\` (no GREEN half): $FIXCLAIM"
+transcript "$TMP/r3.jsonl" "$(pair2 'python3 -m pytest -q' '1 failed in 0.1s' 'for m in a b; do python3 -m pytest -q $m > /dev/null 2>&1; ./gradlew :$m:test; done' $'BUILD SUCCESSFUL in 3s\nBUILD SUCCESSFUL in 2s')"
+run 2 "$TMP/r3.jsonl" "$FIXCLAIM" "real red, edit, then BUILD SUCCESSFUL of a loop that hides pytest (no GREEN half): $FIXCLAIM"
+echo "-- R. a run whose output went to a file, then another command's pass summary (principal review round 2, B2)"
+# The last case was an OCR round-2 control ("Gradle-only loop to logs"): module a's log is never shown and the loop's exit is the last
+# iteration's, so BUILD SUCCESSFUL of g.b says nothing of a.
+for c in 'python3 -m pytest > /tmp/l 2>&1; echo "5 passed"@@5 passed' \
+         'python3 -m pytest tests/a > /tmp/l 2>&1; python3 -m pytest tests/b@@== 3 passed in 0.10s ==' \
+         'python3 -m pytest > /tmp/l 2>&1; bash tests/a/test_x.sh@@✔ x1
+all passed (1)' \
+         'bash tests/a/test_y.sh > /tmp/y.log 2>&1; bash tests/a/test_x.sh@@✔ x1
+all passed (1)' \
+         'for f in tests/a/test_*.sh; do bash "$f" > /dev/null; done; bash tests/a/test_x.sh@@✔ x1
+all passed (1)' \
+         'for m in a b; do ./gradlew :$m:test > /tmp/g.$m 2>&1; done; tail -1 /tmp/g.b@@BUILD SUCCESSFUL in 2s' \
+         'bash tests/a/test_x.sh > /tmp/l 2>&1; tail -3 /tmp/l@@✔ x1
+all passed (3)' \
+         'for d in a b; do python3 -m pytest -q $d; done; python3 -m pytest -q c > /tmp/l 2>&1 || true@@3 passed in 0.10s
+2 passed in 0.10s'; do
+  transcript "$TMP/r5.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/r5.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+echo "-- R. still the evidence: a pass summary behind a pipe, \`&&\` after the run (also \`&& tail\` of its log), a run after \`cd … &&\`, two runs"
+echo "   joined by \`&&\`, a Gradle loop that shows each module's summary"
+for c in 'python3 -m pytest -q 2>&1 | tail -5@@........ [100%]
+5 passed in 0.10s' \
+         'python3 -m pytest -q > /tmp/l 2>&1 && echo ok@@ok' \
+         'python3 -m pytest -q > /tmp/l 2>&1 && tail -3 /tmp/l@@5 passed in 0.10s' \
+         'bash tests/a/test_x.sh > /tmp/l 2>&1 && tail -3 /tmp/l@@✔ x1
+all passed (3)' \
+         'cd /tmp && python3 -m pytest -q > /tmp/l 2>&1@@' \
+         'python3 -m pytest -q a && python3 -m pytest -q b > /tmp/l 2>&1@@3 passed in 0.10s' \
+         'for m in a b; do ./gradlew :$m:test 2>&1 | tail -1; done@@BUILD SUCCESSFUL in 3s
+BUILD SUCCESSFUL in 2s'; do
+  transcript "$TMP/r4.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 0 "$TMP/r4.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
 
 [ "$FAILS" -eq 0 ] && { echo "all passed ($N)"; exit 0; }
 echo "$FAILS failed of $N"; exit 1

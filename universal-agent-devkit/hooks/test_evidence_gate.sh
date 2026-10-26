@@ -784,16 +784,19 @@ def _env_for(cmd):
 # `<<WORD`, `<<-WORD`, `<<'WORD'`, `<<"WORD"`, `<<\WORD` (not `<<<`, not `1 << 2`): its body follows the line and is data, never commands.
 _HEREDOC_RX = re.compile(r"<<(-?)[^\S\n]*\\?(['\"]?)([A-Za-z_][\w.-]*)\2")
 
-def _split_segments(cmd):
+def _split_segments(cmd, seps=None):
     """Top-level && / || / ; / newline pieces. Not inside quotes, a heredoc body, or a for/while/until/if/case compound; a newline after
-    a `|` continues the pipe (2026-10-26 review of 322b19db, D4: `pytest > log 2>&1` then `echo "rc=$?"` on the next line was one piece)."""
+    a `|` continues the pipe (2026-10-26 review of 322b19db, D4: `pytest > log 2>&1` then `echo "rc=$?"` on the next line was one piece).
+    seps, when given, receives the separator after each piece but the last ("&&", "||", ";", "\\n")."""
     parts, buf, word, heredocs = [], [], [], []
     i, n, quote, paren, compound, last = 0, len(cmd), None, 0, 0, ""
 
-    def cut():
+    def cut(sep):
         seg = "".join(buf).strip()
         if seg:
             parts.append(seg)
+            if seps is not None:
+                seps.append(sep)
         buf.clear()
 
     def end_word():
@@ -871,7 +874,7 @@ def _split_segments(cmd):
                         break
             heredocs.clear()
             if paren == 0 and compound == 0 and last != "|":
-                cut()
+                cut("\n")
             continue
         if c in " \t\r\n":
             end_word()
@@ -880,11 +883,9 @@ def _split_segments(cmd):
             continue
         if paren == 0 and compound == 0 and (cmd.startswith("&&", i) or cmd.startswith("||", i) or c == ";"):
             end_word()
-            seg = "".join(buf).strip()
-            if seg:
-                parts.append(seg)
-            buf = []
-            i += 2 if c != ";" else 1
+            sep = ";" if c == ";" else cmd[i:i + 2]
+            cut(sep)
+            i += len(sep)
             continue
         buf.append(c)
         word.append(c)
@@ -893,6 +894,8 @@ def _split_segments(cmd):
     seg = "".join(buf).strip()
     if seg:
         parts.append(seg)
+    if seps is not None:
+        del seps[max(len(parts) - 1, 0):]     # a trailing `;` / newline separates nothing
     return parts or ([cmd.strip()] if cmd.strip() else [])
 
 def _words(seg):
@@ -1060,12 +1063,19 @@ MVN_PASS_RX = re.compile(r"\bTests run: [1-9]\d*, Failures: 0, Errors: 0\b")
 MVN_RED_RX = re.compile(r"\bTests run: \d+, Failures: (?:[1-9]|\d+, Errors: [1-9])|\bBUILD FAILURE\b")
 GRADLE_PASS_RX = re.compile(r"^[^\S\n]*BUILD SUCCESSFUL\b", re.M)
 _GRADLE_RX = re.compile(r"(?:^|[\s/])gradlew?(?=\s|$)")
+# NUnit 3 (Unity) `<test-run … passed="N" failed="0" …>` printed after the run (`Unity … -runTests …; cat results.xml`).
+NUNIT_PASS_RX = re.compile(r"<test-run\b(?=[^>\n]*\spassed=\"[1-9]\d*\")(?=[^>\n]*\sfailed=\"0\")")
 
 def _pass_summary(txt, segs, idxs):
     """txt holds a pass summary that can speak for the runner segments idxs, whose exit codes are not bound."""
-    if RUNNER_PASS_RX.search(txt) or NODE_PASS_RX.search(txt) or (MVN_PASS_RX.search(txt) and not MVN_RED_RX.search(txt)):
+    if (RUNNER_PASS_RX.search(txt) or NODE_PASS_RX.search(txt) or NUNIT_PASS_RX.search(txt)
+            or (MVN_PASS_RX.search(txt) and not MVN_RED_RX.search(txt))):
         return True
-    return bool(idxs) and all(_GRADLE_RX.search(segs[i]) for i in idxs) and bool(GRADLE_PASS_RX.search(txt))
+    # Gradle: each runner PIECE (every runner in a loop / if, 2026-10-26 OCR review round 2, P1-3: `for m in a b; do pytest > /dev/null;
+    # ./gradlew :$m:test; done` was judged by the whole loop text) is Gradle run as the command of its piece.
+    pieces = [p for i in idxs for p in (_runner_pieces(segs[i]) or [segs[i]])]
+    return (bool(pieces) and all(_GRADLE_RX.search(p) and _runs_as_command(p) for p in pieces)
+            and bool(GRADLE_PASS_RX.search(txt)))
 
 # A kit suite's own lines: its check lines (✔ ✓ ✅ ✖ ✘ ❌) and its summary ("all passed (3)", "uninstall: 9 passed, 0 failed", "contract
 # points: 3 ok, 0 deviating"). What is left is all another runner of the command can have printed (2026-10-26 review of 9c1a3cb3, P1).
@@ -1101,6 +1111,11 @@ def _head_starts(words):
             i += 1
         elif a == "pnpm" and words[i + 1:i + 2] == ["exec"]:
             i += 2
+        elif a in ("bash", "sh") and not _bash_runs_command_string(words[i:]):
+            # `bash scripts/unity-test.sh`: bash runs the script file, whose exit is bash's. Not `bash -c` / `bash -n`.
+            i += 1
+            while i < len(words) and words[i].startswith(("-", "+")) and words[i] != "--":
+                i += 2 if words[i] in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file") else 1
         else:
             break
         out.append(i)
@@ -1115,6 +1130,8 @@ def _runs_as_command(seg):
         head = words[i:]
         if not head:
             break
+        if re.fullmatch(r"(?i)unity(?:\.exe)?", _argv0(head[0])) and "-runTests" in head:   # the Editor binary with -runTests
+            return True
         for w0 in {head[0][2:] if head[0].startswith("./") else head[0], _argv0(head[0])}:
             text = " ".join([w0] + head[1:])
             if TEST_RUNNER_RX.match(text) or SCRIPT_RUNNER_RX.match(text) or any(text.startswith(c) for c in MATRIX_CMDS):
@@ -1132,26 +1149,59 @@ def _hidden(segs, i, txt):
 
 _CLOSE_KW = re.compile(r"\b(?:done|fi|esac)\b")
 _PART_KW = re.compile(r"^(?:(?:do|then|else|elif)\b\s*)+")
+_QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
+
+def _compound_parts(seg):
+    """(pieces, tail) of a compound: the pieces of its condition and body with do / then / else / elif cut (a nested compound stays one
+    piece), and the text after its closing keyword. A keyword inside quotes is data."""
+    flat = _QUOTED.sub(lambda m: m.group(0)[0] + "x" * (len(m.group(0)) - 2) + m.group(0)[-1], seg)   # same length, keywords blanked
+    head = _COMPOUND.match(flat)
+    close = None
+    for close in _CLOSE_KW.finditer(flat):
+        pass
+    inner = seg[head.end() if head else 0:close.start() if close else len(seg)]
+    return [_PART_KW.sub("", p) for p in _split_segments(inner)], (seg[close.end():] if close else "")
 
 def _compound_stdout_away(seg):
     """The compound sends stdout to a file: a redirection after its closing keyword (`done > all.log`), or in a piece of its condition or
     body that is not a reader such as echo / printf (each nested compound by the same rule). `echo "== $f" >> ran.txt` next to the run
     is not the run's output (2026-10-26 review of 322b19db, D6: the redirection was looked for in the whole loop text)."""
-    s = re.sub(r"\"[^\"]*\"|'[^']*'", "", seg)
-    head = _COMPOUND.match(s)
-    close = None
-    for close in _CLOSE_KW.finditer(s):
-        pass
-    if close and _STDOUT_AWAY.search(s[close.end():]):
+    pieces, tail = _compound_parts(seg)
+    if _STDOUT_AWAY.search(_QUOTED.sub("", tail)):
         return True
-    for p in _split_segments(s[head.end() if head else 0:close.start() if close else len(s)]):
-        p = _PART_KW.sub("", p)
+    for p in pieces:
         if _COMPOUND.match(p):
             if _compound_stdout_away(p):
                 return True
-        elif not _is_reader(_strip_assigns(_words(p))) and _STDOUT_AWAY.search(p):
+        elif not _is_reader(_strip_assigns(_words(p))) and _STDOUT_AWAY.search(_QUOTED.sub("", p)):
             return True
     return False
+
+def _runner_pieces(seg):
+    """The runners a segment runs: itself, or each runner piece of a compound's condition and body, nested compounds included."""
+    if _COMPOUND.match(seg):
+        return [q for p in _compound_parts(seg)[0] for q in _runner_pieces(p)]
+    return [seg] if _segment_is_runner(seg) else []
+
+def _away(seg):
+    """The run sends its stdout to a file (a loop or if: any of its runs, _compound_stdout_away), so no summary in the result is its own:
+    `pytest > log; echo "5 passed"`, `pytest a > log; pytest b`, `pytest > log; bash tests/…/test_x.sh` read as green from another
+    command's summary (2026-10-26 principal review round 2, B2). Its exit code still counts when bound (`echo "rc=$?"`) or when the tool's
+    exit is its own (_exit_is_the_runs)."""
+    return _compound_stdout_away(seg) if _COMPOUND.match(seg) else bool(_STDOUT_AWAY.search(_QUOTED.sub("", seg)))
+
+def _exit_is_the_runs(cmd, segs, res):
+    """The tool's exit code is the runs' own: every runner segment is one simple command run as the command (no pipe, `&`, `!`, or a
+    wrapper that only names it), only `&&` follows the first of them, and no `||` stands right before it (`true || pytest` may skip it).
+    Else `pytest > log || true`, `pytest > log; echo done`, `pytest | head -1`, `pytest > log &`, `! pytest`, `pytest > log` then a
+    second line read as green with no failure marker in sight (2026-10-26 OCR review round 2, P1-1)."""
+    if not res:
+        return False
+    seps = []
+    _split_segments(_expand_vars(cmd, _env_for(cmd)), seps)
+    first = res[0][0]
+    return (all(_single_command(segs[i]) and _runs_as_command(segs[i]) for i, _ in res)
+            and all(s == "&&" for s in seps[first:]) and (first == 0 or seps[first - 1] != "||"))
 
 def _echoed_codes(cmd, txt, binds):
     """(segments, [(i, code)]) for each runner segment i: the exit code its next segment `echo "<label>=$?"` printed when it binds, else
@@ -1197,6 +1247,9 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         echoed = _echoed_verdict(res)
         if echoed:
             return echoed
+        if any(c is None and _away(segs[i]) for i, c in res) and not _exit_is_the_runs(command, segs, res):
+            return None          # B2: a run (kit or not) whose output went to a file; the summary in the result is another run's
+                                 # (`bash tests/…/test_x.sh > log && tail log`: the tool's exit is the run's, the tail its own log)
         # Another runner of the command that hides its result (`bash tests/…/test_x.sh; pytest > log; echo $?`): the kit summary
         # says nothing of it, only its own pass summary can, on a line that is not the kit's ("uninstall: 9 passed, 0 failed" and a
         # check line "✔ … 5 passed …" are the kit's: 2026-10-26 review of 9c1a3cb3, P1); and the kit part needs its own summary.
@@ -1235,17 +1288,19 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         return "green"
     segs, res = _echoed_codes(command, txt, _runs_as_command) if command else ([], [])
     compound = any(_COMPOUND.match(segs[i]) for i, _ in res)
-    masked = any(_hidden(segs, i, txt) for i, _ in res)
+    masked = any(_hidden(segs, i, txt) for i, _ in res) or (not compound and not _exit_is_the_runs(command, segs, res))
     if is_error or RUNNER_FAIL_RX.search(txt) or ((compound or masked) and DEVKIT_SUITE_RED.search(txt)):
         return "red"
     if masked:
         # 2026-10-25 fail-opens: `python3 -m pytest > log 2>&1; echo "rc=$?"` printing rc=1, and a glob loop `for f in tests/a/test_*.sh;
         # do bash "$f" > /dev/null; done`, read as green (no failure marker in the result). A bound non-zero code is red; green needs every
-        # runner bound to 0, or a pass summary in the result.
+        # runner bound to 0, or a pass summary in the result. Also masked: a run whose exit is not the tool's (_exit_is_the_runs).
         echoed = _echoed_verdict(res)
         if echoed:
             return echoed
         unbound = [i for i, c in res if c is None]
+        if any(_away(segs[i]) for i in unbound):
+            return None          # B2: its summary went to the file, what the result holds is another command's
         return "green" if (_pass_summary(txt, segs, unbound) or DEVKIT_SUITE_GREEN.search(txt)) else None
     return "green"
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
