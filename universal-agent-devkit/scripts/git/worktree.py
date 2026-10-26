@@ -1805,6 +1805,13 @@ def _authored_cmp(item):
     return a
 
 
+def _is_prompt_row(item):
+    """A REPORTED row: the UserPromptSubmit hook wrote it (state "reported") and no test, ref or criterion was ever linked to it.
+    `agent-kit bugs add` confirms a row (state "confirmed"), `bugs link` adds a link: either makes it a person's."""
+    return (isinstance(item, dict) and item.get("kind") == "bug" and item.get("state") == "reported"
+            and not any(item.get(k) for k in _LINK_KEYS))
+
+
 def _bookkeeping_regenerated(wt, main):
     """True when the worktree's UNCOMMITTED bookkeeping (BOOKKEEPING) is nothing but what the gate and the checklist sync regenerate.
     Every row a person made (_authored_cmp) in its regression_status.json on disk is either:
@@ -1851,6 +1858,8 @@ def _bookkeeping_regenerated(wt, main):
         for rid, a in mine.items():
             if base.get(rid) == a or (rid not in base and theirs.get(rid) == a):
                 continue
+            if rid not in base and _is_prompt_row(mine_raw["items"][rid]):
+                continue   # #429: a prompt the hook logged as a possible bug, nobody confirmed or linked: not work (the fallback copy keeps it)
             if synced is None:
                 synced = _synced_rows(wt, base_raw)
             want = _authored_cmp(synced.get(rid))
