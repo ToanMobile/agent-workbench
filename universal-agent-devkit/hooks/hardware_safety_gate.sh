@@ -439,29 +439,54 @@ def rm_reach(path):
         return os.path.realpath(q)
     return os.path.join(os.path.realpath(os.path.dirname(q)), base)
 
+def rel_below(p, d):
+    """The names from the folder d down to the resolved path p: [] when p is d, None when p is not under d. Compared by inode, so another
+    spelling of the same folder (another case on APFS) counts; a name that does not exist yet is matched through its parents (principal
+    review round 2, 25/10, B3: `rm -rf <parent>/PROJ` of the project `<parent>/Proj` was judged as another folder)."""
+    try:
+        sd = os.stat(d)
+    except OSError:
+        sd = None
+    names, q = [], p
+    while True:
+        if q == d:
+            return names[::-1]
+        if sd is not None:
+            try:
+                if os.path.samestat(os.lstat(q), sd):
+                    return names[::-1]
+            except OSError:
+                pass
+        up = os.path.dirname(q)
+        if up == q:
+            return None
+        names.append(os.path.basename(q))
+        q = up
+
 def scratch_root(path, roots):
-    """The entry of roots ([(name, stat)]) that is the resolved path or holds it, compared by inode (APFS: /private/tmp/CLAUDE-501 is the
-    same folder), else None. A name that does not exist yet is judged by its nearest existing parent."""
-    d = path
+    """(name, below) for the entry of roots ([(name, stat)]) that is the resolved path (below False) or holds it (below True), compared by
+    inode (APFS: /private/tmp/CLAUDE-501 is the same folder), else None. A name that does not exist yet is judged by its parents."""
+    d, below = path, False
     while roots:
         try:
             st = os.lstat(d)
             hit = next((r for r, s in roots if os.path.samestat(st, s)), None)
             if hit:
-                return hit
+                return hit, below
         except OSError:
             pass
         up = os.path.dirname(d)
         if up == d:
             break
-        d = up
+        d, below = up, True
     return None
 
-def scratch_escape(base, t):
-    """Why rm -rf of t, run in the folder base (/ for an absolute t), reaches outside the agent scratch folder although it is in it;
-    None when it stays or is not in it. In it = the folder rm works in (the resolved parent) is the scratch folder or under it. A `..` is
-    refused, checked before anything resolves it: when the path is in the scratch folder before the `..`, or ends there. A glob is judged
-    on what it matches now (at most 2000) and on the folder before it."""
+def scratch_escape(base, t, p, reach):
+    """Why rm -rf of t, run in the folder base (/ for an absolute t), reaches outside the agent scratch folder although it is in it; None
+    when it stays or is not in it. In it = the folder rm works in (the resolved parent), or a folder the path passes through before a `..`
+    (read before anything resolves it), is the scratch folder or under it. Stays = all rm removes is UNDER the scratch folder (emptying the
+    folder itself is no session scratch): p (rm_reach of t; for a glob, the folder before it) and reach (where the current matches of a
+    glob land; None: not walked, they stay in p). A `..` that stays in it is no escape (principal review round 2, A4)."""
     roots = []
     for r in SCRATCH_ROOTS:
         try:
@@ -472,23 +497,19 @@ def scratch_escape(base, t):
         return None
     raw = os.path.join(base, t)
     parts = raw.split("/")
-    root = scratch_root(os.path.realpath(os.path.dirname(raw.rstrip("/") or "/")), roots)
-    if ".." in parts:
-        root = root or next((h for h in (scratch_root(os.path.realpath("/".join(parts[:i]) or "/"), roots)
-                                         for i, x in enumerate(parts) if x == "..") if h), None)
-        return f"đường dẫn trong thư mục scratch có `..` (ra khỏi {root})" if root else None
-    if root is None:
+    hit = scratch_root(os.path.realpath(os.path.dirname(raw.rstrip("/") or "/")), roots) or next(
+        (h for h in (scratch_root(os.path.realpath("/".join(parts[:i]) or "/"), roots) for i, x in enumerate(parts) if x == "..") if h), None)
+    if hit is None:
         return None
-    if GLOB.search(t):
-        import glob as _glob, itertools as _it
-        tp = t.split("/")
-        k = next(i for i, x in enumerate(tp) if GLOB.search(x))
-        hits = [rm_reach(m) for m in _it.islice(_glob.iglob(os.path.join(_glob.escape(base), t)), 2000)]
-        hits.append(os.path.realpath(os.path.join(base, "/".join(tp[:k]) or ("/" if t.startswith("/") else "."))))
-    else:
-        hits = [rm_reach(raw)]
-    out = next((p for p in hits if scratch_root(p, roots) is None), None)
-    return f"ra khỏi thư mục scratch {root} (tới {out})" if out else None
+    out = next((q for q in [p] + (reach or []) if not (scratch_root(q, roots) or ("", False))[1]), None)
+    return f"ra khỏi thư mục scratch {hit[0]} (tới {out})" if out else None
+
+GLOB_CAP = 2000   # matches of one glob walked to see where they land (principal review round 2, A2: the 2001st on was never judged)
+
+def glob_may_leave(t):
+    """True when the matches of the glob t can land outside the folder before it: a trailing / (rm follows a matched link) or a glob in a
+    name that is not the last one (the path goes on through each match). A glob in the last name only names entries of that folder."""
+    return t.endswith("/") or any(GLOB.search(x) for x in t.rstrip("/").split("/")[:-1])
 
 def rm_target_problem(t, cwds, env, forced=True):
     """Why removing target t recursively is refused, or None. Without -f (forced=False; 2026-10-09,
@@ -505,9 +526,11 @@ def rm_target_problem(t, cwds, env, forced=True):
             if why:
                 return why
         return None
+    # The variable first, then `~` (principal review round 2, B1): bash expands `~` of an unquoted assignment (D=~/x), so the value of $D
+    # may start with it; expanded before, `"$D"/` was judged as `<cwd>/~/x`. A quoted `D="~/x"` reads the same: refused as the home folder.
+    t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
     if t.startswith("~"):
         t = os.path.expanduser(t)
-    t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
     if "$" in t or "`" in t:
         return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)" if forced else None
     glob = bool(GLOB.search(t))
@@ -516,45 +539,53 @@ def rm_target_problem(t, cwds, env, forced=True):
             if not forced:
                 continue
             return f"{orig}: không biết thư mục hiện tại (cd tới $VAR / lệnh con / popd)"
-        if forced:   # A7: a path in the scratch folder must stay in it (scratch_escape), whatever its spelling
-            esc = scratch_escape(cwd or "/", t)
-            if esc:
-                return f"{orig}: {esc}"
-        outs = []
+        base = cwd or "/"
         if glob:  # judged as its directory: rm -rf src/* empties src; the shell expands the glob inside it, through a link too
             parts = t.split("/")
             k = next(i for i, x in enumerate(parts) if GLOB.search(x))
-            p = os.path.realpath(os.path.join(cwd or "/", "/".join(parts[:k]) or ("/" if t.startswith("/") else ".")))
-            # …and each match it expands to now (at most 2000) that lands outside that folder, through a link (`build/*/`, `build/*/x`):
-            # judged where it lands (review of A7, 25/10)
-            import glob as _glob, itertools as _it
-            reach = (rm_reach(m) for m in _it.islice(_glob.iglob(os.path.join(_glob.escape(cwd or "/"), t)), 2000))
-            outs = list(dict.fromkeys(r for r in reach if r != p and not r.startswith(p.rstrip(os.sep) + os.sep)))
+            p = os.path.realpath(os.path.join(base, "/".join(parts[:k]) or ("/" if t.startswith("/") else ".")))
         else:   # where the kernel resolves it (review of A7, 25/10): `link/` deletes what the link points at, `link` the link alone
-            p = rm_reach(os.path.join(cwd or "/", t))
-        for q, g in [(p, glob)] + [(r, False) for r in outs]:
-            why = rm_path_problem(q, orig, forced, g)
-            if why:
-                return why
+            p = rm_reach(os.path.join(base, t))
+        why = rm_path_problem(p, orig, forced, glob)   # the folder first: a refused one costs no walk of its matches (review round 2, A3)
+        if why:
+            return why
+        reach = None
+        if glob and glob_may_leave(t):   # where each current match lands, walked once for both checks below (review of A7, round 2 A2)
+            import glob as _glob, itertools as _it
+            found = list(_it.islice(_glob.iglob(os.path.join(_glob.escape(base), t)), GLOB_CAP + 1))
+            if len(found) > GLOB_CAP and forced:
+                return (f"{orig}: glob khớp hơn {GLOB_CAP} mục mà kết quả có thể ra ngoài {p} (dấu / cuối, hoặc glob trước tên cuối): "
+                        f"không xét hết được từng mục — chia nhỏ lệnh hoặc bỏ dấu / cuối")
+            reach = list(dict.fromkeys(rm_reach(m) for m in found[:GLOB_CAP]))
+        if forced:   # A7: a path in the scratch folder must stay in it (scratch_escape), whatever its spelling
+            esc = scratch_escape(base, t, p, reach)
+            if esc:
+                return f"{orig}: {esc}"
+        for r in reach or []:   # a match that left the folder through a link: judged where it lands
+            if r != p and not r.startswith(p.rstrip(os.sep) + os.sep):
+                why = rm_path_problem(r, orig, forced, False)
+                if why:
+                    return why
     return None
 
 def rm_path_problem(p, orig, forced, glob):
     """The verdict of rm_target_problem on one resolved path p (glob: p is the folder a glob expands in). None when allowed."""
     if not glob and os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p)):
         return None  # a single file
+    # the project root and the home folder compared by inode (rel_below), not by spelling (principal review round 2, B3)
     if not forced:   # / holds the project root, so it is caught by the first test
-        hit = next((d for d in (ROOT, HOME) if p == d or under(d, p)), None) or (p if p in SYS_PART_DIRS else None)
+        hit = next((d for d in (ROOT, HOME) if rel_below(d, p) is not None), None) or (p if p in SYS_PART_DIRS else None)
         return f"{orig}: là hoặc chứa {hit} (gốc project / home / phân vùng hệ thống)" if hit else None
-    if p == ROOT:
+    rel = rel_below(p, ROOT)
+    if rel == []:
         return f"{orig}: là thư mục gốc project"
-    if under(p, ROOT):
-        rel = os.path.relpath(p, ROOT).split(os.sep)
+    if rel is not None:
         if any(x in BUILD_OUTPUTS for x in rel):
-            return f"{orig}: là build output nhưng git đang track file trong đó (là source)" if git_tracks(p) else None
+            return f"{orig}: là build output nhưng git đang track file trong đó (là source)" if git_tracks(os.path.join(ROOT, *rel)) else None
         return f"{orig}: là thư mục cấp 1 của project" if len(rel) == 1 else None
     # Before the /tmp exemption (2026-10-09): a project under /tmp or $TMPDIR is inside its parent, and
     # `rm -rf ..` from it passed while `rm -rf <project>` was blocked.
-    if under(ROOT, p):
+    if rel_below(ROOT, p) is not None:
         return f"{orig}: chứa thư mục gốc project ({ROOT})"
     if any(under(p, d) for d in TMP_ROOTS):
         return None
