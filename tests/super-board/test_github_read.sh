@@ -268,5 +268,30 @@ rc=$(TC_DIR="$TMP/tcdiff" SB_GITHUB_READ_STRICT=1 PATH="$TMP/tcdiff:$PATH" run -
 [ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && ok "diff missing a file's block: still incomplete evidence (halt in strict mode)" \
   || fail "short diff accepted: rc=$rc"
 rm -f "$TMP/halt.json"
+# GraphQL (`gh pr view --json files`) lists a type change twice too (PR #424: sandbox.md DELETED + ADDED in the first 100 entries).
+# 173: 3 paths as 4 entries, under the 100 cap — merged by path, no halt. 174: 100 paths + a type change = 101 entries, GraphQL cut
+# at 100 drops a real path (app/payments/refund.py): the list must be completed over REST, or the money rule never sees the path.
+mkdir -p "$TMP/gql"
+cat > "$TMP/gql/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" pr view 173 "*) python3 -c 'import json; print(json.dumps({"labels": [], "body": "b", "additions": 3, "deletions": 2, "changedFiles": 3, "files": [{"path": "a.txt", "additions": 1, "deletions": 0}, {"path": "s.md", "additions": 0, "deletions": 2}, {"path": "s.md", "additions": 1, "deletions": 0}, {"path": "b.txt", "additions": 1, "deletions": 0}]}))' ;;
+  *" pr view 174 "*) python3 -c 'import json; fs = [{"path": "s.md", "additions": 0, "deletions": 2}, {"path": "s.md", "additions": 1, "deletions": 0}] + [{"path": "f%d" % i, "additions": 1, "deletions": 0} for i in range(98)]; print(json.dumps({"labels": [], "body": "b", "additions": 100, "deletions": 2, "changedFiles": 100, "files": fs}))' ;;
+  *" api repos/o/r/pulls/174/files "*) python3 -c 'import json; fs = [{"filename": "s.md", "additions": 0, "deletions": 2}, {"filename": "s.md", "additions": 1, "deletions": 0}] + [{"filename": "f%d" % i, "additions": 1, "deletions": 0} for i in range(98)] + [{"filename": "app/payments/refund.py", "additions": 1, "deletions": 0}]; print(json.dumps([fs[:100], fs[100:]]))' ;;
+  *" api rate_limit "*) echo '{"resources":{}}' ;;
+  *) echo 'unexpected' >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP/gql/gh"
+rc=$(SB_GITHUB_READ_STRICT=1 PATH="$TMP/gql:$PATH" run --kind metadata -- pr view 173 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+n=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["files"]))' "$TMP/out" 2>/dev/null)
+[ "$rc" = 0 ] && [ "$n" = 3 ] && [ ! -e "$TMP/halt.json" ] && ok "GraphQL type change under 100 entries (4 entries, 3 paths): 3 files, no halt" \
+  || fail "GraphQL type change: rc=$rc files=$n halt=$( [ -e "$TMP/halt.json" ] && echo yes || echo no) err=$(head -c 200 "$TMP/err")"
+rm -f "$TMP/halt.json"
+rc=$(SB_GITHUB_READ_STRICT=1 PATH="$TMP/gql:$PATH" run --kind metadata -- pr view 174 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+has=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d["files"]), any(f["path"] == "app/payments/refund.py" for f in d["files"]))' "$TMP/out" 2>/dev/null)
+[ "$rc" = 0 ] && [ "$has" = "100 True" ] && [ ! -e "$TMP/halt.json" ] && ok "GraphQL cut at 100 entries with a type change: completed over REST, app/payments/refund.py kept" \
+  || fail "GraphQL-cut type change: rc=$rc files/has-refund=$has err=$(head -c 200 "$TMP/err")"
+rm -f "$TMP/halt.json"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_github_read: all passed" || { echo "❌ test_github_read: $FAILS failed"; exit 1; }
