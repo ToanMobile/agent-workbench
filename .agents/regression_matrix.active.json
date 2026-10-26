@@ -1782,6 +1782,26 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-merge-queue-e2e",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-codex-lane.sh",
+        "tests/super-board/test_merge_queue_e2e.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-QUEUE-E2E-01",
+          "name": "đầu-cuối qua runner + hàng đợi + train + merge gate THẬT: 3 PR lệch nhịp (2 thẻ + 1 PR tương tác) chỉ 1 lượt verify trong train, 0 verify lẻ, thẻ Done; lane worker gọi thẳng gate khi queue bật ra exit 13; SB_MERGE_QUEUE=0 giữ đường cũ (trên origin/main trước Pha 2: 0 train)",
+          "command": "bash tests/super-board/test_merge_queue_e2e.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
