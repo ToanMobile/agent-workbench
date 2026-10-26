@@ -188,12 +188,20 @@ def raw_pid(main, sid):
 
 
 def raw_pid_start(main, sid):
-    """The start time of the record's pid (line 3, `start <token>`, #413): tells a pid the OS has handed to another process from the session
-    it was written under. None when the record has none (older kit, start time unknown)."""
+    """The start time of the record's pid (a `start <token>` line after the path, #413): tells a pid the OS has handed to another process from the
+    session it was written under. None when the record has none (older kit, start time unknown)."""
     p = _record_path(main, sid)
-    lines = (_read_small(p) or "").splitlines()[2:3] if p else []
-    m = _START_LINE.fullmatch(lines[0].strip()) if lines else None
-    return m.group(1) if m else None
+    for l in (_read_small(p) or "").splitlines()[2:] if p else []:
+        m = _START_LINE.fullmatch(l.strip())
+        if m:
+            return m.group(1)
+    return None
+
+
+def raw_visit(main, sid):
+    """True when the session's record says it only visited its worktree (a `visit` line after the path), not created it (#428)."""
+    p = _record_path(main, sid)
+    return "visit" in [l.strip() for l in (_read_small(p) or "").splitlines()[2:]] if p else False
 
 
 def record_age(main, sid, now=None):
@@ -241,10 +249,10 @@ def read_record(main, sid):
     return _same_repo_worktree(main, wt) if wt else None
 
 
-def write_record(main, sid, wt, pid=None, start=None):
+def write_record(main, sid, wt, pid=None, start=None, visit=False):
     """Record that session `sid` works in worktree `wt`. pid: the claude process of that session (holder_pid), line 2 - what the merge gate
-    judges the owner dead by. Never the pid of the process writing here when that is a hook's child (the merge gate's python): it dies at once.
-    start: that pid's start time (pid_start_token), line 3, only beside a valid pid (#413: a pid the OS reused is told apart from the session)."""
+    judges the owner dead by. start: that pid's start time (pid_start_token), a `start` line, only beside a valid pid (#413: a pid the OS reused is
+    told apart from the session). visit: the session only stepped into an existing worktree (EnterWorktree `path`), a `visit` line (#428). Never the pid of the process writing here when that is a hook's child (the merge gate's python): it dies at once."""
     p = _record_path(main, sid)
     if not p or not _same_repo_worktree(main, wt):
         return False
@@ -256,7 +264,8 @@ def write_record(main, sid, wt, pid=None, start=None):
     pid_ok = isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(os.path.realpath(wt) + "\n" + (f"pid {int(pid)}\n" if pid_ok else "")
-                 + (f"start {start}\n" if pid_ok and isinstance(start, str) and _START_LINE.fullmatch(f"start {start}") else ""))
+                 + (f"start {start}\n" if pid_ok and isinstance(start, str) and _START_LINE.fullmatch(f"start {start}") else "")
+                 + ("visit\n" if visit else ""))
     os.replace(tmp, p)
     return True
 
@@ -370,7 +379,12 @@ def on_tool_use(payload, env=None):
         wt = _entered_path(payload)
         t = tree_of(wt) if isinstance(wt, str) and wt else None
         pid = holder_pid()
-        if t and t[1] and write_record(main, sid, t[0], pid=pid, start=pid_start_token(pid) if pid else None):
+        # #428: a visit to a worktree the session did not create (EnterWorktree `path`) leaves no keep lock behind when the session moves on
+        prev = read_record(main, sid) if raw_visit(main, sid) else None
+        inp = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+        if prev and t and os.path.realpath(prev) != os.path.realpath(t[0]):
+            _kept_lock(main, prev, sid, pid, unlock=True)
+        if t and t[1] and write_record(main, sid, t[0], pid=pid, start=pid_start_token(pid) if pid else None, visit=bool(inp.get("path"))):
             if trunk_mode(main, env):
                 # 25/10: cleanup-wt (mọi bản đã cài chỉ chừa worktree bị khoá) gỡ worktree đã gộp ngay lúc phiên đang chạy gate trong đó.
                 # Khoá devkit-kept suốt lúc phiên ở trong: ExitWorktree remove đi qua WorktreeRemove -> `worktree remove` của kit, lệnh
@@ -384,7 +398,12 @@ def on_tool_use(payload, env=None):
     if tool == "ExitWorktree":
         wt = read_record(main, sid)
         inp = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+        visited = raw_visit(main, sid)
         clear_record(main, sid)
+        if wt and visited:
+            # #428: the session only visited this worktree (not its creator): its devkit-kept lock goes, keep or remove; other locks stay
+            _kept_lock(main, wt, sid, holder_pid(), unlock=True)
+            return "left"
         if wt and inp.get("action") == "keep":
             if _kept_lock(main, wt, sid, holder_pid()):
                 return "left, kept " + wt
