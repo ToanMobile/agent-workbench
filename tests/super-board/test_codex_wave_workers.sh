@@ -152,4 +152,25 @@ grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" 
 ac_open 12 'merge ok; ac-open: #123'
 grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && ok "ac-open: #123 for card 12 → failed (number prefix is not a match)" || fail "wrong number accepted: $(head -c 300 "$TMP/out.$RUN_N")"
 
+# Merge queue (Pha 2): review lane đưa PR vào hàng (nhãn merge-queue) thì thẻ ở lại Review, detail bắt đầu `queued PR #<P>`.
+# Đó là advanced hợp lệ, không phải "claimed advanced without reaching Done"; lane review chạy đúng một lần.
+queued() { # queued <detail> → review lane trả advanced/Review với detail đó, thẻ 12 ở cột Review
+  local saved="$CARDS" res
+  CARDS="[{\"number\":12,\"status\":\"Review\"}]"
+  res=$(printf '{"status":"advanced","column":"Review","detail":"%s"}' "$1")
+  wave 1 EXPECT=1 SB_CAPACITY="$TMP/caps/two" LANE_RESULT="$res"
+  CARDS="$saved"
+}
+queued 'queued PR #77 @ abc1234'
+{ [ "$RC" = 0 ] && jq -e '.cards[] | select(.number == 12 and .finalStatus == "advanced" and .column == "Review" and .lastLane == "review")' "$TMP/out.$RUN_N" >/dev/null 2>&1 \
+  && [ "$(wc -l < "$RUN_LOG" | tr -d ' ')" = 3 ] && ! grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N"; } \
+  && ok "queued PR #77 → advanced, card stays in Review (review lane ran once)" \
+  || fail "queued advanced: rc=$RC runs=$(wc -l < "$RUN_LOG" | tr -d ' ') out=$(head -c 300 "$TMP/out.$RUN_N") err=$(head -c 200 "$TMP/err.$RUN_N")"
+queued 'merge ok'
+grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && ok "advanced/Review without queued line → failed" || fail "Review without queued accepted: $(head -c 300 "$TMP/out.$RUN_N")"
+queued 'x queued PR #77'
+grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && ok "queued line not at the start of detail → failed" || fail "mid-detail queued accepted: $(head -c 300 "$TMP/out.$RUN_N")"
+queued 'queued PR #'
+grep -q 'claimed advanced without reaching' "$TMP/out.$RUN_N" "$TMP/err.$RUN_N" && ok "queued PR # without a number → failed" || fail "numberless queued accepted: $(head -c 300 "$TMP/out.$RUN_N")"
+
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }

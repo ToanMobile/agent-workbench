@@ -117,5 +117,11 @@
     "bot_identity": "ToanMobile"
   },
   "max_workers": 5,
-  "backlog_pull": false
+  "backlog_pull": false,
+  "merge_queue": {
+    "enabled": true,
+    "enabled_at": "2026-10-26T18:37:40Z",
+    "batch_max": 6,
+    "max_wait_min": 60
+  }
 }

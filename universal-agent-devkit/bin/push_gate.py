@@ -524,6 +524,9 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     (the user's keychain / ssh-agent) if a forged receipt is ever seen."""
     def number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
+    # T0061 Pha 1: biên nhận task (lượt --run-tests không --full) chỉ cho XONG của task, không bao giờ cho push (tests/gates/test_task_receipt_doors.sh ca 2)
+    if receipt.get("scope", "full") != "full":
+        return "biên nhận task (scope task, không phải --full): push cần post-fix-gate --run-tests --full"
     if receipt.get("exit") != 0 or isinstance(receipt.get("exit"), bool):
         return "exit không phải 0"
     head = receipt.get("head")

@@ -15,12 +15,13 @@ LUẬT ĐỨNG — NGHIỆM THU THEO LOẠI LƯỢT. Áp dụng cho Claude Code,
    Hai lần sửa cho cùng một nguyên nhân mà vẫn đỏ: dừng, bỏ giả thuyết đó, đổi hướng.
 
 3. Loại B, C — cổng nghiệm thu, chạy từ gốc repo:
-   python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief
+   python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief
+   Lượt impacted này (các test mà thay đổi của nhánh so với trunk chạm tới) ghi biên nhận task, bằng chứng cho bước 5. Task không bao giờ chạy --full: chỉ điểm gộp mới chạy (merge queue hoặc merge train của repo đi PR, push main của repo trunk-push).
    - Exit 0 (PASS): qua bước tiếp.
    - Exit 1 (REJECT): dán 30 dòng cuối log, sửa, chạy lại bước 3 từ đầu.
    - Exit 2 (UNVERIFIED) hoặc 4 (UNTESTED): dừng. Trả lời CHƯA XONG, dán lý do cổng in ra. Không sửa matrix hay test cũ để qua cổng.
    - Exit 3 (không có gì để audit) ở loại B, C: cổng không thấy thay đổi, thường do đã commit. Chạy lại với --diff <commit trước khi bắt đầu lượt>.
-   Dry-run, --help, --staged, --run-tests không kèm --full và test Gradle lẻ không thay cổng này.
+   Dry-run, --help, --staged và test Gradle lẻ không thay cổng này.
    Loại A không chạy cổng.
 
 4. Chỉ loại C — ảnh nghiệm thu là luật chặn, cùng cấp với exit 0.
@@ -36,6 +37,7 @@ LUẬT ĐỨNG — NGHIỆM THU THEO LOẠI LƯỢT. Áp dụng cho Claude Code,
      - Loại A: TRẢ LỜI.
      - Loại B: XONG chỉ khi có exit 0 của bước 3 trong lượt này, và log đỏ→xanh nếu bước 2 áp dụng.
      - Loại C: XONG chỉ khi có exit 0 của bước 3 và ảnh PNG của bước 4, cả hai trong lượt này.
+     - Loại B, C còn cần việc đã giao cho điểm gộp: PR đã mở, worktree đã finish hoặc main đã push.
      - CHỜ DUYỆT chỉ khi đang xoá file hoặc dữ liệu cực kỳ quan trọng không khôi phục được, hoặc việc cực kỳ nguy hiểm (force-push, viết lại lịch sử, phát hành production, đổi secret đang dùng, billing, cấp quyền PII, làm yếu gate bảo mật khi lượt chưa được yêu cầu) mà người dùng chưa xác nhận trong lượt. Commit, push fast-forward kể cả main, PR thường: không phải CHỜ DUYỆT.
      - Thiếu bất kỳ điều kiện nào ở trên: CHƯA XONG.
    - Dòng 2: người dùng nhận được gì.

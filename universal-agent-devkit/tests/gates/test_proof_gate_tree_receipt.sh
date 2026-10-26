@@ -156,6 +156,15 @@ blocked "$rc" && ok "N2 edited and committed after the gate: blocked" || fail "N
 turn_start; wt_new n3; wt_edit 61
 CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --no-checklist --diff HEAD~1 >"$TMP/gate" 2>&1; finish; stop; rc=$?
 blocked "$rc" && ok "N3 gate without --full: blocked" || fail "N3 partial gate accepted ($(why $rc))"
+# N3b (T0061 Pha 1, hợp đồng mới). Lượt task (--run-tests, không --full, không --diff: gate tự kiểm merge-base(origin/main, HEAD)) trong
+# worktree rồi finish: biên nhận task được nhận cho XONG trong lượt (trunk-finish). Push main chỉ với biên nhận task bị push_gate từ chối:
+# tests/gates/test_proof_gate_task_receipt.sh C1b (repo này không có .agents/regression_matrix.active.json nên push_gate không xét).
+git -C "$REPO" push -q origin main   # origin/main = main: phạm vi lượt task chỉ là việc của worktree
+turn_start; wt_new n3b; wt_edit 62
+CLAUDE_PROJECT_DIR="$WT" python3 "$GATE" --run-tests --no-checklist >"$TMP/gate" 2>&1 || fail "N3b setup: task gate exit $?"
+finish; stop; rc=$?
+[ "$rc" = 0 ] && grep -q "task-receipt" "$REPO/.claude/audit-gate/proof_gate.log" && ok "N3b task run (no --full) then finish: XONG allowed in its turn" \
+  || fail "N3b task receipt refused ($(why $rc))"
 
 # N4. Gate exit 3 (không có gì để audit: cây sạch, không --diff): chặn.
 turn_start; wt_new n4; wt_edit 71; gate "$WT"; g=$?; finish; stop; rc=$?

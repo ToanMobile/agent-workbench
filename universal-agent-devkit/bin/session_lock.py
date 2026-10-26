@@ -1770,9 +1770,10 @@ def _hook_module(name):
 # ── W1 R1/R2 v6: trunk mode (docs/workflow-improvements.md I.0; hooks/session_worktree.py) ─────────────────────────────────────────
 # ON by default (a repo with no `devkit.trunkMode` key; `agent-kit worktree trunk off` or WORKTREE_TRUNK_MODE=0 turn it off): the main checkout is merge-only, nobody holds it, every session works in its own worktree.
 TRUNK_STATUS_EXIT = 5   # `--status` on a trunk-mode main checkout (Antigravity and other agents without hooks read the code)
-# What may still run against a trunk-mode main checkout: the integrator (agent-kit worktree …, worktree.py …) and syncing main with origin
-# (fetch, push, a pull that only fast-forwards). The gate is not among them: it writes the tracked checklist there (v6 item 7).
-_TRUNK_ALLOWED = _Re(r"^\s*(?:\S*/)?agent-kit\s+(?:worktree|wt)\s|^\s*(?:python3?\s+(?:-I\s+)?)?\S*worktree\.py\s")
+# What may still run against a trunk-mode main checkout: the integrator (agent-kit worktree …, worktree.py …; agent-kit integrate, Q5: it
+# gates in a scratch worktree, never in main) and syncing main with origin (fetch, push, a pull that only fast-forwards). The gate is not
+# among them: it writes the tracked checklist there (v6 item 7).
+_TRUNK_ALLOWED = _Re(r"^\s*(?:\S*/)?agent-kit\s+(?:worktree|wt|integrate)(?:\s|$)|^\s*(?:python3?\s+(?:-I\s+)?)?\S*worktree\.py\s")
 _LOCAL_REMOTE = _Re(r"^(?:\.{1,2}(?:/|$)|/|~|file:)")   # a remote that is a path: `git fetch . x:main`, `git pull . branch` move THIS repo's refs
 
 
