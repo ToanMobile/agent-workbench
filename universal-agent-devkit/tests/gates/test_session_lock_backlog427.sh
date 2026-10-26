@@ -212,6 +212,18 @@ if r.returncode != 0:
 for (want, label, _c), g in zip(rows, got):
     check(label, g, want)
 
+print("1 + trunk mode: cwd không phải repo, project của phiên (đăng ký ở đó) là repo trunk mode TM")
+os.makedirs(os.path.join(TM, ".git", "devkit-sessions"))
+with open(os.path.join(TM, ".git", "devkit-sessions", "me.json"), "w", encoding="utf-8") as f:
+    json.dump({"session_id": "me", "pid": os.getpid(), "heartbeat": time.time(), "cwd": TW, "status": "working"}, f)
+tplain = lambda c, sid="me", **kw: hook(c, PLAIN, sid=sid, env_extra={"WORKTREE_TRUNK_MODE": "1", "CLAUDE_PROJECT_DIR": TW}, **kw)
+check("git -C <TM main> commit", tplain(f"git -C {TM} commit -qm x"), 2)
+check("echo x > <TM main>/README.md", tplain(f"echo x > {TM}/README.md"), 2)
+check("Edit <TM main>/README.md", tplain("", tool="Edit", ti={"file_path": f"{TM}/README.md", "old_string": "r", "new_string": "x"}), 2)
+check("  đối chứng: git -C <TW worktree> commit", tplain(f"git -C {TW} commit -qm x"), 0)
+check("  đối chứng: echo x > <scratch>/f.txt", tplain(f"echo x > {S}/f.txt"), 0)
+check("  đối chứng: phiên không đăng ký ở project (biến thừa hưởng)", tplain(f"git -C {TM} commit -qm x", sid="stranger"), 0)
+
 print("4. ps chậm: một hạn tổng cho mọi lần gọi ps của một tiến trình hook (ps giả trên PATH)")
 FAKE = os.path.join(tmp, "fakebin")
 os.makedirs(FAKE)
@@ -238,12 +250,28 @@ def probe(calls):
     return json.loads(r.stdout) if r.returncode == 0 else [[r.stderr[-300:]], 99]
 
 
+# hook thật (main): repo PS có 5 worktree anh em, khoá của chúng có pid + pid_start dạng ps (is_pid_alive hỏi ps) và heartbeat cũ (rảnh sau
+# khi ps không trả lời: family_held đọc hết cả 5); `cd $X && git commit` từ worktree rảnh OW: holder_pid, pid_start, 5 lần family_held, take
+PSR = repo("psrepo")
+OW = os.path.join(tmp, "ps-own")
+sh("git", "-C", PSR, "worktree", "add", "-q", "--detach", OW)
+for k in range(5):
+    wk = os.path.join(tmp, f"ps-sib{k}")
+    sh("git", "-C", PSR, "worktree", "add", "-q", "--detach", wk)
+    with open(os.path.join(gitdir(wk), "devkit-session.lock"), "w", encoding="utf-8") as f:
+        json.dump({"session_id": f"old{k}", "started": 1.0, "heartbeat": 1.0, "cwd": wk, "pid": os.getpid(),
+                   "pid_start": "Mon Jan  1 00:00:00 2001", "gitdir": gitdir(wk)}, f)
 fake_ps(30, "Thu Oct 26 10:00:00 2026")   # ps treo: mỗi lần quá giờ
-res, took = probe(6)
-check("ps treo, 6 lần gọi: tổng < 5.5 s (bản cũ 1 + 3 + 4 x 1 = 8 s)", took < 5.5, True)
-check("  … và vẫn coi là còn sống (không biết: fail closed)", res, [True] * 6)
+t0 = time.monotonic()
+rc = hook("cd $X && git commit -qm x", OW, env_extra={"PATH": FAKE + os.pathsep + os.environ.get("PATH", "")})
+took = time.monotonic() - t0
+check(f"hook, ps treo: tổng < 7 s (bản cũ 1 + 3 + một giây mỗi lần sau: > 10 s; đo được {took:.1f} s)", took < 7, True)
+check("  … và kết quả như khi ps trả lời được (5 khoá đều cũ: không ai giữ)", rc, 0)
+fake_ps(0.25, "Thu Oct 26 10:00:00 2026")
+res, took = probe(18)
+check("  đối chứng: module được import (gate, nightly) không có hạn này: 18 lần ps 0.25 s đều trả lời", res, [False] * 18)
 fake_ps(1.5, "Thu Oct 26 10:00:00 2026")
-check("  đối chứng: ps 1.5 s, start khác: lần thử lại còn trong hạn - pid đã tái dùng", probe(1)[0], [False])
+check("  đối chứng: ps 1.5 s, start khác: lần thử lại vẫn chạy - pid đã tái dùng", probe(1)[0], [False])
 
 shutil.rmtree(tmp, ignore_errors=True)
 print(f"session_lock.py backlog #427: {'all checks passed' if not bad else str(bad) + ' FAILED'}")

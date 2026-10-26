@@ -287,8 +287,11 @@ def _strip_heredocs(cmd, shell_only=False, kept=None, data=None, child=None, sin
     (`bash <<EOF`, `cat <<EOF | bash`, cả S3; không S2 trơ, không interpreter); thân `maybe` (_line_heredocs: `<<` sau một
     `#` hay trong nháy) không bị bỏ - các dòng của nó được đọc như dòng thường, đánh dấu "maybe", vào `data`; `sink` (list): thân dữ liệu đầu
     dòng có delimiter trong nháy nạp cho cat > f / tee f / git commit -F - (_sink_body) vào đây thay vì `data`."""
+    if "<<" not in cmd:
+        return cmd   # không heredoc nào: không có gì để bỏ hay đánh dấu (hook gọi hàm này nhiều lần cho mỗi lệnh)
     lines = cmd.split("\n")
     out, i, end, later, state, later_sub = [], 0, _heredoc_ends(lines), {}, (None, False), set()
+    last_op = max(k for k, ln in enumerate(lines) if "<<" in ln)   # trạng thái nháy chỉ cần tới dòng `<<` cuối cùng
     while i < len(lines):
         line = lines[i]
         if kept is not None and i in later:
@@ -297,7 +300,7 @@ def _strip_heredocs(cmd, shell_only=False, kept=None, data=None, child=None, sin
             child.add(len(out))
         out.append(line)
         docs = _line_heredocs(lines, i, end, state)
-        if i not in later:   # (dòng thân S3 / maybe không đổi trạng thái nháy của shell này)
+        if i < last_op and i not in later:   # (dòng thân S3 / maybe không đổi trạng thái nháy của shell này)
             state = _line_scan(line, len(line), state)[1]
         i += 1
         last = next((j for _m, _s, j, maybe in reversed(docs) if not maybe), i - 1)   # dòng cuối của các thân thật
@@ -765,27 +768,26 @@ def unregister_session(cwd, sid):
 PS_RETRY_S = 3.0   # B5 (#427): lần thử lại dài hơn khi ps quá 1 s
 PS_BUDGET_S = 4.0   # #427 vòng 2: tổng thời gian mọi lần gọi ps của MỘT tiến trình hook được chờ (hook có timeout 10 s)
 _ps_retried = []   # có phần tử: tiến trình hook này đã thử lại một lần - lần ps chậm sau trả None ngay
-_ps_deadline = []   # [time.monotonic() hết hạn], đặt ở lần gọi ps đầu tiên của tiến trình
+_ps_left = []   # [giây còn được chờ ps]: chỉ main() (tiến trình hook) đặt; module được import (gate, nightly, worktree.py) không có hạn này
 
 
 def _ps(pid, fields):
     """`ps -o <fields>= -p pid` output, stripped; None when the process is gone or ps fails (macOS has no /proc). B5 (#427): dưới tải ps quá
     1 s, None khiến is_pid_alive coi pid đã tái dùng là còn sống (khoá của phiên chết vẫn giữ tới hết hạn): lần quá giờ đầu tiên của tiến
     trình được thử lại với PS_RETRY_S; các lần sau thì không - một hook gọi ps nhiều lần, tổng thời gian phải nằm trong timeout 10 s mà
-    .claude/settings.json đặt cho session_lock.sh. #427 vòng 2: mọi lần gọi (cả lần thử lại) chung một hạn PS_BUDGET_S tính từ lần gọi đầu:
-    hết hạn thì trả None ngay (không biết = còn sống, như trước) - hook quá 10 s bị huỷ thì lệnh được chạy luôn."""
+    .claude/settings.json đặt cho session_lock.sh. #427 vòng 2: trong tiến trình hook (main) mọi lần gọi (cả lần thử lại) chung PS_BUDGET_S
+    giây chờ ps (_ps_left): hết thì trả None ngay (không biết = còn sống, như trước) - hook quá 10 s bị huỷ thì lệnh được chạy luôn."""
     # `lstart` is printed in local time: pin TZ/locale so a start recorded under one TZ equals the one read under another
     env = dict(os.environ, TZ="UTC", LC_ALL="C")
     import subprocess  # noqa: PLC0415 - only a platform without /proc forks ps
-    if not _ps_deadline:
-        _ps_deadline.append(time.monotonic() + PS_BUDGET_S)
     argv, timeout = ["ps", "-o", "=,".join(fields.split(",")) + "=", "-p", str(pid)], 1
     while True:
-        left = _ps_deadline[0] - time.monotonic()
-        if left <= 0:
+        wait = min(timeout, _ps_left[0]) if _ps_left else timeout
+        if wait <= 0:
             return None
+        t0 = time.monotonic()
         try:
-            r = subprocess.run(argv, capture_output=True, text=True, timeout=min(timeout, left), env=env)
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=wait, env=env)
             break
         except subprocess.TimeoutExpired:
             if _ps_retried:
@@ -794,6 +796,9 @@ def _ps(pid, fields):
             timeout = PS_RETRY_S
         except (OSError, subprocess.SubprocessError):
             return None
+        finally:
+            if _ps_left:
+                _ps_left[0] -= time.monotonic() - t0
     out = r.stdout.strip()
     return out if r.returncode == 0 and out else None
 
@@ -1288,9 +1293,11 @@ def _stdin_scripts(cmd):
         out.append(f"{prog} -s <<'__DEVKIT_EOF__'\n{body}\n__DEVKIT_EOF__")
     lines, i, state = cmd.split("\n"), 0, (None, False)
     end = _heredoc_ends(lines)
+    last_op = max((k for k, ln in enumerate(lines) if "<<" in ln), default=-1)
     while i < len(lines):   # cat <<EOF ... EOF | bash: the body is the producer's text; `_strip_heredocs` drops it before anything else looks
         docs = [d for d in _line_heredocs(lines, i, end, state) if not d[3]]   # #427 S3: mọi heredoc của dòng; vòng 2: `<<` sau `#` / trong
-        state = _line_scan(lines[i], len(lines[i]), state)[1]                   # nháy thì các dòng sau được quét như dòng thường (có thể là lệnh)
+        if i < last_op:                                                          # nháy thì các dòng sau được quét như dòng thường
+            state = _line_scan(lines[i], len(lines[i]), state)[1]
         for m, s, j, _maybe in docs:
             after = lines[i][m.end():]
             prog = _piped_reader(after) or _pipe_stage_reader(after, (lines[k] for k in range(docs[-1][2] + 1, len(lines))))
@@ -2181,7 +2188,7 @@ def bash_collides(cmd, top, cwd=None, sid="", notes=None):
     if GIT_WRITE.search(cmd) or GATE.search(cmd):
         hits_top, foreign = write_hits_locked(cmd, top, cwd, sid, notes)
     if ">" in cmd:
-        tops = False   # các checkout bị giữ cùng repo: đọc ở đích tuyệt đối đầu tiên ngoài `top`
+        tops = False   # các checkout khác cùng repo: đọc ở đích tuyệt đối đầu tiên ngoài `top`
         for target in _redirect_targets(cmd):
             if not target or target.startswith("&"):
                 continue
@@ -2193,8 +2200,7 @@ def bash_collides(cmd, top, cwd=None, sid="", notes=None):
             elif foreign is None and not os.path.normpath(target).startswith("/dev/"):   # (2>/dev/null: không đọc khoá nào)
                 if tops is False:
                     gdir = git_dir(top)[0] if top else None   # (top mà git không cho biết git dir: như trước, chỉ `top`)
-                    tops = [(_checkout_top(g, lock), g, lock) for _c, g, lock in _family_locks(gdir, sid, time.time(), gdir)] if gdir else (
-                        [] if top else None)
+                    tops = [(_checkout_top(g), g) for g in _family_dirs(gdir) if not _same_dir(g, gdir)] if gdir else ([] if top else None)
                 foreign = _held_at(target, sid, time.time(), tops)
     if not hits_top and top and _file_write_hits(cmd, top, cwd):
         hits_top = True
@@ -2221,12 +2227,7 @@ def family_held(gdir, sid, now, skip=None):
 def _family_locks(gdir, sid, now, skip):
     """family_held, mọi checkout: (checkout, git dir, lock) của từng checkout của repo chứa `gdir` mà phiên khác còn sống giữ, trừ git dir
     `skip` (None: không trừ cái nào)."""
-    common = _common_of(gdir)
-    try:
-        names = sorted(os.listdir(os.path.join(common, "worktrees")))
-    except OSError:
-        names = []
-    for g in [common] + [os.path.join(common, "worktrees", n) for n in names]:
+    for g in _family_dirs(gdir):
         if skip and _same_dir(g, skip):
             continue
         lock = read_checkout_lock(g)
@@ -2234,9 +2235,19 @@ def _family_locks(gdir, sid, now, skip):
             yield str(lock.get("cwd") or g), g, lock
 
 
-def _checkout_top(g, lock):
+def _family_dirs(gdir):
+    """Git dir của mọi checkout của repo chứa `gdir`: git dir chung rồi từng worktree liên kết."""
+    common = _common_of(gdir)
+    try:
+        names = sorted(os.listdir(os.path.join(common, "worktrees")))
+    except OSError:
+        names = []
+    return [common] + [os.path.join(common, "worktrees", n) for n in names]
+
+
+def _checkout_top(g):
     """Thư mục làm việc của checkout có git dir `g`: worktree liên kết đọc từ <g>/gitdir, git dir `<top>/.git` thì là <top>, còn lại lấy
-    toplevel chứa cwd ghi trong khoá; None khi không biết."""
+    toplevel chứa cwd ghi trong khoá của nó; None khi không biết."""
     try:
         with open(os.path.join(g, "gitdir"), encoding="utf-8") as f:
             return os.path.dirname(os.path.realpath(f.read(4096).strip()))
@@ -2244,14 +2255,15 @@ def _checkout_top(g, lock):
         pass   # không phải worktree liên kết
     if os.path.basename(g) == ".git":
         return os.path.dirname(g)
-    return _target(str(lock.get("cwd") or ""))[0]
+    return _target(str((read_lock(os.path.join(g, LOCK)) or {}).get("cwd") or ""))[0]
 
 
 def _held_at(path, sid, now, tops=None):
     """(checkout, git dir, lock) khi đường dẫn tuyệt đối `path` (đích một redirect, một Edit) nằm trong checkout mà phiên khác còn sống giữ;
-    None khi không. `tops`: [(toplevel, git dir, lock)] - chỉ xét đường dẫn trong một checkout của danh sách đó (mục 5: các checkout bị giữ
-    cùng repo; không liệt kê repo khác), và khi git không cho biết checkout chứa nó thì coi là checkout đó (fail closed); None: xét mọi
-    repo (mục 1: phiên ở thư mục không phải repo, không có họ checkout nào để lọc). /dev/* không bao giờ là file của checkout."""
+    None khi không. `tops`: [(toplevel, git dir)] - chỉ xét đường dẫn trong một checkout của danh sách đó (mục 5: các checkout khác cùng repo;
+    không liệt kê repo khác; khoá chỉ đọc khi đích nằm trong một checkout), và khi git không cho biết checkout chứa nó thì xét khoá của
+    checkout đó (fail closed); None: xét mọi repo (mục 1: phiên ở thư mục không phải repo, không có họ checkout nào để lọc). /dev/* không bao
+    giờ là file của checkout."""
     try:
         real = os.path.realpath(path)
     except ValueError:   # a NUL: no file can have it
@@ -2265,8 +2277,10 @@ def _held_at(path, sid, now, tops=None):
     while d != os.path.dirname(d) and not os.path.isdir(d):   # chưa có (mkdir -p trước nó trong cùng lệnh): thư mục cha gần nhất quyết
         d = os.path.dirname(d)
     tl, g = _target(d)
+    if g is None and inside:
+        tl, g = inside[0]
     if g is None:
-        return inside[0] if inside else None
+        return None
     lock = read_checkout_lock(g)
     return None if is_free_for(lock, sid, now) else (tl, g, lock)
 
@@ -2362,6 +2376,7 @@ def status(argv):
 
 
 def main():
+    _ps_left[:] = [PS_BUDGET_S]   # #427 vòng 2: tiến trình này là hook / lệnh ngắn - một hạn chờ ps cho cả tiến trình
     if "--status" in sys.argv[1:]:
         return status([a for a in sys.argv[1:] if a != "--status"])
     if "--allow-shared" in sys.argv[1:]:
@@ -2548,13 +2563,15 @@ def main():
                   f"TỰ làm trong worktree riêng (`agent-kit worktree add ../<repo>-<việc>`, người dùng đã duyệt sẵn; xong thì "
                   f"`agent-kit worktree finish <đường dẫn>`), hoặc chờ phiên kia xong lượt.", file=sys.stderr)
             return 2
-    trunk, sw = trunk_main(top)
+    # #427 vòng 2: cwd không phải repo - luật trunk của repo project của phiên (phiên đăng ký ở đó, như project_held)
+    proj = os.environ.get("CLAUDE_PROJECT_DIR") if not gdir else None
+    trunk, sw = trunk_main(top if gdir else (git_dir(proj)[1] if proj and sid and read_session(proj, sid) else None))
     if trunk:   # W1 R1 v6: main is merge-only - a write into it is refused whoever the session is, wherever it runs from
         if trunk_write(tool, d.get("tool_input"), command, cwd, trunk, sw, sid):
             print(TRUNK_MSG.format(main=trunk), file=sys.stderr)
-            log(gdir, f"{sid} trunk mode: chặn ghi vào main {trunk} ({tool})")
+            log(gdir or git_dir(trunk)[0] or trunk, f"{sid} trunk mode: chặn ghi vào main {trunk} ({tool})")
             return 2
-        if _same_dir(top, trunk):
+        if top and _same_dir(top, trunk):
             return 0   # nothing written into main: nothing to take (main has no holder in trunk mode)
     # lỗ 1 (25/10): a git write / gate run whose target the line does not tell used to count against this session's OWN checkout only, so
     # from a free checkout `cd $X && git commit` reached one of the same repository another session holds. Trunk mode refuses such a
