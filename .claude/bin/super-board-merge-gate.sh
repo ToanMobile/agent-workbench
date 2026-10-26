@@ -839,7 +839,8 @@ gate_red_suite_ids() {
 run_suite_on_base() {
   ( cd "$SCRATCH" && python3 -I -c '
 import os, signal, subprocess, sys
-env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "POSTFIX_GATE_FORCE_FULL"}
+env = {k: v for k, v in os.environ.items()
+       if not k.startswith("GIT_") and k not in ("POSTFIX_GATE_FORCE_FULL", "CLAUDE_PROJECT_DIR", "TARGET_DIR")}
 p = subprocess.Popen(sys.argv[1], shell=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 try:
     rc = p.wait(timeout=900)
