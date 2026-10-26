@@ -24,7 +24,13 @@ else ok "prompt reviewer không chứa lệnh post-fix-gate --full"; fi
 case "$(cat "$RUN")" in *"$MARK"*) ok "run.md nêu '$MARK'" ;; *) fail "run.md thiếu '$MARK'" ;; esac
 case "$(cat "$SKILL")" in *"$MARK"*) ok "SKILL nêu '$MARK'" ;; *) fail "SKILL thiếu '$MARK'" ;; esac
 if grep -q "rerun it" "$SKILL"; then fail "SKILL còn 'rerun it yourself'"; else ok "SKILL hết 'rerun it yourself'"; fi
-# Merge gate vẫn thêm --force-full vào lệnh verify.
-grep -q -- '--force-full' "$ROOT/.claude/bin/super-board-merge-gate.sh" && ok "merge gate vẫn thêm --force-full" || fail "merge gate mất --force-full"
+# Merge gate vẫn thêm --force-full vào lệnh verify. Chuỗi cờ nằm ở super-board-verify-flags.sh (sb_verify_inject_flags, #251);
+# kiểm cả chuỗi: gate source file đó, gate gọi hàm đó, và hàm thật sự chèn --force-full vào lệnh post-fix-gate.
+GATE="$ROOT/.claude/bin/super-board-merge-gate.sh"
+FLAGS="$ROOT/.claude/bin/super-board-verify-flags.sh"
+grep -q 'super-board-verify-flags\.sh' "$GATE" && grep -q 'sb_verify_inject_flags ' "$GATE" \
+  && injected="$(bash -c '. "$1"; sb_verify_inject_flags "python3 x/post-fix-gate.py --run-tests" main' _ "$FLAGS" 2>/dev/null)" \
+  && case "$injected" in *" --force-full"*) true ;; *) false ;; esac \
+  && ok "merge gate vẫn thêm --force-full (qua sb_verify_inject_flags)" || fail "merge gate mất --force-full"
 
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }
