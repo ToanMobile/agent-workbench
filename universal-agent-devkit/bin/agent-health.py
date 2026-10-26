@@ -363,6 +363,35 @@ def project_wiring(target: Path, score: Score):
                    f"{len(leaked)} DevKit links not excluded from git (re-run agent-kit init): {leaked[:3]}"), warn_only=True)
 
 
+def merge_queue_canary(target: Path) -> None:
+    """Pha 2 lớp 3: config board bật merge_queue mà canary 24 h ĐỎ → một dòng WARN. Chỉ in: không chấm điểm (không đổi exit
+    của REG-WB-CONFIG-01), không gọi gh (chỉ luật theo runs.jsonl), không tạo thẻ (thẻ do nightly.py tạo)."""
+    import time
+    bin_dir = str(Path(__file__).resolve().parent)
+    if bin_dir not in sys.path:   # main() gọi qua import (không phải chạy file): bin/ chưa nằm trong sys.path
+        sys.path.insert(0, bin_dir)
+    try:
+        import batch_canary
+    except ImportError as e:   # kit cài thiếu bin/batch_canary.py: health vẫn chạy hết
+        print(f"agent-health: batch canary skipped: {e}", file=sys.stderr)
+        return
+    try:
+        configs = batch_canary.enabled_configs(target)
+        if not configs:
+            return
+        runs = batch_canary.runs_path(target)
+        if runs is None or not runs.is_file():
+            return
+        since = max([time.time() - 24 * 3600] + [s for _c, s in configs])
+        red, summary, reasons = batch_canary.check(runs, since)
+    except (OSError, batch_canary.CanaryError) as e:
+        print(f"agent-health: batch canary skipped: {e}", file=sys.stderr)
+        return
+    if red:
+        warn(tr(f"batch canary 24 h ĐỎ (merge_queue bật): {summary} — {'; '.join(reasons)}",
+                f"batch canary 24 h RED (merge_queue on): {summary} — {'; '.join(reasons)}"))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Universal Agent DevKit health diagnostic")
     parser.add_argument("--run-tests", action="store_true",
@@ -517,6 +546,7 @@ def main(argv=None):
     if target.resolve() != BASE_DIR.resolve():
         section(tr("[+] Dây nối trong dự án (hook, import, ma trận, git)", "[+] Project wiring (hooks, imports, matrix, git)"))
         project_wiring(target, score)
+        merge_queue_canary(target)
 
     section(tr("[6/6] MCP & Ma trận hồi quy", "[6/6] MCP & regression matrix"))
     mcps, sources = configured_mcps(target)

@@ -496,7 +496,7 @@ if info is not None and not degraded and (data.get("session_id") or data.get("se
     except Exception as e:
         note("reuse key failed: %r" % e)
 repeat = state.get("repeat") if isinstance(state.get("repeat"), dict) else {}
-REUSED = "cùng nội dung với lần chặn trước — chưa chạy lại; sửa code hoặc chạy post-fix-gate --full"
+REUSED = "cùng nội dung với lần chặn trước — chưa chạy lại; sửa code hoặc chạy post-fix-gate --run-tests (biên nhận task)"
 
 def block(lines, cure, rc, reused=False, reusable=True, repeat_hit=False):
     attempts = state.setdefault("attempts", {})
@@ -872,7 +872,7 @@ if res.returncode == 4 and summary.get("budget_exhausted"):
     left = [str(t.get("id") or "?") for t in summary.get("regression_tests", []) if t.get("label") == "BUDGET"]
     note("budget fp=%s left=%s" % (fp, ",".join(left)))
     print(json.dumps({"systemMessage": "Regression gate UNTESTED — hết ngân sách thời gian (%ss): %s chưa chạy — KHÔNG phải PASS; "
-                      "chạy `postfix-gate --run-tests --full` trước khi bàn giao. (REGRESSION_GATE_BUDGET_S) "
+                      "chạy `post-fix-gate.py --run-tests` (biên nhận task; --full chỉ ở điểm gộp) trước khi bàn giao. (REGRESSION_GATE_BUDGET_S) "
                       "Suite đã PASS giữ lại cho lần Stop sau nếu code không đổi."
                       % (budget_s, ", ".join(left))}, ensure_ascii=False))
     sys.exit(0)

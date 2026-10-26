@@ -631,17 +631,19 @@ if recs:
 root = make_repo("deferred")
 edit(root, "docs/guide.md")
 subprocess.run([PY, SESSION_LOCK, "--register", "--session", "S2", root], check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
-r0, r1, _ = same_as_off("deferred --full", root, ["--run-tests", "--full", "--session", "S1", "--json"])
+# T0061 Pha 1 (hợp đồng mới): --full không còn bị hoãn khi có phiên anh em (S2 còn đăng ký): nó chạy như mọi --full. Trường "deferred"
+# của runs.jsonl vẫn còn và là False. same_as_off chạy hai lần trên cùng nội dung: --no-cache để hai lượt cùng chạy suite thật (cùng byte).
+r0, r1, _ = same_as_off("--full with a sibling session", root, ["--run-tests", "--full", "--no-cache", "--session", "S1", "--json"])
 recs = read_log(root)
-chk(r1[0] == 5 and len(recs) == 1 and recs[0]["verdict"] == "DEFERRED" and recs[0]["deferred"] is True and recs[0]["exit"] == 5
-    and recs[0].get("exit_reason") == "deferred"
+chk(r1[0] == 0 and len(recs) == 1 and recs[0]["verdict"] in ("PASS", "REUSED") and recs[0]["deferred"] is False and recs[0]["exit"] == 0
+    and recs[0].get("exit_reason") in ("pass", "reused")
     and recs[0]["mode"] == "full" and recs[0]["source"] == "hook",
-    "deferred --full: exit 5 kept, verdict DEFERRED, exit_reason deferred, mode full", repr(recs))
-r0, r1, _ = same_as_off("deferred by POSTFIX_GATE_FULL=1 (the Stop hook)", root, ["--run-tests", "--session", "S1"], {"POSTFIX_GATE_FULL": "1"})
+    "--full with a sibling session: no longer deferred, exit 0, verdict PASS/REUSED, deferred false, mode full", repr(recs))
+r0, r1, _ = same_as_off("POSTFIX_GATE_FULL=1 with a sibling session (the Stop hook)", root, ["--run-tests", "--session", "S1"], {"POSTFIX_GATE_FULL": "1"})
 recs = read_log(root)
-chk(r1[0] == 0 and len(recs) == 2 and recs[-1]["verdict"] == "DEFERRED" and recs[-1]["exit"] == 0 and recs[-1]["deferred"] is True
-    and recs[-1].get("exit_reason") == "deferred",
-    "deferred without --full: exit 0 kept, verdict DEFERRED, exit_reason deferred", repr(recs[-1:]))
+chk(r1[0] == 0 and len(recs) == 2 and recs[-1]["verdict"] in ("PASS", "REUSED") and recs[-1]["exit"] == 0 and recs[-1]["deferred"] is False
+    and recs[-1].get("exit_reason") in ("pass", "reused"),
+    "POSTFIX_GATE_FULL=1 with a sibling session: not deferred, exit 0, deferred false", repr(recs[-1:]))
 
 root = make_repo("reused")
 edit(root, "docs/guide.md")
