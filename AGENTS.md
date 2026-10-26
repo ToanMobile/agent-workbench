@@ -75,8 +75,8 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   paths, `git fetch`; origin moved → `git pull --no-rebase --no-edit` (check its exit code;
   a conflict → skill conflict, ask only for a business decision) and, after any pull, merge
   or conflict fix, re-run the gate on what will be pushed: on a PR branch `post-fix-gate.py --run-tests`
-  (its task receipt), on main `post-fix-gate.py --run-tests --full --diff origin/<branch>` (a push of
-  main is a merge point). Every commit and every push needs the latest gate on that content at
+  (its task receipt). A trunk-push repo pushes main only through `agent-kit integrate` (one `--full` in a
+  scratch worktree, then the push); never a `--full` in the main checkout. Every commit and every push needs the latest gate on that content at
   exit 0 — or exit 2 whose only reason is an edited test an Antigravity `audit` passed, with
   `Test-approved-by: antigravity <task-id>` in `git log origin/<branch>..HEAD`. Anything else: no commit,
   no push.
