@@ -243,11 +243,12 @@ def git_gate_wiring(target: Path, score: Score):
                                   "No pre-commit hook: commits skip the static checks (agent-kit githooks install)"), warn_only=True)
 
 
-# A script a hook command runs from the project: a path after $CLAUDE_PROJECT_DIR / ${CLAUDE_PROJECT_DIR:-…}
+# A script a hook command runs from the project: a path after $CLAUDE_PROJECT_DIR / ${CLAUDE_PROJECT_DIR:-…} / $PWD
 # (`bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/x.sh"`, `python3 "$CLAUDE_PROJECT_DIR"/universal-agent-devkit/hooks/x.py`),
-# or a bare .claude/hooks/ or .agents/devkit/ path (`cd "$CLAUDE_PROJECT_DIR" && python3 .claude/hooks/x.py`).
-HOOK_PATH_RX = re.compile(r"""(?:\$\{CLAUDE_PROJECT_DIR[^}]*\}|\$CLAUDE_PROJECT_DIR)["']?/([\w.-]+(?:/[\w.-]+)*)"""
-                          r"""|(?:^|[\s"'])((?:\.claude/hooks|\.agents/devkit)/[\w.-]+(?:/[\w.-]+)*)""")
+# or a bare or ./ .claude/hooks/ or .agents/devkit/ path (`cd "$CLAUDE_PROJECT_DIR" && python3 .claude/hooks/x.py`).
+# Not $HOME/.claude/hooks or ~/.claude/hooks: user-level hooks are not files of the project.
+HOOK_PATH_RX = re.compile(r"""(?:\$\{CLAUDE_PROJECT_DIR[^}]*\}|\$CLAUDE_PROJECT_DIR|\$\{PWD\}|\$PWD)["']?/([\w.-]+(?:/[\w.-]+)*)"""
+                          r"""|(?:^|[\s"'])(?:\./)?((?:\.claude/hooks|\.agents/devkit)/[\w.-]+(?:/[\w.-]+)*)""")
 # Only a script counts: `>> "$CLAUDE_PROJECT_DIR/.claude/hook.log"` names a file the hook writes, not one it needs.
 HOOK_SCRIPT_EXTS = (".sh", ".bash", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl")
 
