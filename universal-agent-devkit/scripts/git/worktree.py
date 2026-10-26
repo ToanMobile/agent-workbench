@@ -2129,6 +2129,50 @@ def _iter_blockers(cwd, wt, shown, budget, rows=None):
     if cut:
         yield (1, "secret", tr(f"{wt}: dò file bí mật bị git ignore dừng ở {cut} (quá WORKTREE_SECRET_SCAN_MAX file hoặc không đọc được) — phần chưa đọc có thể có khoá",
                                f"{wt}: the scan for git-ignored secret files stopped at {cut} (over WORKTREE_SECRET_SCAN_MAX files, or unreadable) - what it did not read may hold a key"), [])
+    try:   # OCR r2 (26/10): the kit's own uncommitted work lives git-ignored under .agents/local/ (red-patches, stages, handoffs, claude-auto)
+        local, local_cut = _unsaved_agent_local(wt, main)
+    except (OSError, UnicodeError) as e:   # (SystemExit - git cannot run - is the caller's, as for every check here)
+        local, local_cut = [], f"({e})"
+    if local:
+        listing = ", ".join(p.encode("utf-8", "surrogateescape").decode("utf-8", "replace") for p in local[:6]) + (" …" if len(local) > 6 else "")
+        yield (1, "agent_local", tr(f"{wt}: {len(local)} file bị git ignore dưới .agents/local/ chỉ worktree có (main chưa có hoặc có bản khác): {listing} — gỡ worktree là mất "
+                                    f"chúng. Chép chúng vào {shlex.quote(os.path.join(main, AGENT_LOCAL_REL))} (cùng đường dẫn) trước, hoặc hỏi người dùng có bỏ được không",
+                                    f"{wt}: {len(local)} git-ignored file(s) under .agents/local/ only the worktree holds (main lacks them or holds other bytes): {listing} - a "
+                                    f"removal deletes them. Copy them into {shlex.quote(os.path.join(main, AGENT_LOCAL_REL))} (same paths) first, or ask the user whether they can go"), [])
+    if local_cut:
+        yield (1, "agent_local", tr(f"{wt}: không dò hết file bị git ignore dưới .agents/local/ ({local_cut}) — phần chưa đọc có thể là việc chưa lưu",
+                                    f"{wt}: the git-ignored files under .agents/local/ could not all be checked ({local_cut}) - what was not read may be unsaved work"), [])
+
+
+AGENT_LOCAL_REL = os.path.join(".agents", "local")   # the kit's place for work that is not committed: red-patches, stages, handoffs, claude-auto
+AGENT_LOCAL_SCAN_MAX = 5000
+
+
+def _unsaved_agent_local(wt, main):
+    """(paths, cut): the git-IGNORED files under the worktree's .agents/local/ whose bytes the main checkout does not hold at the same path
+    (missing there, or other bytes) - a removal deletes them (OCR r2 26/10: `remove`, `remove --merged` and `gc --merged` dropped a
+    red-patch, a stage HANDOFF.md and claude-auto notes). A file `worktree add` copied from main is the same bytes: not counted, nor one
+    main holds as <path>.from-<worktree name> with the same bytes (finish puts a file main has with OTHER bytes there). Not counted
+    either: a link (no data of its own; the installer links the kit's hooks there), a dotfile (.DS_Store, the installer's
+    .devkit_backups.log, as _unsaved_memory), a .agents/local that is a link or IS main's folder. Tracked and untracked-not-ignored files
+    are changes_since's. `cut`: why the scan did not finish (git failed, over AGENT_LOCAL_SCAN_MAX files) - the caller refuses then."""
+    own = os.path.join(wt, AGENT_LOCAL_REL)
+    if not os.path.isdir(own) or os.path.islink(own) or _same_path(own, os.path.join(main, AGENT_LOCAL_REL)):
+        return [], ""
+    r = _git_bytes(wt, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", AGENT_LOCAL_REL.replace(os.sep, "/") + "/")
+    if r.returncode != 0:
+        return [], tr(f"git ls-files lỗi (exit {r.returncode})", f"git ls-files failed (exit {r.returncode})")
+    rels = [p.decode("utf-8", "surrogateescape") for p in r.stdout.split(b"\0") if p]
+    if len(rels) > AGENT_LOCAL_SCAN_MAX:
+        return [], tr(f"hơn {AGENT_LOCAL_SCAN_MAX} file", f"over {AGENT_LOCAL_SCAN_MAX} files")
+    lost, suffix = [], ".from-" + os.path.basename(os.path.normpath(wt))
+    for rel in rels:
+        src = os.path.join(wt, rel)
+        if os.path.basename(rel).startswith(".") or os.path.islink(src) or not os.path.isfile(src):
+            continue
+        if not (_same_bytes(src, os.path.join(main, rel)) or _same_bytes(src, os.path.join(main, rel + suffix))):
+            lost.append(rel)
+    return lost, ""
 
 
 def removal_blockers(cwd, wt, budget=None, shown=None):
@@ -3956,16 +4000,35 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
         return status, head + tr(f"; worktree giữ lại (phiên {kept[0]} còn sống giữ khoá devkit-kept của nó, pid {kept[1]})",
                                  f"; the worktree is kept (live session {kept[0]} holds its devkit-kept lock, pid {kept[1]})") + receipt_note, {"kept": True}
     saved = []
-    try:
-        for rel in _unsaved_memory(wt, main):   # notes only the worktree's own (git-ignored) agent-memory folder holds: a removal would delete them
-            src, dst = os.path.join(wt, MEMORY_REL, rel), os.path.join(main, MEMORY_REL, rel)
-            if os.path.exists(dst):
-                dst += ".from-" + os.path.basename(wt)
+    try:   # OCR r2 (26/10): every git-ignored file under .agents/local/ only the worktree holds (claude-auto notes, red-patches, stages, handoffs)
+        # goes to main before the removal (the blocker cmd_remove shares would keep the worktree otherwise); one main holds with OTHER bytes
+        # lands next to it as <path>.from-<worktree name>, main's own copy untouched. Every destination must be ignored in main too: an
+        # untracked file put in the merge-only main checkout could stop its next fast-forward. A secret-like file (a keystore under
+        # .agents/local/signing/) is left to the secret carry below (O_EXCL, private mode, never next to another copy).
+        local, cut = _unsaved_agent_local(wt, main)
+        if cut:
+            raise OSError(cut)
+        plan = [(rel, rel if not os.path.lexists(os.path.join(main, rel)) else rel + ".from-" + os.path.basename(os.path.normpath(wt)))
+                for rel in local if not _secret_like(rel)]
+        if plan:
+            r = _git_bytes(main, "check-ignore", "-z", "--stdin", "--no-index", inp=b"".join(d.encode("utf-8", "surrogateescape") + b"\0" for _rel, d in plan))
+            ignored = {p.decode("utf-8", "surrogateescape") for p in r.stdout.split(b"\0") if p} if r.returncode in (0, 1) else None
+            open_ = [d for _rel, d in plan if ignored is None or d not in ignored]
+            if open_:
+                return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ worktree: {len(open_)} file bị git ignore dưới .agents/local/ chỉ worktree có mà main KHÔNG ignore ở đó "
+                                     f"(chép sang sẽ thành file chưa track trong main): {', '.join(open_[:6])}. Không gì bị chép. Chép tay (hoặc thêm luật ignore ở main) rồi chạy lại "
+                                     f"`agent-kit worktree finish {shlex.quote(wt)}`",
+                                     f"merged into main but the worktree is NOT removed: {len(open_)} git-ignored file(s) under .agents/local/ only the worktree holds are NOT "
+                                     f"ignored in main (a copy would be an untracked file there): {', '.join(open_[:6])}. Nothing was copied. Copy them by hand (or add an "
+                                     f"ignore rule in main), then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": open_[:20]}
+        for rel, dst_rel in plan:
+            dst = os.path.join(main, dst_rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copy2(src, dst)
-            saved.append(rel)
-    except (OSError, SystemExit) as e:
-        return "blocked", tr(f"đã gộp vào main nhưng không chép được memory note của worktree ({e}); worktree còn nguyên", f"merged into main but the worktree's memory notes could not be copied ({e}); the worktree is untouched"), {"merged": True}
+            shutil.copy(os.path.join(wt, rel), dst)   # content + mode, not copy2: no macOS `chflags uchg` carried into main (_copy's rule)
+            saved.append(dst_rel)
+    except (OSError, SystemExit, UnicodeError) as e:
+        return "blocked", tr(f"đã gộp vào main nhưng không chép được file bị git ignore dưới .agents/local/ của worktree ({e}); worktree còn nguyên",
+                             f"merged into main but the worktree's git-ignored files under .agents/local/ could not be copied ({e}); the worktree is untouched"), {"merged": True}
     try:   # A.1b #12: a git-ignored secret only the worktree holds (a keystore made there) goes to main, never with the folder
         secrets, cut = _ignored_secrets(wt)
         carried, refused = ([], []) if cut else _carry_secrets(main, secrets)
@@ -4009,7 +4072,8 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
             how = "" if _by_hand(wt) in why else tr(f". NGƯỜI DÙNG chạy `{_by_hand(wt)}`", f". The USER runs `{_by_hand(wt)}`")
         return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ được worktree: {why}{how}",
                              f"merged into main but the worktree could NOT be removed: {why}{how}"), {"merged": True}
-    note = (tr(f" ({len(saved)} memory note đã chép sang main: {', '.join(saved[:5])})", f" ({len(saved)} memory note(s) copied into main: {', '.join(saved[:5])})") if saved else "")
+    note = (tr(f" ({len(saved)} file bị ignore dưới .agents/local/ đã chép sang main: {', '.join(saved[:5])})",
+               f" ({len(saved)} git-ignored file(s) under .agents/local/ copied into main: {', '.join(saved[:5])})") if saved else "")
     note += (tr(f" ({len(carried)} file bí mật bị git ignore đã chép sang main, ở đó vẫn bị ignore: {', '.join(carried[:5])})",
                 f" ({len(carried)} git-ignored secret file(s) copied into main, ignored there too: {', '.join(carried[:5])})") if carried else "")
     note += receipt_note

@@ -70,12 +70,16 @@ mv "$TMP/claude-auto-away" "$M/.agents/local/memory/claude-auto"
 bash "$KIT" worktree remove ../wt-n >/dev/null 2>&1
 bash "$KIT" worktree add ../wt-x --bogus-flag >/dev/null 2>&1; [ $? = 2 ] && ok "add: an unknown option is still refused" || fail "unknown add option accepted"
 grep -q -e "--share-memory" "$DEVKIT_DIR/completions/agent-kit.bash" && ok "completion: worktree add offers --share-memory" || fail "bash completion lacks --share-memory"
-# a note saved in the worktree's OWN claude-auto folder goes with it: remove WARNS (it does not refuse) when main's folder lacks it
+# a note saved in the worktree's OWN claude-auto folder that main's folder lacks: remove REFUSES, naming it (OCR r2 26/10: it used to warn
+# AFTER deleting it); once main holds the same bytes, the worktree goes
 bash "$KIT" worktree add ../wt-w >/dev/null 2>&1; WW="$TMP/wt-w"; mkdir -p "$WW/.agents/local/memory/claude-auto"
 printf 'lesson\n' > "$WW/.agents/local/memory/claude-auto/note.md"
 out_w="$(bash "$KIT" worktree remove ../wt-w 2>&1)"; rc_w=$?
-[ "$rc_w" = 0 ] && [ ! -e "$WW" ] && printf '%s' "$out_w" | grep -q "1 memory note" && printf '%s' "$out_w" | grep -q "share-memory" && printf '%s' "$out_w" | grep -q "claude-auto" \
-  && ok "remove: a note only in the worktree's own claude-auto folder -> WARNING (count + both cures), the worktree is still removed" || fail "memory note warning (rc=$rc_w): $out_w"
+[ "$rc_w" != 0 ] && [ -f "$WW/.agents/local/memory/claude-auto/note.md" ] && printf '%s' "$out_w" | grep -q "\.agents/local/memory/claude-auto/note.md" \
+  && ok "remove: a note only in the worktree's own claude-auto folder -> REFUSED, the note named (no longer deleted with a warning)" || fail "memory note refusal (rc=$rc_w): $out_w"
+cp "$WW/.agents/local/memory/claude-auto/note.md" "$M/.agents/local/memory/claude-auto/note.md"
+bash "$KIT" worktree remove ../wt-w >/dev/null 2>&1; [ ! -e "$WW" ] && ok "remove: … and goes once main holds the same note" || fail "wt-w kept after main got the note"
+rm -f "$M/.agents/local/memory/claude-auto/note.md"
 bash "$KIT" worktree add ../wt-w2 >/dev/null 2>&1; WW="$TMP/wt-w2"; mkdir -p "$WW/.agents/local/memory/claude-auto"
 printf 'lesson\n' > "$WW/.agents/local/memory/claude-auto/note.md"; cp "$WW/.agents/local/memory/claude-auto/note.md" "$M/.agents/local/memory/claude-auto/note.md"
 out_w="$(bash "$KIT" worktree remove ../wt-w2 2>&1)"; rc_w=$?
@@ -84,8 +88,9 @@ rm -f "$M/.agents/local/memory/claude-auto/note.md"
 bash "$KIT" worktree add ../wt-w4 >/dev/null 2>&1; WW="$TMP/wt-w4"; mkdir -p "$WW/.agents/local/memory/claude-auto"
 printf 'main version\n' > "$M/.agents/local/memory/claude-auto/MEMORY.md"; printf 'worktree version, edited\n' > "$WW/.agents/local/memory/claude-auto/MEMORY.md"
 out_w="$(bash "$KIT" worktree remove ../wt-w4 2>&1)"; rc_w=$?
-[ "$rc_w" = 0 ] && printf '%s' "$out_w" | grep -q "1 memory note" && ok "remove: a note of the same name with OTHER bytes in main is also warned about" || fail "edited note not warned (rc=$rc_w): $out_w"
-rm -f "$M/.agents/local/memory/claude-auto/MEMORY.md"
+[ "$rc_w" != 0 ] && [ -f "$WW/.agents/local/memory/claude-auto/MEMORY.md" ] && printf '%s' "$out_w" | grep -q "\.agents/local/memory/claude-auto/MEMORY.md" \
+  && ok "remove: a note of the same name with OTHER bytes in main is also refused, named" || fail "edited note not refused (rc=$rc_w): $out_w"
+rm -f "$M/.agents/local/memory/claude-auto/MEMORY.md" "$WW/.agents/local/memory/claude-auto/MEMORY.md"; bash "$KIT" worktree remove ../wt-w4 >/dev/null 2>&1
 bash "$KIT" worktree add ../wt-w3 --share-memory >/dev/null 2>&1
 out_w="$(bash "$KIT" worktree remove ../wt-w3 2>&1)"; rc_w=$?
 [ "$rc_w" = 0 ] && ! printf '%s' "$out_w" | grep -qi "memory note" && ok "remove: a --share-memory worktree -> no warning (its notes are in main's folder)" || fail "warned for a shared-memory worktree (rc=$rc_w): $out_w"
