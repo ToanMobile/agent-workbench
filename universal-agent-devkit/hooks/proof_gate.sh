@@ -1068,7 +1068,7 @@ if missing_report:
     lines.append("- Báo cáo 4 mục (thiếu %s) — dán vào cuối:" % ",".join(n[0] for n in missing_report))
     lines.append(SKELETON)
 if gate_problem:
-    lines.append("- Cổng: " + gate_problem + " → python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief (biên nhận task; --full: điểm gộp)")
+    lines.append("- Cổng: " + gate_problem + " → python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief (+ --full ngoài worktree/nhánh PR)")
 for bp in before_problems:
     lines.append("- " + bp)
 if problems or (not good and need_image):

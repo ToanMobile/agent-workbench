@@ -96,7 +96,7 @@ run_gate() {
 # Đuôi log là dữ liệu tuỳ ý và đi vào comment issue CÔNG KHAI: mọi dòng qua redact_secrets() của kit (regression_checklist.py).
 # Không nạp được bộ che thì giấu cả đuôi (đóng an toàn), không bao giờ đăng log thô.
 detail_tail() {
-  local raw kit="" d
+  local raw kit="" d k
   raw=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$2" 2>/dev/null | grep -av '^[[:space:]]*$' | tail -20 || true)
   [ -n "$raw" ] || return 0
   for d in "$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)" "$HERE"; do
@@ -104,10 +104,11 @@ detail_tail() {
       [ -f "$k/regression_checklist.py" ] && { kit="$k"; break 2; }
     done
   done
-  if [ -n "$kit" ] && printf '%s\n' "$raw" | python3 -c 'import sys
+  # Che cả đoạn một lần (không từng dòng): khối khoá PEM nhiều dòng chỉ nhận ra được khi thấy cả khối. Lỗi của bộ che ra stderr của train.
+  if [ -n "$kit" ] && printf '%s\n' "$raw" | python3 -I -c 'import sys
 sys.path.insert(0, sys.argv[1])
 from regression_checklist import redact_secrets
-sys.stdout.write("".join(redact_secrets(l) for l in sys.stdin))' "$kit" > "$DETAIL_DIR/.redacted" 2>/dev/null; then
+sys.stdout.write(redact_secrets(sys.stdin.read()))' "$kit" > "$DETAIL_DIR/.redacted"; then
     sed "s/^/train-detail: $1 /" "$DETAIL_DIR/.redacted"
   else
     echo "train-detail: $1 (verify log tail hidden: the DevKit secret redactor could not be loaded)"

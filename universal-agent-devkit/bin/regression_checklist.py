@@ -754,17 +754,29 @@ def dismiss_rollback(project_dir: Path) -> bool:
 
 # A key, token or password pasted into a bug report never reaches the checklist (2026-10-13: a pasted API key became a REPORTED
 # row's title and the start of its id, in files every session commits). Redacted where all paths meet: register_bug.
+# 26/10: merge-train.sh đưa đuôi log verify đỏ (qua hàm này) vào comment issue CÔNG KHAI, nên cũng che dạng hay gặp trong log test:
+# key có nháy (dict/JSON pytest in ra), `Authorization: Basic|token`, `--password`, mật khẩu trong URL (`://user:pw@`), khoá PEM (cả khối,
+# kể cả khi đuôi log cắt mất dòng END). tests/gates/test_redact_secrets.sh.
 _SECRET_RX = re.compile(
-    r"\b(?:sk-[A-Za-z0-9]{2,10}-[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"(?P<pem>-{5}BEGIN [A-Z ]*PRIVATE\ KEY-{5}[\s\S]*?(?:-{5}END [A-Z ]*PRIVATE\ KEY-{5}|\Z))"
+    r"|(?P<url>://[^/\s:@]+:)[^\s/@]+(?=@)"
+    r"|\b(?:sk-[A-Za-z0-9]{2,10}-[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
     r"|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|xox[abprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})"
-    r"|(?P<pre>(?i:bearer\s+|(?:api[_-]?key|token|secret|password|passwd)\s*[=:]\s*))[A-Za-z0-9._~+/-]{12,}")
+    r"|(?P<pre>(?i:bearer\s+|basic\s+|authorization:\s*token\s+|--password[=\s]+"
+    r"|(?:api[_-]?key|access[_-]?key|token|secret|password|passwd)[\"']?\s*[=:]\s*[\"']?))[^\s\"'@,;}]{8,}")
+
+
+def _redact_one(m):
+    if m.group("pem"):
+        return "«redacted private key»"
+    return (m.group("url") or m.group("pre") or "") + "«redacted»"
 
 
 def redact_secrets(text):
     """`text` with every key / token / password-looking value replaced by «redacted» (None stays None)."""
     if not isinstance(text, str):
         return text
-    return _SECRET_RX.sub(lambda m: (m.group("pre") or "") + "«redacted»", text)
+    return _SECRET_RX.sub(_redact_one, text)
 
 
 def _slug(text: str, max_len: int = 40) -> str:

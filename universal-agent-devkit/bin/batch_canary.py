@@ -6,7 +6,8 @@ train chạy 0 lần mà test vẫn xanh; canary này đo trên dữ liệu th�
 
 Đọc <git common dir>/postfix-gate/runs.jsonl: lượt verify của merge gate có project `.merge-scratch*`, của train
 `.train-scratch*`. PR merged lấy từ --merged-json, không có thì `gh pr list --state merged --limit 200 --json number,mergedAt`
-(timeout 15 s). Exit 1 (ĐỎ) khi có >= 2 PR merged mà 0 lượt train, hoặc số lượt merge gate lẻ > số lượt train (đường lẻ áp đảo).
+(timeout 15 s). Exit 1 (ĐỎ) khi có >= 2 PR merged mà 0 lượt train, hoặc số lượt merge gate lẻ >= 2 và > số lượt train (đường lẻ áp đảo;
+một lượt --standalone lẻ ngoài board không tính).
 Không có luật tỉ lệ: một đợt nhỏ lúc máy rảnh (1 PR / 1 train) là bình thường. Exit 0 (XANH, hoặc "canary off" khi config board
 không bật merge_queue / enabled_at null). Exit 2: lỗi đầu vào, kèm lý do.
 Mốc: --since; không có thì merge_queue.enabled_at của --config; có cả hai thì lấy mốc muộn hơn (lượt trước lúc bật không tính).
