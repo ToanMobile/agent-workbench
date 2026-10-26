@@ -72,4 +72,68 @@ check 0 'find . -name "*.kt" | xargs wc -l'
 check 0 'find . -name "*.kt" -exec wc -l {} +'
 check 0 'git ls-files | xargs rm -f'
 
+# 3. audit 2026-10-25 A7: the agent's own scratch (/private/tmp/claude-<uid>/, /tmp/claude-<uid>/). A literal path there stays allowed, but a
+#    path SPELLED under it must also end under it: no `..` out of it, and no link it reaches through (a trailing slash makes BSD rm follow
+#    the link: `rm -rf link/` empties the link target — measured on macOS 25/10). Variables stay as they were (`rm -rf $X` refused).
+U="$(id -u)"; mkdir -p "/tmp/claude-$U" && SCR="$(mktemp -d "/tmp/claude-$U/devkit-hw-test.XXXXXX")" || { fail "no scratch dir"; SCR=""; }
+if [ -n "$SCR" ]; then
+  trap 'rm -rf "$TMP" "$SCR"' EXIT
+  SCRP="$(cd "$SCR" && pwd -P)"; SB="$(basename "$SCR")"
+  mkdir -p "$SCR/inner" && ln -s "$HOME" "$SCR/home" && ln -s "$TMP/work/other" "$SCR/elsewhere" && ln -s "$SCRP/inner" "$SCR/inside"
+  check 0 "rm -rf $SCRP/kitcopy"                              # literal, /private/tmp spelling
+  check 0 "rm -rf /tmp/claude-$U/$SB/stage $SCRP/inner"        # literal, /tmp spelling, two targets
+  check 0 "rm -rf $SCRP/kit*"                                 # a glob that stays in the folder
+  check 0 "rm -rf $SCRP/home"                                 # no trailing slash: rm removes the link, not $HOME
+  check 0 "rm -rf $SCRP/inside/"                              # a link that stays in the scratch folder
+  check 2 "rm -rf /private/tmp/claude-$U/../x"
+  check 2 "rm -rf /tmp/claude-$U/$SB/../../x"
+  check 2 "rm -rf $SCRP/../*"
+  check 2 "rm -rf $SCRP/home/"                                # trailing slash through a link to $HOME
+  check 2 "rm -rf $SCRP/elsewhere/"                           # … or to a folder outside the scratch folder
+  check 2 "rm -rf $SCRP/home/Documents"
+  check 2 "rm -rf $SCRP/*/Documents"                          # a glob whose match is the link to \$HOME
+  check 2 "rm -rf $SCRP/*/"                                   # … with a trailing slash: rm follows every matched link
+  check 2 'rm -rf /'
+  check 2 'rm -rf ~'
+  check 2 'rm -rf $X'
+  # review of A7 (25/10): the scratch check read the SPELLING (a string prefix) and the general branch dropped the trailing slash
+  # (normpath), then took the link for one file — `rm -rf <link to $HOME>/` passed in any other spelling of the same folder. Every path is
+  # now judged where the kernel resolves it. Spellings are built from $SCRP (the folder the test made), not from a literal /private/tmp.
+  TROOT="$(dirname "$(dirname "$SCRP")")"                  # /private/tmp on macOS, /tmp elsewhere
+  check 2 "rm -rf $TROOT//claude-$U/$SB/home/"             # C3: an inner //
+  check 2 "rm -rf $TROOT/./claude-$U/$SB/home/"            # C4: /./
+  check 2 "cd $SCRP && rm -rf home/"                       # C5: relative, after a literal cd
+  check 2 "cd $SCRP && rm -rf home/."
+  if [ -d "$TROOT/CLAUDE-$U/$SB" ]; then                   # C1: the same folder in another case (APFS is case-insensitive)
+    check 2 "rm -rf $TROOT/CLAUDE-$U/$SB/home/"
+  else
+    echo "skip C1: this filesystem is case-sensitive"
+  fi
+  HDEPTH="$(python3 -c 'import os; print(len([x for x in os.path.realpath(os.path.expanduser("~")).split("/") if x]))')"
+  check 2 "rm -rf ~/$(printf '../%.0s' $(seq "$HDEPTH"))${SCRP#/}/home/"   # ~/../../private/tmp/…: `..` resolved, not read
+  check 0 "rm -rf $SCRP/inner/"                            # control: a real folder of the scratch, trailing slash
+  check 0 "cd $SCRP && rm -rf inner/"                      # control: … relative
+  check 0 "cd $SCRP && rm -rf home"                        # control: no trailing slash, rm removes the link only
+fi
+
+# 4. review of A7 (25/10): a link inside the PROJECT to a folder outside it. With a trailing slash (or /.) rm deletes what the link points at;
+#    a glob walks into it as well. Without either, rm removes the link alone (allowed as before).
+ln -s "$HOME" "$P/hl" && ln -s "$HOME" "$P/app/build/hl"
+check 2 'rm -rf hl/'
+check 2 "rm -rf $P/hl/"
+check 2 'rm -rf hl/.'
+check 2 'rm -rf app/build/hl/*'                            # a glob in a build output, through the link
+check 0 'rm -rf hl'
+check 0 'rm -rf app/build/hl'
+check 0 'rm -rf app/build/'                                # a real build output with a trailing slash
+# … and a glob whose MATCH goes through such a link (the folder before the glob is a real build output / /tmp folder): each match that
+# leaves that folder is judged where it lands, like the scratch case `$SCRP/*/`
+mkdir -p "$P/app/build/real" "$TMP/work/other/real" && ln -s "$HOME" "$TMP/work/other/hl"
+check 2 'rm -rf app/build/*/'
+check 2 'rm -rf app/build/*/Documents'
+check 2 "rm -rf $TMP/work/other/*/"
+check 0 'rm -rf app/build/*'                               # no trailing slash: the link itself is removed
+check 0 "rm -rf $TMP/work/other/*"
+check 0 'rm -rf app/build/real/'
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_containment: all passed" || { echo "❌ test_hardware_rm_containment: $FAILS failed"; exit 1; }

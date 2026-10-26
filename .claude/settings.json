@@ -87,7 +87,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-protected-push.py"
+            "command": "p=\"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-protected-push.py; f=\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-protected-push.py; [ -f \"$p\" ] && exec python3 \"$p\"; [ -f \"$f\" ] && exec python3 \"$f\"; echo \"⛔ DevKit: guard-protected-push.py is missing ($p and $f): tool call blocked (fail closed). Reinstall: agent-kit init\" >&2; exit 2"
           }
         ]
       },
@@ -131,7 +131,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-secrets.py"
+            "command": "p=\"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-secrets.py; f=\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-secrets.py; [ -f \"$p\" ] && exec python3 \"$p\"; [ -f \"$f\" ] && exec python3 \"$f\"; echo \"⛔ DevKit: guard-secrets.py is missing ($p and $f): tool call blocked (fail closed). Reinstall: agent-kit init\" >&2; exit 2"
           }
         ]
       },
