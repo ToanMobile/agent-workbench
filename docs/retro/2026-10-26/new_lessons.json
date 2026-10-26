@@ -1,0 +1,162 @@
+[
+ {
+  "verdict": "INSTINCT",
+  "title": "Tài liệu/báo cáo: không bịa số liệu, tính năng, thư viện",
+  "cause": "Agent viết tài liệu (Antigravity phần lớn) điền con số, tính năng xe, tên thư viện theo suy đoán; tổng các tab không khớp. 25 lần sửa / 17 phiên. (đề xuất đưa lên profiles/universal)",
+  "rule": "Mỗi con số, giá, tính năng, thư viện trong tài liệu gửi người khác phải kèm nguồn (file:dòng, URL, output lệnh). Không có nguồn → ghi 'CHƯA CÓ NGUỒN', không đoán. Trước khi giao: cộng lại các tổng, đối chiếu giữa các tab/bảng.",
+  "symptom": "Chủ hỏi 'mày đang bịa à?', 'Đầu xe làm gì có nhỉ', 'cộng lại nó đâu có khớp tính sai rồi'.",
+  "check": "grep -nE '[0-9]{1,3}([.,][0-9]{3})+|[0-9]+ ?%' FILE.md | grep -viE 'nguồn|http|\\.(kt|java|swift|gradle):'",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-08-27..2026-10-19",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Hồ sơ SDK eKYC: thư viện/mã lỗi chỉ lấy từ build file và errors.json thật",
+  "cause": "Agent liệt kê thư viện không có trong dependencies (AndroidUtilCode) và map mã lỗi TrueID→FinOS theo suy đoán. 8 lần sửa / 5 phiên.",
+  "rule": "Danh sách thư viện (hồ sơ bản quyền, kiến trúc, roadmap) chỉ sinh từ build.gradle*/Podfile/pubspec; mã lỗi phải đối chiếu errors.json + response thật đã lưu.",
+  "symptom": "'check kỹ lại AndroidUtilCode đâu có ?'",
+  "check": "for l in TÊN_THƯ_VIỆN; do grep -rIlq \"$l\" --include='*.gradle*' --include='Podfile*' --include=pubspec.yaml --include=package.json . || echo \"THIẾU: $l\"; done",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-08-27..2026-10-17",
+  "project": "/Volumes/Data/GalaxyHolding/SDK_eKYC/finos.sdk"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Root cause trên đúng bản và đúng biến thể người dùng báo",
+  "cause": "Agent phân tích/sửa trên bản hiện tại hoặc biến thể gần giống (YouTube Music thay vì YouTube), báo 'đã fix' nhưng lỗi vẫn còn. (universal)",
+  "rule": "Trước khi sửa bug người dùng báo: ghi rõ version/tag + app/màn hình chính xác, checkout đúng bản đó, tái hiện RED đúng đường đó; chỉ báo xong khi chính đường đó GREEN.",
+  "symptom": "'youtube music bấm next, prev được mà youtube không được à?'; 'bug này đã báo 1 lần mà mày fix h vẫn bị lại á'.",
+  "check": "git describe --tags --always && git log -1 --format=%H",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-08-18..2026-10-17",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Nhắc lại cách hiểu khi yêu cầu có gỡ/xoá/public/bổ sung",
+  "cause": "Agent hiểu sai đối tượng (gỡ link thay vì unpublish pub.dev), thay thế thay vì bổ sung, ghi plan vào thư mục ignored. 8 lần phải revert / 8 phiên. (universal)",
+  "rule": "Yêu cầu có từ gỡ/xoá/public/revert/bổ sung hoặc nơi lưu không rõ → 1 dòng 'hiểu là X trên Y' rồi làm. 'Bổ sung' = giữ mục cũ, thêm mới. Plan/tài liệu cần commit ghi vào docs/ được track, không vào thư mục ignored.",
+  "symptom": "'revert lại cũ bổ sung chứ ko phải thay thế bị mất 2 cái cũ rồi'; 'revert lại ý tôi là gỡ … khỏi pub.dev'.",
+  "check": "git diff --numstat | awk '$2>0{print \"có xoá dòng:\",$3}'; git check-ignore -v FILE",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-08-12..2026-10-13",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Chỉ hỏi khi xoá dữ liệu quan trọng, secrets, billing",
+  "cause": "Agent kết lượt bằng câu hỏi/CHỜ DUYỆT hoặc đẩy việc tự làm được (test trên đầu xe qua adb, init repo) cho người dùng. 8 phiên. (universal; GeelyEx2 INSTINCT-041 là bản cục bộ)",
+  "rule": "Theo lời chủ: 'chỉ hỏi khi xoá dữ liệu quan trọng, đụng secrets/billing thôi còn lại tự làm hết'. Ngoài các mục đó: chọn phương án chất lượng nhất, ghi lý do, làm luôn; không đẩy bước agent tự làm được.",
+  "symptom": "'mày tự test luôn trên đầu xe ko được à?'; 'làm cho xong toàn bộ đừng hỏi nữa'.",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-09-25..2026-10-13",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Không hỏi lại điều đã chọn, không làm lại việc đã xong",
+  "cause": "Agent quên lựa chọn người dùng đã đưa trong phiên/phiên trước, báo 'chưa làm' việc đã có. (universal)",
+  "rule": "Trước khi hỏi lựa chọn hoặc nói 'chưa làm': grep plan, memory, git log. Lựa chọn của người dùng ghi ngay vào file quyết định của plan.",
+  "symptom": "'trước đó tao chọn rồi mà sao lại chưa chọn?'",
+  "check": "grep -rniE 'TỪ_KHOÁ' docs/plans .agents 2>/dev/null; git log --oneline -30 | grep -i TỪ_KHOÁ",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-09-29..2026-10-05",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Sửa chỉ doc thì không chạy gate full; gom một lần chạy",
+  "cause": "Gate full chạy cho diff chỉ markdown, agent chạy lại gate nhiều lần cho cùng nội dung. 11 phiên than chậm.",
+  "rule": "Diff chỉ *.md/docs → gate nhanh (lint doc). Gom mọi sửa rồi chạy gate một lần; không chạy lại khi tree không đổi; báo ETA.",
+  "symptom": "'đổi có vài file doc mà chạy 30 phút chưa xong'; 'sao ko gom lại 1 session chạy luôn'.",
+  "check": "git diff --name-only origin/main...HEAD | grep -vE '\\.md$|^docs/' | wc -l   # 0 ⇒ chỉ cần gate nhanh",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-09-29..2026-10-26",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Phiên trong worktree riêng không chờ khoá của checkout chính",
+  "cause": "Khoá 'một thư mục một phiên' và worktree finish/merge vẫn cần checkout chính → phiên ở worktree phải chờ phiên khác nhả.",
+  "rule": "Worktree finish/merge không được lấy khoá phiên của main. Gặp khoá: không Monitor chờ; chuyển việc khác hoặc làm trong worktree, báo rõ đang bị phiên nào giữ.",
+  "symptom": "'đã tạo 1 worktree riêng rồi mà còn đợi worktree bên kia nhả phiên nữa'; 'đã fix lại là ko giữ main mà sao giờ vẫn bị giữ?'",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-09-26..2026-10-15",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Máy quá tải thì tự tạm dừng board, không ngồi chờ",
+  "cause": "Gate/port báo load cao khi nhiều board chạy, agent chờ thay vì dừng bớt board.",
+  "rule": "Load average vượt ngưỡng gate trước khi chạy gate/port nặng → tự tạm dừng board không thiết yếu, ghi lại để bật lại; không chờ thụ động.",
+  "symptom": "'tạm dừng bớt board cho máy nhẹ tải đi'; 'tạm dừng board đi'.",
+  "check": "sysctl -n vm.loadavg",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-10-21..2026-10-26",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Báo cáo tiến độ: 2 danh sách XONG / CHƯA XONG",
+  "cause": "Khi được hỏi tiến độ, agent kể lể quá trình thay vì liệt kê.",
+  "rule": "Hỏi 'xong gì chưa xong gì' → trả XONG (kèm bằng chứng) và CHƯA XONG (kèm lý do: cần xe/cần người/đang làm), theo mục plan, ≤10 dòng.",
+  "symptom": "'báo cáo ngắn gọn gì đã xong gì chưa xong'",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-09-30..2026-10-03",
+  "project": "/Volumes/Data/Toan/GeelyEx2"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Tài liệu gửi người: văn tự nhiên, không giọng AI",
+  "cause": "Tài liệu so sánh/báo cáo đầy emoji, khẳng định tuyệt đối, bảng màu mè. (universal)",
+  "rule": "Văn bản gửi sếp/khách: câu ngắn, giọng người viết, không emoji, không 'TUYỆT ĐỐI/100% PASS', chỉ dùng bảng khi cần so sánh.",
+  "symptom": "'gửi lại tự nhiên hơn đừng nhìn giống AI quá'",
+  "check": "grep -cP '[\\x{1F300}-\\x{1FAFF}\\x{2705}\\x{274C}]|TUYỆT ĐỐI' FILE.md",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-10-16..2026-10-16",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Không tự hạ chất lượng hình ảnh để qua cổng dung lượng/FPS",
+  "cause": "Agent đổi nén texture ASTC 8x8, tắt MSAA mà không hỏi, chủ phải revert.",
+  "rule": "Đổi nén texture, maxTextureSize, MSAA, quality level → phải có ảnh A/B và đồng ý của chủ; mặc định giữ chất lượng.",
+  "symptom": "'revert lại đi ko làm giảm chất lượng'; 'tắt MSAA là gì có sao ko chất lượng có giảm ko'.",
+  "check": "git diff origin/main -- '*.meta' ProjectSettings/QualitySettings.asset | grep -E 'textureCompression|antiAliasing|maxTextureSize|textureFormat'",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-10-10..2026-10-12",
+  "project": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Chờ việc nền bằng thông báo, không sleep rồi poll",
+  "cause": "signals: 220 lần hook chặn 'sleep rồi poll', 225 lần Monitor lỗi thiếu description. (universal)",
+  "rule": "Việc dài: chạy nền rồi chờ thông báo hoàn tất. Nếu cần Monitor: luôn có description và vòng until; không 'sleep N; tail'.",
+  "symptom": "Hook chặn sleep; Monitor báo lỗi thiếu 'description'.",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-08-12..2026-10-26 (signals.json, không có ngày từng lỗi)",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "Trong worktree cô lập: gọi git trực tiếp, một lệnh một dòng",
+  "cause": "signals: 353 lần hook cô lập worktree từ chối 'cd $X && git', 'git -C \"$W\"', git trong vòng lặp/bash -c.",
+  "rule": "Chạy git từ cwd của worktree, đường dẫn tường minh, mỗi lệnh git một lời gọi; không ghép cd biến + git.",
+  "symptom": "Hook từ chối lệnh git phức hợp, phải viết lại nhiều lần.",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-08-12..2026-10-26 (signals.json, không có ngày từng lỗi)",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ },
+ {
+  "verdict": "INSTINCT",
+  "title": "macOS: sed BSD và không có timeout",
+  "cause": "signals: 21 lỗi sed BSD, 5 lỗi 'timeout: command not found'.",
+  "rule": "macOS: dùng sed -i '' (hoặc perl -pi -e); thay timeout bằng gtimeout hoặc perl -e 'alarm N; exec @ARGV'.",
+  "symptom": "sed: 1: ... invalid command code; timeout: command not found.",
+  "check": "grep -rnE \"sed -i [^'\\\"]|(^|[ ;|&])timeout \" scripts .claude 2>/dev/null | grep -v \"sed -i ''\"",
+  "source": "retro 2026-10-26",
+  "found_on": "2026-08-12..2026-10-26 (signals.json, không có ngày từng lỗi)",
+  "project": "/Volumes/Data/Toan/agent-workbench"
+ }
+]
