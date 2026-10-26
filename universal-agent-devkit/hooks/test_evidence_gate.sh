@@ -1966,10 +1966,18 @@ _KIT_FAIL_LINE = re.compile(r"(?i:^(?:[\w ./-]+:[^\S\n]+|[^\S\n]*)[1-9]\d*[^\S\n
                             r"<test-run\b[^<>\n]*\sfailed=\"[1-9]\d*\"|\b(?:failures|errors)=\"[1-9]\d*\"|"
                             r"\bFAIL(ED)?\b|test result: FAILED|^not ok\b|\bpanicked\b|\bERRORS?\b|--- FAIL", re.M)
 
+# #427 vòng 2: lỗi của chính docker (daemon tắt, không có image / container / service) khi runner chạy qua `docker [compose] run|exec`:
+# test chưa chạy, không phải nửa ĐỎ của check 7.
+_DOCKER_ERR = re.compile(r"Cannot connect to the Docker daemon|Error response from daemon|Unable to find image|No such container"
+                         r"|no such service|service \"[^\"\n]*\" is not running|^docker: ", re.M)
+_DOCKER_CMD = re.compile(r"(?:^|[\s;&|(])docker(?:-compose)?\s")
+
 def runner_state(is_error, txt, pm_run=False, command=""):
     """"red", "green", "gate-green" (the DevKit gate: a green for checks 2 and 7, not for auto_link), or None (not a verdict) for one runner tool_result."""
     if command and _spoofed(command):
         return None          # R5 (#427 vòng 2): runner sau `true ||`, hay echo / runner bị định nghĩa lại: không XANH, không ĐỎ
+    if command and is_error and _DOCKER_CMD.search(command) and _DOCKER_ERR.search(txt):
+        return None
     if command and _command_invokes_gate(command):
         clean = ANSI_RX.sub("", txt)
         verdicts, counts = GATE_VERDICT_RX.findall(clean), GATE_COUNT_RX.findall(clean)

@@ -215,6 +215,10 @@ for c in ("docker compose run --rm -e K=V web pytest -q", "docker compose run we
     case("9 must pass: `%s` is a run" % c, after(c, PYOK), 0)
 case("9 must pass: a RED `docker compose run web pytest`, the fix, a GREEN one is check 7's pair",
      pair("docker compose run --rm web pytest -q", "1 failed in 0.1s", "docker compose run --rm web pytest -q", PYOK), 0, msg=FIX)
+for out in ("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+            "Error response from daemon: No such container: ctr", "no such service: web"):
+    case("9 must block: a docker-level error (`%s`) is no RED half of check 7" % out[:40],
+         pair("docker compose run --rm web pytest -q", out, "python3 -m pytest -q", PYOK), 2, msg=FIX)
 for c in ("docker run -d img pytest -q", "docker run -dit img pytest -q", "docker run --detach=true img pytest -q",
           "docker compose exec -d web pytest -q", "docker run --entrypoint sh img -c pytest", "docker compose up -d"):
     case("9 control: `%s` is no run (background / another entrypoint)" % c, after(c, PYOK), 2)
