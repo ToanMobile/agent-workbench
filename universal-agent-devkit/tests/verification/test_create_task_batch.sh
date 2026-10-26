@@ -444,5 +444,20 @@ printf '%s\n' "$sec" | grep -qx -- "1. mục đánh số" && printf '%s\n' "$sec
 printf '%s\n' "$sec" | grep -qx -- '```' && printf '%s\n' "$sec" | grep -qx -- "mã ví dụ" \
   && ok "33e dòng trong code fence giữ nguyên" || fail "33e AC=[$sec]"
 printf '%s\n' "$sec" | grep -qx -- "<!-- ghi chú -->" && ok "33f dòng comment HTML giữ nguyên" || fail "33f AC=[$sec]"
+# 33g–h (review b9cf290d): trạng thái "đang trong khối" không được lan sang --ac sau (fence chưa đóng làm câu thường mất dấu,
+# pre-flight lại không đếm), và comment HTML nhiều dòng giữ nguyên cả khối.
+items '[]'
+rc=$(run --title "✨ [feature] hooks: việc G" --problem "vấn đề G" --ac $'```\nfence chưa đóng' --ac "câu thường sau fence" \
+  --ac $'<!--\nẩn\n-->' --ac "câu thường sau comment")
+sec="$(ac_section "$(created_body)")"
+printf '%s\n' "$sec" | grep -qx -- "- \[ \] câu thường sau fence" && ok "33g fence chưa đóng không lan sang --ac sau" || fail "33g AC=[$sec]"
+printf '%s\n' "$sec" | grep -qx -- "ẩn" && printf '%s\n' "$sec" | grep -qx -- "-->" && printf '%s\n' "$sec" | grep -qx -- "- \[ \] câu thường sau comment" \
+  && ok "33h comment HTML nhiều dòng giữ nguyên cả khối" || fail "33h AC=[$sec]"
+# 33i (review a4fa2e65): fence trong comment và comment trong fence là chữ thường của khối ngoài, không mở khối mới.
+items '[]'
+rc=$(run --title "✨ [feature] hooks: việc I" --problem "vấn đề I" --ac $'<!--\n```\n-->\nsau comment' --ac $'```\n<!--\n```\nsau fence')
+sec="$(ac_section "$(created_body)")"
+printf '%s\n' "$sec" | grep -qx -- "- \[ \] sau comment" && printf '%s\n' "$sec" | grep -qx -- "- \[ \] sau fence" \
+  && ok "33i fence trong comment / comment trong fence không đổi trạng thái khối" || fail "33i AC=[$sec]"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
