@@ -78,10 +78,18 @@ except Exception: pass' 2>/dev/null)"
   # WORKTREE_GC_MERGED=0: that part off.
   if [ "${WORKTREE_GC:-1}" != "0" ]; then
     GC_MERGED="--merged"; [ "${WORKTREE_GC_MERGED:-1}" != "0" ] || GC_MERGED=""
+    # #427 vòng 2: .claude hay .claude/worktrees là symlink thì gc --merged in "• gc --merged: <đường dẫn> is a symlink: no worktree removed"
+    # (worktree.py _reap_merged). gc chạy nền nên stdout của nó vào <git-common-dir>/devkit-gc.out (cạnh devkit-gc.lock; .claude/ có thể
+    # chính là symlink đó); lượt mở phiên ở main checkout SAU đó đưa đúng dòng này vào context, các dòng gc khác vẫn im.
+    # ponytail: trễ một phiên và còn hiện một lần sau khi gỡ link; nâng cấp khi cần báo ngay trong phiên đầu.
+    GC_COMMON="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+    GC_OUT=/dev/null; [ -n "${GC_COMMON}" ] && GC_OUT="${GC_COMMON}/devkit-gc.out"
+    [ -n "${GC_MERGED}" ] && [ -n "${GC_COMMON}" ] && [ "$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir 2>/dev/null)" = "${GC_COMMON}" ] \
+      && grep -a -m1 -E '^• gc --merged: .*symlink: ' "${GC_OUT}" 2>/dev/null | sed 's/^/[DevKit] /'
     ( [ "$(git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || exit 0
       [ "$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir 2>/dev/null)" = "$(cd "${REPO_ROOT}" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ] || exit 0
       GC_TOP="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null)" && [ -n "${GC_TOP}" ] || exit 0   # REPO_ROOT may be a subfolder
-      cd "${GC_TOP}" && exec python3 "${WT_SCRIPT}" gc "--log=${GC_TOP}/.claude/audit-gate/worktree_gc.log" ${GC_MERGED} </dev/null ) >/dev/null 2>&1 &
+      cd "${GC_TOP}" && exec python3 "${WT_SCRIPT}" gc "--log=${GC_TOP}/.claude/audit-gate/worktree_gc.log" ${GC_MERGED} </dev/null >"${GC_OUT}" ) >/dev/null 2>&1 &
   fi
 fi
 # The regression baseline (T0003): verified_head recorded before the first turn can commit, so a
