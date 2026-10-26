@@ -427,3 +427,4 @@
 45 tests/worktree_git/test_worktree_gc_merged.sh
 # 2026-10-26: textconv lossy làm thay đổi nhị phân vô hình với show / diff của worktree.py (OCR review).
 3 tests/worktree_git/test_worktree_textconv.sh
+8 tests/worktree_git/test_relink_prune.sh
