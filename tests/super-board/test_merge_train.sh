@@ -276,6 +276,18 @@ reset_run
 grep -q "^train-detail: 47 FAILED test_bad$" "$TMP/t17.log" && ok "red tail: the failing line is a train-detail of #47 (colour codes stripped)" || fail "red tail: $(grep train-detail "$TMP/t17.log" | tail -3)"
 n47=$(grep -c "^train-detail: 47 " "$TMP/t17.log"); [ "$n47" -ge 1 ] && [ "$n47" -le 20 ] && ok "red tail: at most 20 detail lines ($n47)" || fail "red tail: $n47 detail lines"
 grep -q "^train-detail: 46 " "$TMP/t17.log" && fail "red tail: the green PR #46 got detail lines" || ok "red tail: no detail for the green PR"
+# 14b. Bảo mật: queue chép train-detail vào comment issue CÔNG KHAI → token / khoá trong log verify phải bị che (redact_secrets của kit).
+#     Token giả ghép lúc chạy (không có nguyên văn trong file: bộ quét secret đọc diff).
+FAKE_TOK="gh""p_$(printf 'Z%.0s' $(seq 1 30))"
+card_branch 49 bad
+CFG_LEAK="$TMP/cfg-leak.json"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo x >> %s/verify.count; if [ -e bad ]; then echo leaked token=%s; echo auth %s; exit 1; fi"]}\n' "$TMP" "$FAKE_TOK" "$FAKE_TOK" > "$CFG_LEAK"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_LEAK" --prs 49 ) >"$TMP/t19.log" 2>"$TMP/t19.err"; rc=$?
+[ "$rc" -eq 11 ] && grep -q "^train-result: 49 red$" "$TMP/t19.log" && ok "secret tail: #49 red (exit 11)" || fail "secret tail: exit $rc: $(grep train "$TMP/t19.log")"
+if grep -q "$FAKE_TOK" "$TMP/t19.log"; then fail "secret tail: a token from the verify log reached train-detail (public issue comment)"
+else ok "secret tail: no token in train-detail"; fi
+grep -q "^train-detail: 49 .*«redacted»" "$TMP/t19.log" && ok "secret tail: the leaked lines are kept, the values redacted" || fail "secret tail: no «redacted» line: $(grep train-detail "$TMP/t19.log" | tail -3)"
 # Verify riêng của gate đỏ ở lượt merge (exit 11 → `red`): đuôi stderr của gate thành train-detail.
 card_branch 48 f48; touch "$TMP/gatered48"
 reset_run

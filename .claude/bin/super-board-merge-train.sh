@@ -93,8 +93,25 @@ run_gate() {
   return 0
 }
 # detail_tail <PR> <file>: ≤ 20 dòng cuối không rỗng của log đỏ, bỏ mã màu, thành `train-detail: <PR> <dòng>` (queue chép vào comment issue).
+# Đuôi log là dữ liệu tuỳ ý và đi vào comment issue CÔNG KHAI: mọi dòng qua redact_secrets() của kit (regression_checklist.py).
+# Không nạp được bộ che thì giấu cả đuôi (đóng an toàn), không bao giờ đăng log thô.
 detail_tail() {
-  LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$2" 2>/dev/null | grep -av '^[[:space:]]*$' | tail -20 | sed "s/^/train-detail: $1 /" || true
+  local raw kit="" d
+  raw=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$2" 2>/dev/null | grep -av '^[[:space:]]*$' | tail -20 || true)
+  [ -n "$raw" ] || return 0
+  for d in "$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)" "$HERE"; do
+    for k in "$d/../../universal-agent-devkit/bin" "$d/../../.agents/devkit/bin" "${DEVKIT_ROOT:-/nonexistent}/bin"; do
+      [ -f "$k/regression_checklist.py" ] && { kit="$k"; break 2; }
+    done
+  done
+  if [ -n "$kit" ] && printf '%s\n' "$raw" | python3 -c 'import sys
+sys.path.insert(0, sys.argv[1])
+from regression_checklist import redact_secrets
+sys.stdout.write("".join(redact_secrets(l) for l in sys.stdin))' "$kit" > "$DETAIL_DIR/.redacted" 2>/dev/null; then
+    sed "s/^/train-detail: $1 /" "$DETAIL_DIR/.redacted"
+  else
+    echo "train-detail: $1 (verify log tail hidden: the DevKit secret redactor could not be loaded)"
+  fi
 }
 trap 'rm -rf "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"' EXIT
 . "$HERE/super-board-verify-flags.sh"
