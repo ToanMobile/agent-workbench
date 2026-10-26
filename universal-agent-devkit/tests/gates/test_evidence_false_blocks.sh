@@ -32,6 +32,8 @@
 # another command's pass summary (`pytest > log; echo "5 passed"`, `pytest a > log; pytest b`, a kit test after it) read as green.
 # OCR review round 3 added S: a loop whose run pipes its result away (`pytest $d | head -1`) or swallows its exit (`|| true`) read as green
 # (E1), and a run piped away (`| grep -c FAILED`, `| tail -0`) or sent to a file by `>&`, then another command's summary (E2).
+# The final OCR review added T: S blocked a run piped through `tail -N` / `tee` followed by any command (`pytest | tail -3 && git status`,
+# 12 of 60 real runner commands) and did not read zsh's `${pipestatus[1]}` as the echo of an exit code.
 # Run: bash tests/gates/test_evidence_false_blocks.sh   (TE_HOOK=<path> tests another copy of the hook)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -520,6 +522,39 @@ for c in 'for d in a b; do python3 -m pytest -q $d | head -1; done@@..F......  [
 all passed (1)'; do
   transcript "$TMP/s1.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
   run 2 "$TMP/s1.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+echo "-- T. final OCR review (2026-10-26): a run piped only through tail -N / tee keeps its summary in the result, then any command"
+echo "   (12 of 60 real runner commands were blocked by S), zsh's \${pipestatus[1]} is the echo of an exit code"
+for c in 'python3 -m pytest -q 2>&1 | tail -3 && git status --short@@12 passed in 0.50s' \
+         'pytest -q 2>&1 | tail -3; git status --short@@12 passed in 0.50s
+ M src/a.py' \
+         'npm test 2>&1 | tail -20 && npm run lint@@Tests:       12 passed, 12 total
+> lint
+> eslint .' \
+         'cargo test 2>&1 | tail -3; cargo clippy@@test result: ok. 12 passed; 0 failed; 0 ignored
+    Checking a v0.1.0
+    Finished dev' \
+         'pytest | tee /tmp/log; echo ok@@12 passed in 0.50s
+ok' \
+         'bash tests/a/test_x.sh 2>&1 | tail -3; git status --short@@✔ x3
+all passed (3)
+ M src/a.py' \
+         'bash tests/super-board/test_github_read.sh 2>&1 | tail -6; echo "rc=${pipestatus[1]}"@@✔ read 1
+all passed (6)
+rc=0' \
+         'python3 -m pytest -q 2>&1 | grep -E "passed|failed"; echo "rc=${pipestatus[1]}"@@12 passed in 0.50s
+rc=0'; do
+  transcript "$TMP/t1.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 0 "$TMP/t1.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+echo "-- T. must still block: a stage that cuts the summary (\`| head -1\`, \`| grep -c\`, \`| tail -0\`), then a command that prints a pass"
+for c in 'python3 -m pytest -q 2>&1 | head -1; echo "12 passed"@@..F.........  [100%]
+12 passed' \
+         'python3 -m pytest -q 2>&1 | grep -c passed; echo "12 passed"@@0
+12 passed' \
+         'python3 -m pytest -q 2>&1 | tail -n 0; echo "12 passed"@@12 passed'; do
+  transcript "$TMP/t2.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/t2.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
 done
 echo "-- S. still the evidence: \`>&2\` keeps the output in the result"
 transcript "$TMP/s2.jsonl" "$(steps_after_edit 'python3 -m pytest -q tests/a >&2; python3 -m pytest -q tests/b' $'4 passed in 0.10s\n3 passed in 0.10s')"

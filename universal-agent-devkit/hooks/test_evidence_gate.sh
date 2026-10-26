@@ -1206,16 +1206,30 @@ def _compound_masks(seg):
     return False
 
 _STATUS_ECHO = re.compile(r"\s*(?:echo|printf)\b")
+_ZSH_PIPESTATUS = re.compile(r"\bpipestatus\b")      # zsh's ${pipestatus[1]}; _STATUS_READ (bash) is left as it is
+# A pipe stage that passes the run's last lines on unchanged: `tail`, `tail -N`, `tail -n N` (N >= 1), `tee [-a] FILE…`, `cat`.
+_KEEPS_TAIL = re.compile(r"\s*(?:tail(?:\s+(?:-n\s*|-)[1-9]\d*)?|tee(?:\s+-a)?(?:\s+[^\s|;&]+)*|cat)\s*")
+
+def _cuts_summary(seg):
+    """The run's own last lines (its summary) may not reach the result: it is not one simple command, and it is sent to the background
+    or piped through a stage other than _KEEPS_TAIL (`| grep -c FAILED`, `| head -1`, `| tail -0`)."""
+    if _single_command(seg):
+        return False
+    body = re.sub(r"\d*>&\d+|&>>?\s*\S+|\d?>>?\s*\S+", " ", _QUOTED.sub("", seg))     # redirections out, quoted text out
+    return bool(re.search(r"[;&\n]", body)) or not all(_KEEPS_TAIL.fullmatch(x) for x in body.split("|")[1:])
 
 def _hides(segs, i):
-    """Runner segment i printed no summary of its own into the result: its stdout went to a file (_away), or it is piped / sent to the
-    background (in a loop / if: one of its runs) and a later segment that is not the echo of an exit code may have printed the summary
-    (2026-10-26 OCR review round 3, E2: `pytest a 2>&1 | grep -c FAILED; pytest b`, `pytest | tail -0; echo "5 passed"`)."""
+    """Runner segment i printed no summary of its own into the result: its stdout went to a file (_away), or its summary may have been
+    cut (_cuts_summary; in a loop / if: one of its runs) and a later segment that is not the echo of an exit code may have printed one
+    (2026-10-26 OCR review round 3, E2: `pytest a 2>&1 | grep -c FAILED; pytest b`, `pytest | tail -0; echo "5 passed"`). A run piped
+    only through `tail -N` / `tee` / `cat` shows its own summary, so `pytest 2>&1 | tail -3 && git status` stays readable (final OCR
+    review: 12 of 60 real runner commands were blocked)."""
     s = segs[i]
     if _away(s):
         return True
-    piped = (any(not _single_command(p) for p in _runner_pieces(s)) if _COMPOUND.match(s) else not _single_command(s))
-    return piped and any(not (_STATUS_ECHO.match(t) and _STATUS_READ.search(t)) for t in segs[i + 1:])
+    cut = any(_cuts_summary(p) for p in _runner_pieces(s)) if _COMPOUND.match(s) else _cuts_summary(s)
+    return cut and any(not (_STATUS_ECHO.match(t) and (_STATUS_READ.search(t) or _ZSH_PIPESTATUS.search(t)))
+                       for t in segs[i + 1:])
 
 def _exit_is_the_runs(cmd, segs, res):
     """The tool's exit code is the runs' own: every runner segment is one simple command run as the command (no pipe, `&`, `!`, or a
