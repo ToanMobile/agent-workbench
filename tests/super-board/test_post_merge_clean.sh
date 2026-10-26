@@ -258,4 +258,54 @@ bash "$CLEAN" "$R" issue-23-a "$MERGED23" >/dev/null 2>"$TMP/k13.err"
 [ -d "$W/issue-23-qa" ] && ok "k13 a card worktree on another branch with work the trunk lacks (its open PR) is kept" \
   || { fail "k13 card worktree on another branch with unmerged work REMOVED"; cat "$TMP/k13.err"; }
 
+# k14 (#427, lane C): bản cất của tidy là `git diff --cached --binary`, mà diff porcelain chạy diff.<drv>.textconv và diff ngoài
+#      (diff.<drv>.command) theo attribute của repo. Textconv lossy (asset → text, ở đây mọi bản đọc ra "same") bỏ hẳn sửa nhị phân
+#      khỏi patch, diff ngoài in ra thứ không phải patch: bước kiểm t1 == t2 hỏng và worktree chỉ còn sửa loại CẤT bị giữ mãi
+#      ("salvage could not be verified"). Nay patch tạo với --no-textconv --no-ext-diff: cất đúng byte (áp lên head đã merge dựng lại
+#      đúng file), rồi mới gỡ. Pattern attribute riêng tên file của ca này: các ca trên không thấy hai driver.
+printf '\000\001base' > "$R/tc.asset"; git -C "$R" add tc.asset; git -C "$R" commit -qm tc
+printf 'tc.asset diff=lossy\ntc.note diff=ext\n' >> "$R/.git/info/attributes"
+git -C "$R" config diff.lossy.textconv "sh -c 'echo same'"
+git -C "$R" config diff.ext.command "sh -c 'echo not-a-patch'"
+git -C "$R" branch issue-24-tc
+MERGED24="$(git -C "$R" rev-parse issue-24-tc)"
+git -C "$R" worktree add -q "$W/issue-24-build" issue-24-tc
+printf '\000\001EDIT' > "$W/issue-24-build/tc.asset"                                    # sửa nhị phân trên file đã track (loại CẤT: *.asset)
+mkdir -p "$W/issue-24-build/.agents/local"; printf 'note only here\n' > "$W/issue-24-build/.agents/local/tc.note"   # file mới (loại CẤT)
+mkdir -p "$TMP/k14-orig"; cp "$W/issue-24-build/tc.asset" "$W/issue-24-build/.agents/local/tc.note" "$TMP/k14-orig/"
+bash "$CLEAN" "$R" issue-24-tc "$MERGED24" >/dev/null 2>"$TMP/k14.err"
+P14="$(ls "$R"/.git/super-board/salvage/issue-24-build-*.patch 2>/dev/null | head -1)"
+git -C "$R" worktree add -q --detach "$TMP/k14-check" "$MERGED24"
+[ ! -d "$W/issue-24-build" ] && grep -q "salvaged .*/issue-24-build" "$TMP/k14.err" && [ -n "$P14" ] && grep -q "GIT binary patch" "$P14" \
+  && git -C "$TMP/k14-check" apply --binary "$P14" 2>/dev/null && cmp -s "$TMP/k14-check/tc.asset" "$TMP/k14-orig/tc.asset" \
+  && cmp -s "$TMP/k14-check/.agents/local/tc.note" "$TMP/k14-orig/tc.note" \
+  && ok "k14 a lossy textconv / external diff driver does not spoil the salvage: the patch rebuilds the exact bytes, then the worktree goes" \
+  || { fail "k14 salvage under a textconv / external diff driver: worktree $([ -d "$W/issue-24-build" ] && echo kept || echo removed), patch ${P14:-<none>}"; cat "$TMP/k14.err"; }
+
+# k15 (#427, lane C): TOCTOU của bộ dọn. Board hỏi `held` (chỉ đọc), rồi tidy cất / trả file về HEAD, rồi `remove --merged`; giữa chừng
+#      một phiên có thể nhận worktree. python3 giả (chỉ cho lần chạy này) ghi khoá checkout của một phiên sống ĐÚNG lúc board gọi
+#      `remove`: kit phải hỏi lại người giữ ngay trước khi gỡ — giữ worktree, nói tên phiên, untidy trả lại sửa của lane.
+git -C "$R" branch issue-25-tt
+MERGED25="$(git -C "$R" rev-parse issue-25-tt)"
+git -C "$R" worktree add -q "$W/issue-25-build" issue-25-tt
+mkdir -p "$W/issue-25-build/.agents/local"; echo "lane note 25" > "$W/issue-25-build/.agents/local/note.md"   # tidy cất nó trước khi gỡ
+sleep 300 & SL=$!; disown "$SL" 2>/dev/null   # (trap EXIT giết $SL)
+REALPY="$(command -v python3)"; mkdir -p "$TMP/k15bin"
+cat > "$TMP/k15bin/python3" <<SH
+#!/usr/bin/env bash
+if [ "\${2:-}" = remove ]; then   # python3 <worktree.py> remove --merged=<sha> <wt>: một phiên vừa nhận worktree
+  for a in "\$@"; do wt="\$a"; done
+  gd="\$(git -C "\$wt" rev-parse --absolute-git-dir)" && printf '{"session_id":"late-holder","pid":%s,"gitdir":"%s"}\n' "$SL" "\$gd" > "\$gd/devkit-session.lock"
+fi
+exec "$REALPY" "\$@"
+SH
+chmod +x "$TMP/k15bin/python3"
+PATH="$TMP/k15bin:$PATH" bash "$CLEAN" "$R" issue-25-tt "$MERGED25" >/dev/null 2>"$TMP/k15.err"
+[ -d "$W/issue-25-build" ] && grep -q "salvaged .*/issue-25-build" "$TMP/k15.err" \
+  && grep -q "kept .*/issue-25-build: agent-kit worktree remove refused: ✖ .*late-holder" "$TMP/k15.err" \
+  && [ "$(cat "$W/issue-25-build/.agents/local/note.md" 2>/dev/null)" = "lane note 25" ] \
+  && ok "k15 a session that takes the worktree after held / tidy is seen by remove --merged right before the removal: kept, lane edit put back" \
+  || { fail "k15 TOCTOU: worktree $([ -d "$W/issue-25-build" ] && echo kept || echo REMOVED) under a session that took it after the decision"; cat "$TMP/k15.err"; }
+kill "$SL" 2>/dev/null
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_clean: all passed" || { echo "❌ test_post_merge_clean: $FAILS failed"; exit 1; }

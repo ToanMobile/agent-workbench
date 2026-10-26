@@ -123,7 +123,8 @@ expect "raw Unity -runTests RED→GREEN" 0
 
 # ── 4. red read from the NUnit <test-run failed="N"> attribute (exit 0 both times)
 new_project
-CAT="Unity -batchmode -projectPath . -runTests -testPlatform EditMode -testResults r.xml; cat r.xml"
+# `&& cat`, không `; cat` (#427 E3): Unity không xoá r.xml lúc bắt đầu, sau `;` XML in ra có thể là của lần trước.
+CAT="Unity -batchmode -projectPath . -runTests -testPlatform EditMode -testResults r.xml && cat r.xml"
 X_RED='<test-run id="2" testcasecount="4" result="Failed" total="4" passed="3" failed="1" inconclusive="0" skipped="0">'
 X_GREEN='<test-run id="2" testcasecount="4" result="Passed" total="4" passed="4" failed="0" inconclusive="0" skipped="0">'
 transcript "$P/tr.jsonl" "$(python3 -c 'import json,sys; print(json.dumps([["bash",sys.argv[1],sys.argv[2],False],["edit",sys.argv[4]],["bash",sys.argv[1],sys.argv[3],False]]))' "$CAT" "$X_RED" "$X_GREEN" "$CS")"

@@ -293,5 +293,34 @@ has=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d["
 [ "$rc" = 0 ] && [ "$has" = "100 True" ] && [ ! -e "$TMP/halt.json" ] && ok "GraphQL cut at 100 entries with a type change: completed over REST, app/payments/refund.py kept" \
   || fail "GraphQL-cut type change: rc=$rc files/has-refund=$has err=$(head -c 200 "$TMP/err")"
 rm -f "$TMP/halt.json"
+# #427 (OCR r10, 26/10): 175 — additions là chuỗi: vòng gộp theo đường dẫn ném TypeError (traceback, exit 1) thay vì trả nguyên
+# văn cho bước kiểm. 176 — 100 mục GraphQL có một lần đổi kiểu (99 đường dẫn, changedFiles 100) và REST lỗi: một đường dẫn thật
+# vẫn thiếu, nên STRICT halt; không STRICT thì exit 64 phải nói REST hỏng, không phải "Valid form" như người gọi gõ sai lệnh.
+mkdir -p "$TMP/rest"
+cat > "$TMP/rest/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" pr view 175 "*) echo '{"labels": [], "body": "b", "additions": 2, "deletions": 0, "changedFiles": 1, "files": [{"path": "a.txt", "additions": "2", "deletions": 0}]}' ;;
+  *" pr view 176 "*) python3 -c 'import json; fs = [{"path": "s.md", "additions": 0, "deletions": 2}, {"path": "s.md", "additions": 1, "deletions": 0}] + [{"path": "f%d" % i, "additions": 1, "deletions": 0} for i in range(98)]; print(json.dumps({"labels": [], "body": "b", "additions": 100, "deletions": 2, "changedFiles": 100, "files": fs}))' ;;
+  *" api repos/o/r/pulls/176/files "*) echo 'HTTP 502: Bad Gateway (https://api.github.com/repos/o/r/pulls/176/files)' >&2; exit 1 ;;
+  *" api rate_limit "*) echo '{"resources":{}}' ;;
+  *) echo 'unexpected' >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP/rest/gh"
+rc=$(PATH="$TMP/rest:$PATH" run --kind metadata -- pr view 175 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+grep -q Traceback "$TMP/err"; tb=$?
+[ "$rc" = 0 ] && [ "$tb" = 1 ] && grep -q '"additions": "2"' "$TMP/out" && ok "file additions not a number: no traceback, payload passed on verbatim to the checks" \
+  || fail "additions as a string: rc=$rc traceback=$([ "$tb" = 0 ] && echo yes || echo no) err=$(tail -1 "$TMP/err")"
+rm -f "$TMP/halt.json"
+rc=$(SB_GITHUB_READ_STRICT=1 PATH="$TMP/rest:$PATH" run --kind metadata -- pr view 176 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+[ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && grep -q 'REST' "$TMP/err" && ok "100 entries + REST error + a path missing: halt in strict mode, reason names REST" \
+  || fail "100 entries, REST error (strict): rc=$rc halt=$([ -e "$TMP/halt.json" ] && echo yes || echo no) err=$(tail -1 "$TMP/err")"
+rm -f "$TMP/halt.json"
+rc=$(PATH="$TMP/rest:$PATH" run --kind metadata -- pr view 176 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+[ "$rc" = 64 ] && [ ! -e "$TMP/halt.json" ] && grep -q 'REST' "$TMP/err" && ! grep -q 'Valid form' "$TMP/err" \
+  && ok "100 entries + REST error (not strict): exit 64 names the REST failure, no caller 'Valid form' hint" \
+  || fail "100 entries, REST error (not strict): rc=$rc err=$(tail -1 "$TMP/err")"
+rm -f "$TMP/halt.json"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_github_read: all passed" || { echo "❌ test_github_read: $FAILS failed"; exit 1; }

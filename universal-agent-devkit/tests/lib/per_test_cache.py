@@ -16,13 +16,16 @@ Chỉ chạy khi gate bật (DEVKIT_PER_TEST_CACHE, post-fix-gate.py: "1" dùng 
 <kho suite>/per_test để không đẩy bản ghi suite ra khỏi STORE_MAX):
   - dùng lại ⇔ SuiteCache.hit: PASS trên đúng khoá (pass_n ≥ 1, fail_n = 0, không cách ly, không bị void) có lần chạy THẬT trong tuổi tối
     đa (DEVKIT_SUITE_CACHE_MAX_S / DEVKIT_GATE_CACHE_MAX_S, mặc định 6 h) — test được dùng lại phải chạy thật ít nhất một lần mỗi 6 h;
-  - record ghi PASS khi cả cây (và đích ngoài cây) y nguyên sau khi test chạy; ghi FAIL lên khoá (SuiteCache.hit đòi fail_n = 0) và, khi
+  - record ghi PASS khi cả cây (và đích ngoài cây) y nguyên sau khi test chạy VÀ không file nào của chúng bị ghi từ lúc plan (dấu stat
+    ino, size, mtime_ns, ctime_ns lấy lúc plan, trước mọi test: sửa rồi hoàn tác A→B→A cùng bytes, kể cả trả lại mtime, vẫn đổi ctime —
+    băm nội dung thì không thấy; #427); ghi FAIL lên khoá (SuiteCache.hit đòi fail_n = 0) và, khi
     khoá đang có PASS, gọi SuiteCache.contradiction (cùng cây mà khác kết quả: cách ly); PASS trên khoá có fail_n > 0 (cùng nội dung, chập
     chờn): cách ly id (QUARANTINE_S); TIMEOUT (124 của run_bounded) ghi timeout_n và void id; rc ≥ 128 (tín hiệu: crash của chính test,
     hay gate giết cả nhóm khi REG-DK-ALL-01 quá giờ) hay 64 (lỗi dùng run_bounded): không ghi kết quả, void id (review 26/10, F2).
   - plan không ghi ảnh khoá cho test có lệnh mạng (suite_cache.NETWORK): test đó chạy mỗi lượt.
 Lỗi của helper (ngoại lệ, kho không đọc được) làm plan không in "reuse": test chạy.
 """
+import hashlib
 import importlib.util
 import json
 import os
@@ -58,6 +61,28 @@ def _head(project):
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def _stat_sig(path, follow=False):
+    """"ino:size:mtime_ns:ctime_ns" của path ("-" khi không stat được). ctime đổi mỗi lần file bị ghi và người dùng không đặt lại được."""
+    try:
+        st = os.stat(path) if follow else os.lstat(path)
+    except OSError:
+        return "-"
+    return f"{st.st_ino}:{st.st_size}:{st.st_mtime_ns}:{st.st_ctime_ns}"
+
+
+def _stat_digest(project, rels):
+    """sha256 của dấu stat mọi file của cây (lstat: symlink là chính nó) — record so với dấu lúc plan để bắt ABA (#427)."""
+    h = hashlib.sha256()
+    for rel in sorted(rels):
+        h.update(os.fsencode(rel) + b"\0" + _stat_sig(os.path.join(project, rel)).encode() + b"\0")
+    return h.hexdigest()
+
+
+def _ext_sig(mod, project, tok):
+    hit = mod._external(project, tok, "")
+    return _stat_sig(hit[1], follow=True) if hit else "-"
+
+
 def plan(kit, out, tests):
     mode = os.environ.get("DEVKIT_PER_TEST_CACHE", "")
     if mode not in ("1", "record"):
@@ -75,8 +100,14 @@ def plan(kit, out, tests):
         return 0
     sc.store = os.path.join(sc.store, "per_test")
     sc.learned = sc.load_learned()   # input học được của kho per_test, không của kho suite
-    # Ảnh lúc tính khoá: một file chung (dấu vân tay cả cây) + mỗi test khoá và đích ngoài cây của nó; record so lại cả cây sau khi test chạy.
-    base = {"v": 2, "project": project, "store": sc.store, "head": _head(project), "tree": sc.tree_digest}
+    # Ảnh lúc tính khoá: một file chung (dấu vân tay cả cây + dấu stat cả cây) + mỗi test khoá và đích ngoài cây của nó; record so lại cả
+    # hai sau khi test chạy. Dấu stat lấy SAU khi đọc nội dung: file bị ghi giữa hai lúc đó thì hoặc nội dung lúc record khác khoá, hoặc
+    # (hoàn tác) stat lúc record khác dấu này — không lần nào ghi PASS.
+    # ponytail: một dấu stat cho cả lượt, lấy lúc plan — một lần ghi bất kỳ file nào của cây (kể cả touch) trong lượt bỏ PASS của mọi
+    # test xong sau đó, cả test bắt đầu khi file đã yên; nâng cấp (dấu stat lúc từng test bắt đầu, trong run_one của run_impacted.sh)
+    # khi đo thấy tỉ lệ dùng lại tụt vì việc này.
+    base = {"v": 3, "project": project, "store": sc.store, "head": _head(project), "tree": sc.tree_digest,
+            "stat": _stat_digest(project, sc.cmap or {})}
     if not _write(os.path.join(out, "ptc.base.json"), base):
         return 0
     now = time.time()
@@ -98,8 +129,9 @@ def plan(kit, out, tests):
         if rec:
             print(f"reuse\t{test}\t{int(now - rec['last_pass_at'])}")
             continue
-        _write(_snap_path(out, test), {"id": entry["id"], "command": entry["command"], "key": key,
-                                       "ext": sc.input_values[(entry["id"], entry["command"])][1]})
+        ext = sc.input_values[(entry["id"], entry["command"])][1]
+        _write(_snap_path(out, test), {"id": entry["id"], "command": entry["command"], "key": key, "ext": ext,
+                                       "ext_stat": {tok: _ext_sig(mod, project, tok) for tok in ext}})
     return 0
 
 
@@ -136,12 +168,15 @@ def record(out, test, rc):
         return 0
     status = "PASS" if rc == 0 else ("TIMEOUT" if rc == 124 else "FAIL")
     if status == "PASS":
-        same = sc.cmap is not None and mod.tree_digest(sc.cmap) == tree
+        # nội dung y nguyên chưa đủ: sửa rồi hoàn tác trong lúc test chạy (ABA, #427) cho đúng content_map cũ — so cả dấu stat lúc plan
+        # (thiếu dấu: không ghi PASS)
+        same = sc.cmap is not None and mod.tree_digest(sc.cmap) == tree and _stat_digest(project, sc.cmap) == base.get("stat")
+        ext_stat = snap.get("ext_stat") or {}
         for tok, dig in snap["ext"].items():
             hit = mod._external(project, tok, "")
-            same = same and bool(hit) and mod._file_digest(hit[1]) == dig
+            same = same and bool(hit) and mod._file_digest(hit[1]) == dig and _stat_sig(hit[1], follow=True) == ext_stat.get(tok)
         if not same:
-            print(f"per_test_cache: cây đổi trong lúc {test} chạy — không ghi PASS")
+            print(f"per_test_cache: cây đổi trong lúc {test} chạy (nội dung, hay file bị ghi rồi hoàn tác) — không ghi PASS")
             return 0
     sc.input_values[(entry["id"], entry["command"])] = (dict.fromkeys(sc.cmap or {}), snap["ext"])   # input = cả cây (contradiction)
     prev = sc.record(snap["key"], entry, status, {"head": base.get("head")}, at=finished)

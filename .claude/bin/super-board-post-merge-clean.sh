@@ -86,7 +86,8 @@ kit_held() {
   return 0
 }
 # remove_wt <wt> [<merged-sha>]: gỡ bằng kit. Có đối số 2 (kể cả rỗng): `remove --merged=<sha>`, chỉ khi HEAD đã tích hợp (trunk có nó, hay
-# là head đã merge / tổ tiên của nó). Kit từ chối (✖) hay chết: giữ, nói lý do.
+# là head đã merge / tổ tiên của nó) và, hỏi lại ngay trước khi gỡ, không ai giữ (luật của `held`: một phiên nhận worktree sau kit_held /
+# tidy — #427). Kit từ chối (✖) hay chết: giữ, nói lý do.
 remove_wt() {
   local out rc=0
   [ -n "$KIT_WT" ] || { echo "kept $1: $NO_KIT" >&2; return 0; }
@@ -225,12 +226,13 @@ tidy() {
     okk=0; idx1=$(mktemp); idx2="$idx1.verify"; dl=$(mktemp)   # idx2 chưa tồn tại: git từ chối một file index 0 byte ở vài bản (OCR)
     # Chụp ĐÚNG các file loại CẤT vào một index TẠM chép từ index thật (GIT_INDEX_FILE chỉ cho từng lệnh, không export: index thật không
     # bị đụng; chỉ chúng thành object trong kho chung), rồi dựng lại từ HEAD + patch (+ xoá đã stage có sẵn trong index thật) trong index
-    # tạm thứ hai: hai cây phải trùng, không thì không bỏ gì.
+    # tạm thứ hai: hai cây phải trùng, không thì không bỏ gì. --no-textconv --no-ext-diff (#427): diff porcelain chạy textconv / diff ngoài
+    # theo attribute của repo — patch ra chữ đã chuyển (lossy) hay thứ không phải patch, không cất được byte nào.
     if cp "$gd/index" "$idx1" \
        && GIT_INDEX_FILE="$idx1" git -C "$wt" --literal-pathspecs add -A --pathspec-from-file="$kp" --pathspec-file-nul \
        && t1=$(GIT_INDEX_FILE="$idx1" git -C "$wt" write-tree) \
-       && GIT_INDEX_FILE="$idx1" git -C "$wt" diff --cached --binary --no-renames --diff-filter=d "$head" >"$name.patch" \
-       && GIT_INDEX_FILE="$idx1" git -C "$wt" diff --cached -z --name-only --no-renames --diff-filter=D "$head" >"$dl" \
+       && GIT_INDEX_FILE="$idx1" git -C "$wt" diff --cached --binary --no-renames --no-textconv --no-ext-diff --diff-filter=d "$head" >"$name.patch" \
+       && GIT_INDEX_FILE="$idx1" git -C "$wt" diff --cached -z --name-only --no-renames --no-textconv --no-ext-diff --diff-filter=D "$head" >"$dl" \
        && GIT_INDEX_FILE="$idx2" git -C "$wt" read-tree "$head" \
        && { [ ! -s "$name.patch" ] || GIT_INDEX_FILE="$idx2" git -C "$wt" apply --cached "$name.patch"; } \
        && { [ ! -s "$dl" ] || GIT_INDEX_FILE="$idx2" git -C "$wt" update-index -z --force-remove --stdin <"$dl"; } \
