@@ -186,4 +186,35 @@ else
   echo "skip B3: this filesystem is case-sensitive"
 fi
 
+# 6. OCR round 3 (25/10): the Bash tool runs /bin/zsh (measured), the hook reads the line as bash.
+# H1: a ( glued to a word is a zsh glob qualifier — build/a(:a:h:h) is the project root, build/*(e:…:) any path the code names. The
+#     lexer made the ( a subshell and judged `build/a`. zsh *** follows links (build/a/hl -> $HOME); ** follows none, but Python glob walks
+#     neither like zsh: refused are ***, ** with a trailing / (or /.), and ** that a link could follow (a name after it that is not the
+#     last, another glob before it). `build/**/*.o`, `build/**/tmp` stay allowed (a common clean; rm removes a matched link itself).
+mkdir -p "$P/build/a" && ln -s "$HOME" "$P/build/a/hl"
+check 2 'rm -rf build/a(:a:h:h)'
+check 2 'rm -rf build/*(:A:h:h)'
+check 2 "rm -rf build/*(e:'reply=(/Users/x)':)"
+check 2 'rm -rf build/***/'
+check 2 'rm -rf build/***'
+check 2 'rm -rf build/**/'
+check 2 'rm -rf build/**/.'
+check 2 'rm -rf build/**/hl/Documents'                    # zsh matches build/a/hl/Documents: the home folder, through the link
+check 2 'rm -rf build/*/**/*.o'                           # build/a/hl/**: ** walks the home folder from the link * matched
+check 0 'rm -rf build/**/*.o'                             # (OCR round 3 follow-up: refused by mistake in 6bf699e8)
+check 0 'rm -rf build/**/tmp'
+check 2 'rm -rf build/*/*/'                                # control: already refused (the link at depth 2)
+check 0 'rm -rf build/*'
+check 0 'rm -rf node_modules'
+check 0 'rm -rf "$TMPDIR/x"'
+check 0 'f() { echo; }; rm -rf build'                     # () of a function is no qualifier
+check 0 'x=$(ls build); rm -rf build'                     # nor $( … )
+# H2: ~+ (the cwd) and ~- (the previous one) are left as they are by expanduser: `~-/Documents` was judged as `<cwd>/~-/Documents`
+check 2 'rm -rf ~+/src'
+check 2 'rm -rf ~-/Documents'
+check 2 "cd $HOME && cd $P && rm -rf ~-/Documents"
+check 2 "cd $HOME && cd $P && cd ~- && rm -rf Documents"
+check 2 'rm -rf ~nosuchuser-devkit/x'
+check 0 'rm -rf ~+/build'                                 # ~+ is the cwd: a build output
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_containment: all passed" || { echo "❌ test_hardware_rm_containment: $FAILS failed"; exit 1; }

@@ -59,6 +59,16 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   - Glob chỉ duyệt một lần cho cả hai phép kiểm.
   - Test ĐỎ → XANH: containment 11 ca (gồm 2 ca đo CPU: 0,82 / 0,70 s → 0,07 s, ngưỡng 0,30 s), unforced 3 ca.
   - Còn hở: glob sâu bên trong một thư mục được phép (ví dụ trong /tmp, không có kết quả khớp) vẫn phải duyệt hết cây.
+  - **OCR vòng 3 (25/10)** — Bash tool ở đây chạy `/bin/zsh` (đã đo), hook đọc lệnh như bash:
+    - **H1 (có từ trước):** `(` dính vào tên là glob qualifier của zsh. `build/a(:a:h:h)` là gốc project, `build/*(e:…:)` là đường dẫn bất kỳ do code chỉ định. Lexer coi `(` là subshell và chỉ xét `build/a`. Nay `zsh_qualifiers` đánh dấu từ có `(` dính vào, còn phần trong ngoặc vẫn được duyệt như trước (để `%x(rm -rf ~)` của ruby và `qx(…)` của perl vẫn bị bắt); có `-f` thì target mang dấu này bị chặn.
+    - **H1, `**` (`zsh_starstar`, có `-f`):**
+      - Chặn `***` (zsh `***` đi theo link).
+      - Chặn `**` có `/` hoặc `/.` cuối, `**` mà sau nó còn tên không phải tên cuối (`build/**/hl/Documents` đi qua link), và `**` có glob khác đứng trước (`build/*/**/*.o`).
+      - Cho qua `build/**/*.o`, `build/**/tmp` mà không duyệt glob: `**/` của zsh không đi theo link, rm chỉ gỡ chính link khớp. Bản 6bf699e8 chặn nhầm hai ca này.
+    - **H2 (có từ trước):** `~+` là cwd (xét như `$PWD`). `~-`, `~+` lấy từ biến, `~user` không tồn tại: không biết trỏ đâu, chặn khi có `-f`. `cd ~-` làm cwd thành không biết.
+    - **H3:** quá 2000 kết quả khớp thì từ chối cả khi không có `-f`.
+    - Test ĐỎ → XANH: containment 11 ca, unforced 1 ca.
+    - Còn hở: code trong qualifier `e:…:` / `+fn` của lệnh KHÔNG phải rm không được duyệt; `=cmd` của zsh không được mô phỏng.
 
 - **guard-secrets / guard-protected-push: thử nguồn kit rồi tới bản `.claude/hooks/`, thiếu cả hai thì CHẶN và nói rõ (25/10, audit DevKit A6 + review).** 829 lần chặn "can't open file … Errno 2" (805 trong ngày 18/10 ở checkout `agent-workbench-runner`) đều trên đường dẫn `.claude/hooks/guard-*.py` (thư mục bị git ignore, `agent-kit init` mới tạo) — đo trong transcript: 3 804 guard-secrets, 3 640 guard-protected-push, cùng guard-key-literals / guard-worktree-path / guard-delete-outside. Đăng ký của dự án đã trỏ về nguồn kit được track (`universal-agent-devkit/hooks/`: guard-protected-push 20/10, guard-secrets #363 24/10), nên ma sát đó đã hết từ trước A6. A6 lại đổi trường hợp thiếu file thành cảnh báo stderr + exit 0 — Claude Code không hiện stderr của hook exit 0, nên guard tắt mà không ai thấy (review 25/10). Nay lệnh đăng ký: `exec python3` nguồn kit nếu có, không thì bản `.claude/hooks/` (link do `agent-kit init`), thiếu cả hai thì exit 2 (chặn, fail closed) với thông báo nêu cả hai đường dẫn và `agent-kit init`. `exec` giữ nguyên stdin, stdout (JSON deny) và mã thoát của guard. Kit không sinh hai dòng này (`adapters/setup_claude.sh`, `hooks/hooks.json`, `templates/` không có); `~/.claude*/settings.json` của người dùng không sửa từ đây. `tests/gates/test_guard_secrets.sh` mục 6: ĐỎ (4 ca: thiếu cả hai → rc 0; chỉ có bản `.claude/hooks/` → guard không chạy) → XANH; nguồn kit thắng khi có cả hai; guard thoát 2 / 1, JSON deny, đọc `.env` thật và force push lên main vẫn bị chặn.
 

@@ -408,6 +408,37 @@ RM_WRAPPERS = {"sudo", "doas", "env", "command", "builtin", "exec", "nohup", "ti
 ROOT = os.path.realpath(os.environ.get("REPO_ROOT", "."))
 TMP_ROOTS = {os.path.realpath(t) for t in ("/tmp", os.environ.get("TMPDIR") or "/tmp")}
 GLOB = re.compile(r"[*?\[]")
+# The Bash tool runs /bin/zsh here (measured, OCR round 3), not bash. zsh reads a ( glued to a word as a GLOB QUALIFIER of that word:
+# build/a(:a:h:h) is the project root, build/*(e:…:) any path its code names. bash refuses the line; the lexer made the ( a subshell and
+# judged `build/a`. zsh_qualifiers marks the word; rm_target_problem refuses a target holding the marker (with -f).
+ZSH_QUAL = "__ZSH_GLOB_QUALIFIER__"
+
+def zsh_qualifiers(text):
+    """text with ZSH_QUAL glued to every word a ( is glued to, the ( set apart: what it holds is still walked as before (a perl qx(…) or
+    ruby %x(…) of a kept heredoc body runs its command). Not one: quoted, after $ < > = ( or a separator ($( … ), <( … ), a=( … ),
+    (( … ))), and an empty () (a function)."""
+    out, i, n, q = [], 0, len(text), None
+    while i < n:
+        c = text[i]
+        if q:   # inside quotes, copied as it is
+            out.append(c)
+            if c == "\\" and q == "\x22" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 1
+            elif c == q:
+                q = None
+        elif c == "\\":
+            out.append(text[i:i + 2])
+            i += 1
+        elif c in "\x27\x22":
+            q = c
+            out.append(c)
+        elif c == "(" and i and not text[i - 1].isspace() and text[i - 1] not in "$<>=(;&|" and not text.startswith("()", i):
+            out.append(ZSH_QUAL + " (")
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
 
 def under(p, d):
     return p != d and p.startswith(d.rstrip(os.sep) + os.sep)
@@ -511,11 +542,32 @@ def glob_may_leave(t):
     name that is not the last one (the path goes on through each match). A glob in the last name only names entries of that folder."""
     return t.endswith("/") or any(GLOB.search(x) for x in t.rstrip("/").split("/")[:-1])
 
+def zsh_starstar(t):
+    """None when the glob t has no zsh ** / ***. "" when its ** cannot leave the folder before it: no ***, the last name is a name (not
+    empty — a trailing / — nor . or ..), and ** is the whole name just before it with no other glob before (build/**/*.o, build/**/tmp:
+    zsh **/ follows no link, rm removes a matched link itself). Else why it cannot be judged: *** follows links, and Python glob walks
+    neither like zsh (OCR round 3, H1)."""
+    if "**" not in t:
+        return None
+    names = t.split("/")
+    before = names[:-1]
+    if "***" not in t and names[-1] not in ("", ".", ".."):
+        deep = [i for i, x in enumerate(before) if "**" in x]
+        if not deep or (deep == [len(before) - 1] and before[-1] == "**" and not any(GLOB.search(x) for x in before[:-1])):
+            return ""
+    return ("** / *** của zsh (*** đi theo link; ** có dấu / cuối, tên sau nó không phải tên cuối, hay glob khác trước nó): "
+            "Python glob không duyệt được như zsh, không biết kết quả tới đâu")
+
 def rm_target_problem(t, cwds, env, forced=True):
     """Why removing target t recursively is refused, or None. Without -f (forced=False; 2026-10-09,
     tests/gates/test_hardware_rm_unforced.sh) only a target that is or holds the project root, the home folder, / or a
     system partition: rm -r with no terminal to ask on deletes all the same. A target it cannot resolve is not refused then."""
     orig = t
+    if ZSH_QUAL in t:   # a zsh glob qualifier (zsh_qualifiers): build/a(:a:h:h) is the project root, *(e:…:) any path its code names
+        shown = orig.replace(ZSH_QUAL, "(…)")
+        return f"{shown}: glob qualifier của zsh (`(` dính vào tên): không biết nó mở ra đường dẫn nào" if forced else None
+    if t == "~+" or t.startswith("~+/"):   # ~+ is the cwd (OCR round 3, H2: expanduser leaves it as it is)
+        t = "$PWD" + t[2:]
     if PWD_VAR.search(t):   # $PWD is the directory the command runs in (2026-10-13: rm -rf "$PWD/build" was refused as unknown)
         for cwd in cwds:
             if cwd is None:
@@ -531,9 +583,14 @@ def rm_target_problem(t, cwds, env, forced=True):
     t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
     if t.startswith("~"):
         t = os.path.expanduser(t)
+        if t.startswith("~"):   # ~- (the previous folder), ~+ out of a variable, ~user with no such user: unknown (OCR round 3, H2)
+            return f"{orig}: không biết {t.split(chr(47))[0]} trỏ tới đâu (~- / ~+ / ~user lạ)" if forced else None
     if "$" in t or "`" in t:
         return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)" if forced else None
     glob = bool(GLOB.search(t))
+    starstar = zsh_starstar(t) if glob else None   # OCR round 3, H1: zsh *** follows links, ** walks folders Python glob does not
+    if starstar and forced:
+        return f"{orig}: {starstar}"
     for cwd in ([None] if os.path.isabs(t) else cwds):
         if cwd is None and not os.path.isabs(t):
             if not forced:
@@ -550,10 +607,12 @@ def rm_target_problem(t, cwds, env, forced=True):
         if why:
             return why
         reach = None
-        if glob and glob_may_leave(t):   # where each current match lands, walked once for both checks below (review of A7, round 2 A2)
+        # where each current match lands, walked once for both checks below (review of A7, round 2 A2); a ** that cannot leave
+        # (zsh_starstar "") is not walked: build/**/*.o is a common clean, and its matches stay in the folder
+        if glob and starstar != "" and glob_may_leave(t):
             import glob as _glob, itertools as _it
             found = list(_it.islice(_glob.iglob(os.path.join(_glob.escape(base), t)), GLOB_CAP + 1))
-            if len(found) > GLOB_CAP and forced:
+            if len(found) > GLOB_CAP:   # with -f or not (OCR round 3, H3: rm -r reached the home folder through match 2010)
                 return (f"{orig}: glob khớp hơn {GLOB_CAP} mục mà kết quả có thể ra ngoài {p} (dấu / cuối, hoặc glob trước tên cuối): "
                         f"không xét hết được từng mục — chia nhỏ lệnh hoặc bỏ dấu / cuối")
             reach = list(dict.fromkeys(rm_reach(m) for m in found[:GLOB_CAP]))
@@ -973,6 +1032,7 @@ def rm_walk(text, cwds, depth, remote, env):
     # (unresolvable, refused) while the inner command is walked as its own segment.
     text = re.sub(r"`([^`]*)`?", r"$(\1)", text)
     text = FIND_OP.sub(lambda m: (m.group(1) or "") + FIND_OP_WORD[m.group(2) or m.group(3) or m.group(4)], text)
+    text = zsh_qualifiers(text)
     try:
         if shell_norm.dq_nested_quote(text):   # "$(echo "a b"; rm -rf ~)": the lexer pairs the quotes across the substitution (15/10 r6): read it as text that does not parse
             raise ValueError("a double quote inside a command substitution inside double quotes")
@@ -1002,7 +1062,8 @@ def rm_walk(text, cwds, depth, remote, env):
                 if head == "pushd" and "-n" in opts:
                     pass   # pushd -n only edits the directory stack: the shell stays where it is
                 elif (head == "popd" or arg is None or arg == "-" or re.fullmatch(r"[+-]\d+", arg) or "$" in arg or GLOB.search(arg)
-                      or (CDPATH_SET and not arg.startswith(("/", "~"))) or (remote and arg.startswith("~"))):
+                      or (CDPATH_SET and not arg.startswith(("/", "~"))) or (remote and arg.startswith("~"))
+                      or (arg.startswith("~") and os.path.expanduser(arg).startswith("~"))):   # cd ~- / ~+ / ~nosuchuser (OCR round 3)
                     # popd / bare pushd / cd - / pushd +N come back to a directory this walk never saw; with CDPATH a relative
                     # name may resolve anywhere ("CDPATH=/opt cd data" enters /opt/data); the far home is unknown
                     pending = [None]

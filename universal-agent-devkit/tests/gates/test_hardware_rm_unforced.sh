@@ -78,5 +78,10 @@ if [ -d "$TMP/work/PROJ" ]; then
 else
   echo "skip B3: this filesystem is case-sensitive"
 fi
+# OCR round 3 (25/10), H3: rm -r (no -f) of a glob that can leave its folder, with more than 2000 matches: only 2000 were read, a link to
+# the home folder after them was never judged. Refused now as with -f; a glob in the last name only is not walked (allowed as before).
+mkdir -p "$P/many" && ( cd "$P/many" && mkdir d{1..2100} )
+check 2 'rm -r many/*/'
+check 0 'rm -r many/*'
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_unforced: all passed" || { echo "❌ test_hardware_rm_unforced: $FAILS failed"; exit 1; }
