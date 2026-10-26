@@ -230,6 +230,15 @@ cp "$TMP/rm-al/.agents/local/memory/claude-auto/handoff.md" "$R/.agents/local/me
 (cd "$R" && bash "$KIT" worktree remove "$TMP/rm-al" >"$TMP/rm-al2.out" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ ! -d "$TMP/rm-al" ] && ok "remove: the same .agents/local/ bytes already in main -> removed" \
   || { fail "remove with .agents/local/ files main already holds (rc=$rc)"; cat "$TMP/rm-al2.out"; }
+# OCR r3 W1: a git repo nested under .agents/local/ (a repo-copy stage) is ONE folder entry for git ("…/kit-copy/"): it was skipped as
+# "not a file" and deleted with the worktree. Refused, naming it
+(cd "$R" && bash "$KIT" worktree add "$TMP/rm-nr" >/dev/null 2>&1) || fail "add rm-nr"
+mkdir -p "$TMP/rm-nr/.agents/local/stage/kit-copy"; G "$TMP/rm-nr/.agents/local/stage/kit-copy" init -q .
+echo "staged work awaiting the user" > "$TMP/rm-nr/.agents/local/stage/kit-copy/HANDOFF.md"
+(cd "$R" && bash "$KIT" worktree remove "$TMP/rm-nr" >"$TMP/rm-nr.out" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && [ -f "$TMP/rm-nr/.agents/local/stage/kit-copy/HANDOFF.md" ] && grep -q "\.agents/local/stage/kit-copy/" "$TMP/rm-nr.out" \
+  && ok "remove: a git repo nested under .agents/local/ is refused, named (not deleted as 'not a file')" \
+  || { fail "remove (rc=$rc) of a worktree holding a nested repo under .agents/local/"; cat "$TMP/rm-nr.out"; }
 
 if [ "$FAILS" -ne 0 ]; then echo "worktree remove: $FAILS FAILED"; exit 1; fi
 echo "worktree remove: all checks passed"
