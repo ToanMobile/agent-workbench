@@ -355,6 +355,8 @@ def full_gate_problem():
         return "chưa có exit 0 trên code hiện tại"
     if not isinstance(rec, dict):
         return "receipt hỏng (full_pass.json không phải object JSON)"
+    if rec.get("scope", "full") != "full":   # T0061: biên nhận task chỉ được nhận qua task_evidence (đúng lượt), không thay biên nhận --full
+        return "full_pass.json là biên nhận task, không phải --full"
     if rec.get("exit") != 0:
         return "chưa có exit 0 trên code hiện tại"
     rtime = rec.get("time", 0)
@@ -566,7 +568,8 @@ def merged_evidence():
                 rec = json.loads(fh.read(1 << 20))
         except (OSError, ValueError, RecursionError):
             continue
-        if not isinstance(rec, dict) or rec.get("exit") != 0 or rec.get("carried_from") or not isinstance(rec.get("project"), str):
+        if (not isinstance(rec, dict) or rec.get("exit") != 0 or rec.get("carried_from") or not isinstance(rec.get("project"), str)
+                or rec.get("scope", "full") != "full"):   # T0061: biên nhận task không phải --full
             continue
         rtime, tested = rec.get("time"), rec.get("tested_at")
         if isinstance(rtime, bool) or not isinstance(rtime, (int, float)) or not (start <= rtime <= time.time() + 60):
@@ -757,7 +760,8 @@ def tree_store_evidence():
             continue
         t = r.get("time") if isinstance(r, dict) else None
         # khoảng trước hiệu: một time 400 chữ số trừ float là OverflowError; nan / inf rơi ở so sánh
-        if (isinstance(r, dict) and r.get("exit") == 0 and not isinstance(r.get("exit"), bool) and r.get("fingerprint") == m.group(1)
+        if (isinstance(r, dict) and r.get("scope", "full") == "full"   # T0061: mục scope task không phải --full
+                and r.get("exit") == 0 and not isinstance(r.get("exit"), bool) and r.get("fingerprint") == m.group(1)
                 and isinstance(t, (int, float)) and not isinstance(t, bool) and start <= t <= now + 60 and now - t <= tree_fp.TREE_RECEIPT_MAX_AGE_S):
             recs.append(r)
     if not recs:

@@ -1206,6 +1206,10 @@ def cached_full_pass(project_dir, matrix_arg, fp=None, name=None, path=None):
         return None   # RecursionError: a forged file nested deeper than json.load can read (it is a RuntimeError, not a ValueError)
     if not isinstance(r, dict) or not isinstance(r.get("tests"), list) or not r["tests"]:
         return None
+    # T0061 Pha 1: biên nhận task (`scope` "task", lượt --run-tests không --full) không bao giờ thay biên nhận --full, ở mọi nguồn hàm này
+    # đọc (của chính git dir, của worktree anh em, mục store, BUDGET_RECORD); tests/gates/test_task_receipt_doors.sh ca 1
+    if r.get("scope", "full") != "full":
+        return None
     if r.get("exit") not in (0, 2) and not (r.get("exit") == 4 and r.get("untested") and isinstance(r["untested"], list)):
         return None
     # A time that is not a time (damaged or hand-written record) is no record: this used to raise (float("abc")) outside any try, and the Stop hook
