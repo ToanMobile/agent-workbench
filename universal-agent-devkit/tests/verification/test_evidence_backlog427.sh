@@ -6,8 +6,8 @@
 #      did the same on any long word (24 s); `tests/` repeated 15 000 times made SCRIPT_RUNNER_RX / DEVKIT_SUITE_RX restart at each one.
 #      A hook cut at the Stop cap lets the claim through. Bounded by CPU (getrusage), not wall time.
 #   2  R5, deliberate spoofing, only NARROWED: a runner after `||` of a command that always succeeds (`true || pytest`) never runs; a
-#      function / alias that redefines echo, cat, tail… or the runner itself, in this command or an earlier one, makes the exit code and
-#      every printed summary untrusted. No verdict either way.
+#      function / alias that redefines echo, cat, tail… or the runner itself, in this command (each Bash call is a new shell), makes the
+#      exit code and every printed summary untrusted. No verdict either way.
 #   3  a later segment that prints a FILE (`cat f`, `tail f`, `sed -n … f`) stands in for the summary of a run before it.
 #   4  `npm|yarn|pnpm test | tail -N` printing mocha's shape keeps no verdict from the tail (mocha's failures come after its summary).
 #   5  `_kit_count` counts `{1..3}` and nested braces; never below the old count; huge ranges and products stay fast and blocked.
@@ -20,6 +20,10 @@
 #      count the last kit run whose exit is the tool's" is NOT done: it lets `bash x; bash y` (x crashed silently) through (P1-4 row of
 #      tests/verification/test_evidence_issue427.sh).
 #  11  a kit loop whose output has a non-check line like `linter reports 2 errors`: only a line that looks like a runner's own failure counts.
+#  12  review of round 2: (a) a bare PASS counts only where a run's output ends (last line, before an echoed `<label>=0`, last line of an
+#      exactly filled `2>&1 | tail -N` window); (b) docker's own errors (OCI runtime, no compose file, service with no image) are no RED;
+#      (c) `function NAME` / `NAME()` only at command position with a body, judged per call; (d) `sed -i` prints nothing, `echo … || x`
+#      skips something only when x is a runner.
 #   EG_KIT=<devkit dir>   test another copy of the kit (the unpatched one: RED).
 # bash 3.2 compatible wrapper; the scenarios are python3 stdlib.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
@@ -135,8 +139,8 @@ case("2b must block: `function tail { …; }` then pytest piped through tail",
 case("2b must block: `alias tail='echo 5 passed #'` then pytest piped through tail",
      after("alias tail='echo 5 passed #'; python3 -m pytest -q 2>&1 | tail -3", PYOK), 2)
 case("2b must block: `pytest() { echo '5 passed'; }; pytest -q` (the runner itself)", after("pytest() { echo '5 passed'; }; pytest -q", PYOK), 2)
-case("2b must block: `cat() { …; }` in an EARLIER Bash call, then pytest through cat",
-     [E, ["bash", "cat() { echo '5 passed'; }", ""], ["bash", "python3 -m pytest -q 2>&1 | cat", PYOK]], 2)
+case("2b must pass: `cat() { …; }` in an EARLIER Bash call does not reach a later one (each call is a new shell)",
+     [E, ["bash", "cat() { echo '5 passed'; }", ""], ["bash", "python3 -m pytest -q 2>&1 | cat", PYOK]], 0)
 case("2b control: a heredoc body that defines echo() is data", after("cat > /tmp/lib.sh <<'EOF'\necho() { :; }\nEOF\npython3 -m pytest -q", PYOK), 0)
 case("2b control: `echo() {` inside a quoted commit message is data",
      after("git commit -qm 'drop the echo() { } helper' && python3 -m pytest -q", PYOK), 0)
@@ -253,6 +257,66 @@ for line in ("3 failure(s)", "test_a: 2 errors", "FAIL (3)", "ERROR: config miss
          after("for t in a b; " + L2, line + "\n✅ test_a: all passed\n✅ test_b: all passed"), 2)
 case("11 must block: `Error: ENOENT` (not counted) in a two-run loop with one summary (the count still holds)",
      after("for t in a b; " + L2, "Error: ENOENT x\n✅ test_b: all passed"), 2)
+
+print("-- 12: review of round 2 (four P2 findings)")
+# 12a: a bare PASS counts only where a run's output ends: the last line, a line before the echo of an exit code the command prints, or
+# the last line of a `2>&1 | tail -N` window whose size the output fills exactly.
+case("12a must block: `bash x; bash y`, x crashed silently, y prints PASS then `✅ y: all passed`",
+     after("bash tests/a/test_x.sh; bash tests/a/test_y.sh", "PASS\n✅ test_y: all passed"), 2)
+case("12a must block: `bash x; bash y` printing `PASS`, `rc=0`, a summary, but the command echoes no rc",
+     after("bash tests/a/test_x.sh; bash tests/a/test_y.sh", "PASS\nrc=0\n✅ test_y: all passed"), 2)
+case("12a must pass: `x | tail -1; echo \"x exit=$?\"; y | tail -1`, x prints PASS",
+     after('bash tests/a/test_x.sh 2>&1 | tail -1; echo "x exit=$?"; bash tests/a/test_y.sh 2>&1 | tail -1',
+           "PASS\nx exit=0\n✅ test_y: all passed"), 0)
+AGENTS = ("bash tests/super-board/test_agents_md_block_size.sh 2>&1 | tail -2; bash tests/verification/test_repo_consistency.sh 2>&1"
+          " | tail -1")
+case("12a must block: the agents_md command, PASS is not the last line of the first window",
+     after(AGENTS, "PASS\n✔ a\nrepo consistency: all checks passed"), 2)
+case("12a must block: the agents_md command, 2 lines for 3 window lines (a run printed less: the windows are unknown)",
+     after(AGENTS, "PASS\nrepo consistency: all checks passed"), 2)
+case("12a must block: the agents_md command without 2>&1 on the first run (stderr skips tail)",
+     after(AGENTS.replace(" 2>&1 | tail -2", " | tail -2"), "✔ run.md: x\nPASS\nrepo consistency: all checks passed"), 2)
+case("12a must block: the agents_md command then `; echo done`",
+     after(AGENTS + "; echo done", "✔ run.md: x\nPASS\nrepo consistency: all checks passed\ndone"), 2)
+LOOP1 = "for t in a b c; do bash tests/super-board/test_$t.sh 2>&1 | tail -1; done"
+case("12a must pass: a real `for … 2>&1 | tail -1` loop of three runs, then `python3 tests/…/test_d.py 2>&1 | tail -1` (4 windows)",
+     after(LOOP1 + "; python3 tests/super-board/test_d.py 2>&1 | tail -1", "PASS\n✅ test_b: all passed\nPASS\nALL PASS"), 0)
+case("12a must block: a two-run `tail -2` loop, the first window holds PASS and its summary, the second none",
+     after("for t in a b; do bash tests/super-board/test_$t.sh 2>&1 | tail -2; done", "PASS\n✅ test_a: all passed\n✔ b1\n✔ b2"), 2)
+case("12a must block: the three-run loop without 2>&1 (stderr skips tail: the windows are unknown)",
+     after(LOOP1.replace(" 2>&1", ""), "PASS\nPASS\n✅ test_c: all passed"), 2)
+
+# 12b: docker's own errors are no RED half of check 7.
+for out in ('OCI runtime exec failed: exec failed: unable to start container process: exec: "pytest": executable file not found in $PATH',
+            "no configuration file provided: not found",
+            'service "web" has neither an image nor a build context specified: invalid compose project'):
+    case("12b must block: a docker-level error (`%s`) is no RED half of check 7" % out[:40],
+         pair("docker compose exec web pytest -q", out, "python3 -m pytest -q", PYOK), 2, msg=FIX)
+case("12b control: a pytest RED in docker whose assertion quotes a docker message is a RED half",
+     pair("docker compose run --rm web pytest -q", "E   AssertionError: no configuration file provided\n1 failed in 0.1s",
+          "docker compose run --rm web pytest -q", PYOK), 0, msg=FIX)
+
+# 12c: a definition is `function NAME {` / `NAME() {` at command position, judged per call (a Bash call keeps no function).
+case("12c must pass: `rg -n function test` in an earlier call, then pytest",
+     [E, ["bash", "rg -n function test", ""], ["bash", "python3 -m pytest -q", PYOK]], 0)
+case("12c must pass: `rg -n function test src; python3 -m pytest -q` in one call", after("rg -n function test src; python3 -m pytest -q", PYOK), 0)
+case("12c must block: `function tail() { …; }` then pytest through tail",
+     after("function tail() { echo '5 passed'; }; python3 -m pytest -q 2>&1 | tail -3", PYOK), 2)
+case("12c must block: `if true; then tail() { …; }; fi` then pytest through tail",
+     after("if true; then tail() { echo '5 passed'; }; fi; python3 -m pytest -q 2>&1 | tail -3", PYOK), 2)
+case("12c must block: `for …; do cat() { …; }; done` then pytest through cat",
+     after("for i in 1; do cat() { echo '5 passed'; }; done; python3 -m pytest -q 2>&1 | cat", PYOK), 2)
+
+# 12d: `sed -i` prints nothing; an echo before `||` skips only a runner after it.
+for c in ("sed -i '' 's/a/b/' src/app.py", "sed --in-place=.bak 's/a/b/' src/app.py", "sed -Ei 's/a+/b/' src/app.py"):
+    case("12d must pass: `pytest -q | tail -3; %s` (in place: prints nothing)" % c,
+         after("python3 -m pytest -q 2>&1 | tail -3; " + c, DOTS), 0)
+case("12d must block: `sed -i … f; cat f` after the run", after("python3 -m pytest -q 2>&1 | tail -3; sed -i '' 's/a/b/' /tmp/old.log; cat /tmp/old.log", DOTS), 2)
+case("12d must block: `sed -i 's/x/y/w /dev/stdout' f` prints", after("python3 -m pytest -q 2>&1 | tail -3; sed -i 's/x/y/w /dev/stdout' /tmp/old.log", DOTS), 2)
+case("12d must block: `grep -i passed f` prints", after("python3 -m pytest -q 2>&1 | tail -3; grep -i passed /tmp/old.log", DOTS), 2)
+case("12d must pass: `pytest -q; echo \"exit=$?\" || true`", after('python3 -m pytest -q; echo "exit=$?" || true', PYOK + "\nexit=0"), 0)
+case("12d must block: `echo \"exit=$?\" || python3 -m pytest -q` (pytest never runs)", after('echo "exit=$?" || python3 -m pytest -q', PYOK), 2)
+case("12d must block: `true || { python3 -m pytest -q; }`", after("true || { python3 -m pytest -q; }", PYOK), 2)
 
 shutil.rmtree(TMP, ignore_errors=True)
 print("")
