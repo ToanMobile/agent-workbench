@@ -16,7 +16,8 @@
 #   7. Review vòng 2: {x..y} xét như glob bỏ sót tên chưa có (P1 mất dữ liệu); thân trap / repeat mất phép gán đã biết; mv vào thư mục,
 #      tên link của adb shell, tar -x rồi rm -rf build/ (vẫn chặn); RERUN_RX bậc hai, git ls-files gọi lại ở lượt 2.
 #   8. Review vòng 2, lượt sau: export / declare / unset / NAME+= bị bỏ qua (biến giữ giá trị cũ); biến gán lại trong vòng lặp; T=$(mktemp -d)
-#      cho thân trap (chặn nhầm từ vòng 2); phép gán trong ( … ), chặng ống, chạy nền, sau && / ||, if / case, thân hàm.
+#      cho thân trap (chặn nhầm từ vòng 2); phép gán trong ( … ), chặng ống, chạy nền, sau && / ||, if / case, thân hàm; biến có thể
+#      rỗng ($(mktemp) hỏng, chuỗi && dừng trước phép gán) xét cả chuỗi rỗng.
 # Chỉ chạy hook — không bao giờ chạy lệnh.  HW_HOOK=<đường dẫn hook> chạy bản hook khác (bản chưa sửa: RED).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # bỏ GIT_* thừa kế: tests/lib/clean_git_env.sh
 set -u
@@ -352,6 +353,17 @@ check 2 'f() { false && D=/tmp/a; rm -rf $D; }; D=~; f'
 check 0 'cd build && D=build/x && rm -rf $D'                               # đối chứng: rm trong cùng chuỗi && sau phép gán
 check 0 "cd build && S=/tmp/claude-$(id -u)/q; rm -rf \$S; mkdir -p \$S"   # đối chứng (corpus: 26 lệnh): S chưa từng gán — không chạy thì rỗng
 check 0 '(D=build/x; rm -rf $D)'
+# 8e. biến có thể rỗng lúc chạy ($(mktemp …) hỏng; chỉ gán trong chuỗi && mà chuỗi dừng trước): xét cả giá trị và chuỗi rỗng
+check 2 'T=$(mktemp -d); rm -rf "$T"/*'                                     # rỗng: rm -rf /*
+check 2 'T=$(mktemp -d); rm -rf "$T/sub"'                                   # rỗng: rm -rf /sub
+check 2 'cd nope && S=/tmp/x; rm -rf $S/*'
+check 2 'cd nope && export S=/tmp/x; rm -rf "${S}"/*'
+check 2 'T=$(mktemp -d); trap "rm -rf $T/*" EXIT'
+check 2 'T=$(mktemp -d); rsync -a --delete src/ "$T"/'                     # rỗng: rsync --delete vào /
+check 2 'T=$(mktemp -d); find "$T"/ -delete'
+check 0 'T=$(mktemp -d); rm -rf "$T"'                                       # đối chứng: rỗng là rm -rf "" — không xoá gì
+check 0 'cd build && S=/tmp/x && rm -rf $S/*'                               # đối chứng: rm trong cùng chuỗi && — chạy thì S đã gán
+check 0 "S=/tmp/claude-$(id -u)/q; rm -rf \$S/*"                            # đối chứng: phép gán chắc chắn
 check 0 'f() { OUT=build/x; rm -rf $OUT; }; f'
 check 0 'D=build/x; f() { rm -rf $D; }; f'
 

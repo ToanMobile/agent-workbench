@@ -1239,6 +1239,25 @@ def assign(env, name, v):
     m = re.fullmatch(r"\x22?__MKTEMP_(\d+)__\x22?", v)
     env[name] = (mktemp_path(MKTEMP_ARGS[int(m.group(1))], env) or "$(mktemp)") if m else \
         re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), v)
+    marks = env.get(MAYBE_EMPTY, frozenset())   # mktemp hỏng (TMPDIR mất, đĩa đầy) thì rỗng; gán lại thì hết
+    env[MAYBE_EMPTY] = marks | {name} if m else marks - {name}
+
+# Review #427 vòng 2 (thêm): biến có thể RỖNG lúc chạy — gán từ $(mktemp …), hay chỉ gán trong một chuỗi && đã dứt (cd hỏng thì chuỗi
+# dừng trước phép gán) — được xét hai cách: giá trị của nó và chuỗi rỗng; chặn khi một trong hai bị chặn. `T=$(mktemp -d); rm -rf "$T"/*`
+# rỗng là rm -rf /*. Tập tên nằm trong env dưới khoá MAYBE_EMPTY (không phải tên biến: theo env khi ( … ) / thân hàm / thân trap khôi phục).
+MAYBE_EMPTY = "\x00maybe-empty"
+
+def empty_readings(t, env):
+    """[t] cộng các cách đọc t khi một biến có thể rỗng là chuỗi rỗng (từng biến, rồi tất cả); cách đọc rỗng hẳn bị bỏ (rm "" không xoá gì)."""
+    names = [n for n in sorted(env.get(MAYBE_EMPTY, ())) if re.search(r"\$(?:" + n + r"(?!\w)|\{" + n + r"\})", t)]
+    out = [t]
+    for group in [[n] for n in names] + ([names] if len(names) > 1 else []):
+        x = t
+        for n in group:
+            x = re.sub(r"\$(?:" + n + r"(?!\w)|\{" + n + r"\})", "", x)
+        if x.strip("\x22\x27") and x not in out:
+            out.append(x)
+    return out
 
 # Review #427 vòng 2 (thêm, P0 có từ trước): phép gán qua builtin từng bị bỏ qua, biến giữ giá trị cũ — `export TMPDIR=~; rm -rf "$TMPDIR"/x`,
 # `D=/tmp/a; unset D; rm -rf $D/*` (rm -rf /*), `D+=/../..` đều qua. export / readonly / declare -g / typeset -g NAME=VAL: gán như NAME=VAL.
@@ -1369,7 +1388,7 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         if prog == "rsync" and any(a == "--del" or a.startswith("--delete") for a in rest):
             ops = [a for a in rest if not a.startswith("-")]
             if len(ops) >= 2 and not re.match(r"^[^/]*:", ops[-1]):   # host:path / rsync:// is another machine
-                why = rm_target_problem(ops[-1], cwds, env, False)
+                why = next(filter(None, (rm_target_problem(y, cwds, env, False) for y in empty_readings(ops[-1], env))), None)
                 if why:
                     return why + " (rsync --delete)"
             return None
@@ -1425,14 +1444,16 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         return None
     for t in targets:
         if remote:
-            why = remote_target_problem(t, cwds, env, remote)
-            if why:
-                return why
+            for y in empty_readings(t, env):   # biến có thể rỗng: hai cách đọc (MAYBE_EMPTY)
+                why = remote_target_problem(y, cwds, env, remote)
+                if why:
+                    return why
             continue
         for x in [t] + [b for b in braces(t) if b != t]:   # the raw word, then each brace expansion (rm -rf ~/{a,b})
-            why = rm_target_problem(x, cwds, env, force)
-            if why:
-                return why
+            for y in empty_readings(x, env):
+                why = rm_target_problem(y, cwds, env, force)
+                if why:
+                    return why
     return None
 
 # find operators written escaped or quoted (\; \( \) and their quoted forms) are words of find, not shell separators
@@ -1585,7 +1606,7 @@ def rm_walk(text, cwds, depth, remote, env):
     # chắn: `D=~; false && D=/tmp/a; rm -rf $D`, `D=/tmp/a | cat`, `D=/tmp/a &`, `if …; then D=/tmp/a; fi`, thân hàm (chạy lúc gọi). Nay
     # tên đó thành không biết: ngay sau đoạn (chặng ống, chạy nền, sau ||), khi chuỗi && dứt (sau &&), ở fi / esac (if / case). Thân hàm:
     # xét với body_env như thân trap (chạy lúc gọi, sau mọi phép gán); sau định nghĩa, tên nó gán không biết ở mọi chỗ (gọi lúc nào cũng được).
-    prev, cond, blocks, volatile, fn_body, fn_next, seen = ";", set(), [], set(), None, False, set()
+    prev, cond, blocks, volatile, fn_body, fn_next, seen, cond_kept = ";", set(), [], set(), None, False, set(), set()
     for tk in toks + [";"]:
         if shell_norm.join_fd_dup(seg, tk):   # 2>&1 rm …: the & belongs to the redirect
             continue
@@ -1670,8 +1691,10 @@ def rm_walk(text, cwds, depth, remote, env):
             sep = tk.strip("\n") or ";"   # phép gán không chắc (xem trên prev, cond …)
             uncertain = names if sep in ("|", "|&", "&") or prev in ("|", "|&", "||") else ()
             if prev == "&&":   # tên chưa từng gán (trong lệnh, vùng lặp đang mở, môi trường) mà phép gán sau && không chạy thì rỗng: giữ giá
-                # trị như trước (corpus 27/10: 26 lệnh `cd <wt> && S=<scratch>; rm -rf $S`); còn sót: cd hỏng rồi rm -rf $S/x là /x
-                cond |= {n for n in names if n in seen or n in os.environ or fn_body is not None or any(n in r for r in open_loops)}
+                # trị như trước (corpus 27/10: 26 lệnh `cd <wt> && S=<scratch>; rm -rf $S`), cộng cách đọc rỗng (cd hỏng: rm -rf $S/x là /x)
+                risky = {n for n in names if n in seen or n in os.environ or fn_body is not None or any(n in r for r in open_loops)}
+                cond |= risky
+                cond_kept |= names - risky   # giữ giá trị; chuỗi && dứt thì có thể rỗng (dừng trước phép gán): MAYBE_EMPTY
             seen |= names
             if blocks:
                 blocks[-1] |= names
@@ -1691,6 +1714,9 @@ def rm_walk(text, cwds, depth, remote, env):
             for name in cond:
                 env.pop(name, None)
             cond.clear()
+            if cond_kept:
+                env[MAYBE_EMPTY] = env.get(MAYBE_EMPTY, frozenset()) | cond_kept
+                cond_kept.clear()
         prev = tk.strip("\n") or ";"
         if pending is not None:
             if remote == "device":   # #427 vòng 2: thiết bị bắt đầu ở / (biết); cd tới chỗ không biết ($VAR, ~, -, popd) không còn bỏ qua đích tương đối
