@@ -446,17 +446,29 @@ def complete_pr_files(args, stdout):
     """`gh pr view --json files` trả tối đa 100 file (OfficeReader #170, 103 file, 20/10): kiểm changedFiles == len(files)
     hỏng ở mọi lần và merge gate halt cả board vĩnh viễn. Khi danh sách ngắn hơn changedFiles, lấy đủ qua REST có phân trang
     (`gh api …/pulls/N/files`, chỉ đọc) theo dạng của gh pr view ({path, additions, deletions}). Lỗi thì trả nguyên văn:
-    kiểm tra bên dưới vẫn báo thiếu như cũ."""
+    kiểm tra bên dưới vẫn báo thiếu như cũ.
+    Một đường dẫn có thể là hai mục (file đổi thành symlink: removed + added, PR #424) ở CẢ GraphQL lẫn REST, còn changedFiles
+    đếm nó một lần: mục được gộp theo đường dẫn trước khi so. Danh sách GraphQL đủ 100 mục có thể đã bị cắt dù số đường dẫn khớp
+    (100 đường dẫn + một lần đổi kiểu = 101 mục: một đường dẫn thật rơi mất, luật money/auth không thấy nó), nên khi đó cũng lấy REST."""
     try:
         value = json.loads(stdout)
     except ValueError:
         return stdout
     if not (isinstance(value, dict) and isinstance(value.get('files'), list) and type(value.get('changedFiles')) is int
-            and value['changedFiles'] > len(value['files'])):
+            and all(isinstance(f, dict) and isinstance(f.get('path'), str) for f in value['files'])):
         return stdout
+    raw = len(value['files'])
+    merged = {}
+    for f in value['files']:
+        entry = merged.setdefault(f['path'], {**f, 'additions': 0, 'deletions': 0})
+        entry['additions'] += f.get('additions') or 0
+        entry['deletions'] += f.get('deletions') or 0
+    value['files'] = list(merged.values())
+    if value['changedFiles'] <= len(value['files']) and raw < 100:
+        return json.dumps(value) if raw != len(value['files']) else stdout
     number = args[2] if len(args) > 2 else ''
     if not number.isdigit():
-        return stdout
+        return json.dumps(value)
     repo = None
     for i, arg in enumerate(args):
         if arg in ('--repo', '-R') and i + 1 < len(args):
@@ -467,18 +479,17 @@ def complete_pr_files(args, stdout):
     try:
         full = run_gh(['api', path, '--paginate', '--slurp'])
         if full.returncode:
-            return stdout
-        # One path can be two REST entries (a file that became a symlink: removed + added, PR #424) while changedFiles
-        # counts it once: merge them by path, so the list length means changed files, not entries.
-        merged = {}
+            return json.dumps(value)     # the check below still reports a short list as incomplete
+        # REST lists a type change twice as well: merge by path, so the list length means changed files, not entries.
+        rest = {}
         for page in json.loads(full.stdout):
             for f in page:
-                entry = merged.setdefault(f['filename'], {'path': f['filename'], 'additions': 0, 'deletions': 0})
+                entry = rest.setdefault(f['filename'], {'path': f['filename'], 'additions': 0, 'deletions': 0})
                 entry['additions'] += f['additions']
                 entry['deletions'] += f['deletions']
-        value['files'] = list(merged.values())
+        value['files'] = list(rest.values())
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
-        return stdout
+        return json.dumps(value)
     return json.dumps(value)
 
 
