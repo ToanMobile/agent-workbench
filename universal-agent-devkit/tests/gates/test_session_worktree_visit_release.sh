@@ -46,12 +46,21 @@ repo d; wtadd "$TMP/d" one s0; wtadd "$TMP/d" two s0; visit "$TMP/d" one s4; vis
 lk="$(lock_of "$TMP/d" one)"
 [ -z "$lk" ] && ok "V4: moving on to another worktree releases the lock of the one only visited" || fail "V4: one locked '$lk'"
 
-#   V5 record without a pid (holder_pid None) still reads as a visit; V6 /clear (reown) and a rewrite after a failed lock keep `visit` (#413 x #428)
-repo e; wtadd "$TMP/e" lane s0
+#   V5 record without a pid (holder_pid None) still reads as a visit
+#   V6 /clear (reown) carries visit and the pid to the new session id
+#   V7 a record rewritten after a failed lock (compact) keeps visit; V8 ...but not onto a different worktree than the one visited (#413 x #428)
 py() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw; '"$1" "$DEVKIT_DIR/hooks" "${@:2}"; }
+repo e; wtadd "$TMP/e" lane s0
 py 'sw.write_record(sys.argv[2], "s5", sys.argv[3], pid=None, visit=True); print(sw.raw_visit(sys.argv[2], "s5"))' "$TMP/e" "$TMP/e/.claude/worktrees/lane" | grep -qx True \
   && ok "V5: a visit record with no pid line still reads as a visit" || fail "V5: raw_visit False without a pid"
-py 'sw.write_record(sys.argv[2], "old", sys.argv[3], pid=int(sys.argv[4]), visit=True); sw.reown(sys.argv[2], "new", sys.argv[3], lambda s: False); print(sw.raw_visit(sys.argv[2], "new"))' "$TMP/e" "$TMP/e/.claude/worktrees/lane" "$$" \
-  | grep -qx True && ok "V6: reown (/clear) carries the visit line to the new session id" || fail "V6: reown dropped visit"
+repo f; wtadd "$TMP/f" lane s0
+py 'sw.write_record(sys.argv[2], "old", sys.argv[3], pid=int(sys.argv[4]), visit=True); sw.reown(sys.argv[2], "new", sys.argv[3], lambda s: False); print(sw.raw_visit(sys.argv[2], "new"), sw.raw_pid(sys.argv[2], "new"), sw.raw_record(sys.argv[2], "old"))' "$TMP/f" "$TMP/f/.claude/worktrees/lane" "$$" \
+  | grep -qx "True $$ None" && ok "V6: reown (/clear) carries the visit line and the pid to the new session id" || fail "V6: reown dropped visit or pid"
+repo g; wtadd "$TMP/g" lane s0
+py 'sw.write_record(sys.argv[2], "s7", sys.argv[3], pid=None, visit=True); sw.lock_started_worktree(sys.argv[2], sys.argv[3], "s7", None, source="compact", problems=[]); print(sw.raw_visit(sys.argv[2], "s7"))' "$TMP/g" "$TMP/g/.claude/worktrees/lane" | grep -qx True \
+  && ok "V7: a record rewritten after a failed lock keeps visit" || fail "V7: visit lost after a failed lock rewrite"
+repo h; wtadd "$TMP/h" one s0; wtadd "$TMP/h" two s0
+py 'sw.write_record(sys.argv[2], "s8", sys.argv[3], pid=None, visit=True); sw.lock_started_worktree(sys.argv[2], sys.argv[4], "s8", None, source="startup", problems=[]); print(sw.raw_visit(sys.argv[2], "s8"))' "$TMP/h" "$TMP/h/.claude/worktrees/one" "$TMP/h/.claude/worktrees/two" | grep -qx False \
+  && ok "V8: visit of worktree A is not carried onto worktree B the session started in" || fail "V8: visit leaked onto another worktree"
 
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }

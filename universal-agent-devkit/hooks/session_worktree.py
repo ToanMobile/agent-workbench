@@ -571,7 +571,7 @@ def _lock_or_report(main, wt, sid, pid, problems, locks):
         return wt
     if reason is not None and not reason.startswith(KEPT_PREFIX):
         return None
-    write_record(main, sid, wt, pid=pid, start=pid_start_token(pid) if pid else None, visit=raw_visit(main, sid))
+    write_record(main, sid, wt, pid=pid, start=pid_start_token(pid) if pid else None, visit=raw_visit(main, sid) and os.path.realpath(raw_record(main, sid) or "") == os.path.realpath(wt))
     if problems is not None:
         problems.append(f"NOT LOCKED: {wt} (no pid / git refused or timed out): cleanup-wt may remove it while this session works; "
                         "the next compact (or clear from inside it) tries to lock it again")
