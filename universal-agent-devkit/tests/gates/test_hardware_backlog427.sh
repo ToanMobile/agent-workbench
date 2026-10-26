@@ -61,6 +61,8 @@ if [ -n "$SCR" ]; then
   check 2 "while rm -rf $SCRP/l/; do ln -s ~ $SCRP/l; done"                  # điều kiện của while cũng chạy lại
   check 2 "until false; do rm -rf $SCRP/l/; ln -s ~ $SCRP/l; done"
   check 2 "for a in 1 2; do for b in 1; do rm -rf $SCRP/l/; done; ln -s ~ $SCRP/l; done"   # rm ở vòng trong, ln sau đó ở vòng ngoài
+  check 2 "repeat 2; do rm -rf $SCRP/l/; ln -s ~ $SCRP/l; done"               # vòng lặp của zsh (Bash tool chạy zsh)
+  check 2 "foreach x (1 2) rm -rf $SCRP/l/; ln -s ~ $SCRP/l; end"
   check 2 "(sleep 1; rm -rf $SCRP/l/) & ln -s ~ $SCRP/l"                      # chạy nền: rm có thể chạy sau ln
   check 2 "(sleep 1; rm -rf $SCRP/l/) | ln -s ~ $SCRP/l"                      # chặng ống chạy cùng lúc
   check 2 "rm -rf $SCRP/l/ | ln -s ~ $SCRP/l"

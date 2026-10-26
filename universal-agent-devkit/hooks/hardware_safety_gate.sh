@@ -1292,7 +1292,8 @@ def rm_problem(text, cwds, depth=0, remote="", _pass=0):
 LOOP, PASS, RERUN = [0], [0], [False]
 RERUN_RX = re.compile(r"\b[\w.-]+\s*\(\s*\)\s*[{(]|\bfunction\s+[\w.-]+|(?<![&>|<])&(?![&>])|[)}]\s*\|(?!\|)|\btrap\b|\bcoproc\b|\bxargs\b"
                       r"|\s-(?:exec|execdir|ok|okdir)\b|\bparallel\b|\bwatch\b")
-LOOP_WORD = re.compile(r"\b(?:for|while|until|select)\b")
+LOOP_HEADS = ("for", "while", "until", "select", "repeat", "foreach")   # repeat N … / foreach x ( … ) … end: vòng lặp của zsh (Bash tool)
+LOOP_WORD = re.compile(r"\b(?:" + "|".join(LOOP_HEADS) + r")\b")
 
 SEP_CHARS = set(";&|()\n")   # the characters of a separator word of shell_norm.lex_words (a newline is one)
 
@@ -1321,7 +1322,7 @@ def rm_walk(text, cwds, depth, remote, env):
             while i < len(seg) and (re.match(r"^[A-Za-z_]\w*=", seg[i]) or seg[i] in RM_WRAPPERS):
                 i += 1
             head = os.path.basename(seg[i]) if i < len(seg) else ""
-            if head in ("for", "while", "until", "select"):   # #427 vòng 2: vùng lặp, kể cả điều kiện của while / until
+            if head in LOOP_HEADS:   # #427 vòng 2: vùng lặp, kể cả điều kiện của while / until (end của foreach không đóng: thừa thì chặn hơn)
                 LOOP[0] += 1
             elif head == "done":
                 LOOP[0] = max(0, LOOP[0] - 1)
