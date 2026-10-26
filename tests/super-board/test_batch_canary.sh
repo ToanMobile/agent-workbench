@@ -83,11 +83,15 @@ else fail "75/49/0 phải ĐỎ exit 1 (rc=$rc): $out"; fi
 gen_runs "$TMP/r3e.jsonl" 1 2 0 "$EP"; gen_merged "$TMP/m3e.json" 6 "$EP"; canary "$TMP/r3e.jsonl" "$TMP/m3e.json"
 if [ "$rc" = 0 ] && has "$out" "GREEN"; then ok "1 merge lẻ thỉnh thoảng / 2 train → XANH"
 else fail "1 merge lẻ / 2 train phải XANH exit 0 (rc=$rc): $out"; fi
-# 3f. Ghim luật (b) đúng chữ: 1 PR đi đường lẻ, 0 train → 1 > 0 → ĐỎ (sàn ≥ 2 cho (b) là quyết định của PM, chưa có)
+# 3f. Sàn của luật (b) (PM 26/10): một lượt /super-review --standalone lẻ ngoài board (1 PR, 1 merge lẻ, 0 train) KHÔNG làm đỏ;
+#     (b) chỉ áp khi merge lẻ >= 2 và > train.
 gen_runs "$TMP/r3f.jsonl" 1 0 0 "$EP"; gen_merged "$TMP/m3f.json" 1 "$EP"; canary "$TMP/r3f.jsonl" "$TMP/m3f.json"
-if [ "$rc" = 1 ] && has "$out" "1 single merge-gate verifies > 0 train verifies" && ! has "$out" "no train verify"; then
-  ok "1 PR / 1 merge lẻ / 0 train → ĐỎ theo (b) (ghim hành vi hiện tại)"
-else fail "1/1/0 theo (b) phải ĐỎ exit 1 (rc=$rc): $out"; fi
+if [ "$rc" = 0 ] && has "$out" "GREEN"; then ok "1 PR / 1 merge lẻ (standalone) / 0 train → XANH (sàn của (b))"
+else fail "1/1/0 phải XANH exit 0 (sàn ≥ 2 của (b)) (rc=$rc): $out"; fi
+# 3f2. 2 merge lẻ / 1 train / 3 PR → ĐỎ theo (b) (2 >= 2 và 2 > 1)
+gen_runs "$TMP/r3f2.jsonl" 2 1 0 "$EP"; gen_merged "$TMP/m3f2.json" 3 "$EP"; canary "$TMP/r3f2.jsonl" "$TMP/m3f2.json"
+if [ "$rc" = 1 ] && has "$out" "2 single merge-gate verifies > 1 train verifies"; then ok "2 merge lẻ / 1 train → ĐỎ theo (b)"
+else fail "2/1/3 theo (b) phải ĐỎ exit 1 (rc=$rc): $out"; fi
 # 3g. --max-ratio đã bỏ: truyền vào là lỗi đầu vào argparse (exit 2), không âm thầm bỏ qua
 out=$(python3 "$CANARY" --runs "$TMP/r3a.jsonl" --since "$SINCE" --merged-json "$TMP/m3a.json" --max-ratio 1 2>&1); rc=$?
 if [ "$rc" = 2 ] && has "$out" "max-ratio"; then ok "--max-ratio không còn nhận (exit 2)"

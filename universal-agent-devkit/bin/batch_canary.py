@@ -174,7 +174,7 @@ def evaluate(merge_v: int, train_v: int, merged_n: int | None) -> tuple:
     summary = f"merged PRs={merged_n} merge-gate verifies={merge_v} train verifies={train_v}"
     if merged_n >= 2 and train_v == 0:
         reasons.append("no train verify at all")
-    if merge_v > train_v:
+    if merge_v >= 2 and merge_v > train_v:   # sàn 2: một lượt /super-review --standalone lẻ ngoài board không làm đỏ (PM 26/10)
         reasons.append(f"{merge_v} single merge-gate verifies > {train_v} train verifies")
     return bool(reasons), summary, reasons
 
