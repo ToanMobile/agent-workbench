@@ -204,6 +204,30 @@ wt q; mkdir -p "$TMP/am-q/.agents/local/memory/claude-auto" && echo "a lesson" >
 fin ../am-q; rc=$?
 [ "$rc" = 0 ] && [ ! -d "$TMP/am-q" ] && [ "$(cat "$P/.agents/local/memory/claude-auto/lesson.md" 2>/dev/null)" = "a lesson" ] \
   && ok "17: the worktree's own memory note is saved into main's before it goes" || fail "17: (rc=$rc): $(cat "$TMP/out")"
+# 17b (OCR r2, 26/10): not only claude-auto - every git-ignored file under .agents/local/ only the worktree holds (a red-patch, a stage note)
+#     is carried into main before the removal; a file main already holds with OTHER bytes (the MEMORY.md index both edited) lands next to it
+#     as <name>.from-<worktree>, main's own copy untouched. Before: the red-patch went with the folder (now the blocker `remove` shares would
+#     keep the worktree instead, so finish carries them first).
+# 17c: a destination main does NOT ignore (the worktree ignores it through its own core.excludesFile): nothing copied, the worktree kept
+G "$P" config extensions.worktreeConfig true
+wt r3; mkdir -p "$TMP/am-r3/.agents/local/stage"; echo "stage only here" > "$TMP/am-r3/.agents/local/stage/H.md"
+printf '.agents/local/stage/\n' > "$TMP/r3-excl"; G "$TMP/am-r3" config --worktree core.excludesFile "$TMP/r3-excl"
+echo r3 > "$TMP/am-r3/r3.txt"; wcom r3 r3 r3.txt
+fin ../am-r3; rc=$?
+[ "$rc" = 1 ] && [ -f "$TMP/am-r3/.agents/local/stage/H.md" ] && [ ! -e "$P/.agents/local/stage/H.md" ] && grep -q "\.agents/local/stage/H.md" "$TMP/out" \
+  && ok "17c: a .agents/local/ file main would not ignore is not copied; the worktree is kept, naming it" || fail "17c: (rc=$rc): $(cat "$TMP/out")"
+G "$P" worktree remove --force "$TMP/am-r3" 2>/dev/null; G "$P" config --unset extensions.worktreeConfig
+echo ".agents/local/" >> "$P/.gitignore"; G "$P" add .gitignore; G "$P" commit -qm "ignore .agents/local"
+echo "main index" > "$P/.agents/local/memory/claude-auto/MEMORY.md"
+wt r2; mkdir -p "$TMP/am-r2/.agents/local/red-patches" "$TMP/am-r2/.agents/local/memory/claude-auto"
+echo "diff --git a/x b/x" > "$TMP/am-r2/.agents/local/red-patches/BUG-9.patch"; echo "worktree index" > "$TMP/am-r2/.agents/local/memory/claude-auto/MEMORY.md"
+echo r2 > "$TMP/am-r2/r2.txt"; wcom r2 r2 r2.txt
+fin ../am-r2; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$TMP/am-r2" ] && [ "$(cat "$P/.agents/local/red-patches/BUG-9.patch" 2>/dev/null)" = "diff --git a/x b/x" ] \
+  && [ "$(cat "$P/.agents/local/memory/claude-auto/MEMORY.md.from-am-r2" 2>/dev/null)" = "worktree index" ] \
+  && [ "$(cat "$P/.agents/local/memory/claude-auto/MEMORY.md")" = "main index" ] \
+  && ok "17b: finish carries every .agents/local/ file only the worktree holds (red-patch; MEMORY.md main has too -> MEMORY.md.from-am-r2), then removes it" \
+  || fail "17b: (rc=$rc, exists=$([ -d "$TMP/am-r2" ] && echo y || echo n)): $(cat "$TMP/out")"
 
 # round 2 #5: the secret-looking list is the gate's, plus the common extras; a template (.env.example) is not a secret
 for secret in id_ecdsa .netrc serviceAccountKey.json AuthKey_ABC.p8 id_dsa; do

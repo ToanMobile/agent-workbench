@@ -63,6 +63,12 @@ printf '.agents/local/memory/\n' >> "$R/.git/info/exclude"
 MEM=".agents/local/memory/claude-auto"
 add_det mem-only; mkdir -p "$H/mem-only/$MEM"; echo "handoff: only here" > "$H/mem-only/$MEM/handoff.md"
 add_det mem-same; mkdir -p "$H/mem-same/$MEM" "$R/$MEM"; echo "same note" > "$H/mem-same/$MEM/same.md"; cp "$H/mem-same/$MEM/same.md" "$R/$MEM/same.md"
+# m16 (OCR r2, 26/10): any git-ignored file under .agents/local/ (stage, handoff, red-patches) only the worktree holds - not only
+# claude-auto: removal_blockers (the rule remove / remove --merged / gc --merged share) keeps it, naming the path. m16b: the same bytes
+# at the same path in main: removed.
+printf '.agents/local/\n' >> "$R/.git/info/exclude"
+add_det stage-only; mkdir -p "$H/stage-only/.agents/local/stage-awaiting-user"; echo "handoff only here" > "$H/stage-only/.agents/local/stage-awaiting-user/HANDOFF.md"
+add_det stage-same; mkdir -p "$H/stage-same/.agents/local/stage" "$R/.agents/local/stage"; echo "same stage" > "$H/stage-same/.agents/local/stage/S.md"; cp "$H/stage-same/.agents/local/stage/S.md" "$R/.agents/local/stage/S.md"
 # --- phải được GIỮ ---
 add_br ahead ahead-1                            # m3 commit main chưa có (nhánh giữ commit: remove thường vẫn gỡ được, gc --merged thì không)
 echo ahead > "$H/ahead/ahead.txt"; G "$H/ahead" add ahead.txt && G "$H/ahead" commit -qm ahead
@@ -112,7 +118,7 @@ grep -q "kept $H/mem-only: 1 memory note" "$TMP/c.out" && ! grep -q "would remov
 # D. lượt thật, chạy từ worktree "here"
 (cd "$H/here" && WORKTREE_GC_FRESH_S=0 python3 "$WT" gc --merged --log="$TMP/gc.log" >"$TMP/d.out" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "D exit 0" || { fail "D exit $rc"; cat "$TMP/d.out"; }
-for w in done-branch done-detached done-squash pr-merged mem-same; do
+for w in done-branch done-detached done-squash pr-merged mem-same stage-same; do
   gone "$w" && ok "D integrated, clean, unheld $w is removed" || { fail "D integrated $w kept"; grep -a "$w" "$TMP/d.out"; }
 done
 grep -q "$H/done-branch" "$TMP/gc.log" 2>/dev/null && ok "D the removal is recorded in the gc log" || fail "D no gc log record: $(cat "$TMP/gc.log" 2>&1)"
@@ -124,6 +130,9 @@ kept here && ok "D the worktree the command runs in is kept" || fail "D the call
 kept mem-only && [ "$(cat "$H/mem-only/$MEM/handoff.md" 2>/dev/null)" = "handoff: only here" ] && grep -q "kept $H/mem-only: 1 memory note" "$TMP/d.out" \
   && ok "D a worktree whose own claude-auto holds a memory note main lacks is kept, with the memory reason" \
   || { fail "D memory note only the worktree holds: removed, or kept for another reason"; grep -a mem-only "$TMP/d.out"; }
+kept stage-only && [ -f "$H/stage-only/.agents/local/stage-awaiting-user/HANDOFF.md" ] && grep -q "kept $H/stage-only: .*\.agents/local/stage-awaiting-user/HANDOFF.md" "$TMP/d.out" \
+  && ok "D a worktree holding a git-ignored .agents/local/ file main lacks is kept, naming the file" \
+  || { fail "D .agents/local/ file only the worktree holds: removed, or kept for another reason"; grep -a stage-only "$TMP/d.out"; }
 kept ahead && has_branch ahead-1 && ok "D a worktree with a commit not in main is kept" || fail "D worktree with an unmerged commit removed"
 kept dirty && [ "$(cat "$H/dirty/new.txt" 2>/dev/null)" = "only here" ] && ok "D a worktree with only uncommitted files is kept" || fail "D uncommitted file lost"
 kept reflog && [ "$(G "$R" cat-file -t "$LOST" 2>/dev/null)" = commit ] && ok "D a worktree holding a reflog-only commit is kept" || fail "D reflog-only commit's worktree removed"
@@ -184,6 +193,21 @@ add_det part-of-pr; G "$H/part-of-pr" checkout -q --detach "$AH~0"
 [ "$rc" -eq 0 ] && gone part-of-pr && ok "G remove --merged=<merged head>: HEAD is that head -> removed" || { fail "G remove --merged=<sha> rc=$rc"; cat "$TMP/g2.out"; }
 (cd "$R" && python3 "$WT" remove --merged=nothex "$H/ahead" >"$TMP/g3.out" 2>&1); rc=$?
 [ "$rc" -ne 0 ] && kept ahead && ok "G remove --merged=<not a sha> refuses" || { fail "G bad sha rc=$rc"; cat "$TMP/g3.out"; }
+# G4 (OCR r2, 26/10): integrated worktree whose only unique content is git-ignored under .agents/local/ (a red-patch, a claude-auto note):
+#    `remove --merged` (the board's clean-up) deleted both and only warned about the note afterwards. Refused, naming them; control: once
+#    main holds the same bytes at the same paths, removed.
+add_br rp rp-1; echo rp > "$H/rp/rp.txt"; G "$H/rp" add rp.txt && G "$H/rp" commit -qm rp; G "$R" merge -q --ff-only rp-1
+mkdir -p "$H/rp/.agents/local/red-patches" "$H/rp/$MEM"
+echo "diff --git a/x b/x" > "$H/rp/.agents/local/red-patches/BUG-1.patch"; echo "handoff rp only here" > "$H/rp/$MEM/handoff-rp.md"
+(cd "$R" && python3 "$WT" remove --merged "$H/rp" >"$TMP/g4.out" 2>&1); rc=$?
+[ "$rc" -eq 1 ] && [ -f "$H/rp/.agents/local/red-patches/BUG-1.patch" ] && [ -f "$H/rp/$MEM/handoff-rp.md" ] \
+  && grep -q "\.agents/local/red-patches/BUG-1.patch" "$TMP/g4.out" \
+  && ok "G remove --merged refuses an integrated worktree whose git-ignored .agents/local/ files main lacks, naming them" \
+  || { fail "G remove --merged rc=$rc: .agents/local/ files only the worktree held are gone or unnamed"; cat "$TMP/g4.out"; }
+mkdir -p "$R/.agents/local/red-patches"; cp "$H/rp/.agents/local/red-patches/BUG-1.patch" "$R/.agents/local/red-patches/BUG-1.patch"
+cp "$H/rp/$MEM/handoff-rp.md" "$R/$MEM/handoff-rp.md"
+(cd "$R" && python3 "$WT" remove --merged "$H/rp" >"$TMP/g5.out" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && gone rp && ok "G control: the same bytes already in main at the same paths -> removed" || { fail "G control rc=$rc"; cat "$TMP/g5.out"; }
 
 # H. (review U2 F4, 26/10) nhánh đang được rebase / bisect ở một worktree khác: worktree đó hiện DETACHED nên không "checkout" nhánh,
 #    và `update-ref -d` không từ chối — sweep của gc --merged (và prune-branch) xoá nó, `rebase --continue` hỏng "cannot lock ref".
