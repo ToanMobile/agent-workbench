@@ -53,17 +53,45 @@ else fail "73/48/0 phải ĐỎ exit 1 (rc=$rc): $out"; fi
 # ── 2. 6 PR / 1 train / 0 merge → XANH exit 0
 gen_runs "$TMP/r2.jsonl" 0 1 5 "$EP"; gen_merged "$TMP/m2.json" 6 "$EP"
 out=$(python3 "$CANARY" --runs "$TMP/r2.jsonl" --since "$SINCE" --merged-json "$TMP/m2.json" 2>&1); rc=$?
-if [ "$rc" = 0 ] && has "$out" "merged PRs=6 merge-gate verifies=0 train verifies=1 verifies/PR=0.17" && has "$out" "GREEN"; then
+if [ "$rc" = 0 ] && has "$out" "merged PRs=6 merge-gate verifies=0 train verifies=1" && has "$out" "GREEN"; then
   ok "6 PR / 1 train / 0 merge → XANH exit 0"
 else fail "6/1/0 phải XANH exit 0 (rc=$rc): $out"; fi
 
-# ── 3. Tỉ lệ: 4 PR, 1 train + 2 merge = 0.75 > 0.5 → ĐỎ; --max-ratio 1 → XANH
-gen_runs "$TMP/r3.jsonl" 2 1 0 "$EP"; gen_merged "$TMP/m3.json" 4 "$EP"
-out=$(python3 "$CANARY" --runs "$TMP/r3.jsonl" --since "$SINCE" --merged-json "$TMP/m3.json" 2>&1); rc=$?
-out2=$(python3 "$CANARY" --runs "$TMP/r3.jsonl" --since "$SINCE" --merged-json "$TMP/m3.json" --max-ratio 1 2>&1); rc2=$?
-if [ "$rc" = 1 ] && has "$out" "verifies/PR 0.75 > 0.5" && [ "$rc2" = 0 ] && has "$out2" "GREEN"; then
-  ok "verifies/PR 0.75 > 0.5 → ĐỎ; --max-ratio 1 → XANH"
-else fail "tỉ lệ (rc=$rc rc2=$rc2): $out | $out2"; fi
+# ── 3. Không còn luật tỉ lệ (vòng sửa 1): ĐỎ chỉ khi (a) >= 2 PR merged mà 0 train, hoặc (b) merge lẻ > train trong cửa sổ.
+# canary <runs> <merged>: chạy canary trên cửa sổ SINCE, đặt out/rc
+canary() { out=$(python3 "$CANARY" --runs "$1" --since "$SINCE" --merged-json "$2" 2>&1); rc=$?; }
+# 3a. Đợt nhỏ lúc máy rảnh: 1 PR / 1 train → XANH (luật tỉ lệ cũ: 1.0 > 0.5 → đỏ giả)
+gen_runs "$TMP/r3a.jsonl" 0 1 0 "$EP"; gen_merged "$TMP/m3a.json" 1 "$EP"; canary "$TMP/r3a.jsonl" "$TMP/m3a.json"
+if [ "$rc" = 0 ] && has "$out" "merged PRs=1 merge-gate verifies=0 train verifies=1" && has "$out" "GREEN" && ! has "$out" "verifies/PR"; then
+  ok "1 PR / 1 train → XANH (không còn luật tỉ lệ)"
+else fail "1 PR / 1 train phải XANH exit 0 (rc=$rc): $out"; fi
+# 3b. 2 PR / 2 train → XANH
+gen_runs "$TMP/r3b.jsonl" 0 2 0 "$EP"; gen_merged "$TMP/m3b.json" 2 "$EP"; canary "$TMP/r3b.jsonl" "$TMP/m3b.json"
+if [ "$rc" = 0 ] && has "$out" "GREEN"; then ok "2 PR / 2 train → XANH"
+else fail "2 PR / 2 train phải XANH exit 0 (rc=$rc): $out"; fi
+# 3c. Đường lẻ áp đảo: 8 PR, 3 merge lẻ, 1 train → ĐỎ theo (b) (tỉ lệ cũ 4/8 = 0.5 không vượt → xanh giả)
+gen_runs "$TMP/r3c.jsonl" 3 1 0 "$EP"; gen_merged "$TMP/m3c.json" 8 "$EP"; canary "$TMP/r3c.jsonl" "$TMP/m3c.json"
+if [ "$rc" = 1 ] && has "$out" "RED:" && has "$out" "3 single merge-gate verifies > 1 train verifies" && ! has "$out" "no train verify"; then
+  ok "3 merge lẻ / 1 train → ĐỎ (merge lẻ > train)"
+else fail "3 merge lẻ / 1 train phải ĐỎ exit 1 (rc=$rc): $out"; fi
+# 3d. Số liệu thật 26/10: 75 PR / 49 merge lẻ / 0 train → ĐỎ theo cả (a) lẫn (b)
+gen_runs "$TMP/r3d.jsonl" 49 0 0 "$EP"; gen_merged "$TMP/m3d.json" 75 "$EP"; canary "$TMP/r3d.jsonl" "$TMP/m3d.json"
+if [ "$rc" = 1 ] && has "$out" "merged PRs=75 merge-gate verifies=49 train verifies=0" && has "$out" "no train verify" \
+   && has "$out" "49 single merge-gate verifies > 0 train verifies"; then ok "75 PR / 49 merge / 0 train → ĐỎ (a + b)"
+else fail "75/49/0 phải ĐỎ exit 1 (rc=$rc): $out"; fi
+# 3e. Một /super-review --standalone thỉnh thoảng giữa các đợt train: 6 PR, 1 merge lẻ, 2 train → XANH
+gen_runs "$TMP/r3e.jsonl" 1 2 0 "$EP"; gen_merged "$TMP/m3e.json" 6 "$EP"; canary "$TMP/r3e.jsonl" "$TMP/m3e.json"
+if [ "$rc" = 0 ] && has "$out" "GREEN"; then ok "1 merge lẻ thỉnh thoảng / 2 train → XANH"
+else fail "1 merge lẻ / 2 train phải XANH exit 0 (rc=$rc): $out"; fi
+# 3f. Ghim luật (b) đúng chữ: 1 PR đi đường lẻ, 0 train → 1 > 0 → ĐỎ (sàn ≥ 2 cho (b) là quyết định của PM, chưa có)
+gen_runs "$TMP/r3f.jsonl" 1 0 0 "$EP"; gen_merged "$TMP/m3f.json" 1 "$EP"; canary "$TMP/r3f.jsonl" "$TMP/m3f.json"
+if [ "$rc" = 1 ] && has "$out" "1 single merge-gate verifies > 0 train verifies" && ! has "$out" "no train verify"; then
+  ok "1 PR / 1 merge lẻ / 0 train → ĐỎ theo (b) (ghim hành vi hiện tại)"
+else fail "1/1/0 theo (b) phải ĐỎ exit 1 (rc=$rc): $out"; fi
+# 3g. --max-ratio đã bỏ: truyền vào là lỗi đầu vào argparse (exit 2), không âm thầm bỏ qua
+out=$(python3 "$CANARY" --runs "$TMP/r3a.jsonl" --since "$SINCE" --merged-json "$TMP/m3a.json" --max-ratio 1 2>&1); rc=$?
+if [ "$rc" = 2 ] && has "$out" "max-ratio"; then ok "--max-ratio không còn nhận (exit 2)"
+else fail "--max-ratio phải exit 2 (rc=$rc): $out"; fi
 
 # ── 4. enabled_at trong config lọc lượt cũ (trước lúc bật): 40 merge cũ + 30 PR cũ không tính
 ENA=$((NOW - 1800))
@@ -99,6 +127,28 @@ out=$(python3 "$CANARY" --runs "$TMP/r5.jsonl" --since "$SINCE" --merged-json "$
 if [ "$rc" = 1 ] && has "$out" "merge-gate verifies=3 train verifies=0" && ! has "$out" "Traceback"; then
   ok "dòng JSON hỏng / không phải object / epoch sai bị bỏ qua"
 else fail "JSON hỏng (rc=$rc): $out"; fi
+
+# ── 5b. Lượt gate không chạy suite nào (verdict BUSY, hoặc exit 4: hàng đợi gate / khe bận) không phải lượt verify: không đếm.
+# Scratch của agent-kit integrate (.integrate-scratch-*) cũng không phải merge gate lẻ. 4 PR, 1 train thật; nếu đếm sai: 4 lẻ > 1 → ĐỎ.
+gen_runs "$TMP/r5b.jsonl" 0 1 0 "$EP"
+python3 - "$TMP/r5b.jsonl" "$EP" <<'PY2'
+import json, sys
+path, ep = sys.argv[1], int(sys.argv[2])
+rows = [{"epoch": ep, "project": ".merge-scratch-busy01", "verdict": "BUSY", "exit": 4},
+        {"epoch": ep, "project": ".merge-scratch-busy02", "verdict": "BUSY", "exit": 4},
+        {"epoch": ep, "project": ".merge-scratch-slot01", "verdict": "UNTESTED", "exit": 4},
+        {"epoch": ep, "project": ".train-scratch-busy01", "verdict": "BUSY", "exit": 4},
+        {"epoch": ep, "project": ".integrate-scratch-abc123", "verdict": "PASS", "exit": 0},
+        {"epoch": ep, "project": ".integrate-scratch-def456", "verdict": "PASS", "exit": 0}]
+with open(path, "a", encoding="utf-8") as f:
+    for r in rows:
+        f.write(json.dumps(r) + "\n")
+PY2
+gen_merged "$TMP/m5b.json" 4 "$EP"
+out=$(python3 "$CANARY" --runs "$TMP/r5b.jsonl" --since "$SINCE" --merged-json "$TMP/m5b.json" 2>&1); rc=$?
+if [ "$rc" = 0 ] && has "$out" "merged PRs=4 merge-gate verifies=0 train verifies=1" && has "$out" "GREEN"; then
+  ok "bản ghi BUSY / exit 4 và scratch integrate không bị đếm"
+else fail "BUSY / exit 4 / integrate phải bị bỏ qua (rc=$rc): $out"; fi
 
 # ── 6. Lỗi đầu vào → exit 2 kèm lý do (không traceback)
 bad_in() {   # <tên> <chuỗi phải có> <args...>

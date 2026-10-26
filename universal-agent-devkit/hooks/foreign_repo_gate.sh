@@ -106,7 +106,7 @@ lines = ["⛔ FOREIGN-REPO GATE: phiên này đã sửa file của repo KHÁC, n
          + repo + " (thư mục phiên bắt đầu):"]
 for t in new:
     lines.append("  - " + t + " (vd " + foreign[t] + ") — chạy cổng của repo đó trước khi báo xong:")
-    lines.append("      cd " + t + " && CLAUDE_PROJECT_DIR=\"$PWD\" python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full")
+    lines.append("      cd " + t + " && CLAUDE_PROJECT_DIR=\"$PWD\" python3 .agents/devkit/bin/post-fix-gate.py --run-tests")
 lines.append("Chặn 1 lần mỗi phiên; lần dừng sau sẽ qua. Không chạy được (thiếu công cụ, repo đang có phiên khác) → nói rõ cho người dùng.")
 sys.stderr.write("\n".join(lines) + "\n")
 sys.exit(2)
