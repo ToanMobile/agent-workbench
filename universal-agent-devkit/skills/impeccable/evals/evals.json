@@ -1,0 +1,152 @@
+{
+  "skill_name": "impeccable",
+  "evals": [
+    {
+      "id": 1,
+      "name": "polish-hydrology-gauge-board",
+      "prompt": "Hướng thiết kế này đã chốt, giữ nguyên bố cục, nội dung và link; polish các chi tiết còn chưa ổn rồi ghi đè index.html. Không hỏi lại, tự quyết.",
+      "expected_output": "Trang index.html giữ nguyên bố cục bảng trực ban mực nước Kestrel Gauge, nội dung số liệu và liên kết xuất CSV, đồng thời khắc phục các lỗi tương phản chữ xám trần, khoảng cách dòng chật, khoảng cách đều 16px, ô icon xếp chồng trên tiêu đề, thẻ lồng thẻ và vòng focus bị tắt.",
+      "files_dir": "evals/files/eval-1",
+      "files": [],
+      "allowed_tools": "Read Write Edit Glob Grep Bash(*/.claude/skills/impeccable/scripts/impeccable *) Bash(.claude/skills/impeccable/scripts/impeccable *)",
+      "disallowed_tools": "AskUserQuestion Bash(*serve-question*) Bash(*generate-image*) WebFetch WebSearch",
+      "expectations": [
+        "Giữ nguyên bố cục tổng thể, số liệu trạm đo và liên kết CTA /stations/export-csv trong index.html",
+        "Khắc phục toàn bộ lỗi chi tiết primary do impeccable detect phát hiện mà không sửa DESIGN.md để lách luật",
+        "Bổ sung trạng thái :focus-visible rõ ràng và nhịp khoảng cách tuân thủ DESIGN.md"
+      ],
+      "checks": [
+        {
+          "id": "preserve_export_csv_cta",
+          "text": "Giữ nguyên liên kết CTA xuất biên bản CSV (/stations/export-csv) trong index.html",
+          "type": "file_glob",
+          "glob": "index.html",
+          "regex": "href=['\"]/stations/export-csv['\"]"
+        },
+        {
+          "id": "impeccable_detect_clean",
+          "text": "impeccable detect --no-inline-ignores --json index.html đạt exit 0 trên DESIGN.md gốc",
+          "type": "command",
+          "cmd": [
+            "{skill_dir}/scripts/impeccable",
+            "detect",
+            "--no-inline-ignores",
+            "--json",
+            "index.html"
+          ],
+          "env": {
+            "IMPECCABLE_LAUNCHER_PROBE": "1",
+            "IMPECCABLE_NO_TELEMETRY": "1"
+          },
+          "oracle_files": [
+            "evals/files/eval-1/DESIGN.md"
+          ],
+          "remove_paths": [
+            ".impeccable"
+          ],
+          "unavailable_exit_codes": [
+            127
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "polish-studio-calibration-log",
+      "prompt": "Hướng thiết kế này đã chốt, giữ nguyên bố cục, nội dung và link; polish các chi tiết còn chưa ổn rồi ghi đè index.html. Không hỏi lại, tự quyết.",
+      "expected_output": "Trang index.html giữ nguyên bố cục biên bản hiệu chuẩn phòng dựng Calibra Room, nội dung dải tần và liên kết /sessions/new-sweep, đồng thời bỏ viền lệch side-tab trên thẻ bo tròn, làm phẳng thẻ lồng thẻ, sửa thứ bậc tiêu đề bị nhảy cấp, tăng tương phản chữ phụ và mở khoảng cách dòng.",
+      "files_dir": "evals/files/eval-2",
+      "files": [],
+      "allowed_tools": "Read Write Edit Glob Grep Bash(*/.claude/skills/impeccable/scripts/impeccable *) Bash(.claude/skills/impeccable/scripts/impeccable *)",
+      "disallowed_tools": "AskUserQuestion Bash(*serve-question*) Bash(*generate-image*) WebFetch WebSearch",
+      "expectations": [
+        "Giữ nguyên bố cục biên bản âm học, thông số dB/RT60 và liên kết CTA /sessions/new-sweep trong index.html",
+        "Khắc phục toàn bộ lỗi chi tiết primary do impeccable detect phát hiện trên DESIGN.md gốc",
+        "Đảm bảo thứ bậc heading tuần tự h1 -> h2 và có vòng :focus-visible truy cập bàn phím"
+      ],
+      "checks": [
+        {
+          "id": "preserve_new_sweep_cta",
+          "text": "Giữ nguyên liên kết CTA chạy phép đo mới (/sessions/new-sweep) trong index.html",
+          "type": "file_glob",
+          "glob": "index.html",
+          "regex": "href=['\"]/sessions/new-sweep['\"]"
+        },
+        {
+          "id": "impeccable_detect_clean",
+          "text": "impeccable detect --no-inline-ignores --json index.html đạt exit 0 trên DESIGN.md gốc",
+          "type": "command",
+          "cmd": [
+            "{skill_dir}/scripts/impeccable",
+            "detect",
+            "--no-inline-ignores",
+            "--json",
+            "index.html"
+          ],
+          "env": {
+            "IMPECCABLE_LAUNCHER_PROBE": "1",
+            "IMPECCABLE_NO_TELEMETRY": "1"
+          },
+          "oracle_files": [
+            "evals/files/eval-2/DESIGN.md"
+          ],
+          "remove_paths": [
+            ".impeccable"
+          ],
+          "unavailable_exit_codes": [
+            127
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "polish-reefer-dispatch-ledger",
+      "prompt": "Hướng thiết kế này đã chốt, giữ nguyên bố cục, nội dung và link; polish các chi tiết còn chưa ổn rồi ghi đè index.html. Không hỏi lại, tự quyết.",
+      "expected_output": "Trang index.html giữ nguyên bố cục phiếu điều độ chuỗi lạnh Meridian Cold-Chain, dữ liệu các ga và liên kết /dispatch/reefer-manifest, đồng thời nâng cỡ chữ thân bài bị nhỏ 11px, giãn khoảng cách dòng, phá nhịp đều 16px, bỏ ô icon trên tiêu đề, gỡ thẻ lồng thẻ và sửa tương phản chữ xám.",
+      "files_dir": "evals/files/eval-3",
+      "files": [],
+      "allowed_tools": "Read Write Edit Glob Grep Bash(*/.claude/skills/impeccable/scripts/impeccable *) Bash(.claude/skills/impeccable/scripts/impeccable *)",
+      "disallowed_tools": "AskUserQuestion Bash(*serve-question*) Bash(*generate-image*) WebFetch WebSearch",
+      "expectations": [
+        "Giữ nguyên bố cục phiếu điều độ đoàn tàu HH16, số liệu container và liên kết CTA /dispatch/reefer-manifest trong index.html",
+        "Khắc phục toàn bộ lỗi chi tiết primary do impeccable detect phát hiện trên DESIGN.md gốc",
+        "Đảm bảo cỡ chữ thân bài dễ đọc (>=14px), khoảng cách phân tầng rõ và có :focus-visible"
+      ],
+      "checks": [
+        {
+          "id": "preserve_manifest_cta",
+          "text": "Giữ nguyên liên kết CTA mở bảng kê container lạnh (/dispatch/reefer-manifest) trong index.html",
+          "type": "file_glob",
+          "glob": "index.html",
+          "regex": "href=['\"]/dispatch/reefer-manifest['\"]"
+        },
+        {
+          "id": "impeccable_detect_clean",
+          "text": "impeccable detect --no-inline-ignores --json index.html đạt exit 0 trên DESIGN.md gốc",
+          "type": "command",
+          "cmd": [
+            "{skill_dir}/scripts/impeccable",
+            "detect",
+            "--no-inline-ignores",
+            "--json",
+            "index.html"
+          ],
+          "env": {
+            "IMPECCABLE_LAUNCHER_PROBE": "1",
+            "IMPECCABLE_NO_TELEMETRY": "1"
+          },
+          "oracle_files": [
+            "evals/files/eval-3/DESIGN.md"
+          ],
+          "remove_paths": [
+            ".impeccable"
+          ],
+          "unavailable_exit_codes": [
+            127
+          ]
+        }
+      ]
+    }
+  ]
+}

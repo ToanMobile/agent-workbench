@@ -449,14 +449,17 @@ def complete_pr_files(args, stdout):
     kiểm tra bên dưới vẫn báo thiếu như cũ.
     Một đường dẫn có thể là hai mục (file đổi thành symlink: removed + added, PR #424) ở CẢ GraphQL lẫn REST, còn changedFiles
     đếm nó một lần: mục được gộp theo đường dẫn trước khi so. Danh sách GraphQL đủ 100 mục có thể đã bị cắt dù số đường dẫn khớp
-    (100 đường dẫn + một lần đổi kiểu = 101 mục: một đường dẫn thật rơi mất, luật money/auth không thấy nó), nên khi đó cũng lấy REST."""
+    (100 đường dẫn + một lần đổi kiểu = 101 mục: một đường dẫn thật rơi mất, luật money/auth không thấy nó), nên khi đó cũng lấy REST.
+    Trả (văn bản, lỗi REST hoặc None): REST hỏng là lỗi đọc của GitHub, không phải lệnh gõ sai của người gọi (#427)."""
     try:
         value = json.loads(stdout)
     except ValueError:
-        return stdout
+        return stdout, None
+    # Số dòng theo file phải là int (hoặc thiếu): chuỗi làm vòng gộp ném TypeError (#427) — trả nguyên văn cho bước kiểm.
     if not (isinstance(value, dict) and isinstance(value.get('files'), list) and type(value.get('changedFiles')) is int
-            and all(isinstance(f, dict) and isinstance(f.get('path'), str) for f in value['files'])):
-        return stdout
+            and all(isinstance(f, dict) and isinstance(f.get('path'), str)
+                    and all(f.get(k) is None or type(f.get(k)) is int for k in ('additions', 'deletions')) for f in value['files'])):
+        return stdout, None
     raw = len(value['files'])
     merged = {}
     for f in value['files']:
@@ -465,10 +468,10 @@ def complete_pr_files(args, stdout):
         entry['deletions'] += f.get('deletions') or 0
     value['files'] = list(merged.values())
     if value['changedFiles'] <= len(value['files']) and raw < 100:
-        return json.dumps(value) if raw != len(value['files']) else stdout
+        return (json.dumps(value) if raw != len(value['files']) else stdout), None
     number = args[2] if len(args) > 2 else ''
     if not number.isdigit():
-        return json.dumps(value)
+        return json.dumps(value), None
     repo = None
     for i, arg in enumerate(args):
         if arg in ('--repo', '-R') and i + 1 < len(args):
@@ -479,7 +482,9 @@ def complete_pr_files(args, stdout):
     try:
         full = run_gh(['api', path, '--paginate', '--slurp'])
         if full.returncode:
-            return json.dumps(value)     # the check below still reports a short list as incomplete
+            status = re.search(r'HTTP [0-9]{3}', full.stderr)
+            # the check below still reports a short list as incomplete
+            return json.dumps(value), 'REST file list read failed' + (f' ({status[0]})' if status else '')
         # REST lists a type change twice as well: merge by path, so the list length means changed files, not entries.
         rest = {}
         for page in json.loads(full.stdout):
@@ -489,8 +494,8 @@ def complete_pr_files(args, stdout):
                 entry['deletions'] += f['deletions']
         value['files'] = list(rest.values())
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
-        return json.dumps(value)
-    return json.dumps(value)
+        return json.dumps(value), 'REST file list unreadable'
+    return json.dumps(value), None
 
 
 def read(args, kind='json', meta=None, recovering=False):
@@ -518,6 +523,7 @@ def read(args, kind='json', meta=None, recovering=False):
     operation = {'args': args, 'kind': kind, 'meta': meta}
     last = 'GitHub read failed'
     shape_only = True  # every attempt reached GitHub and got a payload of the wrong shape
+    rest_error = None  # complete_pr_files: REST hỏng ở lần thử cuối (lỗi của GitHub, không gợi ý "Valid form")
     delay = float(os.environ.get('SB_GITHUB_RETRY_DELAY', '1'))
     for attempt in range(1, 4):
         if not recovering:
@@ -529,8 +535,9 @@ def read(args, kind='json', meta=None, recovering=False):
             if (result.returncode and args[:2] == ['pr', 'diff'] and '--allow-escape-sequences' not in args
                     and 'terminal escape sequences' in result.stderr):
                 result = run_gh([*args, '--allow-escape-sequences'])
+            rest_error = None
             if not result.returncode and kind == 'metadata' and args[:2] == ['pr', 'view']:
-                result.stdout = complete_pr_files(args, result.stdout)
+                result.stdout, rest_error = complete_pr_files(args, result.stdout)
             diagnostic = result.stderr
             if result.returncode:
                 diagnostic += result.stdout
@@ -558,7 +565,7 @@ def read(args, kind='json', meta=None, recovering=False):
                         check_halt()
                     return result.stdout, value
                 except (ValueError, KeyError, TypeError, AttributeError, IndexError) as error:
-                    last = f'GitHub required read returned incomplete evidence: {error}'
+                    last = f'GitHub required read returned incomplete evidence: {error}' + (f'; {rest_error}' if rest_error else '')
                     shape_only = shape_only and not isinstance(error, GitHubErrors)
         except (OSError, subprocess.SubprocessError):
             shape_only = False
@@ -569,7 +576,7 @@ def read(args, kind='json', meta=None, recovering=False):
     # Payload sai dạng ở cả 3 lần với lệnh của agent là lỗi đọc của người gọi cho MỌI kind (OfficeReader 16/10: quota
     # đọc kèm --jq in chuỗi đã halt cả board); lệnh cố định của board đặt STRICT nên vẫn halt.
     if shape_only and not os.environ.get('SB_GITHUB_READ_STRICT'):
-        hint = f' Valid form: --kind {kind} -- {FORMS[kind]}' if kind in FORMS else ''
+        hint = f' Valid form: --kind {kind} -- {FORMS[kind]}' if kind in FORMS and not rest_error else ''
         raise ValueError(f'{last}; this call failed, the run continues.{hint}')
     halt(f'{last}; stopped after 3 failed attempts', 3, operation)
 
