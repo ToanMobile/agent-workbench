@@ -542,6 +542,22 @@ def glob_may_leave(t):
     name that is not the last one (the path goes on through each match). A glob in the last name only names entries of that folder."""
     return t.endswith("/") or any(GLOB.search(x) for x in t.rstrip("/").split("/")[:-1])
 
+def zsh_starstar(t):
+    """None when the glob t has no zsh ** / ***. "" when its ** cannot leave the folder before it: no ***, the last name is a name (not
+    empty — a trailing / — nor . or ..), and ** is the whole name just before it with no other glob before (build/**/*.o, build/**/tmp:
+    zsh **/ follows no link, rm removes a matched link itself). Else why it cannot be judged: *** follows links, and Python glob walks
+    neither like zsh (OCR round 3, H1)."""
+    if "**" not in t:
+        return None
+    names = t.split("/")
+    before = names[:-1]
+    if "***" not in t and names[-1] not in ("", ".", ".."):
+        deep = [i for i, x in enumerate(before) if "**" in x]
+        if not deep or (deep == [len(before) - 1] and before[-1] == "**" and not any(GLOB.search(x) for x in before[:-1])):
+            return ""
+    return ("** / *** của zsh (*** đi theo link; ** có dấu / cuối, tên sau nó không phải tên cuối, hay glob khác trước nó): "
+            "Python glob không duyệt được như zsh, không biết kết quả tới đâu")
+
 def rm_target_problem(t, cwds, env, forced=True):
     """Why removing target t recursively is refused, or None. Without -f (forced=False; 2026-10-09,
     tests/gates/test_hardware_rm_unforced.sh) only a target that is or holds the project root, the home folder, / or a
@@ -572,9 +588,9 @@ def rm_target_problem(t, cwds, env, forced=True):
     if "$" in t or "`" in t:
         return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)" if forced else None
     glob = bool(GLOB.search(t))
-    if glob and forced and "**" in t and glob_may_leave(t):   # OCR round 3, H1: zsh ** walks folders, *** follows links too
-        return (f"{orig}: ** / *** của zsh (*** đi theo link) có dấu / cuối hoặc nằm trước tên cuối: Python glob không duyệt được như zsh, "
-                f"không biết kết quả tới đâu")
+    starstar = zsh_starstar(t) if glob else None   # OCR round 3, H1: zsh *** follows links, ** walks folders Python glob does not
+    if starstar and forced:
+        return f"{orig}: {starstar}"
     for cwd in ([None] if os.path.isabs(t) else cwds):
         if cwd is None and not os.path.isabs(t):
             if not forced:
@@ -591,7 +607,9 @@ def rm_target_problem(t, cwds, env, forced=True):
         if why:
             return why
         reach = None
-        if glob and glob_may_leave(t):   # where each current match lands, walked once for both checks below (review of A7, round 2 A2)
+        # where each current match lands, walked once for both checks below (review of A7, round 2 A2); a ** that cannot leave
+        # (zsh_starstar "") is not walked: build/**/*.o is a common clean, and its matches stay in the folder
+        if glob and starstar != "" and glob_may_leave(t):
             import glob as _glob, itertools as _it
             found = list(_it.islice(_glob.iglob(os.path.join(_glob.escape(base), t)), GLOB_CAP + 1))
             if len(found) > GLOB_CAP:   # with -f or not (OCR round 3, H3: rm -r reached the home folder through match 2010)

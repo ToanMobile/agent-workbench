@@ -188,15 +188,21 @@ fi
 
 # 6. OCR round 3 (25/10): the Bash tool runs /bin/zsh (measured), the hook reads the line as bash.
 # H1: a ( glued to a word is a zsh glob qualifier — build/a(:a:h:h) is the project root, build/*(e:…:) any path the code names. The
-#     lexer made the ( a subshell and judged `build/a`. And zsh *** follows links (build/a/hl -> $HOME), ** walks folders Python glob cannot:
-#     with a trailing / or before the last name both are refused (glob_may_leave); `build/**/*.o` is one of them, on purpose.
+#     lexer made the ( a subshell and judged `build/a`. zsh *** follows links (build/a/hl -> $HOME); ** follows none, but Python glob walks
+#     neither like zsh: refused are ***, ** with a trailing / (or /.), and ** that a link could follow (a name after it that is not the
+#     last, another glob before it). `build/**/*.o`, `build/**/tmp` stay allowed (a common clean; rm removes a matched link itself).
 mkdir -p "$P/build/a" && ln -s "$HOME" "$P/build/a/hl"
 check 2 'rm -rf build/a(:a:h:h)'
 check 2 'rm -rf build/*(:A:h:h)'
 check 2 "rm -rf build/*(e:'reply=(/Users/x)':)"
 check 2 'rm -rf build/***/'
+check 2 'rm -rf build/***'
 check 2 'rm -rf build/**/'
-check 2 'rm -rf build/**/*.o'
+check 2 'rm -rf build/**/.'
+check 2 'rm -rf build/**/hl/Documents'                    # zsh matches build/a/hl/Documents: the home folder, through the link
+check 2 'rm -rf build/*/**/*.o'                           # build/a/hl/**: ** walks the home folder from the link * matched
+check 0 'rm -rf build/**/*.o'                             # (OCR round 3 follow-up: refused by mistake in 6bf699e8)
+check 0 'rm -rf build/**/tmp'
 check 2 'rm -rf build/*/*/'                                # control: already refused (the link at depth 2)
 check 0 'rm -rf build/*'
 check 0 'rm -rf node_modules'
