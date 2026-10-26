@@ -1764,11 +1764,12 @@ _RC_ZERO_LINE = re.compile(r"[^\S\n]*([A-Za-z_][\w. -]{0,63})=0+[^\S\n]*")
 _TAIL_STAGE = re.compile(r"[^\S\n]*tail[^\S\n]+-(?:n[^\S\n]*)?([1-9]\d{0,2})[^\S\n]*")
 
 def _tail_window(s):
-    """N của một lệnh đơn `<lệnh> 2>&1 | tail -N` (stderr cũng qua tail, stdout không đi ra file), else None."""
+    """N của một runner đơn `<runner> 2>&1 | tail -N` (stderr cũng qua tail, stdout không đi ra file), else None. Chỉ runner: cửa sổ của
+    `cat old.log 2>&1 | tail -1` hay `echo PASS 2>&1 | tail -1` in chữ của ai cũng được."""
     parts = _QUOTED.sub("", s).split("|")
     m = _TAIL_STAGE.fullmatch(parts[-1]) if len(parts) == 2 else None
     if (m is None or _pipe_head(s) is None or not re.search(r"(?<![\d&>])2>&1[^\S\n]*$", parts[0])
-            or _STDOUT_AWAY.search(re.sub(r"\d*>&\d+", " ", parts[0]))):
+            or _STDOUT_AWAY.search(re.sub(r"\d*>&\d+", " ", parts[0])) or not _segment_is_runner(s)):
         return None
     return int(m.group(1))
 
@@ -2007,9 +2008,9 @@ def _skips_after_ok(segs, seps, depth=0):
             return True
     return False
 
-# Review #427 vòng 2: định nghĩa chỉ ở vị trí lệnh (đầu lệnh, sau `;` `&` `|` `(` `{` `!` xuống dòng, do / then / else / elif) và có thân
-# `{` / `(` theo sau: `function NAME {`, `function NAME() {`, `NAME () {`. `rg -n function test` là đối số tìm kiếm, không phải định nghĩa.
-_DEF_RX = re.compile(r"(?:^|[;&|({!\n]|\b(?:do|then|else|elif)\b)[^\S\n]*"
+# Review #427 vòng 2: định nghĩa chỉ ở vị trí lệnh (đầu lệnh, sau `;` `&` `|` `(` `)` `{` `!` xuống dòng, do / then / else / elif; `)` là
+# nhánh `case`) và có thân `{` / `(` theo sau: `function NAME {`, `function NAME() {`, `NAME () {`. `rg -n function test` là đối số tìm kiếm.
+_DEF_RX = re.compile(r"(?:^|[;&|(){!\n]|\b(?:do|then|else|elif)\b)[^\S\n]*"
                      r"(?:function[^\S\n]+([^\s;&|(){}<>=]+)(?:[^\S\n]*\([^\S\n]*\))?|([^\s;&|(){}<>=]+)[^\S\n]*\([^\S\n]*\))\s*[{(]")
 _ALIAS_RX = re.compile(r"(?:^|[\s;&|({])alias\b([^;&|\n]*)")
 _REDEF_NAMES = frozenset({"echo", "printf", "true", "false", ":", "cat", "head", "tail", "tee", "test", "exit", "builtin", "command",

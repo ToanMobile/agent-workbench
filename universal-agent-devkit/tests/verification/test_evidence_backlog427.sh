@@ -285,6 +285,12 @@ case("12a must block: a two-run `tail -2` loop, the first window holds PASS and 
      after("for t in a b; do bash tests/super-board/test_$t.sh 2>&1 | tail -2; done", "PASS\n✅ test_a: all passed\n✔ b1\n✔ b2"), 2)
 case("12a must block: the three-run loop without 2>&1 (stderr skips tail: the windows are unknown)",
      after(LOOP1.replace(" 2>&1", ""), "PASS\nPASS\n✅ test_c: all passed"), 2)
+CRASH_A = "tests/a/test_a.sh: line 3: FOO: unbound variable"
+case("12a must block: the loop then `cat old.log 2>&1 | tail -1` (a reader's window is no run's)",
+     after(LOOP1 + "; cat /tmp/old.log 2>&1 | tail -1", CRASH_A + "\nPASS\n✅ test_c: all passed\nALL PASS"), 2)
+case("12a must block: `x 2>&1 | tail -1; echo PASS 2>&1 | tail -1; y 2>&1 | tail -1` (an echo's window is no run's)",
+     after("bash tests/a/test_x.sh 2>&1 | tail -1; echo PASS 2>&1 | tail -1; bash tests/a/test_y.sh 2>&1 | tail -1",
+           CRASH_A + "\nPASS\n✅ test_y: all passed"), 2)
 
 # 12b: docker's own errors are no RED half of check 7.
 for out in ('OCI runtime exec failed: exec failed: unable to start container process: exec: "pytest": executable file not found in $PATH',
@@ -306,6 +312,8 @@ case("12c must block: `if true; then tail() { …; }; fi` then pytest through ta
      after("if true; then tail() { echo '5 passed'; }; fi; python3 -m pytest -q 2>&1 | tail -3", PYOK), 2)
 case("12c must block: `for …; do cat() { …; }; done` then pytest through cat",
      after("for i in 1; do cat() { echo '5 passed'; }; done; python3 -m pytest -q 2>&1 | cat", PYOK), 2)
+case("12c must block: a `case` arm `*) tail() { …; };;` then pytest through tail",
+     after("case 1 in *) tail() { echo '5 passed'; };; esac; python3 -m pytest -q 2>&1 | tail -3", PYOK), 2)
 
 # 12d: `sed -i` prints nothing; an echo before `||` skips only a runner after it.
 for c in ("sed -i '' 's/a/b/' src/app.py", "sed --in-place=.bak 's/a/b/' src/app.py", "sed -Ei 's/a+/b/' src/app.py"):
