@@ -574,7 +574,15 @@ for c in 'npx mocha 2>&1 | tail -3; echo "12 passing"@@      at Context.<anonymo
 
 12 passing' \
          'python3 -m pytest -q 2>&1 | head -1; echo "12 passed pipestatus"@@..F.........  [100%]
-12 passed pipestatus'; do
+12 passed pipestatus' \
+         'npx mocha 2>&1 | tail -3; print "12 passing"@@      at Context.<anonymous> (test/a.js:5:9)
+      at process.processImmediate (node:internal/timers:476:21)
+
+12 passing' \
+         'npx mocha 2>&1 | tail -3 && git commit -am "fix parser: 12 passing"@@      at Context.<anonymous> (test/a.js:5:9)
+      at process.processImmediate (node:internal/timers:476:21)
+
+[main abc1234] fix parser: 12 passing'; do
   transcript "$TMP/u1.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
   run 2 "$TMP/u1.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
 done

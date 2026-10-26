@@ -1151,6 +1151,7 @@ def _hidden(segs, i, txt):
 _CLOSE_KW = re.compile(r"\b(?:done|fi|esac)\b")
 _PART_KW = re.compile(r"^(?:(?:do|then|else|elif)\b\s*)+")
 _QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
+_QUIET_COMMIT = re.compile(r"\s*git\s+commit\b[^|;&]*\s-(?:-quiet\b|[a-zA-Z]*q)")   # `git commit -q` / `-qam` / `--quiet`: no output
 
 def _compound_parts(seg, seps=None):
     """(pieces, tail) of a compound: the pieces of its condition and body with do / then / else / elif cut (a nested compound stays one
@@ -1229,10 +1230,12 @@ def _hides(segs, i):
         return True
     cut = any(_cuts_summary(p) for p in _runner_pieces(s)) if _COMPOUND.match(s) else _cuts_summary(s)
     piped = (any(not _single_command(p) for p in _runner_pieces(s)) if _COMPOUND.match(s) else not _single_command(s))
-    # Uncut pipe: only an echo / printf of a pass word stands in for it (`mocha | tail -3; echo "12 passing"`). Another runner after it
-    # prints its own summary (`a | tail -3; b | tail -3`: 18 of 40 real kit commands were blocked), and a commit message is no output.
+    # Uncut pipe: any later segment that is not a runner and carries a pass word stands in for it (`mocha | tail -3; echo / print /
+    # python -c … "12 passing"`, `&& git commit -am "… 12 passing"`: git prints the subject). Another runner after it prints its own
+    # summary (`a | tail -3; b | tail -3`: 18 of 40 real kit commands were blocked); `git commit -q` prints nothing.
     return piped and any(not (_STATUS_ECHO.match(t) and (_STATUS_READ.search(t) or _ZSH_PIPESTATUS.search(t)))
-                         and (cut or (_STATUS_ECHO.match(t) and (RUNNER_PASS_RX.search(t) or NODE_PASS_RX.search(t))))
+                         and (cut or ((RUNNER_PASS_RX.search(t) or NODE_PASS_RX.search(t)) and not _segment_is_runner(t)
+                                      and not _QUIET_COMMIT.match(_QUOTED.sub('', t))))
                          for t in segs[i + 1:])
 
 def _exit_is_the_runs(cmd, segs, res):
