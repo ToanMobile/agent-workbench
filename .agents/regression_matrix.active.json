@@ -1621,9 +1621,7 @@
       "component": "super-board-agents-md-block",
       "watch_files": [
         ".claude/skills/super-board/references/agents-md-block.md",
-        ".claude/skills/super-build/references/worker-preamble.md",
-        ".claude/skills/super-board/references/run.md",
-        "tests/super-board/test_agents_md_block_size.sh"
+        ".claude/skills/super-build/references/worker-preamble.md"
       ],
       "mandatory_regression_tests": [
         {
@@ -1648,6 +1646,21 @@
           "id": "REG-DK-WT-MERGED-CLEANER-01",
           "name": "một bộ dọn worktree đã gộp (U2 25/10): gc --merged / held / remove --merged của worktree.py và post-merge clean của board không gỡ worktree có commit trunk chưa có, chỉ file chưa commit, commit chỉ reflog giữ, phiên sống giữ, nhánh có PR mở; gỡ worktree đã tích hợp sạch; không còn đường git trần",
           "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_gc_merged.sh && bash tests/super-board/test_post_merge_clean.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-agents-md-block-pointer",
+      "watch_files": [
+        ".claude/skills/super-board/references/run.md",
+        "tests/super-board/test_agents_md_block_size.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AGENTS-MD-BLOCK-02",
+          "name": "run.md still points every lane to the DevKit pipeline that moved out of the AGENTS.md block (same test as REG-SB-AGENTS-MD-BLOCK-01, watched on run.md and the test itself)",
+          "command": "bash tests/super-board/test_agents_md_block_size.sh",
           "parallel_safe": true
         }
       ]
