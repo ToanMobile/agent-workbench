@@ -225,5 +225,8 @@ if [ "${HOME#/Users/}" != "$HOME" ]; then
   check 2 'cd /(N) && rm -r Users'                        # macOS: /Users holds the home folder
 fi
 check 2 "cd /(N) && rm -r ${HOME#/}"
+# OCR check (26/10): a qualifier may move a cd ((:h) of /tmp is /): the hook took `cd /tmp(:h)` for /tmp, zsh goes to /
+check 2 "cd /tmp(:h) && rm -rf ${HOME#/}"
+check 2 "pushd /tmp(:h) && rm -rf ${HOME#/}"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_containment: all passed" || { echo "❌ test_hardware_rm_containment: $FAILS failed"; exit 1; }

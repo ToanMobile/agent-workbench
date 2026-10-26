@@ -1077,6 +1077,8 @@ def rm_walk(text, cwds, depth, remote, env):
                     # c is None after `cd $VAR`: an absolute arg ignores it (join(None, arg) raised TypeError, rc 1, command ran)
                     pending = [os.path.normpath(os.path.join(c or "/", arg)) if c or os.path.isabs(arg) else None
                                for c in cwds]
+                    if k < len(args) and ZSH_QUAL in args[k]:   # a qualifier may move it ((:h) of /tmp is /): also unknown
+                        pending.append(None)
             else:
                 why = rm_segment_problem(seg, cwds, env, depth, feed, remote)
                 if why:

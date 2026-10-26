@@ -1206,7 +1206,7 @@ def _compound_masks(seg):
     return False
 
 _STATUS_ECHO = re.compile(r"\s*(?:echo|printf)\b")
-_ZSH_PIPESTATUS = re.compile(r"\bpipestatus\b")      # zsh's ${pipestatus[1]}; _STATUS_READ (bash) is left as it is
+_ZSH_PIPESTATUS = re.compile(r"\$\{?pipestatus\b")      # zsh's ${pipestatus[1]}; _STATUS_READ (bash) is left as it is
 # A pipe stage that passes the run's last lines on unchanged: `tail`, `tail -N`, `tail -n N` (N >= 1), `tee [-a] FILE…`, `cat`.
 _KEEPS_TAIL = re.compile(r"\s*(?:tail(?:\s+(?:-n\s*|-)[1-9]\d*)?|tee(?:\s+-a)?(?:\s+[^\s|;&]+)*|cat)\s*")
 
@@ -1228,8 +1228,9 @@ def _hides(segs, i):
     if _away(s):
         return True
     cut = any(_cuts_summary(p) for p in _runner_pieces(s)) if _COMPOUND.match(s) else _cuts_summary(s)
-    return cut and any(not (_STATUS_ECHO.match(t) and (_STATUS_READ.search(t) or _ZSH_PIPESTATUS.search(t)))
-                       for t in segs[i + 1:])
+    piped = (any(not _single_command(p) for p in _runner_pieces(s)) if _COMPOUND.match(s) else not _single_command(s))
+    return piped and any(not (_STATUS_ECHO.match(t) and (_STATUS_READ.search(t) or _ZSH_PIPESTATUS.search(t)))
+                         and (cut or _segment_is_runner(t) or RUNNER_PASS_RX.search(t) or NODE_PASS_RX.search(t)) for t in segs[i + 1:])
 
 def _exit_is_the_runs(cmd, segs, res):
     """The tool's exit code is the runs' own: every runner segment is one simple command run as the command (no pipe, `&`, `!`, or a

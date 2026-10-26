@@ -556,6 +556,20 @@ for c in 'python3 -m pytest -q 2>&1 | head -1; echo "12 passed"@@..F.........  [
   transcript "$TMP/t2.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
   run 2 "$TMP/t2.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
 done
+echo "-- U. OCR check of T (2026-10-26): \`tail -N\` keeps no summary of mocha / node --test / a multi-package go test, so a run, a"
+echo "   pass word or another runner after it must not stand in for it; a bare word 'pipestatus' is no exit-code echo"
+for c in 'go test ./... 2>&1 | tail -2 && python3 -m pytest -q@@ok  	example.com/b	0.01s
+ok  	example.com/c	0.01s
+12 passed in 0.50s' \
+         'npx mocha 2>&1 | tail -3; echo "12 passing"@@      at Context.<anonymous> (test/a.js:5:9)
+      at process.processImmediate (node:internal/timers:476:21)
+
+12 passing' \
+         'python3 -m pytest -q 2>&1 | head -1; echo "12 passed pipestatus"@@..F.........  [100%]
+12 passed pipestatus'; do
+  transcript "$TMP/u1.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/u1.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
 echo "-- S. still the evidence: \`>&2\` keeps the output in the result"
 transcript "$TMP/s2.jsonl" "$(steps_after_edit 'python3 -m pytest -q tests/a >&2; python3 -m pytest -q tests/b' $'4 passed in 0.10s\n3 passed in 0.10s')"
 run 0 "$TMP/s2.jsonl" "$PASSCLAIM" "'4 passed / 3 passed' after \`python3 -m pytest -q tests/a >&2; python3 -m pytest -q tests/b\`: $PASSCLAIM"
