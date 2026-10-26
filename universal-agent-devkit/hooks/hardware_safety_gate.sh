@@ -39,6 +39,15 @@
 #     here); bash -lc / su -c scripts reach the device policy; xargs -i takes no separate value.
 #   • (2026-10-26, #427, tests/gates/test_hardware_issue427.sh) rm -r (cả không -f, find -delete) đi qua một tên mà ln của CHÍNH lệnh đó ghi
 #     (`ln -s ~ <scratch>/l && rm -rf <scratch>/l/`: link chưa có lúc hook xét); build output git track ở hoa thường khác (core.ignorecase).
+#   • (2026-10-27, #427 vòng 2, tests/gates/test_hardware_backlog427.sh) không theo thứ tự: mọi tên link của cả lệnh được gom trước (rm trong
+#     vòng lặp đứng trước ln); link tạo bằng cp -s, mv (tên đích), os.symlink / symlinkSync / symlink trong python -c / node -e / perl -e;
+#     rm -r xuyên qua một mục của thư mục mà tar -x / unzip của lệnh giải nén vào; cùng phép đó trong adb shell / ssh; glob [^…], [[:alpha:]],
+#     {a..c} xét theo kết quả khớp của shell; git lỗi (trừ rc 128 "not a git repository (or any …") xét như build output đang track.
+#     Review vòng 2: {x..y} xét cả từng từ zsh bung (tên chưa có: build/x/{1..2}/../../../src); thân trap / repeat biết phép gán không bị
+#     gán lại; NAME=VAL trước một lệnh không còn đặt biến cho các lệnh sau; mv vào thư mục ghi tên nguồn; tên link của adb shell chỉ cho lệnh
+#     thiết bị; RERUN_RX tuyến tính, git ls-files nhớ theo đường dẫn. Lượt sau: export / readonly / declare -g gán biến (local, unset, read,
+#     NAME+= … làm nó không biết); biến gán trong vùng lặp không biết trong và sau vùng đó; T=$(mktemp -d) là một đường dẫn tạm; phép gán
+#     trong ( … ), chặng ống, chạy nền, sau && / ||, if / case, thân hàm không còn đặt biến cho lệnh sau như phép gán chắc chắn.
 #   • adb shell pm uninstall|disable(-user)|hide of a system package (android,
 #     com.android.*, com.google.android.*, vendor namespaces)
 #   • iOS signing & simulators: fastlane match nuke, security delete-keychain|
@@ -446,8 +455,14 @@ def under(p, d):
     return p != d and p.startswith(d.rstrip(os.sep) + os.sep)
 
 _ICASE = []   # core.ignorecase của project, đọc một lần (git_tracks có thể chạy cho nhiều đích trong một lệnh)
+_TRACKS = {}  # review #427 vòng 2: kết quả theo đường dẫn — lượt 2 của rm_problem xét lại cùng đích (500 rm: 1000 lần git, 5 s)
 
 def git_tracks(p):
+    if p not in _TRACKS:
+        _TRACKS[p] = _git_tracks(p)
+    return _TRACKS[p]
+
+def _git_tracks(p):
     # H4 (#427): ls-files so pathspec phân biệt hoa thường dù core.ignorecase=true: `rm -rf build` khi `Build/` được track (APFS) lọt như
     # build output không track. Dùng :(icase) khi git nói core.ignorecase là true; chưa đặt (rc 1) là false như git; đọc lỗi thì icase.
     if not _ICASE:
@@ -460,12 +475,17 @@ def git_tracks(p):
     # được track lọt (review #427). Bỏ các biến *_PATHSPECS khỏi env của lệnh này.
     env = {k: v for k, v in os.environ.items() if k not in ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS",
                                                                "GIT_ICASE_PATHSPECS")}
+    env["LC_ALL"] = "C"   # thông báo lỗi của git không bị dịch: phép so "not a git repository" bên dưới đọc bản tiếng Anh
     try:
         r = subprocess.run(["git", "-C", ROOT, "ls-files", "--", (":(icase)" if _ICASE[0] else "") + os.path.relpath(p, ROOT)],
                            capture_output=True, text=True, timeout=5, env=env)
-        return r.returncode == 0 and bool(r.stdout.strip())
     except (OSError, subprocess.SubprocessError):
-        return False
+        return True   # #427 vòng 2: git không chạy được / quá hạn — không biết, xét như đang track (chặn)
+    if r.returncode == 0:
+        return bool(r.stdout.strip())
+    # #427 vòng 2: mọi rc ≠ 0 từng là "không track" (cho xoá). Nay chỉ rc 128 "not a git repository (or any …" — project ngoài git — là
+    # không track; git lỗi khác (index hỏng, worktree mất gitdir "not a git repository: <path>", rc khác) xét như đang track.
+    return not (r.returncode == 128 and "not a git repository (or any" in r.stderr)
 
 HOME = os.path.realpath(os.path.expanduser("~"))
 SYS_PART_DIRS = {"/" + d for d in ("system", "vendor", "boot", "product", "odm", "data", "persist", "efs")}
@@ -552,6 +572,45 @@ def scratch_escape(base, t, p, reach):
     return f"ra khỏi thư mục scratch {hit[0]} (tới {out})" if out else None
 
 GLOB_CAP = 2000   # matches of one glob walked to see where they land (principal review round 2, A2: the 2001st on was never judged)
+# #427 vòng 2: các kết quả khớp được xét phải là của shell (zsh, bash), không ít hơn. Python glob đọc khác ở ba chỗ, kết quả khớp thật (một
+# link tới home) không được xét: {a..c} (shell_norm.braces chỉ bung danh sách có dấu phẩy) → xét như *; [^…] (Python đọc ^ là chữ) → [!…];
+# bracket có lớp POSIX [[:alpha:]] (Python không biết) → ? (khớp mọi ký tự: tập lớn hơn, chỉ chặn nhiều hơn).
+BRACE_SEQ = re.compile(r"(?<!\$)\{[^{},]*\.\.[^{},]*\}")
+POSIX_BRACKET = re.compile(r"\[!?\]?(?:\[:\w+:\]|[^\]\[])*\[:\w+:\](?:\[:\w+:\]|[^\]\[])*\]")
+
+def shell_glob(t):
+    """Glob t viết lại cho Python glob khớp như shell (xem trên)."""
+    return POSIX_BRACKET.sub("?", t.replace("[^", "[!"))
+
+# Review #427 vòng 2 (P1 mất dữ liệu): dạng glob của {a..b} chỉ thấy tên ĐÃ có — `mkdir -p build/x/1 && rm -rf build/x/{1..2}/../../../src`
+# không khớp gì lúc hook xét, chỉ build/x được xét, src/ bị xoá. Nay xét thêm các từ shell bung ra. zsh (Bash tool) bung khoảng ký tự gồm
+# mọi ký tự, kể cả . và / (đo 27/10: build/q{-..0}.. thành build/q/..). Mọi số, mọi ký tự thường là một tên thường như nhau (tên đã có
+# thì dạng glob vẫn xét): mỗi dãy giữ một đại diện cộng từng ký tự trong SEQ_SPECIAL.
+SEQ_SPECIAL = "./~$\x60*?[]"
+
+def seq_words(t):
+    """Các từ của t khi mỗi {x..y} / {x..y..s} được bung như zsh (số: đại diện là số đầu; khoảng ký tự: một ký tự thường và mọi ký tự của
+    SEQ_SPECIAL trong khoảng); dãy không bung được (bash 3.2 không bung {-..0}) giữ nguyên chữ. None khi quá GLOB_CAP từ."""
+    out, pos = [""], 0
+    for m in BRACE_SEQ.finditer(t):
+        inner, elems = m.group(0)[1:-1], []
+        num = re.fullmatch(r"(-?\d+)\.\.-?\d+(?:\.\.-?\d+)?", inner)
+        if num:
+            elems.append(num.group(1))
+        for k in range(1, len(inner) - 2):   # mọi cách tách c1..c2[..bước] (zsh đọc {...0} là . tới 0)
+            c1, c2 = inner[:k], inner[k + 2:]
+            c2 = c2[:1] if re.fullmatch(r".\.\.-?\d+", c2, re.S) else c2
+            if inner[k:k + 2] != ".." or len(c1) != 1 or len(c2) != 1:
+                continue
+            lo, hi = sorted((ord(c1), ord(c2)))
+            plain = next((chr(c) for c in range(lo, hi + 1) if chr(c) not in SEQ_SPECIAL), None)
+            elems += ([plain] if plain else []) + [c for c in SEQ_SPECIAL if lo <= ord(c) <= hi]
+        elems = list(dict.fromkeys(elems)) or [m.group(0)]
+        out = [o + t[pos:m.start()] + e for o in out for e in elems]
+        if len(out) > GLOB_CAP:
+            return None
+        pos = m.end()
+    return [o + t[pos:] for o in out]
 
 def glob_may_leave(t):
     """True when the matches of the glob t can land outside the folder before it: a trailing / (rm follows a matched link) or a glob in a
@@ -578,9 +637,15 @@ def zsh_starstar(t):
 # của scratch / /tmp / build output; chạy thật thì rm đi theo link (dấu / sau nó, đường dẫn bên dưới nó) và xoá nội dung nơi link trỏ tới.
 # rm_command_problem ghi vào đây tên (casefold) mọi toán hạng của ln — cả nguồn: `ln -s ~ dir` tạo dir/<user>; "*" khi một toán hạng không
 # đọc được ($VAR chưa gán, lệnh con, glob, {} của find / xargs).
-# ponytail: xét theo thứ tự đọc lệnh — rm đứng TRƯỚC ln mà chạy lại sau nó (vòng lặp, lượt 2) lọt; link tạo bằng cp -s / mv / tar / os.symlink
-# không được xét. Nâng cấp khi gặp ca thật (đọc lại cả lệnh với mọi tên đã biết, thêm các lệnh tạo link khác).
+# #427 vòng 2: rm chạy lại sau ln (vòng lặp, hàm, chạy nền: rm_problem lượt 2 xét với mọi tên); cũng ghi tên của cp -s, mv (đích), API tạo
+# link của interpreter ("*"), và thư mục giải nén của tar -x / unzip (EXTRACT_DIRS).
+# ponytail: link do một file script mà lệnh chạy tạo (bash x.sh, python x.py), cp -R / -a / -P hay rsync -a chép một link có sẵn, git
+# clone / checkout, 7z / ditto / cpio giải nén vẫn không được xét. Nâng cấp khi gặp ca thật (thêm lệnh vào rm_command_problem).
 LINKS_MADE = set()
+# Review #427 vòng 2 (P2 chặn nhầm): tên do lệnh chạy trên THIẾT BỊ (adb shell "…") tạo không có trên máy này — `adb shell "cd /data/local/tmp
+# && tar -xf x.tar" && rm -rf build/tmp/` từng bị chặn. Chúng vào DEVICE_LINKS, chung cho mọi lệnh thiết bị của cả lệnh (adb shell "ln …" rồi
+# adb shell "rm …"); lệnh thiết bị vẫn thấy tên của máy này (adb push một link). ssh không tách: máy kia có thể chính là máy này (ssh localhost).
+DEVICE_LINKS = set()
 
 def ln_names(rest, env, repl, xargs):
     """Tên (casefold) các toán hạng của một lệnh ln (rest: các từ sau ln); "*" cho toán hạng không đọc được."""
@@ -613,14 +678,154 @@ def made_link_name(t):
     if not LINKS_MADE:
         return None
     for x in t.split("/")[:-1]:
-        if x not in ("", ".", "..") and ("*" in LINKS_MADE or GLOB.search(x) or "$" in x or "`" in x or x.casefold() in LINKS_MADE):
+        if x not in ("", ".", "..") and ("*" in LINKS_MADE or GLOB.search(x) or "$" in x or "`" in x or x.casefold() in LINKS_MADE
+                                         or any(n[:1] == "*" and x.casefold().endswith(n[1:]) for n in LINKS_MADE)):   # mẫu đuôi của mv_dest
             return x
     return None
 
-def rm_target_problem(t, cwds, env, forced=True):
+# #427 vòng 2: lời gọi tạo link trong chương trình của interpreter (os.symlink(, fs.symlinkSync(, symlink( / symlink $x của perl / php,
+# Path.symlink_to(, FileUtils.ln_s): tên link không đọc được → "*". Chỉ dạng lời gọi: chữ "symlink" trong một câu (message commit, chú thích,
+# --mode=symlink) không tính (corpus 27/10: 6 lệnh thật bị chặn nhầm). SYMLINK_API thêm `ln -s` trong một chuỗi (os.system("ln -s …"),
+# ["ln", "-s", …]): cho chương trình interpreter; thân heredoc shell đã được duyệt như lệnh, ln của nó có tên.
+SYMLINK_CALL = r"\bsymlink(?:Sync)?\s*\(|\.symlink_to\s*\(|\bln_sf?\b|\bsymlink\s+[$\x22\x27]"
+SYMLINK_API = re.compile(SYMLINK_CALL + r"|\bln\b\W{1,8}-[A-Za-z]*s\b", re.I)
+SYMLINK_CALL = re.compile(SYMLINK_CALL, re.I)
+# Thư mục (realpath) mà tar -x / unzip của chính lệnh giải nén vào: một mục bên dưới nó có thể là link trong file nén, chưa có lúc hook xét.
+EXTRACT_DIRS = set()
+TAR_PROGS = {"tar", "gtar", "bsdtar"}
+# cwd trên máy kia chỉ biết lúc chạy — sau cd vào link chính lệnh tạo (adb shell, ssh), và trên thiết bị sau mọi cd tới chỗ không biết
+# (cd $VAR, cd ~, cd -, popd): remote_target_problem xét nó như một $VAR, phần cố định là / → đích tương đối rm -r bị chặn.
+FAR_CWD_AT_RUN = "/$CWD_AT_RUN"
+
+def cp_symbolic(rest):
+    """True khi cp tạo link thay vì chép: -s (cả trong cụm như -rs) hay --symbolic-link."""
+    for a in rest:
+        if a == "--":
+            break
+        if a == "--symbolic-link" or (a.startswith("-") and not a.startswith("--") and "s" in a[1:]):
+            return True
+    return False
+
+def file_now(a, env, repl, cwds):
+    """True khi toán hạng a lúc hook xét là một file hay một link (không phải thư mục thật) ở mọi thư mục hiện tại có thể."""
+    v = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), a)
+    v = os.path.expanduser(v) if v.startswith("~") else v
+    if a in repl or re.search(r"[$\x60]", v) or GLOB.search(v):
+        return False
+    paths = [v] if os.path.isabs(v) else [c and os.path.join(c, v) for c in cwds]
+    return all(p and os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p)) for p in paths)
+
+def mv_dest(rest, env, repl, xargs, cwds):
+    """Tên (casefold, như ln_names) nơi mv đặt thứ nó chuyển — link chuyển đi vẫn là link. Đổi tên (một nguồn, đích không có / cuối; -T):
+    tên đích. Review #427 vòng 2 (`mv out.json build/` ghi build: chặn nhầm mọi rm qua build/): vào một thư mục (-t / --target-directory,
+    hai nguồn trở lên, đích có / cuối) thì thứ nằm trong thư mục là tên NGUỒN. Đích/ với một nguồn không chắc là file / link lúc hook xét
+    (thư mục thật, chưa có, không đọc được) ghi cả tên đích: BSD mv đổi tên một thư mục thành đích/ khi đích chưa có (đo 27/10; nguồn là
+    link thì lỗi), link bên trong nó lộ ra dưới tên đích. Đích là thư mục có sẵn mà không có / cuối vẫn ghi tên đích: phần trước của lệnh
+    có thể xoá thư mục đó (rm, gradle clean …), mv thành đổi tên. "*" khi không đọc được (xargs: toán hạng lấy từ lệnh trước)."""
+    ops, dest, opts_done, k, rename = [], None, False, 0, False
+    while k < len(rest):
+        a = rest[k]
+        if not opts_done and a == "--":
+            opts_done = True
+        elif not opts_done and a.startswith("--target-directory="):
+            dest = a.split("=", 1)[1]
+        elif not opts_done and a in ("--target-directory", "-S", "--suffix"):
+            dest = rest[k + 1] if a == "--target-directory" and k + 1 < len(rest) else dest
+            k += 1
+        elif not opts_done and a == "--no-target-directory":
+            rename = True
+        elif not opts_done and a.startswith("-") and len(a) > 1:
+            if not a.startswith("--"):
+                rename = rename or "T" in a[1:a.index("t", 1) if "t" in a[1:] else None]   # -T (GNU): luôn đổi tên
+            if not a.startswith("--") and "t" in a[1:]:   # -t DIR, -ft DIR, -tDIR
+                j = a.index("t", 1)
+                dest = a[j + 1:] or (rest[k + 1] if k + 1 < len(rest) else "")
+                k += 0 if a[j + 1:] else 1
+        else:
+            ops.append(a)
+        k += 1
+    if dest is not None and not rename:   # -t DIR: mọi toán hạng là nguồn, nằm trong DIR
+        return ln_names(["--"] + ops, env, repl, xargs)
+    if dest is None:
+        if xargs:
+            return {"*"}
+        dest = ops[-1] if ops else None
+        ops = ops[:-1]
+    if dest is None:
+        return set()
+    if not rename and (len(ops) > 1 or dest.endswith("/")):
+        names = ln_names(["--"] + ops, env, repl, xargs)
+        if len(ops) > 1 or all(file_now(a, env, repl, cwds) for a in ops):
+            return names
+    else:
+        names = set()
+    dnames = ln_names(["--", dest], env, repl, False)
+    if dnames == {"*"}:
+        # tên đích không đọc được (mv x reports/proof-$st.png — quy trình ảnh nghiệm thu, corpus 27/10: 3 lệnh thật): tên thật vẫn kết thúc
+        # bằng phần chữ sau phép mở rộng cuối, kể cả khi biến chứa / → mẫu "*.png" (made_link_name so đuôi) thay cho "*"
+        v = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), dest)
+        ends = [m.end() for m in re.finditer(r"\$(?:\w+|\{[^}]*\}|.)|`[^`]*`?", v)]
+        tail = v[max(ends + [v.rfind(c) + 1 for c in ")}`]"]):]
+        if tail and not re.search(r"[/$`{}()\[\]*?]", tail):
+            dnames = {"*" + tail.casefold()}
+    return names | dnames
+
+def extract_dirs(prog, rest):
+    """None: lệnh không giải nén. Không thì các thư mục tar -x / unzip giải nén vào: giá trị -C / --directory của tar, -d của unzip;
+    [""]: thư mục hiện tại; None trong danh sách: không đọc được (C trong một cụm cờ của tar)."""
+    if prog in TAR_PROGS:
+        old = bool(rest) and not rest[0].startswith("-") and re.fullmatch(r"[A-Za-z]*x[A-Za-z]*", rest[0]) is not None   # tar xzf a.tgz
+        if not old and not any(a in ("--extract", "--get") or re.match(r"-[A-Za-z]*x", a) for a in rest):
+            return None
+        dirs, k = ([None] if old and "C" in rest[0] else []), 0
+        while k < len(rest):
+            a = rest[k]
+            if a in ("-C", "--directory"):
+                dirs.append(rest[k + 1] if k + 1 < len(rest) else None)
+                k += 1
+            elif a.startswith("--directory="):
+                dirs.append(a.split("=", 1)[1])
+            elif re.match(r"-C.", a):
+                dirs.append(a[2:])
+            elif re.match(r"-[A-Za-z]*C", a):
+                dirs.append(None)
+            k += 1
+        return dirs or [""]
+    if prog == "unzip":
+        dirs, k = [], 0
+        while k < len(rest):
+            a = rest[k]
+            if a == "-d":
+                dirs.append(rest[k + 1] if k + 1 < len(rest) else None)
+                k += 1
+            elif a.startswith("-d"):
+                dirs.append(a[2:])
+            elif re.match(r"-[A-Za-z]*[ltvZpcz]", a):   # liệt kê / kiểm / in ra stdout: không ghi đĩa
+                return None
+            k += 1
+        return dirs or [""]
+    return None
+
+def extracted_entry(raw):
+    """Đường dẫn của mục đầu tiên nằm DƯỚI một thư mục của EXTRACT_DIRS mà raw (đường dẫn tuyệt đối của đích rm) đi xuyên qua — mọi tên
+    trừ tên cuối (dấu / cuối: cả tên cuối), như made_link_name —, hoặc None. Chính thư mục giải nén không tính: rm -r không theo link bên trong."""
+    if not EXTRACT_DIRS:
+        return None
+    parts = raw.split("/")
+    for k in range(1, len(parts) - 1):
+        if parts[k] in ("", ".", ".."):
+            continue
+        pre = "/".join(parts[:k + 1])
+        rp = os.path.realpath(pre)
+        if any(rel_below(rp, d) for d in EXTRACT_DIRS):   # rel_below: [] là chính d, None là ngoài d
+            return pre
+    return None
+
+def rm_target_problem(t, cwds, env, forced=True, _seq=False):
     """Why removing target t recursively is refused, or None. Without -f (forced=False; 2026-10-09,
     tests/gates/test_hardware_rm_unforced.sh) only a target that is or holds the project root, the home folder, / or a
-    system partition: rm -r with no terminal to ask on deletes all the same. A target it cannot resolve is not refused then."""
+    system partition: rm -r with no terminal to ask on deletes all the same. A target it cannot resolve is not refused then.
+    _seq: t là một từ seq_words đã bung (không bung lại, biến đã thay)."""
     orig = t
     if ZSH_QUAL in t:   # a zsh glob qualifier (zsh_qualifiers): build/a(:a:h:h) is the project root, *(e:…:) any path its code names
         shown = orig.replace(ZSH_QUAL, "(…)")
@@ -647,10 +852,21 @@ def rm_target_problem(t, cwds, env, forced=True):
         t = os.path.expanduser(t)
         if t.startswith("~"):   # ~- (the previous folder), ~+ out of a variable, ~user with no such user: unknown (OCR round 3, H2)
             return f"{orig}: không biết {t.split(chr(47))[0]} trỏ tới đâu (~- / ~+ / ~user lạ)" if forced else None
+    if not _seq and BRACE_SEQ.search(t):   # #427 vòng 2: {a..c} / {1..9..2} shell bung, braces() không: xét như * (gồm mọi tên nó bung ra)
+        words = seq_words(t)   # review vòng 2: cả từng từ shell bung (tên chưa có, `..` sau nó) và chữ nguyên (bash 3.2 không bung)
+        if words is None:
+            return f"{orig}: dãy {{x..y}} bung ra hơn {GLOB_CAP} từ: không xét hết được — chia nhỏ lệnh"
+        for x in dict.fromkeys([t] + words):
+            why = rm_target_problem(x, cwds, {}, forced, True)   # env {}: biến đã thay; một $ do dãy sinh ra là chữ
+            if why:
+                return why
+        t2 = BRACE_SEQ.sub("*", t)
+        t = t2 if "**" in t else re.sub(r"\*{2,}", "*", t2)   # không tự tạo ** của zsh từ {a..z}*
     link = made_link_name(t)   # #427: trước khi tách forced — rm -r không -f (và find -delete, rsync --delete) qua link cũng xoá
     if link is not None:
-        return (f"{orig}: đi qua `{link}`, có thể là link do chính lệnh này tạo (ln) — rm -r theo link (dấu / sau nó, đường dẫn bên dưới) "
-                f"xoá nội dung nơi link trỏ tới. Tách ln và rm thành hai lệnh để cổng thấy link thật")
+        return (f"{orig}: đi qua `{link}`, có thể là link do chính lệnh này tạo (ln, cp -s, mv, os.symlink, giải nén vào thư mục không biết) "
+                f"— rm -r theo link (dấu / sau nó, đường dẫn bên dưới) xoá nội dung nơi link trỏ tới. Tách lệnh tạo link và rm thành hai lệnh "
+                f"để cổng thấy link thật")
     if "$" in t or "`" in t:
         return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)" if forced else None
     glob = bool(GLOB.search(t))
@@ -663,6 +879,10 @@ def rm_target_problem(t, cwds, env, forced=True):
                 continue
             return f"{orig}: không biết thư mục hiện tại (cd tới $VAR / lệnh con / popd)"
         base = cwd or "/"
+        ent = extracted_entry(os.path.join(base, t))   # #427 vòng 2: trước khi tách forced, như made_link_name
+        if ent:
+            return (f"{orig}: đi qua {ent}, một mục dưới thư mục mà tar -x / unzip của chính lệnh này giải nén vào — mục đó có thể là link "
+                    f"trong file nén, rm -r theo nó xoá nơi link trỏ tới. Tách giải nén và rm thành hai lệnh để cổng thấy mục thật")
         if glob:  # judged as its directory: rm -rf src/* empties src; the shell expands the glob inside it, through a link too
             parts = t.split("/")
             k = next(i for i, x in enumerate(parts) if GLOB.search(x))
@@ -677,7 +897,7 @@ def rm_target_problem(t, cwds, env, forced=True):
         # (zsh_starstar "") is not walked: build/**/*.o is a common clean, and its matches stay in the folder
         if glob and starstar != "" and glob_may_leave(t):
             import glob as _glob, itertools as _it
-            found = list(_it.islice(_glob.iglob(os.path.join(_glob.escape(base), t)), GLOB_CAP + 1))
+            found = list(_it.islice(_glob.iglob(os.path.join(_glob.escape(base), shell_glob(t))), GLOB_CAP + 1))
             if len(found) > GLOB_CAP:   # with -f or not (OCR round 3, H3: rm -r reached the home folder through match 2010)
                 return (f"{orig}: glob khớp hơn {GLOB_CAP} mục mà kết quả có thể ra ngoài {p} (dấu / cuối, hoặc glob trước tên cuối): "
                         f"không xét hết được từng mục — chia nhỏ lệnh hoặc bỏ dấu / cuối")
@@ -706,7 +926,8 @@ def rm_path_problem(p, orig, forced, glob):
         return f"{orig}: là thư mục gốc project"
     if rel is not None:
         if any(x in BUILD_OUTPUTS for x in rel):
-            return f"{orig}: là build output nhưng git đang track file trong đó (là source)" if git_tracks(os.path.join(ROOT, *rel)) else None
+            return (f"{orig}: là build output nhưng git đang track file trong đó (là source), hoặc git lỗi nên không biết"
+                    if git_tracks(os.path.join(ROOT, *rel)) else None)
         return f"{orig}: là thư mục cấp 1 của project" if len(rel) == 1 else None
     # Before the /tmp exemption (2026-10-09): a project under /tmp or $TMPDIR is inside its parent, and
     # `rm -rf ..` from it passed while `rm -rf <project>` was blocked.
@@ -891,6 +1112,10 @@ def remote_target_problem(t, cwds, env, where="device"):
     # the zsh-qualifier marker dropped (OCR final check, 25/10): `/__ZSH…` read as no system partition, `ssh host rm -rf /(N)` passed
     t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t.replace(ZSH_QUAL, ""))
     for x in [t] + braces(t):
+        link = made_link_name(x)   # #427 vòng 2: link do chính lệnh tạo trên máy kia — miễn trừ /data/local/tmp không cứu được nơi nó trỏ tới
+        if link is not None:
+            return (f"{t}: đi qua `{link}`, có thể là link do chính lệnh này tạo trên máy kia — rm -r theo link (dấu / sau nó, đường dẫn "
+                    f"bên dưới) xoá nơi link trỏ tới (có thể là / hay phân vùng hệ thống)")
         if x.startswith("~"):
             if where == "device":
                 return f"{t}: ~ trên thiết bị (HOME của shell thiết bị không biết trước, có thể là /) — có thể là / hoặc phân vùng hệ thống"
@@ -902,7 +1127,7 @@ def remote_target_problem(t, cwds, env, where="device"):
                 continue
             full = x if x.startswith("/") else cwd.rstrip("/") + "/" + x
             if "$" in full or "`" in full:
-                p = shell_norm.norm_path(re.split(r"[$`]", full, 1)[0])
+                p = shell_norm.norm_path(re.split(r"[$`]", full, maxsplit=1)[0])   # maxsplit theo tên: Python 3.13 cảnh báo ra stderr
                 if _sys_target(p):
                     return f"{t}: đường dẫn trên thiết bị chỉ biết lúc chạy, nằm trong {p} (gốc / phân vùng hệ thống)"
                 continue
@@ -943,6 +1168,130 @@ def rm_segment_problem(toks, cwds, env, depth, feed=None, remote=False, implied=
             return why
     return None
 
+# Review #427 vòng 2 (thêm): `T=$(mktemp -d); trap \x27rm -rf "$T"\x27 EXIT` (corpus 27/10: 9 lệnh thật bị chặn từ vòng 2). rm_walk thay
+# NAME=$(mktemp …) bằng NAME=__MKTEMP_<n>__ (lexer tách $( … ) không nháy thành nhiều từ); assign đọc ra một đường dẫn dưới thư mục tạm
+# khi chắc chắn (mktemp_path), không thì giá trị không biết như trước. mktemp là hàm / alias của lệnh, hay PATH bị đổi: không thay.
+# (mỗi đoạn chỉ khớp một cách: $NAME hết chữ, ${NAME} có }, chữ thường không gồm $ { } — không quay lui hàm mũ)
+MKTEMP_ASSIGN = re.compile(r"(?<![\w$])([A-Za-z_]\w*=)(\x22?)\$\(\s*mktemp((?:[ \t]+(?:(?:[^\s()$\x60;&|<>\x22\x27\\{}]|\$\{\w+\}|\$\w+(?!\w))+"
+                           r"|\x22(?:[^\x22$\x60\\{}]|\$\{\w+\}|\$\w+(?!\w))*\x22))*)[ \t]*\)\2(?=[\s;&|)]|$)")
+MKTEMP_ARGS = []
+MKTEMP_SHADOW = []
+
+def mktemp_rewrite(text):
+    if not MKTEMP_SHADOW:
+        MKTEMP_SHADOW.append(bool(re.search(r"\bmktemp\s*\(|\bfunction\s+mktemp\b|\balias\b[^;&|\n]*\bmktemp=|(?<![\w$])PATH\+?=|\bhash\s+-\w*p", cmd)))
+    if MKTEMP_SHADOW[0] or "mktemp" not in text:
+        return text
+    def sub(m):
+        MKTEMP_ARGS.append(m.group(3))
+        return m.group(1) + m.group(2) + "__MKTEMP_%d__" % (len(MKTEMP_ARGS) - 1) + m.group(2)
+    return MKTEMP_ASSIGN.sub(sub, text)
+
+def mktemp_path(args, env):
+    """Đường dẫn mà $(mktemp ARGS) in ra, chỉ khi chắc chắn nằm dưới thư mục tạm (TMP_ROOTS): không mẫu, -t PREFIX, --tmpdir, hay mẫu
+    tuyệt đối trong /tmp, /private/tmp, $TMPDIR; -p DIR thì cả DIR lẫn $TMPDIR (BSD: TMPDIR đè -p) phải là thư mục tạm. Mẫu tương đối (thư
+    mục hiện tại), ~/…, chữ $ / glob / . / .. trong đường dẫn, tuỳ chọn lạ, nhiều mẫu: None."""
+    try:
+        words = shlex.split(re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), args))
+    except ValueError:
+        return None
+    dirs, tmpl, tdir, k = [], [], False, 0
+    while k < len(words):
+        a = words[k]
+        if a in ("--directory", "--quiet", "--dry-run") or re.fullmatch(r"-[dqu]+", a):
+            pass
+        elif a == "--tmpdir" or a.startswith("--tmpdir="):
+            tdir = True
+            dirs += [a.split("=", 1)[1]] if "=" in a else []
+        elif re.fullmatch(r"-[dqu]*[tp].*", a, re.S):
+            j = re.search(r"[tp]", a).start()
+            val = a[j + 1:] or (words[k + 1] if k + 1 < len(words) else None)
+            k += 0 if a[j + 1:] else 1
+            if a[j] == "p" and val is None:
+                return None
+            dirs += [val] if a[j] == "p" else []
+            tmpl += [val] if a[j] == "t" and val is not None else []
+            tdir = True
+        elif a.startswith("-"):
+            return None
+        else:
+            tmpl.append(a)
+        k += 1
+    if len(tmpl) > 1:
+        return None
+    t = tmpl[0] if tmpl else "tmp.XXXXXXXXXX"
+    if tdir or not tmpl:
+        if "/" in t:
+            return None
+        paths = [None if b is None else b.rstrip("/") + "/" + t for b in dirs + [env.get("TMPDIR")]]
+    else:
+        paths = [t]
+    for p in paths:
+        if p is None or not p.startswith("/") or re.search(r"[$\x60~*?\[\]{}\\]", p) or re.search(r"(?:^|/)\.\.?(?:/|$)", p):
+            return None
+        d = os.path.realpath(os.path.dirname(p))
+        if not any(d == r or under(d, r) for r in TMP_ROOTS):
+            return None
+    return paths[0]
+
+def assign(env, name, v):
+    """NAME=v vào env: biến đã biết thay vào; NAME=$(mktemp …) (mktemp_rewrite) thành đường dẫn tạm, hay không biết."""
+    m = re.fullmatch(r"\x22?__MKTEMP_(\d+)__\x22?", v)
+    env[name] = (mktemp_path(MKTEMP_ARGS[int(m.group(1))], env) or "$(mktemp)") if m else \
+        re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), v)
+    marks = env.get(MAYBE_EMPTY, frozenset())   # mktemp hỏng (TMPDIR mất, đĩa đầy) thì rỗng; gán lại thì hết
+    env[MAYBE_EMPTY] = marks | {name} if m else marks - {name}
+
+# Review #427 vòng 2 (thêm): biến có thể RỖNG lúc chạy — gán từ $(mktemp …), hay chỉ gán trong một chuỗi && đã dứt (cd hỏng thì chuỗi
+# dừng trước phép gán) — được xét hai cách: giá trị của nó và chuỗi rỗng; chặn khi một trong hai bị chặn. `T=$(mktemp -d); rm -rf "$T"/*`
+# rỗng là rm -rf /*. Tập tên nằm trong env dưới khoá MAYBE_EMPTY (không phải tên biến: theo env khi ( … ) / thân hàm / thân trap khôi phục).
+MAYBE_EMPTY = "\x00maybe-empty"
+
+def empty_readings(t, env):
+    """[t] cộng các cách đọc t khi một biến có thể rỗng là chuỗi rỗng (từng biến, rồi tất cả); cách đọc rỗng hẳn bị bỏ (rm "" không xoá gì)."""
+    names = [n for n in sorted(env.get(MAYBE_EMPTY, ())) if re.search(r"\$(?:" + n + r"(?!\w)|\{" + n + r"\})", t)]
+    out = [t]
+    for group in [[n] for n in names] + ([names] if len(names) > 1 else []):
+        x = t
+        for n in group:
+            x = re.sub(r"\$(?:" + n + r"(?!\w)|\{" + n + r"\})", "", x)
+        if x.strip("\x22\x27") and x not in out:
+            out.append(x)
+    return out
+
+# Review #427 vòng 2 (thêm, P0 có từ trước): phép gán qua builtin từng bị bỏ qua, biến giữ giá trị cũ — `export TMPDIR=~; rm -rf "$TMPDIR"/x`,
+# `D=/tmp/a; unset D; rm -rf $D/*` (rm -rf /*), `D+=/../..` đều qua. export / readonly / declare -g / typeset -g NAME=VAL: gán như NAME=VAL.
+# local, declare / typeset không -g (trong hàm là biến cục bộ), cờ khác x g r (-i -a -n -l -u …), NAME+=, unset, read, getopts, mapfile,
+# readarray, vared, let, printf -v: tên đó thành không biết (-f thì chặn).
+DECL_BUILTINS = ("export", "readonly", "declare", "typeset", "local", "integer", "float")
+NAME_BUILTINS = ("unset", "read", "getopts", "mapfile", "readarray", "vared", "let")
+
+def decl_effect(word, rest, env):
+    """True khi word (chữ lệnh) là một builtin gán / bỏ biến (env đã cập nhật); False cho mọi lệnh khác."""
+    m = re.match(r"([A-Za-z_]\w*)\+=", word)
+    if m:
+        env.pop(m.group(1), None)
+        return True
+    if word in DECL_BUILTINS:
+        opts = [a for a in rest if re.fullmatch(r"[-+]\w+", a)]
+        plain = all(set(a[1:]) <= set("xgr") for a in opts) and (word in ("export", "readonly") or any("g" in a for a in opts))
+        for a in rest:
+            m = re.match(r"([A-Za-z_]\w*)(\+?=)?", a)
+            if a[:1] in "-+" or not m:
+                continue
+            if m.group(2) == "=" and plain:
+                assign(env, m.group(1), a.split("=", 1)[1])
+            elif m.group(2) or word not in ("export", "readonly"):
+                env.pop(m.group(1), None)
+        return True
+    if word in NAME_BUILTINS or word == "printf":
+        for k, a in enumerate(rest):
+            m = re.match(r"[A-Za-z_]\w*", a)
+            if m and (word != "printf" or (k and rest[k - 1] == "-v")):
+                env.pop(m.group(0), None)
+        return word != "printf"
+    return False
+
 def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
     """rm_segment_problem for the program at toks[i]; toks[:i] is its prefix (NAME=VAL words for this command, xargs and its
     options)."""
@@ -951,7 +1300,9 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         tk = toks[k]
         if re.match(r"^[A-Za-z_]\w*=", tk):
             name, v = tk.split("=", 1)
-            env[name] = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), v)
+            assign(env, name, v)
+            if i < len(toks):   # review #427 vòng 2: NAME=VAL trước một lệnh chỉ cho lệnh đó (sh / builtin đặc biệt thì giữ): sau nó không biết
+                env.pop(name)   # (`D=build/x make; rm -rf $D/*` là rm -rf /*; thân trap thấy env này: body_env)
         elif os.path.basename(tk) == "xargs":
             xargs = True
             while k + 1 < i and (toks[k + 1].startswith("-") or re.match(r"^\d+\w?$", toks[k + 1])):
@@ -963,7 +1314,7 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
                     repl.add(o[2:])
                 k += 2 if o in XARGS_OPTS_WITH_ARG else 1
         k += 1
-    if i >= len(toks):
+    if i >= len(toks) or decl_effect(toks[i], toks[i + 1:], env):
         return None
     prog, rest = os.path.basename(toks[i]), toks[i + 1:]
     if GLOB.search(prog) and _fnm("rm", prog.lower()):
@@ -991,9 +1342,26 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         return None
     dev = device_script(prog, rest)
     if dev:
-        return rm_problem(dev[0], dev[1], depth + 1, dev[2])
+        if dev[2] != "device" or remote == "device":
+            return rm_problem(dev[0], dev[1], depth + 1, dev[2])
+        local = set(LINKS_MADE)   # DEVICE_LINKS: tên thiết bị tạo không về phán quyết rm của máy này
+        LINKS_MADE.update(DEVICE_LINKS)
+        try:
+            return rm_problem(dev[0], dev[1], depth + 1, dev[2])
+        finally:
+            DEVICE_LINKS.update(LINKS_MADE - local)
+            LINKS_MADE.intersection_update(local)
     if prog == "eval":
         return rm_problem(" ".join(rest), cwds, depth + 1, remote)
+    # #427 vòng 2 (P0 có từ trước): thân `repeat N cmd` / `repeat N { … }` của zsh và chuỗi hành động của `trap "<code>" SIG…` là lệnh chạy
+    # thật (trap chạy khi tín hiệu tới hay shell thoát): xét như eval. `trap - SIG` / `trap -p` không có thân. Review vòng 2: với các phép
+    # gán đã biết mà không gì trong lệnh gán lại được (body_env) — `S=/tmp/claude-501/y; trap \x27rm -rf "$S"\x27 EXIT` từng bị chặn.
+    if prog == "repeat" and len(rest) > 1:
+        return rm_problem(" ".join(rest[1:]), cwds, depth + 1, remote, env=body_env(env))
+    if prog == "trap":
+        acts = [a for a in rest if a != "--"]
+        if acts and not acts[0].startswith("-"):
+            return rm_problem(acts[0], cwds, depth + 1, remote, env=body_env(env))
     if prog == "find":
         rest = [FIND_ESC.get(x, x) for x in rest]
         starts = find_starts(rest)
@@ -1020,15 +1388,35 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         if prog == "rsync" and any(a == "--del" or a.startswith("--delete") for a in rest):
             ops = [a for a in rest if not a.startswith("-")]
             if len(ops) >= 2 and not re.match(r"^[^/]*:", ops[-1]):   # host:path / rsync:// is another machine
-                why = rm_target_problem(ops[-1], cwds, env, False)
+                why = next(filter(None, (rm_target_problem(y, cwds, env, False) for y in empty_readings(ops[-1], env))), None)
                 if why:
                     return why + " (rsync --delete)"
             return None
         rim = rimraf_args(prog, rest)
         if rim is not None:
             return rm_segment_problem(["rm", "-rf", "--"] + rim, cwds, env, depth + 1)
-    if prog.lower() in ("ln", "gln"):   # #427: tên link lệnh này tạo, cho made_link_name của các rm sau nó
-        LINKS_MADE.update(ln_names(rest, env, repl, xargs))
+    if prog.lower() in ("ln", "gln") or (prog.lower() in ("cp", "gcp") and cp_symbolic(rest)):   # #427: tên link lệnh này tạo
+        LINKS_MADE.update(ln_names(rest, env, repl, xargs))   # (vòng 2: cp -s / --symbolic-link ghi tên như ln)
+        return None
+    if prog.lower() in ("mv", "gmv"):   # #427 vòng 2: link chuyển đi vẫn là link — tên đích
+        LINKS_MADE.update(mv_dest(rest, env, repl, xargs, cwds))
+        return None
+    if (shell_norm.INTERPRETER.fullmatch(prog) or prog in shell_norm.RUNNERS) and any(SYMLINK_API.search(a) for a in rest):
+        LINKS_MADE.add("*")   # #427 vòng 2: chương trình nội tuyến (-c / -e) của interpreter tạo link (os.symlink …): tên không đọc được
+        return None
+    ex = extract_dirs(prog.lower(), rest)
+    if ex is not None:   # #427 vòng 2: tar -x / unzip — mục bên dưới thư mục giải nén có thể là link (extracted_entry)
+        for d in ex:
+            d = d if d is None else re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), d)
+            d = os.path.expanduser(d) if d and d.startswith("~") else d
+            if d is None or remote or d in repl or re.search(r"[$`~]", d) or GLOB.search(d):   # máy kia, hay không đọc được
+                LINKS_MADE.add("*")
+                continue
+            for cwd in cwds:
+                if cwd is None and not os.path.isabs(d):
+                    LINKS_MADE.add("*")
+                else:
+                    EXTRACT_DIRS.add(os.path.realpath(os.path.join(cwd or "/", d)))
         return None
     if prog.lower() != "rm":
         return None
@@ -1056,14 +1444,16 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         return None
     for t in targets:
         if remote:
-            why = remote_target_problem(t, cwds, env, remote)
-            if why:
-                return why
+            for y in empty_readings(t, env):   # biến có thể rỗng: hai cách đọc (MAYBE_EMPTY)
+                why = remote_target_problem(y, cwds, env, remote)
+                if why:
+                    return why
             continue
         for x in [t] + [b for b in braces(t) if b != t]:   # the raw word, then each brace expansion (rm -rf ~/{a,b})
-            why = rm_target_problem(x, cwds, env, force)
-            if why:
-                return why
+            for y in empty_readings(x, env):
+                why = rm_target_problem(y, cwds, env, force)
+                if why:
+                    return why
     return None
 
 # find operators written escaped or quoted (\; \( \) and their quoted forms) are words of find, not shell separators
@@ -1074,33 +1464,134 @@ FIND_OP_WORD = {";": " __ESC_SEMI__ ", "(": " __ESC_LP__ ", ")": " __ESC_RP__ "}
 
 drop_comments = shell_norm.drop_comments   # one copy for both guards (issue #7)
 
-def rm_problem(text, cwds, depth=0, remote=""):
-    """Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
+_REBOUND = {}
+
+def body_env(env):
+    """Review #427 vòng 2: phần env mà thân trap / repeat dùng — thân trap chạy lúc thoát, sau mọi lệnh; repeat chạy lại thân. Chỉ tên
+    không gì trong cả lệnh gán lại được: trừ các lần đọc ($S, ${S}, ${#S}, ${S:-…} ${S%…} …), tên trần xuất hiện đúng một lần, là S=. Mọi
+    dạng khác (S= thứ hai, S+=, ${S:=…}, read / for / printf -v / unset S, chữ S trong chuỗi) bỏ tên đó: không biết, như trước (-f thì chặn).
+    Tên mặc định (HOME, TMPDIR) không xuất hiện trần thì giữ."""
+    out = {}
+    for k, v in env.items():
+        if k not in _REBOUND:
+            rest = re.sub(r"\$(?:" + k + r"(?!\w)|\{#?" + k + r"(?:\}|(?=:?[-+?%#/^,]|:\d)))", "", cmd)
+            _REBOUND[k] = re.findall(r"(?<![\w$])" + k + r"(?!\w)(\+?=)?", rest) not in ([], ["="])
+        if not _REBOUND[k]:
+            out[k] = v
+    return out
+
+def rm_problem(text, cwds, depth=0, remote="", _pass=0, env=None):
+    """#427 vòng 2: rm / find -delete / rsync --delete đứng TRƯỚC ln mà chạy SAU nó (vòng lặp, hàm gọi sau) từng được xét khi tên link chưa
+    ghi. Cả lệnh (depth 0): lượt 1 xét như trước và gom mọi tên (LINKS_MADE, EXTRACT_DIRS; lượt 1 không chặn thì đã đi hết lệnh); có tên
+    thì lượt 2 xét lại với đủ tên các lệnh có thể chạy sau một lệnh tạo link đứng sau chúng: trong vùng lặp (for / while / until / select …
+    done, LOOP), hay mọi lệnh khi lệnh có hàm, chạy nền &, trap, xargs / find -exec / parallel / watch (RERUN). rm ở ngoài vòng lặp, đứng
+    trước, chỉ chạy một lần trước ln (rm -rf $S; mkdir $S; for …; do ln -s … $S/$x; done: corpus 27/10, 11 lệnh thật) — lượt 1 đã đúng.
+    Chặn khi một trong hai lượt chặn: chỉ thêm phán quyết, không bớt.
+    Walk the command like the shell: `cd` moves the cwd (after `&&` for sure; after
     ; || | & both the old and the new directory stay possible), ( ) restores it. remote: the text runs on a device ("device")
     or a remote host ("ssh") (2026-10-13): no host variable or ~ applies there. A heredoc body is cut only for a message of a
     known option, the one file statement of a modeled command, or an interpreter program that cannot start a process and whose output nothing
     takes (shell_norm.heredocs, policy of 15/10); an unquoted body with a $ or a backtick is never cut (the shell runs its $( )).
     The text is walked once per reading (shell_norm.readings: continuations joined, and as typed): blocked when either reading is."""
+    if depth == 0 and not _pass:
+        RERUN[0], PASS[0], LOOP[0] = False, 1, 0   # RERUN: đặt ở lượt 1, trên văn bản đã cắt thân heredoc dữ liệu (bên dưới)
+        why = rm_problem(text, cwds, 0, remote, 1)
+        if why or not (LINKS_MADE or EXTRACT_DIRS or DEVICE_LINKS):
+            return why
+        PASS[0], LOOP[0] = 2, 0
+        return rm_problem(text, cwds, 0, remote, 2)
     if depth > 5:
         return "lồng lệnh quá sâu để phân tích"
+    shell_text = text   # #427 vòng 2: văn bản mà RERUN_RX đọc — không có thân heredoc dữ liệu / chương trình interpreter (code C# / Python
+    # trong đó, như `F() {`, không phải hàm shell), dù scan_text giữ chúng lại khi lệnh không được mô hình
     if "<<" in text:   # an interpreter program that can start a process (backticks, qx, %x, system …) stays: its text is a command line
+        docs = shell_norm.heredocs(text)
+        for h in sorted((h for h in docs if h.kind in ("data", "interp")), key=lambda h: -h.body_start):
+            shell_text = shell_text[:h.body_start] + shell_text[h.body_end:]
+        # #427 vòng 2: chương trình / script trong thân heredoc tạo link (python3 - <<EOF … os.symlink …): tên không đọc được. Thân "shell"
+        # được duyệt như lệnh (ln của nó có tên), thân "data" không bao giờ chạy
+        if any(h.kind not in ("shell", "data") and (SYMLINK_API if h.kind == "interp" else SYMLINK_CALL).search(h.body(text)) for h in docs):
+            LINKS_MADE.add("*")
         # a body that stays is not quote-scoped (15/10 r6): the quote characters of its lines that do not close them are dropped, or they pair with a quote of another
         # body and hide the command between them from drop_comments and the lexer
-        text, _open = shell_norm.scan_text(text, lambda h: h.kind == "data" or shell_norm.program_cut(h, text))
-    env = {} if remote else {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
+        text, _open = shell_norm.scan_text(text, lambda h: h.kind == "data" or shell_norm.program_cut(h, text), docs)
+    if depth == 0 and _pass == 1:
+        RERUN[0] = bool(RERUN_RX.search(shell_text))
+    # env: phép gán đã biết mà thân trap / repeat dùng (body_env); mặc định: mới, như mọi script con (sh -c không thấy biến không export)
+    env = dict(env) if env is not None else {} if remote else {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
     for reading in shell_norm.readings(drop_comments(text)):
+        loop = LOOP[0]   # vùng lặp của lệnh bao ngoài (sh -c trong vòng lặp vẫn ở trong nó); một done lẻ không lọt ra ngoài
         why = rm_walk(reading, cwds, depth, remote, env)
+        LOOP[0] = loop
         if why:
             return why
     return None
 
+# #427 vòng 2, lượt 2 của rm_problem: LOOP độ sâu vùng lặp ở chỗ rm_walk đang đọc; PASS lượt đang chạy; RERUN lệnh có cấu trúc chạy lại /
+# đổi thứ tự mà rm_walk không mô hình (hàm, & chạy nền, nhóm ( … ) / { … } nối ống, trap, coproc, xargs / find -exec / parallel / watch):
+# lượt 2 xét mọi lệnh.
+LOOP, PASS, RERUN = [0], [0], [False]
+# review #427 vòng 2: (?<![\w.-]) thay \b — \b cho bắt đầu ở mọi ranh giới trong một chuỗi a.a.a…, mỗi chỗ quét lại tới cuối (bậc hai: 20 KB
+# 2 s, 60 KB chạm hạn 7 s); nay chỉ bắt đầu ở đầu chuỗi, cùng các chỗ khớp.
+RERUN_RX = re.compile(r"(?<![\w.-])[\w.-]+\s*\(\s*\)\s*[{(]|\bfunction\s+[\w.-]+|(?<![&>|<])&(?![&>])|[)}]\s*\|(?!\|)|\btrap\b|\bcoproc\b|\bxargs\b"
+                      r"|\s-(?:exec|execdir|ok|okdir)\b|\bparallel\b|\bwatch\b")
+LOOP_HEADS = ("for", "while", "until", "select", "repeat", "foreach")   # repeat N … / foreach x ( … ) … end: vòng lặp của zsh (Bash tool)
+LOOP_WORD = re.compile(r"\b(?:" + "|".join(LOOP_HEADS) + r")\b")
+
 SEP_CHARS = set(";&|()\n")   # the characters of a separator word of shell_norm.lex_words (a newline is one)
+
+def seg_head(seg):
+    """(chỉ số, tên) chữ lệnh của một đoạn như rm_walk đọc: sau NAME=VAL và RM_WRAPPERS."""
+    i = 0
+    while i < len(seg) and (re.match(r"^[A-Za-z_]\w*=", seg[i]) or seg[i] in RM_WRAPPERS):
+        i += 1
+    return i, (os.path.basename(seg[i]) if i < len(seg) else "")
+
+def seg_names(s, i, head):
+    """Tên một đoạn có thể gán: NAME= / NAME+= ở bất cứ từ nào, biến của for / select / foreach, tên trong read / unset / export / local …"""
+    names = {m.group(1) for w in s for m in [re.match(r"([A-Za-z_]\w*)\+?=", w)] if m}
+    if head in ("for", "select", "foreach") + DECL_BUILTINS + NAME_BUILTINS + ("printf",):
+        names |= {w for w in s[i + 1:] if re.fullmatch(r"[A-Za-z_]\w*", w)}
+    return names
+
+def loop_regions(toks):
+    """Review #427 vòng 2 (thêm, P0 có từ trước): `D=build/x; for i in 1 2; do rm -rf $D; D=~; done` qua — lượt lặp 2 xoá ~. {số thứ tự
+    đoạn đầu vòng lặp (như rm_walk đếm): tên được gán ở bất cứ đâu trong vùng lặp (điều kiện, thân, vòng lồng; tới done khớp, không có thì
+    tới hết lệnh)}: NAME= / NAME+=, biến của for / select / foreach, tên trong read / unset / export / local … rm_walk bỏ chúng khỏi env ở
+    đầu vùng (lượt sau thấy giá trị lượt trước) và ở done (không lượt nào chạy thì còn giá trị cũ)."""
+    segs, cur = [], []
+    for tk in toks + [";"]:
+        if shell_norm.join_fd_dup(cur, tk):
+            continue
+        if not set(tk) <= SEP_CHARS:
+            cur.append(tk)
+            continue
+        if cur:
+            segs.append(cur)
+        cur = []
+    out, stack = {}, []
+    for n, s in enumerate(segs):
+        i, head = seg_head(s)
+        if head in LOOP_HEADS:
+            out[n] = set()
+            stack.append(out[n])
+        if stack:
+            stack[-1].update(seg_names(s, i, head))
+        if head == "done" and stack:
+            inner = stack.pop()
+            if stack:
+                stack[-1].update(inner)
+    while len(stack) > 1:   # vùng không đóng: tới hết lệnh, chứa mọi vùng trong nó
+        inner = stack.pop()
+        stack[-1].update(inner)
+    return out
 
 def rm_walk(text, cwds, depth, remote, env):
     """rm_problem of one reading of the text (comments already cut, continuations already decided)."""
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
     # (unresolvable, refused) while the inner command is walked as its own segment.
     text = re.sub(r"`([^`]*)`?", r"$(\1)", text)
+    text = mktemp_rewrite(text)   # NAME=$(mktemp …) → NAME=__MKTEMP_<n>__ (assign)
     text = FIND_OP.sub(lambda m: (m.group(1) or "") + FIND_OP_WORD[m.group(2) or m.group(3) or m.group(4)], text)
     text = zsh_qualifiers(text)
     try:
@@ -1110,6 +1601,12 @@ def rm_walk(text, cwds, depth, remote, env):
     except ValueError:   # a quote left open: split at blanks, a newline is a separator of its own (it is no blank here)
         toks = [x.strip("\"\x27") for x in re.split(r"\s+|([;&|()]+)", text.replace("\n", " ; ")) if x and x.strip()]
     stack, seg, pending, feed = [], [], None, None
+    regions, nseg, open_loops = loop_regions(toks), -1, []   # review vòng 2 (thêm): tên gán trong vùng lặp — loop_regions
+    # Review vòng 2 (thêm, P0 có từ trước): phép gán không chắc chạy, hay chạy ở shell con, từng đặt biến cho các lệnh sau như phép gán chắc
+    # chắn: `D=~; false && D=/tmp/a; rm -rf $D`, `D=/tmp/a | cat`, `D=/tmp/a &`, `if …; then D=/tmp/a; fi`, thân hàm (chạy lúc gọi). Nay
+    # tên đó thành không biết: ngay sau đoạn (chặng ống, chạy nền, sau ||), khi chuỗi && dứt (sau &&), ở fi / esac (if / case). Thân hàm:
+    # xét với body_env như thân trap (chạy lúc gọi, sau mọi phép gán); sau định nghĩa, tên nó gán không biết ở mọi chỗ (gọi lúc nào cũng được).
+    prev, cond, blocks, volatile, fn_body, fn_next, seen, cond_kept = ";", set(), [], set(), None, False, set(), set()
     for tk in toks + [";"]:
         if shell_norm.join_fd_dup(seg, tk):   # 2>&1 rm …: the & belongs to the redirect
             continue
@@ -1117,10 +1614,33 @@ def rm_walk(text, cwds, depth, remote, env):
             seg.append(tk)
             continue
         if seg:
-            i = 0
-            while i < len(seg) and (re.match(r"^[A-Za-z_]\w*=", seg[i]) or seg[i] in RM_WRAPPERS):
-                i += 1
-            head = os.path.basename(seg[i]) if i < len(seg) else ""
+            nseg += 1
+            i, head = seg_head(seg)
+            names = seg_names(seg, i, head)
+            if seg[0] in ("if", "case"):
+                blocks.append(set())
+            if fn_body is None and (fn_next or head == "function") and "{" in seg:
+                fn_body = [dict(env), 0, set()]   # env trước thân, độ sâu { }, tên thân gán
+                body = body_env(env)
+                env.clear()
+                env.update(body)
+            if fn_body is not None:
+                fn_body[1] += seg.count("{") - seg.count("}")
+                fn_body[2] |= names
+            if head in LOOP_HEADS:   # #427 vòng 2: vùng lặp, kể cả điều kiện của while / until (end của foreach không đóng: thừa thì chặn hơn)
+                LOOP[0] += 1
+                open_loops.append(regions.get(nseg, set()))
+                for name in open_loops[-1]:
+                    env.pop(name, None)
+            elif head == "done":
+                LOOP[0] = max(0, LOOP[0] - 1)
+                for name in (open_loops.pop() if open_loops else ()):
+                    env.pop(name, None)
+            for tok_seg in seg:  # "$(…)" / `…` inside a quoted word runs too — #427 vòng 2: trước lệnh chứa nó (chạy trước), như shell
+                if "(" in tok_seg and depth < 5:
+                    why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")"), cwds, depth + 1, remote)
+                    if why:
+                        return why
             if head in ("cd", "pushd", "popd"):
                 # raw words: options (-L -P -e -@ --, pushd -n) are skipped, but "-" (cd -) and +N / -N (pushd +1) are not options
                 args, k, opts = seg[i + 1:], 0, []
@@ -1132,6 +1652,10 @@ def rm_walk(text, cwds, depth, remote, env):
                 arg = args[k].replace(ZSH_QUAL, "") if k < len(args) else ("~" if head == "cd" else None)
                 if head == "pushd" and "-n" in opts:
                     pass   # pushd -n only edits the directory stack: the shell stays where it is
+                elif remote and arg is not None and made_link_name(arg + "/") is not None:
+                    # #427 vòng 2: trên máy kia cwd None là "không xét" (đích tương đối qua đi): cd vào link chính lệnh tạo thì thư mục thật
+                    # là nơi link trỏ tới — chỉ biết lúc chạy, như $VAR (remote_target_problem chặn nếu nó có thể là / hay phân vùng hệ thống)
+                    pending = [FAR_CWD_AT_RUN]
                 elif (head == "popd" or arg is None or arg == "-" or re.fullmatch(r"[+-]\d+", arg) or "$" in arg or GLOB.search(arg)
                       or (CDPATH_SET and not arg.startswith(("/", "~"))) or (remote and arg.startswith("~"))
                       or (arg.startswith("~") and os.path.expanduser(arg).startswith("~"))   # cd ~- / ~+ / ~nosuchuser (OCR round 3)
@@ -1142,26 +1666,69 @@ def rm_walk(text, cwds, depth, remote, env):
                 else:
                     arg = arg if remote else os.path.expanduser(arg)
                     # c is None after `cd $VAR`: an absolute arg ignores it (join(None, arg) raised TypeError, rc 1, command ran)
-                    pending = [os.path.normpath(os.path.join(c or "/", arg)) if c or os.path.isabs(arg) else None
+                    # #427 vòng 2: từ c chỉ biết lúc chạy (FAR_CWD_AT_RUN, chỉ có trên máy kia) cd tương đối vẫn chỉ biết lúc chạy — normpath
+                    # gộp `..` của nó thành /
+                    pending = [FAR_CWD_AT_RUN if c and "$" in c and not os.path.isabs(arg)
+                               else os.path.normpath(os.path.join(c or "/", arg)) if c or os.path.isabs(arg) else None
                                for c in cwds]
                     if k < len(args) and ZSH_QUAL in args[k]:   # a qualifier may move it ((:h) of /tmp is /): also unknown
                         pending.append(None)
-            else:
+            elif (PASS[0] != 2 or LOOP[0] or RERUN[0] or tk.strip() in ("|", "|&")
+                  or LOOP_WORD.search(" ".join(seg))):   # lượt 2: chỉ lệnh có thể chạy SAU một lệnh tạo link đứng sau nó (rm_problem); một
+                # chặng ống chạy cùng lúc với các chặng sau; một lệnh mang script có vòng lặp (adb shell "for …", sh -c "while …")
                 why = rm_segment_problem(seg, cwds, env, depth, feed, remote)
                 if why:
                     return why
-            for tok_seg in seg:  # "$(…)" / `…` inside a quoted word runs too
-                if "(" in tok_seg and depth < 5:
-                    why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")"), cwds, depth + 1, remote)
-                    if why:
-                        return why
+            else:   # lượt 2, lệnh chỉ chạy một lần, trước mọi ln đứng sau nó: không xét lại, chỉ giữ phép gán NAME=VAL cho lệnh sau như lượt 1
+                for w in seg[:i]:
+                    if re.match(r"^[A-Za-z_]\w*=", w):
+                        name, v = w.split("=", 1)
+                        assign(env, name, v)
+                        if i < len(seg):   # trước một lệnh: chỉ cho lệnh đó (rm_command_problem)
+                            env.pop(name)
+                if i < len(seg):   # export / unset / read … (decl_effect), như lượt 1
+                    decl_effect(seg[i], seg[i + 1:], env)
+            sep = tk.strip("\n") or ";"   # phép gán không chắc (xem trên prev, cond …)
+            uncertain = names if sep in ("|", "|&", "&") or prev in ("|", "|&", "||") else ()
+            if prev == "&&":   # tên chưa từng gán (trong lệnh, vùng lặp đang mở, môi trường) mà phép gán sau && không chạy thì rỗng: giữ giá
+                # trị như trước (corpus 27/10: 26 lệnh `cd <wt> && S=<scratch>; rm -rf $S`), cộng cách đọc rỗng (cd hỏng: rm -rf $S/x là /x)
+                risky = {n for n in names if n in seen or n in os.environ or fn_body is not None or any(n in r for r in open_loops)}
+                cond |= risky
+                cond_kept |= names - risky   # giữ giá trị; chuỗi && dứt thì có thể rỗng (dừng trước phép gán): MAYBE_EMPTY
+            seen |= names
+            if blocks:
+                blocks[-1] |= names
+            if seg[0] in ("fi", "esac") and blocks:
+                uncertain = set(uncertain) | blocks.pop()
+                if blocks:
+                    blocks[-1] |= uncertain
+            if fn_body is not None and fn_body[1] <= 0:   # hết thân hàm: env như trước định nghĩa, tên thân gán không biết từ đây
+                env.clear()
+                env.update(fn_body[0])
+                volatile |= fn_body[2]
+                fn_body = None
+            fn_next = (head == "function" and "{" not in seg) or (len(seg) == 1 and tk.replace(" ", "") == "()")
+            for name in set(uncertain) | volatile:
+                env.pop(name, None)
+        if (tk.strip("\n") or ";") != "&&":
+            for name in cond:
+                env.pop(name, None)
+            cond.clear()
+            if cond_kept:
+                env[MAYBE_EMPTY] = env.get(MAYBE_EMPTY, frozenset()) | cond_kept
+                cond_kept.clear()
+        prev = tk.strip("\n") or ";"
         if pending is not None:
+            if remote == "device":   # #427 vòng 2: thiết bị bắt đầu ở / (biết); cd tới chỗ không biết ($VAR, ~, -, popd) không còn bỏ qua đích tương đối
+                pending = [FAR_CWD_AT_RUN if c is None else c for c in pending]
             cwds = list(dict.fromkeys(pending if tk.strip("\n") == "&&" else cwds + pending))   # && then a newline is still &&
             pending = None
-        if "(" in tk:
-            stack.append(cwds)
+        if "(" in tk:   # review vòng 2 (thêm): ( … ) là shell con — phép gán trong đó (cả export) không ra ngoài, như cwd
+            stack.append((cwds, dict(env)))
         if ")" in tk and stack:
-            cwds = stack.pop()
+            cwds, saved = stack.pop()
+            env.clear()
+            env.update(saved)
         feed = seg if ("|" in tk and "||" not in tk and not tk.startswith(")")) else None   # what `| xargs rm` reads
         seg = []
     return None

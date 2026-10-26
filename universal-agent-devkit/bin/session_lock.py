@@ -177,47 +177,112 @@ def _heredoc_ends(lines):
     return end
 
 
+def _line_scan(line, stop, state=(None, False)):
+    """#427 vòng 2: (vị trí `#` đầu tiên trước `stop` có thể mở comment, hoặc None; trạng thái nháy (nháy, đã mở `$(`) ở `stop`) của dòng
+    `line` bắt đầu ở trạng thái `state` (chuỗi nhiều dòng: người gọi mang trạng thái cuối dòng trước sang). `#` mở comment ở đầu một từ (đầu
+    dòng, sau khoảng trắng hay `;&|()<>`), ngoài nháy đơn, ngoài nháy kép trừ khi nháy đó đã mở `$(` / backtick (bên trong chúng `#` lại mở
+    comment, và một `<<` là heredoc thật: `"$(cat <<'EOF'`). Quét này đọc sai (`'` trong `"$( )"`, `$'\''`) thì chỉ thêm cách đọc.
+    Review #427 vòng 2: "đã mở `$(`" là chuỗi các mở còn chờ đóng trong nháy kép - `(` cho `$(` và ngoặc trong nó, "`" cho backtick: `)` /
+    backtick đóng thì bỏ (trước chỉ là cờ không tắt, `"Fixed in $(git rev-parse HEAD) (#427)"` coi `#427` là comment, các heredoc thật sau đó
+    thành "maybe" và thân `don't` nuốt các dòng sau ở các quét chỉ đọc một cách)."""
+    (quote, sub), i = state, 0
+    sub = sub or ""
+    while i < stop:
+        c = line[i]
+        if c == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote == "'":
+            quote = None if c == "'" else quote
+        elif c == '"':
+            quote, sub = (None if quote else '"'), ""
+        elif quote is None and c == "'":
+            quote = "'"
+        elif quote and c == "`":
+            sub = sub[:-1] if sub.endswith("`") else sub + "`"
+        elif quote and line.startswith("$(", i):
+            sub += "("
+            i += 2
+            continue
+        elif quote and sub and c in "()":
+            sub = sub + "(" if c == "(" else (sub[:-1] if sub.endswith("(") else sub)
+        elif c == "#" and (not quote or sub) and (i == 0 or line[i - 1] in " \t;&|()<>"):
+            return i, (quote, sub)   # comment tới hết dòng
+        i += 1
+    return None, (quote, sub)
+
+
+def _uncommented(text):
+    """[text] và, khi một `#` trong nó có thể mở comment (_line_scan), thêm bản cắt tới đó: người gọi xét cả hai (#427 vòng 2: `cat <<EOF |
+    bash # chú thích` - `#` từng thành toán hạng của bash, thân bị coi là dữ liệu; một `#` trong nháy mà quét này đọc sai chỉ thêm một bản)."""
+    p = _line_scan(text, len(text))[0]
+    return [text] if p is None else [text, text[:p]]
+
+
 def _piped_reader(after):
     """The shell / interpreter after the first `|` of `after` (the rest of a heredoc's opening line: `cat <<EOF | bash`) that runs its stdin
-    as a script, past its wrappers (_stdin_prog); None when there is none."""
-    return _stdin_prog(re.split(r"[|;&]", after.split("|", 1)[1])[0]) if "|" in after.replace("||", "") else None
-
-
-def _pipe_stage_reader(after, rest):
-    """#427 S2 (OCR r3), ngoài _piped_reader: shell / interpreter đọc stdin làm script ở MỘT chặng bất kỳ của ống tới `;` `&&` `||` `&`
-    (`cat <<EOF | tee /dev/null | bash`: thân tới bash qua tee), `|&` cũng là ống, và dòng mở kết thúc bằng `|` thì ống đi tiếp ở lệnh đầu
-    sau các thân (`rest`: các dòng sau chúng; bash đọc thân trước rồi mới tới phần còn lại của ống). None khi không có."""
-    text, more = after.replace("|&", "| "), iter(rest)
-    while re.search(r"(?<!\|)\|\s*$", text):   # `cat <<EOF |` <thân> `EOF` `bash`: ống nối sang dòng không trống kế tiếp sau thân
-        nxt = next((ln for ln in more if ln.strip()), None)
-        if nxt is None:
-            break
-        text = text.rstrip() + " " + nxt.replace("|&", "| ")
-    pieces = _split_segments(text)   # text là MỘT dòng (nối bằng dấu cách): _line_heredocs của nó rỗng, _strip_heredocs bên trong không đệ quy
-    for k in range(1, len(pieces) - 1, 2):
-        if pieces[k] != "|":
-            break
-        prog = _stdin_prog(pieces[k + 1])
+    as a script, past its wrappers (_stdin_prog); None when there is none. Also with a trailing comment cut off (_uncommented)."""
+    for text in _uncommented(after):
+        prog = _stdin_prog(re.split(r"[|;&]", text.split("|", 1)[1])[0]) if "|" in text.replace("||", "") else None
         if prog:
             return prog
     return None
 
 
-def _line_heredocs(lines, i, end):
-    """[(match, dòng đầu của thân, dòng kết thúc)] của các heredoc dòng lines[i] mở, theo thứ tự: thân nối tiếp nhau (#427 S3, OCR r3:
+def _pipe_stage_reader(after, rest):
+    """#427 S2 (OCR r3), ngoài _piped_reader: shell / interpreter đọc stdin làm script ở MỘT chặng bất kỳ của ống tới `;` `&&` `||` `&`
+    (`cat <<EOF | tee /dev/null | bash`: thân tới bash qua tee), `|&` cũng là ống, và dòng mở kết thúc bằng `|` thì ống đi tiếp ở lệnh đầu
+    sau các thân (`rest`: các dòng sau chúng; bash đọc thân trước rồi mới tới phần còn lại của ống). None khi không có. #427 vòng 2: xét
+    thêm bản cắt comment của dòng mở và của từng dòng nối (_uncommented: `cat <<EOF | tee x | # c` <nl> `bash`)."""
+    more, seen = iter(rest), []
+
+    def nxt_line(k):   # dòng không trống thứ k sau các thân, đọc từ `rest` một lần cho cả hai bản
+        while len(seen) <= k:
+            ln = next((ln for ln in more if ln.strip()), None)
+            if ln is None:
+                return None
+            seen.append(ln)
+        return seen[k]
+    for cut, start in enumerate(_uncommented(after)):
+        text, k = start.replace("|&", "| "), 0
+        while re.search(r"(?<!\|)\|\s*$", text):   # `cat <<EOF |` <thân> `EOF` `bash`: ống nối sang dòng không trống kế tiếp sau thân
+            nxt = nxt_line(k)
+            k += 1
+            if nxt is None:
+                break
+            text = text.rstrip() + " " + (_uncommented(nxt)[-1] if cut else nxt).replace("|&", "| ")
+        pieces = _split_segments(text)   # text là MỘT dòng (nối bằng dấu cách): _line_heredocs của nó rỗng, _strip_heredocs bên trong không đệ quy
+        for k in range(1, len(pieces) - 1, 2):
+            if pieces[k] != "|":
+                break
+            prog = _stdin_prog(pieces[k + 1])
+            if prog:
+                return prog
+    return None
+
+
+def _line_heredocs(lines, i, end, state=(None, False)):
+    """[(match, dòng đầu của thân, dòng kết thúc, maybe)] của các heredoc dòng lines[i] mở, theo thứ tự: thân nối tiếp nhau (#427 S3, OCR r3:
     `a <<A <<B`, `a <<A; b <<B` - trước chỉ đọc cái đầu, nên thân thứ hai bị coi là các dòng của shell này). Dừng ở heredoc đầu tiên không
-    dòng nào kết thúc (`end`: _heredoc_ends; khi đó nó không phải heredoc, các dòng sau là lệnh)."""
+    dòng nào kết thúc (`end`: _heredoc_ends; khi đó nó không phải heredoc, các dòng sau là lệnh). #427 vòng 2: maybe - `<<` đứng sau một `#`
+    có thể mở comment hay trong nháy (_line_scan: `# dùng cat <<EOF`, `echo "<<EOF"`, rồi một dòng `EOF` về sau): có thể không phải heredoc,
+    các dòng tới `EOF` có thể là lệnh; người gọi xét cả hai cách đọc. Sau nó không xét heredoc nào nữa trên dòng. `state`: trạng thái nháy ở
+    đầu dòng (_line_scan)."""
     docs, s = [], i + 1
     for m in _HEREDOC.finditer(lines[i]):
         j = end(s, m)
         if j is None:
             break
-        docs.append((m, s, j))
+        hash_at, (quote, sub) = _line_scan(lines[i], m.start(), state)
+        maybe = hash_at is not None or (quote is not None and not sub)
+        docs.append((m, s, j, maybe))
+        if maybe:
+            break
         s = j + 1
     return docs
 
 
-def _strip_heredocs(cmd, shell_only=False, kept=None, data=None):
+def _strip_heredocs(cmd, shell_only=False, kept=None, data=None, child=None, sink=None, cut_maybe=False):
     """Drop the body of every heredoc that feeds a data command (cat, a commit message, a patch): its lines are text, not commands. A
     heredoc fed to a shell or an interpreter - also behind a wrapper (`timeout 60 bash <<EOF`) or through a pipe (`cat <<EOF | bash`) -
     keeps its body - those lines run. shell_only: keep only bodies a SHELL runs (the redirect check: `print(1 > 0)` fed to python is not a
@@ -226,36 +291,86 @@ def _strip_heredocs(cmd, shell_only=False, kept=None, data=None):
     thân không shell / interpreter nào đọc, và của thân S2 - trước #427 nó bị bỏ như dữ liệu (_expand_static_vars).
     #427 - chỉ chặn THÊM, text còn lại như cũ: thân chỉ nhận ra là code nhờ _pipe_stage_reader (S2) được giữ ở dạng trơ (_INERT: một nháy lẻ
     trong thân từng làm các quét sau coi phần lệnh sau thân là trong nháy, redirect ở đó bị bỏ sót); thân của heredoc thứ hai trở đi của một
-    dòng (S3) vẫn được đọc từng dòng như trước, nay chỉ được đánh dấu là thân (kept, data)."""
+    dòng (S3) vẫn được đọc từng dòng như trước, nay chỉ được đánh dấu là thân (kept, data).
+    #427 vòng 2: kept "child" thay "code" cho thân chạy ở tiến trình con (mọi người đọc trừ source / . / eval; vào cả `data` khi dòng mở có
+    comment: người đọc có thể chỉ thấy nhờ cắt comment), `child` (set) nhận chỉ số, trong text trả về, của các dòng thân một SHELL con chạy
+    (`bash <<EOF`, `cat <<EOF | bash`, cả S3; không S2 trơ, không interpreter); thân `maybe` (_line_heredocs: `<<` sau một
+    `#` hay trong nháy) không bị bỏ - các dòng của nó được đọc như dòng thường, đánh dấu "maybe", vào `data`; `sink` (list): thân dữ liệu đầu
+    dòng có delimiter trong nháy nạp cho cat > f / tee f / git commit -F - (_sink_body) vào đây thay vì `data`."""
+    if "<<" not in cmd:
+        return cmd   # không heredoc nào: không có gì để bỏ hay đánh dấu (hook gọi hàm này nhiều lần cho mỗi lệnh)
     lines = cmd.split("\n")
-    out, i, end, later = [], 0, _heredoc_ends(lines), {}
+    out, i, end, later, state, later_sub = [], 0, _heredoc_ends(lines), {}, (None, False), set()
+    last_op = max(k for k, ln in enumerate(lines) if "<<" in ln)   # trạng thái nháy chỉ cần tới dòng `<<` cuối cùng
     while i < len(lines):
         line = lines[i]
         if kept is not None and i in later:
             kept[len(out)] = later[i]
+        if child is not None and i in later_sub:
+            child.add(len(out))
         out.append(line)
-        docs = _line_heredocs(lines, i, end)
+        docs = _line_heredocs(lines, i, end, state)
+        if i < last_op and i not in later:   # (dòng thân S3 / maybe không đổi trạng thái nháy của shell này)
+            state = _line_scan(line, len(line), state)[1]
         i += 1
-        for n, (m, s, j) in enumerate(docs):
+        last = next((j for _m, _s, j, maybe in reversed(docs) if not maybe), i - 1)   # dòng cuối của các thân thật
+        for n, (m, s, j, maybe) in enumerate(docs):
+            if maybe and not cut_maybe:   # comment hay heredoc: đọc như dòng thường (S3) - write_hits_locked xét thêm cách đọc là dữ liệu
+                later.update(dict.fromkeys(range(s, j), "maybe"))
+                if data is not None:
+                    data.extend(lines[s:j])
+                continue
             word = _program_word(re.split(r"[;&|(]|\$\(|`", line[:m.start()])[-1])
             runs = word in SHELL_BODY if shell_only else (word in RUNS_BODY or word.startswith("python"))
-            inert = None
+            inert = reader = None
             if not runs:
                 reader = _piped_reader(line[m.end():])
                 if not reader:
-                    reader = inert = _pipe_stage_reader(line[m.end():], (lines[k] for k in range(docs[-1][2] + 1, len(lines))))
+                    reader = inert = _pipe_stage_reader(line[m.end():], (lines[k] for k in range(last + 1, len(lines))))
                 runs = bool(reader) and (reader in SHELL_BODY or not shell_only)
+            own = word in ("source", ".", "eval")   # chạy trong shell này; mọi người đọc khác: tiến trình con
+            sub_sh = runs and not own and not inert and (word in SHELL_BODY or reader in SHELL_BODY)   # một shell con chạy thân
             if (not runs or inert) and data is not None:
-                data.extend(lines[s:j])
+                (sink if sink is not None and not n and not runs and _sink_body(line, m) else data).extend(lines[s:j])
+            elif runs and not own and data is not None and len(_uncommented(line[m.end():])) > 1:
+                data.extend(lines[s:j])   # người đọc có thể chỉ thấy nhờ cắt comment (`| bash # c`): như trước, thân còn là dữ liệu ở đây
             if n:
-                later.update(dict.fromkeys(range(s, j), "later-sh" if word in ("source", ".", "eval") else "later"))
+                later.update(dict.fromkeys(range(s, j), "later-sh" if own else "later"))
+                if sub_sh:
+                    later_sub.update(range(s, j))
                 continue
             if runs:
                 if kept is not None:
-                    kept.update(dict.fromkeys(range(len(out), len(out) + j - s), "inert" if inert else "code"))
+                    kept.update(dict.fromkeys(range(len(out), len(out) + j - s), "inert" if inert else "code" if own else "child"))
+                if sub_sh and child is not None:
+                    child.update(range(len(out), len(out) + j - s))
                 out.extend(ln.translate(_INERT) if inert else ln for ln in lines[s:j])
             i = j
     return "\n".join(out)
+
+
+def _sink_body(line, m):
+    """#427 vòng 2 (mục 6): heredoc `m` của dòng `line` có delimiter trong nháy (thân không mở rộng gì: không `${X:=…}`, không `$( )`) và nạp
+    cho một lệnh chỉ chép thân ra file / làm message: `cat > f`, `cat >> f`, `tee [-a] f…`, `git commit … -F -` - không ống sau nó. Thân như
+    vậy không gán được biến nào của shell này."""
+    if not m.group(1) or re.search(r"\|(?!\|)", line[m.end():].replace("||", "")):
+        return False
+    import shlex   # noqa: PLC0415 - only a quoted data heredoc gets here
+    try:
+        words = shlex.split(re.split(r"[;&|(]|\$\(|`", line[:m.start()])[-1] + " " + re.split(r"[;&|)`]", line[m.end():])[0])
+    except ValueError:
+        return False
+    if words[:1] == ["cat"]:
+        rest = words[1:]
+        return (len(rest) == 2 and rest[0] in (">", ">>")) or (len(rest) == 1 and re.fullmatch(r">>?[^>&|].*", rest[0]) is not None)
+    if words[:1] == ["tee"]:
+        files = [w for w in words[1:] if w != "-a"]
+        return bool(files) and not any(w.startswith("-") or w.startswith(">") or w.startswith("<") for w in files)
+    if words[:2] == ["git", "commit"]:
+        opts = words[2:]
+        return any(w in ("-F-", "--file=-") or (re.fullmatch(r"-[A-Za-z]*F|--file", w) and opts[k + 1:k + 2] == ["-"])
+                   for k, w in enumerate(opts))
+    return False
 
 
 def _split_segments(cmd):
@@ -307,11 +422,15 @@ def _split_segments(cmd):
     return out
 
 
-def _redirect_targets(cmd):
+def _redirect_targets(cmd, cut_maybe=None):
     """The target of every output redirect (`>`, `>>`, `>|`, `&>`, `N>`) in cmd, unquoted; "" for a fd copy (`>&2`) or `>(...)`. A `>`
     inside quotes, escaped, or in the body of a heredoc no shell runs is text (D5, audit 2026-10-09: `grep -n "a > b" f`,
-    `git log --format='%h -> %s'` and `python3 -c "print(1>0)"` were blocked as redirects into the checkout)."""
-    s = _strip_heredocs(cmd, shell_only=True)
+    `git log --format='%h -> %s'` and `python3 -c "print(1>0)"` were blocked as redirects into the checkout).
+    Review #427 vòng 2: cut_maybe None - hợp hai cách đọc `<<` sau `#` / trong nháy (_readings), như _bash_trunk_write."""
+    if cut_maybe is None:
+        out = _redirect_targets(cmd, False)
+        return out + [t for t in _redirect_targets(cmd, True) if t not in out] if "<<" in cmd else out
+    s = _strip_heredocs(cmd, shell_only=True, cut_maybe=cut_maybe)
     out, quote, i, n = [], None, 0, len(s)
     while i < n:
         c = s[i]
@@ -470,7 +589,7 @@ def git_dir(cwd):
     try:
         r = subprocess.run(["git", "-C", cwd, "rev-parse", "--absolute-git-dir", "--show-toplevel"],
                            capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):   # (ValueError: đường dẫn không UTF-8 / có NUL - review #427 vòng 2)
         return None, None
     if r.returncode != 0:
         return None, None
@@ -534,7 +653,7 @@ def git_common_dir(cwd):
     try:
         r = subprocess.run(["git", "-C", cwd, "rev-parse", "--git-common-dir", "--show-toplevel"],
                            capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):   # (ValueError: như git_dir - review #427 vòng 2)
         return None, None
     if r.returncode != 0:
         return None, None
@@ -661,21 +780,28 @@ def unregister_session(cwd, sid):
 
 
 PS_RETRY_S = 3.0   # B5 (#427): lần thử lại dài hơn khi ps quá 1 s
+PS_BUDGET_S = 4.0   # #427 vòng 2: tổng thời gian mọi lần gọi ps của MỘT tiến trình hook được chờ (hook có timeout 10 s)
 _ps_retried = []   # có phần tử: tiến trình hook này đã thử lại một lần - lần ps chậm sau trả None ngay
+_ps_left = []   # [giây còn được chờ ps]: chỉ main() (tiến trình hook) đặt; module được import (gate, nightly, worktree.py) không có hạn này
 
 
 def _ps(pid, fields):
     """`ps -o <fields>= -p pid` output, stripped; None when the process is gone or ps fails (macOS has no /proc). B5 (#427): dưới tải ps quá
     1 s, None khiến is_pid_alive coi pid đã tái dùng là còn sống (khoá của phiên chết vẫn giữ tới hết hạn): lần quá giờ đầu tiên của tiến
     trình được thử lại với PS_RETRY_S; các lần sau thì không - một hook gọi ps nhiều lần, tổng thời gian phải nằm trong timeout 10 s mà
-    .claude/settings.json đặt cho session_lock.sh."""
+    .claude/settings.json đặt cho session_lock.sh. #427 vòng 2: trong tiến trình hook (main) mọi lần gọi (cả lần thử lại) chung PS_BUDGET_S
+    giây chờ ps (_ps_left): hết thì trả None ngay (không biết = còn sống, như trước) - hook quá 10 s bị huỷ thì lệnh được chạy luôn."""
     # `lstart` is printed in local time: pin TZ/locale so a start recorded under one TZ equals the one read under another
     env = dict(os.environ, TZ="UTC", LC_ALL="C")
     import subprocess  # noqa: PLC0415 - only a platform without /proc forks ps
     argv, timeout = ["ps", "-o", "=,".join(fields.split(",")) + "=", "-p", str(pid)], 1
     while True:
+        wait = min(timeout, _ps_left[0]) if _ps_left else timeout
+        if wait <= 0:
+            return None
+        t0 = time.monotonic()
         try:
-            r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=wait, env=env)
             break
         except subprocess.TimeoutExpired:
             if _ps_retried:
@@ -684,6 +810,9 @@ def _ps(pid, fields):
             timeout = PS_RETRY_S
         except (OSError, subprocess.SubprocessError):
             return None
+        finally:
+            if _ps_left:
+                _ps_left[0] -= time.monotonic() - t0
     out = r.stdout.strip()
     return out if r.returncode == 0 and out else None
 
@@ -960,7 +1089,8 @@ def is_self_grant(cmd):
     if ALLOW_FLAG not in cmd and "allow-shared" not in cmd:
         return False
     import shlex   # noqa: PLC0415 - only commands that mention the switch pay for it
-    for seg in _split_segments(cmd)[::2]:
+    texts = [cmd] + ([_strip_heredocs(cmd, cut_maybe=True)] if "<<" in cmd else [])   # review #427 vòng 2: hai cách đọc (_readings)
+    for seg in [s for text in texts for s in _split_segments(text)[::2]]:
         if ALLOW_FLAG in seg and re.search(r">>?\s*\S*" + ALLOW_FLAG, seg):
             return True
         try:
@@ -1017,14 +1147,27 @@ def _config_trunk_off(args):
     return len(pos) > 1 and pos[1].lower() not in _TRUNK_TRUE
 
 
-def _clean(cmd):
-    """cmd without the bodies of heredocs that feed data commands and without shell comments (a quote in a comment is no quote)."""
-    text = _strip_heredocs(cmd)
+def _clean(cmd, cut_maybe=False):
+    """cmd without the bodies of heredocs that feed data commands and without shell comments (a quote in a comment is no quote).
+    cut_maybe (#427 vòng 2): một `<<` sau `#` / trong nháy được đọc như trước - heredoc dữ liệu, các dòng tới delimiter bị bỏ."""
+    text = _strip_heredocs(cmd, cut_maybe=cut_maybe)
     try:
         return _hook_module("shell_writes").strip_comments(text)
     except Exception as e:  # noqa: BLE001 - the text as it is: what the segment walk always read
         print(f"session_lock: comment scan failed: {e!r}", file=sys.stderr)
         return text
+
+
+def _readings(cmd):
+    """Review #427 vòng 2: [_clean(cmd)] và, khi khác nó, _clean(cmd, cut_maybe=True) - cách đọc trước vòng 2 (`<<` sau `#` / trong nháy là
+    heredoc dữ liệu). _line_scan đọc sai một dòng (`"$(echo "it's")"`) thì một thân dữ liệu thành các dòng lệnh và một nháy lẻ trong đó
+    (`don't`) nuốt các dòng sau: quét nào chỉ đọc một cách thì bỏ sót lệnh ở đó - người gọi xét cả hai."""
+    texts = [_clean(cmd)]
+    if "<<" in cmd:
+        cut = _clean(cmd, cut_maybe=True)
+        if cut != texts[0]:
+            texts.append(cut)
+    return texts
 
 
 def _matching_paren(text, start):
@@ -1175,17 +1318,21 @@ def _stdin_scripts(cmd):
 
     def synth(prog, body):
         out.append(f"{prog} -s <<'__DEVKIT_EOF__'\n{body}\n__DEVKIT_EOF__")
-    lines, i = cmd.split("\n"), 0
+    lines, i, state = cmd.split("\n"), 0, (None, False)
     end = _heredoc_ends(lines)
+    last_op = max((k for k, ln in enumerate(lines) if "<<" in ln), default=-1)
     while i < len(lines):   # cat <<EOF ... EOF | bash: the body is the producer's text; `_strip_heredocs` drops it before anything else looks
-        docs = _line_heredocs(lines, i, end)   # #427 S3: mọi heredoc của dòng
-        for m, s, j in docs:
+        docs = [d for d in _line_heredocs(lines, i, end, state) if not d[3]]   # #427 S3: mọi heredoc của dòng; vòng 2: `<<` sau `#` / trong
+        if i < last_op:                                                          # nháy thì các dòng sau được quét như dòng thường
+            state = _line_scan(lines[i], len(lines[i]), state)[1]
+        for m, s, j, _maybe in docs:
             after = lines[i][m.end():]
             prog = _piped_reader(after) or _pipe_stage_reader(after, (lines[k] for k in range(docs[-1][2] + 1, len(lines))))
             if prog:
                 synth(prog, "\n".join(lines[s:j]))
         i = docs[-1][2] + 1 if docs else i + 1
-    pieces = _split_segments(_clean(cmd))
+    texts = _readings(cmd)   # review #427 vòng 2: hai cách đọc, nối bằng một `;` (segment ở chỉ số chẵn như cũ)
+    pieces = _split_segments(texts[0]) + [p for text in texts[1:] for p in [";"] + _split_segments(text)]
     for k in range(0, len(pieces), 2):
         hs = re.search(r"<<<\s*(\"[^\"]*\"|'[^']*'|\S+)", pieces[k])
         prog = _stdin_prog(pieces[k]) if hs else None
@@ -1211,7 +1358,7 @@ def _stdin_scripts(cmd):
 def _nested_scripts(cmd):
     """Every script `cmd` runs that its own segments do not show: command substitutions and the scripts fed on stdin (_stdin_scripts). One
     scan for is_trunk_off and trunk_write; each caller recurses into what this returns (three levels)."""
-    return _subst_bodies(_clean(cmd)) + _stdin_scripts(cmd)
+    return list(dict.fromkeys([b for text in _readings(cmd) for b in _subst_bodies(text)] + _stdin_scripts(cmd)))   # (review #427 vòng 2: hai cách đọc)
 
 
 def is_trunk_off(cmd, depth=0):
@@ -1225,7 +1372,7 @@ def is_trunk_off(cmd, depth=0):
     import shlex   # noqa: PLC0415 - only commands that mention the switch pay for it
     if depth < 3 and any(is_trunk_off(body, depth + 1) for body in _nested_scripts(cmd)):   # $( ), backticks, <( ), echo '…' | sh, bash <<< '…'
         return True
-    for seg in _split_segments(_clean(cmd))[::2]:
+    for seg in [s for text in _readings(cmd) for s in _split_segments(text)[::2]]:   # (review #427 vòng 2: hai cách đọc)
         try:
             words = shlex.split(seg)
         except ValueError:
@@ -1301,7 +1448,7 @@ _SED_SUBST = _Re(r"s(?P<d>[^\w\s\\])(?P<pat>.*?)(?P=d)(?P<rep>.*?)(?P=d)")
 def _sed_one_to_zero(command):
     """True when a segment of `command` is a `sed -i` on a settings file with a substitution that turns a lone 1 into 0 (`s/"1"/"0"/`,
     `s/MODE": "1"/MODE": "0"/`, `s/1/0/`): the value-only edit of WORKTREE_TRUNK_MODE that names no key. A bounded parse: one `s` word each."""
-    for seg in _split_segments(_clean(command))[::2]:
+    for seg in [s for text in _readings(command) for s in _split_segments(text)[::2]]:   # (review #427 vòng 2: hai cách đọc)
         words = _cmd_words(seg)
         if not (words and os.path.basename(words[0]) == "sed" and any(w.startswith("-i") or w == "--in-place" for w in words[1:])):
             continue
@@ -1346,7 +1493,7 @@ def trunk_env_in_settings(tool, tool_input, command):
     if any(t and _SETTINGS_FILE.search(t) for t in _redirect_targets(command)):
         return True
     import shlex   # noqa: PLC0415 - only a command that names the key and a settings file pays for it
-    for seg in _split_segments(_clean(command))[::2]:
+    for seg in [s for text in _readings(command) for s in _split_segments(text)[::2]]:   # (review #427 vòng 2: hai cách đọc)
         try:
             raw = shlex.split(seg)
         except ValueError:
@@ -1582,17 +1729,25 @@ def write_hits_locked(cmd, top, cwd, sid="", notes=None):
     text = _clean(cmd)
     kept = {}
     _strip_heredocs(text, kept=kept)   # text already lost the bodies of data heredocs: same lines, the kept bodies only marked
-    hits_top, foreign = _write_walk(cmd, text, kept, top, cwd, sid, notes)
+    if "#" in cmd and "<<" in cmd:   # #427 vòng 2: `<<` sau `#` (maybe) đọc trên lệnh gốc - _clean đã bỏ comment chứa nó; số dòng như text
+        raw = {}
+        _strip_heredocs(cmd, kept=raw)
+        for k, v in raw.items():
+            if v == "maybe":
+                kept.setdefault(k, v)
+    # lượt này: thân "child" (tiến trình con) trả lại biến / thư mục sau thân; dòng "maybe" là lệnh thường (cách đọc: `#` mở comment)
+    hits_top, foreign = _write_walk(cmd, text, {k: v for k, v in kept.items() if v != "maybe"}, top, cwd, sid, notes)
     if any(v != "code" for v in kept.values()):
         # #427 - chỉ chặn THÊM: lệnh có thân mà trước #427 không được coi là thân (S2 trơ: khi đó bị bỏ; S3: khi đó là dòng thường) được
         # phán thêm một lần như trước, lấy hợp hai kết quả - thân mới thấy có thể làm đích "không biết" (`cd` / phép gán trong thân nạp cho
         # source, từ khoá if/for/{ hay PWD trong thân), mà "không biết" chỉ bị chặn khi repo của cwd / project có checkout bị giữ: yếu hơn
-        # một đích đã biết là checkout bị giữ của repo khác
+        # một đích đã biết là checkout bị giữ của repo khác. #427 vòng 2: lượt này thân "child" như trước (sau thân: không biết), dòng
+        # "maybe" bị bỏ như trước (cách đọc: heredoc dữ liệu)
         lines = text.split("\n")
-        keep = [k for k in range(len(lines)) if kept.get(k) != "inert"]
+        keep = [k for k in range(len(lines)) if kept.get(k) not in ("inert", "maybe")]
         at = {k: n for n, k in enumerate(keep)}
-        old_hits, old_foreign = _write_walk(cmd, "\n".join(lines[k] for k in keep), {at[k]: v for k, v in kept.items() if v == "code"},
-                                            top, cwd, sid, notes)
+        old_hits, old_foreign = _write_walk(cmd, "\n".join(lines[k] for k in keep),
+                                            {at[k]: "code" for k, v in kept.items() if v in ("code", "child")}, top, cwd, sid, notes)
         hits_top, foreign = hits_top or old_hits, foreign or old_foreign
     return hits_top, foreign
 
@@ -1613,7 +1768,10 @@ def _write_walk(cmd, text, body, top, cwd, sid, notes):
     # quoted <<'EOF' body sees only exported names) - fail closed there too if a body that uses a non-exported name is ever met.
     pieces = _split_segments(text)   # segment, separator, segment, ...
     pwd_ok = "PWD" not in _names_bound(text)
-    values = None if _SHELL_COMPOUND.search(text) else {}
+    # #427 vòng 2: if / for / { … trong thân chạy ở tiến trình con (child, S2 trơ, S3) không gán biến của shell này - sau thân biến trở lại
+    # như trước (bên dưới): không làm mọi biến thành không biết (`cat <<'EOF' | tee log | bash` <nl> `for …; done` từng chặn `git -C "$W"`)
+    sub = {k for k, v in body.items() if v in ("inert", "later", "child")}
+    values = None if _SHELL_COMPOUND.search("\n".join(ln for k, ln in enumerate(text.split("\n")) if k not in sub) if sub else text) else {}
     in_body, body_cur, kind, saved = False, None, None, None   # body_cur: the directory the body's shell started in
 
     def known():   # a view, not a copy per segment (review 25/10: copying every known name per cd / git segment was quadratic)
@@ -1629,9 +1787,10 @@ def _write_walk(cmd, text, body, top, cwd, sid, notes):
         if in_body and not was_body:
             body_cur, kind = cur, body[start]
             saved = (dict(values) if values is not None else None, {k: list(v) for k, v in gate_dirs.items()})
-        elif was_body and not in_body and kind in ("inert", "later"):
+        elif was_body and not in_body and kind in ("inert", "later", "child"):
             # #427: thân S2 (một chặng ống) và thân S3 không nạp cho source / . / eval chạy ở tiến trình con hoặc là dữ liệu: sau thân,
-            # thư mục, biến và CLAUDE_PROJECT_DIR / TARGET_DIR của shell này trở lại như trước thân - "không biết" ở đây yếu hơn
+            # thư mục, biến và CLAUDE_PROJECT_DIR / TARGET_DIR của shell này trở lại như trước thân - "không biết" ở đây yếu hơn.
+            # Vòng 2: cả thân nạp thẳng cho shell / interpreter (`bash <<EOF`, `cat <<EOF | bash`: "child")
             cur, gate_dirs = body_cur, saved[1]
             if values is not None and saved[0] is not None:
                 values.clear()
@@ -1662,7 +1821,9 @@ def _write_walk(cmd, text, body, top, cwd, sid, notes):
             tl, tgdir = _target(target)
             if tl is None and notes is not None:
                 notes["unknown"] = True
-            if tl is None or tl == locked or _same_dir(tl, locked):
+            if tl is None or (locked and (tl == locked or _same_dir(tl, locked))):   # (locked None: cwd không phải repo, #427 vòng 2)
+                if tl is not None and notes is not None:
+                    notes["top"] = True   # đích đã biết là chính `top` (review #427 vòng 2: trunk mode từ cwd không phải repo chỉ chặn đích này)
                 hits_top = True
                 continue
             lock = read_checkout_lock(tgdir)
@@ -1932,43 +2093,61 @@ def _lands_in_main(path, main, sw):
     return r.returncode != 0   # 0: git ignores it (and does not track it)
 
 
-def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid=""):
+def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid="", unknown=None):
     """W1 R1 v6: this call writes into the trunk-mode main checkout `main` itself. Edit/Write: its file. Bash, after dropping the segments
     _TRUNK_ALLOWED lets through (a `cd` before them still counts): a git write or gate run aimed at main (write_hits_locked: by the toplevel
     of its target; one that cannot be told counts), or a redirect / file write (hooks/shell_writes.py, cd-aware) landing in it. Builds and
     interpreters run in main are no writes here (their output is ignored build state). A line the scanner cannot tokenise: its redirects
-    are read without cd tracking."""
+    are read without cd tracking.
+    unknown (dict; review #427 vòng 2 - cwd không phải repo): Bash chỉ ghi vào main khi đích đã biết nằm trong main; đích git / gate không
+    biết thì unknown["unknown"] = True (main() xét khoá các checkout của project, như khi trunk mode tắt), redirect không biết bỏ qua - một
+    repo nháp mới (`git init t && cd t && git commit`), `> "$TMPDIR/x"` từng bị chặn dù không ai giữ gì."""
     if tool in EDIT_TOOLS:
         ti = tool_input if isinstance(tool_input, dict) else {}
         path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
         if not isinstance(path, str) or not path:
             return True
         return _lands_in_main(path if os.path.isabs(path) else os.path.join(cwd or main, path), main, sw)
-    return _bash_trunk_write(cmd, cwd, main, sw, sid, 0)
+    return _bash_trunk_write(cmd, cwd, main, sw, sid, 0, unknown)
 
 
 _VAR_ASSIGN = re.compile(r"""(?:^|[;&|\n(]|\bexport\s+)\s*([A-Za-z_][A-Za-z0-9_]*)(\+?)=("[^"$`]*"|'[^']*'|[^\s;&|$`"'()]*)""")
 _VAR_USE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+# một định nghĩa hàm / alias, source / . / eval / enable: `cat` của dòng có thể không phải chương trình cat (_expand_static_vars, mục 6).
+# Review #427 vòng 2: `.` là một từ đứng riêng ở BẤT KỲ đâu (sau then / do / { / ! / command / builtin / time, trong nháy của trap …: trước chỉ
+# xét đầu lệnh, `if true; then . "$S/env.sh"; fi` lọt) - fail closed, `git add .` chỉ làm mất luật thân sink; autoload / functions[…] của zsh
+_DEFINES = re.compile(r"\(\s*\)|\b(?:function|functions|alias|autoload|source|eval|enable)\b|(?:^|[\s;&|(){}!`'\"])\.(?=\s)")
 
 
 def _expand_static_vars(target, cmd):
     """`target` with every $VAR / ${VAR} replaced by the literal value `cmd` itself assigns (`VAR=/path`, `export VAR=/path`); None when it
     still holds a variable the line does not assign, a $( ) or a backtick - where such a path lands cannot be told. The last assignment wins.
     #427: tên được gán trong thân heredoc dữ liệu (commit message: `git commit -F - <<'EOF'` … `M=/tmp/x` … `EOF`) là không biết - thân không
-    gán gì trong shell này, mà nó từng lái `$M` ra khỏi main; không lấy giá trị trong thân, cũng không lấy giá trị trước đó (fail closed)."""
-    values = {}
-    for m in _VAR_ASSIGN.finditer(cmd):
+    gán gì trong shell này, mà nó từng lái `$M` ra khỏi main; không lấy giá trị trong thân, cũng không lấy giá trị trước đó (fail closed).
+    #427 vòng 2: trừ thân delimiter trong nháy nạp cho cat > f / tee f / git commit -F - (_sink_body; dòng lệnh không định nghĩa hàm / alias,
+    không source / eval): giữ giá trị trước đó. Tên được gán cả trong thân một shell con chạy (`bash <<EOF`, `cat <<EOF | bash`) lẫn ngoài
+    nó là không biết: không biết đích `$M` nằm trong thân hay sau thân (sau thân, phép gán trong thân không tới)."""
+    text, values, data, sink, inner = cmd, {}, [], [], set()
+    if "<<" in cmd:
+        text = _strip_heredocs(cmd, data=data, child=inner, sink=sink)
+        if sink and _DEFINES.search(text):   # `cat` có thể là hàm / alias chạy stdin trong shell này: thân là dữ liệu như mọi thân khác
+            data.extend(sink)
+    for m in _VAR_ASSIGN.finditer(text):
         # `B=$M`, `B="$M"`, `B=$M/x`: the value pattern stops at the `$` and matches "" - the variable is unknown, not empty
         # `M+=/x` appends to the old value: also unknown, never the old value (reviewer R1)
-        if m.group(2) or (m.end() < len(cmd) and cmd[m.end()] not in " \t\r\n;&|()"):
+        if m.group(2) or (m.end() < len(text) and text[m.end()] not in " \t\r\n;&|()"):
             values.pop(m.group(1), None)
         else:
             values[m.group(1)] = m.group(3).strip("\"'")
     if "<<" in cmd:
-        data = []
-        _strip_heredocs(cmd, data=data)
         for m in _VAR_ASSIGN.finditer("\n".join(data)):
             values.pop(m.group(1), None)
+        lines = text.split("\n")
+        names = {m.group(1) for m in _VAR_ASSIGN.finditer("\n".join(lines[k] for k in sorted(inner)))} if inner else set()
+        if names:
+            outside = {m.group(1) for m in _VAR_ASSIGN.finditer("\n".join(ln for k, ln in enumerate(lines) if k not in inner))}
+            for name in names & outside:
+                values.pop(name, None)
     unknown = False
 
     def sub(m):
@@ -1982,19 +2161,29 @@ def _expand_static_vars(target, cmd):
     return None if unknown or "$" in out or "`" in out else out
 
 
-def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
+def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
     """trunk_write for one Bash script: what its segments write, then - three levels deep - the scripts it hides from them (_nested_scripts:
     substitutions, echo / printf / cat-heredoc piped to a shell or interpreter, a here-string). A script that cannot be tokenised counts as a
-    write where it runs (hooks/shell_writes.py "unparsed"); after a cd the nested scripts run where that cd led, which is unknown: main's rules."""
+    write where it runs (hooks/shell_writes.py "unparsed"); after a cd the nested scripts run where that cd led, which is unknown: main's rules
+    - với `unknown` (trunk_write: cwd không phải repo) thì thư mục không biết đó không phải main, chỉ đích đã biết nằm trong main là ghi."""
     # An allowed segment is excused only as a git write / gate run: its own redirects still count (OCR 14/10: `git fetch > src/a.py`,
     # `agent-kit worktree list > README.md` overwrote tracked files of main), so the redirect / file-write scan reads the ORIGINAL line
-    pieces = _split_segments(_clean(cmd))
-    inner = [_trunk_unwrap(p) if i % 2 == 0 else p for i, p in enumerate(pieces)]   # nohup / time / bash -c '<một lệnh>' gỡ ra (17/10)
-    if any(i % 2 == 0 and _updates_checked_out_branch(p) for i, p in enumerate(inner)):
-        return True
-    stripped = "".join(":" if i % 2 == 0 and (_TRUNK_ALLOWED.search(q) or _trunk_sync(q)) else p for i, (p, q) in enumerate(zip(pieces, inner)))
-    if (GIT_WRITE.search(stripped) or GATE.search(stripped)) and write_hits_locked(stripped, main, cwd, sid)[0]:
-        return True
+    texts = _readings(cmd)   # #427 vòng 2: `<<` sau `#` / trong nháy - _clean đọc các dòng tới delimiter là lệnh; cách đọc cũ (dữ liệu) cũng được xét
+    loose = unknown is not None
+    if loose and cwd is None:
+        cwd = os.devnull   # thư mục không biết: không thư mục nào nằm dưới nó, nên đích tương đối không bao giờ "đã biết nằm trong main"
+    for text in texts:
+        pieces = _split_segments(text)
+        inner = [_trunk_unwrap(p) if i % 2 == 0 else p for i, p in enumerate(pieces)]   # nohup / time / bash -c '<một lệnh>' gỡ ra (17/10)
+        if any(i % 2 == 0 and _updates_checked_out_branch(p) for i, p in enumerate(inner)):
+            return True
+        stripped = "".join(":" if i % 2 == 0 and (_TRUNK_ALLOWED.search(q) or _trunk_sync(q)) else p for i, (p, q) in enumerate(zip(pieces, inner)))
+        if GIT_WRITE.search(stripped) or GATE.search(stripped):
+            notes = {}
+            if write_hits_locked(stripped, main, cwd, sid, notes)[0] and (not loose or notes.get("top")):
+                return True
+            if loose and notes.get("unknown"):
+                unknown["unknown"] = True
     here = cwd or main
     try:
         found = _hook_module("shell_writes").targets(cmd, here, run_bodies=True)
@@ -2007,7 +2196,8 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
     for kind, t, wd in found:
         if kind == "cdvar":
             d = _expand_static_vars(t, cmd)
-            cd_unsafe = cd_unsafe or d is None or _lands_in_main(os.path.expanduser(d) if os.path.isabs(os.path.expanduser(d)) else os.path.join(wd or here, d), main, sw)
+            cd_unsafe = cd_unsafe or (not loose if d is None else   # (loose: cd không biết thì đích tương đối sau nó cũng không biết)
+                                      _lands_in_main(os.path.expanduser(d) if os.path.isabs(os.path.expanduser(d)) else os.path.join(wd or here, d), main, sw))
             continue
         if kind == "unparsed":
             if _lands_in_main(wd or here, main, sw):
@@ -2017,6 +2207,8 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
             continue
         if "$" in t or "`" in t:
             t = _expand_static_vars(t, cmd)
+            if t is None and loose:   # cwd không phải repo: `> "$TMPDIR/x"` không phải ghi vào main (review #427 vòng 2)
+                continue
             if t is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
                 return True
         p = os.path.expanduser(t)
@@ -2025,20 +2217,23 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
         if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
             return True
     if depth < 3:
-        moved = bool(DIR_CHANGE.search(_clean(cmd)))
+        moved = any(DIR_CHANGE.search(text) for text in texts)
         for body in _nested_scripts(cmd):
-            if _bash_trunk_write(body, None if moved else cwd, main, sw, sid, depth + 1):
+            if _bash_trunk_write(body, None if moved else cwd, main, sw, sid, depth + 1, unknown):
                 return True
     return False
 
 
 def bash_collides(cmd, top, cwd=None, sid="", notes=None):
     """(hits_top, foreign) - see write_hits_locked (and its `notes`); a redirect or a file write (_file_write_hits) into the locked
-    checkout also counts as hits_top."""
+    checkout also counts as hits_top. #427 vòng 2: một redirect tuyệt đối vào checkout khác CÙNG repo mà phiên khác còn sống giữ là `foreign`
+    (trước chỉ xét checkout của phiên: `echo x > <worktree anh em bị giữ>/f` lọt); top None (cwd không phải repo): vào checkout bị giữ của
+    bất kỳ repo nào (_held_at)."""
     hits_top, foreign = False, None
     if GIT_WRITE.search(cmd) or GATE.search(cmd):
         hits_top, foreign = write_hits_locked(cmd, top, cwd, sid, notes)
-    if not hits_top and ">" in cmd:
+    if ">" in cmd:
+        tops = False   # các checkout khác cùng repo: đọc ở đích tuyệt đối đầu tiên ngoài `top`
         for target in _redirect_targets(cmd):
             if not target or target.startswith("&"):
                 continue
@@ -2047,7 +2242,11 @@ def bash_collides(cmd, top, cwd=None, sid="", notes=None):
             # a temp dir, another directory) it never does. A relative one, $VAR or ~ lands here or cannot be told: it does.
             if not target.startswith("/") or (top and _inside(target, top)):
                 hits_top = True
-                break
+            elif foreign is None and not os.path.normpath(target).startswith("/dev/"):   # (2>/dev/null: không đọc khoá nào)
+                if tops is False:
+                    gdir = git_dir(top)[0] if top else None   # (top mà git không cho biết git dir: như trước, chỉ `top`)
+                    tops = [(_checkout_top(g), g) for g in _family_dirs(gdir) if not _same_dir(g, gdir)] if gdir else ([] if top else None)
+                foreign = _held_at(target, sid, time.time(), tops)
     if not hits_top and top and _file_write_hits(cmd, top, cwd):
         hits_top = True
     return hits_top, foreign
@@ -2058,7 +2257,7 @@ def _common_of(gdir):
     try:
         with open(os.path.join(gdir, "commondir"), encoding="utf-8") as f:
             return os.path.realpath(os.path.join(gdir, f.read(4096).strip()))
-    except OSError:
+    except (OSError, ValueError):   # (ValueError: không phải UTF-8 / có NUL - review #427 vòng 2: hook không được văng)
         return gdir   # no commondir: gdir is the repository's own git dir
 
 
@@ -2067,32 +2266,83 @@ def family_held(gdir, sid, now, skip=None):
     worktree, all under one common git dir - that ANOTHER live session holds; None when none does (lỗ 1, 25/10). Read only when a write
     target cannot be told: such a write may land in any of them. skip: git dir không đọc thay cho `gdir` (project_held: checkout của
     project cũng được xét)."""
+    return next(_family_locks(gdir, sid, now, gdir if skip is None else skip), None)
+
+
+def _family_locks(gdir, sid, now, skip):
+    """family_held, mọi checkout: (checkout, git dir, lock) của từng checkout của repo chứa `gdir` mà phiên khác còn sống giữ, trừ git dir
+    `skip` (None: không trừ cái nào)."""
+    for g in _family_dirs(gdir):
+        if skip and _same_dir(g, skip):
+            continue
+        lock = read_checkout_lock(g)
+        if not is_free_for(lock, sid, now):
+            yield str(lock.get("cwd") or g), g, lock
+
+
+def _family_dirs(gdir):
+    """Git dir của mọi checkout của repo chứa `gdir`: git dir chung rồi từng worktree liên kết."""
     common = _common_of(gdir)
     try:
         names = sorted(os.listdir(os.path.join(common, "worktrees")))
     except OSError:
         names = []
-    for g in [common] + [os.path.join(common, "worktrees", n) for n in names]:
-        if _same_dir(g, gdir if skip is None else skip):
-            continue
-        lock = read_checkout_lock(g)
-        if not is_free_for(lock, sid, now):
-            return str(lock.get("cwd") or g), g, lock
-    return None
+    return [common] + [os.path.join(common, "worktrees", n) for n in names]
+
+
+def _checkout_top(g):
+    """Thư mục làm việc của checkout có git dir `g`: worktree liên kết đọc từ <g>/gitdir, git dir `<top>/.git` thì là <top>, còn lại lấy
+    toplevel chứa cwd ghi trong khoá của nó; None khi không biết."""
+    try:
+        with open(os.path.join(g, "gitdir"), encoding="utf-8") as f:
+            return os.path.dirname(os.path.realpath(f.read(4096).strip()))
+    except (OSError, ValueError):   # (ValueError, review #427 vòng 2: file không phải UTF-8 / có NUL - hook từng văng, exit 1: lệnh ghi lọt)
+        pass   # không phải worktree liên kết, hay không đọc được: như khi không có file
+    if os.path.basename(g) == ".git":
+        return os.path.dirname(g)
+    return _target(str((read_lock(os.path.join(g, LOCK)) or {}).get("cwd") or ""))[0]
+
+
+def _held_at(path, sid, now, tops=None):
+    """(checkout, git dir, lock) khi đường dẫn tuyệt đối `path` (đích một redirect, một Edit) nằm trong checkout mà phiên khác còn sống giữ;
+    None khi không. `tops`: [(toplevel, git dir)] - chỉ xét đường dẫn trong một checkout của danh sách đó (mục 5: các checkout khác cùng repo;
+    không liệt kê repo khác; khoá chỉ đọc khi đích nằm trong một checkout), và khi git không cho biết checkout chứa nó thì xét khoá của
+    checkout đó (fail closed); None: xét mọi repo (mục 1: phiên ở thư mục không phải repo, không có họ checkout nào để lọc). /dev/* không bao
+    giờ là file của checkout."""
+    try:
+        real = os.path.realpath(path)
+    except ValueError:   # a NUL: no file can have it
+        return None
+    if real.startswith("/dev/"):
+        return None
+    inside = [t for t in tops or () if t[0] and _inside(real, t[0])]
+    if tops is not None and not inside:
+        return None
+    d = os.path.dirname(real)
+    while d != os.path.dirname(d) and not os.path.isdir(d):   # chưa có (mkdir -p trước nó trong cùng lệnh): thư mục cha gần nhất quyết
+        d = os.path.dirname(d)
+    tl, g = _target(d)
+    if g is None and inside:
+        tl, g = inside[0]
+    if g is None:
+        return None
+    lock = read_checkout_lock(g)
+    return None if is_free_for(lock, sid, now) else (tl, g, lock)
 
 
 def project_held(gdir, sid, now):
     """family_held của repo chứa project của phiên (CLAUDE_PROJECT_DIR) khi lệnh chạy từ một repo KHÁC (#427: từ một clone không liên quan,
     `git -C "$(cat /tmp/p)" commit` lọt vào checkout bị giữ của project): checkout nào của repo đó - cả checkout của chính project - mà
     phiên khác còn sống giữ. None khi không có, khi project cùng repo với `gdir` (family_held đã xét), hoặc khi phiên không đăng ký ở repo đó
-    (SessionStart đăng ký phiên ở project của nó; hook do test gọi mà thừa hưởng biến này thì không đọc khoá của project thật)."""
+    (SessionStart đăng ký phiên ở project của nó; hook do test gọi mà thừa hưởng biến này thì không đọc khoá của project thật).
+    gdir None (#427 vòng 2): lệnh chạy từ thư mục không phải repo - mọi checkout của repo project đều được xét."""
     proj = os.environ.get("CLAUDE_PROJECT_DIR")
     if not proj or not sid:
         return None
     pgdir = git_dir(proj)[0]
-    if not pgdir or _same_dir(_common_of(pgdir), _common_of(gdir)) or not read_session(proj, sid):
+    if not pgdir or (gdir and _same_dir(_common_of(pgdir), _common_of(gdir))) or not read_session(proj, sid):
         return None
-    return family_held(pgdir, sid, now, skip=gdir)
+    return next(_family_locks(pgdir, sid, now, gdir), None)
 
 
 def _guard(gdir):
@@ -2171,6 +2421,7 @@ def status(argv):
 
 
 def main():
+    _ps_left[:] = [PS_BUDGET_S]   # #427 vòng 2: tiến trình này là hook / lệnh ngắn - một hạn chờ ps cho cả tiến trình
     if "--status" in sys.argv[1:]:
         return status([a for a in sys.argv[1:] if a != "--status"])
     if "--allow-shared" in sys.argv[1:]:
@@ -2235,9 +2486,9 @@ def main():
     if not sid:
         return 0
     gdir, top = git_dir(cwd)
-    if not gdir:
-        return 0
-    path = os.path.join(gdir, LOCK)
+    if not gdir and event != "PreToolUse":
+        return 0   # #427 vòng 2: một lệnh từ thư mục không phải repo vẫn được xét đích ghi của nó (PreToolUse bên dưới)
+    path = os.path.join(gdir, LOCK) if gdir else ""
     now = time.time()
     # Every branch below reads the lock again under the guard (_guard, D1) right before it decides and writes.
 
@@ -2312,7 +2563,8 @@ def main():
 
     if event != "PreToolUse":
         return 0
-    heartbeat_session(cwd, sid)
+    if gdir:
+        heartbeat_session(cwd, sid)
     tool = str(d.get("tool_name") or "")
     ti = d.get("tool_input") if isinstance(d.get("tool_input"), dict) else {}   # (a string or a list: no command, no path - D6)
     command = str(ti.get("command") or "") if tool == "Bash" else ""
@@ -2336,7 +2588,12 @@ def main():
               "của settings*.json là môi trường của hook ở phiên sau). Cần tắt: nhờ người dùng chạy `! agent-kit worktree trunk off`.", file=sys.stderr)
         return 2
     foreign, notes = None, {}
-    if tool in EDIT_TOOLS:
+    if tool in EDIT_TOOLS and not gdir:   # #427 vòng 2: cwd không phải repo - file sửa nằm trong checkout phiên khác giữ thì như `foreign`
+        target_path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
+        collides = False
+        if isinstance(target_path, str) and target_path:
+            foreign = _held_at(os.path.join(cwd, target_path), sid, now)
+    elif tool in EDIT_TOOLS:
         collides = edit_hits_locked(d.get("tool_input"), top, cwd, gdir)
     elif tool == "Bash":
         collides, foreign = bash_collides(command, top, cwd, sid, notes)
@@ -2351,21 +2608,26 @@ def main():
                   f"TỰ làm trong worktree riêng (`agent-kit worktree add ../<repo>-<việc>`, người dùng đã duyệt sẵn; xong thì "
                   f"`agent-kit worktree finish <đường dẫn>`), hoặc chờ phiên kia xong lượt.", file=sys.stderr)
             return 2
-    trunk, sw = trunk_main(top)
+    # #427 vòng 2: cwd không phải repo - luật trunk của repo project của phiên (phiên đăng ký ở đó, như project_held)
+    proj = os.environ.get("CLAUDE_PROJECT_DIR") if not gdir else None
+    trunk, sw = trunk_main(top if gdir else (git_dir(proj)[1] if proj and sid and read_session(proj, sid) else None))
+    tunknown = {} if not gdir else None   # review #427 vòng 2: cwd không phải repo - chỉ đích đã biết nằm trong main (trunk_write unknown)
     if trunk:   # W1 R1 v6: main is merge-only - a write into it is refused whoever the session is, wherever it runs from
-        if trunk_write(tool, d.get("tool_input"), command, cwd, trunk, sw, sid):
+        if trunk_write(tool, d.get("tool_input"), command, cwd, trunk, sw, sid, unknown=tunknown):
             print(TRUNK_MSG.format(main=trunk), file=sys.stderr)
-            log(gdir, f"{sid} trunk mode: chặn ghi vào main {trunk} ({tool})")
+            log(gdir or git_dir(trunk)[0] or trunk, f"{sid} trunk mode: chặn ghi vào main {trunk} ({tool})")
             return 2
-        if _same_dir(top, trunk):
+        if top and _same_dir(top, trunk):
             return 0   # nothing written into main: nothing to take (main has no holder in trunk mode)
     # lỗ 1 (25/10): a git write / gate run whose target the line does not tell used to count against this session's OWN checkout only, so
     # from a free checkout `cd $X && git commit` reached one of the same repository another session holds. Trunk mode refuses such a
     # target already (trunk_write), except in the sync / integrator segments it lets through (`git -C "$X" pull --ff-only` from a worktree
     # still passes: ponytail, judge those by family_held too if a sibling is ever hit; refusing them all would stop every lane's push);
     # here, trunk mode off, it is refused while another live session holds any checkout of this repository.
-    # #427: từ repo khác, đích không biết cũng có thể là checkout bị giữ của project của phiên (project_held)
-    held = (family_held(gdir, sid, now) or project_held(gdir, sid, now)) if notes.get("unknown") and not trunk else None
+    # #427: từ repo khác, đích không biết cũng có thể là checkout bị giữ của project của phiên (project_held). Review vòng 2: trunk mode từ cwd
+    # không phải repo không chặn đích git / gate không biết (trunk_write unknown) - xét khoá như khi trunk mode tắt, trừ các segment nó cho qua
+    unknown_target = tunknown.get("unknown") if trunk and tunknown is not None else notes.get("unknown") and not trunk
+    held = ((family_held(gdir, sid, now) if gdir else None) or project_held(gdir, sid, now)) if unknown_target else None
     if held:
         htop, hgdir, hlock = held
         if os.environ.get("DEVKIT_ALLOW_SHARED_CHECKOUT") == "1" or allow_shared_until(hgdir) > now:
@@ -2376,8 +2638,10 @@ def main():
                   f"đang do {describe(hlock, now)} giữ: lệnh có thể ghi vào đó. Viết đường dẫn thật (`cd <thư mục> && …`, `git -C <thư mục> …`, "
                   f"`CLAUDE_PROJECT_DIR=\"$PWD\" …`) rồi chạy lại; cần ghi vào checkout đang bị giữ thì TỰ làm trong worktree riêng "
                   f"(`agent-kit worktree add ../<repo>-<việc>`), hoặc chờ phiên kia xong lượt.", file=sys.stderr)
-            log(gdir, f"{sid} chặn ghi vào đích không xác định khi {hlock.get('session_id')} giữ {htop} ({tool})")
+            log(gdir or hgdir, f"{sid} chặn ghi vào đích không xác định khi {hlock.get('session_id')} giữ {htop} ({tool})")
             return 2
+    if not gdir:
+        return 0   # cwd không phải repo: không có khoá của chính nó để nhận
 
     # D1: read, decide and take under the guard - two sessions starting their first write together used to both read "free"
     guard, why = _guard(gdir)

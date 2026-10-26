@@ -78,9 +78,9 @@ def watched_mtimes(project: Path, pats: list) -> dict:
     return out
 
 
-def _execute(project: Path, cmd: str, timeout: float) -> tuple:
+def _execute(project: Path, cmd: str, timeout: float, env: dict | None = None) -> tuple:
     proc = subprocess.Popen(cmd, shell=True, cwd=str(project), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, errors="replace", start_new_session=True)
+                            text=True, errors="replace", start_new_session=True, env=env)
     try:
         out, _ = proc.communicate(timeout=max(1.0, timeout))
         return ("PASS" if proc.returncode == 0 else "FAIL"), proc.returncode, out or ""
@@ -182,6 +182,21 @@ def _gate_module():
     return _GATE[0]
 
 
+def _record_env(cmd: str) -> dict:
+    """Môi trường suite của nightly (#427 vòng 2), như run_in_group + suite_env của post-fix-gate.py: chỉ lệnh run_impacted.sh chuẩn
+    (SELECTION_CMD) nhận DEVKIT_PER_TEST_CACHE, và chỉ "record" — chạy MỌI test, ghi PASS từng test để gate trên đúng cây đó dùng lại
+    ("1" có sẵn trong môi trường thì nightly bỏ qua test). Mọi suite khác chạy không có biến; người dùng đặt "0": tắt."""
+    env = {k: v for k, v in os.environ.items() if k != "DEVKIT_PER_TEST_CACHE"}
+    try:
+        mod = _gate_module().suite_cache_mod()
+    except Exception as exc:  # noqa: BLE001 - sổ per-test chỉ là phần thêm: suite vẫn chạy, không ghi
+        print(f"[stale-rerun] per-test record: {exc!r}", file=sys.stderr)
+        mod = None
+    if os.environ.get("DEVKIT_PER_TEST_CACHE") != "0" and mod is not None and mod.SELECTION_CMD.match(cmd or ""):
+        env["DEVKIT_PER_TEST_CACHE"] = "record"
+    return env
+
+
 def _tree_unchanged(sc, project: Path):
     """(nội dung cả cây vẫn là nội dung lúc tính khoá?, content_map vừa dựng) — khoá cả cây chỉ ghi PASS khi đúng như vậy; người gọi
     dùng lại content_map đó cho phép kiểm input của suite (một lần dựng mỗi lượt, OCR 21/10)."""
@@ -217,13 +232,14 @@ def keyed_context(project: Path, tid: str, cmd: str, matrix=None):
 
 
 def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mode: str = "stale-rerun",
-            retry: bool = False, matrix=None) -> str:
+            retry: bool = False, matrix=None, record_per_test: bool = False) -> str:
     """Run one suite for real and record it (result + evidence), unless a watched file
     changed while it ran. retry: a FAIL is re-run once; green then = flaky (stays FAIL).
     A run that lost its results store (INFRA_FAILURE_RE) is re-run whatever `retry` says.
     The wait for the project's test-run lock is bounded by `timeout` (held past it → BUSY,
     nothing run or recorded); once held, the suite gets its whole `timeout`, so a TIMEOUT is
-    always the suite's own (a job may take up to twice `timeout`)."""
+    always the suite's own (a job may take up to twice `timeout`).
+    record_per_test (nightly): run_impacted.sh chuẩn chạy với DEVKIT_PER_TEST_CACHE=record (_record_env)."""
     with test_run_lock(project, time.monotonic() + timeout) as held, suite_slots(project, tid, cmd, held, timeout) as admitted:
         if not held:
             return f"{tid}: BUSY — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau"
@@ -231,14 +247,15 @@ def run_one(project: Path, tid: str, cmd: str, pats: list, timeout: float, *, mo
             return f"{tid}: SLOT — khoá độc quyền (Unity) bận hết thời gian chờ — chạy lại sau"
         keyed = keyed_context(project, tid, cmd, matrix)   # khoá TRƯỚC khi chạy (P2): ghi theo khoá chỉ khi sau khi chạy vẫn đúng khoá này
         deadline = time.monotonic() + timeout   # sau khi dựng khoá: suite được trọn timeout của nó (OCR 20/10)
+        env = _record_env(cmd) if record_per_test else None   # sau suite_slots: giữ SB_HEAVY_SLOT_HELD / DEVKIT_SLOT_ADVISORY_HELD nó vừa đặt
         before = watched_mtimes(project, pats)
         started = time.perf_counter()
-        status, code, out = _execute(project, cmd, deadline - time.monotonic())
+        status, code, out = _execute(project, cmd, deadline - time.monotonic(), env)
         flaky = infra = False
         broke = status == "FAIL" and bool(INFRA_FAILURE_RE.search(out))
         if status == "FAIL" and ((broke and os.environ.get("INFRA_RETRY", "1") != "0")
                                  or (retry and not broke and os.environ.get("FLAKY_RETRY", "1") != "0")):
-            st2, code2, out2 = _execute(project, cmd, max(1.0, deadline - time.monotonic()))
+            st2, code2, out2 = _execute(project, cmd, max(1.0, deadline - time.monotonic()), env)
             first = out
             out += f"\n# --- chạy lại 1 lần ({'INFRA_RETRY' if broke else 'FLAKY_RETRY'}) — exit {code2} ---\n{out2}"
             if st2 == "PASS" and (broke or not rc.test_failure_reported(first)):

@@ -6,7 +6,8 @@
 # Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CLEAN="$ROOT/.claude/bin/super-board-post-merge-clean.sh"
+# PMC_CLEAN: chạy test trên một bản khác của script (vd bản gốc chép ra thư mục tạm để thấy RED); kit đi cùng bản đó (HERE_UP)
+CLEAN="${PMC_CLEAN:-$ROOT/.claude/bin/super-board-post-merge-clean.sh}"
 . "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
 FAILS=0
 ok() { echo "✔ $1"; }
@@ -306,6 +307,96 @@ PATH="$TMP/k15bin:$PATH" bash "$CLEAN" "$R" issue-25-tt "$MERGED25" >/dev/null 2
   && [ "$(cat "$W/issue-25-build/.agents/local/note.md" 2>/dev/null)" = "lane note 25" ] \
   && ok "k15 a session that takes the worktree after held / tidy is seen by remove --merged right before the removal: kept, lane edit put back" \
   || { fail "k15 TOCTOU: worktree $([ -d "$W/issue-25-build" ] && echo kept || echo REMOVED) under a session that took it after the decision"; cat "$TMP/k15.err"; }
+kill "$SL" 2>/dev/null
+
+# Hai ca dưới dựng repo riêng: sweep trên $R sẽ duyệt mọi thẻ issue-* của các ca trên (thứ tự ngẫu nhiên).
+sleep 300 & SL=$!; disown "$SL" 2>/dev/null   # pid của "phiên" nhận worktree muộn (trap EXIT giết $SL)
+# k16 (#427 vòng 2): TOCTOU của drop_card (--sweep, thẻ đóng NOT_PLANNED). Nó hỏi `held` rồi gọi `remove` TRẦN: kit kiểm việc sẽ mất
+#      (_iter_blockers: git status, file ignore, submodule… — có thể lâu) rồi gỡ mà không hỏi lại người giữ như `remove --merged` (k15).
+#      python3 giả ghi khoá checkout của một phiên sống ĐÚNG lúc sweep gọi `remove` cho issue-31-build: phải giữ, nói tên phiên.
+#      k16b canh hồi quy (xanh cả ở bản gốc): phiên nhận issue-32-build trong lúc `gh pr close` (gh giả ghi khoá) — lần `held` thứ hai
+#      của drop_card, sau các lời gọi mạng, thấy nó. k16c đối chứng: thẻ bị bỏ không ai giữ vẫn được gỡ.
+R2="$TMP/repo2"; W2="$R2/.claude/worktrees"; K16="$TMP/k16"
+git init -q -b main "$R2"
+git -C "$R2" config user.email t@example.invalid; git -C "$R2" config user.name t
+printf '.claude/\n' > "$R2/.gitignore"; echo a > "$R2/a"; git -C "$R2" add -A; git -C "$R2" commit -qm init
+mkdir -p "$W2" "$K16/bin"
+for n in 31 32 33; do
+  git -C "$R2" worktree add -q -b "issue-$n-drop" "$W2/issue-$n-build" main
+  printf '{"state":"CLOSED","stateReason":"NOT_PLANNED","closedAt":"2020-01-01T00:00:00Z"}\n' > "$K16/issue$n.json"
+done
+cat > "$K16/bin/gh" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *" issue view "*) n=\$(printf '%s\n' "\$@" | grep -E '^[0-9]+\$' | head -1); cat "$K16/issue\$n.json" ;;
+  *" pr list "*"--state open"*"head:issue-32-"*) echo '[{"number":320,"headRefName":"issue-32-drop","isCrossRepository":false}]' ;;
+  *" pr close 320 "*)   # k16b: một phiên nhận issue-32-build trong lúc lời gọi mạng này chạy
+    gd="\$(git -C "$W2/issue-32-build" rev-parse --absolute-git-dir)" \\
+      && printf '{"session_id":"net-holder","pid":%s,"gitdir":"%s"}\n' "$SL" "\$gd" > "\$gd/devkit-session.lock" ;;
+  *) echo '[]' ;;
+esac
+SH
+cat > "$K16/bin/python3" <<SH
+#!/usr/bin/env bash
+if [ "\${2:-}" = remove ]; then   # python3 <worktree.py> remove [--merged=<sha>] <wt>: chỉ issue-31-build có người nhận muộn
+  for a in "\$@"; do wt="\$a"; done
+  case "\$wt" in */issue-31-build)
+    gd="\$(git -C "\$wt" rev-parse --absolute-git-dir)" && printf '{"session_id":"late-holder","pid":%s,"gitdir":"%s"}\n' "$SL" "\$gd" > "\$gd/devkit-session.lock" ;;
+  esac
+fi
+exec "$REALPY" "\$@"
+SH
+chmod +x "$K16/bin/gh" "$K16/bin/python3"
+PATH="$K16/bin:$PATH" SB_GITHUB_HALT_FILE="$K16/halt.json" SB_GITHUB_RETRY_DELAY=0 \
+  bash "$CLEAN" --sweep "$R2" --min-interval 0 >/dev/null 2>"$TMP/k16.err"
+[ -d "$W2/issue-31-build" ] && grep -q "kept .*/issue-31-build: agent-kit worktree remove refused: ✖ .*late-holder" "$TMP/k16.err" \
+  && ok "k16 a session that takes a dropped card's worktree while remove checks it is seen right before the removal: kept, named" \
+  || { fail "k16 TOCTOU drop_card: worktree $([ -d "$W2/issue-31-build" ] && echo kept || echo REMOVED) under a session that took it during remove"; cat "$TMP/k16.err"; }
+[ -d "$W2/issue-32-build" ] && grep -q "closed PR #320" "$TMP/k16.err" && grep -q "kept .*/issue-32-build: .*net-holder" "$TMP/k16.err" \
+  && ok "k16b … one taken during gh pr close is seen by the held check after the network calls" \
+  || { fail "k16b drop_card removed a worktree a session took during gh pr close"; cat "$TMP/k16.err"; }
+[ ! -d "$W2/issue-33-build" ] && ok "k16c … a dropped card's worktree nobody holds is still removed" \
+  || { fail "k16c the unheld worktree of a dropped card was kept"; cat "$TMP/k16.err"; }
+
+# k17 (#427 vòng 2): khe giữa `held` và tidy ở chế độ post. PR squash: không ref nào giữ HEAD, hold_head fetch refs/pull/<PR>/head
+#      (tới SB_CLEAN_FETCH_TIMEOUT, 30 s). python3 giả ghi khoá checkout của một phiên sống ĐÚNG lúc fetch: tidy không được cất / trả file
+#      loại CẤT của phiên đó về HEAD (bản gốc: tidy chạy, `remove --merged` mới từ chối, untidy trả lại — phiên thấy file biến mất giữa
+#      chừng). Giữ, không đụng file nào, nói tên phiên. k17c đối chứng: cùng cách dựng, không ai giữ — vẫn cất và gỡ.
+O3="$TMP/origin3.git"; R3="$TMP/repo3"; W3="$R3/.claude/worktrees"; K17="$TMP/k17"
+git init -q --bare -b main "$O3"
+git init -q -b main "$R3"
+git -C "$R3" config user.email t@example.invalid; git -C "$R3" config user.name t
+printf '.claude/\n' > "$R3/.gitignore"; echo a > "$R3/a"; git -C "$R3" add -A; git -C "$R3" commit -qm init
+git -C "$R3" remote add origin "$O3"; git -C "$R3" push -q -u origin main; git -C "$R3" remote set-head origin main
+mkdir -p "$W3" "$K17/bin"
+# sq <N> <PR>: issue-<N>-qa detached trên head PR đã squash (chỉ GitHub giữ, ở refs/pull/<PR>/head), còn một ghi chú lane (loại CẤT)
+sq() {
+  git -C "$R3" worktree add -q --detach "$W3/issue-$1-qa" main
+  echo "card $1" > "$W3/issue-$1-qa/f$1"; git -C "$W3/issue-$1-qa" add "f$1"; git -C "$W3/issue-$1-qa" commit -qm "card $1"
+  git -C "$W3/issue-$1-qa" push -q origin "HEAD:refs/pull/$2/head"
+  mkdir -p "$W3/issue-$1-qa/.agents/local"; echo "lane note $1" > "$W3/issue-$1-qa/.agents/local/note.md"
+}
+sq 34 340; M34="$(git -C "$W3/issue-34-qa" rev-parse HEAD)"
+sq 35 350; M35="$(git -C "$W3/issue-35-qa" rev-parse HEAD)"
+cat > "$K17/bin/python3" <<SH
+#!/usr/bin/env bash
+case " \$* " in *" fetch "*"refs/pull/340/head"*)   # run_t … git … fetch … refs/pull/340/head: một phiên nhận issue-34-qa lúc này
+  gd="\$(git -C "$W3/issue-34-qa" rev-parse --absolute-git-dir)" && printf '{"session_id":"fetch-holder","pid":%s,"gitdir":"%s"}\n' "$SL" "\$gd" > "\$gd/devkit-session.lock" ;;
+esac
+exec "$REALPY" "\$@"
+SH
+chmod +x "$K17/bin/python3"
+PATH="$K17/bin:$PATH" bash "$CLEAN" "$R3" issue-34-x "$M34" 340 >/dev/null 2>"$TMP/k17.err"
+[ -d "$W3/issue-34-qa" ] && ! grep -q "salvaged .*/issue-34-qa\|restored .*/issue-34-qa" "$TMP/k17.err" \
+  && [ -z "$(ls "$R3/.git/super-board/salvage" 2>/dev/null | grep '^issue-34-qa')" ] \
+  && grep -q "kept .*/issue-34-qa: .*fetch-holder.*not touched" "$TMP/k17.err" \
+  && [ "$(cat "$W3/issue-34-qa/.agents/local/note.md" 2>/dev/null)" = "lane note 34" ] \
+  && ok "k17 a session that takes the worktree during hold_head's fetch is seen before tidy: kept, no file moved, named" \
+  || { fail "k17 TOCTOU held/tidy: tidy salvaged / reverted files of a worktree a session took during the fetch"; cat "$TMP/k17.err"; }
+bash "$CLEAN" "$R3" issue-35-x "$M35" 350 >/dev/null 2>"$TMP/k17c.err"
+[ ! -d "$W3/issue-35-qa" ] && grep -q "salvaged .*/issue-35-qa" "$TMP/k17c.err" && ls "$R3/.git/super-board/salvage" 2>/dev/null | grep -q '^issue-35-qa-.*\.patch$' \
+  && ok "k17c … the same squash worktree nobody takes is still salvaged (fetched hold ref) and removed" \
+  || { fail "k17c the unheld squash worktree was not salvaged and removed"; cat "$TMP/k17c.err"; }
 kill "$SL" 2>/dev/null
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_clean: all passed" || { echo "❌ test_post_merge_clean: $FAILS failed"; exit 1; }

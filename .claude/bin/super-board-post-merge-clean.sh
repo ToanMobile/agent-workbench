@@ -352,6 +352,9 @@ clean_wt() {
     echo "kept $wt: HEAD ${head:-<unknown>} is on no branch or remote${HOLD_WHY:+ ($HOLD_WHY)}" >&2
     return 0
   fi
+  # #427 vòng 2: hold_head có thể fetch tới SB_CLEAN_FETCH_TIMEOUT giây; một phiên nhận worktree trong lúc đó thì tidy cất / trả file loại
+  # CẤT của nó về HEAD (untidy trả lại sau khi `remove --merged` từ chối, nhưng phiên đã thấy file biến mất). Hỏi lại kit ngay trước tidy.
+  if why=$(kit_held "$wt" "$3"); then echo "kept $wt: $why; not touched" >&2; return 0; fi
   TIDY_NAME=""; TIDY_DL=""; TIDY_SDEL=""; TIDY_DROPZ=""
   if ! tidy "$wt"; then
     [ -z "$TIDY_NAME" ] || untidy "$wt"
@@ -532,7 +535,7 @@ prune_salvage
 # giữ), xoá nhánh local bằng `prune-branch --dropped` (kit tự kiểm lại issue + không còn PR mở, cất commit riêng vào refs/devkit/discarded
 # 30 ngày). 0 = thẻ bị bỏ (đã xử lý), 1 = không phải. Lane còn sống đã bị loại trước khi gọi.
 drop_card() {
-  local n="$1" info st age prs p i wt br co
+  local n="$1" info st age prs p i wt br co h
   info=$(gh_t issue view "$n" --json state,stateReason,closedAt 2>/dev/null) || return 1
   st=$(printf '%s' "$info" | python3 -I -c '
 import calendar, json, sys, time
@@ -584,7 +587,11 @@ except (KeyError, TypeError, ValueError):
     case "$br" in ""|"issue-$n-"*) ;; *) echo "kept $wt: it is on branch $br, not a branch of card $n" >&2; continue ;; esac
     if p=$(kit_held "$wt"); then echo "kept $wt: $p; not touched" >&2; continue; fi
     if [ "$DRY" -eq 1 ]; then echo "would ask agent-kit to remove $wt (card $n closed as not planned; kept if it holds real work)" >&2; DRY_GONE="$DRY_GONE$wt"$'\n'
-    else remove_wt "$wt"; fi
+    # #427 vòng 2: `remove` trần kiểm việc sẽ mất (_iter_blockers: git status, file ignore… có thể lâu) rồi gỡ, không hỏi lại người giữ:
+    # một phiên nhận worktree sau lần `held` trên mất nó. `--merged=<HEAD của chính nó>` (thẻ bị bỏ KHÔNG có PR merged: chỉ để luật tích
+    # hợp qua ngay, như `remove` trần) thêm lần hỏi lại người giữ của kit ngay trước khi gỡ (luật của `held`). HEAD không đọc được: giữ.
+    elif ! h=$(git -C "$wt" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || [ -z "$h" ]; then echo "kept $wt: HEAD cannot be read" >&2
+    else remove_wt "$wt" "$h"; fi
   done
   while IFS= read -r br; do
     [ -n "$br" ] || continue
