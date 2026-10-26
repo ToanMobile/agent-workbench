@@ -36,7 +36,7 @@ All notable changes to Universal Agent DevKit. Versions follow `.claude-plugin/p
   - Test ĐỎ → XANH: containment 11 ca (gồm 2 ca đo CPU: 0,82 / 0,70 s → 0,07 s, ngưỡng 0,30 s), unforced 3 ca.
   - Còn hở: glob sâu bên trong một thư mục được phép (ví dụ trong /tmp, không có kết quả khớp) vẫn phải duyệt hết cây.
   - **OCR vòng 3 (25/10)** — Bash tool ở đây chạy `/bin/zsh` (đã đo), hook đọc lệnh như bash:
-    - **H1 (có từ trước):** `(` dính vào tên là glob qualifier của zsh. `build/a(:a:h:h)` là gốc project, `build/*(e:…:)` là đường dẫn bất kỳ do code chỉ định. Lexer coi `(` là subshell và chỉ xét `build/a`. Nay `zsh_qualifiers` gộp qualifier vào từ của nó; có `-f` thì target mang qualifier bị chặn.
+    - **H1 (có từ trước):** `(` dính vào tên là glob qualifier của zsh. `build/a(:a:h:h)` là gốc project, `build/*(e:…:)` là đường dẫn bất kỳ do code chỉ định. Lexer coi `(` là subshell và chỉ xét `build/a`. Nay `zsh_qualifiers` đánh dấu từ có `(` dính vào, còn phần trong ngoặc vẫn được duyệt như trước (để `%x(rm -rf ~)` của ruby và `qx(…)` của perl vẫn bị bắt); có `-f` thì target mang dấu này bị chặn.
     - **H1, `**`:** `**` / `***` (zsh `***` đi theo link) khi `glob_may_leave` cũng bị chặn, vì Python glob không duyệt giống zsh. `rm -rf build/**/*.o` thuộc diện này và bị chặn, có chủ ý.
     - **H2 (có từ trước):** `~+` là cwd (xét như `$PWD`). `~-`, `~+` lấy từ biến, `~user` không tồn tại: không biết trỏ đâu, chặn khi có `-f`. `cd ~-` làm cwd thành không biết.
     - **H3:** quá 2000 kết quả khớp thì từ chối cả khi không có `-f`.

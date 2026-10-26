@@ -410,12 +410,13 @@ TMP_ROOTS = {os.path.realpath(t) for t in ("/tmp", os.environ.get("TMPDIR") or "
 GLOB = re.compile(r"[*?\[]")
 # The Bash tool runs /bin/zsh here (measured, OCR round 3), not bash. zsh reads a ( glued to a word as a GLOB QUALIFIER of that word:
 # build/a(:a:h:h) is the project root, build/*(e:…:) any path its code names. bash refuses the line; the lexer made the ( a subshell and
-# judged `build/a`. zsh_qualifiers folds each one into its word as this marker; rm_target_problem refuses a target holding it (with -f).
+# judged `build/a`. zsh_qualifiers marks the word; rm_target_problem refuses a target holding the marker (with -f).
 ZSH_QUAL = "__ZSH_GLOB_QUALIFIER__"
 
 def zsh_qualifiers(text):
-    """text with every ( glued to the end of a word, and what it holds up to its ), replaced by ZSH_QUAL. Not one: quoted, after
-    $ < > = ( or a separator ($( … ), <( … ), a=( … ), (( … ))), and an empty () (a function)."""
+    """text with ZSH_QUAL glued to every word a ( is glued to, the ( set apart: what it holds is still walked as before (a perl qx(…) or
+    ruby %x(…) of a kept heredoc body runs its command). Not one: quoted, after $ < > = ( or a separator ($( … ), <( … ), a=( … ),
+    (( … ))), and an empty () (a function)."""
     out, i, n, q = [], 0, len(text), None
     while i < n:
         c = text[i]
@@ -433,21 +434,7 @@ def zsh_qualifiers(text):
             q = c
             out.append(c)
         elif c == "(" and i and not text[i - 1].isspace() and text[i - 1] not in "$<>=(;&|" and not text.startswith("()", i):
-            depth, j, qq = 1, i + 1, None
-            while j < n and depth:
-                d = text[j]
-                if qq:
-                    qq = None if d == qq else qq
-                elif d in "\x27\x22":
-                    qq = d
-                elif d == "\\":
-                    j += 1
-                else:
-                    depth += (d == "(") - (d == ")")
-                j += 1
-            out.append(ZSH_QUAL)
-            i = j
-            continue
+            out.append(ZSH_QUAL + " (")
         else:
             out.append(c)
         i += 1
