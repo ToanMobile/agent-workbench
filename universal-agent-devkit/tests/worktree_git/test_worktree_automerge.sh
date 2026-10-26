@@ -228,6 +228,32 @@ fin ../am-r2; rc=$?
   && [ "$(cat "$P/.agents/local/memory/claude-auto/MEMORY.md")" = "main index" ] \
   && ok "17b: finish carries every .agents/local/ file only the worktree holds (red-patch; MEMORY.md main has too -> MEMORY.md.from-am-r2), then removes it" \
   || fail "17b: (rc=$rc, exists=$([ -d "$TMP/am-r2" ] && echo y || echo n)): $(cat "$TMP/out")"
+# 17d (OCR r3 W2, 26/10): a worktree NAME used before: main already holds MEMORY.md.from-am-x (an earlier session's carried index, other
+#     bytes): finish puts this one at MEMORY.md.from-am-x.2 (created O_EXCL), never over the earlier copy. 17e: the same bytes already at
+#     .from-<name>: nothing copied, the worktree goes.
+echo "EARLIER carried copy" > "$P/.agents/local/memory/claude-auto/MEMORY.md.from-am-x"
+wt x; mkdir -p "$TMP/am-x/.agents/local/memory/claude-auto"; echo "this worktree's index" > "$TMP/am-x/.agents/local/memory/claude-auto/MEMORY.md"
+echo x > "$TMP/am-x/x.txt"; wcom x x x.txt
+fin ../am-x; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$TMP/am-x" ] && [ "$(cat "$P/.agents/local/memory/claude-auto/MEMORY.md.from-am-x")" = "EARLIER carried copy" ] \
+  && [ "$(cat "$P/.agents/local/memory/claude-auto/MEMORY.md.from-am-x.2" 2>/dev/null)" = "this worktree's index" ] && [ "$(cat "$P/.agents/local/memory/claude-auto/MEMORY.md")" = "main index" ] \
+  && ok "17d: an earlier .from-am-x copy is never overwritten; this one lands at .from-am-x.2" \
+  || fail "17d: (rc=$rc) .from-am-x='$(cat "$P/.agents/local/memory/claude-auto/MEMORY.md.from-am-x")': $(cat "$TMP/out")"
+echo "same as carried" > "$P/.agents/local/memory/claude-auto/MEMORY.md.from-am-z"
+wt z; mkdir -p "$TMP/am-z/.agents/local/memory/claude-auto"; echo "same as carried" > "$TMP/am-z/.agents/local/memory/claude-auto/MEMORY.md"
+echo z > "$TMP/am-z/z.txt"; wcom z z z.txt
+fin ../am-z; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$TMP/am-z" ] && [ ! -e "$P/.agents/local/memory/claude-auto/MEMORY.md.from-am-z.2" ] \
+  && ok "17e: the same bytes already at .from-am-z: nothing copied, the worktree goes" || fail "17e: (rc=$rc): $(cat "$TMP/out")"
+# 17f (OCR r3 W1): a git repo nested under .agents/local/ (a repo-copy stage) is listed by git as ONE folder entry ("…/kit-copy/"): it was
+#     skipped as "not a file" and removed with the worktree. finish copies no folder: blocked, naming it; nothing touched
+wt y; mkdir -p "$TMP/am-y/.agents/local/stage/kit-copy"; G "$TMP/am-y/.agents/local/stage/kit-copy" init -q .
+echo "staged work awaiting the user" > "$TMP/am-y/.agents/local/stage/kit-copy/HANDOFF.md"; echo y > "$TMP/am-y/y.txt"; wcom y y y.txt
+fin ../am-y; rc=$?
+[ "$rc" = 1 ] && [ -f "$TMP/am-y/.agents/local/stage/kit-copy/HANDOFF.md" ] && grep -q "\.agents/local/stage/kit-copy/" "$TMP/out" \
+  && [ ! -e "$P/.agents/local/stage/kit-copy" ] && ok "17f: a nested git repo under .agents/local/ blocks finish, named; nothing copied or removed" \
+  || fail "17f: (rc=$rc, stage there: $([ -f "$TMP/am-y/.agents/local/stage/kit-copy/HANDOFF.md" ] && echo y || echo NO)): $(cat "$TMP/out")"
+rm -rf "$TMP/am-y/.agents/local/stage"; G "$P" worktree remove --force "$TMP/am-y" 2>/dev/null
 
 # round 2 #5: the secret-looking list is the gate's, plus the common extras; a template (.env.example) is not a secret
 for secret in id_ecdsa .netrc serviceAccountKey.json AuthKey_ABC.p8 id_dsa; do

@@ -2152,7 +2152,8 @@ def _unsaved_agent_local(wt, main):
     """(paths, cut): the git-IGNORED files under the worktree's .agents/local/ whose bytes the main checkout does not hold at the same path
     (missing there, or other bytes) - a removal deletes them (OCR r2 26/10: `remove`, `remove --merged` and `gc --merged` dropped a
     red-patch, a stage HANDOFF.md and claude-auto notes). A file `worktree add` copied from main is the same bytes: not counted, nor one
-    main holds as <path>.from-<worktree name> with the same bytes (finish puts a file main has with OTHER bytes there). Not counted
+    main holds as <path>.from-<worktree name>[.N] with the same bytes (_from_copies: where finish puts a file main has with OTHER bytes).
+    A folder entry git prints ("…/", a nested git repo) always counts: it cannot be compared and goes whole with the worktree. Not counted
     either: a link (no data of its own; the installer links the kit's hooks there), a dotfile (.DS_Store, the installer's
     .devkit_backups.log, as _unsaved_memory), a .agents/local that is a link or IS main's folder. Tracked and untracked-not-ignored files
     are changes_since's. `cut`: why the scan did not finish (git failed, over AGENT_LOCAL_SCAN_MAX files) - the caller refuses then."""
@@ -2165,14 +2166,24 @@ def _unsaved_agent_local(wt, main):
     rels = [p.decode("utf-8", "surrogateescape") for p in r.stdout.split(b"\0") if p]
     if len(rels) > AGENT_LOCAL_SCAN_MAX:
         return [], tr(f"hơn {AGENT_LOCAL_SCAN_MAX} file", f"over {AGENT_LOCAL_SCAN_MAX} files")
-    lost, suffix = [], ".from-" + os.path.basename(os.path.normpath(wt))
+    lost = []
     for rel in rels:
-        src = os.path.join(wt, rel)
-        if os.path.basename(rel).startswith(".") or os.path.islink(src) or not os.path.isfile(src):
+        src = os.path.join(wt, rel.rstrip("/"))
+        if os.path.basename(rel.rstrip("/")).startswith(".") or os.path.islink(src):
             continue
-        if not (_same_bytes(src, os.path.join(main, rel)) or _same_bytes(src, os.path.join(main, rel + suffix))):
+        if rel.endswith("/"):   # OCR r3 W1: a nested git repo (a repo-copy stage) is ONE folder entry: never comparable, never dropped
+            lost.append(rel)
+        elif os.path.isfile(src) and not (_same_bytes(src, os.path.join(main, rel))
+                                          or any(_same_bytes(src, p) for p in _from_copies(main, rel, wt) if os.path.lexists(p))):
             lost.append(rel)
     return lost, ""
+
+
+def _from_copies(main, rel, wt, limit=50):
+    """The paths in main where finish puts a file of worktree `wt` that main holds at `rel` with other bytes: <rel>.from-<worktree name>,
+    then <…>.2, .3 … (OCR r3 W2: a worktree name used again never overwrites the copy an earlier finish left)."""
+    base = os.path.join(main, rel + ".from-" + os.path.basename(os.path.normpath(wt)))
+    return [base] + [f"{base}.{n}" for n in range(2, limit + 1)]
 
 
 def removal_blockers(cwd, wt, budget=None, shown=None):
@@ -4008,8 +4019,22 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
         local, cut = _unsaved_agent_local(wt, main)
         if cut:
             raise OSError(cut)
-        plan = [(rel, rel if not os.path.lexists(os.path.join(main, rel)) else rel + ".from-" + os.path.basename(os.path.normpath(wt)))
-                for rel in local if not _secret_like(rel)]
+        folders = [rel for rel in local if rel.endswith("/")]
+        if folders:   # OCR r3 W1: a nested git repo is never copied by hand here: kept, named
+            return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ worktree: {len(folders)} thư mục bị git ignore dưới .agents/local/ (repo git lồng) chỉ worktree có: "
+                                 f"{', '.join(folders[:6])}. Không gì bị chép. Chuyển nó ra khỏi worktree (hoặc hỏi người dùng có bỏ được không) rồi chạy lại "
+                                 f"`agent-kit worktree finish {shlex.quote(wt)}`",
+                                 f"merged into main but the worktree is NOT removed: {len(folders)} git-ignored folder(s) under .agents/local/ (a nested git repo) only "
+                                 f"the worktree holds: {', '.join(folders[:6])}. Nothing was copied. Move it out of the worktree (or ask the user whether it can go), then "
+                                 f"run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": folders[:20]}
+        plan = []
+        for rel in (r for r in local if not _secret_like(r)):
+            # main lacks it: the same path; else the first free <rel>.from-<worktree>[.N] (W2: an earlier finish's copy is never overwritten)
+            dst = os.path.join(main, rel) if not os.path.lexists(os.path.join(main, rel)) \
+                else next((p for p in _from_copies(main, rel, wt) if not os.path.lexists(p)), None)
+            if dst is None:
+                raise OSError(errno.EEXIST, "every .from- name is taken", os.path.join(main, rel))
+            plan.append((rel, os.path.relpath(dst, main)))
         if plan:
             r = _git_bytes(main, "check-ignore", "-z", "--stdin", "--no-index", inp=b"".join(d.encode("utf-8", "surrogateescape") + b"\0" for _rel, d in plan))
             ignored = {p.decode("utf-8", "surrogateescape") for p in r.stdout.split(b"\0") if p} if r.returncode in (0, 1) else None
@@ -4022,9 +4047,13 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
                                      f"ignored in main (a copy would be an untracked file there): {', '.join(open_[:6])}. Nothing was copied. Copy them by hand (or add an "
                                      f"ignore rule in main), then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": open_[:20]}
         for rel, dst_rel in plan:
-            dst = os.path.join(main, dst_rel)
+            dst, src = os.path.join(main, dst_rel), os.path.join(wt, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copy(os.path.join(wt, rel), dst)   # content + mode, not copy2: no macOS `chflags uchg` carried into main (_copy's rule)
+            # O_EXCL (as _carry_secrets): a file that appeared there meanwhile is never overwritten (FileExistsError: blocked, run again);
+            # content + mode only, no macOS `chflags uchg` carried into main (_copy's rule)
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), os.stat(src).st_mode & 0o777)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(_read_regular(src))
             saved.append(dst_rel)
     except (OSError, SystemExit, UnicodeError) as e:
         return "blocked", tr(f"đã gộp vào main nhưng không chép được file bị git ignore dưới .agents/local/ của worktree ({e}); worktree còn nguyên",
