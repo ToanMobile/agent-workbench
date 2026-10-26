@@ -235,7 +235,9 @@ def targets(cmd, here, depth=0, run_bodies=False):
         if not m or nl < 0:
             out.append(cmd[pos:])
             break
-        e = re.compile(r"^[ \t]*" + re.escape(m.group(2)) + r"[ \t]*$", re.M).search(cmd, nl + 1)
+        # the body ends at the line that IS the delimiter, as bash reads it: only `<<-` drops leading TABS (OCR 26/10 r2: "  EOF" ended it
+        # here, so a `cd /tmp` the body held read as a command of the line and a redirect after the heredoc was judged in /tmp)
+        e = re.compile(r"^" + (r"\t*" if m.group(0).startswith("<<-") else "") + re.escape(m.group(2)) + r"$", re.M).search(cmd, nl + 1)
         out.append(cmd[pos:nl + 1])
         bodies.append(cmd[nl + 1:e.start() if e else len(cmd)])
         pos = e.end() if e else len(cmd)

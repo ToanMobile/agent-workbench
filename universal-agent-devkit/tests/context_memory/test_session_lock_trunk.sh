@@ -268,6 +268,12 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "worktree: W=<main> <nl> bash <<EOF <nl>   EOF <nl> W=<wt> <nl> EOF <nl> git -C $W commit (an indented EOF ends nothing)", w, B(f"W={m}\nbash <<EOF\n  EOF\nW={w}\nEOF\ngit -C $W commit -qm x")),
     (False, "worktree: cat <<EOF <nl>   EOF <nl> git -C <main> commit <nl> EOF (all of it is data)", w, B(f"cat <<EOF\n  EOF\ngit -C {m} commit -qm x\nEOF")),
     (False, "worktree: W=<main> <nl> bash <<-EOF … <tab>EOF <nl> W=<wt> <nl> git -C $W commit (<<- ends at a tab-indented EOF)", w, B(f"W={m}\nbash <<-EOF\necho hi\n\tEOF\nW={w}\ngit -C $W commit -qm x")),
+    # vòng 2, cùng lỗi P2-7 ở hooks/shell_writes.py (quét redirect / file write): dòng thân "  EOF" làm `cd /tmp` trong thân thành lệnh
+    # của dòng ngoài, nên redirect sau heredoc được xét ở /tmp thay vì main
+    (True, "main: cat <<EOF <nl>   EOF <nl> cd /tmp <nl> EOF <nl> echo > README.md (the cd is data)", m, B("cat <<EOF\n  EOF\ncd /tmp\nEOF\necho x > README.md")),
+    (True, "main: bash <<EOF <nl>   EOF <nl> cd /tmp <nl> EOF <nl> echo > README.md (the cd ran in a child)", m, B("bash <<EOF\n  EOF\ncd /tmp\nEOF\necho x > README.md")),
+    (False, "main: cat <<EOF <nl>   EOF <nl> echo > README.md <nl> EOF (all of it is data)", m, B("cat <<EOF\n  EOF\necho x > README.md\nEOF")),
+    (True, "main: cat <<-EOF … <tab>EOF <nl> echo > README.md (<<- ends at a tab-indented EOF)", m, B("cat <<-EOF\nx\n\tEOF\necho x > README.md")),
     # 25/10 lỗ 2: `cd` trong $( ) / backtick / ( ) / <( ) chạy ở subshell, không dời thư mục của lệnh ngoài - walk đi theo nó nên gate chạy ở
     # main được coi như chạy ở worktree. cd ở độ sâu > 0 làm thư mục thành "không biết" (fail closed)
     (True, "main: x=$(<nl>cd <wt><nl>); gate (the cd runs in the substitution's subshell)", m, B(f"x=$(\ncd {w}\n); {G}")),
