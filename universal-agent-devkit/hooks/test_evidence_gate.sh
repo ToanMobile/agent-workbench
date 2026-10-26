@@ -644,7 +644,12 @@ def parse_suites(path):
             if tc.find("failure") is not None or tc.find("error") is not None:
                 failing.append(f"{tc.attrib.get('classname','?')}#{tc.attrib.get('name','?')}")
         def g(k, _n=node):
-            return int(_n.attrib.get(k, "0") or 0)
+            # #427: số đếm hỏng (`failures="x"`, 5 000 chữ số) từng ném ValueError ra ngoài, hook thoát 1 và cho qua. Nay đóng: tests
+            # hỏng là 0 (chưa chạy), failures / errors / skipped hỏng là 1 (không phải pass).
+            try:
+                return int(_n.attrib.get(k, "0") or 0)
+            except ValueError:
+                return 0 if k == "tests" else 1
         out.append({
             "path": path, "mtime": mtime,
             "name": node.attrib.get("name", ""),
@@ -726,7 +731,9 @@ GATE_COUNT_RX = re.compile(r"(?:Test hồi quy đạt|Regression tests passed)\s
 ANSI_RX = re.compile(r"\x1b\[[0-9;]*m")
 def is_test_runner(cmd):
     return _is_test_runner(cmd)
-DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)*(?:test_[\w.-]+|\$\{?\w+\}?)\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
+# `tests/a/test_$t.sh` (tên ghép từ biến vòng lặp) cũng là suite kit (#427 P1-4): vòng `for t in x y; do bash tests/a/test_$t.sh; done`
+# phải theo luật đếm dòng tóm tắt bên dưới, không đi nhánh runner thường (xanh khi không thấy dấu hỏng).
+DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)*(?:test_[\w.${}-]+|\$\{?\w+\}?)\.sh\b|\b\w*contract_test\.sh\b|\brun_impacted\.sh\b|\bagent-kit\s+test\b")
 # Their check names may carry FAIL / REJECT / ERROR in capitals ("✔ REJECT on secrets"), so
 # the verdict is the summary: red on "N failed/FAILED", "N deviating" (N > 0), "❌" or a "✖"
 # line ("✘" too: test_repo_consistency, test_uninstall, test_restore_old print their failures with it);
@@ -735,7 +742,9 @@ DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)*(?:test_[\w.-]+|\$\{?\w+\}?)\
 # with 30 000 blank lines took 18-68 s, past the Stop hook's 30 s cap (2026-10-25 review of af339645, P3; section P of the test).
 DEVKIT_SUITE_RED = re.compile(r"\b[1-9]\d*\s+(failed|FAILED|deviating)\b|❌|^[^\S\n]*[✖✘] ", re.M)
 # "not all tests passed in $d" is no pass summary (2026-10-26 review of 9c1a3cb3, R2-M1): `(?<!not )` before the two "all … passed" forms.
-DEVKIT_SUITE_GREEN = re.compile(r"(?<!not )(?:all (checks )?passed|ALL [\w ,-]*PASSED)|\b0 deviating\b|: all passed", re.I)
+# `ALL … PASSED` có trần 200 ký tự (#427 R4): `[\w ,-]*` không trần chạy từ mỗi chữ "all" tới cuối dòng, một dòng 200 KB "all all …" là bậc
+# hai. Dòng tóm tắt thật ngắn; dài hơn thì không còn là tóm tắt (chặn thêm, không mở).
+DEVKIT_SUITE_GREEN = re.compile(r"(?<!not )(?:all (checks )?passed|ALL [\w ,-]{0,200}PASSED)|\b0 deviating\b|: all passed", re.I)
 # A command is a runner only in the segment that actually runs it. `&&` / `||` / `;` / a newline split segments
 # (not inside quotes, or inside for/while/until/if/case … done/fi/esac). A reader (echo, grep, git,
 # python -c, …) that merely names a suite or the gate is not a run. `cd` / a `$VAR` expansion still
@@ -966,15 +975,125 @@ def _direct_bash_kit(seg):
     script = next((w for w in words[1:] if not w.startswith("-")), "")
     return bool(_KIT_BASH_FILE.search(script))
 
-def _simple_runner(seg):
+def _subshell_body(seg):
+    """Phần trong của `( … )` mở đầu segment (subshell), hoặc None."""
+    s = seg.lstrip()
+    if not s.startswith("("):
+        return None
+    depth, quote, i = 0, None, 0
+    while i < len(s):
+        c = s[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in "\"'":
+            quote = c
+        elif c == "\\":
+            i += 2
+            continue
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return s[1:i]
+        i += 1
+    return None
+
+_INTERP = re.compile(r"(?:ba|z)?sh|python\d?(?:\.\d+)?|node")
+# File test: dưới tests/; hay tên test_* / *_test ở một thư mục nhóm test (`runtests.sh gates/test_x.sh`) hoặc không thư mục. Không phải
+# `hooks/test_evidence_gate.sh` (một hook mang tên test_). Chỉ xét trong segment mà _base_runner đã thấy.
+_TEST_ARG = re.compile(r"(?:^|/)tests?/(?:[^/\s]+/)*[^/\s]*test[^/\s]*\.(?:sh|py|m?js)$"
+                       r"|(?:(?:^|/)(?:gates|verification|context_memory|worktree_git|installer|super-board|spec|__tests__)/|^)"
+                       r"(?:test[-_][^/\s]*|[^/\s]*[_.]test)\.(?:sh|py|m?js)$")
+
+def _argv_test_run(words):
+    """Một trình thông dịch (bash/sh/zsh/python/node, không phải -c / -n / -m / stdin) hay một script chạy theo đường dẫn nhận một file
+    test làm đối số, ở bất kỳ vị trí nào của argv: `bash universal-agent-devkit/tests/x/test_y.sh | tail -5`, `bash "$K/tests/gates/$t.sh"`,
+    `bash $S/run.sh tests/x/test_y.sh 80`, `python3 runtests.py r3 tests/gates/test_x.sh`, `perl -e 'alarm 400; exec @ARGV' bash
+    tests/…/test_x.sh`. Chỉ để phân loại (như trước #427 với dạng này), không gắn mã thoát. `pip install`, `touch`, `chmod`, `cp`,
+    `shellcheck`, `[ -f … ]` không có trình thông dịch nên không thuộc đây."""
+    for k, w in enumerate(words):
+        a = _argv0(w)
+        if not (_INTERP.fullmatch(a) or (k == 0 and re.match(r"[\w.$~/{}-]*/[^/]+\.(?:sh|py)$", w) and not w.startswith("-"))):
+            continue
+        if a in ("bash", "sh", "zsh") and _bash_runs_command_string(words[k:]):
+            continue
+        if a.startswith("python") and any(x in ("-", "-m") or x.startswith("-c") for x in words[k + 1:k + 4]):
+            continue
+        if a == "node" and any(x in ("-", "-e", "-p", "--eval", "--print") for x in words[k + 1:k + 4]):
+            continue
+        if any(_TEST_ARG.search(x) or DEVKIT_SUITE_RX.search(x) for x in words[k + 1:]):
+            return True
+    return False
+
+def _command_string(words):
+    """Chuỗi lệnh của `bash -c '…'` / `sh -lc "…"` / `zsh -c …`, hoặc None."""
+    if not words or _argv0(words[0]) not in ("bash", "sh", "zsh"):
+        return None
+    for j, w in enumerate(words[1:], 1):
+        if not w.startswith("-") or w == "--":
+            return None
+        if not w.startswith("--") and "c" in w[1:]:
+            return words[j + 1] if j + 1 < len(words) else None
+    return None
+
+def _wrapped_runner(words):
+    """`uv run --frozen --extra dev pytest -q`, `npx -y vitest run`: runner sau option (và giá trị option) của wrapper, mà _head_starts
+    không bỏ qua. Chỉ để phân loại."""
+    a = _argv0(words[0]) if words else ""
+    i = (2 if (a in ("uv", "poetry", "pipenv", "pdm", "hatch") and words[1:2] == ["run"]) or (a == "pnpm" and words[1:2] == ["exec"])
+         else 1 if a in ("npx", "bunx") else 0)
+    if not i:
+        return False
+    for j in range(i, len(words)):
+        w = words[j]
+        if not w.startswith("-") and TEST_RUNNER_RX.match(" ".join([_argv0(w)] + words[j + 1:])):
+            return True
+        if not w.startswith("-") and not (j > i and words[j - 1].startswith("-")):
+            return False       # w is no option and no option's value: the command proper starts at w, and it is no runner
+    return False
+
+def _base_runner(seg):
+    """Luật phân loại trước #427 (tên runner ở bất kỳ đâu trong segment): tập runner mới là tập con của nó."""
     words = _strip_assigns(_words(seg))
     if not words or _is_reader(words) or _is_python_c(words):
         return False
-    if _direct_bash_kit(seg):
+    return bool(_direct_bash_kit(seg) or TEST_RUNNER_RX.search(seg) or SCRIPT_RUNNER_RX.search(seg) or GATE_RUN_RX.search(seg)
+                or _invokes_gate_words(words) or any(c in seg for c in MATRIX_CMDS))
+
+def _simple_runner(seg):
+    # P1-2 (#427): runner chỉ là runner khi nó LÀ lệnh của segment (neo đầu lệnh, sau wrapper: _runs_as_command), không phải khi tên nó
+    # nằm đâu đó trong segment. `pip install -q pytest`, `touch pytest.ini`, thân heredoc nhắc pytest không chạy test nào: trước đây là
+    # lần chạy XANH (kèm một dòng "N passed" ở đâu đó) hoặc nửa ĐỎ của check 7 (khi lệnh lỗi). Thân heredoc là dữ liệu: chỉ đọc dòng lệnh.
+    # Đo trên 148 182 lệnh Bash thật (30 ngày): các dạng dưới đây giữ lại những lần chạy thật mà neo đầu lệnh làm mất. Chỉ thu hẹp: một
+    # segment là runner khi luật cũ (_base_runner, tìm ở bất kỳ đâu) cũng nói vậy; lần chạy thật mà luật cũ không thấy (`bash test_x.sh`
+    # trong tests/gates, `bash -x tests/…`) vẫn không thấy.
+    if not _base_runner(seg):
+        return False
+    line0 = seg.split("\n", 1)[0]
+    if _HEREDOC_RX.search(line0):
+        seg = line0
+    seg = re.sub(r"^\s*time(?:\s+-p)?\s+", "", seg)       # từ khoá `time` của shell: `time (bash …)`, `time VAR=x cmd`
+    # `caffeinate -dimsu env UNITY_TIMEOUT=1200 bash …/unity-batch.sh playmode`, `nohup …`: chỉ để phân loại (mã thoát vẫn coi là bị che)
+    seg = re.sub(r"^\s*(?:(?:caffeinate(?:\s+-[a-zA-Z]+(?:\s+\d+)?)*|nohup)\s+)+", "", seg)
+    words = _strip_assigns(_words(seg))
+    if not words or _is_reader(words) or _is_python_c(words):
+        return False
+    if _direct_bash_kit(seg) or GATE_RUN_RX.search(seg) or _invokes_gate_words(words):
         return True
-    if TEST_RUNNER_RX.search(seg) or SCRIPT_RUNNER_RX.search(seg) or GATE_RUN_RX.search(seg) or _invokes_gate_words(words):
+    if _runs_as_command(seg) or _argv_test_run(words) or _wrapped_runner(words):
         return True
-    return any(c in seg for c in MATRIX_CMDS)
+    if any(re.sub(r"^(?:\s*[A-Za-z_]\w*=\S*\s+)+", "", seg.lstrip()).startswith(c) for c in MATRIX_CMDS):
+        return True
+    # `(cd sub && python3 -m pytest -q)`, `bash -c 'cd x && pytest'`: xét lại từng segment bên trong
+    inner = _subshell_body(seg)
+    if inner is None:
+        inner = _command_string(words)
+    return inner is not None and any(_segment_is_runner(p) for p in _split_segments(inner))
 
 def _compound_body(seg):
     m = re.search(r"\bdo\b(.*)\bdone\b", seg, re.S) or re.search(r"\bthen\b(.*)\bfi\b", seg, re.S)
@@ -1031,10 +1150,11 @@ def _command_is_suite(cmd):
 # bare words only in the capitals runners print (FAIL, FAILED, ERROR) — a passing test
 # named "shows error message" or node's "ℹ fail 0" summary must not read as red.
 # NUnit 3 (Unity) prints its verdict as `<test-run … failed="N">`: red only when N > 0.
+# Thuộc tính của thẻ không chứa `<` (#427 R4): `[^>\n]*` từ mỗi `<test-run` của một dòng `<test-run <test-run …` chạy tới cuối dòng.
 RUNNER_FAIL_RX = re.compile(
     r"(?i:\b[1-9]\d*\s+(failed|failing|failures?|errors?)\b)|(?i:\btests?:\s+[1-9]\d*\s+failed)|"
     r"(?i:^[^\S\n]*(?:[#ℹ*•-]\s*)?(fail|failures?|errors?)\s*[:=]?\s*[1-9]\d*\b)|"
-    r"<test-run\b[^>\n]*\sfailed=\"[1-9]\d*\"|"
+    r"<test-run\b[^<>\n]*\sfailed=\"[1-9]\d*\"|"
     # JUnit XML summary printed by the agent (`<testsuite … failures="5">`) after sending the
     # runner's own output to a log (GeelyEx2 2026-09-28: every real red read as green).
     r"\b(?:failures|errors)=\"[1-9]\d*\"|"
@@ -1049,6 +1169,11 @@ PM_RUN_EXIT_RX = re.compile(r"^exit=(-?\d+|null)", re.M)
 # command (no pipe, `&`, `;` or loop: `$?` would be the pipe's last command, the background launch or the last iteration), the NEXT
 # segment is `echo "<label>=$?"`, and the label is printed exactly once.
 _ECHO_RC_RX = re.compile(r"""echo\s+(["']?)([A-Za-z_][\w.-]*)=\$\?\1\s*$""")
+# #427: hai cách in mã thoát nữa, chỉ dùng cho ĐỎ (mã 0 của chúng không là xanh: một dòng "rc=0" sau `pytest | tail -1` không nói gì về
+# tóm tắt mà kết quả đang đưa ra). `run | tail -N; echo "rc=${PIPESTATUS[0]}"` (zsh: `${pipestatus[1]}`) in mã của chặng ĐẦU của pipe;
+# `run > log 2>&1; echo $?` không nhãn, là segment CUỐI, in mã ở dòng không trống cuối cùng.
+_ECHO_PS_RX = re.compile(r"""echo\s+(["']?)([A-Za-z_][\w.-]*)=\$\{(?:PIPESTATUS\[0\]|pipestatus\[1\])\}\1\s*$""")
+_BARE_ECHO_RC = re.compile(r"""echo\s+(["']?)\$(?:\?|\{\?\})\1\s*$""")
 # A positive pass summary of a common runner (pytest / jest / vitest "N passed", mocha "N passing", cargo, go, unittest, XCTest, rspec,
 # phpunit, dotnet, xcodebuild): what a masked run below needs for a green when its exit code cannot be bound.
 RUNNER_PASS_RX = re.compile(r"\b[1-9]\d*\s+(?:tests?\s+)?(?:passed|passing)\b|\btest result: ok\b"
@@ -1064,10 +1189,24 @@ MVN_RED_RX = re.compile(r"\bTests run: \d+, Failures: (?:[1-9]|\d+, Errors: [1-9
 GRADLE_PASS_RX = re.compile(r"^[^\S\n]*BUILD SUCCESSFUL\b", re.M)
 _GRADLE_RX = re.compile(r"(?:^|[\s/])gradlew?(?=\s|$)")
 # NUnit 3 (Unity) `<test-run … passed="N" failed="0" …>` printed after the run (`Unity … -runTests …; cat results.xml`).
-NUNIT_PASS_RX = re.compile(r"<test-run\b(?=[^>\n]*\spassed=\"[1-9]\d*\")(?=[^>\n]*\sfailed=\"0\")")
+NUNIT_PASS_RX = re.compile(r"<test-run\b(?=[^<>\n]*\spassed=\"[1-9]\d*\")(?=[^<>\n]*\sfailed=\"0\")")   # `<`: như RUNNER_FAIL_RX (#427 R4)
+
+def _late_blocks(txt, segs, idxs):
+    """#427 item 8: một runner trong idxs là mocha / node --test / go test qua `tail` mà kết quả thiếu thứ thay được kết luận đã bị cắt:
+    `go test ./... | tail -N` cho thấy vài package 'ok', không phải mọi package, nên cần segment sau in `${PIPESTATUS[0]}` = 0;
+    `node --test | tail -N` cần đúng tóm tắt của node ('ℹ pass N' rồi 'ℹ fail 0'). mocha: 'N passing' của nó đứng ngay trước 'M failing'
+    nên thấy được là đủ; khi có segment khác sau nó thì _hides đã chặn. Kết quả ít hơn N dòng: tail không cắt gì."""
+    for i in idxs:
+        for p in (_runner_pieces(segs[i]) or [segs[i]]):
+            kind = _tail_cut(p, txt)
+            if (kind == "go" and not (p is segs[i] and _ps_zero(segs, i, txt))) or (kind == "node" and not NODE_PASS_RX.search(txt)):
+                return True
+    return False
 
 def _pass_summary(txt, segs, idxs):
     """txt holds a pass summary that can speak for the runner segments idxs, whose exit codes are not bound."""
+    if _late_blocks(txt, segs, idxs):
+        return False
     if (RUNNER_PASS_RX.search(txt) or NODE_PASS_RX.search(txt) or NUNIT_PASS_RX.search(txt)
             or (MVN_PASS_RX.search(txt) and not MVN_RED_RX.search(txt))):
         return True
@@ -1151,7 +1290,84 @@ def _hidden(segs, i, txt):
 _CLOSE_KW = re.compile(r"\b(?:done|fi|esac)\b")
 _PART_KW = re.compile(r"^(?:(?:do|then|else|elif)\b\s*)+")
 _QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
-_QUIET_COMMIT = re.compile(r"\s*git\s+commit\b[^|;&]*\s-(?:-quiet\b|[a-zA-Z]*q)")   # `git commit -q` / `-qam` / `--quiet`: no output
+# Option toàn cục của git trước subcommand (#427 item 9): `git -C <repo> commit -q`, `git -c k=v commit -q` vẫn là commit im lặng.
+_GIT_GLOBAL = r"(?:\s+(?:-[Cc]\s+\S+|--[\w-]+(?:=\S+)?|-[pP]))*"
+_QUIET_COMMIT = re.compile(r"\s*git" + _GIT_GLOBAL + r"\s+commit\b[^|;&]*\s-(?:-quiet\b|[a-zA-Z]*q)")   # `git commit -q` / `-qam` / `--quiet`: no output
+# Lệnh in subject của commit ra kết quả: `git commit -q -m "12 passing"; git log --oneline -1` in lại chữ pass đó (#427 item 9).
+_PRINTS_LOG = re.compile(r"\s*git" + _GIT_GLOBAL + r"\s+(?:log|show|reflog|shortlog|whatchanged)\b")
+_GIT_COMMIT = re.compile(r"\s*git" + _GIT_GLOBAL + r"\s+commit\b")
+# Lệnh ghi lên GitHub, chỉ in URL chứ không in --body: `gh pr comment 5 --body "… 12 passed"`. `gh pr view` in body nên không thuộc đây.
+_GH_WRITE = re.compile(r"\s*gh\s+(?:pr|issue)\s+(?:comment|create|edit)\b")
+_DEV_OUT = re.compile(r">>?[ \t]*/dev/(?:stdout|stderr|tty|fd/\d+)\b")   # ghi vào file nhưng file đó lại là kết quả
+
+def _silent(t):
+    """Segment t không in gì vào kết quả (#427 item 9): dòng lệnh của nó đẩy stdout ra file hay /dev/null (`cat > f <<EOF … EOF`,
+    `printf … > /dev/null`; thân heredoc là dữ liệu, không xét), hoặc là `gh pr|issue comment|create|edit`. Không tính: `>&2`,
+    `> /dev/stderr`, `/dev/tty`, `/dev/fd/N` (vẫn vào kết quả), lệnh nhiều dòng không phải heredoc."""
+    head = _heredoc_head(t)
+    if head is None:
+        return False
+    h = _QUOTED.sub("", head)
+    return not _DEV_OUT.search(h) and bool(_STDOUT_AWAY.search(h) or _GH_WRITE.match(h))
+
+def _heredoc_head(t):
+    """Dòng lệnh của segment t: cả t khi nó một dòng; khi nhiều dòng, dòng đầu nếu phần còn lại đúng là thân của MỘT heredoc mở trên dòng
+    đó (dòng cuối là dấu kết), else None. INSTINCT-045: máy quét không phải shell, nghi ngờ thì không bỏ phần nào."""
+    head = t.split("\n", 1)[0]
+    if "\n" not in t.strip():
+        return head
+    hd = _HEREDOC_RX.findall(head)
+    last = t.rstrip("\n").rsplit("\n", 1)[-1]
+    if len(hd) != 1 or (last.lstrip("\t") if hd[0][0] else last) != hd[0][2]:
+        return None
+    return head
+
+def _pipe_head(seg):
+    """Chặng đầu của một pipe đơn (`run 2>&1 | tail -3`), cả lệnh khi nó là một lệnh đơn; None khi có `;`, `&`, xuống dòng, vòng lặp."""
+    flat = _QUOTED.sub(lambda q: "x" * len(q.group(0)), seg)
+    flat = re.sub(r"\|[ \t]*\n", lambda q: q.group(0).replace("\n", " "), flat)     # `run |` xuống dòng `tail -3`: vẫn là một pipe
+    if _COMPOUND.match(flat) or re.search(r"[;\n]|&", re.sub(r"\d*>&\d+|&>>?|>&", lambda q: " " * len(q.group(0)), flat)):
+        return None
+    k = flat.find("|")
+    return seg[:k].strip() if k > 0 else (seg if k < 0 else None)
+
+def _late_summary(stage):
+    """mocha / node --test / go test (#427 item 8): in chi tiết lỗi SAU dòng 'N failing' / 'ℹ fail N', go test nhiều package không có
+    tóm tắt chung, nên `| tail -N` của chúng không giữ được kết luận. Trả về loại runner hoặc None. go test chỉ khi nhiều package
+    (`./...`): một package in dòng `ok` / `FAIL <pkg>` của nó ở CUỐI (`go test -count=1 . | tail -2`: dạng thường gặp nhất trong lệnh thật)."""
+    words = _strip_assigns(_words(stage))
+    for i in _head_starts(words):
+        h = words[i:]
+        if not h:
+            break
+        a = _argv0(h[0])
+        if a == "mocha":
+            return "mocha"
+        if a == "node" and "--test" in [w.split("=", 1)[0] for w in h[1:]]:
+            return "node"
+        if a == "go" and h[1:2] == ["test"]:
+            return "go" if any("..." in w for w in h[2:]) else None
+    return None
+
+_TAIL_N = re.compile(r"\|\s*tail\b(?:\s+(?:-n\s*|-)(\d+))?")
+
+def _tail_cut(seg, txt=None):
+    """Loại runner (mocha / node / go) khi segment là pipe đơn chạy nó qua `tail -N`, else None. Với txt: kết quả có ít hơn N dòng thì
+    tail không cắt gì (cả output đã hiện), không tính."""
+    head = _pipe_head(seg)
+    m = _TAIL_N.search(_QUOTED.sub("", seg)) if head is not None and head is not seg else None
+    if m is None or (txt is not None and len(txt.splitlines()) < int((m.group(1) or "10")[:7])):
+        return None
+    return _late_summary(head)
+
+# `trap … EXIT` (#427 E4): mã thoát của tool là của trap, không phải của runner, theo cả hai chiều (`trap 'exit 0' EXIT` giấu ĐỎ,
+# `trap 'exit 1' EXIT` làm giả ĐỎ). Ở vị trí lệnh, đâu cũng được trong lệnh; chữ trong ngoặc là dữ liệu, thân heredoc cũng vậy khi
+# _heredoc_head chắc chắn về nó (`cat > t.sh <<'EOF'` chép một test có `trap 'rm -rf "$TMP"' EXIT`, rồi chạy nó: lệnh thật, 30 ngày qua).
+# Có trap mà tool lỗi: không ĐỎ, cũng không XANH (None).
+_EXIT_TRAP = re.compile(r"(?:^|[;&|({\n]|\b(?:do|then|else)\b)[^\S\n]*trap[^\S\n]+[^;&|\n]*?(?<![\w-])(?:SIG)?(?:EXIT|0)(?![\w-])", re.I)
+
+def _exit_trapped(cmd):
+    return any(_EXIT_TRAP.search(_QUOTED.sub("", _heredoc_head(s) or s)) for s in _command_segments(cmd))
 
 def _compound_parts(seg, seps=None):
     """(pieces, tail) of a compound: the pieces of its condition and body with do / then / else / elif cut (a nested compound stays one
@@ -1217,7 +1433,8 @@ def _cuts_summary(seg):
     if _single_command(seg):
         return False
     body = re.sub(r"\d*>&\d+|&>>?\s*\S+|\d?>>?\s*\S+", " ", _QUOTED.sub("", seg))     # redirections out, quoted text out
-    return bool(re.search(r"[;&\n]", body)) or not all(_KEEPS_TAIL.fullmatch(x) for x in body.split("|")[1:])
+    return (bool(re.search(r"[;&\n]", body)) or not all(_KEEPS_TAIL.fullmatch(x) for x in body.split("|")[1:])
+            or bool(_tail_cut(seg)))      # #427 item 8: `tail -N` của mocha / node --test / go test không giữ kết luận
 
 def _hides(segs, i):
     """Runner segment i printed no summary of its own into the result: its stdout went to a file (_away), or its summary may have been
@@ -1233,10 +1450,19 @@ def _hides(segs, i):
     # Uncut pipe: any later segment that is not a runner and carries a pass word stands in for it (`mocha | tail -3; echo / print /
     # python -c … "12 passing"`, `&& git commit -am "… 12 passing"`: git prints the subject). Another runner after it prints its own
     # summary (`a | tail -3; b | tail -3`: 18 of 40 real kit commands were blocked); `git commit -q` prints nothing.
+    # #427 item 9: một segment im lặng (_silent: ghi ra file, /dev/null, `gh pr comment`) không đứng thay được; `git log` / `git show` sau
+    # một commit trong cùng lệnh mà message có chữ pass in lại subject đó nên đứng thay, kể cả khi commit là `-q`. Khi tóm tắt bị cắt (cut)
+    # mọi segment sau vẫn tính.
+    later = segs[i + 1:]
     return piped and any(not (_STATUS_ECHO.match(t) and (_STATUS_READ.search(t) or _ZSH_PIPESTATUS.search(t)))
-                         and (cut or ((RUNNER_PASS_RX.search(t) or NODE_PASS_RX.search(t)) and not _segment_is_runner(t)
-                                      and not _QUIET_COMMIT.match(_QUOTED.sub('', t))))
-                         for t in segs[i + 1:])
+                         and (cut or (not _silent(t)
+                                      and ((_PRINTS_LOG.match(_QUOTED.sub('', t))
+                                            and any(_GIT_COMMIT.match(_QUOTED.sub('', u)) and (RUNNER_PASS_RX.search(u) or NODE_PASS_RX.search(u)
+                                                                                               or DEVKIT_SUITE_GREEN.search(u))
+                                                    for u in later[:k]))
+                                           or ((RUNNER_PASS_RX.search(t) or NODE_PASS_RX.search(t)) and not _segment_is_runner(t)
+                                               and not _QUIET_COMMIT.match(_QUOTED.sub('', t))))))
+                         for k, t in enumerate(later))
 
 def _exit_is_the_runs(cmd, segs, res):
     """The tool's exit code is the runs' own: every runner segment is one simple command run as the command (no pipe, `&`, `!`, or a
@@ -1245,26 +1471,101 @@ def _exit_is_the_runs(cmd, segs, res):
     second line read as green with no failure marker in sight (2026-10-26 OCR review round 2, P1-1)."""
     if not res:
         return False
-    seps = []
-    _split_segments(_expand_vars(cmd, _env_for(cmd)), seps)
+    seps = _seps(cmd)
     first = res[0][0]
     return (all(_single_command(segs[i]) and _runs_as_command(segs[i]) for i, _ in res)
-            and all(s == "&&" for s in seps[first:]) and (first == 0 or seps[first - 1] != "||"))
+            and all(s == "&&" for s in seps[first:]) and (first == 0 or seps[first - 1] != "||")
+            and not _exit_trapped(cmd))          # #427 E4
+
+def _seps(cmd):
+    seps = []
+    _split_segments(_expand_vars(cmd, _env_for(cmd)), seps)
+    return seps
+
+def _own_exit(cmd, segs, i, seps):
+    """Mã thoát của tool mang được lỗi của runner segment i (#427 R1 / P1-4): một lệnh đơn chạy runner như lệnh của nó, sau nó chỉ `&&`,
+    ngay trước nó không là `||`, không có trap EXIT. Còn lại (`pytest || true; bash kit`, `bash x; bash y`, `x | tail -3`) là bị che."""
+    return (_single_command(segs[i]) and (_runs_as_command(segs[i]) or _direct_bash_kit(segs[i])) and all(s == "&&" for s in seps[i:])
+            and (i == 0 or seps[i - 1] != "||") and not _exit_trapped(cmd))
+
+_FOR_LIST = re.compile(r"\s*for\s+[A-Za-z_]\w*\s+in\s+([^;\n]*?)\s*[;\n]\s*do\b")
+# Dòng tóm tắt của một suite kit khi đếm (#427 P1-4), ngoài DEVKIT_SUITE_GREEN: "uninstall: 9 passed, 0 failed", "PASS test_x", "ALL PASS",
+# "ALL OK", "pass=5 fail=0", "✅ test_x: passed", "test_x: PASS". Không phải dòng của từng ca: "ok: …", "✅ ca 1", "OK", "PASS: ca 1".
+# Chỉ để đếm, không là xanh.
+_KIT_SUMMARY_EXTRA = re.compile(r"^[\w ./-]+:[^\S\n]+[1-9]\d*[^\S\n]+(?:passed|ok),[^\S\n]+0[^\S\n]+(?:failed|deviating)\b"
+                                r"|^[^\S\n]*ALL[^\S\n]+(?:PASS(?:ED)?|OK)\b|^[^\S\n]*PASS[^\S\n]+test[\w.-]*[^\S\n]*$|\bpass=[1-9]\d*[^\S\n]+fail=0\b"
+                                r"|^[^\S\n]*✅[^\n]*:[^\S\n]+passed\b|:[^\S\n]+PASS(?:ED)?[^\S\n]*$", re.M)
+_PS_LABEL = re.compile(r"([A-Za-z_][\w.-]*)=\$\{(?:PIPESTATUS\[0\]|pipestatus\[1\])\}")
+
+def _runs_kit_file(seg):
+    """Segment chạy CHÍNH một file suite kit (`bash tests/a/test_x.sh 2>&1 | tail -3`, `./tests/a/test_x.sh`, `agent-kit test`), hay là vòng
+    lặp: thứ in ra dòng tóm tắt kit của riêng nó. Script trợ giúp nhận đường dẫn test làm đối số (`python3 patch.py tests/…/test_x.sh`,
+    `bash $S/run.sh tests/…`) thì không: không đòi nó một dòng tóm tắt. ponytail: script trợ giúp chết im lặng vẫn mượn được tóm tắt của
+    suite kit khác; muốn chặt thì phải biết script đó chạy gì."""
+    if _COMPOUND.match(seg):
+        return True
+    head = _pipe_head(seg)
+    words = _strip_assigns(_words(re.sub(r"^\s*time(?:\s+-p)?\s+", "", head if head is not None else seg)))
+    if words[:2] == ["agent-kit", "test"] or (words and DEVKIT_SUITE_RX.search(words[0])):
+        return True
+    for k, w in enumerate(words):
+        if _argv0(w) in ("bash", "sh", "zsh") and not _bash_runs_command_string(words[k:]):
+            script = next((x for x in words[k + 1:] if not x.startswith(("-", "+"))), "")
+            return bool(DEVKIT_SUITE_RX.search(script))
+    return False
+
+def _kit_count(seg):
+    """Số dòng tóm tắt kit mà segment kit nợ kết quả (#427 P1-4): 1; vòng `for t in a b c; do … done` với danh sách chữ trơn thì một dòng
+    cho mỗi chữ × mỗi lần chạy kit trong thân. ponytail: glob, $VAR, $( ), while / until / if / case không biết số vòng nên tính 1; muốn
+    chặt hơn thì phải đếm file khớp glob trên đĩa."""
+    if not _COMPOUND.match(seg):
+        return 1
+    m = _FOR_LIST.match(seg)
+    if not m or not m.group(1).strip() or re.search(r"[*?\[$`{(]", m.group(1)):
+        return 1
+    body = sum(_kit_count(p) for p in _compound_parts(seg)[0] if _is_suite_seg(p) and _runs_kit_file(p))
+    return len(_words(m.group(1))) * max(1, body)
+
+def _label_code(m, txt, segs, ran=False):
+    """0 / 1 (không 0) / None: dòng `<label>=N` của echo m in ra đúng một lần, và chỉ một echo của lệnh in nhãn đó ở đầu dòng (#427: hai
+    `echo "exit=…"`, một in mã của lệnh khác, một in rỗng vì `${PIPESTATUS[0]}` của zsh, đã gắn nhầm mã). ran: mã 126 / 127 (lệnh không
+    chạy được, `timeout: command not found`) không phải mã của runner: None."""
+    if not m or sum(len(re.findall(r"\b(?:echo|printf)\s+[\"']?" + re.escape(m.group(2)) + r"=", s)) for s in segs) != 1:
+        return None
+    hits = re.findall(r"(?m)^[^\S\n]*" + re.escape(m.group(2)) + r"=(\d+)\s*$", txt)
+    # Zero or not, read as text: int() of a 5 000-digit `rc=111…` raised past Python's 4 300-digit limit and ended the transcript
+    # scan (2026-10-26 review of 9c1a3cb3, P3a). Only 0 / not 0 is used.
+    if len(hits) != 1 or (ran and hits[0].lstrip("0") in ("126", "127")):
+        return None
+    return 0 if hits[0].strip("0") == "" else 1
+
+def _ps_zero(segs, i, txt):
+    """Segment i là pipe của một runner chạy như lệnh, segment sau in `<label>=${PIPESTATUS[0]}` = 0 (#427 item 8)."""
+    head = _pipe_head(segs[i])
+    return (i + 1 < len(segs) and head is not None and _runs_as_command(head)
+            and _label_code(_ECHO_PS_RX.match(segs[i + 1]), txt, segs) == 0)
 
 def _echoed_codes(cmd, txt, binds):
     """(segments, [(i, code)]) for each runner segment i: the exit code its next segment `echo "<label>=$?"` printed when it binds, else
-    None. binds(seg): may this runner segment be bound at all."""
+    None. binds(seg): may this runner segment be bound at all. #427: a non-zero code of `echo "<label>=${PIPESTATUS[0]}"` (the pipe's first
+    stage) or of a bare `echo $?` that ends the command binds too, as red only."""
     segs = _command_segments(cmd)
     out = []
     for i, seg in enumerate(segs):
         if not _segment_is_runner(seg):
             continue
-        m = (_ECHO_RC_RX.match(segs[i + 1])
-             if i + 1 < len(segs) and _single_command(seg) and binds(seg) else None)
-        hits = re.findall(r"(?m)^[^\S\n]*" + re.escape(m.group(2)) + r"=(\d+)\s*$", txt) if m else []
-        # Zero or not, read as text: int() of a 5 000-digit `rc=111…` raised past Python's 4 300-digit limit and ended the transcript
-        # scan (2026-10-26 review of 9c1a3cb3, P3a). Only 0 / not 0 is used.
-        out.append((i, (0 if hits[0].strip("0") == "" else 1) if len(hits) == 1 else None))
+        nxt = segs[i + 1] if i + 1 < len(segs) else None
+        code = None
+        if nxt is not None and _single_command(seg) and binds(seg):
+            code = _label_code(_ECHO_RC_RX.match(nxt), txt, segs)
+            if code is None and i + 2 == len(segs) and _BARE_ECHO_RC.match(nxt):
+                last = next((l.strip() for l in reversed(txt.splitlines()) if l.strip()), "")
+                code = 1 if re.fullmatch(r"[0-9]*[1-9][0-9]*", last) and last.lstrip("0") not in ("126", "127") else None
+        if code is None and nxt is not None:
+            head = _pipe_head(seg)
+            if head is not None and _single_command(head) and binds(head) and _label_code(_ECHO_PS_RX.match(nxt), txt, segs, ran=True) == 1:
+                code = 1
+        out.append((i, code))
     return segs, out
 
 def _echoed_verdict(res):
@@ -1289,8 +1590,11 @@ def runner_state(is_error, txt, pm_run=False, command=""):
             return "gate-green"
         return None
     if command and _command_is_suite(command):
-        if is_error or DEVKIT_SUITE_RED.search(txt):
+        trapped = _exit_trapped(command)
+        if (is_error and not trapped) or DEVKIT_SUITE_RED.search(txt):
             return "red"
+        if is_error:
+            return None          # #427 E4: lỗi của tool là của trap, không là ĐỎ của test, càng không là XANH
         segs, res = _echoed_codes(command, txt, _suite_binds)
         echoed = _echoed_verdict(res)
         if echoed:
@@ -1298,10 +1602,32 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if any(c is None and _hides(segs, i) for i, c in res) and not _exit_is_the_runs(command, segs, res):
             return None          # B2: a run (kit or not) whose output went to a file; the summary in the result is another run's
                                  # (`bash tests/…/test_x.sh > log && tail log`: the tool's exit is the run's, the tail its own log)
+        seps = _seps(command)
+        # R3 (#427): runner không phải kit in lỗi ra kết quả (`FAILED tests/…`, `--- FAIL`, `panicked`): dòng 'all passed' của kit ở
+        # segment khác không gỡ được lỗi đó. Chỉ đọc các dòng không phải của kit, và chỉ khi lệnh có runner không phải kit.
+        if any(not _is_suite_seg(segs[i]) for i, _ in res) and RUNNER_FAIL_RX.search(_not_kit_lines(txt)):
+            return None
         # Another runner of the command that hides its result (`bash tests/…/test_x.sh; pytest > log; echo $?`): the kit summary
         # says nothing of it, only its own pass summary can, on a line that is not the kit's ("uninstall: 9 passed, 0 failed" and a
         # check line "✔ … 5 passed …" are the kit's: 2026-10-26 review of 9c1a3cb3, P1); and the kit part needs its own summary.
-        hidden = [i for i, c in res if c is None and not _is_suite_seg(segs[i]) and _hidden(segs, i, txt)]
+        # R1 (#427): cả runner mà mã thoát của tool không mang (`pytest -q || true; bash kit`, `pytest; bash kit`) cũng cần tóm tắt riêng.
+        hidden = [i for i, c in res if c is None and not _is_suite_seg(segs[i])
+                  and (_hidden(segs, i, txt) or not _own_exit(command, segs, i, seps))]
+        # P1-4 (#427): một suite kit bị che (không cuối, sau nó `;` / `||`, qua pipe, trong vòng lặp) mượn được 'all passed' của suite khác
+        # (`bash x; bash y` khi x chết im lặng). Khi có suite bị che, mỗi lần chạy kit chưa gắn mã (trừ cái đẩy stdout ra file) phải có
+        # dòng tóm tắt của riêng nó, hoặc dòng `<nhãn>=${PIPESTATUS[0]}` = 0 của chính nó: đếm dòng (lấy số lớn hơn của hai loại, không
+        # cộng: một lần chạy in cả hai không được che cho lần chạy khác). Một mã khác 0 như vậy là không xanh.
+        kits = [i for i, c in res if c is None and _is_suite_seg(segs[i]) and _runs_kit_file(segs[i])]
+        if any(not _own_exit(command, segs, i, seps) for i in kits):
+            need = sum(_kit_count(segs[i]) for i in kits if not _away(segs[i]))
+            labels = {lab for i in kits for lab in _PS_LABEL.findall(segs[i] + "\n" + (segs[i + 1] if i + 1 < len(segs) else ""))}
+            codes = [c for lab in labels for c in re.findall(r"(?m)(?:^|\s)" + re.escape(lab) + r"=(\d+)(?!\S)", txt)]
+            if any(c.strip("0") for c in codes):
+                return None
+            lines = txt.splitlines()
+            summaries = sum(1 for line in lines if DEVKIT_SUITE_GREEN.search(line) or _KIT_SUMMARY_EXTRA.search(line))
+            if max(summaries, len(codes)) < need:
+                return None
         if hidden:
             return "green" if (DEVKIT_SUITE_GREEN.search(txt) and _pass_summary(_not_kit_lines(txt), segs, hidden)) else None
         if DEVKIT_SUITE_GREEN.search(txt):
@@ -1336,10 +1662,13 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         return "green"
     segs, res = _echoed_codes(command, txt, _runs_as_command) if command else ([], [])
     compound = any(_COMPOUND.match(segs[i]) for i, _ in res)
-    masked = (any(_hidden(segs, i, txt) for i, _ in res) or (not compound and not _exit_is_the_runs(command, segs, res))
+    trapped = bool(command) and _exit_trapped(command)     # #427 E4: mã thoát của tool là của trap, không tin theo chiều nào
+    masked = (trapped or any(_hidden(segs, i, txt) for i, _ in res) or (not compound and not _exit_is_the_runs(command, segs, res))
               or any(_compound_masks(segs[i]) for i, _ in res if _COMPOUND.match(segs[i])))
-    if is_error or RUNNER_FAIL_RX.search(txt) or ((compound or masked) and DEVKIT_SUITE_RED.search(txt)):
+    if (is_error and not trapped) or RUNNER_FAIL_RX.search(txt) or ((compound or masked) and DEVKIT_SUITE_RED.search(txt)):
         return "red"
+    if is_error:
+        return None              # #427 E4: như nhánh suite kit
     if masked:
         # 2026-10-25 fail-opens: `python3 -m pytest > log 2>&1; echo "rc=$?"` printing rc=1, and a glob loop `for f in tests/a/test_*.sh;
         # do bash "$f" > /dev/null; done`, read as green (no failure marker in the result). A bound non-zero code is red; green needs every
@@ -1348,7 +1677,7 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if echoed:
             return echoed
         unbound = [i for i, c in res if c is None]
-        if any(_hides(segs, i) for i in unbound):
+        if any(_hides(segs, i) for i in unbound) or _late_blocks(txt, segs, unbound):
             return None          # B2 / E2: its summary went to a file or a pipe, what the result holds is another command's
         return "green" if (_pass_summary(txt, segs, unbound) or DEVKIT_SUITE_GREEN.search(txt)) else None
     return "green"
@@ -1389,8 +1718,11 @@ def is_test_path(fp):
     return bool(SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)
                 or "/src/test/" in fp or "/src/androidTest/" in fp or re.search(r"/Tests?/.*\.cs$|Tests?\.cs$", fp))
 
+# #427 R4: `[\w./-]+\.(test|spec)…` không neo, nên từ MỖI vị trí của một dải `a/a/a/…` 200 KB nó chạy tới cuối dải: bậc hai, hook bị giết
+# sau 60 s = cho qua. Chỉ dùng search() (có hay không), nên lookbehind một ký tự là tương đương và tuyến tính. Không cắt input: thiếu một
+# lần khớp làm `not TEST_FILE_IN_OUTPUT.search(…)` đúng, nới RED-check.
 TEST_FILE_IN_OUTPUT = re.compile(
-    r"[\w./-]+\.(test|spec)\.(m|c)?[jt]sx?\b|\btest_\w+\.py\b|\b\w+_test\.(go|py|dart)\b|\b\w+Tests?\.swift\b")
+    r"(?<=[\w./-])\.(test|spec)\.(m|c)?[jt]sx?\b|\btest_\w+\.py\b|\b\w+_test\.(go|py|dart)\b|\b\w+Tests?\.swift\b")
 script_test_idx = {}      # test file path -> transcript position of its last edit
 script_pending = {}       # test file path -> LIFO of (old, new) edits not yet undone
 script_idx_before = {}    # test file path -> [script_test_idx before each edit]
@@ -1421,11 +1753,28 @@ edit_idx_before = {}     # file path -> [test_edit_idx value in force before tha
 # suite but the final one was silently dropped. Measured 2026-07-28: a RED-check
 # that printed two failing suites in one tool_result registered only the second,
 # and the gate accused the first of never having been red.
-RED_XML = re.compile(r'<testsuite[^>\n]*name="([^"\n]+)"[^>\n]*(?:failures|errors)="([1-9]\d*)"')
-RED_XML2 = re.compile(r'<testsuite[^>\n]*(?:failures|errors)="([1-9]\d*)"[^>\n]*name="([^"\n]+)"')
+# #427 R4: thuộc tính của một thẻ không chứa `<` (XML cấm) và có trần 2 000 ký tự: `[^>\n]*` từ mỗi `<testsuite` của một dòng 200 KB
+# `<testsuite <testsuite …` (hay một thẻ hàng nghìn `name="…"`) chạy tới cuối dòng, bậc hai (22-28 s CPU đo 26/10). Thẻ thật ngắn hơn
+# nhiều; thẻ dài hơn chỉ không được tính là ĐỎ ở đây, RED-check chặt hơn.
+RED_XML = re.compile(r'<testsuite[^<>\n]{0,2000}name="([^"\n]+)"[^<>\n]{0,2000}(?:failures|errors)="([1-9]\d*)"')
+RED_XML2 = re.compile(r'<testsuite[^<>\n]{0,2000}(?:failures|errors)="([1-9]\d*)"[^<>\n]{0,2000}name="([^"\n]+)"')
 # Gradle prints "<Class> > <test name> FAILED"; a test name may be long (Vietnamese, backticks),
 # so after " > " the gap runs to the end of the line (GeelyEx2 2026-09-26: a 90-char name was missed).
-RED_GRADLE = re.compile(r'([\w.]*\b\w*Test)\b(?: > [^\n]*?|[^\n]{0,80}?)\bFAILED\b')
+# #427 R4: tên lớp chỉ bắt đầu ở đầu một dải [\w.] (`(?<![\w.])`): không neo thì mọi vị trí trong một dải 200 KB đều thử lại cả dải (bậc
+# hai). Mỗi lần khớp đứng trước FAILED trên cùng dòng, nên chỉ đọc dòng có FAILED, cắt sau chữ FAILED cuối (red_gradle_lines): ` > [^\n]*?`
+# của mỗi ứng viên luôn gặp một FAILED, không quét tới cuối một dòng dài vô ích. Thiếu một lần khớp chỉ làm RED-check chặt hơn.
+RED_GRADLE = re.compile(r'(?<![\w.])([\w.]*\b\w*Test)\b(?: > [^\n]*?|[^\n]{0,80}?)\bFAILED\b')
+_FAILED_WORD = re.compile(r"\bFAILED\b")
+
+def red_gradle_lines(txt):
+    for line in txt.splitlines():
+        if "FAILED" not in line:
+            continue
+        last = None
+        for last in _FAILED_WORD.finditer(line):
+            pass
+        if last is not None:
+            yield from RED_GRADLE.finditer(line, 0, last.end())
 
 def canonical_workflow_script(value):
     if not isinstance(value, str) or not value:
@@ -1555,7 +1904,7 @@ if tp and os.path.exists(tp):
                                 red_idx[m.group(1)] = blk_idx
                             for m in RED_XML2.finditer(txt):
                                 red_idx[m.group(2)] = blk_idx
-                            for m in RED_GRADLE.finditer(txt):
+                            for m in red_gradle_lines(txt):      # #427 R4: chỉ dòng có FAILED, tuyến tính
                                 red_idx[m.group(1)] = blk_idx
                             continue
                         if blk.get("type") != "tool_use":
