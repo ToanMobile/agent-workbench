@@ -34,8 +34,12 @@ def req(port, method, path, host, headers=None):
     c.putheader("Host", host)
     for k, v in (headers or {}).items():
         c.putheader(k, v)
-    c.putheader("Content-Length", "2")
-    c.endheaders(b"{}")
+    # a body only on POST: the server answers a GET without reading it and closes with bytes unread, which sends a RST that can
+    # cut the page off ("Connection reset by peer" in 17-27 of 900 GETs at 3 threads, 0 of 900 without the body; #430)
+    body = b"{}" if method == "POST" else None
+    if body:
+        c.putheader("Content-Length", str(len(body)))
+    c.endheaders(body)
     r = c.getresponse()
     r.read()
     c.close()
