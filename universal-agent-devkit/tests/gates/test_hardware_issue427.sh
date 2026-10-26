@@ -72,6 +72,10 @@ if [ -n "$SCR" ]; then
   # review #427: toán hạng ln có $ nhưng basename đọc được ghi đúng tên đó, không "*" (lệnh thật bị chặn nhầm)
   check 0 "ln -s \"\$(pwd)/x\" $SCRP/y; rm -rf $SCRP/plain/out"
   check 0 "S=$SCRP/red; rm -rf \$S; ln -s \$PWD/node_modules \$S/node_modules 2>/dev/null; cd \$S && node --test tests/; cd /; rm -rf \$S"
+  # review #427 (OCR): dấu / cuối nằm trong một phép mở rộng thì basename là `l}` / `l)`, tên link thật không được ghi: phải là "*"
+  check 2 "ln -s ~ \"\${LNK:-$SCRP/l}\" && rm -rf $SCRP/l/"
+  check 2 "ln -sfn \"\$HOME/.gradle\" \"\${GL:-$SCRP/g}\"; rm -rf $SCRP/g/caches"
+  check 2 "ln -s ~ \"\$(echo $SCRP/l)\" && rm -rf $SCRP/l/"
 fi
 # … trong /tmp ($TMPDIR) và trong build output của project: cùng lỗ đó ngoài thư mục scratch
 check 2 "ln -s ~ $TMP/x && rm -rf $TMP/x/"

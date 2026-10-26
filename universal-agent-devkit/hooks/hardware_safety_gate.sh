@@ -596,8 +596,13 @@ def ln_names(rest, env, repl, xargs):
         v = os.path.expanduser(v) if v.startswith("~") else v
         for x in [v] + braces(v):
             name = os.path.basename(x.rstrip("/"))
-            # Xét trên basename, không trên cả toán hạng: `ln -s $PWD/node_modules $S/node_modules` vẫn biết tên link (review #427)
-            names.add("*" if "$" in name or "`" in name or GLOB.search(name) else name.casefold())
+            # Xét trên basename, không trên cả toán hạng: `ln -s $PWD/node_modules $S/node_modules` vẫn biết tên link (review #427).
+            # Nhưng toán hạng còn `${…:-…}` / `${…/…}`, `$(`, backtick thì dấu / cuối có thể nằm trong phép mở rộng (basename `l}`,
+            # `l)`): tên link thật không biết, là "*" (OCR review #427).
+            # `"$(pwd)/x"`: dấu / cuối nằm sau phép mở rộng cuối cùng, basename `x` vẫn đọc được.
+            opaque = ((re.search(r"\$\(|`|\$\{[^}]*[^\w}]", x) and "/" not in x[max(x.rfind(")"), x.rfind("}"), x.rfind("`")) + 1:])
+                      or re.search(r"[$`{}()]", name))
+            names.add("*" if opaque or GLOB.search(name) else name.casefold())
     if xargs:   # xargs ln: toán hạng lấy từ lệnh trước
         names.add("*")
     return names - {"", ".", ".."}

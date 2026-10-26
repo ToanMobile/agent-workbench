@@ -1256,6 +1256,8 @@ _WRAPPERS = {"xvfb-run": ("-n", "-s", "-f", "-e", "-p", "-w", "--server-num", "-
              "stdbuf": ("-i", "-o", "-e"), "sudo": ("-u", "-g", "-C", "-h", "-p", "-D", "-R", "-T", "-U", "-r", "-t"),
              "exec": ("-a",), "arch": ("-arch", "-e", "-d"), "xcrun": ("--sdk", "--toolchain")}
 _XCRUN_RUN = ("--sdk", "--toolchain", "-v", "--verbose", "-l", "--log", "-n", "--no-cache", "-r", "--run")
+# sudo chỉ với các option này (OCR review #427): `sudo -b` chạy nền và trả 0 ngay, `sudo -l` / `-v` / `-K` không chạy lệnh nào.
+_SUDO_RUN = ("-E", "-H", "-n", "-S", "-k", "-P", "-u", "-g", "--preserve-env", "--non-interactive", "--stdin", "--set-home")
 
 def _head_starts(words):
     """Where the command proper may start: 0, and after each leading wrapper that hands back the wrapped command's own exit code
@@ -1272,6 +1274,8 @@ def _head_starts(words):
             j = i + 1
             while j < len(words) and words[j].startswith("-") and words[j] != "--":
                 if a == "xcrun" and words[j] not in _XCRUN_RUN:
+                    return out
+                if a == "sudo" and not (words[j] in _SUDO_RUN or words[j].startswith(("--preserve-env=", "--user=", "--group="))):
                     return out
                 j += 2 if words[j] in _WRAPPERS[a] else 1
             i = j + (words[j:j + 1] == ["--"])
@@ -1303,7 +1307,8 @@ def _py_head(head):
         py, rest = "python3", head[2:]
     elif _PY_RX.fullmatch(a):
         j = 1
-        while j < len(head) and (re.fullmatch(r"-[XW].*|-[bBdEiIOPqsSuvRx]+", head[j])):
+        # Không có `-i`: với stdin đã hết, `python -i` trả 0 dù module lỗi (OCR review #427).
+        while j < len(head) and (re.fullmatch(r"-[XW].*|-[bBdEIOPqsSuvRx]+", head[j])):
             j += 2 if head[j] in ("-X", "-W") else 1
         if head[j:j + 3] != ["-m", "coverage", "run"]:
             return [head[0]] + head[j:]
@@ -1442,7 +1447,7 @@ def _tail_cut(seg, txt=None):
 _EXIT_TRAP = re.compile(r"(?:^|[;&|({\n]|\b(?:do|then|else)\b)[^\S\n]*(trap[^\S\n]+[^;&|\n]*?(?<![\w-])(?:SIG)?(?:EXIT|0))(?![\w-])", re.I)
 _TRAP_SAFE = frozenset({"rm", "rmdir", "unlink", "kill", "wait", "cd", "popd", "echo", "printf", "true", ":"})
 # `kill` nhắm vào chính shell hay nhóm của nó (`kill $$`: zsh thoát 143, `kill -9 $$`: 137; `kill 0`, `kill -- -1`, `$PPID`) đổi mã thoát.
-_KILL_SELF = re.compile(r"\$\$|\$\{\$\}|PPID|^-?0$")
+_KILL_SELF = re.compile(r"\$\$|\$\{\$\}|PPID|BASHPID|^-?0$")
 
 def _trap_piece_safe(words):
     if words[0] == "kill" and (any(_KILL_SELF.search(w) for w in words[1:]) or "-1" in words[2:]):
@@ -1458,16 +1463,22 @@ def _trap_keeps_exit(stmt):
         body = shlex.split(rest)[0]
     except (ValueError, IndexError):
         return False
+    if rest[0] == '"' and "$" in body:     # ngoặc kép: biến mở rộng lúc đặt trap (`X='…; exit 0'`), thân thật không biết (OCR #427)
+        return False
     return "$(" not in body and "`" not in body and all(
         _single_command(p) and _trap_piece_safe(_words(p) or [""]) for p in _split_segments(body))
 
 def _exit_trapped(cmd):
+    raw = 0
     for s in _split_segments(cmd):
         t = _heredoc_head(s) or s
         flat = _QUOTED.sub(lambda q: q.group(0)[0] + "x" * (len(q.group(0)) - 2) + q.group(0)[-1], t)   # cùng độ dài: vị trí giữ nguyên
-        if any(not _trap_keeps_exit(t[m.start(1):m.end(1)]) for m in _EXIT_TRAP.finditer(flat)):
-            return True
-    return False
+        for m in _EXIT_TRAP.finditer(flat):
+            raw += 1
+            if not _trap_keeps_exit(t[m.start(1):m.end(1)]):
+                return True
+    # Tín hiệu qua biến (`A=EXIT; trap 'exit 0' $A`) chỉ thấy sau khi thay biến: thêm trap EXIT nào ở đó thì không tin (OCR review #427).
+    return sum(len(_EXIT_TRAP.findall(_QUOTED.sub("", _heredoc_head(s) or s))) for s in _command_segments(cmd)) > raw
 
 def _compound_parts(seg, seps=None):
     """(pieces, tail) of a compound: the pieces of its condition and body with do / then / else / elif cut (a nested compound stays one

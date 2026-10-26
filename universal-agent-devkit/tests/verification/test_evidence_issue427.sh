@@ -245,6 +245,22 @@ NEST = "(" * 400 + "python3 -m pytest -q" + ")" * 400
 case("N must block: 400 nested ( … ) around pytest: no RecursionError, the pass claim is blocked", after(NEST, PYOK), 2)
 case("N control: 3 nested ( … ) around pytest is still a run", after("(((python3 -m pytest -q)))", PYOK), 0)
 
+print("-- O: OCR review of the review fixes")
+# `python -i` với stdin hết trả 0 dù test lỗi; `sudo -b` chạy nền và trả 0 ngay, `sudo -l` không chạy gì; tín hiệu EXIT qua biến; thân
+# trap trong ngoặc kép mở rộng lúc đặt trap; `kill $BASHPID` (bash) giết chính shell.
+case("O must block: `python3 -i -m pytest -q > log`, exit 0, no output", after("python3 -i -m pytest -q > /tmp/l 2>&1", ""), 2)
+case("O must block: `sudo -b python3 -m pytest -q > log`, exit 0, no output", after("sudo -b python3 -m pytest -q > /tmp/l 2>&1", ""), 2)
+case("O must block: `sudo -l python3 -m pytest -q > log; echo \"rc=$?\"` printing rc=0",
+     after("sudo -l python3 -m pytest -q > /tmp/l 2>&1; echo \"rc=$?\"", "rc=0"), 2)
+case("O must block: `A=EXIT; trap 'exit 0' $A` before a hidden run",
+     after("A=EXIT; trap 'exit 0' $A; python3 -m pytest -q > /tmp/l 2>&1", ""), 2)
+case("O must block: a double-quoted trap body with a variable (expanded when the trap is set)",
+     after("X='/tmp/x; exit 0'; trap \"rm -rf $X\" EXIT; python3 -m pytest -q > /tmp/l 2>&1", ""), 2)
+case("O must block: `trap 'kill -9 $BASHPID' EXIT` forging the RED half of check 7",
+     pair("trap 'kill -9 $BASHPID' EXIT; python3 -m pytest -q", PYOK, "python3 -m pytest -q", PYOK), 2, msg=FIX)
+case("O control: `sudo -E python3 -m pytest -q` is still a run", after("sudo -E python3 -m pytest -q", PYOK), 0)
+case("O control: `python3 -u -m pytest -q` is still a run", after("python3 -u -m pytest -q", PYOK), 0)
+
 print("-- E4: an EXIT trap owns the tool's exit")
 case("E4 must block: `trap 'exit 0' EXIT; pytest -q` with no summary", after("trap 'exit 0' EXIT; python3 -m pytest -q", "....F...."), 2)
 case("E4 must block: `trap 'exit 1' EXIT` forging the RED half of check 7",
