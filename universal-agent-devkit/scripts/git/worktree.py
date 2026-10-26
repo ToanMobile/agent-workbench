@@ -4742,8 +4742,13 @@ def cmd_gc(cwd, args):
     # folder stayed, and with no `.git` left it was never a candidate). There every file is judged as in a dangling orphan.
     cands = [(os.path.join(parent, n), False) for n in siblings if n.startswith(prefix)]
     wt_home = os.path.join(main, ".claude", "worktrees")
+    # #427 vòng 2: `.claude` hay `.claude/worktrees` là symlink thì os.listdir đi xuyên link, thư mục ở đích (của người khác, repo khác)
+    # thành "worktree mồ côi của checkout này" và bị rmtree: không xét thư mục nào ở đó (như gc --merged, review U2 P3)
+    linked = [d for d in (os.path.join(main, ".claude"), wt_home) if os.path.islink(d)]
+    if linked:
+        print("• gc: " + tr(f"{linked[0]} là symlink: không xét thư mục nào trong đó", f"{linked[0]} is a symlink: no folder in it judged"))
     try:
-        cands += [(os.path.join(wt_home, n), True) for n in sorted(os.listdir(wt_home))]
+        cands += [] if linked else [(os.path.join(wt_home, n), True) for n in sorted(os.listdir(wt_home))]
     except OSError:
         pass
     for top, owned in cands:
