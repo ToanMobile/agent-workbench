@@ -126,5 +126,14 @@ check 2 'rm -rf app/build/hl/*'                            # a glob in a build o
 check 0 'rm -rf hl'
 check 0 'rm -rf app/build/hl'
 check 0 'rm -rf app/build/'                                # a real build output with a trailing slash
+# … and a glob whose MATCH goes through such a link (the folder before the glob is a real build output / /tmp folder): each match that
+# leaves that folder is judged where it lands, like the scratch case `$SCRP/*/`
+mkdir -p "$P/app/build/real" "$TMP/work/other/real" && ln -s "$HOME" "$TMP/work/other/hl"
+check 2 'rm -rf app/build/*/'
+check 2 'rm -rf app/build/*/Documents'
+check 2 "rm -rf $TMP/work/other/*/"
+check 0 'rm -rf app/build/*'                               # no trailing slash: the link itself is removed
+check 0 "rm -rf $TMP/work/other/*"
+check 0 'rm -rf app/build/real/'
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_containment: all passed" || { echo "❌ test_hardware_rm_containment: $FAILS failed"; exit 1; }

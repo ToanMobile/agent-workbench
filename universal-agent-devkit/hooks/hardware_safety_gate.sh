@@ -520,38 +520,45 @@ def rm_target_problem(t, cwds, env, forced=True):
             esc = scratch_escape(cwd or "/", t)
             if esc:
                 return f"{orig}: {esc}"
+        outs = []
         if glob:  # judged as its directory: rm -rf src/* empties src; the shell expands the glob inside it, through a link too
             parts = t.split("/")
             k = next(i for i, x in enumerate(parts) if GLOB.search(x))
             p = os.path.realpath(os.path.join(cwd or "/", "/".join(parts[:k]) or ("/" if t.startswith("/") else ".")))
+            # …and each match it expands to now (at most 2000) that lands outside that folder, through a link (`build/*/`, `build/*/x`):
+            # judged where it lands (review of A7, 25/10)
+            import glob as _glob, itertools as _it
+            reach = (rm_reach(m) for m in _it.islice(_glob.iglob(os.path.join(_glob.escape(cwd or "/"), t)), 2000))
+            outs = list(dict.fromkeys(r for r in reach if r != p and not r.startswith(p.rstrip(os.sep) + os.sep)))
         else:   # where the kernel resolves it (review of A7, 25/10): `link/` deletes what the link points at, `link` the link alone
             p = rm_reach(os.path.join(cwd or "/", t))
-        if not glob and os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p)):
-            continue  # a single file
-        if not forced:   # / holds the project root, so it is caught by the first test
-            hit = next((d for d in (ROOT, HOME) if p == d or under(d, p)), None) or (p if p in SYS_PART_DIRS else None)
-            if hit:
-                return f"{orig}: là hoặc chứa {hit} (gốc project / home / phân vùng hệ thống)"
-            continue
-        if p == ROOT:
-            return f"{orig}: là thư mục gốc project"
-        if under(p, ROOT):
-            rel = os.path.relpath(p, ROOT).split(os.sep)
-            if any(x in BUILD_OUTPUTS for x in rel):
-                if git_tracks(p):
-                    return f"{orig}: là build output nhưng git đang track file trong đó (là source)"
-                continue
-            if len(rel) == 1:
-                return f"{orig}: là thư mục cấp 1 của project"
-            continue
-        # Before the /tmp exemption (2026-10-09): a project under /tmp or $TMPDIR is inside its parent, and
-        # `rm -rf ..` from it passed while `rm -rf <project>` was blocked.
-        if under(ROOT, p):
-            return f"{orig}: chứa thư mục gốc project ({ROOT})"
-        if any(under(p, d) for d in TMP_ROOTS):
-            continue
-        return f"{orig}: nằm ngoài project ({p})"
+        for q, g in [(p, glob)] + [(r, False) for r in outs]:
+            why = rm_path_problem(q, orig, forced, g)
+            if why:
+                return why
     return None
+
+def rm_path_problem(p, orig, forced, glob):
+    """The verdict of rm_target_problem on one resolved path p (glob: p is the folder a glob expands in). None when allowed."""
+    if not glob and os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p)):
+        return None  # a single file
+    if not forced:   # / holds the project root, so it is caught by the first test
+        hit = next((d for d in (ROOT, HOME) if p == d or under(d, p)), None) or (p if p in SYS_PART_DIRS else None)
+        return f"{orig}: là hoặc chứa {hit} (gốc project / home / phân vùng hệ thống)" if hit else None
+    if p == ROOT:
+        return f"{orig}: là thư mục gốc project"
+    if under(p, ROOT):
+        rel = os.path.relpath(p, ROOT).split(os.sep)
+        if any(x in BUILD_OUTPUTS for x in rel):
+            return f"{orig}: là build output nhưng git đang track file trong đó (là source)" if git_tracks(p) else None
+        return f"{orig}: là thư mục cấp 1 của project" if len(rel) == 1 else None
+    # Before the /tmp exemption (2026-10-09): a project under /tmp or $TMPDIR is inside its parent, and
+    # `rm -rf ..` from it passed while `rm -rf <project>` was blocked.
+    if under(ROOT, p):
+        return f"{orig}: chứa thư mục gốc project ({ROOT})"
+    if any(under(p, d) for d in TMP_ROOTS):
+        return None
+    return f"{orig}: nằm ngoài project ({p})"
 
 # find and xargs delete paths that are not on the rm command line (2026-10-09, tests/gates/test_hardware_rm_containment.sh):
 # `find P -delete`, `find P -exec rm -rf {} +` and `find P | xargs rm -rf` are judged as rm -rf of the start points P —

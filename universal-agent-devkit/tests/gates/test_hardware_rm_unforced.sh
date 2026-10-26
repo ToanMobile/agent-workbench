@@ -64,5 +64,8 @@ check 0 'rm -f notes.txt'
 ln -s "$H" "$P/hl"
 check 2 'rm -r hl/'
 check 0 'rm -r hl'                        # no trailing slash: the link only
+mkdir -p "$P/build/real" && ln -s "$H" "$P/build/hl"
+check 2 'rm -r build/*/'                  # a glob match through the link: the home folder
+check 0 'rm -r build/*'
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_unforced: all passed" || { echo "❌ test_hardware_rm_unforced: $FAILS failed"; exit 1; }
