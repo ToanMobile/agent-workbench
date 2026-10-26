@@ -4928,6 +4928,7 @@ def suite_env():
             "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH", "CI",
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
+            # T0056 (INSTINCT-046): DEVKIT_GATE_SLOT_HELD cố ý giữ lại để suite chạy gate lồng không xin thêm slot và không tự khoá cứng
             "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD"}
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
@@ -5294,6 +5295,31 @@ def default_gate_parallel() -> int:
     except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì (cả lỗi runtime lúc nạp) cũng không làm chết gate
         log_warn(f"capacity: {exc!r}; DEVKIT_GATE_PARALLEL mặc định 6")
         return 6
+
+
+def default_gate_slots() -> int:
+    """Số lượt post-fix-gate tối đa chạy suite cùng lúc trên máy (T0056, pool 'gate'): DEVKIT_GATE_SLOTS nếu là số nguyên ≥ 0
+    (0 = tắt hàng đợi), không đặt / âm / rác thì bin/capacity.py gate_max (12 lõi: 3), lỗi nạp capacity thì mặc định 3."""
+    raw = os.environ.get("DEVKIT_GATE_SLOTS", "").strip()
+    if raw:
+        try:
+            n = int(raw, 10)
+            if n >= 0:
+                return n
+        except ValueError:
+            pass
+    try:
+        _bin = str(Path(__file__).resolve().parent)
+        if _bin not in sys.path:
+            sys.path.insert(0, _bin)
+        import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+        value = _capacity.gate_max()
+        if type(value) is not int or value < 1:
+            raise ValueError(f"gate_max trả {value!r}")
+        return value
+    except Exception as exc:   # noqa: BLE001 - capacity.py hỏng kiểu gì cũng không làm chết gate
+        log_warn(f"capacity: {exc!r}; DEVKIT_GATE_SLOTS mặc định 3")
+        return 3
 
 
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
@@ -6183,6 +6209,10 @@ def main():
     # before this check it needed no lock at all. Past that short wait it is READ-ONLY (read_only below): it judges from a stamp check and writes nothing.
     nothing_to_run = not any(t.get("command") for t in to_run)
     reuse_wait_s = _env_seconds("DEVKIT_REUSE_LOCK_WAIT_S", 3.0)
+    gate_slot = None
+    gate_slot_busy = False
+    gate_slot_hs = None
+    prev_gate_slot_held = os.environ.get("DEVKIT_GATE_SLOT_HELD")
     lock_fh, lock_held = (acquire_test_run_lock(project_dir, cap=reuse_wait_s if nothing_to_run else None)
                           if run_tests and (reuse_src[0] or keyed_hits or not nothing_to_run) else (None, True))
     # Read-only: every suite was re-used and the lock was not obtained within the short wait. The verdict is the stamp check alone (the file that vouched
@@ -6204,6 +6234,59 @@ def main():
         cache = reuse_full_pass()
         to_run = [t for t in regression_tests if t.get("mode") != "cached"]
         nothing_to_run = not any(t.get("command") for t in to_run)
+    # T0056: hàng đợi gate toàn máy (pool 'gate', tối đa N lượt chạy suite cùng lúc). Chỉ xin slot khi đã giữ khoá dự án,
+    # thực sự còn suite cần chạy và tiến trình cha chưa giữ slot (DEVKIT_GATE_SLOT_HELD != "1").
+    if run_tests and lock_held and not nothing_to_run and prev_gate_slot_held != "1":
+        gate_slots_n = default_gate_slots()
+        if gate_slots_n > 0:
+            try:
+                _bin = str(Path(__file__).resolve().parent)
+                if _bin not in sys.path:
+                    sys.path.insert(0, _bin)
+                import heavy_slot as _gate_hs  # noqa: PLC0415 - sibling module in bin/
+                gate_slot_hs = _gate_hs
+            except Exception as exc:   # noqa: BLE001 - thiếu heavy_slot thì chạy tiếp không khoá như take_slots()
+                log_warn(f"heavy_slot: {exc}")
+            if gate_slot_hs is not None:
+                gate_wait_s = _env_seconds("DEVKIT_GATE_SLOT_WAIT_S", 1800.0)
+                gate_slot = gate_slot_hs.acquire_pool(
+                    "gate", gate_slot_hs.pool_paths("gate", gate_slots_n),
+                    wait_s=gate_wait_s, label=os.path.basename(str(project_dir))[:64])
+                if gate_slot.timed_out:
+                    if lock_fh is not None:
+                        lock_fh.close()
+                        lock_fh = None
+                    lock_held = False
+                    gate_slot_busy = True
+                    gate_slot = None
+                else:
+                    os.environ["DEVKIT_GATE_SLOT_HELD"] = "1"
+                    # Trong lúc chờ slot, lượt khác có thể đã ghi biên nhận, đóng mốc sentinel hoặc nạp suite_cache:
+                    # kiểm tra lại ngay, nếu không còn suite nào cần chạy thì trả slot liền cho hàng đợi.
+                    if use_cache and cache is None:
+                        cache = reuse_full_pass()
+                    if use_cache and sc is not None and not keyed_ok and not sc.sentinel_due():
+                        sentinel_run = False
+                        keyed_ok = True
+                    if sc is not None and keyed_ok:
+                        prev_keyed_n = len(keyed_hits)
+                        for t in regression_tests:
+                            k = lookup_key(t)
+                            if k and t.get("mode") != "cached":
+                                rec = sc.hit(k, t)
+                                if rec:
+                                    mark_keyed(t, rec)
+                        if len(keyed_hits) > prev_keyed_n:
+                            print(f"    {CYAN}▶ {tr(f'dùng lại {len(keyed_hits) - prev_keyed_n} suite theo khoá nội dung sau khi chờ slot', f'reusing {len(keyed_hits) - prev_keyed_n} suite(s) by content key after slot wait')}{RESET}")
+                    to_run = [t for t in regression_tests if t.get("mode") != "cached"]
+                    nothing_to_run = not any(t.get("command") for t in to_run)
+                    if nothing_to_run:
+                        gate_slot_hs.release_pool(gate_slot)
+                        gate_slot = None
+                        if prev_gate_slot_held is None:
+                            os.environ.pop("DEVKIT_GATE_SLOT_HELD", None)
+                        else:
+                            os.environ["DEVKIT_GATE_SLOT_HELD"] = prev_gate_slot_held
     _lap("lock")
     # One run per distinct command (O2, 2026-09-28): two rules naming one command share its result,
     # and the test scripts run so far go to DEVKIT_GATE_DONE so run_impacted.sh skips them.
@@ -6607,9 +6690,12 @@ def main():
         if group and not may_join(t):
             drain()
         if run_tests and t["command"] and not lock_held:
-            t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": tr(
-                "Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
-                "Another test run held the project lock past TEST_RUN_LOCK_WAIT_S — not run side by side (Gradle corrupts build/test-results)")})
+            t.update({"status": "UNTESTED", "label": "BUSY", "duration": "0s", "output_tail": (
+                tr("Hàng đợi gate toàn máy đang đầy quá DEVKIT_GATE_SLOT_WAIT_S (pool gate) — chưa tới lượt chạy suite",
+                   "The machine-wide gate queue stayed full past DEVKIT_GATE_SLOT_WAIT_S (pool gate) — suite did not start")
+                if gate_slot_busy else
+                tr("Một lượt chạy test khác giữ khoá dự án quá TEST_RUN_LOCK_WAIT_S — không chạy song song (Gradle ghi đè build/test-results)",
+                   "Another test run held the project lock past TEST_RUN_LOCK_WAIT_S — not run side by side (Gradle corrupts build/test-results)"))})
             continue
         if run_tests and t["command"] and budget_spent():
             mark_budget(t)
@@ -7049,8 +7135,12 @@ def main():
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — không có test hồi quy nào khớp thay đổi (--allow-no-tests để chấp nhận)", "UNVERIFIED — no regression test matches the change (--allow-no-tests to accept)"), YELLOW, 2
     elif run_tests and tests_untested and all(t.get("label") == "BUSY" for t in tests_untested):
         exit_reason = "busy"
-        verdict_text, verdict_color, exit_code = tr("UNTESTED — một lượt chạy test khác đang giữ khoá dự án (TEST_RUN_LOCK_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
-                                                    "UNTESTED — another test run holds the project lock (TEST_RUN_LOCK_WAIT_S) — run again later; NOT a PASS"), YELLOW, 4
+        verdict_text, verdict_color, exit_code = (
+            tr("UNTESTED — hàng đợi gate toàn máy đang đầy (pool gate, DEVKIT_GATE_SLOT_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
+               "UNTESTED — the machine-wide gate queue is full (pool gate, DEVKIT_GATE_SLOT_WAIT_S) — run again later; NOT a PASS")
+            if gate_slot_busy else
+            tr("UNTESTED — một lượt chạy test khác đang giữ khoá dự án (TEST_RUN_LOCK_WAIT_S) — chạy lại sau; KHÔNG phải PASS",
+               "UNTESTED — another test run holds the project lock (TEST_RUN_LOCK_WAIT_S) — run again later; NOT a PASS")), YELLOW, 4
         lock_busy = True
     elif run_tests and any(t.get("label") == "SLOT" for t in tests_untested):
         exit_reason = "slot"
@@ -7189,6 +7279,14 @@ def main():
             write_budget_record(project_dir, args.matrix, regression_tests, budget_fp,
                                 tested_at=float(cache.get("tested_at") or 0) if cache else None, head=budget_head)
     finally:
+        # T0056: nhả slot hàng đợi gate toàn máy và khôi phục DEVKIT_GATE_SLOT_HELD trong khối finally sẵn có.
+        if gate_slot_hs is not None:
+            gate_slot_hs.release_pool(gate_slot)
+            gate_slot = None
+        if prev_gate_slot_held is None:
+            os.environ.pop("DEVKIT_GATE_SLOT_HELD", None)
+        else:
+            os.environ["DEVKIT_GATE_SLOT_HELD"] = prev_gate_slot_held
         # Only now may another run take the test-run lock: it finds the receipt (or its settled absence), and the
         # checklist update below does not run under it. A BUSY run holds no lock (lock_fh is None); a kill before
         # this line frees the lock with the process.
@@ -7286,6 +7384,8 @@ def main():
             # tests not run because another run interfered (_gate_busy): the Stop hook says "run again later" and caches nothing, so the next Stop
             # runs the suite for real (not a sticky "untested here")
             "busy": _gate_busy(run_tests, lock_held, read_only, regression_tests),
+            "busy_reason": (("gate_queue" if gate_slot_busy else "project_lock")
+                            if (run_tests and not lock_held and not read_only) else None),
             "budget_exhausted": any(t.get("label") == "BUDGET" for t in regression_tests),   # GATE_TOTAL_BUDGET_S spent
             "test_mode": test_mode, "full_run_required": bool(impacted_run),
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,

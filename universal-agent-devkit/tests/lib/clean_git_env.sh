@@ -12,6 +12,7 @@ for _v in GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJ
           GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
           GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT \
           POSTFIX_GATE_FORCE_FULL POSTFIX_GATE_FULL WORKTREE_MERGE_GATE DEVKIT_ALLOW_BRANCH \
+          DEVKIT_GATE_SLOTS DEVKIT_GATE_SLOT_WAIT_S \
           DEVKIT_CAPACITY DEVKIT_CAPACITY_CORES DEVKIT_CAPACITY_LOAD; do   # T0052: nút sức chứa của người gọi (bin/capacity.py) không lái test
   unset "$_v"
 done
@@ -35,6 +36,9 @@ unset CI
 # (echo) queued behind them for up to 3600 s whenever no gate holding a slot started it (2026-10-20, test_merge_gate_ff.sh).
 # A test runs as if its caller held the slot; test_heavy_slot.sh unsets this to test the slots themselves.
 export SB_HEAVY_SLOT_HELD=1
+# Hàng đợi gate toàn máy (T0056, pool gate): test chạy tay hay chạy trong suite coi như đã giữ slot gate, không xếp hàng sau gate thật;
+# test_gate_slot_queue.sh và test_merge_gate_busy_slot.sh tự unset biến này để kiểm thử hàng đợi.
+export DEVKIT_GATE_SLOT_HELD=1
 # A test that runs session_context.sh (SessionStart) must not start a REAL incident scan of the 5 repos and file cards on the
 # public DevKit board (Antigravity plan review T0055); test_devkit_incident.sh unsets it to test the scanner itself.
 export DEVKIT_INCIDENT=0

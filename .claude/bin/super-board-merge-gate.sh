@@ -690,10 +690,12 @@ run_verify_cmd_inner() {
   local c="$1"
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
     ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+        DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
         && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
         && DEVKIT_LANG="${DEVKIT_LANG:-vi}" eval "$c" ) >"$VERIFY_LOG" 2>&1
   else
     ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+        DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
         && { [ "${LOAD_WAIT_ON:-0}" -ne 1 ] || export DEVKIT_SLOT_LOAD_WAIT_S="${DEVKIT_SLOT_LOAD_WAIT_S:-0}"; } \
         && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$c" ) >"$VERIFY_LOG" 2>&1
   fi
@@ -902,6 +904,15 @@ for cmd in "${VERIFY[@]}"; do
     say "verify red only on suites that are red on origin/${BASE} too (#251): not rejecting the PR"
     VRC=0
     TREE_RECEIPT=""   # verify tolerated red suites: no receipt, the next gate checks them against the base again
+  fi
+  if [ "$VRC" -eq 4 ]; then
+    # T0056: post-fix-gate thoát 4 kèm JSON .busy == true (hàng đợi gate toàn máy hoặc khoá dự án bận) là tình trạng tạm thời,
+    # không phải lỗi code của PR: thoát 4 để thẻ ở lại Review, không đẩy xuống nhánh exit 11.
+    BUSY_LINE=$(LC_ALL=C grep -a '^{.*"exit_code"' "$VERIFY_LOG" 2>/dev/null | tail -1 || true)
+    if [ -n "$BUSY_LINE" ] && printf '%s' "$BUSY_LINE" | jq -e '.exit_code == 4 and .busy == true' >/dev/null 2>&1; then
+      say "verify busy (exit 4, gate queue / project lock busy): ${cmd} — keeping PR #${PR} in Review"
+      exit 4
+    fi
   fi
   if [ "$VRC" -ne 0 ]; then
     say "FAILED: ${cmd}"
