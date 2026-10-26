@@ -6,8 +6,9 @@
 # train chỉ chứng minh trước cây gộp, để gate khỏi chạy lại đúng bằng chứng đó.
 #
 # Cách chạy:
-#   1. Một PR: exec thẳng merge gate như cũ (không train).
-#   2. Nhiều PR: dựng scratch = origin/<base> + lần lượt các head (merge, đúng thứ tự --prs) rồi chạy verify_commands một lần.
+#   1. Mọi kích thước (cả 1 PR, Pha 2 hàng đợi merge) đi cùng một đường. Trước khi dựng cây: gate `--preflight` từng PR (policy, qa-report,
+#      AC, migrations, head; vài giây, không verify/merge). PR rớt preflight rời đợt với `train-result: <N> gate-exit-K`.
+#   2. Dựng scratch = origin/<base> + lần lượt các head (merge, đúng thứ tự --prs) rồi chạy verify_commands một lần.
 #      PR không merge sạch vào chuỗi thì bị loại (kết quả `conflict`, exit 5 như gate).
 #   3. Đỏ: chia đôi tìm PR gây lỗi (tập đã xanh + nửa trái, rồi + nửa phải). PR đỏ bị loại, phần còn lại vẫn được chứng minh.
 #   4. Ghi biên nhận `<head sha> <cây sau khi merge head đó vào chuỗi>` cho các PR xanh, rồi gọi gate cho từng PR theo thứ tự với
@@ -26,9 +27,10 @@
 #       5 có PR conflict, không PR nào đỏ/hết giờ · 79/9 của github-read và readiness đi thẳng tới caller.
 #       6 có PR đã dời head khỏi sha duyệt (`--prs N:sha`): PR đó rời đợt, dòng `head-moved`, ở lại Review chờ review lại.
 #       Mỗi PR một dòng `train-result: <N> <merged|red|conflict|deferred|timeout|head-moved|gate-exit-K>` trên stdout.
-# ponytail: gate --dry-run từng PR chạy SAU lượt verify đầu (R11): PR bị gate chặn (policy cần người duyệt) ra khỏi chuỗi rồi phần còn lại
-#           verify lại, tức thêm một lượt verify mỗi vòng có PR bị chặn; nâng lên khi hay có PR cần người duyệt đi chung đợt:
-#           gate --dry-run từng PR trước khi dựng chuỗi đầu tiên.
+#       Dòng `approval-request:|human-gate:|needs-you:` của gate (preflight, --dry-run, merge) in lại thành `train-detail: <N> <dòng>`
+#       để bên gọi (super-board-merge-queue.sh) chép nguyên văn vào comment 🙋. Mọi lời gọi gate mang SB_MERGE_CALLER=train.
+# ponytail: preflight lọc PR bị policy chặn trước verify; gate --dry-run sau verify vẫn còn (R11) cho phần preflight không thấy (người duyệt
+#           đổi ý giữa chừng): PR bị chặn ở đó ra khỏi chuỗi rồi phần còn lại verify lại, thêm một lượt verify mỗi vòng như vậy.
 set -euo pipefail
 export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -52,13 +54,25 @@ for p in "${RAW[@]}"; do
   LIST+=("${p%%:*}"); WANT+=("$([[ "$p" == *:* ]] && echo "${p#*:}" || echo "")")
 done
 [ "${#LIST[@]}" -gt 0 ] || { echo "--prs <N,M,...> is required" >&2; exit 64; }
-
-# Một PR: đường cũ, không dòng nào của train.
-if [ "${#LIST[@]}" -eq 1 ]; then
-  exec bash "$GATE" --config "$CONFIG" --pr "${LIST[0]}" ${WANT[0]:+--expect-head "${WANT[0]}"} ${PASS[@]+"${PASS[@]}"}
-fi
+# Gate biết nó được train gọi (lane E: khi hàng đợi merge bật, gate từ chối lời gọi trực tiếp). Đặt cứng, không kế thừa giá trị khác.
+export SB_MERGE_CALLER=train
 
 say() { echo "[merge-train] $*" >&2; }
+# run_gate <PR> <out-stream 1|2> <gate args…>: chạy merge gate, GRC = exit của nó. Stdout của gate đi nguyên vẹn ra luồng cũ (merge: stdout,
+# vì `ac-open: #N` / "verify skipped" là của bên gọi; preflight / --dry-run: stderr), rồi các dòng approval-request/human-gate/needs-you
+# in thêm thành `train-detail: <PR> <dòng>` trên stdout.
+GATE_OUT=$(mktemp)
+run_gate() {
+  local p="$1" to="$2" line; shift 2
+  GRC=0
+  bash "$GATE" "$@" >"$GATE_OUT" || GRC=$?
+  if [ "$to" = 1 ]; then cat "$GATE_OUT"; else cat "$GATE_OUT" >&2; fi
+  while IFS= read -r line; do
+    case "$line" in approval-request:*|human-gate:*|needs-you:*) echo "train-detail: $p $line" ;; esac
+  done <"$GATE_OUT"
+  return 0
+}
+trap 'rm -f "$GATE_OUT"' EXIT
 . "$HERE/super-board-verify-flags.sh"
 CONFIG_JSON=$(cat "$CONFIG")
 printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
@@ -79,7 +93,7 @@ BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.train-scratch-XXXXXX")
 RECEIPT=$(mktemp); VLOG=$(mktemp)
-cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG"; }
+cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT"; }
 trap cleanup EXIT
 
 # Head của từng PR, ghim một lần: verify và biên nhận thuộc đúng commit này (gate còn --match-head-commit lúc merge).
@@ -100,6 +114,28 @@ done
 for p in ${MOVED[@]+"${MOVED[@]}"}; do echo "train-result: $p head-moved"; done
 [ "${#KEEP[@]}" -gt 0 ] || exit 6
 LIST=("${KEEP[@]}")
+# Preflight (Pha 2, M6): kiểm rẻ của gate cho từng PR trước khi dựng cây nào. PR rớt (policy cần người 7/8, qa-report/AC 11, đóng 3,
+# head dời 6…) rời đợt, không tốn lượt verify của cả đợt; 79/9 đi thẳng tới caller.
+BLOCKED=(); DRYRC=0; PF_LIST=(); PF_REFS=(); PF_HEADS=()
+for i in "${!LIST[@]}"; do
+  p="${LIST[$i]}"
+  run_gate "$p" 2 --config "$CONFIG" --pr "$p" --expect-head "${HEADS[$i]}" --preflight ${PASS[@]+"${PASS[@]}"}
+  case "$GRC" in
+    0) PF_LIST+=("$p"); PF_REFS+=("${REFS[$i]}"); PF_HEADS+=("${HEADS[$i]}") ;;
+    # 64 = gate chưa có --preflight (cờ của lane E, gộp riêng): PR ở lại; gate --dry-run sau verify vẫn kiểm policy như trước Pha 2.
+    # ponytail: bỏ nhánh này khi mọi repo đã có gate mang --preflight.
+    64) say "the merge gate has no --preflight (exit 64); PR #${p} stays, the gate's --dry-run after verify checks it"
+        PF_LIST+=("$p"); PF_REFS+=("${REFS[$i]}"); PF_HEADS+=("${HEADS[$i]}") ;;
+    79|9) echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;
+    *) BLOCKED+=("$p:$GRC"); say "PR #${p} fails the gate preflight (exit ${GRC}); it leaves the batch before any tree is built"
+       [ "$DRYRC" -ne 0 ] || DRYRC=$GRC ;;
+  esac
+done
+if [ "${#PF_LIST[@]}" -eq 0 ]; then
+  for b in "${BLOCKED[@]}"; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done
+  exit "$DRYRC"
+fi
+LIST=("${PF_LIST[@]}"); REFS=("${PF_REFS[@]}"); HEADS=("${PF_HEADS[@]}")
 git -C "$REPO_PATH" fetch origin "$BASE" ${REFS[@]+"${REFS[@]}"} --quiet
 # R9: nhánh bị force-push sau lúc đọc head thì SHA đã ghim không còn trong repo: đó là head đã dời (exit 6 như gate), không phải conflict.
 for i in "${!HEADS[@]}"; do
@@ -194,7 +230,7 @@ verify_set() {
   return 0
 }
 
-GOOD=(); RED=(); GATERED=(); CONFLICT=(); DEFERRED=(); BLOCKED=()
+GOOD=(); RED=(); GATERED=(); CONFLICT=(); DEFERRED=()   # BLOCKED / DRYRC: đã khởi tạo ở preflight
 # Một PR không merge sạch vào base + các PR trước: bỏ ra trước, rồi mới chứng minh phần còn lại.
 # Sạch với base mà chỉ xung đột với PR đứng trước (R8): không phải lỗi của PR, ở lại Review chờ wave sau (lúc đó base đã có PR trước).
 CANDS=()
@@ -229,7 +265,6 @@ solve() {
 # ponytail: gate chặn sau preflight (đua với người duyệt/chờ khoá) vẫn có thể để main ở cây đã verify của tiền tố chuỗi trước đó; nâng lên khi
 #           cần tuyệt đối: merge các PR bằng một ref-update duy nhất thay vì từng gate.
 in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
-DRYRC=0
 PENDING=()   # PR chưa chứng minh vì verify hết giờ ở lượt solve trước; vòng preflight ghi đè CANDS nên phải giữ riêng
 while [ "${#GOOD[@]}" -gt 0 ]; do
   : >"$RECEIPT"
@@ -238,11 +273,10 @@ while [ "${#GOOD[@]}" -gt 0 ]; do
   done
   NEWGOOD=(); DROPPED=0
   for p in "${GOOD[@]}"; do
-    GRC=0
-    bash "$GATE" --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" --dry-run ${PASS[@]+"${PASS[@]}"} >&2 || GRC=$?
+    run_gate "$p" 2 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" --dry-run ${PASS[@]+"${PASS[@]}"}
     case "$GRC" in
       0) NEWGOOD+=("$p") ;;
-      79|9) exit "$GRC" ;;
+      79|9) echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;
       *) BLOCKED+=("$p:$GRC"); DROPPED=1; say "PR #${p} is blocked by the merge gate (exit ${GRC}); the chain is proved again without it"
          [ "$DRYRC" -ne 0 ] || DRYRC=$GRC ;;
     esac
@@ -274,8 +308,7 @@ fi
 RC=$DRYRC
 for b in "${BLOCKED[@]+"${BLOCKED[@]}"}"; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done
 for p in "${GOOD[@]+"${GOOD[@]}"}"; do
-  GRC=0
-  bash "$GATE" --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" ${PASS[@]+"${PASS[@]}"} || GRC=$?
+  run_gate "$p" 1 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" ${PASS[@]+"${PASS[@]}"}
   case "$GRC" in
     0)     echo "train-result: $p merged" ;;
     79|9)  echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # R7: halt / readiness của gate đi thẳng tới caller, không bị che bởi 11
