@@ -46,4 +46,12 @@ repo d; wtadd "$TMP/d" one s0; wtadd "$TMP/d" two s0; visit "$TMP/d" one s4; vis
 lk="$(lock_of "$TMP/d" one)"
 [ -z "$lk" ] && ok "V4: moving on to another worktree releases the lock of the one only visited" || fail "V4: one locked '$lk'"
 
+#   V5 record without a pid (holder_pid None) still reads as a visit; V6 /clear (reown) and a rewrite after a failed lock keep `visit` (#413 x #428)
+repo e; wtadd "$TMP/e" lane s0
+py() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import session_worktree as sw; '"$1" "$DEVKIT_DIR/hooks" "${@:2}"; }
+py 'sw.write_record(sys.argv[2], "s5", sys.argv[3], pid=None, visit=True); print(sw.raw_visit(sys.argv[2], "s5"))' "$TMP/e" "$TMP/e/.claude/worktrees/lane" | grep -qx True \
+  && ok "V5: a visit record with no pid line still reads as a visit" || fail "V5: raw_visit False without a pid"
+py 'sw.write_record(sys.argv[2], "old", sys.argv[3], pid=int(sys.argv[4]), visit=True); sw.reown(sys.argv[2], "new", sys.argv[3], lambda s: False); print(sw.raw_visit(sys.argv[2], "new"))' "$TMP/e" "$TMP/e/.claude/worktrees/lane" "$$" \
+  | grep -qx True && ok "V6: reown (/clear) carries the visit line to the new session id" || fail "V6: reown dropped visit"
+
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }

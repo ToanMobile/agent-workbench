@@ -201,7 +201,7 @@ def raw_pid_start(main, sid):
 def raw_visit(main, sid):
     """True when the session's record says it only visited its worktree (a `visit` line after the path), not created it (#428)."""
     p = _record_path(main, sid)
-    return "visit" in [l.strip() for l in (_read_small(p) or "").splitlines()[2:]] if p else False
+    return "visit" in [l.strip() for l in (_read_small(p) or "").splitlines()[1:]] if p else False
 
 
 def record_age(main, sid, now=None):
@@ -340,7 +340,7 @@ def reown(main, sid, here, is_alive, me=None):
         # Trade-off (OCR2 5): a /resume gets a new pid, so only "the owner is gone" tells it from a bystander; a session with no record that merely
         # stands (cd) in a dead peer's worktree takes it over too. It then merges that worktree with --keep and keeps it - the work is never lost.
         if not is_alive(osid) or (me and rec_pid == me):
-            if write_record(main, sid, rp, pid=rec_pid, start=rec_start):
+            if write_record(main, sid, rp, pid=rec_pid, start=rec_start, visit=raw_visit(main, osid)):
                 clear_record(main, osid)
                 return rp
     return None
@@ -571,7 +571,7 @@ def _lock_or_report(main, wt, sid, pid, problems, locks):
         return wt
     if reason is not None and not reason.startswith(KEPT_PREFIX):
         return None
-    write_record(main, sid, wt, pid=pid, start=pid_start_token(pid) if pid else None)
+    write_record(main, sid, wt, pid=pid, start=pid_start_token(pid) if pid else None, visit=raw_visit(main, sid))
     if problems is not None:
         problems.append(f"NOT LOCKED: {wt} (no pid / git refused or timed out): cleanup-wt may remove it while this session works; "
                         "the next compact (or clear from inside it) tries to lock it again")
