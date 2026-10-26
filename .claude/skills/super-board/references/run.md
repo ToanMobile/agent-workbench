@@ -360,8 +360,8 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
    - Move card `QA -> Review`: `.claude/bin/super-board-card.sh --config <cfg> move <N> Review`.
    - **Adversarial Review Discipline:** Apply **Blind-First Pass** (read AC + raw `git diff` and form 2–4 failure hypotheses before reading Builder summary), **Review Remembers** (on rework rounds, grade prior `R1..Rn` findings `fixed`/`not fixed` first), and **Taste Never Blocks** (`Over-engineering`/`Deepening opportunity` is `Should fix`, never blocks a test-green diff).
    - **Small/Medium Task (`< 3` files, `<= 200` LOC net diff, no `auth`/`payment`/`migration`/`security`):** Run `open-code-review` self-audit, post `[reviewer] [report] ✅ merge-ready (DevKit Fast-Track)` + the 4-item Acceptance Report (`core-rules §1.3`), then:
-     - **Merge queue on** (config `merge_queue.enabled`, or `SB_MERGE_QUEUE=1`): never call the merge gate. Post `approved-head:<sha40>` on the PR as its own comment, run `gh pr ready <PR>`, add the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, and leave the card in `Review`: the queue merges it (run.md → Merge protocol step 5).
-     - **Queue off** (`SB_MERGE_QUEUE=0`, or not enabled): run `gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`, and move card `Review -> Done` (`column='Done'`) — unless the gate printed `ac-open: #N` (merged with AC still unproven: the card stays open in Ready, never Done).
+     - **Merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` without `--codex`: that runner drains the queue every tick): never call the merge gate. Post `approved-head:<sha40>` on the PR as its own comment, run `gh pr ready <PR>`, add the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, and leave the card in `Review`: the queue merges it (run.md → Merge protocol step 5).
+     - **Queue off** (`SB_MERGE_QUEUE=0`, not enabled, or the workflow backend (default) / `--codex`: nothing drains the queue there, so the old merge gate path applies even when the config enables it): run `gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`, and move card `Review -> Done` (`column='Done'`) — unless the gate printed `ac-open: #N` (merged with AC still unproven: the card stays open in Ready, never Done).
    - **Large/High-Risk Task (`>= 2` modules, `>= 3` files, `> 200` LOC net diff, or `auth`/`payment`/`migration`/`security`):** Leave card in `Review` (`column='Review'`) so the independent Reviewer lane (2nd agent / Antigravity `audit`) performs cross-review before merging to `Done`.
 <!-- universal-agent-devkit-workflow:end -->
 
@@ -504,7 +504,8 @@ substantial builds and landed **zero commits on `main` in six hours**. The Revie
 walk these steps in order, and the card **must not reach Done until the merge is confirmed
 on the base branch**.
 
-**Merge queue on** (config `merge_queue.enabled`, or `SB_MERGE_QUEUE=1`; `SB_MERGE_QUEUE=0` turns it off): the Reviewer
+**Merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` without `--codex`, whose runner
+drains the queue every tick; `SB_MERGE_QUEUE=0` turns it off): the Reviewer
 never calls the merge gate (it refuses a direct call, exit 13). In place of steps 2–5 below:
 1. post `approved-head:$HEAD` on the PR as its own new comment (step 5 says how);
 2. `gh pr ready <PR>`;
@@ -513,7 +514,10 @@ never calls the merge gate (it refuses a direct call, exit 13). In place of step
 5. write the Reviewer report (status `merge-ready`), leave the card in Review and exit.
 
 `super-board-merge-queue.sh` batches the queued PRs into one merge train (one `--full` verify of the merged tree), merges
-them and routes every `train-result` (merged → Done). Queue off: the steps below, unchanged.
+them and routes every `train-result` (merged → Done). Queue off: the steps below, unchanged. The workflow backend (default) and
+`--codex` have nothing that drains the queue, so the queue is off there even when the config enables it: a `merge-queue` label
+would leave the card in Review, re-reviewed every wave. They take the steps below (`ponytail:` queue only on claude-p; add
+workflow/codex when a queue schedule runs there).
 
 ```
 1. Mark ready      gh pr ready <PR>                     # idempotent; no-op if already ready
