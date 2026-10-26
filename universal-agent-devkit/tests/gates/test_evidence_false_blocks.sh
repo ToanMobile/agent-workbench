@@ -30,6 +30,8 @@
 # line, `true || pytest`) read as green with no failure marker (P1-1), and Gradle's BUILD SUCCESSFUL backing a loop / if that also hides a
 # pytest run (P1-3, a regression of 8c1c695d); the principal review of the same round added B2: a run whose stdout went to a file, then
 # another command's pass summary (`pytest > log; echo "5 passed"`, `pytest a > log; pytest b`, a kit test after it) read as green.
+# OCR review round 3 added S: a loop whose run pipes its result away (`pytest $d | head -1`) or swallows its exit (`|| true`) read as green
+# (E1), and a run piped away (`| grep -c FAILED`, `| tail -0`) or sent to a file by `>&`, then another command's summary (E2).
 # Run: bash tests/gates/test_evidence_false_blocks.sh   (TE_HOOK=<path> tests another copy of the hook)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -500,6 +502,28 @@ BUILD SUCCESSFUL in 2s'; do
   transcript "$TMP/r4.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
   run 0 "$TMP/r4.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
 done
+
+echo "-- S. OCR review round 3 (2026-10-26): a loop's run that pipes its result away or swallows its exit (E1), a run piped away or sent"
+echo "   to a file by \`>&\`, then another command's summary (E2)"
+for c in 'for d in a b; do python3 -m pytest -q $d | head -1; done@@..F......  [100%]
+.........  [100%]' \
+         'for d in a b; do python3 -m pytest -q $d 2>&1 | grep -c passed; done@@1
+1' \
+         'for d in a; do python3 -m pytest -q $d || true; done@@..F..' \
+         'while true; do python3 -m pytest -q | tail -0; break; done; echo checked@@checked' \
+         'python3 -m pytest -q tests/a 2>&1 | grep -c FAILED; python3 -m pytest -q tests/b@@3
+10 passed in 0.50s' \
+         'python3 -m pytest -q tests/a 2>&1 | tail -0; echo "5 passed"@@5 passed' \
+         'python3 -m pytest -q >& /tmp/l; echo "5 passed"@@5 passed' \
+         'python3 -m pytest -q tests/a >& /tmp/l; python3 -m pytest -q tests/b@@3 passed in 0.10s' \
+         'bash tests/a/test_y.sh 2>&1 | tail -0; bash tests/a/test_x.sh@@✔ x1
+all passed (1)'; do
+  transcript "$TMP/s1.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
+  run 2 "$TMP/s1.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
+done
+echo "-- S. still the evidence: \`>&2\` keeps the output in the result"
+transcript "$TMP/s2.jsonl" "$(steps_after_edit 'python3 -m pytest -q tests/a >&2; python3 -m pytest -q tests/b' $'4 passed in 0.10s\n3 passed in 0.10s')"
+run 0 "$TMP/s2.jsonl" "$PASSCLAIM" "'4 passed / 3 passed' after \`python3 -m pytest -q tests/a >&2; python3 -m pytest -q tests/b\`: $PASSCLAIM"
 
 [ "$FAILS" -eq 0 ] && { echo "all passed ($N)"; exit 0; }
 echo "$FAILS failed of $N"; exit 1
