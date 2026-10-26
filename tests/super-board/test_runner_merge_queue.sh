@@ -240,18 +240,18 @@ exec(compile(ast.Module(body=[node], type_ignores=[]), 'codex-lane', 'exec'), ns
 print(ns['prompt'])
 PY
 }
-p=$(codex_prompt 1 '{"worker_backend":"claude-p"}')
-{ printf '%s' "$p" | grep -q 'add-label merge-queue' && printf '%s' "$p" | grep -qF 'queued PR #<N>' && ! printf '%s' "$p" | grep -q 'Merge ONLY through'; } \
-  && ok "codex lane, SB_MERGE_QUEUE=1: review prompt enters the merge queue, no direct merge gate step" || fail "codex lane queue-on prompt: $(printf '%s' "$p" | tail -c 400)"
-p=$(codex_prompt '' '{"worker_backend":"claude-p","merge_queue":{"enabled":true}}')
-printf '%s' "$p" | grep -q 'add-label merge-queue' && ok "  … config merge_queue.enabled=true turns it on too" || fail "codex lane ignores config merge_queue.enabled"
-p=$(codex_prompt 0 '{"worker_backend":"claude-p","merge_queue":{"enabled":true}}')
-{ printf '%s' "$p" | grep -q 'Merge ONLY through the unchanged .claude/bin/super-board-merge-gate.sh' && ! printf '%s' "$p" | grep -q 'add-label merge-queue'; } \
-  && ok "  … SB_MERGE_QUEUE=0 keeps the old merge gate step" || fail "codex lane queue-off prompt changed"
-for cfg in '{"merge_queue":{"enabled":true}}' '{"worker_backend":"codex","merge_queue":{"enabled":true}}' '{"worker_backend":"workflow"}'; do
-  p=$(codex_prompt 1 "$cfg")
-  { printf '%s' "$p" | grep -q 'Merge ONLY through the unchanged' && ! printf '%s' "$p" | grep -q 'add-label merge-queue'; } \
-    && ok "  … codex lane, backend not claude-p ($cfg) + SB_MERGE_QUEUE=1: queue off, old merge gate step" || fail "codex lane queue on for $cfg"
+# Audit lại Antigravity #1 (26/10): lane Codex (đường `run --codex`, codex-wave) không có ai rút hàng — chỉ runner claude-p gọi
+# merge-queue.sh mỗi tick. Lane Codex LUÔN đi đường merge gate cũ, kể cả config claude-p + enabled + SB_MERGE_QUEUE=1, và phóng
+# `codex exec` với SB_MERGE_QUEUE=0 để gate không trả 13 cho reviewer Codex.
+for sw in 1 ''; do
+  for cfg in '{"worker_backend":"claude-p","merge_queue":{"enabled":true}}' '{"merge_queue":{"enabled":true}}' '{"worker_backend":"codex","merge_queue":{"enabled":true}}' '{"worker_backend":"workflow"}'; do
+    p=$(codex_prompt "$sw" "$cfg")
+    { printf '%s' "$p" | grep -q 'Merge ONLY through the unchanged' && ! printf '%s' "$p" | grep -q 'add-label merge-queue'; } \
+      && ok "codex lane (SB_MERGE_QUEUE='$sw', $cfg): old merge gate step, never the queue" || fail "codex lane entered the queue for SB_MERGE_QUEUE='$sw' $cfg"
+  done
 done
+grep -qE "Popen\(command,.*env=.*SB_MERGE_QUEUE.*'0'" "${SB_TEST_CODEX_LANE:-$ROOT/.claude/bin/super-board-codex-lane.sh}" \
+  && ok "codex exec is launched with SB_MERGE_QUEUE=0 (structure check: the gate lets the Codex reviewer merge)" \
+  || fail "codex exec not launched with SB_MERGE_QUEUE=0: the gate would answer exit 13 to the Codex reviewer"
 
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }
