@@ -507,7 +507,7 @@ top_card_in_column() {
   # The result is returned via TOP_ISSUE, NOT stdout: this function logs as it
   # reconciles, and log lines on stdout would be captured by a `$(...)` caller and
   # read back as a card number.
-  local col="$1" issue item_id
+  local col="$1" issue item_id queued mq_seen=0
   TOP_ISSUE=""; TOP_ITEM_ID=""
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
@@ -534,6 +534,18 @@ top_card_in_column() {
       continue
     fi
     if [ "$col" = "Ready" ] && ready_card_held "$issue" "$item_id"; then continue; fi   # #202
+    # Pha 2: thẻ Review đã vào hàng (PR không draft, nhãn merge-queue, approved-head khớp head) chờ super-board-merge-queue.sh gom;
+    # phóng reviewer cho nó chỉ lặp lại review (B1). Đọc GitHub hỏng → coi như chưa vào hàng (review như cũ, không bỏ qua vì lỗi đọc).
+    if [ "$col" = "Review" ] && merge_queue_on && queued=$(review_approved_head "$issue" merge-queue </dev/null); then
+      mq_seen=1
+      case " ${MQ_LOGGED:-} " in
+        *" ${issue}@${queued// /@} "*) ;;
+        *) log "skip #${issue} in Review: PR ${queued%% *} is in the merge queue at ${queued#* } — waiting for super-board-merge-queue.sh, no reviewer"
+           MQ_LOGGED="${MQ_LOGGED:-} ${issue}@${queued// /@}" ;;
+      esac
+      continue
+    fi
+    [ "$col" != "Review" ] || MQ_WAITING=$mq_seen
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
@@ -551,6 +563,7 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}"
     | (if $col == "Ready" then sort_by(ready_rank) else . end)
     | .[] | [(.content.number | tostring), (.id // "")] | @tsv')
 EOF
+  [ "$col" != "Review" ] || MQ_WAITING=$mq_seen
   return 1
 }
 
@@ -934,16 +947,49 @@ PY
   [ "$rc" -ne 4 ]
 }
 
+merge_queue_on() {
+  # Pha 2: 0 khi merge queue bật cho board này. SB_MERGE_QUEUE=1 bật, =0 tắt (đường lùi: merge-only / train như cũ), còn lại theo
+  # config `merge_queue.enabled` (thiếu khoá hoặc config không đọc được = tắt).
+  case "${SB_MERGE_QUEUE:-}" in
+    1) return 0 ;;
+    0) return 1 ;;
+  esac
+  jq -e '.merge_queue.enabled == true' "$CONFIG_PATH" >/dev/null 2>&1
+}
+
+merge_queue_due() {
+  # Pha 2: khi queue bật, mỗi tick chạy `super-board-merge-queue.sh --config <cfg> --if-due` (bộ gom tự thoát 0 khi chưa tới hạn hoặc
+  # khoá bận). Exit 79/9 của nó là halt như gh_checkpoint; mọi lỗi khác chỉ ghi log, không được kết thúc runner (set -euo pipefail).
+  # ponytail: chạy đồng bộ, nên lúc một đợt tới hạn đang verify thì tick của runner đứng chờ; chuyển sang chạy nền (ghi PID, đọc mã
+  # thoát ở tick sau) khi log runner thấy khoảng trống giữa các tick dài hơn vài tick_seconds.
+  merge_queue_on || return 0
+  local mq rc=0
+  mq="$(dirname "$SB_GITHUB_READ")/super-board-merge-queue.sh"
+  if [ ! -x "$mq" ]; then
+    log "⚠ merge queue is on but $mq is missing or not executable — queued PRs are not merged by this runner"
+    return 0
+  fi
+  "$mq" --config "$CONFIG_PATH" --if-due >> "${RUN_MANIFEST:-/dev/null}" 2>&1 || rc=$?
+  case "$rc" in
+    0) ;;
+    79|9) log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
+    *) log "⚠ super-board-merge-queue.sh --if-due exited ${rc} — runner keeps going, the queue is retried next tick" ;;
+  esac
+  return 0
+}
+
 review_approved_head() {
   # $1 = issue. Thẻ Review đã được duyệt đúng head PR hiện tại (#227): in "<PR> <sha>" và trả 0, để lượt này chỉ chạy lại merge gate
   # (exit 4/conflict/not mergeable không phải lỗi code, review lại tốn 15-30 phút). Duyệt = comment `approved-head:<sha>` của người
   # có quyền ghi (OWNER/MEMBER/COLLABORATOR), comment cuối cùng thắng; head PR đổi thì sha không khớp nên duyệt tự mất hiệu lực.
   # Đọc GitHub hỏng hay thiếu dữ liệu → trả 1 = review đầy đủ như cũ (không bao giờ bỏ qua review vì lỗi đọc). Gate vẫn ghim --expect-head
   # và áp merge_policy nguyên vẹn: hàm này chỉ chọn việc cho worker, không nới luật merge.
-  local prs pr head approved
-  prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json number,headRefName,headRefOid 2>/dev/null) || return 1
+  # $2 (tuỳ chọn, Pha 2) = nhãn bắt buộc, vd merge-queue: PR đó còn phải mang nhãn này và không là draft (đúng bộ lọc của merge-queue.sh).
+  local prs pr head approved want="${2:-}"
+  prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid${want:+,labels,isDraft}" 2>/dev/null) || return 1
   read -r pr head <<EOF
-$(printf '%s' "$prs" | jq -r --arg p "issue-$1-" '[.[] | select(.headRefName | startswith($p))][0] | select(. != null) | "\(.number) \(.headRefOid)"' 2>/dev/null)
+$(printf '%s' "$prs" | jq -r --arg p "issue-$1-" --arg l "$want" '[.[] | select(.headRefName | startswith($p))][0] | select(. != null)
+  | select($l == "" or ((.isDraft != true) and any((.labels // [])[]; .name == $l))) | "\(.number) \(.headRefOid)"' 2>/dev/null)
 EOF
   [ -n "${pr:-}" ] && [ -n "${head:-}" ] || return 1
   approved=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r '
@@ -962,6 +1008,7 @@ review_train_batch() {
   # ponytail: mỗi thẻ ứng viên tốn một lần `pr list` + `pr view` (Review thường chỉ vài thẻ); nâng lên khi cột Review quá 10 thẻ: đọc pr list một lần.
   TRAIN_BATCH=""
   [ "${SB_REVIEW_TRAIN:-1}" != "0" ] || return 0
+  ! merge_queue_on || return 0   # Pha 2: queue bật thì super-board-merge-queue.sh gom, runner không phóng worker train
   local n=0 max="${SB_TRAIN_MAX:-8}" rows="" issue row cands
   case "$max" in ''|*[!0-9]*) max=8 ;; esac
   # Cùng bộ lọc với top_card_in_column (#95): thẻ cần người / cần thiết bị không đi vào đợt (R2).
@@ -1173,13 +1220,16 @@ EOF
         noop_judge=0
         log "review lane: merge-train for #${train_issues// /, #} (PRs ${train_prs}) — one worker, one verify, no fresh review"
         prompt="Run one merge-train worker on issues #${train_issues// /, #} (PRs ${train_prs}) for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol (the runner-batched merge train). Config: ${CONFIG_PATH}. These PRs were already reviewed and approved at their current heads (approved-head comments: ${train_heads}); do NOT review any of them again. Mark each PR ready (gh pr ready <PR>), then run ONE command, never the gate per PR: bash .claude/bin/super-board-merge-train.sh --config ${CONFIG_PATH} --prs ${train_prs} (each N:sha pins the approved head; keep the list exactly as given). The train itself drops a PR whose head moved off the approved one (train-result head-moved, exit 6): its card stays in Review for a fresh review. Route every train-result line exactly as the Merge protocol says: head-moved → leave the card in Review; merged → confirm it landed, close the issue, card Review → Done (not when the gate printed ac-open: #N — that card stays open, the gate moved it to Ready); red or train-red (exit 11) → the exit 11 route (card to Ready with loop:rebuild-N); conflict → rebase pass; deferred or timeout → leave the card in Review for the next wave; gate-exit-K → route K like the gate exit code K. Exit 79 or 9 from the train → halt as the Merge protocol says. Every issue of the batch is yours: keep going until each has been routed."
-      elif merge_only=$(review_approved_head "$issue"); then
+      elif ! merge_queue_on && merge_only=$(review_approved_head "$issue"); then   # Pha 2: queue bật thì không có worker merge-only
         noop_judge=0
         read -r mo_pr mo_head <<EOF
 $merge_only
 EOF
         log "review lane issue=#${issue}: PR #${mo_pr} approved at head ${mo_head} — merge-only, no fresh review"
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
+      elif merge_queue_on; then
+      # Pha 2 (Q1): reviewer vào hàng thay cho gọi merge gate; super-board-merge-queue.sh gom và merge cả đợt, rồi chuyển thẻ Done.
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: post a PR comment whose line is exactly approved-head:<the 40-char head sha you reviewed>, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
       else
       prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
@@ -1403,6 +1453,9 @@ record_cycle_progress() {
     PREV_DONE_SIG="$cur"
     return 0
   fi
+  # Pha 2 (M4): the last Review scan found cards queued for super-board-merge-queue.sh (MQ_WAITING, set by top_card_in_column and kept
+  # while the review lane is busy). Done moves only when their batch lands (up to merge_queue.max_wait_min), so the wait is no runaway.
+  if [ "${MQ_WAITING:-0}" = 1 ] && [ "${REVIEW:-0}" -gt 0 ]; then return 0; fi
   NO_PROGRESS_CYCLE_COUNT=$((NO_PROGRESS_CYCLE_COUNT + 1))
   [ "$NO_PROGRESS_CYCLE_COUNT" -lt "$NO_PROGRESS_CYCLES" ]
 }
@@ -1611,6 +1664,12 @@ EOF
     [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
     if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
       rm -f "$f" 2>/dev/null || true   # it moved the card or wrote something: progress
+      continue
+    fi
+    # Pha 2 (M4): a reviewer that queued the PR (merge-queue label + approved-head at the head) rightly leaves the card in Review:
+    # the queue merges it later, so this is no no-op. Checked only here, on the would-be no-op path, so a queue-off board reads nothing more.
+    if [ "$lane" = review ] && [ "$col" = Review ] && merge_queue_on && review_approved_head "$issue" merge-queue >/dev/null; then
+      rm -f "$f" 2>/dev/null || true
       continue
     fi
     now=$(date +%s)
@@ -2737,6 +2796,7 @@ while true; do
   #    Trần mặc định 1 thì QA_COUNT>=QA_WORKERS khi lane bận, nên điều kiện này đúng như cũ.
   if tick_is_cheap; then
     log "tick — cap reached (machine at ${MAX_WORKERS} workers, ${ACTIVE_WORKERS} here) — skipping GraphQL fetch, sleeping ${TICK_SECONDS}s"
+    merge_queue_due   # Pha 2: queued PRs still get their batch while every lane is busy (no-op when the queue is off)
     tick_sleep "$TICK_SECONDS"
     continue
   fi
@@ -2820,6 +2880,7 @@ while true; do
   fi
 
   gh_checkpoint
+  merge_queue_due   # Pha 2: gom PR đã vào hàng khi tới hạn (hợp đồng lanes-contract: --if-due exit 0 khi chưa tới hạn; merge_queue_on lọc khi tắt)
 
   # ── Landed-work halt gate (issue #8).
   #    Progress = the Done/Skipped set changed since the last dispatch cycle. Lane
