@@ -193,6 +193,15 @@ cases = [
     # vòng 2: c7943377 coi cd trong thân là "không biết" nên từ repo khác (trunk tắt) commit sau cd đó trong thân lọt; cd dời shell của THÂN
     ("from B: bash <<'EOF' cd A && git commit EOF (the body's shell moved to A)", lambda: bash(f"bash <<'EOF'\ncd {A} && git commit -m x\nEOF", cwd=B), 2),
     ("from B: bash <<'EOF' cd A <nl> git commit EOF", lambda: bash(f"bash <<'EOF'\ncd {A}\ngit commit -m x\nEOF", cwd=B), 2),
+    # OCR 26/10 vòng 3 (S1): `<<WORD` không phải heredoc (trong comment, trong chuỗi có nháy, here-string `<<<`) hay delimiter có `-` (regex chỉ
+    # lấy END của END-X) không có dòng kết thúc - mọi dòng sau nó từng bị bỏ như thân dữ liệu
+    ("from B: # heredoc form: <<EOF <nl> git -C A commit", lambda: bash(f"# heredoc form: <<EOF\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: grep -n '<<EOF' x.sh <nl> git -C A commit", lambda: bash(f"grep -n '<<EOF' x.sh\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: cat <<END-X … END-X <nl> git -C A commit", lambda: bash(f"cat <<END-X > /dev/null\nhi\nEND-X\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: base64 -d <<< SGk= <nl> git -C A commit (a here-string)", lambda: bash(f"base64 -d <<< SGk=\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: read a <<< x <nl> git -C A commit", lambda: bash(f"read a <<< x\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: cat <<END-X > <scratch> <nl> git -C A commit <nl> END-X (a data body, delimiter with -)", lambda: bash(f"cat <<END-X > {tmp}/scratch/n.txt\ngit -C {A} commit -m x\nEND-X", cwd=B), 0),
+    ("from B: cat <<EOF > <scratch> <nl> git -C A commit (unterminated: bash reads it all as data)", lambda: bash(f"cat <<EOF > {tmp}/scratch/n.txt\ngit -C {A} commit -m x", cwd=B), 2),
     # OCR 26/10 vòng 2 (P2-7): bash kết thúc heredoc ở dòng ĐÚNG bằng từ kết thúc (<<- chỉ bỏ tab đầu dòng); `.strip()` coi "  EOF" là hết thân
     ("from B: cat <<EOF <nl>  EOF <nl> git -C A commit <nl> EOF (all of it is data)", lambda: bash(f"cat <<EOF\n  EOF\ngit -C {A} commit -m x\nEOF", cwd=B), 0),
 ]
