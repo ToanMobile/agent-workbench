@@ -304,7 +304,7 @@ column), never built unchecked. `qa` cards are not pre-flighted: nothing is buil
 In a Universal Agent DevKit repo every lane also follows the step for its column in "Universal Agent DevKit Mandatory
 Pipeline" below (between Builder first pass and Builder rebuild); AGENTS.md no longer repeats it.
 
-`post-fix-gate.py --run-tests --full` and `super-board-merge-gate.sh` can wait up to 600 s for a heavy slot before they
+`post-fix-gate.py --run-tests` and `super-board-merge-gate.sh` can wait up to 600 s for a heavy slot before they
 start. Run them with the Bash tool's `run_in_background: true` from the first attempt, then poll the output; a foreground
 call is cut by the Bash timeout and the whole run is repeated (#249). The runner also exports
 `BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` = 3600000 to every worker as a second line of defence.
@@ -353,13 +353,15 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
    - **Surviving Mutant & Anti-Tautology Guard:** If a new test passes on its first run (`First-run Green`), mutate the guarded production line once to confirm **RED**, then restore **GREEN**; never assert on a test's own mock or copy the implementation formula into `expected`.
 2. **Column `QA` — DevKit Post-Fix Gate & Visual Proof (`qc` + `verification-before-completion`):**
    - Move card `Building -> QA`: `.claude/bin/super-board-card.sh --config <cfg> move <N> QA`.
-   - Execute `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief` (must exit `0`) and capture screenshot proof via `python3 .agents/devkit/bin/proof-capture.py` when app/UI source changes.
+   - Run `git merge --no-edit origin/<base>`, the card's target tests, then `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief` (impacted, must exit `0`; it writes the task receipt). Never `--full` per card: the merge point verifies the merged tree once. Capture screenshot proof via `python3 .agents/devkit/bin/proof-capture.py` when app/UI source changes.
    - **Non-Blank, Terminal-State & A/B Perf Guards:** UI proof requires rendered data/empty-state + `0` `console.error`/`pageerror`/uncaught exceptions + `0` background `5xx`/`401`/`403`; async/queue/upload/eSign flows must verify terminal state + persisted destination record (Toast/HTTP 200 alone is never PASS); performance claims require alternating `AB, BA` (>= 5 pairs after warmup).
    - Push branch, open/update PR, and post `[builder] [report]` + `[qa] [report] ✅` with gate output and embedded proof screenshot.
 3. **Column `Review` & `Done` — Smart Fast-Track vs Cross-Review (`open-code-review` + `deep-module-design`):**
    - Move card `QA -> Review`: `.claude/bin/super-board-card.sh --config <cfg> move <N> Review`.
    - **Adversarial Review Discipline:** Apply **Blind-First Pass** (read AC + raw `git diff` and form 2–4 failure hypotheses before reading Builder summary), **Review Remembers** (on rework rounds, grade prior `R1..Rn` findings `fixed`/`not fixed` first), and **Taste Never Blocks** (`Over-engineering`/`Deepening opportunity` is `Should fix`, never blocks a test-green diff).
-   - **Small/Medium Task (`< 3` files, `<= 200` LOC net diff, no `auth`/`payment`/`migration`/`security`):** Run `open-code-review` self-audit, post `[reviewer] [report] ✅ merge-ready (DevKit Fast-Track)` + the 4-item Acceptance Report (`core-rules §1.3`), run `gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`, and move card `Review -> Done` (`column='Done'`) — unless the gate printed `ac-open: #N` (merged with AC still unproven: the card stays open in Ready, never Done).
+   - **Small/Medium Task (`< 3` files, `<= 200` LOC net diff, no `auth`/`payment`/`migration`/`security`):** Run `open-code-review` self-audit, post `[reviewer] [report] ✅ merge-ready (DevKit Fast-Track)` + the 4-item Acceptance Report (`core-rules §1.3`), then:
+     - **Merge queue on** (config `merge_queue.enabled`, or `SB_MERGE_QUEUE=1`): never call the merge gate. Post `approved-head:<sha40>` on the PR as its own comment, run `gh pr ready <PR>`, add the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, and leave the card in `Review`: the queue merges it (run.md → Merge protocol step 5).
+     - **Queue off** (`SB_MERGE_QUEUE=0`, or not enabled): run `gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`, and move card `Review -> Done` (`column='Done'`) — unless the gate printed `ac-open: #N` (merged with AC still unproven: the card stays open in Ready, never Done).
    - **Large/High-Risk Task (`>= 2` modules, `>= 3` files, `> 200` LOC net diff, or `auth`/`payment`/`migration`/`security`):** Leave card in `Review` (`column='Review'`) so the independent Reviewer lane (2nd agent / Antigravity `audit`) performs cross-review before merging to `Done`.
 <!-- universal-agent-devkit-workflow:end -->
 
@@ -387,7 +389,7 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
 for affected feature selection, actual host readiness and new run-owned proof.
 Record uncovered/stale optional coverage alongside ordinary issue AC checks.
 4b. **Test-gap check** (super-qa → "Test-gap check (after build)"): map every AC to unit / component / e2e tests, hunt edge cases, write the High gaps red-first. A High gap that needs app code changed → Fail (step 7) with the gap list. Medium/Low go in the handoff under `Test gaps (not written)`.
-4c. **Same suites as the merge gate (#251).** In the QA worktree run `git merge --no-edit origin/<config.base_branch>` (the tree the gate verifies), then run every line of `.claude/bin/super-board-verify-cmd.sh --config <cfg>` (no `--record` by hand since #319: a `post-fix-gate.py --full --diff origin/<base>` that exits 0 on a clean tree holding `origin/<base>` writes the same tree receipt itself via `super-board-verify-cmd.sh --mark`, so the merge gate skips the same verify on this exact tree, #226): it prints the `verify_commands` with ` --diff origin/<base> --force-full` already inserted, by the same function the merge gate uses. Never a hand-built `post-fix-gate.py` line. The receipt is keyed on the tree: any commit after that gate (QA evidence under `docs/super-board/runs/`, a fix-up) changes the tree and the merge gate verifies again (#394 did), so commit evidence first and run the gate last, or put it in the PR body or a comment. Measured on PR #395 (#319): one `--full`, 402 s before the push, no commit after it; the merge gate ran no verify (no `last-merge-verify-pr-395.log`, no new receipt) and the review lane took 397 s. A red suite is rerun once on `origin/<base>`; red there too = red on base, not this PR (the merge gate files its own card), so QA does not fail the card for it.
+4c. **Target tests + impacted gate on the merged base (#251, 26/10).** In the QA worktree run `git merge --no-edit origin/<config.base_branch>` (the base the merge point builds on), then the card's target tests (step 4) and `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief`: impacted, exit `0` required, it writes the task receipt the Reviewer reads for this head. Never `--full` and never the `super-board-verify-cmd.sh` lines per card: the full verify runs once at the merge point (the merge queue's train; with the queue off, the merge gate) on the merged tree. The task receipt is keyed on the tree: commit evidence (`docs/super-board/runs/`, a fix-up) first and run the gate last, or put it in the PR body or a comment. A red suite is rerun once on `origin/<base>`; red there too = red on base, not this PR (the merge gate files its own card), so QA does not fail the card for it.
 5. Run the tests. Capture evidence to `docs/super-board/runs/issue-<N>-qa-v<N>/`. For UI/visual ACs, capture screenshots at the standard viewports (1920×1080 desktop, 1024×768 tablet, 375×667 mobile). Commit the screenshots to the issue branch BEFORE writing the comment (the markdown image URLs depend on the files being present on the branch).
    **Evidence stays small** (Goods PR #48, 19/10: 17k lines of raw test XML and logs with ANSI colour codes made `gh pr diff` fail and halted the board). Commit the screenshots plus one `summary.md` of at most 40 lines: the command, its exit code, the pass/fail counts and the failing lines quoted. Never commit raw runner output over 200 lines (`*.log`, JUnit/NUnit `*.xml`, HAR): keep it in `$(git rev-parse --git-common-dir)/super-board/evidence/issue-<N>/`, outside the branch. Strip ANSI colour codes from anything you commit (`LC_ALL=C sed $'s/\x1b\\[[0-9;]*m//g'`). Comments stay short and plain: what passed, what failed, the evidence path (writing-standard.md § 4, at most 8 lines).
 6. **Pass** → commit test files + screenshots to same branch + push → tick the `ac` block with proof lines, write `visual` for UI, append a `history` row, rewrite `status` → `[qa] [report] ✅` PR comment with results + evidence path **+ inline screenshot embeds** (see "Screenshot embed format" below) → issue comment with the SAME inline screenshot embeds → move card QA → Review. Clean up worktree.
@@ -453,7 +455,7 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
 5. **Reviewer-side test rerun** (always — closes the Tester self-verification gap):
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the test command Tester used (recorded in Tester's PR handoff comment as `Local tests:` line).
-   - Exception: the DevKit gate (`post-fix-gate.py … --full`) is never rerun here — never rerun post-fix-gate --full; read its exit 0 for this head SHA from QA's report. The merge gate's `--force-full` verifies the merged tree.
+   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the impacted `post-fix-gate.py --run-tests` exit 0 (its task receipt) for this exact head SHA. A report for another SHA, or none, is a Verification miss. The merge point (the merge queue's train; queue off, the merge gate's `--force-full`) verifies the merged tree once.
    - Tests green → continue to step 6.
    - Tests red → open new `[qa]`-prefixed PR thread quoting the failure output, move card Review → QA with `loop:rebuild-N`, exit. Tester wrote a broken suite; QA owns the fix.
 6. **Adversarial mode** (per `truth_gate`): when triggered, spawn 2 sub-agents in parallel:
@@ -502,6 +504,17 @@ substantial builds and landed **zero commits on `main` in six hours**. The Revie
 walk these steps in order, and the card **must not reach Done until the merge is confirmed
 on the base branch**.
 
+**Merge queue on** (config `merge_queue.enabled`, or `SB_MERGE_QUEUE=1`; `SB_MERGE_QUEUE=0` turns it off): the Reviewer
+never calls the merge gate (it refuses a direct call, exit 13). In place of steps 2–5 below:
+1. post `approved-head:$HEAD` on the PR as its own new comment (step 5 says how);
+2. `gh pr ready <PR>`;
+3. `gh pr edit <PR> --add-label merge-queue`;
+4. comment on the Issue, one line: `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`;
+5. write the Reviewer report (status `merge-ready`), leave the card in Review and exit.
+
+`super-board-merge-queue.sh` batches the queued PRs into one merge train (one `--full` verify of the merged tree), merges
+them and routes every `train-result` (merged → Done). Queue off: the steps below, unchanged.
+
 ```
 1. Mark ready      gh pr ready <PR>                     # idempotent; no-op if already ready
 2. Merge through the gate (step 5), pinned to the reviewed head — never a bare
@@ -517,7 +530,7 @@ on the base branch**.
    card to Ready; `super-board-card.sh move N Done` refuses exit 5 and the runner reopens a closed `ac-open` issue):
    close the issue, move card Review → Done, rewrite `status` (`> [!TIP]` ✅ Merged) and append the `history` row, post the `[reviewer] [report] ✅ merged` comment
    citing the merge commit sha.
-5. Merge through the gate, never with a bare `gh pr merge`. Record the head you
+5. Merge through the gate (merge queue off; on: the queue steps above), never with a bare `gh pr merge`. Record the head you
    reviewed when review passes, and hand it to the gate:
      HEAD=$(gh pr view <N> --json headRefOid -q .headRefOid)   # at the moment review passes
      bash .claude/bin/super-board-merge-gate.sh --config <config> --pr <N> --expect-head "$HEAD" \
@@ -527,7 +540,7 @@ on the base branch**.
    (full 40-hex sha, `$HEAD` above). The runner reads the latest such comment from an OWNER/MEMBER/COLLABORATOR: a card still in
    Review whose PR head equals it (gate exit 4, a lock or conflict, not code) gets a **merge-only** worker next tick — this step 5 only,
    `--expect-head` pinned, no new review. A push changes the head, so the approval lapses and the next tick reviews the new head (#227).
-   The runner batches by itself (#228): when two or more Review cards carry a valid `approved-head:` (above), it hands them to
+   The runner batches by itself (#228, merge queue off): when two or more Review cards carry a valid `approved-head:` (above), it hands them to
    **one merge-train worker** (`super-board-merge-train.sh --prs <N:sha,…>` in board order, each `sha` the approved head, up to `SB_TRAIN_MAX`, default 8) instead of one
    reviewer per card, each running its own gate; every card of the batch holds a lock with the same PID, so the zombie sweep keeps that worker
    while any of them is still in Review. That worker reviews nothing; the train itself drops a PR whose head moved off its `sha` (`train-result: <N> head-moved`, exit 6, the card stays in Review for a fresh review),
