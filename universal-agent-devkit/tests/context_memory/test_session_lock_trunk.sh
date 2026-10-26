@@ -238,6 +238,14 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "worktree: W=; : ${W:=<main>}; git -C $W commit (a default assignment)", w, B(f"W=; : ${{W:={m}}}; git -C $W commit -qm x")),
     (True, "worktree: W=<wt>/l[m] unquoted: the glob picks the link to main, not the dir named l[m]", w, B(f"W={w}/l[m]; git -C $W commit -qm x")),
     (False, "worktree: W=<wt>/l[m] in double quotes: the dir named l[m] (no glob)", w, B(f'W={w}/l[m]; git -C "$W" commit -qm x')),
+    # OCR 26/10 (P2): thân heredoc nạp cho bash / python chạy ở tiến trình con - `W=…` / `cd` trong đó không tới lệnh git sau heredoc
+    (True, "worktree: W=<main> <nl> bash <<'EOF' W=<wt> EOF <nl> git -C $W commit (the body runs in a child)", w, B(f"W={m}\nbash <<'EOF'\nW={w}\nEOF\ngit -C $W commit -qm x")),
+    (True, "worktree: W=<main> <nl> python3 - <<EOF W=\"<wt>\" EOF <nl> git -C \"$W\" commit", w, B(f"W={m}\npython3 - <<EOF\nW=\"{w}\"\nEOF\ngit -C \"$W\" commit -qm x")),
+    (True, "worktree: cd <main> <nl> bash <<EOF cd <wt> EOF <nl> git commit (the cd runs in a child)", w, B(f"cd {m}\nbash <<EOF\ncd {w}\nEOF\ngit commit -qm x")),
+    (True, "worktree: W=<wt> <nl> . /dev/stdin <<EOF W=<main> EOF <nl> git -C $W commit (sourced: runs in this shell)", w, B(f"W={w}\n. /dev/stdin <<EOF\nW={m}\nEOF\ngit -C $W commit -qm x")),
+    (False, "worktree: W=<wt> <nl> cat <<EOF W=<main> EOF <nl> git -C $W commit (a data heredoc assigns nothing)", w, B(f"W={w}\ncat <<EOF\nW={m}\nEOF\ngit -C $W commit -qm x")),
+    (False, "worktree: W=<wt> <nl> python3 - <<EOF print(1) EOF <nl> git -C $W commit (the body leaves W alone)", w, B(f"W={w}\npython3 - <<EOF\nprint(1)\nEOF\ngit -C $W commit -qm x")),
+    (False, "main: cd <wt> && python3 - <<EOF print(1) EOF <nl> CLAUDE_PROJECT_DIR=\"$PWD\" gate", m, B(f'cd {w} && python3 - <<EOF\nprint(1)\nEOF\nCLAUDE_PROJECT_DIR="$PWD" {G}')),
     # 25/10 lỗ 2: `cd` trong $( ) / backtick / ( ) / <( ) chạy ở subshell, không dời thư mục của lệnh ngoài - walk đi theo nó nên gate chạy ở
     # main được coi như chạy ở worktree. cd ở độ sâu > 0 làm thư mục thành "không biết" (fail closed)
     (True, "main: x=$(<nl>cd <wt><nl>); gate (the cd runs in the substitution's subshell)", m, B(f"x=$(\ncd {w}\n); {G}")),

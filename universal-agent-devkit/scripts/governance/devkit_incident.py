@@ -90,7 +90,9 @@ TRACEBACK = re.compile(r"^Traceback \(most recent call last\):")
 # vẫn nhận một từ có chữ thường kiểu Java/Python (Killed, com.x.PrivApp) đứng NGAY sau frame cuối — chỉ khi một tiến trình khác
 # chen đúng chỗ đó (tên đó SẼ lên issue public); đoạn cuối TOÀN HOA (WARNING, PRIVPKG) bị loại vì class exception luôn có chữ thường.
 # Nới khi thấy Traceback thật bị bỏ sót trong log board.
-EXC_LINE = re.compile(r"^((?:[A-Za-z_]\w*\.)*[A-Z]\w*[a-z]\w*(?::.*)?)$")
+# `[^\Wa-z]*` (ký tự \w trừ a-z) dừng ĐÚNG ở chữ thường đầu tiên: cùng ngôn ngữ với `\w*[a-z]` mà không quay lui bậc hai trên một dòng
+# dài (OCR 26/10: 'A' + 'a'*32000 + '!' mất ~10 s CPU mỗi lượt quét).
+EXC_LINE = re.compile(r"^((?:[A-Za-z_]\w*\.)*[A-Z][^\Wa-z]*[a-z]\w*(?::.*)?)$")
 FRAME = re.compile(r'^\s*File "([^"]+)", line \d+, in (\S+)')
 
 

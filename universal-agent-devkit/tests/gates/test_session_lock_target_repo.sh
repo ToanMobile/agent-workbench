@@ -324,6 +324,23 @@ check("sibling worktree held: from the free main, cd $X && git commit is blocked
 check("  … and from the other free worktree too", fam("cd $X && git commit -m x"), 2)
 check("  … git commit in the own checkout still passes", fam_main("git commit -m x"), 0)
 
+# OCR 26/10 (P2): thân heredoc nạp cho bash / python chạy ở TIẾN TRÌNH CON - `W=…` / `cd` trong đó không đổi $W / thư mục của dòng lệnh
+# sau nó; walk từng đọc nó như phép gán của shell cha, nên từ worktree rảnh `W=<anh em bị giữ>` + thân heredoc gán lại W lọt vào checkout
+# bị giữ (trunk mode bật lẫn tắt)
+fam_t = lambda cmd: hook({"tool_name": "Bash", "tool_input": {"command": cmd}}, env_extra={"WORKTREE_TRUNK_MODE": "1"}, sid="me", cwd=FW)
+for mode, run in (("trunk off", fam), ("trunk on", fam_t)):
+    check(f"{mode}: W=<held sibling>; git -C $W commit is blocked (control)", run(f"W={FW2}\ngit -C $W commit -m x"), 2)
+    check("  … W=<held sibling> <nl> bash <<EOF W=<own> EOF <nl> git -C $W commit (the body ran in a child)",
+          run(f"W={FW2}\nbash <<EOF\nW={FW}\nEOF\ngit -C $W commit -m x"), 2)
+    check("  … W=<held sibling> <nl> python3 - <<EOF W=\"<own>\" EOF <nl> git -C \"$W\" commit",
+          run(f"W={FW2}\npython3 - <<EOF\nW=\"{FW}\"\nEOF\ngit -C \"$W\" commit -m x"), 2)
+    check("  … cd <held sibling> <nl> bash <<EOF cd <own> EOF <nl> git commit (the cd ran in a child)",
+          run(f"cd {FW2}\nbash <<EOF\ncd {FW}\nEOF\ngit commit -m x"), 2)
+    check("  … W=<own> <nl> cat <<EOF W=<held> EOF (a data heredoc) <nl> git -C $W commit passes",
+          run(f"W={FW}\ncat <<EOF\nW={FW2}\nEOF\ngit -C $W commit -m x"), 0)
+    check("  … W=<own> <nl> python3 - <<EOF print(1) EOF (a body that leaves W alone) <nl> git -C $W commit passes",
+          run(f"W={FW}\npython3 - <<EOF\nprint(1)\nEOF\ngit -C $W commit -m x"), 0)
+
 # a FIFO planted where the approval flag belongs must not hang the hook
 fifo = os.path.join(A, ".git", "devkit-allow-shared")
 os.mkfifo(fifo)
