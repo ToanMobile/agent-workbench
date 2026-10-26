@@ -76,10 +76,12 @@ If the input is ambiguous, default to reviewing the current branch against its u
      - calendar days use `date`, not `timestamptz`;
      - structured `AppError({ error_code, context })`;
      - jsonb writes are Zod-validated.
-   - **DevKit repo** (it has `.agents/devkit/bin/post-fix-gate.py`): the reviewed head needs a
-     `post-fix-gate.py --run-tests --full --brief` exit 0 on that exact SHA — read it from QA's report
-     and never rerun post-fix-gate --full yourself inside the board: the merge gate's `--force-full`
-     verifies the merged tree. A review run on its own, outside the board, has no merge gate and runs it.
+   - **DevKit repo** (it has `.agents/devkit/bin/post-fix-gate.py`): the reviewed head needs an impacted
+     `post-fix-gate.py --run-tests --brief` exit 0 (its task receipt) on that exact SHA — read it from QA's
+     report and never rerun post-fix-gate --full yourself: the merge point (the merge queue's train; queue off,
+     the merge gate's `--force-full`) verifies the merged tree once. A review run on its own, outside the board,
+     runs the impacted gate itself when QA left no result for this SHA; its merge goes through the merge gate
+     with `--standalone`, which runs the full verify (Merge protocol step 2).
      It also needs an `.agents/devkit/bin/ocr-review` pass on the diff. Missing either is a
      **Verification miss**, also when `/super-review` runs on its own, outside the board.
 
@@ -333,7 +335,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
 5. **Reviewer-side test rerun (always — closes Tester self-verification gap):**
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the EXACT command from Tester's PR `Local tests:` line.
-   - Exception: the DevKit gate (`post-fix-gate.py … --full`) is never rerun here — never rerun post-fix-gate --full; read its exit 0 for this head SHA from QA's report. The merge gate's `--force-full` verifies the merged tree (run.md → Merge protocol).
+   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the impacted `post-fix-gate.py --run-tests` exit 0 (its task receipt) for this exact head SHA. The merge point (the merge queue's train; queue off, the merge gate's `--force-full`) verifies the merged tree (run.md → Merge protocol).
    - Green → continue. Red → open new `[qa]`-prefixed thread quoting failure, move card Review → QA with `loop:rebuild-N`, exit.
    - If QA includes `Runtime checks:`, follow
      [optional runtime verification](../super-qa/references/runtime-verification.md):
@@ -360,11 +362,16 @@ Builder opens PRs as **drafts**, and GitHub never auto-merges a draft. Skipping 
 two complete builds. In order, no shortcuts:
 
 1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
+   **Inside the board with the merge queue on** (config `merge_queue.enabled`, or `SB_MERGE_QUEUE=1`): never call
+   the merge gate (it refuses a direct call, exit 13). Post `approved-head:<sha40>` on the PR as its own comment, add
+   the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
+   the report (`merge-ready`) and leave the card in **Review**: the queue merges it in one train (run.md → Merge
+   protocol). Queue off (`SB_MERGE_QUEUE=0`, or not enabled) inside the board: step 2 as below.
 2. Merge through the gate, pinned to the head you reviewed (`merge_policy.default: "human"`
    keeps a person on every merge — the gate returns exit 7 below):
    record `gh pr view <PR> --json headRefOid` when review passes, then
    `super-board-merge-gate.sh --config <cfg> --pr <PR> --expect-head <sha> --subject "<PR title>"
-   --body-file <msg.md>` (it merges with `--match-head-commit`; the message is the PR title plus the
+   --body-file <msg.md>`, plus `--standalone` when `/super-review` runs on its own, outside the board (it merges with `--match-head-commit`; the message is the PR title plus the
    commit bullets and `Closes #N` — writing-standard.md § 1). Exit 6 = the head moved after review → your evidence is void;
    leave the card in **Review** with a `[reviewer]` comment naming both shas.
    The gate owns the merge decision (config `merge_policy`, `migrations`):
