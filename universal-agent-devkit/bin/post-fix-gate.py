@@ -7092,9 +7092,7 @@ def main():
                  + ", ".join(orphans_new[:5]) + f"{why} — {orphan_fix}")
     print(f"\n{BOLD}{CYAN}──────────────────────────────────────────────────────────────────────────────────────{RESET}")
     receipt_untested = None
-    # the lock was not held (project lock or gate queue): no suite ran, so the receipt is neither written nor deleted — whatever exit
-    # the verdict chain picks (audit T0056: an exit-2 branch ahead of BUSY left this False and an unlocked run wrote full_pass.json)
-    lock_busy = bool(run_tests and not lock_held and not read_only)
+    lock_busy = False   # exit 4 because the lock was not held: no suite ran, so the receipt is neither written nor deleted
     budget_cut = False  # exit 4 because the time budget stopped a suite from starting: same, do not write or delete
     slot_busy = False   # exit 4 because the exclusive lock (Unity) stayed busy: same, do not write or delete
     project_gone = not Path(project_dir).is_dir()   # W1 R5a: `worktree finish`/`remove` took it while the suites ran
@@ -7239,7 +7237,7 @@ def main():
     merge_check = os.environ.get("DEVKIT_GATE_MERGE_CHECK") == "1"
     try:
         if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and (not partial or (exit_code != 0 and not receipt_untested)) \
-                and (not read_only or partial or exit_code != 0):
+                and (lock_held or partial or exit_code != 0):
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
             # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)
             # and a BUDGET run (a suite never started) leave it alone too: either used to delete even a valid one,
@@ -7259,7 +7257,10 @@ def main():
             reuse_at = reused_tested_at()
             write_full_pass_receipt(project_dir, exit_code, args.matrix, receipt_tests,
                                     tested_at=reuse_at, refresh_only=reuse_src[0] is not None,
-                                    tested_fp=tested_fp, untested=receipt_untested, partial=partial or read_only,
+                                    # a run WITHOUT the lock (read-only, or the project lock / gate queue timed out: audit T0056, an exit-2
+                                    # branch ahead of BUSY wrote full_pass.json) is handed over as partial + unlocked: it may DROP an exit-0
+                                    # receipt its verdict contradicts, it never writes one
+                                    tested_fp=tested_fp, untested=receipt_untested, partial=partial or not lock_held,
                                     locked=lock_fh is not None,   # the handle itself: (None, True) is also "nothing to re-use or run, no lock asked for"
                                     keep_same=merge_check)
         if exit_code == 0 and run_tests and not partial and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy:
