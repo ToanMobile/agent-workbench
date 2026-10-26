@@ -284,6 +284,11 @@ case "$CMD" in
     shift || true
     python3 "$(find_script git worktree.py)" "$@"
     ;;
+  integrate)
+    # integrate [--if-due] [--dry-run] [path] — trunk-push repo: gate --full once on main's unpushed commits (in a scratch worktree), then push
+    shift || true
+    python3 "$(find_script git integrate.py)" "$@"
+    ;;
   completion)
     # completion [bash|zsh] — eval "$(agent-kit completion bash)" in ~/.bashrc (zsh: ~/.zshrc)
     shift || true
@@ -459,6 +464,12 @@ Commands:
                       its own worktree (EnterWorktree; the WorktreeCreate hook sets it up) and the Stop hook
                       merges it. on/off: git config devkit.trunkMode + hooks in .claude/settings.local.json;
                       WORKTREE_TRUNK_MODE=0 turns it off everywhere (the user's switch)
+  integrate [--if-due] [--dry-run]
+                      Trunk-push repo (no PR): main's commits not on origin are the queue. One gate --full on
+                      main's HEAD in a scratch worktree, then push when push_gate accepts its receipt; red: no
+                      push, the batch's commits listed. --if-due: only when due (git config
+                      devkit.integrate.batchMax, default 6; devkit.integrate.maxWaitMin, default 60; or no
+                      test_run.lock held). Origin diverged: stops before the gate. Busy lock: exit 0
   index-memory [file] Line-numbered index of a large .agents/instincts.md (default: this project's;
                       the SessionStart hook also refreshes it automatically above 20 KB)
   completion [bash|zsh]
