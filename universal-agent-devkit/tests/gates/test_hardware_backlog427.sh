@@ -3,7 +3,8 @@
 #   1. Thứ tự: rm -r / find -delete / rsync --delete / cd đứng TRƯỚC ln mà chạy SAU nó (vòng lặp, hàm gọi sau) được xét khi tên link
 #      chưa được ghi. Nay cổng gom mọi tên link của cả lệnh trước (lượt 1), rồi xét lại cả lệnh với đủ tên (lượt 2).
 #   2. Lệnh tạo link khác ln: cp -s / --symbolic-link (ghi tên như ln); os.symlink / symlinkSync / symlink / `ln -s` trong chương trình
-#      python -c / node -e / perl -e (cả thân heredoc) → "*"; mv (link chuyển đi vẫn là link) → tên đích; tar -x / unzip: rm -r đi xuyên qua
+#      python -c / node -e / perl -e (cả thân heredoc) → "*"; mv (link chuyển đi vẫn là link) → tên đích khi đổi tên, tên nguồn khi chuyển
+#      vào thư mục (dấu / cuối, -t, nhiều nguồn — review vòng 2, mục 7c); tar -x / unzip: rm -r đi xuyên qua
 #      một mục bên dưới thư mục giải nén (mục đó có thể là link trong file nén) bị chặn — xoá chính thư mục đó, hay mục cuối không có
 #      dấu /, vẫn được.
 #   3. adb shell "<lệnh>" (và ssh): cùng phép đó trong lệnh chạy trên máy kia — `ln -s /data /data/local/tmp/l; rm -rf /data/local/tmp/l/`
@@ -12,6 +13,8 @@
 #      [[:alpha:]] khác shell, và {a..c} không được bung — kết quả khớp thật (link tới home) không được xét.
 #   5. git_tracks: mọi lần git lỗi (rc ≠ 0) được xét như build output chưa track → cho xoá. Nay rc 128 kèm "not a git repository (or
 #      any …" (project ngoài git) giữ cách xét đó; git lỗi khác, quá hạn, index hỏng, worktree mất gitdir được xét như đang track → chặn.
+#   7. Review vòng 2: {x..y} xét như glob bỏ sót tên chưa có (P1 mất dữ liệu); thân trap / repeat mất phép gán đã biết; mv vào thư mục,
+#      tên link của adb shell, tar -x rồi rm -rf build/ (vẫn chặn); RERUN_RX bậc hai, git ls-files gọi lại ở lượt 2.
 # Chỉ chạy hook — không bao giờ chạy lệnh.  HW_HOOK=<đường dẫn hook> chạy bản hook khác (bản chưa sửa: RED).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # bỏ GIT_* thừa kế: tests/lib/clean_git_env.sh
 set -u
@@ -33,13 +36,14 @@ newrepo() {   # newrepo <dir>: repo git có một file nguồn đã commit, buil
 P="$TMP/work/proj"
 newrepo "$P"
 
-# check <rc mong đợi> <lệnh> [project]; CHECK_PATH thay PATH của hook (git giả)
+# check <rc mong đợi> <lệnh> [project]; CHECK_PATH thay PATH của hook (git giả); CHECK_CPU: giới hạn giây CPU của hook (ulimit -t: đo
+# CPU, không đo đồng hồ — máy tải nặng không làm dòng đỏ); CHECK_LABEL: tên in ra thay cho lệnh dài
 check() {
   local want="$1" c="$2" p="${3:-$P}"
   python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[2],"hook_event_name":"PreToolUse",
     "tool_name":"Bash","tool_input":{"command":sys.argv[1],"description":"d"}}))' "$c" "$p" > "$TMP/in.json"
-  ( cd "$p" && PATH="${CHECK_PATH:-$PATH}" CLAUDE_PROJECT_DIR="$p" bash "$HOOK" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
-  local rc=$?
+  ( cd "$p" && { [ -z "${CHECK_CPU:-}" ] || ulimit -t "$CHECK_CPU"; } && PATH="${CHECK_PATH:-$PATH}" CLAUDE_PROJECT_DIR="$p" bash "$HOOK" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
+  local rc=$? c="${CHECK_LABEL:-$c}"
   if [ "$rc" = "$want" ]; then ok "rc $rc: $c"; else fail "rc $rc (want $want): $c — $(head -c 200 "$TMP/err" | tr '\n' ' ')"; fi
 }
 
@@ -221,5 +225,70 @@ check 2 'repeat 2 { rm -rf ~ }'
 check 0 "trap 'rm -rf /tmp/devkit-hw-trap-x' EXIT"                         # đối chứng: dọn thư mục tạm
 check 0 'repeat 3 echo hi'                                                # đối chứng
 check 0 'trap - EXIT'                                                     # đối chứng: gỡ trap
+
+# 7. Review vòng 2 (#427): phán quyết vòng 2 thêm vào bị sai. Ghép mỗi dòng nới với một dòng chặn đối chứng.
+printf '{}\n' > "$P/out.json"; printf 'x' > "$P/x.png"; printf 'x' > "$P/app.apk"; mkdir -p "$P/reports"   # file có sẵn, không track
+# 7a. (P1 mất dữ liệu) {x..y} xét như *: tên chưa có không khớp, phần sau `..` không được xét. Nay xét cả từng từ shell bung
+check 2 'mkdir -p build/x/1 && rm -rf build/x/{1..2}/../../../src'
+check 2 'mkdir -p build/q && rm -rf build/q{-..0}../../src'                # zsh bung {-..0} thành - . / 0: có từ build/q/../../src
+check 2 'rm -r build/x/{1..2}/../../..'                                     # không -f: là gốc project
+check 2 'rm -rf build/x/{1..5000}/../../../src'                             # dãy dài: mọi số là một tên thường, xét một
+check 0 'rm -rf build/x/{1..3}'                                             # đối chứng
+check 0 'rm -rf build/{a..c}/ build/{01..12}.log build/{1..5000}'
+# 7b. (P1 chặn nhầm) thân trap / repeat từng được xét với env mới: phép gán đã biết mất. Nay biết tên mà không gì trong lệnh gán lại được
+check 0 "S=/tmp/claude-$(id -u)/y; trap 'rm -rf \"\$S\"' EXIT; mkdir -p \"\$S\""
+check 0 "T=\$TMPDIR/z; trap 'rm -rf \"\$T\"' EXIT"
+check 0 "S=/tmp/claude-$(id -u)/y; trap \"rm -rf \$S\" EXIT"
+check 0 'D=build/x; repeat 2 rm -rf $D'
+check 2 "S=~; trap 'rm -rf \"\$S\"' EXIT"
+check 2 "S=/tmp/claude-$(id -u)/y; trap 'rm -rf \"\$S\"' EXIT; S=~"          # thân trap chạy lúc thoát: S lúc đó là ~
+check 2 "S=/tmp/claude-$(id -u); trap 'rm -rf \"\$S\"' EXIT; S+=/../../.."
+check 2 "S=/tmp/claude-$(id -u)/y; for S in ~; do :; done; trap 'rm -rf \"\$S\"' EXIT"
+check 2 "S=/tmp/claude-$(id -u)/y; read -r S; trap 'rm -rf \"\$S\"' EXIT"
+check 2 "S=/tmp/claude-$(id -u)/y; unset S; : \${S:=~}; trap 'rm -rf \"\$S\"' EXIT"
+check 2 'D=build/x; repeat 2 { rm -rf $D; D=~ }'                            # lượt lặp 2 xoá ~
+check 2 "S=/tmp/claude-$(id -u)/y; sh -c 'rm -rf \"\$S\"'"                  # biến không export: shell con không thấy (như cũ)
+# NAME=VAL trước một lệnh chỉ cho lệnh đó: sau nó biến chưa gán (có từ trước: `rm -rf $D/*` là rm -rf /*)
+check 2 "HOME=/tmp/x true; trap 'rm -rf \$HOME' EXIT"
+check 2 'HOME=/tmp/x true; rm -rf $HOME'
+check 2 'D=build/x make; rm -rf $D/*'
+check 0 'D=build/x; make; rm -rf $D/*'                                      # đối chứng: phép gán đứng riêng
+# 7c. (P1 chặn nhầm) mv VÀO thư mục (dấu / cuối, -t, nhiều nguồn): thứ nằm trong thư mục mang tên NGUỒN, không phải tên đích
+check 0 'mv out.json build/ && rm -rf build/tmp'
+check 0 'mv x.png reports/ && rm -rf reports/old'
+check 0 'mv app.apk build/ && rm -rf build/tmp/'
+check 0 'mv -t build out.json x.png && rm -rf build/tmp/'
+check 0 'mv out.json x.png build && rm -rf build/tmp/'
+check 2 'mv nope.json build/ && rm -rf build/tmp'      # nguồn chưa có: có thể là thư mục lệnh tạo; build/ mất trước đó thì mv đổi tên nó
+check 2 'mv out.json build && rm -rf build/tmp'        # không dấu /: build có sẵn nhưng phần trước của lệnh có thể xoá nó, mv thành đổi tên
+# 7d. (P2 chặn nhầm) tên link / giải nén của lệnh trên thiết bị (adb shell) không đổ sang phán quyết rm của máy này
+check 0 'adb shell "cd /data/local/tmp && tar -xf x.tar" && rm -rf build/tmp/'
+check 0 'adb shell "ln -s /system/bin /data/local/tmp/tmp" && rm -rf build/tmp/x'
+check 2 'adb shell "ln -s /data /data/local/tmp/l" && adb shell "rm -rf /data/local/tmp/l/"'   # một tập tên cho mọi lệnh thiết bị
+check 2 'for i in 1 2; do adb shell "rm -rf /data/local/tmp/l/"; adb shell "ln -s /data /data/local/tmp/l"; done'
+check 2 'ln -s / build/l && adb push build/l /data/local/tmp/ && adb shell "rm -rf /data/local/tmp/l/"'   # tên máy này vẫn tới thiết bị
+check 2 'adb shell "$(ln -s ~ build/l; echo ls)" && rm -rf build/l/'       # $( ) trong nháy kép chạy ở máy này
+# 7e. tar -x vào thư mục hiện tại rồi rm -rf build/: VẪN chặn — file nén có thể mang mục build -> ~ thay một build/ rỗng hay chưa có (tar
+# làm gì với thư mục không rỗng tuỳ bản tar và cờ). Bỏ dấu / cuối thì qua (dòng đối chứng ở mục 2d)
+check 2 'tar -xzf x.tgz && rm -rf build/'
+# 7f. (P2 thời gian, giới hạn CPU) RERUN_RX bậc hai trên chuỗi a.a.a… (60 KB chạm hạn 7 s); lượt 2 gọi lại git ls-files cho cùng đường dẫn
+CHECK_CPU=3 CHECK_LABEL="echo <60 KB a.a.a…> && rm -rf build/x (CPU ≤ 3 s)" check 0 "echo $(python3 -c 'print("a." * 30000)') && rm -rf build/x"
+CG="$TMP/countgit"; mkdir -p "$CG"; : > "$CG/ls-files.log"
+printf '#!/usr/bin/env bash\ncase " $* " in *" ls-files "*) echo x >> "%s/ls-files.log" ;; esac\nexec "%s" "$@"\n' "$CG" "$(command -v git)" > "$CG/git"
+chmod +x "$CG/git"
+CHECK_PATH="$CG:$PATH" check 0 'for i in 1; do rm -rf build/a; rm -rf build/a; done; ln -s x build/q'
+n="$(wc -l < "$CG/ls-files.log" | tr -d ' ')"
+if [ "$n" = 1 ]; then ok "git ls-files 1 lần cho một đường dẫn (lượt 1 + lượt 2)"; else fail "git ls-files $n lần cho một đường dẫn (want 1)"; fi
+if [ -n "$SCR" ]; then
+  # 7c. đối chứng chặn: đổi tên vẫn ghi tên đích
+  check 2 "mv $SCRP/gx $SCRP/newdir/ && rm -rf $SCRP/newdir/l/"             # thư mục nguồn, đích chưa có: mv đổi tên, link l bên trong
+  check 2 "ln -s ~ $SCRP/x; rm -rf $SCRP/d; mv $SCRP/x $SCRP/d; rm -rf $SCRP/d/"   # đích có sẵn bị xoá trước: mv đổi tên
+  check 2 "mv $SCRP/a $SCRP/inside $SCRP/d && rm -rf $SCRP/d/inside/"         # nhiều nguồn: tên nguồn
+  check 2 "gmv -T $SCRP/inside $SCRP/l/ && rm -rf $SCRP/l/"                   # -T: luôn đổi tên
+  check 2 "printf 'x\\n' | xargs -I{} mv {} $SCRP/d/ && rm -rf $SCRP/d/plain/x"   # nguồn từ xargs: không đọc được
+  check 0 "mv $SCRP/inside $SCRP/d/ && rm -rf $SCRP/d/plain/"                 # đối chứng: link nguồn nằm ở d/inside, d/plain không liên quan
+  # 7d. ssh không tách: máy kia có thể chính là máy này
+  check 2 "ssh localhost 'ln -s ~ $SCRP/l' && rm -rf $SCRP/l/"
+fi
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_backlog427: all passed" || { echo "❌ test_hardware_backlog427: $FAILS failed"; exit 1; }
