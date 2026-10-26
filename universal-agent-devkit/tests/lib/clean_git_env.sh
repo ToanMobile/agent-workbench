@@ -32,6 +32,10 @@ export ANTIGRAVITY_PM_GLOBAL_CONFIG=/dev/null/agpm-test-no-global-config/.antigr
 export DEVKIT_LANG=vi
 # CI=true của worker super-board cũng ép --full (force_full_reason). Gate lồng trong test phải thấy chế độ thường.
 unset CI
+# Merge gate verify chạy với DEVKIT_SLOT_PRIORITY=merge (và DEVKIT_SLOT_LOAD_WAIT_S=0): gate lồng trong test tưởng mình là merge gate
+# nên bỏ lượt sentinel (26/10: test_gate_per_test_cache.sh P8 đỏ trong verify của PR #444; #167 từng vá riêng test_gate_sentinel.sh).
+# Test cần các biến này tự đặt sau khi nạp file này.
+unset DEVKIT_SLOT_PRIORITY DEVKIT_SLOT_LOAD_WAIT_S
 # The machine's two heavy-verify slots (~/.claude/super-board/locks) belong to real merge gates and --full runs: a test's fake verify
 # (echo) queued behind them for up to 3600 s whenever no gate holding a slot started it (2026-10-20, test_merge_gate_ff.sh).
 # A test runs as if its caller held the slot; test_heavy_slot.sh unsets this to test the slots themselves.
