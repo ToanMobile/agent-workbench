@@ -156,6 +156,26 @@ else
 fi
 rm -f "$(rcpt_path "$R")"
 
+# Ca (a3) (audit T0056 #1): slot hết hạn chờ ĐỒNG THỜI gate ra exit 2 (một file code ngoài mọi rule: "chưa có test hồi quy", nhánh
+# exit 2 đứng trước nhánh BUSY) -> lock_busy từng chỉ bật ở nhánh BUSY, nên lượt không giữ khoá, không chạy suite nào vẫn ghi
+# full_pass.json. Không lượt nào thiếu khoá được ghi biên nhận.
+make_repo
+mkdir -p "$R/lib" && printf 'y = 1\n' > "$R/lib/other.py"
+git -C "$R" add -A && git -C "$R" commit -qm other
+printf 'y = 2\n' > "$R/lib/other.py"
+printf 'x = 3\n' > "$R/src/app.py"
+hold_flock "$SB_HEAVY_SLOT_DIR/gate-1.lock" "$TMP/held" "$TMP/release" 30
+DEVKIT_GATE_SLOT_WAIT_S=1 CLAUDE_PROJECT_DIR="$R" DEVKIT_SUITE_CACHE=0 \
+  python3 "$GATE" --run-tests --full --json --no-checklist >"$TMP/a3.out" 2>&1
+rc=$?
+release_flock "$TMP/release" "$LAST_HOLDER"
+if [ "$rc" -ne 0 ] && [ ! -f "$TMP/ran" ] && [ ! -e "$(rcpt_path "$R")" ]; then
+  ok "ca (a3): slot hết hạn chờ kèm exit $rc (file code chưa có test) -> không chạy suite, không tạo full_pass.json"
+else
+  fail "ca (a3): rc=$rc ran=$([ -f "$TMP/ran" ] && echo yes || echo no) rcpt=$([ -e "$(rcpt_path "$R")" ] && echo yes || echo no)"
+fi
+make_repo   # ca (a2) cần repo sạch như sau ca (a1b)
+
 # Ca (a2): tiến trình giữ nhả slot trước khi hết DEVKIT_GATE_SLOT_WAIT_S -> gate thứ N+1 xếp hàng chờ rồi chạy XANH
 rm -f "$TMP/ran"
 hold_flock "$SB_HEAVY_SLOT_DIR/gate-1.lock" "$TMP/held" "$TMP/release" 0.45
@@ -426,6 +446,10 @@ env = mod.suite_env()
 assert env.get("DEVKIT_GATE_SLOT_HELD") == "1", env.get("DEVKIT_GATE_SLOT_HELD")
 del os.environ["DEVKIT_GATE_SLOT_HELD"]
 assert "DEVKIT_GATE_SLOT_HELD" not in mod.suite_env()
+# audit T0056 (INSTINCT-046): núm của MỘT lần gate (số slot, thời gian chờ — Stop hook đặt 45 s) không lọt xuống suite
+os.environ["DEVKIT_GATE_SLOTS"] = "0"; os.environ["DEVKIT_GATE_SLOT_WAIT_S"] = "45"
+env = mod.suite_env()
+assert "DEVKIT_GATE_SLOTS" not in env and "DEVKIT_GATE_SLOT_WAIT_S" not in env, (env.get("DEVKIT_GATE_SLOTS"), env.get("DEVKIT_GATE_SLOT_WAIT_S"))
 PY
 
 # ── Ca (h): Stop hook (hooks/regression_gate.sh) truyền DEVKIT_GATE_SLOT_WAIT_S=45, BUSY giữ exit 0 UNTESTED và đúng 1 dòng JSON ──
@@ -448,15 +472,25 @@ git -C "$H_REPO" add -A && git -C "$H_REPO" commit -qm init
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"fix"},"uuid":"u1","sessionId":"s-h1"}' > "$TMP/h.jsonl"
 PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"session_id":"s-h1","hook_event_name":"Stop","transcript_path":sys.argv[1]}))' "$TMP/h.jsonl")"
 
-# (h1) Khi slot rảnh và không truyền DEVKIT_GATE_SLOT_WAIT_S -> hook truyền mặc định 45 xuống gate
+# (h1) Khi slot rảnh và không truyền DEVKIT_GATE_SLOT_WAIT_S -> hook truyền mặc định 45 xuống gate. Quan sát ở CHÍNH gate (suite_env
+# bỏ biến này khỏi suite, INSTINCT-046): bản chép của hook trong một kit tạm tìm gate ở <kit>/bin/post-fix-gate.py = trình bọc ghi
+# biến rồi exec gate thật.
+mkdir -p "$TMP/kit/hooks" "$TMP/kit/bin"
+cp "$HOOK" "$TMP/kit/hooks/regression_gate.sh"
+[ -f "$DEVKIT_DIR/hooks/devkit_harness.py" ] && cp "$DEVKIT_DIR/hooks/devkit_harness.py" "$TMP/kit/hooks/"
+cat > "$TMP/kit/bin/post-fix-gate.py" <<PY
+import os, sys
+open("$TMP/hook_wait_gate", "w").write(os.environ.get("DEVKIT_GATE_SLOT_WAIT_S", "unset"))
+os.execv(sys.executable, [sys.executable, "$GATE"] + sys.argv[1:])
+PY
 printf 'z = 2\n' > "$H_REPO/src/Core.kt"
-rm -f "$TMP/hook_wait_seen"
-printf '%s' "$PAYLOAD" | ( unset DEVKIT_GATE_SLOT_WAIT_S; CLAUDE_PROJECT_DIR="$H_REPO" bash "$HOOK" ) >"$TMP/h1.out" 2>"$TMP/h1.err"
+rm -f "$TMP/hook_wait_seen" "$TMP/hook_wait_gate"
+printf '%s' "$PAYLOAD" | ( unset DEVKIT_GATE_SLOT_WAIT_S; CLAUDE_PROJECT_DIR="$H_REPO" bash "$TMP/kit/hooks/regression_gate.sh" ) >"$TMP/h1.out" 2>"$TMP/h1.err"
 h1_rc=$?
-if [ "$h1_rc" -eq 0 ] && [ "$(cat "$TMP/hook_wait_seen" 2>/dev/null)" = "45" ]; then
-  ok "ca (h1): Stop hook truyền mặc định DEVKIT_GATE_SLOT_WAIT_S=45 xuống gate"
+if [ "$h1_rc" -eq 0 ] && [ "$(cat "$TMP/hook_wait_gate" 2>/dev/null)" = "45" ] && [ "$(cat "$TMP/hook_wait_seen" 2>/dev/null)" = "unset" ]; then
+  ok "ca (h1): Stop hook truyền mặc định DEVKIT_GATE_SLOT_WAIT_S=45 xuống gate, và biến không lọt xuống suite"
 else
-  fail "ca (h1): rc=$h1_rc wait_seen='$(cat "$TMP/hook_wait_seen" 2>/dev/null)' err='$(cat "$TMP/h1.err")'"
+  fail "ca (h1): rc=$h1_rc gate='$(cat "$TMP/hook_wait_gate" 2>/dev/null)' suite='$(cat "$TMP/hook_wait_seen" 2>/dev/null)' err='$(cat "$TMP/h1.err")'"
 fi
 
 # (h2) Khi hàng đợi gate bận (busy_reason == gate_queue) -> exit 0, không cache pass_fp/untested_fp, stdout đúng 1 JSON object chứa nguyên văn câu gốc + dòng nối thêm

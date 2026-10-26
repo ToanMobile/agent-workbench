@@ -149,21 +149,30 @@ print(json.dumps({
 PY
 
 # ── 1. super-board-merge-gate.sh: mặc định DEVKIT_GATE_SLOT_WAIT_S=1800 ở cả 2 nhánh của run_verify_cmd_inner ──
+# Quan sát ở CHÍNH lệnh post-fix-gate (trình bọc ghi biến rồi gọi gate thật): suite_env bỏ biến này khỏi suite (audit T0056).
+SEEN_PFG="$TMP/seen_post-fix-gate.py"
+cat > "$SEEN_PFG" <<PY
+import os, subprocess, sys
+open(r"$TMP/pfg_wait_seen", "w").write(os.environ.get("DEVKIT_GATE_SLOT_WAIT_S", "unset"))
+sys.exit(subprocess.call([sys.executable, r"$PFG"] + sys.argv[1:]))
+PY
+CFG_SEEN="$TMP/cfg-seen.json"
+python3 -c 'import json,sys; print(json.dumps({"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":[f"python3 {sys.argv[1]} --run-tests --no-checklist"]}))' "$SEEN_PFG" > "$CFG_SEEN"
 card_branch 1 "src/f1.py"
-rm -f "$TMP/suite_wait_seen" "$TMP/merged"
+rm -f "$TMP/suite_wait_seen" "$TMP/pfg_wait_seen" "$TMP/merged"
 ( unset DEVKIT_GATE_SLOT_WAIT_S; cd "$W/review" && DEVKIT_GATE_SLOTS=1 DEVKIT_SUITE_CACHE=0 \
-    bash "$MERGE_GATE" --config "$CFG_PFG" --pr 1 --expect-head "$(cat "$TMP/pr1.head")" ) >"$TMP/mg_def1.log" 2>&1
+    bash "$MERGE_GATE" --config "$CFG_SEEN" --pr 1 --expect-head "$(cat "$TMP/pr1.head")" ) >"$TMP/mg_def1.log" 2>&1
 rc1=$?
 card_branch 2 "src/f2.py"
 rm -f "$TMP/else_wait_seen"
 ( unset DEVKIT_GATE_SLOT_WAIT_S; cd "$W/review" && DEVKIT_GATE_SLOTS=1 \
     bash "$MERGE_GATE" --config "$CFG_WRAP" --pr 2 --expect-head "$(cat "$TMP/pr2.head")" ) >"$TMP/mg_def2.log" 2>&1
 rc2=$?
-if [ "$rc1" -eq 0 ] && [ "$(tail -1 "$TMP/suite_wait_seen" 2>/dev/null)" = "1800" ] \
+if [ "$rc1" -eq 0 ] && [ "$(cat "$TMP/pfg_wait_seen" 2>/dev/null)" = "1800" ] \
    && [ "$rc2" -eq 0 ] && [ "$(cat "$TMP/else_wait_seen" 2>/dev/null)" = "1800" ]; then
   ok "1. merge-gate: cả hai nhánh run_verify_cmd_inner đều export mặc định DEVKIT_GATE_SLOT_WAIT_S=1800"
 else
-  fail "1. merge-gate default wait: rc1=$rc1 (seen='$(cat "$TMP/suite_wait_seen" 2>/dev/null)') rc2=$rc2 (else='$(cat "$TMP/else_wait_seen" 2>/dev/null)')"
+  fail "1. merge-gate default wait: rc1=$rc1 (seen='$(cat "$TMP/pfg_wait_seen" 2>/dev/null)') rc2=$rc2 (else='$(cat "$TMP/else_wait_seen" 2>/dev/null)')"
 fi
 
 # ── 2. super-board-merge-gate.sh: slot gate bận (exit 4, .busy == true) -> thoát 4 (thẻ ở lại Review), không thoát 11, không merge ──

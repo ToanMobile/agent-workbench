@@ -4928,8 +4928,9 @@ def suite_env():
             "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH", "CI",
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
-            # T0056 (INSTINCT-046): DEVKIT_GATE_SLOT_HELD cố ý giữ lại để suite chạy gate lồng không xin thêm slot và không tự khoá cứng
-            "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD"}
+            # T0056 (INSTINCT-046): DEVKIT_GATE_SLOT_HELD cố ý giữ lại để suite chạy gate lồng không xin thêm slot và không tự khoá cứng;
+            # số slot và thời gian chờ là núm của MỘT lần gate (Stop hook đặt 45 s), không lọt xuống suite
+            "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD", "DEVKIT_GATE_SLOTS", "DEVKIT_GATE_SLOT_WAIT_S"}
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
@@ -7091,7 +7092,9 @@ def main():
                  + ", ".join(orphans_new[:5]) + f"{why} — {orphan_fix}")
     print(f"\n{BOLD}{CYAN}──────────────────────────────────────────────────────────────────────────────────────{RESET}")
     receipt_untested = None
-    lock_busy = False   # exit 4 because the lock was not held: no suite ran, so the receipt is neither written nor deleted
+    # the lock was not held (project lock or gate queue): no suite ran, so the receipt is neither written nor deleted — whatever exit
+    # the verdict chain picks (audit T0056: an exit-2 branch ahead of BUSY left this False and an unlocked run wrote full_pass.json)
+    lock_busy = bool(run_tests and not lock_held and not read_only)
     budget_cut = False  # exit 4 because the time budget stopped a suite from starting: same, do not write or delete
     slot_busy = False   # exit 4 because the exclusive lock (Unity) stayed busy: same, do not write or delete
     project_gone = not Path(project_dir).is_dir()   # W1 R5a: `worktree finish`/`remove` took it while the suites ran
@@ -7297,8 +7300,10 @@ def main():
             lock_fh.close()
     _lap("receipt")
 
-    # a read-only run holds no lock: a re-used PASS is not written into the checklist (it would overwrite the FAIL of a run that finished meanwhile)
-    checklist_tests = [dict(t, status="UNTESTED") if t.get("mode") == "cached" else t for t in regression_tests] if read_only else regression_tests
+    # a run without the lock (read-only, or BUSY) holds no lock: a re-used PASS is not written into the checklist (it would overwrite
+    # the FAIL of a run that finished meanwhile)
+    checklist_tests = ([dict(t, status="UNTESTED") if t.get("mode") == "cached" else t for t in regression_tests]
+                       if (read_only or not lock_held) else regression_tests)
     checklist_tests = [t for t in checklist_tests if id(t) not in KEYED_IDS]   # P2: PASS theo khoá không đóng dấu lại commit
     cl_matrix, cl_rules = matrix, rules
     if matrix_added and exit_code != 0:
