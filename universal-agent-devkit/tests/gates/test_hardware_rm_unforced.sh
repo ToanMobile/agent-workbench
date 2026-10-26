@@ -83,5 +83,20 @@ fi
 mkdir -p "$P/many" && ( cd "$P/many" && mkdir d{1..2100} )
 check 2 'rm -r many/*/'
 check 0 'rm -r many/*'
+# OCR final check (25/10): the zsh-qualifier marker of 6bf699e8 stuck to the word, and without -f the word was no longer judged: `rm -r ~(N)`
+# (zsh: the home folder, N = no error when nothing matches) passed. Without -f the word before the qualifier is judged, as before.
+check 2 'rm -r ~(N)'
+check 2 'rm -r /(N)'
+check 2 'rm -r .(N)'
+check 2 'rm -r ..(N)'
+check 2 'rm -r ~/(N)'
+check 2 'rm -R ~(:a)'
+check 2 'rm -r "$HOME"(N)'
+check 2 'rm -r -- ~(N)'
+check 2 'sudo rm -r /(N)'
+check 2 "bash -c 'rm -r ~(N)'"
+check 2 'rsync -a --delete src/ ~(N)'
+check 2 "cd /(N) && rm -r ${TMP#/}"                       # cd to / through a qualifier, then a folder that holds the project
+check 0 'rm -r src(N)'                                    # control: a top-level folder, allowed without -f as before
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_unforced: all passed" || { echo "❌ test_hardware_rm_unforced: $FAILS failed"; exit 1; }

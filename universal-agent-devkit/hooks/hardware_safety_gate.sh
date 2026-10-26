@@ -565,7 +565,10 @@ def rm_target_problem(t, cwds, env, forced=True):
     orig = t
     if ZSH_QUAL in t:   # a zsh glob qualifier (zsh_qualifiers): build/a(:a:h:h) is the project root, *(e:…:) any path its code names
         shown = orig.replace(ZSH_QUAL, "(…)")
-        return f"{shown}: glob qualifier của zsh (`(` dính vào tên): không biết nó mở ra đường dẫn nào" if forced else None
+        if forced:
+            return f"{shown}: glob qualifier của zsh (`(` dính vào tên): không biết nó mở ra đường dẫn nào"
+        # without -f the word before the qualifier is judged, as before 6bf699e8 (OCR final check: rm -r ~(N) is rm -r ~ and passed)
+        t = orig = t.replace(ZSH_QUAL, "")
     if t == "~+" or t.startswith("~+/"):   # ~+ is the cwd (OCR round 3, H2: expanduser leaves it as it is)
         t = "$PWD" + t[2:]
     if PWD_VAR.search(t):   # $PWD is the directory the command runs in (2026-10-13: rm -rf "$PWD/build" was refused as unknown)
@@ -822,7 +825,8 @@ def remote_target_problem(t, cwds, env, where="device"):
     shell fills in at run time ($VAR, `…`) is refused when it starts with it or when what stays fixed before it is / or inside a
     system partition: $ANDROID_ROOT is /system. On a device ~ is such a target too (14/10): the HOME of the device shell is not
     known here and may be / (ssh: the remote user home, no system partition)."""
-    t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
+    # the zsh-qualifier marker dropped (OCR final check, 25/10): `/__ZSH…` read as no system partition, `ssh host rm -rf /(N)` passed
+    t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t.replace(ZSH_QUAL, ""))
     for x in [t] + braces(t):
         if x.startswith("~"):
             if where == "device":
@@ -1058,7 +1062,8 @@ def rm_walk(text, cwds, depth, remote, env):
                     opts.append(args[k]); k += 1
                     if args[k - 1] == "--":
                         break
-                arg = args[k] if k < len(args) else ("~" if head == "cd" else None)
+                # the zsh-qualifier marker dropped (OCR final check): `cd /(N)` enters /, not /__ZSH…
+                arg = args[k].replace(ZSH_QUAL, "") if k < len(args) else ("~" if head == "cd" else None)
                 if head == "pushd" and "-n" in opts:
                     pass   # pushd -n only edits the directory stack: the shell stays where it is
                 elif (head == "popd" or arg is None or arg == "-" or re.fullmatch(r"[+-]\d+", arg) or "$" in arg or GLOB.search(arg)
