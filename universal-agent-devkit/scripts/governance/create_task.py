@@ -192,8 +192,8 @@ def ac_list(ac):
         for line in part.strip().splitlines():
             if not line.strip():
                 continue
-            fence = line.lstrip().startswith("```")
-            opens = not commented and line.lstrip().startswith("<!--")
+            fence = not commented and line.lstrip().startswith("```")   # khối này nằm trong khối kia là chữ thường
+            opens = not commented and not fenced and line.lstrip().startswith("<!--")
             keep = fenced or fence or commented or opens or line[0].isspace() or AC_ITEM_RE.match(line)
             out.append(line if keep else f"- [ ] {line.strip()}")
             fenced ^= fence
