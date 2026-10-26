@@ -1087,7 +1087,8 @@ def _not_kit_lines(txt):
 _STATUS_READ = re.compile(r"\$\?|\$\{\?\}|PIPESTATUS")
 _COMPOUND = re.compile(r"\s*(?:for|while|until|if|case)\b")
 # A redirection of stdout to a file (`>`, `1>`, `>>`, `&>`): not `2>…`, not `>&2` / `2>&1`.
-_STDOUT_AWAY = re.compile(r"(?:^|[^\d&>])(?:1?>>?|&>>?)(?!&)")
+_STDOUT_AWAY = re.compile(r"(?:^|[^\d&>])(?:1?>>?|&>>?)(?!&)"
+                          r"|(?:^|[^\d&>])>&[ \t]*(?![\d-])\S")   # `>& file` (stdout and stderr; not `>&2`, `>&-`): OCR round 3, E2
 
 def _single_command(seg):
     s = re.sub(r"\"[^\"]*\"|'[^']*'", "", seg)     # quoted text is data
@@ -1151,16 +1152,16 @@ _CLOSE_KW = re.compile(r"\b(?:done|fi|esac)\b")
 _PART_KW = re.compile(r"^(?:(?:do|then|else|elif)\b\s*)+")
 _QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
 
-def _compound_parts(seg):
+def _compound_parts(seg, seps=None):
     """(pieces, tail) of a compound: the pieces of its condition and body with do / then / else / elif cut (a nested compound stays one
-    piece), and the text after its closing keyword. A keyword inside quotes is data."""
+    piece), and the text after its closing keyword. A keyword inside quotes is data. seps: as for _split_segments."""
     flat = _QUOTED.sub(lambda m: m.group(0)[0] + "x" * (len(m.group(0)) - 2) + m.group(0)[-1], seg)   # same length, keywords blanked
     head = _COMPOUND.match(flat)
     close = None
     for close in _CLOSE_KW.finditer(flat):
         pass
     inner = seg[head.end() if head else 0:close.start() if close else len(seg)]
-    return [_PART_KW.sub("", p) for p in _split_segments(inner)], (seg[close.end():] if close else "")
+    return [_PART_KW.sub("", p) for p in _split_segments(inner, seps)], (seg[close.end():] if close else "")
 
 def _compound_stdout_away(seg):
     """The compound sends stdout to a file: a redirection after its closing keyword (`done > all.log`), or in a piece of its condition or
@@ -1189,6 +1190,32 @@ def _away(seg):
     command's summary (2026-10-26 principal review round 2, B2). Its exit code still counts when bound (`echo "rc=$?"`) or when the tool's
     exit is its own (_exit_is_the_runs)."""
     return _compound_stdout_away(seg) if _COMPOUND.match(seg) else bool(_STDOUT_AWAY.search(_QUOTED.sub("", seg)))
+
+def _compound_masks(seg):
+    """A run in the loop / if that may hide its result: not one simple command run as the command (`pytest $d | head -1`,
+    `pytest $d 2>&1 | grep -c passed`), or followed by `||` (`pytest $d || true`); nested compounds by the same rule (2026-10-26 OCR
+    review round 3, E1: a compound was spared the exit check of _exit_is_the_runs)."""
+    seps = []
+    pieces = _compound_parts(seg, seps)[0]
+    for k, p in enumerate(pieces):
+        if _COMPOUND.match(p):
+            if _compound_masks(p):
+                return True
+        elif _segment_is_runner(p) and (not (_single_command(p) and _runs_as_command(p)) or seps[k:k + 1] == ["||"]):
+            return True
+    return False
+
+_STATUS_ECHO = re.compile(r"\s*(?:echo|printf)\b")
+
+def _hides(segs, i):
+    """Runner segment i printed no summary of its own into the result: its stdout went to a file (_away), or it is piped / sent to the
+    background (in a loop / if: one of its runs) and a later segment that is not the echo of an exit code may have printed the summary
+    (2026-10-26 OCR review round 3, E2: `pytest a 2>&1 | grep -c FAILED; pytest b`, `pytest | tail -0; echo "5 passed"`)."""
+    s = segs[i]
+    if _away(s):
+        return True
+    piped = (any(not _single_command(p) for p in _runner_pieces(s)) if _COMPOUND.match(s) else not _single_command(s))
+    return piped and any(not (_STATUS_ECHO.match(t) and _STATUS_READ.search(t)) for t in segs[i + 1:])
 
 def _exit_is_the_runs(cmd, segs, res):
     """The tool's exit code is the runs' own: every runner segment is one simple command run as the command (no pipe, `&`, `!`, or a
@@ -1247,7 +1274,7 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         echoed = _echoed_verdict(res)
         if echoed:
             return echoed
-        if any(c is None and _away(segs[i]) for i, c in res) and not _exit_is_the_runs(command, segs, res):
+        if any(c is None and _hides(segs, i) for i, c in res) and not _exit_is_the_runs(command, segs, res):
             return None          # B2: a run (kit or not) whose output went to a file; the summary in the result is another run's
                                  # (`bash tests/…/test_x.sh > log && tail log`: the tool's exit is the run's, the tail its own log)
         # Another runner of the command that hides its result (`bash tests/…/test_x.sh; pytest > log; echo $?`): the kit summary
@@ -1288,7 +1315,8 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         return "green"
     segs, res = _echoed_codes(command, txt, _runs_as_command) if command else ([], [])
     compound = any(_COMPOUND.match(segs[i]) for i, _ in res)
-    masked = any(_hidden(segs, i, txt) for i, _ in res) or (not compound and not _exit_is_the_runs(command, segs, res))
+    masked = (any(_hidden(segs, i, txt) for i, _ in res) or (not compound and not _exit_is_the_runs(command, segs, res))
+              or any(_compound_masks(segs[i]) for i, _ in res if _COMPOUND.match(segs[i])))
     if is_error or RUNNER_FAIL_RX.search(txt) or ((compound or masked) and DEVKIT_SUITE_RED.search(txt)):
         return "red"
     if masked:
@@ -1299,8 +1327,8 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if echoed:
             return echoed
         unbound = [i for i, c in res if c is None]
-        if any(_away(segs[i]) for i in unbound):
-            return None          # B2: its summary went to the file, what the result holds is another command's
+        if any(_hides(segs, i) for i in unbound):
+            return None          # B2 / E2: its summary went to a file or a pipe, what the result holds is another command's
         return "green" if (_pass_summary(txt, segs, unbound) or DEVKIT_SUITE_GREEN.search(txt)) else None
     return "green"
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
