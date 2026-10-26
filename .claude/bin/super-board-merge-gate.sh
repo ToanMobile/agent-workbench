@@ -52,11 +52,12 @@
 #                             [--preflight] [--standalone]
 #
 # MERGE QUEUE (Pha 2, 26/10): merge train cũ chạy 0 lần trên 73 PR vì reviewer/builder tự gọi gate này. Khi merge queue bật
-# (config `merge_queue.enabled == true`, hoặc SB_MERGE_QUEUE=1; SB_MERGE_QUEUE=0 luôn tắt), gate chỉ chạy cho
-# super-board-merge-train.sh / super-board-merge-queue.sh (SB_MERGE_CALLER=train|queue) hoặc với `--standalone` (/super-review ngoài
-# board); mọi lời gọi khác thoát 13 trước khi đọc GitHub hay đụng khoá. `--preflight`: chỉ các kiểm rẻ trước verify (head, merge
-# policy, QA report, AC, needs-you), không khoá merge, không scratch, không verify/merge, không thông báo; qua hết in `preflight: ok`
-# và thoát 0, không qua thì thoát đúng mã gate sẽ thoát ở bước đó.
+# (config `merge_queue.enabled == true`, hoặc SB_MERGE_QUEUE=1; SB_MERGE_QUEUE=0 luôn tắt; và chỉ khi `worker_backend` của config là
+# "claude-p" — backend khác luôn coi là tắt), gate chỉ chạy cho super-board-merge-train.sh / super-board-merge-queue.sh
+# (SB_MERGE_CALLER=train|queue) hoặc với `--standalone` (/super-review ngoài board; worker của board, SB_BOARD_WORKER=1, không được dùng);
+# mọi lời gọi khác thoát 13 trước khi đọc GitHub hay đụng khoá. `--preflight`: chỉ các kiểm rẻ trước verify (head, merge policy, QA
+# report, AC, needs-you), không khoá merge, không scratch, không verify/merge; nút duyệt (exit 7/8) chỉ gửi khi queue tắt (queue bật thì
+# queue gửi); qua hết in `preflight: ok` và thoát 0, không qua thì thoát đúng mã gate sẽ thoát ở bước đó.
 #
 # `--expect-head` is the PR head commit the Reviewer actually reviewed and
 # tested (its `headRefOid` when review passed). The gate pins everything to one
@@ -81,8 +82,8 @@
 #
 # Exit codes, all meaningful to the caller:
 #   0  merged (--preflight: every cheap check passed, stdout `preflight: ok`)
-#   13 merge queue is on and the caller is neither the train nor the queue (no --standalone): label the PR merge-queue instead;
-#      nothing ran, no lock touched
+#   13 merge queue is on and the caller is neither the train nor the queue (no --standalone, or --standalone from a board worker
+#      with SB_BOARD_WORKER=1): label the PR merge-queue instead; nothing ran, no lock touched
 #   11 verification failed after merging the base cleanly into the scratch tree —
 #      rebasing changes nothing: back to Build to fix the failing verify (the gate
 #      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
@@ -166,13 +167,26 @@ case "${SB_MERGE_QUEUE-}" in
   1) MERGE_QUEUE_ON=1 ;;
   *) if jq -e '.merge_queue.enabled == true' "$CONFIG" >/dev/null 2>&1; then MERGE_QUEUE_ON=1; fi ;;
 esac
-if [ "$MERGE_QUEUE_ON" -eq 1 ] && [ "$STANDALONE" -eq 0 ]; then
-  case "${SB_MERGE_CALLER-}" in
-    train|queue) : ;;
-    *) echo "merge-queue: label the PR merge-queue instead of calling the gate directly"
-       echo "[merge-gate #${PR}] merge queue is on: only super-board-merge-train.sh / super-board-merge-queue.sh call this gate (or --standalone outside the board)" >&2
-       exit 13 ;;
-  esac
+# Chỉ backend claude-p có runner rút hàng (merge_queue_due); backend khác (workflow — mặc định khi thiếu khoá, như super-board-run.sh —
+# hoặc codex) luôn coi là tắt, kể cả SB_MERGE_QUEUE=1, để PR không kẹt trong hàng không ai rút. ponytail: hỗ trợ workflow/codex khi có
+# Q-schedule.
+if [ "$MERGE_QUEUE_ON" -eq 1 ] && ! jq -e '(.worker_backend // "workflow") == "claude-p"' "$CONFIG" >/dev/null 2>&1; then
+  MERGE_QUEUE_ON=0
+fi
+# Queue bật: chỉ train/queue gọi được; --standalone (/super-review ngoài board) đi tiếp, trừ worker do runner phóng (SB_BOARD_WORKER=1):
+# worker không được lách hàng đợi bằng --standalone.
+QUEUE_REFUSE=0
+if [ "$MERGE_QUEUE_ON" -eq 1 ]; then
+  if [ "$STANDALONE" -eq 1 ]; then
+    [ "${SB_BOARD_WORKER-}" = 1 ] && QUEUE_REFUSE=1
+  else
+    case "${SB_MERGE_CALLER-}" in train|queue) : ;; *) QUEUE_REFUSE=1 ;; esac
+  fi
+fi
+if [ "$QUEUE_REFUSE" -eq 1 ]; then
+  echo "merge-queue: label the PR merge-queue instead of calling the gate directly"
+  echo "[merge-gate #${PR}] merge queue is on: only super-board-merge-train.sh / super-board-merge-queue.sh call this gate (or --standalone outside the board, never from a board worker)" >&2
+  exit 13
 fi
 # A lock is presumed abandoned only well past the point a caller stops waiting,
 # so a slow-but-alive merge is never stolen from. The floor matters as much as
@@ -226,9 +240,9 @@ pr_title() {
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
 }
 needs_you_notify() {
-  # --preflight không gửi; --dry-run không gửi khi merge queue bật (plan v4 mục 4: queue báo một lần lúc chuyển Blocked). Queue tắt
-  # thì --dry-run vẫn gửi như cũ: train cũ (:242) loại PR exit 7 ở lượt dry-run, gate thật không chạy cho PR đó.
-  if [ "$PREFLIGHT" -eq 1 ] || { [ "$DRY" -eq 1 ] && [ "$MERGE_QUEUE_ON" -eq 1 ]; }; then return 0; fi
+  # Queue bật: --preflight / --dry-run không gửi (queue gửi đúng một lần ở nhánh exit 7/8). Queue tắt: cả hai gửi như gate cũ. Train gọi
+  # --preflight cho mọi PR và PR rớt preflight rời đợt trước lượt --dry-run, nên preflight im lặng = PR exit 7/8 mất nút duyệt (R2).
+  if [ "$MERGE_QUEUE_ON" -eq 1 ] && { [ "$PREFLIGHT" -eq 1 ] || [ "$DRY" -eq 1 ]; }; then return 0; fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
@@ -594,6 +608,7 @@ if [ "$PREFLIGHT" -eq 1 ]; then
     echo "$PLAN" | jq -r '.needs_you[] | "needs-you: " + .'
     approval_request
     say "preflight: 🙋 needs you before this merges"
+    needs_you_notify
     exit 8
   fi
   echo "preflight: ok"
