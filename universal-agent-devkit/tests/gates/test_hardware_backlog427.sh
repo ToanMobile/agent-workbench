@@ -15,6 +15,8 @@
 #      any …" (project ngoài git) giữ cách xét đó; git lỗi khác, quá hạn, index hỏng, worktree mất gitdir được xét như đang track → chặn.
 #   7. Review vòng 2: {x..y} xét như glob bỏ sót tên chưa có (P1 mất dữ liệu); thân trap / repeat mất phép gán đã biết; mv vào thư mục,
 #      tên link của adb shell, tar -x rồi rm -rf build/ (vẫn chặn); RERUN_RX bậc hai, git ls-files gọi lại ở lượt 2.
+#   8. Review vòng 2, lượt sau: export / declare / unset / NAME+= bị bỏ qua (biến giữ giá trị cũ); biến gán lại trong vòng lặp; T=$(mktemp -d)
+#      cho thân trap (chặn nhầm từ vòng 2); phép gán trong ( … ), chặng ống, chạy nền, sau && / ||, if / case, thân hàm.
 # Chỉ chạy hook — không bao giờ chạy lệnh.  HW_HOOK=<đường dẫn hook> chạy bản hook khác (bản chưa sửa: RED).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # bỏ GIT_* thừa kế: tests/lib/clean_git_env.sh
 set -u
@@ -290,5 +292,67 @@ if [ -n "$SCR" ]; then
   # 7d. ssh không tách: máy kia có thể chính là máy này
   check 2 "ssh localhost 'ln -s ~ $SCRP/l' && rm -rf $SCRP/l/"
 fi
+
+# 8. Review vòng 2, lượt sau. 8a (P0 có từ trước) phép gán qua builtin bị bỏ qua: biến giữ giá trị cũ
+check 2 'export TMPDIR=~; rm -rf "$TMPDIR"/x'
+check 2 'declare -x TMPDIR=~; rm -rf "$TMPDIR"/x'                          # declare không -g: có thể là biến cục bộ — không biết
+check 2 'D=/tmp/x; typeset -g D=~; rm -rf $D'
+check 2 'D=/tmp/x; readonly D=~; rm -rf $D'
+check 2 'D=~; f() { local D=/tmp/b; }; f; rm -rf $D'                      # local chỉ trong hàm: sau hàm vẫn là ~
+check 2 'D=/tmp/x; unset D; rm -rf $D/*'                                  # rm -rf /*
+check 2 'D=/tmp/x; D+=/../..; rm -rf $D'
+check 2 'export D=~; rm -rf $D'
+check 2 "S=/tmp/claude-$(id -u)/y; export S=~; trap 'rm -rf \"\$S\"' EXIT"   # gán hai lần: thân trap không biết
+check 0 'export D=build/x; rm -rf $D'                                     # đối chứng (bản trước chặn nhầm: D không biết)
+check 0 'declare -g D=build/x; rm -rf $D'
+check 0 "export S=/tmp/claude-$(id -u)/y; trap 'rm -rf \"\$S\"' EXIT"
+# 8b. (P0 có từ trước) biến gán lại trong vùng lặp: lượt sau thấy giá trị lượt trước; không lượt nào chạy thì còn giá trị cũ
+check 2 'D=build/x; for i in 1 2; do rm -rf $D; D=~; done'
+check 2 'D=build/x; while true; do rm -rf $D; D=~; done'
+check 2 'D=~; for x in $(ls nope); do D=/tmp/x; done; rm -rf $D'
+check 2 'D=/tmp/x; for D in ~; do rm -rf $D/x; done'
+check 2 'D=/tmp/x; while read -r D; do rm -rf $D; done'
+check 2 'D=build/x; for i in 1 2; do for j in 1; do rm -rf $D; done; D=~; done'   # gán ở vòng ngoài, dùng ở vòng trong
+check 0 'for i in 1 2; do D=build/x; rm -rf $D; done'                     # đối chứng: gán trước khi dùng trong cùng lượt
+check 0 'D=build/x; for i in 1 2; do rm -rf $D; done'                     # đối chứng: không gán lại trong vòng lặp
+# 8c. (chặn nhầm từ vòng 2, corpus: 9 lệnh thật) biến chỉ gán $(mktemp …) không mẫu / -t / mẫu trong thư mục tạm: đường dẫn tạm
+check 0 "T=\$(mktemp -d); trap 'rm -rf \"\$T\"' EXIT"
+check 0 "T=\$(mktemp -d -t x); trap 'rm -rf \"\$T\"' EXIT"
+check 0 "T=\"\$(mktemp -d)\"; trap 'rm -rf \"\$T\"' EXIT"
+check 0 'T=`mktemp -d`; rm -rf "$T"'
+check 0 'T=$(mktemp -d /tmp/x.XXXXXX); rm -rf "$T"'
+check 0 'T=$(mktemp -d "$TMPDIR/x.XXXXXX"); rm -rf "$T"'
+check 0 'for f in a b; do T=$(mktemp -d); rm -rf "$T"; done'
+check 2 "T=\$(mktemp -d); T=~; trap 'rm -rf \$T' EXIT"
+check 2 'rm -rf "$(mktemp -d ~/x.XXXX)"/..'
+check 2 'T=$(mktemp -d ~/x.XXXX); rm -rf "$T"'
+check 2 'T=$(mktemp -d ./x.XXXX); rm -rf "$T"'                            # mẫu tương đối: thư mục hiện tại
+check 2 'T=$(mktemp -d -p ~ x.XXXX); rm -rf "$T"'
+check 2 'T=$(mktemp -d -t ../../x); rm -rf "$T"'
+check 2 'T=$(mktemp -d); rm -rf "$T"/..'                                  # chính thư mục tạm
+check 2 'export TMPDIR=~; T=$(mktemp -d); rm -rf "$T"'
+check 2 'mktemp() { echo ~; }; T=$(mktemp -d); rm -rf "$T"'               # mktemp là hàm của lệnh
+check 2 'PATH=/opt/x:$PATH; T=$(mktemp -d); rm -rf "$T"'
+check 0 "T=\$(mktemp -d) || exit 1; trap 'rm -rf \"\$T\"' EXIT"
+check 0 'T=$(mktemp -d); cleanup() { rm -rf "$T"; }; trap cleanup EXIT'
+# 8d. (P0 có từ trước; export ở 8a cũng vậy) phép gán không chắc chạy hay chạy ở shell con từng đặt biến cho lệnh sau: nay không biết
+check 2 'D=~; (D=/tmp/a); rm -rf $D'                                      # ( … ): shell con
+check 2 'D=~; false && D=/tmp/a; rm -rf $D'                                # sau &&: chỉ chắc trong chuỗi && đó
+check 2 'D=~; false && export D=/tmp/a; rm -rf $D'
+check 2 'D=~; true || D=/tmp/a; rm -rf $D'
+check 2 'D=~; D=/tmp/a | cat; rm -rf $D'                                   # chặng ống
+check 2 'D=~; export D=/tmp/a & rm -rf $D'                                 # chạy nền
+check 2 'D=~; if false; then D=/tmp/a; fi; rm -rf $D'
+check 2 'D=~; case x in y) D=/tmp/a;; esac; rm -rf $D'
+check 2 'D=~; f() { D=/tmp/a; }; rm -rf $D'                                # thân hàm chưa chạy
+check 2 'f() { D=~; }; D=/tmp/a; f; rm -rf $D'                             # gọi hàm sau phép gán
+check 2 'D=/tmp/a; f() { rm -rf $D; }; D=~; f'                             # thân hàm chạy lúc gọi
+check 2 'for i in 1 2; do false && D=/tmp/a; rm -rf $D; D=~; done'        # lượt 2: D đã là ~
+check 2 'f() { false && D=/tmp/a; rm -rf $D; }; D=~; f'
+check 0 'cd build && D=build/x && rm -rf $D'                               # đối chứng: rm trong cùng chuỗi && sau phép gán
+check 0 "cd build && S=/tmp/claude-$(id -u)/q; rm -rf \$S; mkdir -p \$S"   # đối chứng (corpus: 26 lệnh): S chưa từng gán — không chạy thì rỗng
+check 0 '(D=build/x; rm -rf $D)'
+check 0 'f() { OUT=build/x; rm -rf $OUT; }; f'
+check 0 'D=build/x; f() { rm -rf $D; }; f'
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_backlog427: all passed" || { echo "❌ test_hardware_backlog427: $FAILS failed"; exit 1; }
