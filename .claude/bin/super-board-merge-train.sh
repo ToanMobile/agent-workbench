@@ -157,18 +157,28 @@ verify_timed_out() {
 # verify_set <PR...>: 0 chuỗi dựng được và mọi verify_commands xanh · 1 đỏ · 2 chuỗi không dựng được (không phải lỗi đỏ của PR)
 #                     · 3 hết giờ sau một lần chạy lại (máy quá tải, không quy lỗi cho PR nào).
 verify_set() {
-  local cmd rc try merged
+  local cmd run_cmd busy_line rc try merged
   build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]"; return 2; }
   merged=$(git -C "$SCRATCH" rev-parse HEAD)
   for cmd in "${VERIFY[@]}"; do
     cmd=$(sb_verify_inject_flags "$cmd" "$BASE")
+    run_cmd=$(sb_verify_inject_flags "$cmd" "$BASE" json)
     try=1
     while :; do
       say "verify [$*]: ${cmd}"
       rc=0
       ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
-          && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$cmd" ) >"$VLOG" 2>&1 || rc=$?
+          DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
+          && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$run_cmd" ) >"$VLOG" 2>&1 || rc=$?
       [ "$rc" -ne 0 ] || break
+      # T0056: post-fix-gate thoát 4 kèm JSON .busy == true (hàng đợi gate / khoá dự án bận): trả 3 NGAY, không retry (tránh 1800s × 2 chạm trần 3600s).
+      if [ "$rc" -eq 4 ]; then
+        busy_line=$(LC_ALL=C grep -a '^{.*"exit_code"' "$VLOG" 2>/dev/null | tail -1 || true)
+        if [ -n "$busy_line" ] && printf '%s' "$busy_line" | jq -e '.exit_code == 4 and .busy == true' >/dev/null 2>&1; then
+          say "verify busy (exit 4) for [$*]; keeping PRs in Review without retry"
+          return 3
+        fi
+      fi
       if verify_timed_out "$rc"; then
         # Suite bị giết giữa chừng có thể để lại file sửa dở: trả cây về đúng commit đã dựng rồi chạy lại đúng một lần, như merge gate.
         if [ "$try" -eq 1 ] && git -C "$SCRATCH" reset -q --hard "$merged" 2>/dev/null; then
