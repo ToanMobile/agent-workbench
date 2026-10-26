@@ -14,8 +14,8 @@ lồng và `import` trong heredoc python của file .sh (review 26/10, F1).
 Chỉ chạy khi gate bật (DEVKIT_PER_TEST_CACHE, post-fix-gate.py: "1" dùng lại + ghi theo khoá nội dung, "record" chỉ ghi — lượt sentinel /
 --no-cache); `agent-kit test` của người dùng không đặt biến nên luôn chạy hết. Luật như suite (cùng mã SuiteCache, kho riêng
 <kho suite>/per_test để không đẩy bản ghi suite ra khỏi STORE_MAX):
-  - dùng lại ⇔ PASS trên đúng khoá (pass_n ≥ 1, fail_n = 0, trong tuổi tối đa, không cách ly, không bị void) VÀ lần chạy THẬT đó chưa quá
-    DEVKIT_SENTINEL_MAX_S (24 h; 0 tắt): sentinel theo test — một test được dùng lại phải chạy thật ít nhất một lần mỗi 24 h;
+  - dùng lại ⇔ SuiteCache.hit: PASS trên đúng khoá (pass_n ≥ 1, fail_n = 0, không cách ly, không bị void) có lần chạy THẬT trong tuổi tối
+    đa (DEVKIT_SUITE_CACHE_MAX_S / DEVKIT_GATE_CACHE_MAX_S, mặc định 6 h) — test được dùng lại phải chạy thật ít nhất một lần mỗi 6 h;
   - record ghi PASS khi cả cây (và đích ngoài cây) y nguyên sau khi test chạy; ghi FAIL lên khoá (SuiteCache.hit đòi fail_n = 0) và, khi
     khoá đang có PASS, gọi SuiteCache.contradiction (cùng cây mà khác kết quả: cách ly); PASS trên khoá có fail_n > 0 (cùng nội dung, chập
     chờn): cách ly id (QUARANTINE_S); TIMEOUT (124 của run_bounded) ghi timeout_n và void id; rc ≥ 128 (tín hiệu: crash của chính test,
@@ -80,7 +80,6 @@ def plan(kit, out, tests):
     if not _write(os.path.join(out, "ptc.base.json"), base):
         return 0
     now = time.time()
-    max_s = mod._env_float("DEVKIT_SENTINEL_MAX_S", 24 * 3600)
     for test in tests:
         full = os.path.realpath(os.path.join(kit, test))
         rel = os.path.relpath(full, project)
@@ -95,8 +94,8 @@ def plan(kit, out, tests):
         key = sc.keys(entry)[1]
         if not key:
             continue
-        rec = sc.hit(key, entry, now) if mode == "1" else None
-        if rec and not (max_s > 0 and now - rec["last_pass_at"] > max_s):
+        rec = sc.hit(key, entry, now) if mode == "1" else None   # hit() đã giới hạn tuổi PASS (mặc định 6 h)
+        if rec:
             print(f"reuse\t{test}\t{int(now - rec['last_pass_at'])}")
             continue
         _write(_snap_path(out, test), {"id": entry["id"], "command": entry["command"], "key": key,
