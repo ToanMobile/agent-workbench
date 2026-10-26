@@ -55,6 +55,8 @@ w("t17.jsonl", [("assistant", sed("d5")), ("user", res("d5", "This agent is isol
                                                          "Split it into plain, separate commands and run them from /x.", True))])
 w("t18.jsonl", [("assistant", sed("d6")), ("user", res("d6", "This agent is isolated in the worktree /x, but this command changes directory to a location computed at "
                                                          "runtime before running git. Refusing to run it — a worktree-isolated agent's git operations must target its own worktree.", True))])
+# Kiểm an toàn dựng sẵn của Claude Code từ chối bằng câu khác (#427 vòng 2): lệnh không chạy, không phải lần sửa
+w("t19.jsonl", [("assistant", sed("d7")), ("user", res("d7", "Permission for this command was denied by a built-in Claude Code safety check. Reason: x", True))])
 w("t13.jsonl", [("assistant", sed("c6")), ("user", res("c6", "", False)), ("assistant", scan("c7")),
                 ("user", res("c7", "The user doesn't want to proceed with this tool use. The tool use was rejected", True))])
 PY
@@ -78,6 +80,7 @@ run s15 t15.jsonl; rc=$?; [ "$rc" = 0 ] && ok "a write the auto-mode classifier 
 run s16 t16.jsonl; rc=$?; [ "$rc" = 0 ] && ok "a multi-line (heredoc) Bash the permission system denied: not an edit" || fail "multi-line denied write counted (rc $rc)"
 run s17 t17.jsonl; rc=$?; [ "$rc" = 0 ] && ok "a write a SUBAGENT's worktree isolation refused ('This agent is isolated …'): not an edit" || fail "subagent isolation-refused write counted (rc $rc)"
 run s18 t18.jsonl; rc=$?; [ "$rc" = 0 ] && ok "  … also the 'changes directory … computed at runtime' refusal" || fail "subagent cd-refused write counted (rc $rc)"
+run s19 t19.jsonl; rc=$?; [ "$rc" = 0 ] && ok "a write Claude Code's built-in safety check denied: not an edit (#427 vòng 2)" || fail "safety-check-denied write counted (rc $rc)"
 run s12 t12.jsonl; rc=$?; [ "$rc" = 2 ] && ok "refusal wording in a result that is NOT an error: the write still counts (rc 2)" || fail "non-error refusal text dropped the write (rc $rc)"
 
 echo

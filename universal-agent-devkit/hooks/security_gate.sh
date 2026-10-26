@@ -455,6 +455,7 @@ reviews, bashes = [], []   # (idx, tool_use id): a review or Bash call that neve
 # A subagent gets "This agent is isolated …" for the same refusal (25/10); test_evidence_gate.sh carries the same pattern.
 NOT_RUN_RX = re.compile(r"(PreToolUse:\S+ hook error|Permission to use \S[\s\S]*? has been denied"
                         r"|Permission for this action was denied by the Claude Code auto mode classifier"
+                        r"|Permission for this command was denied by a built-in Claude Code safety check"   # #427 vòng 2
                         r"|This (?:session|agent) is isolated in the worktree [^\n]* Refusing to run it)")
 errored = set()       # every tool_use id whose result is an error: a REVIEW that errored never finished (Unknown skill, denied, cut) -> covers nothing
 def _result_text(c):

@@ -327,6 +327,15 @@ case("12d must block: `echo \"exit=$?\" || python3 -m pytest -q` (pytest never r
 case("12d must block: `true || { python3 -m pytest -q; }`", after("true || { python3 -m pytest -q; }", PYOK), 2)
 
 shutil.rmtree(TMP, ignore_errors=True)
+print("-- 13: a call Claude Code refused never ran: no RED half of check 7")
+# Câu từ chối của kiểm an toàn dựng sẵn ("Permission for this command was denied by a built-in Claude Code safety check") chưa có
+# trong NOT_RUN_RX: lần gọi không chạy vẫn thành nửa ĐỎ của cặp check 7 (review #427 vòng 2).
+DENIED = "Permission for this command was denied by a built-in Claude Code safety check. Reason: x"
+case("13 must block: a safety-check refusal is no RED half (then fix, then green)",
+     pair("python3 -m pytest -q", DENIED, "python3 -m pytest -q", PYOK), 2, msg=FIX)
+case("13 control: a real RED, the fix, a green run still pair",
+     pair("python3 -m pytest -q", "FAILED tests/test_foo.py::test_a - assert 1 == 2\n1 failed in 0.1s", "python3 -m pytest -q", PYOK), 0, msg=FIX)
+
 print("")
 print("test_evidence_backlog427: %s" % ("all checks passed" if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

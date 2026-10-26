@@ -2309,6 +2309,7 @@ def workflow_producer(use):
 # (NOT_RUN_RX, anchored: a command's own failing output starts "Exit code N"), plus the subagent wording "This agent is isolated …".
 NOT_RUN_RX = re.compile(r"(PreToolUse:\S+ hook error|Permission to use \S[\s\S]*? has been denied"
                         r"|Permission for this action was denied by the Claude Code auto mode classifier"
+                        r"|Permission for this command was denied by a built-in Claude Code safety check"   # #427 vòng 2
                         r"|This (?:session|agent) is isolated in the worktree [^\n]* Refusing to run it)")
 
 tp = d.get("transcript_path")
