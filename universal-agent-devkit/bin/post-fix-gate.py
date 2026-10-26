@@ -1426,6 +1426,89 @@ def tree_fp_of(project_dir):
     return tree_fp.tree_fingerprint(project_dir)
 
 
+# T0061 Pha 1 — biên nhận task: lượt CLI `--run-tests` (không --full) exit 0 trên worktree / nhánh không phải nhánh đích, đã kiểm trọn
+# merge-base(<trunk>, HEAD) → cây hiện tại. Cách ly khỏi biên nhận --full: <git dir>/postfix-gate/task_pass.json và
+# <git common dir>/postfix-gate/task_receipts/<fp>.json, {"scope": "task", "fp", "tested_at", "diff_base", "session"}. Chỉ hooks/proof_gate.sh
+# đọc nó (XONG trong đúng lượt); mọi cửa đọc biên nhận --full từ chối scope task (tests/gates/test_task_receipt_doors.sh).
+TASK_RECEIPT = "task_pass.json"
+TASK_STORE_DIR = "task_receipts"
+
+
+def task_trunk(project_dir):
+    """(ref, tên nhánh) của nhánh đích: refs/remotes/origin/HEAD → origin/{main,master,trunk} → refs/heads/{main,master,trunk};
+    (None, None) khi không đọc được."""
+    def ok(ref):
+        return subprocess.run(["git", "-C", str(project_dir), "rev-parse", "--verify", "-q", ref + "^{commit}"],
+                              capture_output=True, timeout=30).returncode == 0
+    try:
+        r = subprocess.run(["git", "-C", str(project_dir), "symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
+                           capture_output=True, text=True, timeout=30)
+        head = r.stdout.strip()
+        if r.returncode == 0 and head.startswith("refs/remotes/origin/") and ok(head):
+            return head, head[len("refs/remotes/origin/"):]
+        for prefix in ("refs/remotes/origin/", "refs/heads/"):
+            for name in ("main", "master", "trunk"):
+                if ok(prefix + name):
+                    return prefix + name, name
+    except (OSError, subprocess.SubprocessError) as e:
+        log_warn(f"task receipt: nhánh đích không đọc được ({e})")
+    return None, None
+
+
+def _task_paths(project_dir):
+    """(task_pass.json của git dir này, thư mục store dùng chung) — (None, None) ngoài git."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    own, shared = tree_fp.receipt_path(project_dir), tree_fp.tree_receipt_dir(project_dir)
+    if not own or not shared or os.path.basename(os.path.dirname(os.path.dirname(own))) == "audit-gate":   # non-git: không biên nhận task
+        return None, None
+    return os.path.join(os.path.dirname(own), TASK_RECEIPT), os.path.join(os.path.dirname(shared), TASK_STORE_DIR)
+
+
+def write_task_receipt(project_dir, fp, diff_base, session):
+    """Ghi biên nhận task khi cây vẫn là cây đã kiểm (fp lấy trước khi suite chạy). Lỗi ghi chỉ là cảnh báo: không đổi kết luận."""
+    import tree_fp  # noqa: PLC0415 - sibling module in bin/ (_task_paths đã đưa bin/ vào sys.path)
+    own, _ = _task_paths(project_dir)
+    if not own or not re.fullmatch(r"[0-9a-f]{24}", fp or "") or tree_fp.tree_fingerprint(project_dir) != fp:
+        return False
+    data = {"scope": "task", "fp": fp, "tested_at": time.time(), "diff_base": diff_base, "session": session}
+    try:
+        os.makedirs(os.path.dirname(own), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".tmp_task.", dir=os.path.dirname(own))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp, own)
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+            raise
+    except OSError as e:
+        log_warn(f"task receipt ({own}): {e}")
+        return False
+    _tree_store(tree_fp, project_dir, fp, data, kind=TASK_STORE_DIR)
+    return True
+
+
+def drop_task_receipt(project_dir, fp):
+    """Một lượt exit 1 trên cây fp: bỏ mục store của cây đó và task_pass.json của git dir này nếu nó nói về cây đó."""
+    try:
+        own, _ = _task_paths(project_dir)
+    except ImportError:
+        return
+    if not own or not re.fullmatch(r"[0-9a-f]{24}", fp or ""):
+        return
+    import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    _tree_store(tree_fp, project_dir, fp, None, kind=TASK_STORE_DIR)
+    try:
+        kept = _load_state_json(own)
+    except (OSError, ValueError, RecursionError, OverflowError):
+        kept = None
+    if isinstance(kept, dict) and kept.get("fp") == fp:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(own)
+
+
 def head_and_dirty(project_dir):
     """(HEAD sha, {path from the repo root: blob sha, or None when deleted}) of every file that
     differs from HEAD: what bin/push_gate.py compares a push against. (None, {}) on a git error."""
@@ -1470,16 +1553,19 @@ def dirty_links(project_dir, dirty):
     return {p: hashlib.new(algo, b"blob %d\0" % len(t) + t).hexdigest() for p, t in texts.items()}
 
 
-def _tree_store(tree_fp, project_dir, fp, data=None, create=True):
+def _tree_store(tree_fp, project_dir, fp, data=None, create=True, kind=TREE_STORE_DIR):
     """#105 (trunk mode): mirror of the receipt in <git common dir>/postfix-gate/tree_receipts/<fp>.json. A worktree's own receipt goes with
     its git dir when the worktree is removed, so proof_gate finds the full PASS of the tree a session delivered into main (finish, squash
     PR) here. data: the exit-0 receipt; None: drop the entry, any other verdict on that tree. fp None: the tested tree, fingerprinted only when the store holds something. Only the
     entry of that one tree is touched; a write prunes entries older than TREE_RECEIPT_MAX_AGE_S or beyond the TREE_RECEIPT_MAX newest.
     create False (#247, a run that re-used a PASS): only refreshes an entry that is there. A FAIL on the tree removes its entry, and a copy
-    carrying a re-used PASS must never put it back (principal review 22/10, P1: wt-b FAILs, wt-c re-runs on its own receipt, a new worktree borrows)."""
+    carrying a re-used PASS must never put it back (principal review 22/10, P1: wt-b FAILs, wt-c re-runs on its own receipt, a new worktree borrows).
+    kind: thư mục anh em dưới <git common dir>/postfix-gate/ (T0061: TASK_STORE_DIR giữ biên nhận task, tách hẳn khỏi tree_receipts)."""
     store = None
     try:
         store = tree_fp.tree_receipt_dir(project_dir)
+        if store and kind != TREE_STORE_DIR:
+            store = os.path.join(os.path.dirname(store), kind)
         if not store or (data is None and not fp and not (os.path.isdir(store) and any(n.endswith(".json") for n in os.listdir(store)))):
             return
         fp = fp or tree_fp.tree_fingerprint(project_dir)
@@ -5614,6 +5700,21 @@ def main():
             log_err(f"--tree: {unclean}")
             return 2
         args.full = args.force_full = True   # no "current case" to narrow to, and a deferral to a sibling session would write no receipt
+    # T0061 Pha 1: phạm vi của biên nhận task. merge-base(<nhánh đích>, HEAD) và checkout có đứng trên nhánh đích không (HEAD tách rời = không).
+    # Lượt CLI task (--run-tests, không --full/--diff/--since/--staged/--commit-msg/--tree, không phải hook, không phải merge check) ngoài nhánh
+    # đích tự kiểm từ merge-base đó, cả cây sạch lẫn bẩn: một nhánh sạch đã push không còn là exit 3 "không có gì để kiểm".
+    task_mb, task_off_trunk = None, False
+    if args.run_tests and not (args.staged or args.commit_msg or args.tree is not None):
+        proj = str(get_project_dir())
+        trunk_ref, trunk_name = task_trunk(proj)
+        if trunk_ref:
+            branch = subprocess.run(["git", "-C", proj, "symbolic-ref", "-q", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+            task_off_trunk = branch != trunk_name
+            task_mb = subprocess.run(["git", "-C", proj, "merge-base", trunk_ref, "HEAD"], capture_output=True, text=True).stdout.strip() or None
+        if (task_off_trunk and task_mb and not (args.diff or args.since) and force_full_reason(args) is None
+                and not (args.session or args.transcript) and os.environ.get("DEVKIT_GATE_MERGE_CHECK") != "1"):
+            args.diff = task_mb
+            print(f"    {CYAN}▶ {tr(f'Lượt task: kiểm merge-base({trunk_ref}, HEAD) = {task_mb[:12]} → cây hiện tại', f'Task run: auditing merge-base({trunk_ref}, HEAD) = {task_mb[:12]} → the current tree')}{RESET}")
     # 2026-09-29: after a commit, --full on the clean tree said "nothing to audit" (exit 3), so the
     # commits about to be pushed got no receipt unless the agent found `--diff <sha>` by hand. A clean
     # tree AHEAD of its upstream audits upstream..HEAD — exactly what a push sends. No upstream, or
@@ -6101,6 +6202,9 @@ def main():
     # receipt to re-use and ran every suite again. Closed right after the receipt block below.
     cache = None
     tested_fp = tree_fp_of(project_dir) if run_tests and force_reason else None
+    # T0061: cây mà một lượt task kiểm, lấy TRƯỚC khi suite chạy (biên nhận task chỉ ghi khi cây vẫn là nó; một FAIL bỏ biên nhận của cây đó)
+    task_fp = tree_fp_of(project_dir) if (run_tests and not force_reason and not deferred_by and not args.since and task_off_trunk
+                                          and task_mb and os.environ.get("DEVKIT_GATE_MERGE_CHECK") != "1") else None
     use_cache = run_tests and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
         and any(t.get("command") for t in regression_tests)
     # P3 (20/10) sentinel: lượt cưỡng bức khi lần chạy THẬT đủ suite gần nhất của repo đã quá DEVKIT_SENTINEL_MAX_S (24 h) không dùng
@@ -7391,6 +7495,19 @@ def main():
             mark_merge_gate_receipt(project_dir, diff_ref, run_start_tree, relaxing=[
                 flag for flag, on in (("--allow-no-tests", args.allow_no_tests), ("--allow-orphan-tests", args.allow_orphan_tests),
                                       ("--auto-approve-tests", args.auto_approve_tests or os.environ.get("DEVKIT_AUTO_APPROVE_TESTS") == "1")) if on])
+        # T0061 Pha 1: biên nhận task (task_fp chỉ có ở lượt không cưỡng bức, ngoài nhánh đích, không --since, không merge check). Ghi khi
+        # exit 0 có khoá, không read-only, không suite UNTESTED (BUSY / BUDGET / SLOT / KEYED…), và lượt đã kiểm trọn merge-base(<nhánh đích>,
+        # HEAD) → cây: base của diff là merge-base đó hoặc tổ tiên của nó. Exit 1 (mọi chế độ) bỏ biên nhận task của cây đó; BUSY / BUDGET /
+        # SLOT / exit 2 của merge check không đụng tới nó.
+        if (task_fp and exit_code == 0 and run_tests and lock_held and not read_only and not lock_busy and not budget_cut and not slot_busy
+                and not project_gone and not any(t.get("status") == "UNTESTED" for t in regression_tests)
+                and subprocess.run(["git", "-C", str(project_dir), "merge-base", "--is-ancestor", base_ref, task_mb],
+                                   capture_output=True).returncode == 0):
+            if write_task_receipt(project_dir, task_fp, task_mb, args.session or os.environ.get("DEVKIT_SESSION_ID")
+                                  or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID")):
+                print(f"  • {GREEN}{tr('Biên nhận task đã ghi (XONG của task trong lượt này; push nhánh đích vẫn cần --full)', 'Task receipt written (XONG for this task in this turn; a push to the trunk still needs --full)')}{RESET}")
+        elif exit_code == 1 and run_tests and not project_gone:
+            drop_task_receipt(project_dir, task_fp or tested_fp or budget_fp or tree_fp_of(project_dir))
         # The budget record (BUDGET_RECORD) is a file of its own, so the receipt above stays byte for byte whatever happens here:
         # a suite that FAILED or TIMED OUT drops it (never a FAIL item), a budget cut writes what finished (never on another tree).
         if run_tests and any(t.get("status") in ("FAIL", "TIMEOUT") for t in regression_tests):
