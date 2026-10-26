@@ -1099,7 +1099,20 @@ def _compound_body(seg):
     m = re.search(r"\bdo\b(.*)\bdone\b", seg, re.S) or re.search(r"\bthen\b(.*)\bfi\b", seg, re.S)
     return m.group(1) if m else ""
 
+_NEST = [0]   # độ sâu hiện tại của _segment_is_runner (thân `( … )`, `bash -c`, vòng lặp lồng nhau)
+
 def _segment_is_runner(seg):
+    # Review #427: 400 lớp `( … )` ném RecursionError, hook thoát với traceback (claim lọt). Quá 32 lớp thì không coi là lần chạy:
+    # không XANH, không ĐỎ, claim cần bằng chứng khác.
+    if _NEST[0] >= 32:
+        return False
+    _NEST[0] += 1
+    try:
+        return _segment_is_runner_at(seg)
+    finally:
+        _NEST[0] -= 1
+
+def _segment_is_runner_at(seg):
     if re.match(r"(?:for|while|until|if|case)\b", seg.lstrip()):
         body = _compound_body(seg)
         if any(_segment_is_runner(p) for p in _split_segments(body)):

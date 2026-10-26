@@ -238,6 +238,13 @@ case("E3 must pass (review): the same, exit=1 / failed=\"1\" → fix → exit=0 
      pair(UNITY_REAL, "edit exit=1\n" + X6_RED, UNITY_REAL, "edit exit=0\n" + X6, red_err=False), 0, msg=FIX)
 case("E3 control (review): the same printing `edit exit=2` and a green XML (stale) is no green", after(UNITY_REAL, "edit exit=2\n" + X6), 2)
 
+print("-- N: deep nesting")
+# Review #427 (OCR): _segment_is_runner đệ quy vào thân `( … )` không giới hạn: 400 lớp ném RecursionError, hook thoát 0 với traceback
+# (claim lọt). Lồng quá sâu thì không phải lần chạy: claim bị chặn, không crash.
+NEST = "(" * 400 + "python3 -m pytest -q" + ")" * 400
+case("N must block: 400 nested ( … ) around pytest: no RecursionError, the pass claim is blocked", after(NEST, PYOK), 2)
+case("N control: 3 nested ( … ) around pytest is still a run", after("(((python3 -m pytest -q)))", PYOK), 0)
+
 print("-- E4: an EXIT trap owns the tool's exit")
 case("E4 must block: `trap 'exit 0' EXIT; pytest -q` with no summary", after("trap 'exit 0' EXIT; python3 -m pytest -q", "....F...."), 2)
 case("E4 must block: `trap 'exit 1' EXIT` forging the RED half of check 7",
