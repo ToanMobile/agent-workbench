@@ -417,12 +417,26 @@ def quoted_mention(sentence, match):
         return k >= 0 and spans[k][0] < i < spans[k][1] - 1
     return inside(match.start()) and inside(match.end() - 1)
 
+# Each match re-reads its sentence (the prefix regexes, the cycle-name and quote checks), so N matches in one long clause cost N × its
+# length: 1 340 negated phrases in one 40 KB sentence took 8-13 s of CPU (2026-10-25), and a Stop hook past its 30 s cap lets the Stop
+# through. A reply gets _EXEMPT_BUDGET characters of that re-reading (~0.1 s); past it every further match is an ASSERTION (fail-closed).
+# ponytail: a reply that only holds exempt phrases past the budget (hundreds in one clause) now blocks; make the per-match checks local
+# to a window if a real reply ever does.
+_EXEMPT_BUDGET = 500_000
+_exempt_spent = 0
+
 def is_nonassertive(sentence, match, kind):
     """Only explicit grammar may exempt a matched result/outcome phrase.
 
     Default is ASSERTION. Generic `chưa/không/thì` elsewhere in the sentence
     cannot erase an independent claim.
     """
+    global _exempt_spent
+    _exempt_spent += len(sentence)
+    if _exempt_spent > _EXEMPT_BUDGET:
+        if _exempt_spent - len(sentence) <= _EXEMPT_BUDGET:
+            logline(f"[{ts}] exemption budget of {_EXEMPT_BUDGET} chars spent: every further match is a claim")
+        return False
     prefix = re.sub(r"[`\"“”]", "", sentence[:match.start()])
     matched_text = match.group(0)
     if GOVERNING_PREFIX.search(prefix):
@@ -720,8 +734,9 @@ DEVKIT_SUITE_RX = re.compile(r"\btests/(?:[\w-]+/)*(?:test_[\w.-]+|\$\{?\w+\}?)\
 # A line-start anchor under re.M takes `[^\S\n]*`, never `\s*`: `\s*` runs on across blank lines from every line start, so a tool result
 # with 30 000 blank lines took 18-68 s, past the Stop hook's 30 s cap (2026-10-25 review of af339645, P3; section P of the test).
 DEVKIT_SUITE_RED = re.compile(r"\b[1-9]\d*\s+(failed|FAILED|deviating)\b|❌|^[^\S\n]*[✖✘] ", re.M)
-DEVKIT_SUITE_GREEN = re.compile(r"all (checks )?passed|ALL [\w ,-]*PASSED|\b0 deviating\b|: all passed", re.I)
-# A command is a runner only in the segment that actually runs it. `&&` / `||` / `;` split segments
+# "not all tests passed in $d" is no pass summary (2026-10-26 review of 9c1a3cb3, R2-M1): `(?<!not )` before the two "all … passed" forms.
+DEVKIT_SUITE_GREEN = re.compile(r"(?<!not )(?:all (checks )?passed|ALL [\w ,-]*PASSED)|\b0 deviating\b|: all passed", re.I)
+# A command is a runner only in the segment that actually runs it. `&&` / `||` / `;` / a newline split segments
 # (not inside quotes, or inside for/while/until/if/case … done/fi/esac). A reader (echo, grep, git,
 # python -c, …) that merely names a suite or the gate is not a run. `cd` / a `$VAR` expansion still
 # says where a real run happens. ponytail: `echo done` inside a for-loop can close the compound early.
@@ -766,10 +781,20 @@ def _env_for(cmd):
     env.update(_collect_assigns(cmd))
     return env
 
+# `<<WORD`, `<<-WORD`, `<<'WORD'`, `<<"WORD"`, `<<\WORD` (not `<<<`, not `1 << 2`): its body follows the line and is data, never commands.
+_HEREDOC_RX = re.compile(r"<<(-?)[^\S\n]*\\?(['\"]?)([A-Za-z_][\w.-]*)\2")
+
 def _split_segments(cmd):
-    """Top-level && / || / ; pieces. Not inside quotes or a for/while/until/if/case compound."""
-    parts, buf, word = [], [], []
-    i, n, quote, paren, compound = 0, len(cmd), None, 0, 0
+    """Top-level && / || / ; / newline pieces. Not inside quotes, a heredoc body, or a for/while/until/if/case compound; a newline after
+    a `|` continues the pipe (2026-10-26 review of 322b19db, D4: `pytest > log 2>&1` then `echo "rc=$?"` on the next line was one piece)."""
+    parts, buf, word, heredocs = [], [], [], []
+    i, n, quote, paren, compound, last = 0, len(cmd), None, 0, 0, ""
+
+    def cut():
+        seg = "".join(buf).strip()
+        if seg:
+            parts.append(seg)
+        buf.clear()
 
     def end_word():
         nonlocal compound
@@ -784,6 +809,8 @@ def _split_segments(cmd):
 
     while i < n:
         c = cmd[i]
+        if c not in " \t\r\n":
+            last = c
         if quote:
             buf.append(c)
             word.append(c)
@@ -819,6 +846,32 @@ def _split_segments(cmd):
             end_word()
             buf.append(c)
             i += 1
+            continue
+        if c == "<" and cmd.startswith("<<", i) and not cmd.startswith("<<<", i) and (i == 0 or cmd[i - 1] != "<"):
+            m = _HEREDOC_RX.match(cmd, i)
+            if m:
+                end_word()
+                heredocs.append((m.group(3), m.group(1) == "-"))
+                buf.append(m.group(0))
+                i = m.end()
+                continue
+        if c == "\n":
+            end_word()
+            buf.append(c)
+            i += 1
+            # The heredoc bodies of this line follow it, in order, whatever the depth: kept in this piece, never split or parsed.
+            for delim, tabs in heredocs:
+                while i < n:
+                    j = cmd.find("\n", i)
+                    j = n if j < 0 else j + 1
+                    line = cmd[i:j].rstrip("\r\n")
+                    buf.append(cmd[i:j])
+                    i = j
+                    if (line.lstrip("\t") if tabs else line) == delim:
+                        break
+            heredocs.clear()
+            if paren == 0 and compound == 0 and last != "|":
+                cut()
             continue
         if c in " \t\r\n":
             end_word()
@@ -966,9 +1019,11 @@ def _direct_hooks_tests(seg):
     script = next((w for w in words[1:] if not w.startswith("-")), "")
     return bool(_HOOKS_TESTS_FILE.search(script.replace("\\", "/")))
 
+def _is_suite_seg(seg):
+    return _segment_is_runner(seg) and bool(DEVKIT_SUITE_RX.search(seg) or _direct_hooks_tests(seg))
+
 def _command_is_suite(cmd):
-    return any(_segment_is_runner(seg) and (DEVKIT_SUITE_RX.search(seg) or _direct_hooks_tests(seg))
-               for seg in _command_segments(cmd))
+    return any(_is_suite_seg(seg) for seg in _command_segments(cmd))
 # Failure markers. Counts only when non-zero ("fail 0", "0 failed" are green), and the
 # bare words only in the capitals runners print (FAIL, FAILED, ERROR) — a passing test
 # named "shows error message" or node's "ℹ fail 0" summary must not read as red.
@@ -991,32 +1046,140 @@ PM_RUN_EXIT_RX = re.compile(r"^exit=(-?\d+|null)", re.M)
 # command (no pipe, `&`, `;` or loop: `$?` would be the pipe's last command, the background launch or the last iteration), the NEXT
 # segment is `echo "<label>=$?"`, and the label is printed exactly once.
 _ECHO_RC_RX = re.compile(r"""echo\s+(["']?)([A-Za-z_][\w.-]*)=\$\?\1\s*$""")
+# A positive pass summary of a common runner (pytest / jest / vitest "N passed", mocha "N passing", cargo, go, unittest, XCTest, rspec,
+# phpunit, dotnet, xcodebuild): what a masked run below needs for a green when its exit code cannot be bound.
+RUNNER_PASS_RX = re.compile(r"\b[1-9]\d*\s+(?:tests?\s+)?(?:passed|passing)\b|\btest result: ok\b"
+                            r"|^ok[^\S\n]+\S+[^\S\n]+(?:[\d.]+s|\(cached\))|\bRan [1-9]\d* tests? in [\d.]+s\s+OK\b"
+                            r"|\bExecuted [1-9]\d* tests?, with 0 failures\b|\b[1-9]\d* examples?, 0 failures\b"
+                            r"|^OK \([1-9]\d* tests?\b|^Passed!\s|\*\* TEST SUCCEEDED \*\*", re.M)
+# Pass summaries one RUNNER_PASS_RX match cannot judge (2026-10-26 review of 322b19db, P2): node --test's `ℹ pass N` with `ℹ fail 0` on the
+# next line; Maven's `Tests run: N, Failures: 0, Errors: 0`, only with no `Tests run:` line that carries a failure or an error and no BUILD
+# FAILURE (RUNNER_FAIL_RX does not read those mid-line counts); Gradle's BUILD SUCCESSFUL, only when every runner it must speak for is Gradle.
+NODE_PASS_RX = re.compile(r"^[^\S\n]*ℹ pass [1-9]\d*[^\S\n]*\n[^\S\n]*ℹ fail 0[^\S\n]*$", re.M)
+MVN_PASS_RX = re.compile(r"\bTests run: [1-9]\d*, Failures: 0, Errors: 0\b")
+MVN_RED_RX = re.compile(r"\bTests run: \d+, Failures: (?:[1-9]|\d+, Errors: [1-9])|\bBUILD FAILURE\b")
+GRADLE_PASS_RX = re.compile(r"^[^\S\n]*BUILD SUCCESSFUL\b", re.M)
+_GRADLE_RX = re.compile(r"(?:^|[\s/])gradlew?(?=\s|$)")
+
+def _pass_summary(txt, segs, idxs):
+    """txt holds a pass summary that can speak for the runner segments idxs, whose exit codes are not bound."""
+    if RUNNER_PASS_RX.search(txt) or NODE_PASS_RX.search(txt) or (MVN_PASS_RX.search(txt) and not MVN_RED_RX.search(txt)):
+        return True
+    return bool(idxs) and all(_GRADLE_RX.search(segs[i]) for i in idxs) and bool(GRADLE_PASS_RX.search(txt))
+
+# A kit suite's own lines: its check lines (✔ ✓ ✅ ✖ ✘ ❌) and its summary ("all passed (3)", "uninstall: 9 passed, 0 failed", "contract
+# points: 3 ok, 0 deviating"). What is left is all another runner of the command can have printed (2026-10-26 review of 9c1a3cb3, P1).
+_KIT_LINE_RX = re.compile(r"^[^\S\n]*[✔✓✅✖✘❌]|" + DEVKIT_SUITE_GREEN.pattern
+                          + r"|^[\w ./-]+:[^\S\n]+\d+[^\S\n]+(?:passed|ok),[^\S\n]+\d+[^\S\n]+(?:failed|deviating)\b", re.I)
+
+def _not_kit_lines(txt):
+    return "\n".join(line for line in txt.splitlines() if not _KIT_LINE_RX.search(line))
+_STATUS_READ = re.compile(r"\$\?|\$\{\?\}|PIPESTATUS")
+_COMPOUND = re.compile(r"\s*(?:for|while|until|if|case)\b")
+# A redirection of stdout to a file (`>`, `1>`, `>>`, `&>`): not `2>…`, not `>&2` / `2>&1`.
+_STDOUT_AWAY = re.compile(r"(?:^|[^\d&>])(?:1?>>?|&>>?)(?!&)")
 
 def _single_command(seg):
     s = re.sub(r"\"[^\"]*\"|'[^']*'", "", seg)     # quoted text is data
     s = re.sub(r"\d*>&\d+|&>>?|>&", " ", s)         # 2>&1, &>log: redirections, not job control
     return not re.match(r"\s*(?:for|while|until|if|case)\b", s) and not re.search(r"[;|&\n]", s)
 
-def _echoed_exit(cmd, txt):
-    """"red" when an echoed exit code of a runner segment is not 0, "green" when EVERY runner segment of the command is bound to an
-    echoed 0, else None."""
+def _head_starts(words):
+    """Where the command proper may start: 0, and after each leading wrapper that hands back the wrapped command's own exit code
+    (timeout, env, time, nice, `uv|poetry|pipenv|pdm|hatch run`, npx, bunx, yarn, `pnpm exec`)."""
+    out, i = [0], 0
+    while i < len(words):
+        a = _argv0(words[i])
+        if a in ("timeout", "gtimeout", "env", "time", "nice"):
+            i += 1
+            while i < len(words) and (words[i].startswith("-") or (a == "env" and re.match(r"[A-Za-z_]\w*=", words[i]))):
+                i += 2 if words[i] in ("-s", "-k", "-n", "-u") else 1
+            i += 1 if a in ("timeout", "gtimeout") else 0     # the duration
+        elif a in ("uv", "poetry", "pipenv", "pdm", "hatch") and words[i + 1:i + 2] == ["run"]:
+            i += 2
+        elif a in ("npx", "bunx", "yarn"):
+            i += 1
+        elif a == "pnpm" and words[i + 1:i + 2] == ["exec"]:
+            i += 2
+        else:
+            break
+        out.append(i)
+    return out
+
+def _runs_as_command(seg):
+    """The runner IS the command of this segment (2026-10-25, fail-open of a pytest run sent to a log, then `echo "rc=$?"`): its words,
+    from the start or after wrappers, match a runner pattern anchored at the head. `! pytest`, `eval "pytest"`, `bash -c "pytest || true"`,
+    `pip install pytest` only name a runner: their exit code is not a test run's."""
+    words = _strip_assigns(_words(seg))
+    for i in _head_starts(words):
+        head = words[i:]
+        if not head:
+            break
+        for w0 in {head[0][2:] if head[0].startswith("./") else head[0], _argv0(head[0])}:
+            text = " ".join([w0] + head[1:])
+            if TEST_RUNNER_RX.match(text) or SCRIPT_RUNNER_RX.match(text) or any(text.startswith(c) for c in MATRIX_CMDS):
+                return True
+    return False
+
+def _hidden(segs, i, txt):
+    """Runner segment i may hide its result, so the absence of a failure marker says nothing of it: a segment from it on reads `$?`
+    (the tool's exit is then the reader's; the code counts only when bound, _echoed_codes), or it is a compound (for/while/until/if/case:
+    the tool's exit is the last iteration's) that left blank output or sent its stdout to a file. A compound whose output is in the
+    result keeps the plain rule."""
+    s = segs[i]
+    return bool(any(_STATUS_READ.search(t) for t in segs[i:])
+                or (_COMPOUND.match(s) and (not txt.strip() or _compound_stdout_away(s))))
+
+_CLOSE_KW = re.compile(r"\b(?:done|fi|esac)\b")
+_PART_KW = re.compile(r"^(?:(?:do|then|else|elif)\b\s*)+")
+
+def _compound_stdout_away(seg):
+    """The compound sends stdout to a file: a redirection after its closing keyword (`done > all.log`), or in a piece of its condition or
+    body that is not a reader such as echo / printf (each nested compound by the same rule). `echo "== $f" >> ran.txt` next to the run
+    is not the run's output (2026-10-26 review of 322b19db, D6: the redirection was looked for in the whole loop text)."""
+    s = re.sub(r"\"[^\"]*\"|'[^']*'", "", seg)
+    head = _COMPOUND.match(s)
+    close = None
+    for close in _CLOSE_KW.finditer(s):
+        pass
+    if close and _STDOUT_AWAY.search(s[close.end():]):
+        return True
+    for p in _split_segments(s[head.end() if head else 0:close.start() if close else len(s)]):
+        p = _PART_KW.sub("", p)
+        if _COMPOUND.match(p):
+            if _compound_stdout_away(p):
+                return True
+        elif not _is_reader(_strip_assigns(_words(p))) and _STDOUT_AWAY.search(p):
+            return True
+    return False
+
+def _echoed_codes(cmd, txt, binds):
+    """(segments, [(i, code)]) for each runner segment i: the exit code its next segment `echo "<label>=$?"` printed when it binds, else
+    None. binds(seg): may this runner segment be bound at all."""
     segs = _command_segments(cmd)
-    codes, unbound = [], False
+    out = []
     for i, seg in enumerate(segs):
         if not _segment_is_runner(seg):
             continue
-        # Only a direct `bash|sh <kit test file>` run binds (2026-10-25 review of af339645, P1): `bash -n`, `shellcheck`, `[ -f … ]`,
-        # `chmod +x`, `bash -c "…"`, `eval`, `! bash …` name a test file and run no test, so their rc=0 is no green, their rc=1 no RED.
         m = (_ECHO_RC_RX.match(segs[i + 1])
-             if i + 1 < len(segs) and _single_command(seg) and _direct_bash_kit(seg) else None)
+             if i + 1 < len(segs) and _single_command(seg) and binds(seg) else None)
         hits = re.findall(r"(?m)^[^\S\n]*" + re.escape(m.group(2)) + r"=(\d+)\s*$", txt) if m else []
-        if len(hits) != 1:
-            unbound = True
-            continue
-        codes.append(int(hits[0]))
-    if any(c != 0 for c in codes):
+        # Zero or not, read as text: int() of a 5 000-digit `rc=111…` raised past Python's 4 300-digit limit and ended the transcript
+        # scan (2026-10-26 review of 9c1a3cb3, P3a). Only 0 / not 0 is used.
+        out.append((i, (0 if hits[0].strip("0") == "" else 1) if len(hits) == 1 else None))
+    return segs, out
+
+def _echoed_verdict(res):
+    """"red" when a bound code is not 0, "green" when EVERY runner segment is bound to 0, else None."""
+    if any(c not in (None, 0) for _, c in res):
         return "red"
-    return "green" if codes and not unbound else None
+    return "green" if res and all(c == 0 for _, c in res) else None
+
+def _suite_binds(seg):
+    """In a kit-suite command: a kit segment binds only as a direct `bash|sh <kit test file>` run (2026-10-25 review of af339645, P1:
+    `bash -n`, `shellcheck`, `[ -f … ]`, `chmod +x`, `bash -c "…"`, `eval`, `! bash …` name a test file and run no test, so their rc=0 is no
+    green, their rc=1 no RED); any other runner binds as the command of its segment (_runs_as_command)."""
+    return _direct_bash_kit(seg) if _is_suite_seg(seg) else _runs_as_command(seg)
 
 def runner_state(is_error, txt, pm_run=False, command=""):
     """"red", "green", "gate-green" (the DevKit gate: a green for checks 2 and 7, not for auto_link), or None (not a verdict) for one runner tool_result."""
@@ -1030,9 +1193,16 @@ def runner_state(is_error, txt, pm_run=False, command=""):
     if command and _command_is_suite(command):
         if is_error or DEVKIT_SUITE_RED.search(txt):
             return "red"
-        echoed = _echoed_exit(command, txt)
+        segs, res = _echoed_codes(command, txt, _suite_binds)
+        echoed = _echoed_verdict(res)
         if echoed:
             return echoed
+        # Another runner of the command that hides its result (`bash tests/…/test_x.sh; pytest > log; echo $?`): the kit summary
+        # says nothing of it, only its own pass summary can, on a line that is not the kit's ("uninstall: 9 passed, 0 failed" and a
+        # check line "✔ … 5 passed …" are the kit's: 2026-10-26 review of 9c1a3cb3, P1); and the kit part needs its own summary.
+        hidden = [i for i, c in res if c is None and not _is_suite_seg(segs[i]) and _hidden(segs, i, txt)]
+        if hidden:
+            return "green" if (DEVKIT_SUITE_GREEN.search(txt) and _pass_summary(_not_kit_lines(txt), segs, hidden)) else None
         if DEVKIT_SUITE_GREEN.search(txt):
             return "green"
         # Exit 0 của tool là xanh khi bash/sh chạy thẳng file kit, dù không có "all passed".
@@ -1063,7 +1233,21 @@ def runner_state(is_error, txt, pm_run=False, command=""):
         if is_error or "CHUA TINH" in run_txt or RUNNER_FAIL_RX.search(run_txt):
             return None
         return "green"
-    return "red" if (is_error or RUNNER_FAIL_RX.search(txt)) else "green"
+    segs, res = _echoed_codes(command, txt, _runs_as_command) if command else ([], [])
+    compound = any(_COMPOUND.match(segs[i]) for i, _ in res)
+    masked = any(_hidden(segs, i, txt) for i, _ in res)
+    if is_error or RUNNER_FAIL_RX.search(txt) or ((compound or masked) and DEVKIT_SUITE_RED.search(txt)):
+        return "red"
+    if masked:
+        # 2026-10-25 fail-opens: `python3 -m pytest > log 2>&1; echo "rc=$?"` printing rc=1, and a glob loop `for f in tests/a/test_*.sh;
+        # do bash "$f" > /dev/null; done`, read as green (no failure marker in the result). A bound non-zero code is red; green needs every
+        # runner bound to 0, or a pass summary in the result.
+        echoed = _echoed_verdict(res)
+        if echoed:
+            return echoed
+        unbound = [i for i, c in res if c is None]
+        return "green" if (_pass_summary(txt, segs, unbound) or DEVKIT_SUITE_GREEN.search(txt)) else None
+    return "green"
 SRC_EXT = (".kt", ".kts", ".java", ".swift", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py",
            ".go", ".rs", ".dart", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp", ".m", ".mm")
 # A file the session wrote in a TEMP dir that is not the project itself (the scratchpad the harness tells every agent to use, /tmp,
@@ -1167,7 +1351,7 @@ tp = d.get("transcript_path")
 if tp and os.path.exists(tp):
     try:
         with open(tp) as fh:
-            for rawline in fh:
+            for lineno, rawline in enumerate(fh, 1):
                 rawline = rawline.strip()
                 if not rawline:
                     continue
@@ -1184,177 +1368,187 @@ if tp and os.path.exists(tp):
                     if not isinstance(blk, dict):
                         continue
                     blk_idx += 1
-                    if blk.get("type") == "tool_use" and blk.get("name") == "Bash" \
-                            and isinstance(blk.get("input"), dict):
-                        bash_cmds.append(str(blk["input"].get("command", "")))
-                    if blk.get("type") == "tool_result":
-                        c = blk.get("content")
-                        if isinstance(c, str):
-                            txt = c
-                        elif isinstance(c, list):
-                            txt = "\n".join(
-                                part.get("text", "")
-                                for part in c
-                                if isinstance(part, dict) and isinstance(part.get("text"), str)
+                    try:
+                        if blk.get("type") == "tool_use" and blk.get("name") == "Bash" \
+                                and isinstance(blk.get("input"), dict):
+                            bash_cmds.append(str(blk["input"].get("command", "")))
+                        if blk.get("type") == "tool_result":
+                            c = blk.get("content")
+                            if isinstance(c, str):
+                                txt = c
+                            elif isinstance(c, list):
+                                txt = "\n".join(
+                                    part.get("text", "")
+                                    for part in c
+                                    if isinstance(part, dict) and isinstance(part.get("text"), str)
+                                )
+                            else:
+                                txt = json.dumps(c, ensure_ascii=False)
+                            try:
+                                proof = json.loads(txt)
+                            except Exception:
+                                proof = None
+                            use = tool_uses.get(blk.get("tool_use_id"))
+                            result_id = blk.get("tool_use_id")
+                            if isinstance(result_id, str):
+                                tool_results[result_id] = {
+                                    "index": blk_idx,
+                                    "isError": blk.get("is_error") is True,
+                                }
+                            if (use and use["name"] == "Bash"
+                                    and BUGS_CMD_RX.search(str(use["input"].get("command", "")))):
+                                bugs_touched.update(BUG_ID_RX.findall(txt))
+                            if blk.get("is_error") is True and NOT_RUN_RX.match(txt.lstrip()):
+                                pass    # refused: never ran (NOT_RUN_RX)
+                            elif (use and use["name"] == "Bash"
+                                    and is_test_runner(str(use["input"].get("command", "")))):
+                                cmd = str(use["input"].get("command", ""))
+                                st = runner_state(blk.get("is_error") is True, txt, command=cmd)
+                                if st:
+                                    runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt, cmd, st))
+                            elif (use and use["name"].endswith("__pm_run")
+                                    and use["input"].get("kind") == "test"):
+                                st = runner_state(blk.get("is_error") is True, txt, pm_run=True)
+                                if st:
+                                    runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt,
+                                                           str(use["input"].get("command") or "pm_run kind=test"), st))
+                            producer_ok = bool(
+                                use
+                                and (
+                                    workflow_producer(use)
+                                    or
+                                    (use["name"] == "Skill"
+                                     and use["input"].get("skill") == "multi-lens-audit")
+                                )
                             )
-                        else:
-                            txt = json.dumps(c, ensure_ascii=False)
-                        try:
-                            proof = json.loads(txt)
-                        except Exception:
-                            proof = None
-                        use = tool_uses.get(blk.get("tool_use_id"))
-                        result_id = blk.get("tool_use_id")
-                        if isinstance(result_id, str):
-                            tool_results[result_id] = {
-                                "index": blk_idx,
-                                "isError": blk.get("is_error") is True,
-                            }
-                        if (use and use["name"] == "Bash"
-                                and BUGS_CMD_RX.search(str(use["input"].get("command", "")))):
-                            bugs_touched.update(BUG_ID_RX.findall(txt))
-                        if blk.get("is_error") is True and NOT_RUN_RX.match(txt.lstrip()):
-                            pass    # refused: never ran (NOT_RUN_RX)
-                        elif (use and use["name"] == "Bash"
-                                and is_test_runner(str(use["input"].get("command", "")))):
-                            cmd = str(use["input"].get("command", ""))
-                            st = runner_state(blk.get("is_error") is True, txt, command=cmd)
-                            if st:
-                                runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt, cmd, st))
-                        elif (use and use["name"].endswith("__pm_run")
-                                and use["input"].get("kind") == "test"):
-                            st = runner_state(blk.get("is_error") is True, txt, pm_run=True)
-                            if st:
-                                runner_results.append((blk_idx, use["index"], blk.get("is_error") is True, txt,
-                                                       str(use["input"].get("command") or "pm_run kind=test"), st))
-                        producer_ok = bool(
-                            use
-                            and (
-                                workflow_producer(use)
-                                or
-                                (use["name"] == "Skill"
-                                 and use["input"].get("skill") == "multi-lens-audit")
-                            )
-                        )
-                        if (producer_ok
-                                and blk.get("is_error") is not True
-                                and isinstance(proof, dict)
-                                and proof.get("schemaVersion") == 3
-                                and proof.get("auditVerdict") == "CLEAR"
-                                and proof.get("terminalRecommendation") == "AUDIT_CLEAR_NEEDS_EXTERNAL_GATES"
-                                and proof.get("verificationVerdict") == "ASSERTED_ONLY"
-                                and isinstance(proof.get("runId"), str)
-                                and len(proof["runId"]) > 0
-                                and isinstance(proof.get("runNonce"), str)
-                                and len(proof["runNonce"]) > 0
-                                and isinstance(proof.get("fixedKeys"), list)
-                                and len(proof["fixedKeys"]) > 0
-                                and all(isinstance(key, str) and key for key in proof["fixedKeys"])
-                                and re.fullmatch(r"sha256:[0-9a-f]{64}", str(proof.get("scopeFingerprint", "")))
-                                and re.fullmatch(r"sha256:[0-9a-f]{64}", str(proof.get("currentId", "")))
-                                and re.fullmatch(r"sha256:[0-9a-f]{64}", str(proof.get("contentHash", "")))):
-                            structured_fix_proofs.append({
-                                "index": blk_idx,
-                                "useIndex": use["index"],
-                                "toolUseId": result_id,
-                                "fixedKeys": proof["fixedKeys"],
-                                "scopeFingerprint": proof["scopeFingerprint"],
-                                "currentId": proof["currentId"],
-                                "contentHash": proof["contentHash"],
-                            })
-                        for m in RED_XML.finditer(txt):
-                            red_idx[m.group(1)] = blk_idx
-                        for m in RED_XML2.finditer(txt):
-                            red_idx[m.group(2)] = blk_idx
-                        for m in RED_GRADLE.finditer(txt):
-                            red_idx[m.group(1)] = blk_idx
-                        continue
-                    if blk.get("type") != "tool_use":
-                        continue
-                    nm = blk.get("name", "")
-                    binp = blk.get("input") or {}
-                    use_id = blk.get("id")
-                    if isinstance(use_id, str) and isinstance(binp, dict):
-                        tool_uses[use_id] = {"name": nm, "input": binp, "index": blk_idx}
-                    elif not isinstance(use_id, str):
-                        # With no correlation id there is no later result that
-                        # can prove failure. Treat the tool as successful/unknown
-                        # so a prior proof cannot authorize a later outcome.
-                        no_id_tool_indices.append(blk_idx)
-                    if nm not in ("Edit", "Write", "NotebookEdit"):
-                        continue
-                    fp = binp.get("file_path") or ""
-                    if isinstance(fp, str) and fp and _is_scratch(fp):
-                        if fp.endswith(SRC_EXT):
-                            last_scratch_src_idx = blk_idx
+                            if (producer_ok
+                                    and blk.get("is_error") is not True
+                                    and isinstance(proof, dict)
+                                    and proof.get("schemaVersion") == 3
+                                    and proof.get("auditVerdict") == "CLEAR"
+                                    and proof.get("terminalRecommendation") == "AUDIT_CLEAR_NEEDS_EXTERNAL_GATES"
+                                    and proof.get("verificationVerdict") == "ASSERTED_ONLY"
+                                    and isinstance(proof.get("runId"), str)
+                                    and len(proof["runId"]) > 0
+                                    and isinstance(proof.get("runNonce"), str)
+                                    and len(proof["runNonce"]) > 0
+                                    and isinstance(proof.get("fixedKeys"), list)
+                                    and len(proof["fixedKeys"]) > 0
+                                    and all(isinstance(key, str) and key for key in proof["fixedKeys"])
+                                    and re.fullmatch(r"sha256:[0-9a-f]{64}", str(proof.get("scopeFingerprint", "")))
+                                    and re.fullmatch(r"sha256:[0-9a-f]{64}", str(proof.get("currentId", "")))
+                                    and re.fullmatch(r"sha256:[0-9a-f]{64}", str(proof.get("contentHash", "")))):
+                                structured_fix_proofs.append({
+                                    "index": blk_idx,
+                                    "useIndex": use["index"],
+                                    "toolUseId": result_id,
+                                    "fixedKeys": proof["fixedKeys"],
+                                    "scopeFingerprint": proof["scopeFingerprint"],
+                                    "currentId": proof["currentId"],
+                                    "contentHash": proof["contentHash"],
+                                })
+                            for m in RED_XML.finditer(txt):
+                                red_idx[m.group(1)] = blk_idx
+                            for m in RED_XML2.finditer(txt):
+                                red_idx[m.group(2)] = blk_idx
+                            for m in RED_GRADLE.finditer(txt):
+                                red_idx[m.group(1)] = blk_idx
+                            continue
+                        if blk.get("type") != "tool_use":
+                            continue
+                        nm = blk.get("name", "")
+                        binp = blk.get("input") or {}
+                        use_id = blk.get("id")
+                        if isinstance(use_id, str) and isinstance(binp, dict):
+                            tool_uses[use_id] = {"name": nm, "input": binp, "index": blk_idx}
+                        elif not isinstance(use_id, str):
+                            # With no correlation id there is no later result that
+                            # can prove failure. Treat the tool as successful/unknown
+                            # so a prior proof cannot authorize a later outcome.
+                            no_id_tool_indices.append(blk_idx)
+                        if nm not in ("Edit", "Write", "NotebookEdit"):
+                            continue
+                        fp = binp.get("file_path") or ""
+                        if isinstance(fp, str) and fp and _is_scratch(fp):
+                            if fp.endswith(SRC_EXT):
+                                last_scratch_src_idx = blk_idx
+                                if not is_test_path(fp):
+                                    last_scratch_fix_idx = blk_idx
+                            continue
+                        if isinstance(fp, str) and fp:
+                            edit_log.append((blk_idx, fp))
+                        if isinstance(fp, str) and fp.endswith(SRC_EXT):
+                            last_src_edit_idx = blk_idx
                             if not is_test_path(fp):
-                                last_scratch_fix_idx = blk_idx
-                        continue
-                    if isinstance(fp, str) and fp:
-                        edit_log.append((blk_idx, fp))
-                    if isinstance(fp, str) and fp.endswith(SRC_EXT):
-                        last_src_edit_idx = blk_idx
-                        if not is_test_path(fp):
-                            last_fix_edit_idx = blk_idx
-                    if isinstance(fp, str) and (SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)) \
-                            and not fp.endswith((".kt", ".java")):
-                        # Same mutate/restore rule as the JVM branch below: an Edit that is the
-                        # exact inverse of the last un-undone edit rolls the marker back.
-                        o_s, n_s = binp.get("old_string"), binp.get("new_string")
-                        stk = script_pending.get(fp) or []
-                        if stk and isinstance(o_s, str) and isinstance(n_s, str) and stk[-1] == (n_s, o_s):
-                            stk.pop()
-                            script_test_idx[fp] = script_idx_before[fp].pop()
-                        else:
-                            script_pending.setdefault(fp, []).append((o_s, n_s))
-                            script_idx_before.setdefault(fp, []).append(script_test_idx.get(fp, -1))
-                            script_test_idx[fp] = blk_idx
-                    # Unity C#: the NUnit XML is judged against the last .cs edit, as TEST-*.xml
-                    # is against .kt/.java — else a run from before the fix would still back it.
-                    if isinstance(fp, str) and fp.endswith(".cs") and os.path.exists(fp):
-                        last_edit_mtime = max(last_edit_mtime, os.path.getmtime(fp))
-                    if not (isinstance(fp, str) and fp.endswith((".kt", ".java")) and os.path.exists(fp)):
-                        continue
-                    mt = os.path.getmtime(fp)
-                    last_edit_mtime = max(last_edit_mtime, mt)
-                    # Module root of the edited file, so a red suite somewhere else in the
-                    # repo cannot veto a truthful claim about the module actually touched.
-                    rel = os.path.relpath(fp, repo)
-                    if "/src/" in rel:
-                        touched_modules.add(rel.split("/src/")[0])
-                    if "/src/test/" in fp or "/src/androidTest/" in fp:
-                        cls = os.path.basename(fp).rsplit(".", 1)[0]
-                        authored_tests[cls] = max(authored_tests.get(cls, 0.0), mt)
-                        # A mutate/restore pair must not expire the red it exists to produce.
-                        # check 2's RED-check REQUIRES mutating a load-bearing line, running it red,
-                        # then putting the line back — so the restore is ALWAYS the last edit, and
-                        # counting it moved the expiry marker past the red every time. The better
-                        # someone followed the protocol, the surer this gate was to reject them
-                        # (measured 2026-08-09: it rejected a fix whose mutant had just gone red
-                        # 3 runs out of 4). When an edit is the EXACT inverse of the most recent
-                        # un-undone edit to the same file, roll the marker back to where it stood
-                        # before the mutation instead of advancing it.
-                        #
-                        # Deliberately LIFO and exact: a real edit between the mutation and the
-                        # restore leaves the stack top unmatched, so the verdict still expires.
-                        # `Write` carries no old_string/new_string and so never matches — only an
-                        # Edit that literally swaps a previous Edit's two strings qualifies.
-                        old_s = binp.get("old_string")
-                        new_s = binp.get("new_string")
-                        stack = pending_edits.get(fp) or []
-                        undoes_last = (
-                            bool(stack)
-                            and isinstance(old_s, str)
-                            and isinstance(new_s, str)
-                            and stack[-1] == (new_s, old_s)
-                        )
-                        if undoes_last:
-                            stack.pop()
-                            test_edit_idx[cls] = edit_idx_before[fp].pop()
-                        else:
-                            pending_edits.setdefault(fp, []).append((old_s, new_s))
-                            edit_idx_before.setdefault(fp, []).append(test_edit_idx.get(cls, -1))
-                            test_edit_idx[cls] = blk_idx
+                                last_fix_edit_idx = blk_idx
+                        if isinstance(fp, str) and (SCRIPT_TEST_RX.search(fp) or SCRIPT_TEST_DIR_RX.search(fp)) \
+                                and not fp.endswith((".kt", ".java")):
+                            # Same mutate/restore rule as the JVM branch below: an Edit that is the
+                            # exact inverse of the last un-undone edit rolls the marker back.
+                            o_s, n_s = binp.get("old_string"), binp.get("new_string")
+                            stk = script_pending.get(fp) or []
+                            if stk and isinstance(o_s, str) and isinstance(n_s, str) and stk[-1] == (n_s, o_s):
+                                stk.pop()
+                                script_test_idx[fp] = script_idx_before[fp].pop()
+                            else:
+                                script_pending.setdefault(fp, []).append((o_s, n_s))
+                                script_idx_before.setdefault(fp, []).append(script_test_idx.get(fp, -1))
+                                script_test_idx[fp] = blk_idx
+                        # Unity C#: the NUnit XML is judged against the last .cs edit, as TEST-*.xml
+                        # is against .kt/.java — else a run from before the fix would still back it.
+                        if isinstance(fp, str) and fp.endswith(".cs") and os.path.exists(fp):
+                            last_edit_mtime = max(last_edit_mtime, os.path.getmtime(fp))
+                        if not (isinstance(fp, str) and fp.endswith((".kt", ".java")) and os.path.exists(fp)):
+                            continue
+                        mt = os.path.getmtime(fp)
+                        last_edit_mtime = max(last_edit_mtime, mt)
+                        # Module root of the edited file, so a red suite somewhere else in the
+                        # repo cannot veto a truthful claim about the module actually touched.
+                        rel = os.path.relpath(fp, repo)
+                        if "/src/" in rel:
+                            touched_modules.add(rel.split("/src/")[0])
+                        if "/src/test/" in fp or "/src/androidTest/" in fp:
+                            cls = os.path.basename(fp).rsplit(".", 1)[0]
+                            authored_tests[cls] = max(authored_tests.get(cls, 0.0), mt)
+                            # A mutate/restore pair must not expire the red it exists to produce.
+                            # check 2's RED-check REQUIRES mutating a load-bearing line, running it red,
+                            # then putting the line back — so the restore is ALWAYS the last edit, and
+                            # counting it moved the expiry marker past the red every time. The better
+                            # someone followed the protocol, the surer this gate was to reject them
+                            # (measured 2026-08-09: it rejected a fix whose mutant had just gone red
+                            # 3 runs out of 4). When an edit is the EXACT inverse of the most recent
+                            # un-undone edit to the same file, roll the marker back to where it stood
+                            # before the mutation instead of advancing it.
+                            #
+                            # Deliberately LIFO and exact: a real edit between the mutation and the
+                            # restore leaves the stack top unmatched, so the verdict still expires.
+                            # `Write` carries no old_string/new_string and so never matches — only an
+                            # Edit that literally swaps a previous Edit's two strings qualifies.
+                            old_s = binp.get("old_string")
+                            new_s = binp.get("new_string")
+                            stack = pending_edits.get(fp) or []
+                            undoes_last = (
+                                bool(stack)
+                                and isinstance(old_s, str)
+                                and isinstance(new_s, str)
+                                and stack[-1] == (new_s, old_s)
+                            )
+                            if undoes_last:
+                                stack.pop()
+                                test_edit_idx[cls] = edit_idx_before[fp].pop()
+                            else:
+                                pending_edits.setdefault(fp, []).append((old_s, new_s))
+                                edit_idx_before.setdefault(fp, []).append(test_edit_idx.get(cls, -1))
+                                test_edit_idx[cls] = blk_idx
+                    except Exception as e:
+                        # One block the scan cannot read is skipped and logged, never the rest of the transcript (2026-10-26 review of
+                        # 9c1a3cb3, P3a: an exception here ended the scan, so a later edit was never seen and an older green backed the
+                        # claim). Per block, not per line: one record carries parallel tool calls. A skipped edit call still counts as a
+                        # source edit (fail-closed).
+                        logline(f"[{ts}] transcript line {lineno} block {blk_idx} skipped ({blk.get('type')} "
+                                f"{blk.get('name') or blk.get('tool_use_id') or ''}): {e!r}")
+                        if blk.get("type") == "tool_use" and blk.get("name") in ("Edit", "Write", "NotebookEdit"):
+                            last_src_edit_idx = last_fix_edit_idx = blk_idx
     except Exception as e:
         logline(f"[{ts}] transcript scan fail: {e!r}")
 
@@ -1875,7 +2069,9 @@ if outcome_claimed:
             re.I,
         ))
 
-    unbound_claims = []
+    # Only whether ONE claim has no bound proof is used: a flag and a stop at the first, never a copy of each claim's clause (2026-10-26
+    # review of 9c1a3cb3, P3b: 8 570 claims in one 60 KB clause made 8 570 stripped copies, 1.1 GB).
+    unbound_claims = False
     for claim in outcome_claims:
         bound_proof = None
         for proof in structured_fix_proofs:
@@ -1892,7 +2088,8 @@ if outcome_claimed:
                 bound_proof = proof
                 break
         if not bound_proof:
-            unbound_claims.append(claim["clause"].strip())
+            unbound_claims = True
+            break
     # Second accepted proof — the paired executable oracle AGENTS.md makes mandatory,
     # observed in this session's own tool results: a test run that FAILED before the
     # last source edit and one that PASSED after it. A green run alone (no red before
