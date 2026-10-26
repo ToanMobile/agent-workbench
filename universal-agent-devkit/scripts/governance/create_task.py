@@ -181,6 +181,27 @@ def other_repos_named(text, repo):
     return [r for r, pat in REPO_NAME_PATTERNS.items()
             if r.lower() != repo.lower() and re.search(rf"(?<![A-Za-z0-9_])(?:{pat})(?![A-Za-z0-9_])", text)]
 
+def ac_list(ac):
+    """--ac (một chuỗi hoặc danh sách, mỗi phần có thể nhiều dòng) → các dòng của mục AC. Dòng chưa có dấu danh sách
+    thành `- [ ] …` (26/10: #419, #421 tạo bằng một câu thường, pre-flight không đếm được AC và giữ thẻ ở Blocked);
+    dòng đã là mục theo đúng AC_ITEM_RE mà pre-flight đếm, dòng thụt lề (phần tiếp của mục trên), dòng trong code fence
+    và dòng comment HTML giữ nguyên."""
+    out = []
+    for part in ([ac] if isinstance(ac, str) else ac or []):
+        fenced = commented = False   # mỗi --ac một khối riêng: fence/comment chưa đóng không lan sang --ac sau
+        for line in part.strip().splitlines():
+            if not line.strip():
+                continue
+            fence = not commented and line.lstrip().startswith("```")   # khối này nằm trong khối kia là chữ thường
+            opens = not commented and not fenced and line.lstrip().startswith("<!--")
+            keep = fenced or fence or commented or opens or line[0].isspace() or AC_ITEM_RE.match(line)
+            out.append(line if keep else f"- [ ] {line.strip()}")
+            fenced ^= fence
+            if opens or commented:
+                commented = "-->" not in line
+    return out
+
+
 def build_body(problem, context=None, fix=None, ac=None, risk=None, blocked_by=None):
     lines = []
     lines.append("## Problem")
@@ -198,8 +219,9 @@ def build_body(problem, context=None, fix=None, ac=None, risk=None, blocked_by=N
     lines.append(fix.strip() if fix else "Thực hiện sửa lỗi và bổ sung kiểm thử hồi quy.")
     lines.append("")
     lines.append("## Acceptance Criteria")
+    ac = ac_list(ac)
     if ac:
-        lines.append(ac.strip())
+        lines.extend(ac)
     else:
         lines.append("- [ ] Đã sửa đúng nguyên nhân gốc rễ và pass paired oracle RED→GREEN.")
         lines.append("- [ ] post-fix-gate --run-tests --full --brief đạt exit 0.")
@@ -544,7 +566,8 @@ def main():
     parser.add_argument("--title", help="Tiêu đề chuẩn Super-Board: <emoji> [<kind>] <scope>: <what>")
     parser.add_argument("--problem", help="Nội dung ## Problem")
     parser.add_argument("--fix", help="Nội dung ## Fix")
-    parser.add_argument("--ac", help="Nội dung ## Acceptance Criteria")
+    parser.add_argument("--ac", action="append",
+                        help="Một điều kiện của ## Acceptance Criteria (lặp lại cho nhiều điều kiện; câu thường tự thành `- [ ] …`)")
     parser.add_argument("--risk", help="Nội dung ## Risk (🟢 Low / 🟡 Medium / 🔴 High)")
     parser.add_argument("--blocked-by", help="Nội dung ## Blocked by")
     parser.add_argument("--labels", nargs="*", help="Labels (bug, feature, qa)")

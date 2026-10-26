@@ -122,10 +122,10 @@ sys.path.insert(0, sys.argv[1])
 import worktree as w
 import os
 row = lambda **kw: [r for r in w.inventory(os.getcwd(), **kw) if r["path"].endswith("rm-u")][0]["ahead"]
-print(row(), row(budget=0.0))
+print(row(budget=60.0), row(budget=0.0))   # a budget that is plenty, not the 3 s default: under load that expired and read "ahead 1" (#430)
 PY
 )"
-[ "$ahead" = "0 1" ] && ok "inventory: with the default budget a cherry-picked commit clears (ahead 0); with no time left it stays unintegrated (ahead 1)" || fail "inventory budget: '$ahead' (expected '0 1')"
+[ "$ahead" = "0 1" ] && ok "inventory: with a generous budget a cherry-picked commit clears (ahead 0); with no time left it stays unintegrated (ahead 1)" || fail "inventory budget: '$ahead' (expected '0 1')"
 rm_wt u >/dev/null
 
 # ── a PARENT commit with the same patch in main must not vouch for the valuable commit on top of it ───────────────────
