@@ -9,7 +9,8 @@
 # Checked = both halves of step 5, from this turn:
 #   - .git/postfix-gate/full_pass.json, written by `post-fix-gate --run-tests --full` on
 #     exit 0, newer than the turn's user message, whose fingerprint (bin/tree_fp.py) still
-#     matches the code — an edit after the gate run voids it (trunk mode, 17/10: a receipt `worktree finish` carried into main for
+#     matches the code — an edit after the gate run voids it (25/10, audit A item 4: a receipt of an EARLIER turn holds too when
+#     every suite in it is PASS and its fingerprint equals the current one exactly; tests/gates/test_proof_gate.sh grp_earlier) (trunk mode, 17/10: a receipt `worktree finish` carried into main for
 #     main's HEAD, of a clean tree, still holds when the only differing files are dirty in main and named by no editing tool call of
 #     this session: other sessions' / the board runner's files, foreign_dirty_only); trunk mode, 18/10: without such a receipt the turn
 #     still passes on (a) a --full exit 0 receipt a worktree of the repo wrote this turn, still matching that worktree, for the same tree
@@ -374,12 +375,31 @@ def full_gate_problem():
         # from the transcript and must skip isMeta entries of Stop-hook feedback, [Image: ...] and skills, task-notification
         # and auto-continuation (rv5/rv7 reviews, 2026-10-04: marking by "the last user entry" blocked 22 of 95 valid XONG).
         turn_start_time = time.time() - 3600
-    if rtime < turn_start_time:
-        return "lần exit 0 là từ trước lượt này"
+    earlier = rtime < turn_start_time
+    if earlier:
+        # Audit 25/10 A item 4 (303 blocks in 14 days: the agent re-ran a long gate on code that had not changed): a receipt of an
+        # EARLIER turn still holds when it is a real --full exit 0 (post-fix-gate writes exit 0 only for a full run, never for an
+        # impacted / deferred / budget / BUSY one) whose every suite is PASS, and the tree fingerprint below equals the current one
+        # exactly (no foreign-dirty relief). A suite that is not PASS (UNTESTED: KEYED, STALE, KNOWN-RED, untested_exit; BUSY) was
+        # proven in no run of its own: its own turn only. Checked before the fingerprint (cheap; 29 of 44 real exit-0 receipts carry
+        # UNTESTED, 25/10). ponytail: no age cap and no gate_sha / matrix_sha check: a DevKit linked from outside the tree that changes
+        # between turns does not void the receipt; add the receipt's gate_sha check when such a stale pass is seen in proof_gate.log.
+        tests = rec.get("tests")
+        if isinstance(rec.get("exit"), bool) or not isinstance(tests, list) or not tests:
+            return "lần exit 0 là từ trước lượt này (biên nhận không ghi suite nào: chỉ dùng được trong lượt của nó)"
+        not_pass = ["%s=%s" % (str(t.get("id"))[:40], str(t.get("status"))[:16]) if isinstance(t, dict) else "?"
+                    for t in tests if not isinstance(t, dict) or t.get("status") != "PASS"]
+        if not_pass:
+            return "lần exit 0 là từ trước lượt này, có suite không PASS (%s): chỉ dùng được trong lượt của nó" % ", ".join(not_pass[:4])
     now_fp = FP["now"] = tree_fp.tree_fingerprint(repo)   # tree_store_evidence dùng lại: không tính dấu vân tay hai lần trong hạn chót
     if not now_fp or not rec.get("fingerprint"):
         why = getattr(tree_fp.tree_fingerprint, "error", "") or "?"
         return "không tính được dấu vân tay code hiện tại (%s)" % str(why)[:60]
+    if earlier:
+        if rec.get("fingerprint") != now_fp:
+            return "lần exit 0 là từ trước lượt này và code đã đổi sau đó"
+        log("pass-gate session=%s earlier-turn receipt fp=%s suites=%d" % (session, now_fp, len(rec["tests"])))
+        return None
     if rec.get("fingerprint") != now_fp:
         try:
             foreign = foreign_dirty_only(rec, tree_fp)

@@ -1,8 +1,9 @@
 <!-- universal-agent-devkit:start -->
 # Universal Agent DevKit Integration
-This project is configured with Universal Agent DevKit standards:
-- Central Engineering Rules & SSOT: @AGENTS.md
-- Active Domain Profile: @.active-profile.json
-- High-Performance & Security Standards: @rules/core-rules.md
+This project is configured with Universal Agent DevKit standards. Read them on demand (no `@` import: this file is
+nested in the repo that holds the kit, and an import loads ~94 KB the first time any kit file is read):
+- Central Engineering Rules & SSOT: `AGENTS.md`
+- Active Domain Profile: `.active-profile.json`
+- High-Performance & Security Standards: `rules/core-rules.md`
 - Post-Fix Verification Gate: `python3 bin/post-fix-gate.py --run-tests` (or `postfix-gate --run-tests` after `make install`)
 <!-- universal-agent-devkit:end -->

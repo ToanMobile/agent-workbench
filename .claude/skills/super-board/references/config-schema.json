@@ -57,7 +57,7 @@
   "codex": {
     // Optional model name passed to `codex exec -m` for every card, over the
     // Codex ladder. `--codex=<model>` wins; absent/null lets the ladder pick
-    // (run tier x card grade, see scripts/super-board-codex-lane.sh).
+    // (run tier x card grade, see .claude/bin/super-board-codex-lane.sh).
     "model": null
   },
 

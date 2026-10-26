@@ -34,6 +34,9 @@ description: Dùng khi <ngữ cảnh kích hoạt rõ ràng>. Bỏ qua khi <trư
 2. Viết wording nhỏ nhất chặn failure; không bắt buộc spawn subagent nếu harness/policy không cho phép.
 3. Chạy lại scenario hoặc audit fixture/command hiện có; kiểm bằng tay output quan trọng.
 4. Rút bỏ phần không ảnh hưởng behavior.
+5. **Hook/guard test hai chiều:** mỗi test của hook hoặc guard ghép một ca phải chặn với một ca phải cho qua lấy từ
+   transcript thật; bản sửa guard thêm đúng câu bị chặn nhầm đã gây ra nó làm ca phải cho qua (chặn nhầm việc hợp lệ là
+   loại lỗi trội của kit, `rules/core-rules.md` §3).
 
 ## Checklist Kiểm Định (Skill Validation)
 

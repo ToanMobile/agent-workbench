@@ -36,8 +36,10 @@ rel="$(python3 -c "import json;print(json.load(open('.agents/regression_status.j
 [ -f "$P/.agents/evidence/.gitignore" ] && git -C "$P" check-ignore -q "$LOG" && ok "evidence folder is git-ignored" || fail "evidence not ignored"
 for i in 3 4 5 6 7 8 9 10 11 12 13; do run_gate "$i"; done
 [ "$(logs)" = 10 ] && ok "only the last 10 logs per test are kept" || fail "kept $(logs) logs"
-python3 "$DEVKIT_DIR/scripts/devkit_clean.py" "$P" --days=0 --apply >/dev/null 2>&1
-[ "$(logs)" = 10 ] && ok "agent-kit clean leaves the evidence alone" || fail "clean removed evidence: $(logs)"
+# The clean must really run: a moved script (scripts/devkit_clean.py before the 02/10 split) made this step vacuous.
+python3 "$DEVKIT_DIR/scripts/governance/devkit_clean.py" "$P" --days=0 --apply >/dev/null 2>"$TMP/clean.err"; clean_rc=$?
+[ "$clean_rc" = 0 ] && [ "$(logs)" = 10 ] && ok "agent-kit clean runs and leaves the evidence alone" \
+  || fail "clean rc=$clean_rc, evidence left: $(logs) — $(head -c 300 "$TMP/clean.err")"
 
 # Lock: while another writer holds the checklist lock, the gate must not write.
 python3 - "$P" "$DEVKIT_DIR" <<'PY' &

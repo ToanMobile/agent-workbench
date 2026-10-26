@@ -1599,6 +1599,38 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-impeccable-skill",
+      "watch_files": [
+        "universal-agent-devkit/skills/impeccable/*",
+        "universal-agent-devkit/profiles/*/profile.json",
+        "universal-agent-devkit/profiles/web/rules/web-rules.md",
+        "universal-agent-devkit/tests/verification/test_impeccable_skill.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-IMPECCABLE-01",
+          "name": "skill impeccable v4.7.1: SKILL.md frontmatter + Apache-2.0/MIT NOTICE, launcher tắt telemetry mặc định & probe cô lập exit 127, đủ reference/JSON 62 rule, 3 lớp bảo vệ DevKit (billing, hook/.grok, .adb-denylist), lọc profile và đồng bộ tài liệu 35 skills",
+          "command": "bash universal-agent-devkit/tests/verification/test_impeccable_skill.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-agents-md-block",
+      "watch_files": [
+        ".claude/skills/super-board/references/agents-md-block.md",
+        ".claude/skills/super-build/references/worker-preamble.md"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AGENTS-MD-BLOCK-01",
+          "name": "super-board AGENTS.md block stays within 40 lines and does not repeat the worker pipeline",
+          "command": "bash tests/super-board/test_agents_md_block_size.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

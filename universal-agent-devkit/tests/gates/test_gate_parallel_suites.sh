@@ -36,6 +36,8 @@ trap 'rm -rf "$TMP"' EXIT
 # máy tải 45–100 thì ca 4 lõi chờ tới 600 s, ca 12 lõi lệch giờ bắt đầu làm hẹn ba bên hỏng (OCR 23/10). Ghim tải giả 0.
 echo 0 > "$TMP/load"
 export DEVKIT_SLOT_LOAD_FILE="$TMP/load"
+# ca 16: suite tên run_impacted.sh là lớp cpu (heavy_slot): xếp hàng ở pool slot riêng của test, không đụng slot thật của máy
+export SB_HEAVY_SLOT_DIR="$TMP/slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -62,6 +64,7 @@ make_repo() {
   printf 'exit 1\n' > tests/boom.sh
   printf 'exit 0\n' > tests/fine.sh
   printf 'printf "%%s" "$DEVKIT_GATE_DONE" > "$MARK/done_seen"\n' > tests/see_done.sh
+  printf 'printf "%%s" "$DEVKIT_GATE_DONE" > "$MARK/ri_done"\n' > tests/run_impacted.sh   # a run_impacted.sh stand-in (DIFF_DEPENDENT)
   printf 'sleep 1\n' > tests/first.sh
   # hẹn ba bên: mỗi suite chờ tối đa 3 s cho đủ 3 suite cùng bắt đầu (chỉ qua khi nhóm chạy được 3 suite một lúc)
   for me in x y z; do
@@ -278,5 +281,38 @@ make_repo "$(suite REG-A 'sh tests/slow_a.sh' p),$(suite REG-B 'sh tests/need_a.
 run_gate
 if [ "$RC" = 0 ] && passed REG-A && passed REG-B; then ok "15: a flagged run_impacted.sh waits for the suite before it (it does not join the group)"
 else bad "15: run_impacted.sh joined the group (exit $RC)"; printf '%s\n' "$OUT" | tail -15; fi
+
+# 16. (audit B1, 25/10) run_impacted.sh (DIFF_DEPENDENT) skips only the scripts that ran BEFORE it (DEVKIT_GATE_DONE). In the middle of
+#     the matrix, or ahead of the STALE / cached-full suites appended at the end, it ran their scripts a second time (REG-DK-ALL-01: 44 %
+#     of the workbench gate time over 54 h). It now runs after every other suite (the add-only matrix tail stays last).
+#  a. matrix order [run_impacted, plain suite]: the runner is told the plain suite's script
+ri_seen() { cat "$MARK/ri_done" 2>/dev/null; }
+make_repo "$(suite REG-ALL 'sh tests/run_impacted.sh'),$(suite REG-C 'sh tests/fine.sh')"
+OUT="$(env -u DEVKIT_GATE_DONE CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests 2>&1)"; RC=$?
+case "$(ri_seen)" in
+  *"/tests/fine.sh"*) [ "$RC" = 0 ] && ok "16a: run_impacted.sh runs after the suite listed after it and skips its script" || bad "16a: gate exit $RC" ;;
+  *) bad "16a: run_impacted.sh ran before REG-C (DEVKIT_GATE_DONE: '$(ri_seen)')"; printf '%s\n' "$OUT" | grep -E "REG-" | tail -6 ;;
+esac
+#  b./c. --full: a flagged suite of a rule no file matches is added by cached-full (keyed_full) and runs in a group; a real PASS of it is
+#     told to run_impacted.sh (b), a FAIL is not (c): a keyed_full FAIL can leave the verdict as KNOWN-RED, so run_impacted.sh must still
+#     run that script itself.
+two_rules() {   # <run_impacted suite> <other suite>: the first watches src/* (changed), the second other/* (unchanged)
+  printf '{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],"mandatory_regression_tests":[%s]},{"component":"Other","watch_files":["other/*"],"mandatory_regression_tests":[%s]}]}\n' "$1" "$2" > matrix.json
+  git commit -qm two-rules -- matrix.json
+}
+for c in b c; do
+  if [ "$c" = b ]; then script=first.sh; else script=boom.sh; fi
+  make_repo "$(suite REG-ALL 'sh tests/fine.sh')"
+  two_rules "$(suite REG-ALL 'sh tests/run_impacted.sh')" "$(suite REG-K "sh tests/$script" p)"
+  OUT="$(env -u DEVKIT_GATE_DONE FLAKY_RETRY=0 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --lang en --run-tests --full --no-checklist 2>&1)"; RC=$?
+  if ! printf '%s\n' "$OUT" | grep -qE "REG-K"; then bad "16$c: cached-full did not add REG-K (exit $RC)"; printf '%s\n' "$OUT" | tail -8; continue; fi
+  case "$c:$(ri_seen)" in
+    b:*"/tests/first.sh"*) ok "16b: a cached-full suite that ran and passed in a group is told to run_impacted.sh, which runs after it" ;;
+    b:*) bad "16b: run_impacted.sh was not told REG-K's script (DEVKIT_GATE_DONE: '$(ri_seen)')"; printf '%s\n' "$OUT" | grep -E "REG-|Cached" | tail -6 ;;
+    c:*"/tests/boom.sh"*) bad "16c: a cached-full suite that FAILED was told to run_impacted.sh (it would skip a script the verdict may not judge)" ;;
+    c:*) [ -f "$MARK/ri_done" ] && ok "16c: a cached-full FAIL is not told to run_impacted.sh: it runs that script itself" \
+           || { bad "16c: run_impacted.sh did not run (exit $RC)"; printf '%s\n' "$OUT" | grep -E "REG-" | tail -6; } ;;
+  esac
+done
 
 [ "$FAILS" = 0 ] && echo "ALL OK" || { echo "$FAILS FAILED"; exit 1; }

@@ -121,7 +121,8 @@ NON_TECHNICAL_PHRASES = re.compile(
     r"(?:lựa chọn|phương án) tối ưu|tối ưu nhất|docker[ -]compose|thẩm mỹ viện"
     # UI words that mean something else in backend work (the UI door reads p_route):
     r"|(?<!\w)compose(?:\.ya?ml|\s+up(?!\s+to\b))(?!\w)|(?:sql|materialized|django) views?|views\.py|grafana panels?|panels? grafana"
-    r"|(?:credit|debit|payment|bank|gift|sim|sd) cards?|card numbers?|số card|dialog (?:state|manager|system)")
+    r"|(?:credit|debit|payment|bank|gift|sim|sd) cards?|card numbers?|số card|dialog (?:state|manager|system)"
+    r"|(?<![\w-])--cards?(?!\w)")  # a CLI flag: the super-board lane opener passes --cards (2026-10-25: UI door in 761/771 lanes)
 
 # The UI door (docs/workflow-improvements.md II.C): a UI word in the prompt, or an app
 # profile, switches on UI_INTERACTION + VISUAL_DESIGN, the Zero-Slop mandate and ui-ux-pro-max.
@@ -188,6 +189,75 @@ def giao_default(project_root):
     return False, ""
 
 
+# The first prompt of a super-board lane worker is the runner's text, not a request (.claude/bin/super-board-run.sh dispatch_lane,
+# the wave workflow's SKILLS_CHECK, super-build-dispatch.sh): it opens with "First operation…" running super-board-skills-ready.py
+# on the card JSON array. Replayed on 40 real lanes (2026-10-25): its fixed sentences matched the same 4 traps in 38-40 of 40, opened
+# the UI door ("card") in all, and the runner opener was captured as a bug. Only the opener at the very start counts: a user's
+# prompt that quotes it, or starts "First operation after login…", is a request as before.
+# Linear on purpose (OCR 25/10): the regex it replaces, two lazy [^\n]*? around the script name, backtracked quadratically ("First
+# operation: " + "super-board-skills-ready.py " * 4000 = 112 KB took 6.17 s; the hook runs the check up to 3 times under a 10 s timeout).
+_LANE_HEAD_RE = re.compile(r"First operation\b")
+_LANE_SCRIPT = "super-board-skills-ready.py"
+_LANE_CARDS_RE = re.compile(r"--cards -(?!\S)")
+# The Codex lane (.claude/bin/super-board-codex-lane.sh) opens with "Run super-<lane skill> for issue #N as a Codex lane worker." and
+# puts the same opener on line 2 (--host codex). Its card is one JSON object on its own "Card: " line, after a skills report that holds
+# arrays (the "[" search of the other lanes would read that report). Anchored the same way: line 1 at the very start, then line 2.
+_CODEX_LANE_RE = re.compile(r"Run super-(?:build|qa|review) for issue #\d+ as a Codex lane worker\.\n")
+_CODEX_CARD_RE = re.compile(r"^Card: (?=\{)", re.M)
+ISSUE_SECTION_RE = re.compile(r"^# Issue #\d+ — ([^\n]*)\n(.*?)(?=^---$|\Z)", re.M | re.S)   # super-build-dispatch.sh: title + body
+
+
+def _opener_line_end(text, pos):
+    """Index just past `--cards -` when the line of text that starts at pos is the lane opener ("First operation" there, then
+    super-board-skills-ready.py, then `--cards -` on that same line), else -1. One pass over that line: no backtracking."""
+    if not _LANE_HEAD_RE.match(text, pos):
+        return -1
+    nl = text.find("\n", pos)
+    end = len(text) if nl < 0 else nl
+    i = text.find(_LANE_SCRIPT, pos, end)
+    if i < 0:
+        return -1
+    m = _LANE_CARDS_RE.search(text, i + len(_LANE_SCRIPT), end)   # endpos = end of line: `--cards -` at the line end still counts
+    return m.end() if m else -1
+
+
+def lane_opener_end(text):
+    """Index just past the lane opener at the very start of text (already left-stripped), -1 when text opens with none. The Codex
+    lane's opener is its line 2, right after its "Run … as a Codex lane worker." line 1."""
+    codex = _CODEX_LANE_RE.match(text)
+    return _opener_line_end(text, codex.end() if codex else 0)
+
+
+def lane_card_text(prompt):
+    """The card's own words (title, body) of a super-board lane prompt, "" when its card JSON carries none (the runner's card is
+    number/status/labels/lane only), or None when the prompt is no lane opener. Labels are not words of the card: a `bug` label
+    made 33 of 40 lanes BUG_FIX."""
+    text = prompt.lstrip()
+    opener_end = lane_opener_end(text)
+    if opener_end < 0:
+        return None
+    words = []
+    codex = _CODEX_LANE_RE.match(text)
+    if codex:   # the card object on its "Card: " line
+        card_at = _CODEX_CARD_RE.search(text, opener_end)
+        start = card_at.end() if card_at else -1
+    else:
+        start = text.find("[", opener_end)   # the array the opener hands to --cards - as stdin
+    try:
+        cards = json.JSONDecoder().raw_decode(text, start)[0] if start >= 0 else []
+    except (ValueError, RecursionError):   # RecursionError: a card part nested past the recursion limit ("[" * 200000, OCR 25/10)
+        cards = []
+    if codex:
+        cards = [cards]
+    for card in cards if isinstance(cards, list) else []:
+        if isinstance(card, dict):
+            words += [card[k] for k in ("title", "body") if isinstance(card.get(k), str)]
+    issue = ISSUE_SECTION_RE.search(text)
+    if issue:
+        words += [issue.group(1), issue.group(2).strip()]
+    return "\n".join(words)
+
+
 def enrich_prompt(prompt, devkit_root=".", project_root=None):
     dossier = {
         "dossier_type": "5D_CONTEXT_DOSSIER",
@@ -216,6 +286,10 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
         except Exception:
             pass
 
+    card_text = lane_card_text(prompt)
+    if card_text is not None:   # a super-board lane: everything below reads the card's own words only (user_prompt keeps the whole text)
+        dossier["lane_card"] = card_text
+        prompt = card_text
     p_lower = normalize(prompt)
     # Phrases where an ambiguous routing word means something else ("tối ưu nhất" = best,
     # "docker compose", "thẩm mỹ viện" = beauty salon); removed before the keyword match only.
@@ -296,7 +370,7 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
     giao_on, giao_note = giao_default(project_root or devkit_root)
     if giao_note:
         dossier.setdefault("notices", []).append(giao_note)   # printed even when nothing else matched: a bad flag must not be silent
-    if giao_on:
+    if giao_on and "lane_card" not in dossier:   # a lane worker never hands its card to Antigravity (759 of 760 lanes got it, 2026-10-25)
         # An ORDER, not a classification: a real intent here turned off shown_refs()'s noise filter (weak instinct matches on every chit-chat prompt)
         # and the GENERAL_TASK fallback (OpenCodeReview 14/10). No slot in the skill line: it shows five, and `giao` there pushed compose-recomp-audit / qa-visual out (INSTINCT-022); the order below names it.
         dossier.setdefault("orders", []).append(
@@ -343,11 +417,23 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
 
     # Visual design: the UI door (a UI or aesthetic word, an app profile) — the Zero-Slop mandate points at
     # ui-ux-pro-max. Last, so it follows qa-visual; compact() keeps it inside the 5 skills it prints.
+    impeccable_craft = mentions(p_route, [
+        "impeccable", "ux", "ui/ux", "critique", "polish", "typeset", "colorize", "distill",
+        "ai slop", "anti-slop", "chống phèn", "phèn", "làm đẹp", "chỉnh thẩm mỹ",
+        "bảng màu", "palette", "typography", "font chữ", "design system",
+        "dựng màn hình", "tạo màn hình", "làm giao diện",
+        "thiết kế giao diện", "thiết kế lại giao diện", "thiết kế lại màn hình",
+        "tinh chỉnh giao diện", "nâng cấp giao diện"
+    ])
     if ui_door:
         dossier["detected_intents"].append("VISUAL_DESIGN")
         if not ui_words:
             dossier["profile_intents"].append("VISUAL_DESIGN")
         dossier["recommended_skills"].append("ui-ux-pro-max")
+        # Định tuyến Smart On-Demand: chỉ gợi ý impeccable khi người dùng yêu cầu thiết kế/làm đẹp/phê bình thẩm mỹ UI
+        # trên các profile có giao diện (tránh làm nhiễu các ca sửa bug logic thông thường).
+        if impeccable_craft and dossier["active_profile"] not in ("backend", "game"):
+            dossier["recommended_skills"].append("impeccable")
         # The four game-feel lines stay with the aesthetic words: the profile alone would tax every game prompt with them.
         if aesthetic and (dossier["active_profile"] == "game" or mentions(p_lower, ["game", "unity", "godot", "unreal", "blender", "ugui"])):
             dossier["injected_nfrs"].append("Anti-Phèn Visual Standard: Studio-grade aesthetics; no raw unlit primitives or flat single-color boxes.")
@@ -561,6 +647,13 @@ def compact(dossier, project_root, limit=4):
         # one that is not a tool audit (the list is deduplicated, so at most 3 of the 5 are).
         shown.remove(next((s for s in reversed(shown) if s not in KEEP_SKILLS), shown[-1]))
         shown.append("ui-ux-pro-max")
+    if "impeccable" in skills and "impeccable" not in shown:
+        # Giữ impeccable trong 5 skill hiển thị khi người dùng chủ động yêu cầu thiết kế/polish UI,
+        # nhưng không bao giờ đẩy KEEP_SKILLS hoặc ui-ux-pro-max ra ngoài.
+        evict = next((s for s in reversed(shown) if s not in KEEP_SKILLS and s != "ui-ux-pro-max"), None)
+        if evict is not None:
+            shown.remove(evict)
+            shown.append("impeccable")
     if shown:
         out.append("- Skill phù hợp: " + ", ".join(shown))
     return "\n".join(out)
@@ -756,6 +849,8 @@ def harness_prompt(prompt, payload=None, env=None):
     """Why this prompt is an agent or harness prompt rather than a user's report, or "".
     Decided by the prompt's content only: the agent that runs the hook (Grok, Codex, Gemini,
     Cursor) says nothing — a user's bug report is recorded under every agent (2026-09-25)."""
+    if lane_opener_end(prompt.lstrip()) >= 0:
+        return "super-board lane opener"   # BUG-20261016-first-operation-run-claude-bin-super-boa: the card is already the ticket
     first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
     if ROLE_OPENING.match(first):
         return "role-play opening"
@@ -964,8 +1059,8 @@ def antigravity_collab_hint(prompt, dossier, project_root):
     """Claude ↔ Antigravity: Scope cross-review strictly to LARGE/RISKY tasks (≥2 modules,
     ≥3 files, >200 LOC, architecture, security, auth, migration). For simple tasks, whichever
     agent is invoked executes directly without two-agent review overhead."""
-    if len(prompt.strip()) < 8 or prompt.strip().startswith("/"):
-        return ""
+    if len(prompt.strip()) < 8 or prompt.strip().startswith("/") or "lane_card" in dossier:
+        return ""   # a super-board lane: the board's own Reviewer lane reviews it, never a hand-off to Antigravity
     # Only trigger for large/risky tasks or explicit multi-agent requests
     norm = normalize(prompt)
     is_large = bool(LARGE_TASK_RE.search(norm))
@@ -1133,8 +1228,10 @@ def context_note(payload, project_dir, session_id):
 # 492 injections — the same ~700-char requirements line re-sent 43.9k chars, each copy re-read
 # on every API call). "Loại việc" and the RED→GREEN rule are short and stay every time.
 ONCE_PER_SESSION = ("- Yêu cầu ngầm định: ", "- Bẫy đã gặp: ", "- Skill phù hợp: ",
-                    "ZERO-SLOP UI MANDATE", "• ")  # the last two: the lines of ZERO_SLOP_MANDATE
+                    "ZERO-SLOP UI MANDATE", "• ",  # these two: the lines of ZERO_SLOP_MANDATE
+                    "- GIAO MẶC ĐỊNH BẬT")  # the giaoDefault order (2026-10-25: ~370 B re-sent on every prompt, 19.6 KB a session)
 SAME_AS_BEFORE = "(ngữ cảnh DevKit như lượt trước)"
+CONTEXT_HEADER = "[DevKit] Ngữ cảnh tự động"   # compact()'s first line, and the one the hook adds when only extra lines follow
 COMPACT_MARKS = (b'"subtype":"compact_boundary"', b'"subtype": "compact_boundary"')  # Claude Code transcript line after a compaction
 NO_TRANSCRIPT_CAP = 20  # without a transcript a compaction is invisible: resend after 20 prompts
 
@@ -1199,6 +1296,8 @@ def dedupe_session(text, project_dir, session_id, payload):
         out = "\n".join([SAME_AS_BEFORE] + [l for l in lines if l.startswith(("- Bắt buộc: ", "- Song song "))])
     else:
         out = "\n".join(l for l in lines if not (l.startswith(ONCE_PER_SESSION) and h(l) in sent))
+        if all(l.startswith(CONTEXT_HEADER) for l in out.split("\n") if l.strip()):
+            out = ""   # OCR 25/10: only the header left (its one line, the giao order, already sent): a bare header says nothing
     sent.update(h(l) for l in lines if l.startswith(ONCE_PER_SESSION))
     st = {"sent": sorted(sent), "last": h(text), "n": int(st.get("n") or 0) + 1,
           "offset": size if size is not None else 0}
@@ -1272,10 +1371,11 @@ if __name__ == "__main__":
         if is_hook:
             log_surfaced(project_dir, session_id, prompt_input, shown_refs(res))
             write_turn_class(project_dir, session_id, res)
+            asked = res.get("lane_card", prompt_input)   # a super-board lane: the card's words, not the runner's text
             extra = [l for l in (antigravity_collab_hint(prompt_input, res, project_dir), parallel_hint(prompt_input),
                                  capture_bug(prompt_input, res, project_dir, session_id, hook_payload),
-                                 req_hint(prompt_input, res, project_dir), watch_inbox(project_dir),
-                                 command_words(prompt_input, project_dir),
+                                 req_hint(asked, res, project_dir), watch_inbox(project_dir),
+                                 command_words(asked, project_dir),
                                  context_note(hook_payload, project_dir, session_id)) if l]
             if extra:
                 text = "\n".join(([text] if text else [f"[DevKit] Ngữ cảnh tự động (profile: {res['active_profile']}):"])
