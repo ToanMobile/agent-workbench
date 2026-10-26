@@ -57,6 +57,8 @@ def queue_since(cfg_path) -> float | None:
     mq = cfg.get("merge_queue") if isinstance(cfg, dict) else None
     if not isinstance(mq, dict) or mq.get("enabled") is not True or mq.get("enabled_at") in (None, ""):
         return None
+    if (cfg.get("worker_backend") or "workflow") != "claude-p":   # cùng định nghĩa "bật" với gate/runner/queue/train (audit 26/10 #5)
+        return None
     try:
         return parse_time(mq["enabled_at"])
     except (TypeError, ValueError) as e:

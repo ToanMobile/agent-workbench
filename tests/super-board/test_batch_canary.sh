@@ -106,7 +106,7 @@ import json, sys
 a = json.load(open(sys.argv[1])) + [dict(x, number=x["number"] + 1000) for x in json.load(open(sys.argv[2]))]
 json.dump(a, open(sys.argv[1], "w"))
 PY
-printf '{"merge_queue":{"enabled":true,"enabled_at":%s,"batch_max":6,"max_wait_min":60}}\n' "$ENA" > "$TMP/cfg_on.json"
+printf '{"worker_backend":"claude-p","merge_queue":{"enabled":true,"enabled_at":%s,"batch_max":6,"max_wait_min":60}}\n' "$ENA" > "$TMP/cfg_on.json"
 printf '{"merge_queue":{"enabled":false,"enabled_at":null,"batch_max":6,"max_wait_min":60}}\n' > "$TMP/cfg_off.json"
 out=$(python3 "$CANARY" --runs "$TMP/r4.jsonl" --config "$TMP/cfg_on.json" --merged-json "$TMP/m4.json" 2>&1); rc=$?
 OLD_SINCE=$(python3 -c "import datetime as dt; print(dt.datetime.fromtimestamp($ENA - 90000, dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
@@ -116,9 +116,16 @@ if [ "$rc" = 0 ] && has "$out" "merged PRs=3 merge-gate verifies=0 train verifie
    && [ "$rcf" = 0 ] && has "$off" "canary off"; then
   ok "enabled_at lọc lượt cũ; config tắt / enabled_at null → canary off exit 0"
 else fail "enabled_at (rc=$rc rco=$rco rcf=$rcf): $out | $old | $off"; fi
+# Audit lại Antigravity #5 (26/10): queue chỉ "bật" khi worker_backend là claude-p (như gate/runner/queue/train). Config bật mà backend
+# workflow / thiếu khoá → canary off (không có hàng đợi để đo, không được đỏ giả).
+for bk in '"worker_backend":"workflow",' ''; do
+  printf '{%s"merge_queue":{"enabled":true,"enabled_at":%s,"batch_max":6,"max_wait_min":60}}\n' "$bk" "$ENA" > "$TMP/cfg_wf.json"
+  wf=$(python3 "$CANARY" --runs "$TMP/r4.jsonl" --config "$TMP/cfg_wf.json" --merged-json "$TMP/m4.json" 2>&1); rcw=$?
+  [ "$rcw" = 0 ] && has "$wf" "canary off" && ok "backend not claude-p ($bk) + enabled → canary off" || fail "backend ($bk) enabled must be canary off (rc=$rcw): $wf"
+done
 # enabled_at dạng ISO cũng nhận
 ISO_ENA=$(python3 -c "import datetime as dt; print(dt.datetime.fromtimestamp($ENA, dt.timezone.utc).isoformat())")
-printf '{"merge_queue":{"enabled":true,"enabled_at":"%s"}}\n' "$ISO_ENA" > "$TMP/cfg_iso.json"
+printf '{"worker_backend":"claude-p","merge_queue":{"enabled":true,"enabled_at":"%s"}}\n' "$ISO_ENA" > "$TMP/cfg_iso.json"
 out=$(python3 "$CANARY" --runs "$TMP/r4.jsonl" --config "$TMP/cfg_iso.json" --merged-json "$TMP/m4.json" 2>&1); rc=$?
 if [ "$rc" = 0 ] && has "$out" "merged PRs=3 merge-gate verifies=0 train verifies=1"; then ok "enabled_at ISO được nhận"
 else fail "enabled_at ISO (rc=$rc): $out"; fi
@@ -199,7 +206,7 @@ gen_runs "$T/.git/postfix-gate/runs.jsonl" 3 0 2 $((NOW - 600))
 HEALTH="$KIT/bin/agent-health.py"
 h1=$(python3 "$HEALTH" -t "$T" 2>&1); hr1=$?
 mkdir -p "$T/.claude/super-board/configs"
-printf '{"merge_queue":{"enabled":true,"enabled_at":%s,"batch_max":6,"max_wait_min":60}}\n' $((NOW - 3600)) \
+printf '{"worker_backend":"claude-p","merge_queue":{"enabled":true,"enabled_at":%s,"batch_max":6,"max_wait_min":60}}\n' $((NOW - 3600)) \
   > "$T/.claude/super-board/configs/t.json"
 h2=$(PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" python3 "$HEALTH" -t "$T" 2>&1); hr2=$?
 score() { printf '%s' "$1" | grep -E 'hạng mục đã đo|checks measured' | sed 's/\x1b\[[0-9;]*m//g'; }
@@ -220,7 +227,7 @@ else fail "agent-health xanh (hr4=$hr4): $(printf '%s' "$h4" | grep -i canary)";
 export DEVKIT_INCIDENT_HOME="$TMP/incident"
 N="$TMP/nproj"; mkdir -p "$N/.claude/super-board/configs"; git init -q -b main "$N"; mkdir -p "$N/.git/postfix-gate"
 gen_runs "$N/.git/postfix-gate/runs.jsonl" 5 0 0 $((NOW - 600))
-printf '{"merge_queue":{"enabled":true,"enabled_at":%s}}\n' $((NOW - 3600)) > "$N/.claude/super-board/configs/n.json"
+printf '{"worker_backend":"claude-p","merge_queue":{"enabled":true,"enabled_at":%s}}\n' $((NOW - 3600)) > "$N/.claude/super-board/configs/n.json"
 nout=$(DEVKIT_INCIDENT=1 python3 - "$KIT" "$N" "$TMP/m1.json" <<'PY' 2>&1
 import json, sys
 from pathlib import Path
