@@ -216,5 +216,14 @@ check 2 "cd $HOME && cd $P && rm -rf ~-/Documents"
 check 2 "cd $HOME && cd $P && cd ~- && rm -rf Documents"
 check 2 'rm -rf ~nosuchuser-devkit/x'
 check 0 'rm -rf ~+/build'                                 # ~+ is the cwd: a build output
+# OCR final check (25/10): the qualifier marker stuck to words the hook reads elsewhere — a remote target (`/__ZSH…` is no longer `/`), a
+# cd argument, and the word of an rm without -f. The marker is dropped there: the word before the qualifier is judged.
+check 2 "ssh host 'rm -rf /(N)'"
+check 2 "ssh host 'rm -r /(N)'"
+check 2 'rm -r ~(N)'                                      # real home folder, no -f
+if [ "${HOME#/Users/}" != "$HOME" ]; then
+  check 2 'cd /(N) && rm -r Users'                        # macOS: /Users holds the home folder
+fi
+check 2 "cd /(N) && rm -r ${HOME#/}"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_containment: all passed" || { echo "❌ test_hardware_rm_containment: $FAILS failed"; exit 1; }
