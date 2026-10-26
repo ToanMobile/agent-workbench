@@ -9,7 +9,7 @@ lệnh này gom cả hàng đợi vào MỘT lượt `post-fix-gate --run-tests 
      cho một cây không push được;
   3. `--if-due`: chỉ chạy khi số commit chờ ≥ devkit.integrate.batchMax (mặc định 6), commit cũ nhất chờ ≥ devkit.integrate.maxWaitMin
      phút (mặc định 60), hoặc máy rảnh: không `.claude/audit-gate/test_run.lock` nào của các worktree đang bị giữ (thử LOCK_SH|LOCK_NB);
-  4. dựng worktree scratch tách rời ở HEAD main (`.claude/worktrees/.merge-scratch-integrate-*`): gate KHÔNG chạy trong checkout main
+  4. dựng worktree scratch tách rời ở HEAD main (`.claude/worktrees/.integrate-scratch-*`): gate KHÔNG chạy trong checkout main
      (nó ghi checklist tracked ở đó; session_lock.py `_TRUNK_ALLOWED`, v6 item 7). Chạy `--full` ở đó;
   5. xanh → `bin/push_gate.py <main> <sha>` phải nhận biên nhận của cây đó (lúc này scratch còn, push_gate xét biên nhận của linked
      worktree) → `git push origin <sha>:refs/heads/<base>` (đúng commit đã gate, kể cả khi main đã tiến trong lúc gate chạy); đỏ → không
@@ -38,7 +38,10 @@ if not os.path.isdir(os.path.join(DEVKIT, "profiles")) and os.path.isdir(os.path
     DEVKIT = os.path.dirname(DEVKIT)   # scripts/git/integrate.py → kit root (như worktree.py)
 
 LOCK_NAME = "devkit-integrate.lock"
-SCRATCH_PREFIX = ".merge-scratch-integrate-"   # .merge-scratch-*: worktree.py không tính vào WORKTREE_MAX, gc nhận ra là cây tạm của gate
+# Không dùng .merge-scratch-*: batch_canary.py đếm tiền tố đó là lượt merge gate lẻ (PR đi đường lẻ), mà integrate là điểm gộp theo đợt.
+# ponytail: worktree.py _live_worktrees chỉ miễn ("red-proof-", ".merge-scratch-") khỏi WORKTREE_MAX; scratch integrate mồ côi (SIGKILL,
+# `finally` không chạy) chiếm một chỗ tới khi gc/prune. Thêm tiền tố này vào bộ miễn đó khi gặp.
+SCRATCH_PREFIX = ".integrate-scratch-"
 BATCH_MAX_DEFAULT = 6
 MAX_WAIT_MIN_DEFAULT = 60
 GIT_TIMEOUT_S = 60
@@ -167,12 +170,12 @@ def setup_kit(main, scratch):
 def run_gate(scratch, remote):
     """Exit code của `post-fix-gate --run-tests --full --brief --diff <origin/base>` trong scratch (124 khi quá
     DEVKIT_INTEGRATE_GATE_TIMEOUT_S). --diff: scratch tách rời không có upstream, cây sạch không --diff thì gate trả 3 (nothing to audit);
-    origin/<base>..HEAD đúng là nội dung sẽ push (như mặc định @{u}..HEAD của gate trên một nhánh có upstream). --force-full: đây là lượt
-    nghiệm thu duy nhất của cả đợt, không bao giờ hoãn sang "phiên cuối" (post-fix-gate.py deferred_by: hoãn thì exit 5, không biên nhận)."""
+    origin/<base>..HEAD đúng là nội dung sẽ push (như mặc định @{u}..HEAD của gate trên một nhánh có upstream). Đây là lượt --full duy
+    nhất của cả đợt (điểm gộp)."""
     gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
     env = dict(os.environ, CLAUDE_PROJECT_DIR=scratch, DEVKIT_SLOT_PRIORITY="merge")
     try:
-        p = subprocess.Popen([sys.executable, gate, "--run-tests", "--full", "--force-full", "--brief", "--diff", remote], cwd=scratch, env=env,
+        p = subprocess.Popen([sys.executable, gate, "--run-tests", "--full", "--brief", "--diff", remote], cwd=scratch, env=env,
                              stdin=subprocess.DEVNULL)
     except OSError as e:
         say(f"gate không chạy được: {e}")
