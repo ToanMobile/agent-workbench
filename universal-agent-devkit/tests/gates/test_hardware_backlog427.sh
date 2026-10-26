@@ -213,4 +213,13 @@ FAKE_GIT_MODE=nonrepo; check 0 'rm -rf build'                                 # 
 FAKE_GIT_MODE=nonrepo; check 0 'rm -rf src/old/build'                         # đối chứng: đường dẫn sâu, như cũ
 unset CHECK_PATH FAKE_GIT_MODE
 
+# 6. P0 có từ trước (lane HW vòng 2): thân `trap '…' EXIT` và thân `repeat N …` của zsh là lệnh chạy thật, chưa được xét
+check 2 "trap 'rm -rf ~' EXIT"
+check 2 "trap -- 'rm -rf ~' EXIT INT"
+check 2 'repeat 2 rm -rf ~'
+check 2 'repeat 2 { rm -rf ~ }'
+check 0 "trap 'rm -rf /tmp/devkit-hw-trap-x' EXIT"                         # đối chứng: dọn thư mục tạm
+check 0 'repeat 3 echo hi'                                                # đối chứng
+check 0 'trap - EXIT'                                                     # đối chứng: gỡ trap
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_backlog427: all passed" || { echo "❌ test_hardware_backlog427: $FAILS failed"; exit 1; }

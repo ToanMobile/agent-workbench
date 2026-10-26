@@ -1140,6 +1140,14 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         return rm_problem(dev[0], dev[1], depth + 1, dev[2])
     if prog == "eval":
         return rm_problem(" ".join(rest), cwds, depth + 1, remote)
+    # #427 vòng 2 (P0 có từ trước): thân `repeat N cmd` / `repeat N { … }` của zsh và chuỗi hành động của `trap "<code>" SIG…` là lệnh chạy
+    # thật (trap chạy khi tín hiệu tới hay shell thoát): xét như eval. `trap - SIG` / `trap -p` không có thân.
+    if prog == "repeat" and len(rest) > 1:
+        return rm_problem(" ".join(rest[1:]), cwds, depth + 1, remote)
+    if prog == "trap":
+        acts = [a for a in rest if a != "--"]
+        if acts and not acts[0].startswith("-"):
+            return rm_problem(acts[0], cwds, depth + 1, remote)
     if prog == "find":
         rest = [FIND_ESC.get(x, x) for x in rest]
         starts = find_starts(rest)
