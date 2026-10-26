@@ -433,5 +433,16 @@ rc=$(run --title "✨ [feature] hooks: việc E" --problem "vấn đề E" --ac 
 sec="$(ac_section "$(edited_body)")"
 [ "$rc" = "0" ] && [ "$(edited)" = "7" ] && printf '%s\n' "$sec" | grep -q -- "- \[ \] .*AC gom một" && printf '%s\n' "$sec" | grep -q -- "- \[ \] .*AC gom hai" \
   && ok "33c gom vào thẻ có sẵn: cả hai AC mới vào mục AC dạng danh sách" || fail "33c rc=$rc edit=$(edited) AC=[$sec]"
+# 33d–f (review c2e30b30): "đã là mục danh sách" phải theo đúng AC_ITEM_RE mà pre-flight đếm (số 1–2 chữ số), không thì
+# "100. x" giữ nguyên mà vẫn không được đếm và thẻ lại kẹt; dòng trong code fence và dòng comment HTML giữ nguyên.
+items '[]'
+rc=$(run --title "✨ [feature] hooks: việc F" --problem "vấn đề F" --ac "1. mục đánh số" --ac "100. không phải mục" \
+  --ac $'```\nmã ví dụ\n```' --ac "<!-- ghi chú -->")
+sec="$(ac_section "$(created_body)")"
+printf '%s\n' "$sec" | grep -qx -- "1. mục đánh số" && printf '%s\n' "$sec" | grep -qx -- "- \[ \] 100. không phải mục" \
+  && ok "33d số 1–2 chữ số giữ nguyên, '100.' thành - [ ] như pre-flight đếm" || fail "33d AC=[$sec]"
+printf '%s\n' "$sec" | grep -qx -- '```' && printf '%s\n' "$sec" | grep -qx -- "mã ví dụ" \
+  && ok "33e dòng trong code fence giữ nguyên" || fail "33e AC=[$sec]"
+printf '%s\n' "$sec" | grep -qx -- "<!-- ghi chú -->" && ok "33f dòng comment HTML giữ nguyên" || fail "33f AC=[$sec]"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

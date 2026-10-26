@@ -184,13 +184,17 @@ def other_repos_named(text, repo):
 def ac_list(ac):
     """--ac (một chuỗi hoặc danh sách, mỗi phần có thể nhiều dòng) → các dòng của mục AC. Dòng chưa có dấu danh sách
     thành `- [ ] …` (26/10: #419, #421 tạo bằng một câu thường, pre-flight không đếm được AC và giữ thẻ ở Blocked);
-    dòng đã có dấu (-, *, 1., 1)) và dòng thụt lề (phần tiếp của mục trên) giữ nguyên."""
-    out = []
+    dòng đã là mục theo đúng AC_ITEM_RE mà pre-flight đếm, dòng thụt lề (phần tiếp của mục trên), dòng trong code fence
+    và dòng comment HTML giữ nguyên."""
+    out, fenced = [], False
     for part in ([ac] if isinstance(ac, str) else ac or []):
         for line in part.strip().splitlines():
             if not line.strip():
                 continue
-            out.append(line if re.match(r"^(\s+\S|\s*([-*]|\d+[.)])\s)", line) else f"- [ ] {line.strip()}")
+            fence = line.lstrip().startswith("```")
+            keep = fenced or fence or line[0].isspace() or AC_ITEM_RE.match(line) or line.lstrip().startswith("<!--")
+            out.append(line if keep else f"- [ ] {line.strip()}")
+            fenced ^= fence
     return out
 
 

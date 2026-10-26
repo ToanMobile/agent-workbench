@@ -69,9 +69,11 @@ python3 .agents/devkit/scripts/governance/create_task.py \
   --title "🐛 [bug] <scope>: <what>" \
   --problem "<nội dung problem>" \
   --fix "<nội dung fix>" \
-  --ac "- [ ] AC 1\n- [ ] AC 2" \
+  --ac "AC 1" --ac "AC 2" \
   --risk "🟢 **Low** · <mô tả>"
 ```
+
+`--ac` lặp lại cho mỗi điều kiện; câu thường tự thành `- [ ] …` (pre-flight chỉ đếm dòng dạng danh sách). Đừng ghép nhiều AC bằng `\n` trong ngoặc kép: shell gửi nguyên chữ `\n` và ra một mục.
 
 Thẻ được gom vào thẻ có sẵn thì script in `🧺 Đã gom ... vào thẻ Backlog #N` và không tạo issue; trả link thẻ #N cho người dùng.
 Thêm `--new-card "<lý do>"` để mở thẻ riêng (xem mục Gom Việc).
