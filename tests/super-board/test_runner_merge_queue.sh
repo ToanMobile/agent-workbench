@@ -113,17 +113,16 @@ printf '[%s]' "$(pr 70 7 "$H1" "$MQ" false)" > "$TMP/prs.json"; approve 70 NONE 
 prompt_of 7 | grep -q 'super-review on issue #7' && ok "approved-head from a non-collaborator: not queued, reviewer dispatched" || fail "forged approval queued: $(logs)"
 
 # ── 3. queue bật: không merge-only, không train dù thẻ đã có approved-head khớp head (chưa gắn nhãn).
-# Vòng sửa 1 (R3): PR không draft, duyệt đúng head mà thiếu nhãn merge-queue (reviewer chết giữa chừng / nhãn bị gỡ tay) → runner gắn
-# lại nhãn và bỏ qua thẻ, không phóng reviewer (review lại tốn 15-30 phút cho một PR đã duyệt).
+# Audit lại Antigravity #2 (26/10): runner KHÔNG tự gắn lại nhãn. Hàng đợi chủ động gỡ nhãn khi loại PR (trần 3 lần thử, approved-head
+# sai…) mà thẻ có thể còn ở Review với duyệt còn khớp: runner gắn lại thì loại → gắn → loại lặp mãi. Thẻ như vậy được review lại.
 reset; export SB_MERGE_QUEUE=1; items Review Review Review
 printf '[%s,%s,%s]' "$(pr 70 7 "$H1" '[]' false)" "$(pr 71 8 "$H2" '[]' false)" "$(pr 72 9 "$H3" '[]' false)" > "$TMP/prs.json"
 approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"; tick
 prompt_any | grep -q 'merge-train' && fail "queue on: the runner still dispatched a merge train" || ok "queue on: no merge-train worker for three approved cards"
 prompt_any | grep -q 'merge-only' && fail "queue on: the runner still dispatched merge-only" || ok "  … and no merge-only worker"
-[ -z "$(logs)" ] && ok "  … and no reviewer: approved at head but unlabelled cards are not reviewed again" || fail "approved unlabelled cards re-reviewed: $(logs) $(prompt_any | cut -c1-200)"
-{ grep -qxF 'gh pr edit 70 --add-label merge-queue' "$TMP/writes" && grep -qxF 'gh pr edit 71 --add-label merge-queue' "$TMP/writes" \
-  && grep -qxF 'gh pr edit 72 --add-label merge-queue' "$TMP/writes"; } \
-  && ok "  … the runner puts the merge-queue label back on PRs 70, 71, 72" || fail "no relabel writes: $(tr '\n' ';' < "$TMP/writes")"
+grep -q 'add-label' "$TMP/writes" && fail "the runner put a merge-queue label back (evict → relabel loop): $(tr '\n' ';' < "$TMP/writes")" \
+  || ok "  … the runner never puts a merge-queue label back (the queue's evictions stand)"
+prompt_of 7 | grep -q 'super-review on issue #7' && ok "  … an approved but unlabelled card is reviewed again (safe, no relabel)" || fail "approved unlabelled card not reviewed: $(logs)"
 grep -q 'merge-train\|merge-only' "$TMP/log" && fail "runner log mentions merge-train/merge-only with the queue on" || ok "  … and the runner log has no merge-train/merge-only line"
 # draft + duyệt đúng head + thiếu nhãn: không gắn nhãn (hàng không nhận draft), review lại như cũ
 reset; export SB_MERGE_QUEUE=1; items Review Done Done

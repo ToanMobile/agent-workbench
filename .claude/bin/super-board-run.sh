@@ -545,15 +545,8 @@ top_card_in_column() {
       esac
       continue
     fi
-    # Vòng sửa 1 (R3): PR không draft, duyệt đúng head nhưng thiếu nhãn merge-queue (reviewer chết sau approved-head, hoặc nhãn bị gỡ):
-    # runner gắn lại nhãn và bỏ qua thẻ — review lại một PR đã duyệt tốn 15-30 phút. PR draft không được gắn (hàng không nhận draft).
-    # ponytail: thêm một `pr list` cho mỗi thẻ Review chưa vào hàng khi queue bật; gộp với lần đọc trên khi cột Review quá 10 thẻ.
-    if [ "$col" = "Review" ] && merge_queue_on && queued=$(review_approved_head "$issue" '!merge-queue' </dev/null); then
-      mq_seen=1
-      gh_write_once pr edit "${queued%% *}" --add-label merge-queue </dev/null >/dev/null 2>&1
-      log "relabel #${issue}: PR ${queued%% *} is approved at head ${queued#* } but had no merge-queue label — label added back, no reviewer"
-      continue
-    fi
+    # Thẻ Review có PR đã duyệt đúng head nhưng THIẾU nhãn merge-queue được review lại, không tự gắn lại nhãn: hàng đợi chủ động gỡ nhãn
+    # khi loại PR (trần 3 lần thử, approved-head sai…), gắn lại là loại → gắn → loại lặp mãi (audit Antigravity 26/10 #2).
     [ "$col" != "Review" ] || MQ_WAITING=$mq_seen
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
