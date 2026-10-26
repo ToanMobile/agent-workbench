@@ -63,4 +63,9 @@ repo h; wtadd "$TMP/h" one s0; wtadd "$TMP/h" two s0
 py 'sw.write_record(sys.argv[2], "s8", sys.argv[3], pid=None, visit=True); sw.lock_started_worktree(sys.argv[2], sys.argv[4], "s8", None, source="startup", problems=[]); print(sw.raw_visit(sys.argv[2], "s8"))' "$TMP/h" "$TMP/h/.claude/worktrees/one" "$TMP/h/.claude/worktrees/two" | grep -qx False \
   && ok "V8: visit of worktree A is not carried onto worktree B the session started in" || fail "V8: visit leaked onto another worktree"
 
+#   V9 a record whose path is not absolute is never compared with the process cwd: started in the worktree itself, the session is its owner, not a visitor
+repo i; wtadd "$TMP/i" lane s0
+(cd "$TMP/i/.claude/worktrees/lane" && py 'import os; p = sw._record_path(sys.argv[2], "s9"); os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "w").write("relative\nvisit\n"); sw.lock_started_worktree(sys.argv[2], os.getcwd(), "s9", None, source="startup", problems=[]); print(sw.raw_visit(sys.argv[2], "s9"))' "$TMP/i") | grep -qx False \
+  && ok "V9: a record with a relative path is not matched against the cwd" || fail "V9: visit kept by comparing a relative record path with the cwd"
+
 [ "$FAILS" = 0 ] && echo "ALL PASS" || { echo "$FAILS FAILED"; exit 1; }
