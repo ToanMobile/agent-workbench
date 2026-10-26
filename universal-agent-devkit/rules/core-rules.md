@@ -42,6 +42,7 @@ Thứ tự: Làm & Chạy test cục bộ → Self Review (Diff + DEMO/LIVE) →
 ## 3. Quy chuẩn Test Automation & Chống Spam Thao Tác (Anti-Spam / Debounce)
 - **Tương tác UI chặt chẽ:** Tương tác UI bằng các tiện ích an toàn (`safeClick`, `safeFill`) có cơ chế wait visible, scroll into view, kiểm tra disabled; không dùng click mù quáng hoặc sleep cố định.
 - **Chống Spam Thao Tác & Tránh Quá Tải Hạ Tầng:** quy tắc gốc ở §14 (Debounce ≥ 1000ms, Disable tức thì, kỷ luật test runner).
+- **Test hook/guard hai chiều:** mỗi test của hook hoặc guard ghép một ca phải chặn với một ca phải cho qua lấy từ transcript thật; bản sửa guard thêm đúng câu bị chặn nhầm đã gây ra nó làm ca phải cho qua. Chặn nhầm việc hợp lệ (over-refusal) là loại lỗi trội của kit: một guard chỉ có ca phải chặn thì nới hay siết đều không ai thấy.
 
 ## 4. Triết lý Kỹ sư Già "Lười biếng" (Lazy Senior Dev Principle)
 - **Tái sử dụng tiện ích có sẵn trước:** Trước khi viết mới bất kỳ hàm utility, helper hay service nào, bắt buộc phải tìm kiếm trong codebase xem dự án đã có sẵn hàm tương tự chưa. Tuyệt đối không viết trùng lặp logic ("Don't Reinvent the Wheel").

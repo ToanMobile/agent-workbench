@@ -20,6 +20,7 @@ IMPLEMENT → CONVERGE; không tạo workflow hoặc approval gate thứ hai.
 - `spec.md`: objective/problem, requirements, non-goals, acceptance, edge cases, assumptions và open
   authority decisions; chỉ what/why.
 - `plan.md`: approach, impacted modules/files, graph trace, dependencies, risks và test plan.
+  - Thay đổi vắt qua ≥2 module: mỗi module ghi `Owns` (thứ nó là chủ duy nhất), `Consumes` (thứ nó đọc từ module khác) và `Forbidden` (thứ không bao giờ được làm/import) — theo định dạng SPEC của JetBrains/thinkrail.
 - `tasks.md`: task theo dependency, map requirement, có path/module và một verify command tương xứng.
 
 Không thêm artifact nếu ba file đủ dùng. Metric/threshold phải có nguồn từ User, repo gate hoặc

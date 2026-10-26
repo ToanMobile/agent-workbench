@@ -285,7 +285,8 @@ def validate(text, kind, meta=None):
         # Split on \n only: splitlines() also breaks on VT, FF, U+2028 and friends,
         # which can sit inside a changed line and look like missing hunk data.
         lines = text.split('\n')
-        require(sum(line.startswith('diff --git ') for line in lines) == len(files), 'diff file list incomplete')
+        # Distinct headers: a type change (file <-> symlink) is two blocks with one header for one changed file (PR #424).
+        require(len({line for line in lines if line.startswith('diff --git ')}) == len(files), 'diff file list incomplete')
         added = removed = 0
         old_left = new_left = 0
         for line in lines:
@@ -467,8 +468,15 @@ def complete_pr_files(args, stdout):
         full = run_gh(['api', path, '--paginate', '--slurp'])
         if full.returncode:
             return stdout
-        value['files'] = [{'path': f['filename'], 'additions': f['additions'], 'deletions': f['deletions']}
-                          for page in json.loads(full.stdout) for f in page]
+        # One path can be two REST entries (a file that became a symlink: removed + added, PR #424) while changedFiles
+        # counts it once: merge them by path, so the list length means changed files, not entries.
+        merged = {}
+        for page in json.loads(full.stdout):
+            for f in page:
+                entry = merged.setdefault(f['filename'], {'path': f['filename'], 'additions': 0, 'deletions': 0})
+                entry['additions'] += f['additions']
+                entry['deletions'] += f['deletions']
+        value['files'] = list(merged.values())
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
         return stdout
     return json.dumps(value)

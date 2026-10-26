@@ -575,3 +575,19 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** chuỗi giống khóa nằm nguyên khối trong mã nguồn; công cụ quét từng commit nên sửa mã mới không xoá được sự cố nằm ở commit cũ
 - **Quy tắc phòng ngừa & Cách fix:** ghép giá trị giả lúc chạy từ nhiều mảnh (tiền tố + phần còn lại), không bao giờ viết nguyên khối; làm ngay từ commit đầu vì sửa sau không xoá được lịch sử, chỉ còn đánh dấu dương tính giả hoặc dựng lại nhánh
 - **Lệnh kiểm tra:** `git diff origin/main -U0 | grep -E '^\+' | grep -E 'sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{10,}|Bearer [A-Za-z0-9]{10,}|(token|secret)=[A-Za-z0-9]{10,}' phải rỗng`
+
+---
+
+### [INSTINCT-069] Giới hạn thời gian thực trong test bị phình khi run_impacted chạy song song lúc máy tải cao
+- **Ngày phát hiện:** 2026-10-25
+- **Hiện tượng lỗi:** Giới hạn thời gian thực trong test bị phình khi run_impacted chạy song song lúc máy tải cao
+- **Nguyên nhân:** Ca ≤ 2 s đo bằng time.monotonic trượt trong pool song song của run_impacted.sh ở tải ~70 (gate 25/10) dù một mình chỉ 0,4 s; test đua 1,5 s giữa hai gate cũng trượt theo cách đó
+- **Quy tắc phòng ngừa & Cách fix:** Giới hạn hiệu năng trong test đo CPU time của tiến trình (time.process_time / getrusage), thời gian thực chỉ làm chuông chặn treo rộng (30 s); test đua phụ thuộc độ trễ thật thì đưa vào danh sách chạy một mình của run_impacted.sh
+
+---
+
+### [INSTINCT-070] Thêm lệnh mới vào commands/ của kit làm agent-kit health FAIL ở mọi repo đã cài
+- **Ngày phát hiện:** 2026-10-25
+- **Hiện tượng lỗi:** Thêm lệnh mới vào commands/ của kit làm agent-kit health FAIL ở mọi repo đã cài
+- **Nguyên nhân:** health đòi .claude/commands/&lt;lệnh> cho mọi lệnh kit; link chỉ tạo khi agent-kit init, SessionStart và relink_check không thêm link mới — commands/parallel-lanes.md (25/10) sẽ làm REG-WB-CONFIG-01 đỏ ở main và 9 repo
+- **Quy tắc phòng ngừa & Cách fix:** Skill được hook tự gọi thì để không có lệnh slash (NO_COMMAND_SKILLS); khi thật cần lệnh mới, cùng đợt đó chạy agent-kit init ở mọi repo đã cài hoặc thêm bước tự link vào SessionStart

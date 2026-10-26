@@ -54,6 +54,7 @@ import shlex
 import shutil
 import signal
 import stat
+import statistics
 import subprocess
 import tempfile
 import sys
@@ -3159,6 +3160,74 @@ def needs_no_test(rel_file: str) -> bool:
             or clean.lower().endswith(".log"))
 
 
+# Exempt from regression SUITES above, not from every check (25/10): 11 of 11 app repos have no matrix rule watching
+# .claude/settings.json, so a commit that dropped the Stop hook wiring passed with none. run_settings_audit() checks it.
+SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
+_AGENT_HEALTH = []
+
+
+def _registered_hook_scripts(settings) -> list:
+    """bin/agent-health.py's reader of the hook script paths (one copy, INSTINCT-015), loaded on first use."""
+    if not _AGENT_HEALTH:
+        import importlib.util  # noqa: PLC0415 - hyphenated sibling module in bin/
+        spec = importlib.util.spec_from_file_location("agent_health", Path(__file__).resolve().parent / "agent-health.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _AGENT_HEALTH.append(mod)
+    return _AGENT_HEALTH[0].registered_hook_scripts(settings)
+
+
+def settings_problems(rel_file: str, text, root: Path) -> list:
+    """(vi, en) labels of what breaks the hook wiring in this content of .claude/settings.json or settings.local.json;
+    [] when sound. text None = the file is deleted. Shared with bin/push_gate.py, which passes the blob it pushes.
+    settings.local.json usually holds permissions only, so it needs no hooks of its own (core-rules §3 must-allow).
+    ponytail: settings.json must keep a non-empty "hooks" block, so a project that wires no Claude hook on purpose (the kit
+    installed for other agents only) is refused any edit of it; key the rule on the base version having hooks when one shows up."""
+    is_main = rel_file.replace("\\", "/") == ".claude/settings.json"
+    if text is None:
+        return [("đã xoá: mọi hook Claude Code của dự án thôi chạy", "deleted: every Claude Code hook of the project stops running")] if is_main else []
+    try:
+        settings = json.loads(text)
+    except ValueError as e:
+        return [(f"không phải JSON hợp lệ ({e})", f"not valid JSON ({e})")]
+    if not isinstance(settings, dict):
+        return [("không phải một object JSON", "not a JSON object")]
+    if is_main and not (isinstance(settings.get("hooks"), dict) and settings["hooks"]):
+        return [('"hooks" rỗng hoặc thiếu: không hook nào chạy (chạy lại agent-kit init)',
+                 '"hooks" is empty or missing: no hook runs (re-run agent-kit init)')]
+    try:
+        scripts = _registered_hook_scripts(settings)
+    except ValueError as e:
+        return [(f"khối hooks sai dạng, Claude Code không đọc được: {e}", f"malformed hooks block Claude Code cannot read: {e}")]
+    except Exception as e:   # noqa: BLE001 - agent-health.py not loadable: the wiring cannot be judged, never a silent pass
+        return [(f"không kiểm được dây nối hook ({e!r})", f"cannot check the hook wiring ({e!r})")]
+    kit_hooks = get_devkit_dir() / "hooks"
+    missing = []
+    for rel in dict.fromkeys(scripts):
+        name = rel[len(".claude/hooks/"):] if rel.startswith(".claude/hooks/") else ""
+        # .claude/hooks/ holds the git-ignored links `agent-kit init` makes: a hook the kit ships is wired once it is installed
+        if (root / rel).exists() or (name and "/" not in name and (kit_hooks / name).is_file()):
+            continue
+        missing.append(rel)
+    return [(f"hook chạy file không tồn tại: {rel}", f"hook runs a file that does not exist: {rel}") for rel in missing]
+
+
+def run_settings_audit(modified_files: list) -> tuple:
+    """The static check of a changed .claude/settings*.json: valid JSON, settings.json keeps a non-empty "hooks", every hook
+    script it runs from the project or .agents/devkit exists. Content as the other checks read it (the staged blob with --staged)."""
+    findings = []
+    for rel_file in modified_files:
+        if rel_file.replace("\\", "/") not in SETTINGS_FILES:
+            continue
+        text = read_changed_text(rel_file)
+        if text is None and rel_file not in DELETED_FILES:
+            continue   # a link or an unreadable file: the unreadable check names it
+        for label in settings_problems(rel_file, text, get_project_dir()):
+            findings.append((rel_file, _L(label)))
+            _record("settings", rel_file, label)
+    return len(findings) == 0, findings
+
+
 # A document a test READS stays a test even as Markdown (OfficeReader: androidTest/assets/test_files/*.md).
 FIXTURE_DIR_NAMES = {"assets", "resources", "fixtures", "testfixtures", "testdata", "test_files", "samples"}
 
@@ -4782,13 +4851,16 @@ def _env_float(name, default):
         return float(default)
 
 
-def _recorded_seconds() -> dict:
+def _recorded_seconds(median=False) -> dict:
     """Suite id → seconds the pre-commit gate believes it takes (.agents/regression_status.json): the
     LONGEST PASS/FAIL run in its history, else its last run. The last run alone made the same commit run a
     suite or skip it depending on the previous gate run (REG-DK-ALL-01, whose length follows the diff:
     165 s, 164 s, 23 s, 17 s). A suite with only untested / busy / cached runs has no belief.
     ponytail: biased towards skipping, and the history window (5 runs) lets a suite that really got faster
-    drift back in after five fast runs; declare the length in the matrix if that ever matters."""
+    drift back in after five fast runs; declare the length in the matrix if that ever matters.
+    median=True (lớp slot của heavy_slot, audit B7 25/10): trung vị median_high của các lần chạy — một lần chậm (máy tải cao) không
+    còn biến suite nhẹ thành cpu và xếp hàng slot nặng của cả máy; `last` trùng history[0] (cùng lúc, kết quả, độ dài) chỉ tính một lần.
+    Pre-commit vẫn đọc số dài nhất (tests/gates/test_precommit_duration.sh)."""
     try:
         items = json.loads((get_project_dir() / ".agents" / "regression_status.json").read_text(encoding="utf-8")).get("items", {})
     except (OSError, ValueError, AttributeError):
@@ -4800,10 +4872,16 @@ def _recorded_seconds() -> dict:
 
     out = {}
     for sid, it in items.items():
-        runs = [seconds(r) for r in [*((it or {}).get("history") or []), (it or {}).get("last")]]
-        runs = [r for r in runs if r is not None]
+        runs, seen = [], set()
+        for r in [*((it or {}).get("history") or []), (it or {}).get("last")]:
+            s = seconds(r)
+            k = (r.get("ts") or r.get("at"), r.get("status"), r.get("duration")) if isinstance(r, dict) else None
+            if s is None or k in seen:
+                continue
+            seen.add(k)
+            runs.append(s)
         if runs:
-            out[sid] = max(runs)
+            out[sid] = statistics.median_high(runs) if median else max(runs)
     return out
 
 
@@ -4956,6 +5034,7 @@ def run_staged_audit(args, modified_files, devkit_artifacts) -> int:
         ("perf", tr("Anti-pattern hiệu năng", "Performance anti-patterns"), run_performance_audit),
         ("resilience", tr("Nuốt lỗi", "Swallowed errors"), run_resilience_audit),
         ("logging", tr("Log thô", "Raw logging"), run_logging_audit),
+        ("settings", tr("Dây nối hook trong .claude/settings*.json", "Hook wiring in .claude/settings*.json"), run_settings_audit),
     ]
     counts = {}
     for key, label, check in checks:
@@ -5194,8 +5273,8 @@ def _rotate_run_log(path):
 def _gate_busy(run_tests, lock_held, read_only, regression_tests):
     """Tests not run because another run interfered: it held test_run.lock past the wait, or it replaced / dropped the file a re-used PASS came from
     (STALE). A read-only run (every suite re-used, no lock, nothing written) is no such case: its re-used PASS stands and it waited for nothing.
-    One formula for the --json summary (the Stop hook says "run again later" and caches nothing) and for the run log (hooks/stop_hook_times.py and
-    bin/gate_runs_report.py count a busy run as a lock wait)."""
+    One formula for the --json summary (the Stop hook says "run again later" and caches nothing) and for the run log (scripts/governance/stop_hook_times.py and
+    scripts/governance/gate_runs_report.py count a busy run as a lock wait)."""
     return bool(run_tests and ((not lock_held and not read_only) or any(t.get("label") == "STALE" for t in regression_tests)))
 
 
@@ -5609,6 +5688,7 @@ def main():
     hygiene_ok, secrets = run_git_hygiene_audit(modified_files + state_files)
     anti_laziness_ok, lazy_findings = run_anti_laziness_audit(modified_files)
     deps_ok, dep_findings = run_dependency_audit(modified_files)
+    settings_ok, settings_findings = run_settings_audit(modified_files)
     instincts_ok, instincts_msg = check_instincts_memory()
 
     print(f"  • {tr('Phạm vi thay đổi', 'Changed files')}: {BOLD}{len(modified_files)} files{RESET}"
@@ -5635,6 +5715,8 @@ def main():
     else:
         for f, lbl in dep_findings:
             log_err(f"{f}: {lbl}")
+    for f, lbl in settings_findings:   # silent when no .claude/settings*.json changed
+        log_err(f"{f}: {lbl}")
 
     if instincts_ok:
         log_ok(f"{tr('Bộ nhớ bài học kinh nghiệm (Instincts Memory)', 'Instincts memory')}: {instincts_msg}")
@@ -5800,7 +5882,7 @@ def main():
             except Exception as e:   # noqa: BLE001 - không phân lớp được: không thêm gì (luật chọn cũ)
                 log_warn(f"heavy_slot: {e!r}")
                 _hs_x = None
-            rec_x = _recorded_seconds() if _hs_x is not None else {}
+            rec_x = _recorded_seconds(median=True) if _hs_x is not None else {}
             for rule in rules:
                 for test in rule.get("mandatory_regression_tests", []):
                     tid = test.get("id")
@@ -5821,6 +5903,15 @@ def main():
             if extra:
                 print(f"  • {tr('Cached-full: xét thêm suite không bị chọn (chạy khi chưa có PASS cho khoá nội dung hiện tại)', 'Cached-full: also considering unselected suites (run unless their content key already passed)')}: "
                       f"{len(extra)}")
+
+    # 25/10 (audit B1): run_impacted.sh (DIFF_DEPENDENT) chỉ bỏ script của suite chạy TRƯỚC nó (DEVKIT_GATE_DONE). Đứng giữa ma trận, hay
+    # trước suite STALE / cached-full thêm vào cuối ở trên, nó chạy lại đúng các script đó lần hai (REG-DK-ALL-01: 44 % thời gian gate của
+    # workbench trong 54 h). Chạy nó SAU mọi suite khác; đuôi chỉ-thêm (matrix_added) ngay dưới vẫn là cuối cùng.
+    if run_tests and suite_cache_mod() is not None:
+        _dd = suite_cache_mod().DIFF_DEPENDENT
+        _late = [t for t in regression_tests if _dd.search(t.get("command") or "")]
+        if _late:
+            regression_tests[:] = [t for t in regression_tests if not _dd.search(t.get("command") or "")] + _late
 
     if run_tests and matrix_added:
         # Ma trận chỉ-thêm được tin với điều kiện test thêm chạy XANH ở đây: chạy cả khi không file nào khớp watch_files của rule mới, và
@@ -6193,7 +6284,16 @@ def main():
         for m in RAN_SCRIPT.finditer(cmd):
             done_scripts.append(os.path.realpath(os.path.join(str(project_dir), m.group(1) or m.group(2))))
 
-    slot_rec = _recorded_seconds() if run_tests and lock_held else {}
+    def may_note(t):
+        """Script của suite này được báo cho run_impacted.sh chạy sau (DEVKIT_GATE_DONE) không. Suite STALE / cached-full (keyed_full) chỉ
+        khi CHẠY THẬT trong lượt này và PASS (audit B1, 25/10): giờ chúng đứng trước run_impacted.sh, mà FAIL / quá giờ / UNTESTED của chúng
+        có thể ra ngoài kết luận (KNOWN-RED, untested_exit) — script đó phải còn được run_impacted.sh chạy. PASS theo khoá chính xác: không."""
+        if t.get("matrix_added") or precise_hit(t):
+            return False
+        return not (t.get("keyed_full") or t.get("stale_rerun")) or (id(t) in really_ran and t.get("status") == "PASS")
+    late_notes = []   # (suite, lệnh) trong nhóm song song mà may_note chỉ biết được sau khi nhóm xong
+
+    slot_rec = _recorded_seconds(median=True) if run_tests and lock_held else {}   # lớp slot: trung vị, không phải lần dài nhất (B7)
     slot_mod = []
     # #338: lượt đã có suite được cho chạy thì chạy cho xong. started_run: không chờ tải lại ở các suite sau; heavy_lease: slot nặng giữ nguyên
     # giữa hai suite nặng TUẦN TỰ liền nhau (gate khác không chen được; suite trong nhóm song song vẫn xin slot riêng, nên tổng suite nặng
@@ -6491,6 +6591,10 @@ def main():
         group_ts.clear()
         if errors:   # before sharing: a worker that died left its suite without a status
             raise errors[0]
+        for t, c in late_notes:
+            if may_note(t):
+                note_ran(c)
+        late_notes.clear()
         for t, prev in deferred:
             share_result(t, prev)
         deferred.clear()
@@ -6586,7 +6690,9 @@ def main():
                 drop_lease()
                 start_job(t, cmd, mode, env)
                 ran_cmds[key] = t
-                if not t.get("keyed_full"):   # suite cached-full có thể thành PASS theo khoá chính xác: không bảo runner bỏ script
+                if t.get("keyed_full") or t.get("stale_rerun"):   # kết quả chưa có: may_note quyết sau khi nhóm xong (drain)
+                    late_notes.append((t, cmd))
+                else:
                     note_ran(cmd)
                 continue
             drain()
@@ -6594,7 +6700,7 @@ def main():
                 os.environ["DEVKIT_GATE_DONE"] = "\n".join(done_scripts)
             run_suite(t, cmd, mode, suite_env(), sequential=True)
             ran_cmds[key] = t
-            if not t.get("matrix_added") and not precise_hit(t):   # chỉ-thêm / PASS theo khoá chính xác: không bảo runner bỏ script
+            if may_note(t):   # chỉ-thêm / PASS theo khoá chính xác / STALE, cached-full chưa PASS thật: không bảo runner bỏ script
                 note_ran(cmd)
         elif run_tests:
             t["status"] = "FAIL"
@@ -6835,7 +6941,7 @@ def main():
                         f"{t.get('id')}: cached-full suite timed out — UNTESTED, not part of the verdict (the old selection does not run it); it runs again next time"))
     # Final Summary Verdict
     static_ok = (hygiene_ok and anti_laziness_ok and deps_ok and perf_ok and resilience_ok
-                 and logging_ok and hw_ok and assert_ok and proof_ok)
+                 and logging_ok and hw_ok and assert_ok and proof_ok and settings_ok)
     tests_passed = sum(1 for t in regression_tests if t["status"] == "PASS")
     # A STALE suite of another component that cannot run on this machine stays STALE and is
     # named; it is not the verdict of this change (only a failure of it is). Chỉ UNTESTED do chính suite báo "không chạy được ở
@@ -7185,7 +7291,8 @@ def main():
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),
                        "perf": len(perf_findings),
-                       "resilience": len(resilience_findings), "logging": len(logging_findings)},
+                       "resilience": len(resilience_findings), "logging": len(logging_findings),
+                       "settings": len(settings_findings)},
             "findings": FINDINGS,
             "advisories": advisories,  # lazy-senior warnings, never blocking
             "report": str(report_file),

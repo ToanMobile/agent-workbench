@@ -6,7 +6,7 @@
 [![GitHub Repository](https://img.shields.io/badge/GitHub-ToanMobile%2Fagent--workbench-181717.svg?style=for-the-badge&logo=github)](https://github.com/ToanMobile/agent-workbench)
 [![DevKit Quality Gate](https://img.shields.io/badge/Gate-Zero--Defect%20PASS-success.svg?style=for-the-badge&logo=shield)](universal-agent-devkit/)
 [![Supported Agents](https://img.shields.io/badge/Agents-Claude%20%C2%B7%20Codex%20%C2%B7%20Antigravity%20%C2%B7%20Cursor-blueviolet.svg?style=for-the-badge)](#-universal-multi-agent-matrix)
-[![Curated Skills](https://img.shields.io/badge/Skills-33%20Curated-purple.svg?style=for-the-badge)](universal-agent-devkit/skills/)
+[![Curated Skills](https://img.shields.io/badge/Skills-35%20Curated-purple.svg?style=for-the-badge)](universal-agent-devkit/skills/)
 [![Domain Profiles](https://img.shields.io/badge/Profiles-8%20Domains-00b4d8.svg?style=for-the-badge)](universal-agent-devkit/profiles/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 
@@ -104,7 +104,7 @@ The workbench brings together the flagship DevKit alongside enterprise-grade MCP
 
 | Component | Role | Description | Stack |
 | :--- | :--- | :--- | :--- |
-| **[`universal-agent-devkit/`](universal-agent-devkit/)** | 🚀 **Core Platform** | **Flagship AI Quality Protocol**: 33 curated skills, 8 domain profiles, post-fix diff gate, anti-fabrication claim verification, and collision safeguards. | Shell + Python + Node |
+| **[`universal-agent-devkit/`](universal-agent-devkit/)** | 🚀 **Core Platform** | **Flagship AI Quality Protocol**: 35 curated skills, 8 domain profiles, post-fix diff gate, anti-fabrication claim verification, and collision safeguards. | Shell + Python + Node |
 | **[`mcp-servers/antigravity-pm-mcp/`](mcp-servers/antigravity-pm-mcp/)** | 🤖 **PM Orchestration** | **Leader PM ↔ Worker Protocol**: Enables Claude Code to direct Google Antigravity in an isolated sandbox, grill plans, audit diffs, and enforce acceptance gates. | Node (ESM) |
 | **[`mcp-servers/play-store-mcp/`](mcp-servers/play-store-mcp/)** | 📱 **Distribution Hub** | **Google Play Console MCP**: Full lifecycle management for Android apps (AAB/APK upload, track promotion, release rollouts, and review replies). | Python (uv) |
 

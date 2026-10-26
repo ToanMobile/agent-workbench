@@ -56,7 +56,9 @@ cat > .agents/regression_matrix.active.json <<'JSON'
 JSON
 git add -A && git commit -qm init
 git init -q --bare "$TMP/origin.git" && git remote add origin "$TMP/origin.git" && git push -q -u origin HEAD 2>/dev/null
-echo '{"hooks":{}}' > .claude/settings.json; echo "# notes" > NOTES.md; git add -A; git commit -qm "agent config + doc"
+# a VALID hook wiring (25/10: "hooks" emptied or a hook file missing is refused — tests/gates/test_gate_settings_hooks.sh)
+echo '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_lock.sh\""}]}]}}' > .claude/settings.json
+echo "# notes" > NOTES.md; git add -A; git commit -qm "agent config + doc"
 echo "fun ok() = 9" > src/Core.kt   # unrelated failing WIP left in the tree, not pushed
 expect "only agent config + a doc pushed, no receipt: allowed" 0
 git commit -qam "code"
