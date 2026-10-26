@@ -56,4 +56,29 @@ ln -sfn "$KIT/commands/zz-removed-w.md" "$W/.claude/commands/zz-removed-w.md"
 python3 "$DEVKIT_DIR/scripts/governance/relink_check.py" "$W" --quiet
 [ -L "$W/.claude/commands/zz-removed-w.md" ] && ok "linked worktree: nothing pruned" || fail "pruned in a linked worktree"
 
+# A link directory that is itself a symlink into the kit (`.claude/commands -> <kit>/commands`) lists the KIT's own files:
+# its dangling, git-tracked links must not be pruned (OCR review 26/10: the kit lost commands/old.md and .agents/skills/old).
+for variant in commands skills; do
+  K="$TMP/fk-$variant/kit"; mkdir -p "$K/profiles" "$K/commands" "$K/skills/keep" "$K/.agents/skills" "$K/scripts/governance" "$K/rules"
+  echo r > "$K/rules/essentials.md"; echo k > "$K/skills/keep/SKILL.md"
+  cp "$DEVKIT_DIR/scripts/governance/relink_check.py" "$K/scripts/governance/relink_check.py"; : > "$K/scripts/governance/context_sync.py"
+  ln -s ../skills/old/SKILL.md "$K/commands/old.md"; ln -s ../../skills/old "$K/.agents/skills/old"
+  git -C "$K" init -q -b main && git -C "$K" add -A && git -C "$K" -c user.email=t@t -c user.name=t commit -qm kit
+  FP="$TMP/fk-$variant/p"; mkdir -p "$FP/.claude" "$FP/.agents/context"; git -C "$FP" init -q -b main
+  echo '{}' > "$FP/.agents/active-profile.json"; ln -s "$K" "$FP/.agents/devkit"
+  if [ "$variant" = commands ]; then ln -s "$K/commands" "$FP/.claude/commands"; mkdir -p "$FP/.agents/skills"
+  else mkdir -p "$FP/.claude/commands"; ln -s "$K/.agents/skills" "$FP/.agents/skills"; fi
+  python3 "$K/scripts/governance/relink_check.py" "$FP" --quiet --links-only
+  [ -z "$(git -C "$K" status --porcelain)" ] && ok "$variant dir is a symlink into the kit: the kit's tracked links stay" \
+    || fail "$variant dir symlinked into the kit: kit changed: $(git -C "$K" status --porcelain | tr '\n' ' ')"
+done
+# A project inside the kit (a self-install) prunes nothing: every kit link would look like a DevKit link.
+K="$TMP/fk-self/kit"; mkdir -p "$K/profiles" "$K/scripts/governance" "$K/rules" "$K/.claude/commands" "$K/.agents/context"
+echo r > "$K/rules/essentials.md"; cp "$DEVKIT_DIR/scripts/governance/relink_check.py" "$K/scripts/governance/"; : > "$K/scripts/governance/context_sync.py"
+echo '{}' > "$K/.agents/active-profile.json"; ln -s ../../skills/gone/SKILL.md "$K/.claude/commands/gone.md"
+git -C "$K" init -q -b main && git -C "$K" add -A && git -C "$K" -c user.email=t@t -c user.name=t commit -qm kit
+python3 "$K/scripts/governance/relink_check.py" "$K" --quiet --links-only
+[ -z "$(git -C "$K" status --porcelain)" ] && ok "project inside the kit (self-install): nothing pruned" \
+  || fail "self-install: kit changed: $(git -C "$K" status --porcelain | tr '\n' ' ')"
+
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }

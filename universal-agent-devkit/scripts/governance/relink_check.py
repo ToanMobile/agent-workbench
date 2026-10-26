@@ -46,6 +46,8 @@ def git(project, *args):
 def should_run(project, argv):
     if os.environ.get("DEVKIT_RELINK") == "0":
         return False
+    if (os.path.realpath(project) + os.sep).startswith(os.path.realpath(DEVKIT) + os.sep):
+        return False                    # a project inside the kit (a self-install): its links are the kit's own files
     hook = next((a.split("=", 1)[1] for a in argv if a.startswith("--hook=")), "")
     rest = [a for a in argv[2:] if not a.startswith("--")]
     if hook == "post-checkout" and len(rest) >= 3 and rest[2] == "0":
@@ -84,7 +86,9 @@ def missing(project):
         out.append(".agents/devkit")    # master rules, core-rules, the post-fix gate
     excluded = excluded_skills(project)
     cmds = os.path.join(DEVKIT, "commands")
-    if os.path.isdir(os.path.join(project, ".claude", "commands")):
+    # a link directory symlinked as a whole points at someone else's folder (the kit's own, a shared one): never write into it
+    if (os.path.isdir(os.path.join(project, ".claude", "commands")) and not os.path.islink(os.path.join(project, ".claude", "commands"))
+            and os.path.isdir(cmds)):
         for name in sorted(os.listdir(cmds)):
             src = os.path.join(cmds, name)
             skill = os.path.basename(os.path.dirname(os.path.realpath(src))) if os.path.islink(src) else None
@@ -93,7 +97,7 @@ def missing(project):
     # every DevKit skill the profile keeps, in an install that has .agents/skills/: a skill the DevKit gained after the install
     # never got its link (OfficeReader 2026-10-13: health 96, .agents/skills/devkit-audit missing)
     skills_dir = os.path.join(project, ".agents", "skills")
-    if os.path.isdir(skills_dir):
+    if os.path.isdir(skills_dir) and not os.path.islink(skills_dir):
         for name in sorted(os.listdir(os.path.join(DEVKIT, "skills"))):
             if (name not in excluded and os.path.isfile(os.path.join(DEVKIT, "skills", name, "SKILL.md"))
                     and not os.path.lexists(os.path.join(skills_dir, name))):
@@ -151,6 +155,8 @@ def dangling(project):
     out = []
     for rel_dir in (os.path.join(".claude", "commands"), os.path.join(".agents", "skills")):
         d = os.path.join(project, rel_dir)
+        if os.path.islink(d) or (os.path.realpath(d) + os.sep).startswith(kit):
+            continue         # a link directory symlinked as a whole (into the kit or elsewhere) lists someone else's files
         try:
             names = sorted(os.listdir(d))
         except OSError:
@@ -194,7 +200,10 @@ def relink(project, gone):
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if src.startswith(os.path.join(project, ".agents", "local") + os.sep):
             src = os.path.relpath(src, os.path.dirname(dst))   # project tier: relative, like the installer
-        os.symlink(src, dst)
+        try:
+            os.symlink(src, dst)
+        except FileExistsError:
+            continue         # another session's SessionStart made it a moment ago
         keep_out_of_git(project, rel)
     return left
 
