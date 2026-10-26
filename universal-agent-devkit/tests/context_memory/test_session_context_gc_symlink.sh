@@ -51,8 +51,10 @@ out="$(ctx "$TMP/plain")"; gc_wait
 # 4. Đối chứng: công tắc tắt reaper, và một worktree liên kết của repo symlink (gc không chạy từ đó), không thấy dòng nào.
 out="$(WORKTREE_GC=0 ctx "$TMP/wtl")"
 [ "$(gcline "$out")" = 0 ] && ok "WORKTREE_GC=0: nothing surfaced" || fail "WORKTREE_GC=0 still surfaced the gc line"
-rm -f "$TMP/wtl/.git/devkit-gc.out"; out="$(WORKTREE_GC_MERGED=0 ctx "$TMP/wtl")"; gc_done wtl
-[ "$(gcline "$out")" = 0 ] && ok "WORKTREE_GC_MERGED=0: nothing surfaced" || fail "WORKTREE_GC_MERGED=0 still surfaced the gc line"
+# devkit-gc.out còn dòng symlink của ca 1: chỉ công tắc mới giữ nó ngoài context (review #427 vòng 2: xoá file trước thì ca này không đỏ được)
+pre="$(grep -c 'symlink: ' "$TMP/wtl/.git/devkit-gc.out" 2>/dev/null)"; out="$(WORKTREE_GC_MERGED=0 ctx "$TMP/wtl")"; gc_done wtl
+[ "${pre:-0}" -ge 1 ] && [ "$(gcline "$out")" = 0 ] && ok "WORKTREE_GC_MERGED=0: nothing surfaced (the symlink line was there to surface)" \
+  || fail "WORKTREE_GC_MERGED=0: gc line=$(gcline "$out"), symlink line before the call=${pre:-0}"
 rm -f "$TMP/wtl/.git/devkit-gc.out"; ctx "$TMP/wtl" >/dev/null; gc_done wtl   # devkit-gc.out có lại dòng symlink cho ca dưới
 git -C "$TMP/wtl" worktree add -q --detach "$TMP/wtl-linked" 2>/dev/null
 out="$(ctx "$TMP/wtl-linked")"
