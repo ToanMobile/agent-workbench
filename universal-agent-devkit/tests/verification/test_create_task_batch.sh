@@ -409,4 +409,40 @@ rc=$(run "${NEWARGS[@]}")
 (cd "$TMP/repo" && SB_MAX_CARD_AC=abc python3 "$CT" "${NEWARGS[@]}") >"$TMP/out" 2>&1; rc=$?
 ! grep -q Traceback "$TMP/out" && [ "$rc" = "0" ] && [ "$(called issue create)" = "1" ] && ok "31d SB_MAX_CARD_AC rác → trần mặc định 12, không traceback" || fail "31d rc=$rc: $(head -5 "$TMP/out")"
 
+# 33. 26/10 (#419, #421 bị pre-flight giữ ở Blocked): --ac chỉ nhận một chuỗi và chèn nguyên văn. Câu thường không có gạch đầu
+# dòng nên pre-flight không đếm được AC; --ac lặp lại thì chỉ giữ lần cuối. Nay --ac nhận nhiều lần, dòng chưa có dấu danh sách
+# thành `- [ ] …`, dòng đã có dấu (-, *, 1.) giữ nguyên.
+created_body() { python3 - <<'PY'
+import json, os
+for l in open(os.environ["FAKE_LOG"]):
+    a = json.loads(l).get("gh", [])
+    if a[:2] == ["issue", "create"]:
+        print(a[a.index("--body") + 1]); break
+PY
+}
+ac_section() { python3 -c 'import re,sys; m = re.search(r"## Acceptance Criteria\n(.*?)\n## ", sys.argv[1], re.S); print(m.group(1) if m else "")' "$1"; }
+items '[]'
+rc=$(run --title "✨ [feature] hooks: việc D" --problem "vấn đề D" --ac "AC thường một" --ac "AC thường hai" --ac "- [ ] AC có sẵn dấu")
+sec="$(ac_section "$(created_body)")"
+[ "$rc" = "0" ] && printf '%s\n' "$sec" | grep -qx -- "- \[ \] AC thường một" && printf '%s\n' "$sec" | grep -qx -- "- \[ \] AC thường hai" \
+  && ok "33a --ac lặp lại: giữ cả hai, câu thường thành - [ ]" || fail "33a rc=$rc AC=[$sec]"
+printf '%s\n' "$sec" | grep -qx -- "- \[ \] AC có sẵn dấu" && ! printf '%s\n' "$sec" | grep -q -- "- \[ \] - \[ \]" \
+  && ok "33b dòng đã có dấu danh sách giữ nguyên, không gạch hai lần" || fail "33b AC=[$sec]"
+items '[{"n":7}]'
+rc=$(run --title "✨ [feature] hooks: việc E" --problem "vấn đề E" --ac "AC gom một" --ac "AC gom hai")
+sec="$(ac_section "$(edited_body)")"
+[ "$rc" = "0" ] && [ "$(edited)" = "7" ] && printf '%s\n' "$sec" | grep -q -- "- \[ \] .*AC gom một" && printf '%s\n' "$sec" | grep -q -- "- \[ \] .*AC gom hai" \
+  && ok "33c gom vào thẻ có sẵn: cả hai AC mới vào mục AC dạng danh sách" || fail "33c rc=$rc edit=$(edited) AC=[$sec]"
+# 33d–f (review c2e30b30): "đã là mục danh sách" phải theo đúng AC_ITEM_RE mà pre-flight đếm (số 1–2 chữ số), không thì
+# "100. x" giữ nguyên mà vẫn không được đếm và thẻ lại kẹt; dòng trong code fence và dòng comment HTML giữ nguyên.
+items '[]'
+rc=$(run --title "✨ [feature] hooks: việc F" --problem "vấn đề F" --ac "1. mục đánh số" --ac "100. không phải mục" \
+  --ac $'```\nmã ví dụ\n```' --ac "<!-- ghi chú -->")
+sec="$(ac_section "$(created_body)")"
+printf '%s\n' "$sec" | grep -qx -- "1. mục đánh số" && printf '%s\n' "$sec" | grep -qx -- "- \[ \] 100. không phải mục" \
+  && ok "33d số 1–2 chữ số giữ nguyên, '100.' thành - [ ] như pre-flight đếm" || fail "33d AC=[$sec]"
+printf '%s\n' "$sec" | grep -qx -- '```' && printf '%s\n' "$sec" | grep -qx -- "mã ví dụ" \
+  && ok "33e dòng trong code fence giữ nguyên" || fail "33e AC=[$sec]"
+printf '%s\n' "$sec" | grep -qx -- "<!-- ghi chú -->" && ok "33f dòng comment HTML giữ nguyên" || fail "33f AC=[$sec]"
+
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
