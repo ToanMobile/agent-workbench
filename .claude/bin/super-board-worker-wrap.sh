@@ -5,6 +5,9 @@
 start=$(date +%s)
 child=
 trap '[ -z "$child" ] || kill -TERM "$child" 2>/dev/null; [ -n "$child" ] || exit 143' TERM INT HUP
+# Vòng sửa 1 (F4): mọi worker runner phóng (build/qa/review/merge, mọi engine) đi qua wrapper này, nên cờ worker board đặt ở đây;
+# gate / merge-train dựa vào nó để từ chối đường lách hàng đợi. Không export trong runner để môi trường của runner không đổi sau lượt giao đầu.
+export SB_BOARD_WORKER=1
 "$@" &
 child=$!
 # ponytail: wrapper bị SIGKILL (OOM, kill -9) không chạy được trap nên không ghi exit record và con thành orphan; startup_orphan_workers dọn con ở lần khởi động runner sau.

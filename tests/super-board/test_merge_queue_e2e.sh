@@ -236,6 +236,7 @@ printf 'import os, sys\nopen(os.environ["FAKE"] + "/pfg.log", "a").write(os.getc
 export PATH="$TMP/path:$PATH"
 
 # ── thế giới: origin bare + checkout chính + bin thật (symlink) + config + trạng thái gh. new_world <tên> <merge_queue.enabled>
+# Vòng sửa 1 (R3): hàng đợi chỉ bật với worker_backend "claude-p", nên config của thế giới ghim backend đó.
 new_world() {
   W="$TMP/$1"; O="$W/origin.git"; R="$W/repo"; F="$W/fake"
   mkdir -p "$F"; : > "$F/stub-pids"; : > "$F/claude.calls"; : > "$F/gh.calls"
@@ -248,7 +249,7 @@ new_world() {
   for f in "$BIN_SRC"/*; do ln -s "$f" "$R/.claude/bin/$(basename "$f")"; done
   rm -f "$R/.claude/bin/super-board-skills-ready.py"; printf 'print("ok")\n' > "$R/.claude/bin/super-board-skills-ready.py"
   CFG="$R/.claude/super-board/configs/e2e.json"
-  printf '{"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"project":{"owner":"o","number":1},"rebuild_cap":2,"verify_commands":["python3 %s/pfg/post-fix-gate.py --run-tests"],"merge_queue":{"enabled":%s,"enabled_at":null,"batch_max":6,"max_wait_min":60}}\n' "$TMP" "$2" > "$CFG"
+  printf '{"worker_backend":"claude-p","base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"project":{"owner":"o","number":1},"rebuild_cap":2,"verify_commands":["python3 %s/pfg/post-fix-gate.py --run-tests"],"merge_queue":{"enabled":%s,"enabled_at":null,"batch_max":6,"max_wait_min":60}}\n' "$TMP" "$2" > "$CFG"
   echo '{"prs":{},"issues":{},"board":{},"merged":[],"moves":[]}' > "$F/state.json"
   export FAKE="$F" FAKE_REPO="$R" FAKE_ORIGIN="$O" STUB_CFG="$CFG" SB_GITHUB_HALT_FILE="$W/halt.json" SB_CARD_CACHE_DIR="$W/card-cache"
   COMMON="$(cd "$R" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"

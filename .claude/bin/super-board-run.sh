@@ -545,6 +545,15 @@ top_card_in_column() {
       esac
       continue
     fi
+    # Vòng sửa 1 (R3): PR không draft, duyệt đúng head nhưng thiếu nhãn merge-queue (reviewer chết sau approved-head, hoặc nhãn bị gỡ):
+    # runner gắn lại nhãn và bỏ qua thẻ — review lại một PR đã duyệt tốn 15-30 phút. PR draft không được gắn (hàng không nhận draft).
+    # ponytail: thêm một `pr list` cho mỗi thẻ Review chưa vào hàng khi queue bật; gộp với lần đọc trên khi cột Review quá 10 thẻ.
+    if [ "$col" = "Review" ] && merge_queue_on && queued=$(review_approved_head "$issue" '!merge-queue' </dev/null); then
+      mq_seen=1
+      gh_write_once pr edit "${queued%% *}" --add-label merge-queue </dev/null >/dev/null 2>&1
+      log "relabel #${issue}: PR ${queued%% *} is approved at head ${queued#* } but had no merge-queue label — label added back, no reviewer"
+      continue
+    fi
     [ "$col" != "Review" ] || MQ_WAITING=$mq_seen
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
@@ -950,11 +959,29 @@ PY
 merge_queue_on() {
   # Pha 2: 0 khi merge queue bật cho board này. SB_MERGE_QUEUE=1 bật, =0 tắt (đường lùi: merge-only / train như cũ), còn lại theo
   # config `merge_queue.enabled` (thiếu khoá hoặc config không đọc được = tắt).
-  case "${SB_MERGE_QUEUE:-}" in
-    1) return 0 ;;
-    0) return 1 ;;
-  esac
+  # Vòng sửa 1 (R3): chỉ bật khi worker_backend của config là "claude-p" (đọc như WORKER_BACKEND, mặc định "workflow"); backend khác
+  # luôn tắt, kể cả SB_MERGE_QUEUE=1, vì chưa có ai rút hàng ở đó. Đọc thẳng config vì chế độ SB_LIB_ONLY không đặt WORKER_BACKEND.
+  # ponytail: hàng đợi chỉ cho backend claude-p, nâng cấp cho workflow/codex khi chúng có lịch chạy super-board-merge-queue.sh (Q-schedule).
+  [ "${SB_MERGE_QUEUE:-}" != 0 ] || return 1
+  jq -e '(.worker_backend // "workflow") == "claude-p"' "$CONFIG_PATH" >/dev/null 2>&1 || return 1
+  [ "${SB_MERGE_QUEUE:-}" != 1 ] || return 0
   jq -e '.merge_queue.enabled == true' "$CONFIG_PATH" >/dev/null 2>&1
+}
+
+merge_queue_wait_ok() {
+  # Vòng sửa 1 (R3): 0 khi PR cũ nhất đang chờ trong <git-common-dir>/super-board/merge-queue.labeled (dòng `<PR> <head> <epoch>`,
+  # super-board-merge-queue.sh ghi mỗi lượt có PR trong hàng) chờ chưa quá 3 × merge_queue.max_wait_min (mặc định 60, như bộ gom).
+  # Thiếu file / không có mốc hợp lệ = 1: bộ gom chạy trước record_cycle_progress trong cùng tick và luôn ghi file khi có PR, nên
+  # không có file nghĩa là hàng không được rút; khi đó không miễn RUNAWAY. Thư mục chung tính như bộ gom (repo.path → git-common-dir).
+  local rp common max oldest
+  rp=$(jq -r '.repo.path // "."' "$CONFIG_PATH" 2>/dev/null) || rp=.
+  common=$(cd "${rp:-.}" 2>/dev/null && g=$(git rev-parse --git-common-dir 2>/dev/null) && [ -n "$g" ] && cd "$g" && pwd -P) || return 1
+  max=$(jq -r '.merge_queue.max_wait_min // empty' "$CONFIG_PATH" 2>/dev/null || true)
+  case "$max" in ''|*[!0-9]*|0) max=60 ;; esac
+  [ "${#max}" -le 6 ] || max=60
+  oldest=$(awk '$3 ~ /^[0-9]+$/ { if (m == "" || $3 + 0 < m + 0) m = $3 } END { print m }' "$common/super-board/merge-queue.labeled" 2>/dev/null)
+  [ -n "$oldest" ] || return 1
+  [ $(( $(date +%s) - oldest )) -le $(( 3 * 10#$max * 60 )) ]
 }
 
 merge_queue_due() {
@@ -985,11 +1012,13 @@ review_approved_head() {
   # Đọc GitHub hỏng hay thiếu dữ liệu → trả 1 = review đầy đủ như cũ (không bao giờ bỏ qua review vì lỗi đọc). Gate vẫn ghim --expect-head
   # và áp merge_policy nguyên vẹn: hàm này chỉ chọn việc cho worker, không nới luật merge.
   # $2 (tuỳ chọn, Pha 2) = nhãn bắt buộc, vd merge-queue: PR đó còn phải mang nhãn này và không là draft (đúng bộ lọc của merge-queue.sh).
+  # `!<nhãn>` (vòng sửa 1, R3) = PR không draft và KHÔNG mang nhãn đó (thẻ đã duyệt nhưng mất nhãn hàng đợi).
   local prs pr head approved want="${2:-}"
   prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid${want:+,labels,isDraft}" 2>/dev/null) || return 1
   read -r pr head <<EOF
 $(printf '%s' "$prs" | jq -r --arg p "issue-$1-" --arg l "$want" '[.[] | select(.headRefName | startswith($p))][0] | select(. != null)
-  | select($l == "" or ((.isDraft != true) and any((.labels // [])[]; .name == $l))) | "\(.number) \(.headRefOid)"' 2>/dev/null)
+  | select($l == "" or ((.isDraft != true) and (if ($l | startswith("!")) then (any((.labels // [])[]; .name == ($l | ltrimstr("!"))) | not)
+      else any((.labels // [])[]; .name == $l) end))) | "\(.number) \(.headRefOid)"' 2>/dev/null)
 EOF
   [ -n "${pr:-}" ] && [ -n "${head:-}" ] || return 1
   approved=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r '
@@ -1455,7 +1484,11 @@ record_cycle_progress() {
   fi
   # Pha 2 (M4): the last Review scan found cards queued for super-board-merge-queue.sh (MQ_WAITING, set by top_card_in_column and kept
   # while the review lane is busy). Done moves only when their batch lands (up to merge_queue.max_wait_min), so the wait is no runaway.
-  if [ "${MQ_WAITING:-0}" = 1 ] && [ "${REVIEW:-0}" -gt 0 ]; then return 0; fi
+  # Vòng sửa 1 (R3): miễn có hạn — chỉ khi PR cũ nhất trong hàng chờ chưa quá 3 × max_wait_min; quá hạn (hàng kẹt) thì đếm như thường.
+  if [ "${MQ_WAITING:-0}" = 1 ] && [ "${REVIEW:-0}" -gt 0 ]; then
+    merge_queue_wait_ok && return 0
+    log "⚠ cards wait in the merge queue but its oldest PR is past 3 × merge_queue.max_wait_min (or merge-queue.labeled is missing) — counted as a no-progress cycle"
+  fi
   NO_PROGRESS_CYCLE_COUNT=$((NO_PROGRESS_CYCLE_COUNT + 1))
   [ "$NO_PROGRESS_CYCLE_COUNT" -lt "$NO_PROGRESS_CYCLES" ]
 }
