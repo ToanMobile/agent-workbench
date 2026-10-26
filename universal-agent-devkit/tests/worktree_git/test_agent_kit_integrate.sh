@@ -88,7 +88,7 @@ newrepo; G "$M" config devkit.integrate.batchMax 2; work a; work b; hold_test_lo
 ARGS="--if-due" integrate; rc=$?
 gate_cwd="$(head -1 "$INTEGRATE_GATE_LOG" 2>/dev/null | cut -d' ' -f1)"
 [ "$rc" = 0 ] && [ "$(origin_head)" = "$(G "$M" rev-parse HEAD)" ] && [ "$(gate_runs)" = 1 ] \
-  && [ -n "$gate_cwd" ] && [ "$gate_cwd" != "$M" ] && grep -q -- "--run-tests --full --brief" "$INTEGRATE_GATE_LOG" \
+  && [ -n "$gate_cwd" ] && [ "$gate_cwd" != "$M" ] && grep -q -- "--run-tests --full --force-full --brief --diff refs/remotes/origin/main" "$INTEGRATE_GATE_LOG" \
   && [ ! -d "$gate_cwd" ] && [ "$(G "$M" worktree list | wc -l | tr -d ' ')" = 1 ] \
   && ok "I3 tới hạn (batchMax) + gate xanh: push đúng HEAD, 1 gate --full trong scratch, scratch đã gỡ" \
   || fail "I3: rc $rc, origin $(origin_head | cut -c1-8) HEAD $(G "$M" rev-parse --short HEAD), gate $(gate_runs) cwd '$gate_cwd', worktrees $(G "$M" worktree list | wc -l), out: $(tail -5 "$TMP/out")"
@@ -126,6 +126,12 @@ newrepo; work a; o0="$(origin_head)"
 ARGS="" integrate FAKE_GATE_EXIT=0; rc=$?
 [ "$rc" = 1 ] && [ "$(gate_runs)" = 1 ] && [ "$(origin_head)" = "$o0" ] && grep -q "push_gate" "$TMP/out" \
   && ok "I7 gate exit 0 không biên nhận: push_gate từ chối, không push" || fail "I7: rc $rc, gate $(gate_runs), out: $(tail -3 "$TMP/out")"
+
+# I7b gate bận (exit 4: hàng đợi gate / khoá dự án): không phải đỏ — exit 0, không push, không liệt kê đợt như lượt đỏ
+newrepo; work a; o0="$(origin_head)"
+ARGS="" integrate FAKE_GATE_EXIT=4; rc=$?
+[ "$rc" = 0 ] && [ "$(gate_runs)" = 1 ] && [ "$(origin_head)" = "$o0" ] && grep -qi "bận\|busy" "$TMP/out" && ! grep -q "ĐỎ" "$TMP/out" \
+  && ok "I7b gate bận: exit 0, không push, không báo đỏ" || fail "I7b: rc $rc, gate $(gate_runs), out: $(tail -3 "$TMP/out")"
 
 # I8 --dry-run: tới hạn theo tuổi (commit 2 giờ trước) và theo máy rảnh; không gate, không push
 newrepo; GIT_COMMITTER_DATE="$(date -u -v-2H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '2 hours ago' +%Y-%m-%dT%H:%M:%SZ)" work old; o0="$(origin_head)"

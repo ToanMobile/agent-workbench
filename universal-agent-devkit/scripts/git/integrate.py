@@ -167,11 +167,12 @@ def setup_kit(main, scratch):
 def run_gate(scratch, remote):
     """Exit code của `post-fix-gate --run-tests --full --brief --diff <origin/base>` trong scratch (124 khi quá
     DEVKIT_INTEGRATE_GATE_TIMEOUT_S). --diff: scratch tách rời không có upstream, cây sạch không --diff thì gate trả 3 (nothing to audit);
-    origin/<base>..HEAD đúng là nội dung sẽ push (như mặc định @{u}..HEAD của gate trên một nhánh có upstream)."""
+    origin/<base>..HEAD đúng là nội dung sẽ push (như mặc định @{u}..HEAD của gate trên một nhánh có upstream). --force-full: đây là lượt
+    nghiệm thu duy nhất của cả đợt, không bao giờ hoãn sang "phiên cuối" (post-fix-gate.py deferred_by: hoãn thì exit 5, không biên nhận)."""
     gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
     env = dict(os.environ, CLAUDE_PROJECT_DIR=scratch, DEVKIT_SLOT_PRIORITY="merge")
     try:
-        p = subprocess.Popen([sys.executable, gate, "--run-tests", "--full", "--brief", "--diff", remote], cwd=scratch, env=env,
+        p = subprocess.Popen([sys.executable, gate, "--run-tests", "--full", "--force-full", "--brief", "--diff", remote], cwd=scratch, env=env,
                              stdin=subprocess.DEVNULL)
     except OSError as e:
         say(f"gate không chạy được: {e}")
@@ -239,8 +240,11 @@ def integrate(main, base, args):
             return 1
         setup_kit(main, scratch)
         rc = run_gate(scratch, remote)
+        if rc == 4:   # hàng đợi gate toàn máy / khoá dự án bận (T0056): không phải đỏ, đợt giữ nguyên cho lượt sau
+            say("gate bận (busy, exit 4): chưa kiểm được gì, không push; lượt integrate sau thử lại")
+            return 0
         if rc != 0:
-            say(f"gate ĐỎ (exit {rc}{', bận: thử lại sau' if rc == 4 else ''}): không push. Các commit trong đợt:\n{batch}")
+            say(f"gate ĐỎ (exit {rc}): không push. Các commit trong đợt:\n{batch}")
             return 1
         ok, reason = push_gate_ok(main, head)
         if not ok:
