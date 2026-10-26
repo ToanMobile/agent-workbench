@@ -456,9 +456,13 @@ def git_tracks(p):
             _ICASE.append(c.stdout.strip() == "true" if c.returncode in (0, 1) else True)
         except (OSError, subprocess.SubprocessError):
             _ICASE.append(True)
+    # GIT_LITERAL_PATHSPECS=1 thừa kế từ môi trường làm git đọc ":(icase)build" như một tên thật: không file nào khớp, mọi build output
+    # được track lọt (review #427). Bỏ các biến *_PATHSPECS khỏi env của lệnh này.
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS",
+                                                               "GIT_ICASE_PATHSPECS")}
     try:
         r = subprocess.run(["git", "-C", ROOT, "ls-files", "--", (":(icase)" if _ICASE[0] else "") + os.path.relpath(p, ROOT)],
-                           capture_output=True, text=True, timeout=5)
+                           capture_output=True, text=True, timeout=5, env=env)
         return r.returncode == 0 and bool(r.stdout.strip())
     except (OSError, subprocess.SubprocessError):
         return False
@@ -592,7 +596,8 @@ def ln_names(rest, env, repl, xargs):
         v = os.path.expanduser(v) if v.startswith("~") else v
         for x in [v] + braces(v):
             name = os.path.basename(x.rstrip("/"))
-            names.add("*" if "$" in x or "`" in x or GLOB.search(name) else name.casefold())
+            # Xét trên basename, không trên cả toán hạng: `ln -s $PWD/node_modules $S/node_modules` vẫn biết tên link (review #427)
+            names.add("*" if "$" in name or "`" in name or GLOB.search(name) else name.casefold())
     if xargs:   # xargs ln: toán hạng lấy từ lệnh trước
         names.add("*")
     return names - {"", ".", ".."}

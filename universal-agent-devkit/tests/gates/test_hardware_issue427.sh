@@ -69,6 +69,9 @@ if [ -n "$SCR" ]; then
   check 0 "ln -s x $SCRP/l && rm -rf $SCRP/inner/"                  # có ln, nhưng thư mục không liên quan
   check 0 "ln -s x $SCRP/l && rm -rf $SCRP/kit*"
   check 0 "rm -rf $SCRP/inside/"                                    # link nằm trong scratch, như trước
+  # review #427: toán hạng ln có $ nhưng basename đọc được ghi đúng tên đó, không "*" (lệnh thật bị chặn nhầm)
+  check 0 "ln -s \"\$(pwd)/x\" $SCRP/y; rm -rf $SCRP/plain/out"
+  check 0 "S=$SCRP/red; rm -rf \$S; ln -s \$PWD/node_modules \$S/node_modules 2>/dev/null; cd \$S && node --test tests/; cd /; rm -rf \$S"
 fi
 # … trong /tmp ($TMPDIR) và trong build output của project: cùng lỗ đó ngoài thư mục scratch
 check 2 "ln -s ~ $TMP/x && rm -rf $TMP/x/"
@@ -86,5 +89,9 @@ check 2 'rm -rf app/build' "$Q"
 check 2 'rm -rf Build' "$Q"                                   # đối chứng: đúng tên được track, đã bị chặn từ trước
 check 0 'rm -rf out' "$Q"                                     # đối chứng: không có gì được track ở đó, mọi kiểu hoa thường
 check 0 'rm -rf node_modules' "$Q"
+# review #427: GIT_LITERAL_PATHSPECS=1 trong env của hook làm git đọc ":(icase)build" như tên thật: mọi build output được track lọt
+export GIT_LITERAL_PATHSPECS=1
+check 2 'rm -rf build' "$Q"
+unset GIT_LITERAL_PATHSPECS
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_issue427: all passed" || { echo "❌ test_hardware_issue427: $FAILS failed"; exit 1; }
