@@ -432,3 +432,4 @@
 25 tests/gates/test_session_lock_issue427.sh
 3 tests/gates/test_hardware_issue427.sh
 6 tests/verification/test_evidence_issue427.sh
+8 tests/worktree_git/test_relink_prune.sh

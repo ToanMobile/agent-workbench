@@ -1664,6 +1664,41 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-gate-slot-queue",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/tests/gates/test_gate_slot_queue.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SLOT-QUEUE-01",
+          "name": "hàng đợi gate toàn máy (pool gate, N = capacity gate_max; 12 lõi = 3): hết giờ chờ thoát 4 BUSY không ghi biên nhận, kế thừa DEVKIT_GATE_SLOT_HELD, kiểm lại reuse sau khi lấy slot và Stop hook giữ UNTESTED",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_queue.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-gate-busy-slot",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_merge_gate_busy_slot.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-BUSY-SLOT-01",
+          "name": "merge-gate và merge-train đặt mặc định DEVKIT_GATE_SLOT_WAIT_S=1800; khi post-fix-gate thoát 4 busy thì giữ thẻ ở Review (exit 4 / train exit 12 không retry), không ra exit 11",
+          "command": "bash tests/super-board/test_merge_gate_busy_slot.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

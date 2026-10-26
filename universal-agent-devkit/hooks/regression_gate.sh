@@ -801,6 +801,7 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                      cwd=repo, capture_output=True, text=True, errors="replace",
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo, "DEVKIT_LEDGER_ROOT": ledger_root,
                           "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
+                          "DEVKIT_GATE_SLOT_WAIT_S": os.environ.get("DEVKIT_GATE_SLOT_WAIT_S", "45"),
                           # B5 (audit 25/10): khoá do một lượt gate CÒN SỐNG giữ thì chỉ chờ DEVKIT_REUSE_LOCK_WAIT_S (3 s) rồi BUSY
                           "TEST_RUN_LOCK_BUSY_FAST": os.environ.get("TEST_RUN_LOCK_BUSY_FAST", "1"),
                           "GATE_TOTAL_BUDGET_S": budget_s,
@@ -855,8 +856,12 @@ if res.returncode == 4 and summary.get("busy"):
         print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy khác đã đổi/xoá kết quả PASS dùng lại của %s — chạy lại sau; "
                           "test hồi quy đó CHƯA chạy lại, KHÔNG phải PASS." % ", ".join(stale)}, ensure_ascii=False))
         sys.exit(0)
-    print(json.dumps({"systemMessage": "Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
-                      "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS."}, ensure_ascii=False))
+    # T0056: giữ nguyên từng chữ câu gốc; khi bận vì hàng đợi gate toàn máy thì nối thêm 1 dòng bên trong chuỗi systemMessage (print 1 lần).
+    msg = ("Regression gate UNTESTED — một lượt chạy test khác đang giữ khoá dự án — chạy lại sau "
+           "(.claude/audit-gate/test_run.lock); test hồi quy CHƯA chạy, KHÔNG phải PASS.")
+    if summary.get("busy_reason") == "gate_queue":
+        msg += "\nHàng đợi gate toàn máy đang đầy (pool gate, DEVKIT_GATE_SLOT_WAIT_S) — chờ lượt chạy test khác trên máy xong rồi thử lại."
+    print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
     sys.exit(0)
 if res.returncode == 4 and summary.get("budget_exhausted"):
     # Time budget spent: some suites did not start. Nothing to fix in the change and no verdict to remember HERE: say it every
