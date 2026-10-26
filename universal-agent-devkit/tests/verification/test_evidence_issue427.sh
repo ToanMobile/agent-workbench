@@ -18,9 +18,14 @@
 #   Q9   `git -C <repo> commit -q` / `git -c k=v commit -q` print nothing; `git log` after a commit prints the subject; a segment that
 #        writes to a file, /dev/null or a PR comment prints nothing in place of a summary, `> /dev/stderr` / `>&2` still does.
 #   X    a TEST-*.xml with a count that is not a number (`failures="x"`) crashed the hook (exit 1 = the claim passed).
-# Not here, backlog of #427: E3 (`Unity … -testResults f; cat f` read as green: tests/verification/test_evidence_unity.sh §4 asserts that
-# very shape as the GREEN half of check 7) and a glob loop over kit suites with no or one summary (tests/gates/test_evidence_false_blocks.sh
-# section D asserts `for f in tests/a/test_*.sh; do …; bash "$f"; done` with no summary line as green).
+#   E3   `Unity … -testResults f; cat f` không còn XANH: Unity không xoá f lúc bắt đầu, XML in sau `;` có thể là của lần trước; chỉ
+#        `&& cat f` hoặc mã thoát gắn bằng `echo "<nhãn>=$?"` (nhãn có dấu cách: `edit exit=$?`) là bằng chứng (test_evidence_unity.sh
+#        §4 nay dùng `&& cat`).
+#   (review) vòng kit brace / $VAR mà một lần chạy in `3 failure(s)`; brace dạng dấu phẩy đếm từng lần chạy; ghi ra file rồi segment
+#        sau đọc lại file đó (_silent); cờ python trước `-m`, `coverage run`, xvfb-run / stdbuf / sudo / exec / bundle exec / xcrun /
+#        arch là lần chạy; trap dọn dẹp trong ngoặc (`trap 'rm -rf $T' EXIT`) giữ mã thoát; `echo $?` cuối với dòng 100 KB `1…1x1`.
+# Chưa ở đây, backlog của #427: vòng glob / $VAR qua suite kit với không hoặc một dòng tóm tắt (tests/gates/test_evidence_false_blocks.sh
+# section D coi `for f in tests/a/test_*.sh; do …; bash "$f"; done` không dòng tóm tắt là xanh), `docker compose run … pytest`.
 #   EG_KIT=<devkit dir>   test another copy of the kit (the unpatched one: RED).
 # bash 3.2 compatible wrapper; the scenarios are python3 stdlib.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
@@ -138,6 +143,8 @@ case("R4 tag regexes: 100 KB of `<testsuite ` and 100 KB of `<test-run ` in a ru
      after("python3 -m pytest -q > /tmp/l 2>&1; echo x", "<testsuite " * (BIG // 22) + "\n" + "<test-run " * (BIG // 20)), 2, cpu=3.0)
 case("R4 fail-closed: a FAILED line after 200 KB of output (exit 0) is still red",
      after("python3 -m pytest -q", "a" * BIG + "\nFAILED tests/test_a.py::test_x - assert 1"), 2, cpu=3.0)
+case("R4 (review): a bare `echo $?` whose last line is 100 KB of `1…1x1` is read in linear time",
+     after("python3 -m pytest -q > /tmp/l 2>&1; echo $?", "1" * (BIG // 2) + "x1"), 2, cpu=3.0)
 
 print("-- P1-2: a runner counts only as the command of its segment")
 case("P1-2 must block: a failed `pip install` of a pytest plugin is no RED half of check 7",
@@ -163,6 +170,16 @@ case("P1-2 control: a Unity run under `caffeinate … env …` is still both hal
 case("P1-2 must pass: a bare `echo $?` ending the command and printing 1 is the RED half of check 7",
      pair("python3 -m pytest -q > /tmp/l 2>&1; echo $?", "1", "python3 -m pytest -q", PYOK, red_err=False), 0, msg=FIX)
 case("P1-2 control: a bare `echo $?` printing 0 is still no green", after("python3 -m pytest -q > /tmp/l 2>&1; echo $?", "0"), 2)
+# Review #427: cờ của trình thông dịch trước `-m`, `coverage run`, và wrapper giữ mã thoát (xvfb-run, stdbuf, sudo, exec, bundle exec,
+# xcrun, arch) vẫn là lần chạy. `docker compose run … pytest` không có ở đây (backlog).
+for c in ("python3 -u -m pytest -q", "python3 -B -m pytest -q", "python3 -X dev -m pytest -q", "python3 -W error -m pytest -q",
+          "coverage run -m pytest -q", "python3 -m coverage run -m pytest -q", "xvfb-run -a python3 -m pytest -q",
+          "stdbuf -oL python3 -m pytest -q", "sudo python3 -m pytest -q", "exec pytest -q", "bundle exec rspec",
+          "xcrun xcodebuild test", "arch -arm64 xcodebuild test"):
+    case("P1-2 must pass (review): `%s` is a run" % c, after(c, PYOK), 0)
+case("P1-2 control (review): `sudo pip install -q pytest` then a printed pass word", after("sudo pip install -q pytest; echo '5 passed'", "5 passed"), 2)
+case("P1-2 control (review): `python3 -X dev -m pip install pytest` then a printed pass word",
+     after("python3 -X dev -m pip install pytest; echo '5 passed'", "5 passed"), 2)
 
 print("-- P1-4: one summary line per unbound kit run once one of them is masked")
 CRASH = "tests/a/test_x.sh: line 3: FOO: unbound variable\n✔ y1\nall passed (1)"
@@ -186,6 +203,17 @@ case("P1-4 control: a loop that prints each run's ${pipestatus[1]} = 0 (summary 
      after(PSLOOP, "PASS a\na exit=0\nALL OK\nb exit=0\n✅ c: all passed\nc exit=0"), 0)
 case("P1-4 must block: the same loop with one run's ${pipestatus[1]} = 1",
      after(PSLOOP, "PASS a\na exit=0\nb exit=1\n✅ c: all passed\nc exit=0"), 2)
+# Review #427: `test_$t.sh` vào nhánh suite kit, nhánh đó chỉ đọc DEVKIT_SUITE_RED (không RUNNER_FAIL_RX), còn danh sách brace / $VAR
+# đếm là 1: lỗi `3 failure(s)` của lần chạy đầu bị 'all passed' của lần sau che.
+LOOP_TAIL1 = "do bash tests/gates/test_$t.sh 2>&1 | tail -1; done"
+FAIL3 = "3 failure(s)\n✅ test_b: all passed"
+case("P1-4 must block (review): a brace-list loop whose first run printed `3 failure(s)`",
+     after("for t in guard_{kill_by_name,protected_push}; " + LOOP_TAIL1, FAIL3), 2)
+case("P1-4 must block (review): a `$SUITES` loop whose first run printed `3 failure(s)`", after("for t in $SUITES; " + LOOP_TAIL1, FAIL3), 2)
+case("P1-4 must block (review): a brace-list loop (2 runs), the first crashed silently, one summary",
+     after("for t in guard_{kill_by_name,protected_push}; " + LOOP_TAIL1, "tests/gates/test_guard_kill_by_name.sh: line 3: FOO: unbound variable\n✅ test_b: all passed"), 2)
+case("P1-4 control (review): the brace-list loop with a summary per run",
+     after("for t in guard_{kill_by_name,protected_push}; " + LOOP_TAIL1, "✅ test_a: all passed\n✅ test_b: all passed"), 0)
 
 print("-- E3: Unity -testResults <f> is the run's result sent to a file")
 # Unity không xoá file kết quả lúc bắt đầu: Editor chết trước khi ghi thì `cat r.xml` in XML XANH của lần trước. Sau `;` mã thoát
@@ -198,6 +226,17 @@ case("E3 must block: the same with `|| true` before the cat", after(UNITY + " ||
 case("E3 control: `Unity … -testResults r.xml && cat r.xml`: cat runs only after exit 0", after(UNITY + " && cat r.xml", X_GREEN), 0)
 case("E3 control: `&& cat` RED (failed=\"1\") → fix → GREEN is check 7's pair",
      pair(UNITY + " && cat r.xml", X_RED, UNITY + " && cat r.xml", X_GREEN, red_err=False), 0, msg=FIX)
+# Review #427: lệnh Unity thật của repo game, mã thoát gắn bằng `echo "edit exit=$?"` (nhãn có dấu cách).
+UNITY_REAL = ('/Applications/Unity/Hub/Editor/6000.0.1f1/Unity.app/Contents/MacOS/Unity -batchmode -projectPath . -runTests '
+              '-testPlatform EditMode -testResults "$S/edit.xml" -logFile "$S/edit.log"; echo "edit exit=$?"; '
+              "grep -o '<test-run[^>]*' \"$S/edit.xml\" | head -1")
+X6 = '<test-run id="2" testcasecount="6" result="Passed" total="6" passed="6" failed="0"'
+X6_RED = '<test-run id="2" testcasecount="6" result="Failed" total="6" passed="5" failed="1"'
+case("E3 must pass (review): `Unity … -testResults f; echo \"edit exit=$?\"; grep … f` printing exit=0 and a green XML",
+     after(UNITY_REAL, "edit exit=0\n" + X6), 0)
+case("E3 must pass (review): the same, exit=1 / failed=\"1\" → fix → exit=0 is check 7's pair",
+     pair(UNITY_REAL, "edit exit=1\n" + X6_RED, UNITY_REAL, "edit exit=0\n" + X6, red_err=False), 0, msg=FIX)
+case("E3 control (review): the same printing `edit exit=2` and a green XML (stale) is no green", after(UNITY_REAL, "edit exit=2\n" + X6), 2)
 
 print("-- E4: an EXIT trap owns the tool's exit")
 case("E4 must block: `trap 'exit 0' EXIT; pytest -q` with no summary", after("trap 'exit 0' EXIT; python3 -m pytest -q", "....F...."), 2)
@@ -208,6 +247,14 @@ case("E4 control: the word trap in an echo is no trap", after("echo 'no trap EXI
 WRITE_RUN = "cat > tests/a/test_x.sh <<'EOF'\nTMP=$(mktemp -d)\ntrap 'rm -rf \"$TMP\"' EXIT\necho ok\nEOF\nbash tests/a/test_x.sh"
 case("E4 control: a trap inside a heredoc body (a test file written, then run) is data: its failure is the RED half",
      pair(WRITE_RUN, "tests/a/test_x.sh: line 4: FOO: unbound variable", "bash tests/a/test_x.sh", KIT_OK), 0, msg=FIX)
+# Review #427: thân trap trong ngoặc chỉ dọn dẹp (rm, kill, cd, echo…) không đổi mã thoát: lỗi của runner vẫn là nửa ĐỎ.
+case("E4 must pass (review): `trap 'rm -rf $T' EXIT` keeps the run's exit: its failure is the RED half of check 7",
+     pair("T=$(mktemp -d); trap 'rm -rf $T' EXIT; bash tests/a/test_x.sh", "tests/a/test_x.sh: line 3: FOO: unbound variable",
+          "bash tests/a/test_x.sh", "✅ test_x: all passed"), 0, msg=FIX)
+case("E4 control (review): `trap 'rm -rf $T; exit 0' EXIT` with no summary", after("trap 'rm -rf $T; exit 0' EXIT; python3 -m pytest -q", "....F...."), 2)
+case("E4 control (review): `trap cleanup EXIT` (a function: unknown body) with no summary", after("trap cleanup EXIT; python3 -m pytest -q", "....F...."), 2)
+case("E4 control (review): `trap \"rm -rf $(cat d)\" EXIT` (command substitution) with no summary",
+     after('trap "rm -rf $(cat d)" EXIT; python3 -m pytest -q', "....F...."), 2)
 
 print("-- T8: tail -N of mocha / node --test / go test keeps no verdict")
 GO2 = "ok  \texample.com/b\t0.1s\nok  \texample.com/c\t0.1s"
@@ -249,6 +296,17 @@ case("Q9 must pass: pytest through tail -N, then `printf … > /dev/null`",
 case("Q9 must pass: pytest through tail -N, then `gh pr comment --body \"… passed\"`",
      after("python3 -m pytest -q 2>&1 | tail -3; gh pr comment 5 --body 'tests: 12 passed'", "12 passed in 0.50s\nhttps://github.com/o/r/pull/5#issuecomment-1"), 0)
 case("Q9 control: a pass word echoed to stderr still stands in", after("npx mocha 2>&1 | tail -3; echo '12 passing' >&2", MOCHA_TAIL), 2)
+# Review #427: ghi ra file rồi một segment sau đọc lại file đó: không im lặng.
+case("Q9 must block (review): a pass word written to a file that a later segment cats",
+     after("python3 -m pytest -q 2>&1 | tail -3; echo '12 passed' > /tmp/s; cat /tmp/s", "....\n12 passed"), 2)
+case("Q9 must block (review): a heredoc written to a file, then `cat` of that file",
+     after("python3 -m pytest -q 2>&1 | tail -3; cat > /tmp/r.md <<'EOF'\nresult: 12 passed\nEOF\ncat /tmp/r.md", "....\nresult: 12 passed"), 2)
+case("Q9 must block (review): a pass word written to a quoted variable target, then a later segment",
+     after("python3 -m pytest -q 2>&1 | tail -3; echo '12 passed' > \"$F\"; cat \"$F\"", "....\n12 passed"), 2)
+case("Q9 must pass (review): a heredoc to a file that no later segment names",
+     after("python3 -m pytest -q 2>&1 | tail -3; cat > /tmp/n.md <<'EOF'\n12 passed\nEOF\ngit status --short", "12 passed in 0.50s"), 0)
+case("Q9 must pass (review): `printf … > /dev/null`, then another segment",
+     after("python3 -m pytest -q 2>&1 | tail -3; printf '12 passed' > /dev/null; git status --short", "12 passed in 0.50s"), 0)
 case("Q9 control: a pass word written to /dev/stderr still stands in",
      after('python3 -m pytest -q 2>&1 | tail -1; echo "12 passed" > /dev/stderr', "....\n12 passed"), 2)
 
