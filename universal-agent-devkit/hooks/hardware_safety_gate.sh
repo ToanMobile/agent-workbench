@@ -37,6 +37,8 @@
 #     <<'EOF' …)) or the one statement of the command (cat > notes.md <<'EOF', git commit -F -); an unquoted body with a $ or a backtick is never cut;
 #     every other body stays, as before 14/10 (policy of 15/10). ~ as an rm target on a device is refused (its HOME is not known
 #     here); bash -lc / su -c scripts reach the device policy; xargs -i takes no separate value.
+#   • (2026-10-26, #427, tests/gates/test_hardware_issue427.sh) rm -r (cả không -f, find -delete) đi qua một tên mà ln của CHÍNH lệnh đó ghi
+#     (`ln -s ~ <scratch>/l && rm -rf <scratch>/l/`: link chưa có lúc hook xét); build output git track ở hoa thường khác (core.ignorecase).
 #   • adb shell pm uninstall|disable(-user)|hide of a system package (android,
 #     com.android.*, com.google.android.*, vendor namespaces)
 #   • iOS signing & simulators: fastlane match nuke, security delete-keychain|
@@ -443,9 +445,19 @@ def zsh_qualifiers(text):
 def under(p, d):
     return p != d and p.startswith(d.rstrip(os.sep) + os.sep)
 
+_ICASE = []   # core.ignorecase của project, đọc một lần (git_tracks có thể chạy cho nhiều đích trong một lệnh)
+
 def git_tracks(p):
+    # H4 (#427): ls-files so pathspec phân biệt hoa thường dù core.ignorecase=true: `rm -rf build` khi `Build/` được track (APFS) lọt như
+    # build output không track. Dùng :(icase) khi git nói core.ignorecase là true; chưa đặt (rc 1) là false như git; đọc lỗi thì icase.
+    if not _ICASE:
+        try:
+            c = subprocess.run(["git", "-C", ROOT, "config", "--bool", "core.ignorecase"], capture_output=True, text=True, timeout=5)
+            _ICASE.append(c.stdout.strip() == "true" if c.returncode in (0, 1) else True)
+        except (OSError, subprocess.SubprocessError):
+            _ICASE.append(True)
     try:
-        r = subprocess.run(["git", "-C", ROOT, "ls-files", "--", os.path.relpath(p, ROOT)],
+        r = subprocess.run(["git", "-C", ROOT, "ls-files", "--", (":(icase)" if _ICASE[0] else "") + os.path.relpath(p, ROOT)],
                            capture_output=True, text=True, timeout=5)
         return r.returncode == 0 and bool(r.stdout.strip())
     except (OSError, subprocess.SubprocessError):
@@ -558,6 +570,43 @@ def zsh_starstar(t):
     return ("** / *** của zsh (*** đi theo link; ** có dấu / cuối, tên sau nó không phải tên cuối, hay glob khác trước nó): "
             "Python glob không duyệt được như zsh, không biết kết quả tới đâu")
 
+# #427: link do chính lệnh này tạo (ln …) chưa có lúc hook chạy, nên `ln -s ~ <scratch>/l && rm -rf <scratch>/l/` được xét như thư mục thường
+# của scratch / /tmp / build output; chạy thật thì rm đi theo link (dấu / sau nó, đường dẫn bên dưới nó) và xoá nội dung nơi link trỏ tới.
+# rm_command_problem ghi vào đây tên (casefold) mọi toán hạng của ln — cả nguồn: `ln -s ~ dir` tạo dir/<user>; "*" khi một toán hạng không
+# đọc được ($VAR chưa gán, lệnh con, glob, {} của find / xargs).
+# ponytail: xét theo thứ tự đọc lệnh — rm đứng TRƯỚC ln mà chạy lại sau nó (vòng lặp, lượt 2) lọt; link tạo bằng cp -s / mv / tar / os.symlink
+# không được xét. Nâng cấp khi gặp ca thật (đọc lại cả lệnh với mọi tên đã biết, thêm các lệnh tạo link khác).
+LINKS_MADE = set()
+
+def ln_names(rest, env, repl, xargs):
+    """Tên (casefold) các toán hạng của một lệnh ln (rest: các từ sau ln); "*" cho toán hạng không đọc được."""
+    names, opts_done = set(), False
+    for a in rest:
+        if not opts_done and a.startswith("-"):   # tuỳ chọn (cả giá trị của -t / -S: thêm tên thừa thì chỉ chặn nhiều hơn)
+            opts_done = a == "--"
+            continue
+        if a in repl:
+            names.add("*")
+            continue
+        v = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), a)
+        v = os.path.expanduser(v) if v.startswith("~") else v
+        for x in [v] + braces(v):
+            name = os.path.basename(x.rstrip("/"))
+            names.add("*" if "$" in x or "`" in x or GLOB.search(name) else name.casefold())
+    if xargs:   # xargs ln: toán hạng lấy từ lệnh trước
+        names.add("*")
+    return names - {"", ".", ".."}
+
+def made_link_name(t):
+    """Tên trong t mà rm -r đi xuyên qua (có dấu / theo sau) và có thể là link do chính lệnh này tạo (LINKS_MADE), hoặc None. So casefold
+    (APFS không phân biệt hoa thường); một tên là glob, hay một toán hạng ln không đọc được, thì coi như có thể trùng."""
+    if not LINKS_MADE:
+        return None
+    for x in t.split("/")[:-1]:
+        if x not in ("", ".", "..") and ("*" in LINKS_MADE or GLOB.search(x) or "$" in x or "`" in x or x.casefold() in LINKS_MADE):
+            return x
+    return None
+
 def rm_target_problem(t, cwds, env, forced=True):
     """Why removing target t recursively is refused, or None. Without -f (forced=False; 2026-10-09,
     tests/gates/test_hardware_rm_unforced.sh) only a target that is or holds the project root, the home folder, / or a
@@ -588,6 +637,10 @@ def rm_target_problem(t, cwds, env, forced=True):
         t = os.path.expanduser(t)
         if t.startswith("~"):   # ~- (the previous folder), ~+ out of a variable, ~user with no such user: unknown (OCR round 3, H2)
             return f"{orig}: không biết {t.split(chr(47))[0]} trỏ tới đâu (~- / ~+ / ~user lạ)" if forced else None
+    link = made_link_name(t)   # #427: trước khi tách forced — rm -r không -f (và find -delete, rsync --delete) qua link cũng xoá
+    if link is not None:
+        return (f"{orig}: đi qua `{link}`, có thể là link do chính lệnh này tạo (ln) — rm -r theo link (dấu / sau nó, đường dẫn bên dưới) "
+                f"xoá nội dung nơi link trỏ tới. Tách ln và rm thành hai lệnh để cổng thấy link thật")
     if "$" in t or "`" in t:
         return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)" if forced else None
     glob = bool(GLOB.search(t))
@@ -964,6 +1017,9 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
         rim = rimraf_args(prog, rest)
         if rim is not None:
             return rm_segment_problem(["rm", "-rf", "--"] + rim, cwds, env, depth + 1)
+    if prog.lower() in ("ln", "gln"):   # #427: tên link lệnh này tạo, cho made_link_name của các rm sau nó
+        LINKS_MADE.update(ln_names(rest, env, repl, xargs))
+        return None
     if prog.lower() != "rm":
         return None
     flags, targets, opts_done = "", [], False
@@ -1068,7 +1124,8 @@ def rm_walk(text, cwds, depth, remote, env):
                     pass   # pushd -n only edits the directory stack: the shell stays where it is
                 elif (head == "popd" or arg is None or arg == "-" or re.fullmatch(r"[+-]\d+", arg) or "$" in arg or GLOB.search(arg)
                       or (CDPATH_SET and not arg.startswith(("/", "~"))) or (remote and arg.startswith("~"))
-                      or (arg.startswith("~") and os.path.expanduser(arg).startswith("~"))):   # cd ~- / ~+ / ~nosuchuser (OCR round 3)
+                      or (arg.startswith("~") and os.path.expanduser(arg).startswith("~"))   # cd ~- / ~+ / ~nosuchuser (OCR round 3)
+                      or made_link_name(arg + "/") is not None):   # #427: cd vào link chính lệnh này tạo — thư mục thật là nơi link trỏ tới
                     # popd / bare pushd / cd - / pushd +N come back to a directory this walk never saw; with CDPATH a relative
                     # name may resolve anywhere ("CDPATH=/opt cd data" enters /opt/data); the far home is unknown
                     pending = [None]
