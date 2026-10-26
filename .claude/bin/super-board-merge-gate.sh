@@ -49,6 +49,14 @@
 #   super-board-merge-gate.sh --config <config.json> --pr <number>
 #                             [--expect-head <sha>] [--subject <title>] [--body-file <md>]
 #                             [--lock-timeout 1800] [--stale-after 5400] [--dry-run]
+#                             [--preflight] [--standalone]
+#
+# MERGE QUEUE (Pha 2, 26/10): merge train cũ chạy 0 lần trên 73 PR vì reviewer/builder tự gọi gate này. Khi merge queue bật
+# (config `merge_queue.enabled == true`, hoặc SB_MERGE_QUEUE=1; SB_MERGE_QUEUE=0 luôn tắt), gate chỉ chạy cho
+# super-board-merge-train.sh / super-board-merge-queue.sh (SB_MERGE_CALLER=train|queue) hoặc với `--standalone` (/super-review ngoài
+# board); mọi lời gọi khác thoát 13 trước khi đọc GitHub hay đụng khoá. `--preflight`: chỉ các kiểm rẻ trước verify (head, merge
+# policy, QA report, AC, needs-you), không khoá merge, không scratch, không verify/merge, không thông báo; qua hết in `preflight: ok`
+# và thoát 0, không qua thì thoát đúng mã gate sẽ thoát ở bước đó.
 #
 # `--expect-head` is the PR head commit the Reviewer actually reviewed and
 # tested (its `headRefOid` when review passed). The gate pins everything to one
@@ -72,7 +80,9 @@
 # already exists and verification is skipped. Any other tree (the base moved, the head changed) verifies as usual.
 #
 # Exit codes, all meaningful to the caller:
-#   0  merged
+#   0  merged (--preflight: every cheap check passed, stdout `preflight: ok`)
+#   13 merge queue is on and the caller is neither the train nor the queue (no --standalone): label the PR merge-queue instead;
+#      nothing ran, no lock touched
 #   11 verification failed after merging the base cleanly into the scratch tree —
 #      rebasing changes nothing: back to Build to fix the failing verify (the gate
 #      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
@@ -128,6 +138,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 
 CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""; TRAIN_RECEIPT=""
+PREFLIGHT=0; STANDALONE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -139,12 +150,30 @@ while [ $# -gt 0 ]; do
     --stale-after)   STALE_AFTER="$2"; shift 2 ;;
     --train-receipt) TRAIN_RECEIPT="$2"; shift 2 ;;
     --dry-run)       DRY=1; shift ;;
+    --preflight)     PREFLIGHT=1; shift ;;
+    --standalone)    STANDALONE=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
 [ -n "$CONFIG" ] && [ -e "$CONFIG" ] || { echo "config not found: ${CONFIG:-<unset>}" >&2; exit 66; }
 [ -n "$PR" ] || { echo "--pr <number> is required" >&2; exit 64; }
 [ -z "$MSG_FILE" ] || [ -r "$MSG_FILE" ] || { echo "--body-file not readable: $MSG_FILE" >&2; exit 66; }
+# ---- merge queue: một đường merge duy nhất ---------------------------------------
+# Đứng trước mọi việc tốn kém (đọc GitHub, khoá, scratch). Config không đọc được thì coi như tắt: đường cũ tự dừng ở bước kiểm config.
+MERGE_QUEUE_ON=0
+case "${SB_MERGE_QUEUE-}" in
+  0) MERGE_QUEUE_ON=0 ;;
+  1) MERGE_QUEUE_ON=1 ;;
+  *) if jq -e '.merge_queue.enabled == true' "$CONFIG" >/dev/null 2>&1; then MERGE_QUEUE_ON=1; fi ;;
+esac
+if [ "$MERGE_QUEUE_ON" -eq 1 ] && [ "$STANDALONE" -eq 0 ]; then
+  case "${SB_MERGE_CALLER-}" in
+    train|queue) : ;;
+    *) echo "merge-queue: label the PR merge-queue instead of calling the gate directly"
+       echo "[merge-gate #${PR}] merge queue is on: only super-board-merge-train.sh / super-board-merge-queue.sh call this gate (or --standalone outside the board)" >&2
+       exit 13 ;;
+  esac
+fi
 # A lock is presumed abandoned only well past the point a caller stops waiting,
 # so a slow-but-alive merge is never stolen from. The floor matters as much as
 # the multiple: an impatient caller (say --lock-timeout 6 in a test) would
@@ -197,6 +226,8 @@ pr_title() {
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
 }
 needs_you_notify() {
+  # --preflight / --dry-run không gửi (plan v4 mục 4): người nhận chỉ một tin, lúc thẻ chuyển Blocked.
+  if [ "$PREFLIGHT" -eq 1 ] || [ "$DRY" -eq 1 ]; then return 0; fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
@@ -255,10 +286,14 @@ acquire() {
 # Chạy trong trap EXIT dưới set -e: rm hỏng không được đè mã thoát của gate.
 release() { if [ "$(cat "$LOCK_DIR/pid" 2>/dev/null || true)" = "$$" ]; then rm -rf "$LOCK_DIR" 2>/dev/null || true; fi; }
 
-acquire || { say "could not take the merge lock within ${LOCK_TIMEOUT}s"; exit 4; }
-trap release EXIT
-
-say "lock taken; verifying against ${BASE} as it is now"
+# --preflight không lấy khoá merge: chỉ đọc PR và kiểm rẻ (train gọi nó cho từng PR trước khi dựng cây).
+if [ "$PREFLIGHT" -eq 1 ]; then
+  say "preflight: cheap checks only (no merge lock, no scratch tree, no verify, no merge)"
+else
+  acquire || { say "could not take the merge lock within ${LOCK_TIMEOUT}s"; exit 4; }
+  trap release EXIT
+  say "lock taken; verifying against ${BASE} as it is now"
+fi
 
 # ---- the freshness check ---------------------------------------------------
 # Scratch proves the merge. When that merge is clean and the PR branch is behind
@@ -268,9 +303,13 @@ say "lock taken; verifying against ${BASE} as it is now"
 REPO_ABS=$(cd "$REPO_PATH" && pwd -P)
 MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //p')
 BASE_WT=${MAIN_WT:-$REPO_ABS}
-mkdir -p "$BASE_WT/.claude/worktrees"
-SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
-cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "${META:-}" "${DIFF:-}" "${VERIFY_LOG:-}" "${AC_DIR:-}"; release; }
+SCRATCH=""
+if [ "$PREFLIGHT" -ne 1 ]; then
+  mkdir -p "$BASE_WT/.claude/worktrees"
+  SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
+fi
+# SCRATCH rỗng (--preflight): không gọi worktree remove / rm với đường dẫn rỗng.
+cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
 trap cleanup EXIT
 
 # ---- the head guard --------------------------------------------------------
@@ -446,6 +485,8 @@ wait_for_load() {
   # DEVKIT_SLOT_LOAD_WAIT_S=0 (OCR 21/10: tải không đọc được thì gate không chờ, bên trong tự chờ tải).
   LOAD_WAIT_ON=0
   [ "$DRY" -eq 1 ] && return 0
+  # --preflight không giữ khoá: không chờ, không ghi mốc "at" vào khoá có thể là của gate khác.
+  [ "$PREFLIGHT" -eq 1 ] && return 0
   # Tối đa 6 chữ số (không tràn số); 10# đọc 08 là tám (không có nó bash đọc bát phân và set -e dừng gate).
   [[ "$cap" =~ ^[0-9]{1,6}$ ]] || { say "SB_MERGE_LOAD_WAIT_S='${cap}' is not a number of seconds; not waiting for the load"; return 0; }
   cap=$((10#$cap)); [ "$cap" -gt 0 ] || return 0
@@ -487,7 +528,7 @@ wait_for_load() {
 # #288: biên nhận của merge train đã chứng minh đúng cây này thì verify bị bỏ, nên không chờ tải: mỗi PR của đợt từng chờ tới
 # merge_load_wait_s để rồi không chạy gì. Cây dự kiến = merge-tree(base, head), đúng cây train ghi (và cây merge scratch bên dưới).
 SKIP_LOAD_WAIT=0
-if [ "$DRY" -ne 1 ] && [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
+if [ "$DRY" -ne 1 ] && [ "$PREFLIGHT" -ne 1 ] && [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
   PRE_TREE=$(awk -v h="$HEAD_SHA" '$1 == h { print $2 }' "$TRAIN_RECEIPT" | head -1)
   if [ -n "$PRE_TREE" ] && git -C "$REPO_PATH" fetch origin "$HEAD_REF" "$BASE" --quiet 2>/dev/null; then
     [ "$PRE_TREE" != "$(git -C "$REPO_PATH" merge-tree --write-tree "origin/${BASE}" "$HEAD_SHA" 2>/dev/null)" ] || SKIP_LOAD_WAIT=1
@@ -541,6 +582,21 @@ if [ -n "$AC_CARD" ] && [ -z "$MSG_FILE" ]; then
       exit 11
     fi
   fi
+fi
+
+# ---- --preflight dừng ở đây: phần sau là scratch + verify + migrate + merge ------------------------------------------------------
+# Bước chỉ người làm (needs_you của policy: migration ngoài allowed_envs, human_steps, dòng needs-you: trong body) gate thường báo SAU
+# verify (exit 8, khối migrations bên dưới); preflight báo ngay để train không verify một PR sẽ dừng ở exit 8. Lệnh migrate của env được
+# phép không chạy trong preflight.
+if [ "$PREFLIGHT" -eq 1 ]; then
+  if [ "$(echo "$PLAN" | jq '.needs_you | length')" -gt 0 ] && [ "$APPROVED" != true ]; then
+    echo "$PLAN" | jq -r '.needs_you[] | "needs-you: " + .'
+    approval_request
+    say "preflight: 🙋 needs you before this merges"
+    exit 8
+  fi
+  echo "preflight: ok"
+  exit 0
 fi
 
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
