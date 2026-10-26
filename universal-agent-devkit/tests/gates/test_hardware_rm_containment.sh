@@ -96,6 +96,35 @@ if [ -n "$SCR" ]; then
   check 2 'rm -rf /'
   check 2 'rm -rf ~'
   check 2 'rm -rf $X'
+  # review of A7 (25/10): the scratch check read the SPELLING (a string prefix) and the general branch dropped the trailing slash
+  # (normpath), then took the link for one file — `rm -rf <link to $HOME>/` passed in any other spelling of the same folder. Every path is
+  # now judged where the kernel resolves it. Spellings are built from $SCRP (the folder the test made), not from a literal /private/tmp.
+  TROOT="$(dirname "$(dirname "$SCRP")")"                  # /private/tmp on macOS, /tmp elsewhere
+  check 2 "rm -rf $TROOT//claude-$U/$SB/home/"             # C3: an inner //
+  check 2 "rm -rf $TROOT/./claude-$U/$SB/home/"            # C4: /./
+  check 2 "cd $SCRP && rm -rf home/"                       # C5: relative, after a literal cd
+  check 2 "cd $SCRP && rm -rf home/."
+  if [ -d "$TROOT/CLAUDE-$U/$SB" ]; then                   # C1: the same folder in another case (APFS is case-insensitive)
+    check 2 "rm -rf $TROOT/CLAUDE-$U/$SB/home/"
+  else
+    echo "skip C1: this filesystem is case-sensitive"
+  fi
+  HDEPTH="$(python3 -c 'import os; print(len([x for x in os.path.realpath(os.path.expanduser("~")).split("/") if x]))')"
+  check 2 "rm -rf ~/$(printf '../%.0s' $(seq "$HDEPTH"))${SCRP#/}/home/"   # ~/../../private/tmp/…: `..` resolved, not read
+  check 0 "rm -rf $SCRP/inner/"                            # control: a real folder of the scratch, trailing slash
+  check 0 "cd $SCRP && rm -rf inner/"                      # control: … relative
+  check 0 "cd $SCRP && rm -rf home"                        # control: no trailing slash, rm removes the link only
 fi
+
+# 4. review of A7 (25/10): a link inside the PROJECT to a folder outside it. With a trailing slash (or /.) rm deletes what the link points at;
+#    a glob walks into it as well. Without either, rm removes the link alone (allowed as before).
+ln -s "$HOME" "$P/hl" && ln -s "$HOME" "$P/app/build/hl"
+check 2 'rm -rf hl/'
+check 2 "rm -rf $P/hl/"
+check 2 'rm -rf hl/.'
+check 2 'rm -rf app/build/hl/*'                            # a glob in a build output, through the link
+check 0 'rm -rf hl'
+check 0 'rm -rf app/build/hl'
+check 0 'rm -rf app/build/'                                # a real build output with a trailing slash
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_containment: all passed" || { echo "❌ test_hardware_rm_containment: $FAILS failed"; exit 1; }

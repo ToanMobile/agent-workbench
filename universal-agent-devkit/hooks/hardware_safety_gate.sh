@@ -423,33 +423,71 @@ def git_tracks(p):
 HOME = os.path.realpath(os.path.expanduser("~"))
 SYS_PART_DIRS = {"/" + d for d in ("system", "vendor", "boot", "product", "odm", "data", "persist", "efs")}
 PWD_VAR = re.compile(r"\$(?:PWD\b|\{PWD\})")
-# The agent own scratch folder (audit 2026-10-25 A7). A literal path there is allowed like any /tmp path, but one SPELLED under it must
-# also END under it: `rm -rf /private/tmp/claude-501/../x` and `rm -rf <scratch>/link/` (a trailing slash makes BSD rm delete what the
-# link points at: measured on macOS 25/10, the target folder went, the link stayed) left it unchecked. Every other path: unchanged.
+# The agent own scratch folder (audit 2026-10-25 A7). A path there is allowed like any /tmp path, but one that is IN it must also END in
+# it: `rm -rf /private/tmp/claude-501/../x` and `rm -rf <scratch>/link/` (a trailing slash makes BSD rm delete what the link points at:
+# measured on macOS 25/10, the target folder went, the link stayed). Review of A7 (25/10): judged on the spelling, it missed the same folder
+# written another way (`//`, `/./`, another case on APFS, `~/..`, relative after a `cd`): membership is now by inode of the resolved folder.
 SCRATCH_ROOTS = tuple(r + "/claude-" + str(os.getuid()) for r in ("/private/tmp", "/tmp"))
 
-def scratch_escape(t):
-    """Why rm -rf of t, spelled as a path in the agent scratch folder, reaches outside it; None when it stays or is not spelled there.
-    A `..` part is refused. Without a trailing slash rm removes the last name itself (a link, not its target); with one it follows it.
-    A glob is judged on what it matches now (at most 2000) and on the folder before it."""
-    root = next((r for r in SCRATCH_ROOTS if t == r or t.startswith(r + "/")), None)
+def rm_reach(path):
+    """What rm -rf of the absolute path removes, resolved as the kernel does (links, `..` after a link, `//`, `/./`), never by spelling.
+    A trailing / (or a last name . / ..) resolves the whole path: rm follows a link then. Otherwise the parent is resolved and the last name
+    kept: rm removes a link itself, not its target."""
+    q = path.rstrip("/") or "/"
+    base = os.path.basename(q)
+    if q == "/" or path.endswith("/") or base in (".", ".."):
+        return os.path.realpath(q)
+    return os.path.join(os.path.realpath(os.path.dirname(q)), base)
+
+def scratch_root(path, roots):
+    """The entry of roots ([(name, stat)]) that is the resolved path or holds it, compared by inode (APFS: /private/tmp/CLAUDE-501 is the
+    same folder), else None. A name that does not exist yet is judged by its nearest existing parent."""
+    d = path
+    while roots:
+        try:
+            st = os.lstat(d)
+            hit = next((r for r, s in roots if os.path.samestat(st, s)), None)
+            if hit:
+                return hit
+        except OSError:
+            pass
+        up = os.path.dirname(d)
+        if up == d:
+            break
+        d = up
+    return None
+
+def scratch_escape(base, t):
+    """Why rm -rf of t, run in the folder base (/ for an absolute t), reaches outside the agent scratch folder although it is in it;
+    None when it stays or is not in it. In it = the folder rm works in (the resolved parent) is the scratch folder or under it. A `..` is
+    refused, checked before anything resolves it: when the path is in the scratch folder before the `..`, or ends there. A glob is judged
+    on what it matches now (at most 2000) and on the folder before it."""
+    roots = []
+    for r in SCRATCH_ROOTS:
+        try:
+            roots.append((r, os.stat(r)))
+        except OSError:
+            pass
+    if not roots:
+        return None
+    raw = os.path.join(base, t)
+    parts = raw.split("/")
+    root = scratch_root(os.path.realpath(os.path.dirname(raw.rstrip("/") or "/")), roots)
+    if ".." in parts:
+        root = root or next((h for h in (scratch_root(os.path.realpath("/".join(parts[:i]) or "/"), roots)
+                                         for i, x in enumerate(parts) if x == "..") if h), None)
+        return f"đường dẫn trong thư mục scratch có `..` (ra khỏi {root})" if root else None
     if root is None:
         return None
-    parts = t.split("/")
-    if ".." in parts:
-        return f"đường dẫn trong thư mục scratch có `..` (ra khỏi {root})"
-    follow = t.endswith("/")
-    def reach(path):
-        q = path.rstrip("/") or "/"
-        return os.path.realpath(q) if follow else os.path.join(os.path.realpath(os.path.dirname(q)), os.path.basename(q))
     if GLOB.search(t):
         import glob as _glob, itertools as _it
-        k = next(i for i, x in enumerate(parts) if GLOB.search(x))
-        hits = [reach(m) for m in _it.islice(_glob.iglob(t), 2000)] + [os.path.realpath("/".join(parts[:k]) or "/")]
+        tp = t.split("/")
+        k = next(i for i, x in enumerate(tp) if GLOB.search(x))
+        hits = [rm_reach(m) for m in _it.islice(_glob.iglob(os.path.join(_glob.escape(base), t)), 2000)]
+        hits.append(os.path.realpath(os.path.join(base, "/".join(tp[:k]) or ("/" if t.startswith("/") else "."))))
     else:
-        hits = [reach(t)]
-    real = os.path.realpath(root)
-    out = next((p for p in hits if p != real and not p.startswith(real + "/")), None)
+        hits = [rm_reach(raw)]
+    out = next((p for p in hits if scratch_root(p, roots) is None), None)
     return f"ra khỏi thư mục scratch {root} (tới {out})" if out else None
 
 def rm_target_problem(t, cwds, env, forced=True):
@@ -472,23 +510,22 @@ def rm_target_problem(t, cwds, env, forced=True):
     t = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), t)
     if "$" in t or "`" in t:
         return f"{orig}: không xác định được đường dẫn ($VAR / lệnh con)" if forced else None
-    if forced:   # A7: a path spelled in the scratch folder must stay in it (scratch_escape); any other path is judged as before
-        esc = scratch_escape(t)
-        if esc:
-            return f"{orig}: {esc}"
     glob = bool(GLOB.search(t))
-    if glob:  # judged as its directory: rm -rf src/* empties src
-        parts = t.split("/")
-        k = next(i for i, x in enumerate(parts) if GLOB.search(x))
-        t = "/".join(parts[:k]) or ("/" if t.startswith("/") else ".")
     for cwd in ([None] if os.path.isabs(t) else cwds):
         if cwd is None and not os.path.isabs(t):
             if not forced:
                 continue
             return f"{orig}: không biết thư mục hiện tại (cd tới $VAR / lệnh con / popd)"
-        p = os.path.normpath(os.path.join(cwd or "/", t))
-        # the parent resolved, the last name kept: rm removes a symlink, not its target
-        p = os.path.realpath(p) if p == os.sep else os.path.join(os.path.realpath(os.path.dirname(p)), os.path.basename(p))
+        if forced:   # A7: a path in the scratch folder must stay in it (scratch_escape), whatever its spelling
+            esc = scratch_escape(cwd or "/", t)
+            if esc:
+                return f"{orig}: {esc}"
+        if glob:  # judged as its directory: rm -rf src/* empties src; the shell expands the glob inside it, through a link too
+            parts = t.split("/")
+            k = next(i for i, x in enumerate(parts) if GLOB.search(x))
+            p = os.path.realpath(os.path.join(cwd or "/", "/".join(parts[:k]) or ("/" if t.startswith("/") else ".")))
+        else:   # where the kernel resolves it (review of A7, 25/10): `link/` deletes what the link points at, `link` the link alone
+            p = rm_reach(os.path.join(cwd or "/", t))
         if not glob and os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p)):
             continue  # a single file
         if not forced:   # / holds the project root, so it is caught by the first test

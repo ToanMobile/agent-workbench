@@ -60,4 +60,9 @@ check 0 'rm -r /tmp/devkit-unforced-x'
 check 0 'find . -name __pycache__ -exec rm -r {} +'
 check 0 'rm -f notes.txt'
 
+# Review of A7 (25/10): a link in the project to the home folder — with a trailing slash rm deletes the home folder's contents
+ln -s "$H" "$P/hl"
+check 2 'rm -r hl/'
+check 0 'rm -r hl'                        # no trailing slash: the link only
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_unforced: all passed" || { echo "❌ test_hardware_rm_unforced: $FAILS failed"; exit 1; }
