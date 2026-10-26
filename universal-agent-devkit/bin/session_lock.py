@@ -161,8 +161,8 @@ def _heredoc_end(lines, i, m):
 
 def _piped_reader(after):
     """The shell / interpreter after the first `|` of `after` (the rest of a heredoc's opening line: `cat <<EOF | bash`) that runs its stdin
-    as a script (_stdin_reader); None when there is none."""
-    return _stdin_reader(_cmd_words(re.split(r"[|;&]", after.split("|", 1)[1])[0])) if "|" in after.replace("||", "") else None
+    as a script, past its wrappers (_stdin_prog); None when there is none."""
+    return _stdin_prog(re.split(r"[|;&]", after.split("|", 1)[1])[0]) if "|" in after.replace("||", "") else None
 
 
 def _strip_heredocs(cmd, shell_only=False, kept=None):
@@ -1058,6 +1058,18 @@ def _stdin_reader(words):
     return prog if not operands or operands == ["-"] or (shell and "-s" in opts) else None
 
 
+def _stdin_prog(seg):
+    """_stdin_reader of the segment `seg` past every wrapper: the launchers of _cmd_words and the ones hooks/shell_norm knows besides
+    (gtimeout, stdbuf, setsid, flock …: OCR 26/10 r2, `cat <<EOF | gtimeout 60 bash` was read as data)."""
+    words = _cmd_words(seg)
+    try:
+        k = _hook_module("shell_norm").prefix_end(words)
+    except Exception as e:  # noqa: BLE001 - fail closed: the first word a reader starts at
+        print(f"session_lock: wrapper scan failed: {e!r}", file=sys.stderr)
+        k = next((i for i in range(len(words)) if _stdin_reader(words[i:])), 0)
+    return _stdin_reader(words[k:])
+
+
 def _printf_text(args):
     """What `printf FORMAT ARGS...` prints, approximately: escapes read, each %s / %b / %d replaced by the next argument (the format repeats
     while arguments are left)."""
@@ -1097,23 +1109,23 @@ def _stdin_scripts(cmd):
     pieces = _split_segments(_clean(cmd))
     for k in range(0, len(pieces), 2):
         hs = re.search(r"<<<\s*(\"[^\"]*\"|'[^']*'|\S+)", pieces[k])
-        prog = _stdin_reader(_cmd_words(pieces[k])) if hs else None
+        prog = _stdin_prog(pieces[k]) if hs else None
         if prog:   # bash <<< 'cmd'
             try:
                 body = shlex.split(hs.group(1))[0]
             except (ValueError, IndexError):
                 body = hs.group(1)
             synth(prog, body)
-        if k + 2 < len(pieces) and pieces[k + 1] == "|" and _stdin_reader(_cmd_words(pieces[k + 2])):   # echo '…' | sh, printf … | bash
+        if k + 2 < len(pieces) and pieces[k + 1] == "|" and _stdin_prog(pieces[k + 2]):   # echo '…' | sh, printf … | bash
             words = _cmd_words(pieces[k])
             if words and os.path.basename(words[0]) in ("echo", "printf"):
                 args = [a for a in words[1:]]
                 if words[0] == "echo":
                     while args and re.fullmatch(r"-[neE]+", args[0]):
                         args = args[1:]
-                    synth(_stdin_reader(_cmd_words(pieces[k + 2])), " ".join(args))
+                    synth(_stdin_prog(pieces[k + 2]), " ".join(args))
                 else:
-                    synth(_stdin_reader(_cmd_words(pieces[k + 2])), _printf_text(args))
+                    synth(_stdin_prog(pieces[k + 2]), _printf_text(args))
     return out
 
 

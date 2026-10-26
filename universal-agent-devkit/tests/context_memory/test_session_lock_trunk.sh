@@ -253,6 +253,12 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "worktree: nohup bash <<'EOF' git -C <main> commit EOF", w, B(f"nohup bash <<'EOF'\ngit -C {m} commit -qm x\nEOF")),
     (False, "worktree: cat <<EOF > <wt>/notes.txt (a data heredoc naming main: no write)", w, B(f"cat <<EOF > {w}/notes.txt\ngit -C {m} commit -qm x\nEOF")),
     (False, "worktree: timeout 60 bash script.sh (no heredoc: as before)", w, B("timeout 60 bash ./script.sh")),
+    # vòng 2: shell đọc script từ stdin sau một wrapper mà bảng launcher của session_lock không có (gtimeout, stdbuf …)
+    (True, "worktree: cat <<'EOF' | gtimeout 60 bash  git -C <main> commit EOF", w, B(f"cat <<'EOF' | gtimeout 60 bash\ngit -C {m} commit -qm x\nEOF")),
+    (True, "worktree: cat <<'EOF' | stdbuf -o0 bash  git -C <main> commit EOF", w, B(f"cat <<'EOF' | stdbuf -o0 bash\ngit -C {m} commit -qm x\nEOF")),
+    (True, "worktree: echo 'git -C <main> commit' | gtimeout 60 bash", w, B(f"echo 'git -C {m} commit -qm x' | gtimeout 60 bash")),
+    (True, "worktree: gtimeout 60 bash <<< 'git -C <main> commit'", w, B(f"gtimeout 60 bash <<< 'git -C {m} commit -qm x'")),
+    (False, "worktree: cat <<'EOF' | gtimeout 60 bash script.sh (the body is the script's stdin data)", w, B(f"cat <<'EOF' | gtimeout 60 bash ./script.sh\ngit -C {m} commit -qm x\nEOF")),
     # vòng 2: cd trong thân dời shell của THÂN - lệnh ghi sau nó trong thân xét ở nơi cd tới; sau thân, thư mục là của shell này (không biết
     # khi thân đã dời: có thể là source)
     (False, "worktree: bash <<'EOF' cd <wt> && git commit EOF (the body's shell stays in the worktree)", w, B(f"bash <<'EOF'\ncd {w} && git commit -qm x\nEOF")),
