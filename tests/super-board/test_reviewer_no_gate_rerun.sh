@@ -33,4 +33,24 @@ grep -q 'super-board-verify-flags\.sh' "$GATE" && grep -q 'sb_verify_inject_flag
   && case "$injected" in *" --force-full"*) true ;; *) false ;; esac \
   && ok "merge gate vẫn thêm --force-full (qua sb_verify_inject_flags)" || fail "merge gate mất --force-full"
 
+# R5 (audit Antigravity #1, #6): merge queue chỉ bật khi config bật VÀ worker_backend là claude-p (runner claude-p rút hàng mỗi
+# tick). Lane workflow (wave.js) / codex không có ai rút hàng: gắn nhãn merge-queue ở đó làm thẻ kẹt Review, wave sau review lại.
+PRE="$ROOT/.claude/skills/super-build/references/worker-preamble.md"
+DOC="$ROOT/universal-agent-devkit/docs/init_board/ai-factory-superboard-workflow.md"
+case "$review_block" in
+  *"Merge queue on"*) fail "prompt reviewer (workflow) còn nhánh 'Merge queue on' bảo gắn nhãn merge-queue" ;;
+  *"worker_backend is claude-p"*) ok "prompt reviewer (workflow) nói queue chỉ áp dụng với worker_backend claude-p, ở đây đi merge gate" ;;
+  *) fail "prompt reviewer (workflow) thiếu điều kiện worker_backend claude-p" ;;
+esac
+for f in "$RUN" "$PRE" "$DOC" "$SKILL"; do
+  n="$(grep -ci 'merge queue on' "$f")"
+  bad="$(grep -i 'merge queue on' "$f" | grep -v -c 'claude-p')"
+  if [ "$n" -gt 0 ] && [ "$bad" -eq 0 ]; then ok "${f#"$ROOT"/}: mọi câu 'Merge queue on' đều nêu điều kiện claude-p"
+  else fail "${f#"$ROOT"/}: $bad/$n câu 'Merge queue on' thiếu điều kiện claude-p"; fi
+done
+if grep -qF -- '--body-file <msg.md>`, plus `--standalone`' "$SKILL"; then fail "SKILL bước merge còn gợi ý --standalone ngay trong lệnh gate"
+else ok "SKILL bước merge không gắn --standalone vào lệnh gate"; fi
+grep -qF 'never inside a board lane' "$SKILL" && ok "SKILL nói --standalone không bao giờ dùng trong lane board" \
+  || fail "SKILL thiếu câu --standalone 'never inside a board lane'"
+
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }
