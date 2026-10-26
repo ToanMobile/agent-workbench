@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calibra Room — Biên bản hiệu chuẩn phòng Control B</title>
+  <style>
+    :root {
+      --studio-bg: #10161d;
+      --panel-surface: #18212b;
+      --panel-raised: #202c39;
+      --border-slate: #2f3f50;
+      --ice-ink: #e9eff5;
+      --slate-secondary: #a9b8c7;
+      --copper-meter: #e08432;
+      --copper-ink: #10161d;
+      --sage-pass: #6cc497;
+      --font-display: Charter, Georgia, Cambria, serif;
+      --font-sans: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+      --font-mono: "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--studio-bg);
+      color: var(--ice-ink);
+      font-family: var(--font-sans);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    a:focus,
+    button:focus {
+      outline: none;
+    }
+
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding-bottom: 24px;
+      margin-bottom: 32px;
+      border-bottom: 1px solid var(--border-slate);
+    }
+
+    .brand {
+      font-weight: 700;
+      font-size: 1.125rem;
+      letter-spacing: 0.01em;
+    }
+
+    .room-code {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: #6b727a;
+      margin-top: 4px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .btn-primary {
+      display: inline-block;
+      background: var(--copper-meter);
+      color: var(--copper-ink);
+      text-decoration: none;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 6px;
+    }
+
+    .btn-secondary {
+      display: inline-block;
+      background: var(--panel-raised);
+      color: var(--ice-ink);
+      text-decoration: none;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border-slate);
+    }
+
+    .summary-banner {
+      background: var(--panel-surface);
+      border: 1px solid var(--border-slate);
+      border-left: 5px solid var(--copper-meter);
+      border-radius: 10px;
+      padding: 24px;
+      margin-bottom: 36px;
+    }
+
+    .summary-banner h1 {
+      font-family: var(--font-display);
+      font-size: 2.375rem;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 14px;
+    }
+
+    .long-note {
+      color: #707780;
+      line-height: 1.18;
+      font-size: 1rem;
+    }
+
+    .room-panel {
+      background: var(--panel-surface);
+      border: 1px solid var(--border-slate);
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      padding: 24px;
+      margin-bottom: 36px;
+    }
+
+    .room-panel h3 {
+      font-size: 1.25rem;
+      margin-bottom: 18px;
+    }
+
+    .band-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+    }
+
+    .band-card {
+      background: var(--panel-raised);
+      border: 1px solid var(--border-slate);
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      padding: 18px;
+    }
+
+    .band-label {
+      font-family: var(--font-mono);
+      font-size: 0.9375rem;
+      color: var(--copper-meter);
+      margin-bottom: 8px;
+    }
+
+    .band-value {
+      font-family: var(--font-mono);
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .band-caption {
+      color: #6f767f;
+      font-size: 0.9375rem;
+      line-height: 1.18;
+    }
+
+    .notes-section {
+      background: var(--panel-surface);
+      border: 1px solid var(--border-slate);
+      border-radius: 10px;
+      padding: 24px;
+    }
+
+    .notes-section h3 {
+      font-size: 1.25rem;
+      margin-bottom: 12px;
+    }
+
+    .notes-list {
+      list-style: none;
+      display: grid;
+      gap: 10px;
+    }
+
+    .notes-list li {
+      padding-top: 10px;
+      border-top: 1px solid var(--border-slate);
+      color: var(--slate-secondary);
+    }
+
+    .pass-badge {
+      font-family: var(--font-mono);
+      color: var(--sage-pass);
+      margin-right: 8px;
+    }
+
+    @media (max-width: 820px) {
+      .band-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header-bar">
+      <div>
+        <div class="brand">Calibra Room</div>
+        <div class="room-code">Phòng Control B · Micro chuẩn #MC-418 · 79 dB SPL(C)</div>
+      </div>
+      <nav class="actions" aria-label="Tác vụ hiệu chuẩn">
+        <a class="btn-secondary" href="/sessions/control-b.cal">Tải tệp hiệu chuẩn .cal</a>
+        <a class="btn-primary" href="/sessions/new-sweep">Chạy phép đo dải tần mới</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="summary-banner">
+        <h1>Biên bản kiểm định đáp tuyến phòng dựng Control B</h1>
+        <p class="long-note">Phép đo thực hiện tại vị trí ghế kỹ sư chính sau khi bổ sung hai tấm bẫy trầm góc tường sau và dịch chuyển cặp loa kiểm âm trái phải lùi 14 cm khỏi vách kính phòng thu âm giọng đọc. Toàn bộ chuỗi lọc bù phòng đã giữ độ lệch biên độ trong ngưỡng cộng trừ 1.8 dB từ 55 Hz đến 16 kHz mà không gây gợn pha ở vùng cắt tần 1.9 kHz.</p>
+      </section>
+
+      <section class="room-panel" aria-labelledby="bands-title">
+        <h3 id="bands-title">Độ lệch đo theo ba vùng tần số</h3>
+        <div class="band-grid">
+          <article class="band-card">
+            <div class="band-label">45 Hz – 160 Hz</div>
+            <div class="band-value">-1.4 dB</div>
+            <p class="band-caption">Đã triệt tiêu đỉnh cộng hưởng 63 Hz từng làm dày giọng nam trầm ở bản dựng trước.</p>
+          </article>
+
+          <article class="band-card">
+            <div class="band-label">160 Hz – 2.5 kHz</div>
+            <div class="band-value">+0.6 dB</div>
+            <p class="band-caption">Dải trung thoại cân bằng giữa kênh trái và kênh phải với sai số dưới 0.3 dB.</p>
+          </article>
+
+          <article class="band-card">
+            <div class="band-label">2.5 kHz – 18 kHz</div>
+            <div class="band-value">-0.8 dB</div>
+            <p class="band-caption">Độ suy giảm tần cao tự nhiên theo khoảng cách nghe 1.35 m tại bàn điều khiển.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="notes-section" aria-labelledby="checklist-title">
+        <h3 id="checklist-title">Hạng mục nghiệm thu kỹ thuật</h3>
+        <ul class="notes-list">
+          <li><span class="pass-badge">[ĐẠT]</span>Thời gian dội âm RT60 trung bình đạt 0.24 giây trên dải 250 Hz – 4 kHz.</li>
+          <li><span class="pass-badge">[ĐẠT]</span>Độ trễ tương quan kênh trái – phải tại điểm ngọt bằng 0.02 ms.</li>
+          <li><span class="pass-badge">[ĐẠT]</span>Mức nhiễu nền điều hòa không khí giữ ở NC-18 khi đóng cửa cách âm.</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

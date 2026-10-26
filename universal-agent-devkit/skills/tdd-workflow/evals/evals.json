@@ -1,0 +1,161 @@
+{
+  "skill_name": "tdd-workflow",
+  "evals": [
+    {
+      "id": 1,
+      "name": "slugify-drops-digits",
+      "prompt": "Người dùng báo cáo khi tiêu đề bài viết có số phiên bản hoặc năm (ví dụ 'Release 2026 v2' hay 'Top 10 Tips'), đường dẫn tĩnh do hàm slugify trong text_slug.py tạo ra bị mất sạch các chữ số. Hãy kiểm tra và khắc phục lỗi này.",
+      "expected_output": "Hàm slugify giữ lại đầy đủ chữ số 0-9 trong kết quả slug và có test hồi quy tái hiện lỗi trước khi sửa.",
+      "files": [
+        "evals/files/eval-1/text_slug.py",
+        "evals/files/eval-1/test_text_slug.py"
+      ],
+      "expectations": [
+        "Agent viết và chạy test tái hiện triệu chứng mất chữ số thấy FAIL trước khi sửa text_slug.py",
+        "Bộ test của agent bắt được lỗi khi chạy lại trên bản text_slug.py lỗi gốc và chạy xanh trên bản đã sửa",
+        "Hàm slugify vượt qua toàn bộ bộ test oracle"
+      ],
+      "checks": [
+        {
+          "id": "tdd_test_before_prod_edit",
+          "text": "Chạy lệnh test Python trước khi Edit/Write lần đầu vào file production",
+          "type": "tool_order",
+          "first": {
+            "tool": "Bash",
+            "command_regex": "\\bpython3?\\b.*(-m\\s+(unittest|pytest)\\b|(^|[\\s/])test_\\w*\\.py\\b)|\\bpytest\\b"
+          },
+          "before": {
+            "tool": "Edit|Write",
+            "path_not_regex": "(^|/)test_"
+          }
+        },
+        {
+          "id": "agent_test_catches_bug",
+          "text": "Bộ test do agent để lại thất bại (bắt được lỗi) khi chạy trên file text_slug.py lỗi gốc",
+          "type": "command",
+          "expect": "fail",
+          "cmd": ["python3", "-m", "unittest", "-q"],
+          "oracle_files": ["evals/files/eval-1/text_slug.py"]
+        },
+        {
+          "id": "agent_tests_pass",
+          "text": "Bộ test của agent chạy xanh trên mã nguồn sau khi sửa",
+          "type": "command",
+          "expect": "pass",
+          "cmd": ["python3", "-m", "unittest", "-q"]
+        },
+        {
+          "id": "oracle_passes",
+          "text": "Vượt qua bộ kiểm thử độc lập test_oracle.py",
+          "type": "command",
+          "cmd": ["python3", "-m", "unittest", "-q", "test_oracle"],
+          "oracle_files": ["evals/files/eval-1/oracle/test_oracle.py"]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "parse-compound-duration",
+      "prompt": "Trong module duration.py, khi người dùng nhập chuỗi thời lượng ghép nhiều đơn vị như '1h30m' hoặc '2m15s' vào hàm parse_duration thì bị báo lỗi không hợp lệ thay vì tính tổng số giây. Hãy kiểm tra và sửa lỗi này.",
+      "expected_output": "Hàm parse_duration tính đúng tổng số giây cho chuỗi ghép nhiều đơn vị (h/m/s) và vẫn từ chối đầu vào sai.",
+      "files": [
+        "evals/files/eval-2/duration.py",
+        "evals/files/eval-2/test_duration.py"
+      ],
+      "expectations": [
+        "Agent chạy test tái hiện lỗi chuỗi ghép (ví dụ 1h30m) thấy FAIL trước khi sửa duration.py",
+        "Bộ test của agent bắt được lỗi khi chạy lại trên bản duration.py lỗi gốc và chạy xanh trên bản đã sửa",
+        "Hàm parse_duration vượt qua toàn bộ bộ test oracle"
+      ],
+      "checks": [
+        {
+          "id": "tdd_test_before_prod_edit",
+          "text": "Chạy lệnh test Python trước khi Edit/Write lần đầu vào file production",
+          "type": "tool_order",
+          "first": {
+            "tool": "Bash",
+            "command_regex": "\\bpython3?\\b.*(-m\\s+(unittest|pytest)\\b|(^|[\\s/])test_\\w*\\.py\\b)|\\bpytest\\b"
+          },
+          "before": {
+            "tool": "Edit|Write",
+            "path_not_regex": "(^|/)test_"
+          }
+        },
+        {
+          "id": "agent_test_catches_bug",
+          "text": "Bộ test do agent để lại thất bại (bắt được lỗi) khi chạy trên file duration.py lỗi gốc",
+          "type": "command",
+          "expect": "fail",
+          "cmd": ["python3", "-m", "unittest", "-q"],
+          "oracle_files": ["evals/files/eval-2/duration.py"]
+        },
+        {
+          "id": "agent_tests_pass",
+          "text": "Bộ test của agent chạy xanh trên mã nguồn sau khi sửa",
+          "type": "command",
+          "expect": "pass",
+          "cmd": ["python3", "-m", "unittest", "-q"]
+        },
+        {
+          "id": "oracle_passes",
+          "text": "Vượt qua bộ kiểm thử độc lập test_oracle.py",
+          "type": "command",
+          "cmd": ["python3", "-m", "unittest", "-q", "test_oracle"],
+          "oracle_files": ["evals/files/eval-2/oracle/test_oracle.py"]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "median-even-length",
+      "prompt": "Báo cáo thống kê từ stats_calc.py đang tính sai giá trị trung vị (hàm median) khi danh sách đầu vào có số lượng phần tử chẵn (kết quả bị lệch về phần tử đứng sau thay vì trung bình cộng hai phần tử giữa). Hãy kiểm tra và sửa lỗi.",
+      "expected_output": "Hàm median trả về trung bình cộng hai phần tử giữa cho dãy chẵn và giữ đúng hành vi cho dãy lẻ / rỗng.",
+      "files": [
+        "evals/files/eval-3/stats_calc.py",
+        "evals/files/eval-3/test_stats_calc.py"
+      ],
+      "expectations": [
+        "Agent chạy test tái hiện lỗi dãy chẵn thấy FAIL trước khi sửa stats_calc.py",
+        "Bộ test của agent bắt được lỗi khi chạy lại trên bản stats_calc.py lỗi gốc và chạy xanh trên bản đã sửa",
+        "Hàm median vượt qua toàn bộ bộ test oracle"
+      ],
+      "checks": [
+        {
+          "id": "tdd_test_before_prod_edit",
+          "text": "Chạy lệnh test Python trước khi Edit/Write lần đầu vào file production",
+          "type": "tool_order",
+          "first": {
+            "tool": "Bash",
+            "command_regex": "\\bpython3?\\b.*(-m\\s+(unittest|pytest)\\b|(^|[\\s/])test_\\w*\\.py\\b)|\\bpytest\\b"
+          },
+          "before": {
+            "tool": "Edit|Write",
+            "path_not_regex": "(^|/)test_"
+          }
+        },
+        {
+          "id": "agent_test_catches_bug",
+          "text": "Bộ test do agent để lại thất bại (bắt được lỗi) khi chạy trên file stats_calc.py lỗi gốc",
+          "type": "command",
+          "expect": "fail",
+          "cmd": ["python3", "-m", "unittest", "-q"],
+          "oracle_files": ["evals/files/eval-3/stats_calc.py"]
+        },
+        {
+          "id": "agent_tests_pass",
+          "text": "Bộ test của agent chạy xanh trên mã nguồn sau khi sửa",
+          "type": "command",
+          "expect": "pass",
+          "cmd": ["python3", "-m", "unittest", "-q"]
+        },
+        {
+          "id": "oracle_passes",
+          "text": "Vượt qua bộ kiểm thử độc lập test_oracle.py",
+          "type": "command",
+          "cmd": ["python3", "-m", "unittest", "-q", "test_oracle"],
+          "oracle_files": ["evals/files/eval-3/oracle/test_oracle.py"]
+        }
+      ]
+    }
+  ]
+}
