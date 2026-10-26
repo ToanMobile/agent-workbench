@@ -507,7 +507,7 @@ rv_none="$(rv14 "Đang chờ Antigravity phản biện kế hoạch.")"
 # A turn spans many Stops (a reply waiting for a background task ends one; its <task-notification> is no prompt): one early `git push`
 # made every later "waiting" Stop a handover (review_gate: 261 of 454 blocks mid-task). Only a push that no Edit/Write of the turn
 # follows is one; review_gate still holds when that push carried code edited since the last review. Replies are real transcript lines.
-tra3() {   # tra3 <transcript> <session> <item>…   B:<command> (Bash) · E:<file> (Edit) · R (principal-code-reviewer)
+tra3() {   # tra3 <transcript> <session> <item>…   B:<command> (Bash) · E:<file> (Edit, E: alone = no path) · W:<file> (Write) · N:<file> (NotebookEdit) · R (reviewer)
   python3 - "$@" <<'PY'
 import json, sys, time
 iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t)); now = time.time() - 60
@@ -518,6 +518,12 @@ for i, it in enumerate(sys.argv[3:]):
         tu = {"type": "tool_use", "id": "b%d" % i, "name": "Bash", "input": {"command": it[2:]}}
     elif it.startswith("E:"):
         tu = {"type": "tool_use", "id": "e%d" % i, "name": "Edit", "input": {"file_path": it[2:], "old_string": "1", "new_string": "2"}}
+        if not it[2:]:
+            del tu["input"]["file_path"]
+    elif it.startswith("W:"):
+        tu = {"type": "tool_use", "id": "w%d" % i, "name": "Write", "input": {"file_path": it[2:], "content": "n"}}
+    elif it.startswith("N:"):
+        tu = {"type": "tool_use", "id": "n%d" % i, "name": "NotebookEdit", "input": {"notebook_path": it[2:], "new_source": "x"}}
     else:
         tu = {"type": "tool_use", "id": "r%d" % i, "name": "Agent", "input": {"subagent_type": "principal-code-reviewer", "prompt": "review"}}
     recs.append({"type": "assistant", "sessionId": sid, "timestamp": iso(now + i), "message": {"content": [tu]}})
@@ -543,6 +549,16 @@ tra3 "$TRA3" sa3 "B:git push origin main" "B:sed -i '' s/2/3/ src/Core.kt"; ra_b
   || fail "regression_gate held a waiting reply after an early push (CHƯA XONG rc=$ra_after, no status rc=$ra_after_b)"
 [ "$ra_last" = 2 ] && [ "$ra_bash" = 2 ] && ok "  … a push after the turn's last edit, or one only Bash edits followed (not seen as edits), is still a handover" \
   || fail "push handover lost: push last rc=$ra_last, Bash edit after push rc=$ra_bash"
+# Review of A3 (25/10): only an edit of a file inside the repo / worktree follows the push. A handover note written outside it (scratch)
+# after the push made the turn mid-work, and regression_gate / testsourceset_gate skipped the handover.
+tra3 "$TRA3" sa3 "E:$RA3/src/Core.kt" "B:git push origin main" "W:$TMP/scratch-note.md"; ra_wout="$(rga3 "$WAIT_A3")"
+tra3 "$TRA3" sa3 "E:$RA3/src/Core.kt" "B:git push origin main" "N:$TMP/scratch.ipynb"; ra_nout="$(rga3 "$WAIT_A3")"
+tra3 "$TRA3" sa3 "E:$RA3/src/Core.kt" "B:git push origin main" "W:$RA3/notes.md"; ra_win="$(rga3 "$WAIT_A3")"
+tra3 "$TRA3" sa3 "E:$RA3/src/Core.kt" "B:git push origin main" "E:"; ra_nopath="$(rga3 "$WAIT_A3")"
+[ "$ra_wout" = 2 ] && [ "$ra_nout" = 2 ] && ok "regression_gate: a Write / NotebookEdit OUTSIDE the repo after the push leaves the push the last step — handover, gated" \
+  || fail "regression_gate skipped a handover after an outside edit (Write rc=$ra_wout, NotebookEdit rc=$ra_nout)"
+[ "$ra_win" = 0 ] && [ "$ra_nopath" = 0 ] && ok "  … a Write inside the repo, or an edit with no path, after the push is still mid-work" \
+  || fail "inside edit after push no longer mid-work (Write in repo rc=$ra_win, no path rc=$ra_nopath)"
 # review_gate: src/A.kt is a changed code file; its mtime is set per case (Bash-window authorship reads it)
 VA3="$TMP/va3"; mkdir -p "$VA3/src"; git -C "$VA3" init -q; git -C "$VA3" config user.email t@t; git -C "$VA3" config user.name t
 echo "fun a() = 1" > "$VA3/src/A.kt"; git -C "$VA3" add -A; git -C "$VA3" commit -qm init; echo "fun a() = 2" > "$VA3/src/A.kt"

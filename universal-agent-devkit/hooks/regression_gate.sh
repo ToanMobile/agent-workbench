@@ -264,7 +264,7 @@ if not probe:
 # Một định nghĩa duy nhất: devkit_harness.mid_work (audit 25/10 A5: testsourceset_gate dùng chung, không chép lại).
 if info is not None and not probe:
     try:
-        why = devkit_harness.mid_work(data, info, pushed)
+        why = devkit_harness.mid_work(data, info, pushed, repo=repo)   # repo: an edit outside it after a push is no work of the turn
         if why == "wip":
             note("skip: work in progress (status line %r) sid=%s" % (devkit_harness.status_line(
                 data.get("last_assistant_message"))[:40], sid))

@@ -146,7 +146,7 @@ for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             sys.path.insert(0, _hd)
             sys.dont_write_bytecode = True
             import devkit_harness
-            if devkit_harness.work_in_progress(d, status_optional=True):
+            if devkit_harness.work_in_progress(d, status_optional=True, repo=repo):
                 _tp0 = d.get("transcript_path")
                 _st0 = devkit_harness.turn_start(_tp0)
                 if _st0 is None or "push" not in devkit_harness.git_writes_in_turn(_tp0, _st0):
