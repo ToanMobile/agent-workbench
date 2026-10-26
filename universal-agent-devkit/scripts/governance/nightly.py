@@ -217,7 +217,8 @@ def run_project(project: Path, named: bool = False) -> tuple:
             lines.append(f"skip: {stopped} - dừng trước {tid}")
             break
         pats = list(it.get("watch_files", [])) + list(it.get("covers", []))
-        lines.append(stale_rerun.run_one(project, tid, it["command"], pats, timeout, mode="nightly", retry=True))
+        # record_per_test (#427 vòng 2): run_impacted.sh chạy mọi test và ghi PASS từng test — gate sáng trên đúng cây đó dùng lại (trong 6 h)
+        lines.append(stale_rerun.run_one(project, tid, it["command"], pats, timeout, mode="nightly", retry=True, record_per_test=True))
     if named and not stopped:   # a session may have opened during the LAST suite, and red_proof adds and removes worktrees in this repo's .git
         stopped = checkout_busy(project)
         if stopped:

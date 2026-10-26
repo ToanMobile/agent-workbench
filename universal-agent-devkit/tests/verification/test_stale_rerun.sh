@@ -8,7 +8,7 @@
 #  - SessionStart says what it started
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
-DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+DEVKIT_DIR="${SR_KIT:-$(cd "$(dirname "$0")/../.." && pwd)}"   # SR_KIT: chạy cùng bộ ca trên một bản kit khác (RED trên bản gốc)
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; RERUN="$DEVKIT_DIR/scripts/testing/stale_rerun.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -156,5 +156,43 @@ wait "$holder" 2>/dev/null
 [ "$(last_status)" = "TIMEOUT" ] \
   && ok "run_one: a hang after a short lock wait is still recorded as TIMEOUT" \
   || fail "short lock wait hid a real hang: '$res' (status $(status_of))"
+
+# #427 vòng 2: nightly (scripts/governance/nightly.py → run_one record_per_test) chạy run_impacted.sh chuẩn với DEVKIT_PER_TEST_CACHE=record:
+# MỌI test chạy thật (per_test_cache.py plan chỉ gọi hit() ở chế độ "1"; ca dưới đặt sẵn "1" cho nightly), PASS từng test được ghi để một lượt sau trên ĐÚNG
+# cây đó (gate buổi sáng: DEVKIT_PER_TEST_CACHE=1) dùng lại. Suite khác không thấy biến; "0" của người dùng: tắt. Kit giả: run_impacted.sh +
+# per_test_cache.py + run_bounded.py THẬT của kit đang test, một test đếm số lần chạy (như tests/gates/test_gate_per_test_cache.sh).
+R2="$TMP/pt"; KIT="$R2/universal-agent-devkit"; mkdir -p "$KIT/tests/v" "$KIT/tests/lib" "$R2/.agents"
+cp "$DEVKIT_DIR/tests/run_impacted.sh" "$KIT/tests/"; : > "$KIT/tests/impact_map.txt"; : > "$KIT/tests/lib/test_durations.txt"
+cp "$DEVKIT_DIR/tests/lib/per_test_cache.py" "$DEVKIT_DIR/tests/lib/run_bounded.py" "$KIT/tests/lib/"
+ln -s "$DEVKIT_DIR/bin" "$KIT/bin"
+printf 'echo 1 >> %s/count.t1\n' "$TMP" > "$KIT/tests/v/test_t1.sh"
+printf 'echo "${DEVKIT_PER_TEST_CACHE-unset}" >> %s/env.txt\n' "$TMP" > "$R2/probe.sh"
+echo 0 > "$R2/notes.txt"
+cat > "$R2/.agents/regression_matrix.active.json" <<'JSON'
+{"adopted": true, "rules":[
+ {"component":"ALL","watch_files":["universal-agent-devkit/tests/*"],"mandatory_regression_tests":[{"id":"REG-ALL","name":"all","command":"bash universal-agent-devkit/tests/run_impacted.sh --all"}]},
+ {"component":"ENV","watch_files":["probe.sh"],"mandatory_regression_tests":[{"id":"REG-ENV","name":"env","command":"bash probe.sh"}]}]}
+JSON
+( cd "$R2" && git init -q . && git config user.email t@t && git config user.name t && git config devkit.trunkMode false && git add -A && git commit -qm init )
+t1() { [ -f "$TMP/count.t1" ] && wc -l < "$TMP/count.t1" | tr -d ' ' || echo 0; }
+night() { # night [VAR=value ...] — nightly run of R2 by name (test_nightly.sh covers the LaunchAgent run)
+  env "$@" HOME="$TMP/home" NIGHTLY_NOTIFY=0 CLAUDE_PROJECT_DIR="$R2" SB_HEAVY_SLOT_DIR="$TMP/slots" DEVKIT_SLOT_LOAD_WAIT_S=0 \
+    python3 "$DEVKIT_DIR/scripts/governance/nightly.py" run "$R2" > "$TMP/night.out" 2>&1; }
+morning() { ( cd "$KIT" && DEVKIT_PER_TEST_CACHE=1 SB_HEAVY_SLOT_DIR="$TMP/slots" bash tests/run_impacted.sh --all ) > "$TMP/morning.out" 2>&1; }
+mkdir -p "$TMP/home" "$TMP/slots"; unset DEVKIT_PER_TEST_CACHE
+b=$(t1); night; n1=$(( $(t1) - b )); b=$(t1); morning; m1=$(( $(t1) - b ))
+[ "$n1" = 1 ] && [ "$m1" = 0 ] && grep -q '↺ tests/v/test_t1.sh' "$TMP/morning.out" \
+  && ok "nightly records each test's PASS: a DEVKIT_PER_TEST_CACHE=1 run on the same tree reuses it" \
+  || fail "nightly record → morning reuse: nightly ran t1 $n1× (want 1), morning ran it $m1× (want 0): $(tail -3 "$TMP/morning.out") | $(tail -2 "$TMP/night.out")"
+b=$(t1); night DEVKIT_PER_TEST_CACHE=1; n2=$(( $(t1) - b ))
+[ "$n2" = 1 ] && ok "nightly with DEVKIT_PER_TEST_CACHE=1 in its environment still runs every test (a PASS on this tree exists)" \
+  || fail "nightly reused a PASS (ran t1 $n2×, want 1): it is the night's real full run"
+[ "$(sort -u "$TMP/env.txt" 2>/dev/null | tr '\n' ' ')" = "unset " ] \
+  && ok "a suite that is not the canonical run_impacted.sh never sees DEVKIT_PER_TEST_CACHE (ambient 1 included)" \
+  || fail "REG-ENV saw DEVKIT_PER_TEST_CACHE = '$(sort -u "$TMP/env.txt" 2>/dev/null | tr '\n' ' ')' (want 'unset ')"
+echo 1 > "$R2/notes.txt"   # a new tree: no PASS recorded on it yet
+b=$(t1); night DEVKIT_PER_TEST_CACHE=0; n4=$(( $(t1) - b )); b=$(t1); morning; m4=$(( $(t1) - b ))
+[ "$n4" = 1 ] && [ "$m4" = 1 ] && ok "DEVKIT_PER_TEST_CACHE=0 (user's off switch): nightly runs every test and records nothing" \
+  || fail "off switch: nightly ran t1 $n4× (want 1), the next run on that tree ran it $m4× (want 1, nothing to reuse)"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_stale_rerun: all passed" || { echo "❌ test_stale_rerun: $FAILS failed"; exit 1; }
