@@ -246,6 +246,22 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (False, "worktree: W=<wt> <nl> cat <<EOF W=<main> EOF <nl> git -C $W commit (a data heredoc assigns nothing)", w, B(f"W={w}\ncat <<EOF\nW={m}\nEOF\ngit -C $W commit -qm x")),
     (False, "worktree: W=<wt> <nl> python3 - <<EOF print(1) EOF <nl> git -C $W commit (the body leaves W alone)", w, B(f"W={w}\npython3 - <<EOF\nprint(1)\nEOF\ngit -C $W commit -qm x")),
     (False, "main: cd <wt> && python3 - <<EOF print(1) EOF <nl> CLAUDE_PROJECT_DIR=\"$PWD\" gate", m, B(f'cd {w} && python3 - <<EOF\nprint(1)\nEOF\nCLAUDE_PROJECT_DIR="$PWD" {G}')),
+    # OCR 26/10 vòng 2 (P1-6): bash sau timeout / gtimeout / env / nohup / command vẫn chạy thân heredoc
+    (True, "worktree: timeout 60 bash <<'EOF' git -C <main> commit EOF", w, B(f"timeout 60 bash <<'EOF'\ngit -C {m} commit -qm x\nEOF")),
+    (True, "worktree: gtimeout -k 5 60 bash <<'EOF' git -C <main> commit EOF", w, B(f"gtimeout -k 5 60 bash <<'EOF'\ngit -C {m} commit -qm x\nEOF")),
+    (True, "worktree: env X=1 bash <<'EOF' cd <main> && git commit EOF", w, B(f"env X=1 bash <<'EOF'\ncd {m} && git commit -qm x\nEOF")),
+    (True, "worktree: nohup bash <<'EOF' git -C <main> commit EOF", w, B(f"nohup bash <<'EOF'\ngit -C {m} commit -qm x\nEOF")),
+    (False, "worktree: cat <<EOF > <wt>/notes.txt (a data heredoc naming main: no write)", w, B(f"cat <<EOF > {w}/notes.txt\ngit -C {m} commit -qm x\nEOF")),
+    (False, "worktree: timeout 60 bash script.sh (no heredoc: as before)", w, B("timeout 60 bash ./script.sh")),
+    # vòng 2: cd trong thân dời shell của THÂN - lệnh ghi sau nó trong thân xét ở nơi cd tới; sau thân, thư mục là của shell này (không biết
+    # khi thân đã dời: có thể là source)
+    (False, "worktree: bash <<'EOF' cd <wt> && git commit EOF (the body's shell stays in the worktree)", w, B(f"bash <<'EOF'\ncd {w} && git commit -qm x\nEOF")),
+    (True, "worktree: bash <<'EOF' cd <main> && git commit EOF", w, B(f"bash <<'EOF'\ncd {m} && git commit -qm x\nEOF")),
+    (True, "worktree: . /dev/stdin <<'EOF' cd <main> EOF <nl> git commit (sourced: this shell moved)", w, B(f". /dev/stdin <<'EOF'\ncd {m}\nEOF\ngit commit -qm x")),
+    # OCR 26/10 vòng 2 (P2-7): bash kết thúc heredoc ở dòng đúng bằng từ kết thúc; <<- chỉ bỏ TAB đầu dòng
+    (True, "worktree: W=<main> <nl> bash <<EOF <nl>   EOF <nl> W=<wt> <nl> EOF <nl> git -C $W commit (an indented EOF ends nothing)", w, B(f"W={m}\nbash <<EOF\n  EOF\nW={w}\nEOF\ngit -C $W commit -qm x")),
+    (False, "worktree: cat <<EOF <nl>   EOF <nl> git -C <main> commit <nl> EOF (all of it is data)", w, B(f"cat <<EOF\n  EOF\ngit -C {m} commit -qm x\nEOF")),
+    (False, "worktree: W=<main> <nl> bash <<-EOF … <tab>EOF <nl> W=<wt> <nl> git -C $W commit (<<- ends at a tab-indented EOF)", w, B(f"W={m}\nbash <<-EOF\necho hi\n\tEOF\nW={w}\ngit -C $W commit -qm x")),
     # 25/10 lỗ 2: `cd` trong $( ) / backtick / ( ) / <( ) chạy ở subshell, không dời thư mục của lệnh ngoài - walk đi theo nó nên gate chạy ở
     # main được coi như chạy ở worktree. cd ở độ sâu > 0 làm thư mục thành "không biết" (fail closed)
     (True, "main: x=$(<nl>cd <wt><nl>); gate (the cd runs in the substitution's subshell)", m, B(f"x=$(\ncd {w}\n); {G}")),
@@ -316,7 +332,9 @@ signal.signal(signal.SIGALRM, too_slow)
 for label, body in (("20000 x `W=/tmp/x; `", "W=/tmp/x; " * 20000), ("20000 distinct `W<i>=/x; `", "".join(f"W{i}=/x; " for i in range(20000))),
                     # every segment that is no assignment used to scan every known name (and compile two regexes for it): 2000 pairs took 57 s
                     ("15000 x `W<i>=/x; : ; `", "".join(f"W{i}=/x; : ; " for i in range(15000))),
-                    ("12000 x `W<i>=/x; cd /tmp; `", "".join(f"W{i}=/x; cd /tmp; " for i in range(12000)))):
+                    ("12000 x `W<i>=/x; cd /tmp; `", "".join(f"W{i}=/x; cd /tmp; " for i in range(12000))),
+                    # OCR 26/10 vòng 2: mỗi dòng mở heredoc giờ đọc từ lệnh qua wrapper (timeout 60 …) và tìm dòng kết thúc nguyên văn
+                    ("4000 x `timeout 60 bash <<EOF / : / EOF`", "timeout 60 bash <<EOF\n:\nEOF\n" * 4000)):
     cmd = body + f"W={m}; git -C $W commit -qm x"
     for fn, call in (("write_hits_locked", lambda: sl.write_hits_locked(cmd, m, w, "s")[0]),
                      ("_bash_trunk_write", lambda: sl._bash_trunk_write(cmd, w, main, sw, "s", 0))):
