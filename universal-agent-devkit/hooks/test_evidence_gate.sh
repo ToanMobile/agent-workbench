@@ -1406,7 +1406,13 @@ def _away(seg):
     `pytest > log; echo "5 passed"`, `pytest a > log; pytest b`, `pytest > log; bash tests/…/test_x.sh` read as green from another
     command's summary (2026-10-26 principal review round 2, B2). Its exit code still counts when bound (`echo "rc=$?"`) or when the tool's
     exit is its own (_exit_is_the_runs)."""
-    return _compound_stdout_away(seg) if _COMPOUND.match(seg) else bool(_STDOUT_AWAY.search(_QUOTED.sub("", seg)))
+    if _COMPOUND.match(seg):
+        return _compound_stdout_away(seg)
+    # #427 E3: `Unity … -runTests -testResults <f>` ghi kết quả ra file như stdout ra file, và không xoá file đó lúc bắt đầu (Editor chết
+    # trước khi ghi thì `; cat <f>` in XML của lần trước): chỉ XANH khi mã thoát được gắn (`&& cat <f>`, _exit_is_the_runs).
+    return bool(_STDOUT_AWAY.search(_QUOTED.sub("", seg)) or _UNITY_RESULTS.search(_QUOTED.sub("", seg)))
+
+_UNITY_RESULTS = re.compile(r"(?<![\w-])-testResults\b")
 
 def _compound_masks(seg):
     """A run in the loop / if that may hide its result: not one simple command run as the command (`pytest $d | head -1`,

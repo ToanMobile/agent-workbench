@@ -187,6 +187,18 @@ case("P1-4 control: a loop that prints each run's ${pipestatus[1]} = 0 (summary 
 case("P1-4 must block: the same loop with one run's ${pipestatus[1]} = 1",
      after(PSLOOP, "PASS a\na exit=0\nb exit=1\n✅ c: all passed\nc exit=0"), 2)
 
+print("-- E3: Unity -testResults <f> is the run's result sent to a file")
+# Unity không xoá file kết quả lúc bắt đầu: Editor chết trước khi ghi thì `cat r.xml` in XML XANH của lần trước. Sau `;` mã thoát
+# của Unity không gắn với gì, nên XML đó không là tóm tắt của lần này; `&& cat` thì cat chỉ chạy khi Unity thoát 0.
+UNITY = "Unity -batchmode -projectPath . -runTests -testPlatform EditMode -testResults r.xml"
+X_GREEN = '<test-run id="2" testcasecount="4" result="Passed" total="4" passed="4" failed="0" inconclusive="0" skipped="0">'
+X_RED = '<test-run id="2" testcasecount="4" result="Failed" total="4" passed="3" failed="1" inconclusive="0" skipped="0">'
+case("E3 must block: `Unity … -testResults r.xml; cat r.xml` printing a green XML", after(UNITY + "; cat r.xml", X_GREEN), 2)
+case("E3 must block: the same with `|| true` before the cat", after(UNITY + " || true; cat r.xml", X_GREEN), 2)
+case("E3 control: `Unity … -testResults r.xml && cat r.xml`: cat runs only after exit 0", after(UNITY + " && cat r.xml", X_GREEN), 0)
+case("E3 control: `&& cat` RED (failed=\"1\") → fix → GREEN is check 7's pair",
+     pair(UNITY + " && cat r.xml", X_RED, UNITY + " && cat r.xml", X_GREEN, red_err=False), 0, msg=FIX)
+
 print("-- E4: an EXIT trap owns the tool's exit")
 case("E4 must block: `trap 'exit 0' EXIT; pytest -q` with no summary", after("trap 'exit 0' EXIT; python3 -m pytest -q", "....F...."), 2)
 case("E4 must block: `trap 'exit 1' EXIT` forging the RED half of check 7",
