@@ -129,10 +129,13 @@ PY
 [ "$rc" = 0 ] && [ -x "$T/.claude/hooks/my-own-hook.sh" ] && [ -e "$T/.claude/hooks/guard-secrets.py" ] && [ -e "$T/.claude/hooks/guard-protected-push.py" ] \
   && ok "install: the user's own hook file is kept and the kit's guard-secrets.py is linked in" || fail "install (rc=$rc): hooks dir = $(ls "$T/.claude/hooks" | head -5 | tr '\n' ' ')"
 
-# 6) (audit 2026-10-25 A6) the checked-in registration of guard-secrets.py / guard-protected-push.py, run as the harness runs it (sh -c):
-#    a MISSING hook file is a loud warning (stderr) and exit 0 — `python3 <missing file>` exits 2, and exit 2 blocks the tool call (805
-#    blocks on 2026-10-18, "can't open file … Errno 2"). Every other outcome of the guard passes through unchanged: its exit 2, its exit 1,
-#    its deny JSON on stdout, and the real guards still deny a dotenv read / a force push to main.
+# 6) (audit 2026-10-25 A6, review 25/10) the checked-in registration of guard-secrets.py / guard-protected-push.py, run as the harness
+#    runs it (sh -c): the kit source (tracked) first, else the .claude/hooks/ copy `agent-kit init` links in. Neither there: exit 2, the
+#    tool call is blocked (fail closed) and stderr names both paths and `agent-kit init`. A6 had made that a warning + exit 0, which Claude
+#    Code never shows (an exit-0 hook's stderr is not displayed): the guard was off unseen. The 805 blocks of 2026-10-18 ("can't open file
+#    … Errno 2") came from the OLD registration of the ignored path `.claude/hooks/guard-*.py` (kit path since 20/10 and #363, 24/10).
+#    Every outcome of a guard that is there passes through unchanged: its exit 2, its exit 1, its deny JSON on stdout, and the real guards
+#    still deny a dotenv read / a force push to main, from either place.
 S6="$(cd "$DEVKIT_DIR/.." && pwd)/.claude/settings.json"
 if [ -f "$S6" ] && git -C "$DEVKIT_DIR" ls-files --error-unmatch "../.claude/settings.json" >/dev/null 2>&1; then
   for g in guard-secrets.py guard-protected-push.py; do
@@ -148,8 +151,21 @@ PY
       OUT6="$(printf '%s' "$2" | env -u SB_ALLOW_PROTECTED_PUSH CLAUDE_PROJECT_DIR="$1" sh -c "$cmd" 2>"$TMP/err6")"; RC6=$?; ERR6="$(cat "$TMP/err6")"; }
     P6='{"tool_name":"Bash","tool_input":{"command":"ls"}}'
     mkdir -p "$TMP/none6"; run6 "$TMP/none6" "$P6"
-    [ "$RC6" = 0 ] && [ -z "$OUT6" ] && printf '%s' "$ERR6" | grep -q "$g" \
-      && ok "$g missing: a warning on stderr naming it, exit 0 (no block)" || fail "$g missing: rc=$RC6 out='$OUT6' err='$ERR6'"
+    [ "$RC6" = 2 ] && [ -z "$OUT6" ] && printf '%s' "$ERR6" | grep -q "universal-agent-devkit/hooks/$g" \
+      && printf '%s' "$ERR6" | grep -q ".claude/hooks/$g" && printf '%s' "$ERR6" | grep -q "agent-kit init" \
+      && ok "$g missing in both places: blocked (exit 2), stderr names both paths and agent-kit init" || fail "$g missing: rc=$RC6 out='$OUT6' err='$ERR6'"
+    case "$g" in
+      guard-secrets.py) PG6='{"tool_name":"Read","tool_input":{"file_path":".env"}}' ;;
+      *) PG6='{"tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}' ;;
+    esac
+    mkdir -p "$TMP/fb6/.claude/hooks"; ln -sf "$DEVKIT_DIR/hooks/$g" "$TMP/fb6/.claude/hooks/$g"; run6 "$TMP/fb6" "$PG6"
+    [ "$RC6" = 0 ] && printf '%s' "$OUT6" | grep -q '"permissionDecision": "deny"' \
+      && ok "$g only in .claude/hooks/ (the agent-kit init link): that guard runs and denies" || fail "$g fallback not run (rc=$RC6 out='$OUT6' err='$ERR6')"
+    mkdir -p "$TMP/both6/universal-agent-devkit/hooks" "$TMP/both6/.claude/hooks"
+    printf 'import sys\nsys.stdin.read()\nsys.exit(1)\n' > "$TMP/both6/universal-agent-devkit/hooks/$g"
+    printf 'import sys\nsys.stdin.read()\nsys.exit(2)\n' > "$TMP/both6/.claude/hooks/$g"
+    run6 "$TMP/both6" "$P6"
+    [ "$RC6" = 1 ] && ok "$g in both places: the kit source runs, not the .claude/hooks/ copy" || fail "$g both: rc=$RC6 (want 1, the kit source)"
     for code in 2 1; do
       mkdir -p "$TMP/stub$code/universal-agent-devkit/hooks"
       printf 'import sys\nsys.stdin.read()\nsys.stderr.write("stub says no\\n")\nsys.exit(%s)\n' "$code" > "$TMP/stub$code/universal-agent-devkit/hooks/$g"
