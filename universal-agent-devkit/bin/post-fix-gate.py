@@ -6249,6 +6249,9 @@ def main():
                 log_warn(f"heavy_slot: {exc}")
             if gate_slot_hs is not None:
                 gate_wait_s = _env_seconds("DEVKIT_GATE_SLOT_WAIT_S", 1800.0)
+                # ponytail: test_run.lock của dự án vẫn bị giữ trong lúc chờ slot, nên một Stop hook cùng checkout báo BUSY với
+                # busy_reason=project_lock dù máy thực ra đang nghẽn hàng đợi gate; và dưới SB_HEAVY_SLOT_HELD=1 acquire_pool trả
+                # prev_held mà vẫn đặt DEVKIT_GATE_SLOT_HELD. Ghi nhãn holder vào khoá khi người dùng thấy báo sai lý do.
                 gate_slot = gate_slot_hs.acquire_pool(
                     "gate", gate_slot_hs.pool_paths("gate", gate_slots_n),
                     wait_s=gate_wait_s, label=os.path.basename(str(project_dir))[:64])
