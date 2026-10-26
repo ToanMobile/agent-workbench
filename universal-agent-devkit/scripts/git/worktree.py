@@ -3557,7 +3557,10 @@ def _carry_gate_receipt(main, wt):
             return tr(" (không có biên nhận gate --full nào của worktree phủ HEAD mới của main: push từ main cần chạy gate lại)",
                       " (no gate --full receipt of the worktree covers main's new HEAD: a push from main needs the gate again)")
         receipt = json.loads(_read_regular(push_gate.tree_fp.receipt_path(wt), 4_000_000).decode("utf-8"))
-        rel = os.path.relpath(os.path.realpath(receipt["project"]), os.path.realpath(wt))
+        if not isinstance(receipt, dict) or receipt.get("scope", "full") != "full":   # T0061: biên nhận task không bao giờ sang main
+            return tr(" (biên nhận của worktree không phải --full: push từ main cần chạy gate lại)",
+                      " (the worktree's receipt is not a --full one: a push from main needs the gate again)")
+        rel =os.path.relpath(os.path.realpath(receipt["project"]), os.path.realpath(wt))
         receipt = dict(receipt, project=os.path.normpath(os.path.join(main, rel)), carried_from=receipt["project"])
         dst = push_gate.tree_fp.receipt_path(main)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
