@@ -191,9 +191,23 @@ def _lock_path(project_dir: Path, kind: str) -> str:
         if project_gone(project_dir):
             raise FileNotFoundError(project_dir)   # the temp-dir lock below: never re-create the project to hold a lock
         gate_dir.mkdir(parents=True, exist_ok=True)
+        _ignore_mark(gate_dir)
         return str(gate_dir / f"{kind}.lock")
     except OSError:
         return os.path.join(tempfile.gettempdir(), f"{kind}.{key}.lock")
+
+
+def _ignore_mark(gate_dir: Path) -> None:
+    """`.claude/audit-gate/.gitignore` = `*`, as every hook and worktree.py write it: hook state is never part of the change. Without it the
+    first gate run in a fresh worktree (a sandbox: no hook ran there) left `regression_journal.lock` untracked, and `worktree finish` read
+    that as an edit made during its own merge gate and refused (audit 25/10 U1). A failure to write it is said; the lock path is unchanged."""
+    ign = gate_dir / ".gitignore"
+    if ign.exists():
+        return
+    try:
+        ign.write_text("*\n", encoding="utf-8")
+    except OSError as e:
+        print(f"regression_checklist: {ign} not written ({e}): its lock files show as untracked", file=sys.stderr)
 
 
 def _holds_checklist(project_dir: Path) -> bool:

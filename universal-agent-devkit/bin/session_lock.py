@@ -127,32 +127,80 @@ WRAPPERS = {"env", "command", "exec", "xargs", "nohup", "time", "sudo", "bash", 
 WRITE_CMDS = {"touch", "cp", "mv", "ln", "install", "tee", "dd", "rsync", "truncate", "perl", "ruby", "node"}
 READERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "cat", "bat", "less", "more", "head", "tail", "wc", "file", "stat", "ls", "echo",
            "printf", "diff", "cmp", "git", "man", "type", "which", "find", "sed", "awk"}   # (sed writes only with -i: see is_self_grant)
-_HEREDOC = _Re(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+# `<<WORD` (not the here-string `<<<`); WORD as bash reads it up to a metacharacter, `-` included (OCR 26/10 r3: `<<END-X` was read as END,
+# whose line never came). A match that no line ends is no heredoc to the readers below (_heredoc_ends): a `<<EOF` in a comment or a quote.
+_HEREDOC = _Re(r"(?<!<)<<(?!<)-?\s*(['\"]?)([^\s;&|<>()'\"`\\]+)\1")
 RUNS_BODY = {"bash", "sh", "zsh", "dash", "ksh", "python", "python3", "perl", "ruby", "node", "eval", "source", "."}   # a heredoc fed to these is CODE
 SHELL_BODY = {"bash", "sh", "zsh", "dash", "ksh", "eval", "source", "."}   # ... and these run it as SHELL code (a `>` there redirects)
 
 
-def _strip_heredocs(cmd, shell_only=False):
+def _program_word(text):
+    """The program (basename) of the simple command `text`, past assignments, keywords and wrappers with their options and values
+    (`timeout 60`, `gtimeout -s KILL 60`, `env X=1`, `nohup`, `command`, `sudo -u x`: hooks/shell_norm.prefix_end); "" when there is none.
+    OCR 26/10 r2: the FIRST word was read, so `timeout 60 bash <<EOF` fed its body to `timeout` - data, never judged."""
+    import shlex   # noqa: PLC0415 - only the opening line of a heredoc gets here
+    try:
+        words = shlex.split(text)
+    except ValueError:
+        words = text.split()
+    try:
+        k = _hook_module("shell_norm").prefix_end(words)
+    except Exception as e:  # noqa: BLE001 - fail closed: a body fed to any word that runs code is code
+        print(f"session_lock: wrapper scan failed: {e!r}", file=sys.stderr)
+        return next((os.path.basename(w) for w in words if os.path.basename(w) in RUNS_BODY or w.startswith("python")), "")
+    return os.path.basename(words[k]) if k < len(words) else ""
+
+
+def _heredoc_ends(lines):
+    """end(i, m): index of the line that ends the heredoc `m` opened just before lines[i] - the first line from i on that IS the delimiter,
+    after its leading TABS only for `<<-`, as bash reads it (OCR 26/10 r2: `.strip()` ended a body at "  EOF", a line bash runs) - or None
+    when no line does: then it is no heredoc for the scans here, and no line after it is dropped as data (r3: a `<<EOF` in a comment, a
+    quote or a here-string swallowed the rest of the command). Fail closed: an unterminated heredoc, which bash reads to the end as data,
+    is read as commands. The lines are indexed once per text, so a `<<WORD` that never ends costs a lookup, not a scan to the end."""
+    import bisect   # noqa: PLC0415 - only a command with a `<<` gets here
+    index = {}
+
+    def end(i, m):
+        tabs = m.group(0).startswith("<<-")
+        if tabs not in index:
+            at = index[tabs] = {}
+            for k, ln in enumerate(lines):
+                at.setdefault(ln.lstrip("\t") if tabs else ln, []).append(k)
+        hits = index[tabs].get(m.group(2), ())
+        k = bisect.bisect_left(hits, i)
+        return hits[k] if k < len(hits) else None
+    return end
+
+
+def _piped_reader(after):
+    """The shell / interpreter after the first `|` of `after` (the rest of a heredoc's opening line: `cat <<EOF | bash`) that runs its stdin
+    as a script, past its wrappers (_stdin_prog); None when there is none."""
+    return _stdin_prog(re.split(r"[|;&]", after.split("|", 1)[1])[0]) if "|" in after.replace("||", "") else None
+
+
+def _strip_heredocs(cmd, shell_only=False, kept=None):
     """Drop the body of every heredoc that feeds a data command (cat, a commit message, a patch): its lines are text, not commands. A
-    heredoc fed to a shell or an interpreter keeps its body - those lines run. shell_only: keep only bodies a SHELL runs (the redirect
-    check: `print(1 > 0)` fed to python is not a shell redirect)."""
+    heredoc fed to a shell or an interpreter - also behind a wrapper (`timeout 60 bash <<EOF`) or through a pipe (`cat <<EOF | bash`) -
+    keeps its body - those lines run. shell_only: keep only bodies a SHELL runs (the redirect check: `print(1 > 0)` fed to python is not a
+    shell redirect). kept (a set): gets the index, in the text returned, of every line of a body kept."""
     lines = cmd.split("\n")
-    out, i = [], 0
+    out, i, end = [], 0, _heredoc_ends(lines)
     while i < len(lines):
         line = lines[i]
         out.append(line)
         i += 1
         m = _HEREDOC.search(line)
-        if not m:
+        j = end(i, m) if m else None
+        if j is None:
             continue
-        head = re.split(r"[;&|(]|\$\(|`", line[:m.start()])[-1].split()
-        head = [w for w in head if not re.match(r"^[A-Za-z_]\w*=", w)]
-        word = os.path.basename(head[0]) if head else ""
+        word = _program_word(re.split(r"[;&|(]|\$\(|`", line[:m.start()])[-1])
         runs = word in SHELL_BODY if shell_only else (word in RUNS_BODY or word.startswith("python"))
-        j = i
-        while j < len(lines) and lines[j].strip() != m.group(2):
-            j += 1
+        if not runs:
+            reader = _piped_reader(line[m.end():])
+            runs = bool(reader) and (reader in SHELL_BODY or not shell_only)
         if runs:
+            if kept is not None:
+                kept.update(range(len(out), len(out) + j - i))
             out.extend(lines[i:j])
         i = j
     return "\n".join(out)
@@ -1023,6 +1071,18 @@ def _stdin_reader(words):
     return prog if not operands or operands == ["-"] or (shell and "-s" in opts) else None
 
 
+def _stdin_prog(seg):
+    """_stdin_reader of the segment `seg` past every wrapper: the launchers of _cmd_words and the ones hooks/shell_norm knows besides
+    (gtimeout, stdbuf, setsid, flock …: OCR 26/10 r2, `cat <<EOF | gtimeout 60 bash` was read as data)."""
+    words = _cmd_words(seg)
+    try:
+        k = _hook_module("shell_norm").prefix_end(words)
+    except Exception as e:  # noqa: BLE001 - fail closed: the first word a reader starts at
+        print(f"session_lock: wrapper scan failed: {e!r}", file=sys.stderr)
+        k = next((i for i in range(len(words)) if _stdin_reader(words[i:])), 0)
+    return _stdin_reader(words[k:])
+
+
 def _printf_text(args):
     """What `printf FORMAT ARGS...` prints, approximately: escapes read, each %s / %b / %d replaced by the next argument (the format repeats
     while arguments are left)."""
@@ -1049,39 +1109,37 @@ def _stdin_scripts(cmd):
     def synth(prog, body):
         out.append(f"{prog} -s <<'__DEVKIT_EOF__'\n{body}\n__DEVKIT_EOF__")
     lines, i = cmd.split("\n"), 0
+    end = _heredoc_ends(lines)
     while i < len(lines):   # cat <<EOF ... EOF | bash: the body is the producer's text; `_strip_heredocs` drops it before anything else looks
         m = _HEREDOC.search(lines[i])
         i += 1
-        if not m:
+        j = end(i, m) if m else None
+        if j is None:
             continue
-        j = i
-        while j < len(lines) and lines[j].strip() != m.group(2):
-            j += 1
-        after = lines[i - 1][m.end():]
-        prog = _stdin_reader(_cmd_words(re.split(r"[|;&]", after.split("|", 1)[1])[0])) if "|" in after.replace("||", "") else None
+        prog = _piped_reader(lines[i - 1][m.end():])
         if prog:
             synth(prog, "\n".join(lines[i:j]))
         i = j + 1
     pieces = _split_segments(_clean(cmd))
     for k in range(0, len(pieces), 2):
         hs = re.search(r"<<<\s*(\"[^\"]*\"|'[^']*'|\S+)", pieces[k])
-        prog = _stdin_reader(_cmd_words(pieces[k])) if hs else None
+        prog = _stdin_prog(pieces[k]) if hs else None
         if prog:   # bash <<< 'cmd'
             try:
                 body = shlex.split(hs.group(1))[0]
             except (ValueError, IndexError):
                 body = hs.group(1)
             synth(prog, body)
-        if k + 2 < len(pieces) and pieces[k + 1] == "|" and _stdin_reader(_cmd_words(pieces[k + 2])):   # echo '…' | sh, printf … | bash
+        if k + 2 < len(pieces) and pieces[k + 1] == "|" and _stdin_prog(pieces[k + 2]):   # echo '…' | sh, printf … | bash
             words = _cmd_words(pieces[k])
             if words and os.path.basename(words[0]) in ("echo", "printf"):
                 args = [a for a in words[1:]]
                 if words[0] == "echo":
                     while args and re.fullmatch(r"-[neE]+", args[0]):
                         args = args[1:]
-                    synth(_stdin_reader(_cmd_words(pieces[k + 2])), " ".join(args))
+                    synth(_stdin_prog(pieces[k + 2]), " ".join(args))
                 else:
-                    synth(_stdin_reader(_cmd_words(pieces[k + 2])), _printf_text(args))
+                    synth(_stdin_prog(pieces[k + 2]), _printf_text(args))
     return out
 
 
@@ -1459,21 +1517,38 @@ def write_hits_locked(cmd, top, cwd, sid="", notes=None):
     # the walk reads the line without its comments, as trunk mode's _bash_trunk_write does: bash ignores `# note; W=B`, the split did not
     # (review 25/10: from B, `W=A <nl> # note; W=B <nl> git -C $W commit` passed while A was held)
     text = _clean(cmd)
+    # the lines of a heredoc body fed to a shell / an interpreter (`bash <<EOF`, `python3 - <<EOF`) run in a CHILD process: a `W=…` or a
+    # `cd` there never reaches the segments after the body (OCR 26/10: `W=<held> <nl> bash <<EOF <nl> W=<own> <nl> EOF <nl> git -C $W
+    # commit` was judged as <own>). What a body segment binds becomes unknown (a body fed to source / . / eval runs in this shell: unknown
+    # all the same, never the value the walk read before it). A cd there moves the body's own shell: the body's writes after it are judged
+    # where it led (r2: unknown made `bash <<EOF <nl> cd <held repo> && git commit <nl> EOF` pass from another repo, trunk mode off); after
+    # the body the directory is this shell's again - unknown when the body moved (it may have been sourced). $PWD in a body that moved:
+    # unknown (an unquoted <<EOF body reads this shell's $PWD, the parent expands it).
+    # ponytail: a $NAME used INSIDE such a body still reads this shell's value (right for an unquoted <<EOF, the parent expands it; a
+    # quoted <<'EOF' body sees only exported names) - fail closed there too if a body that uses a non-exported name is ever met.
+    body = set()
+    _strip_heredocs(text, kept=body)   # text already lost the bodies of data heredocs: same lines, the kept bodies only marked
     pieces = _split_segments(text)   # segment, separator, segment, ...
     pwd_ok = "PWD" not in _names_bound(text)
     values = None if _SHELL_COMPOUND.search(text) else {}
+    in_body, body_cur = False, None   # body_cur: the directory the body's shell started in
 
     def known():   # a view, not a copy per segment (review 25/10: copying every known name per cd / git segment was quadratic)
-        return ChainMap({"PWD": cur if pwd_ok and cur else None}, values or {})
+        return ChainMap({"PWD": cur if pwd_ok and cur and (not in_body or cur == body_cur) else None}, values or {})
 
     seen, hits_top, foreign, named, opened = False, False, None, False, False
-    depth, ticks, gate_dirs = 0, False, {}
+    depth, ticks, gate_dirs, line = 0, False, {}, 0   # line: the line of `text` the segment starts on
     for i in range(0, len(pieces), 2):
         seg = pieces[i]
         sep = pieces[i + 1] if i + 1 < len(pieces) else ""
+        was_body, in_body, line = in_body, line in body, line + seg.count("\n") + sep.count("\n")
+        if in_body and not was_body:
+            body_cur = cur
+        elif was_body and not in_body:
+            cur = body_cur if cur == body_cur else None
         # runs for sure in this shell: after the line start, `;` or a newline, before `;`, `&&`, a newline or the end, and no `(` / `$(` /
         # backtick before it (the segment walk splits inside a substitution: `x=$(true; W=…` is a subshell's W)
-        sure = (pieces[i - 1] if i else "") in ("", ";", "\n") and sep in ("", ";", "&&", "\n") and not opened
+        sure = (pieces[i - 1] if i else "") in ("", ";", "\n") and sep in ("", ";", "&&", "\n") and not opened and not in_body
         _track_vars(values, seg, sure)
         opened = opened or "(" in seg or "`" in seg
         nested = depth > 0 or ticks   # this segment runs inside a subshell / substitution the line opened before it

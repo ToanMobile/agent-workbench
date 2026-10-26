@@ -69,11 +69,15 @@ except Exception: pass' 2>/dev/null)"
   # when nothing in them is unique (`agent-kit worktree gc`). Only from the main checkout (its siblings are what gc sweeps; a linked
   # worktree would keep the record and go away with it). gc appends what it deleted, stamped, to .claude/audit-gate/worktree_gc.log
   # under its own lock (last 400 lines; `agent-kit worktree gc --dry-run` says what it keeps and why). WORKTREE_GC=0: off.
+  # --merged (U2, audit 25/10: the one merged-worktree cleaner; it replaces the untracked .claude/hooks/cleanup-wt.py --auto): also the
+  # integrated, unheld worktrees of .claude/worktrees/ and the local branches the trunk holds, each by `worktree remove`'s rule.
+  # WORKTREE_GC_MERGED=0: that part off.
   if [ "${WORKTREE_GC:-1}" != "0" ]; then
+    GC_MERGED="--merged"; [ "${WORKTREE_GC_MERGED:-1}" != "0" ] || GC_MERGED=""
     ( [ "$(git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || exit 0
       [ "$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir 2>/dev/null)" = "$(cd "${REPO_ROOT}" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ] || exit 0
       GC_TOP="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null)" && [ -n "${GC_TOP}" ] || exit 0   # REPO_ROOT may be a subfolder
-      cd "${GC_TOP}" && exec python3 "${WT_SCRIPT}" gc "--log=${GC_TOP}/.claude/audit-gate/worktree_gc.log" </dev/null ) >/dev/null 2>&1 &
+      cd "${GC_TOP}" && exec python3 "${WT_SCRIPT}" gc "--log=${GC_TOP}/.claude/audit-gate/worktree_gc.log" ${GC_MERGED} </dev/null ) >/dev/null 2>&1 &
   fi
 fi
 # The regression baseline (T0003): verified_head recorded before the first turn can commit, so a

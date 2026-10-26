@@ -15,7 +15,7 @@
 #   7 gc: a leftover folder (admin dir gone) whose only unique file is a secret -> copied to main, the folder deleted; --dry-run copies nothing
 #   8 gc: a different file at that path in main -> the folder is kept, the reason names it, main's file intact
 #   11 a deep secret path: every folder the carry creates in main is 0700
-#   13 a key under .agents/local/ is carried by finish and by gc, an ordinary ignored file there is not
+#   13 a key under .agents/local/ is carried by finish and by gc; finish carries an ordinary note there too, not one elsewhere
 #   12 `worktree remove` / hook-remove refuse a worktree holding an ignored secret main lacks (or holds differently); finish still carries it
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*
 set -u
@@ -188,14 +188,19 @@ fin "$W"; rc=$?
   || fail "  … finish (rc=$rc): $(cat "$TMP/out")"
 
 # 13 (principal review A1): .agents/ is not a rebuildable folder - .agents/local/ is where the kit keeps long-lived files - so a key there is
-#     carried like any other (the skip list was build_inputs.SKIP_WALK, which also names .agents, .claude, .idea, Logs): automerge and gc agree
+#     carried like any other (the skip list was build_inputs.SKIP_WALK, which also names .agents, .claude, .idea, Logs): automerge and gc agree.
+#     OCR r2 (26/10): an ordinary ignored note under .agents/local/ is the kit's long-lived work too: finish carries it as well (before, it
+#     went with the folder); the secret NAME filter still holds for an ordinary ignored file anywhere else (build/out.txt: not copied)
 new_main m13 '*.jks
-.agents/local/'; W="$TMP/sc-n"; wt "$W"
-mkdir -p "$W/.agents/local/signing" && echo "SIGN" > "$W/.agents/local/signing/release.jks" && echo "just a note" > "$W/.agents/local/notes.txt"; echo n > "$W/n.txt"
+.agents/local/
+build/'; W="$TMP/sc-n"; wt "$W"
+mkdir -p "$W/.agents/local/signing" "$W/build" && echo "SIGN" > "$W/.agents/local/signing/release.jks" && echo "just a note" > "$W/.agents/local/notes.txt"
+echo "built" > "$W/build/out.txt"; echo n > "$W/n.txt"
 fin "$W"; rc=$?
 [ "$rc" = 0 ] && [ ! -d "$W" ] && [ "$(cat "$P/.agents/local/signing/release.jks" 2>/dev/null)" = SIGN ] && ok "13: .agents/local/signing/release.jks is carried into main by finish" \
   || fail "13: (rc=$rc, exists=$([ -d "$W" ] && echo y || echo n)): $(cat "$TMP/out") / main: $(ls -R "$P/.agents" 2>&1 | head -5)"
-[ ! -e "$P/.agents/local/notes.txt" ] && ok "  … an ordinary ignored file next to it is not copied (the name filter stays)" || fail "  … notes.txt was copied into main"
+[ "$(cat "$P/.agents/local/notes.txt" 2>/dev/null)" = "just a note" ] && ok "  … an ordinary ignored note under .agents/local/ is carried too (no longer lost)" || fail "  … notes.txt was not carried into main"
+[ ! -e "$P/build/out.txt" ] && ok "  … an ordinary ignored file elsewhere is not copied (the name filter stays)" || fail "  … build/out.txt was copied into main"
 new_main g13 '*.jks
 .agents/local/'; O="$TMP/g13-orphan"; G "$P" worktree add -q --detach "$O" && rm -rf "$P/.git/worktrees/g13-orphan"
 mkdir -p "$O/.agents/local/signing" && echo "ORPHAN-SIGN" > "$O/.agents/local/signing/rel.jks"

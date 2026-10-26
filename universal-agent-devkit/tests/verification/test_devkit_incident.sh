@@ -464,6 +464,27 @@ scan >/dev/null
   && ok "đoạn cuối toàn chữ HOA (WARNING, com.x.PRIVPKG3) sau frame cuối không thành thẻ" \
   || fail "dòng chữ HOA sau frame cuối thành thẻ exception: create=$(creates) (trước $n)"
 
+# 31. OCR 26/10 (P3): EXC_LINE `[A-Z]\w*[a-z]\w*` quay lui bậc hai trên một dòng dài sau frame cuối ('A' + 'a'*32000 + '!' mất ~10 s
+# CPU, mỗi lượt quét log của board). Đo CPU time của tiến trình (time.process_time), không đo wall-clock: máy đang tải không làm nó
+# phình (INSTINCT-069). Kết quả nhận / loại của các dòng quen thuộc giữ nguyên.
+python3 - "$DEVKIT_DIR/scripts/governance" <<'PY' && ok "EXC_LINE tuyến tính: dòng 32k ký tự sau frame cuối < 1 s CPU, các dòng WARNING / PRIVPKG / com.x.PrivApp giữ kết quả" \
+  || fail "EXC_LINE chậm hoặc đổi kết quả"
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import devkit_incident as d
+t0 = time.process_time()
+got = d.classify_tracebacks(["Traceback (most recent call last):", '  File "/x/a.py", line 1, in f', "A" + "a" * 32000 + "!"])
+dt = time.process_time() - t0
+assert got == [], got
+assert dt < 1, f"classify_tracebacks: {dt:.2f} s CPU"
+for line, want in (("WARNING: disk almost full", None), ("com.finos.PRIVPKG", None), ("com.x.PrivApp", "com.x.PrivApp"),
+                   ("Killed", "Killed"), ("subprocess.TimeoutExpired", "subprocess.TimeoutExpired"), ("StopIteration", "StopIteration"),
+                   ("ValueError: bad x", "ValueError: bad x"), ("socket.gaierror", None), ("fatal: not a git repository", None),
+                   ("Aéb", "Aéb"), ("AÉb", "AÉb"), ("A_1b", "A_1b"), ("AB1", None)):
+    m = d.EXC_LINE.match(line)
+    assert (m.group(1) if m else None) == want, (line, m and m.group(1), want)
+PY
+
 # 27. Danh sách repo của bộ quét = danh sách board của super_board_all.py (25/10: Idle-Plaza-3D thay Neighbours-From-Hell).
 python3 - "$DEVKIT_DIR/scripts/governance" <<'PY' && ok "DEFAULT_REPOS khớp REPOS của super_board_all, có Idle, không có Neighbours" \
   || fail "danh sách repo của bộ quét lệch danh sách board"

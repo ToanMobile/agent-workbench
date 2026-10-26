@@ -61,13 +61,22 @@ git -C "$R" worktree add -q "$W/issue-9-build" issue-9-late
 git -C "$R" worktree add -q --detach "$W/issue-9-qa" main
 echo late > "$W/issue-9-build/b"; git -C "$W/issue-9-build" add b; git -C "$W/issue-9-build" commit -qm late
 echo dirty > "$W/issue-9-qa/a"
-bash "$CLEAN" "$R" issue-9-late "$MERGED9" >/dev/null 2>&1
+mkdir -p "$W/issue-9-build/.agents/local"; echo "lane note 9" > "$W/issue-9-build/.agents/local/note.md"   # KEEP_RE: tidy would salvage it
+bash "$CLEAN" "$R" issue-9-late "$MERGED9" >/dev/null 2>"$TMP/k9late.err"
 [ -d "$W/issue-9-qa" ] && [ "$(cat "$W/issue-9-qa/a")" = dirty ] && ok "worktree with uncommitted edits kept" \
   || fail "worktree with uncommitted edits removed (edit lost)"
 git -C "$R" rev-parse --verify -q refs/heads/issue-9-late >/dev/null && ok "branch with commits after the merged head kept" \
   || fail "branch with commits after the merged head deleted (commit lost)"
-[ ! -d "$W/issue-9-build" ] && ok "clean Builder worktree removed while its ahead branch is kept" \
-  || fail "clean Builder worktree of card 9 kept"
+# U2 (audit 25/10): một worktree mang commit trunk chưa có (commit sau head đã merge: việc tiếp sau merge) không bao giờ bị bộ dọn
+# gỡ, kể cả khi nhánh còn giữ commit đó (sweep đã giữ đúng ca này: "not the head of a merged PR"). Trước đây post mode gỡ nó.
+[ -d "$W/issue-9-build" ] && ok "Builder worktree with a commit after the merged head kept (work the trunk lacks)" \
+  || fail "Builder worktree with a commit after the merged head REMOVED (work the trunk lacks)"
+# F5 (review U2, 26/10): integration is decided read-only (kit `held --merged=<sha>`) BEFORE tidy moves a file: a worktree the kit then
+# keeps as "not integrated" was salvaged / reverted first and put back by untidy. Nothing is moved, no salvage record is written.
+! grep -q "salvaged .*/issue-9-build" "$TMP/k9late.err" && [ -z "$(ls "$R/.git/super-board/salvage" 2>/dev/null | grep '^issue-9-build')" ] \
+  && grep -q "kept .*/issue-9-build: \(not integrated\|chưa tích hợp\)" "$TMP/k9late.err" && [ "$(cat "$W/issue-9-build/.agents/local/note.md" 2>/dev/null)" = "lane note 9" ] \
+  && ok "F5 a worktree that is not integrated is kept before tidy touches a file (no salvage, note untouched, reason given)" \
+  || { fail "F5 tidy moved files of a worktree the kit then kept as not integrated"; cat "$TMP/k9late.err"; }
 
 # Thẻ 12: Tester commit trên HEAD detached (repro chưa push), worktree sạch; Builder còn sửa dở trên nhánh đã merge.
 git -C "$R" branch issue-12-y
@@ -117,6 +126,27 @@ bash "$CLEAN" "$R" feat-own "$MERGEDF" >/dev/null 2>&1
 [ ! -d "$W/feat-own" ] && ok "k2 the session's own worktree on a merged non-card branch is removed" \
   || fail "k2 the session's own worktree on a merged non-card branch kept"
 git -C "$R" rev-parse --verify -q refs/heads/feat-own >/dev/null && fail "k2 merged non-card branch kept" || ok "k2 merged non-card branch deleted"
+# k2b (review U2 P3, 26/10): như k2, nhưng worktree do hook WorktreeCreate dựng (`add --session`: state ghi phiên chủ, bản ghi
+#     session_worktree mang pid của phiên). `held` nay hỏi cả _live_holder; phiên chủ là CHÍNH phiên gọi (pid tổ tiên) thì không phải
+#     "đang giữ" — như khoá devkit-kept của chính nó. Phiên chủ KHÁC còn sống: vẫn giữ.
+mkdir -p "$R/.claude/audit-gate/session_worktree"
+git -C "$R" branch feat-own2; MERGEDF2="$(git -C "$R" rev-parse feat-own2)"
+git -C "$R" worktree add -q "$W/feat-own2" feat-own2
+git -C "$R" worktree lock --reason "devkit-kept session=sess-me pid=$$" "$W/feat-own2"
+printf '{"session":"sess-me","branch":"feat-own2","baseline":{},"fp":2}\n' > "$(git -C "$W/feat-own2" rev-parse --absolute-git-dir)/devkit-worktree.json"
+printf '%s\npid %s\n' "$W/feat-own2" "$$" > "$R/.claude/audit-gate/session_worktree/sess-me"
+bash "$CLEAN" "$R" feat-own2 "$MERGEDF2" >/dev/null 2>"$TMP/k2b.err"
+[ ! -d "$W/feat-own2" ] && ok "k2b the caller's own session (its state owner) does not hold its merged worktree: removed" \
+  || { fail "k2b the caller's own hook-made worktree is kept as held by its own session"; cat "$TMP/k2b.err"; }
+sleep 300 & SL2=$!; disown "$SL2" 2>/dev/null
+git -C "$R" branch feat-other2; MERGEDO2="$(git -C "$R" rev-parse feat-other2)"
+git -C "$R" worktree add -q "$W/feat-other2" feat-other2
+printf '{"session":"sess-other","branch":"feat-other2","baseline":{},"fp":2}\n' > "$(git -C "$W/feat-other2" rev-parse --absolute-git-dir)/devkit-worktree.json"
+printf '%s\npid %s\n' "$W/feat-other2" "$SL2" > "$R/.claude/audit-gate/session_worktree/sess-other"
+bash "$CLEAN" "$R" feat-other2 "$MERGEDO2" >/dev/null 2>"$TMP/k2c.err"
+[ -d "$W/feat-other2" ] && grep -q "sess-other" "$TMP/k2c.err" && ok "k2b … a worktree another live session owns is kept, naming it" \
+  || { fail "k2b a worktree another live session owns was removed"; cat "$TMP/k2c.err"; }
+kill "$SL2" 2>/dev/null
 # k3. khoá keep của một phiên KHÁC còn sống: giữ (không bao giờ gỡ worktree từ dưới chân phiên khác)
 sleep 300 & SL=$!; disown "$SL" 2>/dev/null
 git -C "$R" branch issue-15-o
@@ -133,8 +163,9 @@ git -C "$R" worktree add -q "$TMP/repo-feat-hand" feat-hand
 bash "$CLEAN" "$R" feat-hand "$MERGEDH" >/dev/null 2>&1
 [ -d "$TMP/repo-feat-hand" ] && ok "k4 a hand-made worktree outside .claude/worktrees on the merged branch is left alone" \
   || fail "k4 a hand-made worktree outside .claude/worktrees REMOVED"
-# k5. (OCR 18/10) không có python3 (hay kit không chạy được): đường git như cũ — worktree sạch không khoá vẫn được gỡ, worktree khoá giữ
-#     và nói rõ lý do. PATH chỉ còn các lệnh script cần, trừ python3.
+# k5. không có python3 (hay kit không chạy được): không còn đường git trần (U2, audit 25/10). `git worktree remove` trần xoá im lặng
+#     file bị ignore chỉ worktree có (bí mật), commit chỉ reflog giữ… — chỉ kit chứng minh được là không mất gì; không có kit thì giữ
+#     mọi worktree và nói lý do. PATH chỉ còn các lệnh script cần, trừ python3.
 NOPY="$TMP/nopy"; mkdir -p "$NOPY"
 for b in git sed dirname cut tail head grep bash sh env; do p=$(command -v "$b") && ln -s "$p" "$NOPY/$b"; done
 git -C "$R" branch issue-16-np
@@ -142,11 +173,12 @@ MERGED16="$(git -C "$R" rev-parse issue-16-np)"
 git -C "$R" worktree add -q "$W/issue-16-build" issue-16-np
 git -C "$R" worktree add -q --detach "$W/issue-16-qa" main
 git -C "$R" worktree lock --reason "devkit-kept session=me pid=$$" "$W/issue-16-qa"
+echo "k5.secret" >> "$R/.git/info/exclude"; echo "TOKEN=only-here" > "$W/issue-16-build/k5.secret"   # bí mật bị ignore chỉ nó có
 PATH="$NOPY" bash "$CLEAN" "$R" issue-16-np "$MERGED16" >/dev/null 2>"$TMP/k5.err"
-[ ! -d "$W/issue-16-build" ] && [ -d "$W/issue-16-qa" ] && grep -q "/issue-16-qa: git worktree remove failed" "$TMP/k5.err" \
-  && ok "k5 without python3: plain git removes the unlocked worktree and keeps the locked one, saying why" \
-  || { fail "k5 no-python3 fallback"; cat "$TMP/k5.err"; }
-# k6. (OCR 18/10) DevKit của repo có mặt nhưng không chạy được (cú pháp hỏng / python quá cũ): đường git như cũ, worktree sạch vẫn gỡ
+[ -f "$W/issue-16-build/k5.secret" ] && [ -d "$W/issue-16-qa" ] && grep -q "issue-16-build: no DevKit" "$TMP/k5.err" \
+  && ok "k5 without python3 nothing is removed (no DevKit to prove it safe), saying why: the ignored secret stays" \
+  || { fail "k5 without python3 a worktree was removed by plain git (its ignored secret is gone)"; cat "$TMP/k5.err"; }
+# k6. DevKit của repo có mặt nhưng không chạy được (cú pháp hỏng / python quá cũ): như không có kit — giữ, nói lý do (U2 25/10)
 #     Chạy BẢN CHÉP của script ở thư mục tạm: không còn kit nào cạnh nó, chỉ còn kit hỏng của repo (OCR: không thì kit của repo này đỡ thay)
 mkdir -p "$R/.agents/devkit/scripts/git" && printf 'def broken(:\n' > "$R/.agents/devkit/scripts/git/worktree.py"
 mkdir -p "$TMP/sb/.claude/bin" && cp "$CLEAN" "$TMP/sb/.claude/bin/clean.sh"
@@ -156,24 +188,27 @@ git -C "$R" worktree add -q "$W/issue-17-build" issue-17-bk
 git -C "$R" worktree add -q --detach "$W/issue-17-qa" main
 git -C "$R" worktree lock --reason "devkit-kept session=me pid=$$" "$W/issue-17-qa"
 bash "$TMP/sb/.claude/bin/clean.sh" "$R" issue-17-bk "$MERGED17" >/dev/null 2>"$TMP/k6.err"
-[ ! -d "$W/issue-17-build" ] && [ -d "$W/issue-17-qa" ] && grep -q "/issue-17-qa: git worktree remove failed" "$TMP/k6.err" \
-  && ok "k6 a DevKit that cannot start falls back to plain git: the clean worktree is removed, the locked one kept" \
-  || { fail "k6 broken DevKit fallback"; cat "$TMP/k6.err"; }
-# k9. (OCR 18/10) kit chạy được `list` nhưng chết giữa `remove` (traceback, exit 1 không có dòng ✖): không phải lời từ chối có lý do —
-#     đường git như cũ, worktree sạch vẫn gỡ
+[ -d "$W/issue-17-build" ] && [ -d "$W/issue-17-qa" ] && grep -q "issue-17-build: no DevKit" "$TMP/k6.err" \
+  && ok "k6 a DevKit that cannot start removes nothing (no plain-git fallback), saying why" \
+  || { fail "k6 broken DevKit: plain git removed a worktree"; cat "$TMP/k6.err"; }
+# k9. kit chạy được `list` nhưng chết (traceback, exit 1 không có dòng ✖): không nói được là an toàn = giữ (U2 25/10; trước đây rơi về
+#     `git worktree remove` trần, xoá luôn bí mật bị ignore chỉ worktree có — k9b)
 printf 'import sys\nif sys.argv[1:2] != ["list"]:\n    raise RuntimeError("boom")\n' > "$R/.agents/devkit/scripts/git/worktree.py"
 git -C "$R" branch issue-19-cr
 MERGED19="$(git -C "$R" rev-parse issue-19-cr)"
 git -C "$R" worktree add -q "$W/issue-19-build" issue-19-cr
+echo "k9.secret" >> "$R/.git/info/exclude"; echo "TOKEN=only-here" > "$W/issue-19-build/k9.secret"
 bash "$TMP/sb/.claude/bin/clean.sh" "$R" issue-19-cr "$MERGED19" >/dev/null 2>"$TMP/k9.err"
-[ ! -d "$W/issue-19-build" ] && ok "k9 a kit that crashes in remove falls back to plain git" || { fail "k9 kit crash kept a clean worktree"; cat "$TMP/k9.err"; }
+[ -d "$W/issue-19-build" ] && grep -q "issue-19-build" "$TMP/k9.err" && ok "k9 a kit that crashes keeps the worktree, saying why (no plain-git fallback)" \
+  || { fail "k9 a crashing kit fell back to plain git"; cat "$TMP/k9.err"; }
+[ -f "$W/issue-19-build/k9.secret" ] && ok "k9b … so the ignored secret only that worktree holds is not lost" || fail "k9b the ignored secret is gone"
 # k11. (OCR 18/10) kit từ chối bằng exit 2 kèm dòng ✖ (die(): git lỗi khi dò bí mật, state không đọc được…): vẫn là từ chối, giữ
 printf 'import sys\nif sys.argv[1:2] != ["list"]:\n    print("\\u2716 worktree: cannot list ignored files", file=sys.stderr); sys.exit(2)\n' > "$R/.agents/devkit/scripts/git/worktree.py"
 git -C "$R" branch issue-21-r2
 MERGED21="$(git -C "$R" rev-parse issue-21-r2)"
 git -C "$R" worktree add -q "$W/issue-21-build" issue-21-r2
 bash "$TMP/sb/.claude/bin/clean.sh" "$R" issue-21-r2 "$MERGED21" >/dev/null 2>"$TMP/k11.err"
-[ -d "$W/issue-21-build" ] && grep -q "issue-21-build: agent-kit worktree remove refused: ✖ worktree: cannot list" "$TMP/k11.err" \
+[ -d "$W/issue-21-build" ] && grep -q "issue-21-build: .*✖ worktree: cannot list" "$TMP/k11.err" \
   && ok "k11 a kit refusal with exit 2 and a ✖ line keeps the worktree, no git fallback" \
   || { fail "k11 kit exit-2 refusal fell through to git"; cat "$TMP/k11.err"; }
 rm -rf "$R/.agents"
@@ -202,5 +237,25 @@ git -C "$R" worktree add -q "$W/issue-18-build" issue-18-d
 git -C "$R" worktree lock --reason "devkit-kept session=gone pid=$DEAD" "$W/issue-18-build"
 bash "$CLEAN" "$R" issue-18-d "$MERGED18" >/dev/null 2>&1
 [ ! -d "$W/issue-18-build" ] && ok "k8 a worktree kept by a dead session's lock is removed" || fail "k8 dead session's kept worktree kept"
+
+# k12. (U2 25/10) nhánh vừa merge mà reflog còn nêu một commit riêng (commit rồi reset về head đã merge): `git branch -D` trần xoá
+#      reflog và commit đó mất ở lần git gc. Kit (prune-branch) xoá nhánh nhưng cất commit đó vào refs/devkit/discarded trước.
+git -C "$R" switch -q -c issue-22-r
+echo z > "$R/z22"; git -C "$R" add z22; git -C "$R" commit -qm z22; Z22=$(git -C "$R" rev-parse HEAD)
+git -C "$R" reset -q --hard main; git -C "$R" switch -q main
+MERGED22="$(git -C "$R" rev-parse issue-22-r)"
+bash "$CLEAN" "$R" issue-22-r "$MERGED22" >/dev/null 2>"$TMP/k12.err"
+! git -C "$R" rev-parse --verify -q refs/heads/issue-22-r >/dev/null && [ -n "$(git -C "$R" for-each-ref --contains "$Z22" 2>/dev/null)" ] \
+  && ok "k12 the merged branch is deleted, the commit only its reflog named is kept on a ref" \
+  || { fail "k12 merged branch kept, or deleted with its reflog-only commit lost"; cat "$TMP/k12.err"; }
+# k13. (U2 25/10) worktree issue-<N>-qa của thẻ vừa merge nhưng ở NHÁNH KHÁC mang việc trunk chưa có (PR thứ hai của thẻ, còn mở):
+#      không phải phần đã merge — giữ.
+git -C "$R" branch issue-23-a
+MERGED23="$(git -C "$R" rev-parse issue-23-a)"
+git -C "$R" worktree add -q -b issue-23-next "$W/issue-23-qa" main
+echo next > "$W/issue-23-qa/n23"; git -C "$W/issue-23-qa" add n23; git -C "$W/issue-23-qa" commit -qm next
+bash "$CLEAN" "$R" issue-23-a "$MERGED23" >/dev/null 2>"$TMP/k13.err"
+[ -d "$W/issue-23-qa" ] && ok "k13 a card worktree on another branch with work the trunk lacks (its open PR) is kept" \
+  || { fail "k13 card worktree on another branch with unmerged work REMOVED"; cat "$TMP/k13.err"; }
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_post_merge_clean: all passed" || { echo "❌ test_post_merge_clean: $FAILS failed"; exit 1; }

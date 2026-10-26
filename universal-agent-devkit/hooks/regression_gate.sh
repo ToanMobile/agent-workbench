@@ -257,37 +257,21 @@ if not probe:
 # no outcome and pushed nothing (unverified): no test run now — the handover turn runs it, over verified_head..HEAD (T0003,
 # 2026-09-28; user 2026-10-09: 15 h of Stop-hook test runs in 3 days, "chỉ test khi bàn giao"). proof_gate
 # (XONG needs a --full exit 0 of the same turn), push_gate and pre-commit still hold every handover. DEVKIT_GATE_EVERY_STOP=1: old rule.
-if info is not None and not probe and not pushed:
+# Claude, Gemini, Grok: lời giữa chừng không mở suite (Gemini/Grok không có transcript Claude: không đọc được push của lượt).
+# XONG hoặc câu nhận đã xong vẫn chạy suite. Commit đã đẩy mà chưa kiểm vẫn nợ tới lượt bàn giao.
+# Claude: một `git push` ngay trong lượt này vẫn là bàn giao, dù lời không nhận đã xong — khi không có lần sửa nào sau nó
+# (devkit_harness.push_after_last_edit, audit 25/10 A3; push_gate đã đòi biên nhận gate cho nội dung được push).
+# Một định nghĩa duy nhất: devkit_harness.mid_work (audit 25/10 A5: testsourceset_gate dùng chung, không chép lại).
+if info is not None and not probe:
     try:
-        if devkit_harness.work_in_progress(data, status_optional=True):
+        why = devkit_harness.mid_work(data, info, pushed, repo=repo)   # repo: an edit outside it after a push is no work of the turn
+        if why == "wip":
             note("skip: work in progress (status line %r) sid=%s" % (devkit_harness.status_line(
                 data.get("last_assistant_message"))[:40], sid))
             sys.exit(0)
-    except SystemExit:
-        raise
-    except Exception as e:
-        note("work_in_progress failed: %r" % e)
-
-# Claude, Gemini, Grok: lời giữa chừng không mở suite. work_in_progress() phía trên bỏ qua Claude
-# khi commit đã nằm trên remote (`pushed`), và luôn false với Gemini/Grok (transcript không phải Claude).
-# XONG hoặc câu nhận đã xong vẫn chạy suite. Commit đã đẩy mà chưa kiểm vẫn nợ tới lượt bàn giao.
-# Claude: một `git push` ngay trong lượt này vẫn là bàn giao, dù lời không nhận đã xong.
-if info is not None and not probe and os.environ.get("DEVKIT_GATE_EVERY_STOP") != "1":
-    try:
-        reply = data.get("last_assistant_message")
-        if isinstance(reply, str) and reply.strip():
-            st = devkit_harness.reply_status(reply)
-            body = devkit_harness.MIDWORK_WORDS.sub("", reply)
-            if st in ("NOT_DONE", "NONE") and not devkit_harness.OUTCOME_WIDE.search(body):
-                turn_pushed = False
-                if info.get("agent") == "claude" and info.get("transcript") == "claude":
-                    tp = data.get("transcript_path") or data.get("transcriptPath")
-                    start = devkit_harness.turn_start(tp) if isinstance(tp, str) else None
-                    if start is not None and "push" in devkit_harness.git_writes_in_turn(tp, start):
-                        turn_pushed = True
-                if not turn_pushed:
-                    note("skip: mid-work (no handover) agent=%s sid=%s" % (info.get("agent") or "?", sid))
-                    sys.exit(0)
+        if why:
+            note("skip: mid-work (no handover) agent=%s sid=%s" % (info.get("agent") or "?", sid))
+            sys.exit(0)
     except SystemExit:
         raise
     except Exception as e:
@@ -817,6 +801,8 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                      cwd=repo, capture_output=True, text=True, errors="replace",
                      env={**os.environ, "CLAUDE_PROJECT_DIR": repo, "DEVKIT_LEDGER_ROOT": ledger_root,
                           "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
+                          # B5 (audit 25/10): khoá do một lượt gate CÒN SỐNG giữ thì chỉ chờ DEVKIT_REUSE_LOCK_WAIT_S (3 s) rồi BUSY
+                          "TEST_RUN_LOCK_BUSY_FAST": os.environ.get("TEST_RUN_LOCK_BUSY_FAST", "1"),
                           "GATE_TOTAL_BUDGET_S": budget_s,
                           # P1 (20/10): lượt Stop xếp sau merge/push/interactive ở hàng đợi khoá Unity; P1b: tải máy
                           # cao thì chỉ chờ ngắn rồi vẫn chạy (hook có hạn 1800 s, ngân sách suite 900 s). Tổng giây chờ tải của
