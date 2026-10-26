@@ -121,7 +121,7 @@ fi
 # Parallel, $JOBS at a time (jobs_now above): run one after another the suite took 740 s of
 # the gate's 900 s (2026-09-26). Every test works in its own mktemp dir. Timing tests
 # (test_budgets, test_session_context's bounded fetch, test_gate_lock_receipt_gap's 1.5 s race between two gates — failed rep 3 in
-# the pool at load ~70 on 25/10, 3/3 alone) run alone afterwards, so the others cannot slow them. Output keeps list order.
+# the pool at load ~70 on 25/10, 3/3 alone; #430: test_run_impacted "not parallel: 6 s", test_relink "slow", test_worktree_merge_gate_owner's 6 s wait) run alone afterwards, so the others cannot slow them. Output keeps list order.
 JOBS="$(jobs_now)"
 # `agent-kit test` runs its earlier suites beside the parallel phase and names a file that appears when they have ended: the
 # timing tests below wait for it, so they still run alone (15 minutes at most: a file that never comes must not hang the run; and not
@@ -161,7 +161,7 @@ export DEVKIT_RUN_BOUNDED DEVKIT_TEST_TIMEOUT_S
 parallel="" alone=""
 for t in $selected; do
   [ -f "$t" ] || continue
-  case "$t" in */test_budgets.sh|*/test_session_context.sh|*/test_gate_lock_receipt_gap.sh) alone="$alone $t" ;; *) parallel="$parallel $t" ;; esac
+  case "$t" in */test_budgets.sh|*/test_session_context.sh|*/test_gate_lock_receipt_gap.sh|*/test_run_impacted.sh|*/test_relink.sh|*/test_worktree_merge_gate_owner.sh) alone="$alone $t" ;; *) parallel="$parallel $t" ;; esac
 done
 # Start the longest tests first (tests/lib/test_durations.txt: `<seconds> <path>`; a test it does not list starts first, as it
 # may be slow): a 137 s test that starts last becomes the tail of the whole run. ONLY the start order of $parallel changes: $selected

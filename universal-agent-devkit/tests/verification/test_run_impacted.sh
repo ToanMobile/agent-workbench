@@ -59,18 +59,27 @@ list | grep -qx "tests/verification/test_tool_cmd.sh" && ok "a test naming only 
 # The run is parallel (DEVKIT_TEST_JOBS, default min(cores + cores/3, 16) with a floor of 4; this test pins 4): the DevKit suite took 740 s of the 900 s
 # gate limit on 2026-09-26. Output stays in list order; one failing test still fails the run;
 # test_budgets (timings) runs alone after the others.
+# #430: "ran in parallel" is proved by a rendezvous, not by seconds (a wall-clock ceiling failed at machine load 100+): each slow test drops its marker
+# and waits until all three exist, so only tests that run at the SAME TIME get through; one after another the first waits out its 60 s ceiling and fails.
+barrier_test() { # <marker dir> <name> -> the script body
+  printf 'M=%s; mkdir -p "$M"; touch "$M/%s"; w=0\nwhile [ ! -e "$M/a" ] || [ ! -e "$M/b" ] || [ ! -e "$M/c" ]; do sleep 0.2; w=$((w + 1)); [ "$w" -gt 300 ] && { echo never-overlapped; exit 1; }; done\necho %s-done\n' "$1" "$2" "$2"
+}
 R="$TMP/par"; mkdir -p "$R/tests/verification" "$R/tests/context_memory"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$R/tests/"
 echo 'echo ok' > "$R/tests/verification/test_repo_consistency.sh"
-for n in a b c; do printf 'sleep 2; echo %s-done\n' "$n" > "$R/tests/verification/test_slow_${TOK}_$n.sh"; done
+for n in a b c; do barrier_test "$R/mark" "$n" > "$R/tests/verification/test_slow_${TOK}_$n.sh"; done
 printf 'echo broken; exit 3\n' > "$R/tests/verification/test_broken.sh"
 printf 'for f in tests/verification/test_slow_*.sh; do [ -e "$f" ]; done; [ -z "$(pgrep -f "tests/verification/test_slow_%s_" | head -1)" ] && echo alone || { echo "not alone"; exit 1; }\n' "$TOK" > "$R/tests/context_memory/test_budgets.sh"
 ( cd "$R" && git init -q . && git config user.email t@t && git config user.name t && git add -A && git commit -qm init )
 ( cd "$R" && echo "# x" >> tests/verification/test_slow_${TOK}_a.sh && echo "# x" >> tests/verification/test_slow_${TOK}_b.sh && echo "# x" >> tests/verification/test_slow_${TOK}_c.sh \
   && echo "# x" >> tests/verification/test_broken.sh && echo "# x" >> tests/context_memory/test_budgets.sh )
 t0=$(date +%s); out="$(cd "$R" && DEVKIT_TEST_JOBS=4 bash tests/run_impacted.sh 2>&1)"; rc=$?; t1=$(date +%s)
-[ $((t1 - t0)) -lt 5 ] && ok "3 × 2 s tests run in parallel ($((t1 - t0)) s < 5 s)" || fail "not parallel: $((t1 - t0)) s"
+[ "$(printf '%s\n' "$out" | grep -cE "^✔ tests/verification/test_slow_${TOK}_[abc].sh")" = 3 ] && ok "3 tests that wait for each other all got through: they ran in parallel" || fail "not parallel: $out"
 [ "$rc" = 1 ] && printf '%s' "$out" | grep -q "✖ tests/verification/test_broken.sh" && ok "a failing test still fails the run, named" || fail "rc=$rc: $out"
 printf '%s' "$out" | grep -q "✔ tests/context_memory/test_budgets.sh" && ok "test_budgets runs alone, after the others" || fail "budgets not alone: $out"
+# #430: tests that assert an absolute number of seconds fail in the pool under load (25-26/10); each runs alone, like test_budgets
+for t in test_run_impacted test_relink test_worktree_merge_gate_owner; do
+  grep -E '^ *case "\$t" in .*\*/'"$t"'\.sh' "$DEVKIT_DIR/tests/run_impacted.sh" | grep -q 'alone=' && ok "$t is on the run-alone list" || fail "$t (asserts seconds) is not on the run-alone list"
+done
 # (✔|✖), not [✔✖]: under a POSIX locale (Linux, LANG unset) grep reads a multibyte bracket class byte by byte and matches nothing
 [ "$(printf '%s\n' "$out" | grep -E '^(✔|✖) ' | sed 's/^[^ ]* //' | tr '\n' ' ')" = "$(printf '%s\n' "$out" | grep -E '^(✔|✖) ' | sed 's/^[^ ]* //' | sort | tr '\n' ' ')" ] \
   && ok "results are printed in list order" || fail "order: $out"
@@ -80,7 +89,7 @@ printf '%s' "$out" | grep -q "✔ tests/context_memory/test_budgets.sh" && ok "t
 # --all selects every tests/*/test_*.sh whatever changed, in parallel, and finding none is an error, not a pass.
 A="$TMP/all"; mkdir -p "$A/tests/verification" "$A/tests/context_memory"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$A/tests/"
 echo 'echo ok' > "$A/tests/verification/test_repo_consistency.sh"
-for n in a b c; do printf 'sleep 2; echo %s-done\n' "$n" > "$A/tests/verification/test_slow_$n.sh"; done
+for n in a b c; do barrier_test "$A/mark" "$n" > "$A/tests/verification/test_slow_$n.sh"; done
 printf 'echo broken; exit 3\n' > "$A/tests/verification/test_broken.sh"
 echo 'echo budgets' > "$A/tests/context_memory/test_budgets.sh"
 ( cd "$A" && git init -q . && git config user.email t@t && git config user.name t && git add -A && git commit -qm init
@@ -90,7 +99,7 @@ echo 'echo budgets' > "$A/tests/context_memory/test_budgets.sh"
 t0=$(date +%s); out="$(cd "$A" && DEVKIT_TEST_JOBS=4 bash tests/run_impacted.sh --all 2>&1)"; rc=$?; t1=$(date +%s)
 n_ran="$(printf '%s\n' "$out" | grep -cE '^(✔|✖) tests/')"
 [ "$n_ran" = 6 ] && ok "--all on a clean tree selects every test ($n_ran)" || fail "--all selected $n_ran tests, not 6: $out"
-[ $((t1 - t0)) -lt 5 ] && ok "--all runs them in parallel ($((t1 - t0)) s < 5 s)" || fail "--all not parallel: $((t1 - t0)) s"
+[ "$(printf '%s\n' "$out" | grep -cE '^✔ tests/verification/test_slow_[abc].sh')" = 3 ] && ok "--all: the 3 tests that wait for each other all got through: they ran in parallel" || fail "--all not parallel: $out"
 [ "$rc" = 1 ] && printf '%s' "$out" | grep -q "✖ tests/verification/test_broken.sh" && ok "--all: a failing test fails the run, named" || fail "--all rc=$rc: $out"
 E="$TMP/none"; mkdir -p "$E/tests"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$E/tests/"; ( cd "$E" && git init -q . )
 out="$(cd "$E" && bash tests/run_impacted.sh --all 2>&1)"; rc=$?
