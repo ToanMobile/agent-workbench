@@ -11,7 +11,8 @@
 #     `headRefOid`. Không khớp (head dời, không có, người ngoài duyệt) → gỡ nhãn + comment lý do. Draft: bỏ qua, giữ nhãn.
 #   --if-due: chỉ gom khi một điều xảy ra: số PR ≥ trần đợt; PR cũ nhất (mốc sự kiện `labeled` trong timeline) chờ ≥ max_wait_min;
 #     hoặc máy rảnh (không worker board nào còn sống, merge.lock của gate không còn chủ, không post-fix-gate nào giữ test_run.lock).
-#   Trần đợt = merge_queue.batch_max (mặc định 6); đợt trước có PR đỏ thì max(1, batch_max/2) (trạng thái trong merge-queue.state cạnh khoá).
+#   Trần đợt = merge_queue.batch_max (mặc định 6); đợt trước có PR đỏ thì max(1, batch_max/2) (trạng thái trong merge-queue.state cạnh khoá;
+#     train hỏng không in train-result nào thì giữ nguyên). Mốc gắn nhãn nhớ trong merge-queue.labeled (<PR> <head> <epoch>).
 #   --dry-run: in đợt sẽ gửi và lý do rồi thoát trước khối train; reject chỉ in (tests/super-board/test_merge_queue.sh ca 8 kiểm điều này).
 #
 # Route mỗi `train-result: <PR> <kết quả>` (bước ghi nhãn đi SAU cùng: chết giữa chừng thì lượt sau route lại, không mất việc):
@@ -82,8 +83,8 @@ except OSError as e:
     sys.exit(3 if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES) else (print(e, file=sys.stderr) or 2))
 ' || LRC=$?
 case "$LRC" in
-  0) ;;
-  3) say "another merge-queue run holds ${LOCK}; nothing to do"; exit 0 ;;
+  0) echo "$$" > "$LOCK.pid" ;;   # ai đang giữ khoá, cho người đọc khi hàng có vẻ kẹt
+  3) say "another merge-queue run (pid $(cat "$LOCK.pid" 2>/dev/null || echo '?')) holds ${LOCK}; nothing to do"; exit 0 ;;
   *) say "could not lock ${LOCK} (exit ${LRC})"; exit 1 ;;
 esac
 
@@ -104,25 +105,31 @@ Next: review again; write a new \`approved-head:<sha40>\` for the current head a
 PRS_JSON=$(python3 "$GITHUB_READ" --kind array -- pr list ${REPO:+--repo "$REPO"} --state open --label "$LABEL" --limit 200 \
              --json number,headRefName,headRefOid,isDraft) || exit $?
 NOW=$(date +%s)
-ROWS=""   # "<mốc gắn nhãn epoch> <PR> <head> <nhánh>" mỗi dòng
-while read -r n head ref draft; do
-  [ -n "${n:-}" ] || continue
-  if [ "$draft" = true ]; then say "PR #${n} is a draft; skipped (label kept)"; continue; fi
-  comments=$(python3 "$GITHUB_READ" --kind object -- pr view "$n" ${REPO:+--repo "$REPO"} --json comments) || exit $?
-  # Cùng luật với review_approved_head của runner (#227): comment approved-head cuối cùng của người có quyền ghi thắng.
-  approved=$(printf '%s' "$comments" | jq -r '
-    [.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
-      | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty')
-  if [ -z "$approved" ]; then reject "$n" "no \`approved-head:<sha40>\` from an OWNER/MEMBER/COLLABORATOR on this PR"; continue; fi
-  if [ "$approved" != "$head" ]; then reject "$n" "approved-head ${approved:0:7} is not the PR head ${head:0:7} (pushed after approval)"; continue; fi
-  tl=$(python3 "$GITHUB_READ" --kind json -- api "repos/${SLUG}/issues/${n}/timeline?per_page=100" --paginate --slurp) || exit $?
-  at=$(printf '%s' "$tl" | jq -r --arg l "$LABEL" '[.[][]? | select(.event == "labeled" and .label.name == $l) | .created_at | fromdateiso8601] | max // empty')
-  [ -n "$at" ] || { say "PR #${n}: no labeled event for ${LABEL} in its timeline; counting it as labelled now"; at=$NOW; }
-  ROWS="${ROWS}${at} ${n} ${head} ${ref}"$'\n'
-done < <(printf '%s' "$PRS_JSON" | jq -r '.[] | "\(.number) \(.headRefOid) \(.headRefName) \(.isDraft)"')
-ROWS=$(printf '%s' "$ROWS" | sort -n -k1,1 -k2,2)
-N=0; [ -z "$ROWS" ] || N=$(printf '%s\n' "$ROWS" | wc -l | tr -d ' ')
+# Thứ tự đọc từ rẻ tới đắt (runner gọi --if-due mỗi tick 30 s): một `pr list`; máy rảnh / đủ đợt quyết ngay; mốc gắn nhãn (REST timeline)
+# chỉ đọc khi cần và nhớ trong merge-queue.labeled theo <PR> <head>; comment approved-head (GraphQL) chỉ đọc khi đợt đã tới hạn.
+CANDS=$(printf '%s' "$PRS_JSON" | jq -r '.[] | select(.isDraft != true) | "\(.number) \(.headRefOid) \(.headRefName)"')
+for n in $(printf '%s' "$PRS_JSON" | jq -r '.[] | select(.isDraft == true) | .number'); do say "PR #${n} is a draft; skipped (label kept)"; done
+N=0; [ -z "$CANDS" ] || N=$(printf '%s\n' "$CANDS" | wc -l | tr -d ' ')
 [ "$N" -gt 0 ] || { say "nothing queued"; exit 0; }
+LABELED="$QDIR/merge-queue.labeled"
+ROWS=""   # "<mốc gắn nhãn epoch> <PR> <head> <nhánh>" mỗi dòng, cũ nhất trước
+load_rows() {
+  local n head ref at tl cache="" out=""
+  [ -z "$ROWS" ] || return 0
+  [ ! -r "$LABELED" ] || cache=$(cat "$LABELED")
+  while read -r n head ref; do
+    [ -n "${n:-}" ] || continue
+    at=$(printf '%s\n' "$cache" | awk -v n="$n" -v h="$head" '$1 == n && $2 == h {print $3; exit}')
+    if [ -z "$at" ]; then
+      tl=$(python3 "$GITHUB_READ" --kind json -- api "repos/${SLUG}/issues/${n}/timeline?per_page=100" --paginate --slurp) || exit $?
+      at=$(printf '%s' "$tl" | jq -r --arg l "$LABEL" '[.[][]? | select(.event == "labeled" and .label.name == $l) | .created_at | fromdateiso8601] | max // empty')
+      [ -n "$at" ] || { say "PR #${n}: no labeled event for ${LABEL} in its timeline; counting it as labelled now"; at=$NOW; }
+    fi
+    out="${out}${at} ${n} ${head} ${ref}"$'\n'
+  done < <(printf '%s\n' "$CANDS")
+  ROWS=$(printf '%s' "$out" | sort -n -k1,1 -k2,2)
+  printf '%s\n' "$ROWS" | awk 'NF {print $2, $3, $1}' > "$LABELED.tmp" && mv -f "$LABELED.tmp" "$LABELED"
+}
 
 LAST_RED=false
 [ ! -r "$STATE" ] || LAST_RED=$(jq -r '.last_red // false' "$STATE" 2>/dev/null || echo false)
@@ -171,19 +178,37 @@ for wt in sys.stdin.read().splitlines():
   if [ -n "$held" ]; then echo "post-fix-gate holds ${held}"; return 0; fi
   return 1
 }
-OLDEST=$(printf '%s\n' "$ROWS" | head -1 | cut -d' ' -f1)
-WAITED=$(( NOW - OLDEST ))
+BUSY=""
 if [ "$N" -ge "$CAP" ]; then DUE="${N} PR(s) queued ≥ batch cap ${CAP}"
-elif [ "$WAITED" -ge $(( MAX_WAIT_MIN * 60 )) ]; then DUE="oldest PR waited $(( WAITED / 60 )) min ≥ ${MAX_WAIT_MIN}"
-elif BUSY=$(machine_busy); then DUE=""
-else DUE="machine idle"; fi
+elif ! BUSY=$(machine_busy); then DUE="machine idle"
+else
+  load_rows
+  WAITED=$(( NOW - $(printf '%s\n' "$ROWS" | head -1 | cut -d' ' -f1) ))
+  if [ "$WAITED" -ge $(( MAX_WAIT_MIN * 60 )) ]; then DUE="oldest PR waited $(( WAITED / 60 )) min ≥ ${MAX_WAIT_MIN}"
+  else DUE=""; fi
+fi
 if [ "$IF_DUE" -eq 1 ] && [ -z "$DUE" ]; then
   say "not due: ${N} PR(s), oldest $(( WAITED / 60 )) min (< ${MAX_WAIT_MIN}), cap ${CAP}; busy: ${BUSY}"
   exit 0
 fi
 [ -n "$DUE" ] || DUE="run by hand (busy: ${BUSY})"
+load_rows
 
-BATCH=$(printf '%s\n' "$ROWS" | head -n "$CAP")
+# Đợt: đi từ PR cũ nhất, đọc comment duyệt từng PR (GraphQL) tới khi đủ trần; PR duyệt sai rời hàng ngay lượt này.
+BATCH=""; NB=0
+while read -r at n head ref; do
+  [ -n "${n:-}" ] && [ "$NB" -lt "$CAP" ] || continue
+  comments=$(python3 "$GITHUB_READ" --kind object -- pr view "$n" ${REPO:+--repo "$REPO"} --json comments) || exit $?
+  # Cùng luật với review_approved_head của runner (#227): comment approved-head cuối cùng của người có quyền ghi thắng.
+  approved=$(printf '%s' "$comments" | jq -r '
+    [.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
+      | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty')
+  if [ -z "$approved" ]; then reject "$n" "no \`approved-head:<sha40>\` from an OWNER/MEMBER/COLLABORATOR on this PR"; continue; fi
+  if [ "$approved" != "$head" ]; then reject "$n" "approved-head ${approved:0:7} is not the PR head ${head:0:7} (pushed after approval)"; continue; fi
+  BATCH="${BATCH}${at} ${n} ${head} ${ref}"$'\n'; NB=$((NB + 1))
+done < <(printf '%s\n' "$ROWS")
+BATCH=${BATCH%$'\n'}
+[ "$NB" -gt 0 ] || { say "no queued PR carries a valid approval; nothing to run"; exit 0; }
 PRS_ARG=$(printf '%s\n' "$BATCH" | awk '{printf "%s%s:%s", (NR > 1 ? "," : ""), $2, $3}')
 if [ "$DRY" -eq 1 ]; then
   echo "merge-queue: would run super-board-merge-train.sh --prs ${PRS_ARG} (${DUE}; cap ${CAP}$([ "$LAST_RED" = true ] && echo ', halved after a red batch'))"
@@ -195,9 +220,15 @@ say "batch of $(printf '%s\n' "$BATCH" | wc -l | tr -d ' ') (${DUE}; cap ${CAP})
 TOUT=$(mktemp); ERRF=$(mktemp)
 trap 'rm -f "$TOUT" "$ERRF"' EXIT
 TRC=0
-SB_MERGE_CALLER=queue bash "$TRAIN" --config "$CONFIG" --prs "$PRS_ARG" >"$TOUT" || TRC=$?
+# 9>&-: train và mọi tiến trình nền của nó (verify, gate) không mang khoá của queue; queue chết thì khoá đi theo nó, không kẹt hàng.
+SB_MERGE_CALLER=queue bash "$TRAIN" --config "$CONFIG" --prs "$PRS_ARG" >"$TOUT" 9>&- || TRC=$?
 cat "$TOUT"
 if [ "$TRC" -eq 79 ]; then say "train exit 79 (GitHub reads halted); nothing routed, labels kept"; exit 79; fi
+if ! grep -q '^train-result: ' "$TOUT"; then
+  say "train exit ${TRC} with no train-result line; nothing routed, labels and the red mark kept"
+  [ "$TRC" -ne 9 ] || exit 9
+  exit 0
+fi
 if grep -qE '^train-result: [0-9]+ (red|gate-exit-11)$' "$TOUT"; then RED_NOW=true; else RED_NOW=false; fi
 printf '{"last_red":%s,"at":%s,"prs":"%s","train_exit":%s}\n' "$RED_NOW" "$(date +%s)" "$PRS_ARG" "$TRC" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"
 

@@ -69,6 +69,7 @@ if a[:2] == ['pr', 'list']:
         prs = [p for p in prs if os.path.exists(f"{F}/labeled/{p['number']}")]
     print(json.dumps(prs))
 elif a[:2] == ['pr', 'view'] and opt('--json') == 'comments':
+    open(F + '/reads', 'a').write(f'comments {num()}\n')
     p = f'{F}/comments-{num()}.json'
     print(open(p).read() if os.path.exists(p) else '{"comments":[]}')
 elif a[:2] == ['pr', 'view'] and 'state' in (opt('--json') or ''):
@@ -79,6 +80,7 @@ elif a[:2] == ['pr', 'view'] and 'state' in (opt('--json') or ''):
         print(json.dumps({'state': 'OPEN', 'mergeCommit': None, 'headRefOid': 'a' * 40}))
 elif a[0] == 'api' and '/timeline' in a[1]:
     n = a[1].split('/issues/')[1].split('/')[0]; p = f'{F}/labeled/{n}'
+    open(F + '/reads', 'a').write(f'timeline {n}\n')
     ev = [{'event': 'commented', 'created_at': '2020-01-01T00:00:00Z'}]
     if os.path.exists(p):
         ev.append({'event': 'labeled', 'label': {'name': 'merge-queue'}, 'created_at': open(p).read().strip()})
@@ -135,7 +137,7 @@ issue() {   # issue <K> [labels comma]
 }
 reset() {
   rm -rf "$F"; mkdir -p "$F/labeled"; PRS_ROWS=""; printf '[]\n' > "$F/prs.json"; : > "$F/writes"; : > "$F/calls"
-  rm -f "$INF"/[0-9]* "$STATE"; rm -rf "$INF/merge.lock"
+  rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled"; rm -rf "$INF/merge.lock"
 }
 run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" "$@" ) >"$TMP/out" 2>"$TMP/err"; }
 calls() { grep -c '^train ' "$F/calls" 2>/dev/null | tr -d ' '; }
@@ -183,10 +185,14 @@ sleep 60 & LIVE=$!; PIDS="$PIDS $LIVE"
 printf 'PID=%s\nLANE=build\n' "$LIVE" > "$INF/77"
 run_q --if-due; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "--if-due: 2 PRs, 5 min old, a worker alive → not due" || fail "--if-due busy: rc=$rc calls=$(calls): $(cat "$TMP/err")"
+grep -q '^comments' "$F/reads" 2>/dev/null && fail "--if-due not due: approval comments were read (GraphQL per PR per tick)" || ok "--if-due not due: no approval comment read"
+: > "$F/reads"; run_q --if-due
+grep -q '^timeline' "$F/reads" && fail "--if-due second tick re-read the timelines: $(cat "$F/reads")" || ok "--if-due second tick: labelled times come from the cache"
+rm -f "$COMMON/super-board/merge-queue.labeled"   # mốc gắn nhãn đổi dưới đây: đọc lại timeline
 ago 61 > "$F/labeled/2"
 run_q --if-due
 [ "$(calls)" = 1 ] && ok "--if-due: oldest waited 61 min ≥ max_wait_min → due" || fail "--if-due age: calls=$(calls): $(cat "$TMP/err")"
-: > "$F/calls"; ago 5 > "$F/labeled/2"; cfg true 2 60
+: > "$F/calls"; ago 5 > "$F/labeled/2"; cfg true 2 60; rm -f "$COMMON/super-board/merge-queue.labeled"
 run_q --if-due
 [ "$(calls)" = 1 ] && ok "--if-due: count reaches batch_max → due (worker still alive)" || fail "--if-due count: calls=$(calls)"
 : > "$F/calls"; cfg true 6 60; rm -f "$INF/77"
@@ -202,6 +208,13 @@ echo 999999 > "$INF/merge.lock/pid"; echo 999999 > "$INF/merge.lock/pgid"; echo 
 run_q --if-due
 [ "$(calls)" = 1 ] && ok "--if-due: merge.lock of a dead holder past stale-after → idle" || fail "--if-due merge.lock dead: calls=$(calls): $(cat "$TMP/err")"
 [ -d "$INF/merge.lock" ] && ok "  … the queue never reaps the gate's lock" || fail "  … merge.lock was removed"
+# Busy = holder còn VÀ khoá chưa quá stale-after (cả hai): holder chết + khoá mới → rảnh; holder sống + khoá quá 6000 s → rảnh.
+: > "$F/calls"; date +%s > "$INF/merge.lock/at"
+run_q --if-due
+[ "$(calls)" = 1 ] && ok "--if-due: merge.lock of a dead holder, fresh → idle" || fail "--if-due dead fresh: calls=$(calls)"
+: > "$F/calls"; echo "$LIVE" > "$INF/merge.lock/pid"; ps -o pgid= -p "$LIVE" | tr -d ' ' > "$INF/merge.lock/pgid"; echo $(( $(date +%s) - 6000 )) > "$INF/merge.lock/at"
+run_q --if-due
+[ "$(calls)" = 1 ] && ok "--if-due: merge.lock of a live holder past stale-after → idle" || fail "--if-due live stale: calls=$(calls)"
 rm -rf "$INF/merge.lock"
 # test_run.lock của post-fix-gate trong một worktree đang bị giữ → bận.
 : > "$F/calls"; git -C "$R" worktree add -q --detach "$TMP/wt1" HEAD
@@ -267,7 +280,7 @@ has_w "pr-unlabel 29 merge-queue" && has_w "issue-labels 39 loop:rebuild-2" && h
 reset; cfg true 4
 echo '{"last_red":true}' > "$STATE"
 for n in 51 52 53 54; do pr "$n" "issue-$((n + 10))-x" $((60 - n)); approve "$n" OWNER "$(sha "$n")"; issue $((n + 10)); done
-: > "$F/train.out"
+printf 'train-result: 51 deferred\ntrain-result: 52 deferred\ntrain-result: 53 deferred\ntrain-result: 54 deferred\n' > "$F/train.out"   # không đỏ, giữ nhãn
 run_q
 grep -q -- "--prs 51:$(sha 51),52:$(sha 52)\$" "$F/calls" && ok "after a red batch: at most batch_max/2 (the 2 oldest of 4)" || fail "halved batch: $(cat "$F/calls")"
 [ "$(jq -r .last_red "$STATE" 2>/dev/null)" = false ] && ok "  … a green batch clears the red mark" || fail "  … state: $(cat "$STATE" 2>/dev/null)"
@@ -283,6 +296,12 @@ run_q; rc=$?
 echo 9 > "$F/train.rc"; : > "$F/writes"
 run_q; rc=$?
 [ "$rc" -eq 9 ] && has_w "card move 11 Done" && ok "train exit 9: merged PRs routed, then exit 9" || fail "9: rc=$rc writes=$(cat "$F/writes")"
+# Train hỏng mà không in kết quả nào (exit 1): không đụng trạng thái đỏ của đợt trước, nói rõ trong log.
+echo '{"last_red":true}' > "$STATE"; : > "$F/train.out"; echo 1 > "$F/train.rc"; : > "$F/writes"; ago 5 > "$F/labeled/1"
+run_q; rc=$?
+[ "$(jq -r .last_red "$STATE" 2>/dev/null)" = true ] && ok "train exit 1 with no results: red mark kept" || fail "no results: state $(cat "$STATE")"
+grep -q "no train-result" "$TMP/err" && ok "  … and the log says so" || fail "  … log: $(tail -3 "$TMP/err")"
+[ ! -s "$F/writes" ] && ok "  … nothing routed" || fail "  … writes: $(cat "$F/writes")"
 
 # ── 8. --dry-run. Ca này khẳng định: file ghi của gh giả rỗng và số lời gọi train là 0.
 reset; cfg true 6

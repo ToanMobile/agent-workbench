@@ -69,8 +69,10 @@ for a in "\$@"; do
   prev="\$a"
 done
 if [ "\$pre" = 1 ]; then
+  # Hợp đồng lane E: qua preflight = exit 0 + dòng "preflight: ok"; exit 0 không có dòng đó = PR đã MERGED.
   [ -f "\$FAKE_DIR/preflight\$n.out" ] && cat "\$FAKE_DIR/preflight\$n.out"
   [ -f "\$FAKE_DIR/preflight\$n.rc" ] && exit "\$(cat "\$FAKE_DIR/preflight\$n.rc")"
+  echo "preflight: ok"
   exit 0
 fi
 exec bash "$ROOT/.claude/bin/super-board-merge-gate.sh" "\$@"
@@ -238,6 +240,15 @@ reset_run
 [ "$rc" -eq 0 ] && [ "$(merged_list)" = "42 " ] && grep -q "train-result: 42 merged" "$TMP/t15.log" \
   && ok "gate without --preflight (exit 64): the PR stays and merges" || fail "preflight 64: exit $rc merged=$(merged_list): $(tail -4 "$TMP/t15.log")"
 rm -f "$TMP/preflight42.rc"
+# Preflight exit 0 KHÔNG có dòng "preflight: ok" = PR đã merge (lane E): rời chuỗi trước khi dựng cây, kết quả `merged`, gate không merge lại.
+card_branch 43 f43; card_branch 44 f44; printf '0\n' > "$TMP/preflight43.rc"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_SEEN" --prs 43,44 ) >"$TMP/t16.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "^train-result: 43 merged$" "$TMP/t16.log" && grep -q "^train-result: 44 merged$" "$TMP/t16.log" \
+  && ok "preflight says already merged: train-result merged, exit 0" || fail "already merged: exit $rc: $(grep train "$TMP/t16.log")"
+[ "$(merged_list)" = "44 " ] && ok "  … the gate did not merge #43 again" || fail "  … merged $(merged_list)"
+grep -q "^f43$" "$TMP/verify.files" && fail "  … #43 was inside the verified tree" || ok "  … #43 left before any tree was built"
+rm -f "$TMP/preflight43.rc"
 
 # ── 12. #288: ghi chú ponytail đầu file mô tả đúng hành vi: PR bị gate chặn đã ra khỏi chuỗi trước khi verify (R11), không "vẫn nằm trong chuỗi".
 grep -q "vẫn nằm trong chuỗi verify" "$TRAIN" && fail "the ponytail note at the top still says a gate-blocked PR stays in the verify chain" \

@@ -116,12 +116,14 @@ for p in ${MOVED[@]+"${MOVED[@]}"}; do echo "train-result: $p head-moved"; done
 LIST=("${KEEP[@]}")
 # Preflight (Pha 2, M6): kiểm rẻ của gate cho từng PR trước khi dựng cây nào. PR rớt (policy cần người 7/8, qa-report/AC 11, đóng 3,
 # head dời 6…) rời đợt, không tốn lượt verify của cả đợt; 79/9 đi thẳng tới caller.
-BLOCKED=(); DRYRC=0; PF_LIST=(); PF_REFS=(); PF_HEADS=()
+BLOCKED=(); DRYRC=0; PF_LIST=(); PF_REFS=(); PF_HEADS=(); PREMERGED=()
 for i in "${!LIST[@]}"; do
   p="${LIST[$i]}"
   run_gate "$p" 2 --config "$CONFIG" --pr "$p" --expect-head "${HEADS[$i]}" --preflight ${PASS[@]+"${PASS[@]}"}
   case "$GRC" in
-    0) PF_LIST+=("$p"); PF_REFS+=("${REFS[$i]}"); PF_HEADS+=("${HEADS[$i]}") ;;
+    # Qua preflight = exit 0 + dòng `preflight: ok`. Exit 0 không có dòng đó = gate thấy PR đã MERGED: rời chuỗi, kết quả `merged`.
+    0) if grep -q '^preflight: ok' "$GATE_OUT"; then PF_LIST+=("$p"); PF_REFS+=("${REFS[$i]}"); PF_HEADS+=("${HEADS[$i]}")
+       else say "PR #${p} is already merged (preflight exit 0 without 'preflight: ok')"; PREMERGED+=("$p"); fi ;;
     # 64 = gate chưa có --preflight (cờ của lane E, gộp riêng): PR ở lại; gate --dry-run sau verify vẫn kiểm policy như trước Pha 2.
     # ponytail: bỏ nhánh này khi mọi repo đã có gate mang --preflight.
     64) say "the merge gate has no --preflight (exit 64); PR #${p} stays, the gate's --dry-run after verify checks it"
@@ -132,7 +134,8 @@ for i in "${!LIST[@]}"; do
   esac
 done
 if [ "${#PF_LIST[@]}" -eq 0 ]; then
-  for b in "${BLOCKED[@]}"; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done
+  for p in ${PREMERGED[@]+"${PREMERGED[@]}"}; do echo "train-result: $p merged"; done
+  for b in ${BLOCKED[@]+"${BLOCKED[@]}"}; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done
   exit "$DRYRC"
 fi
 LIST=("${PF_LIST[@]}"); REFS=("${PF_REFS[@]}"); HEADS=("${PF_HEADS[@]}")
@@ -306,6 +309,7 @@ if [ "${#GOOD[@]}" -gt 0 ]; then
 fi
 
 RC=$DRYRC
+for p in ${PREMERGED[@]+"${PREMERGED[@]}"}; do echo "train-result: $p merged"; done
 for b in "${BLOCKED[@]+"${BLOCKED[@]}"}"; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done
 for p in "${GOOD[@]+"${GOOD[@]}"}"; do
   run_gate "$p" 1 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" ${PASS[@]+"${PASS[@]}"}
