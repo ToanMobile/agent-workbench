@@ -128,6 +128,28 @@ if [ "$rc" = 1 ] && has "$out" "merge-gate verifies=3 train verifies=0" && ! has
   ok "dòng JSON hỏng / không phải object / epoch sai bị bỏ qua"
 else fail "JSON hỏng (rc=$rc): $out"; fi
 
+# ── 5b. Lượt gate không chạy suite nào (verdict BUSY, hoặc exit 4: hàng đợi gate / khe bận) không phải lượt verify: không đếm.
+# Scratch của agent-kit integrate (.integrate-scratch-*) cũng không phải merge gate lẻ. 4 PR, 1 train thật; nếu đếm sai: 4 lẻ > 1 → ĐỎ.
+gen_runs "$TMP/r5b.jsonl" 0 1 0 "$EP"
+python3 - "$TMP/r5b.jsonl" "$EP" <<'PY2'
+import json, sys
+path, ep = sys.argv[1], int(sys.argv[2])
+rows = [{"epoch": ep, "project": ".merge-scratch-busy01", "verdict": "BUSY", "exit": 4},
+        {"epoch": ep, "project": ".merge-scratch-busy02", "verdict": "BUSY", "exit": 4},
+        {"epoch": ep, "project": ".merge-scratch-slot01", "verdict": "UNTESTED", "exit": 4},
+        {"epoch": ep, "project": ".train-scratch-busy01", "verdict": "BUSY", "exit": 4},
+        {"epoch": ep, "project": ".integrate-scratch-abc123", "verdict": "PASS", "exit": 0},
+        {"epoch": ep, "project": ".integrate-scratch-def456", "verdict": "PASS", "exit": 0}]
+with open(path, "a", encoding="utf-8") as f:
+    for r in rows:
+        f.write(json.dumps(r) + "\n")
+PY2
+gen_merged "$TMP/m5b.json" 4 "$EP"
+out=$(python3 "$CANARY" --runs "$TMP/r5b.jsonl" --since "$SINCE" --merged-json "$TMP/m5b.json" 2>&1); rc=$?
+if [ "$rc" = 0 ] && has "$out" "merged PRs=4 merge-gate verifies=0 train verifies=1" && has "$out" "GREEN"; then
+  ok "bản ghi BUSY / exit 4 và scratch integrate không bị đếm"
+else fail "BUSY / exit 4 / integrate phải bị bỏ qua (rc=$rc): $out"; fi
+
 # ── 6. Lỗi đầu vào → exit 2 kèm lý do (không traceback)
 bad_in() {   # <tên> <chuỗi phải có> <args...>
   local name="$1" want="$2"; shift 2

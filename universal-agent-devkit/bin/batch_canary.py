@@ -93,7 +93,8 @@ def runs_path(repo) -> Path | None:
 
 
 def count_verifies(runs, since: float) -> tuple:
-    """(lượt merge gate, lượt train) có epoch >= since. Dòng hỏng, không phải object, epoch không phải số: bỏ qua."""
+    """(lượt merge gate, lượt train) có epoch >= since. Dòng hỏng, không phải object, epoch không phải số: bỏ qua. Lượt gate không chạy
+    suite nào (verdict BUSY, hoặc exit 4: hàng đợi gate / khe / khoá bận) không phải lượt verify: bỏ qua."""
     merge_v = train_v = 0
     try:
         with open(runs, encoding="utf-8", errors="replace") as fh:
@@ -108,7 +109,7 @@ def count_verifies(runs, since: float) -> tuple:
                 if isinstance(epoch, bool) or not isinstance(epoch, (int, float)) or epoch < since:
                     continue
                 project = r.get("project")
-                if not isinstance(project, str):
+                if not isinstance(project, str) or r.get("verdict") == "BUSY" or r.get("exit") == 4:
                     continue
                 if project.startswith(MERGE_PREFIX):
                     merge_v += 1
