@@ -114,6 +114,12 @@ if [ -n "$SCR" ]; then
   check 0 "rm -rf $SCRP/inner/"                            # control: a real folder of the scratch, trailing slash
   check 0 "cd $SCRP && rm -rf inner/"                      # control: … relative
   check 0 "cd $SCRP && rm -rf home"                        # control: no trailing slash, rm removes the link only
+  # principal review round 2 (25/10). A4: a `..` that stays in the scratch folder is no escape (every `..` was refused).
+  # A2: a glob that can leave its folder with more than 2000 matches now cannot be judged match by match: refused (only 2000 were read).
+  mkdir -p "$SCR/a/d1" "$SCR/a/d2" "$SCR/many" && ( cd "$SCR/many" && mkdir d{1..2100} )
+  check 0 "cd $SCRP/a/d1 && rm -rf ../d2"
+  check 2 "rm -rf $SCRP/many/*/"
+  check 0 "rm -rf $SCRP/many/*"                            # control: names in that folder only, no walk
 fi
 
 # 4. review of A7 (25/10): a link inside the PROJECT to a folder outside it. With a trailing slash (or /.) rm deletes what the link points at;
@@ -135,5 +141,49 @@ check 2 "rm -rf $TMP/work/other/*/"
 check 0 'rm -rf app/build/*'                               # no trailing slash: the link itself is removed
 check 0 "rm -rf $TMP/work/other/*"
 check 0 'rm -rf app/build/real/'
+
+# 5. principal review round 2 (25/10)
+# B1: bash expands `~` in an unquoted assignment, so `D=~/x; rm -rf "$D"/` deletes x of the home folder. The hook expanded `~` before it put
+#     the variable in, and judged `<cwd>/~/x`. (`D="~/x"`, quoted, is read the same way: refused as the home folder, on purpose.)
+check 2 'D=~/Documents; rm -rf "$D"/'
+check 2 'D=~/Documents && rm -rf $D/'
+check 2 'D=~/Documents; rm -rf $D'
+check 0 'D=build; rm -rf "$D"'                             # control: a build output through a variable
+# A2: more than 2000 matches of a glob that can leave its folder (trailing /, or a glob before the last name): only 2000 were read, a link
+#     after them was never judged. Now refused; a glob in the last name only (`many/*`) is not walked at all, as before.
+mkdir -p "$TMP/work/many" && ( cd "$TMP/work/many" && mkdir d{1..2100} )
+check 2 "rm -rf $TMP/work/many/*/"
+check 0 "rm -rf $TMP/work/many/*"
+check 0 'rm -rf build/*'
+# A3: the folder before the glob is judged before its matches are walked: a refused folder (the project root here, ~/Library in the
+#     review: 7 s, and the harness kills the hook at 10 s, which lets the command run) costs no walk. Judged on the hook's CPU time.
+( cd "$P" && mkdir -p deep/a{1..25}/b{1..25}/c{1..25} )
+for c in 'rm -rf ./*/*/*/*/zzzz*' 'rm -rf deep/*/*/*/zzzz*'; do
+  r="$(python3 -I - "$HOOK" "$P" "$c" <<'PY'
+import json, os, resource, subprocess, sys
+hook, P, cmd = sys.argv[1:4]
+payload = json.dumps({"session_id": "s", "transcript_path": "", "cwd": P, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                      "tool_input": {"command": cmd, "description": "d"}})
+r0 = resource.getrusage(resource.RUSAGE_CHILDREN)
+r = subprocess.run(["bash", hook], input=payload, capture_output=True, text=True, cwd=P, env=dict(os.environ, CLAUDE_PROJECT_DIR=P))
+r1 = resource.getrusage(resource.RUSAGE_CHILDREN)
+print(r.returncode, "%.2f" % ((r1.ru_utime - r0.ru_utime) + (r1.ru_stime - r0.ru_stime)))
+PY
+)"
+  case "$r" in
+    "2 "*) awk -v c="${r#2 }" 'BEGIN { exit !(c < 0.30) }' && ok "rc 2 in ${r#2 } s CPU (< 0.30): $c" || fail "rc 2 but ${r#2 } s CPU (>= 0.30, the matches were walked): $c" ;;
+    *) fail "rc/cpu $r (want rc 2): $c" ;;
+  esac
+done
+# B3: the project root compared by spelling: on APFS `<parent>/PROJ` is the project `<parent>/proj`, and `rm -rf` of it passed (a project
+#     under /tmp, where the /tmp exemption answers). Compared by inode now, like the scratch folder.
+if [ -d "$TMP/work/PROJ" ]; then
+  check 2 "rm -rf $TMP/work/PROJ"
+  check 2 "cd $TMP/work && rm -rf PROJ"
+  check 2 "rm -rf $TMP/WORK"                               # holds the project root, in another case
+  check 2 "rm -rf $TMP/work/proj/SRC"                      # a top-level folder of the project, in another case
+else
+  echo "skip B3: this filesystem is case-sensitive"
+fi
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_containment: all passed" || { echo "❌ test_hardware_rm_containment: $FAILS failed"; exit 1; }

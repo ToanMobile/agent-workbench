@@ -68,4 +68,15 @@ mkdir -p "$P/build/real" && ln -s "$H" "$P/build/hl"
 check 2 'rm -r build/*/'                  # a glob match through the link: the home folder
 check 0 'rm -r build/*'
 
+# Principal review round 2 (25/10). B1: `~` of an unquoted assignment is expanded by bash; the hook read `$D` as `<cwd>/~`.
+check 2 'D=~; rm -r "$D"'
+check 0 'D=~/cache; rm -r "$D"'
+# B3: the project root or the home folder in another case (APFS): compared by inode, not by spelling
+if [ -d "$TMP/work/PROJ" ]; then
+  check 2 "rm -r $TMP/work/PROJ"
+  check 2 "rm -r $TMP/HOME"
+else
+  echo "skip B3: this filesystem is case-sensitive"
+fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_unforced: all passed" || { echo "❌ test_hardware_rm_unforced: $FAILS failed"; exit 1; }
