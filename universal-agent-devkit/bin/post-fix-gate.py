@@ -5618,7 +5618,7 @@ def main():
                              "Without it, --run-tests runs only the impacted tests where the matrix declares an "
                              "impacted_command. Use --full before handover; POSTFIX_GATE_FULL=1 and CI=true do the same")
     parser.add_argument("--force-full", action="store_true",
-                        help="Force full test run unconditionally even if other active sessions are currently running (bypasses multi-session optimization)")
+                        help="Force the full test commands (like --full; kept for callers that pass it: --full is no longer deferred for sibling sessions)")
     parser.add_argument("--dry-run", action="store_true", help="Only list impacted tests, do not run them (default without --run-tests; never PASS)")
     parser.add_argument("--brief", action="store_true",
                         help="Print only the verdict block, errors (✖) and failing suites with their output tail; "
@@ -6046,25 +6046,9 @@ def main():
     # Acceptance was asked for (--full), not a Stop-hook style check: if it is deferred
     # below, the exit code must say "not accepted" (5), because an agent reading only the code would call 0 a PASS.
     asked_full = bool(getattr(args, "full", False))   # the flag only: the Stop hook inherits the environment (POSTFIX_GATE_FULL)
-    deferred_by = []   # sibling session ids that made this run defer --full (verdict must say so)
-    if force_reason and not getattr(args, "force_full", False) and os.environ.get("POSTFIX_GATE_FORCE_FULL") != "1":
-        # Multi-session optimization: if sibling sessions are active, downgrade --full to impacted mode ("test đúng case đang làm thôi")
-        try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            import session_lock
-            cur_sid = (args.session or os.environ.get("DEVKIT_SESSION_ID")
-                       or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID"))
-            # Without a session id this run cannot tell its own session from a sibling: fail toward full.
-            active_list, other_list, is_last = session_lock.get_active_sessions(
-                cwd=str(project_dir), current_sid=cur_sid
-            ) if cur_sid else ([], [], True)
-            if not is_last and other_list:
-                deferred_by = [s.get("session_id", "?")[:12] for s in other_list]
-                other_ids = ", ".join(s.get("session_id", "?")[:12] for s in other_list)
-                print(f"    {YELLOW}⚡ [DevKit Optimization] {tr(f'Phát hiện {len(other_list)} phiên khác đang hoạt động ({other_ids}) — hoãn --full, chỉ test ca đang làm (chế độ impacted). Kiểm tra toàn diện (--full) sẽ chạy một lần duy nhất tại phiên cuối cùng khi hoàn tất.', f'Detected {len(other_list)} other active session(s) ({other_ids}) — deferring --full to test current case only (impacted mode). Full verification will run once on the final active session.')} {tr('Cần --full ngay: thêm --force-full.', 'Need --full now: add --force-full.')}{RESET}")
-                force_reason = None
-        except Exception:
-            pass
+    # T0061 Pha 1: khối "Multi-session optimization" (hoãn --full khi có phiên anh em: 1/551 lượt, session_lock chỉ đếm phiên cùng gitdir) đã
+    # bỏ; task giờ dùng biên nhận task (lượt --run-tests). deferred_by luôn rỗng, giữ cho _log_gate_run và trường "deferred" của runs.jsonl.
+    deferred_by = []
     if args.session:
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent))
