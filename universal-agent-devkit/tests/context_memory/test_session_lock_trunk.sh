@@ -268,6 +268,16 @@ cases = [   # (want, label, cwd, (tool, input, command))
     (True, "worktree: W=<main> <nl> bash <<EOF <nl>   EOF <nl> W=<wt> <nl> EOF <nl> git -C $W commit (an indented EOF ends nothing)", w, B(f"W={m}\nbash <<EOF\n  EOF\nW={w}\nEOF\ngit -C $W commit -qm x")),
     (False, "worktree: cat <<EOF <nl>   EOF <nl> git -C <main> commit <nl> EOF (all of it is data)", w, B(f"cat <<EOF\n  EOF\ngit -C {m} commit -qm x\nEOF")),
     (False, "worktree: W=<main> <nl> bash <<-EOF … <tab>EOF <nl> W=<wt> <nl> git -C $W commit (<<- ends at a tab-indented EOF)", w, B(f"W={m}\nbash <<-EOF\necho hi\n\tEOF\nW={w}\ngit -C $W commit -qm x")),
+    # OCR 26/10 vòng 3 (S1): `<<WORD` không phải heredoc (comment, chuỗi có nháy, here-string) hay delimiter có `-`: không có dòng kết thúc,
+    # mọi dòng sau từng bị bỏ như thân dữ liệu - nay không bỏ dòng nào
+    (True, "worktree: # heredoc form: <<EOF <nl> git -C <main> commit", w, B(f"# heredoc form: <<EOF\ngit -C {m} commit -qm x")),
+    (True, "worktree: grep -n '<<EOF' x.sh <nl> git -C <main> commit", w, B(f"grep -n '<<EOF' x.sh\ngit -C {m} commit -qm x")),
+    (True, "worktree: cat <<END-X … END-X <nl> git -C <main> commit", w, B(f"cat <<END-X > /dev/null\nhi\nEND-X\ngit -C {m} commit -qm x")),
+    (True, "worktree: base64 -d <<< SGk= <nl> git -C <main> commit (a here-string)", w, B(f"base64 -d <<< SGk=\ngit -C {m} commit -qm x")),
+    (True, "worktree: cat <<END-X … END-X <nl> echo > <main>/README.md", w, B(f"cat <<END-X > /dev/null\nhi\nEND-X\necho x > {m}/README.md")),
+    (True, "worktree: base64 -d <<< SGk= <nl> echo > <main>/README.md", w, B(f"base64 -d <<< SGk=\necho x > {m}/README.md")),
+    (False, "worktree: cat <<END-X > <wt>/n.txt <nl> git -C <main> commit <nl> END-X (a data body, delimiter with -)", w, B(f"cat <<END-X > {w}/n.txt\ngit -C {m} commit -qm x\nEND-X")),
+    (False, "worktree: x=$((1<<2)) <nl> git -C <wt> commit (a shift is no heredoc)", w, B(f"x=$((1<<2))\ngit -C {w} commit -qm x")),
     # vòng 2, cùng lỗi P2-7 ở hooks/shell_writes.py (quét redirect / file write): dòng thân "  EOF" làm `cd /tmp` trong thân thành lệnh
     # của dòng ngoài, nên redirect sau heredoc được xét ở /tmp thay vì main
     (True, "main: cat <<EOF <nl>   EOF <nl> cd /tmp <nl> EOF <nl> echo > README.md (the cd is data)", m, B("cat <<EOF\n  EOF\ncd /tmp\nEOF\necho x > README.md")),
@@ -346,7 +356,9 @@ for label, body in (("20000 x `W=/tmp/x; `", "W=/tmp/x; " * 20000), ("20000 dist
                     ("15000 x `W<i>=/x; : ; `", "".join(f"W{i}=/x; : ; " for i in range(15000))),
                     ("12000 x `W<i>=/x; cd /tmp; `", "".join(f"W{i}=/x; cd /tmp; " for i in range(12000))),
                     # OCR 26/10 vòng 2: mỗi dòng mở heredoc giờ đọc từ lệnh qua wrapper (timeout 60 …) và tìm dòng kết thúc nguyên văn
-                    ("4000 x `timeout 60 bash <<EOF / : / EOF`", "timeout 60 bash <<EOF\n:\nEOF\n" * 4000)):
+                    ("4000 x `timeout 60 bash <<EOF / : / EOF`", "timeout 60 bash <<EOF\n:\nEOF\n" * 4000),
+                    # vòng 3: một `<<WORD` không có dòng kết thúc không còn nuốt phần còn lại - mỗi cái không được quét lại tới cuối lệnh
+                    ("8000 x `# <<E<i>` (no delimiter line)", "".join(f"# <<E{i}\n" for i in range(8000)))):
     cmd = body + f"W={m}; git -C $W commit -qm x"
     for fn, call in (("write_hits_locked", lambda: sl.write_hits_locked(cmd, m, w, "s")[0]),
                      ("_bash_trunk_write", lambda: sl._bash_trunk_write(cmd, w, main, sw, "s", 0))):

@@ -127,7 +127,9 @@ WRAPPERS = {"env", "command", "exec", "xargs", "nohup", "time", "sudo", "bash", 
 WRITE_CMDS = {"touch", "cp", "mv", "ln", "install", "tee", "dd", "rsync", "truncate", "perl", "ruby", "node"}
 READERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack", "cat", "bat", "less", "more", "head", "tail", "wc", "file", "stat", "ls", "echo",
            "printf", "diff", "cmp", "git", "man", "type", "which", "find", "sed", "awk"}   # (sed writes only with -i: see is_self_grant)
-_HEREDOC = _Re(r"<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+# `<<WORD` (not the here-string `<<<`); WORD as bash reads it up to a metacharacter, `-` included (OCR 26/10 r3: `<<END-X` was read as END,
+# whose line never came). A match that no line ends is no heredoc to the readers below (_heredoc_ends): a `<<EOF` in a comment or a quote.
+_HEREDOC = _Re(r"(?<!<)<<(?!<)-?\s*(['\"]?)([^\s;&|<>()'\"`\\]+)\1")
 RUNS_BODY = {"bash", "sh", "zsh", "dash", "ksh", "python", "python3", "perl", "ruby", "node", "eval", "source", "."}   # a heredoc fed to these is CODE
 SHELL_BODY = {"bash", "sh", "zsh", "dash", "ksh", "eval", "source", "."}   # ... and these run it as SHELL code (a `>` there redirects)
 
@@ -149,14 +151,25 @@ def _program_word(text):
     return os.path.basename(words[k]) if k < len(words) else ""
 
 
-def _heredoc_end(lines, i, m):
-    """Index of the line that ends the heredoc `m` opened just before lines[i]: the first line that IS the delimiter - after its leading TABS
-    only for `<<-` - as bash reads it; len(lines) when none does. OCR 26/10 r2: `.strip()` ended the body at "  EOF", a line bash runs."""
-    tabs = m.group(0).startswith("<<-")
-    j = i
-    while j < len(lines) and (lines[j].lstrip("\t") if tabs else lines[j]) != m.group(2):
-        j += 1
-    return j
+def _heredoc_ends(lines):
+    """end(i, m): index of the line that ends the heredoc `m` opened just before lines[i] - the first line from i on that IS the delimiter,
+    after its leading TABS only for `<<-`, as bash reads it (OCR 26/10 r2: `.strip()` ended a body at "  EOF", a line bash runs) - or None
+    when no line does: then it is no heredoc for the scans here, and no line after it is dropped as data (r3: a `<<EOF` in a comment, a
+    quote or a here-string swallowed the rest of the command). Fail closed: an unterminated heredoc, which bash reads to the end as data,
+    is read as commands. The lines are indexed once per text, so a `<<WORD` that never ends costs a lookup, not a scan to the end."""
+    import bisect   # noqa: PLC0415 - only a command with a `<<` gets here
+    index = {}
+
+    def end(i, m):
+        tabs = m.group(0).startswith("<<-")
+        if tabs not in index:
+            at = index[tabs] = {}
+            for k, ln in enumerate(lines):
+                at.setdefault(ln.lstrip("\t") if tabs else ln, []).append(k)
+        hits = index[tabs].get(m.group(2), ())
+        k = bisect.bisect_left(hits, i)
+        return hits[k] if k < len(hits) else None
+    return end
 
 
 def _piped_reader(after):
@@ -171,20 +184,20 @@ def _strip_heredocs(cmd, shell_only=False, kept=None):
     keeps its body - those lines run. shell_only: keep only bodies a SHELL runs (the redirect check: `print(1 > 0)` fed to python is not a
     shell redirect). kept (a set): gets the index, in the text returned, of every line of a body kept."""
     lines = cmd.split("\n")
-    out, i = [], 0
+    out, i, end = [], 0, _heredoc_ends(lines)
     while i < len(lines):
         line = lines[i]
         out.append(line)
         i += 1
         m = _HEREDOC.search(line)
-        if not m:
+        j = end(i, m) if m else None
+        if j is None:
             continue
         word = _program_word(re.split(r"[;&|(]|\$\(|`", line[:m.start()])[-1])
         runs = word in SHELL_BODY if shell_only else (word in RUNS_BODY or word.startswith("python"))
         if not runs:
             reader = _piped_reader(line[m.end():])
             runs = bool(reader) and (reader in SHELL_BODY or not shell_only)
-        j = _heredoc_end(lines, i, m)
         if runs:
             if kept is not None:
                 kept.update(range(len(out), len(out) + j - i))
@@ -1096,12 +1109,13 @@ def _stdin_scripts(cmd):
     def synth(prog, body):
         out.append(f"{prog} -s <<'__DEVKIT_EOF__'\n{body}\n__DEVKIT_EOF__")
     lines, i = cmd.split("\n"), 0
+    end = _heredoc_ends(lines)
     while i < len(lines):   # cat <<EOF ... EOF | bash: the body is the producer's text; `_strip_heredocs` drops it before anything else looks
         m = _HEREDOC.search(lines[i])
         i += 1
-        if not m:
+        j = end(i, m) if m else None
+        if j is None:
             continue
-        j = _heredoc_end(lines, i, m)
         prog = _piped_reader(lines[i - 1][m.end():])
         if prog:
             synth(prog, "\n".join(lines[i:j]))
