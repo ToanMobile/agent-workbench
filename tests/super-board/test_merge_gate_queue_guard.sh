@@ -174,5 +174,11 @@ unplant_lock
 # ── 9. --dry-run không gửi needs-you notice (plan v4 mục 4: chỉ báo một lần lúc chuyển Blocked)
 gate 5 SB_MERGE_CALLER=train -- --config "$CFG_HUMAN" --expect-head "$H" --dry-run
 [ "$RC" -eq 7 ] && [ ! -s "$TMP/notify.log" ] && ok "--dry-run on a human-merge policy: exit 7, no notice" || fail "dry-run notice: $(why) notify=$(cat "$TMP/notify.log")"
+# Đường lùi SB_MERGE_QUEUE=0: --dry-run vẫn gửi tin như cũ. Nguồn: super-board-merge-train.sh:242 gọi gate --dry-run từng PR, PR bị
+# chặn ra khỏi chuỗi; grep approve-button/notify trong merge-train.sh và super-board-run.sh (26/10) không có chỗ gửi nào khác.
+gate 5 SB_MERGE_QUEUE=0 -- --config "$CFG_HUMAN" --expect-head "$H" --dry-run
+[ "$RC" -eq 7 ] && grep -q '^approve-button ' "$TMP/notify.log" \
+  && ok "SB_MERGE_QUEUE=0 --dry-run on a human-merge policy still sends the approve notice" \
+  || fail "queue-off dry-run notice: $(why) notify=$(cat "$TMP/notify.log")"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

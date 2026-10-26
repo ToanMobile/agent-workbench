@@ -226,8 +226,9 @@ pr_title() {
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
 }
 needs_you_notify() {
-  # --preflight / --dry-run không gửi (plan v4 mục 4): người nhận chỉ một tin, lúc thẻ chuyển Blocked.
-  if [ "$PREFLIGHT" -eq 1 ] || [ "$DRY" -eq 1 ]; then return 0; fi
+  # --preflight không gửi; --dry-run không gửi khi merge queue bật (plan v4 mục 4: queue báo một lần lúc chuyển Blocked). Queue tắt
+  # thì --dry-run vẫn gửi như cũ: train cũ (:242) loại PR exit 7 ở lượt dry-run, gate thật không chạy cho PR đó.
+  if [ "$PREFLIGHT" -eq 1 ] || { [ "$DRY" -eq 1 ] && [ "$MERGE_QUEUE_ON" -eq 1 ]; }; then return 0; fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
