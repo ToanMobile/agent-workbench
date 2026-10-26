@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Bất biến production của merge theo đợt (Pha 2, lớp 3): trong cửa sổ, số lượt verify --full lúc merge phải nhỏ hơn hẳn số PR
-đã merge. Lần trước train chạy 0 lần mà test vẫn xanh; canary này đo trên dữ liệu thật để điều đó không lặp lại.
+"""Bất biến production của merge theo đợt (Pha 2, lớp 3): PR merged phải đi qua train, không đi đường merge gate lẻ. Lần trước
+train chạy 0 lần mà test vẫn xanh; canary này đo trên dữ liệu thật để điều đó không lặp lại.
 
-  batch_canary.py --runs <runs.jsonl> (--since <ISO> | --config <board cfg>) [--merged-json <file>] [--max-ratio 0.5]
+  batch_canary.py --runs <runs.jsonl> (--since <ISO> | --config <board cfg>) [--merged-json <file>]
 
 Đọc <git common dir>/postfix-gate/runs.jsonl: lượt verify của merge gate có project `.merge-scratch*`, của train
 `.train-scratch*`. PR merged lấy từ --merged-json, không có thì `gh pr list --state merged --limit 200 --json number,mergedAt`
-(timeout 15 s). Exit 1 (ĐỎ) khi có >= 2 PR merged mà 0 lượt train, hoặc (merge + train) / PR > --max-ratio. Exit 0 (XANH,
-hoặc "canary off" khi config board không bật merge_queue / enabled_at null). Exit 2: lỗi đầu vào, kèm lý do.
+(timeout 15 s). Exit 1 (ĐỎ) khi có >= 2 PR merged mà 0 lượt train, hoặc số lượt merge gate lẻ > số lượt train (đường lẻ áp đảo).
+Không có luật tỉ lệ: một đợt nhỏ lúc máy rảnh (1 PR / 1 train) là bình thường. Exit 0 (XANH, hoặc "canary off" khi config board
+không bật merge_queue / enabled_at null). Exit 2: lỗi đầu vào, kèm lý do.
 Mốc: --since; không có thì merge_queue.enabled_at của --config; có cả hai thì lấy mốc muộn hơn (lượt trước lúc bật không tính).
 Chỉ đọc, không ghi gì. Dòng JSON hỏng bị bỏ qua. Thư viện chuẩn, Python >= 3.9.
 """
@@ -160,7 +161,7 @@ def gh_merged(cwd=None) -> list:
         raise CanaryError(f"gh pr list output is not JSON: {e}") from e
 
 
-def evaluate(merge_v: int, train_v: int, merged_n: int | None, max_ratio: float = 0.5) -> tuple:
+def evaluate(merge_v: int, train_v: int, merged_n: int | None) -> tuple:
     """(đỏ?, dòng tóm tắt, lý do). merged_n None = người gọi không đưa dữ liệu PR: chỉ còn luật theo runs —
     >= 2 lượt merge gate lẻ mà 0 lượt train nghĩa là PR đi đường lẻ, hàng đợi không chạy."""
     reasons = []
@@ -169,21 +170,19 @@ def evaluate(merge_v: int, train_v: int, merged_n: int | None, max_ratio: float 
         if merge_v >= 2 and train_v == 0:
             reasons.append(f"{merge_v} single merge-gate verifies and no train verify")
         return bool(reasons), summary, reasons
-    ratio = (merge_v + train_v) / merged_n if merged_n else 0.0
-    summary = (f"merged PRs={merged_n} merge-gate verifies={merge_v} train verifies={train_v} "
-               f"verifies/PR={ratio:.2f} (max {max_ratio})")
+    summary = f"merged PRs={merged_n} merge-gate verifies={merge_v} train verifies={train_v}"
     if merged_n >= 2 and train_v == 0:
         reasons.append("no train verify at all")
-    if merged_n and ratio > max_ratio:
-        reasons.append(f"verifies/PR {ratio:.2f} > {max_ratio}")
+    if merge_v > train_v:
+        reasons.append(f"{merge_v} single merge-gate verifies > {train_v} train verifies")
     return bool(reasons), summary, reasons
 
 
-def check(runs, since: float, merged=None, max_ratio: float = 0.5) -> tuple:
+def check(runs, since: float, merged=None) -> tuple:
     """Canary trên runs + danh sách PR merged (None: chỉ runs). Ném CanaryError khi đầu vào hỏng."""
     merge_v, train_v = count_verifies(runs, since)
     merged_n = None if merged is None else merged_since(merged, since)
-    return evaluate(merge_v, train_v, merged_n, max_ratio)
+    return evaluate(merge_v, train_v, merged_n)
 
 
 def main(argv=None) -> int:
@@ -192,7 +191,6 @@ def main(argv=None) -> int:
     ap.add_argument("--since", help="ISO time (no zone = UTC) or epoch; default merge_queue.enabled_at of --config")
     ap.add_argument("--config", help="board config (.claude/super-board/configs/<slug>.json)")
     ap.add_argument("--merged-json", help="output of `gh pr list --state merged --json number,mergedAt`; default: call gh")
-    ap.add_argument("--max-ratio", type=float, default=0.5)
     a = ap.parse_args(argv)
     try:
         bounds = []
@@ -211,7 +209,7 @@ def main(argv=None) -> int:
             raise CanaryError("need --since or --config with merge_queue.enabled_at")
         since = max(bounds)
         merged = load_merged_json(a.merged_json) if a.merged_json else gh_merged()
-        red, summary, reasons = check(a.runs, since, merged, a.max_ratio)
+        red, summary, reasons = check(a.runs, since, merged)
     except CanaryError as e:
         print(f"batch_canary: error: {e}", file=sys.stderr)
         return 2
