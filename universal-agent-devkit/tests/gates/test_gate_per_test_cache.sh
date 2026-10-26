@@ -19,8 +19,7 @@ TMP="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
 export SB_HEAVY_SLOT_DIR="$TMP/slots" SB_HEAVY_SLOT_POLL_S=0.1
 mkdir -p "$SB_HEAVY_SLOT_DIR"
-# Tuổi PASS do sentinel theo test quyết (DEVKIT_SENTINEL_MAX_S mặc định 24 h), không do tuổi tối đa 6 h của kho.
-export DEVKIT_SUITE_CACHE_MAX_S=2592000 DEVKIT_GATE_CACHE_MAX_S=2592000
+# Tuổi tối đa của PASS dùng lại: mặc định của kho (SuiteCache.hit, 6 h — DEVKIT_SUITE_CACHE_MAX_S / DEVKIT_GATE_CACHE_MAX_S bị unset ở trên); P4.
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -50,7 +49,7 @@ printf '{"project":"t","rules":[{"component":"K","watch_files":["universal-agent
 git -C "$R" add -A && git -C "$R" commit -qm init
 STORE="$R/.git/postfix-gate/suite_cache"
 # gate <notes> [args]: --full trên cây có notes.txt = <notes> (chưa commit: REG-ALL luôn được chọn). Mốc sentinel CẢ REPO đặt "vừa chạy"
-# (hoặc $SENTINEL_AGE giây trước) để lượt này dùng khoá nội dung (repo mới tinh thì lượt nào cũng là sentinel); sentinel THEO TEST vẫn 24 h.
+# (hoặc $SENTINEL_AGE giây trước) để lượt này dùng khoá nội dung (repo mới tinh thì lượt nào cũng là sentinel).
 gate() {
   local notes="$1"; shift
   echo "$notes" > "$KIT/notes.txt"
@@ -98,10 +97,10 @@ gate 2
 if [ "$RC" = 0 ] && [ "$(delta "$B")" = "1 1 1" ]; then ok "P3. đổi input của t1: cây khác, mọi test chạy lại"
 else fail "P3. exit $RC, t1 t2 t3 chạy thêm $(delta "$B") (mong 0, 1 1 1)"; fi
 
-# P4. Sentinel theo test (cùng cây): PASS của t2 từ 25 h trước chạy lại; PASS của t3 từ 23 h trước vẫn dùng lại.
-B="$(counts)"; age test_t2.sh 90000; age test_t3.sh 82800
+# P4. Tuổi tối đa (cùng cây, mặc định 6 h): PASS của t2 từ 7 h trước chạy lại; PASS của t3 từ 5 h trước vẫn dùng lại.
+B="$(counts)"; age test_t2.sh 25200; age test_t3.sh 18000
 direct 1 out4
-if [ "$RC" = 0 ] && [ "$(delta "$B")" = "0 1 0" ]; then ok "P4. PASS dùng lại đã 25 h: t2 chạy thật lại; 23 h: t3 vẫn dùng lại"
+if [ "$RC" = 0 ] && [ "$(delta "$B")" = "0 1 0" ]; then ok "P4. PASS dùng lại đã 7 h (> 6 h mặc định): t2 chạy thật lại; 5 h: t3 vẫn dùng lại"
 else fail "P4. exit $RC, t1 t2 t3 chạy thêm $(delta "$B") (mong 0, 0 1 0)"; fi
 
 # P5. FAIL trên khoá: cây mới, t3 FAIL (cờ fail3 ngoài cây); lượt sau cùng cây, hết cờ: t3 chạy lại, t1 t2 dùng lại.
