@@ -5,7 +5,6 @@
 set -u
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-TRAIN="$ROOT/.claude/bin/super-board-merge-train.sh"
 . "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
 FAILS=0
 ok() { echo "✔ $1"; }
@@ -55,12 +54,38 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+# Train chạy từ một bản bin liên kết (symlink) để thay merge gate bằng shim: shim ghi lại SB_MERGE_CALLER + đối số, tự trả lời
+# `--preflight` (cờ của lane E; ca nào cần thì đặt $FAKE_DIR/preflight<N>.rc/.out), mọi lời gọi khác exec gate thật.
+mkdir -p "$TMP/sbbin"
+for f in "$ROOT"/.claude/bin/*; do ln -s "$f" "$TMP/sbbin/$(basename "$f")"; done
+rm -f "$TMP/sbbin/super-board-merge-gate.sh"
+cat > "$TMP/sbbin/super-board-merge-gate.sh" <<SH
+#!/usr/bin/env bash
+echo "\${SB_MERGE_CALLER:-<unset>} \$*" >> "\$FAKE_DIR/gate.calls"
+pre=0; n=""; prev=""
+for a in "\$@"; do
+  [ "\$a" = --preflight ] && pre=1
+  [ "\$prev" = --pr ] && n="\$a"
+  prev="\$a"
+done
+if [ "\$pre" = 1 ]; then
+  # Hợp đồng lane E: qua preflight = exit 0 + dòng "preflight: ok"; exit 0 không có dòng đó = PR đã MERGED.
+  [ -f "\$FAKE_DIR/preflight\$n.out" ] && cat "\$FAKE_DIR/preflight\$n.out"
+  [ -f "\$FAKE_DIR/preflight\$n.rc" ] && exit "\$(cat "\$FAKE_DIR/preflight\$n.rc")"
+  echo "preflight: ok"
+  exit 0
+fi
+exec bash "$ROOT/.claude/bin/super-board-merge-gate.sh" "\$@"
+SH
+chmod +x "$TMP/sbbin/super-board-merge-gate.sh"
+TRAIN="$TMP/sbbin/super-board-merge-train.sh"
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" FAKE_REPO="$R"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_NOTIFY_SKIP=1
+unset SB_MERGE_CALLER SB_MERGE_QUEUE
 CFG="$TMP/cfg.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo x >> %s/verify.count; test ! -e bad"]}\n' "$TMP" > "$CFG"
 runs() { if [ -f "$TMP/verify.count" ]; then wc -l < "$TMP/verify.count" | tr -d ' '; else echo 0; fi; }
-reset_run() { rm -f "$TMP/verify.count" "$TMP/merged"; }
+reset_run() { rm -f "$TMP/verify.count" "$TMP/merged" "$TMP/gate.calls" "$TMP/verify.files"; }
 origin_has() { git -C "$O" cat-file -e "main:$1" 2>/dev/null; }
 merged_list() { sort "$TMP/merged" 2>/dev/null | tr '\n' ' '; }
 
@@ -83,13 +108,14 @@ reset_run
 grep -q "train-red: 5" "$TMP/t2.log" && ok "1 red PR: culprit named (#5)" || fail "1 red PR: culprit not named: $(grep train "$TMP/t2.log")"
 if origin_has bad; then fail "1 red PR: bad file reached origin/main"; else ok "1 red PR: red change never reached origin/main"; fi
 
-# ── 3. Một PR: chạy như hiện tại (gate thường, một lần verify của chính nó).
+# ── 3. Một PR (Pha 2, hàng đợi merge): đi đúng đường train như mọi kích thước — preflight, verify_set một lần, dòng `train-result`.
 card_branch 7 h7
 reset_run
 ( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs 7 ) >"$TMP/t3.log" 2>&1; rc=$?
-[ "$rc" -eq 0 ] && [ "$(merged_list)" = "7 " ] && ok "1 PR: merged through the plain gate" || fail "1 PR: exit $rc merged=$(merged_list)"
-[ "$(runs)" = 1 ] && ok "1 PR: gate verified once" || fail "1 PR: verify ran $(runs) times"
-if grep -qE "\[merge-train\]|train-result" "$TMP/t3.log"; then fail "1 PR: train path taken"; else ok "1 PR: no train output"; fi
+[ "$rc" -eq 0 ] && [ "$(merged_list)" = "7 " ] && ok "1 PR: merged" || fail "1 PR: exit $rc merged=$(merged_list)"
+[ "$(runs)" = 1 ] && ok "1 PR: verified once" || fail "1 PR: verify ran $(runs) times"
+grep -q "train-result: 7 merged" "$TMP/t3.log" && ok "1 PR: train path taken (train-result: 7 merged)" || fail "1 PR: no train-result line: $(tail -5 "$TMP/t3.log")"
+grep -q -- "--pr 7 .*--preflight" "$TMP/gate.calls" && ok "1 PR: preflight ran before verify" || fail "1 PR: no preflight call: $(cat "$TMP/gate.calls" 2>/dev/null)"
 
 # ── 4. Biên nhận sai cây (QA #110): gate phải verify như thường, biên nhận không bao giờ nới tiêu chuẩn.
 card_branch 8 k8
@@ -185,6 +211,44 @@ reset_run
 grep -q "verify skipped" "$TMP/t13.log" && ok "  … and the gate says it skipped verify" || fail "behind base: no 'verify skipped' line"
 grep -q "verified green against main (0 command(s) run here" "$TMP/t13.log" \
   && ok "  … without claiming it ran a command" || fail "behind base: $(grep 'verified green' "$TMP/t13.log" | head -2)"
+
+# ── 13. Pha 2: preflight rẻ của gate (policy/qa-report/AC) chạy cho từng PR TRƯỚC khi dựng cây. PR rớt preflight (exit 7) rời đợt trước
+#    verify (cây verify không có file của nó), có `train-result: N gate-exit-7` và các dòng human-gate/approval-request thành `train-detail:`.
+#    Mọi lời gọi gate mang SB_MERGE_CALLER=train.
+card_branch 40 f40; card_branch 41 f41
+printf '7\n' > "$TMP/preflight41.rc"
+printf 'human-gate: money — label money\napproval-request: req-41 head\nunrelated line\n' > "$TMP/preflight41.out"
+CFG_SEEN="$TMP/cfg-seen.json"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo x >> %s/verify.count; ls >> %s/verify.files; test ! -e bad"]}\n' "$TMP" "$TMP" > "$CFG_SEEN"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_SEEN" --prs 40,41 ) >"$TMP/t14.log" 2>"$TMP/t14.err"; rc=$?
+[ "$rc" -eq 7 ] && ok "preflight drop: train exit 7 (the gate's exit for #41)" || fail "preflight drop: exit $rc (want 7): $(tail -5 "$TMP/t14.err")"
+grep -q "^train-result: 41 gate-exit-7$" "$TMP/t14.log" && ok "preflight drop: train-result: 41 gate-exit-7" || fail "preflight drop: $(grep train "$TMP/t14.log")"
+grep -q "^train-detail: 41 human-gate: money — label money$" "$TMP/t14.log" && grep -q "^train-detail: 41 approval-request: req-41 head$" "$TMP/t14.log" \
+  && ok "preflight drop: gate lines copied as train-detail" || fail "preflight drop: train-detail missing: $(grep train "$TMP/t14.log")"
+grep -q "train-detail: 41 unrelated" "$TMP/t14.log" && fail "preflight drop: a non-detail gate line became train-detail" || ok "preflight drop: only approval/human-gate/needs-you lines are details"
+[ "$(merged_list)" = "40 " ] && ok "preflight drop: #40 merged, #41 did not" || fail "preflight drop: merged $(merged_list)"
+[ "$(runs)" = 1 ] && ok "preflight drop: one verify" || fail "preflight drop: verify ran $(runs) times"
+grep -q "^f41$" "$TMP/verify.files" && fail "preflight drop: #41 was inside the verified tree" || ok "preflight drop: #41 left before any tree was built"
+grep -q -- "--pr 40 .*--preflight" "$TMP/gate.calls" && ok "preflight drop: #40 preflighted too" || fail "preflight drop: no preflight for #40"
+if grep -qv "^train " "$TMP/gate.calls"; then fail "SB_MERGE_CALLER: a gate call without SB_MERGE_CALLER=train: $(grep -v '^train ' "$TMP/gate.calls" | head -2)"; else ok "SB_MERGE_CALLER=train on every gate call"; fi
+rm -f "$TMP/preflight41.rc" "$TMP/preflight41.out"
+# Gate chưa có --preflight (exit 64, trước khi lane E vào): PR ở lại, --dry-run sau verify vẫn kiểm policy.
+card_branch 42 f42; printf '64\n' > "$TMP/preflight42.rc"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs 42 ) >"$TMP/t15.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(merged_list)" = "42 " ] && grep -q "train-result: 42 merged" "$TMP/t15.log" \
+  && ok "gate without --preflight (exit 64): the PR stays and merges" || fail "preflight 64: exit $rc merged=$(merged_list): $(tail -4 "$TMP/t15.log")"
+rm -f "$TMP/preflight42.rc"
+# Preflight exit 0 KHÔNG có dòng "preflight: ok" = PR đã merge (lane E): rời chuỗi trước khi dựng cây, kết quả `merged`, gate không merge lại.
+card_branch 43 f43; card_branch 44 f44; printf '0\n' > "$TMP/preflight43.rc"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_SEEN" --prs 43,44 ) >"$TMP/t16.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "^train-result: 43 merged$" "$TMP/t16.log" && grep -q "^train-result: 44 merged$" "$TMP/t16.log" \
+  && ok "preflight says already merged: train-result merged, exit 0" || fail "already merged: exit $rc: $(grep train "$TMP/t16.log")"
+[ "$(merged_list)" = "44 " ] && ok "  … the gate did not merge #43 again" || fail "  … merged $(merged_list)"
+grep -q "^f43$" "$TMP/verify.files" && fail "  … #43 was inside the verified tree" || ok "  … #43 left before any tree was built"
+rm -f "$TMP/preflight43.rc"
 
 # ── 12. #288: ghi chú ponytail đầu file mô tả đúng hành vi: PR bị gate chặn đã ra khỏi chuỗi trước khi verify (R11), không "vẫn nằm trong chuỗi".
 grep -q "vẫn nằm trong chuỗi verify" "$TRAIN" && fail "the ponytail note at the top still says a gate-blocked PR stays in the verify chain" \
