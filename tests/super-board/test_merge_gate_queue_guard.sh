@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Pha 2, lớp bảo đảm 1 (lane E): merge train cũ chạy 0 lần trên 73 PR vì reviewer/builder tự gọi merge gate. Khi merge queue bật
-# (config merge_queue.enabled hoặc SB_MERGE_QUEUE=1; SB_MERGE_QUEUE=0 luôn tắt), gọi gate trực tiếp mà không có
-# SB_MERGE_CALLER ∈ {train,queue} và không --standalone → exit 13, dòng `merge-queue: label the PR merge-queue …`, không verify, không
-# đụng khoá. --preflight chỉ chạy các kiểm rẻ trước verify (head, policy, qa-report, ac-check, needs-you), không scratch, không khoá,
-# không needs_you_notify; sạch → exit 0 `preflight: ok`. Các dòng approval-request:/human-gate:/needs-you: vẫn ra stdout.
+# (config merge_queue.enabled hoặc SB_MERGE_QUEUE=1; SB_MERGE_QUEUE=0 luôn tắt; chỉ khi worker_backend là claude-p), gọi gate trực
+# tiếp mà không có SB_MERGE_CALLER ∈ {train,queue} và không --standalone (hoặc --standalone từ worker board, SB_BOARD_WORKER=1) → exit 13,
+# dòng `merge-queue: label the PR merge-queue …`, không verify, không đụng khoá. --preflight chỉ chạy các kiểm rẻ trước verify (head,
+# policy, qa-report, ac-check, needs-you), không scratch, không khoá; needs_you_notify chỉ khi queue tắt (đúng một lần, như gate cũ);
+# sạch → exit 0 `preflight: ok`. Các dòng approval-request:/human-gate:/needs-you: vẫn ra stdout.
 # Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
-unset SB_MERGE_QUEUE SB_MERGE_CALLER SB_NOTIFY_SKIP
+unset SB_MERGE_QUEUE SB_MERGE_CALLER SB_NOTIFY_SKIP SB_BOARD_WORKER
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 for _dk in "$ROOT/universal-agent-devkit" "$ROOT/.agents/devkit"; do
   if [ -f "$_dk/tests/lib/clean_git_env.sh" ]; then . "$_dk/tests/lib/clean_git_env.sh"; break; fi
@@ -76,14 +77,20 @@ SH
 chmod +x "$TMP/bin/gh"
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
-mkcfg() {  # mkcfg <file> <merge_queue.enabled> <merge_policy.default>
-  python3 -c 'import json,sys; print(json.dumps({"base_branch":"main","repo":{"path":".","remote":""},
-    "merge_policy":{"default":sys.argv[3]},
-    "merge_queue":{"enabled":sys.argv[2]=="true","enabled_at":None,"batch_max":6,"max_wait_min":60},
-    "verify_commands":["touch " + sys.argv[4]]}))' "$1" "$2" "$3" "$TMP/verified" > "$1"
+mkcfg() {  # mkcfg <file> <merge_queue.enabled> <merge_policy.default> [worker_backend: mặc định claude-p; "-" = không có khoá]
+  python3 -c 'import json,sys
+c={"base_branch":"main","repo":{"path":".","remote":""},
+   "merge_policy":{"default":sys.argv[3]},
+   "merge_queue":{"enabled":sys.argv[2]=="true","enabled_at":None,"batch_max":6,"max_wait_min":60},
+   "verify_commands":["touch " + sys.argv[4]]}
+if sys.argv[5] != "-": c["worker_backend"] = sys.argv[5]
+print(json.dumps(c))' "$1" "$2" "$3" "$TMP/verified" "${4:-claude-p}" > "$1"
 }
 CFG_ON="$TMP/cfg-on.json"; CFG_OFF="$TMP/cfg-off.json"; CFG_HUMAN="$TMP/cfg-human.json"
 mkcfg "$CFG_ON" true auto; mkcfg "$CFG_OFF" false auto; mkcfg "$CFG_HUMAN" true human
+# Vòng sửa 1 (R2): queue chỉ bật khi worker_backend là claude-p; backend khác (hoặc thiếu khoá = "workflow") luôn tắt.
+CFG_HUMAN_OFF="$TMP/cfg-human-off.json"; CFG_WF="$TMP/cfg-wf.json"; CFG_NOKEY="$TMP/cfg-nokey.json"; CFG_HUMAN_WF="$TMP/cfg-human-wf.json"
+mkcfg "$CFG_HUMAN_OFF" false human; mkcfg "$CFG_WF" true auto workflow; mkcfg "$CFG_NOKEY" true auto -; mkcfg "$CFG_HUMAN_WF" true human workflow
 LINE='merge-queue: label the PR merge-queue instead of calling the gate directly'
 LOCK="$WT/.claude/super-board/inflight/merge.lock"
 
@@ -158,7 +165,7 @@ gate 5 SB_MERGE_CALLER=train -- --config "$CFG_HUMAN" --expect-head "$H" --prefl
 [ "$RC" -eq 7 ] && grep -q '^human-gate: ' "$TMP/out" && grep -q '^approval-request: ' "$TMP/out" && ! verified \
   && ok "--preflight on a human-merge policy: exit 7, human-gate and approval-request on stdout, nothing verified" \
   || fail "preflight human policy, want 7: $(why)"
-[ ! -s "$TMP/notify.log" ] && ok "--preflight sends no needs-you notice" || fail "preflight notified: $(cat "$TMP/notify.log")"
+[ ! -s "$TMP/notify.log" ] && ok "--preflight sends no needs-you notice while the queue is on (the queue sends it)" || fail "preflight notified: $(cat "$TMP/notify.log")"
 
 # ── 7. --preflight với bước chỉ người làm (needs-you): exit 8 trước verify, không chờ verify rồi mới báo
 gate 6 SB_MERGE_CALLER=train -- --config "$CFG_ON" --expect-head "$H" --preflight --lock-timeout 0
@@ -180,5 +187,47 @@ gate 5 SB_MERGE_QUEUE=0 -- --config "$CFG_HUMAN" --expect-head "$H" --dry-run
 [ "$RC" -eq 7 ] && grep -q '^approve-button ' "$TMP/notify.log" \
   && ok "SB_MERGE_QUEUE=0 --dry-run on a human-merge policy still sends the approve notice" \
   || fail "queue-off dry-run notice: $(why) notify=$(cat "$TMP/notify.log")"
+
+# ── 10. Hồi quy (R2): queue TẮT thì --preflight gửi approve-button đúng một lần như gate cũ. Train gọi --preflight cho mọi PR và PR rớt
+#        preflight rời đợt trước lượt --dry-run, nên nếu preflight im lặng thì PR exit 7/8 không bao giờ có nút duyệt Telegram.
+napprove() { grep -c '^approve-button ' "$TMP/notify.log" | tr -d ' '; }
+gate 5 SB_MERGE_CALLER=train -- --config "$CFG_HUMAN_OFF" --expect-head "$H" --preflight --lock-timeout 0
+[ "$RC" -eq 7 ] && [ "$(napprove)" = 1 ] && ! verified \
+  && ok "queue off: --preflight on a human-merge policy exits 7 and sends the approve notice exactly once" \
+  || fail "queue-off preflight exit 7 notice: $(why) approve=$(napprove) notify=$(cat "$TMP/notify.log")"
+gate 6 SB_MERGE_CALLER=train -- --config "$CFG_OFF" --expect-head "$H" --preflight --lock-timeout 0
+[ "$RC" -eq 8 ] && [ "$(napprove)" = 1 ] && ! verified \
+  && ok "queue off: --preflight on a needs-you PR exits 8 and sends the approve notice exactly once" \
+  || fail "queue-off preflight exit 8 notice: $(why) approve=$(napprove) notify=$(cat "$TMP/notify.log")"
+gate 5 SB_MERGE_CALLER=train SB_MERGE_QUEUE=0 -- --config "$CFG_HUMAN" --expect-head "$H" --preflight --lock-timeout 0
+[ "$RC" -eq 7 ] && [ "$(napprove)" = 1 ] \
+  && ok "SB_MERGE_QUEUE=0 over a config that is on: --preflight sends the approve notice once" \
+  || fail "SB_MERGE_QUEUE=0 preflight notice: $(why) approve=$(napprove)"
+# Queue tắt vì backend (config bật, worker_backend workflow): cũng gửi như gate cũ.
+gate 5 SB_MERGE_CALLER=train -- --config "$CFG_HUMAN_WF" --expect-head "$H" --preflight --lock-timeout 0
+[ "$RC" -eq 7 ] && [ "$(napprove)" = 1 ] \
+  && ok "queue off by backend (workflow): --preflight sends the approve notice once" \
+  || fail "workflow-backend preflight notice: $(why) approve=$(napprove)"
+
+# ── 11. Queue chỉ bật với worker_backend claude-p (R2). Backend khác, hoặc thiếu khoá (mặc định workflow), luôn coi là tắt, kể cả
+#        SB_MERGE_QUEUE=1: chưa có ai rút hàng ở đó. ponytail: hỗ trợ workflow/codex khi có Q-schedule.
+gate 5 -- --config "$CFG_WF" --expect-head "$H" --dry-run
+[ "$RC" -eq 0 ] && verified && ! grep -q '^merge-queue:' "$TMP/out" \
+  && ok "merge_queue.enabled with worker_backend workflow: queue off, the direct call verifies" || fail "workflow backend: $(why)"
+gate 5 -- --config "$CFG_NOKEY" --expect-head "$H" --dry-run
+[ "$RC" -eq 0 ] && verified && ok "merge_queue.enabled with no worker_backend (defaults to workflow): queue off" || fail "no backend key: $(why)"
+gate 5 SB_MERGE_QUEUE=1 -- --config "$CFG_WF" --expect-head "$H" --dry-run
+[ "$RC" -eq 0 ] && verified && ok "SB_MERGE_QUEUE=1 with worker_backend workflow: still off" || fail "SB_MERGE_QUEUE=1 + workflow: $(why)"
+
+# ── 12. F4 (R2): worker do runner phóng (SB_BOARD_WORKER=1) không được lách hàng đợi bằng --standalone khi queue bật.
+gate 5 SB_BOARD_WORKER=1 -- --config "$CFG_ON" --expect-head "$H" --dry-run --standalone
+[ "$RC" -eq 13 ] && grep -qxF "$LINE" "$TMP/out" && ! verified && [ ! -s "$TMP/gh.calls" ] \
+  && ok "queue on + SB_BOARD_WORKER=1: --standalone is refused with exit 13 and the label line" || fail "board worker --standalone, want 13: $(why)"
+gate 5 SB_BOARD_WORKER=1 -- --config "$CFG_OFF" --expect-head "$H" --dry-run --standalone
+[ "$RC" -eq 0 ] && verified && ok "queue off + SB_BOARD_WORKER=1: --standalone verifies as before" || fail "board worker --standalone, queue off: $(why)"
+for caller in train queue; do
+  gate 5 SB_BOARD_WORKER=1 "SB_MERGE_CALLER=$caller" -- --config "$CFG_ON" --expect-head "$H" --dry-run
+  [ "$RC" -eq 0 ] && verified && ok "queue on + SB_BOARD_WORKER=1: SB_MERGE_CALLER=$caller still passes" || fail "board worker caller=$caller: $(why)"
+done
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
