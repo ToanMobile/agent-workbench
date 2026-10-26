@@ -189,6 +189,19 @@ else
   fail "ca (a2): rc=$rc ran=$([ -f "$TMP/ran" ] && echo yes || echo no) log=$(tail -4 "$TMP/a2.out")"
 fi
 
+# Ca (a4) (#442): hết chờ slot gate (exit 4 BUSY) -> xoá sạch bản ghi người giữ trong test_run.lock trước khi đóng khoá
+make_repo
+hold_flock "$SB_HEAVY_SLOT_DIR/gate-1.lock" "$TMP/held" "$TMP/release" 30
+DEVKIT_GATE_SLOT_WAIT_S=1 CLAUDE_PROJECT_DIR="$R" DEVKIT_SUITE_CACHE=0 \
+  python3 "$GATE" --run-tests --full --json --no-checklist >"$TMP/a4.out" 2>&1
+rc=$?
+release_flock "$TMP/release" "$LAST_HOLDER"
+if [ "$rc" -eq 4 ] && [ -f "$R/.claude/audit-gate/test_run.lock" ] && [ ! -s "$R/.claude/audit-gate/test_run.lock" ]; then
+  ok "ca (a4): hết chờ slot gate (exit 4 BUSY) -> xoá bản ghi người giữ trong test_run.lock"
+else
+  fail "ca (a4): rc=$rc lock_exists=$([ -f "$R/.claude/audit-gate/test_run.lock" ] && echo yes || echo no) lock_body='$(tr -d '\n' < "$R/.claude/audit-gate/test_run.lock" 2>/dev/null)'"
+fi
+
 # ── Ca (b): không còn ai giữ slot -> gate chạy ngay và sau khi xong đã nhả khoá (try/finally) ──
 make_repo
 DEVKIT_GATE_SLOT_WAIT_S=2 CLAUDE_PROJECT_DIR="$R" \

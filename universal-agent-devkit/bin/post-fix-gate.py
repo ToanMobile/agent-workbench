@@ -6369,6 +6369,7 @@ def main():
                     wait_s=gate_wait_s, label=os.path.basename(str(project_dir))[:64])
                 if gate_slot.timed_out:
                     if lock_fh is not None:
+                        _write_test_run_lock_holder(lock_fh, clear=True)
                         lock_fh.close()
                         lock_fh = None
                     lock_held = False
