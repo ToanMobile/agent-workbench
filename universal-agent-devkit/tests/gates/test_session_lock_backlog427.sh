@@ -11,6 +11,12 @@
 #   6. (chặn nhầm) heredoc dữ liệu xoá luôn giá trị thật gán trước đó (trunk mode) - giữ khi delimiter trong nháy và lệnh là cat > f / tee f /
 #      git commit -F -.
 #   7. (chặn nhầm) thân S2 có for / if làm mọi biến thành không biết: `git -C "$W"` với W = worktree của chính nó bị chặn.
+#   Review vòng 2:
+#   R1. file gitdir của một worktree anh em không phải UTF-8 / có NUL: hook văng (exit 1), lệnh ghi vào checkout bị giữ lọt.
+#   R2. `"$(…) #x"`: `$(` trong nháy kép không đóng ở `)`, heredoc thật sau đó thành "maybe", thân (`don't`) nuốt các dòng sau ở các quét
+#       chỉ đọc một cách (_redirect_targets, is_trunk_off, trunk_env_in_settings, _sed_one_to_zero, is_self_grant).
+#   R3. `.` (source) sau then / do / { / command / builtin không làm mất luật thân "sink" (mục 6): `cat` trước đó có thể là hàm.
+#   R4. (chặn nhầm) cwd không phải repo + trunk mode: đích không biết (repo nháp mới, $TMPDIR) không phải ghi vào main; đích vào main vẫn chặn.
 #   SLT_KIT=<thư mục kit>   chạy cùng bảng trên một bản kit khác (bản chưa sửa: ĐỎ).
 # bash 3.2 compatible wrapper; the checks are python3 (stdlib only).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
@@ -153,6 +159,47 @@ check("`<<EOF` trong nháy không mở heredoc: echo \"<<EOF\" | tee log | bash 
 check("đơn điệu: thân nạp cho source: source /dev/stdin <<'EOF' for … W=<FW2> … done",
       S2(FW, f"for x in a; do W={FW2}; done", head="source /dev/stdin <<'EOF'"), 2)
 
+print("R1. file gitdir hỏng của một worktree anh em (không UTF-8, NUL): hook không văng, vẫn chặn")
+for tag, raw in (("không UTF-8", b"/tmp/\xff\xfe/x/.git\n"), ("NUL", b"/tmp/a\x00b/.git\n")):
+    BG = repo("badgd-" + ("u" if "UTF" in tag else "n"))
+    BW1, BW2 = BG + "-bad", BG + "-held"
+    sh("git", "-C", BG, "worktree", "add", "-q", "--detach", BW1)
+    sh("git", "-C", BG, "worktree", "add", "-q", "--detach", BW2)
+    with open(os.path.join(gitdir(BW1), "gitdir"), "wb") as f:
+        f.write(raw)
+    hold(gitdir(BW2), "holder5", BW2)
+    check(f"{tag}: echo x > <worktree anh em bị giữ>/f.txt", hook(f"echo x > {BW2}/f.txt", BG), 2)
+    check(f"{tag}: git commit; echo x > <scratch>/f.txt (cwd bị giữ)", hook(f"git commit -qm x; echo x > {S}/f.txt", BW2), 2)
+    check(f"  đối chứng {tag}: echo x > <scratch>/f.txt", hook(f"echo x > {S}/f.txt", BG), 0)
+
+print("R2. `$(` trong nháy kép đóng ở `)`; các quét một cách đọc xét thêm cách đọc heredoc dữ liệu (từ B rảnh; A bị giữ)")
+NOTE = f"cat > \"{S}/notes.md\" <<'EOF'\nWe don't need it.\nEOF\n"
+check("gh … --body \"Fixed in $(git rev-parse HEAD) (#427)\" <nl> cat > notes <<'EOF' don't EOF <nl> git config devkit.trunkMode false",
+      fromB("gh issue comment 427 --body \"Fixed in $(git rev-parse --short HEAD) (#427)\"\n" + NOTE + "git config devkit.trunkMode false"), 2)
+check("  đối chứng: … git config devkit.trunkMode true",
+      fromB("gh issue comment 427 --body \"Fixed in $(git rev-parse --short HEAD) (#427)\"\n" + NOTE + "git config devkit.trunkMode true"), 0)
+check("echo \"$(date) <<EOF\" <nl> git -C <A> commit <nl> EOF (`<<` trong nháy sau một `$( )` đã đóng)", fromB(f"echo \"$(date) <<EOF\"\ngit -C {A} commit -m x\nEOF"), 2)
+check("  đối chứng: echo \"$(date) x\" <nl> cat <<EOF git -C <A> commit EOF (thân dữ liệu)", fromB(f"echo \"$(date) x\"\ncat <<EOF\ngit -C {A} commit -m x\nEOF"), 0)
+check("(chặn nhầm) echo \"$(date) #1\"; cat <<EOF <nl> git -C <A> commit <nl> EOF (`#` trong nháy sau `)`: không phải comment)",
+      fromB(f"echo \"$(date) #1\" >/dev/null; cat <<EOF\ngit -C {A} commit -m x\nEOF"), 0)
+check("  phải chặn: echo \"$(date)\" #1 <<EOF <nl> git -C <A> commit <nl> EOF (`#` ngoài nháy: comment)",
+      fromB(f"echo \"$(date)\" #1 <<EOF\ngit -C {A} commit -m x\nEOF"), 2)
+check("  phải chặn: echo \"$(date #1 <<EOF <nl> )\" <nl> git -C <A> commit <nl> EOF (`#` trong `$(` còn mở: comment)",
+      fromB(f"echo \"$(date #1 <<EOF\n)\"\ngit -C {A} commit -m x\nEOF"), 2)
+DATE = f"echo \"$(date) #1\" >/dev/null; cat > {S}/n.md <<'EOF'\ndon't\nEOF\n"
+MIS = f"echo \"$(echo \"it's\")\" >/dev/null\ncat > {S}/n.md <<'EOF'\ndon't\nEOF\n"   # quét vẫn đọc sai dòng này: chỉ cách đọc thứ hai thấy
+for tag, pre in (("\"$(date) #1\"", DATE), ("quét đọc sai \"$(echo \"it's\")\"", MIS)):
+    check(f"{tag} … EOF <nl> echo x > f.txt (cwd A bị giữ)", hook(pre + "echo x > f.txt", A), 2)
+    check(f"{tag} … EOF <nl> git config devkit.trunkMode false", fromB(pre + "git config devkit.trunkMode false"), 2)
+    check(f"{tag} … EOF <nl> echo $(git config devkit.trunkMode false)", fromB(pre + "echo $(git config devkit.trunkMode false)"), 2)
+    check(f"{tag} … EOF <nl> echo '{{WORKTREE_TRUNK_MODE: 0}}' > .claude/settings.local.json",
+          fromB(pre + "echo '{\"env\": {\"WORKTREE_TRUNK_MODE\": \"0\"}}' > .claude/settings.local.json"), 2)
+    check(f"{tag} … EOF <nl> sed -i '' 's/\"1\"/\"0\"/' .claude/settings.local.json", fromB(pre + "sed -i '' 's/\"1\"/\"0\"/' .claude/settings.local.json"), 2)
+    check(f"{tag} … EOF <nl> agent-kit allow-shared", fromB(pre + "agent-kit allow-shared"), 2)
+    check(f"  đối chứng {tag} … EOF <nl> echo x > <scratch>/f.txt (cwd A bị giữ)", hook(pre + f"echo x > {S}/f.txt", A), 0)
+    check(f"  đối chứng {tag} … EOF <nl> agent-kit worktree list > <scratch>/l.txt; git config devkit.trunkMode true",
+          fromB(pre + f"agent-kit worktree list > {S}/l.txt; git config devkit.trunkMode true"), 0)
+
 print("2 + 3 + 6 trunk mode: trunk_write (main TM chỉ để gộp, phiên ở worktree TW)")
 TM = os.path.join(tmp, "tmain")
 os.makedirs(TM)
@@ -203,6 +250,14 @@ rows = [   # (want, label, command)
     (True, "đơn điệu: cat là hàm: cat() { . /dev/stdin; } … cat > f <<'EOF' …",
      f"cat() {{ . /dev/stdin; }}\nS={S}\ncat > \"$S/run.sh\" <<'EOF'\nS={TM}\nEOF\necho evil > \"$S/README.md\""),
     (True, "đơn điệu: cat > f <<'EOF' … | bash (ống vào shell)", f"S={S}\ncat <<'EOF' > \"$S/x\" | bash\nS={TM}\nEOF\necho evil > \"$S/README.md\""),
+] + [   # R3: thân sink gán S=<TM> vào env.sh, rồi `.` nạp nó trong shell này sau một từ khoá / tiền tố
+    (True, f"R3: … <nl> {pre} . \"$S/env.sh\" … ; echo > \"$S/README.md\"",
+     f"S={S}\ncat > \"$S/env.sh\" <<'EOF'\nS={TM}\nEOF\n{pre} . \"$S/env.sh\"{post}; echo evil > \"$S/README.md\"")
+    for pre, post in (("if true; then", "; fi"), ("for x in a; do", "; done"), ("{", "; }"), ("command", ""), ("builtin", ""),
+                      ("if", "; then :; fi"), ("while", "; do break; done"), ("! ", ""), ("case a in a)", ";; esac"), ("time", ""))
+] + [
+    (False, "  R3 đối chứng: … <nl> if true; then echo hi; fi; echo > \"$S/README.md\" (luật sink còn giữ)",
+     f"S={S}\ncat > \"$S/env.sh\" <<'EOF'\nS={TM}\nEOF\nif true; then echo hi; fi; echo ok > \"$S/README.md\""),
 ]
 env = {k: v for k, v in os.environ.items() if k not in ("WORKTREE_TRUNK_MODE", "CLAUDE_PROJECT_DIR")}
 r = subprocess.run([sys.executable, "-I", "-c", UNIT, KIT, TM, TW, json.dumps([c for _w, _l, c in rows])], capture_output=True, text=True, env=env, timeout=120)
@@ -223,6 +278,24 @@ check("Edit <TM main>/README.md", tplain("", tool="Edit", ti={"file_path": f"{TM
 check("  đối chứng: git -C <TW worktree> commit", tplain(f"git -C {TW} commit -qm x"), 0)
 check("  đối chứng: echo x > <scratch>/f.txt", tplain(f"echo x > {S}/f.txt"), 0)
 check("  đối chứng: phiên không đăng ký ở project (biến thừa hưởng)", tplain(f"git -C {TM} commit -qm x", sid="stranger"), 0)
+print("R4. cwd không phải repo + trunk mode: chỉ đích nằm trong main TM là ghi vào main (không ai giữ checkout nào)")
+check("(chặn nhầm) git init -q t && cd t && git add -A && git commit -qm init", tplain("git init -q t && cd t && git add -A && git commit -qm init"), 0)
+check("(chặn nhầm) python3 x.py > \"$TMPDIR/out.txt\"", tplain("python3 x.py > \"$TMPDIR/out.txt\""), 0)
+check("(chặn nhầm) cd $X && git commit (đích không biết, không ai giữ)", tplain("cd $X && git commit -qm x"), 0)
+check("  phải chặn: cd <TM> && git commit", tplain(f"cd {TM} && git commit -qm x"), 2)
+check("  phải chặn: cd <TM> && echo x > README.md", tplain(f"cd {TM} && echo x > README.md"), 2)
+check("  phải chặn: M=<TM>; echo x > \"$M/README.md\"", tplain(f"M={TM}; echo x > \"$M/README.md\""), 2)
+check("  phải chặn: M=<TM>; cd \"$M\" && echo x > README.md", tplain(f"M={TM}; cd \"$M\" && echo x > README.md"), 2)
+check("  phải chặn: x=$(cd /tmp && git -C <TM> commit)", tplain(f"x=$(cd /tmp && git -C {TM} commit -qm x)"), 2)
+check("  phải chặn: cd /tmp && bash <<'EOF' git -C <TM> commit EOF", tplain(f"cd /tmp && bash <<'EOF'\ngit -C {TM} commit -qm x\nEOF"), 2)
+TW2 = os.path.join(tmp, "tmain-wt2")   # worktree của TM mà phiên khác giữ: đích không biết có thể là nó (như khi trunk mode tắt, mục 1)
+sh("git", "-C", TM, "worktree", "add", "-q", "--detach", TW2)
+hold(gitdir(TW2), "holder6", TW2)
+check("  phải chặn: cd $X && git commit khi phiên khác giữ worktree TW2 của project", tplain("cd $X && git commit -qm x"), 2)
+check("  phải chặn (cố ý, như trunk mode tắt): git init -q t && cd t && … git commit khi TW2 bị giữ (t có thể là symlink tạo trước đó)",
+      tplain("git init -q t && cd t && git add -A && git commit -qm init"), 2)
+check("  phải chặn: echo x > <TW2 bị giữ>/f.txt", tplain(f"echo x > {TW2}/f.txt"), 2)
+check("  đối chứng: python3 x.py > \"$TMPDIR/out.txt\" khi TW2 bị giữ (redirect không phải git)", tplain("python3 x.py > \"$TMPDIR/out.txt\""), 0)
 
 print("4. ps chậm: một hạn tổng cho mọi lần gọi ps của một tiến trình hook (ps giả trên PATH)")
 FAKE = os.path.join(tmp, "fakebin")

@@ -181,8 +181,12 @@ def _line_scan(line, stop, state=(None, False)):
     """#427 vòng 2: (vị trí `#` đầu tiên trước `stop` có thể mở comment, hoặc None; trạng thái nháy (nháy, đã mở `$(`) ở `stop`) của dòng
     `line` bắt đầu ở trạng thái `state` (chuỗi nhiều dòng: người gọi mang trạng thái cuối dòng trước sang). `#` mở comment ở đầu một từ (đầu
     dòng, sau khoảng trắng hay `;&|()<>`), ngoài nháy đơn, ngoài nháy kép trừ khi nháy đó đã mở `$(` / backtick (bên trong chúng `#` lại mở
-    comment, và một `<<` là heredoc thật: `"$(cat <<'EOF'`). Quét này đọc sai (`'` trong `"$( )"`, `$'\''`) thì chỉ thêm cách đọc."""
+    comment, và một `<<` là heredoc thật: `"$(cat <<'EOF'`). Quét này đọc sai (`'` trong `"$( )"`, `$'\''`) thì chỉ thêm cách đọc.
+    Review #427 vòng 2: "đã mở `$(`" là chuỗi các mở còn chờ đóng trong nháy kép - `(` cho `$(` và ngoặc trong nó, "`" cho backtick: `)` /
+    backtick đóng thì bỏ (trước chỉ là cờ không tắt, `"Fixed in $(git rev-parse HEAD) (#427)"` coi `#427` là comment, các heredoc thật sau đó
+    thành "maybe" và thân `don't` nuốt các dòng sau ở các quét chỉ đọc một cách)."""
     (quote, sub), i = state, 0
+    sub = sub or ""
     while i < stop:
         c = line[i]
         if c == "\\" and quote != "'":
@@ -191,11 +195,17 @@ def _line_scan(line, stop, state=(None, False)):
         if quote == "'":
             quote = None if c == "'" else quote
         elif c == '"':
-            quote, sub = (None if quote else '"'), False
+            quote, sub = (None if quote else '"'), ""
         elif quote is None and c == "'":
             quote = "'"
-        elif quote and (c == "`" or line.startswith("$(", i)):
-            sub = True
+        elif quote and c == "`":
+            sub = sub[:-1] if sub.endswith("`") else sub + "`"
+        elif quote and line.startswith("$(", i):
+            sub += "("
+            i += 2
+            continue
+        elif quote and sub and c in "()":
+            sub = sub + "(" if c == "(" else (sub[:-1] if sub.endswith("(") else sub)
         elif c == "#" and (not quote or sub) and (i == 0 or line[i - 1] in " \t;&|()<>"):
             return i, (quote, sub)   # comment tới hết dòng
         i += 1
@@ -412,11 +422,15 @@ def _split_segments(cmd):
     return out
 
 
-def _redirect_targets(cmd):
+def _redirect_targets(cmd, cut_maybe=None):
     """The target of every output redirect (`>`, `>>`, `>|`, `&>`, `N>`) in cmd, unquoted; "" for a fd copy (`>&2`) or `>(...)`. A `>`
     inside quotes, escaped, or in the body of a heredoc no shell runs is text (D5, audit 2026-10-09: `grep -n "a > b" f`,
-    `git log --format='%h -> %s'` and `python3 -c "print(1>0)"` were blocked as redirects into the checkout)."""
-    s = _strip_heredocs(cmd, shell_only=True)
+    `git log --format='%h -> %s'` and `python3 -c "print(1>0)"` were blocked as redirects into the checkout).
+    Review #427 vòng 2: cut_maybe None - hợp hai cách đọc `<<` sau `#` / trong nháy (_readings), như _bash_trunk_write."""
+    if cut_maybe is None:
+        out = _redirect_targets(cmd, False)
+        return out + [t for t in _redirect_targets(cmd, True) if t not in out] if "<<" in cmd else out
+    s = _strip_heredocs(cmd, shell_only=True, cut_maybe=cut_maybe)
     out, quote, i, n = [], None, 0, len(s)
     while i < n:
         c = s[i]
@@ -575,7 +589,7 @@ def git_dir(cwd):
     try:
         r = subprocess.run(["git", "-C", cwd, "rev-parse", "--absolute-git-dir", "--show-toplevel"],
                            capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):   # (ValueError: đường dẫn không UTF-8 / có NUL - review #427 vòng 2)
         return None, None
     if r.returncode != 0:
         return None, None
@@ -639,7 +653,7 @@ def git_common_dir(cwd):
     try:
         r = subprocess.run(["git", "-C", cwd, "rev-parse", "--git-common-dir", "--show-toplevel"],
                            capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):   # (ValueError: như git_dir - review #427 vòng 2)
         return None, None
     if r.returncode != 0:
         return None, None
@@ -1075,7 +1089,8 @@ def is_self_grant(cmd):
     if ALLOW_FLAG not in cmd and "allow-shared" not in cmd:
         return False
     import shlex   # noqa: PLC0415 - only commands that mention the switch pay for it
-    for seg in _split_segments(cmd)[::2]:
+    texts = [cmd] + ([_strip_heredocs(cmd, cut_maybe=True)] if "<<" in cmd else [])   # review #427 vòng 2: hai cách đọc (_readings)
+    for seg in [s for text in texts for s in _split_segments(text)[::2]]:
         if ALLOW_FLAG in seg and re.search(r">>?\s*\S*" + ALLOW_FLAG, seg):
             return True
         try:
@@ -1141,6 +1156,18 @@ def _clean(cmd, cut_maybe=False):
     except Exception as e:  # noqa: BLE001 - the text as it is: what the segment walk always read
         print(f"session_lock: comment scan failed: {e!r}", file=sys.stderr)
         return text
+
+
+def _readings(cmd):
+    """Review #427 vòng 2: [_clean(cmd)] và, khi khác nó, _clean(cmd, cut_maybe=True) - cách đọc trước vòng 2 (`<<` sau `#` / trong nháy là
+    heredoc dữ liệu). _line_scan đọc sai một dòng (`"$(echo "it's")"`) thì một thân dữ liệu thành các dòng lệnh và một nháy lẻ trong đó
+    (`don't`) nuốt các dòng sau: quét nào chỉ đọc một cách thì bỏ sót lệnh ở đó - người gọi xét cả hai."""
+    texts = [_clean(cmd)]
+    if "<<" in cmd:
+        cut = _clean(cmd, cut_maybe=True)
+        if cut != texts[0]:
+            texts.append(cut)
+    return texts
 
 
 def _matching_paren(text, start):
@@ -1304,7 +1331,8 @@ def _stdin_scripts(cmd):
             if prog:
                 synth(prog, "\n".join(lines[s:j]))
         i = docs[-1][2] + 1 if docs else i + 1
-    pieces = _split_segments(_clean(cmd))
+    texts = _readings(cmd)   # review #427 vòng 2: hai cách đọc, nối bằng một `;` (segment ở chỉ số chẵn như cũ)
+    pieces = _split_segments(texts[0]) + [p for text in texts[1:] for p in [";"] + _split_segments(text)]
     for k in range(0, len(pieces), 2):
         hs = re.search(r"<<<\s*(\"[^\"]*\"|'[^']*'|\S+)", pieces[k])
         prog = _stdin_prog(pieces[k]) if hs else None
@@ -1330,7 +1358,7 @@ def _stdin_scripts(cmd):
 def _nested_scripts(cmd):
     """Every script `cmd` runs that its own segments do not show: command substitutions and the scripts fed on stdin (_stdin_scripts). One
     scan for is_trunk_off and trunk_write; each caller recurses into what this returns (three levels)."""
-    return _subst_bodies(_clean(cmd)) + _stdin_scripts(cmd)
+    return list(dict.fromkeys([b for text in _readings(cmd) for b in _subst_bodies(text)] + _stdin_scripts(cmd)))   # (review #427 vòng 2: hai cách đọc)
 
 
 def is_trunk_off(cmd, depth=0):
@@ -1344,7 +1372,7 @@ def is_trunk_off(cmd, depth=0):
     import shlex   # noqa: PLC0415 - only commands that mention the switch pay for it
     if depth < 3 and any(is_trunk_off(body, depth + 1) for body in _nested_scripts(cmd)):   # $( ), backticks, <( ), echo '…' | sh, bash <<< '…'
         return True
-    for seg in _split_segments(_clean(cmd))[::2]:
+    for seg in [s for text in _readings(cmd) for s in _split_segments(text)[::2]]:   # (review #427 vòng 2: hai cách đọc)
         try:
             words = shlex.split(seg)
         except ValueError:
@@ -1420,7 +1448,7 @@ _SED_SUBST = _Re(r"s(?P<d>[^\w\s\\])(?P<pat>.*?)(?P=d)(?P<rep>.*?)(?P=d)")
 def _sed_one_to_zero(command):
     """True when a segment of `command` is a `sed -i` on a settings file with a substitution that turns a lone 1 into 0 (`s/"1"/"0"/`,
     `s/MODE": "1"/MODE": "0"/`, `s/1/0/`): the value-only edit of WORKTREE_TRUNK_MODE that names no key. A bounded parse: one `s` word each."""
-    for seg in _split_segments(_clean(command))[::2]:
+    for seg in [s for text in _readings(command) for s in _split_segments(text)[::2]]:   # (review #427 vòng 2: hai cách đọc)
         words = _cmd_words(seg)
         if not (words and os.path.basename(words[0]) == "sed" and any(w.startswith("-i") or w == "--in-place" for w in words[1:])):
             continue
@@ -1465,7 +1493,7 @@ def trunk_env_in_settings(tool, tool_input, command):
     if any(t and _SETTINGS_FILE.search(t) for t in _redirect_targets(command)):
         return True
     import shlex   # noqa: PLC0415 - only a command that names the key and a settings file pays for it
-    for seg in _split_segments(_clean(command))[::2]:
+    for seg in [s for text in _readings(command) for s in _split_segments(text)[::2]]:   # (review #427 vòng 2: hai cách đọc)
         try:
             raw = shlex.split(seg)
         except ValueError:
@@ -1794,6 +1822,8 @@ def _write_walk(cmd, text, body, top, cwd, sid, notes):
             if tl is None and notes is not None:
                 notes["unknown"] = True
             if tl is None or (locked and (tl == locked or _same_dir(tl, locked))):   # (locked None: cwd không phải repo, #427 vòng 2)
+                if tl is not None and notes is not None:
+                    notes["top"] = True   # đích đã biết là chính `top` (review #427 vòng 2: trunk mode từ cwd không phải repo chỉ chặn đích này)
                 hits_top = True
                 continue
             lock = read_checkout_lock(tgdir)
@@ -2062,25 +2092,30 @@ def _lands_in_main(path, main, sw):
     return r.returncode != 0   # 0: git ignores it (and does not track it)
 
 
-def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid=""):
+def trunk_write(tool, tool_input, cmd, cwd, main, sw, sid="", unknown=None):
     """W1 R1 v6: this call writes into the trunk-mode main checkout `main` itself. Edit/Write: its file. Bash, after dropping the segments
     _TRUNK_ALLOWED lets through (a `cd` before them still counts): a git write or gate run aimed at main (write_hits_locked: by the toplevel
     of its target; one that cannot be told counts), or a redirect / file write (hooks/shell_writes.py, cd-aware) landing in it. Builds and
     interpreters run in main are no writes here (their output is ignored build state). A line the scanner cannot tokenise: its redirects
-    are read without cd tracking."""
+    are read without cd tracking.
+    unknown (dict; review #427 vòng 2 - cwd không phải repo): Bash chỉ ghi vào main khi đích đã biết nằm trong main; đích git / gate không
+    biết thì unknown["unknown"] = True (main() xét khoá các checkout của project, như khi trunk mode tắt), redirect không biết bỏ qua - một
+    repo nháp mới (`git init t && cd t && git commit`), `> "$TMPDIR/x"` từng bị chặn dù không ai giữ gì."""
     if tool in EDIT_TOOLS:
         ti = tool_input if isinstance(tool_input, dict) else {}
         path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path")
         if not isinstance(path, str) or not path:
             return True
         return _lands_in_main(path if os.path.isabs(path) else os.path.join(cwd or main, path), main, sw)
-    return _bash_trunk_write(cmd, cwd, main, sw, sid, 0)
+    return _bash_trunk_write(cmd, cwd, main, sw, sid, 0, unknown)
 
 
 _VAR_ASSIGN = re.compile(r"""(?:^|[;&|\n(]|\bexport\s+)\s*([A-Za-z_][A-Za-z0-9_]*)(\+?)=("[^"$`]*"|'[^']*'|[^\s;&|$`"'()]*)""")
 _VAR_USE = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
-# một định nghĩa hàm / alias, source / . / eval / enable: `cat` của dòng có thể không phải chương trình cat (_expand_static_vars, mục 6)
-_DEFINES = re.compile(r"\(\s*\)|\b(?:function|alias|source|eval|enable)\b|(?:^|[;&|(\n])\s*\.\s")
+# một định nghĩa hàm / alias, source / . / eval / enable: `cat` của dòng có thể không phải chương trình cat (_expand_static_vars, mục 6).
+# Review #427 vòng 2: `.` là một từ đứng riêng ở BẤT KỲ đâu (sau then / do / { / ! / command / builtin / time, trong nháy của trap …: trước chỉ
+# xét đầu lệnh, `if true; then . "$S/env.sh"; fi` lọt) - fail closed, `git add .` chỉ làm mất luật thân sink; autoload / functions[…] của zsh
+_DEFINES = re.compile(r"\(\s*\)|\b(?:function|functions|alias|autoload|source|eval|enable)\b|(?:^|[\s;&|(){}!`'\"])\.(?=\s)")
 
 
 def _expand_static_vars(target, cmd):
@@ -2125,23 +2160,29 @@ def _expand_static_vars(target, cmd):
     return None if unknown or "$" in out or "`" in out else out
 
 
-def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
+def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
     """trunk_write for one Bash script: what its segments write, then - three levels deep - the scripts it hides from them (_nested_scripts:
     substitutions, echo / printf / cat-heredoc piped to a shell or interpreter, a here-string). A script that cannot be tokenised counts as a
-    write where it runs (hooks/shell_writes.py "unparsed"); after a cd the nested scripts run where that cd led, which is unknown: main's rules."""
+    write where it runs (hooks/shell_writes.py "unparsed"); after a cd the nested scripts run where that cd led, which is unknown: main's rules
+    - với `unknown` (trunk_write: cwd không phải repo) thì thư mục không biết đó không phải main, chỉ đích đã biết nằm trong main là ghi."""
     # An allowed segment is excused only as a git write / gate run: its own redirects still count (OCR 14/10: `git fetch > src/a.py`,
     # `agent-kit worktree list > README.md` overwrote tracked files of main), so the redirect / file-write scan reads the ORIGINAL line
-    texts = [_clean(cmd)]
-    if "<<" in cmd:   # #427 vòng 2: `<<` sau `#` / trong nháy - _clean đọc các dòng tới delimiter là lệnh; cách đọc cũ (dữ liệu) cũng được xét
-        texts += [t for t in (_clean(cmd, cut_maybe=True),) if t != texts[0]]
+    texts = _readings(cmd)   # #427 vòng 2: `<<` sau `#` / trong nháy - _clean đọc các dòng tới delimiter là lệnh; cách đọc cũ (dữ liệu) cũng được xét
+    loose = unknown is not None
+    if loose and cwd is None:
+        cwd = os.devnull   # thư mục không biết: không thư mục nào nằm dưới nó, nên đích tương đối không bao giờ "đã biết nằm trong main"
     for text in texts:
         pieces = _split_segments(text)
         inner = [_trunk_unwrap(p) if i % 2 == 0 else p for i, p in enumerate(pieces)]   # nohup / time / bash -c '<một lệnh>' gỡ ra (17/10)
         if any(i % 2 == 0 and _updates_checked_out_branch(p) for i, p in enumerate(inner)):
             return True
         stripped = "".join(":" if i % 2 == 0 and (_TRUNK_ALLOWED.search(q) or _trunk_sync(q)) else p for i, (p, q) in enumerate(zip(pieces, inner)))
-        if (GIT_WRITE.search(stripped) or GATE.search(stripped)) and write_hits_locked(stripped, main, cwd, sid)[0]:
-            return True
+        if GIT_WRITE.search(stripped) or GATE.search(stripped):
+            notes = {}
+            if write_hits_locked(stripped, main, cwd, sid, notes)[0] and (not loose or notes.get("top")):
+                return True
+            if loose and notes.get("unknown"):
+                unknown["unknown"] = True
     here = cwd or main
     try:
         found = _hook_module("shell_writes").targets(cmd, here, run_bodies=True)
@@ -2154,7 +2195,8 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
     for kind, t, wd in found:
         if kind == "cdvar":
             d = _expand_static_vars(t, cmd)
-            cd_unsafe = cd_unsafe or d is None or _lands_in_main(os.path.expanduser(d) if os.path.isabs(os.path.expanduser(d)) else os.path.join(wd or here, d), main, sw)
+            cd_unsafe = cd_unsafe or (not loose if d is None else   # (loose: cd không biết thì đích tương đối sau nó cũng không biết)
+                                      _lands_in_main(os.path.expanduser(d) if os.path.isabs(os.path.expanduser(d)) else os.path.join(wd or here, d), main, sw))
             continue
         if kind == "unparsed":
             if _lands_in_main(wd or here, main, sw):
@@ -2164,6 +2206,8 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
             continue
         if "$" in t or "`" in t:
             t = _expand_static_vars(t, cmd)
+            if t is None and loose:   # cwd không phải repo: `> "$TMPDIR/x"` không phải ghi vào main (review #427 vòng 2)
+                continue
             if t is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
                 return True
         p = os.path.expanduser(t)
@@ -2172,9 +2216,9 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth):
         if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
             return True
     if depth < 3:
-        moved = bool(DIR_CHANGE.search(_clean(cmd)))
+        moved = any(DIR_CHANGE.search(text) for text in texts)
         for body in _nested_scripts(cmd):
-            if _bash_trunk_write(body, None if moved else cwd, main, sw, sid, depth + 1):
+            if _bash_trunk_write(body, None if moved else cwd, main, sw, sid, depth + 1, unknown):
                 return True
     return False
 
@@ -2212,7 +2256,7 @@ def _common_of(gdir):
     try:
         with open(os.path.join(gdir, "commondir"), encoding="utf-8") as f:
             return os.path.realpath(os.path.join(gdir, f.read(4096).strip()))
-    except OSError:
+    except (OSError, ValueError):   # (ValueError: không phải UTF-8 / có NUL - review #427 vòng 2: hook không được văng)
         return gdir   # no commondir: gdir is the repository's own git dir
 
 
@@ -2251,8 +2295,8 @@ def _checkout_top(g):
     try:
         with open(os.path.join(g, "gitdir"), encoding="utf-8") as f:
             return os.path.dirname(os.path.realpath(f.read(4096).strip()))
-    except OSError:
-        pass   # không phải worktree liên kết
+    except (OSError, ValueError):   # (ValueError, review #427 vòng 2: file không phải UTF-8 / có NUL - hook từng văng, exit 1: lệnh ghi lọt)
+        pass   # không phải worktree liên kết, hay không đọc được: như khi không có file
     if os.path.basename(g) == ".git":
         return os.path.dirname(g)
     return _target(str((read_lock(os.path.join(g, LOCK)) or {}).get("cwd") or ""))[0]
@@ -2566,8 +2610,9 @@ def main():
     # #427 vòng 2: cwd không phải repo - luật trunk của repo project của phiên (phiên đăng ký ở đó, như project_held)
     proj = os.environ.get("CLAUDE_PROJECT_DIR") if not gdir else None
     trunk, sw = trunk_main(top if gdir else (git_dir(proj)[1] if proj and sid and read_session(proj, sid) else None))
+    tunknown = {} if not gdir else None   # review #427 vòng 2: cwd không phải repo - chỉ đích đã biết nằm trong main (trunk_write unknown)
     if trunk:   # W1 R1 v6: main is merge-only - a write into it is refused whoever the session is, wherever it runs from
-        if trunk_write(tool, d.get("tool_input"), command, cwd, trunk, sw, sid):
+        if trunk_write(tool, d.get("tool_input"), command, cwd, trunk, sw, sid, unknown=tunknown):
             print(TRUNK_MSG.format(main=trunk), file=sys.stderr)
             log(gdir or git_dir(trunk)[0] or trunk, f"{sid} trunk mode: chặn ghi vào main {trunk} ({tool})")
             return 2
@@ -2578,8 +2623,10 @@ def main():
     # target already (trunk_write), except in the sync / integrator segments it lets through (`git -C "$X" pull --ff-only` from a worktree
     # still passes: ponytail, judge those by family_held too if a sibling is ever hit; refusing them all would stop every lane's push);
     # here, trunk mode off, it is refused while another live session holds any checkout of this repository.
-    # #427: từ repo khác, đích không biết cũng có thể là checkout bị giữ của project của phiên (project_held)
-    held = ((family_held(gdir, sid, now) if gdir else None) or project_held(gdir, sid, now)) if notes.get("unknown") and not trunk else None
+    # #427: từ repo khác, đích không biết cũng có thể là checkout bị giữ của project của phiên (project_held). Review vòng 2: trunk mode từ cwd
+    # không phải repo không chặn đích git / gate không biết (trunk_write unknown) - xét khoá như khi trunk mode tắt, trừ các segment nó cho qua
+    unknown_target = tunknown.get("unknown") if trunk and tunknown is not None else notes.get("unknown") and not trunk
+    held = ((family_held(gdir, sid, now) if gdir else None) or project_held(gdir, sid, now)) if unknown_target else None
     if held:
         htop, hgdir, hlock = held
         if os.environ.get("DEVKIT_ALLOW_SHARED_CHECKOUT") == "1" or allow_shared_until(hgdir) > now:
