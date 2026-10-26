@@ -67,5 +67,18 @@ rm -rf "$CD/super-board" && : > "$CD/super-board"
 [ "$rc" -eq 11 ] && grep -q "log saved to (not saved)" "$TMP/gate2.log" && grep -q "verify-said-no" "$TMP/gate2.log" \
   && ok "log cannot be written: still exit 11, the verify output on stderr, '(not saved)' said" || fail "unwritable log dir (rc $rc): $(tail -3 "$TMP/gate2.log")"
 
+# Verify chạy trong scratch nhưng post-fix-gate ưu tiên CLAUDE_PROJECT_DIR / TARGET_DIR hơn cwd: bên gọi mang sẵn hai biến đó (runner, agent)
+# thì verify kiểm nhầm cây chính → xanh sai. Cả hai nhánh (lệnh post-fix-gate.py chạy eval, lệnh khác qua heavy-slot) phải gỡ chúng.
+rm -f "$CD/super-board"
+for kind in pfg other; do
+  if [ "$kind" = pfg ]; then cmd=": post-fix-gate.py; echo \\\"\${CLAUDE_PROJECT_DIR:-unset}|\${TARGET_DIR:-unset}\\\" > $TMP/env-$kind.seen; false"
+  else cmd="echo \\\"\${CLAUDE_PROJECT_DIR:-unset}|\${TARGET_DIR:-unset}\\\" > $TMP/env-$kind.seen; false"; fi
+  printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["%s"]}\n' "$cmd" > "$TMP/cfg-env-$kind.json"
+  ( cd "$WT" && CLAUDE_PROJECT_DIR="$R" TARGET_DIR="$R" bash "$GATE" --config "$TMP/cfg-env-$kind.json" --pr 5 --expect-head "$H" ) >"$TMP/gate-env-$kind.log" 2>&1
+  seen=$(cat "$TMP/env-$kind.seen" 2>/dev/null || echo "<verify did not run>")
+  [ "$seen" = "unset|unset" ] && ok "verify ($kind) runs without the caller's CLAUDE_PROJECT_DIR / TARGET_DIR" \
+    || fail "verify ($kind) inherited the caller's project dir (checks the wrong tree): $seen"
+done
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_verify_log_outside: PASS"; exit 0; } || { echo "test_merge_gate_verify_log_outside: FAIL ($FAILS)"; exit 1; }
