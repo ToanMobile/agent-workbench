@@ -542,12 +542,20 @@ def cleanup_sandbox(name: Optional[str] = None, cleanup_all: bool = False, force
     return kept
 
 
-def _trunk_main(repo_root: Path) -> bool:
-    """U1 (audit 25/10): repo_root is the MAIN checkout of a repo in trunk mode (worktree.py `_trunk_mode`, the default). There main is
-    merge-only: it moves through `worktree.py finish` alone. A linked (session) worktree is not main: merge-winner merges into it as before."""
+def _trunk_main(repo_root: Path, head_ref: str) -> bool:
+    """U1 (audit 25/10): merge-winner would move the trunk branch of a repo in trunk mode (worktree.py `_trunk_mode`, the default) — the
+    checkout it runs from (head_ref: its `git symbolic-ref HEAD`) stands on that branch, whichever checkout it is (review 25/10: a linked
+    worktree on main merged straight into it; the main checkout on `feat` was sent to finish, which refuses any branch but the trunk).
+    Main is merge-only: it moves through `worktree.py finish` alone. Another branch, or a detached HEAD (a session worktree): merged into
+    as before. No trunk branch can be told (`_trunk_branch` None): the main checkout's branch is the trunk, as finish judges it."""
     wm = _worktree_module()
     main = wm.main_checkout(str(repo_root))
-    return bool(wm._same_path(main, str(repo_root)) and wm._trunk_mode(main))
+    if not wm._trunk_mode(main):
+        return False
+    trunk = wm._trunk_branch(main)
+    if trunk:
+        return head_ref == f"refs/heads/{trunk}"
+    return bool(head_ref) and wm._same_path(main, str(repo_root))
 
 
 def _finish_into_main(name: str, s_path: Path, repo_root: Path) -> None:
@@ -618,10 +626,10 @@ def merge_winner(name: str, squash: bool = False, clean_others: bool = False) ->
         why = base_name if not base_ref else f"checkout chính đang ở HEAD tách rời, merge sẽ chỉ nằm trên HEAD đó, không vào {base_name}"
         raise RuntimeError(f"Không merge sandbox '{name}': {why}. Chuyển checkout về nhánh (`git checkout <nhánh>`) rồi chạy lại.")
 
-    # U1 (audit 25/10): trunk mode, run from the main checkout — main is merge-only, `worktree finish` is its one door (merge gate, then a
-    # fast-forward). The sandbox is handed to it instead of `git merge` here. Not known whether trunk mode is on: nothing is merged.
+    # U1 (audit 25/10): trunk mode, the checkout stands on the trunk branch — main is merge-only, `worktree finish` is its one door (merge
+    # gate, then a fast-forward). The sandbox is handed to it instead of `git merge` here. Not known whether trunk mode is on: nothing is merged.
     try:
-        trunk_main = _trunk_main(repo_root)
+        trunk_main = _trunk_main(repo_root, head_ref)
     except (Exception, SystemExit) as e:  # noqa: BLE001 - worktree.git(check=True) raises SystemExit
         raise RuntimeError(f"Không merge sandbox '{name}': không xác định được checkout này có phải main ở trunk mode không ({e}); không đổi gì.")
     if trunk_main and squash:
