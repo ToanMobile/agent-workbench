@@ -457,21 +457,25 @@ def complete_pr_files(args, stdout):
         return stdout, None
     # Số dòng theo file phải là int (hoặc thiếu): chuỗi làm vòng gộp ném TypeError (#427) — trả nguyên văn cho bước kiểm.
     if not (isinstance(value, dict) and isinstance(value.get('files'), list) and type(value.get('changedFiles')) is int
-            and all(isinstance(f, dict) and isinstance(f.get('path'), str)
+            and all(isinstance(f, dict)
                     and all(f.get(k) is None or type(f.get(k)) is int for k in ('additions', 'deletions')) for f in value['files'])):
         return stdout, None
+    # Mục có path là null / số / list / dict / chuỗi rỗng (schema khai `String!`, #427 vòng 2): coi danh sách GraphQL như danh sách bị cắt
+    # và lấy REST (bản trước trả nguyên văn nên lượt đọc halt mà REST chưa được hỏi). Bỏ bước gộp: path list/dict làm khoá dict ném TypeError.
+    garbled = not all(isinstance(f.get('path'), str) and f['path'] for f in value['files'])
     raw = len(value['files'])
-    merged = {}
-    for f in value['files']:
-        entry = merged.setdefault(f['path'], {**f, 'additions': 0, 'deletions': 0})
-        entry['additions'] += f.get('additions') or 0
-        entry['deletions'] += f.get('deletions') or 0
-    value['files'] = list(merged.values())
-    if value['changedFiles'] <= len(value['files']) and raw < 100:
-        return (json.dumps(value) if raw != len(value['files']) else stdout), None
+    if not garbled:
+        merged = {}
+        for f in value['files']:
+            entry = merged.setdefault(f['path'], {**f, 'additions': 0, 'deletions': 0})
+            entry['additions'] += f.get('additions') or 0
+            entry['deletions'] += f.get('deletions') or 0
+        value['files'] = list(merged.values())
+        if value['changedFiles'] <= len(value['files']) and raw < 100:
+            return (json.dumps(value) if raw != len(value['files']) else stdout), None
     number = args[2] if len(args) > 2 else ''
     if not number.isdigit():
-        return json.dumps(value), None
+        return (stdout if garbled else json.dumps(value)), None
     repo = None
     for i, arg in enumerate(args):
         if arg in ('--repo', '-R') and i + 1 < len(args):
