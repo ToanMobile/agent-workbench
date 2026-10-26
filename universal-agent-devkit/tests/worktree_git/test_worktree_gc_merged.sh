@@ -208,6 +208,16 @@ mkdir -p "$R/.agents/local/red-patches"; cp "$H/rp/.agents/local/red-patches/BUG
 cp "$H/rp/$MEM/handoff-rp.md" "$R/$MEM/handoff-rp.md"
 (cd "$R" && python3 "$WT" remove --merged "$H/rp" >"$TMP/g5.out" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && gone rp && ok "G control: the same bytes already in main at the same paths -> removed" || { fail "G control rc=$rc"; cat "$TMP/g5.out"; }
+# G6 (#427, lane C): board quyết định bằng `held` rồi tidy rồi mới `remove --merged`; một phiên nhận worktree giữa chừng (khoá checkout
+#    của pid sống) không làm git từ chối gì, và `remove --merged` trước đây không hỏi ai giữ: gỡ từ dưới chân phiên đó. Nay nó hỏi lại
+#    ngay trước khi gỡ, đúng luật của `held`: giữ, exit 1, dòng ✖ nêu phiên. (Ca board end-to-end: test_post_merge_clean.sh k15.)
+add_det late-held
+GDL=$(G "$H/late-held" rev-parse --absolute-git-dir)
+printf '{"session_id":"late-holder","pid":%s,"gitdir":"%s"}\n' "$SL" "$GDL" > "$GDL/devkit-session.lock"
+(cd "$R" && python3 "$WT" remove --merged "$H/late-held" >"$TMP/g6.out" 2>&1); rc=$?
+[ "$rc" -eq 1 ] && kept late-held && grep -q "✖.*late-holder" "$TMP/g6.out" \
+  && ok "G remove --merged asks who holds the worktree right before removing it: a live session's checkout lock keeps it (✖, exit 1)" \
+  || { fail "G remove --merged rc=$rc: a worktree a live session holds was $(kept late-held && echo kept without the reason || echo REMOVED)"; cat "$TMP/g6.out"; }
 
 # H. (review U2 F4, 26/10) nhánh đang được rebase / bisect ở một worktree khác: worktree đó hiện DETACHED nên không "checkout" nhánh,
 #    và `update-ref -d` không từ chối — sweep của gc --merged (và prune-branch) xoá nó, `rebase --continue` hỏng "cannot lock ref".
