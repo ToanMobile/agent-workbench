@@ -473,6 +473,61 @@ kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
 kstop; rc=$?
 [ "$rc" = 0 ] && [ -f "$TMP/b_wait" ] && ok "degraded: the same tree runs its suite once the lock is free" \
   || fail "degraded: BUSY result reused, suite not run (rc=$rc)"
+# Audit 2026-10-25 B5: 41 BUSY Stop runs in 54 h each waited the whole 45 s first (six in a row behind one gate). When the holder is a LIVE
+# post-fix-gate run (the pid + start time it records in the lock file, checked like session_lock checks its holder), the Stop says BUSY
+# after DEVKIT_REUSE_LOCK_WAIT_S (3 s); a holder it cannot name (another tool, a dead or recycled pid) keeps the long wait; a lock nobody
+# holds is taken as before; the CLI (no Stop hook) keeps its own wait whoever holds the lock.
+hold_gate_lock() {   # hold_gate_lock <pid in the record: "self" = the holder, else that number>
+  rm -f "$TMP/b_held"
+  python3 - "$B" "$TMP/b_held" "$DEVKIT_DIR/bin" "$1" <<'PY' &
+import fcntl, json, os, sys, time
+sys.path.insert(0, sys.argv[3]); import session_lock
+os.makedirs(sys.argv[1] + "/.claude/audit-gate", exist_ok=True)
+pid = os.getpid() if sys.argv[4] == "self" else int(sys.argv[4])
+with open(sys.argv[1] + "/.claude/audit-gate/test_run.lock", "a") as f:
+    fcntl.flock(f, fcntl.LOCK_EX)
+    f.truncate(0); f.write(json.dumps({"pid": pid, "pid_start": session_lock.pid_start(os.getpid())}) + "\n"); f.flush()
+    open(sys.argv[2], "w").close()
+    time.sleep(60)
+PY
+  b_holder=$!
+  for _ in $(seq 1 50); do [ -f "$TMP/b_held" ] && break; sleep 0.1; done; }
+secs() { python3 -c 'import time; print(time.time())'; }
+lockwait() {   # the gate's own `lock` step (seconds waiting for test_run.lock) of its last run, from runs.jsonl
+  python3 -c 'import json,sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+print(round(float((rows[-1].get("steps") or {}).get("lock", -1)), 1))' "$(git -C "$B" rev-parse --path-format=absolute --git-common-dir)/postfix-gate/runs.jsonl" 2>/dev/null || echo -1; }
+echo "fun ok() = 4" > src/Core.kt; rm -f "$TMP/b_wait"
+hold_gate_lock self
+t0="$(secs)"; bstop; rc=$?; dt="$(python3 -c 'import sys,time; print(round(time.time()-float(sys.argv[1]),1))' "$t0")"; lw="$(lockwait)"
+python3 -c 'import sys; sys.exit(0 if 0 <= float(sys.argv[1]) < 5 and float(sys.argv[2]) < 15 else 1)' "$lw" "$dt" && [ "$rc" = 0 ] \
+  && grep -q "$BUSY_MSG" "$TMP/out" && [ ! -f "$TMP/b_wait" ] \
+  && ok "B5: lock held by a live gate run: BUSY after a ${lw} s lock wait (< 5 s; whole Stop ${dt} s), nothing cached" \
+  || fail "B5: live gate holder: rc=$rc, lock wait ${lw} s, Stop ${dt} s (want BUSY after < 5 s), out='$(head -2 "$TMP/out")'"
+no_untested_fp || fail "B5: the short BUSY was cached as UNTESTED"
+t0="$(secs)"; ( cd "$B" && env -u TEST_RUN_LOCK_BUSY_FAST TEST_RUN_LOCK_WAIT_S=4 CLAUDE_PROJECT_DIR="$B" python3 "$DEVKIT_DIR/bin/post-fix-gate.py" --run-tests --json >/dev/null 2>&1 )
+dt="$(python3 -c 'import sys,time; print(round(time.time()-float(sys.argv[1]),1))' "$t0")"
+python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= 4 else 1)' "$dt" && ok "B5: the CLI (no Stop hook) still waits its own TEST_RUN_LOCK_WAIT_S behind a live gate (${dt} s)" \
+  || fail "B5: the CLI gave up after ${dt} s behind a live gate (want >= 4 s)"
+kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
+dead="$(python3 -c 'import subprocess; p = subprocess.Popen(["true"]); p.wait(); print(p.pid)')"
+hold_gate_lock "$dead"
+t0="$(secs)"; TEST_RUN_LOCK_WAIT_S=4 bstop; rc=$?; dt="$(python3 -c 'import sys,time; print(round(time.time()-float(sys.argv[1]),1))' "$t0")"
+python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= 4 else 1)' "$dt" && [ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" \
+  && ok "B5: a record naming a dead pid while the lock is held: the holder is unknown, the long wait stays (${dt} s)" \
+  || fail "B5: unknown holder cut short: rc=$rc after ${dt} s (want BUSY after >= 4 s)"
+kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
+hold_lock
+t0="$(secs)"; TEST_RUN_LOCK_WAIT_S=4 bstop; rc=$?; dt="$(python3 -c 'import sys,time; print(round(time.time()-float(sys.argv[1]),1))' "$t0")"
+python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= 4 else 1)' "$dt" && [ "$rc" = 0 ] && grep -q "$BUSY_MSG" "$TMP/out" \
+  && ok "B5: a holder that wrote no record (another tool): the long wait stays (${dt} s)" \
+  || fail "B5: record-less holder cut short: rc=$rc after ${dt} s (want BUSY after >= 4 s)"
+kill "$b_holder" 2>/dev/null; wait "$b_holder" 2>/dev/null
+printf '{"pid": %s, "pid_start": "x"}\n' "$dead" > "$B/.claude/audit-gate/test_run.lock"   # the record a killed gate left behind
+rm -f "$TMP/b_wait"; bstop; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$TMP/b_wait" 2>/dev/null)" = 45 ] && ! grep -q "$BUSY_MSG" "$TMP/out" \
+  && ok "B5: a stale lock (a dead gate's record, nobody holds it) is taken over: the suite runs" \
+  || fail "B5: stale lock not taken over (rc=$rc wait='$(cat "$TMP/b_wait" 2>/dev/null)' out='$(head -2 "$TMP/out")')"
 
 # ── UNTESTED (untested_exit) advances verified_head; the same content is not re-run ─────
 # 2026-09-29 (GeelyEx2: REG-QC-05 "test on the real car" always exits 2): exit 4 left

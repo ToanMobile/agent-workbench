@@ -211,5 +211,34 @@ PY
 )"
 [ "$excs" = "1 True" ] && ok "removal_blockers: a check that raises reads as a blocker (never as 'safe to remove')" || fail "exception in a check: '$excs'"
 
+# ── OCR r2 (26/10): git-ignored files under .agents/local/ (red-patches, stage, handoffs, claude-auto notes) only the worktree holds ──
+# `remove` deleted them: only a git-ignored SECRET was checked, and the memory-note warning came AFTER the removal. Refused, naming the
+# path; the same bytes at the same path in main (a copy `worktree add` made, or brought back by hand): removed.
+printf '.agents/local/\n' >> "$R/.git/info/exclude"
+(cd "$R" && bash "$KIT" worktree add "$TMP/rm-al" >/dev/null 2>&1) || fail "add rm-al"
+mkdir -p "$TMP/rm-al/.agents/local/red-patches" "$TMP/rm-al/.agents/local/memory/claude-auto"
+echo "diff --git a/x b/x" > "$TMP/rm-al/.agents/local/red-patches/BUG-1.patch"
+echo "handoff only here" > "$TMP/rm-al/.agents/local/memory/claude-auto/handoff.md"
+(cd "$R" && bash "$KIT" worktree remove "$TMP/rm-al" >"$TMP/rm-al.out" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && [ -f "$TMP/rm-al/.agents/local/red-patches/BUG-1.patch" ] && [ -f "$TMP/rm-al/.agents/local/memory/claude-auto/handoff.md" ] \
+  && grep -q "\.agents/local/red-patches/BUG-1.patch" "$TMP/rm-al.out" \
+  && ok "remove: git-ignored .agents/local/ files only the worktree holds (a red-patch, a claude-auto note) are refused, named" \
+  || { fail "remove (rc=$rc) deleted git-ignored .agents/local/ files only the worktree held"; cat "$TMP/rm-al.out"; }
+mkdir -p "$R/.agents/local/red-patches" "$R/.agents/local/memory/claude-auto"
+cp "$TMP/rm-al/.agents/local/red-patches/BUG-1.patch" "$R/.agents/local/red-patches/BUG-1.patch"
+cp "$TMP/rm-al/.agents/local/memory/claude-auto/handoff.md" "$R/.agents/local/memory/claude-auto/handoff.md"
+(cd "$R" && bash "$KIT" worktree remove "$TMP/rm-al" >"$TMP/rm-al2.out" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ ! -d "$TMP/rm-al" ] && ok "remove: the same .agents/local/ bytes already in main -> removed" \
+  || { fail "remove with .agents/local/ files main already holds (rc=$rc)"; cat "$TMP/rm-al2.out"; }
+# OCR r3 W1: a git repo nested under .agents/local/ (a repo-copy stage) is ONE folder entry for git ("…/kit-copy/"): it was skipped as
+# "not a file" and deleted with the worktree. Refused, naming it
+(cd "$R" && bash "$KIT" worktree add "$TMP/rm-nr" >/dev/null 2>&1) || fail "add rm-nr"
+mkdir -p "$TMP/rm-nr/.agents/local/stage/kit-copy"; G "$TMP/rm-nr/.agents/local/stage/kit-copy" init -q .
+echo "staged work awaiting the user" > "$TMP/rm-nr/.agents/local/stage/kit-copy/HANDOFF.md"
+(cd "$R" && bash "$KIT" worktree remove "$TMP/rm-nr" >"$TMP/rm-nr.out" 2>&1); rc=$?
+[ "$rc" -ne 0 ] && [ -f "$TMP/rm-nr/.agents/local/stage/kit-copy/HANDOFF.md" ] && grep -q "\.agents/local/stage/kit-copy/" "$TMP/rm-nr.out" \
+  && ok "remove: a git repo nested under .agents/local/ is refused, named (not deleted as 'not a file')" \
+  || { fail "remove (rc=$rc) of a worktree holding a nested repo under .agents/local/"; cat "$TMP/rm-nr.out"; }
+
 if [ "$FAILS" -ne 0 ]; then echo "worktree remove: $FAILS FAILED"; exit 1; fi
 echo "worktree remove: all checks passed"

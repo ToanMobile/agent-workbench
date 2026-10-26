@@ -9,7 +9,8 @@ import os
 import re
 import shlex
 
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+# `<<WORD` (not the here-string `<<<`), WORD up to a metacharacter with `-` in it (OCR 26/10 r3: `<<END-X` read as END) - as bin/session_lock.py
+HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([^\s;&|<>()'\"`\\]+)\1")
 DEST_LAST = {"cp", "install", "rsync", "ln", "scp"}
 ALL_ARGS = {"mv", "rm", "touch", "truncate", "tee", "mkdir", "rmdir", "chmod", "unlink"}
 GIT_WRITE = {"add", "am", "apply", "checkout", "cherry-pick", "clean", "commit", "merge", "mv", "pull",
@@ -218,6 +219,22 @@ def _nested(code, wd, depth, run_bodies):
     return [("unparsed", "", wd)] if got is None and run_bodies else got or []
 
 
+def _delimiter_line(cmd, m, start, ends):
+    """Offset of the line from `start` on that ends heredoc `m`: the line IS the delimiter, as bash reads it - only `<<-` drops leading TABS
+    (OCR 26/10 r2: "  EOF" ended a body here). None when no line does. `ends` caches the line index of `cmd` (built once per kind), so a
+    `<<WORD` no line ends costs a lookup, not a scan to the end of the command (r3)."""
+    import bisect   # noqa: PLC0415 - only a command with a `<<` gets here
+    tabs = m.group(0).startswith("<<-")
+    if tabs not in ends:
+        at, off = ends.setdefault(tabs, {}), 0
+        for ln in cmd.split("\n"):
+            at.setdefault(ln.lstrip("\t") if tabs else ln, []).append(off)
+            off += len(ln) + 1
+    hits = ends[tabs].get(m.group(2), ())
+    k = bisect.bisect_left(hits, start)
+    return hits[k] if k < len(hits) else None
+
+
 def targets(cmd, here, depth=0, run_bodies=False):
     """[(kind, target, directory it is relative to)] of the shell line `cmd` run in `here`, or None when it cannot be tokenised.
     kind: "redirect" (a > target; an escaped `\\>` reads as one too, so a caller with its own quote-aware redirect rule skips it),
@@ -228,17 +245,22 @@ def targets(cmd, here, depth=0, run_bodies=False):
     scanned like `bash -c '…'`) or an interpreter (its script's literal write paths: "file"); `bash -c '…'` is scanned three levels deep;
     the line of `env -S '…'` / `--split-string` is split into words in place (_env_split).
     A body run_bodies cannot tokenise comes back as ("unparsed", "", directory)."""
-    out, bodies, pos = [], [], 0
+    out, bodies, pos, ends = [], [], 0, {}
     while True:                               # heredoc bodies are data, not commands
         m = HEREDOC.search(cmd, pos)
         nl = cmd.find("\n", m.end()) if m else -1
         if not m or nl < 0:
             out.append(cmd[pos:])
             break
-        e = re.compile(r"^[ \t]*" + re.escape(m.group(2)) + r"[ \t]*$", re.M).search(cmd, nl + 1)
+        s = _delimiter_line(cmd, m, nl + 1, ends)
+        if s is None:   # no line ends it: no heredoc (a `<<EOF` in a comment or a quote) or one bash reads to the end: its lines stay commands (r3)
+            out.append(cmd[pos:m.end()])
+            pos = m.end()
+            continue
         out.append(cmd[pos:nl + 1])
-        bodies.append(cmd[nl + 1:e.start() if e else len(cmd)])
-        pos = e.end() if e else len(cmd)
+        bodies.append(cmd[nl + 1:s])
+        e = cmd.find("\n", s)
+        pos = len(cmd) if e < 0 else e
     try:
         lex = shlex.shlex(strip_comments("".join(out)), posix=True, punctuation_chars=";&|<>()\n")
         lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""

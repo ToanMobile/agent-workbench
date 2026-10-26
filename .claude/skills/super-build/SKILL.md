@@ -137,7 +137,7 @@ handoff complete. Add file summaries and critical inline notes on the PR, not in
 - `gh issue edit N --remove-label loop:in-progress`
 - `gh issue comment N --body "[builder] [report] ✅ built · PR <URL>"` (Next line: `qa`)
 - Move the project card to `QA`. The Tester and Reviewer take it from there; the issue closes when the Reviewer merges through the merge gate.
-- Leave the worktree in place — the merge gate (after the merge) or the cleanup-wt SessionStart hook removes it once the work is on the base branch.
+- Leave the worktree in place — the merge gate's clean-up (after the merge) or the board's sweep removes it once the work is on the base branch; the DevKit (`agent-kit worktree held` / `remove --merged` / `prune-branch`) decides what is safe to remove.
 - Report: `✅ Super Build issue #N → PR <URL>, card in QA`
 - Recompute ready set; if new issues are now unblocked, dispatch in the next wave (respecting the worker cap)
 

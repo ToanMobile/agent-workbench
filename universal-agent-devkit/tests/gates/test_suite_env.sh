@@ -75,5 +75,10 @@ for v in DEVKIT_CAPACITY_CORES DEVKIT_CAPACITY_LOAD; do
   printf '%s\n' "$cap" | grep -qx "$v" && fail "suite_env giữ $v (móc test của capacity.py)" || ok "suite_env bỏ $v"
 done
 printf '%s\n' "$cap" | grep -qx DEVKIT_CAPACITY && ok "suite_env giữ DEVKIT_CAPACITY (nút người dùng)" || fail "suite_env làm mất DEVKIT_CAPACITY"
+# B5 (audit 25/10): TEST_RUN_LOCK_BUSY_FAST=1 là của lượt gate do regression_gate mở (BUSY sau 3 s khi gate còn sống giữ khoá); gate lồng
+# trong một suite chờ như CLI — lọt xuống thì ca "CLI vẫn chờ" của test_regression_gate_hook.sh đỏ khi chạy dưới Stop hook.
+bf="$(probe TEST_RUN_LOCK_BUSY_FAST=1 DEVKIT_PROBE_KEEP=1)"
+printf '%s\n' "$bf" | grep -qx DEVKIT_PROBE_KEEP || { echo "✖ busy-fast probe returned no environment"; exit 1; }
+printf '%s\n' "$bf" | grep -qx TEST_RUN_LOCK_BUSY_FAST && fail "suite_env giữ TEST_RUN_LOCK_BUSY_FAST (cờ của lượt Stop)" || ok "suite_env bỏ TEST_RUN_LOCK_BUSY_FAST"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_suite_env: all passed" || { echo "❌ test_suite_env: $FAILS failed"; exit 1; }

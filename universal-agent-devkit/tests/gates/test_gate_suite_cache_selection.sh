@@ -131,4 +131,20 @@ gate "$TMP/s8b"; r2=$?; c2=$(n s8)
 if [ "$r1 $r2" = "0 0" ] && [ "$h8a" != "$h8b" ] && [ "$c1" -ge 2 ] && [ "$c2" = "$c1" ]; then ok "S8. cùng nội dung, khác lịch sử, cùng tập chọn: dùng lại REG-ALL (test chạy $c1 → $c2)"
 else fail "S8. exit $r1 $r2 (mong 0 0); HEAD $h8a / $h8b (mong khác nhau); test của REG-ALL chạy $c1 rồi $c2 (mong ≥2 rồi bằng nhau)"; grep -E "REG-ALL|suite_cache" "$TMP/out" | tail -3; fi
 
+# S9 (review 25/10). Một lượt chỉ hỏi `--list` cho mỗi việc cần nó: khoá (sc.keys) và lần kiểm lại trước khi ghi PASS (R3, S7). Phân lớp slot
+#    (heavy_slot.classify → selection_seconds) dùng lại tập đã đọc lúc tính khoá thay vì sinh thêm một `run_impacted.sh --list` (~2 s ở
+#    workbench, lâu hơn khi máy tải). Đếm số lần `--list` của run_impacted.sh trong một lượt chạy REG-ALL: 2.
+repo s9; k9="$TMP/s9/universal-agent-devkit/tests/run_impacted.sh"
+python3 - "$k9" "$TMP/count.s9.list" <<'PY'
+import sys
+path, counter = sys.argv[1:]
+lines = open(path).read().split("\n")
+lines.insert(1, '[ "${1:-}" = --list ] && echo l >> ' + counter)
+open(path, "w").write("\n".join(lines))
+PY
+git -C "$TMP/s9" commit -qam count-list
+wt s9 s9a $LIB 'a = 2'; gate "$TMP/s9a"; r9=$?; l9=$( [ -f "$TMP/count.s9.list" ] && wc -l < "$TMP/count.s9.list" | tr -d ' ' || echo 0 )
+if [ "$r9" = 0 ] && [ "$l9" = 2 ] && [ "$(n s9)" -ge 2 ]; then ok "S9. một lượt REG-ALL hỏi --list 2 lần (khoá + kiểm lại), phân lớp slot dùng lại tập của khoá"
+else fail "S9. exit $r9 (mong 0); run_impacted.sh --list chạy $l9 lần (mong 2); test của REG-ALL chạy $(n s9) (mong ≥ 2)"; grep -E "REG-ALL|heavy-slot" "$TMP/out" | tail -3; fi
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_suite_cache_selection: all passed" || { echo "❌ test_gate_suite_cache_selection: $FAILS failed"; exit 1; }

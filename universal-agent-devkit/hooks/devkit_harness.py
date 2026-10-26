@@ -244,7 +244,7 @@ class SessionGuard:
 # The heavy Stop gates (tests, fresh-context review) cost a model round per block and re-read the
 # whole context: GeelyEx2 blocked 204 times in ~4 days, mostly on progress replies. They are
 # skipped for a reply that declares itself unfinished in its status line (regression_gate since 2026-10-09: or has
-# no status line at all), claims no outcome and ran no git push in the turn. Anything else — no reply, no Claude
+# no status line at all), claims no outcome and ran no git push after the turn's last edit. Anything else — no reply, no Claude
 # transcript, a claim, a push — keeps them (fail closed). DEVKIT_GATE_EVERY_STOP=1 restores a gate on every stop.
 # Claim words in any case (review 2026-10-09: "Đã fix …", "Fixed …", "Done.", "Xong: …", "Hoàn tất …" read as no claim once a reply
 # without a status line counted as mid-work); `XONG` and `PASS` stay uppercase so "pass the value" is no claim. Callers strip
@@ -545,11 +545,81 @@ def git_writes_in_turn(tp, start):
     return found
 
 
-def work_in_progress(payload, env=None, status_optional=False):
+# Audit 2026-10-25 A3: an early `git push` made every later Stop of the user's turn a handover, and a turn spans many Stops (a reply that
+# waits for a background task ends a Stop; the <task-notification> is no new prompt): review_gate held 261 of its 454 blocks on such
+# mid-task "waiting" replies. Only a push that no edit of the turn follows carried the turn's work; one followed by more edits is mid-work.
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
+
+def _checkout_top(path):
+    """The resolved top folder of the git checkout holding path (a repo or a linked worktree: `.git` is a folder or a file); None outside
+    one, or when path cannot be read."""
+    try:
+        d = os.path.realpath(path)
+    except (OSError, TypeError, ValueError):
+        return None
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        up = os.path.dirname(d)
+        if up == d:
+            return None
+        d = up
+
+
+def push_after_last_edit(tp, start, root=None):
+    """True when the turn (tool calls after `start`, epoch) ran a `git push` (git_writes) that no Edit / Write / MultiEdit / NotebookEdit
+    call of the turn comes after, in transcript order. An edit the transcript does not show as such (Bash, a subagent) is not seen, so the
+    push then reads as the last step: a handover, held as before (fail closed). A read error after the first pass saw a push: True.
+    Only an edit of a file in the checkout of `root` (the repo / worktree the gate judges; None: the current folder) counts: a handover
+    note written to a scratch folder after the push is no work of the turn (review of A3, 25/10: it made the handover mid-work). An edit
+    with no path, or no checkout to tell: counted, as before."""
+    import datetime
+    if "push" not in git_writes_in_turn(tp, start):   # the cheap pass (lines naming commit / push only): most turns end here
+        return False
+    try:
+        top = _checkout_top(root if root else os.getcwd())
+    except OSError:   # the current folder is gone
+        top = None
+    n, last_push, last_edit = 0, -1, -1
+    try:
+        with open(tp, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                if '"tool_use"' not in raw or ("push" not in raw and not any('"%s"' % t in raw for t in EDIT_TOOLS)):
+                    continue
+                try:
+                    e = json.loads(raw)
+                    t = datetime.datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError):
+                    continue
+                if t < start or e.get("type") != "assistant":
+                    continue
+                for c in (e.get("message") or {}).get("content") or []:
+                    if not isinstance(c, dict) or c.get("type") != "tool_use":
+                        continue
+                    n += 1
+                    if c.get("name") in EDIT_TOOLS:
+                        inp = c.get("input") if isinstance(c.get("input"), dict) else {}
+                        fp = inp.get("file_path") or inp.get("notebook_path")
+                        if top and isinstance(fp, str) and fp:
+                            q = os.path.realpath(os.path.join(top, fp))
+                            if q != top and not q.startswith(top.rstrip(os.sep) + os.sep):
+                                continue   # outside the repo / worktree (a scratch note): not the turn's work
+                        last_edit = n
+                    elif "push" in git_writes((c.get("input") or {}).get("command", "")):
+                        last_push = n
+    except OSError:
+        return True   # cut off mid-read: the push the first pass saw may be the last step (fail closed)
+    return last_push > last_edit
+
+
+def work_in_progress(payload, env=None, status_optional=False, repo=None):
     """True only for a reply that declares itself unfinished (status line), claims no outcome
-    and ran no git commit/push this turn — then the heavy Stop gates may skip. False otherwise.
+    and ran no git push after the last edit of this turn (push_after_last_edit) — then the heavy Stop gates may skip. False otherwise.
+    repo: the repo / worktree the gate judges (an edit outside it does not follow the push); None: the payload cwd's checkout.
     status_optional=True (regression_gate: user 2026-10-09, "chỉ test khi bàn giao", tested once at the
-    handover over every change since the last PASS): a reply with NO status line is unfinished too."""
+    handover over every change since the last PASS): a reply with NO status line is unfinished too.
+    A push followed by more edits is no handover here; review_gate still holds when that push carried code no review covered."""
     env = os.environ if env is None else env
     if env.get("DEVKIT_GATE_EVERY_STOP") == "1" or not isinstance(payload, dict):
         return False
@@ -569,8 +639,16 @@ def work_in_progress(payload, env=None, status_optional=False):
         return False
     start = turn_start(tp)
     # A local commit is fine mid-work (its range is tested at the handover, --since the verified
-    # HEAD); a push is a handover (Antigravity review of T0003 v3).
-    return start is not None and "push" not in git_writes_in_turn(tp, start)
+    # HEAD); a push is a handover (Antigravity review of T0003 v3) when it came after the turn's last edit (audit 2026-10-25 A3).
+    return start is not None and not push_after_last_edit(tp, start, _gate_root(payload, repo))
+
+
+def _gate_root(payload, repo):
+    """The folder whose checkout bounds the turn's edits for push_after_last_edit: the gate's repo, else the payload cwd, else None."""
+    if repo:
+        return repo
+    cwd = payload.get("cwd") if isinstance(payload, dict) else None
+    return cwd if isinstance(cwd, str) and cwd else None
 
 
 # ── verified HEAD (T0003) ────────────────────────────────────────────────────────────────────
@@ -665,6 +743,39 @@ def files_since(repo, vh):
         return []
     out = _git(repo, "diff", "--name-only", "--relative", vh, "HEAD")
     return [f for f in out.splitlines() if f and os.path.exists(os.path.join(repo, f))]
+
+
+def mid_work(payload, info=None, pushed=None, repo=None, env=None):
+    """regression_gate's handover decision, one definition for every Stop gate that runs only at the handover (regression_gate, and
+    testsourceset_gate since audit 2026-10-25 A5). "" = a handover (run the gate); else why it is the middle of the work:
+      "wip"     — work_in_progress(status_optional=True) and none of this branch's unverified commits is on the upstream;
+      "midwork" — any agent: the reply is unfinished or has no status line, claims nothing (OUTCOME_WIDE) and, for a Claude
+                  transcript, ran no git push after the turn's last edit (Gemini / Grok have no transcript to read a push from).
+    info: detect(payload) (computed when None). pushed: pushed_unverified of verified_head (computed from `repo`, read only, when None;
+    no repo: False). DEVKIT_GATE_EVERY_STOP=1 or a payload that is not an object: "" (fail closed)."""
+    env = os.environ if env is None else env
+    if not isinstance(payload, dict) or env.get("DEVKIT_GATE_EVERY_STOP") == "1":
+        return ""
+    if info is None:
+        info = detect(payload, env)
+    if pushed is None:
+        vh, head, _why = verified_head(repo, write=False) if repo else ("", "", "")
+        pushed = bool(head and vh and head != vh) and pushed_unverified(repo, vh)
+    if not pushed and work_in_progress(payload, env, status_optional=True, repo=repo):
+        return "wip"
+    reply = payload.get("last_assistant_message")
+    if not isinstance(reply, str) or not reply.strip():
+        reply = payload.get("lastAssistantMessage")   # Grok's camelCase (regression_gate log 20/10)
+    if not isinstance(reply, str) or not reply.strip():
+        return ""
+    if reply_status(reply) not in ("NOT_DONE", "NONE") or OUTCOME_WIDE.search(MIDWORK_WORDS.sub("", reply)):
+        return ""
+    if info.get("agent") == "claude" and info.get("transcript") == "claude":
+        tp = payload.get("transcript_path") or payload.get("transcriptPath")
+        start = turn_start(tp) if isinstance(tp, str) else None
+        if start is not None and push_after_last_edit(tp, start, _gate_root(payload, repo)):
+            return ""
+    return "midwork"
 
 
 def _cli(argv, stdin):
