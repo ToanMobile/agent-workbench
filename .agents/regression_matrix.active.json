@@ -1825,6 +1825,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "worktree-remove-reflog-squash",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REMOVE-REFLOG-SQUASH-01",
+          "name": "worktree remove: commit chỉ còn trong reflog mà trunk đã có patch (squash) thì gỡ được kèm refs/devkit/discarded; trunk chưa có patch thì vẫn từ chối UNREACHABLE (#421)",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
