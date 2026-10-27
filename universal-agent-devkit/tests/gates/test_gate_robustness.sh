@@ -128,9 +128,10 @@ for mode in "" "--brief"; do
 done
 
 # ── A9: a signal to the gate kills the suites it started, and the gate dies by that signal ─────────────────────
-# Start python with SIGINT at its default (a background job of a script inherits SIGINT ignored); it execs the gate, so
+# Start python with SIGINT, SIGHUP and SIGTERM at their default (a background job of a script inherits SIGINT ignored, a
+# nohup'd runner SIGHUP: the merge queue starts its train both ways, 27/10); it execs the gate, so
 # $! is the gate's own pid (a shell function run with & would be a subshell: the signal would never reach the gate).
-LAUNCH='import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execv(sys.argv[1], sys.argv[1:])'
+LAUNCH='import os, signal, sys; [signal.signal(s, signal.SIG_DFL) for s in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)]; os.execv(sys.argv[1], sys.argv[1:])'
 mk signals
 cat > tests/slow.sh <<EOF
 #!/bin/sh
