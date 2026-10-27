@@ -287,6 +287,9 @@ def strict_check(cwd, rev, tag_remote, dst, remote):
         return True, "not a git repo"
     # như _own_check: repo chưa có ma trận hồi quy thì push_gate chưa áp (test_guard_shell_norm.sh: push trong repo không ma trận)
     if not any(os.path.isfile(os.path.join(d, MATRIX)) for d in (top, os.path.abspath(cwd))):
+        # #482: repo đã cài DevKit (có .agents/devkit, symlink cũng tính) mà mất ma trận là bị xoá/đổi tên: fail closed
+        if os.path.lexists(os.path.join(top, ".agents", "devkit")):
+            return False, f"repo đã cài DevKit nhưng thiếu {MATRIX} (regression matrix): push trunk bị từ chối; khôi phục file rồi chạy agent-kit integrate"
         return True, "no regression matrix"
     if tag_remote:
         if on_remote_only(top, rev, tag_remote):
