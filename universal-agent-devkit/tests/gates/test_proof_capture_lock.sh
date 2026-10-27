@@ -6,20 +6,37 @@
 #
 # Env (tests only): PROOF_CAPTURE_CMD = another copy of proof-capture.py (the mutation runs use it),
 #                   LOCK_TEST_ONLY   = comma list of case ids (T1,T7,...) to run just those (T5 also runs T5b/T5c; =T5 only T5),
-#                   LOCK_TEST_PY     = interpreter for the whole test (e.g. /usr/bin/python3 = 3.9).
+#                   LOCK_TEST_PY     = interpreter for the whole test (e.g. /usr/bin/python3 = 3.9),
+#                   LOCK_TEST_SHARDS = số tiến trình chạy song song (mặc định 8; 1 = tuần tự như trước 27/10).
+# Chạy song song (tốc độ gate, 27/10: 112 s tuần tự): ca thứ k trong CASES vào shard k % n (chia theo chỉ số, không liệt kê tay, nên ca
+# thêm sau không bao giờ bị bỏ sót). Mỗi shard là một tiến trình python riêng với TMP riêng (máy giả, HOME giả, thư mục khoá riêng), nên
+# không chung đường dẫn nào; kết quả in theo thứ tự shard. Shard chết giữa chừng là FAIL. Thân các ca giữ nguyên.
 # Overlap is judged by event ORDER in the shim log (S = first device call after the lock, E = end of the
 # screencap), never by absolute seconds: SESE = serialised, SSEE = overlapped.
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 CMD="${PROOF_CAPTURE_CMD:-$DEVKIT_DIR/bin/proof-capture.py}"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)" || exit 1
+SHARDS="${LOCK_TEST_SHARDS:-8}"
+case "$SHARDS" in ''|*[!0-9]*|0) echo "✖ LOCK_TEST_SHARDS='$SHARDS' is not a positive integer" >&2; rm -rf "$TMP"; exit 1 ;; esac
+PIDS=""   # process group của các shard đang chạy
+cleanup() {   # kết thúc thường, lỗi, Ctrl-C hay TERM: dừng trọn từng shard (process group riêng, không bao giờ `kill 0`), rồi xoá thư mục chạy
+  local p
+  for p in $PIDS; do kill -TERM -- "-$p" 2>/dev/null; done
+  wait 2>/dev/null
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-"${LOCK_TEST_PY:-python3}" - "$TMP" "$CMD" <<'PYEND'
+run_shard() { # $1 = TMP của shard, $2 = "i/n"
+LOCK_TEST_SHARD="$2" "${LOCK_TEST_PY:-python3}" - "$1" "$CMD" <<'PYEND'
 import contextlib, hashlib, importlib.util, os, re, signal, stat, struct, subprocess, sys, time, zlib
 
 TMP, CMD = sys.argv[1], sys.argv[2]
 ONLY = [x for x in os.environ.get("LOCK_TEST_ONLY", "").split(",") if x]
+SHARD_I, SHARD_N = (int(x) for x in os.environ.get("LOCK_TEST_SHARD", "0/1").split("/"))   # ca thứ k chạy khi k % SHARD_N == SHARD_I
 FAILS = []
 PROCS = []
 SYS_PY39 = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else None
@@ -973,7 +990,9 @@ CASES = [("T1", T1), ("T1b", T1b), ("T2", T2), ("T3", T3), ("T4", T4), ("T4b", T
          ("T8", T8), ("T9", T9), ("T10", T10), ("T11a", T11a), ("T11b", T11b), ("T11c", T11c), ("T11d", T11d),
          ("T11e", T11e), ("T11f", T11f), ("T11i", T11i), ("T11g", T11g), ("T11h", T11h), ("T12", T12), ("T13", T13), ("T13b", T13b), ("T14", T14), ("T15", T15), ("T16", T16), ("T17", T17)]
 try:
-    for cid, fn in CASES:
+    for k, (cid, fn) in enumerate(CASES):
+        if k % SHARD_N != SHARD_I:
+            continue
         if ONLY and ("=" + cid) not in ONLY and (cid.rstrip("abcdefgh") not in ONLY or any(x.startswith("=") for x in ONLY)) and cid not in ONLY:
             continue
         try:
@@ -988,5 +1007,24 @@ finally:
 print(("%d failed" % len(FAILS)) if FAILS else "ok")
 sys.exit(1 if FAILS else 0)
 PYEND
-rc=$?
+}
+
+set -m
+i=0
+while [ "$i" -lt "$SHARDS" ]; do
+  ( set +m; mkdir -p "$TMP/s$i" && run_shard "$TMP/s$i" "$i/$SHARDS"; echo $? > "$TMP/rc.$i" ) > "$TMP/out.$i" 2>&1 </dev/null &
+  PIDS="$PIDS $!"
+  i=$((i + 1))
+done
+set +m
+wait
+PIDS=""
+rc=0
+i=0
+while [ "$i" -lt "$SHARDS" ]; do
+  cat "$TMP/out.$i"
+  src="$(cat "$TMP/rc.$i" 2>/dev/null)"
+  if [ -z "$src" ]; then echo "✖ shard $i/$SHARDS did not finish"; rc=1; elif [ "$src" != 0 ]; then rc=1; fi
+  i=$((i + 1))
+done
 [ "$rc" = 0 ] && echo "✅ test_proof_capture_lock: all passed" || { echo "❌ test_proof_capture_lock: failed"; exit 1; }

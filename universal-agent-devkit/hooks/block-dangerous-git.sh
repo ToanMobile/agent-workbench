@@ -676,8 +676,10 @@ def push_gate_rule(vals, gdir, forced=False, all_branches=False, all_tags=False,
     tool = os.path.join(os.path.dirname(here), "bin", "push_gate.py")
     if not gdir or not os.path.isdir(gdir) or not os.path.isfile(tool):
         return "push: không kiểm được biên nhận gate (thư mục repo hoặc bin/push_gate.py không xác định)"
-    jobs = [[rev] + (["--tag-remote", remote] if is_tag else []) + (["--dst", remote, dst] if dst else [])
-            for rev, is_tag, dst in revs] + sweeps
+    # #472 mục A: --via-hook trên MỌI lần gọi — push của agent đi qua hook dùng luật chặt (trunk chỉ qua agent-kit integrate);
+    # integrate tự gọi push_gate không có cờ này (tiến trình con của nó, hook không thấy)
+    jobs = [[rev] + (["--tag-remote", remote] if is_tag else []) + (["--dst", remote, dst] if dst else []) + ["--via-hook", remote]
+            for rev, is_tag, dst in revs] + [s + ["--via-hook", remote] for s in sweeps]
     for job in jobs:
         try:
             r = subprocess.run([sys.executable, tool, gdir] + job, stdin=subprocess.DEVNULL,
@@ -685,7 +687,8 @@ def push_gate_rule(vals, gdir, forced=False, all_branches=False, all_tags=False,
         except (OSError, subprocess.SubprocessError) as e:
             return f"push: không kiểm được biên nhận gate ({e})"
         if r.returncode != 0:
-            return f"push {job[0]} chưa qua gate: " + ((r.stdout or r.stderr).strip() or f"push_gate exit {r.returncode}")
+            # (#472 A: không còn "chưa qua gate" — lời đó đẩy agent chạy lại gate, vòng lặp cũ; lý do và lối ra là của push_gate)
+            return f"push {job[0]} bị từ chối: " + ((r.stdout or r.stderr).strip() or f"push_gate exit {r.returncode}")
     return None
 
 RESTORE_FLAGS = {"--worktree", "-W", "--staged", "-S", "--quiet", "-q", "--progress", "--no-progress"}
@@ -1508,6 +1511,10 @@ CHANGES_DIR.extend(t for t in re.findall(r"(?:^|[;&|(\s])(cd|pushd)\s", cmd[:_up
 reason = analyse(cmd) or (PENDING_FEED[0] if PENDING_FEED else None)
 if not reason and not do_backups():
     reason = "không sao lưu được file trước khi restore"
+if reason and reason.startswith("push") and "agent-kit integrate" in reason:
+    # #472 mục A: push_gate đã nói đúng lối ra (integrate); lời "1 dev, 1 nhánh" bên dưới bảo `git push origin <nhánh>`, trái với nó
+    print(f"BLOCKED: {cmd!r} — {reason}.", file=sys.stderr)
+    sys.exit(2)
 if reason and any(reason.startswith(h) for h in SOLO_HIT):
     print(f"BLOCKED: {cmd!r} — {reason}. Luật \"1 dev, 1 nhánh\" (DevKit): làm thẳng trên nhánh hiện tại. "
           "Đưa code lên remote: merge/ff vào nhánh local bằng một lệnh riêng (kiểm exit code), rồi "

@@ -715,12 +715,23 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     user_at = {}                                  # path -> latest approving answer of the user
     if appr_file.is_file():
         try:
+            # #485: thời điểm duyệt = mtime (float) của chính approved_tests.json, không phải int(time.time()):
+            # int() cắt giây làm test sửa cùng giây bị chặn, còn "bây giờ" duyệt mãi cả bản sửa SAU khi duyệt.
+            appr_t = appr_file.stat().st_mtime
             with open(appr_file, encoding="utf-8") as afh:
                 saved = json.load(afh)
                 if isinstance(saved, list):
+                    # ponytail: dạng list gắn duyệt với mtime của cả file, ghi lại list là duyệt lại mọi test trong đó; dùng dạng {path: sha256} khi cần gắn nội dung
                     for f in saved:
                         if f in mtimes:
-                            approved_at[f] = max(approved_at.get(f, 0), int(time.time()))
+                            approved_at[f] = max(approved_at.get(f, 0), appr_t)
+                elif isinstance(saved, dict):
+                    # dạng {path: sha256}: chỉ duyệt đúng nội dung đã duyệt, sửa sau đó (nội dung đổi) là chặn
+                    for f, want in saved.items():
+                        if f in mtimes and isinstance(want, str):
+                            with open(root / f, "rb") as tfh:
+                                if hashlib.sha256(tfh.read()).hexdigest() == want.strip().lower():
+                                    approved_at[f] = max(approved_at.get(f, 0), mtimes[f])
         except Exception:
             pass
     folders = []
@@ -5092,6 +5103,9 @@ def suite_env():
             "DEVKIT_LEDGER_ROOT",  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
             # CI=true của worker ép --full. Để lọt vào suite thì gate lồng (test_postfix_gate) chặn file test mới.
             "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH", "CI",
+            # #484: tự duyệt test sửa là quyết định verdict của gate CHA (do nơi gọi đặt trong env); lọt xuống suite thì gate lồng
+            # (tests/gates/test_postfix_gate.sh) cũng tự duyệt, các ca "existing test edited … -> UNVERIFIED" ra exit 0 và REG-DK-GATE-01 đỏ
+            "DEVKIT_AUTO_APPROVE_TESTS",
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
             "TEST_RUN_LOCK_BUSY_FAST",   # B5: the Stop hook's short BUSY wait is for ITS gate run; a gate a suite starts waits as the CLI does
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống

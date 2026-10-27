@@ -25,16 +25,17 @@ echo "fun ok() = 2" > src/Core.kt && git commit -qam fix
 expect "push with no gate run: blocked" "git push origin main" 2
 expect "cd + push with no gate run: blocked" "cd $TMP/repo && git push" 2
 gate --diff origin/main
-expect "push after a full gate PASS of the commits (--diff origin/main): allowed" "git push origin main" 0
+# #472 mục A: biên nhận --full không còn mở được push trunk qua hook — chỉ agent-kit integrate (test_gate_speed_next_full_merge_point.sh)
+expect "push after a full gate PASS of the commits (--diff origin/main): still blocked (trunk only via integrate)" "git push origin main" 2
 echo "fun ok() = 3" > src/Core.kt && git commit -qam "after gate"
 expect "push of a commit made after the gate: blocked" "git push origin main" 2
 git reset -q --soft HEAD~1; gate; git commit -qm "gated, then committed"
-expect "gate on the dirty tree, then commit: allowed" "git push origin main" 0
+expect "gate on the dirty tree, then commit: still blocked (trunk only via integrate)" "git push origin main" 2
 # 18/10: nhánh ungated ở đây phải là trunk (develop): nhánh PR ungated nay push được không cần biên nhận (ca bên dưới)
 git branch -q develop HEAD~1 2>/dev/null; git reset -q --soft HEAD~1; gate; git commit -qm "gated again"
 git checkout -q develop && echo "fun ok() = 9" > src/Core.kt && git commit -qam "develop, never gated" && git checkout -q main
 expect "one push of a gated branch plus an ungated trunk one: blocked" "git push origin main develop" 2
-expect "the gated branch alone: allowed" "git push origin main" 0
+expect "the gated branch alone: still blocked (trunk only via integrate)" "git push origin main" 2
 expect "git status is never checked" "git status" 0
 
 # 18/10 (người dùng, GeelyEx2): mỗi PR chạy --full HAI lần trên cùng nội dung — push nhánh PR đòi biên nhận, merge gate chạy lại.
