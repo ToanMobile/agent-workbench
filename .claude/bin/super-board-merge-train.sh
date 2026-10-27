@@ -50,13 +50,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$CONFIG" ] && [ -e "$CONFIG" ] || { echo "config not found: ${CONFIG:-<unset>}" >&2; exit 66; }
-# F4 (fix-round1-contract.md, "Cờ worker board"): queue bật = (merge_queue.enabled hoặc SB_MERGE_QUEUE=1) VÀ worker_backend "claude-p"
-# (thiếu khoá = "workflow", như super-board-run.sh); SB_MERGE_QUEUE=0 luôn tắt. Khi đó worker board (SB_BOARD_WORKER=1) chỉ gắn nhãn
+# F4 (fix-round1-contract.md, "Cờ worker board"): queue bật = (merge_queue.enabled hoặc SB_MERGE_QUEUE=1) VÀ worker_backend "claude-p" hoặc
+# "workflow" (thiếu khoá = "workflow", như super-board-run.sh; #453); SB_MERGE_QUEUE=0 luôn tắt. Khi đó worker board (SB_BOARD_WORKER=1) chỉ gắn nhãn
 # merge-queue; train chỉ chạy cho super-board-merge-queue.sh (SB_MERGE_CALLER=queue). Đọc SB_MERGE_CALLER của bên gọi TRƯỚC khi train
 # tự đặt nó = train ở dưới.
-# ponytail: backend workflow/codex coi như queue tắt (chưa có ai rút hàng ở đó); thêm khi có Q-schedule.
+# ponytail: backend codex coi như queue tắt (lane codex tự merge qua gate); thêm khi codex có lịch rút hàng.
 if [ "${SB_BOARD_WORKER:-}" = 1 ] && [ "${SB_MERGE_CALLER:-}" != queue ] && [ "${SB_MERGE_QUEUE:-}" != 0 ] \
-   && jq -e --arg env "${SB_MERGE_QUEUE:-}" '(.worker_backend // "workflow") == "claude-p" and ($env == "1" or .merge_queue.enabled == true)' \
+   && jq -e --arg env "${SB_MERGE_QUEUE:-}" '((.worker_backend // "workflow") | IN("claude-p", "workflow")) and ($env == "1" or .merge_queue.enabled == true)' \
         "$CONFIG" >/dev/null 2>&1; then
   echo "merge-queue: label the PR merge-queue instead of calling the gate directly"
   echo "[merge-train] merge queue is on: a board worker labels the PR merge-queue; only super-board-merge-queue.sh runs the train" >&2
@@ -75,16 +75,18 @@ export SB_MERGE_CALLER=train
 
 say() { echo "[merge-train] $*" >&2; }
 # run_gate <PR> <out-stream 1|2> <gate args…>: chạy merge gate, GRC = exit của nó. Stdout của gate đi nguyên vẹn ra luồng cũ (merge: stdout,
-# vì `ac-open: #N` / "verify skipped" là của bên gọi; preflight / --dry-run: stderr), stderr của gate đi ra stderr sau khi gate xong
-# (giữ trong $GATE_ERR cho đuôi verify đỏ), rồi các dòng approval-request/human-gate/needs-you/ac-check/qa-report/verification-readiness
+# vì `ac-open: #N` / "verify skipped" là của bên gọi; preflight / --dry-run: stderr), stderr của gate đi ra stderr ngay khi gate in
+# (tee, #453; giữ trong $GATE_ERR cho đuôi verify đỏ), rồi các dòng approval-request/human-gate/needs-you/ac-check/qa-report/verification-readiness
 # (verification-readiness gate in ra stderr) in thêm thành `train-detail: <PR> <dòng>` trên stdout.
-GATE_OUT=$(mktemp); GATE_ERR=$(mktemp); DETAIL_DIR=$(mktemp -d)
+GATE_OUT=$(mktemp); GATE_ERR=$(mktemp); GATE_RC=$(mktemp); DETAIL_DIR=$(mktemp -d)
 run_gate() {
   local p="$1" to="$2" line; shift 2
   GRC=0
-  bash "$GATE" "$@" >"$GATE_OUT" 2>"$GATE_ERR" 8>&- || GRC=$?
+  # #453: stderr của gate đi qua tee: ra stderr của train NGAY khi gate in (log runner thấy tiến độ), vẫn giữ trong $GATE_ERR.
+  # Exit của gate đi qua $GATE_RC vì pipe trả exit của tee.
+  { grc=0; bash "$GATE" "$@" >"$GATE_OUT" 8>&- || grc=$?; echo "$grc" >"$GATE_RC"; } 2>&1 | tee "$GATE_ERR" >&2
+  GRC=$(cat "$GATE_RC" 2>/dev/null || echo 1)
   if [ "$to" = 1 ]; then cat "$GATE_OUT"; else cat "$GATE_OUT" >&2; fi
-  cat "$GATE_ERR" >&2
   while IFS= read -r line; do
     case "$line" in
       approval-request:*|human-gate:*|needs-you:*|ac-check:*|qa-report:*|verification-readiness:*) echo "train-detail: $p $line" ;;
@@ -158,7 +160,7 @@ BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.train-scratch-XXXXXX")
 RECEIPT=$(mktemp); VLOG=$(mktemp)
-cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"; }
+cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT" "$GATE_ERR" "$GATE_RC" "$DETAIL_DIR"; }
 trap cleanup EXIT
 
 # Head của từng PR, ghim một lần: verify và biên nhận thuộc đúng commit này (gate còn --match-head-commit lúc merge).
