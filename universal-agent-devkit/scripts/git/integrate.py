@@ -27,6 +27,7 @@ import contextlib
 import fcntl
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -39,9 +40,13 @@ if not os.path.isdir(os.path.join(DEVKIT, "profiles")) and os.path.isdir(os.path
 
 LOCK_NAME = "devkit-integrate.lock"
 # Không dùng .merge-scratch-*: batch_canary.py đếm tiền tố đó là lượt merge gate lẻ (PR đi đường lẻ), mà integrate là điểm gộp theo đợt.
-# ponytail: worktree.py _live_worktrees chỉ miễn ("red-proof-", ".merge-scratch-") khỏi WORKTREE_MAX; scratch integrate mồ côi (SIGKILL,
-# `finally` không chạy) chiếm một chỗ tới khi gc/prune. Thêm tiền tố này vào bộ miễn đó khi gặp.
+# Tên scratch: .integrate-scratch-<pid chủ>-<ngẫu nhiên>. SIGTERM/SIGINT/SIGHUP → SystemExit → `finally` gỡ scratch; SIGKILL không chạy được gì,
+# nên lượt integrate kế tiếp (đang giữ khoá) dọn mọi scratch mồ côi trước khi làm việc khác (sweep_orphans, #475).
+# ponytail: worktree.py _live_worktrees chỉ miễn ("red-proof-", ".merge-scratch-") khỏi WORKTREE_MAX; scratch mồ côi sau SIGKILL chiếm một
+# chỗ tới lượt integrate kế tiếp. Thêm tiền tố này vào bộ miễn đó khi gặp.
 SCRATCH_PREFIX = ".integrate-scratch-"
+GATE_STOP_S = 30   # sau SIGTERM nhóm tiến trình gate: chờ chừng này rồi SIGKILL cả nhóm
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)   # HUP: terminal đóng; gate ở phiên riêng nên không còn tự nhận nó
 BATCH_MAX_DEFAULT = 6
 MAX_WAIT_MIN_DEFAULT = 60
 GIT_TIMEOUT_S = 60
@@ -145,6 +150,38 @@ def remove_scratch(main, scratch):
     git(main, "worktree", "prune")
 
 
+def _owner_alive(name):
+    """True khi pid chủ ghi trong tên scratch (.integrate-scratch-<pid>-…) còn sống và không phải tiến trình này."""
+    head = name[len(SCRATCH_PREFIX):].split("-", 1)[0]
+    if not head.isdigit() or int(head) == os.getpid():
+        return False
+    try:
+        os.kill(int(head), 0)
+    except (ProcessLookupError, OverflowError, ValueError):   # chết, hoặc không phải pid (tên kiểu cũ toàn chữ số)
+        return False
+    except PermissionError:   # pid của người dùng khác: coi là còn sống, không xoá
+        pass
+    return True
+
+
+def sweep_orphans(main):
+    """Gỡ các scratch integrate mồ côi (lượt trước bị SIGKILL: `finally` không chạy, bản chép dotenv/keystore còn trên đĩa). Gọi khi đang
+    giữ khoá integrate, nên không lượt integrate nào khác của repo đang dùng chúng; pid chủ còn sống thì để yên."""
+    root = os.path.join(main, ".claude", "worktrees")
+    try:
+        names = [n for n in os.listdir(root) if n.startswith(SCRATCH_PREFIX)]
+    except FileNotFoundError:
+        return
+    except OSError as e:
+        say(f"không đọc được {root} để dọn scratch mồ côi: {e}")
+        return
+    for name in names:
+        if _owner_alive(name):
+            continue
+        say(f"gỡ scratch mồ côi của một lượt integrate đã chết: {name}")
+        remove_scratch(main, os.path.join(root, name))
+
+
 def setup_kit(main, scratch):
     """Cài DevKit vào scratch đúng như `worktree add` (worktree.install_args) khi main có DevKit; bản cài ghi đè file tracked thì trả lại
     HEAD (như merge gate). Lỗi chỉ được báo: gate tự đỏ nếu thiếu thứ nó cần."""
@@ -167,6 +204,30 @@ def setup_kit(main, scratch):
     git(scratch, "checkout", "-q", "--", ".")
 
 
+def copy_ignored(main, scratch):
+    """Chép vào scratch các file bị git ignore mà gate cần, đúng bộ merge train chép (super-board-scratch-config.sh, chế độ full):
+    config cục bộ, build input, Unity Library, rồi hook trong .claude/hooks/ mà settings.json đăng ký (guard-*.py…). Thiếu hook thì
+    `agent-kit health` trong scratch đỏ ("hook đăng ký nhưng thiếu file"), REG-WB-CONFIG-01 đỏ và integrate không bao giờ push được
+    (agent-workbench #463). Chạy SAU setup_kit như `worktree add`: chỉ chép thứ bản cài không link. Tách khỏi setup_kit vì setup_kit
+    return sớm khi main không có DevKit. Lỗi chỉ được báo: gate tự đỏ nếu thiếu thứ nó cần."""
+    try:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        import worktree  # noqa: PLC0415 - module anh em, chỉ nạp khi thật sự gate
+    except Exception as e:  # noqa: BLE001 - kit cài dở: gate vẫn chạy, kết luận là của gate
+        say(f"không nạp được worktree.py để chép file bị ignore vào scratch: {type(e).__name__}: {e}")
+        return
+    copied = []
+    # Mỗi bước một try: một bước hỏng (vd. build input) không được làm mất bước chép hook phía sau (#463 quay lại).
+    for name in ("copy_local_config", "copy_build_inputs", "copy_unity_library", "copy_local_hooks"):
+        try:
+            copied += getattr(worktree, name)(main, scratch)
+        except Exception as e:  # noqa: BLE001 - bước hỏng chỉ được báo, các bước còn lại vẫn chạy
+            say(f"{name} vào scratch hỏng: {type(e).__name__}: {e}")
+    if copied:
+        say(f"đã chép vào scratch {len(copied)} file bị ignore: {', '.join(copied[:8])}")
+
+
 def run_gate(scratch, remote):
     """Exit code của `post-fix-gate --run-tests --full --brief --diff <origin/base>` trong scratch (124 khi quá
     DEVKIT_INTEGRATE_GATE_TIMEOUT_S). --diff: scratch tách rời không có upstream, cây sạch không --diff thì gate trả 3 (nothing to audit);
@@ -175,22 +236,45 @@ def run_gate(scratch, remote):
     gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
     env = dict(os.environ, CLAUDE_PROJECT_DIR=scratch, DEVKIT_SLOT_PRIORITY="merge")
     try:
+        # Phiên riêng: nhóm tiến trình của gate (gate + suite con) dừng được trọn bằng killpg khi integrate bị SIGTERM/SIGINT (#475).
         p = subprocess.Popen([sys.executable, gate, "--run-tests", "--full", "--brief", "--diff", remote], cwd=scratch, env=env,
-                             stdin=subprocess.DEVNULL)
+                             stdin=subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
         say(f"gate không chạy được: {e}")
         return 127
     try:
         return p.wait(timeout=GATE_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        p.terminate()   # SIGTERM: gate dừng suite và trả lại những gì nó đã đổi
-        try:
-            p.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            p.kill()
-            p.wait()
+        stop_gate_group(p, 60)   # SIGTERM: gate dừng suite và trả lại những gì nó đã đổi
         say(f"gate không xong trong {GATE_TIMEOUT_S:g} s (DEVKIT_INTEGRATE_GATE_TIMEOUT_S)")
         return 124
+    except BaseException:   # integrate bị tín hiệu dừng (SystemExit) hay lỗi bất kỳ: dừng cả nhóm gate rồi để `finally` gỡ scratch
+        stop_gate_group(p)
+        raise
+
+
+def stop_gate_group(p, grace=GATE_STOP_S):
+    """SIGTERM nhóm tiến trình của gate (gate tự dọn suite, kể cả suite ở phiên riêng của nó), chờ `grace` giây, rồi SIGKILL cả nhóm:
+    không để gate mồ côi chạy tiếp."""
+    for sig, wait_s in ((signal.SIGTERM, grace), (signal.SIGKILL, 5)):
+        try:
+            os.killpg(p.pid, sig)
+        except ProcessLookupError:
+            break
+        except PermissionError:   # macOS: killpg trả EPERM khi nhóm còn zombie (như _signal_group của post-fix-gate) → gửi leader
+            with contextlib.suppress(OSError):
+                p.send_signal(sig)
+        except OSError as e:
+            say(f"không gửi được {sig.name} tới nhóm gate {p.pid}: {e}")
+        try:
+            p.wait(timeout=wait_s)
+        except subprocess.TimeoutExpired:
+            continue
+        if sig == signal.SIGTERM:   # gate đã thoát; cháu còn sót trong nhóm (suite gate không dọn) thì SIGKILL nốt
+            with contextlib.suppress(OSError):
+                os.killpg(p.pid, signal.SIGKILL)
+        break
+    say(f"đã dừng nhóm tiến trình gate {p.pid}")
 
 
 def push_gate_ok(main, sha):
@@ -204,6 +288,8 @@ def push_gate_ok(main, sha):
 
 
 def integrate(main, base, args):
+    if not args.dry_run:
+        sweep_orphans(main)
     fetch = git(main, "fetch", "--quiet", "origin", base, timeout=NET_TIMEOUT_S)
     if fetch.returncode != 0:
         say(f"git fetch origin {base} hỏng: {fetch.stderr.strip()[-300:]}")
@@ -235,13 +321,14 @@ def integrate(main, base, args):
         return 0
     say(f"gộp {len(pending)} commit ({why}): gate --full một lần trên {head[:10]}")
     os.makedirs(os.path.join(main, ".claude", "worktrees"), exist_ok=True)
-    scratch = tempfile.mkdtemp(prefix=SCRATCH_PREFIX, dir=os.path.join(main, ".claude", "worktrees"))
+    scratch = tempfile.mkdtemp(prefix=f"{SCRATCH_PREFIX}{os.getpid()}-", dir=os.path.join(main, ".claude", "worktrees"))
     try:
         add = git(main, "worktree", "add", "--detach", "--quiet", scratch, head, timeout=600)
         if add.returncode != 0:
             say(f"không dựng được worktree scratch: {add.stderr.strip()[-300:]}")
             return 1
         setup_kit(main, scratch)
+        copy_ignored(main, scratch)
         rc = run_gate(scratch, remote)
         if rc == 4:   # hàng đợi gate toàn máy / khoá dự án bận (T0056): không phải đỏ, đợt giữ nguyên cho lượt sau
             say("gate bận (busy, exit 4): chưa kiểm được gì, không push; lượt integrate sau thử lại")
@@ -260,7 +347,19 @@ def integrate(main, base, args):
         say(f"đã push {len(pending)} commit lên origin/{base} @ {head[:10]}:\n{batch}")
         return 0
     finally:
+        for s in STOP_SIGNALS:   # tín hiệu đến giữa lúc gỡ không được cắt ngang việc xoá bản chép secret
+            signal.signal(s, signal.SIG_IGN)
         remove_scratch(main, scratch)
+
+
+def _on_signal(signum, _frame):
+    """SIGTERM/SIGINT/SIGHUP → SystemExit(128+sig): các `finally` chạy (dừng nhóm gate, gỡ scratch kèm bản chép secret, nhả khoá). Tín hiệu thứ
+    hai bị bỏ qua để không cắt ngang chính việc dọn đó."""
+    for s in STOP_SIGNALS:
+        signal.signal(s, signal.SIG_IGN)
+    with contextlib.suppress(OSError):   # stdout là pipe đã đóng (Ctrl-C trên `… | tee`): BrokenPipeError không được thay SystemExit
+        say(f"nhận {signal.Signals(signum).name}: dừng gate, gỡ scratch")
+    raise SystemExit(128 + signum)
 
 
 def main(argv):
@@ -269,6 +368,8 @@ def main(argv):
     ap.add_argument("--dry-run", action="store_true", help="chỉ nói sẽ làm gì: không gate, không push")
     ap.add_argument("path", nargs="?", default=os.getcwd(), help="một thư mục trong repo (mặc định: thư mục hiện tại)")
     args = ap.parse_args(argv)
+    for s in STOP_SIGNALS:
+        signal.signal(s, _on_signal)
     trees = worktrees(args.path)
     if not trees:
         say(f"{args.path} không phải repo git có work tree")

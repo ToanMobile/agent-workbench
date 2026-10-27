@@ -55,8 +55,9 @@ git branch side HEAD~1
 gate --diff origin/main
 expect "--all: main is gated but a local branch (side) was never sent and the receipt is not in its history" "git push --all origin" 2
 git branch -q -D side
-expect "--all once the gate covers every branch" "git push --all origin" 0
-expect "--branches once the gate covers every branch" "git push origin --branches" 0
+# #472 mục A: qua hook, biên nhận --full không còn mở được trunk (chỉ agent-kit integrate): --all mang commit mới của main bị chặn
+expect "--all once the gate covers every branch: still blocked (trunk only via integrate)" "git push --all origin" 2
+expect "--branches once the gate covers every branch: still blocked (trunk only via integrate)" "git push origin --branches" 2
 echo "fun ok() = 4" > src/Core.kt && git commit -qam "after the gate"
 expect "--all with a commit made after the gate" "git push --all origin" 2
 expect "a plain branch push is still checked the same way" "git push origin main" 2
@@ -66,7 +67,7 @@ expect "a plain branch push is still checked the same way" "git push origin main
 # 18/10: nhánh đó phải là trunk (release/*): nhánh PR thường nay push được không cần biên nhận (test_push_gate_pr_branch.sh).
 git reset -q --hard HEAD~1                                # drop "after the gate": main = the gated commit again
 git checkout -q -b release/side && echo "fun ok() = 5" > src/Core.kt && git commit -qam c5 && git tag v4 HEAD && git checkout -q main
-expect "baseline: main alone is covered, so a push of main passes" "git push origin main" 0
+expect "baseline: main alone is covered, yet a direct push of main is blocked (#472 A: only via integrate)" "git push origin main" 2
 expect "baseline: the ungated branch alone is blocked" "git push origin release/side" 2
 expect "abbreviated --tag" "git push --tag origin" 2
 expect "abbreviated --ta" "git push --ta" 2
@@ -100,7 +101,8 @@ expect "abbreviated --recurse <mode> must not be read as the remote" "git push -
 expect "abbreviated --recurse with --tags" "git push --tags --recurse no origin" 2
 expect "quote-split export GIT_DIR does not hide the retarget" 'export GIT_""DIR='"$TMP"'/other/.git; git push origin main' 2
 expect "quote-split --git-dir does not hide the retarget" 'git --git""-dir='"$TMP"'/other/.git push origin main' 2
-expect "a commit message that mentions --git-dir, chained with a push of the covered main, is fine" "git commit -qm 'mention GIT_DIR and --git-dir' --allow-empty && git push origin main" 0
+# (#472 A: push trunk trực tiếp nay luôn bị chặn, nên ca này push một tag của commit remote đã có — vẫn là push được phép)
+expect "a commit message that mentions --git-dir, chained with an allowed push (tag on the remote), is fine" "git commit -qm 'mention GIT_DIR and --git-dir' --allow-empty && git push origin v1" 0
 expect "-c remote.<n>.pushurl" "git -c remote.origin.pushurl=$TMP/remote.git push --tags origin" 2
 expect "git config remote.<n>.pushurl" "git config remote.origin.pushurl $TMP/remote.git" 2
 expect "-c url.<base>.pushInsteadOf" "git -c url.$TMP/remote.git.pushInsteadOf=$TMP/repo push origin v4" 2

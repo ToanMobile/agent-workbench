@@ -142,7 +142,8 @@ for bad in '{"guards": null}' '"just a string"' '{"guards": 7}'; do
   [ "$rc" = 0 ] && [ "$grc" = 0 ] && ! grep -q Traceback "$TMP/bad.out" \
     && ok "A8b guards.json $bad: render and gate still work (exit 0, no traceback)" || fail "A8b $bad: render $rc gate $grc $(grep -m2 -E 'Error|Traceback' "$TMP/bad.out")"
 done
-echo "print('a2')" > tests/test_a.py
+# chỉ THÊM một dòng: một lần sửa ghi đè là "test đã có bị sửa" chưa duyệt và lượt CLI impacted không chạy suite nào (#472 B)
+echo "print('a2')" >> tests/test_a.py
 gate --run-tests
 st="$(py "rc.effective_status(d, I['G-NEW']) if 'G-NEW' in I else 'MISSING'")"
 [ "$(py "I['REG-PY']['last']['status']")" = PASS ] && [ "$st" = UNPROVEN ] \

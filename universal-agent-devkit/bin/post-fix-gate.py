@@ -715,12 +715,23 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     user_at = {}                                  # path -> latest approving answer of the user
     if appr_file.is_file():
         try:
+            # #485: thời điểm duyệt = mtime (float) của chính approved_tests.json, không phải int(time.time()):
+            # int() cắt giây làm test sửa cùng giây bị chặn, còn "bây giờ" duyệt mãi cả bản sửa SAU khi duyệt.
+            appr_t = appr_file.stat().st_mtime
             with open(appr_file, encoding="utf-8") as afh:
                 saved = json.load(afh)
                 if isinstance(saved, list):
+                    # ponytail: dạng list gắn duyệt với mtime của cả file, ghi lại list là duyệt lại mọi test trong đó; dùng dạng {path: sha256} khi cần gắn nội dung
                     for f in saved:
                         if f in mtimes:
-                            approved_at[f] = max(approved_at.get(f, 0), int(time.time()))
+                            approved_at[f] = max(approved_at.get(f, 0), appr_t)
+                elif isinstance(saved, dict):
+                    # dạng {path: sha256}: chỉ duyệt đúng nội dung đã duyệt, sửa sau đó (nội dung đổi) là chặn
+                    for f, want in saved.items():
+                        if f in mtimes and isinstance(want, str):
+                            with open(root / f, "rb") as tfh:
+                                if hashlib.sha256(tfh.read()).hexdigest() == want.strip().lower():
+                                    approved_at[f] = max(approved_at.get(f, 0), mtimes[f])
         except Exception:
             pass
     folders = []
@@ -4152,6 +4163,21 @@ def _signal_group(proc, sig) -> None:
 HANG_SNAPSHOT_MARK = "\n# --- process snapshot at timeout (ps) ---\n"
 # a line of the suite output that names a test (the last one is where it hung); with none, the last line of output
 HANG_TEST_LINE = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")
+# #427 / hang giả 27/10: dòng cuối của ảnh ps — tuổi (giây) của tiến trình CÓ CON trẻ nhất trong cả cây suite (mọi tiến trình, không chỉ
+# 12 dòng in ra). hang_report đọc dòng này: một cây con mới (một test mới) vừa bắt đầu thì suite vẫn đang tiến triển, chưa phải treo. Lá
+# không tính: vòng poll của một suite kẹt (`sleep 5` của unity-batch.sh, `grep` chờ marker) sinh lá mới liên tục mà không tiến triển.
+HANG_YOUNGEST_LINE = "# youngest process: {} s"
+HANG_YOUNGEST_RE = re.compile(r"^# youngest process: (\d+) s$", re.M)
+PS_ETIME_RE = re.compile(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$")   # cột etime của ps: [[dd-]hh:]mm:ss
+
+
+def _etime_seconds(text: str):
+    """etime của ps ra giây; None khi không đúng dạng [[dd-]hh:]mm:ss."""
+    m = PS_ETIME_RE.match(text)
+    if not m:
+        return None
+    days, hours, mins, secs = (int(g or 0) for g in m.groups())
+    return ((days * 24 + hours) * 60 + mins) * 60 + secs
 
 
 def _timeout_snapshot(pgid: int) -> str:
@@ -4178,7 +4204,12 @@ def _timeout_snapshot(pgid: int) -> str:
     mine = [row for row in rows if row[0] in depth or row[2] == str(pgid)]
     parents = {ppid for _, ppid, _, _ in mine}
     mine.sort(key=lambda row: (row[0] in parents, -depth.get(row[0], 0)))   # stable: ps order on ties
-    return "\n".join(lines[:1] + [row[3] for row in mine[:12]])
+    # #427: tuổi nhỏ nhất trên MỌI tiến trình có con trong cây (cột etime); đặt cuối ảnh, hang_report bỏ nó khỏi phần hiển thị. Không có
+    # tiến trình có con (`exec sleep`: một tiến trình) hay không đọc được tuổi nào thì không có dòng này.
+    fields = (row[3].split(None, 5) for row in mine if row[0] in parents)
+    ages = [a for a in (_etime_seconds(f[4]) for f in fields if len(f) >= 5) if a is not None]
+    youngest = [HANG_YOUNGEST_LINE.format(min(ages))] if ages else []
+    return "\n".join(lines[:1] + [row[3] for row in mine[:12]] + youngest)
 
 
 PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh của lượt này (đặt sau khi biết keyed_ok)
@@ -5072,6 +5103,9 @@ def suite_env():
             "DEVKIT_LEDGER_ROOT",  # regression_gate's hint for THIS run: a gate a suite starts on a scratch repo reads that repo's own ledger
             # CI=true của worker ép --full. Để lọt vào suite thì gate lồng (test_postfix_gate) chặn file test mới.
             "POSTFIX_GATE_FORCE_FULL", "POSTFIX_GATE_FULL", "WORKTREE_MERGE_GATE", "DEVKIT_ALLOW_BRANCH", "CI",
+            # #484: tự duyệt test sửa là quyết định verdict của gate CHA (do nơi gọi đặt trong env); lọt xuống suite thì gate lồng
+            # (tests/gates/test_postfix_gate.sh) cũng tự duyệt, các ca "existing test edited … -> UNVERIFIED" ra exit 0 và REG-DK-GATE-01 đỏ
+            "DEVKIT_AUTO_APPROVE_TESTS",
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
             "TEST_RUN_LOCK_BUSY_FAST",   # B5: the Stop hook's short BUSY wait is for ITS gate run; a gate a suite starts waits as the CLI does
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
@@ -5269,6 +5303,29 @@ RUN_LOG_KEEP_LINES = 4000
 RUN_LOG_LINE_MAX = 3000
 RUN_LOG_STALE_TMP_S = 3600        # a rotation temp file older than this belongs to a dead run
 _MAIN_T0 = None                   # time.monotonic() at the start of main()
+_MAIN_LOAD1 = None                # #472 C: tải 1 phút lúc main() bắt đầu (runs.jsonl load1)
+# #472: worktree scratch của điểm gộp (scripts/git/integrate.py, .claude/bin/super-board-merge-gate.sh, super-board-merge-train.sh);
+# cùng tiền tố với scripts/governance/gate_speed_report.py MERGE_POINT_PREFIXES và bin/batch_canary.py
+MERGE_POINT_PREFIXES = (".integrate-scratch-", ".merge-scratch-", ".train-scratch-")
+RUN_LOG_CHANGED_MAX = 50          # đường dẫn tối đa trong changed_files của một dòng runs.jsonl (n_changed vẫn là số thật)
+
+
+def at_merge_point(project_dir) -> bool:
+    """True khi một thành phần của đường dẫn project bắt đầu bằng tiền tố scratch của điểm gộp. Chỉ xét chuỗi (không lstat/realpath):
+    _log_gate_run không được chạm hệ thống file ngoài file của nó (tests/gates/test_gate_run_log.sh)."""
+    return any(p.startswith(MERGE_POINT_PREFIXES) for p in os.path.normpath(str(project_dir)).split(os.sep))
+
+
+def run_log_force_reason(args, force_reason):
+    """Vì sao lượt này chạy full (#472 C), nhãn ổn định cho runs.jsonl: "--tree", "--full", "--force-full", "POSTFIX_GATE_FORCE_FULL",
+    "POSTFIX_GATE_FULL", "CI", "--record-lesson"; "" khi lượt impacted. force_full_reason trả nhãn theo ngôn ngữ (--record-lesson)."""
+    if not force_reason:
+        return ""
+    if getattr(args, "tree", None) is not None:
+        return "--tree"
+    if str(force_reason).startswith("--record-lesson"):
+        return "--record-lesson"
+    return str(force_reason).split("=", 1)[0][:32]
 # Per-phase seconds of the run, written as `steps` in the record (2026-10-15: runs.jsonl said how long a run took and how long its suites
 # ran, so the 28.6 % of OfficeReader's gate time outside the suites could not be attributed). _lap(name) charges the time since the previous
 # lap (main()'s start for the first) to `name`; the laps tile main() from its first line to the log call, so the steps add up to total_wall_s.
@@ -5354,6 +5411,12 @@ def _run_log_fit(rec):
     def dump():
         return (json.dumps(rec, separators=(",", ":")) + "\n").encode("ascii")
     data = dump()
+    # #472 C: cắt changed_files rồi ran_suites trước (n_changed giữ số thật; suites vẫn ghi giây của suite đã chạy), rồi tới suites như cũ
+    for k in ("changed_files", "ran_suites"):
+        while len(data) > RUN_LOG_LINE_MAX and rec.get(k):
+            rec[k] = rec[k][:len(rec[k]) // 2]
+            rec[k + "_cut"] = True
+            data = dump()
     suites = rec["suites"]
     order = sorted(range(len(suites)), key=lambda i: (suites[i][1] != "PASS",
                                                       suites[i][2] if suites[i][1] == "PASS" and suites[i][2] is not None else -i))
@@ -5551,6 +5614,7 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         # B9: the verdict and suites_wall above read every suite; the line lists only those that ran or did not PASS
         listed = [s for s in suites if s[2] is not None or s[1] != "PASS"]
         z = time.strftime("%z")
+        ran = {id(t) for t in (ran_cmds or {}).values()}
         rec = {
             "v": 1,
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S") + (z[:3] + ":" + z[3:] if len(z) == 5 else ""),
@@ -5576,7 +5640,17 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             "suites_wall_s": suites_wall,
             "force_full": bool(getattr(args, "force_full", False)),
             "impacted_run": bool(impacted_run),
+            # #472 C: đủ dữ liệu để đo theo task, theo tải máy và theo lý do chạy full (scripts/governance/gate_speed_report.py)
+            "force_reason": run_log_force_reason(args, force_reason),
+            "merge_point": at_merge_point(project_dir),
+            "task": str(args.task)[:80] if getattr(args, "task", None) else None,
+            "load1": _MAIN_LOAD1,
+            "ncpu": os.cpu_count() or None,
+            "changed_files": [f[:200] for f in files[:RUN_LOG_CHANGED_MAX]],
+            "ran_suites": [str(t.get("id") or "?")[:40] for t in regression_tests if id(t) in ran],
         }
+        if len(files) > RUN_LOG_CHANGED_MAX:
+            rec["changed_files_cut"] = True
         waits = _run_log_slot_waits(regression_tests, slot_waits)
         if waits:
             rec["slot_wait_s"] = waits
@@ -5594,8 +5668,12 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
 
 
 def main():
-    global _MAIN_T0, _STEP_LAST
+    global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1
     _MAIN_T0 = time.monotonic()
+    try:
+        _MAIN_LOAD1 = round(os.getloadavg()[0], 2)
+    except (OSError, AttributeError):
+        _MAIN_LOAD1 = None
     _STEP_LAST = None
     _STEPS.clear()   # one run, one set of steps (a test may call main() again in the same process)
     if threading.current_thread() is threading.main_thread():
@@ -6189,7 +6267,34 @@ def main():
     # T0061: cây mà một lượt task kiểm, lấy TRƯỚC khi suite chạy (biên nhận task chỉ ghi khi cây vẫn là nó; một FAIL bỏ biên nhận của cây đó)
     task_fp = tree_fp_of(project_dir) if (run_tests and not force_reason and not deferred_by and not args.since and task_off_trunk
                                           and task_mb and os.environ.get("DEVKIT_GATE_MERGE_CHECK") != "1") else None
-    use_cache = run_tests and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
+    # #472 mục B: file TEST đã có bị sửa mà chưa duyệt thì kết luận chắc chắn là CHƯA XÁC MINH (edited_test): lượt không lấy khoá dự án và
+    # không chạy suite nào (baseline 24-27/10: 29/55 lượt như vậy chạy suite trước, 20 lượt chờ khoá trước). Lớp tĩnh đã chạy ở trên nên
+    # REJECT tĩnh vẫn exit 1; một FAIL của suite không thể xảy ra vì suite không chạy — thứ tự kết luận giữ nguyên, lượt sau khi duyệt chạy
+    # suite và bắt FAIL đó (exit 2 không bao giờ là PASS). Không áp cho:
+    #   - merge check của `worktree finish` (DEVKIT_GATE_MERGE_CHECK=1): exit 2 ở đó không chặn gộp, suite phải chạy để bắt hồi quy;
+    #   - lượt kiểu Stop (--session, hay GATE_TOTAL_BUDGET_S đặt): hooks/regression_gate.sh chạy suite MỘT lần trên nội dung đang chờ duyệt,
+    #     ghi budget record rồi chỉ nhắc, không chạy lại (tests/gates/test_gate_stop_run_record.sh A1-A14 B1-B6,
+    #     test_regression_gate_repeat_cache.sh 5c);
+    #   - lượt cưỡng bức (--full, CI, …): điểm gộp và các ca đo FLAKY/infra_retry trên script test đã sửa (test_gate_audit_holes.sh A7);
+    #   - script lệnh suite bị sửa (runners_touched): FAIL của nó vẫn là REJECT như cũ (test_regression_checklist.sh ca 3).
+    # ponytail: chỉ lượt CLI impacted được rút ngắn; mở rộng sang lượt Stop khi runs.jsonl (source, exit_reason edited_test) cho thấy chúng
+    # chiếm phần lớn giờ máy phí — cần đổi thiết kế budget record của Stop hook cùng lúc.
+    try:
+        _stop_budget = float(os.environ.get("GATE_TOTAL_BUDGET_S") or 0) > 0
+    except ValueError:
+        _stop_budget = False
+    edited_early = bool(run_tests and not args.session and not _stop_budget and not force_reason
+                        and os.environ.get("DEVKIT_GATE_MERGE_CHECK") != "1"
+                        and not runners_touched and tests_touched)
+    if edited_early:
+        for t in regression_tests:
+            if t.get("command"):
+                t.update({"status": "UNTESTED", "label": "EDITED", "mode": "edited", "duration": "0s", "output_tail": tr(
+                    # cách chữa nằm ở dòng kết luận (khác nhau theo --since: commit hay `Test-approved-by:`), không lặp lại ở đây
+                    "Không chạy: test đã có bị sửa chưa được duyệt — xem cách chữa ở dòng KẾT LUẬN rồi chạy lại gate",
+                    "Not run: an existing test was edited and is not approved — see the verdict line for how to clear it, then re-run the gate")})
+        print(f"    {YELLOW}▶ {tr('Test đã có bị sửa chưa duyệt: không lấy khoá, không chạy suite nào (kết luận: CHƯA XÁC MINH)', 'Edited existing test not approved: no lock taken, no suite runs (verdict: UNVERIFIED)')}{RESET}")
+    use_cache = run_tests and not edited_early and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
         and any(t.get("command") for t in regression_tests)
     # P3 (20/10) sentinel: lượt cưỡng bức khi lần chạy THẬT đủ suite gần nhất của repo đã quá DEVKIT_SENTINEL_MAX_S (24 h) không dùng
     # lại gì (cả biên nhận lẫn khoá): nó kiểm chính cache. Suite FAIL trên khoá mà sổ nói PASS ⇒ học input thiếu hoặc cách ly (record_keyed).
@@ -6406,7 +6511,7 @@ def main():
         if keyed_hits:
             print(f"    {CYAN}▶ {tr(f'dùng lại {len(keyed_hits)} suite theo khoá nội dung (cùng input, cùng môi trường; --no-cache để chạy lại)', f'reusing {len(keyed_hits)} suite(s) by content key (same inputs and environment; --no-cache to re-run)')}{RESET}")
     _lap("cache")
-    to_run = [t for t in regression_tests if t.get("mode") != "cached"]
+    to_run = [t for t in regression_tests if t.get("mode") not in ("cached", "edited")]
     # A run that re-used a suite takes the lock even when it has nothing left to run: the check that what it re-used still stands and the writes
     # that follow it are one step under the lock (a forced run that FAILS the suite deletes the file holding the PASS while it holds this lock).
     # But it waits only DEVKIT_REUSE_LOCK_WAIT_S (default 3 s), not TEST_RUN_LOCK_WAIT_S (45 s through the Stop hook): it has no suite to run, and
@@ -6436,7 +6541,7 @@ def main():
     # can finish before this one reaches the lock (a timing threshold missed that; review 2026-09-29).
     if use_cache and cache is None and lock_held and receipt_stamp() not in (None, stamp_before):
         cache = reuse_full_pass()
-        to_run = [t for t in regression_tests if t.get("mode") != "cached"]
+        to_run = [t for t in regression_tests if t.get("mode") not in ("cached", "edited")]
         nothing_to_run = not any(t.get("command") for t in to_run)
     # T0056: hàng đợi gate toàn máy (pool 'gate', tối đa N lượt chạy suite cùng lúc). Chỉ xin slot khi đã giữ khoá dự án,
     # thực sự còn suite cần chạy và tiến trình cha chưa giữ slot (DEVKIT_GATE_SLOT_HELD != "1").
@@ -6486,7 +6591,7 @@ def main():
                                     mark_keyed(t, rec)
                         if len(keyed_hits) > prev_keyed_n:
                             print(f"    {CYAN}▶ {tr(f'dùng lại {len(keyed_hits) - prev_keyed_n} suite theo khoá nội dung sau khi chờ slot', f'reusing {len(keyed_hits) - prev_keyed_n} suite(s) by content key after slot wait')}{RESET}")
-                    to_run = [t for t in regression_tests if t.get("mode") != "cached"]
+                    to_run = [t for t in regression_tests if t.get("mode") not in ("cached", "edited")]
                     nothing_to_run = not any(t.get("command") for t in to_run)
                     if nothing_to_run:
                         gate_slot_hs.release_pool(gate_slot)
@@ -6758,7 +6863,8 @@ def main():
 
     def hang_report(t, out):
         """#370: a suite that timed out while the machine was NOT busy hung — it was not slow. Marks it (t["hang"], label HANG) and puts the
-        last test line it printed plus the `ps` snapshot of its process group in output_tail; under load it stays a plain TIMEOUT."""
+        last test line it printed plus the `ps` snapshot of its process group in output_tail; under load it stays a plain TIMEOUT, and so does
+        a suite still making progress (#427: its youngest process that has a child is younger than min(timeout/2, 120) s)."""
         body, _, snap = (out or "").partition(HANG_SNAPSHOT_MARK)
         try:
             import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
@@ -6768,10 +6874,18 @@ def main():
             return
         if load is None or load >= busy:
             return
+        # #427 / hang giả 27/10: tải thấp chưa đủ. REG-DK-ALL-01 hết 900 s ở đuôi tuần tự (tải ~15 < 36) khi test đang chạy mới 6 s và
+        # tiến trình lá mới sinh — vẫn bị gọi HANG. Chỉ gọi HANG khi tiến trình CÓ CON trẻ nhất của cây đã sống ≥ min(timeout/2, 120) s
+        # (không cây con nào mới bắt đầu ngần ấy lâu; lá của vòng poll không tính, xem HANG_YOUNGEST_LINE). Ảnh của chính lượt này luôn nằm cuối out (rpartition: output của gate lồng không lẫn vào).
+        # Không đọc được tuổi (ps hỏng, không dòng nào, thiếu dòng youngest): giữ cách cũ, chỉ xét tải.
+        youngest = HANG_YOUNGEST_RE.search((out or "").rpartition(HANG_SNAPSHOT_MARK)[2])
+        if youngest and int(youngest.group(1)) < min(args.timeout / 2, 120):
+            return
         lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
         last = next((ln for ln in reversed(lines) if HANG_TEST_LINE.search(ln)), lines[-1] if lines else "(no output)")
         t["hang"] = True
-        t["output_tail"] = "\n".join(snap.strip().splitlines()[:7] + [
+        shown = [ln for ln in snap.strip().splitlines() if not HANG_YOUNGEST_RE.match(ln)]   # dòng tuổi chỉ để quyết định, không chiếm chỗ
+        t["output_tail"] = "\n".join(shown[:7] + [
             tr(f"HANG (tải {load:.1f} < {busy}): test cuối suite in ra: {last[:200]}",
                f"HANG (load {load:.1f} < {busy}): last test line the suite printed: {last[:200]}")])
         log_warn(tr(f"{t.get('id')}: quá giờ lúc máy rảnh (tải {load:.1f}) — TREO, không phải chậm; test cuối: {last[:120]}",
@@ -7264,7 +7378,7 @@ def main():
     # PASS mà không chạy gì (RESOURCE, SKIP compile, COVERED) không phải XANH; BUSY/BUDGET là kết luận exit 4 của chính chúng
     added_not_green = [i for i in matrix_added if not any(
         t.get("id") == i and ((t["status"] == "PASS" and t.get("mode") not in ("resource", "skip-compile", "covered"))
-                              or t.get("label") in ("BUSY", "BUDGET")) for t in regression_tests)]
+                              or t.get("label") in ("BUSY", "BUDGET", "EDITED")) for t in regression_tests)]
     if added_not_green and not matrix_problem:
         matrix_problem = tr(f"regression matrix chỉ thêm rule so với {base_ref} nhưng test mới chưa chạy XANH trong lượt này "
                             f"({', '.join(added_not_green[:5])}) — gate chỉ tin ma trận chỉ-thêm khi mọi test mới PASS; chạy lại với --run-tests",
@@ -7449,7 +7563,7 @@ def main():
     # (a FAIL) still drops it, as before.
     merge_check = os.environ.get("DEVKIT_GATE_MERGE_CHECK") == "1"
     try:
-        if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and (not partial or (exit_code != 0 and not receipt_untested)) \
+        if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and not edited_early and (not partial or (exit_code != 0 and not receipt_untested)) \
                 and (lock_held or partial or exit_code != 0):
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
             # suites all passed (2026-09-29) — leaves the last full one as it is; a BUSY run (lock not held, nothing ran)

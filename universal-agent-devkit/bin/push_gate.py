@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Does the full-gate PASS cover what a `git push` sends? Called by hooks/block-dangerous-git.sh.
+"""Does the full-gate PASS cover what a `git push` sends? Called by hooks/block-dangerous-git.sh and scripts/git/integrate.py.
+
+#472 mục A (người dùng 27/10, bớt --full): push lên trunk / release/* chỉ đi qua `agent-kit integrate` — điểm gộp chạy --full MỘT lần
+trong worktree scratch rồi tự `git push` (tiến trình con của integrate, hook PreToolUse không thấy). Hook truyền `--via-hook <remote>`
+cho MỌI lần gọi (chế độ chặt, strict_check()): đích trunk hay không rõ chỉ cho qua khi push không gửi gì mới (remote đã có ĐÚNG commit
+đó ở đúng nhánh đích: lần push tay sau integrate không thành vòng lặp). KHÔNG biên nhận nào mở được trunk ở đây, nên không có gì để giả:
+biên nhận tự chạy, worktree tự đặt tên .integrate-scratch-*, env CI / POSTFIX_GATE_FULL đều không đổi kết quả. Từ chối thì chỉ đường
+integrate, không bảo chạy --full. Nhánh PR, --all-tags và tag của commit remote đã có giữ nguyên. Không có `--via-hook` (integrate tự
+gọi trước khi push, CLI): luật biên nhận bên dưới, như cũ — chỉ lời chỉ đường đổi sang integrate.
 
 Rule (rules/essentials.md, Git): every push needs the latest `post-fix-gate --run-tests --full`
 at exit 0 on the content pushed, or an edited test an Antigravity audit passed: a pushed commit
@@ -36,6 +44,7 @@ qua pre-commit. Trunk = main/master/trunk/develop/release/*/hotfix/* và nhánh 
 Đích rỗng, thiếu, remote không phải tên đã cấu hình (URL), hay ref ngoài refs/heads/ → luật biên nhận cũ.
 
 CLI: push_gate.py <dir> [<rev>] [--tag-remote <name>] [--dst <remote> <branch>] | --all-tags <name> | --all-branches <name>
+    [--via-hook <remote>]
 → exit 0 covered · 2 not covered (reason on stdout).
 100% standard library.
 """
@@ -54,7 +63,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tree_fp  # noqa: E402
 
 MATRIX = os.path.join(".agents", "regression_matrix.active.json")
-GATE = "python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief"
+# #472 mục A: lời chỉ đường khi từ chối push trunk — điểm gộp là integrate; KHÔNG bảo agent chạy --full (vòng lặp cũ: gate xong vẫn chặn)
+INTEGRATE = ("push lên trunk / release/* chỉ qua `agent-kit integrate` (điểm gộp: chạy gate một lần trong worktree scratch rồi tự push "
+             "đúng commit đó). Đang ở worktree: `agent-kit worktree finish <đường dẫn>` trước, rồi `agent-kit integrate` (không --if-due). "
+             "Repo đi PR: push nhánh PR bằng tên (`git push origin <nhánh>`), merge gate lo phần còn lại")
 APPROVED = "Test-approved-by:"
 APPROVED_VALUE = re.compile(r"antigravity\s+(T\d{4,}-[a-z0-9-]{1,48})")   # antigravity-pm TASK_ID_RE (src/tasks.js)
 HEX_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
@@ -175,8 +187,9 @@ def check_all_tags(cwd, remote):
     return True, "every tag points at a commit the remote already has"
 
 
-def check_all_branches(cwd, remote):
-    """(ok, reason) for `git push --all|--branches <remote>`: each local branch has nothing new to send or is covered."""
+def check_all_branches(cwd, remote, strict=False):
+    """(ok, reason) for `git push --all|--branches <remote>`: each local branch has nothing new to send or is covered.
+    strict (#472 mục A, qua hook): nhánh nào có thứ mới để gửi là từ chối — không biên nhận nào thay được integrate."""
     top, why = toplevel(cwd)
     if why:
         return False, f"repository without a work tree here ({why}): cannot find the gate receipt"
@@ -199,6 +212,9 @@ def check_all_branches(cwd, remote):
                 and subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", tip.strip(), r_tip],
                                    capture_output=True, timeout=5).returncode == 0:
             continue                      # the remote branch of that name already has everything
+        if strict:
+            bad.append(f"{ref[len('refs/heads/'):]}: --all sẽ gửi commit remote chưa có; push từng nhánh PR bằng tên, trunk qua integrate")
+            continue
         ok, reason = check(top, ref)
         if not ok:
             bad.append(f"{ref[len('refs/heads/'):]}: {reason}")
@@ -238,6 +254,54 @@ def pr_branch(cwd, remote, dst):
     # tên đầy đủ, không --short: có nhánh local tên "origin/prod" thì --short trả "remotes/origin/prod" và phép so trượt (OCR 18/10)
     rc, head = git(top, "symbolic-ref", "-q", f"refs/remotes/{remote}/HEAD")
     return not (rc == 0 and head.strip().lower() == f"refs/remotes/{remote}/{name}".lower())
+
+
+def nothing_new(cwd, rev, remote, dst):
+    """True khi push `rev` lên nhánh `dst` của `remote` không đổi gì: remote (chính nó trả lời, git ls-remote) đang có refs/heads/<dst>
+    trỏ ĐÚNG commit của rev. on_remote_only() hỏi commit có ở MỌI ref nào đó của remote (unpushed(): rev-list --not cả danh sách
+    ls-remote), nên một commit chỉ nằm trên nhánh PR chưa gate sẽ được `git push origin feat/x:main` đẩy lên main (ca của test #472). So bằng nhau, không phải "là tổ tiên": push ép một
+    tổ tiên là lùi trunk. Mọi nghi ngờ (remote là URL, không mạng, đích lạ) → False."""
+    if not isinstance(remote, str) or not remote or not isinstance(dst, str) or not dst:
+        return False
+    name = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+    top = toplevel(cwd)[0]
+    if not top or not name or git(top, "check-ref-format", "refs/heads/" + name)[0] != 0:
+        return False
+    rc, sha = git(top, "rev-parse", "--verify", "-q", rev + "^{commit}")
+    if rc != 0:
+        return False
+    refs = remote_refs(top, remote)
+    return bool(refs) and refs.get("refs/heads/" + name) == sha.strip()
+
+
+def strict_check(cwd, rev, tag_remote, dst, remote):
+    """(ok, reason) cho một push của agent qua hook (#472 mục A). Nhánh PR: như cũ, không cần biên nhận. Tag: chỉ khi remote đã có
+    mọi commit của nó. Còn lại (trunk, release/*, đích không rõ): chỉ khi không gửi gì mới — không biên nhận nào mở được; lối ra là
+    integrate."""
+    if dst and not tag_remote and not rev.startswith("-") and pr_branch(cwd, *dst):
+        return True, f"push nhánh PR {dst[1]}: --full chạy một lần ở merge gate trước khi gộp vào trunk"
+    top, why = toplevel(cwd)
+    if why:
+        return False, f"repository without a work tree here ({why})"
+    if top is None:
+        return True, "not a git repo"
+    # như _own_check: repo chưa có ma trận hồi quy thì push_gate chưa áp (test_guard_shell_norm.sh: push trong repo không ma trận)
+    if not any(os.path.isfile(os.path.join(d, MATRIX)) for d in (top, os.path.abspath(cwd))):
+        return True, "no regression matrix"
+    if tag_remote:
+        if on_remote_only(top, rev, tag_remote):
+            return True, "a tag of commits the remote already has: nothing new is pushed"
+        return False, f"tag {rev} mang commit remote chưa có: đưa commit lên trunk trước, rồi push tag"
+    if dst and nothing_new(top, rev, dst[0], dst[1]):
+        return True, f"remote đã có đúng commit này ở {dst[1]}: không gửi gì mới"
+    if dst and dst[1]:
+        return False, f"push trực tiếp {rev} lên {dst[1]} không qua agent-kit integrate"
+    # ponytail: repo đặt push.default=upstream/matching, remote.<n>.push, remote.<n>.mirror hay push.followTags thì hook không bao giờ
+    # suy ra đích, nên mọi push nhánh PR ở đó bị từ chối ở đây (trước #472 thì biên nhận --full mở được). Nâng cấp: hỏi `git push
+    # --dry-run --porcelain` đích thật khi gặp repo như vậy.
+    return False, (f"hook không suy ra được nhánh đích của push {rev} (dấu nháy, `-c`, --follow-tags, biến, hoặc config push.default/"
+                   "remote.<n>.push/push.followTags/remote.<n>.mirror): nhánh PR thì push lại dạng trơn `git push origin <nhánh>` "
+                   "không kèm những thứ đó (bỏ config đó nếu repo đặt); trunk thì không push tay")
 
 
 def entries(top, rev, paths):
@@ -313,7 +377,7 @@ def recovery_hint(top, rev, head):
     HEAD passed the gate, then `git push origin main` said only that, and nobody could tell the LOCAL main was stale): where the
     repository is, where HEAD is, and - when the branch <rev> is an ancestor of HEAD and the gated commit is in HEAD's history -
     the one command that fast-forwards it. Never raises: a hint must not turn a refusal into a crash."""
-    gate_advice = f"`{GATE}` (exit 0) trên đúng code sẽ push, commit, rồi push lại"
+    gate_advice = INTEGRATE
     try:
         def is_ancestor(a, b):
             return subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", a, b],
@@ -327,12 +391,13 @@ def recovery_hint(top, rev, head):
         if rev != "HEAD" and rc == 0 and tip and is_ancestor(rev, tip) and is_ancestor(head, tip):
             fix = f"cd {shlex.quote(top)} && git switch {shlex.quote(rev)} && git merge --ff-only {tip}"
             covered, _why = check(top, tip)   # would the push of HEAD itself pass? (a commit added after the gate would not)
-            then = "rồi push lại (không cần chạy lại gate)" if covered else f"rồi chạy lại {gate_advice} (HEAD có code mới hơn lần gate)"
+            # #472 mục A: trunk chỉ đi qua integrate (nó tự gate lại), nên không còn lời hứa "không cần chạy lại gate"
+            then = f"rồi: {gate_advice}" + ("" if covered else " (HEAD có code mới hơn lần gate)")
             return (f"{where}. Nhánh local {rev} cũ hơn commit đã qua gate (clone detached hoặc đang ở nhánh khác): "
                     f"chạy `{fix}` {then}")
-        return f"{where}. Nếu đã pull/rebase/squash sau lần gate: chạy {gate_advice}"
+        return f"{where}. Nếu đã pull/rebase/squash sau lần gate: {gate_advice}"
     except (OSError, subprocess.SubprocessError, ValueError, RuntimeError):   # (check() below may raise RuntimeError: a hint never turns a refusal into a crash)
-        return f"repo {top}. Chạy {gate_advice}"
+        return f"repo {top}. {gate_advice}"
 
 
 def _inside(path, root):
@@ -526,7 +591,7 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
         return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
     # T0061 Pha 1: biên nhận task (lượt --run-tests không --full) chỉ cho XONG của task, không bao giờ cho push (tests/gates/test_task_receipt_doors.sh ca 2)
     if receipt.get("scope", "full") != "full":
-        return "biên nhận task (scope task, không phải --full): push cần post-fix-gate --run-tests --full"
+        return "biên nhận task (scope task, không phải biên nhận của điểm gộp)"
     if receipt.get("exit") != 0 or isinstance(receipt.get("exit"), bool):
         return "exit không phải 0"
     head = receipt.get("head")
@@ -707,24 +772,40 @@ def main(argv):
         del argv[k:k + 3]
         if "--dst" in argv:
             dst = [None, None]   # hai --dst: không biết cái nào là đích thật → luật cũ
+    # #472 mục A: có `--via-hook` ở bất kỳ đâu (kể cả thiếu giá trị, hay hai lần) là chế độ chặt — không bao giờ rơi về luật biên nhận
+    strict, single, hook_remote = "--via-hook" in argv, argv.count("--via-hook") == 1, None
+    while "--via-hook" in argv:   # hai cờ: không biết remote nào → hook_remote None, không gì là "không gửi gì mới"
+        k = argv.index("--via-hook")
+        hook_remote = argv[k + 1] if single and k + 1 < len(argv) else None
+        del argv[k:k + 2]
     cwd = argv[1] if len(argv) > 1 else "."
     rev = argv[2] if len(argv) > 2 else "HEAD"
     try:
         if rev in ("--all-tags", "--all-branches") and len(argv) > 3:
-            ok, reason = (check_all_tags if rev == "--all-tags" else check_all_branches)(cwd, argv[3])
+            if rev == "--all-tags":
+                ok, reason = check_all_tags(cwd, argv[3])
+            else:
+                ok, reason = check_all_branches(cwd, argv[3], strict=strict)
+        elif strict:
+            # đích của --dst phải cùng remote với remote hook đang push (một lệnh một remote); lệch → coi như đích không rõ
+            ok, reason = strict_check(cwd, rev, tag_remote, dst if dst and dst[0] == hook_remote else None, hook_remote)
         elif dst and not tag_remote and not rev.startswith("-") and pr_branch(cwd, *dst):   # sweep thiếu đối số, tag: luật cũ
             ok, reason = True, f"push nhánh PR {dst[1]}: --full chạy một lần ở merge gate trước khi gộp vào trunk"
         else:
             ok, reason = check(cwd, rev, tag_remote)
     except (subprocess.TimeoutExpired, RuntimeError, OSError) as e:
         ok, reason = False, f"không kiểm được biên nhận gate ({e})"
+    except Exception as e:  # noqa: BLE001 - chế độ chặt không bao giờ fail-open; ngoài nó giữ hành vi cũ (lỗi lạ nổ ra như trước)
+        if not strict:
+            raise
+        ok, reason = False, f"không kiểm được push ({type(e).__name__}: {e})"
     if not ok:
         # backslashreplace: a reason naming a non-UTF-8 path or tag (decoded with surrogateescape) crashed the print on a
         # strict UTF-8 stdout (macOS, 2026-10-09). Set here, not at start: importing post-fix-gate.py resets it to "replace".
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(errors="backslashreplace")
         # a reason with a second line carries its own next step (recovery_hint): the generic one would contradict it
-        print(reason if "\n" in reason else f"{reason} — chạy `{GATE}` (exit 0) trên đúng code sẽ push, commit, rồi push lại")
+        print(reason if "\n" in reason else f"{reason} — {INTEGRATE}")
     return 0 if ok else 2
 
 
