@@ -1781,7 +1781,10 @@ def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
             return
         r = subprocess.run(["bash", str(script), "--config", str(configs[0]), "--mark", "--tree", tested_tree], cwd=str(root),
                            capture_output=True, text=True, timeout=30)
-        if r.returncode not in (0, 65):   # 65 = dirty tree / base not merged: the documented "no receipt"
+        # #459: a verify-cmd.sh that predates --mark (an app repo not yet ported) rejects it with exit 64 and a usage text that never names --mark:
+        # that is "no script that can write a receipt" (the old behaviour), not a fault. A script that knows --mark names it in every 64 message.
+        old_script = r.returncode == 64 and "--mark" not in r.stderr
+        if r.returncode not in (0, 65) and not old_script:   # 65 = dirty tree / base not merged: the documented "no receipt"
             log_err(f"tree receipt not written (exit {r.returncode}): {r.stderr.strip()[-200:]}")
     except (OSError, ValueError, subprocess.SubprocessError) as e:
         log_err(f"tree receipt not written: {e}")

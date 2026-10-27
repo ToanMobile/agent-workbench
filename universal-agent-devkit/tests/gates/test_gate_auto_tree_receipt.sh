@@ -182,4 +182,19 @@ COMMIT_DURING_RUN=1 run_gate; rc=$?
 RA=$(receipt_path)   # the key of the tree that exists NOW (after the suite's own commit)
 [ "$rc" = 0 ] && [ ! -e "$RA" ] && ok "a commit during the run: the new tree gets no receipt (gate rc=0)" || fail "rc=$rc receipt present=$([ -e "$RA" ] && echo yes || echo no): $(grep -E 'KẾT LUẬN|UNVERIFIED|CHƯA XÁC MINH|REJECT|•' "$TMP/out" | head -6 | tr '\n' '|')"
 
+# 14 (#459). An app repo whose verify-cmd.sh predates --mark (it takes only --config, usage text without --mark, exit 64): that is "no script that can
+#     write a receipt" (the docstring's old behaviour), not a gate fault: the run PASSes and prints no "tree receipt not written" line.
+make_repo with-config
+printf '#!/usr/bin/env bash\n[ "${1:-}" = "--config" ] && [ "$#" -eq 2 ] || { echo "usage: super-board-verify-cmd.sh --config <cfg>" >&2; exit 64; }\nexit 0\n' > .claude/bin/super-board-verify-cmd.sh
+git add -A && git commit -qm old-verify
+R=$(receipt_path)
+run_gate; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$R" ] && ! grep -q "tree receipt not written" "$TMP/out" && ok "verify-cmd.sh without --mark (exit 64): PASS, no ✖ tree receipt line" || fail "rc=$rc: $(grep -i 'receipt' "$TMP/out" | head -2 | tr '\n' '|')"
+# 14b. a verify-cmd.sh that knows --mark and exits 64 for a real usage fault (its message names --mark): the gate still reports it
+make_repo with-config
+printf '#!/usr/bin/env bash\necho "super-board-verify-cmd: --mark needs --tree <the tree sha the run tested>" >&2; exit 64\n' > .claude/bin/super-board-verify-cmd.sh
+git add -A && git commit -qm new-verify-usage-fault
+run_gate; rc=$?
+[ "$rc" = 0 ] && grep -q "tree receipt not written (exit 64)" "$TMP/out" && ok "verify-cmd.sh that knows --mark and exits 64: the gate still prints ✖" || fail "rc=$rc, no ✖ line: $(tail -3 "$TMP/out")"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_auto_tree_receipt: all passed" || { echo "❌ test_gate_auto_tree_receipt: $FAILS failed"; exit 1; }
