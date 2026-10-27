@@ -118,7 +118,7 @@ printf 'w=0; while [ ! -e "%s/release" ]; do sleep 0.2; w=$((w + 1)); [ "$w" -gt
 TMPDIR="$G/tmp" DEVKIT_TEST_JOBS=4 python3 -c 'import os, sys; os.setpgrp(); os.execvp("bash", ["bash", sys.argv[1], "--all"])' "$G/tests/run_impacted.sh" \
   >"$TMP/prog_cut.out" 2>&1 & gp=$!
 w=0; while [ ! -e "$G/fast.ended" ] && [ "$w" -lt 300 ]; do sleep 0.2; w=$((w + 1)); done
-w=0; while [ -e "$G/fast.ended" ] && ! grep -q "test_fast_${TOK}\.sh" "$TMP/prog_cut.out" && [ "$w" -lt 100 ]; do sleep 0.2; w=$((w + 1)); done
+w=0; while [ -e "$G/fast.ended" ] && ! grep -qE "^· done rc=[0-9]+ [0-9]+s tests/gates/test_fast_${TOK}\.sh$" "$TMP/prog_cut.out" && [ "$w" -lt 100 ]; do sleep 0.2; w=$((w + 1)); done
 kill -TERM -- "-$gp" 2>/dev/null; wait "$gp" 2>/dev/null; touch "$G/release"; kill -KILL -- "-$gp" 2>/dev/null
 if [ ! -e "$G/fast.ended" ]; then fail "setup: the fast test never ran: $(cat "$TMP/prog_cut.out")"
 else
@@ -133,13 +133,59 @@ so="$(cd "$G" && TMPDIR="$G/tmp" DEVKIT_TEST_JOBS=4 bash tests/run_impacted.sh -
   && ok "normal run: stdout is the same ✔/✖ list in list order, exit 1 (one red test)" || fail "normal run stdout changed (rc=$rc): '$so'"
 [ "$(grep -c '^· done ' "$TMP/prog.err")" = 4 ] && grep -qE "^· done rc=3 [0-9]+s tests/gates/test_bad_${TOK}\.sh$" "$TMP/prog.err" \
   && ok "normal run: one progress line per test on stderr, with its exit code" || fail "progress lines on stderr: '$(cat "$TMP/prog.err")'"
+# #473: the two regexes are read from post-fix-gate.py itself (ast, no hand copy that can drift), and every progress line — `· start` before the
+# test runs, `· done` after — must read as a test line and never as a failure line. Each test's start line comes before its done line.
 python3 -I -c '
-import re, sys
-fail_line = re.compile(r"✖|✗|❌|\bFAILED\b|\bFAIL\b|\bERROR\b|Traceback|AssertionError|\bException\b")   # FAIL_LINE của gate
-hang_line = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")                                                # HANG_TEST_LINE của gate
-ls = [l for l in open(sys.argv[1], encoding="utf-8").read().splitlines() if l.startswith("· done ")]
-sys.exit(0 if ls and all(not fail_line.search(l) and hang_line.search(l) for l in ls) else 1)' "$TMP/prog.err" \
-  && ok "progress lines: never a gate failure line, always a test line" || fail "a progress line reads as a failure or not as a test: $(cat "$TMP/prog.err")"
+import ast, re, sys
+want = {"FAIL_LINE": None, "HANG_TEST_LINE": None, "HANG_START_RE": None, "HANG_DONE_RE": None}
+for node in ast.parse(open(sys.argv[2], encoding="utf-8").read()).body:
+    if isinstance(node, ast.Assign) and len(node.targets) == 1 and getattr(node.targets[0], "id", "") in want:
+        want[node.targets[0].id] = re.compile(ast.literal_eval(node.value.args[0]))
+if not all(want.values()):
+    print("FAIL_LINE / HANG_TEST_LINE not found in post-fix-gate.py"); sys.exit(2)
+ls = [l for l in open(sys.argv[1], encoding="utf-8").read().splitlines() if l.startswith(("· done ", "· start "))]
+starts = [l.split(" ", 2)[2] for l in ls if l.startswith("· start ")]
+dones = [l.split(" ", 4)[4] for l in ls if l.startswith("· done ")]
+order = all(next(i for i, l in enumerate(ls) if l == "· start " + t) < next(i for i, l in enumerate(ls) if l.startswith("· done ") and l.endswith(" " + t)) for t in dones if t in starts)
+ms = [want["HANG_START_RE"].match(l) for l in ls if l.startswith("· start ")]
+md = [want["HANG_DONE_RE"].match(l) for l in ls if l.startswith("· done ")]
+fmt = all(ms) and all(md) and sorted(m.group(1) for m in ms) == sorted(starts) and sorted(m.group(1) for m in md) == sorted(dones)   # the gate parses the real lines
+sys.exit(0 if len(starts) == 4 and sorted(starts) == sorted(dones) and order and fmt
+         and all(not want["FAIL_LINE"].search(l) and want["HANG_TEST_LINE"].search(l) for l in ls) else 1)' "$TMP/prog.err" "$DEVKIT_DIR/bin/post-fix-gate.py" \
+  && ok "progress lines: a start and a done per test (start first), never a gate failure line, always a test line (regexes from the gate's source)" \
+  || fail "progress lines (4 start + 4 done, start first, test lines, no failure lines): $(cat "$TMP/prog.err")"
+
+# #473: SIGPIPE oracle. A gate that is gone leaves stderr a pipe nobody reads: the progress printf then dies of SIGPIPE, so the PASS of the per-test
+# cache must already be written BEFORE it (the order in run_one). A stub per_test_cache.py writes a marker when `record` runs; the test waits until the
+# reader has closed the pipe (after the `· start` line), so the `· done` printf is certain to meet a closed pipe. Printf before record: no marker.
+S="$TMP/sigpipe"; mkdir -p "$S/tests/gates" "$S/tests/lib" "$S/tmp"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$S/tests/"
+printf 'import sys\nif sys.argv[1] == "record":\n    open(%s, "a").write(" ".join(sys.argv[2:]) + "\\n")\n' "\"$S/recorded\"" > "$S/tests/lib/per_test_cache.py"
+printf 'w=0; while [ ! -e "%s/closed" ]; do sleep 0.1; w=$((w + 1)); [ "$w" -gt 300 ] && exit 1; done\n' "$S" > "$S/tests/gates/test_pipe_${TOK}.sh"
+( cd "$S" && git init -q . )
+python3 -I - "$S" <<'PY'
+import os, select, subprocess, sys, time
+s = sys.argv[1]
+r, w = os.pipe()
+p = subprocess.Popen(["bash", s + "/tests/run_impacted.sh", "--all"], cwd=s, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=w,
+                     env=dict(os.environ, DEVKIT_PER_TEST_CACHE="record", DEVKIT_TEST_JOBS="1", TMPDIR=s + "/tmp"))
+os.close(w)
+buf, end = b"", time.time() + 60
+while b"\xc2\xb7 start " not in buf and time.time() < end:   # "· start " (UTF-8)
+    if select.select([r], [], [], 1)[0]:
+        chunk = os.read(r, 4096)
+        if not chunk:
+            break
+        buf += chunk
+os.close(r)                                                  # nobody reads stderr from here on
+open(s + "/closed", "w").close()
+try:
+    p.wait(timeout=60)
+except subprocess.TimeoutExpired:
+    p.kill()
+PY
+grep -qE "test_pipe_${TOK}\.sh 0$" "$S/recorded" 2>/dev/null \
+  && ok "run_one: stderr closed (SIGPIPE at the progress printf) and the PASS of the per-test cache was already recorded" \
+  || fail "run_one: no per-test cache record after SIGPIPE: the progress printf runs before the record"
 
 if [ "$FAILS" -ne 0 ]; then echo "run_impacted: $FAILS FAILED"; exit 1; fi
 echo "run_impacted: all checks passed"
