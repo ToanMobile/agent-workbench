@@ -1732,7 +1732,7 @@ def _inventory(cwd, only, budget):
         except Exception:  # noqa: BLE001
             busy = "unknown operation"
         rows.append({"path": path, "branch": e["branch"], "detached": e["detached"], "dirty": dirty, "ahead": ahead,
-                     "reflog": reflog, "busy": busy,
+                     "reflog": reflog, "busy": busy, "held_only": held_only,
                      "unreachable": bool((e["detached"] and ahead != 0 and (held_only is None or held_only > 0)) or reflog is None or reflog),
                      "unintegrated": bool(dirty is None or dirty or ahead is None or ahead or reflog is None or reflog or busy)})
     return rows
@@ -2020,7 +2020,7 @@ def _iter_blockers(cwd, wt, shown, budget, rows=None):
             sha = git(wt, "rev-parse", "--short=12", "HEAD", check=False).stdout.strip() or "HEAD"
             main = main_checkout(cwd)
             vi, en = [], []
-            if r["detached"] and r["ahead"] != 0:   # (a worktree on a branch keeps those commits on it; only its reflog-only ones are lost)
+            if r["detached"] and r["ahead"] != 0 and (r["held_only"] is None or r["held_only"] > 0):   # #458: the row's own blocking condition; (a worktree on a branch keeps those commits on it; only its reflog-only ones are lost)
                 vi.append(f"HEAD tách rời ({sha}), {r['ahead']} commit không thuộc nhánh nào và main chưa có (cùng nội dung hoặc cùng patch hoặc "
                           f"gộp ba chiều không đổi gì). Đem về trước: agent-kit worktree diff {shlex.quote(shown)} | git apply --3way rồi commit ở main checkout "
                           "(file sổ sách checklist được bỏ qua khi so, trừ dòng bug/REQ do người tạo; nếu commit có sửa chúng thì dùng "
