@@ -162,7 +162,16 @@ Owner:       repo owner
 Move back:   drag this card to Ready after the steps above are done
 blocked-by: -" || true
 }
-detail_lines() { [ -n "${TOUT:-}" ] && [ -r "$TOUT" ] || return 0; sed -nE "s/^train-detail: $1 //p" "$TOUT"; }
+# Trần body (#470): GitHub từ chối comment > 65536 ký tự. Mỗi dòng ≤ 400 ký tự, cả khối ≤ 12000 ký tự; dòng đầu (kết luận, suite đỏ) giữ, phần dư cắt
+# kèm một dòng báo. Chi tiết đầy đủ nằm ở log của train (stdout của queue), không ở comment.
+detail_lines() {
+  [ -n "${TOUT:-}" ] && [ -r "$TOUT" ] || return 0
+  sed -nE "s/^train-detail: $1 //p" "$TOUT" | LC_ALL=C awk -v max=12000 '
+    { l = substr($0, 1, 400); if (length($0) > 400) l = l " …"
+      if (used + length(l) + 1 > max) { cut = 1; next }
+      print l; used += length(l) + 1 }
+    END { if (cut) print "… (detail truncated: the full train log is in the merge-queue output)" }'
+}
 # rebuild_or_rebase <PR> <issue> <rebuild|rebase> <why>: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
 # Trả 0 chỉ khi các bước bắt buộc (nhãn loop:*, card_move) xong. Lượt route lại (RETRY=1): không comment lại; nhãn loop:* đã gắn ở lượt
 # trước (LABEL_DONE=1) thì không gắn lần nữa (không đẩy loop:rebuild-N lên hai lần cho cùng một lần đỏ).
