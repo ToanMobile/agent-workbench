@@ -69,6 +69,8 @@ def w(line):
     open(F + '/writes', 'a').write(line + '\n')
 def issue(k):
     return json.load(open(f'{F}/issue-{k}.json'))
+if os.path.exists(F + '/gh.hang') and a[:2] in (['pr', 'edit'], ['pr', 'comment'], ['issue', 'comment'], ['issue', 'edit'], ['issue', 'close']):
+    import time; time.sleep(60)   # #453: a GitHub write that never answers
 if a[:2] == ['pr', 'list']:
     open(F + '/reads', 'a').write('list ' + ' '.join(a[2:]) + '\n')
     st = (opt('--state') or 'open').upper()
@@ -470,5 +472,12 @@ PC="$F/pr-comment-5.txt"; IC="$F/issue-comment-15.txt"
 [ -s "$PC" ] && [ "$(wc -c < "$PC")" -lt 65536 ] && [ "$(wc -c < "$IC")" -lt 65536 ] && ok "#470 oversized train-detail: PR and issue comment bodies stay under 65536 chars" || fail "#470 sizes: pr=$(wc -c < "$PC" 2>/dev/null) issue=$(wc -c < "$IC" 2>/dev/null)"
 grep -q "^\[merge-queue\] \[report\] ❌ red · red" "$PC" && grep -q "^FAILED tests/test_first.py::test_red$" "$PC" && ok "  … the verdict line and the red suite line survive" || fail "  … lost lines: $(head -c 400 "$PC")"
 grep -q "^Next: back to Build" "$PC" && ok "  … the trailing Next line survives" || fail "  … no Next line"
+
+# #453: ghi lên GitHub có timeout: gh treo thì gh_w bỏ cuộc sau SB_GH_WRITE_TIMEOUT (mặc định 15 s), hàng đợi không chết và route tiếp.
+reset; cfg true 6; pr 6 issue-16-f 5; approve 6 OWNER "$(sha 6 b)"; issue 16; : > "$F/gh.hang"
+t0=$(date +%s); ( export SB_GH_WRITE_TIMEOUT=1; run_q ); rc=$?; t1=$(date +%s)
+[ "$rc" -eq 0 ] && [ $((t1 - t0)) -lt 20 ] && ok "#453 a hanging gh write is cut by the timeout: exit 0 in $((t1 - t0)) s" || fail "#453 hang: rc=$rc took $((t1 - t0)) s: $(tail -3 "$TMP/err")"
+grep -q "timed out" "$TMP/err" && ok "  … the timeout is logged" || fail "  … no timeout line: $(cat "$TMP/err")"
+grep -q 'SB_GH_WRITE_TIMEOUT:-15' "$QUEUE" && ok "  … default is 15 s" || fail "  … default is not 15 s"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue: all passed" || { echo "❌ test_merge_queue: $FAILS failed"; exit 1; }

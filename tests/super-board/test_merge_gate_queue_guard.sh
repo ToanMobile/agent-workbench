@@ -188,6 +188,15 @@ gate 5 SB_MERGE_QUEUE=0 -- --config "$CFG_HUMAN" --expect-head "$H" --dry-run
   && ok "SB_MERGE_QUEUE=0 --dry-run on a human-merge policy still sends the approve notice" \
   || fail "queue-off dry-run notice: $(why) notify=$(cat "$TMP/notify.log")"
 
+# #453 (audit Antigravity 26/10 #6): notify theo BÊN GỌI, không theo cờ. Queue bật: train/queue không gửi (queue gửi đúng một lần);
+# /super-review --standalone --dry-run ngoài board vẫn gửi nút duyệt.
+gate 5 -- --config "$CFG_HUMAN" --expect-head "$H" --standalone --dry-run
+[ "$RC" -eq 7 ] && grep -q '^approve-button ' "$TMP/notify.log" \
+  && ok "queue on: --standalone --dry-run on a human-merge policy sends the approve notice" \
+  || fail "standalone dry-run notice: $(why) notify=$(cat "$TMP/notify.log")"
+gate 5 SB_MERGE_CALLER=queue -- --config "$CFG_HUMAN" --expect-head "$H" --dry-run
+[ "$RC" -eq 7 ] && [ ! -s "$TMP/notify.log" ] && ok "queue on: caller queue sends no notice" || fail "queue caller notice: $(why) notify=$(cat "$TMP/notify.log")"
+
 # ── 10. Hồi quy (R2): queue TẮT thì --preflight gửi approve-button đúng một lần như gate cũ. Train gọi --preflight cho mọi PR và PR rớt
 #        preflight rời đợt trước lượt --dry-run, nên nếu preflight im lặng thì PR exit 7/8 không bao giờ có nút duyệt Telegram.
 napprove() { grep -c '^approve-button ' "$TMP/notify.log" | tr -d ' '; }
