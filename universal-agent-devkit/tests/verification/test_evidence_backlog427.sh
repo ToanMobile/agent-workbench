@@ -193,8 +193,8 @@ case("6 must block: `$SUITES` loop of kit suites, a crash line then one summary"
 case("6 must block: `while read t` loop of kit suites, a crash line then one summary",
      after("while read t; do bash tests/gates/test_$t.sh 2>&1 | tail -1; done < /tmp/list.txt",
            "tests/gates/test_a.sh: line 3: FOO: unbound variable\n✅ test_b: all passed"), 2)
-case("6 control: the glob loop of tests/gates/test_evidence_false_blocks.sh section D stays green",
-     after('for f in tests/a/test_*.sh; do echo "== $f" >> /tmp/ran.txt; bash "$f"; done', "✔ case 1\nok: done\n✔ case 2"), 0)
+case("6 control: the glob loop of tests/gates/test_evidence_false_blocks.sh section D stays green with its summary (#427 round 3: not without)",
+     after('for f in tests/a/test_*.sh; do echo "== $f" >> /tmp/ran.txt; bash "$f"; done', "✔ case 1\nok: done\n✔ case 2\nall passed (2)"), 0)
 case("6 control: an error word on a kit check line is the kit's",
      after('for f in tests/a/test_*.sh; do bash "$f"; done', "✔ a missing tool prints command not found\nall passed (3)"), 0)
 

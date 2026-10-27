@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (718 dòng, 78.8 KB) · 86 mục
+> **Tệp gốc:** `.agents/instincts.md` (728 dòng, 80.0 KB) · 87 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -87,5 +87,6 @@
 - [INSTINCT-081] Chờ việc nền bằng thông báo, không sleep rồi poll — `sed -n '685,693p' .agents/instincts.md`
 - [INSTINCT-082] Trong worktree cô lập: gọi git trực tiếp, một lệnh một dòng — `sed -n '694,702p' .agents/instincts.md`
 - [INSTINCT-083] macOS: sed BSD và không có timeout — `sed -n '703,712p' .agents/instincts.md`
-- [INSTINCT-071] Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main — `sed -n '713,718p' .agents/instincts.md`
+- [INSTINCT-071] Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main — `sed -n '713,721p' .agents/instincts.md`
+- [INSTINCT-084] Gộp lane bằng cherry-pick làm kit không gỡ được worktree lane và Stop hook tự gộp main local vào lane — `sed -n '722,728p' .agents/instincts.md`
 

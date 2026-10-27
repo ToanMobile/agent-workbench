@@ -1804,6 +1804,29 @@
       ]
     },
     {
+      "component": "proof-gate-merge-receipt",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        "universal-agent-devkit/tests/gates/test_proof_gate_merge_receipt.sh",
+        "tests/super-board/test_merge_gate_proof_receipt.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-PROOF-MERGE-RECEIPT-01",
+          "name": "proof_gate nhận biên nhận merge của merge gate (lượt gộp qua merge gate chạy nền, push qua pipe: cho qua); biên nhận lượt trước / phiên khác / không session, squash không có trên origin, cha squash khác base, commit chưa qua gate sau squash (kể cả ngày giả), main bẩn file của phiên, gh pr merge, ghi tay kho biên nhận: chặn",
+          "command": "bash universal-agent-devkit/tests/gates/test_proof_gate_merge_receipt.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-GATE-PROOF-RECEIPT-01",
+          "name": "merge gate THẬT ghi biên nhận merge (pr, head, base, verified_tree, squash, session) mà proof_gate nhận; phiên khác / không session: chặn; kho không ghi được: gate vẫn gộp, exit 0",
+          "command": "bash tests/super-board/test_merge_gate_proof_receipt.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "worktree-remove-reflog-squash",
       "watch_files": [
         "universal-agent-devkit/scripts/git/worktree.py",
