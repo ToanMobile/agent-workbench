@@ -6,6 +6,8 @@
 # - --run-tests, `true`   -> exit 0 (PASS)
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
+# #484 (lớp phòng hai, sau suite_env của gate): tự duyệt test sửa của nơi gọi không được lọt vào các gate chạy trong file này
+unset DEVKIT_AUTO_APPROVE_TESTS
 
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
@@ -270,6 +272,17 @@ make_repo "true"
 mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm t
 echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
 out="$(run_gate --run-tests)"; check "existing test edited in the change -> UNVERIFIED" 2 $? "$out" "PASS —"
+# #484: gate cha có DEVKIT_AUTO_APPROVE_TESTS=1 vẫn tự duyệt test sửa, nhưng suite nó chạy không được thấy biến này
+# (gate lồng trong suite, như chính file này dưới agent-kit integrate, sẽ tự duyệt theo và các ca "existing test edited … -> UNVERIFIED" đỏ).
+make_repo "sh probe.sh"
+printf 'echo "${DEVKIT_AUTO_APPROVE_TESTS-unset}" > "%s/seen_auto_approve"\n' "$TMP" > probe.sh
+mkdir -p src/test && echo "assert(true)" > src/test/CoreTest.kt && git add -A && git commit -qm t
+echo "fun ok() = 2" > src/Core.kt && echo "// weakened" > src/test/CoreTest.kt
+out="$(DEVKIT_AUTO_APPROVE_TESTS=1 run_gate --run-tests)"
+check "DEVKIT_AUTO_APPROVE_TESTS=1 on the parent gate still auto-approves the edited test -> PASS" 0 $? "$out"
+seen="$(cat "$TMP/seen_auto_approve" 2>/dev/null)"
+if [ "$seen" = "unset" ]; then echo "✔ the suite does not see DEVKIT_AUTO_APPROVE_TESTS"
+else echo "✖ the suite sees DEVKIT_AUTO_APPROVE_TESTS='$seen'"; FAILS=$((FAILS + 1)); fi
 make_repo "true"
 echo "fun ok() = 2" > src/Core.kt && mkdir -p src/test && echo "assert(ok() == 2)" > src/test/NewTest.kt
 out="$(run_gate --run-tests)"; check "new RED test file is allowed -> PASS" 0 $? "$out"
