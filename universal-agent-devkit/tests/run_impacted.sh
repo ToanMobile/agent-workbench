@@ -155,11 +155,12 @@ run_one() { # <test> <out dir>
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
        bash "$1" >"$o.log" 2>&1 || rc=$?
   echo "$rc" >"$o.rc"
-  # #427 / log trống khi quá 900 s (27/10): ✔/✖ chỉ in ở vòng cuối, gate giết suite thì log rỗng. Một dòng tiến độ ra stderr ngay khi
-  # test xong, một printf (worker xargs song song không xé dòng); không mở đầu ✔/✖/↺, không khớp FAIL_LINE của gate, có đường dẫn test.
-  printf '· done rc=%s %ss %s\n' "$rc" "$((SECONDS - t0))" "$1" >&2
   # B2 (audit 25/10): kết quả ghi NGAY khi test xong — một TIMEOUT của cả suite (gate giết nhóm) không còn xoá PASS đã có
   [ -n "${DEVKIT_PTC:-}" ] && python3 -I "$DEVKIT_PTC" record "$2" "$1" "$rc" >"$o.ptc" 2>&1
+  # #427 / log trống khi quá 900 s (27/10): ✔/✖ chỉ in ở vòng cuối, gate giết suite thì log rỗng. Một dòng tiến độ ra stderr ngay khi
+  # test xong, một printf (worker xargs song song không xé dòng); không mở đầu ✔/✖/↺, không khớp FAIL_LINE của gate, có đường dẫn test.
+  # In SAU bước ghi B2: người đọc stderr đã chết (gate bị SIGKILL) thì printf nhận SIGPIPE và worker chết — PASS đã ghi trước đó.
+  printf '· done rc=%s %ss %s\n' "$rc" "$((SECONDS - t0))" "$1" >&2
   return 0
 }
 export -f run_one
