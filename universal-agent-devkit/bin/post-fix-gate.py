@@ -5289,6 +5289,29 @@ RUN_LOG_KEEP_LINES = 4000
 RUN_LOG_LINE_MAX = 3000
 RUN_LOG_STALE_TMP_S = 3600        # a rotation temp file older than this belongs to a dead run
 _MAIN_T0 = None                   # time.monotonic() at the start of main()
+_MAIN_LOAD1 = None                # #472 C: tải 1 phút lúc main() bắt đầu (runs.jsonl load1)
+# #472: worktree scratch của điểm gộp (scripts/git/integrate.py, .claude/bin/super-board-merge-gate.sh, super-board-merge-train.sh);
+# cùng tiền tố với scripts/governance/gate_speed_report.py MERGE_POINT_PREFIXES và bin/batch_canary.py
+MERGE_POINT_PREFIXES = (".integrate-scratch-", ".merge-scratch-", ".train-scratch-")
+RUN_LOG_CHANGED_MAX = 50          # đường dẫn tối đa trong changed_files của một dòng runs.jsonl (n_changed vẫn là số thật)
+
+
+def at_merge_point(project_dir) -> bool:
+    """True khi một thành phần của đường dẫn project bắt đầu bằng tiền tố scratch của điểm gộp. Chỉ xét chuỗi (không lstat/realpath):
+    _log_gate_run không được chạm hệ thống file ngoài file của nó (tests/gates/test_gate_run_log.sh)."""
+    return any(p.startswith(MERGE_POINT_PREFIXES) for p in os.path.normpath(str(project_dir)).split(os.sep))
+
+
+def run_log_force_reason(args, force_reason):
+    """Vì sao lượt này chạy full (#472 C), nhãn ổn định cho runs.jsonl: "--tree", "--full", "--force-full", "POSTFIX_GATE_FORCE_FULL",
+    "POSTFIX_GATE_FULL", "CI", "--record-lesson"; "" khi lượt impacted. force_full_reason trả nhãn theo ngôn ngữ (--record-lesson)."""
+    if not force_reason:
+        return ""
+    if getattr(args, "tree", None) is not None:
+        return "--tree"
+    if str(force_reason).startswith("--record-lesson"):
+        return "--record-lesson"
+    return str(force_reason).split("=", 1)[0][:32]
 # Per-phase seconds of the run, written as `steps` in the record (2026-10-15: runs.jsonl said how long a run took and how long its suites
 # ran, so the 28.6 % of OfficeReader's gate time outside the suites could not be attributed). _lap(name) charges the time since the previous
 # lap (main()'s start for the first) to `name`; the laps tile main() from its first line to the log call, so the steps add up to total_wall_s.
@@ -5374,6 +5397,12 @@ def _run_log_fit(rec):
     def dump():
         return (json.dumps(rec, separators=(",", ":")) + "\n").encode("ascii")
     data = dump()
+    # #472 C: cắt changed_files rồi ran_suites trước (n_changed giữ số thật; suites vẫn ghi giây của suite đã chạy), rồi tới suites như cũ
+    for k in ("changed_files", "ran_suites"):
+        while len(data) > RUN_LOG_LINE_MAX and rec.get(k):
+            rec[k] = rec[k][:len(rec[k]) // 2]
+            rec[k + "_cut"] = True
+            data = dump()
     suites = rec["suites"]
     order = sorted(range(len(suites)), key=lambda i: (suites[i][1] != "PASS",
                                                       suites[i][2] if suites[i][1] == "PASS" and suites[i][2] is not None else -i))
@@ -5571,6 +5600,7 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         # B9: the verdict and suites_wall above read every suite; the line lists only those that ran or did not PASS
         listed = [s for s in suites if s[2] is not None or s[1] != "PASS"]
         z = time.strftime("%z")
+        ran = {id(t) for t in (ran_cmds or {}).values()}
         rec = {
             "v": 1,
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S") + (z[:3] + ":" + z[3:] if len(z) == 5 else ""),
@@ -5596,7 +5626,17 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             "suites_wall_s": suites_wall,
             "force_full": bool(getattr(args, "force_full", False)),
             "impacted_run": bool(impacted_run),
+            # #472 C: đủ dữ liệu để đo theo task, theo tải máy và theo lý do chạy full (scripts/governance/gate_speed_report.py)
+            "force_reason": run_log_force_reason(args, force_reason),
+            "merge_point": at_merge_point(project_dir),
+            "task": str(args.task)[:80] if getattr(args, "task", None) else None,
+            "load1": _MAIN_LOAD1,
+            "ncpu": os.cpu_count() or None,
+            "changed_files": [f[:200] for f in files[:RUN_LOG_CHANGED_MAX]],
+            "ran_suites": [str(t.get("id") or "?")[:40] for t in regression_tests if id(t) in ran],
         }
+        if len(files) > RUN_LOG_CHANGED_MAX:
+            rec["changed_files_cut"] = True
         waits = _run_log_slot_waits(regression_tests, slot_waits)
         if waits:
             rec["slot_wait_s"] = waits
@@ -5614,8 +5654,12 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
 
 
 def main():
-    global _MAIN_T0, _STEP_LAST
+    global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1
     _MAIN_T0 = time.monotonic()
+    try:
+        _MAIN_LOAD1 = round(os.getloadavg()[0], 2)
+    except (OSError, AttributeError):
+        _MAIN_LOAD1 = None
     _STEP_LAST = None
     _STEPS.clear()   # one run, one set of steps (a test may call main() again in the same process)
     if threading.current_thread() is threading.main_thread():

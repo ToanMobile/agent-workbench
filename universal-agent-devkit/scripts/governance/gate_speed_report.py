@@ -12,12 +12,13 @@ Quy ước in ra:
   Thêm một dòng "incl. busy/reused flags": chỉ bỏ verdict BUSY/REUSED (lượt không chạy gì), giữ lượt có cờ busy /
   reused_full_pass / deferred — để thấy cả hai số.
 - suite liệt kê = mọi dòng trong "suites"; suite thực chạy = dòng có số giây. Với impacted chỉ đếm lượt không BUSY/REUSED/deferred
-  và in trung bình mỗi lượt; với --full đếm mọi lượt.
+  và in trung bình mỗi lượt; với mode=full đếm mọi lượt.
 - xanh lần đầu: chỉ nhóm theo trường task; lượt thử = lượt impacted không BUSY/REUSED/deferred, theo epoch; nhóm xanh lần đầu khi
   lượt thử đầu tiên là PASS. Không bản ghi nào có task thì in n/a: nhóm theo fp phần lớn chỉ một lượt, không phải task.
-- --full hợp lệ = project bắt đầu bằng .integrate-scratch- / .merge-scratch- / .train-scratch- (worktree tạm của integrate, merge
-  gate, merge train — như bin/batch_canary.py); mọi --full khác (kể cả final-gate, gate-batch-integrate) là ngoài điểm gộp.
-  Mọi bản ghi --full đều đếm, kể cả BUSY (lượt đã được gọi).
+- mode=full runs: mode=full không chỉ là --full (còn CI, --record-lesson, POSTFIX_GATE_FORCE_FULL...). Điểm gộp = trường
+  merge_point (#472 C) khi có; bản ghi cũ thì project bắt đầu bằng .integrate-scratch- / .merge-scratch- / .train-scratch-
+  (worktree tạm của integrate, merge gate, merge train — như bin/batch_canary.py). Khi log có force_reason thì in thêm phân bố
+  mỗi ngày theo force_reason (bản ghi thiếu = unknown). Mọi bản ghi mode=full đều đếm, kể cả BUSY (lượt đã được gọi).
 - impacted_command used: lượt impacted (bỏ BUSY/REUSED/deferred) có impacted_run=true; chỉ suite matrix có impacted_command mới
   đặt cờ này, nên số này không đo việc thu hẹp test và không vào bảng trước/sau.
 - REG-DK-ALL-01: mọi lần suite đó có trong một lượt; p50/p90 trên các lần có số giây. Thêm thời gian lượt impacted (không
@@ -128,10 +129,19 @@ def metrics(recs):
     m["first_green_pass"] = sum(1 for v in first.values() if v == "PASS")
     m["first_green_pct"] = round(100.0 * m["first_green_pass"] / len(first), 1) if first else None
     per_day = collections.OrderedDict()
+    reasons = collections.OrderedDict()
     for r in full:
         d = per_day.setdefault(day(r), [0, 0])
-        d[0 if str(r.get("project", "")).startswith(MERGE_POINT_PREFIXES) else 1] += 1
+        mp = r.get("merge_point")
+        if not isinstance(mp, bool):
+            # bản ghi cũ (trước #472 C) không có merge_point: dùng quy tắc tiền tố project
+            mp = str(r.get("project", "")).startswith(MERGE_POINT_PREFIXES)
+        d[0 if mp else 1] += 1
+        fr = r.get("force_reason")
+        reasons.setdefault(day(r), collections.Counter())[fr if isinstance(fr, str) and fr else "unknown"] += 1
     m["full_per_day"] = per_day
+    # chỉ in theo force_reason khi log có trường này (#472 C); log cũ thì bỏ hẳn
+    m["full_reason_per_day"] = reasons if any(isinstance(r.get("force_reason"), str) and r["force_reason"] for r in full) else None
     m["full_merge_point"] = sum(v[0] for v in per_day.values())
     m["full_outside"] = sum(v[1] for v in per_day.values())
     a = [s for r in recs for s in r["suites"] if s[0] == ALL01]
@@ -177,9 +187,13 @@ def print_report(label, m, ignored, out):
     else:
         w("first green impacted: n/a (no task field; fp groups are not tasks)\n")
     for d, (ok, bad) in m["full_per_day"].items():
-        w("full %s: merge_point=%d outside=%d\n" % (d, ok, bad))
-    w("full total: merge_point=%d outside=%d (merge point = %s)\n" % (m["full_merge_point"], m["full_outside"],
-                                                                      " ".join(p + "*" for p in MERGE_POINT_PREFIXES)))
+        w("mode=full runs %s: merge_point=%d outside=%d\n" % (d, ok, bad))
+    w("mode=full runs total: merge_point=%d outside=%d (merge point = field merge_point, else %s)\n" % (
+        m["full_merge_point"], m["full_outside"], " ".join(p + "*" for p in MERGE_POINT_PREFIXES)))
+    w("note: mode=full also covers CI, --record-lesson and POSTFIX_GATE_FORCE_FULL\n")
+    if m["full_reason_per_day"]:
+        for d, c in m["full_reason_per_day"].items():
+            w("mode=full force_reason %s: %s\n" % (d, counts(c)))
     st = m["all01_status"]
     other = m["all01_n"] - sum(st[k] for k in ("PASS", "FAIL", "TIMEOUT", "UNTESTED"))
     w("%s: n=%d PASS=%d FAIL=%d TIMEOUT=%d UNTESTED=%d other=%d p50=%s p90=%s\n" % (
