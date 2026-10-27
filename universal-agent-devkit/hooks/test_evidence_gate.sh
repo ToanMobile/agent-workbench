@@ -1568,7 +1568,16 @@ def _trap_keeps_exit(stmt):
     return "$(" not in body and "`" not in body and all(
         _single_command(p) and _trap_piece_safe(_words(p) or [""]) for p in _split_segments(body))
 
+_TRAP_MEMO = [None, -1, False]   # (lệnh, số lệnh Bash đã thấy, kết quả): _own_exit hỏi cho TỪNG runner kit của cùng một lệnh
+
 def _exit_trapped(cmd):
+    """#427 vòng 3: nhớ kết quả cho lệnh vừa hỏi. 800 lần chạy kit nối bằng `&&` từng tách cả lệnh hai lần cho mỗi lần chạy (R×N: hơn 6 s
+    CPU, 2 400 lần chạy là quá trần Stop). Khoá gồm số lệnh Bash của phiên vì _command_segments thay biến theo các lệnh trước."""
+    if _TRAP_MEMO[0] is not cmd or _TRAP_MEMO[1] != len(bash_cmds):
+        _TRAP_MEMO[:] = [cmd, len(bash_cmds), _exit_trapped_at(cmd)]
+    return _TRAP_MEMO[2]
+
+def _exit_trapped_at(cmd):
     raw = 0
     for s in _split_segments(cmd):
         t = _heredoc_head(s) or s
@@ -2020,11 +2029,20 @@ def _brace_count(w, depth=0):
         i = j + 1
     return n
 
+_JOINED = [None, ""]
+
+def _joined(segs):
+    if _JOINED[0] is not segs:
+        _JOINED[:] = [segs, "\x00".join(segs)]
+    return _JOINED[1]
+
 def _label_code(m, txt, segs, ran=False):
     """0 / 1 (không 0) / None: dòng `<label>=N` của echo m in ra đúng một lần, và chỉ một echo của lệnh in nhãn đó ở đầu dòng (#427: hai
     `echo "exit=…"`, một in mã của lệnh khác, một in rỗng vì `${PIPESTATUS[0]}` của zsh, đã gắn nhầm mã). ran: mã 126 / 127 (lệnh không
     chạy được, `timeout: command not found`) không phải mã của runner: None."""
-    if not m or sum(len(re.findall(r"\b(?:echo|printf)\s+[\"']?" + re.escape(m.group(2)) + r"=", s)) for s in segs) != 1:
+    # Một lần quét trên các segment nối bằng \x00 (không là \s: không khớp vắt qua hai segment), không một lần gọi regex cho mỗi segment
+    # (#427 vòng 3: R×N lời gọi khi mỗi runner có echo nhãn riêng).
+    if not m or len(re.findall(r"\b(?:echo|printf)\s+[\"']?" + re.escape(m.group(2)) + r"=", _joined(segs))) != 1:
         return None
     hits = re.findall(r"(?m)^[^\S\n]*" + re.escape(m.group(2)) + r"=(\d+)\s*$", txt)
     # Zero or not, read as text: int() of a 5 000-digit `rc=111…` raised past Python's 4 300-digit limit and ended the transcript
@@ -2092,6 +2110,7 @@ _ALWAYS_OK = re.compile(r"(?:^|\|)[^\S\n]*(?:\{[^\S\n]+)?(?:true|:|echo)(?![\w.:
 _ALWAYS_FAIL = re.compile(r"(?:^|\|)[^\S\n]*(?:\{[^\S\n]+)?(?:false|![^\S\n]+(?:true|:))(?![\w.:-])[^|]*$")
 _EXIT_SEG = re.compile(r"[^\S\n]*(?:\{[^\S\n]+)?(?:exit(?![\w.:-])|exec[^\S\n]+(?![\d<>&{\s]))[^|]*$")
 _CONST_COND = re.compile(r"[^\S\n]*(?:(true|:|![^\S\n]+false)|(false|![^\S\n]+(?:true|:)))[^\S\n]*")
+_FUNC_OPEN = re.compile(r"[^\S\n]*(?:function[^\S\n]+[^\s;&|(){}<>=]+(?:[^\S\n]*\([^\S\n]*\))?|[^\s;&|(){}<>=]+[^\S\n]*\([^\S\n]*\))\s*\{")
 _DEAD_LOOP = re.compile(r"\s*(?:while[^\S\n]+(?:false|![^\S\n]+(?:true|:))|until[^\S\n]+(?:true|:|![^\S\n]+false))[^\S\n]*[;\n]\s*do\b")
 
 def _skips_after_ok(segs, seps, depth=0, raw=False, seq=True):
@@ -2105,6 +2124,8 @@ def _skips_after_ok(segs, seps, depth=0, raw=False, seq=True):
         if re.match(r"\s*\{(?:\s|$)", _QUOTED.sub("", body)):
             # `cd x || { echo gone; exit 1; }; pytest`: `exit` trong nhóm sau && / || chỉ chạy khi nhánh đó chạy (corpus vòng 3)
             groups.append(bool((i and seps[i - 1] in ("&&", "||")) or any(groups)))
+        elif _FUNC_OPEN.match(_QUOTED.sub("", body)):
+            groups.append(True)      # `die() { echo "$1"; exit 1; }`: thân hàm không chạy lúc định nghĩa
         flat_prev = _QUOTED.sub("", segs[i - 1]) if i else ""
         # Lệnh luôn thành công đó phải chắc chắn đã chạy (đầu lệnh, sau `;` / xuống dòng) hay mọi đường tới nó đều để lại mã 0 (sau `||`):
         # `bash t && echo PASS || { echo FAIL; … }` thì nhánh sau `||` vẫn chạy khi t lỗi (corpus #427 vòng 2: 9 ĐỎ thật bị mất).

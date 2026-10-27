@@ -4,6 +4,8 @@
 # blocked.
 #   1  `_hides` cost R×N²: for each runner it re-read every later segment, and _silent of each re-read every later one again. 800 runner +
 #      redirect pairs in one command ran past the Stop cap (the hook is cut, the claim passes). Linear now; bounded by CPU (getrusage).
+#      Same class, another path: _exit_trapped re-split the whole command for every kit run (`bash a && bash b && …`: 1 200 runs took
+#      14.6 s of CPU). (_label_code's one regex call per segment per runner is now one scan; its gain is too small for a stable CPU row.)
 #   2  P1-4 counting read a kit CHECK line `✔ first full run: PASS` (tests/gates/test_postfix_gate.sh) as a run's summary
 #      (_KIT_SUMMARY_EXTRA `…: PASS`): one suite printing two such lines covered a suite that crashed silently (round-1 OCR #7, still open).
 #   3  `_split_segments` did not close a compound on `done;` / `fi;` / `esac;` with no space (all that followed joined the loop); a loop
@@ -114,6 +116,9 @@ case("1 must block: 800 `pytest | tail -1; echo x > f` pairs, no pass summary: b
 KPAIRS = "; ".join("bash tests/a/test_x%d.sh 2>&1 | tail -1; echo x > /tmp/r3_f%d" % (k, k) for k in range(800))
 case("1 must block: 800 `bash tests/…/test_xN.sh | tail -1; echo x > f` pairs, one summary: blocked within the CPU cap",
      after(KPAIRS, "all passed (1)"), 2, cpu=3.0)
+ANDS = " && ".join("bash tests/a/test_x%d.sh" % k for k in range(1200))
+case("1 must pass: 1 200 direct kit runs joined by `&&`, the tool's exit 0: green within the CPU cap (_exit_trapped once per command)",
+     after(ANDS, "✔ a\nall passed (1)"), 0, cpu=3.0)
 case("1 control: one pair with its summary is still green", after("python3 -m pytest -q 2>&1 | tail -1; echo x > /tmp/r3_f", PYOK), 0)
 case("1 control: `pytest | tail -3; echo '5 passed' > /tmp/s; cat /tmp/s` (the file is read later: it stands in)",
      after("python3 -m pytest -q 2>&1 | tail -3; echo '5 passed' > /tmp/s; cat /tmp/s", DOTS), 2)
@@ -219,13 +224,14 @@ for c in ("PATH=\"/bin:/usr/bin:$PATH\" bash tests/a/test_x.sh", "PATH=/usr/bin:
     case("4 control: `%s` (only SIP-protected system directories) is still green" % c, after(c, PYOK if "pytest" in c else "✔ a\nall passed (1)"), 0)
 case("4 must block: `false && pytest; exit 1` forging the RED half of check 7",
      pair("false && python3 -m pytest -q; exit 1", "", "python3 -m pytest -q", PYOK), 2, msg=FIX)
-for c in ("cd sub || exit 1; python3 -m pytest -q", "cd sub || { echo gone; exit 1; }; python3 -m pytest -q", "source venv/bin/activate && python3 -m pytest -q",
+for c in ("cd sub || exit 1; python3 -m pytest -q", "die() { echo \"$1\"; exit 1; }; python3 -m pytest -q || die x",
+          "die() {\n  echo \"$1\"\n  exit 1\n}\npython3 -m pytest -q || die x", "function die { echo x; exit 1; }; python3 -m pytest -q", "cd sub || { echo gone; exit 1; }; python3 -m pytest -q", "source venv/bin/activate && python3 -m pytest -q",
           ". .venv/bin/activate; python3 -m pytest -q", "PYTHONPATH=src python3 -m pytest -q",
           "export PYTHONPATH=src NODE_PATH=x; python3 -m pytest -q", "if [ -d tests ]; then python3 -m pytest -q; else echo none; fi",
           "if true; then python3 -m pytest -q; fi", "true && python3 -m pytest -q", "bash -c 'cd sub && python3 -m pytest -q'",
           "eval \"$(pyenv init -)\"; python3 -m pytest -q", "git commit -qm 'export PATH=x' && python3 -m pytest -q",
           "python3 -m pytest -q; exit 0"):
-    case("4 control: `%s` is still green" % c, after(c, PYOK), 0)
+    case("4 control: `%s` is still green" % c.replace("\n", "⏎"), after(c, PYOK), 0)
 
 print("-- 4b: a runner that is not installed did not run: an earlier command's summary is not its own")
 case("4b must block: `echo 'all checks passed'; pytest | tail -3`, pytest not installed",
