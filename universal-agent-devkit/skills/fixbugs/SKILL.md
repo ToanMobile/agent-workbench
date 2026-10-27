@@ -127,8 +127,9 @@ Phân loại lỗi vào đúng 1 trong 5 cơ chế hỏng hóc thực chiến:
 ### Bước 6: Cổng Kiểm Toán Post-Fix Bắt Buộc (Post-Fix Audit & TIA Gate)
 1. Kích hoạt cổng kiểm toán và checklist đánh dấu tự động:
    ```bash
-   python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full
+   python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief
    ```
+   > Task chỉ chạy gate impacted (lệnh trên: các test mà thay đổi của nhánh chạm tới). KHÔNG chạy `--full` trong task: `--full` chỉ chạy ở điểm gộp — `agent-kit integrate` (worktree tạm `.integrate-scratch-*`), merge gate (`.merge-scratch-*`) và merge train (`.train-scratch-*`).
    > `--run-tests` bắt buộc để có PASS: gate chạy thật các lệnh test trong `regression_matrix.json`. Exit code: `0` PASS · `1` REJECT · `2` CHƯA XÁC MINH (dry-run, file không đọc được, hoặc không test hồi quy nào khớp — thêm `--allow-no-tests` nếu chấp nhận) · `3` không có thay đổi để kiểm. Chỉ exit `0` mới được coi là đạt.
    > Truyền `--task <mã task>` để regression checklist (`.agents/CHECKLIST.md`) ghi lại test nào pass/fail trong task này; bug sửa xong ghi bằng `--record-lesson` sẽ thành một dòng BUG link tới test vừa pass (cùng tiêu đề với dòng đã `bugs add` → dùng lại dòng đó). File thay đổi chưa có test sẽ hiện `⚠️ UNCOVERED` — gắn test thật cho nó (`bin/regression_checklist.py link`), không bịa.
    > **Bắt buộc — link test ĐỎ→XANH vào bug đã ghi ở Bước 1.4:**
