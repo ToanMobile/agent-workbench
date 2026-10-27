@@ -36,11 +36,11 @@ def at(day, hour):
     return calendar.timegm((2026, 10, day, hour - 7, 0, 0))
 
 
-def rec(epoch, mode, source, verdict, wall, fp, project="w", reason=None, suites=(), task=None):
+def rec(epoch, mode, source, verdict, wall, fp, project="w", reason=None, suites=(), task=None, narrowed=False):
     r = {"v": 1, "ts": "", "epoch": epoch, "project": project, "mode": mode, "source": source, "exit": 0 if verdict == "PASS" else 1,
          "verdict": verdict, "fp": fp, "exit_reason": reason or verdict.lower(), "deferred": False, "busy": verdict == "BUSY",
          "reused_full_pass": verdict == "REUSED", "n_changed": 1, "n_docs": 0, "docs_only": False, "no_test_only": False,
-         "suites": [list(s) for s in suites], "suites_wall_s": wall, "force_full": False, "impacted_run": mode == "impacted",
+         "suites": [list(s) for s in suites], "suites_wall_s": wall, "force_full": False, "impacted_run": narrowed,
          "total_wall_s": wall, "steps": {}}
     if task:
         r["task"] = task
@@ -48,7 +48,7 @@ def rec(epoch, mode, source, verdict, wall, fp, project="w", reason=None, suites
 
 
 base = [
-    rec(at(25, 9), "impacted", "cli", "PASS", 100, "A", suites=[("X", "PASS", 10), ("Y", "UNTESTED", None)]),
+    rec(at(25, 9), "impacted", "cli", "PASS", 100, "A", narrowed=True, suites=[("X", "PASS", 10), ("Y", "UNTESTED", None)]),
     rec(at(25, 10), "impacted", "cli", "FAIL", 200, "B", suites=[("X", "FAIL", 20)]),
     rec(at(25, 11), "impacted", "cli", "PASS", 300, "B"),
     rec(at(25, 12), "impacted", "cli", "UNTESTED", 5, "C", reason="edited_test", suites=[("X", "UNTESTED", None)]),
@@ -97,6 +97,7 @@ for line, why in [
     ("full 2026-10-25: merge_point=1 outside=1", "--full ngày 25 tách điểm gộp"),
     ("full 2026-10-26: merge_point=2 outside=1", "--full ngày 26: integrate + train hợp lệ, final-gate ngoài"),
     ("REG-DK-ALL-01: n=4 PASS=2 FAIL=0 TIMEOUT=1 UNTESTED=1 other=0 p50=600.0s p90=900.0s", "thống kê ALL-01"),
+    ("impacted narrowed (impacted_run): 1/8", "lượt impacted có suite chạy lệnh thu hẹp (BUSY/REUSED không tính)"),
     ("ignored lines: 1", "dòng hỏng bị bỏ và đếm"),
 ]:
     chk(line in out.splitlines(), why, "thiếu dòng %r" % line)

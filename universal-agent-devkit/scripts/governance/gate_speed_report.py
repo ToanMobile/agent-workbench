@@ -15,6 +15,8 @@ Quy ước in ra:
 - --full hợp lệ = project bắt đầu bằng .integrate-scratch- / .merge-scratch- / .train-scratch- (worktree tạm của integrate, merge
   gate, merge train — như bin/batch_canary.py); mọi --full khác (kể cả final-gate, gate-batch-integrate) là ngoài điểm gộp.
   Mọi bản ghi --full đều đếm, kể cả BUSY (lượt đã được gọi).
+- impacted narrowed: lượt impacted (bỏ BUSY/REUSED/deferred) có impacted_run=true, tức có suite chạy lệnh thu hẹp; còn lại
+  mọi suite chạy lệnh đầy đủ (vượt trần chọn test, file không map được...).
 - REG-DK-ALL-01: mọi lần suite đó có trong một lượt; p50/p90 trên các lần có số giây.
 --baseline FILE: in thêm bảng | metric | baseline | current | delta | cho cùng cửa sổ --since/--until.
 """
@@ -85,6 +87,10 @@ def metrics(recs):
         walls = [grr.wall(r) for r in imp if r["source"] == src and not skipped(r)]
         m["impacted_%s_n" % src] = len(walls)
         m["impacted_%s_p50_s" % src], m["impacted_%s_p90_s" % src] = pct_stats(walls)
+    # impacted_run = có suite chạy lệnh thu hẹp (impacted_command); false = mọi suite chạy lệnh đầy đủ dù mode=impacted
+    ran_imp = [r for r in imp if not skipped(r)]
+    m["impacted_narrowed"] = sum(1 for r in ran_imp if r.get("impacted_run") is True)
+    m["impacted_narrowed_of"] = len(ran_imp)
     for name, rs in (("impacted", imp), ("full", full)):
         m["suites_%s_listed" % name] = sum(len(r["suites"]) for r in rs)
         m["suites_%s_ran" % name] = sum(1 for r in rs for s in r["suites"] if ran(s))
@@ -140,11 +146,12 @@ def print_report(label, m, ignored, out):
     other = m["all01_n"] - sum(st[k] for k in ("PASS", "FAIL", "TIMEOUT", "UNTESTED"))
     w("%s: n=%d PASS=%d FAIL=%d TIMEOUT=%d UNTESTED=%d other=%d p50=%s p90=%s\n" % (
         ALL01, m["all01_n"], st["PASS"], st["FAIL"], st["TIMEOUT"], st["UNTESTED"], other, fmt_s(m["all01_p50_s"]), fmt_s(m["all01_p90_s"])))
+    w("impacted narrowed (impacted_run): %d/%d\n" % (m["impacted_narrowed"], m["impacted_narrowed_of"]))
     w("ignored lines: %d\n" % ignored)
 
 
 TABLE_KEYS = ("impacted_cli_n", "impacted_cli_p50_s", "impacted_cli_p90_s", "impacted_hook_n", "impacted_hook_p50_s",
-              "impacted_hook_p90_s", "suites_impacted_listed", "suites_impacted_ran", "first_green_pct", "full_merge_point",
+              "impacted_hook_p90_s", "impacted_narrowed", "suites_impacted_listed", "suites_impacted_ran", "first_green_pct", "full_merge_point",
               "full_outside", "all01_n", "all01_p50_s", "all01_p90_s")
 
 
