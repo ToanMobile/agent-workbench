@@ -95,8 +95,9 @@ for line, why in [
     ("suite status: FAIL=1 PASS=4 TIMEOUT=1 UNTESTED=3", "trạng thái suite có TIMEOUT"),
     ("first green impacted (key=task): 0/1 = 0.0%", "xanh lần đầu theo task: T1 gộp F+G, lượt đầu FAIL"),
     ("first green skipped (no task): 6", "lượt không có task không gộp theo fp (8 lượt thử, 2 của T1)"),
-    ("full 2026-10-25: merge_point=1 outside=1", "--full ngày 25 tách điểm gộp"),
-    ("full 2026-10-26: merge_point=2 outside=1", "--full ngày 26: integrate + train hợp lệ, final-gate ngoài"),
+    ("mode=full runs 2026-10-25: merge_point=1 outside=1", "mode=full ngày 25 tách điểm gộp"),
+    ("mode=full runs 2026-10-26: merge_point=2 outside=1", "mode=full ngày 26: integrate + train hợp lệ, final-gate ngoài"),
+    ("note: mode=full also covers CI, --record-lesson and POSTFIX_GATE_FORCE_FULL", "ghi chú mode=full không chỉ là --full"),
     ("REG-DK-ALL-01: n=4 PASS=2 FAIL=0 TIMEOUT=1 UNTESTED=1 other=0 p50=600.0s p90=900.0s", "thống kê ALL-01"),
     ("impacted_command used (impacted_run): 1/8", "lượt impacted có suite chạy impacted_command (BUSY/REUSED không tính)"),
     ("ignored lines: 1", "dòng hỏng bị bỏ và đếm"),
@@ -105,11 +106,13 @@ for line, why in [
 
 chk("impacted narrowed" not in out, "bỏ dòng impacted narrowed gây hiểu sai", out)
 
+chk("mode=full force_reason" not in out, "log cũ không có force_reason: không in phân bố theo lý do", out)
+
 rc, out = run("--log", cur_path, "--since", "2026-10-26")
-chk(rc == 0 and "full 2026-10-25" not in out and "full 2026-10-26: merge_point=2 outside=1" in out
+chk(rc == 0 and "mode=full runs 2026-10-25" not in out and "mode=full runs 2026-10-26: merge_point=2 outside=1" in out
     and "REG-DK-ALL-01: n=2 PASS=1 FAIL=0 TIMEOUT=0 UNTESTED=1 other=0 p50=300.0s p90=300.0s" in out, "--since lọc theo ngày địa phương", out)
 rc, out = run("--log", cur_path, "--until", "2026-10-25")
-chk(rc == 0 and "full 2026-10-26" not in out and "REG-DK-ALL-01: n=2 PASS=1 FAIL=0 TIMEOUT=1 UNTESTED=0 other=0 p50=750.0s p90=900.0s" in out,
+chk(rc == 0 and "mode=full runs 2026-10-26" not in out and "REG-DK-ALL-01: n=2 PASS=1 FAIL=0 TIMEOUT=1 UNTESTED=0 other=0 p50=750.0s p90=900.0s" in out,
     "--until gồm cả ngày cuối", out)
 
 rc, out = run("--log", cur_path, "--baseline", base_path)
@@ -170,7 +173,16 @@ ext = [
     rec(at(25, 12), "impacted", "hook", "REUSED", 2, "d", suites=[("X", "PASS", None)]),
     busy_flag(rec(at(25, 13), "impacted", "hook", "UNTESTED", 500, "e", suites=[("X", "PASS", 30)])),
     rec(at(25, 14), "impacted", "cli", "PASS", 50, "f", suites=[("X", "PASS", None)]),
+    # #472 C: force_reason / merge_point; merge_point có thì thắng quy tắc tiền tố project, không có thì dùng tiền tố
+    rec(at(25, 15), "full", "cli", "PASS", 10, "g", project=".merge-scratch-a"),
+    rec(at(25, 16), "full", "cli", "PASS", 10, "h", project=".merge-scratch-b"),
+    rec(at(25, 17), "full", "cli", "PASS", 10, "i", project="x"),
+    rec(at(26, 9), "full", "cli", "PASS", 10, "j", project="y"),
 ]
+ext[0]["force_reason"] = ""
+ext[6]["force_reason"] = "--full"
+ext[7]["force_reason"], ext[7]["merge_point"] = "CI", False
+ext[8]["force_reason"], ext[8]["merge_point"] = "--record-lesson", True
 ext_path = os.path.join(TMP, "ext.jsonl")
 with open(ext_path, "w") as f:
     f.write("".join(json.dumps(r) + "\n" for r in ext))
@@ -184,6 +196,10 @@ for line, why in [
     ("impacted without REG-DK-ALL-01 (impacted, not BUSY/REUSED/deferred, >=1 suite with seconds, REG-DK-ALL-01 without seconds): "
      "n=1 p50=100.0s; with REG-DK-ALL-01: n=1 p50=300.0s", "lượt không chạy ALL-01 với bộ lọc in rõ"),
     ("impacted filter: BUSY, REUSED, deferred and reused_full_pass excluded", "in rõ bộ lọc skipped()"),
+    ("mode=full runs 2026-10-25: merge_point=2 outside=1", "merge_point thắng tiền tố project, thiếu thì dùng tiền tố"),
+    ("mode=full runs 2026-10-26: merge_point=0 outside=1", "bản ghi cũ không có merge_point: theo tiền tố"),
+    ("mode=full force_reason 2026-10-25: --full=1 --record-lesson=1 CI=1", "mode=full theo force_reason mỗi ngày"),
+    ("mode=full force_reason 2026-10-26: unknown=1", "bản ghi không có force_reason: unknown"),
     ("impacted_command used (impacted_run): 0/3","impacted_command đếm trên lượt không BUSY/REUSED"),
 ]:
     chk(line in lines, why, "thiếu dòng %r" % line)
