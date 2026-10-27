@@ -91,6 +91,45 @@ def strip_comments(text):
     return "".join(out)
 
 
+# Số fd dính liền phép chuyển hướng: MỘT chữ số (zsh đọc `10>x` là đối số `10` rồi `>x`; bash đọc là fd 10 - giữ như cũ, xem _drop_fd_numbers)
+_FD_NUM = re.compile(r"[0-9](?=[<>])")
+
+
+def _drop_fd_numbers(text):
+    """`text` bỏ số fd dính liền phép chuyển hướng (`2>/dev/null`, `2>>e`, `2>&1`, `1>log`, `0<f`): shell đọc một chữ số không nháy, đứng
+    đầu từ và liền trước `<` / `>`, là số của fd được chuyển, không bao giờ là đối số. shlex tách `2>` thành `2` và `>` nên `2` từng được
+    đọc là toán hạng cuối = đích của cp / ln / install / rsync / scp (#427 vòng 3: `cp x <checkout bị giữ>/f 2>/dev/null` lọt session_lock
+    và worktree_guard), một toán hạng của rm / touch / tee …, thư mục của `cd 2>/dev/null`, hay chính động từ (`2>/dev/null cp …`). Phép
+    chuyển hướng và đích của nó giữ nguyên (`2>/tmp/log` vẫn là redirect /tmp/log). Còn là đối số (đo trên bash và zsh 27/10): `2 >f`
+    (có cách), `'2'>f`, `\\2>f`, `a\\ 2>f`, `a2>f`, `2&>f`; `>&2>f` (`2` là đích của `>&`). ponytail: `10>f` (fd nhiều chữ số của bash)
+    vẫn đọc `10` là đối số như zsh - corpus 27/10 không có lệnh thật nào như thế; nâng lên khi gặp."""
+    out, quote, start, i, n = [], None, True, 0, len(text)
+    while i < n:
+        c = text[i]
+        if quote:
+            if c == "\\" and quote == '"' and i + 1 < n:
+                out.append(text[i:i + 2])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c == "\\":
+            out.append(text[i:i + 2])
+            i, start = i + 2, False
+            continue
+        elif c in "\"'":
+            quote = c
+        elif start and _FD_NUM.match(text, i):   # thành dấu cách, không xoá: `;2>x` / `(2>x` / `&2>x` xoá đi thì shlex gộp `;>` `(>` `&>` làm một
+            out.append(" ")
+            i, start = i + 1, False
+            continue
+        # đầu từ: sau khoảng trắng / ; | ( / & (trừ `&` của `>&` `<&`) ngoài nháy - shlex cũng tách từ ở đó
+        start = not quote and (c in " \t\r\n;|(" or (c == "&" and text[i - 1:i] not in ("<", ">")))
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _cd(here, d):
     """The directory `d` names from `here`; a $VAR / backtick one is unknown: `here` stays (as for cd)."""
     if "$" in d or "`" in d:
@@ -262,7 +301,7 @@ def targets(cmd, here, depth=0, run_bodies=False):
         e = cmd.find("\n", s)
         pos = len(cmd) if e < 0 else e
     try:
-        lex = shlex.shlex(strip_comments("".join(out)), posix=True, punctuation_chars=";&|<>()\n")
+        lex = shlex.shlex(_drop_fd_numbers(strip_comments("".join(out))), posix=True, punctuation_chars=";&|<>()\n")
         lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
         toks = list(lex)
     except ValueError:
