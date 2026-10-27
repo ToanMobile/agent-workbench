@@ -1197,6 +1197,31 @@ ac_after_merge() {
   bash "$HERE/super-board-card.sh" --config "$CONFIG" move "$AC_CARD" Ready >&2 || say "warning: could not move #${AC_CARD} to Ready"
   say "card #${AC_CARD} keeps label ac-open: $(printf '%s\n' "$AC_UNTICKED" | grep -c .) AC line(s) not proven — do not close it or move it to Done"
 }
+# Biên nhận merge (27/10): proof_gate.sh (merge_receipt_evidence) nhận lượt đã gộp qua gate này kể cả khi gate chạy nền, output vào file
+# (không có dòng "merged <H>" trong transcript). Ghi <git common dir>/postfix-gate/merge_receipts/<PR>-<HEAD_SHA>.json: pr, head (HEAD_SHA,
+# commit truyền cho --match-head-commit), base (BASE_SHA gộp vào scratch), verified_tree (cây của MERGED_SHA, cây mà vòng verify chạy trên),
+# squash (commit gộp GitHub báo, null khi không đọc được), time, session (id phiên Claude của môi trường, rỗng khi không có). proof_gate tự
+# chứng thực bằng git (squash có cha = base, cây = verified_tree trên origin THẬT), không tin file này. Gọi sau khi merge thành công: lỗi ở
+# đây chỉ cảnh báo, không đổi exit. $1 (tuỳ chọn): sha squash đã biết (nhánh mất phản hồi đọc nó từ pr_state), khỏi hỏi GitHub lần nữa.
+write_merge_receipt() {
+  local gd sq="${1:-}"
+  gd=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || return 1
+  [ -n "$sq" ] || sq=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json mergeCommit -q '.mergeCommit.oid // ""' 2>/dev/null) || sq=""
+  find "$gd/postfix-gate/merge_receipts" -maxdepth 1 -type f -name '*.json' -mtime +7 -delete 2>/dev/null || true
+  python3 - "$gd/postfix-gate/merge_receipts" "$PR" "$HEAD_SHA" "$BASE_SHA" "$(git -C "$REPO_PATH" rev-parse "${MERGED_SHA}^{tree}" 2>/dev/null)" "$sq" \
+    "${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}" <<'PY'
+import json, os, re, sys, tempfile, time
+d, pr, head, base, tree, sq, sid = sys.argv[1:8]
+if not all(re.fullmatch(r"[0-9a-f]{40}", x) for x in (head, base, tree)):
+    sys.exit("head/base/tree not 40-hex")
+os.makedirs(d, exist_ok=True)
+fd, tmp = tempfile.mkstemp(prefix=".tmp_receipt.", dir=d)
+with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    json.dump({"pr": int(pr), "head": head, "base": base, "verified_tree": tree,
+               "squash": sq if re.fullmatch(r"[0-9a-f]{40}", sq) else None, "time": time.time(), "session": sid}, fh)
+os.replace(tmp, os.path.join(d, "%d-%s.json" % (int(pr), head)))
+PY
+}
 
 # --match-head-commit makes GitHub refuse if anything was pushed after HEAD_SHA,
 # including during the verification run above.
@@ -1206,6 +1231,7 @@ if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
   say "merged ${HEAD_SHA}"
+  write_merge_receipt || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
   ac_after_merge
   board_notify send --card "PR #${PR}" --repo "$REPO" --title "$(pr_title)" --text "✅ đã merge ${HEAD_SHA}"
   # Dọn sau merge: fast-forward nhánh base local và xoá worktree + nhánh local của CHÍNH thẻ vừa merge
@@ -1405,6 +1431,10 @@ while :; do
   STATE=$(pr_state) || exit $?
   if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then
     say "merge response was lost; GitHub confirms the merge commit"
+    # Nhánh này không tới bước fetch sau merge: lấy squash về kho object chung để proof_gate đọc được nó (lỗi mạng: chỉ bỏ qua).
+    git -C "$REPO_PATH" fetch origin "$BASE" --quiet 2>/dev/null || true
+    write_merge_receipt "$(echo "$STATE" | jq -r '.mergeCommit.oid // ""' 2>/dev/null || true)" \
+      || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
     ac_after_merge
     exit 0
   fi

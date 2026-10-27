@@ -509,6 +509,12 @@ configure_agent() {
   esac
 }
 
+# Mỗi adapter đều đặt .agents/skills (devkit_place_skills); file này cho các adapter sau trong
+# cùng lượt cài biết bộ skill đó đã đặt xong, khỏi làm lại 3 lần với -a all.
+DEVKIT_SKILLS_DONE_FILE="$(mktemp "${TMPDIR:-/tmp}/devkit-skills-done.XXXXXX")" || DEVKIT_SKILLS_DONE_FILE=""
+export DEVKIT_SKILLS_DONE_FILE
+trap 'rm -f "${DEVKIT_SKILLS_DONE_FILE:-}"' EXIT
+
 for agent_item in "${AGENT_LIST[@]}"; do
   agent_clean="$(echo "$agent_item" | tr '[:upper:]' '[:lower:]' | xargs)"
   configure_agent "$agent_clean"

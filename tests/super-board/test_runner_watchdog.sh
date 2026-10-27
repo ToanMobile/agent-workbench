@@ -734,6 +734,8 @@ awk '/^run_capped\(\) \{/{p=1} p{print} p&&/^}/{p=0}' "$BIN/super-board-watchdog
 printf '. "%s"\nset -e\nrun_capped 30 sleep 20 || true\necho AFTER\n' "$TMP/rc_fn.sh" > "$TMP/rc_int.sh"
 rc_int=$(python3 - "$TMP/rc_int.sh" <<'PY'
 import os, signal, subprocess, sys, time
+# Bash không đặt lại được SIGINT đã bị bỏ qua lúc vào (train của hàng đợi merge chạy bằng `&`, 27/10): con thừa hưởng SIG_DFL từ đây.
+signal.signal(signal.SIGINT, signal.SIG_DFL)
 p = subprocess.Popen(["bash", sys.argv[1]], stdout=subprocess.PIPE, start_new_session=True)
 time.sleep(1)
 os.killpg(p.pid, signal.SIGINT)
