@@ -39,8 +39,18 @@
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="${TE_HOOK:-$DEVKIT_DIR/hooks/test_evidence_gate.sh}"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)" || exit 1
+ROOT="$TMP"
+PIDS=""   # process group của các nhóm đang chạy
+cleanup() {   # kết thúc thường, lỗi, Ctrl-C hay TERM: dừng trọn từng nhóm (process group riêng, không bao giờ `kill 0`), rồi xoá thư mục chạy
+  local p
+  for p in $PIDS; do kill -TERM -- "-$p" 2>/dev/null; done
+  wait 2>/dev/null
+  rm -rf "$ROOT"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -119,6 +129,19 @@ with open(out, "w") as fh:
 PY
 }
 
+# Định nghĩa dùng chung cho nhiều nhóm (27/10: dời lên trước các nhóm, nội dung giữ nguyên)
+PASSCLAIM='Đã chạy lại bộ test: 12/12 test pass.'
+FIXCLAIM='Đã fix bug X trong src/a.py.'
+CLAIM='Lần này lộ thêm một lỗi của chính hook: hai script kiểm tra tôi đã chạy và thấy xanh (`test_repo_consistency.sh` và `test_agents_md_block_size.sh`) đều là script bash.'
+# steps_after_edit <cmd> <output>: an edit of src/a.py, then the command. pair <cmd> <red output> <green output>: run, edit, run again.
+steps_after_edit() { python3 -c 'import json,sys; print(json.dumps([["edit",sys.argv[1]],["bash",sys.argv[2],sys.argv[3],False]]))' "$P/src/a.py" "$1" "$2"; }
+pair() { python3 -c 'import json,sys; c=sys.argv[2]; print(json.dumps([["bash",c,sys.argv[3],False],["edit",sys.argv[1]],["bash",c,sys.argv[4],False]]))' "$P/src/a.py" "$1" "$2" "$3"; }
+# pair2 <red cmd> <red output> <green cmd> <green output>: a FAILING run (is_error), an edit of src/a.py, then the second command.
+pair2() { python3 -c 'import json,sys; a=sys.argv; print(json.dumps([["bash",a[2],a[3],True],["edit",a[1]],["bash",a[4],a[5],False]]))' "$P/src/a.py" "$1" "$2" "$3" "$4"; }
+PYRED=$'FAILED tests/test_a.py::test_x - assert 1 == 2\n1 failed in 0.12s'
+KITRED=$'✖ case 1\n1 failed of 3'
+
+grp_a() {
 echo "-- A. the cycle name in a plan / proposal / prohibition is no result (real replies, f294e5d9 L297, L318, L1094)"
 # L297 as written ("Sửa ở template của kit, kèm test RED→GREEN, rồi đồng bộ sang các repo.") carries no plan marker, and a bare ", rồi"
 # cannot tell it from a done report (leader, 2026-10-25): the plan sentence below states it is the next step.
@@ -154,9 +177,10 @@ run 2 "$EMPTY" 'Mỗi sửa có test ĐỎ→XANH, rồi merge vào main.'
 run 2 "$EMPTY" 'Mỗi sửa có test ĐỎ→XANH, rồi merge vào main, chưa push.'
 run 2 "$EMPTY" 'Sau khi gỡ luật chặn chạy test ĐỎ→XANH thì mọi ca đều qua.'
 echo "-- A. the real claim of f294e5d9 L1107 stays a claim with no evidence"
-CLAIM='Lần này lộ thêm một lỗi của chính hook: hai script kiểm tra tôi đã chạy và thấy xanh (`test_repo_consistency.sh` và `test_agents_md_block_size.sh`) đều là script bash.'
 run 2 "$EMPTY" "$CLAIM"
+}
 
+grp_b_c() {
 echo "-- B. a kit suite with its exit echoed by the next segment (f294e5d9 use#412 / use#349)"
 transcript "$TMP/b1.jsonl" '[["bash","bash universal-agent-devkit/tests/verification/test_repo_consistency.sh > /tmp/rc3.log 2>&1; echo \"rc_exit=$?\"; grep -E \"✘|R5 removed\" /tmp/rc3.log","rc_exit=0\n✔ R5 removed deprecated aliases stay removed\n✔ R5 every alias in sync_commands.sh is a link",false]]'
 run 0 "$TMP/b1.jsonl" "$CLAIM"
@@ -169,11 +193,6 @@ transcript "$TMP/b4.jsonl" '[["bash","bash tests/a/test_x.sh; bash tests/a/test_
 run 2 "$TMP/b4.jsonl" "$CLAIM"
 transcript "$TMP/b5.jsonl" '[["bash","for f in tests/a/test_x.sh tests/a/test_y.sh; do bash \"$f\" > /dev/null 2>&1; done; echo \"rc=$?\"","rc=0",false]]'
 run 2 "$TMP/b5.jsonl" "$CLAIM"
-PASSCLAIM='Đã chạy lại bộ test: 12/12 test pass.'
-FIXCLAIM='Đã fix bug X trong src/a.py.'
-# steps_after_edit <cmd> <output>: an edit of src/a.py, then the command. pair <cmd> <red output> <green output>: run, edit, run again.
-steps_after_edit() { python3 -c 'import json,sys; print(json.dumps([["edit",sys.argv[1]],["bash",sys.argv[2],sys.argv[3],False]]))' "$P/src/a.py" "$1" "$2"; }
-pair() { python3 -c 'import json,sys; c=sys.argv[2]; print(json.dumps([["bash",c,sys.argv[3],False],["edit",sys.argv[1]],["bash",c,sys.argv[4],False]]))' "$P/src/a.py" "$1" "$2" "$3"; }
 echo "-- B. must still block: the echoed \$? of a segment that names a test file but runs no test (2026-10-25 review of af339645, P1)"
 for c in 'bash -n tests/a/test_x.sh; echo "rc=$?"' \
          'shellcheck tests/a/test_x.sh; echo "sc=$?"' \
@@ -208,7 +227,9 @@ run 2 "$TMP/c3.jsonl" 'Đã fix bug X trong src/a.py.'
 echo "-- C. a real red run still is the RED half"
 transcript "$TMP/c4.jsonl" "[[\"bash\",\"bash tests/a/test_x.sh\",\"Exit code 1\n✖ case 1\n1 failed\",true],[\"edit\",\"$P/src/a.py\"],[\"bash\",\"bash tests/a/test_x.sh\",\"✔ case 1\nall passed\",false]]"
 run 0 "$TMP/c4.jsonl" 'Đã fix bug X trong src/a.py.'
+}
 
+grp_e() {
 echo "-- E. a negated assertion verb before the outcome / result is no claim (real check-7 / check-2 blocks, 10/2026)"
 run 0 "$EMPTY" 'Tôi không gọi chúng là đã fix.'
 run 0 "$EMPTY" 'Tôi chưa chốt đã fix cho toàn card.'
@@ -238,11 +259,9 @@ run 2 "$EMPTY" "It's not an overstatement to say 12/12 tests pass."
 run 2 "$EMPTY" "I'm not exaggerating when I say that tests pass on every platform."
 run 2 "$EMPTY" "We don't hesitate to call it fixed."
 run 2 "$EMPTY" "Never have I been more confident to say that 12/12 tests pass."
+}
 
-# pair2 <red cmd> <red output> <green cmd> <green output>: a FAILING run (is_error), an edit of src/a.py, then the second command.
-pair2() { python3 -c 'import json,sys; a=sys.argv; print(json.dumps([["bash",a[2],a[3],True],["edit",a[1]],["bash",a[4],a[5],False]]))' "$P/src/a.py" "$1" "$2" "$3" "$4"; }
-PYRED=$'FAILED tests/test_a.py::test_x - assert 1 == 2\n1 failed in 0.12s'
-KITRED=$'✖ case 1\n1 failed of 3'
+grp_f() {
 echo "-- F. a non-suite runner whose output went to a log: its echoed exit code decides (fail-open: rc=1 read as green)"
 for c in 'python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"' 'npm test > /tmp/l 2>&1; echo "rc=$?"'; do
   transcript "$TMP/f1.jsonl" "$(steps_after_edit "$c" 'rc=1')"
@@ -293,7 +312,9 @@ rc=1' \
 done
 transcript "$TMP/f8.jsonl" "$(steps_after_edit 'bash tests/a/test_x.sh; python3 -m pytest > /tmp/l 2>&1; echo "rc=$?"' $'all passed (3)\nrc=0')"
 run 0 "$TMP/f8.jsonl" "$PASSCLAIM" "'all passed (3) / rc=0' after \`bash tests/a/test_x.sh; python3 -m pytest > /tmp/l 2>&1; echo \"rc=\$?\"\`: $PASSCLAIM"
+}
 
+grp_g_p_q_h_i_m() {
 echo "-- G. a loop / compound runner gives no green from the absence of a failure marker (fail-open: glob loop always green)"
 for c in 'for f in tests/a/test_*.sh; do bash "$f"; done@@' \
          'for f in tests/a/test_*.sh; do bash "$f" > /dev/null 2>&1; done@@' \
@@ -380,7 +401,9 @@ run 2 "$TMP/i3.jsonl" "$PASSCLAIM" "green, then an Edit record the scan cannot r
 
 echo "-- M. one clause of many outcome claims keeps memory flat (2026-10-26 review, P3b: 8 570 × \" đã fix\" took 1.1 GB of RSS)"
 run_cpu 2 "$EMPTY" "$(long '' ' đã fix' 8570 '')" '8 570 × " đã fix" (60 KB, one clause)' 2.0 300
+}
 
+grp_d_n() {
 echo "-- D. honest runs whose code is read through PIPESTATUS or on the next line still are the evidence (2026-10-26 review, P2 of 322b19db)"
 transcript "$TMP/d1.jsonl" "$(pair2 './gradlew test' $'FAILED\nBUILD FAILED in 2s' './gradlew test 2>&1 | tail -5; echo "exit=${PIPESTATUS[0]}"' $'BUILD SUCCESSFUL in 3s\nexit=0')"
 run 0 "$TMP/d1.jsonl" "$FIXCLAIM" "Gradle red, edit, then BUILD SUCCESSFUL of \`./gradlew test 2>&1 | tail -5; echo \"exit=\${PIPESTATUS[0]}\"\`: $FIXCLAIM"
@@ -444,7 +467,9 @@ done
 echo "-- N. \"not all tests passed\" is no pass summary (2026-10-26 review, R2-M1)"
 transcript "$TMP/n1.jsonl" "$(steps_after_edit 'for d in a b; do python3 -m pytest -q $d > /dev/null 2>&1 || echo "not all tests passed in $d"; done' 'not all tests passed in a')"
 run 2 "$TMP/n1.jsonl" "$PASSCLAIM" "'not all tests passed in a' after a loop of \`python3 -m pytest -q \$d > /dev/null 2>&1 || echo …\`: $PASSCLAIM"
+}
 
+grp_r() {
 echo "-- R. OCR review round 2 (2026-10-26): a run whose exit is not the tool's (P1-1), Gradle's summary for a loop that also hides pytest (P1-3)"
 for c in 'for m in a b; do python3 -m pytest -q $m > /dev/null 2>&1; ./gradlew :$m:test; done@@BUILD SUCCESSFUL in 3s
 BUILD SUCCESSFUL in 2s' \
@@ -508,7 +533,9 @@ BUILD SUCCESSFUL in 2s'; do
   transcript "$TMP/r4.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
   run 0 "$TMP/r4.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
 done
+}
 
+grp_s_t_u() {
 echo "-- S. OCR review round 3 (2026-10-26): a loop's run that pipes its result away or swallows its exit (E1), a run piped away or sent"
 echo "   to a file by \`>&\`, then another command's summary (E2)"
 for c in 'for d in a b; do python3 -m pytest -q $d | head -1; done@@..F......  [100%]
@@ -593,6 +620,28 @@ done
 echo "-- S. still the evidence: \`>&2\` keeps the output in the result"
 transcript "$TMP/s2.jsonl" "$(steps_after_edit 'python3 -m pytest -q tests/a >&2; python3 -m pytest -q tests/b' $'4 passed in 0.10s\n3 passed in 0.10s')"
 run 0 "$TMP/s2.jsonl" "$PASSCLAIM" "'4 passed / 3 passed' after \`python3 -m pytest -q tests/a >&2; python3 -m pytest -q tests/b\`: $PASSCLAIM"
+}
+
+# Chạy các nhóm cùng lúc (tốc độ gate, 27/10: ~210 lần gọi hook tuần tự). Mỗi nhóm có TMP riêng và bản sao riêng của repo P (trạng thái hook
+# nằm ở $P/.claude/audit-gate, nên id phiên te-fb-N trùng giữa các nhóm không đụng nhau), job control chỉ bật cho các lần khởi chạy này (mỗi
+# nhóm một process group, cleanup dừng trọn nhóm). Nhóm chết giữa chừng không để lại file fails: đó là FAIL, không bao giờ là PASS im lặng.
+# Kết quả in theo thứ tự nhóm; N (số lần gọi hook) cộng dồn mọi nhóm như bản tuần tự.
+GROUPS_IN_ORDER="a b_c e f g_p_q_h_i_m d_n r s_t_u"
+set -m
+for grp in $GROUPS_IN_ORDER; do
+  ( set +m; TMP="$ROOT/$grp"; mkdir -p "$TMP" && cp -R "$ROOT/p" "$TMP/p" || exit 1
+    P="$TMP/p"; FAILS=0; N=0
+    "grp_$grp"; echo "$FAILS $N" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &
+  PIDS="$PIDS $!"
+done
+set +m
+wait
+PIDS=""
+for grp in $GROUPS_IN_ORDER; do
+  cat "$ROOT/out.$grp"
+  if [ -f "$ROOT/fails.$grp" ]; then read -r gf gn < "$ROOT/fails.$grp"; FAILS=$((FAILS + gf)); N=$((N + gn))
+  else echo "✖ group $grp did not finish"; FAILS=$((FAILS + 1)); fi
+done
 
 [ "$FAILS" -eq 0 ] && { echo "all passed ($N)"; exit 0; }
 echo "$FAILS failed of $N"; exit 1
