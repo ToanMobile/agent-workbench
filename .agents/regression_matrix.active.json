@@ -1840,6 +1840,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-worker-wrap-term",
+      "watch_files": [
+        ".claude/bin/super-board-worker-wrap.sh",
+        "tests/super-board/test_worker_wrap_term.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WORKER-WRAP-TERM-01",
+          "name": "worker-wrap dừng được worker dù con nuốt mất SIGTERM đầu tiên (TERM tới con trước exec): gửi lại sau 1 s, không treo kill + wait (#489)",
+          "command": "bash tests/super-board/test_worker_wrap_term.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
