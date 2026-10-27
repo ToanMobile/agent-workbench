@@ -8,7 +8,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 WT="${WTL_KIT:-$DEVKIT_DIR}/scripts/git/worktree.py"
 TMP="$(mktemp -d)"; SL=""
-trap '[ -n "$SL" ] && kill "$SL" 2>/dev/null; rm -rf "$TMP"' EXIT
+trap '[ -n "$SL" ] && { kill "$SL" 2>/dev/null; wait "$SL" 2>/dev/null; }; rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 G() { git -C "$1" -c user.email=t@t -c user.name=t "${@:2}"; }
 REALGIT="$(command -v git)"
