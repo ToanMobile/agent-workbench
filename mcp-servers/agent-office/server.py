@@ -54,7 +54,7 @@ DEFAULTS = {
         "includeArchived": False,
     },
     "root": "/Volumes/Data/Toan",
-    "repos": ["agent-workbench", "GeelyEx2", "OfficeReader", "Goods-Triple", "Neighbours"],
+    "repos": ["agent-workbench", "GeelyEx2", "OfficeReader", "Goods-Triple", "Idle-Plaza-3D"],
     "repoPaths": {},
     "claudeProjectsDir": "~/.claude/projects",
     "runnerLogGlobs": ["~/.agent-office/logs/*.log"],
@@ -1107,7 +1107,7 @@ def demo_data(cfg: dict):
         "GeelyEx2": {"Blocked": [41, 35, 36, 37, 38, 39, 40], "Done": [30, 31, 32, 33, 34]},
         "OfficeReader": {"Building": [172], "Review": [87], "Blocked": [150, 151, 152, 153, 154, 155, 156], "Done": [160, 161, 162, 163, 164, 165]},
         "Goods-Triple": {"Blocked": list(range(1, 13))},
-        "Neighbours": {"Review": [19, 22, 25], "Blocked": list(range(26, 37)), "Done": [10, 11, 12, 13, 14]},
+        "Idle-Plaza-3D": {"Review": [19, 22, 25], "Blocked": list(range(26, 37)), "Done": [10, 11, 12, 13, 14]},
     }
     known = {("OfficeReader", 87): "Refactor nhóm C D2 (PR #179)"}
     items = []
@@ -1161,7 +1161,7 @@ def demo_data(cfg: dict):
     or_ticks = [tick("14:44:37", 0, 1, 0, 1, 7, {"b": (0, "172"), "q": (1, None), "r": (0, "87")})]
     gt_ticks = [tick(h, 0, 0, 0, 0, 12, {"b": (1, "1"), "q": (1, None), "r": (1, None)})
                 for h in ("14:42:11", "14:42:44", "14:43:18", "14:43:52", "14:44:25")]
-    nb_ticks = [tick(h, 0, 0, 0, 3, 11, {"b": (1, "41"), "q": (1, "41"), "r": (0, "19")})
+    ip_ticks = [tick(h, 0, 0, 0, 3, 11, {"b": (1, "41"), "q": (1, "41"), "r": (0, "19")})
                 for h in ("14:42:08", "14:42:41", "14:43:15", "14:43:49", "14:44:23")]
 
     sessions = [
@@ -1202,7 +1202,7 @@ def demo_data(cfg: dict):
             ("Bash", "cd .claude/worktrees/issue-87-review && git diff --name-only"),
         ], ticks=or_ticks, tokens=14887973),
         sess("Goods-Triple", "goods-triple-runner", "14:44:25", [], [], ticks=gt_ticks),
-        sess("Neighbours", "neighbours-runner", "14:44:23", [], [], ticks=nb_ticks),
+        sess("Idle-Plaza-3D", "idle-plaza-3d-runner", "14:44:23", [], [], ticks=ip_ticks),
     ]
     manifests = {"GeelyEx2": {"path": "docs/super-board/runs/2026-10-21-geelyex2.md", "mtime": at("13:57:25")}}
     return project, sessions, manifests

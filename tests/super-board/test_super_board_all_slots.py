@@ -41,6 +41,9 @@ def main() -> int:
     board = load()
     slugs = [r["slug"] for r in board.REPOS]
     check(len(slugs) == 6 and "humans-vs-ufos" in slugs, "REPOS includes all 6 boards including humans-vs-ufos", str(slugs))
+    check("idle-plaza-3d" in slugs and "neighbours-from-hell" not in slugs, "REPOS replaces neighbours-from-hell with idle-plaza-3d on Project #5", str(slugs))
+    plaza = next((r for r in board.REPOS if r["slug"] == "idle-plaza-3d"), {})
+    check(plaza.get("dir") == "/Volumes/Data/Toan/Game/Idle-Plaza-3D" and "/projects/5/" in plaza.get("url", ""), "idle-plaza-3d points to /Volumes/Data/Toan/Game/Idle-Plaza-3D and Project #5", str(plaza))
     with tempfile.TemporaryDirectory() as raw:
         slot_dir = board.ensure_heavy_slots(raw)
         names = sorted(p.name for p in Path(slot_dir).glob("heavy-gate-*.lock"))

@@ -215,5 +215,30 @@ class NewCardsAndBulkMove(unittest.TestCase):
         self.assertTrue(all("FRIENDLY" in f for f in r["failed"]), r["failed"])
 
 
+class DefaultReposAndConfig(unittest.TestCase):
+    def test_config_and_defaults_use_idle_plaza_3d_instead_of_neighbours(self):
+        import json
+        with open(os.path.join(HERE, "config.json"), encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        self.assertIn("Idle-Plaza-3D", cfg["repos"])
+        self.assertNotIn("Neighbours-From-Hell", cfg["repos"])
+        self.assertEqual(cfg["repoPaths"].get("Idle-Plaza-3D"), "/Volumes/Data/Toan/Game/Idle-Plaza-3D")
+        self.assertNotIn("Neighbours-From-Hell", cfg["repoPaths"])
+        self.assertIn("Idle-Plaza-3D", server.DEFAULTS["repos"])
+        self.assertNotIn("Neighbours", server.DEFAULTS["repos"])
+        proj, sessions, manifests = server.demo_data(server.DEFAULTS)
+        demo_repos = {it["repo"] for it in proj["items"]}
+        self.assertIn("Idle-Plaza-3D", demo_repos)
+        self.assertNotIn("Neighbours", demo_repos)
+        self.assertTrue(any("Idle-Plaza-3D" in s["cwd"] for s in sessions))
+        st = server.build_state(
+            server.DEFAULTS, proj, {"ok": True}, sessions, {"ok": True},
+            [], server.LocalScanner(server.DEFAULTS), demo=True, manifests=manifests,
+        )
+        by_name = {r["name"]: r for r in st["repos"]}
+        self.assertNotIn("Game", by_name)
+        self.assertIsNotNone(by_name["Idle-Plaza-3D"]["runner"])
+
+
 if __name__ == "__main__":
     unittest.main()

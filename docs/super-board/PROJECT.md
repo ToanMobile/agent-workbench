@@ -1,7 +1,7 @@
 # agent-workbench — project notes for super-board
 
 **What it is.** Home of the Universal Agent DevKit (`universal-agent-devkit/`): hooks, gates, skills and
-the `agent-kit` installer that other repos (GeelyEx2, OfficeReader, Goods, Neighbours-From-Hell) link to.
+the `agent-kit` installer that other repos (GeelyEx2, OfficeReader, Goods, Idle-Plaza-3D, Humans-vs.-UFOs) link to.
 Profile: backend. Primary languages: Python and Bash.
 
 **Where things live**

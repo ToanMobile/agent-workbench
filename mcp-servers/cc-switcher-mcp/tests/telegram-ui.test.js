@@ -13,6 +13,7 @@ import {
   fetchAnthropicProfileQuotaLive,
   balanceRepoAccounts,
   getRepoAssignments,
+  DEFAULT_REPOS,
 } from '../src/profiles.js';
 import {
   saveTelegramConfig,
@@ -264,10 +265,17 @@ test('Telegram UI 5: syncLiveQuotas hien thi % quota con lai, thanh tien trinh v
 test('Telegram UI 6: balanceRepoAccounts chia deu 3 repo finos va 3 repo finos_team, giu nguyen cau hinh cu va ho tro dao nhom tren Telegram', async () => {
   const tmp = createTempDir();
   try {
+    const defaultNames = DEFAULT_REPOS.map((r) => r.name);
+    assert.ok(defaultNames.includes('Idle-Plaza-3D'), 'DEFAULT_REPOS phai chua Idle-Plaza-3D');
+    assert.ok(!defaultNames.includes('Neighbours-From-Hell'), 'DEFAULT_REPOS khong con Neighbours-From-Hell');
+    const plazaEntry = DEFAULT_REPOS.find((r) => r.name === 'Idle-Plaza-3D');
+    assert.equal(plazaEntry.path, '/Volumes/Data/Toan/Game/Idle-Plaza-3D');
+    assert.equal(plazaEntry.defaultAccount, 'finos');
+
     const repoNames = [
       'agent-workbench',
       'OfficeReader',
-      'Neighbours-From-Hell',
+      'Idle-Plaza-3D',
       'GeelyEx2',
       'Goods-Triple-Shelf-Match-3D',
       'Humans-vs.-UFOs',

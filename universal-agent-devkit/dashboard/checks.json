@@ -13,6 +13,17 @@
   "repo": "agent-workbench",
   "area": "hook",
   "group": "SessionStart",
+  "item": "cleanup-wt.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "SessionStart",
   "item": "session_context.sh",
   "kind": "",
   "state": "ok",
@@ -68,6 +79,61 @@
   "repo": "agent-workbench",
   "area": "hook",
   "group": "PreToolUse",
+  "item": "guard-delete-outside.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit|Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-protected-push.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-secrets.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash|Read|Grep",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-worktree-path.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
   "item": "hardware_safety_gate.sh",
   "kind": "",
   "state": "ok",
@@ -104,17 +170,6 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 10
- },
- {
-  "repo": "agent-workbench",
-  "area": "hook",
-  "group": "PreToolUse",
-  "item": "session_lock.sh",
-  "kind": "",
-  "state": "ok",
   "trigger": "Bash",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
   "order": 3
@@ -123,12 +178,12 @@
   "repo": "agent-workbench",
   "area": "hook",
   "group": "PreToolUse",
-  "item": "worktree_guard.sh",
+  "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
-  "order": 11
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 10
  },
  {
   "repo": "agent-workbench",
@@ -140,6 +195,17 @@
   "trigger": "Bash",
   "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
   "order": 7
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 11
  },
  {
   "repo": "agent-workbench",
@@ -178,6 +244,17 @@
   "repo": "agent-workbench",
   "area": "hook",
   "group": "PostToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
+  "group": "PostToolUse",
   "item": "read_ledger.sh",
   "kind": "",
   "state": "ok",
@@ -188,13 +265,24 @@
  {
   "repo": "agent-workbench",
   "area": "hook",
+  "group": "PostToolUse",
+  "item": "session_worktree.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "EnterWorktree|ExitWorktree",
+  "detail": "",
+  "order": 16
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "hook",
   "group": "Stop",
   "item": "claim_check.sh",
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
-  "order": 16
+  "order": 17
  },
  {
   "repo": "agent-workbench",
@@ -205,7 +293,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the gates ran for the wrong project.",
-  "order": 23
+  "order": 24
  },
  {
   "repo": "agent-workbench",
@@ -216,7 +304,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
-  "order": 22
+  "order": 23
  },
  {
   "repo": "agent-workbench",
@@ -227,7 +315,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the living regression checklist must be green",
-  "order": 19
+  "order": 20
  },
  {
   "repo": "agent-workbench",
@@ -238,7 +326,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
-  "order": 17
+  "order": 18
  },
  {
   "repo": "agent-workbench",
@@ -249,7 +337,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
-  "order": 21
+  "order": 22
  },
  {
   "repo": "agent-workbench",
@@ -260,7 +348,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
-  "order": 20
+  "order": 21
  },
  {
   "repo": "agent-workbench",
@@ -271,7 +359,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: compile the TEST source set of every module",
-  "order": 18
+  "order": 19
  },
  {
   "repo": "agent-workbench",
@@ -282,7 +370,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a worktree's work never reached trunk.",
-  "order": 24
+  "order": 25
  },
  {
   "repo": "agent-workbench",
@@ -293,7 +381,7 @@
   "state": "ok",
   "trigger": "idle_prompt",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 25
+  "order": 26
  },
  {
   "repo": "agent-workbench",
@@ -304,7 +392,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 26
+  "order": 27
  },
  {
   "repo": "agent-workbench",
@@ -344,6 +432,16 @@
   "kind": "",
   "state": "ok",
   "trigger": "named in hook: prompt_context.sh",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "create-task",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
   "detail": ""
  },
  {
@@ -490,6 +588,16 @@
   "repo": "agent-workbench",
   "area": "skill",
   "group": "kit skill",
+  "item": "parallel-lanes",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "agent-workbench",
+  "area": "skill",
+  "group": "kit skill",
   "item": "qa-review",
   "kind": "",
   "state": "ok",
@@ -629,8 +737,8 @@
  {
   "repo": "agent-workbench",
   "area": "mcp",
-  "group": "required",
-  "item": "agentmemory",
+  "group": "extra",
+  "item": "cc-switcher-mcp",
   "kind": "",
   "state": "ok",
   "trigger": "tool call",
@@ -684,7 +792,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "hook chạy: review_gate.sh",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "agent-workbench",
@@ -802,9 +910,9 @@
   "group": "p1",
   "item": "Luật riêng của repo (.agents/local/rules)",
   "kind": "luật",
-  "state": "empty",
+  "state": "ok",
   "trigger": "nạp vào phiên",
-  "detail": "chưa có file luật riêng nào"
+  "detail": "1 file luật"
  },
  {
   "repo": "agent-workbench",
@@ -814,23 +922,13 @@
   "kind": "luật",
   "state": "ok",
   "trigger": "gợi ý trong prompt",
-  "detail": "40 bài học"
+  "detail": "63 bài học"
  },
  {
   "repo": "agent-workbench",
   "area": "flow",
   "group": "p1",
   "item": "codebase-memory-mcp",
-  "kind": "MCP",
-  "state": "ok",
-  "trigger": "gọi khi agent cần",
-  "detail": "đã khai báo và bật"
- },
- {
-  "repo": "agent-workbench",
-  "area": "flow",
-  "group": "p1",
-  "item": "agentmemory",
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
@@ -1004,7 +1102,7 @@
   "kind": "test",
   "state": "ok",
   "trigger": "chạy khi dừng",
-  "detail": "10 quy tắc hồi quy"
+  "detail": "83 quy tắc hồi quy"
  },
  {
   "repo": "agent-workbench",
@@ -1074,7 +1172,7 @@
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "agent-workbench",
@@ -1220,71 +1318,71 @@
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-workbench-w1trunk",
+  "item": "red-proof-1n5anz4k",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench-w1trunk"
+  "detail": "/private/var/folders/f_/p7gj74t55l5gb31f1gczc3hm0000gn/T/red-proof-1n5anz4k"
  },
  {
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-a0bbc17ee1c3b97f7",
+  "item": ".merge-scratch-piKdhO",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-a0bbc17ee1c3b97f7"
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/.merge-scratch-piKdhO"
  },
  {
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-a204c71438230f2af",
+  "item": "dropped-card-sweep",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-a204c71438230f2af"
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/dropped-card-sweep"
  },
  {
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-a688bb68e82e9b9a2",
+  "item": "issue-319-build",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-a688bb68e82e9b9a2"
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/issue-319-build"
  },
  {
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-a7a061704665f2cdd",
+  "item": "issue-346-review",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-a7a061704665f2cdd"
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/issue-346-review"
  },
  {
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-aa3f350b6e679b047",
+  "item": "issue-377-build",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-aa3f350b6e679b047"
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/issue-377-build"
  },
  {
   "repo": "agent-workbench",
   "area": "worktree",
   "group": "unmerged?",
-  "item": "agent-ab910bb5c27892b95",
+  "item": "issue-380-build",
   "kind": "",
   "state": "warn",
   "trigger": "",
-  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/agent-ab910bb5c27892b95"
+  "detail": "/Volumes/Data/Toan/agent-workbench/.claude/worktrees/issue-380-build"
  },
  {
   "repo": "GeelyEx2",
@@ -1295,6 +1393,17 @@
   "state": "ok",
   "trigger": "",
   "detail": "8 councils"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "cleanup-wt.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": "",
+  "order": 1000
  },
  {
   "repo": "GeelyEx2",
@@ -1377,6 +1486,61 @@
   "repo": "GeelyEx2",
   "area": "hook",
   "group": "PreToolUse",
+  "item": "guard-delete-outside.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit|Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-protected-push.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-secrets.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash|Read|Grep",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-worktree-path.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PreToolUse",
   "item": "hardware_safety_gate.sh",
   "kind": "",
   "state": "ok",
@@ -1413,9 +1577,9 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "trigger": "Bash",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 10
+  "order": 3
  },
  {
   "repo": "GeelyEx2",
@@ -1424,9 +1588,9 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Bash",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 3
+  "order": 10
  },
  {
   "repo": "GeelyEx2",
@@ -1487,6 +1651,17 @@
   "repo": "GeelyEx2",
   "area": "hook",
   "group": "PostToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
+  "group": "PostToolUse",
   "item": "read_ledger.sh",
   "kind": "",
   "state": "ok",
@@ -1497,13 +1672,24 @@
  {
   "repo": "GeelyEx2",
   "area": "hook",
+  "group": "PostToolUse",
+  "item": "session_worktree.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "EnterWorktree|ExitWorktree",
+  "detail": "",
+  "order": 16
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "hook",
   "group": "Stop",
   "item": "claim_check.sh",
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
-  "order": 16
+  "order": 17
  },
  {
   "repo": "GeelyEx2",
@@ -1514,7 +1700,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the gates ran for the wrong project.",
-  "order": 23
+  "order": 24
  },
  {
   "repo": "GeelyEx2",
@@ -1525,7 +1711,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
-  "order": 22
+  "order": 23
  },
  {
   "repo": "GeelyEx2",
@@ -1547,7 +1733,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the living regression checklist must be green",
-  "order": 19
+  "order": 20
  },
  {
   "repo": "GeelyEx2",
@@ -1558,7 +1744,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
-  "order": 17
+  "order": 18
  },
  {
   "repo": "GeelyEx2",
@@ -1569,7 +1755,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
-  "order": 21
+  "order": 22
  },
  {
   "repo": "GeelyEx2",
@@ -1580,7 +1766,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
-  "order": 20
+  "order": 21
  },
  {
   "repo": "GeelyEx2",
@@ -1591,7 +1777,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: compile the TEST source set of every module",
-  "order": 18
+  "order": 19
  },
  {
   "repo": "GeelyEx2",
@@ -1602,7 +1788,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a worktree's work never reached trunk.",
-  "order": 24
+  "order": 25
  },
  {
   "repo": "GeelyEx2",
@@ -1613,7 +1799,7 @@
   "state": "ok",
   "trigger": "idle_prompt",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 25
+  "order": 26
  },
  {
   "repo": "GeelyEx2",
@@ -1624,7 +1810,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 26
+  "order": 27
  },
  {
   "repo": "GeelyEx2",
@@ -1664,6 +1850,16 @@
   "kind": "",
   "state": "ok",
   "trigger": "named in hook: prompt_context.sh",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "create-task",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
   "detail": ""
  },
  {
@@ -1804,6 +2000,16 @@
   "kind": "",
   "state": "ok",
   "trigger": "named in hook: review_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "parallel-lanes",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
   "detail": ""
  },
  {
@@ -2019,12 +2225,12 @@
  {
   "repo": "GeelyEx2",
   "area": "mcp",
-  "group": "required",
+  "group": "extra",
   "item": "agentmemory",
   "kind": "",
-  "state": "ok",
+  "state": "off",
   "trigger": "tool call",
-  "detail": "đã khai báo và bật"
+  "detail": "đã khai báo nhưng chưa được bật"
  },
  {
   "repo": "GeelyEx2",
@@ -2094,7 +2300,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "hook chạy: review_gate.sh",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "GeelyEx2",
@@ -2214,7 +2420,7 @@
   "kind": "luật",
   "state": "ok",
   "trigger": "nạp vào phiên",
-  "detail": "4 file luật"
+  "detail": "6 file luật"
  },
  {
   "repo": "GeelyEx2",
@@ -2224,23 +2430,13 @@
   "kind": "luật",
   "state": "ok",
   "trigger": "gợi ý trong prompt",
-  "detail": "170 bài học"
+  "detail": "174 bài học"
  },
  {
   "repo": "GeelyEx2",
   "area": "flow",
   "group": "p1",
   "item": "codebase-memory-mcp",
-  "kind": "MCP",
-  "state": "ok",
-  "trigger": "gọi khi agent cần",
-  "detail": "đã khai báo và bật"
- },
- {
-  "repo": "GeelyEx2",
-  "area": "flow",
-  "group": "p1",
-  "item": "agentmemory",
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
@@ -2414,7 +2610,7 @@
   "kind": "test",
   "state": "ok",
   "trigger": "chạy khi dừng",
-  "detail": "22 quy tắc hồi quy"
+  "detail": "26 quy tắc hồi quy"
  },
  {
   "repo": "GeelyEx2",
@@ -2484,7 +2680,7 @@
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "GeelyEx2",
@@ -2627,6 +2823,36 @@
   "detail": "ghi bàn giao khi kết thúc phiên"
  },
  {
+  "repo": "GeelyEx2",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "GeelyEx2-port187",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/GeelyEx2-port187"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "fix-82",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/GeelyEx2/.claude/worktrees/fix-82"
+ },
+ {
+  "repo": "GeelyEx2",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "sb-pack-sync",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/GeelyEx2/.claude/worktrees/sb-pack-sync"
+ },
+ {
   "repo": "OfficeReader",
   "area": "profile",
   "group": "profile",
@@ -2641,6 +2867,17 @@
   "area": "hook",
   "group": "SessionStart",
   "item": "REPO=\"${CLAUDE_PROJECT_DIR:-$PWD}\"; CBM=",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "cleanup-wt.py",
   "kind": "",
   "state": "local",
   "trigger": "any tool",
@@ -2706,6 +2943,61 @@
   "repo": "OfficeReader",
   "area": "hook",
   "group": "PreToolUse",
+  "item": "guard-delete-outside.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit|Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-protected-push.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-secrets.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash|Read|Grep",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-worktree-path.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PreToolUse",
   "item": "hardware_safety_gate.sh",
   "kind": "",
   "state": "ok",
@@ -2742,9 +3034,9 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "trigger": "Bash",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 10
+  "order": 3
  },
  {
   "repo": "OfficeReader",
@@ -2753,9 +3045,9 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Bash",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 3
+  "order": 10
  },
  {
   "repo": "OfficeReader",
@@ -2816,6 +3108,17 @@
   "repo": "OfficeReader",
   "area": "hook",
   "group": "PostToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
+  "group": "PostToolUse",
   "item": "read_ledger.sh",
   "kind": "",
   "state": "ok",
@@ -2826,13 +3129,24 @@
  {
   "repo": "OfficeReader",
   "area": "hook",
+  "group": "PostToolUse",
+  "item": "session_worktree.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "EnterWorktree|ExitWorktree",
+  "detail": "",
+  "order": 16
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "hook",
   "group": "Stop",
   "item": "claim_check.sh",
   "kind": "",
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
-  "order": 16
+  "order": 17
  },
  {
   "repo": "OfficeReader",
@@ -2843,7 +3157,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the gates ran for the wrong project.",
-  "order": 23
+  "order": 24
  },
  {
   "repo": "OfficeReader",
@@ -2854,7 +3168,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
-  "order": 22
+  "order": 23
  },
  {
   "repo": "OfficeReader",
@@ -2865,7 +3179,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the living regression checklist must be green",
-  "order": 19
+  "order": 20
  },
  {
   "repo": "OfficeReader",
@@ -2876,7 +3190,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
-  "order": 17
+  "order": 18
  },
  {
   "repo": "OfficeReader",
@@ -2887,7 +3201,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
-  "order": 21
+  "order": 22
  },
  {
   "repo": "OfficeReader",
@@ -2898,7 +3212,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
-  "order": 20
+  "order": 21
  },
  {
   "repo": "OfficeReader",
@@ -2909,7 +3223,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: compile the TEST source set of every module",
-  "order": 18
+  "order": 19
  },
  {
   "repo": "OfficeReader",
@@ -2920,7 +3234,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a worktree's work never reached trunk.",
-  "order": 24
+  "order": 25
  },
  {
   "repo": "OfficeReader",
@@ -2931,7 +3245,7 @@
   "state": "ok",
   "trigger": "idle_prompt",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 25
+  "order": 26
  },
  {
   "repo": "OfficeReader",
@@ -2942,7 +3256,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 26
+  "order": 27
  },
  {
   "repo": "OfficeReader",
@@ -2982,6 +3296,16 @@
   "kind": "",
   "state": "ok",
   "trigger": "named in hook: prompt_context.sh",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "create-task",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
   "detail": ""
  },
  {
@@ -3128,6 +3452,16 @@
   "repo": "OfficeReader",
   "area": "skill",
   "group": "kit skill",
+  "item": "parallel-lanes",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "OfficeReader",
+  "area": "skill",
+  "group": "kit skill",
   "item": "qa-review",
   "kind": "",
   "state": "ok",
@@ -3267,7 +3601,7 @@
  {
   "repo": "OfficeReader",
   "area": "mcp",
-  "group": "required",
+  "group": "extra",
   "item": "agentmemory",
   "kind": "",
   "state": "ok",
@@ -3342,7 +3676,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "hook chạy: review_gate.sh",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "OfficeReader",
@@ -3472,23 +3806,13 @@
   "kind": "luật",
   "state": "ok",
   "trigger": "gợi ý trong prompt",
-  "detail": "164 bài học"
+  "detail": "165 bài học"
  },
  {
   "repo": "OfficeReader",
   "area": "flow",
   "group": "p1",
   "item": "codebase-memory-mcp",
-  "kind": "MCP",
-  "state": "ok",
-  "trigger": "gọi khi agent cần",
-  "detail": "đã khai báo và bật"
- },
- {
-  "repo": "OfficeReader",
-  "area": "flow",
-  "group": "p1",
-  "item": "agentmemory",
   "kind": "MCP",
   "state": "ok",
   "trigger": "gọi khi agent cần",
@@ -3662,7 +3986,7 @@
   "kind": "test",
   "state": "ok",
   "trigger": "chạy khi dừng",
-  "detail": "13 quy tắc hồi quy"
+  "detail": "17 quy tắc hồi quy"
  },
  {
   "repo": "OfficeReader",
@@ -3732,7 +4056,7 @@
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "OfficeReader",
@@ -3888,6 +4212,17 @@
   "repo": "Goods",
   "area": "hook",
   "group": "SessionStart",
+  "item": "cleanup-wt.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "SessionStart",
   "item": "session-start.sh",
   "kind": "",
   "state": "local",
@@ -3954,6 +4289,61 @@
   "repo": "Goods",
   "area": "hook",
   "group": "PreToolUse",
+  "item": "guard-delete-outside.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit|Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-protected-push.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-secrets.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash|Read|Grep",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-worktree-path.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PreToolUse",
   "item": "hardware_safety_gate.sh",
   "kind": "",
   "state": "ok",
@@ -3990,9 +4380,9 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "trigger": "Bash",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 10
+  "order": 3
  },
  {
   "repo": "Goods",
@@ -4001,9 +4391,9 @@
   "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
-  "trigger": "Bash",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 3
+  "order": 10
  },
  {
   "repo": "Goods",
@@ -4075,12 +4465,34 @@
   "repo": "Goods",
   "area": "hook",
   "group": "PostToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PostToolUse",
   "item": "read_ledger.sh",
   "kind": "",
   "state": "ok",
   "trigger": "Read",
   "detail": "PostToolUse hook on Read. Records \"this session looked at",
   "order": 13
+ },
+ {
+  "repo": "Goods",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "session_worktree.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "EnterWorktree|ExitWorktree",
+  "detail": "",
+  "order": 16
  },
  {
   "repo": "Goods",
@@ -4102,7 +4514,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
-  "order": 16
+  "order": 17
  },
  {
   "repo": "Goods",
@@ -4113,7 +4525,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the gates ran for the wrong project.",
-  "order": 23
+  "order": 24
  },
  {
   "repo": "Goods",
@@ -4124,7 +4536,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
-  "order": 22
+  "order": 23
  },
  {
   "repo": "Goods",
@@ -4135,7 +4547,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the living regression checklist must be green",
-  "order": 19
+  "order": 20
  },
  {
   "repo": "Goods",
@@ -4146,7 +4558,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
-  "order": 17
+  "order": 18
  },
  {
   "repo": "Goods",
@@ -4157,7 +4569,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
-  "order": 21
+  "order": 22
  },
  {
   "repo": "Goods",
@@ -4179,7 +4591,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
-  "order": 20
+  "order": 21
  },
  {
   "repo": "Goods",
@@ -4190,7 +4602,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: compile the TEST source set of every module",
-  "order": 18
+  "order": 19
  },
  {
   "repo": "Goods",
@@ -4201,7 +4613,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a worktree's work never reached trunk.",
-  "order": 24
+  "order": 25
  },
  {
   "repo": "Goods",
@@ -4212,7 +4624,7 @@
   "state": "ok",
   "trigger": "idle_prompt",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 25
+  "order": 26
  },
  {
   "repo": "Goods",
@@ -4223,7 +4635,7 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 26
+  "order": 27
  },
  {
   "repo": "Goods",
@@ -4285,6 +4697,16 @@
   "kind": "",
   "state": "ok",
   "trigger": "named in hook: prompt_context.sh",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "create-task",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
   "detail": ""
  },
  {
@@ -4353,9 +4775,9 @@
   "group": "kit skill",
   "item": "generate2dmedia",
   "kind": "",
-  "state": "ok",
+  "state": "excluded",
   "trigger": "agent's own choice only",
-  "detail": ""
+  "detail": "excluded by profile game"
  },
  {
   "repo": "Goods",
@@ -4363,9 +4785,9 @@
   "group": "kit skill",
   "item": "generate2dsprite",
   "kind": "",
-  "state": "ok",
+  "state": "excluded",
   "trigger": "agent's own choice only",
-  "detail": ""
+  "detail": "excluded by profile game"
  },
  {
   "repo": "Goods",
@@ -4425,6 +4847,16 @@
   "kind": "",
   "state": "ok",
   "trigger": "named in hook: review_gate.sh + prompt suggestion: enrich_context.py",
+  "detail": ""
+ },
+ {
+  "repo": "Goods",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "parallel-lanes",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
   "detail": ""
  },
  {
@@ -4543,9 +4975,9 @@
   "group": "kit skill",
   "item": "video2dsprite",
   "kind": "",
-  "state": "ok",
+  "state": "excluded",
   "trigger": "agent's own choice only",
-  "detail": ""
+  "detail": "excluded by profile game"
  },
  {
   "repo": "Goods",
@@ -4600,12 +5032,12 @@
  {
   "repo": "Goods",
   "area": "mcp",
-  "group": "required",
+  "group": "extra",
   "item": "agentmemory",
   "kind": "",
-  "state": "off",
+  "state": "ok",
   "trigger": "tool call",
-  "detail": "đã khai báo nhưng bị tắt trong settings.local.json"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Goods",
@@ -4633,9 +5065,9 @@
   "group": "required",
   "item": "play-store",
   "kind": "",
-  "state": "off",
+  "state": "ok",
   "trigger": "tool call",
-  "detail": "đã khai báo nhưng bị tắt trong settings.local.json"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Goods",
@@ -4643,9 +5075,9 @@
   "group": "required",
   "item": "replicant-mcp",
   "kind": "",
-  "state": "off",
+  "state": "ok",
   "trigger": "tool call",
-  "detail": "đã khai báo nhưng bị tắt trong settings.local.json"
+  "detail": "đã khai báo và bật"
  },
  {
   "repo": "Goods",
@@ -4655,7 +5087,7 @@
   "kind": "",
   "state": "ok",
   "trigger": "hook chạy: review_gate.sh",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "Goods",
@@ -4775,7 +5207,7 @@
   "kind": "luật",
   "state": "ok",
   "trigger": "nạp vào phiên",
-  "detail": "7 file luật"
+  "detail": "11 file luật"
  },
  {
   "repo": "Goods",
@@ -4796,16 +5228,6 @@
   "state": "ok",
   "trigger": "gọi khi agent cần",
   "detail": "đã khai báo và bật"
- },
- {
-  "repo": "Goods",
-  "area": "flow",
-  "group": "p1",
-  "item": "agentmemory",
-  "kind": "MCP",
-  "state": "off",
-  "trigger": "gọi khi agent cần",
-  "detail": "đã khai báo nhưng bị tắt trong settings.local.json"
  },
  {
   "repo": "Goods",
@@ -4975,7 +5397,7 @@
   "kind": "test",
   "state": "ok",
   "trigger": "chạy khi dừng",
-  "detail": "3 quy tắc hồi quy"
+  "detail": "6 quy tắc hồi quy"
  },
  {
   "repo": "Goods",
@@ -5045,7 +5467,7 @@
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
   "repo": "Goods",
@@ -5188,7 +5610,47 @@
   "detail": "ghi bàn giao khi kết thúc phiên"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Goods",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "Goods-Triple-Shelf-Match-3D-port187",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D-port187"
+ },
+ {
+  "repo": "Goods",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "Goods-Triple-Shelf-Match-3D-runner-bw",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D-runner-bw"
+ },
+ {
+  "repo": "Goods",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "issue-1-build",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D/.claude/worktrees/issue-1-build"
+ },
+ {
+  "repo": "Goods",
+  "area": "worktree",
+  "group": "unmerged?",
+  "item": "sb-pack-sync",
+  "kind": "",
+  "state": "warn",
+  "trigger": "",
+  "detail": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D/.claude/worktrees/sb-pack-sync"
+ },
+ {
+  "repo": "Idle-Plaza-3D",
   "area": "profile",
   "group": "profile",
   "item": "game",
@@ -5198,7 +5660,18 @@
   "detail": "8 councils"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
+  "area": "hook",
+  "group": "SessionStart",
+  "item": "cleanup-wt.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "any tool",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "SessionStart",
   "item": "session_context.sh",
@@ -5209,7 +5682,7 @@
   "order": 0
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "SessionStart",
   "item": "session_lock.sh",
@@ -5220,7 +5693,7 @@
   "order": 1
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "UserPromptSubmit",
   "item": "prompt_context.sh",
@@ -5231,7 +5704,7 @@
   "order": 2
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PreToolUse",
   "item": "bash_write_ledger.sh",
@@ -5242,7 +5715,7 @@
   "order": 6
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PreToolUse",
   "item": "block-dangerous-git.sh",
@@ -5253,7 +5726,51 @@
   "order": 4
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-delete-outside.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Idle-Plaza-3D",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit|Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Idle-Plaza-3D",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-secrets.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash|Read|Grep",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Idle-Plaza-3D",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "guard-worktree-path.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Bash",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PreToolUse",
   "item": "hardware_safety_gate.sh",
@@ -5264,7 +5781,7 @@
   "order": 8
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PreToolUse",
   "item": "hardware_safety_gate.sh",
@@ -5275,7 +5792,7 @@
   "order": 5
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PreToolUse",
   "item": "precode_gate.sh",
@@ -5286,18 +5803,7 @@
   "order": 9
  },
  {
-  "repo": "Neighbours-From-Hell",
-  "area": "hook",
-  "group": "PreToolUse",
-  "item": "session_lock.sh",
-  "kind": "",
-  "state": "ok",
-  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 10
- },
- {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PreToolUse",
   "item": "session_lock.sh",
@@ -5308,18 +5814,18 @@
   "order": 3
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PreToolUse",
-  "item": "worktree_guard.sh",
+  "item": "session_lock.sh",
   "kind": "",
   "state": "ok",
   "trigger": "Edit|Write|MultiEdit|NotebookEdit",
-  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
-  "order": 11
+  "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
+  "order": 10
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PreToolUse",
   "item": "worktree_guard.sh",
@@ -5330,7 +5836,18 @@
   "order": 7
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
+  "area": "hook",
+  "group": "PreToolUse",
+  "item": "worktree_guard.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "Edit|Write|MultiEdit|NotebookEdit",
+  "detail": "PreToolUse hook on Bash and Edit|Write|MultiEdit|NotebookEdit: a session or agent",
+  "order": 11
+ },
+ {
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PostToolUse",
   "item": "bash_write_ledger.sh",
@@ -5341,7 +5858,7 @@
   "order": 12
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PostToolUse",
   "item": "churn_guard.sh",
@@ -5352,7 +5869,7 @@
   "order": 14
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PostToolUse",
   "item": "comment_claim_guard.sh",
@@ -5363,7 +5880,18 @@
   "order": 15
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "guard-key-literals.py",
+  "kind": "",
+  "state": "local",
+  "trigger": "Edit|MultiEdit|Write|NotebookEdit",
+  "detail": "",
+  "order": 1000
+ },
+ {
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PostToolUse",
   "item": "read_ledger.sh",
@@ -5374,7 +5902,18 @@
   "order": 13
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
+  "area": "hook",
+  "group": "PostToolUse",
+  "item": "session_worktree.sh",
+  "kind": "",
+  "state": "ok",
+  "trigger": "EnterWorktree|ExitWorktree",
+  "detail": "",
+  "order": 16
+ },
+ {
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "PostToolUse",
   "item": "validate-assets.sh",
@@ -5385,7 +5924,7 @@
   "order": 1000
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Stop",
   "item": "claim_check.sh",
@@ -5393,10 +5932,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: deterministic anti-fabrication gate (Rule 5).",
-  "order": 16
+  "order": 17
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Stop",
   "item": "foreign_repo_gate.sh",
@@ -5404,10 +5943,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the gates ran for the wrong project.",
-  "order": 23
+  "order": 24
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Stop",
   "item": "proof_gate.sh",
@@ -5415,10 +5954,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a reply that opens with XONG must carry the turn's",
-  "order": 22
+  "order": 23
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Stop",
   "item": "regression_gate.sh",
@@ -5426,10 +5965,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: the living regression checklist must be green",
-  "order": 19
+  "order": 20
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Stop",
   "item": "review_gate.sh",
@@ -5437,10 +5976,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: enforce a FRESH-CONTEXT review of uncommitted",
-  "order": 17
+  "order": 18
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Stop",
   "item": "security_gate.sh",
@@ -5448,10 +5987,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 4c` (security review by trigger).",
-  "order": 21
+  "order": 22
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Stop",
   "item": "test_evidence_gate.sh",
@@ -5459,10 +5998,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: CLAUDE.md `check 2` + `6.4`.",
-  "order": 20
+  "order": 21
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Stop",
   "item": "testsourceset_gate.sh",
@@ -5470,10 +6009,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: compile the TEST source set of every module",
-  "order": 18
+  "order": 19
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Stop",
   "item": "worktree_merge_gate.sh",
@@ -5481,10 +6020,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "Stop hook: a worktree's work never reached trunk.",
-  "order": 24
+  "order": 25
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "Notification",
   "item": "session_lock.sh",
@@ -5492,10 +6031,10 @@
   "state": "ok",
   "trigger": "idle_prompt",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 25
+  "order": 26
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "hook",
   "group": "SessionEnd",
   "item": "session_lock.sh",
@@ -5503,10 +6042,10 @@
   "state": "ok",
   "trigger": "any tool",
   "detail": "SessionStart / PreToolUse / SessionEnd hook: ONE agent session per checkout.",
-  "order": 26
+  "order": 27
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "android-real-device-qa",
@@ -5516,7 +6055,7 @@
   "detail": "excluded by profile game"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "codebase-memory",
@@ -5526,7 +6065,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "compose-recomp-audit",
@@ -5536,7 +6075,7 @@
   "detail": "excluded by profile game"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "context-enricher",
@@ -5546,7 +6085,17 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "create-task",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "deep-module-design",
@@ -5556,7 +6105,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "deploy",
@@ -5566,7 +6115,7 @@
   "detail": "excluded by profile game"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "deprecation-migration",
@@ -5576,7 +6125,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "devkit-audit",
@@ -5586,7 +6135,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "documentation-and-adrs",
@@ -5596,7 +6145,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "fixbugs",
@@ -5606,27 +6155,27 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "generate2dmedia",
   "kind": "",
-  "state": "ok",
+  "state": "excluded",
   "trigger": "agent's own choice only",
-  "detail": ""
+  "detail": "excluded by profile game"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "generate2dsprite",
   "kind": "",
-  "state": "ok",
+  "state": "excluded",
   "trigger": "agent's own choice only",
-  "detail": ""
+  "detail": "excluded by profile game"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "giao",
@@ -5636,7 +6185,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "grill-plan",
@@ -5646,7 +6195,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "incremental-implementation",
@@ -5656,7 +6205,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "merge-conflict-resolver",
@@ -5666,7 +6215,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "observability-instrumentation",
@@ -5676,7 +6225,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "open-code-review",
@@ -5686,7 +6235,17 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
+  "area": "skill",
+  "group": "kit skill",
+  "item": "parallel-lanes",
+  "kind": "",
+  "state": "ok",
+  "trigger": "agent's own choice only",
+  "detail": ""
+ },
+ {
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "qa-review",
@@ -5696,7 +6255,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "qa-visual",
@@ -5706,7 +6265,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "qc",
@@ -5716,7 +6275,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "security-checklist",
@@ -5726,7 +6285,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "session-handoff",
@@ -5736,7 +6295,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "spec-driven-development",
@@ -5746,7 +6305,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "taste-mobile-app",
@@ -5756,7 +6315,7 @@
   "detail": "excluded by profile game"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "tdd-workflow",
@@ -5766,7 +6325,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "ui-ux-pro-max",
@@ -5776,7 +6335,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "unity-gc-audit",
@@ -5786,7 +6345,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "verification-before-completion",
@@ -5796,17 +6355,17 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "video2dsprite",
   "kind": "",
-  "state": "ok",
+  "state": "excluded",
   "trigger": "agent's own choice only",
-  "detail": ""
+  "detail": "excluded by profile game"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "worktree-sandbox",
@@ -5816,7 +6375,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "skill",
   "group": "kit skill",
   "item": "writing-skills",
@@ -5826,17 +6385,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
-  "area": "mcp",
-  "group": "required",
-  "item": "agentmemory",
-  "kind": "",
-  "state": "ok",
-  "trigger": "tool call",
-  "detail": "đã khai báo và bật"
- },
- {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "mcp",
   "group": "required",
   "item": "codebase-memory-mcp",
@@ -5846,7 +6395,7 @@
   "detail": "đã khai báo và bật"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "mcp",
   "group": "required",
   "item": "context7",
@@ -5856,7 +6405,7 @@
   "detail": "đã khai báo và bật"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "mcp",
   "group": "required",
   "item": "play-store",
@@ -5866,7 +6415,7 @@
   "detail": "đã khai báo và bật"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "mcp",
   "group": "required",
   "item": "replicant-mcp",
@@ -5876,17 +6425,17 @@
   "detail": "đã khai báo và bật"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "tool",
   "group": "cli",
   "item": "ocr",
   "kind": "",
   "state": "ok",
   "trigger": "hook chạy: review_gate.sh",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "tool",
   "group": "cli",
   "item": "agent-kit",
@@ -5896,7 +6445,7 @@
   "detail": "/Users/alex/.local/bin/agent-kit"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "tool",
   "group": "cli",
   "item": "codebase-memory-mcp",
@@ -5906,7 +6455,7 @@
   "detail": "/Users/alex/.local/bin/codebase-memory-mcp"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "tool",
   "group": "cli",
   "item": "npx",
@@ -5916,7 +6465,7 @@
   "detail": "/opt/homebrew/bin/npx"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "tool",
   "group": "cli",
   "item": "uvx",
@@ -5926,7 +6475,7 @@
   "detail": "/Users/alex/.local/bin/uvx"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "tool",
   "group": "cli",
   "item": "git",
@@ -5936,7 +6485,7 @@
   "detail": "/opt/homebrew/bin/git"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "tool",
   "group": "cli",
   "item": "python3",
@@ -5946,7 +6495,7 @@
   "detail": "/opt/homebrew/bin/python3"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p1",
   "item": "session_context.sh",
@@ -5956,7 +6505,7 @@
   "detail": "nạp ngữ cảnh đầu phiên (profile, bài học, trạng thái)"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p1",
   "item": "session_lock.sh",
@@ -5966,7 +6515,7 @@
   "detail": "một thư mục — một phiên; phiên thứ hai chỉ được đọc"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p1",
   "item": "AGENTS.md (luật chung)",
@@ -5976,7 +6525,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p1",
   "item": "Luật theo profile",
@@ -5986,7 +6535,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p1",
   "item": "Mục lục luật riêng",
@@ -5996,7 +6545,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p1",
   "item": "Luật riêng của repo (.agents/local/rules)",
@@ -6006,17 +6555,17 @@
   "detail": "chưa có file luật riêng nào"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p1",
   "item": "Bài học từ bug cũ (instincts)",
   "kind": "luật",
   "state": "ok",
   "trigger": "gợi ý trong prompt",
-  "detail": "15 bài học"
+  "detail": "10 bài học"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p1",
   "item": "codebase-memory-mcp",
@@ -6026,17 +6575,7 @@
   "detail": "đã khai báo và bật"
  },
  {
-  "repo": "Neighbours-From-Hell",
-  "area": "flow",
-  "group": "p1",
-  "item": "agentmemory",
-  "kind": "MCP",
-  "state": "ok",
-  "trigger": "gọi khi agent cần",
-  "detail": "đã khai báo và bật"
- },
- {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p2",
   "item": "prompt_context.sh",
@@ -6046,7 +6585,7 @@
   "detail": "gắn loại việc, bẫy từng gặp và skill gợi ý vào prompt"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p2",
   "item": "context-enricher",
@@ -6056,7 +6595,7 @@
   "detail": "làm giàu yêu cầu ngắn thành hồ sơ kỹ thuật"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p2",
   "item": "spec-driven-development",
@@ -6066,7 +6605,7 @@
   "detail": "viết spec trước khi code"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p2",
   "item": "grill-plan",
@@ -6076,7 +6615,7 @@
   "detail": "phản biện kế hoạch trước khi code"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p3",
   "item": "precode_gate.sh",
@@ -6086,7 +6625,7 @@
   "detail": "cổng duy nhất chạy TRƯỚC khi viết code"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p3",
   "item": "read_ledger.sh",
@@ -6096,7 +6635,7 @@
   "detail": "ghi file đã đọc, để sửa file phải đọc trước"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p3",
   "item": "worktree_guard.sh",
@@ -6106,7 +6645,7 @@
   "detail": "chặn ghi nhầm vào checkout hoặc worktree không phải của phiên"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p3",
   "item": "codebase-memory",
@@ -6116,7 +6655,7 @@
   "detail": "tra đồ thị mã nguồn thay vì đoán"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p4",
   "item": "block-dangerous-git.sh",
@@ -6126,7 +6665,7 @@
   "detail": "chặn lệnh git nguy hiểm (--no-verify, force...)"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p4",
   "item": "bash_write_ledger.sh",
@@ -6136,7 +6675,7 @@
   "detail": "ghi khung thời gian của mỗi lệnh Bash, để cổng Stop biết file nào do phiên này ghi"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p4",
   "item": "churn_guard.sh",
@@ -6146,7 +6685,7 @@
   "detail": "sửa cùng một file lần thứ ba mà chưa có bằng chứng mới thì cảnh báo (không chặn)"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p4",
   "item": "comment_claim_guard.sh",
@@ -6156,7 +6695,7 @@
   "detail": "chú thích không được khẳng định điều chưa kiểm chứng"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p4",
   "item": "hardware_safety_gate.sh",
@@ -6166,7 +6705,7 @@
   "detail": "chặn lệnh có thể làm hỏng thiết bị phần cứng"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p4",
   "item": "incremental-implementation",
@@ -6176,7 +6715,7 @@
   "detail": "làm từng bước nhỏ, kiểm từng bước"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p5",
   "item": "tdd-workflow",
@@ -6186,7 +6725,7 @@
   "detail": "quy trình test RED→GREEN"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p5",
   "item": "fixbugs",
@@ -6196,17 +6735,17 @@
   "detail": "chẩn đoán và sửa bug có cặp test"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p5",
   "item": "Ma trận hồi quy (regression_matrix.active.json)",
   "kind": "test",
   "state": "ok",
   "trigger": "chạy khi dừng",
-  "detail": "1 quy tắc hồi quy"
+  "detail": "3 quy tắc hồi quy"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p5",
   "item": "regression_gate.sh",
@@ -6216,7 +6755,7 @@
   "detail": "checklist hồi quy phải xanh khi dừng"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p5",
   "item": "test_evidence_gate.sh",
@@ -6226,7 +6765,7 @@
   "detail": "nói 'test pass' hay 'đã fix' phải có kết quả runner; test mới phải từng đỏ"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p5",
   "item": "testsourceset_gate.sh",
@@ -6236,7 +6775,7 @@
   "detail": "biên dịch bộ test của mọi module khi dừng"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p6",
   "item": "review_gate.sh",
@@ -6246,7 +6785,7 @@
   "detail": "thay đổi code phải qua một lần review ngữ cảnh mới mới được dừng"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p6",
   "item": "qa-review",
@@ -6256,7 +6795,7 @@
   "detail": "chất vấn diff, sinh tiêu chí chấp nhận"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p6",
   "item": "open-code-review",
@@ -6266,17 +6805,17 @@
   "detail": "review diff bằng ocr (Alibaba)"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p6",
   "item": "ocr",
   "kind": "công cụ",
   "state": "ok",
   "trigger": "agent tự chọn",
-  "detail": "open-code-review v1.13.0 (1672852) darwin/arm64 | runs in repo: yes"
+  "detail": "open-code-review v1.13.3 (375f64c) darwin/arm64 | runs in repo: yes"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p6",
   "item": "principal-code-reviewer",
@@ -6286,7 +6825,7 @@
   "detail": "12 subagent trong .claude/agents"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p6",
   "item": "giao",
@@ -6296,7 +6835,7 @@
   "detail": "giao việc cho Antigravity rồi audit"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p7",
   "item": "Cổng post-fix (post-fix-gate.py)",
@@ -6306,7 +6845,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p7",
   "item": "proof_gate.sh",
@@ -6316,7 +6855,7 @@
   "detail": "câu mở bằng XONG phải kèm ảnh nghiệm thu của lượt này"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p7",
   "item": "Ảnh nghiệm thu (proof-capture.py)",
@@ -6326,7 +6865,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p7",
   "item": "verification-before-completion",
@@ -6336,7 +6875,7 @@
   "detail": "kiểm chứng trước khi báo xong"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p8",
   "item": "claim_check.sh",
@@ -6346,7 +6885,7 @@
   "detail": "chống bịa: khẳng định phải có bằng chứng"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p8",
   "item": "security_gate.sh",
@@ -6356,7 +6895,7 @@
   "detail": "review bảo mật khi thay đổi chạm vùng nhạy cảm"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p8",
   "item": "foreign_repo_gate.sh",
@@ -6366,7 +6905,7 @@
   "detail": "cổng đã chạy nhầm repo: phiên sửa file repo khác"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p8",
   "item": "worktree_merge_gate.sh",
@@ -6376,7 +6915,7 @@
   "detail": "worktree phải được gộp vào nhánh chính rồi xoá"
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p8",
   "item": "git pre-commit",
@@ -6386,17 +6925,17 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p8",
   "item": "git pre-push",
   "kind": "git",
-  "state": "ok",
+  "state": "missing",
   "trigger": "git tự chạy",
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p8",
   "item": "git commit-msg",
@@ -6406,7 +6945,7 @@
   "detail": ""
  },
  {
-  "repo": "Neighbours-From-Hell",
+  "repo": "Idle-Plaza-3D",
   "area": "flow",
   "group": "p8",
   "item": "session-handoff",

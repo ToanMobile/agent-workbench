@@ -93,12 +93,17 @@ rc=$(run --title "🐛 [bug] Humans-vs.-UFOs: màn thua treo" --problem "x" --ac
 [ "$rc" = "0" ] && [ "$(call_arg "project item-add" @2 x)" = "6" ] && ok "6 Humans nêu chính nó → exit 0, Project #6" || fail "6 exit $rc, board $(call_arg "project item-add" @2 x)"
 git -C "$TMP/repo" remote set-url origin https://github.com/ToanMobile/agent-workbench.git
 
-# 7. gh project field-list lỗi: dùng ID trong registry, ID cột Backlog của Project #1 phải là ID thật hiện nay.
+# 7. gh project field-list lỗi: dùng ID trong registry, ID cột Backlog của Project #1 và Project #5 phải là ID thật hiện nay.
 : > "$FAKE_LOG"
 (cd "$TMP/repo" && FAKE_FIELDLIST_RC=1 python3 "$CT" --title "🐛 [bug] runner: kẹt" --problem "x" --ac "- [ ] y") >"$TMP/out" 2>&1; rc=$?
 [ "$rc" = "0" ] && ok "7a field-list lỗi vẫn tạo được thẻ (exit 0)" || fail "7a exit $rc"
 [ "$(call_arg "project item-edit" --single-select-option-id x)" = "81f934af" ] && ok "7b dự phòng dùng ID Backlog thật của Project #1" || fail "7b option $(call_arg "project item-edit" --single-select-option-id x)"
 grep -q "dự phòng" "$TMP/out" && ok "7c có cảnh báo khi dùng ID dự phòng" || fail "7c thiếu cảnh báo dùng ID dự phòng"
+: > "$FAKE_LOG"
+(cd "$TMP/repo" && FAKE_FIELDLIST_RC=1 python3 "$CT" --repo ToanMobile/Idle-Plaza-3D --title "🐛 [bug] plaza: kẹt" --problem "x" --ac "- [ ] y") >"$TMP/out" 2>&1; rc=$?
+[ "$rc" = "0" ] && [ "$(call_arg "project item-add" @2 x)" = "5" ] && [ "$(call_arg "project item-edit" --single-select-option-id x)" = "5eaaa6e6" ] \
+  && ok "7d Idle-Plaza-3D gắn đúng Project #5 và ID Backlog dự phòng 5eaaa6e6" \
+  || fail "7d exit $rc, board $(call_arg "project item-add" @2 x), opt $(call_arg "project item-edit" --single-select-option-id x)"
 
 # 8. item-add không trả id thì thẻ chưa có cột: exit 3 và có lỗi, không im lặng.
 : > "$FAKE_LOG"

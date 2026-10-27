@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 create_task.py — Tự động tạo issue và đẩy lên cột Backlog của GitHub Project Board
-Hỗ trợ cả 5 repositories:
+Hỗ trợ cả 6 repositories:
   1. ToanMobile/agent-workbench             ➔ Project #1: Agent Workbench
   2. ToanMobile/OfficeReader                ➔ Project #2: OfficeReader
   3. ToanMobile/Goods-Triple-Shelf-Match-3D ➔ Project #3: Goods Triple Shelf Match 3D
   4. ToanMobile/GeelyEx2                    ➔ Project #4: GeelyEx2
-  5. ToanMobile/Neighbours-From-Hell        ➔ Project #5: Neighbours From Hell
+  5. ToanMobile/Idle-Plaza-3D               ➔ Project #5: Idle Plaza 3D
+  6. ToanMobile/Humans-vs.-UFOs             ➔ Project #6: Humans vs. UFOs
 
 Sử dụng:
   1. Tạo nhanh từ câu tóm tắt (auto-format):
@@ -27,7 +28,7 @@ from pathlib import Path
 
 PROJECT_OWNER = "ToanMobile"
 
-# Cấu hình 5 repositories tương ứng 5 Project Boards trên ToanMobile
+# Cấu hình 6 repositories tương ứng 6 Project Boards trên ToanMobile
 PROJECT_REGISTRY = {
     "ToanMobile/agent-workbench": {
         "number": 1,
@@ -57,12 +58,12 @@ PROJECT_REGISTRY = {
         "status_field_id": "PVTSSF_lAHOAGnqzM4BnTAHzhl4Rrk",
         "backlog_option_id": "cbc05bf8",
     },
-    "ToanMobile/Neighbours-From-Hell": {
+    "ToanMobile/Idle-Plaza-3D": {
         "number": 5,
-        "name": "Neighbours From Hell",
+        "name": "Idle Plaza 3D",
         "project_id": "PVT_kwHOAGnqzM4BnTFL",
         "status_field_id": "PVTSSF_lAHOAGnqzM4BnTFLzhl4WVM",
-        "backlog_option_id": "8b4a5523",
+        "backlog_option_id": "5eaaa6e6",
     },
     "ToanMobile/Humans-vs.-UFOs": {
         "number": 6,
@@ -83,7 +84,7 @@ REPO_NAME_PATTERNS = {
     "ToanMobile/OfficeReader": r"OfficeReader",
     "ToanMobile/Goods-Triple-Shelf-Match-3D": r"Goods(?:-Triple-Shelf-Match-3D)?",
     "ToanMobile/GeelyEx2": r"GeelyEx2",
-    "ToanMobile/Neighbours-From-Hell": r"Neighbours(?:-| )From(?:-| )Hell|NFH",
+    "ToanMobile/Idle-Plaza-3D": r"Idle(?:-| )Plaza(?:-| )3D",
     "ToanMobile/Humans-vs.-UFOs": r"Humans-vs\.-UFOs",
 }
 

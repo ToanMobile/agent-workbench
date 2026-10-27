@@ -22,7 +22,7 @@ REPOS = {
     "GeelyEx2": "/Volumes/Data/Toan/GeelyEx2",
     "OfficeReader": "/Volumes/Data/Toan/OfficeReader/OfficeReader",
     "Goods": "/Volumes/Data/Toan/Game/Goods-Triple-Shelf-Match-3D",
-    "Neighbours-From-Hell": "/Volumes/Data/Toan/Game/Neighbours-From-Hell",
+    "Idle-Plaza-3D": "/Volumes/Data/Toan/Game/Idle-Plaza-3D",
 }
 # user requirement 2026-10-13, per repo: MCP servers that must run there (anything else is optional)
 BASE_MCPS = ["codebase-memory-mcp", "context7"]
@@ -32,7 +32,7 @@ REQUIRED_MCPS = {
     "GeelyEx2": BASE_MCPS + ["replicant-mcp"],       # no play-store
     "OfficeReader": ALL_MCPS,
     "Goods": ALL_MCPS,
-    "Neighbours-From-Hell": ALL_MCPS,
+    "Idle-Plaza-3D": ALL_MCPS,
 }
 TOOLS = ["ocr", "agent-kit", "codebase-memory-mcp", "npx", "uvx", "git", "python3"]
 STAGE_ORDER = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "Notification", "SessionEnd"]
