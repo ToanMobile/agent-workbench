@@ -2594,7 +2594,7 @@ def _chain_in_trunk(main, head):
 
 def _merged_pr_at(main, branch, tip):
     """Số PR MERGED VÀO TRUNK (baseRefName = trunk, không phải PR từ fork) có head là `branch` và headRefOid đúng `tip` (không còn commit mới
-    sau lần gộp), theo `gh`; None khi không có, không biết trunk, gh không chạy được, quá 15 s hay trả gì đọc không được (không nói được =
+    sau lần gộp), hoặc (#453) mà headRefOid của một PR MERGED vào trunk nào khác chứa trọn `tip` (tổ tiên), theo `gh`; None khi không có, không biết trunk, gh không chạy được, quá 15 s hay trả gì đọc không được (không nói được =
     không xoá). Một PR gộp vào nhánh khác (feat/parent) chưa đưa gì vào trunk (review + audit T0044)."""
     trunk = _trunk_branch(main)
     if not trunk:
@@ -2608,6 +2608,19 @@ def _merged_pr_at(main, branch, tip):
         return None
     for row in rows if isinstance(rows, list) else []:
         if isinstance(row, dict) and row.get("headRefOid") == tip and row.get("baseRefName") == trunk and row.get("isCrossRepository") is False:
+            return row.get("number") or "?"
+    # #453: tip nằm TRỌN trong head của một PR đã MERGED vào trunk mà PR đó lấy head từ nhánh KHÁC (gom lane-A..I vào gate-batch-integrate,
+    # PR #455): commit nào của nhánh cũng đã đi theo PR đó. Head không có trong repo hay không phải hậu duệ của tip: không nói được = giữ.
+    try:
+        r = subprocess.run(["gh", "pr", "list", "--base", trunk, "--state", "merged", "--json", "number,headRefOid,baseRefName,isCrossRepository",
+                            "--limit", "100"], cwd=main, capture_output=True, text=True, timeout=15)
+        rows = json.loads(r.stdout or "[]") if r.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and row.get("baseRefName") == trunk and row.get("isCrossRepository") is False \
+                and re.fullmatch(r"[0-9a-f]{40}", str(row.get("headRefOid") or "")) \
+                and git(main, "merge-base", "--is-ancestor", tip, row["headRefOid"], check=False).returncode == 0:
             return row.get("number") or "?"
     return None
 
