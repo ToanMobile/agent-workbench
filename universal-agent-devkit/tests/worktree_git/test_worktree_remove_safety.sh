@@ -592,5 +592,15 @@ PY
 )"
 [ "$out" = "True True" ] && ok "git cannot tell where the worktree state lives: the row is busy and unintegrated (held), not clean" || fail "git-dir failure row: '$out'"
 
+# #458: a detached HEAD another branch holds + ONE reflog-only commit: the refusal names the reflog-only commit, not "commits on no branch"
+w6 held; G "$TMP/r6-held" checkout -q -b held-458; echo "held" >> "$TMP/r6-held/c.txt"; c6 held "held by a branch"
+G "$TMP/r6-held" checkout -q --detach; echo "only reflog" >> "$TMP/r6-held/d.txt"; c6 held "only the reflog"; RSHA="$(G "$TMP/r6-held" rev-parse HEAD)"
+G "$TMP/r6-held" checkout -q --detach HEAD~1
+rm6 ../r6-held; refused "held HEAD + reflog-only commit: still refused for the reflog-only commit" $? "$TMP/r6-held" "reflog" "$RSHA"
+! grep -q "không thuộc nhánh nào\|on no branch" "$TMP/out.txt" && ok "held HEAD: the refusal no longer says its commits are on no branch" || fail "held HEAD: false 'on no branch' sentence: $(head -c 400 "$TMP/out.txt")"
+# ... and a detached commit NO ref holds keeps the old sentence
+w6 unheld; echo "u" >> "$TMP/r6-unheld/e.txt"; c6 unheld "no ref holds this"; USHA="$(G "$TMP/r6-unheld" rev-parse HEAD)"; G "$TMP/r6-unheld" checkout -q --detach
+rm6 ../r6-unheld; refused "unheld detached commit: still refused with the 'on no branch' sentence" $? "$TMP/r6-unheld" "on no branch" "$USHA"
+
 if [ "$FAILS" -ne 0 ]; then echo "worktree remove safety: $FAILS FAILED"; exit 1; fi
 echo "worktree remove safety: all checks passed"
