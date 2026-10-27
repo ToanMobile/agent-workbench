@@ -1522,7 +1522,10 @@ def _inside(path, root):
     """True when `path` is `root` or lies below it. realpath keeps the letter case it was given and a case-insensitive filesystem
     (APFS) spells one directory two ways ("Repo" / "repo"), so a string prefix is not enough: when it fails, `root`'s inode is
     looked for among `path` and its parents (a path that does not exist yet is judged by its nearest existing parent)."""
-    r, p = os.path.realpath(root), os.path.realpath(path)
+    try:
+        r, p = os.path.realpath(root), os.path.realpath(path)
+    except ValueError:   # NUL: không file nào có nó - review #427 vòng 3: `echo > "/tmp/a<NUL>b"` làm hook văng (exit 1 = cho qua cả dòng)
+        return False
     if p == r or p.startswith(r + os.sep):
         return True
     try:
@@ -1911,16 +1914,18 @@ def _file_write_hits(cmd, top, cwd, found=False):
     tee / mkdir / rmdir / chmod / unlink operands, dd of=, sed -i / perl -i files, also inside `bash -c` (hooks/shell_writes.py, the
     scanner hooks/worktree_guard.sh uses: issues-bugs.md A.1 #3, 13/10 11:03 a cp/mv into a held checkout went through). Not judged
     here: a target behind $VAR or a backtick, an interpreter's or build tool's own writes (a read-only session runs `python3 x.py`).
-    ponytail: those stay open, and so do `xargs rm`, `find -delete`, `eval '…'`, a backtick, a heredoc fed to a shell and a cd inside a
-    subshell (review 14/10); tighten when one is seen landing. Scanner missing or line untokenisable: False (the other rules hold).
+    ponytail: those stay open, and so do `xargs rm`, `find -delete`, `eval '…'`, a backtick, a heredoc fed to a shell, a redirect inside
+    `bash -c '…'` and a cd inside a subshell on a line shell_writes cannot pair its parentheses for (_scoped: `case`, a quoted `")"`; #427
+    vòng 3 - otherwise `)` and popd bring the directory back) (review 14/10); tighten when one is seen landing. Scanner missing or line
+    untokenisable: False (the other rules hold).
     found: kết quả _write_scan đã có (bash_collides quét một lần); False: tự quét."""
     if found is False:
         found = _write_scan(cmd, cwd or top)
     for kind, t, here in found or ():
         if kind != "file" or "$" in t or "`" in t:
             continue
-        p = os.path.expanduser(t)
-        try:
+        try:   # (expanduser cũng văng với `~a<NUL>b` - review #427 vòng 3)
+            p = os.path.expanduser(t)
             if _inside(os.path.realpath(p if os.path.isabs(p) else os.path.join(here or cwd or top, p)), top):
                 return True
         except ValueError as e:   # a NUL in the path: no file can have it, and the hook must not crash (exit 1 lets the call through)
@@ -1928,28 +1933,28 @@ def _file_write_hits(cmd, top, cwd, found=False):
     return False
 
 
-def _family_write_held(found, gdir, sid, tops):
+def _family_write_held(found, gdir, sid, tops, memo=None):
     """#427 vòng 3: (checkout, git dir, lock) khi một đích ghi file trong `found` (_write_scan của lệnh; shell_writes "file": đích cp /
-    install / rsync / ln, toán hạng mv / rm / touch / tee / mkdir …, dd of=, sed -i / perl -i) hay một redirect KHÔNG tuyệt đối
-    (`> ../<anh em>/f`, `> ~/…`; redirect tuyệt đối: luật redirect của bash_collides) nằm trong checkout mà phiên khác còn sống giữ -
-    `tops` như _held_at (các checkout khác cùng repo; None: mọi repo). Đích tương đối tính từ thư mục mà shell_writes theo cd chữ tới
-    (`cd .. && cp a wt2/f`). Redirect trong `bash -c '…'` cũng được xét; `\\>` (escape) shell_writes đọc là redirect: fail closed, như
-    trunk_write. Không xét: đích sau $VAR / backtick (như _file_write_hits); đích tương đối sau `cd "$X"` (thư mục không biết - tính từ thư
-    mục trước đó từng chặn nhầm `cd "$B" && bash t.sh > ../base.log` trên corpus); đích chỉ là chữ số (`cp a b 2>/dev/null`: shell_writes
-    đọc `2` là đích - đích thật mất, xem ponytail); đích trong git dir `gdir` của chính phiên (worktree liên kết: nằm trong .git của main).
-    ponytail: `cp` / `ln` / `install` / `rsync` / `scp` có `N>` dính liền (`2>/dev/null`, `2>&1`) lọt cả luật `top` lẫn luật này - sửa ở
-    hooks/shell_writes.py (bỏ chữ số fd đứng liền trước `>`). ponytail: mỗi đích một lần _inside cho mỗi checkout (corpus: 529 checkout ×
-    ~20 đích = 3 s; repo thật 9-12 worktree); nhiều hơn thì lập chỉ mục inode của `tops` một lần mỗi lệnh."""
-    now, memo, moved = time.time(), {}, False
+    install / rsync / ln, toán hạng mv / rm / touch / tee / mkdir …, dd of=, sed -i / perl -i) hay một redirect (`> ../<anh em>/f`,
+    `> ~/…`; review vòng 3: cả redirect tuyệt đối trong `bash -c "…"` / `sh -c` - luật redirect của bash_collides không thấy `>` trong
+    nháy) nằm trong checkout mà phiên khác còn sống giữ - `tops` như _held_at (các checkout khác cùng repo; None: mọi repo). Đích tương đối
+    tính từ thư mục mà shell_writes theo cd chữ tới (`cd .. && cp a wt2/f`; `)` và popd đưa nó về). `\\>` (escape) shell_writes đọc là
+    redirect: fail closed, như trunk_write. Không xét: đích sau $VAR / backtick (như _file_write_hits); đích tương đối sau `cd "$X"` (thư
+    mục không biết - tính từ thư mục trước đó từng chặn nhầm `cd "$B" && bash t.sh > ../base.log` trên corpus; kể cả sau khi `)` / popd đưa
+    thư mục về); đích trong git dir `gdir` của chính phiên (worktree liên kết: nằm trong .git của main). Đích chỉ là chữ số được xét như mọi
+    đích (review vòng 3: shell_writes không còn đọc số fd của `2>` là đích; `cd <anh em> && cp a 2` ghi file `2` thật). memo: _held_at của
+    bash_collides dùng chung (redirect tuyệt đối ở ngoài nháy được hỏi hai lần).
+    ponytail: mỗi đích một lần _inside cho mỗi checkout (corpus: 529 checkout × ~20 đích = 3 s; repo thật 9-12 worktree); nhiều hơn thì
+    lập chỉ mục inode của `tops` một lần mỗi lệnh."""
+    now, memo, moved = time.time(), ({} if memo is None else memo), False
     for kind, t, here in found or ():
         moved = moved or kind == "cdvar"
-        if kind not in ("file", "redirect") or not t or "$" in t or "`" in t or (kind == "redirect" and t.startswith("/")):
+        if kind not in ("file", "redirect") or not t or "$" in t or "`" in t:
             continue
-        rel = not os.path.isabs(os.path.expanduser(t))
-        if rel and (moved or t.isdigit()):
-            continue
-        try:
+        try:   # (expanduser cũng văng với `~a<NUL>b` - review #427 vòng 3: từng ở ngoài try, hook văng = cho qua cả luật trunk)
             p = os.path.expanduser(t)
+            if moved and not os.path.isabs(p):
+                continue
             path = os.path.normpath(p if os.path.isabs(p) else os.path.join(here, p))
             if gdir and _inside(path, gdir):
                 continue
@@ -2238,8 +2243,12 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
     for kind, t, wd in found:
         if kind == "cdvar":
             d = _expand_static_vars(t, cmd)
+            try:
+                dx = None if d is None else os.path.expanduser(d)
+            except ValueError:   # `~a<NUL>b` (review #427 vòng 3: hook từng văng): thư mục không biết, như $VAR không gán
+                d = dx = None
             cd_unsafe = cd_unsafe or (not loose if d is None else   # (loose: cd không biết thì đích tương đối sau nó cũng không biết)
-                                      _lands_in_main(os.path.expanduser(d) if os.path.isabs(os.path.expanduser(d)) else os.path.join(wd or here, d), main, sw))
+                                      _lands_in_main(dx if os.path.isabs(dx) else os.path.join(wd or here, d), main, sw))
             continue
         if kind == "unparsed":
             if _lands_in_main(wd or here, main, sw):
@@ -2253,7 +2262,10 @@ def _bash_trunk_write(cmd, cwd, main, sw, sid, depth, unknown=None):
                 continue
             if t is None:   # a variable the line does not assign, or a substitution: where it lands cannot be told - fail closed (issue #13)
                 return True
-        p = os.path.expanduser(t)
+        try:
+            p = os.path.expanduser(t)
+        except ValueError:   # `~a<NUL>b`: không file nào có nó (như _lands_in_main) - bỏ đích này, xét tiếp (review #427 vòng 3: hook từng văng)
+            continue
         if not os.path.isabs(p) and cd_unsafe:
             return True
         if _lands_in_main(p if os.path.isabs(p) else os.path.join(wd or here, p), main, sw):
@@ -2271,11 +2283,11 @@ def bash_collides(cmd, top, cwd=None, sid="", notes=None):
     checkout also counts as hits_top. #427 vòng 2: một redirect tuyệt đối vào checkout khác CÙNG repo mà phiên khác còn sống giữ là `foreign`
     (trước chỉ xét checkout của phiên: `echo x > <worktree anh em bị giữ>/f` lọt); top None (cwd không phải repo): vào checkout bị giữ của
     bất kỳ repo nào (_held_at). #427 vòng 3: đích ghi file (cp / mv / tee / install / rsync / ln / dd of= / touch …) và redirect tương đối
-    (`> ../<anh em>/f`) vào checkout như thế cũng là `foreign` (_family_write_held; trước chỉ xét `top`)."""
+    (`> ../<anh em>/f`) hay trong `bash -c "…"` vào checkout như thế cũng là `foreign` (_family_write_held; trước chỉ xét `top`)."""
     hits_top, foreign = False, None
     if GIT_WRITE.search(cmd) or GATE.search(cmd):
         hits_top, foreign = write_hits_locked(cmd, top, cwd, sid, notes)
-    tops, gdir = False, None   # các checkout khác cùng repo: đọc ở đích đầu tiên cần đến (redirect tuyệt đối ngoài `top`, đích ghi file)
+    tops, gdir, memo = False, None, {}   # các checkout khác cùng repo: đọc ở đích đầu tiên cần đến (redirect tuyệt đối ngoài `top`, đích ghi file)
     if ">" in cmd:
         for target in _redirect_targets(cmd):
             if not target or target.startswith("&"):
@@ -2288,7 +2300,7 @@ def bash_collides(cmd, top, cwd=None, sid="", notes=None):
             elif foreign is None and not os.path.normpath(target).startswith("/dev/"):   # (2>/dev/null: không đọc khoá nào)
                 if tops is False:
                     gdir, tops = _other_checkouts(top)
-                foreign = _held_at(target, sid, time.time(), tops)
+                foreign = _held_at(target, sid, time.time(), tops, memo)
     found = _write_scan(cmd, cwd or top)
     if not hits_top and top and _file_write_hits(cmd, top, cwd, found):
         hits_top = True
@@ -2296,7 +2308,7 @@ def bash_collides(cmd, top, cwd=None, sid="", notes=None):
         if tops is False:
             gdir, tops = _other_checkouts(top)
         if tops != []:   # (không có checkout nào khác để xét: không đọc gì)
-            foreign = _family_write_held(found, gdir, sid, tops)
+            foreign = _family_write_held(found, gdir, sid, tops, memo)
     return hits_top, foreign
 
 

@@ -9,6 +9,11 @@
 #      repo, SessionEnd / SessionStart trả 0 trước khi gỡ / đăng ký - id mới không ở đâu cả, id cũ (SessionStart ghi, agent "claude") vẫn
 #      ở project với pid của chính tiến trình claude. Nay: một mục agent "claude" của project có pid = tiến trình giữ hook (holder_pid,
 #      start time khớp) thì phiên là của project. Test thừa hưởng CLAUDE_PROJECT_DIR không vấp: cha của hook là tiến trình test.
+#   4. review vòng 3: (a) đích có NUL sau `~` (`~a<NUL>b`) làm expanduser văng ngoài try - hook exit 1 = cho qua cả dòng, cả luật trunk;
+#      (b) redirect TUYỆT ĐỐI trong `bash -c "…"` / `sh -c` vào anh em bị giữ lọt (luật redirect của bash_collides không thấy `>` trong
+#      nháy, _family_write_held bỏ mọi redirect tuyệt đối); (c) shell_writes giữ thư mục của cd sau khi `)` đóng subshell và sau `popd`:
+#      `(cd ../<anh em bị giữ> && ls); echo x > out.txt` bị chặn nhầm - mỗi ca nới có ca đối nghịch phải-chặn; (d) đích chỉ là chữ số
+#      (`cd <anh em bị giữ> && cp a 2`) bị bỏ qua dù shell_writes không còn đọc số fd của `2>` là đích.
 #   SLT_KIT=<thư mục kit>   chạy cùng bảng trên một bản kit khác (bản chưa sửa: ĐỎ).
 # bash 3.2 compatible wrapper; the checks are python3 (stdlib only).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
@@ -143,7 +148,7 @@ for label, c in (("echo x > ../family-wt/f.txt (worktree của chính nó)", "ec
                  ("grep x ../family-wt2/f.txt > ../family-wt/out.txt (đọc anh em)", "grep x ../family-wt2/f.txt > ../family-wt/out.txt"),
                  ("cat ../family-wt2/f.txt > ../scratch/x; ls ../family-wt2", "cat ../family-wt2/f.txt > ../scratch/x; ls ../family-wt2"),
                  ("cd ../family-wt3 && echo x > f.txt (khoá cũ)", "cd ../family-wt3 && echo x > f.txt"),
-                 ("cd ../family-wt2 && cp -R . \"$M/k\" 2>/dev/null (shell_writes đọc `2` là đích: không phải đích thật)",
+                 ("cd ../family-wt2 && cp -R . \"$M/k\" 2>/dev/null (`2>` là số fd, không phải đích; đích sau $M không xét)",
                   "cd ../family-wt2 && cp -R . \"$M/k\" 2>/dev/null")):
     check("  đối chứng: " + label, fam(c), 0)
 check("từ worktree lồng: echo x > ../../../f.txt (vào main bị giữ)", hook("echo x > ../../../f.txt", NW), 2)
@@ -208,6 +213,90 @@ register(TM, "old", agent="claude", pid=other.pid)
 check("  đối chứng: mục của tiến trình khác: git -C <TM main> commit (như trước: phiên không thuộc project)", tplain(f"git -C {TM} commit -qm x"), 0)
 other.kill()
 other.wait()
+
+print("4a. review vòng 3: đích có NUL sau ~ không làm hook văng (exit 1 = cho qua cả dòng); các đích khác của dòng vẫn được xét")
+N = "\x00"
+own = lambda c: hook(c, FW2)   # checkout của chính phiên do holder2 giữ, có anh em (FM, FW, FW3): _family_write_held có chạy
+for d in (FW, FW2):
+    with open(os.path.join(d, "s.txt"), "w", encoding="utf-8") as f:
+        f.write("a\n")
+for label, c in (("ở FW2 bị giữ: echo pwn > src.txt; echo > \"~a<NUL>b\" (từng văng ở _family_write_held)", f'echo pwn > src.txt; echo > "~a{N}b"'),
+                 ("ở FW2 bị giữ: touch \"~<NUL>\" src.txt (từng văng ở _file_write_hits)", f'touch "~{N}" src.txt'),
+                 ("ở FW2 bị giữ: echo > \"/tmp/a<NUL>b\"; echo pwn > src.txt (từng văng ở luật redirect)", f'echo > "/tmp/a{N}b"; echo pwn > src.txt'),
+                 ("ở FW2 bị giữ: cd \"~a<NUL>b\"; cp … src.txt (shell_writes từng văng: luật ghi file tắt)", f'cd "~a{N}b"; cp /etc/hosts src.txt'),
+                 ("ở FW2 bị giữ: sed -i s/a/b/ \"~a<NUL>b\" s.txt", f'sed -i s/a/b/ "~a{N}b" s.txt')):
+    check(label, own(c), 2)
+check("từ FW: touch \"~a<NUL>b\" <FW2>/f.txt", fam(f'touch "~a{N}b" {FW2}/f.txt'), 2)
+for label, c in (("echo > \"~a<NUL>b\"", f'echo > "~a{N}b"'), ("touch \"~<NUL>\" src.txt", f'touch "~{N}" src.txt'),
+                 ("echo > \"/tmp/a<NUL>b\"", f'echo > "/tmp/a{N}b"'), ("cd \"~a<NUL>b\"; cp … src.txt", f'cd "~a{N}b"; cp /etc/hosts src.txt'),
+                 ("sed -i s/a/b/ \"~a<NUL>b\" s.txt", f'sed -i s/a/b/ "~a{N}b" s.txt')):
+    check("  đối chứng: từ FW rảnh: " + label, fam(c), 0)
+unregister(TM, "old")
+register(TM, "old", agent="claude", pid_start=my_start or None)
+check("trunk mode, cwd không phải repo: git -C <TM main> commit -qm x; touch \"~a<NUL>b\"", tplain(f'git -C {TM} commit -qm x; touch "~a{N}b"'), 2)
+check("  đối chứng: trunk mode, cwd không phải repo: touch \"~a<NUL>b\"", tplain(f'touch "~a{N}b"'), 0)
+tw = lambda c: hook(c, TW, sid="tw", trunk="1")
+check("trunk mode, từ TW: cd <TM main> && touch \"~a<NUL>b\" x", tw(f'cd {TM} && touch "~a{N}b" x'), 2)
+check("trunk mode, từ TW: X=\"~a<NUL>b\"; cd \"$X\"; touch x (thư mục không biết: fail closed)", tw(f'X="~a{N}b"; cd "$X"; touch x'), 2)
+check("  đối chứng: trunk mode, từ TW: cd <TW> && touch \"~a<NUL>b\" x", tw(f'cd {TW} && touch "~a{N}b" x'), 0)
+check("  đối chứng: trunk mode, từ TW: X=/tmp; cd \"$X\"; touch x", tw('X=/tmp; cd "$X"; touch x'), 0)
+
+print("4b. redirect tuyệt đối trong bash -c \"…\" / sh -c vào checkout bị giữ")
+for label, c, cwd in (("bash -c \"echo x > <FW2>/f.txt\"", f'bash -c "echo x > {FW2}/f.txt"', FW),
+                      ("sh -c 'echo x >> <FW2>/f.txt'", f"sh -c 'echo x >> {FW2}/f.txt'", FW),
+                      ("bash -c \"echo x 2> <FW2>/err.txt\"", f'bash -c "echo x 2> {FW2}/err.txt"', FW),
+                      ("zsh -c \"cd /tmp && echo x > <FW2>/f.txt\"", f'zsh -c "cd /tmp && echo x > {FW2}/f.txt"', FW),
+                      ("cwd không phải repo: bash -c \"echo x > <FW2>/f.txt\"", f'bash -c "echo x > {FW2}/f.txt"', PLAIN),
+                      ("cwd không phải repo: bash -c \"echo x > <A bị giữ>/f.txt\"", f'bash -c "echo x > {A}/f.txt"', PLAIN)):
+    check(label, hook(c, cwd), 2)
+for label, c, cwd in (("bash -c \"echo x > <FW của chính nó>/f.txt\"", f'bash -c "echo x > {FW}/f.txt"', FW),
+                      ("bash -c \"echo x > <scratch>/f.txt\"", f'bash -c "echo x > {S}/f.txt"', FW),
+                      ("bash -c \"echo x > /dev/null 2>&1\"", 'bash -c "echo x > /dev/null 2>&1"', FW),
+                      ("bash -c \"echo x > <FW3 khoá cũ>/f.txt\"", f'bash -c "echo x > {FW3}/f.txt"', FW),
+                      ("echo \"x > <FW2>/f.txt\" (không có shell con: chữ trong nháy)", f'echo "x > {FW2}/f.txt"', FW),
+                      ("cwd không phải repo: bash -c \"echo x > <B rảnh>/f.txt\"", f'bash -c "echo x > {B}/f.txt"', PLAIN)):
+    check("  đối chứng: " + label, hook(c, cwd), 0)
+
+print("4c. `)` đóng subshell và popd đưa thư mục về (trước: giữ thư mục của cd - chặn nhầm); ca đối nghịch vẫn chặn")
+for label, c in (("(cd ../family-wt2 && ls); echo x > out.txt", "(cd ../family-wt2 && ls); echo x > out.txt"),
+                 ("pushd ../family-wt2 && ls && popd && echo x > out.txt", "pushd ../family-wt2 && ls && popd && echo x > out.txt"),
+                 ("X=$(cd ../family-wt2 && pwd); echo x > out.txt", "X=$(cd ../family-wt2 && pwd); echo x > out.txt"),
+                 ("pushd ../family-wt2 >/dev/null && ls && popd >/dev/null; cp … out.txt",
+                  "pushd ../family-wt2 >/dev/null && ls && popd >/dev/null; cp /etc/hosts out.txt")):
+    check("  đối chứng (nới): " + label, fam(c), 0)
+for label, c in (("(cd ../family-wt2 && echo x > out.txt)", "(cd ../family-wt2 && echo x > out.txt)"),
+                 ("cd ../family-wt2; (ls); echo x > out.txt", "cd ../family-wt2; (ls); echo x > out.txt"),
+                 ("{ cd ../family-wt2; }; echo x > out.txt (nhóm { } không phải subshell)", "{ cd ../family-wt2; }; echo x > out.txt"),
+                 ("pushd ../family-wt2 && pushd /tmp && popd && echo x > out.txt", "pushd ../family-wt2 && pushd /tmp && popd && echo x > out.txt"),
+                 ("(cd ../family-wt2 && cat <(ls) > out.txt) (`)` của <( ) không đóng subshell ngoài)", "(cd ../family-wt2 && cat <(ls) > out.txt)"),
+                 ("popd; echo x > ../family-wt2/f.txt (ngăn rỗng: popd không đổi thư mục)", "popd; echo x > ../family-wt2/f.txt"),
+                 ("cd ../family-wt2 && popd; echo x > out.txt", "cd ../family-wt2 && popd; echo x > out.txt"),
+                 ("cd ../family-wt2 && (pushd /tmp) && popd; echo x > out.txt (pushd trong subshell mất khi nó đóng)",
+                  "cd ../family-wt2 && (pushd /tmp) && popd; echo x > out.txt"),
+                 ("(cd ../family-wt2 && case a in a) echo x > out.txt;; esac) (`a)` không đóng subshell)",
+                  "(cd ../family-wt2 && case a in a) echo x > out.txt;; esac)"),
+                 ("(cd ../family-wt2; echo \")\"; echo x > out.txt) (`)` trong nháy)", "(cd ../family-wt2; echo \")\"; echo x > out.txt)"),
+                 ("(cd ../family-wt2; echo \\); echo x > out.txt) (`)` bị thoát)", "(cd ../family-wt2; echo \\); echo x > out.txt)"),
+                 ("(cd ../family-wt2; echo \")\" \"(\"; echo x > out.txt) (ngoặc trong nháy cân nhau)",
+                  "(cd ../family-wt2; echo \")\" \"(\"; echo x > out.txt)"),
+                 ("cd ../family-wt2 && (cd .. && pushd /tmp); popd; echo x > out.txt (ngăn của subshell mất: popd lỗi)",
+                  "cd ../family-wt2 && (cd .. && pushd /tmp); popd; echo x > out.txt"),
+                 ("pushd ../family-wt2 && eval \"pushd /tmp\" && popd && echo x > out.txt (eval đổi ngăn)",
+                  "pushd ../family-wt2 && eval \"pushd /tmp\" && popd && echo x > out.txt"),
+                 ("pushd ../family-wt2 && dirs -c && popd; echo x > out.txt (dirs -c xoá ngăn)",
+                  "pushd ../family-wt2 && dirs -c && popd; echo x > out.txt")):
+    check(label, fam(c), 2)
+# siết: thư mục về checkout của chính phiên (bị giữ) - trước tính ở /tmp, lọt
+check("ở FW2 bị giữ: (cd /tmp && ls); cp … out.txt", own("(cd /tmp && ls); cp /etc/hosts out.txt"), 2)
+check("ở FW2 bị giữ: pushd /tmp && popd && cp … out.txt", own("pushd /tmp && popd && cp /etc/hosts out.txt"), 2)
+check("  đối chứng: ở FW2 bị giữ: (cd /tmp && cp … out.txt)", own("(cd /tmp && cp /etc/hosts out.txt)"), 0)
+
+print("4d. đích chỉ là chữ số là đích thật (shell_writes không còn đọc số fd của `2>` là đích)")
+check("cd ../family-wt2 && cp … 2", fam("cd ../family-wt2 && cp /etc/hosts 2"), 2)
+check("cd ../family-wt2 && cp … b.txt 2 >/dev/null (có cách: `2` là đích thật)", fam("cd ../family-wt2 && cp /etc/hosts b.txt 2 >/dev/null"), 2)
+check("  đối chứng: cp … 2 (ở FW của chính nó)", fam("cp /etc/hosts 2"), 0)
+check("  đối chứng: cd ../family-wt3 && cp … 2 (khoá cũ)", fam("cd ../family-wt3 && cp /etc/hosts 2"), 0)
+check("  đối chứng: cd ../family-wt2 && ls 2>/dev/null (`2>` là số fd, không phải đích)", fam("cd ../family-wt2 && ls 2>/dev/null"), 0)
 
 shutil.rmtree(tmp, ignore_errors=True)
 print(f"session_lock.py round 3 #427: {'all checks passed' if not bad else str(bad) + ' FAILED'}")
