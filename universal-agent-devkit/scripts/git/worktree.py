@@ -728,6 +728,19 @@ def profile_file(root):
     return None
 
 
+def copy_ignored(main, wt):
+    """agent-workbench#477: the git-ignored files a gate in a scratch worktree needs - local config, build inputs, Unity Library, hooks - the one
+    list that `agent-kit integrate` and the merge train's super-board-scratch-config.sh share (it had been written out in each). Each step on
+    its own try: one failing (a build input) must not lose the hooks after it (#463). A failure is named, never raised."""
+    copied = []
+    for step in (copy_local_config, copy_build_inputs, copy_unity_library, copy_local_hooks):
+        try:
+            copied += step(main, wt)
+        except Exception as e:  # noqa: BLE001 - the other steps still run; the gate is red by itself if what it needs is missing
+            print("• " + tr(f"{step.__name__} hỏng: {type(e).__name__}: {e}", f"{step.__name__} failed: {type(e).__name__}: {e}"))
+    return copied
+
+
 def install_args(main, wt, profile):
     """The installer run that reproduces the main checkout's DevKit setup, or None."""
     if not profile_file(main):
