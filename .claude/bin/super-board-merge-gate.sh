@@ -167,10 +167,10 @@ case "${SB_MERGE_QUEUE-}" in
   1) MERGE_QUEUE_ON=1 ;;
   *) if jq -e '.merge_queue.enabled == true' "$CONFIG" >/dev/null 2>&1; then MERGE_QUEUE_ON=1; fi ;;
 esac
-# Chỉ backend claude-p có runner rút hàng (merge_queue_due); backend khác (workflow — mặc định khi thiếu khoá, như super-board-run.sh —
-# hoặc codex) luôn coi là tắt, kể cả SB_MERGE_QUEUE=1, để PR không kẹt trong hàng không ai rút. ponytail: hỗ trợ workflow/codex khi có
-# Q-schedule.
-if [ "$MERGE_QUEUE_ON" -eq 1 ] && ! jq -e '(.worker_backend // "workflow") == "claude-p"' "$CONFIG" >/dev/null 2>&1; then
+# Chỉ backend có người rút hàng: claude-p (runner gọi merge_queue_due mỗi tick) và workflow (mặc định khi thiếu khoá, như
+# super-board-run.sh; lịch super-board-queue-schedule.sh, #453). Backend khác (codex) luôn coi là tắt, kể cả SB_MERGE_QUEUE=1, để PR
+# không kẹt trong hàng không ai rút. ponytail: hỗ trợ codex khi lane codex có lịch rút hàng.
+if [ "$MERGE_QUEUE_ON" -eq 1 ] && ! jq -e '(.worker_backend // "workflow") | IN("claude-p", "workflow")' "$CONFIG" >/dev/null 2>&1; then
   MERGE_QUEUE_ON=0
 fi
 # Queue bật: chỉ train/queue gọi được; --standalone (/super-review ngoài board) đi tiếp, trừ worker do runner phóng (SB_BOARD_WORKER=1):

@@ -166,13 +166,18 @@ run_q; rc=$?
 reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 ( export SB_MERGE_QUEUE=0; run_q ); rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "SB_MERGE_QUEUE=0 turns it off over the config" || fail "SB_MERGE_QUEUE=0: rc=$rc calls=$(calls)"
-# fix-round1-contract: bật cần thêm worker_backend "claude-p" (thiếu = workflow); backend khác = tắt, cả khi SB_MERGE_QUEUE=1.
-jq '.worker_backend = "workflow"' "$TMP/cfg.json" > "$TMP/cfg.tmp" && mv "$TMP/cfg.tmp" "$TMP/cfg.json"
+# fix-round1-contract, #453: bật cần worker_backend "claude-p" hoặc "workflow" (thiếu = workflow, có lịch rút); backend khác (codex) = tắt.
+reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
+jq '.worker_backend = "codex"' "$TMP/cfg.json" > "$TMP/cfg.tmp" && mv "$TMP/cfg.tmp" "$TMP/cfg.json"
 ( export SB_MERGE_QUEUE=1; run_q ); rc=$?
-[ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "worker_backend workflow: off even with SB_MERGE_QUEUE=1" || fail "workflow backend: rc=$rc calls=$(calls)"
+[ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "worker_backend codex: off even with SB_MERGE_QUEUE=1" || fail "codex backend: rc=$rc calls=$(calls)"
+jq '.worker_backend = "workflow"' "$TMP/cfg.json" > "$TMP/cfg.tmp" && mv "$TMP/cfg.tmp" "$TMP/cfg.json"
+run_q; rc=$?
+[ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "worker_backend workflow: on with merge_queue.enabled true (the schedule drains it)" || fail "workflow backend: rc=$rc calls=$(calls)"
+reset; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 jq 'del(.worker_backend)' "$TMP/cfg.json" > "$TMP/cfg.tmp" && mv "$TMP/cfg.tmp" "$TMP/cfg.json"
 run_q; rc=$?
-[ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "no worker_backend (= workflow): off with merge_queue.enabled true" || fail "no backend: rc=$rc calls=$(calls)"
+[ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "no worker_backend (= workflow): on with merge_queue.enabled true" || fail "no backend: rc=$rc calls=$(calls)"
 
 # ── 2. Chọn PR: 3 hợp lệ → MỘT train, cũ nhất trước; approved-head lệch / người ngoài → gỡ nhãn + comment; draft → bỏ qua, giữ nhãn.
 reset; cfg true 6

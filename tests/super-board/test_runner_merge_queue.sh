@@ -139,16 +139,20 @@ printf '[%s]' "$(pr 70 7 "$H1" '[]' false)" > "$TMP/prs.json"; approve 70 OWNER 
 reset; echo "{$CP,\"merge_queue\":{\"enabled\":true}}" > "$CONFIG_PATH"; items Review Done Done
 printf '[%s]' "$(pr 70 7 "$H1" "$MQ" false)" > "$TMP/prs.json"; approve 70 OWNER "$H1"; tick
 [ -z "$(logs)" ] && ok "SB_MERGE_QUEUE unset + config merge_queue.enabled=true: queue on, queued card skipped" || fail "config switch ignored: $(logs)"
-# Vòng sửa 1 (R3): backend khác claude-p (thiếu khoá = workflow, workflow, codex) → queue tắt dù config bật hay SB_MERGE_QUEUE=1.
-for BK in '' '"worker_backend":"workflow",' '"worker_backend":"codex",'; do
+# Vòng sửa 1 (R3), #453: backend codex → queue tắt dù config bật hay SB_MERGE_QUEUE=1; claude-p và workflow (thiếu khoá = workflow) → bật.
+for BK in '"worker_backend":"codex",'; do
   for SW in '' 1; do
     reset; echo "{${BK}\"merge_queue\":{\"enabled\":true}}" > "$CONFIG_PATH"; [ -z "$SW" ] || export SB_MERGE_QUEUE=$SW
-    if merge_queue_on; then fail "backend [${BK:-none}] SB_MERGE_QUEUE=[${SW}]: merge_queue_on says ON"; else ok "backend [${BK:-default workflow}] SB_MERGE_QUEUE=[${SW:-unset}]: queue off"; fi
+    if merge_queue_on; then fail "backend [${BK}] SB_MERGE_QUEUE=[${SW}]: merge_queue_on says ON"; else ok "backend [${BK}] SB_MERGE_QUEUE=[${SW:-unset}]: queue off"; fi
   done
 done
-reset; echo '{"merge_queue":{"enabled":true}}' > "$CONFIG_PATH"; export SB_MERGE_QUEUE=1; items Review Done Done
+for BK in '' '"worker_backend":"workflow",'; do
+  reset; echo "{${BK}\"merge_queue\":{\"enabled\":true}}" > "$CONFIG_PATH"
+  if merge_queue_on; then ok "backend [${BK:-default workflow}]: queue on (the schedule drains it)"; else fail "backend [${BK:-none}]: merge_queue_on says off"; fi
+done
+reset; echo '{"worker_backend":"codex","merge_queue":{"enabled":true}}' > "$CONFIG_PATH"; export SB_MERGE_QUEUE=1; items Review Done Done
 printf '[%s]' "$(pr 70 7 "$H1" "$MQ" false)" > "$TMP/prs.json"; approve 70 OWNER "$H1"; tick
-prompt_of 7 | grep -q 'merge-only' && ok "  … no worker_backend + SB_MERGE_QUEUE=1: the tick takes the old merge-only path" || fail "backend default queue on in tick: $(logs) $(prompt_of 7 | cut -c1-120)"
+prompt_of 7 | grep -q 'merge-only' && ok "  … worker_backend codex + SB_MERGE_QUEUE=1: the tick takes the old merge-only path" || fail "backend codex queue on in tick: $(logs) $(prompt_of 7 | cut -c1-120)"
 reset; echo "{$CP,\"merge_queue\":{\"enabled\":true}}" > "$CONFIG_PATH"; export SB_MERGE_QUEUE=0; items Review Done Done
 printf '[%s]' "$(pr 70 7 "$H1" "$MQ" false)" > "$TMP/prs.json"; approve 70 OWNER "$H1"; tick
 prompt_of 7 | grep -q 'merge-only' && ok "SB_MERGE_QUEUE=0 overrides the config: the old merge-only path" || fail "SB_MERGE_QUEUE=0 lost merge-only: $(prompt_of 7 | cut -c1-200)"

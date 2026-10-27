@@ -314,6 +314,9 @@
   // the merge gate; `.claude/bin/super-board-merge-queue.sh --config <cfg>
   // --if-due` batches them into ONE super-board-merge-train.sh run (one verify
   // for the batch) and routes every `train-result:` line. Off by default.
+  // On only for worker_backend "claude-p" (its runner calls --if-due every tick)
+  // or "workflow" (the launchd schedule super-board-queue-schedule.sh does, which
+  // super-board-wave-plan.sh ensures); "codex" never uses the queue.
   // `SB_MERGE_QUEUE=1` / `0` overrides `enabled` for one process.
   //   enabled_at:   ISO time it was switched on (the batch canary only reads
   //                 runs after it); null while off.

@@ -1792,6 +1792,8 @@
         ".claude/bin/super-board-merge-gate.sh",
         ".claude/bin/super-board-card.sh",
         ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-queue-schedule.sh",
+        ".claude/bin/super-board-wave-plan.sh",
         "tests/super-board/test_merge_queue_e2e.sh"
       ],
       "mandatory_regression_tests": [
@@ -1852,6 +1854,56 @@
           "id": "REG-SB-WORKER-WRAP-TERM-01",
           "name": "worker-wrap dừng được worker dù con nuốt mất SIGTERM đầu tiên (TERM tới con trước exec): gửi lại sau 1 s, không treo kill + wait (#489)",
           "command": "bash tests/super-board/test_worker_wrap_term.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-queue-schedule",
+      "watch_files": [
+        ".claude/bin/super-board-queue-schedule.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_wave_plan_queued.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAVE-PLAN-QUEUED-01",
+          "name": "#453 backend workflow + queue bật: wave-plan bỏ thẻ Review có PR nhãn merge-queue (chờ lịch rút hàng); queue tắt / codex / SB_MERGE_QUEUE=0 giữ nguyên",
+          "command": "bash tests/super-board/test_wave_plan_queued.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-worktree-integrate-scratch-slot",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_integrate_scratch_slot.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-WT-INTEGRATE-SCRATCH-SLOT-01",
+          "name": "#453 scratch .integrate-scratch-* mồ côi (agent-kit integrate bị SIGKILL) không chiếm chỗ WORKTREE_MAX; worktree thật vẫn tính",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_integrate_scratch_slot.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-worktree-prune-merged-ancestor",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_prune_ancestor_of_merged.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-WT-PRUNE-MERGED-ANCESTOR-01",
+          "name": "#453 prune-branch nhận nhánh có tip là tổ tiên head của PR MERGED vào trunk (PR lấy head từ nhánh khác); commit ngoài head đó, hoặc PR gộp vào nhánh khác trunk: giữ",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_prune_ancestor_of_merged.sh",
           "parallel_safe": true
         }
       ]

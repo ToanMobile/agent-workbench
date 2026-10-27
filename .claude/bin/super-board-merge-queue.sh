@@ -62,15 +62,16 @@ done
 say() { echo "[merge-queue] $*" >&2; }
 
 CONFIG_JSON=$(cat "$CONFIG")
-# Bật = (merge_queue.enabled hoặc SB_MERGE_QUEUE=1) VÀ worker_backend "claude-p" (thiếu khoá = "workflow", như super-board-run.sh);
-# SB_MERGE_QUEUE=0 luôn tắt. Cùng định nghĩa với merge gate và merge train (fix-round1-contract.md).
-# ponytail: backend workflow/codex coi như tắt (chưa có ai rút hàng ở đó); thêm khi có Q-schedule.
+# Bật = (merge_queue.enabled hoặc SB_MERGE_QUEUE=1) VÀ worker_backend "claude-p" (runner rút mỗi tick) hoặc "workflow" (thiếu khoá = "workflow",
+# như super-board-run.sh; lịch super-board-queue-schedule.sh rút, #453); SB_MERGE_QUEUE=0 luôn tắt. Cùng định nghĩa với merge gate, merge
+# train và runner (fix-round1-contract.md).
+# ponytail: backend codex coi như tắt (lane codex tự merge qua gate với SB_MERGE_QUEUE=0); thêm khi codex có lịch rút hàng.
 case "${SB_MERGE_QUEUE:-}" in
   0) ENABLED=false ;;
   *) ENABLED=$(echo "$CONFIG_JSON" | jq -r --arg env "${SB_MERGE_QUEUE:-}" \
-       '(.worker_backend // "workflow") == "claude-p" and ($env == "1" or .merge_queue.enabled == true)') ;;
+       '((.worker_backend // "workflow") | IN("claude-p", "workflow")) and ($env == "1" or .merge_queue.enabled == true)') ;;
 esac
-[ "$ENABLED" = true ] || { say "merge queue is off (config merge_queue.enabled + worker_backend claude-p / SB_MERGE_QUEUE); nothing to do"; exit 0; }
+[ "$ENABLED" = true ] || { say "merge queue is off (config merge_queue.enabled + worker_backend claude-p or workflow / SB_MERGE_QUEUE); nothing to do"; exit 0; }
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 NOTIFY="$HERE/super-board-notify.py"
 posint() { case "$1" in ''|*[!0-9]*|0) echo "$2" ;; *) echo "$1" ;; esac; }

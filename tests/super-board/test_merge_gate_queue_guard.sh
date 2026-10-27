@@ -88,9 +88,9 @@ print(json.dumps(c))' "$1" "$2" "$3" "$TMP/verified" "${4:-claude-p}" > "$1"
 }
 CFG_ON="$TMP/cfg-on.json"; CFG_OFF="$TMP/cfg-off.json"; CFG_HUMAN="$TMP/cfg-human.json"
 mkcfg "$CFG_ON" true auto; mkcfg "$CFG_OFF" false auto; mkcfg "$CFG_HUMAN" true human
-# Vòng sửa 1 (R2): queue chỉ bật khi worker_backend là claude-p; backend khác (hoặc thiếu khoá = "workflow") luôn tắt.
+# Vòng sửa 1 (R2), #453: queue chỉ bật khi worker_backend là claude-p hoặc workflow (thiếu khoá = workflow); backend khác (codex) luôn tắt.
 CFG_HUMAN_OFF="$TMP/cfg-human-off.json"; CFG_WF="$TMP/cfg-wf.json"; CFG_NOKEY="$TMP/cfg-nokey.json"; CFG_HUMAN_WF="$TMP/cfg-human-wf.json"
-mkcfg "$CFG_HUMAN_OFF" false human; mkcfg "$CFG_WF" true auto workflow; mkcfg "$CFG_NOKEY" true auto -; mkcfg "$CFG_HUMAN_WF" true human workflow
+mkcfg "$CFG_HUMAN_OFF" false human; mkcfg "$CFG_WF" true auto workflow; mkcfg "$CFG_NOKEY" true auto -; mkcfg "$CFG_HUMAN_WF" true human codex  # #453: workflow = bật, codex = tắt
 LINE='merge-queue: label the PR merge-queue instead of calling the gate directly'
 LOCK="$WT/.claude/super-board/inflight/merge.lock"
 
@@ -212,21 +212,25 @@ gate 5 SB_MERGE_CALLER=train SB_MERGE_QUEUE=0 -- --config "$CFG_HUMAN" --expect-
 [ "$RC" -eq 7 ] && [ "$(napprove)" = 1 ] \
   && ok "SB_MERGE_QUEUE=0 over a config that is on: --preflight sends the approve notice once" \
   || fail "SB_MERGE_QUEUE=0 preflight notice: $(why) approve=$(napprove)"
-# Queue tắt vì backend (config bật, worker_backend workflow): cũng gửi như gate cũ.
+# Queue tắt vì backend (config bật, worker_backend codex): cũng gửi như gate cũ.
 gate 5 SB_MERGE_CALLER=train -- --config "$CFG_HUMAN_WF" --expect-head "$H" --preflight --lock-timeout 0
 [ "$RC" -eq 7 ] && [ "$(napprove)" = 1 ] \
-  && ok "queue off by backend (workflow): --preflight sends the approve notice once" \
-  || fail "workflow-backend preflight notice: $(why) approve=$(napprove)"
+  && ok "queue off by backend (codex): --preflight sends the approve notice once" \
+  || fail "codex-backend preflight notice: $(why) approve=$(napprove)"
 
-# ── 11. Queue chỉ bật với worker_backend claude-p (R2). Backend khác, hoặc thiếu khoá (mặc định workflow), luôn coi là tắt, kể cả
-#        SB_MERGE_QUEUE=1: chưa có ai rút hàng ở đó. ponytail: hỗ trợ workflow/codex khi có Q-schedule.
-gate 5 -- --config "$CFG_WF" --expect-head "$H" --dry-run
+# ── 11. Queue chỉ bật với worker_backend claude-p hoặc workflow (R2, #453). Thiếu khoá = workflow = bật; backend khác (codex) luôn tắt,
+#        kể cả SB_MERGE_QUEUE=1: chưa có ai rút hàng ở đó. ponytail: hỗ trợ codex khi lane codex có lịch rút hàng.
+CFG_CODEX="$TMP/cfg-codex.json"; mkcfg "$CFG_CODEX" true auto codex
+gate 5 -- --config "$CFG_CODEX" --expect-head "$H" --dry-run
 [ "$RC" -eq 0 ] && verified && ! grep -q '^merge-queue:' "$TMP/out" \
-  && ok "merge_queue.enabled with worker_backend workflow: queue off, the direct call verifies" || fail "workflow backend: $(why)"
+  && ok "merge_queue.enabled with worker_backend codex: queue off, the direct call verifies" || fail "codex backend: $(why)"
+gate 5 SB_MERGE_QUEUE=1 -- --config "$CFG_CODEX" --expect-head "$H" --dry-run
+[ "$RC" -eq 0 ] && verified && ok "SB_MERGE_QUEUE=1 with worker_backend codex: still off" || fail "SB_MERGE_QUEUE=1 + codex: $(why)"
+gate 5 -- --config "$CFG_WF" --expect-head "$H" --dry-run
+[ "$RC" -eq 13 ] && ! verified && grep -q "^$LINE\$" "$TMP/out" \
+  && ok "worker_backend workflow: queue on, a direct call exits 13 (the schedule drains the queue)" || fail "workflow backend: $(why)"
 gate 5 -- --config "$CFG_NOKEY" --expect-head "$H" --dry-run
-[ "$RC" -eq 0 ] && verified && ok "merge_queue.enabled with no worker_backend (defaults to workflow): queue off" || fail "no backend key: $(why)"
-gate 5 SB_MERGE_QUEUE=1 -- --config "$CFG_WF" --expect-head "$H" --dry-run
-[ "$RC" -eq 0 ] && verified && ok "SB_MERGE_QUEUE=1 with worker_backend workflow: still off" || fail "SB_MERGE_QUEUE=1 + workflow: $(why)"
+[ "$RC" -eq 13 ] && ! verified && ok "no worker_backend (defaults to workflow): queue on" || fail "no backend key: $(why)"
 
 # ── 12. F4 (R2): worker do runner phóng (SB_BOARD_WORKER=1) không được lách hàng đợi bằng --standalone khi queue bật.
 gate 5 SB_BOARD_WORKER=1 -- --config "$CFG_ON" --expect-head "$H" --dry-run --standalone
