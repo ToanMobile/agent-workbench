@@ -8,7 +8,7 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 WT="${WTL_KIT:-$DEVKIT_DIR}/scripts/git/worktree.py"
 TMP="$(mktemp -d)"; SL=""
-trap '[ -n "$SL" ] && kill "$SL" 2>/dev/null; rm -rf "$TMP"' EXIT
+trap '[ -n "$SL" ] && { kill "$SL" 2>/dev/null; wait "$SL" 2>/dev/null; }; rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 G() { git -C "$1" -c user.email=t@t -c user.name=t "${@:2}"; }
 REALGIT="$(command -v git)"
@@ -45,5 +45,22 @@ G "$R" worktree add -q --detach "$H/free" main
 (cd "$R" && python3 "$WT" remove "$H/free" > "$TMP/r2.out" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ ! -d "$H/free" ] && ok "control: an unheld, clean worktree is still removed" \
   || { fail "control remove rc=$rc"; cat "$TMP/r2.out"; }
+
+# 3. khoá của CHÍNH chủ worktree (session_id = "session" trong devkit-worktree.json), pid sống nhưng không là tổ tiên: automerge của Stop hook
+#    chạy mồ côi (ppid 1) sau khi hook thoát, _ancestor_pids không còn thấy claude (OCR review #427 vòng 3): vẫn gỡ được worktree của mình
+(cd "$R" && python3 "$WT" add "$H/own" --session=me --no-init > "$TMP/add3.out" 2>&1) || { fail "setup: worktree add --session=me"; cat "$TMP/add3.out"; }
+GDO="$(G "$H/own" rev-parse --absolute-git-dir)"
+printf '{"session_id":"me","pid":%s,"gitdir":"%s"}\n' "$SL" "$GDO" > "$GDO/devkit-session.lock"
+(cd "$R" && python3 "$WT" remove "$H/own" > "$TMP/r3.out" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ ! -d "$H/own" ] && ok "the owner's own checkout lock (orphaned automerge, no claude ancestor) does not keep its own worktree" \
+  || { fail "own lock kept the worktree: rc=$rc"; cat "$TMP/r3.out"; }
+
+# 4. pid đã bị hệ điều hành tái dùng (pid_start khác bản ghi): khoá đó đã chết, không giữ
+G "$R" worktree add -q --detach "$H/reused" main
+GDR="$(G "$H/reused" rev-parse --absolute-git-dir)"
+printf '{"session_id":"gone","pid":%s,"pid_start":"Thu Jan  1 00:00:00 1970","gitdir":"%s"}\n' "$SL" "$GDR" > "$GDR/devkit-session.lock"
+(cd "$R" && python3 "$WT" remove "$H/reused" > "$TMP/r4.out" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ ! -d "$H/reused" ] && ok "a lock whose pid was recycled (pid_start differs) does not keep the worktree" \
+  || { fail "recycled-pid lock kept the worktree: rc=$rc"; cat "$TMP/r4.out"; }
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_worktree_remove_late_holder: all passed" || { echo "❌ test_worktree_remove_late_holder: $FAILS failed"; exit 1; }

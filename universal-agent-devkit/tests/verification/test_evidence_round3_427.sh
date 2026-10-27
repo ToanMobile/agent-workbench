@@ -22,6 +22,19 @@
 #      and `yarn test:e2e | tail -N` follow the round-2 mocha rule now (only `npm test` / `npm run test` did).
 #   6  contract D of tests/gates/test_evidence_false_blocks.sh (a glob loop over kit suites with no summary line is green) is DROPPED:
 #      measured on 70 051 real tool results, 2 commands flip, both real holes (a loop the harness moved to the background, a grep loop).
+# Review vòng 3 (#427), các dòng R1–R7:
+#   R1 mọi cửa sổ `2>&1 | tail -N` của lần chạy kit phải kết thúc bằng tóm tắt của chính nó khi có runner bị che; dòng trong cửa sổ của
+#      runner không phải kit không được đếm cho kit (`x | tail -1; y | tail -1; d.py | tail -1` in `✔ case 1`, `✅ …`, `ALL PASS`: xanh);
+#      khi ranh giới biết được, mỗi lần chạy kit đếm nhiều nhất một tóm tắt.
+#   R2 (orchestrator quyết) PATH chỉ thêm bin của venv / toolchain quen thuộc vẫn được tin; thư mục khác, `..`, HOME / VIRTUAL_ENV đặt lại
+#      trong lệnh (cả ngoài chuỗi `bash -c` / `eval`) thì không.
+#   R3 kết quả chỉ là thông báo chạy nền của harness: không phán quyết. Đọc đúng file output đó (Read trọn, `cat` / `tail -N` đứng một mình)
+#      khi nó kết thúc bằng `[exited with code N]` thì phán như lần chạy tiền cảnh của lệnh gốc, tính ở vị trí lệnh gốc; không có dấu đó
+#      (đang chạy, `[killed]`) thì chỉ ĐỎ.
+#   R4 `No module named pytest` / `command not found` với is_error không phải nửa ĐỎ của check 7.
+#   R5 _defines_spoof tuyến tính: 9 000 × `sh -c a` từng quá 35 s (hook bị cắt, claim lọt). Có trần CPU.
+#   R6 hàm kiểu Allman (`die()⏎{ …; exit 1; }`) và `PATH=` là đối số của grep / echo không còn bị chặn nhầm; `make test PATH=…` vẫn chặn.
+#   R7 `builtin exit 0; pytest`, `false || false && pytest`: runner không bao giờ chạy, không phán quyết.
 #   EG_KIT=<devkit dir>   test another copy of the kit (the unpatched one: RED).
 # bash 3.2 compatible wrapper; the scenarios are python3 stdlib.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
@@ -59,6 +72,10 @@ def transcript(p, steps):
         if s[0] == "bash":
             use = {"type": "tool_use", "id": uid, "name": "Bash", "input": {"command": s[1]}}
             res = {"type": "tool_result", "tool_use_id": uid, "content": s[2], "is_error": bool(s[3]) if len(s) > 3 else False}
+        elif s[0] == "read":   # ["read", file_path, content, {other Read input}]: the Read tool's line-numbered result
+            use = {"type": "tool_use", "id": uid, "name": "Read", "input": dict({"file_path": s[1]}, **(s[3] if len(s) > 3 else {}))}
+            res = {"type": "tool_result", "tool_use_id": uid,
+                   "content": "".join("%d\t%s\n" % (k + 1, l) for k, l in enumerate(s[2].split("\n")))}
         else:   # ["edit"]: src/app.py
             use = {"type": "tool_use", "id": uid, "name": "Edit",
                    "input": {"file_path": os.path.join(p, "src", "app.py"), "old_string": "1", "new_string": "2"}}
@@ -265,6 +282,121 @@ case("6 must block: a glob loop the harness moved to the background (its result 
 case("6 must block: a glob loop printing only per-case `✔ …: PASS` lines", after(GLOB, "✔ a: PASS\n✔ b: PASS"), 2)
 case("6 control: the same glob loop with a summary line is green", after(GLOB, "✔ case 1\nok: done\n✔ case 2\nall passed (2)"), 0)
 case("6 control: a glob loop whose runs print `PASS` lines is green", after('for f in tests/a/test_*.sh; do bash "$f" 2>&1 | tail -1; done', "PASS\nPASS"), 0)
+
+# ── Review vòng 3 (#427): R1–R7 ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+print("-- R1: mọi cửa sổ kit phải kết thúc bằng tóm tắt của chính nó; dòng của cửa sổ runner bị che không được đếm cho kit")
+W3 = "bash tests/a/test_x.sh 2>&1 | tail -1; bash tests/a/test_y.sh 2>&1 | tail -1; python3 tests/a/test_d.py 2>&1 | tail -%d"
+case("R1 must block: x | tail -1; y | tail -1; d.py | tail -1, x's window ends in a check line (x died silently)",
+     after(W3 % 1, "✔ case 1\n✅ test_y: all passed\nALL PASS"), 2)
+case("R1 must block: the 3b loop shape, run b's window ends in a crash line",
+     after(D4, "PASS\ntests/super-board/test_b.sh: line 7: jq: command not found\n✅ test_c: all passed\nALL PASS"), 2)
+case("R1 must block: d.py | tail -2 prints `5 passed` and `ALL PASS`: its `ALL PASS` is no kit's summary (x printed none)",
+     after(W3 % 2, "✔ case 1\n✅ test_y: all passed\n5 passed in 0.1s\nALL PASS"), 2)
+case("R1 must block (the `after` rule still holds where the boundaries are unknown): `bash x; bash y` printing `✅ test_x: all passed⏎PASS`",
+     after("bash tests/a/test_x.sh; bash tests/a/test_y.sh", "✅ test_x: all passed\nPASS"), 2)
+case("R1 must block: no masked runner, `x | tail -2` prints two summary lines, `y | tail -1` only a check line (one run per window)",
+     after("bash tests/a/test_x.sh 2>&1 | tail -2; bash tests/a/test_y.sh 2>&1 | tail -1", "✅ a: all passed\nall passed (1)\n✔ case"), 2)
+case("R1 control: the same two windows, each with its summary", after("bash tests/a/test_x.sh 2>&1 | tail -2; bash tests/a/test_y.sh 2>&1 | tail -1",
+                                                                    "✔ a\nall passed (1)\nall passed (1)"), 0)
+case("R1 control: the same three windows, each ending in its own summary", after(W3 % 1, "test_x: PASS\n✅ test_y: all passed\nALL PASS"), 0)
+case("R1 control: d.py | tail -2 with each kit window ending in its summary",
+     after(W3 % 2, "✅ test_x: all passed\n✅ test_y: all passed\n5 passed in 0.1s\nALL PASS"), 0)
+
+print("-- R2: PATH có thêm bin của venv / toolchain quen thuộc vẫn được tin (như `source venv/bin/activate`)")
+GATE_OUT = "  KẾT LUẬN CỔNG POST-FIX AUDIT: PASS — ĐỦ ĐIỀU KIỆN NGHIỆM THU & BÀN GIAO\n  • Test hồi quy đạt: 3/3"
+case("R2 must pass: `PATH=\"$PWD/.venv/bin:$PATH\" python3 …/post-fix-gate.py --run-tests --full` (GeelyEx2 gate-green)",
+     after("PATH=\"$PWD/.venv/bin:$PATH\" python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --full", GATE_OUT), 0)
+for c in ("PATH=.venv/bin:$PATH python3 -m pytest -q", "PATH=\"venv/bin:$PATH\" python3 -m pytest -q",
+          "PATH=./env/bin:$PATH python3 -m pytest -q", "export PATH=\"$VIRTUAL_ENV/bin:$PATH\"; python3 -m pytest -q",
+          "PATH=\"${PWD}/.venv/bin:${PATH}\" python3 -m pytest -q", "export PATH=\"$HOME/flutter/bin:$PATH\" && python3 -m pytest -q",
+          "PATH=$HOME/.cargo/bin:~/.local/bin:$PATH python3 -m pytest -q", "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:$PATH python3 -m pytest -q",
+          "PATH=\"$HOME/.pyenv/shims:$PATH\" python3 -m pytest -q"):
+    case("R2 must pass: `%s`" % c, after(c, PYOK), 0)
+for c in ("PATH=\"$PWD/scratch:$PATH\" python3 -m pytest -q", "PATH=/tmp/x/.venv/bin:$PATH python3 -m pytest -q",
+          "PATH=\".venv/bin/../../shim:$PATH\" python3 -m pytest -q", "PATH=\"$HOME:$PATH\" python3 -m pytest -q",
+          "PATH=$PWD/.venv/bin:/tmp/x:$PATH python3 -m pytest -q", "VIRTUAL_ENV=/tmp/shim PATH=$VIRTUAL_ENV/bin:$PATH python3 -m pytest -q",
+          "HOME=/tmp/x; export PATH=$HOME/.cargo/bin:$PATH; python3 -m pytest -q", "PATH=$TMPDIR/bin:$PATH python3 -m pytest -q",
+          "PATH=$HOME/.local/bin/x:$PATH python3 -m pytest -q",
+          "HOME=/tmp/x bash -c 'PATH=$HOME/.cargo/bin:$PATH python3 -m pytest -q'",
+          "export HOME=/tmp/x; eval 'PATH=~/.local/bin:$PATH python3 -m pytest -q'"):
+    case("R2 must block: `%s` (a directory a shim can be put in)" % c, after(c, PYOK), 2)
+
+print("-- R3: kết quả chỉ là thông báo chạy nền của harness thì không có phán quyết; đọc đúng file output đó thì phán theo lệnh gốc")
+BGP = "/private/tmp/claude-501/x/tasks/b1q2w3e4r.output"
+BG = ("Command running in background with ID: b1q2w3e4r. Output is being written to: %s. You will be notified when it completes. "
+      "To check interim output, use Read on that file path." % BGP)
+MOVED = ("Command did not complete within its 120s timeout and was moved to the background (ID: b1q2w3e4r). Output is being written to: "
+         "%s. You will be notified when it completes. To check interim output, use Read on that file path." % BGP)
+PY = "python3 -m pytest -q"
+case("R3 must block: `pytest -q` whose result is only the background notice", after(PY, BG), 2)
+case("R3 must block: `bash tests/…/test_x.sh` whose result is only the background notice", after("bash tests/a/test_x.sh", BG), 2)
+case("R3 must block: `pytest -q` moved to the background after its timeout (only that notice)", after(PY, MOVED), 2)
+case("R3 must pass: the notice, then a Read of that output file with `5 passed` and the harness's `[exited with code 0]`",
+     after(PY, BG) + [["read", BGP, "....\n5 passed in 0.1s\n\n[exited with code 0]"]], 0)
+DONE0 = "\n\n[exited with code 0]"
+case("R3 must pass: the moved notice, then `tail -5 <file>` with `5 passed`",
+     after(PY, MOVED) + [["bash", "tail -5 " + BGP, DOTS + DONE0]], 0)
+case("R3 must pass: the notice, then `cat \"<file>\"` with `5 passed`", after(PY, BG) + [["bash", "cat \"%s\"" % BGP, DOTS + DONE0]], 0)
+case("R3 must pass: the notice, then a Read ending `[exited with code 0]` and a <system-reminder> the Read tool adds (lone pytest, exit 0)",
+     after(PY, BG) + [["read", BGP, "....\n[exited with code 0]\n<system-reminder>\nnote\n</system-reminder>"]], 0)
+case("R3 must block: an interim read (no `[exited with code N]` yet) of `go test ./...` showing `ok` lines",
+     after("go test ./...", BG) + [["read", BGP, "ok  \texample.com/a\t0.1s\nok  \texample.com/b\t0.2s"]], 2)
+case("R3 must block: the same read ending `[exited with code 1]`",
+     after("go test ./...", BG) + [["read", BGP, "ok  \texample.com/a\t0.1s\nok  \texample.com/b\t0.2s\n[exited with code 1]"]], 2)
+case("R3 must block: a read of a killed run (`[killed]`)", after(PY, BG) + [["read", BGP, "5 passed in 0.1s\n[killed]"]], 2)
+case("R3 must block: a read without the trailer (`5 passed`, the run may still be going)", after(PY, BG) + [["bash", "cat " + BGP, DOTS]], 2)
+case("R3 must pass: a RED read of a background run, the fix, a GREEN run: check 7's pair",
+     [["bash", PY, BG], ["read", BGP, "FAILED tests/test_foo.py::test_a - assert 1 == 2\n1 failed in 0.1s"], E, ["bash", PY, PYOK]], 0, msg=FIX)
+case("R3 must block (control of the row above): the read shows a pass, so there is no RED half",
+     [["bash", PY, BG], ["read", BGP, "5 passed in 0.1s"], E, ["bash", PY, PYOK]], 2, msg=FIX)
+case("R3 must block: the notice, then a Read of a DIFFERENT path", after(PY, BG) + [["read", BGP.replace("b1q2", "b9q2"), PYOK + DONE0]], 2)
+case("R3 must block: the notice, then a Read of the head only (`limit`)", after(PY, BG) + [["read", BGP, PYOK + DONE0, {"limit": 20}]], 2)
+case("R3 must block: the notice, then `cat <file> | grep passed`", after(PY, BG) + [["bash", "cat %s | grep passed" % BGP, PYOK + DONE0]], 2)
+case("R3 must block: the read shows no summary and no `[exited with code N]` (the exit code is unknown)",
+     after(PY, BG) + [["read", BGP, "....\n"]], 2)
+case("R3 must block: the read is judged by the ORIGINAL command (`bash x; bash y` needs two summaries)",
+     after("bash tests/a/test_x.sh; bash tests/a/test_y.sh", BG) + [["read", BGP, "✔ a\nall passed (1)" + DONE0]], 2)
+case("R3 must block: the run was started BEFORE the last edit; only its read comes after",
+     [["bash", PY, BG], E, ["read", BGP, PYOK + DONE0]], 2)
+
+print("-- R4: runner không có trên máy (is_error) không phải nửa ĐỎ của check 7")
+for out in ("/usr/bin/python3: No module named pytest", "zsh: command not found: pytest", "bash: npm: command not found"):
+    cmd = "npm test" if "npm" in out else PY
+    case("R4 must block: RED half `%s` printing `%s`, the fix, a GREEN run" % (cmd, out),
+         pair(cmd, out, cmd, "Tests: 12 passed, 12 total" if "npm" in out else PYOK), 2, msg=FIX)
+case("R4 control: a real RED (`ModuleNotFoundError: No module named 'pytest_asyncio'` in a failing test) still pairs",
+     pair(PY, "E   ModuleNotFoundError: No module named 'pytest_asyncio'\nFAILED tests/test_foo.py::test_a\n1 failed in 0.1s", PY, PYOK), 0, msg=FIX)
+
+print("-- R5: _defines_spoof tuyến tính theo số `sh -c` / `eval`")
+SHC = " ".join(["sh -c a"] * 9000)
+case("R5 must block: 9 000 × `sh -c a` (70 KB) then a run sent to a log: blocked within the CPU cap",
+     after(SHC + "; python3 -m pytest -q > /tmp/l 2>&1; echo done", "done"), 2, cpu=3.0)
+case("R5 must block: 9 000 × `eval` then a run sent to a log: blocked within the CPU cap",
+     after(" ".join(["eval a"] * 9000) + "; python3 -m pytest -q > /tmp/l 2>&1; echo done", "done"), 2, cpu=3.0)
+case("R5 control: `sh -c a sh -c a; bash -c 'tail() { … }; pytest | tail -3'` still reads the definition",
+     after("sh -c a sh -c a; bash -c 'tail() { echo 5 passed; }; python3 -m pytest -q 2>&1 | tail -3'", PYOK), 2)
+case("R5 control: `eval x; eval 'tail() { … }'; pytest | tail -3` still reads the definition",
+     after("eval x; eval 'tail() { echo 5 passed; }'; python3 -m pytest -q 2>&1 | tail -3", PYOK), 2)
+
+print("-- R6: hàm kiểu Allman, `grep PATH=` không phải đổi PATH")
+for c in ("die()\n{\n  echo \"$1\"\n  exit 1\n}\npython3 -m pytest -q || die x", "function die\n{ echo x; exit 1; }\npython3 -m pytest -q",
+          "env | grep PATH= ; python3 -m pytest -q", "echo PATH=$PATH; python3 -m pytest -q", "X=$(grep -c PATH= f); python3 -m pytest -q"):
+    case("R6 must pass: `%s`" % c.replace("\n", "⏎"), after(c, PYOK), 0)
+case("R6 control: `make test` is a run (the `make test PATH=…` row below is blocked by its PATH)", after("make test", PYOK), 0)
+for c in ("x=1\n{\n  exit 0\n}\npython3 -m pytest -q", "{\n  exit 0\n}\npython3 -m pytest -q",
+          "env PATH=/tmp/x:$PATH python3 -m pytest -q", "A=1 PATH=/tmp/x:$PATH python3 -m pytest -q",
+          "export A=1 PATH=/tmp/x:$PATH; python3 -m pytest -q", "sudo PATH=/tmp/x:$PATH python3 -m pytest -q",
+          "timeout 60 env PATH=/tmp/x python3 -m pytest -q", "if PATH=/tmp/x:$PATH; then python3 -m pytest -q; fi",
+          "make test PATH=/tmp/x:$PATH", "uv run env PATH=/tmp/x python3 -m pytest -q"):
+    case("R6 must block: `%s`" % c.replace("\n", "⏎"), after(c, PYOK), 2)
+
+print("-- R7: `builtin exit`, `false || false && pytest` (runner không bao giờ chạy)")
+for c in ("builtin exit 0; python3 -m pytest -q", "command exit 0; python3 -m pytest -q", "false || false && python3 -m pytest -q",
+          "false && true || false && python3 -m pytest -q", "true || false || python3 -m pytest -q"):
+    case("R7 must block: `%s`" % c, after(c, PYOK), 2)
+for c in ("a=1 || false && python3 -m pytest -q", "true && false || python3 -m pytest -q", "command -v pytest && python3 -m pytest -q",
+          "builtin cd sub && python3 -m pytest -q", "cd sub && echo ok || false && python3 -m pytest -q"):
+    case("R7 control: `%s` is still green" % c, after(c, PYOK), 0)
 
 shutil.rmtree(TMP, ignore_errors=True)
 print("")

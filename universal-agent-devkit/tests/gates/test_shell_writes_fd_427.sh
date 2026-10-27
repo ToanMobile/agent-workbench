@@ -9,6 +9,9 @@
 #   4. hooks/worktree_guard.sh (như tests/gates/test_worktree_guard_shell_writes.sh): ghi vào checkout main của agent ở worktree.
 #   5. shell_writes.targets trực tiếp: đích redirect vẫn là đích ghi (`2>/tmp/log`), và các dạng shell đọc `2` là ĐỐI SỐ (đo trên bash và zsh):
 #      `2 >f` (có cách), `'2'>f`, `\2>f`, `a\ 2>f`.
+#   6. review vòng 3: thư mục mà targets() theo cd chữ không quay về khi `)` đóng subshell / $( ) và sau `popd` (chặn nhầm
+#      `(cd <main> && ls); make` ở worktree_guard); nay về như shell - chỉ khi ngoặc của dòng đọc được như shell (_scoped: không `case`,
+#      không `")"` trong nháy / bị thoát) và ngăn pushd theo được (không eval / source / . / dirs / hàm); `~a<NUL>b` không làm targets() văng.
 # Mỗi ca nới (trước chặn, nay qua: `2` không còn là đích giả ở cwd) có ca đối nghịch phải-chặn; mỗi ca phải-chặn có ca đối chứng phải-qua.
 #   SWFD_KIT=<thư mục kit>   chạy cùng bảng trên một bản kit khác (bản chưa sửa: ĐỎ).
 # bash 3.2 compatible wrapper; the checks are python3 (stdlib only). Không lệnh nào được chạy thật: test chỉ đưa payload cho hook.
@@ -217,6 +220,73 @@ for label, c, want in (("cp a b 2 >x (có cách)", "cp a b 2 >x", "2"), ("cp a b
                        ("cp a b2>x (chữ số giữa từ)", "cp a b2>x", "b2"), ("cp a b 2&>x (bash: `2` là đối số của cp)", "cp a b 2&>x", "2")):
     check("đối số giữ nguyên: " + label, [t for k, t, _ in T(c) if k == "file"], [want])
 check("env -S 'cp a b 2>x': env không chuyển hướng - `2>x` là đối số", T("env -S 'cp a b 2>x'"), [("file", "2>x", "/w")])
+
+print("6. review vòng 3: `)` và popd đưa thư mục về (chỉ khi đọc được như shell); NUL sau ~ không làm targets() văng")
+W = lambda c: [(t, h) for k, t, h in T(c) if k in ("redirect", "file")]
+for label, c, want in (("(cd /x && ls); echo y > out", "(cd /x && ls); echo y > out", "/w"),
+                       ("pushd /x && ls && popd && echo y > out", "pushd /x && ls && popd && echo y > out", "/w"),
+                       ("X=$(cd /x && pwd); echo y > out", "X=$(cd /x && pwd); echo y > out", "/w"),
+                       ("cat <(cd /x && ls) > out", "cat <(cd /x && ls) > out", "/w"),
+                       ("pushd /x && pushd /z && popd && echo y > out", "pushd /x && pushd /z && popd && echo y > out", "/x"),
+                       ("(cd /x && echo y > out)", "(cd /x && echo y > out)", "/x"),
+                       ("cd /x; (cd /z); echo y > out", "cd /x; (cd /z); echo y > out", "/x"),
+                       ("{ cd /x; }; echo y > out (nhóm { } không phải subshell)", "{ cd /x; }; echo y > out", "/x"),
+                       ("(cd /x && cat <(ls) > out) (`)` của <( ) không đóng subshell ngoài)", "(cd /x && cat <(ls) > out)", "/x"),
+                       ("cd /x && popd; echo y > out (ngăn rỗng: popd lỗi, thư mục giữ)", "cd /x && popd; echo y > out", "/x"),
+                       ("cd /x && (pushd /z) && popd; echo y > out (pushd trong subshell mất)", "cd /x && (pushd /z) && popd; echo y > out", "/x"),
+                       ("(cd /x && case a in a) echo y > out;; esac) (`a)`: không _scoped, thư mục giữ)",
+                        "(cd /x && case a in a) echo y > out;; esac)", "/x"),
+                       ("(cd /x; echo \")\"; echo y > out) (`)` trong nháy: không _scoped)", "(cd /x; echo \")\"; echo y > out)", "/x"),
+                       ("(cd /x; echo \\); echo y > out) (`)` bị thoát: không _scoped)", "(cd /x; echo \\); echo y > out)", "/x"),
+                       ("(cd /x; echo \")\" \"(\"; echo y > out) (ngoặc trong nháy cân nhau: vẫn không _scoped)",
+                        "(cd /x; echo \")\" \"(\"; echo y > out)", "/x"),
+                       ("(cd /x; echo $'\\')' \\' $'\\'(' \\'; echo y > out) (`$'…'`: không _scoped)",
+                        "(cd /x; echo $'\\')' \\' $'\\'(' \\'; echo y > out)", "/x"),
+                       ("(cd /x; echo \"$(echo \")(\") x\"; echo y > out) (nháy lồng trong \"$( )\": không _scoped)",
+                        "(cd /x; echo \"$(echo \")(\") x\"; echo y > out)", "/x"),
+                       ("(cd /x; echo \"${X:-\")(\"}\"; echo y > out) (nháy lồng trong \"${ }\")", "(cd /x; echo \"${X:-\")(\"}\"; echo y > out)", "/x"),
+                       ("(cd /x; echo \"`echo \")(\"` x\"; echo y > out) (nháy lồng trong \"` `\")", "(cd /x; echo \"`echo \")(\"` x\"; echo y > out)", "/x"),
+                       ("(cd /x && ls) && echo \"$((1+2)) $(echo $(date))\" > out (\"$( )\" không nháy lồng: vẫn về)",
+                        "(cd /x && ls) && echo \"$((1+2)) $(echo $(date))\" > out", "/w"),
+                       ("(cd /x && pushd /z); popd; echo y > out (ngăn của subshell mất: popd lỗi)", "(cd /x && pushd /z); popd; echo y > out", "/w"),
+                       ("cd /x && (cd /q && pushd /z); popd; echo y > out (ngăn của subshell mất: popd lỗi)",
+                        "cd /x && (cd /q && pushd /z); popd; echo y > out", "/x"),
+                       ("pushd /x && eval 'pushd /z' && popd; echo y > out (eval: ngăn không theo được)",
+                        "pushd /x && eval 'pushd /z' && popd; echo y > out", "/x"),
+                       ("f() { popd; }; pushd /x && f; popd; echo y > out (hàm: ngăn không theo được)",
+                        "f() { popd; }; pushd /x && f; popd; echo y > out", "/x"),
+                       ("pushd /x && popd +1; popd; echo y > out (popd +N: ngăn không theo được)", "pushd /x && popd +1; popd; echo y > out", "/x")):
+    check(label, W(c), [("out", want)])
+check("popd > log: redirect mở trước khi popd đổi thư mục", W("pushd /x && popd > log"), [("log", "/x")])
+check("cd \"~a<NUL>b\"; cp a b: không văng, cd không biết (cdvar), thư mục giữ",
+      T('cd "~a\x00b"; cp a b'), [("cdvar", "~a\x00b", "/w"), ("file", "b", "/w")])
+check("sed -i s/a/b/ \"~a<NUL>b\" <file có thật>: không văng", W(f'sed -i s/a/b/ "~a\x00b" {GM}/src/a.kt'), [(f"{GM}/src/a.kt", "/w")])
+check("git -C \"~a<NUL>b\" commit: không văng", T('git -C "~a\x00b" commit'), [("git", "/w/~a\x00b", "/w")])
+check("worktree_guard: từ GW: (cd <GM> && ls); cp … src/b.kt (trước: chặn nhầm)", guard(GW, f"(cd {GM} && ls); cp /tmp/x src/b.kt"), 0)
+check("worktree_guard: từ GW: pushd <GM> && popd && cp … src/b.kt", guard(GW, f"pushd {GM} && popd && cp /tmp/x src/b.kt"), 0)
+check("worktree_guard: từ GW: (cd <GM> && cp … src/b.kt)", guard(GW, f"(cd {GM} && cp /tmp/x src/b.kt)"), 2)
+check("worktree_guard: từ GW: pushd <GM> && cp … src/b.kt && popd", guard(GW, f"pushd {GM} && cp /tmp/x src/b.kt && popd"), 2)
+
+print("7. sed -i / perl -i / ruby -i: toán hạng có $VAR / ${…} / $( ) / backtick giữa từ hay glob là đích (thư mục chữ trước nó)")
+SRC = os.path.join(GM, "src")
+F = lambda c: [t for k, t, h in sw_mod.targets(c, SRC) if k == "file"]
+for label, c, want in (("dòng Goods: for n …; sed -i '' \"s/…$n/g\" win_icon_$n.png.meta", "for n in next replay; do sed -i '' \"s/win_star_on/win_icon_$n/g\" win_icon_$n.png.meta; done", ["."]),
+                       ("sed -i '' s/a/b/ *.kt (glob)", "sed -i '' s/a/b/ *.kt", ["."]),
+                       ("sed -i.bak -e 's/a*/b/' sub/*.kt (script có * không phải đích)", "sed -i.bak -e 's/a*/b/' sub/*.kt", ["sub"]),
+                       ("sed -ne 's/$x/y/p' -i x_$n.kt (giá trị của cụm -ne là script)", "sed -ne 's/$x/y/p' -i x_$n.kt", ["."]),
+                       ("sed -i '' '$d' a.kt (BSD: '' là hậu tố, '$d' là script)", "sed -i '' '$d' a.kt", ["a.kt"]),
+                       ("sed -i s/a/b/ a.kt (như trước)", "sed -i s/a/b/ a.kt", ["a.kt"]),
+                       ("sed -i s/a/b/ nofile.kt (không có thật, không biến: như trước)", "sed -i s/a/b/ nofile.kt", []),
+                       ("sed -i '' s/a/b/ \"${F}.bak\" (bắt đầu bằng biến: caller mở rộng hay fail closed)", "sed -i '' s/a/b/ \"${F}.bak\"", ["${F}.bak"]),
+                       ("sed -i '' s/a/b/ \"/abs/x_$(date).kt\"", "sed -i '' s/a/b/ \"/abs/x_$(date).kt\"", ["/abs"]),
+                       ("perl -pi -e 's/a*/b/' *.kt", "perl -pi -e 's/a*/b/' *.kt", ["."]),
+                       ("perl -i -pe 's/$/;/' a.kt (giá trị của cụm -pe là script)", "perl -i -pe 's/$/;/' a.kt", ["a.kt"]),
+                       ("perl -MList::Util=sum -ne print *.kt (-M không phải -i)", "perl -MList::Util=sum -ne print *.kt", []),
+                       ("ruby -i.bak -pe 'x' d/x_`date`.kt", "ruby -i.bak -pe 'x' d/x_`date`.kt", ["d"]),
+                       ("ruby -i -pe x a.kt", "ruby -i -pe x a.kt", ["a.kt"])):
+    check(label, F(c), want)
+check("worktree_guard: từ GW: sed -i '' s/a/b/ <GM>/src/*.kt", guard(GW, f"sed -i '' s/a/b/ {GM}/src/*.kt"), 2)
+check("  đối chứng: worktree_guard: từ GW: sed -i '' s/a/b/ src/*.kt (trong worktree của nó)", guard(GW, "sed -i '' s/a/b/ src/*.kt"), 0)
 
 shutil.rmtree(tmp, ignore_errors=True)
 print(f"shell_writes.py fd #427 vòng 3: {'all checks passed' if not bad else str(bad) + ' FAILED'}")

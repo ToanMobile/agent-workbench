@@ -1813,6 +1813,13 @@ def _authored_cmp(item):
     return a
 
 
+def _is_prompt_row(item):
+    """A REPORTED row: the UserPromptSubmit hook wrote it (state "reported") and no test, ref or criterion was ever linked to it.
+    `agent-kit bugs add` confirms a row (state "confirmed"), `bugs link` adds a link: either makes it a person's."""
+    return (isinstance(item, dict) and item.get("kind") == "bug" and item.get("state") == "reported"
+            and not any(item.get(k) for k in _LINK_KEYS))
+
+
 def _bookkeeping_regenerated(wt, main):
     """True when the worktree's UNCOMMITTED bookkeeping (BOOKKEEPING) is nothing but what the gate and the checklist sync regenerate.
     Every row a person made (_authored_cmp) in its regression_status.json on disk is either:
@@ -1859,6 +1866,8 @@ def _bookkeeping_regenerated(wt, main):
         for rid, a in mine.items():
             if base.get(rid) == a or (rid not in base and theirs.get(rid) == a):
                 continue
+            if rid not in base and _is_prompt_row(mine_raw["items"][rid]):
+                continue   # #429: a prompt the hook logged as a possible bug, nobody confirmed or linked: not work (the fallback copy keeps it)
             if synced is None:
                 synced = _synced_rows(wt, base_raw)
             want = _authored_cmp(synced.get(rid))
@@ -2753,7 +2762,12 @@ def _live_checkout_lock(main, wt):
         import session_lock  # noqa: PLC0415
         lock = session_lock.read_checkout_lock(git_dir(wt))
         pid = (lock or {}).get("pid")
-        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and pid not in _ancestor_pids() and session_lock.is_pid_alive(pid):
+        # Khoá của CHÍNH chủ worktree (state `--session`) không phải người lạ: automerge của Stop hook có thể chạy mồ côi (ppid 1) sau khi
+        # hook thoát, _ancestor_pids không còn thấy claude (OCR review #427 vòng 3). pid_start khác bản ghi: pid đã bị tái dùng, khoá chết.
+        if (lock or {}).get("session_id") and lock.get("session_id") == _owner(wt):
+            return ""
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and pid not in _ancestor_pids() \
+                and session_lock.is_pid_alive(pid, lock.get("pid_start")):
             return tr(f"phiên {lock.get('session_id', '?')} giữ khoá checkout của nó (pid {pid} còn sống)",
                       f"session {lock.get('session_id', '?')} holds its checkout lock (pid {pid} is alive)")
     except Exception:  # noqa: BLE001 - không đọc được: giữ hành vi cũ của remove thường (không hỏi)

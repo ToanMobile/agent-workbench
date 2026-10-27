@@ -130,9 +130,64 @@ def _drop_fd_numbers(text):
     return "".join(out)
 
 
+_OPS = set(";&|<>()\n")   # ký tự toán tử của shlex trong targets(): một token chỉ gồm chúng là toán tử - hoặc chữ trong nháy (_scoped)
+
+
+def _bare_parens(text):
+    """Số `(` và `)` của `text` không nằm trong nháy và không bị thoát, theo luật nháy của shlex posix (như strip_comments); None khi luật
+    nháy của shlex khác shell ở dòng này: `$'…'` (ANSI-C: `\\'` là nháy được thoát), hay nháy kép đóng khi `$(` / `${` / backtick mở trong
+    nó chưa đóng (`"$(echo ")(") x"`: shell đọc nháy lồng, shlex đọc `)(` là toán tử trần)."""
+    n, quote, sub, tick, i = 0, None, 0, False, 0
+    while i < len(text):
+        c = text[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if quote == '"' and (c == "`" or (c == "$" and text[i + 1:i + 2] in ("(", "{")) or (sub and c in "()}")):
+                tick = not tick if c == "`" else tick
+                sub += 1 if c in "$(" else (-1 if c in ")}" else 0)
+                i += 2 if c == "$" else 1
+                continue
+            if c == quote:
+                if sub > 0 or tick:
+                    return None
+                quote = None
+        elif c == "\\":
+            i += 2
+            continue
+        elif c == "$" and text[i + 1:i + 2] == "'":
+            return None
+        elif c in "\"'":
+            quote, sub, tick = c, 0, False
+        elif c in "()":
+            n += 1
+        i += 1
+    return n
+
+
+def _scoped(text, toks):
+    """True khi mọi `)` của dòng (`toks`: shlex của `text`) đóng đúng `(` của nó như shell, để targets() đưa thư mục về như trước `(`
+    (#427 vòng 3: `(cd ../<anh em> && ls); echo x > out.txt` từng tính out.txt ở anh em). Điều kiện: số `(` và `)` trong token toán tử bằng
+    nhau (mẫu `a)` của `case` không có `(`: dòng hợp lệ nào có nó cũng thừa `)`), và tổng của chúng bằng số ngoặc trần của `text` (một chữ
+    trong nháy / bị thoát chỉ gồm ngoặc - `")"`, `\\)` - shlex trả như toán tử: `echo ")" "("` cân mà vẫn đóng sai tầng; _bare_parens None:
+    `$'…'`, nháy lồng trong `"$( … )"` - shlex đọc nháy khác shell). Không thì thư mục không quay về (như trước): fail closed (INSTINCT-045)."""
+    ops = "".join(t for t in toks if t and set(t) <= _OPS)
+    return ops.count("(") == ops.count(")") and ops.count("(") + ops.count(")") == _bare_parens(text)
+
+
+def _home(p):
+    """os.path.expanduser(p); `p` nguyên khi nó có NUL (`~a<NUL>b`: getpwnam văng ValueError - review #427 vòng 3: targets() văng thì
+    _write_scan của bin/session_lock.py trả None, luật ghi file tắt cho cả dòng). Không file nào có NUL."""
+    try:
+        return os.path.expanduser(p)
+    except ValueError:
+        return p
+
+
 def _cd(here, d):
-    """The directory `d` names from `here`; a $VAR / backtick one is unknown: `here` stays (as for cd)."""
-    if "$" in d or "`" in d:
+    """The directory `d` names from `here`; a $VAR / backtick one is unknown: `here` stays (as for cd). NUL: như $VAR (#427 vòng 3)."""
+    if "$" in d or "`" in d or "\0" in d:
         return here
     d = os.path.expanduser(d)
     return d if os.path.isabs(d) else os.path.join(here, d)
@@ -232,22 +287,39 @@ def _operands(base, words):
     return ops, tdir
 
 
-# `$M/f`, `${M}/f`, a bare `$M`: a path the shell expands, which _exists cannot see; the caller resolves or refuses it (a sed script such as
-# `$d` looks the same: _inplace_operands drops it)
-_VAR_PATH = re.compile(r"\$\{?\w+\}?(?:/|$)")
-
-
 def _inplace_operands(base, words, args):
-    """The file operands of `sed -i` / `perl -i`: `args` minus the script (sed: the first operand unless -e/-f/--expression gave one;
-    the value of -e/-f is dropped too), so a script like `$d` is no variable target."""
-    script = [w for i, w in enumerate(words) if i and re.fullmatch(r"-e|-f|--expression|--file", words[i - 1])]
+    """The file operands of `sed -i` / `perl -i` / `ruby -i`: `args` minus the script (sed: the first operand unless -e/-f/--expression gave
+    one; the value of -e/-f is dropped too - #427 vòng 3: cả giá trị của cụm cờ kết thúc bằng nó, không có `i` đứng trước: sed `-ne`, perl /
+    ruby `-pe` `-lne`), so a script like `$d` or `s/a*/b/` is no target."""
+    flag = r"-e|-f|--expression|--file|-[A-Za-hj-z]*[ef]" if base == "sed" else r"-[A-Za-hj-z]*[eE]"
+    script = [w for i, w in enumerate(words) if i and re.fullmatch(flag, words[i - 1])]
     ops = [a for a in args if a not in script]
+    if base == "sed" and any(w == "-i" and nxt == "" for w, nxt in zip(words, words[1:])):
+        ops.remove("")   # BSD `sed -i ''`: hậu tố rỗng, không phải script (script là toán hạng sau nó)
     scripted = any(re.fullmatch(r"-[A-Za-z]*[ef]|--expression.*|--file.*", w) for w in words)
     return ops[1:] if base == "sed" and not scripted else ops
 
 
+# perl / ruby `-i` (sửa tại chỗ), đứng riêng hay sau các cờ không lấy giá trị (`-pi`, `-lpi.bak`); không phải chữ `i` trong giá trị của
+# -M / -I / -e … (`-MList::Util` không phải -i)
+_INPLACE_INTERP = re.compile(r"-[acdlnpstTuUvwWX0-9]*i.*")
+
+
+def _inplace_target(a, here):
+    """Đích ghi của một toán hạng sed -i / perl -i / ruby -i: chính nó khi có thật hay bắt đầu bằng $VAR / backtick (caller mở rộng biến hay
+    fail closed, như mọi đích không biết); có $VAR / ${…} / $( ) / backtick ở giữa từ hay glob (`*` `?` `[`): thư mục chữ đứng trước phần đó
+    (`win_icon_$n.png.meta` -> `.`, `A/*.meta` -> `A`) - file được ghi nằm dưới nó (#427 vòng 3, corpus: `for n in …; do sed -i '' …
+    win_icon_$n.png.meta; done` ở main của trunk mode lọt). None: không phải file (không có thật, không biến, không glob)."""
+    m = re.search(r"[$`*?[]", a)
+    if _exists(a, here) or (m and m.start() == 0 and a[0] in "$`"):
+        return a
+    if not m:
+        return None
+    return os.path.dirname(a[:m.start()]) or ("/" if a.startswith("/") else ".")
+
+
 def _exists(a, here):
-    p = os.path.expanduser(a)
+    p = _home(a)
     return os.path.exists(p if os.path.isabs(p) else os.path.join(here, p))
 
 
@@ -283,7 +355,9 @@ def targets(cmd, here, depth=0, run_bodies=False):
     backtick: the caller decides. Heredoc bodies are data, never commands - unless run_bodies and the heredoc feeds a shell (its body is
     scanned like `bash -c '…'`) or an interpreter (its script's literal write paths: "file"); `bash -c '…'` is scanned three levels deep;
     the line of `env -S '…'` / `--split-string` is split into words in place (_env_split).
-    A body run_bodies cannot tokenise comes back as ("unparsed", "", directory)."""
+    A body run_bodies cannot tokenise comes back as ("unparsed", "", directory).
+    Thư mục theo cd chữ (cd / pushd; cd có $VAR / backtick / NUL: "cdvar", thư mục giữ); #427 vòng 3: `)` đưa nó về như trước `(` (khi
+    _scoped), `popd` về thư mục pushd tương ứng đã rời (ngăn rỗng / không theo được: giữ)."""
     out, bodies, pos, ends = [], [], 0, {}
     while True:                               # heredoc bodies are data, not commands
         m = HEREDOC.search(cmd, pos)
@@ -301,27 +375,43 @@ def targets(cmd, here, depth=0, run_bodies=False):
         e = cmd.find("\n", s)
         pos = len(cmd) if e < 0 else e
     try:
-        lex = shlex.shlex(_drop_fd_numbers(strip_comments("".join(out))), posix=True, punctuation_chars=";&|<>()\n")
+        text = _drop_fd_numbers(strip_comments("".join(out)))
+        lex = shlex.shlex(text, posix=True, punctuation_chars=";&|<>()\n")
         lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
         toks = list(lex)
     except ValueError:
         return None
-    segs, cur = [], []
+    # #427 vòng 3: segs xen "(" / ")" (chỉ khi _scoped) - subshell, $( ), <( ), (( )) mở / đóng một tầng thư mục
+    scoped, segs, cur = _scoped(text, toks), [], []
     for tok in toks:
         if tok and set(tok) <= set(";&|()\n"):
             if cur:
                 segs.append(cur)
+                if scoped:   # `<(` `>(` `)>` nằm trong segment (không tách nó): ngoặc của chúng tính sau segment, theo thứ tự
+                    segs += [c for t in cur if set(t) <= _OPS for c in t if c in "()"]
             cur = []
+            if scoped:
+                segs += [c for c in tok if c in "()"]
         else:
             cur.append(tok)
     if cur:
         segs.append(cur)
     found, nbody = [], 0
+    # ngăn pushd (popd về thư mục đã rời) và các tầng ( ): (here, ngăn) lúc mở. None: ngăn không theo được - một hàm (thân chạy lúc gọi,
+    # không phải chỗ định nghĩa), eval / source / . / dirs, pushd không đích / +N; popd khi đó (hay ngăn rỗng: shell báo lỗi) giữ thư mục
+    dirs, scopes = (None if "()" in toks or "function" in toks else []), []
     # HEREDOC reads the raw text (it matches `<<EOF` inside quotes and comments, which shlex reads as no operator) while shlex also emits `<<`
     # for arithmetic (`$((1<<2))`): when the counts differ, pairing a body to an operator by position would hand every later body to the
     # wrong command (OCR2 14). No clever pairing then: after the loop every body is read as a script of this line.
     paired = sum(1 for t in toks if t == "<<") == len(bodies)
     for seg in segs:
+        if seg == "(":
+            scopes.append((here, None if dirs is None else list(dirs)))
+            continue
+        if seg == ")":
+            if scopes:   # (_scoped: luôn có)
+                here, dirs = scopes.pop()
+            continue
         words, redirs, fed, i = [], [], [], 0
         while i < len(seg):
             tok = seg[i]
@@ -361,8 +451,20 @@ def targets(cmd, here, depth=0, run_bodies=False):
         verb = words[0] if words else ""
         args = [a for a in words[1:] if not a.startswith("-")]
         hits = [("redirect", r) for r in redirs]
+        if verb == "popd":   # (không `continue`: redirect của nó vẫn là đích, như trước)
+            if dirs and len(words) == 1:
+                here = dirs.pop()
+            elif len(words) > 1:
+                dirs = None   # popd +N / -n
+        elif verb in ("eval", "source", ".", "dirs"):
+            dirs = None
         if verb in ("cd", "pushd"):
-            if args and ("$" in args[0] or "`" in args[0]):
+            if verb == "pushd" and dirs is not None:
+                if len(words) == 2 and not words[1].startswith(("+", "-")):
+                    dirs.append(here)
+                else:
+                    dirs = None
+            if args and ("$" in args[0] or "`" in args[0] or "\0" in args[0]):
                 found.append(("cdvar", args[0], wd))   # where it leads is the caller's to judge: `here` stays
             elif args:
                 here = _cd(wd, args[0])
@@ -384,15 +486,15 @@ def targets(cmd, here, depth=0, run_bodies=False):
         elif base == "dd":
             hits += [("file", a[3:]) for a in args if a.startswith("of=")]
         elif base == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[1:]):
-            hits += [("file", a) for a in _inplace_operands(base, words, args) if a and (_exists(a, wd) or _VAR_PATH.match(a))]   # BSD `sed -i ''`: the empty suffix is no file
-        elif base == "perl" and any(re.fullmatch(r"-[A-Za-z]*i.*", a) for a in words[1:]):
-            hits += [("file", a) for a in _inplace_operands(base, words, args) if a and (_exists(a, wd) or _VAR_PATH.match(a))]
+            hits += [("file", t) for t in (_inplace_target(a, wd) for a in _inplace_operands(base, words, args) if a) if t]   # BSD `sed -i ''`: the empty suffix is no file
+        elif base in ("perl", "ruby") and any(_INPLACE_INTERP.fullmatch(a) for a in words[1:]):
+            hits += [("file", t) for t in (_inplace_target(a, wd) for a in _inplace_operands(base, words, args) if a) if t]
         elif base == "git":
             gdir, sub, skip, rest = wd, "", None, []
             for k, a in enumerate(words[1:], 1):
                 if skip:
                     if skip == "-C":   # ~ expanded as the shell does (OpenCodeReview 14/10); a $VAR one stays for the caller
-                        gdir = os.path.join(gdir, os.path.expanduser(a))
+                        gdir = os.path.join(gdir, _home(a))
                     skip = None
                 elif a in ("-C", "-c", "--git-dir", "--work-tree"):
                     skip = a
