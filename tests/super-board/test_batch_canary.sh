@@ -97,6 +97,54 @@ out=$(python3 "$CANARY" --runs "$TMP/r3a.jsonl" --since "$SINCE" --merged-json "
 if [ "$rc" = 2 ] && has "$out" "max-ratio"; then ok "--max-ratio không còn nhận (exit 2)"
 else fail "--max-ratio phải exit 2 (rc=$rc): $out"; fi
 
+# 3h. #471 (27/10): 2 PR merge lẻ qua merge gate + 3 lượt train ĐỎ (train đỏ không merge gì) → ĐỎ, nêu số PR; không còn đếm train đỏ là bằng chứng.
+python3 - "$TMP/r3h.jsonl" "$EP" <<'PY3'
+import json, sys
+path, ep = sys.argv[1], int(sys.argv[2])
+rows = [{"epoch": ep + i, "project": f".merge-scratch-{i:06d}", "exit": 0, "verdict": "PASS"} for i in range(3)]
+rows += [{"epoch": ep + i, "project": f".train-scratch-{i:06d}", "exit": 1, "verdict": "FAIL"} for i in range(3)]
+with open(path, "w", encoding="utf-8") as f:
+    for r in rows:
+        f.write(json.dumps(r) + "\n")
+PY3
+gen_merged "$TMP/m3h.json" 2 "$EP"; canary "$TMP/r3h.jsonl" "$TMP/m3h.json"
+if [ "$rc" = 1 ] && has "$out" "merged PRs=2 merge-gate verifies=3 train verifies=0" && has "$out" "no train verify" && has "$out" "2 merged PRs"; then
+  ok "2 PR merge lẻ + train đỏ → ĐỎ, nêu số PR (#471)"
+else fail "#471: 2 PR merge lẻ + 3 train đỏ phải ĐỎ exit 1 (rc=$rc): $out"; fi
+# 3i. Train xanh (exit 0 / PASS) vẫn tính: 2 PR / 1 train PASS → XANH
+python3 - "$TMP/r3i.jsonl" "$EP" <<'PY4'
+import json, sys
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    f.write(json.dumps({"epoch": int(sys.argv[2]), "project": ".train-scratch-ok", "exit": 0, "verdict": "PASS"}) + "\n")
+PY4
+gen_merged "$TMP/m3i.json" 2 "$EP"; canary "$TMP/r3i.jsonl" "$TMP/m3i.json"
+if [ "$rc" = 0 ] && has "$out" "train verifies=1" && has "$out" "GREEN"; then ok "train xanh (PASS) vẫn cho canary XANH (#471)"
+else fail "#471: train PASS phải XANH exit 0 (rc=$rc): $out"; fi
+
+# 3j. R1 (reviewer): train exit 0 nhưng verdict REUSED (suite dùng lại kết quả PASS) vẫn là train xanh → XANH
+python3 - "$TMP/r3j.jsonl" "$EP" <<'PY5'
+import json, sys
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    f.write(json.dumps({"epoch": int(sys.argv[2]), "project": ".train-scratch-reused", "exit": 0, "verdict": "REUSED"}) + "\n")
+PY5
+gen_merged "$TMP/m3j.json" 2 "$EP"; canary "$TMP/r3j.jsonl" "$TMP/m3j.json"
+if [ "$rc" = 0 ] && has "$out" "train verifies=1" && has "$out" "GREEN"; then ok "train exit 0 verdict REUSED vẫn XANH (#471 R1)"
+else fail "#471 R1: train exit 0 + REUSED phải XANH exit 0 (rc=$rc): $out"; fi
+
+# 3k. Reviewer P3: train đỏ exit 2/3 (verdict UNTESTED) cũng không phải bằng chứng → 2 PR merge lẻ vẫn ĐỎ, nêu số PR
+python3 - "$TMP/r3k.jsonl" "$EP" <<'PY6'
+import json, sys
+ep = int(sys.argv[2])
+rows = [{"epoch": ep, "project": ".merge-scratch-a", "exit": 0, "verdict": "PASS"}, {"epoch": ep, "project": ".merge-scratch-b", "exit": 0, "verdict": "PASS"},
+        {"epoch": ep, "project": ".train-scratch-a", "exit": 2, "verdict": "UNTESTED"}, {"epoch": ep, "project": ".train-scratch-b", "exit": 3, "verdict": "UNTESTED"}]
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    for r in rows:
+        f.write(json.dumps(r) + "\n")
+PY6
+gen_merged "$TMP/m3k.json" 2 "$EP"; canary "$TMP/r3k.jsonl" "$TMP/m3k.json"
+if [ "$rc" = 1 ] && has "$out" "train verifies=0" && has "$out" "2 merged PRs"; then ok "train đỏ exit 2/3 không tính, vẫn ĐỎ nêu số PR (#471)"
+else fail "#471: train exit 2/3 phải ĐỎ exit 1 (rc=$rc): $out"; fi
+
 # ── 4. enabled_at trong config lọc lượt cũ (trước lúc bật): 40 merge cũ + 30 PR cũ không tính
 ENA=$((NOW - 1800))
 gen_runs "$TMP/r4.jsonl" 40 0 0 $((ENA - 86400)); gen_runs "$TMP/r4.jsonl" 0 1 0 $((ENA + 10))

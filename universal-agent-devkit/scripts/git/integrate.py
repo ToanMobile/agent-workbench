@@ -184,46 +184,42 @@ def sweep_orphans(main):
 
 def setup_kit(main, scratch):
     """Cài DevKit vào scratch đúng như `worktree add` (worktree.install_args) khi main có DevKit; bản cài ghi đè file tracked thì trả lại
-    HEAD (như merge gate). Lỗi chỉ được báo: gate tự đỏ nếu thiếu thứ nó cần."""
+    HEAD (như merge gate). True = scratch dùng được (cài xong, hoặc main không có DevKit); False = cài hỏng: scratch thiếu kit nên gate sẽ
+    chạy hook/bin của bản working copy main chứ không phải của HEAD, che mất lỗi cài (#477) — người gọi không gate, không push."""
     try:
         if HERE not in sys.path:
             sys.path.insert(0, HERE)
         import worktree  # noqa: PLC0415 - module anh em, chỉ nạp khi thật sự gate
         cmd = worktree.install_args(main, scratch, None)
-    except Exception as e:  # noqa: BLE001 - kit cài dở: gate vẫn chạy, kết luận là của gate
+    except Exception as e:  # noqa: BLE001 - không dựng được lệnh cài: báo, người gọi dừng
         say(f"không dựng được lệnh cài DevKit vào scratch: {type(e).__name__}: {e}")
-        return
+        return False
     if not cmd:
-        return
+        return True
     try:
         r = subprocess.run(cmd, cwd=scratch, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_S, stdin=subprocess.DEVNULL)
         if r.returncode != 0:
             say(f"cài DevKit vào scratch exit {r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
+            return False
     except (OSError, subprocess.TimeoutExpired) as e:
         say(f"cài DevKit vào scratch hỏng: {type(e).__name__}: {e}")
+        return False
     git(scratch, "checkout", "-q", "--", ".")
+    return True
 
 
 def copy_ignored(main, scratch):
-    """Chép vào scratch các file bị git ignore mà gate cần, đúng bộ merge train chép (super-board-scratch-config.sh, chế độ full):
-    config cục bộ, build input, Unity Library, rồi hook trong .claude/hooks/ mà settings.json đăng ký (guard-*.py…). Thiếu hook thì
+    """Chép vào scratch các file bị git ignore mà gate cần (worktree.copy_ignored, danh sách chung với merge train): thiếu hook thì
     `agent-kit health` trong scratch đỏ ("hook đăng ký nhưng thiếu file"), REG-WB-CONFIG-01 đỏ và integrate không bao giờ push được
-    (agent-workbench #463). Chạy SAU setup_kit như `worktree add`: chỉ chép thứ bản cài không link. Tách khỏi setup_kit vì setup_kit
-    return sớm khi main không có DevKit. Lỗi chỉ được báo: gate tự đỏ nếu thiếu thứ nó cần."""
+    (agent-workbench #463). Chạy SAU setup_kit như `worktree add`. Lỗi chỉ được báo: gate tự đỏ nếu thiếu thứ nó cần."""
     try:
         if HERE not in sys.path:
             sys.path.insert(0, HERE)
         import worktree  # noqa: PLC0415 - module anh em, chỉ nạp khi thật sự gate
+        copied = worktree.copy_ignored(main, scratch)
     except Exception as e:  # noqa: BLE001 - kit cài dở: gate vẫn chạy, kết luận là của gate
-        say(f"không nạp được worktree.py để chép file bị ignore vào scratch: {type(e).__name__}: {e}")
+        say(f"không chép được file bị ignore vào scratch: {type(e).__name__}: {e}")
         return
-    copied = []
-    # Mỗi bước một try: một bước hỏng (vd. build input) không được làm mất bước chép hook phía sau (#463 quay lại).
-    for name in ("copy_local_config", "copy_build_inputs", "copy_unity_library", "copy_local_hooks"):
-        try:
-            copied += getattr(worktree, name)(main, scratch)
-        except Exception as e:  # noqa: BLE001 - bước hỏng chỉ được báo, các bước còn lại vẫn chạy
-            say(f"{name} vào scratch hỏng: {type(e).__name__}: {e}")
     if copied:
         say(f"đã chép vào scratch {len(copied)} file bị ignore: {', '.join(copied[:8])}")
 
@@ -327,7 +323,9 @@ def integrate(main, base, args):
         if add.returncode != 0:
             say(f"không dựng được worktree scratch: {add.stderr.strip()[-300:]}")
             return 1
-        setup_kit(main, scratch)
+        if not setup_kit(main, scratch):
+            say("scratch không có DevKit của HEAD: không gate, không push (gate trên cây thiếu kit không đại diện cho commit sẽ push)")
+            return 1
         copy_ignored(main, scratch)
         rc = run_gate(scratch, remote)
         if rc == 4:   # hàng đợi gate toàn máy / khoá dự án bận (T0056): không phải đỏ, đợt giữ nguyên cho lượt sau
