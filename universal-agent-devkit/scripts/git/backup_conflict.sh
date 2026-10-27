@@ -45,7 +45,7 @@ _dk_basename() {
 # return 1. cd ngay trong shell này rồi quay về thư mục cũ; không quay về được thì dừng hẳn
 # (chạy tiếp ở thư mục khác thì mọi đường dẫn tương đối sau đó sai).
 _dk_phys() {
-  local here="$PWD"
+  local here="$PWD" oldpwd="${OLDPWD:-}"   # giữ OLDPWD như bản subshell cũ (cd bên dưới ghi đè nó)
   _DK_P=""
   if [ -z "$here" ] || [ ! -d "$here" ]; then   # thư mục hiện tại đã mất: dùng cách cũ (subshell)
     if [ "$#" -gt 1 ]; then _DK_P="$(cd "$1" 2>/dev/null && cd "$2" 2>/dev/null && pwd -P)" || return 1
@@ -57,6 +57,7 @@ _dk_phys() {
     _DK_P="$PWD"
   fi
   builtin cd "$here" >/dev/null 2>&1 || { echo "ERROR: _dk_phys: cannot return to $here" >&2; exit 1; }
+  OLDPWD="$oldpwd"
   [ -n "$_DK_P" ]
 }
 
@@ -348,7 +349,8 @@ is_foreign_project_dir() {
 devkit_ln() {
   local src="$1" dst="$2" root_p dst_dir src_p
   if _dk_phys "${DEVKIT_ROOT:-/nonexistent}"; then root_p="$_DK_P"; else root_p=""; fi
-  _dk_dirname "$dst"; _dk_phys "$_DK_D" || true; dst_dir="$_DK_P"
+  # cd lỗi: dừng như bản cũ `dst_dir="$(cd … && pwd -P)"` dưới set -e, không chạy tiếp với dst_dir rỗng
+  _dk_dirname "$dst"; _dk_phys "$_DK_D" || return 1; dst_dir="$_DK_P"
   if [ -n "$root_p" ] && [[ "$dst_dir/" == "$root_p/"* ]]; then
     src_p="$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")"
     src="$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$src_p" "$dst_dir")"
@@ -657,7 +659,7 @@ devkit_place() {
   local dst_dir src_p
   _dk_dirname "$dst"; dst_dir="$_DK_D"
   [ -d "$dst_dir" ] || mkdir -p "$dst_dir"
-  _dk_phys "$dst_dir" || true; parent_p="$_DK_P"
+  _dk_phys "$dst_dir" || return 1; parent_p="$_DK_P"   # cd lỗi: dừng (bản cũ dừng theo set -e), guard dưới cần parent_p
   if _dk_phys "${DEVKIT_ROOT:-/nonexistent}"; then root_p="$_DK_P"; else root_p=""; fi
   if _dk_phys "${TARGET_DIR:-.}"; then target_p="$_DK_P"; else target_p=""; fi
   if [ -n "$root_p" ] && [[ "$parent_p/" == "$root_p/"* ]] && [ "$target_p" != "$root_p" ]; then
