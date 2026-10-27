@@ -1896,18 +1896,26 @@ def allow_shared(argv, off=False):
     return 0
 
 
-def _file_write_hits(cmd, top, cwd):
+def _write_scan(cmd, here):
+    """hooks/shell_writes.py targets(cmd, here) - một lần quét cho _file_write_hits và _family_write_held; None khi dòng không tách được
+    từ hay không quét được (lý do nói ở stderr)."""
+    try:
+        return _hook_module("shell_writes").targets(cmd, here)
+    except Exception as e:   # the git / gate / redirect rules still apply; say why this one could not
+        print(f"session_lock: file-write scan failed: {e!r}", file=sys.stderr)
+        return None
+
+
+def _file_write_hits(cmd, top, cwd, found=False):
     """A file write of `cmd` lands in the locked checkout `top`: cp / install / rsync / ln destinations, mv / rm / touch / truncate /
     tee / mkdir / rmdir / chmod / unlink operands, dd of=, sed -i / perl -i files, also inside `bash -c` (hooks/shell_writes.py, the
     scanner hooks/worktree_guard.sh uses: issues-bugs.md A.1 #3, 13/10 11:03 a cp/mv into a held checkout went through). Not judged
     here: a target behind $VAR or a backtick, an interpreter's or build tool's own writes (a read-only session runs `python3 x.py`).
     ponytail: those stay open, and so do `xargs rm`, `find -delete`, `eval '…'`, a backtick, a heredoc fed to a shell and a cd inside a
-    subshell (review 14/10); tighten when one is seen landing. Scanner missing or line untokenisable: False (the other rules hold)."""
-    try:
-        found = _hook_module("shell_writes").targets(cmd, cwd or top)
-    except Exception as e:   # the git / gate / redirect rules still apply; say why this one could not
-        print(f"session_lock: file-write scan failed: {e!r}", file=sys.stderr)
-        return False
+    subshell (review 14/10); tighten when one is seen landing. Scanner missing or line untokenisable: False (the other rules hold).
+    found: kết quả _write_scan đã có (bash_collides quét một lần); False: tự quét."""
+    if found is False:
+        found = _write_scan(cmd, cwd or top)
     for kind, t, here in found or ():
         if kind != "file" or "$" in t or "`" in t:
             continue
@@ -1918,6 +1926,40 @@ def _file_write_hits(cmd, top, cwd):
         except ValueError as e:   # a NUL in the path: no file can have it, and the hook must not crash (exit 1 lets the call through)
             print(f"session_lock: target {t!r} skipped: {e}", file=sys.stderr)
     return False
+
+
+def _family_write_held(found, gdir, sid, tops):
+    """#427 vòng 3: (checkout, git dir, lock) khi một đích ghi file trong `found` (_write_scan của lệnh; shell_writes "file": đích cp /
+    install / rsync / ln, toán hạng mv / rm / touch / tee / mkdir …, dd of=, sed -i / perl -i) hay một redirect KHÔNG tuyệt đối
+    (`> ../<anh em>/f`, `> ~/…`; redirect tuyệt đối: luật redirect của bash_collides) nằm trong checkout mà phiên khác còn sống giữ -
+    `tops` như _held_at (các checkout khác cùng repo; None: mọi repo). Đích tương đối tính từ thư mục mà shell_writes theo cd chữ tới
+    (`cd .. && cp a wt2/f`). Redirect trong `bash -c '…'` cũng được xét; `\\>` (escape) shell_writes đọc là redirect: fail closed, như
+    trunk_write. Không xét: đích sau $VAR / backtick (như _file_write_hits); đích tương đối sau `cd "$X"` (thư mục không biết - tính từ thư
+    mục trước đó từng chặn nhầm `cd "$B" && bash t.sh > ../base.log` trên corpus); đích chỉ là chữ số (`cp a b 2>/dev/null`: shell_writes
+    đọc `2` là đích - đích thật mất, xem ponytail); đích trong git dir `gdir` của chính phiên (worktree liên kết: nằm trong .git của main).
+    ponytail: `cp` / `ln` / `install` / `rsync` / `scp` có `N>` dính liền (`2>/dev/null`, `2>&1`) lọt cả luật `top` lẫn luật này - sửa ở
+    hooks/shell_writes.py (bỏ chữ số fd đứng liền trước `>`). ponytail: mỗi đích một lần _inside cho mỗi checkout (corpus: 529 checkout ×
+    ~20 đích = 3 s; repo thật 9-12 worktree); nhiều hơn thì lập chỉ mục inode của `tops` một lần mỗi lệnh."""
+    now, memo, moved = time.time(), {}, False
+    for kind, t, here in found or ():
+        moved = moved or kind == "cdvar"
+        if kind not in ("file", "redirect") or not t or "$" in t or "`" in t or (kind == "redirect" and t.startswith("/")):
+            continue
+        rel = not os.path.isabs(os.path.expanduser(t))
+        if rel and (moved or t.isdigit()):
+            continue
+        try:
+            p = os.path.expanduser(t)
+            path = os.path.normpath(p if os.path.isabs(p) else os.path.join(here, p))
+            if gdir and _inside(path, gdir):
+                continue
+            held = _held_at(path, sid, now, tops, memo)
+        except (TypeError, ValueError, OSError) as e:   # (NUL, thư mục không biết): bỏ đích đó, xét tiếp - hook không được văng
+            print(f"session_lock: target {t!r} skipped: {e}", file=sys.stderr)
+            continue
+        if held:
+            return held
+    return None
 
 
 def _hook_module(name):
@@ -2228,12 +2270,13 @@ def bash_collides(cmd, top, cwd=None, sid="", notes=None):
     """(hits_top, foreign) - see write_hits_locked (and its `notes`); a redirect or a file write (_file_write_hits) into the locked
     checkout also counts as hits_top. #427 vòng 2: một redirect tuyệt đối vào checkout khác CÙNG repo mà phiên khác còn sống giữ là `foreign`
     (trước chỉ xét checkout của phiên: `echo x > <worktree anh em bị giữ>/f` lọt); top None (cwd không phải repo): vào checkout bị giữ của
-    bất kỳ repo nào (_held_at)."""
+    bất kỳ repo nào (_held_at). #427 vòng 3: đích ghi file (cp / mv / tee / install / rsync / ln / dd of= / touch …) và redirect tương đối
+    (`> ../<anh em>/f`) vào checkout như thế cũng là `foreign` (_family_write_held; trước chỉ xét `top`)."""
     hits_top, foreign = False, None
     if GIT_WRITE.search(cmd) or GATE.search(cmd):
         hits_top, foreign = write_hits_locked(cmd, top, cwd, sid, notes)
+    tops, gdir = False, None   # các checkout khác cùng repo: đọc ở đích đầu tiên cần đến (redirect tuyệt đối ngoài `top`, đích ghi file)
     if ">" in cmd:
-        tops = False   # các checkout khác cùng repo: đọc ở đích tuyệt đối đầu tiên ngoài `top`
         for target in _redirect_targets(cmd):
             if not target or target.startswith("&"):
                 continue
@@ -2244,12 +2287,24 @@ def bash_collides(cmd, top, cwd=None, sid="", notes=None):
                 hits_top = True
             elif foreign is None and not os.path.normpath(target).startswith("/dev/"):   # (2>/dev/null: không đọc khoá nào)
                 if tops is False:
-                    gdir = git_dir(top)[0] if top else None   # (top mà git không cho biết git dir: như trước, chỉ `top`)
-                    tops = [(_checkout_top(g), g) for g in _family_dirs(gdir) if not _same_dir(g, gdir)] if gdir else ([] if top else None)
+                    gdir, tops = _other_checkouts(top)
                 foreign = _held_at(target, sid, time.time(), tops)
-    if not hits_top and top and _file_write_hits(cmd, top, cwd):
+    found = _write_scan(cmd, cwd or top)
+    if not hits_top and top and _file_write_hits(cmd, top, cwd, found):
         hits_top = True
+    if foreign is None and found:
+        if tops is False:
+            gdir, tops = _other_checkouts(top)
+        if tops != []:   # (không có checkout nào khác để xét: không đọc gì)
+            foreign = _family_write_held(found, gdir, sid, tops)
     return hits_top, foreign
+
+
+def _other_checkouts(top):
+    """(git dir của `top`, [(toplevel, git dir)] của các checkout khác cùng repo) cho _held_at; top None (cwd không phải repo): (None, None) -
+    mọi repo; top mà git không cho biết git dir: (None, []) - như trước, chỉ `top`."""
+    gdir = git_dir(top)[0] if top else None
+    return gdir, ([(_checkout_top(g), g) for g in _family_dirs(gdir) if not _same_dir(g, gdir)] if gdir else ([] if top else None))
 
 
 def _common_of(gdir):
@@ -2303,12 +2358,13 @@ def _checkout_top(g):
     return _target(str((read_lock(os.path.join(g, LOCK)) or {}).get("cwd") or ""))[0]
 
 
-def _held_at(path, sid, now, tops=None):
+def _held_at(path, sid, now, tops=None, memo=None):
     """(checkout, git dir, lock) khi đường dẫn tuyệt đối `path` (đích một redirect, một Edit) nằm trong checkout mà phiên khác còn sống giữ;
     None khi không. `tops`: [(toplevel, git dir)] - chỉ xét đường dẫn trong một checkout của danh sách đó (mục 5: các checkout khác cùng repo;
     không liệt kê repo khác; khoá chỉ đọc khi đích nằm trong một checkout), và khi git không cho biết checkout chứa nó thì xét khoá của
     checkout đó (fail closed); None: xét mọi repo (mục 1: phiên ở thư mục không phải repo, không có họ checkout nào để lọc). /dev/* không bao
-    giờ là file của checkout."""
+    giờ là file của checkout. memo (dict, #427 vòng 3): _target của từng thư mục đã hỏi trong cùng một lệnh - `rm -rf -- <200 file>` ở
+    /private/tmp từng gọi `git rev-parse` 200 lần (_find_git dừng ở ranh giới firmlink)."""
     try:
         real = os.path.realpath(path)
     except ValueError:   # a NUL: no file can have it
@@ -2318,10 +2374,14 @@ def _held_at(path, sid, now, tops=None):
     inside = [t for t in tops or () if t[0] and _inside(real, t[0])]
     if tops is not None and not inside:
         return None
-    d = os.path.dirname(real)
+    # một thư mục có sẵn (đích `cp a .`, `rm -rf <worktree>`, #427 vòng 3) là của checkout chứa chính nó: thư mục cha của một worktree lồng
+    # trong main là main
+    d = real if os.path.isdir(real) else os.path.dirname(real)
     while d != os.path.dirname(d) and not os.path.isdir(d):   # chưa có (mkdir -p trước nó trong cùng lệnh): thư mục cha gần nhất quyết
         d = os.path.dirname(d)
-    tl, g = _target(d)
+    tl, g = memo[d] if memo is not None and d in memo else _target(d)
+    if memo is not None:
+        memo[d] = (tl, g)
     if g is None and inside:
         tl, g = inside[0]
     if g is None:
