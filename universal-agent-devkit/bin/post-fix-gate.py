@@ -6777,7 +6777,8 @@ def main():
 
     def hang_report(t, out):
         """#370: a suite that timed out while the machine was NOT busy hung — it was not slow. Marks it (t["hang"], label HANG) and puts the
-        last test line it printed plus the `ps` snapshot of its process group in output_tail; under load it stays a plain TIMEOUT."""
+        last test line it printed plus the `ps` snapshot of its process group in output_tail; under load it stays a plain TIMEOUT, and so does
+        a suite still making progress (#427: its youngest process is younger than min(timeout/2, 120) s)."""
         body, _, snap = (out or "").partition(HANG_SNAPSHOT_MARK)
         try:
             import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
