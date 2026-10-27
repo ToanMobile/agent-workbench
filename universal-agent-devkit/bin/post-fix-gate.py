@@ -4152,6 +4152,21 @@ def _signal_group(proc, sig) -> None:
 HANG_SNAPSHOT_MARK = "\n# --- process snapshot at timeout (ps) ---\n"
 # a line of the suite output that names a test (the last one is where it hung); with none, the last line of output
 HANG_TEST_LINE = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")
+# #427 / hang giả 27/10: dòng cuối của ảnh ps — tuổi (giây) của tiến trình CÓ CON trẻ nhất trong cả cây suite (mọi tiến trình, không chỉ
+# 12 dòng in ra). hang_report đọc dòng này: một cây con mới (một test mới) vừa bắt đầu thì suite vẫn đang tiến triển, chưa phải treo. Lá
+# không tính: vòng poll của một suite kẹt (`sleep 5` của unity-batch.sh, `grep` chờ marker) sinh lá mới liên tục mà không tiến triển.
+HANG_YOUNGEST_LINE = "# youngest process: {} s"
+HANG_YOUNGEST_RE = re.compile(r"^# youngest process: (\d+) s$", re.M)
+PS_ETIME_RE = re.compile(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$")   # cột etime của ps: [[dd-]hh:]mm:ss
+
+
+def _etime_seconds(text: str):
+    """etime của ps ra giây; None khi không đúng dạng [[dd-]hh:]mm:ss."""
+    m = PS_ETIME_RE.match(text)
+    if not m:
+        return None
+    days, hours, mins, secs = (int(g or 0) for g in m.groups())
+    return ((days * 24 + hours) * 60 + mins) * 60 + secs
 
 
 def _timeout_snapshot(pgid: int) -> str:
@@ -4178,7 +4193,12 @@ def _timeout_snapshot(pgid: int) -> str:
     mine = [row for row in rows if row[0] in depth or row[2] == str(pgid)]
     parents = {ppid for _, ppid, _, _ in mine}
     mine.sort(key=lambda row: (row[0] in parents, -depth.get(row[0], 0)))   # stable: ps order on ties
-    return "\n".join(lines[:1] + [row[3] for row in mine[:12]])
+    # #427: tuổi nhỏ nhất trên MỌI tiến trình có con trong cây (cột etime); đặt cuối ảnh, hang_report bỏ nó khỏi phần hiển thị. Không có
+    # tiến trình có con (`exec sleep`: một tiến trình) hay không đọc được tuổi nào thì không có dòng này.
+    fields = (row[3].split(None, 5) for row in mine if row[0] in parents)
+    ages = [a for a in (_etime_seconds(f[4]) for f in fields if len(f) >= 5) if a is not None]
+    youngest = [HANG_YOUNGEST_LINE.format(min(ages))] if ages else []
+    return "\n".join(lines[:1] + [row[3] for row in mine[:12]] + youngest)
 
 
 PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh của lượt này (đặt sau khi biết keyed_ok)
@@ -6758,7 +6778,8 @@ def main():
 
     def hang_report(t, out):
         """#370: a suite that timed out while the machine was NOT busy hung — it was not slow. Marks it (t["hang"], label HANG) and puts the
-        last test line it printed plus the `ps` snapshot of its process group in output_tail; under load it stays a plain TIMEOUT."""
+        last test line it printed plus the `ps` snapshot of its process group in output_tail; under load it stays a plain TIMEOUT, and so does
+        a suite still making progress (#427: its youngest process that has a child is younger than min(timeout/2, 120) s)."""
         body, _, snap = (out or "").partition(HANG_SNAPSHOT_MARK)
         try:
             import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
@@ -6768,10 +6789,18 @@ def main():
             return
         if load is None or load >= busy:
             return
+        # #427 / hang giả 27/10: tải thấp chưa đủ. REG-DK-ALL-01 hết 900 s ở đuôi tuần tự (tải ~15 < 36) khi test đang chạy mới 6 s và
+        # tiến trình lá mới sinh — vẫn bị gọi HANG. Chỉ gọi HANG khi tiến trình CÓ CON trẻ nhất của cây đã sống ≥ min(timeout/2, 120) s
+        # (không cây con nào mới bắt đầu ngần ấy lâu; lá của vòng poll không tính, xem HANG_YOUNGEST_LINE). Ảnh của chính lượt này luôn nằm cuối out (rpartition: output của gate lồng không lẫn vào).
+        # Không đọc được tuổi (ps hỏng, không dòng nào, thiếu dòng youngest): giữ cách cũ, chỉ xét tải.
+        youngest = HANG_YOUNGEST_RE.search((out or "").rpartition(HANG_SNAPSHOT_MARK)[2])
+        if youngest and int(youngest.group(1)) < min(args.timeout / 2, 120):
+            return
         lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
         last = next((ln for ln in reversed(lines) if HANG_TEST_LINE.search(ln)), lines[-1] if lines else "(no output)")
         t["hang"] = True
-        t["output_tail"] = "\n".join(snap.strip().splitlines()[:7] + [
+        shown = [ln for ln in snap.strip().splitlines() if not HANG_YOUNGEST_RE.match(ln)]   # dòng tuổi chỉ để quyết định, không chiếm chỗ
+        t["output_tail"] = "\n".join(shown[:7] + [
             tr(f"HANG (tải {load:.1f} < {busy}): test cuối suite in ra: {last[:200]}",
                f"HANG (load {load:.1f} < {busy}): last test line the suite printed: {last[:200]}")])
         log_warn(tr(f"{t.get('id')}: quá giờ lúc máy rảnh (tải {load:.1f}) — TREO, không phải chậm; test cuối: {last[:120]}",
