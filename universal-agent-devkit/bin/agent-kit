@@ -177,7 +177,7 @@ case "$CMD" in
     ;;
   gate|postfix|postfix-gate|audit-gate)
     shift || true
-    python3 "$DEVKIT_ROOT/bin/post-fix-gate.py" "$@"
+    exec python3 "$DEVKIT_ROOT/bin/post-fix-gate.py" "$@"
     ;;
   githooks|git-hooks)
     # githooks [install|uninstall|status] [path]
@@ -282,12 +282,13 @@ case "$CMD" in
   worktree|wt)
     # worktree add <path> [branch] [--base=REF] [--profile=ID] [--no-init] [--share-memory] | diff <path> | finish <path> | remove <path> | list
     shift || true
-    python3 "$(find_script git worktree.py)" "$@"
+    exec python3 "$(find_script git worktree.py)" "$@"
     ;;
   integrate)
+    # exec: SIGTERM/SIGINT sent to the agent-kit pid must reach python (no bash parent left behind, #480)
     # integrate [--if-due] [--dry-run] [path] — trunk-push repo: gate --full once on main's unpushed commits (in a scratch worktree), then push
     shift || true
-    python3 "$(find_script git integrate.py)" "$@"
+    exec python3 "$(find_script git integrate.py)" "$@"
     ;;
   completion)
     # completion [bash|zsh] — eval "$(agent-kit completion bash)" in ~/.bashrc (zsh: ~/.zshrc)
