@@ -439,3 +439,9 @@
 30 tests/gates/test_session_lock_backlog427.sh
 19 tests/context_memory/test_session_context_gc_symlink.sh
 3 tests/worktree_git/test_worktree_gc_symlink_home.sh
+# 2026-10-27: #427 vòng 3 (theo báo cáo lane, máy tải: chỉ để xếp thứ tự).
+40 tests/gates/test_hardware_round3_427.sh
+12 tests/verification/test_evidence_round3_427.sh
+35 tests/gates/test_session_lock_round3_427.sh
+20 tests/gates/test_shell_writes_fd_427.sh
+6 tests/worktree_git/test_worktree_remove_late_holder.sh
