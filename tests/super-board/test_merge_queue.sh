@@ -458,4 +458,17 @@ printf '%s\n' "$(sha 4 c)" > "$F/merged-4"; printf 'train-result: 4 merged\n' > 
 run_q
 has_w "issue-comment 14 [merge-queue] [report] ✅ merged" && ! has_w "issue-close 14" && ok "issue already closed by Closes #K: ✅ comment still posted, no second close" || fail "closed issue: $(cat "$F/writes")"
 
+# #470: train-detail dài (>70000 ký tự) làm body comment vượt 65536 nên `gh pr comment` bị từ chối. Body bị chặn trần, vẫn giữ dòng kết luận + dòng suite đỏ.
+reset; cfg true 6; pr 5 issue-15-e 5; approve 5 OWNER "$(sha 5)"; issue 15
+{
+  echo "train-result: 5 red"
+  echo "train-detail: 5 FAILED tests/test_first.py::test_red"
+  i=0; while [ "$i" -lt 12 ]; do printf 'train-detail: 5 %s\n' "$(head -c 6000 /dev/zero | tr '\0' x)"; i=$((i + 1)); done
+} > "$F/train.out"; echo 11 > "$F/train.rc"
+run_q
+PC="$F/pr-comment-5.txt"; IC="$F/issue-comment-15.txt"
+[ -s "$PC" ] && [ "$(wc -c < "$PC")" -lt 65536 ] && [ "$(wc -c < "$IC")" -lt 65536 ] && ok "#470 oversized train-detail: PR and issue comment bodies stay under 65536 chars" || fail "#470 sizes: pr=$(wc -c < "$PC" 2>/dev/null) issue=$(wc -c < "$IC" 2>/dev/null)"
+grep -q "^\[merge-queue\] \[report\] ❌ red · red" "$PC" && grep -q "^FAILED tests/test_first.py::test_red$" "$PC" && ok "  … the verdict line and the red suite line survive" || fail "  … lost lines: $(head -c 400 "$PC")"
+grep -q "^Next: back to Build" "$PC" && ok "  … the trailing Next line survives" || fail "  … no Next line"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue: all passed" || { echo "❌ test_merge_queue: $FAILS failed"; exit 1; }

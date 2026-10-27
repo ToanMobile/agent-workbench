@@ -161,6 +161,16 @@ def resolve_target(file_arg, project: Path) -> Path:
     return target
 
 
+def _refresh_index(target: Path, project: Path) -> None:
+    """The project's instincts-index.md (when it has one) is regenerated in the same step as its instincts.md, so both land in one commit (#461)."""
+    if target != project / ".agents" / "instincts.md" or not (target.parent / "instincts-index.md").exists():
+        return
+    indexer = DEVKIT_ROOT / "scripts" / "governance" / "index_memory.py"
+    res = subprocess.run([sys.executable, str(indexer), str(target)], capture_output=True, text=True, timeout=30)
+    if res.returncode != 0:
+        print(f"⚠ {tr('index chưa cập nhật', 'index not refreshed')}: {res.stderr.strip()[:200]}", file=sys.stderr)
+
+
 def cmd_add(args) -> int:
     project = project_dir()
     try:
@@ -190,6 +200,7 @@ def cmd_add(args) -> int:
         print(f"{tr('(dry-run) Sẽ thêm vào', '(dry-run) Would add to')} {target}:\n\n{entry}")
     else:
         print(f"✔ {tr('Đã ghi', 'Recorded')} [{inst_id}] {tr('vào', 'in')} {target}")
+        _refresh_index(target, project)
         if getattr(args, "generic", False):
             queue = project / ".agents" / "local" / "upstream-queue.md"
             queue.parent.mkdir(parents=True, exist_ok=True)
