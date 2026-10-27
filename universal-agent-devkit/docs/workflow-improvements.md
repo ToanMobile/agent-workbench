@@ -59,6 +59,16 @@
 |---|---|---|---|
 | A.4 Geely | vừa | `REG-SHARED-02` (`.agents/regression_matrix.active.json:140`) chạy đúng lệnh của `REG-PHONE-01` mà chưa có `covered_by: REG-PHONE-01` (`REG-SHARED-01` đã có `covered_by: REG-CAR-01`). Người dùng duyệt 14/10; luật chủ xe: agent không tự sửa ma trận GeelyEx2 | phiên giữ GeelyEx2 áp dụng, cùng nhóm commit ma trận chờ chủ xe · phiên giữ repo |
 
+### 1.6 Đo hiệu quả skill (T0058, 26/10)
+
+Runner `scripts/testing/skill_eval.py` (run / grade / aggregate / compare / validate; `claude -p` thật trong project scratch ngoài mọi checkout DevKit, `--setting-sources project`, bộ phát hiện lọt qua `init.skills`) và evals của `tdd-workflow`, `impeccable` đã có; test tất định `tests/verification/test_skill_eval.sh`. Không thuộc gate hay ma trận (gọi model thật, tốn tiền). Pilot 26/10, Sonnet, 3 eval × 2 nhánh × 3 lần mỗi skill, 0 lọt, ~5,7 USD cho 36 ô (chưa tính 9 lượt so mù):
+
+| Id | Mức | Việc và bằng chứng (26/10) | Bước tiếp · ai quyết |
+|---|---|---|---|
+| SKILL-EVAL tdd | thấp | `tdd-workflow`: chạy test trước Edit production đầu tiên 9/9 có skill, 3/9 không skill; kết quả (test của agent bắt được lỗi trên code gốc, oracle ẩn đạt) 9/9 cả hai nhánh. Skill đổi quy trình, chưa đổi kết quả trên ba lỗi dễ; +44 nghìn token, +4 s mỗi lượt | thêm eval lỗi khó hơn (nhiều cơ chế, lỗi chỉ lộ ở biên) để đo kết quả · agent |
+| SKILL-EVAL impeccable | vừa | `impeccable` (polish trang có sẵn): detector của chính skill sạch 4/9 có skill, 1/9 không skill; **so mù (judge Sonnet) chỉ thắng 2/9**, ví dụ eval-1 cả 3 lần nhánh có skill giữ card lồng card mà nhánh kia đã bỏ; +144 nghìn token, +9 s. Lần chạy đầu với fixture lộ đáp án trong `DESIGN.md` cho kết quả ngược (thắng 7/9), nên fixture quyết định kết quả: chưa có bằng chứng skill làm trang tốt hơn | đọc transcript eval-1 xem skill dừng ở bước nào; thêm judge khác họ model (judge cùng họ Sonnet với người làm); thêm eval · agent |
+| SKILL-EVAL rộng | thấp | 33 skill còn lại chưa có evals; `/devkit-audit` chưa gọi runner | chọn skill theo tần suất dùng; nối vào `/devkit-audit` làm bước tuỳ chọn có trần chi phí · agent; chi tiêu mỗi lần chạy: người dùng |
+
 ## 2. Quyết định đang chờ người dùng
 
 | Id | Việc | Ghi chú |

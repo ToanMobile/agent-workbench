@@ -121,7 +121,9 @@ fi
 # Parallel, $JOBS at a time (jobs_now above): run one after another the suite took 740 s of
 # the gate's 900 s (2026-09-26). Every test works in its own mktemp dir. Timing tests
 # (test_budgets, test_session_context's bounded fetch, test_gate_lock_receipt_gap's 1.5 s race between two gates — failed rep 3 in
-# the pool at load ~70 on 25/10, 3/3 alone) run alone afterwards, so the others cannot slow them. Output keeps list order.
+# the pool at load ~70 on 25/10, 3/3 alone; test_agent_kit_test_order's pool/SIGTERM windows — D2 then D1 failed in the pool at
+# load 100+ on 26/10, all checks passed alone at load 106; #430: test_run_impacted "not parallel: 6 s", test_relink "slow",
+# test_worktree_merge_gate_owner's 6 s wait) run alone afterwards, so the others cannot slow them. Output keeps list order.
 JOBS="$(jobs_now)"
 # `agent-kit test` runs its earlier suites beside the parallel phase and names a file that appears when they have ended: the
 # timing tests below wait for it, so they still run alone (15 minutes at most: a file that never comes must not hang the run; and not
@@ -146,10 +148,20 @@ run_one() { # <test> <out dir>
   # Trước đó `bash "$1"` trần: ca FIFO của test_gate_robustness.sh kẹt trong open(), runner phía trên mất, hai post-fix-gate.py
   # sống 18h và các gate khác báo BUSY.
   mkdir -p "$o.slots"
-  if env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
+  local rc=0 t0=$SECONDS
+  env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
+       -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC \
        SB_HEAVY_SLOT_DIR="$o.slots" \
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
-       bash "$1" >"$o.log" 2>&1; then echo 0 >"$o.rc"; else echo 1 >"$o.rc"; fi
+       bash "$1" >"$o.log" 2>&1 || rc=$?
+  echo "$rc" >"$o.rc"
+  # B2 (audit 25/10): kết quả ghi NGAY khi test xong — một TIMEOUT của cả suite (gate giết nhóm) không còn xoá PASS đã có
+  [ -n "${DEVKIT_PTC:-}" ] && python3 -I "$DEVKIT_PTC" record "$2" "$1" "$rc" >"$o.ptc" 2>&1
+  # #427 / log trống khi quá 900 s (27/10): ✔/✖ chỉ in ở vòng cuối, gate giết suite thì log rỗng. Một dòng tiến độ ra stderr ngay khi
+  # test xong, một printf (worker xargs song song không xé dòng); không mở đầu ✔/✖/↺, không khớp FAIL_LINE của gate, có đường dẫn test.
+  # In SAU bước ghi B2: người đọc stderr đã chết (gate bị SIGKILL) thì printf nhận SIGPIPE và worker chết — PASS đã ghi trước đó.
+  printf '· done rc=%s %ss %s\n' "$rc" "$((SECONDS - t0))" "$1" >&2
+  return 0
 }
 export -f run_one
 # helper vắng (bản kit cũ) hay không có python3: chạy trần như trước, không chặn cả lượt test
@@ -158,10 +170,27 @@ DEVKIT_RUN_BOUNDED=""
 DEVKIT_TEST_TIMEOUT_S="${DEVKIT_TEST_TIMEOUT_S:-1800}"
 case "$DEVKIT_TEST_TIMEOUT_S" in *[!0-9]*) echo "run_impacted.sh: DEVKIT_TEST_TIMEOUT_S must be whole seconds; using 1800" >&2; DEVKIT_TEST_TIMEOUT_S=1800 ;; esac
 export DEVKIT_RUN_BOUNDED DEVKIT_TEST_TIMEOUT_S
+# B2 (audit 25/10): sổ PASS theo từng test (tests/lib/per_test_cache.py, kho của bin/suite_cache.py, khoá = cả cây + đường dẫn test). Chỉ khi
+# gate bật (DEVKIT_PER_TEST_CACHE=1: dùng lại + ghi; record: chỉ ghi — lượt sentinel / --no-cache); `agent-kit test` không đặt biến: chạy hết.
+# `--list` ở trên không đổi (khoá của gate và lần kiểm lại R3 cần tập chọn đầy đủ). Helper vắng / lỗi: mọi test chạy như trước.
+DEVKIT_PTC=""; reused=""
+case "${DEVKIT_PER_TEST_CACHE:-}" in
+  1|record) [ -f "$DK/tests/lib/per_test_cache.py" ] && command -v python3 >/dev/null 2>&1 && DEVKIT_PTC="$DK/tests/lib/per_test_cache.py" ;;
+esac
+export DEVKIT_PTC
+if [ -n "$DEVKIT_PTC" ] && [ -n "$(printf '%s' $selected)" ]; then
+  # in "reuse<TAB><test><TAB><tuổi giây>" cho test có PASS trên đúng khoá; ghi ảnh khoá cho test phải chạy (bước record của run_one)
+  python3 -I "$DEVKIT_PTC" plan "$DK" "$out" $selected >"$out/ptc.plan" 2>"$out/ptc.err" \
+    || echo "run_impacted.sh: per_test_cache plan exit $? — mọi test chạy" >&2
+  [ -s "$out/ptc.err" ] && tail -n 5 "$out/ptc.err" | sed 's/^/run_impacted.sh: /' >&2
+  reused="$(awk -F'\t' '$1 == "reuse" { print $2 }' "$out/ptc.plan" 2>/dev/null)"
+fi
+is_reused() { printf '%s\n' "$reused" | grep -qxF -- "$1"; }
 parallel="" alone=""
 for t in $selected; do
   [ -f "$t" ] || continue
-  case "$t" in */test_budgets.sh|*/test_session_context.sh|*/test_gate_lock_receipt_gap.sh) alone="$alone $t" ;; *) parallel="$parallel $t" ;; esac
+  is_reused "$t" && continue
+  case "$t" in */test_budgets.sh|*/test_session_context.sh|*/test_gate_lock_receipt_gap.sh|*/test_agent_kit_test_order.sh|*/test_run_impacted.sh|*/test_relink.sh|*/test_worktree_merge_gate_owner.sh) alone="$alone $t" ;; *) parallel="$parallel $t" ;; esac
 done
 # Start the longest tests first (tests/lib/test_durations.txt: `<seconds> <path>`; a test it does not list starts first, as it
 # may be slow): a 137 s test that starts last becomes the tail of the whole run. ONLY the start order of $parallel changes: $selected
@@ -186,6 +215,12 @@ rc=0
 for t in $selected; do
   [ -f "$t" ] || continue
   o="$out/$(printf '%s' "$t" | tr '/' '_')"
+  if is_reused "$t"; then
+    age="$(awk -F'\t' -v t="$t" '$1 == "reuse" && $2 == t { print $3; exit }' "$out/ptc.plan")"
+    echo "↺ $t (PASS dùng lại trên cùng cây, chạy thật $((${age:-0} / 60)) phút trước)"
+    continue
+  fi
+  [ -s "$o.ptc" ] && sed 's/^/    /' "$o.ptc"
   if [ "$(cat "$o.rc" 2>/dev/null)" = 0 ]; then
     echo "✔ $t"
   else

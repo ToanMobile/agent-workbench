@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kestrel Gauge — Trực ban mực nước hạ lưu</title>
+  <style>
+    :root {
+      --fjord-bg: #f1f5f9;
+      --slate-surface: #ffffff;
+      --slate-subtle: #e3ebf3;
+      --border-hairline: #cbd6e2;
+      --fjord-ink: #0f2233;
+      --fjord-muted: #3d5368;
+      --cobalt-signal: #135399;
+      --cobalt-deep: #0d3e73;
+      --amber-watch: #9a5209;
+      --font-sans: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+      --font-mono: "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--fjord-bg);
+      color: var(--fjord-ink);
+      font-family: var(--font-sans);
+      font-size: 16px;
+      line-height: 1.18;
+      padding: 16px;
+    }
+
+    a:focus,
+    button:focus {
+      outline: none;
+    }
+
+    .shell {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+      background: var(--slate-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 10px;
+    }
+
+    .brand-title {
+      font-size: 1.125rem;
+      font-weight: 700;
+      color: var(--fjord-ink);
+    }
+
+    .shift-meta {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: #808080;
+    }
+
+    .topbar-actions {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .btn-primary {
+      display: inline-block;
+      background: var(--cobalt-signal);
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.9375rem;
+      padding: 6px 12px;
+      border-radius: 6px;
+    }
+
+    .btn-secondary {
+      display: inline-block;
+      background: var(--slate-subtle);
+      color: var(--fjord-ink);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.9375rem;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border-hairline);
+    }
+
+    .hero {
+      background: var(--slate-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .hero h1 {
+      font-size: 2.25rem;
+      line-height: 1.18;
+      margin-bottom: 16px;
+    }
+
+    .hero p {
+      color: #8a8a8a;
+      line-height: 1.18;
+    }
+
+    .stations-section {
+      margin-bottom: 16px;
+    }
+
+    .stations-section h2 {
+      font-size: 1.375rem;
+      line-height: 1.3;
+      margin-bottom: 16px;
+    }
+
+    .station-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .station-card {
+      background: var(--slate-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 10px;
+      box-shadow: 0 2px 6px rgba(15, 34, 51, 0.08);
+      padding: 16px;
+    }
+
+    .icon-tile {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      background: var(--slate-subtle);
+      color: var(--cobalt-signal);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+    }
+
+    .station-card h3 {
+      font-size: 1.0625rem;
+      line-height: 1.35;
+      margin-bottom: 16px;
+    }
+
+    .reading-inner-card {
+      background: var(--slate-subtle);
+      border: 1px solid var(--border-hairline);
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(15, 34, 51, 0.08);
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .water-level {
+      font-family: var(--font-mono);
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--fjord-ink);
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .delta-note {
+      font-size: 0.875rem;
+      color: #808080;
+      line-height: 1.15;
+    }
+
+    .station-desc {
+      color: #808080;
+      font-size: 0.9375rem;
+      line-height: 1.16;
+    }
+
+    .log-panel {
+      background: var(--slate-surface);
+      border: 1px solid var(--border-hairline);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .log-panel h2 {
+      font-size: 1.375rem;
+      margin-bottom: 16px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 12px 8px;
+      border-bottom: 1px solid var(--border-hairline);
+      font-size: 0.9375rem;
+    }
+
+    th {
+      color: #808080;
+      font-weight: 600;
+    }
+
+    .mono {
+      font-family: var(--font-mono);
+    }
+
+    .watch-tag {
+      color: var(--amber-watch);
+      font-weight: 600;
+    }
+
+    @media (max-width: 820px) {
+      .station-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <div class="brand-title">Kestrel Gauge</div>
+        <div class="shift-meta">Ca trực 14:00–22:00 · Lưu vực Vu Gia – Thu Bồn</div>
+      </div>
+      <nav class="topbar-actions" aria-label="Tác vụ ca trực">
+        <a class="btn-secondary" href="/stations/phu-oc-2">Chi tiết trạm Phú Ốc 2</a>
+        <a class="btn-primary" href="/stations/export-csv">Xuất biên bản CSV</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <h1>Bảng theo dõi mực nước hạ lưu theo giờ</h1>
+        <p>Số liệu tổng hợp trực tiếp từ cảm biến áp suất thủy tĩnh tại ba mặt cắt kiểm soát lũ. Mọi phép đo đã đối chiếu cao trình chuẩn quốc gia và cập nhật mỗi 15 phút để phục vụ lệnh điều tiết cửa xả hồ chứa thượng nguồn.</p>
+      </section>
+
+      <section class="stations-section" aria-labelledby="stations-heading">
+        <h2 id="stations-heading">Mặt cắt quan trắc trọng điểm</h2>
+        <div class="station-grid">
+          <article class="station-card">
+            <div class="icon-tile" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 16c3-2 6-2 9 0s6 2 9 0M3 10c3-2 6-2 9 0s6 2 9 0"/></svg></div>
+            <h3>Trạm cầu Câu Lâu</h3>
+            <div class="reading-inner-card">
+              <span class="water-level">+3.42 m</span>
+              <p class="delta-note">Tăng 0.18 m trong 6 giờ · Dưới báo động II 0.58 m</p>
+            </div>
+            <p class="station-desc">Cảm biến chính hoạt động ổn định, dòng chảy mặt mở không vướng vật cản tại nhịp giữa cầu đường sắt.</p>
+          </article>
+
+          <article class="station-card">
+            <div class="icon-tile" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M6 9l6-6 6 6"/></svg></div>
+            <h3>Trạm Phú Ốc 2</h3>
+            <div class="reading-inner-card">
+              <span class="water-level">+4.15 m</span>
+              <p class="delta-note">Tăng 0.31 m trong 6 giờ · Chạm ngưỡng theo dõi sát</p>
+            </div>
+            <p class="station-desc">Lưu lượng đổ về từ nhánh sông con tăng đều sau đợt mưa rào lúc 11:30 tại sườn đông.</p>
+          </article>
+
+          <article class="station-card">
+            <div class="icon-tile" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="2"/><path d="M4 12h16"/></svg></div>
+            <h3>Trạm đập tràn Ái Nghĩa</h3>
+            <div class="reading-inner-card">
+              <span class="water-level">+6.08 m</span>
+              <p class="delta-note">Giảm 0.06 m trong 6 giờ · Cửa xả số 2 mở 1.2 m</p>
+            </div>
+            <p class="station-desc">Biên độ mực nước hạ lưu đã chững lại sau khi điều chỉnh lưu lượng xả qua tuabin phát điện.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="log-panel" aria-labelledby="log-heading">
+        <h2 id="log-heading">Nhật ký đối chiếu 3 chu kỳ gần nhất</h2>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Thời điểm</th>
+              <th scope="col">Mã trạm</th>
+              <th scope="col">Mực nước đo</th>
+              <th scope="col">Trạng thái trực ban</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">19:45</td>
+              <td class="mono">PO-02</td>
+              <td class="mono">+4.15 m</td>
+              <td class="watch-tag">Theo dõi sát mỗi 15 phút</td>
+            </tr>
+            <tr>
+              <td class="mono">19:45</td>
+              <td class="mono">CL-01</td>
+              <td class="mono">+3.42 m</td>
+              <td>Bình thường theo quy trình</td>
+            </tr>
+            <tr>
+              <td class="mono">19:30</td>
+              <td class="mono">AN-03</td>
+              <td class="mono">+6.08 m</td>
+              <td>Đã khóa biên bản đối chiếu</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,6 +1,6 @@
 ---
 name: parallel-lanes
-description: "Dùng khi một việc được chia cho từ hai agent/lane trở lên chạy song song (fixer, reviewer, lane test, đợt merge): xếp lane đường găng và lane nặng chạy trước, giới hạn số lane theo CPU còn trống, brief sẵn các bẫy lặp lại, mỗi lane một worktree, review theo mức rủi ro nhưng không bỏ vòng nào, một gate full cho cả đợt. Lệnh: `agent-kit lanes plan|slots|record`."
+description: "Dùng khi một việc được chia cho từ hai agent/lane trở lên chạy song song (fixer, reviewer, lane test, đợt merge): xếp lane đường găng và lane nặng chạy trước, giới hạn số lane theo CPU còn trống, brief sẵn các bẫy lặp lại, mỗi lane một worktree, review theo mức rủi ro nhưng không bỏ vòng nào, một gate full cho cả đợt ở điểm gộp (integrate / merge gate / merge train). Lệnh: `agent-kit lanes plan|slots|record`."
 ---
 
 # Parallel Lanes (nhiều agent, xong sớm nhất mà không bớt chất lượng)
@@ -34,5 +34,5 @@ Nhanh ở đây đến từ **xếp lịch**, không đến từ bỏ một vòn
 ## 4. Gate và merge
 - Mỗi lane chạy gate impacted (`--since <base>`) trong worktree của nó.
 - Merge theo thứ tự `lanes plan` đưa ra; xung đột chỉ ở file hợp nhất bằng union (`tests/impact_map.txt`, `tests/lib/test_durations.txt`, checklist).
-- Một gate full cho kết quả đã merge (`post-fix-gate.py --run-tests --full --diff origin/<nhánh>`), trên máy yên: kiểm `uptime` trước (load trên số core là quá tải, test chập chờn và gate dễ quá 900 s), không chạy khi từ 5 agent đang chạy test.
+- Lane không chạy `--full`. Một gate full cho cả đợt, chỉ ở điểm gộp: `agent-kit integrate` (repo trunk-push), merge gate hoặc merge train (repo PR) tự chạy `--full` trong worktree tạm của chúng; không gọi tay `post-fix-gate.py --full` trong lane hay checkout chính. Điểm gộp chạy trên máy yên: kiểm `uptime` trước (load trên số core là quá tải, test chập chờn và gate dễ quá 900 s), không chạy khi từ 5 agent đang chạy test.
 - Xong lane thì `agent-kit lanes record <id> <số phút thật> --kind <loại>` để lần sau ước lượng sát hơn (file lịch sử nằm trong git dir chung `<git-common-dir>/devkit/lane_times.jsonl`: mọi worktree dùng chung, không bao giờ vào commit).

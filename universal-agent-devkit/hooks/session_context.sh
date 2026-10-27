@@ -45,6 +45,10 @@ GATE_HOOK="$(dirname "${SELF}")/regression_gate.sh"
 CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/governance/context_sync.py"
 [ -f "${CTX_SYNC}" ] || CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/context_sync.py"
 [ -f "${CTX_SYNC}" ] && [ -d "${REPO_ROOT}/.agents" ] && (python3 "${CTX_SYNC}" "${REPO_ROOT}" --quiet >/dev/null 2>&1 &)
+# DevKit links: put back the ones a git operation removed and drop the ones the DevKit made obsolete (a command it dropped
+# left a dangling .claude/commands/<name>.md in every repo: health 90-93 until `agent-kit init`, 26/10). Fast, no network.
+RELINK="$(dirname "$(dirname "${SELF}")")/scripts/governance/relink_check.py"
+[ -f "${RELINK}" ] && [ -d "${REPO_ROOT}/.agents" ] && python3 "${RELINK}" "${REPO_ROOT}" --quiet --links-only >/dev/null 2>&1
 # Errors the DevKit causes while a board / workflow runs in a whitelisted repo become 🐛 cards on the DevKit board
 # (Project #1). Detached in the background (never delays SessionStart); every board worker is a session too, so it runs
 # while boards run. One machine-wide ledger, a lock and at least 300 s between scans. DEVKIT_INCIDENT=0: off.
@@ -69,11 +73,23 @@ except Exception: pass' 2>/dev/null)"
   # when nothing in them is unique (`agent-kit worktree gc`). Only from the main checkout (its siblings are what gc sweeps; a linked
   # worktree would keep the record and go away with it). gc appends what it deleted, stamped, to .claude/audit-gate/worktree_gc.log
   # under its own lock (last 400 lines; `agent-kit worktree gc --dry-run` says what it keeps and why). WORKTREE_GC=0: off.
+  # --merged (U2, audit 25/10: the one merged-worktree cleaner; it replaces the untracked .claude/hooks/cleanup-wt.py --auto): also the
+  # integrated, unheld worktrees of .claude/worktrees/ and the local branches the trunk holds, each by `worktree remove`'s rule.
+  # WORKTREE_GC_MERGED=0: that part off.
   if [ "${WORKTREE_GC:-1}" != "0" ]; then
+    GC_MERGED="--merged"; [ "${WORKTREE_GC_MERGED:-1}" != "0" ] || GC_MERGED=""
+    # #427 vòng 2: .claude hay .claude/worktrees là symlink thì gc --merged in "• gc --merged: <đường dẫn> is a symlink: no worktree removed"
+    # (worktree.py _reap_merged). gc chạy nền nên stdout của nó vào <git-common-dir>/devkit-gc.out (cạnh devkit-gc.lock; .claude/ có thể
+    # chính là symlink đó); lượt mở phiên ở main checkout SAU đó đưa đúng dòng này vào context, các dòng gc khác vẫn im.
+    # ponytail: trễ một phiên và còn hiện một lần sau khi gỡ link; nâng cấp khi cần báo ngay trong phiên đầu.
+    GC_COMMON="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+    GC_OUT=/dev/null; [ -n "${GC_COMMON}" ] && GC_OUT="${GC_COMMON}/devkit-gc.out"
+    [ -n "${GC_MERGED}" ] && [ -n "${GC_COMMON}" ] && [ "$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir 2>/dev/null)" = "${GC_COMMON}" ] \
+      && grep -a -m1 -E '^• gc --merged: .*symlink: ' "${GC_OUT}" 2>/dev/null | sed 's/^/[DevKit] /'
     ( [ "$(git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || exit 0
       [ "$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir 2>/dev/null)" = "$(cd "${REPO_ROOT}" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ] || exit 0
       GC_TOP="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null)" && [ -n "${GC_TOP}" ] || exit 0   # REPO_ROOT may be a subfolder
-      cd "${GC_TOP}" && exec python3 "${WT_SCRIPT}" gc "--log=${GC_TOP}/.claude/audit-gate/worktree_gc.log" </dev/null ) >/dev/null 2>&1 &
+      cd "${GC_TOP}" && exec python3 "${WT_SCRIPT}" gc "--log=${GC_TOP}/.claude/audit-gate/worktree_gc.log" ${GC_MERGED} </dev/null >"${GC_OUT}" ) >/dev/null 2>&1 &
   fi
 fi
 # The regression baseline (T0003): verified_head recorded before the first turn can commit, so a
@@ -89,6 +105,23 @@ import json, os, re, signal, subprocess, sys, time
 
 root = os.environ["REPO_ROOT"]
 out = []
+
+def _main_trunk_tracks(root, indexer, index):
+    """True when `root` is the main checkout of a trunk-mode repo AND git tracks `index`: writing it there would dirty main (#461)."""
+    try:
+        if subprocess.run(["git", "-C", root, "ls-files", "--error-unmatch", "--", index],
+                          capture_output=True, timeout=5).returncode != 0:
+            return False
+        top = os.path.dirname(os.path.dirname(indexer))   # DevKit root when index_memory.py sits in scripts/
+        if not os.path.isfile(os.path.join(top, "bin", "regression_checklist.py")):
+            top = os.path.dirname(top)                     # …or in scripts/<group>/ since the regrouping
+        sys.path.insert(0, os.path.join(top, "bin"))
+        sys.dont_write_bytecode = True
+        import regression_checklist as rc
+        return bool(rc.trunk_main(root))
+    except Exception:  # noqa: BLE001 - unknown: the old behaviour (regenerate)
+        return False
+
 
 prof = "none"
 try:
@@ -112,7 +145,12 @@ if os.path.isfile(inst):
     if size_kb > 20:
         index = os.path.join(root, ".agents", "instincts-index.md")
         indexer = os.environ.get("INDEXER")
-        if indexer and (not os.path.exists(index) or os.path.getmtime(index) < os.path.getmtime(inst)):
+        stale = bool(indexer) and (not os.path.exists(index) or os.path.getmtime(index) < os.path.getmtime(inst))
+        if stale and _main_trunk_tracks(root, indexer, index):
+            # main in trunk mode only takes merges: a tracked index is regenerated by `agent-kit learn` / the merge, never here (#461)
+            out.append("⚠️ .agents/instincts-index.md cũ hơn instincts.md (main trunk mode không ghi file track): số dòng `sed -n` có thể lệch, "
+                       "tìm bằng `grep -n '^### \\[INSTINCT-' .agents/instincts.md`.")
+        elif stale:
             subprocess.run([sys.executable, indexer, inst], capture_output=True, timeout=20)
         out.append(f"Bài học của dự án: .agents/instincts.md ({len(heads)} mục, {size_kb:.0f} KB — KHÔNG đọc cả file). "
                    f"Tra mục lục .agents/instincts-index.md rồi đọc đúng mục bằng `sed -n 'a,bp'`.")

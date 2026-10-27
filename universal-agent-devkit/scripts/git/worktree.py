@@ -9,14 +9,19 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py diff <path> [--with-checklist]   the worktree's own changes as a binary patch
   worktree.py finish <path>    merge its work into the main branch AUTOMATICALLY, then remove it (exit 0 done, 3 conflict, 1 blocked)
   worktree.py automerge <path> the same, one JSON line on stdout (what the Stop gate runs)
-  worktree.py remove <path>    remove it once nothing of its work would be lost
+  worktree.py remove [--merged[=<sha>]] <path>   remove it once nothing of its work would be lost; --merged: only when its HEAD is
+                               integrated (the trunk holds it, or it is <sha> - a PR head just merged - or behind it) and, asked
+                               again right before the removal, nothing holds it (the rule of `held`)
+  worktree.py held <path>      exit 0 when no session or lock holds it, 3 (reason on stdout) when one does; read-only
   worktree.py discard <path>   remove one `remove` refuses, only when it holds nothing but deleted files / untracked IDE junk, its HEAD is
                                in the trunk and no live session holds it; a fallback copy goes to refs/devkit/discarded/* (30 days)
   worktree.py restore <commit> -- <path>…   `git checkout <commit> -- <path>` for paths with no uncommitted change and no ignored file in
                                the way (not in a trunk-mode main)
   worktree.py prune-branch [--remote] <branch>   `git branch -D` for a branch the trunk holds (ancestor or squash) or whose PR merged into
                                the trunk at its tip; --remote: origin's branch too, when that PR merged at its tip
-  worktree.py gc [--dry-run]   delete what DevKit worktrees left behind, only when nothing in it is unique (kept ones are named)
+  worktree.py gc [--dry-run] [--merged]   delete what DevKit worktrees left behind, only when nothing in it is unique (kept ones are
+                               named); --merged: also the integrated, unheld worktrees of .claude/worktrees/ and the local branches the
+                               trunk holds (the one merged-worktree cleaner; SessionStart runs it)
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
 
@@ -723,6 +728,19 @@ def profile_file(root):
     return None
 
 
+def copy_ignored(main, wt):
+    """agent-workbench#477: the git-ignored files a gate in a scratch worktree needs - local config, build inputs, Unity Library, hooks - the one
+    list that `agent-kit integrate` and the merge train's super-board-scratch-config.sh share (it had been written out in each). Each step on
+    its own try: one failing (a build input) must not lose the hooks after it (#463). A failure is named, never raised."""
+    copied = []
+    for step in (copy_local_config, copy_build_inputs, copy_unity_library, copy_local_hooks):
+        try:
+            copied += step(main, wt)
+        except Exception as e:  # noqa: BLE001 - the other steps still run; the gate is red by itself if what it needs is missing
+            print("• " + tr(f"{step.__name__} hỏng: {type(e).__name__}: {e}", f"{step.__name__} failed: {type(e).__name__}: {e}"))
+    return copied
+
+
 def install_args(main, wt, profile):
     """The installer run that reproduces the main checkout's DevKit setup, or None."""
     if not profile_file(main):
@@ -1292,7 +1310,8 @@ def _patch_already_in_main(cwd, main_head, head, memo=None):
     files = [f for f in files if f and f not in ign]   # the gate and hooks rewrite those: not work (authored rows are)
     if not files or len(files) > 500:
         return False
-    return git(cwd, "--no-optional-locks", "diff", "--quiet", "--ignore-submodules=none", main_head, head, "--", *files, check=False,
+    # --no-textconv --no-ext-diff: a lossy diff.<drv>.textconv (docx/pdf -> text) makes a binary change read as "same" (OCR 26/10)
+    return git(cwd, "--no-optional-locks", "diff", "--quiet", "--no-textconv", "--no-ext-diff", "--ignore-submodules=none", main_head, head, "--", *files, check=False,
                env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode == 0
 
 
@@ -1469,7 +1488,7 @@ def _clean_merges(wt, unheld):
     for sha in list(merges):
         # bytes: a hunk may hold a byte that is not UTF-8 (a Latin-1 file); a strict text decode raised UnicodeDecodeError here and
         # the Stop gate held every worktree with "gate error" (2026-10-26). Only "is there any hunk" is read.
-        shown = _git_bytes(wt, "show", "--cc", "--format=", "--ignore-submodules=none", sha)
+        shown = _git_bytes(wt, "show", "--cc", "--no-textconv", "--no-ext-diff", "--format=", "--ignore-submodules=none", sha)   # a lossy textconv hides a binary hunk
         if shown.returncode != 0 or shown.stdout.strip():
             del merges[sha]
     ok, grew = set(), True
@@ -1543,10 +1562,12 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False, 
         on_file = _reflog_file_entries(wt) if reflog_lines is False else reflog_lines   # BEFORE git reads that file: a FIFO there would block `git log -g`
         if on_file is None:
             return None
-        r = git(wt, "log", "-g", "--format=%H%x09%gs", "HEAD", check=False)
+        # bytes: the reflog keeps a `git commit -m` subject raw (a Latin-1 one made the strict decode raise and the worktree read as
+        # "reflog could not be read", review 26/10); only the subject is read from it, never a path
+        r = _git_bytes(wt, "log", "-g", "--format=%H%x09%gs", "HEAD")
         if r.returncode != 0:
             return None
-        entries = [(l.split("\t", 1) + [""])[:2] for l in r.stdout.splitlines() if l]
+        entries = [(l.split("\t", 1) + [""])[:2] for l in r.stdout.decode("utf-8", "replace").splitlines() if l]
         if on_file > len(entries):
             return None   # git skipped lines it could not read: what they named is unknown
     superseded = {entries[i + 1][0] for i in range(len(entries) - 1)
@@ -1586,7 +1607,7 @@ def _reflog_only(wt, head, main_head, refs, attached=False, reflog_lines=False, 
                                      check=False).stdout.split("\0") if f]
         files = [f for f in diff_names if f not in ign]
         same_bytes = bool(files) and len(files) <= 500 and bool(main_head) and git(
-            wt, "--no-optional-locks", "diff", "--quiet", "--ignore-submodules=none", main_head, sha, "--", *files, check=False,
+            wt, "--no-optional-locks", "diff", "--quiet", "--no-textconv", "--no-ext-diff", "--ignore-submodules=none", main_head, sha, "--", *files, check=False,
             env=dict(os.environ, GIT_LITERAL_PATHSPECS="1")).returncode == 0
         if not any(diff_names):   # an empty commit (or a merge) has no patch to compare: its message would be lost
             if clean is None:
@@ -1724,7 +1745,7 @@ def _inventory(cwd, only, budget):
         except Exception:  # noqa: BLE001
             busy = "unknown operation"
         rows.append({"path": path, "branch": e["branch"], "detached": e["detached"], "dirty": dirty, "ahead": ahead,
-                     "reflog": reflog, "busy": busy,
+                     "reflog": reflog, "busy": busy, "held_only": held_only,
                      "unreachable": bool((e["detached"] and ahead != 0 and (held_only is None or held_only > 0)) or reflog is None or reflog),
                      "unintegrated": bool(dirty is None or dirty or ahead is None or ahead or reflog is None or reflog or busy)})
     return rows
@@ -1805,6 +1826,13 @@ def _authored_cmp(item):
     return a
 
 
+def _is_prompt_row(item):
+    """A REPORTED row: the UserPromptSubmit hook wrote it (state "reported") and no test, ref or criterion was ever linked to it.
+    `agent-kit bugs add` confirms a row (state "confirmed"), `bugs link` adds a link: either makes it a person's."""
+    return (isinstance(item, dict) and item.get("kind") == "bug" and item.get("state") == "reported"
+            and not any(item.get(k) for k in _LINK_KEYS))
+
+
 def _bookkeeping_regenerated(wt, main):
     """True when the worktree's UNCOMMITTED bookkeeping (BOOKKEEPING) is nothing but what the gate and the checklist sync regenerate.
     Every row a person made (_authored_cmp) in its regression_status.json on disk is either:
@@ -1851,6 +1879,8 @@ def _bookkeeping_regenerated(wt, main):
         for rid, a in mine.items():
             if base.get(rid) == a or (rid not in base and theirs.get(rid) == a):
                 continue
+            if rid not in base and _is_prompt_row(mine_raw["items"][rid]):
+                continue   # #429: a prompt the hook logged as a possible bug, nobody confirmed or linked: not work (the fallback copy keeps it)
             if synced is None:
                 synced = _synced_rows(wt, base_raw)
             want = _authored_cmp(synced.get(rid))
@@ -1951,7 +1981,7 @@ def cmd_diff(cwd, args):
                 keep, carried = [STATUS_FILE], True   # the rows people made (bugs, REQs, links) replace that file's content in the patch
                 left_out = [p for p in left_out if p != STATUS_FILE]
             spec = [":/"] + [":(top,exclude,literal)" + p for p in BOOKKEEPING if p not in keep]   # magic: GIT_LITERAL_PATHSPECS off below
-        out = subprocess.run(["git", "-C", wt, "diff", "--cached", "--binary", state["base"], "--", *spec],
+        out = subprocess.run(["git", "-C", wt, "diff", "--cached", "--binary", "--no-textconv", "--no-ext-diff", state["base"], "--", *spec],   # the bytes, never a textconv's text
                              capture_output=True, env=dict(env, GIT_LITERAL_PATHSPECS="0"))
         if out.returncode != 0:
             die(out.stderr.decode("utf-8", "replace").strip(), 1)
@@ -2012,7 +2042,7 @@ def _iter_blockers(cwd, wt, shown, budget, rows=None):
             sha = git(wt, "rev-parse", "--short=12", "HEAD", check=False).stdout.strip() or "HEAD"
             main = main_checkout(cwd)
             vi, en = [], []
-            if r["detached"] and r["ahead"] != 0:   # (a worktree on a branch keeps those commits on it; only its reflog-only ones are lost)
+            if r["detached"] and r["ahead"] != 0 and (r["held_only"] is None or r["held_only"] > 0):   # #458: the row's own blocking condition; (a worktree on a branch keeps those commits on it; only its reflog-only ones are lost)
                 vi.append(f"HEAD tách rời ({sha}), {r['ahead']} commit không thuộc nhánh nào và main chưa có (cùng nội dung hoặc cùng patch hoặc "
                           f"gộp ba chiều không đổi gì). Đem về trước: agent-kit worktree diff {shlex.quote(shown)} | git apply --3way rồi commit ở main checkout "
                           "(file sổ sách checklist được bỏ qua khi so, trừ dòng bug/REQ do người tạo; nếu commit có sửa chúng thì dùng "
@@ -2122,6 +2152,61 @@ def _iter_blockers(cwd, wt, shown, budget, rows=None):
     if cut:
         yield (1, "secret", tr(f"{wt}: dò file bí mật bị git ignore dừng ở {cut} (quá WORKTREE_SECRET_SCAN_MAX file hoặc không đọc được) — phần chưa đọc có thể có khoá",
                                f"{wt}: the scan for git-ignored secret files stopped at {cut} (over WORKTREE_SECRET_SCAN_MAX files, or unreadable) - what it did not read may hold a key"), [])
+    try:   # OCR r2 (26/10): the kit's own uncommitted work lives git-ignored under .agents/local/ (red-patches, stages, handoffs, claude-auto)
+        local, local_cut = _unsaved_agent_local(wt, main)
+    except (OSError, UnicodeError) as e:   # (SystemExit - git cannot run - is the caller's, as for every check here)
+        local, local_cut = [], f"({e})"
+    if local:
+        listing = ", ".join(p.encode("utf-8", "surrogateescape").decode("utf-8", "replace") for p in local[:6]) + (" …" if len(local) > 6 else "")
+        yield (1, "agent_local", tr(f"{wt}: {len(local)} file bị git ignore dưới .agents/local/ chỉ worktree có (main chưa có hoặc có bản khác): {listing} — gỡ worktree là mất "
+                                    f"chúng. Chép chúng vào {shlex.quote(os.path.join(main, AGENT_LOCAL_REL))} (cùng đường dẫn) trước, hoặc hỏi người dùng có bỏ được không",
+                                    f"{wt}: {len(local)} git-ignored file(s) under .agents/local/ only the worktree holds (main lacks them or holds other bytes): {listing} - a "
+                                    f"removal deletes them. Copy them into {shlex.quote(os.path.join(main, AGENT_LOCAL_REL))} (same paths) first, or ask the user whether they can go"), [])
+    if local_cut:
+        yield (1, "agent_local", tr(f"{wt}: không dò hết file bị git ignore dưới .agents/local/ ({local_cut}) — phần chưa đọc có thể là việc chưa lưu",
+                                    f"{wt}: the git-ignored files under .agents/local/ could not all be checked ({local_cut}) - what was not read may be unsaved work"), [])
+
+
+AGENT_LOCAL_REL = os.path.join(".agents", "local")   # the kit's place for work that is not committed: red-patches, stages, handoffs, claude-auto
+AGENT_LOCAL_SCAN_MAX = 5000
+
+
+def _unsaved_agent_local(wt, main):
+    """(paths, cut): the git-IGNORED files under the worktree's .agents/local/ whose bytes the main checkout does not hold at the same path
+    (missing there, or other bytes) - a removal deletes them (OCR r2 26/10: `remove`, `remove --merged` and `gc --merged` dropped a
+    red-patch, a stage HANDOFF.md and claude-auto notes). A file `worktree add` copied from main is the same bytes: not counted, nor one
+    main holds as <path>.from-<worktree name>[.N] with the same bytes (_from_copies: where finish puts a file main has with OTHER bytes).
+    A folder entry git prints ("…/", a nested git repo) always counts: it cannot be compared and goes whole with the worktree. Not counted
+    either: a link (no data of its own; the installer links the kit's hooks there), a dotfile (.DS_Store, the installer's
+    .devkit_backups.log, as _unsaved_memory), a .agents/local that is a link or IS main's folder. Tracked and untracked-not-ignored files
+    are changes_since's. `cut`: why the scan did not finish (git failed, over AGENT_LOCAL_SCAN_MAX files) - the caller refuses then."""
+    own = os.path.join(wt, AGENT_LOCAL_REL)
+    if not os.path.isdir(own) or os.path.islink(own) or _same_path(own, os.path.join(main, AGENT_LOCAL_REL)):
+        return [], ""
+    r = _git_bytes(wt, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", AGENT_LOCAL_REL.replace(os.sep, "/") + "/")
+    if r.returncode != 0:
+        return [], tr(f"git ls-files lỗi (exit {r.returncode})", f"git ls-files failed (exit {r.returncode})")
+    rels = [p.decode("utf-8", "surrogateescape") for p in r.stdout.split(b"\0") if p]
+    if len(rels) > AGENT_LOCAL_SCAN_MAX:
+        return [], tr(f"hơn {AGENT_LOCAL_SCAN_MAX} file", f"over {AGENT_LOCAL_SCAN_MAX} files")
+    lost = []
+    for rel in rels:
+        src = os.path.join(wt, rel.rstrip("/"))
+        if os.path.basename(rel.rstrip("/")).startswith(".") or os.path.islink(src):
+            continue
+        if rel.endswith("/"):   # OCR r3 W1: a nested git repo (a repo-copy stage) is ONE folder entry: never comparable, never dropped
+            lost.append(rel)
+        elif os.path.isfile(src) and not (_same_bytes(src, os.path.join(main, rel))
+                                          or any(_same_bytes(src, p) for p in _from_copies(main, rel, wt) if os.path.lexists(p))):
+            lost.append(rel)
+    return lost, ""
+
+
+def _from_copies(main, rel, wt, limit=50):
+    """The paths in main where finish puts a file of worktree `wt` that main holds at `rel` with other bytes: <rel>.from-<worktree name>,
+    then <…>.2, .3 … (OCR r3 W2: a worktree name used again never overwrites the copy an earlier finish left)."""
+    base = os.path.join(main, rel + ".from-" + os.path.basename(os.path.normpath(wt)))
+    return [base] + [f"{base}.{n}" for n in range(2, limit + 1)]
 
 
 def removal_blockers(cwd, wt, budget=None, shown=None):
@@ -2196,12 +2281,41 @@ def _by_hand(wt):
     return f"chflags -R nouchg {q}; chmod -R u+rwX {q}; rm -rf {q}"
 
 
+SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
 def cmd_remove(cwd, args):
-    if len(args) != 1:
-        die("usage: agent-kit worktree remove <path>")
-    wt = os.path.abspath(os.path.join(cwd, args[0]))
+    # --merged[=<sha>] (U2, audit 25/10): the board's clean-up after a merge removes only what is integrated (_integrated); the bare flag or
+    # an empty value: the trunk alone decides.
+    merged, rest = None, []
+    for a in args:
+        if a == "--merged" or a.startswith("--merged="):
+            merged = a.partition("=")[2]
+        else:
+            rest.append(a)
+    if len(rest) != 1 or (merged and not SHA_RE.fullmatch(merged)):
+        die("usage: agent-kit worktree remove [--merged[=<merged head sha>]] <path>")
+    wt = os.path.abspath(os.path.join(cwd, rest[0]))
+    if merged is not None:
+        why = _integrated(main_checkout(cwd), wt, merged or None)
+        if why:
+            print("✖ worktree: " + tr(f"{wt}: chưa tích hợp ({why}) — giữ nguyên", f"{wt}: not integrated ({why}) - kept"), file=sys.stderr)
+            return 1
     try:
-        for code, kind, text, detail in _iter_blockers(cwd, wt, args[0], None):   # a person is waiting: a git call is still bounded (_timeout)
+        head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()   # BEFORE the inventory it must match
+        rows = inventory(cwd, only=wt, budget=None)   # one inventory for the waiver and the blockers: they cannot disagree
+        main = main_checkout(cwd)
+        # #421: a PR squashed into the trunk leaves the session's own commits only in the worktree's reflog. When HEAD and every one of
+        # those commits are already in the trunk (ancestor, same patch, or the whole patch), UNREACHABLE has nothing left to protect.
+        lost = rows[0]["reflog"] if len(rows) == 1 else None
+        waive = bool(head) and lost is not None and rows[0]["unreachable"] and _chain_in_trunk(main, head) \
+            and all(_chain_in_trunk(main, c) for c in lost) \
+            and git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip() == head   # HEAD unchanged since the first read
+        waived = False
+        for code, kind, text, detail in _iter_blockers(cwd, wt, rest[0], None, rows=rows):   # a person is waiting: a git call is still bounded (_timeout)
+            if kind == "unreachable" and waive:
+                waived = True
+                continue
             if kind == "uncommitted":
                 print("✖ worktree: " + text, file=sys.stderr)
                 for d in detail:
@@ -2210,6 +2324,25 @@ def cmd_remove(cwd, args):
             die(text, code)
     except UnicodeError as e:   # a path git prints that is not UTF-8: what it names cannot be compared, so nothing is removed
         die(tr(f"không kiểm tra được {wt} (tên file không phải UTF-8: {e}) — không gỡ", f"cannot check {wt} (a file name that is not UTF-8: {e}) - nothing removed"), 1)
+    main = main_checkout(cwd)
+    if merged is not None:
+        # #427: board hỏi `held` rồi tidy (cất / trả file về HEAD) rồi mới gọi lệnh này; giữa chừng một phiên có thể nhận worktree (khoá
+        # checkout không làm git từ chối gì). Hỏi lại ĐÚNG luật của `held` ngay trước khi gỡ, như gc --merged (review U2 F3).
+        why = _holder(main, wt)
+    else:
+        # #427 vòng 3: gỡ thường cũng hỏi lại ngay trước khi gỡ: _iter_blockers chạy git, có thể lâu, một phiên nhận worktree giữa chừng
+        # (khoá checkout của pid sống). Chỉ khoá checkout sống của phiên KHÁC (_live_checkout_lock); `_held` / state chủ: như trước.
+        why = _live_checkout_lock(main, wt)
+    if why:
+        print("✖ worktree: " + tr(f"{wt}: đang bị giữ ({why}) — giữ nguyên", f"{wt}: held ({why}) - kept"), file=sys.stderr)
+        return 1
+    return _remove_after_checks(cwd, wt, waived)
+
+
+def _remove_after_checks(cwd, wt, waived=False):
+    """The removal itself, once _iter_blockers found nothing that would be lost (`remove`, `gc --merged`): the regenerated bookkeeping's
+    fallback copy, _remove_checked (its branch goes when the trunk holds it), the warning for the memory notes that went with it.
+    SystemExit when git refuses or a folder is left."""
     state = load_state(wt)
     main = main_checkout(cwd)
     entry = next((e for e in _worktree_entries(main) if _same_path(e["path"], wt)), None)
@@ -2224,8 +2357,12 @@ def cmd_remove(cwd, args):
         notes = []
     # Regenerated bookkeeping _iter_blockers let through: a fallback copy first (a git error there: SystemExit, nothing removed).
     dropped = [p for p in changes_since(wt, state) if p in BOOKKEEPING and not _same_in_main(wt, main, p)]
-    if dropped:
+    if dropped or waived:   # a waived UNREACHABLE: the same fallback copy as discard (refs/devkit/discarded/*), reflog-only commits as parents
         kept = _discard_backup(main, wt)
+    if waived:
+        print("ℹ " + tr(f"commit chưa có ref (chỉ reflog / HEAD tách rời) đã có trong trunk (squash / cùng patch); bản cất: {kept} ({DISCARD_KEEP_DAYS} ngày)",
+                        f"commits no ref holds (reflog-only / detached HEAD) are already in the trunk (squash / same patch); fallback copy: {kept} ({DISCARD_KEEP_DAYS} days)"), file=sys.stderr)
+    if dropped:
         print("ℹ " + tr(f"sổ sách checklist do gate / sync sinh lại ({', '.join(dropped)}) không đem về; bản cất: {kept} ({DISCARD_KEEP_DAYS} ngày)",
                         f"checklist bookkeeping the gate / sync regenerate ({', '.join(dropped)}) is not brought back; fallback copy: {kept} "
                         f"({DISCARD_KEEP_DAYS} days)"), file=sys.stderr)
@@ -2296,6 +2433,44 @@ def _keep_ref(main, label, tree, parents, message):
     ref = f"{DISCARD_REF}{name}-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     git(main, "update-ref", ref, sha, "")
     return ref
+
+
+def _branches_in_use(main):
+    """{branch: (worktree, "checkout" | "rebase" | "bisect")} for every local branch a worktree uses: checked out (`worktree list`), or
+    being rebased (rebase-merge/head-name, rebase-apply/head-name) or bisected (BISECT_START) - those two show the worktree DETACHED and
+    `update-ref -d` does not refuse them (review U2 F4, 26/10: gc --merged deleted a branch mid-rebase, `rebase --continue` then failed).
+    Read from every admin dir (<git-common-dir> and <git-common-dir>/worktrees/*: a registration whose folder is gone counts too).
+    None when it cannot be told (git fails, a state file is unreadable or not a regular file): the caller deletes no branch."""
+    try:
+        entries = _worktree_entries(main)
+        common = git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+        try:
+            linked = sorted(os.listdir(os.path.join(common, "worktrees")))
+        except FileNotFoundError:
+            linked = []
+    except (OSError, SystemExit):
+        return None
+    used = {e["branch"]: (e["path"], "checkout") for e in entries if e.get("branch")}
+    for adm in [common] + [os.path.join(common, "worktrees", n) for n in linked]:
+        for rel, what in (("rebase-merge/head-name", "rebase"), ("rebase-apply/head-name", "rebase"), ("BISECT_START", "bisect")):
+            try:
+                name = _read_regular(os.path.join(adm, rel), limit=4096).decode("utf-8", "surrogateescape").strip()
+            except FileNotFoundError:
+                continue
+            except OSError:   # a FIFO, a folder, unreadable: cannot say
+                return None
+            name = name[len("refs/heads/"):] if name.startswith("refs/heads/") else name
+            if not name or name == "detached HEAD":
+                continue
+            if adm == common:
+                where = entries[0]["path"] if entries else adm
+            else:
+                try:   # <admin>/gitdir names <worktree>/.git
+                    where = os.path.dirname(_read_regular(os.path.join(adm, "gitdir"), limit=4096).decode("utf-8", "surrogateescape").strip())
+                except OSError:
+                    where = adm   # the admin dir names it well enough
+            used.setdefault(name, (where, what))
+    return used
 
 
 def _delete_branch(main, name, tip):
@@ -2606,6 +2781,165 @@ def _live_holder(main, wt):
     return ""
 
 
+def _live_checkout_lock(main, wt):
+    """#427 vòng 3, cho `remove` thường: lý do khi khoá checkout (devkit-session.lock) của `wt` mang pid CÒN SỐNG không thuộc người gọi
+    (_ancestor_pids), '' khi không. Hẹp hơn _live_holder: không xét state chủ chưa chứng minh đã dừng (K11, trunk hooks gỡ những worktree
+    đó), chỉ phiên đang thật sự đứng trong worktree. Không đọc được khoá: '' (như trước vòng 3, remove không hỏi gì)."""
+    for d in (os.path.join(DEVKIT, "bin"), os.path.join(DEVKIT, "hooks")):
+        if d not in sys.path:
+            sys.path.append(d)   # sau stdlib: không gì trong bin/ hooks/ được che nó
+    try:
+        import session_lock  # noqa: PLC0415
+        lock = session_lock.read_checkout_lock(git_dir(wt))
+        pid = (lock or {}).get("pid")
+        # Khoá của CHÍNH chủ worktree (state `--session`) không phải người lạ: automerge của Stop hook có thể chạy mồ côi (ppid 1) sau khi
+        # hook thoát, _ancestor_pids không còn thấy claude (OCR review #427 vòng 3). pid_start khác bản ghi: pid đã bị tái dùng, khoá chết.
+        if (lock or {}).get("session_id") and lock.get("session_id") == _owner(wt):
+            return ""
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and pid not in _ancestor_pids() \
+                and session_lock.is_pid_alive(pid, lock.get("pid_start")):
+            return tr(f"phiên {lock.get('session_id', '?')} giữ khoá checkout của nó (pid {pid} còn sống)",
+                      f"session {lock.get('session_id', '?')} holds its checkout lock (pid {pid} is alive)")
+    except Exception:  # noqa: BLE001 - không đọc được: giữ hành vi cũ của remove thường (không hỏi)
+        return ""
+    return ""
+
+
+def _owner_is_caller(main, wt):
+    """True when the session that owns `wt` (its state, `add --session`) is the one this process runs under: a pid its session_worktree
+    record or its registry entry names is this process or an ancestor up to the nearest `claude` (_ancestor_pids). `held` - the board's
+    clean-up a session runs after merging its own PR (test_post_merge_clean k2b) - does not count the caller's own session as a holder,
+    as _held does not count its own devkit-kept lock; discard and gc keep the stricter _live_holder. No pid, unreadable: False."""
+    owner = _owner(wt)
+    if not owner:
+        return False
+    for d in (os.path.join(DEVKIT, "bin"), os.path.join(DEVKIT, "hooks")):
+        if d not in sys.path:
+            sys.path.append(d)   # after the stdlib: nothing in bin/ hooks/ shadows it
+    try:
+        import session_lock  # noqa: PLC0415
+        import session_worktree  # noqa: PLC0415
+        pids = (session_worktree.raw_pid(main, owner), (session_lock.read_session(main, owner) or {}).get("pid"))
+    except Exception:  # noqa: BLE001 - cannot tell: not the caller's (held stays held)
+        return False
+    mine = _ancestor_pids()
+    return any(isinstance(p, int) and not isinstance(p, bool) and p > 1 and p in mine for p in pids)
+
+
+def _flock_busy(path):
+    """True when somebody holds an flock on `path`, or it cannot be probed (held); False when the file is not there or the probe gets it.
+    A shared non-blocking flock released at once (every holder of these locks retries, as session_lock.test_run_active's probe relies
+    on); the file is never created (no O_CREAT), a FIFO never blocks (O_NONBLOCK) and a link is not followed."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    try:
+        import fcntl  # noqa: PLC0415 - POSIX only; no fcntl = cannot probe = busy
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except (OSError, ImportError):
+        return True
+    finally:
+        os.close(fd)
+
+
+def _held(main, wt):
+    """U2 (audit 25/10): why `wt` must not be TOUCHED now - before any file of it is moved, reverted or removed -, '' when nothing holds
+    it. The one rule the board's clean-up after a merge (`held`, before its lane-junk salvage) and `gc --merged` share; it replaced the
+    board's bash copies (session_held, locked_by_other). Held: a folder git does not list as a linked worktree (it cannot be judged, and
+    `git -C` there acts on the checkout around it); a `git worktree lock` other than devkit-kept (a person's); a devkit-kept lock whose
+    session pid lives and is not this process or one of its ancestors (_ancestor_pids: a session may clear its own keep, as `remove`
+    does); a checkout lock (devkit-session.lock) of a live pid, or one that cannot be read; the kit's own flocks - a test run's
+    <wt>/.claude/audit-gate/test_run.lock, an automatic merge's <git dir>/devkit-automerge.lock (review U2 F3) - held now. Anything that
+    cannot be told: held."""
+    try:
+        entry = next((e for e in _worktree_entries(main)[1:] if not e["broken"] and _same_path(e["path"], wt)), None)
+        if entry is None:
+            return tr("git không liệt kê nó là worktree liên kết của repo (không xét được)", "git does not list it as a linked worktree (it cannot be judged)")
+        if "locked" in entry:
+            k = kept_lock(main, entry["path"])
+            if k is None:
+                return tr("bị khoá: ", "locked: ") + (entry["locked"] or tr("(không có lý do)", "(no reason)"))
+            if k[2] and k[1] not in _ancestor_pids():
+                return tr(f"phiên {k[0]} giữ nó (devkit-kept, pid {k[1]} còn sống)", f"session {k[0]} keeps it (devkit-kept, pid {k[1]} is alive)")
+        for d in (os.path.join(DEVKIT, "bin"), os.path.join(DEVKIT, "hooks")):
+            if d not in sys.path:
+                sys.path.append(d)   # sau stdlib: không gì trong bin/ hooks/ được che nó
+        import session_lock  # noqa: PLC0415
+        gd = git_dir(entry["path"])
+        if os.path.lexists(os.path.join(gd, session_lock.LOCK)):
+            if session_lock.read_lock(os.path.join(gd, session_lock.LOCK)) is None:
+                return tr("không đọc được khoá checkout của nó", "its checkout lock cannot be read")
+            lock = session_lock.read_checkout_lock(gd) or {}   # None: a copy made with its git dir (cp -Rc), nobody holds that
+            pid = lock.get("pid")
+            if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and session_lock.is_pid_alive(pid):
+                return tr(f"phiên {lock.get('session_id', '?')} giữ khoá checkout của nó (pid {pid} còn sống)",
+                          f"session {lock.get('session_id', '?')} holds its checkout lock (pid {pid} is alive)")
+        # review U2 F3 (26/10): the kit's own locks - a test run of that tree (post-fix gate, Stop gates, stale re-run) and an automatic merge
+        if _flock_busy(os.path.join(entry["path"], ".claude", "audit-gate", TEST_RUN_LOCK)):
+            return tr(f"một lượt test (gate) đang giữ .claude/audit-gate/{TEST_RUN_LOCK} của nó", f"a test run (gate) holds its .claude/audit-gate/{TEST_RUN_LOCK}")
+        if _flock_busy(os.path.join(gd, AUTOMERGE_LOCK)):
+            return tr(f"một lần gộp tự động đang giữ nó ({AUTOMERGE_LOCK})", f"an automatic merge holds it ({AUTOMERGE_LOCK})")
+    except (Exception, SystemExit) as e:  # noqa: BLE001 - cannot tell who holds it: held
+        return tr(f"không kiểm được ai đang giữ nó ({e!r})", f"cannot tell who holds it ({e!r})")
+    return ""
+
+
+def _holder(main, wt):
+    """Lý do `wt` đang bị giữ theo luật của `held`, '' khi không ai giữ: _held, rồi _live_holder — trừ khi phiên chủ là chính phiên gọi
+    (_owner_is_caller). Một chỗ cho `held` và lần hỏi lại của `remove --merged` ngay trước khi gỡ (#427)."""
+    return _held(main, wt) or ("" if _owner_is_caller(main, wt) else _live_holder(main, wt))
+
+
+def cmd_held(cwd, args):
+    """`held [--merged[=<sha>]] <path>`: exit 0 when nothing holds the worktree, 3 with the reason on stdout when something does; any
+    other exit (a usage error, a crash): cannot tell, the caller keeps it. Read-only. The rule is gc --merged's own (review U2 P3): _held,
+    then _live_holder (an owner session in its state not proven gone) - unless that owner is the caller's own session (_owner_is_caller,
+    as _held lets the caller's own devkit-kept lock go). --merged[=<sha>] (review U2 F5): also 3 when HEAD is not integrated
+    (_integrated, the rule `remove --merged` applies), so the board decides that BEFORE its tidy moves a file."""
+    merged, rest = None, []
+    for a in args:
+        if a == "--merged" or a.startswith("--merged="):
+            merged = a.partition("=")[2]
+        else:
+            rest.append(a)
+    if len(rest) != 1 or rest[0].startswith("-") or (merged and not SHA_RE.fullmatch(merged)):
+        die("usage: agent-kit worktree held [--merged[=<merged head sha>]] <path>")
+    main, wt = main_checkout(cwd), os.path.abspath(os.path.join(cwd, rest[0]))
+    why = _holder(main, wt)
+    if not why and merged is not None:
+        try:
+            why = _integrated(main, wt, merged or None)
+            why = tr(f"chưa tích hợp ({why})", f"not integrated ({why})") if why else ""
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - cannot tell: held
+            why = tr(f"không kiểm được đã tích hợp chưa ({e!r})", f"cannot tell whether it is integrated ({e!r})")
+    if why:
+        print(why)
+        return 3
+    return 0
+
+
+def _integrated(main, wt, merged=None):
+    """'' when everything HEAD of `wt` carries is integrated, else why not (U2, audit 25/10). Integrated: the trunk holds its content
+    (_content_in_trunk: an ancestor of the trunk or origin/<trunk>, or a squash a trial merge shows adds nothing), or HEAD is `merged` -
+    the head of the PR the caller has just merged (40/64 hex) - or an ancestor of it. `gc --merged` and `remove --merged` use it: a
+    clean-up never removes a worktree with work the trunk lacks, even when a branch still holds those commits."""
+    r = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False)
+    head = r.stdout.strip()
+    if r.returncode or not SHA_RE.fullmatch(head):
+        return tr("không đọc được HEAD", "HEAD cannot be read")
+    if merged and (head == merged or _is_ancestor(main, head, merged)):
+        return ""
+    if _content_in_trunk(main, head):
+        return ""
+    return tr(f"HEAD {head[:12]} mang commit trunk ({_trunk_branch(main) or '?'}) chưa có", f"HEAD {head[:12]} holds commits the trunk ({_trunk_branch(main) or '?'}) lacks") \
+        + (tr(f", không phải head đã merge {merged[:12]} hay tổ tiên của nó", f", and is neither the merged head {merged[:12]} nor behind it") if merged else "")
+
+
 def cmd_restore(cwd, args):
     """`git checkout <commit> -- <path>…` khi không có gì để mất: mọi path không có thay đổi chưa commit (so với HEAD, cả index, submodule,
     cả bản sửa git ẩn bằng skip-worktree / assume-unchanged), không giữ file chưa track, và không có file / thư mục bị ignore va chạm với
@@ -2623,8 +2957,8 @@ def cmd_restore(cwd, args):
         die(tr(f"không phải commit: {rev}", f"not a commit: {rev}"))
     lit, bad = ("--literal-pathspecs",), []
     for p in paths:
-        for d in (git(cwd, *lit, "diff", "--quiet", "--ignore-submodules=none", "HEAD", "--", p, check=False),               # cây làm việc so với HEAD
-                  git(cwd, *lit, "diff", "--cached", "--quiet", "--ignore-submodules=none", "HEAD", "--", p, check=False)):  # index so với HEAD (OCR 18/10)
+        for d in (git(cwd, *lit, "diff", "--quiet", "--no-textconv", "--no-ext-diff", "--ignore-submodules=none", "HEAD", "--", p, check=False),               # cây làm việc so với HEAD
+                  git(cwd, *lit, "diff", "--cached", "--quiet", "--no-textconv", "--no-ext-diff", "--ignore-submodules=none", "HEAD", "--", p, check=False)):  # index so với HEAD (OCR 18/10)
             if d.returncode:
                 bad.append(f"{p}: " + (tr("có thay đổi chưa commit", "has uncommitted changes") if d.returncode == 1 else (d.stderr or "").strip()[-200:]))
                 break
@@ -2714,9 +3048,13 @@ def cmd_prune_branch(cwd, args):
     tip = git(main, "rev-parse", "-q", "--verify", f"{ref}^{{commit}}", check=False).stdout.strip()
     if not tip and not remote:
         die(tr(f"không có nhánh {name}", f"no branch {name}"))
-    holders = [e["path"] for e in _worktree_entries(main) if e.get("branch") == name]
-    if holders:
-        die(tr(f"{name} đang được checkout ở {holders[0]}: gỡ worktree đó trước", f"{name} is checked out in {holders[0]}: remove that worktree first"), 1)
+    used = _branches_in_use(main)   # review U2 F4: also a branch mid-rebase / mid-bisect in a detached worktree
+    if used is None:
+        die(tr(f"không biết worktree nào đang dùng {name}: không xoá", f"cannot tell which worktree uses {name}: not deleted"), 1)
+    if name in used and used[name][1] == "checkout":
+        die(tr(f"{name} đang được checkout ở {used[name][0]}: gỡ worktree đó trước", f"{name} is checked out in {used[name][0]}: remove that worktree first"), 1)
+    if name in used:
+        die(tr(f"{name} đang {used[name][1]} dở ở {used[name][0]}: xong hoặc --abort trước", f"a {used[name][1]} of {name} is in progress in {used[name][0]}: finish or --abort it first"), 1)
     pr = None
     if tip:
         in_trunk = _content_in_trunk(main, ref)
@@ -3301,7 +3639,10 @@ def _carry_gate_receipt(main, wt):
             return tr(" (không có biên nhận gate --full nào của worktree phủ HEAD mới của main: push từ main cần chạy gate lại)",
                       " (no gate --full receipt of the worktree covers main's new HEAD: a push from main needs the gate again)")
         receipt = json.loads(_read_regular(push_gate.tree_fp.receipt_path(wt), 4_000_000).decode("utf-8"))
-        rel = os.path.relpath(os.path.realpath(receipt["project"]), os.path.realpath(wt))
+        if not isinstance(receipt, dict) or receipt.get("scope", "full") != "full":   # T0061: biên nhận task không bao giờ sang main
+            return tr(" (biên nhận của worktree không phải --full: push từ main cần chạy gate lại)",
+                      " (the worktree's receipt is not a --full one: a push from main needs the gate again)")
+        rel =os.path.relpath(os.path.realpath(receipt["project"]), os.path.realpath(wt))
         receipt = dict(receipt, project=os.path.normpath(os.path.join(main, rel)), carried_from=receipt["project"])
         dst = push_gate.tree_fp.receipt_path(main)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -3498,7 +3839,7 @@ def _sync_main_to(main, origin):
             why = "" if r.returncode == 0 else (r.stderr or r.stdout).strip()[-300:]
         elif _in_progress(main):
             why = tr(f"main đang dở một {_in_progress(main)}", f"a {_in_progress(main)} is in progress in main")
-        elif git(main, "diff", "--cached", "--quiet", "--ita-visible-in-index", check=False).returncode != 0:
+        elif git(main, "diff", "--cached", "--quiet", "--no-textconv", "--no-ext-diff", "--ita-visible-in-index", check=False).returncode != 0:
             why = tr("index của main có thay đổi đã stage (của phiên khác): reset sẽ làm rơi chúng", "main's index holds staged changes (another session's): a reset would drop them")
         elif not _merges_to(main, origin, head) and not _extras_in_merged_prs(main, head, origin):   # gọi gh (mạng) sau các kiểm tra rẻ
             why = tr("main local có commit origin chưa có và không thuộc PR nào đã merge vào trunk (đẩy / PR chúng trước)",
@@ -3755,16 +4096,53 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
         return status, head + tr(f"; worktree giữ lại (phiên {kept[0]} còn sống giữ khoá devkit-kept của nó, pid {kept[1]})",
                                  f"; the worktree is kept (live session {kept[0]} holds its devkit-kept lock, pid {kept[1]})") + receipt_note, {"kept": True}
     saved = []
-    try:
-        for rel in _unsaved_memory(wt, main):   # notes only the worktree's own (git-ignored) agent-memory folder holds: a removal would delete them
-            src, dst = os.path.join(wt, MEMORY_REL, rel), os.path.join(main, MEMORY_REL, rel)
-            if os.path.exists(dst):
-                dst += ".from-" + os.path.basename(wt)
+    try:   # OCR r2 (26/10): every git-ignored file under .agents/local/ only the worktree holds (claude-auto notes, red-patches, stages, handoffs)
+        # goes to main before the removal (the blocker cmd_remove shares would keep the worktree otherwise); one main holds with OTHER bytes
+        # lands next to it as <path>.from-<worktree name>, main's own copy untouched. Every destination must be ignored in main too: an
+        # untracked file put in the merge-only main checkout could stop its next fast-forward. A secret-like file (a keystore under
+        # .agents/local/signing/) is left to the secret carry below (O_EXCL, private mode, never next to another copy).
+        local, cut = _unsaved_agent_local(wt, main)
+        if cut:
+            raise OSError(cut)
+        folders = [rel for rel in local if rel.endswith("/")]
+        if folders:   # OCR r3 W1: a nested git repo is never copied by hand here: kept, named
+            return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ worktree: {len(folders)} thư mục bị git ignore dưới .agents/local/ (repo git lồng) chỉ worktree có: "
+                                 f"{', '.join(folders[:6])}. Không gì bị chép. Chuyển nó ra khỏi worktree (hoặc hỏi người dùng có bỏ được không) rồi chạy lại "
+                                 f"`agent-kit worktree finish {shlex.quote(wt)}`",
+                                 f"merged into main but the worktree is NOT removed: {len(folders)} git-ignored folder(s) under .agents/local/ (a nested git repo) only "
+                                 f"the worktree holds: {', '.join(folders[:6])}. Nothing was copied. Move it out of the worktree (or ask the user whether it can go), then "
+                                 f"run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": folders[:20]}
+        plan = []
+        for rel in (r for r in local if not _secret_like(r)):
+            # main lacks it: the same path; else the first free <rel>.from-<worktree>[.N] (W2: an earlier finish's copy is never overwritten)
+            dst = os.path.join(main, rel) if not os.path.lexists(os.path.join(main, rel)) \
+                else next((p for p in _from_copies(main, rel, wt) if not os.path.lexists(p)), None)
+            if dst is None:
+                raise OSError(errno.EEXIST, "every .from- name is taken", os.path.join(main, rel))
+            plan.append((rel, os.path.relpath(dst, main)))
+        if plan:
+            r = _git_bytes(main, "check-ignore", "-z", "--stdin", "--no-index", inp=b"".join(d.encode("utf-8", "surrogateescape") + b"\0" for _rel, d in plan))
+            ignored = {p.decode("utf-8", "surrogateescape") for p in r.stdout.split(b"\0") if p} if r.returncode in (0, 1) else None
+            open_ = [d for _rel, d in plan if ignored is None or d not in ignored]
+            if open_:
+                return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ worktree: {len(open_)} file bị git ignore dưới .agents/local/ chỉ worktree có mà main KHÔNG ignore ở đó "
+                                     f"(chép sang sẽ thành file chưa track trong main): {', '.join(open_[:6])}. Không gì bị chép. Chép tay (hoặc thêm luật ignore ở main) rồi chạy lại "
+                                     f"`agent-kit worktree finish {shlex.quote(wt)}`",
+                                     f"merged into main but the worktree is NOT removed: {len(open_)} git-ignored file(s) under .agents/local/ only the worktree holds are NOT "
+                                     f"ignored in main (a copy would be an untracked file there): {', '.join(open_[:6])}. Nothing was copied. Copy them by hand (or add an "
+                                     f"ignore rule in main), then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"merged": True, "files": open_[:20]}
+        for rel, dst_rel in plan:
+            dst, src = os.path.join(main, dst_rel), os.path.join(wt, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copy2(src, dst)
-            saved.append(rel)
-    except (OSError, SystemExit) as e:
-        return "blocked", tr(f"đã gộp vào main nhưng không chép được memory note của worktree ({e}); worktree còn nguyên", f"merged into main but the worktree's memory notes could not be copied ({e}); the worktree is untouched"), {"merged": True}
+            # O_EXCL (as _carry_secrets): a file that appeared there meanwhile is never overwritten (FileExistsError: blocked, run again);
+            # content + mode only, no macOS `chflags uchg` carried into main (_copy's rule)
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), os.stat(src).st_mode & 0o777)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(_read_regular(src))
+            saved.append(dst_rel)
+    except (OSError, SystemExit, UnicodeError) as e:
+        return "blocked", tr(f"đã gộp vào main nhưng không chép được file bị git ignore dưới .agents/local/ của worktree ({e}); worktree còn nguyên",
+                             f"merged into main but the worktree's git-ignored files under .agents/local/ could not be copied ({e}); the worktree is untouched"), {"merged": True}
     try:   # A.1b #12: a git-ignored secret only the worktree holds (a keystore made there) goes to main, never with the folder
         secrets, cut = _ignored_secrets(wt)
         carried, refused = ([], []) if cut else _carry_secrets(main, secrets)
@@ -3808,7 +4186,8 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
             how = "" if _by_hand(wt) in why else tr(f". NGƯỜI DÙNG chạy `{_by_hand(wt)}`", f". The USER runs `{_by_hand(wt)}`")
         return "blocked", tr(f"đã gộp vào main nhưng CHƯA gỡ được worktree: {why}{how}",
                              f"merged into main but the worktree could NOT be removed: {why}{how}"), {"merged": True}
-    note = (tr(f" ({len(saved)} memory note đã chép sang main: {', '.join(saved[:5])})", f" ({len(saved)} memory note(s) copied into main: {', '.join(saved[:5])})") if saved else "")
+    note = (tr(f" ({len(saved)} file bị ignore dưới .agents/local/ đã chép sang main: {', '.join(saved[:5])})",
+               f" ({len(saved)} git-ignored file(s) under .agents/local/ copied into main: {', '.join(saved[:5])})") if saved else "")
     note += (tr(f" ({len(carried)} file bí mật bị git ignore đã chép sang main, ở đó vẫn bị ignore: {', '.join(carried[:5])})",
                 f" ({len(carried)} git-ignored secret file(s) copied into main, ignored there too: {', '.join(carried[:5])})") if carried else "")
     note += receipt_note
@@ -4058,6 +4437,11 @@ try:   # a folder changed this recently may be a `worktree add` still being writ
     GC_MIN_AGE_S = max(0, int(os.environ.get("WORKTREE_GC_MIN_AGE_S", "600")))
 except ValueError:
     GC_MIN_AGE_S = 600
+try:   # gc --merged: a worktree registered this recently with no commit since is a session's / subagent's before its first commit or lock
+    GC_FRESH_S = max(0, int(os.environ.get("WORKTREE_GC_FRESH_S", "86400")))
+except ValueError:
+    GC_FRESH_S = 86400
+BOARD_BRANCH_RE = re.compile(r"(?:loop/)?issue-[0-9]+(?:-.*)?")   # super-board's branches: its sweep and prune-branch judge them
 
 
 def _gc_young(*paths):
@@ -4226,15 +4610,186 @@ def _gc_why(unique):
     return "; ".join(f"{rel} ({why})" for rel, why in unique[:3]) + (" …" if len(unique) > 3 else "")
 
 
+def _fresh(wt):
+    """True when `wt` was registered less than GC_FRESH_S ago and HEAD has no commit made since (the rule cleanup-wt had): a worktree just
+    made for a session or a subagent, before its first commit or lock, is clean and "integrated" and must not be reaped. Also True when
+    its HEAD, index or HEAD reflog (in its admin dir, like _gc_young) changed less than GC_FRESH_S ago (review U2 F3, 26/10: a checkout or
+    fast-forward to a NEWER trunk commit made `committed > made` and a worktree seconds old read as stale). gc's own checks run with
+    --no-optional-locks, so they never touch the index. Unreadable: True."""
+    if not GC_FRESH_S:
+        return False
+    try:
+        gd = git_dir(wt)
+        made = os.lstat(os.path.join(gd, "commondir")).st_mtime
+        committed = int(git(wt, "log", "-1", "--format=%ct", "HEAD").stdout.strip())
+        used = max(os.lstat(x).st_mtime for x in (os.path.join(gd, "HEAD"), os.path.join(gd, "index"), os.path.join(gd, "logs", "HEAD"))
+                   if os.path.lexists(x))
+    except (OSError, ValueError, SystemExit):
+        return True
+    now = time.time()
+    return (now - made < GC_FRESH_S and committed <= made) or now - used < GC_FRESH_S
+
+
+def _remote_ref(main, branch):
+    """True when some remote-tracking ref has `branch`'s name (or git cannot say): it may be the head or the base of an open PR."""
+    r = git(main, "for-each-ref", "--format=%(refname)", f"refs/remotes/*/{branch}", check=False)
+    return r.returncode != 0 or bool(r.stdout.strip())
+
+
+def _open_pr_names(main):
+    """The branch names OPEN pull requests use, as head or as base (a stacked PR), per `gh`; None when gh cannot say (missing, failing,
+    over 15 s, unreadable, or as many rows as the limit: one may be cut off)."""
+    try:
+        r = subprocess.run(["gh", "pr", "list", "--state", "open", "--limit", "500", "--json", "headRefName,baseRefName"], cwd=main,
+                           capture_output=True, text=True, timeout=15, env={**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"})
+        rows = json.loads(r.stdout or "null") if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError, RecursionError):
+        return None
+    if not isinstance(rows, list) or len(rows) >= 500 or not all(isinstance(x, dict) for x in rows):
+        return None
+    return {v for x in rows for v in (x.get("headRefName"), x.get("baseRefName")) if isinstance(v, str) and v}
+
+
+def _reap_merged(main, here, dry, log, logged):
+    """`gc --merged` (U2, audit 25/10; replaces the SessionStart run of the untracked .claude/hooks/cleanup-wt.py --auto, whose own
+    "merged" rule removed with plain `git worktree remove` / `git branch -D` and once took a live session's worktree mid-gate). Removes
+    the REGISTERED worktrees of <main>/.claude/worktrees/ whose work is integrated, and deletes the local branches the trunk holds. A
+    worktree goes only when all of this holds, every check made before anything is touched (also with --dry-run): it is a direct child of
+    that folder (realpath, not a link); it is not super-board's (board_worktree: the board's sweep judges those with its lanes, grace time
+    and issue state) nor the one this runs in; nobody holds it (_held, _live_holder - asked again right before the removal); it is not
+    fresh (_fresh: made or used in the last GC_FRESH_S); its branch is in no open PR, as head or base (with a remote ref and gh unable to
+    say: kept); its HEAD is integrated (_integrated); its own claude-auto folder holds no note main lacks (_unsaved_memory); and
+    removal_blockers() - the rule of `worktree remove` - is empty. None when <main>/.claude or .claude/worktrees is a symlink. The removal
+    is `remove`'s (its branch goes when the trunk holds it and no remote ref is left, with a fallback copy). A local branch no worktree
+    uses (_branches_in_use: checked out, mid-rebase, mid-bisect) goes (_branch_in_main: the commits only its reflog names are kept in
+    refs/devkit/discarded) when the trunk holds its content and no remote ref is left; never the trunk, a protected or a board branch.
+    Not done here: registrations whose folder is gone (`git worktree prune` would delete their HEAD reflog), worktrees outside
+    .claude/worktrees/ (a person's), remote branches (`prune-branch --remote`). Returns how many it removed (or would)."""
+    home = os.path.realpath(os.path.join(main, ".claude", "worktrees"))
+    trunk = _trunk_branch(main)
+    try:
+        entries = _worktree_entries(main)
+    except SystemExit as e:
+        print("• gc --merged: " + tr("không đọc được danh sách worktree, không gỡ gì: ", "cannot list the worktrees, nothing removed: ") + str(e.code))
+        return 0
+    if not trunk:
+        print("• gc --merged: " + tr("không biết trunk (origin/HEAD, main, master, trunk): không gỡ gì", "trunk unknown (origin/HEAD, main, master, trunk): nothing removed"))
+        return 0
+    acted, prs = 0, []
+    # review U2 P3 (26/10): a symlinked .claude or .claude/worktrees makes the realpath "home" below the link's target, so worktrees that
+    # live there (a person's, another repo's) would read as this checkout's session worktrees: none is removed then (branches still go)
+    linked = [d for d in (os.path.join(main, ".claude"), os.path.join(main, ".claude", "worktrees")) if os.path.islink(d)]
+    if linked:
+        print("• gc --merged: " + tr(f"{linked[0]} là symlink: không gỡ worktree nào", f"{linked[0]} is a symlink: no worktree removed"))
+
+    def record(line):
+        nonlocal logged
+        if log and not dry:
+            _gc_log(log, ([] if logged else ["== " + time.strftime("%Y-%m-%d %H:%M:%S")]) + [line])
+            logged = True
+
+    for e in ([] if linked else entries[1:]):
+        p, branch = e["path"], e.get("branch")
+        real = os.path.realpath(p)
+        if e["broken"] or os.path.islink(p) or os.path.dirname(real) != home or not os.path.isdir(real):
+            continue   # not a session worktree of this checkout: a person's, a sibling, a folder gone, a path git printed in pieces
+        why = ""
+        try:
+            if here == real or here.startswith(real + os.sep):
+                why = tr("lệnh này đang chạy trong nó", "this command runs in it")
+            elif board_worktree(p, branch or ""):
+                why = tr("worktree của super-board: sweep của board xét", "a super-board worktree: the board's sweep judges it")
+            else:
+                why = _held(main, p) or _live_holder(main, p)
+            if not why and _fresh(p):
+                why = tr(f"mới tạo hoặc mới dùng (HEAD / index / reflog đổi trong {GC_FRESH_S} s qua)", f"made or used in the last {GC_FRESH_S} s (HEAD / index / reflog)")
+            if not why and branch and _remote_ref(main, branch):
+                if not prs:
+                    prs.append(_open_pr_names(main))   # one gh call, only when a branch can have a PR
+                if prs[0] is None:
+                    why = tr(f"nhánh {branch} có ref remote và gh không đọc được PR mở", f"branch {branch} has a remote ref and gh cannot rule out an open PR")
+                elif branch in prs[0]:
+                    why = tr(f"nhánh {branch} có PR đang mở", f"branch {branch} has an open PR")
+            if not why:
+                why = _integrated(main, p)
+            if not why:
+                # review U2 F2 (26/10): notes only the worktree's own (git-ignored) claude-auto folder holds would go with it, and the
+                # hook throws away remove's warning; kept, as discard refuses (an exception here: the except below keeps it too)
+                notes = _unsaved_memory(p, main)
+                if notes:
+                    shown = ", ".join(notes[:3]) + (" …" if len(notes) > 3 else "")
+                    why = tr(f"{len(notes)} memory note chỉ có trong claude-auto riêng của nó (main chưa có): {shown}; chép vào {os.path.join(main, MEMORY_REL)} trước",
+                             f"{len(notes)} memory note(s) only its own claude-auto folder holds (main's lacks them): {shown}; copy them into {os.path.join(main, MEMORY_REL)} first")
+            if not why:
+                blockers = removal_blockers(main, p)
+                why = blockers[0].split("\n", 1)[0] if blockers else ""
+        except (Exception, SystemExit) as ex:  # noqa: BLE001 - a check that cannot run never reads as "safe"
+            why = tr(f"không kiểm được ({ex})", f"cannot check it ({ex})")
+        if why:
+            print("• gc: " + tr("giữ ", "kept ") + p + ": " + why)
+            continue
+        if dry:
+            print("• gc (dry-run): " + tr("sẽ gỡ ", "would remove ") + p)
+            acted += 1
+            continue
+        try:   # review U2 F3: asked again right before the removal - gh, the trial merge and removal_blockers took time, a gate may have started
+            why = _held(main, p) or _live_holder(main, p)
+        except (Exception, SystemExit) as ex:  # noqa: BLE001 - cannot tell: kept
+            why = tr(f"không kiểm được ({ex})", f"cannot check it ({ex})")
+        if why:
+            print("• gc: " + tr("giữ ", "kept ") + p + ": " + why)
+            continue
+        try:
+            _remove_after_checks(main, p)
+        except (Exception, SystemExit) as ex:  # noqa: BLE001 - git refused or a folder is left: said, the sweep goes on
+            print("• gc: " + tr("giữ ", "kept ") + p + ": " + str(getattr(ex, "code", ex)))
+            continue
+        acted += 1
+        record("✔ gc: " + tr("đã gỡ worktree đã tích hợp ", "removed integrated worktree ") + p)
+    try:
+        entries = _worktree_entries(main)
+        heads = git(main, "for-each-ref", "--format=%(refname)", "refs/heads").stdout.split()
+    except SystemExit as e:
+        print("• gc --merged: " + tr("không đọc được nhánh / worktree: không xoá nhánh nào: ", "cannot list branches / worktrees: no branch deleted: ") + str(e.code))
+        return acted
+    out = _branches_in_use(main)   # checked out, or mid-rebase / mid-bisect in a (detached) worktree
+    if out is None or any(x["broken"] for x in entries):
+        return acted   # which branch a worktree uses cannot be told: no branch is deleted
+    for ref in heads:
+        b = ref[len("refs/heads/"):]
+        if b in out and out[b][1] != "checkout":
+            print("• gc: " + tr(f"giữ nhánh {b}: đang {out[b][1]} ở {out[b][0]}", f"kept branch {b}: a {out[b][1]} of it is in progress in {out[b][0]}"))
+            continue
+        if b == trunk or b in out or PROTECTED_BRANCH_RE.fullmatch(b) or BOARD_BRANCH_RE.fullmatch(b) or _remote_ref(main, b):
+            continue
+        if dry:
+            if _content_in_trunk(main, ref):
+                print("• gc (dry-run): " + tr("sẽ xoá nhánh ", "would delete branch ") + b)
+                acted += 1
+            continue
+        try:
+            gone, note = _branch_in_main(main, b)
+        except (Exception, SystemExit) as ex:  # noqa: BLE001 - kept, said
+            print("• gc: " + tr(f"giữ nhánh {b}: ", f"kept branch {b}: ") + str(getattr(ex, "code", ex)))
+            continue
+        if gone:
+            print("✔ gc: " + tr(f"đã xoá nhánh {b} (trunk đã có nội dung của nó)", f"deleted branch {b} (the trunk holds its content)") + note)
+            record("✔ gc: " + tr("đã xoá nhánh ", "deleted branch ") + b + note)
+            acted += 1
+    return acted
+
+
 def cmd_gc(cwd, args):
     """Delete the folders DevKit worktrees left behind that git no longer knows, only when nothing in them is unique
     (docs/workflow-improvements.md I.0 R5b): `<repo>-*` siblings whose `.git` pointer dangles into this repo, or with no `.git` that hold
     DevKit bookkeeping only, and any folder of main's own `.claude/worktrees/` git does not register (#327); every file is checked
     (_gc_unique). An agent cannot `rm -rf` them (hardware_safety_gate), so before gc they
-    waited for the user. Registered worktrees are never gc's: worktree_merge_gate (Stop) and `worktree remove` judge those (review 3,
-    13/10: removing them from gc opened data-loss holes round after round). Kept: anything with work not in main, a unique file, a secret
-    only there, a folder changed in the last GC_MIN_AGE_S, a person's folder or clone. --dry-run deletes nothing."""
+    waited for the user. Registered worktrees are not plain gc's: worktree_merge_gate (Stop) and `worktree remove` judge those (review 3,
+    13/10: removing them from gc opened data-loss holes round after round); only `--merged` (_reap_merged, the SessionStart hook) takes
+    the integrated ones of .claude/worktrees/, each through removal_blockers like `remove`. Kept: anything with work not in main, a unique
+    file, a secret only there, a folder changed in the last GC_MIN_AGE_S, a person's folder or clone. --dry-run deletes nothing."""
     dry = "--dry-run" in args
+    merged = "--merged" in args
     log = next((a.split("=", 1)[1] for a in args if a.startswith("--log=")), None)   # the SessionStart hook's record of deletions
     main = main_checkout(cwd)
     common = os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
@@ -4258,8 +4813,13 @@ def cmd_gc(cwd, args):
     # folder stayed, and with no `.git` left it was never a candidate). There every file is judged as in a dangling orphan.
     cands = [(os.path.join(parent, n), False) for n in siblings if n.startswith(prefix)]
     wt_home = os.path.join(main, ".claude", "worktrees")
+    # #427 vòng 2: `.claude` hay `.claude/worktrees` là symlink thì os.listdir đi xuyên link, thư mục ở đích (của người khác, repo khác)
+    # thành "worktree mồ côi của checkout này" và bị rmtree: không xét thư mục nào ở đó (như gc --merged, review U2 P3)
+    linked = [d for d in (os.path.join(main, ".claude"), wt_home) if os.path.islink(d)]
+    if linked:
+        print("• gc: " + tr(f"{linked[0]} là symlink: không xét thư mục nào trong đó", f"{linked[0]} is a symlink: no folder in it judged"))
     try:
-        cands += [(os.path.join(wt_home, n), True) for n in sorted(os.listdir(wt_home))]
+        cands += [] if linked else [(os.path.join(wt_home, n), True) for n in sorted(os.listdir(wt_home))]
     except OSError:
         pass
     for top, owned in cands:
@@ -4328,7 +4888,8 @@ def cmd_gc(cwd, args):
         print(("• gc (dry-run): " + tr("sẽ xoá ", "would delete ") if dry else "✔ gc: " + tr("đã xoá ", "deleted ")) + p + notes.get(p, ""))
     for p, why in kept:
         print("• gc: " + tr("giữ ", "kept ") + p + ": " + why)
-    if not deleted and not kept:
+    reaped = _reap_merged(main, here, dry, log, bool(deleted)) if merged else 0   # (still under the gc lock)
+    if not deleted and not kept and not reaped:
         print("✔ gc: " + tr("không có gì để dọn", "nothing to clean"))
     return 0
 
@@ -4640,11 +5201,13 @@ def main(argv):
         return cmd_heal(cwd, rest)
     if action == "gc":
         return cmd_gc(cwd, rest)
+    if action == "held":
+        return cmd_held(cwd, rest)
     if action == "trunk":
         return cmd_trunk(cwd, rest)
     if action == "list":
         return subprocess.run(["git", "-C", cwd, "worktree", "list"]).returncode
-    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | finish | remove | discard | restore | prune-branch | status | gc | trunk | list)")
+    die(tr(f"lệnh không hợp lệ '{action}'", f"unknown action '{action}'") + " (add | diff | finish | remove | held | discard | restore | prune-branch | status | gc | trunk | list)")
 
 
 if __name__ == "__main__":

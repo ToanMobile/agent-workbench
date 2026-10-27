@@ -268,6 +268,9 @@ def run_card(card):
             # T0054: merge gate in `ac-open: #N` = đã merge nhưng còn AC chưa chứng minh; thẻ về Ready, không Done.
             if lane == 'review' and result['column'] == 'Ready' and re.search(rf"ac-open: #{card.get('number')}(?!\d)", str(result.get('detail', ''))):
                 expected = 'Ready'
+            # Merge queue: review đưa PR vào hàng (nhãn merge-queue), thẻ ở lại Review tới khi train merge; detail bắt đầu `queued PR #<P>`.
+            if lane == 'review' and result['column'] == 'Review' and re.match(r"queued PR #\d", str(result.get('detail', ''))):
+                expected = 'Review'
             if result['column'] != expected:
                 history[-1].update(status='failed', detail=f'{lane} claimed advanced without reaching {expected}')
                 break

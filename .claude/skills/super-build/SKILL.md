@@ -137,7 +137,7 @@ handoff complete. Add file summaries and critical inline notes on the PR, not in
 - `gh issue edit N --remove-label loop:in-progress`
 - `gh issue comment N --body "[builder] [report] ✅ built · PR <URL>"` (Next line: `qa`)
 - Move the project card to `QA`. The Tester and Reviewer take it from there; the issue closes when the Reviewer merges through the merge gate.
-- Leave the worktree in place — the merge gate (after the merge) or the cleanup-wt SessionStart hook removes it once the work is on the base branch.
+- Leave the worktree in place — the merge gate's clean-up (after the merge) or the board's sweep removes it once the work is on the base branch; the DevKit (`agent-kit worktree held` / `remove --merged` / `prune-branch`) decides what is safe to remove.
 - Report: `✅ Super Build issue #N → PR <URL>, card in QA`
 - Recompute ready set; if new issues are now unblocked, dispatch in the next wave (respecting the worker cap)
 
@@ -309,8 +309,8 @@ A card over the size cap that is agent-doable is split by the Builder, not block
 "too big" has no way out (#181 sat Blocked two ways on 22/10).
 
 **No line cap → never split for size (24/10, user: "gom lại nhiều nhất có thể, đỡ chạy gate nhiều lần").** When the board's
-`merge_policy.auto_max_lines` is `0`, a card with many deliverables or many AC items is built as ONE PR with ONE `--full`
-gate; never propose child cards, batches "≤ N items per PR" or a split to keep a diff small. Commit per deliverable inside the
+`merge_policy.auto_max_lines` is `0`, a card with many deliverables or many AC items is built as ONE PR (its target tests +
+one impacted `post-fix-gate.py --run-tests`, never `--full`: the merge point runs that once); never propose child cards, batches "≤ N items per PR" or a split to keep a diff small. Commit per deliverable inside the
 one branch instead. Only a step no agent can do (a real device, real people, a credential) leaves the card, as a `qa` card.
 
 ### Block exits use the §4 mandatory template

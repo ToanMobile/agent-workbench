@@ -22,7 +22,7 @@ _agent_kit() {
   COMPREPLY=()
 
   if [ "${COMP_CWORD}" -eq 1 ]; then
-    words="init install-global profile health gate githooks bugs checklist req nightly lanes memory-stats learn promote clean matrix worktree allow-shared
+    words="init install-global profile health gate githooks bugs checklist req nightly lanes memory-stats learn promote clean matrix worktree integrate allow-shared
            index-memory test sync list commands list-old restore-old uninstall completion help"
     COMPREPLY=( $(compgen -W "${words}" -- "${cur}") )
     return 0
@@ -61,6 +61,8 @@ _agent_kit() {
       COMPREPLY=( $(compgen -W "--from --profile --dry-run --kit" -- "${cur}") ) ;;
     matrix)
       COMPREPLY=( $(compgen -W "--write" -- "${cur}") ) ;;
+    integrate)
+      COMPREPLY=( $(compgen -W "--if-due --dry-run" -- "${cur}") ) ;;
     restore-old|restore|uninstall|remove)
       [[ "${cur}" == -* ]] && COMPREPLY=( $(compgen -W "--apply" -- "${cur}") ) \
         || COMPREPLY=( $(compgen -d -- "${cur}") ) ;;

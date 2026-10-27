@@ -145,6 +145,25 @@ python3 -c 'import os, sys; os.utime(sys.argv[1], (int(sys.argv[2]), int(sys.arg
 [ ! -s "$INFLIGHT_DIR/early-deaths/63" ] && ok "  … nor a 30-minute silent run whose log holds only the dispatch header" \
   || fail "a long silent run (log mtime before STARTED) was counted as an early death"
 
+# ── 4c (#434): a worker that ended on its own (exit=0 in its exit record) after a quick pass — a rebuild of review threads, a
+#    proof-only run — is no crash. #428 (26/10): two clean builds of 51 s and 80 s were logged "early end" and filed a kit-bug card.
+#    A worker that exits 0 and moves nothing is the no-op ledger's job; a non-zero or missing exit record still counts.
+rm -rf "$INFLIGHT_DIR/early-deaths"; mkdir -p "$TMP/repo/wl"
+st=$(( $(date +%s) - 60 ))
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DIR/70"
+printf '=== dispatch lane=build issue=#70 ===\n{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}\nworker_exit: exit=0 signal=none elapsed=51s\n' > "$TMP/repo/wl/worker-build-70.log"
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DIR/71"
+printf '=== dispatch lane=build issue=#71 ===\nboom\nworker_exit: exit=1 signal=none elapsed=20s\n' > "$TMP/repo/wl/worker-build-71.log"
+: > "$TMP/log"
+( TICK_SECONDS=120; reap_finished_locks )
+[ ! -s "$INFLIGHT_DIR/early-deaths/70" ] && ! grep -q "#70.*early end" "$TMP/log" && ok "a worker that exited 0 after 51 s is not an early death and is not logged as one (#434)" \
+  || fail "a clean exit=0 worker was counted as an early death (#434): $(grep -m1 '#70' "$TMP/log")"
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DIR/72"
+printf '=== dispatch lane=build issue=#72 ===\n{"type":"result","subtype":"success","is_error":true,"result":"session limit"}\nworker_exit: exit=0 signal=none elapsed=20s\n' > "$TMP/repo/wl/worker-build-72.log"
+( TICK_SECONDS=120; reap_finished_locks )
+[ -s "$INFLIGHT_DIR/early-deaths/72" ] && ok "  … and exit 0 with an error result (a session limit) still is" || fail "an exit=0 worker whose result is_error was skipped"
+[ -s "$INFLIGHT_DIR/early-deaths/71" ] && ok "  … but a worker that exited 1 after 20 s still is" || fail "a failing quick worker (exit=1) is no longer an early death"
+
 # ── 5. under the runner's own `set -euo pipefail`, an early death whose worker log is gone must not end the runner (OCR 19/10)
 rm -rf "$TMP/repo/wl" "$INFLIGHT_DIR/early-deaths"
 printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/40"
@@ -173,6 +192,17 @@ for n in 70 71; do printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(date -u 
   && ok "a quick exit after moving the card to Blocked is not an early death (#393)" \
   || fail "#393: a worker that blocked its card on purpose was counted as an early death: $(grep '#70' "$TMP/log" | tail -1)"
 [ -s "$INFLIGHT_DIR/early-deaths/71" ] && ok "  … but a card still in Building stays an early death" || fail "#393: a card still in Building was not counted"
+# ── 6c. #465: a QA worker that passed its card on (QA → Review) or closed it (Done) in under 120 s finished its job, it did not crash.
+rm -f "$INFLIGHT_DIR"/early-deaths/*; : > "$TMP/log"
+printf '#!/usr/bin/env bash\ncase "$*" in *"status 72") echo Review ;; *"status 73") echo Done ;; *"status 74") echo QA ;; *) exit 1 ;; esac\n' > "$TMP/bin/super-board-card.sh"
+chmod +x "$TMP/bin/super-board-card.sh"
+for n in 72 73 74; do printf 'PID=%s\nLANE=qa\nSTARTED=%s\n' "$DEAD" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/$n"; done
+( reap_finished_locks )
+[ ! -s "$INFLIGHT_DIR/early-deaths/72" ] && ! grep -q "#72.*early end" "$TMP/log" \
+  && ok "a quick QA exit after moving the card to Review is not an early death (#465)" \
+  || fail "#465: a QA worker that passed its card to Review was counted as an early death: $(grep '#72' "$TMP/log" | tail -1)"
+[ ! -s "$INFLIGHT_DIR/early-deaths/73" ] && ok "  … nor one that closed it (Done)" || fail "#465: a card moved to Done was counted as an early death"
+[ -s "$INFLIGHT_DIR/early-deaths/74" ] && ok "  … but a card still in QA stays an early death" || fail "#465: a card still in QA was not counted"
 rm -f "$TMP/bin/super-board-card.sh"
 
 # ── 7. per lane: two quick build deaths hold the card back from the Builder, not from its Reviewer

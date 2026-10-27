@@ -191,9 +191,23 @@ def _lock_path(project_dir: Path, kind: str) -> str:
         if project_gone(project_dir):
             raise FileNotFoundError(project_dir)   # the temp-dir lock below: never re-create the project to hold a lock
         gate_dir.mkdir(parents=True, exist_ok=True)
+        _ignore_mark(gate_dir)
         return str(gate_dir / f"{kind}.lock")
     except OSError:
         return os.path.join(tempfile.gettempdir(), f"{kind}.{key}.lock")
+
+
+def _ignore_mark(gate_dir: Path) -> None:
+    """`.claude/audit-gate/.gitignore` = `*`, as every hook and worktree.py write it: hook state is never part of the change. Without it the
+    first gate run in a fresh worktree (a sandbox: no hook ran there) left `regression_journal.lock` untracked, and `worktree finish` read
+    that as an edit made during its own merge gate and refused (audit 25/10 U1). A failure to write it is said; the lock path is unchanged."""
+    ign = gate_dir / ".gitignore"
+    if ign.exists():
+        return
+    try:
+        ign.write_text("*\n", encoding="utf-8")
+    except OSError as e:
+        print(f"regression_checklist: {ign} not written ({e}): its lock files show as untracked", file=sys.stderr)
 
 
 def _holds_checklist(project_dir: Path) -> bool:
@@ -740,17 +754,29 @@ def dismiss_rollback(project_dir: Path) -> bool:
 
 # A key, token or password pasted into a bug report never reaches the checklist (2026-10-13: a pasted API key became a REPORTED
 # row's title and the start of its id, in files every session commits). Redacted where all paths meet: register_bug.
+# 26/10: merge-train.sh đưa đuôi log verify đỏ (qua hàm này) vào comment issue CÔNG KHAI, nên cũng che dạng hay gặp trong log test:
+# key có nháy (dict/JSON pytest in ra), `Authorization: Basic|token`, `--password`, mật khẩu trong URL (`://user:pw@`), khoá PEM (cả khối,
+# kể cả khi đuôi log cắt mất dòng END). tests/gates/test_redact_secrets.sh.
 _SECRET_RX = re.compile(
-    r"\b(?:sk-[A-Za-z0-9]{2,10}-[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"(?P<pem>-{5}BEGIN [A-Z ]*PRIVATE\ KEY-{5}[\s\S]*?(?:-{5}END [A-Z ]*PRIVATE\ KEY-{5}|\Z))"
+    r"|(?P<url>://[^/\s:@]+:)[^\s/@]+(?=@)"
+    r"|\b(?:sk-[A-Za-z0-9]{2,10}-[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
     r"|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|xox[abprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})"
-    r"|(?P<pre>(?i:bearer\s+|(?:api[_-]?key|token|secret|password|passwd)\s*[=:]\s*))[A-Za-z0-9._~+/-]{12,}")
+    r"|(?P<pre>(?i:bearer\s+|basic\s+|authorization:\s*token\s+|--password[=\s]+"
+    r"|(?:api[_-]?key|access[_-]?key|token|secret|password|passwd)[\"']?\s*[=:]\s*[\"']?))[^\s\"'@,;}]{8,}")
+
+
+def _redact_one(m):
+    if m.group("pem"):
+        return "«redacted private key»"
+    return (m.group("url") or m.group("pre") or "") + "«redacted»"
 
 
 def redact_secrets(text):
     """`text` with every key / token / password-looking value replaced by «redacted» (None stays None)."""
     if not isinstance(text, str):
         return text
-    return _SECRET_RX.sub(lambda m: (m.group("pre") or "") + "«redacted»", text)
+    return _SECRET_RX.sub(_redact_one, text)
 
 
 def _slug(text: str, max_len: int = 40) -> str:

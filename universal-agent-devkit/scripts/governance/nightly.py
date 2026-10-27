@@ -217,7 +217,8 @@ def run_project(project: Path, named: bool = False) -> tuple:
             lines.append(f"skip: {stopped} - dừng trước {tid}")
             break
         pats = list(it.get("watch_files", [])) + list(it.get("covers", []))
-        lines.append(stale_rerun.run_one(project, tid, it["command"], pats, timeout, mode="nightly", retry=True))
+        # record_per_test (#427 vòng 2): run_impacted.sh chạy mọi test và ghi PASS từng test — gate sáng trên đúng cây đó dùng lại (trong 6 h)
+        lines.append(stale_rerun.run_one(project, tid, it["command"], pats, timeout, mode="nightly", retry=True, record_per_test=True))
     if named and not stopped:   # a session may have opened during the LAST suite, and red_proof adds and removes worktrees in this repo's .git
         stopped = checkout_busy(project)
         if stopped:
@@ -311,6 +312,52 @@ def unique_projects(paths: list) -> list:
     return out
 
 
+CANARY_WINDOW_S = 24 * 3600
+
+
+def canary_project(project: Path) -> str | None:
+    """Pha 2 lớp 3: canary 24 h của merge theo đợt cho repo có config board bật merge_queue; None khi không bật. ĐỎ → sự cố
+    `batch-canary` vào ledger của devkit_incident (chống trùng theo chữ ký: một thẻ mở cho một chữ ký, tối đa một comment
+    mỗi 24 h, trần thẻ mỗi lượt), cùng khoá scan.lock với bộ quét SessionStart. Chỉ đọc repo; gh lỗi → báo, không thẻ."""
+    import batch_canary as bc   # bin/ đã nằm trong sys.path (đầu file)
+    configs = bc.enabled_configs(project)
+    if not configs:
+        return None
+    runs = bc.runs_path(project)
+    if runs is None or not runs.is_file():
+        return f"{project.name}: batch canary: không có runs.jsonl — bỏ qua"
+    since = max([time.time() - CANARY_WINDOW_S] + [s for _c, s in configs])
+    try:
+        red, summary, reasons = bc.check(runs, since, bc.gh_merged(cwd=str(project)))
+    except bc.CanaryError as e:
+        return f"{project.name}: batch canary: lỗi đầu vào ({e}) — không kết luận"
+    if not red:
+        return f"{project.name}: batch canary GREEN: {summary}"
+    msg = f"{project.name}: batch canary RED: {summary} — {'; '.join(reasons)}"
+    file_canary_incident(project, configs[0][0], summary, reasons)
+    return msg
+
+
+def file_canary_incident(project: Path, cfg: Path, summary: str, reasons: list) -> None:
+    """Một lần gặp của sự cố batch-canary qua đúng đường của devkit_incident (record → flush). Bằng chứng chỉ có các con số
+    (issue lên repo PUBLIC). DEVKIT_INCIDENT=0 tắt."""
+    import fcntl
+    import devkit_incident as di
+    if os.environ.get("DEVKIT_INCIDENT", "1") == "0":
+        return
+    home = di.env_home()
+    home.mkdir(parents=True, exist_ok=True)
+    with open(home / "scan.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)   # chờ bộ quét SessionStart xong: không ghi đè ledger của nhau
+        data = di.load_ledger(home)
+        evidence = f"{summary}\nRED: {'; '.join(reasons)}"
+        di.record(data["incidents"], di.signature("batch-canary", "merge queue batch canary red"), "batch-canary",
+                  "batch canary RED: PR merged mà merge train không chạy", 1, project, cfg, evidence, time.time())
+        di.save_ledger(home, data)
+        di.flush(home, data, quiet=True)
+        di.save_ledger(home, data)
+
+
 def cmd_run(paths: list | None = None) -> int:
     """Every registered project, or exactly `paths` (the daily /devkit-audit runs one repo at a time, only those whose
     checkout is free). A named run leaves the project list alone and sends no weekly report: its 7-day slot would go to
@@ -325,6 +372,12 @@ def cmd_run(paths: list | None = None) -> int:
             turned, msg = [], f"{Path(p).name}: {e}"
         print(msg)
         reds += [f"{Path(p).name} {i} {s}" for i, s in turned]
+        try:
+            canary = canary_project(Path(p))
+        except OSError as e:   # ledger / runs không đọc ghi được: báo, các repo khác vẫn chạy
+            canary = f"{Path(p).name}: batch canary: {e}"
+        if canary:
+            print(canary)
     if reds:
         notify(f"{len(reds)} mục chuyển sang đỏ: " + ", ".join(reds[:6]) + (" …" if len(reds) > 6 else ""))
     report = None if paths else weekly(projects)

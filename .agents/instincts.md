@@ -591,3 +591,138 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Thêm lệnh mới vào commands/ của kit làm agent-kit health FAIL ở mọi repo đã cài
 - **Nguyên nhân:** health đòi .claude/commands/&lt;lệnh> cho mọi lệnh kit; link chỉ tạo khi agent-kit init, SessionStart và relink_check không thêm link mới — commands/parallel-lanes.md (25/10) sẽ làm REG-WB-CONFIG-01 đỏ ở main và 9 repo
 - **Quy tắc phòng ngừa & Cách fix:** Skill được hook tự gọi thì để không có lệnh slash (NO_COMMAND_SKILLS); khi thật cần lệnh mới, cùng đợt đó chạy agent-kit init ở mọi repo đã cài hoặc thêm bước tự link vào SessionStart
+
+---
+
+### [INSTINCT-072] Tài liệu/báo cáo: không bịa số liệu, tính năng, thư viện
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** Chủ hỏi 'mày đang bịa à?', 'Đầu xe làm gì có nhỉ', 'cộng lại nó đâu có khớp tính sai rồi'.
+- **Nguyên nhân:** Agent viết tài liệu (Antigravity phần lớn) điền con số, tính năng xe, tên thư viện theo suy đoán; tổng các tab không khớp. 25 lần sửa / 17 phiên. (đề xuất đưa lên profiles/universal)
+- **Quy tắc phòng ngừa & Cách fix:** Mỗi con số, giá, tính năng, thư viện trong tài liệu gửi người khác phải kèm nguồn (file:dòng, URL, output lệnh). Không có nguồn → ghi 'CHƯA CÓ NGUỒN', không đoán. Trước khi giao: cộng lại các tổng, đối chiếu giữa các tab/bảng.
+- **Lệnh kiểm tra:** `grep -nE '[0-9]{1,3}([.,][0-9]{3})+|[0-9]+ ?%' FILE.md | grep -viE 'nguồn|http|\.(kt|java|swift|gradle):'`
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-073] Root cause trên đúng bản và đúng biến thể người dùng báo
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** 'youtube music bấm next, prev được mà youtube không được à?'; 'bug này đã báo 1 lần mà mày fix h vẫn bị lại á'.
+- **Nguyên nhân:** Agent phân tích/sửa trên bản hiện tại hoặc biến thể gần giống (YouTube Music thay vì YouTube), báo 'đã fix' nhưng lỗi vẫn còn. (universal)
+- **Quy tắc phòng ngừa & Cách fix:** Trước khi sửa bug người dùng báo: ghi rõ version/tag + app/màn hình chính xác, checkout đúng bản đó, tái hiện RED đúng đường đó; chỉ báo xong khi chính đường đó GREEN.
+- **Lệnh kiểm tra:** `git describe --tags --always && git log -1 --format=%H`
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-074] Nhắc lại cách hiểu khi yêu cầu có gỡ/xoá/public/bổ sung
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** 'revert lại cũ bổ sung chứ ko phải thay thế bị mất 2 cái cũ rồi'; 'revert lại ý tôi là gỡ … khỏi pub.dev'.
+- **Nguyên nhân:** Agent hiểu sai đối tượng (gỡ link thay vì unpublish pub.dev), thay thế thay vì bổ sung, ghi plan vào thư mục ignored. 8 lần phải revert / 8 phiên. (universal)
+- **Quy tắc phòng ngừa & Cách fix:** Yêu cầu có từ gỡ/xoá/public/revert/bổ sung hoặc nơi lưu không rõ → 1 dòng 'hiểu là X trên Y' rồi làm. 'Bổ sung' = giữ mục cũ, thêm mới. Plan/tài liệu cần commit ghi vào docs/ được track, không vào thư mục ignored.
+- **Lệnh kiểm tra:** `git diff --numstat | awk '$2>0{print "có xoá dòng:",$3}'; git check-ignore -v FILE`
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-075] Chỉ hỏi khi xoá dữ liệu quan trọng, secrets, billing
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** 'mày tự test luôn trên đầu xe ko được à?'; 'làm cho xong toàn bộ đừng hỏi nữa'.
+- **Nguyên nhân:** Agent kết lượt bằng câu hỏi/CHỜ DUYỆT hoặc đẩy việc tự làm được (test trên đầu xe qua adb, init repo) cho người dùng. 8 phiên. (universal; GeelyEx2 INSTINCT-041 là bản cục bộ)
+- **Quy tắc phòng ngừa & Cách fix:** Theo lời chủ: 'chỉ hỏi khi xoá dữ liệu quan trọng, đụng secrets/billing thôi còn lại tự làm hết'. Ngoài các mục đó: chọn phương án chất lượng nhất, ghi lý do, làm luôn; không đẩy bước agent tự làm được.
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-076] Không hỏi lại điều đã chọn, không làm lại việc đã xong
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** 'trước đó tao chọn rồi mà sao lại chưa chọn?'
+- **Nguyên nhân:** Agent quên lựa chọn người dùng đã đưa trong phiên/phiên trước, báo 'chưa làm' việc đã có. (universal)
+- **Quy tắc phòng ngừa & Cách fix:** Trước khi hỏi lựa chọn hoặc nói 'chưa làm': grep plan, memory, git log. Lựa chọn của người dùng ghi ngay vào file quyết định của plan.
+- **Lệnh kiểm tra:** `grep -rniE 'TỪ_KHOÁ' docs/plans .agents 2>/dev/null; git log --oneline -30 | grep -i TỪ_KHOÁ`
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-077] Sửa chỉ doc thì không chạy gate full; gom một lần chạy
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** 'đổi có vài file doc mà chạy 30 phút chưa xong'; 'sao ko gom lại 1 session chạy luôn'.
+- **Nguyên nhân:** Gate full chạy cho diff chỉ markdown, agent chạy lại gate nhiều lần cho cùng nội dung. 11 phiên than chậm.
+- **Quy tắc phòng ngừa & Cách fix:** Diff chỉ *.md/docs → gate nhanh (lint doc). Gom mọi sửa rồi chạy gate một lần; không chạy lại khi tree không đổi; báo ETA.
+- **Lệnh kiểm tra:** `git diff --name-only origin/main...HEAD | grep -vE '\.md$|^docs/' | wc -l # 0 ⇒ chỉ cần gate nhanh`
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-078] Phiên trong worktree riêng không chờ khoá của checkout chính
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** 'đã tạo 1 worktree riêng rồi mà còn đợi worktree bên kia nhả phiên nữa'; 'đã fix lại là ko giữ main mà sao giờ vẫn bị giữ?'
+- **Nguyên nhân:** Khoá 'một thư mục một phiên' và worktree finish/merge vẫn cần checkout chính → phiên ở worktree phải chờ phiên khác nhả.
+- **Quy tắc phòng ngừa & Cách fix:** Worktree finish/merge không được lấy khoá phiên của main. Gặp khoá: không Monitor chờ; chuyển việc khác hoặc làm trong worktree, báo rõ đang bị phiên nào giữ.
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-079] Máy quá tải thì tự tạm dừng board, không ngồi chờ
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** 'tạm dừng bớt board cho máy nhẹ tải đi'; 'tạm dừng board đi'.
+- **Nguyên nhân:** Gate/port báo load cao khi nhiều board chạy, agent chờ thay vì dừng bớt board.
+- **Quy tắc phòng ngừa & Cách fix:** Load average vượt ngưỡng gate trước khi chạy gate/port nặng → tự tạm dừng board không thiết yếu, ghi lại để bật lại; không chờ thụ động.
+- **Lệnh kiểm tra:** `sysctl -n vm.loadavg`
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-080] Tài liệu gửi người: văn tự nhiên, không giọng AI
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** 'gửi lại tự nhiên hơn đừng nhìn giống AI quá'
+- **Nguyên nhân:** Tài liệu so sánh/báo cáo đầy emoji, khẳng định tuyệt đối, bảng màu mè. (universal)
+- **Quy tắc phòng ngừa & Cách fix:** Văn bản gửi sếp/khách: câu ngắn, giọng người viết, không emoji, không 'TUYỆT ĐỐI/100% PASS', chỉ dùng bảng khi cần so sánh.
+- **Lệnh kiểm tra:** `grep -cP '[\x{1F300}-\x{1FAFF}\x{2705}\x{274C}]|TUYỆT ĐỐI' FILE.md`
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-081] Chờ việc nền bằng thông báo, không sleep rồi poll
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** Hook chặn sleep; Monitor báo lỗi thiếu 'description'.
+- **Nguyên nhân:** signals: 220 lần hook chặn 'sleep rồi poll', 225 lần Monitor lỗi thiếu description. (universal)
+- **Quy tắc phòng ngừa & Cách fix:** Việc dài: chạy nền rồi chờ thông báo hoàn tất. Nếu cần Monitor: luôn có description và vòng until; không 'sleep N; tail'.
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-082] Trong worktree cô lập: gọi git trực tiếp, một lệnh một dòng
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** Hook từ chối lệnh git phức hợp, phải viết lại nhiều lần.
+- **Nguyên nhân:** signals: 353 lần hook cô lập worktree từ chối 'cd $X && git', 'git -C "$W"', git trong vòng lặp/bash -c.
+- **Quy tắc phòng ngừa & Cách fix:** Chạy git từ cwd của worktree, đường dẫn tường minh, mỗi lệnh git một lời gọi; không ghép cd biến + git.
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-083] macOS: sed BSD và không có timeout
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** sed: 1: ... invalid command code; timeout: command not found.
+- **Nguyên nhân:** signals: 21 lỗi sed BSD, 5 lỗi 'timeout: command not found'.
+- **Quy tắc phòng ngừa & Cách fix:** macOS: dùng sed -i '' (hoặc perl -pi -e); thay timeout bằng gtimeout hoặc perl -e 'alarm N; exec @ARGV'.
+- **Lệnh kiểm tra:** `grep -rnE "sed -i [^'\"]|(^|[ ;|&])timeout " scripts .claude 2>/dev/null | grep -v "sed -i ''"`
+- **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-071] Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main
+- **Nguyên nhân:** #425 ghi sai nguyên nhân (giới hạn 100 file); PR #424 của phiên khác đã sửa đúng lỗi, PR #426 của tôi trùng và xung đột
+- **Quy tắc phòng ngừa & Cách fix:** Trước khi sửa lỗi hạ tầng: fetch origin/main, git log -- &lt;file>, tái hiện bằng dữ liệu thật rồi mới viết RED
+- **Nguồn:** phiên sửa #425 (26/10), ghi trong main checkout nhưng chưa commit; đưa nguyên văn lên để main checkout đồng bộ được với origin
+
+---
+
+### [INSTINCT-084] Gộp lane bằng cherry-pick làm kit không gỡ được worktree lane và Stop hook tự gộp main local vào lane
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** Gộp lane bằng cherry-pick: agent-kit worktree remove từ chối worktree lane (UNREACHABLE, commit chỉ còn trong reflog); mỗi lần Stop, worktree_merge_gate giữ lại và tự gộp main local (có việc chưa push của phiên khác) vào worktree lane, kẹt xung đột.
+- **Nguyên nhân:** cherry-pick tạo commit SHA khác, nên commit gốc của lane không thuộc nhánh nào; luật không-mất-việc của worktree.py chỉ nhận commit có trong trunk hoặc một nhánh, không so patch với nhánh PR.
+- **Quy tắc phòng ngừa & Cách fix:** Gộp commit lane vào nhánh PR bằng git merge --no-ff &lt;sha lane> (đã lỡ cherry-pick thì git merge -s ours &lt;sha lane> để ghi nhận), rồi agent-kit worktree remove ngay, trước lần Stop kế tiếp; hook đã tự gộp main vào lane thì git merge --abort trong worktree lane trước.
+- **Lệnh kiểm tra:** `agent-kit worktree remove <worktree lane> trả exit 0 ngay sau khi gộp`
+- **Nguồn:** phiên 31d7d633, issue #427 (6 lane theo file, 26/10)

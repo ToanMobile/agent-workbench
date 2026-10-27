@@ -45,4 +45,19 @@ echo "$out" | grep -qx "strict raises" && ok "git()'s text decode stays strict (
 echo "$out" | grep -qx "clean \[\]" && ok "_clean_merges judges the merge (has a hunk: not clean) instead of crashing" \
   || fail "_clean_merges: $out"
 
+# The HEAD reflog keeps the raw bytes of a `git commit -m` message: a Latin-1 subject made _reflog_only's text `git log -g` raise
+# UnicodeDecodeError, its caller turned that into "reflog could not be read" and HELD a worktree whose commits main already has
+# (review 26/10). That one read is bytes, decoded with "replace" (only the subject is read from it, never a path).
+G worktree add -q --detach "$R/.claude/worktrees/latin" main
+printf 'caf\351 latin-1 subject\n' > "$TMP/msg"
+git -C "$R/.claude/worktrees/latin" -c user.email=t@example.invalid -c user.name=t -c i18n.commitEncoding=ISO-8859-1 commit -q --allow-empty -F "$TMP/msg"
+LAT="$(git -C "$R/.claude/worktrees/latin" rev-parse HEAD)"
+G merge -q --ff-only "$LAT"
+git -C "$R/.claude/worktrees/latin" log -g --format=%gs HEAD | LC_ALL=C grep -q "$(printf 'caf\351')" \
+  && ok "setup: the worktree's HEAD reflog holds the Latin-1 byte" || fail "setup: no Latin-1 byte in the HEAD reflog"
+(cd "$R" && DEVKIT_LANG=en python3 "$DEVKIT_DIR/scripts/git/worktree.py" remove "$R/.claude/worktrees/latin" >"$TMP/latin.out" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$R/.claude/worktrees/latin" ] && ! grep -qi "reflog" "$TMP/latin.out" \
+  && ok "a worktree whose reflog has a Latin-1 subject and whose commits main holds is removed (not held as an unreadable reflog)" \
+  || fail "Latin-1 reflog subject: remove rc=$rc: $(tail -3 "$TMP/latin.out")"
+
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }

@@ -73,4 +73,10 @@ reports/
 docs/super-board/runner.log
 docs/super-board/current-worker.log
 docs/super-board/runs/*-workers/
+# Log run hằng ngày của board (runner ghi ở main): không để untracked làm main bẩn (#461); các log đã track giữ nguyên
+docs/super-board/runs/20??-??-??-*.md
 .claude/settings.json.bak-*
+
+# Trạng thái cục bộ của super-board và bản sao lưu hook của trình cài DevKit (27/10, #461)
+.claude/super-board/dup-noted
+.agents/local/hooks/

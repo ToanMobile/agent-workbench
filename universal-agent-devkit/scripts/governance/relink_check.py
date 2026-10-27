@@ -18,7 +18,16 @@ installer, never changes the profile, never touches a tracked file. It does noth
 A link it cannot re-create is logged (.claude/audit-gate/relink.log) with "run agent-kit
 init". When nothing is missing, .agents/context/ (generated, git-ignored) is brought up
 to date. Exit 0 always.
+
+It also removes a DevKit link the DevKit itself made obsolete: a `.claude/commands/` or
+`.agents/skills/` symlink that is dangling AND points into this DevKit (absolute or through
+the .agents/devkit alias) — a command or skill the kit dropped (1.2.0: review, qa, test,
+bugs, crashlytics left 5 dangling links in every installed repo, health 90-93). A dangling
+link pointing elsewhere, a regular file and a live link are never touched. SessionStart runs
+it with --links-only (no context refresh: SessionStart does its own), so a session heals the
+repo with no git operation and no `agent-kit init`.
 """
+import fcntl
 import json
 import os
 import re
@@ -38,6 +47,8 @@ def git(project, *args):
 def should_run(project, argv):
     if os.environ.get("DEVKIT_RELINK") == "0":
         return False
+    if (os.path.realpath(project) + os.sep).startswith(os.path.realpath(DEVKIT) + os.sep):
+        return False                    # a project inside the kit (a self-install): its links are the kit's own files
     hook = next((a.split("=", 1)[1] for a in argv if a.startswith("--hook=")), "")
     rest = [a for a in argv[2:] if not a.startswith("--")]
     if hook == "post-checkout" and len(rest) >= 3 and rest[2] == "0":
@@ -49,6 +60,12 @@ def should_run(project, argv):
             return False                # a linked worktree
     return (os.path.isfile(os.path.join(project, ".agents", "active-profile.json"))
             and os.path.isdir(os.path.join(project, ".agents", "context")))
+
+
+def in_kit(path):
+    """True when path resolves into this DevKit: a link dir there lists (and would receive) the kit's own files. Shared by
+    missing() and dangling() so both agree on which link directories are the project's to heal."""
+    return (os.path.realpath(path) + os.sep).startswith(os.path.realpath(DEVKIT) + os.sep)
 
 
 def excluded_skills(project):
@@ -76,7 +93,11 @@ def missing(project):
         out.append(".agents/devkit")    # master rules, core-rules, the post-fix gate
     excluded = excluded_skills(project)
     cmds = os.path.join(DEVKIT, "commands")
-    if os.path.isdir(os.path.join(project, ".claude", "commands")):
+    # a link directory that resolves into the kit is the kit's own folder: never write into it. One that is absent is rebuilt
+    # (`git rm -r .claude/commands`) in a Claude install (.claude/settings.json); a symlink to a project folder is healed as it is.
+    cdir = os.path.join(project, ".claude", "commands")
+    if ((os.path.isdir(cdir) or (not os.path.lexists(cdir) and os.path.isfile(os.path.join(project, ".claude", "settings.json"))))
+            and not in_kit(cdir) and os.path.isdir(cmds)):
         for name in sorted(os.listdir(cmds)):
             src = os.path.join(cmds, name)
             skill = os.path.basename(os.path.dirname(os.path.realpath(src))) if os.path.islink(src) else None
@@ -85,8 +106,10 @@ def missing(project):
     # every DevKit skill the profile keeps, in an install that has .agents/skills/: a skill the DevKit gained after the install
     # never got its link (OfficeReader 2026-10-13: health 96, .agents/skills/devkit-audit missing)
     skills_dir = os.path.join(project, ".agents", "skills")
-    if os.path.isdir(skills_dir):
-        for name in sorted(os.listdir(os.path.join(DEVKIT, "skills"))):
+    kit_skills = os.path.join(DEVKIT, "skills")
+    # ponytail: a skills dir removed whole is not rebuilt (a claude-only install never had one), upgrade when the installer records it
+    if os.path.isdir(skills_dir) and not in_kit(skills_dir) and os.path.isdir(kit_skills):
+        for name in sorted(os.listdir(kit_skills)):
             if (name not in excluded and os.path.isfile(os.path.join(DEVKIT, "skills", name, "SKILL.md"))
                     and not os.path.lexists(os.path.join(skills_dir, name))):
                 out.append(f".agents/skills/{name}")
@@ -103,10 +126,12 @@ def keep_out_of_git(project, rel):
     path = os.path.join(common, "info", "exclude")
     line = "/" + rel
     try:
-        raw = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
-        if line not in raw.splitlines():
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "a", encoding="utf-8") as fh:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a+", encoding="utf-8") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)      # check-then-append is one step: parallel runs wrote the line twice
+            fh.seek(0)
+            raw = fh.read()
+            if line not in raw.splitlines():
                 fh.write(("\n" if raw and not raw.endswith("\n") else "") + line + "\n")
     except OSError:
         pass
@@ -136,7 +161,50 @@ def source_for(project, rel):
     return None
 
 
-def relink(project, gone):
+def dangling(project):
+    """Relative paths of DevKit links whose target the DevKit no longer has: a symlink under .claude/commands/ or
+    .agents/skills/ that resolves to nothing and whose target lies inside this DevKit (the alias .agents/devkit resolved)."""
+    kit = os.path.realpath(DEVKIT) + os.sep
+    out = []
+    for rel_dir in (os.path.join(".claude", "commands"), os.path.join(".agents", "skills")):
+        d = os.path.join(project, rel_dir)
+        if in_kit(d):
+            continue         # a link directory that resolves into the kit lists the kit's own files
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            continue
+        for name in names:
+            p = os.path.join(d, name)
+            if not os.path.islink(p) or os.path.exists(p):
+                continue
+            try:
+                target = os.readlink(p)
+            except OSError:
+                continue
+            target = target if os.path.isabs(target) else os.path.join(d, target)
+            where = os.path.join(os.path.realpath(os.path.dirname(target)), os.path.basename(target))
+            if where.startswith(kit):
+                out.append(os.path.join(rel_dir, name))
+    return out
+
+
+def prune(project, stale):
+    """Remove the dangling DevKit links found by dangling(); returns how many went."""
+    done = 0
+    for rel in stale:
+        p = os.path.join(project, rel)
+        try:
+            if os.path.islink(p) and not os.path.exists(p):
+                os.unlink(p)
+                done += 1
+        except OSError as e:
+            sys.stderr.write(f"DevKit: cannot remove dangling link {rel}: {e}\n")
+    return done
+
+
+def relink(project, gone, raced=None):
+    """Re-create the links in gone; returns those it could not. A link another session made first is appended to raced."""
     left = []
     for rel in gone:
         src, dst = source_for(project, rel), os.path.join(project, rel)
@@ -146,7 +214,12 @@ def relink(project, gone):
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if src.startswith(os.path.join(project, ".agents", "local") + os.sep):
             src = os.path.relpath(src, os.path.dirname(dst))   # project tier: relative, like the installer
-        os.symlink(src, dst)
+        try:
+            os.symlink(src, dst)
+        except FileExistsError:
+            if raced is not None:
+                raced.append(rel)         # another session's SessionStart made it a moment ago
+            continue
         keep_out_of_git(project, rel)
     return left
 
@@ -155,7 +228,19 @@ def main(argv):
     project = os.path.realpath(argv[1] if len(argv) > 1 and not argv[1].startswith("-") else os.getcwd())
     if not should_run(project, argv):
         return 0
+    stale = dangling(project)
+    pruned = prune(project, stale) if stale else 0
+    if pruned:
+        try:
+            log = os.path.join(project, ".claude", "audit-gate", "relink.log")
+            os.makedirs(os.path.dirname(log), exist_ok=True)
+            with open(log, "a", encoding="utf-8") as f:
+                f.write(f"pruned {pruned} dangling DevKit link(s): {stale}\n")
+        except OSError as e:
+            sys.stderr.write(f"DevKit: relink.log not written: {e}\n")
     gone = missing(project)
+    if not gone and "--links-only" in argv:
+        return 0
     if not gone:
         # --context-only: rewriting the tracked AGENTS.md right after a checkout would leave the
         # tree dirty (and could block the next checkout); SessionStart refreshes it instead.
@@ -165,16 +250,18 @@ def main(argv):
         subprocess.run([sys.executable, _cs_script, project, "--quiet",
                         "--context-only"], capture_output=True)
         return 0
-    left = relink(project, gone)
+    raced = []
+    left = relink(project, gone, raced)
+    restored = len(gone) - len(left) - len(raced)
     log = os.path.join(project, ".claude", "audit-gate", "relink.log")
     try:
         os.makedirs(os.path.dirname(log), exist_ok=True)
         with open(log, "a", encoding="utf-8") as f:
-            f.write(f"restored {len(gone) - len(left)}/{len(gone)}; not restorable: {left}\n")
+            f.write(f"restored {restored}/{len(gone)}; not restorable: {left}\n")
     except OSError:
         pass
     if "--quiet" not in argv:
-        sys.stderr.write(f"DevKit: restored {len(gone) - len(left)} link(s) this git operation removed\n")
+        sys.stderr.write(f"DevKit: restored {restored} link(s) this git operation removed\n")
         if left:
             sys.stderr.write(f"DevKit: cannot restore {left} — run `agent-kit init`\n")
     return 0

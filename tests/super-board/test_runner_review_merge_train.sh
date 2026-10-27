@@ -36,6 +36,8 @@ chmod +x "$TMP/path/claude"
 export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_DISK_WARN_GIB=0
 
 unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX SB_REVIEW_TRAIN
+# Pha 2: mọi ca dưới đây là đường lùi khi merge queue tắt (runner tự phóng merge train / merge-only); hành vi khi bật ở test_runner_merge_queue.sh.
+export SB_MERGE_QUEUE=0
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
 SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"

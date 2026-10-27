@@ -1631,6 +1631,215 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "worktree-merged-cleaner",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/hooks/session_context.sh",
+        ".claude/bin/super-board-post-merge-clean.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_gc_merged.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-WT-MERGED-CLEANER-01",
+          "name": "một bộ dọn worktree đã gộp (U2 25/10): gc --merged / held / remove --merged của worktree.py và post-merge clean của board không gỡ worktree có commit trunk chưa có, chỉ file chưa commit, commit chỉ reflog giữ, phiên sống giữ, nhánh có PR mở; gỡ worktree đã tích hợp sạch; không còn đường git trần",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_gc_merged.sh && bash tests/super-board/test_post_merge_clean.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-agents-md-block-pointer",
+      "watch_files": [
+        ".claude/skills/super-board/references/run.md",
+        "tests/super-board/test_agents_md_block_size.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AGENTS-MD-BLOCK-02",
+          "name": "run.md still points every lane to the DevKit pipeline that moved out of the AGENTS.md block (same test as REG-SB-AGENTS-MD-BLOCK-01, watched on run.md and the test itself)",
+          "command": "bash tests/super-board/test_agents_md_block_size.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-slot-queue",
+      "watch_files": [
+        "universal-agent-devkit/bin/capacity.py",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/tests/gates/test_gate_slot_queue.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-SLOT-QUEUE-01",
+          "name": "hàng đợi gate toàn máy (pool gate, N = capacity gate_max; 12 lõi = 3): hết giờ chờ thoát 4 BUSY không ghi biên nhận, kế thừa DEVKIT_GATE_SLOT_HELD, kiểm lại reuse sau khi lấy slot và Stop hook giữ UNTESTED",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_queue.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-gate-busy-slot",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_merge_gate_busy_slot.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-BUSY-SLOT-01",
+          "name": "merge-gate và merge-train đặt mặc định DEVKIT_GATE_SLOT_WAIT_S=1800; khi post-fix-gate thoát 4 busy thì giữ thẻ ở Review (exit 4 / train exit 12 không retry), không ra exit 11",
+          "command": "bash tests/super-board/test_merge_gate_busy_slot.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-queue",
+      "watch_files": [
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/skills/super-board/references/config-schema.json",
+        ".claude/super-board/configs/agent-workbench.json",
+        "tests/super-board/test_merge_queue.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-QUEUE-01",
+          "name": "hàng đợi merge: --if-due gom khi đủ batch_max / PR cũ nhất chờ max_wait_min / máy rảnh; khoá fcntl không chạy chồng; approved-head lệch hay người ngoài bị loại; route từng train-result; đợt sau đợt đỏ thu nhỏ",
+          "command": "bash tests/super-board/test_merge_queue.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-merge-queue",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-codex-lane.sh",
+        "tests/super-board/test_runner_merge_queue.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-MERGE-QUEUE-01",
+          "name": "runner khi bật merge queue: không phóng lại reviewer cho thẻ đã vào hàng, không merge-only/train, không phạt no-op/RUNAWAY, gọi merge-queue --if-due mỗi tick; SB_MERGE_QUEUE=0 giữ đường cũ",
+          "command": "bash tests/super-board/test_runner_merge_queue.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-gate-queue-guard",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_queue_guard.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-QUEUE-GUARD-01",
+          "name": "merge gate: queue bật mà gọi thẳng (không SB_MERGE_CALLER train/queue, không --standalone) thì exit 13 không verify/không khoá; --preflight chỉ chạy kiểm rẻ, in preflight: ok; --standalone; SB_MERGE_QUEUE=0 như cũ",
+          "command": "bash tests/super-board/test_merge_gate_queue_guard.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "batch-canary",
+      "watch_files": [
+        "universal-agent-devkit/bin/batch_canary.py",
+        "universal-agent-devkit/bin/agent-health.py",
+        "universal-agent-devkit/scripts/governance/nightly.py",
+        "tests/super-board/test_batch_canary.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-BATCH-CANARY-01",
+          "name": "canary merge theo đợt: >=2 PR merged mà 0 train hoặc verify/PR > 0.5 thì ĐỎ; enabled_at lọc lượt cũ; health chỉ WARN không đổi exit; nightly tạo thẻ incident chống trùng",
+          "command": "bash tests/super-board/test_batch_canary.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-integrate",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/integrate.py",
+        "universal-agent-devkit/bin/agent-kit",
+        "universal-agent-devkit/bin/session_lock.py",
+        "universal-agent-devkit/tests/worktree_git/test_agent_kit_integrate.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-INTEGRATE-01",
+          "name": "agent-kit integrate (repo trunk-push): chưa tới hạn không làm gì; tới hạn chạy --full một lần trong scratch rồi push đúng HEAD đã gate; gate đỏ/bận không push; origin phân kỳ dừng; khoá bận exit 0; _TRUNK_ALLOWED",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_agent_kit_integrate.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-queue-e2e",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-card.sh",
+        ".claude/bin/super-board-codex-lane.sh",
+        "tests/super-board/test_merge_queue_e2e.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-QUEUE-E2E-01",
+          "name": "đầu-cuối qua runner + hàng đợi + train + merge gate THẬT: 3 PR lệch nhịp (2 thẻ + 1 PR tương tác) chỉ 1 lượt verify trong train, 0 verify lẻ, thẻ Done; lane worker gọi thẳng gate khi queue bật ra exit 13; SB_MERGE_QUEUE=0 giữ đường cũ (trên origin/main trước Pha 2: 0 train)",
+          "command": "bash tests/super-board/test_merge_queue_e2e.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "proof-gate-merge-receipt",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        "universal-agent-devkit/tests/gates/test_proof_gate_merge_receipt.sh",
+        "tests/super-board/test_merge_gate_proof_receipt.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-PROOF-MERGE-RECEIPT-01",
+          "name": "proof_gate nhận biên nhận merge của merge gate (lượt gộp qua merge gate chạy nền, push qua pipe: cho qua); biên nhận lượt trước / phiên khác / không session, squash không có trên origin, cha squash khác base, commit chưa qua gate sau squash (kể cả ngày giả), main bẩn file của phiên, gh pr merge, ghi tay kho biên nhận: chặn",
+          "command": "bash universal-agent-devkit/tests/gates/test_proof_gate_merge_receipt.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-GATE-PROOF-RECEIPT-01",
+          "name": "merge gate THẬT ghi biên nhận merge (pr, head, base, verified_tree, squash, session) mà proof_gate nhận; phiên khác / không session: chặn; kho không ghi được: gate vẫn gộp, exit 0",
+          "command": "bash tests/super-board/test_merge_gate_proof_receipt.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "worktree-remove-reflog-squash",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-REMOVE-REFLOG-SQUASH-01",
+          "name": "worktree remove: commit chỉ còn trong reflog mà trunk đã có patch (squash) thì gỡ được kèm refs/devkit/discarded; trunk chưa có patch thì vẫn từ chối UNREACHABLE (#421)",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
