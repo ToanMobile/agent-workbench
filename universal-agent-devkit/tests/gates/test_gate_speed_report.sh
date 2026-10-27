@@ -119,6 +119,30 @@ chk(rc != 0 and "nope.jsonl" in out, "log không có thì exit khác 0 và nêu 
 rc, out = run("--log", cur_path, "--since", "26/10")
 chk(rc == 2, "--since sai định dạng: lỗi tham số", "rc=%s" % rc)
 
+# review 27/10: --log hỏng thì lỗi nêu đúng --log (không đổ cho --baseline), lỗi ra stderr, stdout rỗng
+if os.path.isfile(SCRIPT):
+    p = subprocess.run([sys.executable, "-I", SCRIPT, "--log", TMP, "--baseline", os.path.join(TMP, "missing-base.jsonl")],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    err = p.stderr.decode("utf-8", "replace")
+    chk(p.returncode != 0 and ("cannot read %s:" % TMP) in err and "missing-base" not in err and not p.stdout.strip(),
+        "--log hỏng: lỗi nêu đúng --log, ra stderr", "rc=%s out=%r err=%r" % (p.returncode, p.stdout, err))
+else:
+    chk(False, "--log hỏng: lỗi nêu đúng --log, ra stderr", "missing script")
+
+# review 27/10: bản ghi không có task lẫn fp không gộp chung một nhóm xanh lần đầu; bản ghi không có thời gian không tính là 0 s
+odd = [rec(at(25, 9), "impacted", "cli", "FAIL", 100, None), rec(at(25, 10), "impacted", "cli", "PASS", 300, None),
+       rec(at(25, 11), "impacted", "cli", "PASS", 200, "Q")]
+for r in odd[:2]:
+    del r["fp"]
+del odd[2]["total_wall_s"], odd[2]["suites_wall_s"]
+odd_path = os.path.join(TMP, "odd.jsonl")
+with open(odd_path, "w") as f:
+    f.write("".join(json.dumps(r) + "\n" for r in odd))
+rc, out = run("--log", odd_path)
+chk("first green impacted (key=task|fp): 1/1 = 100.0%" in out.splitlines() and "first green skipped (no task/fp): 2" in out.splitlines(),
+    "không task/fp: không gộp nhóm, đếm riêng", out)
+chk("impacted cli: n=2 p50=200.0s p90=300.0s" in out.splitlines(), "bản ghi không có thời gian không tính là 0 s", out)
+
 print("%s: %d lỗi" % ("FAIL" if fails else "PASS", fails))
 sys.exit(1 if fails else 0)
 PYEND

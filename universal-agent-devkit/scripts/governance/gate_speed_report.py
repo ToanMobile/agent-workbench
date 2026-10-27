@@ -56,6 +56,11 @@ def skipped(r):
     return grr.excluded(r) or r["verdict"] == "REUSED" or r.get("reused_full_pass") is True
 
 
+def wall_or_none(r):
+    w = grr.num(r.get("total_wall_s"))
+    return w if w is not None else grr.num(r.get("suites_wall_s"))
+
+
 def counts(c):
     return " ".join("%s=%d" % kv for kv in sorted(c.items()))
 
@@ -84,7 +89,8 @@ def metrics(recs):
     imp = [r for r in recs if r["mode"] == "impacted"]
     full = [r for r in recs if r["mode"] == "full"]
     for src in ("cli", "hook"):
-        walls = [grr.wall(r) for r in imp if r["source"] == src and not skipped(r)]
+        # bản ghi không có total_wall_s lẫn suites_wall_s không có thời gian: bỏ, không tính là 0 s
+        walls = [w for w in (wall_or_none(r) for r in imp if r["source"] == src and not skipped(r)) if w is not None]
         m["impacted_%s_n" % src] = len(walls)
         m["impacted_%s_p50_s" % src], m["impacted_%s_p90_s" % src] = pct_stats(walls)
     # impacted_run = có suite chạy lệnh thu hẹp (impacted_command); false = mọi suite chạy lệnh đầy đủ dù mode=impacted
@@ -99,10 +105,19 @@ def metrics(recs):
     m["suite_status"] = collections.Counter(str(s[1]) for r in recs for s in r["suites"])
     # xanh lần đầu: nhóm theo task (khi có) hoặc fp
     first = collections.OrderedDict()
+    m["first_green_skipped"] = 0
     for r in imp:
         if skipped(r):
             continue
-        key = r.get("task") if isinstance(r.get("task"), str) and r.get("task") else "fp:%s" % r.get("fp")
+        task, fp = r.get("task"), r.get("fp")
+        if isinstance(task, str) and task:
+            key = "task:" + task
+        elif isinstance(fp, str) and fp:
+            key = "fp:" + fp
+        else:
+            # không có task lẫn fp: không biết thuộc nhóm nào, không gộp chung — đếm riêng
+            m["first_green_skipped"] += 1
+            continue
         first.setdefault(key, r["verdict"])
     m["first_green_groups"] = len(first)
     m["first_green_pass"] = sum(1 for v in first.values() if v == "PASS")
@@ -138,6 +153,8 @@ def print_report(label, m, ignored, out):
     pct = m["first_green_pct"]
     w("first green impacted (key=task|fp): %d/%d = %s\n" % (m["first_green_pass"], m["first_green_groups"],
                                                             "-" if pct is None else "%.1f%%" % pct))
+    if m["first_green_skipped"]:
+        w("first green skipped (no task/fp): %d\n" % m["first_green_skipped"])
     for d, (ok, bad) in m["full_per_day"].items():
         w("full %s: merge_point=%d outside=%d\n" % (d, ok, bad))
     w("full total: merge_point=%d outside=%d (merge point = %s)\n" % (m["full_merge_point"], m["full_outside"],
@@ -177,14 +194,22 @@ def main(argv=None):
     if not path:
         path, _, problem = grr.log_file(os.getcwd())
         if problem:
-            print("✖ %s" % problem)
+            print("✖ %s" % problem, file=sys.stderr)
             return 1
-    try:
-        recs, ignored = load(path, a.since, until)
-        base = load(a.baseline, a.since, until) if a.baseline else None
-    except (OSError, ValueError) as e:
-        print("✖ cannot read %s: %s" % (e.filename if getattr(e, "filename", None) else (a.baseline or path), e))
-        return 1
+    base = None
+    # mỗi file đọc riêng để lỗi nêu đúng file hỏng (ValueError của read_runs không mang tên file)
+    for which, f in (("log", path), ("baseline", a.baseline)):
+        if not f:
+            continue
+        try:
+            got = load(f, a.since, until)
+        except (OSError, ValueError) as e:
+            print("✖ cannot read %s: %s" % (f, getattr(e, "strerror", None) or e), file=sys.stderr)
+            return 1
+        if which == "log":
+            recs, ignored = got
+        else:
+            base = got
     cur = metrics(recs)
     print_report("current: %s (%d runs)" % (path, len(recs)), cur, ignored, sys.stdout)
     if base is not None:
