@@ -1598,7 +1598,10 @@ print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED
   case "$age" in *" 1") age=${age% *} ;; *) return 0 ;; esac
   # #393: a worker that moved its card to Blocked (hold, sequence, too big) ended on purpose, not by a crash. The cache predates
   # that move, so ask the board once (a rare path). Unreadable: keep counting it.
-  [ "$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" status "$1" 2>/dev/null || true)" = "Blocked" ] && return 0
+  # #465: a QA worker that passed its card to Review or closed it (Done) in under 120 s finished its job the same way.
+  case "${LANE:-}:$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" status "$1" 2>/dev/null || true)" in
+    *:Blocked | *:Done | qa:Review) return 0 ;;
+  esac
   now=$(date +%s)
   f=$(early_death_file "$1")
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
