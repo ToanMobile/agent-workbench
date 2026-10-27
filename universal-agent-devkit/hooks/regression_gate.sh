@@ -236,13 +236,13 @@ if not probe:
         note("held-by-other check failed: %r" % e)
     try:
         # K12 (18/10): trunk mode, phiên dừng ở chính MAIN checkout. session_lock từ chối mọi lần ghi vào main (cả chạy gate ở đó), nên
-        # đòi "chạy post-fix-gate --full" ở main là vòng lặp không lối ra; thứ bẩn ở main không phải của phiên này (runner board, file sổ
-        # sách của phiên khác) và mọi thứ vào main đã qua gate gộp của `worktree finish`; push từ main vẫn cần biên nhận (push_gate),
-        # XONG vẫn cần --full (proof_gate). Chỉ phiên Claude Code có transcript (hook PreToolUse của session_lock chạy ở đó); không có
+        # đòi "chạy post-fix-gate" ở main là vòng lặp không lối ra; thứ bẩn ở main không phải của phiên này (runner board, file sổ
+        # sách của phiên khác) và mọi thứ vào main đã qua gate gộp của `worktree finish`; push trunk chỉ qua `agent-kit integrate`
+        # (push_gate, #472 mục A), XONG vẫn cần biên nhận gate (proof_gate). Chỉ phiên Claude Code có transcript (hook PreToolUse của session_lock chạy ở đó); không có
         # session_id hay transcript (Grok, agent bắc cầu, lời gọi không rõ): không ai chặn họ ghi vào main, nên vẫn gate như cũ.
         # Phiên vừa push dải chưa kiểm (pushed): vẫn gate như cũ (review 18/10).
         # ponytail: session_lock.trunk_write không coi build / interpreter chạy ở main là ghi, nên `python3 fix.py` sửa file ở main lọt
-        # qua bước này (proof_gate vẫn đòi --full trước XONG, push_gate đòi biên nhận); nâng cấp: chỉ bỏ qua khi main không có file bẩn
+        # qua bước này (proof_gate vẫn đòi biên nhận gate trước XONG, push_gate chỉ cho push trunk qua integrate); nâng cấp: chỉ bỏ qua khi main không có file bẩn
         # nào mới hơn lúc phiên bắt đầu, khi thấy một phiên sửa main theo đường đó.
         _tmain = _sl.trunk_main(_top)[0] if (_top and _lsid and info is not None and not degraded and not pushed) else None
         if _tmain and _sl._same_dir(_top, _tmain):
@@ -799,7 +799,10 @@ res = subprocess.run([sys.executable, gate, "--run-tests", "--json", "--task", "
                       "--session", str(data.get("session_id") or ""), "--transcript", str(data.get("transcript_path") or "")]
                      + (["--since", commit_base] if commit_base else []),
                      cwd=repo, capture_output=True, text=True, errors="replace",
-                     env={**os.environ, "CLAUDE_PROJECT_DIR": repo, "DEVKIT_LEDGER_ROOT": ledger_root,
+                     # #472 mục A: POSTFIX_GATE_FULL đặt toàn cục (shell của người dùng) không biến lượt Stop thành --full — ngoài điểm gộp
+                     # lượt Stop là impacted. CI và POSTFIX_GATE_FORCE_FULL vẫn truyền xuống như cũ.
+                     env={**{k: v for k, v in os.environ.items() if k != "POSTFIX_GATE_FULL"},
+                          "CLAUDE_PROJECT_DIR": repo, "DEVKIT_LEDGER_ROOT": ledger_root,
                           "TEST_RUN_LOCK_WAIT_S": os.environ.get("TEST_RUN_LOCK_WAIT_S", "45"),
                           "DEVKIT_GATE_SLOT_WAIT_S": os.environ.get("DEVKIT_GATE_SLOT_WAIT_S", "45"),
                           # B5 (audit 25/10): khoá do một lượt gate CÒN SỐNG giữ thì chỉ chờ DEVKIT_REUSE_LOCK_WAIT_S (3 s) rồi BUSY

@@ -107,7 +107,7 @@ for stale in tests hooks.json; do
 done
 for hook in "$DEVKIT_ROOT/hooks"/*.sh "$DEVKIT_ROOT/hooks"/*.py; do
   [ -f "$hook" ] || continue
-  hook_name="$(basename "$hook")"
+  hook_name="${hook##*/}"   # = basename, không fork (vòng lặp ~60 hook)
   case "$hook_name" in *.tmp*|.*) continue ;; esac
   target_hook="$TARGET_DIR/.claude/hooks/$hook_name"
   if [ "$SKIP_EXISTING" = "1" ] && [ -e "$target_hook" ] && [ ! -L "$target_hook" ]; then
@@ -120,7 +120,7 @@ done
 # 5. Smart Item-by-Item Link for Commands (Preserving custom user commands)
 for cmd in "$DEVKIT_ROOT/commands"/*; do
   [ -e "$cmd" ] || continue
-  cmd_name="$(basename "$cmd")"
+  cmd_name="${cmd##*/}"
   target_cmd="$TARGET_DIR/.claude/commands/$cmd_name"
   if ! devkit_command_allowed "$cmd"; then
     devkit_remove_filtered "$target_cmd"  # skill not part of the active profile
@@ -136,7 +136,7 @@ done
 # 6. Smart Item-by-Item Link for Agents (Preserving custom user subagents)
 for agent in "$DEVKIT_ROOT/agents"/*; do
   [ -e "$agent" ] || continue
-  agent_name="$(basename "$agent")"
+  agent_name="${agent##*/}"
   target_agent="$TARGET_DIR/.claude/agents/$agent_name"
   case " ${DEVKIT_AGENTS_EXCLUDED:-} " in *" ${agent_name%.md} "*)
     devkit_remove_filtered "$target_agent"  # the profile's exclude_agents

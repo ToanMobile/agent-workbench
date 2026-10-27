@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Test hồi quy: scripts/governance/gate_speed_report.py đọc runs.jsonl của post-fix-gate (--log <file>) và in số đo tốc độ gate:
 #   trung vị / p90 thời gian impacted tách cli và hook (bỏ BUSY, REUSED, deferred); số suite liệt kê và số suite thực chạy;
-#   phân bố verdict theo mode, UNTESTED theo exit_reason; trạng thái suite (có TIMEOUT); tỉ lệ xanh lần đầu theo task (có trường task)
-#   hoặc fp; --full mỗi ngày tách điểm gộp hợp lệ (.integrate-scratch-*, .merge-scratch-*, .train-scratch-*) và ngoài điểm gộp;
+#   phân bố verdict theo mode, UNTESTED theo exit_reason; trạng thái suite (có TIMEOUT); tỉ lệ xanh lần đầu chỉ theo task (không có task: n/a);
+#   lượt không chạy REG-DK-ALL-01; impacted_command used; --full mỗi ngày tách điểm gộp hợp lệ (.integrate-scratch-*, .merge-scratch-*, .train-scratch-*) và ngoài điểm gộp;
 #   thống kê REG-DK-ALL-01; --since / --until theo ngày giờ địa phương; --baseline in bảng trước/sau.
 # Dữ liệu giả, TZ cố định (Asia/Ho_Chi_Minh) để ngày không trôi theo máy.
 #   RPT_KIT=<devkit dir>   thử bản kit khác (bản chưa có script: ĐỎ)
@@ -87,32 +87,41 @@ chk(rc == 0, "exit 0 trên log hợp lệ", "rc=%s" % rc)
 for line, why in [
     ("impacted cli: n=7 p50=100.0s p90=400.0s", "cli: bỏ BUSY/REUSED, trung vị và p90 nearest-rank"),
     ("impacted hook: n=1 p50=50.0s p90=50.0s", "hook tách riêng, BUSY và REUSED không tính"),
-    ("suites impacted: listed=4 ran=2", "suite liệt kê và suite có số giây"),
+    ("suites impacted: listed=4 ran=2 runs=8 mean_listed=0.5 mean_ran=0.2", "suite liệt kê và suite có số giây, chỉ lượt không BUSY/REUSED/deferred"),
     ("suites full: listed=5 ran=4", "suite của --full"),
     ("verdict impacted: BUSY=1 FAIL=2 PASS=5 REUSED=1 UNTESTED=1", "phân bố verdict impacted"),
     ("verdict full: BUSY=1 FAIL=1 PASS=3", "phân bố verdict full"),
     ("untested reasons impacted: edited_test=1", "UNTESTED theo lý do"),
     ("suite status: FAIL=1 PASS=4 TIMEOUT=1 UNTESTED=3", "trạng thái suite có TIMEOUT"),
-    ("first green impacted (key=task|fp): 2/5 = 40.0%", "xanh lần đầu: task gộp F+G, BUSY bỏ qua, chỉ REUSED không tính"),
-    ("full 2026-10-25: merge_point=1 outside=1", "--full ngày 25 tách điểm gộp"),
-    ("full 2026-10-26: merge_point=2 outside=1", "--full ngày 26: integrate + train hợp lệ, final-gate ngoài"),
+    ("first green impacted (key=task): 0/1 = 0.0%", "xanh lần đầu theo task: T1 gộp F+G, lượt đầu FAIL"),
+    ("first green skipped (no task): 6", "lượt không có task không gộp theo fp (8 lượt thử, 2 của T1)"),
+    ("mode=full runs 2026-10-25: merge_point=1 outside=1", "mode=full ngày 25 tách điểm gộp"),
+    ("mode=full runs 2026-10-26: merge_point=2 outside=1", "mode=full ngày 26: integrate + train hợp lệ, final-gate ngoài"),
+    ("note: mode=full also covers CI, --record-lesson and POSTFIX_GATE_FORCE_FULL", "ghi chú mode=full không chỉ là --full"),
     ("REG-DK-ALL-01: n=4 PASS=2 FAIL=0 TIMEOUT=1 UNTESTED=1 other=0 p50=600.0s p90=900.0s", "thống kê ALL-01"),
-    ("impacted narrowed (impacted_run): 1/8", "lượt impacted có suite chạy lệnh thu hẹp (BUSY/REUSED không tính)"),
+    ("impacted_command used (impacted_run): 1/8", "lượt impacted có suite chạy impacted_command (BUSY/REUSED không tính)"),
     ("ignored lines: 1", "dòng hỏng bị bỏ và đếm"),
 ]:
     chk(line in out.splitlines(), why, "thiếu dòng %r" % line)
 
+chk("impacted narrowed" not in out, "bỏ dòng impacted narrowed gây hiểu sai", out)
+
+chk("mode=full force_reason" not in out, "log cũ không có force_reason: không in phân bố theo lý do", out)
+
 rc, out = run("--log", cur_path, "--since", "2026-10-26")
-chk(rc == 0 and "full 2026-10-25" not in out and "full 2026-10-26: merge_point=2 outside=1" in out
+chk(rc == 0 and "mode=full runs 2026-10-25" not in out and "mode=full runs 2026-10-26: merge_point=2 outside=1" in out
     and "REG-DK-ALL-01: n=2 PASS=1 FAIL=0 TIMEOUT=0 UNTESTED=1 other=0 p50=300.0s p90=300.0s" in out, "--since lọc theo ngày địa phương", out)
 rc, out = run("--log", cur_path, "--until", "2026-10-25")
-chk(rc == 0 and "full 2026-10-26" not in out and "REG-DK-ALL-01: n=2 PASS=1 FAIL=0 TIMEOUT=1 UNTESTED=0 other=0 p50=750.0s p90=900.0s" in out,
+chk(rc == 0 and "mode=full runs 2026-10-26" not in out and "REG-DK-ALL-01: n=2 PASS=1 FAIL=0 TIMEOUT=1 UNTESTED=0 other=0 p50=750.0s p90=900.0s" in out,
     "--until gồm cả ngày cuối", out)
 
 rc, out = run("--log", cur_path, "--baseline", base_path)
 chk(rc == 0 and re.search(r"^\| impacted_cli_p50_s \| 200\.0 \| 100\.0 \| -100\.0 \|$", out, re.M) is not None,
     "--baseline in bảng trước/sau với delta", out)
-chk(re.search(r"^\| first_green_pct \| 33\.3 \| 40\.0 \| 6\.7 \|$", out, re.M) is not None, "bảng có tỉ lệ xanh lần đầu", out)
+# audit 27/10: baseline không có task thì xanh lần đầu là n/a (nhóm fp không phải task), không ra số
+chk(re.search(r"^\| first_green_pct \| - \| 0\.0 \| - \|$", out, re.M) is not None, "bảng: xanh lần đầu chỉ theo task", out)
+chk("first green impacted: n/a (no task field; fp groups are not tasks)" in out.splitlines(), "baseline không có task: in n/a", out)
+chk("impacted_narrowed" not in out, "bảng không còn impacted_narrowed_pct", out)
 
 rc, out = run("--log", os.path.join(TMP, "nope.jsonl"))
 chk(rc != 0 and "nope.jsonl" in out, "log không có thì exit khác 0 và nêu tên file", out)
@@ -126,6 +135,13 @@ if os.path.isfile(SCRIPT):
     err = p.stderr.decode("utf-8", "replace")
     chk(p.returncode != 0 and ("cannot read %s:" % TMP) in err and "missing-base" not in err and not p.stdout.strip(),
         "--log hỏng: lỗi nêu đúng --log, ra stderr", "rc=%s out=%r err=%r" % (p.returncode, p.stdout, err))
+    # chiều ngược lại: --log tốt, --baseline hỏng thì lỗi nêu --baseline
+    bad_base = os.path.join(TMP, "missing-base.jsonl")
+    p = subprocess.run([sys.executable, "-I", SCRIPT, "--log", cur_path, "--baseline", bad_base],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    err = p.stderr.decode("utf-8", "replace")
+    chk(p.returncode != 0 and ("cannot read %s:" % bad_base) in err and not p.stdout.strip(),
+        "--baseline hỏng: lỗi nêu đúng --baseline, stdout rỗng", "rc=%s out=%r err=%r" % (p.returncode, p.stdout[:200], err))
 else:
     chk(False, "--log hỏng: lỗi nêu đúng --log, ra stderr", "missing script")
 
@@ -139,9 +155,54 @@ odd_path = os.path.join(TMP, "odd.jsonl")
 with open(odd_path, "w") as f:
     f.write("".join(json.dumps(r) + "\n" for r in odd))
 rc, out = run("--log", odd_path)
-chk("first green impacted (key=task|fp): 1/1 = 100.0%" in out.splitlines() and "first green skipped (no task/fp): 2" in out.splitlines(),
-    "không task/fp: không gộp nhóm, đếm riêng", out)
+chk("first green impacted: n/a (no task field; fp groups are not tasks)" in out.splitlines(),
+    "không có task: không gộp theo fp, in n/a", out)
 chk("impacted cli: n=2 p50=200.0s p90=300.0s" in out.splitlines(), "bản ghi không có thời gian không tính là 0 s", out)
+
+# audit 27/10: suite đếm chỉ lượt không BUSY/REUSED/deferred (kèm trung bình mỗi lượt); hook in thêm dòng gồm cờ busy/reused;
+# thống kê lượt impacted không chạy REG-DK-ALL-01 với bộ lọc in rõ
+def busy_flag(r):
+    r["busy"] = True
+    return r
+
+
+ext = [
+    rec(at(25, 9), "impacted", "cli", "PASS", 100, "a", suites=[("X", "PASS", 10), ("Y", "PASS", 20)]),
+    rec(at(25, 10), "impacted", "cli", "FAIL", 300, "b", suites=[("REG-DK-ALL-01", "PASS", 250), ("X", "PASS", 5)]),
+    rec(at(25, 11), "impacted", "cli", "BUSY", 1, "c", suites=[("X", "PASS", None), ("Y", "PASS", None), ("Z", "PASS", None)]),
+    rec(at(25, 12), "impacted", "hook", "REUSED", 2, "d", suites=[("X", "PASS", None)]),
+    busy_flag(rec(at(25, 13), "impacted", "hook", "UNTESTED", 500, "e", suites=[("X", "PASS", 30)])),
+    rec(at(25, 14), "impacted", "cli", "PASS", 50, "f", suites=[("X", "PASS", None)]),
+    # #472 C: force_reason / merge_point; merge_point có thì thắng quy tắc tiền tố project, không có thì dùng tiền tố
+    rec(at(25, 15), "full", "cli", "PASS", 10, "g", project=".merge-scratch-a"),
+    rec(at(25, 16), "full", "cli", "PASS", 10, "h", project=".merge-scratch-b"),
+    rec(at(25, 17), "full", "cli", "PASS", 10, "i", project="x"),
+    rec(at(26, 9), "full", "cli", "PASS", 10, "j", project="y"),
+]
+ext[0]["force_reason"] = ""
+ext[6]["force_reason"] = "--full"
+ext[7]["force_reason"], ext[7]["merge_point"] = "CI", False
+ext[8]["force_reason"], ext[8]["merge_point"] = "--record-lesson", True
+ext_path = os.path.join(TMP, "ext.jsonl")
+with open(ext_path, "w") as f:
+    f.write("".join(json.dumps(r) + "\n" for r in ext))
+rc, out = run("--log", ext_path)
+lines = out.splitlines()
+for line, why in [
+    ("suites impacted: listed=5 ran=4 runs=3 mean_listed=1.7 mean_ran=1.3", "BUSY/REUSED/cờ busy không tính vào suite và trung bình"),
+    ("impacted hook: n=0 p50=- p90=-", "hook bỏ lượt cờ busy"),
+    ("impacted hook incl. busy/reused flags (verdict BUSY/REUSED dropped): n=1 p50=500.0s p90=500.0s", "hook gồm lượt cờ busy"),
+    ("impacted cli incl. busy/reused flags (verdict BUSY/REUSED dropped): n=3 p50=100.0s p90=300.0s", "cli gồm lượt cờ busy"),
+    ("impacted without REG-DK-ALL-01 (impacted, not BUSY/REUSED/deferred, >=1 suite with seconds, REG-DK-ALL-01 without seconds): "
+     "n=1 p50=100.0s; with REG-DK-ALL-01: n=1 p50=300.0s", "lượt không chạy ALL-01 với bộ lọc in rõ"),
+    ("impacted filter: BUSY, REUSED, deferred and reused_full_pass excluded", "in rõ bộ lọc skipped()"),
+    ("mode=full runs 2026-10-25: merge_point=2 outside=1", "merge_point thắng tiền tố project, thiếu thì dùng tiền tố"),
+    ("mode=full runs 2026-10-26: merge_point=0 outside=1", "bản ghi cũ không có merge_point: theo tiền tố"),
+    ("mode=full force_reason 2026-10-25: --full=1 --record-lesson=1 CI=1", "mode=full theo force_reason mỗi ngày"),
+    ("mode=full force_reason 2026-10-26: unknown=1", "bản ghi không có force_reason: unknown"),
+    ("impacted_command used (impacted_run): 0/3","impacted_command đếm trên lượt không BUSY/REUSED"),
+]:
+    chk(line in lines, why, "thiếu dòng %r" % line)
 
 print("%s: %d lỗi" % ("FAIL" if fails else "PASS", fails))
 sys.exit(1 if fails else 0)

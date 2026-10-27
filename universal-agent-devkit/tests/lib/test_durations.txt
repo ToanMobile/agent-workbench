@@ -440,7 +440,13 @@
 19 tests/context_memory/test_session_context_gc_symlink.sh
 3 tests/worktree_git/test_worktree_gc_symlink_home.sh
 1 tests/gates/test_gate_speed_report.sh
-1 tests/gates/test_gate_speed_next_full_merge_point.sh
+30 tests/gates/test_gate_speed_next_full_merge_point.sh
 1 tests/gates/test_gate_speed_next_run_log_fields.sh
 1 tests/gates/test_gate_speed_next_untested_early.sh
-1 tests/gates/test_gate_speed_next_per_test_inputs.sh
+# 2026-10-27: #427 vòng 3 (theo báo cáo lane, máy tải: chỉ để xếp thứ tự).
+40 tests/gates/test_hardware_round3_427.sh
+12 tests/verification/test_evidence_round3_427.sh
+35 tests/gates/test_session_lock_round3_427.sh
+20 tests/gates/test_shell_writes_fd_427.sh
+6 tests/worktree_git/test_worktree_remove_late_holder.sh
+1 tests/gates/test_gate_approved_tests_same_second.sh
