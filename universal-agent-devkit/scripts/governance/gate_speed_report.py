@@ -97,6 +97,8 @@ def metrics(recs):
     ran_imp = [r for r in imp if not skipped(r)]
     m["impacted_narrowed"] = sum(1 for r in ran_imp if r.get("impacted_run") is True)
     m["impacted_narrowed_of"] = len(ran_imp)
+    # bảng trước/sau so tỉ lệ: hai cửa sổ có số lượt khác nhau, so số đếm thô thì sai nghĩa
+    m["impacted_narrowed_pct"] = round(100.0 * m["impacted_narrowed"] / len(ran_imp), 1) if ran_imp else None
     for name, rs in (("impacted", imp), ("full", full)):
         m["suites_%s_listed" % name] = sum(len(r["suites"]) for r in rs)
         m["suites_%s_ran" % name] = sum(1 for r in rs for s in r["suites"] if ran(s))
@@ -168,7 +170,7 @@ def print_report(label, m, ignored, out):
 
 
 TABLE_KEYS = ("impacted_cli_n", "impacted_cli_p50_s", "impacted_cli_p90_s", "impacted_hook_n", "impacted_hook_p50_s",
-              "impacted_hook_p90_s", "impacted_narrowed", "suites_impacted_listed", "suites_impacted_ran", "first_green_pct", "full_merge_point",
+              "impacted_hook_p90_s", "impacted_narrowed_pct", "suites_impacted_listed", "suites_impacted_ran", "first_green_pct", "full_merge_point",
               "full_outside", "all01_n", "all01_p50_s", "all01_p90_s")
 
 

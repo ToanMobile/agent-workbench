@@ -79,5 +79,16 @@ for d in .merge-scratch-abc .integrate-scratch-abc .train-scratch-abc; do
   if [ -f "$R.ran" ]; then ok "$d: --full vẫn chạy suite"; else fail "$d: --full bị chặn nhầm ở điểm gộp (rc=$RC): $(printf '%s' "$OUT" | tail -3)"; fi
 done
 
+# đối chứng cho --force-full và POSTFIX_GATE_FULL=1 (OCR 27/10): ở điểm gộp chúng vẫn chạy suite, nên "từ chối" ở trên
+# không thể xanh chỉ vì gate sập hay lỗi tham số
+for args in "--force-full" "ENV:POSTFIX_GATE_FULL=1"; do
+  i=$((i + 1)); R="$TMP/wt/.merge-scratch-ctl$i"; make_repo "$R"
+  case "$args" in
+    ENV:*) ( export "${args#ENV:}"; gate "$R"; echo "$RC" > "$TMP/rc" ); RC="$(cat "$TMP/rc")" ;;
+    *) gate "$R" $args ;;
+  esac
+  if [ -f "$R.ran" ]; then ok ".merge-scratch-*: $args vẫn chạy suite"; else fail ".merge-scratch-*: $args không chạy suite (rc=$RC)"; fi
+done
+
 [ "$FAILS" = 0 ] && echo "PASS" || echo "FAIL: $FAILS"
 exit $(( FAILS > 0 ))

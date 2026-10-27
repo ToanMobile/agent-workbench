@@ -113,6 +113,8 @@ rc, out = run("--log", cur_path, "--baseline", base_path)
 chk(rc == 0 and re.search(r"^\| impacted_cli_p50_s \| 200\.0 \| 100\.0 \| -100\.0 \|$", out, re.M) is not None,
     "--baseline in bảng trước/sau với delta", out)
 chk(re.search(r"^\| first_green_pct \| 33\.3 \| 40\.0 \| 6\.7 \|$", out, re.M) is not None, "bảng có tỉ lệ xanh lần đầu", out)
+# OCR 27/10: số lượt thu hẹp so theo tỉ lệ (hai cửa sổ khác số lượt): baseline 1/5, current 1/8
+chk(re.search(r"^\| impacted_narrowed_pct \| 20\.0 \| 12\.5 \| -7\.5 \|$", out, re.M) is not None, "bảng so tỉ lệ thu hẹp, không so số đếm", out)
 
 rc, out = run("--log", os.path.join(TMP, "nope.jsonl"))
 chk(rc != 0 and "nope.jsonl" in out, "log không có thì exit khác 0 và nêu tên file", out)
@@ -126,6 +128,13 @@ if os.path.isfile(SCRIPT):
     err = p.stderr.decode("utf-8", "replace")
     chk(p.returncode != 0 and ("cannot read %s:" % TMP) in err and "missing-base" not in err and not p.stdout.strip(),
         "--log hỏng: lỗi nêu đúng --log, ra stderr", "rc=%s out=%r err=%r" % (p.returncode, p.stdout, err))
+    # chiều ngược lại: --log tốt, --baseline hỏng thì lỗi nêu --baseline
+    bad_base = os.path.join(TMP, "missing-base.jsonl")
+    p = subprocess.run([sys.executable, "-I", SCRIPT, "--log", cur_path, "--baseline", bad_base],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    err = p.stderr.decode("utf-8", "replace")
+    chk(p.returncode != 0 and ("cannot read %s:" % bad_base) in err and not p.stdout.strip(),
+        "--baseline hỏng: lỗi nêu đúng --baseline, stdout rỗng", "rc=%s out=%r err=%r" % (p.returncode, p.stdout[:200], err))
 else:
     chk(False, "--log hỏng: lỗi nêu đúng --log, ra stderr", "missing script")
 
