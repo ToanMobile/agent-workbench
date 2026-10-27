@@ -2,10 +2,10 @@
 # Regression test: hooks/testsourceset_gate.sh does not compile the test source sets on a stop that is only the middle of the work
 # (DevKit backlog #3; user 2026-10-10 "làm hết đi", the extension of Dot 11 that regression_gate already has: "chỉ test khi bàn giao").
 # 2026-10-09..10 measurement: 8 of 15 minutes of Stop-hook time after Dot 11 were this hook compiling on turns whose reply said
-# "CHƯA XONG". The skip is the work-in-progress rule of hooks/devkit_harness.py work_in_progress(): the reply's status line is
-# CHƯA XONG / CHỜ DUYỆT / BLOCKED / WIP, it claims no outcome (XONG, PASS, "đã fix" ...), and the turn ran no git push. Everything else
-# is compiled as before: a reply with no status line, XONG, an outcome claim, a push, DEVKIT_GATE_EVERY_STOP=1, or the switch
-# TESTSOURCESET_WIP_SKIP=0. The handover turn therefore still blocks a broken test source set. Fake ./gradlew only (it records its calls).
+# "CHƯA XONG". Since audit 2026-10-25 A5 the skip is regression_gate's own decision, hooks/devkit_harness.py mid_work(): the reply's status
+# line is CHƯA XONG / CHỜ DUYỆT / BLOCKED / WIP or absent, it claims no outcome (XONG, PASS, "đã fix" ...), and the turn ran no git push
+# after its last edit. Everything else is compiled as before: XONG, an outcome claim, a push as the last step, DEVKIT_GATE_EVERY_STOP=1,
+# or the switch TESTSOURCESET_WIP_SKIP=0. The handover turn therefore still blocks a broken test source set. Fake ./gradlew only (it records its calls).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 
@@ -80,8 +80,18 @@ stop "XONG
   || fail "(b) handover not blocked or midwork blocked (CHƯA XONG rc=$r1 calls=$c1; XONG rc=$r2 calls=$c2)"
 
 # (c) controls: replies that are NOT work in progress are compiled as before.
-new_repo; stop "Đã sửa file Foo." X=1
-[ "$RC" = 0 ] && [ "$(calls)" -ge 1 ] && ok "(c1) a reply with no status line is compiled" || fail "(c1) no-status reply skipped (calls=$(calls))"
+# Audit 2026-10-25 A5: the decision is regression_gate's (devkit_harness.mid_work), so a reply with NO status line that claims nothing is
+# the middle of the work too (it compiled on every such Stop: p90 22-25 s on OfficeReader / GeelyEx2). Real waiting replies from transcripts.
+new_repo; printf ':app:compileDebugUnitTestKotlin\n' > "$R/.broken"
+stop "Cổng \`--full\` đang chạy nền. Khi xong, nếu exit 0 tôi sẽ push, mở PR nháp và chuyển thẻ #137 sang QA." X=1; r1=$RC; c1="$(calls)"
+stop "CHƯA XONG — card #1 vẫn đang chờ gate lần 3." X=1; r2=$RC; c2="$(calls)"
+stop "XONG
+Đã sửa." X=1; r3=$RC; c3="$(calls)"
+[ "$r1" = 0 ] && [ "$c1" = 0 ] && [ "$r2" = 0 ] && [ "$c2" = 0 ] && [ "$r3" = 2 ] && [ "$c3" -ge 1 ] \
+  && ok "(c1) mid-task Stops (no status line, CHƯA XONG) skip the compile like regression_gate; the XONG handover compiles and blocks" \
+  || fail "(c1) mid-task/handover split wrong (no status rc=$r1 calls=$c1; CHƯA XONG rc=$r2 calls=$c2; XONG rc=$r3 calls=$c3)"
+new_repo; stop "Đã fix lỗi X, test pass." X=1
+[ "$RC" = 0 ] && [ "$(calls)" -ge 1 ] && ok "(c1b) a reply with no status line that claims an outcome is compiled" || fail "(c1b) no-status claim skipped (calls=$(calls))"
 new_repo; stop "XONG
 Xong việc." X=1
 [ "$RC" = 0 ] && [ "$(calls)" -ge 1 ] && ok "(c2) a XONG reply is compiled" || fail "(c2) XONG skipped (calls=$(calls))"
@@ -114,13 +124,18 @@ new_repo; stop "CHƯA XONG
 Đang sửa." DEVKIT_GATE_EVERY_STOP=1
 [ "$RC" = 0 ] && [ "$(calls)" -ge 1 ] && ok "(e2) DEVKIT_GATE_EVERY_STOP=1: compiled as before" || fail "(e2) every-stop switch ignored (calls=$(calls))"
 
-# (f) other statuses of the same family are work in progress too; a CHƯA XONG with no transcript is not decidable and is compiled.
+# (f) other statuses of the same family are work in progress too. A CHƯA XONG with no transcript (no push can be read from it) is the
+# middle of the work for regression_gate too (its rule for Gemini / Grok, A5: one decision): skipped and remembered; a XONG is compiled.
 new_repo; stop "CHỜ DUYỆT
 Cần bạn xem diff." X=1
 [ "$RC" = 0 ] && [ "$(calls)" = 0 ] && ok "(f1) CHỜ DUYỆT reply: no compile" || fail "(f1) CHỜ DUYỆT compiled (calls=$(calls))"
 new_repo; rm -f "$R/.transcript.jsonl"; stop "CHƯA XONG
-Đang sửa." X=1
-[ "$RC" = 0 ] && [ "$(calls)" -ge 1 ] && ok "(f2) no transcript: not decidable, compiled" || fail "(f2) no-transcript stop skipped (calls=$(calls))"
+Đang sửa." X=1; c1="$(calls)"
+[ "$RC" = 0 ] && [ "$c1" = 0 ] && [ -s "$R/.claude/audit-gate/.testsourceset_skipped_tss-wip-$N" ] \
+  && ok "(f2) no transcript, CHƯA XONG: mid-work as regression_gate reads it, the files are remembered" || fail "(f2) no-transcript mid-work stop (calls=$c1)"
+stop "XONG
+Đã sửa." X=1
+[ "$RC" = 0 ] && [ "$(calls)" -ge 1 ] && ok "(f3) no transcript, XONG: compiled" || fail "(f3) no-transcript handover skipped (calls=$(calls))"
 
 # (g) a payload that is not JSON cannot declare anything: the skip logic fails closed (compiled), never open.
 new_repo; printf 'not json at all' | CLAUDE_PROJECT_DIR="$R" bash "$GATE" >/dev/null 2>&1; RC=$?

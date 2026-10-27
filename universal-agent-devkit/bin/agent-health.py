@@ -243,11 +243,12 @@ def git_gate_wiring(target: Path, score: Score):
                                   "No pre-commit hook: commits skip the static checks (agent-kit githooks install)"), warn_only=True)
 
 
-# A script a hook command runs from the project: a path after $CLAUDE_PROJECT_DIR / ${CLAUDE_PROJECT_DIR:-…}
+# A script a hook command runs from the project: a path after $CLAUDE_PROJECT_DIR / ${CLAUDE_PROJECT_DIR:-…} / $PWD
 # (`bash "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/x.sh"`, `python3 "$CLAUDE_PROJECT_DIR"/universal-agent-devkit/hooks/x.py`),
-# or a bare .claude/hooks/ or .agents/devkit/ path (`cd "$CLAUDE_PROJECT_DIR" && python3 .claude/hooks/x.py`).
-HOOK_PATH_RX = re.compile(r"""(?:\$\{CLAUDE_PROJECT_DIR[^}]*\}|\$CLAUDE_PROJECT_DIR)["']?/([\w.-]+(?:/[\w.-]+)*)"""
-                          r"""|(?:^|[\s"'])((?:\.claude/hooks|\.agents/devkit)/[\w.-]+(?:/[\w.-]+)*)""")
+# or a bare or ./ .claude/hooks/ or .agents/devkit/ path (`cd "$CLAUDE_PROJECT_DIR" && python3 .claude/hooks/x.py`).
+# Not $HOME/.claude/hooks or ~/.claude/hooks: user-level hooks are not files of the project.
+HOOK_PATH_RX = re.compile(r"""(?:\$\{CLAUDE_PROJECT_DIR[^}]*\}|\$CLAUDE_PROJECT_DIR|\$\{PWD\}|\$PWD)["']?/([\w.-]+(?:/[\w.-]+)*)"""
+                          r"""|(?:^|[\s"'])(?:\./)?((?:\.claude/hooks|\.agents/devkit)/[\w.-]+(?:/[\w.-]+)*)""")
 # Only a script counts: `>> "$CLAUDE_PROJECT_DIR/.claude/hook.log"` names a file the hook writes, not one it needs.
 HOOK_SCRIPT_EXTS = (".sh", ".bash", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl")
 
@@ -360,6 +361,35 @@ def project_wiring(target: Path, score: Score):
     score.check(not leaked, tr("Không có link DevKit (đường dẫn máy này) lọt vào `git status`", "No DevKit link (this machine's paths) shows up in `git status`"),
                 tr(f"{len(leaked)} link DevKit chưa bị loại khỏi git (chạy lại agent-kit init): {leaked[:3]}",
                    f"{len(leaked)} DevKit links not excluded from git (re-run agent-kit init): {leaked[:3]}"), warn_only=True)
+
+
+def merge_queue_canary(target: Path) -> None:
+    """Pha 2 lớp 3: config board bật merge_queue mà canary 24 h ĐỎ → một dòng WARN. Chỉ in: không chấm điểm (không đổi exit
+    của REG-WB-CONFIG-01), không gọi gh (chỉ luật theo runs.jsonl), không tạo thẻ (thẻ do nightly.py tạo)."""
+    import time
+    bin_dir = str(Path(__file__).resolve().parent)
+    if bin_dir not in sys.path:   # main() gọi qua import (không phải chạy file): bin/ chưa nằm trong sys.path
+        sys.path.insert(0, bin_dir)
+    try:
+        import batch_canary
+    except ImportError as e:   # kit cài thiếu bin/batch_canary.py: health vẫn chạy hết
+        print(f"agent-health: batch canary skipped: {e}", file=sys.stderr)
+        return
+    try:
+        configs = batch_canary.enabled_configs(target)
+        if not configs:
+            return
+        runs = batch_canary.runs_path(target)
+        if runs is None or not runs.is_file():
+            return
+        since = max([time.time() - 24 * 3600] + [s for _c, s in configs])
+        red, summary, reasons = batch_canary.check(runs, since)
+    except (OSError, batch_canary.CanaryError) as e:
+        print(f"agent-health: batch canary skipped: {e}", file=sys.stderr)
+        return
+    if red:
+        warn(tr(f"batch canary 24 h ĐỎ (merge_queue bật): {summary} — {'; '.join(reasons)}",
+                f"batch canary 24 h RED (merge_queue on): {summary} — {'; '.join(reasons)}"))
 
 
 def main(argv=None):
@@ -516,6 +546,7 @@ def main(argv=None):
     if target.resolve() != BASE_DIR.resolve():
         section(tr("[+] Dây nối trong dự án (hook, import, ma trận, git)", "[+] Project wiring (hooks, imports, matrix, git)"))
         project_wiring(target, score)
+        merge_queue_canary(target)
 
     section(tr("[6/6] MCP & Ma trận hồi quy", "[6/6] MCP & regression matrix"))
     mcps, sources = configured_mcps(target)

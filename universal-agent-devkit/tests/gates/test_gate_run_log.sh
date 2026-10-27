@@ -197,8 +197,8 @@ MATRIX_FILE = "matrix.json"
 POISON_N = [0]   # unique repo names for the case helpers
 
 
-def make_repo(name, suite_a="exit 0", impacted=False, same_cmd=False, extra_suites=0):
-    """A repo (basename pj-<name>) whose rule watches src/* and docs/*, with two fast suites; HEAD is clean."""
+def make_repo(name, suite_a="exit 0", impacted=False, same_cmd=False, extra_suites=0, tail=()):
+    """A repo (basename pj-<name>) whose rule watches src/* and docs/*, with two fast suites; HEAD is clean. tail: more test dicts, last."""
     root = os.path.join(TMP, name, "pj-" + name)
     os.makedirs(root)
     git(root, "init", "-q", ".")
@@ -214,6 +214,7 @@ def make_repo(name, suite_a="exit 0", impacted=False, same_cmd=False, extra_suit
     if impacted:
         a["impacted_command"] = "sh a.sh {pytest_nodes}"
     tests = [a, b] + [{"id": "REG-EXTRA-%03d-%s" % (i, "x" * 20), "name": "extra %d" % i, "command": "sh b.sh # %d" % i} for i in range(extra_suites)]
+    tests += list(tail)
     put(root + "/" + MATRIX_FILE, json.dumps({"project": "t", "rules": [
         {"component": "App", "watch_files": ["src/*", "docs/*"], "mandatory_regression_tests": tests}]}))
     git(root, "add", "-A")
@@ -355,7 +356,8 @@ def check_fields(label, r, j=None):
             "reused_full_pass", "n_changed", "n_docs", "docs_only", "no_test_only", "suites", "suites_wall_s",
             "total_wall_s", "force_full", "impacted_run")
     missing = [k for k in keys if k not in r]
-    extra = [k for k in r if k not in keys and k not in ("suites_cut", "steps")]   # steps: seconds per phase, additive (tests/gates/test_gate_run_steps.sh pins its shape)
+    # steps: seconds per phase, additive (tests/gates/test_gate_run_steps.sh pins its shape); suites_reused / slot_wait_s: additive (B9 25/10)
+    extra = [k for k in r if k not in keys and k not in ("suites_cut", "steps", "suites_reused", "slot_wait_s")]
     chk(not missing and not extra and r.get("v") == 1, "%s: line has every field and no other (n_code is gone: it read the profile), v=1" % label,
         "missing %s extra %s in %s" % (missing, extra, r))
     chk(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", str(r.get("ts"))) and abs(time.time() - r.get("epoch", 0)) < 600,
@@ -415,8 +417,10 @@ root = make_repo("dup", same_cmd=True)
 edit(root, "docs/guide.md")
 rc, out, err = run_gate(root, ["--run-tests", "--full", "--no-cache"])
 recs = read_log(root)
-chk(len(recs) == 1 and [s[0] for s in recs[0]["suites"]] == ["REG-A", "REG-B"] and recs[0]["suites"][0][2] is not None and recs[0]["suites"][1][2] is None,
-    "two suites with one command: seconds only on the one that ran", repr(recs))
+# B9 (25/10): only suites that really ran or did not PASS are listed; REG-B (PASS on REG-A's run) is counted in suites_reused
+chk(len(recs) == 1 and [s[0] for s in recs[0]["suites"]] == ["REG-A"] and recs[0]["suites"][0][2] is not None
+    and recs[0].get("suites_reused") == 1,
+    "two suites with one command: seconds only on the one that ran, the other counted as reused", repr(recs))
 
 # a linked worktree: its runs go to the COMMON dir's log (they survive the worktree's removal), not to the worktree's own git dir
 root = make_repo("wtmain")
@@ -442,6 +446,48 @@ except (OSError, ValueError):
 chk(rc == 0 and len(recs) == 1 and len(raw) <= 3000 and recs[0].get("suites_cut") is True and 0 < len(recs[0]["suites"]) < 102
     and recs[0]["n_changed"] == 1 and recs[0]["verdict"] == "PASS", "102 suites: the line is cut to <= 3000 bytes (suites_cut), still one valid line",
     "rc %s lines %d bytes %d keys %s" % (rc, len(recs), len(raw), sorted(recs[0])[:6] if recs else None))
+
+# B9 (audit 25/10): runs.jsonl kept only ~54 h in agent-workbench — every line listed every suite (~2.1 KB) and the cut halved the list
+# from its END, where REG-DK-ALL-01 runs (DIFF_DEPENDENT last, audit B1): it was dropped in about half the runs. 60 suites, the slowest
+# last: (1) all run (--no-cache): the line stays <= 3000 B and keeps REG-DK-ALL-01 (the cut drops the shortest PASS first); (2) the same
+# content again: every suite re-used, the line lists none of them and counts them (suites_reused), far below the cap.
+sys.path.insert(0, os.path.join(KIT, "scripts", "governance"))
+import gate_runs_report as _report
+root = make_repo("sixty", extra_suites=57, tail=[{"id": "REG-DK-ALL-01", "name": "slow tail", "command": "sleep 0.5"}])
+edit(root, "docs/guide.md")
+rc, out, err = run_gate(root, ["--run-tests", "--full", "--no-cache"])
+recs = read_log(root)
+raw = open(log_path(root), "rb").read() if recs else b""
+ids = [s[0] for s in recs[0]["suites"]] if recs else []
+chk(rc == 0 and len(recs) == 1 and len(raw) <= 3000 and "REG-DK-ALL-01" in ids and recs[0].get("suites_cut") is True
+    and _report.parse_line(raw.decode().strip(), time.time()) is not None,
+    "60 suites all run: line <= 3000 B, REG-DK-ALL-01 (slowest, last) kept by the cut, gate_runs_report reads it",
+    "rc %s lines %d bytes %d has_all %s" % (rc, len(recs), len(raw), "REG-DK-ALL-01" in ids))
+rc2, out2, err2 = run_gate(root, ["--run-tests", "--full"])
+rc3, out3, err3 = run_gate(root, ["--run-tests", "--full"])   # the first cached run may still run what --no-cache never recorded
+recs = read_log(root)
+last = open(log_path(root), "rb").read().splitlines()[-1] if recs else b""
+chk(rc3 == 0 and recs and recs[-1]["verdict"] == "REUSED" and recs[-1]["suites"] == [] and recs[-1].get("suites_reused") == 60
+    and len(last) < 1200 and _report.parse_line(last.decode(), time.time()) is not None,
+    "60 suites all re-used: no suite listed, suites_reused 60, a short line gate_runs_report reads",
+    "rc %s %s bytes %d last %r" % (rc3, [(r["verdict"], len(r["suites"]), r.get("suites_reused")) for r in recs], len(last), last[:300]))
+
+# B9: heavy-slot WAIT seconds are logged per suite (slot_wait_s {id: seconds}, waits only). Load read from a file above the threshold, a
+# 1 s cap on the wait: the first suite waits ~1 s then runs (later suites of a run that started do not wait again, #338). The parent gate
+# may run this test as an admitted suite (DEVKIT_SLOT_ADVISORY_HELD=1): those flags are cleared so the nested gate waits for real.
+root = make_repo("slotwait")
+edit(root, "docs/guide.md")
+put(os.path.join(TMP, "slotwait", "load"), "99999\n")
+os.makedirs(os.path.join(TMP, "slotwait", "slots"), exist_ok=True)
+rc, out, err = run_gate(root, ["--run-tests", "--full", "--no-cache"], {
+    "DEVKIT_SLOT_LOAD_FILE": os.path.join(TMP, "slotwait", "load"), "DEVKIT_SLOT_LOAD_WAIT_S": "1", "SB_HEAVY_SLOT_POLL_S": "0.1",
+    "SB_HEAVY_SLOT_DIR": os.path.join(TMP, "slotwait", "slots"), "SB_HEAVY_SLOT_HELD": "", "DEVKIT_SLOT_ADVISORY_HELD": "",
+    "DEVKIT_SLOT_ADVISORY_BUDGET_S": "", "SB_HEAVY_SLOT_WAIT_S": "", "DEVKIT_SLOT_PRIORITY": "", "DEVKIT_SLOT_LOAD_MAX": ""})
+recs = read_log(root)
+w = (recs[0].get("slot_wait_s") if recs else None) or {}
+chk(rc == 0 and len(recs) == 1 and isinstance(w, dict) and 0.5 <= sum(w.values()) <= 30 and set(w) <= {"REG-A", "REG-B"}
+    and _report.parse_line(open(log_path(root), "rb").read().decode().strip(), time.time()) is not None,
+    "a slot wait is logged: slot_wait_s holds the waiting suite's seconds", "rc %s slot_wait_s %r" % (rc, w))
 
 # the log call itself: no lock, no subprocess, nothing printed (a guard around it; a violation or an error leaves a marker or no line)
 LAUNCHER_GUARD = os.path.join(TMP, "launcher_guard.py")
@@ -585,17 +631,19 @@ if recs:
 root = make_repo("deferred")
 edit(root, "docs/guide.md")
 subprocess.run([PY, SESSION_LOCK, "--register", "--session", "S2", root], check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
-r0, r1, _ = same_as_off("deferred --full", root, ["--run-tests", "--full", "--session", "S1", "--json"])
+# T0061 Pha 1 (hợp đồng mới): --full không còn bị hoãn khi có phiên anh em (S2 còn đăng ký): nó chạy như mọi --full. Trường "deferred"
+# của runs.jsonl vẫn còn và là False. same_as_off chạy hai lần trên cùng nội dung: --no-cache để hai lượt cùng chạy suite thật (cùng byte).
+r0, r1, _ = same_as_off("--full with a sibling session", root, ["--run-tests", "--full", "--no-cache", "--session", "S1", "--json"])
 recs = read_log(root)
-chk(r1[0] == 5 and len(recs) == 1 and recs[0]["verdict"] == "DEFERRED" and recs[0]["deferred"] is True and recs[0]["exit"] == 5
-    and recs[0].get("exit_reason") == "deferred"
+chk(r1[0] == 0 and len(recs) == 1 and recs[0]["verdict"] in ("PASS", "REUSED") and recs[0]["deferred"] is False and recs[0]["exit"] == 0
+    and recs[0].get("exit_reason") in ("pass", "reused")
     and recs[0]["mode"] == "full" and recs[0]["source"] == "hook",
-    "deferred --full: exit 5 kept, verdict DEFERRED, exit_reason deferred, mode full", repr(recs))
-r0, r1, _ = same_as_off("deferred by POSTFIX_GATE_FULL=1 (the Stop hook)", root, ["--run-tests", "--session", "S1"], {"POSTFIX_GATE_FULL": "1"})
+    "--full with a sibling session: no longer deferred, exit 0, verdict PASS/REUSED, deferred false, mode full", repr(recs))
+r0, r1, _ = same_as_off("POSTFIX_GATE_FULL=1 with a sibling session (the Stop hook)", root, ["--run-tests", "--session", "S1"], {"POSTFIX_GATE_FULL": "1"})
 recs = read_log(root)
-chk(r1[0] == 0 and len(recs) == 2 and recs[-1]["verdict"] == "DEFERRED" and recs[-1]["exit"] == 0 and recs[-1]["deferred"] is True
-    and recs[-1].get("exit_reason") == "deferred",
-    "deferred without --full: exit 0 kept, verdict DEFERRED, exit_reason deferred", repr(recs[-1:]))
+chk(r1[0] == 0 and len(recs) == 2 and recs[-1]["verdict"] in ("PASS", "REUSED") and recs[-1]["exit"] == 0 and recs[-1]["deferred"] is False
+    and recs[-1].get("exit_reason") in ("pass", "reused"),
+    "POSTFIX_GATE_FULL=1 with a sibling session: not deferred, exit 0, deferred false", repr(recs[-1:]))
 
 root = make_repo("reused")
 edit(root, "docs/guide.md")
@@ -605,7 +653,7 @@ recs = read_log(root)
 chk(rc1 == 0 and rc2 == 0 and len(recs) == 2 and recs[0]["verdict"] == "PASS" and recs[1]["verdict"] == "REUSED"
     and recs[0].get("exit_reason") == "pass" and recs[1].get("exit_reason") == "reused"
     and recs[0].get("fp") == recs[1].get("fp") and re.fullmatch(r"[0-9a-f]{24}", str(recs[0].get("fp") or ""))
-    and recs[1]["reused_full_pass"] is True and all(s[2] is None for s in recs[1]["suites"]) and recs[1]["suites"]
+    and recs[1]["reused_full_pass"] is True and recs[1]["suites"] == [] and recs[1].get("suites_reused") == 2
     and recs[1]["suites_wall_s"] == 0,
     "second --full of the same content: verdict REUSED, same fp, exit_reason reused, no suite seconds", repr(recs))
 

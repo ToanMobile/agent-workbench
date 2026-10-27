@@ -147,21 +147,31 @@ b=$(runs); out="$(run_gate "$TMP/wt-q7")"; rc=$?
 check "7. worktree mới sau FAIL: không mượn được, chạy suite" 0 1 no "$b" "$rc" "$out"
 rm_wt wt-q7
 
-# 8. FAIL ở lượt --full BỊ HOÃN vì phiên khác đang chạy (lệnh của lane QA: không --force-full): lượt đó không qua write_full_pass_receipt, nên mục
-#    store của cây chỉ bị xoá bởi nhánh "FAIL xoá mục store" cạnh drop_budget_record (review 22/10, P2; mutant bỏ nhánh đó → ca này ĐỎ).
+# 8. FAIL ở lượt IMPACTED (suite chạy impacted_command, không --full). T0061 Pha 1: --full không còn bị hoãn vì phiên khác; tiền đề cũ là
+#    lượt --full bị hoãn, đi đúng nhánh này. Lượt impacted không qua write_full_pass_receipt, nên mục store của cây chỉ bị xoá bởi nhánh
+#    "FAIL xoá mục store" cạnh drop_budget_record (review 22/10, P2; mutant bỏ nhánh đó → ca này ĐỎ). Ma trận riêng của ca (ngoài cây) có
+#    impacted_command chọn được test pytest; hai commit của ca bị bỏ ở cuối để các ca sau đứng đúng HEAD cũ.
 wipe
+M8="$TMP/matrix8.json"
+cat > "$M8" <<JSON
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"echo run >> '$COUNT'; test ! -f .hong",
+  "impacted_command":": {pytest_nodes}; echo run >> '$COUNT'; test ! -f .hong"}]}]}
+JSON
+mkdir -p "$R/tests" && printf 'def ok():\n    return 1\n' > "$R/src/x.py" && printf 'from src.x import ok\n\ndef test_ok():\n    assert ok()\n' > "$R/tests/test_x.py" \
+  && git -C "$R" add src/x.py tests/test_x.py && git -C "$R" commit -qm "case 8 base" && printf 'def ok():\n    return 2\n' > "$R/src/x.py" \
+  && git -C "$R" commit -qam "case 8 change" || fail "8. setup: commit"
 add_wt wt-b8
-out="$(run_gate "$TMP/wt-b8" --no-cache)"; rm_wt wt-b8
-[ -n "$(store_file)" ] || fail "8. tiền đề: không có mục store"
+out="$(run_gate "$TMP/wt-b8" --no-cache --matrix "$M8")"; rm_wt wt-b8
+[ -n "$(store_file)" ] || fail "8. tiền đề: không có mục store ($(printf '%s' "$out" | tail -3 | tr '\n' ' '))"
 add_wt wt-f8
 touch "$TMP/wt-f8/.hong"
-python3 "$DEVKIT_DIR/bin/session_lock.py" --register --session S2 "$TMP/wt-f8" >/dev/null 2>&1 || fail "8. setup: không đăng ký được phiên S2"
-b=$(runs); out="$(cd "$TMP/wt-f8" && env -u CI FLAKY_RETRY=0 CLAUDE_PROJECT_DIR="$TMP/wt-f8" python3 "$GATE" --matrix "$TMP/wt-f8/matrix.json" --run-tests --full --session S1 --diff HEAD~1 --no-cache 2>&1)"; rc=$?
-printf '%s\n' "$out" | grep -q "hoãn --full" && echo "✔ 8. tiền đề: --full bị hoãn vì phiên khác" || fail "8. tiền đề: --full không bị hoãn (không đi qua nhánh cần test)"
-check "8. tiền đề: lượt bị hoãn FAIL thật" 1 1 no "$b" "$rc" "$out"
-[ -z "$(store_file)" ] && echo "✔ 8. FAIL ở lượt --full bị hoãn xoá mục store của cây" || fail "8. mục store còn lại sau FAIL của lượt bị hoãn"
-python3 "$DEVKIT_DIR/bin/session_lock.py" --unregister --session S2 "$TMP/wt-f8" >/dev/null 2>&1   # S2 không được tính là phiên sống ở ca sau
+b=$(runs); out="$(cd "$TMP/wt-f8" && env -u CI FLAKY_RETRY=0 CLAUDE_PROJECT_DIR="$TMP/wt-f8" python3 "$GATE" --matrix "$M8" --run-tests --session S1 --diff HEAD~1 --no-cache 2>&1)"; rc=$?
+printf '%s\n' "$out" | grep -q "tests/test_x.py" && echo "✔ 8. tiền đề: suite chạy impacted_command (chọn tests/test_x.py)" || fail "8. tiền đề: suite không chạy impacted (không đi qua nhánh cần test)"
+check "8. tiền đề: lượt impacted FAIL thật" 1 1 no "$b" "$rc" "$out"
+[ -z "$(store_file)" ] && echo "✔ 8. FAIL ở lượt impacted xoá mục store của cây" || fail "8. mục store còn lại sau FAIL của lượt impacted"
 rm_wt wt-f8
+git -C "$R" reset -q --hard HEAD~2 && rm -rf "$R/tests" || fail "8. setup: bỏ hai commit của ca"
 
 # 9. Chỉ lượt --full cưỡng bức trong git dir CHƯA từng chạy gate đọc store (header): lượt không --full (Stop-hook) và worktree đã từng chạy
 #    không mượn; mục store là symlink cũng không.

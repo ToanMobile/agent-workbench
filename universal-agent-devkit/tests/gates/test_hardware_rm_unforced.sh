@@ -60,4 +60,43 @@ check 0 'rm -r /tmp/devkit-unforced-x'
 check 0 'find . -name __pycache__ -exec rm -r {} +'
 check 0 'rm -f notes.txt'
 
+# Review of A7 (25/10): a link in the project to the home folder — with a trailing slash rm deletes the home folder's contents
+ln -s "$H" "$P/hl"
+check 2 'rm -r hl/'
+check 0 'rm -r hl'                        # no trailing slash: the link only
+mkdir -p "$P/build/real" && ln -s "$H" "$P/build/hl"
+check 2 'rm -r build/*/'                  # a glob match through the link: the home folder
+check 0 'rm -r build/*'
+
+# Principal review round 2 (25/10). B1: `~` of an unquoted assignment is expanded by bash; the hook read `$D` as `<cwd>/~`.
+check 2 'D=~; rm -r "$D"'
+check 0 'D=~/cache; rm -r "$D"'
+# B3: the project root or the home folder in another case (APFS): compared by inode, not by spelling
+if [ -d "$TMP/work/PROJ" ]; then
+  check 2 "rm -r $TMP/work/PROJ"
+  check 2 "rm -r $TMP/HOME"
+else
+  echo "skip B3: this filesystem is case-sensitive"
+fi
+# OCR round 3 (25/10), H3: rm -r (no -f) of a glob that can leave its folder, with more than 2000 matches: only 2000 were read, a link to
+# the home folder after them was never judged. Refused now as with -f; a glob in the last name only is not walked (allowed as before).
+mkdir -p "$P/many" && ( cd "$P/many" && mkdir d{1..2100} )
+check 2 'rm -r many/*/'
+check 0 'rm -r many/*'
+# OCR final check (25/10): the zsh-qualifier marker of 6bf699e8 stuck to the word, and without -f the word was no longer judged: `rm -r ~(N)`
+# (zsh: the home folder, N = no error when nothing matches) passed. Without -f the word before the qualifier is judged, as before.
+check 2 'rm -r ~(N)'
+check 2 'rm -r /(N)'
+check 2 'rm -r .(N)'
+check 2 'rm -r ..(N)'
+check 2 'rm -r ~/(N)'
+check 2 'rm -R ~(:a)'
+check 2 'rm -r "$HOME"(N)'
+check 2 'rm -r -- ~(N)'
+check 2 'sudo rm -r /(N)'
+check 2 "bash -c 'rm -r ~(N)'"
+check 2 'rsync -a --delete src/ ~(N)'
+check 2 "cd /(N) && rm -r ${TMP#/}"                       # cd to / through a qualifier, then a folder that holds the project
+check 0 'rm -r src(N)'                                    # control: a top-level folder, allowed without -f as before
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_hardware_rm_unforced: all passed" || { echo "❌ test_hardware_rm_unforced: $FAILS failed"; exit 1; }

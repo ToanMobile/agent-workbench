@@ -414,3 +414,28 @@
 77 tests/gates/test_evidence_false_blocks.sh
 # 2026-10-26: git output với byte không phải UTF-8 (worktree.py _run surrogateescape).
 2 tests/worktree_git/test_worktree_nonutf8_output.sh
+# 2026-10-25 (review mục B4): 5 test kit chưa có dòng nào — heavy_slot.selection_seconds coi cả tập run_impacted là "không biết" ⇒ cpu;
+# đo mỗi bài một lần, chạy một mình, máy tải 36-43 (12 nhân).
+40 tests/gates/test_gate_auto_tree_receipt.sh
+14 tests/worktree_git/test_worktree_remove_origin_safe.sh
+4 tests/gates/test_gate_diff_merge_base.sh
+2 hooks/tests/test_git_guard_ansi_c_quote.sh
+2 tests/worktree_git/test_worktree_git241_attr_source.sh
+# 2026-10-26 (audit B2): sổ PASS theo từng test của run_impacted.sh; đo một lần, chạy một mình, máy đang tải.
+54 tests/gates/test_gate_per_test_cache.sh
+# 2026-10-26: gc --merged (U2) và các bản sửa review F2-F4/P3 (đo 32-84 s tuỳ tải máy).
+45 tests/worktree_git/test_worktree_gc_merged.sh
+# 2026-10-26: textconv lossy làm thay đổi nhị phân vô hình với show / diff của worktree.py (OCR review).
+3 tests/worktree_git/test_worktree_textconv.sh
+# 2026-10-26: lỗ dư #427 (đo một mình, máy tải cao: chỉ để xếp thứ tự).
+19 tests/gates/test_gate_per_test_cache_integrity.sh
+25 tests/gates/test_session_lock_issue427.sh
+3 tests/gates/test_hardware_issue427.sh
+6 tests/verification/test_evidence_issue427.sh
+8 tests/worktree_git/test_relink_prune.sh
+# 2026-10-27: #427 vòng 2 (đo một mình hoặc theo báo cáo lane, máy tải: chỉ để xếp thứ tự).
+10 tests/verification/test_evidence_backlog427.sh
+21 tests/gates/test_hardware_backlog427.sh
+30 tests/gates/test_session_lock_backlog427.sh
+19 tests/context_memory/test_session_context_gc_symlink.sh
+3 tests/worktree_git/test_worktree_gc_symlink_home.sh

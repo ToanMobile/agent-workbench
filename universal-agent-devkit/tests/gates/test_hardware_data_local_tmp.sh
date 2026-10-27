@@ -49,5 +49,9 @@ check 2 'adb shell rm -rf /data/data/com.example.app'
 check 2 'adb shell "rm -rf /data/local/tmp/x /data/app"'
 check 2 'adb shell "rm -rf /data/local/tmp/x; rm -rf /system/*"'
 check 2 'adb shell rm -rf /data/*'
+# OCR final check (25/10): a ( glued to the target (a zsh qualifier on the host) marked the word, and `/system__ZSH…` no longer read as
+# /system on the device: the marker is dropped before the remote target is judged
+check 2 "adb shell 'rm -rf /system(N)'"
+check 2 "adb shell 'rm -rf /(N)'"
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

@@ -679,6 +679,86 @@ else
 fi
 for s in rf_sb rc_sb; do python3 "$SCRIPT" cleanup --name "$s" --force >/dev/null 2>&1; done
 
+# Test U1 (audit 2026-10-25 D/U1): in trunk mode main moves only through `agent-kit worktree finish` (its merge gate, then a fast-forward).
+# merge-winner run from the MAIN checkout merged the sandbox branch straight into main: no gate, the one door trunk mode forbids. It now
+# hands the sandbox to `worktree.py finish` (the setup files create_sandbox wrote are put aside for that run). Run from a session worktree
+# (Test 10) it merges into that worktree's HEAD as before; with trunk mode off the old direct merge stays.
+Q="$TMP/u1-repo"; mkdir -p "$Q/.agents" && cd "$Q" || exit 1
+git init -q . && git symbolic-ref HEAD refs/heads/main && git config user.email t@t && git config user.name t
+echo "hello" > README.md; printf '.env\n' > .worktreeinclude; echo "K=1" > .env
+cat > .agents/regression_matrix.active.json <<'JSON'
+{"project":"t","adopted":true,"rules":[{"component":"Red","watch_files":["red.txt"],
+ "mandatory_regression_tests":[{"id":"REG-RED","name":"red on red.txt","command":"exit 1"}]}]}
+JSON
+git add README.md .worktreeinclude .agents && git commit -qm init
+python3 "$SCRIPT" create u1_red >/dev/null 2>&1
+( cd "$Q/.sandboxes/u1_red" && echo r > red.txt && git add red.txt && git commit -qm "feat: red" )
+if U1R_OUT=$(python3 "$SCRIPT" merge-winner u1_red 2>&1); then U1R_RC=0; else U1R_RC=1; fi
+if [ "$U1R_RC" -ne 0 ] && [ ! -f "$Q/red.txt" ] && [ -d "$Q/.sandboxes/u1_red" ] && [ -f "$Q/.sandboxes/u1_red/.sandbox-env.sh" ] \
+   && [ -f "$Q/.sandboxes/u1_red/.env" ] && git -C "$Q" rev-parse --verify -q sandbox/u1_red >/dev/null; then
+  ok "U1 trunk mode: merge-winner from main goes through worktree finish — its merge gate is red, main unchanged, the sandbox kept whole"
+else
+  fail "U1 trunk mode: merge-winner moved main past the merge gate (rc=$U1R_RC, red.txt in main: $([ -f "$Q/red.txt" ] && echo yes || echo no)): $U1R_OUT"
+fi
+if U1S_OUT=$(python3 "$SCRIPT" merge-winner u1_red --squash 2>&1); then U1S_RC=0; else U1S_RC=1; fi
+[ "$U1S_RC" -ne 0 ] && [ ! -f "$Q/red.txt" ] && [ -z "$(git -C "$Q" diff --cached --name-only)" ] \
+  && ok "U1 trunk mode: --squash (finish never squashes) is refused before anything moves" || fail "U1 --squash in trunk mode (rc=$U1S_RC): $U1S_OUT"
+python3 "$SCRIPT" create u1_ok >/dev/null 2>&1
+( cd "$Q/.sandboxes/u1_ok" && echo ok > ok.txt && git add ok.txt && git commit -qm "feat: ok" )
+U1K_OUT=$(python3 "$SCRIPT" merge-winner u1_ok 2>&1)
+if [ -f "$Q/ok.txt" ] && [ ! -d "$Q/.sandboxes/u1_ok" ] && ! git -C "$Q" rev-parse --verify -q sandbox/u1_ok >/dev/null \
+   && echo "$U1K_OUT" | grep -q "worktree finish" && echo "$U1K_OUT" | grep -q "🎉"; then
+  ok "U1 trunk mode: a green winner reaches main through worktree finish, sandbox and branch removed"
+else
+  fail "U1 trunk mode: green winner not merged/cleaned through finish: $U1K_OUT"
+fi
+U1O_OUT=$(WORKTREE_TRUNK_MODE=0 python3 "$SCRIPT" merge-winner u1_red 2>&1)
+[ -f "$Q/red.txt" ] && [ ! -d "$Q/.sandboxes/u1_red" ] && ok "U1 trunk mode off (WORKTREE_TRUNK_MODE=0): the old direct merge stays" \
+  || fail "U1 trunk mode off: direct merge lost: $U1O_OUT"
+# Review of U1 (25/10): what matters is the BRANCH merge-winner moves, not the checkout it runs from. (a) The main checkout detached, a
+# linked worktree on main: merge-winner from there merged straight into main, past the red gate. (b) The main checkout on `feat` (not the
+# trunk): finish refused it, where merge-winner merges into feat as before trunk mode. (c) No trunk branch can be told (no origin/HEAD, no
+# main/master/trunk): the main checkout is the trunk, as finish judges it — through finish, as before.
+red_matrix() { printf '%s\n' '{"project":"t","adopted":true,"rules":[{"component":"Red","watch_files":["red.txt"],' \
+  ' "mandatory_regression_tests":[{"id":"REG-RED","name":"red on red.txt","command":"exit 1"}]}]}' > "$1/.agents/regression_matrix.active.json"; }
+QB="$TMP/u1b-repo"; mkdir -p "$QB/.agents" && cd "$QB" || exit 1
+git init -q . && git symbolic-ref HEAD refs/heads/main && git config user.email t@t && git config user.name t
+echo hello > README.md; red_matrix "$QB"; git add -A && git commit -qm init
+git checkout -q --detach && git worktree add -q "$TMP/u1b-wt" main && cd "$TMP/u1b-wt" || exit 1
+U1B_MAIN="$(git rev-parse main)"
+python3 "$SCRIPT" create u1b >/dev/null 2>&1
+( cd "$TMP/u1b-wt/.sandboxes/u1b" && echo r > red.txt && git add red.txt && git commit -qm "feat: red" )
+if U1B_OUT=$(python3 "$SCRIPT" merge-winner u1b 2>&1); then U1B_RC=0; else U1B_RC=1; fi
+if [ "$U1B_RC" -ne 0 ] && [ "$(git rev-parse main)" = "$U1B_MAIN" ] && ! git cat-file -e main:red.txt 2>/dev/null && [ -d "$TMP/u1b-wt/.sandboxes/u1b" ]; then
+  ok "U1 (a): merge-winner from a linked worktree on main goes through worktree finish too — main unchanged, sandbox kept"
+else
+  fail "U1 (a): merge-winner from a linked worktree on main moved main past the gate (rc=$U1B_RC): $U1B_OUT"
+fi
+QC="$TMP/u1c-repo"; mkdir -p "$QC/.agents" && cd "$QC" || exit 1
+git init -q . && git symbolic-ref HEAD refs/heads/main && git config user.email t@t && git config user.name t
+echo hello > README.md; printf '%s\n' '{"project":"t","adopted":true,"rules":[]}' > .agents/regression_matrix.active.json; git add -A && git commit -qm init
+git checkout -q -b feat && echo f > feat.txt && git add feat.txt && git commit -qm feat
+U1C_MAIN="$(git rev-parse main)"
+python3 "$SCRIPT" create u1c >/dev/null 2>&1
+( cd "$QC/.sandboxes/u1c" && echo ok > ok.txt && git add ok.txt && git commit -qm "feat: ok" )
+U1C_OUT=$(python3 "$SCRIPT" merge-winner u1c 2>&1)
+if git cat-file -e feat:ok.txt 2>/dev/null && [ "$(git rev-parse main)" = "$U1C_MAIN" ] && [ ! -d "$QC/.sandboxes/u1c" ]; then
+  ok "U1 (b): main checkout on feat (not the trunk): merge-winner merges into feat as before, main unchanged"
+else
+  fail "U1 (b): main checkout on feat: winner not merged into feat (main moved: $([ "$(git rev-parse main)" = "$U1C_MAIN" ] && echo no || echo YES)): $U1C_OUT"
+fi
+QD="$TMP/u1d-repo"; mkdir -p "$QD/.agents" && cd "$QD" || exit 1
+git init -q . && git symbolic-ref HEAD refs/heads/develop && git config user.email t@t && git config user.name t
+echo hello > README.md; red_matrix "$QD"; git add -A && git commit -qm init
+U1D_DEV="$(git rev-parse develop)"
+python3 "$SCRIPT" create u1d >/dev/null 2>&1
+( cd "$QD/.sandboxes/u1d" && echo r > red.txt && git add red.txt && git commit -qm "feat: red" )
+if U1D_OUT=$(python3 "$SCRIPT" merge-winner u1d 2>&1); then U1D_RC=0; else U1D_RC=1; fi
+[ "$U1D_RC" -ne 0 ] && [ "$(git rev-parse develop)" = "$U1D_DEV" ] && [ ! -f "$QD/red.txt" ] \
+  && ok "U1 (c): no trunk branch can be told: the main checkout still goes through worktree finish (red gate, develop unchanged)" \
+  || fail "U1 (c): no trunk branch: merge-winner merged into develop past the gate (rc=$U1D_RC): $U1D_OUT"
+cd "$P"
+
 if [ $FAILS -gt 0 ]; then
   echo "FAILED: $FAILS errors"
   exit 1

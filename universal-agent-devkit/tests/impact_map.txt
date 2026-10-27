@@ -53,3 +53,5 @@ rules/essentials.md   tests/installer/test_platform_rules.sh tests/context_memor
 profiles/*/profile.json   tests/installer/test_install_cli.sh tests/installer/test_install_claude_only.sh tests/context_memory/test_completion.sh tests/gates/test_regression_gate_hook.sh tests/verification/test_matrix_detect.sh tests/worktree_git/test_relink_skills.sh
 profiles/*/regression_matrix.json   tests/installer/test_agent_config.sh tests/installer/test_uninstall.sh
 templates/regression_matrix.json   tests/installer/test_agent_health.sh tests/installer/test_uninstall.sh
+# 26/10 (T0058): test_skill_eval.sh quét động skills/*/evals/evals.json để kiểm định schema và đường dẫn fixture/oracle mà không gọi tên từng skill.
+skills/*/evals/*   tests/verification/test_skill_eval.sh

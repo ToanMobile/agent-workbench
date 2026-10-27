@@ -177,6 +177,33 @@ cases = [
     ("from B: export CLAUDE_PROJECT_DIR=A; post-fix-gate", lambda: bash(f"export CLAUDE_PROJECT_DIR={A}; python3 {GATE} --run-tests", cwd=B), 2),
     ("from B: export TARGET_DIR=A && post-fix-gate", lambda: bash(f"export TARGET_DIR={A} && python3 {GATE} --run-tests", cwd=B), 2),
     ("from B: export CLAUDE_PROJECT_DIR=\"$PWD\"; post-fix-gate (B itself)", lambda: bash(f'export CLAUDE_PROJECT_DIR="$PWD"; python3 {GATE} --run-tests --full', cwd=B), 0),
+    # OCR 26/10 vòng 2 (P1-6): từ lệnh của heredoc từng là từ ĐẦU dòng - sau timeout / env / nohup / command, hay heredoc của cat đổ qua
+    # `| bash`, thân bị coi là dữ liệu nên lệnh ghi trong thân không bao giờ được xét
+    ("from B: timeout 60 bash <<'EOF' git -C A commit EOF", lambda: bash(f"timeout 60 bash <<'EOF'\ngit -C {A} commit -m x\nEOF", cwd=B), 2),
+    ("from B: gtimeout -s KILL 60 bash <<'EOF' git -C A commit EOF", lambda: bash(f"gtimeout -s KILL 60 bash <<'EOF'\ngit -C {A} commit -m x\nEOF", cwd=B), 2),
+    ("from B: env X=1 bash <<'EOF' cd A && git commit EOF", lambda: bash(f"env X=1 bash <<'EOF'\ncd {A} && git commit -m x\nEOF", cwd=B), 2),
+    ("from B: nohup bash <<'EOF' git -C A commit EOF", lambda: bash(f"nohup bash <<'EOF'\ngit -C {A} commit -m x\nEOF", cwd=B), 2),
+    ("from B: command bash <<'EOF' git -C A commit EOF", lambda: bash(f"command bash <<'EOF'\ngit -C {A} commit -m x\nEOF", cwd=B), 2),
+    ("from B: cat <<'EOF' | bash  git -C A commit EOF (the body runs in bash)", lambda: bash(f"cat <<'EOF' | bash\ngit -C {A} commit -m x\nEOF", cwd=B), 2),
+    ("from B: cat <<'EOF' | gtimeout 60 bash  git -C A commit EOF", lambda: bash(f"cat <<'EOF' | gtimeout 60 bash\ngit -C {A} commit -m x\nEOF", cwd=B), 2),
+    ("from B: cat <<'EOF' | stdbuf -o0 bash  git -C A commit EOF", lambda: bash(f"cat <<'EOF' | stdbuf -o0 bash\ngit -C {A} commit -m x\nEOF", cwd=B), 2),
+    ("from B: cat <<'EOF' > <scratch file> (a data heredoc naming A: no write)", lambda: bash(f"cat <<'EOF' > {tmp}/scratch/notes.txt\ngit -C {A} commit -m x\nEOF", cwd=B), 0),
+    ("from B: cat <<'EOF' | bash script.sh (the body is the script's stdin data)", lambda: bash(f"cat <<'EOF' | bash {tmp}/scratch/s.sh\ngit -C {A} commit -m x\nEOF", cwd=B), 0),
+    ("from B: timeout 60 bash script.sh (no heredoc: as before)", lambda: bash(f"timeout 60 bash {tmp}/scratch/s.sh", cwd=B), 0),
+    # vòng 2: c7943377 coi cd trong thân là "không biết" nên từ repo khác (trunk tắt) commit sau cd đó trong thân lọt; cd dời shell của THÂN
+    ("from B: bash <<'EOF' cd A && git commit EOF (the body's shell moved to A)", lambda: bash(f"bash <<'EOF'\ncd {A} && git commit -m x\nEOF", cwd=B), 2),
+    ("from B: bash <<'EOF' cd A <nl> git commit EOF", lambda: bash(f"bash <<'EOF'\ncd {A}\ngit commit -m x\nEOF", cwd=B), 2),
+    # OCR 26/10 vòng 3 (S1): `<<WORD` không phải heredoc (trong comment, trong chuỗi có nháy, here-string `<<<`) hay delimiter có `-` (regex chỉ
+    # lấy END của END-X) không có dòng kết thúc - mọi dòng sau nó từng bị bỏ như thân dữ liệu
+    ("from B: # heredoc form: <<EOF <nl> git -C A commit", lambda: bash(f"# heredoc form: <<EOF\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: grep -n '<<EOF' x.sh <nl> git -C A commit", lambda: bash(f"grep -n '<<EOF' x.sh\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: cat <<END-X … END-X <nl> git -C A commit", lambda: bash(f"cat <<END-X > /dev/null\nhi\nEND-X\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: base64 -d <<< SGk= <nl> git -C A commit (a here-string)", lambda: bash(f"base64 -d <<< SGk=\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: read a <<< x <nl> git -C A commit", lambda: bash(f"read a <<< x\ngit -C {A} commit -m x", cwd=B), 2),
+    ("from B: cat <<END-X > <scratch> <nl> git -C A commit <nl> END-X (a data body, delimiter with -)", lambda: bash(f"cat <<END-X > {tmp}/scratch/n.txt\ngit -C {A} commit -m x\nEND-X", cwd=B), 0),
+    ("from B: cat <<EOF > <scratch> <nl> git -C A commit (unterminated: bash reads it all as data)", lambda: bash(f"cat <<EOF > {tmp}/scratch/n.txt\ngit -C {A} commit -m x", cwd=B), 2),
+    # OCR 26/10 vòng 2 (P2-7): bash kết thúc heredoc ở dòng ĐÚNG bằng từ kết thúc (<<- chỉ bỏ tab đầu dòng); `.strip()` coi "  EOF" là hết thân
+    ("from B: cat <<EOF <nl>  EOF <nl> git -C A commit <nl> EOF (all of it is data)", lambda: bash(f"cat <<EOF\n  EOF\ngit -C {A} commit -m x\nEOF", cwd=B), 0),
 ]
 bad = 0
 for label, run, want in cases:
@@ -323,6 +350,28 @@ fam_main = lambda cmd: hook({"tool_name": "Bash", "tool_input": {"command": cmd}
 check("sibling worktree held: from the free main, cd $X && git commit is blocked", fam_main("cd $X && git commit -m x"), 2)
 check("  … and from the other free worktree too", fam("cd $X && git commit -m x"), 2)
 check("  … git commit in the own checkout still passes", fam_main("git commit -m x"), 0)
+
+# OCR 26/10 (P2): thân heredoc nạp cho bash / python chạy ở TIẾN TRÌNH CON - `W=…` / `cd` trong đó không đổi $W / thư mục của dòng lệnh
+# sau nó; walk từng đọc nó như phép gán của shell cha, nên từ worktree rảnh `W=<anh em bị giữ>` + thân heredoc gán lại W lọt vào checkout
+# bị giữ (trunk mode bật lẫn tắt)
+fam_t = lambda cmd: hook({"tool_name": "Bash", "tool_input": {"command": cmd}}, env_extra={"WORKTREE_TRUNK_MODE": "1"}, sid="me", cwd=FW)
+for mode, run in (("trunk off", fam), ("trunk on", fam_t)):
+    check(f"{mode}: W=<held sibling>; git -C $W commit is blocked (control)", run(f"W={FW2}\ngit -C $W commit -m x"), 2)
+    check("  … W=<held sibling> <nl> bash <<EOF W=<own> EOF <nl> git -C $W commit (the body ran in a child)",
+          run(f"W={FW2}\nbash <<EOF\nW={FW}\nEOF\ngit -C $W commit -m x"), 2)
+    check("  … W=<held sibling> <nl> python3 - <<EOF W=\"<own>\" EOF <nl> git -C \"$W\" commit",
+          run(f"W={FW2}\npython3 - <<EOF\nW=\"{FW}\"\nEOF\ngit -C \"$W\" commit -m x"), 2)
+    check("  … cd <held sibling> <nl> bash <<EOF cd <own> EOF <nl> git commit (the cd ran in a child)",
+          run(f"cd {FW2}\nbash <<EOF\ncd {FW}\nEOF\ngit commit -m x"), 2)
+    check("  … W=<own> <nl> cat <<EOF W=<held> EOF (a data heredoc) <nl> git -C $W commit passes",
+          run(f"W={FW}\ncat <<EOF\nW={FW2}\nEOF\ngit -C $W commit -m x"), 0)
+    check("  … W=<own> <nl> python3 - <<EOF print(1) EOF (a body that leaves W alone) <nl> git -C $W commit passes",
+          run(f"W={FW}\npython3 - <<EOF\nprint(1)\nEOF\ngit -C $W commit -m x"), 0)
+    # OCR 26/10 vòng 2 (P2-7): dòng thân "  EOF" không kết thúc heredoc với bash - W=<own> sau nó vẫn ở trong thân
+    check("  … W=<held sibling> <nl> bash <<EOF <nl>   EOF <nl> W=<own> <nl> EOF <nl> git -C $W commit (an indented EOF ends nothing)",
+          run(f"W={FW2}\nbash <<EOF\n  EOF\nW={FW}\nEOF\ngit -C $W commit -m x"), 2)
+    check("  … W=<held sibling> <nl> timeout 60 bash <<EOF W=<own> EOF <nl> git -C $W commit (a wrapper before bash)",
+          run(f"W={FW2}\ntimeout 60 bash <<EOF\nW={FW}\nEOF\ngit -C $W commit -m x"), 2)
 
 # a FIFO planted where the approval flag belongs must not hang the hook
 fifo = os.path.join(A, ".git", "devkit-allow-shared")

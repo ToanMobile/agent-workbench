@@ -122,8 +122,11 @@ const REVIEW_MEMORY = [
   `Run ponytail:ponytail-review on the merge-base diff (inline ladder if the plugin is absent); Over-engineering never blocks merge alone.`,
   // Truth-check brief is fixed (super-review → Adversarial mode); a hand-written one once made over-building blocking.
   `Truth-check sub-agents get the fixed brief from super-review → "Adversarial mode", verbatim. After collecting, reclass any Over-engineering Blocker to Should fix; it never decides merge or bounce.`,
-  // #250: the merge gate's --force-full verifies the merged tree; a reviewer-side gate run is a fourth, duplicate run.
-  `Test rerun (run.md → Reviewer step 5) skips the DevKit gate: never rerun post-fix-gate --full. Read QA's exit 0 for this head SHA; the merge gate verifies the merged tree.`,
+  // #250 + 26/10 (task receipt): the merge point verifies the merged tree once; a reviewer-side gate run is a duplicate run.
+  `Test rerun (run.md → Reviewer step 5) skips the DevKit gate: never rerun post-fix-gate --full. Read QA's impacted gate exit 0 (task receipt) for this exact head SHA; the merge point verifies the merged tree.`,
+  // Merge queue (Pha 2 Q1, fix R5): only the claude-p runner drains the queue. These waves run on the workflow backend, so a
+  // merge-queue label here would leave the card in Review and get it re-reviewed every wave: always the merge gate path.
+  `Merge queue: applies only when the config enables merge_queue (or SB_MERGE_QUEUE=1) AND worker_backend is claude-p, whose runner drains the queue every tick. This wave runs on the workflow backend: the queue is off here whatever the config says. Never label the PR merge-queue; take the merge gate path below.`,
   // Merge policy + migrations live in the gate (run.md → Merge protocol step 5).
   `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): Blocked with the 🙋 template quoting its human-gate lines, then \`python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "<what the person must do>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"\` so the card carries the 🙋 Cần bạn comment.`,
   `Exit 2/5 = stale branch or real conflict: rebase pass (loop:rebase). Exit 11 = verify red on a branch NOT behind the base: [builder] thread quoting the gate's verify line, Review → Ready with loop:rebuild-N, never a rebase pass.`,

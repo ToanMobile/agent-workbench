@@ -30,7 +30,8 @@ edit Write "$TMP/plain/src/A.kt"
 stop s1; [ $? = 0 ] && ok "a repo without the DevKit: not its business" || fail "plain repo blocked"
 edit Edit "$TMP/goods/src/A.kt"
 stop s1; rc=$?
-[ "$rc" = 2 ] && grep -q "goods" "$TMP/err" && grep -q "post-fix-gate.py --run-tests --full" "$TMP/err" \
+# Lệnh khuyên là lượt task (impacted, biên nhận task); --full chỉ chạy ở điểm gộp (vòng sửa 1, R4).
+[ "$rc" = 2 ] && grep -q "goods" "$TMP/err" && grep -q "post-fix-gate.py --run-tests" "$TMP/err" && ! grep -q -- "--full" "$TMP/err" \
   && ok "an edit in another DevKit repo stops once, naming it and its gate command" || fail "foreign repo missed (rc=$rc): $(cat "$TMP/err")"
 stop s1; [ $? = 0 ] && ok "  … then the next stop of the session passes" || fail "blocked twice for the same repo"
 stop s2; [ $? = 2 ] && ok "  … a new session is told again" || fail "state leaked across sessions"

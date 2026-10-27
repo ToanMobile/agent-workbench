@@ -45,6 +45,10 @@ GATE_HOOK="$(dirname "${SELF}")/regression_gate.sh"
 CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/governance/context_sync.py"
 [ -f "${CTX_SYNC}" ] || CTX_SYNC="$(dirname "$(dirname "${SELF}")")/scripts/context_sync.py"
 [ -f "${CTX_SYNC}" ] && [ -d "${REPO_ROOT}/.agents" ] && (python3 "${CTX_SYNC}" "${REPO_ROOT}" --quiet >/dev/null 2>&1 &)
+# DevKit links: put back the ones a git operation removed and drop the ones the DevKit made obsolete (a command it dropped
+# left a dangling .claude/commands/<name>.md in every repo: health 90-93 until `agent-kit init`, 26/10). Fast, no network.
+RELINK="$(dirname "$(dirname "${SELF}")")/scripts/governance/relink_check.py"
+[ -f "${RELINK}" ] && [ -d "${REPO_ROOT}/.agents" ] && python3 "${RELINK}" "${REPO_ROOT}" --quiet --links-only >/dev/null 2>&1
 # Errors the DevKit causes while a board / workflow runs in a whitelisted repo become 🐛 cards on the DevKit board
 # (Project #1). Detached in the background (never delays SessionStart); every board worker is a session too, so it runs
 # while boards run. One machine-wide ledger, a lock and at least 300 s between scans. DEVKIT_INCIDENT=0: off.
@@ -69,11 +73,23 @@ except Exception: pass' 2>/dev/null)"
   # when nothing in them is unique (`agent-kit worktree gc`). Only from the main checkout (its siblings are what gc sweeps; a linked
   # worktree would keep the record and go away with it). gc appends what it deleted, stamped, to .claude/audit-gate/worktree_gc.log
   # under its own lock (last 400 lines; `agent-kit worktree gc --dry-run` says what it keeps and why). WORKTREE_GC=0: off.
+  # --merged (U2, audit 25/10: the one merged-worktree cleaner; it replaces the untracked .claude/hooks/cleanup-wt.py --auto): also the
+  # integrated, unheld worktrees of .claude/worktrees/ and the local branches the trunk holds, each by `worktree remove`'s rule.
+  # WORKTREE_GC_MERGED=0: that part off.
   if [ "${WORKTREE_GC:-1}" != "0" ]; then
+    GC_MERGED="--merged"; [ "${WORKTREE_GC_MERGED:-1}" != "0" ] || GC_MERGED=""
+    # #427 vòng 2: .claude hay .claude/worktrees là symlink thì gc --merged in "• gc --merged: <đường dẫn> is a symlink: no worktree removed"
+    # (worktree.py _reap_merged). gc chạy nền nên stdout của nó vào <git-common-dir>/devkit-gc.out (cạnh devkit-gc.lock; .claude/ có thể
+    # chính là symlink đó); lượt mở phiên ở main checkout SAU đó đưa đúng dòng này vào context, các dòng gc khác vẫn im.
+    # ponytail: trễ một phiên và còn hiện một lần sau khi gỡ link; nâng cấp khi cần báo ngay trong phiên đầu.
+    GC_COMMON="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+    GC_OUT=/dev/null; [ -n "${GC_COMMON}" ] && GC_OUT="${GC_COMMON}/devkit-gc.out"
+    [ -n "${GC_MERGED}" ] && [ -n "${GC_COMMON}" ] && [ "$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir 2>/dev/null)" = "${GC_COMMON}" ] \
+      && grep -a -m1 -E '^• gc --merged: .*symlink: ' "${GC_OUT}" 2>/dev/null | sed 's/^/[DevKit] /'
     ( [ "$(git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] || exit 0
       [ "$(git -C "${REPO_ROOT}" rev-parse --absolute-git-dir 2>/dev/null)" = "$(cd "${REPO_ROOT}" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ] || exit 0
       GC_TOP="$(git -C "${REPO_ROOT}" rev-parse --show-toplevel 2>/dev/null)" && [ -n "${GC_TOP}" ] || exit 0   # REPO_ROOT may be a subfolder
-      cd "${GC_TOP}" && exec python3 "${WT_SCRIPT}" gc "--log=${GC_TOP}/.claude/audit-gate/worktree_gc.log" </dev/null ) >/dev/null 2>&1 &
+      cd "${GC_TOP}" && exec python3 "${WT_SCRIPT}" gc "--log=${GC_TOP}/.claude/audit-gate/worktree_gc.log" ${GC_MERGED} </dev/null >"${GC_OUT}" ) >/dev/null 2>&1 &
   fi
 fi
 # The regression baseline (T0003): verified_head recorded before the first turn can commit, so a

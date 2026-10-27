@@ -149,9 +149,9 @@ def heavy_max(cores=None, scale=None, load=None) -> int:
 
 
 def gate_max(cores=None, scale=None, load=None) -> int:
-    """Số post-fix-gate chạy cùng lúc trên máy (super-board gate_max): lõi/2 × hệ số (12 lõi: 6)."""
+    """Số post-fix-gate chạy suite cùng lúc trên cả máy (pool gate): lõi/4 × hệ số (12 lõi: 3)."""
     c, s = _resolve(cores, scale)
-    return max(1, _floor(c * s / 2))
+    return max(1, _floor(c * s / 4))
 
 
 def build_workers(cores=None, scale=None, load=None) -> int:

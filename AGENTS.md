@@ -70,12 +70,13 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
 - **Protect working code**: touch it only for a real error, a real necessity, or an explicit
   instruction. Surgical diffs; no drive-by refactors, formatting sweeps or placeholder code
   (`// ... existing code ...`); keep public signatures backward compatible.
-- **Git — commit and push yourself** (unless a project rule in `.agents/local/rules/` or a user rule forbids it — that rule wins, then stop and wait for the order): a finished task (gate `--full` exit 0, proof when
+- **Git — commit and push yourself** (unless a project rule in `.agents/local/rules/` or a user rule forbids it — that rule wins, then stop and wait for the order): a finished task (task receipt of step 3, proof when
   required, the acceptance report) is committed and pushed without asking: commit your own
   paths, `git fetch`; origin moved → `git pull --no-rebase --no-edit` (check its exit code;
   a conflict → skill conflict, ask only for a business decision) and, after any pull, merge
-  or conflict fix, re-run the gate on what will be pushed (`post-fix-gate.py --run-tests
-  --full --diff origin/<branch>`). Every commit and every push needs the latest gate on that content at
+  or conflict fix, re-run the gate on what will be pushed: on a PR branch `post-fix-gate.py --run-tests`
+  (its task receipt). A trunk-push repo pushes main only through `agent-kit integrate` (one `--full` in a
+  scratch worktree, then the push); never a `--full` in the main checkout. Every commit and every push needs the latest gate on that content at
   exit 0 — or exit 2 whose only reason is an edited test an Antigravity `audit` passed, with
   `Test-approved-by: antigravity <task-id>` in `git log origin/<branch>..HEAD`. Anything else: no commit,
   no push.
@@ -100,8 +101,8 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   `agent-kit worktree trunk off` turns it off): main is merge-only and nobody holds it — every session works in its own worktree (Claude Code: the
   tool EnterWorktree; others: `agent-kit worktree add`), and only `agent-kit worktree finish` moves main.
 - **Done means verified**: run the post-fix gate
-  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`, exit 0 only, on the
-  current code) and attach a real proof PNG from this turn (when step 4 of "Every prompt" applies)
+  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief`, impacted, exit 0 only, on the
+  current code; step 3) and attach a real proof PNG from this turn (when step 4 of "Every prompt" applies)
   before the reply may open with XONG. The Stop hooks enforce this where the host has them, but
   no hook takes the screenshot.
 
@@ -116,16 +117,17 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 2. A code or bug prompt: run the failing oracle and see RED before editing production,
    then the same oracle GREEN after. Keep the command log and the exit code.
 3. From the repo root, once:
-   `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief`
-   Exit 0 is required. Còn phiên khác đang chạy thì gate chỉ chạy test ca đang làm (impacted mode);
-   chỉ phiên cuối cùng chạy `--full`. Một lượt hoãn/impacted in "CHƯA ĐỦ ĐIỀU KIỆN NGHIỆM THU", không ghi receipt và KHÔNG phải bằng chứng cho bước 5: phiên cuối chạy `--full`, hoặc thêm `--force-full` khi phải nghiệm thu ngay. Any other exit: paste the last
+   `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief`
+   Exit 0 is required. This impacted run (the tests the branch's change since the trunk reaches) writes the
+   task receipt, the proof for step 5. A task never runs `--full`: only the merge point does (the merge queue
+   or merge train of a PR repo, the push of main of a trunk-push repo). Any other exit: paste the last
    30 log lines, fix, and repeat this step. A dry-run, `--help`, or a single Gradle test does not replace this command.
    `--full` is cached-full: every cacheable light/cpu matrix suite is considered too; one whose content key (its inputs +
    environment, `bin/suite_cache.py`, shared by every worktree) already PASSed is reused, the rest run (an added suite that
    times out is named, outside the verdict). Gradle/Unity/device suites, `run_impacted.sh`, network commands and
    `"cache": false` keep the old selection; `--no-cache` runs them all. When the repo's last real full run is over 24 h old,
-   a `--full` (not a merge gate) uses no content key (sentinel). A push needs the receipt of the pushed content (usually
-   zero suites to run). Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores
+   a `--full` (not a merge gate) uses no content key (sentinel). A push of main needs that receipt of the pushed content
+   (usually zero suites to run). Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores
    (`bin/capacity.py`; `DEVKIT_SLOT_LOAD_MAX` / `DEVKIT_CAPACITY` override) they start at once, above it they
    wait up to 600 s and run anyway; only Unity and device suites hold an exclusive lock.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a
@@ -155,8 +157,9 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
      `![Ảnh nghiệm thu](reports/proof-<stamp>.png)`.
    - The command exits non-zero when it cannot open a device. Open with CHƯA XONG and
      paste that error. Do not draw, reuse an old image, or substitute a test XML.
-5. The reply may open with XONG only when this turn has exit 0 from step 3 and, when step 4
-   applies, its PNG. Line 1: XONG, CHƯA XONG or CHỜ DUYỆT (English: DONE / NOT DONE /
+5. The reply may open with XONG only when this turn has step 2 RED→GREEN (code or bug prompt), exit 0
+   from step 3 (its task receipt), when step 4 applies its PNG, and the work handed to the merge point: PR
+   opened, worktree finished or main pushed. Line 1: XONG, CHƯA XONG or CHỜ DUYỆT (English: DONE / NOT DONE /
    AWAITING APPROVAL). Line 2: what the user gets. Line 3: gate exit code, then image path and
    serial, or "ảnh: không cần — <reason>"; then the next step. Stay short.
    Every handover — an XONG, or any turn that runs `git push` — then carries the acceptance

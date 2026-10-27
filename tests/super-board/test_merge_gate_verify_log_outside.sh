@@ -67,5 +67,32 @@ rm -rf "$CD/super-board" && : > "$CD/super-board"
 [ "$rc" -eq 11 ] && grep -q "log saved to (not saved)" "$TMP/gate2.log" && grep -q "verify-said-no" "$TMP/gate2.log" \
   && ok "log cannot be written: still exit 11, the verify output on stderr, '(not saved)' said" || fail "unwritable log dir (rc $rc): $(tail -3 "$TMP/gate2.log")"
 
+# Verify chạy trong scratch nhưng post-fix-gate ưu tiên CLAUDE_PROJECT_DIR / TARGET_DIR hơn cwd: bên gọi mang sẵn hai biến đó (runner, agent)
+# thì verify kiểm nhầm cây chính → xanh sai. Cả hai nhánh (lệnh post-fix-gate.py chạy eval, lệnh khác qua heavy-slot) phải gỡ chúng.
+rm -f "$CD/super-board"
+for kind in pfg other; do
+  if [ "$kind" = pfg ]; then cmd=": post-fix-gate.py; echo \\\"\${CLAUDE_PROJECT_DIR:-unset}|\${TARGET_DIR:-unset}\\\" > $TMP/env-$kind.seen; false"
+  else cmd="echo \\\"\${CLAUDE_PROJECT_DIR:-unset}|\${TARGET_DIR:-unset}\\\" > $TMP/env-$kind.seen; false"; fi
+  printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["%s"]}\n' "$cmd" > "$TMP/cfg-env-$kind.json"
+  ( cd "$WT" && CLAUDE_PROJECT_DIR="$R" TARGET_DIR="$R" bash "$GATE" --config "$TMP/cfg-env-$kind.json" --pr 5 --expect-head "$H" ) >"$TMP/gate-env-$kind.log" 2>&1
+  seen=$(cat "$TMP/env-$kind.seen" 2>/dev/null || echo "<verify did not run>")
+  [ "$seen" = "unset|unset" ] && ok "verify ($kind) runs without the caller's CLAUDE_PROJECT_DIR / TARGET_DIR" \
+    || fail "verify ($kind) inherited the caller's project dir (checks the wrong tree): $seen"
+done
+# Cùng loại lỗi (audit Antigravity 26/10 #4): run_suite_on_base (red_only_on_base, quyết "đỏ sẵn trên base" — sai là PR đỏ lọt merge)
+# lọc GIT_* mà giữ CLAUDE_PROJECT_DIR / TARGET_DIR. Chạy chính đoạn python của hàm đó (trích từ gate) với hai biến được đặt.
+python3 - "$GATE" "$TMP/env-base.seen" <<'PY' > "$TMP/env-base.out" 2>&1
+import os, re, subprocess, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+body = src.split("run_suite_on_base() {", 1)[1].split("\n}\n", 1)[0]
+snippet = re.search(r"python3 -I -c '(.*?)' \"\$1\"", body, re.S).group(1)
+cmd = 'echo "${CLAUDE_PROJECT_DIR:-unset}|${TARGET_DIR:-unset}" > ' + sys.argv[2]
+env = dict(os.environ, CLAUDE_PROJECT_DIR="/main/checkout", TARGET_DIR="/main/checkout")
+sys.exit(subprocess.run([sys.executable, "-I", "-c", snippet, cmd], env=env).returncode)
+PY
+seen=$(cat "$TMP/env-base.seen" 2>/dev/null || echo "<did not run: $(tail -2 "$TMP/env-base.out")>")
+[ "$seen" = "unset|unset" ] && ok "run_suite_on_base (red-on-base check) runs without the caller's CLAUDE_PROJECT_DIR / TARGET_DIR" \
+  || fail "run_suite_on_base inherited the caller's project dir: $seen"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_verify_log_outside: PASS"; exit 0; } || { echo "test_merge_gate_verify_log_outside: FAIL ($FAILS)"; exit 1; }

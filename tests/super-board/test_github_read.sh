@@ -6,7 +6,7 @@
 # Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-READ="$ROOT/.claude/bin/super-board-github-read.py"
+READ="${GHR_READ:-$ROOT/.claude/bin/super-board-github-read.py}"   # GHR_READ: chạy cùng bộ ca trên một bản khác (RED trên bản gốc)
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -267,6 +267,107 @@ rm -f "$TMP/halt.json"
 rc=$(TC_DIR="$TMP/tcdiff" SB_GITHUB_READ_STRICT=1 PATH="$TMP/tcdiff:$PATH" run --kind diff --meta "$TMP/tcdiff/meta.json" -- pr diff 172 --repo o/r)
 [ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && ok "diff missing a file's block: still incomplete evidence (halt in strict mode)" \
   || fail "short diff accepted: rc=$rc"
+rm -f "$TMP/halt.json"
+# GraphQL (`gh pr view --json files`) lists a type change twice too (PR #424: sandbox.md DELETED + ADDED in the first 100 entries).
+# 173: 3 paths as 4 entries, under the 100 cap — merged by path, no halt. 174: 100 paths + a type change = 101 entries, GraphQL cut
+# at 100 drops a real path (app/payments/refund.py): the list must be completed over REST, or the money rule never sees the path.
+mkdir -p "$TMP/gql"
+cat > "$TMP/gql/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" pr view 173 "*) python3 -c 'import json; print(json.dumps({"labels": [], "body": "b", "additions": 3, "deletions": 2, "changedFiles": 3, "files": [{"path": "a.txt", "additions": 1, "deletions": 0}, {"path": "s.md", "additions": 0, "deletions": 2}, {"path": "s.md", "additions": 1, "deletions": 0}, {"path": "b.txt", "additions": 1, "deletions": 0}]}))' ;;
+  *" pr view 174 "*) python3 -c 'import json; fs = [{"path": "s.md", "additions": 0, "deletions": 2}, {"path": "s.md", "additions": 1, "deletions": 0}] + [{"path": "f%d" % i, "additions": 1, "deletions": 0} for i in range(98)]; print(json.dumps({"labels": [], "body": "b", "additions": 100, "deletions": 2, "changedFiles": 100, "files": fs}))' ;;
+  *" api repos/o/r/pulls/174/files "*) python3 -c 'import json; fs = [{"filename": "s.md", "additions": 0, "deletions": 2}, {"filename": "s.md", "additions": 1, "deletions": 0}] + [{"filename": "f%d" % i, "additions": 1, "deletions": 0} for i in range(98)] + [{"filename": "app/payments/refund.py", "additions": 1, "deletions": 0}]; print(json.dumps([fs[:100], fs[100:]]))' ;;
+  *" api rate_limit "*) echo '{"resources":{}}' ;;
+  *) echo 'unexpected' >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP/gql/gh"
+rc=$(SB_GITHUB_READ_STRICT=1 PATH="$TMP/gql:$PATH" run --kind metadata -- pr view 173 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+n=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["files"]))' "$TMP/out" 2>/dev/null)
+[ "$rc" = 0 ] && [ "$n" = 3 ] && [ ! -e "$TMP/halt.json" ] && ok "GraphQL type change under 100 entries (4 entries, 3 paths): 3 files, no halt" \
+  || fail "GraphQL type change: rc=$rc files=$n halt=$( [ -e "$TMP/halt.json" ] && echo yes || echo no) err=$(head -c 200 "$TMP/err")"
+rm -f "$TMP/halt.json"
+rc=$(SB_GITHUB_READ_STRICT=1 PATH="$TMP/gql:$PATH" run --kind metadata -- pr view 174 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+has=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d["files"]), any(f["path"] == "app/payments/refund.py" for f in d["files"]))' "$TMP/out" 2>/dev/null)
+[ "$rc" = 0 ] && [ "$has" = "100 True" ] && [ ! -e "$TMP/halt.json" ] && ok "GraphQL cut at 100 entries with a type change: completed over REST, app/payments/refund.py kept" \
+  || fail "GraphQL-cut type change: rc=$rc files/has-refund=$has err=$(head -c 200 "$TMP/err")"
+rm -f "$TMP/halt.json"
+# #427 (OCR r10, 26/10): 175 — additions là chuỗi: vòng gộp theo đường dẫn ném TypeError (traceback, exit 1) thay vì trả nguyên
+# văn cho bước kiểm. 176 — 100 mục GraphQL có một lần đổi kiểu (99 đường dẫn, changedFiles 100) và REST lỗi: một đường dẫn thật
+# vẫn thiếu, nên STRICT halt; không STRICT thì exit 64 phải nói REST hỏng, không phải "Valid form" như người gọi gõ sai lệnh.
+mkdir -p "$TMP/rest"
+cat > "$TMP/rest/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" pr view 175 "*) echo '{"labels": [], "body": "b", "additions": 2, "deletions": 0, "changedFiles": 1, "files": [{"path": "a.txt", "additions": "2", "deletions": 0}]}' ;;
+  *" pr view 176 "*) python3 -c 'import json; fs = [{"path": "s.md", "additions": 0, "deletions": 2}, {"path": "s.md", "additions": 1, "deletions": 0}] + [{"path": "f%d" % i, "additions": 1, "deletions": 0} for i in range(98)]; print(json.dumps({"labels": [], "body": "b", "additions": 100, "deletions": 2, "changedFiles": 100, "files": fs}))' ;;
+  *" api repos/o/r/pulls/176/files "*) echo 'HTTP 502: Bad Gateway (https://api.github.com/repos/o/r/pulls/176/files)' >&2; exit 1 ;;
+  *" api rate_limit "*) echo '{"resources":{}}' ;;
+  *) echo 'unexpected' >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP/rest/gh"
+rc=$(PATH="$TMP/rest:$PATH" run --kind metadata -- pr view 175 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+grep -q Traceback "$TMP/err"; tb=$?
+[ "$rc" = 0 ] && [ "$tb" = 1 ] && grep -q '"additions": "2"' "$TMP/out" && ok "file additions not a number: no traceback, payload passed on verbatim to the checks" \
+  || fail "additions as a string: rc=$rc traceback=$([ "$tb" = 0 ] && echo yes || echo no) err=$(tail -1 "$TMP/err")"
+rm -f "$TMP/halt.json"
+rc=$(SB_GITHUB_READ_STRICT=1 PATH="$TMP/rest:$PATH" run --kind metadata -- pr view 176 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+[ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && grep -q 'REST' "$TMP/err" && ok "100 entries + REST error + a path missing: halt in strict mode, reason names REST" \
+  || fail "100 entries, REST error (strict): rc=$rc halt=$([ -e "$TMP/halt.json" ] && echo yes || echo no) err=$(tail -1 "$TMP/err")"
+rm -f "$TMP/halt.json"
+rc=$(PATH="$TMP/rest:$PATH" run --kind metadata -- pr view 176 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+[ "$rc" = 64 ] && [ ! -e "$TMP/halt.json" ] && grep -q 'REST' "$TMP/err" && ! grep -q 'Valid form' "$TMP/err" \
+  && ok "100 entries + REST error (not strict): exit 64 names the REST failure, no caller 'Valid form' hint" \
+  || fail "100 entries, REST error (not strict): rc=$rc err=$(tail -1 "$TMP/err")"
+rm -f "$TMP/halt.json"
+# #427 vòng 2: một mục GraphQL có path là null / list / chuỗi rỗng (schema khai `String!`) trong danh sách ngắn: bản trước trả nguyên văn,
+# REST chưa được hỏi và lượt đọc của merge gate halt. Nay danh sách đó được lấy lại qua REST (177 path null, 178 path list + path rỗng).
+# Đối chứng phải vẫn chặn, không traceback: REST cũng hỏng (179 filename null, 180 filename là list, 181 REST thiếu mục so với changedFiles);
+# 182 path null kèm additions là chuỗi: nguyên văn như vòng 1, không hỏi REST.
+mkdir -p "$TMP/badpath"
+cat > "$TMP/badpath/gh" <<'SH'
+#!/usr/bin/env bash
+echo "$*" >> "$GH_CALLS"
+meta() { python3 -c 'import json, sys; print(json.dumps({"labels": [], "body": "b", "additions": 2, "deletions": 0, "changedFiles": 2, "files": json.loads(sys.argv[1])}))' "$1"; }
+case " $* " in
+  *" pr view 177 "*|*" pr view 179 "*|*" pr view 180 "*|*" pr view 181 "*) meta '[{"path": null, "additions": 1, "deletions": 0}, {"path": "b.txt", "additions": 1, "deletions": 0}]' ;;
+  *" pr view 178 "*) meta '[{"path": ["a.txt"], "additions": 1, "deletions": 0}, {"path": "", "additions": 1, "deletions": 0}]' ;;
+  *" pr view 182 "*) meta '[{"path": null, "additions": "1", "deletions": 0}, {"path": "b.txt", "additions": 1, "deletions": 0}]' ;;
+  *" api repos/o/r/pulls/177/files "*|*" api repos/o/r/pulls/178/files "*) echo '[[{"filename": "a.txt", "additions": 1, "deletions": 0}, {"filename": "b.txt", "additions": 1, "deletions": 0}]]' ;;
+  *" api repos/o/r/pulls/179/files "*) echo '[[{"filename": null, "additions": 1, "deletions": 0}, {"filename": "b.txt", "additions": 1, "deletions": 0}]]' ;;
+  *" api repos/o/r/pulls/180/files "*) echo '[[{"filename": ["a.txt"], "additions": 1, "deletions": 0}, {"filename": "b.txt", "additions": 1, "deletions": 0}]]' ;;
+  *" api repos/o/r/pulls/181/files "*) echo '[[{"filename": "b.txt", "additions": 1, "deletions": 0}]]' ;;
+  *" api rate_limit "*) echo '{"resources":{}}' ;;
+  *) echo 'unexpected' >&2; exit 1 ;;
+esac
+SH
+chmod +x "$TMP/badpath/gh"
+meta_read() { SB_GITHUB_READ_STRICT=1 PATH="$TMP/badpath:$PATH" run --kind metadata -- pr view "$1" --repo o/r --json labels,files,additions,deletions,changedFiles,body; }
+for n in 177 178; do
+  : > "$GH_CALLS"; rm -f "$TMP/halt.json"
+  rc=$(meta_read $n)
+  paths=$(python3 -c 'import json,sys; print(",".join(sorted(f["path"] for f in json.load(open(sys.argv[1]))["files"])))' "$TMP/out" 2>/dev/null)
+  [ "$rc" = 0 ] && [ "$paths" = "a.txt,b.txt" ] && grep -q "api repos/o/r/pulls/$n/files" "$GH_CALLS" && [ ! -e "$TMP/halt.json" ] \
+    && ok "PR $n: GraphQL path not a non-empty string → list fetched over REST, no halt" \
+    || fail "PR $n, GraphQL path not a string: rc=$rc paths=$paths REST asked=$(grep -c "pulls/$n/files" "$GH_CALLS") err=$(tail -1 "$TMP/err")"
+done
+# <PR>:<lý do halt mong đợi>:<mô tả> — lý do nói đúng chỗ hỏng của REST
+for n in '179:PR paths missing:REST filename null' '180:REST file list unreadable:REST filename a list' \
+         '181:PR file list truncated:REST list short of changedFiles'; do
+  pr="${n%%:*}"; why="${n#*:}"; what="${why#*:}"; why="${why%%:*}"
+  rm -f "$TMP/halt.json"
+  rc=$(meta_read "$pr")
+  [ "$rc" = 79 ] && [ -e "$TMP/halt.json" ] && ! grep -q Traceback "$TMP/err" && grep -q "$why" "$TMP/err" \
+    && ok "PR $pr: bad GraphQL path, $what → still incomplete evidence (halt in strict mode: '$why'), no traceback" \
+    || fail "PR $pr ($what) accepted, crashed or wrong reason: rc=$rc err=$(tail -1 "$TMP/err")"
+done
+rm -f "$TMP/halt.json"; : > "$GH_CALLS"
+rc=$(PATH="$TMP/badpath:$PATH" run --kind metadata -- pr view 182 --repo o/r --json labels,files,additions,deletions,changedFiles,body)
+[ "$rc" = 64 ] && [ ! -e "$TMP/halt.json" ] && ! grep -q Traceback "$TMP/err" && ! grep -q 'pulls/182/files' "$GH_CALLS" \
+  && ok "PR 182: path null + additions a string → passed on verbatim as in round 1 (no REST, no traceback, exit 64)" \
+  || fail "PR 182 path null + string additions: rc=$rc REST asked=$(grep -c 'pulls/182/files' "$GH_CALLS") err=$(tail -1 "$TMP/err")"
 rm -f "$TMP/halt.json"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_github_read: all passed" || { echo "❌ test_github_read: $FAILS failed"; exit 1; }

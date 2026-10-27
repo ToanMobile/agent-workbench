@@ -707,3 +707,22 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa & Cách fix:** macOS: dùng sed -i '' (hoặc perl -pi -e); thay timeout bằng gtimeout hoặc perl -e 'alarm N; exec @ARGV'.
 - **Lệnh kiểm tra:** `grep -rnE "sed -i [^'\"]|(^|[ ;|&])timeout " scripts .claude 2>/dev/null | grep -v "sed -i ''"`
 - **Nguồn:** retro 2026-10-26
+
+---
+
+### [INSTINCT-071] Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main
+- **Nguyên nhân:** #425 ghi sai nguyên nhân (giới hạn 100 file); PR #424 của phiên khác đã sửa đúng lỗi, PR #426 của tôi trùng và xung đột
+- **Quy tắc phòng ngừa & Cách fix:** Trước khi sửa lỗi hạ tầng: fetch origin/main, git log -- &lt;file>, tái hiện bằng dữ liệu thật rồi mới viết RED
+- **Nguồn:** phiên sửa #425 (26/10), ghi trong main checkout nhưng chưa commit; đưa nguyên văn lên để main checkout đồng bộ được với origin
+
+---
+
+### [INSTINCT-084] Gộp lane bằng cherry-pick làm kit không gỡ được worktree lane và Stop hook tự gộp main local vào lane
+- **Ngày phát hiện:** 2026-10-26
+- **Hiện tượng lỗi:** Gộp lane bằng cherry-pick: agent-kit worktree remove từ chối worktree lane (UNREACHABLE, commit chỉ còn trong reflog); mỗi lần Stop, worktree_merge_gate giữ lại và tự gộp main local (có việc chưa push của phiên khác) vào worktree lane, kẹt xung đột.
+- **Nguyên nhân:** cherry-pick tạo commit SHA khác, nên commit gốc của lane không thuộc nhánh nào; luật không-mất-việc của worktree.py chỉ nhận commit có trong trunk hoặc một nhánh, không so patch với nhánh PR.
+- **Quy tắc phòng ngừa & Cách fix:** Gộp commit lane vào nhánh PR bằng git merge --no-ff &lt;sha lane> (đã lỡ cherry-pick thì git merge -s ours &lt;sha lane> để ghi nhận), rồi agent-kit worktree remove ngay, trước lần Stop kế tiếp; hook đã tự gộp main vào lane thì git merge --abort trong worktree lane trước.
+- **Lệnh kiểm tra:** `agent-kit worktree remove <worktree lane> trả exit 0 ngay sau khi gộp`
+- **Nguồn:** phiên 31d7d633, issue #427 (6 lane theo file, 26/10)

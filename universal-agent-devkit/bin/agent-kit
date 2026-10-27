@@ -284,6 +284,11 @@ case "$CMD" in
     shift || true
     python3 "$(find_script git worktree.py)" "$@"
     ;;
+  integrate)
+    # integrate [--if-due] [--dry-run] [path] — trunk-push repo: gate --full once on main's unpushed commits (in a scratch worktree), then push
+    shift || true
+    python3 "$(find_script git integrate.py)" "$@"
+    ;;
   completion)
     # completion [bash|zsh] — eval "$(agent-kit completion bash)" in ~/.bashrc (zsh: ~/.zshrc)
     shift || true
@@ -420,8 +425,10 @@ Commands:
                       Claude auto-memory stays the worktree's own; --share-memory points it at the
                       main checkout's (every worktree then shares ONE MEMORY.md)
   worktree status     Every worktree and which ones still hold work not in the main checkout (run BEFORE gathering/removing any)
-  worktree gc [--dry-run]  Delete what DevKit worktrees left behind (integrated worktrees, orphan <repo>-* folders) only when
-                      nothing in it is unique; kept ones are named with the reason
+  worktree gc [--dry-run] [--merged]  Delete what DevKit worktrees left behind (orphan <repo>-* folders) only when
+                      nothing in it is unique; kept ones are named with the reason. --merged (SessionStart runs it): also the
+                      integrated worktrees of .claude/worktrees/ no session or lock holds, and the local branches the trunk holds
+  worktree held <path>  Exit 0 when no live session or lock holds it, 3 (reason printed) when one does
   worktree diff <path>
                       Its own changes as a patch, DevKit setup left out; bring them back
                       with: agent-kit worktree diff ../app-x | git apply --3way
@@ -436,10 +443,11 @@ Commands:
   allow-shared [--minutes N] | off
                       The USER lets a second live session write in a checkout another session holds
                       (default 60 minutes; type it after a "!" in the prompt); agents cannot switch it on or off
-  worktree remove <path>
+  worktree remove [--merged[=<sha>]] <path>
                       Remove it once nothing of its work would be lost (uncommitted changes in the
                       main checkout; a named branch keeps its commits, a detached worktree's
-                      commits must be brought back first)
+                      commits must be brought back first); --merged: only when its HEAD is integrated
+                      (the trunk holds it, or it is <sha>, a PR head just merged, or behind it)
   worktree discard <path>
                       Remove one that remove refuses, only when it holds nothing but deleted files and
                       untracked IDE junk, its HEAD is in the trunk and no live session holds it; a
@@ -456,6 +464,12 @@ Commands:
                       its own worktree (EnterWorktree; the WorktreeCreate hook sets it up) and the Stop hook
                       merges it. on/off: git config devkit.trunkMode + hooks in .claude/settings.local.json;
                       WORKTREE_TRUNK_MODE=0 turns it off everywhere (the user's switch)
+  integrate [--if-due] [--dry-run]
+                      Trunk-push repo (no PR): main's commits not on origin are the queue. One gate --full on
+                      main's HEAD in a scratch worktree, then push when push_gate accepts its receipt; red: no
+                      push, the batch's commits listed. --if-due: only when due (git config
+                      devkit.integrate.batchMax, default 6; devkit.integrate.maxWaitMin, default 60; or no
+                      test_run.lock held). Origin diverged: stops before the gate. Busy lock: exit 0
   index-memory [file] Line-numbered index of a large .agents/instincts.md (default: this project's;
                       the SessionStart hook also refreshes it automatically above 20 KB)
   completion [bash|zsh]
