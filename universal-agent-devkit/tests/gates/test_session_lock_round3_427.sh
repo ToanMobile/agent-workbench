@@ -5,6 +5,10 @@
 #      "file") được xét theo khoá các checkout cùng họ như redirect (_held_at); cwd không phải repo: theo khoá mọi repo.
 #   2. đích tương đối `../<anh em>/f` (redirect và các lệnh mục 1) được tính từ thư mục mà cd (chữ) dẫn tới rồi mới xét khoá:
 #      `echo x > ../<anh em bị giữ>/f` phải chặn, `echo x > ../<worktree rảnh của chính nó>/f` qua.
+#   3. phiên chưa đăng ký ở project (không có <main>/.git/devkit-sessions/<id>.json) không có luật project / trunk: sau /clear từ cwd ngoài
+#      repo, SessionEnd / SessionStart trả 0 trước khi gỡ / đăng ký - id mới không ở đâu cả, id cũ (SessionStart ghi, agent "claude") vẫn
+#      ở project với pid của chính tiến trình claude. Nay: một mục agent "claude" của project có pid = tiến trình giữ hook (holder_pid,
+#      start time khớp) thì phiên là của project. Test thừa hưởng CLAUDE_PROJECT_DIR không vấp: cha của hook là tiến trình test.
 #   SLT_KIT=<thư mục kit>   chạy cùng bảng trên một bản kit khác (bản chưa sửa: ĐỎ).
 # bash 3.2 compatible wrapper; the checks are python3 (stdlib only).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
@@ -148,6 +152,62 @@ check("  đối chứng: echo x > ../w/f.txt (worktree lồng của chính nó)"
 check("  đối chứng: cp … . (thư mục gốc của worktree lồng của chính nó, không phải main chứa nó)", hook("cp /etc/hosts .", NW), 0)
 check("  đối chứng: cd \"$B\" && bash t.sh > ../base.log (cd không biết: đích tương đối không xét, corpus chặn nhầm)",
       hook("cd \"$B\" && bash t.sh > ../base.log", NW), 0)
+
+print("3. phiên chưa đăng ký ở project: tiến trình claude của nó (holder_pid) đã đăng ký ở đó dưới id khác (sau /clear ngoài repo)")
+PS_TOOL = r'''
+import os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "bin"))
+import session_lock as sl
+print(sl.pid_start(int(sys.argv[2])) or "")
+'''
+my_start = subprocess.run([sys.executable, "-I", "-c", PS_TOOL, KIT, str(os.getpid())], capture_output=True, text=True).stdout.strip()
+other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])   # một pid khác còn sống
+
+
+def register(top, name, **fields):   # mục registry ở main `top` của project (SessionStart ghi agent "claude")
+    d = os.path.join(gitdir(top), "devkit-sessions")
+    os.makedirs(d, exist_ok=True)
+    rec = {"session_id": name, "pid": os.getpid(), "heartbeat": time.time(), "cwd": top, "status": "working"}
+    rec.update(fields)
+    with open(os.path.join(d, name + ".json"), "w", encoding="utf-8") as f:
+        json.dump({k: v for k, v in rec.items() if v is not None}, f)
+
+
+def unregister(top, name):
+    os.remove(os.path.join(gitdir(top), "devkit-sessions", name + ".json"))
+
+
+PM = repo("project")   # project của phiên, main bị giữ
+hold(os.path.join(PM, ".git"), "holder3", PM)
+proj = lambda c, cwd=PLAIN: hook(c, cwd, sid="new", env_extra={"CLAUDE_PROJECT_DIR": PM})
+register(PM, "old", agent="claude", pid_start=my_start or None)
+check("cwd không phải repo: cd $X && git commit (PM bị giữ)", proj("cd $X && git commit -qm x"), 2)
+check("từ repo khác B: cd $X && git commit (PM bị giữ)", proj("cd $X && git commit -qm x", cwd=B), 2)
+check("  đối chứng: cd <B> && git commit (đích đã biết, rảnh)", proj(f"cd {B} && git commit -qm x"), 0)
+unregister(PM, "old")
+for label, fields in (("mục không có agent (ghi bởi heartbeat / test cũ)", {"agent": None}),
+                      ("pid đúng nhưng start time khác (pid tái dùng)", {"agent": "claude", "pid_start": "Mon Jan  1 00:00:00 2001"}),
+                      ("pid khác còn sống", {"agent": "claude", "pid": other.pid}),
+                      ("pid là bool (True)", {"agent": "claude", "pid": True})):
+    register(PM, "old", **fields)
+    check("  đối chứng: " + label + ": cd $X && git commit", proj("cd $X && git commit -qm x"), 0)
+    unregister(PM, "old")
+check("  đối chứng: không có mục nào của tiến trình này", proj("cd $X && git commit -qm x"), 0)
+TM = repo("tmain")   # repo trunk mode: main chỉ để gộp, phiên ở worktree TW
+TW = os.path.join(tmp, "tmain-wt")
+sh("git", "-C", TM, "worktree", "add", "-q", "--detach", TW)
+sh("git", "-C", TM, "config", "devkit.trunkMode", "true")
+tplain = lambda c: hook(c, PLAIN, sid="new", env_extra={"CLAUDE_PROJECT_DIR": TW}, trunk="1")
+register(TM, "old", agent="claude", pid_start=my_start or None)
+check("trunk mode, cwd không phải repo: git -C <TM main> commit", tplain(f"git -C {TM} commit -qm x"), 2)
+check("trunk mode, cwd không phải repo: echo x > <TM main>/README.md", tplain(f"echo x > {TM}/README.md"), 2)
+check("  đối chứng: git -C <TW worktree> commit", tplain(f"git -C {TW} commit -qm x"), 0)
+check("  đối chứng: echo x > <scratch>/f.txt", tplain(f"echo x > {S}/f.txt"), 0)
+unregister(TM, "old")
+register(TM, "old", agent="claude", pid=other.pid)
+check("  đối chứng: mục của tiến trình khác: git -C <TM main> commit (như trước: phiên không thuộc project)", tplain(f"git -C {TM} commit -qm x"), 0)
+other.kill()
+other.wait()
 
 shutil.rmtree(tmp, ignore_errors=True)
 print(f"session_lock.py round 3 #427: {'all checks passed' if not bad else str(bad) + ' FAILED'}")

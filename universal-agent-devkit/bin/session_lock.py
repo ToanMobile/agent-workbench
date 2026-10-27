@@ -2399,9 +2399,35 @@ def project_held(gdir, sid, now):
     if not proj or not sid:
         return None
     pgdir = git_dir(proj)[0]
-    if not pgdir or (gdir and _same_dir(_common_of(pgdir), _common_of(gdir))) or not read_session(proj, sid):
+    if not pgdir or (gdir and _same_dir(_common_of(pgdir), _common_of(gdir))) or not _session_of(proj, sid):
         return None
     return next(_family_locks(pgdir, sid, now, gdir), None)
+
+
+def _session_of(proj, sid):
+    """Phiên `sid` thuộc project `proj` (CLAUDE_PROJECT_DIR): đăng ký ở đó, hoặc (#427 vòng 3) chính tiến trình claude của nó (holder_pid,
+    start time khớp) có ở registry của project một mục SessionStart ghi (agent "claude") dưới id khác - /clear khi cwd ngoài repo:
+    SessionEnd / SessionStart trả 0 trước khi gỡ / đăng ký, id mới không ở đâu cả, id cũ còn ở project với pid của tiến trình. Mục do
+    heartbeat ghi (agent "agent") không tính: heartbeat đăng ký ở repo của cwd, không phải ở project. Test gọi hook mà thừa hưởng
+    CLAUDE_PROJECT_DIR không vấp: cha của hook là tiến trình test, không phải pid nào trong registry của project thật.
+    ponytail: phiên mà SessionStart không đăng ký được ở project (lỗi ghi) vẫn không có luật project / trunk - không còn dấu hiệu nào."""
+    if read_session(proj, sid):
+        return True
+    try:
+        sdir = sessions_dir(proj)[0]
+        names = sorted(os.listdir(sdir)) if sdir and os.path.isdir(sdir) else []
+        me = None
+        for name in names:
+            info = read_lock(os.path.join(sdir, name)) if name.endswith(".json") else None
+            pid = (info or {}).get("pid")
+            if not info or info.get("agent") != "claude" or not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+                continue
+            me = holder_pid() if me is None else me
+            if pid == me and is_pid_alive(pid, info.get("pid_start")):
+                return True
+    except Exception as e:  # noqa: BLE001 - registry không đọc được: như khi phiên không đăng ký (luật cũ), nói ở stderr
+        print(f"session_lock: project registry unreadable ({e!r})", file=sys.stderr)
+    return False
 
 
 def _guard(gdir):
@@ -2669,7 +2695,7 @@ def main():
             return 2
     # #427 vòng 2: cwd không phải repo - luật trunk của repo project của phiên (phiên đăng ký ở đó, như project_held)
     proj = os.environ.get("CLAUDE_PROJECT_DIR") if not gdir else None
-    trunk, sw = trunk_main(top if gdir else (git_dir(proj)[1] if proj and sid and read_session(proj, sid) else None))
+    trunk, sw = trunk_main(top if gdir else (git_dir(proj)[1] if proj and sid and _session_of(proj, sid) else None))
     tunknown = {} if not gdir else None   # review #427 vòng 2: cwd không phải repo - chỉ đích đã biết nằm trong main (trunk_write unknown)
     if trunk:   # W1 R1 v6: main is merge-only - a write into it is refused whoever the session is, wherever it runs from
         if trunk_write(tool, d.get("tool_input"), command, cwd, trunk, sw, sid, unknown=tunknown):
