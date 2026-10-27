@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Test ĐỎ cho đợt tăng tốc gate (#472, mục 2) — XFAIL: mặc định in SKIP và thoát 0; GATE_SPEED_NEXT=1 chạy thật.
-# Test đã commit bị sửa (không chỉ thêm) và chưa ai duyệt: gate trả UNTESTED (exit_reason edited_test) TRƯỚC khi chạy suite nào.
-# Baseline 24-27/10: 29/55 lượt edited_test đã chạy suite rồi mới bị loại (8,3 giờ). Suite ghi một dòng vào marker khi chạy.
-# Bỏ dòng skip khi #472 xong và test XANH.
-if [ "${GATE_SPEED_NEXT:-0}" != 1 ]; then echo "SKIP (xfail #472): test sửa chưa duyệt vẫn chạy suite trước khi UNTESTED — GATE_SPEED_NEXT=1 để chạy thật"; exit 0; fi
+# Test hồi quy #472 mục B: test đã commit bị sửa (không chỉ thêm) và chưa ai duyệt: gate (lượt CLI) trả UNTESTED (exit_reason
+# edited_test) TRƯỚC khi lấy khoá dự án và chạy suite nào. Baseline 24-27/10: 29/55 lượt edited_test đã chạy suite rồi mới bị loại.
+# Suite ghi một dòng vào marker khi chạy. Đối chứng: cùng thay đổi mà test đã được duyệt (--auto-approve-tests) thì suite vẫn chạy.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 unset POSTFIX_GATE_FULL POSTFIX_GATE_FORCE_FULL CI DEVKIT_GATE_CACHE DEVKIT_SUITE_CACHE DEVKIT_PER_TEST_CACHE
@@ -32,9 +30,15 @@ try: r=json.loads(sys.stdin.read())
 except ValueError: r={}
 print(r.get("verdict",""), r.get("exit_reason",""))')"
 # điều kiện tiền đề (đúng cả hôm nay): gate nhận ra test sửa chưa duyệt — không thì ca dưới không chứng minh gì
-if [ "$V" = "UNTESTED edited_test" ] && [ "$RC" != 0 ]; then echo "✔ gate trả UNTESTED edited_test (rc=$RC)"
+if [ "$V" = "UNTESTED edited_test" ] && [ "$RC" = 2 ]; then echo "✔ gate trả UNTESTED edited_test (rc=$RC)"
 else echo "✖ tiền đề: gate không trả UNTESTED edited_test (rc=$RC, log: $V): $(printf '%s' "$OUT" | tail -3)"; FAILS=$((FAILS + 1)); fi
 if [ ! -f "$TMP/ran" ]; then echo "✔ không suite nào chạy trước khi trả UNTESTED"
 else echo "✖ suite đã chạy ($(wc -l < "$TMP/ran" | tr -d ' ') lần) rồi mới trả UNTESTED"; FAILS=$((FAILS + 1)); fi
+if [ ! -e "$R/.claude/audit-gate/test_run.lock" ]; then echo "✔ không lấy khoá dự án (test_run.lock chưa từng được tạo)"
+else echo "✖ gate đã mở khoá dự án test_run.lock dù kết luận chắc chắn là UNTESTED"; FAILS=$((FAILS + 1)); fi
+# đối chứng: test sửa đã được duyệt thì suite chạy bình thường (không xanh nhờ bỏ suite)
+OUT="$(cd "$R" && FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --run-tests --no-checklist --transcript "$TMP/empty.jsonl" --auto-approve-tests 2>&1)"; RC=$?
+if [ -f "$TMP/ran" ] && [ "$RC" = 0 ]; then echo "✔ đối chứng: test sửa đã duyệt (--auto-approve-tests) thì suite chạy, exit 0"
+else echo "✖ đối chứng: test sửa đã duyệt mà suite không chạy hoặc không exit 0 (rc=$RC): $(printf '%s' "$OUT" | tail -3)"; FAILS=$((FAILS + 1)); fi
 [ "$FAILS" = 0 ] && echo "PASS" || echo "FAIL: $FAILS"
 exit $(( FAILS > 0 ))

@@ -9,15 +9,20 @@ gate_runs_report.py). Ngày tính theo giờ địa phương (TZ); --until gồm
 Quy ước in ra:
 - thời gian impacted: total_wall_s của lượt impacted, tách source cli / hook; bỏ BUSY, REUSED, deferred (không trả giá chạy suite).
   p90 = nearest rank (như gate_runs_report.p90).
-- suite liệt kê = mọi dòng trong "suites"; suite thực chạy = dòng có số giây.
-- xanh lần đầu: nhóm theo trường task khi bản ghi có, không thì theo fp; lượt thử = lượt impacted không BUSY/REUSED/deferred,
-  theo epoch; nhóm xanh lần đầu khi lượt thử đầu tiên là PASS. Nhóm không có lượt thử nào không tính.
-- --full hợp lệ = project bắt đầu bằng .integrate-scratch- / .merge-scratch- / .train-scratch- (worktree tạm của integrate, merge
-  gate, merge train — như bin/batch_canary.py); mọi --full khác (kể cả final-gate, gate-batch-integrate) là ngoài điểm gộp.
-  Mọi bản ghi --full đều đếm, kể cả BUSY (lượt đã được gọi).
-- impacted narrowed: lượt impacted (bỏ BUSY/REUSED/deferred) có impacted_run=true, tức có suite chạy lệnh thu hẹp; còn lại
-  mọi suite chạy lệnh đầy đủ (vượt trần chọn test, file không map được...).
-- REG-DK-ALL-01: mọi lần suite đó có trong một lượt; p50/p90 trên các lần có số giây.
+  Thêm một dòng "incl. busy/reused flags": chỉ bỏ verdict BUSY/REUSED (lượt không chạy gì), giữ lượt có cờ busy /
+  reused_full_pass / deferred — để thấy cả hai số.
+- suite liệt kê = mọi dòng trong "suites"; suite thực chạy = dòng có số giây. Với impacted chỉ đếm lượt không BUSY/REUSED/deferred
+  và in trung bình mỗi lượt; với mode=full đếm mọi lượt.
+- xanh lần đầu: chỉ nhóm theo trường task; lượt thử = lượt impacted không BUSY/REUSED/deferred, theo epoch; nhóm xanh lần đầu khi
+  lượt thử đầu tiên là PASS. Không bản ghi nào có task thì in n/a: nhóm theo fp phần lớn chỉ một lượt, không phải task.
+- mode=full runs: mode=full không chỉ là --full (còn CI, --record-lesson, POSTFIX_GATE_FORCE_FULL...). Điểm gộp = trường
+  merge_point (#472 C) khi có; bản ghi cũ thì project bắt đầu bằng .integrate-scratch- / .merge-scratch- / .train-scratch-
+  (worktree tạm của integrate, merge gate, merge train — như bin/batch_canary.py). Khi log có force_reason thì in thêm phân bố
+  mỗi ngày theo force_reason (bản ghi thiếu = unknown). Mọi bản ghi mode=full đều đếm, kể cả BUSY (lượt đã được gọi).
+- impacted_command used: lượt impacted (bỏ BUSY/REUSED/deferred) có impacted_run=true; chỉ suite matrix có impacted_command mới
+  đặt cờ này, nên số này không đo việc thu hẹp test và không vào bảng trước/sau.
+- REG-DK-ALL-01: mọi lần suite đó có trong một lượt; p50/p90 trên các lần có số giây. Thêm thời gian lượt impacted (không
+  BUSY/REUSED/deferred, có ít nhất một suite có số giây) tách theo REG-DK-ALL-01 có số giây hay không.
 --baseline FILE: in thêm bảng | metric | baseline | current | delta | cho cùng cửa sổ --since/--until.
 """
 import argparse
@@ -93,42 +98,50 @@ def metrics(recs):
         walls = [w for w in (wall_or_none(r) for r in imp if r["source"] == src and not skipped(r)) if w is not None]
         m["impacted_%s_n" % src] = len(walls)
         m["impacted_%s_p50_s" % src], m["impacted_%s_p90_s" % src] = pct_stats(walls)
-    # impacted_run = có suite chạy lệnh thu hẹp (impacted_command); false = mọi suite chạy lệnh đầy đủ dù mode=impacted
+        # gồm lượt có cờ busy/reused_full_pass/deferred; chỉ bỏ verdict BUSY/REUSED (lượt không chạy suite nào)
+        walls = [w for w in (wall_or_none(r) for r in imp if r["source"] == src and r["verdict"] not in ("BUSY", "REUSED"))
+                 if w is not None]
+        m["impacted_%s_incl_n" % src] = len(walls)
+        m["impacted_%s_incl_p50_s" % src], m["impacted_%s_incl_p90_s" % src] = pct_stats(walls)
+    # impacted_run chỉ true khi một suite matrix có impacted_command; không đo việc thu hẹp test
     ran_imp = [r for r in imp if not skipped(r)]
-    m["impacted_narrowed"] = sum(1 for r in ran_imp if r.get("impacted_run") is True)
-    m["impacted_narrowed_of"] = len(ran_imp)
-    # bảng trước/sau so tỉ lệ: hai cửa sổ có số lượt khác nhau, so số đếm thô thì sai nghĩa
-    m["impacted_narrowed_pct"] = round(100.0 * m["impacted_narrowed"] / len(ran_imp), 1) if ran_imp else None
-    for name, rs in (("impacted", imp), ("full", full)):
+    m["impacted_command_used"] = sum(1 for r in ran_imp if r.get("impacted_run") is True)
+    m["impacted_command_of"] = len(ran_imp)
+    # impacted: chỉ lượt đã trả giá chạy suite, để trung bình mỗi lượt đúng nghĩa
+    for name, rs in (("impacted", ran_imp), ("full", full)):
         m["suites_%s_listed" % name] = sum(len(r["suites"]) for r in rs)
         m["suites_%s_ran" % name] = sum(1 for r in rs for s in r["suites"] if ran(s))
+    m["suites_impacted_runs"] = len(ran_imp)
+    for name, rs in (("impacted", imp), ("full", full)):
         m["verdict_%s" % name] = collections.Counter(r["verdict"] for r in rs)
         m["untested_%s" % name] = collections.Counter(str(r.get("exit_reason")) for r in rs if r["verdict"] == "UNTESTED")
     m["suite_status"] = collections.Counter(str(s[1]) for r in recs for s in r["suites"])
-    # xanh lần đầu: nhóm theo task (khi có) hoặc fp
+    # xanh lần đầu: chỉ theo task; nhóm theo fp phần lớn chỉ một lượt nên không phải số đo task
     first = collections.OrderedDict()
     m["first_green_skipped"] = 0
-    for r in imp:
-        if skipped(r):
-            continue
-        task, fp = r.get("task"), r.get("fp")
+    for r in ran_imp:
+        task = r.get("task")
         if isinstance(task, str) and task:
-            key = "task:" + task
-        elif isinstance(fp, str) and fp:
-            key = "fp:" + fp
+            first.setdefault(task, r["verdict"])
         else:
-            # không có task lẫn fp: không biết thuộc nhóm nào, không gộp chung — đếm riêng
             m["first_green_skipped"] += 1
-            continue
-        first.setdefault(key, r["verdict"])
     m["first_green_groups"] = len(first)
     m["first_green_pass"] = sum(1 for v in first.values() if v == "PASS")
     m["first_green_pct"] = round(100.0 * m["first_green_pass"] / len(first), 1) if first else None
     per_day = collections.OrderedDict()
+    reasons = collections.OrderedDict()
     for r in full:
         d = per_day.setdefault(day(r), [0, 0])
-        d[0 if str(r.get("project", "")).startswith(MERGE_POINT_PREFIXES) else 1] += 1
+        mp = r.get("merge_point")
+        if not isinstance(mp, bool):
+            # bản ghi cũ (trước #472 C) không có merge_point: dùng quy tắc tiền tố project
+            mp = str(r.get("project", "")).startswith(MERGE_POINT_PREFIXES)
+        d[0 if mp else 1] += 1
+        fr = r.get("force_reason")
+        reasons.setdefault(day(r), collections.Counter())[fr if isinstance(fr, str) and fr else "unknown"] += 1
     m["full_per_day"] = per_day
+    # chỉ in theo force_reason khi log có trường này (#472 C); log cũ thì bỏ hẳn
+    m["full_reason_per_day"] = reasons if any(isinstance(r.get("force_reason"), str) and r["force_reason"] for r in full) else None
     m["full_merge_point"] = sum(v[0] for v in per_day.values())
     m["full_outside"] = sum(v[1] for v in per_day.values())
     a = [s for r in recs for s in r["suites"] if s[0] == ALL01]
@@ -136,6 +149,13 @@ def metrics(recs):
     m["all01_n"] = len(a)
     m["all01_status"] = collections.Counter(str(s[1]) for s in a)
     m["all01_p50_s"], m["all01_p90_s"] = pct_stats(secs)
+    # lượt impacted có chạy suite (ít nhất một suite có số giây), tách theo REG-DK-ALL-01 có số giây hay không
+    for key, has in (("without", False), ("with", True)):
+        walls = [wall_or_none(r) for r in ran_imp if any(ran(s) for s in r["suites"])
+                 and any(s[0] == ALL01 and ran(s) for s in r["suites"]) == has]
+        walls = [w for w in walls if w is not None]
+        m["imp_%s_all01_n" % key] = len(walls)
+        m["imp_%s_all01_p50_s" % key] = pct_stats(walls)[0]
     return m
 
 
@@ -145,32 +165,48 @@ def print_report(label, m, ignored, out):
     for src in ("cli", "hook"):
         w("impacted %s: n=%d p50=%s p90=%s\n" % (src, m["impacted_%s_n" % src], fmt_s(m["impacted_%s_p50_s" % src]),
                                                 fmt_s(m["impacted_%s_p90_s" % src])))
-    for name in ("impacted", "full"):
-        w("suites %s: listed=%d ran=%d\n" % (name, m["suites_%s_listed" % name], m["suites_%s_ran" % name]))
+    for src in ("cli", "hook"):
+        w("impacted %s incl. busy/reused flags (verdict BUSY/REUSED dropped): n=%d p50=%s p90=%s\n" % (
+            src, m["impacted_%s_incl_n" % src], fmt_s(m["impacted_%s_incl_p50_s" % src]), fmt_s(m["impacted_%s_incl_p90_s" % src])))
+    n = m["suites_impacted_runs"]
+    w("suites impacted: listed=%d ran=%d runs=%d mean_listed=%s mean_ran=%s\n" % (
+        m["suites_impacted_listed"], m["suites_impacted_ran"], n, "-" if not n else "%.1f" % (1.0 * m["suites_impacted_listed"] / n),
+        "-" if not n else "%.1f" % (1.0 * m["suites_impacted_ran"] / n)))
+    # bộ lọc của skipped(): dùng cho thời gian impacted, suite impacted, xanh lần đầu, ALL-01 tách lượt, impacted_command
+    w("impacted filter: BUSY, REUSED, deferred and reused_full_pass excluded\n")
+    w("suites full: listed=%d ran=%d\n" % (m["suites_full_listed"], m["suites_full_ran"]))
     for name in ("impacted", "full"):
         w("verdict %s: %s\n" % (name, counts(m["verdict_%s" % name])))
         if m["untested_%s" % name]:
             w("untested reasons %s: %s\n" % (name, counts(m["untested_%s" % name])))
     w("suite status: %s\n" % counts(m["suite_status"]))
-    pct = m["first_green_pct"]
-    w("first green impacted (key=task|fp): %d/%d = %s\n" % (m["first_green_pass"], m["first_green_groups"],
-                                                            "-" if pct is None else "%.1f%%" % pct))
-    if m["first_green_skipped"]:
-        w("first green skipped (no task/fp): %d\n" % m["first_green_skipped"])
+    if m["first_green_groups"]:
+        w("first green impacted (key=task): %d/%d = %.1f%%\n" % (m["first_green_pass"], m["first_green_groups"], m["first_green_pct"]))
+        if m["first_green_skipped"]:
+            w("first green skipped (no task): %d\n" % m["first_green_skipped"])
+    else:
+        w("first green impacted: n/a (no task field; fp groups are not tasks)\n")
     for d, (ok, bad) in m["full_per_day"].items():
-        w("full %s: merge_point=%d outside=%d\n" % (d, ok, bad))
-    w("full total: merge_point=%d outside=%d (merge point = %s)\n" % (m["full_merge_point"], m["full_outside"],
-                                                                      " ".join(p + "*" for p in MERGE_POINT_PREFIXES)))
+        w("mode=full runs %s: merge_point=%d outside=%d\n" % (d, ok, bad))
+    w("mode=full runs total: merge_point=%d outside=%d (merge point = field merge_point, else %s)\n" % (
+        m["full_merge_point"], m["full_outside"], " ".join(p + "*" for p in MERGE_POINT_PREFIXES)))
+    w("note: mode=full also covers CI, --record-lesson and POSTFIX_GATE_FORCE_FULL\n")
+    if m["full_reason_per_day"]:
+        for d, c in m["full_reason_per_day"].items():
+            w("mode=full force_reason %s: %s\n" % (d, counts(c)))
     st = m["all01_status"]
     other = m["all01_n"] - sum(st[k] for k in ("PASS", "FAIL", "TIMEOUT", "UNTESTED"))
     w("%s: n=%d PASS=%d FAIL=%d TIMEOUT=%d UNTESTED=%d other=%d p50=%s p90=%s\n" % (
         ALL01, m["all01_n"], st["PASS"], st["FAIL"], st["TIMEOUT"], st["UNTESTED"], other, fmt_s(m["all01_p50_s"]), fmt_s(m["all01_p90_s"])))
-    w("impacted narrowed (impacted_run): %d/%d\n" % (m["impacted_narrowed"], m["impacted_narrowed_of"]))
+    w("impacted without %s (impacted, not BUSY/REUSED/deferred, >=1 suite with seconds, %s without seconds): n=%d p50=%s; "
+      "with %s: n=%d p50=%s\n" % (ALL01, ALL01, m["imp_without_all01_n"], fmt_s(m["imp_without_all01_p50_s"]), ALL01,
+                                 m["imp_with_all01_n"], fmt_s(m["imp_with_all01_p50_s"])))
+    w("impacted_command used (impacted_run): %d/%d\n" % (m["impacted_command_used"], m["impacted_command_of"]))
     w("ignored lines: %d\n" % ignored)
 
 
 TABLE_KEYS = ("impacted_cli_n", "impacted_cli_p50_s", "impacted_cli_p90_s", "impacted_hook_n", "impacted_hook_p50_s",
-              "impacted_hook_p90_s", "impacted_narrowed_pct", "suites_impacted_listed", "suites_impacted_ran", "first_green_pct", "full_merge_point",
+              "impacted_hook_p90_s", "suites_impacted_listed", "suites_impacted_ran", "first_green_pct", "full_merge_point",
               "full_outside", "all01_n", "all01_p50_s", "all01_p90_s")
 
 
