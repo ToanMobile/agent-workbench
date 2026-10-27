@@ -147,9 +147,13 @@ pg() { python3 "$PG" "$R" "$@" >/dev/null 2>&1; echo $?; }
 [ "$(pg HEAD --dst origin main --via-hook origin --via-hook origin)" = 2 ] && ok "argv: hai --via-hook: từ chối" || fail "argv: hai --via-hook lọt"
 git -C "$R" remote add other "$R.origin.git"
 [ "$(pg HEAD --dst other main --via-hook origin)" = 2 ] && ok "argv: remote của --dst khác --via-hook: từ chối" || fail "argv: --dst lệch remote lọt"
-# repo không có ma trận hồi quy: push_gate chưa áp, như luật cũ
+# #482: repo ĐÃ cài DevKit (có .agents/devkit) mà thiếu ma trận: fail closed, lời nêu lý do; repo chưa cài DevKit: cho, như luật cũ
 rm "$R/.agents/regression_matrix.active.json"; echo 'fun ok()=9' > "$R/src/Core.kt" && git -C "$R" commit -qam nomatrix
-[ "$(pg HEAD --dst origin main --via-hook origin)" = 0 ] && ok "repo không ma trận: cho, như cũ" || fail "repo không ma trận bị từ chối"
+[ "$(pg HEAD --dst origin main --via-hook origin)" = 0 ] && ok "repo không cài DevKit, không ma trận: cho, như cũ" || fail "repo không cài DevKit, không ma trận bị từ chối"
+mkdir -p "$R/.agents/devkit"
+OUT="$(python3 "$PG" "$R" HEAD --dst origin main --via-hook origin 2>&1)"; RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -q 'regression matrix'; then ok "repo đã cài DevKit, thiếu ma trận: từ chối, nêu lý do (#482)"
+else fail "repo đã cài DevKit, thiếu ma trận vẫn lọt (rc=$RC): $(printf '%s' "$OUT" | tail -c 300)"; fi
 
 [ "$FAILS" = 0 ] && echo "PASS" || echo "FAIL: $FAILS"
 exit $(( FAILS > 0 ))
