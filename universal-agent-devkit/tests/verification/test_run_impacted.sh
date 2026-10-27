@@ -105,5 +105,41 @@ E="$TMP/none"; mkdir -p "$E/tests"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$E/t
 out="$(cd "$E" && bash tests/run_impacted.sh --all 2>&1)"; rc=$?
 [ "$rc" = 2 ] && printf '%s' "$out" | grep -q "no tests found" && ok "--all with no tests is an error (exit 2), never a silent pass" || fail "--all with no tests: rc=$rc out=$out"
 
+# #427 / log trống khi quá 900 s (27/10): ✔/✖ chỉ in ở vòng cuối, sau khi MỌI test xong; gate giết suite ở trần 900 s thì log bằng chứng
+# trống ("(no output)"), không biết test nào đã xong. Nay mỗi test xong in ngay một dòng tiến độ ra stderr. Kit riêng KHÔNG có run_bounded.py:
+# test chạy trần trong nhóm tiến trình của runner, một kill nhóm dừng hết (như gate). Dừng theo sự kiện (marker, dòng tiến độ), không theo
+# đồng hồ (#430: trần giây đỏ oan khi tải 100+); chỉ khi ĐỎ mới chờ hết trần 20 s.
+G="$TMP/prog"; mkdir -p "$G/tests/verification" "$G/tests/gates" "$G/tmp"; cp "$DEVKIT_DIR/tests/run_impacted.sh" "$G/tests/"; : > "$G/tests/impact_map.txt"
+echo 'echo ok' > "$G/tests/verification/test_repo_consistency.sh"
+printf 'touch "%s/fast.ended"\n' "$G" > "$G/tests/gates/test_fast_${TOK}.sh"
+printf 'exit 3\n' > "$G/tests/gates/test_bad_${TOK}.sh"
+printf 'w=0; while [ ! -e "%s/release" ]; do sleep 0.2; w=$((w + 1)); [ "$w" -gt 600 ] && exit 1; done\n' "$G" > "$G/tests/gates/test_held_${TOK}.sh"
+( cd "$G" && git init -q . )
+TMPDIR="$G/tmp" DEVKIT_TEST_JOBS=4 python3 -c 'import os, sys; os.setpgrp(); os.execvp("bash", ["bash", sys.argv[1], "--all"])' "$G/tests/run_impacted.sh" \
+  >"$TMP/prog_cut.out" 2>&1 & gp=$!
+w=0; while [ ! -e "$G/fast.ended" ] && [ "$w" -lt 300 ]; do sleep 0.2; w=$((w + 1)); done
+w=0; while [ -e "$G/fast.ended" ] && ! grep -q "test_fast_${TOK}\.sh" "$TMP/prog_cut.out" && [ "$w" -lt 100 ]; do sleep 0.2; w=$((w + 1)); done
+kill -TERM -- "-$gp" 2>/dev/null; wait "$gp" 2>/dev/null; touch "$G/release"; kill -KILL -- "-$gp" 2>/dev/null
+if [ ! -e "$G/fast.ended" ]; then fail "setup: the fast test never ran: $(cat "$TMP/prog_cut.out")"
+else
+  grep -qE "^· done rc=0 [0-9]+s tests/gates/test_fast_${TOK}\.sh$" "$TMP/prog_cut.out" \
+    && ok "a run killed mid-way already printed the progress line of the test that had ended" || fail "killed run left no progress line: '$(cat "$TMP/prog_cut.out")'"
+  ! grep -qE '^(✔|✖) ' "$TMP/prog_cut.out" && ok "  … and it was cut before the ✔/✖ summary (the line is the only trace)" || fail "killed run reached the summary: $(cat "$TMP/prog_cut.out")"
+fi
+# Lượt bình thường trên cùng kit: stdout (✔/✖, thứ tự, mã thoát) y như trước; dòng tiến độ chỉ ở stderr, mỗi test chạy một dòng,
+# không khớp FAIL_LINE của gate (dòng hỏng) và khớp HANG_TEST_LINE (gate gọi tên test cuối khi quá giờ).
+so="$(cd "$G" && TMPDIR="$G/tmp" DEVKIT_TEST_JOBS=4 bash tests/run_impacted.sh --all 2>"$TMP/prog.err")"; rc=$?
+[ "$rc" = 1 ] && [ "$so" = "$(printf '✖ tests/gates/test_bad_%s.sh\n✔ tests/gates/test_fast_%s.sh\n✔ tests/gates/test_held_%s.sh\n✔ tests/verification/test_repo_consistency.sh' "$TOK" "$TOK" "$TOK")" ] \
+  && ok "normal run: stdout is the same ✔/✖ list in list order, exit 1 (one red test)" || fail "normal run stdout changed (rc=$rc): '$so'"
+[ "$(grep -c '^· done ' "$TMP/prog.err")" = 4 ] && grep -qE "^· done rc=3 [0-9]+s tests/gates/test_bad_${TOK}\.sh$" "$TMP/prog.err" \
+  && ok "normal run: one progress line per test on stderr, with its exit code" || fail "progress lines on stderr: '$(cat "$TMP/prog.err")'"
+python3 -I -c '
+import re, sys
+fail_line = re.compile(r"✖|✗|❌|\bFAILED\b|\bFAIL\b|\bERROR\b|Traceback|AssertionError|\bException\b")   # FAIL_LINE của gate
+hang_line = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")                                                # HANG_TEST_LINE của gate
+ls = [l for l in open(sys.argv[1], encoding="utf-8").read().splitlines() if l.startswith("· done ")]
+sys.exit(0 if ls and all(not fail_line.search(l) and hang_line.search(l) for l in ls) else 1)' "$TMP/prog.err" \
+  && ok "progress lines: never a gate failure line, always a test line" || fail "a progress line reads as a failure or not as a test: $(cat "$TMP/prog.err")"
+
 if [ "$FAILS" -ne 0 ]; then echo "run_impacted: $FAILS FAILED"; exit 1; fi
 echo "run_impacted: all checks passed"

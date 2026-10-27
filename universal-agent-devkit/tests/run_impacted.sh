@@ -148,13 +148,16 @@ run_one() { # <test> <out dir>
   # Trước đó `bash "$1"` trần: ca FIFO của test_gate_robustness.sh kẹt trong open(), runner phía trên mất, hai post-fix-gate.py
   # sống 18h và các gate khác báo BUSY.
   mkdir -p "$o.slots"
-  local rc=0
+  local rc=0 t0=$SECONDS
   env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
        -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC \
        SB_HEAVY_SLOT_DIR="$o.slots" \
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
        bash "$1" >"$o.log" 2>&1 || rc=$?
   echo "$rc" >"$o.rc"
+  # #427 / log trống khi quá 900 s (27/10): ✔/✖ chỉ in ở vòng cuối, gate giết suite thì log rỗng. Một dòng tiến độ ra stderr ngay khi
+  # test xong, một printf (worker xargs song song không xé dòng); không mở đầu ✔/✖/↺, không khớp FAIL_LINE của gate, có đường dẫn test.
+  printf '· done rc=%s %ss %s\n' "$rc" "$((SECONDS - t0))" "$1" >&2
   # B2 (audit 25/10): kết quả ghi NGAY khi test xong — một TIMEOUT của cả suite (gate giết nhóm) không còn xoá PASS đã có
   [ -n "${DEVKIT_PTC:-}" ] && python3 -I "$DEVKIT_PTC" record "$2" "$1" "$rc" >"$o.ptc" 2>&1
   return 0
