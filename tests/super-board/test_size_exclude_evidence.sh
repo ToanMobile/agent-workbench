@@ -7,11 +7,16 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 POLICY="$ROOT/.claude/bin/super-board-merge-policy.py"
-CONFIG="$ROOT/.claude/super-board/configs/agent-workbench.json"
+REAL_CONFIG="$ROOT/.claude/super-board/configs/agent-workbench.json"
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# 2026-10-28 (#451): config thật đã bỏ trần cỡ PR (auto_max_lines: 0, PR #59) nên các ca về trần không còn đúng trên nó.
+# Dùng bản sao config với trần 400, giữ nguyên size_exclude thật; đổi trần ở board không làm test này đỏ.
+CONFIG="$TMP/config-cap400.json"
+python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c["merge_policy"]["auto_max_lines"]=400; json.dump(c,open(sys.argv[2],"w"))' \
+  "$REAL_CONFIG" "$CONFIG" || { echo "✖ cannot build the cap-400 fixture config"; exit 1; }
 : > "$TMP/empty.diff"
 
 size_verdict() {  # $1 = meta json; in ra "size" nếu chính sách đòi người duyệt vì cỡ PR, ngược lại "ok"
