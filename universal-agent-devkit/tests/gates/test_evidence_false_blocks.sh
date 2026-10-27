@@ -399,12 +399,13 @@ EOF
 python3 -m pytest -q > /tmp/l 2>&1; echo "rc=$?"@@rc=0' \
          'for f in tests/a/test_*.sh; do echo "== $f" >> /tmp/ran.txt; bash "$f"; done@@✔ case 1
 ok: done
-✔ case 2'; do
+✔ case 2
+all passed (2)'; do
   transcript "$TMP/d2.jsonl" "$(steps_after_edit "${c%%@@*}" "${c#*@@}")"
   run 0 "$TMP/d2.jsonl" "$PASSCLAIM" "'${c#*@@}' after \`${c%%@@*}\`: $PASSCLAIM"
 done
 echo "-- D. must still block: those summaries for another runner or a red run, a next line that is not the run's echo, a heredoc body,"
-echo "   a loop whose run (or the whole loop) writes stdout to a file"
+echo "   a loop whose run (or the whole loop) writes stdout to a file, a glob loop over kit suites with no summary line (#427 round 3)"
 for c in './gradlew test 2>&1 | tail -3; echo "g=${PIPESTATUS[0]}"; python3 -m pytest > /tmp/l 2>&1; echo $?@@BUILD SUCCESSFUL in 3s
 g=0
 1' \
@@ -429,6 +430,9 @@ python3 -m pytest > /tmp/l 2>&1
 echo "rc=$?"
 EOF
 echo "rc=0"@@rc=0' \
+         'for f in tests/a/test_*.sh; do echo "== $f" >> /tmp/ran.txt; bash "$f"; done@@✔ case 1
+ok: done
+✔ case 2' \
          'for f in tests/a/test_*.sh; do bash "$f" > /dev/null; done@@warning: x' \
          'for f in tests/a/test_*.sh; do echo "== $f"; bash "$f" > /dev/null; done@@== tests/a/test_x.sh' \
          'for f in tests/a/test_*.sh; do bash "$f"; done > /tmp/all.log@@warning: x' \
