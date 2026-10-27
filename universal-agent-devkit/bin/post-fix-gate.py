@@ -6271,7 +6271,7 @@ def main():
         _stop_budget = False
     edited_early = bool(run_tests and not args.session and not _stop_budget and not force_reason
                         and os.environ.get("DEVKIT_GATE_MERGE_CHECK") != "1"
-                        and [f for f in tests_touched if f not in runners_touched])
+                        and not runners_touched and tests_touched)
     if edited_early:
         for t in regression_tests:
             if t.get("command"):
@@ -7363,7 +7363,7 @@ def main():
     # PASS mà không chạy gì (RESOURCE, SKIP compile, COVERED) không phải XANH; BUSY/BUDGET là kết luận exit 4 của chính chúng
     added_not_green = [i for i in matrix_added if not any(
         t.get("id") == i and ((t["status"] == "PASS" and t.get("mode") not in ("resource", "skip-compile", "covered"))
-                              or t.get("label") in ("BUSY", "BUDGET")) for t in regression_tests)]
+                              or t.get("label") in ("BUSY", "BUDGET", "EDITED")) for t in regression_tests)]
     if added_not_green and not matrix_problem:
         matrix_problem = tr(f"regression matrix chỉ thêm rule so với {base_ref} nhưng test mới chưa chạy XANH trong lượt này "
                             f"({', '.join(added_not_green[:5])}) — gate chỉ tin ma trận chỉ-thêm khi mọi test mới PASS; chạy lại với --run-tests",

@@ -30,7 +30,7 @@ try: r=json.loads(sys.stdin.read())
 except ValueError: r={}
 print(r.get("verdict",""), r.get("exit_reason",""))')"
 # điều kiện tiền đề (đúng cả hôm nay): gate nhận ra test sửa chưa duyệt — không thì ca dưới không chứng minh gì
-if [ "$V" = "UNTESTED edited_test" ] && [ "$RC" != 0 ]; then echo "✔ gate trả UNTESTED edited_test (rc=$RC)"
+if [ "$V" = "UNTESTED edited_test" ] && [ "$RC" = 2 ]; then echo "✔ gate trả UNTESTED edited_test (rc=$RC)"
 else echo "✖ tiền đề: gate không trả UNTESTED edited_test (rc=$RC, log: $V): $(printf '%s' "$OUT" | tail -3)"; FAILS=$((FAILS + 1)); fi
 if [ ! -f "$TMP/ran" ]; then echo "✔ không suite nào chạy trước khi trả UNTESTED"
 else echo "✖ suite đã chạy ($(wc -l < "$TMP/ran" | tr -d ' ') lần) rồi mới trả UNTESTED"; FAILS=$((FAILS + 1)); fi
