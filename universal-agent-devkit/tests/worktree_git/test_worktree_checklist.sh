@@ -241,12 +241,22 @@ bash "$KIT" worktree remove ../wt-s >"$TMP/rm-s.out" 2>&1; rc=$?
   || { fail "remove of a worktree with only sync-regenerated rows (rc=$rc)"; cat "$TMP/rm-s.out"; }
 # a row a person made (`agent-kit bugs add`), only in the worktree: still refused, the worktree stays
 bash "$KIT" worktree add ../wt-h >/dev/null 2>&1 || fail "add wt-h"
-status_edit "$TMP/wt-h" 'items["BUG-HAND"] = {"id": "BUG-HAND", "kind": "bug", "title": "made by a person", "fixed": False, "state": "reported", "tests": [], "created_at": "2026-10-21 09:00:00"}'
+status_edit "$TMP/wt-h" 'items["BUG-HAND"] = {"id": "BUG-HAND", "kind": "bug", "title": "made by a person", "fixed": False, "state": "confirmed", "tests": [], "created_at": "2026-10-21 09:00:00"}'
 bash "$KIT" worktree remove ../wt-h >"$TMP/rm-h.out" 2>&1; rc=$?
 [ "$rc" = 1 ] && [ -d "$TMP/wt-h" ] && grep -q "regression_status.json" "$TMP/rm-h.out" && grep -q "with-checklist" "$TMP/rm-h.out" \
   && ok "remove: a bug row a person made, only in the worktree, still holds it; the hint names --with-checklist" \
   || { fail "remove of a worktree with an authored row (rc=$rc)"; cat "$TMP/rm-h.out"; }
 git -C "$TMP/m" worktree remove --force "$TMP/wt-h" >/dev/null 2>&1
+# #429 (26/10, #416: the builder's worktree held 2 bookkeeping files, remove refused, the QA lane could not start): a REPORTED row
+# (state "reported": the prompt hook wrote it, no test, nobody confirmed it) plus a stale_files list is not a person's work: remove
+# goes through and the fallback copy keeps the row. `bugs add` (state "confirmed", the wt-h case above) still holds the worktree
+bash "$KIT" worktree add ../wt-rp >/dev/null 2>&1 || fail "add wt-rp"
+status_edit "$TMP/wt-rp" 'items["BUG-PROMPT"] = {"id": "BUG-PROMPT", "kind": "bug", "title": "prompt that sounded like a bug", "fixed": None, "state": "reported", "tests": [], "created_at": "2026-10-26 09:00:00"}; items["BUG-MOVE"]["stale_since"] = "2026-10-26 09:00:00"; items["BUG-MOVE"]["stale_files"] = ["a.py"]'
+echo "<!-- r -->" >> "$TMP/wt-rp/.agents/CHECKLIST.md"
+bash "$KIT" worktree remove ../wt-rp >"$TMP/rm-rp.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$TMP/wt-rp" ] && [ "$(fallback_has BUG-PROMPT .agents/regression_status.json)" = yes ] && grep -q "refs/devkit/discarded/" "$TMP/rm-rp.out" \
+  && ok "remove: a REPORTED prompt row + stale_files + the CHECKLIST view alone no longer hold a worktree; the fallback copy keeps the row" \
+  || { fail "remove of a worktree with only a REPORTED row (rc=$rc)"; cat "$TMP/rm-rp.out"; }
 # a row a person DROPPED in the worktree (`agent-kit bugs drop`; OCR 21/10): the worktree's own HEAD has it, main still does:
 # that decision lives nowhere else, still refused. A row main gained after the worktree branched off is no drop (#41 had those)
 bash "$KIT" worktree add ../wt-d >/dev/null 2>&1 || fail "add wt-d"

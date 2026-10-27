@@ -30,13 +30,14 @@ newrepo() {   # newrepo <dir>: repo git có một file nguồn đã commit, buil
 P="$TMP/work/proj"
 newrepo "$P"
 
-# check <rc mong đợi> <lệnh> [project] — payload cwd và CLAUDE_PROJECT_DIR là project
+# check <rc mong đợi> <lệnh> [project] — payload cwd và CLAUDE_PROJECT_DIR là project. CHECK_CPU: giới hạn giây CPU của hook (ulimit -t:
+# đo CPU, không đo đồng hồ); CHECK_LABEL: tên in ra thay cho lệnh dài (review vòng 3, như tests/gates/test_hardware_backlog427.sh)
 check() {
   local want="$1" c="$2" p="${3:-$P}"
   python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[2],"hook_event_name":"PreToolUse",
     "tool_name":"Bash","tool_input":{"command":sys.argv[1],"description":"d"}}))' "$c" "$p" > "$TMP/in.json"
-  ( cd "$p" && CLAUDE_PROJECT_DIR="$p" bash "$HOOK" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
-  local rc=$?
+  ( cd "$p" && { [ -z "${CHECK_CPU:-}" ] || ulimit -t "$CHECK_CPU"; } && CLAUDE_PROJECT_DIR="$p" bash "$HOOK" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
+  local rc=$? c="${CHECK_LABEL:-$c}"
   if [ "$rc" = "$want" ]; then ok "rc $rc: $c"; else fail "rc $rc (want $want): $c — $(head -c 200 "$TMP/err" | tr '\n' ' ')"; fi
 }
 
@@ -133,6 +134,104 @@ check 2 'for i in 1 2; do rm -rf build/l/; bash mk.sh; done'               # rm 
 check 0 'bash ok.sh && rm -rf build/l/'                                     # đối chứng: script không tạo link
 check 0 'bash mk.sh && rm -rf build/l'                                      # đối chứng: không dấu /, xoá chính link
 check 0 'bash clean.sh'                                                     # đối chứng: rm trong script không bị xét (như trước)
+
+# ── Review vòng 3 ──
+# R1. (P1) tên glob dưới / trên một đích chép: shell khớp * với tree/lnk (link tới ~), rm đi theo nó xoá ~/x. Từng đọc * như một tên.
+check 2 'cp -R tree dist/t && rm -rf dist/t/*/x'
+check 2 'cp -R tree dist/t && rm -rf dist/t/l?k/x'
+check 2 'rsync -a tree/ dist/t/ && rm -rf dist/t/*/x'
+check 2 'ditto tree dist/t && rm -rf dist/t/[l]nk/x'
+check 2 'cp -R tree dist/t && rm -rf dist/t/[!L]nk/x'                         # lớp phủ định: casefold một mình không khớp lnk
+check 2 'cp -R tree dist/t && rm -rf dist/t/[^S]*/x'
+check 2 'cp -R tree dist/t && rm -r dist/t/*/x'                               # không -f
+check 2 "cp -R tree dist/t; trap 'rm -rf dist/t/*/x' EXIT"                    # thân trap
+check 2 'cp -R tree dist/ && rm -rf dist/*/lnk/x'                             # đích/<tên nguồn>: glob ở tên nguồn
+check 2 'cp -R tree dist/t && rm -rf dist/t*/lnk/x'                           # glob ở chính tên đích
+check 2 'tar -xf a.tar -C build/e && rm -rf build/e*/pkg/x'                   # glob ở tên thư mục giải nén
+check 0 'cp -R tree dist/t && rm -rf dist/t/s*/x'                             # đối chứng: s* chỉ khớp sub (thư mục thật)
+check 0 'cp -R tree dist/t && rm -rf dist/t/*'                                # đối chứng: glob ở tên cuối, không dấu /
+check 0 'cp -R src dist/s && rm -rf dist/s/*/x'                               # đối chứng: nguồn không có link
+check 0 'cp -R tree dist/t && rm -rf dist/u*/lnk/x'                           # đối chứng: glob không khớp đích nào
+
+# R2. (P0) rm -r chứa một worktree git đã đăng ký (của phiên khác): `rm -rf .claude/worktrees` từ main
+W="$TMP/work/wtp"
+newrepo "$W"
+for w in .claude/worktrees/w1 .claude/worktrees/w2 build/wt; do git -C "$W" worktree add -q --detach "$W/$w" 2>/dev/null || fail "worktree add $w"; done
+check 2 'rm -rf .claude/worktrees' "$W"
+check 2 'rm -r .claude/worktrees' "$W"                                        # không -f
+check 2 'rm -rf .claude/worktrees/*' "$W"
+check 2 'find .claude/worktrees -delete' "$W"
+check 2 'rsync -a --delete empty/ .claude/worktrees/' "$W"
+check 2 'rm -rf build' "$W"                                                    # build output chứa worktree
+check 2 'cd .claude && rm -rf worktrees/' "$W"
+check 0 'rm -rf .claude/worktrees/w1' "$W"                                     # đối chứng: chính một worktree — phán quyết cũ
+check 0 'rm -rf .claude/worktrees/w1/build' "$W"
+check 0 'rm -rf .claude/worktrees/x*' "$W"                                     # đối chứng: glob không khớp worktree nào
+check 0 'rm -rf build/tmp' "$W"
+check 0 'rm -rf build/wt/node_modules' "$W"
+
+# R3. (P2 chặn nhầm) đích chép / clone không đọc được không còn chặn mọi rm qua một thư mục; cả hai không biết thì vẫn chặn
+printf '#!/bin/sh\ncp -R "$A" "$B"\ntar -x -C "$D" -f a.tar\ngit clone "$U" "$D"\n' > "$P/cpvar.sh"
+check 0 'cp -R src "$OUT" && rm -rf build/tmp/x'
+check 0 'git clone "$URL" && rm -rf build/tmp/x'
+check 0 'ssh host "cp -r /a /b" && rm -rf build/tmp/x'
+check 0 'bash cpvar.sh && rm -rf build/tmp/x'
+check 2 'cp -R src "$OUT" && rm -r "$OUT"/x/'                                  # đường dẫn rm cũng không đọc được
+check 2 'cp -R src "$OUT" && rm -rf build/*/x'
+check 2 'cd "$NOPE_DEVKIT_R3" && cp -R ~/nope_devkit_r3 "$OUT" && rm -r pkg/x'   # cwd không biết, rm -r không -f
+check 2 'cd "$NOPE_DEVKIT_R3" && cp -R ~/nope_devkit_r3 "$OUT" && rm -r "$PWD/pkg/x"'
+check 2 'tar -xf a.tar -C "$NOPE_DEVKIT_R3" && rm -rf build/tmp/x/'           # giải nén trên dòng lệnh: như vòng 2
+check 2 'ssh host "cp -r /a /b" && ssh host "rm -rf /b/x/"'                    # lệnh ssh sau vẫn thấy đích không biết
+check 2 'ssh host "cp -r /a /b && rm -rf /b/x/"'
+check 2 "ssh localhost 'ln -s ~ build/l' && rm -rf build/l/"                  # tên ln của ssh vẫn dùng chung (ssh localhost)
+
+# R4. (P2 thời gian, giới hạn CPU) note_copy / extracted_entry so mỗi lệnh với mọi thư mục đã ghi; thân trap xét lại mỗi cwd, git mỗi đường dẫn
+python3 -c 'print("#!/bin/sh"); [print("cp -R src dist/pkg/component_with_a_fairly_long_directory_name_%03d/output/release/x  # step %d" % (i, i)) for i in range(400)]' > "$P/big.sh"
+CHECK_CPU=2 CHECK_LABEL="300 × (cp -R + rm -rf) (CPU ≤ 2 s)" check 0 "$(python3 -c 'print(" && ".join("cp -R src dist/s%d && rm -rf build/t%d/x" % (i, i) for i in range(300)))')"
+CHECK_CPU=2 CHECK_LABEL="500 × cp -R (CPU ≤ 2 s)" check 0 "$(python3 -c 'print(" && ".join("cp -R src dist/s%d" % i for i in range(500)))') && rm -rf build/tmp/x"
+CHECK_CPU=2 CHECK_LABEL="50 × (trap + cd) (CPU ≤ 2 s)" check 0 "$(python3 -c 'print(" && ".join("trap \"rm -rf build/t%d\" EXIT && cd build/d%d && cd ../.." % (i, i) for i in range(50)))')"
+CHECK_CPU=2 CHECK_LABEL="bash <script 45 KB, 400 cp -R> (CPU ≤ 2 s)" check 0 'bash big.sh && rm -rf build/tmp/x'
+# git ls-files một lần cho cả project từ đường dẫn thứ 5: build output đang track vẫn bị chặn, như khi hỏi từng đường dẫn
+mkdir -p "$P/target/gen" && printf 'k\n' > "$P/target/gen/keep.txt" && git -C "$P" add target/gen/keep.txt && git -C "$P" commit -qm keep
+check 2 'rm -rf build/q1 build/q2 build/q3 build/q4 build/q5 target/gen'
+check 2 'rm -rf build/q1 build/q2 build/q3 build/q4 build/q5 target'
+check 0 'rm -rf build/q1 build/q2 build/q3 build/q4 build/q5 target/other'
+
+# R5. (P3 chặn nhầm) nguồn mkdir của chính lệnh; trap đã gỡ; cd chạy nền
+check 0 'mkdir -p out && cp -R out dist/o && rm -rf dist/o/cache/'
+check 0 'mkdir -p out/sub && cp -R out dist/o && rm -rf dist/o/sub/x/'
+check 2 'mkdir -p out && ln -s ~ out/l && cp -R out dist/o && rm -rf dist/o/l/'
+check 2 'mkdir -p out && tar -xf a.tar -C out && cp -R out dist/o && rm -rf dist/o/pkg/'
+check 2 'ln -s ~ out; mkdir -p out && cp -R out dist/o && rm -rf dist/o/x/'
+check 0 "trap 'rm -rf build' EXIT; trap - EXIT; cd ~"
+check 0 "trap 'rm -rf build' EXIT; trap 'echo bye' EXIT; cd ~"
+check 0 "trap 'rm -rf build' 0; trap SIGEXIT; cd ~"                               # một toán hạng: gỡ; 0 là EXIT
+check 2 "trap 'rm -rf build' EXIT; false && trap - EXIT; cd ~"                     # gỡ không chắc chạy
+check 2 "trap 'rm -rf build' EXIT INT; trap - EXIT; cd ~"                          # còn INT
+check 2 "trap 'rm -rf build' EXIT; (trap - EXIT); cd ~"                            # gỡ ở shell con
+check 2 "trap 'rm -rf build' EXIT; { trap - EXIT; } | cat; cd ~"                   # nhóm trong ống: shell con
+check 2 "trap 'rm -rf build' EXIT; if true; then trap - EXIT; fi; cd ~"
+check 2 "trap 'rm -rf build' EXIT; trap - EXIT & cd ~"                             # gỡ ở shell con chạy nền
+check 2 "trap 'rm -rf build' EXIT; f() { trap - EXIT; }; cd ~"                     # thân hàm: chạy lúc gọi
+check 2 "trap 'rm -rf build' EXIT; while false; do trap - EXIT; done; cd ~"
+check 2 "trap 'rm -rf build' EXIT; trap 'rm -rf build' EXIT; cd ~"                 # cùng thân đặt lại: vẫn còn
+check 2 "trap - EXIT; trap 'rm -rf build' EXIT; cd ~"
+check 0 'cd ~ & rm -rf build'
+check 2 'cd ~ &>/dev/null && rm -rf build'                                        # &> là chuyển hướng, không phải chạy nền
+check 2 'cd ~ 2>&1 && rm -rf build'
+check 2 'cd ~ >&2; rm -rf build'
+
+# R6. (có từ trước) cd trong chuỗi eval, trong script mà source / . chạy, chdir của zsh
+printf '#!/bin/sh\ncd ~\n' > "$P/go.sh"
+printf '#!/bin/sh\nX=$(cd build && pwd)\necho "$X"\n' > "$P/sub.sh"
+check 2 "eval 'cd ~' && rm -rf build"
+check 2 'eval cd ~; rm -rf build'
+check 2 'source go.sh && rm -rf build'
+check 2 '. ./go.sh; rm -rf build'
+check 2 'chdir ~ && rm -rf build'
+check 0 "eval 'echo hi' && rm -rf build"
+check 0 'source sub.sh && rm -rf build'                                       # cd trong $( … ): shell con
+check 0 'eval "$(ssh-agent -s)" && rm -rf build'
 
 U="$(id -u)"; mkdir -p "/tmp/claude-$U" && SCR="$(mktemp -d "/tmp/claude-$U/devkit-hwr3.XXXXXX")" || { fail "no scratch dir"; SCR=""; }
 if [ -n "$SCR" ]; then

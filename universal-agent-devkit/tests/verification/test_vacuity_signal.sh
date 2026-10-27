@@ -18,6 +18,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Start python with SIGINT, SIGHUP and SIGTERM at their default (a nohup'd runner hands its children SIGHUP ignored: the
+# merge queue runs suites that way, 27/10); it execs the gate, so $! is the gate's own pid.
+LAUNCH='import os, signal, sys; [signal.signal(s, signal.SIG_DFL) for s in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)]; os.execv(sys.argv[1], sys.argv[1:])'
+PY="$(command -v python3)"
+
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -49,7 +54,7 @@ JSON
   git add -A && git commit -qm init
   echo "// tweak" >> app/src/main/kotlin/pkg/Foo.kt     # the agent's uncommitted fix
 
-  CLAUDE_PROJECT_DIR="$TMP/repo" VACUITY_REVERT=1 python3 "$GATE" --matrix "$TMP/repo/matrix.json" \
+  CLAUDE_PROJECT_DIR="$TMP/repo" VACUITY_REVERT=1 "$PY" -c "$LAUNCH" "$PY" "$GATE" --matrix "$TMP/repo/matrix.json" \
     --lang en --json --run-tests >"$TMP/gate.out" 2>&1 &
   GATE_PID=$!
   for _ in $(seq 1 300); do [ -s "$TMP/runner.pid" ] && break; sleep 0.1; done
