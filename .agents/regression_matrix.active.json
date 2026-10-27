@@ -1792,8 +1792,6 @@
         ".claude/bin/super-board-merge-gate.sh",
         ".claude/bin/super-board-card.sh",
         ".claude/bin/super-board-codex-lane.sh",
-        ".claude/bin/super-board-queue-schedule.sh",
-        ".claude/bin/super-board-wave-plan.sh",
         "tests/super-board/test_merge_queue_e2e.sh"
       ],
       "mandatory_regression_tests": [
