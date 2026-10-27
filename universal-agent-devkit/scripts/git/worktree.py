@@ -2753,7 +2753,12 @@ def _live_checkout_lock(main, wt):
         import session_lock  # noqa: PLC0415
         lock = session_lock.read_checkout_lock(git_dir(wt))
         pid = (lock or {}).get("pid")
-        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and pid not in _ancestor_pids() and session_lock.is_pid_alive(pid):
+        # Khoá của CHÍNH chủ worktree (state `--session`) không phải người lạ: automerge của Stop hook có thể chạy mồ côi (ppid 1) sau khi
+        # hook thoát, _ancestor_pids không còn thấy claude (OCR review #427 vòng 3). pid_start khác bản ghi: pid đã bị tái dùng, khoá chết.
+        if (lock or {}).get("session_id") and lock.get("session_id") == _owner(wt):
+            return ""
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and pid not in _ancestor_pids() \
+                and session_lock.is_pid_alive(pid, lock.get("pid_start")):
             return tr(f"phiên {lock.get('session_id', '?')} giữ khoá checkout của nó (pid {pid} còn sống)",
                       f"session {lock.get('session_id', '?')} holds its checkout lock (pid {pid} is alive)")
     except Exception:  # noqa: BLE001 - không đọc được: giữ hành vi cũ của remove thường (không hỏi)
