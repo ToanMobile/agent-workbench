@@ -27,6 +27,7 @@ link pointing elsewhere, a regular file and a live link are never touched. Sessi
 it with --links-only (no context refresh: SessionStart does its own), so a session heals the
 repo with no git operation and no `agent-kit init`.
 """
+import fcntl
 import json
 import os
 import re
@@ -61,6 +62,12 @@ def should_run(project, argv):
             and os.path.isdir(os.path.join(project, ".agents", "context")))
 
 
+def in_kit(path):
+    """True when path resolves into this DevKit: a link dir there lists (and would receive) the kit's own files. Shared by
+    missing() and dangling() so both agree on which link directories are the project's to heal."""
+    return (os.path.realpath(path) + os.sep).startswith(os.path.realpath(DEVKIT) + os.sep)
+
+
 def excluded_skills(project):
     try:
         prof = json.load(open(os.path.join(project, ".agents", "active-profile", "profile.json"), encoding="utf-8"))
@@ -86,9 +93,11 @@ def missing(project):
         out.append(".agents/devkit")    # master rules, core-rules, the post-fix gate
     excluded = excluded_skills(project)
     cmds = os.path.join(DEVKIT, "commands")
-    # a link directory symlinked as a whole points at someone else's folder (the kit's own, a shared one): never write into it
-    if (os.path.isdir(os.path.join(project, ".claude", "commands")) and not os.path.islink(os.path.join(project, ".claude", "commands"))
-            and os.path.isdir(cmds)):
+    # a link directory that resolves into the kit is the kit's own folder: never write into it. One that is absent is rebuilt
+    # (`git rm -r .claude/commands`) in a Claude install (.claude/settings.json); a symlink to a project folder is healed as it is.
+    cdir = os.path.join(project, ".claude", "commands")
+    if ((os.path.isdir(cdir) or (not os.path.lexists(cdir) and os.path.isfile(os.path.join(project, ".claude", "settings.json"))))
+            and not in_kit(cdir) and os.path.isdir(cmds)):
         for name in sorted(os.listdir(cmds)):
             src = os.path.join(cmds, name)
             skill = os.path.basename(os.path.dirname(os.path.realpath(src))) if os.path.islink(src) else None
@@ -97,8 +106,10 @@ def missing(project):
     # every DevKit skill the profile keeps, in an install that has .agents/skills/: a skill the DevKit gained after the install
     # never got its link (OfficeReader 2026-10-13: health 96, .agents/skills/devkit-audit missing)
     skills_dir = os.path.join(project, ".agents", "skills")
-    if os.path.isdir(skills_dir) and not os.path.islink(skills_dir):
-        for name in sorted(os.listdir(os.path.join(DEVKIT, "skills"))):
+    kit_skills = os.path.join(DEVKIT, "skills")
+    # ponytail: a skills dir removed whole is not rebuilt (a claude-only install never had one), upgrade when the installer records it
+    if os.path.isdir(skills_dir) and not in_kit(skills_dir) and os.path.isdir(kit_skills):
+        for name in sorted(os.listdir(kit_skills)):
             if (name not in excluded and os.path.isfile(os.path.join(DEVKIT, "skills", name, "SKILL.md"))
                     and not os.path.lexists(os.path.join(skills_dir, name))):
                 out.append(f".agents/skills/{name}")
@@ -115,10 +126,12 @@ def keep_out_of_git(project, rel):
     path = os.path.join(common, "info", "exclude")
     line = "/" + rel
     try:
-        raw = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
-        if line not in raw.splitlines():
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "a", encoding="utf-8") as fh:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a+", encoding="utf-8") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)      # check-then-append is one step: parallel runs wrote the line twice
+            fh.seek(0)
+            raw = fh.read()
+            if line not in raw.splitlines():
                 fh.write(("\n" if raw and not raw.endswith("\n") else "") + line + "\n")
     except OSError:
         pass
@@ -155,8 +168,8 @@ def dangling(project):
     out = []
     for rel_dir in (os.path.join(".claude", "commands"), os.path.join(".agents", "skills")):
         d = os.path.join(project, rel_dir)
-        if os.path.islink(d) or (os.path.realpath(d) + os.sep).startswith(kit):
-            continue         # a link directory symlinked as a whole (into the kit or elsewhere) lists someone else's files
+        if in_kit(d):
+            continue         # a link directory that resolves into the kit lists the kit's own files
         try:
             names = sorted(os.listdir(d))
         except OSError:
@@ -190,7 +203,8 @@ def prune(project, stale):
     return done
 
 
-def relink(project, gone):
+def relink(project, gone, raced=None):
+    """Re-create the links in gone; returns those it could not. A link another session made first is appended to raced."""
     left = []
     for rel in gone:
         src, dst = source_for(project, rel), os.path.join(project, rel)
@@ -203,7 +217,9 @@ def relink(project, gone):
         try:
             os.symlink(src, dst)
         except FileExistsError:
-            continue         # another session's SessionStart made it a moment ago
+            if raced is not None:
+                raced.append(rel)         # another session's SessionStart made it a moment ago
+            continue
         keep_out_of_git(project, rel)
     return left
 
@@ -234,16 +250,18 @@ def main(argv):
         subprocess.run([sys.executable, _cs_script, project, "--quiet",
                         "--context-only"], capture_output=True)
         return 0
-    left = relink(project, gone)
+    raced = []
+    left = relink(project, gone, raced)
+    restored = len(gone) - len(left) - len(raced)
     log = os.path.join(project, ".claude", "audit-gate", "relink.log")
     try:
         os.makedirs(os.path.dirname(log), exist_ok=True)
         with open(log, "a", encoding="utf-8") as f:
-            f.write(f"restored {len(gone) - len(left)}/{len(gone)}; not restorable: {left}\n")
+            f.write(f"restored {restored}/{len(gone)}; not restorable: {left}\n")
     except OSError:
         pass
     if "--quiet" not in argv:
-        sys.stderr.write(f"DevKit: restored {len(gone) - len(left)} link(s) this git operation removed\n")
+        sys.stderr.write(f"DevKit: restored {restored} link(s) this git operation removed\n")
         if left:
             sys.stderr.write(f"DevKit: cannot restore {left} — run `agent-kit init`\n")
     return 0
