@@ -97,8 +97,8 @@ def runs_path(repo) -> Path | None:
 
 def count_verifies(runs, since: float) -> tuple:
     """(lượt merge gate, lượt train) có epoch >= since. Dòng hỏng, không phải object, epoch không phải số: bỏ qua. Lượt gate không chạy
-    suite nào (verdict BUSY, hoặc exit 4: hàng đợi gate / khe / khoá bận) không phải lượt verify: bỏ qua. Lượt train có exit khác 0 hoặc verdict
-    khác PASS cũng không tính (train đỏ không merge gì, #471); dòng thiếu exit/verdict vẫn tính."""
+    suite nào (verdict BUSY, hoặc exit 4: hàng đợi gate / khe / khoá bận) không phải lượt verify: bỏ qua. Lượt train có exit khác 0 cũng không
+    tính (train đỏ không merge gì, #471; verdict như REUSED với exit 0 vẫn là train xanh); dòng thiếu exit vẫn tính."""
     merge_v = train_v = 0
     try:
         with open(runs, encoding="utf-8", errors="replace") as fh:
@@ -118,7 +118,7 @@ def count_verifies(runs, since: float) -> tuple:
                 if project.startswith(MERGE_PREFIX):
                     merge_v += 1
                 elif project.startswith(TRAIN_PREFIX):
-                    if r.get("exit") not in (None, 0) or r.get("verdict") not in (None, "PASS"):
+                    if r.get("exit") not in (None, 0):
                         continue   # train đỏ không merge gì: không chứng minh hàng đợi chạy đúng (#471)
                     train_v += 1
     except OSError as e:

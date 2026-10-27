@@ -121,6 +121,16 @@ gen_merged "$TMP/m3i.json" 2 "$EP"; canary "$TMP/r3i.jsonl" "$TMP/m3i.json"
 if [ "$rc" = 0 ] && has "$out" "train verifies=1" && has "$out" "GREEN"; then ok "train xanh (PASS) vẫn cho canary XANH (#471)"
 else fail "#471: train PASS phải XANH exit 0 (rc=$rc): $out"; fi
 
+# 3j. R1 (reviewer): train exit 0 nhưng verdict REUSED (suite dùng lại kết quả PASS) vẫn là train xanh → XANH
+python3 - "$TMP/r3j.jsonl" "$EP" <<'PY5'
+import json, sys
+with open(sys.argv[1], "w", encoding="utf-8") as f:
+    f.write(json.dumps({"epoch": int(sys.argv[2]), "project": ".train-scratch-reused", "exit": 0, "verdict": "REUSED"}) + "\n")
+PY5
+gen_merged "$TMP/m3j.json" 2 "$EP"; canary "$TMP/r3j.jsonl" "$TMP/m3j.json"
+if [ "$rc" = 0 ] && has "$out" "train verifies=1" && has "$out" "GREEN"; then ok "train exit 0 verdict REUSED vẫn XANH (#471 R1)"
+else fail "#471 R1: train exit 0 + REUSED phải XANH exit 0 (rc=$rc): $out"; fi
+
 # ── 4. enabled_at trong config lọc lượt cũ (trước lúc bật): 40 merge cũ + 30 PR cũ không tính
 ENA=$((NOW - 1800))
 gen_runs "$TMP/r4.jsonl" 40 0 0 $((ENA - 86400)); gen_runs "$TMP/r4.jsonl" 0 1 0 $((ENA + 10))
