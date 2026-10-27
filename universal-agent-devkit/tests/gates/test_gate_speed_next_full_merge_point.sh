@@ -122,6 +122,22 @@ for e in NONE POSTFIX_GATE_FULL=1; do
   else fail "Stop hook ($e): rc=$RC, suite chạy: $([ -f "$R.ran" ] && echo có || echo không), mode='$m': $(tail -c 300 "$TMP/stop.err")"; fi
 done
 
+# ── 6b. như mục 6 nhưng trunk mode BẬT (repo thật): phiên trong worktree, main chỉ để gộp ─────────────────────────────────────
+for e in NONE POSTFIX_GATE_FULL=1; do
+  R="$TMP/trunk-${e%%=*}"; mkdir -p "$R/src" "$R/templates"
+  git -C "$R" init -q -b main . && git -C "$R" config user.email t@t && git -C "$R" config user.name t
+  printf '{"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],"mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"echo x >> %s.ran"}]}]}\n' "$R" > "$R/templates/regression_matrix.json"
+  printf '.claude/\n' > "$R/.gitignore"
+  echo 'fun ok()=1' > "$R/src/Core.kt" && git -C "$R" add -A && git -C "$R" commit -qm init
+  W="$R/.claude/worktrees/wt"; git -C "$R" worktree add -q --detach "$W" HEAD 2>/dev/null
+  echo 'fun ok()=2' > "$W/src/Core.kt"
+  printf '{"session_id":"s-1","hook_event_name":"Stop"}' | (cd "$W" || exit 1; [ "$e" = NONE ] || export "$e"
+    WORKTREE_TRUNK_MODE=1 CLAUDE_PROJECT_DIR="$W" bash "$STOP_HOOK" >"$TMP/stop.out" 2>"$TMP/stop.err"); RC=$?
+  m="$(last_mode "$W")"; [ -n "$m" ] || m="$(last_mode "$R")"
+  if [ "$RC" = 0 ] && [ -f "$R.ran" ] && [ -n "$m" ] && [ "$m" != full ]; then ok "Stop hook trunk mode ($e): suite chạy, mode=$m (không full), Stop không bị chặn"
+  else fail "Stop hook trunk mode ($e): rc=$RC, suite chạy: $([ -f "$R.ran" ] && echo có || echo không), mode='$m': $(tail -c 300 "$TMP/stop.err")"; fi
+done
+
 # ── 7. argv của chế độ chặt (gọi thẳng push_gate): main = origin nên đúng dạng thì cho; mọi dạng lệch phải từ chối ─────────
 R="$TMP/argv"; repo "$R"; git -C "$R" push -q origin main 2>/dev/null
 PG="$DEVKIT_DIR/bin/push_gate.py"
