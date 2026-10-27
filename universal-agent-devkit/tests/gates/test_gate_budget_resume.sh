@@ -7,7 +7,7 @@
 # receipt alone). A budget-cut run now leaves a record of its own (.git/postfix-gate/budget_pass.json, never full_pass.json),
 # read only by a non-forced (Stop-style) run, under the SAME re-use rules as a receipt (fingerprint taken BEFORE the suites, matrix,
 # local state, format, age, Unity age, no device suite) and listing every suite that did not PASS on its full command as "untested".
-# Suites: REG-1 instant, REG-2 sleeps 4.5 s (starts at once, inside the 3 s budget), REG-3 instant (starts after the budget: BUDGET).
+# Suites: REG-1 instant, REG-2 sleeps 5.5 s (starts at once, inside the 5 s budget), REG-3 instant (starts after the budget: BUDGET).
 #   1. same content twice: run 1 = exit 4 (REG-1+REG-2 PASS, REG-3 BUDGET), run 2 = only REG-3 runs, exit 0 (RED on the old gate:
 #      run 2 ran REG-1 and REG-2 again and was cut again); no full-pass receipt is ever written by either (still not a PASS)
 #   2. the content changes between the runs: every suite runs again       3. --no-cache: every suite runs again
@@ -25,8 +25,21 @@ export VACUITY_REVERT=0 FLAKY_RETRY=0
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 HOOK="$DEVKIT_DIR/hooks/regression_gate.sh"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)" || exit 1
+# Chạy song song (tốc độ gate, 27/10: 98 s tuần tự): các mục 1..10 chia thành NHÓM (grp_*, theo mẫu tests/gates/test_postfix_gate.sh). Mỗi nhóm
+# có thư mục riêng $ROOT/<nhóm> (repo, MARK, trạng thái gate, khoá test_run, SB_HEAVY_SLOT_DIR), không chung đường dẫn nào, nên chạy cùng lúc;
+# kết quả in theo thứ tự nhóm sau khi tất cả xong. Thân mỗi nhóm giữ nguyên kịch bản và assertion cũ (mục 2-4 dùng chung một repo: một nhóm).
+ROOT="$TMP"
+PIDS=""   # process group của các nhóm đang chạy
+cleanup() {   # kết thúc thường, lỗi, Ctrl-C hay TERM: dừng trọn từng nhóm (process group riêng, không bao giờ `kill 0`), rồi xoá thư mục chạy
+  local p
+  for p in $PIDS; do kill -TERM -- "-$p" 2>/dev/null; done
+  wait 2>/dev/null
+  rm -rf "$ROOT"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -34,7 +47,9 @@ bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 R="$TMP/repo"
 export MARK="$TMP/mark"
 OUT=""; RC=0
-BUDGET=3   # only the START side is load-sensitive: the suites before the cut must start within BUDGET s of the loop (they are instant)
+BUDGET=5   # only the START side is load-sensitive: the suites before the cut must start within BUDGET s of the loop (they are instant)
+           # (27/10: 3 → 5 s, sleep 4.5 → 5.5 s: các nhóm chạy song song làm máy tải cao hơn, INSTINCT-069; phía cắt không nhạy tải vì
+           # REG-3 chỉ bắt đầu sau khi REG-2 ngủ xong, > BUDGET)
 
 suite() { printf '{"id":"%s","name":"%s","command":"%s"}' "$1" "$1" "$2"; }
 S1='sh tests/s1.sh'; S2='sh tests/s2.sh'; S3='sh tests/s3.sh'
@@ -43,9 +58,9 @@ make_repo() { # $1 = suites (json list body), run in "$R"
   git init -q . && git config user.email t@t && git config user.name t
   echo "fun ok() = 1" > src/Core.kt
   printf 'echo x >> "$MARK/s1"\nexit "${FAIL1:-0}"\n' > tests/s1.sh
-  printf 'echo x >> "$MARK/s2"\nsleep 4.5\n[ -n "${EDIT2:-}" ] && echo "// edited by a suite" >> src/Core.kt\nexit 0\n' > tests/s2.sh
+  printf 'echo x >> "$MARK/s2"\nsleep 5.5\n[ -n "${EDIT2:-}" ] && echo "// edited by a suite" >> src/Core.kt\nexit 0\n' > tests/s2.sh
   printf 'echo x >> "$MARK/s3"\nexit 0\n' > tests/s3.sh
-  printf 'echo x >> "$MARK/s5"\nsleep 4.5\nexit 0\n' > tests/s5.sh
+  printf 'echo x >> "$MARK/s5"\nsleep 5.5\nexit 0\n' > tests/s5.sh
   printf '{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],"mandatory_regression_tests":[%s]}]}\n' "$1" > matrix.json
   git add -A && git commit -qm init
   echo "fun ok() = 2" > src/Core.kt
@@ -69,6 +84,7 @@ delta() {
   LAST="$now"
 }
 
+grp_1() {
 # 1. same content twice
 make_repo "$(suite REG-1 "$S1"),$(suite REG-2 "$S2"),$(suite REG-3 "$S3")"; LAST="0:0:0"
 run_gate; delta; d1="$D"; rc1=$RC
@@ -81,6 +97,8 @@ else bad "1b: run 2 exit $rc2, runs $d2 (want exit 0 and 0:0:1: the suites that 
 printf '%s' "$OUT" | grep -q "reused from" && ok "1c: run 2 says which suites it re-used" || bad "1c: run 2 does not say it re-used anything"
 [ ! -e "$GD/full_pass.json" ] && ok "1d: neither run wrote a full-pass receipt (the budget record is never a handover PASS)" || bad "1d: a full-pass receipt exists"
 
+}
+grp_2_4() {
 # 2. content changed between the runs
 make_repo "$(suite REG-1 "$S1"),$(suite REG-2 "$S2"),$(suite REG-3 "$S3")"; LAST="0:0:0"
 run_gate; delta
@@ -101,6 +119,8 @@ run_gate; delta; d="$D"
 if [ "$d" = "1:1:0" ]; then ok "4b: after a FAIL on this content the next run re-uses nothing (REG-1 + REG-2 ran again)"
 else bad "4b: runs $d (want 1:1:0: the record must be gone after a FAIL)"; fi
 
+}
+grp_5() {
 # 5. a device suite is never re-used
 make_repo "$(suite REG-1 "$S1 adb"),$(suite REG-2 "$S2"),$(suite REG-3 "$S3")"; LAST="0:0:0"
 run_gate; delta
@@ -108,6 +128,8 @@ run_gate; delta; d="$D"
 if [ "$d" = "1:0:1" ]; then ok "5: the adb suite ran again, the plain one was re-used (runs $d)"
 else bad "5: runs $d (want 1:0:1)"; printf '%s\n' "$OUT" | tail -12; fi
 
+}
+grp_6() {
 # 6. a Unity test suite: re-used inside DEVKIT_UNITY_REUSE_MAX_S, never with 0
 make_repo "$(suite REG-1 "$S1 unity-batch editmode"),$(suite REG-2 "$S2"),$(suite REG-3 "$S3")"; LAST="0:0:0"
 run_gate; delta
@@ -118,6 +140,8 @@ run_gate DEVKIT_UNITY_REUSE_MAX_S=0; delta; d="$D"
 if [ "$d" = "1:0:1" ]; then ok "6b: DEVKIT_UNITY_REUSE_MAX_S=0 runs the Unity suite again (runs $d)"
 else bad "6b: runs $d (want 1:0:1)"; fi
 
+}
+grp_7() {
 # 7. a --full run does not read the record
 make_repo "$(suite REG-1 "$S1"),$(suite REG-2 "$S2"),$(suite REG-3 "$S3")"; LAST="0:0:0"
 run_gate; delta
@@ -125,6 +149,8 @@ run_gate GATE_TOTAL_BUDGET_S=0 -- --full; delta; d="$D"
 if [ "$d" = "1:1:1" ]; then ok "7: --full ran every suite (it does not take results from a Stop run)"
 else bad "7: --full runs $d (want 1:1:1)"; fi
 
+}
+grp_8() {
 # 8. only a suite that ran its FULL command is recorded as PASS (the unit under the writer)
 python3 -I - "$GATE" <<'PY' && ok "8: a budget record lists as untested everything that is not a clean full-command PASS" || bad "8: budget_untested_ids"
 import importlib.util, sys
@@ -141,6 +167,8 @@ want = ["BUDGET", "FAIL", "IMP", "MOD", "NOMODE", "PKG", "RES", "TMO", "UNT"]
 assert got == want, (got, want)
 PY
 
+}
+grp_8b() {
 # 8b. code that changes WHILE the suites run was not the code tested: nothing is recorded (the fingerprint is taken before the
 #     suites, a Stop run takes none otherwise; taken after, the record would label the edited code as tested)
 make_repo "$(suite REG-1 "$S1"),$(suite REG-2 "$S2"),$(suite REG-3 "$S3")"; LAST="0:0:0"
@@ -151,6 +179,8 @@ run_gate; delta; d="$D"
 if [ "$d" = "1:1:0" ]; then ok "8b: run 2 on the edited tree ran every suite again (runs $d)"
 else bad "8b: runs $d (want 1:1:0: the record must not name the content the suites did not run on)"; fi
 
+}
+grp_8c() {
 # 8c. the tree changes while run 2 WAITS for the test-run lock: the suites it already re-used (marked before the wait) belong to the
 #     old content, so the record it writes when it is cut again must not name the new one. REG-5 is a second slow suite.
 make_repo "$(suite REG-1 "$S1"),$(suite REG-2 "$S2"),$(suite REG-5 'sh tests/s5.sh'),$(suite REG-3 "$S3")"; LAST="0:0:0"
@@ -179,6 +209,8 @@ run_gate; delta; d="$D"
 if [ "$(runs s1):$(runs s2)" = "2:2" ]; then ok "8c: a tree edited while run 2 waited for the lock got no record: run 3 ran REG-1 + REG-2 again"
 else bad "8c: REG-1 ran $(runs s1)x, REG-2 $(runs s2)x after run 3 (want 2 and 2: the record must not name content its re-used suites never ran on)"; fi
 
+}
+grp_9() {
 # 9. a FIFO planted at the record path (the state folder is writable by an agent) never hangs the gate: the record is read
 #     through _state_fd, written by replacing it
 make_repo "$(suite REG-1 "$S1"),$(suite REG-2 "$S2"),$(suite REG-3 "$S3")"; LAST="0:0:0"
@@ -194,7 +226,10 @@ else
   else bad "9: the gate ended with exit '$frc' on a FIFO at budget_pass.json (want 4 and a regular record: $([ -f "$GD/budget_pass.json" ] && echo yes || echo no))"; fi
 fi
 
+}
+grp_10() {
 # 10. the Stop hook end to end
+make_repo "$(suite REG-1 "$S1"),$(suite REG-2 "$S2"),$(suite REG-3 "$S3")"   # nhóm riêng: dựng tests/s*.sh mà mục 10 chép (trước đây do mục 9 để lại)
 H="$TMP/hookrepo"
 rm -rf "$H" "$MARK"; mkdir -p "$H/src" "$H/tests" "$H/.agents" "$MARK" && cd "$H" || exit 1
 git init -q . && git config user.email t@t && git config user.name t
@@ -216,6 +251,25 @@ else bad "10a: hook Stop 1 rc=$rc1 runs=$d1 message=$c1 out='$(cat "$TMP/out")' 
 if [ "$rc2" = 0 ] && [ "$d2" = "0:0:1" ] && ! grep -q 'ngân sách' "$TMP/out"; then ok "10b: hook Stop 2 on the same tree ran only REG-3 and ended the budget cycle (runs $d2)"
 else bad "10b: hook Stop 2 rc=$rc2 runs=$d2 out='$(cat "$TMP/out")' err='$(head -3 "$TMP/err")'"; fi
 cd "$TMP" || exit 1
+}
+
+# Chạy các nhóm cùng lúc (job control chỉ bật cho các lần khởi chạy này: mỗi nhóm là một process group riêng, `cleanup` dừng trọn nhóm).
+# Nhóm chết giữa chừng không để lại file fails: đó là FAIL, không bao giờ là PASS im lặng. Thứ tự in giữ thứ tự mục cũ.
+GROUPS_IN_ORDER="1 2_4 5 6 7 8 8b 8c 9 10"
+set -m
+for grp in $GROUPS_IN_ORDER; do
+  ( set +m; TMP="$ROOT/$grp"; mkdir -p "$TMP" || exit 1
+    R="$TMP/repo"; export MARK="$TMP/mark"; export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"; FAILS=0; LAST="0:0:0"
+    "grp_$grp"; echo "$FAILS" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &
+  PIDS="$PIDS $!"
+done
+set +m
+wait
+PIDS=""
+for grp in $GROUPS_IN_ORDER; do
+  cat "$ROOT/out.$grp"
+  if [ -f "$ROOT/fails.$grp" ]; then FAILS=$((FAILS + $(cat "$ROOT/fails.$grp"))); else echo "✖ group $grp did not finish"; FAILS=$((FAILS + 1)); fi
+done
 
 echo
 [ "$FAILS" -eq 0 ] && echo "budget resume: all checks passed" || { echo "budget resume: $FAILS FAILED"; exit 1; }
