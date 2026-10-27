@@ -61,10 +61,11 @@ _dk_phys() {
   [ -n "$_DK_P" ]
 }
 
-# _dk_resolve_link <link> — đặt _DK_T = kết quả resolve_link_target <link>.
+# _dk_resolve_link <link> — đặt _DK_T = kết quả resolve_link_target <link>, _DK_RAW = đích thô (readlink).
 _dk_resolve_link() {
   local link="$1" t ld
   t="$(readlink "$link" || true)"
+  _DK_RAW="$t"
   case "$t" in
     /*|"") _DK_T="$t" ;;
     *)
@@ -673,7 +674,16 @@ devkit_place() {
     if [ "$src_p" = "$parent_p/$_DK_B" ]; then return 0; fi # dst IS src — nothing to place
   fi
   if [ -L "$dst" ]; then
+    _DK_RAW=""
     if link_is_devkit_owned "$dst" "${DEVKIT_ROOT:-}"; then
+      # Cài lại: link đã trỏ đúng chuỗi devkit_ln sẽ ghi thì giữ nguyên, khỏi rm + ln (2 fork mỗi mục, ~150 mục mỗi
+      # lượt cài). devkit_ln ghi nguyên $src (ln -sfn) khi thư mục đích không nằm trong kit; nằm trong kit (tự cài) thì nó
+      # đổi sang đường dẫn tương đối nên không so ở đây. _DK_RAW = readlink "$dst": thân link_is_devkit_owned
+      # (đọc 27/10) gọi _dk_resolve_link "$link" một lần, phần còn lại chỉ gọi _dk_phys/_dk_dirname/_dk_basename.
+      if [ "$mode" = "symlink" ] && [ "$_DK_RAW" = "$src" ] && { [ -z "$root_p" ] || [[ "$parent_p/" != "$root_p/"* ]]; }; then
+        forget_devkit_file "$dst"
+        return 0
+      fi
       rm -f "$dst"
     elif devkit_is_local_link "$dst"; then
       # A project-tier item linked here earlier; the DevKit now has one of that name.
