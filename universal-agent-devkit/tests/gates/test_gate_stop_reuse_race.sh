@@ -74,23 +74,7 @@ export MARK="$TMP/mark"
 RC=0
 
 # hard timeout: the command runs in its own process group, which is killed (TERM, then KILL) past the limit; exit 124 then
-cat > "$TMP/tlimit.py" <<'PY'
-import os, signal, subprocess, sys, time
-limit = float(sys.argv[1])
-p = subprocess.Popen(sys.argv[2:], start_new_session=True)
-try:
-    rc = p.wait(timeout=limit)
-except subprocess.TimeoutExpired:
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(p.pid, sig)
-        except ProcessLookupError:
-            break
-        time.sleep(1)
-    p.wait()
-    rc = 124
-sys.exit(rc)
-PY
+cp "$DEVKIT_DIR/tests/lib/tlimit.py" "$TMP/tlimit.py"
 tl() { python3 -I "$TMP/tlimit.py" "$@"; }
 # warm the interpreter and the wrapper once (the first exec of a fresh file can be slow)
 tl 60 true >/dev/null 2>&1
