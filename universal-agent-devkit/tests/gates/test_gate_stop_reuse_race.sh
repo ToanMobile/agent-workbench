@@ -50,7 +50,21 @@ TMP="$(mktemp -d)"
 case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 HOLDER=""
-trap '[ -n "$HOLDER" ] && kill "$HOLDER" 2>/dev/null; rm -rf "$TMP"' EXIT
+# Chạy song song (tốc độ gate, 27/10: 184 s tuần tự): các kịch bản chia thành NHÓM (grp_*, theo mẫu tests/gates/test_postfix_gate.sh). Mỗi
+# nhóm có thư mục riêng $ROOT/<nhóm> (repo, MARK, trạng thái gate, khoá test_run, SB_HEAVY_SLOT_DIR, bản sao các file python trợ giúp), không
+# chung đường dẫn nào, nên chạy cùng lúc; kết quả in theo thứ tự nhóm sau khi tất cả xong. Thân mỗi nhóm giữ nguyên kịch bản và assertion cũ.
+ROOT="$TMP"
+PIDS=""   # process group của các nhóm đang chạy
+cleanup() {   # kết thúc thường, lỗi, Ctrl-C hay TERM: dừng trọn từng nhóm (process group riêng, không bao giờ `kill 0`), rồi xoá thư mục chạy
+  local p
+  [ -n "$HOLDER" ] && kill "$HOLDER" 2>/dev/null
+  for p in $PIDS; do kill -TERM -- "-$p" 2>/dev/null; done
+  wait 2>/dev/null
+  rm -rf "$ROOT"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -117,7 +131,7 @@ status1() { status_of REG-1; }
 seed() { # $1 = record (Stop, REG-2 exits its untested_exit: exit 4) | budget (Stop cut by the time budget) | receipt (--full, exit 4) | pass (--full, exit 0)
   case "$1" in
     record)  run_gate GATE_TOTAL_BUDGET_S=900 EXIT2=2 -- --no-checklist ;;
-    budget)  run_gate GATE_TOTAL_BUDGET_S=1 SLEEP1=2 -- --no-checklist ;;
+    budget)  run_gate GATE_TOTAL_BUDGET_S=4 SLEEP1=4.5 -- --no-checklist ;;   # REG-1 phải BẮT ĐẦU trong 4 s (trước là 1 s: hẹp khi các nhóm chạy song song, INSTINCT-069)
     receipt) run_gate EXIT2=2 -- --full --no-checklist ;;
     pass)    run_gate -- --full --no-checklist ;;
   esac
@@ -203,7 +217,9 @@ def hooked(*a, **k):
         fired.append(1)
         change.apply(os.environ["RACE_HOW"], os.environ["RACE_FILES"].split(":"))
         if os.environ.get("RACE_RELEASE_AFTER"):
-            threading.Timer(float(os.environ["RACE_RELEASE_AFTER"]), lambda: open(os.environ["RACE_RELEASE"], "w").close()).start()
+            t = threading.Timer(float(os.environ["RACE_RELEASE_AFTER"]), lambda: open(os.environ["RACE_RELEASE"], "w").close())
+            t.daemon = True   # 27/10: luồng daemon: lượt A bỏ cuộc sớm thì thoát ngay, không ngồi chờ timer (trước đây mỗi ca giữ khoá tốn đủ N s)
+            t.start()
     return real(*a, **k)
 setattr(m, name, hooked)
 sys.exit(m.main())
@@ -262,12 +278,14 @@ k1() {
 }
 # rewrite = the file replaced by another run that PASSED and wrote the same bytes (another inode and ctime): nothing failed, A must keep its PASS
 # unvouch / idonly / cmd = replaced by a valid file that does not vouch for REG-1: A must not (the re-check is "does the CURRENT file still say PASS for this", not "is there a file")
-for row in "record stop" "budget stop" "receipt full" "receipt stop"; do
-  set -- $row
-  for how in remove unvouch rewrite none; do k1 "K1/$1/$2" "$1" "$2" "$how"; done
-done
+# mỗi hàng (seed + A) là một nhóm riêng: grp_k1_<seed>_<A>
+k1_row() { local how; for how in remove unvouch rewrite none; do k1 "K1/$1/$2" "$1" "$2" "$how"; done; }
+grp_k1_record_stop()  { k1_row record stop; }
+grp_k1_budget_stop()  { k1_row budget stop; }
+grp_k1_receipt_full() { k1_row receipt full; }
+grp_k1_receipt_stop() { k1_row receipt stop; }
 # a record that still says PASS but names REG-1 in `untested`, and one whose REG-1 passed another command: not what this run re-used
-k1 "K1/record/stop" record stop idonly; k1 "K1/receipt/full" receipt full idonly; k1 "K1/record/stop" record stop cmd; k1 "K1/budget/stop" budget stop cmd
+grp_k1_extra() { k1 "K1/record/stop" record stop idonly; k1 "K1/receipt/full" receipt full idonly; k1 "K1/record/stop" record stop cmd; k1 "K1/budget/stop" budget stop cmd; }
 
 # K2: every suite is re-used, A runs nothing and (before) took no lock. The file vanishes inside A's read of it.
 k2() { # $1 label, $2 A (stop|full), $3 remove | rewrite | none
@@ -295,7 +313,9 @@ k2() { # $1 label, $2 A (stop|full), $3 remove | rewrite | none
     fi
   fi
 }
-for how in remove rewrite none; do k2 "K2/all-reused/full" full "$how"; k2 "K2/all-reused/stop" stop "$how"; done
+# hai nhóm (full / stop) để cân thời gian các nhóm; thứ tự in đổi từ xen kẽ full/stop sang hết full rồi hết stop, đủ 6 ca như cũ
+grp_k2_full() { local how; for how in remove rewrite none; do k2 "K2/all-reused/full" full "$how"; done; }
+grp_k2_stop() { local how; for how in remove rewrite none; do k2 "K2/all-reused/stop" stop "$how"; done; }
 
 # K3: the file changes after the check under the lock and before the verdict (a writer that holds no lock)
 k3() { # $1 label, $2 remove|none
@@ -312,15 +332,17 @@ k3() { # $1 label, $2 remove|none
     [ "$A_RC" = 0 ] && [ "$A_STATUS1" = PASS ] && ok "$1 control: untouched: exit 0, checklist REG-1 PASS" || bad "$1 control: exit $A_RC (want 0), checklist '$A_STATUS1' (want PASS)"
   fi
 }
-k3 "K3/verdict" remove; k3 "K3/verdict" none
+grp_k3() { k3 "K3/verdict" remove; k3 "K3/verdict" none; }
 
 # K6: every suite re-used and another run holds the lock past the SHORT wait (DEVKIT_REUSE_LOCK_WAIT_S, default 3 s): nothing is left to run, so A does
 # not wait for the long one (TEST_RUN_LOCK_WAIT_S: 45 s through the Stop hook). It judges from a stamp check and WRITES NOTHING: no receipt rewrite, no
 # record, no PASS row in the checklist. Why that cannot be a false PASS: A says PASS only while the file that vouched for the suites still stands (or
 # still says PASS after another run rewrote it), the only writers of that file hold the lock, and A writes nothing, so it cannot put a PASS back that a
 # FAIL took away; a FAIL that no one has written yet is not known to anyone (the same as A having run just before that run started).
-# The stub lets go 4 s after A's first ask for the lock (a timer in the launcher): a run that waited the long 10 s would get the lock then and write
-# the receipt ("time" moves), a run that gave up after 1 s does not. $3: none (it stands) | rewrite (another run PASSED, same bytes) | remove | unvouch.
+# The stub lets go 6 s after A's first ask for the lock (a daemon timer in the launcher): a run that waited the long 30 s would get the lock then and
+# write the receipt ("time" moves), a run that gave up after 1 s does not. (Trước 27/10 là 4 s / 10 s: biên 3 s giữa lần chờ ngắn và lúc thả khoá hẹp
+# khi các nhóm chạy song song ở tải cao, INSTINCT-069; 6 s cho biên 5 s mà vẫn bắt mutant chờ cố định ≥ 6 s. Timer là daemon nên lượt đúng bỏ cuộc
+# sau 1 s là thoát, không tốn thêm thời gian.) $3: none (it stands) | rewrite (another run PASSED, same bytes) | remove | unvouch.
 rtime() { python3 -I -c 'import json,sys
 try:
     print(json.load(open(sys.argv[1])).get("time"))
@@ -329,8 +351,8 @@ k6() { # $1 label, $2 A (stop | full), $3 none | rewrite | remove | unvouch | fr
   make_repo; seed pass; mark_runs; local t0; t0="$(rtime)"
   if [ "$SEED_RC" = 0 ] && [ "$SEED_STATE" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ]; then :
   else bad "$1: setup went wrong: seed rc=$SEED_RC state='$SEED_STATE'"; fi
-  local how="$3" envs=(DEVKIT_REUSE_LOCK_WAIT_S=1 TEST_RUN_LOCK_WAIT_S=10)
-  if [ "$3" = free ]; then how=none; else hold_lock "$TMP/lock.release"; envs+=(RACE_RELEASE="$TMP/lock.release" RACE_RELEASE_AFTER=4); fi
+  local how="$3" envs=(DEVKIT_REUSE_LOCK_WAIT_S=1 TEST_RUN_LOCK_WAIT_S=30)
+  if [ "$3" = free ]; then how=none; else hold_lock "$TMP/lock.release"; envs+=(RACE_RELEASE="$TMP/lock.release" RACE_RELEASE_AFTER=6); fi
   a_run "$2" acquire "$how" "${envs[@]}"; snapshot
   touch "$TMP/lock.release"; [ -z "$HOLDER" ] || { wait "$HOLDER" 2>/dev/null; HOLDER=""; }
   local t1; t1="$(rtime)"
@@ -361,8 +383,9 @@ k6() { # $1 label, $2 A (stop | full), $3 none | rewrite | remove | unvouch | fr
       fi ;;
   esac
 }
-for how in none rewrite remove unvouch; do k6 "K6/all-reused/full/$how" full "$how"; done
-k6 "K6/all-reused/stop/none" stop none; k6 "K6/all-reused/full/free" full free
+# hai nhóm 3 ca để cân thời gian các nhóm (thứ tự ca giữ nguyên)
+grp_k6_a() { local how; for how in none rewrite remove; do k6 "K6/all-reused/full/$how" full "$how"; done; }
+grp_k6_b() { k6 "K6/all-reused/full/unvouch" full unvouch; k6 "K6/all-reused/stop/none" stop none; k6 "K6/all-reused/full/free" full free; }
 
 # K7: the same, but A (a Stop-style run) ends exit 2: the receipt of this content is exit 0 (a --full run with --allow-no-tests). Leaving it exit 0 would
 # let XONG and push stand on a receipt this run's verdict contradicts, so the receipt must not stay exit 0. With the lock (free) the partial writer turns
@@ -372,8 +395,8 @@ k7() { # $1 label, $2 held (the lock is held past the short wait) | free
   make_repo unwatched; run_gate -- --full --no-checklist --allow-no-tests; SEED_RC=$RC; SEED_STATE="$(state "$GD/full_pass.json")"; mark_runs
   if [ "$SEED_RC" = 0 ] && [ "$SEED_STATE" = "exit=0 REG-1=PASS,REG-2=PASS untested=" ]; then :
   else bad "$1: setup went wrong: seed rc=$SEED_RC state='$SEED_STATE'"; fi
-  local envs=(DEVKIT_REUSE_LOCK_WAIT_S=1 TEST_RUN_LOCK_WAIT_S=10)
-  if [ "$2" = held ]; then hold_lock "$TMP/lock.release"; envs+=(RACE_RELEASE="$TMP/lock.release" RACE_RELEASE_AFTER=4); fi
+  local envs=(DEVKIT_REUSE_LOCK_WAIT_S=1 TEST_RUN_LOCK_WAIT_S=30)
+  if [ "$2" = held ]; then hold_lock "$TMP/lock.release"; envs+=(RACE_RELEASE="$TMP/lock.release" RACE_RELEASE_AFTER=6); fi
   a_run stop acquire none "${envs[@]}"; snapshot
   touch "$TMP/lock.release"; [ -z "$HOLDER" ] || { wait "$HOLDER" 2>/dev/null; HOLDER=""; }
   local want="exit=2 REG-1=PASS,REG-2=PASS untested="; [ "$2" = held ] && want="none"
@@ -383,13 +406,14 @@ k7() { # $1 label, $2 held (the lock is held past the short wait) | free
     bad "$1 ($2): A exit $A_RC (want 2), runs $A_S1/$A_S2 (want 0/0), receipt '$A_RECEIPT' (want '$want')"
   fi
 }
-k7 "K7/partial-downgrade" held; k7 "K7/partial-downgrade" free
+grp_k7() { k7 "K7/partial-downgrade" held; k7 "K7/partial-downgrade" free; }
 
 # S: a record or receipt over 1 MiB is no record
 pad() { python3 -I -c 'import json,sys
 p, n = sys.argv[1], int(sys.argv[2])
 d = json.load(open(p)); d["pad"] = "a" * n
 open(p, "w").write(json.dumps(d))' "$1" "$2"; }
+grp_s() {
 for n in 100000 1100000; do
   make_repo; seed record; pad "$GD/budget_pass.json" "$n"; mark_runs
   run_gate GATE_TOTAL_BUDGET_S=900 EXIT2=0 --; A_RC=$RC; A_S1=$(( $(runs s1) - B1 )); A_S2=$(( $(runs s2) - B2 ))
@@ -410,9 +434,11 @@ for n in 100000 1100000; do
     [ "$A_RC" = 2 ] && [ "$left" = none ] && ok "S/receipt: a receipt of $n padded bytes (over 1 MiB) is dropped by the partial writer, never loaded" || bad "S/receipt: exit $A_RC receipt '$left' (want 2, none)"
   fi
 done
+}
 
 # T: write_full_pass_receipt serialises before it makes the temp file. The receipt of the same content carries a field nested so deep that json.load
 # reads it and `json.dump(kept, f)` (the old writer) refuses it (the depth where that happens depends on the Python, so it is looked for)
+grp_t() {
 make_repo unwatched; run_gate -- --full --no-checklist; seed_rc=$RC
 T_OUT="$("$PY" -I - "$GATE" "$R" "$GD" <<'PY' 2>&1
 import importlib.util, io, json, os, sys
@@ -470,6 +496,26 @@ elif [ "$seed_rc" = 2 ] && [ "${T_FOUND:-0}" = 0 ] && [ -n "$T_PYV" ] && [ "$T_L
 else
   bad "T/receipt: seed rc=$seed_rc, depths found ${T_FOUND:-0} (want >= 1), with a leftover temp file: $T_LEFT, exceptions: $T_EXC"; printf '%s\n' "$T_OUT" | tail -12
 fi
+}
+
+# Chạy các nhóm cùng lúc (job control chỉ bật cho các lần khởi chạy này: mỗi nhóm là một process group riêng, `cleanup` dừng trọn nhóm).
+# Mỗi nhóm có TMP riêng (repo, MARK, a.out, khoá, bản sao tlimit/change/launcher) và SB_HEAVY_SLOT_DIR riêng. Nhóm chết giữa chừng không để
+# lại file fails: đó là FAIL, không bao giờ là PASS im lặng. Thứ tự in giữ thứ tự kịch bản cũ.
+GROUPS_IN_ORDER="k1_record_stop k1_budget_stop k1_receipt_full k1_receipt_stop k1_extra k2_full k2_stop k3 k6_a k6_b k7 s t"
+set -m
+for grp in $GROUPS_IN_ORDER; do
+  ( set +m; TMP="$ROOT/$grp"; mkdir -p "$TMP" && cp "$ROOT/tlimit.py" "$ROOT/change.py" "$ROOT/launcher.py" "$TMP/" || exit 1
+    R="$TMP/repo"; export MARK="$TMP/mark"; export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"; HOLDER=""; FAILS=0
+    "grp_$grp"; [ -n "$HOLDER" ] && kill "$HOLDER" 2>/dev/null; echo "$FAILS" > "$ROOT/fails.$grp" ) >"$ROOT/out.$grp" 2>&1 </dev/null &
+  PIDS="$PIDS $!"
+done
+set +m
+wait
+PIDS=""
+for grp in $GROUPS_IN_ORDER; do
+  cat "$ROOT/out.$grp"
+  if [ -f "$ROOT/fails.$grp" ]; then FAILS=$((FAILS + $(cat "$ROOT/fails.$grp"))); else echo "✖ group $grp did not finish"; FAILS=$((FAILS + 1)); fi
+done
 
 echo
 [ "$FAILS" -eq 0 ] && echo "gate stop reuse race: all checks passed" || { echo "gate stop reuse race: $FAILS FAILED"; exit 1; }

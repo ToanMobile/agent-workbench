@@ -128,9 +128,10 @@ for mode in "" "--brief"; do
 done
 
 # ── A9: a signal to the gate kills the suites it started, and the gate dies by that signal ─────────────────────
-# Start python with SIGINT at its default (a background job of a script inherits SIGINT ignored); it execs the gate, so
+# Start python with SIGINT, SIGHUP and SIGTERM at their default (a background job of a script inherits SIGINT ignored, a
+# nohup'd runner SIGHUP: the merge queue starts its train both ways, 27/10); it execs the gate, so
 # $! is the gate's own pid (a shell function run with & would be a subshell: the signal would never reach the gate).
-LAUNCH='import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execv(sys.argv[1], sys.argv[1:])'
+LAUNCH='import os, signal, sys; [signal.signal(s, signal.SIG_DFL) for s in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)]; os.execv(sys.argv[1], sys.argv[1:])'
 mk signals
 cat > tests/slow.sh <<EOF
 #!/bin/sh
@@ -318,5 +319,40 @@ printf '%s\n' "$OUT" | grep -q "HANG" && printf '%s\n' "$OUT" | grep -q "tests/t
   && ok "A15: the timeout is reported as HANG with the last test line" || bad "A15: no HANG / last test line: $(printf '%s' "$OUT" | grep REG-L | head -3)"
 printf '%s\n' "$OUT" | grep -q "sleep 307" && ok "A15: the snapshot carries the stuck leaf in its own session (process tree, not pgid)" \
   || bad "A15: the snapshot lost the stuck leaf in its own session: $(printf '%s' "$OUT" | grep -A8 'HANG\|PPID' | head -12)"
+
+# ── A16 (#427 / hang giả 27/10): tải thấp KHÔNG đủ để gọi là HANG. REG-DK-ALL-01 hết 900 s đúng lúc đang chạy đuôi tuần tự (tải ~15 < 36)
+# trong khi suite vẫn tiến triển (test đang chạy mới 6 s, tiến trình lá mới sinh) mà vẫn bị dán nhãn HANG. Suite ở đây liên tục sinh
+# tiến trình mới: quá giờ là TIMEOUT thường, không phải HANG. `sh -c 'sleep 1; :' &` chồng lên nhau để lúc ps chụp luôn có một shell
+# CÓ CON còn trẻ (lá như sleep không tính là tiến triển, xem A17). A14 / A15 (treo thật) vẫn là HANG.
+mk busy
+cat > matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-B","name":"busy","command":"echo \"running tests/test_busy_$(echo tail).sh\"; while :; do sh -c 'sleep 1; :' & sleep 0.2; done"}]}]}
+JSON
+git add -A && git commit -qm matrix
+printf 'def f():\n    return 2\n' > src/core.py
+DEVKIT_CAPACITY_LOAD=0.5 gate --run-tests --full --timeout 6
+# phải chứng minh suite THẬT SỰ chạy và quá giờ (BUSY / SLOT / lỗi sớm cũng không có HANG, sẽ xanh sai lý do)
+printf '%s\n' "$OUT" | grep -qE "TIMEOUT.*REG-B" && ! printf '%s\n' "$OUT" | grep -qE "(BUSY|SLOT|BUDGET).*REG-B" && [ "$RC" = 1 ] \
+  && ok "A16: low load, a suite still starting processes ran and TIMED OUT (status TIMEOUT, exit 1)" \
+  || bad "A16: no TIMEOUT status for REG-B (rc=$RC): $(printf '%s' "$OUT" | grep REG-B | head -3)"
+printf '%s\n' "$OUT" | grep -q "HANG" && bad "A16: a suite still making progress (fresh processes) must not be called HANG: $(printf '%s' "$OUT" | grep HANG | head -3)" \
+  || ok "A16: low load but fresh processes: the timeout is not called HANG"
+
+# ── A17 (#427, review OCR): treo thật mà còn vòng canh `sleep` (unity-batch.sh: `sleep 5` mỗi 5 s khi Editor kẹt) vẫn là HANG. Tiến trình
+# lá mới sinh không phải tiến triển: tuổi trẻ nhất chỉ tính tiến trình CÓ CON. Ở đây đó là shell đã exec (tuổi = thời hạn).
+mk pollhang
+cat > matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/*"],
+ "mandatory_regression_tests":[{"id":"REG-P","name":"poll","command":"echo \"running tests/test_poll_$(echo wait).sh\"; exec sh -c 'while :; do sleep 0.3; done'"}]}]}
+JSON
+git add -A && git commit -qm matrix
+printf 'def f():\n    return 2\n' > src/core.py
+DEVKIT_CAPACITY_LOAD=0.5 gate --run-tests --full --timeout 4
+printf '%s\n' "$OUT" | grep -qE "TIMEOUT.*REG-P" && [ "$RC" = 1 ] \
+  && ok "A17: a sleep-polling stuck suite ran and TIMED OUT (exit 1)" || bad "A17: no TIMEOUT status for REG-P (rc=$RC): $(printf '%s' "$OUT" | grep REG-P | head -3)"
+printf '%s\n' "$OUT" | grep -q "HANG" && printf '%s\n' "$OUT" | grep -q "tests/test_poll_wait.sh" \
+  && ok "A17: only sleep processes are young: the timeout is still a HANG with the last test line" \
+  || bad "A17: a stuck suite whose only young processes are sleep polls is not called HANG: $(printf '%s' "$OUT" | grep REG-P | head -3)"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_gate_robustness: all tests passed" || { echo "❌ test_gate_robustness: $FAILS failed"; exit 1; }

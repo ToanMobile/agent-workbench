@@ -69,7 +69,7 @@ git reset -q --soft HEAD~2 && git commit -qm "squashed after the gate"
 push_check main
 [ "$RC" = 2 ] && ok "4: a squash after the gate is refused" || bad "4: expected exit 2, got $RC: $OUT"
 case "$OUT" in *"git merge --ff-only"*) bad "  … it must NOT print a fast-forward command here: $OUT" ;; *) ok "  … no fast-forward command" ;; esac
-case "$OUT" in *"$R"*"post-fix-gate.py --run-tests --full"*) ok "  … repo named and the gate command still advised" ;; *) bad "  … repo or gate advice missing: $OUT" ;; esac
+case "$OUT" in *"$R"*"agent-kit integrate"*) ok "  … repo named and the merge point (agent-kit integrate) advised (#472 A)" ;; *) bad "  … repo or integrate advice missing: $OUT" ;; esac
 
 # 5: detached HEAD above a stale main, the tested commit squashed away
 git checkout -q --detach
@@ -79,7 +79,7 @@ git reset -q --soft HEAD~2 && git commit -qm "squashed on the detached HEAD"
 push_check main
 [ "$RC" = 2 ] && ok "5: detached HEAD, stale main, tested commit squashed away: refused" || bad "5: expected exit 2, got $RC: $OUT"
 case "$OUT" in *"git merge --ff-only"*) bad "  … a fast-forward would not help here, yet it is advised: $OUT" ;; *) ok "  … no fast-forward command" ;; esac
-case "$OUT" in *[Dd]etached*"post-fix-gate.py --run-tests --full"*) ok "  … says detached and advises running the gate again" ;; *) bad "  … detached note or gate advice missing: $OUT" ;; esac
+case "$OUT" in *[Dd]etached*"agent-kit integrate"*) ok "  … says detached and advises the merge point (agent-kit integrate)" ;; *) bad "  … detached note or integrate advice missing: $OUT" ;; esac
 
 # 6: HEAD went on after the gate (an UNTESTED code commit above the tested one): fast-forwarding main is only half the way - the hint must
 # not promise that no new gate is needed
@@ -90,6 +90,6 @@ echo "fun ok() = 22" > src/Core.kt; git commit -qam "c3 code added after the gat
 push_check main
 [ "$RC" = 2 ] && ok "6: HEAD ahead of the tested commit: refused" || bad "6: expected exit 2, got $RC: $OUT"
 case "$OUT" in *"không cần chạy lại gate"*) bad "  … it promises no new gate is needed, but the later commit changed code: $OUT" ;; *) ok "  … it does not promise that no new gate is needed" ;; esac
-case "$OUT" in *"post-fix-gate.py --run-tests --full"*) ok "  … it tells to run the gate on the code that will be pushed" ;; *) bad "  … gate advice missing: $OUT" ;; esac
+case "$OUT" in *"agent-kit integrate"*) ok "  … it sends the code through the merge point (agent-kit integrate)" ;; *) bad "  … integrate advice missing: $OUT" ;; esac
 
 [ "$FAILS" -eq 0 ] && echo "push gate recovery hint: all checks passed" || { echo "push gate recovery hint: $FAILS FAILED"; exit 1; }

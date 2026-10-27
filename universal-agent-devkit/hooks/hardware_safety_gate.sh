@@ -48,6 +48,13 @@
 #     thiết bị; RERUN_RX tuyến tính, git ls-files nhớ theo đường dẫn. Lượt sau: export / readonly / declare -g gán biến (local, unset, read,
 #     NAME+= … làm nó không biết); biến gán trong vùng lặp không biết trong và sau vùng đó; T=$(mktemp -d) là một đường dẫn tạm; phép gán
 #     trong ( … ), chặng ống, chạy nền, sau && / ||, if / case, thân hàm không còn đặt biến cho lệnh sau như phép gán chắc chắn.
+#   • (2026-10-27, #427 vòng 3, tests/gates/test_hardware_round3_427.sh) tên glob rồi `..` (build/x/*/../../../src: tên chưa có lúc hook xét)
+#     xét thêm với mỗi tên glob là một tên thường; rm -r không -f sau cd vào link chính lệnh tạo; thân trap xét với mọi cwd từ trap tới lúc
+#     thoát; cp -R / -a / -P, rsync -a / -l, git clone, 7z x, ditto, cpio -i chép / giải nén link (luật của tar); script dưới project mà lệnh
+#     chạy (bash x.sh, ./x.sh, source x.sh; < 64 KB) được đọc để gom lệnh tạo link của nó.
+#     Review vòng 3: tên glob dưới / trên đích chép khớp với mục thật của nguồn (dist/t/*/x); rm -r chứa một worktree git đã đăng ký
+#     (`rm -rf .claude/worktrees`); đích chép / clone không đọc được chỉ chặn rm cũng không đọc được; cd trong eval / script source, chdir;
+#     trap đã gỡ (trap - EXIT), cd chạy nền, nguồn mkdir của chính lệnh không còn bị xét; tra theo khoá, git ls-files một lần (thời gian).
 #   • adb shell pm uninstall|disable(-user)|hide of a system package (android,
 #     com.android.*, com.google.android.*, vendor namespaces)
 #   • iOS signing & simulators: fastlane match nuke, security delete-keychain|
@@ -167,7 +174,7 @@ def _fail_closed(etype, value, tb):
     finally:
         os._exit(2)
 sys.excepthook = _fail_closed
-import json, re, fnmatch, shlex, shutil, subprocess, signal
+import json, re, fnmatch, shlex, shutil, subprocess, signal, unicodedata
 # Watchdog: the hook limit is 10 s (.claude/settings.json) and a hook killed there is no verdict. A command the parser cannot judge in 7 s
 # (a pattern word[^;&|\n]*rare re-scans the line for every word: 15 s for 60 KB of `dd dd dd …`) is refused with a reason. SIGALRM also
 # interrupts a regex search in the middle (checked on Python 3.9 and 3.14). tests/gates/test_hook_big_command_fast_path.sh
@@ -457,6 +464,34 @@ def under(p, d):
 _ICASE = []   # core.ignorecase của project, đọc một lần (git_tracks có thể chạy cho nhiều đích trong một lệnh)
 _TRACKS = {}  # review #427 vòng 2: kết quả theo đường dẫn — lượt 2 của rm_problem xét lại cùng đích (500 rm: 1000 lần git, 5 s)
 
+GIT_EACH = 4    # review #427 vòng 3: số đường dẫn hỏi git riêng trước khi đọc một lần cả danh sách (git_listing)
+_GIT_ENV = []
+_LISTING = []   # [None: không đọc được | bool: git lỗi, phán quyết của mọi đường dẫn | (tập file, tập thư mục chứa file)], đọc một lần
+
+def git_listing(env):
+    if not _LISTING:
+        try:
+            r = subprocess.run(["git", "-C", ROOT, "ls-files", "-z"], capture_output=True, timeout=5, env=env)
+        except (OSError, subprocess.SubprocessError):
+            _LISTING.append(None)
+        else:
+            if r.returncode != 0:   # như _git_tracks: chỉ rc 128 "not a git repository (or any …" là không track
+                _LISTING.append(not (r.returncode == 128 and "not a git repository (or any" in r.stderr.decode("utf-8", "replace")))
+            else:
+                files, dirs = set(), set()
+                for f in r.stdout.split(b"\0"):
+                    if not f:
+                        continue
+                    s = unicodedata.normalize("NFC", os.fsdecode(f))
+                    s = s.casefold() if _ICASE[0] else s
+                    files.add(s)
+                    d = os.path.dirname(s)
+                    while d and d not in dirs:
+                        dirs.add(d)
+                        d = os.path.dirname(d)
+                _LISTING.append((files, dirs))
+    return _LISTING[0]
+
 def git_tracks(p):
     if p not in _TRACKS:
         _TRACKS[p] = _git_tracks(p)
@@ -473,11 +508,25 @@ def _git_tracks(p):
             _ICASE.append(True)
     # GIT_LITERAL_PATHSPECS=1 thừa kế từ môi trường làm git đọc ":(icase)build" như một tên thật: không file nào khớp, mọi build output
     # được track lọt (review #427). Bỏ các biến *_PATHSPECS khỏi env của lệnh này.
-    env = {k: v for k, v in os.environ.items() if k not in ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS",
-                                                               "GIT_ICASE_PATHSPECS")}
-    env["LC_ALL"] = "C"   # thông báo lỗi của git không bị dịch: phép so "not a git repository" bên dưới đọc bản tiếng Anh
+    if not _GIT_ENV:   # review vòng 3: dựng một lần (từng dựng lại mỗi đường dẫn)
+        _GIT_ENV.append({k: v for k, v in os.environ.items() if k not in ("GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS",
+                                                                          "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS")})
+        _GIT_ENV[0]["LC_ALL"] = "C"   # thông báo lỗi của git không bị dịch: phép so "not a git repository" bên dưới đọc bản tiếng Anh
+    env = _GIT_ENV[0]
+    rel = os.path.relpath(p, ROOT)
+    # Review #427 vòng 3 (P2 thời gian): mỗi đường dẫn một lần git (30-60 ms khi máy tải nặng) — thân trap xét lại ở mỗi cwd, 300 rm trong một
+    # lệnh: hàng nghìn lần, chạm hạn 7 s. Từ đường dẫn thứ GIT_EACH trở đi: một lần `git ls-files -z` cho cả project, tra theo tập. Tên có
+    # ký tự đặc biệt của pathspec (* ? [ \) vẫn hỏi riêng; danh sách không đọc được (quá hạn, lỗi khác): hỏi riêng như trước.
+    if len(_TRACKS) >= GIT_EACH and not re.search(r"[*?\[\\]", rel):
+        ls = git_listing(env)
+        if ls is not None:
+            if isinstance(ls, bool):   # git lỗi: cùng phán quyết như một lần hỏi riêng
+                return ls
+            k = unicodedata.normalize("NFC", rel)
+            k = k.casefold() if _ICASE[0] else k
+            return bool(ls[0]) if k == "." else (k in ls[0] or k in ls[1])
     try:
-        r = subprocess.run(["git", "-C", ROOT, "ls-files", "--", (":(icase)" if _ICASE[0] else "") + os.path.relpath(p, ROOT)],
+        r = subprocess.run(["git", "-C", ROOT, "ls-files", "--", (":(icase)" if _ICASE[0] else "") + rel],
                            capture_output=True, text=True, timeout=5, env=env)
     except (OSError, subprocess.SubprocessError):
         return True   # #427 vòng 2: git không chạy được / quá hạn — không biết, xét như đang track (chặn)
@@ -587,6 +636,7 @@ def shell_glob(t):
 # mọi ký tự, kể cả . và / (đo 27/10: build/q{-..0}.. thành build/q/..). Mọi số, mọi ký tự thường là một tên thường như nhau (tên đã có
 # thì dạng glob vẫn xét): mỗi dãy giữ một đại diện cộng từng ký tự trong SEQ_SPECIAL.
 SEQ_SPECIAL = "./~$\x60*?[]"
+GLOB_NAME = "__devkit_glob_name__"   # #427 vòng 3: tên thường thay cho một tên glob (rm_target_problem, glob rồi `..`)
 
 def seq_words(t):
     """Các từ của t khi mỗi {x..y} / {x..y..s} được bung như zsh (số: đại diện là số đầu; khoảng ký tự: một ký tự thường và mọi ký tự của
@@ -639,13 +689,18 @@ def zsh_starstar(t):
 # đọc được ($VAR chưa gán, lệnh con, glob, {} của find / xargs).
 # #427 vòng 2: rm chạy lại sau ln (vòng lặp, hàm, chạy nền: rm_problem lượt 2 xét với mọi tên); cũng ghi tên của cp -s, mv (đích), API tạo
 # link của interpreter ("*"), và thư mục giải nén của tar -x / unzip (EXTRACT_DIRS).
-# ponytail: link do một file script mà lệnh chạy tạo (bash x.sh, python x.py), cp -R / -a / -P hay rsync -a chép một link có sẵn, git
-# clone / checkout, 7z / ditto / cpio giải nén vẫn không được xét. Nâng cấp khi gặp ca thật (thêm lệnh vào rm_command_problem).
+# #427 vòng 3: cp -R / -a / -P, rsync -a, git clone, 7z, ditto, cpio (copied, git_clone_dir, extract_dirs); script shell dưới project mà
+# lệnh chạy (script_links). ponytail: script ngoài project / từ 64 KB / python x.py, git checkout / worktree add / pull, gh repo clone,
+# pax / unrar / jar vẫn không được xét. Nâng cấp khi gặp ca thật (thêm lệnh vào rm_command_problem).
 LINKS_MADE = set()
 # Review #427 vòng 2 (P2 chặn nhầm): tên do lệnh chạy trên THIẾT BỊ (adb shell "…") tạo không có trên máy này — `adb shell "cd /data/local/tmp
 # && tar -xf x.tar" && rm -rf build/tmp/` từng bị chặn. Chúng vào DEVICE_LINKS, chung cho mọi lệnh thiết bị của cả lệnh (adb shell "ln …" rồi
-# adb shell "rm …"); lệnh thiết bị vẫn thấy tên của máy này (adb push một link). ssh không tách: máy kia có thể chính là máy này (ssh localhost).
+# adb shell "rm …"); lệnh thiết bị vẫn thấy tên của máy này (adb push một link). ssh không tách tên ln: máy kia có thể chính là máy này (ssh
+# localhost). Review vòng 3 (P2 chặn nhầm: `ssh host "cp -r /a /b" && rm -rf build/tmp/x`): chỉ FAR_DEST — đích chép / giải nén không đọc
+# được ở máy kia, "*" cho mọi rm của máy kia — tách vào SSH_LINKS. ponytail: `ssh localhost "cp -r a /tmp/y" && rm -rf /tmp/y/l/` qua.
 DEVICE_LINKS = set()
+SSH_LINKS = set()
+FAR_DEST = "\x00far-dest"
 
 def ln_names(rest, env, repl, xargs):
     """Tên (casefold) các toán hạng của một lệnh ln (rest: các từ sau ln); "*" cho toán hạng không đọc được."""
@@ -677,8 +732,9 @@ def made_link_name(t):
     (APFS không phân biệt hoa thường); một tên là glob, hay một toán hạng ln không đọc được, thì coi như có thể trùng."""
     if not LINKS_MADE:
         return None
+    anyname = "*" in LINKS_MADE or FAR_DEST in LINKS_MADE   # FAR_DEST (vòng 3): như "*", chỉ trong lệnh của máy kia
     for x in t.split("/")[:-1]:
-        if x not in ("", ".", "..") and ("*" in LINKS_MADE or GLOB.search(x) or "$" in x or "`" in x or x.casefold() in LINKS_MADE
+        if x not in ("", ".", "..") and (anyname or GLOB.search(x) or "$" in x or "`" in x or x.casefold() in LINKS_MADE
                                          or any(n[:1] == "*" and x.casefold().endswith(n[1:]) for n in LINKS_MADE)):   # mẫu đuôi của mv_dest
             return x
     return None
@@ -691,11 +747,96 @@ SYMLINK_CALL = r"\bsymlink(?:Sync)?\s*\(|\.symlink_to\s*\(|\bln_sf?\b|\bsymlink\
 SYMLINK_API = re.compile(SYMLINK_CALL + r"|\bln\b\W{1,8}-[A-Za-z]*s\b", re.I)
 SYMLINK_CALL = re.compile(SYMLINK_CALL, re.I)
 # Thư mục (realpath) mà tar -x / unzip của chính lệnh giải nén vào: một mục bên dưới nó có thể là link trong file nén, chưa có lúc hook xét.
+# #427 vòng 3: cả 7z x, cpio -i, git clone, và thư mục mà cp -R / rsync -a / ditto chép các mục vào.
 EXTRACT_DIRS = set()
+# #427 vòng 3: đích (realpath) của cp -R / -a / -P, rsync -a, ditto chép MỘT nguồn có thể là link (link, chưa có, không đọc được): chính đích
+# có thể là link — rm -r đi qua nó (dấu / sau nó, đường dẫn bên dưới) bị chặn; xoá chính nó (không dấu /) vẫn được.
+COPY_DESTS = set()
+# #427 vòng 3: đích (realpath) → nguồn (realpath) của cp -R / rsync -a / ditto mà mọi nguồn là cây có thật lúc hook xét: một mục dưới đích
+# chỉ là link khi mục tương ứng của nguồn là link (extracted_entry so cả hai cách đặt: đích/x ↔ nguồn/x, đích/<tên nguồn>/x ↔ nguồn/x).
+COPY_SRCS = {}
+# Review #427 vòng 3 (P2 thời gian): chỉ mục của ba tập trên theo khoá đường dẫn (NFC, casefold: APFS không phân biệt hoa thường). Mỗi đích rm
+# và mỗi lệnh chép từng được so với MỌI thư mục đã ghi qua rel_below (300 cp -R + 300 rm: 5 s, gần hạn 7 s). MARK_KEYS: loại ("x"
+# EXTRACT_DIRS, "d" COPY_DESTS, "s" COPY_SRCS) → khoá → realpath; MARK_ANC: khoá của mọi thư mục đã ghi và của mọi thư mục cha của nó.
+# ponytail: so theo chữ của realpath, không theo inode như rel_below — firmlink (/System/Volumes/Data/…), bind mount không được nhận ra.
+MARK_KEYS = {"x": {}, "d": {}, "s": {}}
+MARK_ANC = set()
+# Review #427 vòng 3 (P2 chặn nhầm): đích không đọc được ($VAR, glob, cwd không biết) của một lệnh chép / clone ở máy này (và của mọi lệnh
+# chép / clone / giải nén trong script đọc để gom) không còn là tên link "*" (chặn mọi rm đi qua một thư mục: `cp -R src "$OUT" && rm -rf
+# build/tmp/x`). Nó là COPY_ANY: chỉ chặn rm mà đường dẫn cũng không đọc được — một tên $VAR / glob / backtick (made_link_name), hay tương
+# đối khi cwd không biết (rm_target_problem): cả hai không biết thì có thể là một. Giải nén trên dòng lệnh (tar -x -C "$D") vẫn "*" như vòng 2.
+# ponytail: `cp -R ~/x "$D" && rm -rf build/x/` qua (D có thể là build) — đích viết bằng chữ thì vẫn xét.
+COPY_ANY = "\x00copy-dest"
+
+def pkey(p):
+    return unicodedata.normalize("NFC", p).casefold()
+
+def anc_keys(p):
+    """Khoá của realpath p rồi của từng thư mục cha, tới /."""
+    out = []
+    while True:
+        out.append(pkey(p))
+        up = os.path.dirname(p)
+        if up == p:
+            return out
+        p = up
+
+def add_marks(kind, paths):
+    for p in paths:
+        ks = anc_keys(p)
+        MARK_KEYS[kind][ks[0]] = p
+        MARK_ANC.update(ks)
+
+def mark_touch(x):
+    """True khi realpath x là, nằm dưới, hay chứa một thư mục đã ghi (thay rel_below hai chiều với từng thư mục)."""
+    ks = anc_keys(x)
+    return ks[0] in MARK_ANC or any(k in keys for keys in MARK_KEYS.values() for k in ks)
+
+def name_hit(pat, name):
+    """Tên name khớp tên pat của một đường dẫn rm: glob như shell (cả tên bắt đầu bằng dấu chấm). Khớp khi đúng chữ HAY khi so casefold
+    (APFS) — chỉ khớp thêm: casefold một mình làm mất kết quả của lớp phủ định ([!L]nk thành [!l]nk, không còn khớp lnk mà zsh khớp)."""
+    if not GLOB.search(pat):
+        return name.casefold() == pat.casefold()
+    g = shell_glob(pat)
+    return _fnm(name, g) or _fnm(name.casefold(), g.casefold())
+
+def src_link(src, rel):
+    """Review #427 vòng 3 (P1): True khi một đường dẫn src/<rel> là link ở một tên nào đó. Một tên glob của rel (rm -rf dist/t/*/x) khớp với
+    các mục THẬT của thư mục nguồn như shell khớp với bản chép — từng đọc * như một tên: tree/lnk -> ~ lọt, xoá ~/x. Quá GLOB_CAP mục: True."""
+    cands = [src]
+    for x in rel:
+        nxt = []
+        for c in cands:
+            if GLOB.search(x):
+                try:
+                    hits = [n for n in os.listdir(c) if name_hit(x, n)]
+                except OSError:   # không phải thư mục, chưa có: không mục nào khớp
+                    hits = []
+            else:
+                hits = [x]
+            for n in hits:
+                q = os.path.join(c, n)
+                if os.path.islink(q):
+                    return True
+                nxt.append(q)
+        if len(nxt) > GLOB_CAP:
+            return True
+        cands = nxt
+    return False
+
+def copy_link(srcs, rel):
+    """Mục dưới một đích chép (rel: các tên từ đích xuống) là link khi mục tương ứng của một nguồn là link: đích/x ↔ nguồn/x, hay
+    đích/<tên nguồn>/x ↔ nguồn/x."""
+    return any(src_link(s, rel) or (len(rel) > 1 and name_hit(rel[0], os.path.basename(s)) and src_link(s, rel[1:])) for s in srcs)
+
 TAR_PROGS = {"tar", "gtar", "bsdtar"}
+SEVENZ_PROGS = {"7z", "7za", "7zz", "7zr"}
 # cwd trên máy kia chỉ biết lúc chạy — sau cd vào link chính lệnh tạo (adb shell, ssh), và trên thiết bị sau mọi cd tới chỗ không biết
 # (cd $VAR, cd ~, cd -, popd): remote_target_problem xét nó như một $VAR, phần cố định là / → đích tương đối rm -r bị chặn.
 FAR_CWD_AT_RUN = "/$CWD_AT_RUN"
+# #427 vòng 3: cwd ở máy này sau cd vào link chính lệnh tạo (ln -s ~ l && cd l): nơi link trỏ tới, không biết — nhưng chắc là không phải chỗ
+# hook thấy. Khác cwd None (cd $VAR): đích tương đối bị chặn cả khi rm -r không -f (chính sách 10-09 bỏ qua cwd None).
+LINK_CWD = "<cwd: đích của link do chính lệnh tạo>"
 
 def cp_symbolic(rest):
     """True khi cp tạo link thay vì chép: -s (cả trong cụm như -rs) hay --symbolic-link."""
@@ -712,8 +853,39 @@ def file_now(a, env, repl, cwds):
     v = os.path.expanduser(v) if v.startswith("~") else v
     if a in repl or re.search(r"[$\x60]", v) or GLOB.search(v):
         return False
-    paths = [v] if os.path.isabs(v) else [c and os.path.join(c, v) for c in cwds]
+    paths = [v] if os.path.isabs(v) else [c and c != LINK_CWD and os.path.join(c, v) for c in cwds]
     return all(p and os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p)) for p in paths)
+
+def real_paths(a, env, repl, cwds):
+    """#427 vòng 3: các đường dẫn (realpath, mỗi thư mục hiện tại có thể một) của toán hạng a khi lúc hook xét nó có thật, không phải link, và
+    không tên nào của nó là link chính lệnh tạo (made_link_name); None khi không như vậy: chép nó (cp -R, rsync -a, ditto) có thể làm chính
+    đích thành link."""
+    v = re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), a)
+    v = os.path.expanduser(v) if v.startswith("~") else v
+    if a in repl or re.search(r"[$\x60]", v) or GLOB.search(v) or made_link_name(v.rstrip("/") + "/") is not None:
+        return None
+    paths = [v] if os.path.isabs(v) else [c and c != LINK_CWD and os.path.join(c, v) for c in cwds]
+    # review vòng 3 (P3): thư mục chưa có mà mkdir của chính lệnh tạo (MKDIRS) là cây rỗng có thật — `mkdir -p out && cp -R out dist/o`
+    ok = all(p and (os.path.lexists(p) or pkey(os.path.realpath(p)) in MKDIRS) and not os.path.islink(p.rstrip("/") or "/") for p in paths)
+    return [os.path.realpath(p) for p in paths] if ok else None
+
+MKDIRS = set()   # review vòng 3: khoá (pkey) các thư mục chưa có lúc hook xét mà mkdir của chính lệnh tạo (cả cha của mkdir -p)
+
+def note_mkdir(rest, cwds, env, repl, remote):
+    """mkdir [-p] [-m MODE] DIR…: ghi DIR và các thư mục cha chưa có của nó vào MKDIRS. DIR không đọc được: không ghi gì."""
+    skip, done = False, False
+    for a in rest:
+        if skip:
+            skip = False
+        elif not done and a == "--":
+            done = True
+        elif not done and a.startswith("-") and len(a) > 1:
+            skip = a == "--mode" or (not a.startswith("--") and a.endswith("m"))   # -m MODE, -pm MODE
+        else:
+            for d in dir_paths(a, cwds, env, repl, remote) or []:
+                while not os.path.lexists(d) and pkey(d) not in MKDIRS:
+                    MKDIRS.add(pkey(d))
+                    d = os.path.dirname(d)
 
 def mv_dest(rest, env, repl, xargs, cwds):
     """Tên (casefold, như ln_names) nơi mv đặt thứ nó chuyển — link chuyển đi vẫn là link. Đổi tên (một nguồn, đích không có / cuối; -T):
@@ -804,22 +976,214 @@ def extract_dirs(prog, rest):
                 return None
             k += 1
         return dirs or [""]
+    if prog in SEVENZ_PROGS:   # #427 vòng 3: 7z x / e, -o<thư mục> dính liền (không có: thư mục hiện tại)
+        ops = [a for a in rest if not a.startswith("-")]
+        if not ops or ops[0] not in ("x", "e"):
+            return None
+        return [a[2:] or None for a in rest if a.startswith("-o")] or [""]
+    if prog == "cpio":   # #427 vòng 3: -i / --extract vào thư mục hiện tại (GNU -D / --directory); -p / --pass-through vào thư mục toán hạng
+        flags, dirs, ops, k = "", [], [], 0
+        while k < len(rest):
+            a = rest[k]
+            if a in ("-D", "--directory"):
+                dirs.append(rest[k + 1] if k + 1 < len(rest) else None)
+                k += 1
+            elif a.startswith("--directory="):
+                dirs.append(a.split("=", 1)[1])
+            elif a in ("--extract", "--pass-through", "--create", "--list"):
+                flags += {"--extract": "i", "--pass-through": "p", "--create": "o", "--list": "t"}[a]
+            elif a.startswith("-") and not a.startswith("--") and len(a) > 1:
+                for j, ch in enumerate(a[1:], 1):
+                    if ch in "EFHIMORCD":   # tuỳ chọn có giá trị: phần còn lại của cụm, hay từ sau
+                        val = a[j + 1:] or (rest[k + 1] if k + 1 < len(rest) else None)
+                        k += 0 if a[j + 1:] else 1
+                        dirs += [val] if ch == "D" else []
+                        break
+                    flags += ch
+            elif not a.startswith("-"):
+                ops.append(a)
+            k += 1
+        if "t" in flags or "o" in flags:
+            return None
+        if "p" in flags:
+            return [ops[-1] if ops else None]
+        return (dirs or [""]) if "i" in flags else None
     return None
+
+RSYNC_VALUE_OPTS = {"-e", "-f", "-B", "-T", "-M", "-@", "--exclude", "--include", "--filter", "--rsh", "--rsync-path", "--log-file",
+                    "--files-from", "--exclude-from", "--include-from", "--temp-dir", "--partial-dir", "--compare-dest", "--copy-dest",
+                    "--link-dest", "--backup-dir", "--suffix", "--chmod", "--timeout", "--contimeout", "--bwlimit", "--port",
+                    "--password-file", "--max-size", "--min-size", "--max-delete", "--modify-window", "--out-format", "--info", "--debug",
+                    "--usermap", "--groupmap", "--chown", "--iconv", "--block-size", "--remote-option", "--address", "--skip-compress"}
+
+def drop_redirects(words):
+    """#427 vòng 3: các từ của một lệnh trừ chuyển hướng (2>/dev/null, > log): đích của cp / rsync / cpio -p / git clone là toán hạng cuối."""
+    out, k = [], 0
+    while k < len(words):
+        n = shell_norm.redirect_len(words, k)
+        out += [] if n else [words[k]]
+        k += n or 1
+    return out
+
+def copied(prog, rest):
+    """#427 vòng 3: lệnh chép mà link được chép thành link — cp -R / -r / -a / -P / -d (--recursive, --archive, --no-dereference), rsync
+    -a / -l (--archive, --links), ditto (không -c; -x giải nén): (đích, các nguồn, vào thư mục). vào thư mục: các nguồn nằm DƯỚI đích (cp
+    -t, nhiều nguồn, đích có / cuối, ditto -x). None: không phải lệnh đó, đích ở máy khác (rsync host:path), hay không có đích."""
+    if prog not in ("cp", "gcp", "rsync", "ditto"):
+        return None
+    ops, dest, opts_done, k, flags, longs = [], None, False, 0, "", set()
+    vals = RSYNC_VALUE_OPTS if prog == "rsync" else {"--arch", "--bom", "--zlibCompressionLevel"} if prog == "ditto" else {"--suffix"}
+    while k < len(rest):
+        a = rest[k]
+        if not opts_done and a == "--":
+            opts_done = True
+        elif not opts_done and a.startswith("--"):
+            name, eq, val = a.partition("=")
+            longs.add(name)
+            if prog in ("cp", "gcp") and name == "--target-directory":
+                dest = val if eq else (rest[k + 1] if k + 1 < len(rest) else None)
+                k += 0 if eq else 1
+            elif name in vals and not eq:
+                k += 1
+        elif not opts_done and a.startswith("-") and len(a) > 1:
+            j = next((n for n, ch in enumerate(a[1:], 1) if "-" + ch in vals or (prog in ("cp", "gcp") and ch in "tS")), None)
+            flags += a[1:j] if j else a[1:]
+            if j:   # tuỳ chọn có giá trị: phần còn lại của cụm, hay từ sau (cp -t DIR)
+                val = a[j + 1:] or (rest[k + 1] if k + 1 < len(rest) else None)
+                k += 0 if a[j + 1:] else 1
+                dest = val if prog in ("cp", "gcp") and a[j] == "t" else dest
+        else:
+            ops.append(a)
+        k += 1
+    if prog == "rsync":
+        links = bool({"--archive", "--links"} & longs) or "a" in flags or "l" in flags
+    elif prog == "ditto":
+        links = "c" not in flags
+    else:
+        links = bool({"--recursive", "--archive", "--no-dereference"} & longs) or any(c in flags for c in "RraPd")
+    if not links:
+        return None
+    into = dest is not None or (prog == "ditto" and "x" in flags)
+    if dest is None:
+        if len(ops) < 2:
+            return None
+        dest, ops = ops[-1], ops[:-1]
+    if prog == "rsync" and (re.match(r"^[^/]*:", dest) or dest.startswith("rsync:")):   # máy khác
+        return None
+    return dest, ops, into or len(ops) > 1 or dest.endswith("/"), prog == "ditto" and "x" in flags   # đích/: mục nằm trong nó
+
+GIT_CLONE_VALUE_OPTS = {"-o", "-b", "-u", "-c", "-j", "--origin", "--branch", "--upload-pack", "--template", "--config", "--depth",
+                        "--shallow-since", "--shallow-exclude", "--reference", "--reference-if-able", "--separate-git-dir", "--jobs",
+                        "--filter", "--server-option", "--bundle-uri", "--ref-format"}
+
+def git_clone_dir(rest):
+    """#427 vòng 3: [thư mục working tree] mà `git clone` tạo (git lưu link: một mục bên dưới có thể là link) — toán hạng thứ hai, không có
+    thì tên git lấy từ URL; -C DIR đặt trước nó. [] khi không phải clone, hay --bare / --mirror (không có working tree); [None]: không đọc được."""
+    j, base = 0, ""
+    while j < len(rest) and rest[j].startswith("-"):
+        if rest[j] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"):   # giá trị là từ sau
+            base = os.path.join(base, rest[j + 1]) if rest[j] == "-C" and j + 1 < len(rest) else base
+            j += 1
+        j += 1
+    if j >= len(rest) or rest[j] != "clone":
+        return []
+    ops, k = [], j + 1
+    while k < len(rest):
+        a = rest[k]
+        if a == "--":
+            ops += rest[k + 1:]
+            break
+        if a in ("--bare", "--mirror"):
+            return []
+        k += 1 if a in GIT_CLONE_VALUE_OPTS else 0
+        if not a.startswith("-"):
+            ops.append(a)
+        k += 1
+    if not ops:
+        return []
+    d = ops[1] if len(ops) > 1 else re.split(r"[/:]", re.sub(r"(?:/\.git|\.git|\.bundle)$", "", ops[0].rstrip("/")))[-1]
+    return [os.path.join(base, d) if d else None]
 
 def extracted_entry(raw):
     """Đường dẫn của mục đầu tiên nằm DƯỚI một thư mục của EXTRACT_DIRS mà raw (đường dẫn tuyệt đối của đích rm) đi xuyên qua — mọi tên
-    trừ tên cuối (dấu / cuối: cả tên cuối), như made_link_name —, hoặc None. Chính thư mục giải nén không tính: rm -r không theo link bên trong."""
-    if not EXTRACT_DIRS:
+    trừ tên cuối (dấu / cuối: cả tên cuối), như made_link_name —, hoặc None. Chính thư mục giải nén không tính: rm -r không theo link bên trong.
+    #427 vòng 3: một đích COPY_DESTS thì tính cả chính nó (đích chép từ một link là link); dưới một đích COPY_SRCS chỉ mục mà mục tương ứng
+    của nguồn là link (từng tiền tố được xét, nên link ở giữa đường cũng thấy). Review vòng 3: tra theo khoá (MARK_KEYS, mỗi tiền tố một lượt
+    các thư mục cha), không còn so với mọi thư mục đã ghi; từ tên glob đầu tiên: mark_glob."""
+    if not EXTRACT_DIRS and not COPY_DESTS and not COPY_SRCS:
         return None
     parts = raw.split("/")
     for k in range(1, len(parts) - 1):
         if parts[k] in ("", ".", ".."):
             continue
+        if GLOB.search(parts[k]):   # review vòng 3 (P1): tên glob khớp như shell, không đọc như một tên
+            return mark_glob(parts, k)
         pre = "/".join(parts[:k + 1])
         rp = os.path.realpath(pre)
-        if any(rel_below(rp, d) for d in EXTRACT_DIRS):   # rel_below: [] là chính d, None là ngoài d
+        ks = anc_keys(rp)   # ks[j]: thư mục j bậc trên rp (ks[0]: chính rp)
+        if any(a in MARK_KEYS["x"] for a in ks[1:]) or any(a in MARK_KEYS["d"] for a in ks):
+            return pre
+        names = rp.split("/")
+        if any(a in MARK_KEYS["s"] and copy_link(COPY_SRCS[MARK_KEYS["s"][a]], names[len(names) - j:]) for j, a in enumerate(ks) if j):
             return pre
     return None
+
+def mark_glob(parts, k):
+    """Review #427 vòng 3 (P1): extracted_entry từ parts[k], tên glob đầu tiên mà rm đi xuyên qua. pat (các tên rm đi qua từ đó) đi xuống dưới
+    thư mục trước glob (base): base hay một thư mục cha của nó đã ghi — giải nén / đích chép thì chặn, nguồn chép thì xét các mục của nguồn
+    khớp pat; thư mục đã ghi nằm dưới base thì các tên của nó phải khớp phần đầu của pat. Trả về đường dẫn như rm viết, hoặc None."""
+    base = os.path.realpath("/".join(parts[:k]) or "/")
+    pat = [x for x in parts[k:-1] if x not in ("", ".")]
+    shown = "/".join(parts[:-1]) or "/"
+    names = base.split("/")
+    ks = anc_keys(base)
+    for j, a in enumerate(ks):
+        if a in MARK_KEYS["x"] or a in MARK_KEYS["d"]:
+            return shown
+        if a in MARK_KEYS["s"] and copy_link(COPY_SRCS[MARK_KEYS["s"][a]], (names[len(names) - j:] if j else []) + pat):
+            return shown
+    kb = ks[0].rstrip("/") + "/"
+    for kind, keys in MARK_KEYS.items():
+        for key, m in keys.items():
+            if not key.startswith(kb):
+                continue
+            rel = m.split("/")[-len(key[len(kb):].split("/")):]
+            n = len(rel)
+            if n > len(pat) or not all(name_hit(x, r) for x, r in zip(pat, rel)):
+                continue
+            if kind == "d" or (n < len(pat) and (kind == "x" or copy_link(COPY_SRCS[m], pat[n:]))):
+                return shown
+    return None
+
+def dir_paths(d, cwds, env, repl, remote):
+    """#427 vòng 3: realpath của thư mục d ở mỗi thư mục hiện tại có thể; None khi không đọc được (None, $VAR, ~ lạ, glob, {} của xargs, máy
+    kia, cwd không biết với d tương đối)."""
+    d = d if d is None else re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), d)
+    d = os.path.expanduser(d) if d and d.startswith("~") else d
+    if d is None or remote or d in repl or re.search(r"[$`~]", d) or GLOB.search(d):
+        return None
+    if any(cwd in (None, LINK_CWD) for cwd in cwds) and not os.path.isabs(d):
+        return None
+    return [os.path.realpath(os.path.join(cwd or "/", d)) for cwd in cwds]
+
+def record_dirs(dirs, into, cwds, env, repl, remote, named=False):
+    """#427 vòng 2/3: ghi các thư mục mà lệnh đặt mục (có thể là link) vào — into: chỉ các mục bên dưới (EXTRACT_DIRS), không thì cả chính
+    nó (COPY_DESTS). Thư mục không đọc được (None, $VAR, ~ lạ, glob, {} của xargs, máy kia, cwd không biết): tên link "*" (review vòng 3:
+    xem bên dưới). named (cp -R, rsync, ditto, git clone): đích tương đối đọc được mà chỉ cwd không biết (cd $W && cp -R a b; corpus 27/10)
+    ghi tên cuối của nó như tên link của ln — rm đi qua một thư mục tên đó bị chặn, rm khác không."""
+    for d in dirs:
+        found = dir_paths(d, cwds, env, repl, remote)
+        name = os.path.basename(d.rstrip("/")) if d else ""
+        if found is None and named and not remote and d not in repl and not re.search(r"[$`~]", d or "$") and not GLOB.search(d) \
+                and name not in ("", ".", ".."):
+            LINKS_MADE.add(name.casefold())
+        elif found is None:   # máy kia, hay không đọc được
+            # review vòng 3: máy kia — FAR_DEST (như "*"); giải nén (tar -x, unzip, 7z, cpio) trên dòng lệnh — "*" như vòng 2
+            # (tests/gates/test_hardware_backlog427.sh); chép / clone, và mọi lệnh trong script đọc để gom (COLLECT) — COPY_ANY
+            LINKS_MADE.add(FAR_DEST if remote else "*" if not named and not COLLECT[0] else COPY_ANY)
+        else:
+            (EXTRACT_DIRS if into else COPY_DESTS).update(found)
+            add_marks("x" if into else "d", found)
 
 def rm_target_problem(t, cwds, env, forced=True, _seq=False):
     """Why removing target t recursively is refused, or None. Without -f (forced=False; 2026-10-09,
@@ -837,9 +1201,13 @@ def rm_target_problem(t, cwds, env, forced=True, _seq=False):
         t = "$PWD" + t[2:]
     if PWD_VAR.search(t):   # $PWD is the directory the command runs in (2026-10-13: rm -rf "$PWD/build" was refused as unknown)
         for cwd in cwds:
-            if cwd is None:
-                if forced:
-                    return f"{orig}: không biết thư mục hiện tại ($PWD sau cd tới $VAR / lệnh con / popd)"
+            if cwd in (None, LINK_CWD):   # #427 vòng 3: sau cd vào link chính lệnh tạo — cả khi không -f
+                if forced or cwd == LINK_CWD:
+                    return f"{orig}: không biết thư mục hiện tại ($PWD sau cd tới $VAR / lệnh con / popd / link do chính lệnh tạo)"
+                # review vòng 3: phần sau $PWD xét như đường dẫn tương đối ở cwd không biết (tên link, COPY_ANY)
+                why = rm_target_problem(PWD_VAR.sub("", t).lstrip("/") or ".", [None], env, forced)
+                if why:
+                    return why
                 continue
             why = rm_target_problem(PWD_VAR.sub(lambda m: cwd, t), [cwd], env, forced)
             if why:
@@ -873,23 +1241,41 @@ def rm_target_problem(t, cwds, env, forced=True, _seq=False):
     starstar = zsh_starstar(t) if glob else None   # OCR round 3, H1: zsh *** follows links, ** walks folders Python glob does not
     if starstar and forced:
         return f"{orig}: {starstar}"
+    # #427 vòng 3 (P0): một tên glob rồi `..` sau nó — `mkdir -p build/x/1 && rm -rf build/x/*/../../../src`: tên chưa có lúc hook xét thì
+    # glob không khớp gì, chỉ thư mục trước glob (build/x) được xét; chạy thật thì shell khớp build/x/1, `..` đưa tới src/. Xét thêm đường
+    # dẫn với mỗi tên glob là một tên thường (shell gộp `..` sau nó như vậy); chặn khi một trong hai cách đọc chặn.
+    names = t.split("/")
+    if glob and ".." in names[next(k for k, x in enumerate(names) if GLOB.search(x)):]:
+        why = rm_target_problem("/".join(GLOB_NAME if GLOB.search(x) else x for x in names), cwds, {}, forced, True)
+        if why:
+            return why.replace(GLOB_NAME, "*")
     for cwd in ([None] if os.path.isabs(t) else cwds):
+        if cwd == LINK_CWD:   # #427 vòng 3: đích tương đối sau cd vào link chính lệnh tạo — cả rm -r không -f (nơi link trỏ tới)
+            return (f"{orig}: thư mục hiện tại là nơi một link do chính lệnh này tạo trỏ tới (cd vào link): không biết là đâu — tách lệnh tạo "
+                    f"link và lệnh xoá để cổng thấy link thật")
         if cwd is None and not os.path.isabs(t):
             if not forced:
+                # review vòng 3: chính lệnh chép / giải nén vào một thư mục không đọc được (COPY_ANY) — đường dẫn tương đối mà cwd không biết
+                # đi xuyên qua một tên có thể là thư mục đó
+                if COPY_ANY in LINKS_MADE and any(x not in ("", ".", "..") for x in t.split("/")[:-1]):
+                    return (f"{orig}: không biết thư mục hiện tại, và chính lệnh này chép / giải nén vào một thư mục không đọc được — rm -r có "
+                            f"thể đi qua một mục chép / giải nén (có thể là link). Tách hai lệnh để cổng thấy mục thật")
                 continue
             return f"{orig}: không biết thư mục hiện tại (cd tới $VAR / lệnh con / popd)"
         base = cwd or "/"
         ent = extracted_entry(os.path.join(base, t))   # #427 vòng 2: trước khi tách forced, như made_link_name
         if ent:
-            return (f"{orig}: đi qua {ent}, một mục dưới thư mục mà tar -x / unzip của chính lệnh này giải nén vào — mục đó có thể là link "
-                    f"trong file nén, rm -r theo nó xoá nơi link trỏ tới. Tách giải nén và rm thành hai lệnh để cổng thấy mục thật")
+            return (f"{orig}: đi qua {ent}, một mục mà chính lệnh này giải nén / chép vào (tar -x, unzip, 7z, cpio, cp -R, rsync -a, ditto, "
+                    f"git clone) — mục đó có thể là link, rm -r theo nó xoá nơi link trỏ tới. Tách lệnh đó và rm thành hai lệnh để cổng thấy "
+                    f"mục thật")
         if glob:  # judged as its directory: rm -rf src/* empties src; the shell expands the glob inside it, through a link too
             parts = t.split("/")
             k = next(i for i, x in enumerate(parts) if GLOB.search(x))
             p = os.path.realpath(os.path.join(base, "/".join(parts[:k]) or ("/" if t.startswith("/") else ".")))
         else:   # where the kernel resolves it (review of A7, 25/10): `link/` deletes what the link points at, `link` the link alone
             p = rm_reach(os.path.join(base, t))
-        why = rm_path_problem(p, orig, forced, glob)   # the folder first: a refused one costs no walk of its matches (review round 2, A3)
+        # the folder first: a refused one costs no walk of its matches (review round 2, A3); review vòng 3: rồi worktree git nằm dưới nó
+        why = rm_path_problem(p, orig, forced, glob) or worktree_problem(p, parts[k:] if glob else None, orig)
         if why:
             return why
         reach = None
@@ -908,9 +1294,50 @@ def rm_target_problem(t, cwds, env, forced=True, _seq=False):
                 return f"{orig}: {esc}"
         for r in reach or []:   # a match that left the folder through a link: judged where it lands
             if r != p and not r.startswith(p.rstrip(os.sep) + os.sep):
-                why = rm_path_problem(r, orig, forced, False)
+                why = rm_path_problem(r, orig, forced, False) or worktree_problem(r, None, orig)
                 if why:
                     return why
+    return None
+
+_WORKTREES = []   # review #427 vòng 3: [realpath các worktree git đăng ký của project | None: git lỗi, không biết], đọc một lần
+
+def worktrees():
+    if not _WORKTREES:
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["LC_ALL"] = "C"
+        try:
+            r = subprocess.run(["git", "-C", ROOT, "worktree", "list", "--porcelain"], capture_output=True, text=True, timeout=5, env=env)
+        except FileNotFoundError:   # máy không có git: không worktree nào được git đăng ký
+            _WORKTREES.append([])
+        except (OSError, subprocess.SubprocessError):
+            _WORKTREES.append(None)
+        else:
+            if r.returncode == 0:
+                _WORKTREES.append([os.path.realpath(x[9:]) for x in r.stdout.splitlines() if x.startswith("worktree ")])
+            else:   # project ngoài git: không có worktree; git lỗi khác: không biết
+                _WORKTREES.append([] if r.returncode == 128 and "not a git repository (or any" in r.stderr else None)
+    return _WORKTREES[0]
+
+def worktree_problem(p, pat, orig):
+    """Review #427 vòng 3 (P0 mất dữ liệu): rm -r (cả không -f, find -delete, rsync --delete) của p xoá một worktree git đã đăng ký của
+    project nằm DƯỚI p — `rm -rf .claude/worktrees` từ main xoá worktree của mọi phiên khác. Chính p là một worktree: giữ phán quyết cũ.
+    pat: các tên sau p của một glob (p là thư mục trước glob): chỉ worktree mà một kết quả khớp là nó hay chứa nó (`..` sau glob: mọi worktree
+    dưới p). git không cho danh sách (lỗi khác "not a git repository"): chặn khi p là thư mục thật."""
+    if not os.path.isdir(p) or os.path.islink(p):   # file, link (rm xoá chính link), chưa có: không chứa gì
+        return None
+    wts = worktrees()
+    if wts is None:
+        return f"{orig}: git worktree list lỗi — không biết {p} có chứa worktree của phiên khác không"
+    kp = pkey(p).rstrip("/") + "/"
+    pat = None if pat is None else [x for x in pat if x not in ("", ".")]
+    for w in wts:
+        kw = pkey(w)
+        if not kw.startswith(kp):
+            continue
+        rel = w.split("/")[-len(kw[len(kp):].split("/")):]
+        if pat is None or ".." in pat or (len(pat) <= len(rel) and all(name_hit(x, r) for x, r in zip(pat, rel))):
+            return (f"{orig}: chứa worktree git {w} (git worktree list) — có thể là worktree của phiên khác. Gỡ từng worktree bằng "
+                    f"`git worktree remove <đường dẫn>` (hay agent-kit worktree)")
     return None
 
 def rm_path_problem(p, orig, forced, glob):
@@ -1292,6 +1719,103 @@ def decl_effect(word, rest, env):
         return word != "printf"
     return False
 
+def note_copy(prog, rest, cwds, env, repl, remote):
+    """#427 vòng 3: ghi đích của một lệnh chép link thành link (copied); True khi lệnh là lệnh như thế. Mọi nguồn là cây có thật: cặp đích →
+    nguồn (COPY_SRCS). Không thì như tar — một nguồn có thật, không phải link: chỉ các mục bên dưới đích (EXTRACT_DIRS); nguồn có thể là link:
+    cả chính đích (COPY_DESTS)."""
+    c = copied(prog, drop_redirects(rest))
+    if c is None:
+        return False
+    dest, srcs, into, archive = c
+    found = [real_paths(a, env, repl, cwds) for a in srcs]
+    dests = dir_paths(dest, cwds, env, repl, remote)
+    # mọi nguồn là cây có thật, không cây nào dính tới thư mục mà phần trước của lệnh giải nén / chép vào (cây đó có thể đổi trước lúc chép):
+    # ghi cặp đích → nguồn (extracted_entry xét mục tương ứng của nguồn). Không thì như tar: mục bên dưới đích, hay cả chính đích.
+    # Review vòng 3: mark_touch tra theo khoá (từng so với mọi thư mục đã ghi: 500 cp -R mất 3.4 s)
+    if dests and srcs and not archive and all(found) and not any(mark_touch(x) for xs in found for x in xs):
+        for d in dests:
+            COPY_SRCS.setdefault(d, []).extend(x for xs in found for x in xs)
+        add_marks("s", dests)
+    else:
+        record_dirs([dest], into or (len(srcs) == 1 and found[0] is not None), cwds, env, repl, remote, True)
+    return True
+
+SCRIPT_MAX = 64 * 1024
+SCRIPTS_READ = set()
+COLLECT = [0]   # > 0: rm_walk đang duyệt một script chỉ để gom lệnh tạo link (script_links) — không phán quyết nào được trả về
+
+def script_links(path, cwds, depth, remote, shebang):
+    """#427 vòng 3: script mà lệnh chạy (bash x.sh, source x.sh, ./x.sh) có thể tạo link mà rm -r sau nó đi qua. File có thật dưới project,
+    nhỏ hơn 64 KB, không phải nhị phân (shebang: ./x.sh chỉ khi dòng #! là một shell, hay không có #!) được duyệt như thân heredoc shell, chỉ
+    để gom tên link / thư mục giải nén (COLLECT: rm của nó không bị xét ở đây). Script ngoài project, từ 64 KB, $VAR / glob, cwd không
+    biết, trên máy kia: không đọc (ponytail ở LINKS_MADE)."""
+    if remote or depth > 4:
+        return
+    for p, text in project_scripts(path, cwds, shebang):
+        if p in SCRIPTS_READ:
+            continue
+        SCRIPTS_READ.add(p)
+        COLLECT[0] += 1
+        try:
+            rm_problem(text, cwds, depth + 1, remote)
+        finally:
+            COLLECT[0] -= 1
+
+SCRIPT_TEXT = {}   # review vòng 3: realpath → nội dung (bytes) của script dưới project, hay None — script_links và moves_cwd đọc chung
+
+def project_scripts(path, cwds, shebang):
+    """[(realpath, nội dung)] của script path ở mỗi thư mục hiện tại có thể (script_links): file có thật dưới project, < 64 KB, không phải
+    nhị phân; shebang: chỉ khi dòng #! là một shell, hay không có #!."""
+    out = []
+    if re.search(r"[$\x60*?\[]", path):
+        return out
+    path = os.path.expanduser(path)
+    for cwd in ([None] if os.path.isabs(path) else cwds):
+        if cwd in (None, LINK_CWD) and not os.path.isabs(path):
+            continue
+        p = os.path.realpath(os.path.join(cwd or "/", path))
+        if p not in SCRIPT_TEXT:
+            SCRIPT_TEXT[p] = None
+            try:
+                if rel_below(p, ROOT) is not None and os.path.isfile(p) and os.path.getsize(p) < SCRIPT_MAX:
+                    with open(p, "rb") as fh:
+                        data = fh.read(SCRIPT_MAX)
+                    SCRIPT_TEXT[p] = None if b"\x00" in data else data
+            except OSError:
+                pass
+        data = SCRIPT_TEXT[p]
+        if data is None or (shebang and data.startswith(b"#!") and not re.match(rb"#![^\n]*\b(?:ba|z|da|k|mk)?sh\b", data)):
+            continue
+        out.append((p, data.decode("utf-8", "replace")))
+    return out
+
+CD_WORDS = ("cd", "chdir", "pushd", "popd")   # chdir: cd của zsh (Bash tool chạy zsh)
+
+def moves_cwd(text, cwds, remote, depth=0):
+    """Review #427 vòng 3 (có từ trước): True khi text — chuỗi của eval, nội dung script (dưới project, < 64 KB, như script_links) mà
+    source / . chạy trong shell này — đổi thư mục hiện tại: cd / chdir / pushd / popd ở mức ngoài cùng (trong ( … ), $( … ) là shell con),
+    hay eval / source lồng như thế. `eval \x27cd ~\x27 && rm -rf build` từng xét rm ở project. Không tách được từ: tìm chữ cd."""
+    if depth > 4:
+        return True
+    try:
+        toks = shell_norm.lex_words(drop_comments(text))
+    except ValueError:
+        return re.search(r"\b(?:" + "|".join(CD_WORDS) + r")\b", text) is not None
+    level, seg = 0, []
+    for tk in toks + [";"]:
+        if not set(tk) <= SEP_CHARS:
+            seg.append(tk)
+            continue
+        i, head = seg_head(seg)
+        if level == 0 and (
+                head in CD_WORDS or (head == "eval" and moves_cwd(" ".join(seg[i + 1:]), cwds, remote, depth + 1))
+                or (head in ("source", ".") and i + 1 < len(seg) and not remote
+                    and any(moves_cwd(s, cwds, remote, depth + 1) for _p, s in project_scripts(seg[i + 1], cwds, False)))):
+            return True
+        level = max(0, level + tk.count("(") - tk.count(")"))
+        seg = []
+    return False
+
 def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
     """rm_segment_problem for the program at toks[i]; toks[:i] is its prefix (NAME=VAL words for this command, xargs and its
     options)."""
@@ -1327,6 +1851,7 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
                 why = rm_problem(val[1:], cwds, depth + 1, remote)
                 if why:
                     return why
+        record_dirs(git_clone_dir(drop_redirects(rest)), True, cwds, env, repl, remote, True)   # #427 vòng 3: git clone — mục bên dưới có thể là link
         return None
     if prog in shell_norm.SHELLS or prog == "su":
         scripts = shell_scripts(rest)
@@ -1339,11 +1864,29 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
             if ran and ran[0] == "script":   # --command=STR / --session-command STR: a command line (string API), not a word list
                 return rm_problem(ran[1], cwds, depth + 1, remote)
             return rm_segment_problem(ran[1], cwds, env, depth + 1, None, remote) if ran else None
+        if not scripts:   # #427 vòng 3: bash x.sh — đọc file script để gom lệnh tạo link của nó (script_links)
+            j, stdin = 0, False
+            while j < len(rest) and rest[j][:1] in "-+" and rest[j] not in ("-", "--"):
+                stdin = stdin or (rest[j][1:2] != "-" and "s" in rest[j][1:])   # -s: script từ stdin, không phải file
+                j += 2 if rest[j] in shell_norm.SHELL_OPTS_WITH_ARG else 1
+            j += 1 if j < len(rest) and rest[j] == "--" else 0
+            if j < len(rest) and not stdin:
+                script_links(rest[j], cwds, depth, remote, False)
         return None
     dev = device_script(prog, rest)
     if dev:
         if dev[2] != "device" or remote == "device":
-            return rm_problem(dev[0], dev[1], depth + 1, dev[2])
+            if dev[2] != "ssh" or remote:
+                return rm_problem(dev[0], dev[1], depth + 1, dev[2])
+            # review vòng 3: ssh từ máy này — FAR_DEST (đích chép / giải nén không đọc được ở máy kia) không về phán quyết rm của máy này;
+            # tên ln của ssh vẫn dùng chung (ssh localhost: tests/gates/test_hardware_backlog427.sh)
+            LINKS_MADE.update(SSH_LINKS)
+            try:
+                return rm_problem(dev[0], dev[1], depth + 1, dev[2])
+            finally:
+                if FAR_DEST in LINKS_MADE:
+                    SSH_LINKS.add(FAR_DEST)
+                    LINKS_MADE.discard(FAR_DEST)
         local = set(LINKS_MADE)   # DEVICE_LINKS: tên thiết bị tạo không về phán quyết rm của máy này
         LINKS_MADE.update(DEVICE_LINKS)
         try:
@@ -1361,6 +1904,9 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
     if prog == "trap":
         acts = [a for a in rest if a != "--"]
         if acts and not acts[0].startswith("-"):
+            if TRAPS:   # #427 vòng 3: thân chạy lúc thoát, ở cwd lúc đó — rm_walk xét lại với mọi cwd từ đây tới lúc thoát (late_traps)
+                e = [acts[0], body_env(env), list(cwds), None, list(cwds), remote, trap_sigs(acts[1:])]   # vòng 3: + tín hiệu (trap_reset)
+                TRAPS[-1] += [] if e in TRAPS[-1] else [e]
             return rm_problem(acts[0], cwds, depth + 1, remote, env=body_env(env))
     if prog == "find":
         rest = [FIND_ESC.get(x, x) for x in rest]
@@ -1391,34 +1937,38 @@ def rm_command_problem(toks, i, cwds, env, depth, feed, remote, implied):
                 why = next(filter(None, (rm_target_problem(y, cwds, env, False) for y in empty_readings(ops[-1], env))), None)
                 if why:
                     return why + " (rsync --delete)"
+            note_copy(prog, rest, cwds, env, repl, remote)   # #427 vòng 3: sau phép xét --delete (đích của chính nó không tính)
             return None
         rim = rimraf_args(prog, rest)
         if rim is not None:
             return rm_segment_problem(["rm", "-rf", "--"] + rim, cwds, env, depth + 1)
+    if prog.lower() in ("mkdir", "gmkdir"):   # review vòng 3: thư mục rỗng chính lệnh tạo — nguồn chép có thật (real_paths)
+        note_mkdir(rest, cwds, env, repl, remote)
+        return None
     if prog.lower() in ("ln", "gln") or (prog.lower() in ("cp", "gcp") and cp_symbolic(rest)):   # #427: tên link lệnh này tạo
         LINKS_MADE.update(ln_names(rest, env, repl, xargs))   # (vòng 2: cp -s / --symbolic-link ghi tên như ln)
         return None
     if prog.lower() in ("mv", "gmv"):   # #427 vòng 2: link chuyển đi vẫn là link — tên đích
-        LINKS_MADE.update(mv_dest(rest, env, repl, xargs, cwds))
+        # vòng 3: trong script đọc để gom (COLLECT) chỉ khi một toán hạng có thể là link chính lệnh tạo: `mv "$tmp" "$path"` (ghi file
+        # nguyên tử, rất thường gặp) từng làm tên "*" chặn mọi rm qua thư mục (corpus 27/10). ponytail: script chuyển một link có sẵn.
+        if not COLLECT[0] or any(made_link_name(a.rstrip("/") + "/") is not None for a in rest if not a.startswith("-")):
+            LINKS_MADE.update(mv_dest(rest, env, repl, xargs, cwds))
+        return None
+    if note_copy(prog.lower(), rest, cwds, env, repl, remote):   # #427 vòng 3: cp -R / -a, rsync -a, ditto chép link thành link
+        return None
+    if prog in ("source", ".") and rest:   # #427 vòng 3: script chạy trong shell này
+        script_links(rest[0], cwds, depth, remote, False)
         return None
     if (shell_norm.INTERPRETER.fullmatch(prog) or prog in shell_norm.RUNNERS) and any(SYMLINK_API.search(a) for a in rest):
         LINKS_MADE.add("*")   # #427 vòng 2: chương trình nội tuyến (-c / -e) của interpreter tạo link (os.symlink …): tên không đọc được
         return None
-    ex = extract_dirs(prog.lower(), rest)
-    if ex is not None:   # #427 vòng 2: tar -x / unzip — mục bên dưới thư mục giải nén có thể là link (extracted_entry)
-        for d in ex:
-            d = d if d is None else re.sub(r"\$\{?(\w+)\}?", lambda m: env.get(m.group(1), m.group(0)), d)
-            d = os.path.expanduser(d) if d and d.startswith("~") else d
-            if d is None or remote or d in repl or re.search(r"[$`~]", d) or GLOB.search(d):   # máy kia, hay không đọc được
-                LINKS_MADE.add("*")
-                continue
-            for cwd in cwds:
-                if cwd is None and not os.path.isabs(d):
-                    LINKS_MADE.add("*")
-                else:
-                    EXTRACT_DIRS.add(os.path.realpath(os.path.join(cwd or "/", d)))
+    ex = extract_dirs(prog.lower(), drop_redirects(rest))
+    if ex is not None:   # #427 vòng 2: tar -x / unzip (vòng 3: 7z, cpio) — mục bên dưới thư mục giải nén có thể là link (extracted_entry)
+        record_dirs(ex, True, cwds, env, repl, remote)
         return None
-    if prog.lower() != "rm":
+    if "/" in toks[i] and prog.lower() != "rm":   # #427 vòng 3: ./x.sh, scripts/run.sh — script shell (shebang) dưới project
+        script_links(toks[i], cwds, depth, remote, True)
+    if prog.lower() != "rm" or COLLECT[0]:   # COLLECT: chỉ gom lệnh tạo link của script (script_links), không xét rm của nó
         return None
     flags, targets, opts_done = "", [], False
     longs = set()
@@ -1496,7 +2046,7 @@ def rm_problem(text, cwds, depth=0, remote="", _pass=0, env=None):
     if depth == 0 and not _pass:
         RERUN[0], PASS[0], LOOP[0] = False, 1, 0   # RERUN: đặt ở lượt 1, trên văn bản đã cắt thân heredoc dữ liệu (bên dưới)
         why = rm_problem(text, cwds, 0, remote, 1)
-        if why or not (LINKS_MADE or EXTRACT_DIRS or DEVICE_LINKS):
+        if why or not (LINKS_MADE or EXTRACT_DIRS or COPY_DESTS or COPY_SRCS or DEVICE_LINKS or SSH_LINKS):
             return why
         PASS[0], LOOP[0] = 2, 0
         return rm_problem(text, cwds, 0, remote, 2)
@@ -1521,7 +2071,11 @@ def rm_problem(text, cwds, depth=0, remote="", _pass=0, env=None):
     env = dict(env) if env is not None else {} if remote else {"HOME": os.path.expanduser("~"), "TMPDIR": os.environ.get("TMPDIR") or "/tmp"}
     for reading in shell_norm.readings(drop_comments(text)):
         loop = LOOP[0]   # vùng lặp của lệnh bao ngoài (sh -c trong vòng lặp vẫn ở trong nó); một done lẻ không lọt ra ngoài
-        why = rm_walk(reading, cwds, depth, remote, env)
+        TRAPS.append([])   # #427 vòng 3: trap đặt trong lần duyệt này (late_traps)
+        try:
+            why = rm_walk(reading, cwds, depth, remote, env)
+        finally:
+            TRAPS.pop()
         LOOP[0] = loop
         if why:
             return why
@@ -1586,6 +2140,45 @@ def loop_regions(toks):
         stack[-1].update(inner)
     return out
 
+TRAPS = []   # #427 vòng 3: mỗi rm_walk đang chạy một danh sách [thân, env, cwds tới giờ, độ sâu ( … ), cwds lúc đặt, remote, tín hiệu] của trap
+SIG_NUM = {"0": "EXIT", "1": "HUP", "2": "INT", "3": "QUIT", "6": "ABRT", "9": "KILL", "14": "ALRM", "15": "TERM"}
+
+def trap_sigs(words):
+    """Tên tín hiệu của trap, chuẩn hoá: chữ hoa, bỏ SIG, số thường gặp thành tên (0 là EXIT)."""
+    out = set()
+    for w in words:
+        s = w.upper()
+        s = s[3:] if s.startswith("SIG") else s
+        out.add(SIG_NUM.get(s, s))
+    return out
+
+def trap_reset(args, level):
+    """Review #427 vòng 3 (P3 chặn nhầm: `trap \x27rm -rf build\x27 EXIT; trap - EXIT; cd ~`): `trap - SIG…`, `trap SIG` (một toán hạng), hay
+    trap mới cho cùng tín hiệu gỡ tín hiệu đó khỏi các trap cũ của shell này (cùng độ sâu ( … )); trap không còn tín hiệu nào thì không chạy lúc
+    thoát. Trap của chính câu này (cùng thân) giữ nguyên. rm_walk chỉ gọi khi câu trap chắc chạy ở chính shell này."""
+    acts = [a for a in args if a != "--"]
+    if not acts or (acts[0][:1] == "-" and acts[0] != "-"):   # trap -p / -l: không đổi gì
+        return
+    sigs = trap_sigs(acts[1:] if len(acts) > 1 else acts)
+    for tr in list(TRAPS[-1]):
+        if tr[3] == level and tr[0] != acts[0] and tr[6]:
+            tr[6] = tr[6] - sigs
+            if not tr[6]:
+                TRAPS[-1].remove(tr)
+
+def late_traps(traps, level, depth):
+    """#427 vòng 3: thân trap chạy khi shell của nó thoát, ở cwd LÚC ĐÓ (lệnh dừng ở đâu cũng được: lỗi, tín hiệu) — xét lại với mọi cwd từ
+    lúc đặt tới lúc thoát: `trap \x27rm -rf build\x27 EXIT; cd ~` xoá ~/build; cd sau đó tới chỗ không biết thì không biết. level: trap đặt
+    sâu hơn (trong ( … ) vừa đóng) chạy bây giờ; -1: hết lệnh. Không cwd nào thêm thì phép xét lúc đặt trap đã đủ."""
+    for tr in [t for t in traps if t[3] is None or t[3] > level]:
+        traps.remove(tr)
+        new = [c for c in tr[2] if c not in tr[4]]   # review vòng 3: cwd lúc đặt đã xét (lượt 2 với đủ tên link)
+        if new and not COLLECT[0]:
+            why = rm_problem(tr[0], new, depth + 1, tr[5], env=tr[1])
+            if why:
+                return why + " (thân trap chạy lúc thoát, ở thư mục hiện tại lúc đó)"
+    return None
+
 def rm_walk(text, cwds, depth, remote, env):
     """rm_problem of one reading of the text (comments already cut, continuations already decided)."""
     # `…` is $(…): the lexer splits "$" from "(", so a target built from one stays "$…"
@@ -1607,7 +2200,8 @@ def rm_walk(text, cwds, depth, remote, env):
     # tên đó thành không biết: ngay sau đoạn (chặng ống, chạy nền, sau ||), khi chuỗi && dứt (sau &&), ở fi / esac (if / case). Thân hàm:
     # xét với body_env như thân trap (chạy lúc gọi, sau mọi phép gán); sau định nghĩa, tên nó gán không biết ở mọi chỗ (gọi lúc nào cũng được).
     prev, cond, blocks, volatile, fn_body, fn_next, seen, cond_kept = ";", set(), [], set(), None, False, set(), set()
-    for tk in toks + [";"]:
+    braces, stream = 0, toks + [";"]   # review vòng 3: số nhóm { … } đang mở (trap đặt / gỡ trong đó: không chắc ở shell này)
+    for ti, tk in enumerate(stream):
         if shell_norm.join_fd_dup(seg, tk):   # 2>&1 rm …: the & belongs to the redirect
             continue
         if not set(tk) <= SEP_CHARS:
@@ -1617,6 +2211,8 @@ def rm_walk(text, cwds, depth, remote, env):
             nseg += 1
             i, head = seg_head(seg)
             names = seg_names(seg, i, head)
+            bopen = braces + seg.count("{")
+            braces = max(0, bopen - seg.count("}"))
             if seg[0] in ("if", "case"):
                 blocks.append(set())
             if fn_body is None and (fn_next or head == "function") and "{" in seg:
@@ -1639,9 +2235,9 @@ def rm_walk(text, cwds, depth, remote, env):
             for tok_seg in seg:  # "$(…)" / `…` inside a quoted word runs too — #427 vòng 2: trước lệnh chứa nó (chạy trước), như shell
                 if "(" in tok_seg and depth < 5:
                     why = rm_problem(tok_seg.split("(", 1)[1].rstrip(")"), cwds, depth + 1, remote)
-                    if why:
+                    if why and not COLLECT[0]:
                         return why
-            if head in ("cd", "pushd", "popd"):
+            if head in CD_WORDS:   # review vòng 3: cả chdir (cd của zsh)
                 # raw words: options (-L -P -e -@ --, pushd -n) are skipped, but "-" (cd -) and +N / -N (pushd +1) are not options
                 args, k, opts = seg[i + 1:], 0, []
                 while k < len(args) and args[k].startswith("-") and len(args[k]) > 1 and not re.fullmatch(r"-\d+", args[k]):
@@ -1649,7 +2245,7 @@ def rm_walk(text, cwds, depth, remote, env):
                     if args[k - 1] == "--":
                         break
                 # the zsh-qualifier marker dropped (OCR final check): `cd /(N)` enters /, not /__ZSH…
-                arg = args[k].replace(ZSH_QUAL, "") if k < len(args) else ("~" if head == "cd" else None)
+                arg = args[k].replace(ZSH_QUAL, "") if k < len(args) else ("~" if head in ("cd", "chdir") else None)
                 if head == "pushd" and "-n" in opts:
                     pass   # pushd -n only edits the directory stack: the shell stays where it is
                 elif remote and arg is not None and made_link_name(arg + "/") is not None:
@@ -1658,17 +2254,19 @@ def rm_walk(text, cwds, depth, remote, env):
                     pending = [FAR_CWD_AT_RUN]
                 elif (head == "popd" or arg is None or arg == "-" or re.fullmatch(r"[+-]\d+", arg) or "$" in arg or GLOB.search(arg)
                       or (CDPATH_SET and not arg.startswith(("/", "~"))) or (remote and arg.startswith("~"))
-                      or (arg.startswith("~") and os.path.expanduser(arg).startswith("~"))   # cd ~- / ~+ / ~nosuchuser (OCR round 3)
-                      or made_link_name(arg + "/") is not None):   # #427: cd vào link chính lệnh này tạo — thư mục thật là nơi link trỏ tới
+                      or (arg.startswith("~") and os.path.expanduser(arg).startswith("~"))):   # cd ~- / ~+ / ~nosuchuser (OCR round 3)
                     # popd / bare pushd / cd - / pushd +N come back to a directory this walk never saw; with CDPATH a relative
                     # name may resolve anywhere ("CDPATH=/opt cd data" enters /opt/data); the far home is unknown
                     pending = [None]
+                elif made_link_name(arg + "/") is not None:   # #427: cd vào link chính lệnh này tạo — thư mục thật là nơi link trỏ tới
+                    pending = [LINK_CWD]   # vòng 3: không phải None — đích tương đối bị chặn cả khi rm -r không -f
                 else:
                     arg = arg if remote else os.path.expanduser(arg)
                     # c is None after `cd $VAR`: an absolute arg ignores it (join(None, arg) raised TypeError, rc 1, command ran)
                     # #427 vòng 2: từ c chỉ biết lúc chạy (FAR_CWD_AT_RUN, chỉ có trên máy kia) cd tương đối vẫn chỉ biết lúc chạy — normpath
                     # gộp `..` của nó thành /
-                    pending = [FAR_CWD_AT_RUN if c and "$" in c and not os.path.isabs(arg)
+                    pending = [LINK_CWD if c == LINK_CWD and not os.path.isabs(arg)   # vòng 3: cd tương đối từ đó vẫn ở nơi link trỏ tới
+                               else FAR_CWD_AT_RUN if c and "$" in c and not os.path.isabs(arg)
                                else os.path.normpath(os.path.join(c or "/", arg)) if c or os.path.isabs(arg) else None
                                for c in cwds]
                     if k < len(args) and ZSH_QUAL in args[k]:   # a qualifier may move it ((:h) of /tmp is /): also unknown
@@ -1677,8 +2275,15 @@ def rm_walk(text, cwds, depth, remote, env):
                   or LOOP_WORD.search(" ".join(seg))):   # lượt 2: chỉ lệnh có thể chạy SAU một lệnh tạo link đứng sau nó (rm_problem); một
                 # chặng ống chạy cùng lúc với các chặng sau; một lệnh mang script có vòng lặp (adb shell "for …", sh -c "while …")
                 why = rm_segment_problem(seg, cwds, env, depth, feed, remote)
-                if why:
+                if why and not COLLECT[0]:
                     return why
+                for tr in TRAPS[-1]:   # #427 vòng 3: trap vừa đặt thuộc shell con ( … ) đang mở (late_traps)
+                    tr[3] = len(stack) if tr[3] is None else tr[3]
+                # review vòng 3 (P3): `trap - SIG` / trap mới cho cùng tín hiệu gỡ trap cũ của shell này — chỉ khi chắc chạy ở chính shell này
+                # (không sau && / ||, không trong chặng ống / chạy nền / if / case / vòng lặp / thân hàm / nhóm { … })
+                if head == "trap" and TRAPS and prev not in ("&&", "||", "|", "|&") and (tk.strip("\n") or ";") not in ("|", "|&", "&") \
+                        and not (blocks or open_loops or LOOP[0] or fn_body is not None or bopen):
+                    trap_reset(seg[i + 1:], len(stack))
             else:   # lượt 2, lệnh chỉ chạy một lần, trước mọi ln đứng sau nó: không xét lại, chỉ giữ phép gán NAME=VAL cho lệnh sau như lượt 1
                 for w in seg[:i]:
                     if re.match(r"^[A-Za-z_]\w*=", w):
@@ -1688,6 +2293,11 @@ def rm_walk(text, cwds, depth, remote, env):
                             env.pop(name)
                 if i < len(seg):   # export / unset / read … (decl_effect), như lượt 1
                     decl_effect(seg[i], seg[i + 1:], env)
+            # review vòng 3 (có từ trước): cd trong chuỗi eval / trong script mà source / . chạy (moves_cwd) đổi cwd của shell này: không biết
+            if head in ("eval", "source", ".") and pending is None and i + 1 < len(seg) and (
+                    moves_cwd(" ".join(seg[i + 1:]), cwds, remote) if head == "eval"
+                    else not remote and any(moves_cwd(s, cwds, remote) for _p, s in project_scripts(seg[i + 1], cwds, False))):
+                pending = [None]
             sep = tk.strip("\n") or ";"   # phép gán không chắc (xem trên prev, cond …)
             uncertain = names if sep in ("|", "|&", "&") or prev in ("|", "|&", "||") else ()
             if prev == "&&":   # tên chưa từng gán (trong lệnh, vùng lặp đang mở, môi trường) mà phép gán sau && không chạy thì rỗng: giữ giá
@@ -1718,20 +2328,30 @@ def rm_walk(text, cwds, depth, remote, env):
                 env[MAYBE_EMPTY] = env.get(MAYBE_EMPTY, frozenset()) | cond_kept
                 cond_kept.clear()
         prev = tk.strip("\n") or ";"
+        if pending is not None and tk.strip("\n") == "&" and seg and not seg[-1].endswith((">", "<")) \
+                and not stream[ti + 1].startswith(">"):
+            pending = None   # review vòng 3 (P3): `cd ~ &` chạy ở shell con nền, cwd của shell này không đổi (`cd ~ &>f`, `cd ~ 2>&1`: không phải nền)
         if pending is not None:
             if remote == "device":   # #427 vòng 2: thiết bị bắt đầu ở / (biết); cd tới chỗ không biết ($VAR, ~, -, popd) không còn bỏ qua đích tương đối
                 pending = [FAR_CWD_AT_RUN if c is None else c for c in pending]
             cwds = list(dict.fromkeys(pending if tk.strip("\n") == "&&" else cwds + pending))   # && then a newline is still &&
             pending = None
+            for tr in TRAPS[-1]:   # #427 vòng 3: cwd mà thân trap có thể chạy ở đó
+                tr[2] = list(dict.fromkeys(tr[2] + cwds))
         if "(" in tk:   # review vòng 2 (thêm): ( … ) là shell con — phép gán trong đó (cả export) không ra ngoài, như cwd
             stack.append((cwds, dict(env)))
         if ")" in tk and stack:
             cwds, saved = stack.pop()
             env.clear()
             env.update(saved)
+            why = late_traps(TRAPS[-1], len(stack), depth)   # #427 vòng 3: trap đặt trong ( … ) chạy khi nó thoát
+            if why and not COLLECT[0]:
+                return why
+            for tr in TRAPS[-1]:
+                tr[2] = list(dict.fromkeys(tr[2] + cwds))
         feed = seg if ("|" in tk and "||" not in tk and not tk.startswith(")")) else None   # what `| xargs rm` reads
         seg = []
-    return None
+    return None if COLLECT[0] else late_traps(TRAPS[-1], -1, depth)   # #427 vòng 3: trap của shell này chạy khi nó thoát
 
 CDPATH_SET = bool(os.environ.get("CDPATH")) or "CDPATH" in cmd   # set in the environment or anywhere in the command
 rm_why = None if (label or MCP) else rm_problem(cmd, [CWD])

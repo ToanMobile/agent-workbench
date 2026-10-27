@@ -10,7 +10,7 @@
 #  scratch đã gỡ · I4 gate đỏ → không push, in commit của đợt, exit 1 · I5 origin phân kỳ → exit ≠ 0, không gate ·
 #  I6 khoá bận → exit 0, không gate · I7 gate exit 0 nhưng không có biên nhận → push_gate từ chối, không push ·
 #  I8 --dry-run: tới hạn theo tuổi / máy rảnh, không gate · I9 _TRUNK_ALLOWED cho `agent-kit integrate` ở trunk mode ·
-#  I10 help + completion có integrate.
+#  I10 help + completion có integrate · I11 (#463) hook bị ignore mà settings.json đăng ký có trong scratch: health xanh, push.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -166,6 +166,30 @@ for want, cmd in [(False, "agent-kit integrate --if-due"), (True, "agent-kit int
 print("\n".join(bad) or "OK")
 PY
 [ "$(tail -1 "$TMP/unit")" = OK ] && ok "I9 _TRUNK_ALLOWED cho agent-kit integrate; redirect vào main vẫn chặn" || fail "I9: $(cat "$TMP/unit")"
+
+# I11 (#463) hook bị git ignore mà settings.json đăng ký (.claude/hooks/guard-x.py): scratch phải có nó, như scratch của merge train
+# (super-board-scratch-config.sh → copy_local_hooks). Suite duy nhất là `agent-kit health` trong scratch, chỉ đỏ vì đúng lý do
+# "hook đăng ký nhưng thiếu file" (REG-WB-CONFIG-01); thiếu hook → gate đỏ, không push.
+newrepo
+printf '.agents/CHECKLIST.md\n.agents/regression_status.json\n.agents/evidence/\n.agents/regression_journal/\n.claude/*\n!.claude/settings.json\n' > "$M/.gitignore"
+mkdir -p "$M/.claude/hooks" && printf 'import sys\nsys.exit(0)\n' > "$M/.claude/hooks/guard-x.py"
+printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"python3 \\"$CLAUDE_PROJECT_DIR\\"/.claude/hooks/guard-x.py"}]}]}}\n' > "$M/.claude/settings.json"
+cat > "$M/check.sh" <<SH
+out="\$(bash "$AK" health -t . 2>&1)"
+if printf '%s\n' "\$out" | grep -q "registered hooks missing\|hook đăng ký nhưng thiếu file"; then
+  printf '%s\n' "\$out" | grep -i "hook"; exit 1
+fi
+exit 0
+SH
+G "$M" add -A && G "$M" commit -qm "settings + health check" && G "$M" push -q origin main 2>/dev/null
+G "$M" check-ignore -q .claude/hooks/guard-x.py && ! G "$M" check-ignore -q .claude/settings.json \
+  && (cd "$M" && bash check.sh > "$TMP/h_main" 2>&1) \
+  && ok "I11 tiền đề: hook ignored, settings tracked, health ở main không báo thiếu hook" || fail "I11 tiền đề: $(tail -3 "$TMP/h_main")"
+work a
+ARGS="" integrate; rc=$?
+[ "$rc" = 0 ] && [ "$(origin_head)" = "$(G "$M" rev-parse HEAD)" ] && [ "$(gate_runs)" = 1 ] && ! grep -q "registered hooks missing\|thiếu file" "$TMP/out" \
+  && ok "I11 hook ignored có trong scratch: health xanh, gate xanh, push" \
+  || fail "I11 scratch thiếu hook ignored: rc $rc, gate $(gate_runs), out: $(grep -i "hook\|ĐỎ" "$TMP/out" | tail -6)"
 
 # I10 help + completion
 bash "$AK" help | grep -q "integrate \[--if-due\] \[--dry-run\]" && bash "$AK" completion bash | grep -q "integrate" \

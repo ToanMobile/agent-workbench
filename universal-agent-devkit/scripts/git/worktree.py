@@ -1813,6 +1813,13 @@ def _authored_cmp(item):
     return a
 
 
+def _is_prompt_row(item):
+    """A REPORTED row: the UserPromptSubmit hook wrote it (state "reported") and no test, ref or criterion was ever linked to it.
+    `agent-kit bugs add` confirms a row (state "confirmed"), `bugs link` adds a link: either makes it a person's."""
+    return (isinstance(item, dict) and item.get("kind") == "bug" and item.get("state") == "reported"
+            and not any(item.get(k) for k in _LINK_KEYS))
+
+
 def _bookkeeping_regenerated(wt, main):
     """True when the worktree's UNCOMMITTED bookkeeping (BOOKKEEPING) is nothing but what the gate and the checklist sync regenerate.
     Every row a person made (_authored_cmp) in its regression_status.json on disk is either:
@@ -1859,6 +1866,8 @@ def _bookkeeping_regenerated(wt, main):
         for rid, a in mine.items():
             if base.get(rid) == a or (rid not in base and theirs.get(rid) == a):
                 continue
+            if rid not in base and _is_prompt_row(mine_raw["items"][rid]):
+                continue   # #429: a prompt the hook logged as a possible bug, nobody confirmed or linked: not work (the fallback copy keeps it)
             if synced is None:
                 synced = _synced_rows(wt, base_raw)
             want = _authored_cmp(synced.get(rid))
@@ -2280,7 +2289,20 @@ def cmd_remove(cwd, args):
             print("✖ worktree: " + tr(f"{wt}: chưa tích hợp ({why}) — giữ nguyên", f"{wt}: not integrated ({why}) - kept"), file=sys.stderr)
             return 1
     try:
-        for code, kind, text, detail in _iter_blockers(cwd, wt, rest[0], None):   # a person is waiting: a git call is still bounded (_timeout)
+        head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()   # BEFORE the inventory it must match
+        rows = inventory(cwd, only=wt, budget=None)   # one inventory for the waiver and the blockers: they cannot disagree
+        main = main_checkout(cwd)
+        # #421: a PR squashed into the trunk leaves the session's own commits only in the worktree's reflog. When HEAD and every one of
+        # those commits are already in the trunk (ancestor, same patch, or the whole patch), UNREACHABLE has nothing left to protect.
+        lost = rows[0]["reflog"] if len(rows) == 1 else None
+        waive = bool(head) and lost is not None and rows[0]["unreachable"] and _chain_in_trunk(main, head) \
+            and all(_chain_in_trunk(main, c) for c in lost) \
+            and git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip() == head   # HEAD unchanged since the first read
+        waived = False
+        for code, kind, text, detail in _iter_blockers(cwd, wt, rest[0], None, rows=rows):   # a person is waiting: a git call is still bounded (_timeout)
+            if kind == "unreachable" and waive:
+                waived = True
+                continue
             if kind == "uncommitted":
                 print("✖ worktree: " + text, file=sys.stderr)
                 for d in detail:
@@ -2289,17 +2311,22 @@ def cmd_remove(cwd, args):
             die(text, code)
     except UnicodeError as e:   # a path git prints that is not UTF-8: what it names cannot be compared, so nothing is removed
         die(tr(f"không kiểm tra được {wt} (tên file không phải UTF-8: {e}) — không gỡ", f"cannot check {wt} (a file name that is not UTF-8: {e}) - nothing removed"), 1)
+    main = main_checkout(cwd)
     if merged is not None:
         # #427: board hỏi `held` rồi tidy (cất / trả file về HEAD) rồi mới gọi lệnh này; giữa chừng một phiên có thể nhận worktree (khoá
         # checkout không làm git từ chối gì). Hỏi lại ĐÚNG luật của `held` ngay trước khi gỡ, như gc --merged (review U2 F3).
-        why = _holder(main_checkout(cwd), wt)
-        if why:
-            print("✖ worktree: " + tr(f"{wt}: đang bị giữ ({why}) — giữ nguyên", f"{wt}: held ({why}) - kept"), file=sys.stderr)
-            return 1
-    return _remove_after_checks(cwd, wt)
+        why = _holder(main, wt)
+    else:
+        # #427 vòng 3: gỡ thường cũng hỏi lại ngay trước khi gỡ: _iter_blockers chạy git, có thể lâu, một phiên nhận worktree giữa chừng
+        # (khoá checkout của pid sống). Chỉ khoá checkout sống của phiên KHÁC (_live_checkout_lock); `_held` / state chủ: như trước.
+        why = _live_checkout_lock(main, wt)
+    if why:
+        print("✖ worktree: " + tr(f"{wt}: đang bị giữ ({why}) — giữ nguyên", f"{wt}: held ({why}) - kept"), file=sys.stderr)
+        return 1
+    return _remove_after_checks(cwd, wt, waived)
 
 
-def _remove_after_checks(cwd, wt):
+def _remove_after_checks(cwd, wt, waived=False):
     """The removal itself, once _iter_blockers found nothing that would be lost (`remove`, `gc --merged`): the regenerated bookkeeping's
     fallback copy, _remove_checked (its branch goes when the trunk holds it), the warning for the memory notes that went with it.
     SystemExit when git refuses or a folder is left."""
@@ -2317,8 +2344,12 @@ def _remove_after_checks(cwd, wt):
         notes = []
     # Regenerated bookkeeping _iter_blockers let through: a fallback copy first (a git error there: SystemExit, nothing removed).
     dropped = [p for p in changes_since(wt, state) if p in BOOKKEEPING and not _same_in_main(wt, main, p)]
-    if dropped:
+    if dropped or waived:   # a waived UNREACHABLE: the same fallback copy as discard (refs/devkit/discarded/*), reflog-only commits as parents
         kept = _discard_backup(main, wt)
+    if waived:
+        print("ℹ " + tr(f"commit chưa có ref (chỉ reflog / HEAD tách rời) đã có trong trunk (squash / cùng patch); bản cất: {kept} ({DISCARD_KEEP_DAYS} ngày)",
+                        f"commits no ref holds (reflog-only / detached HEAD) are already in the trunk (squash / same patch); fallback copy: {kept} ({DISCARD_KEEP_DAYS} days)"), file=sys.stderr)
+    if dropped:
         print("ℹ " + tr(f"sổ sách checklist do gate / sync sinh lại ({', '.join(dropped)}) không đem về; bản cất: {kept} ({DISCARD_KEEP_DAYS} ngày)",
                         f"checklist bookkeeping the gate / sync regenerate ({', '.join(dropped)}) is not brought back; fallback copy: {kept} "
                         f"({DISCARD_KEEP_DAYS} days)"), file=sys.stderr)
@@ -2734,6 +2765,30 @@ def _live_holder(main, wt):
                       f"session {lock.get('session_id', '?')} holds its checkout lock (pid {pid} is alive)")
     except Exception as e:  # noqa: BLE001 - cannot tell who holds it: never removed
         return tr(f"không kiểm được phiên nào đang giữ nó ({e!r})", f"cannot tell which session holds it ({e!r})")
+    return ""
+
+
+def _live_checkout_lock(main, wt):
+    """#427 vòng 3, cho `remove` thường: lý do khi khoá checkout (devkit-session.lock) của `wt` mang pid CÒN SỐNG không thuộc người gọi
+    (_ancestor_pids), '' khi không. Hẹp hơn _live_holder: không xét state chủ chưa chứng minh đã dừng (K11, trunk hooks gỡ những worktree
+    đó), chỉ phiên đang thật sự đứng trong worktree. Không đọc được khoá: '' (như trước vòng 3, remove không hỏi gì)."""
+    for d in (os.path.join(DEVKIT, "bin"), os.path.join(DEVKIT, "hooks")):
+        if d not in sys.path:
+            sys.path.append(d)   # sau stdlib: không gì trong bin/ hooks/ được che nó
+    try:
+        import session_lock  # noqa: PLC0415
+        lock = session_lock.read_checkout_lock(git_dir(wt))
+        pid = (lock or {}).get("pid")
+        # Khoá của CHÍNH chủ worktree (state `--session`) không phải người lạ: automerge của Stop hook có thể chạy mồ côi (ppid 1) sau khi
+        # hook thoát, _ancestor_pids không còn thấy claude (OCR review #427 vòng 3). pid_start khác bản ghi: pid đã bị tái dùng, khoá chết.
+        if (lock or {}).get("session_id") and lock.get("session_id") == _owner(wt):
+            return ""
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and pid not in _ancestor_pids() \
+                and session_lock.is_pid_alive(pid, lock.get("pid_start")):
+            return tr(f"phiên {lock.get('session_id', '?')} giữ khoá checkout của nó (pid {pid} còn sống)",
+                      f"session {lock.get('session_id', '?')} holds its checkout lock (pid {pid} is alive)")
+    except Exception:  # noqa: BLE001 - không đọc được: giữ hành vi cũ của remove thường (không hỏi)
+        return ""
     return ""
 
 
