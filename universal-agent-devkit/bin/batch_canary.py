@@ -97,7 +97,8 @@ def runs_path(repo) -> Path | None:
 
 def count_verifies(runs, since: float) -> tuple:
     """(lượt merge gate, lượt train) có epoch >= since. Dòng hỏng, không phải object, epoch không phải số: bỏ qua. Lượt gate không chạy
-    suite nào (verdict BUSY, hoặc exit 4: hàng đợi gate / khe / khoá bận) không phải lượt verify: bỏ qua."""
+    suite nào (verdict BUSY, hoặc exit 4: hàng đợi gate / khe / khoá bận) không phải lượt verify: bỏ qua. Lượt train có exit khác 0 cũng không
+    tính (train đỏ không merge gì, #471; verdict như REUSED với exit 0 vẫn là train xanh); dòng thiếu exit vẫn tính."""
     merge_v = train_v = 0
     try:
         with open(runs, encoding="utf-8", errors="replace") as fh:
@@ -117,6 +118,8 @@ def count_verifies(runs, since: float) -> tuple:
                 if project.startswith(MERGE_PREFIX):
                     merge_v += 1
                 elif project.startswith(TRAIN_PREFIX):
+                    if r.get("exit") not in (None, 0):
+                        continue   # train đỏ không merge gì: không chứng minh hàng đợi chạy đúng (#471)
                     train_v += 1
     except OSError as e:
         raise CanaryError(f"runs {runs}: {e}") from e
@@ -176,7 +179,7 @@ def evaluate(merge_v: int, train_v: int, merged_n: int | None) -> tuple:
         return bool(reasons), summary, reasons
     summary = f"merged PRs={merged_n} merge-gate verifies={merge_v} train verifies={train_v}"
     if merged_n >= 2 and train_v == 0:
-        reasons.append("no train verify at all")
+        reasons.append(f"no train verify at all ({merged_n} merged PRs)")
     if merge_v >= 2 and merge_v > train_v:   # sàn 2: một lượt /super-review --standalone lẻ ngoài board không làm đỏ (PM 26/10)
         reasons.append(f"{merge_v} single merge-gate verifies > {train_v} train verifies")
     return bool(reasons), summary, reasons
