@@ -90,15 +90,21 @@ check_limit('{"cores": 12, "load": 36}', 3.0, "load 36 / 12 cores")
 check_limit('{"cores": 1, "load": 90}', 5.0, "clamped to 5.0")
 
 big = "git status\n" + "\n" * 12000 + "cat > x <<EOF\nb\nEOF\nls"
+# Load-independent discriminator (review R1, 27/10): the same hook runs a tiny `eval 'ls'` as a baseline and the ratio
+# big/baseline is what is judged. Both slow down together under load; the pre-8abacc69 hook is ~27x its baseline on the
+# eval case, the fixed one ~2x (measured at load 12-35). The absolute limit above stays as the second condition.
+RATIO_MAX = 6.0
+base = min(run("eval 'ls'")[1] for _ in range(3))
 for name, cmd in (("eval", "eval " + shlex.quote(big)), ("plain", big)):
-    best = min(run(cmd)[1] for _ in range(2))
+    best = min(run(cmd)[1] for _ in range(3))
     rc = run(cmd)[0]
     limit = window_limit(capacity)
-    if rc == 0 and best < limit:
-        print(f"✔ harmless 12000-line command ({name}) passes in {best:.2f}s (limit {limit:.1f}s)")
+    ratio = best / max(base, 0.01)
+    if rc == 0 and best < limit and ratio < RATIO_MAX:
+        print(f"✔ harmless 12000-line command ({name}) passes in {best:.2f}s (limit {limit:.1f}s, x{ratio:.1f} of baseline)")
     else:
         fails += 1
-        print(f"✖ harmless 12000-line command ({name}): rc {rc}, {best:.2f}s (want rc 0 under {limit:.1f}s)")
+        print(f"✖ harmless 12000-line command ({name}): rc {rc}, {best:.2f}s x{ratio:.1f} (want rc 0, under {limit:.1f}s and x{RATIO_MAX:.0f})")
 sys.exit(1 if fails else 0)
 PY
 rc=$?
