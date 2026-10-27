@@ -134,21 +134,32 @@ _OPS = set(";&|<>()\n")   # ký tự toán tử của shlex trong targets(): m�
 
 
 def _bare_parens(text):
-    """Số `(` và `)` của `text` không nằm trong nháy và không bị thoát, theo luật nháy của shlex posix (như strip_comments)."""
-    n, quote, i = 0, None, 0
+    """Số `(` và `)` của `text` không nằm trong nháy và không bị thoát, theo luật nháy của shlex posix (như strip_comments); None khi luật
+    nháy của shlex khác shell ở dòng này: `$'…'` (ANSI-C: `\\'` là nháy được thoát), hay nháy kép đóng khi `$(` / `${` / backtick mở trong
+    nó chưa đóng (`"$(echo ")(") x"`: shell đọc nháy lồng, shlex đọc `)(` là toán tử trần)."""
+    n, quote, sub, tick, i = 0, None, 0, False, 0
     while i < len(text):
         c = text[i]
         if quote:
             if c == "\\" and quote == '"':
                 i += 2
                 continue
+            if quote == '"' and (c == "`" or (c == "$" and text[i + 1:i + 2] in ("(", "{")) or (sub and c in "()}")):
+                tick = not tick if c == "`" else tick
+                sub += 1 if c in "$(" else (-1 if c in ")}" else 0)
+                i += 2 if c == "$" else 1
+                continue
             if c == quote:
+                if sub > 0 or tick:
+                    return None
                 quote = None
         elif c == "\\":
             i += 2
             continue
+        elif c == "$" and text[i + 1:i + 2] == "'":
+            return None
         elif c in "\"'":
-            quote = c
+            quote, sub, tick = c, 0, False
         elif c in "()":
             n += 1
         i += 1
@@ -159,8 +170,8 @@ def _scoped(text, toks):
     """True khi mọi `)` của dòng (`toks`: shlex của `text`) đóng đúng `(` của nó như shell, để targets() đưa thư mục về như trước `(`
     (#427 vòng 3: `(cd ../<anh em> && ls); echo x > out.txt` từng tính out.txt ở anh em). Điều kiện: số `(` và `)` trong token toán tử bằng
     nhau (mẫu `a)` của `case` không có `(`: dòng hợp lệ nào có nó cũng thừa `)`), và tổng của chúng bằng số ngoặc trần của `text` (một chữ
-    trong nháy / bị thoát chỉ gồm ngoặc - `")"`, `\\)` - shlex trả như toán tử: `echo ")" "("` cân mà vẫn đóng sai tầng). Không thì thư mục
-    không quay về (như trước): fail closed (INSTINCT-045)."""
+    trong nháy / bị thoát chỉ gồm ngoặc - `")"`, `\\)` - shlex trả như toán tử: `echo ")" "("` cân mà vẫn đóng sai tầng; _bare_parens None:
+    `$'…'`, nháy lồng trong `"$( … )"` - shlex đọc nháy khác shell). Không thì thư mục không quay về (như trước): fail closed (INSTINCT-045)."""
     ops = "".join(t for t in toks if t and set(t) <= _OPS)
     return ops.count("(") == ops.count(")") and ops.count("(") + ops.count(")") == _bare_parens(text)
 

@@ -262,7 +262,9 @@ for label, c in (("(cd ../family-wt2 && ls); echo x > out.txt", "(cd ../family-w
                  ("pushd ../family-wt2 && ls && popd && echo x > out.txt", "pushd ../family-wt2 && ls && popd && echo x > out.txt"),
                  ("X=$(cd ../family-wt2 && pwd); echo x > out.txt", "X=$(cd ../family-wt2 && pwd); echo x > out.txt"),
                  ("pushd ../family-wt2 >/dev/null && ls && popd >/dev/null; cp … out.txt",
-                  "pushd ../family-wt2 >/dev/null && ls && popd >/dev/null; cp /etc/hosts out.txt")):
+                  "pushd ../family-wt2 >/dev/null && ls && popd >/dev/null; cp /etc/hosts out.txt"),
+                 ("(cd ../family-wt2 && ls) && echo \"$(date)\" > out.txt (\"$( )\" không nháy lồng)",
+                  "(cd ../family-wt2 && ls) && echo \"$(date)\" > out.txt")):
     check("  đối chứng (nới): " + label, fam(c), 0)
 for label, c in (("(cd ../family-wt2 && echo x > out.txt)", "(cd ../family-wt2 && echo x > out.txt)"),
                  ("cd ../family-wt2; (ls); echo x > out.txt", "cd ../family-wt2; (ls); echo x > out.txt"),
@@ -279,6 +281,10 @@ for label, c in (("(cd ../family-wt2 && echo x > out.txt)", "(cd ../family-wt2 &
                  ("(cd ../family-wt2; echo \\); echo x > out.txt) (`)` bị thoát)", "(cd ../family-wt2; echo \\); echo x > out.txt)"),
                  ("(cd ../family-wt2; echo \")\" \"(\"; echo x > out.txt) (ngoặc trong nháy cân nhau)",
                   "(cd ../family-wt2; echo \")\" \"(\"; echo x > out.txt)"),
+                 ("(cd ../family-wt2; echo $'\\')' \\' $'\\'(' \\'; echo x > out.txt) (`$'…'`: shlex đọc nháy khác shell)",
+                  "(cd ../family-wt2; echo $'\\')' \\' $'\\'(' \\'; echo x > out.txt)"),
+                 ("(cd ../family-wt2; echo \"$(echo \")(\") x\"; echo x > out.txt) (nháy lồng trong \"$( )\")",
+                  "(cd ../family-wt2; echo \"$(echo \")(\") x\"; echo x > out.txt)"),
                  ("cd ../family-wt2 && (cd .. && pushd /tmp); popd; echo x > out.txt (ngăn của subshell mất: popd lỗi)",
                   "cd ../family-wt2 && (cd .. && pushd /tmp); popd; echo x > out.txt"),
                  ("pushd ../family-wt2 && eval \"pushd /tmp\" && popd && echo x > out.txt (eval đổi ngăn)",
