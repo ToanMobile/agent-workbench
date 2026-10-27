@@ -439,3 +439,4 @@
 30 tests/gates/test_session_lock_backlog427.sh
 19 tests/context_memory/test_session_context_gc_symlink.sh
 3 tests/worktree_git/test_worktree_gc_symlink_home.sh
+1 tests/gates/test_gate_speed_report.sh
