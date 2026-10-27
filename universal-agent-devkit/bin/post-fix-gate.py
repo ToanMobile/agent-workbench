@@ -6276,8 +6276,9 @@ def main():
         for t in regression_tests:
             if t.get("command"):
                 t.update({"status": "UNTESTED", "label": "EDITED", "mode": "edited", "duration": "0s", "output_tail": tr(
-                    "Không chạy: test đã có bị sửa chưa được duyệt — duyệt (AUTO-APPROVE / --auto-approve-tests) hoặc commit rồi chạy lại gate",
-                    "Not run: an existing test was edited and is not approved — approve it (AUTO-APPROVE / --auto-approve-tests) or commit it, then re-run the gate")})
+                    # cách chữa nằm ở dòng kết luận (khác nhau theo --since: commit hay `Test-approved-by:`), không lặp lại ở đây
+                    "Không chạy: test đã có bị sửa chưa được duyệt — xem cách chữa ở dòng KẾT LUẬN rồi chạy lại gate",
+                    "Not run: an existing test was edited and is not approved — see the verdict line for how to clear it, then re-run the gate")})
         print(f"    {YELLOW}▶ {tr('Test đã có bị sửa chưa duyệt: không lấy khoá, không chạy suite nào (kết luận: CHƯA XÁC MINH)', 'Edited existing test not approved: no lock taken, no suite runs (verdict: UNVERIFIED)')}{RESET}")
     use_cache = run_tests and not edited_early and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0" \
         and any(t.get("command") for t in regression_tests)
