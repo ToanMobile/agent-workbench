@@ -21,7 +21,7 @@ git -C "$P" init -q . && printf 'x\n' > "$P/src/a.kt" && git -C "$P" add -A \
 unset HARDWARE_SAFETY_GATE HARDWARE_OVERRIDE PROOF_WINDOW
 
 python3 -I - "$HW" "$P" "$DEVKIT_DIR/bin/capacity.py" <<'PY'
-import json, os, shlex, subprocess, sys, time
+import json, math, os, shlex, subprocess, sys, time
 hw, proj, capacity = sys.argv[1:4]
 env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 env.update(CLAUDE_PROJECT_DIR=proj, ADB_DENY_SERIALS="", ADB_ALLOW_SERIALS="", ANDROID_SERIAL="")
@@ -51,17 +51,49 @@ check("PROOF_WINDOW=1 emulator -avd Pixel", 0, "PROOF_WINDOW=1 allows the window
 check("emulator -list-avds", 0, "emulator -list-avds passes")
 check("ls\nemulator -avd Pixel", 2, "emulator on a later line is blocked")
 
+def window_limit(capacity):
+    # 1 s on an idle machine, x load/cores above that: the gate's other suites and other sessions' gates (load 85-115 on 12
+    # cores, 26/10) made the fixed hook 1.03-1.20 s. The bug slows down with the load too (3.66 s idle), so it still fails.
+    # Falls back to 1.0 when capacity.py is broken (cores 0/missing, load non-finite/non-numeric, JSON not a dict).
+    # Clamped to 5.0: above that the hook's own 7 s alarm (rc 2, hardware_safety_gate.sh) is the backstop, a bigger limit
+    # would make the time branch unable to fail.
+    try:
+        cap = json.loads(subprocess.run([sys.executable, "-I", capacity, "--json"], capture_output=True, text=True, timeout=30).stdout)
+        cores, load = float(cap["cores"]), float(cap["load"])
+        if cores > 0 and math.isfinite(load):
+            return min(5.0, max(1.0, load / cores))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+        pass
+    return 1.0
+
+def check_limit(payload, want, what):
+    global fails
+    fake = os.path.join(os.path.dirname(proj), "fake_capacity.py")
+    with open(fake, "w") as f:
+        f.write("print(%r)\n" % payload)
+    try:
+        got = window_limit(fake)
+    except Exception as e:
+        got = repr(e)
+    if got == want:
+        print(f"✔ window_limit {what}")
+    else:
+        fails += 1
+        print(f"✖ window_limit {what}: got {got!r} (want {want})")
+
+for payload, what in (('{"cores": 0, "load": 50}', "cores 0"), ('{"load": 50}', "cores missing"),
+                      ('{"cores": 12, "load": Infinity}', "load Infinity"), ('{"cores": 12, "load": null}', "load null"),
+                      ('[1, 2]', "JSON list"), ('"x"', "JSON string"), ('{"cores": 12, "load": "x"}', "load string"),
+                      ('not json', "not JSON")):
+    check_limit(payload, 1.0, what)
+check_limit('{"cores": 12, "load": 36}', 3.0, "load 36 / 12 cores")
+check_limit('{"cores": 1, "load": 90}', 5.0, "clamped to 5.0")
+
 big = "git status\n" + "\n" * 12000 + "cat > x <<EOF\nb\nEOF\nls"
 for name, cmd in (("eval", "eval " + shlex.quote(big)), ("plain", big)):
     best = min(run(cmd)[1] for _ in range(2))
     rc = run(cmd)[0]
-    # 1 s on an idle machine, × load/cores above that: the gate's other suites and other sessions' gates (load 85-115 on 12
-    # cores, 26/10) made the fixed hook 1.03-1.20 s. The bug slows down with the load too (3.66 s idle), so it still fails.
-    try:
-        cap = json.loads(subprocess.run([sys.executable, capacity, "--json"], capture_output=True, text=True, timeout=30).stdout)
-        limit = max(1.0, (cap.get("load") or 0) / (cap.get("cores") or 1))
-    except (OSError, ValueError, subprocess.SubprocessError):
-        limit = 1.0
+    limit = window_limit(capacity)
     if rc == 0 and best < limit:
         print(f"✔ harmless 12000-line command ({name}) passes in {best:.2f}s (limit {limit:.1f}s)")
     else:
