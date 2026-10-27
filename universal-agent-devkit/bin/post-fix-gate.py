@@ -4152,6 +4152,20 @@ def _signal_group(proc, sig) -> None:
 HANG_SNAPSHOT_MARK = "\n# --- process snapshot at timeout (ps) ---\n"
 # a line of the suite output that names a test (the last one is where it hung); with none, the last line of output
 HANG_TEST_LINE = re.compile(r"(?i)test|✔|✖|▶|^ok\b|^not ok\b")
+# #427 / hang giả 27/10: dòng cuối của ảnh ps — tuổi (giây) của tiến trình TRẺ NHẤT trong cả cây suite (mọi tiến trình, không chỉ 12 dòng
+# in ra). hang_report đọc dòng này: còn tiến trình mới sinh thì suite vẫn đang tiến triển, chưa phải treo.
+HANG_YOUNGEST_LINE = "# youngest process: {} s"
+HANG_YOUNGEST_RE = re.compile(r"^# youngest process: (\d+) s$", re.M)
+PS_ETIME_RE = re.compile(r"^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$")   # cột etime của ps: [[dd-]hh:]mm:ss
+
+
+def _etime_seconds(text: str):
+    """etime của ps ra giây; None khi không đúng dạng [[dd-]hh:]mm:ss."""
+    m = PS_ETIME_RE.match(text)
+    if not m:
+        return None
+    days, hours, mins, secs = (int(g or 0) for g in m.groups())
+    return ((days * 24 + hours) * 60 + mins) * 60 + secs
 
 
 def _timeout_snapshot(pgid: int) -> str:
@@ -4178,7 +4192,12 @@ def _timeout_snapshot(pgid: int) -> str:
     mine = [row for row in rows if row[0] in depth or row[2] == str(pgid)]
     parents = {ppid for _, ppid, _, _ in mine}
     mine.sort(key=lambda row: (row[0] in parents, -depth.get(row[0], 0)))   # stable: ps order on ties
-    return "\n".join(lines[:1] + [row[3] for row in mine[:12]])
+    # #427: tuổi nhỏ nhất trên MỌI tiến trình của cây (cột etime); đặt cuối ảnh để không đẩy dòng tiến trình nào ra khỏi 7 dòng
+    # hang_report hiển thị. Không đọc được tuổi nào thì không có dòng này.
+    fields = (row[3].split(None, 5) for row in mine)
+    ages = [a for a in (_etime_seconds(f[4]) for f in fields if len(f) >= 5) if a is not None]
+    youngest = [HANG_YOUNGEST_LINE.format(min(ages))] if ages else []
+    return "\n".join(lines[:1] + [row[3] for row in mine[:12]] + youngest)
 
 
 PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh của lượt này (đặt sau khi biết keyed_ok)
@@ -6767,6 +6786,13 @@ def main():
             log_warn(f"capacity: {exc!r}; {t.get('id')}: timeout stays TIMEOUT (load unknown)")
             return
         if load is None or load >= busy:
+            return
+        # #427 / hang giả 27/10: tải thấp chưa đủ. REG-DK-ALL-01 hết 900 s ở đuôi tuần tự (tải ~15 < 36) khi test đang chạy mới 6 s và
+        # tiến trình lá mới sinh — vẫn bị gọi HANG. Chỉ gọi HANG khi tiến trình TRẺ NHẤT của cây đã sống ≥ min(timeout/2, 120) s (không
+        # có gì mới bắt đầu ngần ấy lâu). Ảnh của chính lượt này luôn nằm cuối out (rpartition: output của gate lồng không lẫn vào).
+        # Không đọc được tuổi (ps hỏng, không dòng nào, thiếu dòng youngest): giữ cách cũ, chỉ xét tải.
+        youngest = HANG_YOUNGEST_RE.search((out or "").rpartition(HANG_SNAPSHOT_MARK)[2])
+        if youngest and int(youngest.group(1)) < min(args.timeout / 2, 120):
             return
         lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
         last = next((ln for ln in reversed(lines) if HANG_TEST_LINE.search(ln)), lines[-1] if lines else "(no output)")
