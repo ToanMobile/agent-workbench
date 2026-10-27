@@ -858,7 +858,15 @@ devkit_remove_dangling() {
 # for every agent, so every adapter that writes it places them (2026-10-09: a Claude-only
 # install had none — agent-health FAILed and AGENTS.md pointed at a missing folder).
 devkit_place_skills() {
-  local target="$1" mode="$2" skill name dst
+  local target="$1" mode="$2" skill name dst key
+  # install.sh -a all chạy 4 adapter (claude, codex, gemini, cursor), adapter nào cũng gọi hàm này với cùng
+  # đích, cùng mode, cùng bộ skill: lần đầu đặt xong thì các lần sau trong CÙNG lượt cài là no-op.
+  # DEVKIT_SKILLS_DONE_FILE do install.sh tạo cho mỗi lượt cài; chạy adapter riêng lẻ (biến rỗng) thì như cũ.
+  key="$target|$mode|${DEVKIT_SKILLS_ALLOWED:-}|${SKIP_EXISTING:-0}|${DEVKIT_ROOT:-}"
+  if [ -n "${DEVKIT_SKILLS_DONE_FILE:-}" ] && [ -f "$DEVKIT_SKILLS_DONE_FILE" ] \
+    && grep -qxF -- "$key" "$DEVKIT_SKILLS_DONE_FILE" 2>/dev/null; then
+    return 0
+  fi
   mkdir -p "$target/.agents/skills"
   for skill in "$DEVKIT_ROOT/skills"/*; do
     [ -e "$skill" ] || continue
@@ -877,6 +885,10 @@ devkit_place_skills() {
   # Project tier: the project's own skills (.agents/local/skills) whose name the DevKit does not use.
   [ "$target" = "$DEVKIT_ROOT" ] || devkit_link_local "$target" skills .agents/skills
   devkit_remove_dangling "$target/.agents/skills"
+  if [ -n "${DEVKIT_SKILLS_DONE_FILE:-}" ] && [ -f "$DEVKIT_SKILLS_DONE_FILE" ]; then
+    printf '%s\n' "$key" >> "$DEVKIT_SKILLS_DONE_FILE"
+  fi
+  return 0
 }
 
 # ---- Profile skill filter (P1-5) -------------------------------------------------
