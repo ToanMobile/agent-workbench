@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Test ĐỎ cho đợt tăng tốc gate (#472, mục 5) — XFAIL: mặc định in SKIP và thoát 0; GATE_SPEED_NEXT=1 chạy thật.
-# Mỗi dòng runs.jsonl của post-fix-gate cần đủ dữ liệu để đo theo task và theo tải máy (scripts/governance/gate_speed_report.py):
-#   task (giá trị --task), load1 (số), ncpu (số nguyên > 0), changed_files (list đường dẫn tương đối của repo), ran_suites (list id suite có chạy).
-# Gate thật trong repo tạm, một suite. Bỏ dòng skip khi #472 xong và test XANH.
-if [ "${GATE_SPEED_NEXT:-0}" != 1 ]; then echo "SKIP (xfail #472): runs.jsonl chưa có task/load1/ncpu/changed_files/ran_suites — GATE_SPEED_NEXT=1 để chạy thật"; exit 0; fi
+# Test hồi quy #472 mục C: mỗi dòng runs.jsonl của post-fix-gate có đủ dữ liệu để đo theo task, theo tải máy và theo lý do chạy full
+# (scripts/governance/gate_speed_report.py): task (giá trị --task), load1 (số), ncpu (số nguyên > 0), changed_files (list đường dẫn
+# tương đối của repo), ran_suites (list id suite có chạy), force_reason ("" khi impacted, "--full" khi --full), merge_point (bool).
+# Gate thật trong repo tạm, một suite: lượt impacted rồi lượt --full.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 unset POSTFIX_GATE_FULL POSTFIX_GATE_FORCE_FULL CI DEVKIT_GATE_CACHE DEVKIT_SUITE_CACHE DEVKIT_PER_TEST_CACHE
@@ -21,10 +20,12 @@ echo 'fun ok()=1' > "$R/src/Core.kt"
 git -C "$R" add -A && git -C "$R" commit -qm init
 echo 'fun ok()=2' > "$R/src/Core.kt"
 OUT="$(cd "$R" && FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --run-tests --no-checklist --task T-472 2>&1)"; RC=$?
+cp "$R/.git/postfix-gate/runs.jsonl" "$TMP/impacted.jsonl" 2>/dev/null
+OUT2="$(cd "$R" && FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --run-tests --full --no-cache --no-checklist 2>&1)"
 
-python3 -I - "$R/.git/postfix-gate/runs.jsonl" "$RC" <<'PY'
+python3 -I - "$TMP/impacted.jsonl" "$RC" "$R/.git/postfix-gate/runs.jsonl" <<'PY'
 import json, sys
-path, rc = sys.argv[1], sys.argv[2]
+path, rc, path2 = sys.argv[1], sys.argv[2], sys.argv[3]
 fails = 0
 def chk(cond, msg):
     global fails
@@ -41,6 +42,13 @@ chk(num(r.get("load1")) and r["load1"] >= 0, "load1 là số >= 0 (có: %r)" % r
 chk(isinstance(r.get("ncpu"), int) and not isinstance(r.get("ncpu"), bool) and r["ncpu"] > 0, "ncpu là số nguyên > 0 (có: %r)" % r.get("ncpu"))
 chk(r.get("changed_files") == ["src/Core.kt"], "changed_files = [src/Core.kt] (có: %r)" % r.get("changed_files"))
 chk(r.get("ran_suites") == ["REG-1"], "ran_suites = [REG-1] (có: %r)" % r.get("ran_suites"))
+chk(r.get("force_reason") == "" and r.get("mode") == "impacted", "lượt impacted: force_reason rỗng (có: %r, mode %r)" % (r.get("force_reason"), r.get("mode")))
+chk(r.get("merge_point") is False, "repo tạm không phải điểm gộp: merge_point false (có: %r)" % r.get("merge_point"))
+try:
+    r2 = json.loads(open(path2).read().splitlines()[-1])
+except (OSError, IndexError, ValueError) as e:
+    r2 = {}
+chk(r2.get("force_reason") == "--full" and r2.get("mode") == "full", "lượt --full: force_reason = --full (có: %r, mode %r)" % (r2.get("force_reason"), r2.get("mode")))
 print("PASS" if not fails else "FAIL: %d" % fails)
 sys.exit(1 if fails else 0)
 PY

@@ -354,10 +354,12 @@ def check_fields(label, r, j=None):
     """Shape of one line + agreement with the gate's own --json output."""
     keys = ("v", "ts", "epoch", "project", "mode", "source", "exit", "verdict", "fp", "exit_reason", "deferred", "busy",
             "reused_full_pass", "n_changed", "n_docs", "docs_only", "no_test_only", "suites", "suites_wall_s",
-            "total_wall_s", "force_full", "impacted_run")
+            "total_wall_s", "force_full", "impacted_run",
+            # #472 C: lý do chạy full, điểm gộp, task, tải máy, file đổi (tương đối repo), suite đã chạy
+            "force_reason", "merge_point", "task", "load1", "ncpu", "changed_files", "ran_suites")
     missing = [k for k in keys if k not in r]
     # steps: seconds per phase, additive (tests/gates/test_gate_run_steps.sh pins its shape); suites_reused / slot_wait_s: additive (B9 25/10)
-    extra = [k for k in r if k not in keys and k not in ("suites_cut", "steps", "suites_reused", "slot_wait_s")]
+    extra = [k for k in r if k not in keys and k not in ("suites_cut", "steps", "suites_reused", "slot_wait_s", "changed_files_cut", "ran_suites_cut")]
     chk(not missing and not extra and r.get("v") == 1, "%s: line has every field and no other (n_code is gone: it read the profile), v=1" % label,
         "missing %s extra %s in %s" % (missing, extra, r))
     chk(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d", str(r.get("ts"))) and abs(time.time() - r.get("epoch", 0)) < 600,
@@ -1055,6 +1057,17 @@ for dirpath, dirs, files in os.walk(TMP):
                     line = raw.decode("utf-8", "replace")
                     if '"seq"' in line:
                         continue   # the synthetic pre-fill of the rotation test
+                    # #472 C: changed_files mang đường dẫn TƯƠNG ĐỐI của repo (đo theo file đổi); chỉ trường đó được có tên file, và không
+                    # mục nào là đường dẫn tuyệt đối hay ra ngoài repo. Mọi trường khác vẫn qua phép dò bên dưới.
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        rec = None
+                    if isinstance(rec, dict) and "changed_files" in rec:
+                        cf = rec.pop("changed_files")
+                        if not isinstance(cf, list) or any(not isinstance(x, str) or x.startswith(("/", "\\", "..")) or TMP in x for x in cf):
+                            leaks.append("%s line %d: changed_files not repo-relative: %r" % (dirpath[-40:], n + 1, cf))
+                        line = json.dumps(rec)
                     for needle in (TMP, SESSION_ID, COMMIT_MSG, "guide", "Core", "Elsewhere", "transcript", "/", "\\"):
                         if needle in line:
                             leaks.append("%s line %d has %r: %s" % (dirpath[-40:], n + 1, needle, line[:200]))
