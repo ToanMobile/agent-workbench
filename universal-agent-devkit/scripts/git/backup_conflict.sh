@@ -12,36 +12,93 @@ elif [ -n "${DEVKIT_ROOT:-}" ] && [ -f "$DEVKIT_ROOT/scripts/governance/i18n.sh"
   source "$DEVKIT_ROOT/scripts/governance/i18n.sh"
 fi
 
+# ---- Helper không fork -------------------------------------------------------------
+# Một lượt cài gọi devkit_place khoảng 250 lần; mỗi $(dirname …), $(basename …) hay
+# $(cd … && pwd -P) là một tiến trình con. Máy tải cao (27/10, load 50-80) làm một lần cài
+# mất 35-50 s, gần hết ở các fork này. Các helper dưới đây cho cùng kết quả với lệnh gốc
+# nhưng ghi vào biến, chạy ngay trong shell hiện tại.
+
+# _dk_dirname <path> — đặt _DK_D = `dirname <path>` (POSIX).
+_dk_dirname() {
+  local p="$1"
+  case "$p" in ""|//*) _DK_D="$(dirname "$p")"; return 0 ;; esac   # ca hiếm: để lệnh gốc quyết định
+  while [ "$p" != "/" ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+  case "$p" in
+    /) _DK_D="/" ;;
+    */*)
+      p="${p%/*}"
+      while [ -n "$p" ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+      _DK_D="${p:-/}" ;;
+    *) _DK_D="." ;;
+  esac
+}
+
+# _dk_basename <path> — đặt _DK_B = `basename <path>`.
+_dk_basename() {
+  local p="$1"
+  case "$p" in ""|//*) _DK_B="$(basename "$p")"; return 0 ;; esac
+  while [ "$p" != "/" ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+  case "$p" in /) _DK_B="/" ;; *) _DK_B="${p##*/}" ;; esac
+}
+
+# _dk_phys <dir> [<dir2>] — đặt _DK_P = `cd <dir> [&& cd <dir2>] && pwd -P`; cd lỗi: _DK_P rỗng,
+# return 1. cd ngay trong shell này rồi quay về thư mục cũ; không quay về được thì dừng hẳn
+# (chạy tiếp ở thư mục khác thì mọi đường dẫn tương đối sau đó sai).
+_dk_phys() {
+  local here="$PWD"
+  _DK_P=""
+  if [ -z "$here" ] || [ ! -d "$here" ]; then   # thư mục hiện tại đã mất: dùng cách cũ (subshell)
+    if [ "$#" -gt 1 ]; then _DK_P="$(cd "$1" 2>/dev/null && cd "$2" 2>/dev/null && pwd -P)" || return 1
+    else _DK_P="$(cd "$1" 2>/dev/null && pwd -P)" || return 1; fi
+    return 0
+  fi
+  if builtin cd "$1" >/dev/null 2>&1 && { [ "$#" -lt 2 ] || builtin cd "$2" >/dev/null 2>&1; } \
+    && builtin cd -P . >/dev/null 2>&1; then
+    _DK_P="$PWD"
+  fi
+  builtin cd "$here" >/dev/null 2>&1 || { echo "ERROR: _dk_phys: cannot return to $here" >&2; exit 1; }
+  [ -n "$_DK_P" ]
+}
+
+# _dk_resolve_link <link> — đặt _DK_T = kết quả resolve_link_target <link>.
+_dk_resolve_link() {
+  local link="$1" t ld
+  t="$(readlink "$link" || true)"
+  case "$t" in
+    /*|"") _DK_T="$t" ;;
+    *)
+      _dk_dirname "$link"; ld="$_DK_D"
+      _dk_dirname "$t"
+      if _dk_phys "$ld" "$_DK_D"; then _dk_basename "$t"; _DK_T="$_DK_P/$_DK_B"; else _DK_T="$t"; fi
+      ;;
+  esac
+}
+
 # resolve_link_target <link> — absolute target of a symlink (relative targets are
 # resolved against the link's own directory). Links may be relative since the
 # devkit's self-install writes portable relative links.
 resolve_link_target() {
-  local link="$1" t dir
-  t="$(readlink "$link" || true)"
-  case "$t" in
-    /*) printf '%s' "$t" ;;
-    "") printf '' ;;
-    *)
-      dir="$(cd "$(dirname "$link")" 2>/dev/null && cd "$(dirname "$t")" 2>/dev/null && pwd -P)" || dir=""
-      [ -n "$dir" ] && printf '%s/%s' "$dir" "$(basename "$t")" || printf '%s' "$t"
-      ;;
-  esac
+  _dk_resolve_link "$1"
+  printf '%s' "$_DK_T"
 }
 
 # link_is_devkit_owned <link> <devkit_root>
 link_is_devkit_owned() {
   local link="$1" root="$2" t root_p
   [ -L "$link" ] && [ -n "$root" ] || return 1
-  t="$(resolve_link_target "$link")"
-  root_p="$(cd "$root" 2>/dev/null && pwd -P)" || root_p="$root"
+  _dk_resolve_link "$link"; t="$_DK_T"
+  if _dk_phys "$root"; then root_p="$_DK_P"; else root_p="$root"; fi
   [[ "$t" == "$root_p"/* || "$t" == "$root"/* || "$t" == "$root_p" || "$t" == "$root" ]] && return 0
   # A link written through a symlinked alias of the DevKit (quick-install.sh's
   # ~/.universal-agent-devkit, 2026-10-09) while this run reached it by its real path: compare
   # the target's physical folder (the target itself when it is a folder: the .agents/devkit link).
   # A relative target resolve_link_target could not resolve is not judged from the cwd.
   case "$t" in /*) ;; *) return 1 ;; esac
-  if [ -d "$t" ]; then t="$(cd "$t" 2>/dev/null && pwd -P)" || return 1
-  else t="$(cd "$(dirname "$t")" 2>/dev/null && pwd -P)/$(basename "$t")" || return 1; fi
+  if [ -d "$t" ]; then _dk_phys "$t" || return 1; t="$_DK_P"
+  else
+    # Như bản cũ `t="$(cd …)/$(basename …)" || return 1`: mã lỗi là của basename, nên cd lỗi vẫn đi tiếp với "/<tên>".
+    _dk_dirname "$t"; _dk_phys "$_DK_D" || true; _dk_basename "$t"; t="$_DK_P/$_DK_B"
+  fi
   [[ "$t" == "$root_p"/* || "$t" == "$root_p" ]]
 }
 
@@ -249,8 +306,8 @@ _devkit_sha() {
 # forget_devkit_file <dst> — drop <dst> from its directory ledger
 forget_devkit_file() {
   local dst="$1" ledger name tmp
-  ledger="$(dirname "$dst")/$DEVKIT_FILE_LEDGER"
-  name="$(basename "$dst")"
+  _dk_dirname "$dst"; ledger="$_DK_D/$DEVKIT_FILE_LEDGER"
+  _dk_basename "$dst"; name="$_DK_B"
   [ -f "$ledger" ] || return 0
   tmp="$(mktemp "${ledger}.XXXXXX")" || return 0
   awk -v n="$name" '{ line=$0; sub(/^[^ ]+  /, "", line); if (line != n) print }' "$ledger" > "$tmp" && mv "$tmp" "$ledger"
@@ -268,8 +325,8 @@ record_devkit_file() {
 is_recorded_devkit_file() {
   local dst="$1" ledger name want
   [ -f "$dst" ] && [ ! -L "$dst" ] || return 1
-  ledger="$(dirname "$dst")/$DEVKIT_FILE_LEDGER"
-  name="$(basename "$dst")"
+  _dk_dirname "$dst"; ledger="$_DK_D/$DEVKIT_FILE_LEDGER"
+  _dk_basename "$dst"; name="$_DK_B"
   [ -f "$ledger" ] || return 1
   want="$(awk -v n="$name" '{ line=$0; sub(/^[^ ]+  /, "", line); if (line == n) { split($0, a, " "); print a[1] } }' "$ledger" | tail -n 1)"
   [ -n "$want" ] && [ "$want" = "$(_devkit_sha "$dst")" ]
@@ -290,8 +347,8 @@ is_foreign_project_dir() {
 # (self-install), so the committed links work on every clone.
 devkit_ln() {
   local src="$1" dst="$2" root_p dst_dir src_p
-  root_p="$(cd "${DEVKIT_ROOT:-/nonexistent}" 2>/dev/null && pwd -P)" || root_p=""
-  dst_dir="$(cd "$(dirname "$dst")" && pwd -P)"
+  if _dk_phys "${DEVKIT_ROOT:-/nonexistent}"; then root_p="$_DK_P"; else root_p=""; fi
+  _dk_dirname "$dst"; _dk_phys "$_DK_D" || true; dst_dir="$_DK_P"
   if [ -n "$root_p" ] && [[ "$dst_dir/" == "$root_p/"* ]]; then
     src_p="$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")"
     src="$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$src_p" "$dst_dir")"
@@ -492,8 +549,8 @@ devkit_local_prune() {
 devkit_is_local_link() {
   local t local_p
   [ -L "$1" ] && [ -n "${TARGET_DIR:-}" ] || return 1
-  local_p="$(cd "$TARGET_DIR/$DEVKIT_LOCAL_DIR" 2>/dev/null && pwd -P)" || return 1
-  t="$(resolve_link_target "$1")"
+  _dk_phys "$TARGET_DIR/$DEVKIT_LOCAL_DIR" || return 1; local_p="$_DK_P"
+  _dk_resolve_link "$1"; t="$_DK_T"
   [[ "$t" == "$local_p"/* ]]
 }
 
@@ -597,17 +654,21 @@ devkit_place() {
   # Guard: a symlinked project dir (e.g. .claude/commands -> DEVKIT/commands) or a
   # symlinked alias of the devkit would make every rm/ln below act on the devkit
   # itself. Compare PHYSICAL paths and refuse instead of destroying the source.
-  mkdir -p "$(dirname "$dst")"
-  parent_p="$(cd "$(dirname "$dst")" && pwd -P)"
-  root_p="$(cd "${DEVKIT_ROOT:-/nonexistent}" 2>/dev/null && pwd -P)" || root_p=""
-  target_p="$(cd "${TARGET_DIR:-.}" 2>/dev/null && pwd -P)" || target_p=""
+  local dst_dir src_p
+  _dk_dirname "$dst"; dst_dir="$_DK_D"
+  [ -d "$dst_dir" ] || mkdir -p "$dst_dir"
+  _dk_phys "$dst_dir" || true; parent_p="$_DK_P"
+  if _dk_phys "${DEVKIT_ROOT:-/nonexistent}"; then root_p="$_DK_P"; else root_p=""; fi
+  if _dk_phys "${TARGET_DIR:-.}"; then target_p="$_DK_P"; else target_p=""; fi
   if [ -n "$root_p" ] && [[ "$parent_p/" == "$root_p/"* ]] && [ "$target_p" != "$root_p" ]; then
     echo "ERROR: '$dst' resolves into the DevKit itself ($parent_p)." >&2
     echo "       Replace that symlinked directory in the project with a real directory and re-run." >&2
     return 1
   fi
-  if [ -e "$dst" ] && [ "$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")" = "$parent_p/$(basename "$dst")" ]; then
-    return 0 # dst IS src — nothing to place
+  if [ -e "$dst" ]; then
+    _dk_dirname "$src"; _dk_phys "$_DK_D" || true; _dk_basename "$src"; src_p="$_DK_P/$_DK_B"
+    _dk_basename "$dst"
+    if [ "$src_p" = "$parent_p/$_DK_B" ]; then return 0; fi # dst IS src — nothing to place
   fi
   if [ -L "$dst" ]; then
     if link_is_devkit_owned "$dst" "${DEVKIT_ROOT:-}"; then
@@ -650,7 +711,7 @@ devkit_place() {
       backup_conflict "$dst" "${DEVKIT_ROOT:-}" || return 1
     fi
   fi
-  mkdir -p "$(dirname "$dst")"
+  [ -d "$dst_dir" ] || mkdir -p "$dst_dir"
   if [ "$mode" = "symlink" ]; then
     devkit_ln "$src" "$dst"
     forget_devkit_file "$dst"
@@ -783,9 +844,12 @@ devkit_remove_root_item() {
 # backup (2026-10-09). Needs DEVKIT_ROOT and TARGET_DIR (every adapter sets both).
 devkit_remove_dangling() {
   local l
+  # Chỉ link hỏng: lọc bằng [ -e ] ngay trong vòng lặp, cùng kết quả với `find … ! -exec test -e {} \;`
+  # mà không fork một /bin/test cho mỗi link (~100 link mỗi thư mục, 5 lần mỗi lượt cài).
   while IFS= read -r l; do
+    [ -e "$l" ] && continue
     if link_is_devkit_owned "$l" "${DEVKIT_ROOT:-}" || devkit_is_local_link "$l"; then rm -f "$l"; fi
-  done < <(find "$@" -type l ! -exec test -e {} \; -print 2>/dev/null)
+  done < <(find "$@" -type l -print 2>/dev/null)
   return 0
 }
 
@@ -798,7 +862,7 @@ devkit_place_skills() {
   mkdir -p "$target/.agents/skills"
   for skill in "$DEVKIT_ROOT/skills"/*; do
     [ -e "$skill" ] || continue
-    name="$(basename "$skill")"
+    name="${skill##*/}"   # = basename, không fork
     dst="$target/.agents/skills/$name"
     if ! devkit_skill_allowed "$name"; then
       devkit_remove_filtered "$dst"  # not part of the active profile
@@ -831,7 +895,7 @@ devkit_skill_allowed() {
 devkit_command_skill() {
   local f="$1" n=0 t
   while [ -L "$f" ] && [ "$n" -lt 10 ]; do
-    t="$(resolve_link_target "$f")"
+    _dk_resolve_link "$f"; t="$_DK_T"
     [ -n "$t" ] || break
     f="$t"; n=$((n + 1))
   done
