@@ -304,6 +304,31 @@ check("  đối chứng: cp … 2 (ở FW của chính nó)", fam("cp /etc/hosts
 check("  đối chứng: cd ../family-wt3 && cp … 2 (khoá cũ)", fam("cd ../family-wt3 && cp /etc/hosts 2"), 0)
 check("  đối chứng: cd ../family-wt2 && ls 2>/dev/null (`2>` là số fd, không phải đích)", fam("cd ../family-wt2 && ls 2>/dev/null"), 0)
 
+print("4e. sed -i / perl -i / ruby -i: toán hạng có $VAR giữa từ hay glob là đích (thư mục chữ trước nó) - corpus: main của Goods lọt")
+GOODS = ("for n in next replay; do sed -i '' \"s/win_star_on/win_icon_$n/g; s/^        width: 200$/        width: 128/\" win_icon_$n.png.meta; "
+         "grep -n \"win_icon\" win_icon_$n.png.meta | head -8; done")
+for d in (TM, TW):
+    os.makedirs(os.path.join(d, "UI"), exist_ok=True)
+    for name in ("win_icon_next.png.meta", "f.txt"):
+        with open(os.path.join(d, "UI", name), "w", encoding="utf-8") as f:
+            f.write("win_star_on\n")
+in_main = lambda c: hook(c, os.path.join(TM, "UI"), sid="tw", trunk="1")   # (phiên "tw" giữ TW từ mục 4a)
+in_wt = lambda c: hook(c, os.path.join(TW, "UI"), sid="tw", trunk="1")
+for label, c in (("trunk mode, ở main/UI: dòng Goods (for n …; sed -i '' … win_icon_$n.png.meta)", GOODS),
+                 ("trunk mode, ở main/UI: sed -i '' s/a/b/ *.meta (glob)", "sed -i '' s/a/b/ *.meta"),
+                 ("trunk mode, ở main/UI: perl -pi -e s/a/b/ *.meta", "perl -pi -e s/a/b/ *.meta"),
+                 ("trunk mode, ở main/UI: ruby -i -pe … win_icon_next.png.meta (ruby -i trước không được xét)",
+                  "ruby -i -pe 'gsub(/a/, %q(b))' win_icon_next.png.meta"),
+                 ("trunk mode, ở main/UI: sed -i s/a/b/ f.txt (như trước)", "sed -i s/a/b/ f.txt")):
+    check(label, in_main(c), 2)
+for label, c in (("ở worktree TW/UI rảnh của chính nó: dòng Goods", GOODS), ("ở TW/UI: sed -i '' s/a/b/ *.meta", "sed -i '' s/a/b/ *.meta"),
+                 ("ở TW/UI: sed -i s/a/b/ f.txt (như trước)", "sed -i s/a/b/ f.txt")):
+    check("  đối chứng: trunk mode, " + label, in_wt(c), 0)
+check("  đối chứng: trunk mode, ở main/UI: perl -MList::Util=sum -ne print *.meta (chỉ đọc: -M không phải -i)",
+      in_main("perl -MList::Util=sum -ne print *.meta"), 0)
+check("từ FW: cd ../family-wt2 && sed -i '' s/a/b/ x_$n.meta", fam("cd ../family-wt2 && sed -i '' s/a/b/ x_$n.meta"), 2)
+check("  đối chứng: từ FW: cd ../family-wt3 && sed -i '' s/a/b/ x_$n.meta (khoá cũ)", fam("cd ../family-wt3 && sed -i '' s/a/b/ x_$n.meta"), 0)
+
 shutil.rmtree(tmp, ignore_errors=True)
 print(f"session_lock.py round 3 #427: {'all checks passed' if not bad else str(bad) + ' FAILED'}")
 sys.exit(1 if bad else 0)

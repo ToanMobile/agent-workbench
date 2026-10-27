@@ -287,18 +287,35 @@ def _operands(base, words):
     return ops, tdir
 
 
-# `$M/f`, `${M}/f`, a bare `$M`: a path the shell expands, which _exists cannot see; the caller resolves or refuses it (a sed script such as
-# `$d` looks the same: _inplace_operands drops it)
-_VAR_PATH = re.compile(r"\$\{?\w+\}?(?:/|$)")
-
-
 def _inplace_operands(base, words, args):
-    """The file operands of `sed -i` / `perl -i`: `args` minus the script (sed: the first operand unless -e/-f/--expression gave one;
-    the value of -e/-f is dropped too), so a script like `$d` is no variable target."""
-    script = [w for i, w in enumerate(words) if i and re.fullmatch(r"-e|-f|--expression|--file", words[i - 1])]
+    """The file operands of `sed -i` / `perl -i` / `ruby -i`: `args` minus the script (sed: the first operand unless -e/-f/--expression gave
+    one; the value of -e/-f is dropped too - #427 vòng 3: cả giá trị của cụm cờ kết thúc bằng nó, không có `i` đứng trước: sed `-ne`, perl /
+    ruby `-pe` `-lne`), so a script like `$d` or `s/a*/b/` is no target."""
+    flag = r"-e|-f|--expression|--file|-[A-Za-hj-z]*[ef]" if base == "sed" else r"-[A-Za-hj-z]*[eE]"
+    script = [w for i, w in enumerate(words) if i and re.fullmatch(flag, words[i - 1])]
     ops = [a for a in args if a not in script]
+    if base == "sed" and any(w == "-i" and nxt == "" for w, nxt in zip(words, words[1:])):
+        ops.remove("")   # BSD `sed -i ''`: hậu tố rỗng, không phải script (script là toán hạng sau nó)
     scripted = any(re.fullmatch(r"-[A-Za-z]*[ef]|--expression.*|--file.*", w) for w in words)
     return ops[1:] if base == "sed" and not scripted else ops
+
+
+# perl / ruby `-i` (sửa tại chỗ), đứng riêng hay sau các cờ không lấy giá trị (`-pi`, `-lpi.bak`); không phải chữ `i` trong giá trị của
+# -M / -I / -e … (`-MList::Util` không phải -i)
+_INPLACE_INTERP = re.compile(r"-[acdlnpstTuUvwWX0-9]*i.*")
+
+
+def _inplace_target(a, here):
+    """Đích ghi của một toán hạng sed -i / perl -i / ruby -i: chính nó khi có thật hay bắt đầu bằng $VAR / backtick (caller mở rộng biến hay
+    fail closed, như mọi đích không biết); có $VAR / ${…} / $( ) / backtick ở giữa từ hay glob (`*` `?` `[`): thư mục chữ đứng trước phần đó
+    (`win_icon_$n.png.meta` -> `.`, `A/*.meta` -> `A`) - file được ghi nằm dưới nó (#427 vòng 3, corpus: `for n in …; do sed -i '' …
+    win_icon_$n.png.meta; done` ở main của trunk mode lọt). None: không phải file (không có thật, không biến, không glob)."""
+    m = re.search(r"[$`*?[]", a)
+    if _exists(a, here) or (m and m.start() == 0 and a[0] in "$`"):
+        return a
+    if not m:
+        return None
+    return os.path.dirname(a[:m.start()]) or ("/" if a.startswith("/") else ".")
 
 
 def _exists(a, here):
@@ -469,9 +486,9 @@ def targets(cmd, here, depth=0, run_bodies=False):
         elif base == "dd":
             hits += [("file", a[3:]) for a in args if a.startswith("of=")]
         elif base == "sed" and any(re.fullmatch(r"-[A-Za-z]*i.*|--in-place.*", a) for a in words[1:]):
-            hits += [("file", a) for a in _inplace_operands(base, words, args) if a and (_exists(a, wd) or _VAR_PATH.match(a))]   # BSD `sed -i ''`: the empty suffix is no file
-        elif base == "perl" and any(re.fullmatch(r"-[A-Za-z]*i.*", a) for a in words[1:]):
-            hits += [("file", a) for a in _inplace_operands(base, words, args) if a and (_exists(a, wd) or _VAR_PATH.match(a))]
+            hits += [("file", t) for t in (_inplace_target(a, wd) for a in _inplace_operands(base, words, args) if a) if t]   # BSD `sed -i ''`: the empty suffix is no file
+        elif base in ("perl", "ruby") and any(_INPLACE_INTERP.fullmatch(a) for a in words[1:]):
+            hits += [("file", t) for t in (_inplace_target(a, wd) for a in _inplace_operands(base, words, args) if a) if t]
         elif base == "git":
             gdir, sub, skip, rest = wd, "", None, []
             for k, a in enumerate(words[1:], 1):

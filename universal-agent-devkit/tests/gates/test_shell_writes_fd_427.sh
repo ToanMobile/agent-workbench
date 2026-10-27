@@ -267,6 +267,27 @@ check("worktree_guard: từ GW: pushd <GM> && popd && cp … src/b.kt", guard(GW
 check("worktree_guard: từ GW: (cd <GM> && cp … src/b.kt)", guard(GW, f"(cd {GM} && cp /tmp/x src/b.kt)"), 2)
 check("worktree_guard: từ GW: pushd <GM> && cp … src/b.kt && popd", guard(GW, f"pushd {GM} && cp /tmp/x src/b.kt && popd"), 2)
 
+print("7. sed -i / perl -i / ruby -i: toán hạng có $VAR / ${…} / $( ) / backtick giữa từ hay glob là đích (thư mục chữ trước nó)")
+SRC = os.path.join(GM, "src")
+F = lambda c: [t for k, t, h in sw_mod.targets(c, SRC) if k == "file"]
+for label, c, want in (("dòng Goods: for n …; sed -i '' \"s/…$n/g\" win_icon_$n.png.meta", "for n in next replay; do sed -i '' \"s/win_star_on/win_icon_$n/g\" win_icon_$n.png.meta; done", ["."]),
+                       ("sed -i '' s/a/b/ *.kt (glob)", "sed -i '' s/a/b/ *.kt", ["."]),
+                       ("sed -i.bak -e 's/a*/b/' sub/*.kt (script có * không phải đích)", "sed -i.bak -e 's/a*/b/' sub/*.kt", ["sub"]),
+                       ("sed -ne 's/$x/y/p' -i x_$n.kt (giá trị của cụm -ne là script)", "sed -ne 's/$x/y/p' -i x_$n.kt", ["."]),
+                       ("sed -i '' '$d' a.kt (BSD: '' là hậu tố, '$d' là script)", "sed -i '' '$d' a.kt", ["a.kt"]),
+                       ("sed -i s/a/b/ a.kt (như trước)", "sed -i s/a/b/ a.kt", ["a.kt"]),
+                       ("sed -i s/a/b/ nofile.kt (không có thật, không biến: như trước)", "sed -i s/a/b/ nofile.kt", []),
+                       ("sed -i '' s/a/b/ \"${F}.bak\" (bắt đầu bằng biến: caller mở rộng hay fail closed)", "sed -i '' s/a/b/ \"${F}.bak\"", ["${F}.bak"]),
+                       ("sed -i '' s/a/b/ \"/abs/x_$(date).kt\"", "sed -i '' s/a/b/ \"/abs/x_$(date).kt\"", ["/abs"]),
+                       ("perl -pi -e 's/a*/b/' *.kt", "perl -pi -e 's/a*/b/' *.kt", ["."]),
+                       ("perl -i -pe 's/$/;/' a.kt (giá trị của cụm -pe là script)", "perl -i -pe 's/$/;/' a.kt", ["a.kt"]),
+                       ("perl -MList::Util=sum -ne print *.kt (-M không phải -i)", "perl -MList::Util=sum -ne print *.kt", []),
+                       ("ruby -i.bak -pe 'x' d/x_`date`.kt", "ruby -i.bak -pe 'x' d/x_`date`.kt", ["d"]),
+                       ("ruby -i -pe x a.kt", "ruby -i -pe x a.kt", ["a.kt"])):
+    check(label, F(c), want)
+check("worktree_guard: từ GW: sed -i '' s/a/b/ <GM>/src/*.kt", guard(GW, f"sed -i '' s/a/b/ {GM}/src/*.kt"), 2)
+check("  đối chứng: worktree_guard: từ GW: sed -i '' s/a/b/ src/*.kt (trong worktree của nó)", guard(GW, "sed -i '' s/a/b/ src/*.kt"), 0)
+
 shutil.rmtree(tmp, ignore_errors=True)
 print(f"shell_writes.py fd #427 vòng 3: {'all checks passed' if not bad else str(bad) + ' FAILED'}")
 sys.exit(1 if bad else 0)
