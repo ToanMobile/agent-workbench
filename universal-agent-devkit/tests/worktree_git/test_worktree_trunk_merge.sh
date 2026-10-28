@@ -200,5 +200,19 @@ for last in null 3 '[]' '{"regression_tests": [null]}' '{"regression_tests": "FA
     || fail "gate last line $last: rc $rc, out '$(tail -1 "$TMP/out" | cut -c1-160)', err '$(tail -1 "$TMP/err" | cut -c1-160)'"
 done
 
+# 17 a repo with the DevKit installed (.agents/devkit) whose matrix file vanished from main's disk (blob still in HEAD): gated with HEAD's matrix (#527)
+repo y; mkdir -p "$TMP/y/.agents/devkit"; wtadd y w; newcaller y w; rename_on_main y; rm "$TMP/y/.agents/regression_matrix.active.json"
+yb="$(G "$TMP/y" rev-parse HEAD)"
+fin y w; rc=$?
+[ "$rc" = 1 ] && [ "$(G "$TMP/y" rev-parse HEAD)" = "$yb" ] && [ ! -f "$TMP/y/app2.sh" ] && grep -q "REG-APP-01" "$TMP/out" \
+  && ok "matrix deleted from main's disk, DevKit installed: still gated with HEAD's matrix, refused" || fail "deleted matrix file skipped the gate (rc $rc): $(tail -2 "$TMP/out")"
+
+# 18 … and a DevKit repo whose HEAD has no matrix at all: finish is blocked, never an ungated fast-forward (#527)
+repo z; mkdir -p "$TMP/z/.agents/devkit"; G "$TMP/z" rm -q .agents/regression_matrix.active.json && G "$TMP/z" commit -qm "no matrix"
+wtadd z w; newcaller z w; zb="$(G "$TMP/z" rev-parse HEAD)"
+fin z w; rc=$?
+[ "$rc" = 1 ] && [ "$(G "$TMP/z" rev-parse HEAD)" = "$zb" ] && [ ! -f "$TMP/z/app2.sh" ] && ok "DevKit installed but HEAD has no matrix: finish blocked, main unmoved" \
+  || fail "DevKit repo without a matrix merged ungated (rc $rc): $(tail -2 "$TMP/out")"
+
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_trunk_merge: PASS"; exit 0; } || { echo "test_worktree_trunk_merge: FAIL ($FAILS)"; exit 1; }
