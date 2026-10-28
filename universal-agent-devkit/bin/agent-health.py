@@ -277,10 +277,11 @@ def registered_hook_scripts(settings) -> list:
 
 
 def kit_files_vs_head(score: Score):
-    """A kit file the git of the kit tracks must equal the kit's HEAD: a third-party installer writing through a symlink
+    """A kit file the git of the kit tracks must equal the kit's HEAD (the index counts: a change already staged is the developer's own
+    work, e.g. the pre-commit of a kit commit, never an overwrite): a third-party installer writing through a symlink
     (.claude/hooks/guard-protected-push.py, 2026-10-24, #462) or a deleted file leaves the kit running old code with no error.
-    Read-only: the restore command is printed, never run. No git or no HEAD in the kit: nothing to compare, no verdict."""
-    res = subprocess.run(["git", "-C", str(BASE_DIR), "diff", "--relative", "--name-only", "-z", "HEAD", "--", "."],
+    Read-only: the restore command is printed, never run. No git in the kit: nothing to compare, no verdict."""
+    res = subprocess.run(["git", "-C", str(BASE_DIR), "diff", "--relative", "--name-only", "-z", "--", "."],
                          capture_output=True, text=True, errors="surrogateescape")
     if res.returncode != 0:
         return
