@@ -61,6 +61,24 @@ cp A/.agents/instincts.md once.md
 python3 -I "$DEVKIT_ROOT/bin/instincts.py" archive --days 30 --apply >/dev/null 2>&1
 cmp -s once.md A/.agents/instincts.md || fail "second --apply changed instincts.md"
 
+echo "--- add after --apply never reuses an archived id (R1) ---"
+mk_repo H "001|Seen Trap|90|" "002|Stale Trap|90|" "003|Top Stale Trap|90|"
+mkdir -p H/.claude/audit-gate
+{
+  echo "{\"ts\": \"$(iso 60)\", \"session\": \"s\", \"prompt_sha1\": \"x\", \"instinct_ids\": [], \"instinct_refs\": []}"
+  echo "{\"ts\": \"$(iso 3)\", \"session\": \"s\", \"prompt_sha1\": \"y\", \"instinct_ids\": [\"INSTINCT-001\"], \"instinct_refs\": [{\"id\": \"INSTINCT-001\", \"file\": \".agents/instincts.md\", \"line\": 9}]}"
+} > H/.claude/audit-gate/surfaced.jsonl
+CLAUDE_PROJECT_DIR="$D/H" python3 -I "$DEVKIT_ROOT/bin/instincts.py" archive --days 30 --apply >/dev/null 2>&1 || fail "H --apply exit non-zero"
+grep -q "INSTINCT-003" H/.agents/instincts-archive.md || fail "H: INSTINCT-003 not archived (setup)"
+OUT=$(CLAUDE_PROJECT_DIR="$D/H" python3 -I "$DEVKIT_ROOT/bin/instincts.py" add "Fresh Lesson After Archive" 2>&1) || fail "H add exit non-zero: $OUT"
+grep -q "INSTINCT-003\] Fresh" H/.agents/instincts.md && fail "add reused archived id INSTINCT-003"
+grep -q "INSTINCT-004\] Fresh Lesson" H/.agents/instincts.md || fail "add did not issue INSTINCT-004"
+
+echo "--- enrich_context still loads instincts.md, not the archive (AC3) ---"
+OUT=$(CLAUDE_PROJECT_DIR="$D/H" python3 -I "$DEVKIT_ROOT/scripts/context/enrich_context.py" "Seen Trap" 2>&1)
+echo "$OUT" | grep -q "INSTINCT-001" || fail "enrich_context lost INSTINCT-001 from instincts.md after archive"
+echo "$OUT" | grep -q "Top Stale Trap" && fail "enrich_context surfaced an archived entry"
+
 echo "--- log younger than N days: refuse ---"
 mkdir -p Y/.agents Y/.claude/audit-gate
 cp A/.agents/instincts.md Y/.agents/instincts.md

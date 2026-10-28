@@ -132,7 +132,8 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
         dup = find_duplicate(text, title)
         if dup and not force:
             return "duplicate", dup, None
-        inst_id = next_id(text)
+        archive = path.with_name("instincts-archive.md")   # ids moved there stay taken
+        inst_id = next_id(text + (archive.read_text(encoding="utf-8") if archive.is_file() else ""))
         entry = format_entry(inst_id, title, cause, rule, symptom, check, today=found_on, source=source)
         if dry_run:
             return "dry-run", inst_id, entry
@@ -494,7 +495,8 @@ def main(argv=None) -> int:
     arch = sub.add_parser("archive", help="move entries not shown for N days to instincts-archive.md (dry-run unless --apply)")
     arch.add_argument("--days", type=int, default=60, help="window in days (default 60)")
     arch.add_argument("--apply", action="store_true", help="write; without it only list")
-    arch.add_argument("--file", help="instincts file (default: <project>/.agents/instincts.md)")
+    arch.add_argument("--file", help="instincts file (default: <project>/.agents/instincts.md); a path outside the project "
+                                     "never matches the log; surfaced.jsonl is local to each machine (gitignored)")
     arch.add_argument("--log", help="surfaced.jsonl (default: <project>/.claude/audit-gate/surfaced.jsonl)")
     arch.add_argument("-l", "--lang", choices=["en", "vi"], help="output language")
 
