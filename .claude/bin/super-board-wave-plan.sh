@@ -70,10 +70,11 @@
 #     "sweep": [ {"number":37,"title":"…","clearedBy":[32]} ],
 #     "resume": [ {"number":51,"title":"…"} ],
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
-#     "pending": [ {"number":48,"title":"…","openBlockers":[32]} ],   # Blocked, waiting only on open cards (#235)
+#     "pending": [ {"number":48,"title":"…","openBlockers":[32],"needsYou":false} ],   # Blocked, waiting only on open cards (#235)
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
 #     "stranded": [ {"number":44,"title":"…"} ],
 #     "waiting": [ {"number":45,"title":"…","labels":["needs-you"]},       # Ready cards held for a person (#95)
+#                  {"number":47,"title":"…","labels":["waiting-on:#32"]},   # Ready cards waiting on another card (#601)
 #                  {"number":46,"title":"…","labels":["qa","needs-device"],"why":"…"} ] }   # held for a real device (#95)
 set -euo pipefail
 
@@ -164,6 +165,8 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   # Not one carrying loop:rebase / loop:rebuild-N: back from QA/Review after the person acted (super-board-run.sh FOR_A_PERSON_JQ).
   def for_a_person($l): (($l | index("needs-you")) or ($l | index("human-gated")))
                         and ($l | map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not);
+  # #601: thẻ Ready chỉ chờ thẻ khác mang nhãn `waiting-on:#N` (super-board-waiting-on.py mark); không phát, gỡ nhãn mới chạy.
+  def waiting_on($l): $l | map(startswith("waiting-on:#")) | any;
   # #95: its QA needs a real device and none is online ($nodev, above). Not Review; a Ready card without `qa` is built first.
   def held_for_device($s; $l): $nodev and ($l | index("needs-device")) != null
                                and ($s == "QA" or ($s == "Ready" and ($l | index("qa")) != null));
@@ -182,6 +185,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
 
   # Ready: only the ones the graph says are actually free.
   | [ $all[] | select(.status == "Ready") | select(free(.number)) | select(for_a_person(.labels) | not)
+      | select(waiting_on(.labels) | not)
       | select(held_for_device(.status; .labels) | not) ] as $ready
 
   # Downstream-first, so work already begun finishes before new work starts.
@@ -204,7 +208,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
                  | select(for_a_person(.labels) | not)
                  | select(dep(.number) != null and dep(.number).parseable and (dep(.number).humanGated | not)
                           and ((dep(.number).openBlockers // []) | length) > 0)
-                 | { number, title, openBlockers: dep(.number).openBlockers } ],
+                 | { number, title, openBlockers: dep(.number).openBlockers, needsYou: (dep(.number).needsYou // false) } ],
 
       # Verified current-head human approval from the dependency helper. The
       # Reviewer independently rechecks it; labels are only UI state.
@@ -231,7 +235,11 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
 
       # Ready cards held back for a person (#95): removing the needs-you / human-gated label releases them. Then Ready/QA
       # cards held for a real device: plugging one in (or removing needs-device) releases them.
+      # #601: thẻ Ready mang `waiting-on:#N` cũng nằm đây; `super-board-waiting-on.py sweep` gỡ nhãn khi N đóng.
       waiting: ([ $all[] | select(.status == "Ready") | select(for_a_person(.labels)) | { number, title, labels } ]
+                + [ $all[] | select(.status == "Ready") | select(waiting_on(.labels)) | select(for_a_person(.labels) | not)
+                    | { number, title, labels } ]
                 + [ $all[] | select(held_for_device(.status; .labels))
                     | select((.status == "Ready" and for_a_person(.labels)) | not)
+                    | select((.status == "Ready" and waiting_on(.labels)) | not)
                     | { number, title, labels, why: "its QA needs a real device (needs-device) and none is online" } ]) }'

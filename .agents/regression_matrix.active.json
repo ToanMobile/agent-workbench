@@ -1945,6 +1945,40 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-waiting-on-601",
+      "watch_files": [
+        ".claude/bin/super-board-waiting-on.py",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/workflows/super-board-wave.js",
+        ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_waiting_on_helper.sh",
+        "tests/super-board/test_waiting_on_runner.sh",
+        "tests/super-board/test_waiting_on_wave.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAITING-ON-HELPER-601-01",
+          "name": "#601 helper waiting-on: mark gắn nhãn waiting-on:#N + comment một lần (không dòng blocked-by:); sweep gỡ nhãn khi N CLOSED/MERGED, mỗi N đọc một lần, số lỗi không chặn số khác; migrate thẻ Blocked chỉ chờ → Ready + nhãn, bỏ needs-you/fuse, chạy 2 lần cùng kết quả",
+          "command": "bash tests/super-board/test_waiting_on_helper.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-WAITING-ON-RUNNER-601-01",
+          "name": "#601 runner: preflight sequence có blocker mở không Blocked mà gọi mark, thẻ ở Ready; dispatch/inflight bỏ qua thẻ waiting-on; sweep_waiting_on theo nhịp, lỗi không halt; hold vẫn Blocked",
+          "command": "bash tests/super-board/test_waiting_on_runner.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-WAITING-ON-WAVE-601-01",
+          "name": "#601 workflow: planner để thẻ waiting-on ngoài Ready (vào waiting), pending có needsYou; wave.js không build sequence có blocker mở, preflightExit = waiting@Ready",
+          "command": "bash tests/super-board/test_waiting_on_wave.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
