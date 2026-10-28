@@ -3219,11 +3219,26 @@ def _gate_matrix(main):
     """The regression matrix the merge gate uses: MAIN's, the side it protects — a worktree that dropped or weakened its own copy is still
     gated with main's mandatory tests (OCR 14/10). "" = no gate: WORKTREE_TRUNK_MODE=0, or main has no matrix (no mandatory test protects
     main yet; a matrix the worktree brings is new, so the gate would not trust it and would run nothing anyway). Asked BEFORE a kept
-    verdict is replayed: the opt-out must work after a refusal."""
+    verdict is replayed: the opt-out must work after a refusal. #527: a repo with the DevKit installed (`.agents/devkit`, a link counts) never
+    loses the gate because the file is gone from main's disk: HEAD's blob is gated with (written beside the git dir); no matrix in HEAD
+    either = None (finish is blocked), like push_gate's #482."""
     if os.environ.get("WORKTREE_TRUNK_MODE", "1") == "0":
         return ""
     m = os.path.join(main, MATRIX_REL)
-    return m if os.path.isfile(m) else ""
+    if os.path.isfile(m):
+        return m
+    if not os.path.lexists(os.path.join(main, ".agents", "devkit")):
+        return ""
+    blob = git(main, "show", "HEAD:" + MATRIX_REL.replace(os.sep, "/"), check=False)
+    if blob.returncode != 0:
+        return None
+    out = os.path.join(git_dir(main), "devkit-gate-matrix.json")
+    try:
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write(blob.stdout)
+    except OSError:
+        return None
+    return out
 
 
 def _merge_gate(wt, base, matrix):
@@ -3989,6 +4004,11 @@ def _automerge_locked(cwd, main, wt, keep=False, held=None):
         key = {"worktree": w_head, "main": main_head}
         rpath = os.path.join(git_dir(wt), MERGE_GATE_RESULT)
         matrix = _gate_matrix(main)
+        if matrix is None:
+            return "blocked", tr(f"repo đã cài DevKit nhưng HEAD của main không có {MATRIX_REL} (regression matrix): không gate được nên không gộp. "
+                                 f"Khôi phục file ở main rồi chạy lại `agent-kit worktree finish {shlex.quote(wt)}`",
+                                 f"the DevKit is installed but main's HEAD has no {MATRIX_REL} (regression matrix): it cannot be gated, so nothing merges. "
+                                 f"Restore the file on main, then run `agent-kit worktree finish {shlex.quote(wt)}` again"), {"gate": True}
         try:
             with open(rpath, encoding="utf-8") as fh:
                 last = json.load(fh)
