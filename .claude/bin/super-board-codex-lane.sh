@@ -76,10 +76,10 @@ if not explicit and config.get('usage_fallback', 'none') != 'codex':
     fail(f'Codex fallback refused: usage_fallback is not "codex" in {config_path}; pass --codex for an explicit Codex run.', 78)
 
 column = card['status']
-# #531: only a claude-p board whose merge queue is on has a runner that drains the queue; elsewhere (workflow, codex, queue off, SB_MERGE_QUEUE=0)
+# #531: only a claude-p board whose merge queue is on has a runner that drains the queue, and an explicit `run --codex` never has one (codex-wave); elsewhere (explicit, workflow, codex, queue off, SB_MERGE_QUEUE=0)
 # the Codex reviewer merges through the gate itself and `codex exec` runs with SB_MERGE_QUEUE=0 so the gate does not answer 13.
 queue_env = os.environ.get('SB_MERGE_QUEUE', '')
-queue_on = (queue_env != '0' and config.get('worker_backend', 'workflow') == 'claude-p'
+queue_on = (not explicit and queue_env != '0' and config.get('worker_backend', 'workflow') == 'claude-p'
             and (queue_env == '1' or (config.get('merge_queue') or {}).get('enabled') is True))
 def result(status, detail):
     print(json.dumps({'status': status, 'column': column, 'detail': detail}))
