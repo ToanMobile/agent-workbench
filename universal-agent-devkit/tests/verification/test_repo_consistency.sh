@@ -331,7 +331,9 @@ wired = set()
 for ev in json.load(open(os.path.join(ROOT, "hooks/hooks.json")))["hooks"].values():
     for matcher in ev:
         for h in matcher["hooks"]:
-            wired.add(re.findall(r"([\w.-]+\.sh)", h["command"])[-1])
+            sh = re.findall(r"([\w.-]+\.sh)", h["command"])   # a python hook (instincts_file_context.py) has no .sh to count
+            if sh:
+                wired.add(sh[-1])
 n_wired = len(wired)
 print(f"  (real counts: {n_skills} skills, {n_profiles} profiles, {n_councils} councils, "
       f"{n_hook_files} hook scripts, {n_wired} wired hooks)")
