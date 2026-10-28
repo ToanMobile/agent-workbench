@@ -35,7 +35,8 @@ git commit -q --allow-empty -m "audit" -m "Test-approved-by: antigravity T0004-a
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
 expect "Test-approved-by with no antigravity-pm audit record: blocked" 2
 mkdir -p "$TMP/pm/projects/repo-x/tasks/T0004-audit"
-printf '{"id":"T0004-audit","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1}}}\n' "$TMP/repo" \
+# audit T0066 (#605): the verdict names the audited head; the empty trailer commit sits on that same tree
+printf '{"id":"T0004-audit","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1,"notes":"auditedHead: %s"}}}\n' "$TMP/repo" "$(git rev-parse HEAD~1)" \
   > "$TMP/pm/projects/repo-x/tasks/T0004-audit/task.json"
 expect "Test-approved-by in the pushed commits, audit recorded as pass: allowed" 0
 unset ANTIGRAVITY_PM_STATE_HOME

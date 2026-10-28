@@ -246,4 +246,45 @@ run_at "$TMP/t26"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "26: auditedHead không có trong repo -> exit 2"
 else bad "26: auditedHead lạ: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
+# --- push_gate.approved (audit T0066, #605): trailer chỉ tính khi cây của commit mang trailer VÀ cây đầu range đều bằng cây
+# auditedHead của task — task_id cũ đã pass không duyệt được nội dung mới (replay), sửa sau commit trailer cần audit lại.
+PG_DIR="$DEVKIT_DIR/bin"
+pg_approved() {   # pg_approved <repo> <range>: in "True" / "False" theo push_gate.approved
+  OUT="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate; ok, why = push_gate.approved(sys.argv[2], sys.argv[3]); print(ok, why)' \
+    "$PG_DIR" "$1" "$2" 2>&1)"
+}
+mk_pg_repo() {   # mk_pg_repo <dir>: main có test cũ; nhánh feat: commit sửa test (chưa trailer)
+  mkdir -p "$1/tests" && cd "$1" || exit 1
+  git init -q -b main . && git config user.email t@t && git config user.name t && git config commit.gpgsign false
+  printf '#!/bin/sh\ntrue\n' > tests/test_old.sh && git add -A && git commit -qm init
+  git checkout -q -b feat
+  printf '#!/bin/sh\nexit 0\n' > tests/test_old.sh && git commit -qam "sửa test"
+}
+
+# 27. (c) replay: task cũ pass với auditedHead = main (cây cũ), trailer task đó đặt trên commit sửa test mới -> không duyệt
+mk_pg_repo "$TMP/p27"; pm_task T0627-old "$TMP/p27" pass "$(git rev-parse main)"
+printf '#!/bin/sh\nexit 0 # mới\n' > tests/test_old.sh && git commit -qam "sửa mới" -m "Test-approved-by: antigravity T0627-old"
+pg_approved "$TMP/p27" "main..HEAD"
+if printf '%s' "$OUT" | grep -q "^False"; then ok "27: push_gate.approved: replay task_id cũ trên nội dung mới -> không duyệt"
+else bad "27: replay push_gate: $OUT"; fi
+pg_approved "$TMP/p27" "$(git rev-parse HEAD)^!"   # cùng lời gọi since_test_weakened dùng để dời mốc base
+if printf '%s' "$OUT" | grep -q "^False"; then ok "27b: approved(<trailer>^!) của trailer cũ có cây khác auditedHead -> không duyệt"
+else bad "27b: approved(sha^!) replay: $OUT"; fi
+
+# 28. commit rỗng mang trailer ngay trên auditedHead -> duyệt (cả range lẫn <trailer>^!)
+mk_pg_repo "$TMP/p28"; pm_task T0628-cross "$TMP/p28" pass "$(git rev-parse HEAD)"
+git commit -q --allow-empty -m "audit chéo" -m "Test-approved-by: antigravity T0628-cross"
+pg_approved "$TMP/p28" "main..HEAD"
+if printf '%s' "$OUT" | grep -q "^True"; then ok "28: commit rỗng trailer trên auditedHead -> duyệt"
+else bad "28: trailer rỗng trên auditedHead: $OUT"; fi
+pg_approved "$TMP/p28" "$(git rev-parse HEAD)^!"
+if printf '%s' "$OUT" | grep -q "^True"; then ok "28b: approved(<trailer>^!) trên auditedHead -> duyệt"
+else bad "28b: approved(sha^!): $OUT"; fi
+
+# 29. thêm commit SAU commit trailer (cây đầu range khác auditedHead) -> không duyệt
+printf '#!/bin/sh\nexit 0 # sau audit\n' > tests/test_old.sh && git commit -qam "sửa sau audit"
+pg_approved "$TMP/p28" "main..HEAD"
+if printf '%s' "$OUT" | grep -q "^False"; then ok "29: commit sau commit trailer -> không duyệt"
+else bad "29: commit sau trailer: $OUT"; fi
+
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

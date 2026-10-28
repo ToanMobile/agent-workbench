@@ -500,25 +500,46 @@ def _task_audits(top, task_id):
 
 def approved(top, rng):
     """(True, note) when a commit of rng ends with the trailer `Test-approved-by: antigravity <task-id>` (git's own trailer
-    parsing: the last paragraph, line-anchored) and antigravity-pm recorded an audit pass for that task (audit_record);
+    parsing: the last paragraph, line-anchored) and antigravity-pm recorded an audit pass for that task (audit_record) whose
+    auditedHead (audited_head) has the same tree as that commit and as the tip of rng (audit T0066, #605: no replay);
     (False, why) when a Test-approved-by line is there but does not count; (False, None) when there is none.
     Audit 2026-10-09: the old check was `"Test-approved-by:" in git log`, so "fix; Test-approved-by: whatever" passed.
     ponytail: the task record lives in a directory of the same user — an agent that writes ~/.antigravity-pm by hand still
     passes; upgrade to a record signed by the PM server if that is ever seen."""
-    rc, out = git(top, "log", "--format=%(trailers:key=Test-approved-by,valueonly,unfold)%x00", rng)
+    rc, out = git(top, "log", "--format=%H%x01%(trailers:key=Test-approved-by,valueonly,unfold)%x00", rng)
     if rc != 0:
         return False, None
-    values = [v.strip() for v in out.replace("\0", "\n").splitlines() if v.strip()]
+    values = []                                        # (commit, value), newest commit first
+    for rec in out.split("\0"):
+        sha, _, trailers = rec.strip("\n").partition("\x01")
+        values.extend((sha.strip(), v.strip()) for v in trailers.splitlines() if v.strip())
+    tip = None
     whys = []
-    for value in values:   # newest commit first
+    for sha, value in values:
         m = APPROVED_VALUE.fullmatch(value)
         if not m:
             whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
             continue
         ok, why = audit_record(top, m.group(1))
-        if ok:
+        if not ok:
+            whys.append(why)
+            continue
+        # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
+        # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
+        # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
+        # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
+        # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
+        head = audited_head(top, m.group(1))
+        if tip is None:
+            rc_tip, tip_out = git(top, "rev-list", "-1", rng)
+            tip = tip_out.strip() if rc_tip == 0 else ""
+        trees = git(top, "rev-parse", f"{sha}^{{tree}}", f"{head}^{{tree}}", f"{tip}^{{tree}}") if head and tip and sha else (1, "")
+        got = trees[1].split() if trees[0] == 0 else []
+        if len(got) == 3 and len(set(got)) == 1:
             return True, f"{APPROVED} antigravity {m.group(1)} (antigravity-pm audit pass)"
-        whys.append(why)
+        whys.append(f"{APPROVED} antigravity {m.group(1)}: " + (
+            "biên bản audit không ghi `auditedHead: <sha>` (hoặc sha không có trong repo)" if not head else
+            f"cây đã đổi so với auditedHead {head[:10]} (commit trailer {sha[:10]} / đầu range): cần audit lại"))
     if not whys:
         rc, body = git(top, "log", "--format=%B", rng)
         if rc == 0 and APPROVED in body:
