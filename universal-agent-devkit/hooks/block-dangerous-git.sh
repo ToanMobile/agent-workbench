@@ -80,8 +80,9 @@ fast_allow() { # $1 = trigger ERE
 # ERE has no \b (glibc adds it, macOS regcomp need not). A process substitution <(…) can be a shell's script (`bash <(curl …)`,
 # 2026-10-09, tests/gates/test_git_guard_process_subst.sh): the parser reads it too, and so does `tee >(sh)`, a shell that reads
 # what an output process substitution is fed (tests/gates/test_git_guard_shell_subst.sh). `bash -c "$(…)"` has a `$`: the parser.
-# (#605) rm / unlink / find -delete: parser kiểm danh sách protected_delete.
-fast_allow 'git|eval|devkit_precommit|hookspath|pkill|killall|pgrep|(^|[^[:alnum:]_.-])(rm|unlink)([^[:alnum:]_.-]|$)|-delete|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
+# (#605) rm / unlink / find -delete: parser kiểm danh sách protected_delete. (#605 Lane H) gh (comment tự duyệt) và lời gọi xoá
+# của interpreter (os.remove, os.unlink, shutil.rmtree, fs.rmSync, File.delete, FileUtils.rm_rf …) cũng vào parser.
+fast_allow 'git|eval|devkit_precommit|hookspath|pkill|killall|pgrep|(^|[^[:alnum:]_.-])(rm|unlink|gh)([^[:alnum:]_.-]|$)|-delete|unlink|remove|rmtree|rmsync|rmdirsync|rm_r|[.]delete|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2
@@ -814,8 +815,10 @@ def inline_codes(rest):
 # <git toplevel>/.antigravity-pm.json; config hỏng/thiếu thì vẫn dùng mặc định. Glob không có "/" khớp tên file ở mọi cấp; glob có
 # "/" khớp đường dẫn tính từ git toplevel của file (worktree lồng trong project có gốc riêng); "X/**" = X và mọi thứ bên trong.
 # Xoá một thư mục cha của path được bảo vệ (rm -rf .agents, rm -rf .) cũng bị chặn. Xoá file thường không bị hỏi gì thêm.
-# ponytail: không duyệt cây thư mục, nên rm -rf app không thấy app/google-services.json bên trong (chỉ glob có "/" được xét
-# theo thư mục cha); toán hạng chứa $VAR / $( ) không biết trước giá trị nên cho qua. Nâng cấp khi một ca thật lọt qua.
+# (#605 Lane H) rm -r <thư mục có thật> quét nông bên trong (_pd_walk: sâu 3, tối đa 2000 mục, vượt trần thì chặn), và
+# python -c / node -e / perl -e / ruby -e có lời gọi xoá với path literal được bảo vệ cũng bị chặn (interp_delete_rule).
+# ponytail: toán hạng chứa $VAR / $( ) không biết trước giá trị nên cho qua; script interpreter đọc từ heredoc / file và path
+# tính lúc chạy (os.path.join, biến) không được xét; node_modules không được quét bên trong. Nâng cấp khi một ca thật lọt qua.
 # tests/gates/test_guard_protected_delete.sh
 PROTECTED_DELETE_DEFAULT = (".env*", "*.keystore", "*.jks", "google-services.json",
                             ".agents/regression_matrix.active.json", ".agents/local/memory/**",
@@ -894,17 +897,177 @@ def _pd_match(rel, pats, names=(), paths=(), start=""):
             return p
     return None
 
-def protected_delete_rule(words, base, names=(), paths=()):
-    """Lý do chặn khi một toán hạng xoá đụng file quan trọng; names/paths: bộ lọc -name / -path của find."""
+PD_WALK_DEPTH, PD_WALK_MAX = 3, 2000
+PD_WALK_SKIP = {".git", "node_modules"}   # không đi vào bên trong (.git chỉ tính chính nó ở cấp 1; node_modules: cây sinh lại được)
+
+def _pd_walk(root, rel, pats):
+    """(#605 Lane H) rm -r <thư mục có thật>: quét nông (sâu PD_WALK_DEPTH, tối đa PD_WALK_MAX mục, không theo symlink).
+    Trả glob bảo vệ khớp một mục bên trong, chuỗi lý do khi vượt trần / không đọc được (chặn, fail closed), hoặc None."""
+    start = os.path.join(root, rel)
+    if rel == "." or os.path.islink(start) or not os.path.isdir(start) or rel.rsplit("/", 1)[-1] in PD_WALK_SKIP:
+        return None
+    seen, stack = 0, [(start, rel, 0)]
+    while stack:
+        d, r, depth = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                entries = list(it)
+        except OSError as e:
+            return ("", f"không đọc được thư mục {r} để kiểm ({e.__class__.__name__})")
+        for e in entries:
+            seen += 1
+            if seen > PD_WALK_MAX:
+                return ("", f"thư mục có hơn {PD_WALK_MAX} mục trong {PD_WALK_DEPTH} cấp, không kiểm hết được")
+            erel = r + "/" + e.name
+            pat = _pd_match(erel, pats)
+            if pat:
+                return (pat, erel)
+            try:
+                sub = e.is_dir(follow_symlinks=False)
+            except OSError:
+                sub = False
+            if sub and depth + 1 < PD_WALK_DEPTH and e.name not in PD_WALK_SKIP:
+                stack.append((e.path, erel, depth + 1))
+    return None
+
+def protected_delete_rule(words, base, names=(), paths=(), walk=False):
+    """Lý do chặn khi một toán hạng xoá đụng file quan trọng; names/paths: bộ lọc -name / -path của find.
+    walk (rm -r, interpreter xoá): toán hạng là thư mục có thật thì quét nông bên trong (_pd_walk)."""
     for w in words:
         if "$" in w or SUBST in w or "`" in w:
             continue   # giá trị chỉ biết lúc chạy
         loc = _pd_locate(w, base)
         if not loc:
             continue
-        pat = _pd_match(loc[1], protected_delete_patterns(loc[0]), names, paths, w)
+        pats = protected_delete_patterns(loc[0])
+        pat = _pd_match(loc[1], pats, names, paths, w)
         if pat:
             return f"{PROTECTED_DELETE_MSG} {w} (khớp \"{pat}\" trong danh sách protected_delete)"
+        found = _pd_walk(loc[0], loc[1], pats) if walk and not re.search(r"[*?\[]", w) else None
+        if found and found[0]:
+            return f"{PROTECTED_DELETE_MSG} {w}: bên trong có {found[1]} (khớp \"{found[0]}\" trong danh sách protected_delete)"
+        if found:
+            return f"{PROTECTED_DELETE_MSG} {w}: {found[1]} (chặn để an toàn)"
+    return None
+
+# (#605 Lane H) python -c / node -e / perl -e / ruby -e có lời gọi xoá: mọi chuỗi literal trong code được xét như toán hạng xoá
+# (os.remove("x"), Path("x").unlink(), shutil.rmtree("x"), fs.unlinkSync("x"), unlink("x"), FileUtils.rm_rf("x") …).
+INTERP_DELETE = re.compile(r"\b(?:remove|removedirs|unlink|unlinkSync|rmSync|rmdirSync|rmtree|rmdir|rm_rf|rm_r|rm|delete)\b")
+STR_LIT = re.compile(r"\"((?:[^\"\\\n]|\\.)*)\"|\x27((?:[^\x27\\\n]|\\.)*)\x27")
+
+def interp_delete_rule(code, base):
+    if not INTERP_DELETE.search(code):
+        return None
+    lits = [a or b for a, b in STR_LIT.findall(code)]
+    return protected_delete_rule([x for x in lits if x.strip()], base, walk=True)
+
+# (#605 Lane H) Agent đăng comment GitHub bằng chung tài khoản OWNER, nên `approved-head:<sha>` trơn (không kèm `approved-by:`)
+# hay một dòng `done` do agent đăng sẽ tự duyệt chính nó (super-board-approved-head.jq, super-board-approval.py). Chỉ người chủ repo
+# gõ tay hai thứ đó. gh pr comment / gh issue comment / gh api …/comments: body qua --body, -b, --body-file, -F (file), -f/-F body=,
+# --input. approved-head kèm approved-by: và cross-review-approved: vẫn qua (việc của lane reviewer).
+# ponytail: body do $(lệnh) sinh ra (không phải heredoc) không đọc được nên cho qua; nâng cấp khi một ca thật lọt qua.
+# tests/gates/test_guard_self_approval_comment.sh
+SELF_APPROVE_MSG = "agent tự đăng duyệt"
+GH_BARE_HEAD = re.compile(r"(?m)^[ \t]*approved-head:[ \t]*[0-9a-f]{40}")
+GH_APPROVED_BY = re.compile(r"(?m)^[ \t]*approved-by:")
+GH_DONE = re.compile(r"(?mi)^[ \t]*done[.!]?[ \t\r]*$")
+GH_BODY_MAX = 1 << 20
+
+def _gh_file(path, base):
+    """Nội dung file body (--body-file, @file, --input); None = không đọc được (chặn, fail closed)."""
+    if not path or "$" in path or SUBST in path or "`" in path:
+        return None
+    p = os.path.expanduser(path)
+    if not os.path.isabs(p):
+        if not base:
+            return None
+        p = os.path.join(base, p)
+    try:
+        if not os.path.isfile(p) or os.path.getsize(p) >= GH_BODY_MAX:
+            return None
+        with open(p, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+def _gh_stdin_texts():
+    """Body đọc từ stdin: các heredoc của lệnh gốc; rỗng = không biết nội dung."""
+    try:
+        return [h.body(cmd) for h in shell_norm.heredocs(cmd)]
+    except Exception:
+        return []
+
+def self_approval_text(text):
+    if GH_BARE_HEAD.search(text) and not GH_APPROVED_BY.search(text):
+        return "dòng approved-head:<sha> không kèm approved-by:"
+    if GH_DONE.search(text):
+        return "dòng done"
+    return None
+
+def gh_comment_rule(rest, base):
+    """Lý do chặn khi lệnh gh đăng comment tự duyệt; None khi không phải đăng comment hoặc body sạch."""
+    rest = drop_redirects(rest)
+    j = 0
+    while j < len(rest) and rest[j].startswith("-"):
+        j += 2 if rest[j] in ("-R", "--repo") else 1
+    sub, args = rest[j:j + 2], rest[j + 2:]
+    api = sub[:1] == ["api"]
+    if api:
+        args = rest[j + 1:]
+        if not any(re.search(r"(^|/)comments(/|$|\?)", a) for a in args if not a.startswith("-")):
+            return None
+    elif sub not in (["pr", "comment"], ["issue", "comment"]):
+        return None
+    bodies = []   # (literal | file | stdin, value)
+    k = 0
+    while k < len(args):
+        a, nxt = args[k], (args[k + 1] if k + 1 < len(args) else None)
+        opt, eq, val = a.partition("=")
+        has = bool(eq) and a.startswith("--")
+        if not api and opt in ("--body", "-b"):
+            bodies.append(("literal", val if has else (nxt or "")))
+        elif not api and opt in ("--body-file", "-F"):
+            v = val if has else nxt
+            bodies.append(("stdin" if v == "-" else "file", v))
+        elif api and opt in ("-f", "--raw-field", "-F", "--field"):
+            v = val if has else nxt
+            if v and v.startswith("body="):
+                v = v[5:]
+                if opt in ("-F", "--field") and v.startswith("@"):
+                    bodies.append(("stdin" if v == "@-" else "file", v[1:]))
+                else:
+                    bodies.append(("literal", v))
+        elif api and opt == "--input":
+            v = val if has else nxt
+            bodies.append(("stdin" if v == "-" else "json", v))
+        elif api and a.startswith(("-fbody=", "-Fbody=")):
+            bodies.append(("literal", a[7:]))
+        if not has and opt in ("--body", "-b", "--body-file", "-F", "-f", "--raw-field", "--field", "--input"):
+            k += 1
+        k += 1
+    for kind, v in bodies:
+        texts = []
+        if kind == "literal":
+            texts = [v] + (_gh_stdin_texts() if ("$" in v or SUBST in v or "`" in v) else [])
+        elif kind == "stdin":
+            texts = _gh_stdin_texts()
+            if not texts:
+                return f"{SELF_APPROVE_MSG}: body đọc từ stdin không phải heredoc, không kiểm được nội dung"
+        else:
+            t = _gh_file(v, base)
+            if t is None:
+                return f"{SELF_APPROVE_MSG}: không đọc được file body {v} (thiếu, quá 1 MB hoặc đường dẫn chỉ biết lúc chạy)"
+            if kind == "json":
+                try:
+                    o = json.loads(t)
+                    t = o.get("body") if isinstance(o, dict) and isinstance(o.get("body"), str) else t
+                except ValueError:
+                    pass   # không phải JSON: xét nguyên văn
+            texts = [t]
+        for t in texts:
+            why = self_approval_text(t)
+            if why:
+                return f"{SELF_APPROVE_MSG}: comment có {why}"
     return None
 
 def _operands(args):
@@ -988,7 +1151,12 @@ def analyse_simple(tokens, depth):
             a == "--full" or (a.startswith("-") and not a.startswith("--") and "f" in a[1:]) for a in rest)):
         return f"kill theo tên ({lp}) trúng tiến trình của mọi phiên/board khác trên máy"
     if prog in ("rm", "unlink"):   # (#605) xoá file quan trọng: người làm hoặc duyệt
-        return protected_delete_rule(_operands(rest), CUR_DIR[0])
+        opts = rest[:rest.index("--")] if "--" in rest else rest
+        rec = prog == "rm" and any(a == "--recursive" or (a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a))
+                                   for a in opts)
+        return protected_delete_rule(_operands(rest), CUR_DIR[0], walk=rec)   # (#605 Lane H) rm -r: quét nông thư mục
+    if prog == "gh":   # (#605 Lane H) agent không tự đăng approved-head trơn / done
+        return gh_comment_rule(rest, CUR_DIR[0])
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there
     # (`$(echo gi)t reset --hard`, 2026-10-09): its output is the program name.
     if prog.startswith("$") or SUBST in prog:
@@ -1000,6 +1168,9 @@ def analyse_simple(tokens, depth):
         return f"{reason} (gọi qua {prog})" if reason else None
     if prog in INTERPRETERS:
         for code in inline_codes(rest):
+            reason = interp_delete_rule(code, CUR_DIR[0])   # (#605 Lane H) os.remove / shutil.rmtree / fs.rmSync … path bảo vệ
+            if reason:
+                return reason
             m = RAW.search(code)
             if m:
                 return f"{m.group(1).split()[0]} (gọi qua {prog})"
@@ -1654,6 +1825,12 @@ if reason and reason.startswith(PROTECTED_DELETE_MSG):
     print(f"BLOCKED: {cmd!r} — {reason}. Luật chủ repo (#605): xoá file quan trọng chỉ do NGƯỜI làm hoặc duyệt — agent không tự xoá. "
           "Hỏi người dùng một lần (AskUserQuestion); người dùng tự chạy qua prefix \"!\" nếu đồng ý. Danh sách: mặc định của hook + "
           "khoá \"protected_delete\" trong .antigravity-pm.json. Xoá file khác vẫn tự làm, không cần hỏi.", file=sys.stderr)
+    sys.exit(2)
+if reason and reason.startswith(SELF_APPROVE_MSG):
+    print(f"BLOCKED: {cmd!r} — {reason}. Luật #605: `approved-head:<sha>` trơn (không kèm dòng `approved-by:`) và `done` chỉ người "
+          "chủ repo gõ tay — agent đăng bằng chung tài khoản OWNER nên đăng chúng là tự duyệt. Lane reviewer: đăng `approved-head:<sha>` "
+          "kèm dòng `approved-by: {\"reviewer\",\"builder\",\"task_id\",\"gate_receipt\"}` (reviewer khác builder), hoặc "
+          "`cross-review-approved: {...}`.", file=sys.stderr)
     sys.exit(2)
 if reason and reason.startswith("kill theo tên"):
     print(f"BLOCKED: {cmd!r} — {reason}. Chạy lệnh nền rồi giữ PID của chính nó: `cmd & pid=$!`, sau đó `wait $pid` / `kill -0 $pid` / "

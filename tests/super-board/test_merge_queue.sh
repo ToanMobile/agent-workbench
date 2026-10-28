@@ -176,7 +176,8 @@ run_q; rc=$?
 # ── 2. Chọn PR: 3 hợp lệ → MỘT train, cũ nhất trước; approved-head lệch / người ngoài → gỡ nhãn + comment; draft → bỏ qua, giữ nhãn.
 reset; cfg true 6
 pr 1 issue-11-a 10; pr 2 issue-12-b 30; pr 3 feature-x 20; pr 4 issue-14-d 40; pr 5 issue-15-e 50; pr 6 issue-16-f 60 true
-approve 1 OWNER "$(sha 1)"; approve 2 MEMBER "$(sha 2)"; approve 3 COLLABORATOR "$(sha 3)"
+# #605 Lane H: approved-head trơn chỉ của OWNER; MEMBER/COLLABORATOR trơn bị loại (ca riêng ở cuối file).
+approve 1 OWNER "$(sha 1)"; approve 2 OWNER "$(sha 2)"; approve 3 OWNER "$(sha 3)"
 approve 4 OWNER "$(sha 4 b)"; approve 5 CONTRIBUTOR "$(sha 5)"; approve 6 OWNER "$(sha 6)"
 issue 11; issue 12 ac-open; issue 14; issue 15; issue 16
 printf '%s\n' "$(sha 1 c)" > "$F/merged-1"; printf '%s\n' "$(sha 2 c)" > "$F/merged-2"; printf '%s\n' "$(sha 3 c)" > "$F/merged-3"
@@ -481,7 +482,7 @@ by() {   # by <reviewer> <builder> [task_id] [gate_receipt]
   jq -cn --arg r "$1" --arg b "$2" --arg t "${3-task-605}" --arg g "${4-receipt-1}" '{reviewer:$r,builder:$b,task_id:$t,gate_receipt:$g}'
 }
 reset; cfg true 6
-pr 1 issue-11-a 10; pr 2 issue-12-b 20; pr 3 issue-13-c 30; pr 4 issue-14-d 40; pr 5 issue-15-e 50; pr 6 issue-16-f 60; pr 7 issue-17-g 70
+pr 1 issue-11-a 10; pr 2 issue-12-b 20; pr 3 issue-13-c 30; pr 4 issue-14-d 40; pr 5 issue-15-e 50; pr 6 issue-16-f 60; pr 7 issue-17-g 70; pr 8 issue-18-h 80; pr 9 issue-19-i 90; pr 10 issue-20-j 100
 approve_body 1 COLLABORATOR "approved-head:$(sha 1)
 approved-by: $(by antigravity claude-builder)
 note: } trailing line"
@@ -496,7 +497,11 @@ approve_body 6 MEMBER "approved-head:$(sha 6)
 approved-by: $(by antigravity claude-builder '' receipt-1)"
 jq -n --arg h "$(sha 7)" --arg ok "$(by antigravity claude-builder)" --arg self "$(by claude claude)" \
   '{comments:[{authorAssociation:"MEMBER",body:("approved-head:"+$h+"\napproved-by: "+$ok)},{authorAssociation:"MEMBER",body:("approved-head:"+$h+"\napproved-by: "+$self)}]}' > "$F/comments-7.json"
-for k in 11 12 13 14 15 16 17; do issue "$k"; done
+# #605 Lane H: approved-head trơn của MEMBER / COLLABORATOR → loại, đòi approved-by; trường số (không phải chuỗi) → loại.
+approve 8 MEMBER "$(sha 8)"; approve 9 COLLABORATOR "$(sha 9)"
+approve_body 10 MEMBER "approved-head:$(sha 10)
+approved-by: {\"reviewer\":1,\"builder\":2,\"task_id\":3,\"gate_receipt\":4}"
+for k in 11 12 13 14 15 16 17 18 19 20; do issue "$k"; done
 : > "$F/train.out"
 ( export SB_MERGE_QUEUE=1; run_q --dry-run ); rc=$?
 OUT="$(cat "$TMP/out" "$TMP/err")"
@@ -506,5 +511,8 @@ printf '%s' "$OUT" | grep -q "drop PR #3 .*not the PR head" && ok "#605 marker o
 printf '%s' "$OUT" | grep -q "drop PR #5 .*approved-by" && ok "#605 malformed approved-by: rejected (no fallback to bare)" || fail "#605 malformed: $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #6 .*approved-by" && ok "#605 empty task_id: rejected" || fail "#605 empty field: $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #7 .*self-review" && ok "#605 newer self-review marker voids an older valid one" || fail "#605 newest wins: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #8 .*approved-by required" && ok "#605 bare approved-head from a MEMBER: rejected (approved-by required)" || fail "#605 bare MEMBER honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #9 .*approved-by required" && ok "#605 bare approved-head from a COLLABORATOR: rejected (approved-by required)" || fail "#605 bare COLLABORATOR honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #10 .*approved-by needs non-empty" && ok "#605 numeric approved-by fields: rejected (strings only)" || fail "#605 numeric fields honoured: $OUT"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue: all passed" || { echo "❌ test_merge_queue: $FAILS failed"; exit 1; }

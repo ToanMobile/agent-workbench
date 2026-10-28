@@ -190,7 +190,9 @@ class PolicyDeleteProtected(unittest.TestCase):
 
     def test_deleting_protected_default_path_goes_to_human(self):
         for path in (".agents/regression_matrix.active.json", DOT_ENV + ".local", "app/" + DOT_ENV,
-                     "app/release.keystore", ".agents/local/rules/00.md"):
+                     "app/release.keystore", ".agents/local/rules/00.md",
+                     # #605 Lane H: đồng bộ với PROTECTED_DELETE_DEFAULT của block-dangerous-git.sh
+                     "app/google-services.json", "google-services.json"):
             plan = policy(self.CFG, [{"path": path, "additions": 0, "deletions": 1}], deletion(path))
             self.assertIn("delete-protected", self.cats(plan), (path, plan))
             self.assertFalse(approval.cross_review_allowed(plan))

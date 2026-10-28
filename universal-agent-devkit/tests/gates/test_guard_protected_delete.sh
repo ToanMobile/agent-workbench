@@ -127,5 +127,33 @@ check 2 'file quan trọng' 'rm -rf .git' "$W"
 check 2 'file quan trọng' 'rm .env' "$W"
 check 0 '' 'rm -rf build' "$W"
 
+echo "F. (#605 Lane H) xoá qua interpreter -c/-e với path literal được bảo vệ: chặn"
+check 2 'file quan trọng' "python3 -c \"import os; os.remove('app/google-services.json')\""
+check 2 'file quan trọng' "python -c \"import os; os.unlink('.env')\""
+check 2 'file quan trọng' "python3 -c \"from pathlib import Path; Path('release.keystore').unlink()\""
+check 2 'file quan trọng' "python3 -c \"import shutil; shutil.rmtree('.agents/local/memory')\""
+check 2 'file quan trọng' "node -e \"require('fs').unlinkSync('.env')\""
+check 2 'file quan trọng' "node -e \"fs.rmSync('.agents', {recursive: true})\""
+check 2 'file quan trọng' "perl -e \"unlink('upload.jks')\""
+check 2 'file quan trọng' "ruby -e \"File.unlink('.env.local')\""
+check 0 '' "python3 -c \"import os; os.remove('build/x.log')\""
+check 0 '' "python3 -c \"print(open('.env').read())\""
+check 0 '' "node -e \"fs.unlinkSync('src/a.kt')\""
+
+echo "G. (#605 Lane H) rm -r <thư mục có thật>: quét nông, chặn khi bên trong có file được bảo vệ"
+check 2 'file quan trọng' 'rm -rf app'
+check 2 'file quan trọng' 'rm -r app/'
+check 2 'file quan trọng' 'rm -Rf ./app'
+check 2 'file quan trọng' 'rm --recursive --force app'
+mkdir -p "$P/deep/a/b"; touch "$P/deep/a/b/.env"
+check 2 'file quan trọng' 'rm -rf deep'
+mkdir -p "$P/huge"; ( cd "$P/huge" && for i in $(seq 1 2100); do : > "f$i"; done )
+check 2 'file quan trọng' 'rm -rf huge'
+check 0 '' 'rm -rf build'
+check 0 '' 'rm -rf src'
+check 0 '' 'rm app/missing.txt'
+mkdir -p "$P/linkdir"; ln -s "$P/app" "$P/linkdir/app-link"
+check 0 '' 'rm -rf linkdir'
+
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $FAILS case(s)"; exit 1; fi
 echo "PASS"

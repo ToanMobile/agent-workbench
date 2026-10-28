@@ -122,6 +122,14 @@ approved-by: {\"reviewer\":\"a\",\"builder\":\"b\",\"task_id\":\"\",\"gate_recei
 is_full_review && ok "#605 empty task_id: rejected" || fail "#605 empty field honoured"
 reset; pr_head "$H1"; comment OWNER "approved-head:$H1"; tick
 is_merge_only && ok "#605 bare approved-head from the OWNER: still accepted" || fail "#605 bare OWNER approval lost"
+# #605 Lane H: approved-head trơn chỉ OWNER; MEMBER / COLLABORATOR trơn và trường số bị từ chối.
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1"; tick
+is_full_review && ok "#605 bare approved-head from a MEMBER: rejected (approved-by required), full review" || fail "#605 bare MEMBER approval honoured"
+reset; pr_head "$H1"; comment COLLABORATOR "approved-head:$H1"; tick
+is_full_review && ok "#605 bare approved-head from a COLLABORATOR: rejected, full review" || fail "#605 bare COLLABORATOR approval honoured"
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1
+approved-by: {\"reviewer\":1,\"builder\":2,\"task_id\":3,\"gate_receipt\":4}"; tick
+is_full_review && ok "#605 numeric approved-by fields: rejected (strings only)" || fail "#605 numeric approved-by honoured"
 
 # ── 6. hợp đồng viết: run.md bảo Reviewer ghi `approved-head:` trước khi chạy gate
 grep -q 'approved-head:' "$ROOT/.claude/skills/super-board/references/run.md" && ok "run.md tells the Reviewer to post approved-head:<sha> before the gate" || fail "run.md does not mention approved-head:"
