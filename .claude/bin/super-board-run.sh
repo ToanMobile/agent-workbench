@@ -51,6 +51,10 @@ gh_write_once() {
     done
   fi
   gh "${args[@]}" || {
+    # 28/10: lệnh ghi về MỘT thẻ hỏng thì thẻ đó vào Blocked, board chạy tiếp (block_card_after_failed_write). Lệnh ghi của chính
+    # bước chặn thẻ hỏng (SB_CARD_BLOCKING) chỉ trả 1: lệnh ghi gốc halt bên dưới với bản ghi verify của nó.
+    [ -z "${SB_CARD_BLOCKING:-}" ] || return 1
+    if declare -F block_card_after_failed_write >/dev/null && block_card_after_failed_write "$@"; then return 1; fi
     local verify=() spec=""
     [ -z "$token" ] || spec=$(jq -nc --argjson n "$3" --arg m "$token" '{kind:"comment",issue:$n,marker:$m}' 2>/dev/null) || spec=""
     [ -z "$spec" ] || verify=(--verify "$spec")
@@ -201,7 +205,7 @@ fetch_project_items() {
   for d in ${delays[@]+"${delays[@]}"} ""; do
     rc=0
     fresh=$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" items) || rc=$?
-    if [ "$rc" -eq 0 ]; then PROJECT_ITEMS_JSON="$fresh"; return 0; fi
+    if [ "$rc" -eq 0 ]; then PROJECT_ITEMS_JSON="$fresh"; CARD_WRITE_BLOCKED=""; return 0; fi   # board mới: thẻ đã Blocked nằm đúng cột
     case "$RUNNER_HALT_CODES" in *" $rc "*) return "$rc" ;; esac
     [ -n "$d" ] || break
     case "$d" in *[!0-9]*|?????*) d=10 ;; esac   # giá trị lạ (1.5, chữ, quá dài): dùng 10s, không để lỗi số học giết runner
@@ -344,6 +348,68 @@ set_card_status() {
   gh_checkpoint
   gh_write_once project item-edit --id "$item_id" --project-id "$project_id" \
     --field-id "$STATUS_FIELD_ID" --single-select-option-id "$opt_id" >/dev/null 2>&1
+}
+
+# 28/10 (04:33 gỡ assignee #446 hỏng một lần, board đứng tới 07:05): gh_write_once gọi hàm này khi một lệnh ghi hỏng. Lệnh của MỘT thẻ
+# (`issue <verb> <N>`, `project item-edit --id <item>` có trong board cache) → thẻ đó vào Blocked kèm comment chặn cần người kiểm lệnh ghi
+# chưa rõ kết quả (`blocked-by:  -`: sweep không tự thả), trả 0 để gh_write_once trả 1 và caller đi tiếp. Reason tag ❓, không 🙋: 🙋 là
+# yêu cầu duyệt merge (super-board-approval.py), một chữ `done` sẽ đưa thẻ lên Review. Trả 1 (gh_write_once halt như cũ) khi lệnh không
+# thuộc thẻ nào, thẻ không có trên board, hoặc chính bước chặn hỏng (GitHub sập thật: halt + watchdog là đường đúng).
+block_card_after_failed_write() {
+  local issue="" item="" col title what="" a prev=""
+  if [ "${1:-}" = issue ]; then
+    issue="${3:-}"
+    case "$issue" in ''|*[!0-9]*) return 1 ;; esac
+    item=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -r --argjson n "$issue" '[.items[]? | select(.content.number == $n) | .id][0] // empty' 2>/dev/null) || item=""
+  elif [ "${1:-} ${2:-}" = "project item-edit" ]; then
+    for a in "$@"; do [ "$prev" = --id ] && { item="$a"; break; }; prev="$a"; done
+    [ -n "$item" ] || return 1
+    issue=$(printf '%s' "${PROJECT_ITEMS_JSON:-}" | jq -r --arg id "$item" '[.items[]? | select(.id == $id) | .content.number][0] // empty' 2>/dev/null) || issue=""
+    case "$issue" in ''|*[!0-9]*) return 1 ;; esac
+  else
+    return 1
+  fi
+  [ -n "$item" ] || return 1
+  col=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[]? | select(.content.number == $n) | .status][0] // empty' 2>/dev/null) || col=""
+  title=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[]? | select(.content.number == $n) | .content.title][0] // empty' 2>/dev/null) || title=""
+  prev=""
+  for a in "$@"; do   # lệnh ghi để người kiểm lại; body của comment rút còn dòng đầu
+    [ "$prev" = --body ] && a="${a%%$'\n'*}…"
+    what="${what:+$what }$a"; prev="$a"
+  done
+  log "⚠ GitHub write for #${issue} failed (gh ${what}) — #${issue} ${col:-?} → Blocked, the board keeps running"
+  local SB_CARD_BLOCKING=1   # gh_write_once lồng bên dưới thấy biến này: hỏng thì trả 1, không chặn thẻ lần nữa
+  if ! set_card_status "$item" "Blocked"; then
+    log "✖ could not move #${issue} to Blocked after its failed GitHub write — halting as before"
+    return 1
+  fi
+  if ! gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ❓ GitHub write failed · needs you
+Card:        #${issue}${title:+ ${title}}
+Reason tag:  ❓
+Why blocked: the runner's GitHub write about this card failed and may or may not have been applied: \`gh ${what}\`
+Evidence:    run log ${RUN_MANIFEST:-?} (⚠ GitHub write for #${issue} failed)
+Checked:     the card was moved to Blocked so the board keeps running; no worker is dispatched for it
+What blocks: an uncertain GitHub write the bot cannot verify on its own
+Why I (bot) cannot decide:
+             writing it again blind could post twice or undo a person's change
+To unblock:  [ ] Check on GitHub whether the write above took effect (assignee, label, status, comment) and finish it by hand
+             [ ] Drag #${issue} back to ${col:-the column it came from}
+Owner:       Eric
+Move back:   drag this card to ${col:-its previous column} after the check above
+blocked-by:  -" >/dev/null 2>&1; then
+    log "✖ #${issue} is in Blocked but its blocker comment failed too — halting as before"
+    return 1
+  fi
+  # Tới lần đọc board kế tiếp: dispatch_lane không phóng worker cho thẻ này, cache của tick này thấy nó ở Blocked.
+  CARD_WRITE_BLOCKED="${CARD_WRITE_BLOCKED:-} ${issue}"
+  local cache
+  if cache=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -c --argjson n "$issue" '.items |= map(if .content.number == $n then .status = "Blocked" else . end)' 2>/dev/null) \
+     && [ -n "$cache" ]; then
+    PROJECT_ITEMS_JSON="$cache"
+  else
+    log "⚠ #${issue}: board cache not updated; the next tick reads Blocked from GitHub"
+  fi
+  return 0
 }
 
 PROJECT_NODE_ID=""
@@ -1183,6 +1249,11 @@ dispatch_lane() {
     log "skip dispatch lane=${lane} issue=#${issue} — issue is CLOSED"
     return 0
   fi
+  # 28/10: một lệnh ghi hỏng của thẻ này vừa đưa nó vào Blocked (block_card_after_failed_write, vd mở lại issue ac-open hỏng).
+  case " ${CARD_WRITE_BLOCKED:-} " in *" ${issue} "*)
+    log "skip dispatch lane=${lane} issue=#${issue} — a GitHub write for it failed this tick and the card went to Blocked"
+    return 0 ;;
+  esac
   local card skills_rc=0 skills_report
   card=$(echo "$PROJECT_ITEMS_JSON" | jq -c --argjson n "$issue" --arg lane "$lane" '
     [.items[] | select(.content.number == $n) | {number:$n, status:(.status // "Ready"), labels:(.labels // .content.labels // []), lane:$lane}]')
@@ -1230,7 +1301,13 @@ EOF
   if [ "$lane" = "build" ] && [ -n "$PROJECT_OWNER" ] && [ "${PROJECT_NUMBER:-0}" -gt 0 ]; then
     local build_item_id
     build_item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n and .status == "Ready") | .id][0] // empty' 2>/dev/null || true)
-    [ -z "$build_item_id" ] || set_card_status "$build_item_id" "Building" || true
+    # 28/10: chuyển Building hỏng đưa thẻ vào Blocked (block_card_after_failed_write) → không phóng worker cho thẻ Blocked.
+    if [ -n "$build_item_id" ] && ! set_card_status "$build_item_id" "Building"; then
+      case " ${CARD_WRITE_BLOCKED:-} " in *" ${issue} "*)
+        log "skip dispatch lane=build issue=#${issue} — moving it to Building failed and the card went to Blocked"
+        return 0 ;;
+      esac
+    fi
   fi
   local noop_judge=1 baseline
   case "$lane" in
@@ -1584,9 +1661,18 @@ note_early_death() {
   # session limit also exits 0 (19/10, #94) but prints text or `is_error: true`, so those, and non-zero or missing records, still count.
   case "$(worker_exit_line "$wlog")" in
     *"exit=0 "*) python3 -c 'import json, sys
-last = [l for l in open(sys.argv[1], errors="replace") if l.strip() and not l.startswith("worker_exit: ")][-1]
-r = json.loads(last)
-sys.exit(0 if r.get("type") == "result" and r.get("subtype") == "success" and not r.get("is_error") else 1)' "$wlog" 2>/dev/null && return 0 ;;
+rs = None
+for l in open(sys.argv[1], errors="replace"):
+    if l.startswith("=== dispatch "):
+        rs = None
+    elif l.startswith("{"):
+        try:
+            r = json.loads(l)
+        except ValueError:
+            continue
+        if r.get("type") == "result":
+            rs = r
+sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") else 1)' "$wlog" 2>/dev/null && return 0 ;;
   esac
   # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
   # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
