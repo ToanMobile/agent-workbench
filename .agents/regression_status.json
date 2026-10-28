@@ -6363,6 +6363,10 @@
       "watch_files": [
         ".claude/bin/super-board-scratch-config.sh",
         "tests/super-board/test_scratch_config.sh"
+      ],
+      "stale_since": "2026-10-28 14:14:25",
+      "stale_files": [
+        ".claude/bin/super-board-scratch-config.sh"
       ]
     },
     "REG-SB-NEEDS-DEVICE-01": {
@@ -7401,6 +7405,7 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
+        "tests/super-board/test_heavy_slot.sh",
         "universal-agent-devkit/bin/heavy_slot.py"
       ]
     },
@@ -11538,6 +11543,7 @@
       ],
       "stale_since": "2026-10-27 19:04:46",
       "stale_files": [
+        "universal-agent-devkit/tests/gates/test_gate_stop_reuse_race.sh",
         "universal-agent-devkit/tests/gates/test_multi_session_gate.sh"
       ]
     },
@@ -12545,6 +12551,70 @@
         "universal-agent-devkit/hooks/proof_gate.sh",
         "universal-agent-devkit/tests/gates/test_proof_gate_merge_receipt.sh",
         "tests/super-board/test_merge_gate_proof_receipt.sh"
+      ]
+    },
+    "BUG-20261028-check-cac-task-bi-blocked-nguyen-nhan-la": {
+      "id": "BUG-20261028-check-cac-task-bi-blocked-nguyen-nhan-la",
+      "kind": "bug",
+      "title": "check các task bị blocked nguyên nhân là gì thế fix root cause rồi chuyển task về lại ready",
+      "cause": null,
+      "component": "-",
+      "created_at": "2026-10-28 13:19:25",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-10-28 13:19:25",
+      "sessions": [
+        "e1fbc5f2-a41e-4a09-824f-4b87b4c1e1fd"
+      ],
+      "linked_at": "2026-10-28 14:14:25",
+      "linked_ts": 1793171665.625408,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_branch_rename.sh"
+      ]
+    },
+    "REG-DK-REMOVE-REFLOG-SQUASH-01": {
+      "id": "REG-DK-REMOVE-REFLOG-SQUASH-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "worktree remove: commit chỉ còn trong reflog mà trunk đã có patch (squash) thì gỡ được kèm refs/devkit/discarded; trunk chưa có patch thì vẫn từ chối UNREACHABLE (#421)",
+      "component": "worktree-remove-reflog-squash",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh"
+      ]
+    },
+    "REG-SB-WORKER-WRAP-TERM-01": {
+      "id": "REG-SB-WORKER-WRAP-TERM-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "worker-wrap dừng được worker dù con nuốt mất SIGTERM đầu tiên (TERM tới con trước exec): gửi lại sau 1 s, không treo kill + wait (#489)",
+      "component": "super-board-worker-wrap-term",
+      "command": "bash tests/super-board/test_worker_wrap_term.sh",
+      "watch_files": [
+        ".claude/bin/super-board-worker-wrap.sh",
+        "tests/super-board/test_worker_wrap_term.sh"
+      ]
+    },
+    "REG-SB-CARD-WRITE-BLOCK-01": {
+      "id": "REG-SB-CARD-WRITE-BLOCK-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "gh_write_once: lệnh ghi GitHub của MỘT thẻ hỏng thì thẻ đó vào Blocked kèm comment chặn, board chạy tiếp; bước chặn hỏng hoặc lệnh không thuộc thẻ thì halt 79 như cũ; dispatch không phóng worker cho thẻ vừa bị chặn (28/10)",
+      "component": "super-board-card-write-fail-blocks-card",
+      "command": "bash tests/super-board/test_card_write_fail_blocks_card.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_card_write_fail_blocks_card.sh"
       ]
     }
   },
