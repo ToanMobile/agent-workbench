@@ -14,6 +14,7 @@ DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; PG="$DEVKIT_DIR/bin/push_gate.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"   # never the real ~/.antigravity-pm
+export DEVKIT_PM_HOME_TEST=1   # #605: test-only switch, a fixture pm home under the temp dir counts for push_gate.approved
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }

@@ -19,6 +19,7 @@ trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"; mkdir -p "$HOME/.claude/projects"
 export SB_HEAVY_SLOT_DIR="$TMP/slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"   # biên bản giả dưới $TMP, không bao giờ ~/.antigravity-pm thật
+export DEVKIT_PM_HOME_TEST=1                 # công tắc chỉ cho test: push_gate.approved tính biên bản pm giả trong thư mục tạm
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -91,6 +92,14 @@ pm_task T0703-old "$TMP/d3" "$R3"
 pg approved "$TMP/d3" "main..HEAD"
 if printf '%s' "$OUT" | grep -q "^True"; then ok "D3c: push_gate.approved, auditedHead sau mốc dưới -> duyệt"
 else bad "D3c: đối chứng push_gate.approved: $OUT"; fi
+# D4. cùng biên bản hợp lệ của D3c, nhưng pm home lạ KHÔNG bật công tắc test -> approved() từ chối ở mọi đường push
+OUT="$(DEVKIT_PM_HOME_TEST= python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(*p.approved(sys.argv[2], "main..HEAD"))' "$PG_DIR" "$TMP/d3" 2>&1)"
+if printf '%s' "$OUT" | grep -q "^False" && printf '%s' "$OUT" | grep -qF "ANTIGRAVITY_PM_STATE_HOME lạ"; then ok "D4: pm home lạ, không công tắc test -> approved() từ chối"
+else bad "D4: pm home lạ không công tắc: $OUT"; fi
+# D4b. công tắc bật nhưng pm home không nằm trong thư mục tạm của hệ thống -> vẫn từ chối
+OUT="$(ANTIGRAVITY_PM_STATE_HOME=/nonexistent-agpm-home python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(*p.approved(sys.argv[2], "main..HEAD"))' "$PG_DIR" "$TMP/d3" 2>&1)"
+if printf '%s' "$OUT" | grep -q "^False" && printf '%s' "$OUT" | grep -qF "ANTIGRAVITY_PM_STATE_HOME lạ"; then ok "D4b: công tắc bật, pm home ngoài thư mục tạm -> từ chối"
+else bad "D4b: pm home ngoài thư mục tạm: $OUT"; fi
 
 # H. audited_head đọc verdicts.audit.auditedHead (không có trong notes); giá trị sai khuôn -> lùi về notes
 mk_repo "$TMP/h"; H="$(git rev-parse HEAD)"

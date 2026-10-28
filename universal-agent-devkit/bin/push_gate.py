@@ -510,6 +510,24 @@ def pm_home_overridden():
         return True
 
 
+TEST_TMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
+
+
+def pm_home_test_fixture():
+    """True chỉ cho fixture của test: DEVKIT_PM_HOME_TEST=1 VÀ pm home nằm dưới thư mục tạm của hệ thống (tempfile.gettempdir(), /tmp,
+    /var/folders). Khi đó approved() tính biên bản pm giả; post-fix-gate vẫn coi lượt đó là nới lỏng (không cấp biên nhận).
+    ponytail: agent tự đặt được cả hai trên dòng lệnh — lane git guard chặn gán chúng; nâng lên biên bản do PM server ký nếu thấy lách."""
+    if os.environ.get("DEVKIT_PM_HOME_TEST") != "1":
+        return False
+    try:
+        import tempfile  # noqa: PLC0415
+        home = os.path.realpath(pm_state_home())
+        roots = {os.path.realpath(r) for r in (tempfile.gettempdir(), *TEST_TMP_ROOTS)}
+    except OSError:
+        return False
+    return any(home.startswith(r.rstrip(os.sep) + os.sep) for r in roots if r and r != os.sep)
+
+
 def _task_pattern(task_id):
     return os.path.join(glob.escape(pm_state_home()), "projects", "*", "tasks", task_id, "task.json")
 
@@ -561,6 +579,11 @@ def approved(top, rng):
         m = APPROVED_VALUE.fullmatch(value)
         if not m:
             whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
+            continue
+        # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
+        # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
+        if pm_home_overridden() and not pm_home_test_fixture():
+            whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
             continue
         ok, why = audit_record(top, m.group(1))
         if not ok:
