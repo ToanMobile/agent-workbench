@@ -13,6 +13,13 @@
 # --jobs prints how many tests a run starts at once and exits)
 # bash 3.2 compatible.
 set -u
+# Chuẩn hoá TMPDIR tương đối thành đường dẫn tuyệt đối trước khi đổi thư mục làm việc sang $DK
+if [ -n "${TMPDIR:-}" ]; then
+  case "$TMPDIR" in
+    /*) ;;
+    *) [ -d "$TMPDIR" ] && TMPDIR="$(CDPATH= cd -P -- "$TMPDIR" >/dev/null 2>&1 && pwd -P)" && export TMPDIR ;;
+  esac
+fi
 DK="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DK" || exit 2
 
@@ -131,8 +138,12 @@ JOBS="$(jobs_now)"
 # Not set: no wait. Read once and unset, so no test started below (some run their own copy of this runner) sees it.
 after="${DEVKIT_ALONE_AFTER_FILE:-}"; unset DEVKIT_ALONE_AFTER_FILE
 parent="$PPID"   # whoever started this run (agent-kit): the wait below ends when that process is gone, a SIGKILL leaves no trap to tell us
-out="$(mktemp -d)"
+out="$(mktemp -d "${TMPDIR:-/tmp}/dk-run-XXXXXX" 2>/dev/null)" && [ -n "$out" ] && [ -d "$out" ] \
+  || { echo "run_impacted.sh: mktemp -d failed" >&2; exit 2; }
 trap 'rm -rf "$out"' EXIT
+trap 'rm -rf "$out"; trap - INT EXIT; kill -INT $$' INT
+trap 'rm -rf "$out"; trap - TERM EXIT; kill -TERM $$' TERM
+trap 'rm -rf "$out"; trap - HUP EXIT; kill -HUP $$' HUP
 run_one() { # <test> <out dir>
   local o
   o="$2/$(printf '%s' "$1" | tr '/' '_')"
@@ -148,12 +159,42 @@ run_one() { # <test> <out dir>
   # Trước đó `bash "$1"` trần: ca FIFO của test_gate_robustness.sh kẹt trong open(), runner phía trên mất, hai post-fix-gate.py
   # sống 18h và các gate khác báo BUSY.
   mkdir -p "$o.slots"
+  # #546: cấp TMPDIR riêng đường dẫn ngắn /tmp/dk-XXXXXX (< 25 byte để không chạm trần 104 byte sun_path của AF_UNIX socket trên macOS),
+  # chuyển luôn PYTHONPYCACHEPREFIX vào trong đó để python3 không đẻ __pycache__ làm bẩn cây nguồn khi chạy song song,
+  # kèm shim mktemp cho trường hợp BSD mktemp trên macOS bỏ qua TMPDIR khi gọi mktemp -d trần, rồi dọn sạch ngay sau khi run_bounded.py kết thúc.
+  # Cả $parallel lẫn $alone đều gọi run_one trong bash -c riêng, nên _dk_tdir giữ ở phạm vi worker (tránh local bash 3.2 bị gỡ trước trap EXIT).
   local rc=0 t0=$SECONDS
+  _dk_tdir="$(mktemp -d /tmp/dk-XXXXXX 2>/dev/null)" || _dk_tdir=""
+  case "$_dk_tdir" in
+    /tmp/dk-?*/*|/tmp/dk-) _dk_tdir="" ;;
+    /tmp/dk-?*) [ -d "$_dk_tdir" ] && [ ! -L "$_dk_tdir" ] || _dk_tdir="" ;;
+    *) _dk_tdir="" ;;
+  esac
+  _dk_clean_tdir() {
+    case "${_dk_tdir:-}" in
+      /tmp/dk-?*/*|/tmp/dk-|'') return 0 ;;
+      /tmp/dk-?*) [ -d "$_dk_tdir" ] && [ ! -L "$_dk_tdir" ] || return 0 ;;
+      *) return 0 ;;
+    esac
+    rm -rf "$_dk_tdir" 2>/dev/null || {
+      chmod -R u+rwX "$_dk_tdir" 2>/dev/null
+      chflags -R nouchg "$_dk_tdir" 2>/dev/null
+      chmod -R u+rwX "$_dk_tdir" 2>/dev/null
+      rm -rf "$_dk_tdir" 2>/dev/null || true
+    }
+  }
+  trap '_dk_clean_tdir' EXIT
+  trap '_dk_clean_tdir; trap - INT EXIT; kill -INT $$' INT
+  trap '_dk_clean_tdir; trap - TERM EXIT; kill -TERM $$' TERM
+  trap '_dk_clean_tdir; trap - HUP EXIT; kill -HUP $$' HUP
   env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
-       -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC \
+       -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM \
+       ${_dk_tdir:+TMPDIR="$_dk_tdir" PYTHONPYCACHEPREFIX="$_dk_tdir/pyc" PATH="$2/mkbin:$PATH"} \
        SB_HEAVY_SLOT_DIR="$o.slots" \
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
        bash "$1" >"$o.log" 2>&1 || rc=$?
+  _dk_clean_tdir
+  trap - EXIT INT TERM HUP
   echo "$rc" >"$o.rc"
   # B2 (audit 25/10): kết quả ghi NGAY khi test xong — một TIMEOUT của cả suite (gate giết nhóm) không còn xoá PASS đã có
   [ -n "${DEVKIT_PTC:-}" ] && python3 -I "$DEVKIT_PTC" record "$2" "$1" "$rc" >"$o.ptc" 2>&1
@@ -164,6 +205,83 @@ run_one() { # <test> <out dir>
   return 0
 }
 export -f run_one
+# #546: BSD mktemp trên macOS dùng _CS_DARWIN_USER_TEMP_DIR thay vì TMPDIR khi gọi mktemp / mktemp -d / mktemp -t không kèm đường dẫn;
+# shim đặt trong $out/mkbin chuyển các lời gọi đó vào $TMPDIR tuyệt đối của bài test và chặn đệ quy vô hạn khi runner chạy lồng nhau.
+case "${DEVKIT_REAL_MKTEMP:-}" in
+  ""|*/mkbin/mktemp) DEVKIT_REAL_MKTEMP="$(PATH=/usr/bin:/bin command -v mktemp || echo /usr/bin/mktemp)" ;;
+esac
+if [ ! -f "$DEVKIT_REAL_MKTEMP" ] || [ ! -x "$DEVKIT_REAL_MKTEMP" ]; then
+  DEVKIT_REAL_MKTEMP="$(PATH=/usr/bin:/bin command -v mktemp || echo /usr/bin/mktemp)"
+fi
+export DEVKIT_REAL_MKTEMP
+mkdir -p "$out/mkbin"
+cat >"$out/mkbin/mktemp" <<'SH'
+#!/bin/sh
+unset IFS
+real="${DEVKIT_REAL_MKTEMP:-/usr/bin/mktemp}"
+if [ "${_DEVKIT_IN_MKTEMP_SHIM:-}" = 1 ] || [ "$real" -ef "$0" ] || [ ! -f "$real" ] || [ ! -x "$real" ]; then
+  for cand in /usr/bin/mktemp /bin/mktemp; do
+    if [ -f "$cand" ] && [ -x "$cand" ] && [ ! "$cand" -ef "$0" ]; then
+      real="$cand"
+      break
+    fi
+  done
+fi
+if [ "${_DEVKIT_IN_MKTEMP_SHIM:-}" = 1 ]; then
+  exec "$real" "$@"
+fi
+export _DEVKIT_IN_MKTEMP_SHIM=1
+if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
+  flags=""; prefix=""; ok=1; saw_t=0
+  for a in "$@"; do
+    if [ "$saw_t" = 1 ]; then
+      case "$a" in ""|*/*|-*) ok=0; break ;; *) prefix="$a"; saw_t=2 ;; esac
+    else
+      case "$a" in
+        -?*)
+          rest="${a#-}"
+          while [ -n "$rest" ]; do
+            ch="${rest%"${rest#?}"}"
+            rest="${rest#?}"
+            case "$ch" in
+              d|q|u) flags="$flags -$ch" ;;
+              t)
+                if [ "$saw_t" != 0 ]; then ok=0; break; fi
+                if [ -n "$rest" ]; then
+                  case "$rest" in */*|-*) ok=0 ;; *) prefix="$rest"; saw_t=2 ;; esac
+                  rest=""
+                else
+                  saw_t=1
+                fi
+                ;;
+              *) ok=0; break ;;
+            esac
+          done
+          [ "$ok" = 1 ] || break
+          ;;
+        *) ok=0; break ;;
+      esac
+    fi
+  done
+  if [ "$ok" = 1 ] && [ "$saw_t" != 1 ]; then
+    tbase="$TMPDIR"
+    case "$tbase" in
+      /*) ;;
+      *) tbase="$(CDPATH= cd -P -- "$tbase" >/dev/null 2>&1 && pwd -P || printf '%s/%s' "$(pwd -P)" "$tbase")" ;;
+    esac
+    while [ "${tbase%/}" != "$tbase" ] && [ -n "${tbase%/}" ]; do
+      tbase="${tbase%/}"
+    done
+    case "${prefix:-tmp}" in
+      *XXX) tpl="${prefix:-tmp}" ;;
+      *) tpl="${prefix:-tmp}.XXXXXXXXXX" ;;
+    esac
+    exec "$real" $flags "${tbase:-/}/$tpl"
+  fi
+fi
+exec "$real" "$@"
+SH
+chmod +x "$out/mkbin/mktemp"
 # helper vắng (bản kit cũ) hay không có python3: chạy trần như trước, không chặn cả lượt test
 DEVKIT_RUN_BOUNDED=""
 [ -f "$DK/tests/lib/run_bounded.py" ] && command -v python3 >/dev/null 2>&1 && DEVKIT_RUN_BOUNDED="$DK/tests/lib/run_bounded.py"
@@ -210,7 +328,7 @@ w=0; while [ -n "$after" ] && [ -n "$alone" ] && [ ! -e "$after" ] && [ "$w" -lt
   if [ -n "$now" ] && [ "$now" != "$parent" ]; then echo "run_impacted.sh: the process that started this run ($parent) is gone: stopping, the timing tests are not run" >&2; exit 1; fi
   sleep 1; w=$((w + 1))
 done
-for t in $alone; do run_one "$t" "$out"; done
+for t in $alone; do bash -c 'run_one "$1" "$2"' _ "$t" "$out"; done
 rc=0
 for t in $selected; do
   [ -f "$t" ] || continue
