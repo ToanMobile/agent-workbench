@@ -1200,7 +1200,9 @@ preflight_gate() {
       elif ($c | type) == "string" and ($c | test("^\\s*[-+]?[0-9]+\\s*$")) then ($c | gsub("\\s"; "") | tonumber)
       else 400 end
     | if . <= 0 then 0 elif . > 1000000000 then 1000000000 else . end' "$CONFIG_PATH" 2>/dev/null) || cap=400
-  out=$(bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" --cap "${cap:-400}" 2>>"$RUN_MANIFEST") || rc=$?
+  # #581: a draft PR idle longer than preflight.stale_draft_days (default 3) is no file overlap.
+  local stale; stale=$(jq -r '(.preflight.stale_draft_days // 3) | if type == "number" and . >= 0 and . <= 99999 then floor else 3 end' "$CONFIG_PATH" 2>/dev/null) || stale=3
+  out=$(SB_STALE_DRAFT_DAYS="${stale:-3}" bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" --cap "${cap:-400}" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$inf"
   if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
   if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
