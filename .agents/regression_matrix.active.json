@@ -1903,6 +1903,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-runner-mq-restart-599",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_mq_restart.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-MQ-RESTART-599-01",
+          "name": "#599: runner restart giữa chừng khi bộ gom nền còn chạy không bật bộ gom thứ hai (đọc lại .mq.pid); .mq.rc do runner cũ để lại vẫn được runner mới đọc và áp 79/9 (halt), mã khác chỉ ghi log",
+          "command": "bash tests/super-board/test_runner_mq_restart.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
