@@ -628,6 +628,52 @@ def _norm_agent(v):
     return v.strip().casefold()
 
 
+def _trailer_cross_review(paths: list, project_root) -> dict:
+    """{path: task_id} — nguồn duyệt chéo thứ hai (#605 lane E): commit MỚI NHẤT của nhánh (base..HEAD) chạm file, có trailer
+    `Test-approved-by: antigravity <task-id>` mà push_gate.approved công nhận (biên bản audit pass của antigravity-pm, ngoài repo),
+    và nội dung hiện tại của file đúng bằng blob ở commit đó (đổi sau audit → không duyệt). Trailer đi theo commit nên tới được
+    scratch worktree của merge gate, nơi .claude/audit-gate/ không được chép. base: BASE_REF (đã là merge-base khi có --diff),
+    HEAD → merge-base(nhánh đích, HEAD). Mọi lỗi git → không duyệt (fail closed).
+    ponytail: --since trên chính nhánh đích không có range ở đây (base = HEAD) → không duyệt; nối args.since vào nếu cần."""
+    if not paths:
+        return {}
+    try:
+        root = str(get_repo_root())
+        prefix = get_project_prefix()
+        base = BASE_REF if BASE_REF and BASE_REF != "HEAD" else ""
+        if not base:
+            trunk_ref, _name = task_trunk(project_root)
+            if not trunk_ref:
+                return {}
+            mb = subprocess.run(["git", "-C", root, "merge-base", trunk_ref, "HEAD"], capture_output=True, text=True, timeout=30)
+            base = mb.stdout.strip() if mb.returncode == 0 else ""
+        if not base:
+            return {}
+        out = {}
+        for f in paths:
+            res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
+                                  "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{base}..HEAD", "--", prefix + f],
+                                 capture_output=True, text=True, timeout=30)
+            if res.returncode != 0:
+                continue
+            for sha in res.stdout.split():            # mới nhất trước: commit đầu tiên được công nhận quyết định
+                ok, note = _push_gate().approved(root, f"{sha}^!")
+                if not ok:
+                    continue
+                m = re.search(r"antigravity\s+(\S+)", note or "")
+                blob = subprocess.run(["git", "-C", root, "rev-parse", "--verify", "-q", f"{sha}:{prefix}{f}"],
+                                      capture_output=True, text=True, timeout=30)
+                cur = subprocess.run(["git", "-C", root, "hash-object", "--", str(Path(project_root) / f)],
+                                     capture_output=True, text=True, timeout=30)
+                if m and blob.returncode == 0 and cur.returncode == 0 and blob.stdout.strip() == cur.stdout.strip():
+                    out[f] = m.group(1)
+                break
+        return out
+    except (OSError, subprocess.SubprocessError, RuntimeError, ImportError) as e:
+        print(f"post-fix-gate: trailer Test-approved-by không đọc được ({type(e).__name__}); không duyệt", file=sys.stderr)
+        return {}
+
+
 def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> tuple:
     """(still_blocking, approved): an edited existing test approved by the user's answer or by a CROSS-REVIEW (#605).
     Cross-review: .claude/audit-gate/approved_tests.json = {"approvals": [{path, sha256, reviewer, author, task_id, reason}]},
@@ -694,6 +740,9 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                 continue
             approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # sha256 gắn nội dung: mtime không quyết định
             CROSS_REVIEW[f] = (e["reviewer"].strip(), e["task_id"].strip())
+    for f, tid in _trailer_cross_review([f for f in mtimes if f not in CROSS_REVIEW], root).items():
+        approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # nội dung = blob đã audit: mtime không quyết định
+        CROSS_REVIEW[f] = ("antigravity", tid)
     folders = []
     if transcript:
         folders.append(Path(transcript).parent)
@@ -1711,8 +1760,9 @@ def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
     --full once instead of twice. It refuses a dirty tree or a base not in the tree itself; no board config or script = the old behaviour."""
     # OCR 24/10: not a receipt for what this run did not prove: no tree taken before the run, or a run that relaxed a check (`relaxing`: the
     # --allow-no-tests / --allow-orphan-tests / --auto-approve-tests flags it used, DEVKIT_AUTO_APPROVE_TESTS=1 as the last) that the board's
-    # verify line does not carry itself — the merge gate runs that line, so a flag it carries relaxes both runs the same way (this repo's own
-    # line carries --auto-approve-tests: refusing every relaxing run would never write a receipt).
+    # verify line does not carry itself — the merge gate runs that line, so a flag it carries relaxes both runs the same way. Since #605
+    # --auto-approve-tests approves nothing (self-approval) and this repo's verify line no longer carries it; an edited test reaches the merge
+    # gate's scratch only through a committed `Test-approved-by: antigravity <task-id>` trailer.
     # ponytail: a custom --matrix is not compared with the verify command's (it has none); compare when a board's gate line names its matrix.
     if not diff_ref or not diff_ref.startswith("origin/") or not tested_tree:
         return

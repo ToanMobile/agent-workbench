@@ -429,8 +429,20 @@ def audit_record(top, task_id):
     antigravity-pm keeps its task state OUTSIDE the repository (an agent cannot edit it from the work tree):
     ${ANTIGRAVITY_PM_STATE_HOME:-~/.antigravity-pm}/projects/<name>-<hash>/tasks/<id>/task.json, verdicts.audit.verdict
     (mcp-servers/antigravity-pm-mcp src/config.js, src/tasks.js recordVerdict). The task's `project` must be this repository
-    (or a directory in it): task ids restart at T0001 in every project."""
-    home = os.path.expanduser(os.environ.get("ANTIGRAVITY_PM_STATE_HOME") or os.path.join("~", ".antigravity-pm"))
+    (or a directory in it): task ids restart at T0001 in every project. In a linked worktree (a session's or the merge gate's
+    scratch) `top` is that worktree while the task names the main checkout: the main checkout of the SAME repository (the
+    parent of `git rev-parse --git-common-dir` when that is a `.git` dir) counts too (#605 lane E); git error → top only."""
+    roots = [top]
+    try:
+        rc, common = git(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    except (OSError, subprocess.SubprocessError):
+        rc, common = 1, ""
+    common = common.strip() if rc == 0 else ""
+    if common and os.path.basename(common) == ".git":
+        main_root = os.path.dirname(common)
+        if not _inside(main_root, top):
+            roots.append(main_root)
+    home =os.path.expanduser(os.environ.get("ANTIGRAVITY_PM_STATE_HOME") or os.path.join("~", ".antigravity-pm"))
     pattern = os.path.join(glob.escape(home), "projects", "*", "tasks", task_id, "task.json")
     verdicts = []
     for path in sorted(glob.glob(pattern)):
@@ -441,7 +453,7 @@ def audit_record(top, task_id):
                 task = json.load(f)
         except (OSError, ValueError, RecursionError):
             continue
-        if not isinstance(task, dict) or task.get("id") != task_id or not _inside(task.get("project"), top):
+        if not isinstance(task, dict) or task.get("id") != task_id or not any(_inside(task.get("project"), r) for r in roots):
             continue
         audit = (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
         verdict = audit.get("verdict") if isinstance(audit, dict) else None

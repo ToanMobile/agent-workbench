@@ -117,4 +117,70 @@ run_gate --brief
 if [ "$RC" = 2 ] && has "cần duyệt lại" && has "$SHA"; then ok "12: --brief vẫn in cần duyệt lại + sha"
 else bad "12: --brief: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
+# --- #605 lane E: trailer `Test-approved-by: antigravity <task-id>` là nguồn duyệt chéo thứ hai (đi theo commit, tới được
+# scratch worktree của merge gate, nơi .claude/audit-gate/ không được chép). Biên bản audit antigravity-pm giả qua
+# ANTIGRAVITY_PM_STATE_HOME (ngoài repo, như push_gate.audit_record đọc). Mỗi ca một thư mục mới (mktemp dọn cả $TMP).
+export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
+pm_task() {   # pm_task <task-id> <project> <verdict>
+  mkdir -p "$TMP/pm/projects/p-$1/tasks/$1"
+  printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"%s","round":1}}}\n' "$1" "$2" "$3" \
+    > "$TMP/pm/projects/p-$1/tasks/$1/task.json"
+}
+mk_trailer_repo() {   # mk_trailer_repo <dir mới>: main có test cũ; nhánh feat sửa test trong commit có trailer <task-id>
+  mkdir -p "$1/src" "$1/tests" && cd "$1" || exit 1
+  git init -q -b main . && git config user.email t@t && git config user.name t && git config commit.gpgsign false
+  printf '.claude/audit-gate/\n' > .gitignore
+  mkdir -p .claude && echo '{"DEVKIT_IMPACT_TEST_ENABLED":"1","DEVKIT_REGRESSION_TEST_ENABLED":"1"}' > .claude/config.json
+  cp "$R/matrix.json" matrix.json
+  echo 'fun ok()=1' > src/Core.kt
+  printf '#!/bin/sh\ntrue\n' > tests/test_old.sh
+  git add -A && git commit -qm init
+  git checkout -q -b feat
+  printf '#!/bin/sh\nexit 0\n' > tests/test_old.sh; echo 'fun ok()=2' > src/Core.kt
+  git commit -qam "đổi test + code" -m "Test-approved-by: antigravity $2"
+}
+run_at() {   # run_at <dir>: gate kiểm merge-base(main, HEAD) → cây, không file duyệt, không transcript
+  OUT="$(cd "$1" && CLAUDE_PROJECT_DIR="$1" python3 "$GATE" --matrix "$1/matrix.json" --lang vi --run-tests --diff main 2>&1)"; RC=$?
+}
+
+# 13. (a) commit có trailer + audit pass + file không đổi sau commit -> exit 0, duyệt chéo bởi antigravity, in task id
+mk_trailer_repo "$TMP/t13" T0613-cross; pm_task T0613-cross "$TMP/t13" pass
+run_at "$TMP/t13"
+if [ "$RC" = 0 ] && has "duyệt chéo bởi antigravity" && has "T0613-cross"; then ok "13: trailer + audit pass + file không đổi -> exit 0"
+else bad "13: trailer + audit pass: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 14. (b) audit chưa pass -> exit 2
+mk_trailer_repo "$TMP/t14" T0614-cross; pm_task T0614-cross "$TMP/t14" fail
+run_at "$TMP/t14"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "14: audit verdict fail -> exit 2"
+else bad "14: audit fail: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 15. (c) file đổi sau commit có trailer (nội dung khác blob đã audit) -> exit 2
+mk_trailer_repo "$TMP/t15" T0615-cross; pm_task T0615-cross "$TMP/t15" pass
+printf '#!/bin/sh\nexit 0 # sau audit\n' > "$TMP/t15/tests/test_old.sh"
+run_at "$TMP/t15"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "15: file đổi sau commit trailer -> exit 2"
+else bad "15: file đổi sau trailer: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 16. (d) gate chạy trong linked worktree, task.project = checkout chính của cùng repo -> exit 0
+mk_trailer_repo "$TMP/t16" T0616-cross; pm_task T0616-cross "$TMP/t16" pass
+git -C "$TMP/t16" checkout -q main && git -C "$TMP/t16" worktree add -q "$TMP/t16-wt" feat
+run_at "$TMP/t16-wt"
+if [ "$RC" = 0 ] && has "duyệt chéo bởi antigravity"; then ok "16: linked worktree, task.project = checkout chính -> exit 0"
+else bad "16: linked worktree: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 17. (e) task.project = repo khác -> exit 2
+mkdir -p "$TMP/other-repo"
+mk_trailer_repo "$TMP/t17" T0617-cross; pm_task T0617-cross "$TMP/other-repo" pass
+run_at "$TMP/t17"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "17: task.project = repo khác -> exit 2"
+else bad "17: task.project repo khác: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 18. (e') linked worktree, task.project = repo khác -> exit 2 (nới về checkout chính chỉ cho CÙNG repo)
+mk_trailer_repo "$TMP/t18" T0618-cross; pm_task T0618-cross "$TMP/other-repo" pass
+git -C "$TMP/t18" checkout -q main && git -C "$TMP/t18" worktree add -q "$TMP/t18-wt" feat
+run_at "$TMP/t18-wt"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "18: linked worktree, task.project = repo khác -> exit 2"
+else bad "18: linked worktree repo khác: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }
