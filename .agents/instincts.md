@@ -726,3 +726,11 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa & Cách fix:** Gộp commit lane vào nhánh PR bằng git merge --no-ff &lt;sha lane> (đã lỡ cherry-pick thì git merge -s ours &lt;sha lane> để ghi nhận), rồi agent-kit worktree remove ngay, trước lần Stop kế tiếp; hook đã tự gộp main vào lane thì git merge --abort trong worktree lane trước.
 - **Lệnh kiểm tra:** `agent-kit worktree remove <worktree lane> trả exit 0 ngay sau khi gộp`
 - **Nguồn:** phiên 31d7d633, issue #427 (6 lane theo file, 26/10)
+
+---
+
+### [INSTINCT-085] Dem dong reflog so voi log -g: dong null-oid bi bo qua
+- **Ngày phát hiện:** 2026-10-28
+- **Hiện tượng lỗi:** Dem dong reflog so voi log -g: dong null-oid bi bo qua
+- **Nguyên nhân:** branch -m ghi dong co oid moi toan so 0 vao logs/HEAD; log -g bo qua dong do nen so dong file lon hon so muc va worktree.py coi reflog khong doc duoc, remove bao UNREACHABLE oan
+- **Quy tắc phòng ngừa & Cách fix:** Chi loai dung dong co oid moi bang null 0x40 hoac 0x64; dong hong hoac cat cut van dem de fail closed; test co ca branch -m va ca dong hong
