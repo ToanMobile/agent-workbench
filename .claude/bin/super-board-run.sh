@@ -37,6 +37,7 @@ RUNNER_BORN=$(date +%s)
 SB_WORKER_WRAP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-worker-wrap.sh"
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
 SB_APPROVED_HEAD_JQ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-approved-head.jq"   # #605: chung với merge-queue
+SB_AUDIT_CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-audit-check.py"          # #605: task_id ↔ biên bản audit
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
 # của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
 gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
@@ -1113,6 +1114,12 @@ EOF
   verdict=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r -f "$SB_APPROVED_HEAD_JQ" 2>/dev/null) || return 1
   IFS=$'\t' read -r vstate approved vwhy <<<"$verdict" || true
   [ "$vstate" = ok ] && [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
+  # #605 (audit T0066 vòng 2): approved-by chỉ tính khi task_id có audit pass của antigravity-pm với auditedHead == head.
+  case "$vwhy" in
+    owner) ;;
+    task:?*) python3 "$SB_AUDIT_CHECK" --top "${REPO_ROOT:-.}" "${vwhy#task:}" "$head" 2>/dev/null || return 1 ;;
+    *) return 1 ;;
+  esac
   printf '%s %s' "$pr" "$head"
 }
 

@@ -78,5 +78,54 @@ check 0 'for i in 1 2; do
   gh issue comment $i --body "[builder] ok"
 done'
 
+echo "C. (#605 audit T0066 vòng 2) các đường lách đã thực nghiệm: chặn"
+check 2 'gh issue comment 7 -bdone'
+check 2 "gh pr comment 5 -b'approved-head:$SHA'"
+check 2 'gh pr comment 5 -Fbare.md'
+check 2 'gh pr comment 5 -Fmissing.md'
+check 2 'gh pr -R o/r comment 5 --body done'
+check 2 'gh pr comment 5 -R o/r --body done'
+check 2 'gh pr --repo=o/r comment 5 --body done'
+check 2 'gh issue --repo o/r comment 7 -b done'
+check 2 'gh --hostname github.com issue comment 7 --body done'
+check 2 'gh -H github.com pr comment 5 --body done'
+check 2 'gh api --hostname github.com repos/o/r/issues/7/comments -f body=done'
+check 2 'gh api repos/o/r/issues/7/comments -Fbody=@bare.md'
+check 2 "gh api graphql -f query='mutation { addComment(input:{subjectId:\"I_1\", body:\"done\"}) { clientMutationId } }'"
+check 2 "gh api graphql -f query='mutation { addComment(input:{subjectId:\"I_1\", body:\"[reviewer] ok\\napproved-head:$SHA\"}) { clientMutationId } }'"
+check 2 "gh api graphql -f query='mutation(\$b:String!) { addComment(input:{subjectId:\"I_1\", body:\$b}) { clientMutationId } }' -f b=done"
+check 2 "gh api graphql -F query=@missing.graphql"
+check 2 "gh api graphql -f query='mutation { addPullRequestReviewComment(input:{pullRequestId:\"P_1\", body:\"done\"}) { clientMutationId } }'"
+check 2 "gh api graphql -f query=\"\$Q\""
+check 2 "python3 -c \"import subprocess; subprocess.run(['gh','issue','comment','7','--body','done'])\""
+check 2 "python3 -c \"import subprocess; subprocess.run('gh pr comment 5 --body approved-head:$SHA', shell=True)\""
+check 2 "node -e \"require('child_process').execSync('gh issue comment 7 -b done')\""
+check 2 "python3 -c \"import os; os.system('gh pr comment 5 --body-file bare.md')\""
+
+echo "D. lệnh gh / interpreter bình thường: không chặn oan"
+check 0 'gh pr -R o/r comment 5 --body "[builder] ok"'
+check 0 'gh --hostname github.com pr view 5'
+check 0 "gh api graphql -f query='query { viewer { login } }'"
+check 0 "gh api graphql -f query='mutation { addComment(input:{subjectId:\"I_1\", body:\"[reviewer] ok\"}) { clientMutationId } }'"
+check 0 "python3 -c \"import subprocess; subprocess.run(['gh','pr','view','5'])\""
+check 0 "python3 -c \"import subprocess; subprocess.run(['gh','issue','comment','7','--body','[builder] ok'])\""
+check 0 "python3 -c \"print('done')\""
+
+echo "E. ANTIGRAVITY_PM_STATE_HOME chỉ dành cho test: agent tự đặt trên dòng lệnh thì chặn"
+FRAG='chỉ dành cho test'
+check 2 'ANTIGRAVITY_PM_STATE_HOME=/tmp/fake python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief'
+check 2 'export ANTIGRAVITY_PM_STATE_HOME=/tmp/fake'
+check 2 'ANTIGRAVITY_PM_STATE_HOME=/tmp/fake; export ANTIGRAVITY_PM_STATE_HOME'
+check 2 'export ANTIGRAVITY_PM_STATE_HOME'
+check 2 'env ANTIGRAVITY_PM_STATE_HOME=/tmp/fake agent-kit integrate'
+check 2 'bash -c "ANTIGRAVITY_PM_STATE_HOME=/tmp/fake git push origin feat"'
+check 2 'DEVKIT_PM_HOME_TEST=1 python3 .agents/devkit/bin/push_gate.py'
+check 2 'export DEVKIT_PM_HOME_TEST=1'
+check 2 'export DEVKIT_PM_HOME_TEST'
+check 2 'env DEVKIT_PM_HOME_TEST=1 git push origin feat'
+check 2 'bash -c "DEVKIT_PM_HOME_TEST=1 agent-kit integrate"'
+check 0 'bash universal-agent-devkit/tests/gates/test_push_gate.sh'
+check 0 'python3 tests/super-board/test_approval_cross_review.py'
+
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $FAILS case(s)"; exit 1; fi
 echo "PASS"
