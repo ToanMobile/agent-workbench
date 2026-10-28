@@ -268,8 +268,24 @@ for sw in 1 ''; do
       && ok "codex lane (SB_MERGE_QUEUE='$sw', $cfg): old merge gate step, never the queue" || fail "codex lane entered the queue for SB_MERGE_QUEUE='$sw' $cfg"
   done
 done
-grep -qE "Popen\(command,.*env=.*SB_MERGE_QUEUE.*'0'" "${SB_TEST_CODEX_LANE:-$ROOT/.claude/bin/super-board-codex-lane.sh}" \
-  && ok "codex exec is launched with SB_MERGE_QUEUE=0 (structure check: the gate lets the Codex reviewer merge)" \
-  || fail "codex exec not launched with SB_MERGE_QUEUE=0: the gate would answer exit 13 to the Codex reviewer"
+# #531 AC1: the env codex exec gets, from the production lane_env (not a copy): review keeps SB_MERGE_QUEUE=0 (it merges via the gate and nothing
+# drains the queue for it); build/qa (usage fallback on a queue-enabled claude-p board) pass the board's value through.
+lane_env_of() {   # lane_env_of <lane> <SB_MERGE_QUEUE or ''>
+  python3 - "${SB_TEST_CODEX_LANE:-$ROOT/.claude/bin/super-board-codex-lane.sh}" "$1" "$2" <<'PY'
+import ast, sys
+src = open(sys.argv[1], encoding='utf-8').read()
+tree = ast.parse(src.split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0])
+fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'lane_env')
+ns = {}
+exec(compile(ast.Module(body=[fn], type_ignores=[]), 'codex-lane', 'exec'), ns)
+print(ns['lane_env'](sys.argv[2], {'SB_MERGE_QUEUE': sys.argv[3]} if sys.argv[3] else {}).get('SB_MERGE_QUEUE', 'unset'))
+PY
+}
+for pair in 'review 1:0' 'review :0' 'build 1:1' 'qa 1:1' 'build :unset'; do
+  lane=${pair%% *}; rest=${pair#* }; sw=${rest%%:*}; want=${rest##*:}
+  got=$(lane_env_of "$lane" "$sw")
+  [ "$got" = "$want" ] && ok "codex exec env ($lane, SB_MERGE_QUEUE='$sw'): SB_MERGE_QUEUE=$got" \
+    || fail "codex exec env ($lane, SB_MERGE_QUEUE='$sw'): SB_MERGE_QUEUE=$got, want $want"
+done
 
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }

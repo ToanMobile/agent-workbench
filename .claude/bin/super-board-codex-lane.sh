@@ -76,6 +76,11 @@ if not explicit and config.get('usage_fallback', 'none') != 'codex':
     fail(f'Codex fallback refused: usage_fallback is not "codex" in {config_path}; pass --codex for an explicit Codex run.', 78)
 
 column = card['status']
+# #531: only the review lane merges, and nothing drains the merge queue for an explicit `run --codex` (codex-wave), so the Codex reviewer
+# merges through the gate itself and `codex exec` runs with SB_MERGE_QUEUE=0 there (else the gate answers 13). A build/qa lane (the usage
+# fallback on a claude-p board) never merges: it keeps the board's SB_MERGE_QUEUE, so a queue-enabled board stays queue-enabled.
+def lane_env(lane, environ):
+    return {**environ, 'SB_MERGE_QUEUE': '0'} if lane == 'review' else dict(environ)
 def result(status, detail):
     print(json.dumps({'status': status, 'column': column, 'detail': detail}))
 
@@ -140,7 +145,7 @@ elif args.lane == 'qa' and card['status'] == 'Ready':
     prompt += 'This qa-labelled Ready card skips Building: move Ready → QA and create the issue branch from the base; test the existing product per run.md qa cards.\n'
 elif args.lane == 'review':
     # Lane Codex (`run --codex`) không có ai rút merge queue (chỉ runner claude-p gọi merge-queue.sh mỗi tick): luôn tự merge qua gate,
-    # và `codex exec` chạy với SB_MERGE_QUEUE=0 bên dưới để gate không trả 13 (audit Antigravity 26/10 #1).
+    # và `codex exec` chạy với SB_MERGE_QUEUE=0 (lane_env) để gate không trả 13 (audit Antigravity 26/10 #1).
     prompt += '''The owner explicitly chose run --codex: you may review and own the merge. First load the latest <!-- super-review:report -->; grade prior R-ids fixed/not fixed/no longer applies, bounce any not fixed and edit the same report in place. Form hypotheses from the issue AC and diff before reading the Builder narrative.
 Rerun the Tester's tests. When truth_gate triggers, apply super-review's fixed Adversarial mode brief inline in two distinct passes (code-grounder and historian); collect evidence and aggregate confidence against truth_threshold. Over-engineering is Should fix, never Blocker alone and never lowers confidence. Missing evidence fails closed.
 '''
@@ -202,7 +207,7 @@ with tempfile.TemporaryDirectory(prefix='super-board-codex-') as temporary:
     if model and model.strip():
         command[2:2] = ['-m', model]
     try:
-        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=sys.stderr, text=True, env={**os.environ, 'SB_MERGE_QUEUE': '0'})
+        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=sys.stderr, text=True, env=lane_env(args.lane, os.environ))
         child.communicate(prompt)
         require_verification_ready()
         if child.returncode:

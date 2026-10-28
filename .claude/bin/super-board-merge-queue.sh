@@ -133,6 +133,16 @@ ROUTE_ROWS=""
 card_of() { printf '%s\n' "$ROUTE_ROWS" | awk -v p="$1" '$2 == p {print $4; exit}' | sed -nE 's/^issue-([0-9]+)-.*/\1/p'; }
 head_of() { printf '%s\n' "$ROUTE_ROWS" | awk -v p="$1" '$2 == p {print $3; exit}'; }
 issue_json() { python3 "$GITHUB_READ" --kind issue -- issue view "$1" ${REPO:+--repo "$REPO"} --json number,title,body,labels,state; }
+unproven_ac() {   # unproven_ac <PR> <issue>: in các dòng AC chưa tick của khối sb:ac trong body PR (rỗng = đủ hoặc PR không có khối); 79 đi thẳng lên
+  local body rc=0 br
+  body=$(python3 "$GITHUB_READ" --kind body -- pr view "$1" ${REPO:+--repo "$REPO"} --json body,headRefOid) || return $?
+  br=$(printf '%s\n' "$ROUTE_ROWS" | awk -v p="$1" '$2 == p {print $4; exit}')
+  printf '%s' "$body" | jq -r '.body' > "$QDIR/ac-pr-$1.md"
+  python3 "$HERE/super-board-ac-check.py" --pr-body "$QDIR/ac-pr-$1.md" --msg /dev/null --branch "$br" | jq -r '(.unticked // [])[] | "- " + .' || rc=$?
+  rm -f "$QDIR/ac-pr-$1.md"
+  return $rc
+}
+reopen_issue() { [ "$2" = OPEN ] || gh_w issue reopen "$1" ${REPO:+--repo "$REPO"} || true; }   # reopen_issue <issue> <state>
 card_move() {   # card_move <issue> <Status>: 79 dừng cả lượt; lỗi khác log rồi trả 1 (nhãn giữ lại, lượt sau route lại)
   local rc=0
   bash "$CARD" --config "$CONFIG" move "$1" "$2" >/dev/null || rc=$?
@@ -258,6 +268,20 @@ route_one() {
         ij=$(issue_json "$k") || exit $?
         if printf '%s' "$ij" | jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' >/dev/null; then
           say "PR #${p} merged; card #${k} carries ac-open: left open (the gate moved it to Ready)"
+        elif unticked=$(unproven_ac "$p" "$k"); urc=$?; [ "$urc" -eq 79 ] && exit 79; [ "$urc" -ne 0 ]; then
+          # #531 R5: an ac-check failure other than 79 fails this PR only (retried next pass), never the whole pass.
+          say "PR #${p} merged; card #${k}: ac-check failed (exit ${urc}), retry next pass"; ok=1
+        elif [ -n "$unticked" ]; then
+          # #531: the gate labels ac-open only after the merge and only warns when that fails; an unticked sb:ac line is the proof gap itself.
+          say "PR #${p} merged; card #${k}: sb:ac still has unticked line(s): left open, labelled ac-open"
+          [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⏳ merged ${msha} · PR #${p}, AC chưa chứng minh hết — thẻ ở lại
+❌ Chưa chứng minh:
+${unticked}
+Next: PR sau của thẻ chứng minh các dòng còn lại trong khối sb:ac" || true
+          reopen_issue "$k" "$(printf '%s' "$ij" | jq -r '.state // "OPEN"')"
+          # #531 R4: the label goes last — a retry that finds it takes the first branch and would never re-run card_move.
+          card_move "$k" Ready || ok=1
+          [ "$ok" -ne 0 ] || add_label "$k" ac-open || ok=1
         else
           # Comment một lần (lượt route đầu); `Closes #K` thường đã làm GitHub đóng issue lúc merge, nên chỉ đóng khi còn mở.
           [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ✅ merged ${msha} · PR #${p}

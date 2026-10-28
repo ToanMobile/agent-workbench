@@ -28,6 +28,7 @@ ATT="$COMMON/super-board/merge-queue.attempts"
 # Bộ gom thật + github-read thật (symlink: HERE của script là $Q), các helper khác là stub.
 ln -s "$ROOT/.claude/bin/super-board-merge-queue.sh" "$Q/super-board-merge-queue.sh"
 ln -s "$ROOT/.claude/bin/super-board-github-read.py" "$Q/super-board-github-read.py"
+ln -s "$ROOT/.claude/bin/super-board-ac-check.py" "$Q/super-board-ac-check.py"
 QUEUE="$Q/super-board-merge-queue.sh"
 cat > "$Q/super-board-merge-train.sh" <<'SH'
 #!/usr/bin/env bash
@@ -82,6 +83,9 @@ elif a[:2] == ['pr', 'view'] and opt('--json') == 'comments':
     open(F + '/reads', 'a').write(f'comments {num()}\n')
     p = f'{F}/comments-{num()}.json'
     print(open(p).read() if os.path.exists(p) else '{"comments":[]}')
+elif a[:2] == ['pr', 'view'] and opt('--json') == 'body,headRefOid':
+    p = f'{F}/body-{num()}.md'
+    print(json.dumps({'body': open(p).read() if os.path.exists(p) else '', 'headRefOid': 'a' * 40}))
 elif a[:2] == ['pr', 'view'] and opt('--json') == 'title':
     print('title of PR ' + num())
 elif a[:2] == ['pr', 'view'] and 'state' in (opt('--json') or ''):
@@ -196,6 +200,24 @@ has_w "pr-unlabel 1 merge-queue" && has_w "pr-unlabel 3 merge-queue" && ok "merg
 # Chạy lại: PR đã bị loại không bị comment lần hai (idempotent).
 : > "$F/train.out"; run_q
 [ "$(grep -c '^pr-comment 4 ' "$F/writes")" = 1 ] && ok "second run: a rejected PR is not commented again" || fail "second run re-commented PR 4"
+# #531: merged PR whose sb:ac block still has an unticked line: the card stays open (ac-open, Ready) even when the gate left no label.
+reset; cfg true 6; pr 7 issue-17-g 10; approve 7 OWNER "$(sha 7)"; issue 17; issue 18
+printf '<!-- sb:ac -->\n- [x] done\n- [ ] still open\n<!-- /sb:ac -->\n' > "$F/body-7.md"
+pr 8 issue-18-h 20; approve 8 OWNER "$(sha 8)"
+printf '<!-- sb:ac -->\n- [x] done\n- [x] also done\n<!-- /sb:ac -->\n' > "$F/body-8.md"
+printf '%s\n' "$(sha 7 c)" > "$F/merged-7"; printf '%s\n' "$(sha 8 c)" > "$F/merged-8"
+printf 'train-result: 7 merged\ntrain-result: 8 merged\n' > "$F/train.out"
+run_q
+has_w "issue-close 17" || has_w "card move 17 Done" && fail "#531: card #17 with an unticked AC was closed / moved to Done" || ok "#531: unticked sb:ac line keeps the card out of Done"
+has_w "issue-labels 17 ac-open" && has_w "card move 17 Ready" && ok "#531: card #17 labelled ac-open and moved to Ready" || fail "#531: card #17 not routed to ac-open/Ready: $(cat "$F/writes")"
+has_w "issue-close 18" && has_w "card move 18 Done" && ok "#531: fully ticked sb:ac still goes Done" || fail "#531: ticked card #18 not Done: $(cat "$F/writes")"
+# #531 R4: card_move fails after an unticked merge: the ac-open label must NOT be written (a retry that sees it would skip card_move for good).
+reset; cfg true 6; pr 9 issue-19-i 30; approve 9 OWNER "$(sha 9)"; issue 19
+printf '<!-- sb:ac -->\n- [ ] still open\n<!-- /sb:ac -->\n' > "$F/body-9.md"
+printf '%s\n' "$(sha 9 c)" > "$F/merged-9"; printf 'train-result: 9 merged\n' > "$F/train.out"
+echo 1 > "$F/card.rc"; run_q; rm -f "$F/card.rc"
+has_w "card move 19 Ready" && ! has_w "issue-labels 19 ac-open" && ok "#531 R4: card move failed, ac-open label not written (retry still runs card_move)" || fail "#531 R4: label written before a failed card move: $(cat "$F/writes")"
+
 
 # ── 3. --if-due.
 reset; cfg true 6 60
