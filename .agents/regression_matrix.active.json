@@ -1919,6 +1919,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-approval-cross-review-605",
+      "watch_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-merge-policy.py",
+        "tests/super-board/test_approval_cross_review.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVAL-CROSS-REVIEW-605-01",
+          "name": "#605: marker cross-review-approved hợp lệ (reviewer khác builder, head/scope khớp request, task_id + gate_receipt không rỗng, người đăng có quyền ghi) thay cho done; tự duyệt, head lệch, sửa comment, đăng trước request = không nhận; plan có schema / delete-protected / needs_you chỉ nhận done của người; policy: xoá file khớp merge_policy.protected_paths → human delete-protected (cả file nhị phân qua github-read); --deps --config nhận marker khi plan hiện tại cho phép",
+          "command": "python3 tests/super-board/test_approval_cross_review.py",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
