@@ -82,8 +82,8 @@ fast_allow() { # $1 = trigger ERE
 # what an output process substitution is fed (tests/gates/test_git_guard_shell_subst.sh). `bash -c "$(…)"` has a `$`: the parser.
 # (#605) rm / unlink / find -delete: parser kiểm danh sách protected_delete. (#605 Lane H) gh (comment tự duyệt) và lời gọi xoá
 # của interpreter (os.remove, os.unlink, shutil.rmtree, fs.rmSync, File.delete, FileUtils.rm_rf …) cũng vào parser.
-# (audit T0066 vòng 2) ANTIGRAVITY_PM_STATE_HOME (chỉ dành cho test) cũng vào parser.
-fast_allow 'git|eval|devkit_precommit|hookspath|antigravity_pm_state_home|devkit_pm_home_test|pkill|killall|pgrep|(^|[^[:alnum:]_.-])(rm|unlink|gh)([^[:alnum:]_.-]|$)|-delete|unlink|remove|rmtree|rmsync|rmdirsync|rm_r|[.]delete|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
+# (audit T0066 vòng 2) ANTIGRAVITY_PM_STATE_HOME (chỉ dành cho test) cũng vào parser; (vòng 3) HOME= cũng vậy (lệnh gate / push kèm HOME lạ).
+fast_allow 'git|eval|devkit_precommit|hookspath|antigravity_pm_state_home|devkit_pm_home_test|(^|[^[:alnum:]_])home=|pkill|killall|pgrep|(^|[^[:alnum:]_.-])(rm|unlink|gh)([^[:alnum:]_.-]|$)|-delete|unlink|remove|rmtree|rmsync|rmdirsync|rm_r|[.]delete|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2
@@ -391,6 +391,18 @@ GIT_CONFIG_FILE_ENV = {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG"}
 # DEVKIT_PM_HOME_TEST: công tắc test-only của push_gate (lane I), cùng luật.
 PM_STATE_ENVS = ("ANTIGRAVITY_PM_STATE_HOME", "DEVKIT_PM_HOME_TEST")
 PM_STATE_MSG = "biến chỉ dành cho test"
+# (audit T0066 vòng 3) HOME= đổi ~ nên đổi luôn ~/.antigravity-pm mà gate đọc: lệnh gate / push / integrate kèm HOME do agent đặt → chặn.
+# HOME_SET: HOME đã đặt bền trong dòng lệnh này (export HOME=…, HOME=… đứng riêng) nên mọi lệnh sau đó cũng mang nó.
+HOME_SET = [False]
+GATE_CMD = re.compile(r"super-board-merge-gate\.sh|super-board-merge-queue\.sh|super-board-audit-check\.py|push_gate\.py"
+                      r"|post-fix-gate\.py|\bagent-kit\s+integrate\b|\bgit\s+(?:(?:-C|-c)\s+\S+\s+|--?[\w-]+(?:=\S+)?\s+)*push\b")
+
+def pm_env_in_code(code):
+    """(audit T0066 vòng 3) mã interpreter (-c / -e / heredoc) nhắc tên biến pm: nó tự đặt được os.environ rồi gọi push / gate."""
+    for name in PM_STATE_ENVS:
+        if name in code:
+            return f"{PM_STATE_MSG} {name}: mã interpreter nhắc tới nó thì tự đặt được biến rồi gọi push / gate"
+    return None
 
 def env_config_danger(assigns):
     """NAME=VAL assignments (command prefix, env, export) that configure git: GIT_CONFIG_PARAMETERS
@@ -1019,6 +1031,7 @@ def self_approval_text(text):
 GH_GLOBAL_ARG = ("-R", "--repo", "-H", "--hostname")   # cờ có tham số đứng trước/sau pr|issue|api (-H của gh api là --header, cũng có tham số)
 GH_COMMENT_MUTATION = re.compile(r"\b(?:add|update)\w*Comment\b|\baddPullRequestReview\b")
 GH_GQL_BODY = re.compile(r"\bbody\s*:\s*\x22((?:[^\x22\\]|\\.)*)\x22")
+GH_GQL_BLOCK = re.compile(r"\bbody\s*:\s*\x22\x22\x22(.*?)\x22\x22\x22", re.S)   # (audit T0066 vòng 3) chuỗi khối GraphQL, nhiều dòng
 GH_FIELD_OPTS = ("-f", "--raw-field", "-F", "--field")
 
 def _gh_strip_globals(rest):
@@ -1085,8 +1098,8 @@ def _gh_graphql_rule(fields, input_src, base):
         return f"{SELF_APPROVE_MSG}: query graphql chỉ biết lúc chạy, không kiểm được nội dung"
     if not GH_COMMENT_MUTATION.search(query):
         return None
-    texts = []
-    for lit in GH_GQL_BODY.findall(query):
+    texts = GH_GQL_BLOCK.findall(query)
+    for lit in GH_GQL_BODY.findall(GH_GQL_BLOCK.sub("", query)):
         try:
             texts.append(json.loads("\x22" + lit + "\x22"))
         except ValueError:
@@ -1097,11 +1110,23 @@ def _gh_graphql_rule(fields, input_src, base):
         if _unknowable(text):
             return f"{SELF_APPROVE_MSG}: field {name} của mutation comment chỉ biết lúc chạy, không kiểm được nội dung"
         texts.append(text)
+    names = {n for n, _, _ in others}
+    plain = GH_GQL_BLOCK.sub("", query)   # body: phải là chuỗi literal hoặc $biến có giá trị trong field / --input
+    for m in re.finditer(r"\bbody\s*:\s*(\$?)(\w*)", plain):
+        if (m.group(1) and m.group(2) not in names) or (not m.group(1) and (m.group(2) or plain[m.end():m.end() + 1] != "\x22")):
+            return f"{SELF_APPROVE_MSG}: body của mutation comment graphql không trích được, không kiểm được nội dung"
+    if not texts:   # (audit T0066 vòng 3) mutation comment mà không trích được body nào: không kiểm được → chặn (fail closed)
+        return f"{SELF_APPROVE_MSG}: mutation comment graphql không trích được body, không kiểm được nội dung"
     for t in texts:
         why = self_approval_text(t)
         if why:
             return f"{SELF_APPROVE_MSG}: comment có {why}"
     return None
+
+def _gh_graphql_endpoint(x):
+    """(audit T0066 vòng 3) `graphql`, `/graphql`, `graphql/`, `https://api.github.com/graphql` đều là endpoint GraphQL."""
+    x = x.rstrip("/")
+    return x == "graphql" or x.endswith("/graphql")
 
 def gh_comment_rule(rest, base):
     """Lý do chặn khi lệnh gh đăng comment tự duyệt; None khi không phải đăng comment hoặc body sạch."""
@@ -1142,8 +1167,11 @@ def gh_comment_rule(rest, base):
         k += step
     if api:
         pos = [x for x in args if not x.startswith("-")]
-        if "graphql" in pos:
-            return _gh_graphql_rule(fields, input_src, base)
+        if any(_gh_graphql_endpoint(x) for x in pos):
+            # pos còn chứa giá trị cờ (-f x=a/graphql): xét graphql rồi VẪN xét nhánh REST …/comments bên dưới
+            reason = _gh_graphql_rule(fields, input_src, base)
+            if reason:
+                return reason
         if not any(re.search(r"(^|/)comments(/|$|\?)", x) for x in pos):
             return None
         for o, nv in fields:
@@ -1270,6 +1298,10 @@ def analyse_simple(tokens, depth):
     reason = env_config_danger(assigns) if assigns else None
     if reason:
         return reason
+    if "HOME" in assigns and (i >= len(tokens) or tokens[i] in ("export", "declare", "typeset")):
+        HOME_SET[0] = True
+    if (HOME_SET[0] or "HOME" in assigns) and i < len(tokens) and GATE_CMD.search(" ".join(tokens[i:])):
+        return f"{PM_STATE_MSG} HOME: lệnh gate / push / integrate kèm HOME do agent đặt thì ~/.antigravity-pm là thư mục agent tự viết"
     if i >= len(tokens):
         return None
     prog, rest = tokens[i].rsplit("/", 1)[-1], tokens[i + 1:]
@@ -1309,7 +1341,7 @@ def analyse_simple(tokens, depth):
     if prog in INTERPRETERS:
         for code in inline_codes(rest):
             # (#605) os.remove / shutil.rmtree / fs.rmSync … path bảo vệ; gh đăng comment tự duyệt (audit T0066 vòng 2)
-            reason = interp_delete_rule(code, CUR_DIR[0]) or gh_in_literals(code, CUR_DIR[0])
+            reason = pm_env_in_code(code) or interp_delete_rule(code, CUR_DIR[0]) or gh_in_literals(code, CUR_DIR[0])
             if reason:
                 return reason
             m = RAW.search(code)
@@ -1594,6 +1626,9 @@ def heredoc_cut(h, text):
 # captured (h.captured, 15/10 r5): a program that only prints the command line a shell then runs is a command source too.
 def interp_body_danger(body, prog, captured=False):
     """The reason the program an interpreter reads from a heredoc runs a dangerous git command, or None."""
+    reason = pm_env_in_code(body)   # (audit T0066 vòng 3) trước spawns: os.environ[…] rồi import push_gate không sinh tiến trình
+    if reason:
+        return reason
     if not (captured or shell_norm.spawns(body, prog)):
         return None
     reason = gh_in_literals(body, CUR_DIR[0])   # (#605) chương trình heredoc gọi gh đăng comment tự duyệt

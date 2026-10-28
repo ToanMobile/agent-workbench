@@ -105,6 +105,7 @@ is_full_review && ok "  … and a newer approval for another head voids the olde
 # ── 5b. #605 Lane F: approved-head kèm `approved-by: {json}` = nguồn duyệt chéo; tự duyệt (reviewer == builder) bị từ chối.
 # audit T0066 vòng 2: task_id phải có biên bản audit pass của antigravity-pm với auditedHead == head PR (commit có trong repo).
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"   # PM state giả chỉ trong test này
+export DEVKIT_PM_HOME_TEST=1   # audit T0066 vòng 3: pm home lạ chỉ tính khi là fixture test dưới thư mục tạm
 pm_task() {   # pm_task <task_id> <auditedHead> [verdict]
   mkdir -p "$TMP/pm/projects/p/tasks/$1"
   jq -n --arg id "$1" --arg p "$(git rev-parse --show-toplevel)" --arg h "$2" --arg v "${3:-pass}" \
