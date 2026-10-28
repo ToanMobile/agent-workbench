@@ -7,7 +7,7 @@
 #  - Ở expensive tick (sau fetch_project_items + sweep_lane_zombies), reclaim_dead_builds trả thẻ còn ở Building
 #    (không lock sống, không assignee khác bot) về Ready và ghi epoch vào sổ inflight/reclaims/<issue>.
 #  - Quá trần SB_RECLAIM_MAX (mặc định 2) lần trong cửa sổ SB_RECLAIM_WINDOW_S (mặc định 86400 s) thì chuyển thẻ
-#    sang Blocked kèm comment đúng block-template (có dòng cuối `blocked-by:  -`).
+#    sang Blocked kèm comment đúng block-template, KHÔNG có dòng `blocked-by:  -` (#529: build crash là việc agent, không phải của người).
 #  - startup_reconcile trả thẻ Building về Ready như cũ, không ghi sổ reclaims và xoá RECLAIM_BUILDING.
 # Tương thích bash 3.2.
 set -u
@@ -132,10 +132,10 @@ reclaim_dead_builds; rc=$?
 if [ "$rc" -eq 0 ] && [ "${RECLAIM_MOVED:-0}" = "1" ] \
    && grep -qx "move PVTI_55 Blocked" "$TMP/writes" \
    && ! grep -qx "move PVTI_55 Ready" "$TMP/writes" \
-   && grep -q "blocked-by:  -" "$TMP/writes" \
+   && ! grep -q "blocked-by:  -" "$TMP/writes" \
    && grep -q "worker-build-55.log" "$TMP/writes" \
    && grep -q "🛑 #55 Building → Blocked: build worker died mid-run" "$TMP/log"; then
-  ok "F: 2 prior reclaims in window -> card #55 moved to Blocked with block-template comment and blocked-by: -"
+  ok "F: 2 prior reclaims in window -> card #55 moved to Blocked with block-template comment and no blocked-by: - (#529)"
 else
   fail "F: cap-reached card #55 not Blocked properly (rc=$rc moved=${RECLAIM_MOVED:-} writes: $(tr '\n' ';' < "$TMP/writes") log: $(tr '\n' ';' < "$TMP/log"))"
 fi
