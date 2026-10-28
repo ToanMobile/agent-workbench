@@ -1918,6 +1918,33 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-door-blast-host-agy-549",
+      "watch_files": [
+        ".claude/bin/super-board-host.sh",
+        ".claude/skills/super-board/references/writing-standard.md",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-build/SKILL.md",
+        ".claude/skills/super-qa/references/iteration-preamble.md",
+        ".claude/skills/super-review/SKILL.md",
+        "tests/super-board/test_host_detect.sh",
+        "tests/super-board/test_risk_door_blast.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-HOST-AGY-549-01",
+          "name": "#549: super-board-host.sh nhận diện claude, codex, agy (SUPER_BOARD_HOST hoặc ANTIGRAVITY_*), host lạ thoát 64",
+          "command": "bash tests/super-board/test_host_detect.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-RISK-DOOR-BLAST-549-01",
+          "name": "#549: khối Risk nêu Door (one-way/two-way) và Blast radius ở writing-standard và các tài liệu lane; mọi SKILL.md dưới 20000 byte",
+          "command": "bash tests/super-board/test_risk_door_blast.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

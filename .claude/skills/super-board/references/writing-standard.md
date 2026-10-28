@@ -182,12 +182,19 @@ committed on the branch; raw URLs are pinned to the commit that holds them.
 | Mobile | <img src="https://github.com/acme/app/raw/3f9c2a1/docs/ui/before-mobile.png" width="220"> | <img src="https://github.com/acme/app/raw/3f9c2a1/docs/ui/after-mobile.png" width="220"> |
 ```
 
-**Risk** — level plus one line. If it merged red, name the check here too.
+**Risk** — level plus one line, then two lines that are never skipped: **Door** (one-way or
+two-way: can the change be undone by reverting the PR?) and **Blast radius** (who or what is hit if
+it goes wrong, and how it is undone). If it merged red, name the check here too.
 
 ```
 ## Risk
 🟢 **Low** · limit read from one constant; no plan differences.
+- Door: two-way — revert the PR.
+- Blast radius: uploads on web only · revert the squash commit.
 ```
+
+Door is `one-way` when a revert does not restore the state (data migration, sent message, published
+release, deleted file); `two-way` otherwise.
 
 Levels: 🟢 Low · 🟡 Medium · 🔴 High. A `needs-you: <command>` line (merge gate reads it) goes
 under Risk.
@@ -215,7 +222,7 @@ under Risk.
 | `## Evidence` | the folded 12-row table below | bugs |
 | `## Fix` | the intended change in 1–3 lines. No implementation plan | yes |
 | `## Acceptance Criteria` | 2–5 `- [ ]` items, each checkable by a test | yes |
-| `## Risk` | 🟢/🟡/🔴 level + one line | yes |
+| `## Risk` | 🟢/🟡/🔴 level + one line (+ `Door:` and `Blast radius:` once a PR exists) | yes |
 | `## Blocked by` | `- #N — why` bullets, or exactly `- None.` | yes |
 | `## Cần người` | FIRST section, one line: `🙋 Cần bạn: <exactly what the person must do> · xong thì <what next>` | when a step needs a person |
 
