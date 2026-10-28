@@ -33,8 +33,8 @@ Rules, from references/config-schema.json → merge_policy / migrations:
   keyword match → human. Categories ship as money, auth, schema; setting
   always_human replaces them all (`{}` turns category gating off).
 - merge_policy.protected_paths (#605; default DEFAULT_PROTECTED_PATHS, a list replaces it, `[]` turns it off): a PR
-  that DELETES (or renames away) a matching file → human, category "delete-protected". Like "schema", only a
-  human `done` approves it; an agent cross-review marker does not (super-board-approval.py HUMAN_ONLY).
+  that DELETES (or renames away) a matching file → human, category "delete-protected". The only human-only
+  category: a human `done` approves it; an agent cross-review marker does not (super-board-approval.py HUMAN_ONLY).
 - migrations: a changed path matching migrations.globs makes this a migration
   PR. Every env in allowed_envs with a command runs (a command of "-" means the
   deploy pipeline applies it: nothing to run). target_env not in allowed_envs, or
@@ -108,9 +108,9 @@ DEFAULT_ALWAYS_HUMAN = {
 }
 # #605: xoá các file này chỉ người duyệt (luật chủ repo 28/10). `**/` để khớp cả file trong thư mục con.
 DEFAULT_PROTECTED_PATHS = [
-    "**/.env*", "**/*.keystore", "**/*.jks", ".agents/regression_matrix.active.json",
+    "**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json", ".agents/regression_matrix.active.json",
     ".agents/local/memory/**", ".agents/local/rules/**",
-]
+]   # giữ khớp PROTECTED_DELETE_DEFAULT của universal-agent-devkit/hooks/block-dangerous-git.sh (trừ .git/**: PR không xoá được)
 DEFAULT_MIGRATION_GLOBS = [
     "supabase/migrations/**", "prisma/migrations/**", "drizzle/**",
     "**/migrations/*.sql", "db/migrate/**", "alembic/versions/**",

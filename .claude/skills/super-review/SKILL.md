@@ -188,8 +188,10 @@ two complete builds. In order, no shortcuts:
      (repo/pr/head/scope copied from the request). `super-board-approval.py` accepts it in place
      of `done` (schema and `needs-you:` steps too), except when the plan has `delete-protected`
      (a deleted `merge_policy.protected_paths` file): that still needs a human `done`.
-   - The rule in one line: the robot migrates the databases it was allowed to test its
-     work; live databases, money, auth and destructive schema changes wait for a person.
+   - The rule in one line: only deleting a protected file waits for a person; everything
+     else (live databases, money, auth, schema) is approved by the cross-review marker.
+     Never post a bare `approved-head:` or a `done` yourself: the git guard blocks both
+     (only the human owner types them).
 3. **Confirm the merge landed** — never trust the merge command's exit code:
    **Exit 79 — required GitHub evidence unavailable:** stop the current run. Leave
    the card, approval, claims, and worktree intact. Report the local halt reason;
