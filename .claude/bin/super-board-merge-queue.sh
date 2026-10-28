@@ -44,6 +44,7 @@ export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 APPROVED_HEAD_JQ="$HERE/super-board-approved-head.jq"   # #605: luật approved-head dùng chung với runner
+AUDIT_CHECK="$HERE/super-board-audit-check.py"           # #605: task_id của approved-by ↔ biên bản audit antigravity-pm
 TRAIN="$HERE/super-board-merge-train.sh"
 CARD="$HERE/super-board-card.sh"
 NEEDS_YOU="$HERE/super-board-needs-you.py"
@@ -465,6 +466,14 @@ while read -r at n head ref; do
   if [ -z "$approved" ]; then reject "$n" "no \`approved-head:<sha40>\` from an OWNER/MEMBER/COLLABORATOR on this PR"; continue; fi
   if [ "$vstate" != ok ]; then reject "$n" "approved-head ${approved:0:7}: ${vwhy:-invalid approval}"; continue; fi
   if [ "$approved" != "$head" ]; then reject "$n" "approved-head ${approved:0:7} is not the PR head ${head:0:7} (pushed after approval)"; continue; fi
+  # #605 (audit T0066 vòng 2): task_id của approved-by là lời khai; chỉ tính khi antigravity-pm có audit pass với auditedHead == head.
+  case "$vwhy" in
+    owner) ;;
+    task:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" "${vwhy#task:}" "$head" ) 2>/dev/null; then
+               reject "$n" "approved-by task_id ${vwhy#task:} has no antigravity-pm audit pass with auditedHead ${head:0:7}"; continue
+             fi ;;
+    *) reject "$n" "approved-head ${approved:0:7}: approval source unreadable"; continue ;;
+  esac
   BATCH="${BATCH}${at} ${n} ${head} ${ref}"$'\n'; NB=$((NB + 1))
 done < <(printf '%s\n' "$ROWS")
 BATCH=${BATCH%$'\n'}

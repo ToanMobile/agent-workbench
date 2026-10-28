@@ -82,7 +82,8 @@ fast_allow() { # $1 = trigger ERE
 # what an output process substitution is fed (tests/gates/test_git_guard_shell_subst.sh). `bash -c "$(…)"` has a `$`: the parser.
 # (#605) rm / unlink / find -delete: parser kiểm danh sách protected_delete. (#605 Lane H) gh (comment tự duyệt) và lời gọi xoá
 # của interpreter (os.remove, os.unlink, shutil.rmtree, fs.rmSync, File.delete, FileUtils.rm_rf …) cũng vào parser.
-fast_allow 'git|eval|devkit_precommit|hookspath|pkill|killall|pgrep|(^|[^[:alnum:]_.-])(rm|unlink|gh)([^[:alnum:]_.-]|$)|-delete|unlink|remove|rmtree|rmsync|rmdirsync|rm_r|[.]delete|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
+# (audit T0066 vòng 2) ANTIGRAVITY_PM_STATE_HOME (chỉ dành cho test) cũng vào parser.
+fast_allow 'git|eval|devkit_precommit|hookspath|antigravity_pm_state_home|devkit_pm_home_test|pkill|killall|pgrep|(^|[^[:alnum:]_.-])(rm|unlink|gh)([^[:alnum:]_.-]|$)|-delete|unlink|remove|rmtree|rmsync|rmdirsync|rm_r|[.]delete|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2
@@ -385,10 +386,19 @@ HOOK_OFF_ENV = re.compile(r"^DEVKIT_PRECOMMIT=0$")
 # Git reads config from the environment too (2026-09-28: each of these returned exit 0).
 GIT_CONFIG_FILE_ENV = {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG"}
 
+# (#605, audit T0066 vòng 2) ANTIGRAVITY_PM_STATE_HOME đổi nơi push_gate / post-fix-gate đọc biên bản audit antigravity-pm: agent tự
+# đặt nó trên dòng lệnh là tự viết biên bản duyệt. Chỉ test đặt bên trong script của nó (hook chỉ thấy lệnh ngoài).
+# DEVKIT_PM_HOME_TEST: công tắc test-only của push_gate (lane I), cùng luật.
+PM_STATE_ENVS = ("ANTIGRAVITY_PM_STATE_HOME", "DEVKIT_PM_HOME_TEST")
+PM_STATE_MSG = "biến chỉ dành cho test"
+
 def env_config_danger(assigns):
     """NAME=VAL assignments (command prefix, env, export) that configure git: GIT_CONFIG_PARAMETERS
     and GIT_CONFIG_KEY_n/VALUE_n pairs go through config_danger; a config FILE named by
     GIT_CONFIG_GLOBAL/SYSTEM cannot be read safely here, so only /dev/null passes."""
+    for name in PM_STATE_ENVS:
+        if name in assigns:
+            return f"{PM_STATE_MSG} {name}: lệnh của agent đặt nó thì biên bản audit đọc từ thư mục agent tự viết"
     for name in GIT_CONFIG_FILE_ENV & set(assigns):
         if assigns[name] != "/dev/null":
             return f"{name} nạp file config ngoài, không kiểm được"
@@ -897,7 +907,7 @@ def _pd_match(rel, pats, names=(), paths=(), start=""):
             return p
     return None
 
-PD_WALK_DEPTH, PD_WALK_MAX = 3, 2000
+PD_WALK_DEPTH, PD_WALK_MAX = 8, 2000   # (audit T0066 vòng 2) android/app/src/debug/google-services.json nằm ở cấp 4
 PD_WALK_SKIP = {".git", "node_modules"}   # không đi vào bên trong (.git chỉ tính chính nó ở cấp 1; node_modules: cây sinh lại được)
 
 def _pd_walk(root, rel, pats):
@@ -926,7 +936,9 @@ def _pd_walk(root, rel, pats):
                 sub = e.is_dir(follow_symlinks=False)
             except OSError:
                 sub = False
-            if sub and depth + 1 < PD_WALK_DEPTH and e.name not in PD_WALK_SKIP:
+            if sub and e.name not in PD_WALK_SKIP:
+                if depth + 1 >= PD_WALK_DEPTH:   # còn thư mục ở trần độ sâu: không kiểm hết được, chặn (fail closed)
+                    return ("", f"thư mục sâu hơn {PD_WALK_DEPTH} cấp ({erel}), không kiểm hết được")
                 stack.append((e.path, erel, depth + 1))
     return None
 
@@ -1004,51 +1016,149 @@ def self_approval_text(text):
         return "dòng done"
     return None
 
+GH_GLOBAL_ARG = ("-R", "--repo", "-H", "--hostname")   # cờ có tham số đứng trước/sau pr|issue|api (-H của gh api là --header, cũng có tham số)
+GH_COMMENT_MUTATION = re.compile(r"\b(?:add|update)\w*Comment\b|\baddPullRequestReview\b")
+GH_GQL_BODY = re.compile(r"\bbody\s*:\s*\x22((?:[^\x22\\]|\\.)*)\x22")
+GH_FIELD_OPTS = ("-f", "--raw-field", "-F", "--field")
+
+def _gh_strip_globals(rest):
+    """(audit T0066 vòng 2) bỏ -R/--repo/-H/--hostname cùng giá trị của chúng (tách rời, =, dính liền -Ro/r) ở mọi vị trí."""
+    out, k = [], 0
+    while k < len(rest):
+        a = rest[k]
+        if a in GH_GLOBAL_ARG:
+            k += 2
+            continue
+        if (a.startswith(("--repo=", "--hostname=")) or (a[:2] in ("-R", "-H") and len(a) > 2)):
+            k += 1
+            continue
+        out.append(a)
+        k += 1
+    return out
+
+def _unknowable(v):
+    return "$" in v or SUBST in v or "`" in v
+
+def _gh_field_text(opt, v, base):
+    """Giá trị một field -f/-F (name=value đã bỏ name): (text, None) hoặc (None, lý do không đọc được)."""
+    if opt in ("-F", "--field") and v.startswith("@"):
+        if v == "@-":
+            texts = _gh_stdin_texts()
+            return ("\n".join(texts), None) if texts else (None, "đọc từ stdin không phải heredoc")
+        t = _gh_file(v[1:], base)
+        return (t, None) if t is not None else (None, f"không đọc được file {v[1:]}")
+    return (v, None)
+
+def _gh_graphql_rule(fields, input_src, base):
+    """gh api graphql: mutation đăng/sửa comment (addComment, addPullRequestReviewComment …) → xét body literal trong query và
+    mọi field khác (body:$b với -f b=…). Query / field không đọc được khi đó là mutation comment → chặn (fail closed)."""
+    query, others = None, []
+    for opt, nv in fields:
+        name, eq, v = nv.partition("=")
+        if not eq:
+            continue
+        text, why = _gh_field_text(opt, v, base)
+        if name == "query":
+            if text is None:
+                return f"{SELF_APPROVE_MSG}: query graphql {why}, không kiểm được nội dung"
+            query = text
+        else:
+            others.append((name, text, why))
+    if input_src is not None:
+        t = (("\n".join(_gh_stdin_texts()) or None) if input_src == "-" else _gh_file(input_src, base))
+        if t is None:
+            return f"{SELF_APPROVE_MSG}: không đọc được --input của gh api graphql"
+        try:
+            o = json.loads(t)
+        except ValueError:
+            o = None
+        if isinstance(o, dict):
+            if isinstance(o.get("query"), str):
+                query = o["query"]
+            for name, val in (o.get("variables") or {}).items() if isinstance(o.get("variables"), dict) else ():
+                others.append((name, val if isinstance(val, str) else json.dumps(val), None))
+        else:
+            query = t
+    if query is None:
+        return None
+    if re.fullmatch(r"\s*\$\{?\w+\}?\s*", query) or SUBST in query or "`" in query:
+        return f"{SELF_APPROVE_MSG}: query graphql chỉ biết lúc chạy, không kiểm được nội dung"
+    if not GH_COMMENT_MUTATION.search(query):
+        return None
+    texts = []
+    for lit in GH_GQL_BODY.findall(query):
+        try:
+            texts.append(json.loads("\x22" + lit + "\x22"))
+        except ValueError:
+            texts.append(lit.replace("\\n", "\n"))
+    for name, text, why in others:
+        if text is None:
+            return f"{SELF_APPROVE_MSG}: field {name} của mutation comment {why}, không kiểm được nội dung"
+        if _unknowable(text):
+            return f"{SELF_APPROVE_MSG}: field {name} của mutation comment chỉ biết lúc chạy, không kiểm được nội dung"
+        texts.append(text)
+    for t in texts:
+        why = self_approval_text(t)
+        if why:
+            return f"{SELF_APPROVE_MSG}: comment có {why}"
+    return None
+
 def gh_comment_rule(rest, base):
     """Lý do chặn khi lệnh gh đăng comment tự duyệt; None khi không phải đăng comment hoặc body sạch."""
-    rest = drop_redirects(rest)
+    rest = _gh_strip_globals(drop_redirects(rest))
     j = 0
     while j < len(rest) and rest[j].startswith("-"):
-        j += 2 if rest[j] in ("-R", "--repo") else 1
+        j += 1
     sub, args = rest[j:j + 2], rest[j + 2:]
     api = sub[:1] == ["api"]
     if api:
         args = rest[j + 1:]
-        if not any(re.search(r"(^|/)comments(/|$|\?)", a) for a in args if not a.startswith("-")):
-            return None
     elif sub not in (["pr", "comment"], ["issue", "comment"]):
         return None
-    bodies = []   # (literal | file | stdin, value)
+    bodies, fields, input_src = [], [], None   # bodies: (literal | file | stdin | json, value); fields: (opt, name=value) của gh api
     k = 0
     while k < len(args):
         a, nxt = args[k], (args[k + 1] if k + 1 < len(args) else None)
         opt, eq, val = a.partition("=")
         has = bool(eq) and a.startswith("--")
-        if not api and opt in ("--body", "-b"):
-            bodies.append(("literal", val if has else (nxt or "")))
-        elif not api and opt in ("--body-file", "-F"):
-            v = val if has else nxt
+        short = not a.startswith("--") and len(a) > 2 and a[:2] in ("-b", "-F", "-f")   # cờ ngắn dính giá trị: -bdone, -Fbare.md
+        step = 1
+        if not api and (opt in ("--body", "-b") or (short and a[:2] == "-b")):
+            bodies.append(("literal", a[2:] if short else val if has else (nxt or "")))
+            step = 1 if (short or has) else 2
+        elif not api and (opt in ("--body-file", "-F") or (short and a[:2] == "-F")):
+            v = a[2:] if short else val if has else nxt
             bodies.append(("stdin" if v == "-" else "file", v))
-        elif api and opt in ("-f", "--raw-field", "-F", "--field"):
-            v = val if has else nxt
-            if v and v.startswith("body="):
-                v = v[5:]
-                if opt in ("-F", "--field") and v.startswith("@"):
+            step = 1 if (short or has) else 2
+        elif api and (a in GH_FIELD_OPTS or (has and opt in ("--raw-field", "--field")) or short):
+            o = a[:2] if short else opt
+            v = a[2:] if short else val if has else nxt
+            if v is not None:
+                fields.append((o, v))
+            step = 1 if (short or has) else 2
+        elif api and opt == "--input":
+            input_src = val if has else nxt
+            step = 1 if has else 2
+        k += step
+    if api:
+        pos = [x for x in args if not x.startswith("-")]
+        if "graphql" in pos:
+            return _gh_graphql_rule(fields, input_src, base)
+        if not any(re.search(r"(^|/)comments(/|$|\?)", x) for x in pos):
+            return None
+        for o, nv in fields:
+            if nv.startswith("body="):
+                v = nv[5:]
+                if o in ("-F", "--field") and v.startswith("@"):
                     bodies.append(("stdin" if v == "@-" else "file", v[1:]))
                 else:
                     bodies.append(("literal", v))
-        elif api and opt == "--input":
-            v = val if has else nxt
-            bodies.append(("stdin" if v == "-" else "json", v))
-        elif api and a.startswith(("-fbody=", "-Fbody=")):
-            bodies.append(("literal", a[7:]))
-        if not has and opt in ("--body", "-b", "--body-file", "-F", "-f", "--raw-field", "--field", "--input"):
-            k += 1
-        k += 1
+        if input_src is not None:
+            bodies.append(("stdin" if input_src == "-" else "json", input_src))
     for kind, v in bodies:
         texts = []
         if kind == "literal":
-            texts = [v] + (_gh_stdin_texts() if ("$" in v or SUBST in v or "`" in v) else [])
+            texts = [v] + (_gh_stdin_texts() if _unknowable(v) else [])
         elif kind == "stdin":
             texts = _gh_stdin_texts()
             if not texts:
@@ -1068,6 +1178,33 @@ def gh_comment_rule(rest, base):
             why = self_approval_text(t)
             if why:
                 return f"{SELF_APPROVE_MSG}: comment có {why}"
+    return None
+
+def _lit_decode(s):
+    """Nội dung một string literal của script (\\n, \\t, \\x22 …) như chương trình sẽ thấy; lỗi giải mã → nguyên văn."""
+    try:
+        return s.encode("latin-1", "backslashreplace").decode("unicode_escape")
+    except (UnicodeDecodeError, ValueError):
+        return s
+
+def gh_in_literals(code, base):
+    """(audit T0066 vòng 2) interpreter (-c / -e / heredoc) gọi gh: dạng danh sách ([\x22gh\x22, \x22issue\x22, …], mỗi literal một đối số,
+    giữ xuống dòng của body) và dạng chuỗi (\x22gh pr comment 5 --body done\x22, tách như shell) đều đi qua gh_comment_rule."""
+    if "gh" not in code:
+        return None
+    lits = [_lit_decode(next((g for g in m.groups() if g is not None), "")) for m in STR_LITERAL.finditer(code)]
+    for idx, lit in enumerate(lits):
+        if lit.rsplit("/", 1)[-1] == "gh":
+            reason = gh_comment_rule(lits[idx + 1:], base)
+        else:
+            try:
+                ws = shlex.split(lit)
+            except ValueError:
+                ws = lit.split()
+            reason = next((r for r in (gh_comment_rule(ws[k + 1:], base) for k, w in enumerate(ws)
+                                       if w.rsplit("/", 1)[-1] == "gh") if r), None)
+        if reason:
+            return reason
     return None
 
 def _operands(args):
@@ -1125,6 +1262,9 @@ def analyse_simple(tokens, depth):
             break
     if i < len(tokens) and tokens[i] in ("export", "declare", "typeset"):
         assigns.update(a.split("=", 1) for a in tokens[i + 1:] if "=" in a and not a.startswith("-"))
+        for name in PM_STATE_ENVS:   # export ANTIGRAVITY_PM_STATE_HOME (giá trị gán ở lệnh trước)
+            if name in tokens[i + 1:]:
+                assigns[name] = ""
     if RETARGET_ENV & set(assigns):
         RETARGETED[0] = True
     reason = env_config_danger(assigns) if assigns else None
@@ -1168,7 +1308,8 @@ def analyse_simple(tokens, depth):
         return f"{reason} (gọi qua {prog})" if reason else None
     if prog in INTERPRETERS:
         for code in inline_codes(rest):
-            reason = interp_delete_rule(code, CUR_DIR[0])   # (#605 Lane H) os.remove / shutil.rmtree / fs.rmSync … path bảo vệ
+            # (#605) os.remove / shutil.rmtree / fs.rmSync … path bảo vệ; gh đăng comment tự duyệt (audit T0066 vòng 2)
+            reason = interp_delete_rule(code, CUR_DIR[0]) or gh_in_literals(code, CUR_DIR[0])
             if reason:
                 return reason
             m = RAW.search(code)
@@ -1304,7 +1445,9 @@ def analyse_simple(tokens, depth):
             return f"{reason} (trong git submodule foreach)"
     if rest[j] == "rm" and not any(a == "--cached" or (a.startswith("--ca") and "--cached".startswith(a.split("=", 1)[0]))
                                    for a in rest[j + 1:]):
-        reason = protected_delete_rule(_operands(rest[j + 1:]), gdir)   # (#605) git rm xoá cả file trên đĩa
+        opts = rest[j + 1:rest.index("--")] if "--" in rest[j + 1:] else rest[j + 1:]
+        rec = any(a == "--recursive" or (a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a)) for a in opts)
+        reason = protected_delete_rule(_operands(rest[j + 1:]), gdir, walk=rec)   # (#605) git rm xoá cả file trên đĩa; -r quét thư mục
         if reason:
             return reason
     return (danger_in_git(rest[j], rest[j + 1:]) or solo_branch_rule(rest[j], rest[j + 1:], gdir, allow_branch)
@@ -1453,6 +1596,9 @@ def interp_body_danger(body, prog, captured=False):
     """The reason the program an interpreter reads from a heredoc runs a dangerous git command, or None."""
     if not (captured or shell_norm.spawns(body, prog)):
         return None
+    reason = gh_in_literals(body, CUR_DIR[0])   # (#605) chương trình heredoc gọi gh đăng comment tự duyệt
+    if reason:
+        return reason
     hit = RAW.search(body)
     reason = f"{hit.group(1).split()[0]}" if hit else git_in_literals(body)
     return f"{reason} (chương trình {prog} đọc từ heredoc)" if reason else None
@@ -1831,6 +1977,10 @@ if reason and reason.startswith(SELF_APPROVE_MSG):
           "chủ repo gõ tay — agent đăng bằng chung tài khoản OWNER nên đăng chúng là tự duyệt. Lane reviewer: đăng `approved-head:<sha>` "
           "kèm dòng `approved-by: {\"reviewer\",\"builder\",\"task_id\",\"gate_receipt\"}` (reviewer khác builder), hoặc "
           "`cross-review-approved: {...}`.", file=sys.stderr)
+    sys.exit(2)
+if reason and reason.startswith(PM_STATE_MSG):
+    print(f"BLOCKED: {cmd!r} — {reason}. Luật #605: biên bản audit antigravity-pm chỉ do PM server ghi ở ~/.antigravity-pm; ANTIGRAVITY_PM_STATE_HOME / DEVKIT_PM_HOME_TEST "
+          "chỉ test tự đặt bên trong script của nó. Chạy lệnh không kèm biến; chạy test thì gọi thẳng script test.", file=sys.stderr)
     sys.exit(2)
 if reason and reason.startswith("kill theo tên"):
     print(f"BLOCKED: {cmd!r} — {reason}. Chạy lệnh nền rồi giữ PID của chính nó: `cmd & pid=$!`, sau đó `wait $pid` / `kill -0 $pid` / "

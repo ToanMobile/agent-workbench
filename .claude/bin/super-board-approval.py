@@ -21,6 +21,9 @@ import tempfile
 _reader_spec = importlib.util.spec_from_file_location("github_read", Path(__file__).with_name("super-board-github-read.py"))
 github_read = importlib.util.module_from_spec(_reader_spec)
 _reader_spec.loader.exec_module(github_read)
+_audit_spec = importlib.util.spec_from_file_location("audit_check", Path(__file__).with_name("super-board-audit-check.py"))
+audit_check = importlib.util.module_from_spec(_audit_spec)
+_audit_spec.loader.exec_module(audit_check)
 
 PREFIX = "approval-request: "
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -126,11 +129,14 @@ def trusted_blocks(comments, permission):
     return result
 
 
-def validate(comments, expected, permission, cross_review_ok=False):
+def validate(comments, expected, permission, cross_review_ok=False, audited=None):
     """Pure verdict; permission(login) is a current repository permission lookup.
 
     cross_review_ok (#605) = cross_review_allowed(plan) của caller; mặc định False: chỉ `done` của người.
+    audited(task_id) (#605, audit T0066 vòng 2) = auditedHead của audit pass antigravity-pm cho task đó, hoặc None; marker duyệt chéo
+    chỉ tính khi nó đúng bằng head của request. Mặc định: biên bản của repo cwd (super-board-audit-check.py).
     """
+    audited = audited or audit_check.audited
     def hold(why):
         return {"approved": False, "why": why}
 
@@ -162,6 +168,8 @@ def validate(comments, expected, permission, cross_review_ok=False):
                 continue
             done = DONE.fullmatch(comment.get("body") or "")
             review = None if done or not cross_review_ok else parse_cross_review(comment, request)
+            if review is not None and audited(review["task_id"]) != request["head"]:
+                review = None   # task_id tự khai không có audit pass cho đúng head này
             if not done and review is None:
                 continue
             created = timestamp(comment.get("created_at"))

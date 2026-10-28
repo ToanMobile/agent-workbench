@@ -21,7 +21,44 @@ approval = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(approval)
 POLICY = ROOT / ".claude/bin/super-board-merge-policy.py"
 
-HEAD, OTHER = "a" * 40, "c" * 40
+# #605 (audit T0066 vòng 2): task_id của marker phải có biên bản audit pass của antigravity-pm với auditedHead == head được duyệt,
+# và auditedHead phải là commit có trong repo. Repo tạm + PM state giả (ANTIGRAVITY_PM_STATE_HOME chỉ đặt bên trong test này).
+import atexit
+import os
+import shutil
+
+_TMP = tempfile.mkdtemp(prefix="sb-cross-review-")
+atexit.register(shutil.rmtree, _TMP, True)
+_REPO = os.path.join(_TMP, "repo")
+_GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _git(*args):
+    return subprocess.run(["git", "-C", _REPO, *args], check=True, capture_output=True, text=True, env=_GIT_ENV).stdout.strip()
+
+
+os.makedirs(_REPO)
+_git("init", "-q", "-b", "main")
+_git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "c1")
+_C1 = _git("rev-parse", "HEAD")
+_git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "c2")
+_C2 = _git("rev-parse", "HEAD")
+_TOP = _git("rev-parse", "--show-toplevel")
+os.environ["ANTIGRAVITY_PM_STATE_HOME"] = os.path.join(_TMP, "pm")
+os.chdir(_REPO)   # approval mặc định đọc biên bản của repo cwd (git toplevel)
+TASK = "T0605-review"
+
+
+def pm_task(task_id, head, verdict="pass", project=None):
+    d = Path(_TMP, "pm", "projects", "p", "tasks", task_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "task.json").write_text(json.dumps({"id": task_id, "project": project or _TOP, "verdicts": {
+        "audit": {"verdict": verdict, "reviewer": "pm", "notes": f"fixture\nauditedHead: {head}"}}}))
+
+
+pm_task(TASK, _C2)
+
+HEAD, OTHER = _C2, "c" * 40
 REPO, PR = "o/r", 7
 SCOPE = "e" * 64
 EXPECTED = {"repo": REPO, "pr": PR, "head": HEAD, "scope": SCOPE}
@@ -46,7 +83,7 @@ def request_comment():
 
 def cross(**over):
     value = {"repo": REPO, "pr": PR, "head": HEAD, "scope": SCOPE, "reviewer": "claude-reviewer",
-             "builder": "claude-builder", "task_id": "issue-605-review", "gate_receipt": "f" * 40}
+             "builder": "claude-builder", "task_id": TASK, "gate_receipt": "f" * 40}
     value.update(over)
     return "cross-review-approved: " + json.dumps(value, sort_keys=True)
 
@@ -119,6 +156,42 @@ class CrossReview(unittest.TestCase):
     def test_default_is_fail_closed(self):
         r = approval.validate([request_comment(), comment(2, cross(), "2026-10-28T10:05:00Z")], EXPECTED, perm)
         self.assertFalse(r["approved"], r)
+
+    def test_task_id_without_audit_record_not_approved(self):
+        # Builder tự khai task_id không có biên bản audit (audit T0066 vòng 2, BYPASS-R2-04)
+        for task in ("T0999-forged", "T0606-nothing"):
+            r = run(comment(2, cross(task_id=task), "2026-10-28T10:05:00Z"))
+            self.assertFalse(r["approved"], (task, r))
+
+    def test_task_id_bad_shape_not_approved(self):
+        for task in ("issue-605-review", "../../x", "T0605-*", "T0605-review\nx"):
+            r = run(comment(2, cross(task_id=task), "2026-10-28T10:05:00Z"))
+            self.assertFalse(r["approved"], (task, r))
+
+    def test_audit_on_another_head_not_approved(self):
+        pm_task("T0607-old", _C1)   # audit pass thật nhưng cho head cũ
+        r = run(comment(2, cross(task_id="T0607-old"), "2026-10-28T10:05:00Z"))
+        self.assertFalse(r["approved"], r)
+
+    def test_audit_verdict_fail_not_approved(self):
+        pm_task("T0608-failed", _C2, verdict="fail")
+        r = run(comment(2, cross(task_id="T0608-failed"), "2026-10-28T10:05:00Z"))
+        self.assertFalse(r["approved"], r)
+
+    def test_audit_of_another_project_not_approved(self):
+        other = os.path.join(_TMP, "other")
+        os.makedirs(other, exist_ok=True)
+        pm_task("T0609-elsewhere", _C2, project=other)
+        r = run(comment(2, cross(task_id="T0609-elsewhere"), "2026-10-28T10:05:00Z"))
+        self.assertFalse(r["approved"], r)
+
+    def test_audit_check_cli(self):
+        cli = ROOT / ".claude/bin/super-board-audit-check.py"
+        ok = subprocess.run([sys.executable, str(cli), TASK, _C2], capture_output=True, text=True, cwd=_REPO)
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        for task, sha in ((TASK, _C1), ("T0999-forged", _C2), ("bad id", _C2), (TASK, "zz")):
+            r = subprocess.run([sys.executable, str(cli), task, sha], capture_output=True, text=True, cwd=_REPO)
+            self.assertEqual(r.returncode, 1, (task, sha, r.stdout, r.stderr))
 
     def test_unreadable_plan_is_human_only(self):
         self.assertFalse(approval.cross_review_allowed(None))

@@ -155,5 +155,21 @@ check 0 '' 'rm app/missing.txt'
 mkdir -p "$P/linkdir"; ln -s "$P/app" "$P/linkdir/app-link"
 check 0 '' 'rm -rf linkdir'
 
+echo "H. (#605 audit T0066 vòng 2) git rm -r <thư mục> quét bên trong; cây sâu hơn trần thì chặn (fail closed)"
+check 2 'file quan trọng' 'git rm -r app'
+check 2 'file quan trọng' 'git rm -rq app/'
+check 2 'file quan trọng' 'git rm --recursive app'
+check 2 'file quan trọng' 'git rm -R app'
+check 0 '' 'git rm -r src'
+check 0 '' 'git rm -r --cached app'
+check 0 '' 'git rm app'
+mkdir -p "$P/android/app/src/debug"; touch "$P/android/app/src/debug/google-services.json"
+check 2 'file quan trọng' 'rm -rf android'
+check 2 'file quan trọng' 'git rm -r android'
+mkdir -p "$P/deeptree/1/2/3/4/5/6/7/8/9"; touch "$P/deeptree/1/2/3/4/5/6/7/8/9/x.txt"
+check 2 'file quan trọng' 'rm -rf deeptree'
+mkdir -p "$P/okdeep/1/2/3/4/5/6"; touch "$P/okdeep/1/2/3/4/5/6/x.txt"
+check 0 '' 'rm -rf okdeep'
+
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $FAILS case(s)"; exit 1; fi
 echo "PASS"

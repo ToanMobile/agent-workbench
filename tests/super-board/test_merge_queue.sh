@@ -29,6 +29,7 @@ ATT="$COMMON/super-board/merge-queue.attempts"
 ln -s "$ROOT/.claude/bin/super-board-merge-queue.sh" "$Q/super-board-merge-queue.sh"
 ln -s "$ROOT/.claude/bin/super-board-github-read.py" "$Q/super-board-github-read.py"
 ln -s "$ROOT/.claude/bin/super-board-approved-head.jq" "$Q/super-board-approved-head.jq"
+ln -s "$ROOT/.claude/bin/super-board-audit-check.py" "$Q/super-board-audit-check.py"
 QUEUE="$Q/super-board-merge-queue.sh"
 cat > "$Q/super-board-merge-train.sh" <<'SH'
 #!/usr/bin/env bash
@@ -135,8 +136,8 @@ ago() { python3 -c 'import datetime,sys;print((datetime.datetime.now(datetime.ti
 sha() { printf '%040d' "$1" | tr 0 "${2:-a}"; }
 # pr <N> <branch> <minutes since labeled> [draft] [state]: PR có nhãn (mặc định mở), head = sha(N).
 PRS_ROWS=""
-pr() {
-  PRS_ROWS="${PRS_ROWS}${PRS_ROWS:+,}{\"number\":$1,\"headRefName\":\"$2\",\"headRefOid\":\"$(sha "$1")\",\"isDraft\":${4:-false},\"state\":\"${5:-OPEN}\"}"
+pr() {   # [head] (#605): head thật (commit trong $R) cho ca approved-by cần đối chiếu biên bản audit
+  PRS_ROWS="${PRS_ROWS}${PRS_ROWS:+,}{\"number\":$1,\"headRefName\":\"$2\",\"headRefOid\":\"${6:-$(sha "$1")}\",\"isDraft\":${4:-false},\"state\":\"${5:-OPEN}\"}"
   printf '[%s]\n' "$PRS_ROWS" > "$F/prs.json"
   ago "$3" > "$F/labeled/$1"
 }
@@ -479,11 +480,23 @@ approve_body() {   # approve_body <N> <assoc> <body>
   jq -n --arg a "$2" --arg b "$3" '{comments:[{authorAssociation:$a,body:"[reviewer] [report] ✅ pass"},{authorAssociation:$a,body:$b}]}' > "$F/comments-$1.json"
 }
 by() {   # by <reviewer> <builder> [task_id] [gate_receipt]
-  jq -cn --arg r "$1" --arg b "$2" --arg t "${3-task-605}" --arg g "${4-receipt-1}" '{reviewer:$r,builder:$b,task_id:$t,gate_receipt:$g}'
+  jq -cn --arg r "$1" --arg b "$2" --arg t "${3-T0605-cross}" --arg g "${4-receipt-1}" '{reviewer:$r,builder:$b,task_id:$t,gate_receipt:$g}'
 }
+# #605 (audit T0066 vòng 2): task_id của approved-by phải có biên bản audit pass của antigravity-pm với auditedHead == head PR
+# (commit có trong repo). PM state giả chỉ trong test này.
+export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
+pm_task() {   # pm_task <task_id> <auditedHead> [verdict]
+  mkdir -p "$TMP/pm/projects/p/tasks/$1"
+  jq -n --arg id "$1" --arg p "$(git -C "$R" rev-parse --show-toplevel)" --arg h "$2" --arg v "${3:-pass}" \
+    '{id:$id,project:$p,verdicts:{audit:{verdict:$v,reviewer:"pm",notes:("fixture\nauditedHead: "+$h)}}}' > "$TMP/pm/projects/p/tasks/$1/task.json"
+}
+git -C "$R" commit -q --allow-empty -m pr1; RH1=$(git -C "$R" rev-parse HEAD)
+git -C "$R" commit -q --allow-empty -m pr11; RH11=$(git -C "$R" rev-parse HEAD)
+git -C "$R" reset -q --hard HEAD~2
+pm_task T0605-cross "$RH1"; pm_task T0611-old "$RH1"; pm_task T0612-failed "$RH11" fail
 reset; cfg true 6
-pr 1 issue-11-a 10; pr 2 issue-12-b 20; pr 3 issue-13-c 30; pr 4 issue-14-d 40; pr 5 issue-15-e 50; pr 6 issue-16-f 60; pr 7 issue-17-g 70; pr 8 issue-18-h 80; pr 9 issue-19-i 90; pr 10 issue-20-j 100
-approve_body 1 COLLABORATOR "approved-head:$(sha 1)
+pr 1 issue-11-a 10 false OPEN "$RH1"; pr 2 issue-12-b 20; pr 3 issue-13-c 30; pr 4 issue-14-d 40; pr 5 issue-15-e 50; pr 6 issue-16-f 60; pr 7 issue-17-g 70; pr 8 issue-18-h 80; pr 9 issue-19-i 90; pr 10 issue-20-j 100
+approve_body 1 COLLABORATOR "approved-head:$RH1
 approved-by: $(by antigravity claude-builder)
 note: } trailing line"
 approve_body 2 MEMBER "approved-head:$(sha 2)
@@ -501,11 +514,22 @@ jq -n --arg h "$(sha 7)" --arg ok "$(by antigravity claude-builder)" --arg self 
 approve 8 MEMBER "$(sha 8)"; approve 9 COLLABORATOR "$(sha 9)"
 approve_body 10 MEMBER "approved-head:$(sha 10)
 approved-by: {\"reviewer\":1,\"builder\":2,\"task_id\":3,\"gate_receipt\":4}"
-for k in 11 12 13 14 15 16 17 18 19 20; do issue "$k"; done
+# audit T0066 vòng 2 (BYPASS-R2-04): task_id tự khai không có biên bản / biên bản cho head khác / verdict fail / sai dạng → loại.
+pr 11 issue-21-k 110 false OPEN "$RH11"; pr 12 issue-22-l 120 false OPEN "$RH11"; pr 13 issue-23-m 130 false OPEN "$RH11"
+pr 14 issue-24-n 140 false OPEN "$RH11"
+approve_body 11 MEMBER "approved-head:$RH11
+approved-by: $(by antigravity claude-builder T0999-forged)"
+approve_body 12 MEMBER "approved-head:$RH11
+approved-by: $(by antigravity claude-builder T0611-old)"
+approve_body 13 MEMBER "approved-head:$RH11
+approved-by: $(by antigravity claude-builder T0612-failed)"
+approve_body 14 MEMBER "approved-head:$RH11
+approved-by: $(by antigravity claude-builder 'issue-605')"
+for k in 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do issue "$k"; done
 : > "$F/train.out"
 ( export SB_MERGE_QUEUE=1; run_q --dry-run ); rc=$?
 OUT="$(cat "$TMP/out" "$TMP/err")"
-printf '%s' "$OUT" | grep -q -- "--prs 4:$(sha 4),1:$(sha 1) " && ok "#605 cross-review marker (reviewer≠builder) and bare OWNER approved-head: both batched" || fail "#605 batch: rc=$rc $OUT"
+printf '%s' "$OUT" | grep -q -- "--prs 4:$(sha 4),1:$RH1 " && ok "#605 cross-review marker (reviewer≠builder) and bare OWNER approved-head: both batched" || fail "#605 batch: rc=$rc $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #2 .*self-review" && ok "#605 reviewer == builder (case-insensitive): rejected as self-review" || fail "#605 self-review not rejected: $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #3 .*not the PR head" && ok "#605 marker on another head: rejected" || fail "#605 head mismatch: $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #5 .*approved-by" && ok "#605 malformed approved-by: rejected (no fallback to bare)" || fail "#605 malformed: $OUT"
@@ -514,5 +538,9 @@ printf '%s' "$OUT" | grep -q "drop PR #7 .*self-review" && ok "#605 newer self-r
 printf '%s' "$OUT" | grep -q "drop PR #8 .*approved-by required" && ok "#605 bare approved-head from a MEMBER: rejected (approved-by required)" || fail "#605 bare MEMBER honoured: $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #9 .*approved-by required" && ok "#605 bare approved-head from a COLLABORATOR: rejected (approved-by required)" || fail "#605 bare COLLABORATOR honoured: $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #10 .*approved-by needs non-empty" && ok "#605 numeric approved-by fields: rejected (strings only)" || fail "#605 numeric fields honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #11 .*audit" && ok "#605 approved-by task_id with no antigravity-pm audit record: rejected" || fail "#605 forged task_id honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #12 .*audit" && ok "#605 approved-by task_id audited on another head: rejected" || fail "#605 replayed task_id honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #13 .*audit" && ok "#605 approved-by task_id whose audit verdict is fail: rejected" || fail "#605 failed audit honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #14 .*task_id" && ok "#605 approved-by task_id not in the antigravity-pm id shape: rejected" || fail "#605 bad task_id shape honoured: $OUT"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue: all passed" || { echo "❌ test_merge_queue: $FAILS failed"; exit 1; }
