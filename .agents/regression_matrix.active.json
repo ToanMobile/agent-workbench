@@ -2033,6 +2033,24 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-reviewer-antigravity-audit-605",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-build/references/worker-preamble.md",
+        ".claude/skills/super-review/SKILL.md",
+        "universal-agent-devkit/docs/init_board/ai-factory-superboard-workflow.md"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEWER-AUDIT-605-01",
+          "name": "#605 (audit T0066 vòng 3): prompt Review headless, run.md, worker-preamble.md, super-review/SKILL.md và ai-factory doc cùng một hợp đồng: reviewer chạy audit Antigravity thật qua antigravity-pm (pm_task_create, pm_dispatch kind=audit, audit-agent.json, pm_verdict auditedHead) trước approved-by, gate_receipt = biên nhận task impacted, Antigravity không có thì thẻ ở Review với blocked-by",
+          "command": "bash tests/super-board/test_reviewer_antigravity_audit_contract.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

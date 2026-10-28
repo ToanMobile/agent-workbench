@@ -396,7 +396,10 @@ AH_DIR=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/de
 [ -z "$AH_DIR" ] || AH_DIR="$AH_DIR/super-board/approved-merge-heads"
 [ -z "$AH_DIR" ] || [ ! -r "$AH_DIR/$HEAD_SHA" ] || APPROVED_HEAD=$(head -1 "$AH_DIR/$HEAD_SHA")
 approval_check() {
-  APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --pr "$PR" \
+  # audit T0066 vòng 3: head PR phải có trong repo của board thì auditedHead của marker duyệt chéo mới kiểm được; fetch lỗi vẫn đi tiếp
+  # (approval.py tự fetch refs/pull/<n>/head, còn thiếu thì không duyệt).
+  git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || :
+  APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
     --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || APPROVAL='{"approved":false}'
   python3 "$GITHUB_READ" --check || exit $?
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')

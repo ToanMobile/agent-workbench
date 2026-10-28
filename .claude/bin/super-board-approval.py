@@ -134,7 +134,8 @@ def validate(comments, expected, permission, cross_review_ok=False, audited=None
 
     cross_review_ok (#605) = cross_review_allowed(plan) của caller; mặc định False: chỉ `done` của người.
     audited(task_id) (#605, audit T0066 vòng 2) = auditedHead của audit pass antigravity-pm cho task đó, hoặc None; marker duyệt chéo
-    chỉ tính khi nó đúng bằng head của request. Mặc định: biên bản của repo cwd (super-board-audit-check.py).
+    chỉ tính khi nó đúng bằng head của request. Mặc định: biên bản của repo cwd (super-board-audit-check.py); GitHub.check truyền repo
+    của board (--repo-path, audit T0066 vòng 3).
     """
     audited = audited or audit_check.audited
     def hold(why):
@@ -195,11 +196,13 @@ def validate(comments, expected, permission, cross_review_ok=False, audited=None
 
 
 class GitHub:
-    def __init__(self, repo):
+    def __init__(self, repo, repo_path=None):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
             raise ValueError("missing or invalid repository")
         self.repo = repo.lower()
         self.permissions = {}
+        # audit T0066 vòng 3: biên bản audit xét theo repo của board (config repo.path), không theo cwd của tiến trình gọi.
+        self.top = audit_check.repo_top(repo_path or ".")
 
     @staticmethod
     def read(*args):
@@ -306,12 +309,20 @@ class GitHub:
         expected = {"repo": self.repo, "pr": number, "head": approved_head or current_head}
         if scope is not None:
             expected["scope"] = scope
-        return validate(comments, expected, self.permission, cross_review_ok=cross_review_ok)
+        def audited(task_id):
+            # Chỉ gọi khi có marker duyệt chéo đọc được. Head PR chưa fetch về repo của board thì auditedHead không kiểm được:
+            # fetch refs/pull/<n>/head trước (lỗi → không duyệt).
+            if not self.top:
+                return None
+            audit_check.ensure_commit(self.top, expected["head"], number)
+            return audit_check.audited(task_id, self.top)
+        return validate(comments, expected, self.permission, cross_review_ok=cross_review_ok, audited=audited)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--repo", required=True)
+    ap.add_argument("--repo-path", help="checkout của repo board (config repo.path) chứa biên bản audit; mặc định cwd")
     ap.add_argument("--pr", type=int)
     ap.add_argument("--head")
     ap.add_argument("--approved-head", help="head người đã duyệt khi --head là merge commit gate tự đẩy (#262)")
@@ -327,7 +338,7 @@ def main():
         return
     if args.deps:
         graph = json.load(sys.stdin)
-        github = GitHub(args.repo) if args.repo else None
+        github = GitHub(args.repo, args.repo_path) if args.repo else None
         for entry in graph.values():
             entry["needsYouDone"] = False
             entry["approvalRefresh"] = False
@@ -366,7 +377,7 @@ def main():
         ap.error("check requires --pr, --head and --plan")
     try:
         plan = json.loads(args.plan)
-        result = GitHub(args.repo).check(args.pr, args.head, scope_for(plan), approved_head=args.approved_head,
+        result = GitHub(args.repo, args.repo_path).check(args.pr, args.head, scope_for(plan), approved_head=args.approved_head,
                                          cross_review_ok=cross_review_allowed(plan))
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         result = {"approved": False, "why": "approval evidence could not be verified"}

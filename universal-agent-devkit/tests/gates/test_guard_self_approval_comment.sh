@@ -127,5 +127,42 @@ check 2 'bash -c "DEVKIT_PM_HOME_TEST=1 agent-kit integrate"'
 check 0 'bash universal-agent-devkit/tests/gates/test_push_gate.sh'
 check 0 'python3 tests/super-board/test_approval_cross_review.py'
 
+echo "F. (audit T0066 vòng 3) tên biến pm trong mã interpreter, HOME= trên lệnh gate/push: chặn"
+check 2 "python3 -c \"import os,subprocess; os.environ['ANTIGRAVITY_PM_STATE_HOME']='/tmp/f'; subprocess.run(['git','push','origin','feat'])\""
+check 2 "python3 -c \"import os; os.environ['DEVKIT_PM_HOME_TEST']='1'; import push_gate\""
+check 2 "node -e \"process.env.ANTIGRAVITY_PM_STATE_HOME='/tmp/f'; require('child_process').execSync('agent-kit integrate')\""
+check 2 "python3 - <<'EOF'
+import os
+os.environ['ANTIGRAVITY_PM_STATE_HOME'] = '/tmp/f'
+os.environ['DEVKIT_PM_HOME_TEST'] = '1'
+import push_gate
+EOF"
+check 2 'HOME=/tmp/fake bash .claude/bin/super-board-merge-gate.sh --config c.json --pr 5'
+check 2 'HOME=/tmp/fake .claude/bin/super-board-merge-queue.sh --config c.json'
+check 2 "HOME=/tmp/fake python3 .claude/bin/super-board-audit-check.py T0001-x $SHA"
+check 2 'env HOME=/tmp/fake python3 .agents/devkit/bin/push_gate.py'
+check 2 'HOME=/tmp/fake python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief'
+check 2 'HOME=/tmp/fake agent-kit integrate'
+check 2 'HOME=/tmp/fake git push origin feat'
+check 2 'HOME=/tmp/fake git -C . push origin feat'
+check 2 'export HOME=/tmp/fake; git push origin feat'
+check 2 'HOME=/tmp/fake bash -c "git push origin feat"'
+check 0 'HOME=/tmp/fake ls'
+check 0 'HOME=/tmp/fake python3 tests/super-board/test_approval_cross_review.py'
+check 0 "python3 -c \"import os; print(os.environ.get('HOME'))\""
+
+echo "G. (audit T0066 vòng 3) gh api graphql: endpoint /graphql, URL đầy đủ, chuỗi khối \"\"\"…\"\"\", body không đọc được: chặn"
+FRAG='chỉ người chủ repo'
+check 2 "gh api /graphql -f query='mutation { addComment(input:{subjectId:\"I_1\", body:\"done\"}) { clientMutationId } }'"
+check 2 "gh api graphql/ -f query='mutation { addComment(input:{subjectId:\"I_1\", body:\"done\"}) { clientMutationId } }'"
+check 2 "gh api https://api.github.com/graphql -f query='mutation { addComment(input:{subjectId:\"I_1\", body:\"done\"}) { clientMutationId } }'"
+check 2 "gh api graphql -f query='mutation { addComment(input:{subjectId:\"I_1\", body:\"\"\"done\"\"\"}) { clientMutationId } }'"
+check 2 "gh api graphql -f query='mutation { addComment(input:{subjectId:\"I_1\", body:\"\"\"[reviewer] ok
+approved-head:$SHA\"\"\"}) { clientMutationId } }'"
+check 2 "gh api graphql -f query='mutation { addComment(input:{subjectId:\"I_1\", body: \$b}) { clientMutationId } }'"
+check 2 'gh api repos/o/r/issues/7/comments -f body=done -f x=a/graphql'
+check 0 "gh api graphql -f query='mutation { addComment(input:{subjectId:\"I_1\", body:\"\"\"[reviewer] ok\"\"\"}) { clientMutationId } }'"
+check 0 "gh api /graphql -f query='query { viewer { login } }'"
+
 if [ "$FAILS" -ne 0 ]; then echo "FAIL: $FAILS case(s)"; exit 1; fi
 echo "PASS"

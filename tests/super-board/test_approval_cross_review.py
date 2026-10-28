@@ -194,6 +194,16 @@ class CrossReview(unittest.TestCase):
             r = subprocess.run([sys.executable, str(cli), task, sha], capture_output=True, text=True, cwd=_REPO)
             self.assertEqual(r.returncode, 1, (task, sha, r.stdout, r.stderr))
 
+    def test_overridden_pm_home_without_test_switch_refused(self):
+        # audit T0066 vòng 3 (finding 3): HOME=/tmp/x hay ANTIGRAVITY_PM_STATE_HOME lạ mà không phải fixture test → không duyệt
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"DEVKIT_PM_HOME_TEST": ""}):
+            r = run(comment(2, cross(), "2026-10-28T10:05:00Z"))
+            cli = subprocess.run([sys.executable, str(ROOT / ".claude/bin/super-board-audit-check.py"), TASK, _C2],
+                                 capture_output=True, text=True, cwd=_REPO)
+        self.assertFalse(r["approved"], r)
+        self.assertEqual(cli.returncode, 1, cli.stderr)
+
     def test_unreadable_plan_is_human_only(self):
         self.assertFalse(approval.cross_review_allowed(None))
         self.assertFalse(approval.cross_review_allowed({"human": "x"}))
@@ -236,6 +246,58 @@ class DepsCrossReview(unittest.TestCase):
 
     def test_without_config_keeps_card_blocked(self):
         self.assertFalse(self.deps(PLAN_SIZE, with_config=False)["needsYouDone"])
+
+
+def _fetch_fixture(name):
+    """(local, sha): repo `local` có remote origin; sha chỉ có ở origin dưới refs/pull/7/head, local chưa có object."""
+    base = os.path.join(_TMP, name)
+    origin, work, local = (os.path.join(base, d) for d in ("origin.git", "work", "local"))
+
+    def git(*a):
+        return subprocess.run(["git", *a], check=True, capture_output=True, text=True, env=_GIT_ENV).stdout.strip()
+
+    git("init", "-q", "--bare", origin)
+    git("init", "-q", "-b", "main", work)
+    git("-C", work, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "pr")
+    sha = git("-C", work, "rev-parse", "HEAD")
+    git("-C", work, "push", "-q", origin, "HEAD:refs/pull/7/head")
+    git("init", "-q", "-b", "main", local)
+    git("-C", local, "remote", "add", "origin", origin)
+    return git("-C", local, "rev-parse", "--show-toplevel"), sha
+
+
+class RepoTopAndFetch(unittest.TestCase):
+    """audit T0066 vòng 3 (finding 2): biên bản xét theo repo của board (--repo-path), không theo cwd; head PR chưa có object
+    trong repo thì fetch refs/pull/<n>/head trước khi đối chiếu auditedHead."""
+
+    def test_check_uses_repo_path_and_fetches_missing_head(self):
+        from unittest import mock
+        local, sha = _fetch_fixture("check")
+        pm_task("T0610-fetched", sha, project=local)
+        req = comment(1, "Reason tag: 🙋\n" + approval.marker(approval.request_for(REPO, PR, sha, SCOPE)),
+                      "2026-10-28T10:00:00Z", source=PR)
+        mark = comment(2, cross(head=sha, task_id="T0610-fetched"), "2026-10-28T10:05:00Z", source=PR)
+        cwd = os.getcwd()
+        os.chdir(_TMP)   # cwd KHÔNG phải repo: biên bản phải xét theo repo_path
+        try:
+            with mock.patch.object(approval.GitHub, "pr", lambda self, n: (sha, set())), \
+                    mock.patch.object(approval.GitHub, "comments", lambda self, n: [req, mark] if n == PR else []), \
+                    mock.patch.object(approval.GitHub, "permission", lambda self, u: "write"):
+                r = approval.GitHub(REPO, repo_path=local).check(PR, sha, SCOPE, cross_review_ok=True)
+        finally:
+            os.chdir(cwd)
+        self.assertTrue(r["approved"], r)
+
+    def test_audit_check_cli_fetches_pr_head(self):
+        local, sha = _fetch_fixture("cli")
+        pm_task("T0611-cli", sha, project=local)
+        cli = ROOT / ".claude/bin/super-board-audit-check.py"
+        r = subprocess.run([sys.executable, str(cli), "--top", local, "--pr", "7", "T0611-cli", sha],
+                           capture_output=True, text=True, cwd=_TMP)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        bad = subprocess.run([sys.executable, str(cli), "--top", local, "--pr", "8", "T0611-cli", "d" * 40],
+                             capture_output=True, text=True, cwd=_TMP)
+        self.assertEqual(bad.returncode, 1, bad.stderr)   # ref không có ở origin: fetch lỗi → từ chối như cũ
 
 
 def policy(cfg, files, diff):

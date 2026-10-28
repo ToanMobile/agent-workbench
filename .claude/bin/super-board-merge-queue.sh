@@ -469,7 +469,8 @@ while read -r at n head ref; do
   # #605 (audit T0066 vòng 2): task_id của approved-by là lời khai; chỉ tính khi antigravity-pm có audit pass với auditedHead == head.
   case "$vwhy" in
     owner) ;;
-    task:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" "${vwhy#task:}" "$head" ) 2>/dev/null; then
+    # audit T0066 vòng 3: --pr = head chưa có object trong repo thì fetch refs/pull/<n>/head trước; fetch lỗi → loại như cũ.
+    task:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" --pr "$n" "${vwhy#task:}" "$head" ) 2>/dev/null; then
                reject "$n" "approved-by task_id ${vwhy#task:} has no antigravity-pm audit pass with auditedHead ${head:0:7}"; continue
              fi ;;
     *) reject "$n" "approved-head ${approved:0:7}: approval source unreadable"; continue ;;

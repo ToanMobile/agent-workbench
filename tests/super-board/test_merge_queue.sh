@@ -544,4 +544,24 @@ printf '%s' "$OUT" | grep -q "drop PR #12 .*audit" && ok "#605 approved-by task_
 printf '%s' "$OUT" | grep -q "drop PR #13 .*audit" && ok "#605 approved-by task_id whose audit verdict is fail: rejected" || fail "#605 failed audit honoured: $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #14 .*task_id" && ok "#605 approved-by task_id not in the antigravity-pm id shape: rejected" || fail "#605 bad task_id shape honoured: $OUT"
 
+# audit T0066 vòng 3 (finding 2): head PR chưa có object trong repo của board → queue fetch refs/pull/<n>/head rồi mới đối chiếu
+# auditedHead; ref không có ở origin → loại như cũ.
+O="$TMP/origin.git"; W="$TMP/work"
+git init -q --bare "$O"; git init -q -b main "$W"
+git -C "$W" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m pr15; RH15=$(git -C "$W" rev-parse HEAD)
+git -C "$W" push -q "$O" HEAD:refs/pull/15/head
+git -C "$R" remote add origin "$O" 2>/dev/null || git -C "$R" remote set-url origin "$O"
+pm_task T0615-fetch "$RH15"; pm_task T0616-nofetch "$(sha 16 d)"
+reset; cfg true 6
+pr 15 issue-25-o 10 false OPEN "$RH15"; pr 16 issue-26-p 20 false OPEN "$(sha 16 d)"
+approve_body 15 MEMBER "approved-head:$RH15
+approved-by: $(by antigravity claude-builder T0615-fetch)"
+approve_body 16 MEMBER "approved-head:$(sha 16 d)
+approved-by: $(by antigravity claude-builder T0616-nofetch)"
+issue 25; issue 26
+( export SB_MERGE_QUEUE=1; run_q --dry-run ); rc=$?
+OUT="$(cat "$TMP/out" "$TMP/err")"
+printf '%s' "$OUT" | grep -q -- "--prs 15:$RH15 " && ok "#605 PR head missing locally: fetched from refs/pull/15/head, audit pass honoured" || fail "#605 fetch-when-missing: rc=$rc $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #16 .*audit" && ok "#605 PR head not on origin either: rejected" || fail "#605 unfetchable head: $OUT"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue: all passed" || { echo "❌ test_merge_queue: $FAILS failed"; exit 1; }
