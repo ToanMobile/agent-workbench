@@ -30,6 +30,7 @@ already removes every normally closed session, so the prune only catches crashed
 """
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -414,6 +415,49 @@ def claim_hour(stamp, window_s=3600):
         os.close(fd)
 
 
+def prune_project_runtime(log_root):
+    """Ở SessionStart (--prune), gọi devkit_clean.py (--days=7 --apply --keep-state) tối đa 1 lần mỗi 24h cho từng repo
+    để giữ .claude/audit-gate dưới trần 3 MB và tỉa log runtime super-board cũ dù máy chưa cài LaunchAgent nightly."""
+    if log_root is None:
+        return
+    clean_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "devkit_clean.py")
+    if not os.path.isfile(clean_py):
+        return
+    if "DEVKIT_CLEAN_PROJECT" in os.environ:
+        raw = os.environ["DEVKIT_CLEAN_PROJECT"].strip()
+        if not raw:
+            return
+    elif "DEVKIT_SCRATCH_ROOT" in os.environ:
+        # Khi chạy trong bộ test cô lập (DEVKIT_SCRATCH_ROOT được gán), không tự chạm vào CLAUDE_PROJECT_DIR của phiên cha bên ngoài.
+        return
+    else:
+        raw = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    proj = os.path.realpath(raw)
+    try:
+        st = os.lstat(proj)
+    except OSError:
+        return
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        return
+    if not (real_dir(os.path.join(proj, ".claude", "audit-gate")) or real_dir(os.path.join(proj, ".agents"))):
+        return
+    key = hashlib.sha1(proj.encode("utf-8", "replace")).hexdigest()[:12]
+    if not claim_hour(os.path.join(log_root, ".devkit-clean-" + key), window_s=86400):
+        return
+    try:
+        r = subprocess.run([sys.executable, "-I", clean_py, proj, "--days=7", "--apply", "--keep-state"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        if r.returncode != 0:
+            detail = (r.stderr or r.stdout or "").strip().splitlines()
+            msg = "devkit_clean failed on %s (rc=%d%s)" % (proj, r.returncode, ": " + detail[-1] if detail else "")
+            print("scratch_cleanup: " + msg, file=sys.stderr)
+            _append_log(log_root, "%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
+    except (OSError, subprocess.SubprocessError) as e:
+        msg = "devkit_clean error on %s: %s" % (proj, e)
+        print("scratch_cleanup: " + msg, file=sys.stderr)
+        _append_log(log_root, "%s %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
+
+
 def sweep_test_tmp(ttl_h, scratch, rate_limited=False):
     """Xoá các thư mục tạm quá hạn do test bỏ sót trong $TMPDIR (mọi TEST_TMP_PREFIXES) và trong /private/tmp (riêng dk-*)."""
     root = test_tmp_root()
@@ -500,6 +544,8 @@ def main(argv):
     root = scratch_root()
     if prune or sweep_only:
         sweep_test_tmp(tmp_ttl_h, root, rate_limited=prune)
+    if prune:
+        prune_project_runtime(_safe_log_root(root, test_tmp_root()))
     if root is None or sweep_only:
         return 0
     if end is not None:
