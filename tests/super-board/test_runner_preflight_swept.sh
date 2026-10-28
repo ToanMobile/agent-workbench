@@ -93,12 +93,12 @@ export STUB_PREFLIGHT_JSON='{"7":{"number":7,"verdict":"sequence","tag":"overlap
 SB_PREFLIGHT="$PF" dispatch_lane build 7 >/dev/null 2>&1
 [ -e "$INFLIGHT_DIR/7" ] && ok "sequence with empty blockedBy: still dispatched" || fail "sequence/empty blockedBy was blocked"
 
-# ── 1d. sequence có blockedBy → Blocked, dòng cuối blocked-by: 9
+# ── 1d. sequence có blockedBy → thẻ ở Ready + nhãn waiting-on:#9, không Blocked (#601)
 reset
 export STUB_PREFLIGHT_JSON='{"7":{"number":7,"verdict":"sequence","tag":"overlap","reason":"overlap PR #52","blockedBy":[9]}}'
 SB_PREFLIGHT="$PF" dispatch_lane build 7 >/dev/null 2>&1
-[ ! -e "$INFLIGHT_DIR/7" ] && grep -q "move PVTI_7 Blocked" "$TMP/writes" && grep -Eq "blocked-by: +9" "$TMP/writes" \
-  && ok "sequence with blockedBy [9]: Blocked with 'blocked-by: 9'" || fail "sequence/blockedBy wrong: $(cat "$TMP/writes")"
+[ ! -e "$INFLIGHT_DIR/7" ] && ! grep -q "move PVTI_7 Blocked" "$TMP/writes" && grep -q "issue edit 7 --add-label waiting-on:#9" "$TMP/writes" \
+  && ok "sequence with blockedBy [9]: held in Ready with label waiting-on:#9" || fail "sequence/blockedBy wrong: $(cat "$TMP/writes")"
 
 # ── 1d2. blocker đã đóng (#8) → không chặn, giao (số đã đóng là đúng mẫu #200)
 reset
@@ -108,7 +108,8 @@ SB_PREFLIGHT="$PF" dispatch_lane build 7 >/dev/null 2>&1
 reset
 export STUB_PREFLIGHT_JSON='{"7":{"number":7,"verdict":"sequence","tag":"overlap","reason":"overlap PR #52","blockedBy":[8,9]}}'
 SB_PREFLIGHT="$PF" dispatch_lane build 7 >/dev/null 2>&1
-grep -Eq "blocked-by: +9$" "$TMP/writes" && ok "mixed blockers: only the open #9 is written" || fail "mixed blockers wrong: $(cat "$TMP/writes")"
+{ grep -q "issue edit 7 --add-label waiting-on:#9" "$TMP/writes" && ! grep -q "waiting-on:#8" "$TMP/writes"; } \
+  && ok "mixed blockers: only the open #9 is labelled" || fail "mixed blockers wrong: $(cat "$TMP/writes")"
 
 # ── 1d3. blockedBy là số PR (merged → coi đã đóng; open PR / số không tồn tại → không dừng board, giao như cũ)
 export SB_GITHUB_HALT_FILE="$TMP/halt.json"
