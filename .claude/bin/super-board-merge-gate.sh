@@ -312,8 +312,7 @@ fi
 
 # ---- the freshness check ---------------------------------------------------
 # Scratch proves the merge. When that merge is clean and the PR branch is behind
-# the base, the gate fast-forwards the merge commit onto the PR branch. It never
-# uses --force. A rejected fast-forward stays exit 11 (not a rebase pass).
+# the base, verify runs on the merged scratch tree; the gate never writes to the PR branch (#570).
 # Scratch đặt trong .claude/worktrees của main checkout để cùng phân vùng đĩa (st_dev) cho cp -Rc Unity Library.
 REPO_ABS=$(cd "$REPO_PATH" && pwd -P)
 MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //p')
@@ -625,8 +624,7 @@ if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
   exit 5
 fi
 
-# Nhánh chậm hơn base nhưng merge scratch sạch: đẩy fast-forward lên đúng nhánh PR
-# rồi mới verify. Timeout phía dưới vẫn thử lại một lần. Không --force.
+# Nhánh chậm hơn base nhưng merge scratch sạch: verify trên cây đã gộp. Timeout phía dưới vẫn thử lại một lần.
 MERGED_SHA=$(git -C "$SCRATCH" rev-parse HEAD)
 TRAIN_PROVED=0; TREE_PROVED=0
 if [ -n "$TRAIN_RECEIPT" ] && [ -r "$TRAIN_RECEIPT" ]; then
@@ -639,24 +637,10 @@ TREE_RECEIPT=$(sb_verified_tree_receipt "$(git -C "$SCRATCH" rev-parse 'HEAD^{tr
 TREE_KEY=${TREE_RECEIPT##*/}
 if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
+# #570: gate không ghi lên nhánh PR. Nhánh chậm hơn base thì chỉ verify trên cây scratch đã gộp (ở local); HEAD_SHA giữ nguyên head PR
+# nên approved-head, --match-head-commit và merge queue vẫn khớp đúng head người duyệt. GitHub squash tự gộp base lúc merge.
 if [ "${BEHIND_NOW:-0}" -gt 0 ] 2>/dev/null && [ "$MERGED_SHA" != "$HEAD_SHA" ]; then
-  if [ "$DRY" -eq 1 ]; then
-    # --dry-run không ghi lên remote: đầu PR đổi thì --expect-head của lần gọi thật sau đó thoát exit 6 (head moved).
-    say "dry run: ${HEAD_REF} is ${BEHIND_NOW} commit(s) behind ${BASE}; the real run would update it to ${MERGED_SHA} (nothing pushed)"
-  elif git -C "$REPO_PATH" push origin "${MERGED_SHA}:refs/heads/${HEAD_REF}"; then
-    say "updated ${HEAD_REF} in place ${HEAD_SHA} -> ${MERGED_SHA} (clean merge of ${BASE}, no --force)"
-    # Duyệt của người gắn với head cũ; merge commit này do chính gate đẩy (cha là head cũ + base) nên duyệt vẫn phủ nó. Commit khác
-    # đẩy thêm sau đó làm head khác MERGED_SHA, approval.py báo headChanged và đòi duyệt lại.
-    if [ "$APPROVED" = true ]; then
-      APPROVED_HEAD=${APPROVED_HEAD:-$HEAD_SHA}
-      [ -z "$AH_DIR" ] || { mkdir -p "$AH_DIR" && printf '%s\n' "$APPROVED_HEAD" > "$AH_DIR/$MERGED_SHA"; } \
-        || say "could not record the approved head for ${MERGED_SHA}: a second gate run will ask for approval again"
-    fi
-    HEAD_SHA=$MERGED_SHA
-  else
-    say "clean merge of ${BASE} could not fast-forward ${HEAD_REF}; not a rebase pass"
-    exit 11
-  fi
+  say "$([ "$DRY" -eq 1 ] && echo 'dry run: ')${HEAD_REF} is ${BEHIND_NOW} commit(s) behind ${BASE}; verifying the local merge ${MERGED_SHA:0:12} (nothing pushed)"
 fi
 
 # Populate git-ignored DevKit symlinks so post-fix-gate / REG-WB-CONFIG-01 succeed in SCRATCH
