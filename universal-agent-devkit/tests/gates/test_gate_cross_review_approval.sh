@@ -183,4 +183,20 @@ run_at "$TMP/t18-wt"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "18: linked worktree, task.project = repo khác -> exit 2"
 else bad "18: linked worktree repo khác: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
+# 19. commit sửa test KHÔNG có trailer; audit xong ghi một commit rỗng có trailer (chốt cả cây đã audit) -> exit 0
+mk_trailer_repo "$TMP/t19" T0619-none; pm_task T0619-cross "$TMP/t19" pass
+printf '#!/bin/sh\nexit 0 # sửa lần 2\n' > tests/test_old.sh && git commit -qam "sửa test lần 2, chưa audit"
+git commit -q --allow-empty -m "audit chéo" -m "Test-approved-by: antigravity T0619-cross"
+run_at "$TMP/t19"
+if [ "$RC" = 0 ] && has "T0619-cross"; then ok "19: commit rỗng có trailer sau lần sửa -> exit 0"
+else bad "19: commit rỗng trailer: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 20. sửa test SAU commit rỗng có trailer (nội dung khác cây đã audit) -> exit 2
+mk_trailer_repo "$TMP/t20" T0620-none; pm_task T0620-cross "$TMP/t20" pass
+git commit -q --allow-empty -m "audit chéo" -m "Test-approved-by: antigravity T0620-cross"
+printf '#!/bin/sh\nexit 0 # sau audit\n' > tests/test_old.sh && git commit -qam "sửa sau audit"
+run_at "$TMP/t20"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "20: sửa sau commit rỗng trailer -> exit 2"
+else bad "20: sửa sau trailer rỗng: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

@@ -649,25 +649,30 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
             base = mb.stdout.strip() if mb.returncode == 0 else ""
         if not base:
             return {}
+        # Commit có trailer chốt CẢ cây đã audit, không cần chạm file: audit xong ghi một commit rỗng có trailer là đủ.
+        res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
+                              "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{base}..HEAD"],
+                             capture_output=True, text=True, timeout=30)
+        if res.returncode != 0:
+            return {}
+        audited = []                                  # (sha, task_id), mới nhất trước, chỉ commit push_gate công nhận
+        for sha in res.stdout.split():
+            ok, note = _push_gate().approved(root, f"{sha}^!")
+            m = re.search(r"antigravity\s+(\S+)", note or "") if ok else None
+            if m:
+                audited.append((sha, m.group(1)))
         out = {}
-        for f in paths:
-            res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
-                                  "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{base}..HEAD", "--", prefix + f],
+        for f in paths if audited else []:
+            cur = subprocess.run(["git", "-C", root, "hash-object", "--", str(Path(project_root) / f)],
                                  capture_output=True, text=True, timeout=30)
-            if res.returncode != 0:
+            if cur.returncode != 0:
                 continue
-            for sha in res.stdout.split():            # mới nhất trước: commit đầu tiên được công nhận quyết định
-                ok, note = _push_gate().approved(root, f"{sha}^!")
-                if not ok:
-                    continue
-                m = re.search(r"antigravity\s+(\S+)", note or "")
+            for sha, task_id in audited:              # nội dung hiện tại phải đúng bằng blob ở một cây đã audit
                 blob = subprocess.run(["git", "-C", root, "rev-parse", "--verify", "-q", f"{sha}:{prefix}{f}"],
                                       capture_output=True, text=True, timeout=30)
-                cur = subprocess.run(["git", "-C", root, "hash-object", "--", str(Path(project_root) / f)],
-                                     capture_output=True, text=True, timeout=30)
-                if m and blob.returncode == 0 and cur.returncode == 0 and blob.stdout.strip() == cur.stdout.strip():
-                    out[f] = m.group(1)
-                break
+                if blob.returncode == 0 and blob.stdout.strip() == cur.stdout.strip():
+                    out[f] = task_id
+                    break
         return out
     except (OSError, subprocess.SubprocessError, RuntimeError, ImportError) as e:
         print(f"post-fix-gate: trailer Test-approved-by không đọc được ({type(e).__name__}); không duyệt", file=sys.stderr)
