@@ -141,7 +141,9 @@ two complete builds. In order, no shortcuts:
 
 1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
    **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"`
-   without `--codex`, whose runner drains the queue every tick): never call the merge gate (it refuses a direct call, exit 13). Post `approved-head:<sha40>` on the PR as its own comment, add
+   without `--codex`, whose runner drains the queue every tick): never call the merge gate (it refuses a direct call, exit 13). After gate `--full` green and cross-review (you are not the builder), post on the PR as its own comment
+   `approved-head:<sha40>` with a second line `approved-by: {"reviewer":"<you>","builder":"<builder>","task_id":"<id>","gate_receipt":"<id>"}`
+   (all four non-empty; reviewer == builder is rejected as self-review; a bare `approved-head` is the owner's hand approval), add
    the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
    the report (`merge-ready`) and leave the card in **Review**: the queue merges it in one train (run.md → Merge
    protocol). Queue off inside the board (`SB_MERGE_QUEUE=0`, not enabled, or the workflow backend (default) / `--codex`,
@@ -184,8 +186,8 @@ two complete builds. In order, no shortcuts:
      else, besides `approved-head:<sha40>`:
      `cross-review-approved: {"repo":"<owner/name>","pr":<P>,"head":"<sha40>","scope":"<request scope>","reviewer":"<you>","builder":"<builder>","task_id":"<id>","gate_receipt":"<receipt sha/id>"}`
      (repo/pr/head/scope copied from the request). `super-board-approval.py` accepts it in place
-     of `done`, except when the plan has `schema` or `delete-protected` (a deleted
-     `merge_policy.protected_paths` file) or any `needs-you:` step: those still need a human `done`.
+     of `done` (schema and `needs-you:` steps too), except when the plan has `delete-protected`
+     (a deleted `merge_policy.protected_paths` file): that still needs a human `done`.
    - The rule in one line: the robot migrates the databases it was allowed to test its
      work; live databases, money, auth and destructive schema changes wait for a person.
 3. **Confirm the merge landed** — never trust the merge command's exit code:

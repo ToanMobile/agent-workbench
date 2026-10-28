@@ -102,6 +102,27 @@ reset; pr_head "$H1"
 printf '{"comments":[{"authorAssociation":"OWNER","body":"approved-head:%s"},{"authorAssociation":"OWNER","body":"approved-head:%s"}]}' "$H1" "$H2" > "$TMP/comments-70.json"; tick
 is_full_review && ok "  … and a newer approval for another head voids the older one" || fail "older approval honoured over newer"
 
+# ── 5b. #605 Lane F: approved-head kèm `approved-by: {json}` = nguồn duyệt chéo; tự duyệt (reviewer == builder) bị từ chối.
+BY_OK='{"reviewer":"antigravity","builder":"claude-builder","task_id":"issue-605","gate_receipt":"r1"}'
+reset; pr_head "$H1"; comment COLLABORATOR "approved-head:$H1
+approved-by: $BY_OK
+note: } trailing"; tick
+is_merge_only && ok "#605 cross-review marker (reviewer≠builder) at the head: merge-only" || fail "#605 valid marker not merge-only: $(prompt_of | cut -c1-200)"
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1
+approved-by: {\"reviewer\":\"Claude-Builder\",\"builder\":\"claude-builder\",\"task_id\":\"t\",\"gate_receipt\":\"r\"}"; tick
+is_full_review && ok "#605 reviewer == builder (case-insensitive): self-review rejected, full review" || fail "#605 self-review honoured"
+reset; pr_head "$H2"; comment MEMBER "approved-head:$H1
+approved-by: $BY_OK"; tick
+is_full_review && ok "#605 marker on another head: full review" || fail "#605 head mismatch honoured"
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1
+approved-by: {not json"; tick
+is_full_review && ok "#605 malformed approved-by: rejected, no fallback to bare" || fail "#605 malformed marker honoured"
+reset; pr_head "$H1"; comment MEMBER "approved-head:$H1
+approved-by: {\"reviewer\":\"a\",\"builder\":\"b\",\"task_id\":\"\",\"gate_receipt\":\"r\"}"; tick
+is_full_review && ok "#605 empty task_id: rejected" || fail "#605 empty field honoured"
+reset; pr_head "$H1"; comment OWNER "approved-head:$H1"; tick
+is_merge_only && ok "#605 bare approved-head from the OWNER: still accepted" || fail "#605 bare OWNER approval lost"
+
 # ── 6. hợp đồng viết: run.md bảo Reviewer ghi `approved-head:` trước khi chạy gate
 grep -q 'approved-head:' "$ROOT/.claude/skills/super-board/references/run.md" && ok "run.md tells the Reviewer to post approved-head:<sha> before the gate" || fail "run.md does not mention approved-head:"
 

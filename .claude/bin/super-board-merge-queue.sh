@@ -43,6 +43,7 @@ set -euo pipefail
 export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
+APPROVED_HEAD_JQ="$HERE/super-board-approved-head.jq"   # #605: luật approved-head dùng chung với runner
 TRAIN="$HERE/super-board-merge-train.sh"
 CARD="$HERE/super-board-card.sh"
 NEEDS_YOU="$HERE/super-board-needs-you.py"
@@ -457,11 +458,12 @@ BATCH=""; NB=0
 while read -r at n head ref; do
   [ -n "${n:-}" ] && [ "$NB" -lt "$CAP" ] || continue
   comments=$(python3 "$GITHUB_READ" --kind object -- pr view "$n" ${REPO:+--repo "$REPO"} --json comments) || exit $?
-  # Cùng luật với review_approved_head của runner (#227): comment approved-head cuối cùng của người có quyền ghi thắng.
-  approved=$(printf '%s' "$comments" | jq -r '
-    [.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
-      | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty')
+  # Cùng luật với review_approved_head của runner (#227, #605): một file jq chung, comment approved-head cuối cùng của người có
+  # quyền ghi thắng; kèm `approved-by:` thì nguồn duyệt chéo phải đủ trường và không tự duyệt.
+  verdict=$(printf '%s' "$comments" | jq -r -f "$APPROVED_HEAD_JQ") || { say "cannot evaluate approvals for PR #$n (jq failed); left in the queue"; continue; }
+  IFS=$'\t' read -r vstate approved vwhy <<<"$verdict" || true
   if [ -z "$approved" ]; then reject "$n" "no \`approved-head:<sha40>\` from an OWNER/MEMBER/COLLABORATOR on this PR"; continue; fi
+  if [ "$vstate" != ok ]; then reject "$n" "approved-head ${approved:0:7}: ${vwhy:-invalid approval}"; continue; fi
   if [ "$approved" != "$head" ]; then reject "$n" "approved-head ${approved:0:7} is not the PR head ${head:0:7} (pushed after approval)"; continue; fi
   BATCH="${BATCH}${at} ${n} ${head} ${ref}"$'\n'; NB=$((NB + 1))
 done < <(printf '%s\n' "$ROWS")

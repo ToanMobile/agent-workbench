@@ -36,6 +36,7 @@ set -euo pipefail
 RUNNER_BORN=$(date +%s)
 SB_WORKER_WRAP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-worker-wrap.sh"
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
+SB_APPROVED_HEAD_JQ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-approved-head.jq"   # #605: chung với merge-queue
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
 # của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
 gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
@@ -1107,10 +1108,11 @@ $(printf '%s' "$prs" | jq -r --arg p "issue-$1-" --arg l "$want" '[.[] | select(
       else any((.labels // [])[]; .name == $l) end))) | "\(.number) \(.headRefOid)"' 2>/dev/null)
 EOF
   [ -n "${pr:-}" ] && [ -n "${head:-}" ] || return 1
-  approved=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r '
-    [.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
-      | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty' 2>/dev/null) || return 1
-  [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
+  # #605: luật chung trong super-board-approved-head.jq; chỉ `ok` (bare hoặc approved-by hợp lệ, không tự duyệt) mới tính.
+  local verdict vstate vwhy
+  verdict=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r -f "$SB_APPROVED_HEAD_JQ" 2>/dev/null) || return 1
+  IFS=$'\t' read -r vstate approved vwhy <<<"$verdict" || true
+  [ "$vstate" = ok ] && [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
   printf '%s %s' "$pr" "$head"
 }
 
