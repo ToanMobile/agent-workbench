@@ -2097,13 +2097,18 @@ def owner_gone(cwd, osid, sw, main):
     registration failed (or that started before this kit) never had one: the record's pid is what tells them apart. The registry
     heartbeat decides nothing - a session idle at its prompt or inside one long tool call keeps none. No pid anywhere: a record older than
     24 h (`sw` = hooks/session_worktree.py, `main` = the main checkout).
-    ponytail: a pid the OS has reused reads alive (never adopted, fails closed); upgrade to a start-time check if such a worktree is seen."""
+    A pid the OS has reused reads gone when its recorded start time differs (#413); one with no start time recorded, or one that cannot be read
+    now, reads alive (fails closed)."""
     if not osid or os.sep in osid:
         return False, "unknown"
     ok = lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 1   # noqa: E731 - a pid, not a flag or a bogus number
-    pids = [p for p in (sw.raw_pid(main, osid), (read_session(cwd, osid) or {}).get("pid")) if ok(p)]
-    if pids:
-        return (False, "alive") if any(is_pid_alive(p) for p in pids) else (True, "pid gone")
+    reg = read_session(cwd, osid) or {}
+    # (pid, alive?) per source: the registry's pid_start is raw (is_pid_alive), the record's start token has no blank (sw.lock_pid_alive);
+    # a live pid whose start time differs was reused by the OS = the session is gone (#413). No start time recorded: the pid alone, as before.
+    seen = [(p, alive) for p, alive in ((sw.raw_pid(main, osid), lambda p: sw.lock_pid_alive(p, sw.raw_pid_start(main, osid))),
+                                         (reg.get("pid"), lambda p: is_pid_alive(p, reg.get("pid_start")))) if ok(p)]
+    if seen:
+        return (False, "alive") if any(alive(p) for p, alive in seen) else (True, "pid gone")
     age = sw.record_age(main, osid)
     return (True, "old record, no pid") if age is not None and age > RECORD_NO_PID_TAKEOVER_S else (False, "unknown")
 
@@ -2617,10 +2622,14 @@ def main():
                 _sw.reown(main_top, sid, cwd, lambda o: not owner_gone(cwd, o, _sw, main_top)[0], me=holder_pid())
             except Exception as e:  # noqa: BLE001 - a record that cannot be moved: the Stop hook tries again (worktree_merge_gate)
                 print(f"session_lock: worktree record not moved ({e!r})", file=sys.stderr)
+            problems = []   # #413: a lock that could not be taken is said on stdout (SessionStart context), not only on stderr
             try:   # review 25/10: a session that starts in its worktree (no EnterWorktree) holds it too, or cleanup-wt removes it mid-gate
-                _sw.lock_started_worktree(main_top, cwd, sid, holder_pid(), source=str(d.get("source") or "") or None)
+                _sw.lock_started_worktree(main_top, cwd, sid, holder_pid(), source=str(d.get("source") or "") or None, problems=problems)
             except Exception as e:  # noqa: BLE001 - SessionStart never blocks: said on stderr, the worktree stays as unprotected as before
                 print(f"session_lock: session worktree not locked ({e!r})", file=sys.stderr)
+                problems.append(f"NOT LOCKED: the session worktree lock failed ({e!r}): cleanup-wt may remove it while this session works")
+            for line in problems:
+                print(f"⚠️ [DevKit] {line}")
         if trunk and _same_dir(top, trunk):
             return 0   # W1 R1 v6: a trunk-mode main checkout has no holder - nothing to take, nobody to wait for
         guard, why = _guard(gdir)
