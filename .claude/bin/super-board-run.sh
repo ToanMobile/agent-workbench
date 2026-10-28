@@ -1043,24 +1043,51 @@ merge_queue_wait_ok() {
   [ $(( $(date +%s) - oldest )) -le $(( 3 * 10#$max * 60 )) ]
 }
 
+mq_collect_rc() {
+  # $1 = tệp .mq.rc, $2 = tệp .mq.pid. Đọc mã thoát bộ gom chạy nền (#537) rồi xoá cả hai tệp; 79/9 là halt, lỗi khác chỉ ghi log.
+  local rc
+  rc=$(cat "$1" 2>/dev/null || true); rm -f "$1" "$2"
+  case "$rc" in
+    0) ;;
+    79|9) log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
+    *) log "⚠ super-board-merge-queue.sh --if-due exited ${rc:-?} — runner keeps going, the queue is retried next tick" ;;
+  esac
+}
+
 merge_queue_due() {
   # Pha 2: khi queue bật, mỗi tick chạy `super-board-merge-queue.sh --config <cfg> --if-due` (bộ gom tự thoát 0 khi chưa tới hạn hoặc
   # khoá bận). Exit 79/9 của nó là halt như gh_checkpoint; mọi lỗi khác chỉ ghi log, không được kết thúc runner (set -euo pipefail).
-  # ponytail: chạy đồng bộ, nên lúc một đợt tới hạn đang verify thì tick của runner đứng chờ; chuyển sang chạy nền (ghi PID, đọc mã
-  # thoát ở tick sau) khi log runner thấy khoảng trống giữa các tick dài hơn vài tick_seconds.
+  # #537: bộ gom chạy NỀN (gate --full có thể kéo dài hàng chục phút). Tick chỉ đợi tối đa SB_MQ_TICK_WAIT giây (mặc định 60; bộ gom
+  # thường thoát ngay vì chưa tới hạn, nên kết quả vẫn thấy trong cùng tick); quá hạn thì bỏ lại chạy nền và tick sau đọc mã thoát,
+  # nên halt 79/9 có thể đến chậm. Trạng thái nằm trong <RUNNER_DIR>/<slug>.mq.pid (PID) và .mq.rc (mã thoát, ghi nguyên tử khi xong);
+  # runner chết giữa chừng thì runner sau vẫn đọc được .mq.rc; chỉ một bộ gom chạy một lúc (còn khoá riêng của nó).
   merge_queue_on || return 0
-  local mq rc=0
+  local mq dir slug pidf rcf pid wait_s i=0
   mq="$(dirname "$SB_GITHUB_READ")/super-board-merge-queue.sh"
   if [ ! -x "$mq" ]; then
     log "⚠ merge queue is on but $mq is missing or not executable — queued PRs are not merged by this runner"
     return 0
   fi
-  "$mq" --config "$CONFIG_PATH" --if-due >> "${RUN_MANIFEST:-/dev/null}" 2>&1 || rc=$?
-  case "$rc" in
-    0) ;;
-    79|9) log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
-    *) log "⚠ super-board-merge-queue.sh --if-due exited ${rc} — runner keeps going, the queue is retried next tick" ;;
-  esac
+  dir="${RUNNER_DIR:-.claude/super-board/runner}"; slug="${CONFIG_SLUG:-board}"
+  mkdir -p "$dir" 2>/dev/null || true
+  dir="$(cd "$dir" 2>/dev/null && pwd -P || printf '%s' "$dir")"   # tuyệt đối: tiến trình nền không phụ thuộc cwd
+  pidf="$dir/$slug.mq.pid"; rcf="$dir/$slug.mq.rc"
+  if [ -f "$rcf" ]; then
+    mq_collect_rc "$rcf" "$pidf"
+    return 0   # a tick that collected a result starts no new run; the next tick does
+  fi
+  if [ -f "$pidf" ]; then
+    pid=$(cat "$pidf" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi   # batch still running: do not hold the tick
+    log "⚠ super-board-merge-queue.sh background run (pid ${pid:-?}) ended without an exit code — restarting it"
+    rm -f "$pidf"
+  fi
+  ( "$mq" --config "$CONFIG_PATH" --if-due >> "${RUN_MANIFEST:-/dev/null}" 2>&1 </dev/null; echo "$?" > "$rcf.tmp" && mv "$rcf.tmp" "$rcf" ) &
+  echo "$!" > "$pidf"
+  wait_s="${SB_MQ_TICK_WAIT:-60}"
+  case "$wait_s" in ''|*[!0-9]*) wait_s=60 ;; esac
+  while [ ! -f "$rcf" ] && [ "$i" -lt $((wait_s * 5)) ]; do sleep 0.2; i=$((i + 1)); done
+  if [ -f "$rcf" ]; then mq_collect_rc "$rcf" "$pidf"; fi
   return 0
 }
 
@@ -2382,6 +2409,55 @@ maybe_sweep_blocked() {
   return "$rc"
 }
 
+# #558 (28/10: #535 đóng mà nằm Blocked, phải kéo tay): reconcile CLOSED → Done chỉ chạy trên cột đang dispatch (top_card_in_column,
+# reclaim Building), không bao giờ chạm Blocked. Đầu mỗi tick đắt: một lần đọc danh sách issue đóng gần đây, giao với thẻ ngoài Done;
+# CLOSED completed → Done + một comment report (đi qua issue_is_open: nhãn ac-open vẫn mở lại thay vì Done, T0054). Đóng NOT_PLANNED
+# (người bỏ có chủ đích) giữ nguyên cột, chỉ log một lần. Ghi board hỏng: SB_CARD_BLOCKING=1 để gh_write_once KHÔNG chặn thẻ/halt;
+# thẻ giữ nguyên, trả 1 và không đặt mốc nghỉ nên tick sau thử lại. Trả 0 khi đã chuyển ít nhất một thẻ (caller đọc lại board).
+# ponytail: chỉ thấy issue trong SB_CLOSED_SWEEP_LIMIT (200) lần đóng gần nhất; thẻ nằm cột lâu hơn thế thì kéo tay, nâng khi gặp.
+sweep_closed_cards() {
+  local now closed n item col reason moved=0 failed=0 rc
+  now=$(date +%s)
+  [ "$now" -lt "${SWEEP_CLOSED_NEXT:-0}" ] && return 1
+  closed=$(python3 "$SB_GITHUB_READ" --kind json -- issue list --state closed --limit "${SB_CLOSED_SWEEP_LIMIT:-200}" --json number,stateReason 2>/dev/null) \
+    || { log "⚠ closed-issue sweep: list unreadable — retrying next tick"; return 1; }
+  while IFS=$'\t' read -r n item col reason; do
+    [ -n "$n" ] || continue
+    if [ "$reason" = "NOT_PLANNED" ]; then
+      case " ${SWEEP_CLOSED_LOGGED:-} " in *" $n "*) ;; *)
+        log "#${n} closed as not planned, still in '${col}' — left in place"; SWEEP_CLOSED_LOGGED="${SWEEP_CLOSED_LOGGED:-} $n" ;;
+      esac
+      continue
+    fi
+    issue_locked "$n" && continue
+    rc=0; issue_is_open "$n" || rc=$?
+    [ "$rc" -le 1 ] || exit "$rc"
+    [ "$rc" -eq 1 ] || continue
+    if ! SB_CARD_BLOCKING=1 set_card_status "$item" "Done"; then
+      gh_checkpoint
+      log "⚠ #${n} closed in '${col}' — could not move it to Done; retrying next tick"
+      failed=1; continue
+    fi
+    gh_checkpoint
+    SB_CARD_BLOCKING=1 gh_write_once issue comment "$n" --body "[orchestrator] [report] ✅ closed · card → Done
+Did: sweep found the issue closed (completed) while its card was in ${col}
+✅ Done: card moved to Done
+Next: -" >/dev/null 2>&1 || log "⚠ #${n} moved to Done but its report comment failed"
+    [ -n "$BOT_LOGIN" ] && SB_CARD_BLOCKING=1 gh_write_once issue edit "$n" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
+    rm -f "$INFLIGHT_DIR/$n"
+    log "reconciled closed #${n} -> Done (was '${col}') — closed-issue sweep"
+    moved=1
+  done <<EOF2
+$(printf '%s' "$closed" | jq -r --argjson cards "$PROJECT_ITEMS_JSON" '
+    ([.[] | {key: (.number | tostring), value: .stateReason}] | from_entries) as $c
+    | $cards.items[] | select(.status != "Done" and .content.type == "Issue")
+    | (.content.number | tostring) as $k | select($c | has($k))
+    | [$k, (.id // ""), .status, ($c[$k] // "")] | @tsv' 2>/dev/null)
+EOF2
+  [ "$failed" -eq 1 ] || SWEEP_CLOSED_NEXT=$((now + ${SB_CLOSED_SWEEP_EVERY:-300}))
+  [ "$moved" -eq 1 ]
+}
+
 # ── #363: cầu chì suite. ≥2 thẻ bị Blocked cùng một suite id (REG-…) trong SB_FUSE_WINDOW_H giờ là một nguyên nhân gốc, không phải hai thẻ:
 # giữ MỘT thẻ (số nhỏ nhất, hay thẻ đang giữ cờ ngưng), các thẻ còn lại ghi `blocked-by: <thẻ giữ>` và ở nguyên Blocked để sweep thả về khi
 # thẻ giữ đóng; NGƯNG giao Builder mới tới khi mọi thẻ giữ rời Blocked. KHÔNG BAO GIỜ đóng thẻ hay chuyển Done (suy đoán sai thì mất thẻ).
@@ -2994,6 +3070,7 @@ while true; do
   ACTIVE_WORKERS=$(( BUILD_COUNT + QA_COUNT + REVIEW_COUNT ))   # một trần chung cho cả 3 lane
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
+  if sweep_closed_cards; then tick_fetch || continue; fi   # #558
   if maybe_sweep_blocked; then tick_fetch || continue; fi
   # #363: ≥2 thẻ Blocked cùng suite id trong N giờ → một thẻ + ngưng giao Builder (suite_fuse_tick).
   if suite_fuse_tick; then tick_fetch || continue; fi

@@ -25,6 +25,7 @@ lần `git push` tay sau khi scratch đã gỡ cần gate lại. Nâng cấp ở
 import argparse
 import contextlib
 import fcntl
+import glob
 import hashlib
 import json
 import os
@@ -327,6 +328,10 @@ def push_gate_ok(main, sha):
 
 
 def integrate(main, base, args):
+    if glob.glob(os.path.join(main, ".claude", "super-board", "configs", "*.json")):   # #576: a super-board repo lands by PR + merge gate
+        say("repo có super-board (.claude/super-board/configs): main chỉ nhận việc qua PR + merge gate, integrate không push main. "
+            "Push nhánh và mở PR (open a PR) thay vì gộp vào main local")
+        return 2
     if not args.dry_run:
         sweep_orphans(main)
     fetch = git(main, "fetch", "--quiet", "origin", base, timeout=NET_TIMEOUT_S)
