@@ -152,7 +152,7 @@ const SKILLS_CHECK = (cards, lane) => [
 
 // Lane worktrees come from the DevKit only (agent-workbench#93): a plain `git worktree add` lacked .agents/devkit, the profile link and
 // the git-ignored hooks the settings run (health FAIL; NFH #18: matrix exit 127, 5 cards Blocked) and re-imported a whole Unity Library
-// per worktree (Goods ~9.9 GB). `--lane` takes no WORKTREE_MAX slot; the disk floor still refuses with exit 4.
+// per worktree (Goods ~9.9 GB). The disk floor refuses with exit 4.
 const WORKTREE_STEP = (lane, n) => [
   `Worktree: after \`git fetch origin\`, create it from the repo root ONLY with the DevKit, never plain \`git worktree add\` or EnterWorktree:`,
   lane === 'review'
