@@ -485,6 +485,7 @@ by() {   # by <reviewer> <builder> [task_id] [gate_receipt]
 # #605 (audit T0066 vòng 2): task_id của approved-by phải có biên bản audit pass của antigravity-pm với auditedHead == head PR
 # (commit có trong repo). PM state giả chỉ trong test này.
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
+export DEVKIT_PM_HOME_TEST=1   # fixture dưới thư mục tạm (audit T0066 vòng 3: thiếu công tắc thì không tính)
 pm_task() {   # pm_task <task_id> <auditedHead> [verdict]
   mkdir -p "$TMP/pm/projects/p/tasks/$1"
   jq -n --arg id "$1" --arg p "$(git -C "$R" rev-parse --show-toplevel)" --arg h "$2" --arg v "${3:-pass}" \

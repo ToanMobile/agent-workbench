@@ -114,6 +114,11 @@ printf '{"id":"T0704-st","project":"%s","verdicts":{"audit":{"verdict":"pass","n
 pg audited_head "$TMP/h" T0704-st
 if [ "$OUT" = "$C1" ]; then ok "H2: trường cấu trúc sai khuôn -> lùi về notes"
 else bad "H2: auditedHead sai khuôn: '$OUT' (mong $C1)"; fi
+# H3 (audit T0066 vòng 3): cùng biên bản hợp lệ của H2, pm home lạ KHÔNG bật công tắc test -> audited_head None (như approved()),
+# vì post-fix-gate/merge gate dựa vào audited_head cho mục duyệt chéo: HOME=/tmp/x hay ANTIGRAVITY_PM_STATE_HOME tự dựng không duyệt được.
+OUT="$(DEVKIT_PM_HOME_TEST= python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as p; print(p.audited_head(sys.argv[2], "T0704-st"))' "$PG_DIR" "$TMP/h" 2>&1)"
+if [ "$OUT" = "None" ]; then ok "H3: pm home lạ, không công tắc test -> audited_head None"
+else bad "H3: audited_head với pm home lạ không công tắc: '$OUT' (mong None)"; fi
 
 # P. ANTIGRAVITY_PM_STATE_HOME lạ: lời duyệt vẫn cho exit 0 nhưng không cấp biên nhận
 ORIGIN="$TMP/origin.git"; REPO="$TMP/prepo"

@@ -223,7 +223,7 @@ approve() {   # approve <path>:<reviewer>:<author> … → approved_tests.json c
   # Audit T0066: mục duyệt chỉ tính khi T605 có biên bản audit pass của antigravity-pm (ngoài repo, ở đây dưới $TMP) ghi
   # `auditedHead: <HEAD của main>` — cây chứa đúng nội dung test lúc duyệt.
   mkdir -p "$M/.claude/audit-gate"
-  export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm-state"
+  export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm-state"; export DEVKIT_PM_HOME_TEST=1   # fixture dưới $TMP (audit T0066 vòng 3)
   python3 -c 'import json, os, sys
 home, root, head = sys.argv[1:4]
 d = os.path.join(home, "projects", "fixture", "tasks", "T605"); os.makedirs(d, exist_ok=True)
@@ -247,6 +247,36 @@ edited_test_repo; o0="$(origin_head)"
 ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
 [ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] \
   && ok "I14 tiền đề: test sửa chưa được duyệt → integrate dừng, không push" || fail "I14 tiền đề: rc $rc, out: $(tail -4 "$TMP/out")"
+# I14 dương (audit T0066 vòng 3, finding 6): người dùng duyệt cả hai test bằng câu trả lời AskUserQuestion (transcript ở
+# DEVKIT_TRANSCRIPTS_DIR) SAU lần sửa cuối ở main → integrate push đúng HEAD. Không pm home nào (không nới lỏng), HOME riêng để gate
+# trong scratch không quét transcript thật. Scratch là checkout mới (mtime = lúc integrate), nên integrate phải mang mtime của main sang
+# file cùng nội dung, không thì câu trả lời có vẻ cũ hơn lần sửa và gate chặn.
+user_answer() {   # user_answer <epoch giây>: transcript $TMP/tx/s.jsonl với câu trả lời "Duyệt" cho t_a, t_b tại thời điểm đó
+  rm -rf "$TMP/tx" && mkdir -p "$TMP/tx" "$TMP/home-i14"
+  python3 - "$TMP/tx/s.jsonl" "$1" <<'PY'
+import json, sys, time
+q = "Duyệt sửa tests/t_a.sh và tests/t_b.sh?"
+rec = {"type": "user", "sessionId": "s-i14", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(int(sys.argv[2]))),
+       "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]},
+       "toolUseResult": {"questions": [{"question": q, "header": "Test", "options": [{"label": "Duyệt", "description": "giữ diff"},
+                                                                                      {"label": "Không", "description": "đổi"}]}],
+                         "answers": {q: "Duyệt"}}}
+open(sys.argv[1], "w").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+}
+integrate_user() { ARGS="" integrate -u ANTIGRAVITY_PM_STATE_HOME -u DEVKIT_PM_HOME_TEST HOME="$TMP/home-i14" DEVKIT_TRANSCRIPTS_DIR="$TMP/tx" \
+  DEVKIT_AUTO_APPROVE_TESTS=0; }
+edited_test_repo; touch -t 202001010000 "$M/tests/t_a.sh" "$M/tests/t_b.sh"; user_answer "$(date +%s)"
+integrate_user; rc=$?
+[ "$rc" = 0 ] && [ "$(origin_head)" = "$(G "$M" rev-parse HEAD)" ] && ! grep -qF "ANTIGRAVITY_PM_STATE_HOME lạ" "$TMP/out" \
+  && ok "I14 dương: test sửa được người dùng duyệt (transcript) tới được gate trong scratch → integrate push đúng HEAD" \
+  || fail "I14 dương: rc $rc, out: $(tail -6 "$TMP/out")"
+# I14 dương đối chứng: câu trả lời CŨ hơn lần sửa cuối ở main (2019 < 2020) → mtime mang sang không duyệt hộ, vẫn chặn, không push
+edited_test_repo; o0="$(origin_head)"; touch -t 202001010000 "$M/tests/t_a.sh" "$M/tests/t_b.sh"; user_answer 1546300800
+integrate_user; rc=$?
+[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] \
+  && ok "I14 dương đối chứng: câu trả lời trước lần sửa cuối ở main không duyệt, không push" \
+  || fail "I14 dương đối chứng: rc $rc, out: $(tail -6 "$TMP/out")"
 # Audit T0066 vòng 2: biên bản ở ANTIGRAVITY_PM_STATE_HOME lạ (fixture dưới $TMP) agent nào cũng tự dựng được — lời duyệt vẫn tới được gate
 # trong scratch (kết luận duyệt chéo, dòng PM_RELAX) nhưng không cấp biên nhận nên integrate KHÔNG push. Các đối chứng dưới: không có
 # dòng PM_RELAX = gate không duyệt đủ (chặn vì lời duyệt hỏng, không phải vì pm home lạ).

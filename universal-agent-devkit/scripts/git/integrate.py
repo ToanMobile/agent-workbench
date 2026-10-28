@@ -269,6 +269,33 @@ def copy_approved_tests(main, scratch):
         say(f"không chép được lời duyệt test vào scratch: {type(e).__name__}: {e}")
 
 
+def copy_mtimes(main, scratch, remote, head):
+    """Mang mtime của main sang file của scratch khi nội dung trùng byte, chỉ cho các file đổi trong <remote>..<head> (audit T0066 vòng 3,
+    #605): lời duyệt test của người dùng (câu trả lời AskUserQuestion trong transcript) chỉ tính khi nó MỚI hơn lần sửa cuối của file;
+    scratch là checkout mới (mtime = lúc integrate) nên mọi câu trả lời trông cũ hơn và test sửa đã được duyệt ở main vẫn chặn. Trùng byte
+    = đúng nội dung mà gate ở main cũng xét với đúng mtime đó: integrate không tự duyệt, không nới luật. Lỗi chỉ được báo, gate tự chặn."""
+    try:
+        diff = git(main, "diff", "--name-only", "-z", "--no-renames", remote, head)
+        if diff.returncode != 0:
+            say(f"không liệt kê được file đổi để mang mtime sang scratch: {diff.stderr.strip()[-200:]}")
+            return
+        carried = 0
+        for f in filter(None, diff.stdout.split("\0")):
+            ours, theirs = os.path.join(main, f), os.path.join(scratch, f)
+            if os.path.islink(ours) or os.path.islink(theirs) or not (os.path.isfile(ours) and os.path.isfile(theirs)):
+                continue
+            with open(ours, "rb") as a, open(theirs, "rb") as b:
+                if a.read() != b.read():
+                    continue                       # main sửa tiếp chưa commit: nội dung khác, không mang
+            st = os.stat(ours)
+            os.utime(theirs, ns=(st.st_atime_ns, st.st_mtime_ns))
+            carried += 1
+        if carried:
+            say(f"đã mang mtime của main sang {carried} file cùng nội dung trong scratch")
+    except OSError as e:
+        say(f"không mang được mtime sang scratch: {type(e).__name__}: {e}")
+
+
 def run_gate(scratch, remote):
     """Exit code của `post-fix-gate --run-tests --full --brief --diff <origin/base>` trong scratch (124 khi quá
     DEVKIT_INTEGRATE_GATE_TIMEOUT_S). --diff: scratch tách rời không có upstream, cây sạch không --diff thì gate trả 3 (nothing to audit);
@@ -377,6 +404,7 @@ def integrate(main, base, args):
             return 1
         copy_ignored(main, scratch)
         copy_approved_tests(main, scratch)
+        copy_mtimes(main, scratch, remote, head)
         rc = run_gate(scratch, remote)
         if rc == 4:   # hàng đợi gate toàn máy / khoá dự án bận (T0056): không phải đỏ, đợt giữ nguyên cho lượt sau
             say("gate bận (busy, exit 4): chưa kiểm được gì, không push; lượt integrate sau thử lại")

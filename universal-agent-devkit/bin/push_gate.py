@@ -453,6 +453,10 @@ def audited_head(top, task_id):
     VÀ có sha40 ở verdicts.audit.auditedHead (pm_verdict ghi) hoặc `auditedHead: <sha40>` trong notes VÀ sha đó là commit có trong repo `top`.
     Một task_id cũ đã pass vì thế chỉ duyệt đúng nội dung nó đã audit, không duyệt nội dung sửa sau (chặn replay).
     Thiếu auditedHead, sha lạ, lỗi git → None (fail closed)."""
+    # Audit T0066 vòng 3 (#605): cùng điều kiện với approved() — pm home lạ (ANTIGRAVITY_PM_STATE_HOME tự dựng, HOME=/tmp/x) mà không
+    # phải fixture test trong thư mục tạm thì biên bản không tính, ở mọi người gọi (post-fix-gate mục duyệt chéo, merge gate).
+    if pm_home_overridden() and not pm_home_test_fixture():
+        return None
     for audit in _task_audits(top, task_id):
         if not isinstance(audit, dict) or audit.get("verdict") != "pass":
             continue

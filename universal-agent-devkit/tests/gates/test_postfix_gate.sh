@@ -69,7 +69,7 @@ cross_approve() {   # cross_approve <repo> <path>...
   # Audit T0066 (#605): mục duyệt chỉ tính khi task_id có biên bản audit pass của antigravity-pm (ngoài repo, ở đây dưới $TMP)
   # ghi `auditedHead: <sha>` của cây chứa đúng nội dung test hiện tại. `git stash create`: commit của cây làm việc, không đổi
   # index/HEAD/refs; task_id riêng theo cây để lần duyệt sau không ghi đè biên bản của lần trước.
-  export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm-state"
+  export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm-state"; export DEVKIT_PM_HOME_TEST=1   # fixture pm home dưới thư mục tạm (audit T0066 vòng 3: thiếu công tắc thì không tính)
   python3 - "$@" <<'PY'
 import hashlib, json, os, subprocess, sys
 root, paths = sys.argv[1], sys.argv[2:]

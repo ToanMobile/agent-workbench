@@ -45,6 +45,7 @@ _git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", 
 _C2 = _git("rev-parse", "HEAD")
 _TOP = _git("rev-parse", "--show-toplevel")
 os.environ["ANTIGRAVITY_PM_STATE_HOME"] = os.path.join(_TMP, "pm")
+os.environ["DEVKIT_PM_HOME_TEST"] = "1"   # fixture pm home dưới thư mục tạm (audit T0066 vòng 3: thiếu công tắc thì không tính)
 os.chdir(_REPO)   # approval mặc định đọc biên bản của repo cwd (git toplevel)
 TASK = "T0605-review"
 

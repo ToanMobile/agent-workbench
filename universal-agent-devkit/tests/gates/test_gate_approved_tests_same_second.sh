@@ -38,6 +38,7 @@ def case(name, test_dt, appr_dt, edit_after, want_ok, fmt="approvals"):
     subprocess.run(git + ["commit", "-qm", "test"], check=True)
     head = subprocess.run(git + ["rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
     os.environ["ANTIGRAVITY_PM_STATE_HOME"] = os.path.join(tmp, "pm-state")
+    os.environ["DEVKIT_PM_HOME_TEST"] = "1"   # fixture pm home dưới thư mục tạm (audit T0066 vòng 3: thiếu công tắc thì không tính)
     tid = "T605-" + name
     td = os.path.join(tmp, "pm-state", "projects", "fixture", "tasks", tid); os.makedirs(td)
     with open(os.path.join(td, "task.json"), "w") as fh:
