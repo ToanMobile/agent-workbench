@@ -4652,7 +4652,7 @@ def _open_pr_names(main):
 
 def _reap_merged(main, here, dry, log, logged):
     """`gc --merged` (U2, audit 25/10; replaces the SessionStart run of the untracked .claude/hooks/cleanup-wt.py --auto, whose own
-    "merged" rule removed with plain `git worktree remove` / `git branch -D` and once took a live session's worktree mid-gate). Removes
+    "merged" rule removed with a bare worktree removal /`git branch -D` and once took a live session's worktree mid-gate). Removes
     the REGISTERED worktrees of <main>/.claude/worktrees/ whose work is integrated, and deletes the local branches the trunk holds. A
     worktree goes only when all of this holds, every check made before anything is touched (also with --dry-run): it is a direct child of
     that folder (realpath, not a link); it is not super-board's (board_worktree: the board's sweep judges those with its lanes, grace time
