@@ -1,12 +1,12 @@
 # 🧪 Regression Checklist
 
-**An toàn 4% (11/263)** · ❌ 114 · 🔁 0 · 🚫 0 · 🟡 73 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 60 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 67 · ma trận chờ duyệt: không
+**An toàn 4% (10/267)** · ❌ 114 · 🔁 0 · 🚫 0 · 🟡 74 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 64 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 67 · ma trận chờ duyệt: không
 
-> Sinh tự động lúc 2026-10-27 19:04:46 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
+> Sinh tự động lúc 2026-10-28 14:14:25 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
 
 **Bug không có test hồi quy nào chặn tái phát: 2** (0 chưa có test · 2 có test nhưng gate không chạy)
 
-## 🚨 Cần xử lý (192)
+## 🚨 Cần xử lý (193)
 
 | Trạng thái | ID | Tính năng / Bug | Component | Việc cần làm |
 |---|---|---|---|---|
@@ -186,6 +186,7 @@
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-RUNNER-READ-RETRY-01 | runner đọc lại board có backoff khi lần đọc hỏng tạm thời; hỏng hết lượt thì bỏ tick thay vì chết; halt 79 vẫn dừng; vòng chính chỉ đọc qua tick_fetch (#256) | super-board-runner-board-read-retry | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-RUNNER-READY-ORDER-01 | runner giao thẻ Ready theo priority label, bug trước, số issue tăng dần; thẻ body nhắm repo khác → Blocked kèm block-template; thẻ có Fix trùng thẻ đang mở → comment một lần, không giao | super-board-runner-ready-order | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01 | runner trả thẻ Building có worker build chết giữa lượt chạy về lại Ready kèm sổ reclaims; quá trần trong cửa sổ thì chuyển sang Blocked có dòng blocked-by: - | super-board-runner-reclaim-dead-build | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-SCRATCH-CONFIG-01 | merge gate scratch tree gets ignored local config, build inputs and the ignored hooks settings registers | super-board-scratch-config | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-SELF-RELOAD-01 | runner rảnh tự nạp lại super-board-run.sh khi origin đổi: ff main rồi exec lại; main lệch origin / ff hỏng / sai cú pháp thì notify một lần, không restart mù; còn worker thì không đụng | super-board-self-reload | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-SETUP-BIN-01 | setup BIN lists every super-board script the runner, merge gate and skills call | super-board-setup-bin-list | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-STATUS-NEEDS-YOU-01 | status: option Needs You của Project vẽ thành ô riêng và vào nhóm Waiting on you; không có thẻ Needs You thì đầu ra không đổi | super-board-status-needs-you-column | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
@@ -526,6 +527,12 @@
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-CARD-ITEMS-RETRY-01 | card.sh items đọc lại 1 lần khi số item lệch totalCount (không chết runner); lệch cả hai lần vẫn exit 69; stop.sh ghi marker trước kill (#256) | 2026-10-24 13:07:21 · 6.75s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-CARD-ITEMS-RETRY-01/20261024-130107.log) | bash tests/super-board/test_card_items_count_retry.sh |
 
+### super-board-card-write-fail-blocks-card — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-CARD-WRITE-BLOCK-01 | gh_write_once: lệnh ghi GitHub của MỘT thẻ hỏng thì thẻ đó vào Blocked kèm comment chặn, board chạy tiếp; bước chặn hỏng hoặc lệnh không thuộc thẻ thì halt 79 như cũ; dispatch không phóng worker cho thẻ vừa bị chặn (28/10) | chưa chạy | bash tests/super-board/test_card_write_fail_blocks_card.sh |
+
 ### super-board-diff-policy — 0/2 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -760,13 +767,11 @@
 |---|---|---|---|---|
 | ❌ TIMEOUT | REG-SB-RUNNER-WATCHDOG-01 | super-board runner survives a killed sleep; durable stop marker; launchd watchdog never restarts a stopped board | 2026-10-24 13:55:01 · 51.07s · exit None · 1b575f4f+dirty · [log](evidence/REG-SB-RUNNER-WATCHDOG-01/20261024-135501.log) | bash tests/super-board/test_runner_watchdog.sh |
 
-<details><summary>✅ super-board-scratch-config — 1/1 PASS</summary>
+### super-board-scratch-config — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-SB-SCRATCH-CONFIG-01 | merge gate scratch tree gets ignored local config, build inputs and the ignored hooks settings registers | 2026-10-24 13:07:21 · 0.80s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-SCRATCH-CONFIG-01/20261024-125748.log) | bash tests/super-board/test_scratch_config.sh |
-
-</details>
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-SCRATCH-CONFIG-01 | merge gate scratch tree gets ignored local config, build inputs and the ignored hooks settings registers | 2026-10-24 13:07:21 · 0.80s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-SCRATCH-CONFIG-01/20261024-125748.log) | bash tests/super-board/test_scratch_config.sh |
 
 ### super-board-self-reload — 0/1 PASS
 
@@ -828,6 +833,12 @@
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-WIP-LIMIT-01 | runner giới hạn WIP (#252): không giao build khi QA+Review chờ >= build_wip_k × (qa_workers+review_workers); không giao build / worker QA-Review thêm khi số post-fix-gate đang chạy >= gate_max; log lý do; số gate không đếm được thì không chặn | 2026-10-24 12:13:54 · 0.22s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-WIP-LIMIT-01/20261024-121354.log) | bash tests/super-board/test_runner_wip_limit.sh |
 
+### super-board-worker-wrap-term — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-WORKER-WRAP-TERM-01 | worker-wrap dừng được worker dù con nuốt mất SIGTERM đầu tiên (TERM tới con trước exec): gửi lại sau 1 s, không treo kill + wait (#489) | chưa chạy | bash tests/super-board/test_worker_wrap_term.sh |
+
 ### test-heavy-slot-isolation — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -858,7 +869,13 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-DK-WT-MERGED-CLEANER-01 | một bộ dọn worktree đã gộp (U2 25/10): gc --merged / held / remove --merged của worktree.py và post-merge clean của board không gỡ worktree có commit trunk chưa có, chỉ file chưa commit, commit chỉ reflog giữ, phiên sống giữ, nhánh có PR mở; gỡ worktree đã tích hợp sạch; không còn đường git trần | chưa chạy | bash universal-agent-devkit/tests/worktree_git/test_worktree_gc_merged.sh && bash tests/super-board/test_post_merge_clean.sh |
 
-## 📒 Sổ tay bug (138)
+### worktree-remove-reflog-squash — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-REMOVE-REFLOG-SQUASH-01 | worktree remove: commit chỉ còn trong reflog mà trunk đã có patch (squash) thì gỡ được kèm refs/devkit/discarded; trunk chưa có patch thì vẫn từ chối UNREACHABLE (#421) | chưa chạy | bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh |
+
+## 📒 Sổ tay bug (139)
 
 | Trạng thái | Mã | Mô tả | Component | Test bảo vệ | Bằng chứng |
 |---|---|---|---|---|---|
@@ -1000,6 +1017,7 @@
 | ⏳ chưa chạy | BUG-20261024-fix-het-cac-cho-bi-ket-luon-di | Fix hết các chỗ bị kẹt luôn đi | - | REG-DK-ALL-01, tests/gates/test_gate_robustness.sh (ngoài matrix) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261024-tai-sao-tien-trinh-bi-ket-check-fix-dev | tại sao tiến trình bị kẹt check fix dev kit | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_run_bounded.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261027-1-the-backlog-xep-integrate-py-thieu-han | 1. Thẻ Backlog: xếp "integrate.py thiếu handler SIGTERM → scratch chứa .env/keystore bị bỏ lại" lên P2, trên 2 điểm P3… | - | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_integrate_signal_cleanup.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
+| ⏳ chưa chạy | BUG-20261028-check-cac-task-bi-blocked-nguyen-nhan-la | check các task bị blocked nguyên nhân là gì thế fix root cause rồi chuyển task về lại ready | - | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_worktree_remove_branch_rename.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 
 ## 🟡 REPORTED — bug báo qua prompt, chưa xác nhận (67)
 
