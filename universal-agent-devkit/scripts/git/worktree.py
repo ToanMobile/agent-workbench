@@ -77,6 +77,7 @@ import contextlib
 import errno
 import filecmp
 import fnmatch
+import glob
 import hashlib
 import importlib.util
 import io
@@ -3880,6 +3881,11 @@ def _sync_main_to(main, origin):
         mlock.close()
 
 
+def super_board_repo(main):
+    """#576: a repo with a super-board config (.claude/super-board/configs/*.json) lands work by PR + merge gate, never into main local."""
+    return bool(glob.glob(os.path.join(main, ".claude", "super-board", "configs", "*.json")))
+
+
 def automerge(cwd, wt, keep=False):
     """Merge a worktree's work into the main branch and remove it (`keep`: leave it in place, W1 R3). (status, message, extra); status: merged | nothing | conflict | blocked.
     Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe (its index
@@ -3915,6 +3921,11 @@ def automerge(cwd, wt, keep=False):
                              "xong lane thì gỡ nó: `agent-kit worktree remove <path>`",
                              "a super-board lane worktree (.claude/worktrees/issue-<N>-…): it reaches main only through its PR and the merge gate, "
                              "never merged automatically; remove it when the lane is done: `agent-kit worktree remove <path>`"), {}
+    elif super_board_repo(main):   # #576 (28/10): #546-#548 reached main local with no PR; a super-board repo takes work by PR + merge gate only
+        return "blocked", tr("repo có super-board (.claude/super-board/configs): việc chỉ vào main qua PR + merge gate, không tự gộp vào main local; "
+                             "push nhánh của worktree và mở PR (open a PR), rồi `agent-kit worktree remove <path>`",
+                             "this repo has super-board (.claude/super-board/configs): work reaches main only through a PR and the merge gate, never "
+                             "merged into local main automatically; push the worktree's branch and open a PR, then `agent-kit worktree remove <path>`"), {}
     if wt_branch:
         return "blocked", tr(f"worktree đang ở nhánh '{wt_branch}' đã PUBLISH (có nhánh remote / upstream): không tự commit thêm hay gộp nó vào main — gộp bằng tay (merge/PR)",
                              f"the worktree is on branch '{wt_branch}', which is PUBLISHED (a remote ref / upstream exists): nothing is committed to it or merged from it automatically - merge it by hand (merge / PR)"), {}
