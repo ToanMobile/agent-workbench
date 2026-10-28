@@ -39,7 +39,7 @@ for n in 1 2 3; do
   python3 "$DK_BIN" -- bash -c "touch '$TMP/held$n'; sleep 30" >/dev/null 2>&1 &
   PIDS="$PIDS $!"
 done
-for i in $(seq 1 50); do
+for i in $(seq 1 1200); do
   [ -f "$TMP/held1" ] && [ -f "$TMP/held2" ] && [ -f "$TMP/held3" ] && break
   sleep 0.1
 done
@@ -74,15 +74,16 @@ else
 fi
 
 # ── 3. Tải cao rồi xuống: lệnh chờ, rồi chạy ngay khi tải xuống (trước trần chờ 30 s).
+#    #450: không đo giờ tuyệt đối (khởi động python dưới tải 60–150 ăn hàng chục giây → đỏ oan). Tải chỉ hạ KHI log đã báo "chờ tải xuống";
+#    trần chờ 120 s để khởi động chậm không làm hết giờ. Đỏ thật nếu lệnh không chờ (không có dòng chờ) hoặc chạy vì hết giờ ("vẫn chạy").
 echo 150 > "$TMP/load"
-( sleep 1.5; echo 5 > "$TMP/load" ) & PIDS="$PIDS $!"
-t0=$(now)
-SB_HEAVY_SLOT_WAIT_S=30 python3 "$DK_BIN" -- touch "$TMP/after_drop" >"$TMP/drop.log" 2>&1; rc_drop=$?
-w3=$(python3 -c "import time; print(round(time.time() - $t0, 1))")
-if [ "$rc_drop" -eq 0 ] && [ -f "$TMP/after_drop" ] && lt "$w3" 25 && lt 1 "$w3"; then
-  ok "high load: waited ${w3}s, ran once the load dropped"
+: > "$TMP/drop.log"
+( for _ in $(seq 1 1500); do grep -q "chờ tải xuống" "$TMP/drop.log" 2>/dev/null && break; sleep 0.1; done; echo 5 > "$TMP/load" ) & PIDS="$PIDS $!"
+SB_HEAVY_SLOT_WAIT_S=120 python3 "$DK_BIN" -- touch "$TMP/after_drop" >>"$TMP/drop.log" 2>&1; rc_drop=$?
+if [ "$rc_drop" -eq 0 ] && [ -f "$TMP/after_drop" ] && grep -q "chờ tải xuống" "$TMP/drop.log" && ! grep -q "vẫn chạy" "$TMP/drop.log"; then
+  ok "high load: waited, ran once the load dropped"
 else
-  fail "high load then drop (rc=$rc_drop ran=$([ -f "$TMP/after_drop" ] && echo yes || echo no) ${w3}s): $(tail -2 "$TMP/drop.log")"
+  fail "high load then drop (rc=$rc_drop ran=$([ -f "$TMP/after_drop" ] && echo yes || echo no)): $(tail -2 "$TMP/drop.log")"
 fi
 wait 2>/dev/null; PIDS=""
 
@@ -98,28 +99,24 @@ fi
 
 # ── 5. DEVKIT_SLOT_LOAD_WAIT_S=0 (merge gate super-board đặt sau lần chờ tải của chính nó): tải cao mà không chờ.
 echo 150 > "$TMP/load"
-t0=$(now)
 DEVKIT_SLOT_LOAD_WAIT_S=0 python3 "$DK_BIN" -- touch "$TMP/merge_ran" >"$TMP/merge.log" 2>&1; rc_merge=$?
-w5=$(python3 -c "import time; print(round(time.time() - $t0, 1))")
 echo 1 > "$TMP/load"
-if [ "$rc_merge" -eq 0 ] && [ -f "$TMP/merge_ran" ] && lt "$w5" 20 && ! grep -q "chờ tải xuống" "$TMP/merge.log"; then
-  ok "DEVKIT_SLOT_LOAD_WAIT_S=0: no load wait at high load (${w5}s)"
+if [ "$rc_merge" -eq 0 ] && [ -f "$TMP/merge_ran" ] && ! grep -q "chờ tải xuống" "$TMP/merge.log"; then
+  ok "DEVKIT_SLOT_LOAD_WAIT_S=0: no load wait at high load"
 else
-  fail "DEVKIT_SLOT_LOAD_WAIT_S=0 at high load (rc=$rc_merge ran=$([ -f "$TMP/merge_ran" ] && echo yes || echo no) ${w5}s)"
+  fail "DEVKIT_SLOT_LOAD_WAIT_S=0 at high load (rc=$rc_merge ran=$([ -f "$TMP/merge_ran" ] && echo yes || echo no))"
 fi
 
 # ── 5b. DEVKIT_SLOT_LOAD_WAIT_S đặt rõ thắng SB_HEAVY_SLOT_WAIT_S (OCR 20/10: merge gate đặt DEVKIT_SLOT_LOAD_WAIT_S=0 sau lần chờ của
 #       nó, nhưng SB_HEAVY_SLOT_WAIT_S của người gọi từng ghi đè và lệnh verify chờ tải lần nữa). SB_HEAVY_SLOT_WAIT_S chỉ là dự phòng
 #       (ca 3–4: không có DEVKIT_SLOT_LOAD_WAIT_S thì vẫn dùng nó).
 echo 150 > "$TMP/load"
-t0=$(now)
 DEVKIT_SLOT_LOAD_WAIT_S=0 SB_HEAVY_SLOT_WAIT_S=30 python3 "$DK_BIN" -- touch "$TMP/explicit_ran" >"$TMP/explicit.log" 2>&1; rc_ex=$?
-w5b=$(python3 -c "import time; print(round(time.time() - $t0, 1))")
 echo 1 > "$TMP/load"
-if [ "$rc_ex" -eq 0 ] && [ -f "$TMP/explicit_ran" ] && lt "$w5b" 20 && ! grep -q "chờ tải xuống" "$TMP/explicit.log"; then
-  ok "explicit DEVKIT_SLOT_LOAD_WAIT_S=0 beats SB_HEAVY_SLOT_WAIT_S=30: no load wait (${w5b}s)"
+if [ "$rc_ex" -eq 0 ] && [ -f "$TMP/explicit_ran" ] && ! grep -q "chờ tải xuống" "$TMP/explicit.log"; then
+  ok "explicit DEVKIT_SLOT_LOAD_WAIT_S=0 beats SB_HEAVY_SLOT_WAIT_S=30: no load wait"
 else
-  fail "DEVKIT_SLOT_LOAD_WAIT_S=0 with SB_HEAVY_SLOT_WAIT_S=30 at high load (rc=$rc_ex ran=$([ -f "$TMP/explicit_ran" ] && echo yes || echo no) ${w5b}s)"
+  fail "DEVKIT_SLOT_LOAD_WAIT_S=0 with SB_HEAVY_SLOT_WAIT_S=30 at high load (rc=$rc_ex ran=$([ -f "$TMP/explicit_ran" ] && echo yes || echo no))"
 fi
 
 # ── 6. Lồng nhau (CLI ngoài đã được cho chạy theo tải nên đặt DEVKIT_SLOT_ADVISORY_HELD=1 cho cả cây tiến trình): lệnh trong không chờ

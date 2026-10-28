@@ -1857,6 +1857,21 @@
       ]
     },
     {
+      "component": "super-board-card-write-fail-blocks-card",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_card_write_fail_blocks_card.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-CARD-WRITE-BLOCK-01",
+          "name": "gh_write_once: lệnh ghi GitHub của MỘT thẻ hỏng thì thẻ đó vào Blocked kèm comment chặn, board chạy tiếp; bước chặn hỏng hoặc lệnh không thuộc thẻ thì halt 79 như cũ; dispatch không phóng worker cho thẻ vừa bị chặn (28/10)",
+          "command": "bash tests/super-board/test_card_write_fail_blocks_card.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-queue-schedule",
       "watch_files": [
         ".claude/bin/super-board-queue-schedule.sh",
