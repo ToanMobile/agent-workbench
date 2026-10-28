@@ -68,8 +68,20 @@ make_repo ""
 run_gate --run-tests --full >/dev/null; rc=$?
 [ "$rc" = 2 ] && [ "$(runs)" = 1 ] && ok "A1: the edited test makes --full exit 2 after one run of the suite" || bad "A1: exit $rc, suite ran $(runs) times"
 [ "$(receipt_exit)" = 2 ] && ok "A2: the receipt says exit 2 (proof_gate and push_gate accept only 0: XONG and push stay refused)" || bad "A2: receipt exit is $(receipt_exit)"
-cross_approve "$TMP/repo" app/src/test/kotlin/pkg/OtherTest.kt
-out="$(run_gate --run-tests --full)"; rc=$?
+# Audit T0066 r2: an approval resting on a fixture antigravity-pm record (foreign ANTIGRAVITY_PM_STATE_HOME) never leaves an exit-0 receipt,
+# so A approves with the user's AskUserQuestion answer (a transcript) — A5 is about the receipt that approval leaves.
+python3 - "$TMP/tr/s.jsonl" <<'PY'
+import json, os, sys, time
+os.makedirs(os.path.dirname(sys.argv[1]), exist_ok=True)
+q = "Duyệt sửa app/src/test/kotlin/pkg/OtherTest.kt?"
+rec = {"type": "user", "sessionId": "s-a", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + 5)),
+       "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]},
+       "toolUseResult": {"questions": [{"question": q, "header": "Test", "options": [{"label": "Duyệt", "description": "giữ diff"},
+                                                                                      {"label": "Không", "description": "đổi"}]}],
+                         "answers": {q: "Duyệt"}}}
+open(sys.argv[1], "w").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+out="$(run_gate --run-tests --full --transcript "$TMP/tr/s.jsonl")"; rc=$?
 [ "$rc" = 0 ] && ok "A3: with the approval the same code passes (exit 0)" || bad "A3: exit $rc: $(printf '%s' "$out" | tail -4)"
 [ "$(runs)" = 1 ] && ok "A4: the suite did NOT run again (1 run in total)" || bad "A4: the suite ran $(runs) times, the re-run paid it again"
 [ "$(receipt_exit)" = 0 ] && ok "A5: the approved run leaves the exit-0 receipt XONG needs" || bad "A5: receipt exit is $(receipt_exit)"

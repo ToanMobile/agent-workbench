@@ -1991,6 +1991,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-gate-audited-head-base",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_audited_head_base.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-AUDITED-HEAD-BASE-01",
+          "name": "duyệt chéo: auditedHead trước base không duyệt chép lùi test (mục duyệt, trailer, push_gate.approved); audited_head đọc verdicts.audit.auditedHead trước notes; ANTIGRAVITY_PM_STATE_HOME lạ không cấp biên nhận task / full_pass exit 0 (#605 audit T0066 vòng 2)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_audited_head_base.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
