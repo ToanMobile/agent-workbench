@@ -215,6 +215,33 @@ python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import worktree; worktr
   && ok "I13 worktree.copy_ignored là chỗ duy nhất liệt kê copy_*; integrate và merge train dùng chung" \
   || fail "I13: $(tail -3 "$TMP/unit13"); copy_*: $(grep -c "copy_local_hooks\|copy_build_inputs\|copy_unity_library" "$DEVKIT_DIR/scripts/git/integrate.py" "$DEVKIT_DIR/../.claude/bin/super-board-scratch-config.sh" | tr '\n' ' ')"
 
+# I14 (#481) test đã có bị sửa, được duyệt theo tên ở main checkout (.claude/audit-gate/approved_tests.json): lời duyệt phải tới gate trong
+# scratch (nó đọc approved_tests.json của PROJECT = scratch) mà không cần --auto-approve-tests / DEVKIT_AUTO_APPROVE_TESTS. Đối chứng: test
+# sửa khác không được duyệt vẫn chặn (exit 2, không push); duyệt xong rồi sửa tiếp nội dung (dạng list gắn mtime) cũng vẫn chặn.
+edited_test_repo() {   # newrepo + tests/t_a.sh, tests/t_b.sh đã có trên origin; một commit chưa push sửa cả hai
+  newrepo; mkdir -p "$M/tests"; printf 'exit 0\n' > "$M/tests/t_a.sh"; printf 'exit 0\n' > "$M/tests/t_b.sh"
+  G "$M" add -A && G "$M" commit -qm "tests" && G "$M" push -q origin main 2>/dev/null
+  printf 'exit 0 # sửa\n' > "$M/tests/t_a.sh"; printf 'exit 0 # sửa\n' > "$M/tests/t_b.sh"
+  G "$M" commit -qam "sửa test"
+}
+edited_test_repo; o0="$(origin_head)"
+ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
+[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] \
+  && ok "I14 tiền đề: test sửa chưa được duyệt → integrate dừng, không push" || fail "I14 tiền đề: rc $rc, out: $(tail -4 "$TMP/out")"
+edited_test_repo; sleep 1; mkdir -p "$M/.claude/audit-gate"; printf '["tests/t_a.sh","tests/t_b.sh"]\n' > "$M/.claude/audit-gate/approved_tests.json"
+ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
+[ "$rc" = 0 ] && [ "$(origin_head)" = "$(G "$M" rev-parse HEAD)" ] \
+  && ok "I14 cả hai test sửa được duyệt theo tên ở main: integrate push, không cờ duyệt hàng loạt" || fail "I14 duyệt theo tên: rc $rc, out: $(tail -5 "$TMP/out")"
+edited_test_repo; o0="$(origin_head)"; sleep 1; mkdir -p "$M/.claude/audit-gate"; printf '["tests/t_a.sh"]\n' > "$M/.claude/audit-gate/approved_tests.json"
+ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
+[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] \
+  && ok "I14 đối chứng: chỉ duyệt t_a, t_b sửa mà chưa duyệt vẫn chặn, không push" || fail "I14 đối chứng: rc $rc, out: $(tail -4 "$TMP/out")"
+edited_test_repo; o0="$(origin_head)"; sleep 1; mkdir -p "$M/.claude/audit-gate"; printf '["tests/t_a.sh","tests/t_b.sh"]\n' > "$M/.claude/audit-gate/approved_tests.json"
+sleep 1; printf 'exit 0 # sửa lần hai\n' > "$M/tests/t_b.sh"; G "$M" commit -qam "sửa tiếp sau khi duyệt"
+ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
+[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] \
+  && ok "I14 đối chứng: test sửa tiếp SAU lời duyệt không được chép sang scratch, vẫn chặn" || fail "I14 sửa sau duyệt: rc $rc, out: $(tail -4 "$TMP/out")"
+
 # I10 help + completion
 bash "$AK" help | grep -q "integrate \[--if-due\] \[--dry-run\]" && bash "$AK" completion bash | grep -q "integrate" \
   && ok "I10 help và completion có integrate" || fail "I10 help/completion thiếu integrate"
