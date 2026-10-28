@@ -228,42 +228,43 @@ def copy_ignored(main, scratch):
 
 
 def copy_approved_tests(main, scratch):
-    """Chép lời duyệt test-theo-tên của main (.claude/audit-gate/approved_tests.json) sang scratch (#481): gate đọc approved_tests.json của
-    PROJECT của nó = scratch, nên không chép thì test sửa đã duyệt ở main vẫn chặn (exit 2) và chỉ còn cờ duyệt hàng loạt. Chỉ chép mục còn
-    đúng: dạng list gắn với mtime của file duyệt, nên một test sửa SAU lúc duyệt (mtime mới hơn) bị bỏ; dạng {path: sha256} giữ mục nào nội dung
-    trong scratch còn khớp. Scratch nhận dạng {path: sha256} của nội dung scratch (gate chỉ duyệt đúng nội dung đó). Luật không đổi: file
-    chưa duyệt vẫn chặn. Lỗi chỉ được báo, gate tự chặn khi thiếu lời duyệt."""
+    """Chép lời duyệt chéo của main (.claude/audit-gate/approved_tests.json) sang scratch (#481, #605): gate đọc approved_tests.json của
+    PROJECT của nó = scratch, nên không chép thì test sửa đã duyệt chéo ở main vẫn chặn (exit 2). Chỉ nhận dạng {"approvals": [mục]} và chép
+    NGUYÊN mục (path, sha256, reviewer, author, task_id, reason) khi sha256 của mục khớp nội dung file trong scratch (HEAD sẽ push); mục lệch
+    nội dung bị bỏ. Dạng cũ list / {path: sha256} không còn duyệt gì (#605) nên không chép. Xét đủ trường, reviewer khác author là việc của
+    gate: integrate không tự duyệt, không nới luật. Lỗi chỉ được báo, gate tự chặn khi thiếu lời duyệt."""
     src = os.path.join(main, ".claude", "audit-gate", "approved_tests.json")
     if not os.path.isfile(src):
         return
     try:
-        appr_t = os.stat(src).st_mtime
         with open(src, encoding="utf-8") as fh:
             saved = json.load(fh)
-        wants = {f: None for f in saved} if isinstance(saved, list) else dict(saved) if isinstance(saved, dict) else {}
-        keep = {}
-        for f, want in wants.items():
-            if not isinstance(f, str) or os.path.isabs(f) or ".." in f.split("/"):
+        entries = saved.get("approvals") if isinstance(saved, dict) else None
+        if not isinstance(entries, list):
+            say('approved_tests.json của main không ở dạng {"approvals": [...]} (dạng cũ không còn duyệt): không chép sang scratch')
+            return
+        keep, digests = [], {}
+        for e in entries:
+            f = e.get("path") if isinstance(e, dict) else None
+            want = e.get("sha256") if isinstance(e, dict) else None
+            if not isinstance(f, str) or not isinstance(want, str) or os.path.isabs(f) or ".." in f.split("/"):
                 continue
-            mine, theirs = os.path.join(main, f), os.path.join(scratch, f)
-            if not (os.path.isfile(mine) and os.path.isfile(theirs)):
+            theirs = os.path.join(scratch, f)
+            if not os.path.isfile(theirs):
                 continue
-            with open(theirs, "rb") as th:
-                digest = hashlib.sha256(th.read()).hexdigest()
-            if want is None:   # dạng list: duyệt có hiệu lực khi test ở main không đổi sau lúc duyệt và scratch (HEAD) cùng nội dung với main
-                with open(mine, "rb") as mh:
-                    unchanged = os.stat(mine).st_mtime <= appr_t and hashlib.sha256(mh.read()).hexdigest() == digest
-            else:
-                unchanged = isinstance(want, str) and want.strip().lower() == digest
-            if unchanged:
-                keep[f] = digest
+            if f not in digests:
+                with open(theirs, "rb") as th:
+                    digests[f] = hashlib.sha256(th.read()).hexdigest()
+            if want.strip().lower() == digests[f]:   # sha256 gắn đúng nội dung sẽ push: test sửa tiếp sau lúc duyệt bị bỏ
+                keep.append(e)
         if not keep:
             return
         dst = os.path.join(scratch, ".claude", "audit-gate")
         os.makedirs(dst, exist_ok=True)
         with open(os.path.join(dst, "approved_tests.json"), "w", encoding="utf-8") as out:
-            json.dump(keep, out)
-        say(f"đã chép vào scratch lời duyệt test của {len(keep)} file: {', '.join(sorted(keep)[:8])}")
+            json.dump({"approvals": keep}, out)
+        paths = sorted({e["path"] for e in keep})
+        say(f"đã chép vào scratch {len(keep)} mục duyệt chéo của {len(paths)} file: {', '.join(paths[:8])}")
     except (OSError, ValueError) as e:
         say(f"không chép được lời duyệt test vào scratch: {type(e).__name__}: {e}")
 
