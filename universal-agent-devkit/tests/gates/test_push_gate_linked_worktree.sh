@@ -28,6 +28,18 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+# #605: test sửa chỉ được duyệt chéo — ghi mục {path, sha256, reviewer, author, task_id, reason} do "agent khác" duyệt
+cross_approve() {   # cross_approve <repo> <path>...
+  python3 - "$@" <<'PY'
+import hashlib, json, os, sys
+root, paths = sys.argv[1], sys.argv[2:]
+d = os.path.join(root, ".claude", "audit-gate"); os.makedirs(d, exist_ok=True)
+ap = [{"path": p, "sha256": hashlib.sha256(open(os.path.join(root, p), "rb").read()).hexdigest(), "reviewer": "antigravity",
+       "author": "claude", "task_id": "T-fixture", "reason": "fixture: diff test đã được agent khác đọc"} for p in paths]
+with open(os.path.join(d, "approved_tests.json"), "w") as fh:
+    json.dump({"approvals": ap}, fh)
+PY
+}
 R="$TMP/repo"; W="$TMP/wt"
 expect() {   # expect <name> <exit> [text the reason (push_gate.check, printed by the CLI only on a refusal) must contain]
   OUT="$(python3 "$PG" "$R" 2>&1)"; RC=$?
@@ -259,16 +271,17 @@ WHY="$(printf '%s' "$WHY" | tail -1)"   # the line before is the warning untesta
 case "$WHY" in "False "*) ok "L20: the work tree of main not found: fail closed, the receipt exempts nothing" ;;
   *) bad "L20: expected a refusal when main cannot be located, got: $(printf '%s' "$WHY" | tail -2)" ;; esac
 
-# L21 (#154, 21/10): the worktree edits an EXISTING test and passes its --full with --auto-approve-tests (exit 0); `worktree finish`'s
+# L21 (#154, 21/10): the worktree edits an EXISTING test and passes its --full with a cross-review entry (#605; --auto-approve-tests before) (exit 0); `worktree finish`'s
 #     merge gate (--diff <main>, partial, no approval flag) ends exit 2 "edited_test" — the session's own business, never a reason to refuse
 #     the merge — and used to turn that exit-0 receipt down to exit 2, so the push from main was refused and the gate had to run again.
 newrepo
 mkdir -p "$R/tests" && printf 'exit 0\n' > "$R/tests/test_core.sh" && git -C "$R" add tests/test_core.sh && git -C "$R" commit -qm "a test" \
   && git -C "$W" merge -q --ff-only main || bad "L21 setup: test on main failed"
-echo "fun ok() = 21" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"
-CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --auto-approve-tests > "$TMP/gate.out" 2>&1 \
-  || bad "L21 setup: gate --full --auto-approve-tests in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
+echo "fun ok() = 21" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"; cross_approve "$W" tests/test_core.sh
+CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 \
+  || bad "L21 setup: gate --full (cross-reviewed test) in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
 git -C "$W" commit -qam "task work with an edited test" || bad "L21 setup: commit failed"
+rm -f "$W/.claude/audit-gate/approved_tests.json"   # #605: kịch bản cần merge gate exit 2 edited_test (trước đây: merge gate không có cờ duyệt)
 (cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L21 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
 # the scenario itself (OCR 21/10): finish's merge gate really ended exit 2 for the edited test — else L21 would pass testing nothing
 python3 - "$(git -C "$R" rev-parse --path-format=absolute --git-common-dir)/postfix-gate/runs.jsonl" <<'PY' \
@@ -301,9 +314,9 @@ cov22="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_ga
 newrepo
 mkdir -p "$R/tests" && printf 'exit 0\n' > "$R/tests/test_core.sh" && git -C "$R" add tests/test_core.sh && git -C "$R" commit -qm "a test" \
   && git -C "$W" merge -q --ff-only main || bad "L23 setup: test on main failed"
-echo "fun ok() = 23" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"
-CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --auto-approve-tests > "$TMP/gate.out" 2>&1 \
-  || bad "L23 setup: gate --full --auto-approve-tests in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
+echo "fun ok() = 23" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"; cross_approve "$W" tests/test_core.sh
+CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 \
+  || bad "L23 setup: gate --full (cross-reviewed test) in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
 git -C "$W" commit -qam "gated work" || bad "L23 setup: commit A failed"
 printf 'exit 0 # v3 never gated\n' > "$W/tests/test_core.sh"; git -C "$W" commit -qam "test edited again, not gated" || bad "L23 setup: commit B failed"
 (cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L23 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"
@@ -316,9 +329,9 @@ newrepo
 mkdir -p "$R/tests/fixtures" && printf 'exit 0\n' > "$R/tests/test_core.sh" && echo "expected v1" > "$R/tests/fixtures/expected.md" \
   && git -C "$R" add tests && git -C "$R" commit -qm "a test and its golden file" && git -C "$W" merge -q --ff-only main \
   || bad "L24 setup: test on main failed"
-echo "fun ok() = 24" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"
-CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --auto-approve-tests > "$TMP/gate.out" 2>&1 \
-  || bad "L24 setup: gate --full --auto-approve-tests in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
+echo "fun ok() = 24" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"; cross_approve "$W" tests/test_core.sh
+CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 \
+  || bad "L24 setup: gate --full (cross-reviewed test) in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
 git -C "$W" commit -qam "gated work" || bad "L24 setup: commit A failed"
 echo "expected v2, never gated" > "$W/tests/fixtures/expected.md"; git -C "$W" commit -qam "golden file changed, not gated" || bad "L24 setup: commit B failed"
 (cd "$R" && GIT_CONFIG_GLOBAL=/dev/null python3 "$WTPY" finish "$W" > "$TMP/finish.out" 2>&1) || bad "L24 setup: worktree finish failed: $(tail -3 "$TMP/finish.out")"

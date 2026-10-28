@@ -614,84 +614,28 @@ def split_tests_by_author(paths: list, session, transcript) -> tuple:
 
 
 APPROVE_LABEL = re.compile(r"^\s*(?:duyệt|đồng ý|chấp nhận|approve[ds]?|accept(?:ed)?)\b", re.I)
-# Who approved each file split_user_approved returned: "user" (an AskUserQuestion / Antigravity
-# answer) or "agent" (--auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS, approved_tests.json, an
-# auto-approval line). 2026-09-29: the agent's own approval was printed as the user's.
+# Who approved each file split_user_approved returned: "user" (an AskUserQuestion answer) or "cross-review:<reviewer>" (#605: a
+# different agent's entry in approved_tests.json). 2026-09-29: the agent's own approval was printed as the user's; 28/10 (#605): the agent
+# that edited a test never approves it — --auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS=1 and an `AUTO-APPROVE:` reply line approve nothing.
 APPROVED_BY = {}
-AUTO_APPROVE_LINE = re.compile(r"(?m)^[ \t*-]*AUTO-APPROVE:[ \t]*(\S.*)$")   # case as written: "Auto-approve: KHÔNG …" is prose
+CROSS_REVIEW = {}            # path -> (reviewer, task_id) of the accepted cross-review entry
+APPROVAL_REJECTS = []        # (path, sha256 hiện tại, lý do): mục duyệt bị từ chối, cần duyệt lại
+SELF_APPROVAL_REFUSED = []   # paths an --auto-approve-tests / DEVKIT_AUTO_APPROVE_TESTS run asked to approve
+CROSS_REVIEW_FIELDS = ("path", "sha256", "reviewer", "author", "task_id", "reason")
 
 
-def _agent_marker_tokens(rec, tp, transcript):
-    """The path tokens an agent record approves: only `AUTO-APPROVE: <path …>` lines, in
-    - a Claude Code assistant reply of THIS session's transcript (text parts of message.content), or
-    - a top-level "content" of an agent record: type assistant or Antigravity's PLANNER_RESPONSE.
-    Never an isMeta record (the gate's own Stop feedback names the test next to "auto-duyệt": it approved the test it was blocking), a
-    queue-operation (messages from other sessions, queued prompts) / USER_INPUT / SYSTEM_MESSAGE record, a tool_use input, a tool_result,
-    prose (a negation matched the keyword) or another Claude session's transcript (reviews of 13/10, issue #11)."""
-    if rec.get("isMeta"):
-        return []
-    typ, texts = rec.get("type"), []
-    top = rec.get("content")
-    if isinstance(top, str) and top:
-        if typ in ("assistant", "PLANNER_RESPONSE"):
-            texts = [top]
-    elif typ == "assistant" and isinstance(rec.get("message"), dict) and transcript:
-        try:
-            own = os.path.realpath(str(tp)) == os.path.realpath(str(transcript))
-        except (OSError, ValueError):
-            own = False
-        mc = rec["message"].get("content") if own else None
-        texts = [mc] if isinstance(mc, str) else [str(p.get("text") or "") for p in mc if isinstance(p, dict) and p.get("type") == "text"] \
-            if isinstance(mc, list) else []
-    tokens = []
-    for text in texts:
-        text = _strip_fences(text)   # a marker quoted inside a fenced block is someone else's text, not this reply's approval
-        for m in AUTO_APPROVE_LINE.finditer(text):
-            for raw in re.split(r"[\s,;]+", m.group(1)):
-                tok = raw.rstrip(".:;").strip("`'\"()[]<>").rstrip(".:;")
-                if not _PATH_TOKEN.match(tok):
-                    break   # the paths come first: "AUTO-APPROVE: KHÔNG cho <path>" approves nothing
-                tokens.append(tok)
-    return tokens
-
-
-def _strip_fences(text):
-    """Drop fenced blocks (3+ backticks or tildes; closed only by the same character at least as long; an opener whose info string
-    holds a backtick is an inline span, not a fence; an unclosed fence runs to the end)."""
-    out, fence = [], None
-    for ln in text.split("\n"):
-        m = re.match(r"^[ \t]*(`{3,}|~{3,})(.*)$", ln)
-        if fence is None:
-            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
-                fence = m.group(1)
-            else:
-                out.append(ln)
-        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not m.group(2).strip():
-            fence = None
-    return "\n".join(out)
-
-
-_PATH_TOKEN = re.compile(r"^[\w.@+~/-]*/[\w.@+~/-]*$|^[\w@+~-][\w.@+~-]*\.[\w]+$")   # has a slash, or is name.ext
-
-
-def _marker_approves(tokens, f, root, absolute_only=False):
-    """A marker token names the test exactly: its project-relative path (normalised, never `..`), or an absolute path whose real path
-    is the test's. Never a substring, a suffix of another repo's path or a bare file name (two tests can share one)."""
-    want = os.path.realpath(os.path.join(str(root), f))
-    for t in tokens:
-        if os.path.isabs(t):
-            if os.path.realpath(t) == want:
-                return True
-        elif not absolute_only and not t.startswith("..") and os.path.normpath(t) == os.path.normpath(f):
-            return True
-    return False
+def _norm_agent(v):
+    return v.strip().casefold()
 
 
 def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> tuple:
-    """(still_blocking, approved): an edited existing test approved by user answer or agent
-    auto-approval (when evaluated better/safe, or via --auto-approve-tests / DEVKIT_AUTO_APPROVE_TESTS).
-    Evidence is the harness-written `toolUseResult.answers` record, transcript auto-approval,
-    or explicit auto_approve flag. Per file, all three hold:
+    """(still_blocking, approved): an edited existing test approved by the user's answer or by a CROSS-REVIEW (#605).
+    Cross-review: .claude/audit-gate/approved_tests.json = {"approvals": [{path, sha256, reviewer, author, task_id, reason}]},
+    written by another agent (Antigravity /giao audit, a reviewer session); accepted when all six are non-empty strings,
+    reviewer != author and != DEVKIT_AGENT_ID (case-insensitive) and sha256 is the file's current content. Anything else in
+    that file (legacy list / {path: sha256}, a malformed entry) approves nothing and is listed "cần duyệt lại".
+    auto_approve (--auto-approve-tests) and DEVKIT_AUTO_APPROVE_TESTS are self-approval: refused, kept only so old command
+    lines parse. User answer: the harness-written `toolUseResult.answers` record. Per file, all three hold:
     the question (header, options) names the file's path or basename, the chosen label
     approves (APPROVE_LABEL), and the file has not changed since that answer. Searched: the
     transcript's folder, else DEVKIT_TRANSCRIPTS_DIR, else ~/.claude/projects/<project>/ (in a linked worktree
@@ -700,8 +644,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     if not paths:
         return paths, []
     if auto_approve or os.environ.get("DEVKIT_AUTO_APPROVE_TESTS") == "1":
-        APPROVED_BY.update(dict.fromkeys(paths, "agent"))
-        return [], list(paths)
+        SELF_APPROVAL_REFUSED[:] = list(paths)   # #605: tự duyệt bị từ chối, xét tiếp như không có cờ
     root = Path(os.path.realpath(get_project_dir()))
     mtimes = {}
     for f in paths:
@@ -715,26 +658,42 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     approved_at = {}                              # path -> latest approving answer (epoch s)
     user_at = {}                                  # path -> latest approving answer of the user
     if appr_file.is_file():
+        def _cur_sha(f):
+            try:
+                with open(root / f, "rb") as tfh:
+                    return hashlib.sha256(tfh.read()).hexdigest()
+            except OSError:
+                return ""
         try:
-            # #485: thời điểm duyệt = mtime (float) của chính approved_tests.json, không phải int(time.time()):
-            # int() cắt giây làm test sửa cùng giây bị chặn, còn "bây giờ" duyệt mãi cả bản sửa SAU khi duyệt.
-            appr_t = appr_file.stat().st_mtime
             with open(appr_file, encoding="utf-8") as afh:
                 saved = json.load(afh)
-                if isinstance(saved, list):
-                    # ponytail: dạng list gắn duyệt với mtime của cả file, ghi lại list là duyệt lại mọi test trong đó; dùng dạng {path: sha256} khi cần gắn nội dung
-                    for f in saved:
-                        if f in mtimes:
-                            approved_at[f] = max(approved_at.get(f, 0), appr_t)
-                elif isinstance(saved, dict):
-                    # dạng {path: sha256}: chỉ duyệt đúng nội dung đã duyệt, sửa sau đó (nội dung đổi) là chặn
-                    for f, want in saved.items():
-                        if f in mtimes and isinstance(want, str):
-                            with open(root / f, "rb") as tfh:
-                                if hashlib.sha256(tfh.read()).hexdigest() == want.strip().lower():
-                                    approved_at[f] = max(approved_at.get(f, 0), mtimes[f])
-        except Exception:
-            pass
+        except (OSError, ValueError) as e:
+            # fail-closed: file duyệt không đọc được thì không duyệt gì, và nói rõ cho agent
+            saved = None
+            APPROVAL_REJECTS.extend((f, _cur_sha(f), f"approved_tests.json không đọc được ({type(e).__name__})") for f in mtimes)
+        entries = saved.get("approvals") if isinstance(saved, dict) and isinstance(saved.get("approvals"), list) else None
+        if entries is None and saved is not None:
+            # #534 mục 3 / #576: dạng cũ (list, {path: sha256}) không có nguồn duyệt — agent tự ghi bằng script vẫn PASS
+            legacy = saved if isinstance(saved, list) else list(saved) if isinstance(saved, dict) else []
+            APPROVAL_REJECTS.extend((f, _cur_sha(f), "dạng cũ không nguồn duyệt") for f in mtimes if f in legacy)
+        agent_id = _norm_agent(os.environ.get("DEVKIT_AGENT_ID") or "")
+        for e in entries or []:
+            f = e.get("path") if isinstance(e, dict) else None
+            if not isinstance(f, str) or f not in mtimes:
+                continue                          # names no edited test of this run: approves nothing
+            if not all(isinstance(e.get(k), str) and e[k].strip() for k in CROSS_REVIEW_FIELDS):
+                APPROVAL_REJECTS.append((f, _cur_sha(f), "mục duyệt thiếu trường (" + ", ".join(CROSS_REVIEW_FIELDS) + ")"))
+                continue
+            reviewer = _norm_agent(e["reviewer"])
+            if reviewer == _norm_agent(e["author"]) or (agent_id and reviewer == agent_id):
+                APPROVAL_REJECTS.append((f, _cur_sha(f), "reviewer trùng author (tự duyệt)"))
+                continue
+            cur = _cur_sha(f)
+            if not cur or e["sha256"].strip().lower() != cur:
+                APPROVAL_REJECTS.append((f, cur, "sha256 lệch nội dung hiện tại"))
+                continue
+            approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # sha256 gắn nội dung: mtime không quyết định
+            CROSS_REVIEW[f] = (e["reviewer"].strip(), e["task_id"].strip())
     folders = []
     if transcript:
         folders.append(Path(transcript).parent)
@@ -778,19 +737,6 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             pass
 
     for tp in candidates:
-        is_agy = agy_brain in Path(tp).parents
-        agent_ok = None if is_agy else True   # an Antigravity log: decided on its first candidate line only (500+ logs, ~1.5 s to read all)
-
-        def _agy_names_project(path=tp):
-            """An Antigravity log approves only a test of the project it names (the brain logs cover every project)."""
-            try:
-                agy_text = Path(path).read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                return False
-            spellings = {str(root), os.environ.get("CLAUDE_PROJECT_DIR") or str(root)}   # macOS: /var/... is /private/var/...
-            spellings |= {s[len("/private"):] for s in spellings if s.startswith("/private/")}
-            # the whole path, not a prefix: <repo>-v2 / <repo>-<task> worktrees sit next to it (review 13/10)
-            return any(s and re.search(re.escape(s.rstrip("/")) + r"(?![\w.@+~-])", agy_text) for s in spellings)
         try:
             fh = os.fdopen(_state_fd(tp), encoding="utf-8", errors="replace")
         except OSError:
@@ -819,24 +765,6 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
                                 approved_at[f] = max(approved_at.get(f, 0), t)
                                 user_at[f] = max(user_at.get(f, 0), t)
                     continue
-                if "AUTO-APPROVE:" in line and (agent_ok if agent_ok is not None else (agent_ok := _agy_names_project())):   # not elif: a reply line with "SHA256:"/"A1:" must not hide the marker
-                    try:
-                        rec = json.loads(line)
-                    except (ValueError, RecursionError):
-                        continue   # not one whole JSON record (a line cut by a concurrent write): never an approval
-                    if not isinstance(rec, dict):
-                        continue
-                    tokens = _agent_marker_tokens(rec, tp, transcript)
-                    ts = str(rec.get("created_at") or rec.get("timestamp") or "")
-                    if not tokens or not ts:
-                        continue   # no marker, or no time to bind it to the file's last edit
-                    try:
-                        t = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
-                    except (ValueError, OverflowError):
-                        continue
-                    for f in mtimes:
-                        if _marker_approves(tokens, f, root, absolute_only=is_agy):   # an Antigravity log covers many projects
-                            approved_at[f] = max(approved_at.get(f, 0), t)
     # ponytail: duyệt được nhớ theo (đường dẫn, nội dung) trong phạm vi transcript còn quét được, không gắn với blob HEAD gốc; gắn base blob nếu việc yếu hoá lại test sau khi revert thành vấn đề
     hash_file = root / ".claude" / "audit-gate" / "approved_hashes.json"
     saved_hashes = {}
@@ -885,7 +813,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             pass
 
     ok = [f for f in paths if f in mtimes and approved_at.get(f, 0) >= mtimes[f]]
-    APPROVED_BY.update({f: "user" if user_at.get(f, 0) >= mtimes[f] else "agent" for f in ok})
+    APPROVED_BY.update({f: "user" if user_at.get(f, 0) >= mtimes[f] else "cross-review:" + CROSS_REVIEW[f][0] for f in ok})
     return [f for f in paths if f not in ok], ok
 
 
@@ -5739,7 +5667,7 @@ def main():
     parser.add_argument("--timeout", type=int, default=900, help="Timeout (seconds) per regression command")
     parser.add_argument("--json", action="store_true", help="Also print the result as JSON (last stdout line)")
     parser.add_argument("--auto-approve-tests", action="store_true",
-                        help="Allow agent auto-approval for edited existing tests when evaluated safe/better and tests pass (DEVKIT_AUTO_APPROVE_TESTS=1 does the same)")
+                        help="Refused since #605 (self-approval): kept so old command lines parse; an edited existing test needs a cross-review entry in .claude/audit-gate/approved_tests.json")
     parser.add_argument("--allow-no-tests", action="store_true",
                         help="Allow PASS when there is no matrix / no regression test matches the change")
     parser.add_argument("--allow-orphan-tests", action="store_true",
@@ -7471,8 +7399,8 @@ def main():
         # A range-flagged test is already committed: committing again cures nothing.
         cure_vi, cure_en = (("hoặc một commit có dòng `Test-approved-by:` (audit Antigravity)", "or a commit carrying a `Test-approved-by:` line (an Antigravity audit)")
                             if in_range else ("hoặc commit nó", "or commit it"))
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần người review diff test (`{touched_diff}`): Agent tự auto-duyệt nếu thấy tốt hơn/hợp lý (dùng --auto-approve-tests; hook Stop đọc một dòng riêng `AUTO-APPROVE: <đường dẫn>` trong câu trả lời của chính phiên; KHÔNG hỏi phiền người dùng) — {cure_vi} — rồi chạy lại gate",
-                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: have a human review the test diff (`{touched_diff}`): agent auto-approves if evaluated better/safe (use --auto-approve-tests; the Stop hook reads a line of its own `AUTO-APPROVE: <path>` in this session's reply) — {cure_en} — then re-run the gate"), YELLOW, 2
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần duyệt chéo diff test (`{touched_diff}`): agent sửa test KHÔNG tự duyệt (--auto-approve-tests / `AUTO-APPROVE:` bị từ chối); agent khác (audit `/giao` Antigravity hoặc phiên reviewer) đọc diff, xác nhận không nới assertion rồi ghi mục {{path, sha256, reviewer, author, task_id, reason}} vào `.claude/audit-gate/approved_tests.json` (khoá `approvals`) — {cure_vi} — rồi chạy lại gate",
+                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: needs a cross-review of the test diff (`{touched_diff}`): the agent that edited a test does NOT approve it (--auto-approve-tests / `AUTO-APPROVE:` are refused); another agent (an Antigravity `/giao` audit or a reviewer session) reads the diff, confirms no assertion was weakened and records {{path, sha256, reviewer, author, task_id, reason}} in `.claude/audit-gate/approved_tests.json` (key `approvals`) — {cure_en} — then re-run the gate"), YELLOW, 2
     elif unverified:
         exit_reason = "dry_run"
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2
@@ -7573,7 +7501,13 @@ def main():
         if APPROVED_BY.get(f) == "user":
             print(f"  • {GREEN}{tr('Test đã có bị sửa — người dùng đã duyệt (AskUserQuestion), file không đổi sau đó:', 'Existing test edited — approved by the user (AskUserQuestion), unchanged since:')}{RESET} {f}")
         else:
-            print(f"  • {YELLOW}{tr('Test đã có bị sửa — agent tự duyệt (--auto-approve-tests / auto-duyệt), KHÔNG phải người dùng; file không đổi sau đó:', 'Existing test edited — the agent auto-approved it (--auto-approve-tests / auto-approval), NOT the user; unchanged since:')}{RESET} {f}")
+            rv, tid = CROSS_REVIEW.get(f, ("?", "?"))
+            print(f"  • {GREEN}{tr(f'Test đã có bị sửa — duyệt chéo bởi {rv} (task {tid}), sha256 khớp nội dung hiện tại:', f'Existing test edited — cross-reviewed by {rv} (task {tid}), sha256 matches the current content:')}{RESET} {f}")
+    for f, sha, why in APPROVAL_REJECTS:
+        if f in tests_touched:
+            print(f"  • {YELLOW}{tr(f'Duyệt test bị từ chối — {why}: cần duyệt lại (duyệt chéo, mục path, sha256, reviewer, author, task_id, reason):', f'Test approval refused — {why}: needs re-approval (a cross-review entry):')}{RESET} {f} sha256={sha or '?'}")
+    if SELF_APPROVAL_REFUSED:   # cờ có test sửa để duyệt: luôn nói cờ không còn tác dụng, kể cả khi lời duyệt khác đã nhận
+        print(f"  • {YELLOW}{tr('tự duyệt bị từ chối (--auto-approve-tests / DEVKIT_AUTO_APPROVE_TESTS): test có sẵn bị sửa cần agent khác duyệt chéo (audit /giao ghi mục duyệt)', 'self-approval refused (--auto-approve-tests / DEVKIT_AUTO_APPROVE_TESTS): an edited existing test needs a cross-review by another agent (a /giao audit records the entry)')}{RESET}")
     for f in tests_touched_other[:5]:
         print(f"  • {YELLOW}{tr('Test đã có bị phiên khác / người khác sửa (không chặn phiên này, cần người review trước khi commit):', 'Existing test edited by another session or a person (not blocking this session; needs a human review before commit):')}{RESET} {f}")
     print(f"  • {tr('Gate không xác minh: DESIGN.md/a11y, RED/GREEN, Immutable Guards, OpenCodeReview. Ảnh nghiệm thu không nằm trong exit code; agent vẫn phải gắn PNG của lượt này trước khi nói XONG, trừ khi thay đổi chắc chắn không lên màn hình (essentials bước 4).', 'The gate does not verify: DESIGN.md/a11y, RED/GREEN, immutable guards, OpenCodeReview. The proof image is outside the exit code; the agent still attaches a PNG from this turn before saying XONG unless the change surely cannot show on a screen (essentials step 4).')}")

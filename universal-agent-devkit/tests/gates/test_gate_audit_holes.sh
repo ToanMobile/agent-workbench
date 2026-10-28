@@ -21,6 +21,18 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+# #605: test sửa chỉ được duyệt chéo — ghi mục {path, sha256, reviewer, author, task_id, reason} do "agent khác" duyệt
+cross_approve() {   # cross_approve <repo> <path>...
+  python3 - "$@" <<'PY'
+import hashlib, json, os, sys
+root, paths = sys.argv[1], sys.argv[2:]
+d = os.path.join(root, ".claude", "audit-gate"); os.makedirs(d, exist_ok=True)
+ap = [{"path": p, "sha256": hashlib.sha256(open(os.path.join(root, p), "rb").read()).hexdigest(), "reviewer": "antigravity",
+       "author": "claude", "task_id": "T-fixture", "reason": "fixture: diff test đã được agent khác đọc"} for p in paths]
+with open(os.path.join(d, "approved_tests.json"), "w") as fh:
+    json.dump({"approvals": ap}, fh)
+PY
+}
 
 # Fresh repo per scenario: src/core.py, a passing suite, a matrix watching src/ tests/ scripts/.
 mk() {
@@ -109,8 +121,10 @@ gate --run-tests --full
 expect_rc "A2: scripts/check.sh (named by the suite command) set to 'exit 0' is not a PASS" 2
 [ "$(j '"scripts/check.sh" in d["tests_touched"]')" = "True" ] && ok "A2: scripts/check.sh is reported as an edited suite runner" \
   || bad "A2: scripts/check.sh not reported (tests_touched: $(j 'd["tests_touched"]'))"
-gate --run-tests --full --auto-approve-tests
-expect_rc "A2: the existing approval path (--auto-approve-tests) still lifts it" 0
+cross_approve "$PWD" scripts/check.sh
+gate --run-tests --full
+expect_rc "A2: the existing approval path (a cross-review entry, #605) still lifts it" 0
+rm -f .claude/audit-gate/approved_tests.json
 git checkout -q -- scripts/check.sh
 printf '#!/bin/sh\ntrue\n' > scripts/ci.sh
 gate --dry-run

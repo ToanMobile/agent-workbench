@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression test (the time saving itself): a --full that ends exit 2 because an existing test was edited must not make
-# the re-run with --auto-approve-tests run every suite again on the same code.
+# the re-run with the approval (a cross-review entry since #605; --auto-approve-tests before) run every suite again on the same code.
 # 2026-10-07 (OfficeReader runs.jsonl): --full exit 2 (269 s) -> the same --full with the approval -> 254 s, all suites again.
 # The fake suite counts its runs in $TMP/runs (outside the repo: a file inside would change the code fingerprint).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
@@ -16,6 +16,18 @@ export TMP
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+# #605: test sửa chỉ được duyệt chéo — ghi mục {path, sha256, reviewer, author, task_id, reason} do "agent khác" duyệt
+cross_approve() {   # cross_approve <repo> <path>...
+  python3 - "$@" <<'PY'
+import hashlib, json, os, sys
+root, paths = sys.argv[1], sys.argv[2:]
+d = os.path.join(root, ".claude", "audit-gate"); os.makedirs(d, exist_ok=True)
+ap = [{"path": p, "sha256": hashlib.sha256(open(os.path.join(root, p), "rb").read()).hexdigest(), "reviewer": "antigravity",
+       "author": "claude", "task_id": "T-fixture", "reason": "fixture: diff test đã được agent khác đọc"} for p in paths]
+with open(os.path.join(d, "approved_tests.json"), "w") as fh:
+    json.dump({"approvals": ap}, fh)
+PY
+}
 
 make_repo() { # $1 = extra matrix row ("" or ',{...}')
   rm -rf "$TMP/repo" "$TMP/runs" && mkdir -p "$TMP/repo/app/src/main/kotlin/pkg" "$TMP/repo/app/src/test/kotlin/pkg"
@@ -44,7 +56,8 @@ make_repo ""
 run_gate --run-tests --full >/dev/null; rc=$?
 [ "$rc" = 2 ] && [ "$(runs)" = 1 ] && ok "A1: the edited test makes --full exit 2 after one run of the suite" || bad "A1: exit $rc, suite ran $(runs) times"
 [ "$(receipt_exit)" = 2 ] && ok "A2: the receipt says exit 2 (proof_gate and push_gate accept only 0: XONG and push stay refused)" || bad "A2: receipt exit is $(receipt_exit)"
-out="$(run_gate --run-tests --full --auto-approve-tests)"; rc=$?
+cross_approve "$TMP/repo" app/src/test/kotlin/pkg/OtherTest.kt
+out="$(run_gate --run-tests --full)"; rc=$?
 [ "$rc" = 0 ] && ok "A3: with the approval the same code passes (exit 0)" || bad "A3: exit $rc: $(printf '%s' "$out" | tail -4)"
 [ "$(runs)" = 1 ] && ok "A4: the suite did NOT run again (1 run in total)" || bad "A4: the suite ran $(runs) times, the re-run paid it again"
 [ "$(receipt_exit)" = 0 ] && ok "A5: the approved run leaves the exit-0 receipt XONG needs" || bad "A5: receipt exit is $(receipt_exit)"
@@ -53,7 +66,8 @@ out="$(run_gate --run-tests --full --auto-approve-tests)"; rc=$?
 make_repo ',{"id":"REG-MANUAL","name":"manual","command":"exit 2","impacted_command":"exit 2","untested_exit":2}'
 run_gate --run-tests --full >/dev/null; rc=$?
 [ "$rc" = 2 ] && [ "$(runs)" = 1 ] && ok "B1: exit 2 after one run of the suite (REG-MANUAL UNTESTED by design)" || bad "B1: exit $rc, suite ran $(runs) times"
-run_gate --run-tests --full --auto-approve-tests >/dev/null; rc=$?
+cross_approve "$TMP/repo" app/src/test/kotlin/pkg/OtherTest.kt
+run_gate --run-tests --full >/dev/null; rc=$?
 [ "$rc" = 4 ] && ok "B2: the approved run is UNTESTED (exit 4) because of the manual suite, as always" || bad "B2: exit $rc"
 [ "$(runs)" = 1 ] && ok "B3: the suite that can run was NOT run again (1 run in total)" || bad "B3: the suite ran $(runs) times: the UNTESTED manual suite cancelled the reuse"
 
@@ -61,7 +75,8 @@ run_gate --run-tests --full --auto-approve-tests >/dev/null; rc=$?
 make_repo ""
 run_gate --run-tests --full >/dev/null
 echo "// changed after the exit 2" >> app/src/main/kotlin/pkg/Lonely.kt
-run_gate --run-tests --full --auto-approve-tests >/dev/null
+cross_approve "$TMP/repo" app/src/test/kotlin/pkg/OtherTest.kt
+run_gate --run-tests --full >/dev/null
 [ "$(runs)" = 2 ] && ok "C: code that changed after the exit 2 runs the suite again (2 runs)" || bad "C: the suite ran $(runs) times, expected 2"
 
 [ "$FAILS" -eq 0 ] && echo "full rerun after unverified: all checks passed" || { echo "full rerun after unverified: $FAILS FAILED"; exit 1; }

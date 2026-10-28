@@ -1903,6 +1903,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "gate-cross-review-approval-605",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/tests/gates/test_gate_cross_review_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-CROSS-REVIEW-605-01",
+          "name": "#605: test có sẵn bị sửa chỉ được duyệt chéo (approved_tests.json approvals: reviewer khác author/DEVKIT_AGENT_ID, sha256 khớp, đủ 6 trường); tự duyệt (--auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS, AUTO-APPROVE:) và dạng cũ không nguồn = exit 2, in cần duyệt lại + sha256",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_cross_review_approval.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
