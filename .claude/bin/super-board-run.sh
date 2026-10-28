@@ -2106,7 +2106,7 @@ reclaim_dead_builds() {
   # issue vào RECLAIM_BUILDING. Nếu thẻ vẫn ở Building, không có lock sống và không có assignee nào khác ngoài bot:
   #  - Dưới trần SB_RECLAIM_MAX (mặc định 2) lần trong cửa sổ SB_RECLAIM_WINDOW_S (mặc định 86400 s): ghi epoch vào
   #    sổ $INFLIGHT_DIR/reclaims/<issue> rồi trả thẻ về Ready qua reclaim_stranded_building.
-  #  - Đạt/vượt trần: chuyển thẻ sang Blocked kèm comment theo block-template (dòng cuối `blocked-by:  -`).
+  #  - Đạt/vượt trần: chuyển thẻ sang Blocked kèm comment theo block-template (dòng cuối `blocked-by:  agent`, #529).
   # Luôn return 0; đặt RECLAIM_MOVED=1 khi có thẻ được chuyển (Ready hoặc Blocked).
   local pending="${RECLAIM_BUILDING:-}"
   RECLAIM_BUILDING=""
