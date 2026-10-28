@@ -49,6 +49,8 @@ unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
 SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"
+# #529: resume unmarks needs-you through this helper before the move; the stub only has to exit 0.
+printf 'import sys\nsys.exit(0)\n' > "$TMP/bin/super-board-needs-you.py"
 CONFIG_PATH="$TMP/cfg.json"; echo '{"repo":{"remote":"https://github.com/acme/widgets"}}' > "$CONFIG_PATH"
 INFLIGHT_DIR="$TMP/repo/.claude/super-board/inflight"; mkdir -p "$INFLIGHT_DIR"
 WORKER_LOG_DIR="wl"; REPO_ROOT="$TMP/repo"
