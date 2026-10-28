@@ -290,6 +290,44 @@ else
     || fail "R3b: lock='$lk' (another live session's lock was replaced)"
 fi
 
+# #413 N1: khoá lúc startup hỏng (git worktree lock thất bại) thì phiên PHẢI được báo (stdout SessionStart -> additionalContext), không im lặng.
+#   git giả: `worktree lock` luôn lỗi, mọi lệnh khác chuyển cho git thật.
+REALGIT="$(command -v git)"; mkdir -p "$TMP/badgit"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = lock ] && exit 1; done\nexec "%s" "$@"\n' "$REALGIT" > "$TMP/badgit/git"; chmod +x "$TMP/badgit/git"
+start_bad() {   # start_bad <main> <worktree name> <session> <source>: như start_src nhưng `git worktree lock` hỏng; stdout giữ lại
+  python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"hook_event_name":"SessionStart","cwd":sys.argv[2],"source":sys.argv[3]}))' \
+    "$3" "$1/.claude/worktrees/$2" "$4" | PATH="$TMP/badgit:$PATH" CLAUDE_PROJECT_DIR="$1/.claude/worktrees/$2" DEVKIT_SCRATCH_CLEANUP=0 python3 -I "$DEVKIT_DIR/bin/session_lock.py" > "$TMP/start.out" 2> "$TMP/start.err"
+}
+repo n true; wtadd "$TMP/n" bad s60; start_bad "$TMP/n" bad s60 startup; rc=$?
+lk="$(lock_of "$TMP/n" bad)"
+[ "$rc" = 0 ] && [ -z "$lk" ] && grep -q "NOT LOCKED" "$TMP/start.out" && ok "N1: a startup whose git lock fails says NOT LOCKED on stdout (additionalContext), SessionStart still passes" \
+  || fail "N1: rc=$rc lock='$lk' out=$(head -c 300 "$TMP/start.out") err=$(head -c 200 "$TMP/start.err")"
+# N2: ...rồi SessionStart compact (git lành): khoá lại worktree KHỞI ĐẦU của phiên (record), không theo cwd; cd sang worktree phiên khác thì không
+wtadd "$TMP/n" peer s61
+start_src "$TMP/n" bad s60 compact; lk="$(lock_of "$TMP/n" bad)"
+[ "$lk" = "devkit-kept session=s60 pid=$$" ] && ok "N2: compact after a failed startup lock locks the session's own starting worktree" \
+  || fail "N2: lock='$lk' err=$(head -c 300 "$TMP/start.err")"
+wtadd "$TMP/n" bad2 s62; start_bad "$TMP/n" bad2 s63 startup   # s63: lock failed, record kept
+start_src "$TMP/n" peer s63 compact   # cwd = another session's worktree
+[ -z "$(lock_of "$TMP/n" peer)" ] && [ "$(lock_of "$TMP/n" bad2)" = "devkit-kept session=s63 pid=$$" ] \
+  && ok "N2b: compact with the cwd moved into another session's worktree locks the session's own one (its record), not that one" \
+  || fail "N2b: peer='$(lock_of "$TMP/n" peer)' own='$(lock_of "$TMP/n" bad2)'"
+# N1b: git que não responde (lista de worktrees > 5 s): o aviso sai antes de os 10 s do hook, sem mais chamadas git
+mkdir -p "$TMP/slowgit"
+printf '#!/bin/sh\ncase " $* " in *" worktree list "*) sleep 6;; esac\nexec "%s" "$@"\n' "$REALGIT" > "$TMP/slowgit/git"; chmod +x "$TMP/slowgit/git"
+wtadd "$TMP/n" slow s64; t0=$SECONDS
+python3 -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"hook_event_name":"SessionStart","cwd":sys.argv[2],"source":"startup"}))' \
+  s64 "$TMP/n/.claude/worktrees/slow" | PATH="$TMP/slowgit:$PATH" CLAUDE_PROJECT_DIR="$TMP/n/.claude/worktrees/slow" DEVKIT_SCRATCH_CLEANUP=0 python3 -I "$DEVKIT_DIR/bin/session_lock.py" > "$TMP/start.out" 2> "$TMP/start.err"; rc=$?
+[ "$rc" = 0 ] && [ $((SECONDS - t0)) -lt 10 ] && grep -q "NOT LOCKED" "$TMP/start.out" \
+  && ok "N1b: git that hangs on the worktree list: NOT LOCKED printed within the hook's 10 s budget ($((SECONDS - t0)) s)" \
+  || fail "N1b: rc=$rc took $((SECONDS - t0)) s out=$(head -c 200 "$TMP/start.out")"
+
+# #413 N3: the owner veto of #415 (which pid_start fed) is gone since #420: a resume always locks, so there is no owner-alive case left to test.
+# N3d: EnterWorktree ghi thời điểm khởi động của pid vào record (dòng 3)
+repo o true; wtadd "$TMP/o" ent s76; enter "$TMP/o" ent s76
+grep -q "^start [^[:space:]]" "$TMP/o/.claude/audit-gate/session_worktree/s76" && ok "N3d: the session record carries the pid's start time (line 3)" \
+  || fail "N3d: record: $(cat "$TMP/o/.claude/audit-gate/session_worktree/s76")"
+
 echo
 [ "$FAILS" = 0 ] && { echo "test_session_worktree_enter_lock: PASS"; exit 0; }
 echo "test_session_worktree_enter_lock: $FAILS FAIL"; exit 1
