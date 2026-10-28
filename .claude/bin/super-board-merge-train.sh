@@ -135,6 +135,7 @@ python3 "$GITHUB_READ" --check
 TRAIN_COMMON=$(cd "$REPO_PATH" && cd "$(git rev-parse --git-common-dir)" && pwd -P) || { say "cannot resolve the git common dir of ${REPO_PATH}"; exit 1; }
 mkdir -p "$TRAIN_COMMON/super-board"
 TRAIN_LOCK="$TRAIN_COMMON/super-board/merge-train.lock"
+TRAIN_STATE="$TRAIN_COMMON/super-board/merge-train.state"
 exec 8>>"$TRAIN_LOCK"
 TLRC=0
 python3 -I -c '
@@ -158,9 +159,20 @@ BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.train-scratch-XXXXXX")
 RECEIPT=$(mktemp); VLOG=$(mktemp)
-cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"; }
+cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"; rm -f "$TRAIN_STATE" "$TRAIN_STATE.tmp"; }
 trap cleanup EXIT
+# Trạng thái train cho Agent Office / super-board-status.py (#562): `pid`, `started_at`, `step` (gate | merge) và mỗi PR một dòng
+# `pr <N> <sha> <ref>`. Ghi nguyên tử, chỉ sau khi giữ khoá và đã đặt trap dọn: train thoát exit 4 (khoá bận) không bao giờ đụng file của train
+# đang chạy. Bị SIGKILL thì file mồ côi, người đọc bỏ qua vì `pid` đã chết. Lỗi ghi không bao giờ làm hỏng train.
+TRAIN_STARTED=$(date +%s)
+train_state() {
+  local i
+  { echo "pid $$"; echo "started_at ${TRAIN_STARTED}"; echo "step $1"
+    for i in "${!LIST[@]}"; do echo "pr ${LIST[$i]} ${HEADS[$i]:-} ${REFS[$i]:-}"; done
+  } >"$TRAIN_STATE.tmp" 2>/dev/null && mv -f "$TRAIN_STATE.tmp" "$TRAIN_STATE" 2>/dev/null || true
+}
 
+train_state gate
 # Head của từng PR, ghim một lần: verify và biên nhận thuộc đúng commit này (gate còn --match-head-commit lúc merge).
 HEADS=(); REFS=(); KEEP=(); MOVED=()
 for i in "${!LIST[@]}"; do
@@ -178,7 +190,7 @@ for i in "${!LIST[@]}"; do
 done
 for p in ${MOVED[@]+"${MOVED[@]}"}; do echo "train-result: $p head-moved"; done
 [ "${#KEEP[@]}" -gt 0 ] || exit 6
-LIST=("${KEEP[@]}")
+LIST=("${KEEP[@]}"); train_state gate
 # Preflight (Pha 2, M6): kiểm rẻ của gate cho từng PR trước khi dựng cây nào. PR rớt (policy cần người 7/8, qa-report/AC 11, đóng 3,
 # head dời 6…) rời đợt, không tốn lượt verify của cả đợt; 79/9 đi thẳng tới caller.
 BLOCKED=(); DRYRC=0; PF_LIST=(); PF_REFS=(); PF_HEADS=(); PREMERGED=()
@@ -223,6 +235,7 @@ for i in "${!PF_LIST[@]}"; do
   fi
 done
 if [ "${#LIST[@]}" -eq 0 ]; then early_results; exit "$DRYRC"; fi
+train_state gate
 BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { say "cannot resolve origin/${BASE}"; exit 1; }
 head_of() { local i; for i in "${!LIST[@]}"; do [ "${LIST[$i]}" = "$1" ] && { echo "${HEADS[$i]}"; return 0; }; done; return 1; }
 
@@ -452,6 +465,7 @@ if [ "${#GOOD[@]}" -gt 0 ]; then
   done
 fi
 
+train_state merge
 RC=$DRYRC
 for p in ${PREMERGED[@]+"${PREMERGED[@]}"}; do echo "train-result: $p merged"; done
 for b in "${BLOCKED[@]+"${BLOCKED[@]}"}"; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done

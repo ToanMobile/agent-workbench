@@ -558,6 +558,33 @@ if vanished:
         owed.discard(os.path.realpath(r["path"]))
         owners.pop(os.path.realpath(r["path"]), None)
 
+def open_pr_number(path, branch, budget_end):
+    """#571: number of the open PR whose head is `branch` (an open PR means it is published), else None. gh missing, failing, timing out or
+    printing something unreadable is None too (fail closed: the hold stays). `branch` comes from the inventory row: no extra git call here.
+    `budget_end` (time.time() value) is shared by every row: the calls are sequential and the alarm (13 s) passes the Stop, so they must end first."""
+    left = budget_end - time.time()
+    if not branch or left <= 0.2:
+        return None
+    try:
+        r = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "1"],
+                           cwd=path, capture_output=True, text=True, timeout=min(5, left), stdin=subprocess.DEVNULL)
+        rows = json.loads(r.stdout) if r.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    num = rows[0].get("number") if rows and isinstance(rows[0], dict) else None
+    return num if isinstance(num, int) else None
+
+pr_budget_end = time.time() + 3   # all rows together: leaves the alarm's 13 s to the automerge step below
+for r in [r for r in pending if not r.get("reason") and os.path.isdir(r["path"])]:   # a published branch with an open PR reaches main through that PR
+    if wt is None or wt.unpushed_or_dirty(r["path"]):
+        continue   # an open PR proves the branch is published, not that this local work is on it: stays held
+    pr = open_pr_number(r["path"], r.get("branch"), pr_budget_end)
+    if pr is not None:
+        pending.remove(r)
+        owed.discard(os.path.realpath(r["path"]))
+        owners.pop(os.path.realpath(r["path"]), None)
+        pr_notes.append(f"ℹ {r['path']}: nhánh đã publish có PR #{pr} đang mở — vào main qua PR, không giữ Stop")
+
 am_done, am_kept, am_running, am_testing = [], [], [], []
 if pending and wt is not None and os.environ.get("WORKTREE_AUTO_MERGE", "1") != "0":
     cand = [r for r in pending if not r.get("reason") and r.get("busy") in (None, "merge") and os.path.isdir(r["path"])]
