@@ -261,7 +261,7 @@ const preflightPrompt = (batch) => [
   `Read .claude/skills/super-board/references/run.md → "Builder pre-flight" and follow it EXACTLY. You write no code.`,
   `Other cards in this wave: ${JSON.stringify(input.cards.map(({ number, status, title }) => ({ number, status, title })))}`,
   `Run .claude/bin/super-board-preflight.sh once for the whole batch, then judge its candidates semantically.`,
-  `hold — in progress (an open PR / card is building it) → never Blocked: handle it exactly like sequence-behind below (mark --on <the issue that PR or card closes>, verdict sequence, column Ready, blockedBy [that issue]). Any other hold → post the Block template (block-template.md) and move the card to Blocked yourself.`,
+  `hold — in progress (an open PR / card is building it) → never Blocked: handle it exactly like sequence-behind below (mark --on <the number to wait for: the other card's issue, or — when the open PR closes THIS card itself — that PR's own number; never this card's number, mark exits 64 on it>, verdict sequence, column Ready, blockedBy [that number]). Any other hold → post the Block template (block-template.md) and move the card to Blocked yourself.`,
   `sequence-behind (blockedBy non-empty) → never Blocked: run python3 .claude/bin/super-board-waiting-on.py mark --config ${input.configPath} --issue <N> --on <blockedBy, comma-separated> --why "<overlapping PR and files>" and read the JSON it prints. ` +
     `It labels only blockers still OPEN. Exit 0 with "labels": [] (every blocker already closed) → verdict proceed, exactly as if blockedBy were empty (no conflict comment). ` +
     `Exit 0 with labels non-empty → verdict sequence, column Ready, blockedBy = the numbers still open (never empty); the card waits in Ready. ` +
