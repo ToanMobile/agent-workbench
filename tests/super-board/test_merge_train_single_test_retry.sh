@@ -136,4 +136,20 @@ for c in multi other noname escape; do
   [ "$rc" -eq 11 ] && [ "$(reruns)" = 0 ] && [ -z "$(merged_list)" ] && ok "$c: red at once, no re-run" || fail "$c: exit $rc reruns=$(reruns) merged=$(merged_list): $(tail -4 "$TMP/t$n.log")"
 done
 
+# ── 4. #616: một suite shard (REG-DK-ALL-GATES-01) cũng được chạy lại riêng đúng test đỏ: flaky, PR merge, verify 1 lần.
+mklog "$TMP/shard.log" "FAIL|REG-DK-ALL-GATES-01|✖ tests/gates/test_shard_flaky.sh"
+cfg_log "$TMP/cfg9.json" "$TMP/shard.log"
+card_script 64 tests/gates/test_shard_flaky.sh 0
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg9.json" --prs 64 ) >"$TMP/t9.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(merged_list)" = "64 " ] && [ "$(runs)" = 1 ] && [ "$(reruns)" = 1 ] && grep -q "^train-flaky: 64 tests/gates/test_shard_flaky.sh" "$TMP/t9.log" \
+  && ok "shard id: one red test re-ran once, flaky, PR merged" || fail "shard id: exit $rc merged=$(merged_list) runs=$(runs) reruns=$(reruns): $(tail -4 "$TMP/t9.log")"
+# hai suite shard cùng đỏ → vẫn red ngay (không nới)
+mklog "$TMP/shard2.log" "FAIL|REG-DK-ALL-GATES-01|✖ tests/gates/test_a.sh" "FAIL|REG-DK-ALL-REST-01|✖ tests/gates/test_b.sh"
+cfg_log "$TMP/cfg10.json" "$TMP/shard2.log"
+card_script 65 tests/gates/test_a.sh 0
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg10.json" --prs 65 ) >"$TMP/t10.log" 2>&1; rc=$?
+[ "$rc" -eq 11 ] && [ "$(reruns)" = 0 ] && ok "two red shard suites: red at once, no re-run" || fail "two red shard suites: exit $rc reruns=$(reruns)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train_single_test_retry: all passed" || { echo "❌ test_merge_train_single_test_retry: $FAILS failed"; exit 1; }

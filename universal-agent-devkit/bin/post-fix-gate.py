@@ -4241,10 +4241,36 @@ PTC_LINE = re.compile(r"^per_test_cache: reuse=(\d+) ran=(\d+)$", re.M)
 PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh của lượt này (đặt sau khi biết keyed_ok)
 
 
-def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
+EXTEND_STEP_S = 60   # #616 A: step of the extension below; DEVKIT_GATE_EXTEND_STEP_S overrides it (tests)
+EXTEND_CAP_FACTOR = 3   # #616 A: hard ceiling = this × timeout, load never lifts it
+
+
+def _extend_step_s() -> float:
+    try:
+        v = float(os.environ.get("DEVKIT_GATE_EXTEND_STEP_S", ""))
+        return v if v > 0 else EXTEND_STEP_S
+    except ValueError:
+        return EXTEND_STEP_S
+
+
+def _machine_busy() -> bool:
+    """#616 A: the 1-minute load is at or above capacity.busy_load; unknown load (capacity.py broken, no getloadavg) is NOT busy."""
+    try:
+        import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+        load = _capacity.load()
+        return load is not None and load >= _capacity.busy_load()
+    except Exception as exc:   # noqa: BLE001 - không đọc được tải thì không gia hạn: giữ luật timeout cũ, nói rõ lý do
+        log_warn(f"capacity: {exc!r}; timeout is not extended (load unknown)")
+        return False
+
+
+def run_in_group(cmd: str, cwd: str, env: dict, timeout, extend: dict = None) -> tuple:
     """(exit code, output, timed out) of a shell command in its own session/process group, so a timeout kills the
     whole tree (gradle daemons, test workers), not just the shell. The group is in _VACUITY_PGIDS while it runs: a
-    signal handler (_vacuity_on_signal) can end it from any thread."""
+    signal handler (_vacuity_on_signal) can end it from any thread.
+    #616 A: with `extend` (a dict), a run that outlives `timeout` while the machine is busy (load >= busy_load) is not killed: it
+    gets EXTEND_STEP_S more at a time, up to EXTEND_CAP_FACTOR × timeout in all; the seconds added are put in extend["s"]. A machine
+    that is not busy (or whose load is unknown) at the deadline keeps the old kill."""
     mod = suite_cache_mod() if PER_TEST_CACHE["mode"] != "0" else None
     if mod is not None and env is not None and mod.SELECTION_CMD.match(cmd or ""):
         # chỉ `bash <kit>/tests/run_impacted.sh [--all]` (suite_env bỏ biến này khỏi mọi suite khác: một test chạy run_impacted.sh
@@ -4256,7 +4282,25 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
         _VACUITY_PGIDS.add(proc.pid)
     try:
         try:
-            out, _ = proc.communicate(timeout=timeout)
+            try:
+                out, _ = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                if extend is None or not timeout:
+                    raise
+                cap, step, added = EXTEND_CAP_FACTOR * timeout, _extend_step_s(), 0.0
+                try:
+                    while timeout + added < cap and _machine_busy():
+                        wait = min(step, cap - timeout - added)
+                        added += wait
+                        extend["s"] = round(added, 1)
+                        try:
+                            out, _ = proc.communicate(timeout=wait)
+                            return proc.returncode, out, False
+                        except subprocess.TimeoutExpired:
+                            continue
+                except subprocess.TimeoutExpired:
+                    pass
+                raise subprocess.TimeoutExpired(cmd, timeout + added)
             return proc.returncode, out, False
         except subprocess.TimeoutExpired:
             snap = HANG_SNAPSHOT_MARK + _timeout_snapshot(proc.pid) + "\n"   # before any signal: the stuck process is still there
@@ -5678,6 +5722,9 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         ptc = [t["ptc"] for t in regression_tests if t.get("ptc")]
         if ptc:   # #472 D: hit-rate của per_test_cache (chỉ lượt có suite run_impacted.sh chạy với sổ per-test bật)
             rec["ptc_reuse"], rec["ptc_ran"] = sum(p[0] for p in ptc), sum(p[1] for p in ptc)
+        extended = sum(t.get("extended_s") or 0 for t in regression_tests)
+        if extended:   # #616 A
+            rec["extended_s"] = round(extended, 1)
         if len(files) > RUN_LOG_CHANGED_MAX:
             rec["changed_files_cut"] = True
         waits = _run_log_slot_waits(regression_tests, slot_waits)
@@ -6926,7 +6973,10 @@ def main():
         # Own session/process group (run_in_group) so a timeout or a signal to the gate kills the whole tree
         # (gradle daemons, test workers), not just the shell. Commands come from the matrix at the base
         # ref (load_active_matrix), so the audited change cannot rewrite them.
-        code, out, timed_out = run_in_group(cmd, str(project_dir), env, args.timeout)
+        ext = {}
+        code, out, timed_out = run_in_group(cmd, str(project_dir), env, args.timeout, extend=ext)
+        if ext.get("s"):
+            t["extended_s"] = ext["s"]   # #616 A: seconds past --timeout the suite was left running because the machine was busy
         full_cmd = t.get("full_command") or ""
         if (not timed_out and code != 0 and mode in ("package", "module") and full_cmd
                 and full_cmd.strip() != cmd.strip() and NARROW_NO_TESTS_RE.search(out or "")):

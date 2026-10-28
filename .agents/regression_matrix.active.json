@@ -1979,6 +1979,63 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-all-shard-rules",
+      "watch_files": [
+        ".agents/regression_matrix.active.json",
+        "tests/super-board/test_matrix_shard_rules.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-SHARD-RULES-616-01",
+          "name": "#616 B: ba suite shard REG-DK-ALL-* chỉ thêm ở cuối ma trận, REG-DK-ALL-01 còn nguyên, matrix_additions tin ma trận, ba lệnh chia đủ tập thư mục",
+          "command": "bash tests/super-board/test_matrix_shard_rules.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-all-shard-gates",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-GATES-01",
+          "name": "#616 shard của REG-DK-ALL-01 theo thư mục (tests/gates): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s; REG-DK-ALL-01 giữ nguyên, bước sau (người duyệt) mới bỏ",
+          "command": "DEVKIT_IMPACTED_DIRS=gates bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-all-shard-worktree",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-WORKTREE-01",
+          "name": "#616 shard của REG-DK-ALL-01 theo thư mục (tests/worktree_git): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s; REG-DK-ALL-01 giữ nguyên, bước sau (người duyệt) mới bỏ",
+          "command": "DEVKIT_IMPACTED_DIRS=worktree_git bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-all-shard-rest",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-REST-01",
+          "name": "#616 shard của REG-DK-ALL-01 theo thư mục (phần còn lại: verification, installer, context_memory, hooks/tests): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s; REG-DK-ALL-01 giữ nguyên, bước sau (người duyệt) mới bỏ",
+          "command": "DEVKIT_IMPACTED_DIRS=!gates,!worktree_git bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

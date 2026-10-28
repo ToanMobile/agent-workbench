@@ -110,6 +110,27 @@ if [ "${1:-}" = "--all" ]; then
   [ -n "$selected" ] || { echo "run_impacted --all: no tests found under tests/*/test_*.sh" >&2; exit 2; }
   selected="$selected $(ls hooks/tests/test_*.sh 2>/dev/null)"
 fi
+# #616 B: DEVKIT_IMPACTED_DIRS="a,b,!c" narrows the selection to a shard by the directory under tests/ (a = only a, b; !c = not c): REG-DK-ALL-01
+# alone hit its 900 s ceiling at load 80-130, so the matrix also lists the shards (GATES, WORKTREE, REST). Unset or empty: the whole selection.
+# A test outside tests/<dir>/ (hooks/tests) has no directory: no include token matches it, no exclude token drops it. Names are compared, never globbed.
+# The variable rides in the matrix command as a leading `DEVKIT_IMPACTED_DIRS=<value> ` (bin/suite_cache.py SELECTION_CMD reads it, so the key store still applies).
+if [ -n "${DEVKIT_IMPACTED_DIRS:-}" ]; then
+  inc=""; exc=""
+  for tok in $(printf '%s' "$DEVKIT_IMPACTED_DIRS" | tr ',' ' '); do
+    case "$tok" in '!'*) exc="$exc ${tok#!}" ;; *) inc="$inc $tok" ;; esac
+  done
+  keep=""
+  for t in $selected; do
+    top=""; case "$t" in tests/*/*) top="${t#tests/}"; top="${top%%/*}" ;; esac
+    if [ -n "$inc" ]; then
+      hit=0; for x in $inc; do [ "$top" = "$x" ] && hit=1; done
+      [ "$hit" = 1 ] || continue
+    fi
+    for x in $exc; do [ "$top" = "$x" ] && continue 2; done
+    keep="$keep $t"
+  done
+  selected="$keep"
+fi
 # post-fix-gate lists the test scripts it already ran in this gate (O2): not run twice.
 if [ -n "${DEVKIT_GATE_DONE:-}" ]; then
   DKP="$(pwd -P)"; keep=""

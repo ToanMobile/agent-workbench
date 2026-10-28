@@ -71,7 +71,8 @@ DIFF_DEPENDENT = re.compile(r"(?:^|[\s/;&|(])run_impacted\.sh\b")
 # Ngoại lệ có điều kiện (#344): đúng `bash <đường dẫn>/run_impacted.sh [--all]` của CHÍNH DevKit (script có dòng SELECTION_MARK: `--list` chỉ in
 # tập test được chọn, không chạy gì) được cache theo khoá cả cây + tập `--list` in ra. Script trùng tên của dự án khác có thể chạy test ngay
 # khi bị hỏi `--list`: không dấu thì không hỏi, không cache.
-SELECTION_CMD = re.compile(r"^\s*bash\s+(?:\./)?((?:[\w.-]+/)*run_impacted\.sh)(?:\s+--all)?\s*$")
+# #616 B: một tiền tố `DEVKIT_IMPACTED_DIRS=<a,b,!c> ` (shard theo thư mục, xem run_impacted.sh) cũng được; selection_list hỏi `--list` kèm đúng biến đó.
+SELECTION_CMD = re.compile(r"^\s*(?:DEVKIT_IMPACTED_DIRS=(?P<dirs>[\w!,.-]+)\s+)?bash\s+(?:\./)?(?P<script>(?:[\w.-]+/)*run_impacted\.sh)(?:\s+--all)?\s*$")
 SELECTION_MARK = "devkit-selection-list:"
 SELECTION_TIMEOUT_S = 60
 NETWORK = re.compile(r"\b(?:curl|wget)\b[^\n;|&]*\bhttps?://|\bnpx\s+(?:-y|--yes)\b|\bnpm\s+(?:i|install|ci)\b|\bpip3?\s+install\b"
@@ -500,7 +501,7 @@ def selection_list(project_dir, command):
     m = SELECTION_CMD.match(command or "")
     if not m:
         return None
-    script = os.path.normpath(os.path.join(str(project_dir), m.group(1)))
+    script = os.path.normpath(os.path.join(str(project_dir), m.group("script")))
     root = os.path.realpath(str(project_dir))
     real = os.path.realpath(script)
     if not (real.startswith(root + os.sep) and os.path.isfile(real)):
@@ -510,6 +511,8 @@ def selection_list(project_dir, command):
             if SELECTION_MARK not in f.read(4096):
                 return None
         env = {k: v for k, v in os.environ.items() if k not in ("DEVKIT_GATE_DONE", "DEVKIT_IMPACT_TEST_CHANGED")}
+        if m.group("dirs"):
+            env["DEVKIT_IMPACTED_DIRS"] = m.group("dirs")
         arg = ["--all"] if "--all" in command.split() else []
         r = subprocess.run(["bash", real, "--list", *arg], cwd=str(project_dir), capture_output=True, text=True, env=env,
                            timeout=SELECTION_TIMEOUT_S)
