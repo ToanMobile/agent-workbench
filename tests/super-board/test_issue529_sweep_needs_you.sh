@@ -145,4 +145,14 @@ if declare -F cheap_tick_progress >/dev/null; then
   [ "$NO_PROGRESS_CYCLE_COUNT" -eq 0 ] && ok "7b: cheap ticks inside one SB_CHEAP_CYCLE_S window count once at most" || fail "7b: every cheap tick counted: $NO_PROGRESS_CYCLE_COUNT"
 fi
 
+# ── 8. sweep: thẻ người đã xử lý xong về Ready; thẻ `blocked-by: agent` thì không (R1, hồi quy #112)
+WP="$ROOT/.claude/bin/super-board-wave-plan.sh"
+DONE_MARK='<!-- super-board:needs-you:done --> ✅ done'
+printf '[{"number":9,"title":"a","state":"OPEN","body":"## Blocked by\\n- None.\\n","labels":{"nodes":[]},"comments":{"nodes":[{"body":"x\\nblocked-by:  -"},{"body":"%s"}]}},{"number":10,"title":"b","state":"OPEN","body":"## Blocked by\\n- None.\\n","labels":{"nodes":[]},"comments":{"nodes":[{"body":"x\\nblocked-by:  agent"}]}}]' "$DONE_MARK" > "$TMP/p8.json"
+"$DEPS" --repo o/r --from "$TMP/p8.json" > "$TMP/d8.json" 2>/dev/null
+echo '{"items":[{"id":"P9","status":"Blocked","labels":[],"content":{"type":"Issue","number":9,"title":"a","assignees":[]}},{"id":"P10","status":"Blocked","labels":[],"content":{"type":"Issue","number":10,"title":"b","assignees":[]}}]}' > "$TMP/i8.json"
+echo '{"version":1,"project":{"owner":"o","number":1},"verify_commands":["true"],"columns":["Backlog","Ready","Building","QA","Review","Blocked","Done"]}' > "$TMP/c8.json"
+R="$("$WP" --config "$TMP/c8.json" --items "$TMP/i8.json" --deps "$TMP/d8.json" 2>/dev/null | jq -c '[.sweep[].number]' 2>&1 | tail -1)"
+[ "$R" = "[9]" ] && ok "8: sweep takes the person-done card (#9) and skips the blocked-by: agent card (#10)" || fail "8: sweep = $R (want [9])"
+
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }

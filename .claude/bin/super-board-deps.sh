@@ -170,7 +170,7 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
             ( $cl | capture("blocked-by:[ \t]*(?<v>.*)$"; "i").v | gsub("[ \t]"; "") ) as $v
             | if $v == "agent" then
                 # #529: parked by the runner (worker crash / no-op): agent work, not for a person. Not human-gated, nothing to clear.
-                { parseable: true, blockers: [], human_gated: false, why: "" }
+                { parseable: true, blockers: [], human_gated: false, agent_parked: true, why: "" }
               elif $v == "-" or $v == "" then
                 { parseable: true, blockers: [], human_gated: ($i | person_done | not), why: "" }
               elif ($v | test("^[0-9]+(,[0-9]+)*$")) then
@@ -201,6 +201,7 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
           blockers: $p.blockers, openBlockers: $stillOpen,
           parseable: $p.parseable,
           humanGated: $p.human_gated,
+          agentParked: ($p.agent_parked // false),
           runnable: ($p.parseable and ($p.human_gated | not) and (($stillOpen | length) == 0)),
           why: $p.why,
           needsYou: ($i | needs_you),
