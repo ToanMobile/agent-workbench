@@ -3,6 +3,8 @@
 #   1 the branch has an open PR (gh pr list --head <branch> --state open): the Stop is not held, the note names the PR
 #   2 no open PR: held as before
 #   3 gh fails or hangs: held as before (fail closed)
+#   4 open PR but the worktree has an unpushed commit or an uncommitted file: held (the PR does not hold that work)
+#   5 several worktrees and a hanging gh: the per-call timeouts share one budget, the alarm (13 s) never passes the Stop silently
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 export DEVKIT_LANG=en GIT_CONFIG_GLOBAL=/dev/null WORKTREE_AUTO_MERGE_WAIT_S=9
@@ -48,5 +50,30 @@ stop c "$TMP/bin-err"; rc=$?
 repo d; fakegh hang 'sleep 30'
 stop d "$TMP/bin-hang"; rc=$?
 [ "$rc" != 0 ] && ok "gh hangs: held (fail closed)" || fail "gh timeout passed the Stop (rc $rc)"
+
+repo e; fakegh open2 'echo "[{\"number\":569}]"'
+echo y > "$TMP/e/.claude/worktrees/w/y.txt"   # uncommitted file
+stop e "$TMP/bin-open2"; rc=$?
+[ "$rc" != 0 ] && ok "open PR + dirty worktree: held" || fail "open PR + dirty worktree passed the Stop (rc $rc)"
+
+repo f; fakegh open3 'echo "[{\"number\":569}]"'
+echo z > "$TMP/f/.claude/worktrees/w/z.txt" && G "$TMP/f/.claude/worktrees/w" add z.txt && G "$TMP/f/.claude/worktrees/w" commit -qm z   # unpushed commit
+stop f "$TMP/bin-open3"; rc=$?
+[ "$rc" != 0 ] && ok "open PR + unpushed commit: held" || fail "open PR + unpushed commit passed the Stop (rc $rc)"
+
+repo g; fakegh hang2 'sleep 30'
+for n in 2 3 4 5; do (cd "$TMP/g" && python3 -I "$WTPY" add "$TMP/g/.claude/worktrees/w$n" feat-$n --session=s1 --no-init >/dev/null 2>&1
+  echo $n > "$TMP/g/.claude/worktrees/w$n/f$n.txt" && G "$TMP/g/.claude/worktrees/w$n" add f$n.txt && G "$TMP/g/.claude/worktrees/w$n" commit -qm f$n
+  G "$TMP/g" update-ref refs/remotes/origin/feat-$n "$(G "$TMP/g" rev-parse feat-$n)"); done
+python3 - "$TMP/g.jsonl" "$TMP/g/.claude/worktrees" <<'PY'
+import json,sys
+f,base=sys.argv[1:3]
+rows=[json.loads(l) for l in open(f)]
+for n in "2345":
+    rows.append({"type":"assistant","timestamp":rows[1]["timestamp"],"message":{"role":"assistant","content":[{"type":"tool_use","id":"t"+n,"name":"Bash","input":{"command":"agent-kit worktree add "+base+"/w"+n}}]}})
+open(f,"w").write("".join(json.dumps(r)+"\n" for r in rows))
+PY
+stop g "$TMP/bin-hang2"; rc=$?
+[ "$rc" != 0 ] && ok "5 worktrees + hanging gh: held (budget, not the alarm)" || fail "5 worktrees + hanging gh passed the Stop (rc $rc)"
 
 [ "$FAILS" = 0 ]
