@@ -147,7 +147,7 @@ two complete builds. In order, no shortcuts:
    protocol). Queue off inside the board (`SB_MERGE_QUEUE=0`, not enabled, or the workflow backend (default) / `--codex`,
    where nothing drains the queue — even when the config enables it): step 2 as below.
 2. Merge through the gate, pinned to the head you reviewed (`merge_policy.default: "human"`
-   keeps a person on every merge — the gate returns exit 7 below):
+   sends every merge to exit 7 below; a cross-review marker or a human `done` approves it):
    record `gh pr view <PR> --json headRefOid` when review passes, then
    `super-board-merge-gate.sh --config <cfg> --pr <PR> --expect-head <sha> --subject "<PR title>"
    --body-file <msg.md>` (it merges with `--match-head-commit`; the message is the PR title plus the
@@ -178,6 +178,14 @@ two complete builds. In order, no shortcuts:
      permission and the head, then moves it to Review. Re-run the gate; labels do not
      authorize it. For exits 7 and 8, copy `approval-request:` into the canonical
      issue block and link it from the PR (no duplicate request); see block-template.md.
+   - **Cross-review replaces `done` (#605).** When the gate `--full` is green and your
+     cross-review is complete (you are not the builder), post on the issue that holds the
+     request, last (after the Block comment and its request), as its own comment with nothing
+     else, besides `approved-head:<sha40>`:
+     `cross-review-approved: {"repo":"<owner/name>","pr":<P>,"head":"<sha40>","scope":"<request scope>","reviewer":"<you>","builder":"<builder>","task_id":"<id>","gate_receipt":"<receipt sha/id>"}`
+     (repo/pr/head/scope copied from the request). `super-board-approval.py` accepts it in place
+     of `done`, except when the plan has `schema` or `delete-protected` (a deleted
+     `merge_policy.protected_paths` file) or any `needs-you:` step: those still need a human `done`.
    - The rule in one line: the robot migrates the databases it was allowed to test its
      work; live databases, money, auth and destructive schema changes wait for a person.
 3. **Confirm the merge landed** — never trust the merge command's exit code:

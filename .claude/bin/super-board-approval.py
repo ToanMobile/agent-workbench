@@ -2,6 +2,7 @@
 """Read-only, head-bound human approval shared by the planner and merge gate.
 
 A trusted request pins the code and human steps BEFORE a human replies `done`.
+#605: outside the human-only categories, a reviewer lane's `cross-review-approved: {json}` marker replaces `done`.
 Labels only describe UI state. They never authorize a merge. No GitHub writes.
 """
 from __future__ import annotations
@@ -26,6 +27,11 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 SCOPE = re.compile(r"[0-9a-f]{64}\Z")
 BLOCK = re.compile(r"Reason tag:[^\n]*🙋|^approval-request:", re.M)
 DONE = re.compile(r"\s*done[.!]?\s*\Z", re.I)
+CROSS = "cross-review-approved: "
+CROSS_FIELDS = ("reviewer", "builder", "task_id", "gate_receipt")
+# #605: nhóm chỉ người duyệt được (luật chủ repo 28/10): schema phá huỷ (DROP/TRUNCATE/RENAME), xoá file được bảo vệ
+# (merge_policy.protected_paths). Mọi mục needs_you (migrate DB live, bước người tự chạy) cũng chỉ người làm được.
+HUMAN_ONLY = {"schema", "delete-protected"}
 # GitHub's closing keywords: KEYWORD[:] #N or KEYWORD[:] owner/repo#N.
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
 
@@ -39,6 +45,38 @@ def scope_for(plan):
     # Exclude UI-only `done`; a label change must not change what was approved.
     relevant = {key: plan.get(key, []) for key in ("human", "migrations", "run", "needs_you")}
     return hashlib.sha256(json.dumps(relevant, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def cross_review_allowed(plan):
+    """True khi plan không chạm nhóm chỉ người; plan thiếu hoặc đọc không được → False (chỉ `done` của người)."""
+    if not isinstance(plan, dict):
+        return False
+    human, needs = plan.get("human", []), plan.get("needs_you", [])
+    if not isinstance(human, list) or not isinstance(needs, list) or needs:
+        return False
+    return all(isinstance(h, dict) and isinstance(h.get("category"), str) and h["category"] not in HUMAN_ONLY
+               for h in human)
+
+
+def parse_cross_review(comment, request):
+    """Marker duyệt chéo hợp lệ cho đúng `request` → dict, không thì None. Đúng một dòng marker trong comment."""
+    lines = [line for line in (comment.get("body") or "").splitlines() if line.startswith(CROSS)]
+    if len(lines) != 1:
+        return None
+    try:
+        value = json.loads(lines[0][len(CROSS):])
+    except ValueError:
+        return None
+    if (not isinstance(value, dict) or not isinstance(value.get("repo"), str)
+            or value["repo"].lower() != request["repo"].lower() or type(value.get("pr")) is not int
+            or value["pr"] != request["pr"] or value.get("head") != request["head"]
+            or value.get("scope") != request["scope"]):
+        return None
+    if any(not isinstance(value.get(k), str) or not value[k].strip() for k in CROSS_FIELDS):
+        return None
+    if value["reviewer"].strip().lower() == value["builder"].strip().lower():
+        return None   # tự duyệt
+    return value
 
 
 def request_for(repo, pr, head, scope):
@@ -88,8 +126,11 @@ def trusted_blocks(comments, permission):
     return result
 
 
-def validate(comments, expected, permission):
-    """Pure verdict; permission(login) is a current repository permission lookup."""
+def validate(comments, expected, permission, cross_review_ok=False):
+    """Pure verdict; permission(login) is a current repository permission lookup.
+
+    cross_review_ok (#605) = cross_review_allowed(plan) của caller; mặc định False: chỉ `done` của người.
+    """
     def hold(why):
         return {"approved": False, "why": why}
 
@@ -117,18 +158,29 @@ def validate(comments, expected, permission):
         if not isinstance(request_comment.get("source"), int) or not request_comment.get("id"):
             return hold("request identity is missing")
         for comment in comments:
-            if (not comment.get("id") or not DONE.fullmatch(comment.get("body") or "")
-                    or comment.get("source") != request_comment.get("source")):
+            if not comment.get("id") or comment.get("source") != request_comment.get("source"):
+                continue
+            done = DONE.fullmatch(comment.get("body") or "")
+            review = None if done or not cross_review_ok else parse_cross_review(comment, request)
+            if not done and review is None:
                 continue
             created = timestamp(comment.get("created_at"))
             if created <= latest_time or timestamp(comment.get("updated_at")) != created:
                 continue
             author = comment.get("user") or {}
-            if (author.get("type") == "User" and author.get("login")
-                    and permission(author["login"]) in ("write", "maintain", "admin")):
+            # `done` chỉ của người (User); marker duyệt chéo do lane reviewer đăng, có thể là Bot có quyền ghi.
+            if (not author.get("login") or author.get("type") not in (("User",) if done else ("User", "Bot"))
+                    or permission(author["login"]) not in ("write", "maintain", "admin")):
+                continue
+            ids = {"request": request, "requestId": request_comment.get("id"), "approvalId": comment.get("id")}
+            if done:
                 return {"approved": True, "why": "trusted human confirmed the current request",
-                        "request": request, "requestId": request_comment.get("id"),
-                        "approvalId": comment.get("id"), "approver": author["login"]}
+                        "approver": author["login"], **ids}
+            return {"approved": True, "why": f"cross-review by {review['reviewer']}",
+                    "approver": f"cross-review:{review['reviewer']}", "builder": review["builder"],
+                    "taskId": review["task_id"], "gateReceipt": review["gate_receipt"], **ids}
+        if cross_review_ok:
+            return hold("waiting for a cross-review marker or a trusted human done on the current request")
         return hold("waiting for a trusted human to comment done on the current request")
     except (ValueError, TypeError, KeyError):
         return hold("approval evidence is incomplete or unreadable")
@@ -205,13 +257,8 @@ class GitHub:
         issues |= body_links(body, self.repo)
         return head, issues
 
-    def policy_cleared(self, number, config):
-        """True when the CURRENT merge policy no longer asks a human about PR `number`.
-
-        A card parked by an old `human-gate:` stays Blocked until someone types `done`; when the policy changed
-        since (cap removed, category dropped), nobody should have to. Same reads and same classifier as the merge
-        gate; only an empty `human` and `needs_you` counts. Anything unreadable stays "needs a human".
-        """
+    def plan_for(self, number, config):
+        """Plan merge-policy HIỆN TẠI của PR `number` (cùng lệnh đọc, cùng bộ phân loại với merge gate); lỗi → None."""
         meta = github_read.read(["pr", "view", str(number), "--repo", self.repo, "--json",
                                  "labels,files,additions,deletions,changedFiles,body"], "metadata")[1]
         diff = github_read.read(["pr", "diff", str(number), "--repo", self.repo], "diff", meta)[1]
@@ -223,11 +270,21 @@ class GitHub:
                                   "--config", config, "--meta", str(paths["meta"]), "--diff", str(paths["diff"])],
                                  capture_output=True, text=True, timeout=60)
         if run.returncode != 0:
-            return False
+            return None
         plan = json.loads(run.stdout)
-        return not plan.get("human") and not plan.get("needs_you")
+        return plan if isinstance(plan, dict) else None
 
-    def check(self, number, head=None, scope=None, issue=None, approved_head=None):
+    def policy_cleared(self, number, config):
+        """True when the CURRENT merge policy no longer asks a human about PR `number`.
+
+        A card parked by an old `human-gate:` stays Blocked until someone types `done`; when the policy changed
+        since (cap removed, category dropped), nobody should have to. Same reads and same classifier as the merge
+        gate; only an empty `human` and `needs_you` counts. Anything unreadable stays "needs a human".
+        """
+        plan = self.plan_for(number, config)
+        return plan is not None and not plan.get("human") and not plan.get("needs_you")
+
+    def check(self, number, head=None, scope=None, issue=None, approved_head=None, cross_review_ok=False):
         current_head, issues = self.pr(number)
         if issue is not None and issue not in issues:
             return {"approved": False, "why": "request issue is not linked to this PR"}
@@ -241,7 +298,7 @@ class GitHub:
         expected = {"repo": self.repo, "pr": number, "head": approved_head or current_head}
         if scope is not None:
             expected["scope"] = scope
-        return validate(comments, expected, self.permission)
+        return validate(comments, expected, self.permission, cross_review_ok=cross_review_ok)
 
 
 def main():
@@ -281,10 +338,18 @@ def main():
                 entry["needsYouDone"] = result["approved"]
                 entry["approvalRefresh"] = result.get("headChanged", False)
                 entry["approvalWhy"] = result["why"]
-                if (args.config and not result["approved"] and not entry["approvalRefresh"]
-                        and github.policy_cleared(request["pr"], args.config)):
+                plan = (github.plan_for(request["pr"], args.config)
+                        if args.config and not result["approved"] and not entry["approvalRefresh"] else None)
+                if plan is not None and not plan.get("human") and not plan.get("needs_you"):
                     entry["needsYouDone"] = True
                     entry["approvalWhy"] = "policy cleared: the current merge policy no longer asks for a human"
+                elif cross_review_allowed(plan):
+                    # #605: marker duyệt chéo chỉ tính khi request ghim đúng scope của plan hiện tại; không --config = chỉ `done`.
+                    crossed = github.check(request["pr"], head=request["head"], scope=scope_for(plan),
+                                           issue=entry["number"], cross_review_ok=True)
+                    if crossed["approved"]:
+                        entry["needsYouDone"] = True
+                        entry["approvalWhy"] = crossed["why"]
             except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
                 entry["approvalWhy"] = "approval evidence could not be verified"
         print(json.dumps(graph))
@@ -292,7 +357,9 @@ def main():
     if not args.pr or not args.head or not args.plan:
         ap.error("check requires --pr, --head and --plan")
     try:
-        result = GitHub(args.repo).check(args.pr, args.head, scope_for(json.loads(args.plan)), approved_head=args.approved_head)
+        plan = json.loads(args.plan)
+        result = GitHub(args.repo).check(args.pr, args.head, scope_for(plan), approved_head=args.approved_head,
+                                         cross_review_ok=cross_review_allowed(plan))
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         result = {"approved": False, "why": "approval evidence could not be verified"}
     print(json.dumps(result))
