@@ -23,6 +23,7 @@ Use this skill for:
 - Release-readiness checks after Super Build, Super QA, or a human's `/ui-refine-loop` pass.
 - The Review lane of a `super-board run`.
 - A final pass that needs risks, blockers, and human gates summarized.
+- Check the PR's Risk block names `Door:` (one-way/two-way) and `Blast radius:`; adjust them if the diff disagrees (writing-standard.md § 2).
 
 Do **not** use this as the primary implementation workflow. Route fixes to:
 
