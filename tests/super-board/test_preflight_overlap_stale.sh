@@ -113,4 +113,23 @@ SB_OPEN="$TMP/open.json" bash "$PREFLIGHT" --repo o/r --issues 899,900 --infligh
 v=$(jq -r '.["900"].verdict' "$TMP/out.json" 2>/dev/null)
 [ "$v" = proceed ] && ok "I3: peers sharing only the matrix are not sequenced" || fail "I3: verdict=$v blockedBy=$(blocked), want proceed"
 
+# J (#581, 28/10: 10 cards Blocked ⏳ behind draft PRs idle since 22/10): a DRAFT PR not updated for more than the stale
+# threshold (default 3 days, --stale-draft-days) is no overlap. A non-draft PR always blocks, however old; a draft updated
+# within the threshold still blocks.
+jq -n --arg b "$body3" '{number:900,title:"runner worker exit diagnostics",body:$b}' > "$TMP/issue-900.json"
+ago() { python3 -c 'import sys,datetime as d; print((d.datetime.now(d.timezone.utc)-d.timedelta(days=float(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
+# prd <number> <draft true|false> <days-ago> -> PR đóng #901 (đang Building) chạm .claude/bin/super-board-run.sh
+prd() { jq -n --argjson n "$1" --argjson d "$2" --arg u "$(ago "$3")" \
+  '{number:$n,title:"unrelated change \($n)",body:"Closes #901",url:"u",headRefName:"issue-901-x",isDraft:$d,updatedAt:$u,files:[{path:".claude/bin/super-board-run.sh"}]}'; }
+INF='[{"number":900,"title":"runner worker exit diagnostics","status":"Ready"},{"number":901,"title":"other","status":"Building"}]'
+run "[$(prd 80 true 5)]" "$INF"
+[ "$(blocked)" = "[]" ] && ok "J: a draft PR idle for 5 days does not block" || fail "J: blockedBy=$(blocked), want []"
+run "[$(prd 81 false 5)]" "$INF"
+[ "$(blocked)" = "[901]" ] && ok "J2: a non-draft PR still blocks when idle for 5 days" || fail "J2: blockedBy=$(blocked), want [901]"
+run "[$(prd 82 true 1)]" "$INF"
+[ "$(blocked)" = "[901]" ] && ok "J3: a draft PR updated 1 day ago still blocks" || fail "J3: blockedBy=$(blocked), want [901]"
+printf '%s' "[$(prd 83 true 5)]" > "$TMP/open.json"; printf '%s' "$INF" > "$TMP/inflight.json"
+SB_OPEN="$TMP/open.json" bash "$PREFLIGHT" --repo o/r --issues 900 --inflight "$TMP/inflight.json" --stale-draft-days 10 > "$TMP/out.json" 2> "$TMP/err"
+[ "$(blocked)" = "[901]" ] && ok "J4: --stale-draft-days 10 keeps a 5-day draft blocking" || fail "J4: blockedBy=$(blocked), want [901]"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_preflight_overlap_stale: all passed" || { echo "❌ $FAILS failed"; exit 1; }
