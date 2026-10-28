@@ -781,6 +781,8 @@ def _env_limit(name, default):
 DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 10.0)
 DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 3.0)
 NO_ROOM = 4   # add's exit code when it refuses for want of disk: what a hook that creates worktrees tells apart from a usage error
+ADD_LOCK = "devkit-worktree-add.lock"
+ADD_LOCK_WAIT_S = 600.0
 
 
 def free_gib(path):
@@ -1065,29 +1067,39 @@ def cmd_add(cwd, args):
             die(tr(f"không hỏi được origin có nhánh {branch} không (ls-remote exit {probe.returncode}): không tạo nhánh mới khi chưa biết",
                    f"cannot ask origin whether it has the branch {branch} (ls-remote exit {probe.returncode}): no new branch while that is unknown"), 1)
     _make_room(main, wt)   # #607: the disk floor is the only limit; a count of worktrees refused manual adds over scratch and subagent trees
-    # ponytail: no add lock any more, so two concurrent `add -b` can meet on .git/config.lock (a transient git error, no data lost; it was
-    # already unlocked with WORKTREE_MAX=0); put a flock around the `git worktree add` below if that error shows up in a run log.
-    if branch is None:
-        git(main, "worktree", "add", "--detach", wt, *([base] if base else []), bounded=False)
-    elif git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
-        git(main, "worktree", "add", wt, branch, bounded=False)
-    else:
-        start, track = base, []
-        if lane and origin_has is not False \
-                and git(main, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}^{{commit}}", check=False).returncode == 0:
-            # the PR's branch: a new branch off --base would push an empty one over it. Not a remote-tracking ref origin no longer has
-            # (a merged and deleted PR branch picked up again: OCR 19/10) - that one would start the lane on an old merged head
-            start = f"origin/{branch}"
-        elif lane:
-            track = ["--no-track"]   # a new issue branch off origin/<base> must not get origin/<base> as upstream (a bare push/pull hits main)
-        git(main, "worktree", "add", *track, "-b", branch, wt, *([start] if start else []), bounded=False)
-    start = git(wt, "rev-parse", "HEAD").stdout.strip()
-    if session or lane:   # W1 v6 item 3: the owner is known from the moment git registers the worktree, not ~10 s later when the set-up
-        # is done - until then another session's Stop could take a stateless new worktree for an orphan and merge or remove it under
-        # its owner; a lane's detached checkout is the board's (board_worktree) from that moment too
-        _write_state(wt, {"branch": branch, "base": start, "main": main, "baseline": {}, "fp": FP_VERSION, "provisional": True,
-                          "at": time.time(), **({"session": session} if session else {}),
-                          **({"board": True, "lane": lane} if lane else {})})
+    common = os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
+    try:   # #607 QA: add + state one at a time per repo, with or without a count; concurrent adds of one path registered it twice
+        lock = _lock_file(os.path.join(common, ADD_LOCK), wait=ADD_LOCK_WAIT_S,
+                          waiting=tr("chờ một lệnh worktree add khác của repo này…", "waiting for another worktree add in this repo…"))
+    except OSError as e:
+        die(tr(f"không mở được khoá {ADD_LOCK} ({e})", f"cannot open the lock {ADD_LOCK} ({e})"), 1)
+    if lock is None:
+        die(tr(f"một lệnh worktree add khác của repo này đã chạy quá {ADD_LOCK_WAIT_S / 60:g} phút; chạy lại sau",
+               f"another worktree add in this repo has run for over {ADD_LOCK_WAIT_S / 60:g} minutes; run it again later"), 1)
+    try:
+        if branch is None:
+            git(main, "worktree", "add", "--detach", wt, *([base] if base else []), bounded=False)
+        elif git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
+            git(main, "worktree", "add", wt, branch, bounded=False)
+        else:
+            start, track = base, []
+            if lane and origin_has is not False \
+                    and git(main, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}^{{commit}}", check=False).returncode == 0:
+                # the PR's branch: a new branch off --base would push an empty one over it. Not a remote-tracking ref origin no longer has
+                # (a merged and deleted PR branch picked up again: OCR 19/10) - that one would start the lane on an old merged head
+                start = f"origin/{branch}"
+            elif lane:
+                track = ["--no-track"]   # a new issue branch off origin/<base> must not get origin/<base> as upstream (a bare push/pull hits main)
+            git(main, "worktree", "add", *track, "-b", branch, wt, *([start] if start else []), bounded=False)
+        start = git(wt, "rev-parse", "HEAD").stdout.strip()
+        if session or lane:   # W1 v6 item 3: the owner is known from the moment git registers the worktree, not ~10 s later when the set-up
+            # is done - until then another session's Stop could take a stateless new worktree for an orphan and merge or remove it under
+            # its owner; a lane's detached checkout is the board's (board_worktree) from that moment too
+            _write_state(wt, {"branch": branch, "base": start, "main": main, "baseline": {}, "fp": FP_VERSION, "provisional": True,
+                              "at": time.time(), **({"session": session} if session else {}),
+                              **({"board": True, "lane": lane} if lane else {})})
+    finally:
+        lock.close()
 
     copied = copy_local_config(main, wt)
     inputs = copy_build_inputs(main, wt)
