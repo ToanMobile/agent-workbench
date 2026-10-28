@@ -734,3 +734,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên
 - **Nguyên nhân:** split_user_approved gắn lời duyệt với mtime: lane khác sửa rồi trả lại đúng nội dung sau câu trả lời, sha256 không đổi nhưng mtime mới hơn nên gate exit 2
 - **Quy tắc phòng ngừa & Cách fix:** Khóa file đã được duyệt (dặn lane KHÔNG đụng, kể cả comment) ngay khi hỏi duyệt; kiểm sha256 trước gate; nếu đã lỡ thì ghi đúng sha người dùng đã chọn vào approved_tests.json dạng {path: sha256} và nói rõ trong báo cáo
+
+---
+
+### [INSTINCT-087] Bỏ trần đếm cũng bỏ luôn khoá tuần tự hoá
+- **Ngày phát hiện:** 2026-10-29
+- **Hiện tượng lỗi:** Bỏ trần đếm cũng bỏ luôn khoá tuần tự hoá
+- **Nguyên nhân:** khoá add chỉ mở khi có WORKTREE_MAX; bỏ số đếm làm mất luôn khoá, 4 add song song cùng path ra 2 đăng ký
+- **Quy tắc phòng ngừa & Cách fix:** khi xoá một giới hạn, tách và giữ khoá/tuần tự hoá nó từng bao; thêm test race song song cùng tài nguyên
