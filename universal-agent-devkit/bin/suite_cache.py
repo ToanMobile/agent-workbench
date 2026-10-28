@@ -639,6 +639,40 @@ class SuiteCache:
             return t.hexdigest(), t.hexdigest()
         return h.hexdigest(), t.hexdigest()
 
+    # ── #476: map suite → file nguồn, sinh từ lệnh + bao đóng + sổ learned (không đọc watch_files) ──
+    def trace_map(self, tests):
+        """{id suite: danh sách file input đã sắp xếp, hoặc None khi không biết đủ (bao đóng bị cắt / không đọc được)}.
+        Chỉ để so sánh shadow: không bao giờ quyết suite nào chạy."""
+        out = {}
+        for test in tests:
+            sid, cmd = test.get("id"), test.get("command") or ""
+            if not sid or not self.ok:
+                continue
+            seeds, dirs = command_files(self.project_dir, self.idx, cmd)
+            for pat in self.learned.get(sid) or []:
+                seeds |= {pat} if pat in self.cmap else self.idx.glob(pat)
+            ext_seeds = [h for h in (_external(self.project_dir, w, "") for w in cmd.split()) if h]
+            skips0 = self.idx.skips
+            seen, _ext, _tools, cut = closure(self.project_dir, self.idx, seeds, ext_seeds)
+            files = set(seen)
+            for d in dirs:
+                files |= self.idx.under(d)
+            out[sid] = None if (cut or self.idx.skips > skips0 or DIFF_DEPENDENT.search(cmd)) else sorted(files)
+        return out
+
+    def shadow_select(self, tests, changed):
+        """(ids map chọn chạy, ids map bỏ) trong số `tests` (đã chọn theo cách cũ) cho tập file đổi `changed`. Map không biết đủ ⇒ chạy."""
+        m = self.trace_map(tests)
+        changed = set(changed)
+        run, skip = [], []
+        for test in tests:
+            sid = test.get("id")
+            if sid not in m or sid in run or sid in skip:
+                continue
+            inputs = m[sid]
+            (run if inputs is None or changed & set(inputs) else skip).append(sid)
+        return run, skip
+
     def tree_key_at(self, sid, cmd, digest):
         """Khoá cả cây của suite (sid, cmd) trên một nội dung khác — digest = tree_digest(content_map_at(project_dir, ref)) — cùng phần đầu
         và đích ngoài cây đã tính ở keys(); None khi keys() chưa chạy cho suite này hay không có digest."""
