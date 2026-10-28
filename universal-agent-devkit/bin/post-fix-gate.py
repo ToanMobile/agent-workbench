@@ -694,7 +694,8 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     or explicit auto_approve flag. Per file, all three hold:
     the question (header, options) names the file's path or basename, the chosen label
     approves (APPROVE_LABEL), and the file has not changed since that answer. Searched: the
-    transcript's folder, else DEVKIT_TRANSCRIPTS_DIR, else ~/.claude/projects/<project>/ —
+    transcript's folder, else DEVKIT_TRANSCRIPTS_DIR, else ~/.claude/projects/<project>/ (in a linked worktree
+    also this session's own transcript in the main checkout's folder, #582) —
     only transcripts written after the oldest of those files changed."""
     if not paths:
         return paths, []
@@ -740,6 +741,21 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     if os.environ.get("DEVKIT_TRANSCRIPTS_DIR"):
         folders.append(Path(os.environ["DEVKIT_TRANSCRIPTS_DIR"]))
     folders.append(Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(root)))
+    # #582: worktree có slug riêng, nhưng phiên đã hỏi nằm ở checkout chính. Chỉ nhận ĐÚNG transcript của phiên này
+    # (CLAUDE_CODE_SESSION_ID) ở đó, không quét cả thư mục: lời "Duyệt" của phiên khác không được duyệt test của worktree này.
+    session_files = []
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if re.fullmatch(r"[A-Za-z0-9-]{8,64}", sid):
+        try:
+            import regression_checklist as rc  # noqa: PLC0415 - sibling module in bin/
+            if rc.in_linked_worktree(root):
+                common = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                        capture_output=True, text=True, timeout=10, env=rc._clean_git_env()).stdout.strip()
+                if common and Path(common).name == ".git":
+                    main_root = os.path.realpath(str(Path(common).parent))
+                    session_files.append(Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", main_root) / (sid + ".jsonl"))
+        except (OSError, subprocess.SubprocessError, ImportError):
+            pass
     agy_brain = Path.home() / ".gemini" / "antigravity" / "brain"
     if agy_brain.is_dir():
         try:
@@ -752,6 +768,12 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     for fld in folders:
         try:
             candidates.extend(p for p in fld.glob("*.jsonl") if p.stat().st_mtime >= oldest)
+        except OSError:
+            pass
+    for sf in session_files:
+        try:
+            if sf.is_file() and sf.stat().st_mtime >= oldest and sf not in candidates:
+                candidates.append(sf)
         except OSError:
             pass
 
