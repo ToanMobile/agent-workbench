@@ -962,6 +962,8 @@ for cmd in "${VERIFY[@]}"; do
   # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
   say "verify: ${cmd}"
   VRC=0
+  _cd="$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P || true)"
+  [ -z "$_cd" ] || rm -f "$_cd/super-board/last-merge-verify-pr-${PR}.full.log" 2>/dev/null || true   # #574: .full.log cũ của lượt đỏ trước không đứng cạnh lượt này
   run_verify_cmd "$run_cmd" || VRC=$?
   if [ "$VRC" -ne 0 ] && is_verify_timeout "$VRC" "$VERIFY_LOG"; then
     # Suite bị giết giữa chừng có thể để lại file đã track bị sửa, `git add` hay cả commit trong scratch: trả cây và index về đúng
@@ -1002,6 +1004,19 @@ for cmd in "${VERIFY[@]}"; do
     VLOG_DIR="$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P || true)"
     VLOG="${VLOG_DIR:+$VLOG_DIR/super-board/last-merge-verify-pr-${PR}.log}"
     { [ -n "$VLOG" ] && mkdir -p "$VLOG_DIR/super-board" && cp "$VERIFY_LOG" "$VLOG"; } 2>/dev/null || VLOG="(not saved)"
+    # #574: .log chỉ giữ tóm tắt của gate. Log đầy đủ từng suite (.agents/evidence/<suite>/*.log của scratch) và WT_LOG nằm trong scratch,
+    # cleanup() xoá chúng: chép nguyên, không cắt, sang .full.log trước khi thoát. Lỗi ghi không đổi mã thoát 11.
+    if [ -n "$VLOG" ] && [ "$VLOG" != "(not saved)" ]; then
+      FULL_LOG="${VLOG%.log}.full.log"
+      {
+        cat "$VERIFY_LOG"
+        for ev in "$SCRATCH"/.agents/evidence/*/*.log; do
+          [ -f "$ev" ] || continue
+          printf '\n===== %s =====\n' "${ev#"$SCRATCH"/}"
+          cat "$ev"
+        done
+      } >"$FULL_LOG" 2>/dev/null || say "could not write the full verify log ${FULL_LOG}"
+    fi
     tail -60 "$VERIFY_LOG" >&2
     # Merge vào scratch đã sạch (không conflict): verify đỏ luôn thoát 11 kèm mã thoát và dòng KẾT LUẬN cuối, không đẩy về Build để rebase vô ích.
     VERDICT=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VERIFY_LOG" | grep -a -E "KẾT LUẬN|VERDICT" | tail -1 \
