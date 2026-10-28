@@ -1685,9 +1685,18 @@ note_early_death() {
   # session limit also exits 0 (19/10, #94) but prints text or `is_error: true`, so those, and non-zero or missing records, still count.
   case "$(worker_exit_line "$wlog")" in
     *"exit=0 "*) python3 -c 'import json, sys
-last = [l for l in open(sys.argv[1], errors="replace") if l.strip() and not l.startswith("worker_exit: ")][-1]
-r = json.loads(last)
-sys.exit(0 if r.get("type") == "result" and r.get("subtype") == "success" and not r.get("is_error") else 1)' "$wlog" 2>/dev/null && return 0 ;;
+rs = None
+for l in open(sys.argv[1], errors="replace"):
+    if l.startswith("=== dispatch "):
+        rs = None
+    elif l.startswith("{"):
+        try:
+            r = json.loads(l)
+        except ValueError:
+            continue
+        if r.get("type") == "result":
+            rs = r
+sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") else 1)' "$wlog" 2>/dev/null && return 0 ;;
   esac
   # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
   # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
