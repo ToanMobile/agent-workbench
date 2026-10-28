@@ -116,7 +116,7 @@
     "chat_id": null,
     "bot_identity": "ToanMobile"
   },
-  "max_workers": 5,
+  "max_workers": 3,
   "backlog_pull": false,
   "merge_queue": {
     "enabled": true,
