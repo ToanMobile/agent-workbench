@@ -81,6 +81,18 @@ gate_nodiff() { local d="$1"; shift; OUT="$( cd "$d" && CLAUDE_PROJECT_DIR="$d" 
 wt() { git -C "$R" worktree add -q --detach "$TMP/$1" HEAD || { echo "✖ setup: worktree $1"; exit 1; }
        [ -L "$TMP/$1/ext" ] || ln -s "$TMP/extdir" "$TMP/$1/ext"   # link đã commit thì worktree có sẵn (ln vào link thư mục tạo extdir/extdir)
        mkdir -p "$TMP/$1/.claude/audit-gate" && : > "$TMP/$1/.claude/audit-gate/test_run.lock"; }
+# #605: test sửa chỉ được duyệt chéo — ghi mục {path, sha256, reviewer, author, task_id, reason} do "agent khác" duyệt
+cross_approve() {   # cross_approve <repo> <path>...
+  python3 - "$@" <<'PY'
+import hashlib, json, os, sys
+root, paths = sys.argv[1], sys.argv[2:]
+d = os.path.join(root, ".claude", "audit-gate"); os.makedirs(d, exist_ok=True)
+ap = [{"path": p, "sha256": hashlib.sha256(open(os.path.join(root, p), "rb").read()).hexdigest(), "reviewer": "antigravity",
+       "author": "claude", "task_id": "T-fixture", "reason": "fixture: diff test đã được agent khác đọc"} for p in paths]
+with open(os.path.join(d, "approved_tests.json"), "w") as fh:
+    json.dump({"approvals": ap}, fh)
+PY
+}
 # expect <tên> <suite: số lần chạy THÊM mong đợi>... dùng mảng trước/sau
 snap() { B1=$(n 1); B2=$(n 2); B3=$(n 3); BN=$(n N); }
 expect() {   # expect <tên> <thêm REG-1> <thêm REG-2> <thêm REG-3> <thêm REG-N> <exit mong đợi>
@@ -122,7 +134,8 @@ snap; gate_nodiff "$TMP/w1c"; expect "1c. phần cached-full thêm vào dùng l�
 # 2. File mà script của REG-1 source nhưng watch_files không nêu (tests/helper1.sh) đổi: luật cũ không chọn suite nào; cached-full
 #    thêm REG-1 (khoá chính xác của nó có helper qua bao đóng tĩnh) ⇒ REG-1 chạy (điểm mù watch_files); REG-2, REG-3 dùng lại.
 wt w2; echo 'echo helper v2' > "$TMP/w2/tests/helper1.sh"
-snap; gate_nodiff "$TMP/w2" --auto-approve-tests --allow-no-tests; expect "2. file được source (ngoài watch_files) đổi ⇒ suite đó chạy" 1 0 0 0 0
+cross_approve "$TMP/w2" tests/helper1.sh   # #605: helper1.sh là test có sẵn bị sửa: duyệt chéo thay --auto-approve-tests
+snap; gate_nodiff "$TMP/w2" --allow-no-tests; expect "2. file được source (ngoài watch_files) đổi ⇒ suite đó chạy" 1 0 0 0 0
 
 # 3. Đích symlink ngoài cây đổi ⇒ khoá REG-1 đổi ⇒ chạy lại.
 wt w3; echo 'X=2' > "$TMP/extdir/conf.sh"
