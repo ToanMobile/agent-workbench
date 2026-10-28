@@ -70,4 +70,10 @@ printf '# x\n\n### [INSTINCT-009] T\n- **glob:** `[`\n' > "$D/.agents/instincts.
 OUT=$(run s6 Read "$D/a.py" 2>"$D/err"); RC=$?
 [ $RC -eq 0 ] || fail "bad glob blocked (rc=$RC)"
 
+echo "--- a real crash (undecodable instincts.md) is logged to the .err file and exits 0 ---"
+printf '\377\376 not utf8\n' > "$D/.agents/instincts.md"
+OUT=$(run s7 Read "$D/a.py" 2>/dev/null); RC=$?
+[ $RC -eq 0 ] && [ -z "$OUT" ] || fail "crash blocked or spoke (rc=$RC): $OUT"
+grep -q "UnicodeDecodeError" "$D/.claude/audit-gate/instincts_file_context.err" 2>/dev/null || fail "crash not logged to .err"
+
 [ $ERRORS -eq 0 ] && echo "PASS" || { echo "$ERRORS failure(s)"; exit 1; }
