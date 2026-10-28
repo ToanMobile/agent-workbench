@@ -31,6 +31,7 @@ import time
 RECORD_DIR = os.path.join(".claude", "audit-gate", "session_worktree")
 _SID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")   # first char alphanumeric: a dotted temp name (write_record) is never a session id
 _PID_LINE = re.compile(r"pid ([0-9]{1,10})")
+_START_LINE = re.compile(r"start (\S{1,128})")   # line 3 of a record: the start time of the pid on line 2 (pid_start_token form)
 _TRUE = {"true", "yes", "on", "1"}
 
 
@@ -186,10 +187,21 @@ def raw_pid(main, sid):
     return int(m.group(1)) if m and int(m.group(1)) > 1 else None
 
 
-def raw_visit(main, sid):
-    """True when the session's record says it only visited its worktree (line 3 `visit`), not created it (#428)."""
+def raw_pid_start(main, sid):
+    """The start time of the record's pid (a `start <token>` line after the path, #413): tells a pid the OS has handed to another process from the
+    session it was written under. None when the record has none (older kit, start time unknown)."""
     p = _record_path(main, sid)
-    return "visit" in [l.strip() for l in (_read_small(p) or "").splitlines()[2:3]] if p else False
+    for l in (_read_small(p) or "").splitlines()[2:] if p else []:
+        m = _START_LINE.fullmatch(l.strip())
+        if m:
+            return m.group(1)
+    return None
+
+
+def raw_visit(main, sid):
+    """True when the session's record says it only visited its worktree (a `visit` line after the path), not created it (#428)."""
+    p = _record_path(main, sid)
+    return "visit" in [l.strip() for l in (_read_small(p) or "").splitlines()[1:]] if p else False
 
 
 def record_age(main, sid, now=None):
@@ -237,9 +249,10 @@ def read_record(main, sid):
     return _same_repo_worktree(main, wt) if wt else None
 
 
-def write_record(main, sid, wt, pid=None, visit=False):
+def write_record(main, sid, wt, pid=None, start=None, visit=False):
     """Record that session `sid` works in worktree `wt`. pid: the claude process of that session (holder_pid), line 2 - what the merge gate
-    judges the owner dead by. visit: the session only stepped into an existing worktree (EnterWorktree `path`), line 3 `visit` (#428). Never the pid of the process writing here when that is a hook's child (the merge gate's python): it dies at once."""
+    judges the owner dead by. start: that pid's start time (pid_start_token), a `start` line, only beside a valid pid (#413: a pid the OS reused is
+    told apart from the session). visit: the session only stepped into an existing worktree (EnterWorktree `path`), a `visit` line (#428). Never the pid of the process writing here when that is a hook's child (the merge gate's python): it dies at once."""
     p = _record_path(main, sid)
     if not p or not _same_repo_worktree(main, wt):
         return False
@@ -248,8 +261,11 @@ def write_record(main, sid, wt, pid=None, visit=False):
     if os.path.lexists(tmp):
         os.unlink(tmp)   # (a leftover of a killed hook with this pid, or a symlink planted there: never written through)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    pid_ok = isinstance(pid, int) and not isinstance(pid, bool) and pid > 1
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(os.path.realpath(wt) + "\n" + (f"pid {int(pid)}\n" if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 else "") + ("visit\n" if visit else ""))
+        fh.write(os.path.realpath(wt) + "\n" + (f"pid {int(pid)}\n" if pid_ok else "")
+                 + (f"start {start}\n" if pid_ok and isinstance(start, str) and _START_LINE.fullmatch(f"start {start}") else "")
+                 + ("visit\n" if visit else ""))
     os.replace(tmp, p)
     return True
 
@@ -320,11 +336,11 @@ def reown(main, sid, here, is_alive, me=None):
         rp = os.path.realpath(wt)
         if osid == sid or not (here == rp or here.startswith(rp + os.sep)):
             continue
-        rec_pid = raw_pid(main, osid)
+        rec_pid, rec_start = raw_pid(main, osid), raw_pid_start(main, osid)
         # Trade-off (OCR2 5): a /resume gets a new pid, so only "the owner is gone" tells it from a bystander; a session with no record that merely
         # stands (cd) in a dead peer's worktree takes it over too. It then merges that worktree with --keep and keeps it - the work is never lost.
         if not is_alive(osid) or (me and rec_pid == me):
-            if write_record(main, sid, rp, pid=rec_pid):
+            if write_record(main, sid, rp, pid=rec_pid, start=rec_start, visit=raw_visit(main, osid)):
                 clear_record(main, osid)
                 return rp
     return None
@@ -368,7 +384,7 @@ def on_tool_use(payload, env=None):
         inp = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
         if prev and t and os.path.realpath(prev) != os.path.realpath(t[0]):
             _kept_lock(main, prev, sid, pid, unlock=True)
-        if t and t[1] and write_record(main, sid, t[0], pid=pid, visit=bool(inp.get("path"))):
+        if t and t[1] and write_record(main, sid, t[0], pid=pid, start=pid_start_token(pid) if pid else None, visit=bool(inp.get("path"))):
             if trunk_mode(main, env):
                 # 25/10: cleanup-wt (mọi bản đã cài chỉ chừa worktree bị khoá) gỡ worktree đã gộp ngay lúc phiên đang chạy gate trong đó.
                 # Khoá devkit-kept suốt lúc phiên ở trong: ExitWorktree remove đi qua WorktreeRemove -> `worktree remove` của kit, lệnh
@@ -501,14 +517,14 @@ def _git_in(main):
     return g
 
 
-def _kept_lock(main, wt, sid, pid, unlock=False):
+def _kept_lock(main, wt, sid, pid, unlock=False, locks=None):
     """K11 (18/10): ExitWorktree "keep" = phiên muốn giữ worktree. Khoá nó bằng `git worktree lock --reason "devkit-kept session=<sid> pid=<pid
     claude>"`: gộp vẫn được, nhưng automerge của Stop (scripts/git/worktree.py kept_lock) và cleanup-wt (bỏ qua worktree bị khoá) không gỡ nó
     khi pid đó còn sống; pid chết thì `worktree remove` mở khoá. unlock=True: mở khoá devkit-kept của chính phiên `sid` (EnterWorktree lại);
     không có pid hợp lệ khi khoá thì không làm gì (không bao giờ mở khoá ở nhánh này).
     Khoá do người khác đặt (không phải devkit-kept) không bao giờ bị đụng. Trả True khi đã khoá; lỗi git: False, không chặn tool."""
     g = _git_in(main)
-    locks = _worktree_locks(g)
+    locks = _worktree_locks(g) if locks is None else locks   # locks: the caller listed them already (one `git worktree list` per hook run)
     if locks is None:
         return False
     reason = locks.get(os.path.realpath(wt))
@@ -536,27 +552,68 @@ def _kept_lock(main, wt, sid, pid, unlock=False):
 _BOARD_WT = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
 
 
-def lock_started_worktree(main, here, sid, pid, env=None, source=None):
+def _pid_holds_kept_lock(locks, pid, wt):
+    """`pid` still holds a live devkit-kept lock (start time matching) on `wt`; `locks`: {path: reason}."""
+    path = os.path.realpath(wt)
+    m = KEPT_RE.fullmatch(locks.get(path) or "")
+    return bool(m and int(m.group(2)) == pid and lock_pid_alive(pid, kept_start(path, pid)))
+
+
+def _lock_or_report(main, wt, sid, pid, problems, locks):
+    """Lock `wt` for the session; `locks`: {path: reason} listed once by the caller, None when git could not list them (then nothing more is
+    run: each git call may take its 5 s and the SessionStart hook is killed at 10 s, before it could print). No lock (no pid, git refused or
+    timed out; #413): a record of the session's own worktree is written, so a later compact / clear can lock it again (it has no other trace
+    of where the session started - unlike a lock taken, it is the one case a record is written here, and the merge gate then adopts that
+    worktree when the session is gone), and the failure goes to `problems` - SessionStart prints it, the model hears it. A worktree under
+    someone else's lock is held already: nothing to say. Returns `wt` locked."""
+    reason = (locks or {}).get(os.path.realpath(wt))
+    if locks is not None and _kept_lock(main, wt, sid, pid, locks=locks):
+        return wt
+    if reason is not None and not reason.startswith(KEPT_PREFIX):
+        return None
+    rec = raw_record(main, sid)   # read once: a concurrent prune_records may delete the record between two reads
+    write_record(main, sid, wt, pid=pid, start=pid_start_token(pid) if pid else None,
+                 visit=bool(rec) and raw_visit(main, sid) and os.path.realpath(rec) == os.path.realpath(wt))
+    if problems is not None:
+        problems.append(f"NOT LOCKED: {wt} (no pid / git refused or timed out): cleanup-wt may remove it while this session works; "
+                        "the next compact (or clear from inside it) tries to lock it again")
+    return None
+
+
+def lock_started_worktree(main, here, sid, pid, env=None, source=None, problems=None):
     """SessionStart (bin/session_lock.py; review 25/10): a session that STARTS inside a linked worktree of a trunk-mode repo (a Desktop
     worktree session, `claude --worktree`, `claude --resume` there) never calls EnterWorktree, so it takes the same devkit-kept lock
     there. A super-board lane worktree (.claude/worktrees/issue-<N>[-build|-qa|-review]) is the board's: its runner removes it with a
     plain `git worktree remove`, which a lock left by a dead worker would block. Returns the worktree locked, None otherwise.
     #406: the payload cwd follows the session's `cd`. compact and /clear keep the same claude process, whose lock (taken at its start or
     at EnterWorktree) still holds - a new one there would lock whatever worktree the session merely stands in, another session's
-    included. So only a new process (startup, resume, fork; no source: as before) locks.
+    included. So only a new process (startup, resume, fork; no source: as before) locks from the cwd (compact / clear: #413 below).
     No veto beyond that (#415 had two - "another session owns this worktree", and "this pid already holds a lock elsewhere" for an
     in-session /resume after a `cd` - both reverted 25/10 after seven review rounds): owner identity at SessionStart rests on weak signals
     (state sid, lock sid, record pid, locks gc already opened), and every refinement left a session's real worktree unlocked - cleanup-wt
     then removes it mid-gate, the incident #406 is about. Without them a resumed session locks the worktree it stands in, a peer's
-    included: that worktree is kept too long, nothing is lost. Accepted, fail-safe trade-off (#413)."""
-    if source in ("compact", "clear") or not main or not here or not trunk_mode(main, env):
+    included: that worktree is kept too long, nothing is lost. Accepted, fail-safe trade-off (#413).
+    #413: compact / clear lock again the session's OWN starting worktree - the one its record names (reown moved it to the new id), never the
+    cwd - when the startup lock failed and the pid holds no live devkit-kept lock on it. problems: a list that receives one line per lock that
+    could not be taken, for the caller to print."""
+    if not main or not trunk_mode(main, env):
+        return None
+    if source in ("compact", "clear"):
+        wt = read_record(main, sid)
+        if not wt:
+            return None
+        locks = _worktree_locks(_git_in(main))
+        if locks is not None and _pid_holds_kept_lock(locks, pid, wt):
+            return None
+        return _lock_or_report(main, wt, sid, pid, problems, locks)
+    if not here:
         return None
     t = tree_of(here)
     if not t or not t[1] or os.path.realpath(main_of(t[0]) or "") != os.path.realpath(main):
         return None
     if _BOARD_WT.fullmatch(os.path.basename(t[0])) and os.path.basename(os.path.dirname(t[0])) in ("worktrees", ".worktrees"):
         return None
-    return t[0] if _kept_lock(main, t[0], sid, pid) else None
+    return _lock_or_report(main, t[0], sid, pid, problems, _worktree_locks(_git_in(main)))
 
 
 def _agent_worktree(payload, main):
