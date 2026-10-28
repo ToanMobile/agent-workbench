@@ -659,16 +659,17 @@ sys.path.insert(0, dk + "/bin")
 import session_lock as sl
 sw = sl._hook_module("session_worktree")
 DEAD = 2147483646
-def case(label, want, rec_pid=None, reg_pid="none", hb_age=0, rec_age=0, sid="oc"):
+def case(label, want, rec_pid=None, reg_pid="none", hb_age=0, rec_age=0, sid="oc", rec_start=None, reg_start=None):
     for p in (os.path.join(m, sw.RECORD_DIR, sid), os.path.join(sl.sessions_dir(m)[0], sid + ".json")):
         if os.path.lexists(p): os.unlink(p)
-    assert sw.write_record(m, sid, w, pid=rec_pid)
+    assert sw.write_record(m, sid, w, pid=rec_pid, start=rec_start)
     if rec_age:
         t = time.time() - rec_age; os.utime(os.path.join(m, sw.RECORD_DIR, sid), (t, t))
     if reg_pid != "none":
         sl.register_session(m, sid, pid=reg_pid)
         f = os.path.join(sl.sessions_dir(m)[0], sid + ".json"); d = json.load(open(f)); d["heartbeat"] = time.time() - hb_age
         if reg_pid is None: d.pop("pid", None)
+        if reg_start: d["pid_start"] = reg_start
         json.dump(d, open(f, "w"))
     got = sl.owner_gone(m, sid, sw, m)
     print(("✔ " if got[0] == want else "✖ ") + f"{label}: want dead={want}, got {got}")
@@ -684,11 +685,15 @@ case("registry entry with no pid, a stale heartbeat, a fresh record: the heartbe
 case("a garbage registry pid (a bool) counts as none", False, reg_pid=True)
 case("a garbage registry pid (1) counts as none", False, reg_pid=1)
 case("a garbage registry pid (0) counts as none", False, reg_pid=0)
+# #413: a live pid whose start time differs from the one recorded is a pid the OS handed to someone else (gone); one that matches is the owner
+case("a record pid that answers, its recorded start time matches (the owner is alive)", False, rec_pid=os.getpid(), rec_start=sw.pid_start_token(os.getpid()))
+case("a record pid that answers but its recorded start time differs (the pid was reused)", True, rec_pid=os.getpid(), rec_start="Thu_Jan_1_00:00:00_1970")
+case("a registry pid that answers but its pid_start differs (the pid was reused)", True, reg_pid=os.getpid(), reg_start="Thu Jan  1 00:00:00 1970")
 for label, bad in (("a path-like session id", "../x"), ("an empty session id", "")):   # (OCR2 23) a real case: unknown reads alive, never dead
     got = sl.owner_gone(m, bad, sw, m)
     print(("✔ " if got == (False, "unknown") else "✖ ") + f"owner_gone for {label}: want (False, 'unknown'), got {got}")
 PY
-! grep -q "^✖" "$TMP/unit3" && [ "$(grep -c '^✔' "$TMP/unit3")" = 14 ] && ok "owner_gone: dead only on a dead pid or a 25 h old pid-less record; every unknown reads alive" \
+! grep -q "^✖" "$TMP/unit3" && [ "$(grep -c '^✔' "$TMP/unit3")" = 17 ] && ok "owner_gone: dead only on a dead pid or a 25 h old pid-less record; every unknown reads alive" \
   || { fail "owner_gone cases"; grep "✖\|Error\|assert" "$TMP/unit3" | head -8; }
 
 # 5 R7 and trunk mode off: the old rules, unchanged (main's lock taken by the first write)
