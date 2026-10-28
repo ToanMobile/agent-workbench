@@ -749,6 +749,9 @@ PY
 [ "$rc_int" = "-2 " ] && ok "INT to the group of a bash calling run_capped stops it, nothing after runs" \
   || fail "INT to run_capped's group: '$rc_int' (want '-2 ': bash killed by SIGINT, no AFTER)"
 # Hết ngân sách publish (nhiều card × 20 s): không gọi thêm gh, card chưa xoá giữ trong CARDS cho lượt sau.
+# Không dựa vào lock worker "chết" từ trước (#600): PID của nó có thể đã được hệ điều hành cấp lại cho tiến trình sống khi gate
+# chạy song song, #16 hiện thành đang chạy và vào CARDS. Ca này cần board không có worker nào.
+rm -f "$R/.claude/super-board/inflight/15" "$R/.claude/super-board/inflight/16"
 printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; c0=$(grep -c -- '--clear' "$TMP/calls")
 BOARD_STATUS_BUDGET=0 wd
 [ "$(grep -c -- '--clear' "$TMP/calls")" = "$c0" ] && [ "$(field CARDS "$BST")" = 15 ] \
