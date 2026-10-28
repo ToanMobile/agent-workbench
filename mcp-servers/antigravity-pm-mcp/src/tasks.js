@@ -323,7 +323,7 @@ export function freshness(cfg, task) {
   };
 }
 
-export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes = '', reviewer = 'pm' }) {
+export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes = '', reviewer = 'pm', auditedHead }) {
   if (!VERDICT_KINDS.includes(kind)) throw new Error(`kind phai thuoc ${VERDICT_KINDS.join('|')}`);
   if (!['pass', 'fail'].includes(verdict)) throw new Error('verdict phai la pass hoac fail');
   // Vong cua ket luan = vong PM DA XEM (ban nguoi goi dang cam), khong phai vong moi hon neu co rework chen giua.
@@ -337,6 +337,8 @@ export function recordVerdict(cfg, task, { kind, verdict, findings = [], notes =
       notes: String(notes || '').slice(0, 8000),
       reviewer,
       at: nowIso(),
+      // sha40 cua cay da audit (chi kind=audit pass): push_gate.audited_head cua DevKit doc truong nay truoc notes
+      ...(kind === 'audit' && verdict === 'pass' && typeof auditedHead === 'string' && /^[0-9a-f]{40}$/.test(auditedHead) && { auditedHead }),
     };
     // Review dat cua vong nay => danh sach finding chua dong coi nhu da xu ly.
     if (kind === 'review' && verdict === 'pass' && t.round === round) t.openFindings = [];

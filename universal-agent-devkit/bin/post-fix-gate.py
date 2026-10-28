@@ -535,6 +535,7 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
     for sha in res.stdout.split():                    # newest first
         if _push_gate().approved(root, f"{sha}^!")[0]:
             base = sha
+            PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
     return not test_change_is_append_only(base, repo_path, runner=runner)
 
@@ -619,6 +620,20 @@ APPROVE_LABEL = re.compile(r"^\s*(?:duyệt|đồng ý|chấp nhận|approve[ds]
 # that edited a test never approves it — --auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS=1 and an `AUTO-APPROVE:` reply line approve nothing.
 APPROVED_BY = {}
 CROSS_REVIEW = {}            # path -> (reviewer, task_id) of the accepted cross-review entry
+PM_APPROVAL_USED = []        # --since: test whose base moved to a Test-approved-by commit (an antigravity-pm audit record)
+
+
+def pm_relaxed() -> bool:
+    """Audit T0066 vòng 2 (#605): lượt có lời duyệt dựa vào biên bản antigravity-pm (CROSS_REVIEW, mốc --since dời theo trailer) đọc từ
+    ANTIGRAVITY_PM_STATE_HOME lạ (không phải ~/.antigravity-pm của user) là nới lỏng: kết luận giữ nguyên (test cần), nhưng không ghi
+    biên nhận task / merge gate và full_pass.json không là exit 0 — biên bản ở chỗ lạ agent nào cũng tự dựng được. Lỗi → True."""
+    if not CROSS_REVIEW and not PM_APPROVAL_USED:
+        return False
+    try:
+        return bool(_push_gate().pm_home_overridden())
+    except (ImportError, AttributeError, OSError) as e:
+        print(f"post-fix-gate: không xác định được thư mục antigravity-pm ({type(e).__name__}); coi là nới lỏng", file=sys.stderr)
+        return True
 APPROVAL_REJECTS = []        # (path, sha256 hiện tại, lý do): mục duyệt bị từ chối, cần duyệt lại
 SELF_APPROVAL_REFUSED = []   # paths an --auto-approve-tests / DEVKIT_AUTO_APPROVE_TESTS run asked to approve
 CROSS_REVIEW_FIELDS = ("path", "sha256", "reviewer", "author", "task_id", "reason")
@@ -640,6 +655,18 @@ def _blob_is_audited(top, prefix, project_root, f, head) -> bool:
     return blob.returncode == 0 and blob.stdout.strip() == cur.stdout.strip()
 
 
+def _branch_base(root, project_root, fallback_head=True) -> str:
+    """Base của nhánh cho duyệt chéo: BASE_REF (đã là merge-base khi có --diff, hoặc mốc --since) khi khác HEAD, không thì
+    merge-base(nhánh đích, HEAD); không có nhánh đích → "HEAD" (fallback_head) hoặc "". Lỗi git → "" (người gọi không duyệt)."""
+    if BASE_REF and BASE_REF != "HEAD":
+        return BASE_REF
+    trunk_ref, _name = task_trunk(project_root)
+    if not trunk_ref:
+        return "HEAD" if fallback_head else ""
+    mb = subprocess.run(["git", "-C", root, "merge-base", trunk_ref, "HEAD"], capture_output=True, text=True, timeout=30)
+    return mb.stdout.strip() if mb.returncode == 0 else ""
+
+
 def _trailer_cross_review(paths: list, project_root) -> dict:
     """{path: task_id} — nguồn duyệt chéo thứ hai (#605 lane E): commit MỚI NHẤT của nhánh (base..HEAD) chạm file, có trailer
     `Test-approved-by: antigravity <task-id>` mà push_gate.approved công nhận (biên bản audit pass của antigravity-pm, ngoài repo),
@@ -653,13 +680,7 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
     try:
         root = str(get_repo_root())
         prefix = get_project_prefix()
-        base = BASE_REF if BASE_REF and BASE_REF != "HEAD" else ""
-        if not base:
-            trunk_ref, _name = task_trunk(project_root)
-            if not trunk_ref:
-                return {}
-            mb = subprocess.run(["git", "-C", root, "merge-base", trunk_ref, "HEAD"], capture_output=True, text=True, timeout=30)
-            base = mb.stdout.strip() if mb.returncode == 0 else ""
+        base = _branch_base(root, project_root, fallback_head=False)
         if not base:
             return {}
         # Commit có trailer chốt CẢ cây đã audit, không cần chạm file: audit xong ghi một commit rỗng có trailer là đủ.
@@ -675,7 +696,8 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
             # Audit T0066: so với cây PM đã audit (auditedHead ngoài repo), không với commit mang trailer — trailer của task cũ
             # đặt lên commit sửa test mới không duyệt được nội dung mới (replay). Không có auditedHead → không duyệt.
             head = _push_gate().audited_head(root, m.group(1)) if m else None
-            if head:
+            # Audit T0066 vòng 2: auditedHead trước base (task cũ audit cây cũ) không duyệt việc chép lùi test về bản yếu đó.
+            if head and _push_gate().head_after(root, base, head):
                 audited.append((head, m.group(1)))
         out = {}
         for f in paths if audited else []:
@@ -760,14 +782,20 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             try:
                 git_top, prefix = str(get_repo_root()), get_project_prefix()
                 head = _push_gate().audited_head(git_top, e["task_id"].strip())
-                audited_ok = bool(head) and _blob_is_audited(git_top, prefix, root, f, head)
+                # Audit T0066 vòng 2: base của nhánh phải là tổ tiên của auditedHead (không duyệt chép lùi về cây cũ trước base)
+                base = _branch_base(git_top, root) if head else ""
+                after = bool(head) and _push_gate().head_after(git_top, base, head)
+                audited_ok = after and _blob_is_audited(git_top, prefix, root, f, head)
             except (OSError, subprocess.SubprocessError, RuntimeError, ImportError) as err:
-                head, audited_ok = None, False
+                head, audited_ok, after, base = None, False, False, ""
                 print(f"post-fix-gate: không đọc được biên bản audit của {e['task_id'].strip()} ({type(err).__name__}); không duyệt",
                       file=sys.stderr)
             if not head:
                 APPROVAL_REJECTS.append((f, cur, f"task {e['task_id'].strip()} không có biên bản audit pass của antigravity-pm "
                                                  "kèm `auditedHead: <sha>`"))
+                continue
+            if not after:
+                APPROVAL_REJECTS.append((f, cur, f"auditedHead {head[:10]} không nằm sau base {base[:10] or '?'} của nhánh (audit cây cũ)"))
                 continue
             if not audited_ok:
                 APPROVAL_REJECTS.append((f, cur, f"nội dung khác cây đã audit (auditedHead {head[:10]})"))
@@ -7606,6 +7634,9 @@ def main():
     # receipt of other content is still dropped (principal review 21/10: content gated, then changed, must not ride along), and its exit 1
     # (a FAIL) still drops it, as before.
     merge_check = os.environ.get("DEVKIT_GATE_MERGE_CHECK") == "1"
+    pm_relax = run_tests and exit_code == 0 and pm_relaxed()
+    if pm_relax:
+        print(f"  • {YELLOW}{tr('Lời duyệt test dựa vào biên bản antigravity-pm ở ANTIGRAVITY_PM_STATE_HOME lạ (không phải ~/.antigravity-pm): kết luận giữ nguyên nhưng KHÔNG ghi biên nhận task / merge gate, full_pass.json không là exit 0', 'Test approval rests on an antigravity-pm record under a foreign ANTIGRAVITY_PM_STATE_HOME (not ~/.antigravity-pm): verdict kept, but NO task / merge-gate receipt, full_pass.json is not exit 0')}{RESET}")
     try:
         if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and not edited_early and (not partial or (exit_code != 0 and not receipt_untested)) \
                 and (lock_held or partial or exit_code != 0):
@@ -7626,7 +7657,8 @@ def main():
             # tree entry for a removed worktree: safe, only slower; upgrade when a PASS carries its lineage (real-run time) so a copy of a real
             # run can be told from a copy of a copy.
             reuse_at = reused_tested_at()
-            write_full_pass_receipt(project_dir, exit_code, args.matrix, receipt_tests,
+            # pm home lạ (pm_relaxed): exit 0 vào biên nhận như exit 2 — suite vẫn dùng lại được, proof/push gate không nhận
+            write_full_pass_receipt(project_dir, 2 if exit_code == 0 and pm_relax else exit_code, args.matrix, receipt_tests,
                                     tested_at=reuse_at, refresh_only=reuse_src[0] is not None,
                                     # a run WITHOUT the lock (read-only, or the project lock / gate queue timed out: audit T0056, an exit-2
                                     # branch ahead of BUSY wrote full_pass.json) is handed over as partial + unlocked: it may DROP an exit-0
@@ -7637,12 +7669,13 @@ def main():
         if exit_code == 0 and run_tests and not partial and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy:
             mark_merge_gate_receipt(project_dir, diff_ref, run_start_tree, relaxing=[
                 flag for flag, on in (("--allow-no-tests", args.allow_no_tests), ("--allow-orphan-tests", args.allow_orphan_tests),
-                                      ("--auto-approve-tests", args.auto_approve_tests or os.environ.get("DEVKIT_AUTO_APPROVE_TESTS") == "1")) if on])
+                                      ("--auto-approve-tests", args.auto_approve_tests or os.environ.get("DEVKIT_AUTO_APPROVE_TESTS") == "1"),
+                                      ("ANTIGRAVITY_PM_STATE_HOME", pm_relax)) if on])
         # T0061 Pha 1: biên nhận task (task_fp chỉ có ở lượt không cưỡng bức, ngoài nhánh đích, không --since, không merge check). Ghi khi
         # exit 0 có khoá, không read-only, không suite UNTESTED (BUSY / BUDGET / SLOT / KEYED…), và lượt đã kiểm trọn merge-base(<nhánh đích>,
         # HEAD) → cây: base của diff là merge-base đó hoặc tổ tiên của nó. Exit 1 (mọi chế độ) bỏ biên nhận task của cây đó; BUSY / BUDGET /
         # SLOT / exit 2 của merge check không đụng tới nó.
-        if (task_fp and exit_code == 0 and run_tests and lock_held and not read_only and not lock_busy and not budget_cut and not slot_busy
+        if (task_fp and exit_code == 0 and run_tests and lock_held and not read_only and not pm_relax and not lock_busy and not budget_cut and not slot_busy
                 and not project_gone and not any(t.get("status") == "UNTESTED" for t in regression_tests)
                 and subprocess.run(["git", "-C", str(project_dir), "merge-base", "--is-ancestor", base_ref, task_mb],
                                    capture_output=True).returncode == 0):

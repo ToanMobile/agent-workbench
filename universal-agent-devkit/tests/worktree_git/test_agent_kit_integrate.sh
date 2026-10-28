@@ -247,26 +247,31 @@ edited_test_repo; o0="$(origin_head)"
 ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
 [ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] \
   && ok "I14 tiền đề: test sửa chưa được duyệt → integrate dừng, không push" || fail "I14 tiền đề: rc $rc, out: $(tail -4 "$TMP/out")"
-edited_test_repo; approve tests/t_a.sh:antigravity:claude-lane-d tests/t_b.sh:antigravity:claude-lane-d
+# Audit T0066 vòng 2: biên bản ở ANTIGRAVITY_PM_STATE_HOME lạ (fixture dưới $TMP) agent nào cũng tự dựng được — lời duyệt vẫn tới được gate
+# trong scratch (kết luận duyệt chéo, dòng PM_RELAX) nhưng không cấp biên nhận nên integrate KHÔNG push. Các đối chứng dưới: không có
+# dòng PM_RELAX = gate không duyệt đủ (chặn vì lời duyệt hỏng, không phải vì pm home lạ).
+PM_RELAX="ANTIGRAVITY_PM_STATE_HOME lạ"
+edited_test_repo; o0="$(origin_head)"; approve tests/t_a.sh:antigravity:claude-lane-d tests/t_b.sh:antigravity:claude-lane-d
 ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
-[ "$rc" = 0 ] && [ "$(origin_head)" = "$(G "$M" rev-parse HEAD)" ] \
-  && ok "I14 cả hai test sửa được duyệt chéo ở main: integrate push, không cờ tự duyệt" || fail "I14 duyệt chéo: rc $rc, out: $(tail -5 "$TMP/out")"
+[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] && grep -q "duyệt chéo bởi antigravity" "$TMP/out" && grep -qF "$PM_RELAX" "$TMP/out" \
+  && ok "I14 cả hai test duyệt chéo ở main tới được scratch, nhưng pm home lạ không cấp biên nhận: integrate không push" \
+  || fail "I14 duyệt chéo + pm home lạ: rc $rc, out: $(tail -5 "$TMP/out")"
 edited_test_repo; o0="$(origin_head)"; approve tests/t_a.sh:antigravity:claude-lane-d
 ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
-[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] \
+[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] && ! grep -qF "$PM_RELAX" "$TMP/out" \
   && ok "I14 đối chứng: chỉ duyệt t_a, t_b sửa mà chưa duyệt vẫn chặn, không push" || fail "I14 đối chứng: rc $rc, out: $(tail -4 "$TMP/out")"
 edited_test_repo; o0="$(origin_head)"; approve tests/t_a.sh:antigravity:claude-lane-d tests/t_b.sh:antigravity:claude-lane-d
 printf 'exit 0 # sửa lần hai\n' > "$M/tests/t_b.sh"; G "$M" commit -qam "sửa tiếp sau khi duyệt"
 ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
-[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] \
+[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] && ! grep -qF "$PM_RELAX" "$TMP/out" \
   && ok "I14 đối chứng: test sửa tiếp SAU lời duyệt (sha256 lệch) không được chép sang scratch, vẫn chặn" || fail "I14 sửa sau duyệt: rc $rc, out: $(tail -4 "$TMP/out")"
 edited_test_repo; o0="$(origin_head)"; approve tests/t_a.sh:antigravity:claude-lane-d tests/t_b.sh:Claude-Lane-D:claude-lane-d
 ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
-[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] && grep -q "trùng author" "$TMP/out" \
+[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] && grep -q "trùng author" "$TMP/out" && ! grep -qF "$PM_RELAX" "$TMP/out" \
   && ok "I14 đối chứng: mục t_b reviewer == author (tự duyệt) không thành lời duyệt trong scratch, vẫn chặn" || fail "I14 tự duyệt: rc $rc, out: $(tail -4 "$TMP/out")"
 edited_test_repo; o0="$(origin_head)"; mkdir -p "$M/.claude/audit-gate"; printf '["tests/t_a.sh","tests/t_b.sh"]\n' > "$M/.claude/audit-gate/approved_tests.json"
 ARGS="" integrate DEVKIT_AUTO_APPROVE_TESTS=0; rc=$?
-[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] \
+[ "$rc" != 0 ] && [ "$(origin_head)" = "$o0" ] && ! grep -qF "$PM_RELAX" "$TMP/out" \
   && ok "I14 đối chứng: dạng cũ list không duyệt gì, vẫn chặn, không push" || fail "I14 dạng cũ: rc $rc, out: $(tail -4 "$TMP/out")"
 
 # I10 help + completion

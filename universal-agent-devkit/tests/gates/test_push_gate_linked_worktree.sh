@@ -283,14 +283,27 @@ WHY="$(printf '%s' "$WHY" | tail -1)"   # the line before is the warning untesta
 case "$WHY" in "False "*) ok "L20: the work tree of main not found: fail closed, the receipt exempts nothing" ;;
   *) bad "L20: expected a refusal when main cannot be located, got: $(printf '%s' "$WHY" | tail -2)" ;; esac
 
-# L21 (#154, 21/10): the worktree edits an EXISTING test and passes its --full with a cross-review entry (#605; --auto-approve-tests before) (exit 0); `worktree finish`'s
+# L21 (#154, 21/10): the worktree edits an EXISTING test and passes its --full with the user's answer approving it (audit T0066 r2; a cross-review entry before) (exit 0); `worktree finish`'s
 #     merge gate (--diff <main>, partial, no approval flag) ends exit 2 "edited_test" — the session's own business, never a reason to refuse
 #     the merge — and used to turn that exit-0 receipt down to exit 2, so the push from main was refused and the gate had to run again.
 newrepo
 mkdir -p "$R/tests" && printf 'exit 0\n' > "$R/tests/test_core.sh" && git -C "$R" add tests/test_core.sh && git -C "$R" commit -qm "a test" \
   && git -C "$W" merge -q --ff-only main || bad "L21 setup: test on main failed"
-echo "fun ok() = 21" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"; cross_approve "$W" tests/test_core.sh
-CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief > "$TMP/gate.out" 2>&1 \
+echo "fun ok() = 21" > "$W/src/Core.kt"; printf 'exit 0 # v2\n' > "$W/tests/test_core.sh"
+# Audit T0066 vòng 2: lời duyệt dựa vào biên bản antigravity-pm ở ANTIGRAVITY_PM_STATE_HOME lạ không cấp biên nhận exit 0 — ca này cần
+# biên nhận exit 0 của worktree nên duyệt bằng câu trả lời AskUserQuestion của người dùng (transcript), không qua pm.
+python3 - "$TMP/tr21/s.jsonl" <<'PY'
+import json, os, sys, time
+os.makedirs(os.path.dirname(sys.argv[1]), exist_ok=True)
+q = "Duyệt sửa tests/test_core.sh?"
+rec = {"type": "user", "sessionId": "s-l21", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + 5)),
+       "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "q1", "content": "answered"}]},
+       "toolUseResult": {"questions": [{"question": q, "header": "Test", "options": [{"label": "Duyệt", "description": "giữ diff"},
+                                                                                      {"label": "Không", "description": "đổi"}]}],
+                         "answers": {q: "Duyệt"}}}
+open(sys.argv[1], "w").write(json.dumps(rec, ensure_ascii=False) + "\n")
+PY
+CLAUDE_PROJECT_DIR="$W" python3 "$GATE" --run-tests --full --brief --transcript "$TMP/tr21/s.jsonl" > "$TMP/gate.out" 2>&1 \
   || bad "L21 setup: gate --full (cross-reviewed test) in the worktree failed (exit $?): $(tail -3 "$TMP/gate.out")"
 git -C "$W" commit -qam "task work with an edited test" || bad "L21 setup: commit failed"
 rm -f "$W/.claude/audit-gate/approved_tests.json"   # #605: kịch bản cần merge gate exit 2 edited_test (trước đây: merge gate không có cờ duyệt)

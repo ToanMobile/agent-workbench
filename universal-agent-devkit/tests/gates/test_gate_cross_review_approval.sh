@@ -18,6 +18,7 @@ mkdir -p "$HOME/.claude/projects"
 FAILS=0
 # Biên bản antigravity-pm giả, ngoài repo (như push_gate.audited_head đọc); nằm dưới $TMP nên không chạm ~/.antigravity-pm thật.
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
+export DEVKIT_PM_HOME_TEST=1   # #605: công tắc chỉ cho test — biên bản pm giả trong thư mục tạm được push_gate.approved tính
 pm_task() {   # pm_task <task-id> <project> <verdict> [auditedHead]: notes ghi `auditedHead: <sha>` khi có đối số 4
   mkdir -p "$TMP/pm/projects/p-$1/tasks/$1"
   printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"%s","round":1,"reviewer":"pm","notes":"%s"}}}\n' "$1" "$2" "$3" \
