@@ -89,5 +89,6 @@
 - [INSTINCT-083] macOS: sed BSD và không có timeout — `sed -n '703,712p' .agents/instincts.md`
 - [INSTINCT-071] Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main — `sed -n '713,721p' .agents/instincts.md`
 - [INSTINCT-084] Gộp lane bằng cherry-pick làm kit không gỡ được worktree lane và Stop hook tự gộp main local vào lane — `sed -n '722,731p' .agents/instincts.md`
-- [INSTINCT-085] Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình — `sed -n '732,736p' .agents/instincts.md`
+- [INSTINCT-085] Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên — `sed -n '732,736p' .agents/instincts.md`
+- [INSTINCT-086] Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình — `sed -n '740,744p' .agents/instincts.md`
 

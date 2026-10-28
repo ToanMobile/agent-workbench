@@ -64,7 +64,7 @@ REPO, PR = "o/r", 7
 SCOPE = "e" * 64
 EXPECTED = {"repo": REPO, "pr": PR, "head": HEAD, "scope": SCOPE}
 PLAN_SIZE = {"human": [{"category": "size", "why": "big PR"}], "migrations": [], "run": [], "needs_you": []}
-PLAN_SCHEMA = {"human": [{"category": "schema", "why": "keyword drop table"}], "migrations": [], "run": [], "needs_you": []}
+PLAN_SCHEMA = {"human": [{"category": "schema", "why": "destructive schema keyword in an added line"}], "migrations": [], "run": [], "needs_you": []}
 PLAN_DELETE = {"human": [{"category": "delete-protected", "why": "deletes a protected file"}], "migrations": [], "run": [],
                "needs_you": []}
 PLAN_LIVE = {"human": [], "migrations": ["supabase/migrations/1.sql"], "run": [],
