@@ -725,7 +725,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01",
-          "name": "runner trả thẻ Building có worker build chết giữa lượt chạy về lại Ready kèm sổ reclaims; quá trần trong cửa sổ thì chuyển sang Blocked có dòng blocked-by: -",
+          "name": "runner trả thẻ Building có worker build chết giữa lượt chạy về lại Ready kèm sổ reclaims; quá trần trong cửa sổ thì chuyển sang Blocked KHÔNG có dòng blocked-by: - (#529)",
           "command": "bash tests/super-board/test_runner_reclaim_dead_build.sh",
           "parallel_safe": true
         }
@@ -1867,6 +1867,23 @@
           "id": "REG-SB-CARD-WRITE-BLOCK-01",
           "name": "gh_write_once: lệnh ghi GitHub của MỘT thẻ hỏng thì thẻ đó vào Blocked kèm comment chặn, board chạy tiếp; bước chặn hỏng hoặc lệnh không thuộc thẻ thì halt 79 như cũ; dispatch không phóng worker cho thẻ vừa bị chặn (28/10)",
           "command": "bash tests/super-board/test_card_write_fail_blocks_card.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-sweep-needs-you-529",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py",
+        "tests/super-board/test_issue529_sweep_needs_you.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SWEEP-NEEDS-YOU-529-01",
+          "name": "#529: Blocked by không bullet đọc được số; resume gỡ needs-you trước khi sang Review; denylist soi --next và từng mệnh đề; reclaim/no-op ❓ không ghi blocked-by: -; trần im lặng build/qa; tick rẻ đếm chu kỳ không tiến triển",
+          "command": "bash tests/super-board/test_issue529_sweep_needs_you.sh",
           "parallel_safe": true
         }
       ]

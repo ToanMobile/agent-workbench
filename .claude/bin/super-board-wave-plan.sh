@@ -193,6 +193,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       sweep: [ $all[]
                | select(.status == "Blocked")
                | select(free(.number))
+               | select((dep(.number).blockers | length) > 0)   # #529: no blocker to clear (`blocked-by: agent`, body None) is not a sweep
                | { number, title,
                    clearedBy: (dep(.number) | .blockers) } ],
 

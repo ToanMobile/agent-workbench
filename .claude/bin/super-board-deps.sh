@@ -119,8 +119,9 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
       end;
 
   # Issue numbers on a bullet: "- #32 — The price feed" -> 32
-  def refs: [ .[] | select(test("^[ \t]*-[ \t]*#[0-9]+"))
-                  | capture("^[ \t]*-[ \t]*#(?<n>[0-9]+)").n | tonumber ];
+  # #529: the bullet is optional — a bare "#32" line is a blocker too, not an unreadable section.
+  def refs: [ .[] | select(test("^[ \t]*(-[ \t]*)?#[0-9]+"))
+                  | capture("^[ \t]*(-[ \t]*)?#(?<n>[0-9]+)").n | tonumber ];
 
   # A BULLET that claims None while naming an issue is the landmine of 2026-08-20.
   # Restricted to bullets on purpose: a blockquote underneath may legitimately
@@ -167,7 +168,10 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
       | ($i | comment_line) as $cl
       | ( if $cl != null then
             ( $cl | capture("blocked-by:[ \t]*(?<v>.*)$"; "i").v | gsub("[ \t]"; "") ) as $v
-            | if $v == "-" or $v == "" then
+            | if $v == "agent" then
+                # #529: parked by the runner (worker crash / no-op): agent work, not for a person. Not human-gated, nothing to clear.
+                { parseable: true, blockers: [], human_gated: false, why: "" }
+              elif $v == "-" or $v == "" then
                 { parseable: true, blockers: [], human_gated: ($i | person_done | not), why: "" }
               elif ($v | test("^[0-9]+(,[0-9]+)*$")) then
                 { parseable: true, blockers: ($v / "," | map(tonumber)), human_gated: false, why: "" }
