@@ -5701,8 +5701,10 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
 
 def _shadow_compare(project_dir, rules, matrix_path, covers, regression_tests, files):
     """#476: (ids suite cách chọn cũ chạy mà map test→nguồn bỏ, trong số đó ids FAIL) — hoặc None khi tắt / không dựng được.
-    Chỉ so sánh để có dữ liệu trước khi bật cách chọn mới; không đổi suite nào chạy. DEVKIT_SHADOW_MAP=0 tắt."""
-    if os.environ.get("DEVKIT_SHADOW_MAP", "1") == "0":
+    Chỉ so sánh để có dữ liệu trước khi bật cách chọn mới; không đổi suite nào chạy. Bật bằng DEVKIT_SHADOW_MAP=1 (mặc định tắt:
+    dòng runs.jsonl giữ nguyên bộ trường cũ).
+    ponytail: opt-in, cần đặt biến ở các lượt thật để có ≥5 lượt shadow; bật mặc định khi test_gate_run_log được duyệt thêm 2 trường."""
+    if os.environ.get("DEVKIT_SHADOW_MAP") != "1":
         return None
     try:
         sc = suite_cache_for(project_dir, rules, matrix_path, covers)

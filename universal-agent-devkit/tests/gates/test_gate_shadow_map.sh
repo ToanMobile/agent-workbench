@@ -4,7 +4,7 @@
 # không bao giờ đổi suite nào chạy. Case 1-3: SuiteCache.trace_map / shadow_select; case 4: gate thật.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
-unset POSTFIX_GATE_FULL POSTFIX_GATE_FORCE_FULL CI DEVKIT_GATE_CACHE DEVKIT_SUITE_CACHE DEVKIT_PER_TEST_CACHE DEVKIT_SHADOW_MAP
+unset POSTFIX_GATE_FULL POSTFIX_GATE_FORCE_FULL CI DEVKIT_GATE_CACHE DEVKIT_SUITE_CACHE DEVKIT_PER_TEST_CACHE
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)" || exit 1
@@ -49,7 +49,7 @@ PY
 
 # 4. gate thật: impacted đổi src/b.py ⇒ runs.jsonl có shadow_skip, suite vẫn chạy như cũ
 echo 'y = 2' > "$R/src/b.py"
-( cd "$R" && FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --run-tests --no-checklist --task T-476 >"$TMP/out" 2>&1 )
+( cd "$R" && DEVKIT_SHADOW_MAP=1 FLAKY_RETRY=0 VACUITY_REVERT=0 CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --matrix "$R/matrix.json" --run-tests --no-checklist --task T-476 >"$TMP/out" 2>&1 )
 python3 -I - "$R/.git/postfix-gate/runs.jsonl" <<'PY' || FAILS=$((FAILS + 1))
 import json, sys
 try:
