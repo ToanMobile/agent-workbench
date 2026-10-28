@@ -255,7 +255,7 @@ Board: Backlog · Ready · Building · QA · Review · Blocked · Done. Labels r
 | Config | `.claude/super-board/configs/<slug>.json` |
 | Isolation | 1 card · 1 worktree · 1 branch |
 | Merge | auto for normal changes · money, auth, destructive schema (DROP/TRUNCATE/RENAME) → human · PR > 400 changed lines → human |
-| Migrations | additive → robot migrates allowed DBs only · live DB ALWAYS → 🙋 needs you |
+| Migrations | additive → robot migrates allowed DBs only · live DB → 🙋 `done` or cross-review marker |
 | Blocked card | block-template comment · last line `blocked-by:` · 🙋 = needs you |
 | Secrets | NEVER read `.env`; key names via `.claude/bin/super-board-env-check.sh` |
 

@@ -29,9 +29,9 @@ BLOCK = re.compile(r"Reason tag:[^\n]*🙋|^approval-request:", re.M)
 DONE = re.compile(r"\s*done[.!]?\s*\Z", re.I)
 CROSS = "cross-review-approved: "
 CROSS_FIELDS = ("reviewer", "builder", "task_id", "gate_receipt")
-# #605: nhóm chỉ người duyệt được (luật chủ repo 28/10): schema phá huỷ (DROP/TRUNCATE/RENAME), xoá file được bảo vệ
-# (merge_policy.protected_paths). Mọi mục needs_you (migrate DB live, bước người tự chạy) cũng chỉ người làm được.
-HUMAN_ONLY = {"schema", "delete-protected"}
+# #605: nhóm chỉ người duyệt được (luật chủ repo 28/10, bản sau): chỉ xoá file được bảo vệ (merge_policy.protected_paths).
+# Schema và mọi mục needs_you (migrate DB live) duyệt chéo được như việc khác.
+HUMAN_ONLY = {"delete-protected"}
 # GitHub's closing keywords: KEYWORD[:] #N or KEYWORD[:] owner/repo#N.
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
 
@@ -52,7 +52,7 @@ def cross_review_allowed(plan):
     if not isinstance(plan, dict):
         return False
     human, needs = plan.get("human", []), plan.get("needs_you", [])
-    if not isinstance(human, list) or not isinstance(needs, list) or needs:
+    if not isinstance(human, list) or not isinstance(needs, list):
         return False
     return all(isinstance(h, dict) and isinstance(h.get("category"), str) and h["category"] not in HUMAN_ONLY
                for h in human)

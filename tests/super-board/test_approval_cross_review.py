@@ -3,8 +3,8 @@
 
 Reviewer lane đăng một comment riêng chứa đúng một dòng `cross-review-approved: {json}` sau approval-request mới nhất.
 validate() nhận khi repo/pr/head/scope khớp request, reviewer khác builder (không phân biệt hoa thường), task_id và
-gate_receipt không rỗng, người đăng có quyền ghi. Plan chạm nhóm chỉ người (schema phá huỷ, xoá file được bảo vệ,
-needs_you như migrate DB live) thì marker không đủ: chỉ `done` của người mới duyệt.
+gate_receipt không rỗng, người đăng có quyền ghi. Luật chủ repo 28/10: schema và needs_you (migrate DB live) cũng được
+duyệt chéo; chỉ xoá file được bảo vệ (delete-protected) mới cần `done` của người.
 Policy: PR xoá file khớp merge_policy.protected_paths → human có category delete-protected.
 """
 import importlib.util
@@ -100,10 +100,16 @@ class CrossReview(unittest.TestCase):
         body = cross() + "\n" + approval.marker(approval.request_for(REPO, PR, HEAD, SCOPE))
         self.assertFalse(run(comment(2, body, "2026-10-28T10:05:00Z"))["approved"])
 
-    def test_human_only_plans_ignore_cross_review(self):
-        for plan in (PLAN_SCHEMA, PLAN_DELETE, PLAN_LIVE):
+    def test_delete_protected_ignores_cross_review(self):
+        both = {**PLAN_LIVE, "human": PLAN_DELETE["human"] + PLAN_SCHEMA["human"]}
+        for plan in (PLAN_DELETE, both):
             r = run(comment(2, cross(), "2026-10-28T10:05:00Z"), plan=plan)
             self.assertFalse(r["approved"], (plan, r))
+
+    def test_schema_and_needs_you_accept_cross_review(self):
+        for plan in (PLAN_SCHEMA, PLAN_LIVE):
+            r = run(comment(2, cross(), "2026-10-28T10:05:00Z"), plan=plan)
+            self.assertTrue(r["approved"], (plan, r))
 
     def test_human_only_plans_accept_human_done(self):
         for plan in (PLAN_SCHEMA, PLAN_DELETE, PLAN_LIVE):
@@ -148,7 +154,11 @@ class DepsCrossReview(unittest.TestCase):
         self.assertEqual(e["approvalWhy"], "cross-review by claude-reviewer")
 
     def test_human_only_plan_keeps_card_blocked(self):
-        self.assertFalse(self.deps(PLAN_SCHEMA)["needsYouDone"])
+        self.assertFalse(self.deps(PLAN_DELETE)["needsYouDone"])
+
+    def test_schema_and_live_plans_clear_card(self):
+        for plan in (PLAN_SCHEMA, PLAN_LIVE):
+            self.assertTrue(self.deps(plan)["needsYouDone"], plan)
 
     def test_without_config_keeps_card_blocked(self):
         self.assertFalse(self.deps(PLAN_SIZE, with_config=False)["needsYouDone"])
