@@ -76,4 +76,15 @@ OUT=$(run s7 Read "$D/a.py" 2>/dev/null); RC=$?
 [ $RC -eq 0 ] && [ -z "$OUT" ] || fail "crash blocked or spoke (rc=$RC): $OUT"
 grep -q "UnicodeDecodeError" "$D/.claude/audit-gate/instincts_file_context.err" 2>/dev/null || fail "crash not logged to .err"
 
+echo "--- the bash wrapper run through a symlink (.claude/hooks/ layout) still works and never blocks (R4) ---"
+mkdir -p "$D/.agents" "$D/linkdir"
+ln -s "$DEVKIT_ROOT/hooks/instincts_file_context.sh" "$D/linkdir/instincts_file_context.sh"
+cat > "$D/.agents/instincts.md" <<'MD'
+### [INSTINCT-001] Trap With Glob
+- **glob:** `src/api/**`
+MD
+OUT=$(printf '{"session_id":"sl","tool_name":"Read","tool_input":{"file_path":"%s"}}' "$D/src/api/u.py" | bash "$D/linkdir/instincts_file_context.sh" 2>/dev/null); RC=$?
+[ $RC -eq 0 ] || fail "wrapper via symlink exit $RC (blocks Read)"
+echo "$OUT" | grep -q "INSTINCT-001" || fail "wrapper via symlink did not inject: $OUT"
+
 [ $ERRORS -eq 0 ] && echo "PASS" || { echo "$ERRORS failure(s)"; exit 1; }
