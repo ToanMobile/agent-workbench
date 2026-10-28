@@ -122,10 +122,11 @@ if [ "$QUEUE_ON" = true ]; then
   fi
   QUEUED_ISSUES=$(echo "$QUEUED_PRS" | jq -c '[.[].headRefName | capture("^issue-(?<n>[0-9]+)-")? | .n | tonumber]')
   # The workflow backend has no runner to drain the queue: make sure the schedule exists (idempotent, quiet when unchanged).
-  if [ -z "$ITEMS_FILE" ] && [ "$(echo "$CONFIG_JSON" | jq -r '(.worker_backend // "workflow") == "workflow"')" = true ]; then
+  # No schedule = no drainer: queued cards then stay plannable, or their PRs would sit hidden forever.
+  if { [ -z "$ITEMS_FILE" ] || [ -n "${SB_QUEUE_SCHEDULE_BIN:-}" ]; } && [ "$(echo "$CONFIG_JSON" | jq -r '(.worker_backend // "workflow") == "workflow"')" = true ]; then
     SLUG=$(basename "$CONFIG" .json)
-    "$HERE/super-board-queue-schedule.sh" ensure "$SLUG" >&2 \
-      || echo "warning: the merge-queue schedule could not be installed: queued PRs wait until something runs super-board-merge-queue.sh --if-due" >&2
+    "${SB_QUEUE_SCHEDULE_BIN:-$HERE/super-board-queue-schedule.sh}" ensure "$SLUG" >&2 \
+      || { echo "warning: the merge-queue schedule could not be installed: queued cards stay in the wave until it is" >&2; QUEUED_ISSUES='[]'; }
   fi
 fi
 

@@ -26,4 +26,18 @@ plan() {   # plan <backend> <enabled> [env SB_MERGE_QUEUE]
 [ "$(plan workflow false 1)" = "[6,7]" ] && ok "SB_MERGE_QUEUE=1 turns the filter on over the config" || fail "env on: $(plan workflow false 1)"
 [ "$(plan workflow true 0)" = "[5,6,7]" ] && ok "SB_MERGE_QUEUE=0 turns the filter off over the config" || fail "env off: $(plan workflow true 0)"
 [ "$(plan codex true)" = "[5,6,7]" ] && ok "backend codex: queue off, no filter" || fail "codex: $(plan codex true)"
+# R1 (review #513): ensure lỗi → không ai rút hàng, nên thẻ đã vào hàng PHẢI được wave chọn lại (không ẩn); ensure ổn → vẫn ẩn.
+printf '#!/bin/sh\nexit %s\n' 1 > "$TMP/ensure-fail.sh"; printf '#!/bin/sh\nexit 0\n' > "$TMP/ensure-ok.sh"; chmod +x "$TMP"/ensure-*.sh
+plan_ensure() { cfg workflow true; ( cd "$ROOT" && SB_QUEUE_SCHEDULE_BIN="$TMP/$1" SB_GITHUB_HALT_FILE="$TMP/halt.json" bash "$PLAN" --config "$TMP/cfg.json" \
+    --items "$TMP/items.json" --deps "$TMP/deps.json" --queued "$TMP/queued.json" 2>"$TMP/err" | jq -c '[.cards[].number] | sort' ); }
+[ "$(plan_ensure ensure-fail.sh)" = "[5,6,7]" ] && ok "ensure fails: queued card #5 stays plannable (no drainer)" || fail "ensure fail: $(plan_ensure ensure-fail.sh)"
+[ "$(plan_ensure ensure-ok.sh)" = "[6,7]" ] && ok "ensure ok: queued card #5 stays hidden" || fail "ensure ok: $(plan_ensure ensure-ok.sh)"
+# R3 (review #513): root_installable (không SB_LAUNCH_AGENTS_DIR) từ chối thư mục tạm: install exit 1 + không có plist; ensure im lặng exit 0.
+mkdir -p "$TMP/repo/.claude/bin" "$TMP/repo/.claude/super-board/configs" "$TMP/home" "$TMP/stub"
+cp "$ROOT/.claude/bin/super-board-queue-schedule.sh" "$TMP/repo/.claude/bin/"; echo '{}' > "$TMP/repo/.claude/super-board/configs/t.json"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/stub/launchctl"; chmod +x "$TMP/stub/launchctl"
+case "$TMP/" in /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*)
+  ( env -u SB_LAUNCH_AGENTS_DIR HOME="$TMP/home" PATH="$TMP/stub:$PATH" bash "$TMP/repo/.claude/bin/super-board-queue-schedule.sh" install t >"$TMP/ins.out" 2>&1 ); rc=$?
+  [ "$rc" = 1 ] && grep -q 'temporary directory' "$TMP/ins.out" && [ -z "$(find "$TMP/home" -name '*.plist')" ] && ok "install refuses a temporary root (exit 1, no plist)" || fail "refuse: rc=$rc $(cat "$TMP/ins.out")" ;;
+esac
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
