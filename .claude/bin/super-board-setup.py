@@ -77,7 +77,7 @@ BIN = ["super-board-verify-flags.sh", "super-board-verify-cmd.sh", "super-board-
        "super-board-merge-policy.py", "super-board-approval.py", "super-board-env-check.sh", "super-board-agents-md.py",
        "super-board-settings.py", "super-board-setup.py", "super-board-usage.sh", "super-board-pr-body.sh",
        "super-review-file-refactor.sh", "super-qa-file-bug.sh", "super-board-stop.sh", "super-board-watchdog.sh",
-       "super-board-needs-you.py", "super-board-post-merge-clean.sh", "super-board-scratch-config.sh", "super-board-throttle.sh",
+       "super-board-needs-you.py", "super-board-orphan-prs.py", "super-board-post-merge-clean.sh", "super-board-scratch-config.sh", "super-board-throttle.sh",
        "super-board-device-online.py", "super-board-heavy-slot.py", "super-board-notify.py", "super-board-blocked-by.py",
        "super-board-capacity.py", "super-board-qa-report.py", "super-board-drift.py", "super-board-ac-check.py"]
 WORKFLOWS = ["super-board-wave.js", "ui-refine-loop.js"]

@@ -4277,6 +4277,7 @@ def _timeout_snapshot(pgid: int) -> str:
     return "\n".join(lines[:1] + [row[3] for row in mine[:12]] + youngest)
 
 
+PTC_LINE = re.compile(r"^per_test_cache: reuse=(\d+) ran=(\d+)$", re.M)
 PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh của lượt này (đặt sau khi biết keyed_ok)
 
 
@@ -5714,6 +5715,9 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             "changed_files": [f[:200] for f in files[:RUN_LOG_CHANGED_MAX]],
             "ran_suites": [str(t.get("id") or "?")[:40] for t in regression_tests if id(t) in ran],
         }
+        ptc = [t["ptc"] for t in regression_tests if t.get("ptc")]
+        if ptc:   # #472 D: hit-rate của per_test_cache (chỉ lượt có suite run_impacted.sh chạy với sổ per-test bật)
+            rec["ptc_reuse"], rec["ptc_ran"] = sum(p[0] for p in ptc), sum(p[1] for p in ptc)
         if len(files) > RUN_LOG_CHANGED_MAX:
             rec["changed_files_cut"] = True
         waits = _run_log_slot_waits(regression_tests, slot_waits)
@@ -7009,6 +7013,9 @@ def main():
                                           or (first_is_kill and killed_from_outside(last_code, out))):
                 t["env_blocked"] = True     # still FAIL: the verdict never turns into a PASS
             t["output_tail"] = (out or "")[-2000:]
+            m = PTC_LINE.search(out or "")   # #472 D: run_impacted.sh "per_test_cache: reuse=N ran=M"
+            if m:
+                t["ptc"] = (int(m.group(1)), int(m.group(2)))
             # Which sub-test failed, from the WHOLE output: run_impacted's "✖ tests/x.sh" sits
             # mid-output, outside the last lines shown (2026-09-28, --brief showed five ✔).
             t["fail_lines"] = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)][:8]

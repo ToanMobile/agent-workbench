@@ -161,7 +161,7 @@ read it — re-read, then redo the edit. Builder opens the PR with every block f
 | `ac` (checklist + one proof line each) | writes all unchecked — ONE line per AC item of the card (and of every card its AC refers to as "AC của thẻ #X"), never a summary line; on an `ac-open` card, every line again, proven ones kept `[x]` citing the earlier PR | ticks with proof, or leaves unchecked with the reason | unticks one it disproved |
 | `history` (Lane · Done · Time · Details) | appends a row | appends a row | appends a row |
 | `visual` (Before \| After, UI only) | — | writes | — |
-| `risk` (🟢/🟡/🔴 + one line) | writes | — | adjusts |
+| `risk` (🟢/🟡/🔴 + one line + Door + Blast radius) | writes | — | adjusts |
 | `redcheck` (only when merged with a failing check) | — | — | writes |
 
 ```markdown
@@ -205,6 +205,8 @@ read it — re-read, then redo the edit. Builder opens the PR with every block f
 <!-- sb:risk -->
 ## Risk
 🟢 **Low** · <one line: what could break and what limits it>
+- Door: <one-way | two-way> — <can a revert undo it?>
+- Blast radius: <who or what is hit> · <how it is undone>
 <!-- /sb:risk -->
 ```
 
