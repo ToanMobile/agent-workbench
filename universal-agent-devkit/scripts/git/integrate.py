@@ -45,8 +45,6 @@ LOCK_NAME = "devkit-integrate.lock"
 # Không dùng .merge-scratch-*: batch_canary.py đếm tiền tố đó là lượt merge gate lẻ (PR đi đường lẻ), mà integrate là điểm gộp theo đợt.
 # Tên scratch: .integrate-scratch-<pid chủ>-<ngẫu nhiên>. SIGTERM/SIGINT/SIGHUP → SystemExit → `finally` gỡ scratch; SIGKILL không chạy được gì,
 # nên lượt integrate kế tiếp (đang giữ khoá) dọn mọi scratch mồ côi trước khi làm việc khác (sweep_orphans, #475).
-# ponytail: worktree.py _live_worktrees chỉ miễn ("red-proof-", ".merge-scratch-") khỏi WORKTREE_MAX; scratch mồ côi sau SIGKILL chiếm một
-# chỗ tới lượt integrate kế tiếp. Thêm tiền tố này vào bộ miễn đó khi gặp.
 SCRATCH_PREFIX = ".integrate-scratch-"
 GATE_STOP_S = 30   # sau SIGTERM nhóm tiến trình gate: chờ chừng này rồi SIGKILL cả nhóm
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)   # HUP: terminal đóng; gate ở phiên riêng nên không còn tự nhận nó
