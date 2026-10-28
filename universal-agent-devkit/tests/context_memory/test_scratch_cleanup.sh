@@ -14,6 +14,19 @@ TMP="$(mktemp -d)"
 REAL_DK_OLD=""; SLASH_TMP_BOX=""
 trap 'rm -rf "$TMP" ${REAL_DK_OLD:+"$REAL_DK_OLD"} ${SLASH_TMP_BOX:+"$SLASH_TMP_BOX"}' EXIT INT TERM HUP
 export DEVKIT_TEST_TMP_ROOT="$TMP/no-test-tmp"   # --prune also sweeps test temp dirs: never the real TMPDIR here
+# Host state (#573): live_sessions() reads <CLAUDE_CONFIG_DIR or ~/.claude>/sessions/*.json and the sweep takes one lsof of every process
+# of the user. Pin both to test-owned places for EVERY call; the cases that build their own SESS still override it per call.
+mkdir -p "$TMP/claude-home" "$TMP/no-sessions"
+export CLAUDE_CONFIG_DIR="$TMP/claude-home" DEVKIT_CLAUDE_SESSIONS="$TMP/no-sessions"
+# lsof sees only what this test owns: its temp tree (basename: lsof may print /private/var for /var) and its /tmp/dk-sc* boxes.
+cat > "$TMP/lsof-own" <<LSOF
+#!/bin/sh
+LSOF_REAL="\$(command -v lsof || echo /usr/sbin/lsof)"
+"\$LSOF_REAL" "\$@" | grep -E '^p|^n.*(/$(basename "$TMP")/|/dk-sc)'
+exit 0
+LSOF
+chmod +x "$TMP/lsof-own"
+export DEVKIT_LSOF="$TMP/lsof-own"
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -212,7 +225,7 @@ tsetup; sweep --prune --keep "$F"; [ -d "$TR/hookctx.OLD1" ] && ok "  … at mos
 sweep --sweep-tmp; [ ! -e "$TR/hookctx.OLD1" ] && ok "  … while --sweep-tmp always sweeps" || fail "--sweep-tmp was rate-limited"
 # A burst of SessionStarts (super-board workers) while lsof is slow: the hour is claimed BEFORE lsof, so one lsof runs.
 tsetup; rm -f "$ROOT/.devkit-test-tmp-sweep" "$TMP/lsof.calls"
-printf '#!/bin/sh\necho call >> "%s"\nsleep 2\nexec "%s" "$@"\n' "$TMP/lsof.calls" "$(command -v lsof || echo /usr/sbin/lsof)" > "$TMP/slowlsof"
+printf '#!/bin/sh\necho call >> "%s"\nsleep 2\nexec "%s" "$@"\n' "$TMP/lsof.calls" "$TMP/lsof-own" > "$TMP/slowlsof"
 chmod +x "$TMP/slowlsof"
 for i in 1 2 3; do DEVKIT_LSOF="$TMP/slowlsof" sweep --prune --keep "$F" & done; wait
 calls=$(wc -l < "$TMP/lsof.calls" 2>/dev/null | tr -d ' ')
