@@ -69,7 +69,12 @@ class ReadMergeTrain(RepoFixture):
             server.read_merge_train(self.repo)
             fcntl.flock(held, fcntl.LOCK_UN)
         with open(lock, "w") as f:  # khoá lấy lại được ngay: reader không giữ gì
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                got = True
+            except OSError:
+                got = False
+        self.assertTrue(got)
 
 
 class BuildStateMerging(RepoFixture):
