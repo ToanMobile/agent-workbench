@@ -5329,6 +5329,7 @@ RUN_LOG_KEEP_LINES = 4000
 RUN_LOG_LINE_MAX = 3000
 RUN_LOG_STALE_TMP_S = 3600        # a rotation temp file older than this belongs to a dead run
 _MAIN_T0 = None                   # time.monotonic() at the start of main()
+_SHADOW_ON = False                # #476: DEVKIT_SHADOW_MAP=1 đọc ở đầu main() rồi gỡ khỏi env, để suite con (test_gate_run_log) không thấy
 _SHADOW = None                   # #476: (shadow_skip, shadow_miss) của lượt này — map test→nguồn so với cách chọn cũ; chỉ log
 _MAIN_LOAD1 = None                # #472 C: tải 1 phút lúc main() bắt đầu (runs.jsonl load1)
 # #472: worktree scratch của điểm gộp (scripts/git/integrate.py, .claude/bin/super-board-merge-gate.sh, super-board-merge-train.sh);
@@ -5704,7 +5705,7 @@ def _shadow_compare(project_dir, rules, matrix_path, covers, regression_tests, f
     Chỉ so sánh để có dữ liệu trước khi bật cách chọn mới; không đổi suite nào chạy. Bật bằng DEVKIT_SHADOW_MAP=1 (mặc định tắt:
     dòng runs.jsonl giữ nguyên bộ trường cũ).
     ponytail: opt-in, cần đặt biến ở các lượt thật để có ≥5 lượt shadow; bật mặc định khi test_gate_run_log được duyệt thêm 2 trường."""
-    if os.environ.get("DEVKIT_SHADOW_MAP") != "1":
+    if not _SHADOW_ON:
         return None
     try:
         sc = suite_cache_for(project_dir, rules, matrix_path, covers)
@@ -5719,8 +5720,9 @@ def _shadow_compare(project_dir, rules, matrix_path, covers, regression_tests, f
 
 
 def main():
-    global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1
+    global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1, _SHADOW_ON
     _MAIN_T0 = time.monotonic()
+    _SHADOW_ON = os.environ.pop("DEVKIT_SHADOW_MAP", "") == "1"
     try:
         _MAIN_LOAD1 = round(os.getloadavg()[0], 2)
     except (OSError, AttributeError):
