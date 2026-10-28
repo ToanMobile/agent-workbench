@@ -25,6 +25,8 @@ lần `git push` tay sau khi scratch đã gỡ cần gate lại. Nâng cấp ở
 import argparse
 import contextlib
 import fcntl
+import hashlib
+import json
 import os
 import shutil
 import signal
@@ -224,6 +226,47 @@ def copy_ignored(main, scratch):
         say(f"đã chép vào scratch {len(copied)} file bị ignore: {', '.join(copied[:8])}")
 
 
+def copy_approved_tests(main, scratch):
+    """Chép lời duyệt test-theo-tên của main (.claude/audit-gate/approved_tests.json) sang scratch (#481): gate đọc approved_tests.json của
+    PROJECT của nó = scratch, nên không chép thì test sửa đã duyệt ở main vẫn chặn (exit 2) và chỉ còn cờ duyệt hàng loạt. Chỉ chép mục còn
+    đúng: dạng list gắn với mtime của file duyệt, nên một test sửa SAU lúc duyệt (mtime mới hơn) bị bỏ; dạng {path: sha256} giữ mục nào nội dung
+    trong scratch còn khớp. Scratch nhận dạng {path: sha256} của nội dung scratch (gate chỉ duyệt đúng nội dung đó). Luật không đổi: file
+    chưa duyệt vẫn chặn. Lỗi chỉ được báo, gate tự chặn khi thiếu lời duyệt."""
+    src = os.path.join(main, ".claude", "audit-gate", "approved_tests.json")
+    if not os.path.isfile(src):
+        return
+    try:
+        appr_t = os.stat(src).st_mtime
+        with open(src, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        wants = {f: None for f in saved} if isinstance(saved, list) else dict(saved) if isinstance(saved, dict) else {}
+        keep = {}
+        for f, want in wants.items():
+            if not isinstance(f, str) or os.path.isabs(f) or ".." in f.split("/"):
+                continue
+            mine, theirs = os.path.join(main, f), os.path.join(scratch, f)
+            if not (os.path.isfile(mine) and os.path.isfile(theirs)):
+                continue
+            with open(theirs, "rb") as th:
+                digest = hashlib.sha256(th.read()).hexdigest()
+            if want is None:   # dạng list: duyệt có hiệu lực khi test ở main không đổi sau lúc duyệt và scratch (HEAD) cùng nội dung với main
+                with open(mine, "rb") as mh:
+                    unchanged = os.stat(mine).st_mtime <= appr_t and hashlib.sha256(mh.read()).hexdigest() == digest
+            else:
+                unchanged = isinstance(want, str) and want.strip().lower() == digest
+            if unchanged:
+                keep[f] = digest
+        if not keep:
+            return
+        dst = os.path.join(scratch, ".claude", "audit-gate")
+        os.makedirs(dst, exist_ok=True)
+        with open(os.path.join(dst, "approved_tests.json"), "w", encoding="utf-8") as out:
+            json.dump(keep, out)
+        say(f"đã chép vào scratch lời duyệt test của {len(keep)} file: {', '.join(sorted(keep)[:8])}")
+    except (OSError, ValueError) as e:
+        say(f"không chép được lời duyệt test vào scratch: {type(e).__name__}: {e}")
+
+
 def run_gate(scratch, remote):
     """Exit code của `post-fix-gate --run-tests --full --brief --diff <origin/base>` trong scratch (124 khi quá
     DEVKIT_INTEGRATE_GATE_TIMEOUT_S). --diff: scratch tách rời không có upstream, cây sạch không --diff thì gate trả 3 (nothing to audit);
@@ -327,6 +370,7 @@ def integrate(main, base, args):
             say("scratch không có DevKit của HEAD: không gate, không push (gate trên cây thiếu kit không đại diện cho commit sẽ push)")
             return 1
         copy_ignored(main, scratch)
+        copy_approved_tests(main, scratch)
         rc = run_gate(scratch, remote)
         if rc == 4:   # hàng đợi gate toàn máy / khoá dự án bận (T0056): không phải đỏ, đợt giữ nguyên cho lượt sau
             say("gate bận (busy, exit 4): chưa kiểm được gì, không push; lượt integrate sau thử lại")
