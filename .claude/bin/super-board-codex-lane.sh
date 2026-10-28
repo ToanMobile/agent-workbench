@@ -76,11 +76,11 @@ if not explicit and config.get('usage_fallback', 'none') != 'codex':
     fail(f'Codex fallback refused: usage_fallback is not "codex" in {config_path}; pass --codex for an explicit Codex run.', 78)
 
 column = card['status']
-# #531: only a claude-p board whose merge queue is on has a runner that drains the queue, and an explicit `run --codex` never has one (codex-wave); elsewhere (explicit, workflow, codex, queue off, SB_MERGE_QUEUE=0)
-# the Codex reviewer merges through the gate itself and `codex exec` runs with SB_MERGE_QUEUE=0 so the gate does not answer 13.
-queue_env = os.environ.get('SB_MERGE_QUEUE', '')
-queue_on = (not explicit and queue_env != '0' and config.get('worker_backend', 'workflow') == 'claude-p'
-            and (queue_env == '1' or (config.get('merge_queue') or {}).get('enabled') is True))
+# #531: only the review lane merges, and nothing drains the merge queue for an explicit `run --codex` (codex-wave), so the Codex reviewer
+# merges through the gate itself and `codex exec` runs with SB_MERGE_QUEUE=0 there (else the gate answers 13). A build/qa lane (the usage
+# fallback on a claude-p board) never merges: it keeps the board's SB_MERGE_QUEUE, so a queue-enabled board stays queue-enabled.
+def lane_env(lane, environ):
+    return {**environ, 'SB_MERGE_QUEUE': '0'} if lane == 'review' else dict(environ)
 def result(status, detail):
     print(json.dumps({'status': status, 'column': column, 'detail': detail}))
 
@@ -144,16 +144,12 @@ if args.lane == 'build':
 elif args.lane == 'qa' and card['status'] == 'Ready':
     prompt += 'This qa-labelled Ready card skips Building: move Ready → QA and create the issue branch from the base; test the existing product per run.md qa cards.\n'
 elif args.lane == 'review':
-    # Queue chỉ có người rút ở board claude-p đã bật hàng (queue_on, định nghĩa phía trên); còn lại lane Codex tự merge qua gate và
-    # `codex exec` chạy với SB_MERGE_QUEUE=0 bên dưới để gate không trả 13 (audit Antigravity 26/10 #1).
+    # Lane Codex (`run --codex`) không có ai rút merge queue (chỉ runner claude-p gọi merge-queue.sh mỗi tick): luôn tự merge qua gate,
+    # và `codex exec` chạy với SB_MERGE_QUEUE=0 (lane_env) để gate không trả 13 (audit Antigravity 26/10 #1).
     prompt += '''The owner explicitly chose run --codex: you may review and own the merge. First load the latest <!-- super-review:report -->; grade prior R-ids fixed/not fixed/no longer applies, bounce any not fixed and edit the same report in place. Form hypotheses from the issue AC and diff before reading the Builder narrative.
 Rerun the Tester's tests. When truth_gate triggers, apply super-review's fixed Adversarial mode brief inline in two distinct passes (code-grounder and historian); collect evidence and aggregate confidence against truth_threshold. Over-engineering is Should fix, never Blocker alone and never lowers confidence. Missing evidence fails closed.
 '''
-    if queue_on:
-        prompt += '''Merge queue is on for this board (its claude-p runner drains it): never call the merge gate. After your review pass, post `approved-head:<sha40>` for the exact head you reviewed as its own PR comment, run `gh pr ready <PR>`, add the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, return status=advanced with column Review and detail starting exactly `queued PR #<P>`, and leave the card in Review: the queue merges it and moves Done only when every sb:ac line is ticked. Follow run.md Merge protocol step 5.
-'''
-    else:
-        prompt += '''Merge ONLY through the unchanged .claude/bin/super-board-merge-gate.sh, pinning the exact head you reviewed at review pass using --expect-head "$HEAD" --config <config> --pr <N> --subject <title> --body-file <msg.md>. Never run bare gh pr merge or bypass the gate. Follow run.md Merge protocol and route every gate exit exactly: 2/5 rebase pass, 11 back to Ready with loop:rebuild-N and a [builder] thread quoting the verify line (never a rebase pass), 3 Blocked, 4 stay Review, 6 fresh review, 7/8 human gate with pinned approval-request; 9 verification-readiness means halt and preserve card/worktree/approval/claims until config repair and explicit restart, never a Build bounce or rebase retry. Respect human_approves_merge and merge_policy. Confirm MERGED <sha>, fetch base and prove merge-base --is-ancestor <sha> origin/<base> before closing issue or moving Done. If the gate printed `ac-open: #N` (merged with AC lines still unproven), do NOT close the issue or move it to Done: the gate already labelled it ac-open and moved the card to Ready; report status advanced with column Ready and put the gate's `ac-open: #N` line in detail (without it a Ready result counts as failed).
+    prompt += '''Merge ONLY through the unchanged .claude/bin/super-board-merge-gate.sh, pinning the exact head you reviewed at review pass using --expect-head "$HEAD" --config <config> --pr <N> --subject <title> --body-file <msg.md>. Never run bare gh pr merge or bypass the gate. Follow run.md Merge protocol and route every gate exit exactly: 2/5 rebase pass, 11 back to Ready with loop:rebuild-N and a [builder] thread quoting the verify line (never a rebase pass), 3 Blocked, 4 stay Review, 6 fresh review, 7/8 human gate with pinned approval-request; 9 verification-readiness means halt and preserve card/worktree/approval/claims until config repair and explicit restart, never a Build bounce or rebase retry. Respect human_approves_merge and merge_policy. Confirm MERGED <sha>, fetch base and prove merge-base --is-ancestor <sha> origin/<base> before closing issue or moving Done. If the gate printed `ac-open: #N` (merged with AC lines still unproven), do NOT close the issue or move it to Done: the gate already labelled it ac-open and moved the card to Ready; report status advanced with column Ready and put the gate's `ac-open: #N` line in detail (without it a Ready result counts as failed).
 '''
 
 counts = {key: {'type': 'integer'} for key in ['fixed', 'notFixed', 'noLongerApplies']}
@@ -211,7 +207,7 @@ with tempfile.TemporaryDirectory(prefix='super-board-codex-') as temporary:
     if model and model.strip():
         command[2:2] = ['-m', model]
     try:
-        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=sys.stderr, text=True, env={**os.environ, 'SB_MERGE_QUEUE': os.environ.get('SB_MERGE_QUEUE', '') if queue_on else '0'})
+        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=sys.stderr, text=True, env=lane_env(args.lane, os.environ))
         child.communicate(prompt)
         require_verification_ready()
         if child.returncode:

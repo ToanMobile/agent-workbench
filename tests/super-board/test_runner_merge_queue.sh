@@ -226,46 +226,47 @@ awk '/^  gh_checkpoint$/{g=1} g&&/merge_queue_due/{m=1} g&&/record_cycle_progres
 
 # ── 9. super-board-codex-lane.sh (lane review): queue bật thì prompt có bước vào hàng thay bước merge gate; tắt thì giữ bước cũ.
 # Cách chạy: ast tách đúng khối `if args.lane == 'build': … elif args.lane == 'review'` rồi exec với os.environ/config giả.
-codex_prompt() {   # codex_prompt <SB_MERGE_QUEUE> <config-json> [explicit True|False] (queue chỉ bật khi config claude-p và KHÔNG --codex)
-  python3 - "${SB_TEST_CODEX_LANE:-$ROOT/.claude/bin/super-board-codex-lane.sh}" "$1" "$2" "${3:-True}" <<'PY'
+codex_prompt() {   # codex_prompt <SB_MERGE_QUEUE> <config-json> (queue chỉ bật khi config có worker_backend claude-p, vòng sửa 1 R3)
+  python3 - "${SB_TEST_CODEX_LANE:-$ROOT/.claude/bin/super-board-codex-lane.sh}" "$1" "$2" <<'PY'
 import ast, json, sys, types
 src = open(sys.argv[1], encoding='utf-8').read()
 tree = ast.parse(src.split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0])
 node = next(n for n in tree.body if isinstance(n, ast.If) and "args.lane == 'build'" in ast.unparse(n.test))
 env = {} if sys.argv[2] == '' else {'SB_MERGE_QUEUE': sys.argv[2]}
 ns = {'os': types.SimpleNamespace(environ=env), 'args': types.SimpleNamespace(lane='review'),
-      'card': {'status': 'Review'}, 'config': json.loads(sys.argv[3]), 'explicit': sys.argv[4] == 'True', 'prompt': ''}
-pre = [n for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id in ('queue_env', 'queue_on')]
-exec(compile(ast.Module(body=pre + [node], type_ignores=[]), 'codex-lane', 'exec'), ns)
+      'card': {'status': 'Review'}, 'config': json.loads(sys.argv[3]), 'prompt': ''}
+exec(compile(ast.Module(body=[node], type_ignores=[]), 'codex-lane', 'exec'), ns)
 print(ns['prompt'])
 PY
 }
-# #531 (sửa audit Antigravity #1, 26/10): lane Codex vào hàng khi board claude-p đã bật hàng (có runner rút), ngoài ra đi merge gate cũ
-# (workflow, codex, hàng tắt, SB_MERGE_QUEUE=0) và `codex exec` chạy với SB_MERGE_QUEUE=0 để gate không trả 13 cho reviewer Codex.
-want_queue() {   # want_queue <SB_MERGE_QUEUE> <config> <yes|no> [explicit True|False]
-  local p; p=$(codex_prompt "$1" "$2" "${4:-True}")
-  if [ "$3" = yes ]; then
-    printf '%s' "$p" | grep -q 'add the label `merge-queue`' && ! printf '%s' "$p" | grep -q 'Merge ONLY through the unchanged' \
-      && ok "codex lane (SB_MERGE_QUEUE='$1', $2): enters the queue" || fail "codex lane did not enter the queue for SB_MERGE_QUEUE='$1' $2"
-  else
-    printf '%s' "$p" | grep -q 'Merge ONLY through the unchanged' && ! printf '%s' "$p" | grep -q 'add the label `merge-queue`' \
-      && ok "codex lane (SB_MERGE_QUEUE='$1', $2): old merge gate step, never the queue" || fail "codex lane entered the queue for SB_MERGE_QUEUE='$1' $2"
-  fi
-}
-# R1 (#531 vòng 1): `run --codex` (explicit) đi codex-wave, không ai rút hàng: luôn merge gate; hàng chỉ cho lane fallback (không explicit).
-want_queue ''  '{"worker_backend":"claude-p","merge_queue":{"enabled":true}}' no
-want_queue 1   '{"worker_backend":"claude-p","merge_queue":{"enabled":false}}' no
-want_queue ''  '{"worker_backend":"claude-p","merge_queue":{"enabled":true}}' yes False
-want_queue 1   '{"worker_backend":"claude-p","merge_queue":{"enabled":false}}' yes False
-want_queue 0   '{"worker_backend":"claude-p","merge_queue":{"enabled":true}}' no
-want_queue ''  '{"worker_backend":"claude-p","merge_queue":{"enabled":false}}' no
+# Audit lại Antigravity #1 (26/10): lane Codex (đường `run --codex`, codex-wave) không có ai rút hàng — chỉ runner claude-p gọi
+# merge-queue.sh mỗi tick. Lane Codex LUÔN đi đường merge gate cũ, kể cả config claude-p + enabled + SB_MERGE_QUEUE=1, và phóng
+# `codex exec` với SB_MERGE_QUEUE=0 để gate không trả 13 cho reviewer Codex.
 for sw in 1 ''; do
-  for cfg in '{"merge_queue":{"enabled":true}}' '{"worker_backend":"codex","merge_queue":{"enabled":true}}' '{"worker_backend":"workflow"}'; do
-    want_queue "$sw" "$cfg" no
+  for cfg in '{"worker_backend":"claude-p","merge_queue":{"enabled":true}}' '{"merge_queue":{"enabled":true}}' '{"worker_backend":"codex","merge_queue":{"enabled":true}}' '{"worker_backend":"workflow"}'; do
+    p=$(codex_prompt "$sw" "$cfg")
+    { printf '%s' "$p" | grep -q 'Merge ONLY through the unchanged' && ! printf '%s' "$p" | grep -q 'add-label merge-queue'; } \
+      && ok "codex lane (SB_MERGE_QUEUE='$sw', $cfg): old merge gate step, never the queue" || fail "codex lane entered the queue for SB_MERGE_QUEUE='$sw' $cfg"
   done
 done
-grep -qE "Popen\(command,.*env=.*SB_MERGE_QUEUE.*if queue_on else '0'" "${SB_TEST_CODEX_LANE:-$ROOT/.claude/bin/super-board-codex-lane.sh}" \
-  && ok "codex exec is launched with SB_MERGE_QUEUE=0 unless the queue is on (structure check: the gate lets the Codex reviewer merge)" \
-  || fail "codex exec not launched with SB_MERGE_QUEUE=0 when the queue is off: the gate would answer exit 13 to the Codex reviewer"
+# #531 AC1: the env codex exec gets, from the production lane_env (not a copy): review keeps SB_MERGE_QUEUE=0 (it merges via the gate and nothing
+# drains the queue for it); build/qa (usage fallback on a queue-enabled claude-p board) pass the board's value through.
+lane_env_of() {   # lane_env_of <lane> <SB_MERGE_QUEUE or ''>
+  python3 - "${SB_TEST_CODEX_LANE:-$ROOT/.claude/bin/super-board-codex-lane.sh}" "$1" "$2" <<'PY'
+import ast, sys
+src = open(sys.argv[1], encoding='utf-8').read()
+tree = ast.parse(src.split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0])
+fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'lane_env')
+ns = {}
+exec(compile(ast.Module(body=[fn], type_ignores=[]), 'codex-lane', 'exec'), ns)
+print(ns['lane_env'](sys.argv[2], {'SB_MERGE_QUEUE': sys.argv[3]} if sys.argv[3] else {}).get('SB_MERGE_QUEUE', 'unset'))
+PY
+}
+for pair in 'review 1:0' 'review :0' 'build 1:1' 'qa 1:1' 'build :unset'; do
+  lane=${pair%% *}; rest=${pair#* }; sw=${rest%%:*}; want=${rest##*:}
+  got=$(lane_env_of "$lane" "$sw")
+  [ "$got" = "$want" ] && ok "codex exec env ($lane, SB_MERGE_QUEUE='$sw'): SB_MERGE_QUEUE=$got" \
+    || fail "codex exec env ($lane, SB_MERGE_QUEUE='$sw'): SB_MERGE_QUEUE=$got, want $want"
+done
 
 [ "$FAILS" -eq 0 ] && { echo "all passed"; exit 0; } || { echo "$FAILS failed"; exit 1; }

@@ -211,6 +211,12 @@ run_q
 has_w "issue-close 17" || has_w "card move 17 Done" && fail "#531: card #17 with an unticked AC was closed / moved to Done" || ok "#531: unticked sb:ac line keeps the card out of Done"
 has_w "issue-labels 17 ac-open" && has_w "card move 17 Ready" && ok "#531: card #17 labelled ac-open and moved to Ready" || fail "#531: card #17 not routed to ac-open/Ready: $(cat "$F/writes")"
 has_w "issue-close 18" && has_w "card move 18 Done" && ok "#531: fully ticked sb:ac still goes Done" || fail "#531: ticked card #18 not Done: $(cat "$F/writes")"
+# #531 R4: card_move fails after an unticked merge: the ac-open label must NOT be written (a retry that sees it would skip card_move for good).
+reset; cfg true 6; pr 9 issue-19-i 30; approve 9 OWNER "$(sha 9)"; issue 19
+printf '<!-- sb:ac -->\n- [ ] still open\n<!-- /sb:ac -->\n' > "$F/body-9.md"
+printf '%s\n' "$(sha 9 c)" > "$F/merged-9"; printf 'train-result: 9 merged\n' > "$F/train.out"
+echo 1 > "$F/card.rc"; run_q; rm -f "$F/card.rc"
+has_w "card move 19 Ready" && ! has_w "issue-labels 19 ac-open" && ok "#531 R4: card move failed, ac-open label not written (retry still runs card_move)" || fail "#531 R4: label written before a failed card move: $(cat "$F/writes")"
 
 
 # ── 3. --if-due.
