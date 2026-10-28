@@ -108,7 +108,8 @@ DEFAULT_ALWAYS_HUMAN = {
 }
 # #605: xoá các file này chỉ người duyệt (luật chủ repo 28/10). `**/` để khớp cả file trong thư mục con.
 DEFAULT_PROTECTED_PATHS = [
-    "**/.env*", "**/*.keystore", "**/*.jks", ".agents/regression_matrix.active.json", ".agents/local/**",
+    "**/.env*", "**/*.keystore", "**/*.jks", ".agents/regression_matrix.active.json",
+    ".agents/local/memory/**", ".agents/local/rules/**",
 ]
 DEFAULT_MIGRATION_GLOBS = [
     "supabase/migrations/**", "prisma/migrations/**", "drizzle/**",

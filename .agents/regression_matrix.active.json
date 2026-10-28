@@ -1959,6 +1959,27 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "description": "Lane C của #605: rule matrix cho test mới; lane gộp matrix nối vào CUỐI .agents/regression_matrix.active.json.",
+      "rules": [
+        {
+          "component": "devkit-guard-protected-delete",
+          "watch_files": [
+            "universal-agent-devkit/hooks/block-dangerous-git.sh",
+            "universal-agent-devkit/hooks/shell_norm.py",
+            "universal-agent-devkit/tests/gates/test_guard_protected_delete.sh"
+          ],
+          "mandatory_regression_tests": [
+            {
+              "id": "REG-DK-GUARD-PROTECTED-DELETE-01",
+              "name": "git guard chỉ hỏi người khi: force push (-f/--force/--force-with-lease/+ref), xoá ref remote (push --delete/-d/:ref/--mirror/--prune), xoá file quan trọng (rm/unlink/git rm/find -delete theo protected_delete mặc định + .antigravity-pm.json); xoá file thường vẫn qua (#605)",
+              "command": "bash universal-agent-devkit/tests/gates/test_guard_protected_delete.sh",
+              "parallel_safe": true
+            }
+          ]
+        }
+      ]
     }
   ]
 }

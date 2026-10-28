@@ -17,9 +17,9 @@ unset DEVKIT_ALLOW_BRANCH
 P="$TMP/proj"
 mkdir -p "$P"
 git -C "$P" init -q -b feat .
-mkdir -p "$P/app" "$P/.agents/local/stage" "$P/node_modules/x" "$P/build" "$P/.claude/worktrees/w1" "$P/src"
+mkdir -p "$P/app" "$P/.agents/local/stage" "$P/.agents/local/memory" "$P/.agents/local/rules" "$P/node_modules/x" "$P/build" "$P/.claude/worktrees/w1" "$P/src"
 touch "$P/.env" "$P/.env.local" "$P/app/google-services.json" "$P/release.keystore" "$P/upload.jks" \
-      "$P/.agents/local/stage/a.txt" "$P/.agents/regression_matrix.active.json" "$P/build/x.log" "$P/src/a.kt"
+      "$P/.agents/local/stage/a.txt" "$P/.agents/local/memory/m.md" "$P/.agents/local/rules/00.md" "$P/.agents/regression_matrix.active.json" "$P/build/x.log" "$P/src/a.kt"
 echo "gitdir: $P/.git/worktrees/w1" > "$P/.claude/worktrees/w1/.git"
 
 # check <want rc> <reason fragment for a block> <command> [cwd]
@@ -65,7 +65,8 @@ check 2 'file quan trọng' 'rm release.keystore'
 check 2 'file quan trọng' 'unlink upload.jks'
 check 2 'file quan trọng' "rm \"$P/.env\""
 check 2 'file quan trọng' 'rm .agents/regression_matrix.active.json'
-check 2 'file quan trọng' 'rm -rf .agents/local/stage'
+check 2 'file quan trọng' 'rm -rf .agents/local/memory'
+check 2 'file quan trọng' 'rm .agents/local/rules/00.md'
 check 2 'file quan trọng' 'rm -rf .agents/local'
 check 2 'file quan trọng' 'rm -rf .agents'
 check 2 'file quan trọng' 'rm -rf .agents/*'
@@ -80,14 +81,16 @@ check 2 'file quan trọng' 'git rm .env'
 check 2 'file quan trọng' 'git rm -r .agents'
 check 2 'file quan trọng' 'find . -name .env -delete'
 check 2 'file quan trọng' 'find . -name "*.jks" -exec rm {} \;'
-check 2 'file quan trọng' 'find .agents/local -type f -delete'
+check 2 'file quan trọng' 'find .agents/local/memory -type f -delete'
 check 2 'file quan trọng' 'find . -delete'
 check 2 'file quan trọng' 'find . -path "./.git/*" -delete'
 check 2 'file quan trọng' 'find build -name ".env*" -delete'
-check 2 'file quan trọng' 'rm -rf ./.agents/local/'
+check 2 'file quan trọng' 'rm -rf ./.agents/local/memory/'
 
 echo "C. xoá file thường: vẫn qua, không hỏi"
 check 0 '' 'rm -rf node_modules'
+check 0 '' 'rm -rf .agents/local/stage'
+check 0 '' 'rm .agents/local/stage/a.txt'
 check 0 '' 'rm build/x.log'
 check 0 '' 'rm -f src/a.kt'
 check 0 '' 'rm -rf .claude/worktrees/w1'
@@ -118,8 +121,8 @@ echo "E. gốc là git toplevel của cwd (worktree lồng trong project)"
 W="$P/.claude/worktrees/w2"
 mkdir -p "$W"
 git -C "$W" init -q -b feat .
-mkdir -p "$W/.agents/local"; touch "$W/.env" "$W/.agents/local/h.md"
-check 2 'file quan trọng' 'rm -rf .agents/local' "$W"
+mkdir -p "$W/.agents/local/memory"; touch "$W/.env" "$W/.agents/local/memory/h.md"
+check 2 'file quan trọng' 'rm -rf .agents/local/memory' "$W"
 check 2 'file quan trọng' 'rm -rf .git' "$W"
 check 2 'file quan trọng' 'rm .env' "$W"
 check 0 '' 'rm -rf build' "$W"

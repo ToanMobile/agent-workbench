@@ -818,7 +818,8 @@ def inline_codes(rest):
 # theo thư mục cha); toán hạng chứa $VAR / $( ) không biết trước giá trị nên cho qua. Nâng cấp khi một ca thật lọt qua.
 # tests/gates/test_guard_protected_delete.sh
 PROTECTED_DELETE_DEFAULT = (".env*", "*.keystore", "*.jks", "google-services.json",
-                            ".agents/regression_matrix.active.json", ".agents/local/**", ".git/**")
+                            ".agents/regression_matrix.active.json", ".agents/local/memory/**",
+                            ".agents/local/rules/**", ".git/**")   # #605: stage/handoff trong .agents/local tự dọn được
 PROTECTED_DELETE_MSG = "xoá file quan trọng"
 _PD_TOP, _PD_PATS = {}, {}
 
