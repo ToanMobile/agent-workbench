@@ -86,6 +86,8 @@ R="$(mark "$(cm "$DEC1")" "đưa secret API vào kho khoá")"
 case "$R" in *"needs-you added"*) ok "mark: ca DỪNG (secret) vẫn gắn needs-you" ;; *) fail "ca DỪNG secret bị bỏ qua: $R" ;; esac
 R="$(mark "$(cm "[builder] [decision] luật 1")" "xác nhận mẫu đo thay thế đủ chứng minh cơ chế")"
 case "$R" in *"needs-you added"*) ok "mark: builder tự đăng [decision] bị bỏ qua, blocker vẫn gắn" ;; *) fail "builder tự gỡ blocker của mình: $R" ;; esac
+R="$(mark "$(cm "$DEC1"),$(cm "<!-- super-board:needs-you -->\n🙋 Cần bạn: blocker mới")" "xác nhận mẫu đo thay thế đủ chứng minh cơ chế")"
+case "$R" in *"needs-you added"*) ok "mark: needs-you mới hơn [decision] thì gắn lại" ;; *) fail "mark bỏ qua blocker mới hơn decision: $R" ;; esac
 R="$(mark "" "xác nhận mẫu đo thay thế đủ chứng minh cơ chế")"
 case "$R" in *"needs-you added"*) ok "mark: không có [decision] thì gắn như cũ" ;; *) fail "mark thường hỏng: $R" ;; esac
 
