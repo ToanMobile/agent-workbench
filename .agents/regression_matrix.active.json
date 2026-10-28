@@ -1979,6 +1979,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-ac-short-heading",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-ac-check.py",
+        "tests/super-board/test_preflight_ac_short_heading.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AC-SHORT-HEADING-01",
+          "name": "#616/#618: heading `## AC` là mục AC ở preflight (không hold unclear), luật kéo Backlog và ac-check; `## ACL` không phải",
+          "command": "bash tests/super-board/test_preflight_ac_short_heading.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
