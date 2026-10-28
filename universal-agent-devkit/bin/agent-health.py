@@ -276,6 +276,22 @@ def registered_hook_scripts(settings) -> list:
     return paths
 
 
+def kit_files_vs_head(score: Score):
+    """A kit file the git of the kit tracks must equal the kit's HEAD: a third-party installer writing through a symlink
+    (.claude/hooks/guard-protected-push.py, 2026-10-24, #462) or a deleted file leaves the kit running old code with no error.
+    Read-only: the restore command is printed, never run. No git or no HEAD in the kit: nothing to compare, no verdict."""
+    res = subprocess.run(["git", "-C", str(BASE_DIR), "diff", "--relative", "--name-only", "-z", "HEAD", "--", "."],
+                         capture_output=True, text=True, errors="surrogateescape")
+    if res.returncode != 0:
+        return
+    changed = sorted(f for f in res.stdout.split("\0") if f)
+    first = changed[:5]
+    restore = f"git -C {BASE_DIR} checkout -- {' '.join(first)}"
+    score.check(not changed, tr("Mọi file kit đã theo dõi đều khớp HEAD của kit", "Every tracked kit file matches the kit's HEAD"),
+                tr(f"{len(changed)} kit file khác HEAD của kit (bị ghi đè hoặc bị xoá): {first}. Khôi phục (chỉ in, không tự chạy): {restore}",
+                   f"{len(changed)} kit files differ from the kit's HEAD (overwritten or deleted): {first}. Restore (printed, not run): {restore}"))
+
+
 def project_wiring(target: Path, score: Score):
     """What the project actually runs with — the DevKit's own dirs can be fine while the
     project's hooks are missing, its imports dangle or the gate distrusts its matrix."""
@@ -331,6 +347,7 @@ def project_wiring(target: Path, score: Score):
     score.check(not dead, tr("Không có symlink đã commit trỏ vào đích không tồn tại", "No tracked symlink points at a missing target"),
                 tr(f"{len(dead)} symlink đã commit trỏ vào đích không tồn tại (clone hoặc CI sẽ hỏng): {dead[:5]}",
                    f"{len(dead)} tracked symlinks point at a missing target (a clone or CI breaks): {dead[:5]}"), warn_only=True)
+    kit_files_vs_head(score)
     instruction_files(target, score)
     git_gate_wiring(target, score)
     res = subprocess.run([sys.executable, "-c", MATRIX_TRUST_PY, str(BASE_DIR / "bin" / "post-fix-gate.py")],
