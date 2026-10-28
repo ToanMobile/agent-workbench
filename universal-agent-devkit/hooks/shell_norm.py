@@ -379,7 +379,7 @@ _ANSI_NUM = re.compile(r"\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa
 
 def _ansi_num(esc):
     """The text of one \\xHH / \\NNN / \\uHHHH / \\UHHHHHHHH escape of a $'…' as the shell decodes it, or None when it is another escape (kept as typed).
-    A NUL ends the word in bash, so it is dropped; a quote becomes '\\'' (close, literal quote, reopen) so the plain '…' around it stays paired (#526)."""
+    A NUL ends the word in bash: it returns a lone NUL for the caller (ansi_c_to_single), which drops the rest of the body (#618); a quote becomes '\\'' (close, literal quote, reopen) so the plain '…' around it stays paired (#526)."""
     m = _ANSI_NUM.fullmatch(esc)
     if not m:
         return None
@@ -387,7 +387,9 @@ def _ansi_num(esc):
     code = int(hexa or u4 or u8 or octal, 16 if octal is None else 8)
     if octal is not None:
         code &= 0xFF
-    if code == 0 or code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+    if code == 0:
+        return "\0"
+    if code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
         return ""
     ch = chr(code)
     return "'\\''" if ch == "'" else ch
@@ -412,7 +414,13 @@ def ansi_c_to_single(text):
                 if text[j] == "\\" and j + 1 < n:
                     m = _ANSI_NUM.match(text, j)
                     if m:
-                        body.append(_ansi_num(m.group(0))); j = m.end(); continue
+                        dec = _ansi_num(m.group(0))
+                        if dec == "\0":   # bash ends the word at a NUL: drop the rest of the body up to the closing quote (#618)
+                            j = m.end()
+                            while j < n and text[j] != "'":
+                                j += 2 if text[j] == "\\" and j + 1 < n else 1
+                            break
+                        body.append(dec); j = m.end(); continue
                     body.append("'\\''" if text[j + 1] == "'" else text[j:j + 2]); j += 2
                 else:
                     body.append(text[j]); j += 1
