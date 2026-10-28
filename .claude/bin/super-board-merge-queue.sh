@@ -12,7 +12,7 @@
 #   --if-due: chỉ gom khi một điều xảy ra: số PR ≥ trần đợt; PR cũ nhất (mốc sự kiện `labeled` trong timeline) chờ ≥ max_wait_min;
 #     hoặc máy rảnh (không worker board nào còn sống, merge.lock của gate không còn chủ, không post-fix-gate nào giữ test_run.lock).
 #   Trần đợt = merge_queue.batch_max (mặc định 6); đợt trước có PR đỏ thì max(1, batch_max/2) (trạng thái trong merge-queue.state cạnh khoá;
-#     train hỏng không in train-result nào thì giữ nguyên). Mốc gắn nhãn nhớ trong merge-queue.labeled (<PR> <head> <epoch>).
+#     train hỏng không in train-result nào thì giữ nguyên). Mốc gắn nhãn nhớ trong merge-queue.labeled (<PR> <head> <epoch> <nhánh>; nhánh cho Agent Office / status ghép PR với thẻ, #562).
 #   --dry-run: in đợt sẽ gửi và lý do rồi thoát trước khối train; reject chỉ in (tests/super-board/test_merge_queue.sh ca 8 kiểm điều này).
 #
 # Route mỗi `train-result: <PR> <kết quả>` (bước ghi nhãn đi SAU cùng: chết giữa chừng thì lượt sau route lại, không mất việc).
@@ -386,7 +386,7 @@ load_rows() {
     out="${out}${at} ${n} ${head} ${ref}"$'\n'
   done < <(printf '%s\n' "$CANDS")
   ROWS=$(printf '%s' "$out" | sort -n -k1,1 -k2,2)
-  printf '%s\n' "$ROWS" | awk 'NF {print $2, $3, $1}' > "$LABELED.tmp" && mv -f "$LABELED.tmp" "$LABELED"
+  printf '%s\n' "$ROWS" | awk 'NF {print $2, $3, $1, $4}' > "$LABELED.tmp" && mv -f "$LABELED.tmp" "$LABELED"
 }
 
 LAST_RED=false
