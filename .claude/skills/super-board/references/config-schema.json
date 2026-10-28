@@ -116,6 +116,15 @@
   // and nothing lands. See references/run-workflow.md → "Mid-run permission prompts".
   "human_approves_merge": false,
 
+  // Ủy quyền thường trực của chủ (#516, references/decision-policy.md): comment `[orchestrator] [decision]` hợp lệ
+  // (marker orchestrator, hoặc comment tay của chủ không marker) coi blocker 🙋/❓ là đã xử lý: deps.sh, needs-you.py mark và
+  // qa-report.py (merge gate) không dựng lại blocker. DANH SÁCH DỪNG vẫn gắn needs-you. Vắng khối = bật.
+  "decision_policy": {
+    "enabled": true,                                   // false: bộ đọc tắt, mọi comment [decision] bị bỏ qua
+    "owner": "ToanMobile",                             // login của chủ (ngoài authorAssociation OWNER)
+    "marker": "<!-- sb-decision:orchestrator -->"      // marker riêng của lane orchestrator
+  },
+
   // Who merges what (v2.6.0). Evaluated by super-board-merge-gate.sh (via
   // super-board-merge-policy.py) on every merge; `human_approves_merge: true`
   // still overrides it and makes the Reviewer stop before the gate.

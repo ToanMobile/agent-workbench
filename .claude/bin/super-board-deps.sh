@@ -90,7 +90,7 @@ else
       repository(owner:$owner,name:$repo){
         issues(states:OPEN,first:100,after:$endCursor){
           pageInfo{ hasNextPage endCursor }
-          nodes{ number title body state labels(first:30){ nodes{ name } } comments(last:8){ nodes{ body } } }
+          nodes{ number title body state labels(first:30){ nodes{ name } } comments(last:8){ nodes{ body authorAssociation author{ login } } } }
         }
       }
     }' -F owner="${REPO%%/*}" -F repo="${REPO##*/}") || exit $?
@@ -99,7 +99,8 @@ fi
 
 APPROVAL_REPO="$REPO"
 [ -z "$FROM" ] || APPROVAL_REPO=""
-echo "$ISSUES" | jq --arg only "$ONLY" '
+# #516: bộ đọc [decision] dùng chung gắn decisionValid lên từng comment; jq chỉ đọc cờ đó, không tự đoán lại luật.
+echo "$ISSUES" | python3 "$HERE/super-board-decision.py" annotate ${CONFIG:+--config "$CONFIG"} | jq --arg only "$ONLY" '
   # ---- the parser ---------------------------------------------------------
   # Everything after the LAST "## Blocked by" heading, stopping at the next
   # "## " heading so a following section is never swallowed.
@@ -156,7 +157,11 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
   # Index of the newest 🙋 Block comment, or null.
   def needs_at: ( bodies | to_entries
                   | map(select(.value | test("Reason tag:[^\n]*🙋"))) | last | .key ) // null;
-  def needs_you: (label_names | index("needs-you") != null) or (needs_at != null);
+  # #516: index of the newest valid `[orchestrator] [decision]` (super-board-decision.py), or null.
+  def decision_at: ( [ (.comments.nodes // .comments // []) | to_entries[] | select(.value.decisionValid == true) | .key ] | last ) // null;
+  # The label is the live signal; an old 🙋 comment only counts while no valid decision is newer than it.
+  def needs_you: (label_names | index("needs-you") != null)
+                 or (needs_at != null and (decision_at == null or decision_at < needs_at));
 
 
   ( [ .[] | .number ] ) as $open

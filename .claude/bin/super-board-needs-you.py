@@ -30,6 +30,7 @@ Exit: 0 xong · 1 một lệnh gh lỗi · 2 sai cú pháp (argparse) · 64 text
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -93,6 +94,15 @@ GENUINE_HUMAN_RE = re.compile(
     re.I,
 )
 TIMEOUT = 60
+
+
+def _decision_reader():
+    """Bộ đọc [decision] dùng chung (#516); tên file có gạch ngang nên nạp bằng importlib."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "super-board-decision.py")
+    spec = importlib.util.spec_from_file_location("sb_decision", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 PROJECT_QUERY = """query($owner:String!,$number:Int!){
   repositoryOwner(login:$owner){
@@ -197,9 +207,15 @@ def read_issue(repo, issue):
 SECTION_LINE = re.compile(r"(^##[ \t]+Cần người[ \t]*\r?\n(?:(?!##[ \t])[^\r\n]*\r?\n)*?)🙋 Cần bạn:", re.M)
 
 
-def mark(repo, issue, action, nxt, dry):
+def mark(repo, issue, action, nxt, dry, config=None):
     done = [f"label {ensure_label(repo, dry)}"]
     labels, comments, _ = read_issue(repo, issue)
+    # #516: một [decision] hợp lệ mới hơn comment needs-you gần nhất đã xử lý blocker này, trừ DANH SÁCH DỪNG của chủ.
+    dr = _decision_reader()
+    at = dr.newest_valid_index(comments, dr.load_policy(config))
+    last_mark = max((i for i, c in enumerate(comments) if (c.get("body") or "").startswith(MARKER)), default=-1)
+    if at > last_mark and not dr.is_stop(action):
+        return done + ["skipped: [decision] hợp lệ mới hơn đã xử lý blocker, không gắn needs-you"]
     if LABEL not in labels:
         if not dry:
             gh("api", f"repos/{repo}/issues/{issue}/labels", "-f", f"labels[]={LABEL}")
@@ -306,6 +322,7 @@ def main():
         if name == "mark":
             p.add_argument("--action", required=True, help="exactly what the person must do")
             p.add_argument("--next", default=DEFAULT_NEXT, help="what to do once it is done")
+            p.add_argument("--config", help="super-board config (decision_policy)")
         p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("board")
     p.add_argument("--owner", required=True)
@@ -324,7 +341,7 @@ def main():
         return 64
     try:
         if args.cmd == "mark":
-            done, where = mark(args.repo, args.issue, action, nxt, args.dry_run), f"{args.repo}#{args.issue}"
+            done, where = mark(args.repo, args.issue, action, nxt, args.dry_run, args.config), f"{args.repo}#{args.issue}"
         elif args.cmd == "unmark":
             done, where = unmark(args.repo, args.issue, args.dry_run), f"{args.repo}#{args.issue}"
         elif args.cmd == "label":

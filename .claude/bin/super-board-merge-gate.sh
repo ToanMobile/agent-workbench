@@ -368,7 +368,7 @@ python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} 
 # thẻ về Build (exit 11). Checker thoát 2 (metadata không đọc được), crash, hay thoát 1 mà không in dòng "qa-report:" nào là
 # KHÔNG quyết định được: cùng đường với policy không đọc được (exit 7, người duyệt), không phải lỗi build của thẻ.
 QA_REPORT_RC=0
-QA_REPORT_OUT=$(python3 "$HERE/super-board-qa-report.py" --meta "$META" 2>/dev/null) || QA_REPORT_RC=$?
+QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" 2>/dev/null) || QA_REPORT_RC=$?
 if [ "$QA_REPORT_RC" -ne 0 ]; then
   if [ "$QA_REPORT_RC" -eq 1 ] && printf '%s\n' "$QA_REPORT_OUT" | grep -q '^qa-report: '; then
     printf '%s\n' "$QA_REPORT_OUT"
