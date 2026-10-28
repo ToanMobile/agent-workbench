@@ -1872,6 +1872,24 @@
       ]
     },
     {
+      "component": "super-board-sweep-needs-you-529",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-wave-plan.sh",
+        "tests/super-board/test_issue529_sweep_needs_you.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SWEEP-NEEDS-YOU-529-01",
+          "name": "#529: Blocked by không bullet đọc được số; resume gỡ needs-you trước khi sang Review; denylist soi --next và từng mệnh đề; reclaim/no-op ❓ không ghi blocked-by: -; trần im lặng build/qa; tick rẻ đếm chu kỳ không tiến triển",
+          "command": "bash tests/super-board/test_issue529_sweep_needs_you.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-queue-schedule",
       "watch_files": [
         ".claude/bin/super-board-queue-schedule.sh",

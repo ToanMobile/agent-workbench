@@ -1223,17 +1223,22 @@ for ef in "$DEVKIT_ROOT"/skills/*/evals/evals.json; do
   [[ -f "$ef" ]] || continue
   REAL_EVALS_COUNT=$((REAL_EVALS_COUNT + 1))
   rel_ef="${ef#$DEVKIT_ROOT/}"
-  if VAL_OUT="$(python3 "$SKILL_EVAL_PY" validate --evals "$ef" 2>&1)"; then
+  if VAL_OUT="$(python3 -I "$SKILL_EVAL_PY" validate --evals "$ef" 2>&1)"; then
     pass "Ca 10a: Validate đạt cho $rel_ef"
   else
     fail "Ca 10a: Validate thất bại cho $rel_ef: $VAL_OUT"
   fi
 done
 
-if [[ "$REAL_EVALS_COUNT" -ge 2 ]]; then
-  pass "Ca 10b: Đủ bộ evals pilot trong skills/*/evals/evals.json ($REAL_EVALS_COUNT bộ)"
+if [[ "$REAL_EVALS_COUNT" -ge 3 ]] && [[ -f "$DEVKIT_ROOT/skills/verification-before-completion/evals/evals.json" ]] \
+  && python3 -I -c 'import json,sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    d = json.load(fh)
+sys.exit(0 if len(d.get("evals", [])) >= 3 else 1)' \
+     "$DEVKIT_ROOT/skills/verification-before-completion/evals/evals.json"; then
+  pass "Ca 10b: Đủ bộ evals pilot trong skills/*/evals/evals.json ($REAL_EVALS_COUNT bộ, gồm tdd-workflow, impeccable và verification-before-completion)"
 else
-  fail "Ca 10b: Chưa đủ bộ evals pilot (tìm thấy $REAL_EVALS_COUNT, cần >= 2: tdd-workflow và impeccable)"
+  fail "Ca 10b: Chưa đủ bộ evals pilot (tìm thấy $REAL_EVALS_COUNT, cần >= 3 gồm verification-before-completion >= 3 ca)"
 fi
 
 # Dựng các bộ evals xấu để xác minh `skill_eval.py validate` từ chối hết
@@ -1249,7 +1254,7 @@ printf '1\n' >"$BAD_SKILL_DIR/evals/a/dup.py"
 printf '2\n' >"$BAD_SKILL_DIR/evals/b/dup.py"
 ln -s "$TMP/c9.out" "$BAD_SKILL_DIR/evals/a/escape_link.py"
 
-python3 - "$SKILL_EVAL_PY" "$BAD_SKILL_DIR" >"$TMP/c10_neg.out" <<'PY'
+python3 -I - "$SKILL_EVAL_PY" "$BAD_SKILL_DIR" >"$TMP/c10_neg.out" <<'PY'
 import json, os, subprocess, sys
 
 script, sdir = sys.argv[1], sys.argv[2]
@@ -1411,7 +1416,7 @@ for name, payload in bad_cases.items():
     if not os.path.isfile(script):
         print("ERR:skill_eval.py missing")
         sys.exit(0)
-    r = subprocess.run([sys.executable, script, "validate", "--evals", p], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, "-I", script, "validate", "--evals", p], capture_output=True, text=True, timeout=30)
     if r.returncode == 0 or "Traceback" in r.stderr:
         print(f"ERR:validate failed properly rejecting {name} (rc={r.returncode})")
         sys.exit(0)
@@ -1423,6 +1428,89 @@ if [[ "$C10_NEG" == OK:* ]]; then
   pass "Ca 10c: skill_eval.py validate từ chối đầy đủ ${C10_NEG#OK:} mẫu cấu hình xấu (thiếu file, .., symlink thoát, trùng basename, sai tên/id, kiểu lạ)"
 else
   fail "Ca 10c thất bại: $C10_NEG"
+fi
+
+# Ca 10d: Kiểm chứng vòng đời fixture verification-before-completion (starter XANH giả, oracle ĐỎ thật, không lộ đáp án, không rác __pycache__)
+#         và chặn lỗi PEP 552 __pycache__/*.pyc cùng giây cùng kích thước khi grade chép đè oracle_files.
+python3 -I -B - "$SKILL_EVAL_PY" "$DEVKIT_ROOT/skills/verification-before-completion" "$TMP" >"$TMP/c10d.out" <<'PY'
+import json, os, py_compile, shutil, subprocess, sys, tempfile
+
+script, vbc_dir, tmp_root = sys.argv[1], sys.argv[2], sys.argv[3]
+evals_path = os.path.join(vbc_dir, "evals", "evals.json")
+with open(evals_path, encoding="utf-8") as fh:
+    spec = json.load(fh)
+
+# 1. Không để sót __pycache__ trong cây evals/files/
+for dp, dns, fns in os.walk(os.path.join(vbc_dir, "evals", "files")):
+    if "__pycache__" in dns or any(f.endswith(".pyc") for f in fns):
+        print(f"ERR:leftover pycache in {dp}")
+        sys.exit(0)
+
+# 2. HANDOFF.md của eval-2 không lộ thẳng cụm từ 'off-by-one'; eval-3 có >= 2 starter tests và không lộ thẳng '0 dòng' trong prompt
+handoff = open(os.path.join(vbc_dir, "evals", "files", "eval-2", "HANDOFF.md"), encoding="utf-8").read()
+if "off-by-one" in handoff.lower():
+    print("ERR:eval-2 HANDOFF.md leaks 'off-by-one'")
+    sys.exit(0)
+ev3_prompt = [e["prompt"] for e in spec["evals"] if e["id"] == 3][0]
+if "0 dòng" in ev3_prompt:
+    print("ERR:eval-3 prompt leaks exact '0 dòng' root cause instead of verification-shortcut framing")
+    sys.exit(0)
+
+# 3. Mọi ca trong verification-before-completion: starter test XANH (rc=0), oracle test ĐỎ (rc!=0) trên mã lỗi gốc
+for ev in spec["evals"]:
+    with tempfile.TemporaryDirectory(dir=tmp_root) as box:
+        for rel in ev.get("files", []):
+            shutil.copy(os.path.join(vbc_dir, rel), os.path.join(box, os.path.basename(rel)))
+        r_base = subprocess.run([sys.executable, "-I", "-B", "-m", "unittest", "-v"], cwd=box, capture_output=True, text=True, timeout=15)
+        if r_base.returncode != 0:
+            print(f"ERR:eval-{ev['id']} starter test not green (rc={r_base.returncode}): {r_base.stderr}")
+            sys.exit(0)
+        if ev["id"] == 3 and "Ran 2 tests" not in r_base.stderr:
+            print(f"ERR:eval-3 starter should have 2 green tests covering false-clean empty status: {r_base.stderr}")
+            sys.exit(0)
+        oracle_chk = [c for c in ev["checks"] if c["id"] == "oracle_passes"][0]
+        for orel in oracle_chk["oracle_files"]:
+            shutil.copy(os.path.join(vbc_dir, orel), os.path.join(box, os.path.basename(orel)))
+        r_ora = subprocess.run([sys.executable, "-I", "-B", "-m", "unittest", "-q", "test_oracle"], cwd=box, capture_output=True, text=True, timeout=15)
+        if r_ora.returncode == 0:
+            print(f"ERR:eval-{ev['id']} oracle passed on buggy baseline code")
+            sys.exit(0)
+
+# 4. Chặn bẫy PEP 552 __pycache__: mod.py sửa có cùng số byte + cùng giây mtime với bản chép oracle_files lúc grade
+import importlib.util, time as _t
+spec_mod = importlib.util.spec_from_file_location("se", script)
+se = importlib.util.module_from_spec(spec_mod)
+spec_mod.loader.exec_module(se)
+pyc_case = os.path.join(tmp_root, "pyc_trap")
+sdir = os.path.join(pyc_case, "pyc-skill")
+proj_dir = os.path.join(pyc_case, "project")
+os.makedirs(os.path.join(sdir, "evals", "orig"), exist_ok=True)
+os.makedirs(proj_dir, exist_ok=True)
+orig_mod = os.path.join(sdir, "evals", "orig", "mod.py")
+open(orig_mod, "w", encoding="utf-8").write("VAL = 1\n")
+fixed_mod = os.path.join(proj_dir, "mod.py")
+while (_t.time() % 1.0) > 0.35:
+    _t.sleep(0.02)
+open(fixed_mod, "w", encoding="utf-8").write("VAL = 2\n")  # cùng đúng 8 byte như VAL = 1\n
+py_compile.compile(fixed_mod, doraise=True)
+res_chk = se._eval_command_check({
+    "id": "catches_orig_bug",
+    "text": "must fail on orig VAL=1",
+    "type": "command",
+    "expect": "fail",
+    "cmd": [sys.executable, "-I", "-c", "import os, sys; sys.path.insert(0, os.getcwd()); import mod; sys.exit(0 if mod.VAL == 2 else 3)"],
+    "oracle_files": ["evals/orig/mod.py"],
+}, proj_dir, sdir)
+if not res_chk.get("passed") or "exit_code=3" not in str(res_chk.get("evidence", "")):
+    print(f"ERR:PEP 552 stale pycache poisoned oracle_files check: {res_chk}")
+    sys.exit(0)
+
+print("OK")
+PY
+if [[ "$(cat "$TMP/c10d.out")" == "OK" ]]; then
+  pass "Ca 10d: Bộ fixture verification-before-completion đạt chuẩn (starter XANH, oracle ĐỎ, 0 lộ đáp án, 0 __pycache__) và chặn lỗi PEP 552 .pyc khi chép oracle_files"
+else
+  fail "Ca 10d thất bại: $(cat "$TMP/c10d.out")"
 fi
 
 echo ""

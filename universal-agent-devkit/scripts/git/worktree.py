@@ -1458,7 +1458,10 @@ def _reflog_file_entries(wt):
     if r.returncode != 0 or not path:
         return None
     try:
-        return sum(1 for line in _read_regular(os.path.join(wt, path)).split(b"\n") if line.strip())
+        # a `<sha> 0000…` line (`git branch -m` writes one) names no commit and `git log -g` skips it: counted, it read as "git lost lines"
+        # only an exact null oid is skipped: a corrupt or truncated line still counts, so the caller fails closed on it
+        return sum(1 for line in _read_regular(os.path.join(wt, path)).split(b"\n")
+                   if line.strip() and not re.fullmatch(rb"0{40}|0{64}", (line.split(b" ", 2) + [b""])[1]))
     except FileNotFoundError:
         return 0
     except OSError:   # a FIFO / device / directory / unreadable file / over 32 MB: git would block or skip lines
