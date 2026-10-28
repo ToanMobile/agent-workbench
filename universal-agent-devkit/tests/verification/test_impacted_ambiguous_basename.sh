@@ -20,6 +20,13 @@ printf '%s\n' "$sel" | grep -qx "tests/verification/test_skill_size.sh" \
 printf '%s\n' "$sel" | grep -qx "tests/verification/test_repo_consistency.sh" \
   && ok "  … repo consistency still runs" || fail "repo consistency dropped"
 
+# OCR 29/10: tests read a skill's SKILL.md through variables (SKILL=…/skills/devkit-audit, "$d/SKILL.md")
+printf '%s\n' "$(list skills/devkit-audit/SKILL.md)" | grep -qx "tests/verification/test_devkit_audit_nightly_step.sh" \
+  && ok "skills/devkit-audit/SKILL.md selects test_devkit_audit_nightly_step.sh (reads it through a variable)" \
+  || fail "skills/devkit-audit/SKILL.md lost test_devkit_audit_nightly_step.sh"
+printf '%s\n' "$(list skills/tdd-workflow/SKILL.md)" | grep -qx "tests/verification/test_skill_eval.sh" \
+  && ok "skills/tdd-workflow/SKILL.md selects test_skill_eval.sh" || fail "skills/tdd-workflow/SKILL.md lost test_skill_eval.sh"
+
 sel="$(list skills/impeccable/SKILL.md)"
 printf '%s\n' "$sel" | grep -qx "tests/verification/test_impeccable_skill.sh" \
   && ok "a test naming impeccable/SKILL.md is selected for it" || fail "impeccable/SKILL.md lost its own test"

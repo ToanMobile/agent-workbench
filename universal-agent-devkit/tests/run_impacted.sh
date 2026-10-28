@@ -85,15 +85,15 @@ for f in $changed; do
   case "$f" in
     tests/*/test_*.sh|hooks/tests/*.sh) tests="$tests $f"; continue ;;
   esac   # a helper under tests/ falls through: every test that sources it names it
-  # 28/10 (#607): a skill's SKILL.md is matched with its folder ("parallel-lanes/SKILL.md"), else one skill's edit selected
-  # every test naming any SKILL.md (16 tests, none about it). The readers of every SKILL.md are in tests/impact_map.txt
-  # (skills/*/SKILL.md). Only SKILL.md: profiles/*/DESIGN.md, RULES.md, instincts.md and hooks.json are read through
-  # variables ("$GAME/DESIGN.md") by tests the map does not list, so their bare name must keep selecting (review 28/10).
-  name="$(basename "$f")"
+  # 28/10 (#614): a skill's SKILL.md selects the tests that name its skill (the folder, as a whole word), else one skill's edit
+  # selected every test naming any SKILL.md (16 tests, none about it). The skill name, not "<skill>/SKILL.md": tests read it
+  # through variables (SKILL=…/skills/devkit-audit; "$d/SKILL.md"; OCR 29/10). The readers of every SKILL.md are in
+  # tests/impact_map.txt (skills/*/SKILL.md). Only SKILL.md: profiles/*/DESIGN.md, RULES.md, instincts.md and hooks.json keep
+  # their bare name (read as "$GAME/DESIGN.md" by tests the map does not list; review 28/10).
   case "$f" in
-    */SKILL.md) name="$(basename "$(dirname "$f")")/$name" ;;
+    */SKILL.md) tests="$tests $(grep -l -w -F -- "$(basename "$(dirname "$f")")" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')" ;;
+    *) tests="$tests $(grep -l -F -- "$(basename "$f")" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')" ;;
   esac
-  tests="$tests $(grep -l -F -- "$name" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
   # …or its stem as a whole word: tests reach scripts through commands ("agent-kit githooks
   # install" → scripts/githooks.sh; test_githooks went unrun on 2026-09-26).
   # 25/10: chỉ file CODE (.sh .py .bash .mjs .js; file không đuôi thì stem = tên, đã khớp ở trên). Stem của tài liệu là chữ thường:
