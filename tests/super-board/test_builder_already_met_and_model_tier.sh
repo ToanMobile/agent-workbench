@@ -37,8 +37,8 @@ got=$(SB_LIB_ONLY=1 bash -c '. "$1"; CONFIG_PATH="$2"; claude_model_for_tier' _ 
 [ "$got" = "sonnet" ] && ok "thiếu model_tier -> sonnet" || fail "thiếu model_tier cho '$got'"
 
 # Mọi lời gọi claude -p trong dispatch_lane đều mang --model.
-n_all=$(grep -c 'nohup claude --' "$RUNNER")
-n_model=$(grep 'nohup claude --' "$RUNNER" | grep -c -- '--model "\$claude_model"')
+n_all=$(grep -cE 'nohup ("\$SB_WORKER_WRAP" )?claude --' "$RUNNER")
+n_model=$(grep -E 'nohup ("\$SB_WORKER_WRAP" )?claude --' "$RUNNER" | grep -c -- '--model "\$claude_model"')
 [ "$n_all" -gt 0 ] && [ "$n_all" = "$n_model" ] && ok "cả $n_all lời gọi claude -p truyền --model" || fail "claude -p thiếu --model ($n_model/$n_all)"
 
 # 3. R2/R3 (chạy thật): thẻ issue ĐÃ ĐÓNG đang ở Building -> Done, không về Ready; thẻ issue mở -> Ready như cũ.
