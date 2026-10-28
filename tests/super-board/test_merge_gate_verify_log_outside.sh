@@ -67,6 +67,22 @@ rm -rf "$CD/super-board" && : > "$CD/super-board"
 [ "$rc" -eq 11 ] && grep -q "log saved to (not saved)" "$TMP/gate2.log" && grep -q "verify-said-no" "$TMP/gate2.log" \
   && ok "log cannot be written: still exit 11, the verify output on stderr, '(not saved)' said" || fail "unwritable log dir (rc $rc): $(tail -3 "$TMP/gate2.log")"
 
+# #574: verify đỏ → .full.log giữ nguyên log suite trong scratch (.agents/evidence/<suite>/*.log) dù gate xoá scratch sau đó; xanh → không ghi .full.log.
+rm -rf "$CD/super-board"; mkdir -p "$CD/super-board"
+FCFG="$TMP/cfg-full.json"
+printf '%s\n' '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["mkdir -p .agents/evidence/s1 && printf \"Traceback (most recent call last):\\n  File x line 1\\n  File y line 2\\nAssertionError: deep-frame\\n\" > .agents/evidence/s1/1.log; false"]}' > "$FCFG"
+( cd "$WT" && bash "$GATE" --config "$FCFG" --pr 5 --expect-head "$H" ) >"$TMP/gate-full.log" 2>&1
+FULL="$CD/super-board/last-merge-verify-pr-5.full.log"
+grep -q "AssertionError: deep-frame" "$FULL" 2>/dev/null && grep -q "File y line 2" "$FULL" \
+  && ok "red verify: .full.log keeps the whole multi-line Traceback after the scratch is removed" || fail ".full.log missing the Traceback: $(ls "$CD/super-board" 2>&1)"
+rm -f "$FULL"
+GCFG="$TMP/cfg-green.json"
+echo '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["true"]}' > "$GCFG"
+printf 'stale\n' > "$FULL"
+( cd "$WT" && bash "$GATE" --config "$GCFG" --pr 5 --expect-head "$H" --dry-run ) >"$TMP/gate-green.log" 2>&1
+[ ! -s "$FULL" ] && ok "green verify: no (or empty) .full.log left" || fail "green verify left .full.log: $(head -2 "$FULL")"
+rm -f "$FULL"
+
 # Verify chạy trong scratch nhưng post-fix-gate ưu tiên CLAUDE_PROJECT_DIR / TARGET_DIR hơn cwd: bên gọi mang sẵn hai biến đó (runner, agent)
 # thì verify kiểm nhầm cây chính → xanh sai. Cả hai nhánh (lệnh post-fix-gate.py chạy eval, lệnh khác qua heavy-slot) phải gỡ chúng.
 rm -f "$CD/super-board"
