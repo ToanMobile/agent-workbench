@@ -68,7 +68,7 @@ const CLASSIFY_SCHEMA = {
 const STAGE_SCHEMA = {
   type: 'object',
   properties: {
-    status: { type: 'string', enum: ['advanced', 'bounced', 'blocked', 'human-gate', 'failed', 'halted'] },
+    status: { type: 'string', enum: ['advanced', 'bounced', 'blocked', 'human-gate', 'failed', 'halted', 'waiting'] },
     column: { type: 'string' },
     detail: { type: 'string' },
     prUrl: { type: 'string' },
@@ -227,9 +227,10 @@ const runLane = async (lane, card, model, history) => {
 // One agent per batch of PREFLIGHT_BATCH cards, so the three gh list calls in
 // super-board-preflight.sh are paid once per batch, not once per card.
 // Outcomes: proceed · hold (agent wrote the Block template, card → Blocked) ·
-// sequence (card → Blocked with `blocked-by:` the overlapping PR's issue, so the
-// wave-start sweep frees it; or proceed with a conflict note when that PR closes
-// no issue) · skipped (pre-flight blind — card stays Ready for the next wave).
+// sequence (#601: thẻ ở lại Ready, được super-board-waiting-on.py mark gắn nhãn
+// `waiting-on:#N`, không bao giờ vào Blocked; sweep gỡ nhãn khi N đóng; mark trả labels=[]
+// (mọi blocker đã đóng) → proceed; hoặc proceed kèm ghi chú xung đột khi PR đó không đóng issue nào) ·
+// skipped (pre-flight mù, hoặc mark lỗi exit 64/69/79 — thẻ ở lại Ready cho wave sau).
 // A card the agent did not answer for is skipped, never built unchecked.
 const PREFLIGHT_SCHEMA = {
   type: 'object',
@@ -260,9 +261,13 @@ const preflightPrompt = (batch) => [
   `Read .claude/skills/super-board/references/run.md → "Builder pre-flight" and follow it EXACTLY. You write no code.`,
   `Other cards in this wave: ${JSON.stringify(input.cards.map(({ number, status, title }) => ({ number, status, title })))}`,
   `Run .claude/bin/super-board-preflight.sh once for the whole batch, then judge its candidates semantically.`,
-  `hold / sequence-behind → post the Block template (block-template.md) and move the card to Blocked yourself.`,
+  `hold — in progress (an open PR / card is building it) → never Blocked: handle it exactly like sequence-behind below (mark --on <the issue that PR or card closes>, verdict sequence, column Ready, blockedBy [that issue]). Any other hold → post the Block template (block-template.md) and move the card to Blocked yourself.`,
+  `sequence-behind (blockedBy non-empty) → never Blocked: run python3 .claude/bin/super-board-waiting-on.py mark --config ${input.configPath} --issue <N> --on <blockedBy, comma-separated> --why "<overlapping PR and files>" and read the JSON it prints. ` +
+    `It labels only blockers still OPEN. Exit 0 with "labels": [] (every blocker already closed) → verdict proceed, exactly as if blockedBy were empty (no conflict comment). ` +
+    `Exit 0 with labels non-empty → verdict sequence, column Ready, blockedBy = the numbers still open (never empty); the card waits in Ready. ` +
+    `Any non-zero exit (64/69/79 or other) → leave the card untouched, verdict skipped (never Blocked); it is retried next wave and counts as failed for the zero-progress gate. This 79 is the waiting-on helper's own read failure, NOT the run-halt 79 above: never halt the run for it.`,
   `Two Ready cards overlapping each other with no open PR: the lower-numbered one proceeds; sequence only the other, blockedBy [the lower]. Never both.`,
-  `A sequence with nothing to wait on (empty blockedBy) leaves the card in Ready: return column Ready and it builds.`,
+  `A sequence with nothing to wait on leaves the card in Ready: return column Ready and blockedBy [] (always send the array; a missing blockedBy is not built) and it builds.`,
   BOARD_IO(),
   `Return one verdict per issue: proceed | hold | sequence | skipped (pre-flight blind). Never drop a card silently.`,
 ].join('\n')
@@ -284,23 +289,27 @@ await Promise.all(batches.map(async (batch) => {
     if (v.verdict === 'halted') halted = true
   }
 }))
-// sequence with nothing to wait on = proceed with a conflict note (the agent posted it).
-// No column and an empty blockedBy is the same case: nothing to wait on never parks a
-// card (2026-10-03: #180/#181 each "sequenced" behind the other, neither built).
+// sequence with nothing to wait on = proceed with a conflict note (the agent posted it):
+// nothing to wait on never parks a card (2026-10-03: #180/#181 each "sequenced" behind
+// the other, neither built). #601: sequence còn blocker mở thì không bao giờ build, kể cả
+// khi column là Ready — thẻ chờ ở Ready dưới nhãn `waiting-on:#N`.
 const preflightGo = (card) => {
   const v = verdicts.get(card.number)
   if (!v) return false
   if (v.verdict === 'proceed') return true
-  return v.verdict === 'sequence' && (v.column === 'Ready' ||
-    (!v.column && Array.isArray(v.blockedBy) && v.blockedBy.length === 0))
+  return v.verdict === 'sequence' && Array.isArray(v.blockedBy) && v.blockedBy.length === 0
 }
 const preflightExit = (card) => {
   const v = verdicts.get(card.number) ||
     { verdict: 'skipped', detail: 'pre-flight returned no verdict — not built unchecked; retried next wave' }
+  // #601: sequence thiếu mảng blockedBy không build cũng không được mark gắn nhãn: báo failed để cổng zero-progress thấy,
+  // không để nó lặp mỗi wave dưới status 'waiting'.
+  const noList = v.verdict === 'sequence' && !Array.isArray(v.blockedBy)
   return {
     lane: 'preflight',
-    status: v.verdict === 'halted' ? 'halted' : v.verdict === 'skipped' ? 'failed' : 'blocked',
-    column: v.column || (['skipped', 'halted'].includes(v.verdict) ? 'Ready' : 'Blocked'),
+    // #601: sequence còn blocker mở → 'waiting' ở Ready (không tính blocked/bounced/failed); hold vẫn Blocked.
+    status: v.verdict === 'halted' ? 'halted' : (v.verdict === 'skipped' || noList) ? 'failed' : v.verdict === 'sequence' ? 'waiting' : 'blocked',
+    column: v.verdict === 'sequence' ? (v.column || 'Ready') : v.column || (['skipped', 'halted'].includes(v.verdict) ? 'Ready' : 'Blocked'),
     detail: `${v.verdict}: ${v.detail}`,
   }
 }

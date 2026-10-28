@@ -259,6 +259,12 @@ column_count() {
 # moved it to Review with its needs-you still on: run.md → resume), so it is work again (review 19/10). One definition for every use.
 FOR_A_PERSON_JQ='def for_a_person: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
   | ((index("needs-you") or index("human-gated")) and (map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not));'
+# #601: thẻ Ready chỉ chờ thẻ khác mang nhãn `waiting-on:#N` (mọi hoa/thường, ở item hay content, chuỗi hay {name}); không giao
+# tới khi sweep_waiting_on gỡ nhãn vì #N đã CLOSED/MERGED.
+WAITING_ON_JQ='def waiting_on: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+  | any(startswith("waiting-on:#"));'
+# #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
+waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
 
 # #95: a card whose QA needs a real device (label needs-device, any case) — in QA, or in Ready labelled `qa` (the Tester takes it
 # from there) — while none is online ($nodev): a QA lane could only park it in Blocked. Not Review; not a Ready card the Builder
@@ -308,8 +314,9 @@ count_board() {
 person_count() {
   # Cards of column $1 no lane takes this tick — Ready ones waiting for a person, Ready/QA ones waiting for a real device: they
   # must not keep a run alive that has nothing else to do (counted, a non-daemon run never reached its clean "all empty" exit).
-  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
-    [.items[] | select(.status == $col) | select(($col == "Ready" and for_a_person) or held_for_device($col))] | length'
+  # #601: thẻ Ready chờ thẻ khác (waiting_on) cũng không lane nào nhận tới khi nhãn được gỡ.
+  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$WAITING_ON_JQ"'
+    [.items[] | select(.status == $col) | select(($col == "Ready" and (for_a_person or waiting_on)) or held_for_device($col))] | length'
 }
 
 # ── Status-field resolution (issue #10 reconcile path).
@@ -617,7 +624,7 @@ top_card_in_column() {
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$READY_RANK_JQ"'
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$READY_RANK_JQ$WAITING_ON_JQ"'
     [.items[]
     | select(.status == $col and .content.type == "Issue")
     # Chỉ bỏ qua thẻ đang giao cho người khác; thẻ chỉ mang assignee của chính BOT_LOGIN nhưng không có lock sống sẽ được lọc ở issue_locked phía trên để không bị kẹt.
@@ -626,6 +633,7 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}"
     # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
     # still on (run.md → resume). Removing the label releases the card.
     | select($col != "Ready" or (for_a_person | not))
+    | select($col != "Ready" or (waiting_on | not))   # #601: chờ thẻ khác; sweep_waiting_on gỡ nhãn khi blocker đóng
     | select(held_for_device($col) | not)]   # #95: its QA needs a real device and none is online (refresh_device_state)
     # #202: Ready is taken by priority label, then bug before the rest, then the lower (older) issue number; other columns keep board order.
     | (if $col == "Ready" then sort_by(ready_rank) else . end)
@@ -1189,7 +1197,9 @@ preflight_gate() {
   repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
   if [ -z "$repo" ] || [ ! -f "$pf" ]; then log "preflight skipped for #${issue}: no repo.remote in config or no ${pf}"; return 0; fi
   inf=$(mktemp "${TMPDIR:-/tmp}/sb-inflight.XXXXXX")
-  printf '%s' "$PROJECT_ITEMS_JSON" | jq -c '[.items[] | select(.status == "Building" or .status == "QA" or .status == "Review" or .status == "Ready")
+  # #601: thẻ Ready đang chờ (waiting_on) không tính là đang làm: không thì hai thẻ chồng nhau chờ lẫn nhau mãi.
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -c "$WAITING_ON_JQ"'[.items[] | select(.status == "Building" or .status == "QA" or .status == "Review" or .status == "Ready")
+    | select(.status != "Ready" or (waiting_on | not))
     | {number: .content.number, title: (.content.title // ""), status: .status}]' > "$inf" 2>/dev/null || echo '[]' > "$inf"
   # The board's own merge line cap: 0 means one card is one PR whatever its size, so preflight never asks to split it.
   # Read it like super-board-merge-policy.py: unset → 400, else a whole number, and any value <= 0 is "no cap".
@@ -1227,7 +1237,29 @@ preflight_gate() {
         blocked="${bline#blocked-by: }"; [ "$blocked" != "-" ] || blocked=""
       fi
       [ -n "$blocked" ] || { log "preflight #${issue}: ${reason} — proceeding (merge gate rebases)"; return 0; }
-      tagline="⏳" ;;
+      # #601: chỉ chờ thẻ khác → giữ Ready + nhãn `waiting-on:#N` qua helper (tự gọi gh, không qua gh_write_once: ghi hỏng ở đó đẩy
+      # thẻ vào Blocked / halt 79). Helper lỗi (kể cả thiếu file) → không giao, không Blocked, thử lại tick sau.
+      local wcache wout wlabels; csv="${blocked// /}"; orc=0
+      wout=$(python3 "$(waiting_on_helper)" mark --config "$CONFIG_PATH" --issue "$issue" --on "$csv" --why="$reason" 2>>"$RUN_MANIFEST") || orc=$?
+      # mark tự đọc lại trạng thái từng blocker: nhãn nó trả về là các blocker còn mở. Không đọc được JSON → coi như hỏng.
+      [ "$orc" -ne 0 ] || wlabels=$(printf '%s' "$wout" | jq -ce '.labels | arrays' 2>/dev/null) || orc=65
+      if [ "$orc" -ne 0 ]; then
+        log "⚠ preflight #${issue}: waiting on #${csv//,/, #} but waiting-on mark failed (exit ${orc}) — not dispatched, stays in Ready, retrying next tick"
+        return 1
+      fi
+      if [ "$wlabels" = "[]" ]; then
+        log "preflight #${issue}: every blocker (#${csv//,/, #}) is closed now — proceeding"
+        return 0
+      fi
+      # Cache cùng tick: thẻ mang nhãn ngay để top_card_in_column không chọn lại nó trước lần đọc board sau.
+      if wcache=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -c --argjson n "$issue" --argjson add "$wlabels" '
+        .items |= map(if .content.number == $n then .labels = (((.labels // []) + $add) | unique) else . end)'); then
+        PROJECT_ITEMS_JSON="$wcache"
+      else
+        log "⚠ preflight #${issue}: could not add the waiting-on labels to the cached board — next board read has them"
+      fi
+      log "preflight ${verdict}/${tag} for #${issue}: ${reason} — waiting on $(printf '%s' "$wlabels" | jq -r 'map(sub("^waiting-on:"; "")) | join(", ")' 2>/dev/null), stays in Ready (labelled waiting-on), not dispatched"
+      return 1 ;;
     hold)
       exact=$(printf '%s' "$v" | jq -r --arg n "$issue" '
         if .tag == "unclear" then "yes"
@@ -2458,6 +2490,51 @@ EOF2
   [ "$moved" -eq 1 ]
 }
 
+# #601: gỡ nhãn `waiting-on:#N` khi #N đã CLOSED/MERGED (helper `sweep` tự gọi gh). Chỉ chạy khi board có thẻ mang nhãn đó; nhịp
+# SB_WAITING_SWEEP_EVERY (300 s) hoặc ngay khi tập Done đổi. Helper lỗi: log, không dời mốc (tick sau thử lại), không bao giờ exit
+# runner. Trả 0 khi đã gỡ ít nhất một nhãn (caller đọc lại board), 1 khi không.
+sweep_waiting_on() {
+  local now sig out rc=0 removed items
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -e "$WAITING_ON_JQ"'any(.items[]; .status != "Done" and waiting_on)' >/dev/null 2>&1 || return 1
+  now=$(date +%s); sig=$(done_signature)
+  if [ "$now" -lt "${WAITING_SWEEP_NEXT:-0}" ] && [ "$sig" = "${WAITING_SWEEP_SIG-}" ]; then return 1; fi
+  # Board của tick này qua --items: helper không đọc board lần nữa (không tốn thêm GraphQL).
+  items=$(mktemp "${TMPDIR:-/tmp}/sb-waiting-items.XXXXXX") || { log "⚠ waiting-on sweep: mktemp failed — retrying next tick"; return 1; }
+  printf '%s' "$PROJECT_ITEMS_JSON" > "$items"
+  out=$(python3 "$(waiting_on_helper)" sweep --config "$CONFIG_PATH" --items "$items" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$items"
+  if [ "$rc" -ne 0 ]; then log "⚠ waiting-on sweep failed (exit ${rc}) — labels kept, retrying next tick"; return 1; fi
+  WAITING_SWEEP_NEXT=$((now + ${SB_WAITING_SWEEP_EVERY:-300})); WAITING_SWEEP_SIG="$sig"
+  removed=$(printf '%s' "$out" | jq -r '[(.removed // [])[] | "#\(.[0]) (#\(.[1]))"] | join(" ")' 2>/dev/null) || removed=""
+  [ -n "$removed" ] || return 1
+  log "waiting-on sweep: blocker closed, label removed on ${removed} — back to dispatchable Ready"
+  return 0
+}
+
+# #601: một lần lúc khởi động, sau lần đọc board đầu: thẻ Blocked chỉ chờ thẻ khác → Ready + nhãn waiting-on. Board đã đọc đi qua
+# --items. Lỗi: log, chạy tiếp, luôn trả 0 (helper idempotent, lần khởi động sau làm tiếp). Có thẻ được chuyển thì đọc lại board
+# cho đếm Ready ban đầu. Luồng chính gọi hàm này sau chốt SB_LIB_ONLY; test gọi trực tiếp.
+startup_migrate_waiting() {
+  local items="" out rc=0 moved
+  # startup_reconcile vừa đọc board; cache rỗng (lần đọc đó hỏng) → helper tự đọc board, không truyền --items rỗng
+  if [ -n "${PROJECT_ITEMS_JSON:-}" ]; then
+    items=$(mktemp "${TMPDIR:-/tmp}/sb-waiting-items.XXXXXX") || { log "⚠ waiting-on migrate: mktemp failed — skipped until the next start"; return 0; }
+    # set -e ở top-level: ghi hỏng (đĩa đầy) không được giết runner lúc khởi động — để helper tự đọc board
+    printf '%s' "$PROJECT_ITEMS_JSON" > "$items" || { rm -f "$items"; items=""; }
+  fi
+  out=$(INFLIGHT_DIR="$INFLIGHT_DIR" python3 "$(waiting_on_helper)" migrate --config "$CONFIG_PATH" ${items:+--items "$items"} 2>>"$RUN_MANIFEST") || rc=$?
+  [ -z "$items" ] || rm -f "$items"
+  if [ "$rc" -ne 0 ]; then
+    log "⚠ waiting-on migrate failed (exit ${rc}) — Blocked cards that only wait stay there until the next start"
+    return 0
+  fi
+  moved=$(printf '%s' "$out" | jq -r '(.migrated // []) | map("#\(.)") | join(" ")' 2>/dev/null) || moved=""
+  [ -n "$moved" ] || return 0
+  log "waiting-on migrate: ${moved} Blocked → Ready (labelled waiting-on)"
+  fetch_project_items || log "⚠ board re-read after waiting-on migrate failed (exit $?) — the first tick reads it"
+  return 0
+}
+
 # ── #363: cầu chì suite. ≥2 thẻ bị Blocked cùng một suite id (REG-…) trong SB_FUSE_WINDOW_H giờ là một nguyên nhân gốc, không phải hai thẻ:
 # giữ MỘT thẻ (số nhỏ nhất, hay thẻ đang giữ cờ ngưng), các thẻ còn lại ghi `blocked-by: <thẻ giữ>` và ở nguyên Blocked để sweep thả về khi
 # thẻ giữ đóng; NGƯNG giao Builder mới tới khi mọi thẻ giữ rời Blocked. KHÔNG BAO GIỜ đóng thẻ hay chuyển Done (suy đoán sai thì mất thẻ).
@@ -2971,6 +3048,8 @@ check_legacy_worktrees
 cleanup_stale_worktrees
 
 startup_reconcile
+# #601: thẻ Blocked chỉ chờ thẻ khác → Ready + nhãn waiting-on (một lần, sau lần đọc board đầu).
+startup_migrate_waiting
 
 # ───────────────────────────── main loop ─────────────────────────────
 refresh_device_state
@@ -3071,6 +3150,7 @@ while true; do
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   if sweep_closed_cards; then tick_fetch || continue; fi   # #558
+  if sweep_waiting_on; then tick_fetch || continue; fi     # #601
   if maybe_sweep_blocked; then tick_fetch || continue; fi
   # #363: ≥2 thẻ Blocked cùng suite id trong N giờ → một thẻ + ngưng giao Builder (suite_fuse_tick).
   if suite_fuse_tick; then tick_fetch || continue; fi

@@ -256,7 +256,8 @@ in a sub-agent, before touching a worktree.
 ```
 [ ] source .claude/bin/super-board-gh-guard.sh; sb_gh_guard_check 200
 [ ] build the in-flight list: .claude/bin/super-board-card.sh --config <cfg> items (one call) → [{number,title,status}] for
-    Building / QA / Review / Ready cards; save it to a temp file
+    Building / QA / Review / Ready cards, leaving out every Ready card labelled `waiting-on:#*` (any case, on the item or its
+    content, string or {name}) — a waiting card is not in progress; save it to a temp file
 [ ] bash .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> \
          --inflight <file> --cap <merge_policy.auto_max_lines, 400 when unset> [--files <paths you expect to touch>]
 [ ] judge each card: the script's verdict, then its `candidates` (near-misses) semantically
@@ -274,8 +275,8 @@ The script asks five questions; the agent owns the judgement:
 | 5 | Too big? | two or more size signals in the issue text (`tag: too-big`, with `evidence` and a suggested `split`): Fix lists ≥5 short deliverables (or the title ≥3) · ≥4 areas · the card calls itself big (phase, vertical slice, "many components") · its scope is a whole spec section · an AC needs people or production data; an AC only a real device can prove (OOM, FPS, memory) on a card that says "real device" counts as two, so it holds on its own | likely over ~400 changed lines (`merge_policy.auto_max_lines`; lockfiles, generated, snapshots, migration SQL excluded) from the code it will touch, or spans many areas (UI + API + DB + jobs …) — lint.md criterion 15 |
 
 **Two Ready cards that overlap each other, neither with an open PR, go one at a time.** The
-lower-numbered card proceeds; only the other is sequenced, with `blocked-by: #<lower>`, and the
-wave-start sweep frees it once the lower one closes. Sequencing each against the other leaves
+lower-numbered card proceeds; only the other is sequenced, with `waiting-on:#<lower>` (it stays
+Ready), and the waiting-on sweep drops the label once the lower one closes. Sequencing each against the other leaves
 both with nothing to wait on and neither built — the same deadlock comes back every wave.
 
 The agent may turn a `proceed` into a `hold` on evidence. It may turn a mechanical `hold` into
@@ -289,10 +290,10 @@ do not make this card big (the listed items are one small change, the device che
 |---|---|---|
 | `proceed` | nothing; the Builder starts | — |
 | `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: Eric (close as duplicate) · `blocked-by: -` |
-| `hold` — in progress | move card to Blocked | `👯` · names the open PR / card · `blocked-by: <the issue that PR or card closes>` — the sweep returns it when that closes, and pre-flight then finds it done |
+| `hold` — in progress | never Blocked (#601): same as `sequence` below — `super-board-waiting-on.py mark --on <the issue that PR or card closes>`, card stays Ready, return verdict `sequence` | — (no Block comment; `mark` posts its own ⏳ comment) — `sweep` drops the label when that closes, and pre-flight then finds it done |
 | `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
 | `hold` — too big | the Builder splits it with `/createTask` (super-build → "Too big → split"); only when it cannot, move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
-| `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy, open issues only — generate with `super-board-blocked-by.py line`>. Run the helper BEFORE moving the card: it prints `blocked-by: -` (no blocker still open) → treat as `blockedBy` empty, card stays Ready; it exits 79 (state unreadable) → leave the card untouched and return `skipped`, never Blocked with an empty line` — the wave-start sweep frees it |
+| `sequence` — `blockedBy` non-empty | never Blocked: the card stays Ready (return column `Ready`, status `waiting`). Run `python3 .claude/bin/super-board-waiting-on.py mark --config <cfg> --issue <N> --on <blockedBy, comma-separated> --why "<overlapping PR and files>"`: it labels the card `waiting-on:#<each>` and comments once (no `blocked-by:` line). The planner and runner skip Ready cards so labelled; `super-board-waiting-on.py sweep` drops a label once that issue is CLOSED/MERGED and the card builds. `mark` labels only blockers still OPEN and prints JSON: `"labels": []` (every blocker already closed) → `proceed`, as if `blockedBy` were empty; labels non-empty → status `waiting`, column `Ready`, `blockedBy` = the numbers still open. Exit 64/69/79 → leave the card untouched, verdict `skipped` (never Blocked; that 79 is the helper's, not a run halt); it is retried next wave | — (no Block comment, no `blocked-by:` line) |
 | `sequence` — `blockedBy` empty | proceed (card stays Ready, return column `Ready`), comment `⚠️ expected conflict with PR #<P> on <files> — the merge gate will rebase` | — |
 | `halted` | script exit 79: required evidence unavailable; leave the card untouched, stop this run, resume explicitly after recovery | — |
 
