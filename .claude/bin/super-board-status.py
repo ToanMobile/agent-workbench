@@ -308,7 +308,7 @@ def reason_for(body: str) -> tuple[str, str]:
 
 
 _BLOCKED_BY_LINE = re.compile(r"^[ \t]*blocked-by:(.*)$", re.I | re.M)
-_BLOCKED_BY_OK = re.compile(r"^(-|[0-9]+(,[0-9]+)*)?$")
+_BLOCKED_BY_OK = re.compile(r"^(-|agent|[0-9]+(,[0-9]+)*)?$")  # `agent` (#529): parked by the runner, same rule as deps.sh
 
 
 def split_unreadable_blocked_by(

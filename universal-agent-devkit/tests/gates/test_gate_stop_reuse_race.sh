@@ -235,6 +235,7 @@ k1() {
   if [ "$SEED_RC" = 4 ] && [ "$SEED_STATE" = "exit=4 REG-1=PASS,REG-2=UNTESTED untested=REG-2" ]; then :
   else bad "$1: setup went wrong: seed ($2) rc=$SEED_RC state='$SEED_STATE'"; fi
   hold_lock "$TMP/lock.release"
+  rm -f "$TMP/a.out" "$TMP/a.rc"   # #577: a.out of the previous case in this group still says "waiting for it"; under load A truncates it only after the wait loop read it
   ( a_run "$3" none none ) &
   local apid=$! i=0
   while ! grep -q "waiting for it" "$TMP/a.out" 2>/dev/null && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done

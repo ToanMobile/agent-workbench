@@ -1870,6 +1870,39 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-sweep-needs-you-529",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-wave-plan.sh",
+        "tests/super-board/test_issue529_sweep_needs_you.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SWEEP-NEEDS-YOU-529-01",
+          "name": "#529: Blocked by không bullet đọc được số; resume gỡ needs-you trước khi sang Review; denylist soi --next và từng mệnh đề; reclaim/no-op ❓ không ghi blocked-by: -; trần im lặng build/qa; tick rẻ đếm chu kỳ không tiến triển",
+          "command": "bash tests/super-board/test_issue529_sweep_needs_you.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-train-single-test-retry-578",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_merge_train_single_test_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TRAIN-SINGLE-TEST-RETRY-578-01",
+          "name": "#578: verify đỏ chỉ vì đúng một test của REG-DK-ALL-01 thì train chạy lại riêng test đó một lần (xanh = flaky ghi vào PR + thẻ test; đỏ hai lần = red kèm tên test); hai test trở lên, suite khác đỏ, tên test mất, đường dẫn lạ = red ngay",
+          "command": "env -u SB_BOARD_WORKER -u SB_MERGE_QUEUE bash tests/super-board/test_merge_train_single_test_retry.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
