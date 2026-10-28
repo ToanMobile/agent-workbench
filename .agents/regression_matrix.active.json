@@ -1930,7 +1930,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-SB-APPROVAL-CROSS-REVIEW-605-01",
-          "name": "#605: marker cross-review-approved hợp lệ (reviewer khác builder, head/scope khớp request, task_id + gate_receipt không rỗng, người đăng có quyền ghi) thay cho done; tự duyệt, head lệch, sửa comment, đăng trước request = không nhận; plan có schema / delete-protected / needs_you chỉ nhận done của người; policy: xoá file khớp merge_policy.protected_paths → human delete-protected (cả file nhị phân qua github-read); --deps --config nhận marker khi plan hiện tại cho phép",
+          "name": "#605: marker cross-review-approved hợp lệ (reviewer khác builder, head/scope khớp request, task_id + gate_receipt không rỗng, người đăng có quyền ghi) thay cho done; tự duyệt, head lệch, sửa comment, đăng trước request = không nhận; chỉ plan có delete-protected mới cần done của người (schema / needs_you nhận marker); policy: xoá file khớp merge_policy.protected_paths → human delete-protected (cả file nhị phân qua github-read); --deps --config nhận marker khi plan hiện tại cho phép",
           "command": "python3 tests/super-board/test_approval_cross_review.py",
           "parallel_safe": true
         }
@@ -1961,23 +1961,18 @@
       ]
     },
     {
-      "description": "Lane C của #605: rule matrix cho test mới; lane gộp matrix nối vào CUỐI .agents/regression_matrix.active.json.",
-      "rules": [
+      "component": "devkit-guard-protected-delete",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/tests/gates/test_guard_protected_delete.sh"
+      ],
+      "mandatory_regression_tests": [
         {
-          "component": "devkit-guard-protected-delete",
-          "watch_files": [
-            "universal-agent-devkit/hooks/block-dangerous-git.sh",
-            "universal-agent-devkit/hooks/shell_norm.py",
-            "universal-agent-devkit/tests/gates/test_guard_protected_delete.sh"
-          ],
-          "mandatory_regression_tests": [
-            {
-              "id": "REG-DK-GUARD-PROTECTED-DELETE-01",
-              "name": "git guard chỉ hỏi người khi: force push (-f/--force/--force-with-lease/+ref), xoá ref remote (push --delete/-d/:ref/--mirror/--prune), xoá file quan trọng (rm/unlink/git rm/find -delete theo protected_delete mặc định + .antigravity-pm.json); xoá file thường vẫn qua (#605)",
-              "command": "bash universal-agent-devkit/tests/gates/test_guard_protected_delete.sh",
-              "parallel_safe": true
-            }
-          ]
+          "id": "REG-DK-GUARD-PROTECTED-DELETE-01",
+          "name": "git guard chỉ hỏi người khi: force push (-f/--force/--force-with-lease/+ref), xoá ref remote (push --delete/-d/:ref/--mirror/--prune), xoá file quan trọng (rm/unlink/git rm/find -delete theo protected_delete mặc định + .antigravity-pm.json); xoá file thường vẫn qua (#605)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_protected_delete.sh",
+          "parallel_safe": true
         }
       ]
     }

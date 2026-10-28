@@ -220,7 +220,15 @@ python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import worktree; worktr
 # không được duyệt vẫn chặn (exit 2, không push); duyệt xong rồi sửa tiếp nội dung (sha256 lệch) vẫn chặn; mục reviewer == author (tự duyệt)
 # không thành lời duyệt trong scratch, vẫn chặn; dạng cũ list không còn duyệt gì, vẫn chặn.
 approve() {   # approve <path>:<reviewer>:<author> … → approved_tests.json của main, sha256 = nội dung hiện tại của file ở main
+  # Audit T0066: mục duyệt chỉ tính khi T605 có biên bản audit pass của antigravity-pm (ngoài repo, ở đây dưới $TMP) ghi
+  # `auditedHead: <HEAD của main>` — cây chứa đúng nội dung test lúc duyệt.
   mkdir -p "$M/.claude/audit-gate"
+  export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm-state"
+  python3 -c 'import json, os, sys
+home, root, head = sys.argv[1:4]
+d = os.path.join(home, "projects", "fixture", "tasks", "T605"); os.makedirs(d, exist_ok=True)
+json.dump({"id": "T605", "project": root, "verdicts": {"audit": {"verdict": "pass", "reviewer": "pm", "notes": "fixture I14\nauditedHead: " + head}}},
+          open(os.path.join(d, "task.json"), "w"))' "$ANTIGRAVITY_PM_STATE_HOME" "$M" "$(G "$M" rev-parse HEAD)"
   python3 -c 'import hashlib, json, sys
 root, out = sys.argv[1], []
 for spec in sys.argv[2:]:

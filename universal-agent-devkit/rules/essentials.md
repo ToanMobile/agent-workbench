@@ -209,7 +209,8 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   lệnh `!`. Khi đúng việc phải hỏi: một lần AskUserQuestion (phương án khuyến nghị trước),
   rồi tự làm tiếp nếu được duyệt.
 - An edited existing test: cần duyệt chéo bởi agent khác — audit `/giao` của Antigravity ghi mục duyệt
-  (`.claude/audit-gate/approved_tests.json`) hoặc trailer `Test-approved-by: antigravity <task-id>`; agent sửa test
+  (`.claude/audit-gate/approved_tests.json`) hoặc trailer `Test-approved-by: antigravity <task-id>`, chỉ tính khi verdict audit
+  của antigravity-pm (ngoài repo) ghi `auditedHead: <sha>` của cây chứa đúng nội dung test; agent sửa test
   không bao giờ tự duyệt test của chính mình (`--auto-approve-tests`, `AUTO-APPROVE:` không còn duyệt); KHÔNG hỏi người dùng bằng AskUserQuestion.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages

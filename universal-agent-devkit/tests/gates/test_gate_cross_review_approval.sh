@@ -4,6 +4,8 @@
 # Gate nhận khi reviewer != author (và != DEVKIT_AGENT_ID), sha256 khớp nội dung hiện tại, đủ 6 trường chuỗi khác rỗng.
 # Tự duyệt (--auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS=1, dòng `AUTO-APPROVE:`) và dạng cũ không nguồn (list,
 # {path: sha256}) không còn duyệt: exit 2; dạng cũ in "cần duyệt lại" kèm path + sha256 hiện tại (#534 mục 3, #576).
+# Audit T0066: mục duyệt và trailer chỉ tính khi antigravity-pm (ngoài repo) ghi audit pass kèm `auditedHead: <sha40>` trong
+# verdicts.audit.notes, và nội dung hiện tại của test đúng bằng blob của nó ở auditedHead (chặn tự ghi file duyệt, chặn replay task_id).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -14,6 +16,13 @@ unset DEVKIT_AUTO_APPROVE_TESTS DEVKIT_TRANSCRIPTS_DIR TARGET_DIR DEVKIT_AGENT_I
 export HOME="$TMP/home"   # HOME riêng: không quét transcript / log Antigravity thật
 mkdir -p "$HOME/.claude/projects"
 FAILS=0
+# Biên bản antigravity-pm giả, ngoài repo (như push_gate.audited_head đọc); nằm dưới $TMP nên không chạm ~/.antigravity-pm thật.
+export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
+pm_task() {   # pm_task <task-id> <project> <verdict> [auditedHead]: notes ghi `auditedHead: <sha>` khi có đối số 4
+  mkdir -p "$TMP/pm/projects/p-$1/tasks/$1"
+  printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"%s","round":1,"reviewer":"pm","notes":"%s"}}}\n' "$1" "$2" "$3" \
+    "${4:+audit ok\\nauditedHead: $4}" > "$TMP/pm/projects/p-$1/tasks/$1/task.json"
+}
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
@@ -40,7 +49,9 @@ entry() {   # entry <sha> <reviewer> <author> <task_id>
 }
 has() { printf '%s' "$OUT" | grep -qF -- "$1"; }
 
-# 1. duyệt chéo hợp lệ -> exit 0, dòng duyệt ghi reviewer + task_id, không phải "người dùng" hay "agent tự duyệt"
+# 1. (d) duyệt chéo hợp lệ (audit pass, auditedHead = cây hiện tại) -> exit 0, dòng duyệt ghi reviewer + task_id,
+# không phải "người dùng" hay "agent tự duyệt". `git stash create`: commit của cây làm việc, không đổi index/HEAD/refs.
+pm_task T605 "$R" pass "$(git stash create)"
 entry "$SHA" antigravity claude-lane-a T605
 run_gate
 if [ "$RC" = 0 ] && has "duyệt chéo bởi antigravity" && has "T605" && ! has "agent tự duyệt"; then ok "1: duyệt chéo hợp lệ -> exit 0, in reviewer + task_id"
@@ -120,12 +131,6 @@ else bad "12: --brief: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 # --- #605 lane E: trailer `Test-approved-by: antigravity <task-id>` là nguồn duyệt chéo thứ hai (đi theo commit, tới được
 # scratch worktree của merge gate, nơi .claude/audit-gate/ không được chép). Biên bản audit antigravity-pm giả qua
 # ANTIGRAVITY_PM_STATE_HOME (ngoài repo, như push_gate.audit_record đọc). Mỗi ca một thư mục mới (mktemp dọn cả $TMP).
-export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
-pm_task() {   # pm_task <task-id> <project> <verdict>
-  mkdir -p "$TMP/pm/projects/p-$1/tasks/$1"
-  printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"%s","round":1}}}\n' "$1" "$2" "$3" \
-    > "$TMP/pm/projects/p-$1/tasks/$1/task.json"
-}
 mk_trailer_repo() {   # mk_trailer_repo <dir mới>: main có test cũ; nhánh feat sửa test trong commit có trailer <task-id>
   mkdir -p "$1/src" "$1/tests" && cd "$1" || exit 1
   git init -q -b main . && git config user.email t@t && git config user.name t && git config commit.gpgsign false
@@ -144,26 +149,26 @@ run_at() {   # run_at <dir>: gate kiểm merge-base(main, HEAD) → cây, không
 }
 
 # 13. (a) commit có trailer + audit pass + file không đổi sau commit -> exit 0, duyệt chéo bởi antigravity, in task id
-mk_trailer_repo "$TMP/t13" T0613-cross; pm_task T0613-cross "$TMP/t13" pass
+mk_trailer_repo "$TMP/t13" T0613-cross; pm_task T0613-cross "$TMP/t13" pass "$(git -C "$TMP/t13" rev-parse HEAD)"
 run_at "$TMP/t13"
 if [ "$RC" = 0 ] && has "duyệt chéo bởi antigravity" && has "T0613-cross"; then ok "13: trailer + audit pass + file không đổi -> exit 0"
 else bad "13: trailer + audit pass: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
 # 14. (b) audit chưa pass -> exit 2
-mk_trailer_repo "$TMP/t14" T0614-cross; pm_task T0614-cross "$TMP/t14" fail
+mk_trailer_repo "$TMP/t14" T0614-cross; pm_task T0614-cross "$TMP/t14" fail "$(git -C "$TMP/t14" rev-parse HEAD)"
 run_at "$TMP/t14"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "14: audit verdict fail -> exit 2"
 else bad "14: audit fail: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
 # 15. (c) file đổi sau commit có trailer (nội dung khác blob đã audit) -> exit 2
-mk_trailer_repo "$TMP/t15" T0615-cross; pm_task T0615-cross "$TMP/t15" pass
+mk_trailer_repo "$TMP/t15" T0615-cross; pm_task T0615-cross "$TMP/t15" pass "$(git -C "$TMP/t15" rev-parse HEAD)"
 printf '#!/bin/sh\nexit 0 # sau audit\n' > "$TMP/t15/tests/test_old.sh"
 run_at "$TMP/t15"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "15: file đổi sau commit trailer -> exit 2"
 else bad "15: file đổi sau trailer: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
 # 16. (d) gate chạy trong linked worktree, task.project = checkout chính của cùng repo -> exit 0
-mk_trailer_repo "$TMP/t16" T0616-cross; pm_task T0616-cross "$TMP/t16" pass
+mk_trailer_repo "$TMP/t16" T0616-cross; pm_task T0616-cross "$TMP/t16" pass "$(git -C "$TMP/t16" rev-parse HEAD)"
 git -C "$TMP/t16" checkout -q main && git -C "$TMP/t16" worktree add -q "$TMP/t16-wt" feat
 run_at "$TMP/t16-wt"
 if [ "$RC" = 0 ] && has "duyệt chéo bởi antigravity"; then ok "16: linked worktree, task.project = checkout chính -> exit 0"
@@ -171,32 +176,74 @@ else bad "16: linked worktree: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
 # 17. (e) task.project = repo khác -> exit 2
 mkdir -p "$TMP/other-repo"
-mk_trailer_repo "$TMP/t17" T0617-cross; pm_task T0617-cross "$TMP/other-repo" pass
+mk_trailer_repo "$TMP/t17" T0617-cross; pm_task T0617-cross "$TMP/other-repo" pass "$(git -C "$TMP/t17" rev-parse HEAD)"
 run_at "$TMP/t17"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "17: task.project = repo khác -> exit 2"
 else bad "17: task.project repo khác: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
 # 18. (e') linked worktree, task.project = repo khác -> exit 2 (nới về checkout chính chỉ cho CÙNG repo)
-mk_trailer_repo "$TMP/t18" T0618-cross; pm_task T0618-cross "$TMP/other-repo" pass
+mk_trailer_repo "$TMP/t18" T0618-cross; pm_task T0618-cross "$TMP/other-repo" pass "$(git -C "$TMP/t18" rev-parse HEAD)"
 git -C "$TMP/t18" checkout -q main && git -C "$TMP/t18" worktree add -q "$TMP/t18-wt" feat
 run_at "$TMP/t18-wt"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "18: linked worktree, task.project = repo khác -> exit 2"
 else bad "18: linked worktree repo khác: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
 # 19. commit sửa test KHÔNG có trailer; audit xong ghi một commit rỗng có trailer (chốt cả cây đã audit) -> exit 0
-mk_trailer_repo "$TMP/t19" T0619-none; pm_task T0619-cross "$TMP/t19" pass
+mk_trailer_repo "$TMP/t19" T0619-none
 printf '#!/bin/sh\nexit 0 # sửa lần 2\n' > tests/test_old.sh && git commit -qam "sửa test lần 2, chưa audit"
+pm_task T0619-cross "$TMP/t19" pass "$(git rev-parse HEAD)"
 git commit -q --allow-empty -m "audit chéo" -m "Test-approved-by: antigravity T0619-cross"
 run_at "$TMP/t19"
 if [ "$RC" = 0 ] && has "T0619-cross"; then ok "19: commit rỗng có trailer sau lần sửa -> exit 0"
 else bad "19: commit rỗng trailer: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
 # 20. sửa test SAU commit rỗng có trailer (nội dung khác cây đã audit) -> exit 2
-mk_trailer_repo "$TMP/t20" T0620-none; pm_task T0620-cross "$TMP/t20" pass
+mk_trailer_repo "$TMP/t20" T0620-none; pm_task T0620-cross "$TMP/t20" pass "$(git rev-parse HEAD)"
 git commit -q --allow-empty -m "audit chéo" -m "Test-approved-by: antigravity T0620-cross"
 printf '#!/bin/sh\nexit 0 # sau audit\n' > tests/test_old.sh && git commit -qam "sửa sau audit"
 run_at "$TMP/t20"
 if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "20: sửa sau commit rỗng trailer -> exit 2"
 else bad "20: sửa sau trailer rỗng: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# --- Audit T0066 (#605): biên bản audit ngoài repo phải ghi auditedHead, blob của test phải khớp cây đó.
+# 21. (a) mục approved_tests.json đủ trường, reviewer khác author, sha256 đúng, nhưng task_id không có biên bản audit -> exit 2
+cd "$R" || exit 1
+entry "$SHA" antigravity claude-lane-a T0621-none
+run_gate
+if [ "$RC" = 2 ] && has "cần duyệt lại" && ! has "duyệt chéo bởi antigravity"; then ok "21: mục duyệt không có biên bản audit -> exit 2"
+else bad "21: mục duyệt không biên bản: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 22. mục duyệt có audit pass nhưng auditedHead là cây cũ (test đổi sau đó) -> exit 2, cần duyệt lại
+pm_task T0622-old "$R" pass "$(git rev-parse HEAD)"
+entry "$SHA" antigravity claude-lane-a T0622-old
+run_gate
+if [ "$RC" = 2 ] && has "cần duyệt lại" && ! has "duyệt chéo bởi antigravity"; then ok "22: mục duyệt, auditedHead cũ -> exit 2"
+else bad "22: mục duyệt auditedHead cũ: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 23. mục duyệt có audit pass nhưng notes không có auditedHead -> exit 2
+pm_task T0623-nohead "$R" pass
+entry "$SHA" antigravity claude-lane-a T0623-nohead
+run_gate
+if [ "$RC" = 2 ] && has "cần duyệt lại" && ! has "duyệt chéo bởi antigravity"; then ok "23: mục duyệt, audit không auditedHead -> exit 2"
+else bad "23: mục duyệt không auditedHead: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+rm -f "$APPR"
+
+# 24. (b) trailer + audit pass nhưng notes không có auditedHead -> exit 2
+mk_trailer_repo "$TMP/t24" T0624-cross; pm_task T0624-cross "$TMP/t24" pass
+run_at "$TMP/t24"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "24: trailer, audit không auditedHead -> exit 2"
+else bad "24: trailer không auditedHead: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 25. (c) replay: task cũ đã pass với auditedHead = commit cũ (main), test sửa sau đó trong commit có trailer task cũ -> exit 2
+mk_trailer_repo "$TMP/t25" T0625-old; pm_task T0625-old "$TMP/t25" pass "$(git -C "$TMP/t25" rev-parse main)"
+run_at "$TMP/t25"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "25: replay task_id cũ (auditedHead cũ) -> exit 2"
+else bad "25: replay task_id cũ: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
+
+# 26. auditedHead là sha không có trong repo -> exit 2 (fail closed)
+mk_trailer_repo "$TMP/t26" T0626-cross; pm_task T0626-cross "$TMP/t26" pass 0123456789abcdef0123456789abcdef01234567
+run_at "$TMP/t26"
+if [ "$RC" = 2 ] && ! has "duyệt chéo bởi antigravity"; then ok "26: auditedHead không có trong repo -> exit 2"
+else bad "26: auditedHead lạ: rc=$RC, $(printf '%s' "$OUT" | tail -15)"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }

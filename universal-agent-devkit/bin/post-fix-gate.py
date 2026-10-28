@@ -628,10 +628,23 @@ def _norm_agent(v):
     return v.strip().casefold()
 
 
+def _blob_is_audited(top, prefix, project_root, f, head) -> bool:
+    """True khi nội dung hiện tại của `f` (đường dẫn so với project_root) đúng bằng blob của nó ở commit `head` (auditedHead).
+    File không có ở head, lỗi git → False (fail closed)."""
+    cur = subprocess.run(["git", "-C", top, "hash-object", "--", str(Path(project_root) / f)],
+                         capture_output=True, text=True, timeout=30)
+    if cur.returncode != 0 or not cur.stdout.strip():
+        return False
+    blob = subprocess.run(["git", "-C", top, "rev-parse", "--verify", "-q", f"{head}:{prefix}{f}"],
+                          capture_output=True, text=True, timeout=30)
+    return blob.returncode == 0 and blob.stdout.strip() == cur.stdout.strip()
+
+
 def _trailer_cross_review(paths: list, project_root) -> dict:
     """{path: task_id} — nguồn duyệt chéo thứ hai (#605 lane E): commit MỚI NHẤT của nhánh (base..HEAD) chạm file, có trailer
     `Test-approved-by: antigravity <task-id>` mà push_gate.approved công nhận (biên bản audit pass của antigravity-pm, ngoài repo),
-    và nội dung hiện tại của file đúng bằng blob ở commit đó (đổi sau audit → không duyệt). Trailer đi theo commit nên tới được
+    và nội dung hiện tại của file đúng bằng blob ở auditedHead mà PM ghi trong verdicts.audit.notes của task đó (push_gate.audited_head,
+    audit T0066: không phải blob ở commit mang trailer; đổi sau audit hoặc thiếu auditedHead → không duyệt). Trailer đi theo commit nên tới được
     scratch worktree của merge gate, nơi .claude/audit-gate/ không được chép. base: BASE_REF (đã là merge-base khi có --diff),
     HEAD → merge-base(nhánh đích, HEAD). Mọi lỗi git → không duyệt (fail closed).
     ponytail: --since trên chính nhánh đích không có range ở đây (base = HEAD) → không duyệt; nối args.since vào nếu cần."""
@@ -655,22 +668,19 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
                              capture_output=True, text=True, timeout=30)
         if res.returncode != 0:
             return {}
-        audited = []                                  # (sha, task_id), mới nhất trước, chỉ commit push_gate công nhận
+        audited = []                                  # (auditedHead, task_id), mới nhất trước, chỉ commit push_gate công nhận
         for sha in res.stdout.split():
             ok, note = _push_gate().approved(root, f"{sha}^!")
             m = re.search(r"antigravity\s+(\S+)", note or "") if ok else None
-            if m:
-                audited.append((sha, m.group(1)))
+            # Audit T0066: so với cây PM đã audit (auditedHead ngoài repo), không với commit mang trailer — trailer của task cũ
+            # đặt lên commit sửa test mới không duyệt được nội dung mới (replay). Không có auditedHead → không duyệt.
+            head = _push_gate().audited_head(root, m.group(1)) if m else None
+            if head:
+                audited.append((head, m.group(1)))
         out = {}
         for f in paths if audited else []:
-            cur = subprocess.run(["git", "-C", root, "hash-object", "--", str(Path(project_root) / f)],
-                                 capture_output=True, text=True, timeout=30)
-            if cur.returncode != 0:
-                continue
-            for sha, task_id in audited:              # nội dung hiện tại phải đúng bằng blob ở một cây đã audit
-                blob = subprocess.run(["git", "-C", root, "rev-parse", "--verify", "-q", f"{sha}:{prefix}{f}"],
-                                      capture_output=True, text=True, timeout=30)
-                if blob.returncode == 0 and blob.stdout.strip() == cur.stdout.strip():
+            for head, task_id in audited:             # nội dung hiện tại phải đúng bằng blob ở một cây đã audit
+                if _blob_is_audited(root, prefix, project_root, f, head):
                     out[f] = task_id
                     break
         return out
@@ -683,7 +693,9 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     """(still_blocking, approved): an edited existing test approved by the user's answer or by a CROSS-REVIEW (#605).
     Cross-review: .claude/audit-gate/approved_tests.json = {"approvals": [{path, sha256, reviewer, author, task_id, reason}]},
     written by another agent (Antigravity /giao audit, a reviewer session); accepted when all six are non-empty strings,
-    reviewer != author and != DEVKIT_AGENT_ID (case-insensitive) and sha256 is the file's current content. Anything else in
+    reviewer != author and != DEVKIT_AGENT_ID (case-insensitive), sha256 is the file's current content, and (audit T0066) task_id has
+    an antigravity-pm audit pass outside the repo whose notes record `auditedHead: <sha40>` with the file's current blob at that
+    commit (push_gate.audited_head) — the file itself is writable by any agent, so it never approves on its own. Anything else in
     that file (legacy list / {path: sha256}, a malformed entry) approves nothing and is listed "cần duyệt lại".
     auto_approve (--auto-approve-tests) and DEVKIT_AUTO_APPROVE_TESTS are self-approval: refused, kept only so old command
     lines parse. User answer: the harness-written `toolUseResult.answers` record. Per file, all three hold:
@@ -742,6 +754,23 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
             cur = _cur_sha(f)
             if not cur or e["sha256"].strip().lower() != cur:
                 APPROVAL_REJECTS.append((f, cur, "sha256 lệch nội dung hiện tại"))
+                continue
+            # Audit T0066: file này agent nào cũng ghi được — mục duyệt chỉ tính khi task_id có biên bản audit pass ngoài repo
+            # kèm auditedHead, và nội dung hiện tại đúng bằng blob ở cây đã audit đó.
+            try:
+                git_top, prefix = str(get_repo_root()), get_project_prefix()
+                head = _push_gate().audited_head(git_top, e["task_id"].strip())
+                audited_ok = bool(head) and _blob_is_audited(git_top, prefix, root, f, head)
+            except (OSError, subprocess.SubprocessError, RuntimeError, ImportError) as err:
+                head, audited_ok = None, False
+                print(f"post-fix-gate: không đọc được biên bản audit của {e['task_id'].strip()} ({type(err).__name__}); không duyệt",
+                      file=sys.stderr)
+            if not head:
+                APPROVAL_REJECTS.append((f, cur, f"task {e['task_id'].strip()} không có biên bản audit pass của antigravity-pm "
+                                                 "kèm `auditedHead: <sha>`"))
+                continue
+            if not audited_ok:
+                APPROVAL_REJECTS.append((f, cur, f"nội dung khác cây đã audit (auditedHead {head[:10]})"))
                 continue
             approved_at[f] = max(approved_at.get(f, 0), mtimes[f])   # sha256 gắn nội dung: mtime không quyết định
             CROSS_REVIEW[f] = (e["reviewer"].strip(), e["task_id"].strip())
@@ -7454,8 +7483,8 @@ def main():
         # A range-flagged test is already committed: committing again cures nothing.
         cure_vi, cure_en = (("hoặc một commit có dòng `Test-approved-by:` (audit Antigravity)", "or a commit carrying a `Test-approved-by:` line (an Antigravity audit)")
                             if in_range else ("hoặc commit nó", "or commit it"))
-        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần duyệt chéo diff test (`{touched_diff}`): agent sửa test KHÔNG tự duyệt (--auto-approve-tests / `AUTO-APPROVE:` bị từ chối); agent khác (audit `/giao` Antigravity hoặc phiên reviewer) đọc diff, xác nhận không nới assertion rồi ghi mục {{path, sha256, reviewer, author, task_id, reason}} vào `.claude/audit-gate/approved_tests.json` (khoá `approvals`) — {cure_vi} — rồi chạy lại gate",
-                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: needs a cross-review of the test diff (`{touched_diff}`): the agent that edited a test does NOT approve it (--auto-approve-tests / `AUTO-APPROVE:` are refused); another agent (an Antigravity `/giao` audit or a reviewer session) reads the diff, confirms no assertion was weakened and records {{path, sha256, reviewer, author, task_id, reason}} in `.claude/audit-gate/approved_tests.json` (key `approvals`) — {cure_en} — then re-run the gate"), YELLOW, 2
+        verdict_text, verdict_color, exit_code = tr(f"CHƯA XÁC MINH — {len(tests_touched)} file test đã có bị sửa/xoá trong thay đổi: cần duyệt chéo diff test (`{touched_diff}`): agent sửa test KHÔNG tự duyệt (--auto-approve-tests / `AUTO-APPROVE:` bị từ chối); agent khác (audit `/giao` Antigravity hoặc phiên reviewer) đọc diff, xác nhận không nới assertion rồi ghi mục {{path, sha256, reviewer, author, task_id, reason}} vào `.claude/audit-gate/approved_tests.json` (khoá `approvals`) — {cure_vi} — rồi chạy lại gate; mục duyệt và trailer chỉ tính khi task_id có audit Antigravity pass mà verdict của antigravity-pm ghi `auditedHead: <sha>` của cây chứa đúng nội dung test hiện tại",
+                                                    f"UNVERIFIED — {len(tests_touched)} existing test files were edited/deleted in the change: needs a cross-review of the test diff (`{touched_diff}`): the agent that edited a test does NOT approve it (--auto-approve-tests / `AUTO-APPROVE:` are refused); another agent (an Antigravity `/giao` audit or a reviewer session) reads the diff, confirms no assertion was weakened and records {{path, sha256, reviewer, author, task_id, reason}} in `.claude/audit-gate/approved_tests.json` (key `approvals`) — {cure_en} — then re-run the gate; an entry or trailer counts only when its task_id has an Antigravity audit pass whose antigravity-pm verdict records `auditedHead: <sha>` of a tree holding the test's current content"), YELLOW, 2
     elif unverified:
         exit_reason = "dry_run"
         verdict_text, verdict_color, exit_code = tr("CHƯA XÁC MINH — test hồi quy chưa chạy (dry-run)", "UNVERIFIED — regression tests not run (dry-run)"), YELLOW, 2

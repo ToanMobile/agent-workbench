@@ -432,6 +432,49 @@ def audit_record(top, task_id):
     (or a directory in it): task ids restart at T0001 in every project. In a linked worktree (a session's or the merge gate's
     scratch) `top` is that worktree while the task names the main checkout: the main checkout of the SAME repository (the
     parent of `git rev-parse --git-common-dir` when that is a `.git` dir) counts too (#605 lane E); git error → top only."""
+    verdicts = []
+    for audit in _task_audits(top, task_id):
+        verdict = audit.get("verdict") if isinstance(audit, dict) else None
+        if verdict == "pass":
+            return True, None
+        verdicts.append(str(verdict or "chưa có"))
+    if verdicts:
+        return False, f"antigravity-pm: audit của {task_id} chưa pass ({', '.join(verdicts)})"
+    return False, f"không có biên bản audit pass của antigravity-pm cho {task_id} trong repo này ({_task_pattern(task_id)})"
+
+
+AUDITED_HEAD = re.compile(r"(?<![0-9A-Za-z])auditedHead:\s*([0-9a-f]{40})(?![0-9A-Za-z])")
+
+
+def audited_head(top, task_id):
+    """sha40 của cây Antigravity đã audit cho task `task_id` của repo này, hoặc None (audit T0066, #605).
+    Cùng biên bản ngoài repo và cùng luật repo/checkout chính như audit_record; chỉ tính khi verdicts.audit.verdict == "pass"
+    VÀ verdicts.audit.notes có `auditedHead: <sha40>` (PM ghi lúc chốt verdict) VÀ sha đó là commit có trong repo `top`.
+    Một task_id cũ đã pass vì thế chỉ duyệt đúng nội dung nó đã audit, không duyệt nội dung sửa sau (chặn replay).
+    Thiếu auditedHead, sha lạ, lỗi git → None (fail closed)."""
+    for audit in _task_audits(top, task_id):
+        if not isinstance(audit, dict) or audit.get("verdict") != "pass" or not isinstance(audit.get("notes"), str):
+            continue
+        m = AUDITED_HEAD.search(audit["notes"])
+        if not m:
+            continue
+        try:
+            rc, out = git(top, "rev-parse", "--verify", "-q", m.group(1) + "^{commit}")
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if rc == 0 and out.strip() == m.group(1):
+            return m.group(1)
+    return None
+
+
+def _task_pattern(task_id):
+    home = os.path.expanduser(os.environ.get("ANTIGRAVITY_PM_STATE_HOME") or os.path.join("~", ".antigravity-pm"))
+    return os.path.join(glob.escape(home), "projects", "*", "tasks", task_id, "task.json")
+
+
+def _task_audits(top, task_id):
+    """verdicts.audit (có thể None) của từng task.json `task_id` mà `project` thuộc repo này (top, hoặc checkout chính khi top là
+    linked worktree của cùng repo). Dùng chung cho audit_record và audited_head."""
     roots = [top]
     try:
         rc, common = git(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -442,10 +485,7 @@ def audit_record(top, task_id):
         main_root = os.path.dirname(common)
         if not _inside(main_root, top):
             roots.append(main_root)
-    home =os.path.expanduser(os.environ.get("ANTIGRAVITY_PM_STATE_HOME") or os.path.join("~", ".antigravity-pm"))
-    pattern = os.path.join(glob.escape(home), "projects", "*", "tasks", task_id, "task.json")
-    verdicts = []
-    for path in sorted(glob.glob(pattern)):
+    for path in sorted(glob.glob(_task_pattern(task_id))):
         try:
             if not stat.S_ISREG(os.stat(path).st_mode) or os.path.getsize(path) > 8_000_000:
                 continue
@@ -455,14 +495,7 @@ def audit_record(top, task_id):
             continue
         if not isinstance(task, dict) or task.get("id") != task_id or not any(_inside(task.get("project"), r) for r in roots):
             continue
-        audit = (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
-        verdict = audit.get("verdict") if isinstance(audit, dict) else None
-        if verdict == "pass":
-            return True, None
-        verdicts.append(str(verdict or "chưa có"))
-    if verdicts:
-        return False, f"antigravity-pm: audit của {task_id} chưa pass ({', '.join(verdicts)})"
-    return False, f"không có biên bản audit pass của antigravity-pm cho {task_id} trong repo này ({pattern})"
+        yield (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
 
 
 def approved(top, rng):

@@ -15,7 +15,7 @@ export HOME="$TMP/home"   # HOME riêng: không quét transcript / log Antigravi
 mkdir -p "$HOME/.claude/projects"
 
 python3 - "$GATE" "$TMP" <<'PY'
-import hashlib, importlib.util, json, os, sys, time
+import hashlib, importlib.util, json, os, subprocess, sys, time
 gate, tmp = sys.argv[1], sys.argv[2]
 fails = 0
 
@@ -30,12 +30,25 @@ def case(name, test_dt, appr_dt, edit_after, want_ok, fmt="approvals"):
     appr_f = os.path.join(root, ".claude", "audit-gate", "approved_tests.json")
     with open(test_f, "w") as fh:
         fh.write("#!/bin/sh\ntrue\n")
+    # Audit T0066 (#605): mục duyệt chỉ tính khi task_id có biên bản audit pass của antigravity-pm (ngoài repo, ở đây dưới tmp)
+    # ghi `auditedHead: <sha>` của cây chứa đúng nội dung test lúc duyệt: commit nội dung đó, ghi biên bản với HEAD.
+    git = ["git", "-C", root, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
+    subprocess.run(git + ["init", "-q"], check=True)
+    subprocess.run(git + ["add", "tests/test_old.sh"], check=True)
+    subprocess.run(git + ["commit", "-qm", "test"], check=True)
+    head = subprocess.run(git + ["rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    os.environ["ANTIGRAVITY_PM_STATE_HOME"] = os.path.join(tmp, "pm-state")
+    tid = "T605-" + name
+    td = os.path.join(tmp, "pm-state", "projects", "fixture", "tasks", tid); os.makedirs(td)
+    with open(os.path.join(td, "task.json"), "w") as fh:
+        json.dump({"id": tid, "project": root, "verdicts": {"audit": {"verdict": "pass", "reviewer": "pm",
+                                                                      "notes": "fixture\nauditedHead: " + head}}}, fh)
     with open(appr_f, "w") as fh:
         with open(test_f, "rb") as tfh:
             sha = hashlib.sha256(tfh.read()).hexdigest()
         if fmt == "approvals":
             fh.write(json.dumps({"approvals": [{"path": "tests/test_old.sh", "sha256": sha, "reviewer": "antigravity",
-                                                "author": "claude", "task_id": "T605", "reason": "không nới assertion"}]}))
+                                                "author": "claude", "task_id": tid, "reason": "không nới assertion"}]}))
         elif fmt == "dict":
             fh.write('{"tests/test_old.sh": "%s"}\n' % sha)
         else:
