@@ -73,9 +73,9 @@ root_installable() {   # như watchdog: không cài agent thật trỏ vào thư
 
 install_agent() {   # $1 = quiet: không làm gì khi đúng bản này đã nạp (ensure)
   local uid tmp i why
-  if ! command -v launchctl >/dev/null 2>&1; then echo "launchctl not found (not macOS): merge-queue schedule not installed"; return 0; fi
+  if ! command -v launchctl >/dev/null 2>&1; then echo "launchctl not found (not macOS): merge-queue schedule not installed" >&2; return 1; fi
   if ! why=$(root_installable); then
-    [ "${1:-}" = quiet ] && { echo "merge-queue schedule not installed: $why" >&2; return 0; }
+    [ "${1:-}" = quiet ] && { echo "merge-queue schedule not installed: $why" >&2; return 1; }   # no agent = no drainer: wave-plan must not hide queued cards
     echo "$why" >&2; return 1
   fi
   [ -e "$CONFIG" ] || { echo "config not found: $CONFIG" >&2; return 1; }
@@ -100,7 +100,10 @@ install_agent() {   # $1 = quiet: không làm gì khi đúng bản này đã n�
 
 case "$CMD" in
   install) install_agent ;;
-  ensure) [ "${SB_QUEUE_SCHEDULE_AUTOINSTALL:-1}" = 0 ] || install_agent quiet ;;
+  ensure)   # exit 0 only when an agent is (or just became) loaded; AUTOINSTALL=0 installs nothing and only reports whether one is loaded
+    if [ "${SB_QUEUE_SCHEDULE_AUTOINSTALL:-1}" = 0 ]; then
+      command -v launchctl >/dev/null 2>&1 && launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1
+    else install_agent quiet; fi ;;
   uninstall)
     command -v launchctl >/dev/null 2>&1 && { launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || echo "$LABEL was not loaded"; }
     rm -f "$PLIST"; echo "uninstalled $LABEL" ;;

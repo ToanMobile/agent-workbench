@@ -40,4 +40,15 @@ case "$TMP/" in /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*)
   ( env -u SB_LAUNCH_AGENTS_DIR HOME="$TMP/home" PATH="$TMP/stub:$PATH" bash "$TMP/repo/.claude/bin/super-board-queue-schedule.sh" install t >"$TMP/ins.out" 2>&1 ); rc=$?
   [ "$rc" = 1 ] && grep -q 'temporary directory' "$TMP/ins.out" && [ -z "$(find "$TMP/home" -name '*.plist')" ] && ok "install refuses a temporary root (exit 1, no plist)" || fail "refuse: rc=$rc $(cat "$TMP/ins.out")" ;;
 esac
+# R4 (review #513): ensure thoát 0 mà không có drainer (thư mục tạm / AUTOINSTALL=0 không nạp) làm wave ẩn thẻ merge-queue mãi mãi: không có agent nạp thì ensure PHẢI exit != 0.
+case "$TMP/" in /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*)
+  ( env -u SB_LAUNCH_AGENTS_DIR HOME="$TMP/home" PATH="$TMP/stub:$PATH" bash "$TMP/repo/.claude/bin/super-board-queue-schedule.sh" ensure t >"$TMP/ens.out" 2>&1 ); rc=$?
+  [ "$rc" != 0 ] && [ -z "$(find "$TMP/home" -name '*.plist')" ] && ok "ensure on a temporary root exits non-zero (no drainer)" || fail "ensure tmp root: rc=$rc $(cat "$TMP/ens.out")" ;;
+esac
+printf '#!/bin/sh\n[ "$1" = print ] && exit %s\nexit 0\n' 1 > "$TMP/stub/launchctl"
+( SB_LAUNCH_AGENTS_DIR="$TMP/agents" SB_QUEUE_SCHEDULE_AUTOINSTALL=0 HOME="$TMP/home" PATH="$TMP/stub:$PATH" bash "$TMP/repo/.claude/bin/super-board-queue-schedule.sh" ensure t >"$TMP/ens.out" 2>&1 ); rc=$?
+[ "$rc" != 0 ] && ok "AUTOINSTALL=0 and nothing loaded: ensure exits non-zero" || fail "autoinstall=0 unloaded: rc=$rc"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/stub/launchctl"
+( SB_LAUNCH_AGENTS_DIR="$TMP/agents" SB_QUEUE_SCHEDULE_AUTOINSTALL=0 HOME="$TMP/home" PATH="$TMP/stub:$PATH" bash "$TMP/repo/.claude/bin/super-board-queue-schedule.sh" ensure t >"$TMP/ens.out" 2>&1 ); rc=$?
+[ "$rc" = 0 ] && ok "AUTOINSTALL=0 and the agent is loaded: ensure exits 0" || fail "autoinstall=0 loaded: rc=$rc"
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
