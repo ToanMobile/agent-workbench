@@ -85,12 +85,13 @@ for f in $changed; do
   case "$f" in
     tests/*/test_*.sh|hooks/tests/*.sh) tests="$tests $f"; continue ;;
   esac   # a helper under tests/ falls through: every test that sources it names it
-  # 28/10 (#607): a basename several DevKit files share (SKILL.md: one per skill) is matched with its parent folder, else
-  # skills/parallel-lanes/SKILL.md selected every test naming any SKILL.md (16 tests, none about it); readers of every such
-  # file are declared in tests/impact_map.txt (skills/*/SKILL.md -> test_skill_size.sh).
+  # 28/10 (#607): a skill's SKILL.md is matched with its folder ("parallel-lanes/SKILL.md"), else one skill's edit selected
+  # every test naming any SKILL.md (16 tests, none about it). The readers of every SKILL.md are in tests/impact_map.txt
+  # (skills/*/SKILL.md). Only SKILL.md: profiles/*/DESIGN.md, RULES.md, instincts.md and hooks.json are read through
+  # variables ("$GAME/DESIGN.md") by tests the map does not list, so their bare name must keep selecting (review 28/10).
   name="$(basename "$f")"
   case "$f" in
-    */*) [ "$(git ls-files -- "$name" "*/$name" 2>/dev/null | wc -l)" -gt 1 ] && name="$(basename "$(dirname "$f")")/$name" ;;
+    */SKILL.md) name="$(basename "$(dirname "$f")")/$name" ;;
   esac
   tests="$tests $(grep -l -F -- "$name" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
   # …or its stem as a whole word: tests reach scripts through commands ("agent-kit githooks

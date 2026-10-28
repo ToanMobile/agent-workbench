@@ -24,6 +24,13 @@ sel="$(list skills/impeccable/SKILL.md)"
 printf '%s\n' "$sel" | grep -qx "tests/verification/test_impeccable_skill.sh" \
   && ok "a test naming impeccable/SKILL.md is selected for it" || fail "impeccable/SKILL.md lost its own test"
 
+# review 28/10: only SKILL.md narrows. profiles/game/DESIGN.md is read as "$GAME/DESIGN.md" by test_game_blender_default.sh and
+# profiles/<p>/RULES.md through "profiles/%s/RULES.md": their bare names must keep selecting those tests.
+printf '%s\n' "$(list profiles/game/DESIGN.md)" | grep -qx "tests/verification/test_game_blender_default.sh" \
+  && ok "profiles/game/DESIGN.md still selects test_game_blender_default.sh (bare name kept)" || fail "profiles/game/DESIGN.md lost test_game_blender_default.sh"
+printf '%s\n' "$(list profiles/backend/RULES.md)" | grep -qx "tests/context_memory/test_profile_split.sh" \
+  && ok "profiles/backend/RULES.md still selects test_profile_split.sh" || fail "profiles/backend/RULES.md lost test_profile_split.sh"
+
 sel="$(list scripts/git/worktree.py)"
 printf '%s\n' "$sel" | grep -qx "tests/worktree_git/test_worktree_lane.sh" \
   && ok "a unique basename (worktree.py) still selects by name alone" || fail "unique basename worktree.py lost test_worktree_lane.sh"
