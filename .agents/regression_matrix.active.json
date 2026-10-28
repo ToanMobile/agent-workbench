@@ -2007,6 +2007,32 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-audit-check-605",
+      "watch_files": [
+        ".claude/bin/super-board-audit-check.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AUDIT-CHECK-605-01",
+          "name": "#605 (audit T0066 vòng 2): task_id của cross-review-approved chỉ tính khi antigravity-pm có audit pass với auditedHead == head của request; không biên bản, head khác, verdict fail, project khác, task_id sai dạng = không duyệt; CLI super-board-audit-check.py exit 0/1",
+          "command": "python3 tests/super-board/test_approval_cross_review.py",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-AUDIT-CHECK-605-02",
+          "name": "#605 (audit T0066 vòng 2): merge-queue loại approved-by có task_id không có audit pass khớp head PR (giả, head cũ, verdict fail, sai dạng); bare OWNER vẫn vào train",
+          "command": "bash tests/super-board/test_merge_queue.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-AUDIT-CHECK-605-03",
+          "name": "#605 (audit T0066 vòng 2): review_approved_head của runner chỉ merge-only khi task_id của approved-by có audit pass khớp head PR",
+          "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
