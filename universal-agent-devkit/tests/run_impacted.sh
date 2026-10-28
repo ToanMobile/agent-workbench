@@ -211,15 +211,17 @@ w=0; while [ -n "$after" ] && [ -n "$alone" ] && [ ! -e "$after" ] && [ "$w" -lt
   sleep 1; w=$((w + 1))
 done
 for t in $alone; do run_one "$t" "$out"; done
-rc=0
+rc=0; n_reuse=0; n_ran=0
 for t in $selected; do
   [ -f "$t" ] || continue
   o="$out/$(printf '%s' "$t" | tr '/' '_')"
   if is_reused "$t"; then
     age="$(awk -F'\t' -v t="$t" '$1 == "reuse" && $2 == t { print $3; exit }' "$out/ptc.plan")"
     echo "↺ $t (PASS dùng lại trên cùng cây, chạy thật $((${age:-0} / 60)) phút trước)"
+    n_reuse=$((n_reuse + 1))
     continue
   fi
+  n_ran=$((n_ran + 1))
   [ -s "$o.ptc" ] && sed 's/^/    /' "$o.ptc"
   if [ "$(cat "$o.rc" 2>/dev/null)" = 0 ]; then
     echo "✔ $t"
@@ -227,4 +229,6 @@ for t in $selected; do
     echo "✖ $t"; tail -n 20 "$o.log" 2>/dev/null | sed 's/^/    /'; rc=1
   fi
 done
+# #472 D: hit-rate của sổ per-test (post-fix-gate đọc dòng này ghi vào runs.jsonl); chỉ khi sổ bật
+[ -n "$DEVKIT_PTC" ] && echo "per_test_cache: reuse=$n_reuse ran=$n_ran"
 exit "$rc"
