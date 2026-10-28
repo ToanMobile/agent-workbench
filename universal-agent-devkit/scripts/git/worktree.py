@@ -1065,6 +1065,8 @@ def cmd_add(cwd, args):
             die(tr(f"không hỏi được origin có nhánh {branch} không (ls-remote exit {probe.returncode}): không tạo nhánh mới khi chưa biết",
                    f"cannot ask origin whether it has the branch {branch} (ls-remote exit {probe.returncode}): no new branch while that is unknown"), 1)
     _make_room(main, wt)   # #607: the disk floor is the only limit; a count of worktrees refused manual adds over scratch and subagent trees
+    # ponytail: no add lock any more, so two concurrent `add -b` can meet on .git/config.lock (a transient git error, no data lost; it was
+    # already unlocked with WORKTREE_MAX=0); put a flock around the `git worktree add` below if that error shows up in a run log.
     if branch is None:
         git(main, "worktree", "add", "--detach", wt, *([base] if base else []), bounded=False)
     elif git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
