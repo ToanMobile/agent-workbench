@@ -1903,6 +1903,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-waiting-on",
+      "trigger_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        "tests/super-board/test_waiting_on_labels.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAITING-ON-01",
+          "name": "thẻ chỉ chờ thẻ khác ở Ready + nhãn waiting-on:#N (không Blocked), dispatch bỏ qua, nhãn gỡ khi blocker đóng, migration idempotent (#601)",
+          "command": "bash tests/super-board/test_waiting_on_labels.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
