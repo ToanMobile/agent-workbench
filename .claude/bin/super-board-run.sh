@@ -267,6 +267,12 @@ DEVICE_JQ='def held_for_device($col): $nodev and ([((.labels // []) + (.content.
   | index("needs-device") != null and ($col == "QA" or ($col == "Ready" and index("qa") != null)));'
 NO_DEVICE=false
 
+# #601: a Ready card held for another card/PR carries `waiting-on:#N` (one label per open blocker). Not dispatched, not Blocked.
+# Same rule: super-board-wave-plan.sh. The label is dropped by release_waiting_on when N closes.
+WAITING_ON_JQ='def waiting_on: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+  | any(startswith("waiting-on:#"));'
+WAITING_ON_PREFIX="waiting-on:#"
+
 # #202: dispatch order of Ready cards: priority:high < medium < low < none, then `bug` first, then the issue number ascending.
 READY_RANK_JQ='def ready_rank: ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]) as $l
   | [(if ($l | index("priority:high")) then 0 elif ($l | index("priority:medium")) then 1 elif ($l | index("priority:low")) then 2 else 3 end),
@@ -617,7 +623,7 @@ top_card_in_column() {
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$READY_RANK_JQ"'
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$READY_RANK_JQ$WAITING_ON_JQ"'
     [.items[]
     | select(.status == $col and .content.type == "Issue")
     # Chỉ bỏ qua thẻ đang giao cho người khác; thẻ chỉ mang assignee của chính BOT_LOGIN nhưng không có lock sống sẽ được lọc ở issue_locked phía trên để không bị kẹt.
@@ -626,6 +632,7 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}"
     # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
     # still on (run.md → resume). Removing the label releases the card.
     | select($col != "Ready" or (for_a_person | not))
+    | select($col != "Ready" or (waiting_on | not))   # #601: held for another card, released by release_waiting_on
     | select(held_for_device($col) | not)]   # #95: its QA needs a real device and none is online (refresh_device_state)
     # #202: Ready is taken by priority label, then bug before the rest, then the lower (older) issue number; other columns keep board order.
     | (if $col == "Ready" then sort_by(ready_rank) else . end)
@@ -1176,6 +1183,40 @@ agent_office_args() {
   printf 'agent_office: session_id=%s\n' "$sid" >> "$1" 2>/dev/null || true
 }
 
+add_waiting_on_labels() {
+  # #601: $1 = issue, rest = blocker numbers. Creates each label (idempotent --force) and adds it. Returns 1 on a write that did not
+  # take effect, so the caller leaves the card as it was.
+  local issue="$1" n; shift
+  for n in "$@"; do
+    gh_write_once label create "${WAITING_ON_PREFIX}${n}" --color FBCA04 --description "Held in Ready until #${n} closes; the runner removes it then" --force >/dev/null 2>&1 || return 1
+    gh_write_once issue edit "$issue" --add-label "${WAITING_ON_PREFIX}${n}" >/dev/null 2>&1 || return 1
+  done
+}
+
+release_waiting_on() {
+  # #601: drop `waiting-on:#N` from every card once #N is closed. One blocked-by.py call per card (it reads each state and prints only
+  # the OPEN ones); a state it cannot read (exit 79, 64) keeps the labels and tries again at the next sweep, never releases on a guess.
+  local repo issue held csv bline orc open n
+  repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
+  [ -n "$repo" ] || return 0
+  while IFS=$'\t' read -r issue held; do
+    [ -n "$issue" ] && [ -n "$held" ] || continue
+    csv="${held// /,}"; orc=0
+    bline=$(python3 "$(dirname "$SB_GITHUB_READ")/super-board-blocked-by.py" line --repo "$repo" "$csv" 2>>"$RUN_MANIFEST") || orc=$?
+    if [ "$orc" -ne 0 ]; then log "⏳ #${issue}: waiting-on state unreadable (exit ${orc}) — labels kept"; continue; fi
+    open=" $(printf '%s' "${bline#blocked-by: }" | grep -oE '[0-9]+' | tr '\n' ' ')"
+    for n in $held; do
+      case "$open" in *" $n "*) continue ;; esac
+      gh_write_once issue edit "$issue" --remove-label "${WAITING_ON_PREFIX}${n}" >/dev/null 2>&1 || true
+      log "⏳ #${issue}: #${n} closed — label '${WAITING_ON_PREFIX}${n}' removed"
+    done
+  done <<WAITEOF
+$(echo "$PROJECT_ITEMS_JSON" | jq -r '.items[] | [(.content.number | tostring),
+    ([((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end)
+      | select(test("^waiting-on:#[0-9]+$")) | ltrimstr("waiting-on:#")] | unique | join(" "))] | @tsv' 2>/dev/null)
+WAITEOF
+}
+
 preflight_gate() {
   # #253: chạy super-board-preflight.sh TRƯỚC khi nhận thẻ build; trước đây LLM mới chạy nó (09:58Z #200 mới thấy "hold" sau khi
   # đã tốn một lượt). Trả 0 = giao, 1 = không giao (thẻ đã sang Blocked, hoặc còn Ready để thử lại tick sau). Chỉ chặn trên bằng chứng CHÍNH XÁC: PR đã merge / đang mở
@@ -1227,7 +1268,20 @@ preflight_gate() {
         blocked="${bline#blocked-by: }"; [ "$blocked" != "-" ] || blocked=""
       fi
       [ -n "$blocked" ] || { log "preflight #${issue}: ${reason} — proceeding (merge gate rebases)"; return 0; }
-      tagline="⏳" ;;
+      # #601: a card that only waits for another card stays in Ready with `waiting-on:#N` labels (Blocked is for what needs a person
+      # or is red). Labels are written first, so a failed write leaves the card dispatchable and the next tick retries; once labelled
+      # the card is filtered out of dispatch, so this comment is written once.
+      # shellcheck disable=SC2046
+      if add_waiting_on_labels "$issue" $(printf '%s' "$blocked" | grep -oE '[0-9]+'); then
+        gh_write_once issue comment "$issue" --body "[orchestrator] [report] ⏳ waiting on ${blocked} · kept in Ready
+Did: pre-flight ${verdict} (${tag}): ${reason}
+✅ Done: label waiting-on:#N per open blocker; no worker started
+Next: the runner drops each label when its card closes, then the card is built" >/dev/null 2>&1 || true
+        log "preflight ${verdict}/${tag} for #${issue}: ${reason} — held in Ready, waiting on ${blocked}"
+      else
+        log "⚠ preflight: could not label #${issue} waiting-on — not dispatched, retrying next tick"
+      fi
+      return 1 ;;
     hold)
       exact=$(printf '%s' "$v" | jq -r --arg n "$issue" '
         if .tag == "unclear" then "yes"
@@ -2296,6 +2350,37 @@ $(printf '%s' "$1" | jq -r '.flag[]? | [(.number | tostring), ((.why // "") | gs
 EOF
 }
 
+migrate_blocked_waiting() {
+  # #601: $1 = plan JSON. One-off and idempotent: a Blocked card that only waits on open cards (plan `pending`, never a card for a person)
+  # goes back to Ready with `waiting-on:#N` labels. Labels first, then the move: a failed move leaves labels on a Blocked card and the
+  # next sweep finishes it. Once Ready it is no longer `pending`, so a second run finds nothing. Sets MIGRATED_WAITING (issue numbers).
+  MIGRATED_WAITING=""
+  local issue nums item_id
+  while IFS=$'\t' read -r issue nums; do
+    [ -n "$issue" ] && [ -n "$nums" ] || continue
+    if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
+         | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+         | (index("needs-you") or index("human-gated"))' >/dev/null 2>&1; then continue; fi
+    item_id=$(echo "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$issue" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+    [ -n "$item_id" ] || continue
+    # shellcheck disable=SC2086
+    add_waiting_on_labels "$issue" $nums || { gh_checkpoint; log "⚠ #${issue}: could not label waiting-on — left Blocked"; continue; }
+    if ! set_card_status "$item_id" "Ready"; then
+      gh_checkpoint; log "⚠ #${issue}: could not move to Ready — labelled, retried next sweep"; continue
+    fi
+    MIGRATED_WAITING="${MIGRATED_WAITING:+$MIGRATED_WAITING }${issue}"
+    gh_checkpoint
+    gh_write_once issue comment "$issue" --body "[orchestrator] [report] ↩️ back to Ready · waiting on cards
+Did: Blocked only for open cards (#${nums// /, #}); Blocked is for what needs a person or is red (#601)
+✅ Done: card moved Blocked → Ready with label waiting-on:#N per blocker
+Next: built once every blocker closes" >/dev/null 2>&1 || true
+    log "↩ #${issue}: Blocked → Ready, waiting on #${nums// /, #}"
+  done <<MIGEOF
+$(printf '%s' "$1" | jq -r '.pending[]? | select((.openBlockers // []) | length > 0)
+    | [(.number | tostring), (.openBlockers | unique | map(tostring) | join(" "))] | @tsv' 2>/dev/null)
+MIGEOF
+}
+
 sweep_blocked_cards() {
   # Thẻ Blocked có mọi blocker trên dòng `blocked-by:` đã đóng thì về lại Ready: danh sách `sweep` của wave
   # planner, đúng luật backend workflow áp giữa các wave. Thẻ chờ người (`blocked-by: -`) không bao giờ có
@@ -2311,6 +2396,12 @@ sweep_blocked_cards() {
     return 2
   fi
   local next key
+  release_waiting_on
+  migrate_blocked_waiting "$plan"
+  if [ -n "$MIGRATED_WAITING" ]; then   # moved to Ready this pass: the Blocked-only label must not be added to them
+    plan=$(printf '%s' "$plan" | jq -c --arg m "$MIGRATED_WAITING" '.pending |= map(select((.number | tostring) as $n | ($m | split(" ") | index($n)) | not))')
+    moved=0
+  fi
   sync_waiting_labels "$plan"
   log_unreadable_blocked_by "$plan"
   while IFS=$'\t' read -r issue cleared; do

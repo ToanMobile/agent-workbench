@@ -182,6 +182,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
 
   # Ready: only the ones the graph says are actually free.
   | [ $all[] | select(.status == "Ready") | select(free(.number)) | select(for_a_person(.labels) | not)
+      | select(.labels | any(startswith("waiting-on:#")) | not)   # #601: held in Ready for another card; the runner drops the label when it closes
       | select(held_for_device(.status; .labels) | not) ] as $ready
 
   # Downstream-first, so work already begun finishes before new work starts.
