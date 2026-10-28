@@ -637,13 +637,22 @@ def parse_stream_json(stdout_text: str, skill_name: str, project_dir: str) -> di
 
 
 def _copytree_contents(src_dir: str, dst_dir: str) -> None:
-    """Chép toàn bộ cây con từ src_dir vào dst_dir dùng shutil.copy (không chép cờ BSD uchg)."""
+    """Chép toàn bộ cây con từ src_dir vào dst_dir dùng shutil.copy (không chép cờ BSD uchg và bỏ qua __pycache__/*.pyc)."""
     os.makedirs(dst_dir, exist_ok=True)
     for item in os.listdir(src_dir):
+        if item == "__pycache__" or item.endswith(".pyc"):
+            continue
         s_item = os.path.join(src_dir, item)
         d_item = os.path.join(dst_dir, item)
         if os.path.isdir(s_item) and not os.path.islink(s_item):
-            shutil.copytree(s_item, d_item, symlinks=True, dirs_exist_ok=True, copy_function=shutil.copy)
+            shutil.copytree(
+                s_item,
+                d_item,
+                symlinks=True,
+                dirs_exist_ok=True,
+                copy_function=shutil.copy,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
         else:
             if os.path.lexists(d_item):
                 os.unlink(d_item)
@@ -1035,7 +1044,14 @@ def _eval_command_check(chk: dict[str, Any], project_dir: str, skill_dir: str) -
     tmp_parent = tempfile.mkdtemp(prefix="skill_eval_grade_")
     try:
         tmp_proj = os.path.join(tmp_parent, "project")
-        shutil.copytree(project_dir, tmp_proj, symlinks=True, copy_function=shutil.copy)
+        # Loại bỏ __pycache__/*.pyc để việc chép đè oracle_files cùng giây/cùng kích thước (PEP 552) luôn dịch lại nguồn mới.
+        shutil.copytree(
+            project_dir,
+            tmp_proj,
+            symlinks=True,
+            copy_function=shutil.copy,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
 
         raw_rm = chk.get("remove_paths")
         for rpath in (raw_rm if raw_rm is not None else []):
