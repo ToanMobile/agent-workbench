@@ -5697,7 +5697,8 @@ def main():
     parser.add_argument("--full", action="store_true",
                         help="Run every matrix command in full, ignoring impacted_command (implies --run-tests). "
                              "Without it, --run-tests runs only the impacted tests where the matrix declares an "
-                             "impacted_command. Use --full before handover; POSTFIX_GATE_FULL=1 and CI=true do the same")
+                             "impacted_command. A task runs only the impacted tests; --full belongs to the merge point "
+                             "(agent-kit integrate, merge gate or train). POSTFIX_GATE_FULL=1 and CI=true do the same")
     parser.add_argument("--force-full", action="store_true",
                         help="Force the full test commands (like --full; kept for callers that pass it: --full is no longer deferred for sibling sessions)")
     parser.add_argument("--dry-run", action="store_true", help="Only list impacted tests, do not run them (default without --run-tests; never PASS)")
