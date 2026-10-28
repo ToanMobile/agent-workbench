@@ -80,7 +80,8 @@ fast_allow() { # $1 = trigger ERE
 # ERE has no \b (glibc adds it, macOS regcomp need not). A process substitution <(…) can be a shell's script (`bash <(curl …)`,
 # 2026-10-09, tests/gates/test_git_guard_process_subst.sh): the parser reads it too, and so does `tee >(sh)`, a shell that reads
 # what an output process substitution is fed (tests/gates/test_git_guard_shell_subst.sh). `bash -c "$(…)"` has a `$`: the parser.
-fast_allow 'git|eval|devkit_precommit|hookspath|pkill|killall|pgrep|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
+# (#605) rm / unlink / find -delete: parser kiểm danh sách protected_delete.
+fast_allow 'git|eval|devkit_precommit|hookspath|pkill|killall|pgrep|(^|[^[:alnum:]_.-])(rm|unlink)([^[:alnum:]_.-]|$)|-delete|[|]([^|]*[^[:alnum:]_.-])?(ba|z|da|k|fi)?sh([^[:alnum:]_.-]|$)|<<<|<[(]|>[(]' && exit 0
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "BLOCKED: block-dangerous-git.sh cần 'python3' để phân tích lệnh. Chặn để an toàn." >&2
@@ -808,6 +809,112 @@ def inline_codes(rest):
             out += [a[k + 1:]] if k else []
     return out
 
+# (2026-10-28, #605) Luật chủ repo: DevKit tự động hoàn toàn, chỉ hỏi người khi xoá file QUAN TRỌNG (cùng force push và xoá ref
+# trên remote, đã chặn ở danger_in_git). Danh sách = mặc định dưới đây + khoá "protected_delete" (list glob) trong
+# <git toplevel>/.antigravity-pm.json; config hỏng/thiếu thì vẫn dùng mặc định. Glob không có "/" khớp tên file ở mọi cấp; glob có
+# "/" khớp đường dẫn tính từ git toplevel của file (worktree lồng trong project có gốc riêng); "X/**" = X và mọi thứ bên trong.
+# Xoá một thư mục cha của path được bảo vệ (rm -rf .agents, rm -rf .) cũng bị chặn. Xoá file thường không bị hỏi gì thêm.
+# ponytail: không duyệt cây thư mục, nên rm -rf app không thấy app/google-services.json bên trong (chỉ glob có "/" được xét
+# theo thư mục cha); toán hạng chứa $VAR / $( ) không biết trước giá trị nên cho qua. Nâng cấp khi một ca thật lọt qua.
+# tests/gates/test_guard_protected_delete.sh
+PROTECTED_DELETE_DEFAULT = (".env*", "*.keystore", "*.jks", "google-services.json",
+                            ".agents/regression_matrix.active.json", ".agents/local/**", ".git/**")
+PROTECTED_DELETE_MSG = "xoá file quan trọng"
+_PD_TOP, _PD_PATS = {}, {}
+
+def _pd_toplevel(d):
+    if d not in _PD_TOP:
+        _PD_TOP[d] = solo_out(d, "rev-parse", "--show-toplevel") or None
+    return _PD_TOP[d]
+
+def protected_delete_patterns(root):
+    """Mặc định + "protected_delete" của <root>/.antigravity-pm.json (chỉ cộng thêm, không bỏ được mặc định)."""
+    if root not in _PD_PATS:
+        pats = list(PROTECTED_DELETE_DEFAULT)
+        try:
+            with open(os.path.join(root, ".antigravity-pm.json"), encoding="utf-8") as f:
+                extra = json.load(f).get("protected_delete")
+            if isinstance(extra, list):
+                pats += [p.strip()[2:] if p.strip().startswith("./") else p.strip() for p in extra if isinstance(p, str) and p.strip()]
+        except (OSError, ValueError, AttributeError, TypeError):
+            pass   # config hỏng/thiếu: vẫn bảo vệ bằng danh sách mặc định, không bao giờ cho qua hết
+        _PD_PATS[root] = pats
+    return _PD_PATS[root]
+
+def _pd_locate(word, base):
+    """(root, rel) của toán hạng xoá: root = git toplevel chứa nó (hoặc CLAUDE_PROJECT_DIR), rel tính từ root; None ngoài mọi repo."""
+    p = os.path.expanduser(word)
+    if not os.path.isabs(p):
+        if not base:
+            return None
+        p = os.path.join(base, p)
+    p = os.path.normpath(p)
+    parent = os.path.dirname(p)
+    while parent and parent != os.sep and not os.path.isdir(parent):
+        parent = os.path.dirname(parent)
+    real = os.path.normpath(os.path.join(os.path.realpath(parent or os.sep), os.path.relpath(p, parent or os.sep)))
+    top = _pd_toplevel(parent) if parent else None
+    if not top and os.path.isdir(p):
+        top = _pd_toplevel(p)   # rm -rf . ở gốc repo: thư mục cha không thuộc repo nào
+    roots = [r for r in (top, os.environ.get("CLAUDE_PROJECT_DIR")) if r]
+    for r in roots:
+        r = os.path.realpath(r)
+        if real == r or real.startswith(r.rstrip(os.sep) + os.sep):
+            return r, os.path.relpath(real, r).replace(os.sep, "/")
+    return None
+
+def _pd_match(rel, pats, names=(), paths=(), start=""):
+    """Glob bảo vệ mà xoá rel đụng tới (rel là chính nó, nằm trong, hoặc là thư mục cha của path bảo vệ).
+    find: names = giá trị -name/-iname, paths = -path/-ipath/-wholename, start = điểm bắt đầu như đã gõ; có bộ lọc thì
+    thư mục cha chỉ bị chặn khi bộ lọc có thể khớp path bảo vệ (find . -name "*.log" -delete vẫn qua)."""
+    base = rel.rsplit("/", 1)[-1]
+    globby = re.search(r"[*?\[]", rel)
+    leaf = [q.rsplit("/", 1)[-1] for q in paths]   # -path: chỉ chiều thuận (-path "./build/*" không chặn vì "*" khớp mọi tên)
+    for p in pats:
+        if "/" not in p:
+            if _fnm(base, p) or any(_fnm(n, p) or _fnm(p, n) for n in names) or any(_fnm(n, p) for n in leaf):
+                return p
+            continue
+        lit = p[:-3] if p.endswith("/**") else p
+        if p.endswith("/**") and (rel == lit or rel.startswith(lit + "/")):
+            return p
+        if _fnm(rel, p):
+            return p
+        comps = lit.split("/")
+        ancestor = rel == "." or lit.startswith(rel + "/") or (globby and any(_fnm("/".join(comps[:k]), rel) for k in range(1, len(comps) + 1)))
+        if not ancestor:
+            continue
+        if not names and not paths:
+            return p
+        inner = [c for c in comps[len(rel.split("/")) if rel != "." else 0:]] or comps
+        under = [os.path.join(start.rstrip("/") or ".", *inner[:k]) for k in range(1, len(inner) + 1)]
+        under += [under[-1] + "/x"]   # một file bên trong path bảo vệ: -path "./.git/*"
+        if any(_fnm(c, n) for c in comps for n in names) or any(_fnm(u, q) for u in under for q in paths):
+            return p
+    return None
+
+def protected_delete_rule(words, base, names=(), paths=()):
+    """Lý do chặn khi một toán hạng xoá đụng file quan trọng; names/paths: bộ lọc -name / -path của find."""
+    for w in words:
+        if "$" in w or SUBST in w or "`" in w:
+            continue   # giá trị chỉ biết lúc chạy
+        loc = _pd_locate(w, base)
+        if not loc:
+            continue
+        pat = _pd_match(loc[1], protected_delete_patterns(loc[0]), names, paths, w)
+        if pat:
+            return f"{PROTECTED_DELETE_MSG} {w} (khớp \"{pat}\" trong danh sách protected_delete)"
+    return None
+
+def _operands(args):
+    out, end = [], False
+    for a in drop_redirects(args):
+        if not end and a == "--":
+            end = True
+        elif end or not a.startswith("-") or a == "-":
+            out.append(a)
+    return out
+
 def analyse_simple(tokens, depth):
     tokens = shell_norm.inline_script(tokens)   # sudo -s STR, env -S STR: the command line a wrapper hides becomes words
     i = 0
@@ -879,6 +986,8 @@ def analyse_simple(tokens, depth):
     if lp in ("pkill", "killall") or (lp == "pgrep" and any(
             a == "--full" or (a.startswith("-") and not a.startswith("--") and "f" in a[1:]) for a in rest)):
         return f"kill theo tên ({lp}) trúng tiến trình của mọi phiên/board khác trên máy"
+    if prog in ("rm", "unlink"):   # (#605) xoá file quan trọng: người làm hoặc duyệt
+        return protected_delete_rule(_operands(rest), CUR_DIR[0])
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there
     # (`$(echo gi)t reset --hard`, 2026-10-09): its output is the program name.
     if prog.startswith("$") or SUBST in prog:
@@ -903,6 +1012,19 @@ def analyse_simple(tokens, depth):
             j += 2 if rest[j] in ("-n", "-d", "--interval") else 1
         return analyse_free(" ".join(rest[j:]), depth + 1) if j < len(rest) else None
     if prog == "find":
+        # (#605) find -delete / -exec rm|unlink: điểm bắt đầu và bộ lọc -name/-path được xét như toán hạng xoá
+        if "-delete" in rest or any(a in ("-exec", "-execdir", "-ok", "-okdir") and j + 1 < len(rest)
+                                    and rest[j + 1].rsplit("/", 1)[-1] in ("rm", "unlink") for j, a in enumerate(rest)):
+            starts = []
+            for a in rest:
+                if a.startswith("-") or a in ("!", "(", ")"):
+                    break
+                starts.append(a)
+            names = [rest[j + 1] for j, a in enumerate(rest[:-1]) if a in ("-name", "-iname")]
+            paths = [rest[j + 1] for j, a in enumerate(rest[:-1]) if a in ("-path", "-ipath", "-wholename", "-iwholename")]
+            reason = protected_delete_rule(starts or ["."], CUR_DIR[0], names, paths)
+            if reason:
+                return reason
         for j, a in enumerate(rest):
             if a in ("-exec", "-execdir", "-ok", "-okdir"):
                 sub = []
@@ -1008,6 +1130,11 @@ def analyse_simple(tokens, depth):
             CUR_DIR[0] = here
         if reason:
             return f"{reason} (trong git submodule foreach)"
+    if rest[j] == "rm" and not any(a == "--cached" or (a.startswith("--ca") and "--cached".startswith(a.split("=", 1)[0]))
+                                   for a in rest[j + 1:]):
+        reason = protected_delete_rule(_operands(rest[j + 1:]), gdir)   # (#605) git rm xoá cả file trên đĩa
+        if reason:
+            return reason
     return (danger_in_git(rest[j], rest[j + 1:]) or solo_branch_rule(rest[j], rest[j + 1:], gdir, allow_branch)
             or (checkout_path_rule(rest[j + 1:], gdir) if rest[j] == "checkout" else None))
 
@@ -1521,6 +1648,11 @@ if reason and any(reason.startswith(h) for h in SOLO_HIT):
           "`git push origin <nhánh>`; không push `<sha>:<nhánh>` mà local chưa chứa. Nhánh/worktree mới chỉ khi "
           "User yêu cầu: chạy lại với DEVKIT_ALLOW_BRANCH=1 trước lệnh git. Ngoại lệ đã duyệt sẵn: checkout đang bị phiên khác giữ "
           "-> TỰ chạy `agent-kit worktree add ../<repo>-<việc>` (không phải git worktree add), xong `agent-kit worktree finish <đường dẫn>`.", file=sys.stderr)
+    sys.exit(2)
+if reason and reason.startswith(PROTECTED_DELETE_MSG):
+    print(f"BLOCKED: {cmd!r} — {reason}. Luật chủ repo (#605): xoá file quan trọng chỉ do NGƯỜI làm hoặc duyệt — agent không tự xoá. "
+          "Hỏi người dùng một lần (AskUserQuestion); người dùng tự chạy qua prefix \"!\" nếu đồng ý. Danh sách: mặc định của hook + "
+          "khoá \"protected_delete\" trong .antigravity-pm.json. Xoá file khác vẫn tự làm, không cần hỏi.", file=sys.stderr)
     sys.exit(2)
 if reason and reason.startswith("kill theo tên"):
     print(f"BLOCKED: {cmd!r} — {reason}. Chạy lệnh nền rồi giữ PID của chính nó: `cmd & pid=$!`, sau đó `wait $pid` / `kill -0 $pid` / "
