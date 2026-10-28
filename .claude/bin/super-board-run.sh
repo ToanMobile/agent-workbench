@@ -1579,6 +1579,15 @@ note_early_death() {
   # within SB_EARLY_DEATH_S (120 s) of its dispatch is recorded here as "<epoch> <lane>", with the last line of its log, so the card
   # can cool down in that lane. Bookkeeping only: under the runner's `set -euo pipefail` no step here may end the runner.
   local age f last n now wlog="${WORKER_LOG:-${WORKER_LOG_DIR}/worker-${LANE:-?}-${1}.log}"
+  # #434: a worker that ended with exit=0 AND a successful result record as its last log line finished its turn on its own (a quick
+  # rebuild pass: 51 s and 80 s on #428), no crash. Its "did nothing" case is the no-op ledger's. Exit 0 alone proves nothing: a
+  # session limit also exits 0 (19/10, #94) but prints text or `is_error: true`, so those, and non-zero or missing records, still count.
+  case "$(worker_exit_line "$wlog")" in
+    *"exit=0 "*) python3 -c 'import json, sys
+last = [l for l in open(sys.argv[1], errors="replace") if l.strip() and not l.startswith("worker_exit: ")][-1]
+r = json.loads(last)
+sys.exit(0 if r.get("type") == "result" and r.get("subtype") == "success" and not r.get("is_error") else 1)' "$wlog" 2>/dev/null && return 0 ;;
+  esac
   # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
   # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
   # The log's mtime counts only when later than STARTED: `claude -p` (text mode) writes nothing until it ends, so a long silent
@@ -1598,7 +1607,10 @@ print(int(lived if lived is not None else since), 1 if early else 0)' "${STARTED
   case "$age" in *" 1") age=${age% *} ;; *) return 0 ;; esac
   # #393: a worker that moved its card to Blocked (hold, sequence, too big) ended on purpose, not by a crash. The cache predates
   # that move, so ask the board once (a rare path). Unreadable: keep counting it.
-  [ "$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" status "$1" 2>/dev/null || true)" = "Blocked" ] && return 0
+  # #465: a QA worker that passed its card to Review or closed it (Done) in under 120 s finished its job the same way.
+  case "${LANE:-}:$("$(dirname "$SB_GITHUB_READ")/super-board-card.sh" --owner "$PROJECT_OWNER" --number "$PROJECT_NUMBER" status "$1" 2>/dev/null || true)" in
+    *:Blocked | *:Done | qa:Review) return 0 ;;
+  esac
   now=$(date +%s)
   f=$(early_death_file "$1")
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 0

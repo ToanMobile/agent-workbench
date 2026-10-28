@@ -728,6 +728,19 @@ def profile_file(root):
     return None
 
 
+def copy_ignored(main, wt):
+    """agent-workbench#477: the git-ignored files a gate in a scratch worktree needs - local config, build inputs, Unity Library, hooks - the one
+    list that `agent-kit integrate` and the merge train's super-board-scratch-config.sh share (it had been written out in each). Each step on
+    its own try: one failing (a build input) must not lose the hooks after it (#463). A failure is named, never raised."""
+    copied = []
+    for step in (copy_local_config, copy_build_inputs, copy_unity_library, copy_local_hooks):
+        try:
+            copied += step(main, wt)
+        except Exception as e:  # noqa: BLE001 - the other steps still run; the gate is red by itself if what it needs is missing
+            print("• " + tr(f"{step.__name__} hỏng: {type(e).__name__}: {e}", f"{step.__name__} failed: {type(e).__name__}: {e}"))
+    return copied
+
+
 def install_args(main, wt, profile):
     """The installer run that reproduces the main checkout's DevKit setup, or None."""
     if not profile_file(main):
@@ -1732,7 +1745,7 @@ def _inventory(cwd, only, budget):
         except Exception:  # noqa: BLE001
             busy = "unknown operation"
         rows.append({"path": path, "branch": e["branch"], "detached": e["detached"], "dirty": dirty, "ahead": ahead,
-                     "reflog": reflog, "busy": busy,
+                     "reflog": reflog, "busy": busy, "held_only": held_only,
                      "unreachable": bool((e["detached"] and ahead != 0 and (held_only is None or held_only > 0)) or reflog is None or reflog),
                      "unintegrated": bool(dirty is None or dirty or ahead is None or ahead or reflog is None or reflog or busy)})
     return rows
@@ -2029,7 +2042,7 @@ def _iter_blockers(cwd, wt, shown, budget, rows=None):
             sha = git(wt, "rev-parse", "--short=12", "HEAD", check=False).stdout.strip() or "HEAD"
             main = main_checkout(cwd)
             vi, en = [], []
-            if r["detached"] and r["ahead"] != 0:   # (a worktree on a branch keeps those commits on it; only its reflog-only ones are lost)
+            if r["detached"] and r["ahead"] != 0 and (r["held_only"] is None or r["held_only"] > 0):   # #458: the row's own blocking condition; (a worktree on a branch keeps those commits on it; only its reflog-only ones are lost)
                 vi.append(f"HEAD tách rời ({sha}), {r['ahead']} commit không thuộc nhánh nào và main chưa có (cùng nội dung hoặc cùng patch hoặc "
                           f"gộp ba chiều không đổi gì). Đem về trước: agent-kit worktree diff {shlex.quote(shown)} | git apply --3way rồi commit ở main checkout "
                           "(file sổ sách checklist được bỏ qua khi so, trừ dòng bug/REQ do người tạo; nếu commit có sửa chúng thì dùng "
@@ -2289,7 +2302,20 @@ def cmd_remove(cwd, args):
             print("✖ worktree: " + tr(f"{wt}: chưa tích hợp ({why}) — giữ nguyên", f"{wt}: not integrated ({why}) - kept"), file=sys.stderr)
             return 1
     try:
-        for code, kind, text, detail in _iter_blockers(cwd, wt, rest[0], None):   # a person is waiting: a git call is still bounded (_timeout)
+        head = git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip()   # BEFORE the inventory it must match
+        rows = inventory(cwd, only=wt, budget=None)   # one inventory for the waiver and the blockers: they cannot disagree
+        main = main_checkout(cwd)
+        # #421: a PR squashed into the trunk leaves the session's own commits only in the worktree's reflog. When HEAD and every one of
+        # those commits are already in the trunk (ancestor, same patch, or the whole patch), UNREACHABLE has nothing left to protect.
+        lost = rows[0]["reflog"] if len(rows) == 1 else None
+        waive = bool(head) and lost is not None and rows[0]["unreachable"] and _chain_in_trunk(main, head) \
+            and all(_chain_in_trunk(main, c) for c in lost) \
+            and git(wt, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False).stdout.strip() == head   # HEAD unchanged since the first read
+        waived = False
+        for code, kind, text, detail in _iter_blockers(cwd, wt, rest[0], None, rows=rows):   # a person is waiting: a git call is still bounded (_timeout)
+            if kind == "unreachable" and waive:
+                waived = True
+                continue
             if kind == "uncommitted":
                 print("✖ worktree: " + text, file=sys.stderr)
                 for d in detail:
@@ -2310,10 +2336,10 @@ def cmd_remove(cwd, args):
     if why:
         print("✖ worktree: " + tr(f"{wt}: đang bị giữ ({why}) — giữ nguyên", f"{wt}: held ({why}) - kept"), file=sys.stderr)
         return 1
-    return _remove_after_checks(cwd, wt)
+    return _remove_after_checks(cwd, wt, waived)
 
 
-def _remove_after_checks(cwd, wt):
+def _remove_after_checks(cwd, wt, waived=False):
     """The removal itself, once _iter_blockers found nothing that would be lost (`remove`, `gc --merged`): the regenerated bookkeeping's
     fallback copy, _remove_checked (its branch goes when the trunk holds it), the warning for the memory notes that went with it.
     SystemExit when git refuses or a folder is left."""
@@ -2331,8 +2357,12 @@ def _remove_after_checks(cwd, wt):
         notes = []
     # Regenerated bookkeeping _iter_blockers let through: a fallback copy first (a git error there: SystemExit, nothing removed).
     dropped = [p for p in changes_since(wt, state) if p in BOOKKEEPING and not _same_in_main(wt, main, p)]
-    if dropped:
+    if dropped or waived:   # a waived UNREACHABLE: the same fallback copy as discard (refs/devkit/discarded/*), reflog-only commits as parents
         kept = _discard_backup(main, wt)
+    if waived:
+        print("ℹ " + tr(f"commit chưa có ref (chỉ reflog / HEAD tách rời) đã có trong trunk (squash / cùng patch); bản cất: {kept} ({DISCARD_KEEP_DAYS} ngày)",
+                        f"commits no ref holds (reflog-only / detached HEAD) are already in the trunk (squash / same patch); fallback copy: {kept} ({DISCARD_KEEP_DAYS} days)"), file=sys.stderr)
+    if dropped:
         print("ℹ " + tr(f"sổ sách checklist do gate / sync sinh lại ({', '.join(dropped)}) không đem về; bản cất: {kept} ({DISCARD_KEEP_DAYS} ngày)",
                         f"checklist bookkeeping the gate / sync regenerate ({', '.join(dropped)}) is not brought back; fallback copy: {kept} "
                         f"({DISCARD_KEEP_DAYS} days)"), file=sys.stderr)
