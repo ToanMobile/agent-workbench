@@ -75,7 +75,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'exec python3 -I \"$1\"' _ \"${CLAUDE_PLUGIN_ROOT}/hooks/instincts_file_context.py\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/instincts_file_context.sh\"",
             "timeout": 5
           }
         ]
