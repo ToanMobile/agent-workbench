@@ -261,7 +261,9 @@ build_chain() {
 }
 # verify_timed_out <rc>: verify hết giờ chứ không đỏ. Cùng tiêu chí với is_verify_timeout của merge gate: exit 124; gate đã in KẾT LUẬN thì chỉ khi
 # mọi suite đỏ là TIMEOUT; lệnh khác (không có dòng kết luận) thì log chứa "TIMEOUT after" / "quá giới hạn".
-verify_timed_out() {
+# Thân hàm là subshell tắt pipefail: log lớn làm `grep -q` thoát sớm, printf nhận SIGPIPE, pipeline trả 141 (#579).
+verify_timed_out() (
+  set +o pipefail
   local plain
   [ "$1" -eq 124 ] && return 0
   plain=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VLOG" 2>/dev/null) || return 1
@@ -270,7 +272,7 @@ verify_timed_out() {
     return
   fi
   printf '%s\n' "$plain" | grep -aqE "TIMEOUT after|quá giới hạn"
-}
+)
 # single_red_test <log>: #578 — in đường dẫn test khi verify đỏ CHỈ vì đúng một test của REG-DK-ALL-01: gate REJECT, lớp tĩnh đạt, đúng một dòng
 # suite `[ ] FAIL | REG-DK-ALL-01`, đúng một dòng đuôi `| ✖ <test>.sh` (đuôi thụt lề của test lồng nhau không tính). Mọi trường hợp khác
 # (tên test mất vì log bị cắt, hai test trở lên, suite khác đỏ, đường dẫn lạ) thoát 1: đỏ ngay như cũ. Log là dữ liệu: đường dẫn phải khớp mẫu hẹp.
