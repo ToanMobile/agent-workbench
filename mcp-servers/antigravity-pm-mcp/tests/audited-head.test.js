@@ -13,6 +13,8 @@ import { tmpProject, cleanup, writeFile, sampleTaskArgs } from './helpers.js';
 
 const SHA = 'a'.repeat(40);
 const verdict = (args) => TOOLS_BY_NAME.get('pm_verdict').handler(args);
+// #629: builder mac dinh lay tu DEVKIT_AGENT_ID; test khong phu thuoc agent dang chay no (vd Antigravity).
+delete process.env.DEVKIT_AGENT_ID;
 
 function auditOnlyTask() {
   const dir = tmpProject({ projectName: 'audited-head', testCommand: 'echo ok' });
@@ -25,11 +27,15 @@ function auditOnlyTask() {
   recordDispatch(cfg, task, { kind: 'audit', conversationId: 'c-audit' });
   return { dir, cfg, task };
 }
+// Bao cao pass cua auditor cho dung head (pm_verdict chi ghi auditedHead khi co no, AH6).
+const passReport = (dir, task, sha) =>
+  writeFile(path.join(dir, '.antigravity-pm', 'tasks', task.id, 'audit-agent.json'), JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: sha }));
 const auditOf = (cfg, task) => JSON.parse(fs.readFileSync(taskFile(cfg, task.id), 'utf8')).verdicts?.audit;
 
 test('AH1 task chi audit: pm_verdict audit pass voi auditedHead ghi verdicts.audit.auditedHead', async () => {
   const { dir, cfg, task } = auditOnlyTask();
   try {
+    passReport(dir, task, SHA);
     await verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', notes: 'ok', auditedHead: SHA });
     assert.equal(auditOf(cfg, task).auditedHead, SHA);
     assert.equal(auditOf(cfg, task).verdict, 'pass');
@@ -42,6 +48,7 @@ test('AH2 khong co tham so auditedHead: lay `auditedHead: <sha40>` trong notes',
   const { dir, cfg, task } = auditOnlyTask();
   try {
     const sha = 'b1'.repeat(20);
+    passReport(dir, task, sha);
     await verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', notes: `audit ok\nauditedHead: ${sha}` });
     assert.equal(auditOf(cfg, task).auditedHead, sha);
   } finally {
@@ -86,5 +93,101 @@ test('AH5 audit pass khong auditedHead: khong ghi truong (gate DevKit se khong d
     assert.ok(loadTask(cfg, task.id));
   } finally {
     cleanup(dir);
+  }
+});
+
+// #629 (review context sach 29/10 sau merge #609): pm_verdict audit pass + auditedHead phai dua tren bao cao that cua auditor
+// (audit-agent.json cua dung task, viet sau lan giao audit, verdict pass, cung auditedHead, reviewer khac builder) — PM khong tu
+// ghi pass cho cay chua ai audit (dispatch roi bo qua ket qua). Moi ca bi tu choi thi KHONG ghi gi (gate DevKit exit 2).
+test('AH6 #629: auditedHead chi ghi khi audit-agent.json cua Antigravity pass dung head', async () => {
+  const { dir, cfg, task } = auditOnlyTask();
+  const rep = path.join(dir, '.antigravity-pm', 'tasks', task.id, 'audit-agent.json');
+  const pass = (a) => verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: SHA, ...a });
+  const saved = process.env.DEVKIT_AGENT_ID;
+  delete process.env.DEVKIT_AGENT_ID;
+  try {
+    // 1. verdict gia: khong co audit-agent.json
+    await assert.rejects(pass(), /audit-agent\.json/);
+    // 2. task_id khong ton tai
+    await assert.rejects(pass({ taskId: 'T9999-khong-co' }), /T9999/);
+    // 3. auditor bao cao fail
+    writeFile(rep, JSON.stringify({ verdict: 'fail', reviewer: 'antigravity', auditedHead: SHA }));
+    await assert.rejects(pass(), /verdict/);
+    // 4. auditor audit head khac
+    writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: 'c'.repeat(40) }));
+    await assert.rejects(pass(), /auditedHead/);
+    // 5. thieu reviewer (reviewer = builder: AH8 — ghi ket luan nhung khong auditedHead)
+    writeFile(rep, JSON.stringify({ verdict: 'pass', auditedHead: SHA }));
+    await assert.rejects(pass(), /reviewer/);
+    // bao cao cu hon lan giao audit gan nhat (bao cao cua lan truoc)
+    writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: SHA }));
+    fs.utimesSync(rep, new Date(0), new Date(0));
+    await assert.rejects(pass(), /cu hon lan giao audit/);
+    assert.equal(auditOf(cfg, task), undefined);
+    // doi chung: bao cao that, auditedHead trong notes
+    writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', notes: `ok\nauditedHead: ${SHA}` }));
+    await pass();
+    assert.equal(auditOf(cfg, task).auditedHead, SHA);
+  } finally {
+    if (saved === undefined) delete process.env.DEVKIT_AGENT_ID; else process.env.DEVKIT_AGENT_ID = saved;
+    cleanup(dir);
+  }
+});
+
+// #629 review: notes ghi auditedHead KHAC tham so, nhieu dong auditedHead khac nhau, sha sat cho cat 8000 ky tu -> tu choi
+// (gate doc ca truong lan notes da luu; sha trong notes chua ai audit). Antigravity vua build vua audit: AH8.
+test('AH7 #629: notes lech tham so, nhieu auditedHead, bien cat 8000 ky tu deu bi tu choi', async () => {
+  const { dir, cfg, task } = auditOnlyTask();
+  const rep = path.join(dir, '.antigravity-pm', 'tasks', task.id, 'audit-agent.json');
+  try {
+    writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: SHA }));
+    await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: SHA,
+      notes: `ok\nauditedHead: ${'d'.repeat(40)}` }), /notes/);
+    // nhieu dong `auditedHead:`: dong thu hai lech tham so cung bi tu choi (gate co the doc dong khac dong dau)
+    await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: SHA,
+      notes: `ok\nauditedHead: ${SHA}\nauditedHead: ${'e'.repeat(40)}` }), /notes/);
+    // notes bi cat 8000 ky tu khi luu (recordVerdict): sha ket thuc dung ky tu 8000 roi '0' — JS tren notes day du khong thay (lookahead),
+    // gate tren ban da cat lai thay. pm_verdict phai kiem dung ban se luu: khong co bao cao cua head do thi tu choi.
+    const cut = `auditedHead: ${'b'.repeat(40)}`;
+    await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass',
+      notes: `${'x'.repeat(8000 - cut.length - 1)} ${cut}0 tiep` }), /audit-agent\.json ghi auditedHead/);
+    // khoang trang ngoai [ \t\n\r\f\v] (NBSP): ca hai ben deu khong coi la auditedHead, khong lech
+    await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass',
+      notes: `ok\nauditedHead: ${SHA}\nauditedHead: ${'f'.repeat(40)}` }), /audit-agent\.json ghi auditedHead/);
+    assert.equal(auditOf(cfg, task), undefined);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// #629 case 5 reviewer = builder: luong /giao (Antigravity build roi audit) khong ket — ket luan audit van ghi, nhung KHONG co
+// auditedHead (ca truong lan dong `auditedHead:` trong notes, push_gate doc ca hai) nen gate DevKit exit 2 voi test bi sua.
+test('AH8 #629: reviewer trung builder — ghi ket luan, khong ghi auditedHead, notes bi go dong auditedHead', async () => {
+  const saved = process.env.DEVKIT_AGENT_ID;
+  const cases = [
+    { env: undefined, reviewer: 'claude', implement: false },          // builder mac dinh claude
+    { env: 'antigravity', reviewer: 'Antigravity', implement: false }, // DEVKIT_AGENT_ID, khac hoa thuong
+    { env: undefined, reviewer: 'antigravity', implement: true },      // da giao implement: Antigravity la builder
+  ];
+  try {
+    for (const c of cases) {
+      const { dir, cfg, task } = auditOnlyTask();
+      try {
+        if (c.env === undefined) delete process.env.DEVKIT_AGENT_ID; else process.env.DEVKIT_AGENT_ID = c.env;
+        if (c.implement) recordDispatch(cfg, loadTask(cfg, task.id), { kind: 'implement', conversationId: 'c-impl', headCommit: null });
+        writeFile(path.join(dir, '.antigravity-pm', 'tasks', task.id, 'audit-agent.json'),
+          JSON.stringify({ verdict: 'pass', reviewer: c.reviewer, auditedHead: SHA }));
+        const out = await verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: SHA, notes: `ok\nauditedHead: ${SHA}` });
+        const a = auditOf(cfg, task);
+        assert.equal(a.verdict, 'pass', JSON.stringify(c));
+        assert.equal(a.auditedHead, undefined, JSON.stringify(c));
+        assert.doesNotMatch(a.notes, /auditedHead:\s*[0-9a-f]{40}/, JSON.stringify(c));
+        assert.match(out, /trung builder/);
+      } finally {
+        cleanup(dir);
+      }
+    }
+  } finally {
+    if (saved === undefined) delete process.env.DEVKIT_AGENT_ID; else process.env.DEVKIT_AGENT_ID = saved;
   }
 });
