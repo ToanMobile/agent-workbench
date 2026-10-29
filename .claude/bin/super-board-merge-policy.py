@@ -32,6 +32,9 @@ Rules, from references/config-schema.json → merge_policy / migrations:
 - merge_policy.always_human.<category>: any label, path glob or added-line
   keyword match → human. Categories ship as money, auth, schema; setting
   always_human replaces them all (`{}` turns category gating off).
+- merge_policy.protected_paths (#605; default DEFAULT_PROTECTED_PATHS, a list replaces it, `[]` turns it off): a PR
+  that DELETES (or renames away) a matching file → human, category "delete-protected". The only human-only
+  category: a human `done` approves it; an agent cross-review marker does not (super-board-approval.py HUMAN_ONLY).
 - migrations: a changed path matching migrations.globs makes this a migration
   PR. Every env in allowed_envs with a command runs (a command of "-" means the
   deploy pipeline applies it: nothing to run). target_env not in allowed_envs, or
@@ -103,6 +106,11 @@ DEFAULT_ALWAYS_HUMAN = {
                      r"\btruncate [a-z_\"`\[]"],
     },
 }
+# #605: xoá các file này chỉ người duyệt (luật chủ repo 28/10). `**/` để khớp cả file trong thư mục con.
+DEFAULT_PROTECTED_PATHS = [
+    "**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json", ".agents/regression_matrix.active.json",
+    ".agents/local/memory/**", ".agents/local/rules/**",
+]   # giữ khớp PROTECTED_DELETE_DEFAULT của universal-agent-devkit/hooks/block-dangerous-git.sh (trừ .git/**: PR không xoá được)
 DEFAULT_MIGRATION_GLOBS = [
     "supabase/migrations/**", "prisma/migrations/**", "drizzle/**",
     "**/migrations/*.sql", "db/migrate/**", "alembic/versions/**",
@@ -155,6 +163,31 @@ def added_text(diff: str) -> str:
     """
     out = [line[1:] for line in diff.split("\n") if line.startswith("+")]
     return " ".join(" ".join(out).lower().split())
+
+
+def deleted_paths(diff: str) -> list[str]:
+    """Paths a unified git diff deletes: `deleted file mode`, `--- a/X` + `+++ /dev/null`, or `rename from X`.
+
+    Read from the diff headers, not `meta.files` (gh gives no change type there). A quoted path (special
+    characters) is unquoted only for the plain `"a/..."` form.
+    """
+    out, old, lines = [], None, diff.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("diff --git "):
+            old = None
+        elif line.startswith("--- "):
+            old = line[4:].strip().strip('"')
+            old = old[2:] if old.startswith("a/") else None
+            if old and i + 1 < len(lines) and lines[i + 1].startswith("+++ /dev/null"):
+                out.append(old)
+        elif line.startswith("rename from "):
+            out.append(line[len("rename from "):].strip().strip('"'))
+        elif line.startswith("deleted file mode") and i > 0:
+            # header `diff --git a/X b/X` sits just above; `--- a/X` follows when the file had content.
+            head = next((h for h in reversed(lines[:i]) if h.startswith("diff --git ")), "")
+            if " b/" in head:
+                out.append(head[len("diff --git "):].split(" b/", 1)[0].strip('"').removeprefix("a/"))
+    return list(dict.fromkeys(out))
 
 
 def comment_free(text: str) -> str:
@@ -231,6 +264,11 @@ def main() -> int:
                         if re.search(r, added) or re.search(r, added_nc)), None)
         if hit:
             human.append({"category": cat, "why": hit})
+    protected = policy.get("protected_paths")
+    protected = DEFAULT_PROTECTED_PATHS if protected is None else protected
+    gone = next((f"deletes {p} (matches {g})" for p in deleted_paths(diff) for g in [matches(p, protected)] if g), None)
+    if gone:
+        human.append({"category": "delete-protected", "why": gone})
 
     run, needs = [], []
     if mig_files:

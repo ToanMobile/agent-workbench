@@ -46,11 +46,20 @@ expect "append-only change committed in the range is not flagged" no 0 "$base"
 # 2026-10-09: the trailer counts only with antigravity-pm's audit pass record for that task of this repository (kept outside
 # the repo, as bin/push_gate.py checks it); a line the agent writes itself is not an audit.
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
-pm_pass() { # <task-id>: an audit pass recorded for the repo in $PWD
+export DEVKIT_PM_HOME_TEST=1   # #605: test-only switch, a fixture pm home under the temp dir counts for push_gate.approved
+pm_pass() { # <task-id> [auditedHead, default HEAD]: an audit pass recorded for the repo in $PWD
+  # Audit T0066 (#605): the PM verdict names the audited head (`auditedHead: <sha>` in notes); a trailer counts only on that tree.
   mkdir -p "$TMP/pm/projects/$(basename "$PWD")/tasks/$1"
-  printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1}}}\n' "$1" "$PWD" \
-    > "$TMP/pm/projects/$(basename "$PWD")/tasks/$1/task.json"
+  printf '{"id":"%s","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1,"notes":"auditedHead: %s"}}}\n' "$1" "$PWD" \
+    "${2:-$(git rev-parse HEAD)}" > "$TMP/pm/projects/$(basename "$PWD")/tasks/$1/task.json"
 }
+
+# Audit T0066 (#605): an old task's audit pass (auditedHead = the base) reused in the trailer of a NEW weakening is no audit
+mk replayed_trailer; base="$(git rev-parse HEAD)"
+pm_pass T0002-old "$base"
+printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
+git commit -qam "weaken test + fix" -m "Test-approved-by: antigravity T0002-old"
+expect "a trailer reusing an old task whose auditedHead tree differs is still flagged" yes 2 "$base"
 
 mk self_approved; base="$(git rev-parse HEAD)"
 printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt

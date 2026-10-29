@@ -197,7 +197,7 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   Anything that must outlive the session (a stage awaiting the user, a handoff) lives outside
   `/tmp/claude-<uid>`, e.g. in the repo's ignored `.agents/local/`.
 - Decide, don't ask. Agent tự chủ tối đa: Khi thấy tốt hơn hoặc cần thiết thì TỰ AUTO DUYỆT
-  (auto-approve) các thay đổi test và code sau khi kiểm chứng test PASS. Tuyệt đối KHÔNG hỏi
+  (auto-approve) các thay đổi code sau khi kiểm chứng test PASS (test có sẵn bị sửa: mục dưới, cần duyệt chéo). Tuyệt đối KHÔNG hỏi
   phiền người dùng bằng AskUserQuestion "Duyệt / không duyệt" với các thay đổi code/test thông
   thường. Hỏi người dùng CHỈ KHI: force-push hoặc viết lại lịch sử đã chia sẻ; xoá file
   hoặc dữ liệu cực kỳ quan trọng mà không khôi phục được từ origin (dữ liệu người dùng thật,
@@ -208,9 +208,10 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   kể cả `main`, mở và merge PR thường, sửa test, sửa code: agent tự làm, không hỏi, không đưa
   lệnh `!`. Khi đúng việc phải hỏi: một lần AskUserQuestion (phương án khuyến nghị trước),
   rồi tự làm tiếp nếu được duyệt.
-- An edited existing test: Agent tự thẩm định và tự auto-duyệt (auto-approve, cờ `--auto-approve-tests`
-  hoặc một dòng riêng `AUTO-APPROVE: <đường dẫn test>` trong câu trả lời — câu văn xuôi không được tính) khi thấy thay đổi là tốt hơn, cần thiết, hợp lý và test
-  chạy PASS; tuyệt đối KHÔNG hỏi phiền người dùng bằng AskUserQuestion.
+- An edited existing test: cần duyệt chéo bởi agent khác — audit `/giao` của Antigravity ghi mục duyệt
+  (`.claude/audit-gate/approved_tests.json`) hoặc trailer `Test-approved-by: antigravity <task-id>`, chỉ tính khi verdict audit
+  của antigravity-pm (ngoài repo) ghi `auditedHead: <sha>` của cây chứa đúng nội dung test; agent sửa test
+  không bao giờ tự duyệt test của chính mình (`--auto-approve-tests`, `AUTO-APPROVE:` không còn duyệt); KHÔNG hỏi người dùng bằng AskUserQuestion.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
   are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).

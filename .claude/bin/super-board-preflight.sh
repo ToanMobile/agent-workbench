@@ -44,6 +44,8 @@
 #                            [--threshold 0.6]           # title Jaccard for a duplicate
 #                            [--cap 400]                 # merge_policy.auto_max_lines; 0 = no line cap: a card with many
 #                                                        # deliverables is one PR (one gate), never held as too big
+#                            [--stale-draft-days 3]      # or env SB_STALE_DRAFT_DAYS (runner: preflight.stale_draft_days); a DRAFT PR not updated for longer
+#                                                        # is no file overlap (#581); a non-draft PR always counts
 #
 # Stdout, one object keyed by issue number:
 #   { "14": { "number": 14, "title": "…", "verdict": "proceed|hold|sequence",
@@ -58,7 +60,7 @@ set -euo pipefail
 # Fixed read commands: a malformed payload is GitHub's, so it halts (#32).
 export SB_GITHUB_READ_STRICT=1
 
-REPO=""; ISSUES=""; INFLIGHT=""; FILES=""; THRESHOLD="0.6"; CAP="400"
+REPO=""; ISSUES=""; INFLIGHT=""; FILES=""; THRESHOLD="0.6"; CAP="400"; STALE_DAYS="${SB_STALE_DRAFT_DAYS:-3}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)      REPO="$2"; shift 2 ;;
@@ -67,12 +69,15 @@ while [ $# -gt 0 ]; do
     --files)     FILES="$2"; shift 2 ;;
     --threshold) THRESHOLD="$2"; shift 2 ;;
     --cap)       CAP="$2"; shift 2 ;;
+    --stale-draft-days) STALE_DAYS="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
 [ -n "$REPO" ] && [ -n "$ISSUES" ] || { echo "usage: --repo <owner/name> --issues <N[,M…]>" >&2; exit 64; }
 echo "$ISSUES" | grep -Eq '^[0-9]+(,[0-9]+)*$' || { echo "--issues must be numbers: $ISSUES" >&2; exit 64; }
 echo "$CAP" | grep -Eq '^[0-9]{1,10}$' || { echo "--cap must be a whole number of lines: $CAP" >&2; exit 64; }
+echo "$STALE_DAYS" | grep -Eq '^[0-9]{1,5}$' || { echo "--stale-draft-days must be a whole number of days: $STALE_DAYS" >&2; exit 64; }
+STALE_DAYS=$((10#$STALE_DAYS))
 CAP=$((10#$CAP))   # 0400 → 400: jq --argjson rejects leading zeros
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -83,7 +88,7 @@ if [ -f "$HERE/super-board-gh-guard.sh" ]; then
 fi
 
 MERGED=$(python3 "$HERE/super-board-github-read.py" --kind prs-merged -- pr list --repo "$REPO" --state merged --limit 100 --json number,title,body,url ) || exit $?
-OPEN=$(python3 "$HERE/super-board-github-read.py" --kind prs-open -- pr list --repo "$REPO" --state open --limit 100 --json number,title,body,url,headRefName,files ) || exit $?
+OPEN=$(python3 "$HERE/super-board-github-read.py" --kind prs-open -- pr list --repo "$REPO" --state open --limit 100 --json number,title,body,url,headRefName,files,isDraft,updatedAt ) || exit $?
 CLOSED=$(python3 "$HERE/super-board-github-read.py" --kind issues-closed -- issue list --repo "$REPO" --state closed --limit 100 --json number,title,body,stateReason ) || exit $?
 CARDS="[]"
 [ -n "$INFLIGHT" ] && CARDS=$(cat "$INFLIGHT")
@@ -97,7 +102,7 @@ done
 jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$OPEN" \
       --argjson closed "$CLOSED" --argjson cards "$CARDS" --arg files "$FILES" \
       --argjson hasinf "$([ -n "$INFLIGHT" ] && echo true || echo false)" \
-      --argjson th "$THRESHOLD" --argjson cap "$CAP" '
+      --argjson th "$THRESHOLD" --argjson cap "$CAP" --argjson stale "$STALE_DAYS" '
   def stop: ["the","and","for","with","from","into","when","that","this","add","fix","make","use","should","not","are","can","new"];
   def toks: ascii_downcase | [scan("[a-z0-9]+")] | map(select(length > 2)) | . - stop | unique;
   def sim($a; $b): ($a | toks) as $x | ($b | toks) as $y
@@ -113,9 +118,12 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   # Dòng tiêu đề mục "## <tên>": sau tên là hết từ (dấu cách, "(", ":", \r hoặc hết dòng). has_acs và sect dùng
   # chung để cùng nhận "## Acceptance Criteria (…)" và cùng bỏ "## Fixes", "## Fixture".
   def heading($h): test("^##[ \t]+" + $h + "(?!\\w)");
-  # The AC section: lines after the LAST "## Acceptance Criteria" heading, up to the next "## ".
+  # Tên mục AC: "Acceptance Criteria" hoặc viết tắt "AC" (#616, #618 nằm Blocked vì ghi `## AC`); cùng luật với
+  # backlog_ticket_gaps của super-board-run.sh và AC_HEADING của super-board-ac-check.py.
+  def ac_name: "(?:Acceptance Criteria|AC)";
+  # The AC section: lines after the LAST AC heading, up to the next "## ".
   def has_acs: ((.body // "") / "\n") as $l
-    | [ $l | to_entries[] | select(.value | heading("Acceptance Criteria")) | .key ] as $h
+    | [ $l | to_entries[] | select(.value | heading(ac_name)) | .key ] as $h
     | if ($h | length) == 0 then false
       else [ $l[($h | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
@@ -161,7 +169,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   # (#226 sat Blocked behind 8 PRs that only shared the matrix).
   def no_shared: . - [".agents/regression_matrix.active.json", "universal-agent-devkit/tests/lib/test_durations.txt"];
   def too_big:
-    sect("Fix") as $fix | sect("Acceptance Criteria") as $ac
+    sect("Fix") as $fix | sect(ac_name) as $ac
     | [ $fix | parts[] | select(test("^#?[0-9]+$|^[0-9a-f]{7,40}$") | not) ] as $items
     | [ $items[] | select([ scan("\\S+") ] | length <= 6) ] as $short
     | [ (.title // "") | sub("^\\S+ \\[\\w+\\] "; "") | gsub("\\([^()]*\\)"; "") | splits("(?<![0-9]),|,(?![0-9])|;")
@@ -249,6 +257,10 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | ([ $open[] | select((.headRefName // "") | startswith("issue-\($n)-")) ] | length > 0) as $own
     | [ $cards[] | select((.status as $s | ["Ready","Building","QA","Review"] | index($s)) != null) | .number ] as $active
     | [ $others[] | select($own | not) | select(closes($n) | not) | select(sim(.title; $i.title) < $th)
+        # #581: a draft nobody touched for more than $stale days is not "in flight"; a non-draft PR (or a draft with no
+        # readable updatedAt) always counts.
+        | select((.isDraft == true and ((.updatedAt // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))
+                  and ((.updatedAt | fromdateiso8601) < (now - $stale * 86400))) | not)
         | . as $p | [ ($p.files // [])[] | .path ] as $pf
         | ($mine | no_shared) as $own_files
         | ($own_files - ($own_files - $pf)) as $hit

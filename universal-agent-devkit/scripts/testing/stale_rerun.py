@@ -78,26 +78,44 @@ def watched_mtimes(project: Path, pats: list) -> dict:
     return out
 
 
+def _kill_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:   # macOS: nhóm còn zombie — gửi cho chính shell (như post-fix-gate _signal_group, review 20/10)
+        with contextlib.suppress(OSError):
+            proc.kill()
+
+
 def _execute(project: Path, cmd: str, timeout: float, env: dict | None = None) -> tuple:
     proc = subprocess.Popen(cmd, shell=True, cwd=str(project), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, errors="replace", start_new_session=True, env=env)
+
+    def _on_signal(signum, _frame):   # #532: suite chạy trong nhóm riêng — INT/TERM vào cha không tới nó, nên giết nhóm rồi thoát
+        _kill_group(proc)
+        raise SystemExit(128 + signum)
+
+    saved = {}
+    try:   # signal.signal chỉ dùng được ở main thread; chỗ khác thì giữ hành vi cũ
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            saved[sig] = signal.signal(sig, _on_signal)
+    except ValueError:
+        pass
     try:
         out, _ = proc.communicate(timeout=max(1.0, timeout))
         return ("PASS" if proc.returncode == 0 else "FAIL"), proc.returncode, out or ""
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except PermissionError:   # macOS: nhóm còn zombie — gửi cho chính shell (như post-fix-gate _signal_group, review 20/10)
-            with contextlib.suppress(OSError):
-                proc.kill()
+        _kill_group(proc)
         try:
             return "TIMEOUT", None, proc.communicate(timeout=10)[0] or ""
         except subprocess.TimeoutExpired:   # một tiến trình cháu còn giữ ống output
             with contextlib.suppress(OSError):
                 proc.kill()
             return "TIMEOUT", None, "(output cut: a child process still held the output pipe after SIGKILL)"
+    finally:
+        for sig, old in saved.items():
+            signal.signal(sig, old)
 
 
 # Twins of bin/post-fix-gate.py INFRA_FAILURE_RE / TEST_RUN_LOCK (keep them in step): a run

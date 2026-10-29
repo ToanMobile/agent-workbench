@@ -77,7 +77,7 @@ prompt_any() { cat wl/worker-review-*.log 2>/dev/null | sed -n 's/^prompt: //p' 
 lock_pid() { sed -n 's/^PID=//p' "$INFLIGHT_DIR/$1" 2>/dev/null | head -1; }
 
 # ── 1. ba thẻ đã duyệt đúng head → MỘT worker, một lượt merge train cho cả 3 PR
-reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 MEMBER "$H2"; approve 72 COLLABORATOR "$H3"; tick
+reset; items Review Review Review; prs "$H1" "$H2" "$H3"; approve 70 OWNER "$H1"; approve 71 OWNER "$H2"; approve 72 OWNER "$H3"; tick   # #605 Lane H: trơn chỉ OWNER
 [ "$(ls wl | wc -l | tr -d ' ')" = 1 ] && ok "3 approved cards: exactly one worker dispatched ($(logs))" || fail "expected one worker log, got: $(logs)"
 prompt_any | grep -q 'super-board-merge-train.sh' && ok "  … its prompt runs super-board-merge-train.sh" || fail "prompt lacks the merge train: $(prompt_any | cut -c1-200)"
 prompt_any | grep -q -- "--prs 70:$H1,71:$H2,72:$H3" && ok "  … over all three PRs in board order, each pinned to its approved head" || fail "prompt lacks the pinned --prs: $(prompt_any | cut -c1-400)"

@@ -374,10 +374,29 @@ def _heredoc_word(text, i):
     return i, "".join(out), quoted
 
 
+_ANSI_NUM = re.compile(r"\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|([0-7]{1,3}))")
+
+
+def _ansi_num(esc):
+    """The text of one \\xHH / \\NNN / \\uHHHH / \\UHHHHHHHH escape of a $'…' as the shell decodes it, or None when it is another escape (kept as typed).
+    A NUL ends the word in bash, so it is dropped; a quote becomes '\\'' (close, literal quote, reopen) so the plain '…' around it stays paired (#526)."""
+    m = _ANSI_NUM.fullmatch(esc)
+    if not m:
+        return None
+    hexa, u4, u8, octal = m.groups()
+    code = int(hexa or u4 or u8 or octal, 16 if octal is None else 8)
+    if octal is not None:
+        code &= 0xFF
+    if code == 0 or code > 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+        return ""
+    ch = chr(code)
+    return "'\\''" if ch == "'" else ch
+
+
 def ansi_c_to_single(text):
     """text with every $'...' outside quotes rewritten as a plain '...' (issue #7: shlex has no $'...', so the backslash-quote inside one ended its quote and
     the lexer paired the quotes of the REST of the line the other way round, which hid a command after it). An escaped quote inside becomes '\\'' (close,
-    literal quote, reopen). The other escapes stay as typed: the text of the word is not what is judged here, its boundaries are.
+    literal quote, reopen). \\xHH, \\NNN, \\uHHHH and \\UHHHHHHHH are decoded (#526: $'\\x67it' is git, and the rules read the name); the other escapes stay as typed: the text of the word is not what is judged here, its boundaries are.
     An unterminated $'... is left as it is. A backslash escapes inside "..." too (a \" does not close it), and a $ right after an odd run of $ is no start:
     $$ is the PID, so in $$'...' the quote is a plain one."""
     if "$'" not in text:
@@ -391,6 +410,9 @@ def ansi_c_to_single(text):
             j, body = i + 2, []
             while j < n and text[j] != "'":
                 if text[j] == "\\" and j + 1 < n:
+                    m = _ANSI_NUM.match(text, j)
+                    if m:
+                        body.append(_ansi_num(m.group(0))); j = m.end(); continue
                     body.append("'\\''" if text[j + 1] == "'" else text[j:j + 2]); j += 2
                 else:
                     body.append(text[j]); j += 1

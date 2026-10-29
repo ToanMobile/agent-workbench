@@ -304,6 +304,8 @@ export function buildAuditPrompt(cfg, task, scope = '') {
     `{
   "phase": "AUDIT",
   "verdict": "pass" | "fail",
+  "reviewer": "antigravity",
+  "auditedHead": "<sha40 cua commit da audit (git rev-parse HEAD)>",
   "findings": [
     { "severity": "blocker|major|minor", "file": "<file:dong>", "snippet": "<CHEP NGUYEN VAN 1 dong code tai file:dong>", "problem": "<sai gi>", "why": "<hong the nao>", "fix": "<sua sao>" }
   ],

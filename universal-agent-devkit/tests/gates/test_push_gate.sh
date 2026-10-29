@@ -33,12 +33,14 @@ expect "a change committed after the gate: push blocked" 2
 # (outside the repo) for that task of this repository (tests/gates/test_push_gate_integrity.sh has the refused forms).
 git commit -q --allow-empty -m "audit" -m "Test-approved-by: antigravity T0004-audit"
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
+export DEVKIT_PM_HOME_TEST=1   # #605: test-only switch, a fixture pm home under the temp dir counts for push_gate.approved
 expect "Test-approved-by with no antigravity-pm audit record: blocked" 2
 mkdir -p "$TMP/pm/projects/repo-x/tasks/T0004-audit"
-printf '{"id":"T0004-audit","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1}}}\n' "$TMP/repo" \
+# audit T0066 (#605): the verdict names the audited head; the empty trailer commit sits on that same tree
+printf '{"id":"T0004-audit","project":"%s","verdicts":{"audit":{"verdict":"pass","round":1,"notes":"auditedHead: %s"}}}\n' "$TMP/repo" "$(git rev-parse HEAD~1)" \
   > "$TMP/pm/projects/repo-x/tasks/T0004-audit/task.json"
 expect "Test-approved-by in the pushed commits, audit recorded as pass: allowed" 0
-unset ANTIGRAVITY_PM_STATE_HOME
+unset ANTIGRAVITY_PM_STATE_HOME DEVKIT_PM_HOME_TEST
 git reset -q --hard HEAD~2; git checkout -q -- . 2>/dev/null
 rm -f .agents/regression_matrix.active.json; git commit -qam "no matrix"
 expect "a repo without a regression matrix is not checked" 0

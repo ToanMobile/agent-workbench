@@ -1126,6 +1126,71 @@ def tally_moves(prev: dict, cur: dict, kinds: dict, tally: dict) -> dict:
     return out
 
 
+BRANCH_CARD_RE = re.compile(r"^issue-(\d+)-")
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # tiến trình có thật nhưng của người khác
+    except OSError:
+        return False
+    return True
+
+
+def read_merge_train(repo_path: str, alive=_pid_alive):
+    """Train merge đang chạy của repo (#562) từ `<repo>/.git/super-board/merge-train.state`, hoặc None.
+
+    Train ghi `pid`, `started_at`, `step` (gate | merge) và mỗi PR một dòng `pr <N> <sha> <ref>`, rồi xoá file khi thoát. File thiếu, hỏng,
+    pid chết (train bị SIGKILL để lại file mồ côi) thì coi như không có train: giao diện về đúng hành vi cũ. Chỉ ĐỌC file, không bao giờ
+    flock merge-train.lock: một train khác đang xin khoá sẽ thoát exit 4.
+    ponytail: pid bị tái dùng bởi tiến trình khác giữ file mồ côi sống; hàng đợi merge kiểm thêm lệnh của pid, thêm vào đây khi gặp."""
+    try:
+        with open(os.path.join(repo_path, ".git", "super-board", "merge-train.state"), encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    pid = started = None
+    step = "gate"
+    prs = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        if parts[0] == "pid" and parts[1].isdigit():
+            pid = int(parts[1])
+        elif parts[0] == "started_at" and parts[1].isdigit():
+            started = int(parts[1])
+        elif parts[0] == "step":
+            step = parts[1]
+        elif parts[0] == "pr" and parts[1].isdigit():
+            m = BRANCH_CARD_RE.match(parts[3]) if len(parts) > 3 else None
+            prs.append({"pr": int(parts[1]), "card": int(m.group(1)) if m else None})
+    if pid is None or started is None or not prs or not alive(pid):
+        return None
+    return {"pid": pid, "startedAt": started, "step": "merge" if step == "merge" else "gate", "prs": prs,
+            "cards": [x["card"] for x in prs if x["card"] is not None]}
+
+
+def read_queued_cards(repo_path: str) -> set:
+    """Số thẻ có PR đang chờ trong hàng đợi merge (`merge-queue.labeled`: `<PR> <head> <epoch> <ref>`; dòng thiếu ref bị bỏ qua)."""
+    try:
+        with open(os.path.join(repo_path, ".git", "super-board", "merge-queue.labeled"), encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return set()
+    out = set()
+    for line in lines:
+        parts = line.split()
+        m = BRANCH_CARD_RE.match(parts[3]) if len(parts) >= 4 else None
+        if m:
+            out.add(int(m.group(1)))
+    return out
+
+
 def build_state(cfg: dict, project: dict, gh_meta: dict, sessions: list, sess_info: dict,
                 file_ticks: list, scanner: LocalScanner, demo: bool = False, manifests=None) -> dict:
     t_now = now()
@@ -1193,6 +1258,27 @@ def build_state(cfg: dict, project: dict, gh_meta: dict, sessions: list, sess_in
             "tick": tick, "history": hist, "state": state, "finishedAt": fin,
             "source": src["source"], "manifestHint": src.get("manifestHint"),
         }
+
+    # merge train (#562): train còn sống thì runner không "mất tín hiệu" (tick đứng vì chờ train), thẻ trong train mang nhãn gate merge,
+    # thẻ đã vào hàng đợi mà chưa vào train mang nhãn chờ train. Mọi lỗi đọc file = không có train.
+    trains = {}
+    merge_tags = {}  # (repo thường, số thẻ) -> "gate" | "merge" | "wait"
+    for name in names:
+        rp = repo_paths.get(name) or os.path.join(root, name)
+        tr = read_merge_train(rp)
+        if tr:
+            trains[name] = tr
+            if name in runner_by_repo and runner_by_repo[name]["state"] == "stale":
+                runner_by_repo[name]["state"] = "merging"
+        for n in read_queued_cards(rp):
+            merge_tags[(name.lower(), n)] = "wait"
+        if tr:
+            for n in tr["cards"]:
+                merge_tags[(name.lower(), n)] = tr["step"]
+    if merge_tags:
+        items = [dict(it, mergeTag=merge_tags[(it["repo"].lower(), int(it["number"]))])
+                 if it.get("status") == "Review" and str(it.get("number") or "").isdigit()
+                 and (it["repo"].lower(), int(it["number"])) in merge_tags else it for it in items]
 
     # chưa đọc được Project: dựng cột tạm từ các cột runner đang đếm
     if not columns and runner_by_repo:
@@ -1304,7 +1390,7 @@ def build_state(cfg: dict, project: dict, gh_meta: dict, sessions: list, sess_in
             "name": name, "path": rp, "exists": os.path.isdir(rp) or demo,
             "full": full or f"{cfg['github']['owner']}/{name}",
             "counts": rc, "total": sum(rc.values()),
-            "runner": runner_by_repo.get(name),
+            "runner": runner_by_repo.get(name), "train": trains.get(name),
             "working": sum(1 for w in ws if w["status"] == "working"),
             "manifest": manifest,
         })
@@ -1673,7 +1759,7 @@ def spawn_detached(argv, env, cwd, log):
                                 start_new_session=True)
 
 
-ROW_FROM_RUNNER = {"running": "idle", "idle": "idle", "stale": "stale", "finished": "stopped"}
+ROW_FROM_RUNNER = {"running": "idle", "idle": "idle", "merging": "idle", "stale": "stale", "finished": "stopped"}
 
 
 class App:

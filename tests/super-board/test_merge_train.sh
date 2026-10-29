@@ -364,4 +364,25 @@ rm -f "$TMP/hold"
 grep -q "vẫn nằm trong chuỗi verify" "$TRAIN" && fail "the ponytail note at the top still says a gate-blocked PR stays in the verify chain" \
   || ok "ponytail note matches R11 (blocked PRs leave the chain before verify)"
 
+# ── 13. #579: verify_timed_out chạy dưới `set -euo pipefail` của train; log lớn (> bộ đệm pipe) làm `grep -q` thoát sớm → printf SIGPIPE → 141.
+#    Hàm được trích nguyên văn từ script rồi chạy dưới pipefail, VLOG > 128 KB, dòng kết luận ở đầu log.
+VT_FN="$TMP/verify_timed_out.fn"
+awk '/^verify_timed_out\(\) [{(]/ { on = 1 } on { print } on && /^[})]/ { exit }' "$TRAIN" > "$VT_FN"
+vt_log() { # vt_log <file> <đầu log>: đầu log + ~200 KB đệm
+  printf '%b' "$2" > "$1"; head -c 200000 /dev/zero | tr '\0' 'x' >> "$1"; printf '\n' >> "$1"
+}
+vt_run() { # vt_run <file> <rc>: in rc của verify_timed_out dưới pipefail + stderr
+  ( set -euo pipefail; VLOG="$1"; . "$VT_FN"; verify_timed_out "$2"; ) 2>"$TMP/vt.err"; echo $?
+}
+vt_log "$TMP/vt1.log" 'KẾT LUẬN: đỏ\n  [ ] TIMEOUT | suite-a\n  [ ] TIMEOUT | suite-b\n'
+vt_log "$TMP/vt2.log" 'KẾT LUẬN: đỏ\n  [ ] TIMEOUT | suite-a\n  [ ] FAIL | suite-b\n'
+vt_log "$TMP/vt3.log" 'chạy lệnh khác\nTIMEOUT after 900s\n'
+vt_log "$TMP/vt4.log" 'chạy lệnh khác\nlỗi thật\n'
+[ "$(vt_run "$TMP/vt1.log" 1)" -eq 0 ] && ok "big VLOG, KẾT LUẬN + only TIMEOUT suites → timed out (0)" || fail "big VLOG all-TIMEOUT: want 0"
+grep -q "Broken pipe" "$TMP/vt.err" && fail "verify_timed_out printed 'Broken pipe'" || ok "no 'Broken pipe' on a big VLOG"
+[ "$(vt_run "$TMP/vt2.log" 1)" -ne 0 ] && ok "big VLOG, KẾT LUẬN + a FAIL suite → real red (non-zero)" || fail "big VLOG with FAIL suite: want non-zero"
+[ "$(vt_run "$TMP/vt3.log" 1)" -eq 0 ] && ok "big VLOG, no KẾT LUẬN, 'TIMEOUT after' → timed out (0)" || fail "big VLOG 'TIMEOUT after': want 0"
+[ "$(vt_run "$TMP/vt4.log" 1)" -ne 0 ] && ok "big VLOG, no KẾT LUẬN, no timeout text → non-zero" || fail "big VLOG plain red: want non-zero"
+[ "$(vt_run "$TMP/vt4.log" 124)" -eq 0 ] && ok "rc=124 → timed out (0)" || fail "rc 124: want 0"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train: all passed" || { echo "❌ test_merge_train: $FAILS failed"; exit 1; }

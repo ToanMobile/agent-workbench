@@ -47,6 +47,7 @@ Thiếu thành phần nào thì hỏi ngắn gọn người dùng, không tự s
    - Có thể mở mắt thứ hai: `pm_dispatch kind=audit` để hội thoại audit độc lập chỉ đọc soi xét.
 7. **Phán Quyết & Nghiệm Thu:**
    - `pm_verdict kind=audit` ➔ `pm_verdict kind=review`.
+   - Khi ghi audit pass, luôn truyền `auditedHead` = sha40 của commit (PR head) vừa audit: `pm_verdict kind=audit verdict=pass auditedHead=<sha40>`. Gate DevKit chỉ duyệt test đã sửa khi nội dung khớp đúng cây này và cây đó nằm sau base của nhánh; thiếu `auditedHead` thì audit không duyệt được test nào. Task chỉ audit (audit chéo một PR có sẵn, đã `pm_dispatch kind=audit`) ghi được audit mà không cần `kind=implement`.
    - `pm_run kind=test`: PM tự chạy test để lấy exit code thật.
    - `pm_capture_proof`: Thu thập ảnh nghiệm thu thật từ thiết bị/màn hình.
    - `pm_accept`: Cổng nghiệm thu tự động kiểm tra đủ 6 bằng chứng mới phê chuẩn. Nếu phát hiện lỗi: gọi `pm_rework` để tăng vòng và hủy bằng chứng cũ.

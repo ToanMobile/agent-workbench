@@ -99,6 +99,10 @@ fi
 
 APPROVAL_REPO="$REPO"
 [ -z "$FROM" ] || APPROVAL_REPO=""
+# audit T0066 vòng 3: biên bản audit của marker duyệt chéo xét theo checkout của board (config repo.path), không theo cwd; head PR chưa
+# có trong checkout đó thì super-board-approval.py fetch refs/pull/<n>/head trước khi đối chiếu.
+APPROVAL_REPO_PATH=""
+[ -z "$CONFIG" ] || APPROVAL_REPO_PATH=$(jq -r '.repo.path // empty' "$CONFIG" 2>/dev/null) || APPROVAL_REPO_PATH=""
 echo "$ISSUES" | jq --arg only "$ONLY" '
   # ---- the parser ---------------------------------------------------------
   # Everything after the LAST "## Blocked by" heading, stopping at the next
@@ -119,8 +123,9 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
       end;
 
   # Issue numbers on a bullet: "- #32 — The price feed" -> 32
-  def refs: [ .[] | select(test("^[ \t]*-[ \t]*#[0-9]+"))
-                  | capture("^[ \t]*-[ \t]*#(?<n>[0-9]+)").n | tonumber ];
+  # #529: the bullet is optional — a bare "#32" line is a blocker too, not an unreadable section.
+  def refs: [ .[] | select(test("^[ \t]*(-[ \t]*)?#[0-9]+"))
+                  | capture("^[ \t]*(-[ \t]*)?#(?<n>[0-9]+)").n | tonumber ];
 
   # A BULLET that claims None while naming an issue is the landmine of 2026-08-20.
   # Restricted to bullets on purpose: a blockquote underneath may legitimately
@@ -167,7 +172,10 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
       | ($i | comment_line) as $cl
       | ( if $cl != null then
             ( $cl | capture("blocked-by:[ \t]*(?<v>.*)$"; "i").v | gsub("[ \t]"; "") ) as $v
-            | if $v == "-" or $v == "" then
+            | if $v == "agent" then
+                # #529: parked by the runner (worker crash / no-op): agent work, not for a person. Not human-gated, nothing to clear.
+                { parseable: true, blockers: [], human_gated: false, agent_parked: true, why: "" }
+              elif $v == "-" or $v == "" then
                 { parseable: true, blockers: [], human_gated: ($i | person_done | not), why: "" }
               elif ($v | test("^[0-9]+(,[0-9]+)*$")) then
                 { parseable: true, blockers: ($v / "," | map(tonumber)), human_gated: false, why: "" }
@@ -197,10 +205,12 @@ echo "$ISSUES" | jq --arg only "$ONLY" '
           blockers: $p.blockers, openBlockers: $stillOpen,
           parseable: $p.parseable,
           humanGated: $p.human_gated,
+          agentParked: ($p.agent_parked // false),
           runnable: ($p.parseable and ($p.human_gated | not) and (($stillOpen | length) == 0)),
           why: $p.why,
           needsYou: ($i | needs_you),
           needsYouDone: false }
     ]
   | ( if $filter == null then . else map(select(.number as $n | $filter | index($n))) end )
-  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO" ${CONFIG:+--config "$CONFIG"}
+  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO" ${CONFIG:+--config "$CONFIG"} \
+      ${APPROVAL_REPO_PATH:+--repo-path "$APPROVAL_REPO_PATH"}

@@ -11,7 +11,8 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SC="$DEVKIT_DIR/scripts/governance/scratch_cleanup.py"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+REAL_DK_OLD=""; SLASH_TMP_BOX=""
+trap 'rm -rf "$TMP" ${REAL_DK_OLD:+"$REAL_DK_OLD"} ${SLASH_TMP_BOX:+"$SLASH_TMP_BOX"}' EXIT INT TERM HUP
 export DEVKIT_TEST_TMP_ROOT="$TMP/no-test-tmp"   # --prune also sweeps test temp dirs: never the real TMPDIR here
 FAILS=0
 ok()   { echo "✔ $1"; }
@@ -240,6 +241,60 @@ for p in sc.TEST_TMP_PREFIXES:
 PY
 )"
 [ -z "$missing" ] && ok "every TEST_TMP_PREFIXES name is a template some test of this repo uses" || fail "prefixes no test uses: $missing"
+# #546 P2 & audit 10-agent: sweep_test_tmp quét /private/tmp, xử lý thư mục con ngay dưới /tmp (macOS symlink /tmp -> private/tmp),
+# bắt giữ AF_UNIX socket bind qua đường dẫn /tmp/..., không treo ở .git dạng FIFO, và không ghi/cắt qua symlink ở log_root / stamp.
+if command -v lsof >/dev/null 2>&1 || [ -x /usr/sbin/lsof ]; then
+  DK_SIM="$TMP/dk_slash_tmp"
+  mkdir -p "$DK_SIM/dk-oldsim" "$DK_SIM/dk-freshsim" "$DK_SIM/tmp.keepother" "$DK_SIM/dk-fifogit"
+  mkfifo "$DK_SIM/dk-fifogit/.git"
+  touch -t 202001010000 "$DK_SIM/dk-oldsim" "$DK_SIM/tmp.keepother" "$DK_SIM/dk-fifogit/.git" "$DK_SIM/dk-fifogit"
+  DEVKIT_DK_TMP_ROOT="$DK_SIM" python3 -I -c '
+import os, subprocess, sys
+r = subprocess.run([sys.executable, "-I", sys.argv[1], "--sweep-tmp"], timeout=3, capture_output=True, text=True)
+sys.exit(r.returncode)
+' "$SC" >/dev/null 2>&1
+  [ ! -e "$DK_SIM/dk-oldsim" ] && [ ! -e "$DK_SIM/dk-fifogit" ] && [ -d "$DK_SIM/dk-freshsim" ] && [ -d "$DK_SIM/tmp.keepother" ] \
+    && ok "sweep_test_tmp sweeps stale dk-* (including FIFO .git without hanging) while keeping fresh dk-* and non-dk-* entries" \
+    || fail "secondary dk-* sweep wrong: old=$([ -e "$DK_SIM/dk-oldsim" ] && echo y || echo n) fifo=$([ -e "$DK_SIM/dk-fifogit" ] && echo y || echo n) fresh=$([ -d "$DK_SIM/dk-freshsim" ] && echo y || echo n) other=$([ -d "$DK_SIM/tmp.keepother" ] && echo y || echo n)"
+
+  SLASH_TMP_BOX="$(mktemp -d /tmp/dk-scbox-XXXXXX)"
+  mkdir -p "$SLASH_TMP_BOX/dk-subold" "$TMP/victim_dir"
+  echo precious > "$TMP/victim_dir/data.txt"
+  ln -s "$TMP/victim_dir/data.txt" "$SLASH_TMP_BOX/.devkit-test-tmp-sweep"
+  ln -s "$TMP/victim_dir/data.txt" "$SLASH_TMP_BOX/devkit-scratch-cleanup.log"
+  touch -t 202001010000 "$SLASH_TMP_BOX/dk-subold"
+  CLAUDE_CONFIG_DIR="$TMP/no-claude-home" DEVKIT_SCRATCH_ROOT="$TMP/no-sr" DEVKIT_CLAUDE_PROJECTS="$PROJ" \
+    DEVKIT_TEST_TMP_ROOT="$TMP/no-tr" DEVKIT_DK_TMP_ROOT="$SLASH_TMP_BOX" \
+    python3 -I "$SC" --prune --keep "$F" >/dev/null 2>&1
+  if [ ! -e "$SLASH_TMP_BOX/dk-subold" ] && [ "$(cat "$TMP/victim_dir/data.txt" 2>/dev/null)" = "precious" ]; then
+    ok "sweep_test_tmp cleans scan_root 1-level under /tmp without ENOTDIR and never clobbers symlinks in dk_root"
+  else
+    fail "1-level /tmp scan_root or symlink protection failed: subold_exists=$([ -e "$SLASH_TMP_BOX/dk-subold" ] && echo y || echo n) victim='$(cat "$TMP/victim_dir/data.txt" 2>/dev/null)'"
+  fi
+  rm -rf "$SLASH_TMP_BOX"; SLASH_TMP_BOX=""
+
+  REAL_DK_OLD="$(mktemp -d /tmp/dk-sctst-XXXXXX)"
+  REAL_DK_SOCK="$(mktemp -d /tmp/dk-scsock-XXXXXX)"
+  python3 -I - "$REAL_DK_SOCK/s.sock" "$TMP/sock.ready" <<'PY' &
+import os, socket, sys, time
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.bind(sys.argv[1])
+s.listen(1)
+open(sys.argv[2], "w").write("1")
+time.sleep(30)
+PY
+  SOCK_PID=$!
+  for _ in $(seq 1 50); do [ -f "$TMP/sock.ready" ] && break; python3 -c 'import time; time.sleep(0.05)'; done
+  touch -t 202001010000 "$REAL_DK_OLD" "$REAL_DK_SOCK/s.sock" "$REAL_DK_SOCK"
+  TMPDIR="$TR" env -u DEVKIT_TEST_TMP_ROOT DEVKIT_SCRATCH_ROOT="$ROOT" DEVKIT_CLAUDE_PROJECTS="$PROJ" python3 -I "$SC" --sweep-tmp >/dev/null 2>&1
+  kill "$SOCK_PID" 2>/dev/null; wait "$SOCK_PID" 2>/dev/null
+  if [ ! -e "$REAL_DK_OLD" ] && [ -d "$REAL_DK_SOCK" ]; then
+    ok "sweep_test_tmp removes stale /private/tmp/dk-* while keeping /tmp/dk-* held only by an AF_UNIX socket"
+  else
+    fail "/private/tmp dk-* or AF_UNIX socket check failed: old_exists=$([ -e "$REAL_DK_OLD" ] && echo y || echo n) sock_dir_exists=$([ -d "$REAL_DK_SOCK" ] && echo y || echo n)"
+  fi
+  rm -rf "$REAL_DK_OLD" "$REAL_DK_SOCK" 2>/dev/null || true; REAL_DK_OLD=""
+fi
 [ -d "$TR" ] && { chflags -R nouchg "$TR" 2>/dev/null; chmod -R u+rwX "$TR" 2>/dev/null; }
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_scratch_cleanup: all passed" || { echo "❌ test_scratch_cleanup: $FAILS failed"; exit 1; }
