@@ -297,6 +297,15 @@ set_col() { python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s[
 # builder giả đang chạy cho thẻ <K>: khoá inflight thật (PID sống, LANE=build), như runner ghi cho một worker build.
 builder_on() { sleep 600 & BPID=$!; OWN_PIDS="$OWN_PIDS $BPID"; printf 'PID=%s\nLANE=build\nSTARTED=%s\nWORKER_LOG=x\n' "$BPID" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/$1"; }
 builder_off() { kill "$BPID" 2>/dev/null; wait "$BPID" 2>/dev/null; }
+# hold_queue / free_queue: giữ flock của merge-queue.lock (như một lượt queue đang chạy dài): các tick trong lúc giữ không train được,
+# nên thẻ đã vào hàng còn nằm ở Review với nhãn merge-queue (nhánh "skip … is in the merge queue" của runner có việc để làm).
+hold_queue() {
+  mkdir -p "$COMMON/super-board"; rm -f "$W/queue-held"
+  python3 -I -c 'import fcntl,sys,time;f=open(sys.argv[1],"a");fcntl.flock(f,fcntl.LOCK_EX);open(sys.argv[2],"w").close();time.sleep(600)' \
+    "$COMMON/super-board/merge-queue.lock" "$W/queue-held" & QHOLD=$!; OWN_PIDS="$OWN_PIDS $QHOLD"
+  local i=0; while [ ! -e "$W/queue-held" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+}
+free_queue() { kill "$QHOLD" 2>/dev/null; wait "$QHOLD" 2>/dev/null; }
 # wait_held <K>: chờ stub reviewer của thẻ K làm xong các bước ghi và đứng ở điểm giữ (tối đa 60 s).
 wait_held() { local i=0; while [ ! -e "$F/held-$1" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done; }
 # release_worker <K>: thả stub reviewer của thẻ K và chờ wrapper của nó thoát (tối đa 60 s).
@@ -339,7 +348,8 @@ H70=$(head_of 70); H71=$(head_of 71); H72=$(head_of 72)   # head lúc review (ga
 builder_on 8                     # thẻ #8 còn đang build: máy chưa rảnh
 : > "$F/direct-gate-7"            # (c): reviewer #7 thử gọi thẳng merge gate trước khi vào hàng
 
-# tick 1: thẻ #7 ở Review → runner phóng reviewer; reviewer vào hàng (còn sống ở điểm giữ).
+# tick 1: thẻ #7 ở Review → runner phóng reviewer; reviewer vào hàng (còn sống ở điểm giữ). Queue bị giữ khoá: chưa train được.
+hold_queue
 tick; no_halt "tick 1"; wait_held 7
 [ "$(dispatches 7)" = 1 ] && ok "tick 1: the runner dispatched one reviewer for #7" || fail "tick 1: reviewer dispatches for #7 = $(dispatches 7): $(cat "$F/claude.calls")"
 prompt7=$(sed -n 's/^prompt: //p' "$WORKER_LOG_DIR/worker-review-7.log" 2>/dev/null | head -1)
@@ -351,19 +361,24 @@ rc7=$(cat "$F/direct-gate-7.rc" 2>/dev/null)
   && ok "(c) a lane worker calling super-board-merge-gate.sh directly while the queue is on: exit 13 with the label line" \
   || fail "(c) direct gate call from a lane worker: rc=${rc7:-<none>} out=$(tail -3 "$F/direct-gate-7.out" 2>/dev/null | tr '\n' '|')"
 [ "$(pfg .merge-scratch-)" = 0 ] && ok "(c)  … the gate itself verified nothing (no single-PR verify)" || fail "(c)  … gate verify ran $(pfg .merge-scratch-) time(s)"
-# tick 2 (reviewer #7 còn sống, builder #8 còn sống): PR 70 đã có nhãn → train ngay, không chờ đủ PR, không chờ máy rảnh.
-M0=$(wc -l < "$RUN_MANIFEST"); tick; no_halt "tick 2"
-[ "$(trains)" = 1 ] && grep '^\[merge-queue\] train of' "$RUN_MANIFEST" | tail -1 | grep -q -- "70:$H70\$" \
-  && ok "(b) tick 2: PR 70 went into a train at once (1 PR, workers alive, no wait)" \
-  || fail "(b) tick 2: trains=$(trains): $(grep -i 'merge.queue' "$RUN_MANIFEST" | tail -3 | tr '\n' '|')"
-[ "$(st '.prs["70"].state')" = MERGED ] && [ "$(pfg .train-scratch-)" = 1 ] && [ "$(pfg .)" = 1 ] && ok "(b)  … PR 70 merged with one verify (in the train scratch)" || fail "(b)  … PR 70 state $(st '.prs["70"].state') verifies: $(cat "$F/pfg.log" 2>/dev/null)"
-tail -n +"$((M0 + 1))" "$RUN_MANIFEST" | grep -q 'not due' && fail "(b) a 'not due' line is still printed" || ok "(b)  … no 'not due' line (the gate for waiting is gone)"
+{ [ "$(st '.prs["70"].state')" = OPEN ] && ! grep -q 'merged' "$F/direct-gate-7.out"; } && ok "(c)  … and PR 70 is still OPEN (the direct gate call merged nothing)" || fail "(c)  … PR 70 state $(st '.prs["70"].state'): $(cat "$F/direct-gate-7.out" 2>/dev/null | tail -3 | tr '\n' '|')"
+# tick 2 (queue đang bị giữ khoá, reviewer #7 + builder #8 còn sống): chưa train, PR 70 còn OPEN, thẻ #7 còn ở Review.
+tick; no_halt "tick 2"
+[ "$(trains)" = 0 ] && [ "$(st '.prs["70"].state')" = OPEN ] && ok "tick 2: queue lock held by another run: no train, PR 70 still OPEN" || fail "tick 2: trains=$(trains) PR70=$(st '.prs["70"].state')"
 release_worker 7
 
-# tick 3: reviewer #7 đã thoát, #7 đã vào hàng → không phóng reviewer lần hai; hàng rỗng.
-tick; no_halt "tick 3"
-[ "$(dispatches 7)" = 1 ] && ok "(a) tick 3: queued card #7 is not dispatched again" || fail "(a) tick 3: #7 re-dispatched ($(dispatches 7) reviewers)"
-[ "$(trains)" = 1 ] && ok "tick 3: empty queue, no second train" || fail "tick 3: train ran ($(trains))"
+# tick 3: reviewer #7 đã thoát, thẻ #7 còn ở Review với nhãn merge-queue → runner KHÔNG phóng reviewer lần hai, không phạt no-op.
+M0=$(wc -l < "$RUN_MANIFEST"); tick; no_halt "tick 3"
+[ "$(dispatches 7)" = 1 ] && ok "(a) tick 3: queued card #7 (still in Review) is not dispatched again" || fail "(a) tick 3: #7 re-dispatched ($(dispatches 7) reviewers)"
+tail -n +"$((M0 + 1))" "$RUN_MANIFEST" | grep -q 'skip #7 in Review: PR 70 is in the merge queue' && ok "(a)  … the runner says why: PR 70 is in the merge queue" || fail "(a)  … no 'is in the merge queue' skip line: $(tail -n +"$((M0 + 1))" "$RUN_MANIFEST" | tail -4 | tr '\n' '|')"
+grep -q 'no-op' "$RUN_MANIFEST" && fail "(a)  … card #7 was judged a no-op" || ok "(a)  … and card #7 is not penalised as a no-op"
+# tick 3b: khoá được thả → PR 70 vào train ngay dù builder #8 còn sống (không chờ đủ PR, không chờ máy rảnh).
+free_queue; M1=$(wc -l < "$RUN_MANIFEST"); tick; no_halt "tick 3b"
+[ "$(trains)" = 1 ] && grep '^\[merge-queue\] train of' "$RUN_MANIFEST" | tail -1 | grep -q -- "70:$H70\$" \
+  && ok "(b) lock free: PR 70 went into a train at once (1 PR, builder #8 alive, no wait)" \
+  || fail "(b) trains=$(trains): $(grep -i 'merge.queue' "$RUN_MANIFEST" | tail -3 | tr '\n' '|')"
+[ "$(st '.prs["70"].state')" = MERGED ] && [ "$(pfg .train-scratch-)" = 1 ] && [ "$(pfg .)" = 1 ] && ok "(b)  … PR 70 merged with one verify (in the train scratch)" || fail "(b)  … PR 70 state $(st '.prs["70"].state') verifies: $(cat "$F/pfg.log" 2>/dev/null)"
+tail -n +"$((M1 + 1))" "$RUN_MANIFEST" | grep -q 'not due' && fail "(b) a 'not due' line is still printed" || ok "(b)  … no 'not due' line (the gate for waiting is gone)"
 
 # PR tương tác 72 (không thẻ): người duyệt tay vào hàng.
 gh pr comment 72 --body "approved-head:$H72" && gh pr ready 72 && gh pr edit 72 --add-label merge-queue
@@ -373,13 +388,17 @@ tick; no_halt "tick 4"
 
 # Builder #8 xong: thẻ sang Review, builder thoát. tick 5: reviewer #8 được phóng và vào hàng; tick 6: PR 71 vào train dù reviewer #8 còn sống.
 set_col 8 Review; builder_off
+hold_queue
 tick; no_halt "tick 5"; wait_held 8
 [ "$(dispatches 8)" = 1 ] && grep -q '^queued 8 71$' "$F/claude.calls" && ok "tick 5: #8 reached Review, its reviewer queued PR 71" || fail "tick 5: #8 reviewer: $(cat "$F/claude.calls")"
-tick; no_halt "tick 6"
-[ "$(dispatches 7)" = 1 ] && [ "$(dispatches 8)" = 1 ] && ok "(a) tick 6: neither queued card is dispatched again" || fail "(a) tick 6: re-dispatch: $(cat "$F/claude.calls")"
-[ "$(trains)" = 3 ] && grep '^\[merge-queue\] train of' "$RUN_MANIFEST" | tail -1 | grep -q -- "71:$H71\$" \
-  && ok "(b) tick 6: PR 71 went into a train while reviewer #8 was still running" || fail "(b) tick 6: trains=$(trains): $(grep '^\[merge-queue\]' "$RUN_MANIFEST" | tail -3 | tr '\n' '|')"
 release_worker 8
+M2=$(wc -l < "$RUN_MANIFEST"); tick; no_halt "tick 6"
+[ "$(dispatches 7)" = 1 ] && [ "$(dispatches 8)" = 1 ] && ok "(a) tick 6: neither queued card is dispatched again" || fail "(a) tick 6: re-dispatch: $(cat "$F/claude.calls")"
+tail -n +"$((M2 + 1))" "$RUN_MANIFEST" | grep -q 'skip #8 in Review: PR 71 is in the merge queue' && ok "(a)  … card #8 waits in Review with the merge-queue skip line" || fail "(a)  … no skip line for #8: $(tail -n +"$((M2 + 1))" "$RUN_MANIFEST" | tail -4 | tr '\n' '|')"
+[ "$(trains)" = 2 ] && ok "tick 6: queue lock held, no train yet" || fail "tick 6: trains=$(trains)"
+free_queue; tick; no_halt "tick 7"
+[ "$(trains)" = 3 ] && grep '^\[merge-queue\] train of' "$RUN_MANIFEST" | tail -1 | grep -q -- "71:$H71\$" \
+  && ok "(b) tick 6: PR 71 went into a train as soon as the queue lock was free" || fail "(b) tick 6: trains=$(trains): $(grep '^\[merge-queue\]' "$RUN_MANIFEST" | tail -3 | tr '\n' '|')"
 [ "$(pfg .train-scratch-)" = 3 ] && ok "(b) three trains, one verify each (in the train scratch)" || fail "(b) train verifies: $(pfg .train-scratch-): $(cat "$F/pfg.log" 2>/dev/null)"
 [ "$(pfg .)" = 3 ] && ok "(b)  … and 0 single-PR verifies by the merge gate" || fail "(b) total verifies $(pfg .): $(cat "$F/pfg.log" 2>/dev/null)"
 [ "$(st '[.prs[] | select(.state == "MERGED") | .number] | sort | join(",")')" = "70,71,72" ] && ok "(b) PRs 70, 71, 72 merged" || fail "(b) merged: $(st '.merged')"
@@ -390,12 +409,12 @@ release_worker 8
 [ "$(st '[.prs[].labels[] | select(.name == "merge-queue")] | length')" = 0 ] && ok "(b)  … merge-queue label removed from every merged PR" || fail "(b) labels left: $(st '[.prs[] | {n: .number, l: .labels}]')"
 
 # tick 7: hàng trống → không train nữa, không phóng gì.
-tick; no_halt "tick 7"
-[ "$(trains)" = 3 ] && [ "$(pfg .)" = 3 ] && ok "tick 7: empty queue, no further train or verify" || fail "tick 7: trains=$(trains) verifies=$(pfg .)"
+tick; no_halt "tick 8"
+[ "$(trains)" = 3 ] && [ "$(pfg .)" = 3 ] && ok "tick 8: empty queue, no further train or verify" || fail "tick 8: trains=$(trains) verifies=$(pfg .)"
 # (a) toàn kịch bản: mỗi thẻ đúng một reviewer; không worker merge-only / merge-train nào.
 grep -qE '^(merge-only|merge-train) ' "$F/claude.calls" && fail "(a) a merge-only / merge-train worker was dispatched: $(cat "$F/claude.calls")" || ok "(a) no merge-only / merge-train worker in the whole run"
 grep -q 'merge-train for\|merge-only, no fresh review' "$RUN_MANIFEST" && fail "(a) runner log has a merge-train / merge-only dispatch" || ok "(a)  … and no merge-train / merge-only line in the runner log"
-[ "$(grep -c '^review ' "$F/claude.calls")" = 2 ] && ok "(a) two reviewers for two cards over seven ticks" || fail "(a) reviewer dispatches: $(cat "$F/claude.calls")"
+[ "$(grep -c '^review ' "$F/claude.calls")" = 2 ] && ok "(a) two reviewers for two cards over the whole run" || fail "(a) reviewer dispatches: $(cat "$F/claude.calls")"
 grep -q 'no-op' "$RUN_MANIFEST" && fail "a queued card was judged a no-op: $(grep 'no-op' "$RUN_MANIFEST" | head -2)" || ok "reviewers that queued their PR are not no-ops"
 [ "$NO_MQ_DUE" = 0 ] || fail "the runner tick never called merge_queue_due"
 
