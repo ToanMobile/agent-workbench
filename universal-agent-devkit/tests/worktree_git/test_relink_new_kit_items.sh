@@ -141,5 +141,44 @@ done
 [ -z "$bad" ] && ok "e3. hai relink song song x3: mỗi link đúng một dòng exclude, không mất, không trùng, status sạch" \
   || fail "e3. relink song song làm mất / trùng dòng exclude:$bad"
 
+# e4 (OCR #644): bên ghi exclude KHÔNG lấy exclude.lock (worktree.py append dòng secret, install.sh) append giữa lúc relink đọc và ghi
+#   ⇒ relink không được ghi đè cả file: dòng secret.env còn, dòng của relink có, mỗi dòng một lần. Móc: open() của module đọc exclude
+#   rồi append như worktree.py (O_APPEND); đếm số lần móc chạy để biết cuộc đua thật sự được chèn.
+printf '# head\n' > "$EX"
+out="$(python3 - "$RELINK" "$E" <<'PY'
+import builtins, importlib.util, os, sys
+relink_py, proj = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("relink_check", relink_py)
+rc = importlib.util.module_from_spec(spec); spec.loader.exec_module(rc)
+ex = os.path.realpath(os.path.join(proj, ".git", "info", "exclude")); rel = ".agents/skills/zz-e4"; fired = [0]
+class Racing:
+    def __init__(self, fh): self.fh = fh
+    def __enter__(self): return self
+    def __exit__(self, *a): self.fh.close()
+    def read(self, *a):
+        data = self.fh.read(*a)
+        fd = os.open(ex, os.O_WRONLY | os.O_APPEND)
+        try:
+            os.write(fd, b"secret.env\n")
+        finally:
+            os.close(fd)
+        fired[0] += 1
+        return data
+def racing_open(path, mode="r", *a, **k):
+    fh = builtins.open(path, mode, *a, **k)
+    return Racing(fh) if os.path.realpath(path) == ex and "r" in mode and "+" not in mode else fh
+rc.open = racing_open
+try:
+    with rc.exclude_lock(proj) as common:
+        rc.keep_out_of_git(proj, rel, common)
+finally:
+    del rc.open
+lines = builtins.open(ex, encoding="utf-8").read().splitlines()
+print("e4", fired[0], lines.count("secret.env"), lines.count("/" + rel), lines.count("# head"))
+PY
+)"
+case "$out" in *"e4 1 1 1 1"*) ok "e4. bên ghi khác append secret.env giữa lúc relink đọc và ghi: dòng đó còn, dòng relink có, không trùng" ;;
+  *) fail "e4. relink ghi đè exclude, mất dòng của bên khác (fired secret relink head): $(printf '%s' "$out" | tr '\n' ' ') | $(tr '\n' '|' < "$EX")" ;; esac
+
 [ "$FAILS" -eq 0 ] && { echo "✅ test_relink_new_kit_items: all passed"; exit 0; }
 echo "❌ test_relink_new_kit_items: $FAILS failed"; exit 1

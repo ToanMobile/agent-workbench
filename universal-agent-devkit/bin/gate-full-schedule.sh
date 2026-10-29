@@ -5,14 +5,15 @@
 # Mỗi repo một lịch: slug = tên thư mục repo (chỉ [A-Za-z0-9-]) + 8 ký tự sha1 của đường dẫn vật lý (pwd -P) của repo; plist và thư mục log
 # <log>/<slug>/ riêng (plist đặt DEVKIT_GATE_FULL_LOG_DIR = thư mục đó cho gate_full.py) ⇒ cài repo B không gỡ lịch repo A, summary không đè.
 # --repo mặc định gốc git của thư mục hiện tại (cả status / uninstall). install từ một LINKED worktree (trunk mode) không --repo ⇒ neo
-# về main checkout (repo lẫn gate_full.py của main): gỡ worktree thì lịch không còn chạy script đã mất; main không có gate_full.py ⇒ exit 2.
-# --repo là linked worktree ⇒ exit 2 trừ khi có --allow-worktree (thử / test).
+# về main checkout (repo lẫn gate_full.py của main): gỡ worktree thì lịch không còn chạy script đã mất. Kit (đường vật lý) nằm trong
+# linked worktree thì gate_full.py LUÔN lấy từ main checkout, có --repo hay không; main không có gate_full.py ⇒ exit 2.
+# --repo là linked worktree ⇒ exit 2 trừ khi có --allow-worktree (thử / test: giữ luôn gate_full.py của kit đang chạy).
 # launchd chỉ có PATH /usr/bin:/bin:/usr/sbin:/sbin: đường dẫn TUYỆT ĐỐI của python3 / git / gh lấy lúc cài, PATH của job chứa thư mục
 # của chúng. Không sudo: bootstrap vào gui/<uid>. Lượt trùng (đêm trước chưa xong) do khoá pid của gate_full.py bỏ qua.
 # Móc test: DEVKIT_LAUNCH_AGENTS_DIR (mặc định ~/Library/LaunchAgents), DEVKIT_LAUNCHCTL (mặc định launchctl),
 # DEVKIT_GATE_FULL_LOG_DIR (gốc các thư mục log, mặc định ~/Library/Logs/devkit-gate-full). Tương thích bash 3.2.
 set -u
-KIT="$(cd "$(dirname "$0")/.." && pwd)"
+KIT="$(cd "$(dirname "$0")/.." && pwd -P)"   # vật lý: gọi qua alias <wt>/.agents/devkit thì plist không ghi đường trong worktree
 GF="$KIT/bin/gate_full.py"
 LA_DIR="${DEVKIT_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
 LOG_ROOT="${DEVKIT_GATE_FULL_LOG_DIR:-$HOME/Library/Logs/devkit-gate-full}"
@@ -46,24 +47,27 @@ main_of() {
   return 0
 }
 if [ "$ACTION" = install ]; then
+  MAIN=""
   if [ "$REPO_GIVEN" = 1 ]; then
     if [ "$ALLOW_WT" = 0 ] && [ -n "$(main_of "$REPO")" ]; then
       echo "gate-full-schedule: $REPO là linked worktree — lịch neo vào đó sẽ chạy script đã mất khi gỡ worktree; truyền --repo <main checkout>" \
-        "(hoặc --allow-worktree để thử)" >&2
+        "(gate_full.py cũng lấy từ main checkout; hoặc --allow-worktree để thử)" >&2
       exit 2
     fi
+    # kit nằm trong linked worktree: --repo <main> vẫn phải chạy gate_full.py của main, không phải bản trong worktree tạm
+    [ "$ALLOW_WT" = 0 ] && MAIN="$(main_of "$KIT")"
   else
     MAIN_R="$(main_of "$REPO")"; MAIN="${MAIN_R:-$(main_of "$KIT")}"
-    if [ -n "$MAIN" ]; then
-      # cwd hoặc kit nằm trong linked worktree: repo và gate_full.py đều lấy từ main checkout
-      [ -n "$MAIN_R" ] && REPO="$MAIN_R"
-      GF=""
-      for c in "$MAIN/universal-agent-devkit/bin/gate_full.py" "$MAIN/.agents/devkit/bin/gate_full.py"; do
-        [ -f "$c" ] && { GF="$c"; break; }
-      done
-      [ -n "$GF" ] || { echo "gate-full-schedule: đang ở linked worktree mà main checkout $MAIN không có gate_full.py — chạy install từ" \
-        "main checkout hoặc truyền --repo <main>" >&2; exit 2; }
-    fi
+    # cwd hoặc kit nằm trong linked worktree: repo và gate_full.py đều lấy từ main checkout
+    [ -n "$MAIN_R" ] && REPO="$MAIN_R"
+  fi
+  if [ -n "$MAIN" ]; then
+    GF=""
+    for c in "$MAIN/universal-agent-devkit/bin/gate_full.py" "$MAIN/.agents/devkit/bin/gate_full.py"; do
+      [ -f "$c" ] && { GF="$c"; break; }
+    done
+    [ -n "$GF" ] || { echo "gate-full-schedule: kit hoặc repo ở linked worktree nên gate_full.py phải lấy từ main checkout $MAIN, mà main" \
+      "không có (universal-agent-devkit/bin, .agents/devkit/bin) — đưa kit vào main checkout rồi cài lại (hoặc --repo <...> --allow-worktree để thử)" >&2; exit 2; }
   fi
 fi
 

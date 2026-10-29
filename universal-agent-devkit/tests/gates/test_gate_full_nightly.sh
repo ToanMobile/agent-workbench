@@ -208,6 +208,10 @@ chk "h1. chuỗi squash thẳng: lệnh tạo thẻ nhận commit làm vỡ (l3)
 chk "h2. scratch đã gỡ, khoá đã nhả" 'no_scratch'
 
 # e. lịch launchd -------------------------------------------------------------------------------------------------------------
+# e1–e14 chạy bản sao kit ngoài git: kit của test nằm trong linked worktree thì install luôn lấy gate_full.py của main checkout
+# (e19–e21), main chưa có ⇒ exit 2. Đường dẫn vật lý: script lấy KIT bằng pwd -P
+mkdir -p "$T/kit/bin" && cp "$SCHED" "$GF" "$T/kit/bin/"
+SCHED="$(cd "$T/kit/bin" && pwd -P)/gate-full-schedule.sh"; GF="$(cd "$T/kit/bin" && pwd -P)/gate_full.py"
 mkdir -p "$T/la"
 printf '#!/bin/sh\necho "$@" >>"%s/launchctl.calls"\n' "$T" >"$T/fakelaunchctl"
 chmod +x "$T/fakelaunchctl"
@@ -300,6 +304,29 @@ DEVKIT_LAUNCH_AGENTS_DIR="$T/la2" SHELL="$T/fakeshell" bash "$SCHED" install --r
 P2="$(pl2)"
 chk "e18. --repo <linked worktree> --allow-worktree: cài được, plist trỏ worktree" \
   '[ "$rc" = 0 ] && [ -n "$P2" ] && [ "$(phys "$(px ProgramArguments.7 "$P2")")" = "$WTP" ]' "rc=$rc out: $(tail -3 "$T/sched.out")"
+# e19–e21 (OCR #644): kit nằm trong linked worktree thì gate_full.py của lịch LUÔN lấy từ main checkout, cả khi có --repo; gọi qua
+# symlink tới kit thì plist ghi đường vật lý (không phải đường alias trong worktree)
+cp "$GF" "$M/universal-agent-devkit/bin/"; rm -f "$T/la2"/*.plist; : >"$T/launchctl.calls"
+(cd "$T" && DEVKIT_LAUNCH_AGENTS_DIR="$T/la2" SHELL="$T/fakeshell" bash "$WT/universal-agent-devkit/bin/gate-full-schedule.sh" install --repo "$M") \
+  >"$T/sched.out" 2>&1; rc=$?
+P2="$(pl2)"
+chk "e19. kit của linked worktree + --repo <main>: plist trỏ gate_full.py của main checkout" \
+  '[ "$rc" = 0 ] && [ -n "$P2" ] && [ "$(px ProgramArguments.4 "$P2")" = "$MP/universal-agent-devkit/bin/gate_full.py" ] \
+   && [ "$(phys "$(px ProgramArguments.7 "$P2")")" = "$MP" ]' \
+  "rc=$rc gf=$(px ProgramArguments.4 "$P2") out: $(tail -3 "$T/sched.out")"
+mkdir -p "$WT/.agents" && ln -s "$MP/universal-agent-devkit" "$WT/.agents/devkit"
+rm -f "$T/la2"/*.plist; : >"$T/launchctl.calls"
+(cd "$T" && DEVKIT_LAUNCH_AGENTS_DIR="$T/la2" SHELL="$T/fakeshell" bash "$WT/.agents/devkit/bin/gate-full-schedule.sh" install --repo "$M") \
+  >"$T/sched.out" 2>&1; rc=$?
+P2="$(pl2)"
+chk "e20. gọi qua symlink <worktree>/.agents/devkit tới kit của main: plist ghi đường vật lý dưới main, không qua worktree" \
+  '[ "$rc" = 0 ] && [ -n "$P2" ] && [ "$(px ProgramArguments.4 "$P2")" = "$MP/universal-agent-devkit/bin/gate_full.py" ]' \
+  "rc=$rc gf=$(px ProgramArguments.4 "$P2") out: $(tail -3 "$T/sched.out")"
+rm -f "$T/la2"/*.plist "$M/universal-agent-devkit/bin/gate_full.py"; : >"$T/launchctl.calls"
+(cd "$T" && DEVKIT_LAUNCH_AGENTS_DIR="$T/la2" SHELL="$T/fakeshell" bash "$WT/universal-agent-devkit/bin/gate-full-schedule.sh" install --repo "$M") \
+  >"$T/sched.out" 2>&1; rc=$?
+chk "e21. kit của linked worktree + --repo <main>, main không có gate_full.py: từ chối (exit 2), không plist, không bootstrap" \
+  '[ "$rc" = 2 ] && [ -z "$(pl2)" ] && ! grep -q bootstrap "$T/launchctl.calls"' "rc=$rc out: $(tail -3 "$T/sched.out")"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "test_gate_full_nightly: PASS"; exit 0; fi

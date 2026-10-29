@@ -34,7 +34,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 
 DEVKIT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 if not os.path.isdir(os.path.join(DEVKIT, "profiles")) and os.path.isdir(os.path.join(os.path.dirname(DEVKIT), "profiles")):
@@ -162,8 +161,9 @@ def _kit_items(project, main):
 
 def keep_out_of_git(project, rel, common=None):
     """A new link is local state, as the installer keeps it: /rel goes to .git/info/exclude unless an ignore rule covers it.
-    Gọi trong exclude_lock() (relink truyền common): đọc-sửa-ghi exclude là một bước, ghi qua file tạm cùng thư mục rồi os.replace —
-    hai relink song song không mất / không trùng dòng, tiến trình chết giữa chừng không để exclude dở dang."""
+    Gọi trong exclude_lock() (relink truyền common): đọc để biết dòng đã có chưa rồi APPEND tại chỗ bằng một os.write (O_APPEND) —
+    hai relink song song không mất / không trùng dòng; không bao giờ ghi đè cả file, nên dòng mà bên ghi không lấy khoá (worktree.py
+    append dòng secret, install.sh) chen vào giữa lúc đọc và ghi vẫn còn."""
     if subprocess.run(["git", "-C", project, "check-ignore", "-q", "--", rel], capture_output=True).returncode == 0:
         return
     common = common or git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -171,35 +171,27 @@ def keep_out_of_git(project, rel, common=None):
         return
     path = os.path.join(common, "info", "exclude")
     line = "/" + rel
-    tmp = None
     try:
         try:
             with open(path, encoding="utf-8") as fh:
                 raw = fh.read()
-            mode = os.stat(path).st_mode & 0o777
         except FileNotFoundError:
-            raw, mode = "", 0o644
+            raw = ""
         if line in raw.splitlines():
             return
-        fd, tmp = tempfile.mkstemp(prefix=".exclude.", dir=os.path.dirname(path))
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(raw + ("\n" if raw and not raw.endswith("\n") else "") + line + "\n")
-        os.chmod(tmp, mode)
-        os.replace(tmp, path)
-        tmp = None
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            os.write(fd, (("\n" if raw and not raw.endswith("\n") else "") + line + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
     except OSError as e:
         sys.stderr.write(f"DevKit: cannot add {line} to {path}: {e}\n")
-    finally:
-        if tmp:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
 
 
 @contextlib.contextmanager
 def exclude_lock(project):
-    """Khoá fcntl trên <git-common-dir>/info/exclude.lock (file riêng: exclude bị os.replace nên khoá trên chính nó không giữ được).
+    """Khoá fcntl trên <git-common-dir>/info/exclude.lock (file riêng, như lúc exclude còn bị os.replace: tên khoá giữ nguyên
+    cho các bản relink cũ đang chạy song song).
     Trả common dir (None khi không phải git / không mở được khoá — vẫn chạy, chỉ không khoá)."""
     common = git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
     fd = None
