@@ -213,12 +213,13 @@ git -C "$REPO" checkout -q main 2>/dev/null; git -C "$REPO" reset -q --hard "$I2
 keyed() { python3 -c 'import json,sys,time; p=sys.argv[1]; r=json.load(open(p))
 if sys.argv[3:] != ["nokey"]: r["tests"].append({"id":"REG-K","status":"UNTESTED","label":"KEYED","mode":"cached"})
 d=float(sys.argv[2]); r["time"]-=d; r["tested_at"]-=d; json.dump(r,open(p,"w"))' "$SCOPED" "$@"; }
-reset; mk "$SCOPED" scoped >/dev/null; keyed 30 nokey; logline scoped
+# "lượt trước" tính theo mốc đầu lượt: đặt lại mốc ngay đây, không thì máy tải cao (file chạy > 30 s) làm `keyed 30` vẫn rơi vào lượt này
+turn_start; reset; mk "$SCOPED" scoped >/dev/null; keyed 30 nokey; logline scoped
 stop; rc=$?; [ "$rc" = 0 ] || fail "k đối chứng: biên nhận scoped lượt trước, mọi suite PASS mà XONG bị chặn ($(why $rc))"
 reset; mk "$SCOPED" scoped >/dev/null; keyed 0; logline scoped
 push; rc=$PUSH_RC; [ "$rc" = 0 ] && ok "k push_gate nhận biên nhận scoped có suite UNTESTED/KEYED" || fail "k push_gate từ chối suite KEYED ($rc: $PUSH_OUT)"
 stop; rc=$?; [ "$rc" = 0 ] && ok "k proof_gate cùng lượt nhận biên nhận scoped có suite KEYED" || fail "k proof_gate cùng lượt chặn ($(why $rc))"
-reset; mk "$SCOPED" scoped >/dev/null; keyed 30; logline scoped
+turn_start; reset; mk "$SCOPED" scoped >/dev/null; keyed 30; logline scoped
 stop; rc=$?; [ "$rc" = 2 ] && ok "k proof_gate: biên nhận scoped từ lượt trước có suite KEYED bị chặn (không nới)" || fail "k proof_gate nhận KEYED của lượt trước ($(why $rc))"
 
 # ── j. _carry_gate_receipt: full (cũ hơn) phủ HEAD của main, scoped (mới hơn) có head lạc lịch sử ⇒ chép full ──
