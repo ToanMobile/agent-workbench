@@ -151,5 +151,13 @@ card_script 65 tests/gates/test_a.sh 0
 reset_run
 ( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg10.json" --prs 65 ) >"$TMP/t10.log" 2>&1; rc=$?
 [ "$rc" -eq 11 ] && [ "$(reruns)" = 0 ] && ok "two red shard suites: red at once, no re-run" || fail "two red shard suites: exit $rc reruns=$(reruns)"
+# run_impacted.sh in đường dẫn tương đối KIT (`tests/gates/x.sh`); ở agent-workbench file nằm dưới universal-agent-devkit/ (audit Antigravity T0070 F3)
+mklog "$TMP/kit.log" "FAIL|REG-DK-ALL-GATES-01|✖ tests/gates/test_kit_flaky.sh"
+cfg_log "$TMP/cfg11.json" "$TMP/kit.log"
+card_script 66 universal-agent-devkit/tests/gates/test_kit_flaky.sh 0
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg11.json" --prs 66 ) >"$TMP/t11.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(merged_list)" = "66 " ] && [ "$(reruns)" = 1 ] && ok "kit-relative path: found under universal-agent-devkit/, re-ran once, PR merged" \
+  || fail "kit-relative path: exit $rc merged=$(merged_list) reruns=$(reruns): $(tail -4 "$TMP/t11.log")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train_single_test_retry: all passed" || { echo "❌ test_merge_train_single_test_retry: $FAILS failed"; exit 1; }

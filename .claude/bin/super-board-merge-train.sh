@@ -301,7 +301,12 @@ single_red_test() {
     }
     /^[[:space:]]*\| ✖ [^[:space:]]+[[:space:]]*$/ { line = $0; sub(/^[[:space:]]*\| ✖ /, "", line); sub(/[[:space:]]*$/, "", line); if (!(line in seen)) { seen[line] = 1; n++; name = line } }
     END { if (rej && static == 1 && rows == 1 && !bad && n == 1) print name; else exit 1 }') || return 1
-  [[ "$t" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*\.sh$ ]] && [[ "$t" != *..* ]] && [ -f "$SCRATCH/$t" ] && printf '%s\n' "$t"
+  [[ "$t" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*\.sh$ ]] && [[ "$t" != *..* ]] && {
+    # run_impacted.sh prints the path relative to the kit; in agent-workbench the kit sits under universal-agent-devkit/ (#616, T0070 F3)
+    if [ -f "$SCRATCH/$t" ]; then printf '%s\n' "$t"
+    elif [ -f "$SCRATCH/universal-agent-devkit/$t" ]; then printf '%s\n' "universal-agent-devkit/$t"
+    else return 1; fi
+  }
 }
 # rerun_one_test <test>: chạy đúng test đó một lần trên cây scratch của lượt verify (cùng môi trường và hàng đợi tải), ghi vào $VLOG. 0 = xanh.
 # ponytail: không có trần thời gian riêng (test tự giới hạn), nâng khi gặp test treo; một lần, không lặp lại tới khi xanh.

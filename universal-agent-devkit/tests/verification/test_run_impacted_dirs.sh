@@ -50,6 +50,21 @@ root = kit.rsplit("/", 1)[0]
 print(sc.selection_list(root, c1), sc.selection_list(root, c2))
 PY
 )"
+# Biến shard CÓ SẴN trong môi trường gọi (không do lệnh ma trận đặt) không được thu hẹp suite không tiền tố (audit Antigravity T0070):
+# selection_list của lệnh trần trả tập đầy đủ, suite_env() và _record_env() của nightly không chuyển biến xuống suite.
+amb="$(cd "$DK" && DEVKIT_IMPACTED_DIRS=__none__ python3 -I - "$KIT" <<'PY'
+import importlib.util, os, sys
+sys.path.insert(0, "bin")
+import suite_cache as sc
+kit = sys.argv[1]
+root = kit.rsplit("/", 1)[0]
+full = sc.selection_list(root, "bash kit/tests/run_impacted.sh")
+spec = importlib.util.spec_from_file_location("pfg", "bin/post-fix-gate.py"); pfg = importlib.util.module_from_spec(spec); spec.loader.exec_module(pfg)
+spec2 = importlib.util.spec_from_file_location("sr", "scripts/testing/stale_rerun.py"); sr = importlib.util.module_from_spec(spec2); spec2.loader.exec_module(sr)
+print(len(full or []), "DEVKIT_IMPACTED_DIRS" in pfg.suite_env(), "DEVKIT_IMPACTED_DIRS" in sr._record_env("bash kit/tests/run_impacted.sh"))
+PY
+)"
+[ "$amb" = "5 False False" ] && ok "biến shard có sẵn trong môi trường không rò vào --list, suite_env, nightly" || fail "rò biến shard từ môi trường: '$amb' (muốn '5 False False')"
 echo "$res" | sed -n 1p | grep -qx 'True True True False' && ok "SELECTION_CMD nhận lệnh có/không tiền tố biến, từ chối chuỗi lạ" || fail "SELECTION_CMD: $res"
 echo "$res" | sed -n 2p | grep -qx "\['tests/gates/test_g.sh'\] \['hooks/tests/test_h.sh', 'tests/verification/test_repo_consistency.sh', 'tests/verification/test_v.sh'\]" \
   && ok "selection_list trả đúng tập theo shard" || fail "selection_list: $res"

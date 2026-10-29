@@ -510,7 +510,7 @@ def selection_list(project_dir, command):
         with open(real, encoding="utf-8", errors="replace") as f:
             if SELECTION_MARK not in f.read(4096):
                 return None
-        env = {k: v for k, v in os.environ.items() if k not in ("DEVKIT_GATE_DONE", "DEVKIT_IMPACT_TEST_CHANGED")}
+        env = {k: v for k, v in os.environ.items() if k not in ("DEVKIT_GATE_DONE", "DEVKIT_IMPACT_TEST_CHANGED", "DEVKIT_IMPACTED_DIRS")}   # shard: chỉ từ tiền tố của lệnh, không từ môi trường
         if m.group("dirs"):
             env["DEVKIT_IMPACTED_DIRS"] = m.group("dirs")
         arg = ["--all"] if "--all" in command.split() else []
