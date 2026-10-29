@@ -86,6 +86,25 @@ print(m.since_test_weakened(sys.argv[2], "tests/test_old.sh"))' "$GATE" "$base" 
 if [ "$sw" = False ]; then echo "✔ since_test_weakened sees the trailer on an empty commit"
 else echo "✖ since_test_weakened ignored the trailer on an empty commit: $sw"; FAILS=$((FAILS + 1)); fi
 
+# #630 (review): a trailer commit whose task audited a tree BEFORE `since` (side branch, `merge -s ours` into the range) pulls
+# `base` back to that old tree: the audit says nothing about the newer test, so the weakening is still flagged
+mk side_branch_old_audit
+printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; git commit -qam "older, weak test"; c0="$(git rev-parse HEAD)"
+printf '#!/bin/sh\n[ 1 = 1 ]\ntrue\n' > tests/test_old.sh; git commit -qam "newer test with an assertion"; base="$(git rev-parse HEAD)"
+git checkout -q -b side "$c0"
+pm_pass T0630-side "$c0"
+git commit -q --allow-empty -m "old audit" -m "Test-approved-by: antigravity T0630-side"
+git checkout -q -
+printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
+git commit -qam "weaken test + fix"
+git merge -q -s ours --no-edit side
+sw="$(CLAUDE_PROJECT_DIR="$PWD" python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("pfg", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print(m.since_test_weakened(sys.argv[2], "tests/test_old.sh"))' "$GATE" "$base" 2>&1 | tail -1)"
+if [ "$sw" = True ]; then echo "✔ a trailer whose auditedHead precedes --since does not approve the range"
+else echo "✖ side-branch trailer on a tree older than --since approved the weakening: $sw"; FAILS=$((FAILS + 1)); fi
+
 mk approved_then_weakened; base="$(git rev-parse HEAD)"
 printf '#!/bin/sh\ntrue\n' > tests/test_old.sh
 git commit -qam "weaken test" -m "Test-approved-by: antigravity T0001-audit"

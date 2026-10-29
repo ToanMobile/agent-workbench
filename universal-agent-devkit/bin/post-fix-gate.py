@@ -512,9 +512,9 @@ def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = ""
 def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: bool = False) -> bool:
     """True when this test existed at `since`, a LOCAL-ONLY commit of `since..HEAD` (one not
     reachable from `upstream`; no upstream → every range commit) touches it, and its change to
-    the working tree is not append-only — counted from the latest range commit touching it whose
-    message holds a `Test-approved-by:` line (that commit's content was audited), else from
-    `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
+    the working tree is not append-only — counted from the latest range commit (any path, an empty
+    one included) whose message holds a `Test-approved-by:` line that push_gate accepts and whose
+    auditedHead is at or after `since` (that tree was audited), else from `since`. A commit already on the remote (a teammate's, pulled in) passed its own push gate.
     runner: a suite runner script (A2), judged by test_change_is_append_only(runner=True)."""
     root = str(get_repo_root())
     if object_info(since, repo_path) is None:
@@ -524,8 +524,8 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
                            capture_output=True, text=True)
     if local.returncode == 0 and not local.stdout.strip():
         return False                                  # only upstream commits touch it
-    # No pathspec (#630): the #605 audit flow ends in an EMPTY commit carrying the trailer, which `-- <path>` never lists
-    # (as _trailer_cross_review scans the range). push_gate.approved still judges each trailer commit's own tree.
+    # Không pathspec (#630): luồng audit #605 kết thúc bằng một commit RỖNG mang trailer, `-- <path>` không bao giờ liệt kê nó
+    # (_trailer_cross_review cũng quét cả range). Đổi lại phải kiểm auditedHead sau `since` như _trailer_cross_review.
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
                           "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD"],
                          capture_output=True, text=True)
@@ -535,7 +535,11 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
     # record; a line the agent writes itself is no audit (tests/gates/test_gate_since_test_edit.sh).
     base = since
     for sha in res.stdout.split():                    # newest first
-        if _push_gate().approved(root, f"{sha}^!")[0]:
+        ok, note = _push_gate().approved(root, f"{sha}^!")
+        m = re.search(r"antigravity\s+(\S+)", note or "") if ok else None
+        head = _push_gate().audited_head(root, m.group(1)) if m else None
+        # auditedHead trước `since` (task cũ, commit rỗng ở nhánh phụ gộp vào range) kéo base lùi về cây yếu cũ: không duyệt.
+        if head and _push_gate().head_after(root, since, head):
             base = sha
             PM_APPROVAL_USED.append(repo_path)   # lời duyệt dựa vào biên bản antigravity-pm: pm_relaxed() xét chỗ đọc
             break
