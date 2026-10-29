@@ -111,6 +111,16 @@ fi
 command -v python3 >/dev/null 2>&1 || exit 0
 git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
+# #528: worker của board không chấm main. Worktree liên kết vẫn chạy. Probe vẫn in trạng thái.
+if [ "${SB_BOARD_WORKER:-}" = "1" ] && [ "${PROBE}" != "1" ] && python3 -I -c 'import os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s
+raise SystemExit(0 if s.worker_skip_main(sys.argv[2]) else 1)' "$0" "${REPO_ROOT}"; then
+  echo "$(date +%Y-%m-%dT%H:%M:%S) SB_BOARD_WORKER skip main" >> "${LOG}"
+  exit 0
+fi
+
 # Locate the DevKit: this script's real path (symlink install), else `postfix-gate` on PATH.
 SELF="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0" 2>/dev/null)"
 GATE="$(dirname "$(dirname "${SELF}")")/bin/post-fix-gate.py"

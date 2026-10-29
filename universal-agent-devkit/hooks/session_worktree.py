@@ -77,6 +77,14 @@ def main_of(path):
     return os.path.dirname(t[2]) if os.path.basename(t[2]) == ".git" else None
 
 
+def worker_skip_main(path):
+    """#528: worker của board không được chấm main. Chỉ đúng khi SB_BOARD_WORKER=1 và path không phải worktree liên kết."""
+    if os.environ.get("SB_BOARD_WORKER") != "1":
+        return False
+    t = tree_of(path)
+    return not (t and t[1])
+
+
 def _config_bool(config_path, section, key, default=None):
     """[section] key from one git config file, as git reads a boolean (`key` alone = true); `default` (None) when the file was read and has no
     such key, None when it cannot be read. Section and
