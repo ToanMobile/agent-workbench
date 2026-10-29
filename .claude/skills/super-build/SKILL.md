@@ -101,24 +101,25 @@ Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pa
    run left at that path. Exit 4 = under the disk floor: stop with its message, card and claims unchanged. Never a plain `git worktree add`.
 2. Branch `issue-<N>-<slug>` from `config.base_branch` (step 1 makes it; an existing one, local or only on origin, is checked out as it is).
 3. Docs check (section below) — if the ticket touches a third-party surface, an upgrade, or auth/billing, read the current official docs first.
-4. Implement smallest safe change covering ACs — under the PR size cap (section below).
+4. Implement the smallest safe change that covers the ACs. Unset `auto_max_lines` is 0 (section below).
 5. Commit + push (always).
 6. Open **draft PR** with the PR description template from `run.md` — title in commit-subject format, every marker block filled, `Docs:` bullets in Solution, Risk with `Door:` (one-way/two-way) and `Blast radius:` lines (writing-standard.md § 2).
 7. Follow [PR author notes](../super-board/references/pr-author-notes.md), then post the `[builder] [report]` PR comment + the short issue comment with the PR URL (writing-standard.md § 4).
 8. Move card Ready/Building → QA.
 
-### Keep each PR small (every ticket)
-Each PR stays under the merge size cap: `merge_policy.auto_max_lines` (default 400 changed lines,
-additions + deletions; lockfiles, generated files, snapshots and migration SQL do not count — see
-`merge_policy.size_exclude`). A PR over the cap is never auto-merged: the merge gate parks it in
-Blocked 🙋 "big PR — please review".
+### Keep each PR small (only when the board set a positive cap)
+Unset `merge_policy.auto_max_lines` is 0: there is no line-count cap. Build the card's ACs as one
+PR. A positive `auto_max_lines` is opt-in (additions + deletions; lockfiles, generated files,
+snapshots and migration SQL do not count — see `merge_policy.size_exclude`). A PR over that positive
+cap is never auto-merged: the merge gate parks it in Blocked 🙋 "big PR — please review".
 
-Check `git diff --shortstat origin/<base>...HEAD` (minus excluded files) before each push. If the
-change grows past the cap mid-build, **stop — do not push on**. Commit and push what you have on
-the branch, leave the PR as a draft, and post a PR comment proposing the split: the vertical
-slices (each thin end to end, under the cap, with its own ACs), which slice this PR keeps, and
-`/to-tickets` as the way to file the rest. Then move the card to Blocked with `❓` ("too big —
-split proposed in PR #<P>", `block-template.md`). Never pad past the cap to "finish" the ticket.
+When the cap is a positive number, check `git diff --shortstat origin/<base>...HEAD` (minus excluded
+files) before each push. If the change grows past that cap mid-build, **stop — do not push on**.
+Commit and push what you have on the branch, leave the PR as a draft, and post a PR comment
+proposing the split: the vertical slices (each thin end to end, under the cap, with its own ACs),
+which slice this PR keeps, and `/to-tickets` as the way to file the rest. Then move the card to
+Blocked with `❓` ("too big — split proposed in PR #<P>", `block-template.md`). Never pad past the
+cap to "finish" the ticket. When the cap is 0, do not stop or split for line count.
 
 ### Lifecycle (Builder, rebuild)
 Triggered when card returns to Ready/Building with `loop:rebuild-N` label.
