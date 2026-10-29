@@ -16,7 +16,7 @@ Một lượt:
      + workflow + run_impacted.sh --all, ngoài gate vì quá 900 s/lệnh);
   6. xanh ⇒ nightly/full_pass.json, last_full_green_sha, nightly/history.jsonl;
   7. đỏ ⇒ chạy lại CHỈ suite/test đỏ ở đỉnh, rồi chia đôi các merge first-parent last_green..sha (≤ 16; không có last_green: 8 merge gần
-     nhất) ra commit nghi vấn, tạo thẻ P1 qua scripts/governance/create_task.py (issue mở cùng tiêu đề thì không tạo trùng);
+     nhất) ra commit nghi vấn, tạo thẻ P1 qua scripts/governance/create_task.py (đã có thẻ mở cùng suite đỏ (tiêu đề P1, hoặc mã suite trong tiêu đề/body) thì comment vào đó, không tạo trùng);
   8. log <DEVKIT_GATE_FULL_LOG_DIR>/<yyyymmdd-HHMMSS>.log + summary-latest.md + summary-<yyyymmdd>.md (lịch đêm đặt biến này =
      ~/Library/Logs/devkit-gate-full/<slug> riêng từng repo; chạy tay không đặt: ~/Library/Logs/devkit-gate-full);
   9. finally: gỡ scratch, nhả khoá.
@@ -402,22 +402,38 @@ def origin_slug(repo: str) -> str:
 CARD_PREFIX = "🐛 [fix] P1 gate-full đêm"
 
 
+SUITE_ID = re.compile(r"^(?:REG|BUG)-[A-Za-z0-9_-]+$")
+
+
 def open_issue_for(slug: str, first: str) -> str:
-    """URL của thẻ gate-full đêm còn mở cho cùng suite đỏ đầu tiên (đêm nào cũng được: tiêu đề có ngày), "" khi không có.
-    Phản biện #644 (finding 9): so đúng tiêu đề thì đêm sau mở thẻ trùng cho cùng một lỗi chưa sửa."""
-    if not slug or not shutil.which("gh"):
+    """URL của thẻ còn mở cho cùng suite đỏ đầu tiên, "" khi không có. Hai nguồn khớp, thẻ CARD_PREFIX trước:
+    thẻ gate-full đêm (tiêu đề CARD_PREFIX + suite, đêm nào cũng được: phản biện #644 finding 9) rồi thẻ mở tay có đúng mã suite
+    trong tiêu đề HOẶC body (#662: #659/#660 tiêu đề khác mẫu ⇒ lượt đêm mở thẻ P1 trùng). Mã suite so như một token, không khớp lỏng.
+    `first` không phải mã REG-/BUG- (vd. "agent-kit test") thì chỉ khớp thẻ CARD_PREFIX: một lệnh nhắc trong body thẻ thường
+    không phải cùng lỗi (#662 R1)."""
+    if not slug or not shutil.which("gh") or not first or first == "?":
         return ""
-    rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "open", "--search", "\"gate-full đêm\" in:title",
-                  "--json", "title,url", "--limit", "50"], timeout=60)
+    by_id = bool(SUITE_ID.match(first))
+    query = '"%s" in:title,body' % first if by_id else '"gate-full đêm" in:title'
+    rc, out = sh(["gh", "issue", "list", "--repo", slug, "--state", "open", "--search", query,
+                  "--json", "title,url,body", "--limit", "50"], timeout=60)
     if rc != 0:
         return ""
     try:
         items = json.loads(out.strip().splitlines()[-1]) if out.strip() else []
     except ValueError:
         return ""
-    for it in items if isinstance(items, list) else []:
-        t = it.get("title") if isinstance(it, dict) else None
-        if isinstance(t, str) and t.startswith(CARD_PREFIX) and (": %s " % first in t or ": %s (" % first in t):
+    items = [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
+    titles = [it.get("title") if isinstance(it.get("title"), str) else "" for it in items]
+    for it, t in zip(items, titles):
+        if t.startswith(CARD_PREFIX) and (": %s " % first in t or ": %s (" % first in t):
+            return it.get("url") or "(issue mở cùng suite)"
+    if not by_id:
+        return ""
+    token = re.compile(r"(?<![A-Za-z0-9_-])%s(?![A-Za-z0-9_-])" % re.escape(first))
+    for it, t in zip(items, titles):
+        body = it.get("body") if isinstance(it.get("body"), str) else ""
+        if not t.startswith(CARD_PREFIX) and (token.search(t) or token.search(body)):
             return it.get("url") or "(issue mở cùng suite)"
     return ""
 
