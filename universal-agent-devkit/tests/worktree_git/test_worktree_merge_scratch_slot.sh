@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# #155: a `.merge-scratch-*` worktree (super-board-merge-gate.sh's proof tree, left behind when the gate is SIGKILLed) never holds a
-# WORKTREE_MAX slot: three orphans must not make `worktree add` exit 4. A real linked worktree still counts.
+# #155: a `.merge-scratch-*` worktree (super-board-merge-gate.sh's proof tree, left behind when the gate is SIGKILLed) never blocks
+# `worktree add`: three orphans must not make it exit 4. #607: there is no count of worktrees, so real worktrees are made too.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -16,5 +16,5 @@ for s in aaa bbb ccc; do G "$TMP/main" worktree add -q --detach "$TMP/main/.clau
 add w1; rc=$?
 [ "$rc" = 0 ] && ok "three orphan .merge-scratch-* worktrees do not block add" || fail "add refused next to merge scratches (rc $rc): $(cat "$TMP/out")"
 add w2; add w3; add w4; rc=$?
-[ "$rc" = 4 ] && ok "the cap still holds for real worktrees (exit 4 on the fourth)" || fail "cap not enforced for real worktrees (rc $rc)"
+[ "$rc" = 0 ] && [ -d "$TMP/main-w4" ] && ok "#607: a fourth real worktree is made too (no count)" || fail "fourth real worktree refused (rc $rc): $(cat "$TMP/out")"
 [ "$FAILS" = 0 ]

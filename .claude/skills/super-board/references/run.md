@@ -258,7 +258,8 @@ in a sub-agent, before touching a worktree.
 ```
 [ ] source .claude/bin/super-board-gh-guard.sh; sb_gh_guard_check 200
 [ ] build the in-flight list: .claude/bin/super-board-card.sh --config <cfg> items (one call) → [{number,title,status}] for
-    Building / QA / Review / Ready cards; save it to a temp file
+    Building / QA / Review / Ready cards, leaving out every Ready card labelled `waiting-on:#*` (any case, on the item or its
+    content, string or {name}) — a waiting card is not in progress; save it to a temp file
 [ ] bash .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> \
          --inflight <file> --cap <merge_policy.auto_max_lines, 400 when unset> [--files <paths you expect to touch>]
 [ ] judge each card: the script's verdict, then its `candidates` (near-misses) semantically
@@ -276,8 +277,8 @@ The script asks five questions; the agent owns the judgement:
 | 5 | Too big? | two or more size signals in the issue text (`tag: too-big`, with `evidence` and a suggested `split`): Fix lists ≥5 short deliverables (or the title ≥3) · ≥4 areas · the card calls itself big (phase, vertical slice, "many components") · its scope is a whole spec section · an AC needs people or production data; an AC only a real device can prove (OOM, FPS, memory) on a card that says "real device" counts as two, so it holds on its own | likely over ~400 changed lines (`merge_policy.auto_max_lines`; lockfiles, generated, snapshots, migration SQL excluded) from the code it will touch, or spans many areas (UI + API + DB + jobs …) — lint.md criterion 15 |
 
 **Two Ready cards that overlap each other, neither with an open PR, go one at a time.** The
-lower-numbered card proceeds; only the other is sequenced, with `blocked-by: #<lower>`, and the
-wave-start sweep frees it once the lower one closes. Sequencing each against the other leaves
+lower-numbered card proceeds; only the other is sequenced, with `waiting-on:#<lower>` (it stays
+Ready), and the waiting-on sweep drops the label once the lower one closes. Sequencing each against the other leaves
 both with nothing to wait on and neither built — the same deadlock comes back every wave.
 
 The agent may turn a `proceed` into a `hold` on evidence. It may turn a mechanical `hold` into
@@ -291,10 +292,10 @@ do not make this card big (the listed items are one small change, the device che
 |---|---|---|
 | `proceed` | nothing; the Builder starts | — |
 | `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: Eric (close as duplicate) · `blocked-by: -` |
-| `hold` — in progress | move card to Blocked | `👯` · names the open PR / card · `blocked-by: <the issue that PR or card closes>` — the sweep returns it when that closes, and pre-flight then finds it done |
+| `hold` — in progress | never Blocked (#601): same as `sequence` below — `super-board-waiting-on.py mark --on <the other card's issue, or the open PR's own number when that PR closes this card — never this card's number>`, card stays Ready, return verdict `sequence`. Exception: the legacy runner (`super-board-run.sh` preflight_gate) still parks an exact in-progress duplicate in Blocked 👯 for a person (#619 tracks moving it to `mark`) | — (no Block comment; `mark` posts its own ⏳ comment) — `sweep` drops the label when that closes, and pre-flight then finds it done |
 | `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
 | `hold` — too big | the Builder splits it with `/createTask` (super-build → "Too big → split"); only when it cannot, move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
-| `sequence` — `blockedBy` non-empty | move card to Blocked | `⏳` · the overlapping PR and files · `blocked-by: <blockedBy, open issues only — generate with `super-board-blocked-by.py line`>. Run the helper BEFORE moving the card: it prints `blocked-by: -` (no blocker still open) → treat as `blockedBy` empty, card stays Ready; it exits 79 (state unreadable) → leave the card untouched and return `skipped`, never Blocked with an empty line` — the wave-start sweep frees it |
+| `sequence` — `blockedBy` non-empty | never Blocked: the card stays Ready (return column `Ready`, status `waiting`). Run `python3 .claude/bin/super-board-waiting-on.py mark --config <cfg> --issue <N> --on <blockedBy, comma-separated> --why "<overlapping PR and files>"`: it labels the card `waiting-on:#<each>` and comments once (no `blocked-by:` line). The planner and runner skip Ready cards so labelled; `super-board-waiting-on.py sweep` drops a label once that issue is CLOSED/MERGED and the card builds. `mark` labels only blockers still OPEN and prints JSON: `"labels": []` (every blocker already closed) → `proceed`, as if `blockedBy` were empty; labels non-empty → status `waiting`, column `Ready`, `blockedBy` = the numbers still open. Exit 64/69/79 → leave the card untouched, verdict `skipped` (never Blocked; that 79 is the helper's, not a run halt); it is retried next wave | — (no Block comment, no `blocked-by:` line) |
 | `sequence` — `blockedBy` empty | proceed (card stays Ready, return column `Ready`), comment `⚠️ expected conflict with PR #<P> on <files> — the merge gate will rebase` | — |
 | `halted` | script exit 79: required evidence unavailable; leave the card untouched, stop this run, resume explicitly after recovery | — |
 
@@ -362,7 +363,7 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
    - Move card `QA -> Review`: `.claude/bin/super-board-card.sh --config <cfg> move <N> Review`.
    - **Adversarial Review Discipline:** Apply **Blind-First Pass** (read AC + raw `git diff` and form 2–4 failure hypotheses before reading Builder summary), **Review Remembers** (on rework rounds, grade prior `R1..Rn` findings `fixed`/`not fixed` first), and **Taste Never Blocks** (`Over-engineering`/`Deepening opportunity` is `Should fix`, never blocks a test-green diff).
    - **Small/Medium Task (`< 3` files, `<= 200` LOC net diff, no `auth`/`payment`/`migration`/`security`):** Run `open-code-review` self-audit, post `[reviewer] [report] ✅ merge-ready (DevKit Fast-Track)` + the 4-item Acceptance Report (`core-rules §1.3`), then:
-     - **Merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` without `--codex`: that runner drains the queue every tick): never call the merge gate. Post `approved-head:<sha40>` on the PR as its own comment, run `gh pr ready <PR>`, add the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, and leave the card in `Review`: the queue merges it (run.md → Merge protocol step 5).
+     - **Merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` without `--codex`: that runner drains the queue every tick): never call the merge gate. After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP: `pm_task_create` (project = config `repo.path`), `pm_dispatch kind=audit` on that task, read its `audit-agent.json`, and only when Antigravity's verdict is pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR, as its own comment, `approved-head:<sha40>` with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}`. Antigravity unavailable (MCP tools absent, `pm_dispatch` errors, verdict not pass): post no approval and leave the card in `Review` with a `[reviewer]` comment whose last line is `blocked-by: -` (never a bare `approved-head:`: the git guard blocks it). Then run `gh pr ready <PR>`, add the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, and leave the card in `Review`: the queue merges it (run.md → Merge protocol step 5).
      - **Queue off** (`SB_MERGE_QUEUE=0`, not enabled, or the workflow backend (default) / `--codex`: nothing drains the queue there, so the old merge gate path applies even when the config enables it): run `gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`, and move card `Review -> Done` (`column='Done'`) — unless the gate printed `ac-open: #N` (merged with AC still unproven: the card stays open in Ready, never Done).
    - **Large/High-Risk Task (`>= 2` modules, `>= 3` files, `> 200` LOC net diff, or `auth`/`payment`/`migration`/`security`):** Leave card in `Review` (`column='Review'`) so the independent Reviewer lane (2nd agent / Antigravity `audit`) performs cross-review before merging to `Done`.
 <!-- universal-agent-devkit-workflow:end -->
@@ -542,7 +543,7 @@ workflow/codex when a queue schedule runs there).
      bash .claude/bin/super-board-merge-gate.sh --config <config> --pr <N> --expect-head "$HEAD" \
        --subject "<PR title>" --body-file <msg.md>
    <msg.md> = the PR's commit bullets, deduplicated, plus `Closes #<issue>` (writing-standard.md § 1).
-   **Before the gate, post the approval** on the PR as its own NEW comment (not the `[reviewer] [report]` comment, and never an in-place edit of it as in step 8) whose line is exactly `approved-head:$HEAD`
+   **Before the gate, post the approval** on the PR as its own NEW comment (not the `[reviewer] [report]` comment, and never an in-place edit of it as in step 8) whose first line is exactly `approved-head:$HEAD` and second line `approved-by: {...}` (same four fields, only after the Antigravity audit pass of `$HEAD` in the Reviewer lifecycle; `"reviewer":"antigravity"`)
    (full 40-hex sha, `$HEAD` above). The runner reads the latest such comment from an OWNER/MEMBER/COLLABORATOR: a card still in
    Review whose PR head equals it (gate exit 4, a lock or conflict, not code) gets a **merge-only** worker next tick — this step 5 only,
    `--expect-head` pinned, no new review. A push changes the head, so the approval lapses and the next tick reviews the new head (#227).

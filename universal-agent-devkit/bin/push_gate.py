@@ -429,11 +429,130 @@ def audit_record(top, task_id):
     antigravity-pm keeps its task state OUTSIDE the repository (an agent cannot edit it from the work tree):
     ${ANTIGRAVITY_PM_STATE_HOME:-~/.antigravity-pm}/projects/<name>-<hash>/tasks/<id>/task.json, verdicts.audit.verdict
     (mcp-servers/antigravity-pm-mcp src/config.js, src/tasks.js recordVerdict). The task's `project` must be this repository
-    (or a directory in it): task ids restart at T0001 in every project."""
-    home = os.path.expanduser(os.environ.get("ANTIGRAVITY_PM_STATE_HOME") or os.path.join("~", ".antigravity-pm"))
-    pattern = os.path.join(glob.escape(home), "projects", "*", "tasks", task_id, "task.json")
+    (or a directory in it): task ids restart at T0001 in every project. In a linked worktree (a session's or the merge gate's
+    scratch) `top` is that worktree while the task names the main checkout: the main checkout of the SAME repository (the
+    parent of `git rev-parse --git-common-dir` when that is a `.git` dir) counts too (#605 lane E); git error → top only."""
     verdicts = []
-    for path in sorted(glob.glob(pattern)):
+    for audit in _task_audits(top, task_id):
+        verdict = audit.get("verdict") if isinstance(audit, dict) else None
+        if verdict == "pass":
+            return True, None
+        verdicts.append(str(verdict or "chưa có"))
+    if verdicts:
+        return False, f"antigravity-pm: audit của {task_id} chưa pass ({', '.join(verdicts)})"
+    return False, f"không có biên bản audit pass của antigravity-pm cho {task_id} trong repo này ({_task_pattern(task_id)})"
+
+
+# #629: khoảng trắng viết tường minh [ \t\n\r\f\v], đúng tập regex của pm_verdict (mcp-servers/antigravity-pm-mcp/src/tools.js) —
+# `\s` của Python khớp cả \x1c-\x1f, \x85, của JS khớp cả NBSP: lệch là notes `auditedHead:\x1f<sha>` lọt qua kiểm audit-agent.json
+# của pm_verdict nhưng gate vẫn nhận sha (tests/gates/test_audited_head_ascii_space.sh).
+AUDITED_HEAD = re.compile(r"(?<![0-9A-Za-z])auditedHead:[ \t\n\r\f\v]*([0-9a-f]{40})(?![0-9A-Za-z])")
+SHA40 = re.compile(r"[0-9a-f]{40}")
+
+
+def audited_head(top, task_id):
+    """sha40 của cây Antigravity đã audit cho task `task_id` của repo này, hoặc None (audit T0066, #605).
+    Cùng biên bản ngoài repo và cùng luật repo/checkout chính như audit_record; chỉ tính khi verdicts.audit.verdict == "pass"
+    VÀ có sha40 ở verdicts.audit.auditedHead (pm_verdict ghi) hoặc `auditedHead: <sha40>` trong notes VÀ sha đó là commit có trong repo `top`.
+    Một task_id cũ đã pass vì thế chỉ duyệt đúng nội dung nó đã audit, không duyệt nội dung sửa sau (chặn replay).
+    Thiếu auditedHead, sha lạ, lỗi git → None (fail closed)."""
+    # Audit T0066 vòng 3 (#605): cùng điều kiện với approved() — pm home lạ (ANTIGRAVITY_PM_STATE_HOME tự dựng, HOME=/tmp/x) mà không
+    # phải fixture test trong thư mục tạm thì biên bản không tính, ở mọi người gọi (post-fix-gate mục duyệt chéo, merge gate).
+    if pm_home_overridden() and not pm_home_test_fixture():
+        return None
+    for audit in _task_audits(top, task_id):
+        if not isinstance(audit, dict) or audit.get("verdict") != "pass":
+            continue
+        # Audit T0066 vòng 2: trường cấu trúc verdicts.audit.auditedHead (pm_verdict ghi) trước, rồi `auditedHead: <sha>` trong notes.
+        cands = [audit.get("auditedHead")] if isinstance(audit.get("auditedHead"), str) and SHA40.fullmatch(audit["auditedHead"]) else []
+        m = AUDITED_HEAD.search(audit["notes"]) if isinstance(audit.get("notes"), str) else None
+        cands += [m.group(1)] if m else []
+        for sha in cands:
+            try:
+                rc, out = git(top, "rev-parse", "--verify", "-q", sha + "^{commit}")
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if rc == 0 and out.strip() == sha:
+                return sha
+    return None
+
+
+def head_after(top, base, head):
+    """True khi `base` là tổ tiên của (hoặc chính là) `head` — auditedHead nằm SAU base, không phải một cây cũ hơn base mà task cũ đã
+    audit (audit T0066 vòng 2, #605: chặn chép lùi test về bản yếu trước base rồi khai task cũ). Lỗi git, thiếu đối số → False."""
+    if not base or not head:
+        return False
+    try:
+        return subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", base, head],
+                              capture_output=True, timeout=15).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def range_lower_bounds(top, rng):
+    """Các mốc dưới (^sha) của range theo `git rev-parse <rng>` (`A..B` → A, `X^!` → cha của X); None khi lỗi git."""
+    try:
+        rc, out = git(top, "rev-parse", rng)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if rc != 0:
+        return None
+    return [ln[1:] for ln in out.split() if ln.startswith("^")]
+
+
+def pm_state_home():
+    """Thư mục trạng thái antigravity-pm mà push_gate đọc: ${ANTIGRAVITY_PM_STATE_HOME:-~/.antigravity-pm}."""
+    return os.path.expanduser(os.environ.get("ANTIGRAVITY_PM_STATE_HOME") or os.path.join("~", ".antigravity-pm"))
+
+
+def pm_home_overridden():
+    """True khi thư mục pm đang đọc KHÔNG phải ~/.antigravity-pm của user hệ điều hành (pwd, không theo $HOME: HOME=/tmp/x cũng là đổi
+    chỗ). Biên bản ở chỗ lạ thì agent nào cũng tự dựng được (audit T0066 vòng 2): post-fix-gate coi lời duyệt dựa vào nó là nới lỏng.
+    Không đọc được user → True (fail closed)."""
+    try:
+        import pwd  # noqa: PLC0415 - chỉ có trên POSIX
+        default = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".antigravity-pm")
+        return os.path.realpath(pm_state_home()) != os.path.realpath(default)
+    except (ImportError, KeyError, OSError):
+        return True
+
+
+TEST_TMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
+
+
+def pm_home_test_fixture():
+    """True chỉ cho fixture của test: DEVKIT_PM_HOME_TEST=1 VÀ pm home nằm dưới thư mục tạm của hệ thống (tempfile.gettempdir(), /tmp,
+    /var/folders). Khi đó approved() tính biên bản pm giả; post-fix-gate vẫn coi lượt đó là nới lỏng (không cấp biên nhận).
+    ponytail: agent tự đặt được cả hai trên dòng lệnh — lane git guard chặn gán chúng; nâng lên biên bản do PM server ký nếu thấy lách."""
+    if os.environ.get("DEVKIT_PM_HOME_TEST") != "1":
+        return False
+    try:
+        import tempfile  # noqa: PLC0415
+        home = os.path.realpath(pm_state_home())
+        roots = {os.path.realpath(r) for r in (tempfile.gettempdir(), *TEST_TMP_ROOTS)}
+    except OSError:
+        return False
+    return any(home.startswith(r.rstrip(os.sep) + os.sep) for r in roots if r and r != os.sep)
+
+
+def _task_pattern(task_id):
+    return os.path.join(glob.escape(pm_state_home()), "projects", "*", "tasks", task_id, "task.json")
+
+
+def _task_audits(top, task_id):
+    """verdicts.audit (có thể None) của từng task.json `task_id` mà `project` thuộc repo này (top, hoặc checkout chính khi top là
+    linked worktree của cùng repo). Dùng chung cho audit_record và audited_head."""
+    roots = [top]
+    try:
+        rc, common = git(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    except (OSError, subprocess.SubprocessError):
+        rc, common = 1, ""
+    common = common.strip() if rc == 0 else ""
+    if common and os.path.basename(common) == ".git":
+        main_root = os.path.dirname(common)
+        if not _inside(main_root, top):
+            roots.append(main_root)
+    for path in sorted(glob.glob(_task_pattern(task_id))):
         try:
             if not stat.S_ISREG(os.stat(path).st_mode) or os.path.getsize(path) > 8_000_000:
                 continue
@@ -441,39 +560,62 @@ def audit_record(top, task_id):
                 task = json.load(f)
         except (OSError, ValueError, RecursionError):
             continue
-        if not isinstance(task, dict) or task.get("id") != task_id or not _inside(task.get("project"), top):
+        if not isinstance(task, dict) or task.get("id") != task_id or not any(_inside(task.get("project"), r) for r in roots):
             continue
-        audit = (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
-        verdict = audit.get("verdict") if isinstance(audit, dict) else None
-        if verdict == "pass":
-            return True, None
-        verdicts.append(str(verdict or "chưa có"))
-    if verdicts:
-        return False, f"antigravity-pm: audit của {task_id} chưa pass ({', '.join(verdicts)})"
-    return False, f"không có biên bản audit pass của antigravity-pm cho {task_id} trong repo này ({pattern})"
+        yield (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
 
 
 def approved(top, rng):
     """(True, note) when a commit of rng ends with the trailer `Test-approved-by: antigravity <task-id>` (git's own trailer
-    parsing: the last paragraph, line-anchored) and antigravity-pm recorded an audit pass for that task (audit_record);
+    parsing: the last paragraph, line-anchored) and antigravity-pm recorded an audit pass for that task (audit_record) whose
+    auditedHead (audited_head) has the same tree as that commit and as the tip of rng (audit T0066, #605: no replay);
     (False, why) when a Test-approved-by line is there but does not count; (False, None) when there is none.
     Audit 2026-10-09: the old check was `"Test-approved-by:" in git log`, so "fix; Test-approved-by: whatever" passed.
     ponytail: the task record lives in a directory of the same user — an agent that writes ~/.antigravity-pm by hand still
     passes; upgrade to a record signed by the PM server if that is ever seen."""
-    rc, out = git(top, "log", "--format=%(trailers:key=Test-approved-by,valueonly,unfold)%x00", rng)
+    rc, out = git(top, "log", "--format=%H%x01%(trailers:key=Test-approved-by,valueonly,unfold)%x00", rng)
     if rc != 0:
         return False, None
-    values = [v.strip() for v in out.replace("\0", "\n").splitlines() if v.strip()]
+    values = []                                        # (commit, value), newest commit first
+    for rec in out.split("\0"):
+        sha, _, trailers = rec.strip("\n").partition("\x01")
+        values.extend((sha.strip(), v.strip()) for v in trailers.splitlines() if v.strip())
+    tip = None
     whys = []
-    for value in values:   # newest commit first
+    for sha, value in values:
         m = APPROVED_VALUE.fullmatch(value)
         if not m:
             whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
             continue
+        # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
+        # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
+        if pm_home_overridden() and not pm_home_test_fixture():
+            whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
+            continue
         ok, why = audit_record(top, m.group(1))
-        if ok:
+        if not ok:
+            whys.append(why)
+            continue
+        # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
+        # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
+        # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
+        # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
+        # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
+        head = audited_head(top, m.group(1))
+        if tip is None:
+            rc_tip, tip_out = git(top, "rev-list", "-1", rng)
+            tip = tip_out.strip() if rc_tip == 0 else ""
+        trees = git(top, "rev-parse", f"{sha}^{{tree}}", f"{head}^{{tree}}", f"{tip}^{{tree}}") if head and tip and sha else (1, "")
+        got = trees[1].split() if trees[0] == 0 else []
+        # Audit T0066 vòng 2: auditedHead phải nằm sau mọi mốc dưới của range — cây cũ trước base (task cũ) không duyệt việc chép lùi.
+        lows = range_lower_bounds(top, rng) if head else None
+        after = bool(lows) and all(head_after(top, low, head) for low in lows)
+        if len(got) == 3 and len(set(got)) == 1 and after:
             return True, f"{APPROVED} antigravity {m.group(1)} (antigravity-pm audit pass)"
-        whys.append(why)
+        whys.append(f"{APPROVED} antigravity {m.group(1)}: " + (
+            "biên bản audit không ghi `auditedHead: <sha>` (hoặc sha không có trong repo)" if not head else
+            f"auditedHead {head[:10]} không nằm sau mốc dưới của range (audit một cây cũ trước base): cần audit lại" if not after else
+            f"cây đã đổi so với auditedHead {head[:10]} (commit trailer {sha[:10]} / đầu range): cần audit lại"))
     if not whys:
         rc, body = git(top, "log", "--format=%B", rng)
         if rc == 0 and APPROVED in body:
