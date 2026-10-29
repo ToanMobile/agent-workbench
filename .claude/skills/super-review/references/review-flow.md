@@ -41,7 +41,7 @@
      runs the impacted gate itself when QA left no result for this SHA; its merge goes through the merge gate
      with `--standalone`, which runs the full verify (Merge protocol step 2) — only outside the board, never
      inside a board lane.
-     When `.claude/bin/super-board-qa-exit2.sh` printed `review`, that is the only reason an existing test was edited: the card goes to Review for Antigravity, not Blocked and not needs-you, so do not demand QA exit 0. Before `pm_dispatch kind=audit`, `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. False → Review → Ready with `loop:rebase`. The Reviewer does not commit and does not push. After the audit pass, `gate_receipt=$(jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)")` (empty fp: do not comment) and post `approved-head`, `approved-by` and `edited-tests:`.
+     When `.claude/bin/super-board-qa-exit2.sh` printed `review`, that is the only reason an existing test was edited: the card goes to Review for Antigravity, not Blocked and not needs-you, so do not demand QA exit 0. Before `pm_dispatch kind=audit`, `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. False → Review → Ready with `loop:rebase`. The Reviewer does not commit and does not push. After the audit pass, `gate_receipt=$(.claude/bin/super-board-gate-receipt.sh <head sha40>)` (exit 1 = no receipt for that head: run the scoped gate on it, then ask again; never comment an empty code) and post `approved-head`, `approved-by` and `edited-tests:`.
      It also needs an `.agents/devkit/bin/ocr-review` pass on the diff. Missing either is a
      **Verification miss**, also when `/super-review` runs on its own, outside the board.
 
