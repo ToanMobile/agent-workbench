@@ -81,6 +81,30 @@ gate_nodiff() { local d="$1"; shift; OUT="$( cd "$d" && CLAUDE_PROJECT_DIR="$d" 
 wt() { git -C "$R" worktree add -q --detach "$TMP/$1" HEAD || { echo "✖ setup: worktree $1"; exit 1; }
        [ -L "$TMP/$1/ext" ] || ln -s "$TMP/extdir" "$TMP/$1/ext"   # link đã commit thì worktree có sẵn (ln vào link thư mục tạo extdir/extdir)
        mkdir -p "$TMP/$1/.claude/audit-gate" && : > "$TMP/$1/.claude/audit-gate/test_run.lock"; }
+# #605: test sửa chỉ được duyệt chéo — ghi mục {path, sha256, reviewer, author, task_id, reason} do "agent khác" duyệt
+cross_approve() {   # cross_approve <repo> <path>...
+  # Audit T0066 (#605): mục duyệt chỉ tính khi task_id có biên bản audit pass của antigravity-pm (ngoài repo, ở đây dưới $TMP)
+  # ghi `auditedHead: <sha>` của cây chứa đúng nội dung test hiện tại. `git stash create`: commit của cây làm việc, không đổi
+  # index/HEAD/refs; task_id riêng theo cây để lần duyệt sau không ghi đè biên bản của lần trước.
+  export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm-state"; export DEVKIT_PM_HOME_TEST=1   # fixture pm home dưới thư mục tạm (audit T0066 vòng 3: thiếu công tắc thì không tính)
+  python3 - "$@" <<'PY'
+import hashlib, json, os, subprocess, sys
+root, paths = sys.argv[1], sys.argv[2:]
+def git(*a):
+    return subprocess.run(["git", "-C", root, *a], capture_output=True, text=True).stdout.strip()
+head = git("stash", "create") or git("rev-parse", "HEAD")
+tid = "T-fixture-" + head[:12]
+td = os.path.join(os.environ["ANTIGRAVITY_PM_STATE_HOME"], "projects", "fixture", "tasks", tid); os.makedirs(td, exist_ok=True)
+with open(os.path.join(td, "task.json"), "w") as fh:
+    json.dump({"id": tid, "project": os.path.realpath(root),
+               "verdicts": {"audit": {"verdict": "pass", "reviewer": "pm", "notes": "fixture\nauditedHead: " + head}}}, fh)
+d = os.path.join(root, ".claude", "audit-gate"); os.makedirs(d, exist_ok=True)
+ap = [{"path": p, "sha256": hashlib.sha256(open(os.path.join(root, p), "rb").read()).hexdigest(), "reviewer": "antigravity",
+       "author": "claude", "task_id": tid, "reason": "fixture: diff test đã được agent khác đọc"} for p in paths]
+with open(os.path.join(d, "approved_tests.json"), "w") as fh:
+    json.dump({"approvals": ap}, fh)
+PY
+}
 # expect <tên> <suite: số lần chạy THÊM mong đợi>... dùng mảng trước/sau
 snap() { B1=$(n 1); B2=$(n 2); B3=$(n 3); BN=$(n N); }
 expect() {   # expect <tên> <thêm REG-1> <thêm REG-2> <thêm REG-3> <thêm REG-N> <exit mong đợi>
@@ -122,7 +146,8 @@ snap; gate_nodiff "$TMP/w1c"; expect "1c. phần cached-full thêm vào dùng l�
 # 2. File mà script của REG-1 source nhưng watch_files không nêu (tests/helper1.sh) đổi: luật cũ không chọn suite nào; cached-full
 #    thêm REG-1 (khoá chính xác của nó có helper qua bao đóng tĩnh) ⇒ REG-1 chạy (điểm mù watch_files); REG-2, REG-3 dùng lại.
 wt w2; echo 'echo helper v2' > "$TMP/w2/tests/helper1.sh"
-snap; gate_nodiff "$TMP/w2" --auto-approve-tests --allow-no-tests; expect "2. file được source (ngoài watch_files) đổi ⇒ suite đó chạy" 1 0 0 0 0
+cross_approve "$TMP/w2" tests/helper1.sh   # #605: helper1.sh là test có sẵn bị sửa: duyệt chéo thay --auto-approve-tests
+snap; gate_nodiff "$TMP/w2" --allow-no-tests; expect "2. file được source (ngoài watch_files) đổi ⇒ suite đó chạy" 1 0 0 0 0
 
 # 3. Đích symlink ngoài cây đổi ⇒ khoá REG-1 đổi ⇒ chạy lại.
 wt w3; echo 'X=2' > "$TMP/extdir/conf.sh"

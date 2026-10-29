@@ -135,6 +135,7 @@ python3 "$GITHUB_READ" --check
 TRAIN_COMMON=$(cd "$REPO_PATH" && cd "$(git rev-parse --git-common-dir)" && pwd -P) || { say "cannot resolve the git common dir of ${REPO_PATH}"; exit 1; }
 mkdir -p "$TRAIN_COMMON/super-board"
 TRAIN_LOCK="$TRAIN_COMMON/super-board/merge-train.lock"
+TRAIN_STATE="$TRAIN_COMMON/super-board/merge-train.state"
 exec 8>>"$TRAIN_LOCK"
 TLRC=0
 python3 -I -c '
@@ -158,9 +159,20 @@ BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.train-scratch-XXXXXX")
 RECEIPT=$(mktemp); VLOG=$(mktemp)
-cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"; }
+cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"; rm -f "$TRAIN_STATE" "$TRAIN_STATE.tmp"; }
 trap cleanup EXIT
+# Trạng thái train cho Agent Office / super-board-status.py (#562): `pid`, `started_at`, `step` (gate | merge) và mỗi PR một dòng
+# `pr <N> <sha> <ref>`. Ghi nguyên tử, chỉ sau khi giữ khoá và đã đặt trap dọn: train thoát exit 4 (khoá bận) không bao giờ đụng file của train
+# đang chạy. Bị SIGKILL thì file mồ côi, người đọc bỏ qua vì `pid` đã chết. Lỗi ghi không bao giờ làm hỏng train.
+TRAIN_STARTED=$(date +%s)
+train_state() {
+  local i
+  { echo "pid $$"; echo "started_at ${TRAIN_STARTED}"; echo "step $1"
+    for i in "${!LIST[@]}"; do echo "pr ${LIST[$i]} ${HEADS[$i]:-} ${REFS[$i]:-}"; done
+  } >"$TRAIN_STATE.tmp" 2>/dev/null && mv -f "$TRAIN_STATE.tmp" "$TRAIN_STATE" 2>/dev/null || true
+}
 
+train_state gate
 # Head của từng PR, ghim một lần: verify và biên nhận thuộc đúng commit này (gate còn --match-head-commit lúc merge).
 HEADS=(); REFS=(); KEEP=(); MOVED=()
 for i in "${!LIST[@]}"; do
@@ -178,7 +190,7 @@ for i in "${!LIST[@]}"; do
 done
 for p in ${MOVED[@]+"${MOVED[@]}"}; do echo "train-result: $p head-moved"; done
 [ "${#KEEP[@]}" -gt 0 ] || exit 6
-LIST=("${KEEP[@]}")
+LIST=("${KEEP[@]}"); train_state gate
 # Preflight (Pha 2, M6): kiểm rẻ của gate cho từng PR trước khi dựng cây nào. PR rớt (policy cần người 7/8, qa-report/AC 11, đóng 3,
 # head dời 6…) rời đợt, không tốn lượt verify của cả đợt; 79/9 đi thẳng tới caller.
 BLOCKED=(); DRYRC=0; PF_LIST=(); PF_REFS=(); PF_HEADS=(); PREMERGED=()
@@ -223,6 +235,7 @@ for i in "${!PF_LIST[@]}"; do
   fi
 done
 if [ "${#LIST[@]}" -eq 0 ]; then early_results; exit "$DRYRC"; fi
+train_state gate
 BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { say "cannot resolve origin/${BASE}"; exit 1; }
 head_of() { local i; for i in "${!LIST[@]}"; do [ "${LIST[$i]}" = "$1" ] && { echo "${HEADS[$i]}"; return 0; }; done; return 1; }
 
@@ -261,7 +274,9 @@ build_chain() {
 }
 # verify_timed_out <rc>: verify hết giờ chứ không đỏ. Cùng tiêu chí với is_verify_timeout của merge gate: exit 124; gate đã in KẾT LUẬN thì chỉ khi
 # mọi suite đỏ là TIMEOUT; lệnh khác (không có dòng kết luận) thì log chứa "TIMEOUT after" / "quá giới hạn".
-verify_timed_out() {
+# Thân hàm là subshell tắt pipefail: log lớn làm `grep -q` thoát sớm, printf nhận SIGPIPE, pipeline trả 141 (#579).
+verify_timed_out() (
+  set +o pipefail
   local plain
   [ "$1" -eq 124 ] && return 0
   plain=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VLOG" 2>/dev/null) || return 1
@@ -270,6 +285,59 @@ verify_timed_out() {
     return
   fi
   printf '%s\n' "$plain" | grep -aqE "TIMEOUT after|quá giới hạn"
+)
+# single_red_test <log>: #578 — in đường dẫn test khi verify đỏ CHỈ vì đúng một test của REG-DK-ALL-01: gate REJECT, lớp tĩnh đạt, đúng một dòng
+# suite `[ ] FAIL | REG-DK-ALL-01`, đúng một dòng đuôi `| ✖ <test>.sh` (đuôi thụt lề của test lồng nhau không tính). Mọi trường hợp khác
+# (tên test mất vì log bị cắt, hai test trở lên, suite khác đỏ, đường dẫn lạ) thoát 1: đỏ ngay như cũ. Log là dữ liệu: đường dẫn phải khớp mẫu hẹp.
+single_red_test() {
+  local t
+  t=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$1" 2>/dev/null | LC_ALL=C awk '
+    /(KẾT LUẬN CỔNG POST-FIX AUDIT|POST-FIX AUDIT GATE VERDICT):.*REJECT/ { rej = 1 }
+    /^[[:space:]]*• (Lớp tĩnh|Static checks) \(.*\): / { if (static != 2) static = ($0 ~ /: (đạt|passed)[[:space:]]*$/) ? 1 : 2 }
+    /^[[:space:]]*\[ \] [^|]*\|/ {
+      rows++; split($0, parts, "|"); st = parts[1]; sub(/^[[:space:]]*\[ \][[:space:]]*/, "", st); sub(/[[:space:]]+$/, "", st)
+      id = parts[2]; sub(/^[[:space:]]+/, "", id); sub(/[[:space:]].*$/, "", id)
+      if (st != "FAIL" || id != "REG-DK-ALL-01") bad = 1
+    }
+    /^[[:space:]]*\| ✖ [^[:space:]]+[[:space:]]*$/ { line = $0; sub(/^[[:space:]]*\| ✖ /, "", line); sub(/[[:space:]]*$/, "", line); if (!(line in seen)) { seen[line] = 1; n++; name = line } }
+    END { if (rej && static == 1 && rows == 1 && !bad && n == 1) print name; else exit 1 }') || return 1
+  [[ "$t" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*\.sh$ ]] && [[ "$t" != *..* ]] && [ -f "$SCRATCH/$t" ] && printf '%s\n' "$t"
+}
+# rerun_one_test <test>: chạy đúng test đó một lần trên cây scratch của lượt verify (cùng môi trường và hàng đợi tải), ghi vào $VLOG. 0 = xanh.
+# ponytail: không có trần thời gian riêng (test tự giới hạn), nâng khi gặp test treo; một lần, không lặp lại tới khi xanh.
+rerun_one_test() {
+  ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
+      DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
+      && python3 "$HERE/super-board-heavy-slot.py" -- bash "$1" ) >>"$VLOG" 2>&1 8>&-
+}
+FLAKY=()
+# note_flaky <PR> <test>: ghi rõ flaky vào PR (comment) và vào thẻ riêng của test (một thẻ bug mở, không trùng). Lỗi gh chỉ cảnh báo: PR đã xanh.
+note_flaky() {
+  local p="$1" t="$2" found
+  echo "train-flaky: $p $t"
+  gh pr comment "$p" ${REPO:+--repo "$REPO"} --body "[reviewer] [flaky] Merge-train: \`$t\` (REG-DK-ALL-01) đỏ ở lượt verify đầu, xanh khi chạy lại riêng đúng test đó một lần; các kiểm khác đều đạt. Ghi nhận flaky (nhạy tải), PR không bị gán red." >/dev/null 2>&1 \
+    || say "could not comment the flaky note on PR #${p}"
+  found=$(gh issue list ${REPO:+--repo "$REPO"} --state open --label bug --search "\"$t\" flaky in:title" --json number --jq length 2>/dev/null) || found=""
+  [[ "$found" =~ ^[0-9]+$ ]] || { say "could not look up the flaky card for ${t}; not filing"; return 0; }
+  [ "$found" = 0 ] || return 0
+  gh issue create ${REPO:+--repo "$REPO"} --label bug --title "🐛 [fix] test flaky: ${t}" \
+    --body "## Problem
+Merge-train (PR #${p}) thấy \`${t}\` đỏ ở lượt verify REG-DK-ALL-01 rồi xanh khi chạy lại riêng: nhạy tải, đỏ không ổn định.
+
+## Context
+- **Where:** \`${t}\`
+
+## Fix
+Làm test ổn định (bỏ phụ thuộc thời gian/tải) thay vì để merge-train chạy lại.
+
+## Acceptance Criteria
+- [ ] Test xanh ổn định khi máy tải cao
+
+## Risk
+🟢 Low — chỉ đụng test
+
+## Blocked by
+- None." >/dev/null 2>&1 || say "could not file the flaky card for ${t}"
 }
 # verify_set <PR...>: 0 chuỗi dựng được và mọi verify_commands xanh · 1 đỏ · 2 chuỗi không dựng được (không phải lỗi đỏ của PR)
 #                     · 3 hết giờ sau một lần chạy lại (máy quá tải, không quy lỗi cho PR nào).
@@ -304,6 +372,15 @@ verify_set() {
         fi
         say "verify timed out (exit ${rc}) for [$*]; not blaming any PR"
         return 3
+      fi
+      # #578: đỏ chỉ vì đúng một test của REG-DK-ALL-01 (nhạy tải): chạy lại riêng test đó một lần. Xanh = flaky, verify coi như đạt;
+      # đỏ lần hai (hay không đủ điều kiện) = red như mọi lần. Không nới: hai test trở lên / suite khác đỏ không vào đường này.
+      if flaky_test=$(single_red_test "$VLOG"); then
+        say "verify red only by ${flaky_test} (REG-DK-ALL-01); re-running that test once"
+        if rerun_one_test "$flaky_test"; then
+          FLAKY+=("$flaky_test"); say "${flaky_test} passed on re-run: flaky, not blaming any PR"; break
+        fi
+        say "${flaky_test} red on re-run too"; echo "[merge-train] re-ran ${flaky_test}: red again" >>"$VLOG"
       fi
       say "red [$*]: $(tail -3 "$VLOG" | tr '\n' ' ' | cut -c1-300)"
       return 1
@@ -388,13 +465,14 @@ if [ "${#GOOD[@]}" -gt 0 ]; then
   done
 fi
 
+train_state merge
 RC=$DRYRC
 for p in ${PREMERGED[@]+"${PREMERGED[@]}"}; do echo "train-result: $p merged"; done
 for b in "${BLOCKED[@]+"${BLOCKED[@]}"}"; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done
 for p in "${GOOD[@]+"${GOOD[@]}"}"; do
   run_gate "$p" 1 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" ${PASS[@]+"${PASS[@]}"}
   case "$GRC" in
-    0)     echo "train-result: $p merged" ;;
+    0)     echo "train-result: $p merged"; for t in ${FLAKY[@]+"${FLAKY[@]}"}; do note_flaky "$p" "$t"; done ;;
     79|9)  echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # R7: halt / readiness của gate đi thẳng tới caller, không bị che bởi 11
     11)    echo "train-result: $p red"; echo "train-red: $p"; GATERED+=("$p")   # R7: verify riêng của gate đỏ = PR về Build, có dòng train-red
            detail_tail "$p" "$GATE_ERR" ;;   # gate in đuôi log verify đỏ ra stderr

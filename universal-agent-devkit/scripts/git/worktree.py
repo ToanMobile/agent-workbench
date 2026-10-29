@@ -25,11 +25,11 @@ Usage (normally `agent-kit worktree …`, run inside the repo):
   worktree.py list
   worktree.py heal [--devkit=DIR] [--session=ID]   a checkout the host made (Grok): link the DevKit, copy ignored config
 
-add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (3) free or when the repo already has WORKTREE_MAX (3) linked worktrees; under
+add: refuses (exit 4) under WORKTREE_DISK_MIN_GIB (3) free (no count of worktrees, #607); under
 WORKTREE_DISK_WARN_GIB (10) it runs gc first and warns (0 turns each off). Then `git worktree add` on <branch> when one is named (created from --base or HEAD when it
 does not exist); with none, a DETACHED worktree at --base or HEAD — the project keeps one
 branch, and the work comes back with `diff | git apply --3way`. `--lane=build|qa|review` (a super-board lane, agent-workbench#93; only
-at .claude/worktrees/issue-<N>[-<lane>]): no WORKTREE_MAX slot is needed or taken (the disk floor still holds), a branch only origin has
+at .claude/worktrees/issue-<N>[-<lane>]): a branch only origin has
 is fetched and checked out from origin/<branch> (never a new branch off --base over the PR), the registered worktree already at the path
 is reused (healed), and a detached one is marked a board worktree in its state (board_worktree). Copies the main checkout's git-ignored
 hooks under .claude/hooks/ (copy_local_hooks: the project's and the user's settings run them) and git-ignored local config
@@ -77,6 +77,7 @@ import contextlib
 import errno
 import filecmp
 import fnmatch
+import glob
 import hashlib
 import importlib.util
 import io
@@ -775,13 +776,11 @@ def _env_limit(name, default):
     return v if 0 <= v < 1e9 else default
 
 
-# W1 R5c (docs/workflow-improvements.md I.0): `add` runs `gc` and warns under the warning line, creates nothing under the floor, and
-# keeps at most WORKTREE_MAX linked worktrees per repo. 0 turns each off. SessionStart (hooks/session_context.sh) reads the same numbers.
+# W1 R5c (docs/workflow-improvements.md I.0): `add` runs `gc` and warns under the warning line and creates nothing under the floor.
+# 0 turns each off. SessionStart (hooks/session_context.sh) reads the same numbers. #607: no count of worktrees any more.
 DISK_WARN_GIB = _env_limit("WORKTREE_DISK_WARN_GIB", 10.0)
 DISK_MIN_GIB = _env_limit("WORKTREE_DISK_MIN_GIB", 3.0)
-WORKTREE_MAX = _env_limit("WORKTREE_MAX", 3)
-WORKTREE_MAX = int(WORKTREE_MAX) if WORKTREE_MAX == int(WORKTREE_MAX) else 3   # 0.5 is no number of worktrees, and not "off"
-NO_ROOM = 4   # add's exit code when it refuses for want of room (disk or cap): what a hook that creates worktrees tells apart from a usage error
+NO_ROOM = 4   # add's exit code when it refuses for want of disk: what a hook that creates worktrees tells apart from a usage error
 ADD_LOCK = "devkit-worktree-add.lock"
 ADD_LOCK_WAIT_S = 600.0
 
@@ -818,16 +817,6 @@ def _make_room(main, wt):
                         f"{free:.1f} GiB free on the disk after worktree gc (under {DISK_WARN_GIB:g} GiB): clear old build output and caches soon"))
 
 
-def _live_worktrees(main):
-    """The linked worktrees that hold a slot: registered with a folder on disk. A red_proof sandbox (red-proof-*, removed by the run that
-    made it), a merge-gate proof tree (.merge-scratch-*, #155: a SIGKILLed gate leaves it behind), a super-board worktree (K7:
-    board_worktree) and a registration whose folder is gone (prunable) take none."""
-    return [e["path"] for e in _worktree_entries(main)[1:]
-            if not e["broken"] and os.path.isdir(e["path"])
-            and not os.path.basename(e["path"]).startswith(("red-proof-", ".merge-scratch-"))
-            and not board_worktree(e["path"], e["branch"] or "")]
-
-
 BOARD_WT_RE = re.compile(r"issue-[0-9]+(-(build|qa|review))?")
 
 
@@ -835,7 +824,7 @@ def board_worktree(path, branch=None):
     """K1/K7 (18/10): worktree của super-board — `.claude/worktrees/issue-<N>[-build|-qa|-review]` (hoặc `.worktrees/issue-<N>` kiểu cũ),
     đúng mẫu tên mà super-board-run.sh quét, VÀ đang ở một nhánh có tên (board luôn dùng `issue-<N>-<slug>` / `loop/issue-N`; một
     EnterWorktree(name="issue-42") của phiên thường là detached nên vẫn là nợ, review 18/10). Runner và lane của board quản lý nó và gộp
-    qua PR + merge gate: không phải nợ của phiên khác (không tự gộp vào main local, không giữ Stop), không chiếm chỗ WORKTREE_MAX.
+    qua PR + merge gate: không phải nợ của phiên khác (không tự gộp vào main local, không giữ Stop).
     Worktree detached đúng mẫu tên chỉ là của board khi `add --lane` tạo nó (state ghi "board": checkout review/qa của lane, #93).
     branch None: đọc từ git."""
     if not _board_path(path):
@@ -1065,8 +1054,7 @@ def cmd_add(cwd, args):
     origin_has = None   # does origin hold the issue branch: None = not asked (a local branch, no origin remote)
     if lane and branch and git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode != 0 \
             and git(main, "remote", "get-url", "origin", check=False).returncode == 0:
-        # the issue branch an earlier lane pushed and this clone has no local copy of: refresh origin/<branch> (outside the add lock: the
-        # network) so the worktree starts from it below. Only "origin has no such branch" (ls-remote exit 2) makes a new one: offline or a
+        # the issue branch an earlier lane pushed and this clone has no local copy of: refresh origin/<branch> so the worktree starts from it below. Only "origin has no such branch" (ls-remote exit 2) makes a new one: offline or a
         # failed fetch must never start an empty branch off the base that the lane then pushes over the PR (review 19/10)
         probe = git(main, "ls-remote", "--exit-code", "--heads", "origin", f"refs/heads/{branch}", check=False)
         origin_has = probe.returncode == 0
@@ -1078,31 +1066,17 @@ def cmd_add(cwd, args):
         elif probe.returncode != 2:
             die(tr(f"không hỏi được origin có nhánh {branch} không (ls-remote exit {probe.returncode}): không tạo nhánh mới khi chưa biết",
                    f"cannot ask origin whether it has the branch {branch} (ls-remote exit {probe.returncode}): no new branch while that is unknown"), 1)
-    _make_room(main, wt)
+    _make_room(main, wt)   # #607: the disk floor is the only limit; a count of worktrees refused manual adds over scratch and subagent trees
     common = os.path.realpath(git(main, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
-    try:   # count + add: one at a time per repo
+    try:   # #607 QA: add + state one at a time per repo, with or without a count; concurrent adds of one path registered it twice
         lock = _lock_file(os.path.join(common, ADD_LOCK), wait=ADD_LOCK_WAIT_S,
-                          waiting=tr("chờ một lệnh worktree add khác của repo này…", "waiting for another worktree add in this repo…")) if WORKTREE_MAX else None
+                          waiting=tr("chờ một lệnh worktree add khác của repo này…", "waiting for another worktree add in this repo…"))
     except OSError as e:
         die(tr(f"không mở được khoá {ADD_LOCK} ({e})", f"cannot open the lock {ADD_LOCK} ({e})"), 1)
-    if WORKTREE_MAX and lock is None:
+    if lock is None:
         die(tr(f"một lệnh worktree add khác của repo này đã chạy quá {ADD_LOCK_WAIT_S / 60:g} phút; chạy lại sau",
                f"another worktree add in this repo has run for over {ADD_LOCK_WAIT_S / 60:g} minutes; run it again later"), 1)
-    # W1 R1 v6 item 6: in trunk mode every live session has its worktree (and its subagents theirs, as the harness always made them with
-    # no cap), so a session's own worktree takes no slot - the disk floor (_make_room) still applies. A fixed cap of 3 would leave the 4th
-    # session nowhere to write: main is merge-only there.
-    # A super-board lane (--lane) takes no slot either (board_worktree): the runner keeps at most one worker per lane, and a cap filled by
-    # sessions' worktrees refused every lane with exit 4 while the board waited (agent-workbench#93: 7 ordinary worktrees in the workbench).
-    capped = WORKTREE_MAX and not (session and _trunk_mode(main)) and not lane
     try:
-        live = _live_worktrees(main) if capped else []
-        if len(live) >= WORKTREE_MAX > 0:   # never "finish someone else's": a clean worktree may be a live session's that has not edited yet
-            die(tr(f"repo đã có {len(live)} worktree (tối đa {WORKTREE_MAX}): {', '.join(live)} — chỉ gộp và gỡ worktree do CHÍNH phiên "
-                   "này tạo mà đã xong (`agent-kit worktree finish <path>`); worktree của phiên khác, kể cả đang sạch, thì để yên và "
-                   "chờ nó xong",
-                   f"the repo already has {len(live)} worktrees (at most {WORKTREE_MAX}): {', '.join(live)} — merge and remove only a "
-                   "finished worktree THIS session made (`agent-kit worktree finish <path>`); leave another session's alone, even a "
-                   "clean one, and wait for it to finish"), NO_ROOM)
         if branch is None:
             git(main, "worktree", "add", "--detach", wt, *([base] if base else []), bounded=False)
         elif git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
@@ -1125,8 +1099,7 @@ def cmd_add(cwd, args):
                               "at": time.time(), **({"session": session} if session else {}),
                               **({"board": True, "lane": lane} if lane else {})})
     finally:
-        if lock:
-            lock.close()
+        lock.close()
 
     copied = copy_local_config(main, wt)
     inputs = copy_build_inputs(main, wt)
@@ -3880,6 +3853,11 @@ def _sync_main_to(main, origin):
         mlock.close()
 
 
+def super_board_repo(main):
+    """#576: a repo with a super-board config (.claude/super-board/configs/*.json) lands work by PR + merge gate, never into main local."""
+    return bool(glob.glob(os.path.join(main, ".claude", "super-board", "configs", "*.json")))
+
+
 def automerge(cwd, wt, keep=False):
     """Merge a worktree's work into the main branch and remove it (`keep`: leave it in place, W1 R3). (status, message, extra); status: merged | nothing | conflict | blocked.
     Main's working tree is only ever touched by `git merge --ff-only`, so another session's uncommitted or staged files are safe (its index
@@ -3915,6 +3893,11 @@ def automerge(cwd, wt, keep=False):
                              "xong lane thì gỡ nó: `agent-kit worktree remove <path>`",
                              "a super-board lane worktree (.claude/worktrees/issue-<N>-…): it reaches main only through its PR and the merge gate, "
                              "never merged automatically; remove it when the lane is done: `agent-kit worktree remove <path>`"), {}
+    elif super_board_repo(main):   # #576 (28/10): #546-#548 reached main local with no PR; a super-board repo takes work by PR + merge gate only
+        return "blocked", tr("repo có super-board (.claude/super-board/configs): việc chỉ vào main qua PR + merge gate, không tự gộp vào main local; "
+                             "push nhánh của worktree và mở PR (open a PR), rồi `agent-kit worktree remove <path>`",
+                             "this repo has super-board (.claude/super-board/configs): work reaches main only through a PR and the merge gate, never "
+                             "merged into local main automatically; push the worktree's branch and open a PR, then `agent-kit worktree remove <path>`"), {}
     if wt_branch:
         return "blocked", tr(f"worktree đang ở nhánh '{wt_branch}' đã PUBLISH (có nhánh remote / upstream): không tự commit thêm hay gộp nó vào main — gộp bằng tay (merge/PR)",
                              f"the worktree is on branch '{wt_branch}', which is PUBLISHED (a remote ref / upstream exists): nothing is committed to it or merged from it automatically - merge it by hand (merge / PR)"), {}

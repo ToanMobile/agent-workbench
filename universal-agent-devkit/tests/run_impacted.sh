@@ -85,7 +85,15 @@ for f in $changed; do
   case "$f" in
     tests/*/test_*.sh|hooks/tests/*.sh) tests="$tests $f"; continue ;;
   esac   # a helper under tests/ falls through: every test that sources it names it
-  tests="$tests $(grep -l -F -- "$(basename "$f")" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')"
+  # 28/10 (#614): a skill's SKILL.md selects the tests that name its skill (the folder, as a whole word), else one skill's edit
+  # selected every test naming any SKILL.md (16 tests, none about it). The skill name, not "<skill>/SKILL.md": tests read it
+  # through variables (SKILL=…/skills/devkit-audit; "$d/SKILL.md"; OCR 29/10). The readers of every SKILL.md are in
+  # tests/impact_map.txt (skills/*/SKILL.md). Only SKILL.md: profiles/*/DESIGN.md, RULES.md, instincts.md and hooks.json keep
+  # their bare name (read as "$GAME/DESIGN.md" by tests the map does not list; review 28/10).
+  case "$f" in
+    */SKILL.md) tests="$tests $(grep -l -w -F -- "$(basename "$(dirname "$f")")" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')" ;;
+    *) tests="$tests $(grep -l -F -- "$(basename "$f")" tests/*/test_*.sh hooks/tests/*.sh 2>/dev/null | tr '\n' ' ')" ;;
+  esac
   # …or its stem as a whole word: tests reach scripts through commands ("agent-kit githooks
   # install" → scripts/githooks.sh; test_githooks went unrun on 2026-09-26).
   # 25/10: chỉ file CODE (.sh .py .bash .mjs .js; file không đuôi thì stem = tên, đã khớp ở trên). Stem của tài liệu là chữ thường:
@@ -329,15 +337,17 @@ w=0; while [ -n "$after" ] && [ -n "$alone" ] && [ ! -e "$after" ] && [ "$w" -lt
   sleep 1; w=$((w + 1))
 done
 for t in $alone; do bash -c 'run_one "$1" "$2"' _ "$t" "$out"; done
-rc=0
+rc=0; n_reuse=0; n_ran=0
 for t in $selected; do
   [ -f "$t" ] || continue
   o="$out/$(printf '%s' "$t" | tr '/' '_')"
   if is_reused "$t"; then
     age="$(awk -F'\t' -v t="$t" '$1 == "reuse" && $2 == t { print $3; exit }' "$out/ptc.plan")"
     echo "↺ $t (PASS dùng lại trên cùng cây, chạy thật $((${age:-0} / 60)) phút trước)"
+    n_reuse=$((n_reuse + 1))
     continue
   fi
+  n_ran=$((n_ran + 1))
   [ -s "$o.ptc" ] && sed 's/^/    /' "$o.ptc"
   if [ "$(cat "$o.rc" 2>/dev/null)" = 0 ]; then
     echo "✔ $t"
@@ -345,4 +355,6 @@ for t in $selected; do
     echo "✖ $t"; tail -n 20 "$o.log" 2>/dev/null | sed 's/^/    /'; rc=1
   fi
 done
+# #472 D: hit-rate của sổ per-test (post-fix-gate đọc dòng này ghi vào runs.jsonl); chỉ khi sổ bật
+[ -n "$DEVKIT_PTC" ] && echo "per_test_cache: reuse=$n_reuse ran=$n_ran"
 exit "$rc"

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import re
 import subprocess
 import sys
@@ -308,7 +309,7 @@ def reason_for(body: str) -> tuple[str, str]:
 
 
 _BLOCKED_BY_LINE = re.compile(r"^[ \t]*blocked-by:(.*)$", re.I | re.M)
-_BLOCKED_BY_OK = re.compile(r"^(-|[0-9]+(,[0-9]+)*)?$")
+_BLOCKED_BY_OK = re.compile(r"^(-|agent|[0-9]+(,[0-9]+)*)?$")  # `agent` (#529): parked by the runner, same rule as deps.sh
 
 
 def split_unreadable_blocked_by(
@@ -515,6 +516,115 @@ def no_real_device(items: list[dict[str, Any]]) -> bool:
     return proc.returncode != 0
 
 
+BRANCH_CARD_RE = re.compile(r"^issue-(\d+)-")
+
+
+def _branch_card(ref: str) -> int | None:
+    m = BRANCH_CARD_RE.match(ref or "")
+    return int(m.group(1)) if m else None
+
+
+def git_common_dir() -> Path | None:
+    """<git-common-dir> of the cwd repo, where the merge train and queue keep their state; None outside a repo."""
+    out = git_out("rev-parse", "--git-common-dir")
+    return Path(out).resolve() if out else None
+
+
+def git_out(*args: str) -> str:
+    try:
+        r = subprocess.run(["git", *args], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by someone else
+    except OSError:
+        return False
+    return True
+
+
+def read_merge_train(
+    common_dir: Path | None, now: float, alive: Callable[[int], bool] = pid_alive
+) -> dict[str, Any] | None:
+    """The running merge train from `<common>/super-board/merge-train.state` (#562), else None.
+
+    The train writes `pid`, `started_at`, `step` (gate | merge) and one `pr <N> <sha> <ref>` line per PR, and removes the file on
+    exit. An unreadable file, a missing/dead pid or an orphan left by a SIGKILL means no train: the status falls back to what it
+    showed before. Never takes the train's flock (a second claimant would exit 4).
+    ponytail: a pid reused by an unrelated process keeps an orphan file alive; the queue's `ps` command check would close it, add
+    when it shows up.
+    """
+    if common_dir is None:
+        return None
+    try:
+        text = (common_dir / "super-board" / "merge-train.state").read_text()
+    except OSError:
+        return None
+    pid = started = None
+    step = "gate"
+    prs: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == "pid" and parts[1].isdigit():
+            pid = int(parts[1])
+        elif len(parts) >= 2 and parts[0] == "started_at" and parts[1].isdigit():
+            started = int(parts[1])
+        elif len(parts) >= 2 and parts[0] == "step":
+            step = parts[1]
+        elif len(parts) >= 2 and parts[0] == "pr" and parts[1].isdigit():
+            ref = parts[3] if len(parts) > 3 else ""
+            prs.append({"pr": int(parts[1]), "ref": ref, "card": _branch_card(ref)})
+    if pid is None or started is None or not prs or not alive(pid):
+        return None
+    return {"pid": pid, "started_at": started, "step": step, "prs": prs,
+            "cards": [x["card"] for x in prs if x["card"] is not None], "elapsed_s": max(0, int(now) - started)}
+
+
+def read_queued_cards(common_dir: Path | None) -> dict[int, int]:
+    """card -> PR for every PR the merge queue last saw labelled `merge-queue` (`merge-queue.labeled`: `<PR> <head> <epoch> <ref>`)."""
+    if common_dir is None:
+        return {}
+    try:
+        text = (common_dir / "super-board" / "merge-queue.labeled").read_text()
+    except OSError:
+        return {}
+    out: dict[int, int] = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[0].isdigit():
+            card = _branch_card(parts[3])
+            if card is not None:
+                out[card] = int(parts[0])
+    return out
+
+
+def train_tag_for(train: dict[str, Any] | None, queued: dict[int, int]) -> Callable[[int], str]:
+    """Review-card tag: in the running train -> gate/merge, queued but not in the train -> waiting."""
+    in_train = set(train["cards"]) if train else set()
+
+    def tag(n: int) -> str:
+        if n in in_train:
+            return "🚂 merging" if train and train["step"] == "merge" else "🚂 merge gate"
+        if n in queued:
+            return "⏳ wait train"
+        return ""
+
+    return tag
+
+
+def train_line(train: dict[str, Any]) -> str:
+    cards = " ".join(f"#{c}" for c in train["cards"]) or " ".join(f"PR#{x['pr']}" for x in train["prs"])
+    step = "merge" if train["step"] == "merge" else "gate --full"
+    return f"🚂 Merge train: {cards} · {step} · {train['elapsed_s'] // 60}m"
+
+
 def render_collapsed(label: str, lane_items: list[dict[str, Any]]) -> str:
     """One line of issue numbers, newest first, `… +N more` past 76 cols."""
     out = [box_top(label, len(lane_items))]
@@ -541,6 +651,7 @@ def render_kanban(
     by_status: dict[str, list[dict[str, Any]]],
     glyph_for: Callable[[int], str],
     reason_glyph_for: Callable[[int], str],
+    review_tag_for: Callable[[int], str] | None = None,
 ) -> str:
     """The kanban boxes in BOARD_ORDER. Pure: lookups come in as callables."""
     boxes: list[str] = []
@@ -561,6 +672,8 @@ def render_kanban(
                 continue
             left = f"{glyph_for(n)} #{n}  {it['title']}"
             suffix = rebuild_suffix(it)
+            if label == "Review" and review_tag_for:
+                suffix = " ".join(x for x in (review_tag_for(n), suffix) if x)
             if suffix:
                 budget = 76 - visual_width(suffix) - 1
                 if visual_width(left) > budget:
@@ -735,7 +848,10 @@ def main() -> int:
     print()
 
     # ── kanban ──
-    print(render_kanban(by_status, glyph_for_issue, lambda n: reason_for_issue(n)[0]))
+    common_dir = git_common_dir()
+    train = read_merge_train(common_dir, time.time())
+    print(render_kanban(by_status, glyph_for_issue, lambda n: reason_for_issue(n)[0],
+                        train_tag_for(train, read_queued_cards(common_dir))))
 
     # ── workers ──
     print()
@@ -766,6 +882,8 @@ def main() -> int:
                     f"   {glyph} {role}  #{v['issue']}  attempt {attempt_str(item)} · "
                     f"{worker_dur(v['ts'])}{extra}"
                 )
+    if train:
+        print(f"   {train_line(train)}")
 
     # ── waiting on a person (#95): its own group, out of the block reasons ──
     print()

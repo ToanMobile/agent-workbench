@@ -7,7 +7,7 @@
 #  1. `add` chép các file bị ignore, chưa track ở .claude/hooks/ của main (file thường chép, link tạo lại theo đích thật); worktree mới
 #     qua health không còn "registered hooks missing"; `heal` sau một `git worktree add` trần cũng sửa được các hook đó.
 #  2. `add` không làm bẩn file được track: lang của main giữ nguyên dù DEVKIT_LANG khác.
-#  3. `--lane=<build|qa|review>` (chỉ đường dẫn worktree của board): không bị WORKTREE_MAX chặn và không chiếm chỗ; worktree detached tạo
+#  3. `--lane=<build|qa|review>` (chỉ đường dẫn worktree của board): tạo được bên cạnh worktree thường; worktree detached tạo
 #     bằng --lane là worktree của board (board_worktree), một worktree detached cùng tên tạo không có --lane vẫn là nợ (K7).
 #  4. --lane: nhánh chỉ có trên origin thì đi từ origin/<nhánh>, không phải từ HEAD; worktree đã đăng ký ở đúng đường dẫn thì dùng lại.
 #  5. --lane với đường dẫn không phải của board bị từ chối; sàn đĩa vẫn áp dụng (exit 4, không thư mục, không đăng ký).
@@ -27,8 +27,6 @@ spec = importlib.util.spec_from_file_location("w", sys.argv[1]); m = importlib.u
 fn = sys.argv[2]
 if fn == "board":
     print(m.board_worktree(sys.argv[3]))
-elif fn == "live":
-    print(len(m._live_worktrees(sys.argv[3])))
 PY
 }
 
@@ -82,7 +80,7 @@ fi
 [ -d "$H/.claude/hooks" ] && [ -z "$(G "$H" status --porcelain)" ] && ok "  … and nothing shows in git status" || fail "heal dirtied status: $(G "$H" status --porcelain | tr '\n' ' ')"
 G "$P" worktree remove --force "$H" >/dev/null 2>&1
 
-# 3: the cap. One ordinary worktree with WORKTREE_MAX=1 fills it; lane worktrees still get made and take no slot
+# 3: lane worktrees are made next to an ordinary one (WORKTREE_MAX=1 is left set: #607 ignores it)
 add env WORKTREE_MAX=1 python3 "$WT" add "$TMP/side" --no-init || fail "setup: side worktree ($(cat "$TMP/out"))"
 add env WORKTREE_MAX=1 python3 "$WT" add "$P/.claude/worktrees/issue-7-qa" issue-7-x --lane=qa --no-init; rc=$?
 [ "$rc" = 0 ] && ok "add --lane=qa is not refused by a full WORKTREE_MAX" || fail "lane add refused at the cap (rc $rc): $(tail -3 "$TMP/out")"
@@ -91,7 +89,6 @@ add env WORKTREE_MAX=1 python3 "$WT" add "$R" --lane=review --base=issue-5-fix -
 [ "$rc" = 0 ] && [ -z "$(G "$R" symbolic-ref -q --short HEAD)" ] && ok "a detached review checkout (--lane=review --base=<branch>) is made at the cap" \
   || fail "detached review add: rc $rc: $(tail -3 "$TMP/out")"
 [ "$(py board "$R")" = True ] && ok "  … and is a board worktree (no debt of another session)" || fail "detached --lane worktree is not board_worktree"
-[ "$(py live "$P")" = 1 ] && ok "lane worktrees take no WORKTREE_MAX slot (only the ordinary one counts)" || fail "live count = $(py live "$P"), want 1"
 D="$P/.claude/worktrees/issue-8-review"
 G "$P" worktree add -q --detach "$D" HEAD
 [ "$(py board "$D")" = False ] && ok "a detached issue-8-review made without --lane stays a session's debt (K7)" || fail "detached non-lane worktree counted as board"

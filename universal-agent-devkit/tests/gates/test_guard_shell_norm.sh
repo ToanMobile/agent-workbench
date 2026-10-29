@@ -1326,4 +1326,15 @@ for tail in (" ; echo x", " && echo x", " || echo x"):
         emit("0", h, "python3 -c \"$(cat <<\x27EOF\x27" + tail + "\n" + CTL[h] + "\nEOF\n)\"")
 '
 
+echo "   #526: a program name written in an ANSI-C \$'…' (hex, octal, unicode) is decoded before the rules read it: the same verdict as the bare command (stdin JSON only, nothing runs)"
+check 2 git $'$\'\\x67it\' checkout src/a.kt'
+check 2 git $'$\'\\147\\151t\' checkout src/a.kt'
+check 2 git $'$\'\\u0067it\' checkout src/a.kt'
+check 2 git $'g$\'\\x69\'t checkout src/a.kt'
+check 0 git $'$\'\\x67it\' status'
+check 2 hw $'$\'\\x72m\' -rf "$PWD"'
+check 2 hw $'$\'\\162\\155\' -rf "$PWD"'
+check 2 hw $'$\'\\u0072m\' -rf "$PWD"'
+check 0 hw $'$\'\\x72m\' -f nothing.tmp'
+
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }
