@@ -976,7 +976,7 @@ try_claim_assignee() {
 lane_worktree_hint() {
   # $1 = lane, $2 = issue. Worktree của lane chỉ do DevKit tạo (agent-workbench#93): `git worktree add` trần thiếu .agents/devkit,
   # link profile và các hook bị ignore mà settings gọi (health FAIL; NFH #18: lệnh ma trận exit 127, 5 thẻ Blocked) và import lại cả
-  # Library Unity mỗi worktree (Goods ~9,9 GB). --lane không chiếm chỗ WORKTREE_MAX; sàn đĩa vẫn từ chối bằng exit 4.
+  # Library Unity mỗi worktree (Goods ~9,9 GB). Sàn đĩa từ chối bằng exit 4.
   local cmd
   case "$1" in
     review) cmd="agent-kit worktree add .claude/worktrees/issue-$2-review --lane=review --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>)" ;;
@@ -2702,7 +2702,7 @@ backlog_ticket_gaps() {
             | (if $e == null then $t else $t[:$e] end) end;
       [ (if (sect("Problem") // [] | any(.[]; test("\\S"))) then empty else "Problem" end),
         (if (sect("Fix") // [] | any(.[]; test("\\S"))) then empty else "Fix" end),
-        (if (sect("Acceptance Criteria") // [] | any(.[]; test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
+        (if (sect("(?:Acceptance Criteria|AC)") // [] | any(.[]; test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
       | join(", ")'
 }
 

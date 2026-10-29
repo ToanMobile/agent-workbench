@@ -97,7 +97,7 @@ When invoked by super-board (env `SUPER_BOARD_RUN=1` set by the runner, or invoc
 Follow spec `.claude/skills/super-board/references/run.md` → Builder (first pass). Summary:
 1. Worktree with the DevKit, after `git fetch origin`: `agent-kit worktree add .claude/worktrees/issue-<N>-build issue-<N>-<slug> --lane=build --base=origin/<config.base_branch>`
    (no `agent-kit` on PATH: `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It links the DevKit, copies the
-   git-ignored config and hooks, clones a Unity Library copy-on-write, takes no WORKTREE_MAX slot and reuses the build worktree a stopped
+   git-ignored config and hooks, clones a Unity Library copy-on-write and reuses the build worktree a stopped
    run left at that path. Exit 4 = under the disk floor: stop with its message, card and claims unchanged. Never a plain `git worktree add`.
 2. Branch `issue-<N>-<slug>` from `config.base_branch` (step 1 makes it; an existing one, local or only on origin, is checked out as it is).
 3. Docs check (section below) — if the ticket touches a third-party surface, an upgrade, or auth/billing, read the current official docs first.
