@@ -11,19 +11,22 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SC="$DEVKIT_DIR/scripts/governance/scratch_cleanup.py"
 TMP="$(mktemp -d)"
-REAL_DK_OLD=""; SLASH_TMP_BOX=""
-trap 'rm -rf "$TMP" ${REAL_DK_OLD:+"$REAL_DK_OLD"} ${SLASH_TMP_BOX:+"$SLASH_TMP_BOX"}' EXIT INT TERM HUP
+REAL_DK_OLD=""; SLASH_TMP_BOX=""; DK_PAR=""
+trap 'rm -rf "$TMP" ${REAL_DK_OLD:+"$REAL_DK_OLD"} ${DK_PAR:+"$DK_PAR"} ${SLASH_TMP_BOX:+"$SLASH_TMP_BOX"}' EXIT INT TERM HUP
 export DEVKIT_TEST_TMP_ROOT="$TMP/no-test-tmp"   # --prune also sweeps test temp dirs: never the real TMPDIR here
-# Host state (#573): live_sessions() reads <CLAUDE_CONFIG_DIR or ~/.claude>/sessions/*.json and the sweep takes one lsof of every process
-# of the user. Pin both to test-owned places for EVERY call; the cases that build their own SESS still override it per call.
-mkdir -p "$TMP/claude-home" "$TMP/no-sessions"
-export CLAUDE_CONFIG_DIR="$TMP/claude-home" DEVKIT_CLAUDE_SESSIONS="$TMP/no-sessions"
-# lsof sees only what this test owns: its temp tree (basename: lsof may print /private/var for /var) and its /tmp/dk-sc* boxes.
+# Host state (#573): live_sessions() reads <CLAUDE_CONFIG_DIR or ~/.claude>/sessions/*.json. Pin CLAUDE_CONFIG_DIR to a test-owned dir (no
+# sessions/ inside) for EVERY call, so claude_home()/sessions is still the path under test; the cases that build their own SESS override
+# DEVKIT_CLAUDE_SESSIONS per call. Every dir the sweep scans below is test-owned (never the real /private/tmp), so the lsof wrapper only
+# narrows the one machine-wide snapshot to those dirs; it keeps lsof's own exit status (an rc >= 2 must reach the product code).
+mkdir -p "$TMP/claude-home"
+export CLAUDE_CONFIG_DIR="$TMP/claude-home"
+# lsof output limited to this test: its temp tree (basename: lsof may print /private/var for /var) and its /tmp/dk-sc* boxes.
 cat > "$TMP/lsof-own" <<LSOF
 #!/bin/sh
 LSOF_REAL="\$(command -v lsof || echo /usr/sbin/lsof)"
-"\$LSOF_REAL" "\$@" | grep -E '^p|^n.*(/$(basename "$TMP")/|/dk-sc)'
-exit 0
+OUT="\$("\$LSOF_REAL" "\$@")"; rc=\$?
+printf '%s\n' "\$OUT" | grep -E '^p|^n.*(/$(basename "$TMP")/|/dk-sc)'
+exit "\$rc"
 LSOF
 chmod +x "$TMP/lsof-own"
 export DEVKIT_LSOF="$TMP/lsof-own"
@@ -261,7 +264,7 @@ if command -v lsof >/dev/null 2>&1 || [ -x /usr/sbin/lsof ]; then
   mkdir -p "$DK_SIM/dk-oldsim" "$DK_SIM/dk-freshsim" "$DK_SIM/tmp.keepother" "$DK_SIM/dk-fifogit"
   mkfifo "$DK_SIM/dk-fifogit/.git"
   touch -t 202001010000 "$DK_SIM/dk-oldsim" "$DK_SIM/tmp.keepother" "$DK_SIM/dk-fifogit/.git" "$DK_SIM/dk-fifogit"
-  DEVKIT_DK_TMP_ROOT="$DK_SIM" python3 -I -c '
+  DEVKIT_SCRATCH_ROOT="$TMP/no-sr" DEVKIT_DK_TMP_ROOT="$DK_SIM" python3 -I -c '
 import os, subprocess, sys
 r = subprocess.run([sys.executable, "-I", sys.argv[1], "--sweep-tmp"], timeout=3, capture_output=True, text=True)
 sys.exit(r.returncode)
@@ -286,8 +289,10 @@ sys.exit(r.returncode)
   fi
   rm -rf "$SLASH_TMP_BOX"; SLASH_TMP_BOX=""
 
-  REAL_DK_OLD="$(mktemp -d /tmp/dk-sctst-XXXXXX)"
-  REAL_DK_SOCK="$(mktemp -d /tmp/dk-scsock-XXXXXX)"
+  # Own scan root under /tmp (a /private/tmp alias, as lsof prints a socket's bind string): never the shared /private/tmp of the host.
+  REAL_DK_OLD="$(mktemp -d /tmp/dk-scpar-XXXXXX)"; DK_PAR="$REAL_DK_OLD"
+  REAL_DK_OLD="$(mktemp -d "$DK_PAR/dk-sctst-XXXXXX")"
+  REAL_DK_SOCK="$(mktemp -d "$DK_PAR/dk-scsock-XXXXXX")"
   python3 -I - "$REAL_DK_SOCK/s.sock" "$TMP/sock.ready" <<'PY' &
 import os, socket, sys, time
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -299,14 +304,14 @@ PY
   SOCK_PID=$!
   for _ in $(seq 1 50); do [ -f "$TMP/sock.ready" ] && break; python3 -c 'import time; time.sleep(0.05)'; done
   touch -t 202001010000 "$REAL_DK_OLD" "$REAL_DK_SOCK/s.sock" "$REAL_DK_SOCK"
-  TMPDIR="$TR" env -u DEVKIT_TEST_TMP_ROOT DEVKIT_SCRATCH_ROOT="$ROOT" DEVKIT_CLAUDE_PROJECTS="$PROJ" python3 -I "$SC" --sweep-tmp >/dev/null 2>&1
+  TMPDIR="$TR" env -u DEVKIT_TEST_TMP_ROOT DEVKIT_DK_TMP_ROOT="$DK_PAR" DEVKIT_SCRATCH_ROOT="$ROOT" DEVKIT_CLAUDE_PROJECTS="$PROJ" python3 -I "$SC" --sweep-tmp >/dev/null 2>&1
   kill "$SOCK_PID" 2>/dev/null; wait "$SOCK_PID" 2>/dev/null
   if [ ! -e "$REAL_DK_OLD" ] && [ -d "$REAL_DK_SOCK" ]; then
     ok "sweep_test_tmp removes stale /private/tmp/dk-* while keeping /tmp/dk-* held only by an AF_UNIX socket"
   else
     fail "/private/tmp dk-* or AF_UNIX socket check failed: old_exists=$([ -e "$REAL_DK_OLD" ] && echo y || echo n) sock_dir_exists=$([ -d "$REAL_DK_SOCK" ] && echo y || echo n)"
   fi
-  rm -rf "$REAL_DK_OLD" "$REAL_DK_SOCK" 2>/dev/null || true; REAL_DK_OLD=""
+  rm -rf "$DK_PAR" 2>/dev/null || true; REAL_DK_OLD=""; DK_PAR=""
 fi
 [ -d "$TR" ] && { chflags -R nouchg "$TR" 2>/dev/null; chmod -R u+rwX "$TR" 2>/dev/null; }
 
