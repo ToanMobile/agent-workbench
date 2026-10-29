@@ -53,5 +53,11 @@ PY
 echo "$res" | sed -n 1p | grep -qx 'True True True False' && ok "SELECTION_CMD nhận lệnh có/không tiền tố biến, từ chối chuỗi lạ" || fail "SELECTION_CMD: $res"
 echo "$res" | sed -n 2p | grep -qx "\['tests/gates/test_g.sh'\] \['hooks/tests/test_h.sh', 'tests/verification/test_repo_consistency.sh', 'tests/verification/test_v.sh'\]" \
   && ok "selection_list trả đúng tập theo shard" || fail "selection_list: $res"
+# Biến shard không rò vào test con: test_gate_friction / per_test_cache / impact_map tự chạy run_impacted.sh, thừa hưởng biến thì tập chọn của chúng rỗng
+# (gate #616 lượt 2: 7 suite đỏ). Test gates/test_g.sh ghi giá trị nó thấy ra file.
+printf 'printf %%s "${DEVKIT_IMPACTED_DIRS-unset}" > "$SEEN_FILE"\n' > "$KIT/tests/gates/test_g.sh"
+( cd "$KIT" && SEEN_FILE="$TMP/seen" DEVKIT_IMPACTED_DIRS=gates bash tests/run_impacted.sh >/dev/null 2>&1 )
+[ "$(cat "$TMP/seen" 2>/dev/null)" = "unset" ] && ok "test con không thấy DEVKIT_IMPACTED_DIRS" || fail "test con thấy DEVKIT_IMPACTED_DIRS='$(cat "$TMP/seen" 2>/dev/null)'"
+
 [ "$FAILS" = 0 ] && echo "PASS" || echo "FAIL: $FAILS"
 exit $(( FAILS > 0 ))
