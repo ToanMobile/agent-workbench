@@ -3269,9 +3269,41 @@ if new_run:
     except Exception:
         pass
 
+# ── read-only turn (#649): the session used tools, every one of them a read (Read/Grep/Glob or a Bash
+# command with no write / test-run), and wrote no file. A pass count quoted from a log it read is a quotation, not a
+# claim that this session ran anything; check 2 needs a run to compare against, so it has nothing to say. An EMPTY transcript
+# (no tool at all) is not "read-only", it is "unknown" and keeps blocking. Edits (Edit/Write, even in a temp dir), a test
+# runner command or any Bash write keep the old check; check 7 (outcome) is not touched.
+READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS")
+BASH_WRITE_RX = re.compile(r"(?<![<>&0-9])>(?!&)|>>|\btee\b|\bsed\s+(?:-\w*i|--in-place)|\bperl\s+-\w*i|\b(?:rm|mv|cp|mkdir|touch|chmod|ln|truncate|dd|install)\b"
+                           r"|\bgit\s+(?:add|commit|push|pull|merge|rebase|reset|checkout|stash|apply|cherry-pick|am|rm|mv|restore|clean)\b"
+                           r"|\b(?:npm|yarn|pnpm|pip3?|brew|cargo|go)\s+(?:install|add|run|build|get)\b|\bpython\S*\s|\bbash\s|\bsh\s|\bnode\s|\bsource\s|\beval\b")
+BASH_READ_CMDS = ("cat", "head", "tail", "jq", "grep", "rg", "wc", "ls", "sort", "uniq", "cut", "column")
+BASH_CHAIN_RX = re.compile(r"&&|\|\||;|\$\(|`|\n")
+def _read_only_turn():
+    if edit_log or last_src_edit_idx >= 0 or last_scratch_src_idx >= 0 or last_scratch_fix_idx >= 0 or runner_results:
+        return False
+    if not tool_uses or no_id_tool_indices:
+        return False
+    for u in tool_uses.values():
+        if u["name"] in READ_ONLY_TOOLS:
+            continue
+        if u["name"] == "Bash":
+            cmd = str(u["input"].get("command", ""))
+            if TEST_RUNNER_RX.search(cmd) or BASH_WRITE_RX.search(cmd) or BASH_CHAIN_RX.search(cmd) or ".xml" in cmd.lower():
+                return False   # chained / substituted / an XML read: foreign-root and ledger checks (check 2) judge whose run it was
+            if not all(seg.split()[:1] and seg.split()[0] in BASH_READ_CMDS for seg in cmd.split("|")):
+                return False
+            continue
+        return False
+    return True
+read_only_turn = claimed and _read_only_turn()
+if read_only_turn:
+    logline(f"[{ts}] read-only turn ({len(tool_uses)} read tool calls, no edit, no test run): test-pass text is a quotation, check 2 skipped")
+
 # ── check 2 — does the XML back the claim? ──────────────────────────────────
 problems = []
-if claimed:
+if claimed and not read_only_turn:
     gradle_repo = any(os.path.exists(os.path.join(repo, f)) for f in
                       ("gradlew", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"))
     runner_ok = [r for r in runner_results
