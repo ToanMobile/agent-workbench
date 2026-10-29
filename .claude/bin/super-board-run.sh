@@ -1028,11 +1028,12 @@ PY
 merge_queue_on() {
   # Pha 2: 0 khi merge queue bật cho board này. SB_MERGE_QUEUE=1 bật, =0 tắt (đường lùi: merge-only / train như cũ), còn lại theo
   # config `merge_queue.enabled` (thiếu khoá hoặc config không đọc được = tắt).
-  # Vòng sửa 1 (R3): chỉ bật khi worker_backend của config là "claude-p" (đọc như WORKER_BACKEND, mặc định "workflow"); backend khác
-  # luôn tắt, kể cả SB_MERGE_QUEUE=1, vì chưa có ai rút hàng ở đó. Đọc thẳng config vì chế độ SB_LIB_ONLY không đặt WORKER_BACKEND.
-  # ponytail: hàng đợi chỉ cho backend claude-p, nâng cấp cho workflow/codex khi chúng có lịch chạy super-board-merge-queue.sh (Q-schedule).
+  # Vòng sửa 1 (R3), #453: chỉ bật khi worker_backend của config là "claude-p" hoặc "workflow" (đọc như WORKER_BACKEND, mặc định
+  # "workflow"; workflow có lịch super-board-queue-schedule.sh); backend khác luôn tắt, kể cả SB_MERGE_QUEUE=1. Đọc thẳng config vì
+  # chế độ SB_LIB_ONLY không đặt WORKER_BACKEND.
+  # ponytail: codex chưa có lịch rút hàng, nâng cấp khi lane codex có.
   [ "${SB_MERGE_QUEUE:-}" != 0 ] || return 1
-  jq -e '(.worker_backend // "workflow") == "claude-p"' "$CONFIG_PATH" >/dev/null 2>&1 || return 1
+  jq -e '(.worker_backend // "workflow") | IN("claude-p", "workflow")' "$CONFIG_PATH" >/dev/null 2>&1 || return 1
   [ "${SB_MERGE_QUEUE:-}" != 1 ] || return 0
   jq -e '.merge_queue.enabled == true' "$CONFIG_PATH" >/dev/null 2>&1
 }

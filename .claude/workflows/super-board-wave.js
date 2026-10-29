@@ -124,9 +124,10 @@ const REVIEW_MEMORY = [
   `Truth-check sub-agents get the fixed brief from super-review → "Adversarial mode", verbatim. After collecting, reclass any Over-engineering Blocker to Should fix; it never decides merge or bounce.`,
   // #250 + 26/10 (task receipt): the merge point verifies the merged tree once; a reviewer-side gate run is a duplicate run.
   `Test rerun (run.md → Reviewer step 5) skips the DevKit gate: never rerun post-fix-gate --full. Read QA's impacted gate exit 0 (task receipt) for this exact head SHA; the merge point verifies the merged tree.`,
-  // Merge queue (Pha 2 Q1, fix R5): only the claude-p runner drains the queue. These waves run on the workflow backend, so a
-  // merge-queue label here would leave the card in Review and get it re-reviewed every wave: always the merge gate path.
-  `Merge queue: applies only when the config enables merge_queue (or SB_MERGE_QUEUE=1) AND worker_backend is claude-p, whose runner drains the queue every tick. This wave runs on the workflow backend: the queue is off here whatever the config says. Never label the PR merge-queue; take the merge gate path below.`,
+  // Merge queue (#453 Q-schedule): the workflow backend is drained by the launchd schedule super-board-queue-schedule.sh (the planner
+  // ensures it), and the planner leaves a card whose PR carries the label out of the next wave. The gate refuses a direct call (exit 13)
+  // when the queue is on, so this line and the gate must agree: both read the same rule.
+  `Merge queue: ON when (config merge_queue.enabled or SB_MERGE_QUEUE=1) and SB_MERGE_QUEUE is not 0 and worker_backend is claude-p or workflow (a missing key is workflow); read the config yourself. ON: never call the merge gate (it exits 13). After the review passes post \`approved-head:<sha40>\` on the PR as its own comment, run \`gh pr ready <PR>\`, add the label \`merge-queue\`, comment on the issue \`[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>\`, leave the card in Review and report status=advanced, column=Review, detail starting \`queued PR #<P>\`: the scheduled super-board-merge-queue.sh batches it into one train. OFF: take the merge gate path below.`,
   // Merge policy + migrations live in the gate (run.md → Merge protocol step 5).
   `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): Blocked with the 🙋 template quoting its human-gate lines, then \`python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "<what the person must do>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"\` so the card carries the 🙋 Cần bạn comment.`,
   `Exit 2/5 = stale branch or real conflict: rebase pass (loop:rebase). Exit 11 = verify red on a branch NOT behind the base: [builder] thread quoting the gate's verify line, Review → Ready with loop:rebuild-N, never a rebase pass.`,
@@ -178,7 +179,7 @@ const lanePrompt = (lane, card) => [
     : []),
   ``,
   `Report your exit via structured output:`,
-  `- status=advanced  → card moved forward (Building→QA/Review/Done, QA→Review/Done, Review→Done/merged, or Review→Ready when the merge gate printed ac-open: #N — merged with AC still unproven, never close it)`,
+  `- status=advanced  → card moved forward (Building→QA/Review/Done, QA→Review/Done, Review→Done/merged, Review→Review with detail \`queued PR #<P>\` when the PR entered the merge queue, or Review→Ready when the merge gate printed ac-open: #N — merged with AC still unproven, never close it)`,
   `- status=bounced   → card moved backward (QA fail → Ready, Reviewer bounce → Ready/QA)`,
   `- status=blocked or human-gate → you wrote the Block template and moved the card to Blocked`,
   `- status=halted    → required service evidence or verification configuration is unavailable; leave card state unchanged and stop the run`,
