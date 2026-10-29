@@ -385,7 +385,7 @@ verify_set() {
       if flaky_test=$(single_red_test "$VLOG"); then
         say "verify red only by ${flaky_test} (REG-DK-ALL-01); re-running that test once"
         if rerun_one_test "$flaky_test"; then
-          FLAKY+=("$flaky_test"); say "${flaky_test} passed on re-run: flaky, not blaming any PR"; break
+          case " ${FLAKY[*]-} " in *" $flaky_test "*) ;; *) FLAKY+=("$flaky_test") ;; esac; say "${flaky_test} passed on re-run: flaky, not blaming any PR"; break
         fi
         say "${flaky_test} red on re-run too"; echo "[merge-train] re-ran ${flaky_test}: red again" >>"$VLOG"
       fi
