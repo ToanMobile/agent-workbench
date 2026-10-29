@@ -443,7 +443,10 @@ def audit_record(top, task_id):
     return False, f"không có biên bản audit pass của antigravity-pm cho {task_id} trong repo này ({_task_pattern(task_id)})"
 
 
-AUDITED_HEAD = re.compile(r"(?<![0-9A-Za-z])auditedHead:\s*([0-9a-f]{40})(?![0-9A-Za-z])")
+# #629: khoảng trắng viết tường minh [ \t\n\r\f\v], đúng tập regex của pm_verdict (mcp-servers/antigravity-pm-mcp/src/tools.js) —
+# `\s` của Python khớp cả \x1c-\x1f, \x85, của JS khớp cả NBSP: lệch là notes `auditedHead:\x1f<sha>` lọt qua kiểm audit-agent.json
+# của pm_verdict nhưng gate vẫn nhận sha (tests/gates/test_audited_head_ascii_space.sh).
+AUDITED_HEAD = re.compile(r"(?<![0-9A-Za-z])auditedHead:[ \t\n\r\f\v]*([0-9a-f]{40})(?![0-9A-Za-z])")
 SHA40 = re.compile(r"[0-9a-f]{40}")
 
 
