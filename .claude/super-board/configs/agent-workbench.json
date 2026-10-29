@@ -120,8 +120,6 @@
   "backlog_pull": false,
   "merge_queue": {
     "enabled": true,
-    "enabled_at": "2026-10-26T23:32:59Z",
-    "batch_max": 6,
-    "max_wait_min": 60
+    "enabled_at": "2026-10-26T23:32:59Z"
   }
 }

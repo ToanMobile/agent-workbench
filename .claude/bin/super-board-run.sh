@@ -1040,18 +1040,15 @@ merge_queue_on() {
 
 merge_queue_wait_ok() {
   # Vòng sửa 1 (R3): 0 khi PR cũ nhất đang chờ trong <git-common-dir>/super-board/merge-queue.labeled (dòng `<PR> <head> <epoch>`,
-  # super-board-merge-queue.sh ghi mỗi lượt có PR trong hàng) chờ chưa quá 3 × merge_queue.max_wait_min (mặc định 60, như bộ gom).
+  # super-board-merge-queue.sh ghi mỗi lượt có PR trong hàng) chờ chưa quá 3 giờ (hằng cố định; queue không còn config chờ).
   # Thiếu file / không có mốc hợp lệ = 1: bộ gom chạy trước record_cycle_progress trong cùng tick và luôn ghi file khi có PR, nên
   # không có file nghĩa là hàng không được rút; khi đó không miễn RUNAWAY. Thư mục chung tính như bộ gom (repo.path → git-common-dir).
-  local rp common max oldest
+  local rp common oldest
   rp=$(jq -r '.repo.path // "."' "$CONFIG_PATH" 2>/dev/null) || rp=.
   common=$(cd "${rp:-.}" 2>/dev/null && g=$(git rev-parse --git-common-dir 2>/dev/null) && [ -n "$g" ] && cd "$g" && pwd -P) || return 1
-  max=$(jq -r '.merge_queue.max_wait_min // empty' "$CONFIG_PATH" 2>/dev/null || true)
-  case "$max" in ''|*[!0-9]*|0) max=60 ;; esac
-  [ "${#max}" -le 6 ] || max=60
   oldest=$(awk '$3 ~ /^[0-9]+$/ { if (m == "" || $3 + 0 < m + 0) m = $3 } END { print m }' "$common/super-board/merge-queue.labeled" 2>/dev/null)
   [ -n "$oldest" ] || return 1
-  [ $(( $(date +%s) - oldest )) -le $(( 3 * 10#$max * 60 )) ]
+  [ $(( $(date +%s) - oldest )) -le $(( 3 * 60 * 60 )) ]
 }
 
 mq_collect_rc() {
@@ -1061,15 +1058,15 @@ mq_collect_rc() {
   case "$rc" in
     0) ;;
     79|9) log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
-    *) log "⚠ super-board-merge-queue.sh --if-due exited ${rc:-?} — runner keeps going, the queue is retried next tick" ;;
+    *) log "⚠ super-board-merge-queue.sh exited ${rc:-?} — runner keeps going, the queue is retried next tick" ;;
   esac
 }
 
 merge_queue_due() {
-  # Pha 2: khi queue bật, mỗi tick chạy `super-board-merge-queue.sh --config <cfg> --if-due` (bộ gom tự thoát 0 khi chưa tới hạn hoặc
-  # khoá bận). Exit 79/9 của nó là halt như gh_checkpoint; mọi lỗi khác chỉ ghi log, không được kết thúc runner (set -euo pipefail).
+  # Pha 2: khi queue bật, mỗi tick chạy `super-board-merge-queue.sh --config <cfg>` (không gom đợt: mọi PR đã duyệt vào train ngay; bộ gom thoát 0 khi hàng
+  # rỗng hoặc khoá bận). Exit 79/9 của nó là halt như gh_checkpoint; mọi lỗi khác chỉ ghi log, không được kết thúc runner (set -euo pipefail).
   # #537: bộ gom chạy NỀN (gate --full có thể kéo dài hàng chục phút). Tick chỉ đợi tối đa SB_MQ_TICK_WAIT giây (mặc định 60; bộ gom
-  # thường thoát ngay vì chưa tới hạn, nên kết quả vẫn thấy trong cùng tick); quá hạn thì bỏ lại chạy nền và tick sau đọc mã thoát,
+  # thường thoát ngay khi hàng rỗng, nên kết quả vẫn thấy trong cùng tick); quá hạn thì bỏ lại chạy nền và tick sau đọc mã thoát,
   # nên halt 79/9 có thể đến chậm. Trạng thái nằm trong <RUNNER_DIR>/<slug>.mq.pid (PID) và .mq.rc (mã thoát, ghi nguyên tử khi xong);
   # runner chết giữa chừng thì runner sau vẫn đọc được .mq.rc; chỉ một bộ gom chạy một lúc (còn khoá riêng của nó).
   merge_queue_on || return 0
@@ -1093,7 +1090,7 @@ merge_queue_due() {
     log "⚠ super-board-merge-queue.sh background run (pid ${pid:-?}) ended without an exit code — restarting it"
     rm -f "$pidf"
   fi
-  ( "$mq" --config "$CONFIG_PATH" --if-due >> "${RUN_MANIFEST:-/dev/null}" 2>&1 </dev/null; echo "$?" > "$rcf.tmp" && mv "$rcf.tmp" "$rcf" ) &
+  ( "$mq" --config "$CONFIG_PATH" >> "${RUN_MANIFEST:-/dev/null}" 2>&1 </dev/null; echo "$?" > "$rcf.tmp" && mv "$rcf.tmp" "$rcf" ) &
   echo "$!" > "$pidf"
   wait_s="${SB_MQ_TICK_WAIT:-60}"
   case "$wait_s" in ''|*[!0-9]*) wait_s=60 ;; esac
@@ -1715,11 +1712,11 @@ record_cycle_progress() {
     return 0
   fi
   # Pha 2 (M4): the last Review scan found cards queued for super-board-merge-queue.sh (MQ_WAITING, set by top_card_in_column and kept
-  # while the review lane is busy). Done moves only when their batch lands (up to merge_queue.max_wait_min), so the wait is no runaway.
-  # Vòng sửa 1 (R3): miễn có hạn — chỉ khi PR cũ nhất trong hàng chờ chưa quá 3 × max_wait_min; quá hạn (hàng kẹt) thì đếm như thường.
+  # while the review lane is busy). Done moves only when their train lands, so the wait is no runaway.
+  # Vòng sửa 1 (R3): miễn có hạn — chỉ khi PR cũ nhất trong hàng chờ chưa quá 3 giờ; quá hạn (hàng kẹt) thì đếm như thường.
   if [ "${MQ_WAITING:-0}" = 1 ] && [ "${REVIEW:-0}" -gt 0 ]; then
     merge_queue_wait_ok && return 0
-    log "⚠ cards wait in the merge queue but its oldest PR is past 3 × merge_queue.max_wait_min (or merge-queue.labeled is missing) — counted as a no-progress cycle"
+    log "⚠ cards wait in the merge queue but its oldest PR is past 3 hours (or merge-queue.labeled is missing) — counted as a no-progress cycle"
   fi
   NO_PROGRESS_CYCLE_COUNT=$((NO_PROGRESS_CYCLE_COUNT + 1))
   [ "$NO_PROGRESS_CYCLE_COUNT" -lt "$NO_PROGRESS_CYCLES" ]
@@ -3296,7 +3293,7 @@ while true; do
   fi
 
   gh_checkpoint
-  merge_queue_due   # Pha 2: gom PR đã vào hàng khi tới hạn (hợp đồng lanes-contract: --if-due exit 0 khi chưa tới hạn; merge_queue_on lọc khi tắt)
+  merge_queue_due   # Pha 2: rút PR đã vào hàng, không gom đợt (hợp đồng lanes-contract: exit 0 khi hàng rỗng; merge_queue_on lọc khi tắt)
 
   # ── Landed-work halt gate (issue #8).
   #    Progress = the Done/Skipped set changed since the last dispatch cycle. Lane

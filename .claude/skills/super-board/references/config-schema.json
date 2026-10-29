@@ -318,23 +318,19 @@
 
   // Optional. Merge queue (Pha 2, 26/10): reviewers label an approved PR
   // `merge-queue` (plus an `approved-head:<sha40>` comment) instead of calling
-  // the merge gate; `.claude/bin/super-board-merge-queue.sh --config <cfg>
-  // --if-due` batches them into ONE super-board-merge-train.sh run (one verify
-  // for the batch) and routes every `train-result:` line. Off by default.
-  // On only for worker_backend "claude-p" (its runner calls --if-due every tick)
+  // the merge gate; `.claude/bin/super-board-merge-queue.sh --config <cfg>`
+  // sends every valid queued PR to ONE super-board-merge-train.sh run (one
+  // verify for the PRs waiting right now) and routes every `train-result:`
+  // line. No batching (29/10): no PR cap, no wait for more PRs, no age limit,
+  // no wait for an idle machine; `--full` runs once a night (gate-full).
+  // Off by default.
+  // On only for worker_backend "claude-p" (its runner calls it every tick)
   // or "workflow" (the launchd schedule super-board-queue-schedule.sh does, which
   // super-board-wave-plan.sh ensures); "codex" never uses the queue.
   // `SB_MERGE_QUEUE=1` / `0` overrides `enabled` for one process.
   //   enabled_at:   ISO time it was switched on (the batch canary only reads
   //                 runs after it); null while off.
-  //   batch_max:    most PRs per batch, oldest labelled first. `--if-due` runs
-  //                 once this many wait. After a batch with a red PR the next
-  //                 one takes at most max(1, batch_max/2).
-  //   max_wait_min: `--if-due` also runs once the oldest PR waited this long
-  //                 (its `labeled` timeline event), or when the machine is
-  //                 idle (no live board worker, merge gate lock or
-  //                 post-fix-gate test_run.lock).
-  "merge_queue": { "enabled": false, "enabled_at": null, "batch_max": 6, "max_wait_min": 60 },
+  "merge_queue": { "enabled": false, "enabled_at": null },
 
   // When the count of Blocked cards exceeds this percent of the initial Ready
   // count, post a mid-run breakdown in the run report. Default `30`. Set to `0`
