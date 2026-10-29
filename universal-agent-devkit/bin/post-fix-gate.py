@@ -5491,21 +5491,6 @@ def _rerun_cache_blocks(sc, tests, key_of, path):
     return False
 
 
-def _rerun_suite_must_run(tests, matrix_tests):
-    """#648 không được trả 0 trước suite cache:false hoặc runner run_impacted.sh. Chúng vẫn chạy mỗi lượt.
-    matrix_tests là map cục bộ trong hàm main (id → mục ma trận): cờ cache không nằm trên dict suite."""
-    for t in tests:
-        cmd = t.get("command") or ""
-        if not cmd:
-            continue
-        if "run_impacted.sh" in cmd:
-            return True
-        src = next((m for m in (matrix_tests or {}).get(t.get("id"), ()) if m.get("command") == cmd), None)
-        if isinstance(src, dict) and src.get("cache") is False:
-            return True
-    return False
-
-
 def _gate_pool_has_room():
     """True khi cha đang giữ slot, hàng đợi tắt, hoặc acquire_pool(wait_s=0) lấy được một slot rồi nhả ngay."""
     if os.environ.get("DEVKIT_GATE_SLOT_HELD") == "1":
@@ -7109,7 +7094,6 @@ def main():
     # before this check it needed no lock at all. Past that short wait it is READ-ONLY (read_only below): it judges from a stamp check and writes nothing.
     nothing_to_run = not any(t.get("command") for t in to_run)
     # #648: fp, local_sha và danh sách suite lấy trước khoá và trước suite. Bản ghi trước khớp thì trả 0.
-    # --full không trả ở đây: dòng "reusing the" đã in, nhưng biên nhận và runs.jsonl vẫn phải ghi REUSED.
     # ponytail: bản ghi tin exit 0 của đúng fp + local_sha + mtime; cờ nới (--allow-no-tests, …) đứng ngoài file — nâng khi một cờ nới phải thành một fp khác.
     rerun_fp = _run_log_fp(budget_fp or tested_fp or "")
     if run_tests and not rerun_fp:
@@ -7122,10 +7106,6 @@ def main():
                           for t in regression_tests if t.get("command"))
     if (run_tests and rerun_path and rerun_fp and not getattr(args, "force", False)
             and not getattr(args, "force_full", False)
-            and not getattr(args, "full", False)
-            and os.environ.get("POSTFIX_GATE_FORCE_FULL") != "1"
-            and os.environ.get("POSTFIX_GATE_FULL") != "1"
-            and not _rerun_suite_must_run(regression_tests, MATRIX_TESTS)
             and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0"
             and hygiene_ok and anti_laziness_ok and deps_ok and settings_ok
             and not edited_early and not tests_touched and not device_selected
@@ -7671,24 +7651,15 @@ def main():
         reds = [x for x in regression_tests if x.get("status") in ("FAIL", "TIMEOUT")]
         return bool(reds) and all(x.get("stale_rerun") or x.get("keyed_full") for x in reds)
 
-    def _stop_after_red():
-        """Lượt Stop vẫn chạy suite sau FAIL. #647 chỉ dừng lượt --full / --tree / CLI không ngân sách.
-
-        A7a và B5 control (test_gate_stop_run_record.sh): suite đầu FAIL thì suite sau vẫn phải chạy.
-        _stop_like là --session hoặc GATE_TOTAL_BUDGET_S > 0. force_reason (--full, --tree, CI) giữ fail-fast.
-        """
-        return _stop_like and not force_reason
-
     def _keep_after_red(suite):
-        return _cover_failed_still_runs(suite) or _runner_after_soft_red(suite) or _stop_after_red()
+        return _cover_failed_still_runs(suite) or _runner_after_soft_red(suite)
 
     for idx, t in enumerate(to_run):
         if group and not may_join(t):
             drain()
         # #647: mặc định dừng khi một suite đã FAIL hoặc TIMEOUT. Nhóm đang chạy được drain() xong.
         # Suite NOT_RUN phía sau thành UNTESTED — covered_by và skip-compile không kịp biến chúng thành PASS.
-        # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), run_impacted.sh sau STALE / cached-full đỏ,
-        # và lượt Stop (ngân sách hoặc --session, không --full) vẫn chạy hết suite đã chọn.
+        # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), và run_impacted.sh sau STALE / cached-full đỏ.
         if (run_tests and not getattr(args, "no_fail_fast", False)
                 and any(x.get("status") in ("FAIL", "TIMEOUT") for x in regression_tests)
                 and not _keep_after_red(t)):
@@ -8353,9 +8324,7 @@ def main():
             try:
                 write_rerun_skip(rerun_path, rerun_fp, rerun_mode, ran_ids, rerun_local_sha)
             except OSError as e:
-                # Tên file tạm của mkstemp đổi mỗi lượt: không đưa vào log, nếu không hai lượt giống nhau lệch stdout.
-                log_warn(tr(f"rerun_skip: không ghi được ({e.strerror or e.errno})",
-                            f"rerun_skip: not written ({e.strerror or e.errno})"))
+                log_warn(f"rerun_skip: {e}")
         elif rerun_path and exit_code != 0 and any(id(t) in really_ran for t in regression_tests):
             with contextlib.suppress(OSError):
                 os.remove(rerun_path)
