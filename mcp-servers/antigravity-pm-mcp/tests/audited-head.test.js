@@ -143,6 +143,12 @@ test('AH7 #629: notes lech tham so auditedHead, va Antigravity vua build vua aud
     writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: SHA }));
     await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: SHA,
       notes: `ok\nauditedHead: ${'d'.repeat(40)}` }), /notes/);
+    // nhieu dong `auditedHead:`: dong thu hai lech tham so cung bi tu choi (gate co the doc dong khac dong dau)
+    await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: SHA,
+      notes: `ok\nauditedHead: ${SHA}\nauditedHead: ${'e'.repeat(40)}` }), /notes/);
+    // khoang trang ngoai [ \t\n\r\f\v] (NBSP): ca hai ben deu khong coi la auditedHead, khong lech
+    await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass',
+      notes: `ok\nauditedHead: ${SHA}\nauditedHead: ${'f'.repeat(40)}` }), /audit-agent\.json ghi auditedHead/);
     assert.equal(auditOf(cfg, task), undefined);
   } finally {
     cleanup(dir);

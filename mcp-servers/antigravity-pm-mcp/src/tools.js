@@ -801,8 +801,13 @@ export const TOOLS = [
         fail(`Chua giao trien khai (pm_dispatch kind=implement) — chua co gi de ${args.kind}.`);
       }
       // auditedHead: sha40 cua cay da audit (push_gate.audited_head doc verdicts.audit.auditedHead). Thieu thi lay `auditedHead: <sha40>` trong notes.
-      const AUDITED_HEAD = /(?<![0-9A-Za-z])auditedHead:\s*([0-9a-f]{40})(?![0-9A-Za-z])/;
-      const notesHead = AUDITED_HEAD.exec(String(args.notes || ''))?.[1];
+      // Khoang trang viet tuong minh [ \t\n\r\f\v], cung chuoi voi universal-agent-devkit/bin/push_gate.py AUDITED_HEAD; do lech
+      // cua \s Python/JS: universal-agent-devkit/tests/gates/test_audited_head_ascii_space.sh.
+      const AUDITED_HEAD = /(?<![0-9A-Za-z])auditedHead:[ \t\n\r\f\v]*([0-9a-f]{40})(?![0-9A-Za-z])/;
+      const notesHeads = [...String(args.notes || '').matchAll(new RegExp(AUDITED_HEAD.source, 'g'))].map((x) => x[1]);
+      // #629: nhieu dong `auditedHead:` khac nhau thi gate doc dong nao cung la doan — tu choi.
+      if (new Set(notesHeads).size > 1) fail(`notes ghi nhieu auditedHead khac nhau (${[...new Set(notesHeads)].join(', ')}) — chi ghi mot head da audit.`);
+      const notesHead = notesHeads[0];
       let auditedHead;
       let selfAudit = '';
       if (args.auditedHead !== undefined) {
