@@ -2184,7 +2184,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-DK-ALL-GATES-01",
-          "name": "#616 shard của REG-DK-ALL-01 theo thư mục (tests/gates): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s; REG-DK-ALL-01 giữ nguyên, bước sau (người duyệt) mới bỏ",
+          "name": "#616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (tests/gates): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s",
           "command": "DEVKIT_IMPACTED_DIRS=gates bash universal-agent-devkit/tests/run_impacted.sh",
           "parallel_safe": true
         }
@@ -2198,7 +2198,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-DK-ALL-WORKTREE-01",
-          "name": "#616 shard của REG-DK-ALL-01 theo thư mục (tests/worktree_git): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s; REG-DK-ALL-01 giữ nguyên, bước sau (người duyệt) mới bỏ",
+          "name": "#616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (tests/worktree_git): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s",
           "command": "DEVKIT_IMPACTED_DIRS=worktree_git bash universal-agent-devkit/tests/run_impacted.sh",
           "parallel_safe": true
         }
@@ -2212,7 +2212,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-DK-ALL-REST-01",
-          "name": "#616 shard của REG-DK-ALL-01 theo thư mục (phần còn lại: verification, installer, context_memory, hooks/tests): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s; REG-DK-ALL-01 giữ nguyên, bước sau (người duyệt) mới bỏ",
+          "name": "#616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (phần còn lại: verification, installer, context_memory, hooks/tests): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s",
           "command": "DEVKIT_IMPACTED_DIRS=!gates,!worktree_git bash universal-agent-devkit/tests/run_impacted.sh",
           "parallel_safe": true
         }
