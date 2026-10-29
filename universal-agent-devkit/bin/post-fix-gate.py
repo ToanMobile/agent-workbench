@@ -6581,7 +6581,8 @@ def main():
                         TASK_PRECISE.add(id(t))
                 except Exception as e:   # noqa: BLE001 - khoá không tính được: suite này chạy
                     log_warn(f"suite_cache key {t.get('id')}: {e!r}")
-        _lap("keys")
+        if force_reason:
+            _lap("keys")   # #645: lượt task / --scoped không có bước "keys" riêng (như trước #645): thời gian dựng khoá vào bước "cache" kế tiếp
     unity_will_test = any(unity_suite_compiles(t.get("command") or "") for t in regression_tests)
     # Held for every suite run, re-run and vacuity revert (which rewrites production files in
     # the tree) of this gate, and NOT closed after the suite loop: a run waiting for this lock
