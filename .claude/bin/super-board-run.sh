@@ -1928,6 +1928,27 @@ worker_exit_line() {
   awk '/^=== dispatch /{l=""} /^worker_exit: /{l=$0} END{print l}' "$1" 2>/dev/null || true
 }
 
+# #434: exit=0 AND a successful result record as the last result in the log = the worker finished its turn on its own, no crash.
+# Exit 0 alone proves nothing: a session limit also exits 0 (19/10, #94) but prints text or `is_error: true`, so those still fail here.
+worker_ended_clean() {
+  case "$(worker_exit_line "$1")" in
+    *"exit=0 "*) python3 -c 'import json, sys
+rs = None
+for l in open(sys.argv[1], errors="replace"):
+    if l.startswith("=== dispatch "):
+        rs = None
+    elif l.startswith("{"):
+        try:
+            r = json.loads(l)
+        except ValueError:
+            continue
+        if r.get("type") == "result":
+            rs = r
+sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") else 1)' "$1" 2>/dev/null; return $? ;;
+  esac
+  return 1
+}
+
 note_worker_exit() {
   # $1 = issue; the lock just read (LANE) is the worker that died. Logs its exit record and, unless it exited 0, comments on the card.
   # No record = the wrapper itself was killed (SIGKILL, host asleep) or the worker predates the wrapper.
@@ -1965,21 +1986,7 @@ note_early_death() {
   # #434: a worker that ended with exit=0 AND a successful result record as its last log line finished its turn on its own (a quick
   # rebuild pass: 51 s and 80 s on #428), no crash. Its "did nothing" case is the no-op ledger's. Exit 0 alone proves nothing: a
   # session limit also exits 0 (19/10, #94) but prints text or `is_error: true`, so those, and non-zero or missing records, still count.
-  case "$(worker_exit_line "$wlog")" in
-    *"exit=0 "*) python3 -c 'import json, sys
-rs = None
-for l in open(sys.argv[1], errors="replace"):
-    if l.startswith("=== dispatch "):
-        rs = None
-    elif l.startswith("{"):
-        try:
-            r = json.loads(l)
-        except ValueError:
-            continue
-        if r.get("type") == "result":
-            rs = r
-sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") else 1)' "$wlog" 2>/dev/null && return 0 ;;
-  esac
+  worker_ended_clean "$wlog" && return 0
   # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
   # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
   # The log's mtime counts only when later than STARTED: `claude -p` (text mode) writes nothing until it ends, so a long silent
@@ -2048,6 +2055,11 @@ issue_comment_count() {
   python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1" --jq .comments 2>/dev/null | tr -dc '0-9' || true
 }
 
+issue_last_comment() {
+  # $1 = issue, $2 = its comment count. Prints the body of the newest comment; nothing when GitHub cannot say.
+  python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1/comments?per_page=1&page=$2" --jq '.[0].body' 2>/dev/null || true
+}
+
 dispatch_baseline() {
   # $1 = issue, $2 = lane, $3 = 1 when the dispatch is judged. Called BEFORE the worker starts (a worker that comments at once would
   # inflate COMMENTS0, #316 R8); prints the FROM_COL/COMMENTS0 lines for dispatch_lane to write into the lock in the same write as PID=.
@@ -2088,6 +2100,7 @@ EOF
     [ -n "$issue" ] && [ -n "$c0" ] || continue
     issue_locked "$issue" && continue
     f="$INFLIGHT_DIR/noops/$issue"
+    wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
     col=$(issue_status "$issue")
     [ -n "$col" ] || continue
     count=$(issue_comment_count "$issue")
@@ -2102,12 +2115,18 @@ EOF
       rm -f "$f" 2>/dev/null || true
       continue
     fi
+    # #671 (#659): a review worker that ended its turn cleanly (exit 0, result success) while waiting on a condition, its last comment
+    # closing with a `blocked-by:` line, is not dead and not a no-op: later turns rightly post nothing twice. Kills and errors still count.
+    if [ "$lane" = review ] && worker_ended_clean "$wlog" \
+       && [ -n "$(issue_last_comment "$issue" "$count" | awk 'NF{l=$0} END{if (l ~ /^blocked-by:/) print l}')" ]; then
+      rm -f "$f" 2>/dev/null || true
+      continue
+    fi
     now=$(date +%s)
     mkdir -p "$INFLIGHT_DIR/noops" 2>/dev/null || true
     { { tail -n 19 "$f" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now $lane $col $count"; } > "$f.tmp" 2>/dev/null \
       && mv "$f.tmp" "$f" 2>/dev/null || true
     n=$( { wc -l < "$f"; } 2>/dev/null | tr -d ' ')
-    wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
     last=$( { grep -Ev '^[[:space:]]*$|^worker_exit: ' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
     if [ "${n:-0}" -lt "$max" ]; then
       log "⚠ #${issue} (lane ${lane}): worker ended with the card still in ${col} and no new comment — no-op ${n} of ${max}; last log line: ${last:-<no worker log at ${wlog}>}"
