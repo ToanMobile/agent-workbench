@@ -810,6 +810,23 @@ export const TOOLS = [
         const m = /(?<![0-9A-Za-z])auditedHead:\s*([0-9a-f]{40})(?![0-9A-Za-z])/.exec(String(args.notes || ''));
         if (m) auditedHead = m[1];
       }
+      // #629 (review 29/10 sau #609): auditedHead la thu gate DevKit tin de duyet test bi sua, nen chi ghi khi auditor that da bao
+      // cao pass cho dung cay do (audit-agent.json, viet SAU lan giao audit gan nhat, reviewer khac builder); PM tu ghi pass ma
+      // khong co / bo qua bao cao = tu duyet.
+      if (auditedHead) {
+        const repFile = path.join(contractPaths(cfg, task).dir, 'audit-agent.json');
+        const rep = readJsonIfExists(repFile);
+        if (!rep) fail('auditedHead can bao cao audit-agent.json cua auditor — chua co (pm_dispatch kind=audit roi cho bao cao).');
+        const lastAudit = Math.max(0, ...(task.dispatches || []).filter((d) => d.kind === 'audit').map((d) => Date.parse(d.at) || 0));
+        if (fs.statSync(repFile).mtimeMs < lastAudit) fail('audit-agent.json cu hon lan giao audit gan nhat — chua phai bao cao cua lan audit nay.');
+        if (String(rep.verdict || '').toLowerCase() !== 'pass') fail(`audit-agent.json ghi verdict "${rep.verdict ?? '(thieu)'}", khong phai pass — khong ghi auditedHead.`);
+        const m = /(?<![0-9A-Za-z])auditedHead:\s*([0-9a-f]{40})(?![0-9A-Za-z])/.exec(String(rep.notes || ''));
+        const repHead = typeof rep.auditedHead === 'string' ? rep.auditedHead : m?.[1];
+        if (repHead !== auditedHead) fail(`audit-agent.json ghi auditedHead ${repHead || '(thieu)'}, khac ${auditedHead} — auditor chua audit cay nay.`);
+        const reviewer = typeof rep.reviewer === 'string' ? rep.reviewer.trim().toLowerCase() : '';
+        const builders = [process.env.DEVKIT_AGENT_ID || 'claude', task.builder].filter(Boolean).map((b) => String(b).trim().toLowerCase());
+        if (!reviewer || builders.includes(reviewer)) fail(`audit-agent.json reviewer "${rep.reviewer ?? '(thieu)'}" trung builder (${builders.join(', ')}) hoac thieu — khong phai duyet cheo.`);
+      }
       if (args.kind === 'plan' && args.verdict === 'pass') {
         const pp = contractPaths(cfg, task);
         if (!fs.existsSync(pp.plan)) fail('Chua co plan.md — PM viet ke hoach bang pm_plan truoc.');

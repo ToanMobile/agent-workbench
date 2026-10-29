@@ -25,11 +25,15 @@ function auditOnlyTask() {
   recordDispatch(cfg, task, { kind: 'audit', conversationId: 'c-audit' });
   return { dir, cfg, task };
 }
+// Bao cao pass cua auditor cho dung head (pm_verdict chi ghi auditedHead khi co no, AH6).
+const passReport = (dir, task, sha) =>
+  writeFile(path.join(dir, '.antigravity-pm', 'tasks', task.id, 'audit-agent.json'), JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: sha }));
 const auditOf = (cfg, task) => JSON.parse(fs.readFileSync(taskFile(cfg, task.id), 'utf8')).verdicts?.audit;
 
 test('AH1 task chi audit: pm_verdict audit pass voi auditedHead ghi verdicts.audit.auditedHead', async () => {
   const { dir, cfg, task } = auditOnlyTask();
   try {
+    passReport(dir, task, SHA);
     await verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', notes: 'ok', auditedHead: SHA });
     assert.equal(auditOf(cfg, task).auditedHead, SHA);
     assert.equal(auditOf(cfg, task).verdict, 'pass');
@@ -42,6 +46,7 @@ test('AH2 khong co tham so auditedHead: lay `auditedHead: <sha40>` trong notes',
   const { dir, cfg, task } = auditOnlyTask();
   try {
     const sha = 'b1'.repeat(20);
+    passReport(dir, task, sha);
     await verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', notes: `audit ok\nauditedHead: ${sha}` });
     assert.equal(auditOf(cfg, task).auditedHead, sha);
   } finally {
@@ -85,6 +90,50 @@ test('AH5 audit pass khong auditedHead: khong ghi truong (gate DevKit se khong d
     assert.match(out, /khong co auditedHead/);
     assert.ok(loadTask(cfg, task.id));
   } finally {
+    cleanup(dir);
+  }
+});
+
+// #629 (review context sach 29/10 sau merge #609): pm_verdict audit pass + auditedHead phai dua tren bao cao that cua auditor
+// (audit-agent.json cua dung task, viet sau lan giao audit, verdict pass, cung auditedHead, reviewer khac builder) — PM khong tu
+// ghi pass cho cay chua ai audit (dispatch roi bo qua ket qua). Moi ca bi tu choi thi KHONG ghi gi (gate DevKit exit 2).
+test('AH6 #629: auditedHead chi ghi khi audit-agent.json cua Antigravity pass dung head', async () => {
+  const { dir, cfg, task } = auditOnlyTask();
+  const rep = path.join(dir, '.antigravity-pm', 'tasks', task.id, 'audit-agent.json');
+  const pass = (a) => verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: SHA, ...a });
+  const saved = process.env.DEVKIT_AGENT_ID;
+  delete process.env.DEVKIT_AGENT_ID;
+  try {
+    // 1. verdict gia: khong co audit-agent.json
+    await assert.rejects(pass(), /audit-agent\.json/);
+    // 2. task_id khong ton tai
+    await assert.rejects(pass({ taskId: 'T9999-khong-co' }), /T9999/);
+    // 3. auditor bao cao fail
+    writeFile(rep, JSON.stringify({ verdict: 'fail', reviewer: 'antigravity', auditedHead: SHA }));
+    await assert.rejects(pass(), /verdict/);
+    // 4. auditor audit head khac
+    writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: 'c'.repeat(40) }));
+    await assert.rejects(pass(), /auditedHead/);
+    // 5. reviewer = builder (mac dinh claude, hoac DEVKIT_AGENT_ID), hoac thieu reviewer
+    writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'claude', auditedHead: SHA }));
+    await assert.rejects(pass(), /reviewer/);
+    process.env.DEVKIT_AGENT_ID = 'antigravity';
+    writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'Antigravity', auditedHead: SHA }));
+    await assert.rejects(pass(), /reviewer/);
+    delete process.env.DEVKIT_AGENT_ID;
+    writeFile(rep, JSON.stringify({ verdict: 'pass', auditedHead: SHA }));
+    await assert.rejects(pass(), /reviewer/);
+    // bao cao cu hon lan giao audit gan nhat (bao cao cua lan truoc)
+    writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: SHA }));
+    fs.utimesSync(rep, new Date(0), new Date(0));
+    await assert.rejects(pass(), /cu hon lan giao audit/);
+    assert.equal(auditOf(cfg, task), undefined);
+    // doi chung: bao cao that, auditedHead trong notes
+    writeFile(rep, JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', notes: `ok\nauditedHead: ${SHA}` }));
+    await pass();
+    assert.equal(auditOf(cfg, task).auditedHead, SHA);
+  } finally {
+    if (saved === undefined) delete process.env.DEVKIT_AGENT_ID; else process.env.DEVKIT_AGENT_ID = saved;
     cleanup(dir);
   }
 });
