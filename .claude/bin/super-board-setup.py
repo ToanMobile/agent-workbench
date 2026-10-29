@@ -79,7 +79,8 @@ BIN = ["super-board-verify-flags.sh", "super-board-verify-cmd.sh", "super-board-
        "super-review-file-refactor.sh", "super-qa-file-bug.sh", "super-board-stop.sh", "super-board-watchdog.sh",
        "super-board-needs-you.py", "super-board-orphan-prs.py", "super-board-post-merge-clean.sh", "super-board-scratch-config.sh", "super-board-throttle.sh",
        "super-board-device-online.py", "super-board-heavy-slot.py", "super-board-notify.py", "super-board-blocked-by.py",
-       "super-board-capacity.py", "super-board-qa-report.py", "super-board-drift.py", "super-board-ac-check.py", "super-board-waiting-on.py"]
+       "super-board-capacity.py", "super-board-qa-report.py", "super-board-drift.py", "super-board-ac-check.py", "super-board-waiting-on.py",
+       "super-board-queue-schedule.sh"]
 WORKFLOWS = ["super-board-wave.js", "ui-refine-loop.js"]
 HELPERS_CMD = "npx -y skills@latest add mattpocock/skills --skill '*' -a claude-code -y"
 
@@ -279,7 +280,8 @@ def migrate_config(cfg):
         c["worker_backend"] = "workflow"
         changes.append("worker_backend \"workflow\" added")
     if not c.get("verify_commands"):
-        c["verify_commands"] = ["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief"]
+        # #644: không ép --full — super-board-verify-flags.sh chèn --scoped (tự leo full khi đụng lõi); --full đêm thuộc gate-full
+        c["verify_commands"] = ["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief"]
         changes.append("verify_commands locked to DevKit post-fix-gate.py")
     return c, changes
 

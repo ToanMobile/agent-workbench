@@ -42,7 +42,7 @@ it into the target's `docs/agents/issue-tracker.md` under `## Ticket format` (th
 | Human-only step | a `needs-you: <command>` line in the PR body → 🙋 Blocked until done |
 | Real device | label `needs-device` when the card's QA needs a real phone (OOM, FPS, memory, sensors) · while `adb devices` lists none (emulators and denylisted serials do not count) the board holds it in Ready (with `qa`) or QA and lists it under status "Waiting on you" · a phone plugged in releases it |
 | Ticket only a person can do | `## Cần người` as the first section (`🙋 Cần bạn: <exactly what> · xong thì <next>`) + label `needs-you` + the same comment · createTask `--needs-you "<what>"` does all three |
-| Size | one card = one PR under `merge_policy.auto_max_lines` changed lines (400 when unset) · bigger → split with `/to-tickets` · `0` = no cap: group related work into ONE card (one PR, one gate), never split for size |
+| Size | one card = one PR · unset `auto_max_lines` is 0, so do not split for line count · a positive cap is opt-in and only then a bigger diff waits for a human · two unstarted cards that share a file fold into the lower number (AC copied verbatim) |
 
 For recurring PR fixes, keep these sections. Context names the permitting shared boundary
 and prior failing input/action; Evidence cites the prior PRs/findings. Fix names the intended
