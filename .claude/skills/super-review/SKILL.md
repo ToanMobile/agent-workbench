@@ -53,28 +53,6 @@ The full step list is in [references/review-flow.md](references/review-flow.md).
 
 The report layout, the loop rules and the prior-findings memory are in [references/review-output.md](references/review-output.md). Read it before you write a report or review a second round.
 
-## Common pitfalls
-
-- Calling a branch **fixed** or **merge-ready** before tests or evidence prove it.
-- Treating UI success or HTTP 200 as enough evidence for background jobs, uploads, or imports.
-- Mixing reviewer findings with broad refactors.
-- Creating duplicate GitHub issues without checking whether the finding is already tracked.
-- Letting Super Review become another alias for Super Build; keep review authority separate from implementation authority.
-- Re-reviewing a bounced card from scratch and ignoring `prior_report` — that is how a finding gets "resolved" without a fix and slips through.
-
-## Done condition
-
-Super Review is done when one of these is true:
-
-- no blocking findings remain and the branch/PR has enough verification evidence to call it merge-ready;
-- all unresolved findings are explicitly human-gated;
-- required evidence cannot be collected because tooling/service access is unavailable, and the output clearly marks the result as unverified.
-
-
-## Skill dependencies · Deepening opportunities
-
-Both are in [references/review-skills-deepening.md](references/review-skills-deepening.md).
-
 ## super-board integration
 
 When invoked by super-board (env `SUPER_BOARD_RUN=1` or invocation contains "super-board run"):
@@ -114,7 +92,8 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
 5. **Reviewer-side test rerun (always — closes Tester self-verification gap):**
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the EXACT command from Tester's PR `Local tests:` line.
-   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the `post-fix-gate.py --run-tests --scoped` exit 0 (its scoped receipt) for this exact head SHA. The merge point (the merge queue's train; queue off, the merge gate) verifies the merged tree with `--scoped`, which escalates to `--full` on a core file (run.md → Merge protocol).
+   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the `post-fix-gate.py --run-tests --scoped` exit 0 (its scoped receipt) for this exact head SHA. When `.claude/bin/super-board-qa-exit2.sh` printed `review`, that is the only reason an existing test was edited: do not demand QA exit 0; the card is in Review for Antigravity, not Blocked and not needs-you. The merge point (the merge queue's train; queue off, the merge gate) verifies the merged tree with `--scoped`, which escalates to `--full` on a core file (run.md → Merge protocol).
+   - Before `pm_dispatch kind=audit`: `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. True → audit this HEAD. False → move the card Review → Ready with label `loop:rebase` (the Builder on `issue-<N>-build` merges `origin/<base>` and pushes). The Reviewer does not commit and does not push. After the audit pass, sha256 each edited test, write `.claude/audit-gate/approved_tests.json` (reviewer ≠ author), do not set `ANTIGRAVITY_PM_STATE_HOME`, re-run `post-fix-gate.py --run-tests --brief` on `~/.antigravity-pm` (must exit 0), then `gate_receipt=$(jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)")` (empty fp: do not comment).
    - Green → continue. Red → open new `[qa]`-prefixed thread quoting failure, move card Review → QA with `loop:rebuild-N`, exit.
    - If QA includes `Runtime checks:`, follow
      [optional runtime verification](../super-qa/references/runtime-verification.md):
@@ -145,13 +124,13 @@ two complete builds. In order, no shortcuts:
    the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does), without `--codex`): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP:
    `pm_task_create` (project = config `repo.path`), `pm_dispatch kind=audit`, read its `audit-agent.json`, and only on Antigravity's
    pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR as its own comment `approved-head:<sha40>`
-   with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}`.
+   with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}` and a third line `edited-tests:` (JSON array of the edited tests; omit the line only when none were edited). `gate_receipt=$(jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)")` (empty fp: do not comment).
    Antigravity unavailable (MCP absent, `pm_dispatch` errors, verdict not pass): no approval, the card stays in **Review** with a
    `[reviewer]` comment whose last line is `blocked-by: -` (a bare `approved-head` is the owner's hand approval; the guard blocks it). Add
    the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
    the report (`merge-ready`) and leave the card in **Review**: the queue merges it in one train (run.md → Merge
    protocol). Queue off inside the board (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`,
-   where nothing drains the queue — even when the config enables it): step 2 as below.
+   where nothing drains the queue — even when the config enables it): after the Antigravity audit pass, `gate_receipt=$(jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)")` (empty fp: do not comment), post `approved-head` plus `approved-by` plus `edited-tests:` as its own comment, THEN the merge gate (step 2).
 2. Merge through the gate, pinned to the head you reviewed (`merge_policy.default: "human"`
    sends every merge to exit 7 below; a cross-review marker or a human `done` approves it):
    record `gh pr view <PR> --json headRefOid` when review passes, then

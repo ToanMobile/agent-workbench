@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Test: một trần worker duy nhất, không đo CPU.
+# Test: một trần worker duy nhất, cộng một phanh tải cho mọi lane (#530).
 #  - max_workers (mặc định 5) = tổng worker build + qa + review của MỌI repo trên máy, đếm qua thư mục slot dùng chung;
-#  - mọi lane dùng chung trần đó;
-#  - loadavg KHÔNG còn chi phối: tải 0 không cho vượt trần, tải 500 không chặn khi còn chỗ;
+#  - mọi lane dùng chung trần đó và chung ngưỡng DEVKIT_SPAWN_LOAD (ở đây ghim 36);
+#  - dưới ngưỡng: tải không cho vượt trần slot; vượt ngưỡng: hoãn spawn, log holding spawn load1=X > N;
 #  - config không còn build_workers / qa_workers / review_workers / build_load_max / global_max_workers / gate_max.
 # Chạy offline: runner source ở lib mode, gh/claude là stub.
 set -u
@@ -21,7 +21,7 @@ printf 'print("ok")\n' > "$TMP/bin/super-board-skills-ready.py"
 printf '#!/usr/bin/env bash\nsleep 300\n' > "$TMP/path/claude"
 chmod +x "$TMP/bin/super-board-github-read.py" "$TMP/path/claude"
 export STUB_DIR="$TMP" PATH="$TMP/path:$PATH" WORKTREE_DISK_MIN_GIB=0 WORKTREE_DISK_WARN_GIB=0
-unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX
+unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL SB_BUILD_LOAD_MAX DEVKIT_SLOT_LOAD_MAX DEVKIT_CAPACITY_LOAD DEVKIT_SPAWN_LOAD
 export SB_ZOMBIE_GRACE=0 SB_GLOBAL_SLOT_DIR="$TMP/slots"
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
@@ -37,7 +37,8 @@ resolve_worker_account() { POOL_ENGINE=""; POOL_ACCT=""; POOL_CFG=""; return 0; 
 note_worker_limit() { :; }
 cd "$TMP/repo" || exit 1
 git init -q . 2>/dev/null
-load() { printf '%s\n' "$1" > "$TMP/load"; export SB_BUILD_LOAD_FILE="$TMP/load"; }
+load() { export DEVKIT_CAPACITY_LOAD="$1"; TICK_SEQ=$(( ${TICK_SEQ:-0} + 1 )); }
+unset_load() { unset DEVKIT_CAPACITY_LOAD; TICK_SEQ=$(( ${TICK_SEQ:-0} + 1 )); }
 cards() {   # cards <status> <n>...
   local st="$1" out="" n; shift
   for n in "$@"; do out="${out:+$out,}{\"id\":\"PVTI_$n\",\"status\":\"$st\",\"labels\":[],\"content\":{\"type\":\"Issue\",\"number\":$n,\"assignees\":[]}}"; done
@@ -50,6 +51,7 @@ reset() {
   BUILD_PID=""; BUILD_ISSUE=""; BUILD_EXTRA=""; QA_PID=""; QA_ISSUE=""; QA_EXTRA=""; REVIEW_PID=""; REVIEW_ISSUE=""; REVIEW_EXTRA=""; FOREIGN=""
   rm -f "$INFLIGHT_DIR"/[0-9]* "$SB_GLOBAL_SLOT_DIR"/*; : > "$TMP/log"; : > "$TMP/writes"; ACTIVE_WORKERS=0
   MAX_WORKERS=5; BUILD_WORKERS=5; QA_WORKERS=5; REVIEW_WORKERS=5; QA=0; REVIEW=0; READY=0
+  LOAD_HELD_TICK=0
 }
 total() { build_workers_count; lane_workers_count qa; lane_workers_count review; echo $((BUILD_COUNT + QA_COUNT + REVIEW_COUNT)); }
 tick_qa() { reap_finished_locks; lane_dispatch_tick qa QA; }
@@ -65,6 +67,9 @@ grep -q "max_workers 5" <<<"$body" && ok "max_workers defaults to 5" || fail "ma
 grep -qE 'build_load_max|BUILD_LOAD_MAX|resolve_lane_workers|resolve_build_workers' <<<"$body" && fail "runner still reads CPU-load / per-lane worker config" || ok "runner no longer reads build_load_max / build_workers / qa_workers / review_workers"
 grep -qE '^BUILD_WORKERS="?\$MAX_WORKERS' <<<"$body" && ok "lane caps equal max_workers" || fail "lane caps are not tied to max_workers"
 grep -qE 'global_max_workers|GLOBAL_MAX|gate_max' <<<"$body" && fail "a second worker cap is still read" || ok "max_workers is the only worker cap (no global_max_workers / gate_max)"
+
+# Ngưỡng AC ghim 36 (12 lõi). Không đọc busy_load của máy đang chạy.
+export DEVKIT_SPAWN_LOAD=36
 
 # ── 2. QA + Review + Build chung một trần 5 (tải 0 cũng không cho vượt)
 reset; load 0
@@ -84,14 +89,57 @@ cards QA 1 2 6; tick_qa; cards Review 3 7; tick_review
 READY=3; build_slot_free; rc=$?
 [ "$rc" -ne 0 ] && [ "${BUILD_FREE:-0}" = 0 ] && ok "at 5 total: the build lane does not start another" || fail "build started at the cap (rc=$rc)"
 
-# ── 4. tải máy không còn quyết định
-reset; load 500
+# ── 4. phanh tải: một ngưỡng cho build, qa và review
+reset; load 40
+cards QA 1 2 3; tick_qa
+[ "$(total)" = 0 ] && grep -q "holding spawn load1=40 > 36" "$TMP/log" && ok "load 40 holds QA and logs the threshold" || fail "load 40 did not hold QA ($(total)): $(tr '\n' '|' < "$TMP/log")"
+reset; load 40
+cards Review 1; tick_review
+[ "$(total)" = 0 ] && grep -q "holding spawn load1=40 > 36" "$TMP/log" && ok "load 40 holds Review" || fail "load 40 did not hold Review ($(total))"
+reset; READY=2; load 40; build_slot_free; rc=$?
+[ "$rc" -ne 0 ] && [ "${BUILD_FREE:-0}" = 0 ] && grep -q "holding spawn load1=40 > 36" "$TMP/log" && ok "load 40 holds build" || fail "load 40 did not hold build (rc=$rc BUILD_FREE=${BUILD_FREE:-})"
+reset; load 30
+cards QA 1; tick_qa
+[ "$(total)" = 1 ] && ok "load 30 still spawns QA" || fail "load 30 held QA: $(total)"
+reset; load 30
+cards Review 1; tick_review
+[ "$(total)" = 1 ] && ok "load 30 still spawns Review" || fail "load 30 held Review: $(total)"
+reset; READY=2; load 30; build_slot_free; rc=$?
+[ "$rc" -eq 0 ] && [ "$BUILD_FREE" = 1 ] && ok "load 30: build lane starts" || fail "load 30 held build (rc=$rc)"
+reset; load 36.5
+cards QA 1; tick_qa
+[ "$(total)" = 0 ] && grep -q "holding spawn load1=36.5 > 36" "$TMP/log" && ok "load 36.5 (float) holds" || fail "load 36.5 did not hold: $(total) $(tr '\n' '|' < "$TMP/log")"
+reset; load ""
 cards QA 1 2 3; tick_qa; tick_qa; tick_qa
-[ "$(total)" = 3 ] && ok "load 500, 0 -> 3 workers: CPU load is ignored" || fail "load 500 held the lane: $(total)"
-reset; load ""; cards QA 1 2 3; tick_qa; tick_qa; tick_qa
-[ "$(total)" = 3 ] && ok "unreadable load: ignored too" || fail "unreadable load held the lane: $(total)"
-reset; READY=2; load 500; build_slot_free; rc=$?
-[ "$rc" -eq 0 ] && [ "$BUILD_FREE" = 1 ] && ok "load 500: build lane starts under the cap" || fail "build held by load (rc=$rc)"
+[ "$(total)" = 3 ] && ok "empty load does not hold" || fail "empty load held the lane: $(total)"
+reset; load "nope"
+cards QA 1; tick_qa
+[ "$(total)" = 1 ] && ok "garbage load does not hold" || fail "garbage load held the lane: $(total)"
+reset; unset_load
+[ -z "$(spawn_load1)" ] && ok "lib mode without LOAD: load1 stays empty" || fail "lib mode read a load: $(spawn_load1)"
+cards QA 1; tick_qa
+[ "$(total)" = 1 ] && ok "lib mode without LOAD does not hold" || fail "lib mode without LOAD held the lane: $(total)"
+# config spawn_load_max khi không có DEVKIT_SPAWN_LOAD
+reset; unset DEVKIT_SPAWN_LOAD; echo '{"spawn_load_max":36}' > "$CONFIG_PATH"; load 40
+cards QA 1; tick_qa
+[ "$(total)" = 0 ] && grep -q "holding spawn load1=40 > 36" "$TMP/log" && ok "config spawn_load_max=36 holds load 40" || fail "config threshold did not hold: $(total)"
+export DEVKIT_SPAWN_LOAD=36; echo '{}' > "$CONFIG_PATH"; TICK_SEQ=$(( ${TICK_SEQ:-0} + 1 ))
+# tick rẻ vì tải chỉ sau lần đọc board, và không nuốt merge_queue_due
+reset; load 40; BOARD_SYNCED=1; REAPED_THIS_TICK=0; ACTIVE_WORKERS=0
+tick_is_cheap && ok "load 40 after a board sync: tick_is_cheap" || fail "load 40 was not cheap"
+BOARD_SYNCED=0
+tick_is_cheap && fail "cheap before the first board sync" || ok "load 40 before a board sync is not cheap"
+BOARD_SYNCED=1; REAPED_THIS_TICK=1
+tick_is_cheap && fail "cheap while a worker was just reaped" || ok "a just-reaped worker is not a cheap tick"
+reset; load 40
+merge_queue_due; rc=$?
+[ "$rc" -eq 0 ] && ok "load 40: merge_queue_due still runs" || fail "merge_queue_due failed under load (rc=$rc)"
+# tải cao + 0 worker không tính no-progress
+reset; load 40; cards QA 1; tick_qa
+[ "$(total)" = 0 ] && [ "${LOAD_HELD_TICK:-0}" = 1 ] || fail "runaway setup did not hold (total=$(total) held=${LOAD_HELD_TICK:-})"
+NO_PROGRESS_CYCLES=2; PREV_DONE_SIG="9"; NO_PROGRESS_CYCLE_COUNT=0; LANDED_COUNT=0; MQ_WAITING=0; REVIEW=0; RUNAWAY_PAUSE_UNTIL=0
+rc=0; record_cycle_progress "9" || rc=$?
+[ "$rc" -eq 0 ] && [ "${NO_PROGRESS_CYCLE_COUNT:-0}" = 0 ] && ok "high load + 0 workers is not no-progress" || fail "no-progress counted under load (rc=$rc count=${NO_PROGRESS_CYCLE_COUNT:-} held=${LOAD_HELD_TICK:-})"
 
 # ── 5. cả máy: repo khác đang chạy 4 worker thì repo này chỉ còn 1 slot; tự ghi slot khi giao
 reset; load 0; foreign_workers 4

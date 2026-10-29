@@ -122,7 +122,7 @@ on a core file; the merge point runs `--scoped` on the merged tree, the nightly 
 writes the scoped receipt (and the task receipt); and, when app/UI source changed on a
 profile with a screen, a fresh `python3 .agents/devkit/bin/proof-capture.py` PNG. This holds when `/super-qa`
 runs on its own, outside the board's worker preamble. Paste the gate's last line, the head SHA and the PNG into
-the `[qa] [report]`; any other exit is not green.
+the `[qa] [report]`. Pipe that gate's `--json` through `.claude/bin/super-board-qa-exit2.sh`: `pass` is green; `review` is the only reason an existing test was edited — move the card to Review for Antigravity, not Blocked and not needs-you, and comment `Edited tests (await cross-review):` plus each path; `qa-fail` and any other exit is not green.
 
 Per-spec forensics captured by `e2e/lib/report-fixture.ts`:
 
