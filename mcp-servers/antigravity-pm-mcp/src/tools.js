@@ -896,7 +896,7 @@ export const TOOLS = [
         }
       }
       recordVerdict(cfg, task, {
-        kind: args.kind, verdict: args.verdict, findings: args.findings || [], notes: notesOut || '', ...(auditedHead && { auditedHead }),
+        kind: args.kind, verdict: args.verdict, findings: args.findings || [], notes: notesOut, ...(auditedHead && { auditedHead }),
       });
       if (args.kind === 'audit' && args.verdict === 'pass') {
         L.push(auditedHead ? `auditedHead = ${auditedHead}.` : (selfAudit || 'CANH BAO: audit pass khong co auditedHead — gate DevKit se khong duyet test sua dua vao audit nay.'));

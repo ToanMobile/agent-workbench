@@ -100,7 +100,7 @@ Prompt đã gửi luôn được lưu vào `logs/prompt-*.md`; tool chỉ trả 
 | `verdict` | **có** | `pass` \| `fail` |
 | `findings` | không | Mỗi phát hiện: `file:dòng` + sai gì |
 | `notes` | không | |
-| `auditedHead` | không | Chỉ `kind=audit verdict=pass`: sha40 (hex thường) của commit đã audit, ghi vào `verdicts.audit.auditedHead`. Thiếu thì lấy `auditedHead: <sha40>` trong `notes`. Sai khuôn → từ chối |
+| `auditedHead` | không | Chỉ `kind=audit verdict=pass`: sha40 (hex thường) của commit đã audit, ghi vào `verdicts.audit.auditedHead`. Thiếu thì lấy `auditedHead: <sha40>` trong `notes`. Sai khuôn → từ chối. #629: chỉ ghi khi `audit-agent.json` của task mới hơn lần giao audit gần nhất, `verdict` pass, cùng head, có `reviewer`; notes ghi head khác hoặc nhiều head khác nhau → từ chối; `reviewer` trùng builder (`DEVKIT_AGENT_ID`, mặc định `claude`; `antigravity` khi task đã giao implement) → ghi kết luận nhưng bỏ `auditedHead` (cả dòng trong notes) |
 
 `audit` cần đã giao triển khai, hoặc task chỉ audit có lần `pm_dispatch kind=audit`; `review` luôn cần đã giao triển khai.
 

@@ -134,9 +134,9 @@ test('AH6 #629: auditedHead chi ghi khi audit-agent.json cua Antigravity pass du
   }
 });
 
-// #629 review: (a) notes ghi auditedHead KHAC tham so -> tu choi (gate doc ca hai, sha trong notes chua ai audit);
-// (b) task da giao implement cho Antigravity -> Antigravity la builder, bao cao reviewer=antigravity khong phai duyet cheo.
-test('AH7 #629: notes lech tham so auditedHead, va Antigravity vua build vua audit, deu bi tu choi', async () => {
+// #629 review: notes ghi auditedHead KHAC tham so, nhieu dong auditedHead khac nhau, sha sat cho cat 8000 ky tu -> tu choi
+// (gate doc ca truong lan notes da luu; sha trong notes chua ai audit). Antigravity vua build vua audit: AH8.
+test('AH7 #629: notes lech tham so, nhieu auditedHead, bien cat 8000 ky tu deu bi tu choi', async () => {
   const { dir, cfg, task } = auditOnlyTask();
   const rep = path.join(dir, '.antigravity-pm', 'tasks', task.id, 'audit-agent.json');
   try {
