@@ -378,11 +378,13 @@ vt_log "$TMP/vt1.log" 'KẾT LUẬN: đỏ\n  [ ] TIMEOUT | suite-a\n  [ ] TIMEO
 vt_log "$TMP/vt2.log" 'KẾT LUẬN: đỏ\n  [ ] TIMEOUT | suite-a\n  [ ] FAIL | suite-b\n'
 vt_log "$TMP/vt3.log" 'chạy lệnh khác\nTIMEOUT after 900s\n'
 vt_log "$TMP/vt4.log" 'chạy lệnh khác\nlỗi thật\n'
+vt_log "$TMP/vt5.log" 'KẾT LUẬN: đỏ\n  [ ] TIMEOUT (HANG) | REG-DK-ALL-GATES-01\n  [ ] TIMEOUT | REG-DK-ALL-REST-01\n'
 [ "$(vt_run "$TMP/vt1.log" 1)" -eq 0 ] && ok "big VLOG, KẾT LUẬN + only TIMEOUT suites → timed out (0)" || fail "big VLOG all-TIMEOUT: want 0"
 grep -q "Broken pipe" "$TMP/vt.err" && fail "verify_timed_out printed 'Broken pipe'" || ok "no 'Broken pipe' on a big VLOG"
 [ "$(vt_run "$TMP/vt2.log" 1)" -ne 0 ] && ok "big VLOG, KẾT LUẬN + a FAIL suite → real red (non-zero)" || fail "big VLOG with FAIL suite: want non-zero"
 [ "$(vt_run "$TMP/vt3.log" 1)" -eq 0 ] && ok "big VLOG, no KẾT LUẬN, 'TIMEOUT after' → timed out (0)" || fail "big VLOG 'TIMEOUT after': want 0"
 [ "$(vt_run "$TMP/vt4.log" 1)" -ne 0 ] && ok "big VLOG, no KẾT LUẬN, no timeout text → non-zero" || fail "big VLOG plain red: want non-zero"
+[ "$(vt_run "$TMP/vt5.log" 1)" -eq 0 ] && ok "#616: KẾT LUẬN + TIMEOUT (HANG) và TIMEOUT thường → timed out (0)" || fail "#616: TIMEOUT (HANG) suite: want 0"
 [ "$(vt_run "$TMP/vt4.log" 124)" -eq 0 ] && ok "rc=124 → timed out (0)" || fail "rc 124: want 0"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train: all passed" || { echo "❌ test_merge_train: $FAILS failed"; exit 1; }

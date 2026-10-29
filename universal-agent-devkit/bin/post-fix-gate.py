@@ -1819,7 +1819,11 @@ def head_tree(project_dir):
 def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
     """#319: a --full PASS against origin/<base> on a clean tree that holds it is also the merge gate's verify of this tree: the board's
     super-board-verify-cmd.sh --mark writes the tree receipt under the key the merge gate reads (one key function, not copied here), so a PR runs
-    --full once instead of twice. It refuses a dirty tree or a base not in the tree itself; no board config or script = the old behaviour."""
+    --full once instead of twice. It refuses a dirty tree or a base not in the tree itself; no board config or script = the old behaviour.
+    #575: --mark của #319 nay chỉ dùng trong luồng chủ đích: caller đặt SB_MARK_VERIFIED_TREE=1 (merge gate và --record tự ghi trực tiếp, không qua đây).
+    --full chạy tay hay lượt tái hiện không ghi biên nhận, nếu không merge gate bỏ qua verify trên cây chưa ai verify cho nó."""
+    if os.environ.get("SB_MARK_VERIFIED_TREE") != "1":
+        return
     # OCR 24/10: not a receipt for what this run did not prove: no tree taken before the run, or a run that relaxed a check (`relaxing`: the
     # --allow-no-tests / --allow-orphan-tests / --auto-approve-tests flags it used, DEVKIT_AUTO_APPROVE_TESTS=1 as the last) that the board's
     # verify line does not carry itself — the merge gate runs that line, so a flag it carries relaxes both runs the same way. Since #605
@@ -4281,10 +4285,45 @@ PTC_LINE = re.compile(r"^per_test_cache: reuse=(\d+) ran=(\d+)$", re.M)
 PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh của lượt này (đặt sau khi biết keyed_ok)
 
 
-def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
+EXTEND_STEP_S = 60   # #616 A: step of the extension below; DEVKIT_GATE_EXTEND_STEP_S overrides it (tests)
+EXTEND_CAP_FACTOR = 3   # #616 A: hard ceiling = this × timeout, load never lifts it
+EXTEND_MIN_TIMEOUT_S = 60   # #616 A: a --timeout below this is a test's own short budget, never extended (DEVKIT_GATE_EXTEND_MIN_S overrides: tests)
+
+
+def _extend_step_s() -> float:
+    try:
+        v = float(os.environ.get("DEVKIT_GATE_EXTEND_STEP_S", ""))
+        return v if v > 0 else EXTEND_STEP_S
+    except ValueError:
+        return EXTEND_STEP_S
+
+
+def _extend_min_s() -> float:
+    try:
+        v = float(os.environ.get("DEVKIT_GATE_EXTEND_MIN_S", ""))
+        return v if v >= 0 else EXTEND_MIN_TIMEOUT_S
+    except ValueError:
+        return EXTEND_MIN_TIMEOUT_S
+
+
+def _machine_busy() -> bool:
+    """#616 A: the 1-minute load is at or above capacity.busy_load; unknown load (capacity.py broken, no getloadavg) is NOT busy."""
+    try:
+        import capacity as _capacity  # noqa: PLC0415 - sibling module in bin/
+        load = _capacity.load()
+        return load is not None and load >= _capacity.busy_load()
+    except Exception as exc:   # noqa: BLE001 - không đọc được tải thì không gia hạn: giữ luật timeout cũ, nói rõ lý do
+        log_warn(f"capacity: {exc!r}; timeout is not extended (load unknown)")
+        return False
+
+
+def run_in_group(cmd: str, cwd: str, env: dict, timeout, extend: dict = None) -> tuple:
     """(exit code, output, timed out) of a shell command in its own session/process group, so a timeout kills the
     whole tree (gradle daemons, test workers), not just the shell. The group is in _VACUITY_PGIDS while it runs: a
-    signal handler (_vacuity_on_signal) can end it from any thread."""
+    signal handler (_vacuity_on_signal) can end it from any thread.
+    #616 A: with `extend` (a dict), a run that outlives `timeout` while the machine is busy (load >= busy_load) is not killed: it
+    gets EXTEND_STEP_S more at a time, up to EXTEND_CAP_FACTOR × timeout in all; the seconds added are put in extend["s"]. A machine
+    that is not busy (or whose load is unknown) at the deadline keeps the old kill."""
     mod = suite_cache_mod() if PER_TEST_CACHE["mode"] != "0" else None
     if mod is not None and env is not None and mod.SELECTION_CMD.match(cmd or ""):
         # chỉ `bash <kit>/tests/run_impacted.sh [--all]` (suite_env bỏ biến này khỏi mọi suite khác: một test chạy run_impacted.sh
@@ -4296,7 +4335,25 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout) -> tuple:
         _VACUITY_PGIDS.add(proc.pid)
     try:
         try:
-            out, _ = proc.communicate(timeout=timeout)
+            try:
+                out, _ = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                if extend is None or not timeout or timeout < _extend_min_s():
+                    raise
+                cap, step, added = EXTEND_CAP_FACTOR * timeout, _extend_step_s(), 0.0
+                try:
+                    while timeout + added < cap and _machine_busy():
+                        wait = min(step, cap - timeout - added)
+                        added += wait
+                        extend["s"] = round(added, 1)
+                        try:
+                            out, _ = proc.communicate(timeout=wait)
+                            return proc.returncode, out, False
+                        except subprocess.TimeoutExpired:
+                            continue
+                except subprocess.TimeoutExpired:
+                    pass
+                raise subprocess.TimeoutExpired(cmd, timeout + added)
             return proc.returncode, out, False
         except subprocess.TimeoutExpired:
             snap = HANG_SNAPSHOT_MARK + _timeout_snapshot(proc.pid) + "\n"   # before any signal: the stuck process is still there
@@ -5172,13 +5229,15 @@ def suite_env():
             # #484: tự duyệt test sửa là quyết định verdict của gate CHA (do nơi gọi đặt trong env); lọt xuống suite thì gate lồng
             # (tests/gates/test_postfix_gate.sh) cũng tự duyệt, các ca "existing test edited … -> UNVERIFIED" ra exit 0 và REG-DK-GATE-01 đỏ
             "DEVKIT_AUTO_APPROVE_TESTS",
+            "SB_MARK_VERIFIED_TREE",   # #575: cờ ghi biên nhận verified-trees là của lượt gate CHA; lọt xuống suite thì gate lồng ghi biên nhận ngoài ý muốn
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
             "TEST_RUN_LOCK_BUSY_FAST",   # B5: the Stop hook's short BUSY wait is for ITS gate run; a gate a suite starts waits as the CLI does
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
             # T0056 (INSTINCT-046): DEVKIT_GATE_SLOT_HELD cố ý giữ lại để suite chạy gate lồng không xin thêm slot và không tự khoá cứng;
             # số slot và thời gian chờ là núm của MỘT lần gate (Stop hook đặt 45 s), không lọt xuống suite
             "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD", "DEVKIT_GATE_SLOTS", "DEVKIT_GATE_SLOT_WAIT_S",
-            "DEVKIT_PER_TEST_CACHE"}   # B2: chỉ run_in_group đặt nó, cho lệnh run_impacted.sh chuẩn của lượt này
+            "DEVKIT_PER_TEST_CACHE",   # B2: chỉ run_in_group đặt nó, cho lệnh run_impacted.sh chuẩn của lượt này
+            "DEVKIT_IMPACTED_DIRS"}   # #616: shard do tiền tố của lệnh ma trận đặt; biến có sẵn trong môi trường không được thu hẹp suite không tiền tố
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
 
@@ -5718,6 +5777,9 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         ptc = [t["ptc"] for t in regression_tests if t.get("ptc")]
         if ptc:   # #472 D: hit-rate của per_test_cache (chỉ lượt có suite run_impacted.sh chạy với sổ per-test bật)
             rec["ptc_reuse"], rec["ptc_ran"] = sum(p[0] for p in ptc), sum(p[1] for p in ptc)
+        extended = sum(t.get("extended_s") or 0 for t in regression_tests)
+        if extended:   # #616 A
+            rec["extended_s"] = round(extended, 1)
         if len(files) > RUN_LOG_CHANGED_MAX:
             rec["changed_files_cut"] = True
         waits = _run_log_slot_waits(regression_tests, slot_waits)
@@ -6966,7 +7028,10 @@ def main():
         # Own session/process group (run_in_group) so a timeout or a signal to the gate kills the whole tree
         # (gradle daemons, test workers), not just the shell. Commands come from the matrix at the base
         # ref (load_active_matrix), so the audited change cannot rewrite them.
-        code, out, timed_out = run_in_group(cmd, str(project_dir), env, args.timeout)
+        ext = {}
+        code, out, timed_out = run_in_group(cmd, str(project_dir), env, args.timeout, extend=ext)
+        if ext.get("s"):
+            t["extended_s"] = ext["s"]   # #616 A: seconds past --timeout the suite was left running because the machine was busy
         full_cmd = t.get("full_command") or ""
         if (not timed_out and code != 0 and mode in ("package", "module") and full_cmd
                 and full_cmd.strip() != cmd.strip() and NARROW_NO_TESTS_RE.search(out or "")):

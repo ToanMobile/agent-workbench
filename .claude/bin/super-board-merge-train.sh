@@ -281,13 +281,13 @@ verify_timed_out() (
   [ "$1" -eq 124 ] && return 0
   plain=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VLOG" 2>/dev/null) || return 1
   if printf '%s\n' "$plain" | grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT"; then
-    printf '%s\n' "$plain" | LC_ALL=C awk '/^[[:space:]]*\[ \] [^|]*\|/ { if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT[[:space:]]*\|/) t++; else o++ } END { exit !(t > 0 && o == 0) }'
+    printf '%s\n' "$plain" | LC_ALL=C awk '/^[[:space:]]*\[ \] [^|]*\|/ { if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT([[:space:]]+\(HANG\))?[[:space:]]*\|/) t++; else o++ } END { exit !(t > 0 && o == 0) }'
     return
   fi
   printf '%s\n' "$plain" | grep -aqE "TIMEOUT after|quá giới hạn"
 )
-# single_red_test <log>: #578 — in đường dẫn test khi verify đỏ CHỈ vì đúng một test của REG-DK-ALL-01: gate REJECT, lớp tĩnh đạt, đúng một dòng
-# suite `[ ] FAIL | REG-DK-ALL-01`, đúng một dòng đuôi `| ✖ <test>.sh` (đuôi thụt lề của test lồng nhau không tính). Mọi trường hợp khác
+# single_red_test <log>: #578 — in đường dẫn test khi verify đỏ CHỈ vì đúng một test của một suite REG-DK-ALL-* (#616: gồm shard): gate REJECT, lớp tĩnh đạt, đúng một dòng
+# suite `[ ] FAIL | REG-DK-ALL-*`, đúng một dòng đuôi `| ✖ <test>.sh` (đuôi thụt lề của test lồng nhau không tính). Mọi trường hợp khác
 # (tên test mất vì log bị cắt, hai test trở lên, suite khác đỏ, đường dẫn lạ) thoát 1: đỏ ngay như cũ. Log là dữ liệu: đường dẫn phải khớp mẫu hẹp.
 single_red_test() {
   local t
@@ -297,11 +297,16 @@ single_red_test() {
     /^[[:space:]]*\[ \] [^|]*\|/ {
       rows++; split($0, parts, "|"); st = parts[1]; sub(/^[[:space:]]*\[ \][[:space:]]*/, "", st); sub(/[[:space:]]+$/, "", st)
       id = parts[2]; sub(/^[[:space:]]+/, "", id); sub(/[[:space:]].*$/, "", id)
-      if (st != "FAIL" || id != "REG-DK-ALL-01") bad = 1
+      if (st != "FAIL" || id !~ /^REG-DK-ALL-[A-Z0-9-]+$/) bad = 1   # #616: REG-DK-ALL-01 và các suite shard REG-DK-ALL-<NHÓM>-01
     }
     /^[[:space:]]*\| ✖ [^[:space:]]+[[:space:]]*$/ { line = $0; sub(/^[[:space:]]*\| ✖ /, "", line); sub(/[[:space:]]*$/, "", line); if (!(line in seen)) { seen[line] = 1; n++; name = line } }
     END { if (rej && static == 1 && rows == 1 && !bad && n == 1) print name; else exit 1 }') || return 1
-  [[ "$t" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*\.sh$ ]] && [[ "$t" != *..* ]] && [ -f "$SCRATCH/$t" ] && printf '%s\n' "$t"
+  [[ "$t" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*\.sh$ ]] && [[ "$t" != *..* ]] && {
+    # run_impacted.sh prints the path relative to the kit; in agent-workbench the kit sits under universal-agent-devkit/ (#616, T0070 F3)
+    if [ -f "$SCRATCH/$t" ]; then printf '%s\n' "$t"
+    elif [ -f "$SCRATCH/universal-agent-devkit/$t" ]; then printf '%s\n' "universal-agent-devkit/$t"
+    else return 1; fi
+  }
 }
 # rerun_one_test <test>: chạy đúng test đó một lần trên cây scratch của lượt verify (cùng môi trường và hàng đợi tải), ghi vào $VLOG. 0 = xanh.
 # ponytail: không có trần thời gian riêng (test tự giới hạn), nâng khi gặp test treo; một lần, không lặp lại tới khi xanh.
