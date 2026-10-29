@@ -524,9 +524,11 @@ def since_test_weakened(since: str, repo_path: str, upstream: str = "", runner: 
                            capture_output=True, text=True)
     if local.returncode == 0 and not local.stdout.strip():
         return False                                  # only upstream commits touch it
+    # No pathspec (#630): the #605 audit flow ends in an EMPTY commit carrying the trailer, which `-- <path>` never lists
+    # (as _trailer_cross_review scans the range). push_gate.approved still judges each trailer commit's own tree.
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
-                          "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD",
-                          "--", repo_path], capture_output=True, text=True)
+                          "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD"],
+                         capture_output=True, text=True)
     if res.returncode != 0:
         return True                                   # cannot read the range: fail closed
     # The line counts only as push_gate counts it (2026-10-09): a real trailer whose task has antigravity-pm's audit pass
@@ -752,7 +754,7 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
         try:
             with open(appr_file, encoding="utf-8") as afh:
                 saved = json.load(afh)
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, RecursionError) as e:   # RecursionError: JSON lồng quá sâu, không phải ValueError
             # fail-closed: file duyệt không đọc được thì không duyệt gì, và nói rõ cho agent
             saved = None
             APPROVAL_REJECTS.extend((f, _cur_sha(f), f"approved_tests.json không đọc được ({type(e).__name__})") for f in mtimes)

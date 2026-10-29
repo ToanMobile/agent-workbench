@@ -72,6 +72,20 @@ git commit -qam "weaken test + fix" -m "Test-approved-by: antigravity T0001-audi
 pm_pass T0001-audit
 expect "weakened test in a Test-approved-by commit is not flagged" no 0 "$base"
 
+# #630: the trailer sits on an EMPTY commit after the audited tree (the #605 flow): no `-- <path>` pathspec may hide it
+mk empty_trailer; base="$(git rev-parse HEAD)"
+printf '#!/bin/sh\ntrue\n' > tests/test_old.sh; echo "fun ok() = 2" > src/Core.kt
+git commit -qam "weaken test + fix"
+pm_pass T0630-empty
+git commit -q --allow-empty -m "audit" -m "Test-approved-by: antigravity T0630-empty"
+# the cross-review path can rescue the exit code, so judge since_test_weakened itself: it must not call the audited test weakened
+sw="$(CLAUDE_PROJECT_DIR="$PWD" python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("pfg", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print(m.since_test_weakened(sys.argv[2], "tests/test_old.sh"))' "$GATE" "$base" 2>&1 | tail -1)"
+if [ "$sw" = False ]; then echo "✔ since_test_weakened sees the trailer on an empty commit"
+else echo "✖ since_test_weakened ignored the trailer on an empty commit: $sw"; FAILS=$((FAILS + 1)); fi
+
 mk approved_then_weakened; base="$(git rev-parse HEAD)"
 printf '#!/bin/sh\ntrue\n' > tests/test_old.sh
 git commit -qam "weaken test" -m "Test-approved-by: antigravity T0001-audit"
