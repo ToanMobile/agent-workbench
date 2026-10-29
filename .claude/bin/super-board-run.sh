@@ -2887,14 +2887,26 @@ reload_finish_main() {
   return "$rc"
 }
 # #623: thay runner bằng bản origin an toàn: file tạm cùng thư mục, phải không rỗng + qua bash -n + chmod 0755 rồi mới mv -f
-# (git show lỗi không cắt runner về 0 byte; bản sai cú pháp không bao giờ nằm trên đĩa).
+# (git show lỗi không cắt runner về 0 byte; bản sai cú pháp không bao giờ nằm trên đĩa). Hash bản vừa ghi đi vào env (sống qua exec) để
+# lần sau biết đó là bản của runner, không phải sửa tay.
 reload_swap_self() {
   local tmp
   tmp=$(mktemp "${RELOAD_SELF}.XXXXXX" 2>/dev/null) || return 1
   if git show "$1" > "$tmp" 2>/dev/null && [ -s "$tmp" ] && bash -n "$tmp" 2>/dev/null && chmod 0755 "$tmp" && mv -f "$tmp" "$RELOAD_SELF"; then
+    SB_RELOAD_SWAPPED_SUM=$(git hash-object "$RELOAD_SELF" 2>/dev/null) && export SB_RELOAD_SWAPPED_SUM
     return 0
   fi
   rm -f "$tmp"; return 1
+}
+# #623: bản runner do lần swap trước ghi (đĩa lệch HEAD) làm file dirty nên chặn ff và `worktree finish` mãi mãi. Trả file về HEAD trước khi
+# ff/finish (runner đang chạy giữ inode cũ). Chỉ khi đĩa đúng bản runner tự ghi và index sạch: sửa tay (kể cả đã stage) thì không đụng.
+reload_restore_self() {
+  local rel="$1" disk head
+  disk=$(git hash-object "$RELOAD_SELF" 2>/dev/null) || return 1
+  head=$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null) || return 1
+  [ "$disk" = "$head" ] && return 0
+  [ -n "${SB_RELOAD_SWAPPED_SUM:-}" ] && [ "$disk" = "$SB_RELOAD_SWAPPED_SUM" ] && git diff --cached --quiet -- "$rel" 2>/dev/null || return 1
+  git restore --source=HEAD -- "$rel" 2>/dev/null
 }
 self_reload_tick() {
   local now new disk rel cur
@@ -2915,15 +2927,18 @@ self_reload_tick() {
       reload_warn "$new" "main checkout is on branch '${cur:-detached}', not ${BASE_BRANCH}; bring it level, then the next idle tick reloads"
       return 0
     fi
+    reload_restore_self "$rel" || true
     if git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null; then
       if ! git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
         # #623: ff bị chặn bởi file KHÁC bị sửa dở (vd instincts.md của phiên khác). Runner script chưa bị sửa tay thì chỉ cần thay đúng file
         # đó bằng bản origin (không đụng index, không đụng file dở của người khác); script đang bị sửa tay thì giữ nguyên và cảnh báo.
         # ponytail: bin/ helper khác vẫn là bản cũ tới khi main ff được; nâng lên stash/worktree nếu helper đổi cùng lúc làm hỏng runner mới.
-        # "Sạch" = đĩa khớp HEAD hoặc khớp bản runner đang chạy (sau lần nạp trước đĩa = v2, HEAD = v1).
-        { [ "$disk" = "$RELOAD_RUN_SUM" ] || [ "$disk" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ]; } \
-          && reload_swap_self "origin/${BASE_BRANCH}:${rel}" \
+        # "Sạch" = đĩa khớp HEAD và index sạch (reload_restore_self đã trả bản runner tự ghi về HEAD ở trên).
+        [ "$(git hash-object "$RELOAD_SELF" 2>/dev/null)" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ] \
+          && git diff --cached --quiet -- "$rel" 2>/dev/null \
           || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+        reload_swap_self "origin/${BASE_BRANCH}:${rel}" \
+          || { reload_warn "$new" "git merge --ff-only failed and the origin copy of super-board-run.sh could not be swapped in (unreadable or fails bash -n)"; return 0; }
       fi
     else
       # Main có commit cục bộ của phiên khác (#308): gộp origin vào main bằng đường finish (worktree tạm + gate + ff), không đụng tay.
