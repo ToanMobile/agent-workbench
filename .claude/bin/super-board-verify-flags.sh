@@ -7,7 +7,11 @@ sb_verify_inject_flags() {
   local cmd="$1" base="$2" want_json="${3:-}" flags="" pfg_re pfg_after pfg_end pfg_rest
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
     [[ "$cmd" == *"--diff"* ]] || flags=" --diff origin/${base}"
-    [[ "$cmd" == *"--force-full"* ]] || flags="$flags --force-full"
+    # #644: mặc định --scoped (test của diff qua đồ thị import + smoke; đụng lõi / không suy ra test thì post-fix-gate tự leo full). Dòng config
+    # còn ghi --full / --force-full thì giữ nguyên ý đó. --full đêm thuộc skill gate-full.
+    # so TOKEN nguyên (chuỗi con thì `--full-name` cũng chặn --scoped)
+    local tok_re="(^|[[:space:]\"'])--(full|force-full|scoped)(\$|[[:space:]\"';&|)])"
+    [[ "$cmd" =~ $tok_re ]] || flags="$flags --scoped"
     [ "$want_json" = json ] && { [[ "$cmd" == *"--json"* ]] || flags="$flags --json"; }
     if [ -n "$flags" ]; then
       # Cờ chèn ngay sau token post-fix-gate.py (#102): nối vào cuối thì `… post-fix-gate.py --run-tests && npm test` đưa cờ cho npm,

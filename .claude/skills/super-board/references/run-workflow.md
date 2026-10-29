@@ -242,7 +242,11 @@ Repeat until a done condition or halt gate fires:
    and moves held cards to Blocked itself (run.md → "Builder pre-flight"); the summary reports those
    as `preflight:blocked`. A card sequenced behind an open card is never Blocked: the agent runs
    `super-board-waiting-on.py mark`, the card stays in Ready with `waiting-on:#N`, and the summary
-   reports `preflight:waiting`; the `sweep` above drops the label when N closes. `preflight:failed`
+   reports `preflight:waiting`; the `sweep` above drops the label when N closes. Two Ready cards
+   that share files, and neither has an open `issue-<N>-*` PR, fold instead: the higher is verdict
+   `merge`, its AC is copied verbatim onto the lower, the source closes as not planned, and that
+   card's column is Done. A peer that already started stays `sequence` (Ready, never Blocked).
+   `preflight:failed`
    means pre-flight was blind and the card stays in Ready for the next wave.
    Wave width is every card the dependency graph says is free, in flight
    first (Review → QA → Ready), cut to `max_workers` when it is set (0 or
@@ -395,7 +399,7 @@ up front (onboard → Permissions), so the first overnight run does not stall:
 
 Without them every Reviewer merge pauses for one interactive approval, so the
 backend is **attended-only**. With them, the gate still enforces
-`merge_policy` (money / auth / destructive schema / over `auto_max_lines` → human, exit 7) and `migrations`
+`merge_policy` (money / auth / destructive schema → human, exit 7; a line-count hold only when `auto_max_lines` is a positive number) and `migrations`
 (live DB → 🙋 needs you, exit 8), so the allowlist removes the prompt, not
 the policy. Pair auto-merge with a non-production `base_branch`.
 

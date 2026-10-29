@@ -262,7 +262,7 @@ verify_env "$CFG_PRIO_PFG" pfg-push "push unset" DEVKIT_SLOT_PRIORITY=push
 # OCR 21/10: cap > 0 nhưng tải không đọc được ⇒ gate không chờ tải ⇒ không ép 0 (bên trong tự chờ tải như mọi lượt).
 VE_LOAD=12.5 verify_env "$CFG_PRIO" wrap-noload "merge unset" SB_MERGE_LOAD_WAIT_S=3
 VE_LOAD=12.5 verify_env "$CFG_PRIO_PFG" pfg-noload "merge unset" SB_MERGE_LOAD_WAIT_S=3
-grep -q "verify: : post-fix-gate.py --diff origin/main --force-full; " "$TMP/gate16-pfg-cap3.log" \
+grep -q "verify: : post-fix-gate.py --diff origin/main --scoped; " "$TMP/gate16-pfg-cap3.log" \
   && ok "16 pfg: the verify command took the post-fix-gate.py branch" \
   || fail "16 pfg: post-fix-gate.py branch not taken: $(grep 'verify:' "$TMP/gate16-pfg-cap3.log" | head -1)"
 
