@@ -2252,6 +2252,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-setup-bin-scan",
+      "watch_files": [
+        ".claude/bin/*",
+        ".claude/skills/*",
+        ".claude/workflows/*",
+        ".claude/hooks/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SETUP-BIN-02",
+          "name": "test_setup_bin_list.sh quét .claude/bin, skills, workflows, hooks theo thư mục: thêm hay sửa script super-* ở đó phải chọn lại suite này (main đỏ REG-SB-SETUP-BIN-01 sau #656 vì watch_files chỉ liệt kê 2 file)",
+          "command": "bash tests/super-board/test_setup_bin_list.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
