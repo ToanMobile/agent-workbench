@@ -100,8 +100,9 @@
 #      the card goes back to Review (not Blocked, not a rebase pass)
 #   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
 #   7  merge policy says a human merges this one (money / auth / destructive
-#      schema, a diff over auto_max_lines — default 400, "big PR — please
-#      review" — or merge_policy.default "human"). Stdout lists each
+#      schema, a diff over a positive auto_max_lines — default 0, so an unset
+#      cap is not a size gate; a positive cap says "big PR — please review" —
+#      or merge_policy.default "human"). Stdout lists each
 #      `human-gate: <category> — <evidence>`. Nothing ran, nothing merged; the
 #      card → Blocked with the 🙋 template: the human reviews and merges it, or
 #      comments "done" after its pinned request to approve — the next wave re-runs
@@ -122,7 +123,7 @@
 # MERGE POLICY AND MIGRATIONS (config, all optional — defaults shown in
 # references/config-schema.json)
 #
-#   merge_policy: { default: "auto"|"human", auto_max_lines: 400, size_exclude,
+#   merge_policy: { default: "auto"|"human", auto_max_lines: 0, size_exclude,
 #                   always_human: { <category>: {labels, paths, keywords} } }
 #   migrations:   { globs, allowed_envs, target_env, commands: {<env>: cmd},
 #                   human_steps }
@@ -167,10 +168,10 @@ case "${SB_MERGE_QUEUE-}" in
   1) MERGE_QUEUE_ON=1 ;;
   *) if jq -e '.merge_queue.enabled == true' "$CONFIG" >/dev/null 2>&1; then MERGE_QUEUE_ON=1; fi ;;
 esac
-# Chỉ backend claude-p có runner rút hàng (merge_queue_due); backend khác (workflow — mặc định khi thiếu khoá, như super-board-run.sh —
-# hoặc codex) luôn coi là tắt, kể cả SB_MERGE_QUEUE=1, để PR không kẹt trong hàng không ai rút. ponytail: hỗ trợ workflow/codex khi có
-# Q-schedule.
-if [ "$MERGE_QUEUE_ON" -eq 1 ] && ! jq -e '(.worker_backend // "workflow") == "claude-p"' "$CONFIG" >/dev/null 2>&1; then
+# Chỉ backend có người rút hàng: claude-p (runner gọi merge_queue_due mỗi tick) và workflow (mặc định khi thiếu khoá, như
+# super-board-run.sh; lịch super-board-queue-schedule.sh, #453). Backend khác (codex) luôn coi là tắt, kể cả SB_MERGE_QUEUE=1, để PR
+# không kẹt trong hàng không ai rút. ponytail: hỗ trợ codex khi lane codex có lịch rút hàng.
+if [ "$MERGE_QUEUE_ON" -eq 1 ] && ! jq -e '(.worker_backend // "workflow") | IN("claude-p", "workflow")' "$CONFIG" >/dev/null 2>&1; then
   MERGE_QUEUE_ON=0
 fi
 # Queue bật: chỉ train/queue gọi được; --standalone (/super-review ngoài board) đi tiếp, trừ worker do runner phóng (SB_BOARD_WORKER=1):
@@ -240,9 +241,10 @@ pr_title() {
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
 }
 needs_you_notify() {
-  # Queue bật: --preflight / --dry-run không gửi (queue gửi đúng một lần ở nhánh exit 7/8). Queue tắt: cả hai gửi như gate cũ. Train gọi
-  # --preflight cho mọi PR và PR rớt preflight rời đợt trước lượt --dry-run, nên preflight im lặng = PR exit 7/8 mất nút duyệt (R2).
-  if [ "$MERGE_QUEUE_ON" -eq 1 ] && { [ "$PREFLIGHT" -eq 1 ] || [ "$DRY" -eq 1 ]; }; then return 0; fi
+  # Queue bật: train / queue gọi thì không gửi (queue gửi đúng một lần ở nhánh exit 7/8); #453: theo BÊN GỌI, không theo cờ, nên
+  # /super-review --standalone --dry-run ngoài board vẫn gửi nút. Queue tắt: gửi như gate cũ. Train gọi --preflight cho mọi PR và PR rớt
+  # preflight rời đợt trước lượt --dry-run, nên preflight im lặng khi queue tắt = PR exit 7/8 mất nút duyệt (R2).
+  if [ "$MERGE_QUEUE_ON" -eq 1 ]; then case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac; fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt

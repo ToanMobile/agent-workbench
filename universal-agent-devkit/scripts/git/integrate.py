@@ -2,7 +2,8 @@
 """`agent-kit integrate [--if-due] [--dry-run]` — điểm gộp của repo trunk-push (Q5, pha 2 merge queue, v4 mục 1).
 
 Repo không đi PR: các worktree `finish` vào main LOCAL, rồi ai đó push. Commit trên main local chưa có trên origin chính là hàng đợi;
-lệnh này gom cả hàng đợi vào MỘT lượt `post-fix-gate --run-tests --full` thay vì một lượt cho mỗi lần push.
+lệnh này gom cả hàng đợi vào MỘT lượt `post-fix-gate --run-tests --scoped` thay vì một lượt cho mỗi lần push (#644: scoped tự leo
+--full khi đụng lõi; --full đêm thuộc skill gate-full).
 
   1. khoá fcntl `<git common dir>/devkit-integrate.lock` (LOCK_NB; bận → exit 0, lượt khác đang gộp);
   2. `git fetch origin <base>`; origin/<base> phải là tổ tiên của HEAD main, không thì dừng (exit 2) — không đốt một lượt --full
@@ -10,7 +11,7 @@ lệnh này gom cả hàng đợi vào MỘT lượt `post-fix-gate --run-tests 
   3. `--if-due`: chỉ chạy khi số commit chờ ≥ devkit.integrate.batchMax (mặc định 6), commit cũ nhất chờ ≥ devkit.integrate.maxWaitMin
      phút (mặc định 60), hoặc máy rảnh: không `.claude/audit-gate/test_run.lock` nào của các worktree đang bị giữ (thử LOCK_SH|LOCK_NB);
   4. dựng worktree scratch tách rời ở HEAD main (`.claude/worktrees/.integrate-scratch-*`): gate KHÔNG chạy trong checkout main
-     (nó ghi checklist tracked ở đó; session_lock.py `_TRUNK_ALLOWED`, v6 item 7). Chạy `--full` ở đó;
+     (nó ghi checklist tracked ở đó; session_lock.py `_TRUNK_ALLOWED`, v6 item 7). Chạy `--scoped` ở đó;
   5. xanh → `bin/push_gate.py <main> <sha>` phải nhận biên nhận của cây đó (lúc này scratch còn, push_gate xét biên nhận của linked
      worktree) → `git push origin <sha>:refs/heads/<base>` (đúng commit đã gate, kể cả khi main đã tiến trong lúc gate chạy); đỏ → không
      push, in các commit của đợt (exit 1). Scratch luôn được gỡ.
@@ -295,15 +296,16 @@ def copy_mtimes(main, scratch, remote, head):
 
 
 def run_gate(scratch, remote):
-    """Exit code của `post-fix-gate --run-tests --full --brief --diff <origin/base>` trong scratch (124 khi quá
+    """Exit code của `post-fix-gate --run-tests --scoped --brief --diff <origin/base>` trong scratch (124 khi quá
     DEVKIT_INTEGRATE_GATE_TIMEOUT_S). --diff: scratch tách rời không có upstream, cây sạch không --diff thì gate trả 3 (nothing to audit);
-    origin/<base>..HEAD đúng là nội dung sẽ push (như mặc định @{u}..HEAD của gate trên một nhánh có upstream). Đây là lượt --full duy
-    nhất của cả đợt (điểm gộp)."""
+    origin/<base>..HEAD đúng là nội dung sẽ push (như mặc định @{u}..HEAD của gate trên một nhánh có upstream). Đây là lượt gate duy
+    nhất của cả đợt (điểm gộp). #644: --scoped = test của diff cả đợt + smoke, tự leo --full khi đụng file lõi hay không suy ra được test;
+    --full đêm thuộc skill gate-full."""
     gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
     env = dict(os.environ, CLAUDE_PROJECT_DIR=scratch, DEVKIT_SLOT_PRIORITY="merge")
     try:
         # Phiên riêng: nhóm tiến trình của gate (gate + suite con) dừng được trọn bằng killpg khi integrate bị SIGTERM/SIGINT (#475).
-        p = subprocess.Popen([sys.executable, gate, "--run-tests", "--full", "--brief", "--diff", remote], cwd=scratch, env=env,
+        p = subprocess.Popen([sys.executable, gate, "--run-tests", "--scoped", "--brief", "--diff", remote], cwd=scratch, env=env,
                              stdin=subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
         say(f"gate không chạy được: {e}")
@@ -387,9 +389,9 @@ def integrate(main, base, args):
     batch = "\n".join(f"  {p[2]} {p[3] if len(p) > 3 else ''}" for p in pending)
     why = "; ".join(reasons) if args.if_due else "chạy tay"
     if args.dry_run:
-        say(f"--dry-run: sẽ gate --full rồi push {len(pending)} commit ({why}):\n{batch}")
+        say(f"--dry-run: sẽ gate --scoped rồi push {len(pending)} commit ({why}):\n{batch}")
         return 0
-    say(f"gộp {len(pending)} commit ({why}): gate --full một lần trên {head[:10]}")
+    say(f"gộp {len(pending)} commit ({why}): gate --scoped một lần trên {head[:10]}")
     os.makedirs(os.path.join(main, ".claude", "worktrees"), exist_ok=True)
     scratch = tempfile.mkdtemp(prefix=f"{SCRATCH_PREFIX}{os.getpid()}-", dir=os.path.join(main, ".claude", "worktrees"))
     try:

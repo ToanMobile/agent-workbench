@@ -135,6 +135,7 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Hai chỗ trong DevKit phân loại cùng một thứ khác nhau
 - **Nguyên nhân:** needs_no_test (post-fix-gate) không coi *.log là tài liệu dù tree_fp đã coi; RUNNER_FAIL_RX không đọc failures="N" của JUnit XML dù gate XML đọc được; proof_gate coi git push trong repo nháp là bàn giao — agent GeelyEx2 bị chặn nhầm và một lần chạy đỏ bị tính là xanh (2026-09-28)
 - **Quy tắc phòng ngừa & Cách fix:** Khi thêm/đổi luật phân loại (file không cần test, dấu hiệu đỏ, lệnh bàn giao) ở một gate, grep mọi gate khác có luật cùng loại và dùng chung một hàm/regex; mỗi dạng output thật agent hay in (log redirect, XML tóm tắt) phải có ca test ĐỎ và XANH
+- **Cập nhật #644 (2026-10-29):** chọn test của task, QA, merge queue/train và `agent-kit integrate` giờ đi qua MỘT bộ quyết định: `post-fix-gate.py --scoped` → `bin/scoped_gate.decide` (dùng chính `needs_no_test` của gate) với lõi ở `.agents/gate-core.txt`; ba cửa nhận bằng chứng (post-fix-gate ghi, push_gate, proof_gate) cùng đọc `scoped_pass.json` qua `tree_fp.scoped_receipt_path`. Thêm cửa hay luật chọn test mới thì đi qua hai hàm đó, không tự suy lại tập test hay đường dẫn biên nhận; `--full` chỉ còn ở skill `gate-full` (tay / launchd 00:00)
 
 ---
 
