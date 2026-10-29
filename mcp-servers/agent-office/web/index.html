@@ -199,10 +199,11 @@
   .lbl-repo .rd { font-size: 12.5px; color: var(--muted); font-weight: 500; }
   .lbl-repo.st-working { --st: var(--c-done); --st-t: var(--t-done); background: color-mix(in srgb, var(--c-done) 9%, var(--panel-solid)); }
   .lbl-repo.st-idle { --st: var(--c-building); --st-t: var(--t-building); }
+  .lbl-repo.st-merging { --st: var(--c-done); --st-t: var(--t-done); }
   .lbl-repo.st-stopped { --st: var(--muted); color: var(--muted); }
   .lbl-repo.st-stopped .rs i { border-radius: 2px; }
   .lbl-repo.st-stale { --st: var(--c-blocked); --st-t: var(--t-blocked); }
-  .st-working .rs i { animation: livepulse 1.4s ease-in-out infinite; }
+  .st-working .rs i, .st-merging .rs i { animation: livepulse 1.4s ease-in-out infinite; }
   @keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   .lbl-idle { font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--panel); border: 1px dashed var(--faint); padding: 2px 9px; border-radius: 999px; }
   button.lbl-idle { font-family: inherit; pointer-events: auto; cursor: pointer; position: relative; }
@@ -222,7 +223,7 @@
   .states { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 13.5px; font-weight: 600; }
   .states span { display: inline-flex; align-items: center; gap: 6px; }
   .states i { width: 9px; height: 9px; border-radius: 50%; }
-  @media (prefers-reduced-motion: reduce) { .st-working .rs i { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .st-working .rs i, .st-merging .rs i { animation: none; } }
   .bubble { max-width: 250px; white-space: normal; padding: 7px 11px 8px; border-radius: 12px; background: var(--panel-solid); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 12.5px; line-height: 1.38; }
   .bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px; background: var(--panel-solid); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: translateX(-50%) rotate(45deg); }
   .bubble .bt { display: flex; gap: 6px; align-items: center; font-weight: 700; font-size: 12.5px; }
@@ -581,9 +582,17 @@ function shortPath(p, repo) {
   if (STATE && STATE.root) out = out.split(STATE.root + '/').join('');
   return out;
 }
-const RUNNER_STATE = { running: 'Đang chạy', idle: 'Chờ việc', finished: 'Đã chạy xong', stale: 'Mất tín hiệu', none: 'Không có runner' };
+const RUNNER_STATE = { running: 'Đang chạy', idle: 'Chờ việc', merging: 'Đang chạy gate merge', finished: 'Đã chạy xong', stale: 'Mất tín hiệu', none: 'Không có runner' };
 const WORKER_STATE = { working: 'Đang làm', away: 'Đang nghỉ', idle: 'Rảnh' };
-const ROW_PILL = { working: 'running', idle: 'idle', stopped: 'finished', stale: 'stale' };
+const ROW_PILL = { working: 'running', merging: 'running', idle: 'idle', stopped: 'finished', stale: 'stale' };
+const trainMins = (tr) => Math.max(0, Math.floor((Date.now() / 1000 - tr.startedAt) / 60));
+// Thẻ Review trong train merge / đã vào hàng đợi mà chưa vào train (server gắn it.mergeTag; #562)
+const MERGE_TAG = { gate: '🚂 đang chạy gate merge', merge: '🚂 đang merge', wait: '⏳ chờ train' };
+function mergeTagText(it) {
+  const t = it.mergeTag; if (!t || !MERGE_TAG[t]) return '';
+  const r = STATE && STATE.repos.find((x) => x.name.toLowerCase() === String(it.repo).toLowerCase());
+  return MERGE_TAG[t] + (t !== 'wait' && r && r.train ? ' · ' + trainMins(r.train) + 'm' : '');
+}
 function rowState(repo) {
   const ws = STATE ? STATE.workers.filter((w) => w.repo === repo.name && w.status === 'working') : [];
   const rn = repo.runner; const rs = rn ? rn.state : 'none';
@@ -591,6 +600,7 @@ function rowState(repo) {
     const nums = ws.filter((w) => w.issue).map((w) => '#' + w.issue);
     return { key: 'working', label: 'Đang làm', detail: ws.length + ' agent' + (nums.length ? ': ' + nums.slice(0, 5).join(', ') + (nums.length > 5 ? ' +' + (nums.length - 5) : '') : '') };
   }
+  if (repo.train) return { key: 'merging', label: 'Đang chạy gate merge', detail: repo.train.prs.length + ' PR · ' + trainMins(repo.train) + ' phút' };
   if (rs === 'running' || rs === 'idle') return { key: 'idle', label: 'Chờ việc', detail: 'runner vẫn chạy' };
   if (rs === 'stale') return { key: 'stale', label: 'Mất tín hiệu', detail: 'tick cuối ' + ago(rn.tick.at) };
   if (rs === 'finished') return { key: 'stopped', label: 'Đã dừng', detail: 'dừng sau tick ' + rn.tick.time.slice(0, 5) };
@@ -945,11 +955,11 @@ function buildRow(S, repo, r, cols, T) {
   const rn = repo.runner;
   const rstate = rn ? rn.state : 'none';
   if (rn) {
-    const lampColor = { running: cssVar('--c-done'), idle: cssVar('--c-building'), finished: cssVar('--c-away'), stale: cssVar('--c-blocked') }[rstate];
+    const lampColor = { running: cssVar('--c-done'), idle: cssVar('--c-building'), finished: cssVar('--c-away'), stale: cssVar('--c-blocked'), merging: cssVar('--c-done') }[rstate];
     const waiting = rn.tick && rn.tick.waiting > 0;
     const lm = new THREE.Mesh(GEO.lamp, mat(waiting ? cssVar('--c-you') : lampColor, { emissive: waiting ? cssVar('--c-you') : lampColor, emissiveIntensity: rstate === 'finished' ? 0.15 : 0.85 }));
     lm.position.set(sx + 1.9, 2.15, sz); world.add(lm);
-    lamps.push({ mesh: lm, pulse: waiting || rstate === 'running' });
+    lamps.push({ mesh: lm, pulse: waiting || rstate === 'running' || rstate === 'merging' });
   }
   const rsx = rowState(repo);
   const lbl = h('button', 'st-' + rsx.key); lbl.type = 'button';
@@ -1974,9 +1984,9 @@ function renderTop(S) {
   const working = S.workers.filter((w) => w.status === 'working').length;
   sync.append(h('span', null, S.project.fetchedAt ? 'Đồng bộ GitHub ' + ago(S.project.fetchedAt) : 'Chưa đọc được GitHub'));
   const stBox = $('#states'); stBox.textContent = '';
-  const states = S.repos.filter((r) => r.runner || S.workers.some((w) => w.repo === r.name)).map(rowState);
+  const states = S.repos.filter((r) => r.runner || r.train || S.workers.some((w) => w.repo === r.name)).map(rowState);
   const cnt = (k) => states.filter((x) => x.key === k).length;
-  [[working, 'agent đang làm', '--c-done', true], [cnt('idle'), 'repo chờ việc', '--c-building'], [cnt('stopped'), 'repo đã dừng', '--faint'], [cnt('stale'), 'repo mất tín hiệu', '--c-blocked']]
+  [[working, 'agent đang làm', '--c-done', true], [cnt('idle'), 'repo chờ việc', '--c-building'], [cnt('merging'), 'repo đang chạy gate merge', '--c-done'], [cnt('stopped'), 'repo đã dừng', '--faint'], [cnt('stale'), 'repo mất tín hiệu', '--c-blocked']]
     .forEach(([c, t, v, always]) => { if (!c && !always) return; const sp = h('span'); const i = h('i'); i.style.background = 'var(' + v + ')'; sp.append(i, c + ' ' + t); stBox.append(sp); });
 
   const lg = $('#legend'); lg.textContent = '';
@@ -2320,6 +2330,7 @@ function drawItem(it) {
   const sp = h('span', 'pill'); sp.textContent = it.status; sp.style.color = colText(col); sp.style.background = 'color-mix(in srgb, ' + colColor(col) + ' 14%, transparent)';
   k.append(sp, h('span', null, it.repo + (it.number ? ' #' + it.number : '')));
   d.append(k, h('h2', null, it.title));
+  const mtagD = mergeTagText(it); if (mtagD) d.append(h('p', null, mtagD));
   if (it.lastComment && it.lastComment.body) {
     const isBlocked = (col.kind || kindOf(col.name)) === 'blocked';
     d.append(h('h3', null, isBlocked ? 'Lý do bị chặn (bình luận mới nhất)' : 'Bình luận mới nhất'));
@@ -2592,6 +2603,7 @@ function renderBoard() {
       b.setAttribute('aria-current', String(!!selection && selection.type === 'item' && selection.id === it.id));
       const top = h('div', 'bc-top'); top.append(h('b', null, it.number ? '#' + it.number : 'Nháp'), h('span', null, it.repo));
       b.append(top, h('div', 'tt', it.title));
+      const mtag = mergeTagText(it); if (mtag) b.append(h('span', 'pill ' + (it.mergeTag === 'wait' ? 'idle' : 'running'), mtag));
       if ((c.kind || kindOf(c.name)) === 'blocked' && it.lastComment && it.lastComment.body) b.append(h('div', 'why', clip(it.lastComment.body, 110)));
       workersOnItem(it).filter((w) => w.status === 'working').forEach((w) => { const a = h('span', 'agent'); const i = h('i'); i.style.background = workerColor(w); a.append(i, workerName(w) + ' đang làm'); b.append(a); });
       b.addEventListener('click', () => select({ type: 'item', id: it.id }, false));

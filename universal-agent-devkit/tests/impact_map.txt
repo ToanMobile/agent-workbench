@@ -55,3 +55,5 @@ profiles/*/regression_matrix.json   tests/installer/test_agent_config.sh tests/i
 templates/regression_matrix.json   tests/installer/test_agent_health.sh tests/installer/test_uninstall.sh
 # 26/10 (T0058): test_skill_eval.sh quét động skills/*/evals/evals.json để kiểm định schema và đường dẫn fixture/oracle mà không gọi tên từng skill.
 skills/*/evals/*   tests/verification/test_skill_eval.sh
+# 28/10 (#545): test_skill_size.sh scans every skills/*/SKILL.md and .claude/skills/*/SKILL.md for the 20000-character cap without naming them.
+skills/*/SKILL.md   tests/verification/test_skill_size.sh
