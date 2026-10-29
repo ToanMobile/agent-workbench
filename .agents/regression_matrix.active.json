@@ -2170,7 +2170,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-DK-ALL-SHARD-RULES-616-01",
-          "name": "#616: ba suite shard REG-DK-ALL-* thay REG-DK-ALL-01 (đã bỏ khỏi ma trận), theo dõi universal-agent-devkit/*, run_impacted.sh --list của ba lệnh hợp lại đúng tập không shard, không trùng",
+          "name": "#616: ba suite shard REG-DK-ALL-* thay REG-DK-ALL-01 (đã bỏ khỏi ma trận), khối shard liền nhau và chỉ-thêm sau các rule trước nó (rule nối sau không làm đỏ, #453), theo dõi universal-agent-devkit/*, run_impacted.sh --list của ba lệnh hợp lại đúng tập không shard, không trùng",
           "command": "bash tests/super-board/test_matrix_shard_rules.sh",
           "parallel_safe": true
         }
