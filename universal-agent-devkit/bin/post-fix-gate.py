@@ -5491,6 +5491,21 @@ def _rerun_cache_blocks(sc, tests, key_of, path):
     return False
 
 
+def _rerun_suite_must_run(tests, matrix_tests):
+    """#648 không được trả 0 trước suite cache:false hoặc runner run_impacted.sh. Chúng vẫn chạy mỗi lượt.
+    matrix_tests là map cục bộ trong hàm main (id → mục ma trận): cờ cache không nằm trên dict suite."""
+    for t in tests:
+        cmd = t.get("command") or ""
+        if not cmd:
+            continue
+        if "run_impacted.sh" in cmd:
+            return True
+        src = next((m for m in (matrix_tests or {}).get(t.get("id"), ()) if m.get("command") == cmd), None)
+        if isinstance(src, dict) and src.get("cache") is False:
+            return True
+    return False
+
+
 def _gate_pool_has_room():
     """True khi cha đang giữ slot, hàng đợi tắt, hoặc acquire_pool(wait_s=0) lấy được một slot rồi nhả ngay."""
     if os.environ.get("DEVKIT_GATE_SLOT_HELD") == "1":
@@ -7106,6 +7121,9 @@ def main():
                           for t in regression_tests if t.get("command"))
     if (run_tests and rerun_path and rerun_fp and not getattr(args, "force", False)
             and not getattr(args, "force_full", False)
+            and os.environ.get("POSTFIX_GATE_FORCE_FULL") != "1"
+            and os.environ.get("POSTFIX_GATE_FULL") != "1"
+            and not _rerun_suite_must_run(regression_tests, MATRIX_TESTS)
             and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0"
             and hygiene_ok and anti_laziness_ok and deps_ok and settings_ok
             and not edited_early and not tests_touched and not device_selected
