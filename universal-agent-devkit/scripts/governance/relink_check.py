@@ -45,6 +45,8 @@ def git(project, *args):
 
 
 def should_run(project, argv):
+    """False, True (checkout chính: mọi link + context), hoặc "worktree" (#644: linked worktree, chỉ với --links-only của SessionStart —
+    chỉ link lệnh / skill của kit; .agents/devkit và hook do `agent-kit worktree add` / heal lo)."""
     if os.environ.get("DEVKIT_RELINK") == "0":
         return False
     if (os.path.realpath(project) + os.sep).startswith(os.path.realpath(DEVKIT) + os.sep):
@@ -57,9 +59,30 @@ def should_run(project, argv):
     if gd and cd:
         common = cd if os.path.isabs(cd) else os.path.join(project, cd)
         if os.path.realpath(gd) != os.path.realpath(common):
-            return False                # a linked worktree
+            # a linked worktree: .agents/context is git-ignored there, the tracked profile marks the install
+            return "worktree" if ("--links-only" in argv
+                                  and os.path.isfile(os.path.join(project, ".agents", "active-profile.json"))) else False
     return (os.path.isfile(os.path.join(project, ".agents", "active-profile.json"))
             and os.path.isdir(os.path.join(project, ".agents", "context")))
+
+
+def main_checkout(project):
+    """Thư mục checkout chính của repo (dòng đầu `git worktree list`), None khi không biết."""
+    out = git(project, "worktree", "list", "--porcelain") or ""
+    first = out.split("\n", 1)[0]
+    return first[9:] if first.startswith("worktree ") else None
+
+
+def foreign_kit(project):
+    """True khi kit đang chạy nằm trong một checkout KHÁC của cùng repo (checkout chính chạy cho worktree, hay ngược lại): link lệnh /
+    skill trỏ sang đó thì đổi theo nhánh của checkout kia và mất khi nó bị gỡ. Kit ở repo riêng (cài qua .agents/devkit) không phải."""
+    top = git(DEVKIT, "rev-parse", "--show-toplevel")
+    if not top:
+        return False
+    kc, pc = git(DEVKIT, "rev-parse", "--path-format=absolute", "--git-common-dir"), \
+        git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    return bool(kc and pc and os.path.realpath(kc) == os.path.realpath(pc)
+                and os.path.realpath(top) != os.path.realpath(project))
 
 
 def in_kit(path):
@@ -76,8 +99,18 @@ def excluded_skills(project):
     return set(prof.get("exclude_skills", []))
 
 
-def missing(project):
-    """Relative paths of DevKit links the project should have and does not."""
+def missing(project, worktree=False):
+    """Relative paths of DevKit links the project should have and does not. worktree=True: only command / skill links (a linked
+    worktree's .agents/skills/ holds git-ignored links only, so it is wanted when the main checkout has one). None of either when the
+    running kit lies in another checkout of this repository (foreign_kit)."""
+    out = []
+    if worktree:
+        return [] if foreign_kit(project) else _kit_items(project, main_checkout(project))
+    out = [] if foreign_kit(project) else _kit_items(project, None)
+    return sorted(set(_hooks_and_devkit(project) + out))
+
+
+def _hooks_and_devkit(project):
     out = []
     try:
         settings = json.load(open(os.path.join(project, ".claude", "settings.json"), encoding="utf-8"))
@@ -91,6 +124,13 @@ def missing(project):
                         out.append(rel)
     if not os.path.exists(os.path.join(project, ".agents", "devkit", "rules", "essentials.md")):
         out.append(".agents/devkit")    # master rules, core-rules, the post-fix gate
+    return out
+
+
+def _kit_items(project, main):
+    """Lệnh / skill của kit mà project chưa có link. main: checkout chính (linked worktree) — .agents/skills/ của worktree được muốn khi
+    checkout chính có."""
+    out = []
     excluded = excluded_skills(project)
     cmds = os.path.join(DEVKIT, "commands")
     # a link directory that resolves into the kit is the kit's own folder: never write into it. One that is absent is rebuilt
@@ -108,12 +148,14 @@ def missing(project):
     skills_dir = os.path.join(project, ".agents", "skills")
     kit_skills = os.path.join(DEVKIT, "skills")
     # ponytail: a skills dir removed whole is not rebuilt (a claude-only install never had one), upgrade when the installer records it
-    if os.path.isdir(skills_dir) and not in_kit(skills_dir) and os.path.isdir(kit_skills):
+    want = os.path.isdir(skills_dir) or (main is not None and not os.path.lexists(skills_dir)
+                                         and os.path.isdir(os.path.join(main, ".agents", "skills")))
+    if want and not in_kit(skills_dir) and os.path.isdir(kit_skills):
         for name in sorted(os.listdir(kit_skills)):
             if (name not in excluded and os.path.isfile(os.path.join(DEVKIT, "skills", name, "SKILL.md"))
                     and not os.path.lexists(os.path.join(skills_dir, name))):
                 out.append(f".agents/skills/{name}")
-    return sorted(set(out))
+    return out
 
 
 def keep_out_of_git(project, rel):
@@ -226,7 +268,11 @@ def relink(project, gone, raced=None):
 
 def main(argv):
     project = os.path.realpath(argv[1] if len(argv) > 1 and not argv[1].startswith("-") else os.getcwd())
-    if not should_run(project, argv):
+    mode = should_run(project, argv)
+    if not mode:
+        return 0
+    if mode == "worktree":   # chỉ thêm link lệnh / skill còn thiếu; không dọn, không context (worktree add / heal lo phần còn lại)
+        relink(project, missing(project, worktree=True))
         return 0
     stale = dangling(project)
     pruned = prune(project, stale) if stale else 0

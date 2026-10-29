@@ -3629,13 +3629,31 @@ def _carry_gate_receipt(main, wt):
         if not push_gate.check(wt, head, linked=True)[0]:
             return tr(" (không có biên nhận gate --full nào của worktree phủ HEAD mới của main: push từ main cần chạy gate lại)",
                       " (no gate --full receipt of the worktree covers main's new HEAD: a push from main needs the gate again)")
-        receipt = json.loads(_read_regular(push_gate.tree_fp.receipt_path(wt), 4_000_000).decode("utf-8"))
-        if not isinstance(receipt, dict) or receipt.get("scope", "full") != "full":   # T0061: biên nhận task không bao giờ sang main
-            return tr(" (biên nhận của worktree không phải --full: push từ main cần chạy gate lại)",
-                      " (the worktree's receipt is not a --full one: a push from main needs the gate again)")
+        # #644: biên nhận --full trước; không có / không phải full / không phủ HEAD mới thì biên nhận --scoped (scoped_pass.json) — đúng thứ tự
+        # push_gate xét. Mang sang main đúng tên file của nó: scoped không bao giờ thành full_pass.json.
+        # push_gate.check ở trên đã xét phủ; ở đây chỉ chọn file: đúng loại của file (T0061: scope task không bao giờ sang main), exit 0;
+        # có cả hai thì ưu tiên cái có head là tổ tiên của HEAD mới (cái push_gate thấy phủ), rồi mới tới biên nhận mới hơn (một full cũ
+        # của commit trước không đè scoped vừa PASS; một scoped mới hơn mà head lạc lịch sử không đè full đang phủ HEAD).
+        receipt, dst, best = None, None, None
+        for src_of, want in ((push_gate.tree_fp.receipt_path, "full"), (push_gate.tree_fp.scoped_receipt_path, "scoped")):
+            try:
+                cand = json.loads(_read_regular(src_of(wt), 4_000_000).decode("utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(cand, dict) or cand.get("scope", "full") != want or cand.get("exit") != 0 \
+                    or isinstance(cand.get("exit"), bool):
+                continue
+            ch = cand.get("head")
+            key = (isinstance(ch, str) and bool(ch) and not ch.startswith("-")
+                   and git(main, "merge-base", "--is-ancestor", ch, head, check=False).returncode == 0,
+                   float(cand.get("time") or 0))
+            if best is None or key > best:
+                receipt, dst, best = cand, src_of(main), key
+        if receipt is None:
+            return tr(" (biên nhận của worktree không phải --full hay --scoped: push từ main cần chạy gate lại)",
+                      " (the worktree's receipt is neither a --full nor a --scoped one: a push from main needs the gate again)")
         rel =os.path.relpath(os.path.realpath(receipt["project"]), os.path.realpath(wt))
         receipt = dict(receipt, project=os.path.normpath(os.path.join(main, rel)), carried_from=receipt["project"])
-        dst = push_gate.tree_fp.receipt_path(main)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst), prefix=".full_pass.")
         try:

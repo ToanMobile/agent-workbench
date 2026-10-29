@@ -279,7 +279,8 @@ def migrate_config(cfg):
         c["worker_backend"] = "workflow"
         changes.append("worker_backend \"workflow\" added")
     if not c.get("verify_commands"):
-        c["verify_commands"] = ["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief"]
+        # #644: không ép --full — super-board-verify-flags.sh chèn --scoped (tự leo full khi đụng lõi); --full đêm thuộc gate-full
+        c["verify_commands"] = ["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief"]
         changes.append("verify_commands locked to DevKit post-fix-gate.py")
     return c, changes
 
