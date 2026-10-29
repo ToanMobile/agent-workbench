@@ -33,6 +33,10 @@ check 2 $'git$\'\\0foo\' push --force origin main'
 check 2 $'git$\'\\u0000foo\' push --force origin main'
 check 2 $'$\'git\\x00zz\' push --force origin main'
 check 2 $'git$\'\\x00\\\'x\' push --force origin main'
+echo "   \\c@, \\c<space> and \\c<backtick> are control-NUL too (bash: ctrl-X is X & 0x1f)"
+check 2 $'git$\'\\c@foo\' push --force origin main'
+check 2 $'git$\'\\c foo\' push --force origin main'
+check 2 $'git$\'\\c`foo\' push --force origin main'
 check 0 $'git$\'\\x00foo\' status'
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

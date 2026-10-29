@@ -374,17 +374,19 @@ def _heredoc_word(text, i):
     return i, "".join(out), quoted
 
 
-_ANSI_NUM = re.compile(r"\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|([0-7]{1,3}))")
+_ANSI_NUM = re.compile(r"\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|([0-7]{1,3})|(c[@ `]))")
 
 
 def _ansi_num(esc):
-    """The text of one \\xHH / \\NNN / \\uHHHH / \\UHHHHHHHH escape of a $'…' as the shell decodes it, or None when it is another escape (kept as typed).
-    A NUL ends the word in bash: it returns a lone NUL for the caller (ansi_c_to_single), which drops the rest of the body (#618); a quote becomes '\\'' (close, literal quote, reopen) so the plain '…' around it stays paired (#526)."""
+    """The text of one \\xHH / \\NNN / \\uHHHH / \\UHHHHHHHH / \\c@ escape of a $'…' as the shell decodes it, or None when it is another escape (kept as typed).
+    A NUL (code 0, or \\c@ \\c<space> \\c<backtick>) ends the word in bash: it returns a lone NUL for the caller (ansi_c_to_single), which drops the rest of the body (#618); a quote becomes '\\'' (close, literal quote, reopen) so the plain '…' around it stays paired (#526)."""
     m = _ANSI_NUM.fullmatch(esc)
     if not m:
         return None
-    hexa, u4, u8, octal = m.groups()
-    code = int(hexa or u4 or u8 or octal, 16 if octal is None else 8)
+    hexa, u4, u8, octal, ctrl = m.groups()
+    if ctrl:   # \c@, \c<space>, \c<backtick>: control-X is X & 0x1f, so these three are a NUL too
+        return "\0"
+    code =int(hexa or u4 or u8 or octal, 16 if octal is None else 8)
     if octal is not None:
         code &= 0xFF
     if code == 0:
