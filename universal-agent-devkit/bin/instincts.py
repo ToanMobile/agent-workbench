@@ -132,7 +132,8 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
         dup = find_duplicate(text, title)
         if dup and not force:
             return "duplicate", dup, None
-        inst_id = next_id(text)
+        archive = path.with_name("instincts-archive.md")   # ids moved there stay taken
+        inst_id = next_id(text + (archive.read_text(encoding="utf-8") if archive.is_file() else ""))
         entry = format_entry(inst_id, title, cause, rule, symptom, check, today=found_on, source=source)
         if dry_run:
             return "dry-run", inst_id, entry
@@ -159,6 +160,16 @@ def resolve_target(file_arg, project: Path) -> Path:
         raise ValueError(tr(f"{target} là link vào DevKit — bài học sẽ ghi vào DevKit dùng chung, không ghi. Thay link bằng file thật.",
                             f"{target} links into the DevKit — the lesson would go to the shared DevKit, refused. Replace the link with a real file."))
     return target
+
+
+def _refresh_index(target: Path, project: Path) -> None:
+    """The project's instincts-index.md (when it has one) is regenerated in the same step as its instincts.md, so both land in one commit (#461)."""
+    if target != project / ".agents" / "instincts.md" or not (target.parent / "instincts-index.md").exists():
+        return
+    indexer = DEVKIT_ROOT / "scripts" / "governance" / "index_memory.py"
+    res = subprocess.run([sys.executable, str(indexer), str(target)], capture_output=True, text=True, timeout=30)
+    if res.returncode != 0:
+        print(f"⚠ {tr('index chưa cập nhật', 'index not refreshed')}: {res.stderr.strip()[:200]}", file=sys.stderr)
 
 
 def cmd_add(args) -> int:
@@ -190,6 +201,7 @@ def cmd_add(args) -> int:
         print(f"{tr('(dry-run) Sẽ thêm vào', '(dry-run) Would add to')} {target}:\n\n{entry}")
     else:
         print(f"✔ {tr('Đã ghi', 'Recorded')} [{inst_id}] {tr('vào', 'in')} {target}")
+        _refresh_index(target, project)
         if getattr(args, "generic", False):
             queue = project / ".agents" / "local" / "upstream-queue.md"
             queue.parent.mkdir(parents=True, exist_ok=True)
@@ -297,6 +309,115 @@ def cmd_promote(args) -> int:
             
     return 0
 
+
+KEEP_RE = re.compile(r"^- \*\*keep:\*\*", re.MULTILINE)
+FOUND_RE = re.compile(r"^- \*\*(?:Ngày phát hiện|Found on):\*\*\s*(\d{4}-\d{2}-\d{2})", re.MULTILINE)
+CHUNK_SPLIT = re.compile(r"(?m)^(?=### \[INSTINCT-|## )")
+SEPARATOR_TAIL = re.compile(r"\n---[ \t]*\n*\Z")
+ARCHIVE_HEADER = "# Instincts archive — entries moved out of instincts.md (verbatim)\n"
+
+
+def _entry_chunks(text: str):
+    """[(chunk, id)] — id is None for the preamble and any `## ` section, which are never archived."""
+    out = []
+    for chunk in CHUNK_SPLIT.split(text):
+        m = HEADING.match(chunk) if chunk.startswith("### [") else None
+        out.append((chunk, m.group(1) if m else None))
+    return out
+
+
+def _surfaced_ids(log: Path, rel_file: str, cutoff: float):
+    """(ids shown at or after cutoff from this instincts file, earliest log timestamp). Torn lines are skipped."""
+    ids, first = set(), None
+    for line in log.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+            ts = time.mktime(time.strptime(rec["ts"], "%Y-%m-%dT%H:%M:%S"))
+        except (ValueError, KeyError, TypeError):
+            continue
+        first = ts if first is None else min(first, ts)
+        if ts < cutoff:
+            continue
+        for ref in rec.get("instinct_refs") or []:
+            if isinstance(ref, dict) and ref.get("file") == rel_file and ref.get("id"):
+                ids.add(ref["id"])
+    return ids, first
+
+
+def cmd_archive(args) -> int:
+    """Move entries not shown in the last --days days out of instincts.md into instincts-archive.md.
+    Dry-run unless --apply. Kept: an entry with a `- **keep:**` line, one found within the window, one that was shown."""
+    project = project_dir()
+    try:
+        target = resolve_target(args.file, project)
+        log = Path(args.log) if args.log else project / ".claude" / "audit-gate" / "surfaced.jsonl"
+        cutoff = time.time() - args.days * 86400
+        shown, first = _surfaced_ids(log, os.path.relpath(target, project), cutoff)
+        text = target.read_text(encoding="utf-8")
+    except (OSError, ValueError) as e:
+        print(f"✖ {e}", file=sys.stderr)
+        return 2
+    if first is None or first > cutoff:
+        print(f"✖ {tr('nhật ký surfaced.jsonl chưa phủ đủ', 'surfaced.jsonl does not cover')} {args.days} {tr('ngày — không lưu trữ', 'days — nothing archived')}", file=sys.stderr)
+        return 2
+    young = time.strftime("%Y-%m-%d", time.localtime(cutoff))
+    stale = []
+    for chunk, inst_id in _entry_chunks(text):
+        if inst_id is None or inst_id in shown or KEEP_RE.search(chunk):
+            continue
+        found = FOUND_RE.search(chunk)
+        if found and found.group(1) > young:
+            continue
+        stale.append((inst_id, chunk))
+    for inst_id, chunk in stale:
+        print(f"{'  ' if args.apply else '• '}{inst_id} {HEADING.match(chunk).group(2)}")
+    print(tr(f"{len(stale)} mục không hiện trong {args.days} ngày", f"{len(stale)} entries not shown in {args.days} days")
+          + ("" if args.apply else tr(" (chạy thử — thêm --apply để chuyển)", " (dry-run — add --apply to move)")))
+    if not args.apply or not stale:
+        return 0
+    archive = target.with_name("instincts-archive.md")
+    moved = {inst_id for inst_id, _ in stale}
+    try:
+        with open(archive, "a+", encoding="utf-8") as af:   # archive first: a crash in between loses nothing
+            if fcntl is not None:
+                fcntl.flock(af, fcntl.LOCK_EX)
+            af.seek(0)
+            head = "" if af.read() else ARCHIVE_HEADER
+            af.write(head + "".join("\n---\n\n" + SEPARATOR_TAIL.sub("", chunk).rstrip() + "\n" for _, chunk in stale))
+        with open(target, "r+", encoding="utf-8") as f:   # same lock as append_lesson, rewritten in place
+            if fcntl is not None:
+                fcntl.flock(f, fcntl.LOCK_EX)
+            kept = "".join(c for c, i in _entry_chunks(f.read()) if i not in moved)
+            f.seek(0)
+            f.truncate()
+            f.write(SEPARATOR_TAIL.sub("\n", kept) if SEPARATOR_TAIL.search(kept) else kept)
+    except OSError as e:
+        print(f"✖ {e}", file=sys.stderr)
+        return 2
+    _refresh_index(target, project)
+    print(f"✔ {tr('Đã chuyển sang', 'Moved to')} {archive}")
+    return 0
+
+
+def cmd_duplicates(args) -> int:
+    """Titles recorded in >= 2 of the given projects' instincts.md: candidates for `promote`."""
+    seen = {}
+    for proj in args.projects:
+        path = Path(proj) / ".agents" / "instincts.md"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"✖ {e}", file=sys.stderr)
+            return 2
+        for inst_id, title in HEADING.findall(text):
+            seen.setdefault(_norm_title(title), (title, {}))[1][str(proj)] = inst_id
+    dups = [(title, where) for title, where in seen.values() if len(where) >= 2]
+    for title, where in dups:
+        print(f"{title}\n    " + ", ".join(f"{p} [{i}]" for p, i in where.items()))
+    print(tr(f"{len(dups)} tiêu đề trùng ở >= 2 repo (ứng viên promote)", f"{len(dups)} titles in >= 2 repos (promote candidates)"))
+    return 0
+
+
 def cmd_import(args) -> int:
     """--from-json FILE: a list of lessons, e.g. memory an agent classified. Items with a
     "verdict" other than INSTINCT are skipped, and so are items whose "project" is not
@@ -371,7 +492,25 @@ def main(argv=None) -> int:
     promote.add_argument("--kit", help="devkit path override")
     promote.add_argument("--dry-run", action="store_true", help="print but write nothing")
 
+    arch = sub.add_parser("archive", help="move entries not shown for N days to instincts-archive.md (dry-run unless --apply)")
+    arch.add_argument("--days", type=int, default=60, help="window in days (default 60)")
+    arch.add_argument("--apply", action="store_true", help="write; without it only list")
+    arch.add_argument("--file", help="instincts file (default: <project>/.agents/instincts.md); a path outside the project "
+                                     "never matches the log; surfaced.jsonl is local to each machine (gitignored)")
+    arch.add_argument("--log", help="surfaced.jsonl (default: <project>/.claude/audit-gate/surfaced.jsonl)")
+    arch.add_argument("-l", "--lang", choices=["en", "vi"], help="output language")
+
+    dup = sub.add_parser("duplicates", help="list titles recorded in >= 2 projects (promote candidates)")
+    dup.add_argument("projects", nargs="+", help="project directories")
+    dup.add_argument("-l", "--lang", choices=["en", "vi"], help="output language")
+
     args = parser.parse_args(argv)
+    if args.cmd == "archive":
+        set_lang(resolve_lang(args.lang, project_dir()))
+        return cmd_archive(args)
+    if args.cmd == "duplicates":
+        set_lang(resolve_lang(args.lang, project_dir()))
+        return cmd_duplicates(args)
     if args.cmd == "promote":
         return cmd_promote(args)
     set_lang(resolve_lang(args.lang, project_dir()))

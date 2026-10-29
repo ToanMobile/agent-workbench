@@ -12,7 +12,7 @@
 #   --if-due: chỉ gom khi một điều xảy ra: số PR ≥ trần đợt; PR cũ nhất (mốc sự kiện `labeled` trong timeline) chờ ≥ max_wait_min;
 #     hoặc máy rảnh (không worker board nào còn sống, merge.lock của gate không còn chủ, không post-fix-gate nào giữ test_run.lock).
 #   Trần đợt = merge_queue.batch_max (mặc định 6); đợt trước có PR đỏ thì max(1, batch_max/2) (trạng thái trong merge-queue.state cạnh khoá;
-#     train hỏng không in train-result nào thì giữ nguyên). Mốc gắn nhãn nhớ trong merge-queue.labeled (<PR> <head> <epoch>).
+#     train hỏng không in train-result nào thì giữ nguyên). Mốc gắn nhãn nhớ trong merge-queue.labeled (<PR> <head> <epoch> <nhánh>; nhánh cho Agent Office / status ghép PR với thẻ, #562).
 #   --dry-run: in đợt sẽ gửi và lý do rồi thoát trước khối train; reject chỉ in (tests/super-board/test_merge_queue.sh ca 8 kiểm điều này).
 #
 # Route mỗi `train-result: <PR> <kết quả>` (bước ghi nhãn đi SAU cùng: chết giữa chừng thì lượt sau route lại, không mất việc).
@@ -43,6 +43,8 @@ set -euo pipefail
 export SB_GITHUB_READ_STRICT=1
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
+APPROVED_HEAD_JQ="$HERE/super-board-approved-head.jq"   # #605: luật approved-head dùng chung với runner
+AUDIT_CHECK="$HERE/super-board-audit-check.py"           # #605: task_id của approved-by ↔ biên bản audit antigravity-pm
 TRAIN="$HERE/super-board-merge-train.sh"
 CARD="$HERE/super-board-card.sh"
 NEEDS_YOU="$HERE/super-board-needs-you.py"
@@ -162,7 +164,16 @@ Owner:       repo owner
 Move back:   drag this card to Ready after the steps above are done
 blocked-by: -" || true
 }
-detail_lines() { [ -n "${TOUT:-}" ] && [ -r "$TOUT" ] || return 0; sed -nE "s/^train-detail: $1 //p" "$TOUT"; }
+# Trần body (#470): GitHub từ chối comment > 65536 ký tự. Mỗi dòng ≤ 400 ký tự, cả khối ≤ 12000 ký tự; dòng đầu (kết luận, suite đỏ) giữ, phần dư cắt
+# kèm một dòng báo. Chi tiết đầy đủ nằm ở log của train (stdout của queue), không ở comment.
+detail_lines() {
+  [ -n "${TOUT:-}" ] && [ -r "$TOUT" ] || return 0
+  sed -nE "s/^train-detail: $1 //p" "$TOUT" | LC_ALL=C awk -v max=12000 '
+    { l = substr($0, 1, 400); if (length($0) > 400) l = l " …"
+      if (used + length(l) + 1 > max) { cut = 1; next }
+      print l; used += length(l) + 1 }
+    END { if (cut) print "… (detail truncated: the full train log is in the merge-queue output)" }'
+}
 # rebuild_or_rebase <PR> <issue> <rebuild|rebase> <why>: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
 # Trả 0 chỉ khi các bước bắt buộc (nhãn loop:*, card_move) xong. Lượt route lại (RETRY=1): không comment lại; nhãn loop:* đã gắn ở lượt
 # trước (LABEL_DONE=1) thì không gắn lần nữa (không đẩy loop:rebuild-N lên hai lần cho cùng một lần đỏ).
@@ -377,7 +388,7 @@ load_rows() {
     out="${out}${at} ${n} ${head} ${ref}"$'\n'
   done < <(printf '%s\n' "$CANDS")
   ROWS=$(printf '%s' "$out" | sort -n -k1,1 -k2,2)
-  printf '%s\n' "$ROWS" | awk 'NF {print $2, $3, $1}' > "$LABELED.tmp" && mv -f "$LABELED.tmp" "$LABELED"
+  printf '%s\n' "$ROWS" | awk 'NF {print $2, $3, $1, $4}' > "$LABELED.tmp" && mv -f "$LABELED.tmp" "$LABELED"
 }
 
 LAST_RED=false
@@ -448,12 +459,22 @@ BATCH=""; NB=0
 while read -r at n head ref; do
   [ -n "${n:-}" ] && [ "$NB" -lt "$CAP" ] || continue
   comments=$(python3 "$GITHUB_READ" --kind object -- pr view "$n" ${REPO:+--repo "$REPO"} --json comments) || exit $?
-  # Cùng luật với review_approved_head của runner (#227): comment approved-head cuối cùng của người có quyền ghi thắng.
-  approved=$(printf '%s' "$comments" | jq -r '
-    [.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
-      | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty')
+  # Cùng luật với review_approved_head của runner (#227, #605): một file jq chung, comment approved-head cuối cùng của người có
+  # quyền ghi thắng; kèm `approved-by:` thì nguồn duyệt chéo phải đủ trường và không tự duyệt.
+  verdict=$(printf '%s' "$comments" | jq -r -f "$APPROVED_HEAD_JQ") || { say "cannot evaluate approvals for PR #$n (jq failed); left in the queue"; continue; }
+  IFS=$'\t' read -r vstate approved vwhy <<<"$verdict" || true
   if [ -z "$approved" ]; then reject "$n" "no \`approved-head:<sha40>\` from an OWNER/MEMBER/COLLABORATOR on this PR"; continue; fi
+  if [ "$vstate" != ok ]; then reject "$n" "approved-head ${approved:0:7}: ${vwhy:-invalid approval}"; continue; fi
   if [ "$approved" != "$head" ]; then reject "$n" "approved-head ${approved:0:7} is not the PR head ${head:0:7} (pushed after approval)"; continue; fi
+  # #605 (audit T0066 vòng 2): task_id của approved-by là lời khai; chỉ tính khi antigravity-pm có audit pass với auditedHead == head.
+  case "$vwhy" in
+    owner) ;;
+    # audit T0066 vòng 3: --pr = head chưa có object trong repo thì fetch refs/pull/<n>/head trước; fetch lỗi → loại như cũ.
+    task:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" --pr "$n" "${vwhy#task:}" "$head" ) 2>/dev/null; then
+               reject "$n" "approved-by task_id ${vwhy#task:} has no antigravity-pm audit pass with auditedHead ${head:0:7}"; continue
+             fi ;;
+    *) reject "$n" "approved-head ${approved:0:7}: approval source unreadable"; continue ;;
+  esac
   BATCH="${BATCH}${at} ${n} ${head} ${ref}"$'\n'; NB=$((NB + 1))
 done < <(printf '%s\n' "$ROWS")
 BATCH=${BATCH%$'\n'}

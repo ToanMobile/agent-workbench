@@ -749,6 +749,9 @@ PY
 [ "$rc_int" = "-2 " ] && ok "INT to the group of a bash calling run_capped stops it, nothing after runs" \
   || fail "INT to run_capped's group: '$rc_int' (want '-2 ': bash killed by SIGINT, no AFTER)"
 # Hết ngân sách publish (nhiều card × 20 s): không gọi thêm gh, card chưa xoá giữ trong CARDS cho lượt sau.
+# Không dựa vào lock worker "chết" từ trước (#600): PID của nó có thể đã được hệ điều hành cấp lại cho tiến trình sống khi gate
+# chạy song song, #16 hiện thành đang chạy và vào CARDS. Ca này cần board không có worker nào.
+rm -f "$R/.claude/super-board/inflight/15" "$R/.claude/super-board/inflight/16"
 printf 'KEY=x\nAT=1\nFIELD=F_RUN\nCARDS=15\n' > "$BST"; c0=$(grep -c -- '--clear' "$TMP/calls")
 BOARD_STATUS_BUDGET=0 wd
 [ "$(grep -c -- '--clear' "$TMP/calls")" = "$c0" ] && [ "$(field CARDS "$BST")" = 15 ] \
@@ -890,11 +893,20 @@ kill_tree "$RP"; wait_for 10 '! alive "$RP"'
 # ── 12. safe_path bỏ mục '..' và symlink trỏ vào repo, giữ mục ngoài repo (#115 điểm 2) ─────────────────────────────
 mkdir -p "$TMP/sp/repo/.claude/worktrees/evil" "$TMP/sp/ok"
 ln -s "$TMP/sp/repo/.claude/worktrees/evil" "$TMP/sp/link"
-awk '/^(canon_path|safe_path)\(\) \{/{p=1} p{print} p&&/^}/{p=0}' "$BIN/super-board-watchdog.sh" > "$TMP/sp/fn.sh"
+awk '/^(canon_path|raw_entry_ok|safe_path)\(\) \{/{p=1} p{print} p&&/^}/{p=0}' "$BIN/super-board-watchdog.sh" > "$TMP/sp/fn.sh"
 sp_out=$( ROOT_P="$(cd -P "$TMP/sp/repo" && pwd -P)"; . "$TMP/sp/fn.sh"
-  safe_path "$TMP/sp/ok/../repo/.claude/worktrees/evil:$TMP/sp/link:$TMP/sp/repo/./.claude:$TMP/sp/ok" )
-[ "$sp_out" = "$(cd -P "$TMP/sp/ok" && pwd -P)" ] \
-  && ok "safe_path drops '..' and symlink entries that land in the repo, keeps the outside one" \
+  safe_path "$TMP/sp/ok/../repo/.claude/worktrees/evil:$TMP/sp/link:$TMP/sp/repo/./.claude:$TMP/sp/ok" 2>"$TMP/sp/err" )
+[ "$sp_out" = "$TMP/sp/ok" ] \
+  && ok "safe_path drops '..' and symlink entries that land in the repo, keeps the clean outside one verbatim" \
   || fail "safe_path let a repo path through: '$sp_out'"
+# Mục đi qua symlink NẰM TRONG repo nhưng trỏ ra ngoài: trả đường đã phân giải (worker không đổi đích được sau lượt kiểm).
+mkdir -p "$TMP/sp/ok2"; ln -s "$TMP/sp/ok2" "$TMP/sp/repo/lnk"
+sp_out2=$( ROOT_P="$(cd -P "$TMP/sp/repo" && pwd -P)"; . "$TMP/sp/fn.sh"; safe_path "$TMP/sp/repo/lnk" 2>>"$TMP/sp/err" )
+[ "$sp_out2" = "$(cd -P "$TMP/sp/ok2" && pwd -P)" ] \
+  && ok "safe_path returns the resolved path for an in-repo symlink that points outside" \
+  || fail "safe_path kept the in-repo symlink entry verbatim: '$sp_out2'"
+! grep -q 'command not found' "$TMP/sp/err" \
+  && ok "safe_path harness has every helper it calls (no 'command not found')" \
+  || fail "safe_path harness hit a missing helper: $(head -1 "$TMP/sp/err")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_runner_watchdog: all passed" || { echo "❌ test_runner_watchdog: $FAILS failed"; exit 1; }

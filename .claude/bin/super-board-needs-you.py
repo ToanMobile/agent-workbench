@@ -145,11 +145,18 @@ def one_line(text, what):
         raise ValueError(f"{what} must not contain `Reason tag:`, `blocked-by:`, `approval-request:` or `<!--`")
     if len(text) > 500:
         raise ValueError(f"{what} is longer than 500 characters")
-    if what == "--action" and not GENUINE_HUMAN_RE.search(text):
+    # #529: the denylist screens --action and --next. A genuine human keyword excuses only its own clause: split on
+    # `;` `·` `,` `.` and the words "và"/"rồi"/"and"/"then", so "đăng nhập firebase và chạy lại gate" still trips on the gate clause.
+    # Split only when a human keyword is present (else the whole text is one clause: the rules' lookaheads and the
+    # `.claude/worktrees/` / `x.py` patterns need it intact). A `.` separates only before a space or the end.
+    clauses = re.split(r"[;·,]|\.(?=\s|$)|\b(?:và|rồi|and|then)\b", text, flags=re.I) if GENUINE_HUMAN_RE.search(text) else [text]
+    for clause in clauses:
+        if GENUINE_HUMAN_RE.search(clause):
+            continue
         for pat, why in AGENT_DOABLE_RULES:
-            if pat.search(text):
+            if pat.search(clause):
                 raise ValueError(
-                    f"--action mô tả việc agent phải tự xử lý ({why}); "
+                    f"{what} mô tả việc agent phải tự xử lý ({why}); "
                     "hãy tự thực thi, tự chốt (Decide, don't ask / AUTO-APPROVE) hoặc trả thẻ về Ready/QA thay vì gắn needs-you"
                 )
     return text

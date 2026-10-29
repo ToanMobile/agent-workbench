@@ -119,7 +119,9 @@ TMPDIR="$G/tmp" DEVKIT_TEST_JOBS=4 python3 -c 'import os, sys; os.setpgrp(); os.
   >"$TMP/prog_cut.out" 2>&1 & gp=$!
 w=0; while [ ! -e "$G/fast.ended" ] && [ "$w" -lt 300 ]; do sleep 0.2; w=$((w + 1)); done
 w=0; while [ -e "$G/fast.ended" ] && ! grep -qE "^· done rc=[0-9]+ [0-9]+s tests/gates/test_fast_${TOK}\.sh$" "$TMP/prog_cut.out" && [ "$w" -lt 100 ]; do sleep 0.2; w=$((w + 1)); done
-kill -TERM -- "-$gp" 2>/dev/null; wait "$gp" 2>/dev/null; touch "$G/release"; kill -KILL -- "-$gp" 2>/dev/null
+kill -TERM -- "-$gp" 2>/dev/null
+for _ in 1 2 3 4 5; do kill -0 -- "-$gp" 2>/dev/null || break; sleep 0.1; done
+touch "$G/release"; kill -KILL -- "-$gp" 2>/dev/null; wait "$gp" 2>/dev/null
 if [ ! -e "$G/fast.ended" ]; then fail "setup: the fast test never ran: $(cat "$TMP/prog_cut.out")"
 else
   grep -qE "^· done rc=0 [0-9]+s tests/gates/test_fast_${TOK}\.sh$" "$TMP/prog_cut.out" \
@@ -186,6 +188,94 @@ PY
 grep -qE "test_pipe_${TOK}\.sh 0$" "$S/recorded" 2>/dev/null \
   && ok "run_one: stderr closed (SIGPIPE at the progress printf) and the PASS of the per-test cache was already recorded" \
   || fail "run_one: no per-test cache record after SIGPIPE: the progress printf runs before the record"
+
+# #546: mỗi bài test được cấp TMPDIR riêng đường dẫn ngắn /tmp/dk-XXXXXX (< 25 byte cho AF_UNIX socket trên macOS) và được xoá sạch
+# ngay sau khi run_bounded.py kết thúc (kể cả khi bài test tạo mktemp -d trần, thư mục 000 + uchg, hay treo quá giờ bị giết trước trap EXIT).
+# Tách riêng bài test runner lồng nhau (timeout rộng 30s tránh flake #430 khi tải cao) và bài test treo quá giờ (timeout ngắn 2s).
+TD="$TMP/dk_tmp"; mkdir -p "$TD/tests/verification" "$TD/tests/context_memory" "$TD/tests/lib" "$TD/inner/tests/verification" "$TD/inner/tests/lib" "$TD/out_probe"
+cp "$DEVKIT_DIR/tests/run_impacted.sh" "$TD/tests/"
+cp "$DEVKIT_DIR/tests/lib/run_bounded.py" "$TD/tests/lib/"
+cp "$DEVKIT_DIR/tests/run_impacted.sh" "$TD/inner/tests/"
+cp "$DEVKIT_DIR/tests/lib/run_bounded.py" "$TD/inner/tests/lib/"
+: > "$TD/tests/impact_map.txt"
+: > "$TD/inner/tests/impact_map.txt"
+echo 'X = 1' > "$TD/pymod.py"
+printf 'mkdir -p rel_sub\nrel_d="$(CDPATH=/tmp TMPDIR=rel_sub mktemp -d)"\nprintf "%%s" "$rel_d" > "%s/rel_mktemp"\ndt_d="$(mktemp -dt mypref)"\nprintf "%%s" "$dt_d" > "%s/dt_mktemp"\nd="$(mktemp -d)"\nprintf "%%s" "$d" > "%s/inner_mktemp"\nrm -rf "$rel_d" "$dt_d" "$d" rel_sub\n' "$TD" "$TD" "$TD" > "$TD/inner/tests/verification/test_repo_consistency.sh"
+printf 'printf "%%s" "$TMPDIR" > "%s/seen_tmpdir"\nPYTHONPATH="%s" python3 -c "import pymod; assert pymod.X == 1"\nmkdir -p "$TMPDIR/locked_sub"\necho x > "$TMPDIR/locked_sub/imm"\nchflags uchg "$TMPDIR/locked_sub/imm" 2>/dev/null || true\nchmod 000 "$TMPDIR/locked_sub"\nDEVKIT_TEST_JOBS=1 DEVKIT_TEST_TIMEOUT_S=30 bash "%s/inner/tests/run_impacted.sh" --all > "%s/nested.out" 2>&1\necho "$?" > "%s/nested.rc"\n' "$TD" "$TD" "$TD" "$TD" "$TD" > "$TD/tests/verification/test_repo_consistency.sh"
+printf 'dirname "$SB_HEAVY_SLOT_DIR" > "%s/seen_out"\n' "$TD" > "$TD/tests/context_memory/test_budgets.sh"
+( cd "$TD" && git init -q . )
+( cd "$TD/inner" && git init -q . )
+( cd "$TD" && TMPDIR="$TD/out_probe" DEVKIT_REAL_MKTEMP=/tmp DEVKIT_TEST_JOBS=2 DEVKIT_TEST_TIMEOUT_S=30 bash tests/run_impacted.sh --all >/dev/null 2>&1 )
+seen_td="$(cat "$TD/seen_tmpdir" 2>/dev/null || true)"
+seen_out="$(tr -d '\n' < "$TD/seen_out" 2>/dev/null || true)"
+nested_rc="$(cat "$TD/nested.rc" 2>/dev/null || echo missing)"
+inner_mk="$(cat "$TD/inner_mktemp" 2>/dev/null || true)"
+rel_mk="$(cat "$TD/rel_mktemp" 2>/dev/null || true)"
+dt_mk="$(cat "$TD/dt_mktemp" 2>/dev/null || true)"
+inner_real="$(cd "$TD/inner" && pwd -P)"
+out_left="$(ls -A "$TD/out_probe" 2>/dev/null || true)"
+case "$seen_td" in
+  /tmp/dk-*)
+    td_exists="$([ -e "$seen_td" ] && echo y || echo n)"
+    if [ "${#seen_td}" -lt 25 ] && [ "$td_exists" = "n" ]; then
+      ok "TMPDIR per test is short (/tmp/dk-*, ${#seen_td} bytes < 25) and removed even with 000+uchg subdirs"
+    else
+      [ -d "$seen_td" ] && { chmod -R u+rwX "$seen_td" 2>/dev/null; chflags -R nouchg "$seen_td" 2>/dev/null; chmod -R u+rwX "$seen_td" 2>/dev/null; rm -rf "$seen_td" 2>/dev/null || true; }
+      fail "TMPDIR length/cleanup failed: '$seen_td' (len=${#seen_td}, exists=$td_exists)"
+    fi
+    ;;
+  *) fail "TMPDIR was not /tmp/dk-*: '$seen_td'" ;;
+esac
+if [ -n "$seen_out" ] && [ ! -e "$seen_out" ] && [ -z "$out_left" ]; then
+  ok "runner cleans up its own \$out dir ('$seen_out') even after running \$alone tests"
+else
+  [ -n "$seen_out" ] && rm -rf "$seen_out" 2>/dev/null || true
+  rm -rf "$TD/out_probe"/* 2>/dev/null || true
+  fail "runner leaked \$out dir after \$alone phase: seen_out='$seen_out' (exists=$([ -e "${seen_out:-/nonexistent}" ] && echo y || echo n)) left='$out_left'"
+fi
+if [ "$nested_rc" = "0" ] && [ -n "$inner_mk" ]; then
+  ok "nested run_impacted.sh under parent mktemp shim completes without recursion (rc=0)"
+else
+  fail "nested run_impacted.sh failed or hung under parent mktemp shim (rc=$nested_rc, inner='$inner_mk', out='$(cat "$TD/nested.out" 2>/dev/null || true)')"
+fi
+case "$rel_mk" in
+  "$inner_real"/rel_sub/*) [ "$(printf '%s\n' "$rel_mk" | wc -l | tr -d ' ')" = "1" ] \
+    && ok "mktemp shim returns single-line resolved absolute path under relative TMPDIR ('$rel_mk')" \
+    || fail "mktemp shim printed extra lines under CDPATH: '$rel_mk'" ;;
+  *) fail "mktemp shim returned wrong path for relative TMPDIR (want '$inner_real/rel_sub/*'): '$rel_mk'" ;;
+esac
+case "$dt_mk" in
+  /tmp/dk-*/mypref.*) ok "mktemp shim supports clustered -dt <prefix> inside short TMPDIR ('$dt_mk')" ;;
+  *) fail "mktemp shim mishandled clustered -dt <prefix>: '$dt_mk'" ;;
+esac
+if [ ! -d "$TD/__pycache__" ]; then
+  ok "runner routes PYTHONPYCACHEPREFIX into short /tmp/dk-* so imports leave no __pycache__ in repo tree"
+else
+  fail "runner leaked __pycache__ into repo tree during test import"
+fi
+
+# Bài riêng kiểm tra bài test treo quá giờ bị run_bounded.py giết vẫn dọn sạch thư mục mktemp -d trần bên trong /tmp/dk-*
+TD_HANG="$TMP/dk_hang"; mkdir -p "$TD_HANG/tests/verification" "$TD_HANG/tests/lib"
+cp "$DEVKIT_DIR/tests/run_impacted.sh" "$TD_HANG/tests/"
+cp "$DEVKIT_DIR/tests/lib/run_bounded.py" "$TD_HANG/tests/lib/"
+: > "$TD_HANG/tests/impact_map.txt"
+echo 'echo ok' > "$TD_HANG/tests/verification/test_repo_consistency.sh"
+printf 'd="$(mktemp -d)"\nprintf "%%s" "$d" > "%s/leaked_dir"\nsleep 30\n' "$TD_HANG" > "$TD_HANG/tests/verification/test_hang_${TOK}.sh"
+( cd "$TD_HANG" && git init -q . )
+( cd "$TD_HANG" && RUN_BOUNDED_GRACE_S=0.5 DEVKIT_TEST_JOBS=1 DEVKIT_TEST_TIMEOUT_S=2 bash tests/run_impacted.sh --all >/dev/null 2>&1 )
+leaked_td="$(cat "$TD_HANG/leaked_dir" 2>/dev/null || true)"
+if [ -n "$leaked_td" ] && [ ! -e "$leaked_td" ] && [ ! -e "$(dirname "$leaked_td")" ]; then
+  ok "timed-out test killed by run_bounded.py leaves no leaked mktemp -d directory"
+else
+  [ -n "$leaked_td" ] && rm -rf "$leaked_td" "$(dirname "$leaked_td")" 2>/dev/null || true
+  fail "timed-out test leaked mktemp -d directory: '$leaked_td'"
+fi
+python3 -I - "$DEVKIT_DIR/scripts/governance" <<'PY' && ok "scratch_cleanup TEST_TMP_PREFIXES includes dk-" || fail "TEST_TMP_PREFIXES missing dk-"
+import sys
+sys.path.insert(0, sys.argv[1])
+import scratch_cleanup as sc
+sys.exit(0 if "dk-" in sc.TEST_TMP_PREFIXES else 1)
+PY
 
 if [ "$FAILS" -ne 0 ]; then echo "run_impacted: $FAILS FAILED"; exit 1; fi
 echo "run_impacted: all checks passed"

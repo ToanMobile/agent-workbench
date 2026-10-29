@@ -162,6 +162,17 @@ printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DI
 printf '=== dispatch lane=build issue=#72 ===\n{"type":"result","subtype":"success","is_error":true,"result":"session limit"}\nworker_exit: exit=0 signal=none elapsed=20s\n' > "$TMP/repo/wl/worker-build-72.log"
 ( TICK_SECONDS=120; reap_finished_locks )
 [ -s "$INFLIGHT_DIR/early-deaths/72" ] && ok "  … and exit 0 with an error result (a session limit) still is" || fail "an exit=0 worker whose result is_error was skipped"
+# ── 4d (#538): claude appends `system` records (post_turn_summary, task_summary) AFTER the final `result`; a clean review pass of 103 s on #535
+#    (28/10) was logged "early end" because only the log's last JSON line was read. The last `result` of THIS dispatch decides.
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DIR/73"
+printf '=== dispatch lane=build issue=#73 ===\n{"type":"result","subtype":"success","is_error":false}\n{"type":"system","subtype":"task_summary","detail":null}\n\nworker_exit: exit=0 signal=none elapsed=51s\n' > "$TMP/repo/wl/worker-build-73.log"
+printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(iso "$st")" > "$INFLIGHT_DIR/74"
+printf '=== dispatch lane=build issue=#74 ===\n{"type":"result","subtype":"success","is_error":false}\n=== dispatch lane=build issue=#74 ===\n{"type":"system","subtype":"task_summary","detail":null}\nworker_exit: exit=0 signal=none elapsed=51s\n' > "$TMP/repo/wl/worker-build-74.log"
+: > "$TMP/log"
+( TICK_SECONDS=120; reap_finished_locks )
+[ ! -s "$INFLIGHT_DIR/early-deaths/73" ] && ! grep -q "#73.*early end" "$TMP/log" && ok "trailing system records after a successful result are not an early death (#538)" \
+  || fail "result followed by task_summary was counted as an early death (#538): $(grep -m1 '#73' "$TMP/log")"
+[ -s "$INFLIGHT_DIR/early-deaths/74" ] && ok "  … but a result from an earlier dispatch does not excuse the latest one" || fail "an older dispatch's result excused a dead latest dispatch"
 [ -s "$INFLIGHT_DIR/early-deaths/71" ] && ok "  … but a worker that exited 1 after 20 s still is" || fail "a failing quick worker (exit=1) is no longer an early death"
 
 # ── 5. under the runner's own `set -euo pipefail`, an early death whose worker log is gone must not end the runner (OCR 19/10)
@@ -192,6 +203,17 @@ for n in 70 71; do printf 'PID=%s\nLANE=build\nSTARTED=%s\n' "$DEAD" "$(date -u 
   && ok "a quick exit after moving the card to Blocked is not an early death (#393)" \
   || fail "#393: a worker that blocked its card on purpose was counted as an early death: $(grep '#70' "$TMP/log" | tail -1)"
 [ -s "$INFLIGHT_DIR/early-deaths/71" ] && ok "  … but a card still in Building stays an early death" || fail "#393: a card still in Building was not counted"
+# ── 6c. #465: a QA worker that passed its card on (QA → Review) or closed it (Done) in under 120 s finished its job, it did not crash.
+rm -f "$INFLIGHT_DIR"/early-deaths/*; : > "$TMP/log"
+printf '#!/usr/bin/env bash\ncase "$*" in *"status 72") echo Review ;; *"status 73") echo Done ;; *"status 74") echo QA ;; *) exit 1 ;; esac\n' > "$TMP/bin/super-board-card.sh"
+chmod +x "$TMP/bin/super-board-card.sh"
+for n in 72 73 74; do printf 'PID=%s\nLANE=qa\nSTARTED=%s\n' "$DEAD" "$(date -u +%FT%TZ)" > "$INFLIGHT_DIR/$n"; done
+( reap_finished_locks )
+[ ! -s "$INFLIGHT_DIR/early-deaths/72" ] && ! grep -q "#72.*early end" "$TMP/log" \
+  && ok "a quick QA exit after moving the card to Review is not an early death (#465)" \
+  || fail "#465: a QA worker that passed its card to Review was counted as an early death: $(grep '#72' "$TMP/log" | tail -1)"
+[ ! -s "$INFLIGHT_DIR/early-deaths/73" ] && ok "  … nor one that closed it (Done)" || fail "#465: a card moved to Done was counted as an early death"
+[ -s "$INFLIGHT_DIR/early-deaths/74" ] && ok "  … but a card still in QA stays an early death" || fail "#465: a card still in QA was not counted"
 rm -f "$TMP/bin/super-board-card.sh"
 
 # ── 7. per lane: two quick build deaths hold the card back from the Builder, not from its Reviewer

@@ -726,3 +726,19 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa & Cách fix:** Gộp commit lane vào nhánh PR bằng git merge --no-ff &lt;sha lane> (đã lỡ cherry-pick thì git merge -s ours &lt;sha lane> để ghi nhận), rồi agent-kit worktree remove ngay, trước lần Stop kế tiếp; hook đã tự gộp main vào lane thì git merge --abort trong worktree lane trước.
 - **Lệnh kiểm tra:** `agent-kit worktree remove <worktree lane> trả exit 0 ngay sau khi gộp`
 - **Nguồn:** phiên 31d7d633, issue #427 (6 lane theo file, 26/10)
+
+---
+
+### [INSTINCT-085] Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên
+- **Ngày phát hiện:** 2026-10-29
+- **Hiện tượng lỗi:** Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên
+- **Nguyên nhân:** split_user_approved gắn lời duyệt với mtime: lane khác sửa rồi trả lại đúng nội dung sau câu trả lời, sha256 không đổi nhưng mtime mới hơn nên gate exit 2
+- **Quy tắc phòng ngừa & Cách fix:** Khóa file đã được duyệt (dặn lane KHÔNG đụng, kể cả comment) ngay khi hỏi duyệt; kiểm sha256 trước gate; nếu đã lỡ thì ghi đúng sha người dùng đã chọn vào approved_tests.json dạng {path: sha256} và nói rõ trong báo cáo
+
+---
+
+### [INSTINCT-086] Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình
+- **Ngày phát hiện:** 2026-10-29
+- **Hiện tượng lỗi:** Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình
+- **Nguyên nhân:** reviewer/author, approved-head, task_id đều là chuỗi agent tự ghi (cùng tài khoản GitHub, cùng user máy); trailer task_id cũ dùng lại được cho nội dung mới
+- **Quy tắc phòng ngừa & Cách fix:** duyệt chỉ tính khi gắn với biên bản ngoài repo ghi auditedHead (sha) và nội dung hiện tại khớp cây đó, auditedHead sau base; marker thiếu bằng chứng → fail closed; chặn agent đăng comment duyệt trơn

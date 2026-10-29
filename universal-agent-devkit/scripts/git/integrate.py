@@ -25,6 +25,9 @@ lần `git push` tay sau khi scratch đã gỡ cần gate lại. Nâng cấp ở
 import argparse
 import contextlib
 import fcntl
+import glob
+import hashlib
+import json
 import os
 import shutil
 import signal
@@ -42,8 +45,6 @@ LOCK_NAME = "devkit-integrate.lock"
 # Không dùng .merge-scratch-*: batch_canary.py đếm tiền tố đó là lượt merge gate lẻ (PR đi đường lẻ), mà integrate là điểm gộp theo đợt.
 # Tên scratch: .integrate-scratch-<pid chủ>-<ngẫu nhiên>. SIGTERM/SIGINT/SIGHUP → SystemExit → `finally` gỡ scratch; SIGKILL không chạy được gì,
 # nên lượt integrate kế tiếp (đang giữ khoá) dọn mọi scratch mồ côi trước khi làm việc khác (sweep_orphans, #475).
-# ponytail: worktree.py _live_worktrees chỉ miễn ("red-proof-", ".merge-scratch-") khỏi WORKTREE_MAX; scratch mồ côi sau SIGKILL chiếm một
-# chỗ tới lượt integrate kế tiếp. Thêm tiền tố này vào bộ miễn đó khi gặp.
 SCRATCH_PREFIX = ".integrate-scratch-"
 GATE_STOP_S = 30   # sau SIGTERM nhóm tiến trình gate: chờ chừng này rồi SIGKILL cả nhóm
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)   # HUP: terminal đóng; gate ở phiên riêng nên không còn tự nhận nó
@@ -184,48 +185,113 @@ def sweep_orphans(main):
 
 def setup_kit(main, scratch):
     """Cài DevKit vào scratch đúng như `worktree add` (worktree.install_args) khi main có DevKit; bản cài ghi đè file tracked thì trả lại
-    HEAD (như merge gate). Lỗi chỉ được báo: gate tự đỏ nếu thiếu thứ nó cần."""
+    HEAD (như merge gate). True = scratch dùng được (cài xong, hoặc main không có DevKit); False = cài hỏng: scratch thiếu kit nên gate sẽ
+    chạy hook/bin của bản working copy main chứ không phải của HEAD, che mất lỗi cài (#477) — người gọi không gate, không push."""
     try:
         if HERE not in sys.path:
             sys.path.insert(0, HERE)
         import worktree  # noqa: PLC0415 - module anh em, chỉ nạp khi thật sự gate
         cmd = worktree.install_args(main, scratch, None)
-    except Exception as e:  # noqa: BLE001 - kit cài dở: gate vẫn chạy, kết luận là của gate
+    except Exception as e:  # noqa: BLE001 - không dựng được lệnh cài: báo, người gọi dừng
         say(f"không dựng được lệnh cài DevKit vào scratch: {type(e).__name__}: {e}")
-        return
+        return False
     if not cmd:
-        return
+        return True
     try:
         r = subprocess.run(cmd, cwd=scratch, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_S, stdin=subprocess.DEVNULL)
         if r.returncode != 0:
             say(f"cài DevKit vào scratch exit {r.returncode}: {(r.stderr or r.stdout).strip()[-300:]}")
+            return False
     except (OSError, subprocess.TimeoutExpired) as e:
         say(f"cài DevKit vào scratch hỏng: {type(e).__name__}: {e}")
+        return False
     git(scratch, "checkout", "-q", "--", ".")
+    return True
 
 
 def copy_ignored(main, scratch):
-    """Chép vào scratch các file bị git ignore mà gate cần, đúng bộ merge train chép (super-board-scratch-config.sh, chế độ full):
-    config cục bộ, build input, Unity Library, rồi hook trong .claude/hooks/ mà settings.json đăng ký (guard-*.py…). Thiếu hook thì
+    """Chép vào scratch các file bị git ignore mà gate cần (worktree.copy_ignored, danh sách chung với merge train): thiếu hook thì
     `agent-kit health` trong scratch đỏ ("hook đăng ký nhưng thiếu file"), REG-WB-CONFIG-01 đỏ và integrate không bao giờ push được
-    (agent-workbench #463). Chạy SAU setup_kit như `worktree add`: chỉ chép thứ bản cài không link. Tách khỏi setup_kit vì setup_kit
-    return sớm khi main không có DevKit. Lỗi chỉ được báo: gate tự đỏ nếu thiếu thứ nó cần."""
+    (agent-workbench #463). Chạy SAU setup_kit như `worktree add`. Lỗi chỉ được báo: gate tự đỏ nếu thiếu thứ nó cần."""
     try:
         if HERE not in sys.path:
             sys.path.insert(0, HERE)
         import worktree  # noqa: PLC0415 - module anh em, chỉ nạp khi thật sự gate
+        copied = worktree.copy_ignored(main, scratch)
     except Exception as e:  # noqa: BLE001 - kit cài dở: gate vẫn chạy, kết luận là của gate
-        say(f"không nạp được worktree.py để chép file bị ignore vào scratch: {type(e).__name__}: {e}")
+        say(f"không chép được file bị ignore vào scratch: {type(e).__name__}: {e}")
         return
-    copied = []
-    # Mỗi bước một try: một bước hỏng (vd. build input) không được làm mất bước chép hook phía sau (#463 quay lại).
-    for name in ("copy_local_config", "copy_build_inputs", "copy_unity_library", "copy_local_hooks"):
-        try:
-            copied += getattr(worktree, name)(main, scratch)
-        except Exception as e:  # noqa: BLE001 - bước hỏng chỉ được báo, các bước còn lại vẫn chạy
-            say(f"{name} vào scratch hỏng: {type(e).__name__}: {e}")
     if copied:
         say(f"đã chép vào scratch {len(copied)} file bị ignore: {', '.join(copied[:8])}")
+
+
+def copy_approved_tests(main, scratch):
+    """Chép lời duyệt chéo của main (.claude/audit-gate/approved_tests.json) sang scratch (#481, #605): gate đọc approved_tests.json của
+    PROJECT của nó = scratch, nên không chép thì test sửa đã duyệt chéo ở main vẫn chặn (exit 2). Chỉ nhận dạng {"approvals": [mục]} và chép
+    NGUYÊN mục (path, sha256, reviewer, author, task_id, reason) khi sha256 của mục khớp nội dung file trong scratch (HEAD sẽ push); mục lệch
+    nội dung bị bỏ. Dạng cũ list / {path: sha256} không còn duyệt gì (#605) nên không chép. Xét đủ trường, reviewer khác author là việc của
+    gate: integrate không tự duyệt, không nới luật. Lỗi chỉ được báo, gate tự chặn khi thiếu lời duyệt."""
+    src = os.path.join(main, ".claude", "audit-gate", "approved_tests.json")
+    if not os.path.isfile(src):
+        return
+    try:
+        with open(src, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        entries = saved.get("approvals") if isinstance(saved, dict) else None
+        if not isinstance(entries, list):
+            say('approved_tests.json của main không ở dạng {"approvals": [...]} (dạng cũ không còn duyệt): không chép sang scratch')
+            return
+        keep, digests = [], {}
+        for e in entries:
+            f = e.get("path") if isinstance(e, dict) else None
+            want = e.get("sha256") if isinstance(e, dict) else None
+            if not isinstance(f, str) or not isinstance(want, str) or os.path.isabs(f) or ".." in f.split("/"):
+                continue
+            theirs = os.path.join(scratch, f)
+            if not os.path.isfile(theirs):
+                continue
+            if f not in digests:
+                with open(theirs, "rb") as th:
+                    digests[f] = hashlib.sha256(th.read()).hexdigest()
+            if want.strip().lower() == digests[f]:   # sha256 gắn đúng nội dung sẽ push: test sửa tiếp sau lúc duyệt bị bỏ
+                keep.append(e)
+        if not keep:
+            return
+        dst = os.path.join(scratch, ".claude", "audit-gate")
+        os.makedirs(dst, exist_ok=True)
+        with open(os.path.join(dst, "approved_tests.json"), "w", encoding="utf-8") as out:
+            json.dump({"approvals": keep}, out)
+        paths = sorted({e["path"] for e in keep})
+        say(f"đã chép vào scratch {len(keep)} mục duyệt chéo của {len(paths)} file: {', '.join(paths[:8])}")
+    except (OSError, ValueError) as e:
+        say(f"không chép được lời duyệt test vào scratch: {type(e).__name__}: {e}")
+
+
+def copy_mtimes(main, scratch, remote, head):
+    """Mang mtime của main sang file của scratch khi nội dung trùng byte, chỉ cho các file đổi trong <remote>..<head> (audit T0066 vòng 3,
+    #605): lời duyệt test của người dùng (câu trả lời AskUserQuestion trong transcript) chỉ tính khi nó MỚI hơn lần sửa cuối của file;
+    scratch là checkout mới (mtime = lúc integrate) nên mọi câu trả lời trông cũ hơn và test sửa đã được duyệt ở main vẫn chặn. Trùng byte
+    = đúng nội dung mà gate ở main cũng xét với đúng mtime đó: integrate không tự duyệt, không nới luật. Lỗi chỉ được báo, gate tự chặn."""
+    try:
+        diff = git(main, "diff", "--name-only", "-z", "--no-renames", remote, head)
+        if diff.returncode != 0:
+            say(f"không liệt kê được file đổi để mang mtime sang scratch: {diff.stderr.strip()[-200:]}")
+            return
+        carried = 0
+        for f in filter(None, diff.stdout.split("\0")):
+            ours, theirs = os.path.join(main, f), os.path.join(scratch, f)
+            if os.path.islink(ours) or os.path.islink(theirs) or not (os.path.isfile(ours) and os.path.isfile(theirs)):
+                continue
+            with open(ours, "rb") as a, open(theirs, "rb") as b:
+                if a.read() != b.read():
+                    continue                       # main sửa tiếp chưa commit: nội dung khác, không mang
+            st = os.stat(ours)
+            os.utime(theirs, ns=(st.st_atime_ns, st.st_mtime_ns))
+            carried += 1
+        if carried:
+            say(f"đã mang mtime của main sang {carried} file cùng nội dung trong scratch")
+    except OSError as e:
+        say(f"không mang được mtime sang scratch: {type(e).__name__}: {e}")
 
 
 def run_gate(scratch, remote):
@@ -288,6 +354,10 @@ def push_gate_ok(main, sha):
 
 
 def integrate(main, base, args):
+    if glob.glob(os.path.join(main, ".claude", "super-board", "configs", "*.json")):   # #576: a super-board repo lands by PR + merge gate
+        say("repo có super-board (.claude/super-board/configs): main chỉ nhận việc qua PR + merge gate, integrate không push main. "
+            "Push nhánh và mở PR (open a PR) thay vì gộp vào main local")
+        return 2
     if not args.dry_run:
         sweep_orphans(main)
     fetch = git(main, "fetch", "--quiet", "origin", base, timeout=NET_TIMEOUT_S)
@@ -327,8 +397,12 @@ def integrate(main, base, args):
         if add.returncode != 0:
             say(f"không dựng được worktree scratch: {add.stderr.strip()[-300:]}")
             return 1
-        setup_kit(main, scratch)
+        if not setup_kit(main, scratch):
+            say("scratch không có DevKit của HEAD: không gate, không push (gate trên cây thiếu kit không đại diện cho commit sẽ push)")
+            return 1
         copy_ignored(main, scratch)
+        copy_approved_tests(main, scratch)
+        copy_mtimes(main, scratch, remote, head)
         rc = run_gate(scratch, remote)
         if rc == 4:   # hàng đợi gate toàn máy / khoá dự án bận (T0056): không phải đỏ, đợt giữ nguyên cho lượt sau
             say("gate bận (busy, exit 4): chưa kiểm được gì, không push; lượt integrate sau thử lại")
