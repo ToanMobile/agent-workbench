@@ -136,4 +136,17 @@ for c in multi other noname escape; do
   [ "$rc" -eq 11 ] && [ "$(reruns)" = 0 ] && [ -z "$(merged_list)" ] && ok "$c: red at once, no re-run" || fail "$c: exit $rc reruns=$(reruns) merged=$(merged_list): $(tail -4 "$TMP/t$n.log")"
 done
 
+# ── 4. #620: một test flaky thấy hai lần trong chia đôi → mỗi PR merge chỉ một ghi chú, đúng một thẻ.
+# 81, 82 xanh; 83 đỏ thật (có tests/gates/test_real.sh). Verify [81,82,83] đỏ thật → chia đôi → [81] và [81,82] đều đỏ flaky rồi xanh khi chạy lại.
+mklog "$TMP/flaky620.log" "FAIL|REG-DK-ALL-01|✖ tests/gates/test_flaky620.sh"
+mklog "$TMP/real.log" "FAIL|REG-DK-ALL-01|✖ tests/gates/test_real620.sh"
+card_script 81 tests/gates/test_flaky620.sh 0
+card_script 82 tests/gates/test_other620.sh 0
+card_script 83 tests/gates/test_real620.sh 1
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo x >> %s/verify.count; if [ -f tests/gates/test_real620.sh ]; then cat %s; else cat %s; fi; exit 1"]}\n' "$TMP" "$TMP/real.log" "$TMP/flaky620.log" > "$TMP/cfg9.json"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg9.json" --prs 81,82,83 ) >"$TMP/t9.log" 2>&1; rc=$?
+[ "$(grep -c "^train-flaky: 81 " "$TMP/t9.log")" = 1 ] && [ "$(grep -c "^train-flaky: 82 " "$TMP/t9.log")" = 1 ] && ok "dedupe: one flaky note per merged PR" || fail "dedupe: rc=$rc notes: $(grep -E 'train-flaky|train-result' "$TMP/t9.log" | tr '\n' ';')"
+[ "$(grep -c "pr comment 81 " "$TMP/gh.pr_comment" 2>/dev/null)" = 1 ] && ok "dedupe: one PR comment on #81" || fail "dedupe: PR comments: $(cat "$TMP/gh.pr_comment" 2>/dev/null | cut -c1-60)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train_single_test_retry: all passed" || { echo "❌ test_merge_train_single_test_retry: $FAILS failed"; exit 1; }
