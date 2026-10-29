@@ -6,7 +6,7 @@
 #   - a shell runner (.sh / .bash / .zsh, or an extensionless #! sh script) whose BASE version has no `set -e` / `set -o errexit` /
 #     `#!… -e` counts as an edited existing test when any code line is appended (comments and blank lines stay free);
 #   - a runner with `set -e` still accepts pure appends, and so does a runner in another language.
-# The existing approval path (--auto-approve-tests) lifts it like any edited test.
+# The existing approval path (a cross-review entry in approved_tests.json, #605) lifts it like any edited test.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -15,6 +15,30 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+# #605: test sửa chỉ được duyệt chéo — ghi mục {path, sha256, reviewer, author, task_id, reason} do "agent khác" duyệt
+cross_approve() {   # cross_approve <repo> <path>...
+  # Audit T0066 (#605): mục duyệt chỉ tính khi task_id có biên bản audit pass của antigravity-pm (ngoài repo, ở đây dưới $TMP)
+  # ghi `auditedHead: <sha>` của cây chứa đúng nội dung test hiện tại. `git stash create`: commit của cây làm việc, không đổi
+  # index/HEAD/refs; task_id riêng theo cây để lần duyệt sau không ghi đè biên bản của lần trước.
+  export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm-state"; export DEVKIT_PM_HOME_TEST=1   # fixture pm home dưới thư mục tạm (audit T0066 vòng 3: thiếu công tắc thì không tính)
+  python3 - "$@" <<'PY'
+import hashlib, json, os, subprocess, sys
+root, paths = sys.argv[1], sys.argv[2:]
+def git(*a):
+    return subprocess.run(["git", "-C", root, *a], capture_output=True, text=True).stdout.strip()
+head = git("stash", "create") or git("rev-parse", "HEAD")
+tid = "T-fixture-" + head[:12]
+td = os.path.join(os.environ["ANTIGRAVITY_PM_STATE_HOME"], "projects", "fixture", "tasks", tid); os.makedirs(td, exist_ok=True)
+with open(os.path.join(td, "task.json"), "w") as fh:
+    json.dump({"id": tid, "project": os.path.realpath(root),
+               "verdicts": {"audit": {"verdict": "pass", "reviewer": "pm", "notes": "fixture\nauditedHead: " + head}}}, fh)
+d = os.path.join(root, ".claude", "audit-gate"); os.makedirs(d, exist_ok=True)
+ap = [{"path": p, "sha256": hashlib.sha256(open(os.path.join(root, p), "rb").read()).hexdigest(), "reviewer": "antigravity",
+       "author": "claude", "task_id": tid, "reason": "fixture: diff test đã được agent khác đọc"} for p in paths]
+with open(os.path.join(d, "approved_tests.json"), "w") as fh:
+    json.dump({"approvals": ap}, fh)
+PY
+}
 
 # mk <name> <runner file content>: a repo whose suite command runs scripts/check.sh
 mk() {
@@ -105,8 +129,9 @@ printf 'echo done\n' >> scripts/check.sh
 printf 'def f():\n    return 1\n# note\n' > src/core.py
 gate --run-tests --full
 [ "$RC" = 2 ] && ok "no set -e + appended command + passing change: exit 2 (UNVERIFIED), not a PASS" || { bad "exit $RC, want 2"; printf '%s\n' "$OUT" | grep -v '^{' | grep -E '✖|VERDICT' | head -5; }
-gate --run-tests --full --auto-approve-tests
-[ "$RC" = 0 ] && ok "  … and --auto-approve-tests lifts it (exit 0)" || bad "approved: exit $RC, want 0"
+cross_approve "$PWD" scripts/check.sh
+gate --run-tests --full
+[ "$RC" = 0 ] && ok "  … and a cross-review entry lifts it (exit 0)" || bad "approved: exit $RC, want 0"
 
 # a runner in another language: unchanged (the rule is about shell's last-command status)
 mk pyrunner 'x

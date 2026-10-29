@@ -118,9 +118,12 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   # Dòng tiêu đề mục "## <tên>": sau tên là hết từ (dấu cách, "(", ":", \r hoặc hết dòng). has_acs và sect dùng
   # chung để cùng nhận "## Acceptance Criteria (…)" và cùng bỏ "## Fixes", "## Fixture".
   def heading($h): test("^##[ \t]+" + $h + "(?!\\w)");
-  # The AC section: lines after the LAST "## Acceptance Criteria" heading, up to the next "## ".
+  # Tên mục AC: "Acceptance Criteria" hoặc viết tắt "AC" (#616, #618 nằm Blocked vì ghi `## AC`); cùng luật với
+  # backlog_ticket_gaps của super-board-run.sh và AC_HEADING của super-board-ac-check.py.
+  def ac_name: "(?:Acceptance Criteria|AC)";
+  # The AC section: lines after the LAST AC heading, up to the next "## ".
   def has_acs: ((.body // "") / "\n") as $l
-    | [ $l | to_entries[] | select(.value | heading("Acceptance Criteria")) | .key ] as $h
+    | [ $l | to_entries[] | select(.value | heading(ac_name)) | .key ] as $h
     | if ($h | length) == 0 then false
       else [ $l[($h | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
@@ -166,7 +169,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   # (#226 sat Blocked behind 8 PRs that only shared the matrix).
   def no_shared: . - [".agents/regression_matrix.active.json", "universal-agent-devkit/tests/lib/test_durations.txt"];
   def too_big:
-    sect("Fix") as $fix | sect("Acceptance Criteria") as $ac
+    sect("Fix") as $fix | sect(ac_name) as $ac
     | [ $fix | parts[] | select(test("^#?[0-9]+$|^[0-9a-f]{7,40}$") | not) ] as $items
     | [ $items[] | select([ scan("\\S+") ] | length <= 6) ] as $short
     | [ (.title // "") | sub("^\\S+ \\[\\w+\\] "; "") | gsub("\\([^()]*\\)"; "") | splits("(?<![0-9]),|,(?![0-9])|;")

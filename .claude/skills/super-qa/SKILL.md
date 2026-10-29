@@ -220,7 +220,7 @@ See `.claude/skills/super-board/references/run.md` → Tester (first pass — re
 1. `git fetch origin`, then the worktree with the DevKit: `agent-kit worktree add .claude/worktrees/issue-<N>-qa issue-<N>-<slug> --lane=qa --base=origin/<config.base_branch>`
    (no `agent-kit` on PATH: `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It checks out the Builder's branch as
    it is (one only origin has from origin/<branch>; a `qa` card's new branch from the base), links the DevKit, copies the git-ignored config and
-   hooks, clones a Unity Library copy-on-write and takes no WORKTREE_MAX slot. Exit 4 = under the disk floor: stop with its message, card and
+   hooks, clones a Unity Library copy-on-write. Exit 4 = under the disk floor: stop with its message, card and
    claims unchanged. Exit 1 naming a worktree that holds the branch (the Builder's leftover): `agent-kit worktree remove` that path
    (no agent-kit on PATH: `python3 .agents/devkit/scripts/git/worktree.py remove`; a plain `git worktree remove` refuses the DevKit set-up
    every lane worktree carries — 11 cards Blocked on 20/10 for it; refused with ✖ = it holds work: Block the card naming it), then add

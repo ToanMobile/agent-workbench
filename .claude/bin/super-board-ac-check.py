@@ -20,7 +20,8 @@ import sys
 # Mục AC cấp 1 (không thụt lề) — cùng dạng super-board-preflight.sh nhận (#283): `-`, `*`, `1.`, `1)`; năm (2026.) không phải mục.
 AC_ITEM = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]+\S")
 CHECKBOX = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]*\[([ xX])\][ \t]*(.*)$")
-AC_HEADING = re.compile(r"^##[ \t]+Acceptance Criteria(?!\w)", re.I)
+# "## AC" viết tắt cũng là mục AC (#616, #618), cùng luật với has_acs của super-board-preflight.sh.
+AC_HEADING = re.compile(r"^##[ \t]+(?:Acceptance Criteria|AC)(?!\w)", re.I)
 AC_BLOCK = re.compile(r"<!--\s*sb:ac\s*-->(.*?)<!--\s*/sb:ac\s*-->", re.S)
 CARD_FROM_BRANCH = re.compile(r"(?:^|/)issue-(\d+)(?:\D|$)")
 # GitHub's closing keywords, the same expression as super-board-approval.py: KEYWORD[:] #N or KEYWORD[:] owner/repo#N.
