@@ -1819,7 +1819,11 @@ def head_tree(project_dir):
 def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
     """#319: a --full PASS against origin/<base> on a clean tree that holds it is also the merge gate's verify of this tree: the board's
     super-board-verify-cmd.sh --mark writes the tree receipt under the key the merge gate reads (one key function, not copied here), so a PR runs
-    --full once instead of twice. It refuses a dirty tree or a base not in the tree itself; no board config or script = the old behaviour."""
+    --full once instead of twice. It refuses a dirty tree or a base not in the tree itself; no board config or script = the old behaviour.
+    #575: since then --mark is only for a deliberate flow (the merge gate / the QA lane, which set SB_MARK_VERIFIED_TREE=1). A hand-run --full or a
+    repro run writes no receipt: the merge gate would otherwise skip its own verify on a tree nobody verified for it."""
+    if os.environ.get("SB_MARK_VERIFIED_TREE") != "1":
+        return
     # OCR 24/10: not a receipt for what this run did not prove: no tree taken before the run, or a run that relaxed a check (`relaxing`: the
     # --allow-no-tests / --allow-orphan-tests / --auto-approve-tests flags it used, DEVKIT_AUTO_APPROVE_TESTS=1 as the last) that the board's
     # verify line does not carry itself — the merge gate runs that line, so a flag it carries relaxes both runs the same way. Since #605

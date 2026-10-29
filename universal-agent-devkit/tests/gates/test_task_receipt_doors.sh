@@ -150,7 +150,7 @@ CLAUDE_PROJECT_DIR="$TMP/wt2" python3 "$GATE" --run-tests --no-checklist --diff 
 CLAUDE_PROJECT_DIR="$TMP/wt2" python3 "$GATE" --run-tests --no-checklist --diff origin/main >"$TMP/gate" 2>&1; g2=$?
 [ "$g2" = 0 ] || fail "7 tiền đề: lượt task --diff origin/main exit $g2"
 [ ! -e "$MARK" ] && ok "7 lượt task (không --full) không gọi mark_merge_gate_receipt" || fail "7 lượt task gọi mark_merge_gate_receipt: $(cat "$MARK")"
-CLAUDE_PROJECT_DIR="$TMP/wt2" python3 "$GATE" --run-tests --full --no-checklist --diff origin/main >"$TMP/gate" 2>&1 \
+SB_MARK_VERIFIED_TREE=1 CLAUDE_PROJECT_DIR="$TMP/wt2" python3 "$GATE" --run-tests --full --no-checklist --diff origin/main >"$TMP/gate" 2>&1 \
   || fail "7 tiền đề: --full --diff origin/main exit $?"
 grep -q -- "--mark" "$MARK" 2>/dev/null && ok "7 đối chứng: --full --diff origin/main gọi mark_merge_gate_receipt" \
   || fail "7 đối chứng: --full --diff origin/main không gọi mark_merge_gate_receipt (đầu dò hỏng)"
