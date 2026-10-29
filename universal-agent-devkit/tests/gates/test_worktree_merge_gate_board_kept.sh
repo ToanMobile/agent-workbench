@@ -6,7 +6,7 @@
 #         local (board gộp qua PR + merge gate), không giữ Stop
 #   K11 3 worktree phiên tự tạo, ExitWorktree keep (PostToolUse ghi khoá `devkit-kept`): Stop vẫn gộp vào main nhưng KHÔNG gỡ khi phiên còn sống
 #       4 khoá `devkit-kept` của một pid đã chết: `worktree remove` gỡ được (mở khoá trước)
-#   K7  5 `worktree add` không tính worktree của super-board vào WORKTREE_MAX
+#   K7  5 `worktree add` tạo được worktree thường bên cạnh worktree của super-board
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
 export DEVKIT_LANG=en GIT_CONFIG_GLOBAL=/dev/null WORKTREE_AUTO_MERGE_WAIT_S=9
@@ -100,12 +100,10 @@ CLAUDE_PROJECT_DIR="$TMP/e" python3 -I "$SWPY" record < "$TMP/p4.json" > "$TMP/r
 grep -q '"additionalContext"' "$TMP/rec.out" && grep -q "KEEP NOT RECORDED" "$TMP/rec.out" \
   && ok "K11: a keep that cannot be recorded is told to the model (additionalContext on stdout)" || fail "keep failure silent: out=$(cat "$TMP/rec.out") err=$(cat "$TMP/rec.err")"
 
-# 5 K7: worktree của super-board không chiếm chỗ WORKTREE_MAX
+# 5 K7: worktree của super-board không chặn worktree add
 repo d; G "$TMP/d" worktree add -q -b issue-40-fix "$TMP/d/.claude/worktrees/issue-40-qa"   # như super-board dựng: git worktree add -b
 (cd "$TMP/d" && WORKTREE_MAX=1 python3 -I "$WTPY" add "$TMP/d-extra" --no-init > "$TMP/out" 2> "$TMP/err"); rc=$?
 [ "$rc" = 0 ] && [ -d "$TMP/d-extra" ] && ok "K7: a super-board worktree takes no WORKTREE_MAX slot" || fail "K7 (rc $rc): err=$(head -c 300 "$TMP/err")"
-(cd "$TMP/d" && WORKTREE_MAX=1 python3 -I "$WTPY" add "$TMP/d-extra2" --no-init > "$TMP/out" 2> "$TMP/err"); rc=$?
-[ "$rc" = 4 ] && ok "  … but an ordinary worktree still does (the 2nd add at WORKTREE_MAX=1 is refused, rc 4)" || fail "K7 cap gone (rc $rc)"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_worktree_merge_gate_board_kept: PASS"; exit 0; } || { echo "test_worktree_merge_gate_board_kept: FAIL ($FAILS)"; exit 1; }

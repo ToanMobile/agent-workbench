@@ -1981,6 +1981,186 @@
       ]
     },
     {
+      "component": "super-board-ac-short-heading",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-ac-check.py",
+        "tests/super-board/test_preflight_ac_short_heading.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AC-SHORT-HEADING-01",
+          "name": "#616/#618: heading `## AC` là mục AC ở preflight (không hold unclear), luật kéo Backlog và ac-check; `## ACL` không phải",
+          "command": "bash tests/super-board/test_preflight_ac_short_heading.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-cross-review-approval-605",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/tests/gates/test_gate_cross_review_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-CROSS-REVIEW-605-01",
+          "name": "#605: test có sẵn bị sửa chỉ được duyệt chéo (approved_tests.json approvals: reviewer khác author/DEVKIT_AGENT_ID, sha256 khớp, đủ 6 trường); tự duyệt (--auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS, AUTO-APPROVE:) và dạng cũ không nguồn = exit 2, in cần duyệt lại + sha256",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_cross_review_approval.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-approval-cross-review-605",
+      "watch_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-merge-policy.py",
+        "tests/super-board/test_approval_cross_review.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVAL-CROSS-REVIEW-605-01",
+          "name": "#605: marker cross-review-approved hợp lệ (reviewer khác builder, head/scope khớp request, task_id + gate_receipt không rỗng, người đăng có quyền ghi) thay cho done; tự duyệt, head lệch, sửa comment, đăng trước request = không nhận; chỉ plan có delete-protected mới cần done của người (schema / needs_you nhận marker); policy: xoá file khớp merge_policy.protected_paths → human delete-protected (cả file nhị phân qua github-read); --deps --config nhận marker khi plan hiện tại cho phép",
+          "command": "python3 tests/super-board/test_approval_cross_review.py",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-approved-head-605",
+      "watch_files": [
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_merge_queue.sh",
+        "tests/super-board/test_runner_review_approved_head.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVED-HEAD-605-01",
+          "name": "#605: approved-head kèm approved-by {reviewer,builder,task_id,gate_receipt} được nhận (reviewer khác builder); tự duyệt, approved-by hỏng/thiếu trường, head lệch bị loại; marker mới nhất thắng; bare approved-head của OWNER vẫn nhận (runner)",
+          "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-APPROVED-HEAD-605-02",
+          "name": "#605: merge-queue dùng chung luật approved-head (super-board-approved-head.jq): marker hợp lệ và bare OWNER vào train; tự duyệt, approved-by hỏng, task_id rỗng, head lệch, marker tự duyệt mới hơn bị loại kèm lý do",
+          "command": "bash tests/super-board/test_merge_queue.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-guard-protected-delete",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/tests/gates/test_guard_protected_delete.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-PROTECTED-DELETE-01",
+          "name": "git guard chỉ hỏi người khi: force push (-f/--force/--force-with-lease/+ref), xoá ref remote (push --delete/-d/:ref/--mirror/--prune), xoá file quan trọng (rm/unlink/git rm/find -delete theo protected_delete mặc định + .antigravity-pm.json); xoá file thường vẫn qua (#605)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_protected_delete.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-guard-self-approval-comment",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/tests/gates/test_guard_self_approval_comment.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-SELF-APPROVAL-01",
+          "name": "git guard chặn agent tự đăng approved-head trơn (không approved-by:) hoặc dòng done qua gh pr/issue comment, gh api …/comments (--body, -b, --body-file, -F, -f/-F body=); approved-head + approved-by và cross-review-approved vẫn qua (#605 Lane H)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_self_approval_comment.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-audited-head-base",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_audited_head_base.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-AUDITED-HEAD-BASE-01",
+          "name": "duyệt chéo: auditedHead trước base không duyệt chép lùi test (mục duyệt, trailer, push_gate.approved); audited_head đọc verdicts.audit.auditedHead trước notes; ANTIGRAVITY_PM_STATE_HOME lạ không cấp biên nhận task / full_pass exit 0 (#605 audit T0066 vòng 2)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_audited_head_base.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-audit-check-605",
+      "watch_files": [
+        ".claude/bin/super-board-audit-check.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AUDIT-CHECK-605-01",
+          "name": "#605 (audit T0066 vòng 2): task_id của cross-review-approved chỉ tính khi antigravity-pm có audit pass với auditedHead == head của request; không biên bản, head khác, verdict fail, project khác, task_id sai dạng = không duyệt; CLI super-board-audit-check.py exit 0/1",
+          "command": "python3 tests/super-board/test_approval_cross_review.py",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-AUDIT-CHECK-605-02",
+          "name": "#605 (audit T0066 vòng 2): merge-queue loại approved-by có task_id không có audit pass khớp head PR (giả, head cũ, verdict fail, sai dạng); bare OWNER vẫn vào train",
+          "command": "bash tests/super-board/test_merge_queue.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-AUDIT-CHECK-605-03",
+          "name": "#605 (audit T0066 vòng 2): review_approved_head của runner chỉ merge-only khi task_id của approved-by có audit pass khớp head PR",
+          "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-reviewer-antigravity-audit-605",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-build/references/worker-preamble.md",
+        ".claude/skills/super-review/SKILL.md",
+        "universal-agent-devkit/docs/init_board/ai-factory-superboard-workflow.md"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEWER-AUDIT-605-01",
+          "name": "#605 (audit T0066 vòng 3): prompt Review headless, run.md, worker-preamble.md, super-review/SKILL.md và ai-factory doc cùng một hợp đồng: reviewer chạy audit Antigravity thật qua antigravity-pm (pm_task_create, pm_dispatch kind=audit, audit-agent.json, pm_verdict auditedHead) trước approved-by, gate_receipt = biên nhận task impacted, Antigravity không có thì thẻ ở Review với blocked-by",
+          "command": "bash tests/super-board/test_reviewer_antigravity_audit_contract.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-approved-head-closing-ref",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_approved_head_closing_ref.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVED-HEAD-CLOSING-REF-01",
+          "name": "#607/#614: review_approved_head nhận PR nhánh không phải issue-<N>- khi đúng một PR mở có closingIssuesReferences chứa N; nhánh issue-<N>- vẫn thắng, hai PR đóng N thì không chọn; thẻ Review có PR như vậy đã vào hàng không bị đẩy Blocked vì no-op",
+          "command": "bash tests/super-board/test_runner_approved_head_closing_ref.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-all-shard-rules",
       "watch_files": [
         ".agents/regression_matrix.active.json",
