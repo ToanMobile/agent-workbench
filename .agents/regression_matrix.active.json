@@ -2257,6 +2257,24 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-decision-reader",
+      "watch_files": [
+        ".claude/bin/super-board-decision.py",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-qa-report.py",
+        "tests/super-board/test_decision_reader.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-DECISION-READER-01",
+          "name": "[orchestrator] [decision] hợp lệ (marker orchestrator hoặc comment tay của chủ không marker) gỡ blocker ở deps.sh, needs-you mark, qa-report; lane tự đăng thì bị bỏ qua; ca DỪNG vẫn gắn needs-you (#516, 28/10)",
+          "command": "bash tests/super-board/test_decision_reader.sh",
+          "parallel_safe": true
+        }
+      ]
     }
 ,
     {
