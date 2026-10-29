@@ -178,6 +178,11 @@ def metrics(recs):
         walls = [w for w in walls if w is not None]
         m["imp_%s_all01_n" % key] = len(walls)
         m["imp_%s_all01_p50_s" % key] = pct_stats(walls)[0]
+    # #476: lượt impacted có shadow (map test→nguồn so với cách chọn cũ); miss = suite map bỏ mà thật sự FAIL
+    sh = [r for r in imp if isinstance(r.get("shadow_skip"), list)]
+    m["shadow_runs"] = len(sh)
+    m["shadow_skipped"] = sum(len(r["shadow_skip"]) for r in sh)
+    m["shadow_miss"] = sum(len(r["shadow_miss"]) for r in sh if isinstance(r.get("shadow_miss"), list))
     return m
 
 
@@ -225,6 +230,8 @@ def print_report(label, m, ignored, out):
       "with %s: n=%d p50=%s\n" % (ALL01, ALL01, m["imp_without_all01_n"], fmt_s(m["imp_without_all01_p50_s"]), ALL01,
                                  m["imp_with_all01_n"], fmt_s(m["imp_with_all01_p50_s"])))
     w("impacted_command used (impacted_run): %d/%d\n" % (m["impacted_command_used"], m["impacted_command_of"]))
+    if m["shadow_runs"]:
+        w("shadow map (#476): runs=%d suites_skipped_by_map=%d missed_FAIL=%d\n" % (m["shadow_runs"], m["shadow_skipped"], m["shadow_miss"]))
     w("ignored lines: %d\n" % ignored)
 
 

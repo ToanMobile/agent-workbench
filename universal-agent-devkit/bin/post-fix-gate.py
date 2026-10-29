@@ -5792,6 +5792,8 @@ RUN_LOG_KEEP_LINES = 4000
 RUN_LOG_LINE_MAX = 3000
 RUN_LOG_STALE_TMP_S = 3600        # a rotation temp file older than this belongs to a dead run
 _MAIN_T0 = None                   # time.monotonic() at the start of main()
+_SHADOW_ON = False                # #476: DEVKIT_SHADOW_MAP=1 đọc ở đầu main() rồi gỡ khỏi env, để suite con (test_gate_run_log) không thấy
+_SHADOW = None                   # #476: (shadow_skip, shadow_miss) của lượt này — map test→nguồn so với cách chọn cũ; chỉ log
 _MAIN_LOAD1 = None                # #472 C: tải 1 phút lúc main() bắt đầu (runs.jsonl load1)
 # #472: worktree scratch của điểm gộp (scripts/git/integrate.py, .claude/bin/super-board-merge-gate.sh, super-board-merge-train.sh);
 # cùng tiền tố với scripts/governance/gate_speed_report.py MERGE_POINT_PREFIXES và bin/batch_canary.py
@@ -6138,6 +6140,8 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             "changed_files": [f[:200] for f in files[:RUN_LOG_CHANGED_MAX]],
             "ran_suites": [str(t.get("id") or "?")[:40] for t in regression_tests if id(t) in ran],
         }
+        if _SHADOW is not None:   # #476: chỉ dữ liệu so sánh; cách chọn suite không đổi
+            rec["shadow_skip"], rec["shadow_miss"] = _SHADOW
         ptc = [t["ptc"] for t in regression_tests if t.get("ptc")]
         if ptc:   # #472 D: hit-rate của per_test_cache (chỉ lượt có suite run_impacted.sh chạy với sổ per-test bật)
             rec["ptc_reuse"], rec["ptc_ran"] = sum(p[0] for p in ptc), sum(p[1] for p in ptc)
@@ -6162,9 +6166,29 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         return
 
 
+def _shadow_compare(project_dir, rules, matrix_path, covers, regression_tests, files):
+    """#476: (ids suite cách chọn cũ chạy mà map test→nguồn bỏ, trong số đó ids FAIL) — hoặc None khi tắt / không dựng được.
+    Chỉ so sánh để có dữ liệu trước khi bật cách chọn mới; không đổi suite nào chạy. Bật bằng DEVKIT_SHADOW_MAP=1 (mặc định tắt:
+    dòng runs.jsonl giữ nguyên bộ trường cũ).
+    ponytail: opt-in, cần đặt biến ở các lượt thật để có ≥5 lượt shadow; bật mặc định khi test_gate_run_log được duyệt thêm 2 trường."""
+    if not _SHADOW_ON:
+        return None
+    try:
+        sc = suite_cache_for(project_dir, rules, matrix_path, covers)
+        if sc is None:
+            return None
+        _run, skip = sc.shadow_select(regression_tests, files)
+        failed = {str(t.get("id")) for t in regression_tests if t.get("status") == "FAIL"}
+        return [i[:40] for i in skip], [i[:40] for i in skip if i in failed]
+    except Exception as e:  # noqa: BLE001 — chỉ là dữ liệu: không bao giờ đổi kết quả gate
+        log_warn(f"shadow map: {e!r}")
+        return None
+
+
 def main():
-    global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1
+    global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1, _SHADOW_ON
     _MAIN_T0 = time.monotonic()
+    _SHADOW_ON = os.environ.pop("DEVKIT_SHADOW_MAP", "") == "1"
     os.environ.pop(SCOPED_TESTS_ENV, None)   # #644: giá trị kế thừa không được thu hẹp cả pre-commit (run_staged_audit chạy trước khối --scoped)
     try:
         _MAIN_LOAD1 = round(os.getloadavg()[0], 2)
@@ -8476,6 +8500,10 @@ def main():
     log_fp = tested_fp or budget_fp or ""
     if run_tests and not _run_log_fp(log_fp):
         log_fp = tree_fp_of(project_dir)
+    global _SHADOW
+    if run_tests and git_dir and regression_tests and not force_reason:   # lượt impacted: so map với cách chọn cũ
+        _SHADOW = _shadow_compare(project_dir, rules, find_matrix_path(args.matrix), covers, regression_tests,
+                                  [str(f) for f in modified_files])
     _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
                   cache or (keyed_hits or None), run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
                   log_fp=log_fp, exit_reason=exit_reason, slot_waits=slot_waits)
