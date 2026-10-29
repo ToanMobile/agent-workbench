@@ -84,15 +84,16 @@ ARGS="" integrate; rc=$?
   && ok "I2 không có commit chờ: exit 0, không gate" || fail "I2: rc $rc, gate $(gate_runs), out: $(tail -3 "$TMP/out")"
 
 # I3 tới hạn theo batchMax (=2) dù máy bận + gate xanh → push đúng HEAD, gate chạy 1 lần trong scratch (không ở main), scratch gỡ
-# Scratch tên .integrate-scratch-* (batch_canary không đếm là merge gate lẻ); gate --full, không --force-full (không còn hoãn để cưỡng).
+# Scratch tên .integrate-scratch-* (batch_canary không đếm là merge gate lẻ); #644: gate --scoped (tự leo full khi đụng lõi), không --full / --force-full.
 newrepo; G "$M" config devkit.integrate.batchMax 2; work a; work b; hold_test_lock
 ARGS="--if-due" integrate; rc=$?
 gate_cwd="$(head -1 "$INTEGRATE_GATE_LOG" 2>/dev/null | cut -d' ' -f1)"
 [ "$rc" = 0 ] && [ "$(origin_head)" = "$(G "$M" rev-parse HEAD)" ] && [ "$(gate_runs)" = 1 ] \
-  && [ -n "$gate_cwd" ] && [ "$gate_cwd" != "$M" ] && grep -q -- "--run-tests --full --brief --diff refs/remotes/origin/main" "$INTEGRATE_GATE_LOG" \
-  && ! grep -q -- "--force-full" "$INTEGRATE_GATE_LOG" && case "$(basename "$gate_cwd")" in .integrate-scratch-*) true ;; *) false ;; esac \
+  && [ -n "$gate_cwd" ] && [ "$gate_cwd" != "$M" ] && grep -q -- "--run-tests --scoped --brief --diff refs/remotes/origin/main" "$INTEGRATE_GATE_LOG" \
+  && ! grep -q -- "--force-full" "$INTEGRATE_GATE_LOG" && ! grep -q -- "--full" "$INTEGRATE_GATE_LOG" \
+  && case "$(basename "$gate_cwd")" in .integrate-scratch-*) true ;; *) false ;; esac \
   && [ ! -d "$gate_cwd" ] && [ "$(G "$M" worktree list | wc -l | tr -d ' ')" = 1 ] \
-  && ok "I3 tới hạn (batchMax) + gate xanh: push đúng HEAD, 1 gate --full trong scratch, scratch đã gỡ" \
+  && ok "I3 tới hạn (batchMax) + gate xanh: push đúng HEAD, 1 gate --scoped trong scratch, scratch đã gỡ" \
   || fail "I3: rc $rc, origin $(origin_head | cut -c1-8) HEAD $(G "$M" rev-parse --short HEAD), gate $(gate_runs) cwd '$gate_cwd', worktrees $(G "$M" worktree list | wc -l), out: $(tail -5 "$TMP/out")"
 release_test_lock
 

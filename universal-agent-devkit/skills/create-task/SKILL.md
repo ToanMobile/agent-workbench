@@ -29,7 +29,7 @@ Mỗi Task tạo ra BẮT BUỘC phải tuân thủ cấu trúc sau:
 
 ## 🧺 Gom Việc: Ít Thẻ Nhất Có Thể (BẮT BUỘC)
 
-Mỗi thẻ là một PR, một merge-gate và một lần `post-fix-gate --full`; nhiều thẻ nhỏ làm gate chạy đè nhau và máy quá tải
+Mỗi thẻ là một PR, một merge-gate và một lượt gate (`post-fix-gate --scoped`, tự leo `--full` khi đụng file lõi); nhiều thẻ nhỏ làm gate chạy đè nhau và máy quá tải
 (23/10: load 112 trên 12 lõi). Vì vậy **gom, đừng tách**:
 - Việc mới cùng loại (`bug` / `feature` / `qa`) **tự nhập vào thẻ Backlog hoặc Ready chưa chạy** (Ready đã có PR mở head `issue-<số>-` là đã chạy, không nhận): script chọn thẻ trùng đường dẫn file nhiều
   nhất (hòa thì thẻ mới nhất), thêm dòng AC vào mục `## Acceptance Criteria` của thẻ đó và Problem/Fix vào mục `## Gộp thêm: <tiêu đề>`.

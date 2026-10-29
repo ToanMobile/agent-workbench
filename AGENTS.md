@@ -74,8 +74,8 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   required, the acceptance report) is committed and pushed without asking: commit your own
   paths, `git fetch`; origin moved → `git pull --no-rebase --no-edit` (check its exit code;
   a conflict → skill conflict, ask only for a business decision) and, after any pull, merge
-  or conflict fix, re-run the gate on what will be pushed: on a PR branch `post-fix-gate.py --run-tests`
-  (its task receipt). A trunk-push repo pushes main only through `agent-kit integrate` (one `--full` in a
+  or conflict fix, re-run the gate on what will be pushed: on a PR branch `post-fix-gate.py --run-tests --scoped`
+  (its scoped receipt). A trunk-push repo pushes main only through `agent-kit integrate` (one `--scoped` run in a
   scratch worktree, then the push); never a `--full` in the main checkout. Every commit and every push needs the latest gate on that content at
   exit 0 — or exit 2 whose only reason is an edited test an Antigravity `audit` passed, with
   `Test-approved-by: antigravity <task-id>` in `git log origin/<branch>..HEAD`. Anything else: no commit,
@@ -101,7 +101,7 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   `agent-kit worktree trunk off` turns it off): main is merge-only and nobody holds it — every session works in its own worktree (Claude Code: the
   tool EnterWorktree; others: `agent-kit worktree add`), and only `agent-kit worktree finish` moves main.
 - **Done means verified**: run the post-fix gate
-  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief`, impacted, exit 0 only, on the
+  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`, exit 0 only, on the
   current code; step 3) and attach a real proof PNG from this turn (when step 4 of "Every prompt" applies)
   before the reply may open with XONG. The Stop hooks enforce this where the host has them, but
   no hook takes the screenshot.
@@ -117,17 +117,18 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 2. A code or bug prompt: run the failing oracle and see RED before editing production,
    then the same oracle GREEN after. Keep the command log and the exit code.
 3. From the repo root, once:
-   `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief`
-   Exit 0 is required. This impacted run (the tests the branch's change since the trunk reaches) writes the
-   task receipt, the proof for step 5. A task never runs `--full`: only the merge point does (the merge queue
-   or merge train of a PR repo, the push of main of a trunk-push repo). Any other exit: paste the last
+   `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`
+   Exit 0 is required. This scoped run writes the task receipt (and the scoped receipt), the proof for step 5:
+   `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph, plus the fixed smoke
+   group; a file listed in `.agents/gate-core.txt` (gate, hooks, shared libraries, lockfiles, the map itself), a code file no
+   test reaches, or a graph error escalates the run to `--full` by itself. Build, QA, review, the merge queue / train (one run
+   for the union of the batch's diffs) and `agent-kit integrate` run the same `--scoped`; push and XONG accept its receipt
+   for that tree. Nobody runs `--full` by hand for a task: the `gate-full` skill runs it on main every night at 00:00
+   (launchd) and bisects a red one into a P1 card. Any other exit: paste the last
    30 log lines, fix, and repeat this step. A dry-run, `--help`, or a single Gradle test does not replace this command.
-   `--full` is cached-full: every cacheable light/cpu matrix suite is considered too; one whose content key (its inputs +
-   environment, `bin/suite_cache.py`, shared by every worktree) already PASSed is reused, the rest run (an added suite that
-   times out is named, outside the verdict). Gradle/Unity/device suites, `run_impacted.sh`, network commands and
-   `"cache": false` keep the old selection; `--no-cache` runs them all. When the repo's last real full run is over 24 h old,
-   a `--full` (not a merge gate) uses no content key (sentinel). A push of main needs that receipt of the pushed content
-   (usually zero suites to run). Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores
+   A suite whose content key (its inputs + environment, `bin/suite_cache.py`, shared by every worktree) already PASSed is
+   reused, the rest run; Gradle/Unity/device suites, network commands and `"cache": false` always run; `--no-cache` runs them
+   all. Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores
    (`bin/capacity.py`; `DEVKIT_SLOT_LOAD_MAX` / `DEVKIT_CAPACITY` override) they start at once, above it they
    wait up to 600 s and run anyway; only Unity and device suites hold an exclusive lock.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a

@@ -1,0 +1,1 @@
+../skills/gate-full/SKILL.md
