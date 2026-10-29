@@ -6,6 +6,7 @@
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GG="${GG_HOOK:-$DEVKIT_DIR/hooks/block-dangerous-git.sh}"
+HW="${HW_HOOK:-$DEVKIT_DIR/hooks/hardware_safety_gate.sh}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 command -v python3 >/dev/null 2>&1 || { echo "skip: python3 missing"; exit 0; }
@@ -19,10 +20,10 @@ FAILS=0
 
 # check <want rc> <command>
 check() {
-  local want="$1" c="$2"
+  local want="$1" c="$2" h="${3:-$GG}"
   python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[2],"hook_event_name":"PreToolUse",
     "tool_name":"Bash","tool_input":{"command":sys.argv[1],"description":"d"}}))' "$c" "$P" > "$TMP/in.json"
-  ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" bash "$GG" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
+  ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" bash "$h" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
   local rc=$?
   if [ "$rc" = "$want" ]; then echo "✔ rc $rc: $c"; else echo "✖ rc $rc (want $want): $c — $(head -c 160 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; FAILS=$((FAILS + 1)); fi
 }
@@ -46,6 +47,17 @@ check 2 $'git$\'\\C-`foo\' push --force origin main'
 # Cách đọc không cắt: shell không nuốt phần sau NUL (zsh \x00, bash 3.2 \u0000) vẫn chạy lệnh trong bash -c / eval.
 check 2 $'bash -c $\'true\\x00; git push --force origin main\''
 check 2 $'eval $\'true\\x00; git push --force origin main\''
+# Audit T0131: nhiều NUL trong một thân eval/bash -c, và \c / \C- / \M- đứng trước một escape số (\x00): đều phải đọc như NUL.
+check 2 $'eval $\'true\\x00;\\x00git\\x00 push --force origin main\''
+check 2 $'bash -c $\'true\\x00; git\\x00\\x00 push --force origin main\''
+check 2 $'git$\'\\c\\x00foo\' push --force origin main'
+check 2 $'git$\'\\C-\\x00foo\' push --force origin main'
+check 2 $'git$\'\\M-\\x00foo\' push --force origin main'
+check 2 $'eval $\'true\\x00;\\c\\x00git push --force origin main\''
+check 0 $'eval $\'echo a\\x00;\\x00echo b\\x00\''
+# hardware_safety_gate.sh dùng cùng shell_norm: lệnh xoá phân vùng thiết bị sau một từ ANSI-C có NUL vẫn bị chặn.
+check 2 $'adb shell $\'rm\\x00\' -rf /system' "$HW"
+check 2 $'eval $\'true\\x00;\\x00adb shell rm -rf /system\'' "$HW"
 check 0 $'bash -c $\'echo ok\\x00\''
 check 0 $'git$\'\\x00foo\' status'
 

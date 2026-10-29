@@ -377,7 +377,8 @@ def _heredoc_word(text, i):
 # \c + @/cách/backtick, \c + U+0800..U+0FFF (byte UTF-8 đầu 0xE0), \C- của zsh: đều ra NUL.
 _ANSI_NUM = re.compile(
     r"\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|([0-7]{1,3})"
-    r"|(c[@ `])|(c[\u0800-\u0fff])|(C-[@ `]))"
+    r"|(c[@ `])|(c[\u0800-\u0fff])|(C-[@ `])"
+    r"|((?:c|C-|M-)\\(?:x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3})))"   # \c \C- \M- before a numeric escape: the byte it makes is not modelled, read as NUL (audit T0131)
 )
 
 
@@ -387,8 +388,8 @@ def _ansi_num(esc):
     m = _ANSI_NUM.fullmatch(esc)
     if not m:
         return None
-    hexa, u4, u8, octal, ctrl, utf, cword = m.groups()
-    if ctrl or utf or cword:   # control-X là X & 0x1f; ba nhóm này đều ra NUL
+    hexa, u4, u8, octal, ctrl, utf, cword, nested = m.groups()
+    if ctrl or utf or cword or nested:   # control-X là X & 0x1f; ba nhóm này đều ra NUL
         return "\0"
     code = int(hexa or u4 or u8 or octal, 16 if octal is None else 8)
     if octal is not None:
@@ -426,8 +427,8 @@ def ansi_c_to_single(text, cut_at_nul=True):
                             while j < n and text[j] != "'":
                                 j += 2 if text[j] == "\\" and j + 1 < n else 1
                             break
-                        if dec == "\0":   # cách đọc không cắt: bỏ byte NUL, giữ phần sau
-                            j = m.end(); continue
+                        if dec == "\0":   # cách đọc không cắt: NUL là chỗ ngăn từ (không dán hai bên), giữ phần sau (audit T0131)
+                            body.append(" "); j = m.end(); continue
                         body.append(dec); j = m.end(); continue
                     body.append("'\\''" if text[j + 1] == "'" else text[j:j + 2]); j += 2
                 else:
