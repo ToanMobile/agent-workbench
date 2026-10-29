@@ -326,6 +326,7 @@ if [ "$PREFLIGHT" -ne 1 ]; then
 fi
 # SCRATCH rỗng (--preflight): không gọi worktree remove / rm với đường dẫn rỗng.
 cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
+# #559: thư mục đã đổi tên bằng git worktree move thì SCRATCH rỗng, trap không gỡ.
 trap cleanup EXIT
 
 # ---- the head guard --------------------------------------------------------
@@ -369,7 +370,7 @@ python3 "$GITHUB_READ" --kind metadata -- pr view "$PR" ${REPO:+--repo "$REPO"} 
 # thẻ về Build (exit 11). Checker thoát 2 (metadata không đọc được), crash, hay thoát 1 mà không in dòng "qa-report:" nào là
 # KHÔNG quyết định được: cùng đường với policy không đọc được (exit 7, người duyệt), không phải lỗi build của thẻ.
 QA_REPORT_RC=0
-QA_REPORT_OUT=$(python3 "$HERE/super-board-qa-report.py" --meta "$META" 2>/dev/null) || QA_REPORT_RC=$?
+QA_REPORT_OUT=$(SB_CONFIG="$CONFIG" python3 "$HERE/super-board-qa-report.py" --meta "$META" 2>/dev/null) || QA_REPORT_RC=$?
 if [ "$QA_REPORT_RC" -ne 0 ]; then
   if [ "$QA_REPORT_RC" -eq 1 ] && printf '%s\n' "$QA_REPORT_OUT" | grep -q '^qa-report: '; then
     printf '%s\n' "$QA_REPORT_OUT"
@@ -641,6 +642,22 @@ fi
 TREE_RECEIPT=$(sb_verified_tree_receipt "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
 TREE_KEY=${TREE_RECEIPT##*/}
 if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
+# #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA. Exit 2 chỉ khi train chưa
+# chứng minh cây này, comment edited-tests còn đúng head, và base không còn là tổ tiên của head đó.
+REVIEWED_HEAD=$HEAD_SHA
+if [ "$TRAIN_PROVED" -eq 0 ]; then
+  edited=0
+  if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$META" "$REVIEWED_HEAD" >/dev/null 2>&1; then
+    edited=1
+  else
+    et_rc=$?
+    [ "$et_rc" -eq 1 ] || exit "$et_rc"
+  fi
+  if [ "$edited" -eq 1 ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_HEAD"; then
+    say "edited-test review is stale before fast-forward (origin/${BASE} is not an ancestor of ${REVIEWED_HEAD})"
+    exit 2
+  fi
+fi
 BEHIND_NOW=$(git -C "$REPO_PATH" rev-list --count "${HEAD_SHA}..${BASE_SHA}" 2>/dev/null || echo 0)
 # #570: gate không ghi lên nhánh PR. Nhánh chậm hơn base thì chỉ verify trên cây scratch đã gộp (ở local); HEAD_SHA giữ nguyên head PR
 # nên approved-head, --match-head-commit và merge queue vẫn khớp đúng head người duyệt. GitHub squash tự gộp base lúc merge.
@@ -749,6 +766,94 @@ run_verify_cmd() {
 }
 # CLAUDE_PROJECT_DIR / TARGET_DIR của bên gọi (runner, agent) bị gỡ: post-fix-gate ưu tiên chúng hơn cwd, giữ lại là verify kiểm cây chính thay
 # cho cây gộp trong SCRATCH (xanh sai). tests/super-board/test_merge_gate_verify_log_outside.sh.
+# #559: REG-DK-ALL-01 FAIL / TIMEOUT / HANG thì giữ scratch. Dòng PASS không khớp.
+reg_dk_all_not_pass() {
+  local log="$1"
+  [ -f "$log" ] || return 1
+  LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$log" 2>/dev/null \
+    | LC_ALL=C grep -Eq '^[[:space:]]*\[ \] (FAIL|TIMEOUT( \(HANG\))?|HANG)[[:space:]]*\|[[:space:]]*REG-DK-ALL-01[[:space:]]*\|'
+}
+# Tên đúng mẫu .merge-scratch-keep-pr<số>-<yyyyMMdd-HHmmss>. Thư mục khác không đụng.
+keep_name_ok() {
+  [[ "$(basename "$1")" =~ ^\.merge-scratch-keep-pr[0-9]+-[0-9]{8}-[0-9]{6}$ ]]
+}
+prune_old_keeps() {
+  # Giữ chỗ cho bản mới: còn tối đa 1 bản cũ (cộng bản sắp giữ = 2).
+  local d base oldest n
+  local list=()
+  for d in "$BASE_WT/.claude/worktrees"/.merge-scratch-keep-pr*; do
+    [ -d "$d" ] || continue
+    keep_name_ok "$d" || continue
+    list+=("$d")
+  done
+  [ "${#list[@]}" -ge 2 ] || return 0
+  oldest=$(python3 -c 'import os,sys; ps=sys.argv[1:]; ps.sort(key=lambda p: os.stat(p).st_mtime); print("\n".join(ps))' "${list[@]}") || return 0
+  n=$(printf '%s\n' "$oldest" | grep -c . || true)
+  while [ "$n" -ge 2 ]; do
+    d=$(printf '%s\n' "$oldest" | head -1)
+    keep_name_ok "$d" || break
+    git -C "$BASE_WT" worktree remove --force "$d" 2>/dev/null || true
+    git -C "$BASE_WT" worktree prune >/dev/null 2>&1 || true
+    if [ -d "$d" ] && keep_name_ok "$d"; then rm -rf "$d"; fi
+    oldest=$(printf '%s\n' "$oldest" | tail -n +2)
+    n=$(printf '%s\n' "$oldest" | grep -c . || true)
+  done
+}
+write_keep_env() {
+  # Che mọi biến có TOKEN/KEY/SECRET/PASSWORD/AUTH/COOKIE/CREDENTIAL trong tên.
+  python3 - "$SCRATCH/.merge-evidence/env.txt" "$SCRATCH" <<'PY'
+import os, re, subprocess, sys
+out, scratch = sys.argv[1], sys.argv[2]
+mask = re.compile(r"TOKEN|KEY|SECRET|PASSWORD|AUTH|COOKIE|CREDENTIAL", re.I)
+lines = []
+for k in sorted(os.environ):
+    v = os.environ[k]
+    lines.append("%s=<masked>" % k if mask.search(k) else "%s=%s" % (k, v))
+def sh(args):
+    try:
+        return subprocess.check_output(args, stderr=subprocess.DEVNULL, text=True).strip()
+    except Exception:
+        return ""
+linkp = os.path.join(scratch, ".agents", "devkit")
+link = sh(["readlink", linkp]) if os.path.islink(linkp) else ""
+real = os.path.realpath(linkp) if (os.path.exists(linkp) or os.path.islink(linkp)) else ""
+lines.append("devkit_readlink=%s" % link)
+lines.append("devkit_realpath=%s" % real)
+for name in ("HOME", "TMPDIR", "CLAUDE_CONFIG_DIR", "DEVKIT_ROOT", "ANTIGRAVITY_PM_GLOBAL_CONFIG"):
+    lines.append("%s=%s" % (name, os.environ.get(name, "")))
+lines.append("uptime=%s" % sh(["uptime"]))
+lines.append("python3=%s" % sh(["python3", "-V"]))
+os.makedirs(os.path.dirname(out), exist_ok=True)
+with open(out, "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+PY
+}
+keep_failed_scratch() {
+  # #559: đổi tên bằng git worktree move rồi xoá SCRATCH để trap EXIT không gỡ. Tối đa 2 bản.
+  local ts dest
+  [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ] || return 1
+  prune_old_keeps
+  mkdir -p "$SCRATCH/.merge-evidence" || return 1
+  write_keep_env || return 1
+  ts=$(date +%Y%m%d-%H%M%S)
+  dest="$BASE_WT/.claude/worktrees/.merge-scratch-keep-pr${PR}-${ts}"
+  if [ -e "$dest" ]; then sleep 1; ts=$(date +%Y%m%d-%H%M%S); dest="$BASE_WT/.claude/worktrees/.merge-scratch-keep-pr${PR}-${ts}"; fi
+  git -C "$BASE_WT" worktree move "$SCRATCH" "$dest" || return 1
+  say "kept scratch at ${dest} because REG-DK-ALL-01 was not PASS"
+  gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "merge-gate kept the scratch worktree at ${dest} because REG-DK-ALL-01 was not PASS. Evidence: ${dest}/.merge-evidence" \
+    >/dev/null 2>&1 || say "warning: could not comment the kept scratch path on PR #${PR}"
+  SCRATCH=""
+  return 0
+}
+prepare_scratch_evidence() {
+  # Thư mục bằng chứng nằm trong scratch nhưng bị exclude, để git status của verify vẫn sạch.
+  local gd
+  [ -n "$SCRATCH" ] && [ -d "$SCRATCH" ] || return 0
+  gd=$(git -C "$SCRATCH" rev-parse --absolute-git-dir 2>/dev/null) || return 0
+  mkdir -p "$gd/info" "$SCRATCH/.merge-evidence/tests" || return 0
+  grep -qxF '.merge-evidence/' "$gd/info/exclude" 2>/dev/null || printf '%s\n' '.merge-evidence/' >> "$gd/info/exclude"
+  export DEVKIT_KEEP_FAILED_LOGS_DIR="$SCRATCH/.merge-evidence/tests"
+}
 run_verify_cmd_inner() {
   local c="$1"
   if [[ "$c" == *"post-fix-gate.py"* ]]; then
@@ -943,6 +1048,10 @@ red_only_on_base() {
   return 0
 }
 
+# #643: cài duyệt test sửa vào scratch ngay trước bằng chứng #559. File ignore sống qua clean -fdq.
+bash "$HERE/super-board-install-edited-test-approval.sh" \
+  --scratch "$SCRATCH" --sha "$REVIEWED_HEAD" --meta "$META" --pr "$PR" --top "$REPO_PATH"
+prepare_scratch_evidence
 for cmd in "${VERIFY[@]}"; do
   if [ "$TREE_PROVED" -eq 1 ]; then say "verify skipped: this exact merged tree was already verified green with the same commands (receipt ${TREE_KEY:0:12})"; break; fi
   if [ "$TRAIN_PROVED" -eq 1 ]; then say "verify skipped: the merge train already proved this exact tree"; break; fi
@@ -1018,6 +1127,10 @@ for cmd in "${VERIFY[@]}"; do
       say "verify failed (${WHY}) after clean scratch merge of ${BASE} (${BEHIND} commit(s) behind; log saved to ${VLOG})"
     else
       say "verify failed (${WHY}) on a branch not behind ${BASE} (log saved to ${VLOG})"
+    fi
+    # #559: chỉ giữ scratch khi REG-DK-ALL-01 không PASS. Lỗi verify khác vẫn xoá như cũ.
+    if reg_dk_all_not_pass "$VERIFY_LOG"; then
+      keep_failed_scratch || say "could not keep the scratch worktree after REG-DK-ALL-01 was not PASS"
     fi
     exit 11
   fi

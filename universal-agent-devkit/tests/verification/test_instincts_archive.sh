@@ -79,6 +79,30 @@ OUT=$(CLAUDE_PROJECT_DIR="$D/H" python3 -I "$DEVKIT_ROOT/scripts/context/enrich_
 echo "$OUT" | grep -q "INSTINCT-001" || fail "enrich_context lost INSTINCT-001 from instincts.md after archive"
 echo "$OUT" | grep -q "Top Stale Trap" && fail "enrich_context surfaced an archived entry"
 
+echo "--- #620: entry edited while archive waits for the lock is archived with its NEW text ---"
+mk_repo L "001|Seen Trap|90|" "002|Stale Trap|90|"
+mkdir -p L/.claude/audit-gate
+{
+  echo "{\"ts\": \"$(iso 60)\", \"session\": \"s\", \"prompt_sha1\": \"x\", \"instinct_ids\": [], \"instinct_refs\": []}"
+  echo "{\"ts\": \"$(iso 3)\", \"session\": \"s\", \"prompt_sha1\": \"y\", \"instinct_ids\": [\"INSTINCT-001\"], \"instinct_refs\": [{\"id\": \"INSTINCT-001\", \"file\": \".agents/instincts.md\", \"line\": 9}]}"
+} > L/.claude/audit-gate/surfaced.jsonl
+rm -f L/held
+python3 -I - "$D/L/.agents/instincts.md" "$D/L/held" <<'PY' &
+import fcntl, sys, time
+path, flag = sys.argv[1], sys.argv[2]
+with open(path, "r+", encoding="utf-8") as f:
+    fcntl.flock(f, fcntl.LOCK_EX)
+    open(flag, "w").close()
+    time.sleep(2)
+    t = f.read().replace("s 002", "EDITED-UNDER-LOCK 002")
+    f.seek(0); f.truncate(); f.write(t)
+PY
+HOLDER=$!
+for _ in $(seq 1 50); do [ -e L/held ] && break; sleep 0.1; done
+CLAUDE_PROJECT_DIR="$D/L" python3 -I "$DEVKIT_ROOT/bin/instincts.py" archive --days 30 --apply >/dev/null 2>&1 || fail "L --apply exit non-zero"
+wait $HOLDER
+grep -q "EDITED-UNDER-LOCK" L/.agents/instincts-archive.md 2>/dev/null || fail "archive holds the stale pre-edit text of INSTINCT-002"
+
 echo "--- log younger than N days: refuse ---"
 mkdir -p Y/.agents Y/.claude/audit-gate
 cp A/.agents/instincts.md Y/.agents/instincts.md
