@@ -3288,9 +3288,10 @@ if new_run:
 # runner command or any Bash write keep the old check; check 7 (outcome) is not touched.
 READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS")
 # Bỏ chuỗi trong nháy trước khi xét ghi/xâu lệnh, để jq 'select(.x > 0)' và rg "PASS|FAIL" không bị coi là ghi hay xâu lệnh.
-_SHELL_QUOTED = re.compile(r"""\$'(?:\\.|[^'])*'|'(?:\\.|[^'])*'|"(?:\\.|[^"\\]|\\.)*" """)
+# Nháy kép vẫn thực thi $(...) và `...`: chuỗi nháy kép có chúng thì giữ nguyên để BASH_CHAIN_RX/BASH_WRITE_RX còn thấy.
+_SHELL_QUOTED = re.compile(r"""\$'(?:\\.|[^'])*'|'(?:\\.|[^'])*'|"(?:\\.|[^"\\]|\\.)*\"""")
 def _bash_bare(cmd):
-    return _SHELL_QUOTED.sub(" ", cmd)
+    return _SHELL_QUOTED.sub(lambda m: m.group(0) if m.group(0)[0] == '"' and ("$(" in m.group(0) or "`" in m.group(0)) else " ", cmd)
 # 1>, 2>, &>, 1<> ghi file. 2>&1 là gộp fd (dấu > đi liền &), không tính.
 BASH_WRITE_RX = re.compile(r"(?:[0-9]*>>|[0-9]*<>|&>>?|(?<![&<>])[0-9]*>(?!&))"
                            r"|\btee\b|\bsed\s+(?:-\w*i|--in-place)|\bperl\s+-\w*i|\b(?:rm|mv|cp|mkdir|touch|chmod|ln|truncate|dd|install|patch)\b"

@@ -55,6 +55,10 @@ transcript "$TMP/r4.jsonl" "[[\"bash\",\"jq '.a | .b' runs.jsonl\",\"{}\",false]
 run 0 "$TMP/r4.jsonl" "$REPLY" "jq pipe inside quotes"
 transcript "$TMP/r5.jsonl" "[[\"bash\",\"jq 'select(.x > 0)' runs.jsonl\",\"{}\",false]]"
 run 0 "$TMP/r5.jsonl" "$REPLY" "jq greater-than inside quotes"
+transcript "$TMP/r6.jsonl" '[["bash","jq \"select(.x > 0)\" runs.jsonl","",false]]'
+run 0 "$TMP/r6.jsonl" "$REPLY" "jq greater-than inside double quotes, then a path"
+transcript "$TMP/r7.jsonl" '[["bash","jq \"select(.x > 0)\"","",false]]'
+run 0 "$TMP/r7.jsonl" "$REPLY" "jq greater-than inside double quotes at end of command"
 echo "-- must still block"
 transcript "$TMP/b1.jsonl" "[[\"edit\",\"$P/src/a.py\"]]"
 run 2 "$TMP/b1.jsonl" "$REPLY" "edit of code, no test run"
@@ -87,6 +91,12 @@ transcript "$TMP/b11.jsonl" '[["grep","build/TEST-results.xml"]]'
 run 2 "$TMP/b11.jsonl" "$REPLY" "Grep of a TEST xml"
 transcript "$TMP/b12.jsonl" '[["read","/tmp/runs.jsonl"],["baddict"]]'
 run 2 "$TMP/b12.jsonl" "$REPLY" "Bash input that is not a dict"
+transcript "$TMP/b13.jsonl" '[["bash","cat \"$(rm src/a.py)\" x","",false]]'
+run 2 "$TMP/b13.jsonl" "$REPLY" "command substitution inside double quotes, then a word"
+transcript "$TMP/b14.jsonl" '[["bash","cat \"$(rm src/a.py)\"","",false]]'
+run 2 "$TMP/b14.jsonl" "$REPLY" "command substitution inside double quotes at end"
+transcript "$TMP/b15.jsonl" '[["bash","cat \"`rm src/a.py`\" x","",false]]'
+run 2 "$TMP/b15.jsonl" "$REPLY" "backtick inside double quotes, then a word"
 echo "-- a successful run still backs the claim"
 transcript "$TMP/g1.jsonl" '[["bash","python3 -m pytest tests","12 passed in 0.30s",false]]'
 run 0 "$TMP/g1.jsonl" "$REPLY" "pytest run green"
