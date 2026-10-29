@@ -28,10 +28,10 @@ Chạy cổng kiểm toán sau khi sửa lỗi trên các file thay đổi của
 
 ## Sử dụng
 ```bash
-python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief
+python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief
 ```
 
-Task chỉ chạy gate impacted (lệnh trên). `--full` chỉ chạy ở điểm gộp: `agent-kit integrate`, merge gate và merge train (worktree tạm `.integrate-scratch-*`, `.merge-scratch-*`, `.train-scratch-*`); không chạy `--full` trong task hay trong checkout chính.
+Task chạy gate scoped (lệnh trên: test của diff qua đồ thị import + smoke; đụng file lõi `.agents/gate-core.txt` hay không suy ra được test thì tự leo `--full`). Điểm gộp — `agent-kit integrate`, merge gate và merge train (worktree tạm `.integrate-scratch-*`, `.merge-scratch-*`, `.train-scratch-*`) — cũng chạy `--scoped`, một lượt cho cả đợt; `--full` đêm do skill `gate-full` chạy trên main lúc 00:00. Không gọi tay `--full` trong task hay trong checkout chính.
 
 Exit code:
 - `0`: PASS. Chỉ exit `0` mới được coi là đạt.

@@ -136,4 +136,40 @@ for c in multi other noname escape; do
   [ "$rc" -eq 11 ] && [ "$(reruns)" = 0 ] && [ -z "$(merged_list)" ] && ok "$c: red at once, no re-run" || fail "$c: exit $rc reruns=$(reruns) merged=$(merged_list): $(tail -4 "$TMP/t$n.log")"
 done
 
+# ── 4. #616: một suite shard (REG-DK-ALL-GATES-01) cũng được chạy lại riêng đúng test đỏ: flaky, PR merge, verify 1 lần.
+mklog "$TMP/shard.log" "FAIL|REG-DK-ALL-GATES-01|✖ tests/gates/test_shard_flaky.sh"
+cfg_log "$TMP/cfg9.json" "$TMP/shard.log"
+card_script 64 tests/gates/test_shard_flaky.sh 0
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg9.json" --prs 64 ) >"$TMP/t9.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(merged_list)" = "64 " ] && [ "$(runs)" = 1 ] && [ "$(reruns)" = 1 ] && grep -q "^train-flaky: 64 tests/gates/test_shard_flaky.sh" "$TMP/t9.log" \
+  && ok "shard id: one red test re-ran once, flaky, PR merged" || fail "shard id: exit $rc merged=$(merged_list) runs=$(runs) reruns=$(reruns): $(tail -4 "$TMP/t9.log")"
+# hai suite shard cùng đỏ → vẫn red ngay (không nới)
+mklog "$TMP/shard2.log" "FAIL|REG-DK-ALL-GATES-01|✖ tests/gates/test_a.sh" "FAIL|REG-DK-ALL-REST-01|✖ tests/gates/test_b.sh"
+cfg_log "$TMP/cfg10.json" "$TMP/shard2.log"
+card_script 65 tests/gates/test_a.sh 0
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg10.json" --prs 65 ) >"$TMP/t10.log" 2>&1; rc=$?
+[ "$rc" -eq 11 ] && [ "$(reruns)" = 0 ] && ok "two red shard suites: red at once, no re-run" || fail "two red shard suites: exit $rc reruns=$(reruns)"
+# run_impacted.sh in đường dẫn tương đối KIT (`tests/gates/x.sh`); ở agent-workbench file nằm dưới universal-agent-devkit/ (audit Antigravity T0070 F3)
+mklog "$TMP/kit.log" "FAIL|REG-DK-ALL-GATES-01|✖ tests/gates/test_kit_flaky.sh"
+cfg_log "$TMP/cfg11.json" "$TMP/kit.log"
+card_script 66 universal-agent-devkit/tests/gates/test_kit_flaky.sh 0
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg11.json" --prs 66 ) >"$TMP/t11.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ "$(merged_list)" = "66 " ] && [ "$(reruns)" = 1 ] && ok "kit-relative path: found under universal-agent-devkit/, re-ran once, PR merged" \
+  || fail "kit-relative path: exit $rc merged=$(merged_list) reruns=$(reruns): $(tail -4 "$TMP/t11.log")"
+# ── 5. #620: một test flaky thấy hai lần trong chia đôi → mỗi PR merge chỉ một ghi chú, đúng một thẻ.
+# 81, 82 xanh; 83 đỏ thật (có tests/gates/test_real.sh). Verify [81,82,83] đỏ thật → chia đôi → [81] và [81,82] đều đỏ flaky rồi xanh khi chạy lại.
+mklog "$TMP/flaky620.log" "FAIL|REG-DK-ALL-01|✖ tests/gates/test_flaky620.sh"
+mklog "$TMP/real.log" "FAIL|REG-DK-ALL-01|✖ tests/gates/test_real620.sh"
+card_script 81 tests/gates/test_flaky620.sh 0
+card_script 82 tests/gates/test_other620.sh 0
+card_script 83 tests/gates/test_real620.sh 1
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo x >> %s/verify.count; if [ -f tests/gates/test_real620.sh ]; then cat %s; else cat %s; fi; exit 1"]}\n' "$TMP" "$TMP/real.log" "$TMP/flaky620.log" > "$TMP/cfg12.json"
+reset_run
+( cd "$W/review" && bash "$TRAIN" --config "$TMP/cfg12.json" --prs 81,82,83 ) >"$TMP/t12.log" 2>&1; rc=$?
+[ "$(grep -c "^train-flaky: 81 " "$TMP/t12.log")" = 1 ] && [ "$(grep -c "^train-flaky: 82 " "$TMP/t12.log")" = 1 ] && ok "dedupe: one flaky note per merged PR" || fail "dedupe: rc=$rc notes: $(grep -E 'train-flaky|train-result' "$TMP/t12.log" | tr '\n' ';')"
+[ "$(grep -c "pr comment 81 " "$TMP/gh.pr_comment" 2>/dev/null)" = 1 ] && ok "dedupe: one PR comment on #81" || fail "dedupe: PR comments: $(cat "$TMP/gh.pr_comment" 2>/dev/null | cut -c1-60)"
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train_single_test_retry: all passed" || { echo "❌ test_merge_train_single_test_retry: $FAILS failed"; exit 1; }

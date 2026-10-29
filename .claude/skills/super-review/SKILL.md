@@ -114,7 +114,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
 5. **Reviewer-side test rerun (always — closes Tester self-verification gap):**
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the EXACT command from Tester's PR `Local tests:` line.
-   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the impacted `post-fix-gate.py --run-tests` exit 0 (its task receipt) for this exact head SHA. The merge point (the merge queue's train; queue off, the merge gate's `--force-full`) verifies the merged tree (run.md → Merge protocol).
+   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the `post-fix-gate.py --run-tests --scoped` exit 0 (its scoped receipt) for this exact head SHA. The merge point (the merge queue's train; queue off, the merge gate) verifies the merged tree with `--scoped`, which escalates to `--full` on a core file (run.md → Merge protocol).
    - Green → continue. Red → open new `[qa]`-prefixed thread quoting failure, move card Review → QA with `loop:rebuild-N`, exit.
    - If QA includes `Runtime checks:`, follow
      [optional runtime verification](../super-qa/references/runtime-verification.md):
@@ -141,8 +141,8 @@ Builder opens PRs as **drafts**, and GitHub never auto-merges a draft. Skipping 
 two complete builds. In order, no shortcuts:
 
 1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
-   **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"`
-   without `--codex`, whose runner drains the queue every tick): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP:
+   **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` (its runner drains
+   the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does), without `--codex`): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP:
    `pm_task_create` (project = config `repo.path`), `pm_dispatch kind=audit`, read its `audit-agent.json`, and only on Antigravity's
    pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR as its own comment `approved-head:<sha40>`
    with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}`.
@@ -150,7 +150,7 @@ two complete builds. In order, no shortcuts:
    `[reviewer]` comment whose last line is `blocked-by: -` (a bare `approved-head` is the owner's hand approval; the guard blocks it). Add
    the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
    the report (`merge-ready`) and leave the card in **Review**: the queue merges it in one train (run.md → Merge
-   protocol). Queue off inside the board (`SB_MERGE_QUEUE=0`, not enabled, or the workflow backend (default) / `--codex`,
+   protocol). Queue off inside the board (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`,
    where nothing drains the queue — even when the config enables it): step 2 as below.
 2. Merge through the gate, pinned to the head you reviewed (`merge_policy.default: "human"`
    sends every merge to exit 7 below; a cross-review marker or a human `done` approves it):
@@ -166,7 +166,8 @@ two complete builds. In order, no shortcuts:
    - **Exit 2 / 5 — stale branch or real conflict.** Rebase pass (run.md → "The rebase pass").
    - **Exit 11 — verify red, branch NOT behind the base.** A rebase changes nothing: open a `[builder]` thread quoting the gate's "verify failed (exit N: …)" line, move Review → Ready with `loop:rebuild-N`.
    - **Exit 7 — a human merges.** `merge_policy` matched (money / auth / schema label,
-     path or added-line keyword; a diff over `auto_max_lines`, default 400 — "big PR — please
+     path or added-line keyword; a diff over a positive `auto_max_lines` — unset default is 0, so
+     line count is not a human gate unless the board sets one — "big PR — please
      review"; `default: "human"`). `schema` means destructive only (DROP / TRUNCATE / RENAME);
      an additive migration follows `migrations.allowed_envs`, and a live DB is always human.
      Card → **Blocked** with the 🙋 template: `Why blocked` quotes the gate's
