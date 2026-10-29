@@ -36,6 +36,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 LABEL = "needs-you"
 LEGACY_LABEL = "human-gated"
@@ -96,13 +97,10 @@ GENUINE_HUMAN_RE = re.compile(
 TIMEOUT = 60
 
 
-def _decision_reader():
-    """Bộ đọc [decision] dùng chung (#516); tên file có gạch ngang nên nạp bằng importlib."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "super-board-decision.py")
-    spec = importlib.util.spec_from_file_location("sb_decision", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+# #516: bộ đọc [decision] dùng chung; tên file có gạch ngang nên nạp bằng importlib.
+_spec = importlib.util.spec_from_file_location("sb_decision", Path(__file__).with_name("super-board-decision.py"))
+_DEC = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_DEC)
 
 PROJECT_QUERY = """query($owner:String!,$number:Int!){
   repositoryOwner(login:$owner){
@@ -218,10 +216,13 @@ def mark(repo, issue, action, nxt, dry, config=None):
     done = [f"label {ensure_label(repo, dry)}"]
     labels, comments, _ = read_issue(repo, issue)
     # #516: một [decision] hợp lệ mới hơn comment needs-you gần nhất đã xử lý blocker này, trừ DANH SÁCH DỪNG của chủ.
-    dr = _decision_reader()
-    at = dr.newest_valid_index(comments, dr.load_policy(config))
-    last_mark = max((i for i, c in enumerate(comments) if (c.get("body") or "").startswith(MARKER)), default=-1)
-    if at > last_mark and not dr.is_stop(action):
+    policy = _DEC.load_policy(config or os.environ.get("SB_CONFIG"))
+    at = _DEC.newest_valid_index(comments, policy)
+    # Mốc = blocker mới nhất: comment needs-you, hoặc Block 🙋 / dòng `blocked-by:` mà lane vừa đăng trước khi gọi mark.
+    last_mark = max((i for i, c in enumerate(comments)
+                     if not _DEC.is_valid(c, policy) and ((c.get("body") or "").startswith(MARKER)
+                     or re.search(r"Reason tag:[^\n]*🙋|(^|\n)[ \t]*blocked-by:", c.get("body") or "", re.I))), default=-1)
+    if at > last_mark and not _DEC.is_stop(action):
         return done + ["skipped: [decision] hợp lệ mới hơn đã xử lý blocker, không gắn needs-you"]
     if LABEL not in labels:
         if not dry:

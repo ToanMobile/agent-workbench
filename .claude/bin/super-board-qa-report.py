@@ -20,6 +20,7 @@ import importlib.util
 import json
 import os
 import re
+from pathlib import Path
 import sys
 
 QA_HEADER = re.compile(r"^\s*\[qa\]\s*\[report\]", re.I)
@@ -74,13 +75,10 @@ def names_ac(text, acs):
     return bool(AC_ID.search(text)) or any(a in low for a in acs)
 
 
-def _decision_reader():
-    """Bộ đọc [decision] dùng chung (#516); tên file có gạch ngang nên nạp bằng importlib."""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "super-board-decision.py")
-    spec = importlib.util.spec_from_file_location("sb_decision", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+# #516: bộ đọc [decision] dùng chung; tên file có gạch ngang nên nạp bằng importlib.
+_spec = importlib.util.spec_from_file_location("sb_decision", Path(__file__).with_name("super-board-decision.py"))
+_DEC = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_DEC)
 
 
 def latest_qa_unfinished(comments, pr_author=None, body=""):
@@ -96,9 +94,7 @@ def latest_qa_unfinished(comments, pr_author=None, body=""):
     # #516: [decision] hợp lệ mới hơn report QA đã xử lý các mục còn mở của nó (luật 1–5 của chủ), nên không chặn merge.
     # ponytail: một decision gỡ MỌI mục Not done của report cũ hơn nó (không đối chiếu từng AC); đối chiếu theo mã AC
     # khi thấy một decision gỡ nhầm mục nó không nhắc.
-    dr = _decision_reader()
-    if dr.newest_valid_index(comments, dr.load_policy(_CONFIG)) > latest_at:
-        return []
+    decided = _DEC.newest_valid_index(comments, _DEC.load_policy(_CONFIG)) > latest_at
     acs = ac_texts(body)
     items = []
     for i, line in enumerate(latest):
@@ -112,7 +108,9 @@ def latest_qa_unfinished(comments, pr_author=None, body=""):
             parts.append(nxt.strip())
         text = " ".join(p for p in parts if p).strip()
         if text.strip(" .").lower() not in EMPTY_VALUES and names_ac(text, acs):
-            items.append(text)
+            # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
+            if not decided or _DEC.is_stop(text):
+                items.append(text)
     return items
 
 
