@@ -158,9 +158,13 @@ const WORKTREE_STEP = (lane, n) => [
   `Worktree: after \`git fetch origin\`, create it from the repo root ONLY with the DevKit, never plain \`git worktree add\` or EnterWorktree:`,
   lane === 'review'
     ? `\`agent-kit worktree add .claude/worktrees/issue-${n}-review --lane=review --base=origin/<PR branch>\` (detached; refresh with \`git fetch origin && git checkout --detach origin/<PR branch>\`).`
-    : `\`agent-kit worktree add .claude/worktrees/issue-${n}-${lane} issue-${n}-<slug> --lane=${lane} --base=origin/<config.base_branch>\` (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused).`,
+    : lane === 'qa'
+      ? `\`agent-kit worktree add .claude/worktrees/issue-${n}-qa --lane=qa --base=origin/<PR branch>\` (detached; refresh with \`git fetch origin && git checkout --detach origin/<PR branch>\`; push a QA evidence commit with \`git push origin HEAD:<PR branch>\`. The build worktree keeps the branch: do not remove it).`
+      : `\`agent-kit worktree add .claude/worktrees/issue-${n}-${lane} issue-${n}-<slug> --lane=${lane} --base=origin/<config.base_branch>\` (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused).`,
   `It links the DevKit, copies the git-ignored config and hooks and clones a Unity Library copy-on-write. No agent-kit on PATH: \`python3 .agents/devkit/scripts/git/worktree.py add\` with the same arguments.`,
-  `Exit 4 = under the disk floor: status=halted with its message, card and claims unchanged, no retry. Exit 1 naming a worktree that holds the branch: \`agent-kit worktree remove\` that path (no agent-kit on PATH: \`python3 .agents/devkit/scripts/git/worktree.py remove\`; it drops the DevKit set-up a worktree carries, never work; refused with ✖ = it holds work: status=blocked naming it), then add again. Clean up on exit with \`agent-kit worktree remove <path>\` (the branch stays).`,
+  lane === 'qa'
+    ? `Exit 4 = under the disk floor: status=halted with its message, card and claims unchanged, no retry. Clean up the QA worktree on exit with \`agent-kit worktree remove <path>\` (the branch stays; the build worktree stays until after the merge).`
+    : `Exit 4 = under the disk floor: status=halted with its message, card and claims unchanged, no retry. Exit 1 naming a worktree that holds the branch: \`agent-kit worktree remove\` that path (no agent-kit on PATH: \`python3 .agents/devkit/scripts/git/worktree.py remove\`; it drops the DevKit set-up a worktree carries, never work; refused with ✖ = it holds work: status=blocked naming it), then add again. Clean up on exit with \`agent-kit worktree remove <path>\` (the branch stays).`,
 ].join('\n')
 
 const lanePrompt = (lane, card) => [

@@ -16,8 +16,11 @@ ponytail: authorAssociation COLLABORATOR gồm cả quyền read (gh pr view kh�
 `collaborators/<login>/permission` như super-board-approval.py khi có repo nhiều cộng tác viên chỉ-đọc.
 """
 import argparse
+import importlib.util
 import json
+import os
 import re
+from pathlib import Path
 import sys
 
 QA_HEADER = re.compile(r"^\s*\[qa\]\s*\[report\]", re.I)
@@ -30,6 +33,7 @@ PROOF = re.compile(r"^\s*↳\s*(\S.*)$")
 AC_ID = re.compile(r"\bAC\s*-?\s*#?\d+", re.I)
 BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
 TRUSTED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
+_CONFIG = os.environ.get("SB_CONFIG") or None  # decision_policy.enabled=false của config tắt luật này
 MIN_AC_TEXT = 12  # AC ngắn hơn thế quá dễ trùng chữ thường trong ghi chú phạm vi
 
 
@@ -71,16 +75,26 @@ def names_ac(text, acs):
     return bool(AC_ID.search(text)) or any(a in low for a in acs)
 
 
+# #516: bộ đọc [decision] dùng chung; tên file có gạch ngang nên nạp bằng importlib.
+_spec = importlib.util.spec_from_file_location("sb_decision", Path(__file__).with_name("super-board-decision.py"))
+_DEC = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_DEC)
+
+
 def latest_qa_unfinished(comments, pr_author=None, body=""):
-    latest = None
-    for c in comments or []:
+    latest, latest_at = None, -1
+    for i, c in enumerate(comments or []):
         if not isinstance(c, dict) or not isinstance(c.get("body"), str) or not trusted(c, pr_author):
             continue
         lines = visible_lines(c["body"])
         if any(QA_HEADER.match(l) for l in lines):
-            latest = lines          # thứ tự API = thứ tự thời gian: comment đáng tin cuối thắng
+            latest, latest_at = lines, i    # thứ tự API = thứ tự thời gian: comment đáng tin cuối thắng
     if latest is None:
         return []
+    # #516: [decision] hợp lệ mới hơn report QA đã xử lý các mục còn mở của nó (luật 1–5 của chủ), nên không chặn merge.
+    # ponytail: một decision gỡ MỌI mục Not done của report cũ hơn nó (không đối chiếu từng AC); đối chiếu theo mã AC
+    # khi thấy một decision gỡ nhầm mục nó không nhắc.
+    decided = _DEC.newest_valid_index(comments, _DEC.load_policy(_CONFIG)) > latest_at
     acs = ac_texts(body)
     items = []
     for i, line in enumerate(latest):
@@ -94,7 +108,9 @@ def latest_qa_unfinished(comments, pr_author=None, body=""):
             parts.append(nxt.strip())
         text = " ".join(p for p in parts if p).strip()
         if text.strip(" .").lower() not in EMPTY_VALUES and names_ac(text, acs):
-            items.append(text)
+            # DANH SÁCH DỪNG (lái xe, secret…) trong chữ của mục (cả dòng nối tiếp) thì decision không gỡ mục đó.
+            if not decided or _DEC.is_stop(text):
+                items.append(text)
     return items
 
 

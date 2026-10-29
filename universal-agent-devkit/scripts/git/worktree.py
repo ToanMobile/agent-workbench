@@ -3230,14 +3230,48 @@ def _gate_matrix(main):
     return out
 
 
+def _exit0_same_content(wt):
+    """#154: merge check exit 2 giữ nguyên biên nhận --full exit 0 khi dấu vân tay khớp đúng nội dung đang gộp.
+    Đó là lượt full của phiên đã duyệt. Không có biên nhận, hoặc biên nhận của nội dung khác: chưa duyệt (#486)."""
+    try:
+        bin_dir = os.path.join(DEVKIT, "bin")
+        if bin_dir not in sys.path:
+            sys.path.insert(0, bin_dir)
+        import tree_fp  # noqa: PLC0415 - module anh em trong bin/
+        path = tree_fp.receipt_path(wt)
+        if not path or not os.path.isfile(path):
+            return False
+        with open(path, encoding="utf-8") as fh:
+            kept = json.load(fh)
+        if not isinstance(kept, dict) or kept.get("exit") != 0:
+            return False
+        fp = tree_fp.tree_fingerprint(wt)
+        return bool(fp) and kept.get("fingerprint") == fp
+    except (OSError, ValueError, TypeError, ImportError):
+        return False
+
+
+def _untested_for_device(tests):
+    """Exit 4 chỉ vì máy này không có thiết bị hoặc công cụ. SLOT, BUSY, BUDGET và FAIL không thuộc nhóm này."""
+    if not tests:
+        return False
+    if any(x.get("status") in ("FAIL", "TIMEOUT") for x in tests):
+        return False
+    if any(x.get("label") in ("SLOT", "BUSY", "BUDGET") for x in tests):
+        return False
+    return any(x.get("status") == "UNTESTED" for x in tests)
+
+
 def _merge_gate(wt, base, matrix):
     """W1 R3: the gate on what the worktree brings (`--diff base`, `base` = the main it merged; K8: or the worktree HEAD that passed a
     round ago, so only what main brought since is gated) BEFORE main moves — a merge with no
     textual conflict can still break (main renamed what a new caller in the worktree uses). (None, False): it passes, there is nothing
     to audit (exit 3). Otherwise (reason, verdict): a regression test that FAILed (verdict True: the same commits get the same answer,
     kept), or one that TIMED OUT, tests that could not run because another run holds the lock, or a gate that did not finish (verdict
-    False: often the machine's load, so tried again next time), refuse. What the session owes (an edited test to approve, an untested file) is its own gate's
-    business, and a suite that cannot run here (no device) never strands a merge. Past WORKTREE_MERGE_GATE_TIMEOUT_S the gate gets
+    False: often the machine's load, so tried again next time), refuse. #486: exit 2 refuses when tests_touched,
+    uncovered or orphan_tests is set, or the matrix is not trusted; exit 1 while no suite is FAIL and exit 4 label
+    SLOT also refuse. Exit 0, exit 3, exit 4 that is only a missing device, and exit 2 no_match (no code file in the
+    diff) may fast-forward. Past WORKTREE_MERGE_GATE_TIMEOUT_S the gate gets
     SIGTERM (it stops its suites and puts back what it reverted), then SIGKILL; VACUITY_REVERT=0, so it reverts nothing here."""
     gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
     try:
@@ -3284,7 +3318,40 @@ def _merge_gate(wt, base, matrix):
         return (tr("test hồi quy ĐỎ trên kết quả gộp: ", "regression tests RED on the merged result: ")
                 + ", ".join(f"{x.get('id')} {x.get('status')}" for x in bad) + f" ({res.get('report', '')})",
                 any(x.get("status") == "FAIL" and not x.get("flaky") for x in bad))   # failed, then passed on a retry: not kept
-    return None, False
+    # #486: exit 2 chỉ bị chặn khi có test đã sửa chưa duyệt, file code chưa có test, test mồ côi, hoặc ma trận
+    # không tin được. #154: biên nhận --full exit 0 của đúng nội dung này còn sống thì phiên đã duyệt — gộp như cũ.
+    # Exit 2 no_match (diff không có file code, ví dụ main thêm .txt trong lúc gate chạy) vẫn gộp:
+    # suite đã chạy thì PASS, và test_worktree_trunk_merge ca 5 dựa vào đường đó.
+    if p.returncode == 0:
+        return None, False
+    if p.returncode == 4 and _untested_for_device(tests):
+        return None, False
+    touched = [x for x in (res.get("tests_touched") or []) if isinstance(x, str) and x]
+    uncovered = [x for x in (res.get("uncovered") or []) if isinstance(x, str) and x]
+    orphans = [x for x in (res.get("orphan_tests") or []) if isinstance(x, str) and x]
+    if p.returncode == 2 and touched and _exit0_same_content(wt):
+        return None, False
+    if p.returncode == 2 and touched:
+        shown = ", ".join(touched[:8])
+        return tr(f"test đã có bị sửa chưa duyệt: {shown}. Duyệt chéo Antigravity (auditedHead đúng cây) vào "
+                  f".claude/audit-gate/approved_tests.json rồi chạy lại gate",
+                  f"existing tests edited and not approved: {shown}. An Antigravity cross-review (auditedHead of this tree) "
+                  f"must land in .claude/audit-gate/approved_tests.json, then re-run the gate"), False
+    if p.returncode == 2 and (uncovered or orphans or res.get("matrix_problem")):
+        shown = ", ".join((uncovered or orphans)[:8]) or str(res.get("matrix_problem"))[:160]
+        return tr(f"gate exit 2 (file chưa có test hoặc ma trận không tin được): {shown}. Main không đổi",
+                  f"gate exit 2 (a changed file has no regression test, or the matrix is not trusted): {shown}. Main was not moved"), False
+    if p.returncode == 2:
+        return None, False
+    if p.returncode == 4 and any(x.get("label") == "SLOT" for x in tests):
+        return tr("gate exit 4 nhãn SLOT (khoá độc quyền bận): main không đổi",
+                  "gate exit 4 label SLOT (exclusive lock busy): main was not moved"), False
+    if p.returncode == 1:
+        return tr("gate exit 1 (lớp tĩnh hoặc kiểm tra đỏ) trong khi suite không FAIL: main không đổi",
+                  "gate exit 1 (static findings or a failed check) while no suite is FAIL: main was not moved"), False
+    return tr(f"gate exit {p.returncode}: chỉ exit 0, hoặc exit 3 khi không có gì để kiểm, hoặc suite thiếu thiết bị, mới được gộp vào main",
+              f"gate exit {p.returncode}: only exit 0, or exit 3 when there is nothing to check, or a suite missing its device, "
+              f"may fast-forward main"), False
 
 
 def _gate_refusal(wt, why):

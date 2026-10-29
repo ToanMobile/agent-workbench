@@ -233,6 +233,8 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 <!-- devkit-essentials:end -->
 <!-- universal-agent-devkit:end -->
 
+Một lượt gate sau trên cùng cây, cùng chế độ và cùng danh sách suite dùng lại `<git-dir>/postfix-gate/rerun_skip.json` và trả 0 mà không lấy khoá test, trừ `--force`, `--no-cache` hoặc `DEVKIT_GATE_CACHE=0`.
+
 <!-- super-board:begin v3.1.2 (managed; edits inside are overwritten on upgrade) -->
 ## Super Board
 
