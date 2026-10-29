@@ -539,7 +539,8 @@ def cmd_run(args) -> int:
                 run.info["notes"].append("scratch không có post-fix-gate.py (cài DevKit lỗi?)")
                 return 2
             gate_cmd = [sys.executable, os.path.join(scratch, kit_rel, "bin", "post-fix-gate.py"),
-                        "--run-tests", "--tree", "HEAD", "--no-cache", "--brief", "--json", "--timeout", str(args.timeout)]
+                        "--run-tests", "--tree", "HEAD", "--no-cache", "--no-fail-fast", "--brief", "--json",
+                        "--timeout", str(args.timeout)]
             run.log("$ " + " ".join(shlex.quote(c) for c in gate_cmd))
             gate_rc, gate_out = sh(gate_cmd, cwd=scratch, timeout=GATE_TIMEOUT_S, env=env)
         run.raw(gate_out)
