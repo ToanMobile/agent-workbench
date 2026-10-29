@@ -135,13 +135,13 @@
     // A human can merge it or approve the pinned request for the next wave.
     // Onboard recommends "human" when base_branch is production-detected.
     "default": "auto",
-    // Small PRs by design. A PR with more changed lines (additions +
-    // deletions) than this waits for a human: Blocked 🙋 "big PR — please
-    // review". Default 400; 0 = no size cap. Files matching size_exclude and
-    // migration files (migrations.globs) do not count; migration lines are
-    // reported separately. Builders keep PRs under this cap and lint flags
-    // tickets likely to exceed it (references/lint.md → "Too big").
-    "auto_max_lines": 400,
+    // Opt-in size gate. A positive number: a PR with more changed lines
+    // (additions + deletions) than this waits for a human: Blocked 🙋
+    // "big PR — please review". Default 0 = no size cap (unset is the same).
+    // Files matching size_exclude and migration files (migrations.globs) do
+    // not count; migration lines are reported separately. Lint does not split
+    // a ticket so the diff stays under a line count (references/lint.md).
+    "auto_max_lines": 0,
     // Globs left out of the size count. Setting this replaces the defaults
     // below; [] counts every file.
     "size_exclude": [
@@ -173,6 +173,13 @@
                   "paths": [],
                   "keywords": ["drop table", "drop column", "truncate table", "rename column", "drop schema"] }
     },
+    // #605: a PR that DELETES (or renames away) a file matching one of these
+    // globs → human, category "delete-protected": only a human "done" approves it;
+    // the reviewer's cross-review-approved marker does not.
+    // Setting this replaces the defaults below; [] turns it off.
+    "protected_paths": ["**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json",
+                        ".agents/regression_matrix.active.json",
+                        ".agents/local/memory/**", ".agents/local/rules/**"],
     // true only when the user explicitly chose auto-merge onto a
     // production-detected base in onboard. run.md's production-merge guard
     // refuses to start otherwise.
@@ -323,6 +330,9 @@
   // the merge gate; `.claude/bin/super-board-merge-queue.sh --config <cfg>
   // --if-due` batches them into ONE super-board-merge-train.sh run (one verify
   // for the batch) and routes every `train-result:` line. Off by default.
+  // On only for worker_backend "claude-p" (its runner calls --if-due every tick)
+  // or "workflow" (the launchd schedule super-board-queue-schedule.sh does, which
+  // super-board-wave-plan.sh ensures); "codex" never uses the queue.
   // `SB_MERGE_QUEUE=1` / `0` overrides `enabled` for one process.
   //   enabled_at:   ISO time it was switched on (the batch canary only reads
   //                 runs after it); null while off.

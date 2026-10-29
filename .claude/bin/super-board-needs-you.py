@@ -74,7 +74,7 @@ AGENT_DOABLE_RULES = (
             r"(?:dưới|<\s*)400\s+dòng|tách\s+#\d+\s+thành",
             re.I,
         ),
-        "tách thẻ lớn (<400 dòng) hoặc thu gọn phạm vi lát cắt là việc agent phải tự thực hiện",
+        "nhờ người tách thẻ hoặc thu gọn diff theo số dòng là việc agent không đẩy sang người",
     ),
     (
         re.compile(

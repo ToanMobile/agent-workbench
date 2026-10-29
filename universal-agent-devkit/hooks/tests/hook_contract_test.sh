@@ -2474,6 +2474,13 @@ fi
 rm -rf "${WG}"
 echo
 
+# ── instincts_file_context.sh — PreToolUse Read|Edit (#555; the matching/once-per-session cases: tests/verification/test_instincts_file_context.sh) ──
+echo "instincts_file_context.sh"
+run_case "malformed payload never blocks" instincts_file_context.sh 0 "not json at all"
+run_case "a Read matching no glob exits 0" instincts_file_context.sh 0 \
+  '{"session_id":"IFC1","tool_name":"Read","tool_input":{"file_path":"/nonexistent/none.txt"}}'
+echo
+
 # ── report ──────────────────────────────────────────────────────────────────
 echo "─────────────────────────────────────────────"
 echo "contract points: ${PASS} ok, ${FAIL} deviating"

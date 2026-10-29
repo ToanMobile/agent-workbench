@@ -135,6 +135,7 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Hai chỗ trong DevKit phân loại cùng một thứ khác nhau
 - **Nguyên nhân:** needs_no_test (post-fix-gate) không coi *.log là tài liệu dù tree_fp đã coi; RUNNER_FAIL_RX không đọc failures="N" của JUnit XML dù gate XML đọc được; proof_gate coi git push trong repo nháp là bàn giao — agent GeelyEx2 bị chặn nhầm và một lần chạy đỏ bị tính là xanh (2026-09-28)
 - **Quy tắc phòng ngừa & Cách fix:** Khi thêm/đổi luật phân loại (file không cần test, dấu hiệu đỏ, lệnh bàn giao) ở một gate, grep mọi gate khác có luật cùng loại và dùng chung một hàm/regex; mỗi dạng output thật agent hay in (log redirect, XML tóm tắt) phải có ca test ĐỎ và XANH
+- **Cập nhật #644 (2026-10-29):** chọn test của task, QA, merge queue/train và `agent-kit integrate` giờ đi qua MỘT bộ quyết định: `post-fix-gate.py --scoped` → `bin/scoped_gate.decide` (dùng chính `needs_no_test` của gate) với lõi ở `.agents/gate-core.txt`; ba cửa nhận bằng chứng (post-fix-gate ghi, push_gate, proof_gate) cùng đọc `scoped_pass.json` qua `tree_fp.scoped_receipt_path`. Thêm cửa hay luật chọn test mới thì đi qua hai hàm đó, không tự suy lại tập test hay đường dẫn biên nhận; `--full` chỉ còn ở skill `gate-full` (tay / launchd 00:00)
 
 ---
 
@@ -726,3 +727,19 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa & Cách fix:** Gộp commit lane vào nhánh PR bằng git merge --no-ff &lt;sha lane> (đã lỡ cherry-pick thì git merge -s ours &lt;sha lane> để ghi nhận), rồi agent-kit worktree remove ngay, trước lần Stop kế tiếp; hook đã tự gộp main vào lane thì git merge --abort trong worktree lane trước.
 - **Lệnh kiểm tra:** `agent-kit worktree remove <worktree lane> trả exit 0 ngay sau khi gộp`
 - **Nguồn:** phiên 31d7d633, issue #427 (6 lane theo file, 26/10)
+
+---
+
+### [INSTINCT-085] Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên
+- **Ngày phát hiện:** 2026-10-29
+- **Hiện tượng lỗi:** Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên
+- **Nguyên nhân:** split_user_approved gắn lời duyệt với mtime: lane khác sửa rồi trả lại đúng nội dung sau câu trả lời, sha256 không đổi nhưng mtime mới hơn nên gate exit 2
+- **Quy tắc phòng ngừa & Cách fix:** Khóa file đã được duyệt (dặn lane KHÔNG đụng, kể cả comment) ngay khi hỏi duyệt; kiểm sha256 trước gate; nếu đã lỡ thì ghi đúng sha người dùng đã chọn vào approved_tests.json dạng {path: sha256} và nói rõ trong báo cáo
+
+---
+
+### [INSTINCT-086] Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình
+- **Ngày phát hiện:** 2026-10-29
+- **Hiện tượng lỗi:** Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình
+- **Nguyên nhân:** reviewer/author, approved-head, task_id đều là chuỗi agent tự ghi (cùng tài khoản GitHub, cùng user máy); trailer task_id cũ dùng lại được cho nội dung mới
+- **Quy tắc phòng ngừa & Cách fix:** duyệt chỉ tính khi gắn với biên bản ngoài repo ghi auditedHead (sha) và nội dung hiện tại khớp cây đó, auditedHead sau base; marker thiếu bằng chứng → fail closed; chặn agent đăng comment duyệt trơn

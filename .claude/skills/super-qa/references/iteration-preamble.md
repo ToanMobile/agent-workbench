@@ -320,7 +320,8 @@ acceptable; a fix can silently disable a feature to make a wrong spec pass.
    (`.claude/bin/super-board-pr-body.sh --skeleton`): status card with
    `Closes #${ISSUE_N}`, Problem (the failing assertion / signal type, lettered
    steps, screenshot), Solution (plain bullets), Acceptance criteria with proof
-   lines, Iteration history, Risk (🟢/🟡/🔴 — subjective signals are never 🟢).
+   lines, Iteration history, Risk (🟢/🟡/🔴 — subjective signals are never 🟢;
+   plus `Door:` one-way/two-way and `Blast radius:` who is hit + how to undo).
    Forensics excerpts go in the proof lines, not as file lists.
    After opening the PR and after each later push, follow
    `.claude/skills/super-board/references/pr-author-notes.md`: one file-level review
@@ -615,7 +616,7 @@ detection (do NOT batch at end of iter):
    - `## Fix` — first-suspect `file:line` and the intended change in 1–3 lines.
    - `## Acceptance Criteria` — `- [ ]` checklist: user-visible fix + regression
      coverage + Super QA rerun.
-   - `## Risk` — 🟢/🟡/🔴 + one line.
+   - `## Risk` — 🟢/🟡/🔴 + one line (+ Door and Blast radius once a PR exists).
    The owner goes in `--suggested-skill` (`super-build` for implementation,
    `ui-refine-loop` for a UI ticket a human runs, `super-qa` for harness/test-only,
    `super-review` for release-readiness), the dedupe key in `--fingerprint`

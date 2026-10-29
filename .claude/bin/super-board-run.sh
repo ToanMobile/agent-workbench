@@ -36,6 +36,8 @@ set -euo pipefail
 RUNNER_BORN=$(date +%s)
 SB_WORKER_WRAP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-worker-wrap.sh"
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
+SB_APPROVED_HEAD_JQ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-approved-head.jq"   # #605: chung với merge-queue
+SB_AUDIT_CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-audit-check.py"          # #605: task_id ↔ biên bản audit
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
 # của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
 gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
@@ -259,6 +261,12 @@ column_count() {
 # moved it to Review with its needs-you still on: run.md → resume), so it is work again (review 19/10). One definition for every use.
 FOR_A_PERSON_JQ='def for_a_person: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
   | ((index("needs-you") or index("human-gated")) and (map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not));'
+# #601: thẻ Ready chỉ chờ thẻ khác mang nhãn `waiting-on:#N` (mọi hoa/thường, ở item hay content, chuỗi hay {name}); không giao
+# tới khi sweep_waiting_on gỡ nhãn vì #N đã CLOSED/MERGED.
+WAITING_ON_JQ='def waiting_on: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
+  | any(startswith("waiting-on:#"));'
+# #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
+waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
 
 # #95: a card whose QA needs a real device (label needs-device, any case) — in QA, or in Ready labelled `qa` (the Tester takes it
 # from there) — while none is online ($nodev): a QA lane could only park it in Blocked. Not Review; not a Ready card the Builder
@@ -308,8 +316,9 @@ count_board() {
 person_count() {
   # Cards of column $1 no lane takes this tick — Ready ones waiting for a person, Ready/QA ones waiting for a real device: they
   # must not keep a run alive that has nothing else to do (counted, a non-daemon run never reached its clean "all empty" exit).
-  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ"'
-    [.items[] | select(.status == $col) | select(($col == "Ready" and for_a_person) or held_for_device($col))] | length'
+  # #601: thẻ Ready chờ thẻ khác (waiting_on) cũng không lane nào nhận tới khi nhãn được gỡ.
+  echo "$PROJECT_ITEMS_JSON" | jq --arg col "$1" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$WAITING_ON_JQ"'
+    [.items[] | select(.status == $col) | select(($col == "Ready" and (for_a_person or waiting_on)) or held_for_device($col))] | length'
 }
 
 # ── Status-field resolution (issue #10 reconcile path).
@@ -617,7 +626,7 @@ top_card_in_column() {
     TOP_ISSUE="$issue"; TOP_ITEM_ID="$item_id"
     return 0
   done <<EOF
-$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$READY_RANK_JQ"'
+$(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}" --argjson nodev "$NO_DEVICE" "$FOR_A_PERSON_JQ$DEVICE_JQ$READY_RANK_JQ$WAITING_ON_JQ"'
     [.items[]
     | select(.status == $col and .content.type == "Issue")
     # Chỉ bỏ qua thẻ đang giao cho người khác; thẻ chỉ mang assignee của chính BOT_LOGIN nhưng không có lock sống sẽ được lọc ở issue_locked phía trên để không bị kẹt.
@@ -626,6 +635,7 @@ $(echo "$PROJECT_ITEMS_JSON" | jq -r --arg col "$col" --arg bot "${BOT_LOGIN:-}"
     # and parks it again. Not in QA/Review: the resume path moves a 🙋 card a person approved to Review with its label possibly
     # still on (run.md → resume). Removing the label releases the card.
     | select($col != "Ready" or (for_a_person | not))
+    | select($col != "Ready" or (waiting_on | not))   # #601: chờ thẻ khác; sweep_waiting_on gỡ nhãn khi blocker đóng
     | select(held_for_device($col) | not)]   # #95: its QA needs a real device and none is online (refresh_device_state)
     # #202: Ready is taken by priority label, then bug before the rest, then the lower (older) issue number; other columns keep board order.
     | (if $col == "Ready" then sort_by(ready_rank) else . end)
@@ -966,7 +976,7 @@ try_claim_assignee() {
 lane_worktree_hint() {
   # $1 = lane, $2 = issue. Worktree của lane chỉ do DevKit tạo (agent-workbench#93): `git worktree add` trần thiếu .agents/devkit,
   # link profile và các hook bị ignore mà settings gọi (health FAIL; NFH #18: lệnh ma trận exit 127, 5 thẻ Blocked) và import lại cả
-  # Library Unity mỗi worktree (Goods ~9,9 GB). --lane không chiếm chỗ WORKTREE_MAX; sàn đĩa vẫn từ chối bằng exit 4.
+  # Library Unity mỗi worktree (Goods ~9,9 GB). Sàn đĩa từ chối bằng exit 4.
   local cmd
   case "$1" in
     review) cmd="agent-kit worktree add .claude/worktrees/issue-$2-review --lane=review --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>)" ;;
@@ -1018,11 +1028,12 @@ PY
 merge_queue_on() {
   # Pha 2: 0 khi merge queue bật cho board này. SB_MERGE_QUEUE=1 bật, =0 tắt (đường lùi: merge-only / train như cũ), còn lại theo
   # config `merge_queue.enabled` (thiếu khoá hoặc config không đọc được = tắt).
-  # Vòng sửa 1 (R3): chỉ bật khi worker_backend của config là "claude-p" (đọc như WORKER_BACKEND, mặc định "workflow"); backend khác
-  # luôn tắt, kể cả SB_MERGE_QUEUE=1, vì chưa có ai rút hàng ở đó. Đọc thẳng config vì chế độ SB_LIB_ONLY không đặt WORKER_BACKEND.
-  # ponytail: hàng đợi chỉ cho backend claude-p, nâng cấp cho workflow/codex khi chúng có lịch chạy super-board-merge-queue.sh (Q-schedule).
+  # Vòng sửa 1 (R3), #453: chỉ bật khi worker_backend của config là "claude-p" hoặc "workflow" (đọc như WORKER_BACKEND, mặc định
+  # "workflow"; workflow có lịch super-board-queue-schedule.sh); backend khác luôn tắt, kể cả SB_MERGE_QUEUE=1. Đọc thẳng config vì
+  # chế độ SB_LIB_ONLY không đặt WORKER_BACKEND.
+  # ponytail: codex chưa có lịch rút hàng, nâng cấp khi lane codex có.
   [ "${SB_MERGE_QUEUE:-}" != 0 ] || return 1
-  jq -e '(.worker_backend // "workflow") == "claude-p"' "$CONFIG_PATH" >/dev/null 2>&1 || return 1
+  jq -e '(.worker_backend // "workflow") | IN("claude-p", "workflow")' "$CONFIG_PATH" >/dev/null 2>&1 || return 1
   [ "${SB_MERGE_QUEUE:-}" != 1 ] || return 0
   jq -e '.merge_queue.enabled == true' "$CONFIG_PATH" >/dev/null 2>&1
 }
@@ -1043,24 +1054,51 @@ merge_queue_wait_ok() {
   [ $(( $(date +%s) - oldest )) -le $(( 3 * 10#$max * 60 )) ]
 }
 
+mq_collect_rc() {
+  # $1 = tệp .mq.rc, $2 = tệp .mq.pid. Đọc mã thoát bộ gom chạy nền (#537) rồi xoá cả hai tệp; 79/9 là halt, lỗi khác chỉ ghi log.
+  local rc
+  rc=$(cat "$1" 2>/dev/null || true); rm -f "$1" "$2"
+  case "$rc" in
+    0) ;;
+    79|9) log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
+    *) log "⚠ super-board-merge-queue.sh --if-due exited ${rc:-?} — runner keeps going, the queue is retried next tick" ;;
+  esac
+}
+
 merge_queue_due() {
   # Pha 2: khi queue bật, mỗi tick chạy `super-board-merge-queue.sh --config <cfg> --if-due` (bộ gom tự thoát 0 khi chưa tới hạn hoặc
   # khoá bận). Exit 79/9 của nó là halt như gh_checkpoint; mọi lỗi khác chỉ ghi log, không được kết thúc runner (set -euo pipefail).
-  # ponytail: chạy đồng bộ, nên lúc một đợt tới hạn đang verify thì tick của runner đứng chờ; chuyển sang chạy nền (ghi PID, đọc mã
-  # thoát ở tick sau) khi log runner thấy khoảng trống giữa các tick dài hơn vài tick_seconds.
+  # #537: bộ gom chạy NỀN (gate --full có thể kéo dài hàng chục phút). Tick chỉ đợi tối đa SB_MQ_TICK_WAIT giây (mặc định 60; bộ gom
+  # thường thoát ngay vì chưa tới hạn, nên kết quả vẫn thấy trong cùng tick); quá hạn thì bỏ lại chạy nền và tick sau đọc mã thoát,
+  # nên halt 79/9 có thể đến chậm. Trạng thái nằm trong <RUNNER_DIR>/<slug>.mq.pid (PID) và .mq.rc (mã thoát, ghi nguyên tử khi xong);
+  # runner chết giữa chừng thì runner sau vẫn đọc được .mq.rc; chỉ một bộ gom chạy một lúc (còn khoá riêng của nó).
   merge_queue_on || return 0
-  local mq rc=0
+  local mq dir slug pidf rcf pid wait_s i=0
   mq="$(dirname "$SB_GITHUB_READ")/super-board-merge-queue.sh"
   if [ ! -x "$mq" ]; then
     log "⚠ merge queue is on but $mq is missing or not executable — queued PRs are not merged by this runner"
     return 0
   fi
-  "$mq" --config "$CONFIG_PATH" --if-due >> "${RUN_MANIFEST:-/dev/null}" 2>&1 || rc=$?
-  case "$rc" in
-    0) ;;
-    79|9) log "🛑 halt — super-board-merge-queue.sh exited ${rc}"; exit "$rc" ;;
-    *) log "⚠ super-board-merge-queue.sh --if-due exited ${rc} — runner keeps going, the queue is retried next tick" ;;
-  esac
+  dir="${RUNNER_DIR:-.claude/super-board/runner}"; slug="${CONFIG_SLUG:-board}"
+  mkdir -p "$dir" 2>/dev/null || true
+  dir="$(cd "$dir" 2>/dev/null && pwd -P || printf '%s' "$dir")"   # tuyệt đối: tiến trình nền không phụ thuộc cwd
+  pidf="$dir/$slug.mq.pid"; rcf="$dir/$slug.mq.rc"
+  if [ -f "$rcf" ]; then
+    mq_collect_rc "$rcf" "$pidf"
+    return 0   # a tick that collected a result starts no new run; the next tick does
+  fi
+  if [ -f "$pidf" ]; then
+    pid=$(cat "$pidf" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi   # batch still running: do not hold the tick
+    log "⚠ super-board-merge-queue.sh background run (pid ${pid:-?}) ended without an exit code — restarting it"
+    rm -f "$pidf"
+  fi
+  ( "$mq" --config "$CONFIG_PATH" --if-due >> "${RUN_MANIFEST:-/dev/null}" 2>&1 </dev/null; echo "$?" > "$rcf.tmp" && mv "$rcf.tmp" "$rcf" ) &
+  echo "$!" > "$pidf"
+  wait_s="${SB_MQ_TICK_WAIT:-60}"
+  case "$wait_s" in ''|*[!0-9]*) wait_s=60 ;; esac
+  while [ ! -f "$rcf" ] && [ "$i" -lt $((wait_s * 5)) ]; do sleep 0.2; i=$((i + 1)); done
+  if [ -f "$rcf" ]; then mq_collect_rc "$rcf" "$pidf"; fi
   return 0
 }
 
@@ -1072,18 +1110,28 @@ review_approved_head() {
   # và áp merge_policy nguyên vẹn: hàm này chỉ chọn việc cho worker, không nới luật merge.
   # $2 (tuỳ chọn, Pha 2) = nhãn bắt buộc, vd merge-queue: PR đó còn phải mang nhãn này và không là draft (đúng bộ lọc của merge-queue.sh).
   # `!<nhãn>` (vòng sửa 1, R3) = PR không draft và KHÔNG mang nhãn đó (thẻ đã duyệt nhưng mất nhãn hàng đợi).
+  # #607/#614: PR không nằm trên nhánh issue-<N>- (PR tay, nhánh fix-…) thì nhận PR mở duy nhất có closingIssuesReferences chứa N;
+  # hai PR cùng đóng N là mơ hồ → không chọn (review đầy đủ).
   local prs pr head approved want="${2:-}"
-  prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid${want:+,labels,isDraft}" 2>/dev/null) || return 1
+  prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid,closingIssuesReferences${want:+,labels,isDraft}" 2>/dev/null) || return 1
   read -r pr head <<EOF
-$(printf '%s' "$prs" | jq -r --arg p "issue-$1-" --arg l "$want" '[.[] | select(.headRefName | startswith($p))][0] | select(. != null)
+$(printf '%s' "$prs" | jq -r --arg p "issue-$1-" --argjson n "$1" --arg l "$want" '([.[] | select(.headRefName | startswith($p))][0]
+    // ([.[] | select(any((.closingIssuesReferences // [])[]; .number == $n))] | if length == 1 then .[0] else null end)) | select(. != null)
   | select($l == "" or ((.isDraft != true) and (if ($l | startswith("!")) then (any((.labels // [])[]; .name == ($l | ltrimstr("!"))) | not)
       else any((.labels // [])[]; .name == $l) end))) | "\(.number) \(.headRefOid)"' 2>/dev/null)
 EOF
   [ -n "${pr:-}" ] && [ -n "${head:-}" ] || return 1
-  approved=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r '
-    [.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
-      | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty' 2>/dev/null) || return 1
-  [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
+  # #605: luật chung trong super-board-approved-head.jq; chỉ `ok` (bare hoặc approved-by hợp lệ, không tự duyệt) mới tính.
+  local verdict vstate vwhy
+  verdict=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r -f "$SB_APPROVED_HEAD_JQ" 2>/dev/null) || return 1
+  IFS=$'\t' read -r vstate approved vwhy <<<"$verdict" || true
+  [ "$vstate" = ok ] && [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
+  # #605 (audit T0066 vòng 2): approved-by chỉ tính khi task_id có audit pass của antigravity-pm với auditedHead == head.
+  case "$vwhy" in
+    owner) ;;
+    task:?*) python3 "$SB_AUDIT_CHECK" --top "${REPO_ROOT:-.}" --pr "$pr" "${vwhy#task:}" "$head" 2>/dev/null || return 1 ;;
+    *) return 1 ;;
+  esac
   printf '%s %s' "$pr" "$head"
 }
 
@@ -1162,18 +1210,34 @@ preflight_gate() {
   repo=$(jq -r '.repo.remote // empty' "$CONFIG_PATH" 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:)##; s#\.git$##')
   if [ -z "$repo" ] || [ ! -f "$pf" ]; then log "preflight skipped for #${issue}: no repo.remote in config or no ${pf}"; return 0; fi
   inf=$(mktemp "${TMPDIR:-/tmp}/sb-inflight.XXXXXX")
-  printf '%s' "$PROJECT_ITEMS_JSON" | jq -c '[.items[] | select(.status == "Building" or .status == "QA" or .status == "Review" or .status == "Ready")
+  # #601: thẻ Ready đang chờ (waiting_on) không tính là đang làm: không thì hai thẻ chồng nhau chờ lẫn nhau mãi.
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -c "$WAITING_ON_JQ"'[.items[] | select(.status == "Building" or .status == "QA" or .status == "Review" or .status == "Ready")
+    | select(.status != "Ready" or (waiting_on | not))
     | {number: .content.number, title: (.content.title // ""), status: .status}]' > "$inf" 2>/dev/null || echo '[]' > "$inf"
   # The board's own merge line cap: 0 means one card is one PR whatever its size, so preflight never asks to split it.
-  # Read it like super-board-merge-policy.py: unset → 400, else a whole number, and any value <= 0 is "no cap".
-  # A value the merge policy cannot read (a word) falls back to 400 here; the merge gate then sends that PR to a human.
+  # Read it like super-board-merge-policy.py: unset or unreadable → 0 (no line cap). A positive
+  # auto_max_lines is the opt-in size gate. Any value <= 0 is "no cap".
   local cap; cap=$(jq -r '.merge_policy.auto_max_lines as $c
-    | if $c == null then 400 elif $c == false then 0 elif $c == true then 1
+    | if $c == null then 0 elif $c == false then 0 elif $c == true then 1
       elif ($c | type) == "number" then ($c | floor)
       elif ($c | type) == "string" and ($c | test("^\\s*[-+]?[0-9]+\\s*$")) then ($c | gsub("\\s"; "") | tonumber)
-      else 400 end
-    | if . <= 0 then 0 elif . > 1000000000 then 1000000000 else . end' "$CONFIG_PATH" 2>/dev/null) || cap=400
-  out=$(bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" --cap "${cap:-400}" 2>>"$RUN_MANIFEST") || rc=$?
+      else 0 end
+    | if . <= 0 then 0 elif . > 1000000000 then 1000000000 else . end' "$CONFIG_PATH" 2>/dev/null) || cap=0
+  # #581: a draft PR idle longer than preflight.stale_draft_days (default 3) is no file overlap.
+  local stale; stale=$(jq -r '(.preflight.stale_draft_days // 3) | if type == "number" and . >= 0 and . <= 99999 then floor else 3 end' "$CONFIG_PATH" 2>/dev/null) || stale=3
+  # Thẻ Backlog/Ready khác (kể cả Ready đang waiting-on) đi cùng --issues để preflight gộp khi cùng file và chưa chạy.
+  # Building/QA/Review không đưa vào: thẻ đang chạy không nhận gộp. Tối đa 30 thẻ kia, số nhỏ trước.
+  local issues="$issue" peers=""
+  peers=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson self "$issue" '
+    [ .items[]
+      | select((.content.type // "Issue") == "Issue")
+      | select(.status == "Backlog" or .status == "Ready")
+      | .content.number | select(. != $self)
+    ] | unique | sort | .[:30] | map(tostring) | join(",")' 2>/dev/null) || peers=""
+  if [ -n "$peers" ]; then
+    issues=$(printf '%s,%s\n' "$issue" "$peers" | tr ',' '\n' | awk 'NF && !seen[$0]++' | sort -n | paste -sd, -)
+  fi
+  out=$(SB_STALE_DRAFT_DAYS="${stale:-3}" bash "$pf" --repo "$repo" --issues "$issues" --inflight "$inf" --cap "${cap:-0}" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$inf"
   if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
   if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
@@ -1182,8 +1246,70 @@ preflight_gate() {
   verdict=$(printf '%s' "$v" | jq -r '.verdict'); tag=$(printf '%s' "$v" | jq -r '.tag // ""')
   reason=$(printf '%s' "$v" | jq -r '.reason // ""')
   blocked=""
+  # Gộp thẻ: script tự gọi gh. Ghi hỏng không đẩy thẻ vào Blocked (không đi qua gh_write_once).
+  local merge_bin; merge_bin="${SB_MERGE_CARDS:-$(dirname "$SB_GITHUB_READ")/super-board-merge-cards.py}"
+  fold_cards() {
+    python3 "$merge_bin" --repo "$repo" --into "$1" --absorb "$2"
+  }
+  move_issue_done() {
+    local n="$1" id
+    id=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$n" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+    [ -n "$id" ] && set_card_status "$id" "Done"
+  }
   case "$verdict" in
-    proceed) return 0 ;;
+    proceed)
+      absorb=$(printf '%s' "$v" | jq -r '(.absorb // []) | map(tostring) | join(",")')
+      if [ -n "$absorb" ]; then
+        local mrc=0
+        fold_cards "$issue" "$absorb" >/dev/null 2>>"$RUN_MANIFEST" || mrc=$?
+        if [ "$mrc" -eq 0 ]; then
+          local oldifs="$IFS" n
+          IFS=','
+          for n in $absorb; do move_issue_done "$n" || true; done
+          IFS="$oldifs"
+          log "preflight #${issue}: folded #${absorb//,/, #} into it"
+        elif [ "$mrc" -eq 3 ]; then
+          log "preflight #${issue}: absorb #${absorb//,/, #} already started — not folded, keeper still dispatched"
+        else
+          log "preflight #${issue}: fold of #${absorb//,/, #} failed (exit ${mrc}) — not dispatched, stays Ready, retrying next tick"
+          return 1
+        fi
+      fi
+      return 0 ;;
+    merge)
+      into=$(printf '%s' "$v" | jq -r '.mergeInto // empty')
+      if ! printf '%s' "$into" | grep -Eq '^[0-9]+$'; then
+        log "preflight merge for #${issue} has no mergeInto — not dispatched, stays Ready, retrying next tick"
+        return 1
+      fi
+      local mrc=0
+      fold_cards "$into" "$issue" >/dev/null 2>>"$RUN_MANIFEST" || mrc=$?
+      if [ "$mrc" -eq 0 ]; then
+        move_issue_done "$issue" || true
+        log "preflight merge #${issue} into #${into}: folded, card to Done, not dispatched"
+        return 1
+      fi
+      if [ "$mrc" -eq 3 ]; then
+        local wcache wout wlabels orc=0
+        wout=$(python3 "$(waiting_on_helper)" mark --config "$CONFIG_PATH" --issue "$issue" --on "$into" --why="$reason" 2>>"$RUN_MANIFEST") || orc=$?
+        [ "$orc" -ne 0 ] || wlabels=$(printf '%s' "$wout" | jq -ce '.labels | arrays' 2>/dev/null) || orc=65
+        if [ "$orc" -ne 0 ]; then
+          log "preflight #${issue}: already started, waiting-on mark for #${into} failed (exit ${orc}) — stays Ready, retrying next tick"
+          return 1
+        fi
+        if [ "$wlabels" = "[]" ]; then
+          log "preflight #${issue}: #${into} is closed now — proceeding"
+          return 0
+        fi
+        if wcache=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -c --argjson n "$issue" --argjson add "$wlabels" '
+          .items |= map(if .content.number == $n then .labels = (((.labels // []) + $add) | unique) else . end)'); then
+          PROJECT_ITEMS_JSON="$wcache"
+        fi
+        log "preflight merge #${issue}: source already started — waiting on #${into}, stays Ready, not dispatched"
+        return 1
+      fi
+      log "preflight merge #${issue} into #${into} failed (exit ${mrc}) — not dispatched, stays Ready, retrying next tick"
+      return 1 ;;
     sequence)
       # blockedBy đọc từ body PR, không kiểm trạng thái: chỉ số issue còn MỞ mới chặn (số đã đóng là đúng mẫu #200). Một lệnh
       # super-board-blocked-by.py cho cả danh sách: nó không đi qua file halt, số gõ nhầm / số PR không dừng board (review P1/P2).
@@ -1198,7 +1324,29 @@ preflight_gate() {
         blocked="${bline#blocked-by: }"; [ "$blocked" != "-" ] || blocked=""
       fi
       [ -n "$blocked" ] || { log "preflight #${issue}: ${reason} — proceeding (merge gate rebases)"; return 0; }
-      tagline="⏳" ;;
+      # #601: chỉ chờ thẻ khác → giữ Ready + nhãn `waiting-on:#N` qua helper (tự gọi gh, không qua gh_write_once: ghi hỏng ở đó đẩy
+      # thẻ vào Blocked / halt 79). Helper lỗi (kể cả thiếu file) → không giao, không Blocked, thử lại tick sau.
+      local wcache wout wlabels; csv="${blocked// /}"; orc=0
+      wout=$(python3 "$(waiting_on_helper)" mark --config "$CONFIG_PATH" --issue "$issue" --on "$csv" --why="$reason" 2>>"$RUN_MANIFEST") || orc=$?
+      # mark tự đọc lại trạng thái từng blocker: nhãn nó trả về là các blocker còn mở. Không đọc được JSON → coi như hỏng.
+      [ "$orc" -ne 0 ] || wlabels=$(printf '%s' "$wout" | jq -ce '.labels | arrays' 2>/dev/null) || orc=65
+      if [ "$orc" -ne 0 ]; then
+        log "⚠ preflight #${issue}: waiting on #${csv//,/, #} but waiting-on mark failed (exit ${orc}) — not dispatched, stays in Ready, retrying next tick"
+        return 1
+      fi
+      if [ "$wlabels" = "[]" ]; then
+        log "preflight #${issue}: every blocker (#${csv//,/, #}) is closed now — proceeding"
+        return 0
+      fi
+      # Cache cùng tick: thẻ mang nhãn ngay để top_card_in_column không chọn lại nó trước lần đọc board sau.
+      if wcache=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -c --argjson n "$issue" --argjson add "$wlabels" '
+        .items |= map(if .content.number == $n then .labels = (((.labels // []) + $add) | unique) else . end)'); then
+        PROJECT_ITEMS_JSON="$wcache"
+      else
+        log "⚠ preflight #${issue}: could not add the waiting-on labels to the cached board — next board read has them"
+      fi
+      log "preflight ${verdict}/${tag} for #${issue}: ${reason} — waiting on $(printf '%s' "$wlabels" | jq -r 'map(sub("^waiting-on:"; "")) | join(", ")' 2>/dev/null), stays in Ready (labelled waiting-on), not dispatched"
+      return 1 ;;
     hold)
       exact=$(printf '%s' "$v" | jq -r --arg n "$issue" '
         if .tag == "unclear" then "yes"
@@ -1328,9 +1476,9 @@ EOF
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
       elif merge_queue_on; then
       # Pha 2 (Q1): reviewer vào hàng thay cho gọi merge gate; super-board-merge-queue.sh gom và merge cả đợt, rồi chuyển thẻ Done.
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: post a PR comment whose line is exactly approved-head:<the 40-char head sha you reviewed>, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is Antigravity's. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = the config repo.path, pm_dispatch kind=audit on that task, read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id>\"}. Antigravity unavailable (MCP tools absent, pm_dispatch errors, verdict not pass): post no approval, leave the card in Review with a [reviewer] comment whose last line is blocked-by: - (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
       else
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; a cross-review-approved marker (gate exit 7/8) is posted only after an Antigravity audit pass of the head (run.md → Reviewer lifecycle). When ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac
@@ -2429,6 +2577,51 @@ EOF2
   [ "$moved" -eq 1 ]
 }
 
+# #601: gỡ nhãn `waiting-on:#N` khi #N đã CLOSED/MERGED (helper `sweep` tự gọi gh). Chỉ chạy khi board có thẻ mang nhãn đó; nhịp
+# SB_WAITING_SWEEP_EVERY (300 s) hoặc ngay khi tập Done đổi. Helper lỗi: log, không dời mốc (tick sau thử lại), không bao giờ exit
+# runner. Trả 0 khi đã gỡ ít nhất một nhãn (caller đọc lại board), 1 khi không.
+sweep_waiting_on() {
+  local now sig out rc=0 removed items
+  printf '%s' "$PROJECT_ITEMS_JSON" | jq -e "$WAITING_ON_JQ"'any(.items[]; .status != "Done" and waiting_on)' >/dev/null 2>&1 || return 1
+  now=$(date +%s); sig=$(done_signature)
+  if [ "$now" -lt "${WAITING_SWEEP_NEXT:-0}" ] && [ "$sig" = "${WAITING_SWEEP_SIG-}" ]; then return 1; fi
+  # Board của tick này qua --items: helper không đọc board lần nữa (không tốn thêm GraphQL).
+  items=$(mktemp "${TMPDIR:-/tmp}/sb-waiting-items.XXXXXX") || { log "⚠ waiting-on sweep: mktemp failed — retrying next tick"; return 1; }
+  printf '%s' "$PROJECT_ITEMS_JSON" > "$items"
+  out=$(python3 "$(waiting_on_helper)" sweep --config "$CONFIG_PATH" --items "$items" 2>>"$RUN_MANIFEST") || rc=$?
+  rm -f "$items"
+  if [ "$rc" -ne 0 ]; then log "⚠ waiting-on sweep failed (exit ${rc}) — labels kept, retrying next tick"; return 1; fi
+  WAITING_SWEEP_NEXT=$((now + ${SB_WAITING_SWEEP_EVERY:-300})); WAITING_SWEEP_SIG="$sig"
+  removed=$(printf '%s' "$out" | jq -r '[(.removed // [])[] | "#\(.[0]) (#\(.[1]))"] | join(" ")' 2>/dev/null) || removed=""
+  [ -n "$removed" ] || return 1
+  log "waiting-on sweep: blocker closed, label removed on ${removed} — back to dispatchable Ready"
+  return 0
+}
+
+# #601: một lần lúc khởi động, sau lần đọc board đầu: thẻ Blocked chỉ chờ thẻ khác → Ready + nhãn waiting-on. Board đã đọc đi qua
+# --items. Lỗi: log, chạy tiếp, luôn trả 0 (helper idempotent, lần khởi động sau làm tiếp). Có thẻ được chuyển thì đọc lại board
+# cho đếm Ready ban đầu. Luồng chính gọi hàm này sau chốt SB_LIB_ONLY; test gọi trực tiếp.
+startup_migrate_waiting() {
+  local items="" out rc=0 moved
+  # startup_reconcile vừa đọc board; cache rỗng (lần đọc đó hỏng) → helper tự đọc board, không truyền --items rỗng
+  if [ -n "${PROJECT_ITEMS_JSON:-}" ]; then
+    items=$(mktemp "${TMPDIR:-/tmp}/sb-waiting-items.XXXXXX") || { log "⚠ waiting-on migrate: mktemp failed — skipped until the next start"; return 0; }
+    # set -e ở top-level: ghi hỏng (đĩa đầy) không được giết runner lúc khởi động — để helper tự đọc board
+    printf '%s' "$PROJECT_ITEMS_JSON" > "$items" || { rm -f "$items"; items=""; }
+  fi
+  out=$(INFLIGHT_DIR="$INFLIGHT_DIR" python3 "$(waiting_on_helper)" migrate --config "$CONFIG_PATH" ${items:+--items "$items"} 2>>"$RUN_MANIFEST") || rc=$?
+  [ -z "$items" ] || rm -f "$items"
+  if [ "$rc" -ne 0 ]; then
+    log "⚠ waiting-on migrate failed (exit ${rc}) — Blocked cards that only wait stay there until the next start"
+    return 0
+  fi
+  moved=$(printf '%s' "$out" | jq -r '(.migrated // []) | map("#\(.)") | join(" ")' 2>/dev/null) || moved=""
+  [ -n "$moved" ] || return 0
+  log "waiting-on migrate: ${moved} Blocked → Ready (labelled waiting-on)"
+  fetch_project_items || log "⚠ board re-read after waiting-on migrate failed (exit $?) — the first tick reads it"
+  return 0
+}
+
 # ── #363: cầu chì suite. ≥2 thẻ bị Blocked cùng một suite id (REG-…) trong SB_FUSE_WINDOW_H giờ là một nguyên nhân gốc, không phải hai thẻ:
 # giữ MỘT thẻ (số nhỏ nhất, hay thẻ đang giữ cờ ngưng), các thẻ còn lại ghi `blocked-by: <thẻ giữ>` và ở nguyên Blocked để sweep thả về khi
 # thẻ giữ đóng; NGƯNG giao Builder mới tới khi mọi thẻ giữ rời Blocked. KHÔNG BAO GIỜ đóng thẻ hay chuyển Done (suy đoán sai thì mất thẻ).
@@ -2587,7 +2780,7 @@ backlog_ticket_gaps() {
             | (if $e == null then $t else $t[:$e] end) end;
       [ (if (sect("Problem") // [] | any(.[]; test("\\S"))) then empty else "Problem" end),
         (if (sect("Fix") // [] | any(.[]; test("\\S"))) then empty else "Fix" end),
-        (if (sect("Acceptance Criteria") // [] | any(.[]; test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
+        (if (sect("(?:Acceptance Criteria|AC)") // [] | any(.[]; test("^[ \t]*(?:[-*]|[0-9]{1,2}[.)])[ \t]+\\S"))) then empty else "Acceptance Criteria" end) ]
       | join(", ")'
 }
 
@@ -2942,6 +3135,8 @@ check_legacy_worktrees
 cleanup_stale_worktrees
 
 startup_reconcile
+# #601: thẻ Blocked chỉ chờ thẻ khác → Ready + nhãn waiting-on (một lần, sau lần đọc board đầu).
+startup_migrate_waiting
 
 # ───────────────────────────── main loop ─────────────────────────────
 refresh_device_state
@@ -3042,6 +3237,7 @@ while true; do
 
   # Thẻ Blocked có blocker đã về Done thì trở lại Ready (runner này trước đây không có sweep: Goods #2, 2026-10-16).
   if sweep_closed_cards; then tick_fetch || continue; fi   # #558
+  if sweep_waiting_on; then tick_fetch || continue; fi     # #601
   if maybe_sweep_blocked; then tick_fetch || continue; fi
   # #363: ≥2 thẻ Blocked cùng suite id trong N giờ → một thẻ + ngưng giao Builder (suite_fuse_tick).
   if suite_fuse_tick; then tick_fetch || continue; fi

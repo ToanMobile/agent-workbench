@@ -5,6 +5,7 @@
 # Negative paths write nothing: dirty tree, exit != 0, base not in the tree, no board config.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
+export SB_MARK_VERIFIED_TREE=1   # #575: the receipt is written only by a deliberate flow (merge gate / QA); every case here is one
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ROOT="$(cd "$DEVKIT_DIR/.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

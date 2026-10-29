@@ -14,6 +14,7 @@ DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"; PG="$DEVKIT_DIR/bin/push_gate.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"   # never the real ~/.antigravity-pm
+export DEVKIT_PM_HOME_TEST=1   # #605: test-only switch, a fixture pm home under the temp dir counts for push_gate.approved
 FAILS=0
 ok()  { echo "✔ $1"; }
 bad() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -37,14 +38,15 @@ JSON
 run_gate() { CLAUDE_PROJECT_DIR="$R" python3 "$GATE" --run-tests --full --brief "$@" >/dev/null 2>&1; }
 RCPT() { echo "$(git -C "$R" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json"; }
 pm_task() {   # pm_task <task-id> <audit verdict|none> <project dir>
-  python3 - "$ANTIGRAVITY_PM_STATE_HOME" "$@" <<'PY'
+  # Audit T0066 (#605): the PM verdict names the audited head (`auditedHead: <sha>` in notes) — here HEAD of $R when recorded.
+  python3 - "$ANTIGRAVITY_PM_STATE_HOME" "$@" "$(git -C "$R" rev-parse HEAD)" <<'PY'
 import json, os, sys
-home, tid, verdict, project = sys.argv[1:5]
+home, tid, verdict, project, head = sys.argv[1:6]
 d = os.path.join(home, "projects", os.path.basename(project) + "-0123456789abcdef", "tasks", tid)
 os.makedirs(d, exist_ok=True)
 t = {"id": tid, "project": project, "round": 0, "verdicts": {}}
 if verdict != "none":
-    t["verdicts"]["audit"] = {"verdict": verdict, "round": 0, "reviewer": "pm"}
+    t["verdicts"]["audit"] = {"verdict": verdict, "round": 0, "reviewer": "pm", "notes": "auditedHead: " + head}
 json.dump(t, open(os.path.join(d, "task.json"), "w"))
 PY
 }

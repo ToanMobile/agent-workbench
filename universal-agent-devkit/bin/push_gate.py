@@ -22,6 +22,8 @@ commit and every file changed between them has, in the pushed commit, the blob t
 A commit that only rewords the gated one (`git commit --amend`, same tree) is covered too (2026-10-09).
 The receipt must be what the gate writes, for this repository (receipt_problem(); 2026-10-09: a
 hand-written {"exit": 0, "head": "<HEAD>"} passed): anything else counts as no receipt.
+#644: when full_pass.json is missing, invalid or does not cover the push, scoped_pass.json next to it (the receipt of a scoped gate run,
+"scope": "scoped", run-log line mode scoped) is checked by the same rules; a "task" receipt never opens a push.
 
 Only repos with an active regression matrix are checked: without one no receipt can exist.
 Files the gate itself writes after the run (tree_fp.EXCLUDE) are not compared.
@@ -429,11 +431,130 @@ def audit_record(top, task_id):
     antigravity-pm keeps its task state OUTSIDE the repository (an agent cannot edit it from the work tree):
     ${ANTIGRAVITY_PM_STATE_HOME:-~/.antigravity-pm}/projects/<name>-<hash>/tasks/<id>/task.json, verdicts.audit.verdict
     (mcp-servers/antigravity-pm-mcp src/config.js, src/tasks.js recordVerdict). The task's `project` must be this repository
-    (or a directory in it): task ids restart at T0001 in every project."""
-    home = os.path.expanduser(os.environ.get("ANTIGRAVITY_PM_STATE_HOME") or os.path.join("~", ".antigravity-pm"))
-    pattern = os.path.join(glob.escape(home), "projects", "*", "tasks", task_id, "task.json")
+    (or a directory in it): task ids restart at T0001 in every project. In a linked worktree (a session's or the merge gate's
+    scratch) `top` is that worktree while the task names the main checkout: the main checkout of the SAME repository (the
+    parent of `git rev-parse --git-common-dir` when that is a `.git` dir) counts too (#605 lane E); git error → top only."""
     verdicts = []
-    for path in sorted(glob.glob(pattern)):
+    for audit in _task_audits(top, task_id):
+        verdict = audit.get("verdict") if isinstance(audit, dict) else None
+        if verdict == "pass":
+            return True, None
+        verdicts.append(str(verdict or "chưa có"))
+    if verdicts:
+        return False, f"antigravity-pm: audit của {task_id} chưa pass ({', '.join(verdicts)})"
+    return False, f"không có biên bản audit pass của antigravity-pm cho {task_id} trong repo này ({_task_pattern(task_id)})"
+
+
+# #629: khoảng trắng viết tường minh [ \t\n\r\f\v], đúng tập regex của pm_verdict (mcp-servers/antigravity-pm-mcp/src/tools.js) —
+# `\s` của Python khớp cả \x1c-\x1f, \x85, của JS khớp cả NBSP: lệch là notes `auditedHead:\x1f<sha>` lọt qua kiểm audit-agent.json
+# của pm_verdict nhưng gate vẫn nhận sha (tests/gates/test_audited_head_ascii_space.sh).
+AUDITED_HEAD = re.compile(r"(?<![0-9A-Za-z])auditedHead:[ \t\n\r\f\v]*([0-9a-f]{40})(?![0-9A-Za-z])")
+SHA40 = re.compile(r"[0-9a-f]{40}")
+
+
+def audited_head(top, task_id):
+    """sha40 của cây Antigravity đã audit cho task `task_id` của repo này, hoặc None (audit T0066, #605).
+    Cùng biên bản ngoài repo và cùng luật repo/checkout chính như audit_record; chỉ tính khi verdicts.audit.verdict == "pass"
+    VÀ có sha40 ở verdicts.audit.auditedHead (pm_verdict ghi) hoặc `auditedHead: <sha40>` trong notes VÀ sha đó là commit có trong repo `top`.
+    Một task_id cũ đã pass vì thế chỉ duyệt đúng nội dung nó đã audit, không duyệt nội dung sửa sau (chặn replay).
+    Thiếu auditedHead, sha lạ, lỗi git → None (fail closed)."""
+    # Audit T0066 vòng 3 (#605): cùng điều kiện với approved() — pm home lạ (ANTIGRAVITY_PM_STATE_HOME tự dựng, HOME=/tmp/x) mà không
+    # phải fixture test trong thư mục tạm thì biên bản không tính, ở mọi người gọi (post-fix-gate mục duyệt chéo, merge gate).
+    if pm_home_overridden() and not pm_home_test_fixture():
+        return None
+    for audit in _task_audits(top, task_id):
+        if not isinstance(audit, dict) or audit.get("verdict") != "pass":
+            continue
+        # Audit T0066 vòng 2: trường cấu trúc verdicts.audit.auditedHead (pm_verdict ghi) trước, rồi `auditedHead: <sha>` trong notes.
+        cands = [audit.get("auditedHead")] if isinstance(audit.get("auditedHead"), str) and SHA40.fullmatch(audit["auditedHead"]) else []
+        m = AUDITED_HEAD.search(audit["notes"]) if isinstance(audit.get("notes"), str) else None
+        cands += [m.group(1)] if m else []
+        for sha in cands:
+            try:
+                rc, out = git(top, "rev-parse", "--verify", "-q", sha + "^{commit}")
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if rc == 0 and out.strip() == sha:
+                return sha
+    return None
+
+
+def head_after(top, base, head):
+    """True khi `base` là tổ tiên của (hoặc chính là) `head` — auditedHead nằm SAU base, không phải một cây cũ hơn base mà task cũ đã
+    audit (audit T0066 vòng 2, #605: chặn chép lùi test về bản yếu trước base rồi khai task cũ). Lỗi git, thiếu đối số → False."""
+    if not base or not head:
+        return False
+    try:
+        return subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", base, head],
+                              capture_output=True, timeout=15).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def range_lower_bounds(top, rng):
+    """Các mốc dưới (^sha) của range theo `git rev-parse <rng>` (`A..B` → A, `X^!` → cha của X); None khi lỗi git."""
+    try:
+        rc, out = git(top, "rev-parse", rng)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if rc != 0:
+        return None
+    return [ln[1:] for ln in out.split() if ln.startswith("^")]
+
+
+def pm_state_home():
+    """Thư mục trạng thái antigravity-pm mà push_gate đọc: ${ANTIGRAVITY_PM_STATE_HOME:-~/.antigravity-pm}."""
+    return os.path.expanduser(os.environ.get("ANTIGRAVITY_PM_STATE_HOME") or os.path.join("~", ".antigravity-pm"))
+
+
+def pm_home_overridden():
+    """True khi thư mục pm đang đọc KHÔNG phải ~/.antigravity-pm của user hệ điều hành (pwd, không theo $HOME: HOME=/tmp/x cũng là đổi
+    chỗ). Biên bản ở chỗ lạ thì agent nào cũng tự dựng được (audit T0066 vòng 2): post-fix-gate coi lời duyệt dựa vào nó là nới lỏng.
+    Không đọc được user → True (fail closed)."""
+    try:
+        import pwd  # noqa: PLC0415 - chỉ có trên POSIX
+        default = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".antigravity-pm")
+        return os.path.realpath(pm_state_home()) != os.path.realpath(default)
+    except (ImportError, KeyError, OSError):
+        return True
+
+
+TEST_TMP_ROOTS = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
+
+
+def pm_home_test_fixture():
+    """True chỉ cho fixture của test: DEVKIT_PM_HOME_TEST=1 VÀ pm home nằm dưới thư mục tạm của hệ thống (tempfile.gettempdir(), /tmp,
+    /var/folders). Khi đó approved() tính biên bản pm giả; post-fix-gate vẫn coi lượt đó là nới lỏng (không cấp biên nhận).
+    ponytail: agent tự đặt được cả hai trên dòng lệnh — lane git guard chặn gán chúng; nâng lên biên bản do PM server ký nếu thấy lách."""
+    if os.environ.get("DEVKIT_PM_HOME_TEST") != "1":
+        return False
+    try:
+        import tempfile  # noqa: PLC0415
+        home = os.path.realpath(pm_state_home())
+        roots = {os.path.realpath(r) for r in (tempfile.gettempdir(), *TEST_TMP_ROOTS)}
+    except OSError:
+        return False
+    return any(home.startswith(r.rstrip(os.sep) + os.sep) for r in roots if r and r != os.sep)
+
+
+def _task_pattern(task_id):
+    return os.path.join(glob.escape(pm_state_home()), "projects", "*", "tasks", task_id, "task.json")
+
+
+def _task_audits(top, task_id):
+    """verdicts.audit (có thể None) của từng task.json `task_id` mà `project` thuộc repo này (top, hoặc checkout chính khi top là
+    linked worktree của cùng repo). Dùng chung cho audit_record và audited_head."""
+    roots = [top]
+    try:
+        rc, common = git(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    except (OSError, subprocess.SubprocessError):
+        rc, common = 1, ""
+    common = common.strip() if rc == 0 else ""
+    if common and os.path.basename(common) == ".git":
+        main_root = os.path.dirname(common)
+        if not _inside(main_root, top):
+            roots.append(main_root)
+    for path in sorted(glob.glob(_task_pattern(task_id))):
         try:
             if not stat.S_ISREG(os.stat(path).st_mode) or os.path.getsize(path) > 8_000_000:
                 continue
@@ -441,39 +562,62 @@ def audit_record(top, task_id):
                 task = json.load(f)
         except (OSError, ValueError, RecursionError):
             continue
-        if not isinstance(task, dict) or task.get("id") != task_id or not _inside(task.get("project"), top):
+        if not isinstance(task, dict) or task.get("id") != task_id or not any(_inside(task.get("project"), r) for r in roots):
             continue
-        audit = (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
-        verdict = audit.get("verdict") if isinstance(audit, dict) else None
-        if verdict == "pass":
-            return True, None
-        verdicts.append(str(verdict or "chưa có"))
-    if verdicts:
-        return False, f"antigravity-pm: audit của {task_id} chưa pass ({', '.join(verdicts)})"
-    return False, f"không có biên bản audit pass của antigravity-pm cho {task_id} trong repo này ({pattern})"
+        yield (task.get("verdicts") or {}).get("audit") if isinstance(task.get("verdicts"), dict) else None
 
 
 def approved(top, rng):
     """(True, note) when a commit of rng ends with the trailer `Test-approved-by: antigravity <task-id>` (git's own trailer
-    parsing: the last paragraph, line-anchored) and antigravity-pm recorded an audit pass for that task (audit_record);
+    parsing: the last paragraph, line-anchored) and antigravity-pm recorded an audit pass for that task (audit_record) whose
+    auditedHead (audited_head) has the same tree as that commit and as the tip of rng (audit T0066, #605: no replay);
     (False, why) when a Test-approved-by line is there but does not count; (False, None) when there is none.
     Audit 2026-10-09: the old check was `"Test-approved-by:" in git log`, so "fix; Test-approved-by: whatever" passed.
     ponytail: the task record lives in a directory of the same user — an agent that writes ~/.antigravity-pm by hand still
     passes; upgrade to a record signed by the PM server if that is ever seen."""
-    rc, out = git(top, "log", "--format=%(trailers:key=Test-approved-by,valueonly,unfold)%x00", rng)
+    rc, out = git(top, "log", "--format=%H%x01%(trailers:key=Test-approved-by,valueonly,unfold)%x00", rng)
     if rc != 0:
         return False, None
-    values = [v.strip() for v in out.replace("\0", "\n").splitlines() if v.strip()]
+    values = []                                        # (commit, value), newest commit first
+    for rec in out.split("\0"):
+        sha, _, trailers = rec.strip("\n").partition("\x01")
+        values.extend((sha.strip(), v.strip()) for v in trailers.splitlines() if v.strip())
+    tip = None
     whys = []
-    for value in values:   # newest commit first
+    for sha, value in values:
         m = APPROVED_VALUE.fullmatch(value)
         if not m:
             whys.append(f"`{APPROVED} {value[:60]}` sai dạng (cần `{APPROVED} antigravity T0001-ten-task`)")
             continue
+        # #605 (audit T0066 vòng 2): biên bản ở pm home lạ agent nào cũng tự dựng được — không tính ở mọi đường push (fallback @{u}..rev,
+        # receipt-head..rev, post-fix-gate trailer / --since), trừ fixture test bật công tắc trong thư mục tạm (pm_home_test_fixture).
+        if pm_home_overridden() and not pm_home_test_fixture():
+            whys.append("ANTIGRAVITY_PM_STATE_HOME lạ: biên bản audit không tính")
+            continue
         ok, why = audit_record(top, m.group(1))
-        if ok:
+        if not ok:
+            whys.append(why)
+            continue
+        # Audit T0066 (#605): biên bản pass của một task_id cũ không duyệt nội dung mới (replay). Trailer chỉ tính khi cây của
+        # commit mang trailer VÀ cây đầu range đều bằng cây auditedHead PM đã ghi (luồng chuẩn: commit rỗng mang trailer ngay trên
+        # cây đã audit); đổi gì sau đó cần audit lại. Không đọc được → không duyệt.
+        # ponytail: merge main vào nhánh sau audit đổi cây đầu range → push cần audit lại; merge gate (scratch) không bị ảnh hưởng
+        # vì nó duyệt theo blob từng file ở auditedHead (post-fix-gate _trailer_cross_review). Nới khi việc audit lại thành phiền.
+        head = audited_head(top, m.group(1))
+        if tip is None:
+            rc_tip, tip_out = git(top, "rev-list", "-1", rng)
+            tip = tip_out.strip() if rc_tip == 0 else ""
+        trees = git(top, "rev-parse", f"{sha}^{{tree}}", f"{head}^{{tree}}", f"{tip}^{{tree}}") if head and tip and sha else (1, "")
+        got = trees[1].split() if trees[0] == 0 else []
+        # Audit T0066 vòng 2: auditedHead phải nằm sau mọi mốc dưới của range — cây cũ trước base (task cũ) không duyệt việc chép lùi.
+        lows = range_lower_bounds(top, rng) if head else None
+        after = bool(lows) and all(head_after(top, low, head) for low in lows)
+        if len(got) == 3 and len(set(got)) == 1 and after:
             return True, f"{APPROVED} antigravity {m.group(1)} (antigravity-pm audit pass)"
-        whys.append(why)
+        whys.append(f"{APPROVED} antigravity {m.group(1)}: " + (
+            "biên bản audit không ghi `auditedHead: <sha>` (hoặc sha không có trong repo)" if not head else
+            f"auditedHead {head[:10]} không nằm sau mốc dưới của range (audit một cây cũ trước base): cần audit lại" if not after else
+            f"cây đã đổi so với auditedHead {head[:10]} (commit trailer {sha[:10]} / đầu range): cần audit lại"))
     if not whys:
         rc, body = git(top, "log", "--format=%B", rng)
         if rc == 0 and APPROVED in body:
@@ -543,9 +687,10 @@ def tested_fingerprint(top, project, head, dirty, rev, links=None):
     return hashlib.sha256(tree.encode()).hexdigest()[:24]
 
 
-def run_log_has(rp, receipt):
+def run_log_has(rp, receipt, mode="full"):
     """True when <git common dir>/postfix-gate/runs.jsonl (bin/post-fix-gate.py _log_gate_run, written right after the receipt) holds
-    the line of this full PASS: mode full, exit 0, verdict PASS or REUSED, same project name, logged 0-900 s after the receipt."""
+    the line of this full PASS: mode full, exit 0, verdict PASS or REUSED, same project name, logged 0-900 s after the receipt.
+    mode="scoped" (#644): dòng của lượt scoped cho biên nhận scoped_pass.json — dòng mode full không mở biên nhận scoped và ngược lại."""
     gdir = os.path.dirname(os.path.dirname(rp))
     parent = os.path.dirname(gdir)
     base = os.path.dirname(parent) if os.path.basename(parent) == "worktrees" else gdir   # as post-fix-gate _run_log_dir
@@ -575,13 +720,13 @@ def run_log_has(rp, receipt):
             continue
         if epoch < t - 60:
             return False   # older than the receipt: lines are appended in time order
-        if (epoch <= t + 900 and rec.get("mode") == "full" and rec.get("exit") == 0 and not isinstance(rec.get("exit"), bool)
+        if (epoch <= t + 900 and rec.get("mode") == mode and rec.get("exit") == 0 and not isinstance(rec.get("exit"), bool)
                 and rec.get("verdict") in ("PASS", "REUSED") and rec.get("project") == name):
             return True
     return False
 
 
-def receipt_problem(top, rp, receipt, rev="HEAD"):
+def receipt_problem(top, rp, receipt, rev="HEAD", scope="full"):
     """None when the full-pass receipt is what bin/post-fix-gate.py write_full_pass_receipt() writes on a full PASS of THIS
     repository - every field present with its type, `head` a commit here, `project` this repository, no failed suite, the
     fingerprint equal to that of head+dirty rebuilt from git, and the run-log line of that run present; else what is wrong.
@@ -589,11 +734,16 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     ponytail: the receipt and runs.jsonl are files this user can write: a forger who rebuilds the fingerprint the way
     tree_fp.py does and appends a run-log line still passes - or, since issue #5, sets `carried_from` to any worktree's name and
     `time` next to a real full PASS line of that worktree, no line appended; upgrade to a receipt signed with a key the agent cannot read
-    (the user's keychain / ssh-agent) if a forged receipt is ever seen."""
+    (the user's keychain / ssh-agent) if a forged receipt is ever seen.
+    scope="scoped" (#644): biên nhận scoped_pass.json của lượt gate scoped — cùng mọi kiểm tra trên, cộng `scope` đúng "scoped" (thiếu hay
+    "task" đều bị từ chối), các trường scoped_tests / reasons / base / tree đúng dạng, và dòng runs.jsonl mode scoped."""
     def number(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
     # T0061 Pha 1: biên nhận task (lượt --run-tests không --full) chỉ cho XONG của task, không bao giờ cho push (tests/gates/test_task_receipt_doors.sh ca 2)
-    if receipt.get("scope", "full") != "full":
+    if scope == "scoped":
+        if receipt.get("scope") != "scoped":
+            return "scoped_pass.json không mang scope scoped (scope %s)" % str(receipt.get("scope"))[:20]
+    elif receipt.get("scope", "full") != "full":
         return "biên nhận task (scope task, không phải biên nhận của điểm gộp)"
     if receipt.get("exit") != 0 or isinstance(receipt.get("exit"), bool):
         return "exit không phải 0"
@@ -602,8 +752,13 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
         return "head không phải một commit của repo này"
     missing = [k for k in ("time", "tested_at", "fingerprint", "project", "dirty", "tests", "result_format", "gate_sha",
                            "matrix_sha", "local_sha") if k not in receipt]
+    if scope == "scoped":
+        missing += [k for k in ("scoped_tests", "reasons", "base", "tree") if k not in receipt]
     if missing:
         return "thiếu " + ", ".join(missing)
+    if scope == "scoped" and not (all(isinstance(receipt[k], list) and all(isinstance(x, str) for x in receipt[k]) for k in ("scoped_tests", "reasons"))
+                                  and all(isinstance(receipt[k], str) and HEX_SHA.fullmatch(receipt[k]) for k in ("base", "tree"))):
+        return "scoped_tests / reasons / base / tree không đúng dạng"
     if not number(receipt["time"]) or not number(receipt["tested_at"]) or receipt["time"] > time.time() + 300:
         return "time / tested_at không phải mốc thời gian hợp lệ"
     project = receipt["project"]
@@ -631,8 +786,9 @@ def receipt_problem(top, rp, receipt, rev="HEAD"):
     want = tested_fingerprint(top, project, head, dirty, rev, links)
     if want is not None and want != fp:
         return "fingerprint không khớp code head+dirty mà biên nhận ghi"
-    if not run_log_has(rp, receipt):
-        return "không có dòng runs.jsonl của lần chạy gate này (biên nhận không do post-fix-gate --full ghi)"
+    if not run_log_has(rp, receipt, mode=scope):
+        return ("không có dòng runs.jsonl mode scoped của lần chạy gate này (biên nhận không do lượt gate scoped ghi)" if scope == "scoped"
+                else "không có dòng runs.jsonl của lần chạy gate này (biên nhận không do post-fix-gate --full ghi)")
     return None
 
 
@@ -681,7 +837,74 @@ def _own_check(cwd, rev, tag_remote, linked):
         return (False, "linked worktree has no work tree") if linked else (True, "not a git repo")
     if tag_remote and on_remote_only(top, rev, tag_remote):
         return True, "a tag of commits the remote already has: nothing new is pushed"
-    rp = tree_fp.receipt_path(top)
+    rp, srp = tree_fp.receipt_path(top), tree_fp.scoped_receipt_path(top)
+    receipt = _read_receipt(rp)
+    # #644: biên nhận của lượt gate scoped (scoped_pass.json cạnh full_pass.json) chỉ được xét khi file có mặt; vắng thì mọi lời từ chối
+    # giữ nguyên từng chữ như trước
+    has_scoped = os.path.lexists(srp)
+    scoped = _read_receipt(srp) if has_scoped else None
+    # a project outside this repository is not this repository's (a forged one could name a directory with no matrix)
+    project = receipt.get("project") if receipt and _inside(receipt.get("project"), top) else top
+    sproject = scoped.get("project") if scoped and _inside(scoped.get("project"), top) else top
+    homes = [d for d in dict.fromkeys((project, sproject, top, os.path.abspath(cwd))) if os.path.isfile(os.path.join(d, MATRIX))]
+    if not homes:
+        # main có ma trận (nếu không thì main đã trả True); worktree không ma trận chưa chạy test hồi quy nào để bảo lãnh
+        return (False, "no regression matrix in this linked worktree") if linked else (True, "no regression matrix")
+    problem = None
+    if receipt is not None and receipt.get("exit") == 0 and receipt.get("head"):
+        problem = receipt_problem(top, rp, receipt, rev)
+    full_ok = not (receipt is None or problem or receipt.get("exit") != 0 or not receipt.get("head"))
+    if full_ok:
+        ok, full_why = _covered(top, rev, receipt, project, linked)
+        if ok or not has_scoped:
+            return ok, full_why
+    # biên nhận --full không có / không hợp lệ / không phủ rev: thử biên nhận scoped với CÙNG mọi kiểm tra (receipt_problem scope="scoped")
+    sproblem, scoped_why = None, None
+    if has_scoped:
+        if scoped is None or scoped.get("exit") != 0 or isinstance(scoped.get("exit"), bool) or not scoped.get("head"):
+            sproblem = "scoped_pass.json không phải biên nhận exit 0 (có head)"
+        else:
+            sproblem = receipt_problem(top, srp, scoped, rev, scope="scoped") or _scoped_base_problem(top, scoped)
+        if not sproblem:
+            ok, scoped_why = _covered(top, rev, scoped, sproject, linked)
+            if ok:
+                return True, "covered by the scoped gate receipt" if scoped_why == "covered" else scoped_why
+    if full_ok:
+        return False, f"{full_why}; biên nhận scoped: {sproblem or scoped_why}"
+    # không biên nhận nào dùng được (scoped hợp lệ mà không phủ rev cũng vậy: file scoped có mặt không được bỏ hai lối approved / docs-only dưới đây)
+    if linked:
+        return False, "no usable receipt in this linked worktree"
+    ok, why_not = approved(top, "@{u}.." + rev)
+    if ok:
+        return True, why_not
+    # --no-renames: a rename is also a delete of the old path (src/Foo.kt -> docs/Foo.md is code leaving)
+    rc, out = git(top, "diff", "--name-only", "--no-renames", "-z", "@{u}", rev)
+    if rc == 0 and untestable_only(top, homes[0], [p for p in out.split("\0") if p], rev=rev):
+        return True, "only files that need no test (docs / agent config), none watched by the matrix"
+    return False, ("chưa có biên nhận gate --full exit 0 (có head) cho code sắp push"
+                   + (f" (biên nhận hiện có không hợp lệ: {problem})" if problem else "") + (f"; {why_not}" if why_not else "")
+                   + (f"; biên nhận scoped không dùng được: {sproblem or scoped_why}" if has_scoped else ""))
+
+
+def _scoped_base_problem(top, receipt):
+    """None khi `base` của biên nhận scoped đã có trên remote: tổ tiên của @{u} hay origin/HEAD, origin/main, origin/master (nhánh PR gộp
+    origin/main rồi gate --diff origin/main: base là đỉnh origin/main, chưa trên @{u}); else lý do. Biên nhận scoped chỉ chứng minh
+    base..cây: base là commit chưa push thì commit giữa base và đích lên remote mà không test nào chạy."""
+    seen = []
+    for ref in ("@{u}", "refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master"):
+        rc, sha = git(top, "rev-parse", "--verify", "-q", ref + "^{commit}")
+        if rc == 0 and sha.strip():
+            seen.append(ref)
+            if git(top, "merge-base", "--is-ancestor", receipt["base"], sha.strip())[0] == 0:
+                return None
+    if seen:
+        return (f"base {receipt['base'][:10]} của biên nhận scoped chưa có trên đích push ({', '.join(seen)}): "
+                "commit giữa base và đích chưa được test")
+    return "không có đích push (@{u} / origin/HEAD / origin/main / origin/master) để kiểm base của biên nhận scoped"
+
+
+def _read_receipt(rp):
+    """Biên nhận JSON (dict) ở rp, None khi thiếu / không đọc được / không phải object."""
     try:   # O_NONBLOCK + regular file only: a FIFO planted at the receipt blocked open() until the hook timed out (issues-bugs A.4)
         with os.fdopen(os.open(rp, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)), encoding="utf-8") as f:
             if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
@@ -689,29 +912,12 @@ def _own_check(cwd, rev, tag_remote, linked):
             receipt = json.load(f)
     except (TypeError, OSError, ValueError, RecursionError):
         receipt = None
-    if not isinstance(receipt, dict):
-        receipt = None
-    # a project outside this repository is not this repository's (a forged one could name a directory with no matrix)
-    project = receipt.get("project") if receipt and _inside(receipt.get("project"), top) else top
-    homes = [d for d in (project, top, os.path.abspath(cwd)) if os.path.isfile(os.path.join(d, MATRIX))]
-    if not homes:
-        # main có ma trận (nếu không thì main đã trả True); worktree không ma trận chưa chạy test hồi quy nào để bảo lãnh
-        return (False, "no regression matrix in this linked worktree") if linked else (True, "no regression matrix")
-    problem = None
-    if receipt is not None and receipt.get("exit") == 0 and receipt.get("head"):
-        problem = receipt_problem(top, rp, receipt, rev)
-    if receipt is None or problem or receipt.get("exit") != 0 or not receipt.get("head"):
-        if linked:
-            return False, "no usable receipt in this linked worktree"
-        ok, why_not = approved(top, "@{u}.." + rev)
-        if ok:
-            return True, why_not
-        # --no-renames: a rename is also a delete of the old path (src/Foo.kt -> docs/Foo.md is code leaving)
-        rc, out = git(top, "diff", "--name-only", "--no-renames", "-z", "@{u}", rev)
-        if rc == 0 and untestable_only(top, homes[0], [p for p in out.split("\0") if p], rev=rev):
-            return True, "only files that need no test (docs / agent config), none watched by the matrix"
-        return False, ("chưa có biên nhận gate --full exit 0 (có head) cho code sắp push"
-                       + (f" (biên nhận hiện có không hợp lệ: {problem})" if problem else "") + (f"; {why_not}" if why_not else ""))
+    return receipt if isinstance(receipt, dict) else None
+
+
+def _covered(top, rev, receipt, project, linked):
+    """(ok, reason): biên nhận đã qua receipt_problem có phủ những gì push `rev` gửi đi không (head là tổ tiên, mọi file đổi từ head đã được
+    test đúng blob). Tách khỏi _own_check (#644) để biên nhận --full và biên nhận scoped đi cùng một đường."""
     head = receipt["head"]
     if subprocess.run(["git", "-C", top, "merge-base", "--is-ancestor", head, rev],
                       capture_output=True, timeout=5).returncode != 0:

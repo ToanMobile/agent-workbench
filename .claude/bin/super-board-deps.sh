@@ -99,6 +99,10 @@ fi
 
 APPROVAL_REPO="$REPO"
 [ -z "$FROM" ] || APPROVAL_REPO=""
+# audit T0066 vòng 3: biên bản audit của marker duyệt chéo xét theo checkout của board (config repo.path), không theo cwd; head PR chưa
+# có trong checkout đó thì super-board-approval.py fetch refs/pull/<n>/head trước khi đối chiếu.
+APPROVAL_REPO_PATH=""
+[ -z "$CONFIG" ] || APPROVAL_REPO_PATH=$(jq -r '.repo.path // empty' "$CONFIG" 2>/dev/null) || APPROVAL_REPO_PATH=""
 # #516: bộ đọc [decision] dùng chung gắn decisionValid lên từng comment; jq chỉ đọc cờ đó, không tự đoán lại luật.
 echo "$ISSUES" | python3 "$HERE/super-board-decision.py" annotate ${CONFIG:+--config "$CONFIG"} | jq --arg only "$ONLY" '
   # ---- the parser ---------------------------------------------------------
@@ -218,4 +222,5 @@ echo "$ISSUES" | python3 "$HERE/super-board-decision.py" annotate ${CONFIG:+--co
           needsYouDone: false }
     ]
   | ( if $filter == null then . else map(select(.number as $n | $filter | index($n))) end )
-  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO" ${CONFIG:+--config "$CONFIG"}
+  | INDEX(.number | tostring)' | python3 "$(dirname "${BASH_SOURCE[0]}")/super-board-approval.py" --deps --repo "$APPROVAL_REPO" ${CONFIG:+--config "$CONFIG"} \
+      ${APPROVAL_REPO_PATH:+--repo-path "$APPROVAL_REPO_PATH"}

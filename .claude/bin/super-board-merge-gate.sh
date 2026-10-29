@@ -100,8 +100,9 @@
 #      the card goes back to Review (not Blocked, not a rebase pass)
 #   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
 #   7  merge policy says a human merges this one (money / auth / destructive
-#      schema, a diff over auto_max_lines — default 400, "big PR — please
-#      review" — or merge_policy.default "human"). Stdout lists each
+#      schema, a diff over a positive auto_max_lines — default 0, so an unset
+#      cap is not a size gate; a positive cap says "big PR — please review" —
+#      or merge_policy.default "human"). Stdout lists each
 #      `human-gate: <category> — <evidence>`. Nothing ran, nothing merged; the
 #      card → Blocked with the 🙋 template: the human reviews and merges it, or
 #      comments "done" after its pinned request to approve — the next wave re-runs
@@ -122,7 +123,7 @@
 # MERGE POLICY AND MIGRATIONS (config, all optional — defaults shown in
 # references/config-schema.json)
 #
-#   merge_policy: { default: "auto"|"human", auto_max_lines: 400, size_exclude,
+#   merge_policy: { default: "auto"|"human", auto_max_lines: 0, size_exclude,
 #                   always_human: { <category>: {labels, paths, keywords} } }
 #   migrations:   { globs, allowed_envs, target_env, commands: {<env>: cmd},
 #                   human_steps }
@@ -167,10 +168,10 @@ case "${SB_MERGE_QUEUE-}" in
   1) MERGE_QUEUE_ON=1 ;;
   *) if jq -e '.merge_queue.enabled == true' "$CONFIG" >/dev/null 2>&1; then MERGE_QUEUE_ON=1; fi ;;
 esac
-# Chỉ backend claude-p có runner rút hàng (merge_queue_due); backend khác (workflow — mặc định khi thiếu khoá, như super-board-run.sh —
-# hoặc codex) luôn coi là tắt, kể cả SB_MERGE_QUEUE=1, để PR không kẹt trong hàng không ai rút. ponytail: hỗ trợ workflow/codex khi có
-# Q-schedule.
-if [ "$MERGE_QUEUE_ON" -eq 1 ] && ! jq -e '(.worker_backend // "workflow") == "claude-p"' "$CONFIG" >/dev/null 2>&1; then
+# Chỉ backend có người rút hàng: claude-p (runner gọi merge_queue_due mỗi tick) và workflow (mặc định khi thiếu khoá, như
+# super-board-run.sh; lịch super-board-queue-schedule.sh, #453). Backend khác (codex) luôn coi là tắt, kể cả SB_MERGE_QUEUE=1, để PR
+# không kẹt trong hàng không ai rút. ponytail: hỗ trợ codex khi lane codex có lịch rút hàng.
+if [ "$MERGE_QUEUE_ON" -eq 1 ] && ! jq -e '(.worker_backend // "workflow") | IN("claude-p", "workflow")' "$CONFIG" >/dev/null 2>&1; then
   MERGE_QUEUE_ON=0
 fi
 # Queue bật: chỉ train/queue gọi được; --standalone (/super-review ngoài board) đi tiếp, trừ worker do runner phóng (SB_BOARD_WORKER=1):
@@ -240,9 +241,10 @@ pr_title() {
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true
 }
 needs_you_notify() {
-  # Queue bật: --preflight / --dry-run không gửi (queue gửi đúng một lần ở nhánh exit 7/8). Queue tắt: cả hai gửi như gate cũ. Train gọi
-  # --preflight cho mọi PR và PR rớt preflight rời đợt trước lượt --dry-run, nên preflight im lặng = PR exit 7/8 mất nút duyệt (R2).
-  if [ "$MERGE_QUEUE_ON" -eq 1 ] && { [ "$PREFLIGHT" -eq 1 ] || [ "$DRY" -eq 1 ]; }; then return 0; fi
+  # Queue bật: train / queue gọi thì không gửi (queue gửi đúng một lần ở nhánh exit 7/8); #453: theo BÊN GỌI, không theo cờ, nên
+  # /super-review --standalone --dry-run ngoài board vẫn gửi nút. Queue tắt: gửi như gate cũ. Train gọi --preflight cho mọi PR và PR rớt
+  # preflight rời đợt trước lượt --dry-run, nên preflight im lặng khi queue tắt = PR exit 7/8 mất nút duyệt (R2).
+  if [ "$MERGE_QUEUE_ON" -eq 1 ]; then case "${SB_MERGE_CALLER-}" in train|queue) return 0 ;; esac; fi
   board_notify approve-button --repo "$REPO" --pr "$PR" --head "${HEAD_SHA:-}" --source "$PR" --card "PR #${PR}" --title "$(pr_title)"
 }
 # clip <n>: stdin gộp về một dòng, giữ tối đa n KÝ TỰ. INSTINCT-173: dưới locale C `cut -c` cắt theo byte và làm vỡ ký tự tiếng Việt
@@ -396,7 +398,10 @@ AH_DIR=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/de
 [ -z "$AH_DIR" ] || AH_DIR="$AH_DIR/super-board/approved-merge-heads"
 [ -z "$AH_DIR" ] || [ ! -r "$AH_DIR/$HEAD_SHA" ] || APPROVED_HEAD=$(head -1 "$AH_DIR/$HEAD_SHA")
 approval_check() {
-  APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --pr "$PR" \
+  # audit T0066 vòng 3: head PR phải có trong repo của board thì auditedHead của marker duyệt chéo mới kiểm được; fetch lỗi vẫn đi tiếp
+  # (approval.py tự fetch refs/pull/<n>/head, còn thiếu thì không duyệt).
+  git -C "$REPO_PATH" fetch origin "$HEAD_REF" --quiet 2>/dev/null || :
+  APPROVAL=$(python3 "$HERE/super-board-approval.py" --repo "$REPO" --repo-path "$REPO_PATH" --pr "$PR" \
     --head "$HEAD_SHA" ${APPROVED_HEAD:+--approved-head "$APPROVED_HEAD"} --plan "$PLAN") || APPROVAL='{"approved":false}'
   python3 "$GITHUB_READ" --check || exit $?
   APPROVED=$(echo "$APPROVAL" | jq -r '.approved // false')
@@ -962,6 +967,8 @@ for cmd in "${VERIFY[@]}"; do
   # Không bao giờ tự thêm --auto-approve-tests ở đây: duyệt test bị sửa là quyết định của từng board (config của nó).
   say "verify: ${cmd}"
   VRC=0
+  _cd="$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P || true)"
+  [ -z "$_cd" ] || rm -f "$_cd/super-board/last-merge-verify-pr-${PR}.full.log" 2>/dev/null || true   # #574: .full.log cũ của lượt đỏ trước không đứng cạnh lượt này
   run_verify_cmd "$run_cmd" || VRC=$?
   if [ "$VRC" -ne 0 ] && is_verify_timeout "$VRC" "$VERIFY_LOG"; then
     # Suite bị giết giữa chừng có thể để lại file đã track bị sửa, `git add` hay cả commit trong scratch: trả cây và index về đúng
@@ -1002,6 +1009,19 @@ for cmd in "${VERIFY[@]}"; do
     VLOG_DIR="$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P || true)"
     VLOG="${VLOG_DIR:+$VLOG_DIR/super-board/last-merge-verify-pr-${PR}.log}"
     { [ -n "$VLOG" ] && mkdir -p "$VLOG_DIR/super-board" && cp "$VERIFY_LOG" "$VLOG"; } 2>/dev/null || VLOG="(not saved)"
+    # #574: .log chỉ giữ tóm tắt của gate. Log đầy đủ từng suite (.agents/evidence/<suite>/*.log của scratch) và WT_LOG nằm trong scratch,
+    # cleanup() xoá chúng: chép nguyên, không cắt, sang .full.log trước khi thoát. Lỗi ghi không đổi mã thoát 11.
+    if [ -n "$VLOG" ] && [ "$VLOG" != "(not saved)" ]; then
+      FULL_LOG="${VLOG%.log}.full.log"
+      {
+        cat "$VERIFY_LOG"
+        for ev in "$SCRATCH"/.agents/evidence/*/*.log; do
+          [ -f "$ev" ] || continue
+          printf '\n===== %s =====\n' "${ev#"$SCRATCH"/}"
+          cat "$ev"
+        done
+      } >"$FULL_LOG" 2>/dev/null || say "could not write the full verify log ${FULL_LOG}"
+    fi
     tail -60 "$VERIFY_LOG" >&2
     # Merge vào scratch đã sạch (không conflict): verify đỏ luôn thoát 11 kèm mã thoát và dòng KẾT LUẬN cuối, không đẩy về Build để rebase vô ích.
     VERDICT=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VERIFY_LOG" | grep -a -E "KẾT LUẬN|VERDICT" | tail -1 \

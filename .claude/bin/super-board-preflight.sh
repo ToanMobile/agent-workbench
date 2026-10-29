@@ -9,23 +9,25 @@
 #                           title, or another card in Building/QA/Review (or a lower-
 #                           numbered Ready peer in this wave) has the same title.
 #   3. File overlap?        an open PR touches files this card names, or a lower-numbered
-#                           card in the same --issues batch names them. Not a duplicate —
-#                           a sequencing problem. The card goes behind the issue that
-#                           PR closes (blocked-by, so the wave-start sweep frees it when
-#                           that issue closes), or, if the PR closes nothing, proceeds
-#                           with an expected-conflict note so the merge gate rebases. Two
-#                           batch peers: the lower number proceeds, the other is sequenced
+#                           card in the same --issues batch names them. Not a duplicate.
+#                           The card goes behind the issue that PR closes (waiting-on,
+#                           so the sweep frees it when that issue closes), or, if the PR
+#                           closes nothing, proceeds with an expected-conflict note so
+#                           the merge gate rebases. Two batch peers and neither has its
+#                           own open `issue-<n>-` PR: fold the higher into the lower
+#                           (`verdict: merge`, `mergeInto`, keeper `absorb`). If the
+#                           lower already has that PR, sequence the higher
 #                           `blockedBy: [<lower>]` — never both against each other.
 #   4. Unclear?             no `## Acceptance Criteria` section with at least one item (`-`, `*`, `1)` or `1.`).
 #   5. Too big?             (lint.md tiêu chí 15) ≥2 tín hiệu cỡ lớn trong chính nội dung issue:
-#                           Fix liệt kê ≥5 đầu việc ngắn (≈100 dòng mỗi việc, vượt trần 400 dòng)
+#                           Fix liệt kê ≥5 đầu việc ngắn (nhiều việc giao được riêng, không phải đếm dòng)
 #                           hoặc tiêu đề nêu ≥3 việc · trải ≥4 vùng · thẻ tự nhận lớn (giai đoạn,
 #                           vertical slice, "nhiều thành phần") · phạm vi là cả một mục spec · AC
 #                           cần người thật hoặc số liệu vận hành. AC chỉ máy thật chứng minh được
 #                           (OOM, FPS, bộ nhớ) trên thẻ ghi "máy thật" tính 2. Hỏi trước câu 3:
 #                           thẻ phải tách thì chờ tách, không chờ PR.
 #
-# Outcomes: proceed · hold (dup done / dup in progress / unclear / too big) · sequence.
+# Outcomes: proceed · hold (dup done / dup in progress / unclear / too big) · sequence · merge.
 #
 # THIS SCRIPT IS THE MECHANICAL HALF. It catches what string matching can catch and
 # lists near-misses (`candidates`) for the pre-flight sub-agent, which makes the
@@ -42,15 +44,19 @@
 #                            [--inflight <cards.json>]   # [{number,title,status}] board cards
 #                            [--files a/b.ts,c/d.ts]     # paths the card will touch (else: parsed from body)
 #                            [--threshold 0.6]           # title Jaccard for a duplicate
-#                            [--cap 400]                 # merge_policy.auto_max_lines; 0 = no line cap: a card with many
+#                            [--cap 0]                   # merge_policy.auto_max_lines; default 0 = no line cap: a card with many
 #                                                        # deliverables is one PR (one gate), never held as too big
+#                            [--stale-draft-days 3]      # or env SB_STALE_DRAFT_DAYS (runner: preflight.stale_draft_days); a DRAFT PR not updated for longer
+#                                                        # is no file overlap (#581); a non-draft PR always counts
 #
 # Stdout, one object keyed by issue number:
-#   { "14": { "number": 14, "title": "…", "verdict": "proceed|hold|sequence",
+#   { "14": { "number": 14, "title": "…", "verdict": "proceed|hold|sequence|merge",
 #             "tag": "done|in-progress|unclear|too-big|overlap|clean", "reason": "…",
 #             "evidence": ["#31 merged: Resolves #14"], "blockedBy": [31],
+#             "mergeInto": 12, "absorb": [15],
 #             "conflictWith": [52], "candidates": [{"ref":"#40","kind":"open-pr","sim":0.4,"title":"…"}],
 #             "split": ["…"] } }       # too-big only: suggested slices for /to-tickets
+#                                      # merge: fold this card into mergeInto. absorb: numbers the keeper folds.
 #
 # Exit 0 ok · 64 usage · 79 required GitHub evidence unavailable (pause the run;
 # a blind pre-flight never says proceed).
@@ -58,7 +64,7 @@ set -euo pipefail
 # Fixed read commands: a malformed payload is GitHub's, so it halts (#32).
 export SB_GITHUB_READ_STRICT=1
 
-REPO=""; ISSUES=""; INFLIGHT=""; FILES=""; THRESHOLD="0.6"; CAP="400"
+REPO=""; ISSUES=""; INFLIGHT=""; FILES=""; THRESHOLD="0.6"; CAP="0"; STALE_DAYS="${SB_STALE_DRAFT_DAYS:-3}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo)      REPO="$2"; shift 2 ;;
@@ -67,12 +73,15 @@ while [ $# -gt 0 ]; do
     --files)     FILES="$2"; shift 2 ;;
     --threshold) THRESHOLD="$2"; shift 2 ;;
     --cap)       CAP="$2"; shift 2 ;;
+    --stale-draft-days) STALE_DAYS="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
 [ -n "$REPO" ] && [ -n "$ISSUES" ] || { echo "usage: --repo <owner/name> --issues <N[,M…]>" >&2; exit 64; }
 echo "$ISSUES" | grep -Eq '^[0-9]+(,[0-9]+)*$' || { echo "--issues must be numbers: $ISSUES" >&2; exit 64; }
 echo "$CAP" | grep -Eq '^[0-9]{1,10}$' || { echo "--cap must be a whole number of lines: $CAP" >&2; exit 64; }
+echo "$STALE_DAYS" | grep -Eq '^[0-9]{1,5}$' || { echo "--stale-draft-days must be a whole number of days: $STALE_DAYS" >&2; exit 64; }
+STALE_DAYS=$((10#$STALE_DAYS))
 CAP=$((10#$CAP))   # 0400 → 400: jq --argjson rejects leading zeros
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -83,7 +92,7 @@ if [ -f "$HERE/super-board-gh-guard.sh" ]; then
 fi
 
 MERGED=$(python3 "$HERE/super-board-github-read.py" --kind prs-merged -- pr list --repo "$REPO" --state merged --limit 100 --json number,title,body,url ) || exit $?
-OPEN=$(python3 "$HERE/super-board-github-read.py" --kind prs-open -- pr list --repo "$REPO" --state open --limit 100 --json number,title,body,url,headRefName,files ) || exit $?
+OPEN=$(python3 "$HERE/super-board-github-read.py" --kind prs-open -- pr list --repo "$REPO" --state open --limit 100 --json number,title,body,url,headRefName,files,isDraft,updatedAt ) || exit $?
 CLOSED=$(python3 "$HERE/super-board-github-read.py" --kind issues-closed -- issue list --repo "$REPO" --state closed --limit 100 --json number,title,body,stateReason ) || exit $?
 CARDS="[]"
 [ -n "$INFLIGHT" ] && CARDS=$(cat "$INFLIGHT")
@@ -97,7 +106,7 @@ done
 jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$OPEN" \
       --argjson closed "$CLOSED" --argjson cards "$CARDS" --arg files "$FILES" \
       --argjson hasinf "$([ -n "$INFLIGHT" ] && echo true || echo false)" \
-      --argjson th "$THRESHOLD" --argjson cap "$CAP" '
+      --argjson th "$THRESHOLD" --argjson cap "$CAP" --argjson stale "$STALE_DAYS" '
   def stop: ["the","and","for","with","from","into","when","that","this","add","fix","make","use","should","not","are","can","new"];
   def toks: ascii_downcase | [scan("[a-z0-9]+")] | map(select(length > 2)) | . - stop | unique;
   def sim($a; $b): ($a | toks) as $x | ($b | toks) as $y
@@ -113,9 +122,12 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   # Dòng tiêu đề mục "## <tên>": sau tên là hết từ (dấu cách, "(", ":", \r hoặc hết dòng). has_acs và sect dùng
   # chung để cùng nhận "## Acceptance Criteria (…)" và cùng bỏ "## Fixes", "## Fixture".
   def heading($h): test("^##[ \t]+" + $h + "(?!\\w)");
-  # The AC section: lines after the LAST "## Acceptance Criteria" heading, up to the next "## ".
+  # Tên mục AC: "Acceptance Criteria" hoặc viết tắt "AC" (#616, #618 nằm Blocked vì ghi `## AC`); cùng luật với
+  # backlog_ticket_gaps của super-board-run.sh và AC_HEADING của super-board-ac-check.py.
+  def ac_name: "(?:Acceptance Criteria|AC)";
+  # The AC section: lines after the LAST AC heading, up to the next "## ".
   def has_acs: ((.body // "") / "\n") as $l
-    | [ $l | to_entries[] | select(.value | heading("Acceptance Criteria")) | .key ] as $h
+    | [ $l | to_entries[] | select(.value | heading(ac_name)) | .key ] as $h
     | if ($h | length) == 0 then false
       else [ $l[($h | last) + 1:][] ] as $t
         | ([ $t | to_entries[] | select(.value | test("^##[ \t]")) | .key ] | first) as $e
@@ -126,7 +138,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   # #98 #102) đều hold, 0/49 thẻ đóng COMPLETED có AC bị hold. Nghiêng về proceed: mọi tín hiệu tính 1 và cần
   # ≥2, trừ `device` tính 2 nên tự nó đủ hold — AC chỉ máy thật chứng minh được kéo theo cả bộ test trên thiết
   # bị (comment builder ở OfficeReader #98: riêng phần chứng minh ~800–1.100 dòng); agent hạ được khi nêu lý do.
-  # Trần dòng là --cap (runner truyền merge_policy.auto_max_lines, mặc định 400); 0 = không trần: bỏ tín hiệu "nhiều việc".
+  # Trần dòng là --cap (runner truyền merge_policy.auto_max_lines, mặc định 0); 0 = không trần: bỏ tín hiệu "nhiều việc".
   # Mục "## <tên>" cuối cùng của body (cùng luật tiêu đề với has_acs), tới "## " kế tiếp.
   def sect($h): ((.body // "") / "\n") as $l
     | [ $l | to_entries[] | select(.value | heading($h)) | .key ] as $k
@@ -161,7 +173,7 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
   # (#226 sat Blocked behind 8 PRs that only shared the matrix).
   def no_shared: . - [".agents/regression_matrix.active.json", "universal-agent-devkit/tests/lib/test_durations.txt"];
   def too_big:
-    sect("Fix") as $fix | sect("Acceptance Criteria") as $ac
+    sect("Fix") as $fix | sect(ac_name) as $ac
     | [ $fix | parts[] | select(test("^#?[0-9]+$|^[0-9a-f]{7,40}$") | not) ] as $items
     | [ $items[] | select([ scan("\\S+") ] | length <= 6) ] as $short
     | [ (.title // "") | sub("^\\S+ \\[\\w+\\] "; "") | gsub("\\([^()]*\\)"; "") | splits("(?<![0-9]),|,(?![0-9])|;")
@@ -249,6 +261,10 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
     | ([ $open[] | select((.headRefName // "") | startswith("issue-\($n)-")) ] | length > 0) as $own
     | [ $cards[] | select((.status as $s | ["Ready","Building","QA","Review"] | index($s)) != null) | .number ] as $active
     | [ $others[] | select($own | not) | select(closes($n) | not) | select(sim(.title; $i.title) < $th)
+        # #581: a draft nobody touched for more than $stale days is not "in flight"; a non-draft PR (or a draft with no
+        # readable updatedAt) always counts.
+        | select((.isDraft == true and ((.updatedAt // "") | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$"))
+                  and ((.updatedAt | fromdateiso8601) < (now - $stale * 86400))) | not)
         | . as $p | [ ($p.files // [])[] | .path ] as $pf
         | ($mine | no_shared) as $own_files
         | ($own_files - ($own_files - $pf)) as $hit
@@ -282,19 +298,31 @@ jq -n --argjson targets "$TARGETS" --argjson merged "$MERGED" --argjson open "$O
           else
             { verdict: "proceed", tag: "clean", reason: "no duplicate, no overlap", evidence: [] }
           end ) ]
-  # Peer overlap: two cards checked together name the same files and neither has an open
-  # PR yet. The lower-numbered one goes first; the other waits behind it. Sequencing both
-  # against each other parks both forever (#180/#181 on 2026-10-03, corpus.ts).
+  # Peer overlap: two cards checked together name the same files. Neither has its own
+  # open issue-<n>- PR → fold the higher into the lower (one PR). The lower already has
+  # that PR → sequence the higher behind it. Never sequence both against each other
+  # (#180/#181 on 2026-10-03, corpus.ts). A card that already has its own PR is not folded.
   | sort_by(.number)
   | reduce .[] as $c ({out: [], go: []};
       ([ .go[] | select((.files - (.files - $c._files)) | length > 0) ] | first) as $first
-      | if $c.verdict == "proceed" and $first != null and ($c._own | not) then
+      | if $c.verdict == "proceed" and $first != null and ($c._own | not) and ($first.own | not) then
+          .out += [ $c + { verdict: "merge", tag: "overlap",
+                           reason: "unstarted cards touch the same files — fold into the lower number",
+                           evidence: [ "#\($first.number) touches \(($first.files - ($first.files - $c._files)) | join(", "))" ],
+                           mergeInto: $first.number, blockedBy: [] } ]
+          | .go |= map(if .number == $first.number then .absorb += [$c.number] else . end)
+        elif $c.verdict == "proceed" and $first != null and ($c._own | not) then
           .out += [ $c + { verdict: "sequence", tag: "overlap",
-                           reason: "a lower-numbered card in this check touches the same files — build after it",
+                           reason: "a lower-numbered card in this check already has a PR and touches the same files — build after it",
                            evidence: [ "#\($first.number) touches \(($first.files - ($first.files - $c._files)) | join(", "))" ],
                            blockedBy: [ $first.number ] } ]
         elif $c.verdict == "proceed" then
-          .out += [ $c ] | .go += [ { number: $c.number, files: $c._files } ]
+          .out += [ $c ] | .go += [ { number: $c.number, files: $c._files, own: $c._own, absorb: [] } ]
         else .out += [ $c ] end)
-  | .out | map(del(._files, ._own))
+  | . as $st
+  | $st.out
+  | map(. as $c
+      | ($st.go | map(select(.number == $c.number)) | first) as $g
+      | if $g != null and (($g.absorb // []) | length) > 0 then $c + {absorb: $g.absorb} else $c end)
+  | map(del(._files, ._own))
   | INDEX(.number | tostring)'

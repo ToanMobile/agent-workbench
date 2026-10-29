@@ -72,13 +72,15 @@ OLD_LABELS = {
 SKILLS = ["super-board", "super-build", "super-qa", "super-review", "super-collect", "visual", "git-sync", "ui-refine-loop"]
 OLD_SKILL_DIRS = ["super-refine", "cleanup-wt", "arch-loop"]
 BIN = ["super-board-verify-flags.sh", "super-board-verify-cmd.sh", "super-board-project-verifier.py", "super-board-skills-ready.py", "super-board-host.sh", "super-board-codex-wave.sh", "super-board-codex-lane.sh", "super-board-calibration.py", "super-board-verification-ready.py", "super-board-github-read.py", "super-board-collect-state.py", "super-board-run.sh", "super-board-worker-wrap.sh", "super-board-gh-guard.sh", "super-board-card.sh", "super-board-status.py", "super-board-wave-plan.sh",
-       "super-board-deps.sh", "super-board-preflight.sh", "super-board-merge-gate.sh", "super-board-merge-train.sh", "super-board-merge-queue.sh",
+       "super-board-deps.sh", "super-board-preflight.sh", "super-board-merge-gate.sh", "super-board-merge-cards.py", "super-board-merge-train.sh", "super-board-merge-queue.sh",
+       "super-board-approved-head.jq", "super-board-audit-check.py",
        "super-board-merge-policy.py", "super-board-approval.py", "super-board-env-check.sh", "super-board-agents-md.py",
        "super-board-settings.py", "super-board-setup.py", "super-board-usage.sh", "super-board-pr-body.sh",
        "super-review-file-refactor.sh", "super-qa-file-bug.sh", "super-board-stop.sh", "super-board-watchdog.sh",
-       "super-board-needs-you.py", "super-board-post-merge-clean.sh", "super-board-scratch-config.sh", "super-board-throttle.sh",
+       "super-board-needs-you.py", "super-board-orphan-prs.py", "super-board-post-merge-clean.sh", "super-board-scratch-config.sh", "super-board-throttle.sh",
        "super-board-device-online.py", "super-board-heavy-slot.py", "super-board-notify.py", "super-board-blocked-by.py",
-       "super-board-capacity.py", "super-board-qa-report.py", "super-board-drift.py", "super-board-ac-check.py", "super-board-decision.py"]
+       "super-board-capacity.py", "super-board-qa-report.py", "super-board-drift.py", "super-board-ac-check.py", "super-board-decision.py", "super-board-waiting-on.py",
+       "super-board-queue-schedule.sh"]
 WORKFLOWS = ["super-board-wave.js", "ui-refine-loop.js"]
 HELPERS_CMD = "npx -y skills@latest add mattpocock/skills --skill '*' -a claude-code -y"
 
@@ -278,7 +280,8 @@ def migrate_config(cfg):
         c["worker_backend"] = "workflow"
         changes.append("worker_backend \"workflow\" added")
     if not c.get("verify_commands"):
-        c["verify_commands"] = ["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full --brief"]
+        # #644: không ép --full — super-board-verify-flags.sh chèn --scoped (tự leo full khi đụng lõi); --full đêm thuộc gate-full
+        c["verify_commands"] = ["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief"]
         changes.append("verify_commands locked to DevKit post-fix-gate.py")
     return c, changes
 
