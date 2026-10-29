@@ -801,15 +801,53 @@ export const TOOLS = [
         fail(`Chua giao trien khai (pm_dispatch kind=implement) — chua co gi de ${args.kind}.`);
       }
       // auditedHead: sha40 cua cay da audit (push_gate.audited_head doc verdicts.audit.auditedHead). Thieu thi lay `auditedHead: <sha40>` trong notes.
+      // Khoang trang viet tuong minh [ \t\n\r\f\v], cung chuoi voi universal-agent-devkit/bin/push_gate.py AUDITED_HEAD; do lech
+      // cua \s Python/JS: universal-agent-devkit/tests/gates/test_audited_head_ascii_space.sh.
+      const AUDITED_HEAD = /(?<![0-9A-Za-z])auditedHead:[ \t\n\r\f\v]*([0-9a-f]{40})(?![0-9A-Za-z])/;
+      // Kiem dung ban notes se luu (recordVerdict cat 8000 ky tu): sha sat cho cat thi ban day du khong khop nhung ban da cat lai khop.
+      const notesIn = String(args.notes || '').slice(0, 8000);
+      const notesHeads = [...notesIn.matchAll(new RegExp(AUDITED_HEAD.source, 'g'))].map((x) => x[1]);
+      // #629: nhieu dong `auditedHead:` khac nhau thi gate doc dong nao cung la doan — tu choi.
+      if (new Set(notesHeads).size > 1) fail(`notes ghi nhieu auditedHead khac nhau (${[...new Set(notesHeads)].join(', ')}) — chi ghi mot head da audit.`);
+      const notesHead = notesHeads[0];
       let auditedHead;
+      let selfAudit = '';
       if (args.auditedHead !== undefined) {
         if (args.kind !== 'audit' || args.verdict !== 'pass') fail('auditedHead chi dung cho kind=audit verdict=pass.');
         if (typeof args.auditedHead !== 'string' || !/^[0-9a-f]{40}$/.test(args.auditedHead)) fail('auditedHead phai la sha 40 ky tu hex thuong (commit da audit).');
+        // #629: gate DevKit doc ca truong lan `auditedHead:` trong notes — notes ghi sha khac la mot cay chua ai audit.
+        if (notesHead && notesHead !== args.auditedHead) fail(`notes ghi auditedHead ${notesHead}, khac tham so ${args.auditedHead} — chi ghi mot head da audit.`);
         auditedHead = args.auditedHead;
       } else if (args.kind === 'audit' && args.verdict === 'pass') {
-        const m = /(?<![0-9A-Za-z])auditedHead:\s*([0-9a-f]{40})(?![0-9A-Za-z])/.exec(String(args.notes || ''));
-        if (m) auditedHead = m[1];
+        auditedHead = notesHead;
       }
+      // #629 (review 29/10 sau #609): auditedHead la thu gate DevKit tin de duyet test bi sua, nen chi ghi khi auditor that da bao
+      // cao pass cho dung cay do (audit-agent.json, viet SAU lan giao audit gan nhat, reviewer khac builder); PM tu ghi pass ma
+      // khong co / bo qua bao cao = tu duyet.
+      if (auditedHead) {
+        const repFile = path.join(contractPaths(cfg, task).dir, 'audit-agent.json');
+        const rep = readJsonIfExists(repFile);
+        if (!rep) fail('auditedHead can bao cao audit-agent.json cua auditor — chua co (pm_dispatch kind=audit roi cho bao cao).');
+        const lastAudit = Math.max(0, ...(task.dispatches || []).filter((d) => d.kind === 'audit').map((d) => Date.parse(d.at) || 0));
+        if (fs.statSync(repFile).mtimeMs < lastAudit) fail('audit-agent.json cu hon lan giao audit gan nhat — chua phai bao cao cua lan audit nay.');
+        if (String(rep.verdict || '').toLowerCase() !== 'pass') fail(`audit-agent.json ghi verdict "${rep.verdict ?? '(thieu)'}", khong phai pass — khong ghi auditedHead.`);
+        const repHead = typeof rep.auditedHead === 'string' ? rep.auditedHead : AUDITED_HEAD.exec(String(rep.notes || ''))?.[1];
+        if (repHead !== auditedHead) fail(`audit-agent.json ghi auditedHead ${repHead || '(thieu)'}, khac ${auditedHead} — auditor chua audit cay nay.`);
+        // Builder: agent goi PM (DEVKIT_AGENT_ID, mac dinh claude); task da giao implement thi Antigravity cung la builder.
+        const reviewer = typeof rep.reviewer === 'string' ? rep.reviewer.trim().toLowerCase() : '';
+        const builders = [process.env.DEVKIT_AGENT_ID || 'claude', ...(task.implementDispatchedAt ? ['antigravity'] : [])]
+          .map((b) => String(b).trim().toLowerCase());
+        if (!reviewer) fail('audit-agent.json thieu reviewer — khong biet ai audit, khong ghi auditedHead.');
+        // Reviewer trung builder (luong /giao: Antigravity build roi audit): van ghi ket luan audit nhung KHONG ghi auditedHead
+        // (ca truong lan dong trong notes, gate doc ca hai) — gate DevKit khong duyet test sua dua vao lan tu audit nay.
+        if (builders.includes(reviewer)) {
+          selfAudit = `CANH BAO: reviewer "${rep.reviewer}" trung builder (${builders.join(', ')}) — khong phai duyet cheo, khong ghi auditedHead.`;
+          auditedHead = undefined;
+        }
+        // ponytail: bao cao nam trong thu muc project, agent cung user OS ghi tay duoc, va builder la chuoi tu khai (task audit-only rieng
+        // cho PR Antigravity da build van qua) — cung gioi han da chap nhan o push_gate.approved (#605); sua that o #632.
+      }
+      const notesOut = selfAudit ? notesIn.replace(new RegExp(AUDITED_HEAD.source, 'g'), 'auditedHead-bo-qua') : notesIn;
       if (args.kind === 'plan' && args.verdict === 'pass') {
         const pp = contractPaths(cfg, task);
         if (!fs.existsSync(pp.plan)) fail('Chua co plan.md — PM viet ke hoach bang pm_plan truoc.');
@@ -858,10 +896,10 @@ export const TOOLS = [
         }
       }
       recordVerdict(cfg, task, {
-        kind: args.kind, verdict: args.verdict, findings: args.findings || [], notes: args.notes || '', ...(auditedHead && { auditedHead }),
+        kind: args.kind, verdict: args.verdict, findings: args.findings || [], notes: notesOut, ...(auditedHead && { auditedHead }),
       });
       if (args.kind === 'audit' && args.verdict === 'pass') {
-        L.push(auditedHead ? `auditedHead = ${auditedHead}.` : 'CANH BAO: audit pass khong co auditedHead — gate DevKit se khong duyet test sua dua vao audit nay.');
+        L.push(auditedHead ? `auditedHead = ${auditedHead}.` : (selfAudit || 'CANH BAO: audit pass khong co auditedHead — gate DevKit se khong duyet test sua dua vao audit nay.'));
       }
       L.push(`Da ghi ket luan ${args.kind} = ${args.verdict} cho ${task.id} (vong ${task.round}).`);
       if (args.verdict === 'pass') {

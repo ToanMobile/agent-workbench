@@ -636,7 +636,7 @@ def selection_seconds(command: str, project_dir: str = ".", selection: Optional[
         if sel is None:
             return None
         durations = {}
-        with open(os.path.join(os.path.dirname(os.path.join(str(project_dir), m.group(1))), "lib", "test_durations.txt"),
+        with open(os.path.join(os.path.dirname(os.path.join(str(project_dir), m.group("script"))), "lib", "test_durations.txt"),
                   encoding="utf-8") as f:
             for line in f:
                 p = line.split()
