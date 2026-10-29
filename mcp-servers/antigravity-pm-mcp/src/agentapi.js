@@ -158,7 +158,7 @@ export function agyRegistryProblem() {
   try { readAgyRegistry(); return null; } catch (e) { return e.message; }
 }
 
-const LOCK_STALE_MS = 20000;   // > ngan sach ps toi da duoi khoa (<= 5 lan x 1,5 s) de PM khac khong lay mat khoa dang giu that
+const LOCK_STALE_MS = 40000;   // > ngan sach ps toi da duoi khoa (<= 4 lan x PS_TIMEOUT_MS, tran 7 s = 28 s) de PM khac khong lay mat khoa dang giu that
 /**
  * Lay lai khoa cu (chu khoa da chet): DOI TEN no sang ten rieng (nguyen tu) roi xet CHINH file vua lay ra. Hai PM cung thay mot khoa cu:
  * PM sau co the lay trung khoa MOI cua PM truoc (no vua lay lai xong) => file trong tay con tuoi: tra lai cho cu (putLockBack) roi cho
@@ -199,7 +199,7 @@ function putLockBack(aside, lock) {
   fs.rmSync(aside, { force: true });   // da link lai: `aside` chi con la ten phu
 }
 
-/** Khoa file ngan (open 'wx') quanh doc-sua-ghi so dang ky: hai tien trinh PM khong dat cho / ghi de len nhau. Khoa mo coi > 20 s la cu. */
+/** Khoa file ngan (open 'wx') quanh doc-sua-ghi so dang ky: hai tien trinh PM khong dat cho / ghi de len nhau. Khoa mo coi > 40 s la cu. */
 function withRegistryLock(fn) {
   const lock = `${agyRegistryFile()}.lock`;
   const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -254,12 +254,17 @@ let SELF_TAG = null;
 /** Dau van tay cua chinh PM: khong doi suot doi tien trinh nen tinh MOT lan (reserveTurn khong goi ps them duoi khoa). */
 const selfTag = () => { SELF_TAG = SELF_TAG || procTag(process.pid); return SELF_TAG; };
 
+// May ban (load1 > 100, #657) lam ps tra loi > 1,5 s: timeout cu coi cham la loi. Chinh duoc qua env, KEP o PS_TIMEOUT_MAX_MS: ngan sach ps duoi khoa
+// (<= 4 lan) x tran phai < LOCK_STALE_MS (4 x 7 s = 28 s < 40 s); muon tran cao hon thi nang LOCK_STALE_MS trong code (PM khac xet khoa cu bang hang so cua no, khong bang env cua chu khoa).
+const PS_TIMEOUT_MAX_MS = 7000;
+export const psTimeoutMs = () => { const n = Number(process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS); return Number.isFinite(n) && n > 0 ? Math.min(n, PS_TIMEOUT_MAX_MS) : 5000; };
+
 function procTag(pid) {
   if (!pid) return null;
   try {
     // /bin/ps tuyet doi + LC_ALL=C TZ=UTC: lstart doi theo TZ/locale cua tung PM => PM thu hai khong nhan ra agy cua PM dau (do 14/10/2026).
     return execFileSync(process.env.ANTIGRAVITY_PM_PS || '/bin/ps', ['-o', 'lstart=', '-p', String(pid)],
-      { encoding: 'utf8', timeout: 1500, env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).trim() || null;
+      { encoding: 'utf8', timeout: psTimeoutMs(), env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }).trim() || null;
   } catch (e) {
     // Pid vua thoat: ps exit 1, khong in gi => tien trinh da chet. Moi truong hop khac la KHONG BIET: nem loi to, khong coi la "da xong".
     if (e.status === 1 && !String(e.stdout || '').trim() && !String(e.stderr || '').trim()) return null;
@@ -517,7 +522,7 @@ async function agyNewConversation({ prompt, model, cwd }) {
   const root = fs.realpathSync(cwd);
   readAgyRegistry();   // hong thi nem loi NGAY, truoc khi sinh agent: sau khi spawn khong con cach nao theo doi no
   // ponytail: agy mo coi chi bi dung khi co lan mo hoi thoai agy ke tiep (cua PM nao cung duoc; PM chi gui tin thi khong don); nang cap: don them luc
-  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 1,5 s
+  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 5 s
   // (timeout cua procTag) + 3 s (cho khoa); PM chet trong do thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
   reapOrphanAgy();
   // ps cua chinh PM tinh MOT lan, TRUOC spawn: hong (nem) hoac khong in gi (null: entryBusy / reaper khong nhan ra chu) thi tu choi, chua co agy nao chay
