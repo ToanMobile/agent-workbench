@@ -1,2 +1,3 @@
 - [Worktree-isolated Bash limits](worktree-isolated-bash-limits.md) — guard refuses cd&&/git -C/".git"/computed sed/bash -c/pgrep/"$var" targets; use scratch .py/.sh
 - [load_view is written back](load-view-written-back.md) — red_proof.keep_proof + auto_link save() load_view: a new source in it leaks into tracked checklist
+- [run_impacted progress-line sync](run-impacted-progress-line-sync.md) — a new stderr line with a test path breaks tests that wait on the bare name; anchor waits
