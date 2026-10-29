@@ -95,7 +95,7 @@ See `.claude/skills/super-board/references/run.md` → Reviewer. Summary of the 
    another lane's leftover worktree still holds cannot be checked out twice): `git fetch origin`, then
    `agent-kit worktree add .claude/worktrees/issue-<N>-review --lane=review --base=origin/issue-<N>-<slug>` (no `agent-kit` on PATH:
    `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It links the DevKit, copies the git-ignored config and
-   hooks, clones a Unity Library copy-on-write, takes no WORKTREE_MAX slot and marks the checkout the board's. Exit 4 = under the disk
+   hooks, clones a Unity Library copy-on-write and marks the checkout the board's. Exit 4 = under the disk
    floor: stop with its message, card and claims unchanged. Never a plain `git worktree add` or EnterWorktree (agent-workbench#93).
    Clean up with `agent-kit worktree remove <path>` (no agent-kit on PATH: `python3 .agents/devkit/scripts/git/worktree.py remove`; a
    plain `git worktree remove` refuses the DevKit set-up every lane worktree carries).
@@ -142,13 +142,18 @@ two complete builds. In order, no shortcuts:
 
 1. `gh pr ready <PR>` — idempotent, safe on an already-ready PR.
    **Inside the board with the merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"`
-   without `--codex`, whose runner drains the queue every tick): never call the merge gate (it refuses a direct call, exit 13). Post `approved-head:<sha40>` on the PR as its own comment, add
+   without `--codex`, whose runner drains the queue every tick): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP:
+   `pm_task_create` (project = config `repo.path`), `pm_dispatch kind=audit`, read its `audit-agent.json`, and only on Antigravity's
+   pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR as its own comment `approved-head:<sha40>`
+   with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}`.
+   Antigravity unavailable (MCP absent, `pm_dispatch` errors, verdict not pass): no approval, the card stays in **Review** with a
+   `[reviewer]` comment whose last line is `blocked-by: -` (a bare `approved-head` is the owner's hand approval; the guard blocks it). Add
    the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
    the report (`merge-ready`) and leave the card in **Review**: the queue merges it in one train (run.md → Merge
    protocol). Queue off inside the board (`SB_MERGE_QUEUE=0`, not enabled, or the workflow backend (default) / `--codex`,
    where nothing drains the queue — even when the config enables it): step 2 as below.
 2. Merge through the gate, pinned to the head you reviewed (`merge_policy.default: "human"`
-   keeps a person on every merge — the gate returns exit 7 below):
+   sends every merge to exit 7 below; a cross-review marker or a human `done` approves it):
    record `gh pr view <PR> --json headRefOid` when review passes, then
    `super-board-merge-gate.sh --config <cfg> --pr <PR> --expect-head <sha> --subject "<PR title>"
    --body-file <msg.md>` (it merges with `--match-head-commit`; the message is the PR title plus the
@@ -179,8 +184,18 @@ two complete builds. In order, no shortcuts:
      permission and the head, then moves it to Review. Re-run the gate; labels do not
      authorize it. For exits 7 and 8, copy `approval-request:` into the canonical
      issue block and link it from the PR (no duplicate request); see block-template.md.
-   - The rule in one line: the robot migrates the databases it was allowed to test its
-     work; live databases, money, auth and destructive schema changes wait for a person.
+   - **Cross-review replaces `done` (#605).** After the Antigravity audit pass of the head
+     (step 1: `pm_dispatch kind=audit`, then `pm_verdict`), post on the issue that holds the
+     request, last (after the Block comment and its request), as its own comment with nothing
+     else, besides `approved-head:<sha40>`:
+     `cross-review-approved: {"repo":"<owner/name>","pr":<P>,"head":"<sha40>","scope":"<request scope>","reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}`
+     (repo/pr/head/scope copied from the request). `super-board-approval.py` accepts it in place
+     of `done` (schema and `needs-you:` steps too), except when the plan has `delete-protected`
+     (a deleted `merge_policy.protected_paths` file): that still needs a human `done`.
+   - The rule in one line: only deleting a protected file waits for a person; everything
+     else (live databases, money, auth, schema) is approved by the cross-review marker.
+     Never post a bare `approved-head:` or a `done` yourself: the git guard blocks both
+     (only the human owner types them).
 3. **Confirm the merge landed** — never trust the merge command's exit code:
    **Exit 79 — required GitHub evidence unavailable:** stop the current run. Leave
    the card, approval, claims, and worktree intact. Report the local halt reason;

@@ -36,6 +36,8 @@ set -euo pipefail
 RUNNER_BORN=$(date +%s)
 SB_WORKER_WRAP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-worker-wrap.sh"
 SB_GITHUB_READ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-github-read.py"
+SB_APPROVED_HEAD_JQ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-approved-head.jq"   # #605: chung với merge-queue
+SB_AUDIT_CHECK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/super-board-audit-check.py"          # #605: task_id ↔ biên bản audit
 # Lệnh đọc cố định của runner (fields, project, state, quota) đặt SB_GITHUB_READ_STRICT=1 cho TỪNG lệnh: gõ sai ở đây là lỗi
 # của script nên vẫn halt board. Không export: worker thừa hưởng nó thì một lệnh gõ sai của agent lại halt cả board.
 gh_checkpoint() { python3 "$SB_GITHUB_READ" --check || exit $?; }
@@ -974,7 +976,7 @@ try_claim_assignee() {
 lane_worktree_hint() {
   # $1 = lane, $2 = issue. Worktree của lane chỉ do DevKit tạo (agent-workbench#93): `git worktree add` trần thiếu .agents/devkit,
   # link profile và các hook bị ignore mà settings gọi (health FAIL; NFH #18: lệnh ma trận exit 127, 5 thẻ Blocked) và import lại cả
-  # Library Unity mỗi worktree (Goods ~9,9 GB). --lane không chiếm chỗ WORKTREE_MAX; sàn đĩa vẫn từ chối bằng exit 4.
+  # Library Unity mỗi worktree (Goods ~9,9 GB). Sàn đĩa từ chối bằng exit 4.
   local cmd
   case "$1" in
     review) cmd="agent-kit worktree add .claude/worktrees/issue-$2-review --lane=review --base=origin/<PR branch> (detached; refresh with git fetch origin then git checkout --detach origin/<PR branch>)" ;;
@@ -1118,10 +1120,17 @@ $(printf '%s' "$prs" | jq -r --arg p "issue-$1-" --argjson n "$1" --arg l "$want
       else any((.labels // [])[]; .name == $l) end))) | "\(.number) \(.headRefOid)"' 2>/dev/null)
 EOF
   [ -n "${pr:-}" ] && [ -n "${head:-}" ] || return 1
-  approved=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r '
-    [.comments[] | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
-      | (.body | capture("(?m)^approved-head:(?<sha>[0-9a-f]{40})\\s*$")? // empty) | .sha] | last // empty' 2>/dev/null) || return 1
-  [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
+  # #605: luật chung trong super-board-approved-head.jq; chỉ `ok` (bare hoặc approved-by hợp lệ, không tự duyệt) mới tính.
+  local verdict vstate vwhy
+  verdict=$(python3 "$SB_GITHUB_READ" --kind object -- pr view "$pr" --json comments 2>/dev/null | jq -r -f "$SB_APPROVED_HEAD_JQ" 2>/dev/null) || return 1
+  IFS=$'\t' read -r vstate approved vwhy <<<"$verdict" || true
+  [ "$vstate" = ok ] && [ -n "$approved" ] && [ "$approved" = "$head" ] || return 1
+  # #605 (audit T0066 vòng 2): approved-by chỉ tính khi task_id có audit pass của antigravity-pm với auditedHead == head.
+  case "$vwhy" in
+    owner) ;;
+    task:?*) python3 "$SB_AUDIT_CHECK" --top "${REPO_ROOT:-.}" --pr "$pr" "${vwhy#task:}" "$head" 2>/dev/null || return 1 ;;
+    *) return 1 ;;
+  esac
   printf '%s %s' "$pr" "$head"
 }
 
@@ -1392,9 +1401,9 @@ EOF
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
       elif merge_queue_on; then
       # Pha 2 (Q1): reviewer vào hàng thay cho gọi merge gate; super-board-merge-queue.sh gom và merge cả đợt, rồi chuyển thẻ Done.
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: post a PR comment whose line is exactly approved-head:<the 40-char head sha you reviewed>, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is Antigravity's. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = the config repo.path, pm_dispatch kind=audit on that task, read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id>\"}. Antigravity unavailable (MCP tools absent, pm_dispatch errors, verdict not pass): post no approval, leave the card in Review with a [reviewer] comment whose last line is blocked-by: - (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
       else
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. In headless super-board Review lane, your independent review + truth-check sub-agents satisfy the independent audit requirement; when ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; a cross-review-approved marker (gate exit 7/8) is posted only after an Antigravity audit pass of the head (run.md → Reviewer lifecycle). When ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
     *) log "unknown lane: $lane"; return 1 ;;
   esac
