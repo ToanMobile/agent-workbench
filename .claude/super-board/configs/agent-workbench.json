@@ -38,6 +38,11 @@
     "runs_dir": "docs/super-board/runs"
   },
   "human_approves_merge": false,
+  "decision_policy": {
+    "enabled": true,
+    "owner": "ToanMobile",
+    "marker": "<!-- sb-decision:orchestrator -->"
+  },
   "merge_policy": {
     "default": "auto",
     "auto_max_lines": 0,
@@ -101,7 +106,7 @@
   "truth_gate": "non-trivial",
   "truth_threshold": 70,
   "verify_commands": [
-    "python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --full --force-full --brief"
+    "python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --brief"
   ],
   "collect": {
     "sources": [

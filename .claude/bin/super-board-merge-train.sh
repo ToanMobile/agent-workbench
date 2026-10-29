@@ -50,13 +50,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$CONFIG" ] && [ -e "$CONFIG" ] || { echo "config not found: ${CONFIG:-<unset>}" >&2; exit 66; }
-# F4 (fix-round1-contract.md, "Cờ worker board"): queue bật = (merge_queue.enabled hoặc SB_MERGE_QUEUE=1) VÀ worker_backend "claude-p"
-# (thiếu khoá = "workflow", như super-board-run.sh); SB_MERGE_QUEUE=0 luôn tắt. Khi đó worker board (SB_BOARD_WORKER=1) chỉ gắn nhãn
+# F4 (fix-round1-contract.md, "Cờ worker board"): queue bật = (merge_queue.enabled hoặc SB_MERGE_QUEUE=1) VÀ worker_backend "claude-p" hoặc
+# "workflow" (thiếu khoá = "workflow", như super-board-run.sh; #453); SB_MERGE_QUEUE=0 luôn tắt. Khi đó worker board (SB_BOARD_WORKER=1) chỉ gắn nhãn
 # merge-queue; train chỉ chạy cho super-board-merge-queue.sh (SB_MERGE_CALLER=queue). Đọc SB_MERGE_CALLER của bên gọi TRƯỚC khi train
 # tự đặt nó = train ở dưới.
-# ponytail: backend workflow/codex coi như queue tắt (chưa có ai rút hàng ở đó); thêm khi có Q-schedule.
+# ponytail: backend codex coi như queue tắt (lane codex tự merge qua gate); thêm khi codex có lịch rút hàng.
 if [ "${SB_BOARD_WORKER:-}" = 1 ] && [ "${SB_MERGE_CALLER:-}" != queue ] && [ "${SB_MERGE_QUEUE:-}" != 0 ] \
-   && jq -e --arg env "${SB_MERGE_QUEUE:-}" '(.worker_backend // "workflow") == "claude-p" and ($env == "1" or .merge_queue.enabled == true)' \
+   && jq -e --arg env "${SB_MERGE_QUEUE:-}" '((.worker_backend // "workflow") | IN("claude-p", "workflow")) and ($env == "1" or .merge_queue.enabled == true)' \
         "$CONFIG" >/dev/null 2>&1; then
   echo "merge-queue: label the PR merge-queue instead of calling the gate directly"
   echo "[merge-train] merge queue is on: a board worker labels the PR merge-queue; only super-board-merge-queue.sh runs the train" >&2
@@ -75,16 +75,18 @@ export SB_MERGE_CALLER=train
 
 say() { echo "[merge-train] $*" >&2; }
 # run_gate <PR> <out-stream 1|2> <gate args…>: chạy merge gate, GRC = exit của nó. Stdout của gate đi nguyên vẹn ra luồng cũ (merge: stdout,
-# vì `ac-open: #N` / "verify skipped" là của bên gọi; preflight / --dry-run: stderr), stderr của gate đi ra stderr sau khi gate xong
-# (giữ trong $GATE_ERR cho đuôi verify đỏ), rồi các dòng approval-request/human-gate/needs-you/ac-check/qa-report/verification-readiness
+# vì `ac-open: #N` / "verify skipped" là của bên gọi; preflight / --dry-run: stderr), stderr của gate đi ra stderr ngay khi gate in
+# (tee, #453; giữ trong $GATE_ERR cho đuôi verify đỏ), rồi các dòng approval-request/human-gate/needs-you/ac-check/qa-report/verification-readiness
 # (verification-readiness gate in ra stderr) in thêm thành `train-detail: <PR> <dòng>` trên stdout.
-GATE_OUT=$(mktemp); GATE_ERR=$(mktemp); DETAIL_DIR=$(mktemp -d)
+GATE_OUT=$(mktemp); GATE_ERR=$(mktemp); GATE_RC=$(mktemp); DETAIL_DIR=$(mktemp -d)
 run_gate() {
   local p="$1" to="$2" line; shift 2
   GRC=0
-  bash "$GATE" "$@" >"$GATE_OUT" 2>"$GATE_ERR" 8>&- || GRC=$?
+  # #453: stderr của gate đi qua tee: ra stderr của train NGAY khi gate in (log runner thấy tiến độ), vẫn giữ trong $GATE_ERR.
+  # Exit của gate đi qua $GATE_RC vì pipe trả exit của tee.
+  { grc=0; bash "$GATE" "$@" >"$GATE_OUT" 8>&- || grc=$?; echo "$grc" >"$GATE_RC"; } 2>&1 | tee "$GATE_ERR" >&2
+  GRC=$(cat "$GATE_RC" 2>/dev/null || echo 1)
   if [ "$to" = 1 ]; then cat "$GATE_OUT"; else cat "$GATE_OUT" >&2; fi
-  cat "$GATE_ERR" >&2
   while IFS= read -r line; do
     case "$line" in
       approval-request:*|human-gate:*|needs-you:*|ac-check:*|qa-report:*|verification-readiness:*) echo "train-detail: $p $line" ;;
@@ -159,7 +161,7 @@ BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.train-scratch-XXXXXX")
 RECEIPT=$(mktemp); VLOG=$(mktemp)
-cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"; rm -f "$TRAIN_STATE" "$TRAIN_STATE.tmp"; }
+cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT" "$GATE_ERR" "$GATE_RC" "$DETAIL_DIR"; rm -f "$TRAIN_STATE" "$TRAIN_STATE.tmp"; }
 trap cleanup EXIT
 # Trạng thái train cho Agent Office / super-board-status.py (#562): `pid`, `started_at`, `step` (gate | merge) và mỗi PR một dòng
 # `pr <N> <sha> <ref>`. Ghi nguyên tử, chỉ sau khi giữ khoá và đã đặt trap dọn: train thoát exit 4 (khoá bận) không bao giờ đụng file của train
@@ -239,6 +241,27 @@ train_state gate
 BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { say "cannot resolve origin/${BASE}"; exit 1; }
 head_of() { local i; for i in "${!LIST[@]}"; do [ "${LIST[$i]}" = "$1" ] && { echo "${HEADS[$i]}"; return 0; }; done; return 1; }
 
+# #643: duyệt test sửa mà base đã đi trước head thì rời đợt trước khi dựng scratch. Không làm đỏ cả chuỗi.
+for p in "${LIST[@]}"; do
+  emeta=$(mktemp)
+  gh pr view "$p" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
+  edited=0
+  if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$p")" >/dev/null 2>&1; then
+    edited=1
+  else
+    et_rc=$?
+    rm -f "$emeta"
+    [ "$et_rc" -eq 1 ] || exit "$et_rc"
+  fi
+  rm -f "$emeta"
+  if [ "$edited" -eq 1 ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$(head_of "$p")"; then
+    say "PR #${p}: edited-test review is stale before the chain"
+    early_results
+    echo "train-result: $p gate-exit-2"
+    exit 2
+  fi
+done
+
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$BASE_SHA" --quiet 2>/dev/null || { say "could not create the train scratch worktree"; exit 1; }
 # Cùng cách chuẩn bị scratch như merge gate: DevKit + config cục bộ bị ignore. Cài một lần; reset --hard giữ file bị ignore.
 for c in "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "${MAIN_WT:-$REPO_PATH}/universal-agent-devkit" "${MAIN_WT:-$REPO_PATH}/.agents/devkit"; do
@@ -281,13 +304,13 @@ verify_timed_out() (
   [ "$1" -eq 124 ] && return 0
   plain=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$VLOG" 2>/dev/null) || return 1
   if printf '%s\n' "$plain" | grep -aqE "KẾT LUẬN|POST-FIX AUDIT GATE VERDICT"; then
-    printf '%s\n' "$plain" | LC_ALL=C awk '/^[[:space:]]*\[ \] [^|]*\|/ { if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT[[:space:]]*\|/) t++; else o++ } END { exit !(t > 0 && o == 0) }'
+    printf '%s\n' "$plain" | LC_ALL=C awk '/^[[:space:]]*\[ \] [^|]*\|/ { if ($0 ~ /^[[:space:]]*\[ \] TIMEOUT([[:space:]]+\(HANG\))?[[:space:]]*\|/) t++; else o++ } END { exit !(t > 0 && o == 0) }'
     return
   fi
   printf '%s\n' "$plain" | grep -aqE "TIMEOUT after|quá giới hạn"
 )
-# single_red_test <log>: #578 — in đường dẫn test khi verify đỏ CHỈ vì đúng một test của REG-DK-ALL-01: gate REJECT, lớp tĩnh đạt, đúng một dòng
-# suite `[ ] FAIL | REG-DK-ALL-01`, đúng một dòng đuôi `| ✖ <test>.sh` (đuôi thụt lề của test lồng nhau không tính). Mọi trường hợp khác
+# single_red_test <log>: #578 — in đường dẫn test khi verify đỏ CHỈ vì đúng một test của một suite REG-DK-ALL-* (#616: gồm shard): gate REJECT, lớp tĩnh đạt, đúng một dòng
+# suite `[ ] FAIL | REG-DK-ALL-*`, đúng một dòng đuôi `| ✖ <test>.sh` (đuôi thụt lề của test lồng nhau không tính). Mọi trường hợp khác
 # (tên test mất vì log bị cắt, hai test trở lên, suite khác đỏ, đường dẫn lạ) thoát 1: đỏ ngay như cũ. Log là dữ liệu: đường dẫn phải khớp mẫu hẹp.
 single_red_test() {
   local t
@@ -297,11 +320,16 @@ single_red_test() {
     /^[[:space:]]*\[ \] [^|]*\|/ {
       rows++; split($0, parts, "|"); st = parts[1]; sub(/^[[:space:]]*\[ \][[:space:]]*/, "", st); sub(/[[:space:]]+$/, "", st)
       id = parts[2]; sub(/^[[:space:]]+/, "", id); sub(/[[:space:]].*$/, "", id)
-      if (st != "FAIL" || id != "REG-DK-ALL-01") bad = 1
+      if (st != "FAIL" || id !~ /^REG-DK-ALL-[A-Z0-9-]+$/) bad = 1   # #616: REG-DK-ALL-01 và các suite shard REG-DK-ALL-<NHÓM>-01
     }
     /^[[:space:]]*\| ✖ [^[:space:]]+[[:space:]]*$/ { line = $0; sub(/^[[:space:]]*\| ✖ /, "", line); sub(/[[:space:]]*$/, "", line); if (!(line in seen)) { seen[line] = 1; n++; name = line } }
     END { if (rej && static == 1 && rows == 1 && !bad && n == 1) print name; else exit 1 }') || return 1
-  [[ "$t" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*\.sh$ ]] && [[ "$t" != *..* ]] && [ -f "$SCRATCH/$t" ] && printf '%s\n' "$t"
+  [[ "$t" =~ ^[A-Za-z0-9_][A-Za-z0-9_./-]*\.sh$ ]] && [[ "$t" != *..* ]] && {
+    # run_impacted.sh prints the path relative to the kit; in agent-workbench the kit sits under universal-agent-devkit/ (#616, T0070 F3)
+    if [ -f "$SCRATCH/$t" ]; then printf '%s\n' "$t"
+    elif [ -f "$SCRATCH/universal-agent-devkit/$t" ]; then printf '%s\n' "universal-agent-devkit/$t"
+    else return 1; fi
+  }
 }
 # rerun_one_test <test>: chạy đúng test đó một lần trên cây scratch của lượt verify (cùng môi trường và hàng đợi tải), ghi vào $VLOG. 0 = xanh.
 # ponytail: không có trần thời gian riêng (test tự giới hạn), nâng khi gặp test treo; một lần, không lặp lại tới khi xanh.
@@ -342,12 +370,34 @@ Làm test ổn định (bỏ phụ thuộc thời gian/tải) thay vì để mer
 # verify_set <PR...>: 0 chuỗi dựng được và mọi verify_commands xanh · 1 đỏ · 2 chuỗi không dựng được (không phải lỗi đỏ của PR)
 #                     · 3 hết giờ sau một lần chạy lại (máy quá tải, không quy lỗi cho PR nào).
 verify_set() {
-  local cmd run_cmd busy_line rc try merged
+  local cmd run_cmd busy_line rc try merged p emeta
   build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]"; return 2; }
+  # #643: clean -qfd giữ file ignore. Xoá rồi cài lại theo đúng các PR của lượt này, kẻo nửa chuỗi trước còn sót.
+  rm -f "$SCRATCH/.claude/audit-gate/approved_tests.json"
+  for p in "$@"; do
+    emeta=$(mktemp)
+    gh pr view "$p" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
+    bash "$HERE/super-board-install-edited-test-approval.sh" \
+      --scratch "$SCRATCH" --sha "$(head_of "$p")" --meta "$emeta" --pr "$p" --top "$REPO_PATH"
+    rm -f "$emeta"
+  done
   merged=$(git -C "$SCRATCH" rev-parse HEAD)
   for cmd in "${VERIFY[@]}"; do
     cmd=$(sb_verify_inject_flags "$cmd" "$BASE")
     run_cmd=$(sb_verify_inject_flags "$cmd" "$BASE" json)
+    # #647: đêm và merge-train không được dừng ở suite đỏ đầu. Chỉ lệnh post-fix-gate nhận cờ này.
+    case "$cmd" in
+      *post-fix-gate*)
+        case " $cmd " in
+          *" --no-fail-fast "*) ;;
+          *) cmd="$cmd --no-fail-fast" ;;
+        esac
+        case " $run_cmd " in
+          *" --no-fail-fast "*) ;;
+          *) run_cmd="$run_cmd --no-fail-fast" ;;
+        esac
+        ;;
+    esac
     try=1
     while :; do
       say "verify [$*]: ${cmd}"
@@ -378,7 +428,7 @@ verify_set() {
       if flaky_test=$(single_red_test "$VLOG"); then
         say "verify red only by ${flaky_test} (REG-DK-ALL-01); re-running that test once"
         if rerun_one_test "$flaky_test"; then
-          FLAKY+=("$flaky_test"); say "${flaky_test} passed on re-run: flaky, not blaming any PR"; break
+          case " ${FLAKY[*]-} " in *" $flaky_test "*) ;; *) FLAKY+=("$flaky_test") ;; esac; say "${flaky_test} passed on re-run: flaky, not blaming any PR"; break
         fi
         say "${flaky_test} red on re-run too"; echo "[merge-train] re-ran ${flaky_test}: red again" >>"$VLOG"
       fi
