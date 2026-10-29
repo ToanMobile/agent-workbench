@@ -320,7 +320,13 @@ reset_run
 [ "$rc" -eq 7 ] && ok "F4: SB_MERGE_CALLER=queue runs (preflight exit 7 here)" || fail "F4 queue caller: exit $rc: $(tail -3 "$TMP/t20.log")"
 reset_run
 ( cd "$W/review" && SB_BOARD_WORKER=1 bash "$TRAIN" --config "$CFG_QW" --prs 49 ) >"$TMP/t21.log" 2>&1; rc=$?
-[ "$rc" -eq 7 ] && ok "F4: worker_backend codex = queue off, the train runs (#453: workflow is on)" || fail "F4 codex backend: exit $rc"
+[ "$rc" -eq 7 ] && ok "F4: worker_backend codex = queue off, the train runs" || fail "F4 codex backend: exit $rc"
+CFG_QF="$TMP/cfg-qf.json"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"worker_backend":"workflow","merge_queue":{"enabled":true},"verify_commands":["true"]}\n' > "$CFG_QF"
+reset_run
+( cd "$W/review" && SB_BOARD_WORKER=1 bash "$TRAIN" --config "$CFG_QF" --prs 49 ) >"$TMP/t21w.log" 2>&1; rc=$?
+[ "$rc" -eq 13 ] && grep -q "^merge-queue: label the PR merge-queue instead of calling the gate directly$" "$TMP/t21w.log" && [ ! -s "$TMP/gate.calls" ] \
+  && ok "F4: worker_backend workflow = queue on (#453) → exit 13, no gate call" || fail "F4 workflow backend: exit $rc: $(tail -3 "$TMP/t21w.log")"
 reset_run
 ( cd "$W/review" && SB_BOARD_WORKER=1 SB_MERGE_QUEUE=0 bash "$TRAIN" --config "$CFG_Q" --prs 49 ) >"$TMP/t22.log" 2>&1; rc=$?
 [ "$rc" -eq 7 ] && ok "F4: SB_MERGE_QUEUE=0 = queue off, the train runs" || fail "F4 SB_MERGE_QUEUE=0: exit $rc"
