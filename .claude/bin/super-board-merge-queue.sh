@@ -37,7 +37,6 @@
 #
 # Exit: 0 xong / chưa tới hạn / tắt / khoá bận · 79 và 9 của github-read / train đi thẳng lên (9: route các dòng đã có rồi mới thoát) ·
 #       64 sai cú pháp · 66 không thấy config · 1 không khoá được (lỗi hệ thống, không phải bận).
-# ponytail: ghi lên GitHub là `gh` trần không timeout (như merge gate); bước route lỗi chỉ log rồi sang PR kế. Nâng lên khi thấy treo: bọc timeout.
 # ponytail: thẻ incident của canary (Pha 2 v3 mục 3) chưa nối vào đây; làm khi batch_canary.py (lane D) đã vào kit.
 set -euo pipefail
 export SB_GITHUB_READ_STRICT=1
@@ -65,15 +64,16 @@ done
 say() { echo "[merge-queue] $*" >&2; }
 
 CONFIG_JSON=$(cat "$CONFIG")
-# Bật = (merge_queue.enabled hoặc SB_MERGE_QUEUE=1) VÀ worker_backend "claude-p" (thiếu khoá = "workflow", như super-board-run.sh);
-# SB_MERGE_QUEUE=0 luôn tắt. Cùng định nghĩa với merge gate và merge train (fix-round1-contract.md).
-# ponytail: backend workflow/codex coi như tắt (chưa có ai rút hàng ở đó); thêm khi có Q-schedule.
+# Bật = (merge_queue.enabled hoặc SB_MERGE_QUEUE=1) VÀ worker_backend "claude-p" (runner rút mỗi tick) hoặc "workflow" (thiếu khoá = "workflow",
+# như super-board-run.sh; lịch super-board-queue-schedule.sh rút, #453); SB_MERGE_QUEUE=0 luôn tắt. Cùng định nghĩa với merge gate, merge
+# train và runner (fix-round1-contract.md).
+# ponytail: backend codex coi như tắt (lane codex tự merge qua gate với SB_MERGE_QUEUE=0); thêm khi codex có lịch rút hàng.
 case "${SB_MERGE_QUEUE:-}" in
   0) ENABLED=false ;;
   *) ENABLED=$(echo "$CONFIG_JSON" | jq -r --arg env "${SB_MERGE_QUEUE:-}" \
-       '(.worker_backend // "workflow") == "claude-p" and ($env == "1" or .merge_queue.enabled == true)') ;;
+       '((.worker_backend // "workflow") | IN("claude-p", "workflow")) and ($env == "1" or .merge_queue.enabled == true)') ;;
 esac
-[ "$ENABLED" = true ] || { say "merge queue is off (config merge_queue.enabled + worker_backend claude-p / SB_MERGE_QUEUE); nothing to do"; exit 0; }
+[ "$ENABLED" = true ] || { say "merge queue is off (config merge_queue.enabled + worker_backend claude-p or workflow / SB_MERGE_QUEUE); nothing to do"; exit 0; }
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 NOTIFY="$HERE/super-board-notify.py"
 posint() { case "$1" in ''|*[!0-9]*|0) echo "$2" ;; *) echo "$1" ;; esac; }
@@ -116,9 +116,20 @@ fi
 echo "queue $$" > "$LOCK.pid"   # ai đang giữ khoá (và train của nó, ghi thêm lúc chạy), cho lượt sau và người đọc khi hàng có vẻ kẹt
 
 # ---- PR trong hàng ----------------------------------------------------------------------------------------------------------------------
+# #453: gh ghi bị chặn trần SB_GH_WRITE_TIMEOUT giây (mặc định 15; macOS không có `timeout`): gh treo thì cả nhóm tiến trình của nó bị giết,
+# gh_w trả 1 như mọi lỗi ghi khác (giữ nhãn, lượt sau route lại) và hàng đợi không chết.
 gh_w() {   # ghi lên GitHub; lỗi chỉ log (bước route sau vẫn chạy), trả 1
   local err
-  if err=$(gh "$@" 2>&1 >/dev/null); then return 0; fi
+  if err=$(python3 -I -c '
+import os, signal, subprocess, sys
+p = subprocess.Popen(["gh"] + sys.argv[2:], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    _, e = p.communicate(timeout=float(sys.argv[1]))
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL); p.communicate()
+    print("timed out after " + sys.argv[1] + " s", file=sys.stderr); sys.exit(124)
+sys.stderr.write(e); sys.exit(p.returncode)
+' "${SB_GH_WRITE_TIMEOUT:-15}" "$@" 2>&1); then return 0; fi
   say "gh $1 $2 $3 failed: $(printf '%s' "$err" | tail -1 | cut -c1-200)"; return 1
 }
 reject() {   # reject <PR> <lý do>: PR rời hàng (gỡ nhãn + comment). --dry-run chỉ in.

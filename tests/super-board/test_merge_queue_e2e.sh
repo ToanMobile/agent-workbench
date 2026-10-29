@@ -417,4 +417,52 @@ tick; no_halt "(d) tick 2"
   && ok "(d) merge-queue.sh was never called" || fail "(d) merge-queue ran: $(grep '^\[merge-queue\]' "$RUN_MANIFEST" | head -3 | tr '\n' '|')"
 unset SB_MERGE_QUEUE
 
+# ════ (e) Backend workflow (Q-schedule, #453): không có runner; lịch launchd rút hàng ═══════════════════════════════════════════════════
+# Reviewer (stub claude, bước "vào hàng" như skill) ghi approved-head + nhãn merge-queue; rồi CHẠY ĐÚNG ProgramArguments của plist do
+# super-board-queue-schedule.sh cài (không gọi tay merge-queue.sh): một train cho cả 3 PR, một verify, 3 PR merged.
+new_world sched true
+jq '.worker_backend = "workflow"' "$CFG" > "$CFG.tmp" && mv "$CFG.tmp" "$CFG"
+unset SB_MERGE_QUEUE
+cat > "$TMP/path/launchctl" <<'SH'
+#!/usr/bin/env bash
+echo "launchctl $*" >> "$FAKE/launchctl.calls"
+case "$1" in print) [ -e "$FAKE/lc-loaded" ] && exit 0; exit 1 ;; bootstrap) : > "$FAKE/lc-loaded"; exit 0 ;; *) exit 0 ;; esac
+SH
+chmod +x "$TMP/path/launchctl"
+export SB_LAUNCH_AGENTS_DIR="$W/agents"
+for k in 11 12 13; do issue "$k" Review; open_pr "$((k + 70))" "issue-$k-x" "g$k"; done
+RPIDS=""
+for k in 11 12 13; do
+  ( cd "$R" && exec claude -p "Run super-review on issue #$k. After the gate decision: add-label merge-queue. Config: $CFG. end" ) >/dev/null 2>&1 &
+  RPIDS="$RPIDS $!"; OWN_PIDS="$OWN_PIDS $!"
+done
+for k in 11 12 13; do wait_held "$k"; done
+for k in 11 12 13; do : > "$F/release-$k"; done
+for p in $RPIDS; do wait "$p" 2>/dev/null; done
+[ "$(st '[.prs[] | select(.labels | map(.name) | index("merge-queue"))] | length')" = 3 ] \
+  && ok "(e) workflow: 3 reviewers put their PRs in the queue (label merge-queue)" || fail "(e) queued: $(st '[.prs[] | {n: .number, l: .labels}]')"
+bash .claude/bin/super-board-queue-schedule.sh ensure e2e >"$W/ensure.out" 2>&1; bash .claude/bin/super-board-queue-schedule.sh ensure e2e >>"$W/ensure.out" 2>&1
+PL=$(ls "$SB_LAUNCH_AGENTS_DIR"/com.superboard.mergequeue.e2e.*.plist 2>/dev/null | head -1)
+{ [ -n "$PL" ] && [ "$(grep -c '^launchctl bootstrap' "$F/launchctl.calls")" = 1 ]; } \
+  && ok "(e) the schedule is installed once (the second ensure is quiet)" || fail "(e) schedule: plist=$PL $(cat "$W/ensure.out") $(cat "$F/launchctl.calls" 2>/dev/null)"
+# Chạy đúng lệnh lịch: ProgramArguments + WorkingDirectory đọc từ plist.
+sched_run() {
+  python3 -I - "$PL" > "$W/sched.out" 2>&1 <<'PY'
+import plistlib, subprocess, sys
+d = plistlib.load(open(sys.argv[1], 'rb'))
+print('interval', d['StartInterval'])
+sys.exit(subprocess.run(d['ProgramArguments'], cwd=d['WorkingDirectory']).returncode)
+PY
+}
+sched_run; rc=$?
+[ "$rc" = 0 ] && [ "$(grep -c '^\[merge-queue\] batch of' "$W/sched.out")" = 1 ] && ok "(e) the scheduled command ran ONE train" \
+  || fail "(e) scheduled run rc=$rc: $(tail -8 "$W/sched.out" | tr '\n' '|')"
+[ "$(sed -n 's/^interval //p' "$W/sched.out")" -le 60 ] && ok "(e)  … and the schedule fires at least every 60 s (<= max_wait_min)" || fail "(e) interval: $(head -1 "$W/sched.out")"
+[ "$(st '[.prs[] | select(.state == "MERGED") | .number] | sort | join(",")')" = "81,82,83" ] && [ "$(pfg .train-scratch-)" = 1 ] && [ "$(pfg .)" = 1 ] \
+  && ok "(e)  … 3 PRs merged with exactly one verify (in the train scratch)" || fail "(e) merged: $(st '[.prs[] | {n: .number, s: .state}]') verifies: $(cat "$F/pfg.log" 2>/dev/null)"
+[ "$(st '.board["11"]')" = Done ] && [ "$(st '.issues["13"].state')" = CLOSED ] && ok "(e)  … cards Done and issues closed" || fail "(e) board: $(st '.board')"
+sched_run
+[ "$(pfg .)" = 1 ] && ok "(e) the next scheduled tick finds the queue empty: no second train" || fail "(e) second tick verifies: $(pfg .)"
+unset SB_LAUNCH_AGENTS_DIR
+
 [ "$FAILS" -eq 0 ] && { echo "✅ test_merge_queue_e2e: all passed"; exit 0; } || { echo "❌ test_merge_queue_e2e: $FAILS failed"; exit 1; }

@@ -111,6 +111,13 @@ for f in $changed; do
   done < tests/impact_map.txt
 done
 selected="$(printf '%s\n' $tests | sort -u)"
+# #644: lượt `post-fix-gate.py --scoped` đặt DEVKIT_SCOPED_TESTS (có thể rỗng) = đúng các test bin/scoped_gate.py chọn (đồ thị import + smoke),
+# tương đối kit: chạy đúng chúng + repo consistency thay cho luật nhắc tên ở trên. Gate luôn tự đặt/gỡ biến này; đọc một lần rồi gỡ để test con
+# (test_run_impacted.sh chạy runner này trong repo nháp) không thừa hưởng. --all và --list giả lập của test_impact_map giữ như cũ.
+if [ "${DEVKIT_SCOPED_TESTS+set}" = set ] && [ "${1:-}" != "--all" ] && [ -z "${DEVKIT_IMPACT_TEST_CHANGED:-}" ]; then
+  selected="$(printf '%s\n' tests/verification/test_repo_consistency.sh $DEVKIT_SCOPED_TESTS | sort -u)"
+fi
+unset DEVKIT_SCOPED_TESTS
 # --all: every test. Finding none is an error — a glob that matches nothing must not pass. hooks/tests/test_*.sh too (5 of them ran
 # nowhere, 13/10); its *_test.sh contract files are not: `agent-kit test` runs them itself before this pool.
 if [ "${1:-}" = "--all" ]; then
