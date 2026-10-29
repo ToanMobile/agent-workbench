@@ -241,6 +241,27 @@ train_state gate
 BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { say "cannot resolve origin/${BASE}"; exit 1; }
 head_of() { local i; for i in "${!LIST[@]}"; do [ "${LIST[$i]}" = "$1" ] && { echo "${HEADS[$i]}"; return 0; }; done; return 1; }
 
+# #643: duyệt test sửa mà base đã đi trước head thì rời đợt trước khi dựng scratch. Không làm đỏ cả chuỗi.
+for p in "${LIST[@]}"; do
+  emeta=$(mktemp)
+  gh pr view "$p" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
+  edited=0
+  if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$p")" >/dev/null 2>&1; then
+    edited=1
+  else
+    et_rc=$?
+    rm -f "$emeta"
+    [ "$et_rc" -eq 1 ] || exit "$et_rc"
+  fi
+  rm -f "$emeta"
+  if [ "$edited" -eq 1 ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$(head_of "$p")"; then
+    say "PR #${p}: edited-test review is stale before the chain"
+    early_results
+    echo "train-result: $p gate-exit-2"
+    exit 2
+  fi
+done
+
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$BASE_SHA" --quiet 2>/dev/null || { say "could not create the train scratch worktree"; exit 1; }
 # Cùng cách chuẩn bị scratch như merge gate: DevKit + config cục bộ bị ignore. Cài một lần; reset --hard giữ file bị ignore.
 for c in "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "${MAIN_WT:-$REPO_PATH}/universal-agent-devkit" "${MAIN_WT:-$REPO_PATH}/.agents/devkit"; do
@@ -349,12 +370,34 @@ Làm test ổn định (bỏ phụ thuộc thời gian/tải) thay vì để mer
 # verify_set <PR...>: 0 chuỗi dựng được và mọi verify_commands xanh · 1 đỏ · 2 chuỗi không dựng được (không phải lỗi đỏ của PR)
 #                     · 3 hết giờ sau một lần chạy lại (máy quá tải, không quy lỗi cho PR nào).
 verify_set() {
-  local cmd run_cmd busy_line rc try merged
+  local cmd run_cmd busy_line rc try merged p emeta
   build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]"; return 2; }
+  # #643: clean -qfd giữ file ignore. Xoá rồi cài lại theo đúng các PR của lượt này, kẻo nửa chuỗi trước còn sót.
+  rm -f "$SCRATCH/.claude/audit-gate/approved_tests.json"
+  for p in "$@"; do
+    emeta=$(mktemp)
+    gh pr view "$p" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
+    bash "$HERE/super-board-install-edited-test-approval.sh" \
+      --scratch "$SCRATCH" --sha "$(head_of "$p")" --meta "$emeta" --pr "$p" --top "$REPO_PATH"
+    rm -f "$emeta"
+  done
   merged=$(git -C "$SCRATCH" rev-parse HEAD)
   for cmd in "${VERIFY[@]}"; do
     cmd=$(sb_verify_inject_flags "$cmd" "$BASE")
     run_cmd=$(sb_verify_inject_flags "$cmd" "$BASE" json)
+    # #647: đêm và merge-train không được dừng ở suite đỏ đầu. Chỉ lệnh post-fix-gate nhận cờ này.
+    case "$cmd" in
+      *post-fix-gate*)
+        case " $cmd " in
+          *" --no-fail-fast "*) ;;
+          *) cmd="$cmd --no-fail-fast" ;;
+        esac
+        case " $run_cmd " in
+          *" --no-fail-fast "*) ;;
+          *) run_cmd="$run_cmd --no-fail-fast" ;;
+        esac
+        ;;
+    esac
     try=1
     while :; do
       say "verify [$*]: ${cmd}"
