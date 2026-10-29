@@ -992,20 +992,6 @@
       ]
     },
     {
-      "component": "devkit-all",
-      "watch_files": [
-        "universal-agent-devkit/*"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-DK-ALL-01",
-          "name": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
-          "command": "bash universal-agent-devkit/tests/run_impacted.sh",
-          "parallel_safe": true
-        }
-      ]
-    },
-    {
       "component": "super-board-runner-ready-order",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
@@ -2184,7 +2170,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-DK-ALL-SHARD-RULES-616-01",
-          "name": "#616 B: ba suite shard REG-DK-ALL-* chỉ thêm ở cuối ma trận, REG-DK-ALL-01 còn nguyên, matrix_additions tin ma trận, ba lệnh chia đủ tập thư mục",
+          "name": "#616: ba suite shard REG-DK-ALL-* thay REG-DK-ALL-01 (đã bỏ khỏi ma trận), theo dõi universal-agent-devkit/*, run_impacted.sh --list của ba lệnh hợp lại đúng tập không shard, không trùng",
           "command": "bash tests/super-board/test_matrix_shard_rules.sh",
           "parallel_safe": true
         }
