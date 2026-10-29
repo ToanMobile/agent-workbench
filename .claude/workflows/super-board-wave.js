@@ -242,7 +242,7 @@ const PREFLIGHT_SCHEMA = {
         type: 'object',
         properties: {
           number: { type: 'integer' },
-          verdict: { type: 'string', enum: ['proceed', 'hold', 'sequence', 'skipped', 'halted'] },
+          verdict: { type: 'string', enum: ['proceed', 'hold', 'sequence', 'merge', 'skipped', 'halted'] },
           column: { type: 'string' },
           blockedBy: { type: 'array', items: { type: 'integer' } },
           detail: { type: 'string' },
@@ -267,10 +267,10 @@ const preflightPrompt = (batch) => [
     `It labels only blockers still OPEN. Exit 0 with "labels": [] (every blocker already closed) → verdict proceed, exactly as if blockedBy were empty (no conflict comment). ` +
     `Exit 0 with labels non-empty → verdict sequence, column Ready, blockedBy = the numbers still open (never empty); the card waits in Ready. ` +
     `Any non-zero exit (64/69/79 or other) → leave the card untouched, verdict skipped (never Blocked); it is retried next wave and counts as failed for the zero-progress gate. This 79 is the waiting-on helper's own read failure, NOT the run-halt 79 above: never halt the run for it.`,
-  `Two Ready cards overlapping each other with no open PR: the lower-numbered one proceeds; sequence only the other, blockedBy [the lower]. Never both.`,
+  `Two Ready cards overlapping each other with no open PR: fold the higher into the lower with super-board-merge-cards.py (AC copied verbatim, close the higher as not planned). Return verdict merge, column Done, mergeInto the lower number. Never Blocked, never built. If the lower already has an open issue-<N>- PR, do not fold: sequence the higher, blockedBy [the lower], column Ready.`,
   `A sequence with nothing to wait on leaves the card in Ready: return column Ready and blockedBy [] (always send the array; a missing blockedBy is not built) and it builds.`,
   BOARD_IO(),
-  `Return one verdict per issue: proceed | hold | sequence | skipped (pre-flight blind). Never drop a card silently.`,
+  `Return one verdict per issue: proceed | hold | sequence | merge | skipped (pre-flight blind). Never drop a card silently.`,
 ].join('\n')
 
 // Only cards the Builder will take are pre-flighted; `qa` cards skip Building.
@@ -298,6 +298,7 @@ const preflightGo = (card) => {
   const v = verdicts.get(card.number)
   if (!v) return false
   if (v.verdict === 'proceed') return true
+  if (v.verdict === 'merge') return false
   return v.verdict === 'sequence' && Array.isArray(v.blockedBy) && v.blockedBy.length === 0
 }
 const preflightExit = (card) => {
@@ -306,11 +307,12 @@ const preflightExit = (card) => {
   // #601: sequence thiếu mảng blockedBy không build cũng không được mark gắn nhãn: báo failed để cổng zero-progress thấy,
   // không để nó lặp mỗi wave dưới status 'waiting'.
   const noList = v.verdict === 'sequence' && !Array.isArray(v.blockedBy)
+  const folded = v.verdict === 'merge'
   return {
     lane: 'preflight',
-    // #601: sequence còn blocker mở → 'waiting' ở Ready (không tính blocked/bounced/failed); hold vẫn Blocked.
-    status: v.verdict === 'halted' ? 'halted' : (v.verdict === 'skipped' || noList) ? 'failed' : v.verdict === 'sequence' ? 'waiting' : 'blocked',
-    column: v.verdict === 'sequence' ? (v.column || 'Ready') : v.column || (['skipped', 'halted'].includes(v.verdict) ? 'Ready' : 'Blocked'),
+    // #601: sequence còn blocker mở → 'waiting' ở Ready. merge → advanced/Done (đã gộp, không build, không Blocked). hold vẫn Blocked.
+    status: v.verdict === 'halted' ? 'halted' : (v.verdict === 'skipped' || noList) ? 'failed' : v.verdict === 'sequence' ? 'waiting' : folded ? 'advanced' : 'blocked',
+    column: folded ? (v.column || 'Done') : v.verdict === 'sequence' ? (v.column || 'Ready') : v.column || (['skipped', 'halted'].includes(v.verdict) ? 'Ready' : 'Blocked'),
     detail: `${v.verdict}: ${v.detail}`,
   }
 }
