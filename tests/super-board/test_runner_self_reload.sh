@@ -90,6 +90,13 @@ mkrepo; push_other $'#!/usr/bin/env bash\nif then fi((('; self_reload_tick
 mkrepo; echo dirty >> "$RELOAD_SELF"; push_other $'#!/usr/bin/env bash\necho v2'; self_reload_tick
 [ "$(execs)" = 0 ] && [ "$(notes)" = 1 ] && ok "uncommitted edit blocks the fast-forward: notified, not exec'd" || fail "dirty: exec=$(execs) notify=$(notes)"
 
+# ── 7b. (#623) file KHÁC runner bị sửa chưa commit và origin cũng đổi file đó: ff không áp được, nhưng runner script sạch → vẫn nạp bản mới, không cảnh báo
+mkrepo; echo dirty >> other.txt
+( cd "$C/other" && git pull -q origin main 2>/dev/null; echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm next && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick
+[ "$(execs)" = 1 ] && [ "$(notes)" = 0 ] && grep -q v2 "$RELOAD_SELF" && grep -q dirty other.txt \
+  && ok "dirty unrelated file blocks the ff: runner script still reloaded, local edit kept, no warning" || fail "dirty-other: exec=$(execs) notify=$(notes) log=$(cat "$TMP/log")"
+
 # ── 8. finish THẬT (không stub) trên main lệch origin (QA v1 #308): main nhận commit của origin, commit local còn nguyên, worktree tạm bị gỡ;
 #    xung đột thật: trả khác 0, main giữ nguyên.
 WTPY="$ROOT/universal-agent-devkit/scripts/git/worktree.py"; [ -f "$WTPY" ] || WTPY="$ROOT/.agents/devkit/scripts/git/worktree.py"

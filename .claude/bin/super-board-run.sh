@@ -2894,8 +2894,14 @@ self_reload_tick() {
       return 0
     fi
     if git merge-base --is-ancestor HEAD "origin/${BASE_BRANCH}" 2>/dev/null; then
-      git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1 \
-        || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+      if ! git merge --ff-only -q "origin/${BASE_BRANCH}" >/dev/null 2>&1; then
+        # #623: ff bị chặn bởi file KHÁC bị sửa dở (vd instincts.md của phiên khác). Runner script chưa bị sửa tay thì chỉ cần thay đúng file
+        # đó bằng bản origin (không đụng index, không đụng file dở của người khác); script đang bị sửa tay thì giữ nguyên và cảnh báo.
+        # ponytail: bin/ helper khác vẫn là bản cũ tới khi main ff được; nâng lên stash/worktree nếu helper đổi cùng lúc làm hỏng runner mới.
+        git diff --quiet HEAD -- "$rel" 2>/dev/null \
+          && git show "origin/${BASE_BRANCH}:${rel}" > "$RELOAD_SELF" 2>/dev/null \
+          || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
+      fi
     else
       # Main có commit cục bộ của phiên khác (#308): gộp origin vào main bằng đường finish (worktree tạm + gate + ff), không đụng tay.
       reload_finish_main \
