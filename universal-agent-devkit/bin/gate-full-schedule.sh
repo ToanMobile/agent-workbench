@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# gate-full-schedule.sh install|uninstall|status [--repo PATH] [--hour 0] [--minute 0]
+# gate-full-schedule.sh install|uninstall|status [--repo PATH [--allow-worktree]] [--hour 0] [--minute 0]
 # Lịch lượt --full đêm (#644): LaunchAgent com.toanmobile.devkit.gate-full.<slug> chạy bin/gate_full.py run --repo <repo> lúc
 # <hour>:<minute> giờ máy (máy đặt Asia/Ho_Chi_Minh; TZ cũng đặt trong EnvironmentVariables để ngày trong log/summary đúng).
 # Mỗi repo một lịch: slug = tên thư mục repo (chỉ [A-Za-z0-9-]) + 8 ký tự sha1 của đường dẫn vật lý (pwd -P) của repo; plist và thư mục log
 # <log>/<slug>/ riêng (plist đặt DEVKIT_GATE_FULL_LOG_DIR = thư mục đó cho gate_full.py) ⇒ cài repo B không gỡ lịch repo A, summary không đè.
-# --repo mặc định gốc git của thư mục hiện tại (cả status / uninstall).
+# --repo mặc định gốc git của thư mục hiện tại (cả status / uninstall). install từ một LINKED worktree (trunk mode) không --repo ⇒ neo
+# về main checkout (repo lẫn gate_full.py của main): gỡ worktree thì lịch không còn chạy script đã mất; main không có gate_full.py ⇒ exit 2.
+# --repo là linked worktree ⇒ exit 2 trừ khi có --allow-worktree (thử / test).
 # launchd chỉ có PATH /usr/bin:/bin:/usr/sbin:/sbin: đường dẫn TUYỆT ĐỐI của python3 / git / gh lấy lúc cài, PATH của job chứa thư mục
 # của chúng. Không sudo: bootstrap vào gui/<uid>. Lượt trùng (đêm trước chưa xong) do khoá pid của gate_full.py bỏ qua.
 # Móc test: DEVKIT_LAUNCH_AGENTS_DIR (mặc định ~/Library/LaunchAgents), DEVKIT_LAUNCHCTL (mặc định launchctl),
@@ -17,12 +19,13 @@ LOG_ROOT="${DEVKIT_GATE_FULL_LOG_DIR:-$HOME/Library/Logs/devkit-gate-full}"
 LAUNCHCTL="${DEVKIT_LAUNCHCTL:-launchctl}"
 DOMAIN="gui/$(id -u)"
 
-usage() { echo "usage: gate-full-schedule.sh install|uninstall|status [--repo PATH] [--hour 0] [--minute 0]" >&2; exit 2; }
+usage() { echo "usage: gate-full-schedule.sh install|uninstall|status [--repo PATH [--allow-worktree]] [--hour 0] [--minute 0]" >&2; exit 2; }
 ACTION="${1:-}"; [ -n "$ACTION" ] || usage; shift
-REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; HOUR=0; MINUTE=0
+REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; HOUR=0; MINUTE=0; REPO_GIVEN=0; ALLOW_WT=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo) REPO="${2:?--repo cần đường dẫn}"; shift 2 ;;
+    --repo) REPO="${2:?--repo cần đường dẫn}"; REPO_GIVEN=1; shift 2 ;;
+    --allow-worktree) ALLOW_WT=1; shift ;;
     --hour) HOUR="${2:?--hour cần số}"; shift 2 ;;
     --minute) MINUTE="${2:?--minute cần số}"; shift 2 ;;
     *) usage ;;
@@ -31,6 +34,38 @@ done
 case "$HOUR" in ''|*[!0-9]*) usage ;; esac
 case "$MINUTE" in ''|*[!0-9]*) usage ;; esac
 [ "$((10#$HOUR))" -le 23 ] && [ "$((10#$MINUTE))" -le 59 ] || usage
+
+# In main checkout khi $1 nằm trong một linked worktree (git-dir ≠ git-common-dir, so đường dẫn vật lý); rỗng khi không (main checkout,
+# không phải git, thư mục không còn)
+main_of() {
+  local gd common
+  gd="$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null)" || return 0
+  common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 0
+  gd="$(cd "$gd" 2>/dev/null && pwd -P)" && common="$(cd "$common" 2>/dev/null && pwd -P)" || return 0
+  [ "$gd" != "$common" ] && dirname "$common"
+  return 0
+}
+if [ "$ACTION" = install ]; then
+  if [ "$REPO_GIVEN" = 1 ]; then
+    if [ "$ALLOW_WT" = 0 ] && [ -n "$(main_of "$REPO")" ]; then
+      echo "gate-full-schedule: $REPO là linked worktree — lịch neo vào đó sẽ chạy script đã mất khi gỡ worktree; truyền --repo <main checkout>" \
+        "(hoặc --allow-worktree để thử)" >&2
+      exit 2
+    fi
+  else
+    MAIN_R="$(main_of "$REPO")"; MAIN="${MAIN_R:-$(main_of "$KIT")}"
+    if [ -n "$MAIN" ]; then
+      # cwd hoặc kit nằm trong linked worktree: repo và gate_full.py đều lấy từ main checkout
+      [ -n "$MAIN_R" ] && REPO="$MAIN_R"
+      GF=""
+      for c in "$MAIN/universal-agent-devkit/bin/gate_full.py" "$MAIN/.agents/devkit/bin/gate_full.py"; do
+        [ -f "$c" ] && { GF="$c"; break; }
+      done
+      [ -n "$GF" ] || { echo "gate-full-schedule: đang ở linked worktree mà main checkout $MAIN không có gate_full.py — chạy install từ" \
+        "main checkout hoặc truyền --repo <main>" >&2; exit 2; }
+    fi
+  fi
+fi
 
 # slug theo đường dẫn VẬT LÝ: --repo /var/… và gốc git /private/var/… (macOS) là một repo, một lịch. Repo đã mất (uninstall): đường dẫn như nhập
 if PHYS="$(cd "$REPO" 2>/dev/null && pwd -P)"; then REPO="$(cd "$REPO" && pwd)"

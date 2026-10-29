@@ -167,7 +167,7 @@ A card over the size cap that is agent-doable is split by the Builder, not block
 
 **No line cap → never split for size (24/10, user: "gom lại nhiều nhất có thể, đỡ chạy gate nhiều lần").** When the board's
 `merge_policy.auto_max_lines` is `0`, a card with many deliverables or many AC items is built as ONE PR (its target tests +
-one impacted `post-fix-gate.py --run-tests`, never `--full`: the merge point runs that once); never propose child cards, batches "≤ N items per PR" or a split to keep a diff small. Commit per deliverable inside the
+one `post-fix-gate.py --run-tests --scoped`, never `--full` by hand: scoped escalates by itself on a core file and the nightly `gate-full` runs `--full`); never propose child cards, batches "≤ N items per PR" or a split to keep a diff small. Commit per deliverable inside the
 one branch instead. Only a step no agent can do (a real device, real people, a credential) leaves the card, as a `qa` card.
 
 ### Block exits use the §4 mandatory template

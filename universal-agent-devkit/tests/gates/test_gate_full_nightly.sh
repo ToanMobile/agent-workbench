@@ -272,6 +272,35 @@ bash "$SCHED" uninstall --repo "$T/never/repo" >"$T/sched.out" 2>&1; rc=$?
 chk "e14. uninstall repo chưa cài: exit khác 0, không báo đã gỡ" '[ "$rc" != 0 ] && ! grep -q "đã gỡ lịch" "$T/sched.out"' \
   "rc=$rc out: $(cat "$T/sched.out")"
 
+# e15–e18 (audit Antigravity): install từ một LINKED worktree (trunk mode) không được neo lịch đêm vào worktree tạm — gỡ worktree là
+# plist chạy script không còn. Repo nháp M có bản sao kit, worktree W chạy bản sao kit của chính W. Thư mục LaunchAgents riêng (la2).
+M="$T/m"; mkdir -p "$M/universal-agent-devkit/bin"
+cp "$SCHED" "$GF" "$M/universal-agent-devkit/bin/"
+g -C "$M" init -q && g -C "$M" add -A && g -C "$M" commit -qm kit
+WT="$T/wt"; g -C "$M" worktree add -q --detach "$WT" HEAD
+MP="$(cd "$M" && pwd -P)"; WTP="$(cd "$WT" && pwd -P)"
+mkdir -p "$T/la2"; : >"$T/launchctl.calls"
+phys() { (cd "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$1")"); }
+pl2() { ls "$T/la2"/com.toanmobile.devkit.gate-full.*.plist 2>/dev/null | head -1; }
+(cd "$WT" && DEVKIT_LAUNCH_AGENTS_DIR="$T/la2" SHELL="$T/fakeshell" bash "$WT/universal-agent-devkit/bin/gate-full-schedule.sh" install) \
+  >"$T/sched.out" 2>&1; rc=$?
+P2="$(pl2)"
+chk "e15. install từ linked worktree không --repo: plist neo về main checkout (cả --repo lẫn gate_full.py)" \
+  '[ "$rc" = 0 ] && [ -n "$P2" ] && [ "$(phys "$(px ProgramArguments.7 "$P2")")" = "$MP" ] \
+   && [ "$(phys "$(px ProgramArguments.4 "$P2")")" = "$MP/universal-agent-devkit/bin/gate_full.py" ]' \
+  "rc=$rc repo=$(px ProgramArguments.7 "$P2") gf=$(px ProgramArguments.4 "$P2") out: $(tail -3 "$T/sched.out")"
+rm -f "$T/la2"/*.plist "$M/universal-agent-devkit/bin/gate_full.py"; : >"$T/launchctl.calls"
+(cd "$WT" && DEVKIT_LAUNCH_AGENTS_DIR="$T/la2" SHELL="$T/fakeshell" bash "$WT/universal-agent-devkit/bin/gate-full-schedule.sh" install) \
+  >"$T/sched.out" 2>&1; rc=$?
+chk "e16. main checkout không có gate_full.py: từ chối (exit 2), không plist, không bootstrap" \
+  '[ "$rc" = 2 ] && [ -z "$(pl2)" ] && ! grep -q bootstrap "$T/launchctl.calls"' "rc=$rc out: $(tail -3 "$T/sched.out")"
+DEVKIT_LAUNCH_AGENTS_DIR="$T/la2" SHELL="$T/fakeshell" bash "$SCHED" install --repo "$WT" >"$T/sched.out" 2>&1; rc=$?
+chk "e17. --repo <linked worktree>: từ chối (exit 2), không plist" '[ "$rc" = 2 ] && [ -z "$(pl2)" ]' "rc=$rc out: $(tail -3 "$T/sched.out")"
+DEVKIT_LAUNCH_AGENTS_DIR="$T/la2" SHELL="$T/fakeshell" bash "$SCHED" install --repo "$WT" --allow-worktree >"$T/sched.out" 2>&1; rc=$?
+P2="$(pl2)"
+chk "e18. --repo <linked worktree> --allow-worktree: cài được, plist trỏ worktree" \
+  '[ "$rc" = 0 ] && [ -n "$P2" ] && [ "$(phys "$(px ProgramArguments.7 "$P2")")" = "$WTP" ]' "rc=$rc out: $(tail -3 "$T/sched.out")"
+
 echo
 if [ "$fails" -eq 0 ]; then echo "test_gate_full_nightly: PASS"; exit 0; fi
 echo "test_gate_full_nightly: $fails FAIL"; exit 1

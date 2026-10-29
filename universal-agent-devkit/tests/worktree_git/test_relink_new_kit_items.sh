@@ -76,5 +76,70 @@ case "$res" in *FAIL*) printf '%s\n' "$out" | grep -q "ghost.md" && ok "d. healt
     || fail "d. health FAIL nhưng không nêu tên link chết" ;;
   *) fail "d. health không FAIL với link chết: $res | $(printf '%s\n' "$out" | grep -i 'broken\|ghost' | head -2 | tr '\n' ' ')" ;; esac
 
+# ── e. link hợp lệ luôn có dòng exclude (audit Antigravity): phiên kia thắng cuộc đua tạo link ──
+#   e1. khe (b): link đã có trước lúc relink() tạo (sau missing()) ⇒ vẫn ghi /rel vào exclude, không tính là "not restorable";
+#   e2. khe (a): os.symlink gặp FileExistsError (link vừa được phiên kia tạo) ⇒ vẫn ghi exclude;
+#   e3. hai relink song song (lặp 3 lần) trên cùng repo ⇒ mỗi link có đúng một dòng exclude, không mất, không trùng; status sạch.
+E="$TMP/e"; mkdir -p "$E/.agents/skills" "$E/.agents/context" "$E/.claude/commands"
+printf '{"profile":"backend"}\n' > "$E/.agents/active-profile.json"; printf '{"hooks":{}}\n' > "$E/.claude/settings.json"
+: > "$E/.agents/skills/.keep"; : > "$E/.agents/context/.keep"; : > "$E/.claude/commands/.keep"
+printf '.claude/audit-gate/\n' > "$E/.gitignore"   # relink.log của CLI, không phải link
+( cd "$E" && git init -q -b main . && git config user.email t@t && git config user.name t && git add -A && git commit -qm init ) >/dev/null 2>&1
+EX="$E/.git/info/exclude"
+out="$(python3 - "$RELINK" "$E" "$DEVKIT_DIR" <<'PY'
+import importlib.util, os, subprocess, sys
+relink_py, proj, kit = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("relink_check", relink_py)
+rc = importlib.util.module_from_spec(spec); spec.loader.exec_module(rc)
+rel = ".agents/skills/gate-full"; dst = os.path.join(proj, rel); ex = os.path.join(proj, ".git", "info", "exclude")
+def lines():
+    try:
+        return open(ex, encoding="utf-8").read().splitlines()
+    except OSError:
+        return []
+def status():
+    return subprocess.run(["git", "-C", proj, "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
+# e1: phiên kia đã tạo link (đúng đích) trước khi relink() tới; exclude chưa có dòng
+os.symlink(os.path.join(kit, "skills", "gate-full"), dst)
+raced = []; left = rc.relink(proj, [rel], raced)
+print("e1", lines().count("/" + rel), rel in left, repr(status()))
+# e2: link chưa có lúc kiểm, os.symlink thua cuộc đua (tạo xong rồi FileExistsError như khi phiên kia vừa tạo)
+os.unlink(dst); open(ex, "w").write("\n".join(l for l in lines() if l != "/" + rel) + "\n")
+real = os.symlink
+def racing(src, d, *a, **k):
+    real(src, d, *a, **k)
+    raise FileExistsError(17, "File exists", d)
+rc.os.symlink = racing
+try:
+    raced = []; left = rc.relink(proj, [rel], raced)
+finally:
+    rc.os.symlink = real
+print("e2", lines().count("/" + rel), rel in left, repr(status()))
+PY
+)"
+case "$out" in *"e1 1 False ''"*) ok "e1. link có sẵn trước relink() (khe b): exclude có đúng một dòng, không 'not restorable', status sạch" ;;
+  *) fail "e1. link có sẵn: exclude thiếu dòng / status bẩn: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+case "$out" in *"e2 1 False ''"*) ok "e2. FileExistsError khi tạo link (khe a): exclude có đúng một dòng, status sạch" ;;
+  *) fail "e2. FileExistsError: exclude thiếu dòng / status bẩn: $(printf '%s' "$out" | tr '\n' ' ')" ;; esac
+bad=""
+for i in 1 2 3; do
+  find "$E/.agents/skills" "$E/.claude/commands" -mindepth 1 -maxdepth 1 -type l -exec rm -f {} + ; rm -f "$E/.agents/devkit"
+  printf '# git ls-files --others --exclude-from=.git/info/exclude\n' > "$EX"
+  python3 "$RELINK" "$E" --quiet --links-only & p1=$!
+  python3 "$RELINK" "$E" --quiet --links-only & p2=$!
+  wait "$p1"; wait "$p2"
+  n=0
+  for l in "$E"/.agents/skills/* "$E"/.claude/commands/* "$E/.agents/devkit"; do
+    [ -L "$l" ] || continue
+    n=$((n + 1)); r="/${l#$E/}"
+    [ "$(grep -cxF "$r" "$EX")" = 1 ] || bad="$bad lượt$i:$r=$(grep -cxF "$r" "$EX")"
+  done
+  [ "$n" -gt 2 ] || bad="$bad lượt$i:chỉ $n link"
+  [ -z "$(git -C "$E" status --porcelain)" ] || bad="$bad lượt$i:status=$(git -C "$E" status --porcelain | head -2 | tr '\n' ' ')"
+  [ "$(grep -c . "$EX")" = "$(( $(sort -u "$EX" | grep -c .) ))" ] || bad="$bad lượt$i:dòng trùng"
+done
+[ -z "$bad" ] && ok "e3. hai relink song song x3: mỗi link đúng một dòng exclude, không mất, không trùng, status sạch" \
+  || fail "e3. relink song song làm mất / trùng dòng exclude:$bad"
+
 [ "$FAILS" -eq 0 ] && { echo "✅ test_relink_new_kit_items: all passed"; exit 0; }
 echo "❌ test_relink_new_kit_items: $FAILS failed"; exit 1

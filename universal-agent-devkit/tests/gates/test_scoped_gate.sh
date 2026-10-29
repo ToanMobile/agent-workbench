@@ -2,6 +2,7 @@
 # Test hồi quy (#644): bin/scoped_gate.py chọn test theo đồ thị tham chiếu BẮC CẦU và leo "full" khi không chắc (fail closed).
 #   a. diff chỉ docs ⇒ scoped, tests rỗng, smoke có;
 #   b. sửa lib/b.py, tests/x/test_a.sh chỉ gọi a.py (a.py `import b`) ⇒ chọn test_a.sh (bắc cầu, không nhắc tên b.py);
+#      lib/mi.py `from lib import (` nhiều dòng ⇒ test_mi.sh cũng được chọn;
 #   c. sửa file khớp [core] ⇒ full; repo không có gate-core.txt: lõi mặc định (package.json) ⇒ full; bao đóng không đi xuyên lõi;
 #   d. code không test nào phủ (chỉ luật ma trận bắt-tất-cả `lib/*` khớp) ⇒ full, reasons nêu unmapped;
 #   e. đột biến: làm vỡ hàm trong b.py, chạy đúng các test decide chọn ⇒ có test ĐỎ (trước đột biến: XANH);
@@ -28,6 +29,9 @@ git init -q -b main . && git config user.email t@t && git config user.name t
 mkdir -p lib hub tool svc docs tests/x tests/y .agents universal-agent-devkit/lib universal-agent-devkit/tests/x
 printf 'import b\nprint(b.double(21))\n' > lib/a.py
 printf 'def double(x):\n    return x * 2\n' > lib/b.py
+# b3. `from x import (` nhiều dòng (comment trong ngoặc): tên import ở dòng sau vẫn là cạnh
+printf 'from lib import (\n    b,  # double\n)\nprint(b.double(1))\n' > lib/mi.py
+printf '#!/usr/bin/env bash\n# chạy kèm lib/mi.py (chỉ nhắc tên)\nexit 0\n' > tests/x/test_mi.sh
 printf 'import leaf\nX = leaf.Y\n' > lib/core_x.py
 printf 'Y = 1\n' > lib/leaf.py
 printf '#!/usr/bin/env bash\npython3 lib/core_x.py\n' > tests/x/test_core.sh
@@ -157,6 +161,7 @@ d = decide()
 chk(d["mode"] == "scoped" and "tests/x/test_a.sh" in d["tests"] and not d["unmapped"],
     "b. sửa lib/b.py ⇒ chọn tests/x/test_a.sh qua a.py (import b)", d)
 chk("tests/y/test_t1.sh" not in d["tests"], "b2. không chọn test không liên quan", d["tests"])
+chk("tests/x/test_mi.sh" in d["tests"], "b3. `from lib import (\\n    b,\\n)` nhiều dòng ⇒ cạnh mi.py→b.py, chọn test_mi.sh", d["tests"])
 
 # e. đột biến: test decide chọn phải ĐỎ khi b.py vỡ, XANH khi chưa vỡ
 sel = d["tests"] + d["smoke"]

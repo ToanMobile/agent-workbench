@@ -27,12 +27,14 @@ link pointing elsewhere, a regular file and a live link are never touched. Sessi
 it with --links-only (no context refresh: SessionStart does its own), so a session heals the
 repo with no git operation and no `agent-kit init`.
 """
+import contextlib
 import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 
 DEVKIT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 if not os.path.isdir(os.path.join(DEVKIT, "profiles")) and os.path.isdir(os.path.join(os.path.dirname(DEVKIT), "profiles")):
@@ -158,25 +160,66 @@ def _kit_items(project, main):
     return out
 
 
-def keep_out_of_git(project, rel):
-    """A new link is local state, as the installer keeps it: /rel goes to .git/info/exclude unless an ignore rule covers it."""
+def keep_out_of_git(project, rel, common=None):
+    """A new link is local state, as the installer keeps it: /rel goes to .git/info/exclude unless an ignore rule covers it.
+    Gọi trong exclude_lock() (relink truyền common): đọc-sửa-ghi exclude là một bước, ghi qua file tạm cùng thư mục rồi os.replace —
+    hai relink song song không mất / không trùng dòng, tiến trình chết giữa chừng không để exclude dở dang."""
     if subprocess.run(["git", "-C", project, "check-ignore", "-q", "--", rel], capture_output=True).returncode == 0:
         return
-    common = git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    common = common or git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if not common:
         return
     path = os.path.join(common, "info", "exclude")
     line = "/" + rel
+    tmp = None
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a+", encoding="utf-8") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)      # check-then-append is one step: parallel runs wrote the line twice
-            fh.seek(0)
-            raw = fh.read()
-            if line not in raw.splitlines():
-                fh.write(("\n" if raw and not raw.endswith("\n") else "") + line + "\n")
-    except OSError:
-        pass
+        try:
+            with open(path, encoding="utf-8") as fh:
+                raw = fh.read()
+            mode = os.stat(path).st_mode & 0o777
+        except FileNotFoundError:
+            raw, mode = "", 0o644
+        if line in raw.splitlines():
+            return
+        fd, tmp = tempfile.mkstemp(prefix=".exclude.", dir=os.path.dirname(path))
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(raw + ("\n" if raw and not raw.endswith("\n") else "") + line + "\n")
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        tmp = None
+    except OSError as e:
+        sys.stderr.write(f"DevKit: cannot add {line} to {path}: {e}\n")
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+@contextlib.contextmanager
+def exclude_lock(project):
+    """Khoá fcntl trên <git-common-dir>/info/exclude.lock (file riêng: exclude bị os.replace nên khoá trên chính nó không giữ được).
+    Trả common dir (None khi không phải git / không mở được khoá — vẫn chạy, chỉ không khoá)."""
+    common = git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    fd = None
+    if common:
+        try:
+            os.makedirs(os.path.join(common, "info"), exist_ok=True)
+            fd = os.open(os.path.join(common, "info", "exclude.lock"), os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as e:
+            sys.stderr.write(f"DevKit: exclude lock not taken: {e}\n")
+    try:
+        yield common
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _same_link(dst, src):
+    """dst là symlink tới đúng nơi src trỏ (phiên kia tạo cùng link) — chỉ link như vậy mới được ghi exclude, file người dùng thì không."""
+    return os.path.islink(dst) and os.path.realpath(dst) == os.path.realpath(src)
 
 
 def link_root(project):
@@ -246,23 +289,35 @@ def prune(project, stale):
 
 
 def relink(project, gone, raced=None):
-    """Re-create the links in gone; returns those it could not. A link another session made first is appended to raced."""
+    """Re-create the links in gone; returns those it could not. A link another session made first is appended to raced.
+    Tạo link + ghi exclude dưới cùng một khoá; link hợp lệ do phiên kia tạo (trước lúc kiểm hay lúc os.symlink) vẫn được ghi exclude."""
     left = []
-    for rel in gone:
-        src, dst = source_for(project, rel), os.path.join(project, rel)
-        if not src or os.path.lexists(dst):
-            left.append(rel)
-            continue
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        if src.startswith(os.path.join(project, ".agents", "local") + os.sep):
-            src = os.path.relpath(src, os.path.dirname(dst))   # project tier: relative, like the installer
-        try:
-            os.symlink(src, dst)
-        except FileExistsError:
-            if raced is not None:
-                raced.append(rel)         # another session's SessionStart made it a moment ago
-            continue
-        keep_out_of_git(project, rel)
+    with exclude_lock(project) as common:
+        for rel in gone:
+            src, dst = source_for(project, rel), os.path.join(project, rel)
+            if not src:
+                left.append(rel)
+                continue
+            if os.path.lexists(dst):
+                if not _same_link(dst, src):
+                    left.append(rel)      # file / link khác của người dùng: không đụng, không ghi exclude
+                    continue
+                if raced is not None:
+                    raced.append(rel)     # phiên kia tạo giữa missing() và đây
+                keep_out_of_git(project, rel, common)
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            target = src
+            if src.startswith(os.path.join(project, ".agents", "local") + os.sep):
+                target = os.path.relpath(src, os.path.dirname(dst))   # project tier: relative, like the installer
+            try:
+                os.symlink(target, dst)
+            except FileExistsError:
+                if raced is not None:
+                    raced.append(rel)     # another session's SessionStart made it a moment ago
+                if not _same_link(dst, src):
+                    continue              # không phải link của kit: không ghi exclude
+            keep_out_of_git(project, rel, common)
     return left
 
 

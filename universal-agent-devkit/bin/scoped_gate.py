@@ -42,6 +42,7 @@ FAN_IN_CORE = 5
 MAX_BYTES = 2 * 1024 * 1024
 CACHE_AFTER_S = 3.0
 CACHE_KEEP = 4
+SCAN_VER = "v2"                                             # đổi khi _scan đổi cách đọc (v2: import nhiều dòng): cache cũ bỏ
 CODE_EXT = (".sh", ".py", ".bash", ".mjs", ".js")          # đích của luật nhắc tên (như run_impacted)
 SOURCE_EXT = CODE_EXT + (".cjs", ".ts", ".tsx", ".jsx", ".zsh", ".jq")
 PY_SCAN_EXT = (".py", ".sh", ".bash")                       # import Python, kể cả heredoc `python3 - <<'PY'`
@@ -53,7 +54,9 @@ DEFAULT_CORE = ["*.lock", "package*.json", "*/package*.json", "*pnpm-lock.yaml",
                 "conftest.py", "*/conftest.py", "tests/lib/*", "*/tests/lib/*", ".githooks/*", ".claude/hooks/*", CORE_FILE]
 
 TOKEN = re.compile(r"[A-Za-z0-9_.+-]+")
-PY_FROM = re.compile(r"^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+\(?([^\n#]+)", re.M)
+# `from x import (a,\n    b,  # chú thích\n)` nhiều dòng: nhóm 3 là cả danh sách trong ngoặc (tới `)`), nhóm 4 là danh sách một dòng
+PY_FROM = re.compile(r"^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n#]+))", re.M)
+PY_COMMENT = re.compile(r"#[^\n]*")
 PY_IMPORT = re.compile(r"^[ \t]*import[ \t]+([\w.]+(?:[ \t]*,[ \t]*[\w.]+)*)", re.M)
 SH_SOURCE = re.compile(r"(?:^[ \t]*|[;&|({][ \t]*)(?:source|\.)[ \t]+([^\n;&|)]+)", re.M)
 TEST_RE = [re.compile(p) for p in (
@@ -165,8 +168,9 @@ def _scan(project, path):
     toks = sorted({t.rstrip(".-") for t in TOKEN.findall(text)} - {""})
     imps = []
     if path.endswith(PY_SCAN_EXT) or "." not in os.path.basename(path):
-        for dots, mod, names in PY_FROM.findall(text):
-            imps.append([len(dots), mod, [n.split()[0] for n in names.replace(")", "").split(",") if n.split()]])
+        for dots, mod, paren, line in PY_FROM.findall(text):
+            names = PY_COMMENT.sub("", paren) if paren else line
+            imps.append([len(dots), mod, [n.split()[0] for n in names.replace("(", "").replace(")", "").split(",") if n.split()]])
         for group in PY_IMPORT.findall(text):
             for mod in group.split(","):
                 if mod.strip():
@@ -193,7 +197,7 @@ def _scan_all(project, files):
         # cây của CHÍNH thư mục project (HEAD:./): khoá theo HEAD^{tree} thì hai project thư mục con của một repo dùng chung một cache
         tree = _git(project, "rev-parse", "HEAD:./").stdout.decode().strip()
         cdir = os.path.join(common_dir(project), "postfix-gate")
-        with open(os.path.join(cdir, "scoped-scan-%s.json" % tree), encoding="utf-8") as f:
+        with open(os.path.join(cdir, "scoped-scan-%s-%s.json" % (SCAN_VER, tree)), encoding="utf-8") as f:
             cache = json.load(f)
     except (RuntimeError, OSError, ValueError):
         cache = {}
@@ -219,7 +223,7 @@ def _scan_all(project, files):
             tmp = os.path.join(cdir, ".scoped-scan-%d.tmp" % os.getpid())
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(keep, f)
-            os.replace(tmp, os.path.join(cdir, "scoped-scan-%s.json" % tree))
+            os.replace(tmp, os.path.join(cdir, "scoped-scan-%s-%s.json" % (SCAN_VER, tree)))
             old = sorted((os.path.getmtime(os.path.join(cdir, n)), n) for n in os.listdir(cdir) if n.startswith("scoped-scan-"))
             for _, n in old[:-CACHE_KEEP]:
                 os.remove(os.path.join(cdir, n))

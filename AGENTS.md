@@ -118,7 +118,7 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    then the same oracle GREEN after. Keep the command log and the exit code.
 3. From the repo root, once:
    `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`
-   Exit 0 is required. This scoped run writes the scoped receipt (and the task receipt), the proof for step 5:
+   Exit 0 is required. This scoped run writes the task receipt (and the scoped receipt), the proof for step 5:
    `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph, plus the fixed smoke
    group; a file listed in `.agents/gate-core.txt` (gate, hooks, shared libraries, lockfiles, the map itself), a code file no
    test reaches, or a graph error escalates the run to `--full` by itself. Build, QA, review, the merge queue / train (one run
