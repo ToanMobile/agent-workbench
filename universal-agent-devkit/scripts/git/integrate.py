@@ -2,7 +2,8 @@
 """`agent-kit integrate [--if-due] [--dry-run]` — điểm gộp của repo trunk-push (Q5, pha 2 merge queue, v4 mục 1).
 
 Repo không đi PR: các worktree `finish` vào main LOCAL, rồi ai đó push. Commit trên main local chưa có trên origin chính là hàng đợi;
-lệnh này gom cả hàng đợi vào MỘT lượt `post-fix-gate --run-tests --full` thay vì một lượt cho mỗi lần push.
+lệnh này gom cả hàng đợi vào MỘT lượt `post-fix-gate --run-tests --scoped` thay vì một lượt cho mỗi lần push (#644: scoped tự leo
+--full khi đụng lõi; --full đêm thuộc skill gate-full).
 
   1. khoá fcntl `<git common dir>/devkit-integrate.lock` (LOCK_NB; bận → exit 0, lượt khác đang gộp);
   2. `git fetch origin <base>`; origin/<base> phải là tổ tiên của HEAD main, không thì dừng (exit 2) — không đốt một lượt --full
@@ -10,7 +11,7 @@ lệnh này gom cả hàng đợi vào MỘT lượt `post-fix-gate --run-tests 
   3. `--if-due`: chỉ chạy khi số commit chờ ≥ devkit.integrate.batchMax (mặc định 6), commit cũ nhất chờ ≥ devkit.integrate.maxWaitMin
      phút (mặc định 60), hoặc máy rảnh: không `.claude/audit-gate/test_run.lock` nào của các worktree đang bị giữ (thử LOCK_SH|LOCK_NB);
   4. dựng worktree scratch tách rời ở HEAD main (`.claude/worktrees/.integrate-scratch-*`): gate KHÔNG chạy trong checkout main
-     (nó ghi checklist tracked ở đó; session_lock.py `_TRUNK_ALLOWED`, v6 item 7). Chạy `--full` ở đó;
+     (nó ghi checklist tracked ở đó; session_lock.py `_TRUNK_ALLOWED`, v6 item 7). Chạy `--scoped` ở đó;
   5. xanh → `bin/push_gate.py <main> <sha>` phải nhận biên nhận của cây đó (lúc này scratch còn, push_gate xét biên nhận của linked
      worktree) → `git push origin <sha>:refs/heads/<base>` (đúng commit đã gate, kể cả khi main đã tiến trong lúc gate chạy); đỏ → không
      push, in các commit của đợt (exit 1). Scratch luôn được gỡ.
@@ -25,6 +26,7 @@ lần `git push` tay sau khi scratch đã gỡ cần gate lại. Nâng cấp ở
 import argparse
 import contextlib
 import fcntl
+import glob
 import hashlib
 import json
 import os
@@ -44,8 +46,6 @@ LOCK_NAME = "devkit-integrate.lock"
 # Không dùng .merge-scratch-*: batch_canary.py đếm tiền tố đó là lượt merge gate lẻ (PR đi đường lẻ), mà integrate là điểm gộp theo đợt.
 # Tên scratch: .integrate-scratch-<pid chủ>-<ngẫu nhiên>. SIGTERM/SIGINT/SIGHUP → SystemExit → `finally` gỡ scratch; SIGKILL không chạy được gì,
 # nên lượt integrate kế tiếp (đang giữ khoá) dọn mọi scratch mồ côi trước khi làm việc khác (sweep_orphans, #475).
-# ponytail: worktree.py _live_worktrees chỉ miễn ("red-proof-", ".merge-scratch-") khỏi WORKTREE_MAX; scratch mồ côi sau SIGKILL chiếm một
-# chỗ tới lượt integrate kế tiếp. Thêm tiền tố này vào bộ miễn đó khi gặp.
 SCRATCH_PREFIX = ".integrate-scratch-"
 GATE_STOP_S = 30   # sau SIGTERM nhóm tiến trình gate: chờ chừng này rồi SIGKILL cả nhóm
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)   # HUP: terminal đóng; gate ở phiên riêng nên không còn tự nhận nó
@@ -227,56 +227,85 @@ def copy_ignored(main, scratch):
 
 
 def copy_approved_tests(main, scratch):
-    """Chép lời duyệt test-theo-tên của main (.claude/audit-gate/approved_tests.json) sang scratch (#481): gate đọc approved_tests.json của
-    PROJECT của nó = scratch, nên không chép thì test sửa đã duyệt ở main vẫn chặn (exit 2) và chỉ còn cờ duyệt hàng loạt. Chỉ chép mục còn
-    đúng: dạng list gắn với mtime của file duyệt, nên một test sửa SAU lúc duyệt (mtime mới hơn) bị bỏ; dạng {path: sha256} giữ mục nào nội dung
-    trong scratch còn khớp. Scratch nhận dạng {path: sha256} của nội dung scratch (gate chỉ duyệt đúng nội dung đó). Luật không đổi: file
-    chưa duyệt vẫn chặn. Lỗi chỉ được báo, gate tự chặn khi thiếu lời duyệt."""
+    """Chép lời duyệt chéo của main (.claude/audit-gate/approved_tests.json) sang scratch (#481, #605): gate đọc approved_tests.json của
+    PROJECT của nó = scratch, nên không chép thì test sửa đã duyệt chéo ở main vẫn chặn (exit 2). Chỉ nhận dạng {"approvals": [mục]} và chép
+    NGUYÊN mục (path, sha256, reviewer, author, task_id, reason) khi sha256 của mục khớp nội dung file trong scratch (HEAD sẽ push); mục lệch
+    nội dung bị bỏ. Dạng cũ list / {path: sha256} không còn duyệt gì (#605) nên không chép. Xét đủ trường, reviewer khác author là việc của
+    gate: integrate không tự duyệt, không nới luật. Lỗi chỉ được báo, gate tự chặn khi thiếu lời duyệt."""
     src = os.path.join(main, ".claude", "audit-gate", "approved_tests.json")
     if not os.path.isfile(src):
         return
     try:
-        appr_t = os.stat(src).st_mtime
         with open(src, encoding="utf-8") as fh:
             saved = json.load(fh)
-        wants = {f: None for f in saved} if isinstance(saved, list) else dict(saved) if isinstance(saved, dict) else {}
-        keep = {}
-        for f, want in wants.items():
-            if not isinstance(f, str) or os.path.isabs(f) or ".." in f.split("/"):
+        entries = saved.get("approvals") if isinstance(saved, dict) else None
+        if not isinstance(entries, list):
+            say('approved_tests.json của main không ở dạng {"approvals": [...]} (dạng cũ không còn duyệt): không chép sang scratch')
+            return
+        keep, digests = [], {}
+        for e in entries:
+            f = e.get("path") if isinstance(e, dict) else None
+            want = e.get("sha256") if isinstance(e, dict) else None
+            if not isinstance(f, str) or not isinstance(want, str) or os.path.isabs(f) or ".." in f.split("/"):
                 continue
-            mine, theirs = os.path.join(main, f), os.path.join(scratch, f)
-            if not (os.path.isfile(mine) and os.path.isfile(theirs)):
+            theirs = os.path.join(scratch, f)
+            if not os.path.isfile(theirs):
                 continue
-            with open(theirs, "rb") as th:
-                digest = hashlib.sha256(th.read()).hexdigest()
-            if want is None:   # dạng list: duyệt có hiệu lực khi test ở main không đổi sau lúc duyệt và scratch (HEAD) cùng nội dung với main
-                with open(mine, "rb") as mh:
-                    unchanged = os.stat(mine).st_mtime <= appr_t and hashlib.sha256(mh.read()).hexdigest() == digest
-            else:
-                unchanged = isinstance(want, str) and want.strip().lower() == digest
-            if unchanged:
-                keep[f] = digest
+            if f not in digests:
+                with open(theirs, "rb") as th:
+                    digests[f] = hashlib.sha256(th.read()).hexdigest()
+            if want.strip().lower() == digests[f]:   # sha256 gắn đúng nội dung sẽ push: test sửa tiếp sau lúc duyệt bị bỏ
+                keep.append(e)
         if not keep:
             return
         dst = os.path.join(scratch, ".claude", "audit-gate")
         os.makedirs(dst, exist_ok=True)
         with open(os.path.join(dst, "approved_tests.json"), "w", encoding="utf-8") as out:
-            json.dump(keep, out)
-        say(f"đã chép vào scratch lời duyệt test của {len(keep)} file: {', '.join(sorted(keep)[:8])}")
+            json.dump({"approvals": keep}, out)
+        paths = sorted({e["path"] for e in keep})
+        say(f"đã chép vào scratch {len(keep)} mục duyệt chéo của {len(paths)} file: {', '.join(paths[:8])}")
     except (OSError, ValueError) as e:
         say(f"không chép được lời duyệt test vào scratch: {type(e).__name__}: {e}")
 
 
+def copy_mtimes(main, scratch, remote, head):
+    """Mang mtime của main sang file của scratch khi nội dung trùng byte, chỉ cho các file đổi trong <remote>..<head> (audit T0066 vòng 3,
+    #605): lời duyệt test của người dùng (câu trả lời AskUserQuestion trong transcript) chỉ tính khi nó MỚI hơn lần sửa cuối của file;
+    scratch là checkout mới (mtime = lúc integrate) nên mọi câu trả lời trông cũ hơn và test sửa đã được duyệt ở main vẫn chặn. Trùng byte
+    = đúng nội dung mà gate ở main cũng xét với đúng mtime đó: integrate không tự duyệt, không nới luật. Lỗi chỉ được báo, gate tự chặn."""
+    try:
+        diff = git(main, "diff", "--name-only", "-z", "--no-renames", remote, head)
+        if diff.returncode != 0:
+            say(f"không liệt kê được file đổi để mang mtime sang scratch: {diff.stderr.strip()[-200:]}")
+            return
+        carried = 0
+        for f in filter(None, diff.stdout.split("\0")):
+            ours, theirs = os.path.join(main, f), os.path.join(scratch, f)
+            if os.path.islink(ours) or os.path.islink(theirs) or not (os.path.isfile(ours) and os.path.isfile(theirs)):
+                continue
+            with open(ours, "rb") as a, open(theirs, "rb") as b:
+                if a.read() != b.read():
+                    continue                       # main sửa tiếp chưa commit: nội dung khác, không mang
+            st = os.stat(ours)
+            os.utime(theirs, ns=(st.st_atime_ns, st.st_mtime_ns))
+            carried += 1
+        if carried:
+            say(f"đã mang mtime của main sang {carried} file cùng nội dung trong scratch")
+    except OSError as e:
+        say(f"không mang được mtime sang scratch: {type(e).__name__}: {e}")
+
+
 def run_gate(scratch, remote):
-    """Exit code của `post-fix-gate --run-tests --full --brief --diff <origin/base>` trong scratch (124 khi quá
+    """Exit code của `post-fix-gate --run-tests --scoped --brief --diff <origin/base>` trong scratch (124 khi quá
     DEVKIT_INTEGRATE_GATE_TIMEOUT_S). --diff: scratch tách rời không có upstream, cây sạch không --diff thì gate trả 3 (nothing to audit);
-    origin/<base>..HEAD đúng là nội dung sẽ push (như mặc định @{u}..HEAD của gate trên một nhánh có upstream). Đây là lượt --full duy
-    nhất của cả đợt (điểm gộp)."""
+    origin/<base>..HEAD đúng là nội dung sẽ push (như mặc định @{u}..HEAD của gate trên một nhánh có upstream). Đây là lượt gate duy
+    nhất của cả đợt (điểm gộp). #644: --scoped = test của diff cả đợt + smoke, tự leo --full khi đụng file lõi hay không suy ra được test;
+    --full đêm thuộc skill gate-full."""
     gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
     env = dict(os.environ, CLAUDE_PROJECT_DIR=scratch, DEVKIT_SLOT_PRIORITY="merge")
     try:
         # Phiên riêng: nhóm tiến trình của gate (gate + suite con) dừng được trọn bằng killpg khi integrate bị SIGTERM/SIGINT (#475).
-        p = subprocess.Popen([sys.executable, gate, "--run-tests", "--full", "--brief", "--diff", remote], cwd=scratch, env=env,
+        p = subprocess.Popen([sys.executable, gate, "--run-tests", "--scoped", "--brief", "--diff", remote], cwd=scratch, env=env,
                              stdin=subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
         say(f"gate không chạy được: {e}")
@@ -327,6 +356,10 @@ def push_gate_ok(main, sha):
 
 
 def integrate(main, base, args):
+    if glob.glob(os.path.join(main, ".claude", "super-board", "configs", "*.json")):   # #576: a super-board repo lands by PR + merge gate
+        say("repo có super-board (.claude/super-board/configs): main chỉ nhận việc qua PR + merge gate, integrate không push main. "
+            "Push nhánh và mở PR (open a PR) thay vì gộp vào main local")
+        return 2
     if not args.dry_run:
         sweep_orphans(main)
     fetch = git(main, "fetch", "--quiet", "origin", base, timeout=NET_TIMEOUT_S)
@@ -356,9 +389,9 @@ def integrate(main, base, args):
     batch = "\n".join(f"  {p[2]} {p[3] if len(p) > 3 else ''}" for p in pending)
     why = "; ".join(reasons) if args.if_due else "chạy tay"
     if args.dry_run:
-        say(f"--dry-run: sẽ gate --full rồi push {len(pending)} commit ({why}):\n{batch}")
+        say(f"--dry-run: sẽ gate --scoped rồi push {len(pending)} commit ({why}):\n{batch}")
         return 0
-    say(f"gộp {len(pending)} commit ({why}): gate --full một lần trên {head[:10]}")
+    say(f"gộp {len(pending)} commit ({why}): gate --scoped một lần trên {head[:10]}")
     os.makedirs(os.path.join(main, ".claude", "worktrees"), exist_ok=True)
     scratch = tempfile.mkdtemp(prefix=f"{SCRATCH_PREFIX}{os.getpid()}-", dir=os.path.join(main, ".claude", "worktrees"))
     try:
@@ -371,6 +404,7 @@ def integrate(main, base, args):
             return 1
         copy_ignored(main, scratch)
         copy_approved_tests(main, scratch)
+        copy_mtimes(main, scratch, remote, head)
         rc = run_gate(scratch, remote)
         if rc == 4:   # hàng đợi gate toàn máy / khoá dự án bận (T0056): không phải đỏ, đợt giữ nguyên cho lượt sau
             say("gate bận (busy, exit 4): chưa kiểm được gì, không push; lượt integrate sau thử lại")

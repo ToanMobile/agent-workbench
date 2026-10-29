@@ -38,6 +38,7 @@ printf 'print("ok")\n' > "$TMP/bin/super-board-skills-ready.py"
 cat > "$TMP/bin/super-board-merge-queue.sh" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_DIR/mq-calls"
+sleep "${MQ_SLEEP:-0}"
 exit "${MQ_RC:-0}"
 SH
 chmod +x "$TMP/bin/super-board-merge-queue.sh"
@@ -52,6 +53,8 @@ SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"
 CONFIG_PATH="$TMP/cfg.json"; CP='"worker_backend":"claude-p"'; echo "{$CP}" > "$CONFIG_PATH"
 INFLIGHT_DIR="$TMP/repo/.claude/super-board/inflight"; mkdir -p "$INFLIGHT_DIR"
 WORKER_LOG_DIR="wl"; REPO_ROOT="$TMP/repo"; BOT_LOGIN="bot"
+export SB_MQ_TICK_WAIT=0   # các ca dưới đo hành vi nền; ca grace bên dưới đặt lại
+CONFIG_SLUG=board   # tên file trạng thái nền của merge_queue_due: <slug>.mq.pid / .mq.rc
 gh_checkpoint() { :; }
 gh_write_once() { echo "gh $*" >> "$TMP/writes"; }
 set_card_status() { echo "move $1 $2" >> "$TMP/writes"; }
@@ -75,6 +78,13 @@ reset() {
   rm -rf "$INFLIGHT_DIR"/[0-9]* "$INFLIGHT_DIR"/noops "$TMP"/prs.json "$TMP"/comments-*.json "$TMP/mq-calls" wl/*
   : > "$TMP/log"; : > "$TMP/writes"; : > "$TMP/worker-env"; echo "{$CP}" > "$CONFIG_PATH"; unset SB_MERGE_QUEUE MQ_RC
   rm -f "$TMP/repo/.git/super-board/merge-queue.labeled"
+  rm -f "$TMP"/repo/.claude/super-board/runner/*.mq.*; unset MQ_SLEEP
+}
+# #537: merge_queue_due chạy bộ gom ở nền. mq_cycle = một tick khởi chạy + chờ bộ gom xong + một tick đọc mã thoát.
+mq_cycle() {
+  merge_queue_due || return $?
+  local i=0; while [ ! -f "$TMP/repo/.claude/super-board/runner/board.mq.rc" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  merge_queue_due
 }
 # pr <number> <issue> <head> <labels-json> <isDraft>
 pr() { printf '{"number":%s,"headRefName":"issue-%s-x","headRefOid":"%s","labels":%s,"isDraft":%s}' "$1" "$2" "$3" "$4" "$5"; }
@@ -139,16 +149,20 @@ printf '[%s]' "$(pr 70 7 "$H1" '[]' false)" > "$TMP/prs.json"; approve 70 OWNER 
 reset; echo "{$CP,\"merge_queue\":{\"enabled\":true}}" > "$CONFIG_PATH"; items Review Done Done
 printf '[%s]' "$(pr 70 7 "$H1" "$MQ" false)" > "$TMP/prs.json"; approve 70 OWNER "$H1"; tick
 [ -z "$(logs)" ] && ok "SB_MERGE_QUEUE unset + config merge_queue.enabled=true: queue on, queued card skipped" || fail "config switch ignored: $(logs)"
-# Vòng sửa 1 (R3): backend khác claude-p (thiếu khoá = workflow, workflow, codex) → queue tắt dù config bật hay SB_MERGE_QUEUE=1.
-for BK in '' '"worker_backend":"workflow",' '"worker_backend":"codex",'; do
+# Vòng sửa 1 (R3), #453: backend codex → queue tắt dù config bật hay SB_MERGE_QUEUE=1; claude-p và workflow (thiếu khoá = workflow) → bật.
+for BK in '"worker_backend":"codex",'; do
   for SW in '' 1; do
     reset; echo "{${BK}\"merge_queue\":{\"enabled\":true}}" > "$CONFIG_PATH"; [ -z "$SW" ] || export SB_MERGE_QUEUE=$SW
-    if merge_queue_on; then fail "backend [${BK:-none}] SB_MERGE_QUEUE=[${SW}]: merge_queue_on says ON"; else ok "backend [${BK:-default workflow}] SB_MERGE_QUEUE=[${SW:-unset}]: queue off"; fi
+    if merge_queue_on; then fail "backend [${BK}] SB_MERGE_QUEUE=[${SW}]: merge_queue_on says ON"; else ok "backend [${BK}] SB_MERGE_QUEUE=[${SW:-unset}]: queue off"; fi
   done
 done
-reset; echo '{"merge_queue":{"enabled":true}}' > "$CONFIG_PATH"; export SB_MERGE_QUEUE=1; items Review Done Done
+for BK in '' '"worker_backend":"workflow",'; do
+  reset; echo "{${BK}\"merge_queue\":{\"enabled\":true}}" > "$CONFIG_PATH"
+  if merge_queue_on; then ok "backend [${BK:-default workflow}]: queue on (the schedule drains it)"; else fail "backend [${BK:-none}]: merge_queue_on says off"; fi
+done
+reset; echo '{"worker_backend":"codex","merge_queue":{"enabled":true}}' > "$CONFIG_PATH"; export SB_MERGE_QUEUE=1; items Review Done Done
 printf '[%s]' "$(pr 70 7 "$H1" "$MQ" false)" > "$TMP/prs.json"; approve 70 OWNER "$H1"; tick
-prompt_of 7 | grep -q 'merge-only' && ok "  … no worker_backend + SB_MERGE_QUEUE=1: the tick takes the old merge-only path" || fail "backend default queue on in tick: $(logs) $(prompt_of 7 | cut -c1-120)"
+prompt_of 7 | grep -q 'merge-only' && ok "  … worker_backend codex + SB_MERGE_QUEUE=1: the tick takes the old merge-only path" || fail "backend codex queue on in tick: $(logs) $(prompt_of 7 | cut -c1-120)"
 reset; echo "{$CP,\"merge_queue\":{\"enabled\":true}}" > "$CONFIG_PATH"; export SB_MERGE_QUEUE=0; items Review Done Done
 printf '[%s]' "$(pr 70 7 "$H1" "$MQ" false)" > "$TMP/prs.json"; approve 70 OWNER "$H1"; tick
 prompt_of 7 | grep -q 'merge-only' && ok "SB_MERGE_QUEUE=0 overrides the config: the old merge-only path" || fail "SB_MERGE_QUEUE=0 lost merge-only: $(prompt_of 7 | cut -c1-200)"
@@ -202,21 +216,30 @@ NO_PROGRESS_CYCLE_COUNT=0; rc=0; for i in 1 2; do record_cycle_progress "8,9" ||
 
 # ── 7. merge_queue_due: tham số gọi bộ gom, exit 3/5 (runner chạy tiếp), 79/9 (halt), công tắc tắt, thiếu script
 reset; export SB_MERGE_QUEUE=1
-( merge_queue_due ); r=$?
+( mq_cycle ); r=$?
 { [ "$r" = 0 ] && grep -qxF -- "--config $CONFIG_PATH --if-due" "$TMP/mq-calls"; } && ok "queue on: merge_queue_due runs super-board-merge-queue.sh --config <cfg> --if-due" || fail "merge-queue not called right: rc=$r calls=$(cat "$TMP/mq-calls" 2>/dev/null)"
-export MQ_RC=3; ( merge_queue_due ); r=$?
+export MQ_RC=3; ( mq_cycle ); r=$?
 [ "$r" = 0 ] && grep -q 'merge-queue' "$TMP/log" && ok "  … its exit 3 is logged and the runner keeps going" || fail "merge-queue exit 3 ended the runner: rc=$r"
-export MQ_RC=79; ( merge_queue_due ); r=$?
+export MQ_RC=79; ( mq_cycle ); r=$?
 [ "$r" = 79 ] && ok "  … exit 79 halts the runner (exit 79)" || fail "merge-queue exit 79 not a halt: rc=$r"
-export MQ_RC=9; ( merge_queue_due ); r=$?
+export MQ_RC=9; ( mq_cycle ); r=$?
 [ "$r" = 9 ] && ok "  … exit 9 halts the runner (exit 9)" || fail "merge-queue exit 9 not a halt: rc=$r"
-( set -euo pipefail; MQ_RC=5 merge_queue_due; echo alive > "$TMP/alive" ); r=$?
+( set -euo pipefail; MQ_RC=5 mq_cycle; echo alive > "$TMP/alive" ); r=$?
 [ "$r" = 0 ] && [ -e "$TMP/alive" ] && ok "  … under set -euo pipefail a failing merge-queue does not kill the runner" || fail "set -e killed the runner: rc=$r"
 reset; export SB_MERGE_QUEUE=0; ( merge_queue_due ); r=$?
 [ "$r" = 0 ] && [ ! -e "$TMP/mq-calls" ] && ok "SB_MERGE_QUEUE=0: merge-queue is never called" || fail "queue off but merge-queue called: $(cat "$TMP/mq-calls" 2>/dev/null)"
 reset; export SB_MERGE_QUEUE=1; mv "$TMP/bin/super-board-merge-queue.sh" "$TMP/mq.off"; ( merge_queue_due ); r=$?
 [ "$r" = 0 ] && ok "merge-queue script missing: logged, runner keeps going" || fail "missing merge-queue ended the runner: rc=$r"
 mv "$TMP/mq.off" "$TMP/bin/super-board-merge-queue.sh"
+reset; export SB_MERGE_QUEUE=1 MQ_SLEEP=3 MQ_RC=79
+t0=$(date +%s); ( merge_queue_due ); r=$?; t1=$(date +%s)
+{ [ "$r" = 0 ] && [ $((t1 - t0)) -lt 2 ]; } && ok "#537: a running batch does not hold the tick (merge_queue_due returned in $((t1 - t0)) s while the gatherer runs 3 s)" || fail "#537: merge_queue_due blocked the tick: rc=$r took $((t1 - t0)) s"
+( merge_queue_due ); r=$?
+{ [ "$r" = 0 ] && [ "$(wc -l < "$TMP/mq-calls" | tr -d ' ')" = 1 ]; } && ok "  … a second tick while the batch runs starts no second gatherer" || fail "second tick restarted the gatherer: rc=$r calls=$(cat "$TMP/mq-calls" 2>/dev/null)"
+sleep 4; ( merge_queue_due ); r=$?
+[ "$r" = 79 ] && ok "  … the next tick after it ends collects its exit code (79 halts the runner)" || fail "background exit 79 not collected: rc=$r"
+reset; export SB_MERGE_QUEUE=1 MQ_RC=79; ( SB_MQ_TICK_WAIT=10 merge_queue_due ); r=$?
+[ "$r" = 79 ] && ok "  … a gatherer that ends inside the tick wait is collected in the same tick (halt 79 not delayed)" || fail "fast gatherer not collected in the same tick: rc=$r"
 
 # ── 8. cấu trúc (không phải bằng chứng hành vi): vòng lặp gọi merge_queue_due ở nhánh tick_is_cheap trước continue và ở cuối tick đầy đủ
 awk '/^  if tick_is_cheap; then/{f=1} f&&/merge_queue_due/{m=1} f&&/continue/{print (m?"yes":"no"); exit}' "$RUNNER" | grep -qx yes \

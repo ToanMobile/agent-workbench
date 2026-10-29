@@ -74,8 +74,8 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   required, the acceptance report) is committed and pushed without asking: commit your own
   paths, `git fetch`; origin moved → `git pull --no-rebase --no-edit` (check its exit code;
   a conflict → skill conflict, ask only for a business decision) and, after any pull, merge
-  or conflict fix, re-run the gate on what will be pushed: on a PR branch `post-fix-gate.py --run-tests`
-  (its task receipt). A trunk-push repo pushes main only through `agent-kit integrate` (one `--full` in a
+  or conflict fix, re-run the gate on what will be pushed: on a PR branch `post-fix-gate.py --run-tests --scoped`
+  (its scoped receipt). A trunk-push repo pushes main only through `agent-kit integrate` (one `--scoped` run in a
   scratch worktree, then the push); never a `--full` in the main checkout. Every commit and every push needs the latest gate on that content at
   exit 0 — or exit 2 whose only reason is an edited test an Antigravity `audit` passed, with
   `Test-approved-by: antigravity <task-id>` in `git log origin/<branch>..HEAD`. Anything else: no commit,
@@ -101,7 +101,7 @@ calibration, the paired oracle and the gate below. Details: core-rules §4.
   `agent-kit worktree trunk off` turns it off): main is merge-only and nobody holds it — every session works in its own worktree (Claude Code: the
   tool EnterWorktree; others: `agent-kit worktree add`), and only `agent-kit worktree finish` moves main.
 - **Done means verified**: run the post-fix gate
-  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief`, impacted, exit 0 only, on the
+  (`python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`, exit 0 only, on the
   current code; step 3) and attach a real proof PNG from this turn (when step 4 of "Every prompt" applies)
   before the reply may open with XONG. The Stop hooks enforce this where the host has them, but
   no hook takes the screenshot.
@@ -117,17 +117,18 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 2. A code or bug prompt: run the failing oracle and see RED before editing production,
    then the same oracle GREEN after. Keep the command log and the exit code.
 3. From the repo root, once:
-   `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief`
-   Exit 0 is required. This impacted run (the tests the branch's change since the trunk reaches) writes the
-   task receipt, the proof for step 5. A task never runs `--full`: only the merge point does (the merge queue
-   or merge train of a PR repo, the push of main of a trunk-push repo). Any other exit: paste the last
+   `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`
+   Exit 0 is required. This scoped run writes the task receipt (and the scoped receipt), the proof for step 5:
+   `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph, plus the fixed smoke
+   group; a file listed in `.agents/gate-core.txt` (gate, hooks, shared libraries, lockfiles, the map itself), a code file no
+   test reaches, or a graph error escalates the run to `--full` by itself. Build, QA, review, the merge queue / train (one run
+   for the union of the batch's diffs) and `agent-kit integrate` run the same `--scoped`; push and XONG accept its receipt
+   for that tree. Nobody runs `--full` by hand for a task: the `gate-full` skill runs it on main every night at 00:00
+   (launchd) and bisects a red one into a P1 card. Any other exit: paste the last
    30 log lines, fix, and repeat this step. A dry-run, `--help`, or a single Gradle test does not replace this command.
-   `--full` is cached-full: every cacheable light/cpu matrix suite is considered too; one whose content key (its inputs +
-   environment, `bin/suite_cache.py`, shared by every worktree) already PASSed is reused, the rest run (an added suite that
-   times out is named, outside the verdict). Gradle/Unity/device suites, `run_impacted.sh`, network commands and
-   `"cache": false` keep the old selection; `--no-cache` runs them all. When the repo's last real full run is over 24 h old,
-   a `--full` (not a merge gate) uses no content key (sentinel). A push of main needs that receipt of the pushed content
-   (usually zero suites to run). Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores
+   A suite whose content key (its inputs + environment, `bin/suite_cache.py`, shared by every worktree) already PASSed is
+   reused, the rest run; Gradle/Unity/device suites, network commands and `"cache": false` always run; `--no-cache` runs them
+   all. Suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores
    (`bin/capacity.py`; `DEVKIT_SLOT_LOAD_MAX` / `DEVKIT_CAPACITY` override) they start at once, above it they
    wait up to 600 s and run anyway; only Unity and device suites hold an exclusive lock.
 4. A proof image is blocking, same rank as exit 0, unless the change surely cannot show on a
@@ -209,7 +210,7 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   Anything that must outlive the session (a stage awaiting the user, a handoff) lives outside
   `/tmp/claude-<uid>`, e.g. in the repo's ignored `.agents/local/`.
 - Decide, don't ask. Agent tự chủ tối đa: Khi thấy tốt hơn hoặc cần thiết thì TỰ AUTO DUYỆT
-  (auto-approve) các thay đổi test và code sau khi kiểm chứng test PASS. Tuyệt đối KHÔNG hỏi
+  (auto-approve) các thay đổi code sau khi kiểm chứng test PASS (test có sẵn bị sửa: mục dưới, cần duyệt chéo). Tuyệt đối KHÔNG hỏi
   phiền người dùng bằng AskUserQuestion "Duyệt / không duyệt" với các thay đổi code/test thông
   thường. Hỏi người dùng CHỈ KHI: force-push hoặc viết lại lịch sử đã chia sẻ; xoá file
   hoặc dữ liệu cực kỳ quan trọng mà không khôi phục được từ origin (dữ liệu người dùng thật,
@@ -220,9 +221,10 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
   kể cả `main`, mở và merge PR thường, sửa test, sửa code: agent tự làm, không hỏi, không đưa
   lệnh `!`. Khi đúng việc phải hỏi: một lần AskUserQuestion (phương án khuyến nghị trước),
   rồi tự làm tiếp nếu được duyệt.
-- An edited existing test: Agent tự thẩm định và tự auto-duyệt (auto-approve, cờ `--auto-approve-tests`
-  hoặc một dòng riêng `AUTO-APPROVE: <đường dẫn test>` trong câu trả lời — câu văn xuôi không được tính) khi thấy thay đổi là tốt hơn, cần thiết, hợp lý và test
-  chạy PASS; tuyệt đối KHÔNG hỏi phiền người dùng bằng AskUserQuestion.
+- An edited existing test: cần duyệt chéo bởi agent khác — audit `/giao` của Antigravity ghi mục duyệt
+  (`.claude/audit-gate/approved_tests.json`) hoặc trailer `Test-approved-by: antigravity <task-id>`, chỉ tính khi verdict audit
+  của antigravity-pm (ngoài repo) ghi `auditedHead: <sha>` của cây chứa đúng nội dung test; agent sửa test
+  không bao giờ tự duyệt test của chính mình (`--auto-approve-tests`, `AUTO-APPROVE:` không còn duyệt); KHÔNG hỏi người dùng bằng AskUserQuestion.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
   are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).
@@ -230,6 +232,8 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.
 <!-- devkit-essentials:end -->
 <!-- universal-agent-devkit:end -->
+
+Một lượt gate sau trên cùng cây, cùng chế độ và cùng danh sách suite dùng lại `<git-dir>/postfix-gate/rerun_skip.json` và trả 0 mà không lấy khoá test, trừ `--force`, `--no-cache` hoặc `DEVKIT_GATE_CACHE=0`.
 
 <!-- super-board:begin v3.1.2 (managed; edits inside are overwritten on upgrade) -->
 ## Super Board
@@ -254,8 +258,8 @@ Board: Backlog · Ready · Building · QA · Review · Blocked · Done. Labels r
 |---|---|
 | Config | `.claude/super-board/configs/<slug>.json` |
 | Isolation | 1 card · 1 worktree · 1 branch |
-| Merge | auto for normal changes · money, auth, destructive schema (DROP/TRUNCATE/RENAME) → human · PR > 400 changed lines → human |
-| Migrations | additive → robot migrates allowed DBs only · live DB ALWAYS → 🙋 needs you |
+| Merge | auto for normal changes · money, auth, destructive schema, deleting a protected file → human · line count is a human gate only when `auto_max_lines` is a positive number (unset default is 0) |
+| Migrations | additive → robot migrates allowed DBs only · live DB → 🙋 `done` or cross-review marker |
 | Blocked card | block-template comment · last line `blocked-by:` · 🙋 = needs you |
 | Secrets | NEVER read `.env`; key names via `.claude/bin/super-board-env-check.sh` |
 

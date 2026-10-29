@@ -49,6 +49,10 @@ unset SB_GITHUB_READ_STRICT SB_ACCOUNT_POOL
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
 set +e
 SB_GITHUB_READ="$TMP/bin/super-board-github-read.py"
+# #529: resume unmarks needs-you through this helper before the move; the stub only has to exit 0.
+printf 'import sys\nsys.exit(0)\n' > "$TMP/bin/super-board-needs-you.py"
+# #601: sequence có blocker mở gọi helper mark (nhãn waiting-on:#N, thẻ ở Ready); stub ghi lời gọi vào $TMP/writes.
+printf 'import os, sys\nwith open(os.environ["STUB_DIR"] + "/writes", "a") as f:\n    f.write("waiting-on " + " ".join(sys.argv[1:]) + "\\n")\nprint("{}")\n' > "$TMP/bin/super-board-waiting-on.py"
 CONFIG_PATH="$TMP/cfg.json"; echo '{"repo":{"remote":"https://github.com/acme/widgets"}}' > "$CONFIG_PATH"
 INFLIGHT_DIR="$TMP/repo/.claude/super-board/inflight"; mkdir -p "$INFLIGHT_DIR"
 WORKER_LOG_DIR="wl"; REPO_ROOT="$TMP/repo"
@@ -91,12 +95,12 @@ export STUB_PREFLIGHT_JSON='{"7":{"number":7,"verdict":"sequence","tag":"overlap
 SB_PREFLIGHT="$PF" dispatch_lane build 7 >/dev/null 2>&1
 [ -e "$INFLIGHT_DIR/7" ] && ok "sequence with empty blockedBy: still dispatched" || fail "sequence/empty blockedBy was blocked"
 
-# ── 1d. sequence có blockedBy → Blocked, dòng cuối blocked-by: 9
+# ── 1d. sequence có blockedBy → #601: không Blocked, ở Ready, helper mark gắn nhãn waiting-on:#9
 reset
 export STUB_PREFLIGHT_JSON='{"7":{"number":7,"verdict":"sequence","tag":"overlap","reason":"overlap PR #52","blockedBy":[9]}}'
 SB_PREFLIGHT="$PF" dispatch_lane build 7 >/dev/null 2>&1
-[ ! -e "$INFLIGHT_DIR/7" ] && grep -q "move PVTI_7 Blocked" "$TMP/writes" && grep -Eq "blocked-by: +9" "$TMP/writes" \
-  && ok "sequence with blockedBy [9]: Blocked with 'blocked-by: 9'" || fail "sequence/blockedBy wrong: $(cat "$TMP/writes")"
+[ ! -e "$INFLIGHT_DIR/7" ] && ! grep -q "move PVTI_7 Blocked" "$TMP/writes" && grep -Eq "^waiting-on mark .*--issue 7 --on 9( |$)" "$TMP/writes" \
+  && ok "sequence with blockedBy [9]: stays Ready, waiting-on mark --on 9" || fail "sequence/blockedBy wrong: $(cat "$TMP/writes")"
 
 # ── 1d2. blocker đã đóng (#8) → không chặn, giao (số đã đóng là đúng mẫu #200)
 reset
@@ -106,7 +110,8 @@ SB_PREFLIGHT="$PF" dispatch_lane build 7 >/dev/null 2>&1
 reset
 export STUB_PREFLIGHT_JSON='{"7":{"number":7,"verdict":"sequence","tag":"overlap","reason":"overlap PR #52","blockedBy":[8,9]}}'
 SB_PREFLIGHT="$PF" dispatch_lane build 7 >/dev/null 2>&1
-grep -Eq "blocked-by: +9$" "$TMP/writes" && ok "mixed blockers: only the open #9 is written" || fail "mixed blockers wrong: $(cat "$TMP/writes")"
+grep -Eq "^waiting-on mark .*--on 9( |$)" "$TMP/writes" && ! grep -q "move PVTI_7 Blocked" "$TMP/writes" \
+  && ok "mixed blockers: only the open #9 is waited on" || fail "mixed blockers wrong: $(cat "$TMP/writes")"
 
 # ── 1d3. blockedBy là số PR (merged → coi đã đóng; open PR / số không tồn tại → không dừng board, giao như cũ)
 export SB_GITHUB_HALT_FILE="$TMP/halt.json"
@@ -215,10 +220,10 @@ grep -q "policy cleared" "$TMP/writes" && ! grep -q "trusted collaborator answer
   && ok "the comment states why (policy cleared), not a human done that did not happen" || fail "comment wording: $(grep -o 'Did:[^"]*' "$TMP/writes" | head -1)"
 
 # 24/10: preflight gets the board's own merge line cap (merge_policy.auto_max_lines, read as the merge gate reads it),
-# so a board with no cap never has a card held as too big. Unset → 400; 0, "0", -1, false → 0.
+# so a board with no cap never has a card held as too big. Unset, a word, or a fraction → 0; 0, "0", -1, false → 0.
 CFG_BASE='"repo":{"remote":"https://github.com/acme/widgets"}'
-# A value int() cannot read ("many", "1.5") is unreadable to the merge policy too: preflight keeps the 400 default.
-for spec in 'none:400' '0:0' '"0":0' '-1:0' 'false:0' '1500:1500' '"many":400' '"1.5":400' '1e17:1000000000'; do
+# A value int() cannot read ("many", "1.5") is unreadable: preflight uses 0, the same as an unset cap.
+for spec in 'none:0' '0:0' '"0":0' '-1:0' 'false:0' '1500:1500' '"1500":1500' '"many":0' '"1.5":0' '1e17:1000000000'; do
   val="${spec%:*}"; want="${spec##*:}"
   if [ "$val" = none ]; then echo "{$CFG_BASE}" > "$CONFIG_PATH"
   else echo "{$CFG_BASE,\"merge_policy\":{\"auto_max_lines\":$val}}" > "$CONFIG_PATH"; fi

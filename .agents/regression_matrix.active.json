@@ -992,20 +992,6 @@
       ]
     },
     {
-      "component": "devkit-all",
-      "watch_files": [
-        "universal-agent-devkit/*"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-DK-ALL-01",
-          "name": "DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit",
-          "command": "bash universal-agent-devkit/tests/run_impacted.sh",
-          "parallel_safe": true
-        }
-      ]
-    },
-    {
       "component": "super-board-runner-ready-order",
       "watch_files": [
         ".claude/bin/super-board-run.sh",
@@ -1204,7 +1190,7 @@
       "mandatory_regression_tests": [
         {
           "id": "REG-SB-TOTAL-CAP-01",
-          "name": "một trần worker duy nhất: build+qa+review của mọi repo trên máy <= max_workers (5), đếm qua thư mục slot chung, PID chết tự trả slot; tải CPU, WIP, gate_max không còn chi phối",
+          "name": "một trần worker max_workers (5) cho mọi repo, cộng phanh spawn khi load1 vượt ngưỡng (mặc định busy_load); dưới ngưỡng tải không chặn; lib mode không đọc máy thật",
           "command": "bash tests/super-board/test_runner_total_cap.sh",
           "parallel_safe": true
         }
@@ -1870,6 +1856,593 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-sweep-needs-you-529",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-wave-plan.sh",
+        "tests/super-board/test_issue529_sweep_needs_you.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SWEEP-NEEDS-YOU-529-01",
+          "name": "#529: Blocked by không bullet đọc được số; resume gỡ needs-you trước khi sang Review; denylist soi --next và từng mệnh đề; reclaim/no-op ❓ không ghi blocked-by: -; trần im lặng build/qa; tick rẻ đếm chu kỳ không tiến triển",
+          "command": "bash tests/super-board/test_issue529_sweep_needs_you.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-merge-train-single-test-retry-578",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_merge_train_single_test_retry.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TRAIN-SINGLE-TEST-RETRY-578-01",
+          "name": "#578: verify đỏ chỉ vì đúng một test của REG-DK-ALL-01 thì train chạy lại riêng test đó một lần (xanh = flaky ghi vào PR + thẻ test; đỏ hai lần = red kèm tên test); hai test trở lên, suite khác đỏ, tên test mất, đường dẫn lạ = red ngay",
+          "command": "env -u SB_BOARD_WORKER -u SB_MERGE_QUEUE bash tests/super-board/test_merge_train_single_test_retry.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-runner-mq-restart-599",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_mq_restart.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-RUNNER-MQ-RESTART-599-01",
+          "name": "#599: runner restart giữa chừng khi bộ gom nền còn chạy không bật bộ gom thứ hai (đọc lại .mq.pid); .mq.rc do runner cũ để lại vẫn được runner mới đọc và áp 79/9 (halt), mã khác chỉ ghi log",
+          "command": "bash tests/super-board/test_runner_mq_restart.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-door-blast-host-agy-549",
+      "watch_files": [
+        ".claude/bin/super-board-host.sh",
+        ".claude/skills/super-board/references/writing-standard.md",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-build/SKILL.md",
+        ".claude/skills/super-qa/references/iteration-preamble.md",
+        ".claude/skills/super-review/SKILL.md",
+        "tests/super-board/test_host_detect.sh",
+        "tests/super-board/test_risk_door_blast.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-HOST-AGY-549-01",
+          "name": "#549: super-board-host.sh nhận diện claude, codex, agy (SUPER_BOARD_HOST hoặc ANTIGRAVITY_*), host lạ thoát 64",
+          "command": "bash tests/super-board/test_host_detect.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-RISK-DOOR-BLAST-549-01",
+          "name": "#549: khối Risk nêu Door (one-way/two-way) và Blast radius ở writing-standard và các tài liệu lane; mọi SKILL.md dưới 20000 byte",
+          "command": "bash tests/super-board/test_risk_door_blast.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-waiting-on-601",
+      "watch_files": [
+        ".claude/bin/super-board-waiting-on.py",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/workflows/super-board-wave.js",
+        ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_waiting_on_helper.sh",
+        "tests/super-board/test_waiting_on_runner.sh",
+        "tests/super-board/test_waiting_on_wave.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAITING-ON-HELPER-601-01",
+          "name": "#601 helper waiting-on: mark gắn nhãn waiting-on:#N + comment một lần (không dòng blocked-by:); sweep gỡ nhãn khi N CLOSED/MERGED, mỗi N đọc một lần, số lỗi không chặn số khác; migrate thẻ Blocked chỉ chờ → Ready + nhãn, bỏ needs-you/fuse, chạy 2 lần cùng kết quả",
+          "command": "bash tests/super-board/test_waiting_on_helper.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-WAITING-ON-RUNNER-601-01",
+          "name": "#601 runner: preflight sequence có blocker mở không Blocked mà gọi mark, thẻ ở Ready; dispatch/inflight bỏ qua thẻ waiting-on; sweep_waiting_on theo nhịp, lỗi không halt; hold vẫn Blocked",
+          "command": "bash tests/super-board/test_waiting_on_runner.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-WAITING-ON-WAVE-601-01",
+          "name": "#601 workflow: planner để thẻ waiting-on ngoài Ready (vào waiting), pending có needsYou; wave.js không build sequence có blocker mở, preflightExit = waiting@Ready",
+          "command": "bash tests/super-board/test_waiting_on_wave.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-ac-short-heading",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-ac-check.py",
+        "tests/super-board/test_preflight_ac_short_heading.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AC-SHORT-HEADING-01",
+          "name": "#616/#618: heading `## AC` là mục AC ở preflight (không hold unclear), luật kéo Backlog và ac-check; `## ACL` không phải",
+          "command": "bash tests/super-board/test_preflight_ac_short_heading.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-cross-review-approval-605",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/tests/gates/test_gate_cross_review_approval.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-CROSS-REVIEW-605-01",
+          "name": "#605: test có sẵn bị sửa chỉ được duyệt chéo (approved_tests.json approvals: reviewer khác author/DEVKIT_AGENT_ID, sha256 khớp, đủ 6 trường); tự duyệt (--auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS, AUTO-APPROVE:) và dạng cũ không nguồn = exit 2, in cần duyệt lại + sha256",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_cross_review_approval.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-approval-cross-review-605",
+      "watch_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-merge-policy.py",
+        "tests/super-board/test_approval_cross_review.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVAL-CROSS-REVIEW-605-01",
+          "name": "#605: marker cross-review-approved hợp lệ (reviewer khác builder, head/scope khớp request, task_id + gate_receipt không rỗng, người đăng có quyền ghi) thay cho done; tự duyệt, head lệch, sửa comment, đăng trước request = không nhận; chỉ plan có delete-protected mới cần done của người (schema / needs_you nhận marker); policy: xoá file khớp merge_policy.protected_paths → human delete-protected (cả file nhị phân qua github-read); --deps --config nhận marker khi plan hiện tại cho phép",
+          "command": "python3 tests/super-board/test_approval_cross_review.py",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-approved-head-605",
+      "watch_files": [
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_merge_queue.sh",
+        "tests/super-board/test_runner_review_approved_head.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVED-HEAD-605-01",
+          "name": "#605: approved-head kèm approved-by {reviewer,builder,task_id,gate_receipt} được nhận (reviewer khác builder); tự duyệt, approved-by hỏng/thiếu trường, head lệch bị loại; marker mới nhất thắng; bare approved-head của OWNER vẫn nhận (runner)",
+          "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-APPROVED-HEAD-605-02",
+          "name": "#605: merge-queue dùng chung luật approved-head (super-board-approved-head.jq): marker hợp lệ và bare OWNER vào train; tự duyệt, approved-by hỏng, task_id rỗng, head lệch, marker tự duyệt mới hơn bị loại kèm lý do",
+          "command": "bash tests/super-board/test_merge_queue.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-guard-protected-delete",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/tests/gates/test_guard_protected_delete.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-PROTECTED-DELETE-01",
+          "name": "git guard chỉ hỏi người khi: force push (-f/--force/--force-with-lease/+ref), xoá ref remote (push --delete/-d/:ref/--mirror/--prune), xoá file quan trọng (rm/unlink/git rm/find -delete theo protected_delete mặc định + .antigravity-pm.json); xoá file thường vẫn qua (#605)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_protected_delete.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-guard-self-approval-comment",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/tests/gates/test_guard_self_approval_comment.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-SELF-APPROVAL-01",
+          "name": "git guard chặn agent tự đăng approved-head trơn (không approved-by:) hoặc dòng done qua gh pr/issue comment, gh api …/comments (--body, -b, --body-file, -F, -f/-F body=); approved-head + approved-by và cross-review-approved vẫn qua (#605 Lane H)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_self_approval_comment.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-gate-audited-head-base",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_audited_head_base.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-AUDITED-HEAD-BASE-01",
+          "name": "duyệt chéo: auditedHead trước base không duyệt chép lùi test (mục duyệt, trailer, push_gate.approved); audited_head đọc verdicts.audit.auditedHead trước notes; ANTIGRAVITY_PM_STATE_HOME lạ không cấp biên nhận task / full_pass exit 0 (#605 audit T0066 vòng 2)",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_audited_head_base.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-audit-check-605",
+      "watch_files": [
+        ".claude/bin/super-board-audit-check.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AUDIT-CHECK-605-01",
+          "name": "#605 (audit T0066 vòng 2): task_id của cross-review-approved chỉ tính khi antigravity-pm có audit pass với auditedHead == head của request; không biên bản, head khác, verdict fail, project khác, task_id sai dạng = không duyệt; CLI super-board-audit-check.py exit 0/1",
+          "command": "python3 tests/super-board/test_approval_cross_review.py",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-AUDIT-CHECK-605-02",
+          "name": "#605 (audit T0066 vòng 2): merge-queue loại approved-by có task_id không có audit pass khớp head PR (giả, head cũ, verdict fail, sai dạng); bare OWNER vẫn vào train",
+          "command": "bash tests/super-board/test_merge_queue.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-AUDIT-CHECK-605-03",
+          "name": "#605 (audit T0066 vòng 2): review_approved_head của runner chỉ merge-only khi task_id của approved-by có audit pass khớp head PR",
+          "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-reviewer-antigravity-audit-605",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-build/references/worker-preamble.md",
+        ".claude/skills/super-review/SKILL.md",
+        "universal-agent-devkit/docs/init_board/ai-factory-superboard-workflow.md"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEWER-AUDIT-605-01",
+          "name": "#605 (audit T0066 vòng 3): prompt Review headless, run.md, worker-preamble.md, super-review/SKILL.md và ai-factory doc cùng một hợp đồng: reviewer chạy audit Antigravity thật qua antigravity-pm (pm_task_create, pm_dispatch kind=audit, audit-agent.json, pm_verdict auditedHead) trước approved-by, gate_receipt = biên nhận task impacted, Antigravity không có thì thẻ ở Review với blocked-by",
+          "command": "bash tests/super-board/test_reviewer_antigravity_audit_contract.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-approved-head-closing-ref",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_approved_head_closing_ref.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVED-HEAD-CLOSING-REF-01",
+          "name": "#607/#614: review_approved_head nhận PR nhánh không phải issue-<N>- khi đúng một PR mở có closingIssuesReferences chứa N; nhánh issue-<N>- vẫn thắng, hai PR đóng N thì không chọn; thẻ Review có PR như vậy đã vào hàng không bị đẩy Blocked vì no-op",
+          "command": "bash tests/super-board/test_runner_approved_head_closing_ref.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "audited-head-ascii-space-629",
+      "watch_files": [
+        "universal-agent-devkit/bin/push_gate.py",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-AUDITED-HEAD-ASCII-629-01",
+          "name": "#629: push_gate.AUDITED_HEAD (khoảng trắng [ \\t\\n\\r\\f\\v], cùng regex pm_verdict) không nhận `auditedHead:` ngăn bởi \\x1c-\\x1f/U+0085 mà regex JS của pm_verdict không thấy; dấu cách/tab vẫn nhận",
+          "command": "bash universal-agent-devkit/tests/gates/test_audited_head_ascii_space.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-all-shard-rules",
+      "watch_files": [
+        ".agents/regression_matrix.active.json",
+        "tests/super-board/test_matrix_shard_rules.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-SHARD-RULES-616-01",
+          "name": "#616: ba suite shard REG-DK-ALL-* thay REG-DK-ALL-01 (đã bỏ khỏi ma trận), khối shard liền nhau và chỉ-thêm sau các rule trước nó (rule nối sau không làm đỏ, #453), theo dõi universal-agent-devkit/*, run_impacted.sh --list của ba lệnh hợp lại đúng tập không shard, không trùng",
+          "command": "bash tests/super-board/test_matrix_shard_rules.sh",
+          "parallel_safe": true
+        }
+      ]
     }
+,
+    {
+      "component": "devkit-all-shard-gates",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-GATES-01",
+          "name": "#616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (tests/gates): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s",
+          "command": "DEVKIT_IMPACTED_DIRS=gates bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "devkit-all-shard-worktree",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-WORKTREE-01",
+          "name": "#616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (tests/worktree_git): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s",
+          "command": "DEVKIT_IMPACTED_DIRS=worktree_git bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "devkit-all-shard-rest",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-ALL-REST-01",
+          "name": "#616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (phần còn lại: verification, installer, context_memory, hooks/tests): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s",
+          "command": "DEVKIT_IMPACTED_DIRS=!gates,!worktree_git bash universal-agent-devkit/tests/run_impacted.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "super-board-queue-schedule",
+      "watch_files": [
+        ".claude/bin/super-board-queue-schedule.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_wave_plan_queued.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAVE-PLAN-QUEUED-01",
+          "name": "#453 backend workflow + queue bật: wave-plan bỏ thẻ Review có PR nhãn merge-queue (chờ lịch rút hàng); queue tắt / codex / SB_MERGE_QUEUE=0 giữ nguyên",
+          "command": "bash tests/super-board/test_wave_plan_queued.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "devkit-worktree-prune-merged-ancestor",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_prune_ancestor_of_merged.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-WT-PRUNE-MERGED-ANCESTOR-01",
+          "name": "#453 prune-branch nhận nhánh có tip là tổ tiên head của PR MERGED vào trunk (PR lấy head từ nhánh khác); commit ngoài head đó, hoặc PR gộp vào nhánh khác trunk: giữ",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_prune_ancestor_of_merged.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-decision-reader",
+      "watch_files": [
+        ".claude/bin/super-board-decision.py",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-qa-report.py",
+        "tests/super-board/test_decision_reader.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-DECISION-READER-01",
+          "name": "[orchestrator] [decision] hợp lệ (marker orchestrator hoặc comment tay của chủ không marker) gỡ blocker ở deps.sh, needs-you mark, qa-report; lane tự đăng thì bị bỏ qua; ca DỪNG vẫn gắn needs-you (#516, 28/10)",
+          "command": "bash tests/super-board/test_decision_reader.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "merge-gate-edited-test-486",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_edited_test.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MERGE-GATE-EDITED-TEST-486-01",
+          "name": "#486: worktree finish từ chối gate exit 2 (test đã sửa chưa duyệt, nêu tên file), exit 1 khi suite PASS, và exit 4 nhãn SLOT; exit 0, exit 3, và exit 4 thiếu thiết bị vẫn fast-forward",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_edited_test.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "qa-detached-worktree-557",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/workflows/super-board-wave.js",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-qa/SKILL.md",
+        "tests/super-board/test_qa_detached_worktree.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QA-DETACHED-557-01",
+          "name": "#557: QA thêm worktree detached tại origin/<PR branch>, không gỡ worktree build khi nhánh đã đổi tên hoặc còn agent-memory chưa commit, và đẩy commit bằng chứng bằng git push origin HEAD:<PR branch>",
+          "command": "bash tests/super-board/test_qa_detached_worktree.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "file-wait-ready-556",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_file_wait.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-FILE-WAIT-556-01",
+          "name": "#556: sequence conflictWith giữ Ready + nhãn chờ thẻ khác, gỡ khi PR không còn đụng file, không tính RUNAWAY, không giao cùng thẻ đụng file",
+          "command": "bash tests/super-board/test_runner_file_wait.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "merge-scratch-keep-559",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "tests/super-board/test_merge_gate_keep_scratch.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-SCRATCH-KEEP-559-01",
+          "name": "#559: REG-DK-ALL-01 không PASS thì giữ scratch, log đỏ và env.txt đã che secret; PASS thì dọn; tối đa 2 bản",
+          "command": "bash tests/super-board/test_merge_gate_keep_scratch.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "suite-env-board-worker-528",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/hooks/session_worktree.py",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        "universal-agent-devkit/hooks/test_evidence_gate.sh",
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/testsourceset_gate.sh",
+        "universal-agent-devkit/hooks/security_gate.sh",
+        "universal-agent-devkit/tests/gates/test_suite_env_worker_vars.sh",
+        "universal-agent-devkit/tests/gates/test_gate_worker_main.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SUITE-ENV-WORKER-528-01",
+          "name": "#528: suite_env và clean_git_env bỏ SB_BOARD_WORKER, SB_MERGE_CALLER, SB_MERGE_QUEUE, SB_REPO_PATH, SB_GITHUB_READ_STRICT",
+          "command": "bash universal-agent-devkit/tests/gates/test_suite_env_worker_vars.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-WORKER-MAIN-528-01",
+          "name": "#528: SB_BOARD_WORKER=1 trên main thì hook thoát 0 và không chạy suite; không có cờ thì chạy; worktree liên kết vẫn chạy",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_worker_main.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-rerun-skip-648",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "Agents.md",
+        "universal-agent-devkit/tests/gates/test_gate_rerun_skip.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-RERUN-SKIP-648-01",
+          "name": "#648: cùng cây, cùng chế độ, cùng danh sách suite thì thoát 0 từ rerun_skip.json trước khi lấy khoá; --force, --no-cache và DEVKIT_GATE_CACHE=0 vẫn chạy",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_rerun_skip.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-fail-fast-647",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/gate_full.py",
+        ".claude/bin/super-board-merge-train.sh",
+        "universal-agent-devkit/tests/gates/test_gate_fail_fast.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-FAIL-FAST-647-01",
+          "name": "#647: suite FAIL hoặc TIMEOUT thì phần NOT_RUN còn lại thành UNTESTED; --no-fail-fast chạy tiếp; merge-train và gate_full truyền cờ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_fail_fast.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-spawn-load-530",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/skills/super-board/references/config-schema.json",
+        "tests/super-board/test_runner_total_cap.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SPAWN-LOAD-530-01",
+          "name": "#530: load1 vượt ngưỡng thì build+qa+review hoãn spawn (log holding spawn load1); 30 vẫn spawn; 36.5 hoãn; rỗng/rác/lib mode không chặn; tick rẻ không nuốt merge queue hay no-progress khi 0 worker",
+          "command": "bash tests/super-board/test_runner_total_cap.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+,
+    {
+      "component": "qa-exit2-edited-test-643",
+      "watch_files": [
+        ".claude/bin/super-board-qa-exit2.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_qa_exit2_edited_test.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QA-EXIT2-643-01",
+          "name": "#643: QA exit 2 chỉ vì test sửa đi Review rồi merge nhờ duyệt chéo",
+          "command": "bash tests/super-board/test_qa_exit2_edited_test.sh",
+          "parallel_safe": true
+        }
+      ]
+    }
+
   ]
 }

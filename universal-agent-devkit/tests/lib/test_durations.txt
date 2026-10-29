@@ -81,6 +81,7 @@
 150 tests/gates/test_unity_proof.sh
 27 tests/worktree_git/test_heal_active_profile.sh
 1 tests/gates/test_precode_relative_path.sh
+1 tests/gates/test_audited_head_ascii_space.sh
 1 tests/gates/test_proof_capture_headless.sh
 3 hooks/tests/test_prompt_dedupe.sh
 3 tests/context_memory/test_budgets.sh
@@ -417,6 +418,7 @@
 # 2026-10-25 (review mục B4): 5 test kit chưa có dòng nào — heavy_slot.selection_seconds coi cả tập run_impacted là "không biết" ⇒ cpu;
 # đo mỗi bài một lần, chạy một mình, máy tải 36-43 (12 nhân).
 40 tests/gates/test_gate_auto_tree_receipt.sh
+10 tests/gates/test_gate_mark_opt_in.sh
 14 tests/worktree_git/test_worktree_remove_origin_safe.sh
 4 tests/gates/test_gate_diff_merge_base.sh
 2 hooks/tests/test_git_guard_ansi_c_quote.sh
@@ -440,6 +442,7 @@
 19 tests/context_memory/test_session_context_gc_symlink.sh
 3 tests/worktree_git/test_worktree_gc_symlink_home.sh
 1 tests/gates/test_gate_speed_report.sh
+1 tests/gates/test_gate_speed_report_all_shards.sh
 30 tests/gates/test_gate_speed_next_full_merge_point.sh
 1 tests/gates/test_gate_speed_next_run_log_fields.sh
 1 tests/gates/test_gate_speed_next_untested_early.sh
@@ -450,3 +453,10 @@
 20 tests/gates/test_shell_writes_fd_427.sh
 6 tests/worktree_git/test_worktree_remove_late_holder.sh
 1 tests/gates/test_gate_approved_tests_same_second.sh
+# #644 (2026-10-29, tải 40-90): gate scoped, cửa biên nhận scoped, gate-full đêm
+4 tests/gates/test_scoped_gate.sh
+12 tests/gates/test_scoped_receipt_doors.sh
+12 tests/gates/test_gate_full_nightly.sh
+14 tests/gates/test_gate_scoped_routing.sh
+12 tests/worktree_git/test_relink_new_kit_items.sh
+103 tests/gates/test_gate_impacted_cache.sh

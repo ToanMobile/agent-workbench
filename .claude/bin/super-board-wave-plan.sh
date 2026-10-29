@@ -58,31 +58,38 @@
 #
 # Usage:
 #   super-board-wave-plan.sh --config <config.json> [--items <project-items.json>]
-#                            [--deps <deps.json>]
+#                            [--deps <deps.json>] [--queued <prs.json>]
 # Without --items, fetches live board state via super-board-card.sh items — the
 # item-list shape for ~1 GraphQL point per 100 cards, where `gh project item-list`
 # spends 101 per 100 (fieldValues x four nested connections).
 # Without --deps, derives the graph via super-board-deps.sh. Pass --deps in tests
 # to keep the script offline.
+# MERGE QUEUE (#453). With the queue on (merge_queue.enabled or SB_MERGE_QUEUE=1, SB_MERGE_QUEUE=0 off; backend claude-p or workflow)
+# a Review card whose PR carries the `merge-queue` label waits for super-board-merge-queue.sh: it is not planned (a wave would launch a
+# reviewer for an approved card every time). --queued <prs.json> (`pr list --json headRefName` shape) replaces the live read in tests.
+# On the workflow backend a live plan also ensures the launchd schedule that drains the queue (super-board-queue-schedule.sh ensure),
+# so a queue that is on always has a drainer; no schedule possible (not macOS, a temp dir) is a warning on stderr, the plan still runs.
 #
 # Stdout:
 #   { "cards": [ {"number":10,"status":"Review","title":"…","lane":"review","labels":[]} ],
 #     "sweep": [ {"number":37,"title":"…","clearedBy":[32]} ],
 #     "resume": [ {"number":51,"title":"…"} ],
 #     "refreshApproval": [ {"number":52,"title":"…","why":"PR head changed after review"} ],
-#     "pending": [ {"number":48,"title":"…","openBlockers":[32]} ],   # Blocked, waiting only on open cards (#235)
+#     "pending": [ {"number":48,"title":"…","openBlockers":[32],"needsYou":false} ],   # Blocked, waiting only on open cards (#235)
 #     "flag":  [ {"number":82,"title":"…","why":"…"} ],
 #     "stranded": [ {"number":44,"title":"…"} ],
 #     "waiting": [ {"number":45,"title":"…","labels":["needs-you"]},       # Ready cards held for a person (#95)
+#                  {"number":47,"title":"…","labels":["waiting-on:#32"]},   # Ready cards waiting on another card (#601)
 #                  {"number":46,"title":"…","labels":["qa","needs-device"],"why":"…"} ] }   # held for a real device (#95)
 set -euo pipefail
 
-CONFIG=""; ITEMS_FILE=""; DEPS_FILE=""
+CONFIG=""; ITEMS_FILE=""; DEPS_FILE=""; QUEUED_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2 ;;
     --items)  ITEMS_FILE="$2"; shift 2 ;;
     --deps)   DEPS_FILE="$2"; shift 2 ;;
+    --queued) QUEUED_FILE="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
@@ -100,6 +107,29 @@ VARIANT=$(echo "$CONFIG_JSON" | jq -r '.variant // ""')
 MAX_WORKERS=$(echo "$CONFIG_JSON" | jq -r '.max_workers // 0')
 OWNER=$(echo "$CONFIG_JSON" | jq -r '.project.owner')
 NUMBER=$(echo "$CONFIG_JSON" | jq -r '.project.number')
+
+# Merge queue on? Same definition as super-board-merge-gate.sh / merge-train.sh / merge-queue.sh / run.sh merge_queue_on.
+QUEUE_ON=false
+case "${SB_MERGE_QUEUE:-}" in
+  0) ;;
+  *) QUEUE_ON=$(echo "$CONFIG_JSON" | jq -r --arg env "${SB_MERGE_QUEUE:-}" \
+       '((.worker_backend // "workflow") | IN("claude-p", "workflow")) and ($env == "1" or .merge_queue.enabled == true)') ;;
+esac
+QUEUED_ISSUES='[]'
+if [ "$QUEUE_ON" = true ]; then
+  if [ -n "$QUEUED_FILE" ]; then QUEUED_PRS=$(cat "$QUEUED_FILE")
+  else QUEUED_PRS=$(python3 "$HERE/super-board-github-read.py" --kind array -- pr list --state open --label merge-queue --limit 200 --json headRefName) \
+    || { rc=$?; echo "could not read the PRs queued for merge" >&2; exit "$rc"; }
+  fi
+  QUEUED_ISSUES=$(echo "$QUEUED_PRS" | jq -c '[.[].headRefName | capture("^issue-(?<n>[0-9]+)-")? | .n | tonumber]')
+  # The workflow backend has no runner to drain the queue: make sure the schedule exists (idempotent, quiet when unchanged).
+  # No schedule = no drainer: queued cards then stay plannable, or their PRs would sit hidden forever.
+  if { [ -z "$ITEMS_FILE" ] || [ -n "${SB_QUEUE_SCHEDULE_BIN:-}" ]; } && [ "$(echo "$CONFIG_JSON" | jq -r '(.worker_backend // "workflow") == "workflow"')" = true ]; then
+    SLUG=$(basename "$CONFIG" .json)
+    "${SB_QUEUE_SCHEDULE_BIN:-$HERE/super-board-queue-schedule.sh}" ensure "$SLUG" >&2 \
+      || { echo "warning: the merge-queue schedule could not be installed: queued cards stay in the wave until it is" >&2; QUEUED_ISSUES='[]'; }
+  fi
+fi
 
 if [ -n "$ITEMS_FILE" ]; then
   ITEMS=$(cat "$ITEMS_FILE")
@@ -146,7 +176,7 @@ fi
 # auto-merges into one base branch race. That guard now lives where the race
 # actually is — the merge step takes a lock inside the wave workflow and the
 # freshness gate re-verifies under it — so reviews may run in parallel here.
-echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argjson deps "$DEPS" --argjson nodev "$NODEV" '
+echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argjson deps "$DEPS" --argjson nodev "$NODEV" --argjson queued "$QUEUED_ISSUES" '
   def dep($n): $deps[($n | tostring)];
   # gh project item-list puts label names on the item (`labels`); some shapes put
   # them on the content, as strings or {name}. Lower-cased, names only.
@@ -164,6 +194,8 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   # Not one carrying loop:rebase / loop:rebuild-N: back from QA/Review after the person acted (super-board-run.sh FOR_A_PERSON_JQ).
   def for_a_person($l): (($l | index("needs-you")) or ($l | index("human-gated")))
                         and ($l | map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not);
+  # #601: thẻ Ready chỉ chờ thẻ khác mang nhãn `waiting-on:#N` (super-board-waiting-on.py mark); không phát, gỡ nhãn mới chạy.
+  def waiting_on($l): $l | map(startswith("waiting-on:#")) | any;
   # #95: its QA needs a real device and none is online ($nodev, above). Not Review; a Ready card without `qa` is built first.
   def held_for_device($s; $l): $nodev and ($l | index("needs-device")) != null
                                and ($s == "QA" or ($s == "Ready" and ($l | index("qa")) != null));
@@ -178,10 +210,13 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   # In flight: already past preflight, so the graph does not gate them. Iterated
   # in $cols order (Review, then QA) rather than board order, so a throttled wave
   # spends its slots on the work closest to Done.
-  | [ $cols[] as $c | $all[] | select(.status == $c and $c != "Ready") | select(held_for_device(.status; .labels) | not) ] as $flight
+  # #453: a Review card whose PR sits in the merge queue waits for the queue, not for a reviewer.
+  | [ $cols[] as $c | $all[] | select(.status == $c and $c != "Ready") | select(held_for_device(.status; .labels) | not)
+      | select((.status == "Review" and (.number as $n | $queued | index($n) != null)) | not) ] as $flight
 
   # Ready: only the ones the graph says are actually free.
   | [ $all[] | select(.status == "Ready") | select(free(.number)) | select(for_a_person(.labels) | not)
+      | select(waiting_on(.labels) | not)
       | select(held_for_device(.status; .labels) | not) ] as $ready
 
   # Downstream-first, so work already begun finishes before new work starts.
@@ -193,6 +228,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
       sweep: [ $all[]
                | select(.status == "Blocked")
                | select(free(.number))
+               | select((dep(.number).agentParked // false) | not)   # #529: `blocked-by: agent` (parked by the runner) is not a sweep; a person-done card (no blockers) is
                | { number, title,
                    clearedBy: (dep(.number) | .blockers) } ],
 
@@ -203,7 +239,7 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
                  | select(for_a_person(.labels) | not)
                  | select(dep(.number) != null and dep(.number).parseable and (dep(.number).humanGated | not)
                           and ((dep(.number).openBlockers // []) | length) > 0)
-                 | { number, title, openBlockers: dep(.number).openBlockers } ],
+                 | { number, title, openBlockers: dep(.number).openBlockers, needsYou: (dep(.number).needsYou // false) } ],
 
       # Verified current-head human approval from the dependency helper. The
       # Reviewer independently rechecks it; labels are only UI state.
@@ -230,7 +266,11 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
 
       # Ready cards held back for a person (#95): removing the needs-you / human-gated label releases them. Then Ready/QA
       # cards held for a real device: plugging one in (or removing needs-device) releases them.
+      # #601: thẻ Ready mang `waiting-on:#N` cũng nằm đây; `super-board-waiting-on.py sweep` gỡ nhãn khi N đóng.
       waiting: ([ $all[] | select(.status == "Ready") | select(for_a_person(.labels)) | { number, title, labels } ]
+                + [ $all[] | select(.status == "Ready") | select(waiting_on(.labels)) | select(for_a_person(.labels) | not)
+                    | { number, title, labels } ]
                 + [ $all[] | select(held_for_device(.status; .labels))
                     | select((.status == "Ready" and for_a_person(.labels)) | not)
+                    | select((.status == "Ready" and waiting_on(.labels)) | not)
                     | { number, title, labels, why: "its QA needs a real device (needs-device) and none is online" } ]) }'

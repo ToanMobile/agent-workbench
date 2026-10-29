@@ -107,7 +107,7 @@ unset SB_GITHUB_READ_STRICT
 # permission) cũng bằng lệnh cố định: STRICT phải tới được nó, nếu không sự cố GitHub thật bị nuốt thành "approval evidence
 # could not be verified" (audit T0041). Bản sao deps.sh với github-read/approval giả ghi lại STRICT mà approval nhận.
 mkdir -p "$TMP/sbbin"
-cp "$ROOT/.claude/bin/super-board-deps.sh" "$TMP/sbbin/"
+cp "$ROOT/.claude/bin/super-board-deps.sh" "$ROOT/.claude/bin/super-board-decision.py" "$TMP/sbbin/"
 cat > "$TMP/sbbin/super-board-github-read.py" <<'PYF'
 import json
 print(json.dumps([{"data": {"repository": {"issues": {"nodes": [

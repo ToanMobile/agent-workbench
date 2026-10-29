@@ -10,7 +10,7 @@ Board: Backlog · Ready · Building · QA · Review · Blocked · Done. Labels r
 | Board state / halt | `/super-board status` · `/super-board stop` | |
 | Build one ticket | `/super-build` | NEVER build outside the card's worktree |
 | QA a branch, or a live URL alone | `/super-qa` · `/super-qa <url>` | NEVER mark QA pass without evidence |
-| Review a PR, merge | `/super-review` | NEVER `gh pr merge` direct — merge gate only; queue on → label `merge-queue` |
+| Review a PR, merge | `/super-review` | NEVER `gh pr merge` direct — merge gate only; queue on (claude-p or workflow backend) → label `merge-queue` |
 | File bugs from Sentry, PostHog, PRs | `/super-collect` | DON'T file without a verifier pass |
 | UI polish | `/ui-refine-loop` (human runs it) | board NEVER runs it |
 | Diagram / explainer page | `/visual` | |
@@ -20,8 +20,8 @@ Board: Backlog · Ready · Building · QA · Review · Blocked · Done. Labels r
 |---|---|
 | Config | `.claude/super-board/configs/<slug>.json` |
 | Isolation | 1 card · 1 worktree · 1 branch |
-| Merge | auto for normal changes · money, auth, destructive schema (DROP/TRUNCATE/RENAME) → human · PR > 400 changed lines → human |
-| Migrations | additive → robot migrates allowed DBs only · live DB ALWAYS → 🙋 needs you |
+| Merge | auto for normal changes · money, auth, destructive schema, deleting a protected file → human · line count is a human gate only when `auto_max_lines` is a positive number (unset default is 0) |
+| Migrations | additive → robot migrates allowed DBs only · live DB → 🙋 `done` or cross-review marker |
 | Blocked card | block-template comment · last line `blocked-by:` · 🙋 = needs you |
 | Secrets | NEVER read `.env`; key names via `.claude/bin/super-board-env-check.sh` |
 

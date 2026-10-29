@@ -68,7 +68,7 @@ const CLASSIFY_SCHEMA = {
 const STAGE_SCHEMA = {
   type: 'object',
   properties: {
-    status: { type: 'string', enum: ['advanced', 'bounced', 'blocked', 'human-gate', 'failed', 'halted'] },
+    status: { type: 'string', enum: ['advanced', 'bounced', 'blocked', 'human-gate', 'failed', 'halted', 'waiting'] },
     column: { type: 'string' },
     detail: { type: 'string' },
     prUrl: { type: 'string' },
@@ -124,9 +124,10 @@ const REVIEW_MEMORY = [
   `Truth-check sub-agents get the fixed brief from super-review → "Adversarial mode", verbatim. After collecting, reclass any Over-engineering Blocker to Should fix; it never decides merge or bounce.`,
   // #250 + 26/10 (task receipt): the merge point verifies the merged tree once; a reviewer-side gate run is a duplicate run.
   `Test rerun (run.md → Reviewer step 5) skips the DevKit gate: never rerun post-fix-gate --full. Read QA's impacted gate exit 0 (task receipt) for this exact head SHA; the merge point verifies the merged tree.`,
-  // Merge queue (Pha 2 Q1, fix R5): only the claude-p runner drains the queue. These waves run on the workflow backend, so a
-  // merge-queue label here would leave the card in Review and get it re-reviewed every wave: always the merge gate path.
-  `Merge queue: applies only when the config enables merge_queue (or SB_MERGE_QUEUE=1) AND worker_backend is claude-p, whose runner drains the queue every tick. This wave runs on the workflow backend: the queue is off here whatever the config says. Never label the PR merge-queue; take the merge gate path below.`,
+  // Merge queue (#453 Q-schedule): the workflow backend is drained by the launchd schedule super-board-queue-schedule.sh (the planner
+  // ensures it), and the planner leaves a card whose PR carries the label out of the next wave. The gate refuses a direct call (exit 13)
+  // when the queue is on, so this line and the gate must agree: both read the same rule.
+  `Merge queue: ON when (config merge_queue.enabled or SB_MERGE_QUEUE=1) and SB_MERGE_QUEUE is not 0 and worker_backend is claude-p or workflow (a missing key is workflow); read the config yourself. ON: never call the merge gate (it exits 13). After the review passes post \`approved-head:<sha40>\` on the PR as its own comment, run \`gh pr ready <PR>\`, add the label \`merge-queue\`, comment on the issue \`[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>\`, leave the card in Review and report status=advanced, column=Review, detail starting \`queued PR #<P>\`: the scheduled super-board-merge-queue.sh batches it into one train. OFF: take the merge gate path below.`,
   // Merge policy + migrations live in the gate (run.md → Merge protocol step 5).
   `Merge only via super-board-merge-gate.sh. Exit 7 = merge_policy says a human merges (money/auth/schema/size): Blocked with the 🙋 template quoting its human-gate lines, then \`python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N> --action "<what the person must do>" --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"\` so the card carries the 🙋 Cần bạn comment.`,
   `Exit 2/5 = stale branch or real conflict: rebase pass (loop:rebase). Exit 11 = verify red on a branch NOT behind the base: [builder] thread quoting the gate's verify line, Review → Ready with loop:rebuild-N, never a rebase pass.`,
@@ -152,14 +153,18 @@ const SKILLS_CHECK = (cards, lane) => [
 
 // Lane worktrees come from the DevKit only (agent-workbench#93): a plain `git worktree add` lacked .agents/devkit, the profile link and
 // the git-ignored hooks the settings run (health FAIL; NFH #18: matrix exit 127, 5 cards Blocked) and re-imported a whole Unity Library
-// per worktree (Goods ~9.9 GB). `--lane` takes no WORKTREE_MAX slot; the disk floor still refuses with exit 4.
+// per worktree (Goods ~9.9 GB). The disk floor refuses with exit 4.
 const WORKTREE_STEP = (lane, n) => [
   `Worktree: after \`git fetch origin\`, create it from the repo root ONLY with the DevKit, never plain \`git worktree add\` or EnterWorktree:`,
   lane === 'review'
     ? `\`agent-kit worktree add .claude/worktrees/issue-${n}-review --lane=review --base=origin/<PR branch>\` (detached; refresh with \`git fetch origin && git checkout --detach origin/<PR branch>\`).`
-    : `\`agent-kit worktree add .claude/worktrees/issue-${n}-${lane} issue-${n}-<slug> --lane=${lane} --base=origin/<config.base_branch>\` (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused).`,
+    : lane === 'qa'
+      ? `\`agent-kit worktree add .claude/worktrees/issue-${n}-qa --lane=qa --base=origin/<PR branch>\` (detached; refresh with \`git fetch origin && git checkout --detach origin/<PR branch>\`; push a QA evidence commit with \`git push origin HEAD:<PR branch>\`. The build worktree keeps the branch: do not remove it).`
+      : `\`agent-kit worktree add .claude/worktrees/issue-${n}-${lane} issue-${n}-<slug> --lane=${lane} --base=origin/<config.base_branch>\` (an existing issue branch is checked out as it is, one only origin has from origin/<branch>, and the lane's worktree already at that path is reused).`,
   `It links the DevKit, copies the git-ignored config and hooks and clones a Unity Library copy-on-write. No agent-kit on PATH: \`python3 .agents/devkit/scripts/git/worktree.py add\` with the same arguments.`,
-  `Exit 4 = under the disk floor: status=halted with its message, card and claims unchanged, no retry. Exit 1 naming a worktree that holds the branch: \`agent-kit worktree remove\` that path (no agent-kit on PATH: \`python3 .agents/devkit/scripts/git/worktree.py remove\`; it drops the DevKit set-up a worktree carries, never work; refused with ✖ = it holds work: status=blocked naming it), then add again. Clean up on exit with \`agent-kit worktree remove <path>\` (the branch stays).`,
+  lane === 'qa'
+    ? `Exit 4 = under the disk floor: status=halted with its message, card and claims unchanged, no retry. Clean up the QA worktree on exit with \`agent-kit worktree remove <path>\` (the branch stays; the build worktree stays until after the merge).`
+    : `Exit 4 = under the disk floor: status=halted with its message, card and claims unchanged, no retry. Exit 1 naming a worktree that holds the branch: \`agent-kit worktree remove\` that path (no agent-kit on PATH: \`python3 .agents/devkit/scripts/git/worktree.py remove\`; it drops the DevKit set-up a worktree carries, never work; refused with ✖ = it holds work: status=blocked naming it), then add again. Clean up on exit with \`agent-kit worktree remove <path>\` (the branch stays).`,
 ].join('\n')
 
 const lanePrompt = (lane, card) => [
@@ -178,7 +183,7 @@ const lanePrompt = (lane, card) => [
     : []),
   ``,
   `Report your exit via structured output:`,
-  `- status=advanced  → card moved forward (Building→QA/Review/Done, QA→Review/Done, Review→Done/merged, or Review→Ready when the merge gate printed ac-open: #N — merged with AC still unproven, never close it)`,
+  `- status=advanced  → card moved forward (Building→QA/Review/Done, QA→Review/Done, Review→Done/merged, Review→Review with detail \`queued PR #<P>\` when the PR entered the merge queue, or Review→Ready when the merge gate printed ac-open: #N — merged with AC still unproven, never close it)`,
   `- status=bounced   → card moved backward (QA fail → Ready, Reviewer bounce → Ready/QA)`,
   `- status=blocked or human-gate → you wrote the Block template and moved the card to Blocked`,
   `- status=halted    → required service evidence or verification configuration is unavailable; leave card state unchanged and stop the run`,
@@ -227,9 +232,10 @@ const runLane = async (lane, card, model, history) => {
 // One agent per batch of PREFLIGHT_BATCH cards, so the three gh list calls in
 // super-board-preflight.sh are paid once per batch, not once per card.
 // Outcomes: proceed · hold (agent wrote the Block template, card → Blocked) ·
-// sequence (card → Blocked with `blocked-by:` the overlapping PR's issue, so the
-// wave-start sweep frees it; or proceed with a conflict note when that PR closes
-// no issue) · skipped (pre-flight blind — card stays Ready for the next wave).
+// sequence (#601: thẻ ở lại Ready, được super-board-waiting-on.py mark gắn nhãn
+// `waiting-on:#N`, không bao giờ vào Blocked; sweep gỡ nhãn khi N đóng; mark trả labels=[]
+// (mọi blocker đã đóng) → proceed; hoặc proceed kèm ghi chú xung đột khi PR đó không đóng issue nào) ·
+// skipped (pre-flight mù, hoặc mark lỗi exit 64/69/79 — thẻ ở lại Ready cho wave sau).
 // A card the agent did not answer for is skipped, never built unchecked.
 const PREFLIGHT_SCHEMA = {
   type: 'object',
@@ -240,7 +246,7 @@ const PREFLIGHT_SCHEMA = {
         type: 'object',
         properties: {
           number: { type: 'integer' },
-          verdict: { type: 'string', enum: ['proceed', 'hold', 'sequence', 'skipped', 'halted'] },
+          verdict: { type: 'string', enum: ['proceed', 'hold', 'sequence', 'merge', 'skipped', 'halted'] },
           column: { type: 'string' },
           blockedBy: { type: 'array', items: { type: 'integer' } },
           detail: { type: 'string' },
@@ -260,11 +266,15 @@ const preflightPrompt = (batch) => [
   `Read .claude/skills/super-board/references/run.md → "Builder pre-flight" and follow it EXACTLY. You write no code.`,
   `Other cards in this wave: ${JSON.stringify(input.cards.map(({ number, status, title }) => ({ number, status, title })))}`,
   `Run .claude/bin/super-board-preflight.sh once for the whole batch, then judge its candidates semantically.`,
-  `hold / sequence-behind → post the Block template (block-template.md) and move the card to Blocked yourself.`,
-  `Two Ready cards overlapping each other with no open PR: the lower-numbered one proceeds; sequence only the other, blockedBy [the lower]. Never both.`,
-  `A sequence with nothing to wait on (empty blockedBy) leaves the card in Ready: return column Ready and it builds.`,
+  `hold — in progress (an open PR / card is building it) → never Blocked: handle it exactly like sequence-behind below (mark --on <the number to wait for: the other card's issue, or — when the open PR closes THIS card itself — that PR's own number; never this card's number, mark exits 64 on it>, verdict sequence, column Ready, blockedBy [that number]). Any other hold → post the Block template (block-template.md) and move the card to Blocked yourself.`,
+  `sequence-behind (blockedBy non-empty) → never Blocked: run python3 .claude/bin/super-board-waiting-on.py mark --config ${input.configPath} --issue <N> --on <blockedBy, comma-separated> --why "<overlapping PR and files>" and read the JSON it prints. ` +
+    `It labels only blockers still OPEN. Exit 0 with "labels": [] (every blocker already closed) → verdict proceed, exactly as if blockedBy were empty (no conflict comment). ` +
+    `Exit 0 with labels non-empty → verdict sequence, column Ready, blockedBy = the numbers still open (never empty); the card waits in Ready. ` +
+    `Any non-zero exit (64/69/79 or other) → leave the card untouched, verdict skipped (never Blocked); it is retried next wave and counts as failed for the zero-progress gate. This 79 is the waiting-on helper's own read failure, NOT the run-halt 79 above: never halt the run for it.`,
+  `Two Ready cards overlapping each other with no open PR: fold the higher into the lower with super-board-merge-cards.py (AC copied verbatim, close the higher as not planned). Return verdict merge, column Done, mergeInto the lower number. Never Blocked, never built. If the lower already has an open issue-<N>- PR, do not fold: sequence the higher, blockedBy [the lower], column Ready.`,
+  `A sequence with nothing to wait on leaves the card in Ready: return column Ready and blockedBy [] (always send the array; a missing blockedBy is not built) and it builds.`,
   BOARD_IO(),
-  `Return one verdict per issue: proceed | hold | sequence | skipped (pre-flight blind). Never drop a card silently.`,
+  `Return one verdict per issue: proceed | hold | sequence | merge | skipped (pre-flight blind). Never drop a card silently.`,
 ].join('\n')
 
 // Only cards the Builder will take are pre-flighted; `qa` cards skip Building.
@@ -284,23 +294,29 @@ await Promise.all(batches.map(async (batch) => {
     if (v.verdict === 'halted') halted = true
   }
 }))
-// sequence with nothing to wait on = proceed with a conflict note (the agent posted it).
-// No column and an empty blockedBy is the same case: nothing to wait on never parks a
-// card (2026-10-03: #180/#181 each "sequenced" behind the other, neither built).
+// sequence with nothing to wait on = proceed with a conflict note (the agent posted it):
+// nothing to wait on never parks a card (2026-10-03: #180/#181 each "sequenced" behind
+// the other, neither built). #601: sequence còn blocker mở thì không bao giờ build, kể cả
+// khi column là Ready — thẻ chờ ở Ready dưới nhãn `waiting-on:#N`.
 const preflightGo = (card) => {
   const v = verdicts.get(card.number)
   if (!v) return false
   if (v.verdict === 'proceed') return true
-  return v.verdict === 'sequence' && (v.column === 'Ready' ||
-    (!v.column && Array.isArray(v.blockedBy) && v.blockedBy.length === 0))
+  if (v.verdict === 'merge') return false
+  return v.verdict === 'sequence' && Array.isArray(v.blockedBy) && v.blockedBy.length === 0
 }
 const preflightExit = (card) => {
   const v = verdicts.get(card.number) ||
     { verdict: 'skipped', detail: 'pre-flight returned no verdict — not built unchecked; retried next wave' }
+  // #601: sequence thiếu mảng blockedBy không build cũng không được mark gắn nhãn: báo failed để cổng zero-progress thấy,
+  // không để nó lặp mỗi wave dưới status 'waiting'.
+  const noList = v.verdict === 'sequence' && !Array.isArray(v.blockedBy)
+  const folded = v.verdict === 'merge'
   return {
     lane: 'preflight',
-    status: v.verdict === 'halted' ? 'halted' : v.verdict === 'skipped' ? 'failed' : 'blocked',
-    column: v.column || (['skipped', 'halted'].includes(v.verdict) ? 'Ready' : 'Blocked'),
+    // #601: sequence còn blocker mở → 'waiting' ở Ready. merge → advanced/Done (đã gộp, không build, không Blocked). hold vẫn Blocked.
+    status: v.verdict === 'halted' ? 'halted' : (v.verdict === 'skipped' || noList) ? 'failed' : v.verdict === 'sequence' ? 'waiting' : folded ? 'advanced' : 'blocked',
+    column: folded ? (v.column || 'Done') : v.verdict === 'sequence' ? (v.column || 'Ready') : v.column || (['skipped', 'halted'].includes(v.verdict) ? 'Ready' : 'Blocked'),
     detail: `${v.verdict}: ${v.detail}`,
   }
 }

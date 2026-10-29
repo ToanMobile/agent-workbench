@@ -30,11 +30,13 @@ Exit: 0 xong · 1 một lệnh gh lỗi · 2 sai cú pháp (argparse) · 64 text
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 LABEL = "needs-you"
 LEGACY_LABEL = "human-gated"
@@ -72,7 +74,7 @@ AGENT_DOABLE_RULES = (
             r"(?:dưới|<\s*)400\s+dòng|tách\s+#\d+\s+thành",
             re.I,
         ),
-        "tách thẻ lớn (<400 dòng) hoặc thu gọn phạm vi lát cắt là việc agent phải tự thực hiện",
+        "nhờ người tách thẻ hoặc thu gọn diff theo số dòng là việc agent không đẩy sang người",
     ),
     (
         re.compile(
@@ -93,6 +95,12 @@ GENUINE_HUMAN_RE = re.compile(
     re.I,
 )
 TIMEOUT = 60
+
+
+# #516: bộ đọc [decision] dùng chung; tên file có gạch ngang nên nạp bằng importlib.
+_spec = importlib.util.spec_from_file_location("sb_decision", Path(__file__).with_name("super-board-decision.py"))
+_DEC = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_DEC)
 
 PROJECT_QUERY = """query($owner:String!,$number:Int!){
   repositoryOwner(login:$owner){
@@ -145,11 +153,18 @@ def one_line(text, what):
         raise ValueError(f"{what} must not contain `Reason tag:`, `blocked-by:`, `approval-request:` or `<!--`")
     if len(text) > 500:
         raise ValueError(f"{what} is longer than 500 characters")
-    if what == "--action" and not GENUINE_HUMAN_RE.search(text):
+    # #529: the denylist screens --action and --next. A genuine human keyword excuses only its own clause: split on
+    # `;` `·` `,` `.` and the words "và"/"rồi"/"and"/"then", so "đăng nhập firebase và chạy lại gate" still trips on the gate clause.
+    # Split only when a human keyword is present (else the whole text is one clause: the rules' lookaheads and the
+    # `.claude/worktrees/` / `x.py` patterns need it intact). A `.` separates only before a space or the end.
+    clauses = re.split(r"[;·,]|\.(?=\s|$)|\b(?:và|rồi|and|then)\b", text, flags=re.I) if GENUINE_HUMAN_RE.search(text) else [text]
+    for clause in clauses:
+        if GENUINE_HUMAN_RE.search(clause):
+            continue
         for pat, why in AGENT_DOABLE_RULES:
-            if pat.search(text):
+            if pat.search(clause):
                 raise ValueError(
-                    f"--action mô tả việc agent phải tự xử lý ({why}); "
+                    f"{what} mô tả việc agent phải tự xử lý ({why}); "
                     "hãy tự thực thi, tự chốt (Decide, don't ask / AUTO-APPROVE) hoặc trả thẻ về Ready/QA thay vì gắn needs-you"
                 )
     return text
@@ -197,9 +212,18 @@ def read_issue(repo, issue):
 SECTION_LINE = re.compile(r"(^##[ \t]+Cần người[ \t]*\r?\n(?:(?!##[ \t])[^\r\n]*\r?\n)*?)🙋 Cần bạn:", re.M)
 
 
-def mark(repo, issue, action, nxt, dry):
+def mark(repo, issue, action, nxt, dry, config=None):
     done = [f"label {ensure_label(repo, dry)}"]
     labels, comments, _ = read_issue(repo, issue)
+    # #516: một [decision] hợp lệ mới hơn comment needs-you gần nhất đã xử lý blocker này, trừ DANH SÁCH DỪNG của chủ.
+    policy = _DEC.load_policy(config or os.environ.get("SB_CONFIG"))
+    at = _DEC.newest_valid_index(comments, policy)
+    # Mốc = blocker mới nhất: comment needs-you, hoặc Block 🙋 / dòng `blocked-by:` mà lane vừa đăng trước khi gọi mark.
+    last_mark = max((i for i, c in enumerate(comments)
+                     if not _DEC.is_valid(c, policy) and ((c.get("body") or "").startswith(MARKER)
+                     or re.search(r"Reason tag:[^\n]*🙋|(^|\n)[ \t]*blocked-by:", c.get("body") or "", re.I))), default=-1)
+    if at > last_mark and not _DEC.is_stop(action):
+        return done + ["skipped: [decision] hợp lệ mới hơn đã xử lý blocker, không gắn needs-you"]
     if LABEL not in labels:
         if not dry:
             gh("api", f"repos/{repo}/issues/{issue}/labels", "-f", f"labels[]={LABEL}")
@@ -306,6 +330,7 @@ def main():
         if name == "mark":
             p.add_argument("--action", required=True, help="exactly what the person must do")
             p.add_argument("--next", default=DEFAULT_NEXT, help="what to do once it is done")
+            p.add_argument("--config", help="super-board config (decision_policy)")
         p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("board")
     p.add_argument("--owner", required=True)
@@ -324,7 +349,7 @@ def main():
         return 64
     try:
         if args.cmd == "mark":
-            done, where = mark(args.repo, args.issue, action, nxt, args.dry_run), f"{args.repo}#{args.issue}"
+            done, where = mark(args.repo, args.issue, action, nxt, args.dry_run, args.config), f"{args.repo}#{args.issue}"
         elif args.cmd == "unmark":
             done, where = unmark(args.repo, args.issue, args.dry_run), f"{args.repo}#{args.issue}"
         elif args.cmd == "label":

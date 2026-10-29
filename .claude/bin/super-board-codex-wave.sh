@@ -249,7 +249,7 @@ def run_card(card):
             try:
                 result = json.loads(stdout)
                 if (not isinstance(result, dict) or result.get('status') not in
-                    ['advanced', 'bounced', 'blocked', 'human-gate', 'failed', 'halted']
+                    ['advanced', 'bounced', 'blocked', 'human-gate', 'failed', 'halted', 'waiting']
                     or not all(isinstance(result.get(key), str) for key in ['column', 'detail'])):
                     raise ValueError('invalid lane result')
                 if process.returncode and result['status'] != 'halted':
