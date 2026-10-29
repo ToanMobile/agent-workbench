@@ -7109,6 +7109,7 @@ def main():
     # before this check it needed no lock at all. Past that short wait it is READ-ONLY (read_only below): it judges from a stamp check and writes nothing.
     nothing_to_run = not any(t.get("command") for t in to_run)
     # #648: fp, local_sha và danh sách suite lấy trước khoá và trước suite. Bản ghi trước khớp thì trả 0.
+    # --full không trả ở đây: dòng "reusing the" đã in, nhưng biên nhận và runs.jsonl vẫn phải ghi REUSED.
     # ponytail: bản ghi tin exit 0 của đúng fp + local_sha + mtime; cờ nới (--allow-no-tests, …) đứng ngoài file — nâng khi một cờ nới phải thành một fp khác.
     rerun_fp = _run_log_fp(budget_fp or tested_fp or "")
     if run_tests and not rerun_fp:
@@ -7121,6 +7122,7 @@ def main():
                           for t in regression_tests if t.get("command"))
     if (run_tests and rerun_path and rerun_fp and not getattr(args, "force", False)
             and not getattr(args, "force_full", False)
+            and not getattr(args, "full", False)
             and os.environ.get("POSTFIX_GATE_FORCE_FULL") != "1"
             and os.environ.get("POSTFIX_GATE_FULL") != "1"
             and not _rerun_suite_must_run(regression_tests, MATRIX_TESTS)
@@ -8342,7 +8344,9 @@ def main():
             try:
                 write_rerun_skip(rerun_path, rerun_fp, rerun_mode, ran_ids, rerun_local_sha)
             except OSError as e:
-                log_warn(f"rerun_skip: {e}")
+                # Tên file tạm của mkstemp đổi mỗi lượt: không đưa vào log, nếu không hai lượt giống nhau lệch stdout.
+                log_warn(tr(f"rerun_skip: không ghi được ({e.strerror or e.errno})",
+                            f"rerun_skip: not written ({e.strerror or e.errno})"))
         elif rerun_path and exit_code != 0 and any(id(t) in really_ran for t in regression_tests):
             with contextlib.suppress(OSError):
                 os.remove(rerun_path)
