@@ -25,6 +25,7 @@ import { collectTestEvidence, evidenceLine } from './evidence.js';
 import { replayOracle, oracleLine } from './oracle.js';
 import { kiemBaoCao, dongTomTat } from './cite-check.js';
 import { soiThayDoi } from './lint-diff.js';
+import { mergeHeadVerdict } from './merge-head.js';
 import { gitSnapshot, changedFilesOf, baseCommitOf, gateCtx, dongBangCay, goWorktree } from './worktree.js';
 import { hashOf, deltaKeHoach, tinhTrangPhanBien, projectIdFor } from './plan-review.js';
 import { cacTaskDangChayKhac, canhBaoTruocKhiGiao } from './dispatch-guard.js';
@@ -812,6 +813,7 @@ export const TOOLS = [
       const notesHead = notesHeads[0];
       let auditedHead;
       let selfAudit = '';
+      let mergeHeadNote = '';
       if (args.auditedHead !== undefined) {
         if (args.kind !== 'audit' || args.verdict !== 'pass') fail('auditedHead chi dung cho kind=audit verdict=pass.');
         if (typeof args.auditedHead !== 'string' || !/^[0-9a-f]{40}$/.test(args.auditedHead)) fail('auditedHead phai la sha 40 ky tu hex thuong (commit da audit).');
@@ -832,7 +834,12 @@ export const TOOLS = [
         if (fs.statSync(repFile).mtimeMs < lastAudit) fail('audit-agent.json cu hon lan giao audit gan nhat — chua phai bao cao cua lan audit nay.');
         if (String(rep.verdict || '').toLowerCase() !== 'pass') fail(`audit-agent.json ghi verdict "${rep.verdict ?? '(thieu)'}", khong phai pass — khong ghi auditedHead.`);
         const repHead = typeof rep.auditedHead === 'string' ? rep.auditedHead : AUDITED_HEAD.exec(String(rep.notes || ''))?.[1];
-        if (repHead !== auditedHead) fail(`audit-agent.json ghi auditedHead ${repHead || '(thieu)'}, khac ${auditedHead} — auditor chua audit cay nay.`);
+        if (repHead !== auditedHead) {
+          // #672: head moi la merge commit cua origin/main vao head da audit, diff PR khong doi -> van la cay da audit.
+          const mh = repHead ? mergeHeadVerdict(cfg.projectRoot, repHead, auditedHead) : null;
+          if (!mh?.ok) fail(`audit-agent.json ghi auditedHead ${repHead || '(thieu)'}, khac ${auditedHead} — auditor chua audit cay nay.${mh ? ` ${mh.reason}` : ''}`);
+          mergeHeadNote = mh.reason;
+        }
         // Builder: agent goi PM (DEVKIT_AGENT_ID, mac dinh claude); task da giao implement thi Antigravity cung la builder.
         const reviewer = typeof rep.reviewer === 'string' ? rep.reviewer.trim().toLowerCase() : '';
         const builders = [process.env.DEVKIT_AGENT_ID || 'claude', ...(task.implementDispatchedAt ? ['antigravity'] : [])]
@@ -847,7 +854,8 @@ export const TOOLS = [
         // ponytail: bao cao nam trong thu muc project, agent cung user OS ghi tay duoc, va builder la chuoi tu khai (task audit-only rieng
         // cho PR Antigravity da build van qua) — cung gioi han da chap nhan o push_gate.approved (#605); sua that o #632.
       }
-      const notesOut = selfAudit ? notesIn.replace(new RegExp(AUDITED_HEAD.source, 'g'), 'auditedHead-bo-qua') : notesIn;
+      const notesBase = selfAudit ? notesIn.replace(new RegExp(AUDITED_HEAD.source, 'g'), 'auditedHead-bo-qua') : notesIn;
+      const notesOut = mergeHeadNote && auditedHead ? `${notesBase}\n${mergeHeadNote}` : notesBase;
       if (args.kind === 'plan' && args.verdict === 'pass') {
         const pp = contractPaths(cfg, task);
         if (!fs.existsSync(pp.plan)) fail('Chua co plan.md — PM viet ke hoach bang pm_plan truoc.');
