@@ -51,6 +51,23 @@ PY
 out="$(cd "$TMP/wt" && bash "$SCRIPT" "$HEAD2" 2>/dev/null)"; rc=$?
 if [ "$rc" = 0 ] && [ -n "$out" ]; then ok "D: real scoped receipt (tree-keyed) found by head"; else fail "D: rc=$rc out=$out"; fi
 
+# E: lượt gate tự leo --full ghi tree_receipts (không scoped_receipts): cũng tìm được theo head
+echo more >> "$TMP/repo/a.txt"
+$G -c user.name=t -c user.email=t@t commit -q -am three
+HEAD3="$($G rev-parse HEAD)"
+python3 -I - "$TMP/repo" "$ROOT/.agents/devkit/bin/post-fix-gate.py" <<'PY' >/dev/null 2>&1
+import importlib.util, sys
+repo, gate = sys.argv[1:3]
+sys.path.insert(0, gate.rsplit("/", 1)[0])
+spec = importlib.util.spec_from_file_location("pfg", gate)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+import tree_fp
+m.write_full_pass_receipt(repo, 0, tests=[], tested_fp=tree_fp.tree_fingerprint(repo))
+PY
+out="$(cd "$TMP/wt" && bash "$SCRIPT" "$HEAD3" 2>/dev/null)"; rc=$?
+if [ "$rc" = 0 ] && [ -n "$out" ]; then ok "E: real full receipt (tree_receipts) found by head"; else fail "E: rc=$rc out=$out"; fi
+
 (cd "$TMP/wt" && bash "$SCRIPT" "not-a-sha" >/dev/null 2>&1); rc=$?
 if [ "$rc" = 64 ]; then ok "C: bad sha -> exit 64"; else fail "C: rc=$rc"; fi
 
