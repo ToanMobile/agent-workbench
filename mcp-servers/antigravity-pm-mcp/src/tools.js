@@ -786,6 +786,7 @@ export const TOOLS = [
         verdict: { type: 'string', enum: ['pass', 'fail'] },
         findings: { type: 'array', items: { type: 'string' }, description: 'Moi phat hien: file:dong + sai gi' },
         notes: { type: 'string' },
+        auditedHead: { type: 'string', description: 'kind=audit verdict=pass: sha40 cua commit (PR head) da audit; gate chi duyet test o dung cay nay' },
       },
       required: ['taskId', 'kind', 'verdict'],
     },
@@ -793,8 +794,21 @@ export const TOOLS = [
       const { cfg, task } = withTask(args);
       validate(this.inputSchema, args);
       // Ket luan audit/review chi co nghia khi da co viec trien khai de soi (khong nhay coc giai doan).
-      if (['audit', 'review'].includes(args.kind) && !task.implementDispatchedAt) {
+      // Audit T0066 vong 2: task chi audit (audit cheo mot PR co san) co lan giao audit (dispatches kind=audit) la du de ghi audit;
+      // review van can da giao trien khai.
+      const coAudit = (task.dispatches || []).some((d) => d.kind === 'audit');
+      if (['audit', 'review'].includes(args.kind) && !task.implementDispatchedAt && !(args.kind === 'audit' && coAudit)) {
         fail(`Chua giao trien khai (pm_dispatch kind=implement) — chua co gi de ${args.kind}.`);
+      }
+      // auditedHead: sha40 cua cay da audit (push_gate.audited_head doc verdicts.audit.auditedHead). Thieu thi lay `auditedHead: <sha40>` trong notes.
+      let auditedHead;
+      if (args.auditedHead !== undefined) {
+        if (args.kind !== 'audit' || args.verdict !== 'pass') fail('auditedHead chi dung cho kind=audit verdict=pass.');
+        if (typeof args.auditedHead !== 'string' || !/^[0-9a-f]{40}$/.test(args.auditedHead)) fail('auditedHead phai la sha 40 ky tu hex thuong (commit da audit).');
+        auditedHead = args.auditedHead;
+      } else if (args.kind === 'audit' && args.verdict === 'pass') {
+        const m = /(?<![0-9A-Za-z])auditedHead:\s*([0-9a-f]{40})(?![0-9A-Za-z])/.exec(String(args.notes || ''));
+        if (m) auditedHead = m[1];
       }
       if (args.kind === 'plan' && args.verdict === 'pass') {
         const pp = contractPaths(cfg, task);
@@ -844,8 +858,11 @@ export const TOOLS = [
         }
       }
       recordVerdict(cfg, task, {
-        kind: args.kind, verdict: args.verdict, findings: args.findings || [], notes: args.notes || '',
+        kind: args.kind, verdict: args.verdict, findings: args.findings || [], notes: args.notes || '', ...(auditedHead && { auditedHead }),
       });
+      if (args.kind === 'audit' && args.verdict === 'pass') {
+        L.push(auditedHead ? `auditedHead = ${auditedHead}.` : 'CANH BAO: audit pass khong co auditedHead — gate DevKit se khong duyet test sua dua vao audit nay.');
+      }
       L.push(`Da ghi ket luan ${args.kind} = ${args.verdict} cho ${task.id} (vong ${task.round}).`);
       if (args.verdict === 'pass') {
         const next = { plan: 'IMPLEMENT', audit: 'REVIEW', review: 'TEST' }[args.kind];
