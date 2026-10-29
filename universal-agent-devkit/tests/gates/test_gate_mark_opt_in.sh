@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Regression test (#575, 29/10): a hand-run `post-fix-gate.py --full` (or a repro run) wrote the verified-trees receipt under the merge gate's
-# key, so the merge gate later skipped its verify (0 commands run) on a tree it never checked. Only a deliberate flow
-# (SB_MARK_VERIFIED_TREE=1, set by the merge gate / QA lane) may write it; a plain --full run writes nothing.
+# Test hồi quy (#575, 29/10): `post-fix-gate.py --full` chạy tay (hay lượt tái hiện) từng ghi biên nhận verified-trees cùng khoá với merge gate,
+# nên merge gate bỏ qua verify (0 lệnh chạy) trên cây chưa ai kiểm cho nó. Nay chỉ caller chủ đích đặt SB_MARK_VERIFIED_TREE=1 mới ghi;
+# --full xanh không cờ thì không ghi gì.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
+unset SB_MARK_VERIFIED_TREE   # lượt không cờ phải sạch dù người gọi đã export nó
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ROOT="$(cd "$DEVKIT_DIR/.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"

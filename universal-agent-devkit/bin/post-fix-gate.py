@@ -1820,8 +1820,8 @@ def mark_merge_gate_receipt(project_dir, diff_ref, tested_tree="", relaxing=()):
     """#319: a --full PASS against origin/<base> on a clean tree that holds it is also the merge gate's verify of this tree: the board's
     super-board-verify-cmd.sh --mark writes the tree receipt under the key the merge gate reads (one key function, not copied here), so a PR runs
     --full once instead of twice. It refuses a dirty tree or a base not in the tree itself; no board config or script = the old behaviour.
-    #575: since then --mark is only for a deliberate flow (the merge gate / the QA lane, which set SB_MARK_VERIFIED_TREE=1). A hand-run --full or a
-    repro run writes no receipt: the merge gate would otherwise skip its own verify on a tree nobody verified for it."""
+    #575: --mark của #319 nay chỉ dùng trong luồng chủ đích: caller đặt SB_MARK_VERIFIED_TREE=1 (merge gate và --record tự ghi trực tiếp, không qua đây).
+    --full chạy tay hay lượt tái hiện không ghi biên nhận, nếu không merge gate bỏ qua verify trên cây chưa ai verify cho nó."""
     if os.environ.get("SB_MARK_VERIFIED_TREE") != "1":
         return
     # OCR 24/10: not a receipt for what this run did not prove: no tree taken before the run, or a run that relaxed a check (`relaxing`: the
@@ -5176,6 +5176,7 @@ def suite_env():
             # #484: tự duyệt test sửa là quyết định verdict của gate CHA (do nơi gọi đặt trong env); lọt xuống suite thì gate lồng
             # (tests/gates/test_postfix_gate.sh) cũng tự duyệt, các ca "existing test edited … -> UNVERIFIED" ra exit 0 và REG-DK-GATE-01 đỏ
             "DEVKIT_AUTO_APPROVE_TESTS",
+            "SB_MARK_VERIFIED_TREE",   # #575: cờ ghi biên nhận verified-trees là của lượt gate CHA; lọt xuống suite thì gate lồng ghi biên nhận ngoài ý muốn
             "DEVKIT_GATE_MERGE_CHECK",   # the merge gate of `worktree finish` (see the receipt write below), never a gate a suite starts
             "TEST_RUN_LOCK_BUSY_FAST",   # B5: the Stop hook's short BUSY wait is for ITS gate run; a gate a suite starts waits as the CLI does
             # T0052: móc test của bin/capacity.py (giả số lõi / tải) chỉ cho lần gọi này; DEVKIT_CAPACITY (nút người dùng) vẫn truyền xuống
