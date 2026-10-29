@@ -14,19 +14,18 @@ TMP="$(mktemp -d)"
 REAL_DK_OLD=""; SLASH_TMP_BOX=""; DK_PAR=""
 trap 'rm -rf "$TMP" ${REAL_DK_OLD:+"$REAL_DK_OLD"} ${DK_PAR:+"$DK_PAR"} ${SLASH_TMP_BOX:+"$SLASH_TMP_BOX"}' EXIT INT TERM HUP
 export DEVKIT_TEST_TMP_ROOT="$TMP/no-test-tmp"   # --prune also sweeps test temp dirs: never the real TMPDIR here
-# Host state (#573): live_sessions() reads <CLAUDE_CONFIG_DIR or ~/.claude>/sessions/*.json. Pin CLAUDE_CONFIG_DIR to a test-owned dir (no
-# sessions/ inside) for EVERY call, so claude_home()/sessions is still the path under test; the cases that build their own SESS override
-# DEVKIT_CLAUDE_SESSIONS per call. Every dir the sweep scans below is test-owned (never the real /private/tmp), so the lsof wrapper only
-# narrows the one machine-wide snapshot to those dirs; it keeps lsof's own exit status (an rc >= 2 must reach the product code).
-mkdir -p "$TMP/claude-home"
-export CLAUDE_CONFIG_DIR="$TMP/claude-home"
-# lsof output limited to this test: its temp tree (basename: lsof may print /private/var for /var) and its /tmp/dk-sc* boxes.
+# Host state (#573): live_sessions() reads <CLAUDE_CONFIG_DIR or ~/.claude>/sessions/*.json. Pin CLAUDE_CONFIG_DIR (and HOME, git config) to
+# test-owned places for EVERY call; claude_home()/sessions stays the path under test, the other live-session cases set DEVKIT_CLAUDE_SESSIONS per call.
+unset DEVKIT_CLAUDE_SESSIONS DEVKIT_DK_TMP_ROOT DEVKIT_CLEAN_PROJECT DEVKIT_SCRATCH_CLEANUP   # runner/host state: each call below sets what it needs
+mkdir -p "$TMP/home" "$TMP/claude-home/sessions"
+export CLAUDE_CONFIG_DIR="$TMP/claude-home" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null
+# lsof of the test's own processes only (this shell and its direct children: the HOLD cwd holder, the socket server): never a
+# machine-wide snapshot, whose size and time depend on the host. Its exit status is lsof's own.
 cat > "$TMP/lsof-own" <<LSOF
 #!/bin/sh
-LSOF_REAL="\$(command -v lsof || echo /usr/sbin/lsof)"
-OUT="\$("\$LSOF_REAL" "\$@")"; rc=\$?
-printf '%s\n' "\$OUT" | grep -E '^p|^n.*(/$(basename "$TMP")/|/dk-sc)'
-exit "\$rc"
+P=$$
+for c in \$(pgrep -P $$ 2>/dev/null); do P="\$P,\$c"; done
+exec "\$(command -v lsof || echo /usr/sbin/lsof)" -nPw -p "\$P" -Fn
 LSOF
 chmod +x "$TMP/lsof-own"
 export DEVKIT_LSOF="$TMP/lsof-own"
@@ -116,7 +115,7 @@ rc=$?
 # pid does not. Also kept: a dir whose task output is fresh, and a dir that cannot be read (never remove what cannot be judged).
 H=88888888-8888-4888-8888-888888888888; I=99999999-9999-4999-8999-999999999999; J=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
 K=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb; L=cccccccc-cccc-4ccc-8ccc-cccccccccccc
-SESS="$TMP/sessions"; mkdir -p "$SESS"; rm -f "$SESS"/*.json
+SESS="$TMP/claude-home/sessions"; mkdir -p "$SESS"   # the real claude_home()/sessions path: the first live-session case passes no DEVKIT_CLAUDE_SESSIONS; rm -f "$SESS"/*.json
 setup; mk "$H" 200; mk "$I" 200; mk "$J" 200; mk "$K" 200
 python3 -c 'import json,sys; json.dump({"pid": int(sys.argv[2]), "sessionId": sys.argv[3]}, open(sys.argv[1] + "/%s.json" % sys.argv[2], "w"))' "$SESS" "$$" "$H"
 python3 -c 'import json,sys; json.dump({"pid": 999999, "sessionId": sys.argv[2]}, open(sys.argv[1] + "/999999.json", "w"))' "$SESS" "$I"
@@ -126,7 +125,7 @@ python3 -c 'import os,sys,time; t=time.time()-200*3600; [os.utime(p,(t,t)) for p
 mkdir -p "$ROOT/-proj/$K/tasks"; age "$ROOT/-proj/$K" 200; chmod 000 "$ROOT/-proj/$K/tasks"   # a level it cannot read
 M=dddddddd-dddd-4ddd-8ddd-dddddddddddd; mk "$M" 200; echo x > "$ROOT/-proj/$M/gone"; age "$ROOT/-proj/$M" 200
 rm -f "$ROOT/-proj/$M/gone"                                                   # an entry removed just now: the dir itself is fresh
-DEVKIT_CLAUDE_SESSIONS="$SESS" run --prune --keep "$F"; rc=$?
+run --prune --keep "$F"; rc=$?
 chmod 755 "$ROOT/-proj/$K/tasks"
 [ -f "$ROOT/-proj/$M/scratchpad/big" ] && ok "  … a dir whose own mtime is fresh (an entry just removed) is kept" || fail "prune removed a dir with a fresh own mtime"
 [ "$rc" = 0 ] && [ -d "$ROOT/-proj/$H" ] && ok "prune: a 200 h old dir of a session whose Claude process is alive is kept" || fail "prune removed a live process's session dir (rc=$rc)"
@@ -304,7 +303,7 @@ PY
   SOCK_PID=$!
   for _ in $(seq 1 50); do [ -f "$TMP/sock.ready" ] && break; python3 -c 'import time; time.sleep(0.05)'; done
   touch -t 202001010000 "$REAL_DK_OLD" "$REAL_DK_SOCK/s.sock" "$REAL_DK_SOCK"
-  TMPDIR="$TR" env -u DEVKIT_TEST_TMP_ROOT DEVKIT_DK_TMP_ROOT="$DK_PAR" DEVKIT_SCRATCH_ROOT="$ROOT" DEVKIT_CLAUDE_PROJECTS="$PROJ" python3 -I "$SC" --sweep-tmp >/dev/null 2>&1
+  TMPDIR="$TR" env -u DEVKIT_TEST_TMP_ROOT DEVKIT_DK_TMP_ROOT="$(cd "$DK_PAR" && pwd -P)" DEVKIT_SCRATCH_ROOT="$ROOT" DEVKIT_CLAUDE_PROJECTS="$PROJ" python3 -I "$SC" --sweep-tmp >/dev/null 2>&1
   kill "$SOCK_PID" 2>/dev/null; wait "$SOCK_PID" 2>/dev/null
   if [ ! -e "$REAL_DK_OLD" ] && [ -d "$REAL_DK_SOCK" ]; then
     ok "sweep_test_tmp removes stale /private/tmp/dk-* while keeping /tmp/dk-* held only by an AF_UNIX socket"
