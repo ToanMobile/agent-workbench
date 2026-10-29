@@ -100,6 +100,9 @@ Prompt đã gửi luôn được lưu vào `logs/prompt-*.md`; tool chỉ trả 
 | `verdict` | **có** | `pass` \| `fail` |
 | `findings` | không | Mỗi phát hiện: `file:dòng` + sai gì |
 | `notes` | không | |
+| `auditedHead` | không | Chỉ `kind=audit verdict=pass`: sha40 (hex thường) của commit đã audit, ghi vào `verdicts.audit.auditedHead`. Thiếu thì lấy `auditedHead: <sha40>` trong `notes`. Sai khuôn → từ chối |
+
+`audit` cần đã giao triển khai, hoặc task chỉ audit có lần `pm_dispatch kind=audit`; `review` luôn cần đã giao triển khai.
 
 `pass` thì tự chuyển giai đoạn (`audit` → `REVIEW`, `review` → `TEST`). Kết luận được đóng dấu **vòng làm hiện tại** — `pm_rework` sẽ vô hiệu hoá nó.
 
