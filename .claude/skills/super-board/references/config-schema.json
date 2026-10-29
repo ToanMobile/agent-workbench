@@ -311,6 +311,11 @@
   // hit their own preflight and park.
   "max_workers": 0,
 
+  // Optional emergency brake (#530). Hold every lane's spawn while load1 is above
+  // this integer. Absent: busy_load from capacity.py (3 × cores). DEVKIT_SPAWN_LOAD
+  // overrides this for one process. Below the threshold, only max_workers applies.
+  "spawn_load_max": 36,
+
   // Max consecutive failures in the same lane on the same root-cause hash
   // before the card auto-moves to Blocked. Default `2`. Root-cause hash
   // defined in §7 Halt gates.
