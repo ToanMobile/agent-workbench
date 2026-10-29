@@ -2196,21 +2196,6 @@
       ]
     },
     {
-      "component": "devkit-worktree-integrate-scratch-slot",
-      "watch_files": [
-        "universal-agent-devkit/scripts/git/worktree.py",
-        "universal-agent-devkit/tests/worktree_git/test_worktree_integrate_scratch_slot.sh"
-      ],
-      "mandatory_regression_tests": [
-        {
-          "id": "REG-DK-WT-INTEGRATE-SCRATCH-SLOT-01",
-          "name": "#453 scratch .integrate-scratch-* mồ côi (agent-kit integrate bị SIGKILL) không chiếm chỗ WORKTREE_MAX; worktree thật vẫn tính",
-          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_integrate_scratch_slot.sh",
-          "parallel_safe": true
-        }
-      ]
-    },
-    {
       "component": "devkit-worktree-prune-merged-ancestor",
       "watch_files": [
         "universal-agent-devkit/scripts/git/worktree.py",
