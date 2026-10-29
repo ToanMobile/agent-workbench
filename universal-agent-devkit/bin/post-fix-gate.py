@@ -7671,15 +7671,24 @@ def main():
         reds = [x for x in regression_tests if x.get("status") in ("FAIL", "TIMEOUT")]
         return bool(reds) and all(x.get("stale_rerun") or x.get("keyed_full") for x in reds)
 
+    def _stop_after_red():
+        """Lượt Stop vẫn chạy suite sau FAIL. #647 chỉ dừng lượt --full / --tree / CLI không ngân sách.
+
+        A7a và B5 control (test_gate_stop_run_record.sh): suite đầu FAIL thì suite sau vẫn phải chạy.
+        _stop_like là --session hoặc GATE_TOTAL_BUDGET_S > 0. force_reason (--full, --tree, CI) giữ fail-fast.
+        """
+        return _stop_like and not force_reason
+
     def _keep_after_red(suite):
-        return _cover_failed_still_runs(suite) or _runner_after_soft_red(suite)
+        return _cover_failed_still_runs(suite) or _runner_after_soft_red(suite) or _stop_after_red()
 
     for idx, t in enumerate(to_run):
         if group and not may_join(t):
             drain()
         # #647: mặc định dừng khi một suite đã FAIL hoặc TIMEOUT. Nhóm đang chạy được drain() xong.
         # Suite NOT_RUN phía sau thành UNTESTED — covered_by và skip-compile không kịp biến chúng thành PASS.
-        # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), và run_impacted.sh sau STALE / cached-full đỏ.
+        # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), run_impacted.sh sau STALE / cached-full đỏ,
+        # và lượt Stop (ngân sách hoặc --session, không --full) vẫn chạy hết suite đã chọn.
         if (run_tests and not getattr(args, "no_fail_fast", False)
                 and any(x.get("status") in ("FAIL", "TIMEOUT") for x in regression_tests)
                 and not _keep_after_red(t)):
