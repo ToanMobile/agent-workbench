@@ -146,6 +146,11 @@ test('AH7 #629: notes lech tham so auditedHead, va Antigravity vua build vua aud
     // nhieu dong `auditedHead:`: dong thu hai lech tham so cung bi tu choi (gate co the doc dong khac dong dau)
     await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', auditedHead: SHA,
       notes: `ok\nauditedHead: ${SHA}\nauditedHead: ${'e'.repeat(40)}` }), /notes/);
+    // notes bi cat 8000 ky tu khi luu (recordVerdict): sha ket thuc dung ky tu 8000 roi '0' — JS tren notes day du khong thay (lookahead),
+    // gate tren ban da cat lai thay. pm_verdict phai kiem dung ban se luu: khong co bao cao cua head do thi tu choi.
+    const cut = `auditedHead: ${'b'.repeat(40)}`;
+    await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass',
+      notes: `${'x'.repeat(8000 - cut.length - 1)} ${cut}0 tiep` }), /audit-agent\.json ghi auditedHead/);
     // khoang trang ngoai [ \t\n\r\f\v] (NBSP): ca hai ben deu khong coi la auditedHead, khong lech
     await assert.rejects(verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass',
       notes: `ok\nauditedHead: ${SHA}\nauditedHead: ${'f'.repeat(40)}` }), /audit-agent\.json ghi auditedHead/);

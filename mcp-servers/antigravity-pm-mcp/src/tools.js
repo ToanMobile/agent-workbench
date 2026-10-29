@@ -804,7 +804,9 @@ export const TOOLS = [
       // Khoang trang viet tuong minh [ \t\n\r\f\v], cung chuoi voi universal-agent-devkit/bin/push_gate.py AUDITED_HEAD; do lech
       // cua \s Python/JS: universal-agent-devkit/tests/gates/test_audited_head_ascii_space.sh.
       const AUDITED_HEAD = /(?<![0-9A-Za-z])auditedHead:[ \t\n\r\f\v]*([0-9a-f]{40})(?![0-9A-Za-z])/;
-      const notesHeads = [...String(args.notes || '').matchAll(new RegExp(AUDITED_HEAD.source, 'g'))].map((x) => x[1]);
+      // Kiem dung ban notes se luu (recordVerdict cat 8000 ky tu): sha sat cho cat thi ban day du khong khop nhung ban da cat lai khop.
+      const notesIn = String(args.notes || '').slice(0, 8000);
+      const notesHeads = [...notesIn.matchAll(new RegExp(AUDITED_HEAD.source, 'g'))].map((x) => x[1]);
       // #629: nhieu dong `auditedHead:` khac nhau thi gate doc dong nao cung la doan — tu choi.
       if (new Set(notesHeads).size > 1) fail(`notes ghi nhieu auditedHead khac nhau (${[...new Set(notesHeads)].join(', ')}) — chi ghi mot head da audit.`);
       const notesHead = notesHeads[0];
@@ -845,7 +847,7 @@ export const TOOLS = [
         // ponytail: bao cao nam trong thu muc project, agent cung user OS ghi tay duoc, va builder la chuoi tu khai (task audit-only rieng
         // cho PR Antigravity da build van qua) — cung gioi han da chap nhan o push_gate.approved (#605); sua that o #632.
       }
-      const notesOut = selfAudit ? String(args.notes || '').replace(new RegExp(AUDITED_HEAD.source, 'g'), 'auditedHead-bo-qua') : args.notes;
+      const notesOut = selfAudit ? notesIn.replace(new RegExp(AUDITED_HEAD.source, 'g'), 'auditedHead-bo-qua') : notesIn;
       if (args.kind === 'plan' && args.verdict === 'pass') {
         const pp = contractPaths(cfg, task);
         if (!fs.existsSync(pp.plan)) fail('Chua co plan.md — PM viet ke hoach bang pm_plan truoc.');
