@@ -711,6 +711,17 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
         return {}
 
 
+def _main_checkout_root(root) -> Path:
+    """The main checkout of the repository `root` belongs to (the parent of its `.git` common dir); `root` itself when it is
+    the main checkout or git cannot say. #628 AC2."""
+    try:
+        common = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return Path(root)
+    return Path(os.path.realpath(str(Path(common).parent))) if common and Path(common).name == ".git" else Path(root)
+
+
 def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> tuple:
     """(still_blocking, approved): an edited existing test approved by the user's answer or by a CROSS-REVIEW (#605).
     Cross-review: .claude/audit-gate/approved_tests.json = {"approvals": [{path, sha256, reviewer, author, task_id, reason}]},
@@ -879,14 +890,17 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     # ponytail: duyệt được nhớ theo (đường dẫn, nội dung) trong phạm vi transcript còn quét được, không gắn với blob HEAD gốc; gắn base blob nếu việc yếu hoá lại test sau khi revert thành vấn đề
     hash_file = root / ".claude" / "audit-gate" / "approved_hashes.json"
     saved_hashes = {}
-    if hash_file.is_file():
-        try:
-            with open(hash_file, "r", encoding="utf-8") as hf:
-                saved_hashes = json.load(hf)
-                if not isinstance(saved_hashes, dict):
-                    saved_hashes = {}
-        except Exception:
-            saved_hashes = {}
+    # #628 AC2: .claude/audit-gate/ is git-ignored, so a fresh linked worktree starts without the hashes of the answer the user
+    # gave in the main checkout. The hash binds the answer to the file's content (sha256), never to mtime: read the main checkout's too.
+    for hf_path in (hash_file, _main_checkout_root(root) / ".claude" / "audit-gate" / "approved_hashes.json"):
+        if hf_path.is_file():
+            try:
+                with open(hf_path, "r", encoding="utf-8") as hf:
+                    loaded = json.load(hf)
+                if isinstance(loaded, dict):
+                    saved_hashes = {**loaded, **saved_hashes}
+            except Exception:
+                pass
 
     new_hashes = saved_hashes.copy()
     
