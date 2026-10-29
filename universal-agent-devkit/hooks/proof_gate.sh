@@ -22,7 +22,8 @@
 #     tests/gates/test_proof_gate_tree_receipt.sh); 27/10: or (d) a merge receipt super-board-merge-gate.sh wrote this turn for this
 #     session (<git common dir>/postfix-gate/merge_receipts) whose squash git finds on the real origin with the receipt's base as parent
 #     and its verified tree, the judged tree at it or after it through receipted squashes only (merge_receipt_evidence;
-#     tests/gates/test_proof_gate_merge_receipt.sh);
+#     tests/gates/test_proof_gate_merge_receipt.sh); #644: full_pass.json không đạt thì scoped_pass.json (biên nhận exit 0 của lượt gate
+#     scoped, `scope` "scoped") được xét theo cùng luật, và (c) đọc thêm kho scoped_receipts/ (tests/gates/test_scoped_receipt_doors.sh);
 #   - the reply names at least one reports/proof-<yyyyMMdd-HHmmss>.png that
 #   - exists under the project,
 #   - starts with the PNG signature,
@@ -91,6 +92,16 @@ if [ "${PROOF_GATE:-1}" = "0" ]; then
 fi
 if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ proof_gate: python3 không có — gate này KHÔNG chạy, ảnh nghiệm thu không được kiểm." >&2
+  exit 0
+fi
+
+# #528: worker của board không chấm main. Worktree liên kết vẫn chạy.
+if [ "${SB_BOARD_WORKER:-}" = "1" ] && python3 -I -c 'import os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s
+raise SystemExit(0 if s.worker_skip_main(sys.argv[2]) else 1)' "$0" "${REPO_ROOT}"; then
+  echo "$(date +%Y-%m-%dT%H:%M:%S) SB_BOARD_WORKER skip main" >> "${LOG_DIR}/proof_gate.log"
   exit 0
 fi
 
@@ -338,7 +349,8 @@ for rel in cited:
 FP = {}   # "now": dấu vân tay cây đang xét, full_gate_problem tính một lần
 
 def full_gate_problem():
-    """None when this turn has a full-gate exit 0 on the current code, else the reason."""
+    """None when this turn has a full-gate exit 0 on the current code, else the reason.
+    #644: full_pass.json không đạt thì thử scoped_pass.json (lượt gate scoped) theo cùng luật; lý do chặn nêu cả hai khi file scoped có mặt."""
     _pb = os.environ.get("PROOF_BIN") or ""
     if os.path.isabs(_pb):   # "" (copy-mode install: no ../bin) would put the cwd first on sys.path again and undo -I
         sys.path.insert(0, _pb)
@@ -346,7 +358,19 @@ def full_gate_problem():
         import tree_fp
     except ImportError:
         return "không tìm thấy bin/tree_fp.py của DevKit"
-    rp = tree_fp.receipt_path(repo)
+    problem = receipt_gate_problem(tree_fp, tree_fp.receipt_path(repo), "full")
+    srp = tree_fp.scoped_receipt_path(repo) if problem and hasattr(tree_fp, "scoped_receipt_path") else None
+    if not srp or not os.path.lexists(srp):
+        return problem
+    sproblem = receipt_gate_problem(tree_fp, srp, "scoped")
+    if sproblem is None:
+        log("pass-gate session=%s scoped-receipt fp=%s (full: %s)" % (session, FP.get("now"), problem))
+        return None
+    return "%s; biên nhận scoped: %s" % (problem, sproblem)
+
+def receipt_gate_problem(tree_fp, rp, kind):
+    """None khi biên nhận ở rp (kind "full": full_pass.json; "scoped": scoped_pass.json, #644) cho lượt này exit 0 trên code hiện tại."""
+    name = os.path.basename(rp or "") or "full_pass.json"
     rec = None
     try:
         if rp:
@@ -357,8 +381,11 @@ def full_gate_problem():
     if not rec:
         return "chưa có exit 0 trên code hiện tại"
     if not isinstance(rec, dict):
-        return "receipt hỏng (full_pass.json không phải object JSON)"
-    if rec.get("scope", "full") != "full":   # T0061: biên nhận task chỉ được nhận qua task_evidence (đúng lượt), không thay biên nhận --full
+        return "receipt hỏng (%s không phải object JSON)" % name
+    if kind == "scoped":
+        if rec.get("scope") != "scoped":   # #644: thiếu scope hay "task" đều không phải biên nhận scoped
+            return "%s không mang scope scoped" % name
+    elif rec.get("scope", "full") != "full":   # T0061: biên nhận task chỉ được nhận qua task_evidence (đúng lượt), không thay biên nhận --full
         return "full_pass.json là biên nhận task, không phải --full"
     if rec.get("exit") != 0:
         return "chưa có exit 0 trên code hiện tại"
@@ -369,7 +396,7 @@ def full_gate_problem():
     if (isinstance(rtime, bool) or not isinstance(rtime, (int, float))
             or (isinstance(rtime, float) and not math.isfinite(rtime))
             or rtime < 0 or rtime > 10 ** 12):
-        return "receipt hỏng (full_pass.json: time không phải số)"
+        return "receipt hỏng (%s: time không phải số)" % name
     turn_start_time = start
     if turn_start_time is None:
         # No human prompt in the transcript. The code that stood here read `tp` and `time`, two names that do not exist in
@@ -396,7 +423,7 @@ def full_gate_problem():
                     for t in tests if not isinstance(t, dict) or t.get("status") != "PASS"]
         if not_pass:
             return "lần exit 0 là từ trước lượt này, có suite không PASS (%s): chỉ dùng được trong lượt của nó" % ", ".join(not_pass[:4])
-    now_fp = FP["now"] = tree_fp.tree_fingerprint(repo)   # tree_store_evidence dùng lại: không tính dấu vân tay hai lần trong hạn chót
+    now_fp = FP["now"] = FP.get("now") or tree_fp.tree_fingerprint(repo)   # tree_store_evidence (và lần xét scoped) dùng lại: không tính hai lần trong hạn chót
     if not now_fp or not rec.get("fingerprint"):
         why = getattr(tree_fp.tree_fingerprint, "error", "") or "?"
         return "không tính được dấu vân tay code hiện tại (%s)" % str(why)[:60]
@@ -599,8 +626,10 @@ def merged_evidence():
     want = out(git("rev-parse", head + "^{tree}"))
     if not want:
         return None
-    # (a) biên nhận của worktree anh em (cùng .git, như bin/post-fix-gate.py cached_full_pass mượn)
-    for rp in sorted(glob.glob(os.path.join(tree[2], "worktrees", "*", "postfix-gate", "full_pass.json"))):
+    # (a) biên nhận của worktree anh em (cùng .git, như bin/post-fix-gate.py cached_full_pass mượn); #644: cả scoped_pass.json (scope "scoped")
+    for rp in sorted(glob.glob(os.path.join(tree[2], "worktrees", "*", "postfix-gate", "full_pass.json"))
+                     + glob.glob(os.path.join(tree[2], "worktrees", "*", "postfix-gate", "scoped_pass.json"))):
+        scoped = os.path.basename(rp) == "scoped_pass.json"
         if left() <= 3:   # mỗi biên nhận một lần tính dấu vân tay (không cắt giữa chừng được): repo lớn, nhiều worktree
             log("worktree-receipt check: out of time")
             return None
@@ -610,7 +639,7 @@ def merged_evidence():
         except (OSError, ValueError, RecursionError):
             continue
         if (not isinstance(rec, dict) or rec.get("exit") != 0 or rec.get("carried_from") or not isinstance(rec.get("project"), str)
-                or rec.get("scope", "full") != "full"):   # T0061: biên nhận task không phải --full
+                or (rec.get("scope") != "scoped" if scoped else rec.get("scope", "full") != "full")):   # T0061: biên nhận task không phải --full
             continue
         rtime, tested = rec.get("time"), rec.get("tested_at")
         if isinstance(rtime, bool) or not isinstance(rtime, (int, float)) or not (start <= rtime <= time.time() + 60):
@@ -626,7 +655,7 @@ def merged_evidence():
         if (not wst or wst[1] or rec.get("head") != wst[0] or not rec.get("fingerprint") or rec.get("fingerprint") != tree_fp.tree_fingerprint(proj)
                 or out(git("rev-parse", wst[0] + "^{tree}")) != want):
             continue
-        return "worktree-receipt %s head=%s" % (proj, wst[0][:12])
+        return "worktree-receipt%s %s head=%s" % (" scoped" if scoped else "", proj, wst[0][:12])
     # (b) bản ghi merge gate của lượt: chỉ kết quả (không lỗi) của một lệnh Bash LÀ lệnh gọi super-board-merge-gate.sh (MERGE_GATE_CALL),
     # `--pr N` / `--expect-head` khớp "#N" / "merged <H>", script là bản track không đổi của repo (gate_script_ok), ghi sau lời nhắc người dùng.
     # ponytail: bản ghi trong transcript gắn với phiên chỉ qua lệnh của nó; một phiên chép dòng "merged
@@ -753,6 +782,8 @@ def tree_store_evidence(task=False):
     ở HEAD của main; nâng cấp khi đếm được ca này trong proof_gate.log.
     task=True (T0061 Pha 1, nhánh (c) trunk-finish): cùng hai luật trên kho biên nhận task <git common dir>/postfix-gate/task_receipts
     (`scope` "task", `fp` = tên file, `tested_at` trong lượt); không bao giờ có earlier-turn cho biên nhận task.
+    #644: task=False đọc thêm kho scoped_receipts/ (biên nhận exit 0 của lượt gate scoped, `scope` "scoped") trong CÙNG vòng quét và cùng
+    hai luật trên (một lần dirty_state / commit_fingerprint cho cả hai kho: hạn chót của hook).
     None thì chặn như cũ."""
     import session_worktree   # hooks/ (đã vào sys.path cùng devkit_harness); thiếu thì ImportError -> chặn như cũ
     import tree_fp
@@ -761,44 +792,51 @@ def tree_store_evidence(task=False):
         return None
     reserve = left() / 2   # nửa hạn chót còn lại để dành cho merged_evidence (chạy sau, cần ls-remote): không để ca merge gate hết giờ
     room = lambda: left() - reserve
-    key, label = ("fp", "task-receipt") if task else ("fingerprint", "tree-receipt")
-    store, now, recs = os.path.join(tree[2], "postfix-gate", "task_receipts" if task else "tree_receipts"), time.time(), []   # = tree_fp.tree_receipt_dir, không chạy git
-    try:
-        names = sorted(os.listdir(store))
-    except OSError:
-        return None
-    for n in names:
-        m = re.fullmatch(r"([0-9a-f]{24})\.json", n)
-        if not m or room() <= 1:
-            continue
+    key = "fp" if task else "fingerprint"
+    # (thư mục kho, nhãn log, scope mục phải mang) = tree_fp.tree_receipt_dir và anh em của nó, không chạy git
+    kinds = ([("task_receipts", "task-receipt", "task")] if task else
+             [("tree_receipts", "tree-receipt", "full"), (getattr(tree_fp, "SCOPED_STORE_DIR", "scoped_receipts"), "scoped-receipt", "scoped")])
+    now, recs = time.time(), []
+    for sub, lab, want in kinds:
+        store = os.path.join(tree[2], "postfix-gate", sub)
         try:
-            with os.fdopen(open_reg(os.path.join(store, n)), encoding="utf-8") as fh:
-                r = json.loads(fh.read(1 << 20))
-        except (OSError, ValueError, RecursionError):
+            names = sorted(os.listdir(store))
+        except OSError:
             continue
-        t = r.get("tested_at" if task else "time") if isinstance(r, dict) else None
-        if task:
-            kind_ok = isinstance(r, dict) and r.get("scope") == "task" and r.get("fp") == m.group(1)
-        else:   # T0061: mục scope task không phải --full
-            kind_ok = (isinstance(r, dict) and r.get("scope", "full") == "full"
-                       and r.get("exit") == 0 and not isinstance(r.get("exit"), bool) and r.get("fingerprint") == m.group(1))
-        # khoảng trước hiệu: một time 400 chữ số trừ float là OverflowError; nan / inf rơi ở so sánh
-        if (kind_ok and isinstance(t, (int, float)) and not isinstance(t, bool) and start <= t <= now + 60
-                and now - t <= tree_fp.TREE_RECEIPT_MAX_AGE_S):
-            recs.append(r)
+        for n in names:
+            m = re.fullmatch(r"([0-9a-f]{24})\.json", n)
+            if not m or room() <= 1:
+                continue
+            try:
+                with os.fdopen(open_reg(os.path.join(store, n)), encoding="utf-8") as fh:
+                    r = json.loads(fh.read(1 << 20))
+            except (OSError, ValueError, RecursionError):
+                continue
+            t = r.get("tested_at" if task else "time") if isinstance(r, dict) else None
+            if task:
+                kind_ok = isinstance(r, dict) and r.get("scope") == "task" and r.get("fp") == m.group(1)
+            else:   # T0061: mục scope task không phải --full; #644: mục kho scoped phải mang đúng scope "scoped"
+                kind_ok = (isinstance(r, dict) and (r.get("scope", "full") == "full" if want == "full" else r.get("scope") == want)
+                           and r.get("exit") == 0 and not isinstance(r.get("exit"), bool) and r.get("fingerprint") == m.group(1))
+            # khoảng trước hiệu: một time 400 chữ số trừ float là OverflowError; nan / inf rơi ở so sánh
+            if (kind_ok and isinstance(t, (int, float)) and not isinstance(t, bool) and start <= t <= now + 60
+                    and now - t <= tree_fp.TREE_RECEIPT_MAX_AGE_S):
+                recs.append((lab, r))
     if not recs:
         return None
     now_fp = FP.get("now")   # never a fresh tree_fingerprint here: it has no deadline (main clean = commit_fingerprint below, which has one)
-    if now_fp and any(r[key] == now_fp for r in recs):
-        return "%s fp=%s" % (label, now_fp)
+    hit = next((lab for lab, r in recs if now_fp and r[key] == now_fp), None)
+    if hit:
+        return "%s fp=%s" % (hit, now_fp)
     if tree[1] or room() <= 2:
         return None
     state = dirty_state(repo, tree_fp, t=max(0.5, min(10, room() / 3)))
     if state is None or (state[1] and not untouched_by_session(state[1])) or room() <= 1:
         return None
     head_fp = tree_fp.commit_fingerprint(repo, state[0], timeout=max(0.5, min(10, room())))
-    if head_fp and any(r[key] == head_fp for r in recs):
-        return "%s head=%s fp=%s foreign=%s" % (label, state[0][:12], head_fp, ",".join(state[1][:8]) or "-")
+    hit = next((lab for lab, r in recs if head_fp and r[key] == head_fp), None)
+    if hit:
+        return "%s head=%s fp=%s foreign=%s" % (hit, state[0][:12], head_fp, ",".join(state[1][:8]) or "-")
     return None
 
 def task_receipt_ok(path, fp=None):
