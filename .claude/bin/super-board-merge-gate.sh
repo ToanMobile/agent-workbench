@@ -388,9 +388,9 @@ PLAN=$(python3 "$HERE/super-board-merge-policy.py" --config "$CONFIG" --meta "$M
 # The label is display-only. A request posted before `done` pins the exact head
 # and policy/commands. Re-read trusted approval evidence; never mint it here.
 APPROVED=false
-APPROVED_HEAD=   # #262: head người đã duyệt, chốt trước khi gate tự đẩy merge commit của main lên nhánh PR
-# Gate đẩy Y rồi thoát (verify đỏ, timeout, exit 4): lượt sau đọc head=Y, không đẩy nữa. Biên nhận ghi X theo Y (chỉ gate ghi, khi đã
-# duyệt) để lượt sau vẫn nhận ra Y là merge commit của chính gate; commit người đẩy thêm làm head khác Y thì không có biên nhận.
+APPROVED_HEAD=   # #262: head người đã duyệt, đọc từ biên nhận cũ (nếu có) trước khi kiểm duyệt
+# #570: gate không còn đẩy merge commit lên nhánh PR nên không còn ghi biên nhận approved-merge-heads; head PR giữ nguyên X và
+# chính X là head người duyệt. Biên nhận Y→X do bản gate cũ để lại vẫn được đọc ở đây cho tới khi nhánh đó đóng.
 AH_DIR=$(cd "$REPO_PATH" 2>/dev/null && d=$(git rev-parse --git-common-dir 2>/dev/null) && cd "$d" 2>/dev/null && pwd -P) || AH_DIR=
 [ -z "$AH_DIR" ] || AH_DIR="$AH_DIR/super-board/approved-merge-heads"
 [ -z "$AH_DIR" ] || [ ! -r "$AH_DIR/$HEAD_SHA" ] || APPROVED_HEAD=$(head -1 "$AH_DIR/$HEAD_SHA")

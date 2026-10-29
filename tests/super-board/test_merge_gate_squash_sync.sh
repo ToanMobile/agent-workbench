@@ -199,10 +199,11 @@ for a in "\$@"; do
 done
 # Mô phỏng merge driver bị giết (#309): lần merge-tree thử lại sau khi --attr-source bị từ chối để lại .merge_file_* ở cwd hiệu lực của nó
 # (cwd, hay đích của -C). Lệnh merge-tree khác của gate (dự đoán cây ở đầu gate) chạy trước nên không có dấu attr-rejected.
-# #570: chỉ dạng git --git-dir=... merge-tree của gate (cwd = scratch). Gate không còn ghi lên nhánh PR nên bước dọn sau merge của DevKit
-# (worktree.py, đường lùi git -C repo merge-tree theo #358) giờ cũng chạy merge-tree ở checkout main; đường lùi cố ý đó không thuộc ca này.
-case " \$* " in *" merge-tree "*) case "\$1" in --git-dir=*) ;; *) exec "$REAL_GIT" "\$@" ;; esac
-  [ -e "$TMP/git241/attr-rejected" ] || exec "$REAL_GIT" "\$@"
+# #570: gate không còn ghi lên nhánh PR nên bước dọn sau merge của DevKit (worktree.py, đường lùi git -C repo merge-tree theo #358) giờ cũng
+# chạy merge-tree ở checkout main; đường lùi cố ý của DevKit đó không thuộc ca này nên bỏ qua khi tiến trình cha là worktree.py. Mọi merge-tree
+# khác, cả dạng --git-dir lẫn dạng -C, vẫn bị mô phỏng để lại .merge_file_*: gate mà quay lại dùng -C thì dòng kiểm cuối ca này đỏ.
+case " \$* " in *" merge-tree "*) [ -e "$TMP/git241/attr-rejected" ] || exec "$REAL_GIT" "\$@"
+  case "\$(ps -o command= -p "\$PPID" 2>/dev/null)" in *worktree.py*) exec "$REAL_GIT" "\$@" ;; esac
   d="\$PWD"; [ "\$1" = "-C" ] && d="\$2"
   : > "\$d/.merge_file_stub\$\$" ;;
 esac
