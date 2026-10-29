@@ -4283,6 +4283,7 @@ PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh
 
 EXTEND_STEP_S = 60   # #616 A: step of the extension below; DEVKIT_GATE_EXTEND_STEP_S overrides it (tests)
 EXTEND_CAP_FACTOR = 3   # #616 A: hard ceiling = this × timeout, load never lifts it
+EXTEND_MIN_TIMEOUT_S = 60   # #616 A: a --timeout below this is a test's own short budget, never extended (DEVKIT_GATE_EXTEND_MIN_S overrides: tests)
 
 
 def _extend_step_s() -> float:
@@ -4291,6 +4292,14 @@ def _extend_step_s() -> float:
         return v if v > 0 else EXTEND_STEP_S
     except ValueError:
         return EXTEND_STEP_S
+
+
+def _extend_min_s() -> float:
+    try:
+        v = float(os.environ.get("DEVKIT_GATE_EXTEND_MIN_S", ""))
+        return v if v >= 0 else EXTEND_MIN_TIMEOUT_S
+    except ValueError:
+        return EXTEND_MIN_TIMEOUT_S
 
 
 def _machine_busy() -> bool:
@@ -4325,7 +4334,7 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout, extend: dict = None) ->
             try:
                 out, _ = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
-                if extend is None or not timeout:
+                if extend is None or not timeout or timeout < _extend_min_s():
                     raise
                 cap, step, added = EXTEND_CAP_FACTOR * timeout, _extend_step_s(), 0.0
                 try:

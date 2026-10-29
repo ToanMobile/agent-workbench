@@ -12,7 +12,7 @@ DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$DEVKIT_DIR/bin/post-fix-gate.py"
 TMP="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
-export SB_HEAVY_SLOT_DIR="$TMP/slots" SB_HEAVY_SLOT_POLL_S=0.1 DEVKIT_CAPACITY_CORES=4 DEVKIT_GATE_EXTEND_STEP_S=1
+export SB_HEAVY_SLOT_DIR="$TMP/slots" SB_HEAVY_SLOT_POLL_S=0.1 DEVKIT_CAPACITY_CORES=4 DEVKIT_GATE_EXTEND_STEP_S=1 DEVKIT_GATE_EXTEND_MIN_S=0
 mkdir -p "$SB_HEAVY_SLOT_DIR"
 FAILS=0
 ok() { echo "✔ $1"; }
@@ -46,5 +46,10 @@ else fail "(b) muốn TIMEOUT rc≠0 extended_s=0, được rc=$RC extended_s=$E
 run_gate 999 30
 if [ "$RC" != 0 ] && grep -q 'TIMEOUT' "$TMP/out" && [ "$WALL" -lt 15 ]; then ok "(c) trần cứng 3 × timeout vẫn kill (${WALL}s < 15 s)"
 else fail "(c) muốn TIMEOUT trong < 15 s, được rc=$RC wall=${WALL}s: $(tail -4 "$TMP/out")"; fi
+# (d) sàn: --timeout dưới DEVKIT_GATE_EXTEND_MIN_S (mặc định 60 s: giờ của test, không phải suite thật) không gia hạn dù tải cao — các test có sẵn dùng
+# --timeout 1-5 s không đổi nghĩa khi máy bận. Cùng suite 2 s, tải 999, sàn 60: TIMEOUT, extended_s=0.
+DEVKIT_GATE_EXTEND_MIN_S=60 run_gate 999 2
+if [ "$RC" != 0 ] && grep -q 'TIMEOUT' "$TMP/out" && [ "$EXT" = 0 ]; then ok "(d) timeout 1 s < sàn 60 s: không gia hạn, TIMEOUT"
+else fail "(d) muốn TIMEOUT extended_s=0, được rc=$RC extended_s=$EXT: $(tail -4 "$TMP/out")"; fi
 [ "$FAILS" = 0 ] && echo "PASS" || echo "FAIL: $FAILS"
 exit $(( FAILS > 0 ))
