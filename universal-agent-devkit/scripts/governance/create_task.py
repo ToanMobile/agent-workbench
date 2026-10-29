@@ -110,10 +110,9 @@ HUMAN_ONLY = re.compile("|".join([
     r"cần người (quyết|duyệt|chọn|làm|thử)", r"chủ (repo|sản phẩm|dự án) (quyết|chọn|duyệt|đặt)",
 ]), re.I)
 
-# Gom việc (23/10): mỗi thẻ một PR + một merge-gate + một lần gate --full, nên nhiều thẻ nhỏ làm gate chạy đè nhau
-# (load 112 trên 12 lõi). Thẻ mới cùng loại mặc định NHẬP vào thẻ Backlog đang có; mở thẻ riêng phải có --new-card.
-# ponytail: trần 6 việc/thẻ vì PR > 400 dòng đổi phải người duyệt (merge gate); nâng khi đo thấy PR gộp vẫn nhỏ.
-MAX_BATCH = 6
+# Gom việc (23/10, 29/10): mỗi thẻ một PR + một merge-gate + một lần gate --full, nên nhiều thẻ nhỏ làm gate chạy đè nhau
+# (load 112 trên 12 lõi). Thẻ mới cùng loại mặc định NHẬP vào thẻ Backlog hoặc Ready chưa chạy; mở thẻ riêng phải có --new-card.
+# Trần số dòng PR không còn: board không tách việc vì diff dài. Trần mục AC (max_card_ac) vẫn giữ (#369).
 AC_ITEM_RE = re.compile(r"^(?:[-*]|[0-9]{1,2}[.)])[ \t]+\S")
 GENERIC_SCOPES = {"", "task", "misc", "general", "chore"}   # create_task "<tóm tắt>" sinh "[bug] task: …" cho mọi việc
 KINDS = {"bug", "feature", "qa"}   # "cùng loại" = cùng một trong ba nhãn này; nhãn khác (priority:high…) không tính
@@ -255,9 +254,34 @@ def auto_labels(title, labels=None):
         return ["bug"]
     return ["qa"] if "[qa]" in lower_title else ["feature"]
 
-def backlog_cards(cfg, repo):
-    """Thẻ Issue của `repo` đang ở cột Backlog của board: [{number, title, body, labels}]. Lỗi đọc board → RuntimeError.
+def ready_started(repo):
+    """Số issue có PR mở head `issue-<n>-`. Lỗi đọc, JSON hỏng, hoặc đủ 100 PR (danh sách có thể bị cắt) → RuntimeError.
 
+    ponytail: trần 100 PR mở của `gh pr list --limit 100`; khi một repo có nhiều hơn, bỏ mọi thẻ Ready thay vì gom nhầm
+    vào thẻ đã chạy. Nâng khi một board thật vượt 100 PR mở."""
+    res = run_cmd(["gh", "pr", "list", "--repo", repo, "--state", "open",
+                   "--json", "headRefName", "--limit", "100"], check=False)
+    if res.returncode != 0:
+        raise RuntimeError(res.stderr.strip()[:200] or f"gh pr list thoát {res.returncode}")
+    try:
+        prs = json.loads(res.stdout or "[]")
+    except ValueError as e:
+        raise RuntimeError(f"gh pr list không phải JSON: {e}") from e
+    if not isinstance(prs, list):
+        raise RuntimeError("gh pr list không trả một mảng")
+    if len(prs) >= 100:
+        raise RuntimeError("đủ 100 PR mở: không biết thẻ Ready nào đã có PR")
+    started = set()
+    for p in prs:
+        m = re.match(r"issue-(\d+)-", str((p or {}).get("headRefName") or ""))
+        if m:
+            started.add(int(m.group(1)))
+    return started
+
+def backlog_cards(cfg, repo):
+    """Thẻ Issue của `repo` chưa chạy: Backlog, và Ready chưa có PR mở head `issue-<n>-`. [{number, title, body, labels}].
+
+    Lỗi đọc board → RuntimeError. Không đọc được PR mở → bỏ mọi thẻ Ready, vẫn trả Backlog.
     Board có thể chứa issue của repo khác (repo chưa đăng ký dùng Project #1): `gh issue edit N --repo <repo>` lên số
     issue của repo khác sẽ ghi đè nhầm issue cùng số, nên thẻ không khớp repository (hoặc thiếu) bị bỏ."""
     res = run_cmd(["gh", "project", "item-list", str(cfg["number"]), "--owner", PROJECT_OWNER,
@@ -266,16 +290,25 @@ def backlog_cards(cfg, repo):
         raise RuntimeError(res.stderr.strip()[:200] or f"gh project item-list thoát {res.returncode}")
     data = json.loads(res.stdout)
     if data.get("totalCount", 0) > len(data.get("items", [])):
-        print(f"   ⚠️  Board có {data['totalCount']} item, chỉ đọc được {len(data['items'])}: danh sách thẻ Backlog bị cắt, "
+        print(f"   ⚠️  Board có {data['totalCount']} item, chỉ đọc được {len(data['items'])}: danh sách thẻ chưa chạy bị cắt, "
               "thẻ mới nhất có thể bị bỏ sót.", file=sys.stderr)
     cards = []
     for it in data.get("items", []):
         c = it.get("content") or {}
         card_repo = str(c.get("repository") or "").rstrip("/").split("github.com/")[-1].lower()
-        if (it.get("status") == "Backlog" and c.get("type") == "Issue" and c.get("number")
+        status = it.get("status")
+        if (status in ("Backlog", "Ready") and c.get("type") == "Issue" and c.get("number")
                 and card_repo == repo.lower()):
             cards.append({"number": c["number"], "title": c.get("title", ""), "body": c.get("body") or "",
-                          "labels": it.get("labels") or []})
+                          "labels": it.get("labels") or [], "status": status})
+    if any(c["status"] == "Ready" for c in cards):
+        try:
+            started = ready_started(repo)
+        except (RuntimeError, ValueError, OSError) as e:
+            print(f"   ⚠️  Không đọc được PR mở ({e}): không gom vào thẻ Ready, chỉ gom vào Backlog.", file=sys.stderr)
+            cards = [c for c in cards if c["status"] != "Ready"]
+        else:
+            cards = [c for c in cards if not (c["status"] == "Ready" and int(c["number"]) in started)]
     return cards
 
 def fresh_body(repo, n):
@@ -298,15 +331,14 @@ def ac_count(body):
     return sum(1 for l in ac_lines(body) if AC_ITEM_RE.match(l))
 
 def pick_card(cards, labels, text, title="", new_ac=0):
-    """Thẻ Backlog nhận thêm việc: cùng loại (bug/feature/qa), runner build được, chưa đủ MAX_BATCH việc và max_card_ac() mục AC
-    sau gom, VÀ cùng chủ đề — cùng scope cụ thể trong tiêu đề hoặc trùng ≥1 đường dẫn file (T0054: #344 cache gate từng
-    bị gom vào #319 khác chủ đề rồi kẹt). Trùng đường dẫn nhiều nhất, hòa thì thẻ mới nhất. None khi không có thẻ nào hợp."""
+    """Thẻ chưa chạy nhận thêm việc: cùng loại (bug/feature/qa), runner build được, tổng mục AC sau gom không vượt
+    max_card_ac(), VÀ cùng chủ đề — cùng scope cụ thể trong tiêu đề hoặc trùng ≥1 đường dẫn file (T0054: #344 cache gate
+    từng bị gom vào #319 khác chủ đề rồi kẹt). Trùng đường dẫn nhiều nhất, hòa thì thẻ mới nhất. None khi không có thẻ hợp."""
     paths = set(PATH_RE.findall(text))
     scope, cap = scope_of(title), max_card_ac()
     fits = [c for c in cards
             if set(labels) & set(c["labels"]) and not NOT_BUILDABLE & set(c["labels"])
             and [l.strip() for l in section(c["body"], "Blocked by") if l.strip()] in ([], ["- None."])
-            and c["body"].count(BATCH_HEADING) + 1 < MAX_BATCH   # +1: việc gốc của thẻ cũng tính
             and ac_count(c["body"]) + new_ac <= cap
             and ((scope and scope_of(c.get("title", "")) == scope) or paths & set(PATH_RE.findall(c["body"])))]
     return max(fits, key=lambda c: (len(paths & set(PATH_RE.findall(c["body"]))), c["number"]), default=None)
@@ -651,7 +683,7 @@ def main():
             except ValueError as e:
                 print(f"   ⚠️  AC có vẻ cần người nhưng {e}: chưa đánh dấu; truyền --needs-you \"<việc cụ thể>\".")
 
-    # Gom: thẻ thường (không cần người, không từ file có chủ đích, không --new-card) nhập vào thẻ Backlog hợp nhất.
+    # Gom: thẻ thường (không cần người, không từ file có chủ đích, không --new-card) nhập vào thẻ Backlog hoặc Ready chưa chạy.
     # Không gom việc có --blocked-by hoặc rủi ro 🔴: blocker và rủi ro cao của một việc không tách được khỏi thẻ chứa nó.
     # 24/10: trước đây chỉ 🟢 mới gom, mà gần như mọi thẻ ghi 🟡 nên không bao giờ gom (người dùng: "gom … không hoạt động").
     # Only the risk LABEL counts, not the description after it: an emoji wins; without one, the first word (High / Cao).
@@ -668,11 +700,11 @@ def main():
                              f"{title}\n{body}", title=title, new_ac=ac_count(body))
         except (RuntimeError, ValueError, OSError) as e:
             card = None
-            print(f"   ⚠️  Không gom được vào thẻ Backlog (không đọc được board: {e}): tạo thẻ mới.", file=sys.stderr)
+            print(f"   ⚠️  Không gom được vào thẻ chưa chạy (không đọc được board: {e}): tạo thẻ mới.", file=sys.stderr)
         if card:
             n = card["number"]
             if args.dry_run:
-                print(f"\n🧺 [DRY-RUN] Sẽ gom \"{title}\" vào thẻ Backlog #{n} ({card['title']}).")
+                print(f"\n🧺 [DRY-RUN] Sẽ gom \"{title}\" vào thẻ chưa chạy #{n} ({card['title']}).")
                 sys.exit(0)
             # ponytail: GitHub không có ghi-có-điều-kiện; đọc lại ngay trước khi ghi thu hẹp khoảng hở còn một lời gọi,
             # và đọc lại sau khi ghi bắt lần ghi của mình bị phiên khác đè (việc không mất: tạo thẻ mới). Nâng cấp khi
@@ -686,7 +718,7 @@ def main():
                 mark = f"{BATCH_HEADING}{title}"
                 # Ghi thành công = edit exit 0 VÀ số mục cùng tên tăng (thẻ đã có mục trùng tên thì "có mặt" chưa chứng minh gì, #330).
                 if res.returncode == 0 and (fresh_body(repo, n) or "").count(mark) > current.count(mark):
-                    print(f"\n🧺 Đã gom \"{title}\" vào thẻ Backlog #{n} ({card['title']}): một PR, một gate. "
+                    print(f"\n🧺 Đã gom \"{title}\" vào thẻ chưa chạy #{n} ({card['title']}): một PR, một gate. "
                           "Việc độc lập cần PR riêng thì thêm --new-card \"<lý do>\".")
                     sys.exit(0)
                 print(f"   ⚠️  Không gom được vào #{n} (gh issue edit thoát {res.returncode}: {res.stderr.strip()[:200]}, "

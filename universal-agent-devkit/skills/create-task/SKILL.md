@@ -29,20 +29,20 @@ Mỗi Task tạo ra BẮT BUỘC phải tuân thủ cấu trúc sau:
 
 ## 🧺 Gom Việc: Ít Thẻ Nhất Có Thể (BẮT BUỘC)
 
-Mỗi thẻ là một PR, một merge-gate và một lần `post-fix-gate --full`; nhiều thẻ nhỏ làm gate chạy đè nhau và máy quá tải
+Mỗi thẻ là một PR, một merge-gate và một lượt gate (`post-fix-gate --scoped`, tự leo `--full` khi đụng file lõi); nhiều thẻ nhỏ làm gate chạy đè nhau và máy quá tải
 (23/10: load 112 trên 12 lõi). Vì vậy **gom, đừng tách**:
-- Việc mới cùng loại (`bug` / `feature` / `qa`) **tự nhập vào thẻ Backlog đang có**: script chọn thẻ trùng đường dẫn file nhiều
+- Việc mới cùng loại (`bug` / `feature` / `qa`) **tự nhập vào thẻ Backlog hoặc Ready chưa chạy** (Ready đã có PR mở head `issue-<số>-` là đã chạy, không nhận): script chọn thẻ trùng đường dẫn file nhiều
   nhất (hòa thì thẻ mới nhất), thêm dòng AC vào mục `## Acceptance Criteria` của thẻ đó và Problem/Fix vào mục `## Gộp thêm: <tiêu đề>`.
   Agent không cần tự chọn thẻ, không cần gọi `--merge-into`.
 - Nhiều việc nhỏ trong cùng một lượt: tạo **một** thẻ có nhiều dòng AC, không gọi script mỗi việc một lần.
-- Việc phát hiện giữa chừng mà không gấp: nhập vào thẻ Backlog đang có (bằng chính lệnh tạo thẻ), không mở thẻ lẻ.
+- Việc phát hiện giữa chừng mà không gấp: nhập vào thẻ chưa chạy (bằng chính lệnh tạo thẻ), không mở thẻ lẻ.
 - Sửa một lỗi gốc cho nhiều chỗ, hay một nhóm suite/test cùng nguyên nhân: **một thẻ, nhiều commit**, không một thẻ mỗi chỗ.
-- Mở thẻ riêng chỉ khi có lý do thật và nói rõ bằng `--new-card "<lý do>"`: việc độc lập cần PR riêng, khác repo (`--repo`),
-  hoặc thẻ Backlog hiện có đã đủ 6 việc gộp (`MAX_BATCH`, vì PR > 400 dòng đổi phải người duyệt). Thẻ cũng không nhận thêm khi tổng dòng AC (cũ + mới) vượt trần `MAX_CARD_AC` (mặc định 12, đặt `SB_MAX_CARD_AC=<số>` để đổi; #369: thẻ gom phình tới build 7873 s). Thẻ cần người (`--needs-you`),
-  khác loại với mọi thẻ Backlog, `--from-file` và Backlog trống thì script tự tạo thẻ mới. Không đọc được board thì tạo thẻ mới và cảnh báo.
+- Mở thẻ riêng chỉ khi có lý do thật và nói rõ bằng `--new-card "<lý do>"`: việc độc lập cần PR riêng, khác repo (`--repo`).
+  Thẻ không nhận thêm khi tổng dòng AC (cũ + mới) vượt trần `MAX_CARD_AC` (mặc định 12, đặt `SB_MAX_CARD_AC=<số>` để đổi; #369: thẻ gom phình tới build 7873 s). Không tách thẻ vì diff dài: không còn trần 400 dòng. Thẻ cần người (`--needs-you`),
+  khác loại với mọi thẻ chưa chạy, `--from-file` và không có thẻ chưa chạy thì script tự tạo thẻ mới. Không đọc được board thì tạo thẻ mới và cảnh báo. Không đọc được PR mở thì không gom vào Ready, vẫn gom vào Backlog.
 - Rủi ro 🟢 và 🟡 đều gom; chỉ việc 🔴 High, hoặc có `--blocked-by`, mới thành thẻ riêng (24/10: trước đây chỉ 🟢 gom, mà gần
   như mọi thẻ ghi 🟡 nên cơ chế gom không bao giờ chạy).
-- Thẻ đã ở Building / QA / Review / Done không nhận thêm việc: việc mới nhập vào thẻ Backlog khác hoặc mở thẻ mới.
+- Thẻ đã ở Building / QA / Review / Done, hoặc Ready đã có PR mở `issue-<số>-`, không nhận thêm việc: việc mới nhập vào thẻ chưa chạy khác hoặc mở thẻ mới.
 - **Chỉ gom cùng chủ đề** (T0054, 24/10): thẻ nhận gom phải cùng scope cụ thể trong tiêu đề (`🐛 [fix] gate: …`; scope chung
   chung `task`/`misc`/`general`/`chore` không tính) hoặc trùng ít nhất một đường dẫn file; tổng mục AC sau gom không vượt `MAX_CARD_AC` (trên).
   Script tự áp; khác chủ đề thì ra thẻ mới. (#344 cache gate bị gom vào #319 "bằng chứng test" rồi kẹt; #315 ôm 10+ AC, builder
@@ -75,7 +75,7 @@ python3 .agents/devkit/scripts/governance/create_task.py \
 
 `--ac` lặp lại cho mỗi điều kiện; câu thường tự thành `- [ ] …` (pre-flight chỉ đếm dòng dạng danh sách). Đừng ghép nhiều AC bằng `\n` trong ngoặc kép: shell gửi nguyên chữ `\n` và ra một mục.
 
-Thẻ được gom vào thẻ có sẵn thì script in `🧺 Đã gom ... vào thẻ Backlog #N` và không tạo issue; trả link thẻ #N cho người dùng.
+Thẻ được gom vào thẻ có sẵn thì script in `🧺 Đã gom ... vào thẻ chưa chạy #N` và không tạo issue; trả link thẻ #N cho người dùng.
 Thêm `--new-card "<lý do>"` để mở thẻ riêng (xem mục Gom Việc).
 
 ### 1b. Thẻ chỉ người làm được (máy thật, playtest, store, secret, quyết định)
