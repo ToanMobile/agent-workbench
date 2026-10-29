@@ -95,6 +95,16 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
+# #528: worker của board không chấm main. Worktree liên kết vẫn chạy.
+if [ "${SB_BOARD_WORKER:-}" = "1" ] && python3 -I -c 'import os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s
+raise SystemExit(0 if s.worker_skip_main(sys.argv[2]) else 1)' "$0" "${REPO_ROOT}"; then
+  echo "$(date +%Y-%m-%dT%H:%M:%S) SB_BOARD_WORKER skip main" >> "${LOG_DIR}/proof_gate.log"
+  exit 0
+fi
+
 SELF="$0"
 while [ -L "${SELF}" ]; do
   L="$(readlink "${SELF}")"; case "${L}" in /*) SELF="${L}" ;; *) SELF="$(dirname "${SELF}")/${L}" ;; esac
