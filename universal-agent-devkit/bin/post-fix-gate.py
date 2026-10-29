@@ -7612,24 +7612,43 @@ def main():
                 and not precise_hit(t):
             note_ran(t["command"])
     def _cover_failed_still_runs(suite):
-        """True khi cover của suite đã FAIL hoặc TIMEOUT: suite này vẫn chạy lệnh của nó."""
+        """Cover đã FAIL/TIMEOUT: suite này vẫn chạy, chỉ trên lượt không cưỡng bức lệnh đầy đủ.
+
+        Lượt không --full và không có impacted_command vẫn chạy (test_gate_covered_by ca 2).
+        --full / --tree đặt force_reason: fail-fast dừng cả suite covered_by (#647).
+        """
         cov_id = suite.get("covered_by")
         if not isinstance(cov_id, str) or not cov_id or cov_id == suite.get("id"):
             return False
-        if not (force_reason or not suite.get("impacted_command")):
+        if force_reason or suite.get("impacted_command"):
             return False
         cov = next((c for c in regression_tests if c.get("id") == cov_id), None)
         return cov is not None and cov.get("status") in ("FAIL", "TIMEOUT")
+
+    def _runner_after_soft_red(suite):
+        """run_impacted.sh vẫn chạy khi mọi suite đỏ là STALE hoặc cached-full.
+
+        Hai loại đó không vào DEVKIT_GATE_DONE khi FAIL/TIMEOUT (may_note), nên runner
+        phải tự chạy script. FAIL của suite thường vẫn dừng runner (#647).
+        """
+        mod = suite_cache_mod()
+        if mod is None or not mod.DIFF_DEPENDENT.search(suite.get("command") or ""):
+            return False
+        reds = [x for x in regression_tests if x.get("status") in ("FAIL", "TIMEOUT")]
+        return bool(reds) and all(x.get("stale_rerun") or x.get("keyed_full") for x in reds)
+
+    def _keep_after_red(suite):
+        return _cover_failed_still_runs(suite) or _runner_after_soft_red(suite)
 
     for idx, t in enumerate(to_run):
         if group and not may_join(t):
             drain()
         # #647: mặc định dừng khi một suite đã FAIL hoặc TIMEOUT. Nhóm đang chạy được drain() xong.
         # Suite NOT_RUN phía sau thành UNTESTED — covered_by và skip-compile không kịp biến chúng thành PASS.
-        # Suite mà cover đã FAIL vẫn chạy: kết quả của chính nó được báo.
+        # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), và run_impacted.sh sau STALE / cached-full đỏ.
         if (run_tests and not getattr(args, "no_fail_fast", False)
                 and any(x.get("status") in ("FAIL", "TIMEOUT") for x in regression_tests)
-                and not _cover_failed_still_runs(t)):
+                and not _keep_after_red(t)):
             if group:
                 drain()
             _stopped = tr(
@@ -7640,11 +7659,11 @@ def main():
                     continue
                 if later.get("status") in ("PASS", "FAIL", "TIMEOUT"):
                     continue
-                if _cover_failed_still_runs(later):
+                if _keep_after_red(later):
                     continue
                 if later.get("status") == "NOT_RUN":
                     later.update({"status": "UNTESTED", "duration": "0s", "output_tail": _stopped})
-            if not any(_cover_failed_still_runs(later) and later.get("status") == "NOT_RUN"
+            if not any(_keep_after_red(later) and later.get("status") == "NOT_RUN"
                        for later in to_run[idx:]):
                 break
             continue
