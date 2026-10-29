@@ -34,6 +34,23 @@ echo b > "$TMP/repo/b.txt"; $G add -A && $G -c user.name=t -c user.email=t@t com
 out="$(cd "$TMP/wt" && bash "$SCRIPT" "$($G rev-parse HEAD)" 2>/dev/null)"; rc=$?
 if [ "$rc" = 1 ] && [ -z "$out" ]; then ok "B: head with no receipt -> exit 1, silent"; else fail "B: rc=$rc out=$out"; fi
 
+# D: biên nhận scoped do BỘ GHI THẬT của gate tạo, trên cây làm việc lệch commit (như .claude/settings.json do worktree setup sửa)
+echo dirty >> "$TMP/repo/a.txt"
+HEAD2="$($G rev-parse HEAD)"
+python3 -I - "$TMP/repo" "$ROOT/.agents/devkit/bin/post-fix-gate.py" <<'PY' >/dev/null 2>&1
+import importlib.util, sys
+repo, gate = sys.argv[1:3]
+sys.path.insert(0, gate.rsplit("/", 1)[0])
+spec = importlib.util.spec_from_file_location("pfg", gate)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+import tree_fp
+fp = tree_fp.tree_fingerprint(repo)
+m.write_full_pass_receipt(repo, 0, tests=[], tested_fp=fp, scoped={"why": "t"})
+PY
+out="$(cd "$TMP/wt" && bash "$SCRIPT" "$HEAD2" 2>/dev/null)"; rc=$?
+if [ "$rc" = 0 ] && [ -n "$out" ]; then ok "D: real scoped receipt (tree-keyed) found by head"; else fail "D: rc=$rc out=$out"; fi
+
 (cd "$TMP/wt" && bash "$SCRIPT" "not-a-sha" >/dev/null 2>&1); rc=$?
 if [ "$rc" = 64 ]; then ok "C: bad sha -> exit 64"; else fail "C: rc=$rc"; fi
 
