@@ -87,7 +87,7 @@ BOARD_ONE='{"items":[
  {"id":"PVTI_7","status":"Ready","labels":[],"content":{"type":"Issue","number":7,"title":"card seven","assignees":[]}}]}'
 reset() {
   : > "$TMP/writes"; : > "$TMP/log"; rm -f "$TMP/spawned" "$TMP/preflight-calls" "$TMP/wo-calls" "$TMP/wo-env" "$TMP/items-seen" "$TMP/inflight-seen" "$TMP/halt.json" "$TMP/fetches" "$INFLIGHT_DIR"/*
-  PROJECT_ITEMS_JSON="$BOARD_ONE"; export STUB_WO_RC=0 STUB_WO_OUT='{"issue":7,"labels":["waiting-on:#9"],"commented":true}'
+  MARK_FAILED=""; PROJECT_ITEMS_JSON="$BOARD_ONE"; export STUB_WO_RC=0 STUB_WO_OUT='{"issue":7,"labels":["waiting-on:#9"],"commented":true}'
 }
 PF="$TMP/bin/super-board-preflight.sh"
 labels_of() { printf '%s' "$PROJECT_ITEMS_JSON" | jq -c --argjson n "$1" '[.items[] | select(.content.number == $n) | .labels][0]'; }
@@ -183,6 +183,29 @@ done
 n_mark=$(grep -c "^mark " "$TMP/wo-calls" 2>/dev/null); n_pf=$(wc -l < "$TMP/preflight-calls" 2>/dev/null | tr -d ' ')
 [ "$n_mark" = 1 ] && [ "$n_pf" = 1 ] && ! grep -q "move PVTI_7 Blocked" "$TMP/writes" \
   && ok "AC4 two ticks, same blocker: preflight once, mark once" || fail "AC4 mark=$n_mark preflight=$n_pf writes=$(cat "$TMP/writes")"
+
+# ── #619 AC1. nhãn sai dạng `waiting-on:#x` không làm thẻ bị bỏ qua (cùng regex số với helper)
+reset
+PROJECT_ITEMS_JSON='{"items":[
+ {"id":"PVTI_7","status":"Ready","labels":["waiting-on:#x"],"content":{"type":"Issue","number":7,"title":"seven","assignees":[]}}]}'
+top_card_in_column Ready
+[ "$TOP_ISSUE" = 7 ] && ok "#619 AC1 waiting-on:#x (malformed) does not hold the card → #7 dispatchable" || fail "#619 AC1 malformed label held the card: '#$TOP_ISSUE'"
+
+# ── #619 AC2. mark lỗi ở thẻ top → thẻ Ready kế tiếp được chọn trong cùng tick
+reset
+PROJECT_ITEMS_JSON='{"items":[
+ {"id":"PVTI_7","status":"Ready","labels":[],"content":{"type":"Issue","number":7,"title":"seven","assignees":[]}},
+ {"id":"PVTI_8","status":"Ready","labels":[],"content":{"type":"Issue","number":8,"title":"eight","assignees":[]}}]}'
+export STUB_WO_RC=69 STUB_WO_OUT=''
+export STUB_PREFLIGHT_JSON='{"7":{"number":7,"verdict":"sequence","tag":"overlap","reason":"overlap","blockedBy":[9]}}'
+MARK_FAILED=""
+top_card_in_column Ready; first=$TOP_ISSUE
+( SB_PREFLIGHT="$PF" preflight_gate "$first" ) >/dev/null 2>&1
+SB_PREFLIGHT="$PF" preflight_gate "$first" >/dev/null 2>&1   # chạy ở shell hiện tại để MARK_FAILED giữ lại
+top_card_in_column Ready
+[ "$first" = 7 ] && [ "$TOP_ISSUE" = 8 ] && ok "#619 AC2 mark failed on #7 → next pick in the same tick is #8" || fail "#619 AC2 first=#$first next=#$TOP_ISSUE MARK_FAILED=[${MARK_FAILED:-}]"
+grep -q 'mark_tries' "$RUNNER" && ok "  … tick loop retries the next Ready card after a mark failure" || fail "  tick loop missing"
+MARK_FAILED=""
 
 # ── AC2. sweep_waiting_on
 reset; PROJECT_ITEMS_JSON="$BOARD_MIX"; WAITING_SWEEP_NEXT=0; unset WAITING_SWEEP_SIG

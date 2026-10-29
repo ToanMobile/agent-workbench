@@ -262,7 +262,7 @@ FOR_A_PERSON_JQ='def for_a_person: [((.labels // []) + (.content.labels // []))[
 # #601: thẻ Ready chỉ chờ thẻ khác mang nhãn `waiting-on:#N` (mọi hoa/thường, ở item hay content, chuỗi hay {name}); không giao
 # tới khi sweep_waiting_on gỡ nhãn vì #N đã CLOSED/MERGED.
 WAITING_ON_JQ='def waiting_on: [((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
-  | any(startswith("waiting-on:#"));'
+  | any(test("^waiting-on:#[0-9]+$"));'   # #619: cùng regex số với helper (LABEL_RE) — nhãn gõ sai dạng không làm thẻ kẹt
 # #601: đường dẫn helper nhãn chờ; đọc lúc gọi (test đặt SB_GITHUB_READ sau khi source runner), như SB_PREFLIGHT.
 waiting_on_helper() { printf '%s' "${SB_WAITING_ON:-$(dirname "$SB_GITHUB_READ")/super-board-waiting-on.py}"; }
 
@@ -585,6 +585,7 @@ top_card_in_column() {
   while IFS=$'\t' read -r issue item_id; do
     [ -n "$issue" ] || continue
     issue_locked "$issue" && continue
+    case " ${MARK_FAILED:-} " in *" ${issue} "*) continue ;; esac   # #619: waiting-on mark vừa hỏng ở tick này
     if early_backoff "$issue" "$col"; then   # #94: its worker died at once twice in the window — no claim/release loop
       local key
       key="${col}#${issue}@$( { tail -1 "$(early_death_file "$issue")" 2>/dev/null || true; } | cut -d' ' -f1)"   # one line per backoff
@@ -1245,6 +1246,7 @@ preflight_gate() {
       [ "$orc" -ne 0 ] || wlabels=$(printf '%s' "$wout" | jq -ce '.labels | arrays' 2>/dev/null) || orc=65
       if [ "$orc" -ne 0 ]; then
         log "⚠ preflight #${issue}: waiting on #${csv//,/, #} but waiting-on mark failed (exit ${orc}) — not dispatched, stays in Ready, retrying next tick"
+        MARK_FAILED="${MARK_FAILED:-} ${issue}"   # #619: tick này bỏ qua thẻ đó, thẻ Ready kế tiếp vẫn được giao
         return 1
       fi
       if [ "$wlabels" = "[]" ]; then
@@ -3198,14 +3200,19 @@ while true; do
   BUILD_FREE=0
   if can_dispatch && [ "$READY" -gt 0 ]; then build_slot_free || true; fi
   if can_dispatch && [ "$READY" -gt 0 ] && { [ "$BUILD_FREE" -eq 1 ] || [ "$QA_FREE" -eq 1 ]; }; then
-    if top_card_in_column "Ready"; then
+    MARK_FAILED=""
+    mark_tries=0
+    # #619: dispatch_lane trả về khi waiting-on mark hỏng (thẻ vào MARK_FAILED): chọn thẻ Ready kế tiếp, tối đa 3 lần mỗi tick.
+    while [ "$mark_tries" -lt 3 ] && top_card_in_column "Ready"; do
+      mark_tries=$((mark_tries + 1)); mark_before="${MARK_FAILED:-}"
       if [ "$(card_lane "$TOP_ISSUE")" = "qa" ]; then
         [ "$QA_FREE" -eq 1 ] && { dispatch_lane qa "$TOP_ISSUE"; ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1)); }
       elif [ "$BUILD_FREE" -eq 1 ]; then
         dispatch_lane build "$TOP_ISSUE"
         ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1))
       fi
-    fi
+      [ "${MARK_FAILED:-}" != "$mark_before" ] || break
+    done
   fi
 
   gh_checkpoint
