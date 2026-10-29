@@ -139,6 +139,26 @@ rm -f "$T/card.args"
 rc=$(run_gf --slug fake/repo)
 chk "b8. đã có issue mở cùng tiêu đề: không gọi lệnh tạo thẻ, summary dẫn issue cũ" \
   '[ ! -e "$T/card.args" ] && grep -q "issues/7" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
+
+# b''. #662: thẻ mở tay (tiêu đề KHÔNG theo CARD_PREFIX) có mã suite trong body ⇒ nhận thẻ đó, không mở thẻ P1 trùng
+gh_returns() {   # gh giả trả đúng một thẻ mở: tiêu đề $1, url $2, body $3
+  python3 - "$T/bin/gh" "$T" "$1" "$2" "$3" <<'PY'
+import json, sys
+open(sys.argv[1], "w").write('#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho %s\n'
+                             % (sys.argv[2], "'" + json.dumps([{"title": sys.argv[3], "url": sys.argv[4], "body": sys.argv[5]}]) + "'"))
+PY
+  chmod +x "$T/bin/gh"
+}
+gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-01 trên main"
+rm -f "$T/card.args" "$T/gh.calls"
+rc=$(run_gf --slug fake/repo)
+chk "b9. thẻ mở tay có mã suite trong body: không gọi lệnh tạo thẻ, summary dẫn thẻ đó" \
+  '[ ! -e "$T/card.args" ] && grep -q "issues/659" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
+chk "b9b. gh issue comment được gọi vào đúng thẻ mở tay" 'grep -q "issue comment https://github.com/fake/repo/issues/659" "$T/gh.calls"'
+gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-011 và REG-OTHER-01"
+rm -f "$T/card.args"
+rc=$(run_gf --slug fake/repo)
+chk "b10. body chỉ chứa mã suite dài hơn (REG-FAKE-011): không khớp lỏng, vẫn mở thẻ mới" '[ -e "$T/card.args" ]' "$(tail -5 "$T/out")"
 printf '#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho "[]"\n' "$T" >"$T/bin/gh"
 
 # c. khoá ---------------------------------------------------------------------------------------------------------------------
