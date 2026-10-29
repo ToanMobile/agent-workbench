@@ -111,6 +111,13 @@ for f in $changed; do
   done < tests/impact_map.txt
 done
 selected="$(printf '%s\n' $tests | sort -u)"
+# #644: lượt `post-fix-gate.py --scoped` đặt DEVKIT_SCOPED_TESTS (có thể rỗng) = đúng các test bin/scoped_gate.py chọn (đồ thị import + smoke),
+# tương đối kit: chạy đúng chúng + repo consistency thay cho luật nhắc tên ở trên. Gate luôn tự đặt/gỡ biến này; đọc một lần rồi gỡ để test con
+# (test_run_impacted.sh chạy runner này trong repo nháp) không thừa hưởng. --all và --list giả lập của test_impact_map giữ như cũ.
+if [ "${DEVKIT_SCOPED_TESTS+set}" = set ] && [ "${1:-}" != "--all" ] && [ -z "${DEVKIT_IMPACT_TEST_CHANGED:-}" ]; then
+  selected="$(printf '%s\n' tests/verification/test_repo_consistency.sh $DEVKIT_SCOPED_TESTS | sort -u)"
+fi
+unset DEVKIT_SCOPED_TESTS
 # --all: every test. Finding none is an error — a glob that matches nothing must not pass. hooks/tests/test_*.sh too (5 of them ran
 # nowhere, 13/10); its *_test.sh contract files are not: `agent-kit test` runs them itself before this pool.
 if [ "${1:-}" = "--all" ]; then
@@ -169,10 +176,24 @@ after="${DEVKIT_ALONE_AFTER_FILE:-}"; unset DEVKIT_ALONE_AFTER_FILE
 parent="$PPID"   # whoever started this run (agent-kit): the wait below ends when that process is gone, a SIGKILL leaves no trap to tell us
 out="$(mktemp -d "${TMPDIR:-/tmp}/dk-run-XXXXXX" 2>/dev/null)" && [ -n "$out" ] && [ -d "$out" ] \
   || { echo "run_impacted.sh: mktemp -d failed" >&2; exit 2; }
-trap 'rm -rf "$out"' EXIT
-trap 'rm -rf "$out"; trap - INT EXIT; kill -INT $$' INT
-trap 'rm -rf "$out"; trap - TERM EXIT; kill -TERM $$' TERM
-trap 'rm -rf "$out"; trap - HUP EXIT; kill -HUP $$' HUP
+# #559: trap EXIT xoá $out. Chép .log/.rc của bài rc khác 0 trước, nếu merge gate chỉ định thư mục giữ.
+dk_keep_failed_logs() {
+  local dest="${DEVKIT_KEEP_FAILED_LOGS_DIR:-}" rcfile base rc
+  [ -n "$dest" ] && [ -n "${out:-}" ] && [ -d "$out" ] || return 0
+  mkdir -p "$dest" 2>/dev/null || return 0
+  for rcfile in "$out"/*.rc; do
+    [ -f "$rcfile" ] || continue
+    rc=$(cat "$rcfile" 2>/dev/null || true)
+    case "$rc" in ''|0) continue ;; esac
+    base=$(basename "$rcfile" .rc)
+    cp -p "$rcfile" "$dest/$base.rc" 2>/dev/null || true
+    [ -f "$out/$base.log" ] && cp -p "$out/$base.log" "$dest/$base.log" 2>/dev/null || true
+  done
+}
+trap 'dk_keep_failed_logs; rm -rf "$out"' EXIT
+trap 'dk_keep_failed_logs; rm -rf "$out"; trap - INT EXIT; kill -INT $$' INT
+trap 'dk_keep_failed_logs; rm -rf "$out"; trap - TERM EXIT; kill -TERM $$' TERM
+trap 'dk_keep_failed_logs; rm -rf "$out"; trap - HUP EXIT; kill -HUP $$' HUP
 run_one() { # <test> <out dir>
   local o
   o="$2/$(printf '%s' "$1" | tr '/' '_')"

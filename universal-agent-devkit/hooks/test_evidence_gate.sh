@@ -122,6 +122,15 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "⚠ test_evidence_gate: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
   exit 0
 fi
+# #528: worker của board không chấm main. Worktree liên kết vẫn chạy.
+if [ "${SB_BOARD_WORKER:-}" = "1" ] && python3 -I -c 'import os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s
+raise SystemExit(0 if s.worker_skip_main(sys.argv[2]) else 1)' "$0" "${REPO_ROOT}"; then
+  echo "$(date +%Y-%m-%dT%H:%M:%S) SB_BOARD_WORKER skip main" >> "${LOG_DIR}/test_evidence_gate.log"
+  exit 0
+fi
 # The payload goes to python on fd 3, not in an env var (2026-10-09): a reply past the OS limit for one variable could not
 # start python and the gate passed it unchecked (tests/gates/test_hook_large_payload.sh).
 TE_LOG="${LOG_DIR}/test_evidence_gate.log" TE_DIR="${LOG_DIR}" \

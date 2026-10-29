@@ -101,8 +101,8 @@ Builder:   Ready → Building → QA
 
 Tester:    QA → Review            (a `qa` card: Ready → QA → Review)
            worker   = super-qa skill (issue-scoped mode)
-           worktree = .claude/worktrees/issue-<N>-qa/
-           branch   = same issue-<N>-<slug>  (a `qa` card: the Tester creates it)
+           worktree = .claude/worktrees/issue-<N>-qa/  detached at origin/<PR branch>
+           branch   = stays in the build worktree (a `qa` card with no branch yet: the Tester creates it)
 
 Reviewer:  Review → Done
            worker   = super-review skill
@@ -142,7 +142,7 @@ There is **exactly one branch per issue** and **exactly one PR per issue**. All 
 - Builder creates the branch off `config.base_branch`, writes code, commits + pushes, opens a **draft PR**.
 - Tester checks out the same branch in a fresh worktree, adds tests, commits to the same branch, pushes.
 - Reviewer is the **only lane that merges**. On approval: squash-merges PR into `base_branch`, deletes the branch.
-- If `config.merge_policy` says a human merges (`default: "human"`, or a money / auth / schema / size hit), the merge gate exits 7 and the Reviewer parks the card in Blocked for a human click instead.
+- If `config.merge_policy` says a human merges (`default: "human"`, a money / auth / schema hit, or a size hit only when `auto_max_lines` is a positive number), the merge gate exits 7 and the Reviewer parks the card in Blocked for a human click instead.
 
 ## PR description template
 
@@ -261,7 +261,7 @@ in a sub-agent, before touching a worktree.
     Building / QA / Review / Ready cards, leaving out every Ready card labelled `waiting-on:#*` (any case, on the item or its
     content, string or {name}) — a waiting card is not in progress; save it to a temp file
 [ ] bash .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> \
-         --inflight <file> --cap <merge_policy.auto_max_lines, 400 when unset> [--files <paths you expect to touch>]
+         --inflight <file> --cap <merge_policy.auto_max_lines, 0 when unset> [--files <paths you expect to touch>]
 [ ] judge each card: the script's verdict, then its `candidates` (near-misses) semantically
 [ ] act on the outcome below, then return one verdict per card
 ```
@@ -272,14 +272,16 @@ The script asks five questions; the agent owns the judgement:
 |---|---|---|---|
 | 1 | Already done? | merged PR closes `#N`; merged PR / closed issue with the same `fingerprint:` or title | a merged PR that delivers the same behaviour under other words |
 | 2 | Already in progress? | open PR on another branch closes `#N` or has the same title; a card in Building/QA/Review (or a lower-numbered Ready peer) with the same title | same feature, different words — not merely the same files |
-| 3 | File overlap? | open PR touches files the card names; a lower-numbered card in the same `--issues` batch names the same files | expected files from reading the issue (`--files`); the same overlap with a Ready peer in another batch |
+| 3 | File overlap? | open PR touches files the card names; two unstarted cards in the same `--issues` batch name the same files (`verdict: merge`, keeper `absorb`) | expected files from reading the issue (`--files`); the same overlap with a Ready peer in another batch. A peer that already has an open `issue-<N>-*` PR is `sequence`, and is not folded |
 | 4 | Unclear? | no `## Acceptance Criteria` bullets | AC that contradicts the current code (cite `file:line`) |
-| 5 | Too big? | two or more size signals in the issue text (`tag: too-big`, with `evidence` and a suggested `split`): Fix lists ≥5 short deliverables (or the title ≥3) · ≥4 areas · the card calls itself big (phase, vertical slice, "many components") · its scope is a whole spec section · an AC needs people or production data; an AC only a real device can prove (OOM, FPS, memory) on a card that says "real device" counts as two, so it holds on its own | likely over ~400 changed lines (`merge_policy.auto_max_lines`; lockfiles, generated, snapshots, migration SQL excluded) from the code it will touch, or spans many areas (UI + API + DB + jobs …) — lint.md criterion 15 |
+| 5 | Too big? | two or more size signals in the issue text (`tag: too-big`, with `evidence` and a suggested `split`): Fix lists ≥5 short deliverables (or the title ≥3) · ≥4 areas · the card calls itself big (phase, vertical slice, "many components") · its scope is a whole spec section · an AC needs people or production data; an AC only a real device can prove (OOM, FPS, memory) on a card that says "real device" counts as two, so it holds on its own | spans many independent areas (UI + API + DB + jobs …) — lint.md criterion 15. Line count is a hold only when the board set a positive `auto_max_lines` |
 
-**Two Ready cards that overlap each other, neither with an open PR, go one at a time.** The
-lower-numbered card proceeds; only the other is sequenced, with `waiting-on:#<lower>` (it stays
-Ready), and the waiting-on sweep drops the label once the lower one closes. Sequencing each against the other leaves
-both with nothing to wait on and neither built — the same deadlock comes back every wave.
+**Two Ready cards that share files, and neither has an open `issue-<N>-*` PR, fold into one.** The
+lower number is the keeper (`proceed`, `absorb` the higher numbers). Each higher card is `merge`
+with `mergeInto` the keeper: `super-board-merge-cards.py` copies its Acceptance Criteria verbatim
+onto the keeper, closes the source as not planned, and that card moves to Done. One PR, one gate.
+If the lower card already has that open PR, do not fold: the unstarted card is `sequence` with
+`waiting-on:#<lower>` and stays Ready, never Blocked.
 
 The agent may turn a `proceed` into a `hold` on evidence. It may turn a mechanical `hold` into
 `proceed` only by naming why the match is a different feature — or, for `too-big`, why the signals
@@ -294,7 +296,8 @@ do not make this card big (the listed items are one small change, the device che
 | `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: Eric (close as duplicate) · `blocked-by: -` |
 | `hold` — in progress | never Blocked (#601): same as `sequence` below — `super-board-waiting-on.py mark --on <the other card's issue, or the open PR's own number when that PR closes this card — never this card's number>`, card stays Ready, return verdict `sequence`. Exception: the legacy runner (`super-board-run.sh` preflight_gate) still parks an exact in-progress duplicate in Blocked 👯 for a person (#619 tracks moving it to `mark`) | — (no Block comment; `mark` posts its own ⏳ comment) — `sweep` drops the label when that closes, and pre-flight then finds it done |
 | `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
-| `hold` — too big | the Builder splits it with `/createTask` (super-build → "Too big → split"); only when it cannot, move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
+| `hold` — too big | people, production data, a real device, or many independent areas. Line count holds only when the board set a positive `auto_max_lines`. Do not split a card just to stay under a line count | `❓` · people / device ACs become `qa` cards · independent areas may split with `/to-tickets` · `blocked-by: -` |
+| `merge` | neither card has started and they share files. Fold the higher into `mergeInto` with `python3 .claude/bin/super-board-merge-cards.py --repo <owner/name> --into <keeper> --absorb <this>` (AC copied verbatim, close the source as not planned). The keeper `proceed`s with `absorb`. This card moves to Done (status `advanced`), and is never built and never Blocked. A failed fold stays Ready and retries. Exit 3 (the source already has an open `issue-<N>-*` PR): `waiting-on`, stays Ready, never Blocked | — |
 | `sequence` — `blockedBy` non-empty | never Blocked: the card stays Ready (return column `Ready`, status `waiting`). Run `python3 .claude/bin/super-board-waiting-on.py mark --config <cfg> --issue <N> --on <blockedBy, comma-separated> --why "<overlapping PR and files>"`: it labels the card `waiting-on:#<each>` and comments once (no `blocked-by:` line). The planner and runner skip Ready cards so labelled; `super-board-waiting-on.py sweep` drops a label once that issue is CLOSED/MERGED and the card builds. `mark` labels only blockers still OPEN and prints JSON: `"labels": []` (every blocker already closed) → `proceed`, as if `blockedBy` were empty; labels non-empty → status `waiting`, column `Ready`, `blockedBy` = the numbers still open. Exit 64/69/79 → leave the card untouched, verdict `skipped` (never Blocked; that 79 is the helper's, not a run halt); it is retried next wave | — (no Block comment, no `blocked-by:` line) |
 | `sequence` — `blockedBy` empty | proceed (card stays Ready, return column `Ready`), comment `⚠️ expected conflict with PR #<P> on <files> — the merge gate will rebase` | — |
 | `halted` | script exit 79: required evidence unavailable; leave the card untouched, stop this run, resume explicitly after recovery | — |
@@ -314,8 +317,9 @@ call is cut by the Bash timeout and the whole run is repeated (#249). The runner
 
 ### Builder (first pass)
 
-0. Legacy backend only: run the Builder pre-flight above in a sub-agent. Anything but `proceed`
-   (or a conflict-note `sequence`) → do what its row says, release the claim, exit.
+0. Legacy backend only: run the Builder pre-flight above in a sub-agent. A `merge` verdict is not
+   built: the fold already moved that card to Done. Anything but `proceed` (or a conflict-note
+   `sequence`) → do what its row says, release the claim, exit.
 1. Create worktree `.claude/worktrees/issue-<N>-build/` off `config.base_branch` with the DevKit only (agent-workbench#93):
    `git fetch origin`, then `agent-kit worktree add .claude/worktrees/issue-<N>-build issue-<N>-<slug> --lane=build --base=origin/<config.base_branch>`.
    Never a plain `git worktree add` or EnterWorktree. Exit 4 = under the disk floor: stop, card and claims unchanged.
@@ -333,10 +337,9 @@ call is cut by the Bash timeout and the whole run is repeated (#249). The runner
    Reconcile step does the same for a card that ends closed. Any AC not yet met → continue with step 4 (never close on a partial match).
    Not for a card labelled `ac-open` (T0054): the runner reopens it once closed. Open a proof PR whose `sb:ac` lists every AC
    line instead (earlier ones `[x]` citing their PR); its merge gate removes the label.
-4. Implement smallest safe change covering ACs, under the PR size cap
-   (`merge_policy.auto_max_lines`, default 400 changed lines). Growing past it mid-build → stop,
-   push what you have, propose the split (vertical slices via `/to-tickets`) in a PR comment and
-   move the card to Blocked `❓` — never push on past the cap (super-build → "Keep each PR small").
+4. Implement the smallest safe change that covers the card's ACs. Unset `auto_max_lines` is 0:
+   finish the card as one PR. Only a board that set a positive `auto_max_lines` stops when the
+   diff passes that cap, pushes what it has, and proposes a split (super-build → "Keep each PR small").
 5. Commit + push (always). Commits follow writing-standard.md § 1 (`✨ [feat] chat: stream replies` + short bullets).
 6. Open draft PR linked to the issue with the PR description template (title in commit-subject format, every block filled).
 7. Follow [PR author notes](pr-author-notes.md), then post the `[builder] [report]` PR comment (see "Commenting cadence").
@@ -356,15 +359,15 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
    - **Surviving Mutant & Anti-Tautology Guard:** If a new test passes on its first run (`First-run Green`), mutate the guarded production line once to confirm **RED**, then restore **GREEN**; never assert on a test's own mock or copy the implementation formula into `expected`.
 2. **Column `QA` — DevKit Post-Fix Gate & Visual Proof (`qc` + `verification-before-completion`):**
    - Move card `Building -> QA`: `.claude/bin/super-board-card.sh --config <cfg> move <N> QA`.
-   - Run `git merge --no-edit origin/<base>`, the card's target tests, then `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief` (impacted, must exit `0`; it writes the task receipt). Never `--full` per card: the merge point verifies the merged tree once. Capture screenshot proof via `python3 .agents/devkit/bin/proof-capture.py` when app/UI source changes.
+   - Run `git merge --no-edit origin/<base>`, the card's target tests, then pipe `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief --json` through `.claude/bin/super-board-qa-exit2.sh`. `pass` is exit 0 (the gate writes the scoped receipt and the task receipt, and escalates to `--full` by itself on a core file). `review` is the only reason an existing test was edited: move the card to Review for Antigravity, not Blocked and not needs-you, and comment `Edited tests (await cross-review):` plus each path. `qa-fail` stays Fail. Never `--full` by hand per card: the merge point verifies the merged tree once with `--scoped`. Capture screenshot proof via `python3 .agents/devkit/bin/proof-capture.py` when app/UI source changes.
    - **Non-Blank, Terminal-State & A/B Perf Guards:** UI proof requires rendered data/empty-state + `0` `console.error`/`pageerror`/uncaught exceptions + `0` background `5xx`/`401`/`403`; async/queue/upload/eSign flows must verify terminal state + persisted destination record (Toast/HTTP 200 alone is never PASS); performance claims require alternating `AB, BA` (>= 5 pairs after warmup).
    - Push branch, open/update PR, and post `[builder] [report]` + `[qa] [report] ✅` with gate output and embedded proof screenshot.
 3. **Column `Review` & `Done` — Smart Fast-Track vs Cross-Review (`open-code-review` + `deep-module-design`):**
    - Move card `QA -> Review`: `.claude/bin/super-board-card.sh --config <cfg> move <N> Review`.
    - **Adversarial Review Discipline:** Apply **Blind-First Pass** (read AC + raw `git diff` and form 2–4 failure hypotheses before reading Builder summary), **Review Remembers** (on rework rounds, grade prior `R1..Rn` findings `fixed`/`not fixed` first), and **Taste Never Blocks** (`Over-engineering`/`Deepening opportunity` is `Should fix`, never blocks a test-green diff).
    - **Small/Medium Task (`< 3` files, `<= 200` LOC net diff, no `auth`/`payment`/`migration`/`security`):** Run `open-code-review` self-audit, post `[reviewer] [report] ✅ merge-ready (DevKit Fast-Track)` + the 4-item Acceptance Report (`core-rules §1.3`), then:
-     - **Merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` without `--codex`: that runner drains the queue every tick): never call the merge gate. After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP: `pm_task_create` (project = config `repo.path`), `pm_dispatch kind=audit` on that task, read its `audit-agent.json`, and only when Antigravity's verdict is pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR, as its own comment, `approved-head:<sha40>` with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}`. Antigravity unavailable (MCP tools absent, `pm_dispatch` errors, verdict not pass): post no approval and leave the card in `Review` with a `[reviewer]` comment whose last line is `blocked-by: -` (never a bare `approved-head:`: the git guard blocks it). Then run `gh pr ready <PR>`, add the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, and leave the card in `Review`: the queue merges it (run.md → Merge protocol step 5).
-     - **Queue off** (`SB_MERGE_QUEUE=0`, not enabled, or the workflow backend (default) / `--codex`: nothing drains the queue there, so the old merge gate path applies even when the config enables it): run `gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`, and move card `Review -> Done` (`column='Done'`) — unless the gate printed `ac-open: #N` (merged with AC still unproven: the card stays open in Ready, never Done).
+     - **Merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` (that runner drains the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does, #453), without `--codex`): never call the merge gate. After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP: `pm_task_create` (project = config `repo.path`), `pm_dispatch kind=audit` on that task, read its `audit-agent.json`, and only when Antigravity's verdict is pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR, as its own comment, `approved-head:<sha40>` with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}` and a third line `edited-tests:` (JSON array of the edited tests; omit the line only when none were edited). Antigravity unavailable (MCP tools absent, `pm_dispatch` errors, verdict not pass): post no approval and leave the card in `Review` with a `[reviewer]` comment whose last line is `blocked-by: -` (never a bare `approved-head:`: the git guard blocks it). Then run `gh pr ready <PR>`, add the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, and leave the card in `Review`: the queue merges it (run.md → Merge protocol step 5).
+     - **Queue off** (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`: nothing drains the queue there, so the old merge gate path applies even when the config enables it): after the Antigravity audit pass, `gate_receipt=$(jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)")` (empty fp: do not comment), post `approved-head` plus `approved-by` plus `edited-tests` as its own comment, THEN the merge gate (`gh pr ready <PR>` + `.claude/bin/super-board-merge-gate.sh`), and move card `Review -> Done` (`column='Done'`) — unless the gate printed `ac-open: #N` (merged with AC still unproven: the card stays open in Ready, never Done).
    - **Large/High-Risk Task (`>= 2` modules, `>= 3` files, `> 200` LOC net diff, or `auth`/`payment`/`migration`/`security`):** Leave card in `Review` (`column='Review'`) so the independent Reviewer lane (2nd agent / Antigravity `audit`) performs cross-review before merging to `Done`.
 <!-- universal-agent-devkit-workflow:end -->
 
@@ -381,9 +384,11 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
 
 ### Tester (first pass — repo-backed)
 
-1. `git fetch origin`; checkout `issue-<N>-<slug>` into worktree `.claude/worktrees/issue-<N>-qa/` with the DevKit:
-   `agent-kit worktree add .claude/worktrees/issue-<N>-qa issue-<N>-<slug> --lane=qa --base=origin/<config.base_branch>`.
-   A `qa` card has no branch yet: move it Ready → QA, then the same command creates the branch from the base.
+1. `git fetch origin`; create a detached worktree `.claude/worktrees/issue-<N>-qa/` at the PR head with the DevKit:
+   `agent-kit worktree add .claude/worktrees/issue-<N>-qa --lane=qa --base=origin/<PR branch>`.
+   Refresh later with `git fetch origin` then `git checkout --detach origin/<PR branch>`.
+   The build worktree keeps the branch: do not remove it. A QA evidence commit is pushed with `git push origin HEAD:<PR branch>`.
+   A `qa` card has no branch yet: move it Ready → QA, then `agent-kit worktree add .claude/worktrees/issue-<N>-qa issue-<N>-<slug> --lane=qa --base=origin/<config.base_branch>` creates the branch from the base.
 2. `target.url` set → health-check it first. Unhealthy → Block.
 2a. An AC needs a real device and none is online (`adb devices`): label the card `needs-device`, post a `[qa] [blocker]` comment naming the device, and move it to Blocked `📱` before you exit. Never exit silently with the card still in QA: a worker that leaves its card in the column it took it from, with no new comment, counts as a no-op, and the runner parks the card in Blocked after 2 in a row (`SB_NOOP_MAX`, issue #137); merge-only and merge-train dispatches are never counted (leaving the card in Review without a comment is their correct exit).
 3. Read issue + PR + Builder's handoff comment.
@@ -392,11 +397,12 @@ Every worker running in a Universal Agent DevKit repository MUST execute the Dev
 for affected feature selection, actual host readiness and new run-owned proof.
 Record uncovered/stale optional coverage alongside ordinary issue AC checks.
 4b. **Test-gap check** (super-qa → "Test-gap check (after build)"): map every AC to unit / component / e2e tests, hunt edge cases, write the High gaps red-first. A High gap that needs app code changed → Fail (step 7) with the gap list. Medium/Low go in the handoff under `Test gaps (not written)`.
-4c. **Target tests + impacted gate on the merged base (#251, 26/10).** In the QA worktree run `git merge --no-edit origin/<config.base_branch>` (the base the merge point builds on), then the card's target tests (step 4) and `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief`: impacted, exit `0` required, it writes the task receipt the Reviewer reads for this head. Never `--full` and never the `super-board-verify-cmd.sh` lines per card: the full verify runs once at the merge point (the merge queue's train; with the queue off, the merge gate) on the merged tree. The task receipt is keyed on the tree: commit evidence (`docs/super-board/runs/`, a fix-up) first and run the gate last, or put it in the PR body or a comment. A red suite is rerun once on `origin/<base>`; red there too = red on base, not this PR (the merge gate files its own card), so QA does not fail the card for it.
+4c. **Target tests + impacted gate on the merged base (#251, 26/10).** In the QA worktree run `git merge --no-edit origin/<config.base_branch>` (the base the merge point builds on), then the card's target tests (step 4) and pipe `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief --json` through `.claude/bin/super-board-qa-exit2.sh`. `pass` is exit `0`: the gate writes the scoped receipt and the task receipt the Reviewer reads for this head, and escalates to `--full` by itself on a core file. `review` is the only reason an existing test was edited: move the card to Review for Antigravity, not Blocked and not needs-you, and comment `Edited tests (await cross-review):` plus each path. `qa-fail` is Fail (step 7). Never `--full` by hand and never the `super-board-verify-cmd.sh` lines per card: the merge point (the merge queue's train; with the queue off, the merge gate) verifies the merged tree once with `--scoped`; the nightly `gate-full` skill runs `--full`. The task receipt is keyed on the tree: commit evidence (`docs/super-board/runs/`, a fix-up) first and run the gate last, or put it in the PR body or a comment. A red suite is rerun once on `origin/<base>`; red there too = red on base, not this PR (the merge gate files its own card), so QA does not fail the card for it.
 5. Run the tests. Capture evidence to `docs/super-board/runs/issue-<N>-qa-v<N>/`. For UI/visual ACs, capture screenshots at the standard viewports (1920×1080 desktop, 1024×768 tablet, 375×667 mobile). Commit the screenshots to the issue branch BEFORE writing the comment (the markdown image URLs depend on the files being present on the branch).
    **Evidence stays small** (Goods PR #48, 19/10: 17k lines of raw test XML and logs with ANSI colour codes made `gh pr diff` fail and halted the board). Commit the screenshots plus one `summary.md` of at most 40 lines: the command, its exit code, the pass/fail counts and the failing lines quoted. Never commit raw runner output over 200 lines (`*.log`, JUnit/NUnit `*.xml`, HAR): keep it in `$(git rev-parse --git-common-dir)/super-board/evidence/issue-<N>/`, outside the branch. Strip ANSI colour codes from anything you commit (`LC_ALL=C sed $'s/\x1b\\[[0-9;]*m//g'`). Comments stay short and plain: what passed, what failed, the evidence path (writing-standard.md § 4, at most 8 lines).
-6. **Pass** → commit test files + screenshots to same branch + push → tick the `ac` block with proof lines, write `visual` for UI, append a `history` row, rewrite `status` → `[qa] [report] ✅` PR comment with results + evidence path **+ inline screenshot embeds** (see "Screenshot embed format" below) → issue comment with the SAME inline screenshot embeds → move card QA → Review. Clean up worktree.
-7. **Fail** → leave failing ACs unchecked with the reason, append a `history` row, rewrite `status` → `[qa] [report] ❌` PR comment with per-AC expected/actual + repro file:line + evidence path + "what fixed should look like" **+ inline screenshot embeds of the broken state** → issue comment with the same inline screenshots (showing what's wrong) → increment rebuild counter → move card QA → Ready (label `loop:rebuild-N`). Clean up worktree.
+6. **Pass** (`.claude/bin/super-board-qa-exit2.sh` printed `pass`, or this repo has no DevKit gate) → commit test files + screenshots, then `git push origin HEAD:<PR branch>` → tick the `ac` block with proof lines, write `visual` for UI, append a `history` row, rewrite `status` → `[qa] [report] ✅` PR comment with results + evidence path **+ inline screenshot embeds** (see "Screenshot embed format" below) → issue comment with the SAME inline screenshot embeds → move card QA → Review. Clean up the QA worktree. The build worktree stays until after the merge.
+   `review` from `.claude/bin/super-board-qa-exit2.sh` is not step 7: move the card to Review for Antigravity, not Blocked and not needs-you, and comment `Edited tests (await cross-review):` plus each path.
+7. **Fail** (`qa-fail`) → leave failing ACs unchecked with the reason, append a `history` row, rewrite `status` → `[qa] [report] ❌` PR comment with per-AC expected/actual + repro file:line + evidence path + "what fixed should look like" **+ inline screenshot embeds of the broken state** → issue comment with the same inline screenshots (showing what's wrong) → increment rebuild counter → move card QA → Ready (label `loop:rebuild-N`). Clean up worktree.
 
 #### Screenshot embed format (mandatory on every QA exit — added 2026-05-22)
 
@@ -458,7 +464,9 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
 5. **Reviewer-side test rerun** (always — closes the Tester self-verification gap):
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the test command Tester used (recorded in Tester's PR handoff comment as `Local tests:` line).
-   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the impacted `post-fix-gate.py --run-tests` exit 0 (its task receipt) for this exact head SHA. A report for another SHA, or none, is a Verification miss. The merge point (the merge queue's train; queue off, the merge gate's `--force-full`) verifies the merged tree once.
+   - Exception: the DevKit gate is never rerun here — never rerun post-fix-gate --full; read from QA's report the `post-fix-gate.py --run-tests --scoped` exit 0 (its scoped receipt) for this exact head SHA. A report for another SHA, or none, is a Verification miss. When `.claude/bin/super-board-qa-exit2.sh` printed `review`, that is the only reason an existing test was edited: do not demand QA exit 0; the card is in Review for Antigravity, not Blocked and not needs-you. The merge point (the merge queue's train; queue off, the merge gate) verifies the merged tree once with `--scoped`, which escalates to `--full` on a core file.
+   - Before `pm_dispatch kind=audit`: `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. True → audit the current HEAD. False → move the card Review → Ready with label `loop:rebase` (The rebase pass). The Builder on `issue-<N>-build` merges `origin/<base>` and `git push origin <branch>`. QA classifies `review` again. The Reviewer audits the new head. The Reviewer does not commit and does not push.
+   - After the audit pass, in the review worktree at that head: sha256 each edited test (skip a file that is gone). Write `.claude/audit-gate/approved_tests.json` with reviewer ≠ author. Do not set `ANTIGRAVITY_PM_STATE_HOME`. Re-run `post-fix-gate.py --run-tests --brief` on `~/.antigravity-pm`; it must exit 0. `gate_receipt=$(jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)")`. An empty fp: do not comment. Otherwise post one PR comment with `approved-head:<sha40>`, `approved-by:` JSON and `edited-tests:` JSON array.
    - Tests green → continue to step 6.
    - Tests red → open new `[qa]`-prefixed PR thread quoting the failure output, move card Review → QA with `loop:rebuild-N`, exit. Tester wrote a broken suite; QA owns the fix.
 6. **Adversarial mode** (per `truth_gate`): when triggered, spawn 2 sub-agents in parallel:
@@ -507,20 +515,17 @@ substantial builds and landed **zero commits on `main` in six hours**. The Revie
 walk these steps in order, and the card **must not reach Done until the merge is confirmed
 on the base branch**.
 
-**Merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` without `--codex`, whose runner
-drains the queue every tick; `SB_MERGE_QUEUE=0` turns it off): the Reviewer
+**Merge queue on** (config `merge_queue.enabled` or `SB_MERGE_QUEUE=1`, AND `worker_backend: "claude-p"` (its runner drains the queue every
+tick) or `"workflow"` (the launchd schedule drains it), without `--codex`; `SB_MERGE_QUEUE=0` turns it off): the Reviewer
 never calls the merge gate (it refuses a direct call, exit 13). In place of steps 2–5 below:
-1. post `approved-head:$HEAD` on the PR as its own new comment (step 5 says how);
+1. after the Antigravity audit pass, `gate_receipt=$(jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)")` (empty fp: do not comment), then post `approved-head:$HEAD`, `approved-by:` and `edited-tests:` (JSON array of the edited tests; omit the line only when none were edited) on the PR as its own new comment (step 5 says how);
 2. `gh pr ready <PR>`;
 3. `gh pr edit <PR> --add-label merge-queue`;
 4. comment on the Issue, one line: `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`;
 5. write the Reviewer report (status `merge-ready`), leave the card in Review and exit.
 
-`super-board-merge-queue.sh` batches the queued PRs into one merge train (one `--full` verify of the merged tree), merges
-them and routes every `train-result` (merged → Done). Queue off: the steps below, unchanged. The workflow backend (default) and
-`--codex` have nothing that drains the queue, so the queue is off there even when the config enables it: a `merge-queue` label
-would leave the card in Review, re-reviewed every wave. They take the steps below (`ponytail:` queue only on claude-p; add
-workflow/codex when a queue schedule runs there).
+`super-board-merge-queue.sh` batches the queued PRs into one merge train (one `--scoped` verify of the merged tree, `--full` on a core file), merges
+them and routes every `train-result` (merged → Done). Queue off (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`): the steps below. The workflow backend drains the queue through the launchd schedule `super-board-queue-schedule.sh`. Only `--codex` and `SB_MERGE_QUEUE=0` leave it undrained; a `merge-queue` label there would leave the card in Review, re-reviewed every wave.
 
 ```
 1. Mark ready      gh pr ready <PR>                     # idempotent; no-op if already ready
@@ -543,7 +548,7 @@ workflow/codex when a queue schedule runs there).
      bash .claude/bin/super-board-merge-gate.sh --config <config> --pr <N> --expect-head "$HEAD" \
        --subject "<PR title>" --body-file <msg.md>
    <msg.md> = the PR's commit bullets, deduplicated, plus `Closes #<issue>` (writing-standard.md § 1).
-   **Before the gate, post the approval** on the PR as its own NEW comment (not the `[reviewer] [report]` comment, and never an in-place edit of it as in step 8) whose first line is exactly `approved-head:$HEAD` and second line `approved-by: {...}` (same four fields, only after the Antigravity audit pass of `$HEAD` in the Reviewer lifecycle; `"reviewer":"antigravity"`)
+   **Before the gate, post the approval** on the PR as its own NEW comment (not the `[reviewer] [report]` comment, and never an in-place edit of it as in step 8) whose first line is exactly `approved-head:$HEAD`, second line `approved-by: {...}` (same four fields, only after the Antigravity audit pass of `$HEAD` in the Reviewer lifecycle; `"reviewer":"antigravity"`) and third line `edited-tests:` (JSON array of the edited tests; omit the line only when none were edited). `gate_receipt=$(jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)")` (empty fp: do not comment). Audit, that receipt, then the comment, THEN the merge gate.
    (full 40-hex sha, `$HEAD` above). The runner reads the latest such comment from an OWNER/MEMBER/COLLABORATOR: a card still in
    Review whose PR head equals it (gate exit 4, a lock or conflict, not code) gets a **merge-only** worker next tick — this step 5 only,
    `--expect-head` pinned, no new review. A push changes the head, so the approval lapses and the next tick reviews the new head (#227).

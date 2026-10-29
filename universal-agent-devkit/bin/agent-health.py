@@ -335,6 +335,9 @@ def project_wiring(target: Path, score: Score):
     for d in (".claude/hooks", ".claude/commands", ".claude/agents", ".agents/skills", ".agents"):
         if (target / d).is_dir():
             broken += [f"{d}/{e.name}" for e in (target / d).iterdir() if e.is_symlink() and not e.exists()]
+    if broken:
+        # #644: link chết là lệnh / skill / hook chết (như link bị mất ở trên): FAIL, kèm tên link
+        score.fatal.append(tr(f"link hỏng: {', '.join(broken[:5])}", f"broken links: {', '.join(broken[:5])}"))
     score.check(not broken, tr("Không có link hỏng trong .claude/ và .agents/", "No broken links in .claude/ and .agents/"),
                 tr(f"Link hỏng: {broken[:5]}", f"Broken links: {broken[:5]}"))
     # A COMMITTED symlink (git mode 120000) whose target is gone, anywhere in the repo, breaks every clone and CI (GeelyEx2 2026-10-10:

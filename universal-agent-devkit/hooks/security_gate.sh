@@ -104,6 +104,15 @@ import session_worktree as s; print(s.project(json.loads(sys.stdin.read() or "{}
     echo "⚠ DevKit $(basename "$0"): the session's worktree could not be resolved (hooks/session_worktree.py next to the real hook) - judging ${REPO_ROOT}" >&2
   fi
 fi
+# #528: worker của board không chấm main. Dùng SG_TREE (cây đang chấm), không phải REPO_ROOT của log.
+if [ "${SB_BOARD_WORKER:-}" = "1" ] && python3 -I -c 'import os,sys
+_d = os.path.dirname(os.path.realpath(sys.argv[1]))
+if os.path.isabs(_d): sys.path.append(_d)
+import session_worktree as s
+raise SystemExit(0 if s.worker_skip_main(sys.argv[2]) else 1)' "$0" "${SG_TREE}"; then
+  echo "$(date +%Y-%m-%dT%H:%M:%S) SB_BOARD_WORKER skip main" >> "${LOG_DIR}/security_gate.log"
+  exit 0
+fi
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
 # start and the gate passed (tests/gates/test_hook_large_payload.sh).
 SG_LOG="${LOG_DIR}/security_gate.log" SG_DIR="${LOG_DIR}" SG_REPO="${SG_TREE}" \

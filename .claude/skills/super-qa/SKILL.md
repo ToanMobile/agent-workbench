@@ -211,27 +211,25 @@ When invoked by super-board (env `SUPER_BOARD_RUN=1` or invocation contains "sup
 - After pushing tests, evidence or fixes to a PR, refresh [PR author notes](../super-board/references/pr-author-notes.md) before the handoff. Keep file summaries current and explain critical changed sections on the PR.
 
 ### Card types
-- **Built card (`feature`, `bug`, no label):** worktree at `.claude/worktrees/issue-<N>-qa/` checked out at Builder's branch tip.
+- **Built card (`feature`, `bug`, no label):** worktree at `.claude/worktrees/issue-<N>-qa/` detached at `origin/<PR branch>`. The build worktree keeps the branch.
 - **`qa` card (skipped Building):** move it Ready → QA yourself, create `issue-<N>-<slug>` from the base branch, test what is already there (run.md → "qa cards").
 - **A live URL with no repo** is not a board card: `/super-qa <url>` runs standalone.
 
 ### Lifecycle (Tester, first pass)
 See `.claude/skills/super-board/references/run.md` → Tester (first pass — repo-backed). Summary:
-1. `git fetch origin`, then the worktree with the DevKit: `agent-kit worktree add .claude/worktrees/issue-<N>-qa issue-<N>-<slug> --lane=qa --base=origin/<config.base_branch>`
-   (no `agent-kit` on PATH: `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It checks out the Builder's branch as
-   it is (one only origin has from origin/<branch>; a `qa` card's new branch from the base), links the DevKit, copies the git-ignored config and
-   hooks, clones a Unity Library copy-on-write. Exit 4 = under the disk floor: stop with its message, card and
-   claims unchanged. Exit 1 naming a worktree that holds the branch (the Builder's leftover): `agent-kit worktree remove` that path
-   (no agent-kit on PATH: `python3 .agents/devkit/scripts/git/worktree.py remove`; a plain `git worktree remove` refuses the DevKit set-up
-   every lane worktree carries — 11 cards Blocked on 20/10 for it; refused with ✖ = it holds work: Block the card naming it), then add
-   again. Never a plain `git worktree add` or EnterWorktree (agent-workbench#93). Clean up with `agent-kit worktree remove <path>`.
+1. `git fetch origin`, then a detached worktree with the DevKit: `agent-kit worktree add .claude/worktrees/issue-<N>-qa --lane=qa --base=origin/<PR branch>`
+   (no `agent-kit` on PATH: `python3 .agents/devkit/scripts/git/worktree.py add` with the same arguments). It does not check out the branch, so the
+   build worktree keeps it — do not remove that worktree. Refresh with `git fetch origin` then `git checkout --detach origin/<PR branch>`.
+   Push a QA evidence commit with `git push origin HEAD:<PR branch>`. A `qa` card with no PR branch yet creates `issue-<N>-<slug>` from the base (`--lane=qa --base=origin/<config.base_branch>` on the same path).
+   The add links the DevKit, copies the git-ignored config and hooks, and clones a Unity Library copy-on-write. Exit 4 = under the disk floor: stop with its message, card and
+   claims unchanged. Never a plain `git worktree add` or EnterWorktree (agent-workbench#93). Clean up the QA worktree with `agent-kit worktree remove <path>` (the branch stays; the build worktree stays until after the merge).
 2. Read issue + PR + Builder's handoff.
 3. Build issue-scoped test plan: ONE observable test per AC.
 3a. Existing project verifier → follow [project-verifier.md](references/project-verifier.md)
 for affected selection, host readiness, real assertions and fresh proof.
 3b. Run the **Test-gap check** (above) against the Builder's diff; its High gaps join the plan.
 4. Run tests. Capture evidence to `docs/super-board/runs/issue-<N>-qa-v<N>/`. **For any UI-affecting issue, capture at least one screenshot per AC** (Playwright `page.screenshot` or `browse --screenshot`). Save with descriptive names: `ac1-<short-desc>.png`, not `screenshot1.png`.
-5. **Commit the evidence directory** to the issue branch alongside test files (`git add docs/super-board/runs/issue-<N>-qa-v<N>/ && git commit && git push`). This is non-optional — without it, the inline image markdown in the issue comment won't render on GitHub. Keep it small: screenshots plus a `summary.md` of at most 40 lines, never raw runner output over 200 lines and never ANSI colour codes (run.md → Tester step 5, "Evidence stays small").
+5. **Commit the evidence directory** alongside test files, then `git push origin HEAD:<PR branch>` (`git add docs/super-board/runs/issue-<N>-qa-v<N>/ && git commit && git push origin HEAD:<PR branch>`). This is non-optional — without it, the inline image markdown in the issue comment won't render on GitHub. Keep it small: screenshots plus a `summary.md` of at most 40 lines, never raw runner output over 200 lines and never ANSI colour codes (run.md → Tester step 5, "Evidence stays small").
 6. **Pass** → tick the PR's `ac` block with proof lines, write `visual` for UI, append a `history` row, rewrite `status` (`super-board-pr-body.sh`) → `[qa] [report] ✅` PR comment with results + evidence path → **issue comment with screenshot evidence** (see "Issue-comment evidence format" below) → move QA → Review. Clean up worktree.
 7. **Fail** → leave failing ACs unchecked with the reason, append a `history` row, rewrite `status` → `[qa] [report] ❌` PR comment with per-AC expected/actual + repro file:line + evidence path + "what fixed should look like" → issue comment with the failure screenshots → increment rebuild counter → move QA → Ready (label `loop:rebuild-N`). Clean up worktree.
 

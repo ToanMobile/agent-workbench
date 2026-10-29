@@ -50,4 +50,4 @@ board **Agent Workbench** (https://github.com/users/ToanMobile/projects/1).
 | Human-only step | a `needs-you: <command>` line in the PR body → 🙋 Blocked until done |
 | Real device | label `needs-device` when the card's QA needs a real phone · held in Ready (with `qa`) or QA while no real device is online |
 | Needs a person | real device, playtest, store/legal account, owner-only secret, a decision → `## Cần người` first, label `needs-you` + one `🙋 Cần bạn` comment (`.claude/bin/super-board-needs-you.py mark`; createTask `--needs-you`) |
-| Size | one card = one PR under 400 changed lines |
+| Size | one card = one PR · no line-count split (AC cap 12 stays) · two open cards that share a file fold into the lower number when neither has started |
