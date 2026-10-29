@@ -443,7 +443,9 @@ def audit_record(top, task_id):
     return False, f"không có biên bản audit pass của antigravity-pm cho {task_id} trong repo này ({_task_pattern(task_id)})"
 
 
-AUDITED_HEAD = re.compile(r"(?<![0-9A-Za-z])auditedHead:\s*([0-9a-f]{40})(?![0-9A-Za-z])")
+# #629: re.ASCII — `\s` của Python (str) khớp cả \x1c-\x1f, \x85 mà `\s` của JS (pm_verdict) không khớp; không ASCII thì notes
+# `auditedHead:\x1f<sha>` lọt qua kiểm audit-agent.json của pm_verdict nhưng gate vẫn nhận sha (tests/gates/test_audited_head_ascii_space.sh).
+AUDITED_HEAD = re.compile(r"(?<![0-9A-Za-z])auditedHead:\s*([0-9a-f]{40})(?![0-9A-Za-z])", re.ASCII)
 SHA40 = re.compile(r"[0-9a-f]{40}")
 
 

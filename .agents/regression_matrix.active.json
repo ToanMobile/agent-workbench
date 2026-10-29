@@ -2144,6 +2144,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "audited-head-ascii-space-629",
+      "watch_files": [
+        "universal-agent-devkit/bin/push_gate.py",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-AUDITED-HEAD-ASCII-629-01",
+          "name": "#629: push_gate.AUDITED_HEAD (re.ASCII) không nhận `auditedHead:` ngăn bởi \\x1c-\\x1f/U+0085 mà regex JS của pm_verdict không thấy; dấu cách/tab vẫn nhận",
+          "command": "bash universal-agent-devkit/tests/gates/test_audited_head_ascii_space.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
