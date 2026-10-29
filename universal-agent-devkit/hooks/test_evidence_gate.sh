@@ -2801,7 +2801,12 @@ if tp and os.path.exists(tp):
                         else:
                             # Không có id, hoặc input không phải dict: không suy ra lượt chỉ đọc.
                             no_id_tool_indices.append(blk_idx)
-                        if not isinstance(binp, dict) or nm not in ("Edit", "Write", "NotebookEdit"):
+                        if not isinstance(binp, dict):
+                            if nm in ("Edit", "Write", "NotebookEdit"):
+                                # Input hỏng vẫn là sửa nguồn: except phía dưới ghi log và chặn lời khai pass (#649, P3a).
+                                raise TypeError(f"input is {type(binp).__name__}, not a dict")
+                            continue
+                        if nm not in ("Edit", "Write", "NotebookEdit"):
                             continue
                         fp = binp.get("file_path") or ""
                         if isinstance(fp, str) and fp and _is_scratch(fp):
