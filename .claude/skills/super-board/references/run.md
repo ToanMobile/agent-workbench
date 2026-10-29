@@ -142,7 +142,7 @@ There is **exactly one branch per issue** and **exactly one PR per issue**. All 
 - Builder creates the branch off `config.base_branch`, writes code, commits + pushes, opens a **draft PR**.
 - Tester checks out the same branch in a fresh worktree, adds tests, commits to the same branch, pushes.
 - Reviewer is the **only lane that merges**. On approval: squash-merges PR into `base_branch`, deletes the branch.
-- If `config.merge_policy` says a human merges (`default: "human"`, or a money / auth / schema / size hit), the merge gate exits 7 and the Reviewer parks the card in Blocked for a human click instead.
+- If `config.merge_policy` says a human merges (`default: "human"`, a money / auth / schema hit, or a size hit only when `auto_max_lines` is a positive number), the merge gate exits 7 and the Reviewer parks the card in Blocked for a human click instead.
 
 ## PR description template
 
@@ -261,7 +261,7 @@ in a sub-agent, before touching a worktree.
     Building / QA / Review / Ready cards, leaving out every Ready card labelled `waiting-on:#*` (any case, on the item or its
     content, string or {name}) — a waiting card is not in progress; save it to a temp file
 [ ] bash .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> \
-         --inflight <file> --cap <merge_policy.auto_max_lines, 400 when unset> [--files <paths you expect to touch>]
+         --inflight <file> --cap <merge_policy.auto_max_lines, 0 when unset> [--files <paths you expect to touch>]
 [ ] judge each card: the script's verdict, then its `candidates` (near-misses) semantically
 [ ] act on the outcome below, then return one verdict per card
 ```
@@ -272,14 +272,16 @@ The script asks five questions; the agent owns the judgement:
 |---|---|---|---|
 | 1 | Already done? | merged PR closes `#N`; merged PR / closed issue with the same `fingerprint:` or title | a merged PR that delivers the same behaviour under other words |
 | 2 | Already in progress? | open PR on another branch closes `#N` or has the same title; a card in Building/QA/Review (or a lower-numbered Ready peer) with the same title | same feature, different words — not merely the same files |
-| 3 | File overlap? | open PR touches files the card names; a lower-numbered card in the same `--issues` batch names the same files | expected files from reading the issue (`--files`); the same overlap with a Ready peer in another batch |
+| 3 | File overlap? | open PR touches files the card names; two unstarted cards in the same `--issues` batch name the same files (`verdict: merge`, keeper `absorb`) | expected files from reading the issue (`--files`); the same overlap with a Ready peer in another batch. A peer that already has an open `issue-<N>-*` PR is `sequence`, and is not folded |
 | 4 | Unclear? | no `## Acceptance Criteria` bullets | AC that contradicts the current code (cite `file:line`) |
-| 5 | Too big? | two or more size signals in the issue text (`tag: too-big`, with `evidence` and a suggested `split`): Fix lists ≥5 short deliverables (or the title ≥3) · ≥4 areas · the card calls itself big (phase, vertical slice, "many components") · its scope is a whole spec section · an AC needs people or production data; an AC only a real device can prove (OOM, FPS, memory) on a card that says "real device" counts as two, so it holds on its own | likely over ~400 changed lines (`merge_policy.auto_max_lines`; lockfiles, generated, snapshots, migration SQL excluded) from the code it will touch, or spans many areas (UI + API + DB + jobs …) — lint.md criterion 15 |
+| 5 | Too big? | two or more size signals in the issue text (`tag: too-big`, with `evidence` and a suggested `split`): Fix lists ≥5 short deliverables (or the title ≥3) · ≥4 areas · the card calls itself big (phase, vertical slice, "many components") · its scope is a whole spec section · an AC needs people or production data; an AC only a real device can prove (OOM, FPS, memory) on a card that says "real device" counts as two, so it holds on its own | spans many independent areas (UI + API + DB + jobs …) — lint.md criterion 15. Line count is a hold only when the board set a positive `auto_max_lines` |
 
-**Two Ready cards that overlap each other, neither with an open PR, go one at a time.** The
-lower-numbered card proceeds; only the other is sequenced, with `waiting-on:#<lower>` (it stays
-Ready), and the waiting-on sweep drops the label once the lower one closes. Sequencing each against the other leaves
-both with nothing to wait on and neither built — the same deadlock comes back every wave.
+**Two Ready cards that share files, and neither has an open `issue-<N>-*` PR, fold into one.** The
+lower number is the keeper (`proceed`, `absorb` the higher numbers). Each higher card is `merge`
+with `mergeInto` the keeper: `super-board-merge-cards.py` copies its Acceptance Criteria verbatim
+onto the keeper, closes the source as not planned, and that card moves to Done. One PR, one gate.
+If the lower card already has that open PR, do not fold: the unstarted card is `sequence` with
+`waiting-on:#<lower>` and stays Ready, never Blocked.
 
 The agent may turn a `proceed` into a `hold` on evidence. It may turn a mechanical `hold` into
 `proceed` only by naming why the match is a different feature — or, for `too-big`, why the signals
@@ -294,7 +296,8 @@ do not make this card big (the listed items are one small change, the device che
 | `hold` — done | move card to Blocked | `👯` · names the merged PR / closed issue · Owner: Eric (close as duplicate) · `blocked-by: -` |
 | `hold` — in progress | never Blocked (#601): same as `sequence` below — `super-board-waiting-on.py mark --on <the other card's issue, or the open PR's own number when that PR closes this card — never this card's number>`, card stays Ready, return verdict `sequence`. Exception: the legacy runner (`super-board-run.sh` preflight_gate) still parks an exact in-progress duplicate in Blocked 👯 for a person (#619 tracks moving it to `mark`) | — (no Block comment; `mark` posts its own ⏳ comment) — `sweep` drops the label when that closes, and pre-flight then finds it done |
 | `hold` — unclear | move card to Blocked | `❓` · the missing AC or the contradiction with `file:line` · `blocked-by: -` |
-| `hold` — too big | the Builder splits it with `/createTask` (super-build → "Too big → split"); only when it cannot, move card to Blocked | `❓` · "too big — likely over <cap> changed lines / spans <areas>" with the script's `evidence` · suggests splitting with `/to-tickets` into vertical slices, each under the cap, starting from its `split` (person / device ACs become `qa` cards) · `blocked-by: -` |
+| `hold` — too big | people, production data, a real device, or many independent areas. Line count holds only when the board set a positive `auto_max_lines`. Do not split a card just to stay under a line count | `❓` · people / device ACs become `qa` cards · independent areas may split with `/to-tickets` · `blocked-by: -` |
+| `merge` | neither card has started and they share files. Fold the higher into `mergeInto` with `python3 .claude/bin/super-board-merge-cards.py --repo <owner/name> --into <keeper> --absorb <this>` (AC copied verbatim, close the source as not planned). The keeper `proceed`s with `absorb`. This card moves to Done (status `advanced`), and is never built and never Blocked. A failed fold stays Ready and retries. Exit 3 (the source already has an open `issue-<N>-*` PR): `waiting-on`, stays Ready, never Blocked | — |
 | `sequence` — `blockedBy` non-empty | never Blocked: the card stays Ready (return column `Ready`, status `waiting`). Run `python3 .claude/bin/super-board-waiting-on.py mark --config <cfg> --issue <N> --on <blockedBy, comma-separated> --why "<overlapping PR and files>"`: it labels the card `waiting-on:#<each>` and comments once (no `blocked-by:` line). The planner and runner skip Ready cards so labelled; `super-board-waiting-on.py sweep` drops a label once that issue is CLOSED/MERGED and the card builds. `mark` labels only blockers still OPEN and prints JSON: `"labels": []` (every blocker already closed) → `proceed`, as if `blockedBy` were empty; labels non-empty → status `waiting`, column `Ready`, `blockedBy` = the numbers still open. Exit 64/69/79 → leave the card untouched, verdict `skipped` (never Blocked; that 79 is the helper's, not a run halt); it is retried next wave | — (no Block comment, no `blocked-by:` line) |
 | `sequence` — `blockedBy` empty | proceed (card stays Ready, return column `Ready`), comment `⚠️ expected conflict with PR #<P> on <files> — the merge gate will rebase` | — |
 | `halted` | script exit 79: required evidence unavailable; leave the card untouched, stop this run, resume explicitly after recovery | — |
@@ -314,8 +317,9 @@ call is cut by the Bash timeout and the whole run is repeated (#249). The runner
 
 ### Builder (first pass)
 
-0. Legacy backend only: run the Builder pre-flight above in a sub-agent. Anything but `proceed`
-   (or a conflict-note `sequence`) → do what its row says, release the claim, exit.
+0. Legacy backend only: run the Builder pre-flight above in a sub-agent. A `merge` verdict is not
+   built: the fold already moved that card to Done. Anything but `proceed` (or a conflict-note
+   `sequence`) → do what its row says, release the claim, exit.
 1. Create worktree `.claude/worktrees/issue-<N>-build/` off `config.base_branch` with the DevKit only (agent-workbench#93):
    `git fetch origin`, then `agent-kit worktree add .claude/worktrees/issue-<N>-build issue-<N>-<slug> --lane=build --base=origin/<config.base_branch>`.
    Never a plain `git worktree add` or EnterWorktree. Exit 4 = under the disk floor: stop, card and claims unchanged.
@@ -333,10 +337,9 @@ call is cut by the Bash timeout and the whole run is repeated (#249). The runner
    Reconcile step does the same for a card that ends closed. Any AC not yet met → continue with step 4 (never close on a partial match).
    Not for a card labelled `ac-open` (T0054): the runner reopens it once closed. Open a proof PR whose `sb:ac` lists every AC
    line instead (earlier ones `[x]` citing their PR); its merge gate removes the label.
-4. Implement smallest safe change covering ACs, under the PR size cap
-   (`merge_policy.auto_max_lines`, default 400 changed lines). Growing past it mid-build → stop,
-   push what you have, propose the split (vertical slices via `/to-tickets`) in a PR comment and
-   move the card to Blocked `❓` — never push on past the cap (super-build → "Keep each PR small").
+4. Implement the smallest safe change that covers the card's ACs. Unset `auto_max_lines` is 0:
+   finish the card as one PR. Only a board that set a positive `auto_max_lines` stops when the
+   diff passes that cap, pushes what it has, and proposes a split (super-build → "Keep each PR small").
 5. Commit + push (always). Commits follow writing-standard.md § 1 (`✨ [feat] chat: stream replies` + short bullets).
 6. Open draft PR linked to the issue with the PR description template (title in commit-subject format, every block filled).
 7. Follow [PR author notes](pr-author-notes.md), then post the `[builder] [report]` PR comment (see "Commenting cadence").

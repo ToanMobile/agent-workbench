@@ -100,8 +100,9 @@
 #      the card goes back to Review (not Blocked, not a rebase pass)
 #   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
 #   7  merge policy says a human merges this one (money / auth / destructive
-#      schema, a diff over auto_max_lines — default 400, "big PR — please
-#      review" — or merge_policy.default "human"). Stdout lists each
+#      schema, a diff over a positive auto_max_lines — default 0, so an unset
+#      cap is not a size gate; a positive cap says "big PR — please review" —
+#      or merge_policy.default "human"). Stdout lists each
 #      `human-gate: <category> — <evidence>`. Nothing ran, nothing merged; the
 #      card → Blocked with the 🙋 template: the human reviews and merges it, or
 #      comments "done" after its pinned request to approve — the next wave re-runs
@@ -122,7 +123,7 @@
 # MERGE POLICY AND MIGRATIONS (config, all optional — defaults shown in
 # references/config-schema.json)
 #
-#   merge_policy: { default: "auto"|"human", auto_max_lines: 400, size_exclude,
+#   merge_policy: { default: "auto"|"human", auto_max_lines: 0, size_exclude,
 #                   always_human: { <category>: {labels, paths, keywords} } }
 #   migrations:   { globs, allowed_envs, target_env, commands: {<env>: cmd},
 #                   human_steps }

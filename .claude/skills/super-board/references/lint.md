@@ -106,7 +106,7 @@ An issue is flagged if any of these apply. An issue can fail multiple criteria; 
 | 12 | Sub-agent ambiguity flag | "this could mean ≥2 different things" | Surface both interpretations |
 | 13 | `## Blocked by` missing, empty, or unparseable | No section; or `- None — but #26 must merge first` | Rewrite to `- #N — why` bullets, or a bare `- None.` |
 | 14 | An AC proves behaviour against a fake, and no card owns the real thing | "proven with a fake repository, no database" | Name the ticket that builds it, or offer to file one |
-| 15 | Too big: likely over ~400 changed lines (`merge_policy.auto_max_lines`), or spans many areas | "Add billing page, webhook handler, admin UI and email templates" | Hold with ❓ and split via `/to-tickets` into vertical slices |
+| 15 | Too big: spans many independent areas, or needs people, production data, or a real device. Line count is not a split. A positive `auto_max_lines` is the only size gate | "Add billing page, webhook handler, admin UI and email templates" | Hold with ❓ when people, a real device, or independent areas must ship apart. Do not split so each slice stays under a line count |
 | 16 | Ticket sections missing (writing-standard.md § 3): `## Problem`, `## Context`, `## Fix`, `## Risk` — and `## Evidence` (the folded 12-row table) on a bug | Body has "What to build" and ACs only | Rewrite into the ticket format; draft Problem/Fix from the body, ask for Who and Risk |
 | 17 | Acceptance Criteria not a checklist | ACs as prose or plain `-` bullets | Rewrite as `- [ ] <checkable outcome>`, one per line |
 | 18 | Context steps not lettered under Where, more than one step per line, or chained with arrows | "Where: /x — sign in → open Receipts → drop file" | Rewrite as `- **Where:** …` then `  - a. Sign in` / `  - b. …`, one per line; embed the screenshot (raw URL pinned to a sha), never link it |
@@ -150,17 +150,16 @@ When an AC contains *fake*, *stub*, *mock*, `notBuiltYet`, or "no database / no 
 proof method, ask one question: **which card builds the real one?** A number is an answer. "Later"
 is not.
 
-## Criterion 15 — too big (small PRs by design)
+## Criterion 15 — too big (people, device, independent areas)
 
-Small pull requests are a design goal: each ticket should land as one PR under the merge size cap
-(`merge_policy.auto_max_lines`, default 400 changed lines; lockfiles, generated files, snapshots and
-migration SQL do not count). A PR over the cap is never auto-merged — it parks in Blocked 🙋 as a
-"big PR". Catching it at lint time is cheaper than splitting a finished branch.
+There is no default line-count split. `merge_policy.auto_max_lines` unset is 0: one card is one PR
+and one gate, however many lines the diff is. A board that sets a positive number is the only case
+where a larger diff waits for a human at merge time (lockfiles, generated files, snapshots and
+migration SQL still do not count). Do not split a ticket so each slice stays under a line count.
 
 Flag a ticket as **too big** when either holds:
 
-- **Likely over the cap** — estimate from the ACs and the files they imply: many new screens or
-  endpoints, a new module plus its UI plus its tests, or "and" chaining unrelated deliverables.
+- **People, production data, or a real device** — an AC only a person or a real device can prove.
 - **Spans many areas** — touches three or more separate areas (say UI, API, database, background
   job, email) where each could ship and be checked alone.
 
@@ -175,10 +174,10 @@ Tuned on 245 issues of six boards (2026-10-19): the six cards builders had block
 hold, none of the 49 completed ones does. A short card can still be too big from the code it
 touches; that call stays with lint's sub-agent and the pre-flight agent.
 
-What lint does: hold the ticket with ❓ (Blocked, `block-template.md`, reason "too big — split
-first") and offer to split it with `/to-tickets` into vertical slices — each slice thin end to end,
-independently mergeable, under the cap, with its own ACs and a `## Blocked by` line. The original
-ticket closes, or becomes the first slice, once the user approves the split.
+What lint does: for people or a real device, hold with ❓ and offer those ACs as `qa` cards. For
+independent areas, offer `/to-tickets` into vertical slices that can ship and be checked alone,
+each with its own ACs and a `## Blocked by` line. Line count alone never holds and never asks for
+a split. The original ticket closes, or becomes the first slice, once the user approves the split.
 
 ## Phase 4 — skill routing
 
@@ -190,7 +189,7 @@ ticket closes, or becomes the first slice, once the user approves the split.
 | Bug ticket, no repro steps | `mattpocock-skills:diagnosing-bugs` |
 | Issue needing fundamental rethink (criteria #10, #11) | `mattpocock-skills:grilling` |
 | Issue with multiple interpretations (criterion #12) | `mattpocock-skills:grilling` |
-| Ticket too big (criterion #15) | `/to-tickets` (split into vertical slices) |
+| Ticket too big (criterion #15) | `/to-tickets` only for independent areas, people, or a real device — never to stay under a line count |
 | Ticket format (criteria #16–18) | Inline rewrite into `ticket-format.md` (sub-agent in lint itself) |
 | Unsettled expensive design (criterion #19) | [Design preflight](design-preflight.md) with `mattpocock-skills:codebase-design`; `mattpocock-skills:domain-modeling` only for terminology/ADR work |
 | Catch-all (none of above) | Inline draft (sub-agent in lint itself) |

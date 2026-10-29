@@ -1215,17 +1215,29 @@ preflight_gate() {
     | select(.status != "Ready" or (waiting_on | not))
     | {number: .content.number, title: (.content.title // ""), status: .status}]' > "$inf" 2>/dev/null || echo '[]' > "$inf"
   # The board's own merge line cap: 0 means one card is one PR whatever its size, so preflight never asks to split it.
-  # Read it like super-board-merge-policy.py: unset → 400, else a whole number, and any value <= 0 is "no cap".
-  # A value the merge policy cannot read (a word) falls back to 400 here; the merge gate then sends that PR to a human.
+  # Read it like super-board-merge-policy.py: unset or unreadable → 0 (no line cap). A positive
+  # auto_max_lines is the opt-in size gate. Any value <= 0 is "no cap".
   local cap; cap=$(jq -r '.merge_policy.auto_max_lines as $c
-    | if $c == null then 400 elif $c == false then 0 elif $c == true then 1
+    | if $c == null then 0 elif $c == false then 0 elif $c == true then 1
       elif ($c | type) == "number" then ($c | floor)
       elif ($c | type) == "string" and ($c | test("^\\s*[-+]?[0-9]+\\s*$")) then ($c | gsub("\\s"; "") | tonumber)
-      else 400 end
-    | if . <= 0 then 0 elif . > 1000000000 then 1000000000 else . end' "$CONFIG_PATH" 2>/dev/null) || cap=400
+      else 0 end
+    | if . <= 0 then 0 elif . > 1000000000 then 1000000000 else . end' "$CONFIG_PATH" 2>/dev/null) || cap=0
   # #581: a draft PR idle longer than preflight.stale_draft_days (default 3) is no file overlap.
   local stale; stale=$(jq -r '(.preflight.stale_draft_days // 3) | if type == "number" and . >= 0 and . <= 99999 then floor else 3 end' "$CONFIG_PATH" 2>/dev/null) || stale=3
-  out=$(SB_STALE_DRAFT_DAYS="${stale:-3}" bash "$pf" --repo "$repo" --issues "$issue" --inflight "$inf" --cap "${cap:-400}" 2>>"$RUN_MANIFEST") || rc=$?
+  # Thẻ Backlog/Ready khác (kể cả Ready đang waiting-on) đi cùng --issues để preflight gộp khi cùng file và chưa chạy.
+  # Building/QA/Review không đưa vào: thẻ đang chạy không nhận gộp. Tối đa 30 thẻ kia, số nhỏ trước.
+  local issues="$issue" peers=""
+  peers=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson self "$issue" '
+    [ .items[]
+      | select((.content.type // "Issue") == "Issue")
+      | select(.status == "Backlog" or .status == "Ready")
+      | .content.number | select(. != $self)
+    ] | unique | sort | .[:30] | map(tostring) | join(",")' 2>/dev/null) || peers=""
+  if [ -n "$peers" ]; then
+    issues=$(printf '%s,%s\n' "$issue" "$peers" | tr ',' '\n' | awk 'NF && !seen[$0]++' | sort -n | paste -sd, -)
+  fi
+  out=$(SB_STALE_DRAFT_DAYS="${stale:-3}" bash "$pf" --repo "$repo" --issues "$issues" --inflight "$inf" --cap "${cap:-0}" 2>>"$RUN_MANIFEST") || rc=$?
   rm -f "$inf"
   if [ "$rc" -eq 79 ]; then log "preflight halted for #${issue}: GitHub evidence unavailable (exit 79)"; exit 79; fi
   if [ "$rc" -ne 0 ]; then log "⚠ preflight failed for #${issue} (exit ${rc}) — dispatching without it"; return 0; fi
@@ -1234,8 +1246,70 @@ preflight_gate() {
   verdict=$(printf '%s' "$v" | jq -r '.verdict'); tag=$(printf '%s' "$v" | jq -r '.tag // ""')
   reason=$(printf '%s' "$v" | jq -r '.reason // ""')
   blocked=""
+  # Gộp thẻ: script tự gọi gh. Ghi hỏng không đẩy thẻ vào Blocked (không đi qua gh_write_once).
+  local merge_bin; merge_bin="${SB_MERGE_CARDS:-$(dirname "$SB_GITHUB_READ")/super-board-merge-cards.py}"
+  fold_cards() {
+    python3 "$merge_bin" --repo "$repo" --into "$1" --absorb "$2"
+  }
+  move_issue_done() {
+    local n="$1" id
+    id=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -r --argjson n "$n" '[.items[] | select(.content.number == $n) | .id][0] // empty')
+    [ -n "$id" ] && set_card_status "$id" "Done"
+  }
   case "$verdict" in
-    proceed) return 0 ;;
+    proceed)
+      absorb=$(printf '%s' "$v" | jq -r '(.absorb // []) | map(tostring) | join(",")')
+      if [ -n "$absorb" ]; then
+        local mrc=0
+        fold_cards "$issue" "$absorb" >/dev/null 2>>"$RUN_MANIFEST" || mrc=$?
+        if [ "$mrc" -eq 0 ]; then
+          local oldifs="$IFS" n
+          IFS=','
+          for n in $absorb; do move_issue_done "$n" || true; done
+          IFS="$oldifs"
+          log "preflight #${issue}: folded #${absorb//,/, #} into it"
+        elif [ "$mrc" -eq 3 ]; then
+          log "preflight #${issue}: absorb #${absorb//,/, #} already started — not folded, keeper still dispatched"
+        else
+          log "preflight #${issue}: fold of #${absorb//,/, #} failed (exit ${mrc}) — not dispatched, stays Ready, retrying next tick"
+          return 1
+        fi
+      fi
+      return 0 ;;
+    merge)
+      into=$(printf '%s' "$v" | jq -r '.mergeInto // empty')
+      if ! printf '%s' "$into" | grep -Eq '^[0-9]+$'; then
+        log "preflight merge for #${issue} has no mergeInto — not dispatched, stays Ready, retrying next tick"
+        return 1
+      fi
+      local mrc=0
+      fold_cards "$into" "$issue" >/dev/null 2>>"$RUN_MANIFEST" || mrc=$?
+      if [ "$mrc" -eq 0 ]; then
+        move_issue_done "$issue" || true
+        log "preflight merge #${issue} into #${into}: folded, card to Done, not dispatched"
+        return 1
+      fi
+      if [ "$mrc" -eq 3 ]; then
+        local wcache wout wlabels orc=0
+        wout=$(python3 "$(waiting_on_helper)" mark --config "$CONFIG_PATH" --issue "$issue" --on "$into" --why="$reason" 2>>"$RUN_MANIFEST") || orc=$?
+        [ "$orc" -ne 0 ] || wlabels=$(printf '%s' "$wout" | jq -ce '.labels | arrays' 2>/dev/null) || orc=65
+        if [ "$orc" -ne 0 ]; then
+          log "preflight #${issue}: already started, waiting-on mark for #${into} failed (exit ${orc}) — stays Ready, retrying next tick"
+          return 1
+        fi
+        if [ "$wlabels" = "[]" ]; then
+          log "preflight #${issue}: #${into} is closed now — proceeding"
+          return 0
+        fi
+        if wcache=$(printf '%s' "$PROJECT_ITEMS_JSON" | jq -c --argjson n "$issue" --argjson add "$wlabels" '
+          .items |= map(if .content.number == $n then .labels = (((.labels // []) + $add) | unique) else . end)'); then
+          PROJECT_ITEMS_JSON="$wcache"
+        fi
+        log "preflight merge #${issue}: source already started — waiting on #${into}, stays Ready, not dispatched"
+        return 1
+      fi
+      log "preflight merge #${issue} into #${into} failed (exit ${mrc}) — not dispatched, stays Ready, retrying next tick"
+      return 1 ;;
     sequence)
       # blockedBy đọc từ body PR, không kiểm trạng thái: chỉ số issue còn MỞ mới chặn (số đã đóng là đúng mẫu #200). Một lệnh
       # super-board-blocked-by.py cho cả danh sách: nó không đi qua file halt, số gõ nhầm / số PR không dừng board (review P1/P2).

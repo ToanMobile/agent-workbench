@@ -166,7 +166,8 @@ two complete builds. In order, no shortcuts:
    - **Exit 2 / 5 — stale branch or real conflict.** Rebase pass (run.md → "The rebase pass").
    - **Exit 11 — verify red, branch NOT behind the base.** A rebase changes nothing: open a `[builder]` thread quoting the gate's "verify failed (exit N: …)" line, move Review → Ready with `loop:rebuild-N`.
    - **Exit 7 — a human merges.** `merge_policy` matched (money / auth / schema label,
-     path or added-line keyword; a diff over `auto_max_lines`, default 400 — "big PR — please
+     path or added-line keyword; a diff over a positive `auto_max_lines` — unset default is 0, so
+     line count is not a human gate unless the board sets one — "big PR — please
      review"; `default: "human"`). `schema` means destructive only (DROP / TRUNCATE / RENAME);
      an additive migration follows `migrations.allowed_envs`, and a live DB is always human.
      Card → **Blocked** with the 🙋 template: `Why blocked` quotes the gate's
