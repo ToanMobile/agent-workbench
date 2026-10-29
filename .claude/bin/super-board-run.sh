@@ -1107,10 +1107,13 @@ review_approved_head() {
   # và áp merge_policy nguyên vẹn: hàm này chỉ chọn việc cho worker, không nới luật merge.
   # $2 (tuỳ chọn, Pha 2) = nhãn bắt buộc, vd merge-queue: PR đó còn phải mang nhãn này và không là draft (đúng bộ lọc của merge-queue.sh).
   # `!<nhãn>` (vòng sửa 1, R3) = PR không draft và KHÔNG mang nhãn đó (thẻ đã duyệt nhưng mất nhãn hàng đợi).
+  # #607/#614: PR không nằm trên nhánh issue-<N>- (PR tay, nhánh fix-…) thì nhận PR mở duy nhất có closingIssuesReferences chứa N;
+  # hai PR cùng đóng N là mơ hồ → không chọn (review đầy đủ).
   local prs pr head approved want="${2:-}"
-  prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid${want:+,labels,isDraft}" 2>/dev/null) || return 1
+  prs=$(python3 "$SB_GITHUB_READ" --kind array -- pr list --state open --limit 200 --json "number,headRefName,headRefOid,closingIssuesReferences${want:+,labels,isDraft}" 2>/dev/null) || return 1
   read -r pr head <<EOF
-$(printf '%s' "$prs" | jq -r --arg p "issue-$1-" --arg l "$want" '[.[] | select(.headRefName | startswith($p))][0] | select(. != null)
+$(printf '%s' "$prs" | jq -r --arg p "issue-$1-" --argjson n "$1" --arg l "$want" '([.[] | select(.headRefName | startswith($p))][0]
+    // ([.[] | select(any((.closingIssuesReferences // [])[]; .number == $n))] | if length == 1 then .[0] else null end)) | select(. != null)
   | select($l == "" or ((.isDraft != true) and (if ($l | startswith("!")) then (any((.labels // [])[]; .name == ($l | ltrimstr("!"))) | not)
       else any((.labels // [])[]; .name == $l) end))) | "\(.number) \(.headRefOid)"' 2>/dev/null)
 EOF

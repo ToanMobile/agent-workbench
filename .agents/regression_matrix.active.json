@@ -1996,6 +1996,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-approved-head-closing-ref",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_approved_head_closing_ref.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-APPROVED-HEAD-CLOSING-REF-01",
+          "name": "#607/#614: review_approved_head nhận PR nhánh không phải issue-<N>- khi đúng một PR mở có closingIssuesReferences chứa N; nhánh issue-<N>- vẫn thắng, hai PR đóng N thì không chọn; thẻ Review có PR như vậy đã vào hàng không bị đẩy Blocked vì no-op",
+          "command": "bash tests/super-board/test_runner_approved_head_closing_ref.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
