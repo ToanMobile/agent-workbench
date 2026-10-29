@@ -374,19 +374,23 @@ def _heredoc_word(text, i):
     return i, "".join(out), quoted
 
 
-_ANSI_NUM = re.compile(r"\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|([0-7]{1,3})|(c[@ `]))")
+# \c + @/cách/backtick, \c + U+0800..U+0FFF (byte UTF-8 đầu 0xE0), \C- của zsh: đều ra NUL.
+_ANSI_NUM = re.compile(
+    r"\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|([0-7]{1,3})"
+    r"|(c[@ `])|(c[\u0800-\u0fff])|(C-[@ `]))"
+)
 
 
 def _ansi_num(esc):
-    """The text of one \\xHH / \\NNN / \\uHHHH / \\UHHHHHHHH / \\c@ escape of a $'…' as the shell decodes it, or None when it is another escape (kept as typed).
-    A NUL (code 0, or \\c@ \\c<space> \\c<backtick>) ends the word in bash: it returns a lone NUL for the caller (ansi_c_to_single), which drops the rest of the body (#618); a quote becomes '\\'' (close, literal quote, reopen) so the plain '…' around it stays paired (#526)."""
+    """The text of one \\xHH / \\NNN / \\uHHHH / \\UHHHHHHHH / \\c@ / \\C-@ escape of a $'…' as the shell decodes it, or None when it is another escape (kept as typed).
+    A NUL (code 0, \\c@ \\c<space> \\c<backtick>, \\c + U+0800..U+0FFF, or zsh \\C-@ \\C-<space> \\C-<backtick>) ends the word in bash: it returns a lone NUL for the caller (ansi_c_to_single), which drops the rest of the body (#618); a quote becomes '\\'' (close, literal quote, reopen) so the plain '…' around it stays paired (#526)."""
     m = _ANSI_NUM.fullmatch(esc)
     if not m:
         return None
-    hexa, u4, u8, octal, ctrl = m.groups()
-    if ctrl:   # \c@, \c<space>, \c<backtick>: control-X is X & 0x1f, so these three are a NUL too
+    hexa, u4, u8, octal, ctrl, utf, cword = m.groups()
+    if ctrl or utf or cword:   # control-X là X & 0x1f; ba nhóm này đều ra NUL
         return "\0"
-    code =int(hexa or u4 or u8 or octal, 16 if octal is None else 8)
+    code = int(hexa or u4 or u8 or octal, 16 if octal is None else 8)
     if octal is not None:
         code &= 0xFF
     if code == 0:
@@ -397,7 +401,7 @@ def _ansi_num(esc):
     return "'\\''" if ch == "'" else ch
 
 
-def ansi_c_to_single(text):
+def ansi_c_to_single(text, cut_at_nul=True):
     """text with every $'...' outside quotes rewritten as a plain '...' (issue #7: shlex has no $'...', so the backslash-quote inside one ended its quote and
     the lexer paired the quotes of the REST of the line the other way round, which hid a command after it). An escaped quote inside becomes '\\'' (close,
     literal quote, reopen). \\xHH, \\NNN, \\uHHHH and \\UHHHHHHHH are decoded (#526: $'\\x67it' is git, and the rules read the name); the other escapes stay as typed: the text of the word is not what is judged here, its boundaries are.
@@ -417,11 +421,13 @@ def ansi_c_to_single(text):
                     m = _ANSI_NUM.match(text, j)
                     if m:
                         dec = _ansi_num(m.group(0))
-                        if dec == "\0":   # bash ends the word at a NUL: drop the rest of the body up to the closing quote (#618)
+                        if dec == "\0" and cut_at_nul:   # bash kết thúc từ tại NUL: bỏ phần thân còn lại tới nháy đóng (#618)
                             j = m.end()
                             while j < n and text[j] != "'":
                                 j += 2 if text[j] == "\\" and j + 1 < n else 1
                             break
+                        if dec == "\0":   # cách đọc không cắt: bỏ byte NUL, giữ phần sau
+                            j = m.end(); continue
                         body.append(dec); j = m.end(); continue
                     body.append("'\\''" if text[j + 1] == "'" else text[j:j + 2]); j += 2
                 else:
@@ -555,14 +561,21 @@ def readings(text):
     shell removes it there and nothing runs) is refused all the same."""
     joined = join_continuations(text)
     if joined == text:
-        return [joined]
-    out = [joined]
-    kept = _join_outside_single_quotes(text)   # 15/10 r6: the join of the outer text also joined inside the single quotes of a -c script and moved its quoted terminator
-    if kept != joined:
-        out.append(kept)
-    if _comment_continuation(text):
-        out.append(_CONTINUATION.sub(r"\1\n", text))
-    return out
+        out = [joined]
+    else:
+        out = [joined]
+        kept = _join_outside_single_quotes(text)   # 15/10 r6: the join of the outer text also joined inside the single quotes of a -c script and moved its quoted terminator
+        if kept != joined:
+            out.append(kept)
+        if _comment_continuation(text):
+            out.append(_CONTINUATION.sub(r"\1\n", text))
+    # Cách đọc không cắt NUL: shell không nuốt phần sau NUL vẫn chạy lệnh đó. Chặn khi bất kỳ cách đọc nào chặn.
+    extra = []
+    for t in out:
+        uncut = ansi_c_to_single(t, cut_at_nul=False)
+        if uncut != ansi_c_to_single(t) and uncut not in out and uncut not in extra:
+            extra.append(uncut)
+    return out + extra
 
 
 _QUOTE_OR_ESCAPE = re.compile(r"[\\'\x22$)]")

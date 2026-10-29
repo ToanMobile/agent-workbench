@@ -37,6 +37,16 @@ echo "   \\c@, \\c<space> and \\c<backtick> are control-NUL too (bash: ctrl-X is
 check 2 $'git$\'\\c@foo\' push --force origin main'
 check 2 $'git$\'\\c foo\' push --force origin main'
 check 2 $'git$\'\\c`foo\' push --force origin main'
+# \c + ký tự UTF-8 byte đầu 0xE0 (U+0800..U+0FFF) cũng là NUL trong bash: git$'\cकfoo' là git.
+check 2 $'git$\'\\cकfoo\' push --force origin main'
+# zsh \C-@ / \C-<dấu cách> / \C-backtick nhúng NUL. Lệnh ép đẩy phía sau vẫn phải bị chặn.
+check 2 $'git$\'\\C-@foo\' push --force origin main'
+check 2 $'git$\'\\C- foo\' push --force origin main'
+check 2 $'git$\'\\C-`foo\' push --force origin main'
+# Cách đọc không cắt: shell không nuốt phần sau NUL (zsh \x00, bash 3.2 \u0000) vẫn chạy lệnh trong bash -c / eval.
+check 2 $'bash -c $\'true\\x00; git push --force origin main\''
+check 2 $'eval $\'true\\x00; git push --force origin main\''
+check 0 $'bash -c $\'echo ok\\x00\''
 check 0 $'git$\'\\x00foo\' status'
 
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }
