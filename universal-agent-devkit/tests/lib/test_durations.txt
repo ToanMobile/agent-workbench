@@ -418,6 +418,7 @@
 # 2026-10-25 (review mục B4): 5 test kit chưa có dòng nào — heavy_slot.selection_seconds coi cả tập run_impacted là "không biết" ⇒ cpu;
 # đo mỗi bài một lần, chạy một mình, máy tải 36-43 (12 nhân).
 40 tests/gates/test_gate_auto_tree_receipt.sh
+10 tests/gates/test_gate_mark_opt_in.sh
 14 tests/worktree_git/test_worktree_remove_origin_safe.sh
 4 tests/gates/test_gate_diff_merge_base.sh
 2 hooks/tests/test_git_guard_ansi_c_quote.sh

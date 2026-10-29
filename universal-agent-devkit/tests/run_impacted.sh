@@ -125,6 +125,27 @@ if [ "${1:-}" = "--all" ]; then
   [ -n "$selected" ] || { echo "run_impacted --all: no tests found under tests/*/test_*.sh" >&2; exit 2; }
   selected="$selected $(ls hooks/tests/test_*.sh 2>/dev/null)"
 fi
+# #616 B: DEVKIT_IMPACTED_DIRS="a,b,!c" narrows the selection to a shard by the directory under tests/ (a = only a, b; !c = not c): REG-DK-ALL-01
+# alone hit its 900 s ceiling at load 80-130, so the matrix also lists the shards (GATES, WORKTREE, REST). Unset or empty: the whole selection.
+# A test outside tests/<dir>/ (hooks/tests) has no directory: no include token matches it, no exclude token drops it. Names are compared, never globbed.
+# The variable rides in the matrix command as a leading `DEVKIT_IMPACTED_DIRS=<value> ` (bin/suite_cache.py SELECTION_CMD reads it, so the key store still applies).
+if [ -n "${DEVKIT_IMPACTED_DIRS:-}" ]; then
+  inc=""; exc=""
+  for tok in $(printf '%s' "$DEVKIT_IMPACTED_DIRS" | tr ',' ' '); do
+    case "$tok" in '!'*) exc="$exc ${tok#!}" ;; *) inc="$inc $tok" ;; esac
+  done
+  keep=""
+  for t in $selected; do
+    top=""; case "$t" in tests/*/*) top="${t#tests/}"; top="${top%%/*}" ;; esac
+    if [ -n "$inc" ]; then
+      hit=0; for x in $inc; do [ "$top" = "$x" ] && hit=1; done
+      [ "$hit" = 1 ] || continue
+    fi
+    for x in $exc; do [ "$top" = "$x" ] && continue 2; done
+    keep="$keep $t"
+  done
+  selected="$keep"
+fi
 # post-fix-gate lists the test scripts it already ran in this gate (O2): not run twice.
 if [ -n "${DEVKIT_GATE_DONE:-}" ]; then
   DKP="$(pwd -P)"; keep=""
@@ -203,7 +224,7 @@ run_one() { # <test> <out dir>
   trap '_dk_clean_tdir; trap - TERM EXIT; kill -TERM $$' TERM
   trap '_dk_clean_tdir; trap - HUP EXIT; kill -HUP $$' HUP
   env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT -u HOOK_PPID \
-       -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM \
+       -u DEVKIT_PER_TEST_CACHE -u DEVKIT_PTC -u _DEVKIT_IN_MKTEMP_SHIM -u DEVKIT_IMPACTED_DIRS \
        ${_dk_tdir:+TMPDIR="$_dk_tdir" PYTHONPYCACHEPREFIX="$_dk_tdir/pyc" PATH="$2/mkbin:$PATH"} \
        SB_HEAVY_SLOT_DIR="$o.slots" \
        ${DEVKIT_RUN_BOUNDED:+python3 -I "$DEVKIT_RUN_BOUNDED" "$DEVKIT_TEST_TIMEOUT_S" --} \
