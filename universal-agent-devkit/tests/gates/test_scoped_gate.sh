@@ -10,7 +10,9 @@
 #   h. file chỉ có luật ma trận cụ thể (không bắt-tất-cả) phủ ⇒ scoped, không unmapped;
 #   i. file code bị xoá ⇒ full;
 #   j. test bị sửa tự chọn chính nó; tests/impact_map.txt của kit thêm cạnh test→file;
-#   k. CLI: `decide --json` và `gen --write-core` (giữ [core] + [smoke], viết [core:auto] có file fan-in ≥ 5).
+#   k. CLI: `decide --json` và `gen --write-core` (giữ [core] + [smoke], viết [core:auto] có file fan-in ≥ 5);
+#   m. trạng thái agent (.claude/settings.json) ≥ 5 test đọc không thành lõi: scoped, chọn đúng các test đọc nó;
+#   n. project là thư mục con của repo: file bẩn chưa commit không lấy scan cũ từ cache (cạnh import mới có).
 # Chưa có bin/scoped_gate.py thì ĐỎ. Python stdlib, tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -48,6 +50,9 @@ printf '#!/usr/bin/env bash\nP=profiles/x\ngrep -q "màu" "$P/DESIGN.md"\n' > te
 # l2. tài liệu ≥ 5 test đọc ⇒ lõi (test-read-by), như fan-in
 printf '# chung\n' > docs/shared.md
 mkdir -p tests/z && for i in 1 2 3 4 5; do printf '#!/usr/bin/env bash\ngrep -q chung docs/shared.md\nfor d in skills/*; do test -f "$d/SKILL.md"; done\n' > "tests/z/test_r$i.sh"; done
+# m. trạng thái agent: .claude/settings.json ≥ 5 test đọc vẫn KHÔNG thành lõi (worktree nào cũng có nó bẩn), chỉ chọn các test đọc nó
+mkdir -p .claude tests/s && printf '{"hooks": {}}\n' > .claude/settings.json
+for i in 1 2 3 4 5; do printf '#!/usr/bin/env bash\ngrep -q hooks .claude/settings.json\n' > "tests/s/test_st$i.sh"; done
 # l3. */SKILL.md như run_impacted: theo tên thư mục skill nguyên từ, không theo basename "SKILL.md" (5 test trên nhắc nó)
 mkdir -p skills/foo-bar && printf '# foo\n' > skills/foo-bar/SKILL.md
 printf '#!/usr/bin/env bash\nS=skills/foo-bar\ngrep -q foo "$S/SKILL.md"\n' > tests/x/test_foo.sh
@@ -90,10 +95,19 @@ printf '{"name": "x"}\n' > package.json && printf 'X = 1\n' > app.py
 git add -A && git commit -qm base || exit 2
 cd "$TMP" || exit 2
 
-python3 -I - "$SG" "$SB" "$SB2" <<'PY'
+# repo thứ ba (n): project là thư mục con proj/ của repo (git status in đường dẫn từ gốc repo, ls-files từ project)
+SB3="$TMP/repo3"
+mkdir -p "$SB3/proj/lib" "$SB3/proj/tests/x" && cd "$SB3" || exit 2
+git init -q -b main . && git config user.email t@t && git config user.name t
+printf 'X = 1\n' > proj/lib/a.py && printf 'Y = 1\n' > proj/lib/c.py
+printf '#!/usr/bin/env bash\npython3 lib/a.py\n' > proj/tests/x/test_a.sh
+git add -A && git commit -qm base || exit 2
+cd "$TMP" || exit 2
+
+python3 -I - "$SG" "$SB" "$SB2" "$SB3/proj" <<'PY'
 import fnmatch, json, os, subprocess, sys
 
-SG, SB, SB2 = sys.argv[1], sys.argv[2], sys.argv[3]
+SG, SB, SB2, SUB = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 fails = 0
 
 
@@ -255,6 +269,13 @@ d = decide()
 chk(d["mode"] == "scoped" and d["tests"] == ["tests/x/test_foo.sh"],
     "l3. */SKILL.md theo tên skill (foo-bar): chỉ test nhắc tên đó, 5 test nhắc \"SKILL.md\" không làm nó thành lõi", d)
 
+# m. .claude/settings.json (AGENT_STATE) 5 test đọc: không lõi test-read-by ⇒ scoped, chọn đúng 5 test đó
+reset()
+edit(".claude/settings.json", '{"hooks": {"x": 1}}\n')
+d = decide()
+chk(d["mode"] == "scoped" and not d["core_hits"] and all("tests/s/test_st%d.sh" % i in d["tests"] for i in range(1, 6)),
+    "m. sửa .claude/settings.json (5 test đọc) ⇒ scoped, không lõi, chọn 5 test đọc nó", d)
+
 # k. CLI
 reset()
 edit("lib/b.py", "def double(x):\n    return x + x\n")
@@ -276,11 +297,24 @@ chk("lib/core_*.py   # lõi viết tay" in core_txt and "tests/x/test_smoke.sh" 
     and "tool/tool.sh" not in auto, "k3. gen --write-core: giữ [core] + [smoke], [core:auto] có hub.py, không có tool.sh", core_txt)
 chk("docs/shared.md" in auto and "test-read-by: 5 test" in auto and "profiles/x/DESIGN.md" not in auto,
     "k3b. [core:auto] có tài liệu ≥ 5 test đọc (test-read-by), không có tài liệu 1 test đọc", auto)
+chk(".claude/settings.json" not in auto, "k3c. [core:auto] không có trạng thái agent .claude/settings.json", auto)
 lc = sg.load_core(SB)
 chk("hub/hub.py" in lc["core"] and "lib/core_*.py" in lc["core"] and lc["smoke"] == ["tests/x/test_smoke.sh"],
     "k4. load_core đọc lại [core] ∪ [core:auto] và [smoke] (bỏ `# lý do`)", lc)
 r = subprocess.run([sys.executable, SG, "explain", "lib/b.py", "--project", SB], capture_output=True, text=True, timeout=120)
 chk(r.returncode == 0 and "tests/x/test_a.sh" in r.stdout, "k5. CLI explain lib/b.py nêu test phủ nó", (r.returncode, r.stdout[-300:]))
+
+# n. project là thư mục con: lượt đầu (cây sạch) ghi cache scan theo HEAD^{tree}; sửa chưa commit thêm `import c` ⇒ file bẩn phải quét lại
+cache_after = sg.CACHE_AFTER_S
+sg.CACHE_AFTER_S = -1                                       # sandbox quét < 3 s: ép ghi cache
+try:
+    sg.build_graph(SUB)
+    edit("lib/a.py", "import c\nX = c.Y\n", cwd=SUB)
+    g3 = sg.build_graph(SUB)
+finally:
+    sg.CACHE_AFTER_S = cache_after
+chk("lib/c.py" in g3.get("lib/a.py", ()), "n. project thư mục con: lib/a.py bẩn quét lại, có cạnh import mới tới lib/c.py",
+    sorted(g3.get("lib/a.py", ())))
 
 print("---")
 print("FAIL: %d" % fails if fails else "PASS")

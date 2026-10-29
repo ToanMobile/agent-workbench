@@ -17,7 +17,8 @@ Một lượt:
   6. xanh ⇒ nightly/full_pass.json, last_full_green_sha, nightly/history.jsonl;
   7. đỏ ⇒ chạy lại CHỈ suite/test đỏ ở đỉnh, rồi chia đôi các merge first-parent last_green..sha (≤ 16; không có last_green: 8 merge gần
      nhất) ra commit nghi vấn, tạo thẻ P1 qua scripts/governance/create_task.py (issue mở cùng tiêu đề thì không tạo trùng);
-  8. log ~/Library/Logs/devkit-gate-full/<yyyymmdd-HHMMSS>.log + summary-latest.md + summary-<yyyymmdd>.md;
+  8. log <DEVKIT_GATE_FULL_LOG_DIR>/<yyyymmdd-HHMMSS>.log + summary-latest.md + summary-<yyyymmdd>.md (lịch đêm đặt biến này =
+     ~/Library/Logs/devkit-gate-full/<slug> riêng từng repo; chạy tay không đặt: ~/Library/Logs/devkit-gate-full);
   9. finally: gỡ scratch, nhả khoá.
 Kết luận: 0 xanh (hoặc skip), 1 đỏ (suite FAIL thật), 3 chưa kết luận (exit 2/4/5, TIMEOUT, BUSY, môi trường — không thẻ, không ghi
 last_full_green_sha), 2 lỗi chuẩn bị (ref, scratch).

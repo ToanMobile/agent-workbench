@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
 # gate-full-schedule.sh install|uninstall|status [--repo PATH] [--hour 0] [--minute 0]
-# Lịch lượt --full đêm (#644): LaunchAgent com.toanmobile.devkit.gate-full chạy bin/gate_full.py run --repo <repo> lúc <hour>:<minute>
-# giờ máy (máy đặt Asia/Ho_Chi_Minh; TZ cũng đặt trong EnvironmentVariables để ngày trong log/summary đúng).
+# Lịch lượt --full đêm (#644): LaunchAgent com.toanmobile.devkit.gate-full.<slug> chạy bin/gate_full.py run --repo <repo> lúc
+# <hour>:<minute> giờ máy (máy đặt Asia/Ho_Chi_Minh; TZ cũng đặt trong EnvironmentVariables để ngày trong log/summary đúng).
+# Mỗi repo một lịch: slug = tên thư mục repo (chỉ [A-Za-z0-9-]) + 8 ký tự sha1 của đường dẫn vật lý (pwd -P) của repo; plist và thư mục log
+# <log>/<slug>/ riêng (plist đặt DEVKIT_GATE_FULL_LOG_DIR = thư mục đó cho gate_full.py) ⇒ cài repo B không gỡ lịch repo A, summary không đè.
+# --repo mặc định gốc git của thư mục hiện tại (cả status / uninstall).
 # launchd chỉ có PATH /usr/bin:/bin:/usr/sbin:/sbin: đường dẫn TUYỆT ĐỐI của python3 / git / gh lấy lúc cài, PATH của job chứa thư mục
 # của chúng. Không sudo: bootstrap vào gui/<uid>. Lượt trùng (đêm trước chưa xong) do khoá pid của gate_full.py bỏ qua.
 # Móc test: DEVKIT_LAUNCH_AGENTS_DIR (mặc định ~/Library/LaunchAgents), DEVKIT_LAUNCHCTL (mặc định launchctl),
-# DEVKIT_GATE_FULL_LOG_DIR (mặc định ~/Library/Logs/devkit-gate-full). Tương thích bash 3.2.
+# DEVKIT_GATE_FULL_LOG_DIR (gốc các thư mục log, mặc định ~/Library/Logs/devkit-gate-full). Tương thích bash 3.2.
 set -u
-LABEL="com.toanmobile.devkit.gate-full"
 KIT="$(cd "$(dirname "$0")/.." && pwd)"
 GF="$KIT/bin/gate_full.py"
 LA_DIR="${DEVKIT_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
-LOG_DIR="${DEVKIT_GATE_FULL_LOG_DIR:-$HOME/Library/Logs/devkit-gate-full}"
+LOG_ROOT="${DEVKIT_GATE_FULL_LOG_DIR:-$HOME/Library/Logs/devkit-gate-full}"
 LAUNCHCTL="${DEVKIT_LAUNCHCTL:-launchctl}"
-PLIST="$LA_DIR/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
 usage() { echo "usage: gate-full-schedule.sh install|uninstall|status [--repo PATH] [--hour 0] [--minute 0]" >&2; exit 2; }
 ACTION="${1:-}"; [ -n "$ACTION" ] || usage; shift
-REPO="$(pwd)"; HOUR=0; MINUTE=0
+REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; HOUR=0; MINUTE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) REPO="${2:?--repo cần đường dẫn}"; shift 2 ;;
@@ -31,9 +32,19 @@ case "$HOUR" in ''|*[!0-9]*) usage ;; esac
 case "$MINUTE" in ''|*[!0-9]*) usage ;; esac
 [ "$((10#$HOUR))" -le 23 ] && [ "$((10#$MINUTE))" -le 59 ] || usage
 
+# slug theo đường dẫn VẬT LÝ: --repo /var/… và gốc git /private/var/… (macOS) là một repo, một lịch. Repo đã mất (uninstall): đường dẫn như nhập
+if PHYS="$(cd "$REPO" 2>/dev/null && pwd -P)"; then REPO="$(cd "$REPO" && pwd)"
+elif [ "$ACTION" = install ]; then echo "gate-full-schedule: không có repo $REPO" >&2; exit 2
+else PHYS="$REPO"; fi
+H="$(printf '%s' "$PHYS" | shasum -a 1 2>/dev/null | cut -c1-8)"
+[ "${#H}" = 8 ] || { echo "gate-full-schedule: không tính được sha1 của $PHYS (shasum)" >&2; exit 2; }
+SLUG="$(printf '%s' "$(basename "$PHYS")" | LC_ALL=C tr -c 'A-Za-z0-9-' '-')-$H"
+LABEL="com.toanmobile.devkit.gate-full.$SLUG"
+PLIST="$LA_DIR/$LABEL.plist"
+LOG_DIR="$LOG_ROOT/$SLUG"
+
 case "$ACTION" in
   install)
-    REPO="$(cd "$REPO" 2>/dev/null && pwd)" || { echo "gate-full-schedule: không có repo $REPO" >&2; exit 2; }
     PY="$(command -v python3)" || { echo "gate-full-schedule: không thấy python3 trên PATH" >&2; exit 2; }
     GITB="$(command -v git)" || { echo "gate-full-schedule: không thấy git trên PATH" >&2; exit 2; }
     GHB="$(command -v gh || true)"
@@ -81,6 +92,16 @@ PY
     echo "gate-full: đã cài $PLIST — chạy $(printf '%02d:%02d' "$((10#$HOUR))" "$((10#$MINUTE))") mỗi ngày cho $REPO; tóm tắt: $LOG_DIR/summary-latest.md"
     ;;
   uninstall)
+    # Repo đã mất (worktree gỡ trước lịch) thì slug tính lại theo đường dẫn nhập, không phải đường dẫn vật lý lúc cài: tìm plist của kit có
+    # `--repo` đúng đường dẫn đó. Không thấy plist nào ⇒ exit 1, không báo "đã gỡ" giả (lịch vẫn chạy mà người gỡ tưởng đã gỡ).
+    if [ ! -f "$PLIST" ]; then
+      found=""
+      for p in "$LA_DIR"/com.toanmobile.devkit.gate-full.*.plist; do
+        [ -f "$p" ] && grep -qF "<string>$REPO</string>" "$p" && { found="$p"; break; }
+      done
+      [ -n "$found" ] || { echo "gate-full-schedule: không có lịch nào cho $REPO (đã tìm $PLIST và plist có --repo đó)" >&2; exit 1; }
+      PLIST="$found"; LABEL="$(basename "$found" .plist)"
+    fi
     "$LAUNCHCTL" bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
     rm -f "$PLIST"
     echo "gate-full: đã gỡ lịch $LABEL"

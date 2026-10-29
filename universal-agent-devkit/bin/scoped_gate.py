@@ -186,11 +186,12 @@ def _is_source(project, path):
 
 
 def _scan_all(project, files):
-    """Quét mọi file nguồn; > 3 s thì cache phần tracked sạch theo HEAD^{tree} (file bẩn / mới luôn quét lại)."""
+    """Quét mọi file nguồn; > 3 s thì cache phần tracked sạch theo cây HEAD:./ của project (file bẩn / mới luôn quét lại)."""
     sources = [p for p in files if _is_source(project, p)]
     tree, cache, cdir = None, {}, None
     try:
-        tree = _git(project, "rev-parse", "HEAD^{tree}").stdout.decode().strip()
+        # cây của CHÍNH thư mục project (HEAD:./): khoá theo HEAD^{tree} thì hai project thư mục con của một repo dùng chung một cache
+        tree = _git(project, "rev-parse", "HEAD:./").stdout.decode().strip()
         cdir = os.path.join(common_dir(project), "postfix-gate")
         with open(os.path.join(cdir, "scoped-scan-%s.json" % tree), encoding="utf-8") as f:
             cache = json.load(f)
@@ -198,8 +199,9 @@ def _scan_all(project, files):
         cache = {}
     dirty = set()
     if tree:
-        dirty = set(_z(_git(project, "status", "--porcelain=v1", "-z", "-uall", "--no-renames", check=False).stdout))
-        dirty = {d[3:] for d in dirty if len(d) > 3}
+        # đường dẫn tương đối project như ls-files (git status in từ gốc repo: project thư mục con thì file bẩn bị coi là sạch)
+        dirty = set(_z(_git(project, "diff", "--name-only", "-z", "--no-renames", "--relative", "HEAD", "--", check=False).stdout))
+        dirty |= set(_z(_git(project, "ls-files", "-z", "-o", "--exclude-standard", check=False).stdout))
     t0 = time.monotonic()
     scans, fresh = {}, {}
     for p in sources:
@@ -506,12 +508,15 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
     tests, expanded = set(), set(changed)
     for f in changed:
         hit = True
+        # trạng thái agent (.claude/settings.json bẩn ở mọi worktree, 38 test nhắc "settings.json"): không thành lõi theo fan-in /
+        # test-read-by, chỉ cộng đúng các test đọc nó; [core] viết tay vẫn thắng
+        state = f in AGENT_STATE
         if any(match_pattern(f, g) for g in core["core"]):
             res["core_hits"].append(f)
-        elif fi.get(f, 0) >= FAN_IN_CORE and not is_test(f):   # hook nhắc tên test trong chú thích: test không thành lõi
+        elif fi.get(f, 0) >= FAN_IN_CORE and not is_test(f) and not state:   # hook nhắc tên test trong chú thích: test không thành lõi
             res["core_hits"].append(f)
             res["reasons"].append("fan-in %d ≥ %d: %s" % (fi[f], FAN_IN_CORE, f))
-        elif len(reads.get(f, ())) >= FAN_IN_CORE:          # tài liệu / dữ liệu ≥ 5 test đọc (AGENTS.md…): lõi như fan-in
+        elif len(reads.get(f, ())) >= FAN_IN_CORE and not state:   # tài liệu / dữ liệu ≥ 5 test đọc (AGENTS.md…): lõi như fan-in
             res["core_hits"].append(f)
             res["reasons"].append("test-read-by: %d test: %s" % (len(reads[f]), f))
         elif f in deps:
@@ -528,7 +533,7 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
         expanded |= up
         mine = {t for t in up if is_test(t)} | reads.get(f, set())   # 1–4 test đọc tài liệu / dữ liệu: đúng các test đó, không bắc cầu
         tests |= mine
-        if nnt(f):
+        if nnt(f) or state:
             res["docs"].append(f)
         elif mine or hit:                                   # lõi đã là full: không kể thêm là unmapped
             continue

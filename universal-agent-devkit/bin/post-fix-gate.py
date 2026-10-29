@@ -1401,6 +1401,23 @@ def _run_log_fp(value):
     return value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{24}", value) else ""
 
 
+def _full_red_on_tree(project_dir, fp):
+    """#644: True khi runs.jsonl có lượt mode "full" exit 1 trên cây fp mà sau nó chưa có lượt full exit 0 cùng fp: xanh scoped (không chọn
+    suite đỏ) không được đè full đỏ của cùng cây. Exit khác (2/3/4/5, BUSY) không xoá dấu đỏ. Không đọc được run-log / fp sai dạng ⇒ False."""
+    fp = _run_log_fp(fp)
+    if not fp:
+        return False
+    try:
+        gd = _git_static(project_dir, "--absolute-git-dir")
+    except (ImportError, OSError, subprocess.SubprocessError):
+        return False
+    red = False
+    for rec in (_run_log_records(_run_log_dir(os.fsdecode(gd))) if gd else None) or ():
+        if rec.get("mode") == "full" and rec.get("fp") == fp and rec.get("exit") in (0, 1):
+            red = rec.get("exit") == 1
+    return red
+
+
 def _sibling_logged_pass(path, r):
     """True khi dòng run-log ĐẦU TIÊN của project biên nhận r ghi sau thời điểm ghi biên nhận (trong 900 s) là chính lượt đã ghi nó
     (_log_gate_run chạy ngay sau write_full_pass_receipt) và là full / exit 0 / verdict PASS: suite thật sự chạy. Không chỉ "có một dòng
@@ -3660,8 +3677,10 @@ def force_full_reason(args):
 
 # #644: lượt --scoped chạy ĐÚNG các test scoped_gate.decide chọn. Test của kit qua runner của kit (run_impacted.sh đọc biến này, tương đối kit);
 # test ngoài kit thành một suite riêng chạy từ gốc project. Gate luôn tự đặt hoặc gỡ biến này: giá trị agent export không lọt vào lượt khác.
+# Chỉ lệnh runner kit nhận biến (run_in_group gắn, suite_env gỡ): suite khác thấy `unset`.
 SCOPED_TESTS_ENV = "DEVKIT_SCOPED_TESTS"
 _KIT_RUNNER = re.compile(r"(?:^|\s)(?:bash\s+)?(\S*?)tests/run_impacted\.sh(?:\s|$)")
+_SHARD_PREFIX = re.compile(r"\s*DEVKIT_IMPACTED_DIRS=")   # #616 B: lệnh shard của runner (tiền tố gán biến)
 
 
 _KIT_RUNNER_TEST = re.compile(r"^(?:tests/(?:[^/]+/)?test_[^/]*\.sh|hooks/tests/[^/]+\.sh)$")   # tương đối kit: cái runner chạy bằng bash
@@ -3682,21 +3701,27 @@ def scoped_suites(decision, rules, selected, covers=None):
     nào ⇒ .sh thành suite SCOPED-EXTRA (một vòng bash, đỏ khi một test đỏ), py/js ⇒ lý do leo full (fail closed)."""
     from scoped_gate import _catch_all  # noqa: PLC0415 - main đã nạp bin/ vào sys.path trước khi gọi decide
     covers = covers or {}
-    runner, kit = None, None
+    found = []
     for rule in rules:
         for test in rule.get("mandatory_regression_tests", []):
             m = _KIT_RUNNER.search(test.get("command") or "")
-            if m and runner is None:
-                runner, kit = (rule, test), m.group(1)
+            if m:
+                found.append((rule, test, m.group(1)))
+    # runner = lệnh run_impacted.sh KHÔNG tiền tố shard (#616: shard chỉ chạy test dưới thư mục của nó — lấy shard đầu thì test kit ngoài
+    # shard bị lọc mà suite vẫn PASS); chỉ còn shard ⇒ mọi shard (hợp các shard phủ cả kit)
+    plain = [r for r in found if not _SHARD_PREFIX.match(r[1].get("command") or "")]
+    runners = plain[:1] or found
+    runner, kit = (runners[0][:2], runners[0][2]) if runners else (None, None)
     want = list(dict.fromkeys(list(decision.get("tests") or []) + list(decision.get("smoke") or [])))
     kit_tests = [t[len(kit):] for t in want if runner and t.startswith(kit) and _KIT_RUNNER_TEST.match(t[len(kit):])]
     have_cmds = " ".join(t.get("command") or "" for t in selected)
     extra = [t for t in want if not (runner and t.startswith(kit) and _KIT_RUNNER_TEST.match(t[len(kit):])) and t not in have_cmds]
     added = []
     have_ids = {t.get("id") for t in selected}
-    if kit_tests and runner[1].get("id") not in have_ids:
-        added.append((runner[0].get("component", "UnknownComponent"), runner[1]))
-        have_ids.add(runner[1].get("id"))
+    for rule, test, _ in runners if kit_tests else ():
+        if test.get("id") not in have_ids:
+            added.append((rule.get("component", "UnknownComponent"), test))
+            have_ids.add(test.get("id"))
     cmds = []
     for t in extra:
         owners = [(rule, test) for rule in rules
@@ -4431,6 +4456,10 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout, extend: dict = None) ->
         # chỉ `bash <kit>/tests/run_impacted.sh [--all]` (suite_env bỏ biến này khỏi mọi suite khác: một test chạy run_impacted.sh
         # thật trong suite riêng không được thừa hưởng chế độ dùng lại của gate)
         env = dict(env, DEVKIT_PER_TEST_CACHE=PER_TEST_CACHE["mode"])
+    if SCOPED_TESTS_ENV in os.environ and _KIT_RUNNER.search(cmd or ""):
+        # #644: danh sách --scoped (kể cả rỗng) chỉ tới lệnh runner kit run_impacted.sh (shard cũng vậy); suite_env gỡ nó khỏi mọi suite khác.
+        # Vẫn nằm trong os.environ của gate: khoá cache (_selection_env, suite_cache.selection_list `--list`) đọc nó như cũ
+        env = dict(suite_env() if env is None else env, **{SCOPED_TESTS_ENV: os.environ[SCOPED_TESTS_ENV]})
     with _VACUITY_LOCK:   # registered in the same step as the start: a signal in between still finds it
         proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, errors="replace", start_new_session=True, env=env)
@@ -5339,6 +5368,8 @@ def suite_env():
             # số slot và thời gian chờ là núm của MỘT lần gate (Stop hook đặt 45 s), không lọt xuống suite
             "DEVKIT_CAPACITY_CORES", "DEVKIT_CAPACITY_LOAD", "DEVKIT_GATE_SLOTS", "DEVKIT_GATE_SLOT_WAIT_S",
             "DEVKIT_PER_TEST_CACHE",   # B2: chỉ run_in_group đặt nó, cho lệnh run_impacted.sh chuẩn của lượt này
+            # #644: danh sách --scoped chỉ cho runner kit (run_in_group gắn lại): suite khác chép runner thật rồi hỏi --list thì thấy nó
+            "DEVKIT_SCOPED_TESTS",
             "DEVKIT_IMPACTED_DIRS"}   # #616: shard do tiền tố của lệnh ma trận đặt; biến có sẵn trong môi trường không được thu hẹp suite không tiền tố
     return {k: v for k, v in os.environ.items()
             if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
@@ -5903,6 +5934,7 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
 def main():
     global _MAIN_T0, _STEP_LAST, _MAIN_LOAD1
     _MAIN_T0 = time.monotonic()
+    os.environ.pop(SCOPED_TESTS_ENV, None)   # #644: giá trị kế thừa không được thu hẹp cả pre-commit (run_staged_audit chạy trước khối --scoped)
     try:
         _MAIN_LOAD1 = round(os.getloadavg()[0], 2)
     except (OSError, AttributeError):
@@ -7917,6 +7949,9 @@ def main():
             elif exit_code == 0 and (impacted_run or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)):
                 # chốt phòng: suite đã chọn của lượt scoped chạy lệnh đầy đủ (plan_test_run); một suite chạy hẹp thì không mở merge / push
                 print(f"  • {YELLOW}{tr('Không ghi biên nhận scoped: có suite chạy hẹp (impacted/resource/package/module)', 'Scoped receipt not written: a suite ran narrowed (impacted/resource/package/module)')}{RESET}")
+            elif exit_code == 0 and _full_red_on_tree(project_dir, tested_fp):
+                # full đỏ trên cây này đã bỏ cả hai biên nhận; scoped không chọn suite đỏ thì PASS — không để nó mở lại merge / push
+                print(f"  • {YELLOW}{tr('Không ghi biên nhận scoped: cây này có lượt --full đỏ — chạy --full', 'Scoped receipt not written: this tree has a red --full run — run --full')}{RESET}")
             elif (exit_code == 0 and lock_held and not read_only and not pm_relax and not lock_busy and not budget_cut and not slot_busy
                     and not any(t.get("status") == "UNTESTED" for t in regression_tests)):
                 # PASS theo khoá CHÍNH XÁC vào biên nhận như UNTESTED / KEYED, như receipt_tests của biên nhận full
@@ -7940,6 +7975,7 @@ def main():
         # SLOT / exit 2 của merge check không đụng tới nó.
         if (task_fp and exit_code == 0 and run_tests and lock_held and not read_only and not pm_relax and not lock_busy and not budget_cut and not slot_busy
                 and not project_gone and not any(t.get("status") == "UNTESTED" for t in regression_tests)
+                and not _full_red_on_tree(project_dir, task_fp)   # #644 (OCR vòng 4): cây đã có --full đỏ thì không có XONG của task
                 and subprocess.run(["git", "-C", str(project_dir), "merge-base", "--is-ancestor", base_ref, task_mb],
                                    capture_output=True).returncode == 0):
             if write_task_receipt(project_dir, task_fp, task_mb, args.session or os.environ.get("DEVKIT_SESSION_ID")

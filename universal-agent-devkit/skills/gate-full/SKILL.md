@@ -27,9 +27,12 @@ Kết quả (exit): `0` xanh hoặc skip · `1` đỏ (có suite FAIL thật) ·
 
 ## Đọc kết quả
 
-- `~/Library/Logs/devkit-gate-full/summary-latest.md` (và `summary-<yyyymmdd>.md`): kết quả, thời gian, tải lúc bắt đầu, có chờ tải không,
+Lượt của lịch đêm ghi vào `~/Library/Logs/devkit-gate-full/<slug>/` riêng từng repo (`<slug>` = tên thư mục repo + 8 ký tự sha1 đường dẫn,
+`status` in đường dẫn); chạy tay không đặt `DEVKIT_GATE_FULL_LOG_DIR` thì ghi thẳng vào `~/Library/Logs/devkit-gate-full/`.
+
+- `<thư mục log>/summary-latest.md` (và `summary-<yyyymmdd>.md`): kết quả, thời gian, tải lúc bắt đầu, có chờ tải không,
   suite đỏ, commit nghi vấn, link thẻ, đường dẫn log.
-- `~/Library/Logs/devkit-gate-full/<yyyymmdd-HHMMSS>.log`: toàn văn gate, `agent-kit test`, từng bước chia đôi.
+- `<thư mục log>/<yyyymmdd-HHMMSS>.log`: toàn văn gate, `agent-kit test`, từng bước chia đôi.
 - `<git common dir>/postfix-gate/last_full_green_sha`, `nightly/full_pass.json`, `nightly/history.jsonl` (một dòng mỗi lượt).
 
 ## Đỏ: chia đôi + thẻ P1
@@ -46,9 +49,11 @@ Thẻ đến tay: đọc summary + log, sửa hoặc revert commit nghi vấn qu
 ```bash
 bash .agents/devkit/bin/gate-full-schedule.sh install --repo "$(pwd)"    # 00:00 mỗi ngày (--hour/--minute để đổi)
 bash .agents/devkit/bin/gate-full-schedule.sh status                     # launchctl print rút gọn + summary-latest.md
-bash .agents/devkit/bin/gate-full-schedule.sh uninstall
+bash .agents/devkit/bin/gate-full-schedule.sh uninstall                  # status / uninstall: --repo mặc định gốc git của thư mục hiện tại
 ```
 
-LaunchAgent `com.toanmobile.devkit.gate-full` (`~/Library/LaunchAgents/`, `bootstrap gui/<uid>`, không sudo): `/usr/bin/nice -n 10 <python3 tuyệt đối>
-gate_full.py run --repo <repo>`, PATH chứa thư mục của python3/git/gh lấy lúc cài, `TZ=Asia/Ho_Chi_Minh`, `RunAtLoad` false, stdout/stderr vào
-thư mục log. Máy ngủ lúc 00:00 thì launchd chạy bù khi thức dậy; đêm trùng do khoá pid bỏ qua.
+Mỗi repo một LaunchAgent `com.toanmobile.devkit.gate-full.<slug>` (`~/Library/LaunchAgents/<label>.plist`, `bootstrap gui/<uid>`, không sudo):
+cài repo B không gỡ lịch repo A. `/usr/bin/nice -n 10 <python3 tuyệt đối> gate_full.py run --repo <repo>`, PATH chứa thư mục của python3/git/gh
+lấy lúc cài, `TZ=Asia/Ho_Chi_Minh`, `DEVKIT_GATE_FULL_LOG_DIR=~/Library/Logs/devkit-gate-full/<slug>`, `RunAtLoad` false, stdout/stderr vào
+thư mục log đó. Máy ngủ lúc 00:00 thì launchd chạy bù khi thức dậy; đêm trùng do khoá pid bỏ qua. Label cũ chung `com.toanmobile.devkit.gate-full`
+(trước lịch theo repo) script không đụng tới; việc chuyển nó sang label theo repo làm riêng, không phải việc của agent.

@@ -8,7 +8,9 @@
 #   c. khoá do pid còn sống giữ ⇒ "skip", exit 0, gate không chạy; pid đã chết ⇒ chiếm lại khoá và chạy;
 #   d. tải giả cao hơn hold_load ⇒ chờ tới --max-wait-s rồi vẫn chạy, summary ghi lý do;
 #   e. schedule install vào thư mục tạm ⇒ plist hợp lệ (plutil -lint), Hour 0, /usr/bin/nice -n 10, python3 tuyệt đối,
-#      TZ Asia/Ho_Chi_Minh, launchctl giả nhận bootout rồi bootstrap gui/<uid>; uninstall gỡ plist.
+#      TZ Asia/Ho_Chi_Minh, launchctl giả nhận bootout rồi bootstrap gui/<uid>; uninstall gỡ plist;
+#      mỗi repo một lịch: install repo A rồi repo B (cùng tên thư mục) ⇒ hai plist, hai label, hai thư mục log, không bootout lịch A;
+#      uninstall --repo A chỉ gỡ A.
 # Mọi ca: scratch gate-full-scratch-* đã gỡ (thư mục lẫn `git worktree list`), khoá đã nhả.
 # Chưa có bin/gate_full.py / bin/gate-full-schedule.sh thì ĐỎ. Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
@@ -210,13 +212,21 @@ mkdir -p "$T/la"
 printf '#!/bin/sh\necho "$@" >>"%s/launchctl.calls"\n' "$T" >"$T/fakelaunchctl"
 chmod +x "$T/fakelaunchctl"
 export DEVKIT_LAUNCH_AGENTS_DIR="$T/la" DEVKIT_LAUNCHCTL="$T/fakelaunchctl"
-PL="$T/la/com.toanmobile.devkit.gate-full.plist"
+plists() { ls "$T/la"/com.toanmobile.devkit.gate-full.*.plist 2>/dev/null; }
 # shell đăng nhập giả của người dùng: PATH của nó có thư mục công cụ suite (uv ở ~/.local/bin) mà launchd không có
 printf '#!/bin/sh\nprintf %%s "%s/uvbin:/usr/bin:/bin"\n' "$T" >"$T/fakeshell"
 chmod +x "$T/fakeshell"
 SHELL="$T/fakeshell" bash "$SCHED" install --repo "$T/repo" >"$T/sched.out" 2>&1; rc=$?
-chk "e1. install exit 0, plist hợp lệ (plutil -lint)" '[ "$rc" = 0 ] && plutil -lint "$PL" >/dev/null 2>&1' "rc=$rc $(tail -3 "$T/sched.out")"
-px() { plutil -extract "$1" raw -o - "$PL" 2>/dev/null; }
+PL="$(plists | head -1)"; PL="${PL:-$T/la/none.plist}"
+LA="$(basename "$PL" .plist)"
+chk "e1. install exit 0, plist com.toanmobile.devkit.gate-full.<slug>.plist hợp lệ (plutil -lint)" \
+  '[ "$rc" = 0 ] && [ "$(plists | wc -l | tr -d " ")" = 1 ] && plutil -lint "$PL" >/dev/null 2>&1' "rc=$rc $(ls "$T/la") $(tail -3 "$T/sched.out")"
+px() { plutil -extract "$1" raw -o - "${2:-$PL}" 2>/dev/null; }
+chk "e9. Label = tên plist, slug có tên thư mục repo" \
+  '[ "$(px Label)" = "$LA" ] && case "$LA" in com.toanmobile.devkit.gate-full.repo-????????) true ;; *) false ;; esac' "label=$(px Label) plist=$LA"
+chk "e10. log riêng của repo: DEVKIT_GATE_FULL_LOG_DIR = <log>/<slug>, stdout vào đó" \
+  'D="$(px EnvironmentVariables.DEVKIT_GATE_FULL_LOG_DIR)"; [ "$D" = "$T/logs/${LA#com.toanmobile.devkit.gate-full.}" ] && [ "$(dirname "$(px StandardOutPath)")" = "$D" ]' \
+  "log=$(px EnvironmentVariables.DEVKIT_GATE_FULL_LOG_DIR) out=$(px StandardOutPath)"
 chk "e8. PATH của job có PATH đăng nhập của người dùng (thư mục uv), vẫn có /usr/bin" \
   'case ":$(px EnvironmentVariables.PATH):" in *":$T/uvbin:"*) true ;; *) false ;; esac && case ":$(px EnvironmentVariables.PATH):" in *":/usr/bin:"*) true ;; *) false ;; esac' \
   "PATH=$(px EnvironmentVariables.PATH)"
@@ -230,11 +240,37 @@ chk "e4. TZ Asia/Ho_Chi_Minh, PATH có thư mục python3, RunAtLoad false, log 
    && [ "$(px RunAtLoad)" = false ] && case "$(px StandardOutPath)" in "$T/logs/"*) true ;; *) false ;; esac'
 chk "e5. launchctl giả: bootout rồi bootstrap gui/$(id -u) <plist>" \
   'grep -q "^bootout gui/$(id -u)" "$T/launchctl.calls" && grep -qx "bootstrap gui/$(id -u) $PL" "$T/launchctl.calls"'
-bash "$SCHED" status >"$T/sched.out" 2>&1
-chk "e6. status gọi launchctl print và chỉ summary-latest.md" \
-  'grep -q "^print gui/$(id -u)/com.toanmobile.devkit.gate-full" "$T/launchctl.calls" && grep -q summary-latest.md "$T/sched.out"'
-bash "$SCHED" uninstall >"$T/sched.out" 2>&1; rc=$?
-chk "e7. uninstall exit 0, plist đã gỡ" '[ "$rc" = 0 ] && [ ! -e "$PL" ]'
+bash "$SCHED" status --repo "$T/repo" >"$T/sched.out" 2>&1
+chk "e6. status --repo gọi launchctl print đúng label và chỉ summary-latest.md" \
+  'grep -qx "print gui/$(id -u)/$LA" "$T/launchctl.calls" && grep -q summary-latest.md "$T/sched.out"'
+# repo B cùng tên thư mục "repo": lịch riêng, không gỡ lịch A
+mkdir -p "$T/b/repo"; : >"$T/launchctl.calls"
+bash "$SCHED" install --repo "$T/b/repo" >"$T/sched.out" 2>&1; rc=$?
+PLB="$(plists | grep -vxF "$PL" | head -1)"; LB="$(basename "${PLB:-none.plist}" .plist)"
+chk "e11. install repo B: plist + label thứ hai, plist A còn, log B khác log A" \
+  '[ "$rc" = 0 ] && [ "$(plists | wc -l | tr -d " ")" = 2 ] && [ -e "$PL" ] && [ "$LB" != "$LA" ] && [ "$(px Label "$PLB")" = "$LB" ] \
+   && [ "$(px EnvironmentVariables.DEVKIT_GATE_FULL_LOG_DIR "$PLB")" != "$(px EnvironmentVariables.DEVKIT_GATE_FULL_LOG_DIR)" ]' \
+  "rc=$rc $(ls "$T/la") $(tail -3 "$T/sched.out")"
+chk "e12. install repo B: launchctl bootstrap plist B, không bootout lịch A" \
+  'grep -qx "bootstrap gui/$(id -u) $PLB" "$T/launchctl.calls" && ! grep -q "$LA\$" "$T/launchctl.calls"' "$(tr '\n' ' ' <"$T/launchctl.calls")"
+: >"$T/launchctl.calls"
+bash "$SCHED" uninstall --repo "$T/repo" >"$T/sched.out" 2>&1; rc=$?
+chk "e7. uninstall --repo A exit 0: chỉ gỡ plist A, bootout đúng label A, plist B còn" \
+  '[ "$rc" = 0 ] && [ ! -e "$PL" ] && [ -e "$PLB" ] && grep -qx "bootout gui/$(id -u)/$LA" "$T/launchctl.calls" && ! grep -q "$LB" "$T/launchctl.calls"' \
+  "rc=$rc $(ls "$T/la") $(tr '\n' ' ' <"$T/launchctl.calls")"
+bash "$SCHED" uninstall --repo "$T/b/repo" >/dev/null 2>&1
+# e13 (OCR vòng 4): repo đã bị xoá (worktree gỡ trước lịch), nhập qua đường dẫn có symlink ⇒ uninstall vẫn tìm đúng plist đã cài và gỡ nó
+mkdir -p "$T/creal/repo" && ln -s "$T/creal" "$T/clink" && git -C "$T/creal/repo" init -q 2>/dev/null
+bash "$SCHED" install --repo "$T/clink/repo" >/dev/null 2>&1
+PLC="$(ls "$T/la"/com.toanmobile.devkit.gate-full.*.plist 2>/dev/null | head -1)"
+rm -rf "$T/creal/repo"
+bash "$SCHED" uninstall --repo "$T/clink/repo" >"$T/sched.out" 2>&1; rc=$?
+chk "e13. repo đã mất: uninstall --repo (đường dẫn như lúc cài) gỡ đúng plist đã cài, exit 0" \
+  '[ -n "$PLC" ] && [ "$rc" = 0 ] && [ ! -e "$PLC" ]' "rc=$rc plist='$PLC' còn: $(ls "$T/la" 2>/dev/null) out: $(cat "$T/sched.out")"
+# e14: uninstall một repo chưa từng cài ⇒ exit khác 0, nói không có lịch (không báo "đã gỡ" giả)
+bash "$SCHED" uninstall --repo "$T/never/repo" >"$T/sched.out" 2>&1; rc=$?
+chk "e14. uninstall repo chưa cài: exit khác 0, không báo đã gỡ" '[ "$rc" != 0 ] && ! grep -q "đã gỡ lịch" "$T/sched.out"' \
+  "rc=$rc out: $(cat "$T/sched.out")"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "test_gate_full_nightly: PASS"; exit 0; fi
