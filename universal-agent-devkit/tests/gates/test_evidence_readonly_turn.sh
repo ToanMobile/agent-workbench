@@ -31,8 +31,11 @@ out, steps = sys.argv[1], json.loads(sys.argv[2])
 with open(out, "w") as fh:
     for i, st in enumerate(steps):
         inp = {"bash": {"command": st[1] if len(st) > 1 else ""}, "edit": {"file_path": st[1] if len(st) > 1 else "", "old_string": "x = 1", "new_string": "x = 2"},
-               "read": {"file_path": st[1] if len(st) > 1 else ""}}.get(st[0], {})
-        name = {"bash": "Bash", "edit": "Edit", "read": "Read"}.get(st[0], st[1] if st[0] == "tool" else "Read")
+               "read": {"file_path": st[1] if len(st) > 1 else ""},
+               "grep": {"path": st[1] if len(st) > 1 else "", "pattern": "PASS"}}.get(st[0], {})
+        if st[0] == "baddict":
+            inp = "not-a-dict"
+        name = {"bash": "Bash", "edit": "Edit", "read": "Read", "grep": "Grep", "baddict": "Bash"}.get(st[0], st[1] if st[0] == "tool" else "Read")
         fh.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"t{i}", "name": name, "input": inp}]}}) + "\n")
         res = st[2] if st[0] == "bash" else "ok"
         err = bool(st[3]) if st[0] == "bash" and len(st) > 3 else False
@@ -46,6 +49,12 @@ transcript "$TMP/r1.jsonl" '[["read","/tmp/runs.jsonl"]]'
 run 0 "$TMP/r1.jsonl" "$REPLY" "Read of a log"
 transcript "$TMP/r2.jsonl" '[["bash","jq -c . .agents/runs.jsonl | tail -5","{\"status\":\"PASS\"}",false],["tool","Grep"]]'
 run 0 "$TMP/r2.jsonl" "$REPLY" "Bash jq + Grep"
+transcript "$TMP/r3.jsonl" '[["bash","rg \"PASS|FAIL\" runs.jsonl","PASS",false]]'
+run 0 "$TMP/r3.jsonl" "$REPLY" "rg of a quoted PASS|FAIL"
+transcript "$TMP/r4.jsonl" "[[\"bash\",\"jq '.a | .b' runs.jsonl\",\"{}\",false]]"
+run 0 "$TMP/r4.jsonl" "$REPLY" "jq pipe inside quotes"
+transcript "$TMP/r5.jsonl" "[[\"bash\",\"jq 'select(.x > 0)' runs.jsonl\",\"{}\",false]]"
+run 0 "$TMP/r5.jsonl" "$REPLY" "jq greater-than inside quotes"
 echo "-- must still block"
 transcript "$TMP/b1.jsonl" "[[\"edit\",\"$P/src/a.py\"]]"
 run 2 "$TMP/b1.jsonl" "$REPLY" "edit of code, no test run"
@@ -56,6 +65,28 @@ transcript "$TMP/b3.jsonl" '[["read","/tmp/runs.jsonl"],["bash","python3 -m pyte
 run 2 "$TMP/b3.jsonl" "$REPLY" "read then a failing test run"
 transcript "$TMP/b4.jsonl" '[["read","/tmp/runs.jsonl"],["tool","Agent"]]'
 run 2 "$TMP/b4.jsonl" "$REPLY" "read then a tool that is not a read"
+transcript "$TMP/b5.jsonl" '[["bash","cat runs.jsonl 1> src/a.py","",false]]'
+run 2 "$TMP/b5.jsonl" "$REPLY" "redirect 1> writes a file"
+transcript "$TMP/b5b.jsonl" '[["bash","ls &> src/a.py","",false]]'
+run 2 "$TMP/b5b.jsonl" "$REPLY" "redirect &> writes a file"
+transcript "$TMP/b5c.jsonl" '[["bash","cat runs.jsonl 2> src/a.py","",false]]'
+run 2 "$TMP/b5c.jsonl" "$REPLY" "redirect 2> writes a file"
+transcript "$TMP/b5d.jsonl" '[["bash","cat runs.jsonl 1<> src/a.py","",false]]'
+run 2 "$TMP/b5d.jsonl" "$REPLY" "redirect 1<> writes a file"
+transcript "$TMP/b6.jsonl" '[["bash","ls & patch -p0","",false]]'
+run 2 "$TMP/b6.jsonl" "$REPLY" "background & then another command"
+transcript "$TMP/b7.jsonl" '[["bash","cat <(./fix.sh)","",false]]'
+run 2 "$TMP/b7.jsonl" "$REPLY" "process substitution runs a command"
+transcript "$TMP/b8.jsonl" '[["bash","sort -o src/a.py src/a.py","",false]]'
+run 2 "$TMP/b8.jsonl" "$REPLY" "sort -o writes a file"
+transcript "$TMP/b9.jsonl" '[["bash","uniq src/a.py src/b.py","",false]]'
+run 2 "$TMP/b9.jsonl" "$REPLY" "uniq with two paths writes the second"
+transcript "$TMP/b10.jsonl" '[["read","TEST-results.xml"]]'
+run 2 "$TMP/b10.jsonl" "$REPLY" "Read of a TEST xml"
+transcript "$TMP/b11.jsonl" '[["grep","build/TEST-results.xml"]]'
+run 2 "$TMP/b11.jsonl" "$REPLY" "Grep of a TEST xml"
+transcript "$TMP/b12.jsonl" '[["read","/tmp/runs.jsonl"],["baddict"]]'
+run 2 "$TMP/b12.jsonl" "$REPLY" "Bash input that is not a dict"
 echo "-- a successful run still backs the claim"
 transcript "$TMP/g1.jsonl" '[["bash","python3 -m pytest tests","12 passed in 0.30s",false]]'
 run 0 "$TMP/g1.jsonl" "$REPLY" "pytest run green"

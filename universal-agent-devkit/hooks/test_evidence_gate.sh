@@ -2798,12 +2798,10 @@ if tp and os.path.exists(tp):
                         use_id = blk.get("id")
                         if isinstance(use_id, str) and isinstance(binp, dict):
                             tool_uses[use_id] = {"name": nm, "input": binp, "index": blk_idx}
-                        elif not isinstance(use_id, str):
-                            # With no correlation id there is no later result that
-                            # can prove failure. Treat the tool as successful/unknown
-                            # so a prior proof cannot authorize a later outcome.
+                        else:
+                            # Không có id, hoặc input không phải dict: không suy ra lượt chỉ đọc.
                             no_id_tool_indices.append(blk_idx)
-                        if nm not in ("Edit", "Write", "NotebookEdit"):
+                        if not isinstance(binp, dict) or nm not in ("Edit", "Write", "NotebookEdit"):
                             continue
                         fp = binp.get("file_path") or ""
                         if isinstance(fp, str) and fp and _is_scratch(fp):
@@ -3275,11 +3273,27 @@ if new_run:
 # (no tool at all) is not "read-only", it is "unknown" and keeps blocking. Edits (Edit/Write, even in a temp dir), a test
 # runner command or any Bash write keep the old check; check 7 (outcome) is not touched.
 READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS")
-BASH_WRITE_RX = re.compile(r"(?<![<>&0-9])>(?!&)|>>|\btee\b|\bsed\s+(?:-\w*i|--in-place)|\bperl\s+-\w*i|\b(?:rm|mv|cp|mkdir|touch|chmod|ln|truncate|dd|install)\b"
+# Bỏ chuỗi trong nháy trước khi xét ghi/xâu lệnh, để jq 'select(.x > 0)' và rg "PASS|FAIL" không bị coi là ghi hay xâu lệnh.
+_SHELL_QUOTED = re.compile(r"""\$'(?:\\.|[^'])*'|'(?:\\.|[^'])*'|"(?:\\.|[^"\\]|\\.)*" """)
+def _bash_bare(cmd):
+    return _SHELL_QUOTED.sub(" ", cmd)
+# 1>, 2>, &>, 1<> ghi file. 2>&1 là gộp fd (dấu > đi liền &), không tính.
+BASH_WRITE_RX = re.compile(r"(?:[0-9]*>>|[0-9]*<>|&>>?|(?<![&<>])[0-9]*>(?!&))"
+                           r"|\btee\b|\bsed\s+(?:-\w*i|--in-place)|\bperl\s+-\w*i|\b(?:rm|mv|cp|mkdir|touch|chmod|ln|truncate|dd|install|patch)\b"
                            r"|\bgit\s+(?:add|commit|push|pull|merge|rebase|reset|checkout|stash|apply|cherry-pick|am|rm|mv|restore|clean)\b"
                            r"|\b(?:npm|yarn|pnpm|pip3?|brew|cargo|go)\s+(?:install|add|run|build|get)\b|\bpython\S*\s|\bbash\s|\bsh\s|\bnode\s|\bsource\s|\beval\b")
 BASH_READ_CMDS = ("cat", "head", "tail", "jq", "grep", "rg", "wc", "ls", "sort", "uniq", "cut", "column")
-BASH_CHAIN_RX = re.compile(r"&&|\|\||;|\$\(|`|\n")
+BASH_CHAIN_RX = re.compile(r"&&|\|\||;|(?<!&)&(?!&)|\$\(|<\(|>\(|`|\n")
+def _read_cmd_writes(seg):
+    parts = seg.split()
+    if not parts:
+        return False
+    cmd, args = parts[0], parts[1:]
+    if cmd == "sort" and any(a == "-o" or a.startswith("-o") for a in args):
+        return True
+    if cmd == "uniq" and len([a for a in args if not a.startswith("-")]) >= 2:
+        return True
+    return False
 def _read_only_turn():
     if edit_log or last_src_edit_idx >= 0 or last_scratch_src_idx >= 0 or last_scratch_fix_idx >= 0 or runner_results:
         return False
@@ -3287,12 +3301,20 @@ def _read_only_turn():
         return False
     for u in tool_uses.values():
         if u["name"] in READ_ONLY_TOOLS:
+            blob = json.dumps(u.get("input"), ensure_ascii=False).lower()
+            if ".xml" in blob:   # đọc TEST-*.xml không phải lượt chỉ đọc: cat xml đã bị chặn
+                return False
             continue
         if u["name"] == "Bash":
-            cmd = str(u["input"].get("command", ""))
-            if TEST_RUNNER_RX.search(cmd) or BASH_WRITE_RX.search(cmd) or BASH_CHAIN_RX.search(cmd) or ".xml" in cmd.lower():
-                return False   # chained / substituted / an XML read: foreign-root and ledger checks (check 2) judge whose run it was
-            if not all(seg.split()[:1] and seg.split()[0] in BASH_READ_CMDS for seg in cmd.split("|")):
+            if not isinstance(u.get("input"), dict):
+                return False
+            bare = _bash_bare(str(u["input"].get("command", "")))
+            if TEST_RUNNER_RX.search(bare) or BASH_WRITE_RX.search(bare) or BASH_CHAIN_RX.search(bare) or ".xml" in bare.lower():
+                return False   # xâu lệnh / thay thế / đọc XML: check 2 xét lần chạy của ai
+            segs = bare.split("|")
+            if not all(seg.split()[:1] and seg.split()[0] in BASH_READ_CMDS for seg in segs):
+                return False
+            if any(_read_cmd_writes(seg) for seg in segs):
                 return False
             continue
         return False
