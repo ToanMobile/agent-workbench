@@ -2174,6 +2174,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-qa-edited-test-review",
+      "watch_files": [
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-qa/references/findings-and-green.md",
+        "tests/super-board/test_qa_edited_test_routes_review.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QA-EDITED-TEST-01",
+          "name": "QA gặp gate exit 2 chỉ vì test có sẵn bị sửa thì chuyển Review (Reviewer audit Antigravity duyệt chéo), không Blocked + needs-you (#531)",
+          "command": "bash tests/super-board/test_qa_edited_test_routes_review.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

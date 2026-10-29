@@ -121,7 +121,9 @@ head QA tested after `git merge --no-edit origin/<base>`, the target tests green
 that once on the merged tree) at exit 0, which writes the task receipt; and, when app/UI source changed on a
 profile with a screen, a fresh `python3 .agents/devkit/bin/proof-capture.py` PNG. This holds when `/super-qa`
 runs on its own, outside the board's worker preamble. Paste the gate's last line, the head SHA and the PNG into
-the `[qa] [report]`; any other exit is not green.
+the `[qa] [report]`; any other exit is not green, except an edited-test exit 2 (the gate's only reason is an
+existing test the branch changed, #605): not a fail and not a block: list the edited tests in the report and hand
+the card to Review, whose Antigravity audit cross-reviews them.
 
 Per-spec forensics captured by `e2e/lib/report-fixture.ts`:
 
