@@ -97,6 +97,28 @@ self_reload_tick
 [ "$(execs)" = 1 ] && [ "$(notes)" = 0 ] && grep -q v2 "$RELOAD_SELF" && grep -q dirty other.txt \
   && ok "dirty unrelated file blocks the ff: runner script still reloaded, local edit kept, no warning" || fail "dirty-other: exec=$(execs) notify=$(notes) log=$(cat "$TMP/log")"
 
+# ── 7c. (#623) nạp liên tiếp v1→v2→v3 khi ff vẫn bị chặn: lần hai (đĩa = v2, HEAD = v1) vẫn nạp, không cảnh báo, bit +x giữ
+mkrepo; echo dirty >> other.txt
+( cd "$C/other" && echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm n2 && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick; RELOAD_RUN_SUM=$(git hash-object "$RELOAD_SELF")   # runner mới sau exec: bản đang chạy = v2
+( cd "$C/other" && echo up2 >> other.txt; printf '#!/usr/bin/env bash\necho v3\n' > "$REL" && git add -A && git commit -qm n3 && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick
+[ "$(execs)" = 2 ] && [ "$(notes)" = 0 ] && grep -q v3 "$RELOAD_SELF" && [ -x "$RELOAD_SELF" ] && grep -q dirty other.txt \
+  && ok "second reload (disk=v2, HEAD=v1) still applied: no warning, +x kept" || fail "v2->v3: exec=$(execs) notify=$(notes) log=$(cat "$TMP/log")"
+
+# ── 7d. (#623) runner bị sửa tay (đĩa khác HEAD và khác bản đang chạy) + ff bị chặn: giữ nguyên, cảnh báo
+mkrepo; echo dirty >> other.txt; echo '# hand' >> "$RELOAD_SELF"
+( cd "$C/other" && echo up >> other.txt; printf '#!/usr/bin/env bash\necho v2\n' > "$REL" && git add -A && git commit -qm n && git push -q origin HEAD:main 2>/dev/null )
+self_reload_tick
+[ "$(execs)" = 0 ] && [ "$(notes)" = 1 ] && grep -q '# hand' "$RELOAD_SELF" && ok "hand-edited runner kept and warned" || fail "hand-edit: exec=$(execs) notify=$(notes)"
+
+# ── 7e. (#623) git show lỗi / bản rỗng / sai cú pháp: runner trên đĩa còn nguyên (không cắt về 0 byte), không file tạm sót
+leftovers() { ls "$C/repo/.claude/bin" | grep -vc '^super-board-run.sh$'; }
+mkrepo; before=$(git hash-object "$RELOAD_SELF"); reload_swap_self "origin/main:no/such/file"; rc=$?
+[ "$rc" != 0 ] && [ "$(git hash-object "$RELOAD_SELF")" = "$before" ] && [ -s "$RELOAD_SELF" ] && [ "$(leftovers)" = 0 ] && ok "git show failure: runner untouched, no temp left" || fail "show-fail: rc=$rc"
+mkrepo; push_other $'#!/usr/bin/env bash\nif then fi((('; git fetch -q origin; before=$(git hash-object "$RELOAD_SELF"); reload_swap_self "origin/main:$REL"; rc=$?
+[ "$rc" != 0 ] && [ "$(git hash-object "$RELOAD_SELF")" = "$before" ] && [ "$(leftovers)" = 0 ] && ok "syntax-broken new script never lands on disk" || fail "bad-syntax swap: rc=$rc"
+
 # ── 8. finish THẬT (không stub) trên main lệch origin (QA v1 #308): main nhận commit của origin, commit local còn nguyên, worktree tạm bị gỡ;
 #    xung đột thật: trả khác 0, main giữ nguyên.
 WTPY="$ROOT/universal-agent-devkit/scripts/git/worktree.py"; [ -f "$WTPY" ] || WTPY="$ROOT/.agents/devkit/scripts/git/worktree.py"

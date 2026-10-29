@@ -2886,6 +2886,16 @@ reload_finish_main() {
   [ ! -d "$wt" ] || "${ak[@]}" remove "$wt" >/dev/null 2>&1 || log "⚠ self-reload: worktree remove $wt failed; left for the cleanup hook"
   return "$rc"
 }
+# #623: thay runner bằng bản origin an toàn: file tạm cùng thư mục, phải không rỗng + qua bash -n + chmod 0755 rồi mới mv -f
+# (git show lỗi không cắt runner về 0 byte; bản sai cú pháp không bao giờ nằm trên đĩa).
+reload_swap_self() {
+  local tmp
+  tmp=$(mktemp "${RELOAD_SELF}.XXXXXX" 2>/dev/null) || return 1
+  if git show "$1" > "$tmp" 2>/dev/null && [ -s "$tmp" ] && bash -n "$tmp" 2>/dev/null && chmod 0755 "$tmp" && mv -f "$tmp" "$RELOAD_SELF"; then
+    return 0
+  fi
+  rm -f "$tmp"; return 1
+}
 self_reload_tick() {
   local now new disk rel cur
   [ -n "$RELOAD_RUN_SUM" ] || return 0
@@ -2910,8 +2920,9 @@ self_reload_tick() {
         # #623: ff bị chặn bởi file KHÁC bị sửa dở (vd instincts.md của phiên khác). Runner script chưa bị sửa tay thì chỉ cần thay đúng file
         # đó bằng bản origin (không đụng index, không đụng file dở của người khác); script đang bị sửa tay thì giữ nguyên và cảnh báo.
         # ponytail: bin/ helper khác vẫn là bản cũ tới khi main ff được; nâng lên stash/worktree nếu helper đổi cùng lúc làm hỏng runner mới.
-        git diff --quiet HEAD -- "$rel" 2>/dev/null \
-          && git show "origin/${BASE_BRANCH}:${rel}" > "$RELOAD_SELF" 2>/dev/null \
+        # "Sạch" = đĩa khớp HEAD hoặc khớp bản runner đang chạy (sau lần nạp trước đĩa = v2, HEAD = v1).
+        { [ "$disk" = "$RELOAD_RUN_SUM" ] || [ "$disk" = "$(git rev-parse -q --verify "HEAD:${rel}" 2>/dev/null)" ]; } \
+          && reload_swap_self "origin/${BASE_BRANCH}:${rel}" \
           || { reload_warn "$new" "git merge --ff-only origin/${BASE_BRANCH} failed (uncommitted edits in the way?)"; return 0; }
       fi
     else
