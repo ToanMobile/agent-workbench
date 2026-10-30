@@ -2807,11 +2807,14 @@ if tp and os.path.exists(tp):
                         use_id = blk.get("id")
                         if isinstance(use_id, str) and isinstance(binp, dict):
                             tool_uses[use_id] = {"name": nm, "input": binp, "index": blk_idx}
-                        elif not isinstance(use_id, str):
-                            # With no correlation id there is no later result that
-                            # can prove failure. Treat the tool as successful/unknown
-                            # so a prior proof cannot authorize a later outcome.
+                        else:
+                            # Không có id, hoặc input không phải dict: không suy ra lượt chỉ đọc.
                             no_id_tool_indices.append(blk_idx)
+                        if not isinstance(binp, dict):
+                            if nm in ("Edit", "Write", "NotebookEdit"):
+                                # Input hỏng vẫn là sửa nguồn: except phía dưới ghi log và chặn lời khai pass (#649, P3a).
+                                raise TypeError(f"input is {type(binp).__name__}, not a dict")
+                            continue
                         if nm not in ("Edit", "Write", "NotebookEdit"):
                             continue
                         fp = binp.get("file_path") or ""
@@ -3278,9 +3281,66 @@ if new_run:
     except Exception:
         pass
 
+# ── read-only turn (#649): the session used tools, every one of them a read (Read/Grep/Glob or a Bash
+# command with no write / test-run), and wrote no file. A pass count quoted from a log it read is a quotation, not a
+# claim that this session ran anything; check 2 needs a run to compare against, so it has nothing to say. An EMPTY transcript
+# (no tool at all) is not "read-only", it is "unknown" and keeps blocking. Edits (Edit/Write, even in a temp dir), a test
+# runner command or any Bash write keep the old check; check 7 (outcome) is not touched.
+READ_ONLY_TOOLS = ("Read", "Grep", "Glob", "LS")
+# Bỏ chuỗi trong nháy trước khi xét ghi/xâu lệnh, để jq 'select(.x > 0)' và rg "PASS|FAIL" không bị coi là ghi hay xâu lệnh.
+# Nháy kép vẫn thực thi $(...) và `...`: chuỗi nháy kép có chúng thì giữ nguyên để BASH_CHAIN_RX/BASH_WRITE_RX còn thấy.
+_SHELL_QUOTED = re.compile(r"""\$'(?:\\.|[^'])*'|'(?:\\.|[^'])*'|"(?:\\.|[^"\\]|\\.)*\"""")
+def _bash_bare(cmd):
+    return _SHELL_QUOTED.sub(lambda m: m.group(0) if m.group(0)[0] == '"' and ("$(" in m.group(0) or "`" in m.group(0)) else " ", cmd)
+# 1>, 2>, &>, 1<> ghi file. 2>&1 là gộp fd (dấu > đi liền &), không tính.
+BASH_WRITE_RX = re.compile(r"(?:[0-9]*>>|[0-9]*<>|&>>?|(?<![&<>])[0-9]*>(?!&))"
+                           r"|\btee\b|\bsed\s+(?:-\w*i|--in-place)|\bperl\s+-\w*i|\b(?:rm|mv|cp|mkdir|touch|chmod|ln|truncate|dd|install|patch)\b"
+                           r"|\bgit\s+(?:add|commit|push|pull|merge|rebase|reset|checkout|stash|apply|cherry-pick|am|rm|mv|restore|clean)\b"
+                           r"|\b(?:npm|yarn|pnpm|pip3?|brew|cargo|go)\s+(?:install|add|run|build|get)\b|\bpython\S*\s|\bbash\s|\bsh\s|\bnode\s|\bsource\s|\beval\b")
+BASH_READ_CMDS = ("cat", "head", "tail", "jq", "grep", "rg", "wc", "ls", "sort", "uniq", "cut", "column")
+BASH_CHAIN_RX = re.compile(r"&&|\|\||;|(?<!&)&(?!&)|\$\(|<\(|>\(|`|\n")
+def _read_cmd_writes(seg):
+    parts = seg.split()
+    if not parts:
+        return False
+    cmd, args = parts[0], parts[1:]
+    if cmd == "sort" and any(a == "-o" or a.startswith("-o") for a in args):
+        return True
+    if cmd == "uniq" and len([a for a in args if not a.startswith("-")]) >= 2:
+        return True
+    return False
+def _read_only_turn():
+    if edit_log or last_src_edit_idx >= 0 or last_scratch_src_idx >= 0 or last_scratch_fix_idx >= 0 or runner_results:
+        return False
+    if not tool_uses or no_id_tool_indices:
+        return False
+    for u in tool_uses.values():
+        if u["name"] in READ_ONLY_TOOLS:
+            blob = json.dumps(u.get("input"), ensure_ascii=False).lower()
+            if ".xml" in blob:   # đọc TEST-*.xml không phải lượt chỉ đọc: cat xml đã bị chặn
+                return False
+            continue
+        if u["name"] == "Bash":
+            if not isinstance(u.get("input"), dict):
+                return False
+            bare = _bash_bare(str(u["input"].get("command", "")))
+            if TEST_RUNNER_RX.search(bare) or BASH_WRITE_RX.search(bare) or BASH_CHAIN_RX.search(bare) or ".xml" in bare.lower():
+                return False   # xâu lệnh / thay thế / đọc XML: check 2 xét lần chạy của ai
+            segs = bare.split("|")
+            if not all(seg.split()[:1] and seg.split()[0] in BASH_READ_CMDS for seg in segs):
+                return False
+            if any(_read_cmd_writes(seg) for seg in segs):
+                return False
+            continue
+        return False
+    return True
+read_only_turn = claimed and _read_only_turn()
+if read_only_turn:
+    logline(f"[{ts}] read-only turn ({len(tool_uses)} read tool calls, no edit, no test run): test-pass text is a quotation, check 2 skipped")
+
 # ── check 2 — does the XML back the claim? ──────────────────────────────────
 problems = []
-if claimed:
+if claimed and not read_only_turn:
     gradle_repo = any(os.path.exists(os.path.join(repo, f)) for f in
                       ("gradlew", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"))
     runner_ok = [r for r in runner_results
