@@ -129,33 +129,41 @@ def last_array():
 def nonempty(v):
     return isinstance(v, str) and v.strip() != ""
 
-def ok_entry(item):
+FIELDS = ("path", "sha256", "reviewer", "author", "task_id", "reason")
+
+def reject(idx, why):
+    # #693: một dòng stderr cho mỗi phần tử bị loại; không in nội dung phần tử.
+    sys.stderr.write("install-edited-test-approval: edited-tests[%d] phần tử không hợp lệ: %s\n" % (idx, why))
+    return None
+
+def ok_entry(item, idx):
     if not isinstance(item, dict):
-        return None
+        return reject(idx, "không phải object (%s), cần {%s}" % (type(item).__name__, ", ".join(FIELDS)))
     path = item.get("path")
     digest = item.get("sha256")
     reviewer = item.get("reviewer")
     author = item.get("author")
     tid = item.get("task_id")
     reason = item.get("reason")
-    if not all(nonempty(v) for v in (path, reviewer, author, tid, reason)):
-        return None
+    missing = [k for k, v in (("path", path), ("reviewer", reviewer), ("author", author), ("task_id", tid), ("reason", reason)) if not nonempty(v)]
+    if missing:
+        return reject(idx, "thiếu hoặc rỗng trường %s" % ", ".join(missing))
     if not isinstance(digest, str) or not hex64.fullmatch(digest):
-        return None
+        return reject(idx, "sha256 phải là 64 ký tự hex thường")
     path = path.strip()
     if path.startswith("/") or ".." in Path(path).parts:
-        return None
+        return reject(idx, "path phải là đường dẫn tương đối trong repo, không có '..'")
     if reviewer.strip().casefold() == author.strip().casefold():
-        return None
+        return reject(idx, "reviewer trùng author")
     if tid.strip() != task_id:
-        return None
+        return reject(idx, "task_id lệch task của approved-by")
     target = scratch / path
     try:
         got = hashlib.sha256(target.read_bytes()).hexdigest()
     except OSError:
-        return None
+        return reject(idx, "path không đọc được trong scratch")
     if got != digest:
-        return None
+        return reject(idx, "sha256 không khớp file tại head")
     return {
         "path": path,
         "sha256": digest,
@@ -166,8 +174,8 @@ def ok_entry(item):
     }
 
 valid = []
-for item in last_array():
-    row = ok_entry(item)
+for idx, item in enumerate(last_array()):
+    row = ok_entry(item, idx)
     if row is not None:
         valid.append(row)
 if not valid:
