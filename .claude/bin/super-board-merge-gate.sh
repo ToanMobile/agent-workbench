@@ -429,7 +429,7 @@ fi
 #   Closes thẻ khác thẻ của nhánh issue-<N>, hoặc khối sb:ac ít dòng hơn số AC của thẻ → exit 11 (về Build viết lại).
 # Còn dòng AC chưa tick (đo số sau merge, thiết bị, người): vẫn merge, nhưng Closes → Refs và thẻ ở lại (ac_after_merge).
 # Nhánh không mang issue-<N>: bỏ qua. Không có khối sb:ac: chỉ kiểm Closes lạ, không đọc issue (PR tay giữ hành vi cũ).
-AC_DIR=$(mktemp -d); AC_CARD=""; AC_UNTICKED=""; AC_HAS_LABEL=false; AC_RECHECK=false; AC_LIGHT=false; extra=()
+AC_DIR=$(mktemp -d); AC_CARD=""; AC_UNTICKED=""; AC_HAS_LABEL=false; AC_RECHECK=false; AC_LIGHT=false; extra=(); batch_args=(); AC_BATCH=""
 jq -r '.body // ""' "$META" > "$AC_DIR/pr.md"
 # Subject của commit squash cũng đóng thẻ ("Fix #23: …"): --subject, không có thì tiêu đề PR — kiểm cùng message.
 AC_SUBJECT="${SUBJECT:-$(pr_title)}"
@@ -438,6 +438,18 @@ AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --pr-body "$AC_DIR/pr.md" --ms
   || { say "ac-check could not run"; exit 9; }
 if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
   AC_CARD=$(echo "$AC_JSON" | jq -r .card)
+  # #724 đợt: thẻ Closes khác mà body issue của nó mang `<!-- sb:batch-of #<thẻ nhánh> -->` (create_task.py ghi lúc tạo) là
+  # thành viên đợt — một nhánh, một PR, một gate. Không đọc được body → rỗng → vẫn là thẻ lạ (fail-closed). Mọi lần ac-check sau
+  # (AC, kiểm lại sau verify) mang cùng các body này để AC của thành viên được đếm. Chỉ PR có khối sb:ac mới là PR đợt (AC của
+  # thành viên phải nằm trong khối): PR không có khối mà Closes thẻ khác bị chặn như cũ, không tốn lần đọc issue nào.
+  for x in $(echo "$AC_JSON" | jq -r 'if .ac then (.foreign_closes // [])[] else empty end'); do
+    gh issue view "$x" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/batch$x.md" 2>/dev/null || : > "$AC_DIR/batch$x.md"
+    batch_args+=(--batch-member-body "$x=$AC_DIR/batch$x.md")
+  done
+  if [ ${#batch_args[@]} -gt 0 ]; then
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" "${batch_args[@]}" --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" \
+      --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
+  fi
   foreign=$(echo "$AC_JSON" | jq -r '.foreign_closes | map("#\(.)") | join(", ")')
   if [ -n "$foreign" ]; then
     echo "ac-check: the PR or its squash message closes ${foreign}, but branch ${HEAD_REF} is card #${AC_CARD} — close only #${AC_CARD}; reference the others with Refs"
@@ -456,13 +468,13 @@ if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
     # "AC của thẻ #X": các AC của #X tính vào thẻ này. Danh sách #X lấy từ AC của chính thẻ (lần gọi có --issue-body; lần đầu
     # chưa có body nên luôn rỗng — OCR 24/10). Đọc #X thường, không qua github-read: không đọc được thì ac-check vẫn tính nó
     # ít nhất 1 AC, không đáng halt cả board.
-    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" \
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${batch_args[@]+"${batch_args[@]}"} \
       --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
     for x in $(echo "$AC_JSON" | jq -r '(.indirect // [])[]'); do
       gh issue view "$x" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/x$x.md" 2>/dev/null || : > "$AC_DIR/x$x.md"
       extra+=(--extra-issue-body "$x=$AC_DIR/x$x.md")
     done
-    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} \
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} ${batch_args[@]+"${batch_args[@]}"} \
       --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
     if [ "$(echo "$AC_JSON" | jq -r .collapsed)" = true ]; then
       echo "ac-check: card #${AC_CARD} has $(echo "$AC_JSON" | jq -r .issue_ac) acceptance criteria (cards it refers to included) but the PR's sb:ac block lists $(echo "$AC_JSON" | jq -r .pr_ac) — one line per criterion, each ticked with its own proof or left unticked with the reason"
@@ -1237,11 +1249,11 @@ if [ "$AC_RECHECK" = true ] || [ "$AC_LIGHT" = true ]; then
     : > "$AC_DIR/check-msg.md"
   fi
   if [ "$AC_RECHECK" = true ]; then
-    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} \
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --issue-body "$AC_DIR/issue.md" ${extra[@]+"${extra[@]}"} ${batch_args[@]+"${batch_args[@]}"} \
       --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
   else
-    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" --branch "$HEAD_REF") \
-      || { say "ac-check could not run"; exit 9; }
+    AC_JSON=$(python3 "$HERE/super-board-ac-check.py" ${batch_args[@]+"${batch_args[@]}"} --pr-body "$AC_DIR/pr.md" --msg "$AC_DIR/check-msg.md" \
+      --branch "$HEAD_REF") || { say "ac-check could not run"; exit 9; }
   fi
   foreign=$(echo "$AC_JSON" | jq -r '.foreign_closes | map("#\(.)") | join(", ")')
   collapsed=$(echo "$AC_JSON" | jq -r '.collapsed // false')
@@ -1281,18 +1293,24 @@ if [ -n "$AC_UNTICKED" ]; then
   # Đọc lại body ngay trước khi ghi: verify có thể đã chạy > 900 s, ghi bản cũ sẽ đè sửa đổi của lane khác trong lúc đó.
   gh pr view "$PR" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/pr.md" \
     || { say "could not re-read the PR body before turning Closes #${AC_CARD} into Refs; not merging"; exit 4; }
-  if [ "$(python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/pr.md" --card "$AC_CARD")" = rewritten ]; then
+  # #724: một dòng chưa chứng minh giữ CẢ đợt mở — không thẻ thành viên nào tự đóng theo thẻ trưởng (fail-closed như T0054).
+  AC_BATCH=$(echo "$AC_JSON" | jq -r '(.batch // [])[]')
+  edited=false
+  for c in "$AC_CARD" $AC_BATCH; do
+    [ "$(python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/pr.md" --card "$c")" = rewritten ] && edited=true
+  done
+  if [ "$edited" = true ]; then
     gh pr edit "$PR" ${REPO:+--repo "$REPO"} --body-file "$AC_DIR/pr.md" >/dev/null \
       || { say "could not rewrite Closes #${AC_CARD} in the PR body; not merging (the card would close with unproven AC)"; exit 4; }
   fi
   if [ -n "$MSG_FILE" ]; then cp "$MSG_FILE" "$AC_DIR/msg.md"; else cp "$AC_DIR/log.md" "$AC_DIR/msg.md" 2>/dev/null || : > "$AC_DIR/msg.md"; fi
-  python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/msg.md" --card "$AC_CARD" >/dev/null
+  for c in "$AC_CARD" $AC_BATCH; do python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/msg.md" --card "$c" >/dev/null; done
   grep -q "#${AC_CARD}\b" "$AC_DIR/msg.md" || printf '\nRefs #%s\n' "$AC_CARD" >> "$AC_DIR/msg.md"
   MSG_FILE="$AC_DIR/msg.md"
   # Subject squash: --subject, không có thì tiêu đề PR như GitHub vẫn dùng ("<tiêu đề> (#PR)") — Closes trong đó cũng đổi.
   [ -n "$SUBJECT" ] || SUBJECT="${AC_SUBJECT} (#${PR})"
   printf '%s\n' "$SUBJECT" > "$AC_DIR/subject.md"
-  python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/subject.md" --card "$AC_CARD" >/dev/null
+  for c in "$AC_CARD" $AC_BATCH; do python3 "$HERE/super-board-ac-check.py" --rewrite-closes "$AC_DIR/subject.md" --card "$c" >/dev/null; done
   SUBJECT=$(head -1 "$AC_DIR/subject.md")
 elif [ "$AC_HAS_LABEL" = true ]; then
   # Đủ AC: gỡ nhãn TRƯỚC merge — sau merge `Closes` đã đóng issue, runner thấy CLOSED + ac-open sẽ mở lại nó.
@@ -1309,7 +1327,7 @@ ac_after_merge() {
   gh issue edit "$AC_CARD" ${REPO:+--repo "$REPO"} --add-label ac-open >/dev/null 2>&1 || say "warning: could not label #${AC_CARD} ac-open"
   gh issue reopen "$AC_CARD" ${REPO:+--repo "$REPO"} >/dev/null 2>&1 || true   # đã mở thì gh báo lỗi vô hại
   printf '%s\n' "[merge-gate] [report] ⏳ PR #${PR} merged · AC chưa chứng minh hết — thẻ ở lại" \
-    "Did: merge ${HEAD_SHA:0:12}; Closes #${AC_CARD} đổi thành Refs để thẻ không tự đóng" \
+    "Did: merge ${HEAD_SHA:0:12}; Closes #${AC_CARD} ${AC_BATCH:+và thành viên đợt $(printf '#%s ' $AC_BATCH)}đổi thành Refs để thẻ không tự đóng" \
     "❌ Chưa chứng minh:" "$AC_UNTICKED" \
     "Next: PR sau của thẻ chép ĐỦ mọi dòng AC vào khối sb:ac — dòng đã chứng minh giữ [x] kèm PR #${PR}, dòng còn lại chứng minh ở PR đó. Dòng chỉ người/thiết bị làm được: block-template 🙋. Thẻ không vào Done khi còn nhãn ac-open." \
     > "$AC_DIR/comment.md"

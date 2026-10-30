@@ -44,6 +44,8 @@ PROJECT_REGISTRY = {
         "project_id": "PVT_kwHOAGnqzM4BnS4g",
         "status_field_id": "PVTSSF_lAHOAGnqzM4BnS4gzhl4Kok",
         "backlog_option_id": "81f934af",
+        # #724: đợt (nhiều thẻ, một nhánh/PR/gate) cần merge gate hiểu marker sb:batch-of; repo khác bật khi port ac-check.
+        "batch": True,
     },
     "ToanMobile/OfficeReader": {
         "number": 2,
@@ -129,6 +131,14 @@ KINDS = {"bug", "feature", "qa"}   # "cùng loại" = cùng một trong ba nhãn
 # mới vào đó nằm im. Cùng định nghĩa với FOR_A_PERSON_JQ và wave-plan (fail-safe) của super-board.
 NOT_BUILDABLE = {NEEDS_YOU_LABEL, "human-gated", "wontfix", "loop:halted"}
 BATCH_HEADING = "## Gộp thêm: "
+# Đợt (#724): thẻ mới không gom được (khác chủ đề, thẻ đủ trần AC) vào ĐỢT của một thẻ chưa chạy cùng loại — thẻ vẫn riêng (AC riêng,
+# đóng riêng), nhưng builder thẻ trưởng build cả đợt trên MỘT nhánh, một PR, một gate. Chỉ ghi trên chính thẻ mới: Blocked by thẻ
+# trưởng (board không build nó riêng) + marker dưới đây (merge gate cho PR của thẻ trưởng Closes nó). Cùng regex với
+# .claude/bin/super-board-ac-check.py BATCH_OF.
+BATCH_OF_RE = re.compile(r"<!--\s*sb:batch-of\s+#(\d+)\s*-->")
+# Marker trong code fence/span chỉ là ví dụ (thẻ bàn về cơ chế): không tính — cùng luật prose() của ac-check (INSTINCT-015).
+FENCE_BLOCK = re.compile(r"^[ \t]*```.*?^[ \t]*```[^\n]*$", re.S | re.M)
+CODE_SPAN = re.compile(r"`[^`\n]*`")
 # Đường dẫn file có "/" (tên trơn như server.py quá chung để coi là trùng).
 PATH_RE = re.compile(r"[\w.\-]+(?:/[\w.\-]+)+\.\w{1,5}")
 
@@ -145,17 +155,29 @@ def gh_timeout_s():
     print(f"   ⚠️  CREATE_TASK_GH_TIMEOUT_S={raw!r} không hợp lệ: dùng 60s.", file=sys.stderr)
     return 60.0
 
-def max_card_ac():
-    """Trần dòng AC mỗi thẻ gom (#369; thẻ #323/#330 phình tới build 7873 s). SB_MAX_CARD_AC ghi đè; rác/≤ 0 → 12 kèm cảnh báo."""
-    raw = os.environ.get("SB_MAX_CARD_AC", "12")
+def env_cap(name, default):
+    """Trần số nguyên dương từ env `name`; rác/≤ 0 → `default` kèm cảnh báo (không traceback trước argparse)."""
+    raw = os.environ.get(name, str(default))
     try:
         v = int(raw)
         if v > 0:
             return v
     except ValueError:
         pass
-    print(f"   ⚠️  SB_MAX_CARD_AC={raw!r} không hợp lệ: dùng 12.", file=sys.stderr)
-    return 12
+    print(f"   ⚠️  {name}={raw!r} không hợp lệ: dùng {default}.", file=sys.stderr)
+    return default
+
+def max_card_ac():
+    """Trần dòng AC mỗi thẻ gom (#369; thẻ #323/#330 phình tới build 7873 s). SB_MAX_CARD_AC ghi đè; rác/≤ 0 → 12 kèm cảnh báo."""
+    return env_cap("SB_MAX_CARD_AC", 12)
+
+# Trần đợt (#724, bài học #369): số thẻ kể cả thẻ trưởng, và tổng mục AC cấp 1 của mọi thẻ (thước đo thời gian build).
+# ponytail: AC thay cho thời gian build ước; đổi sang giây build đo được mỗi AC khi runs.jsonl có đủ số liệu.
+def max_batch_cards():
+    return env_cap("SB_MAX_BATCH_CARDS", 5)
+
+def max_batch_ac():
+    return env_cap("SB_MAX_BATCH_AC", 16)
 
 def run_cmd(cmd, check=True):
     limit = gh_timeout_s()
@@ -287,12 +309,8 @@ def ready_started(repo):
             started.add(int(m.group(1)))
     return started
 
-def backlog_cards(cfg, repo):
-    """Thẻ Issue của `repo` chưa chạy: Backlog, và Ready chưa có PR mở head `issue-<n>-`. [{number, title, body, labels}].
-
-    Lỗi đọc board → RuntimeError. Không đọc được PR mở → bỏ mọi thẻ Ready, vẫn trả Backlog.
-    Board có thể chứa issue của repo khác (repo chưa đăng ký dùng Project #1): `gh issue edit N --repo <repo>` lên số
-    issue của repo khác sẽ ghi đè nhầm issue cùng số, nên thẻ không khớp repository (hoặc thiếu) bị bỏ."""
+def board_items(cfg):
+    """Mọi item của board (gh project item-list). Lỗi đọc → RuntimeError; danh sách bị cắt → cảnh báo."""
     res = run_cmd(["gh", "project", "item-list", str(cfg["number"]), "--owner", PROJECT_OWNER,
                    "--format", "json", "--limit", "500"], check=False)
     if res.returncode != 0:
@@ -301,10 +319,22 @@ def backlog_cards(cfg, repo):
     if data.get("totalCount", 0) > len(data.get("items", [])):
         print(f"   ⚠️  Board có {data['totalCount']} item, chỉ đọc được {len(data['items'])}: danh sách thẻ chưa chạy bị cắt, "
               "thẻ mới nhất có thể bị bỏ sót.", file=sys.stderr)
+    return data.get("items", [])
+
+def item_repo(content):
+    return str(content.get("repository") or "").rstrip("/").split("github.com/")[-1].lower()
+
+def backlog_cards(cfg, repo, items=None):
+    """Thẻ Issue của `repo` chưa chạy: Backlog, và Ready chưa có PR mở head `issue-<n>-`. [{number, title, body, labels}].
+
+    Lỗi đọc board → RuntimeError. Không đọc được PR mở → bỏ mọi thẻ Ready, vẫn trả Backlog.
+    Board có thể chứa issue của repo khác (repo chưa đăng ký dùng Project #1): `gh issue edit N --repo <repo>` lên số
+    issue của repo khác sẽ ghi đè nhầm issue cùng số, nên thẻ không khớp repository (hoặc thiếu) bị bỏ.
+    `items`: kết quả board_items đã đọc (không đọc lại board)."""
     cards = []
-    for it in data.get("items", []):
+    for it in board_items(cfg) if items is None else items:
         c = it.get("content") or {}
-        card_repo = str(c.get("repository") or "").rstrip("/").split("github.com/")[-1].lower()
+        card_repo = item_repo(c)
         status = it.get("status")
         if (status in ("Backlog", "Ready") and c.get("type") == "Issue" and c.get("number")
                 and card_repo == repo.lower()):
@@ -351,6 +381,63 @@ def pick_card(cards, labels, text, title="", new_ac=0):
             and ac_count(c["body"]) + new_ac <= cap
             and ((scope and scope_of(c.get("title", "")) == scope) or paths & set(PATH_RE.findall(c["body"])))]
     return max(fits, key=lambda c: (len(paths & set(PATH_RE.findall(c["body"]))), c["number"]), default=None)
+
+def is_high(risk):
+    """Rủi ro 🔴 High theo NHÃN, không theo chữ mô tả: emoji thắng; không emoji thì chữ đầu (High / Cao)."""
+    risk = risk or ""
+    return bool("🔴" in risk or ("🟡" not in risk and "🟢" not in risk and re.match(r"\W*(?:high|cao)\b", risk, re.I)))
+
+def batch_of(body):
+    """Số thẻ trưởng của đợt mà body thẻ mang marker, hoặc None."""
+    m = BATCH_OF_RE.search(CODE_SPAN.sub("", FENCE_BLOCK.sub("", body or "")))
+    return int(m.group(1)) if m else None
+
+def batch_members(items, lead, repo):
+    """Item chưa Done của `repo` mang marker đợt của thẻ `lead` (thẻ đã đóng mà chưa sang Done vẫn tính: trần bảo thủ)."""
+    out = []
+    for it in items or []:
+        c = it.get("content") or {}
+        if (it.get("status") != "Done" and c.get("type") == "Issue" and item_repo(c) == repo.lower()
+                and c.get("number") and batch_of(c.get("body")) == int(lead)):
+            out.append(c)
+    return out
+
+def pick_batch_lead(cards, items, labels, repo, new_ac=0):
+    """Thẻ trưởng của đợt nhận thẻ mới (#724), hoặc None. Ứng viên = thẻ chưa chạy (`cards` của backlog_cards) cùng loại,
+    build được (Blocked by `- None.`, không nhãn NOT_BUILDABLE — thành viên đợt khác vì thế cũng bị loại), không mang marker,
+    rủi ro không 🔴 High, đọc lại còn mở; đợt còn chỗ: 1 + thành viên + 1 ≤ max_batch_cards() và tổng mục AC (trưởng + thành
+    viên + mới) ≤ max_batch_ac(). Thẻ số lớn nhất (đợt mới nhất) trước. Trả (thẻ trưởng với body đọc lại, thứ tự thẻ mới
+    trong đợt, trần thẻ, tổng AC, trần AC)."""
+    if not PROJECT_REGISTRY.get(repo, {}).get("batch"):
+        return None
+    cap_cards, cap_ac = max_batch_cards(), max_batch_ac()
+    fits = [c for c in cards
+            if set(labels) & set(c["labels"]) and not NOT_BUILDABLE & set(c["labels"])
+            and [l.strip() for l in section(c["body"], "Blocked by") if l.strip()] in ([], ["- None."])
+            and batch_of(c["body"]) is None and not is_high("\n".join(section(c["body"], "Risk")).strip())]
+    for c in sorted(fits, key=lambda c: c["number"], reverse=True):
+        members = batch_members(items, c["number"], repo)
+        total = ac_count(c["body"]) + sum(ac_count(m.get("body")) for m in members) + new_ac
+        if 1 + len(members) + 1 > cap_cards or total > cap_ac:
+            continue
+        current = fresh_body(repo, c["number"])   # board có thể trễ: thẻ trưởng đã đóng thì đợt của nó không nhận thêm
+        if (current is None or batch_of(current) is not None
+                or [l.strip() for l in section(current, "Blocked by") if l.strip()] not in ([], ["- None."])):
+            continue
+        return dict(c, body=current), len(members) + 2, cap_cards, total, cap_ac
+    return None
+
+def with_batch(body, lead):
+    """Body thẻ thành viên: `## Blocked by` thành đúng một blocker là thẻ trưởng (deps.sh/wave-plan không giao thẻ riêng)
+    + marker đợt (merge gate nhận Closes của nó trên nhánh issue-<lead>-)."""
+    lines = (body or "").rstrip().splitlines()
+    heads = [i for i, l in enumerate(lines) if re.match(r"^##\s+Blocked by\s*$", l, re.I)]
+    start = heads[-1] if heads else len(lines)
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    block = ["## Blocked by",
+             f"- #{lead} — đợt: build chung nhánh issue-{lead}-…, một PR, một gate (tách: card_batch.py split)",
+             f"<!-- sb:batch-of #{lead} -->"]
+    return "\n".join(lines[:start] + block + lines[end:]) + "\n"
 
 def merge_body(old, title, new):
     """Body thẻ cũ + việc mới: dòng AC mới vào mục AC của thẻ (lane chỉ đọc mục đó), Problem/Fix thành mục Gộp thêm."""
@@ -721,20 +808,36 @@ def main():
     # Không gom việc có --blocked-by hoặc rủi ro 🔴: blocker và rủi ro cao của một việc không tách được khỏi thẻ chứa nó.
     # 24/10: trước đây chỉ 🟢 mới gom, mà gần như mọi thẻ ghi 🟡 nên không bao giờ gom (người dùng: "gom … không hoạt động").
     # Only the risk LABEL counts, not the description after it: an emoji wins; without one, the first word (High / Cao).
-    risk = args.risk or ""
-    high = "🔴" in risk or ("🟡" not in risk and "🟢" not in risk and re.match(r"\W*(?:high|cao)\b", risk, re.I))
-    low_risk = not high
+    low_risk = not is_high(args.risk)
     # Nhãn ngoài bug/feature/qa (needs-device…) có tác dụng với runner; đường gom không áp nhãn lên thẻ cũ → thẻ riêng.
     plain_labels = set(auto_labels(title, args.labels)) <= KINDS
     if (needs_you is None and args.new_card is None and not args.from_file
             and not args.blocked_by and low_risk and plain_labels):
         repo = args.repo or detect_repo()
+        items = cards = None
         try:
-            card = pick_card(backlog_cards(resolve_project_config(repo), repo), auto_labels(title, args.labels),
+            cfg = resolve_project_config(repo)
+            items = board_items(cfg)
+            cards = backlog_cards(cfg, repo, items)
+            card = pick_card(cards, auto_labels(title, args.labels),
                              f"{title}\n{body}", title=title, new_ac=ac_count(body))
         except (RuntimeError, ValueError, OSError) as e:
             card = None
             print(f"   ⚠️  Không gom được vào thẻ chưa chạy (không đọc được board: {e}): tạo thẻ mới.", file=sys.stderr)
+        # Không gom được (khác chủ đề, thẻ đủ trần AC) mà đọc được board: vào đợt của một thẻ chưa chạy (#724). Gom thử mà
+        # ghi lỗi thì không vào đợt (thẻ riêng như cũ).
+        lead = None
+        if card is None and cards is not None:
+            try:
+                lead = pick_batch_lead(cards, items, auto_labels(title, args.labels), repo, new_ac=ac_count(body))
+            except (RuntimeError, ValueError, OSError) as e:
+                print(f"   ⚠️  Không xét được đợt ({e}): tạo thẻ riêng.", file=sys.stderr)
+        if lead:
+            head, nth, cap_cards, total, cap_ac = lead
+            body = with_batch(body, head["number"])
+            print(f"\n🚃 {'[DRY-RUN] Sẽ vào' if args.dry_run else 'Vào'} đợt #{head['number']} ({head['title']}): thẻ thứ "
+                  f"{nth}/{cap_cards}, {total}/{cap_ac} AC. Build chung nhánh issue-{head['number']}-…, "
+                  "một PR, một gate (card_batch.py plan). Việc độc lập cần PR riêng thì thêm --new-card \"<lý do>\".")
         if card:
             n = card["number"]
             if args.dry_run:
