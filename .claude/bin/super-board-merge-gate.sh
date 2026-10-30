@@ -769,11 +769,12 @@ run_verify_cmd() {
 # #559: REG-DK-ALL-01 FAIL / TIMEOUT / HANG thì giữ scratch. Dòng PASS không khớp.
 # #712: REG-DK-ALL-01 đã tách thành shard REG-DK-ALL-GATES-01 / -WORKTREE-01 / -REST-01 (#616, #650) và gate in "<ID> : <mô tả>" — khớp cả
 # shard lẫn dấu ':' (dòng cũ "REG-DK-ALL-01 |" vẫn khớp). ID phải đứng ngay sau dấu '|' nên suite khác chỉ nhắc tên trong mô tả không khớp.
+# grep KHÔNG -q: đọc tới hết đầu vào, nên sed không chết SIGPIPE (141) trên log lớn khi script chạy dưới pipefail (T0170).
 reg_dk_all_not_pass() {
   local log="$1"
   [ -f "$log" ] || return 1
   LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$log" 2>/dev/null \
-    | LC_ALL=C grep -Eq '^[[:space:]]*\[ \] (FAIL|TIMEOUT( \(HANG\))?|HANG)[[:space:]]*\|[[:space:]]*REG-DK-ALL(-[A-Z]+)?-01[[:space:]]*[|:]'
+    | LC_ALL=C grep -aE '^[[:space:]]*\[ \] (FAIL|TIMEOUT( \(HANG\))?|HANG)[[:space:]]*\|[[:space:]]*REG-DK-ALL(-[A-Z]+)?-01[[:space:]]*[|:]' >/dev/null
 }
 # Tên đúng mẫu .merge-scratch-keep-pr<số>-<yyyyMMdd-HHmmss>. Thư mục khác không đụng.
 keep_name_ok() {
@@ -841,8 +842,8 @@ keep_failed_scratch() {
   dest="$BASE_WT/.claude/worktrees/.merge-scratch-keep-pr${PR}-${ts}"
   if [ -e "$dest" ]; then sleep 1; ts=$(date +%Y%m%d-%H%M%S); dest="$BASE_WT/.claude/worktrees/.merge-scratch-keep-pr${PR}-${ts}"; fi
   git -C "$BASE_WT" worktree move "$SCRATCH" "$dest" || return 1
-  say "kept scratch at ${dest} because REG-DK-ALL-01 was not PASS"
-  gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "merge-gate kept the scratch worktree at ${dest} because REG-DK-ALL-01 was not PASS. Evidence: ${dest}/.merge-evidence" \
+  say "kept scratch at ${dest} because REG-DK-ALL-01 (or a REG-DK-ALL-*-01 shard) was not PASS"
+  gh pr comment "$PR" ${REPO:+--repo "$REPO"} --body "merge-gate kept the scratch worktree at ${dest} because REG-DK-ALL-01 (or a REG-DK-ALL-*-01 shard) was not PASS. Evidence: ${dest}/.merge-evidence" \
     >/dev/null 2>&1 || say "warning: could not comment the kept scratch path on PR #${PR}"
   SCRATCH=""
   return 0
@@ -1130,9 +1131,9 @@ for cmd in "${VERIFY[@]}"; do
     else
       say "verify failed (${WHY}) on a branch not behind ${BASE} (log saved to ${VLOG})"
     fi
-    # #559: chỉ giữ scratch khi REG-DK-ALL-01 không PASS. Lỗi verify khác vẫn xoá như cũ.
+    # #559/#712: chỉ giữ scratch khi REG-DK-ALL-01 hoặc một shard REG-DK-ALL-*-01 không PASS. Lỗi verify khác vẫn xoá như cũ.
     if reg_dk_all_not_pass "$VERIFY_LOG"; then
-      keep_failed_scratch || say "could not keep the scratch worktree after REG-DK-ALL-01 was not PASS"
+      keep_failed_scratch || say "could not keep the scratch worktree after REG-DK-ALL-01 (or a shard) was not PASS"
     fi
     exit 11
   fi

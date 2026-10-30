@@ -3,7 +3,7 @@
 # -REST-01 (#616, #650) và dòng gate thật in "<trạng thái> | <ID> : <mô tả>", nên reg_dk_all_not_pass cũ (khoá "REG-DK-ALL-01 |") không bao
 # giờ khớp: merge gate #707 lúc 20:07 30/10 đỏ ở shard gates mà scratch bị xoá, mất log đỏ. Test gọi THẲNG hàm của merge gate với các dòng
 # đúng định dạng gate thật (có cả mã màu ANSI), dòng cũ "REG-DK-ALL-01 |" (không hồi quy) và các dòng KHÔNG được khớp.
-set -u
+set -uo pipefail   # như merge gate (set -euo pipefail, dòng 136): hàm chạy dưới pipefail
 export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$ROOT/.claude/bin/super-board-merge-gate.sh"
@@ -36,6 +36,14 @@ case_log "shard UNTESTED (không chạy vì suite trước đỏ) ⇒ không gi�
 case_log "suite khác FAIL chỉ NHẮC REG-DK-ALL-01 trong mô tả ⇒ không giữ" no \
   "    [ ] FAIL | REG-SB-MERGE-SCRATCH-KEEP-559-01 : #559: REG-DK-ALL-01 không PASS thì giữ scratch"
 case_log "ID gần giống (REG-DK-ALLX-01) FAIL ⇒ không giữ" no "    [ ] FAIL | REG-DK-ALLX-01 : khác"
+
+# log thật của merge gate lớn (~354 KB): dòng shard đỏ ở ĐẦU, đuôi > bộ đệm pipe 64 KB. Dưới pipefail, đầu đọc thoát sớm (grep -q) làm
+# sed chết SIGPIPE (141) và hàm trả sai ⇒ scratch vẫn bị xoá (T0170 blocker).
+{ printf '%s\n' "    [ ] FAIL | REG-DK-ALL-GATES-01 : #616 shard (tests/gates)"
+  i=0; while [ "$i" -lt 4000 ]; do printf '%s\n' "           | ✔ tests/gates/test_filler_$i.sh — dòng đệm cho log lớn hơn bộ đệm pipe 64 KB"; i=$((i + 1)); done
+} > "$TMP/big.log"
+if reg_dk_all_not_pass "$TMP/big.log"; then ok "log lớn ($(wc -c < "$TMP/big.log" | tr -d ' ') byte), dòng shard đỏ ở đầu, dưới pipefail ⇒ giữ"
+else fail "log lớn, dòng shard đỏ ở đầu, dưới pipefail ⇒ không giữ (SIGPIPE của sed làm hàm trả sai)"; fi
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_merge_gate_keep_scratch_shards: tất cả XANH"; exit 0; }
