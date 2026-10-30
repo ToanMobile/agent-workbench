@@ -115,14 +115,12 @@ FLAKY_RETRY_MAX_S=0 stop; rc=$?
 [ "$rc" = 2 ] && ok "no re-run, killed after a printed test failure: still blocks" || fail "no-re-run kill after a failure allowed (rc=$rc)"
 
 # 5. two suites: a real failure next to a killed one -> blocks (the real failure is not hidden)
-#    #647 (fail-fast): the first red suite stops the rest, so the real failure runs FIRST here (REG-F, then REG-K). With REG-K first the kill
-#    stops the run before REG-F starts: the Stop is then allowed as an environment kill and REG-F is UNTESTED (known ceiling of fail-fast).
 rm -rf "$REPO" && mkdir -p "$REPO/src" "$REPO/templates" && cd "$REPO" || exit 1
 git init -q . && git config user.email t@t && git config user.name t
 echo "fun ok() = 1" > src/Core.kt; echo 'kill -9 $$' > k.sh; echo 'echo "FooTest > bar FAILED"; exit 1' > f.sh
 cat > templates/regression_matrix.json <<'JSON'
 {"project":"t","rules":[{"component":"Core","watch_files":["src/Core.kt"],
- "mandatory_regression_tests":[{"id":"REG-F","name":"failing","command":"sh f.sh"},{"id":"REG-K","name":"killed","command":"sh k.sh"}]}]}
+ "mandatory_regression_tests":[{"id":"REG-K","name":"killed","command":"sh k.sh"},{"id":"REG-F","name":"failing","command":"sh f.sh"}]}]}
 JSON
 git add -A && git commit -qm init; echo "fun ok() = 2" > src/Core.kt
 stop; rc=$?

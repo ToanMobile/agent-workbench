@@ -68,5 +68,48 @@ gate; rc2=$?
   && ok "đối chứng: chỉ suite cacheable thì lượt hai thoát từ bản ghi skip (ran = 1)" \
   || fail "đối chứng: rc $rc/$rc2 ran=$(lines ran) $(show)"
 
+# Khoá bật: skip bị chặn vì REG-2, nhưng REG-1 (có khoá) vẫn được dùng lại theo khoá nội dung (ran = 1, ran2 = 2)
+export DEVKIT_SUITE_CACHE=1
+ORIGIN="$TMP/origin3.git"; REPO="$TMP/repo3"
+git init -q --bare -b main "$ORIGIN" && git clone -q "$ORIGIN" "$REPO" 2>/dev/null || exit 1
+( cd "$REPO" && git config user.email t@t && git config user.name t && git config commit.gpgsign false
+  mkdir -p src templates .agents
+  echo "def ok(): return 1" > src/core.py
+  echo '{"profile":"backend"}' > .agents/active-profile.json
+  printf 'ran\nran2\n.agents/evidence/\n.agents/regression_checklist.md\n.agents/CHECKLIST.md\n.claude/\n' > .gitignore
+  cat > templates/regression_matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/core.py"],
+ "mandatory_regression_tests":[{"id":"REG-1","name":"core","command":"echo x >> ran"},
+  {"id":"REG-2","name":"luon chay","command":"echo y >> ran2","cache":false}]}]}
+JSON
+  git add -A && git commit -qm init && git push -q origin main ) || exit 1
+echo "def ok(): return 2" > "$REPO/src/core.py"
+gate; rc=$?
+gate; rc2=$?
+[ "$rc" = 0 ] && [ "$rc2" = 0 ] && [ "$(lines ran)" = 1 ] && [ "$(lines ran2)" = 2 ] \
+  && ok "khoá bật: lượt hai dùng lại REG-1 theo khoá (ran = 1), REG-2 cache:false chạy lại (ran2 = 2)" \
+  || fail "khoá bật: rc $rc/$rc2 ran=$(lines ran) ran2=$(lines ran2) (mong 1 và 2) $(show)"
+
+# #647 + suite bị kill: REG-K bị kill -9 chạy TRƯỚC REG-F lỗi thật. Kill không có kết luận test nên không dừng lượt: REG-F vẫn chạy và báo FAIL
+export DEVKIT_SUITE_CACHE=0
+ORIGIN="$TMP/origin4.git"; REPO="$TMP/repo4"
+git init -q --bare -b main "$ORIGIN" && git clone -q "$ORIGIN" "$REPO" 2>/dev/null || exit 1
+( cd "$REPO" && git config user.email t@t && git config user.name t && git config commit.gpgsign false
+  mkdir -p src templates .agents
+  echo "def ok(): return 1" > src/core.py
+  echo '{"profile":"backend"}' > .agents/active-profile.json
+  printf 'ranf\n.agents/evidence/\n.agents/regression_checklist.md\n.agents/CHECKLIST.md\n.claude/\n' > .gitignore
+  echo 'kill -9 $$' > k.sh; printf 'echo f >> ranf\nexit 1\n' > f.sh
+  cat > templates/regression_matrix.json <<'JSON'
+{"project":"t","rules":[{"component":"Core","watch_files":["src/core.py"],
+ "mandatory_regression_tests":[{"id":"REG-K","name":"killed","command":"sh k.sh"},{"id":"REG-F","name":"failing","command":"sh f.sh"}]}]}
+JSON
+  git add -A && git commit -qm init && git push -q origin main ) || exit 1
+echo "def ok(): return 2" > "$REPO/src/core.py"
+gate; rc=$?
+[ "$rc" = 1 ] && [ "$(lines ranf)" -ge 1 ] && ! grep -q "Không chạy: suite trước" "$TMP/gate" \
+  && ok "kill -9 đứng trước lỗi thật: REG-F vẫn chạy (ranf >= 1), exit 1, không UNTESTED vì fail-fast" \
+  || fail "kill trước lỗi thật: rc $rc ranf=$(lines ranf) (mong 1 và ranf >= 1) $(show)"
+
 [ "$FAILS" -eq 0 ] && { echo "gate rerun_skip unkeyed: all passed"; exit 0; }
 echo "gate rerun_skip unkeyed: $FAILS FAILED"; exit 1

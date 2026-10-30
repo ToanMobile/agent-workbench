@@ -7666,7 +7666,9 @@ def main():
         # Suite NOT_RUN phía sau thành UNTESTED — covered_by và skip-compile không kịp biến chúng thành PASS.
         # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), và run_impacted.sh sau STALE / cached-full đỏ.
         if (run_tests and not getattr(args, "no_fail_fast", False)
-                and any(x.get("status") in ("FAIL", "TIMEOUT") for x in regression_tests)
+                # #678: suite FAIL vì bị kill từ ngoài / thiếu môi trường (env_blocked) không có kết luận test, nên không dừng cả lượt:
+                # nếu dừng, suite lỗi thật đứng sau thành UNTESTED và regression_gate.sh cho Stop qua như lỗi môi trường (che lỗi thật).
+                and any(x.get("status") in ("FAIL", "TIMEOUT") and not x.get("env_blocked") for x in regression_tests)
                 and not _keep_after_red(t)):
             if group:
                 drain()
