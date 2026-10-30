@@ -12,16 +12,30 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "not a git repo" >
 COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)" || exit 1
 STORE="$COMMON/postfix-gate"
 FP="$(python3 -I -c '
-import glob, json, os, sys
-for f in sorted(glob.glob(os.path.join(sys.argv[1], "scoped_receipts", "*.json")) + glob.glob(os.path.join(sys.argv[1], "tree_receipts", "*.json"))):
+import glob, json, os, subprocess, sys
+store, sha, root = sys.argv[1:4]
+# Cây bẩn không phủ commit sạch (L10 của push_gate): file dirty chỉ qua khi trùng blob ở head, hoặc là file cài đặt worktree.
+SETUP = {".claude/settings.json", ".claude/settings.local.json"}
+def clean(d):
+    dirty = d.get("dirty")
+    if not isinstance(dirty, dict):
+        return False
+    for p, v in dirty.items():
+        if p in SETUP:
+            continue
+        r = subprocess.run(["git", "-C", root, "rev-parse", "--verify", "-q", sha + ":" + p], capture_output=True, text=True)
+        if r.returncode != 0 or r.stdout.strip() != v:
+            return False
+    return True
+for f in sorted(glob.glob(os.path.join(store, "scoped_receipts", "*.json")) + glob.glob(os.path.join(store, "tree_receipts", "*.json"))):
     try:
         d = json.load(open(f))
     except (OSError, ValueError):
         continue
-    if isinstance(d, dict) and d.get("exit") == 0 and d.get("head") == sys.argv[2] and d.get("fingerprint"):
+    if isinstance(d, dict) and d.get("exit") == 0 and d.get("head") == sha and d.get("fingerprint") and clean(d):
         print(d["fingerprint"])
         break
-' "$STORE" "$SHA" 2>/dev/null)"
+' "$STORE" "$SHA" "$ROOT" 2>/dev/null)"
 if [ -n "$FP" ]; then printf '%s\n' "$FP"; exit 0; fi
 FP="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import tree_fp; print(tree_fp.commit_fingerprint(sys.argv[2], sys.argv[3], timeout=60))' \
   "$ROOT/.agents/devkit/bin" "$ROOT" "$SHA" 2>/dev/null)" || exit 1

@@ -12,7 +12,7 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-671r.XXXXXX")"
-trap 'rm -r "$TMP"' EXIT
+trap 'rm -rf "$TMP"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 G="git -C $TMP/repo"
 git init -q "$TMP/repo" && mkdir -p "$TMP/repo/.agents/devkit" && cp -R "$ROOT/.agents/devkit/bin" "$TMP/repo/.agents/devkit/bin" 2>/dev/null
@@ -49,7 +49,27 @@ fp = tree_fp.tree_fingerprint(repo)
 m.write_full_pass_receipt(repo, 0, tests=[], tested_fp=fp, scoped={"why": "t"})
 PY
 out="$(cd "$TMP/wt" && bash "$SCRIPT" "$HEAD2" 2>/dev/null)"; rc=$?
-if [ "$rc" = 0 ] && [ -n "$out" ]; then ok "D: real scoped receipt (tree-keyed) found by head"; else fail "D: rc=$rc out=$out"; fi
+if [ "$rc" = 1 ] && [ -z "$out" ]; then ok "D1: receipt of a tree dirty in a real file is not accepted for the clean commit (R1)"; else fail "D1: rc=$rc out=$out"; fi
+
+# D2: lệch chỉ ở file cài đặt worktree (.claude/settings.json, như worktree add sửa) -> nhận
+$G checkout -q -- a.txt
+mkdir -p "$TMP/repo/.claude"; echo '{}' > "$TMP/repo/.claude/settings.json"
+$G add -f .claude/settings.json && $G -c user.name=t -c user.email=t@t commit -q -m settings
+HEAD2="$($G rev-parse HEAD)"
+echo '{"x":1}' > "$TMP/repo/.claude/settings.json"
+python3 -I - "$TMP/repo" "$ROOT/.agents/devkit/bin/post-fix-gate.py" <<'PY' >/dev/null 2>&1
+import importlib.util, sys
+repo, gate = sys.argv[1:3]
+sys.path.insert(0, gate.rsplit("/", 1)[0])
+spec = importlib.util.spec_from_file_location("pfg", gate)
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+import tree_fp
+m.write_full_pass_receipt(repo, 0, tests=[], tested_fp=tree_fp.tree_fingerprint(repo), scoped={"why": "t"})
+PY
+out="$(cd "$TMP/wt" && bash "$SCRIPT" "$HEAD2" 2>/dev/null)"; rc=$?
+if [ "$rc" = 0 ] && [ -n "$out" ]; then ok "D2: receipt dirty only in worktree-setup file is accepted"; else fail "D2: rc=$rc out=$out"; fi
+$G checkout -q -- .claude/settings.json
 
 # E: lượt gate tự leo --full ghi tree_receipts (không scoped_receipts): cũng tìm được theo head
 echo more >> "$TMP/repo/a.txt"

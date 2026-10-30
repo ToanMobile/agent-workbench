@@ -13,7 +13,7 @@ ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-671.XXXXXX")"
-trap 'rm -r "$TMP"' EXIT
+trap 'rm -rf "$TMP"' EXIT
 
 unset SB_GITHUB_READ_STRICT SB_NOOP_MAX SB_NOOP_WINDOW_S
 SB_LIB_ONLY=1 . "$RUNNER" || { echo "✖ could not source $RUNNER"; exit 1; }
@@ -73,5 +73,25 @@ LAST_COMMENT=$'blocked-by: gate_receipt'
 two 662
 if grep -qx "move PVTI_662 Blocked" "$TMP/writes"; then ok "D: is_error result -> still Blocked"
 else fail "D: is_error not blocked (writes: $(tr '\n' ';' < "$TMP/writes"))"; fi
+
+# E: comment cuối có blocked-by: nhưng KHÔNG phải của [reviewer] -> vẫn Blocked (R2)
+reset_case; set_card 663
+printf '=== dispatch x\n%s\nworker_exit: exit=0 signal=- elapsed=60s\n' "$OKRES" > "$WORKER_LOG_DIR/worker-review-663.log"
+LAST_COMMENT=$'[builder] [report] xong\nblocked-by: -'
+two 663
+if grep -qx "move PVTI_663 Blocked" "$TMP/writes"; then ok "E: non-reviewer blocked-by comment -> still Blocked"
+else fail "E: non-reviewer comment exempted (writes: $(tr '\n' ';' < "$TMP/writes"))"; fi
+
+# F: thẻ Review vừa chờ sạch nghỉ SB_REVIEW_WAIT_S, không bị chọn lại; hết hạn thì được chọn (R2)
+reset_case; set_card 664
+printf '=== dispatch x\n%s\nworker_exit: exit=0 signal=- elapsed=60s\n' "$OKRES" > "$WORKER_LOG_DIR/worker-review-664.log"
+LAST_COMMENT=$'<!-- super-review:report -->\n[reviewer] [report] chờ\nblocked-by: gate_receipt'
+two 664
+issue_is_open() { return 0; }
+top_card_in_column Review </dev/null; first="$TOP_ISSUE"
+echo $(( $(date +%s) - 4000 )) > "$INFLIGHT_DIR/review-wait/664"
+top_card_in_column Review </dev/null; second="$TOP_ISSUE"
+if [ -z "$first" ] && [ "$second" = 664 ]; then ok "F: waiting review card rests, then is picked again"
+else fail "F: first='$first' second='$second'"; fi
 
 [ "$FAILS" = 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }

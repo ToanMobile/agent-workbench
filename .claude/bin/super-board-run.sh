@@ -576,6 +576,14 @@ Next: Eric — merge this card into ${dup}, or cut the overlap from its Fix" >/d
   return 0
 }
 
+review_wait_cooldown() {
+  # $1 = issue. 0 = its last review turn ended cleanly waiting on a condition (#671) less than SB_REVIEW_WAIT_S (900) ago: no new reviewer yet.
+  local f="$INFLIGHT_DIR/review-wait/$1" t
+  [ -f "$f" ] || return 1
+  t=$(tr -dc '0-9' < "$f" 2>/dev/null)
+  [ -n "$t" ] && [ $(( $(date +%s) - t )) -lt "${SB_REVIEW_WAIT_S:-900}" ]
+}
+
 top_card_in_column() {
   # Sets TOP_ISSUE / TOP_ITEM_ID to the FIRST dispatchable card in column $1:
   # no assignee, no local in-flight lock, and the underlying issue still OPEN.
@@ -600,6 +608,7 @@ top_card_in_column() {
       esac
       continue
     fi
+    if [ "$col" = "Review" ] && review_wait_cooldown "$issue"; then continue; fi   # #671: waiting review turn, rest before the next one
     local issue_rc=0
     issue_is_open "$issue" || issue_rc=$?
     [ "$issue_rc" -le 1 ] || exit "$issue_rc"
@@ -2117,9 +2126,12 @@ EOF
     fi
     # #671 (#659): a review worker that ended its turn cleanly (exit 0, result success) while waiting on a condition, its last comment
     # closing with a `blocked-by:` line, is not dead and not a no-op: later turns rightly post nothing twice. Kills and errors still count.
+    # Only the reviewer's own newest comment counts (first line after a `<!-- -->` marker is `[reviewer]`, last line `blocked-by:`), and the
+    # card then rests SB_REVIEW_WAIT_S (900) before the next review dispatch (review_wait_cooldown), so one waiting card cannot starve the Review column.
     if [ "$lane" = review ] && worker_ended_clean "$wlog" \
-       && [ -n "$(issue_last_comment "$issue" "$count" | awk 'NF{l=$0} END{if (l ~ /^blocked-by:/) print l}')" ]; then
+       && [ -n "$(issue_last_comment "$issue" "$count" | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')" ]; then
       rm -f "$f" 2>/dev/null || true
+      mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null && date +%s > "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true
       continue
     fi
     now=$(date +%s)
