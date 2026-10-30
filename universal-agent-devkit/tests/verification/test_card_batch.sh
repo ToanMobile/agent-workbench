@@ -48,7 +48,11 @@ if a[:2] == ["issue", "view"]:
     title = next((i["content"]["title"] for i in items() if str(i["content"]["number"]) == n), "t")
     print(json.dumps({"body": body, "state": "CLOSED" if closed else "OPEN", "title": title})); sys.exit(0)
 if a[:2] == ["issue", "edit"]:
-    open(os.path.join(d, "issue%s.body" % a[2]), "w").write(arg("--body")); sys.exit(0)
+    if "--body" in a:
+        open(os.path.join(d, "issue%s.body" % a[2]), "w").write(arg("--body"))
+    sys.exit(0)
+if a[:2] == ["label", "create"] and os.environ.get("FAKE_LABEL_FAIL"):
+    sys.stderr.write("fake gh: label refused\n"); sys.exit(1)
 if a[:2] == ["pr", "view"]:
     print(json.dumps({"body": open(os.path.join(d, "pr%s.body" % a[2])).read()})); sys.exit(0)
 if a[:2] == ["pr", "edit"]:
@@ -84,6 +88,14 @@ print(sum(1 for l in open(os.environ["FAKE_LOG"]) if json.loads(l).get("gh", [])
 PY
 }
 created() { cat "$FAKE_DIR/issue$1.body" 2>/dev/null; }
+gh_args() { python3 - "$1" "$2" <<'PY'
+import json, os, sys
+for l in open(os.environ["FAKE_LOG"]):
+    a = json.loads(l).get("gh", [])
+    if a[:2] == sys.argv[1:3]:
+        print(" ".join(a))
+PY
+}
 marker_of() { created "$1" | sed -n 's/.*<!-- sb:batch-of #\([0-9]*\) -->.*/\1/p' | head -1; }
 na() { A=(--title "✨ [feature] $1: việc $1" --problem "vấn đề $1" --fix "sửa $1" --ac "- [ ] AC-$1"); }   # đặt mảng A (bash 3.2: hàm không trả mảng)
 
@@ -101,6 +113,9 @@ sys.exit(0 if len(bullets) == 1 and bullets[0].startswith("- #7 — đợt") and
          and not any(re.match(r"^[ \t]*-[ \t]*[Nn]one", l) for l in sec) else 1)
 PY
 grep -q "đợt #7" "$TMP/out" && ok "1c in 'đợt #7' cho người tạo" || fail "1c không báo đợt: $(tail -3 "$TMP/out")"
+# Runner (top_card_in_column) không đọc `## Blocked by` của thẻ Ready, chỉ giữ thẻ mang nhãn waiting-on:#N (#601): nhãn phải có lúc tạo.
+gh_args label create | grep -q 'waiting-on:#7' && gh_args issue create | grep -q -- '--label waiting-on:#7' \
+  && ok "1h thẻ thành viên tạo kèm nhãn waiting-on:#7 (runner không giao nó riêng ở Ready)" || fail "1h nhãn: $(gh_args label create) / $(gh_args issue create | grep -o -- '--label [^ ]*')"
 na suite-cache; items '[{"n":7},{"n":99,"from_created":1,"title":"✨ [feature] gate: việc gate"}]'
 rc=$(run "${A[@]}")
 [ "$rc" = 0 ] && [ "$(marker_of 100)" = 7 ] && [ "$(called issue edit)" = 0 ] && ok "1d thẻ thứ ba (scope khác nữa) → #100 cùng đợt #7" || fail "1d rc=$rc marker=$(marker_of 100)"
@@ -126,7 +141,8 @@ python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1])["cards"] == [
 reset_gh; echo 101 > "$FAKE_DIR/next"
 items '[{"n":7},{"n":99,"body":"## Acceptance Criteria\n- [ ] m\n\n## Blocked by\n- #7 — đợt\n<!-- sb:batch-of #7 -->\n"},{"n":100,"body":"## Acceptance Criteria\n- [ ] m\n\n## Blocked by\n- #7 — đợt\n<!-- sb:batch-of #7 -->\n"}]'
 na gate; rc=$(SB_MAX_BATCH_CARDS=3 run "${A[@]}")
-[ "$rc" = 0 ] && [ "$(called issue create)" = 1 ] && [ -z "$(marker_of 101)" ] && ok "2a đợt đủ 3 thẻ (SB_MAX_BATCH_CARDS=3) → thẻ mới đứng riêng" || fail "2a rc=$rc marker=$(marker_of 101)"
+[ "$rc" = 0 ] && [ "$(called issue create)" = 1 ] && [ -z "$(marker_of 101)" ] && ! gh_args issue create | grep -q waiting-on \
+  && ok "2a đợt đủ 3 thẻ (SB_MAX_BATCH_CARDS=3) → thẻ mới đứng riêng, không nhãn waiting-on" || fail "2a rc=$rc marker=$(marker_of 101)"
 reset_gh; echo 101 > "$FAKE_DIR/next"
 na gate; rc=$(SB_MAX_BATCH_CARDS=4 run "${A[@]}")
 [ "$(marker_of 101)" = 7 ] && ok "2b còn chỗ (4 thẻ) → vào đợt" || fail "2b marker=$(marker_of 101)"
@@ -140,6 +156,18 @@ reset_gh; echo 101 > "$FAKE_DIR/next"
 na gate; rc=$(SB_MAX_BATCH_CARDS=abc run "${A[@]}")
 [ "$rc" = 0 ] && grep -q "SB_MAX_BATCH_CARDS='abc' không hợp lệ" "$TMP/out" && ! grep -q Traceback "$TMP/out" && [ "$(marker_of 101)" = 7 ] \
   && ok "2e SB_MAX_BATCH_CARDS rác → cảnh báo, trần mặc định (5)" || fail "2e rc=$rc: $(head -3 "$TMP/out")"
+
+# 2f. Gom CÙNG scope vào thẻ trưởng cũng làm đợt nặng thêm: đợt #7 đã 2 + 1 + 1 AC, việc hooks 2 AC, SB_MAX_BATCH_AC=5 → không gom,
+#     không vào đợt (#7 đầy) → thẻ riêng; thẻ chưa có đợt thì gom như cũ (4b).
+reset_gh; echo 101 > "$FAKE_DIR/next"
+rc=$(SB_MAX_BATCH_AC=5 run --title "✨ [feature] hooks: việc 2 AC" --problem p --ac "- [ ] a" --ac "- [ ] b")
+[ "$rc" = 0 ] && [ "$(called issue edit)" = 0 ] && [ "$(called issue create)" = 1 ] && [ -z "$(marker_of 101)" ] \
+  && ok "2f gom cùng scope vào thẻ trưởng sẽ vượt trần đợt → không gom, thẻ riêng" || fail "2f rc=$rc edit=$(called issue edit) marker=$(marker_of 101)"
+# 2g. Không tạo được nhãn waiting-on → không vào đợt (thẻ riêng), không để runner giao thẻ thành viên riêng.
+reset_gh; echo 101 > "$FAKE_DIR/next"
+na gate; rc=$(FAKE_LABEL_FAIL=1 run "${A[@]}")
+[ "$rc" = 0 ] && [ "$(called issue create)" = 1 ] && [ -z "$(marker_of 101)" ] && grep -q "Không tạo được nhãn waiting-on:#7" "$TMP/out" \
+  && ok "2g nhãn waiting-on lỗi → thẻ riêng kèm cảnh báo" || fail "2g rc=$rc marker=$(marker_of 101): $(tail -3 "$TMP/out")"
 
 # 3. Vẫn thẻ riêng: 🔴 High, --blocked-by, needs-you, --new-card, khác loại, thẻ trưởng High / là thành viên / đã đóng, repo chưa bật.
 alone() {  # alone <tên ca> <lệnh create_task…>: thẻ mới tạo ra không có marker đợt
@@ -158,6 +186,8 @@ items '[{"n":7,"body":"## Acceptance Criteria\n- [ ] a\n\n## Risk\n🔴 **High**
 alone "thẻ trưởng High" "${A[@]}"
 items '[{"n":7,"body":"## Acceptance Criteria\n- [ ] a\n\n## Blocked by\n- #5 — đợt\n<!-- sb:batch-of #5 -->\n"}]'
 alone "ứng viên là thành viên đợt khác" "${A[@]}"
+items '[{"n":7,"labels":["feature","ac-open"]}]'
+alone "thẻ trưởng ac-open (đã merge một phần)" "${A[@]}"
 items '[{"n":7}]'
 FAKE_CLOSED=7; export FAKE_CLOSED; alone "thẻ trưởng đã đóng" "${A[@]}"; unset FAKE_CLOSED
 items '[{"n":7,"repo":"ToanMobile/OfficeReader"}]'
@@ -193,7 +223,8 @@ b = open(sys.argv[1]).read()
 sec = re.split(r"(?m)^## Blocked by\s*$", b)[-1].strip().splitlines()
 sys.exit(0 if "sb:batch-of" not in b and sec == ["- None."] and "- [ ] m99" in b else 1)
 PY
-[ "$(called issue comment)" = 1 ] && ok "5c comment lý do trên #99" || fail "5c comment=$(called issue comment)"
+[ "$(called issue comment)" = 1 ] && gh_args issue edit | grep -q -- '99 .*--remove-label waiting-on:#7' \
+  && ok "5c comment lý do trên #99, gỡ nhãn waiting-on:#7" || fail "5c comment=$(called issue comment) edit=$(gh_args issue edit)"
 python3 - "$FAKE_DIR/pr50.body" <<'PY' && ok "5d PR #50: Closes #99 → Refs #99, dòng [#99] + dòng ↳ của nó bị bỏ, phần còn lại giữ" || fail "5d PR body: $(cat "$FAKE_DIR/pr50.body")"
 import sys
 b = open(sys.argv[1]).read()
@@ -219,6 +250,16 @@ rc=$(split --card 102 --reason "xung đột")
 [ "$rc" = 5 ] && [ "$(git -C "$G" rev-parse HEAD)" = "$head" ] && [ -z "$(git -C "$G" status --porcelain)" ] \
   && [ ! -e "$G/.git/REVERT_HEAD" ] && grep -q 'sb:batch-of #7' "$FAKE_DIR/issue102.body" \
   && ok "5i revert xung đột → exit 5, abort, HEAD + cây như cũ, thẻ giữ marker" || fail "5i rc=$rc head=$(git -C "$G" rev-parse HEAD) st=$(git -C "$G" status --porcelain): $(tail -3 "$TMP/split.out")"
+
+# 5j. Thẻ có HAI commit: commit mới revert sạch, commit cũ xung đột → abort cả chuỗi: HEAD như cũ, việc của commit mới còn nguyên.
+git -C "$G" reset -q --hard "$head"
+echo v103 > "$G/shared"; git -C "$G" commit -qam "✨ [feature] việc 103 phần 1 (#103)"
+echo 103 > "$G/f103"; git -C "$G" add f103; git -C "$G" commit -qm "✨ [feature] việc 103 phần 2 (#103)"
+echo v7c > "$G/shared"; git -C "$G" commit -qam "✨ [feature] việc 7 phần 3 (#7)"
+member 103 7; head=$(git -C "$G" rev-parse HEAD)
+rc=$(split --card 103 --reason "xung đột ở commit thứ hai")
+[ "$rc" = 5 ] && [ "$(git -C "$G" rev-parse HEAD)" = "$head" ] && [ -e "$G/f103" ] && [ -z "$(git -C "$G" status --porcelain)" ] \
+  && ok "5j revert 2 commit, commit thứ hai xung đột → exit 5, HEAD như cũ (không còn revert nửa chừng)" || fail "5j rc=$rc head=$(git -C "$G" log --oneline -3 | tr '\n' '|')"
 
 [ "$FAILS" -eq 0 ] && { echo "✅ test_card_batch: all passed"; exit 0; }
 echo "❌ test_card_batch: $FAILS failed"; exit 1

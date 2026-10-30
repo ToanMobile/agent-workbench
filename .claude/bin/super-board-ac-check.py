@@ -101,7 +101,7 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
     items = ac_items(issue_body)
     if not m:
         # Không có khối sb:ac mà vẫn đóng thẻ (merge gate chỉ đưa body issue khi closes_own): nén về 0 dòng.
-        if issue_body:
+        if issue_body or batch:
             out.update({"issue_ac": len(items) + batch_ac, "pr_ac": 0, "collapsed": bool(items) or bool(batch),
                         "unticked": [], "indirect": []})
         return out

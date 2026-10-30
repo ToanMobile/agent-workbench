@@ -115,15 +115,23 @@ def split(repo, lead, card, reason, pr, base):
         return 3
     todo = [sha for sha in mine if sha not in reverted]   # git log: mới → cũ, đúng thứ tự revert
     if todo:
-        res = git("revert", "--no-edit", *todo)
+        orig = git("rev-parse", "HEAD").stdout.strip()
+        res = git("revert", "--no-edit", *todo)   # MỘT chuỗi revert: --abort trả về đúng trạng thái trước cả chuỗi
         if res.returncode != 0:
             git("revert", "--abort")
+            if git("rev-parse", "HEAD").stdout.strip() != orig:   # cây sạch lúc đầu (đã kiểm) nên về orig không mất gì
+                git("reset", "--hard", orig)
             print(f"❌ Revert commit của #{card} xung đột (đã abort, HEAD như cũ): {res.stdout.strip()[-300:]} {res.stderr.strip()[-300:]}\n"
                   f"   Commit sau của đợt sửa cùng chỗ: gỡ tay, hoặc giữ #{card} trong đợt.", file=sys.stderr)
             return 5
         print(f"   ↩️  Đã revert {len(todo)} commit của #{card}: {', '.join(s[:8] for s in todo)}")
     new_body = standalone_body(cur.get("body"))
     ct.run_cmd(["gh", "issue", "edit", str(card), "--repo", repo, "--body", new_body])
+    # Nhãn waiting-on:#lead giữ thẻ ở Ready (runner không giao); thẻ đã riêng thì gỡ để board build nó.
+    res = ct.run_cmd(["gh", "issue", "edit", str(card), "--repo", repo, "--remove-label", f"waiting-on:#{lead}"], check=False)
+    if res.returncode != 0:
+        print(f"   ⚠️  Chưa gỡ được nhãn waiting-on:#{lead} của #{card} ({res.stderr.strip()[:200]}): gỡ tay, hoặc sweep gỡ khi #{lead} đóng.",
+              file=sys.stderr)
     if ct.batch_of(issue(repo, card).get("body")) is not None:
         raise RuntimeError(f"ghi lại body #{card} chưa ăn (còn marker)")
     ct.run_cmd(["gh", "issue", "comment", str(card), "--repo", repo, "--body",

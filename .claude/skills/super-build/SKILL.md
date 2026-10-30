@@ -173,8 +173,9 @@ one branch instead. Only a step no agent can do (a real device, real people, a c
 
 **Batch (đợt, #724): other cards ride on this branch.** Before building, run
 `python3 .agents/devkit/scripts/governance/card_batch.py plan --lead <N>`: open cards marked `<!-- sb:batch-of #N -->` are built here
-too (they stay Blocked by #N, so nobody builds them alone). One commit (or a few) per card, subject ending `(#m)`; the PR body
-carries one `Closes #x` line per card and one sb:ac block listing every card's AC, member lines starting `[#m]`. One gate, one
+too (they carry `waiting-on:#N` and Blocked by #N, so nobody builds them alone). One commit (or a few) per card, subject ending
+`(#m)`; the PR body carries one `Closes #x` line per card and one sb:ac block listing every card's AC, member lines shaped
+`- [x] [#m] <AC>`. One gate, one
 merge gate. A member that blocks the rest (review, conflict, unmet AC): `card_batch.py split --lead <N> --card <M> --reason "…" --pr <P>`
 reverts its commits and frees the card, then re-run the gate once and push.
 

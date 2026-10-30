@@ -139,6 +139,9 @@ BATCH_OF_RE = re.compile(r"<!--\s*sb:batch-of\s+#(\d+)\s*-->")
 # Marker trong code fence/span chỉ là ví dụ (thẻ bàn về cơ chế): không tính — cùng luật prose() của ac-check (INSTINCT-015).
 FENCE_BLOCK = re.compile(r"^[ \t]*```.*?^[ \t]*```[^\n]*$", re.S | re.M)
 CODE_SPAN = re.compile(r"`[^`\n]*`")
+# Runner (super-board-run.sh top_card_in_column) giao thẻ Ready không đọc `## Blocked by`, chỉ giữ thẻ mang nhãn
+# `waiting-on:#N` (#601); super-board-waiting-on.py sweep gỡ nhãn khi #N đóng. Thẻ thành viên mang nhãn này ngay lúc tạo.
+WAITING_ON_COLOR = "FBCA04"   # cùng LABEL_COLOR của .claude/bin/super-board-waiting-on.py
 # Đường dẫn file có "/" (tên trơn như server.py quá chung để coi là trùng).
 PATH_RE = re.compile(r"[\w.\-]+(?:/[\w.\-]+)+\.\w{1,5}")
 
@@ -402,6 +405,11 @@ def batch_members(items, lead, repo):
             out.append(c)
     return out
 
+def batch_ac(card, items, repo):
+    """(số thành viên, tổng mục AC của thẻ + mọi thành viên đợt của nó)."""
+    members = batch_members(items, card["number"], repo)
+    return len(members), ac_count(card["body"]) + sum(ac_count(m.get("body")) for m in members)
+
 def pick_batch_lead(cards, items, labels, repo, new_ac=0):
     """Thẻ trưởng của đợt nhận thẻ mới (#724), hoặc None. Ứng viên = thẻ chưa chạy (`cards` của backlog_cards) cùng loại,
     build được (Blocked by `- None.`, không nhãn NOT_BUILDABLE — thành viên đợt khác vì thế cũng bị loại), không mang marker,
@@ -412,19 +420,19 @@ def pick_batch_lead(cards, items, labels, repo, new_ac=0):
         return None
     cap_cards, cap_ac = max_batch_cards(), max_batch_ac()
     fits = [c for c in cards
-            if set(labels) & set(c["labels"]) and not NOT_BUILDABLE & set(c["labels"])
+            if set(labels) & set(c["labels"]) and not (NOT_BUILDABLE | {"ac-open"}) & set(c["labels"])
             and [l.strip() for l in section(c["body"], "Blocked by") if l.strip()] in ([], ["- None."])
             and batch_of(c["body"]) is None and not is_high("\n".join(section(c["body"], "Risk")).strip())]
     for c in sorted(fits, key=lambda c: c["number"], reverse=True):
-        members = batch_members(items, c["number"], repo)
-        total = ac_count(c["body"]) + sum(ac_count(m.get("body")) for m in members) + new_ac
-        if 1 + len(members) + 1 > cap_cards or total > cap_ac:
+        members, total = batch_ac(c, items, repo)
+        total += new_ac
+        if 1 + members + 1 > cap_cards or total > cap_ac:
             continue
         current = fresh_body(repo, c["number"])   # board có thể trễ: thẻ trưởng đã đóng thì đợt của nó không nhận thêm
         if (current is None or batch_of(current) is not None
                 or [l.strip() for l in section(current, "Blocked by") if l.strip()] not in ([], ["- None."])):
             continue
-        return dict(c, body=current), len(members) + 2, cap_cards, total, cap_ac
+        return dict(c, body=current), members + 2, cap_cards, total, cap_ac
     return None
 
 def with_batch(body, lead):
@@ -595,7 +603,8 @@ def backlog_target(cfg):
     print(f"   ⚠️  Dùng ID cột Backlog dự phòng trong registry ({why}).", file=sys.stderr)
     return fallback
 
-def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_you=None, needs_you_next=NEEDS_YOU_NEXT):
+def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_you=None, needs_you_next=NEEDS_YOU_NEXT,
+                    extra_labels=()):
     repo = repo or detect_repo()
     labels = auto_labels(title, labels)
     if needs_you:
@@ -609,7 +618,7 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
 
     print(f"\n🚀 {'[DRY-RUN] ' if dry_run else ''}Chuẩn bị tạo Task:")
     print(f"   📌 Tiêu đề : {title}")
-    print(f"   🏷️  Labels  : {', '.join(labels)}")
+    print(f"   🏷️  Labels  : {', '.join(list(labels) + list(extra_labels))}")
     print(f"   📦 Repo    : {repo}")
     print(f"   📋 Board   : #{project_number} {project_name} ➔ Cột Backlog ({project_url})")
     if needs_you:
@@ -622,7 +631,7 @@ def create_and_push(title, body, labels=None, repo=None, dry_run=False, needs_yo
         return {"url": "https://github.com/.../dry-run", "item_id": "dry-run"}
 
     helper = find_needs_you_helper() if needs_you else None
-    create_labels = list(labels)
+    create_labels = list(labels) + list(extra_labels)
     if needs_you and helper is None:
         # Repo chưa có helper: nhãn phải có trước, `gh issue create --label` với nhãn lạ thì thất bại.
         run_cmd(["gh", "label", "create", NEEDS_YOU_LABEL, "--repo", repo, "--color", NEEDS_YOU_COLOR,
@@ -811,6 +820,7 @@ def main():
     low_risk = not is_high(args.risk)
     # Nhãn ngoài bug/feature/qa (needs-device…) có tác dụng với runner; đường gom không áp nhãn lên thẻ cũ → thẻ riêng.
     plain_labels = set(auto_labels(title, args.labels)) <= KINDS
+    batch_labels = []
     if (needs_you is None and args.new_card is None and not args.from_file
             and not args.blocked_by and low_risk and plain_labels):
         repo = args.repo or detect_repo()
@@ -819,7 +829,12 @@ def main():
             cfg = resolve_project_config(repo)
             items = board_items(cfg)
             cards = backlog_cards(cfg, repo, items)
-            card = pick_card(cards, auto_labels(title, args.labels),
+            fold_into = cards
+            if PROJECT_REGISTRY.get(repo, {}).get("batch"):
+                # Gom vào thẻ trưởng của một đợt cũng làm đợt nặng thêm: không gom khi tổng AC của đợt vượt trần (#724).
+                cap, sizes = max_batch_ac(), {c["number"]: batch_ac(c, items, repo) for c in cards}
+                fold_into = [c for c in cards if sizes[c["number"]][0] == 0 or sizes[c["number"]][1] + ac_count(body) <= cap]
+            card = pick_card(fold_into, auto_labels(title, args.labels),
                              f"{title}\n{body}", title=title, new_ac=ac_count(body))
         except (RuntimeError, ValueError, OSError) as e:
             card = None
@@ -832,9 +847,16 @@ def main():
                 lead = pick_batch_lead(cards, items, auto_labels(title, args.labels), repo, new_ac=ac_count(body))
             except (RuntimeError, ValueError, OSError) as e:
                 print(f"   ⚠️  Không xét được đợt ({e}): tạo thẻ riêng.", file=sys.stderr)
+        if lead and not args.dry_run:
+            wait = f"waiting-on:#{lead[0]['number']}"
+            res = run_cmd(["gh", "label", "create", wait, "--repo", repo, "--color", WAITING_ON_COLOR, "--force"], check=False)
+            if res.returncode != 0:
+                lead = None   # không có nhãn thì runner giao thẻ Ready riêng: thà thẻ riêng còn hơn hai builder một việc
+                print(f"   ⚠️  Không tạo được nhãn {wait} ({res.stderr.strip()[:200]}): tạo thẻ riêng, không vào đợt.", file=sys.stderr)
         if lead:
             head, nth, cap_cards, total, cap_ac = lead
             body = with_batch(body, head["number"])
+            batch_labels = [f"waiting-on:#{head['number']}"]
             print(f"\n🚃 {'[DRY-RUN] Sẽ vào' if args.dry_run else 'Vào'} đợt #{head['number']} ({head['title']}): thẻ thứ "
                   f"{nth}/{cap_cards}, {total}/{cap_ac} AC. Build chung nhánh issue-{head['number']}-…, "
                   "một PR, một gate (card_batch.py plan). Việc độc lập cần PR riêng thì thêm --new-card \"<lý do>\".")
@@ -862,7 +884,7 @@ def main():
                       "hoặc lần ghi bị phiên khác đè): tạo thẻ mới.", file=sys.stderr)
 
     result = create_and_push(title, body, labels=args.labels, repo=args.repo, dry_run=args.dry_run,
-                             needs_you=needs_you, needs_you_next=needs_you_next)
+                             needs_you=needs_you, needs_you_next=needs_you_next, extra_labels=batch_labels)
     if not result.get("needs_you_marked", True) or not result.get("column_ok", True):
         sys.exit(3)
 

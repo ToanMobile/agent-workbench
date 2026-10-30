@@ -58,19 +58,23 @@ Mỗi NHÁNH là một PR, một merge-gate và một lượt gate (`post-fix-ga
 Gom thẻ chỉ nhận việc cùng chủ đề (T0054), nên 5 việc khác scope từng là 5 nhánh, 5 gate, 5 merge gate. Đợt giữ thẻ RIÊNG (AC
 riêng, đóng riêng) nhưng build chung:
 - Việc không gom được (khác chủ đề, hoặc thẻ đủ trần AC) **tự vào đợt** của thẻ chưa chạy cùng loại, build được, không 🔴 High
-  (thẻ trưởng; số lớn nhất trước). Script chỉ ghi trên chính thẻ mới: `## Blocked by` = `- #<trưởng> — đợt: …` (board không build
-  thẻ riêng) + marker `<!-- sb:batch-of #<trưởng> -->`; in `🚃 Vào đợt #N`. Không sửa thẻ trưởng.
+  (thẻ trưởng; số lớn nhất trước; không nhận thẻ trưởng `ac-open`). Script chỉ ghi trên chính thẻ mới: `## Blocked by` =
+  `- #<trưởng> — đợt: …` + marker `<!-- sb:batch-of #<trưởng> -->` + nhãn `waiting-on:#<trưởng>` (runner không giao thẻ Ready mang
+  nhãn này; sweep gỡ nhãn khi thẻ trưởng đóng); in `🚃 Vào đợt #N`. Không sửa thẻ trưởng. Không tạo được nhãn thì thẻ đứng riêng.
 - Trần đợt (#369): `SB_MAX_BATCH_CARDS` (mặc định 5 thẻ kể cả thẻ trưởng) và `SB_MAX_BATCH_AC` (mặc định 16 mục AC cộng mọi thẻ).
-  Vượt thì thẻ mới đứng riêng và thành thẻ trưởng của đợt sau. Đợt chốt lúc tạo thẻ, không chờ gom (bài học #679).
+  Vượt thì thẻ mới đứng riêng và thành thẻ trưởng của đợt sau; gom cùng chủ đề vào thẻ trưởng cũng không được làm đợt vượt trần.
+  Đợt chốt lúc tạo thẻ, không chờ gom (bài học #679).
 - Vẫn riêng: 🔴 High, `--blocked-by`, `--needs-you`, `--new-card`, `--from-file`, nhãn ngoài bug/feature/qa, khác loại, repo chưa bật
   đợt (`PROJECT_REGISTRY[...]["batch"]`; hiện chỉ agent-workbench — merge gate repo khác chưa hiểu marker).
 - **Builder thẻ trưởng** (người hay lane): `python3 .agents/devkit/scripts/governance/card_batch.py plan --lead <N>` in danh sách thẻ.
   Một worktree, một nhánh `issue-<N>-…`; mỗi thẻ một (vài) commit, subject kết thúc `(#m)`; PR body một dòng `Closes #x` cho MỖI
-  thẻ (GitHub chỉ đóng thẻ đầu với `Closes #1, #2`); khối sb:ac liệt kê AC của mọi thẻ, dòng của thành viên mở đầu `[#m]`. Một lần
+  thẻ (GitHub chỉ đóng thẻ đầu với `Closes #1, #2`); khối sb:ac liệt kê AC của mọi thẻ, dòng của thành viên dạng `- [x] [#m] <AC>`
+(`[#m]` sau ô tích, không trước gạch đầu dòng). Một lần
   gate scoped, một merge gate. Merge gate nhận Closes của thẻ mang marker đợt của nhánh và đếm AC của nó; còn dòng chưa tick thì
   KHÔNG thẻ nào trong đợt tự đóng (Refs cả đợt, thẻ trưởng `ac-open`).
 - **Một thẻ bị chặn** (review, xung đột, AC không đạt): `card_batch.py split --lead <N> --card <M> --reason "<lý do>" --pr <P>`
-  trong worktree của đợt: revert đúng commit `(#M)`, thẻ M về `Blocked by - None.` (thẻ riêng), PR bỏ `Closes #M` và dòng `[#M]`.
+  trong worktree của đợt: revert đúng commit `(#M)` (một chuỗi, xung đột thì abort cả chuỗi), thẻ M về `Blocked by - None.` và
+  gỡ nhãn `waiting-on:#N` (thẻ riêng), PR bỏ `Closes #M` cùng dòng `[#M]` và các dòng `↳` của nó.
   Chạy lại gate một lần rồi push; phần còn lại merge. Revert xung đột: exit 5, cây như cũ.
 
 Ví dụ 5 thẻ khác scope, cùng loại, ≤ 16 AC: trước 5 gate + 5 merge gate; giờ 1 gate + 1 merge gate (tách 1 thẻ: +1 gate lại).

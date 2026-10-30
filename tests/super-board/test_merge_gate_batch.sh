@@ -62,6 +62,9 @@ for spec in "34=$TMP/m34.md:marker trỏ thẻ khác (#99)" "33=$TMP/m33fence.md
   [ "$(printf '%s' "$out" | field foreign_closes 2>/dev/null)" = "[$n]" ] && [ "$(printf '%s' "$out" | field batch 2>/dev/null)" = "[]" ] \
     && ok "A3 $name → vẫn là thẻ lạ" || fail "A3 $name: $out"
 done
+out=$(python3 "$AC" --pr-body "$TMP/a-pr.md" --branch issue-31-dot --batch-member-body "32=$TMP/m32.md" 2>&1)
+[ "$(printf '%s' "$out" | field collapsed 2>/dev/null)" = true ] && [ "$(printf '%s' "$out" | field issue_ac 2>/dev/null)" = 2 ] \
+  && ok "A5 Closes thành viên mà PR không có khối sb:ac → collapsed (AC của thành viên chưa ai chứng minh)" || fail "A5 $out"
 out=$(python3 "$AC" --pr-body "$TMP/a-pr.md" --branch issue-31-dot 2>&1)
 [ "$(printf '%s' "$out" | field foreign_closes 2>/dev/null)" = "[32, 33]" ] && ok "A4 không truyền body thành viên → như cũ, cả hai là thẻ lạ" || fail "A4 $out"
 
