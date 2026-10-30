@@ -676,21 +676,31 @@ root = os.environ["ROOT"]
 p = os.path.join(root, ".agents/regression_matrix.active.json")
 d = json.load(open(p))
 rules = d["rules"]
-if rules[-1].get("component") != "qa-exit2-edited-test-643":
-    sys.exit("cuối là %s" % rules[-1].get("component"))
-if rules[-2].get("component") != "super-board-spawn-load-530":
-    sys.exit("áp chót là %s" % rules[-2].get("component"))
-ids = [r.get("component") for r in rules]
-if ids.count("qa-exit2-edited-test-643") != 1:
-    sys.exit("id xuất hiện %s lần" % ids.count("qa-exit2-edited-test-643"))
-cmd = rules[-1]["mandatory_regression_tests"][0]["command"]
-if cmd != "bash tests/super-board/test_qa_exit2_edited_test.sh":
-    sys.exit("command %s" % cmd)
+# Position is not asserted: the gate trusts a matrix edit only when new rules are appended at the END,
+# so every later rule shifts these two away from the tail (#683).
+want = {
+    "qa-exit2-edited-test-643": ("REG-SB-QA-EXIT2-643-01", "bash tests/super-board/test_qa_exit2_edited_test.sh",
+                                 "tests/super-board/test_qa_exit2_edited_test.sh"),
+    "super-board-spawn-load-530": ("REG-SB-SPAWN-LOAD-530-01", "bash tests/super-board/test_runner_total_cap.sh",
+                                   "tests/super-board/test_runner_total_cap.sh"),
+}
+for comp, (rid, cmd, watched) in want.items():
+    hits = [r for r in rules if r.get("component") == comp]
+    if len(hits) != 1:
+        sys.exit("%s xuất hiện %s lần" % (comp, len(hits)))
+    rule = hits[0]
+    tests = rule["mandatory_regression_tests"]
+    if [t.get("id") for t in tests] != [rid]:
+        sys.exit("%s: id %s" % (comp, [t.get("id") for t in tests]))
+    if tests[0].get("command") != cmd:
+        sys.exit("%s: command %s" % (comp, tests[0].get("command")))
+    if watched not in rule.get("watch_files", []):
+        sys.exit("%s: watch_files thiếu %s" % (comp, watched))
 PY
 then
-  ok "ma trận: một component ở cuối"
+  ok "ma trận: hai component có mặt, đúng id, lệnh, watch_files (không phụ thuộc vị trí)"
 else
-  fail "ma trận: component cuối không đúng hoặc component trước bị đổi"
+  fail "ma trận: component 643/530 thiếu, trùng hoặc sai id, lệnh, watch_files"
 fi
 
 [ "$FAILS" -eq 0 ] && { echo "test_qa_exit2_edited_test: PASS"; exit 0; }
