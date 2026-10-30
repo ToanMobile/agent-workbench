@@ -7104,11 +7104,16 @@ def main():
     rerun_local_sha = local_state_sha(project_dir) if run_tests and rerun_path and rerun_fp else ""
     device_selected = any(HARD_DEVICE_SUITE.search(t.get("command") or "")
                           for t in regression_tests if t.get("command"))
+    # #678: suite không có khoá (cache:false, run_impacted.sh, thiết bị…) chạy mỗi lượt; bản ghi skip không được bỏ qua chúng.
+    unkeyed_selected = any(
+        not suite_cacheable(next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t))[0]
+        for t in regression_tests if t.get("command"))
     if (run_tests and rerun_path and rerun_fp and not getattr(args, "force", False)
             and not getattr(args, "force_full", False)
             and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0"
             and hygiene_ok and anti_laziness_ok and deps_ok and settings_ok
-            and not edited_early and not tests_touched and not device_selected
+            and rerun_mode != "full"   # #678: --full dùng lại qua cached_full_pass (biên nhận đủ suite + mode "cached"), không qua bản ghi skip
+            and not edited_early and not tests_touched and not device_selected and not unkeyed_selected
             and not _rerun_skip_expired(rerun_path)
             and rerun_skip_match(_read_rerun_skip(rerun_path), rerun_fp, rerun_mode, selected_ids, rerun_local_sha)
             and not _rerun_cache_blocks(sc, regression_tests, lookup_key, rerun_path)
@@ -8324,7 +8329,9 @@ def main():
             try:
                 write_rerun_skip(rerun_path, rerun_fp, rerun_mode, ran_ids, rerun_local_sha)
             except OSError as e:
-                log_warn(f"rerun_skip: {e}")
+                # #678: không in str(e): mkstemp ghi tên file tạm ngẫu nhiên vào thông báo, hai lượt cùng đầu vào ra hai chuỗi byte khác nhau
+                # (test_gate_run_log: thư mục postfix-gate chỉ đọc phải cho cùng stdout như khi tắt log).
+                log_warn(f"rerun_skip: {e.strerror or type(e).__name__}")
         elif rerun_path and exit_code != 0 and any(id(t) in really_ran for t in regression_tests):
             with contextlib.suppress(OSError):
                 os.remove(rerun_path)
