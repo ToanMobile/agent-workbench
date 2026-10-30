@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Mẫu LaunchAgent: mỗi giờ nối <git common dir>/postfix-gate/runs.jsonl vào archive/runs-<YYYYMMDD>.jsonl
+  (scripts/governance/runs_archive.py, chỉ đọc runs.jsonl). KHÔNG tự cài: người điều phối thay các placeholder rồi
+  chép vào ~/Library/LaunchAgents/ và `launchctl bootstrap gui/$(id -u) <plist>`.
+    __PYTHON3__  đường dẫn tuyệt đối của python3 (vd /opt/homebrew/bin/python3; launchd chỉ có PATH tối thiểu)
+    __KIT_DIR__  đường dẫn vật lý của universal-agent-devkit
+    __REPO__     đường dẫn repo cần lưu archive (worktree cũng được: dùng chung common dir)
+    __HOME__     thư mục home của người dùng (chỗ ghi log)
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.toanmobile.devkit.runs-archive</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__PYTHON3__</string>
+		<string>__KIT_DIR__/scripts/governance/runs_archive.py</string>
+		<string>--repo</string>
+		<string>__REPO__</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>3600</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>TZ</key>
+		<string>Asia/Ho_Chi_Minh</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/devkit-capacity/runs-archive.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/devkit-capacity/runs-archive.log</string>
+</dict>
+</plist>
