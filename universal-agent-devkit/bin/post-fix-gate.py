@@ -1621,13 +1621,18 @@ def head_and_dirty(project_dir):
     # Paths decoded with surrogateescape, as everywhere else: a non-UTF-8 name crashed text=True here, AFTER the gate
     # printed PASS (A8, 2026-10-09). Such a key reaches the receipt as a \udcXX escape (json's ensure_ascii).
     run = lambda *a: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True)
-    top, head = run("rev-parse", "--show-toplevel"), run("rev-parse", "HEAD")
-    if top.returncode or head.returncode:
+    top, head, pre = run("rev-parse", "--show-toplevel"), run("rev-parse", "HEAD"), run("rev-parse", "--show-prefix")
+    if top.returncode or head.returncode or pre.returncode:   # #691: không biết tiền tố project thì không đoán path ghim nằm đâu
         return None, {}
     top = os.fsdecode(top.stdout.strip())
+    prefix = os.fsdecode(pre.stdout.rstrip(b"\r\n"))   # không .strip(): tên thư mục con có thể bắt đầu bằng khoảng trắng
     names = sorted({p for args in (("diff", "--name-only", "-z", "HEAD"), ("ls-files", "-o", "--exclude-standard", "-z"))
                     for p in subprocess.run(["git", "-C", top, *args], capture_output=True).stdout
                     .decode("utf-8", errors="surrogateescape").split("\0") if p})
+    # #691: path ghim (tree_fp.HEAD_PINNED, kể cả con của nó) không vào `dirty`: tree_fingerprint() đã lấy bản của HEAD, push_gate dựng lại
+    # cây từ head+dirty nên để lại nó là fp dựng lại lệch fp đã ghi và biên nhận hợp lệ bị bác
+    import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    names = [p for p in names if not tree_fp.head_pinned(p, prefix)]
     present = [p for p in names if os.path.isfile(os.path.join(top, p))]
     shas = subprocess.run(["git", "-C", top, "hash-object", "--stdin-paths"], capture_output=True,
                           input="\n".join(present).encode("utf-8", "surrogateescape")).stdout.decode().split() if present else []
@@ -7104,11 +7109,16 @@ def main():
     rerun_local_sha = local_state_sha(project_dir) if run_tests and rerun_path and rerun_fp else ""
     device_selected = any(HARD_DEVICE_SUITE.search(t.get("command") or "")
                           for t in regression_tests if t.get("command"))
+    # #678: suite không có khoá (cache:false, run_impacted.sh, thiết bị…) chạy mỗi lượt; bản ghi skip không được bỏ qua chúng.
+    unkeyed_selected = any(
+        not suite_cacheable(next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t))[0]
+        for t in regression_tests if t.get("command"))
     if (run_tests and rerun_path and rerun_fp and not getattr(args, "force", False)
             and not getattr(args, "force_full", False)
             and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0"
             and hygiene_ok and anti_laziness_ok and deps_ok and settings_ok
-            and not edited_early and not tests_touched and not device_selected
+            and rerun_mode != "full"   # #678: --full dùng lại qua cached_full_pass (biên nhận đủ suite + mode "cached"), không qua bản ghi skip
+            and not edited_early and not tests_touched and not device_selected and not unkeyed_selected
             and not _rerun_skip_expired(rerun_path)
             and rerun_skip_match(_read_rerun_skip(rerun_path), rerun_fp, rerun_mode, selected_ids, rerun_local_sha)
             and not _rerun_cache_blocks(sc, regression_tests, lookup_key, rerun_path)
@@ -7661,7 +7671,9 @@ def main():
         # Suite NOT_RUN phía sau thành UNTESTED — covered_by và skip-compile không kịp biến chúng thành PASS.
         # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), và run_impacted.sh sau STALE / cached-full đỏ.
         if (run_tests and not getattr(args, "no_fail_fast", False)
-                and any(x.get("status") in ("FAIL", "TIMEOUT") for x in regression_tests)
+                # #678: suite FAIL vì bị kill từ ngoài / thiếu môi trường (env_blocked) không có kết luận test, nên không dừng cả lượt:
+                # nếu dừng, suite lỗi thật đứng sau thành UNTESTED và regression_gate.sh cho Stop qua như lỗi môi trường (che lỗi thật).
+                and any(x.get("status") in ("FAIL", "TIMEOUT") and not x.get("env_blocked") for x in regression_tests)
                 and not _keep_after_red(t)):
             if group:
                 drain()
@@ -8324,7 +8336,9 @@ def main():
             try:
                 write_rerun_skip(rerun_path, rerun_fp, rerun_mode, ran_ids, rerun_local_sha)
             except OSError as e:
-                log_warn(f"rerun_skip: {e}")
+                # #678: không in str(e): mkstemp ghi tên file tạm ngẫu nhiên vào thông báo, hai lượt cùng đầu vào ra hai chuỗi byte khác nhau
+                # (test_gate_run_log: thư mục postfix-gate chỉ đọc phải cho cùng stdout như khi tắt log).
+                log_warn(f"rerun_skip: {e.strerror or type(e).__name__}")
         elif rerun_path and exit_code != 0 and any(id(t) in really_ran for t in regression_tests):
             with contextlib.suppress(OSError):
                 os.remove(rerun_path)

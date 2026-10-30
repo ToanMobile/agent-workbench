@@ -2463,6 +2463,37 @@
       ]
     },
     {
+      "component": "super-board-setup-bin-scan",
+      "watch_files": [
+        ".claude/bin/*",
+        ".claude/skills/*",
+        ".claude/workflows/*",
+        ".claude/hooks/*"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-SETUP-BIN-02",
+          "name": "test_setup_bin_list.sh quét .claude/bin, skills, workflows, hooks theo thư mục: thêm hay sửa script super-* ở đó phải chọn lại suite này (main đỏ REG-SB-SETUP-BIN-01 sau #656 vì watch_files chỉ liệt kê 2 file)",
+          "command": "bash tests/super-board/test_setup_bin_list.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-tree-fp-settings-local",
+      "watch_files": [
+        "universal-agent-devkit/bin/tree_fp.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-TREE-FP-SETTINGS-01",
+          "name": "tree_fingerprint bỏ qua sửa chưa commit của .claude/settings.json (bản cài kit), vẫn tính nội dung đã commit và mọi file tracked khác (#691)",
+          "command": "bash universal-agent-devkit/tests/gates/test_tree_fp_settings_local.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "review-wait-receipt-671",
       "trigger_files": [
         ".claude/bin/super-board-gate-receipt.sh",

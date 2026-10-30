@@ -22,7 +22,7 @@ Một lượt:
   9. finally: gỡ scratch, nhả khoá.
 Kết luận: 0 xanh (hoặc skip), 1 đỏ (suite FAIL thật), 3 chưa kết luận (exit 2/4/5, TIMEOUT, BUSY, môi trường — không thẻ, không ghi
 last_full_green_sha), 2 lỗi chuẩn bị (ref, scratch).
-Mọi lệnh con chạy với niceness ≥ 10 (tiến trình tự nice lên 10, con thừa hưởng; launchd đã `nice -n 10` thì giữ nguyên).
+Lượt đêm chạy nice 10 do plist (`/usr/bin/nice -n 10`, con thừa hưởng); gate_full.py không tự đặt nice (#696).
 Móc test: DEVKIT_GATE_FULL_CMD (lệnh gate thay thế, shell, cwd = scratch; khi đặt thì không chạy agent-kit test),
 DEVKIT_GATE_FULL_CARD_CMD (thay `python3 create_task.py`), DEVKIT_GATE_FULL_LOG_DIR, DEVKIT_GATE_FULL_POLL_S; tải giả qua
 DEVKIT_CAPACITY_LOAD / DEVKIT_CAPACITY_CORES của capacity.py. Stdlib."""
@@ -505,9 +505,8 @@ def cmd_run(args) -> int:
               % (repo, args.ref, git_out(repo, "rev-parse", "--verify", "-q", args.ref + "^{commit}") or "?", lock, pg, log_dir,
                  capacity.hold_load(), capacity.load()))
         return 0
-    cur = os.nice(0)
-    if cur < 10:
-        os.nice(10 - cur)   # con thừa hưởng: mọi lệnh dưới nice 10
+    # Không os.nice ở đây (#696): mức nice đặt MỘT chỗ, ở plist (`/usr/bin/nice -n 10`); con thừa hưởng nên mọi lệnh dưới nice 10.
+    # Chạy tay (`gate_full.py run`) thì chạy ở nice của shell; muốn nice 10 thì tự `nice -n 10`.
     run = Run(log_dir)
     run.info["ref"] = args.ref
     holder = acquire_lock(lock)
