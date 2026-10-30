@@ -1621,13 +1621,18 @@ def head_and_dirty(project_dir):
     # Paths decoded with surrogateescape, as everywhere else: a non-UTF-8 name crashed text=True here, AFTER the gate
     # printed PASS (A8, 2026-10-09). Such a key reaches the receipt as a \udcXX escape (json's ensure_ascii).
     run = lambda *a: subprocess.run(["git", "-C", str(project_dir), *a], capture_output=True)
-    top, head = run("rev-parse", "--show-toplevel"), run("rev-parse", "HEAD")
-    if top.returncode or head.returncode:
+    top, head, pre = run("rev-parse", "--show-toplevel"), run("rev-parse", "HEAD"), run("rev-parse", "--show-prefix")
+    if top.returncode or head.returncode or pre.returncode:   # #691: không biết tiền tố project thì không đoán path ghim nằm đâu
         return None, {}
     top = os.fsdecode(top.stdout.strip())
+    prefix = os.fsdecode(pre.stdout.rstrip(b"\r\n"))   # không .strip(): tên thư mục con có thể bắt đầu bằng khoảng trắng
     names = sorted({p for args in (("diff", "--name-only", "-z", "HEAD"), ("ls-files", "-o", "--exclude-standard", "-z"))
                     for p in subprocess.run(["git", "-C", top, *args], capture_output=True).stdout
                     .decode("utf-8", errors="surrogateescape").split("\0") if p})
+    # #691: path ghim (tree_fp.HEAD_PINNED, kể cả con của nó) không vào `dirty`: tree_fingerprint() đã lấy bản của HEAD, push_gate dựng lại
+    # cây từ head+dirty nên để lại nó là fp dựng lại lệch fp đã ghi và biên nhận hợp lệ bị bác
+    import tree_fp  # noqa: PLC0415 - sibling module in bin/
+    names = [p for p in names if not tree_fp.head_pinned(p, prefix)]
     present = [p for p in names if os.path.isfile(os.path.join(top, p))]
     shas = subprocess.run(["git", "-C", top, "hash-object", "--stdin-paths"], capture_output=True,
                           input="\n".join(present).encode("utf-8", "surrogateescape")).stdout.decode().split() if present else []
