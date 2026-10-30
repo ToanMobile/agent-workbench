@@ -460,3 +460,4 @@
 14 tests/gates/test_gate_scoped_routing.sh
 12 tests/worktree_git/test_relink_new_kit_items.sh
 103 tests/gates/test_gate_impacted_cache.sh
+16 tests/gates/test_worktree_merge_gate_pr_budget.sh
