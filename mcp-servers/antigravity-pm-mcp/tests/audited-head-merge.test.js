@@ -59,7 +59,7 @@ test('MH2 merge commit co thay doi la (sua file cua PR, hoac them file khong tu 
     git(dir, 'merge', '--no-ff', '--no-commit', '-q', M);
     writeFile(path.join(dir, 'pr.txt'), 'sneaky\n');
     git(dir, 'add', '-A'); git(dir, 'commit', '-qm', 'merge with evil');
-    await assert.rejects(run(dir, task, git(dir, 'rev-parse', 'HEAD')), /merge/i);
+    await assert.rejects(run(dir, task, git(dir, 'rev-parse', 'HEAD')), /khong rong/);
     assert.equal(auditOf(cfg, task), undefined);
   } finally { cleanup(dir); }
   const s = setup();
@@ -67,7 +67,7 @@ test('MH2 merge commit co thay doi la (sua file cua PR, hoac them file khong tu 
     git(s.dir, 'merge', '--no-ff', '--no-commit', '-q', s.M);
     writeFile(path.join(s.dir, 'extra.txt'), 'not from main\n');
     git(s.dir, 'add', '-A'); git(s.dir, 'commit', '-qm', 'merge with extra');
-    await assert.rejects(run(s.dir, s.task, git(s.dir, 'rev-parse', 'HEAD')), /merge/i);
+    await assert.rejects(run(s.dir, s.task, git(s.dir, 'rev-parse', 'HEAD')), /khong den tu main/);
   } finally { cleanup(s.dir); }
 });
 
@@ -75,11 +75,11 @@ test('MH3 head khong phai merge commit cua auditedHead (commit thuong, hoac merg
   const { dir, task, A, M } = setup();
   try {
     const H = commit(dir, 'main.txt', 'from main\n', 'plain child');
-    await assert.rejects(run(dir, task, H), /merge/i);
+    await assert.rejects(run(dir, task, H), /khong phai merge commit hai parent/);
     git(dir, 'checkout', '-q', '-b', 'other', 'origin/main');
     commit(dir, 'o.txt', 'o\n', 'other');
     git(dir, 'merge', '--no-ff', '-q', '-m', 'merge pr into other', A);
-    await assert.rejects(run(dir, task, git(dir, 'rev-parse', 'HEAD')), /merge/i);
+    await assert.rejects(run(dir, task, git(dir, 'rev-parse', 'HEAD')), /parent1 .* khac auditedHead/);
     assert.ok(M);
   } finally { cleanup(dir); }
 });
@@ -95,12 +95,12 @@ test('MH4 evil merge: sua noi dung file trung ten voi file main doi, hoac `-s ou
     git(s.dir, 'merge', '--no-ff', '--no-commit', '-q', M2);
     writeFile(path.join(s.dir, 'main2.txt'), 'tampered\n');
     git(s.dir, 'add', '-A'); git(s.dir, 'commit', '-qm', 'tampered merge');
-    await assert.rejects(run(s.dir, s.task, git(s.dir, 'rev-parse', 'HEAD')), /merge/i);
+    await assert.rejects(run(s.dir, s.task, git(s.dir, 'rev-parse', 'HEAD')), /khong den tu main/);
   } finally { cleanup(s.dir); }
   const o = setup();
   try {
     git(o.dir, 'merge', '--no-ff', '-s', 'ours', '-q', '-m', 'ours', o.M);
-    await assert.rejects(run(o.dir, o.task, git(o.dir, 'rev-parse', 'HEAD')), /merge/i);
+    await assert.rejects(run(o.dir, o.task, git(o.dir, 'rev-parse', 'HEAD')), /cay cua head khac ket qua merge/);
   } finally { cleanup(o.dir); }
 });
 
@@ -115,4 +115,39 @@ test('MH5 ten file co dau tieng Viet va dau cach trong PR van doi chieu dung', a
     await run(s.dir, s.task, git(s.dir, 'rev-parse', 'HEAD'));
     assert.equal(auditOf(s.cfg, s.task).auditedHead, git(s.dir, 'rev-parse', 'HEAD'));
   } finally { cleanup(s.dir); }
+});
+
+test('MH6 tag/nhanh local ten origin/main khong duoc tin: parent2 chi nam trong tag gia bi tu choi', async () => {
+  const s = setup();
+  try {
+    git(s.dir, 'checkout', '-q', '-b', 'rogue', s.A);
+    const R = commit(s.dir, 'rogue.txt', 'unaudited\n', 'rogue');
+    git(s.dir, 'tag', 'origin/main', R);
+    git(s.dir, 'checkout', '-q', 'pr');
+    git(s.dir, 'merge', '--no-ff', '-q', '-m', 'merge rogue', R);
+    await assert.rejects(run(s.dir, s.task, git(s.dir, 'rev-parse', 'HEAD')), /khong nam trong/);
+  } finally { cleanup(s.dir); }
+});
+
+test('MH7 ten file bat dau bang dau cach khong bi cat: sua file do giua auditedHead va head bi tu choi', async () => {
+  const s = setup();
+  try {
+    const A2 = commit(s.dir, ' lead.txt', 'a\n', 'leading space');
+    writeFile(path.join(s.dir, '.antigravity-pm', 'tasks', s.task.id, 'audit-agent.json'),
+      JSON.stringify({ verdict: 'pass', reviewer: 'antigravity', auditedHead: A2 }));
+    git(s.dir, 'merge', '--no-ff', '--no-commit', '-q', s.M);
+    writeFile(path.join(s.dir, ' lead.txt'), 'changed\n');
+    git(s.dir, 'add', '-A'); git(s.dir, 'commit', '-qm', 'merge with evil');
+    await assert.rejects(run(s.dir, s.task, git(s.dir, 'rev-parse', 'HEAD')), /khong rong/);
+  } finally { cleanup(s.dir); }
+});
+
+test('MH8 notes day 8000 ky tu van giu dong merge-head (AC5)', async () => {
+  const { dir, cfg, task, M } = setup();
+  try {
+    git(dir, 'merge', '--no-ff', '-q', '-m', 'merge main', M);
+    const H = git(dir, 'rev-parse', 'HEAD');
+    await verdict({ project: dir, taskId: task.id, kind: 'audit', verdict: 'pass', notes: 'x'.repeat(8000), auditedHead: H });
+    assert.match(auditOf(cfg, task).notes, /merge-head: parent1=/);
+  } finally { cleanup(dir); }
 });

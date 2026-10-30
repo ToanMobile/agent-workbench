@@ -855,7 +855,8 @@ export const TOOLS = [
         // cho PR Antigravity da build van qua) — cung gioi han da chap nhan o push_gate.approved (#605); sua that o #632.
       }
       const notesBase = selfAudit ? notesIn.replace(new RegExp(AUDITED_HEAD.source, 'g'), 'auditedHead-bo-qua') : notesIn;
-      const notesOut = mergeHeadNote && auditedHead ? `${notesBase}\n${mergeHeadNote}` : notesBase;
+      // Dong merge-head dat DAU: recordVerdict cat 8000 ky tu, dat cuoi thi notes day se mat no (AC5).
+      const notesOut = mergeHeadNote && auditedHead ? `${mergeHeadNote}\n${notesBase}` : notesBase;
       if (args.kind === 'plan' && args.verdict === 'pass') {
         const pp = contractPaths(cfg, task);
         if (!fs.existsSync(pp.plan)) fail('Chua co plan.md — PM viet ke hoach bang pm_plan truoc.');
