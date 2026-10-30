@@ -123,7 +123,7 @@ two 666
 under=0; grep -q "^move " "$TMP/writes" && under=1
 one 666
 unset SB_REVIEW_WAIT_MAX
-if [ "$under" = 0 ] && grep -qx "move PVTI_666 Blocked" "$TMP/writes" && grep -q "quá lâu" "$TMP/writes" && grep -q "gate_receipt" "$TMP/writes"; then ok "H: waits over SB_REVIEW_WAIT_MAX -> Blocked (chờ gate_receipt quá lâu), within the cap -> not"
+if [ "$under" = 0 ] && grep -qx "move PVTI_666 Blocked" "$TMP/writes" && grep -q "quá lâu" "$TMP/writes" && grep -q "gate_receipt" "$TMP/writes" && [ ! -e "$INFLIGHT_DIR/review-wait/666" ]; then ok "H: waits over SB_REVIEW_WAIT_MAX -> Blocked (chờ gate_receipt quá lâu), within the cap -> not, ledger cleared after the move"
 else fail "H: cap not enforced (under=$under writes: $(tr '\n' ';' < "$TMP/writes"))"; fi
 
 # I: chờ người (`blocked-by: -`) -> không miễn, Blocked ngay ở lượt đầu
@@ -153,6 +153,45 @@ LAST_COMMENT="$WAITING"
 two 669 review Review "$TMP/other/custom-669.log"
 if ! grep -q "^move " "$TMP/writes"; then ok "K: worker log path comes from the lock (WORKER_LOG)"
 else fail "K: log path not taken from the lock (writes: $(tr '\n' ';' < "$TMP/writes"))"; fi
+
+# M: kill -> chờ -> kill: lượt chờ không xoá sổ no-op, nên hai lượt kill (cách nhau bởi một lượt chờ) vẫn tới SB_NOOP_MAX=2 -> Blocked, và sổ review-wait bị xoá theo
+reset_case; set_card 670
+printf '=== dispatch x\nworker_exit: exit=143 signal=TERM elapsed=99s\n' > "$WORKER_LOG_DIR/worker-review-670.log"
+LAST_COMMENT="$WAITING"
+one 670
+okwlog "$WORKER_LOG_DIR/worker-review-670.log"
+one 670
+mid=0; grep -q "^move " "$TMP/writes" && mid=1
+printf '=== dispatch x\nworker_exit: exit=143 signal=TERM elapsed=99s\n' > "$WORKER_LOG_DIR/worker-review-670.log"
+one 670
+if [ "$mid" = 0 ] && grep -qx "move PVTI_670 Blocked" "$TMP/writes" && [ ! -e "$INFLIGHT_DIR/review-wait/670" ]; then ok "M: kill, wait, kill -> Blocked (waiting turn keeps the no-op ledger), review-wait ledger cleared"
+else fail "M: mid=$mid writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200)"; fi
+
+# N: SB_REVIEW_WAIT_MAX lớn hơn sức chứa của sổ (20 dòng) bị kẹp về 19: lượt chờ thứ 20 vẫn bị Blocked
+reset_case; set_card 671
+okwlog "$WORKER_LOG_DIR/worker-review-671.log"
+LAST_COMMENT="$WAITING"
+SB_REVIEW_WAIT_MAX=100; export SB_REVIEW_WAIT_MAX
+i=0; early=0
+while [ "$i" -lt 19 ]; do one 671; i=$((i + 1)); done
+grep -q "^move " "$TMP/writes" && early=1
+one 671
+unset SB_REVIEW_WAIT_MAX
+if [ "$early" = 0 ] && grep -qx "move PVTI_671 Blocked" "$TMP/writes"; then ok "N: SB_REVIEW_WAIT_MAX=100 is clamped to the ledger capacity -> the 20th waiting turn is Blocked"
+else fail "N: early=$early writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200)"; fi
+
+# O: set_card_status thất bại -> thẻ vẫn ở Review và sổ review-wait giữ nguyên (không mất bằng chứng trước khi chuyển được)
+reset_case; set_card 672
+okwlog "$WORKER_LOG_DIR/worker-review-672.log"
+LAST_COMMENT="$WAITING"
+SB_REVIEW_WAIT_MAX=1; export SB_REVIEW_WAIT_MAX
+one 672
+set_card_status() { echo "move-failed $1 $2" >> "$TMP/writes"; return 1; }
+one 672
+set_card_status() { echo "move $1 $2" >> "$TMP/writes"; }
+unset SB_REVIEW_WAIT_MAX
+if grep -qx "move-failed PVTI_672 Blocked" "$TMP/writes" && [ -s "$INFLIGHT_DIR/review-wait/672" ]; then ok "O: failed move to Blocked keeps the review-wait ledger"
+else fail "O: writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200)"; fi
 
 # L: gọi issue_last_comment bản thật: với 0 comment trả rỗng và SB_GITHUB_READ nhận 0 lần gọi; với 2 comment đọc trang 2
 cat > "$TMP/fakegh.py" <<'EOF_FAKE'

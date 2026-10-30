@@ -2145,16 +2145,15 @@ EOF
         now=$(date +%s)
         wfile="$INFLIGHT_DIR/review-wait/$issue"
         wlimit="${SB_REVIEW_WAIT_MAX:-8}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=8 ;; esac
+        [ "${#wlimit}" -le 2 ] && [ "$wlimit" -le 19 ] || wlimit=19   # sổ chỉ giữ 20 dòng (tail 19 + dòng mới): trần cao hơn sẽ không bao giờ chạm
         mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null || true
         { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } > "$wfile.tmp" 2>/dev/null \
           && mv "$wfile.tmp" "$wfile" 2>/dev/null || true
         wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ')
         if [ "${wn:-0}" -le "$wlimit" ]; then
-          rm -f "$f" 2>/dev/null || true
-          continue
+          continue   # miễn: sổ no-op giữ nguyên, nên kill xen kẽ lượt chờ vẫn đếm dồn tới SB_NOOP_MAX
         fi
         over_wait="${wait_what:-?}"; eff_max=1
-        rm -f "$wfile" 2>/dev/null || true
       fi
     fi
     now=$(date +%s)
@@ -2178,7 +2177,7 @@ EOF
     [ -z "$over_wait" ] || why_line="the ${lane} worker for #${issue} has waited on ${over_wait} for more than ${wlimit} review turns in the last $((window / 3600)) hours with no new comment (chờ ${over_wait} quá lâu)"
     if [ -n "$item_id" ] && set_card_status "$item_id" "Blocked"; then
       NOOP_MOVED=1
-      rm -f "$f" 2>/dev/null || true
+      rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # thẻ sang Blocked: cả hai sổ bắt đầu lại khi người kéo về
       [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
       gh_checkpoint
       gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tag} ${lane} worker exited ${n} times without moving the card or commenting
