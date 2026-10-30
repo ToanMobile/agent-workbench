@@ -18,7 +18,7 @@ python3 .agents/devkit/bin/gate_full.py run --dry-run             # chỉ in k�
 Một lượt: khoá `<git common dir>/postfix-gate/gate-full.lock` (lượt trước còn sống ⇒ `skip`, exit 0) · chờ tải 1 phút ≤ `capacity.py hold_load`
 (tối đa `--max-wait-s`, mặc định 2 h, rồi chạy luôn) · `git fetch` · scratch `postfix-gate/gate-full-scratch-<stamp>` tách rời ở sha của ref, cài
 DevKit như merge train · `post-fix-gate.py --run-tests --tree HEAD --no-cache --brief --json` · `agent-kit test` (cả bộ test DevKit; REG-DK-ALL-01
-trong gate chỉ chạy test impacted) · gỡ scratch, nhả khoá. Mọi lệnh con chạy nice 10.
+trong gate chỉ chạy test impacted) · gỡ scratch, nhả khoá. Lượt đêm chạy nice 10 (đặt ở plist, không ở gate_full.py; plist không có ProcessType=Background).
 
 `--tree HEAD` chỉ nhận cây đã có trên origin: `--ref` phải là commit origin đã có (mặc định `origin/main`), không phải nhánh chưa push.
 
