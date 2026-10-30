@@ -101,6 +101,7 @@ Mốc A: `runs.jsonl` 465 dòng, 2026-10-29T07:27 → 2026-10-30T07:40 (lưu ở
 | C14 | run.md: reviewer "không rerun gate" nhưng cùng khối yêu cầu chạy gate | run.md:466-469 | L1 / dọn docs |
 | C15 | Nightly 00:00 → ~07:08 chồng `report` 06:30 + `switch` 07:00 | `report.py:30`, `switch.sh` | Ghi nhận (đo) |
 | C16 | `hooks.json` template ≠ `settings.json` (thứ tự, tập hook) ⇒ cài DevKit làm bẩn settings.json | `hooks.json` vs settings.json:58-146 | Card Backlog |
+| C17 | Stop hook xanh giả khi UNTESTED sau FAIL: fail-fast #647 dừng khi một suite FAIL, kể cả FAIL `env_blocked` (bị kill) ⇒ suite lỗi thật đứng sau thành UNTESTED; `regression_gate.sh` xếp UNTESTED vào busy rồi cho Stop qua "vì môi trường" ⇒ lỗi thật bị che | `post-fix-gate.py:7668-7670`; `regression_gate.sh:933-934`, :985 | Đang sửa ở PR #689 (#678) |
 
 ## 6. Gate chạy lại trên cùng một cây (một PR, queue bật)
 

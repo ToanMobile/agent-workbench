@@ -7,7 +7,8 @@ Mỗi lần chạy (launchd StartInterval 3600) script này:
   2. lấy các dòng có `epoch` >= mốc lần trước - 6 giờ (mốc = epoch lớn nhất đã thấy, lưu trong
      <common>/postfix-gate/archive/.runs-archive.state, JSON). Gối đầu 6 giờ để không mất dòng ghi muộn hay cùng giây;
      phần gối đầu được bước 3 khử trùng;
-  3. nối vào <common>/postfix-gate/archive/runs-<YYYYMMDD>.jsonl, ngày theo `epoch` của DÒNG (giờ máy), khử trùng
+  3. nối vào <common>/postfix-gate/archive/runs-<YYYYMMDD>.jsonl, ngày theo `epoch` của DÒNG tính theo UTC (không phụ thuộc
+     múi giờ của launchd/TZ; ngày UTC lệch giờ VN 7 tiếng), khử trùng
      bằng sha256 của cả dòng (đọc file ngày đích để biết dòng nào đã có) nên chạy lại bao nhiêu lần cũng không trùng;
   4. ghi nguyên tử: file tạm cùng thư mục + os.replace, dưới flock(<archive>/.lock) để hai lần chạy không đè nhau.
 Dòng cuối chưa có "\\n" (gate đang ghi dở) và dòng không phải JSON có `epoch` bị bỏ qua, lần sau sẽ lấy lại nếu hợp lệ.
@@ -20,6 +21,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -43,7 +45,7 @@ def common_dir_of(repo):
 
 
 def day_name(epoch):
-    return time.strftime("%Y%m%d", time.localtime(epoch))
+    return time.strftime("%Y%m%d", time.gmtime(epoch))
 
 
 def read_state(path):
@@ -83,7 +85,8 @@ def archive(common):
         since = read_state(state_path)
         with open(src, "rb") as fh:          # chỉ đọc
             content = fh.read()
-        by_day = {}                           # YYYYMMDD -> [(raw, sha)]
+        now = time.time()
+        by_day = {}                           # YYYYMMDD (UTC) -> [(raw, sha)]
         max_epoch = since
         for raw in content.split(b"\n")[:-1]:   # phần tử cuối là đoạn chưa có "\n": bỏ
             raw = raw.strip()
@@ -92,7 +95,11 @@ def archive(common):
             out["read"] += 1
             try:
                 epoch = float(json.loads(raw.decode("utf-8"))["epoch"])
-            except (ValueError, KeyError, TypeError):
+            except (ValueError, KeyError, TypeError, OverflowError):
+                out["skipped"] += 1
+                continue
+            # epoch vô lý (NaN, inf, <= 0, xa tương lai) không được đặt mốc hay đặt tên file ngày: bỏ qua, không crash
+            if not (math.isfinite(epoch) and 0 < epoch < now + 86400):
                 out["skipped"] += 1
                 continue
             if epoch < since - SLACK_S:      # chừa một khoảng gối đầu: dòng ghi muộn (epoch nhỏ hơn mốc) vẫn được lấy, dedupe lo phần trùng
@@ -141,6 +148,9 @@ def main(argv=None):
     except OSError as exc:
         print("runs_archive: lỗi ghi archive: %s" % exc, file=sys.stderr)
         return 2
+    if res["skipped"]:
+        print("runs_archive: CẢNH BÁO bỏ qua %d dòng không đọc được hoặc epoch vô lý (NaN, inf, <= 0, xa tương lai)" % res["skipped"],
+              file=sys.stderr)
     print("runs_archive: đọc %d dòng, nối %d mới, %d trùng, %d bỏ qua, %d file" % (
         res["read"], res["new"], res["duplicate"], res["skipped"], len(res["files"])))
     return 0

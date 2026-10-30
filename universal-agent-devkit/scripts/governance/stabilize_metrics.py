@@ -20,25 +20,30 @@
   * --json: in JSON thay cho bảng text.
 
 Chỉ số (mỗi dòng runs.jsonl là MỘT lượt chạy gate; sắp xếp theo `epoch`)
-  rerun_on_red       Số lượt chạy lại CÙNG `fp` + CÙNG `mode` ngay sau một lượt "đỏ" trên fp đó. "Đỏ" = exit khác 0 và khác 4
-                     (4 = BUSY/stale/budget: gate không chạy, nên không tính là đỏ). "Ngay sau" = lượt liền trước TRONG CÙNG
-                     `project` (lượt BUSY, exit 4, bị bỏ qua như trong suốt); nếu giữa hai lượt có một lượt khác fp thì không
-                     tính. Loại lượt có `force_reason` chứa "flaky". Kèm giờ máy = tổng `total_wall_s` của các lượt chạy lại
-                     (đây là công sức lặp lại), tách theo `source` (hook/cli) và theo `exit_reason` của lượt đỏ trước đó.
+  rerun_on_red       Số lượt chạy lại CÙNG `fp` + CÙNG `mode` ngay sau một lượt ĐỎ trên fp đó. Con số chính chỉ tính khi lượt
+                     trước có exit == 1 (FAIL). "Ngay sau" = lượt liền trước TRONG CÙNG `project` (lượt BUSY, exit 4, bị bỏ
+                     qua như trong suốt); nếu giữa hai lượt có một lượt khác fp thì không tính; dòng không có `fp` không
+                     được so. Kèm giờ máy = tổng `total_wall_s` của các lượt chạy lại (công sức lặp lại), tách theo `source`
+                     (hook/cli). Chạy lại sau exit 2/3 (gate chặn: edited_test, matrix... không phải đỏ) báo RIÊNG trong
+                     `after_blocked`, tách theo `exit_reason`. Chưa có chỗ loại lượt "flaky": gate không ghi cờ đó vào runs.jsonl.
   busy_pct           Tỉ lệ lượt có trường `busy` true (lượt kết thúc khi đang chờ khoá test_run.lock; gồm cả vài lượt exit 2) trên
                      tổng lượt. Số chính là trường `busy`. Báo kèm `exit4_pct` = tỉ lệ lượt exit == 4 (BUSY/stale/budget, gate
                      từ chối chạy).
   machine_hours      Tổng `total_wall_s` / 3600 của mọi lượt; `heavy_full_hours` là riêng lượt full nặng: (mode == "full" hoặc
-                     force_full) và có >= 40 suite (max(len(suites), len(ran_suites)+suites_reused)), loại lượt exit 4.
+                     force_full) và có >= 40 suite (max(len(suites), len(ran_suites)) + suites_reused: từ B9 `suites` không liệt
+                     kê suite PASS dùng lại), loại lượt exit 4.
                      Lượt BUSY vẫn nằm trong tổng vì `total_wall_s` gồm cả thời gian chờ khoá.
-  false_red_pct      Xấp xỉ "đỏ giả": lượt FAIL (verdict FAIL / exit 1) mà SAU ĐÓ có lượt PASS (exit 0) cùng `fp`, cùng TẬP id
-                     suite (`suites[*][0]`) => cùng khoá suite, kết quả đổi => nghi flaky/hạ tầng. Chia cho tổng lượt FAIL.
-  merge_gate_s       median, p90 (nội suy tuyến tính) của `total_wall_s` cho lượt `merge_point` true (hoặc `source` chứa "merge").
-                     Kèm n và riêng lượt PASS.
+  false_red_pct      Xấp xỉ "đỏ giả": lượt FAIL (verdict FAIL / exit 1) là đỏ giả khi tập suite đỏ của nó (suite trong `suites` có
+                     trạng thái khác PASS và UNTESTED) nằm trọn trong `suites`/`ran_suites` của MỘT lượt exit 0 cùng `fp` về
+                     sau (lượt xanh chỉ liệt kê suite đã chạy, nên không so cả tập) => suite đỏ chạy lại và xanh trên cùng nội
+                     dung => nghi flaky/hạ tầng. Chia cho tổng lượt FAIL; FAIL không ghi suite đỏ nào (lớp tĩnh hoặc danh sách
+                     bị cắt) đếm riêng ở `undetermined` và không bao giờ là đỏ giả.
+  merge_gate_s       median, p90 (nội suy tuyến tính) của `total_wall_s` cho lượt `merge_point` true. Kèm n và riêng lượt PASS.
   scoped_escalated_pct  Trong các lượt --scoped (mode == "scoped" HOẶC force_reason chứa "--scoped"), tỉ lệ bị leo lên full
                      (force_reason chứa "--scoped → full").
-  suites_per_run     median, p90 số suite chạy THẬT mỗi lượt: len(ran_suites) nếu có; không thì số suite khác UNTESTED trừ
-                     `suites_reused` (>= 0). Chỉ tính lượt có ít nhất một suite chạy. Lượt bị cắt (`suites_cut`) là cận dưới.
+  suites_per_run     median, p90 số suite chạy THẬT mỗi lượt: max(len(ran_suites), số suite trong `suites` có giây chạy
+                     `s[2] is not None`). Từ B9 `suites` chỉ liệt kê suite đã chạy hoặc không PASS; suite dùng lại chỉ nằm trong
+                     `suites_reused` nên KHÔNG trừ đi. Chỉ tính lượt có ít nhất một suite chạy. Lượt bị cắt (`suites_cut`) là cận dưới.
   load_median        (cần --sampler-csv) trung vị cột load1 của các mẫu trong cửa sổ --since/--until (hoặc cả file).
 
 Giới hạn dữ liệu: runs.jsonl không có SHA commit; dòng > 3000 byte bị gate cắt bớt trường (`*_cut`, `changed_files` tối đa
@@ -55,7 +60,7 @@ import re
 import subprocess
 import sys
 
-RED_EXCLUDED_EXITS = (0, 4)   # exit 0 = xanh, 4 = BUSY: không phải "đỏ"
+BLOCKED_EXITS = (2, 3)        # exit 2 = gate chặn (edited_test, matrix, ...), 3 = chưa kết luận: báo riêng, không tính là "đỏ"
 HEAVY_MIN_SUITES = 40         # ngưỡng "lượt full nặng"
 SCOPED_ESCALATE_MARK = "--scoped → full"
 
@@ -99,16 +104,23 @@ def rnd(x, n=1):
     return None if x is None else round(x, n)
 
 
+def _common_dir(folder):
+    """Đường dẫn tuyệt đối của git common dir chứa thư mục `folder`, hoặc None (không phải repo / không chạy được git)."""
+    try:
+        res = subprocess.run(["git", "-C", folder, "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode != 0 or not res.stdout.strip():
+        return None
+    return os.path.abspath(os.path.join(folder, res.stdout.strip()))
+
+
 def default_inputs(repo):
     """runs.jsonl + archive/runs-*.jsonl của common dir git của `repo`; (danh sách file, lỗi)."""
-    try:
-        res = subprocess.run(["git", "-C", repo, "rev-parse", "--git-common-dir"],
-                             capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return [], "không chạy được git: %s" % exc
-    if res.returncode != 0:
+    common = _common_dir(repo)
+    if not common:
         return [], "không phải repo git: %s" % repo
-    common = os.path.abspath(os.path.join(repo, res.stdout.strip()))
     base = os.path.join(common, "postfix-gate")
     files = [os.path.join(base, "runs.jsonl")] + sorted(glob.glob(os.path.join(base, "archive", "runs-*.jsonl")))
     return [f for f in files if os.path.isfile(f)], None
@@ -120,15 +132,9 @@ def name_matches(name, prefixes):
 
 def repo_name_of_file(path):
     """Tên repo chứa `path` (thư mục cha của git common dir), hoặc None nếu file không nằm trong repo git."""
-    folder = os.path.dirname(os.path.abspath(path))
-    try:
-        res = subprocess.run(["git", "-C", folder, "rev-parse", "--git-common-dir"],
-                             capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
+    common = _common_dir(os.path.dirname(os.path.abspath(path)))
+    if not common:
         return None
-    if res.returncode != 0 or not res.stdout.strip():
-        return None
-    common = os.path.abspath(os.path.join(folder, res.stdout.strip()))
     base = os.path.basename(common)
     if base == ".git":
         return os.path.basename(os.path.dirname(common))
@@ -197,43 +203,51 @@ def suite_ids(row):
     return frozenset(s[0] for s in (row.get("suites") or []) if isinstance(s, (list, tuple)) and s)
 
 
+def failing_ids(row):
+    """Id các suite mà lượt này ghi là đỏ (trạng thái khác PASS và UNTESTED)."""
+    return frozenset(s[0] for s in (row.get("suites") or [])
+                     if isinstance(s, (list, tuple)) and len(s) > 1 and s[1] not in ("PASS", "UNTESTED"))
+
+
 def n_suites(row):
-    return max(len(row.get("suites") or []), len(row.get("ran_suites") or []) + int(row.get("suites_reused") or 0))
+    """Tổng suite của lượt (B9: `suites` chỉ liệt kê suite đã chạy hoặc không PASS, suite dùng lại chỉ nằm trong suites_reused)."""
+    listed = max(len(row.get("suites") or []), len(row.get("ran_suites") or []))
+    return listed + int(row.get("suites_reused") or 0)
 
 
 def m_rerun_on_red(rows):
     last = {}                       # project -> lượt gần nhất không phải BUSY
-    count = 0
-    hours = 0.0
-    by_source, by_reason = {}, {}
-    excluded_flaky = 0
+    red = {"count": 0, "hours": 0.0}
+    blocked = {"count": 0, "hours": 0.0}
+    by_source, blocked_by_reason = {}, {}
     for r in rows:
         if r.get("exit") == 4:
             continue                # BUSY trong suốt: không phải lượt chạy, cũng không cắt chuỗi
         prev = last.get(r.get("project"))
         last[r.get("project")] = r
-        if not prev or prev.get("exit") in RED_EXCLUDED_EXITS:
-            continue
-        if prev.get("fp") != r.get("fp") or prev.get("mode") != r.get("mode"):
-            continue
-        if "flaky" in (r.get("force_reason") or ""):
-            excluded_flaky += 1
-            continue
-        count += 1
+        if not prev or not prev.get("fp") or prev.get("fp") != r.get("fp") or prev.get("mode") != r.get("mode"):
+            continue                # không có fp thì không so (None == None sẽ ghép nhầm)
         w = wall(r)
-        hours += w
-        s = by_source.setdefault(r.get("source") or "?", {"count": 0, "hours": 0.0})
-        s["count"] += 1
-        s["hours"] += w / 3600.0
-        k = by_reason.setdefault(prev.get("exit_reason") or "?", {"count": 0, "hours": 0.0})
-        k["count"] += 1
-        k["hours"] += w / 3600.0
+        if prev.get("exit") == 1:
+            red["count"] += 1
+            red["hours"] += w
+            s = by_source.setdefault(r.get("source") or "?", {"count": 0, "hours": 0.0})
+            s["count"] += 1
+            s["hours"] += w / 3600.0
+        elif prev.get("exit") in BLOCKED_EXITS:
+            blocked["count"] += 1
+            blocked["hours"] += w
+            k = blocked_by_reason.setdefault(prev.get("exit_reason") or "?", {"count": 0, "hours": 0.0})
+            k["count"] += 1
+            k["hours"] += w / 3600.0
     runs = sum(1 for r in rows if r.get("exit") != 4)
-    for d in (by_source, by_reason):
+    for d in (by_source, blocked_by_reason):
         for v in d.values():
             v["hours"] = round(v["hours"], 2)
-    return {"count": count, "hours": round(hours / 3600.0, 2), "pct_of_executed_runs": pct(count, runs),
-            "excluded_flaky": excluded_flaky, "by_source": by_source, "by_prev_exit_reason": by_reason}
+    return {"count": red["count"], "hours": round(red["hours"] / 3600.0, 2), "pct_of_executed_runs": pct(red["count"], runs),
+            "by_source": by_source,
+            "after_blocked": {"count": blocked["count"], "hours": round(blocked["hours"] / 3600.0, 2),
+                              "by_prev_exit_reason": blocked_by_reason}}
 
 
 def m_busy(rows):
@@ -253,21 +267,29 @@ def m_machine_hours(rows):
 
 
 def m_false_red(rows):
-    passes = {}                     # fp -> [(epoch, tập id suite)] của các lượt PASS (exit 0)
+    passes = {}                     # fp -> [(epoch, id suite có mặt trong lượt)] của các lượt exit 0
     for r in rows:
-        if r.get("exit") == 0:
-            passes.setdefault(r.get("fp"), []).append((float(r["epoch"]), suite_ids(r)))
+        if r.get("exit") == 0 and r.get("fp"):
+            passes.setdefault(r["fp"], []).append((float(r["epoch"]), suite_ids(r) | frozenset(r.get("ran_suites") or [])))
     fails = [r for r in rows if r.get("verdict") == "FAIL" or r.get("exit") == 1]
     false_red = 0
+    undetermined = 0                # FAIL không ghi suite đỏ nào (đỏ ở lớp tĩnh, hoặc danh sách bị cắt): không phân loại được
     for r in fails:
-        ids = suite_ids(r)
-        if ids and any(ep > float(r["epoch"]) and pid == ids for ep, pid in passes.get(r.get("fp"), [])):
-            false_red += 1
-    return {"fail_runs": len(fails), "false_red": false_red, "false_red_pct": pct(false_red, len(fails))}
+        red = failing_ids(r)
+        if not red:
+            undetermined += 1
+            continue
+        for ep, present in passes.get(r.get("fp"), []):
+            # ran_suites bị gate cắt id ở 40 ký tự nên so cả dạng cắt
+            if ep > float(r["epoch"]) and all(i in present or i[:40] in present for i in red):
+                false_red += 1
+                break
+    return {"fail_runs": len(fails), "false_red": false_red, "undetermined": undetermined,
+            "false_red_pct": pct(false_red, len(fails))}
 
 
 def m_merge_gate(rows):
-    sel = [r for r in rows if r.get("merge_point") or "merge" in (r.get("source") or "")]
+    sel = [r for r in rows if r.get("merge_point")]
     walls = [wall(r) for r in sel]
     pw = [wall(r) for r in sel if r.get("exit") == 0]
     return {"n": len(sel), "median_s": rnd(median(walls)), "p90_s": rnd(percentile(walls, 90)),
@@ -281,11 +303,10 @@ def m_scoped(rows):
 
 
 def ran_count(row):
-    ran = row.get("ran_suites") or []
-    if ran:
-        return len(ran)
-    real = [s for s in (row.get("suites") or []) if isinstance(s, (list, tuple)) and len(s) > 1 and s[1] != "UNTESTED"]
-    return max(len(real) - int(row.get("suites_reused") or 0), 0)
+    """Số suite chạy thật. Từ B9 `suites` chỉ có suite đã chạy (có giây) hoặc không PASS; suite dùng lại KHÔNG nằm trong đó
+    (chỉ đếm ở `suites_reused`), nên không trừ suites_reused."""
+    timed = sum(1 for s in (row.get("suites") or []) if isinstance(s, (list, tuple)) and len(s) > 2 and s[2] is not None)
+    return max(len(row.get("ran_suites") or []), timed)
 
 
 def m_suites_per_run(rows):
@@ -344,18 +365,20 @@ def render_text(res):
         lines.append("%-22s %-34s %s" % (name, val, note))
 
     row("rerun_on_red", "%d lượt / %.2f h" % (rr["count"], rr["hours"]),
-        "%s%% lượt đã chạy; flaky bị loại: %d" % (rr["pct_of_executed_runs"], rr["excluded_flaky"]))
+        "%s%% lượt đã chạy; chỉ tính sau lượt exit 1" % rr["pct_of_executed_runs"])
     for k, v in sorted(rr["by_source"].items()):
         row("  nguồn " + k, "%d lượt / %.2f h" % (v["count"], v["hours"]))
-    for k, v in sorted(rr["by_prev_exit_reason"].items(), key=lambda kv: -kv[1]["count"]):
-        row("  sau đỏ " + k, "%d lượt / %.2f h" % (v["count"], v["hours"]))
+    ab = rr["after_blocked"]
+    row("  sau exit 2/3 (riêng)", "%d lượt / %.2f h" % (ab["count"], ab["hours"]), "gate chặn: edited_test, matrix... (không phải đỏ)")
+    for k, v in sorted(ab["by_prev_exit_reason"].items(), key=lambda kv: -kv[1]["count"]):
+        row("    sau " + k, "%d lượt / %.2f h" % (v["count"], v["hours"]))
     row("busy_pct", "%s%% (%d/%d busy true)" % (bz["busy_pct"], bz["busy_flag"], bz["runs"]),
         "exit 4: %d (%s%%)" % (bz["exit4"], bz["exit4_pct"]))
     row("machine_hours", "%.2f h" % mh["total_hours"], "tổng total_wall_s")
     row("  full nặng", "%.2f h (%d lượt)" % (mh["heavy_full_hours"], mh["heavy_full_runs"]),
         "%s%% tổng; full >= %d suite" % (mh["heavy_full_share_pct"], HEAVY_MIN_SUITES))
     row("false_red_pct", "%s%% (%d/%d FAIL)" % (fr["false_red_pct"], fr["false_red"], fr["fail_runs"]),
-        "FAIL rồi PASS cùng fp + cùng tập suite")
+        "suite đỏ của FAIL nằm trong lượt exit 0 sau đó, cùng fp; %d FAIL không ghi suite đỏ" % fr["undetermined"])
     row("merge_gate_s", "median %s, p90 %s (n=%d)" % (mg["median_s"], mg["p90_s"], mg["n"]),
         "merge_point; riêng PASS: median %s p90 %s n=%d" % (mg["pass_median_s"], mg["pass_p90_s"], mg["pass_n"]))
     row("scoped_escalated_pct", "%s%% (%d/%d)" % (sc["scoped_escalated_pct"], sc["escalated"], sc["scoped_runs"]),

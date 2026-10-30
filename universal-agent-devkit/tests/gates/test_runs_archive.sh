@@ -19,14 +19,14 @@ case "$TMP" in /?*) [ -d "$TMP" ] || TMP="" ;; *) TMP="" ;; esac
 if [ -z "$TMP" ]; then echo "✖ no temp dir (mktemp failed): nothing was run" >&2; exit 1; fi
 trap 'rm -rf "$TMP"' EXIT
 "$PYBIN" -I - "$SCRIPT" "$TMP" <<'PYEND'
-import glob, hashlib, json, os, subprocess, sys, time
+import calendar, fcntl, glob, hashlib, json, os, subprocess, sys, time
 
 SCRIPT, TMP = sys.argv[1], sys.argv[2]
 PY = sys.executable
 fails = 0
 DAY = 86400
 # giữa trưa giờ máy của một ngày cố định: +- vài giờ vẫn cùng ngày, +1 ngày chắc chắn sang ngày khác
-D1 = int(time.mktime((2026, 10, 29, 12, 0, 0, 0, 0, -1)))
+D1 = calendar.timegm((2026, 10, 20, 12, 0, 0))   # giữa trưa UTC của một ngày đã qua; tên file ngày theo UTC, không theo TZ của máy
 
 
 def chk(cond, good, why=""):
@@ -87,7 +87,7 @@ files = archive_files(common)
 chk(len(files) == 2, "dòng của hai ngày => hai file runs-<ngày>.jsonl", files)
 if len(files) == 2:
     chk(lines_of(files[0]) == [a1, a2, a3] and lines_of(files[1]) == [b1], "ngày 1 có 3 dòng đúng thứ tự, ngày 2 có 1 dòng", [lines_of(f) for f in files])
-    chk(os.path.basename(files[0]) == time.strftime("runs-%Y%m%d.jsonl", time.localtime(D1)), "tên file theo epoch của dòng", files[0])
+    chk(os.path.basename(files[0]) == "runs-20261020.jsonl", "tên file theo ngày UTC của epoch dòng", files[0])
 chk(os.path.isfile(os.path.join(pg, "archive", ".runs-archive.state")), "có file mốc .runs-archive.state")
 chk(sha(runs) == sha_runs, "lần 1: runs.jsonl gốc không đổi (sha256)")
 snap = [sha(f) for f in archive_files(common)]
@@ -136,6 +136,70 @@ rc, out, err = run(empty)
 chk(rc == 0, "thiếu runs.jsonl => exit 0", "rc=%s %s" % (rc, err[-200:]))
 rc, out, err = run(os.path.join(TMP, "khong-co"))
 chk(rc == 2, "common-dir không tồn tại => exit 2", "rc=%s" % rc)
+
+# epoch vô lý: bỏ qua CÓ LOG (stderr + đếm skipped), không crash, không đặt mốc, không tạo file ngày
+bad = os.path.join(TMP, "common-bad")
+os.makedirs(os.path.join(bad, "postfix-gate"))
+good = line(D1, "good")
+insane = ['{"epoch": NaN, "tag": "nan"}', '{"epoch": Infinity, "tag": "inf"}', '{"epoch": 1e999, "tag": "inf2"}',
+          '{"epoch": 0, "tag": "zero"}', '{"epoch": -5, "tag": "neg"}', '{"epoch": 99999999999999999999999, "tag": "huge"}',
+          line(int(time.time()) + 10 * DAY, "future"), '{"tag": "khong-epoch"}', "[1, 2]"]
+with open(os.path.join(bad, "postfix-gate", "runs.jsonl"), "w") as fh:
+    fh.write("\n".join(insane[:3] + [good] + insane[3:]) + "\n")
+rc, out, err = run(bad)
+chk(rc == 0, "epoch vô lý: không crash, exit 0", "rc=%s err=%s" % (rc, err[-300:]))
+got = all_archived(bad)
+chk(got == [good], "epoch vô lý: chỉ dòng hợp lệ được lưu", got)
+chk(len(archive_files(bad)) == 1, "epoch vô lý không tạo thêm file ngày", archive_files(bad))
+chk("CẢNH BÁO" in err and "9 dòng" in err, "epoch vô lý: có log stderr nêu số dòng bị bỏ", err)
+chk("9 bỏ qua" in out, "epoch vô lý: dòng tóm tắt đếm skipped = 9", out)
+state = json.load(open(os.path.join(bad, "postfix-gate", "archive", ".runs-archive.state")))
+chk(state["last_epoch"] == float(D1), "epoch vô lý không đặt mốc (mốc = epoch hợp lệ lớn nhất)", state)
+
+# tên file ngày theo UTC, không theo TZ của máy: 20:00 UTC ngày 20 = 03:00 ngày 21 giờ VN
+utc = os.path.join(TMP, "common-utc")
+os.makedirs(os.path.join(utc, "postfix-gate"))
+late = line(calendar.timegm((2026, 10, 20, 20, 0, 0)), "late-utc")
+with open(os.path.join(utc, "postfix-gate", "runs.jsonl"), "w") as fh:
+    fh.write(late + "\n")
+env = dict(os.environ, TZ="Asia/Ho_Chi_Minh")
+subprocess.run([PY, "-I", SCRIPT, "--common-dir", utc], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=True)
+names = [os.path.basename(f) for f in archive_files(utc)]
+chk(names == ["runs-20261020.jsonl"], "TZ=Asia/Ho_Chi_Minh vẫn đặt tên file theo ngày UTC", names)
+
+# hai tiến trình cùng lúc trên cùng common dir: serialize bằng flock, đủ dòng, không trùng
+par = os.path.join(TMP, "common-par")
+parpg = os.path.join(par, "postfix-gate")
+os.makedirs(os.path.join(parpg, "archive"))
+plines = [line(D1 + i * 600, "p%d" % i) for i in range(300)]       # 300 dòng trải trên 3 ngày UTC
+with open(os.path.join(parpg, "runs.jsonl"), "w") as fh:
+    fh.write("\n".join(plines) + "\n")
+procs = [subprocess.Popen([PY, "-I", SCRIPT, "--common-dir", par], stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(3)]
+rcs = [p.wait(timeout=120) for p in procs]
+for p in procs:
+    p.stdout.close()
+    p.stderr.close()
+merged = all_archived(par)
+chk(rcs == [0, 0, 0], "3 tiến trình cùng lúc: đều exit 0", rcs)
+chk(len(merged) == 300 and len(set(merged)) == 300 and set(merged) == set(plines), "3 tiến trình cùng lúc: đủ 300 dòng, không trùng, không mất", len(merged))
+
+# khoá thật sự được giữ: giữ flock bằng tay, tiến trình archive phải CHỜ rồi mới ghi
+os.makedirs(os.path.join(par, "postfix-gate", "archive"), exist_ok=True)
+lockpath = os.path.join(par, "postfix-gate", "archive", ".lock")
+more = line(D1 + 400 * 600, "after-lock")
+with open(os.path.join(parpg, "runs.jsonl"), "a") as fh:
+    fh.write(more + "\n")
+with open(lockpath, "a") as held:
+    fcntl.flock(held, fcntl.LOCK_EX)
+    waiter = subprocess.Popen([PY, "-I", SCRIPT, "--common-dir", par], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    time.sleep(1.5)
+    chk(waiter.poll() is None, "flock: tiến trình archive chờ khi khoá đang bị giữ", "đã thoát rc=%s" % waiter.poll())
+    chk(more not in all_archived(par), "flock: chưa ghi gì khi khoá đang bị giữ")
+    fcntl.flock(held, fcntl.LOCK_UN)
+chk(waiter.wait(timeout=60) == 0, "flock: nhả khoá thì tiến trình chạy xong, exit 0")
+waiter.stdout.close()
+waiter.stderr.close()
+chk(all_archived(par).count(more) == 1, "flock: dòng mới được ghi đúng một lần sau khi nhả khoá")
 
 print("\n%d lỗi" % fails if fails else "\nTất cả PASS")
 sys.exit(1 if fails else 0)

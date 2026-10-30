@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regression test: scripts/governance/stabilize_metrics.py đo độ ổn định gate từ runs.jsonl (plan ổn định #686).
 # Mỗi chỉ số có một bộ dữ liệu giả riêng, tính tay, kiểm số CHÍNH XÁC qua --json:
-#   rerun_on_red (cùng project + fp + mode ngay sau lượt đỏ; BUSY trong suốt; flaky bị loại; ocr-* và repo khác bị lọc),
+#   rerun_on_red (cùng project + fp + mode ngay sau lượt đỏ; BUSY trong suốt; chỉ sau exit 1, sau exit 2 báo riêng; dòng không fp bị bỏ; ocr-* và repo khác bị lọc),
 #   busy_pct (trường busy; exit4_pct kèm), machine_hours (+ full nặng >= 40 suite, loại BUSY), false_red_pct,
 #   merge_gate_s (median/p90 nội suy), scoped_escalated_pct, suites_per_run, load_median (CSV sampler + cửa sổ thời gian),
 #   khử trùng khi một dòng nằm ở nhiều file, mặc định đọc runs.jsonl + archive/runs-*.jsonl của common dir git,
@@ -93,13 +93,17 @@ rr = [
     row(5, fp="F3", exit=0, mode="impacted", source="hook"),      # fp khác xen giữa: không tính
     row(6, fp="F2", exit=0, mode="impacted", source="hook"),      # prev (F3) xanh: không tính
     row(7, fp="F4", exit=1),
-    row(8, fp="F4", exit=1, force_reason="flaky: thử lại"),       # flaky: loại
+    row(8, fp="F4", exit=1),                                       # chạy lại sau đỏ (cli, 10 s)  -> 3 (gate không ghi cờ flaky: không loại gì)
     row(9, fp="F5", exit=1, source="cli"),
     row(10, fp="F5", exit=4, source="cli"),                        # BUSY trong suốt
-    row(11, fp="F5", exit=0, source="hook", total_wall_s=50),      # sau đỏ qua BUSY (hook)       -> 3
+    row(11, fp="F5", exit=0, source="hook", total_wall_s=50),      # sau đỏ qua BUSY (hook)       -> 4
     row(12, fp="F6", exit=1, mode="impacted"),
     row(13, fp="F6", exit=1, mode="full"),                         # cùng fp nhưng khác mode: không tính
     row(14, project="agent-workbench-b", fp="F1", exit=0),          # project khác: không tính
+    row(15, fp="F7", exit=2, exit_reason="edited_test"),            # gate chặn (không phải đỏ)
+    row(16, fp="F7", exit=0, total_wall_s=30),                      # chạy lại sau exit 2: chỉ vào after_blocked, KHÔNG vào số chính
+    row(17, fp=None, exit=1),
+    row(18, fp=None, exit=0),                                       # dòng không có fp: không được so None == None
     row(20, project="ocr-9", fp="O1", exit=1),
     row(21, project="ocr-9", fp="O1", exit=0),                      # ocr-*: bị loại mặc định
     row(30, project="foo", fp="X1", exit=1),
@@ -109,24 +113,25 @@ p = write("rr.jsonl", rr)
 m, why = metrics(p, "--repo-prefix", "agent-workbench")
 if chk(m is not None, "rerun: chạy với --repo-prefix", why):
     r = m["metrics"]["rerun_on_red"]
-    chk(r["count"] == 3, "rerun_on_red.count == 3", r)
-    chk(abs(r["hours"] - 550 / 3600.0) < 0.006, "rerun_on_red.hours == 0.15", r["hours"])
-    chk(r["by_source"].get("cli", {}).get("count") == 2 and r["by_source"].get("hook", {}).get("count") == 1, "tách theo source cli 2 / hook 1", r["by_source"])
-    chk(r["excluded_flaky"] == 1, "lượt flaky bị loại và đếm riêng", r)
-    chk(r["by_prev_exit_reason"].get("fail", {}).get("count") == 3, "tách theo exit_reason lượt đỏ trước", r["by_prev_exit_reason"])
-    chk(m["meta"]["rows"] == 14, "meta.rows == 14 (ocr-9 và foo bị lọc, agent-workbench-b vào)", m["meta"])
+    chk(r["count"] == 4, "rerun_on_red.count == 4 (chỉ sau lượt exit 1; exit 2 và dòng không fp không vào)", r)
+    chk(abs(r["hours"] - 560 / 3600.0) < 0.006, "rerun_on_red.hours == 0.16", r["hours"])
+    chk(r["by_source"].get("cli", {}).get("count") == 3 and r["by_source"].get("hook", {}).get("count") == 1, "tách theo source cli 3 / hook 1", r["by_source"])
+    ab_ = r["after_blocked"]
+    chk(ab_["count"] == 1 and ab_["by_prev_exit_reason"].get("edited_test", {}).get("count") == 1, "chạy lại sau exit 2 báo riêng (after_blocked, edited_test)", ab_)
+    chk("excluded_flaky" not in r, "không còn nhánh flaky (gate không ghi cờ)", r)
+    chk(m["meta"]["rows"] == 18, "meta.rows == 18 (ocr-9 và foo bị lọc, agent-workbench-b vào)", m["meta"])
 m, why = metrics(p)
 if chk(m is not None, "rerun: không prefix", why):
-    chk(m["metrics"]["rerun_on_red"]["count"] == 4, "không prefix: foo vào, ocr-9 vẫn bị loại => 4", m["metrics"]["rerun_on_red"])
+    chk(m["metrics"]["rerun_on_red"]["count"] == 5, "không prefix: foo vào, ocr-9 vẫn bị loại => 5", m["metrics"]["rerun_on_red"])
 m, why = metrics(p, "--include-ocr")
 if chk(m is not None, "rerun: --include-ocr", why):
-    chk(m["metrics"]["rerun_on_red"]["count"] == 5, "--include-ocr => 5", m["metrics"]["rerun_on_red"])
+    chk(m["metrics"]["rerun_on_red"]["count"] == 6, "--include-ocr => 6", m["metrics"]["rerun_on_red"])
 m, why = metrics(p, "--repo-prefix", "agent-workbench", "--since", str(BASE + 3), "--until", str(BASE + 11))
 if chk(m is not None, "rerun: cửa sổ --since/--until epoch", why):
-    chk(m["metrics"]["rerun_on_red"]["count"] == 1, "cửa sổ [3,11]: r3 mất lượt đỏ trước, chỉ còn r11 => 1", m["metrics"]["rerun_on_red"])
+    chk(m["metrics"]["rerun_on_red"]["count"] == 2, "cửa sổ [3,11]: r3 mất lượt đỏ trước, còn r8 và r11 => 2", m["metrics"]["rerun_on_red"])
 m, why = metrics(p, "--repo-prefix", "agent-workbench", "--since", "2026-10-29T00:00:00+00:00", "--until", "2026-10-30T23:59:59Z")
 if chk(m is not None, "rerun: --since/--until dạng ISO", why):
-    chk(m["metrics"]["rerun_on_red"]["count"] == 3, "ISO bao trùm cả file => 3", m["metrics"]["rerun_on_red"])
+    chk(m["metrics"]["rerun_on_red"]["count"] == 4, "ISO bao trùm cả file => 4", m["metrics"]["rerun_on_red"])
 sha_before = sha(p)
 run(p)
 chk(sha(p) == sha_before, "chỉ đọc: sha256 file đầu vào không đổi")
@@ -141,7 +146,7 @@ if chk(m is not None, "busy: chạy", why):
 
 # ── machine_hours ────────────────────────────────────────────────────────────
 mh = [
-    row(1, total_wall_s=3600, suites=S(40)),                              # full nặng
+    row(1, total_wall_s=3600, suites=S(10), suites_reused=30),            # full nặng: 10 suite liệt kê (đã chạy) + 30 dùng lại (B9)
     row(2, total_wall_s=1800, suites=S(10)),                              # full nhẹ
     row(3, total_wall_s=1800, mode="impacted", source="hook", suites=S(45)),   # không phải full
     row(4, total_wall_s=900, exit=4, suites=S(45)),                       # BUSY: không tính là nặng
@@ -154,18 +159,38 @@ if chk(m is not None, "machine_hours: chạy", why):
     chk(h["heavy_full_share_pct"] == 44.4, "heavy_full_share_pct == 44.4", h)
 
 # ── false_red ────────────────────────────────────────────────────────────────
-ab = [["a", "PASS", 1.0], ["b", "PASS", 1.0]]
-abc = ab + [["c", "PASS", 1.0]]
+# Dạng B9: dòng chỉ liệt kê suite đã chạy hoặc không PASS; lượt xanh sau đó chỉ ghi suite đã chạy lại (không phải cả tập)
+LONG = "REG-" + "L" * 46                                  # 50 ký tự: ran_suites bị gate cắt ở 40
 fr = [
-    row(1, fp="A", exit=1, suites=ab), row(2, fp="A", exit=0, suites=ab),      # đỏ giả
-    row(3, fp="B", exit=1, suites=ab), row(4, fp="B", exit=0, suites=abc),     # tập suite đổi: không tính
-    row(5, fp="C", exit=0, suites=ab), row(6, fp="C", exit=1, suites=ab),      # PASS đến TRƯỚC FAIL: không tính
-    row(7, fp="D", exit=1, suites=ab),                                          # không bao giờ xanh
+    row(1, fp="A", exit=1, suites=[["x", "FAIL", 5.0], ["y", "PASS", 3.0]]),
+    row(2, fp="A", exit=0, suites=[["x", "PASS", 4.0]]),                       # x chạy lại xanh, tập suite KHÁC lượt đỏ: vẫn đỏ giả
+    row(3, fp="B", exit=1, suites=[["x", "FAIL", 5.0]]),
+    row(4, fp="B", exit=0, suites=[["z", "PASS", 1.0]]),                       # x không chạy lại: không chứng minh được
+    row(5, fp="C", exit=0, suites=[["x", "PASS", 1.0]]),
+    row(6, fp="C", exit=1, suites=[["x", "FAIL", 1.0]]),                       # PASS đến TRƯỚC FAIL: không tính
+    row(7, fp="D", exit=1, suites=[["x", "FAIL", 1.0]]),                       # không bao giờ xanh
+    row(8, fp="E", exit=1, suites=[["x", "FAIL", 1.0], ["w", "UNTESTED", None]]),
+    row(9, fp="E", exit=0, suites=[], ran_suites=["x"]),                       # x có trong ran_suites của lượt xanh
+    row(10, fp="F", exit=1, suites=[["x", "PASS", 1.0]]),                      # FAIL không ghi suite đỏ nào
+    row(11, fp="F", exit=0, suites=[["x", "PASS", 1.0]]),
+    row(12, fp="G", exit=1, suites=[[LONG, "FAIL", 1.0]]),
+    row(13, fp="G", exit=0, suites=[], ran_suites=[LONG[:40]]),                # id bị cắt 40 ký tự trong ran_suites
 ]
 m, why = metrics(write("fr.jsonl", fr))
 if chk(m is not None, "false_red: chạy", why):
     f = m["metrics"]["false_red"]
-    chk(f["fail_runs"] == 4 and f["false_red"] == 1 and f["false_red_pct"] == 25.0, "1/4 FAIL là đỏ giả => 25.0", f)
+    chk(f["fail_runs"] == 7 and f["false_red"] == 3 and f["undetermined"] == 1 and f["false_red_pct"] == 42.9,
+        "3/7 FAIL là đỏ giả (A, E, G), 1 FAIL không ghi suite đỏ => 42.9", f)
+# 16 cặp FAIL -> PASS cùng fp (số cặp đo được trên mốc A) + 119 FAIL không bao giờ xanh: phải bắt đủ 16/135
+pairs = []
+for i in range(16):
+    pairs.append(row(2 * i + 1, fp="P%d" % i, exit=1, suites=[["s%d" % i, "FAIL", 9.0], ["ok", "PASS", 2.0]]))
+    pairs.append(row(2 * i + 2, fp="P%d" % i, exit=0, suites=[["s%d" % i, "PASS", 7.0]], suites_reused=40))
+pairs += [row(100 + i, fp="N%d" % i, exit=1, suites=[["s", "FAIL", 1.0]]) for i in range(119)]
+m, why = metrics(write("fr16.jsonl", pairs))
+if chk(m is not None, "false_red 16 cặp: chạy", why):
+    f = m["metrics"]["false_red"]
+    chk(f["fail_runs"] == 135 and f["false_red"] == 16 and f["false_red_pct"] == 11.9, "bắt đủ 16/135 => 11.9", f)
 
 # ── merge_gate_s ─────────────────────────────────────────────────────────────
 mg = [row(1, merge_point=True, total_wall_s=100), row(2, merge_point=True, total_wall_s=200),
@@ -186,15 +211,17 @@ if chk(m is not None, "scoped: chạy", why):
 
 # ── suites_per_run ───────────────────────────────────────────────────────────
 sp = [
-    row(1, ran_suites=["a", "b", "c", "d"], suites=S(9)),
-    row(2, suites=[["a", "PASS", 1], ["b", "PASS", 1], ["c", "PASS", 1], ["d", "UNTESTED", None], ["e", "PASS", 1]], suites_reused=1),
+    row(1, ran_suites=["a", "b", "c", "d"], suites=S(4)),
+    # B9: 4 suite có giây (a b c e) + 1 UNTESTED; 7 suite dùng lại chỉ nằm trong suites_reused => KHÔNG trừ (trừ hai lần cho 0)
+    row(2, suites=[["a", "PASS", 1], ["b", "PASS", 1], ["c", "PASS", 1], ["d", "UNTESTED", None], ["e", "FAIL", 2]], suites_reused=7),
     row(3, exit=4, suites=[["a", "UNTESTED", None]] * 3),                  # BUSY: không suite nào chạy
     row(4, ran_suites=["x"] * 10),
 ]
 m, why = metrics(write("sp.jsonl", sp))
 if chk(m is not None, "suites_per_run: chạy", why):
     q = m["metrics"]["suites_per_run"]
-    chk(q["runs_counted"] == 3 and q["median"] == 4.0 and q["p90"] == 8.8, "n=3 [3,4,10] median 4 p90 8.8", q)
+    chk(q["runs_counted"] == 3 and q["median"] == 4.0 and q["p90"] == 8.8, "n=3 [4,4,10] median 4 p90 8.8 (suites_reused không bị trừ)", q)
+    chk(q["median"] == 4.0, "dòng có 7 suite dùng lại vẫn được đếm 4 suite", q)
 
 # ── load_median ──────────────────────────────────────────────────────────────
 csvp = os.path.join(TMP, "load.csv")
