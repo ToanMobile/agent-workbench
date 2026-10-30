@@ -55,6 +55,8 @@ if a[:2] == ["label", "create"] and os.environ.get("FAKE_LABEL_FAIL"):
     sys.stderr.write("fake gh: label refused\n"); sys.exit(1)
 if a[:2] == ["pr", "view"]:
     print(json.dumps({"body": open(os.path.join(d, "pr%s.body" % a[2])).read()})); sys.exit(0)
+if a[:2] == ["pr", "edit"] and os.environ.get("FAKE_PR_EDIT_FAIL"):
+    sys.stderr.write("fake gh: pr edit refused\n"); sys.exit(1)
 if a[:2] == ["pr", "edit"]:
     open(os.path.join(d, "pr%s.body" % a[2]), "w").write(arg("--body")); sys.exit(0)
 if a[:2] in (["project", "item-edit"], ["label", "create"], ["issue", "comment"]):
@@ -233,15 +235,27 @@ sys.exit(0 if "Refs #99" in b and "Closes #99" not in b and "[#99]" not in b and
 PY
 rc=$(split --card 99 --reason lại)
 [ "$rc" = 2 ] && grep -q "không còn là thành viên đợt #7" "$TMP/split.out" && ok "5e split lần hai (đã tách, hết marker) → exit 2, không đụng gì" || fail "5e rc=$rc: $(tail -2 "$TMP/split.out")"
-rc=$(split --card 101 --reason "không có commit")
-[ "$rc" = 3 ] && grep -q 'sb:batch-of #7' "$FAKE_DIR/issue101.body" && ok "5f thành viên chưa có commit nào → exit 3, thẻ giữ nguyên" || fail "5f rc=$rc"
+# 5k. PR edit lỗi → chưa trả tự do cho thẻ (marker còn), chạy lại khi gh lành thì xong (không kẹt ở exit 2 với PR còn Closes #100).
+cp "$FAKE_DIR/pr50.body" "$TMP/pr50.before"
+head0=$(git -C "$G" rev-parse HEAD)
+rc=$(FAKE_PR_EDIT_FAIL=1 split --card 100 --reason "pr edit lỗi" --pr 50)
+[ "$rc" = 1 ] && grep -q 'sb:batch-of #7' "$FAKE_DIR/issue100.body" && cmp -s "$TMP/pr50.before" "$FAKE_DIR/pr50.body" \
+  && ok "5k PR edit lỗi → exit 1, thẻ #100 chưa bị trả tự do" || fail "5k rc=$rc: $(tail -2 "$TMP/split.out")"
+rc=$(split --card 100 --reason "chạy lại" --pr 50)
+[ "$rc" = 0 ] && ! grep -q 'sb:batch-of' "$FAKE_DIR/issue100.body" && grep -q 'Refs #100' "$FAKE_DIR/pr50.body" \
+  && [ "$(git -C "$G" log --format=%s "$head0..HEAD" | grep -c '^Revert')" = 1 ] \
+  && ok "5k' chạy lại: không revert lần hai, PR Refs #100, thẻ #100 tự do" || fail "5k' rc=$rc: $(tail -2 "$TMP/split.out")"
+# 5f. Thành viên chưa có commit nào (thẻ trưởng kẹt): không có gì để revert nhưng vẫn trả tự do cho thẻ.
+rc=$(split --card 101 --reason "thẻ trưởng kẹt")
+[ "$rc" = 0 ] && ! grep -q 'sb:batch-of' "$FAKE_DIR/issue101.body" && grep -q 'không có commit' "$TMP/split.out" \
+  && ok "5f thành viên chưa có commit → không revert, vẫn thành thẻ riêng" || fail "5f rc=$rc: $(tail -2 "$TMP/split.out")"
 git -C "$G" checkout -q main
 rc=$(split --card 100 --reason "sai nhánh")
 [ "$rc" = 4 ] && ok "5g đứng trên main (không phải issue-7-…) → exit 4" || fail "5g rc=$rc"
-git -C "$G" checkout -q issue-7-dot; echo bẩn > "$G/f100"
-rc=$(split --card 100 --reason "cây bẩn")
-[ "$rc" = 4 ] && [ "$(cat "$G/f100")" = bẩn ] && ok "5h cây bẩn → exit 4, không revert, không mất sửa đổi" || fail "5h rc=$rc"
-git -C "$G" checkout -q -- f100
+git -C "$G" checkout -q issue-7-dot; echo bẩn > "$G/f7"
+rc=$(split --card 102 --reason "cây bẩn")
+[ "$rc" = 4 ] && [ "$(cat "$G/f7")" = bẩn ] && ok "5h cây bẩn → exit 4, không revert, không mất sửa đổi" || fail "5h rc=$rc"
+git -C "$G" checkout -q -- f7
 # xung đột: #102 sửa `shared`, #7 sửa tiếp đúng dòng đó → revert #102 xung đột → exit 5, abort, cây sạch, thẻ giữ marker.
 echo v102 > "$G/shared"; git -C "$G" commit -qam "✨ [feature] việc 102 (#102)"
 echo v7b > "$G/shared"; git -C "$G" commit -qam "✨ [feature] việc 7 phần 2 (#7)"

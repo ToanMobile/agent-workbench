@@ -395,19 +395,24 @@ def batch_of(body):
     m = BATCH_OF_RE.search(CODE_SPAN.sub("", FENCE_BLOCK.sub("", body or "")))
     return int(m.group(1)) if m else None
 
-def batch_members(items, lead, repo):
-    """Item chưa Done của `repo` mang marker đợt của thẻ `lead` (thẻ đã đóng mà chưa sang Done vẫn tính: trần bảo thủ)."""
-    out = []
+def batch_index(items, repo):
+    """{thẻ trưởng: [content thành viên]} — item chưa Done của `repo` mang marker đợt (thẻ đã đóng mà chưa sang Done vẫn tính:
+    trần bảo thủ). Dựng một lần cho cả lượt."""
+    out = {}
     for it in items or []:
         c = it.get("content") or {}
-        if (it.get("status") != "Done" and c.get("type") == "Issue" and item_repo(c) == repo.lower()
-                and c.get("number") and batch_of(c.get("body")) == int(lead)):
-            out.append(c)
+        if it.get("status") != "Done" and c.get("type") == "Issue" and item_repo(c) == repo.lower() and c.get("number"):
+            lead = batch_of(c.get("body"))
+            if lead is not None:
+                out.setdefault(lead, []).append(c)
     return out
 
-def batch_ac(card, items, repo):
-    """(số thành viên, tổng mục AC của thẻ + mọi thành viên đợt của nó)."""
-    members = batch_members(items, card["number"], repo)
+def batch_members(items, lead, repo):
+    return batch_index(items, repo).get(int(lead), [])
+
+def batch_ac(card, index):
+    """(số thành viên, tổng mục AC của thẻ + mọi thành viên đợt của nó); `index` = batch_index()."""
+    members = index.get(int(card["number"]), [])
     return len(members), ac_count(card["body"]) + sum(ac_count(m.get("body")) for m in members)
 
 def pick_batch_lead(cards, items, labels, repo, new_ac=0):
@@ -419,12 +424,13 @@ def pick_batch_lead(cards, items, labels, repo, new_ac=0):
     if not PROJECT_REGISTRY.get(repo, {}).get("batch"):
         return None
     cap_cards, cap_ac = max_batch_cards(), max_batch_ac()
+    index = batch_index(items, repo)
     fits = [c for c in cards
             if set(labels) & set(c["labels"]) and not (NOT_BUILDABLE | {"ac-open"}) & set(c["labels"])
             and [l.strip() for l in section(c["body"], "Blocked by") if l.strip()] in ([], ["- None."])
             and batch_of(c["body"]) is None and not is_high("\n".join(section(c["body"], "Risk")).strip())]
     for c in sorted(fits, key=lambda c: c["number"], reverse=True):
-        members, total = batch_ac(c, items, repo)
+        members, total = batch_ac(c, index)
         total += new_ac
         if 1 + members + 1 > cap_cards or total > cap_ac:
             continue
@@ -832,7 +838,8 @@ def main():
             fold_into = cards
             if PROJECT_REGISTRY.get(repo, {}).get("batch"):
                 # Gom vào thẻ trưởng của một đợt cũng làm đợt nặng thêm: không gom khi tổng AC của đợt vượt trần (#724).
-                cap, sizes = max_batch_ac(), {c["number"]: batch_ac(c, items, repo) for c in cards}
+                index = batch_index(items, repo)
+                cap, sizes = max_batch_ac(), {c["number"]: batch_ac(c, index) for c in cards}
                 fold_into = [c for c in cards if sizes[c["number"]][0] == 0 or sizes[c["number"]][1] + ac_count(body) <= cap]
             card = pick_card(fold_into, auto_labels(title, args.labels),
                              f"{title}\n{body}", title=title, new_ac=ac_count(body))

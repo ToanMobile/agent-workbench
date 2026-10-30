@@ -68,7 +68,8 @@ riêng, đóng riêng) nhưng build chung:
   đợt (`PROJECT_REGISTRY[...]["batch"]`; hiện chỉ agent-workbench — merge gate repo khác chưa hiểu marker).
 - **Builder thẻ trưởng** (người hay lane): `python3 .agents/devkit/scripts/governance/card_batch.py plan --lead <N>` in danh sách thẻ.
   Một worktree, một nhánh `issue-<N>-…`; mỗi thẻ một (vài) commit, subject kết thúc `(#m)`; PR body một dòng `Closes #x` cho MỖI
-  thẻ (GitHub chỉ đóng thẻ đầu với `Closes #1, #2`); khối sb:ac liệt kê AC của mọi thẻ, dòng của thành viên dạng `- [x] [#m] <AC>`
+  thẻ (GitHub chỉ đóng thẻ đầu với `Closes #1, #2`), đặt NGOÀI khối `<!-- sb:status -->` (lane QA/Review ghi đè khối đó), ví dụ sau
+  `<!-- /sb:risk -->`; khối sb:ac liệt kê AC của mọi thẻ, dòng của thành viên dạng `- [x] [#m] <AC>`
 (`[#m]` sau ô tích, không trước gạch đầu dòng). Một lần
   gate scoped, một merge gate. Merge gate nhận Closes của thẻ mang marker đợt của nhánh và đếm AC của nó; còn dòng chưa tick thì
   KHÔNG thẻ nào trong đợt tự đóng (Refs cả đợt, thẻ trưởng `ac-open`).

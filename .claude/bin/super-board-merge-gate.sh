@@ -443,7 +443,8 @@ if [ "$(echo "$AC_JSON" | jq -r .skip)" = false ]; then
   # (AC, kiểm lại sau verify) mang cùng các body này để AC của thành viên được đếm. Chỉ PR có khối sb:ac mới là PR đợt (AC của
   # thành viên phải nằm trong khối): PR không có khối mà Closes thẻ khác bị chặn như cũ, không tốn lần đọc issue nào.
   for x in $(echo "$AC_JSON" | jq -r 'if .ac then (.foreign_closes // [])[] else empty end'); do
-    gh issue view "$x" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/batch$x.md" 2>/dev/null || : > "$AC_DIR/batch$x.md"
+    gh issue view "$x" ${REPO:+--repo "$REPO"} --json body -q '.body' > "$AC_DIR/batch$x.md" 2>/dev/null \
+      || { : > "$AC_DIR/batch$x.md"; say "could not read #${x} to check its batch marker: counted as a foreign card (a retry may pass)"; }
     batch_args+=(--batch-member-body "$x=$AC_DIR/batch$x.md")
   done
   if [ ${#batch_args[@]} -gt 0 ]; then

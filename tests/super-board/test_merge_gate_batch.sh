@@ -65,6 +65,22 @@ done
 out=$(python3 "$AC" --pr-body "$TMP/a-pr.md" --branch issue-31-dot --batch-member-body "32=$TMP/m32.md" 2>&1)
 [ "$(printf '%s' "$out" | field collapsed 2>/dev/null)" = true ] && [ "$(printf '%s' "$out" | field issue_ac 2>/dev/null)" = 2 ] \
   && ok "A5 Closes thành viên mà PR không có khối sb:ac → collapsed (AC của thành viên chưa ai chứng minh)" || fail "A5 $out"
+# A6 — lỗ #315 qua thành viên: AC duy nhất của #32 là "AC của thẻ #315 đạt", #315 có 7 AC → phải đếm 3 + 7 (và báo indirect
+#      [315] để merge gate đọc #315), không phải 3 + 1.
+printf '## Acceptance Criteria\n- [ ] AC của thẻ #315 đạt\n\n## Blocked by\n- #31 — đợt\n<!-- sb:batch-of #31 -->\n' > "$TMP/m32ind.md"
+printf '## Acceptance Criteria\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n- [ ] e\n- [ ] f\n- [ ] g\n' > "$TMP/i315.md"
+{ printf 'Closes #31\nCloses #32\n<!-- sb:ac -->\n- [x] L1\n- [x] L2\n- [x] L3\n- [x] [#32] AC #315 đạt\n<!-- /sb:ac -->\n'; } > "$TMP/a-ind.md"
+out=$(python3 "$AC" --issue-body "$TMP/lead.md" --pr-body "$TMP/a-ind.md" --branch issue-31-dot --batch-member-body "32=$TMP/m32ind.md" 2>&1)
+[ "$(printf '%s' "$out" | field indirect 2>/dev/null)" = "[315]" ] && ok "A6a AC gián tiếp của thành viên (#315) được báo để merge gate đọc" || fail "A6a $out"
+out=$(python3 "$AC" --issue-body "$TMP/lead.md" --pr-body "$TMP/a-ind.md" --branch issue-31-dot --batch-member-body "32=$TMP/m32ind.md" \
+  --extra-issue-body "315=$TMP/i315.md" 2>&1)
+[ "$(printf '%s' "$out" | field issue_ac 2>/dev/null)" = 10 ] && [ "$(printf '%s' "$out" | field collapsed 2>/dev/null)" = true ] \
+  && ok "A6b 'AC của thẻ #315' của thành viên mở rộng thành 7 AC (3 + 7 = 10 > 4 dòng) → collapsed, như thẻ đứng riêng" || fail "A6b $out"
+# A7 — Closes thẻ repo KHÁC cùng số (owner/repo#32) không bao giờ là thành viên đợt: GitHub đóng issue của repo kia.
+printf 'Closes #31\nCloses evil/other#32\n' > "$TMP/a-x.md"
+out=$(python3 "$AC" --pr-body "$TMP/a-x.md" --branch issue-31-dot --batch-member-body "32=$TMP/m32.md" 2>&1)
+[ "$(printf '%s' "$out" | field foreign_closes 2>/dev/null)" = "[32]" ] && [ "$(printf '%s' "$out" | field batch 2>/dev/null)" = "[]" ] \
+  && ok "A7 Closes owner/repo#32 (repo khác) → vẫn là thẻ lạ" || fail "A7 $out"
 out=$(python3 "$AC" --pr-body "$TMP/a-pr.md" --branch issue-31-dot 2>&1)
 [ "$(printf '%s' "$out" | field foreign_closes 2>/dev/null)" = "[32, 33]" ] && ok "A4 không truyền body thành viên → như cũ, cả hai là thẻ lạ" || fail "A4 $out"
 

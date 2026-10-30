@@ -76,6 +76,14 @@ def indirect_cards(items, card):
     return sorted({int(n) for it in items for m in INDIRECT.finditer(it) for n in CARD_REF.findall(m.group(1))} - {card})
 
 
+def card_ac(items, card, by_card, skip=()):
+    """(số AC phải chứng minh, thẻ gián tiếp) của một thẻ: dòng "AC của thẻ #X" là chỗ đứng của mọi AC của #X (ít nhất 1 mỗi
+    thẻ, kể cả khi body #X không đọc được hay viết văn xuôi), nên mở rộng không bao giờ làm giảm số AC phải chứng minh."""
+    indirect = [x for x in indirect_cards(items, card) if x not in skip]
+    direct = [it for it in items if not INDIRECT.search(it)]
+    return max(len(items), len(direct) + sum(max(1, len(ac_items(by_card.get(x, "")))) for x in indirect)), indirect
+
+
 def batch_lead(body):
     """Số thẻ trưởng mà body thẻ đánh dấu là đợt của nó; marker trong code fence/span không tính."""
     m = BATCH_OF.search(prose(body))
@@ -88,10 +96,13 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
         return {"skip": True, "reason": "branch carries no issue-<N>"}
     card = int(card.group(1))
     # Body PR là Markdown: từ khoá trong code không đóng issue. Message commit là văn bản thô: mọi từ khoá đều tính.
-    closes = {int(n) for _, n in CLOSES.findall(prose(pr_body) + "\n" + (msg or ""))}
-    # #724: thẻ Closes mà body mang marker đợt của chính thẻ nhánh là thành viên đợt (một nhánh, một PR, một gate).
+    found = CLOSES.findall(prose(pr_body) + "\n" + (msg or ""))
+    closes = {int(n) for _, n in found}
+    # #724: thẻ Closes mà body mang marker đợt của chính thẻ nhánh là thành viên đợt (một nhánh, một PR, một gate). Chỉ Closes
+    # không kèm owner/repo: `Closes x/y#32` đóng issue của repo khác, body thẻ #32 ở đây không nói gì về nó.
     members = dict(batch_bodies or {})
-    batch = sorted(n for n in closes - {card} if n in members and batch_lead(members[n]) == card)
+    local = {int(n) for repo, n in found if not repo}
+    batch = sorted(n for n in local - {card} if n in members and batch_lead(members[n]) == card)
     # AC của thành viên phải chứng minh trong cùng khối sb:ac: ít nhất 1 mỗi thẻ, như AC gián tiếp.
     batch_ac = sum(max(1, len(ac_items(members[n]))) for n in batch)
     out = {"skip": False, "card": card, "foreign_closes": sorted(closes - {card} - set(batch)), "closes_own": card in closes,
@@ -105,12 +116,14 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
             out.update({"issue_ac": len(items) + batch_ac, "pr_ac": 0, "collapsed": bool(items) or bool(batch),
                         "unticked": [], "indirect": []})
         return out
-    indirect = indirect_cards(items, card)
-    # Dòng "AC của thẻ #X" là chỗ đứng của mọi AC của #X: thay nó bằng số AC của từng thẻ được nhắc (ít nhất 1 mỗi thẻ,
-    # kể cả khi body #X không đọc được hay viết văn xuôi), nên mở rộng không bao giờ làm giảm số AC phải chứng minh.
     by_card = dict(extra_bodies or {})
-    direct = [it for it in items if not INDIRECT.search(it)]
-    issue_ac = max(len(items), len(direct) + sum(max(1, len(ac_items(by_card.get(x, "")))) for x in indirect)) + batch_ac
+    issue_ac, indirect = card_ac(items, card, by_card)
+    # #724: mỗi thành viên đếm như khi nó đứng riêng — "AC của thẻ #X" của thành viên cũng mở rộng (lỗ #315/#343), #X vào
+    # `indirect` để merge gate đọc. "AC của thẻ <trưởng/thành viên khác>" đã được đếm ở thẻ đó, không đếm hai lần.
+    for n in batch:
+        m_ac, m_indirect = card_ac(ac_items(members[n]), n, by_card, skip={card, *batch})
+        issue_ac += max(1, m_ac)
+        indirect = sorted(set(indirect) | set(m_indirect))
     pr_ac = [c for c in map(CHECKBOX.match, FENCE_BLOCK.sub("", m.group(1)).splitlines()) if c]
     out.update({
         "issue_ac": issue_ac,

@@ -15,8 +15,11 @@ mang `<!-- sb:batch-of #<trưởng> -->` và Blocked by thẻ trưởng. Builder
       (mới → cũ), bỏ marker + đặt `## Blocked by` của M về `- None.` (thẻ riêng, board build được), comment lý do; --pr: body PR
       `Closes #M` → `Refs #M` và bỏ dòng sb:ac `[#M]`. Không push: cây đổi thì chạy lại gate một lần rồi push.
 
-Mã thoát: 0 xong · 1 gh lỗi · 2 M không mang marker đợt #N (không phải thành viên, hoặc đã tách) · 3 không có commit `(#M)` nào
-          trong <base>..HEAD · 4 không đứng trên nhánh issue-N-… hoặc cây bẩn · 5 revert xung đột (đã abort, HEAD như cũ) · 64 sai cách gọi
+Mã thoát: 0 xong (kể cả thành viên chưa có commit nào: không revert, vẫn trả tự do) · 1 gh lỗi (sửa PR lỗi thì thẻ CHƯA được trả
+          tự do, chạy lại là xong) · 2 M không mang marker đợt #N (không phải thành viên, hoặc đã tách) · 4 không đứng trên nhánh
+          issue-N-… hoặc cây bẩn · 5 revert xung đột (đã abort, HEAD như cũ) · 64 sai cách gọi
+ponytail: thẻ được trả tự do trước khi revert được push; merge gate chạy đúng khoảng đó sẽ đưa code của M vào main mà không đóng M.
+          Builder push ngay sau gate; tách bước trả tự do ra sau push nếu va chạm xảy ra thật.
 """
 import argparse
 import json
@@ -110,9 +113,8 @@ def split(repo, lead, card, reason, pr, base):
         if re.search(rf"\(#{card}\)\s*$", subject):
             mine.append(sha)
         reverted.update(re.findall(r"This reverts commit ([0-9a-f]{40})", rest))
-    if not mine:
-        print(f"❌ Không có commit nào kết thúc `(#{card})` trong {base}..HEAD: không có gì để revert, thẻ giữ nguyên.", file=sys.stderr)
-        return 3
+    if not mine:   # thẻ trưởng kẹt trước khi build tới M: không có gì để revert, vẫn trả tự do cho M
+        print(f"   ℹ️  Không có commit nào kết thúc `(#{card})` trong {base}..HEAD: không có commit nào để revert.")
     todo = [sha for sha in mine if sha not in reverted]   # git log: mới → cũ, đúng thứ tự revert
     if todo:
         orig = git("rev-parse", "HEAD").stdout.strip()
@@ -125,6 +127,13 @@ def split(repo, lead, card, reason, pr, base):
                   f"   Commit sau của đợt sửa cùng chỗ: gỡ tay, hoặc giữ #{card} trong đợt.", file=sys.stderr)
             return 5
         print(f"   ↩️  Đã revert {len(todo)} commit của #{card}: {', '.join(s[:8] for s in todo)}")
+    # PR trước: sửa PR lỗi thì thẻ còn marker, lần chạy sau (bỏ qua commit đã revert) làm nốt, không kẹt ở exit 2 với PR còn Closes #M.
+    if pr:
+        res = ct.run_cmd(["gh", "pr", "view", str(pr), "--repo", repo, "--json", "body"])
+        old = json.loads(res.stdout).get("body") or ""
+        new = pr_without(old, card)
+        if new != old:
+            ct.run_cmd(["gh", "pr", "edit", str(pr), "--repo", repo, "--body", new])
     new_body = standalone_body(cur.get("body"))
     ct.run_cmd(["gh", "issue", "edit", str(card), "--repo", repo, "--body", new_body])
     # Nhãn waiting-on:#lead giữ thẻ ở Ready (runner không giao); thẻ đã riêng thì gỡ để board build nó.
@@ -137,12 +146,6 @@ def split(repo, lead, card, reason, pr, base):
     ct.run_cmd(["gh", "issue", "comment", str(card), "--repo", repo, "--body",
                 f"[builder] [report] ✂️ tách khỏi đợt #{lead} · {reason}\nDid: revert commit `(#{card})` trên nhánh {branch}; "
                 f"`## Blocked by` về `- None.`, thẻ thành thẻ riêng (board build nó trên nhánh issue-{card}-…)."])
-    if pr:
-        res = ct.run_cmd(["gh", "pr", "view", str(pr), "--repo", repo, "--json", "body"])
-        old = json.loads(res.stdout).get("body") or ""
-        new = pr_without(old, card)
-        if new != old:
-            ct.run_cmd(["gh", "pr", "edit", str(pr), "--repo", repo, "--body", new])
     print(f"✂️  #{card} đã tách khỏi đợt #{lead}. Cây đổi: chạy lại gate một lần trên nhánh {branch} rồi push (không force).")
     return 0
 
