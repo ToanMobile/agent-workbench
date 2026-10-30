@@ -344,6 +344,17 @@ json.dump({"comments": [{"authorAssociation": "OWNER", "body": body}]}, open(out
   grep -q 'phần tử không hợp lệ' "$TMP/plain.err" && grep -q '\[0\]' "$TMP/plain.err" \
     && ok "#693 chuỗi trơn: stderr cảnh báo nêu chỉ số 0" || fail "#693 chuỗi trơn: stderr thiếu cảnh báo ($(tr '\n' '|' < "$TMP/plain.err"))"
 
+  # #693 (audit T0154): dòng edited-tests là JSON lỗi hoặc không phải mảng → cảnh báo stderr, thoát 0, không ghi file
+  for bad_line in '[{"path":' '{"path":"tests/t.sh"}'; do
+    make_meta "$TMP/badline.json" "$ISHA" "$bad_line"
+    rc=0
+    bash "$INS" --scratch "$SCR" --sha "$ISHA" --meta "$TMP/badline.json" --top "$IR" 2>"$TMP/badline.err" >/dev/null || rc=$?
+    [ "$rc" -eq 0 ] && [ ! -f "$SCR/.claude/audit-gate/approved_tests.json" ] \
+      && ok "#693 dòng sai '$bad_line': thoát 0, không ghi file" || fail "#693 dòng sai '$bad_line': rc=$rc"
+    grep -q 'không phải mảng JSON hợp lệ' "$TMP/badline.err" \
+      && ok "#693 dòng sai '$bad_line': stderr có cảnh báo" || fail "#693 dòng sai '$bad_line': stderr thiếu cảnh báo ($(tr '\n' '|' < "$TMP/badline.err"))"
+  done
+
   good=$(entry tests/t.sh "$IDIG" antigravity claude-lane "$TASK" 'chỉ sửa test cũ')
   badsha=$(entry tests/t.sh 0000000000000000000000000000000000000000000000000000000000000000 antigravity claude-lane "$TASK" 'x')
   same=$(entry tests/other.sh "$ODIG" claude-lane claude-lane "$TASK" 'tự duyệt')

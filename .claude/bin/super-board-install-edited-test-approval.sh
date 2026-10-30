@@ -122,9 +122,13 @@ def last_array():
         return []
     try:
         arr = json.loads(m.group(1).strip())
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        sys.stderr.write("install-edited-test-approval: dòng edited-tests không phải mảng JSON hợp lệ: %s\n" % exc)
         return []
-    return arr if isinstance(arr, list) else []
+    if not isinstance(arr, list):
+        sys.stderr.write("install-edited-test-approval: dòng edited-tests không phải mảng JSON hợp lệ: cần mảng object, nhận %s\n" % type(arr).__name__)
+        return []
+    return arr
 
 def nonempty(v):
     return isinstance(v, str) and v.strip() != ""
