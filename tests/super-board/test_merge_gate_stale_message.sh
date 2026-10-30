@@ -125,11 +125,11 @@ git -C "$R" checkout -q main; echo c > "$R/c"; git -C "$R" add c; git -C "$R" co
   && ok "behind-base branch, clean merge in scratch + red verify: exit 11 (no rebase pass bounce), with verify reason" \
   || fail "behind branch clean merge (rc $rc): $(grep merge-gate "$TMP/gate2.log" | tail -3)"
 NEW5=$(git -C "$R" rev-parse origin/issue-5-x)
-MAIN_NOW=$(git -C "$R" rev-parse origin/main)
-if [ "$NEW5" != "$H" ] && git -C "$R" merge-base --is-ancestor "$H" "$NEW5" && git -C "$R" merge-base --is-ancestor "$MAIN_NOW" "$NEW5"; then
-  ok "behind branch fast-forwarded in place to the clean merge of main"
+# #570: gate không ghi lên nhánh PR; nhánh chậm hơn base giữ nguyên head, verify chạy trên cây scratch đã gộp.
+if [ "$NEW5" = "$H" ]; then
+  ok "behind branch left at its reviewed head (gate does not write to the PR branch)"
 else
-  fail "PR branch was not updated in place (old=$H new=$NEW5)"
+  fail "PR branch was moved by the gate (old=$H new=$NEW5)"
 fi
 echo "$NEW5" > "$TMP/pr5.head"
 H=$NEW5

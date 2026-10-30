@@ -711,6 +711,17 @@ def _trailer_cross_review(paths: list, project_root) -> dict:
         return {}
 
 
+def _main_checkout_root(root) -> Path:
+    """The main checkout of the repository `root` belongs to (the parent of its `.git` common dir); `root` itself when it is
+    the main checkout or git cannot say. #628 AC2."""
+    try:
+        common = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return Path(root)
+    return Path(os.path.realpath(str(Path(common).parent))) if common and Path(common).name == ".git" else Path(root)
+
+
 def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> tuple:
     """(still_blocking, approved): an edited existing test approved by the user's answer or by a CROSS-REVIEW (#605).
     Cross-review: .claude/audit-gate/approved_tests.json = {"approvals": [{path, sha256, reviewer, author, task_id, reason}]},
@@ -879,14 +890,17 @@ def split_user_approved(paths: list, transcript, auto_approve: bool = False) -> 
     # ponytail: duyệt được nhớ theo (đường dẫn, nội dung) trong phạm vi transcript còn quét được, không gắn với blob HEAD gốc; gắn base blob nếu việc yếu hoá lại test sau khi revert thành vấn đề
     hash_file = root / ".claude" / "audit-gate" / "approved_hashes.json"
     saved_hashes = {}
-    if hash_file.is_file():
-        try:
-            with open(hash_file, "r", encoding="utf-8") as hf:
-                saved_hashes = json.load(hf)
-                if not isinstance(saved_hashes, dict):
-                    saved_hashes = {}
-        except Exception:
-            saved_hashes = {}
+    # #628 AC2: .claude/audit-gate/ is git-ignored, so a fresh linked worktree starts without the hashes of the answer the user
+    # gave in the main checkout. The hash binds the answer to the file's content (sha256), never to mtime: read the main checkout's too.
+    for hf_path in (hash_file, _main_checkout_root(root) / ".claude" / "audit-gate" / "approved_hashes.json"):
+        if hf_path.is_file():
+            try:
+                with open(hf_path, "r", encoding="utf-8") as hf:
+                    loaded = json.load(hf)
+                if isinstance(loaded, dict):
+                    saved_hashes = {**loaded, **saved_hashes}
+            except Exception:
+                pass
 
     new_hashes = saved_hashes.copy()
     
@@ -7090,11 +7104,16 @@ def main():
     rerun_local_sha = local_state_sha(project_dir) if run_tests and rerun_path and rerun_fp else ""
     device_selected = any(HARD_DEVICE_SUITE.search(t.get("command") or "")
                           for t in regression_tests if t.get("command"))
+    # #678: suite không có khoá (cache:false, run_impacted.sh, thiết bị…) chạy mỗi lượt; bản ghi skip không được bỏ qua chúng.
+    unkeyed_selected = any(
+        not suite_cacheable(next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t))[0]
+        for t in regression_tests if t.get("command"))
     if (run_tests and rerun_path and rerun_fp and not getattr(args, "force", False)
             and not getattr(args, "force_full", False)
             and not args.no_cache and os.environ.get("DEVKIT_GATE_CACHE", "1") != "0"
             and hygiene_ok and anti_laziness_ok and deps_ok and settings_ok
-            and not edited_early and not tests_touched and not device_selected
+            and rerun_mode != "full"   # #678: --full dùng lại qua cached_full_pass (biên nhận đủ suite + mode "cached"), không qua bản ghi skip
+            and not edited_early and not tests_touched and not device_selected and not unkeyed_selected
             and not _rerun_skip_expired(rerun_path)
             and rerun_skip_match(_read_rerun_skip(rerun_path), rerun_fp, rerun_mode, selected_ids, rerun_local_sha)
             and not _rerun_cache_blocks(sc, regression_tests, lookup_key, rerun_path)
@@ -7647,7 +7666,9 @@ def main():
         # Suite NOT_RUN phía sau thành UNTESTED — covered_by và skip-compile không kịp biến chúng thành PASS.
         # Ngoại lệ: cover FAIL trên lượt không --full (ca 2), và run_impacted.sh sau STALE / cached-full đỏ.
         if (run_tests and not getattr(args, "no_fail_fast", False)
-                and any(x.get("status") in ("FAIL", "TIMEOUT") for x in regression_tests)
+                # #678: suite FAIL vì bị kill từ ngoài / thiếu môi trường (env_blocked) không có kết luận test, nên không dừng cả lượt:
+                # nếu dừng, suite lỗi thật đứng sau thành UNTESTED và regression_gate.sh cho Stop qua như lỗi môi trường (che lỗi thật).
+                and any(x.get("status") in ("FAIL", "TIMEOUT") and not x.get("env_blocked") for x in regression_tests)
                 and not _keep_after_red(t)):
             if group:
                 drain()
@@ -8310,7 +8331,9 @@ def main():
             try:
                 write_rerun_skip(rerun_path, rerun_fp, rerun_mode, ran_ids, rerun_local_sha)
             except OSError as e:
-                log_warn(f"rerun_skip: {e}")
+                # #678: không in str(e): mkstemp ghi tên file tạm ngẫu nhiên vào thông báo, hai lượt cùng đầu vào ra hai chuỗi byte khác nhau
+                # (test_gate_run_log: thư mục postfix-gate chỉ đọc phải cho cùng stdout như khi tắt log).
+                log_warn(f"rerun_skip: {e.strerror or type(e).__name__}")
         elif rerun_path and exit_code != 0 and any(id(t) in really_ran for t in regression_tests):
             with contextlib.suppress(OSError):
                 os.remove(rerun_path)

@@ -18,7 +18,7 @@ python3 .agents/devkit/bin/gate_full.py run --dry-run             # chỉ in k�
 Một lượt: khoá `<git common dir>/postfix-gate/gate-full.lock` (lượt trước còn sống ⇒ `skip`, exit 0) · chờ tải 1 phút ≤ `capacity.py hold_load`
 (tối đa `--max-wait-s`, mặc định 2 h, rồi chạy luôn) · `git fetch` · scratch `postfix-gate/gate-full-scratch-<stamp>` tách rời ở sha của ref, cài
 DevKit như merge train · `post-fix-gate.py --run-tests --tree HEAD --no-cache --brief --json` · `agent-kit test` (cả bộ test DevKit; REG-DK-ALL-01
-trong gate chỉ chạy test impacted) · gỡ scratch, nhả khoá. Mọi lệnh con chạy nice 10.
+trong gate chỉ chạy test impacted) · gỡ scratch, nhả khoá. Lượt đêm chạy nice 10 (đặt ở plist, không ở gate_full.py; plist không có ProcessType=Background).
 
 `--tree HEAD` chỉ nhận cây đã có trên origin: `--ref` phải là commit origin đã có (mặc định `origin/main`), không phải nhánh chưa push.
 
@@ -40,7 +40,7 @@ Lượt của lịch đêm ghi vào `~/Library/Logs/devkit-gate-full/<slug>/` ri
 1. Chạy lại CHỈ suite/test đỏ ở đỉnh (đường dẫn `✖ tests/…` của run_impacted, hoặc lệnh của suite đỏ). Không tái hiện ⇒ ghi "flaky?", không nghi ai.
 2. Chia đôi các merge first-parent `last_full_green_sha..sha` (≤ 16; chưa có lượt xanh: 8 merge gần nhất) ⇒ merge đầu tiên làm đỏ.
 3. Tạo thẻ qua `scripts/governance/create_task.py --new-card … --labels bug`, tiêu đề `🐛 [fix] P1 gate-full đêm <yyyy-mm-dd>: <suite> đỏ`,
-   risk `🔴 High — main đỏ`. Issue mở cùng tiêu đề đã có thì không tạo trùng.
+   risk `🔴 High — main đỏ`. Đã có thẻ mở cùng suite đỏ (tiêu đề P1, hoặc mã REG-/BUG- trong tiêu đề/body) thì comment vào đó, không tạo trùng.
 
 Thẻ đến tay: đọc summary + log, sửa hoặc revert commit nghi vấn qua luồng thường (task, biên nhận, merge), rồi chạy tay `gate_full.py run` để xác nhận xanh.
 
