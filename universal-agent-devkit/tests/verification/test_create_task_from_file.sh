@@ -12,7 +12,11 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 mkdir -p "$TMP/bin" "$TMP/repo"
-export FAKE_LOG="$TMP/calls.jsonl"
+export FAKE_LOG="$TMP/calls.jsonl" FAKE_ITEMS="$TMP/items.json"
+# Một thẻ Backlog cùng loại (bug) nhắc create_task.py: thẻ mới cùng loại thường được GOM vào đây (xem ca 10).
+cat > "$TMP/items.json" <<'JSON'
+{"items": [{"status": "Backlog", "labels": ["bug"], "content": {"type": "Issue", "repository": "ToanMobile/agent-workbench", "number": 7, "title": "🐛 [bug] create_task: thẻ cũ", "body": "## Problem\nx create_task.py\n\n## Acceptance Criteria\n- [ ] cũ\n\n## Risk\n🟢\n"}}]}
+JSON
 cat > "$TMP/bin/gh" <<'PY'
 #!/usr/bin/env python3
 import json, os, sys
@@ -24,6 +28,8 @@ if a[:2] == ["project", "item-add"]:
     print(json.dumps({"id": "PVTI_1"})); sys.exit(0)
 if a[:2] in (["project", "item-edit"], ["label", "create"]):
     sys.exit(0)
+if a[:2] == ["project", "item-list"]:
+    print(open(os.environ["FAKE_ITEMS"]).read()); sys.exit(0)
 sys.stderr.write("fake gh: unexpected %r\n" % (a,)); sys.exit(99)
 PY
 chmod +x "$TMP/bin/gh"
@@ -107,5 +113,27 @@ Ticket hai.
 MD
 rc=$(run --dry-run --from-file "$TMP/backlog.md" --ticket 1)
 [ "$rc" = "0" ] && grep -q "TICKET-ONE-MARKER" "$TMP/out" && ! grep -q "Ticket hai" "$TMP/out" && ok "6 --ticket giữ nguyên hành vi" || fail "6 rc=$rc: $(cat "$TMP/out")"
+
+# 7. --ticket 0 là ticket không hợp lệ: exit 64 (không rơi sang nhánh cả-file), log gh rỗng.
+rc=$(run --dry-run --from-file "$TMP/backlog.md" --ticket 0 --title "$TITLE")
+[ "$rc" = "64" ] && [ "$(gh_calls)" = "0" ] && ok "7 --ticket 0 → exit 64" || fail "7 exit $rc: $(cat "$TMP/out")"
+
+# 8. --title toàn khoảng trắng bị từ chối như thiếu --title.
+rc=$(run --dry-run --from-file "$TMP/card.md" --title "   ")
+[ "$rc" = "64" ] && [ "$(gh_calls)" = "0" ] && ok "8 --title toàn khoảng trắng → exit 64" || fail "8 exit $rc: $(cat "$TMP/out")"
+
+# 9. --problem/--fix/--ac đi kèm --from-file: cảnh báo bị bỏ qua, body vẫn là file.
+rc=$(run --dry-run --from-file "$TMP/card.md" --title "$TITLE" --problem "PROBLEM-DE-THỪA" --ac "- [ ] AC-DE-THỪA")
+[ "$rc" = "0" ] && grep -q "bị bỏ qua" "$TMP/out" && grep -q "FROMFILE-MARKER-123" "$TMP/out" && ! grep -q "PROBLEM-DE-THỪA" "$TMP/out" \
+  && ok "9 cờ body thừa được cảnh báo và không vào body" || fail "9 rc=$rc: $(cat "$TMP/out")"
+
+# 10. --from-file không --ticket không bị GOM vào thẻ Backlog có sẵn. Đối chứng: cùng loại thẻ lấy từ --problem thì gom (#7),
+#     chứng minh thẻ giả #7 đủ điều kiện gom nên ca --from-file không phải đạt vì fixture sai.
+BUGTITLE="🐛 [bug] create_task: đọc file làm body"
+rc=$(run --dry-run --title "$BUGTITLE" --problem "x create_task.py" --ac "- [ ] y")
+grep -q "Sẽ gom" "$TMP/out" && ok "10a đối chứng: thẻ từ --problem được gom vào #7" || fail "10a fixture không gom được: rc=$rc $(cat "$TMP/out")"
+rc=$(run --dry-run --from-file "$TMP/card.md" --title "$BUGTITLE")
+[ "$rc" = "0" ] && ! grep -q "Sẽ gom" "$TMP/out" && grep -q "FROMFILE-MARKER-123" "$TMP/out" \
+  && ok "10b --from-file không --ticket tạo thẻ riêng, không gom" || fail "10b rc=$rc: $(cat "$TMP/out")"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

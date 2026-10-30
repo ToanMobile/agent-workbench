@@ -22,8 +22,8 @@ Mã thoát:
   0   đã tạo (hoặc --dry-run / gom vào thẻ chưa chạy)
   2   --from-file không kèm --ticket mà file thiếu `## Problem` hoặc không đọc được: không tạo thẻ
   3   thẻ đã tạo nhưng chưa đánh dấu "cần người" hoặc chưa gán cột Backlog
-  64  đối số sai: --new-card thiếu lý do, --needs-you rỗng, --from-file không kèm --ticket mà thiếu --title,
-      hoặc thẻ nhắc tên repo khác mà chưa có --repo / --here
+  64  đối số sai: --new-card thiếu lý do, --needs-you rỗng, --ticket nhỏ hơn 1, --from-file không kèm --ticket
+      mà thiếu --title (hoặc --title toàn khoảng trắng), hoặc thẻ nhắc tên repo khác mà chưa có --repo / --here
 """
 
 import os
@@ -444,7 +444,7 @@ def parse_ticket_from_file(file_path: Path, ticket_num: int):
 
 
 def read_body_from_file(file_path: Path):
-    """Whole file as the card body (--from-file without --ticket, #695). Needs a `## Problem` section."""
+    """Đọc cả file làm body thẻ (--from-file không kèm --ticket, #695); file phải có mục `## Problem`."""
     content = file_path.read_text(encoding="utf-8").strip()
     if not re.search(r"^##[ \t]+Problem\b", content, re.M):
         raise ValueError(f"{file_path} không có mục `## Problem`: không tạo thẻ.")
@@ -638,10 +638,14 @@ def main():
     title = None
     body = None
 
-    if args.from_file and args.ticket:
+    if args.from_file and args.ticket is not None and args.ticket < 1:
+        print("❌ --ticket phải là số từ 1 (TICKET-1, TICKET-2…).", file=sys.stderr)
+        sys.exit(64)
+    from_ticket = bool(args.from_file) and args.ticket is not None
+    if from_ticket:
         title, body = parse_ticket_from_file(args.from_file, args.ticket)
     elif args.from_file:
-        if not args.title:
+        if not args.title or not args.title.strip():
             print("❌ --from-file không kèm --ticket cần --title (title của thẻ; cả file là body).", file=sys.stderr)
             sys.exit(64)
         try:
@@ -674,7 +678,7 @@ def main():
         sys.exit(0)
 
     # --from-file: ticket nằm trong backlog của chính checkout này, tên repo khác chỉ là ngữ cảnh đo.
-    if not args.repo and not args.here and not (args.from_file and args.ticket):
+    if not args.repo and not args.here and not from_ticket:
         here = detect_repo()
         others = other_repos_named(f"{title}\n{body}", here)
         if others:
