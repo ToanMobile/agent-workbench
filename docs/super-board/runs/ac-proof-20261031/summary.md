@@ -32,7 +32,10 @@ Lý do thẻ còn `ac-open`: body PR #703 ghi dòng ↳ của AC3/AC4 là "not v
   | Việc thứ hai chờ | 14 s | 0 s ("slot 2/2, cho phép 2") |
   | Cả cặp xong sau | 26 s | 11 s |
 
-  Ca thật trước đó: merge gate #707 chờ khoá cũ 4 phút 45 giây (20:16:05 → 20:20:50). Sau khi chuyển, các lượt nặng ở tải < 12 ghi "chờ 0 s" (gp712, commit719, rg719 …).
+  Ca thật trước đó: merge gate #707 chờ khoá cũ 4 phút 45 giây (20:16:05 → 20:20:50). Sau khi chuyển (dòng `[lock] … giữ khoá` trong `work-1644/*.out`):
+  - Các lượt nặng ở tải < 12 đều ghi "chờ 0 s": gp712 (load 9,3), commit712b (5,7), gp712b (4,5), commitac và gpac (5,3).
+  - commitac và gpac vào "slot 2/2" trong lúc slot 1 đang có việc khác, tức 2 việc nặng chạy song song.
+  - rg719 xin khoá lúc 05:38 31/10 khi tải ≥ 12 (chỉ 1 slot, đang bị việc #720 giữ) nên chờ 55 s, tới khi tải còn 10,7 thì vào slot 2/2. Đúng luật 1 slot khi tải cao.
   Comment trên thẻ: https://github.com/ToanMobile/agent-workbench/issues/716#issuecomment-6526852417
 
 ## #685 · CHƯA đóng
