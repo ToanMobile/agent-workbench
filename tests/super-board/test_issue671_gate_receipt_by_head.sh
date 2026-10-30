@@ -139,6 +139,14 @@ forge control "$HEAD4" 'pass'; run_script "$HEAD4"
 if [ "$rc" = 0 ] && [ -n "$out" ]; then ok "G5: control, the same copy untouched is accepted (so G2-G4 are discriminating)"; else fail "G5: rc=$rc out=$out"; fi
 rm -f "$COMMON"/postfix-gate/tree_receipts/forged-*.json
 
+# H: lỗi kỹ thuật -> exit 2 kèm stderr (khác exit 1 "chưa có biên nhận")
+GHOST="$(printf 'a%.0s' $(seq 1 40))"
+err="$(cd "$TMP/wt" && bash "$SCRIPT" "$GHOST" 2>&1 >/dev/null)"; rc=$?
+if [ "$rc" = 2 ] && [ -n "$err" ]; then ok "H1: 40-hex sha that is not a commit -> exit 2 with stderr"; else fail "H1: rc=$rc err=$err"; fi
+git init -q "$TMP/nokit" && echo x > "$TMP/nokit/x.txt" && git -C "$TMP/nokit" add -A && git -C "$TMP/nokit" -c user.name=t -c user.email=t@t commit -q -m one
+err="$(cd "$TMP/nokit" && bash "$SCRIPT" "$(git -C "$TMP/nokit" rev-parse HEAD)" 2>&1 >/dev/null)"; rc=$?
+if [ "$rc" = 2 ] && [ -n "$err" ]; then ok "H2: tree_fp unavailable (no .agents/devkit/bin) -> exit 2 with stderr"; else fail "H2: rc=$rc err=$err"; fi
+
 (cd "$TMP/wt" && bash "$SCRIPT" "not-a-sha" >/dev/null 2>&1); rc=$?
 if [ "$rc" = 64 ]; then ok "C: bad sha -> exit 64"; else fail "C: rc=$rc"; fi
 

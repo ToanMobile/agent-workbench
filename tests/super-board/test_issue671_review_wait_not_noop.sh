@@ -193,6 +193,32 @@ unset SB_REVIEW_WAIT_MAX
 if grep -qx "move-failed PVTI_672 Blocked" "$TMP/writes" && [ -s "$INFLIGHT_DIR/review-wait/672" ]; then ok "O: failed move to Blocked keeps the review-wait ledger"
 else fail "O: writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200)"; fi
 
+# P: comment [reviewer] kết thúc bằng `blocked-by:` RỖNG (không nêu điều kiện chờ) -> không miễn, đếm no-op như thường -> Blocked
+reset_case; set_card 673
+okwlog "$WORKER_LOG_DIR/worker-review-673.log"
+LAST_COMMENT=$'[reviewer] [report] chờ\nblocked-by:  '
+two 673
+if grep -qx "move PVTI_673 Blocked" "$TMP/writes" && [ ! -e "$INFLIGHT_DIR/review-wait/673" ]; then ok "P: empty blocked-by: is not exempted -> Blocked after the no-op ledger fills"
+else fail "P: empty blocked-by exempted (writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200))"; fi
+
+# Q: comment kiểu CRLF của GitHub (dòng trống \r\n\r\n, kết thúc bằng dòng trống) vẫn nhận ra dòng cuối `blocked-by:` -> miễn
+reset_case; set_card 674
+okwlog "$WORKER_LOG_DIR/worker-review-674.log"
+LAST_COMMENT=$'<!-- super-review:report -->\r\n[reviewer] [report] chờ\r\n\r\nblocked-by: gate_receipt\r\n\r\n'
+two 674
+if ! grep -q "^move " "$TMP/writes" && [ "$(wc -l < "$INFLIGHT_DIR/review-wait/674" | tr -d ' ')" = 2 ]; then ok "Q: CRLF waiting comment is recognised -> exempted"
+else fail "Q: CRLF comment not recognised (writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200))"; fi
+
+# R: không ghi được sổ review-wait (đường .tmp bị chiếm bởi một thư mục, sổ cũ còn 1 dòng) -> không miễn, đếm no-op như thường -> Blocked (không phải "quá lâu")
+reset_case; set_card 675
+okwlog "$WORKER_LOG_DIR/worker-review-675.log"
+LAST_COMMENT="$WAITING"
+mkdir -p "$INFLIGHT_DIR/review-wait/675.tmp"
+echo $(( $(date +%s) - 60 )) > "$INFLIGHT_DIR/review-wait/675"   # sổ cũ còn nguyên: một ghi thất bại không được tính lượt này là đã có bản ghi
+two 675
+if grep -qx "move PVTI_675 Blocked" "$TMP/writes" && ! grep -q "quá lâu" "$TMP/writes"; then ok "R: unwritable review-wait ledger -> not exempted (fail-closed), counted as a normal no-op"
+else fail "R: unwritable ledger exempted (writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200))"; fi
+
 # L: gọi issue_last_comment bản thật: với 0 comment trả rỗng và SB_GITHUB_READ nhận 0 lần gọi; với 2 comment đọc trang 2
 cat > "$TMP/fakegh.py" <<'EOF_FAKE'
 import sys

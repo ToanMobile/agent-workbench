@@ -2137,23 +2137,24 @@ EOF
     # Miễn có trần: thẻ nghỉ SB_REVIEW_WAIT_S (900) giữa hai lượt (review_wait_cooldown) và chỉ được miễn SB_REVIEW_WAIT_MAX (8) lượt trong
     # SB_NOOP_WINDOW_S (24 giờ), quá thì Blocked "chờ <X> quá lâu". `blocked-by: -` là chờ người: không miễn, Blocked ngay.
     if [ "$lane" = review ] && worker_ended_clean "$wlog"; then
-      wait_val=$(issue_last_comment "$issue" "$count" | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
+      wait_val=$(issue_last_comment "$issue" "$count" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
       wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
       if [ -n "$wait_val" ] && [ "$wait_what" = "-" ]; then
         eff_max=1; human_wait=1   # chờ người, không có gì để dispatch lại
-      elif [ -n "$wait_val" ]; then
+      elif [ -n "$wait_what" ]; then   # `blocked-by:` rỗng không nêu điều kiện chờ: đếm no-op như thường
         now=$(date +%s)
         wfile="$INFLIGHT_DIR/review-wait/$issue"
         wlimit="${SB_REVIEW_WAIT_MAX:-8}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=8 ;; esac
         [ "${#wlimit}" -le 2 ] && [ "$wlimit" -le 19 ] || wlimit=19   # sổ chỉ giữ 20 dòng (tail 19 + dòng mới): trần cao hơn sẽ không bao giờ chạm
         mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null || true
-        { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } > "$wfile.tmp" 2>/dev/null \
+        { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } 2>/dev/null > "$wfile.tmp" \
           && mv "$wfile.tmp" "$wfile" 2>/dev/null || true
         wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ')
-        if [ "${wn:-0}" -le "$wlimit" ]; then
+        [ "$(tail -n 1 "$wfile" 2>/dev/null)" = "$now" ] || wn=0   # không ghi được sổ thì lượt này không có bản ghi: không miễn (fail-closed)
+        if [ "${wn:-0}" -ge 1 ] && [ "$wn" -le "$wlimit" ]; then
           continue   # miễn: sổ no-op giữ nguyên, nên kill xen kẽ lượt chờ vẫn đếm dồn tới SB_NOOP_MAX
         fi
-        over_wait="${wait_what:-?}"; eff_max=1
+        if [ "${wn:-0}" -ge 1 ]; then over_wait="${wait_what:-?}"; eff_max=1; fi
       fi
     fi
     now=$(date +%s)
