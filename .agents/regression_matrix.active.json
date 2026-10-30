@@ -2433,6 +2433,21 @@
       ]
     },
     {
+      "component": "merge-gate-no-push-pr-branch",
+      "trigger_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_no_push_pr_branch.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-NO-PUSH-PR-01",
+          "name": "gate không ghi lên nhánh PR: PR chậm hơn base thì head trên origin giữ nguyên, verify chạy trên cây scratch đã gộp, approved-head và --match-head-commit vẫn khớp head PR (#570)",
+          "command": "bash tests/super-board/test_merge_gate_no_push_pr_branch.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "gate-approval-fresh-worktree-628",
       "watch_files": [
         "universal-agent-devkit/bin/post-fix-gate.py",
