@@ -132,7 +132,9 @@ case "$CMD" in
     echo "  🧰 Running Installer & Gate Regression Tests..."
     echo "================================================================="
     rc=0; wait "$POOL_PID" || rc=$?; POOL_PID=""
-    cat "$TEST_TMP/pool.out"; cat "$TEST_TMP/pool.err" >&2
+    # #473: stderr first, without the `· start` / `· done` progress lines (they exist for the gate's log of a run it kills), then stdout:
+    # the ✔/✖ list is the end of the output, not buried under the progress lines.
+    grep -vE '^· (start|done) ' "$TEST_TMP/pool.err" >&2 || true; cat "$TEST_TMP/pool.out"
     [ "$rc" -eq 0 ] || exit 1
     ;;
   sync)

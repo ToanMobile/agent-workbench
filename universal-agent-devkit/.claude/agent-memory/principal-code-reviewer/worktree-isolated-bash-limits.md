@@ -16,3 +16,5 @@ with a runtime-computed program, inline `bash -c '<shell text>'` it cannot parse
 `ps -axo … | grep "patter[n]"`). A scratchpad `.sh` run as `bash <file>` passes. Also refused (2026-10-25, trunk-mode
 session_lock): an inline write/delete whose target is a shell variable (`rmdir "$d"`) — use a literal path or a scratch `.sh`.
 Parser-change reviews: `git show HEAD:<file> > scratch/head.py`, load both via importlib, fuzz-compare the function.
+The guard varies by session: on 2026-10-28 (issue-473-build review) `git -C <worktree> diff` and `cd <worktree> && grep` both
+ran. Try the plain command once and fall back to a scratch script only if it is refused.
