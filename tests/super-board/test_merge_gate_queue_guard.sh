@@ -81,7 +81,7 @@ mkcfg() {  # mkcfg <file> <merge_queue.enabled> <merge_policy.default> [worker_b
   python3 -c 'import json,sys
 c={"base_branch":"main","repo":{"path":".","remote":""},
    "merge_policy":{"default":sys.argv[3]},
-   "merge_queue":{"enabled":sys.argv[2]=="true","enabled_at":None,"batch_max":6,"max_wait_min":60},
+   "merge_queue":{"enabled":sys.argv[2]=="true","enabled_at":None},
    "verify_commands":["touch " + sys.argv[4]]}
 if sys.argv[5] != "-": c["worker_backend"] = sys.argv[5]
 print(json.dumps(c))' "$1" "$2" "$3" "$TMP/verified" "${4:-claude-p}" > "$1"

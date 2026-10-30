@@ -2175,8 +2175,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "devkit-all-shard-gates",
       "watch_files": [
@@ -2190,8 +2189,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "devkit-all-shard-worktree",
       "watch_files": [
@@ -2205,8 +2203,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "devkit-all-shard-rest",
       "watch_files": [
@@ -2220,8 +2217,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "super-board-queue-schedule",
       "watch_files": [
@@ -2241,8 +2237,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "devkit-worktree-prune-merged-ancestor",
       "watch_files": [
@@ -2275,8 +2270,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "merge-gate-edited-test-486",
       "watch_files": [
@@ -2291,8 +2285,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "qa-detached-worktree-557",
       "watch_files": [
@@ -2310,8 +2303,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "file-wait-ready-556",
       "watch_files": [
@@ -2326,8 +2318,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "merge-scratch-keep-559",
       "watch_files": [
@@ -2343,8 +2334,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "suite-env-board-worker-528",
       "watch_files": [
@@ -2423,8 +2413,7 @@
           "parallel_safe": true
         }
       ]
-    }
-,
+    },
     {
       "component": "qa-exit2-edited-test-643",
       "watch_files": [
@@ -2439,6 +2428,36 @@
           "id": "REG-SB-QA-EXIT2-643-01",
           "name": "#643: QA exit 2 chỉ vì test sửa đi Review rồi merge nhờ duyệt chéo",
           "command": "bash tests/super-board/test_qa_exit2_edited_test.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-no-push-pr-branch",
+      "trigger_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_no_push_pr_branch.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-NO-PUSH-PR-01",
+          "name": "gate không ghi lên nhánh PR: PR chậm hơn base thì head trên origin giữ nguyên, verify chạy trên cây scratch đã gộp, approved-head và --match-head-commit vẫn khớp head PR (#570)",
+          "command": "bash tests/super-board/test_merge_gate_no_push_pr_branch.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "gate-approval-fresh-worktree-628",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_approval_fresh_worktree.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-APPROVAL-FRESH-WT-628-01",
+          "name": "#628 AC2: lời duyệt test (approved_hashes.json) của main checkout còn hiệu lực ở worktree mới (chỉ so sha256 nội dung, không mtime); đổi 1 byte test: vẫn exit 2",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_approval_fresh_worktree.sh",
           "parallel_safe": true
         }
       ]
@@ -2460,6 +2479,5 @@
         }
       ]
     }
-
   ]
 }
