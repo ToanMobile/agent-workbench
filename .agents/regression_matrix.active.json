@@ -2515,6 +2515,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-scratch-keep-shards-712",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_keep_scratch_shards.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-SCRATCH-KEEP-SHARDS-712-01",
+          "name": "#712: merge gate giữ scratch cả khi shard REG-DK-ALL-GATES/WORKTREE/REST-01 FAIL/TIMEOUT/HANG (dòng '<ID> : …' có mã màu); PASS, UNTESTED và suite khác chỉ nhắc REG-DK-ALL-01 trong mô tả thì không",
+          "command": "bash tests/super-board/test_merge_gate_keep_scratch_shards.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

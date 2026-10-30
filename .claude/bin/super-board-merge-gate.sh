@@ -767,11 +767,13 @@ run_verify_cmd() {
 # CLAUDE_PROJECT_DIR / TARGET_DIR của bên gọi (runner, agent) bị gỡ: post-fix-gate ưu tiên chúng hơn cwd, giữ lại là verify kiểm cây chính thay
 # cho cây gộp trong SCRATCH (xanh sai). tests/super-board/test_merge_gate_verify_log_outside.sh.
 # #559: REG-DK-ALL-01 FAIL / TIMEOUT / HANG thì giữ scratch. Dòng PASS không khớp.
+# #712: REG-DK-ALL-01 đã tách thành shard REG-DK-ALL-GATES-01 / -WORKTREE-01 / -REST-01 (#616, #650) và gate in "<ID> : <mô tả>" — khớp cả
+# shard lẫn dấu ':' (dòng cũ "REG-DK-ALL-01 |" vẫn khớp). ID phải đứng ngay sau dấu '|' nên suite khác chỉ nhắc tên trong mô tả không khớp.
 reg_dk_all_not_pass() {
   local log="$1"
   [ -f "$log" ] || return 1
   LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$log" 2>/dev/null \
-    | LC_ALL=C grep -Eq '^[[:space:]]*\[ \] (FAIL|TIMEOUT( \(HANG\))?|HANG)[[:space:]]*\|[[:space:]]*REG-DK-ALL-01[[:space:]]*\|'
+    | LC_ALL=C grep -Eq '^[[:space:]]*\[ \] (FAIL|TIMEOUT( \(HANG\))?|HANG)[[:space:]]*\|[[:space:]]*REG-DK-ALL(-[A-Z]+)?-01[[:space:]]*[|:]'
 }
 # Tên đúng mẫu .merge-scratch-keep-pr<số>-<yyyyMMdd-HHmmss>. Thư mục khác không đụng.
 keep_name_ok() {
