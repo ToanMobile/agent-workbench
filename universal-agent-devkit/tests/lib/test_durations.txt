@@ -464,6 +464,7 @@
 3 tests/gates/test_tree_fp_settings_local.sh
 16 tests/gates/test_worktree_merge_gate_pr_budget.sh
 3 tests/verification/test_create_task_from_file.sh
+121 tests/gates/test_hook_contract_watchdog_env.sh
 9 tests/gates/test_push_gate_settings_local.sh
 9 tests/gates/test_proof_gate_settings_local.sh
 1 tests/gates/test_gate_head_and_dirty_settings.sh
