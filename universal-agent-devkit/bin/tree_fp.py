@@ -27,6 +27,8 @@ EXCLUDE = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regr
            # The other mkstemp prefixes of that module need no entry: ".tmp." is written inside .agents/regression_journal/ (its own .gitignore
            # is "*") and ".worktree_checklist." inside the git dir.
            ".agents/.regression_status." + "[a-z0-9_]" * 8)
+# #691: file bản cài kit sửa cục bộ trong mỗi worktree; tree_fingerprint() chỉ tính bản đã commit của nó (xem trong hàm)
+LOCAL_SETTINGS = ".claude/settings.json"
 RECEIPT = "full_pass.json"
 # #644: biên nhận của lượt gate scoped (chỉ test liên quan diff, tự leo --full khi đụng file lõi), cạnh full_pass.json, cùng các trường
 # cộng "scope": "scoped"; bản theo cây ở <git common dir>/postfix-gate/scoped_receipts/<fp>.json (đối xứng tree_receipts/)
@@ -140,6 +142,13 @@ def tree_fingerprint(project_dir):
             tree_fingerprint.error = added.stderr.decode(errors="replace").strip()[:300]
             return ""
         run("rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", *EXCLUDE)
+        # #691: bản cài kit sửa .claude/settings.json cục bộ và không commit; đưa file về blob của HEAD để sửa chưa commit không
+        # đổi fp, còn nội dung đã commit vẫn tính (KHÔNG đưa vào EXCLUDE). HEAD không có file thì bỏ khỏi index tạm.
+        head_blob = run("ls-tree", "--full-name", "HEAD", "--", LOCAL_SETTINGS).stdout
+        if head_blob.strip():
+            subprocess.run(["git", "-C", str(project_dir), "update-index", "--index-info"], input=head_blob, capture_output=True, env=env)
+        else:
+            run("rm", "--cached", "-q", "--ignore-unmatch", "--", LOCAL_SETTINGS)
         tree = run("write-tree").stdout.decode().strip()
         if prefix and tree:
             tree = run("rev-parse", f"{tree}:{prefix.rstrip('/')}").stdout.decode().strip()
