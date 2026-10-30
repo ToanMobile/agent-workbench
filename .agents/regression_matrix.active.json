@@ -2478,6 +2478,38 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "gate-rules-flags",
+      "watch_files": [
+        ".agents/gate-rules.json",
+        "universal-agent-devkit/bin/gate_rules.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_rules_flags.sh",
+        "universal-agent-devkit/tests/gates/test_gate_rules_watch.sh",
+        "tests/super-board/test_merge_gate_rules_raise.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-RULES-FLAGS-01",
+          "name": "#686: cờ gate-rules đọc từ blob HEAD ∧ origin, override/env chỉ hạ, TTL, tokens, suite_env không mang núm cờ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_rules_flags.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-GATE-RULES-WATCH-01",
+          "name": "#686: gate_rules.py watch có đủ 5 tín hiệu tắt ngay (L3, B, CACHE, L2, L1), dry-run không ghi gì",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_rules_watch.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-GATE-RULES-RAISE-01",
+          "name": "#686: merge gate chốt bật cờ gate-rules (4 điều kiện §2.4; guard vắng ở BASE thì đóng)",
+          "command": "bash tests/super-board/test_merge_gate_rules_raise.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

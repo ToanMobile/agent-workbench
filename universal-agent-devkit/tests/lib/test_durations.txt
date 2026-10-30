@@ -460,3 +460,5 @@
 14 tests/gates/test_gate_scoped_routing.sh
 12 tests/worktree_git/test_relink_new_kit_items.sh
 103 tests/gates/test_gate_impacted_cache.sh
+13 tests/gates/test_gate_rules_flags.sh
+18 tests/gates/test_gate_rules_watch.sh

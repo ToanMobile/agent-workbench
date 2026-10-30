@@ -604,6 +604,44 @@ if [ -n "$AC_CARD" ] && [ -z "$MSG_FILE" ]; then
   fi
 fi
 
+# ---- Chốt bật cờ gate (#686, §2.4 thiết kế v3.1): .agents/gate-rules.json đổi thì khoá nâng (luật off→on, TTL tăng) phải đủ 4 điều kiện ------
+# (blob gate_rules.py ở HEAD = ở BASE; đúng một khoá nâng và không khoá nào đổi khác; diff ⊆ MANIFEST[khoá]; trailer Freeze-exception không
+# tính). Hạ (on→off, TTL giảm) đi tiếp. Bộ kiểm là bản gate_rules.py lấy từ BASE_SHA, chạy `python3 -I` (cwd do PR kiểm soát không chen được
+# vào sys.path). Thiếu bản đó ở BASE: chỉ file cờ không nâng gì (mọi luật off, TTL ≤ 21600) đi qua; còn lại exit 8, không im lặng cho qua.
+# Đặt sau khối AC, trước --preflight nên train preflight cũng đi qua. DK_MAIN tính ở đây (dùng lại ở bước cài DevKit bên dưới).
+DK_MAIN=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p') || true
+GR_PATH=universal-agent-devkit/bin/gate_rules.py; GR_FLAGS=.agents/gate-rules.json
+if ! git -C "$REPO_PATH" diff --quiet "$BASE_SHA" "$HEAD_SHA" -- "$GR_FLAGS"; then
+  GR_RC=0
+  if git -C "$REPO_PATH" cat-file -e "$BASE_SHA:$GR_PATH" 2>/dev/null; then
+    GR_B=$(git -C "$REPO_PATH" rev-parse --verify -q "$BASE_SHA:$GR_PATH" 2>/dev/null || true)
+    GR_H=$(git -C "$REPO_PATH" rev-parse --verify -q "$HEAD_SHA:$GR_PATH" 2>/dev/null || true)
+    GR_SAME=0; { [ -n "$GR_B" ] && [ "$GR_B" = "$GR_H" ]; } && GR_SAME=1
+    git -C "$REPO_PATH" diff --name-only "$BASE_SHA...$HEAD_SHA" > "$AC_DIR/rules-paths" 2>/dev/null || : > "$AC_DIR/rules-paths"
+    git -C "$REPO_PATH" show "$BASE_SHA:$GR_PATH" > "$AC_DIR/gate_rules_base.py"
+    git -C "$REPO_PATH" show "$BASE_SHA:$GR_FLAGS" > "$AC_DIR/rules-old.json" 2>/dev/null || : > "$AC_DIR/rules-old.json"
+    git -C "$REPO_PATH" show "$HEAD_SHA:$GR_FLAGS" > "$AC_DIR/rules-new.json" 2>/dev/null || : > "$AC_DIR/rules-new.json"
+    python3 -I -B "$AC_DIR/gate_rules_base.py" raise-check --old "$AC_DIR/rules-old.json" --new "$AC_DIR/rules-new.json" \
+      --paths "$AC_DIR/rules-paths" --guard-same "$GR_SAME" >&2 || GR_RC=$?
+  elif ! git -C "$REPO_PATH" cat-file -e "$HEAD_SHA:$GR_FLAGS" 2>/dev/null \
+       || git -C "$REPO_PATH" show "$HEAD_SHA:$GR_FLAGS" 2>/dev/null \
+          | jq -e '((.rules // {}) | [.[]] | all(. == "off")) and ((.ttl.suite_cache_max_s // 21600) | type == "number" and . <= 21600)' >/dev/null 2>&1; then
+    :   # BASE chưa có guard và file cờ không nâng gì (hay bị xoá): PR đầu thêm cờ
+  else
+    GR_RC=10
+    echo "gate-rules raise: ${GR_PATH} vắng ở BASE_SHA, không kiểm được việc nâng cờ" >&2
+  fi
+  case $GR_RC in
+    0) ;;
+    10) echo "needs-you: gate-rules raise not allowed (${GR_FLAGS}: nâng cờ phải đủ 4 điều kiện của §2.4; xem dòng 'gate-rules raise' ở trên)"
+        approval_request || true
+        say "gate-rules: nâng cờ không hợp lệ; chỉ người tự bật"
+        needs_you_notify
+        exit 8 ;;
+    *) say "gate-rules: bộ kiểm lỗi (exit ${GR_RC}); không merge"; exit 1 ;;
+  esac
+fi
+
 # ---- --preflight dừng ở đây: phần sau là scratch + verify + migrate + merge ------------------------------------------------------
 # Bước chỉ người làm (needs_you của policy: migration ngoài allowed_envs, human_steps, dòng needs-you: trong body) gate thường báo SAU
 # verify (exit 8, khối migrations bên dưới); preflight báo ngay để train không verify một PR sẽ dừng ở exit 8. Lệnh migrate của env được
@@ -670,8 +708,7 @@ fi
 # verify đỏ vì thiếu post-fix-gate.py (Goods #48, NFH #61, OfficeReader #74/#159). Tìm ở "." rồi ở main checkout. Không lấy bản đi kèm
 # gate: thử 19/10, nó cài DevKit vào scratch của repo không có DevKit và test_merge_gate_scratch_clean.sh đỏ (11 file chưa track).
 # --no-githooks: cài vào scratch không ghi đè hook git dùng chung của repo.
-DK_MAIN=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p') || true
-DK_INSTALL=""
+DK_INSTALL=""   # DK_MAIN đã tính ở khối chốt cờ gate-rules, phía trên --preflight
 for c in "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "${DK_MAIN:-$REPO_PATH}/universal-agent-devkit" \
          "${DK_MAIN:-$REPO_PATH}/.agents/devkit"; do
   if [ -f "$c/bin/install.sh" ]; then DK_INSTALL="$c/bin/install.sh"; break; fi

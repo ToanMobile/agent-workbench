@@ -5389,7 +5389,7 @@ def suite_env():
             "SB_BOARD_WORKER", "SB_MERGE_CALLER", "SB_MERGE_QUEUE", "SB_REPO_PATH",
             "SB_GITHUB_READ_STRICT"}
     return {k: v for k, v in os.environ.items()
-            if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
+            if k not in drop and not k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", "DEVKIT_GATE_RULE_", "SB_L3_"))}  # #686: núm cờ gate là của lượt cha
 
 
 def _rerun_skip_path(project_dir):

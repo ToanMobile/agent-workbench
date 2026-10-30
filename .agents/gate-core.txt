@@ -17,6 +17,9 @@ universal-agent-devkit/bin/suite_cache.py     # khoá nội dung của cached-fu
 universal-agent-devkit/bin/session_lock.py    # khoá checkout / trunk mode
 universal-agent-devkit/bin/scoped_gate.py     # bộ quyết định scoped
 universal-agent-devkit/bin/gate_full.py       # gate-full đêm
+.agents/gate-rules.json                       # cờ L1/L2/L3/B + TTL: đọc bằng bin/gate_rules.py; chỉ merge gate được bật (#686)
+universal-agent-devkit/bin/gate_rules.py      # guard của cờ: manifest, raise-check, watcher (#686)
+universal-agent-devkit/bin/l3_gate.py         # L3: lời duyệt test sửa sống qua việc main tiến (#686; file thêm ở PR L3)
 universal-agent-devkit/tests/lib/*            # helper dùng chung của mọi test
 universal-agent-devkit/tests/run_impacted.sh  # bộ chọn test của REG-DK-ALL-01
 universal-agent-devkit/tests/impact_map.txt   # cạnh test→file viết tay

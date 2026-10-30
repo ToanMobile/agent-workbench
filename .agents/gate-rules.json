@@ -1,0 +1,3 @@
+{"version": 1,
+ "rules": {"L1": "off", "L2": "off", "L3": "off", "B": "off"},
+ "ttl": {"suite_cache_max_s": 21600}}
