@@ -1,25 +1,22 @@
 #!/usr/bin/env bash
-# super-board-merge-queue.sh — hàng đợi merge (Pha 2, 26/10): gom các PR đã duyệt thành MỘT lượt super-board-merge-train.sh, rồi route kết quả.
+# super-board-merge-queue.sh — hàng đợi merge: PR đã duyệt (nhãn `merge-queue` + `approved-head:<sha40>`) vào MỘT lượt super-board-merge-train.sh, rồi route kết quả.
 #
-# VÌ SAO: merge train (#110/#228) chạy 0 lần trên 73 PR từ 23/10: reviewer tự gọi merge gate ngay sau khi duyệt, nên runner không bao giờ
-# thấy ≥2 thẻ Review đã duyệt để gom. Bộ gom này đứng riêng: reviewer chỉ ghi `approved-head:<sha40>` + gắn nhãn `merge-queue`, rồi lịch
-# (hoặc cuối tick runner) gọi `--if-due`; mỗi đợt một lượt verify cho cả nhóm.
+# VÌ SAO: reviewer chỉ ghi `approved-head:<sha40>` + gắn nhãn `merge-queue`; lịch (hoặc cuối tick runner) gọi script này. Không gom đợt
+# (29/10): `--full` chỉ chạy một lần lúc nửa đêm (gate-full), nên không còn lý do chờ đủ PR hay chờ PR cũ. Mỗi lần gọi, MỌI PR hợp lệ đang
+# trong hàng vào một train (một lượt verify cho cả nhóm đang có); không trần đợt, không hạn chờ, không đợi máy rảnh.
 #
-# Usage: super-board-merge-queue.sh --config <config.json> [--if-due] [--dry-run]
+# Usage: super-board-merge-queue.sh --config <config.json> [--dry-run]
 #   Bật/tắt: SB_MERGE_QUEUE=1 bật, =0 tắt, không đặt thì theo config `merge_queue.enabled` (mặc định false).
 #   PR vào hàng: mở, không draft, có nhãn `merge-queue`, comment `approved-head:<sha40>` MỚI NHẤT của OWNER/MEMBER/COLLABORATOR khớp
 #     `headRefOid`. Không khớp (head dời, không có, người ngoài duyệt) → gỡ nhãn + comment lý do. Draft: bỏ qua, giữ nhãn.
-#   --if-due: chỉ gom khi một điều xảy ra: số PR ≥ trần đợt; PR cũ nhất (mốc sự kiện `labeled` trong timeline) chờ ≥ max_wait_min;
-#     hoặc máy rảnh (không worker board nào còn sống, merge.lock của gate không còn chủ, không post-fix-gate nào giữ test_run.lock).
-#   Trần đợt = merge_queue.batch_max (mặc định 6); đợt trước có PR đỏ thì max(1, batch_max/2) (trạng thái trong merge-queue.state cạnh khoá;
-#     train hỏng không in train-result nào thì giữ nguyên). Mốc gắn nhãn nhớ trong merge-queue.labeled (<PR> <head> <epoch> <nhánh>; nhánh cho Agent Office / status ghép PR với thẻ, #562).
-#   --dry-run: in đợt sẽ gửi và lý do rồi thoát trước khối train; reject chỉ in (tests/super-board/test_merge_queue.sh ca 8 kiểm điều này).
+#   Thứ tự trong train: PR gắn nhãn cũ nhất trước (mốc sự kiện `labeled` trong timeline, nhớ trong merge-queue.labeled:
+#     <PR> <head> <epoch> <nhánh>; nhánh cho Agent Office / status ghép PR với thẻ, #562, và runner dùng mốc cũ nhất để miễn RUNAWAY).
+#   --dry-run: in đợt sẽ gửi rồi thoát trước khối train; reject chỉ in (tests/super-board/test_merge_queue.sh ca 8 kiểm điều này).
 #
 # Route mỗi `train-result: <PR> <kết quả>` (bước ghi nhãn đi SAU cùng: chết giữa chừng thì lượt sau route lại, không mất việc).
 # Dòng `train-detail: <PR> <dòng>` của train (dòng gate, đuôi verify đỏ) chép nguyên văn vào comment issue của red / 11 / 3 / 7 / 8:
 #   merged                        gỡ nhãn; thẻ (nhánh issue-<K>-…) không mang ac-open: đóng issue, card Done, comment ✅ merged <sha>
-#   red · gate-exit-11            thẻ về Ready với loop:rebuild-(K+1) (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn. Chỉ `red` (verify đỏ)
-#                                 đánh dấu đợt đỏ (đợt sau thu nhỏ); 11 của preflight (qa-report/AC) không phải verify đỏ.
+#   red · gate-exit-11            thẻ về Ready với loop:rebuild-(K+1) (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn.
 #   conflict · gate-exit-2/5      thẻ về Ready với loop:rebase (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn
 #   gate-exit-7/8                 comment 🙋 chép nguyên văn dòng approval-request/human-gate/needs-you, needs-you mark, Blocked, một tin
 #                                 super-board-notify.py approve-button (cùng chữ ký merge gate dùng); gỡ nhãn
@@ -48,15 +45,13 @@ TRAIN="$HERE/super-board-merge-train.sh"
 CARD="$HERE/super-board-card.sh"
 NEEDS_YOU="$HERE/super-board-needs-you.py"
 LABEL="merge-queue"
-GATE_STALE_AFTER=5400   # stale-after mặc định của merge gate: max(--lock-timeout 1800 × 3, 1800)
 
-CONFIG=""; IF_DUE=0; DRY=0
+CONFIG=""; DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)  CONFIG="${2:-}"; shift 2 ;;
-    --if-due)  IF_DUE=1; shift ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
@@ -77,8 +72,6 @@ esac
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 NOTIFY="$HERE/super-board-notify.py"
 posint() { case "$1" in ''|*[!0-9]*|0) echo "$2" ;; *) echo "$1" ;; esac; }
-BATCH_MAX=$(posint "$(echo "$CONFIG_JSON" | jq -r '.merge_queue.batch_max // empty')" 6)
-MAX_WAIT_MIN=$(posint "$(echo "$CONFIG_JSON" | jq -r '.merge_queue.max_wait_min // empty')" 60)
 REBUILD_CAP=$(posint "$(echo "$CONFIG_JSON" | jq -r '.rebuild_cap // empty')" 2)
 REPO=$(echo "$CONFIG_JSON" | jq -r '.repo.remote // ""' | sed -E 's#^https?://github\.com/##; s#\.git$##')
 REPO_PATH=$(echo "$CONFIG_JSON" | jq -r '.repo.path // "."')
@@ -92,7 +85,7 @@ SLUG=${REPO:-"{owner}/{repo}"}   # gh api thay {owner}/{repo} bằng repo của 
 # kiểm pid train đó trước (còn sống và lệnh của nó là super-board-merge-train, chống pid tái dùng).
 COMMON=$(cd "$REPO_PATH" && cd "$(git rev-parse --git-common-dir)" && pwd -P) || { say "cannot resolve the git common dir of ${REPO_PATH}"; exit 1; }
 QDIR="$COMMON/super-board"; mkdir -p "$QDIR"
-LOCK="$QDIR/merge-queue.lock"; STATE="$QDIR/merge-queue.state"
+LOCK="$QDIR/merge-queue.lock"
 exec 9>>"$LOCK"
 LRC=0
 python3 -I -c '
@@ -362,8 +355,7 @@ recover_merged
 PRS_JSON=$(python3 "$GITHUB_READ" --kind array -- pr list ${REPO:+--repo "$REPO"} --state open --base "$BASE" --label "$LABEL" --limit 200 \
              --json number,headRefName,headRefOid,isDraft) || exit $?
 NOW=$(date +%s)
-# Thứ tự đọc từ rẻ tới đắt (runner gọi --if-due mỗi tick 30 s): một `pr list`; máy rảnh / đủ đợt quyết ngay; mốc gắn nhãn (REST timeline)
-# chỉ đọc khi cần và nhớ trong merge-queue.labeled theo <PR> <head>; comment approved-head (GraphQL) chỉ đọc khi đợt đã tới hạn.
+# Mốc gắn nhãn (REST timeline) nhớ trong merge-queue.labeled theo <PR> <head>, nên các tick sau không đọc lại timeline.
 CANDS=$(printf '%s' "$PRS_JSON" | jq -r '.[] | select(.isDraft != true) | "\(.number) \(.headRefOid) \(.headRefName)"')
 # PR có dòng merge-queue.pending cùng head: kết quả đã có, chỉ route lại các bước bắt buộc, không vào đợt (không verify lại).
 if [ -s "$PENDING" ] && [ -n "$CANDS" ]; then
@@ -402,73 +394,12 @@ load_rows() {
   printf '%s\n' "$ROWS" | awk 'NF {print $2, $3, $1, $4}' > "$LABELED.tmp" && mv -f "$LABELED.tmp" "$LABELED"
 }
 
-LAST_RED=false
-[ ! -r "$STATE" ] || LAST_RED=$(jq -r '.last_red // false' "$STATE" 2>/dev/null || echo false)
-CAP=$BATCH_MAX
-if [ "$LAST_RED" = true ]; then CAP=$(( BATCH_MAX / 2 )); [ "$CAP" -ge 1 ] || CAP=1; fi
-
-# ---- tới hạn chưa (--if-due) -----------------------------------------------------------------------------------------------------------
-# machine_busy: 0 + in lý do nếu còn việc nặng trên máy. Chỉ đọc: không xoá khoá nào, không tạo file test_run.lock (sự có mặt của nó là
-# "đã từng chạy" với post-fix-gate.py), mở O_RDONLY (mở "w" làm rỗng bản ghi chủ khoá mà Stop hook đọc).
-machine_busy() {
-  local inf="$REPO_PATH/.claude/super-board/inflight" f pid pgid host at age wts held
-  for f in "$inf"/[0-9]*; do
-    [ -f "$f" ] || continue
-    pid=$(sed -n 's/^PID=//p' "$f" 2>/dev/null | head -1)
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "board worker for #$(basename "$f") (pid ${pid})"; return 0; fi
-  done
-  if [ -d "$inf/merge.lock" ]; then
-    # Cùng điều kiện holder_gone của merge gate: chỉ coi là đã đi khi khoá ghi trên máy này, pid chết và nhóm tiến trình không còn ai.
-    pid=$(cat "$inf/merge.lock/pid" 2>/dev/null || true); pgid=$(cat "$inf/merge.lock/pgid" 2>/dev/null || true)
-    host=$(cat "$inf/merge.lock/host" 2>/dev/null || true); at=$(cat "$inf/merge.lock/at" 2>/dev/null || echo "$NOW")
-    case "$at" in ''|*[!0-9]*) at=$NOW ;; esac
-    age=$(( NOW - at ))
-    local gone=1
-    { [ -n "$pid" ] && [ "$pid" -gt 0 ] 2>/dev/null && [ -n "$pgid" ] && [ "$pgid" -gt 0 ] 2>/dev/null && [ "$host" = "$(hostname)" ] \
-      && ! kill -0 "$pid" 2>/dev/null && ! ps -p "$pid" >/dev/null 2>&1 && ! kill -0 -- "-$pgid" 2>/dev/null; } || gone=0
-    if [ "$gone" -eq 0 ] && [ "$age" -le "$GATE_STALE_AFTER" ]; then echo "merge gate lock held (pid ${pid:-?}, ${age}s)"; return 0; fi
-  fi
-  wts=$(git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
-  held=$(printf '%s\n' "$wts" | python3 -I -c '
-import fcntl, os, sys
-for wt in sys.stdin.read().splitlines():
-    p = os.path.join(wt, ".claude", "audit-gate", "test_run.lock")
-    if not wt or not os.path.isfile(p):
-        continue
-    try:
-        fd = os.open(p, os.O_RDONLY)
-    except OSError:
-        continue
-    try:
-        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except OSError:
-        print(p); break
-    finally:
-        os.close(fd)
-')
-  if [ -n "$held" ]; then echo "post-fix-gate holds ${held}"; return 0; fi
-  return 1
-}
-BUSY=""
-if [ "$N" -ge "$CAP" ]; then DUE="${N} PR(s) queued ≥ batch cap ${CAP}"
-elif ! BUSY=$(machine_busy); then DUE="machine idle"
-else
-  load_rows
-  WAITED=$(( NOW - $(printf '%s\n' "$ROWS" | head -1 | cut -d' ' -f1) ))
-  if [ "$WAITED" -ge $(( MAX_WAIT_MIN * 60 )) ]; then DUE="oldest PR waited $(( WAITED / 60 )) min ≥ ${MAX_WAIT_MIN}"
-  else DUE=""; fi
-fi
-if [ "$IF_DUE" -eq 1 ] && [ -z "$DUE" ]; then
-  say "not due: ${N} PR(s), oldest $(( WAITED / 60 )) min (< ${MAX_WAIT_MIN}), cap ${CAP}; busy: ${BUSY}"
-  exit 0
-fi
-[ -n "$DUE" ] || DUE="run by hand (busy: ${BUSY})"
 load_rows
 
-# Đợt: đi từ PR cũ nhất, đọc comment duyệt từng PR (GraphQL) tới khi đủ trần; PR duyệt sai rời hàng ngay lượt này.
+# Đợt: đi từ PR cũ nhất, đọc comment duyệt từng PR (GraphQL); PR duyệt sai rời hàng ngay lượt này.
 BATCH=""; NB=0
 while read -r at n head ref; do
-  [ -n "${n:-}" ] && [ "$NB" -lt "$CAP" ] || continue
+  [ -n "${n:-}" ] || continue
   comments=$(python3 "$GITHUB_READ" --kind object -- pr view "$n" ${REPO:+--repo "$REPO"} --json comments) || exit $?
   # Cùng luật với review_approved_head của runner (#227, #605): một file jq chung, comment approved-head cuối cùng của người có
   # quyền ghi thắng; kèm `approved-by:` thì nguồn duyệt chéo phải đủ trường và không tự duyệt.
@@ -492,10 +423,10 @@ BATCH=${BATCH%$'\n'}
 [ "$NB" -gt 0 ] || { say "no queued PR carries a valid approval; nothing to run"; exit 0; }
 PRS_ARG=$(printf '%s\n' "$BATCH" | awk '{printf "%s%s:%s", (NR > 1 ? "," : ""), $2, $3}')
 if [ "$DRY" -eq 1 ]; then
-  echo "merge-queue: would run super-board-merge-train.sh --prs ${PRS_ARG} (${DUE}; cap ${CAP}$([ "$LAST_RED" = true ] && echo ', halved after a red batch'))"
+  echo "merge-queue: would run super-board-merge-train.sh --prs ${PRS_ARG}"
   exit 0
 fi
-say "batch of $(printf '%s\n' "$BATCH" | wc -l | tr -d ' ') (${DUE}; cap ${CAP}): ${PRS_ARG}"
+say "train of $(printf '%s\n' "$BATCH" | wc -l | tr -d ' '): ${PRS_ARG}"
 
 # ---- một lượt train ---------------------------------------------------------------------------------------------------------------------
 ROUTE_ROWS="${ROUTE_ROWS}${BATCH}"$'\n'
@@ -521,14 +452,11 @@ if ! grep -q '^train-result: ' "$TOUT"; then
     # Train thấy merge-train.lock bận (một train khác đang chạy): các PR chưa chạy, không tính lần thử.
     say "train exit 4 (another train holds merge-train.lock); nothing ran, labels kept, no attempt counted"; exit 0
   fi
-  say "train exit ${TRC} with no train-result line; nothing routed, labels and the red mark kept; one attempt counted per PR"
+  say "train exit ${TRC} with no train-result line; nothing routed, labels kept; one attempt counted per PR"
   while read -r _ p _ _; do [ -n "${p:-}" ] && attempt_retry "$p" "train exit ${TRC} without a train-result" </dev/null; done < <(printf '%s\n' "$BATCH")
   [ "$TRC" -ne 9 ] || exit 9
   exit 0
 fi
-# Chỉ `red` (verify đỏ của train / gate) đánh dấu đợt đỏ; gate-exit-11 của preflight (qa-report/AC) không làm đợt sau nhỏ lại.
-if grep -qE '^train-result: [0-9]+ red$' "$TOUT"; then RED_NOW=true; else RED_NOW=false; fi
-printf '{"last_red":%s,"at":%s,"prs":"%s","train_exit":%s}\n' "$RED_NOW" "$(date +%s)" "$PRS_ARG" "$TRC" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"
 
 # ---- route từng train-result ------------------------------------------------------------------------------------------------------------
 while read -r p res; do
