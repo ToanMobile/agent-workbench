@@ -3,7 +3,9 @@
 the full-run receipt) and hooks/proof_gate.sh (which compares it on XONG).
 
 It covers the content of every tracked and untracked, non-ignored file — so an edit made
-after the gate ran changes it, while committing that same content does not. Files the gate and the proof step write themselves
+after the gate ran changes it, while committing that same content does not. One exception (#691): HEAD_PINNED files
+(.claude/settings.json, which the kit install edits locally and never commits) count as HEAD holds them, so an uncommitted
+edit of them leaves the fingerprint alone while a committed change still moves it. Files the gate and the proof step write themselves
 are left out, otherwise running the gate or taking the screenshot would invalidate the
 receipt: the checklist/status files, audit-gate logs, evidence, and reports/ (proof PNGs).
 
@@ -27,8 +29,14 @@ EXCLUDE = (".claude/audit-gate", ".agents/regression_status.json", ".agents/regr
            # The other mkstemp prefixes of that module need no entry: ".tmp." is written inside .agents/regression_journal/ (its own .gitignore
            # is "*") and ".worktree_checklist." inside the git dir.
            ".agents/.regression_status." + "[a-z0-9_]" * 8)
-# #691: file bản cài kit sửa cục bộ trong mỗi worktree; tree_fingerprint() chỉ tính bản đã commit của nó (xem trong hàm)
-LOCAL_SETTINGS = ".claude/settings.json"
+# #691: file bản cài kit sửa cục bộ trong mỗi worktree; tree_fingerprint() chỉ tính bản đã commit của chúng (xem trong hàm), và biên nhận
+# gate (post-fix-gate head_and_dirty) không ghi chúng vào `dirty`. Không nằm trong EXCLUDE: EXCLUDE bỏ cả nội dung đã commit.
+HEAD_PINNED = (".claude/settings.json",)
+
+
+def head_pinned(path, prefix=""):
+    """True when `path` is a HEAD_PINNED entry or lies under one (same convention as EXCLUDE); `prefix` = the project's path in the repo."""
+    return any(path == prefix + p or path.startswith(prefix + p + "/") for p in HEAD_PINNED)
 RECEIPT = "full_pass.json"
 # #644: biên nhận của lượt gate scoped (chỉ test liên quan diff, tự leo --full khi đụng file lõi), cạnh full_pass.json, cùng các trường
 # cộng "scope": "scoped"; bản theo cây ở <git common dir>/postfix-gate/scoped_receipts/<fp>.json (đối xứng tree_receipts/)
@@ -110,7 +118,7 @@ def _non_git_fingerprint(project_dir):
 
 def tree_fingerprint(project_dir):
     """Hash of the CONTENT of project_dir as it stands (tracked + untracked, ignores and EXCLUDE
-    left out), built in a throw-away index so the real one is never touched. It does not
+    left out, HEAD_PINNED files as HEAD holds them), built in a throw-away index so the real one is never touched. It does not
     include the HEAD commit id: committing exactly the gated code keeps the receipt valid,
     any content change voids it."""
     import shutil
@@ -142,13 +150,23 @@ def tree_fingerprint(project_dir):
             tree_fingerprint.error = added.stderr.decode(errors="replace").strip()[:300]
             return ""
         run("rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", *EXCLUDE)
-        # #691: bản cài kit sửa .claude/settings.json cục bộ và không commit; đưa file về blob của HEAD để sửa chưa commit không
-        # đổi fp, còn nội dung đã commit vẫn tính (KHÔNG đưa vào EXCLUDE). HEAD không có file thì bỏ khỏi index tạm.
-        head_blob = run("ls-tree", "--full-name", "HEAD", "--", LOCAL_SETTINGS).stdout
-        if head_blob.strip():
-            subprocess.run(["git", "-C", str(project_dir), "update-index", "--index-info"], input=head_blob, capture_output=True, env=env)
-        else:
-            run("rm", "--cached", "-q", "--ignore-unmatch", "--", LOCAL_SETTINGS)
+        # #691: bản cài kit sửa .claude/settings.json cục bộ và không commit; đưa path ghim về blob của HEAD để sửa chưa commit không
+        # đổi fp, còn nội dung đã commit vẫn tính (KHÔNG đưa vào EXCLUDE). HEAD không có file thì bỏ khỏi index tạm. Git lỗi thì
+        # fail-closed như `add -A` ở trên: không đoán một fp khác rỗng (ls-tree lỗi từng rơi vào nhánh xoá file khỏi index).
+        for pin in HEAD_PINNED:
+            ls = run("ls-tree", "--full-name", "HEAD", "--", pin)
+            rows = ls.stdout.decode(errors="surrogateescape").splitlines()
+            if ls.returncode != 0 or any(not r.startswith(("100644 blob ", "100755 blob ", "120000 blob ")) for r in rows):
+                tree_fingerprint.error = ("ls-tree HEAD " + pin + ": " + ls.stderr.decode(errors="replace").strip() if ls.returncode != 0
+                                          else "HEAD giữ " + pin + " không phải blob/symlink")[:300]
+                return ""
+            # -r: path ghim có thể là thư mục chưa track (con của nó) trong index tạm; không xoá hết thì update-index đụng file/thư mục
+            cleared = run("rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", pin)
+            put = subprocess.run(["git", "-C", str(project_dir), "update-index", "--index-info"], input=ls.stdout, capture_output=True, env=env) if rows else None
+            bad = cleared if cleared.returncode != 0 else put if put is not None and put.returncode != 0 else None
+            if bad is not None:
+                tree_fingerprint.error = (pin + ": " + bad.stderr.decode(errors="replace").strip())[:300]
+                return ""
         tree = run("write-tree").stdout.decode().strip()
         if prefix and tree:
             tree = run("rev-parse", f"{tree}:{prefix.rstrip('/')}").stdout.decode().strip()
@@ -202,7 +220,7 @@ def _big_untracked(project_dir):
         return [], []
     sigs, excludes = [], []
     for rel in listed.stdout.decode(errors="surrogateescape").split("\0"):
-        if not rel or any(rel == ex or rel.startswith(ex + "/") for ex in EXCLUDE):
+        if not rel or any(rel == ex or rel.startswith(ex + "/") for ex in EXCLUDE) or head_pinned(rel):   # #691: path ghim không tính, kể cả file lớn
             continue
         try:
             st = os.lstat(os.path.join(str(project_dir), rel))
