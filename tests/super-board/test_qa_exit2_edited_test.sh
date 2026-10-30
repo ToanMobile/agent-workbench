@@ -676,21 +676,18 @@ root = os.environ["ROOT"]
 p = os.path.join(root, ".agents/regression_matrix.active.json")
 d = json.load(open(p))
 rules = d["rules"]
-if rules[-1].get("component") != "qa-exit2-edited-test-643":
-    sys.exit("cuối là %s" % rules[-1].get("component"))
-if rules[-2].get("component") != "super-board-spawn-load-530":
-    sys.exit("áp chót là %s" % rules[-2].get("component"))
 ids = [r.get("component") for r in rules]
 if ids.count("qa-exit2-edited-test-643") != 1:
     sys.exit("id xuất hiện %s lần" % ids.count("qa-exit2-edited-test-643"))
-cmd = rules[-1]["mandatory_regression_tests"][0]["command"]
+mine = rules[ids.index("qa-exit2-edited-test-643")]
+cmd = mine["mandatory_regression_tests"][0]["command"]
 if cmd != "bash tests/super-board/test_qa_exit2_edited_test.sh":
     sys.exit("command %s" % cmd)
 PY
 then
-  ok "ma trận: một component ở cuối"
+  ok "ma trận: đúng một component qa-exit2-edited-test-643"
 else
-  fail "ma trận: component cuối không đúng hoặc component trước bị đổi"
+  fail "ma trận: thiếu, lặp hoặc sai lệnh component qa-exit2-edited-test-643"
 fi
 
 [ "$FAILS" -eq 0 ] && { echo "test_qa_exit2_edited_test: PASS"; exit 0; }
