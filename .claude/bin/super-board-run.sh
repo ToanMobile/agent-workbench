@@ -577,10 +577,11 @@ Next: Eric — merge this card into ${dup}, or cut the overlap from its Fix" >/d
 }
 
 review_wait_cooldown() {
-  # $1 = issue. 0 = its last review turn ended cleanly waiting on a condition (#671) less than SB_REVIEW_WAIT_S (900) ago: no new reviewer yet.
+  # $1 = issue. 0 = lượt review gần nhất của thẻ kết thúc sạch khi đang chờ một điều kiện (#671) chưa quá SB_REVIEW_WAIT_S (900) giây: chưa cho reviewer mới.
+  # Sổ review-wait/<issue> mỗi lượt chờ một dòng (epoch); mốc nghỉ là dòng cuối.
   local f="$INFLIGHT_DIR/review-wait/$1" t
   [ -f "$f" ] || return 1
-  t=$(tr -dc '0-9' < "$f" 2>/dev/null)
+  t=$(tail -n 1 "$f" 2>/dev/null | tr -dc '0-9')
   [ -n "$t" ] && [ $(( $(date +%s) - t )) -lt "${SB_REVIEW_WAIT_S:-900}" ]
 }
 
@@ -1943,16 +1944,17 @@ worker_ended_clean() {
   case "$(worker_exit_line "$1")" in
     *"exit=0 "*) python3 -c 'import json, sys
 rs = None
-for l in open(sys.argv[1], errors="replace"):
-    if l.startswith("=== dispatch "):
-        rs = None
-    elif l.startswith("{"):
-        try:
-            r = json.loads(l)
-        except ValueError:
-            continue
-        if r.get("type") == "result":
-            rs = r
+with open(sys.argv[1], errors="replace") as fh:
+    for l in fh:
+        if l.startswith("=== dispatch "):
+            rs = None
+        elif l.startswith("{"):
+            try:
+                r = json.loads(l)
+            except ValueError:
+                continue
+            if r.get("type") == "result":
+                rs = r
 sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") else 1)' "$1" 2>/dev/null; return $? ;;
   esac
   return 1
@@ -2065,7 +2067,8 @@ issue_comment_count() {
 }
 
 issue_last_comment() {
-  # $1 = issue, $2 = its comment count. Prints the body of the newest comment; nothing when GitHub cannot say.
+  # $1 = issue, $2 = số comment của nó. In nội dung comment mới nhất; không in gì khi GitHub không trả lời hoặc số comment là 0.
+  [ "${2:-0}" -gt 0 ] || return 0
   python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1/comments?per_page=1&page=$2" --jq '.[0].body' 2>/dev/null || true
 }
 
@@ -2094,28 +2097,32 @@ note_worker_end() {
   # $1 = issue; the lock just read (LANE, FROM_COL, COMMENTS0) is the worker that ended. Queued for block_noop_workers.
   case "${LANE:-}" in qa|review) ;; *) return 0 ;; esac
   [ -n "${FROM_COL:-}" ] && [ -n "${COMMENTS0:-}" ] || return 0
-  NOOP_CHECK="${NOOP_CHECK:-} ${1}:${LANE}:${FROM_COL}:${COMMENTS0}"
+  # Trường thứ 5 là đường log của chính worker này (từ lock; lock là file shell nên đường dẫn không có dấu cách).
+  NOOP_CHECK="${NOOP_CHECK:-} ${1}:${LANE}:${FROM_COL}:${COMMENTS0}:${WORKER_LOG:-${WORKER_LOG_DIR:-docs/super-board}/worker-${LANE}-${1}.log}"
 }
 
 block_noop_workers() {
   # Expensive tick, after fetch_project_items: judge the workers queued by note_worker_end. Sets NOOP_MOVED=1 when a card was moved.
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
+  local wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait
   NOOP_CHECK=""
   for entry in $pending; do
-    IFS=: read -r issue lane from c0 <<EOF
+    wlog=""
+    IFS=: read -r issue lane from c0 wlog <<EOF
 $entry
 EOF
     [ -n "$issue" ] && [ -n "$c0" ] || continue
     issue_locked "$issue" && continue
     f="$INFLIGHT_DIR/noops/$issue"
-    wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
+    [ -n "$wlog" ] || wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
+    eff_max="$max"; over_wait=""; human_wait=""
     col=$(issue_status "$issue")
     [ -n "$col" ] || continue
     count=$(issue_comment_count "$issue")
     [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
     if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
-      rm -f "$f" 2>/dev/null || true   # it moved the card or wrote something: progress
+      rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # it moved the card or wrote something: progress
       continue
     fi
     # Pha 2 (M4): a reviewer that queued the PR (merge-queue label + approved-head at the head) rightly leaves the card in Review:
@@ -2124,15 +2131,31 @@ EOF
       rm -f "$f" 2>/dev/null || true
       continue
     fi
-    # #671 (#659): a review worker that ended its turn cleanly (exit 0, result success) while waiting on a condition, its last comment
-    # closing with a `blocked-by:` line, is not dead and not a no-op: later turns rightly post nothing twice. Kills and errors still count.
-    # Only the reviewer's own newest comment counts (first line after a `<!-- -->` marker is `[reviewer]`, last line `blocked-by:`), and the
-    # card then rests SB_REVIEW_WAIT_S (900) before the next review dispatch (review_wait_cooldown), so one waiting card cannot starve the Review column.
-    if [ "$lane" = review ] && worker_ended_clean "$wlog" \
-       && [ -n "$(issue_last_comment "$issue" "$count" | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')" ]; then
-      rm -f "$f" 2>/dev/null || true
-      mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null && date +%s > "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true
-      continue
+    # #671 (#659): review worker kết thúc lượt sạch (exit 0, result success) khi đang chờ một điều kiện, comment mới nhất của chính reviewer
+    # kết thúc bằng dòng `blocked-by: <X>`, thì không chết và không phải no-op: lượt sau đúng ra không đăng gì lần nữa. Kill và lỗi vẫn đếm.
+    # Chỉ comment của [reviewer] mới tính (dòng đầu sau marker `<!-- -->` là `[reviewer]`, dòng cuối là `blocked-by:`).
+    # Miễn có trần: thẻ nghỉ SB_REVIEW_WAIT_S (900) giữa hai lượt (review_wait_cooldown) và chỉ được miễn SB_REVIEW_WAIT_MAX (8) lượt trong
+    # SB_NOOP_WINDOW_S (24 giờ), quá thì Blocked "chờ <X> quá lâu". `blocked-by: -` là chờ người: không miễn, Blocked ngay.
+    if [ "$lane" = review ] && worker_ended_clean "$wlog"; then
+      wait_val=$(issue_last_comment "$issue" "$count" | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
+      wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+      if [ -n "$wait_val" ] && [ "$wait_what" = "-" ]; then
+        eff_max=1; human_wait=1   # chờ người, không có gì để dispatch lại
+      elif [ -n "$wait_val" ]; then
+        now=$(date +%s)
+        wfile="$INFLIGHT_DIR/review-wait/$issue"
+        wlimit="${SB_REVIEW_WAIT_MAX:-8}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=8 ;; esac
+        mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null || true
+        { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } > "$wfile.tmp" 2>/dev/null \
+          && mv "$wfile.tmp" "$wfile" 2>/dev/null || true
+        wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ')
+        if [ "${wn:-0}" -le "$wlimit" ]; then
+          rm -f "$f" 2>/dev/null || true
+          continue
+        fi
+        over_wait="${wait_what:-?}"; eff_max=1
+        rm -f "$wfile" 2>/dev/null || true
+      fi
     fi
     now=$(date +%s)
     mkdir -p "$INFLIGHT_DIR/noops" 2>/dev/null || true
@@ -2140,7 +2163,7 @@ EOF
       && mv "$f.tmp" "$f" 2>/dev/null || true
     n=$( { wc -l < "$f"; } 2>/dev/null | tr -d ' ')
     last=$( { grep -Ev '^[[:space:]]*$|^worker_exit: ' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
-    if [ "${n:-0}" -lt "$max" ]; then
+    if [ "${n:-0}" -lt "$eff_max" ]; then
       log "⚠ #${issue} (lane ${lane}): worker ended with the card still in ${col} and no new comment — no-op ${n} of ${max}; last log line: ${last:-<no worker log at ${wlog}>}"
       continue
     fi
@@ -2150,6 +2173,9 @@ EOF
     printf '%s' "$last" | grep -qiE 'máy thật|thiết bị|real device|device|adb' && tag="📱"
     # #529: `blocked-by:  -` hands the card to a person; only a missing device is theirs. Other no-ops are agent work (no machine line).
     human_line="blocked-by:  agent"; [ "$tag" = "📱" ] && human_line="blocked-by:  -"
+    why_line="the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment"
+    [ -z "$human_wait" ] || { human_line="blocked-by:  -"; why_line="the reviewer for #${issue} ended its turn waiting on a person (blocked-by: -); dispatching another review turn cannot change that"; }
+    [ -z "$over_wait" ] || why_line="the ${lane} worker for #${issue} has waited on ${over_wait} for more than ${wlimit} review turns in the last $((window / 3600)) hours with no new comment (chờ ${over_wait} quá lâu)"
     if [ -n "$item_id" ] && set_card_status "$item_id" "Blocked"; then
       NOOP_MOVED=1
       rm -f "$f" 2>/dev/null || true
@@ -2158,7 +2184,7 @@ EOF
       gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tag} ${lane} worker exited ${n} times without moving the card or commenting
 Card:        #${issue}${title:+ ${title}}
 Reason tag:  ${tag}
-Why blocked: the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment
+Why blocked: ${why_line}
 Evidence:    ${wlog}; last log line: ${last:-<empty>}
 Checked:     inflight lock reaped; card still in ${col}; issue comment count unchanged since dispatch (${c0})
 What blocks: the worker cannot finish this card${last:+ — its last log line is quoted above}
