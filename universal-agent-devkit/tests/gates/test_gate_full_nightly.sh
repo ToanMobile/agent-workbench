@@ -66,6 +66,7 @@ cat >"$T/fakegate.sh" <<'SH'
 echo "$(pwd -P)" >>"$FAKE_CALLS"
 case "${FAKE_MODE:-}" in
   timeout) echo '{"verdict": "UNTESTED", "exit_code": 2, "busy": false, "regression_tests": [{"id": "REG-SLOW-01", "status": "TIMEOUT", "command": "sleep 5"}]}'; exit 2 ;;
+  kitred) echo '{"verdict": "FAIL", "exit_code": 1, "regression_tests": [{"id": "agent-kit test", "status": "FAIL", "command": "exit 1"}]}'; exit 1 ;;
   slowred) echo '{"verdict": "FAIL", "exit_code": 1, "regression_tests": [{"id": "REG-SLOW-01", "status": "FAIL", "command": "sleep 5"}]}'; exit 1 ;;
 esac
 if sh tests/check.sh; then
@@ -139,6 +140,51 @@ rm -f "$T/card.args"
 rc=$(run_gf --slug fake/repo)
 chk "b8. đã có issue mở cùng tiêu đề: không gọi lệnh tạo thẻ, summary dẫn issue cũ" \
   '[ ! -e "$T/card.args" ] && grep -q "issues/7" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
+
+# b''. #662: thẻ mở tay (tiêu đề KHÔNG theo CARD_PREFIX) có mã suite trong body ⇒ nhận thẻ đó, không mở thẻ P1 trùng
+gh_returns() {   # gh giả trả đúng một thẻ mở: tiêu đề $1, url $2, body $3
+  python3 - "$T/bin/gh" "$T" "$1" "$2" "$3" <<'PY'
+import json, sys
+open(sys.argv[1], "w").write('#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho %s\n'
+                             % (sys.argv[2], "'" + json.dumps([{"title": sys.argv[3], "url": sys.argv[4], "body": sys.argv[5]}]) + "'"))
+PY
+  chmod +x "$T/bin/gh"
+}
+gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-01 trên main"
+rm -f "$T/card.args" "$T/gh.calls"
+rc=$(run_gf --slug fake/repo)
+chk "b9. thẻ mở tay có mã suite trong body: không gọi lệnh tạo thẻ, summary dẫn thẻ đó" \
+  '[ ! -e "$T/card.args" ] && grep -q "issues/659" "$T/logs/summary-latest.md"' "$(tail -5 "$T/out")"
+chk "b9b. gh issue comment được gọi vào đúng thẻ mở tay" 'grep -q "issue comment https://github.com/fake/repo/issues/659" "$T/gh.calls"'
+gh_returns "🐛 [fix] gate: thẻ mở tay" "https://github.com/fake/repo/issues/659" "Suite đỏ: REG-FAKE-011 và REG-OTHER-01"
+rm -f "$T/card.args"
+rc=$(run_gf --slug fake/repo)
+chk "b10. body chỉ chứa mã suite dài hơn (REG-FAKE-011): không khớp lỏng, vẫn mở thẻ mới" '[ -e "$T/card.args" ]' "$(tail -5 "$T/out")"
+chk "b10b. gh được gọi với --search \"<suite>\" in:title,body và --json title,url,body" \
+  'grep -q "in:title,body" "$T/gh.calls" && grep -q "title,url,body" "$T/gh.calls"'
+# b11. mã suite chỉ ở tiêu đề (body rỗng) ⇒ vẫn nhận thẻ đó
+gh_returns "🐛 [fix] gate: REG-FAKE-01 đỏ trên main" "https://github.com/fake/repo/issues/660" ""
+rm -f "$T/card.args" "$T/gh.calls"
+rc=$(run_gf --slug fake/repo)
+chk "b11. mã suite chỉ ở tiêu đề: nhận thẻ, không mở thẻ mới" \
+  '[ ! -e "$T/card.args" ] && grep -q "issue comment https://github.com/fake/repo/issues/660" "$T/gh.calls"' "$(tail -5 "$T/out")"
+# b12. thẻ mới hơn chỉ nhắc suite trong body, thẻ CARD_PREFIX cũ hơn ở sau (gh trả mới trước) ⇒ ưu tiên thẻ CARD_PREFIX
+python3 - "$T/bin/gh" "$T" <<'PY'
+import json, sys
+items = [{"title": "🐛 [fix] thẻ khác", "url": "https://github.com/fake/repo/issues/700", "body": "nhắc REG-FAKE-01"},
+         {"title": "🐛 [fix] P1 gate-full đêm 2026-01-01: REG-FAKE-01 đỏ", "url": "https://github.com/fake/repo/issues/5", "body": ""}]
+open(sys.argv[1], "w").write('#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho %s\n' % (sys.argv[2], "'" + json.dumps(items) + "'"))
+PY
+chmod +x "$T/bin/gh"
+rm -f "$T/card.args" "$T/gh.calls"
+rc=$(run_gf --slug fake/repo)
+chk "b12. có cả thẻ body-only (mới) và thẻ CARD_PREFIX (cũ): ưu tiên thẻ CARD_PREFIX" \
+  '[ ! -e "$T/card.args" ] && grep -q "issue comment https://github.com/fake/repo/issues/5 " "$T/gh.calls"' "$(cat "$T/gh.calls" 2>/dev/null)"
+# b13. suite đỏ không phải mã REG-/BUG- (agent-kit test): thẻ thường nhắc lệnh trong body KHÔNG được nhận, vẫn mở thẻ P1
+gh_returns "🐛 [fix] việc khác" "https://github.com/fake/repo/issues/473" "Chạy agent-kit test để kiểm"
+rm -f "$T/card.args"
+rc=$(FAKE_MODE=kitred run_gf --slug fake/repo)
+chk "b13. first=agent-kit test: không nhận thẻ thường chỉ nhắc lệnh, vẫn mở thẻ P1" '[ -e "$T/card.args" ]' "$(tail -5 "$T/out")"
 printf '#!/bin/sh\necho "$@" >>"%s/gh.calls"\necho "[]"\n' "$T" >"$T/bin/gh"
 
 # c. khoá ---------------------------------------------------------------------------------------------------------------------

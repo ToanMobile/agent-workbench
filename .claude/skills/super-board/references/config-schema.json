@@ -116,6 +116,15 @@
   // and nothing lands. See references/run-workflow.md → "Mid-run permission prompts".
   "human_approves_merge": false,
 
+  // Ủy quyền thường trực của chủ (#516, references/decision-policy.md): comment `[orchestrator] [decision]` hợp lệ
+  // (marker orchestrator, hoặc comment tay của chủ không marker) coi blocker 🙋/❓ là đã xử lý: deps.sh, needs-you.py mark và
+  // qa-report.py (merge gate) không dựng lại blocker. DANH SÁCH DỪNG vẫn gắn needs-you. Vắng khối = bật.
+  "decision_policy": {
+    "enabled": true,                                   // false: bộ đọc tắt, mọi comment [decision] bị bỏ qua
+    "owner": "ToanMobile",                             // login của chủ (ngoài authorAssociation OWNER)
+    "marker": "<!-- sb-decision:orchestrator -->"      // marker riêng của lane orchestrator
+  },
+
   // Who merges what (v2.6.0). Evaluated by super-board-merge-gate.sh (via
   // super-board-merge-policy.py) on every merge; `human_approves_merge: true`
   // still overrides it and makes the Reviewer stop before the gate.
@@ -310,6 +319,11 @@
   // were waiting on an open blocker, the cap spent its slots on cards that would
   // hit their own preflight and park.
   "max_workers": 0,
+
+  // Optional emergency brake (#530). Hold every lane's spawn while load1 is above
+  // this integer. Absent: busy_load from capacity.py (3 × cores). DEVKIT_SPAWN_LOAD
+  // overrides this for one process. Below the threshold, only max_workers applies.
+  "spawn_load_max": 36,
 
   // Max consecutive failures in the same lane on the same root-cause hash
   // before the card auto-moves to Blocked. Default `2`. Root-cause hash
