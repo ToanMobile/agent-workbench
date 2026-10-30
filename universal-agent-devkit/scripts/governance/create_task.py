@@ -15,6 +15,15 @@ Sử dụng:
      python3 create_task.py --title "🐛 [bug] hooks: sửa lỗi X" --problem "..." --fix "..."
   3. Đẩy từ file mẫu (như docs/super-board/backlog-tickets.md):
      python3 create_task.py --from-file docs/super-board/backlog-tickets.md --ticket 1
+  4. Cả file là body (không --ticket; file phải có `## Problem`, title lấy từ --title):
+     python3 create_task.py --from-file card.md --title "🐛 [fix] scope: what"
+
+Mã thoát:
+  0   đã tạo (hoặc --dry-run / gom vào thẻ chưa chạy)
+  2   --from-file không kèm --ticket mà file thiếu `## Problem` hoặc không đọc được: không tạo thẻ
+  3   thẻ đã tạo nhưng chưa đánh dấu "cần người" hoặc chưa gán cột Backlog
+  64  đối số sai: --new-card thiếu lý do, --needs-you rỗng, --from-file không kèm --ticket mà thiếu --title,
+      hoặc thẻ nhắc tên repo khác mà chưa có --repo / --here
 """
 
 import os
@@ -433,6 +442,15 @@ def parse_ticket_from_file(file_path: Path, ticket_num: int):
     body = m.group(2).strip()
     return title, body
 
+
+def read_body_from_file(file_path: Path):
+    """Whole file as the card body (--from-file without --ticket, #695). Needs a `## Problem` section."""
+    content = file_path.read_text(encoding="utf-8").strip()
+    if not re.search(r"^##[ \t]+Problem\b", content, re.M):
+        raise ValueError(f"{file_path} không có mục `## Problem`: không tạo thẻ.")
+    return content
+
+
 def resolve_project_config(repo: str):
     if repo in PROJECT_REGISTRY:
         return PROJECT_REGISTRY[repo]
@@ -622,6 +640,18 @@ def main():
 
     if args.from_file and args.ticket:
         title, body = parse_ticket_from_file(args.from_file, args.ticket)
+    elif args.from_file:
+        if not args.title:
+            print("❌ --from-file không kèm --ticket cần --title (title của thẻ; cả file là body).", file=sys.stderr)
+            sys.exit(64)
+        try:
+            body = read_body_from_file(args.from_file)
+        except (OSError, UnicodeDecodeError, ValueError) as e:
+            print(f"❌ --from-file: {e}", file=sys.stderr)
+            sys.exit(2)
+        title = args.title
+        if any([args.problem, args.fix, args.ac, args.risk, args.blocked_by]):
+            print("   ⚠️  --from-file đặt cả body: --problem/--fix/--ac/--risk/--blocked-by bị bỏ qua.", file=sys.stderr)
     elif args.title:
         title = args.title
         body = build_body(args.problem, fix=args.fix, ac=args.ac, risk=args.risk, blocked_by=args.blocked_by)
@@ -692,7 +722,7 @@ def main():
     low_risk = not high
     # Nhãn ngoài bug/feature/qa (needs-device…) có tác dụng với runner; đường gom không áp nhãn lên thẻ cũ → thẻ riêng.
     plain_labels = set(auto_labels(title, args.labels)) <= KINDS
-    if (needs_you is None and args.new_card is None and not (args.from_file and args.ticket)
+    if (needs_you is None and args.new_card is None and not args.from_file
             and not args.blocked_by and low_risk and plain_labels):
         repo = args.repo or detect_repo()
         try:
