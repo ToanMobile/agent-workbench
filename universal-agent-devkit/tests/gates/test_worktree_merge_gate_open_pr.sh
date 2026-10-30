@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # #571 (28/10): hooks/worktree_merge_gate.sh - a worktree of THIS session on a published branch that is not in main yet:
-#   1 the branch has an open PR (gh pr list --head <branch> --state open): the Stop is not held, the note names the PR
+#   1 the branch has an open PR (one `gh pr list --state open --json number,headRefName` per Stop, matched by branch, #708): the Stop is not held, the note names the PR
 #   2 no open PR: held as before
 #   3 gh fails or hangs: held as before (fail closed)
 #   4 open PR but the worktree has an unpushed commit or an uncommitted file: held (the PR does not hold that work)
@@ -35,7 +35,7 @@ stop() {   # stop <name> <bin dir>: the hook's exit code; the session is in main
     | env CLAUDE_PROJECT_DIR="$TMP/$1" WORKTREE_AUTO_MERGE=0 PATH="$2:$PATH" bash "$HOOK" > "$TMP/out" 2> "$TMP/err"
 }
 
-repo a; fakegh open 'echo "[{\"number\":569}]"'
+repo a; fakegh open 'echo "[{\"number\":569,\"headRefName\":\"feat-x\"}]"'
 stop a "$TMP/bin-open"; rc=$?
 [ "$rc" = 0 ] && grep -q "#569" "$TMP/out" "$TMP/err" && ok "published branch with an open PR: Stop not held, note names #569" || fail "open PR held the Stop (rc $rc): $(head -c 300 "$TMP/err")"
 
@@ -51,12 +51,12 @@ repo d; fakegh hang 'sleep 30'
 stop d "$TMP/bin-hang"; rc=$?
 [ "$rc" != 0 ] && ok "gh hangs: held (fail closed)" || fail "gh timeout passed the Stop (rc $rc)"
 
-repo e; fakegh open2 'echo "[{\"number\":569}]"'
+repo e; fakegh open2 'echo "[{\"number\":569,\"headRefName\":\"feat-x\"}]"'
 echo y > "$TMP/e/.claude/worktrees/w/y.txt"   # uncommitted file
 stop e "$TMP/bin-open2"; rc=$?
 [ "$rc" != 0 ] && ok "open PR + dirty worktree: held" || fail "open PR + dirty worktree passed the Stop (rc $rc)"
 
-repo f; fakegh open3 'echo "[{\"number\":569}]"'
+repo f; fakegh open3 'echo "[{\"number\":569,\"headRefName\":\"feat-x\"}]"'
 echo z > "$TMP/f/.claude/worktrees/w/z.txt" && G "$TMP/f/.claude/worktrees/w" add z.txt && G "$TMP/f/.claude/worktrees/w" commit -qm z   # unpushed commit
 stop f "$TMP/bin-open3"; rc=$?
 [ "$rc" != 0 ] && ok "open PR + unpushed commit: held" || fail "open PR + unpushed commit passed the Stop (rc $rc)"
