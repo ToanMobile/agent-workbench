@@ -462,3 +462,4 @@
 12 tests/worktree_git/test_relink_new_kit_items.sh
 103 tests/gates/test_gate_impacted_cache.sh
 3 tests/verification/test_create_task_from_file.sh
+121 tests/gates/test_hook_contract_watchdog_env.sh
