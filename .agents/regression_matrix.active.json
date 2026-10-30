@@ -2492,6 +2492,29 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "review-wait-receipt-671",
+      "trigger_files": [
+        ".claude/bin/super-board-gate-receipt.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_issue671_gate_receipt_by_head.sh",
+        "tests/super-board/test_issue671_review_wait_not_noop.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GATE-RECEIPT-BY-HEAD-671-01",
+          "name": "#671 AC1: super-board-gate-receipt.sh in fp theo head từ store chung; biên nhận của cây bẩn (file thật) không phủ commit sạch, file cài đặt worktree thì qua",
+          "command": "bash tests/super-board/test_issue671_gate_receipt_by_head.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-REVIEW-WAIT-NOT-NOOP-671-01",
+          "name": "#671 AC2/AC3: review worker kết thúc sạch khi chờ (comment [reviewer] cuối blocked-by:) không bị đếm no-op và nghỉ SB_REVIEW_WAIT_S; bị kill, is_error hoặc comment không phải reviewer vẫn Blocked",
+          "command": "bash tests/super-board/test_issue671_review_wait_not_noop.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
