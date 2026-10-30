@@ -209,15 +209,37 @@ two 674
 if ! grep -q "^move " "$TMP/writes" && [ "$(wc -l < "$INFLIGHT_DIR/review-wait/674" | tr -d ' ')" = 2 ]; then ok "Q: CRLF waiting comment is recognised -> exempted"
 else fail "Q: CRLF comment not recognised (writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200))"; fi
 
-# R: không ghi được sổ review-wait (đường .tmp bị chiếm bởi một thư mục, sổ cũ còn 1 dòng) -> không miễn, đếm no-op như thường -> Blocked (không phải "quá lâu")
+# R: không ghi được sổ review-wait (đường .tmp bị chiếm bởi một thư mục, sổ cũ còn 1 dòng) -> không miễn, đếm no-op như thường -> Blocked (không phải "quá lâu").
+# Chạy trong ( set -e; ... ) như runner thật (`set -euo pipefail`): một lệnh lỗi lọt ra ngoài sẽ giết subshell, rc khác 0.
 reset_case; set_card 675
 okwlog "$WORKER_LOG_DIR/worker-review-675.log"
 LAST_COMMENT="$WAITING"
 mkdir -p "$INFLIGHT_DIR/review-wait/675.tmp"
 echo $(( $(date +%s) - 60 )) > "$INFLIGHT_DIR/review-wait/675"   # sổ cũ còn nguyên: một ghi thất bại không được tính lượt này là đã có bản ghi
-two 675
-if grep -qx "move PVTI_675 Blocked" "$TMP/writes" && ! grep -q "quá lâu" "$TMP/writes"; then ok "R: unwritable review-wait ledger -> not exempted (fail-closed), counted as a normal no-op"
-else fail "R: unwritable ledger exempted (writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200))"; fi
+( set -e; two 675 ); rc=$?
+if [ "$rc" = 0 ] && grep -qx "move PVTI_675 Blocked" "$TMP/writes" && ! grep -q "quá lâu" "$TMP/writes"; then ok "R: unwritable review-wait ledger -> not exempted (fail-closed), counted as a normal no-op, runner survives set -e"
+else fail "R: unwritable ledger exempted or runner died (rc=$rc writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200))"; fi
+
+# R2: lượt chờ ĐẦU TIÊN của thẻ (chưa có sổ review-wait) mà không ghi được sổ -> runner không chết (rc=0 dưới set -e), không miễn, Blocked như no-op thường
+reset_case; set_card 676
+okwlog "$WORKER_LOG_DIR/worker-review-676.log"
+LAST_COMMENT="$WAITING"
+mkdir -p "$INFLIGHT_DIR/review-wait/676.tmp"   # không tạo sổ 676 trước: đây là trạng thái phổ biến nhất của thẻ mới vào Review
+( set -e; two 676 ); rc=$?
+if [ "$rc" = 0 ] && [ ! -e "$INFLIGHT_DIR/review-wait/676" ] && grep -qx "move PVTI_676 Blocked" "$TMP/writes" && ! grep -q "quá lâu" "$TMP/writes"; then ok "R2: first waiting turn with an unwritable ledger -> runner survives set -e, not exempted, Blocked as a normal no-op"
+else fail "R2: runner died or exempted (rc=$rc writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200))"; fi
+
+# R3: nhánh fail-open: sổ cũ đã có dòng CÙNG GIÂY với lượt này, ghi mới lỗi -> không được suy từ việc đọc lại sổ rằng lượt này có bản ghi -> không miễn
+reset_case; set_card 677
+okwlog "$WORKER_LOG_DIR/worker-review-677.log"
+LAST_COMMENT="$WAITING"
+mkdir -p "$INFLIGHT_DIR/review-wait/677.tmp"
+echo 1800000000 > "$INFLIGHT_DIR/review-wait/677"
+date() { echo 1800000000; }   # giờ cố định: dòng cuối của sổ cũ trùng đúng giây `now` của block_noop_workers
+( set -e; two 677 ); rc=$?
+unset -f date
+if [ "$rc" = 0 ] && grep -qx "move PVTI_677 Blocked" "$TMP/writes" && ! grep -q "quá lâu" "$TMP/writes"; then ok "R3: same-second stale ledger line + failed write -> not exempted (fail-closed)"
+else fail "R3: stale same-second line counted as a record (rc=$rc writes: $(tr '\n' ';' < "$TMP/writes" | cut -c1-200))"; fi
 
 # L: gọi issue_last_comment bản thật: với 0 comment trả rỗng và SB_GITHUB_READ nhận 0 lần gọi; với 2 comment đọc trang 2
 cat > "$TMP/fakegh.py" <<'EOF_FAKE'

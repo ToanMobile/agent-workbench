@@ -2147,10 +2147,13 @@ EOF
         wlimit="${SB_REVIEW_WAIT_MAX:-8}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=8 ;; esac
         [ "${#wlimit}" -le 2 ] && [ "$wlimit" -le 19 ] || wlimit=19   # sổ chỉ giữ 20 dòng (tail 19 + dòng mới): trần cao hơn sẽ không bao giờ chạm
         mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null || true
-        { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } 2>/dev/null > "$wfile.tmp" \
-          && mv "$wfile.tmp" "$wfile" 2>/dev/null || true
-        wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ')
-        [ "$(tail -n 1 "$wfile" 2>/dev/null)" = "$now" ] || wn=0   # không ghi được sổ thì lượt này không có bản ghi: không miễn (fail-closed)
+        # Kết quả lấy từ chính lệnh ghi + mv (trong `if`, nên set -e không giết runner): ghi lỗi thì lượt này KHÔNG có bản ghi (wn=0, không miễn,
+        # fail-closed) và không suy từ việc đọc lại sổ, vì sổ cũ có thể đã có dòng cùng giây. wc chạy sau mv thành công nên sổ luôn tồn tại.
+        wn=0
+        if { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } 2>/dev/null > "$wfile.tmp" \
+          && mv "$wfile.tmp" "$wfile" 2>/dev/null; then
+          wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ' || true)
+        fi
         if [ "${wn:-0}" -ge 1 ] && [ "$wn" -le "$wlimit" ]; then
           continue   # miễn: sổ no-op giữ nguyên, nên kill xen kẽ lượt chờ vẫn đếm dồn tới SB_NOOP_MAX
         fi
