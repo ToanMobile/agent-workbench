@@ -43,6 +43,8 @@ Rules, from references/config-schema.json → merge_policy / migrations:
   or pattern match → machine gate (NOT human). Categories ship as money, auth, schema;
   setting categories replaces them all. A migration PR (migrations.globs) is always
   gated as category "migration" — no opt-out.
+  Keywords/patterns skip the added lines of the policy's own tests (POLICY_SELF_TESTS, a fixed list, #747): their
+  fixtures are not product code. Labels, paths, migrations, protected_paths and size still count those files.
   Extra tests: merge_policy.machine_gate.verify_commands (every gated PR) plus
   machine_gate.categories.<category>.verify_commands (that category only).
 - merge_policy.protected_paths (#605; default DEFAULT_PROTECTED_PATHS, a list replaces it, `[]` turns it off): a PR
@@ -120,6 +122,9 @@ DEFAULT_MACHINE_GATE = {
     },
 }
 DEFAULT_ALWAYS_HUMAN = DEFAULT_MACHINE_GATE   # tên cũ: test/tài liệu cũ còn import tên này
+# #747 (quyết định anh Đạt 31/10 16:17): chuỗi tiền / auth / schema làm fixture trong test của chính policy khiến PR sửa
+# policy tự bị machine gate. Hằng số cứng, không config/env nào nới; mọi file khác dưới tests/ vẫn bị dò.
+POLICY_SELF_TESTS = ["tests/super-board/test_merge_policy_*.sh"]
 # #605: xoá các file này chỉ người duyệt (luật chủ repo 28/10). `**/` để khớp cả file trong thư mục con.
 DEFAULT_PROTECTED_PATHS = [
     "**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json", ".agents/regression_matrix.active.json",
@@ -177,6 +182,21 @@ def added_text(diff: str) -> str:
     """
     out = [line[1:] for line in diff.split("\n") if line.startswith("+")]
     return " ".join(" ".join(out).lower().split())
+
+
+def drop_files(diff: str, globs) -> str:
+    """The diff without the file sections whose new path (`+++ b/<path>` before the first hunk) matches a glob.
+
+    A section whose new path cannot be read stays in (fail-closed). Only a real `diff --git ` line starts a section:
+    file content always carries a `+`/`-`/` ` prefix, so it cannot fake a header.
+    """
+    keep = []
+    for sec in re.split(r"(?m)^(?=diff --git )", diff):
+        new = next((h[4:].strip().strip('"') for h in sec.split("\n@@", 1)[0].split("\n") if h.startswith("+++ ")), "")
+        new = new[2:] if new.startswith("b/") else ""
+        if not (sec.startswith("diff --git ") and new and matches(new, globs)):
+            keep.append(sec)
+    return "".join(keep)
 
 
 def deleted_paths(diff: str) -> list[str]:
@@ -238,7 +258,7 @@ def main() -> int:
 
     labels = {(l.get("name") or "").lower() for l in meta.get("labels") or []}
     paths = [f.get("path") or "" for f in meta.get("files") or []]
-    added = added_text(diff)
+    added = added_text(drop_files(diff, POLICY_SELF_TESTS))
     added_nc = comment_free(added)
     body = meta.get("body") or ""
 
