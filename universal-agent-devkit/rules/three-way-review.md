@@ -1,0 +1,49 @@
+# Three-way review — the only code review that passes (31/10/2026)
+
+> User: "Bất cứ review nào 3 agent review là ai và 3 nó phải cùng thống nhất kết quả thì mới gọi là pass."
+
+## Who reviews
+| Reviewer | How it runs | Vote |
+|---|---|---|
+| **Claude Code** | `claude -p`, read-only (Read/Grep/Glob + read-only git) | its JSON `verdict` |
+| **Alibaba OpenCodeReview** | `bin/ocr-review --strict` — OCR's own LLM (full mode, `REVIEW_GATE_OCR=full`); the delegation spec never counts | pass iff the run completed and no critical/high comment |
+| **Antigravity** | `mcp-servers/antigravity-pm-mcp/bin/pm-review-audit.js` (pm_task_create → pm_dispatch kind=audit) | `audit-agent.json` verdict for this HEAD |
+
+Plus, never optional: `registry` (bin/known_patterns.py — a known bug pattern on an added line is a P0 recurring bug) and, at depth
+**deep** (≥ 50 changed lines or an auth / payment / schema / migration / secret path): a Claude **security** reviewer and the
+**verifier** (tries to refute every P0/P1).
+
+## Run it
+```
+bash .agents/devkit/bin/review-fanout.sh --base origin/<base>      # in the DevKit repo: universal-agent-devkit/bin/review-fanout.sh
+```
+The 3 reviewers run in parallel, each with its own timeout. Results: `<git-common-dir>/review-fanout/<code-hash>/summary.md|json`
+(one verdict, deduped findings with consensus marks, inline comments). The same code is never reviewed twice (cache by code hash).
+The Stop hook `hooks/review_gate.sh` runs the same thing (`--base verified`) and blocks until it PASSES.
+
+## PASS only when ALL hold (bin/review-merge.py)
+1. Claude, OCR and Antigravity (and registry; security + verifier when deep) each produced a result, status `ok`, verdict `pass`.
+   Missing, failed, timed out, errored, unavailable, or a `fail` vote → **FAIL**. No fail-open, no fallback, no release after N blocks.
+2. No blocking finding: a P0/P1 whose file:line + verbatim snippet is really in the code (cite-check, every reviewer) and that the
+   verifier did not refute. A refuted one is downgraded to P3 and logged. A `detect` hit of a known pattern is never refutable.
+3. Tokens / USD within `REVIEW_MAX_TOKENS` (3 000 000) / `REVIEW_MAX_USD` (15).
+4. Every accepted P0/P1 of an earlier run — an OPEN row `BUG-REV-<id>` in the regression checklist — is fixed **with a linked
+   regression test that passed**: `regression_checklist.py bug-link BUG-REV-<id> <test>` then `post-fix-gate.py --run-tests`.
+   Not a bug after all: `regression_checklist.py drop BUG-REV-<id>` (it stays in review_outcomes.jsonl).
+
+## Reviewer instructions (all three get the same)
+- Read the callers, callees and tests of every changed symbol; findings stay scoped to the change.
+- Known bug patterns of the repo (`.agents/instincts.md`) are in the prompt; a repeat is tagged `known_pattern` and is P0.
+- Severity: P0 data loss / security / crash / wrong result on a main path / recurring bug · P1 real bug on a reachable path ·
+  P2 should fix · P3 nit. Verdict pass only with no P0/P1.
+
+## Never again: the anti-regression loop
+- Fixed P0/P1 → regression test linked (rule 4 above blocks until then).
+- A new bug class → `instincts.py add "<title>" --cause … --rule … --detect '<regex>' --detect-glob '*.py'`: every later review
+  greps added lines for it (fanout and CI) and CI also runs it as a generated semgrep rule (`known_patterns.py semgrep`).
+- Every run → `.claude/audit-gate/review_outcomes.jsonl` (verdict, reasons, each finding's state: blocking / refuted / uncited / advisory).
+
+## Board / PR
+`approved-head` and `cross-review-approved` are posted ONLY after `review-fanout.sh` printed PASS for that exact head
+(summary.json `verdict: PASS`); paste the summary path into the Reviewer report. Merge policy stays autonomous (no human approval);
+the machine gates are this review + `.github/workflows/pr-review.yml` (lint, typecheck, tests, semgrep, gitleaks, OCR).
