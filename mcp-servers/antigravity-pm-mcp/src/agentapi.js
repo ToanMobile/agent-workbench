@@ -512,10 +512,11 @@ function reapOrphanAgy() {
 // daemon trong argv, khong theo chuoi bat ky. App GUI = file chinh `*.app/Contents/MacOS/<ten>`, TRU Python: python3 cua Homebrew /
 // python.org chay duoi ten `.../Python.app/Contents/MacOS/Python` (dung hinh tien trinh `while True` 30/10). java cua daemon: argv[0] khong dau cach,
 // hoac nam duoi `<thu muc>.app/Contents/` (JBR cua `Android Studio.app`: ten bundle co dau cach, #734). Dau cach chi duoc o doan ten bundle
-// (khong vuot `/`): khong khop tham so sau cua lenh khac, va khong backtrack bac hai tren argv dai (review r19).
+// (khong vuot `/`) nen tham so co `/` dung truoc khong bi khop; hai nhom lap co tran ({0,32}, {0,16}) de quet argv dai (agent dat, chay dong bo
+// tren event loop cua PM) khong backtrack bac hai (review r19: 960 KB `a.app/Contents/` lap lai 132 s => ~1 ms).
 const SHARED_BIN_RE = /^(emulator|qemu-system-[\w-]+|netsimd|crashpad_handler|watchman)$/;
-const SHARED_ARGV_RE = /^(?:\S*|\/(?:[^\/ ]+\/)*[^\/]+\.app\/Contents\/(?:\S+\/)?)\bjava\s.*\b(GradleDaemon|KotlinCompileDaemon)\b|^(\S*\/)?adb\s.*\bfork-server\b|\s--cbm-daemon-internal\b|^.*?\.app\/Contents\/MacOS\/(?!Python)/;
-const sharedDaemon = (argv) => SHARED_BIN_RE.test(path.basename(argv.split(/\s/)[0])) || SHARED_ARGV_RE.test(argv);
+const SHARED_ARGV_RE = /^(?:\S*|\/(?:[^\/ ]+\/){0,32}[^\/]+\.app\/Contents\/(?:[^\s\/]+\/){0,16})\bjava\s.*\b(GradleDaemon|KotlinCompileDaemon)\b|^(\S*\/)?adb\s.*\bfork-server\b|\s--cbm-daemon-internal\b|^.*?\.app\/Contents\/MacOS\/(?!Python)/;
+export const sharedDaemon = (argv) => SHARED_BIN_RE.test(path.basename(argv.split(/\s/)[0])) || SHARED_ARGV_RE.test(argv);
 const LSTART_RE = '(\\w{3} \\w{3} [ \\d]\\d \\d\\d:\\d\\d:\\d\\d \\d{4})';
 const REAP_MAX = 20;
 const psEnv = () => ({ ...process.env, LC_ALL: 'C', TZ: 'UTC' });   // lstart cung khuon voi procTag
