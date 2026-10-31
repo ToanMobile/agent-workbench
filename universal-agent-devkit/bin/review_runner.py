@@ -335,7 +335,8 @@ def run_agy(a, meta, ctx):
     out = os.path.join(a.run, "antigravity.json")
     rc, so, se, to = run_bounded(["node", cli, "--project", meta["repo"], "--base", meta["base"], "--out", out,
                                   "--message-file", msg, "--timeout", str(max(30, a.timeout - 30)),
-                                  *(["--scope", "full"] if full else [])], a.timeout, a.repo)
+                                  *(["--scope", "full", "--label", f"chunk {meta.get('chunk_id') or '?'}"] if full else [])],
+                                 a.timeout, a.repo)
     if to:
         return env_out(a.run, "antigravity", status="timeout", reason=f"Antigravity audit exceeded {a.timeout}s")
     if not os.path.isfile(out):

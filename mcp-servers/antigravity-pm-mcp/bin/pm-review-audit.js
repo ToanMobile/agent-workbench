@@ -2,7 +2,7 @@
 // pm-review-audit.js — Antigravity's vote in the 4-way review (universal-agent-devkit/bin/review-fanout.sh).
 // Same path as the MCP tools (pm_task_create -> pm_dispatch kind=audit), from a shell, then waits for audit-agent.json.
 //
-//   node bin/pm-review-audit.js --project ROOT --base REF --out FILE [--message-file F] [--timeout SEC] [--model M] [--scope diff|full]
+//   node bin/pm-review-audit.js --project ROOT --base REF --out FILE [--message-file F] [--timeout SEC] [--model M] [--scope diff|full] [--label TEXT]
 //
 // Always writes an envelope to --out: {reviewer:"antigravity", status: ok|failed|timeout|error|unavailable, verdict, findings,
 // reason}. status ok only when Antigravity wrote audit-agent.json for THIS head (auditedHead == git HEAD) after the dispatch.
@@ -22,7 +22,8 @@ const out = arg('--out');
 const timeoutS = Number(arg('--timeout', '1200')) || 1200;
 const model = arg('--model');
 const msgFile = arg('--message-file');
-const scope = arg('--scope', 'diff');   // diff | full (whole-solution audit of the files named in the message)
+const scope = arg('--scope', 'diff');
+const label = arg('--label');   // unique per parallel audit (a full scan runs one per chunk): the task id derives from the title   // diff | full (whole-solution audit of the files named in the message)
 
 function write(env) {
   const full = { reviewer: 'antigravity', usage: { tokens: 0, usd: 0 }, findings: [], ...env };
@@ -53,7 +54,8 @@ async function main() {
   try {
     created = await call('pm_task_create', {
       project,
-      title: scope === 'full' ? `[4-way full audit] ${head.slice(0, 12)}` : `[4-way review] ${head.slice(0, 12)} vs ${base}`,
+      title: (scope === 'full' ? `[4-way full audit] ${head.slice(0, 12)}` : `[4-way review] ${head.slice(0, 12)} vs ${base}`)
+        + (label ? ` ${label}` : ''),
       brief: (scope === 'full'
         ? 'CHI DOC, KHONG SUA. Audit TOAN BO cac file liet ke trong message (khong phai diff), doc tron ven tung file. '
         : `CHI DOC, KHONG SUA. Audit doc lap cho thay doi: \`git diff ${base}\` (commit tu ${base} + thay doi chua commit + file moi chua track). `)

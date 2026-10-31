@@ -148,7 +148,7 @@ def run_chunk(repo, out, ch, reviewers, timeouts, models):
     d = os.path.join(out, "chunks", f"{ch['id']}")
     os.makedirs(d, exist_ok=True)
     meta = {"mode": "full", "repo": repo, "base": "HEAD", "depth": "deep", "files": ch["files"], "untracked": [],
-            "chunk": ch["label"], "required": list(reviewers), "models": models}
+            "chunk": ch["label"], "chunk_id": ch["id"], "required": list(reviewers), "models": models}
     write_json(os.path.join(d, "meta.json"), meta)
     ctx = known_patterns.context(known_patterns.entries(repo), files=ch["files"])
     with open(os.path.join(d, "context.md"), "w", encoding="utf-8") as fh:

@@ -34,7 +34,7 @@ out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done
 ls -R . > "$STUB_DIR/ocr.seen"
 printf '{"status":"completed","comments":[],"manifest":{"coverage":{"completed":["src/app.py"],"failed":[]}},"summary":{"total_tokens":3}}' > "$out"
 SH
-echo "const fs=require('fs');const a=process.argv;fs.appendFileSync(process.env.STUB_DIR+'/agy.scopes',a[a.indexOf('--scope')+1]+'\n');fs.writeFileSync(a[a.indexOf('--out')+1],JSON.stringify({reviewer:'antigravity',status:'ok',verdict:'pass',findings:[]}));" > "$STUB/agy.js"
+echo "const fs=require('fs');const a=process.argv;fs.appendFileSync(process.env.STUB_DIR+'/agy.scopes',a[a.indexOf('--scope')+1]+'\n');fs.appendFileSync(process.env.STUB_DIR+'/agy.labels',a[a.indexOf('--label')+1]+'\n');fs.writeFileSync(a[a.indexOf('--out')+1],JSON.stringify({reviewer:'antigravity',status:'ok',verdict:'pass',findings:[]}));" > "$STUB/agy.js"
 chmod +x "$STUB/claude" "$STUB/grok" "$STUB/ocr"
 unset REVIEW_CLAUDE_MODEL REVIEW_GROK_MODEL
 export STUB_DIR="$STUB" PATH="$STUB:$PATH" REVIEW_CLAUDE_BIN="$STUB/claude" REVIEW_GROK_BIN="$STUB/grok" REVIEW_AGY_CLI="$STUB/agy.js"
@@ -72,6 +72,8 @@ q() { python3 -c "import json,sys; s=json.load(open('$S')); print($1)"; }
   "[('P0', 'INSTINCT-001', 'lib/old.py', 4)]" ] && ok "known bug pattern on an existing (not added) line → P0" || fail "registry: $(q 's["findings"]')"
 grep -q 'app.py' "$STUB/ocr.seen" && ! grep -q -E 'clone|node_modules' "$STUB/ocr.seen" && ok "OCR reviewed a scratch copy of the selection" || fail "ocr scope"
 grep -qx full "$STUB/agy.scopes" && ok "Antigravity audits with --scope full" || fail "agy scope: $(cat "$STUB/agy.scopes")"
+[ "$(sort "$STUB/agy.labels" | uniq -d | wc -l | tr -d ' ')" = 0 ] && [ "$(wc -l < "$STUB/agy.labels" | tr -d ' ')" -ge 2 ] \
+  && ok "each chunk's Antigravity audit has its own label (no task-id clash)" || fail "agy labels: $(cat "$STUB/agy.labels")"
 (cd "$P" && git status --porcelain | grep -q .) && fail "the scan changed the repo" || ok "report only: the repo is untouched"
 [ -z "$(cd "$P" && CLAUDE_PROJECT_DIR="$P" python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import regression_checklist as rc
 print(" ".join(k for k in rc.load_view(sys.argv[2])["items"] if k.startswith("BUG-REV-")))' "$DEVKIT_DIR/bin" "$P" 2>/dev/null)" ] \
