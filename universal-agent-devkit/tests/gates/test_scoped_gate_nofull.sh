@@ -165,7 +165,7 @@ printf '#!/usr/bin/env bash\necho smoke >> "%s/ran"\n' "$TMP" > tests/test_smoke
 printf '.claude/\n' > .gitignore
 echo '{"profile":"backend"}' > .agents/active-profile.json   # backend: không cần ảnh; ma trận mặc định (--tree chỉ tin ma trận đã commit)
 cat > templates/regression_matrix.json <<JSON
-{"project": "t", "rules": [{"component": "C", "watch_files": ["src/core.py", "src/lonely.py", "src/pyonly.py", "src/mv.py"],
+{"project": "t", "rules": [{"component": "C", "watch_files": ["src/core.py", "src/lonely.py", "src/pyonly.py", "src/m[v].py"],
   "mandatory_regression_tests": [{"id": "REG-C", "name": "c", "command": "echo REG-C >> '$TMP/ran'"}]}]}
 JSON
 git add -A && git commit -qm init || exit 2
@@ -228,11 +228,12 @@ if [ "$RC" = 0 ] && [ "$(last)" = "mode=scoped|core=|reason=" ] && ran cs && pri
 else fail "e7. test .py không suite nào chạy: exit $RC, runs.jsonl {$(last)}, ran: $(tr '\n' ' ' < "$TMP/ran" 2>/dev/null)"; printf '%s\n' "$GOUT" | tail -6; fi
 git checkout -q -- src/pyonly.py 2>/dev/null || git -C "$R" restore -q src/pyonly.py
 
-# e8. git mv file code sang tài liệu: luật theo dõi đường dẫn cũ (REG-C: src/mv.py) vẫn chạy, không xanh 0 test
+# e8. git mv file code sang tài liệu: luật theo dõi đường dẫn cũ (REG-C: glob src/m[v].py — ma trận không nêu đúng tên file nên vẫn tin
+#     được) vẫn chạy, không xanh 0 test
 git mv src/mv.py docs/mv.md
 gate --scoped
 if [ "$RC" = 0 ] && [ "$(last)" = "mode=scoped|core=|reason=" ] && ran REG-C; then ok "e8. git mv code → tài liệu: luật theo dõi đường dẫn cũ vẫn chạy"
-else fail "e8. git mv code → tài liệu: exit $RC, runs.jsonl {$(last)}, ran: $(tr '\n' ' ' < "$TMP/ran" 2>/dev/null) (mong REG-C)"; printf '%s\n' "$GOUT" | tail -5; fi
+else fail "e8. git mv code → tài liệu: exit $RC, runs.jsonl {$(last)}, ran: $(tr '\n' ' ' < "$TMP/ran" 2>/dev/null) (mong REG-C)"; printf '%s\n' "$GOUT" | grep -E "KẾT LUẬN|CHƯA|✖|⚠|orphan|mồ côi|không phủ|coverage" | head -8; fi
 git mv docs/mv.md src/mv.py
 
 [ "$FAILS" -eq 0 ] && { echo "PASS test_scoped_gate_nofull"; exit 0; }
