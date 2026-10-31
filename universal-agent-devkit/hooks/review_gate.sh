@@ -166,13 +166,21 @@ for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
             logline(f"[{ts}] work_in_progress failed: {e!r}")
         break
 
-cwd = d.get("cwd") or repo
-try:
-    repo_root = subprocess.run(
-        ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, timeout=10, check=True).stdout.strip()
-except Exception:
-    repo_root = repo
+# the project the bash part resolved (CLAUDE_PROJECT_DIR, or the session's worktree through session_worktree.project) wins
+# when it is a git tree; the payload cwd is the fallback for a project dir outside git (critical scan 31/10: cwd first sent
+# a worktree session back to main; hooks/tests/or_ported_contract_test.sh: a non-git CLAUDE_PROJECT_DIR keeps the cwd's repo)
+repo_root = repo
+for cwd in (repo, d.get("cwd")):
+    if not cwd or not isinstance(cwd, str):
+        continue
+    try:
+        repo_root = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10, check=True).stdout.strip() or repo
+        break
+    except Exception:
+        continue
+cwd = d.get("cwd") or repo   # relative paths in the transcript are relative to the session's own cwd
 
 # Per-session attempts file + reset helper (hoisted so PASS paths can clear it).
 # Reset on every clean exit so MAX bounds each *stuck episode*, not the whole
@@ -194,7 +202,16 @@ try:
     CODE_EXTS = source_exts(repo_root)
 except Exception:
     CODE_EXTS = (".kt", ".java")
-PATHSPECS = ["*" + e for e in CODE_EXTS]
+# hooks, CI, agent/tool config and the review machinery are code whatever their extension (audit 31/10: a .json/.yml
+# edit to the gate itself, or a hook without a source extension, slipped past the review)
+MACHINERY_SPECS = [":(glob)**/hooks/**", ":(glob).github/workflows/**", ":(glob)**/.claude/settings*.json",
+                   ":(glob)**/.mcp.json", ":(glob)**/mcp_config.json", ":(glob)**/bin/review*"]
+MACHINERY_RX = re.compile(r"(^|/)(hooks/|\.github/workflows/|\.claude/settings[^/]*\.json$|\.mcp\.json$|mcp_config\.json$|bin/review[^/]*$)")
+PATHSPECS = ["*" + e for e in CODE_EXTS] + MACHINERY_SPECS
+
+
+def is_code(path):
+    return path.endswith(tuple(CODE_EXTS)) or MACHINERY_RX.search(path) is not None
 
 # ── 1) uncommitted code changes? — modified-tracked + staged + UNTRACKED.
 #       Untracked new .kt (created via Write, not yet `git add`) is the most
@@ -214,7 +231,7 @@ try:
     try:
         import devkit_harness as _dh
         _vh = _dh.verified_head(repo_root, write=False)[0]
-        since = [f for f in _dh.files_since(repo_root, _vh) if f.endswith(tuple(CODE_EXTS)) and not os.path.islink(os.path.join(repo_root, f))]
+        since = [f for f in _dh.files_since(repo_root, _vh) if is_code(f) and not os.path.islink(os.path.join(repo_root, f))]
         since_base = _vh or ""
     except Exception as e:
         logline(f"[{ts}] since-files failed: {e!r}")
@@ -511,7 +528,7 @@ if tp and os.path.exists(tp):
                     tool_times.append((idx, _tt))
                 if name in ("Edit", "Write", "NotebookEdit"):
                     fp = inp.get("file_path") or inp.get("notebook_path") or ""
-                    if isinstance(fp, str) and fp.endswith(CODE_EXTS):
+                    if isinstance(fp, str) and is_code(fp):
                         hit = in_diff(fp)
                         if hit:
                             last_edit_idx = idx
@@ -735,9 +752,20 @@ if not fanout:
     logline(f"[{ts}] BLOCK — bin/review-fanout.sh not found next to the hook")
     _block(["⛔ REVIEW-GATE: không tìm thấy bin/review-fanout.sh (review 4 bên) — chặn (fail-closed). Cài lại DevKit: agent-kit init."])
 cmd_show = f"bash {fanout} --repo {repo_root} --base {review_base}"
+
+
+def _fanout_env():
+    """The environment the gate starts review-fanout with (audit 31/10): nothing inherited from settings.json or the session can
+    reduce the review (REVIEW_SKIP_REVIEWERS), swap a reviewer binary (REVIEW_*_BIN, REVIEW_AGY_CLI), lower the depth
+    (REVIEW_DEEP_LINES) or the budgets (REVIEW_MAX_*): the default gate always runs the default 4-way review."""
+    def stripped(k):
+        return (k == "REVIEW_SKIP_REVIEWERS" or k == "REVIEW_AGY_CLI" or k == "REVIEW_DEEP_LINES"
+                or (k.startswith("REVIEW_") and k.endswith("_BIN")) or k.startswith("REVIEW_MAX_"))
+    return {k: v for k, v in os.environ.items() if not stripped(k)}
+
 try:
     st = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--status"],
-                        capture_output=True, text=True, timeout=15)
+                        capture_output=True, text=True, timeout=15, env=_fanout_env())
     state, run_dir = (st.stdout.split() + ["", ""])[:2]
 except Exception as e:
     logline(f"[{ts}] review-fanout --status failed: {e!r} — BLOCK")
@@ -768,7 +796,7 @@ if os.environ.get("REVIEW_GATE_AUTOSTART", "1") == "0":   # tests (tests/lib/cle
 else:
     try:
         bg = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--background"],
-                            capture_output=True, text=True, timeout=15)
+                            capture_output=True, text=True, timeout=15, env=_fanout_env())
         logline(f"[{ts}] BLOCK — 4-way review started: {bg.stdout.strip()[:200]}")
         started = bg.stdout.strip() or bg.stderr.strip()
     except Exception as e:

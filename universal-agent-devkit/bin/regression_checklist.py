@@ -3327,7 +3327,13 @@ def _bug_command(args, project: Path) -> int:
                   + ("" if ok_ else f" — chưa đủ: cần ≥{REPEAT_MIN} lượt đạt và 0 hỏng"))
             return 0 if ok_ else 1
         if args.cmd == "drop":
+            if args.bug_id.startswith("BUG-REV-"):   # audit 31/10: a review-born bug row leaves only on a verifier's rejection
+                why = _rev_drop_refused(args.bug_id, getattr(args, "refuted_by", None))
+                if why:
+                    print(f"✖ {args.bug_id}: không xoá — {why}", file=sys.stderr)
+                    return 2
             item = drop(data, args.bug_id)
+            _append_drop_log(project, args.bug_id, item, getattr(args, "refuted_by", None))
             store([args.bug_id])   # dòng track bị bản chờ che cũng đi theo (không thì "đã xoá" mà dòng 💤 vẫn còn)
             if args.bug_id in read_pending(project):   # người đã drop: sổ chờ quên nó luôn, không thì nó hiện lại ở mọi view
                 pending_save_rows(project, data, [], drop=[args.bug_id])
@@ -3390,6 +3396,42 @@ def _restore_command(args, project: Path) -> int:
     return 0
 
 
+
+def _rev_drop_refused(bug_id, run_dir):
+    """None when RUN_DIR is a sealed review run (bin/review_sign.py) whose verifier refuted the finding behind bug_id."""
+    if not run_dir:
+        return "BUG-REV-* chỉ xoá được khi verifier của một lần review đã bác finding: --refuted-by <run dir>"
+    import importlib.util
+    sp = importlib.util.spec_from_file_location("review_sign", os.path.join(os.path.dirname(os.path.realpath(__file__)), "review_sign.py"))
+    rs = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(rs)
+    summ = os.path.join(run_dir, "summary.json")
+    if not rs.verify(summ):
+        return f"{summ} không có dấu HMAC hợp lệ (không phải kết quả review thật)"
+    cid = bug_id[len("BUG-REV-"):]
+    try:
+        with open(os.path.join(run_dir, "verifier.json"), encoding="utf-8") as fh:
+            ver = json.load(fh)
+        with open(summ, encoding="utf-8") as fh:
+            clusters = json.load(fh).get("findings") or []
+    except (OSError, ValueError) as e:
+        return f"không đọc được verifier.json / summary.json: {e}"
+    refuted = any(isinstance(v, dict) and str(v.get("id")) == cid and v.get("refuted") is True
+                  for v in (ver.get("verifications") or []))
+    state_ok = any(str(c.get("id")) == cid and c.get("state") == "refuted" for c in clusters)
+    return None if refuted and state_ok else f"verifier của {run_dir} không bác finding {cid}"
+
+
+def _append_drop_log(project, bug_id, item, run_dir):
+    """Append-only record of every dropped row (who/why/which review), next to the checklist."""
+    rec = {"ts": time.time(), "id": bug_id, "title": (item or {}).get("title"), "refuted_by": run_dir or "",
+           "agent": os.environ.get("DEVKIT_AGENT_ID", ""), "session": os.environ.get("CLAUDE_SESSION_ID", "")}
+    path = os.path.join(project, ".agents", "regression_drops.jsonl")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    with os.fdopen(fd, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Living regression checklist")
     parser.add_argument("--project", default=os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
@@ -3422,6 +3464,8 @@ def main(argv=None) -> int:
     p_bl.add_argument("test_ref")
     p_drop = sub.add_parser("drop", help="remove a bug or REQ row (not a bug / duplicate)")
     p_drop.add_argument("bug_id")
+    p_drop.add_argument("--refuted-by", dest="refuted_by", metavar="RUN_DIR",
+                        help="BUG-REV-* rows: the sealed review run whose verifier refuted this finding")
     p_ul = sub.add_parser("bug-unlink", help="undo a link that is context, not a guard")
     p_ul.add_argument("bug_id")
     p_ul.add_argument("test_ref")

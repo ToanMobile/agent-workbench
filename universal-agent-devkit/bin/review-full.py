@@ -285,7 +285,8 @@ def main(argv=None):
     out = a.out or os.path.join(common, "review-fanout", f"full-{head[:12]}-{time.strftime('%Y%m%d-%H%M%S')}")
     os.makedirs(out, exist_ok=True)
     os.chmod(out, 0o700)
-    models = {"claude": os.environ.get("REVIEW_CLAUDE_MODEL") or "opus", "grok": os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7"}
+    models = {"claude": os.environ.get("REVIEW_CLAUDE_MODEL") or "opus", "grok": os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7",
+              "antigravity": os.environ.get("REVIEW_AGY_MODEL") or "gemini-4-argon-high"}
     timeouts = {"claude": int(os.environ.get("REVIEW_TIMEOUT_CLAUDE", "1500")), "grok": int(os.environ.get("REVIEW_TIMEOUT_GROK", "1500")),
                 "antigravity": int(os.environ.get("REVIEW_TIMEOUT_AGY", "2400")), "security": 1500, "verifier": 1500}
     write_json(os.path.join(out, "plan.json"), {"repo": repo, "head": head, "files": len(files), "excluded": skipped,

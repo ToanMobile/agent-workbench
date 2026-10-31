@@ -267,6 +267,15 @@ def analyse(repo, meta, envs, ents=None):
     return dedupe(raw)
 
 
+def _vetoable(c):
+    """One verifier may not overrule two or more reviewers, nor a security P0 (audit 31/10): those stay blocking."""
+    if len(set(c.get("reviewers") or [])) >= 2:
+        return False
+    if c.get("severity") == "P0" and ("security" in (c.get("reviewers") or []) or "secur" in str(c.get("category") or "").lower()):
+        return False
+    return True
+
+
 def apply_verifications(clusters, verifier_env):
     ver = {}
     if verifier_env and verifier_env.get("status") == "ok":
@@ -278,7 +287,7 @@ def apply_verifications(clusters, verifier_env):
         c["verified"] = v is not None
         if not c["cited"]:
             c["state"] = "uncited"
-        elif c["severity"] in BLOCKING and v and v.get("refuted") is True and not c["deterministic"]:
+        elif c["severity"] in BLOCKING and v and v.get("refuted") is True and not c["deterministic"] and _vetoable(c):
             c["state"] = "refuted"
             c["refuted_reason"] = str(v.get("reason") or "")[:400]
             c["original_severity"], c["severity"] = c["severity"], "P3"
@@ -327,10 +336,19 @@ def model_reason(name, env, meta):
             return "model not recorded — cannot prove the review ran on Opus"
         if "opus" not in model.lower():
             return f"ran {model}, the review requires Claude Opus"
+        want = str((meta.get("models") or {}).get("claude") or "opus")
+        if want.lower() != "opus" and not model.lower().startswith(want.lower()):   # an exact pin (REVIEW_CLAUDE_MODEL=claude-opus-…)
+            return f"ran {model}, the review pins {want}"
     elif name == "grok":
         want = str((meta.get("models") or {}).get("grok") or "grok")
         if not model:
             return "model not recorded — cannot prove which Grok model reviewed"
+        if not model.lower().startswith(want.lower()):
+            return f"ran {model}, the review pins {want}"
+    elif name == "antigravity" and (meta.get("models") or {}).get("antigravity"):
+        want = str(meta["models"]["antigravity"])   # recorded and checked like Claude and Grok (audit 31/10)
+        if not model:
+            return "model not recorded — cannot prove which Antigravity model audited"
         if not model.lower().startswith(want.lower()):
             return f"ran {model}, the review pins {want}"
     return None
@@ -497,6 +515,10 @@ def main(argv=None):
             reasons.append("could not record accepted findings as bug rows: " + "; ".join(errs))
             verdict = "FAIL"
     skipped, _ = skipped_of(meta)
+    # a reduced run's PASS is its own verdict (audit 31/10): PASS_REDUCED never reads as the default gate's PASS; whether a
+    # PASS_REDUCED is accepted anywhere is a separate decision (review_gate.sh accepts only PASS)
+    if verdict == "PASS" and skipped:
+        verdict = "PASS_REDUCED"
     out = {"verdict": verdict, "reasons": reasons, "meta": meta, "usage": usage, "run": run_label(meta),
            "reduced": bool(skipped), "skipped_by_override": skipped,
            "reviewers": {n: {"status": e.get("status"), "verdict": e.get("verdict"), "reason": e.get("reason", ""),
@@ -504,7 +526,11 @@ def main(argv=None):
            "findings": clusters, "inline_comments": inline_comments(clusters), "ts": time.time()}
     with open(os.path.join(a.dir, "summary.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, indent=1)
-    md = summary_md(verdict, reasons, meta, envs, clusters, usage)
+    try:   # the HMAC seal --status checks (bin/review_sign.py; key outside the repo)
+        _sign_summary(os.path.join(a.dir, "summary.json"))
+    except Exception as e:   # noqa: BLE001 — an unsigned summary is simply not accepted by --status
+        print(f"review-merge: summary not signed ({e}) — --status will not accept it", file=sys.stderr)
+    md = summary_md("PASS" if verdict == "PASS_REDUCED" else verdict, reasons, meta, envs, clusters, usage)
     with open(os.path.join(a.dir, "summary.md"), "w", encoding="utf-8") as fh:
         fh.write(md)
     try:
@@ -513,7 +539,15 @@ def main(argv=None):
     except OSError as e:
         print(f"review-merge: outcome log not written: {e}", file=sys.stderr)
     sys.stdout.write(md)
-    return 0 if verdict == "PASS" else 1
+    return 0 if verdict in ("PASS", "PASS_REDUCED") else 1
+
+
+def _sign_summary(path):
+    import importlib.util
+    sp = importlib.util.spec_from_file_location("review_sign", os.path.join(os.path.dirname(os.path.realpath(__file__)), "review_sign.py"))
+    mod = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(mod)
+    mod.sign(path)
 
 
 if __name__ == "__main__":

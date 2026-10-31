@@ -515,6 +515,52 @@ class MergeFixes(Base):
         v, _, cl = self.verdict(envs)
         self.assertEqual((v, cl[0]["severity"]), ("FAIL", "P0"))
 
+    def test_antigravity_model_is_pinned(self):
+        """BUG-REV-merge-agy-model — Antigravity's model is recorded and checked like Claude's and Grok's."""
+        meta = dict(self.meta, models={"claude": "opus", "grok": "grok-4.7", "antigravity": "gemini-4-argon-high"})
+        envs = self.all_pass()
+        envs["antigravity"]["model"] = "gemini-4-argon-high"
+        self.assertEqual(self.verdict(envs, meta)[0], "PASS")
+        envs["antigravity"]["model"] = "gemini-2-flash"
+        v, reasons, _ = self.verdict(envs, meta)
+        self.assertEqual(v, "FAIL"); self.assertTrue(any("antigravity: ran gemini-2-flash" in r for r in reasons), reasons)
+        envs["antigravity"].pop("model")
+        self.assertEqual(self.verdict(envs, meta)[0], "FAIL")
+
+    def test_exact_claude_pin(self):
+        """BUG-REV-merge-exact-pins — REVIEW_CLAUDE_MODEL set to a full id: another Opus id fails."""
+        meta = dict(self.meta, models={"claude": "claude-opus-4-7", "grok": "grok-4.7"})
+        envs = self.all_pass()
+        envs["claude"]["model"] = "claude-opus-4-1"
+        self.assertEqual(self.verdict(envs, meta)[0], "FAIL")
+        envs["claude"]["model"] = "claude-opus-4-7"
+        self.assertEqual(self.verdict(envs, meta)[0], "PASS")
+
+    def test_single_verifier_cannot_veto_consensus_or_security_p0(self):
+        """BUG-REV-merge-verifier-veto — a finding of 2+ reviewers, or a security P0, survives one verifier's refutation."""
+        f = {"severity": "P1", "file": "app.py", "line": 9, "snippet": "return items[0]", "problem": "IndexError"}
+        envs = self.all_pass()
+        envs["claude"].update(verdict="fail", findings=[dict(f)])
+        envs["grok"].update(verdict="fail", findings=[dict(f)])
+        clusters = rm.analyse(self.repo, self.meta, envs)
+        ver = {"reviewer": "verifier", "status": "ok", "verifications": [{"id": c["id"], "refuted": True, "reason": "no"} for c in clusters]}
+        rm.apply_verifications(clusters, ver)
+        self.assertEqual([c["state"] for c in clusters], ["blocking"])
+        sec = dict(f, severity="P0", category="security")
+        envs = self.all_pass()
+        envs["claude"].update(verdict="fail", findings=[sec])
+        clusters = rm.analyse(self.repo, self.meta, envs)
+        rm.apply_verifications(clusters, {"reviewer": "verifier", "status": "ok",
+                                          "verifications": [{"id": c["id"], "refuted": True} for c in clusters]})
+        self.assertEqual(clusters[0]["state"], "blocking")
+        one = dict(f)
+        envs = self.all_pass()
+        envs["claude"].update(verdict="fail", findings=[one])
+        clusters = rm.analyse(self.repo, self.meta, envs)
+        rm.apply_verifications(clusters, {"reviewer": "verifier", "status": "ok",
+                                          "verifications": [{"id": c["id"], "refuted": True} for c in clusters]})
+        self.assertEqual(clusters[0]["state"], "refuted")   # control: a single reviewer's P1 can still be refuted
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

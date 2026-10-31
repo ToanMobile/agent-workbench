@@ -13900,6 +13900,917 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_review_gate_4way.sh"
       ]
+    },
+    "BUG-REV-gpp-signed": {
+      "id": "BUG-REV-gpp-signed",
+      "kind": "bug",
+      "title": "guard-protected-push: --signed takes no separate value (it swallowed the remote, refspecs shifted)",
+      "cause": null,
+      "component": "guard-protected-push",
+      "created_at": "2026-10-31 12:24:47",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:24:47",
+      "linked_ts": 1793424287.9452028,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_protected_push.sh"
+      ]
+    },
+    "BUG-REV-gpp-repo-opt": {
+      "id": "BUG-REV-gpp-repo-opt",
+      "kind": "bug",
+      "title": "guard-protected-push: with --repo every positional word is a refspec",
+      "cause": null,
+      "component": "guard-protected-push",
+      "created_at": "2026-10-31 12:24:48",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:24:48",
+      "linked_ts": 1793424288.611284,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_protected_push.sh"
+      ]
+    },
+    "BUG-REV-gpp-wrappers": {
+      "id": "BUG-REV-gpp-wrappers",
+      "kind": "bug",
+      "title": "guard-protected-push: keywords/wrappers (if, time, {, nohup, nice, timeout, env opts) and sh -c are read via shell_norm",
+      "cause": null,
+      "component": "guard-protected-push",
+      "created_at": "2026-10-31 12:24:49",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:24:49",
+      "linked_ts": 1793424289.281846,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_protected_push.sh"
+      ]
+    },
+    "BUG-REV-gpp-comment": {
+      "id": "BUG-REV-gpp-comment",
+      "kind": "bug",
+      "title": "guard-protected-push: a quote inside a comment no longer hides the next command line",
+      "cause": null,
+      "component": "guard-protected-push",
+      "created_at": "2026-10-31 12:24:49",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:24:49",
+      "linked_ts": 1793424289.993193,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_protected_push.sh"
+      ]
+    },
+    "BUG-REV-gpp-payload": {
+      "id": "BUG-REV-gpp-payload",
+      "kind": "bug",
+      "title": "guard-protected-push: camelCase toolInput payload, FIFO-safe config read, errors reported",
+      "cause": null,
+      "component": "guard-protected-push",
+      "created_at": "2026-10-31 12:24:50",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:24:50",
+      "linked_ts": 1793424290.673526,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_protected_push.sh"
+      ]
+    },
+    "BUG-REV-secrets-dotenv-any": {
+      "id": "BUG-REV-secrets-dotenv-any",
+      "kind": "bug",
+      "title": "guard-secrets: any .env(.part)* and .env globs are secret; only example/sample/template/dist allowed",
+      "cause": null,
+      "component": "guard-secrets",
+      "created_at": "2026-10-31 12:24:51",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01",
+        "REG-DK-GIT241-ATTR-01",
+        "REG-DK-GITHOOKS-HEAL-01",
+        "REG-DK-GUARD-SECRETS-01",
+        "REG-DK-SUITE-CACHE-FIFO-01",
+        "REG-DK-WT-REMOVE-DURATIONS-01",
+        "REG-SB-DRIFT-01",
+        "REG-SB-QA-REPORT-01",
+        "REG-SB-REVIEW-SLOT-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:24:51",
+      "linked_ts": 1793424291.372556,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh"
+      ]
+    },
+    "BUG-REV-secrets-dequote": {
+      "id": "BUG-REV-secrets-dequote",
+      "kind": "bug",
+      "title": "guard-secrets: names are matched after quote removal and shell globs (.e\"n\"v, .en?, id_*)",
+      "cause": null,
+      "component": "guard-secrets",
+      "created_at": "2026-10-31 12:24:52",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01",
+        "REG-DK-GIT241-ATTR-01",
+        "REG-DK-GITHOOKS-HEAL-01",
+        "REG-DK-GUARD-SECRETS-01",
+        "REG-DK-SUITE-CACHE-FIFO-01",
+        "REG-DK-WT-REMOVE-DURATIONS-01",
+        "REG-SB-DRIFT-01",
+        "REG-SB-QA-REPORT-01",
+        "REG-SB-REVIEW-SLOT-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:24:52",
+      "linked_ts": 1793424292.071717,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh"
+      ]
+    },
+    "BUG-REV-secrets-comment": {
+      "id": "BUG-REV-secrets-comment",
+      "kind": "bug",
+      "title": "guard-secrets: a # comment is skipped to end of line (its quotes no longer pair with later text)",
+      "cause": null,
+      "component": "guard-secrets",
+      "created_at": "2026-10-31 12:24:52",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01",
+        "REG-DK-GIT241-ATTR-01",
+        "REG-DK-GITHOOKS-HEAL-01",
+        "REG-DK-GUARD-SECRETS-01",
+        "REG-DK-SUITE-CACHE-FIFO-01",
+        "REG-DK-WT-REMOVE-DURATIONS-01",
+        "REG-SB-DRIFT-01",
+        "REG-SB-QA-REPORT-01",
+        "REG-SB-REVIEW-SLOT-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:24:52",
+      "linked_ts": 1793424292.7683809,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh"
+      ]
+    },
+    "BUG-REV-secrets-payload": {
+      "id": "BUG-REV-secrets-payload",
+      "kind": "bug",
+      "title": "guard-secrets: camelCase toolName/toolInput/filePath judged; errors reported on stderr",
+      "cause": null,
+      "component": "guard-secrets",
+      "created_at": "2026-10-31 12:24:53",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01",
+        "REG-DK-GIT241-ATTR-01",
+        "REG-DK-GITHOOKS-HEAL-01",
+        "REG-DK-GUARD-SECRETS-01",
+        "REG-DK-SUITE-CACHE-FIFO-01",
+        "REG-DK-WT-REMOVE-DURATIONS-01",
+        "REG-SB-DRIFT-01",
+        "REG-SB-QA-REPORT-01",
+        "REG-SB-REVIEW-SLOT-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:24:53",
+      "linked_ts": 1793424293.471869,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_secrets.sh"
+      ]
+    },
+    "BUG-REV-review-gate-repo-first": {
+      "id": "BUG-REV-review-gate-repo-first",
+      "kind": "bug",
+      "title": "review_gate: the resolved project (CLAUDE_PROJECT_DIR / session worktree) wins over the payload cwd",
+      "cause": null,
+      "component": "review_gate",
+      "created_at": "2026-10-31 12:27:55",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:27:55",
+      "linked_ts": 1793424475.708101,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_gate_4way.sh"
+      ]
+    },
+    "BUG-REV-timing-current-edit": {
+      "id": "BUG-REV-timing-current-edit",
+      "kind": "bug",
+      "title": "review_timing_guard: the edit that fired the hook is not counted, so a second unreviewed fix is warned",
+      "cause": null,
+      "component": "review_timing_guard",
+      "created_at": "2026-10-31 12:27:56",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:27:56",
+      "linked_ts": 1793424476.411124,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_timing_guard_bursts.sh"
+      ]
+    },
+    "BUG-REV-timing-fanout-review": {
+      "id": "BUG-REV-timing-fanout-review",
+      "kind": "bug",
+      "title": "review_timing_guard: a review-fanout.sh run counts as the review; MultiEdit counts as an edit",
+      "cause": null,
+      "component": "review_timing_guard",
+      "created_at": "2026-10-31 12:27:57",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:27:57",
+      "linked_ts": 1793424477.103078,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_timing_guard_bursts.sh"
+      ]
+    },
+    "BUG-REV-timing-relative-path": {
+      "id": "BUG-REV-timing-relative-path",
+      "kind": "bug",
+      "title": "review_timing_guard: relative file_path resolved against the session cwd; operator precedence fixed",
+      "cause": null,
+      "component": "review_timing_guard",
+      "created_at": "2026-10-31 12:27:57",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P2",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:27:57",
+      "linked_ts": 1793424477.83202,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_timing_guard_bursts.sh"
+      ]
+    },
+    "BUG-REV-ccs-settings-wipe": {
+      "id": "BUG-REV-ccs-settings-wipe",
+      "kind": "bug",
+      "title": "cc-switcher syncToCcSwitchApp: an unparsable settings.json is left alone, never overwritten with {}",
+      "cause": null,
+      "component": "cc-switcher",
+      "created_at": "2026-10-31 13:19:23",
+      "task": null,
+      "tests": [
+        "REG-AUTO-CC-SWITCHER-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:19:23",
+      "linked_ts": 1793427563.883911,
+      "runs_in_suite": [
+        "mcp-servers/cc-switcher-mcp/tests/audit-fixes.test.js"
+      ]
+    },
+    "BUG-REV-ccs-carryover-refire": {
+      "id": "BUG-REV-ccs-carryover-refire",
+      "kind": "bug",
+      "title": "cc-switcher daemon: carried log tail dropped after a 429 match / a jump, no second rotation from the same line",
+      "cause": null,
+      "component": "cc-switcher",
+      "created_at": "2026-10-31 13:19:26",
+      "task": null,
+      "tests": [
+        "REG-AUTO-CC-SWITCHER-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:19:26",
+      "linked_ts": 1793427566.069076,
+      "runs_in_suite": [
+        "mcp-servers/cc-switcher-mcp/tests/audit-fixes.test.js"
+      ]
+    },
+    "BUG-REV-agpm-web-provider-types": {
+      "id": "BUG-REV-agpm-web-provider-types",
+      "kind": "bug",
+      "title": "antigravity-pm policy: qa-visual/playwright providers count for browser/script tasks (one shared list)",
+      "cause": null,
+      "component": "antigravity-pm",
+      "created_at": "2026-10-31 13:19:28",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:19:28",
+      "linked_ts": 1793427568.721062,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/policy.test.js"
+      ]
+    },
+    "BUG-REV-agpm-config-null-object": {
+      "id": "BUG-REV-agpm-config-null-object",
+      "kind": "bug",
+      "title": "antigravity-pm loadConfig: null/primitive object keys fall back to defaults with a warning",
+      "cause": null,
+      "component": "antigravity-pm",
+      "created_at": "2026-10-31 13:19:31",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:19:31",
+      "linked_ts": 1793427571.0692742,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/config-prompt.test.js"
+      ]
+    },
+    "BUG-REV-agpm-task-lock": {
+      "id": "BUG-REV-agpm-task-lock",
+      "kind": "bug",
+      "title": "antigravity-pm withFileLock: token-owned release, atomic stale takeover; createTask numbers under a project lock",
+      "cause": null,
+      "component": "antigravity-pm",
+      "created_at": "2026-10-31 13:19:33",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:19:33",
+      "linked_ts": 1793427573.692497,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/task-lock.test.js"
+      ]
+    },
+    "BUG-REV-agpm-worktree-leak": {
+      "id": "BUG-REV-agpm-worktree-leak",
+      "kind": "bug",
+      "title": "antigravity-pm dongBangCay: a throw after worktree add removes the frozen worktree",
+      "cause": null,
+      "component": "antigravity-pm",
+      "created_at": "2026-10-31 13:19:36",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:19:36",
+      "linked_ts": 1793427576.019768,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/worktree-freeze.test.js"
+      ]
+    },
+    "BUG-REV-review-summary-hmac": {
+      "id": "BUG-REV-review-summary-hmac",
+      "kind": "bug",
+      "title": "review-fanout: summary.json sealed with HMAC (key outside the repo, 600); --status says UNSIGNED for an edited or hand-written summary",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:45:59",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:45:59",
+      "linked_ts": 1793429159.796839,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
+      ]
+    },
+    "BUG-REV-review-status-in-hash": {
+      "id": "BUG-REV-review-status-in-hash",
+      "kind": "bug",
+      "title": "review-fanout code hash: regression_status.json counts (a dropped BUG-REV row no longer keeps an old PASS)",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:00",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:00",
+      "linked_ts": 1793429160.636197,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
+      ]
+    },
+    "BUG-REV-review-tamper-guard": {
+      "id": "BUG-REV-review-tamper-guard",
+      "kind": "bug",
+      "title": "guard-review-tamper: agent writes/deletes to .git/review-fanout, .claude/settings*, hooks/, bin/review*, workflows, review key blocked",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:01",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:01",
+      "linked_ts": 1793429161.395799,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_guard_review_tamper.sh"
+      ]
+    },
+    "BUG-REV-gate-env-allowlist": {
+      "id": "BUG-REV-gate-env-allowlist",
+      "kind": "bug",
+      "title": "review_gate: inherited REVIEW_SKIP_REVIEWERS / REVIEW_*_BIN / REVIEW_AGY_CLI / REVIEW_MAX_* never reach the gate's review",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:02",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:02",
+      "linked_ts": 1793429162.137525,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_gate_4way.sh"
+      ]
+    },
+    "BUG-REV-review-skip-token": {
+      "id": "BUG-REV-review-skip-token",
+      "kind": "bug",
+      "title": "review-fanout --skip: one-shot token bound to the code hash, 6h expiry, logged; reuse or mismatch refused",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:02",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:02",
+      "linked_ts": 1793429162.892618,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
+      ]
+    },
+    "BUG-REV-review-pass-reduced": {
+      "id": "BUG-REV-review-pass-reduced",
+      "kind": "bug",
+      "title": "review-merge/fanout: a reduced (skipped reviewer) run is PASS_REDUCED (exit 6), never PASS",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:03",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:03",
+      "linked_ts": 1793429163.659832,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
+      ]
+    },
+    "BUG-REV-review-diff-once": {
+      "id": "BUG-REV-review-diff-once",
+      "kind": "bug",
+      "title": "review-fanout: review.diff written once before the reviewers start (runners reuse it)",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:04",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:04",
+      "linked_ts": 1793429164.448608,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
+      ]
+    },
+    "BUG-REV-merge-agy-model": {
+      "id": "BUG-REV-merge-agy-model",
+      "kind": "bug",
+      "title": "review-merge: Antigravity's model checked against its pin",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:05",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:05",
+      "linked_ts": 1793429165.211818,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_merge_verdict.py"
+      ]
+    },
+    "BUG-REV-merge-exact-pins": {
+      "id": "BUG-REV-merge-exact-pins",
+      "kind": "bug",
+      "title": "review-merge: an exact Claude pin is matched exactly, not by family",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:05",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:05",
+      "linked_ts": 1793429165.975601,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_merge_verdict.py"
+      ]
+    },
+    "BUG-REV-agy-audit-head-failclosed": {
+      "id": "BUG-REV-agy-audit-head-failclosed",
+      "kind": "bug",
+      "title": "pm-review-audit: missing/different auditedHead or a working-tree change during the audit fails closed",
+      "cause": null,
+      "component": "antigravity-pm",
+      "created_at": "2026-10-31 13:46:06",
+      "task": null,
+      "tests": [
+        "REG-AUTO-ANTIGRAVITY-PM-MCP-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P0",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:06",
+      "linked_ts": 1793429166.751928,
+      "runs_in_suite": [
+        "mcp-servers/antigravity-pm-mcp/tests/review-audit-judge.test.js"
+      ]
+    },
+    "BUG-REV-merge-verifier-veto": {
+      "id": "BUG-REV-merge-verifier-veto",
+      "kind": "bug",
+      "title": "review-merge: one verifier cannot refute a finding of 2+ reviewers or a security P0",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:07",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:07",
+      "linked_ts": 1793429167.516022,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_merge_verdict.py"
+      ]
+    },
+    "BUG-REV-review-untrusted-diff": {
+      "id": "BUG-REV-review-untrusted-diff",
+      "kind": "bug",
+      "title": "review-fanout: hidden unicode / reviewer-directed text in the diff forces depth=deep; prompts mark the diff untrusted",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:08",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:08",
+      "linked_ts": 1793429168.284244,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
+      ]
+    },
+    "BUG-REV-grok-no-shell": {
+      "id": "BUG-REV-grok-no-shell",
+      "kind": "bug",
+      "title": "review_runner: Grok reviewer has no run_terminal_cmd",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:09",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:09",
+      "linked_ts": 1793429169.028515,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
+      ]
+    },
+    "BUG-REV-review-drop-needs-refute": {
+      "id": "BUG-REV-review-drop-needs-refute",
+      "kind": "bug",
+      "title": "regression_checklist drop: a BUG-REV row leaves only with a sealed run whose verifier refuted it; drops logged append-only",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:09",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:09",
+      "linked_ts": 1793429169.762325,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
+      ]
+    },
+    "BUG-REV-review-gate-machinery-scope": {
+      "id": "BUG-REV-review-gate-machinery-scope",
+      "kind": "bug",
+      "title": "review_gate: hooks, CI workflows, settings/mcp config and bin/review* are code for the gate",
+      "cause": null,
+      "component": "review-gate",
+      "created_at": "2026-10-31 13:46:10",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:10",
+      "linked_ts": 1793429170.5066628,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_gate_4way.sh"
+      ]
+    },
+    "BUG-REV-ci-dep-scans": {
+      "id": "BUG-REV-ci-dep-scans",
+      "kind": "bug",
+      "title": "pr-review.yml: dependency-review, osv-scanner, pip-audit, npm audit; semgrep pinned exactly",
+      "cause": null,
+      "component": "ci",
+      "created_at": "2026-10-31 13:46:11",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:11",
+      "linked_ts": 1793429171.239003,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_pr_review_workflow.sh"
+      ]
+    },
+    "BUG-REV-ci-triggers": {
+      "id": "BUG-REV-ci-triggers",
+      "kind": "bug",
+      "title": "pr-review.yml: also runs on push to main and in the merge queue",
+      "cause": null,
+      "component": "ci",
+      "created_at": "2026-10-31 13:46:11",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 13:46:11",
+      "linked_ts": 1793429171.979821,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_pr_review_workflow.sh"
+      ]
     }
   },
   "meta": {

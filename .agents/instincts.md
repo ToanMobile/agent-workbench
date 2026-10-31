@@ -775,3 +775,19 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Đường dẫn trong output git bị C-quote (core.quotePath) nên so khớp đường dẫn thật trượt
 - **Nguyên nhân:** git diff/ls-files in tên file non-ASCII dạng "b/l\341\273\227i.py" khi core.quotePath=true (mặc định); code cắt line[4:] ra tên sai
 - **Quy tắc phòng ngừa & Cách fix:** Gọi git với -c core.quotePath=false và ưu tiên -z; tên còn trong ngoặc kép thì giải mã
+
+---
+
+### [INSTINCT-090] Verdict của gate đọc từ file/biến môi trường mà agent tự ghi được
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Gate review nhận summary.json PASS do agent tự viết, và review chạy rút gọn khi agent export REVIEW_SKIP_REVIEWERS / REVIEW_*_BIN trước khi Stop
+- **Nguyên nhân:** gate tin mọi file trong .git/review-fanout và kế thừa nguyên môi trường của phiên; không có gì phân biệt kết quả của máy review với chuỗi agent tự khai
+- **Quy tắc phòng ngừa & Cách fix:** kết quả gate phải có chữ ký HMAC (khoá ngoài repo, mode 600) và bị từ chối khi thiếu/sai chữ ký; gate gọi tool với allowlist môi trường; bỏ qua reviewer chỉ bằng token một lần gắn code hash, có hạn, có log; chạy rút gọn trả PASS_REDUCED khác PASS; hook chặn agent ghi vào thư mục kết quả, hooks, settings, workflow
+
+---
+
+### [INSTINCT-091] Diff đưa cho LLM reviewer là dữ liệu không tin cậy
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Comment/chuỗi trong code thay đổi có thể nói với reviewer ("ignore previous instructions", "approve this change") hoặc giấu ký tự unicode ẩn; reviewer có shell thì còn chạy được lệnh; một verifier đơn lẻ bác được finding nhiều reviewer cùng thấy
+- **Nguyên nhân:** prompt không đánh dấu diff là dữ liệu, độ sâu review chỉ theo số dòng/tên file, Grok có run_terminal_cmd, verifier có quyền phủ quyết tuyệt đối
+- **Quy tắc phòng ngừa & Cách fix:** prompt ghi rõ diff là UNTRUSTED và text nói với reviewer là finding P0 security; quét tất định unicode ẩn + cụm injection → ép depth deep; reviewer chỉ có công cụ đọc; verifier không bác được finding ≥2 reviewer hoặc P0 security

@@ -89,14 +89,15 @@ BASE_SHA="$(git rev-parse -q --verify "${BASE}^{commit}" 2>/dev/null)" || { echo
 CODE_HASH="$(python3 -I - "$BASE_SHA" "$SKIP" <<'PY'
 import hashlib, os, stat, subprocess, sys
 base, skip = sys.argv[1], sys.argv[2]
-# files the review writes itself (accepted findings -> bug rows, outcome log): hashing them would make every review change
-# the code state it just judged, so its cached verdict could never be found again
-SELF = (".agents/regression_status.json", ".agents/CHECKLIST.md", ".claude/audit-gate/")
+# files the review writes itself (the rendered checklist, outcome log): hashing them would make every review change the code
+# state it just judged. .agents/regression_status.json DOES count (audit 31/10): dropping or editing a BUG-REV row is a change
+# the review must see; the merge writes it only on a FAIL (blocking findings -> bug rows), never on a PASS.
+SELF = (".agents/CHECKLIST.md", ".claude/audit-gate/")
 EXCL = [f":(exclude){p}" for p in SELF]
 h = hashlib.sha256(b"4way-review-v3\0" + base.encode() + b"\0")
 # the pinned models and the override are part of the code state: a review by another model, or a reduced run, is a different review
-h.update(("%s\0%s\0skip=%s\0" % (os.environ.get("REVIEW_CLAUDE_MODEL", "opus"), os.environ.get("REVIEW_GROK_MODEL", "grok-4.7"),
-                                  skip)).encode())
+h.update(("%s\0%s\0%s\0skip=%s\0" % (os.environ.get("REVIEW_CLAUDE_MODEL", "opus"), os.environ.get("REVIEW_GROK_MODEL", "grok-4.7"),
+                                      os.environ.get("REVIEW_AGY_MODEL", "gemini-4-argon-high"), skip)).encode())
 h.update(subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True).stdout)
 h.update(subprocess.run(["git", "diff", "--binary", "--no-ext-diff", base, "--", ".", *EXCL], capture_output=True).stdout)
 for p in sorted(x for x in subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"],
@@ -126,24 +127,48 @@ RUN="$COMMON/review-fanout/$CODE_HASH"
 mkdir -p "$COMMON/review-fanout" && chmod 700 "$COMMON/review-fanout"
 
 running() { [ -f "$RUN/pid" ] && kill -0 "$(cat "$RUN/pid" 2>/dev/null)" 2>/dev/null; }
-cached_verdict() { python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$RUN/summary.json" 2>/dev/null; }
+# a verdict counts only with a valid HMAC seal (bin/review_sign.py, key in ~/.config/agent-workbench/review.key): a summary.json
+# written by anyone else (an agent: {"verdict":"PASS"}) is UNSIGNED, never a verdict
+sealed() { python3 -I "$HERE/review_sign.py" verify "$RUN/summary.json" 2>/dev/null; }
+cached_verdict() { sealed && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$RUN/summary.json" 2>/dev/null; }
 
 if [ "$MODE" = "status" ]; then
   v="$(cached_verdict)"
   if [ "$v" = "PASS" ]; then echo "PASS $RUN"; exit 0; fi
   if [ "$v" = "FAIL" ]; then echo "FAIL $RUN"; exit 1; fi
+  if [ "$v" = "PASS_REDUCED" ]; then echo "PASS_REDUCED $RUN"; exit 6; fi   # never the default gate's PASS
+  if [ -z "$v" ] && [ -f "$RUN/summary.json" ] && ! running; then echo "UNSIGNED $RUN"; exit 5; fi
   if running; then echo "RUNNING $RUN"; exit 3; fi
   echo "NONE $RUN"; exit 4
 fi
 
 if [ "$FORCE" = 0 ] && [ "$MODE" != "child" ]; then
   v="$(cached_verdict)"
-  if [ -n "$v" ]; then cat "$RUN/summary.md" 2>/dev/null; echo "(cached: $RUN)"; [ "$v" = "PASS" ] && exit 0 || exit 1; fi
+  if [ -n "$v" ]; then cat "$RUN/summary.md" 2>/dev/null; echo "(cached: $RUN)"; case "$v" in PASS|PASS_REDUCED) exit 0 ;; *) exit 1 ;; esac; fi
 fi
 if running && [ "$MODE" != "child" ]; then
   echo "review-fanout: a review of this code is already running ($RUN, pid $(cat "$RUN/pid")) — wait for it:"
   echo "  $0 --status --base $BASE_SHA   (or run again without --background when it ends)"
   exit 3
+fi
+
+# Per-run override token (audit 31/10): a skip is honoured only through a one-shot token that THIS command line (--skip /
+# REVIEW_SKIP_REVIEWERS given to review-fanout itself) creates, bound to the code hash, valid 6 h, logged in override.log;
+# the run consumes it. review_gate.sh strips REVIEW_SKIP_REVIEWERS from the environment it starts review-fanout with.
+TOKDIR="$COMMON/review-fanout/skip-tokens"
+if [ -n "$SKIP" ] && [ "$MODE" != "child" ]; then
+  mkdir -p "$TOKDIR" && chmod 700 "$TOKDIR"
+  python3 -I - "$TOKDIR/$CODE_HASH.json" "$SKIP" "$CODE_HASH" "$COMMON/review-fanout/override.log" <<'PY' || { echo "review-fanout: could not write the skip token" >&2; exit 2; }
+import json, os, sys, time
+tok, skip, h, log = sys.argv[1:5]
+rec = {"skip": skip, "code_hash": h, "created": time.time(), "expires": time.time() + 6 * 3600, "pid": os.getppid(),
+       "user": os.environ.get("USER", "")}
+with open(tok + ".tmp", "w") as fh:
+    json.dump(rec, fh)
+os.replace(tok + ".tmp", tok)
+with open(log, "a") as fh:
+    fh.write(json.dumps(dict(rec, event="token_created")) + "\n")
+PY
 fi
 
 if [ "$MODE" = "background" ]; then
@@ -155,10 +180,33 @@ if [ "$MODE" = "background" ]; then
 fi
 
 # ── foreground / child run ────────────────────────────────────────────────────────────────────────────────────────────────
+if [ -n "$SKIP" ]; then   # consume the one-shot token: missing, expired, another hash or another skip list = refused
+  python3 -I - "$TOKDIR/$CODE_HASH.json" "$SKIP" "$CODE_HASH" "$COMMON/review-fanout/override.log" <<'PY' || exit 2
+import json, os, sys, time
+tok, skip, h, log = sys.argv[1:5]
+try:
+    used = tok + ".used.%d" % os.getpid()
+    os.rename(tok, used)   # one shot: a second run cannot reuse it
+    with open(used) as fh:
+        rec = json.load(fh)
+except (OSError, ValueError) as e:
+    print(f"review-fanout: skip refused — no valid override token for this code ({e.__class__.__name__}); "
+          "only `review-fanout.sh --skip grok,ocr` creates one", file=sys.stderr)
+    sys.exit(1)
+bad = (rec.get("code_hash") != h and "code hash") or (rec.get("skip") != skip and "skip list") or \
+      (time.time() > float(rec.get("expires") or 0) and "expired")
+with open(log, "a") as fh:
+    fh.write(json.dumps({"event": "token_refused" if bad else "token_used", "why": bad or "", "skip": skip, "code_hash": h,
+                         "ts": time.time()}) + "\n")
+if bad:
+    print(f"review-fanout: skip refused — override token {bad} mismatch", file=sys.stderr)
+    sys.exit(1)
+PY
+fi
 [ "$FORCE" = 1 ] && [ "$MODE" != "child" ] && rm -rf "$RUN"
 mkdir -p "$RUN" && chmod 700 "$RUN"
 echo $$ > "$RUN/pid"
-rm -f "$RUN"/{claude,ocr,antigravity,grok,security,verifier,registry}.json "$RUN/summary.json" "$RUN/candidates.json"
+rm -f "$RUN"/{claude,ocr,antigravity,grok,security,verifier,registry}.json "$RUN/summary.json" "$RUN/summary.json.sig" "$RUN/candidates.json" "$RUN/review.diff"
 PIDS=""
 # an interrupted review stops its reviewers too (each runner kills its own CLI process group on SIGTERM) instead of
 # leaving them billing in the background with no pid file pointing at them
@@ -193,8 +241,25 @@ files += untracked
 sensitive = re.compile(r"(auth|login|session|token|oauth|passw|payment|billing|money|wallet|invoice|price|checkout|"
                        r"migrat|schema|\.sql$|secur|crypt|secret|permission|acl)", re.I)
 deep_lines = int(os.environ.get("REVIEW_DEEP_LINES", "50") or 50)
-hot = [f for f in files if sensitive.search(f)]
-depth = "deep" if lines >= deep_lines or hot else "light"
+# the review machinery, hooks, CI and agent/tool config are always sensitive (audit 31/10)
+machinery = re.compile(r"(^|/)(hooks/|bin/review|\.github/workflows/|\.claude/|\.mcp\.json$|mcp_config\.json$|AGENTS\.md$|CLAUDE\.md$|"
+                       r"\.agents/(instincts|regression_)|package(-lock)?\.json$|requirements[^/]*\.txt$|pyproject\.toml$)")
+hot = [f for f in files if sensitive.search(f) or machinery.search(f)]
+# the diff is untrusted data: hidden unicode (bidi controls, zero-width, tag characters) or text that talks to the reviewer
+# forces a deep review (security reviewer + verifier) and is named in meta (audit 31/10)
+_dt = subprocess.run(["git", "diff", "--no-ext-diff", base, "--"], capture_output=True).stdout.decode("utf-8", "replace")
+for _u in untracked[:200]:
+    try:
+        with open(_u, encoding="utf-8", errors="replace") as _fh:
+            _dt += _fh.read(1 << 20)
+    except OSError:
+        pass
+HIDDEN = re.compile("[\u202a-\u202e\u2066-\u2069\u200b-\u200f\u2060\u00ad]|[\U000e0000-\U000e007f]|(?<!^)\ufeff")
+INJECT = re.compile(r"ignore (?:all |any )?(?:previous|prior|above) instructions|disregard (?:the|all) (?:above|instructions)|"
+                    r"you are now|system prompt|as an ai (?:reviewer|model)|\"verdict\"\s*:\s*\"pass\"|reviewer[s]?:? (?:must|should) (?:pass|approve)|"
+                    r"approve this (?:change|pr)|no findings? (?:needed|required)", re.I)
+signals = (["hidden unicode"] if HIDDEN.search(_dt) else []) + sorted({m.group(0).lower()[:60] for m in INJECT.finditer(_dt)})[:5]
+depth = "deep" if lines >= deep_lines or hot or signals else "light"
 required = [r for r in ("claude", "antigravity", "grok", "ocr") if r not in skipped] + ["registry"] \
     + (["security", "verifier"] if depth == "deep" else [])
 def num(name, d, cast):
@@ -203,13 +268,14 @@ def num(name, d, cast):
         return cast(v) if str(v).strip() else None
     except ValueError:
         return cast(d)
-meta = {"repo": repo, "base": base, "code_hash": code_hash, "depth": depth, "changed_lines": lines, "sensitive_paths": hot,
+meta = {"repo": repo, "base": base, "code_hash": code_hash, "depth": depth, "changed_lines": lines, "sensitive_paths": hot, "injection_signals": signals,
         "files": files, "untracked": untracked, "dirty": bool(git("status", "--porcelain", "--untracked-files=all").strip()),
         "commits_since_base": bool(git("rev-list", "--max-count=1", f"{base}..HEAD").strip()), "required": required,
         "skipped_by_override": skipped, "reduced": bool(skipped),
         "max_tokens": num("REVIEW_MAX_TOKENS", "3000000", int), "max_usd": num("REVIEW_MAX_USD", "15", float),
         "models": {"claude": os.environ.get("REVIEW_CLAUDE_MODEL") or "opus",
-                   "grok": os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7"}}
+                   "grok": os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7",
+                   "antigravity": os.environ.get("REVIEW_AGY_MODEL") or "gemini-4-argon-high"}}
 with open(os.path.join(run, "meta.json"), "w") as fh:
     json.dump(meta, fh, indent=1)
 ctx = subprocess.run([sys.executable, "-I", os.path.join(here, "known_patterns.py"), "--repo", repo, "context", "--files", *files],
@@ -223,6 +289,7 @@ PY
 
 if [ "$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["files"]))' "$RUN/meta.json")" = "0" ]; then
   python3 -I -c 'import json,sys,time; json.dump({"verdict":"PASS","reasons":[],"note":"nothing to review","ts":time.time()}, open(sys.argv[1],"w"))' "$RUN/summary.json"
+  python3 -I "$HERE/review_sign.py" sign "$RUN/summary.json" || echo "review-fanout: summary not signed" >&2
   printf '# 4-way review: ✅ PASS\n\nNothing to review: no change since %s.\n' "$BASE_SHA" > "$RUN/summary.md"
   cat "$RUN/summary.md"; exit 0
 fi
@@ -231,6 +298,8 @@ DEPTH="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["dep
 python3 -I "$HERE/known_patterns.py" --repo "$REPO" scan --base "$BASE_SHA" --out "$RUN/registry.json" >/dev/null
 [ -f "$RUN/registry.json" ] || python3 -I -c 'import json,sys; json.dump({"reviewer":"registry","status":"error","reason":"known_patterns scan failed"}, open(sys.argv[1],"w"))' "$RUN/registry.json"
 
+# the diff every reviewer reads, written ONCE before any reviewer starts (audit 31/10: each runner wrote it while others read it)
+git diff --no-ext-diff "$BASE_SHA" -- > "$RUN/review.diff" 2>/dev/null || : > "$RUN/review.diff"
 R="$HERE/review_runner.py"
 python3 -I "$R" claude      --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_CLAUDE:-900}" & PIDS="$!"
 python3 -I "$R" antigravity --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_AGY:-1500}"   & PIDS="$PIDS $!"

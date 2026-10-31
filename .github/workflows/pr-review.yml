@@ -6,17 +6,21 @@ name: pr-review
 
 on:
   pull_request:
+  push:
+    branches: [main]
+  merge_group:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pr-review-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: pr-review-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  BASE_REF: origin/${{ github.base_ref || 'main' }}
+  # PR: the target branch; merge queue: the queue's base; push to main: the commit before the push
+  BASE_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.event.before || format('origin/{0}', github.base_ref || 'main') }}
 
 jobs:
   checks:
@@ -53,10 +57,39 @@ jobs:
       - name: Semgrep (known patterns + p/default, new findings only)
         run: |
           set -euo pipefail
-          python3 -m pip install --quiet 'semgrep>=1.90,<2'
+          python3 -m pip install --quiet 'semgrep==1.183.0'
           python3 universal-agent-devkit/bin/known_patterns.py --repo . semgrep --out "$RUNNER_TEMP/known-patterns.yml"
           semgrep scan --metrics=off --error --baseline-commit "$(git merge-base "$BASE_REF" HEAD)" \
             --config "$RUNNER_TEMP/known-patterns.yml" --config p/default
+
+      - name: Dependency review (new vulnerable or disallowed dependencies in this PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+
+      - name: OSV-Scanner (known vulnerabilities in every lockfile)
+        run: |
+          set -euo pipefail
+          v=2.7.0; f=osv-scanner_linux_amd64
+          curl -fsSL -o "$RUNNER_TEMP/$f" "https://github.com/google/osv-scanner/releases/download/v${v}/${f}"
+          echo "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b  $RUNNER_TEMP/$f" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/$f"
+          "$RUNNER_TEMP/$f" scan source --recursive .
+
+      - name: pip-audit (Python requirements)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'pip-audit==2.10.1'
+          git ls-files -z '*requirements*.txt' | xargs -0 -r -n1 python3 -m pip_audit --strict --progress-spinner off -r
+
+      - name: npm audit (production dependencies, high and above)
+        run: |
+          set -euo pipefail
+          git ls-files -z '*package-lock.json' ':!:**/node_modules/**' | while IFS= read -r -d '' lock; do
+            echo "npm audit: ${lock%/*}"
+            (cd "$(dirname "$lock")" && npm audit --omit=dev --audit-level=high)
+          done
 
       - name: Gitleaks (commits of this PR)
         run: |
