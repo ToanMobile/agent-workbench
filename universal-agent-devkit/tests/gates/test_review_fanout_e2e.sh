@@ -218,7 +218,8 @@ echo ok > "$STUB/ocr.mode"; echo pass > "$STUB/claude.mode"; echo pass > "$STUB/
 echo "# v11" >> "$P/app.py"
 rc=$(run); D11="$(bash "$F" --repo "$P" --base HEAD --status | awk '{print $2}')"
 [ "$rc" = 0 ] && [ -s "$D11/summary.json.sig" ] && ok "a 4-way PASS summary is sealed (BUG-REV-review-summary-hmac)" || fail "no seal rc=$rc"
-[ "$(stat -f %Lp "$HOME/.config/agent-workbench/review.key" 2>/dev/null || stat -c %a "$HOME/.config/agent-workbench/review.key")" = 600 ] \
+# GNU stat first (as test_githooks.sh): GNU `stat -f` is file-system status and prints a block before failing on "%Lp" (CI red 31/10)
+[ "$(stat -c %a "$HOME/.config/agent-workbench/review.key" 2>/dev/null || stat -f %Lp "$HOME/.config/agent-workbench/review.key")" = 600 ] \
   && ok "the seal key lives outside the repo, mode 600" || fail "key mode"
 python3 -c 'import json,sys; p=sys.argv[1]; s=json.load(open(p)); s["reasons"]=["edited"]; json.dump(s, open(p,"w"))' "$D11/summary.json"
 st="$(bash "$F" --repo "$P" --base HEAD --status | awk '{print $1}')"
