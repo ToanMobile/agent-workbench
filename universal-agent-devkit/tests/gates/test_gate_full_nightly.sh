@@ -55,7 +55,10 @@ for i in 1 2 3 4 5 6; do
   g -C "$T/seed" merge -q --no-ff -m "Merge branch 'f$i'" "f$i"
 done
 g -C "$T/seed" push -q origin main
-BAD_MERGE="$(git -C "$T/seed" log --first-parent --merges --format='%H %s' | awk '/f4/ {print $1}')"
+# #713: tìm theo TIÊU ĐỀ. awk '/f4/' trên "%H %s" khớp cả sha của merge khác (~14 % mỗi sha có "f4") ⇒ BAD_MERGE nhiều dòng, b2 vẫn xanh
+# (grep nhiều mẫu) còn b5 so 12 ký tự đầu của sha sai ⇒ đỏ '1 FAIL' (log đủ: merge gate #728 31/10 11:01)
+BAD_MERGE="$(git -C "$T/seed" log --first-parent --merges --format=%H --grep="^Merge branch 'f4'\$")"
+chk "setup. BAD_MERGE là đúng một sha (merge f4)" '[ "$(printf "%s\n" "$BAD_MERGE" | grep -cE "^[0-9a-f]{40}$")" = 1 ] && [ "$(printf "%s\n" "$BAD_MERGE" | wc -l | tr -d " ")" = 1 ]' "BAD_MERGE=$BAD_MERGE"
 g clone -q "$T/origin.git" "$T/repo"
 COMMON="$(cd "$T/repo" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
 
