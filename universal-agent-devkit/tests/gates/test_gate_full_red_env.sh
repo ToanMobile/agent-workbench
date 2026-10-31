@@ -5,11 +5,17 @@
 #      lệnh nào, history result red-env (exit 3), có thẻ, không ghi last_full_green_sha;
 #   2. 1 suite đỏ thật + 1 nhóm b ⇒ vẫn chia đôi như cũ (result red, exit 1);
 #   3. DEVKIT_GATE_FULL_BISECT=0 ⇒ không chia đôi cả khi suite đỏ thật, vẫn có thẻ; =1 ⇒ ép chia đôi cả khi mọi suite là nhóm b;
-#   4. dấu hiệu nằm trong dòng ĐẠT (✔ … TIMEOUT …) không tính: suite vẫn là đỏ thật;
+#   4. dấu hiệu nằm trong dòng ĐẠT (✔/ok … killed after …) của một khối hỏng không tính: suite vẫn là đỏ thật;
 #   5. chạy lại ở đỉnh xanh (khác lần đầu) ⇒ red-env;
-#   6. suite chạy run_impacted.sh: xét từng khối `✖ tests/…` — một bài đỏ thật ⇒ chia đôi; mọi bài có dấu hiệu ⇒ red-env;
-#   7. agent-kit test THẬT của lượt (kit giả, không DEVKIT_GATE_FULL_CMD) đỏ chỉ vì các ca watchdog của hook contract (hình dạng lượt
-#      00:00 30/10: chia đôi 5 giờ 27 phút) ⇒ red-env, agent-kit test chỉ chạy một lần; thêm một ca ✗ không dấu hiệu ⇒ chia đôi như cũ.
+#   6. suite chạy run_impacted.sh: xét từng khối LÁ (`✖ tests/…` và các ca ✖ lồng trong nó) — một ca đỏ thật, kể cả nằm cùng file với
+#      ca có dấu hiệu, ⇒ chia đôi; mọi ca có dấu hiệu ⇒ red-env; đuôi output cắt dở không dính vào khối cuối của fail_lines; chữ
+#      TIMEOUT trong chi tiết không phải dấu hiệu;
+#   7. agent-kit test THẬT của lượt (kit giả, không DEVKIT_GATE_FULL_CMD) đỏ chỉ vì hook contract ENV-BLOCKED (dạng sau #714: dòng
+#      ENV-BLOCKED + tổng kết "ENV-BLOCKED: hook watchdog fired under load, no verdict"; lượt 00:00 30/10 chia đôi 5 giờ 27 phút) ⇒
+#      red-env, agent-kit test chỉ chạy một lần; thêm một ca lệch thật (✗) ⇒ chia đôi như cũ;
+#   8. suite đỏ không có lệnh chạy lại (ma trận thiếu command) ⇒ vẫn red, exit 1 (không thành red-env vì "chạy lại xanh" rỗng);
+#   9. fail_lines (8 dòng đầu khớp FAIL) + đuôi 2000 ký tự chỉ thấy ca watchdog, ca đỏ thật nằm giữa log: phân loại đọc toàn văn log bằng
+#      chứng của suite (t["log"] trong scratch) ⇒ red, chia đôi.
 # Gate giả qua DEVKIT_GATE_FULL_CMD, mỗi lần chạy lại một lệnh đỏ ghi một dòng vào $FAKE_RERUNS (rỗng = không chạy lại, không chia đôi).
 # Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
@@ -42,22 +48,23 @@ printf '%s\n' 'import json' 'print(json.dumps({"verdict": "PASS", "exit_code": 0
   >"$T/seed/universal-agent-devkit/bin/post-fix-gate.py"
 cat >"$T/seed/universal-agent-devkit/bin/agent-kit" <<'SH'
 #!/usr/bin/env bash
-# agent-kit test giả: hook contract lệch vì watchdog (đúng hình dạng log 00:00 30/10); FAKE_KIT_MODE=real thêm một ca ✗ không dấu hiệu
+# agent-kit test giả: hook contract (tests/lib/case_runner.sh sau #714) có 2 ca watchdog dưới tải ⇒ ENV-BLOCKED, tổng kết hc_summary;
+# FAKE_KIT_MODE=real thêm một ca lệch thật ⇒ nhánh FAIL của hc_summary (không có dòng tổng kết ENV-BLOCKED)
 echo kit >>"$FAKE_RERUNS"
-echo "  FAIL solo: push HEAD:main from main allowed         want=0 got=2"
 echo "  ok   a Read matching no glob exits 0                exit=0"
-echo "  FAIL hw-gate[0]: rm -rf build                       want=0 got=2"
-echo "contract points: 687 ok, 2 deviating"
-echo
-echo "  ✗ solo: push HEAD:main from main allowed"
-echo "      hook=block-dangerous-git.sh want exit=0, got=2"
-echo "      output: BLOCKED: block-dangerous-git.sh: lệnh quá lớn / quá phức tạp để phân tích trong thời hạn (7 s) — chặn để an toàn."
-echo "  ✗ hw-gate[0]: rm -rf build"
-echo "      hook=hardware_safety_gate.sh want exit=0, got=2"
-echo "      output: 🛑 [HARDWARE SAFETY GATE] lệnh quá lớn / quá phức tạp để phân tích trong thời hạn của hook (7 s của 10 s) — chặn để an toàn."
-[ "${FAKE_KIT_MODE:-}" = real ] && echo "  ✗ no-session key (a / a / a)"
-echo
-echo "A deviation means the hook and its documented contract disagree."
+echo "  ENV-BLOCKED  solo: push HEAD:main from main allowed     load 31.20 > hold 24, CPU hook 12 ms"
+echo "  ENV-BLOCKED  hw-gate[0]: rm -rf build                   load 31.20 > hold 24, CPU hook 9 ms"
+echo "─────────────────────────────────────────────"
+if [ "${FAKE_KIT_MODE:-}" = real ]; then
+  echo "contract points: 689 ok, 1 deviating, 2 env-blocked"
+  echo
+  echo "  ✗ no-session key (a / a / a)"
+  echo
+  echo "A deviation means the hook and its documented contract disagree."
+else
+  echo "contract points: 690 ok, 2 env-blocked (no verdict)"
+  echo "ENV-BLOCKED: hook watchdog fired under load, no verdict"
+fi
 exit 1
 SH
 chmod +x "$T/seed/universal-agent-devkit/bin/agent-kit"
@@ -89,15 +96,34 @@ wd = red("REG-B-WD-01", fail_lines=["  FAIL plain push allowed by design        
 kill = red("REG-B-KILL-01", fail_lines=["✖ tests/slow.sh", "    killed after 1800s (deadline)"])
 timing = red("REG-B-TIMING-01", fail_lines=["✖ PM bi SIGTERM trong luc cho init (9762ms)", "  AssertionError: agy gia phai da duoc spawn"])
 real = red("REG-REAL-01", fail_lines=["✖ đếm sai: want 2, got 3"])
-passname = red("REG-PASSNAME-01", tail="✔ suite TIMEOUT ⇒ chưa kết luận\n  ok   killed after 5s (deadline) là nhóm b\n✖ đếm sai: want 1, got 2")
+passname = red("REG-PASSNAME-01", tail="✖ ca X\n    ✔ con killed after 5s (deadline) ⇒ chưa kết luận\n    ok   killed after 5s (deadline) là nhóm b\n    ✅ cháu killed after 5s (deadline)\n"
+                                         "    đếm sai: want 1, got 2\nkilled after 5s (deadline) — dòng ở cột 0 sau khối, không thuộc khối")
 flaky = red("REG-FLAKY-01", fail_lines=["✖ đếm sai: want 1, got 2"], code=0)
 ALL = "bash universal-agent-devkit/tests/run_impacted.sh --all"
 kit_mixed = {"id": "REG-ALL-01", "status": "FAIL", "command": ALL, "fail_lines": [],
              "output_tail": "✔ tests/c.sh\n✖ tests/a.sh\n    ✖ ca A — rc=2\n" + WD + "\n✖ tests/b.sh\n    ✖ ca B: want 0, got 1\nfailures: 2"}
 kit_allb = {"id": "REG-ALL-01", "status": "FAIL", "command": ALL, "fail_lines": [],
-            "output_tail": "✖ tests/a.sh\n    ✖ ca A — rc=2\n" + WD + "\n✖ tests/b.sh\n    ✖ ca B: TIMEOUT sau 900 s\nfailures: 2"}
+            "output_tail": "✖ tests/a.sh\n    ✖ ca A — rc=2\n" + WD + "\n✖ tests/b.sh\n    ✖ ca B\n      killed after 900s (deadline)\nfailures: 2"}
+# cùng một file: ca A dính watchdog, ca B đỏ thật (kèm chữ TIMEOUT của một gate lồng, không phải dấu hiệu)
+nested = {"id": "REG-ALL-01", "status": "FAIL", "command": ALL, "fail_lines": [],
+          "output_tail": "✖ tests/a.sh\n    ✖ ca A — rc=2\n" + WD + "\n    ✖ ca B: want 0, got 1\n      REG-X TIMEOUT 2s\nfailures: 2"}
+# output_tail = out[-2000:] mở đầu bằng mẩu cắt dở của a.sh: không được dính vào khối cuối (b.sh) của fail_lines
+cut = {"id": "REG-ALL-01", "status": "FAIL", "command": ALL,
+       "fail_lines": ["✖ tests/a.sh", "    ✖ ca A: killed after 900s (deadline)", "✖ tests/b.sh", "    ✖ ca B: want 0, got 1"],
+       "output_tail": "      killed after 900s (deadline)\n✖ tests/a.sh\n    ✖ ca A: killed after 900s (deadline)\n✖ tests/b.sh\n"
+                      "    ✖ ca B: want 0, got 1\nfailures: 2"}
+nocmd = {"id": "REG-NOCMD-01", "status": "FAIL", "command": "", "fail_lines": ["✖ đếm sai: want 1, got 2"], "output_tail": ""}
+# post-fix-gate ghi toàn văn output vào .agents/evidence/<id>/<giờ>.log (đường dẫn tương đối scratch, cwd của gate giả = scratch)
+hidden = red("REG-HIDDEN-01", fail_lines=["✔ ca %d: FAIL-safe vẫn đạt" % i for i in range(8)],
+             tail="contract points: 690 ok, 1 deviating\n\n  ✗ plain push allowed by design\n" + WD)
+if mode == "hidden":
+    hidden["log"] = ".agents/evidence/REG-HIDDEN-01/20261031-000000.log"
+    os.makedirs(os.path.dirname(hidden["log"]), exist_ok=True)
+    with open(hidden["log"], "w", encoding="utf-8") as f:
+        f.write("# test: REG-HIDDEN-01\n# status: FAIL\n\n" + "\n".join(hidden["fail_lines"]) + "\n✖ ca thật: want 1, got 2\n"
+                + "\n".join("  ok   ca đệm %d" % i for i in range(200)) + "\n" + hidden["output_tail"] + "\n")
 suites = {"allb": [wd, kill, timing], "mixed": [real, wd], "real": [real], "passname": [passname], "flaky": [flaky],
-          "kitmixed": [kit_mixed], "kitallb": [kit_allb]}[mode]
+          "kitmixed": [kit_mixed], "kitallb": [kit_allb], "nested": [nested], "cut": [cut], "nocmd": [nocmd], "hidden": [hidden]}[mode]
 print(json.dumps({"verdict": "FAIL", "exit_code": 1, "accepted": False, "matrix_path": os.environ["FAKE_MATRIX"],
                   "regression_tests": suites}, ensure_ascii=False))
 sys.exit(1)
@@ -179,7 +205,7 @@ chk "3e. BISECT giá trị lạ ⇒ auto (đỏ thật vẫn chia đôi), có gh
 
 # --- 4. dấu hiệu trong dòng ĐẠT không tính ------------------------------------------------------------------------------------
 rc=$(run_gf passname)
-chk "4. '✔ … TIMEOUT', 'ok … killed after' là dòng đạt: suite vẫn đỏ thật, chia đôi, result red" \
+chk "4. dòng đạt (✔/ok … killed after) trong khối hỏng và dòng cột 0 sau khối không tính: suite vẫn đỏ thật, chia đôi, result red" \
   '[ "$(reruns)" -gt 1 ] && hist "row[\"result\"] == \"red\" and not row.get(\"group_b\")"' "rc=$rc reruns=$(reruns)"
 
 # --- 5. chạy lại ở đỉnh xanh ⇒ red-env ------------------------------------------------------------------------------------------
@@ -196,17 +222,35 @@ rc=$(run_gf kitallb)
 chk "6b. run_impacted: mọi bài đỏ có dấu hiệu nhóm b ⇒ không chạy lại, result red-env" \
   '[ "$(reruns)" = 0 ] && hist "row[\"result\"] == \"red-env\"" && [ "$rc" = 3 ]' "rc=$rc reruns=$(reruns) $(tail -3 "$T/out.kitallb")"
 
+rc=$(run_gf nested)
+chk "6c. cùng một file: ca watchdog + ca đỏ thật (chi tiết có chữ TIMEOUT) ⇒ chia đôi, result red" \
+  '[ "$(reruns)" -gt 1 ] && hist "row[\"result\"] == \"red\" and not row.get(\"group_b\")" && [ "$rc" = 1 ]' "rc=$rc reruns=$(reruns) $(tail -1 "$HIST")"
+rc=$(run_gf cut)
+chk "6d. đuôi output cắt dở không dính vào khối cuối của fail_lines ⇒ b.sh vẫn đỏ thật, result red" \
+  '[ "$(reruns)" -gt 1 ] && hist "row[\"result\"] == \"red\" and not row.get(\"group_b\")" && [ "$rc" = 1 ]' "rc=$rc reruns=$(reruns) $(tail -1 "$HIST")"
+
 # --- 7. agent-kit test thật của lượt (không DEVKIT_GATE_FULL_CMD) -----------------------------------------------------------------
 rc=$(run_gf kit -u DEVKIT_GATE_FULL_CMD)
-chk "7a. agent-kit test đỏ chỉ vì watchdog hook contract: chạy một lần, không chia đôi, result red-env, exit 3" \
+chk "7a. agent-kit test đỏ chỉ vì hook contract ENV-BLOCKED (dạng sau #714): chạy một lần, không chia đôi, result red-env, exit 3" \
   '[ "$(reruns)" = 1 ] && hist "row[\"result\"] == \"red-env\" and row[\"red\"] == [\"agent-kit test\"] and row.get(\"group_b\") == [\"agent-kit test\"]" && [ "$rc" = 3 ]' \
   "rc=$rc reruns=$(reruns) $(tail -4 "$T/out.kit")"
 rc=$(run_gf kit -u DEVKIT_GATE_FULL_CMD FAKE_KIT_MODE=real)
-chk "7b. thêm một ca ✗ không dấu hiệu: chạy lại + chia đôi, result red, exit 1" \
+chk "7b. thêm một ca lệch thật (✗, không dòng tổng kết ENV-BLOCKED): chạy lại + chia đôi, result red, exit 1" \
   '[ "$(reruns)" -gt 2 ] && grep -q "chia đôi" "$T/out.kit" && hist "row[\"result\"] == \"red\" and not row.get(\"group_b\")" && [ "$rc" = 1 ]' \
   "rc=$rc reruns=$(reruns) $(tail -4 "$T/out.kit")"
 chk "7c. không lượt nào ghi last_full_green_sha; scratch gỡ, khoá nhả" \
   '[ ! -e "$COMMON/postfix-gate/last_full_green_sha" ] && no_scratch'
+
+# --- 8. suite đỏ không có lệnh chạy lại ------------------------------------------------------------------------------------------
+rc=$(run_gf nocmd)
+chk "8. suite đỏ không có command: không coi 'chạy lại xanh' rỗng là nhóm b ⇒ result red, exit 1, thẻ High" \
+  'hist "row[\"result\"] == \"red\" and not row.get(\"group_b\")" && [ "$rc" = 1 ] && grep -q "High" "$T/card.args"' \
+  "rc=$rc $(tail -1 "$HIST")"
+
+# --- 9. ca đỏ thật chỉ có trong toàn văn log -------------------------------------------------------------------------------------
+rc=$(run_gf hidden)
+chk "9. fail_lines + đuôi chỉ thấy watchdog, toàn văn log có ca đỏ thật ⇒ result red, chia đôi, exit 1" \
+  '[ "$(reruns)" -gt 1 ] && hist "row[\"result\"] == \"red\" and not row.get(\"group_b\")" && [ "$rc" = 1 ]' "rc=$rc reruns=$(reruns) $(tail -1 "$HIST")"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "test_gate_full_red_env: PASS"; exit 0; fi

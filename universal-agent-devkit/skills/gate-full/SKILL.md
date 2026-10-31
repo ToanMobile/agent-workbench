@@ -37,8 +37,10 @@ Lượt của lịch đêm ghi vào `~/Library/Logs/devkit-gate-full/<slug>/` ri
 
 ## Đỏ: chia đôi + thẻ P1
 
-0. Nhóm b (#700): suite đỏ có nhãn `"timing": true` trong ma trận, hoặc MỌI khối hỏng (`✖/✗ …` + dòng thụt sâu hơn) có dấu hiệu thời gian
-   thực / môi trường (watchdog "quá lớn / quá phức tạp…", `TIMEOUT`, `killed after …s (deadline)`, `Killed: 9`). Mọi suite đỏ đều nhóm b ⇒
+0. Nhóm b (#700): suite đỏ có nhãn `"timing": true` trong ma trận, hoặc trong toàn văn log của suite MỌI khối hỏng lá (`✖/✗ …` + dòng thụt
+   sâu hơn; khối có khối con chỉ xét khối con) có dấu hiệu thời gian thực / môi trường (watchdog "quá lớn / quá phức tạp…", `killed after
+   …s (deadline)`, `Killed: 9`), hoặc không có khối hỏng nào mà có dòng tổng kết hook contract `ENV-BLOCKED: hook watchdog fired under
+   load, no verdict`. Mọi suite đỏ đều nhóm b ⇒
    `red-env`: không chia đôi, không ghi `last_full_green_sha`, thẻ risk 🟡. `DEVKIT_GATE_FULL_BISECT=0` không bao giờ chia đôi, `=1` luôn chia đôi,
    `auto` (mặc định) như trên.
 1. Chạy lại CHỈ suite/test đỏ ở đỉnh (đường dẫn `✖ tests/…` của run_impacted, hoặc lệnh của suite đỏ). Không tái hiện ⇒ ghi "flaky?", không nghi ai,

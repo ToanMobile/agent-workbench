@@ -53,14 +53,16 @@ import capacity  # noqa: E402  nguồn ngưỡng tải chung (bin/capacity.py), 
 
 TEST_PATH = re.compile(r"^\s*✖\s+((?:hooks/)?tests/\S+\.(?:sh|py|mjs))\s*$")
 ISSUE_URL = re.compile(r"https://github\.com/[^\s/]+/[^\s/]+/issues/\d+")
-# #700: dấu hiệu nhóm b — đỏ vì thời gian thực / môi trường (watchdog 7 s của hook, hết giờ, bị giết): chạy lại ở commit cũ cũng đỏ y như
-# vậy nên chia đôi không quy được cho ai. Chỉ xét dòng KHÔNG phải dòng đạt: tên ca đạt có thể chứa chính các chữ này.
-# ponytail: một assertion đỏ thật có chữ TIMEOUT trong tên ca vẫn bị tính nhóm b; chỉ bỏ chia đôi khi MỌI suite đỏ đều nhóm b và thẻ vẫn
-# ghi đủ suite — gặp ca đổ oan thì thu hẹp mẫu về đúng dòng trạng thái của runner.
-GROUP_B_SIGN = re.compile(r"quá lớn / quá phức tạp để phân tích trong thời hạn|\bTIMEOUT\b|killed after \d+(?:\.\d+)?s \(deadline\)"
-                          r"|\bKilled: 9\b")
-PASS_HEAD = re.compile(r"^\s*(?:✔|✓|ok\b|PASS\b)")
-FAIL_BLOCK = re.compile(r"^(\s*)(?:✖|✘|✗|❌|not ok\b)")
+# #700: dấu hiệu nhóm b — đỏ vì thời gian thực / môi trường (watchdog 7 s của hook, bài bị run_bounded.py giết khi quá hạn, SIGKILL): chạy
+# lại ở commit cũ cũng đỏ y như vậy nên chia đôi không quy được cho ai. Chỉ xét dòng KHÔNG phải dòng đạt. Không có chữ TIMEOUT: không runner
+# nào in nó vào output bài test (suite TIMEOUT đã là env_red), chỉ test của chính gate in — đỏ thật của gate sẽ bị tính nhóm b.
+# ponytail: test về chính watchdog / run_bounded in các dấu hiệu này cả khi đỏ thật; chỉ bỏ chia đôi khi MỌI ca đỏ đều có dấu hiệu và thẻ
+# vẫn ghi đủ suite — gặp ca đổ oan thì thu hẹp mẫu về đúng dòng của runner.
+GROUP_B_SIGN = re.compile(r"quá lớn / quá phức tạp để phân tích trong thời hạn|killed after \d+(?:\.\d+)?s \(deadline\)|\bKilled: 9\b")
+# tổng kết của tests/lib/case_runner.sh hc_summary khi mọi ca không đạt đều ENV-BLOCKED (watchdog dưới tải, #714) và không ca nào lệch
+ENV_BLOCKED_SUMMARY = re.compile(r"^ENV-BLOCKED: hook watchdog fired under load, no verdict\s*$", re.M)
+PASS_HEAD = re.compile(r"^\s*(?:✔|✓|✅|ok\b|PASS\b)")
+FAIL_BLOCK = re.compile(r"^\s*(?:✖|✘|✗|❌|not ok\b)")
 FETCH_TIMEOUT_S = 300
 GATE_TIMEOUT_S = 6 * 3600       # trần cả lượt gate (mỗi suite đã có --timeout riêng)
 KIT_TEST_TIMEOUT_S = 2 * 3600   # agent-kit test cả bộ (~5–10 phút lúc rảnh)
@@ -304,21 +306,43 @@ def test_paths(text: str, kit_dir: str) -> list:
 
 
 def group_b_text(text: str) -> bool:
-    """Nhóm b khi có ít nhất một khối hỏng và MỌI khối hỏng có dấu hiệu GROUP_B_SIGN (trên dòng không phải dòng đạt). Khối = dòng mở
-    đầu ✖/✘/✗/❌/not ok + các dòng thụt sâu hơn ngay sau nó: run_impacted.sh in `✖ tests/…` + đuôi log bài đỏ, hook_contract_test.sh
-    in `✗ <ca>` + hook=/output: (lượt 30/10 00:00: 5 ca watchdog, chia đôi 5 giờ 27 phút). Cùng dòng mở đầu lặp lại (fail_lines + đuôi
-    output) là một khối. Dòng "FAIL <ca>" trần (danh sách chạy của hook_contract_test.sh) không mở khối: chi tiết nằm ở khối ✗."""
-    blocks, head, ind = {}, None, 0
+    """Nhóm b khi MỌI khối hỏng LÁ có dấu hiệu GROUP_B_SIGN (trên dòng không phải dòng đạt); không có khối nào thì chỉ khi có dòng tổng
+    kết ENV_BLOCKED_SUMMARY. Khối = dòng mở đầu ✖/✘/✗/❌/not ok + các dòng thụt sâu hơn ngay sau nó; dòng mở đầu thụt sâu hơn mở khối con,
+    khối có khối con chỉ xét qua các khối con (một file test có ca watchdog lẫn ca đỏ thật là đỏ thật). Cùng dòng mở đầu dưới cùng khối cha
+    lặp lại (fail_lines + đuôi output) là một khối. Dòng "FAIL <ca>" trần (danh sách chạy của hook_contract_test.sh) không mở khối."""
+    blocks, parents, stack = {}, set(), []   # stack: [(thụt lề, khoá khối)] từ ngoài vào trong
     for line in (text or "").splitlines():
+        if not line.strip():
+            continue   # dòng trống không đóng khối
+        ind = len(line) - len(line.lstrip())
+        while stack and ind <= stack[-1][0]:
+            stack.pop()
         sign = bool(GROUP_B_SIGN.search(line)) and not PASS_HEAD.match(line)
-        if head is not None and (not line.strip() or len(line) - len(line.lstrip()) > ind):
-            blocks[head] = blocks[head] or sign   # dòng chi tiết (kể cả khối con) thuộc khối ngoài
-            continue
-        m = FAIL_BLOCK.match(line)
-        head, ind = (line.strip(), len(m.group(1))) if m else (None, 0)
-        if m:
-            blocks[head] = blocks.get(head, False) or sign
-    return bool(blocks) and all(blocks.values())
+        if FAIL_BLOCK.match(line):
+            parent = stack[-1][1] if stack else None
+            if parent is not None:
+                parents.add(parent)
+            key = (parent, line.strip())
+            blocks[key] = blocks.get(key, False) or sign
+            stack.append((ind, key))
+        elif stack:
+            blocks[stack[-1][1]] = blocks[stack[-1][1]] or sign   # dòng chi tiết thuộc khối trong cùng
+    leaves = [v for k, v in blocks.items() if k not in parents]
+    return all(leaves) if leaves else bool(ENV_BLOCKED_SUMMARY.search(text or ""))
+
+
+def suite_output(run: Run, scratch: str, t: dict, fallback: str) -> str:
+    """Toàn văn output của suite đỏ để phân loại nhóm b: log bằng chứng post-fix-gate ghi trong scratch (t["log"], 1 MB cuối) — fail_lines
+    chỉ có 8 dòng đầu khớp FAIL (dòng ✔ … FAIL … chiếm chỗ), đuôi 2000 ký tự: ca đỏ thật ở giữa log nằm ngoài cả hai. Không có log ⇒ fallback."""
+    log = t.get("log")
+    if not (scratch and isinstance(log, str) and log):
+        return fallback
+    try:
+        with open(os.path.join(scratch, log), encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError as exc:
+        run.log("không đọc được log suite %s (%s): phân loại theo fail_lines + đuôi output" % (t.get("id"), exc))
+        return fallback
 
 
 def timing_ids(matrix_path: str) -> set:
@@ -359,13 +383,14 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
             env_red.append(sid)
         elif st == "FAIL":
             red.append(sid)
-            text = "\n".join((t.get("fail_lines") or []) + [t.get("output_tail") or ""])
+            # "--" ở cột 0 đóng mọi khối: output_tail = out[-2000:] mở đầu bằng mẩu cắt dở, không được dính vào khối cuối của fail_lines
+            text = "\n".join((t.get("fail_lines") or []) + ["--", t.get("output_tail") or ""])
             paths = test_paths(text, kit_dir) if "run_impacted.sh" in cmd else []
             if paths:
                 checks += [("%s:%s" % (sid, p), "bash " + shlex.quote(p), kit_rel) for p in paths]
             elif cmd:
                 checks.append((sid, cmd, "."))
-            if sid in timing or group_b_text(text):
+            if sid in timing or group_b_text(suite_output(run, scratch, t, text)):
                 group_b.append(sid)
         elif st in ("TIMEOUT", "UNTESTED"):
             env_red.append("%s (%s)" % (sid, st))
@@ -700,7 +725,10 @@ def cmd_run(args) -> int:
                 except OSError:
                     last_green = ""
                 run.info["suspect"], run.info["suspect_note"] = bisect(run, repo, scratch, sha, last_green, checks, args.timeout)
-                if run.info["suspect_note"] == TIP_GOOD:   # chạy lại ở đỉnh xanh hết (khác lần đầu): mọi suite đỏ là nhóm b
+                # chạy lại ở đỉnh xanh hết (khác lần đầu): mọi suite đỏ là nhóm b — chỉ khi suite nào cũng có lệnh đã chạy lại; suite
+                # không có command (ma trận thiếu) thì "xanh" là rỗng, giữ red như cũ
+                rerun = {c[0].split(":")[0] for c in checks}
+                if run.info["suspect_note"] == TIP_GOOD and set(run.info["red"]) <= rerun:
                     all_b, run.info["group_b"] = True, list(run.info["red"])
             if all_b:
                 run.info["result"] = "red-env"
