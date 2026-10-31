@@ -6162,8 +6162,9 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             "ncpu": os.cpu_count() or None,
             "changed_files": [f[:200] for f in files[:RUN_LOG_CHANGED_MAX]],
             "ran_suites": [str(t.get("id") or "?")[:40] for t in regression_tests if id(t) in ran],
-            "core_touched": [f[:200] for f in (getattr(args, "core_touched", None) or [])[:RUN_LOG_CHANGED_MAX]],   # #741
         }
+        if getattr(args, "core_touched", None):   # #741: lượt --scoped chạm lõi (không leo full); chỉ ghi khi có, như ptc
+            rec["core_touched"] = [f[:200] for f in args.core_touched[:RUN_LOG_CHANGED_MAX]]
         ptc = [t["ptc"] for t in regression_tests if t.get("ptc")]
         if ptc:   # #472 D: hit-rate của per_test_cache (chỉ lượt có suite run_impacted.sh chạy với sổ per-test bật)
             rec["ptc_reuse"], rec["ptc_ran"] = sum(p[0] for p in ptc), sum(p[1] for p in ptc)
