@@ -185,13 +185,17 @@ PY
 # Thụt lề bằng tab (tokenize: tab nhảy tới bội số 8).
 printf 'class Tabs:\n\tdef test_tab_assert(self):\n\t\tself.assertEqual(f(), 1)\n\n\tdef test_tab_empty(self):\n\t\tprint(1)\n' > src/test_tabs.py
 
+# "\f" trong lề (tokenize: cột về 0 tại "\f"): `    \fdef` là lệnh ở cột 0, `\f        self.assertEqual` vẫn trong method.
+printf 'def test_ff_empty():\n    pass\n    \fdef test_ff_next():\n    assert x\n' > src/test_ff.py
+printf 'class A:\n    def test_ff_assert(self):\n        x = 1\n\f        self.assertEqual(x, 1)\n' > src/test_ff2.py
+
 # tokenize ném IndentationError (lề lùi không khớp): quy tắc lề cũ, không traceback.
 printf 'def test_indent_err():\n        x = 1\n    y = 2\n' > src/test_indent_err.py
 
 LINT_SCRIPT="$DEVKIT_ROOT/scripts/linters/assertion_lint.py"
 
 OUTPUT=$(python3 -I "$LINT_SCRIPT" src/test_strings.py src/test_broken.py src/test_seps.py src/test_masked.py \
-         src/test_tabs.py src/test_indent_err.py 2>&1)
+         src/test_tabs.py src/test_indent_err.py src/test_ff.py src/test_ff2.py 2>&1)
 RC=$?
 
 ERRORS=0
@@ -260,6 +264,9 @@ expect_flagged "src/test_masked.py" "90"       # comment che giữ `#`: `fail` +
 expect_not_flagged "src/test_tabs.py" "2"
 expect_flagged "src/test_tabs.py" "5"
 expect_flagged "src/test_indent_err.py" "1"
+expect_flagged "src/test_ff.py" "1"            # `    \fdef` ở cột 0 (như tokenize) kết thúc thân test rỗng
+expect_not_flagged "src/test_ff.py" "3"
+expect_not_flagged "src/test_ff2.py" "2"       # `\f` rồi 8 dấu cách: vẫn trong method, assert được tính
 
 if [ "$RC" -ne 1 ] || echo "$OUTPUT" | grep -q "Traceback"; then
     echo "FAIL: rc=$RC (cần 1, không traceback)"

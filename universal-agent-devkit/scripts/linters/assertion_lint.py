@@ -143,9 +143,9 @@ def _python_scan(text: str) -> "tuple | None":
 
 
 def _lead(line: str) -> int:
-    # lề như tokenize: tab nhảy tới bội số 8
-    s = line.expandtabs(8)
-    return len(s) - len(s.lstrip(" "))
+    # lề như tokenize: tab nhảy tới bội số 8, "\f" đưa cột về 0
+    ws = line[:len(line) - len(line.lstrip(" \t\f"))]
+    return len(ws.rsplit("\f", 1)[-1].expandtabs(8))
 
 
 def _python_body(text: str, start: int) -> str:
