@@ -468,3 +468,5 @@
 9 tests/gates/test_push_gate_settings_local.sh
 9 tests/gates/test_proof_gate_settings_local.sh
 1 tests/gates/test_gate_head_and_dirty_settings.sh
+# #721 (2026-10-31, tải ~9, chạy một mình): test đỏ in mọi dòng hỏng (run_impacted / gate_full chia đôi / fail_lines của gate)
+2 tests/gates/test_red_fail_lines.sh
