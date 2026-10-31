@@ -5,7 +5,8 @@
 #   A. ca nhanh (HOOK_CONTRACT_SCENARIO_FILE + hook giả; tải giả HOOK_WATCHDOG_TEST_LOAD/_CORES, không đốt CPU thật):
 #      A1 hook treo (sleep vô hạn, cháu giữ pipe) ⇒ FAIL < 10 s ở tải 0 VÀ 500, không còn tiến trình cháu;
 #      A2 thông điệp watchdog production, want=2 và want=0: tải 500 + CPU thấp ⇒ ENV-BLOCKED (không PASS, không "deviating", exit 1);
-#         tải 0 ⇒ FAIL; hook tự đốt CPU ⇒ FAIL ở cả hai tải; cháu đốt CPU rồi hook exit 2 ngay ⇒ FAIL ở cả hai tải;
+#         tải 0 ⇒ FAIL; hook tự đốt CPU ⇒ FAIL ở cả hai tải; cháu đốt CPU rồi hook exit 2 ngay ⇒ FAIL "tự tốn CPU" ở cả hai tải,
+#         kể cả cháu bắt đầu đốt muộn 2 s (hook chờ sự kiện cháu đốt xong, không chờ theo đồng hồ: gate-full 31/10 đỏ oan);
 #      A3 ngưỡng qua capacity.py: 12 lõi, tải 40: DEVKIT_CAPACITY=0.25 (hold 24) ⇒ ENV-BLOCKED; không đặt (hold 96) ⇒ FAIL; rác ⇒ như không đặt;
 #      A4 giới hạn: 3 lần hết giờ ⇒ dừng sớm; 11 lần watchdog ⇒ 10 ENV-BLOCKED rồi FAIL, tổng kết nhánh FAIL (không marker, DEVKIT_SUITE_RED khớp);
 #         tổng kết ENV-BLOCKED không khớp DEVKIT_SUITE_GREEN của test_evidence_gate.sh;
@@ -112,16 +113,22 @@ while time.process_time() - t < 0.4: pass'
 echo "BLOCKED: block-dangerous-git.sh: lệnh quá lớn / quá phức tạp để phân tích trong thời hạn (7 s) — chặn." >&2
 exit 2
 H
-  # cháu đốt 0,4 s CPU rồi ngủ (còn sống khi hook thoát): CPU của nó chỉ thấy được qua ps -g
+  # cháu đốt 0,4 s CPU rồi ngủ (còn sống khi hook thoát): CPU của nó chỉ thấy được qua ps -g. HC_GRAND_LATE_S: cháu ngủ trước khi đốt
+  # (mô phỏng cháu bị lập lịch muộn dưới tải, gate-full 31/10). Hook chờ SỰ KIỆN "đốt xong" (file <pidfile>.burnt), không chờ theo đồng hồ
+  # (`sleep 1.2` cũ: dưới tải cháu chưa đốt xong khi hook thoát ⇒ ps -g thấy CPU thấp ⇒ ENV-BLOCKED oan); cháu chết sớm thì hook thôi chờ
+  # (CPU thấp ⇒ ca ĐỎ, không treo tới bell rồi FAIL nhờ rc 142).
   cat > "${FH}/grand.sh" <<'H'
 #!/bin/bash
 cat >/dev/null
-python3 -c 'import time
+python3 -c 'import sys, time
+time.sleep(float(sys.argv[1]))
 t = time.process_time()
 while time.process_time() - t < 0.4: pass
-time.sleep(60)' &
-echo $! > "${HC_PIDFILE}"
-sleep 1.2
+open(sys.argv[2], "w").close()
+time.sleep(60)' "${HC_GRAND_LATE_S:-0}" "${HC_PIDFILE}.burnt" &
+g=$!
+echo ${g} > "${HC_PIDFILE}"
+while [ ! -e "${HC_PIDFILE}.burnt" ] && kill -0 ${g} 2>/dev/null; do sleep 0.05; done
 echo "BLOCKED: block-dangerous-git.sh: lệnh quá lớn / quá phức tạp để phân tích trong thời hạn (7 s) — chặn." >&2
 exit 2
 H
@@ -180,9 +187,17 @@ H
       printf '%s\n' "run_case \"grand L${L}\" grand.sh 2 '{}' HC_PIDFILE=${TMP}/pid.g${L}" > "${TMP}/a2_grand_${L}.sc"
       run_sc "a2_grand_${L}" "${L}" 30
       chk "A2 cháu đốt CPU rồi hook exit 2, tải ${L}: CPU cháu được cộng ⇒ FAIL; cháu bị giết" \
-        "[ ${RC} -eq 1 ] && grep -q '  FAIL grand L${L}' '${TMP}/a2_grand_${L}.out' && ! grep -q 'ENV-BLOCKED  grand' '${TMP}/a2_grand_${L}.out' && ! alive '${TMP}/pid.g${L}'" \
+        "[ ${RC} -eq 1 ] && grep -q '  FAIL grand L${L} .*tự tốn CPU' '${TMP}/a2_grand_${L}.out' && ! grep -q 'ENV-BLOCKED  grand' '${TMP}/a2_grand_${L}.out' && ! alive '${TMP}/pid.g${L}'" \
         "rc=${RC} alive=$(alive "${TMP}/pid.g${L}" && echo yes || echo no): $(tail -4 "${TMP}/a2_grand_${L}.out" | tr '\n' ' ')"
     done
+    # A2 cháu muộn (#685, gate-full 31/10 đỏ oan): cháu ngủ 2 s rồi mới đốt CPU. Hook phải chờ SỰ KIỆN cháu đốt xong, không chờ theo đồng hồ;
+    # bản chờ `sleep 1.2` ra ENV-BLOCKED (CPU cháu chưa có khi hook thoát) ⇒ ĐỎ ở mọi máy, không phụ thuộc tải.
+    rm -f "${TMP}/pid.glate"
+    printf '%s\n' "run_case \"grand late L500\" grand.sh 2 '{}' HC_PIDFILE=${TMP}/pid.glate HC_GRAND_LATE_S=2" > "${TMP}/a2_grand_late.sc"
+    run_sc a2_grand_late 500 30
+    chk "A2 cháu đốt CPU MUỘN (sau 2 s) rồi hook exit 2, tải 500: hook chờ cháu đốt xong ⇒ CPU cháu được cộng ⇒ FAIL; cháu bị giết" \
+      "[ ${RC} -eq 1 ] && grep -q '  FAIL grand late L500 .*tự tốn CPU' '${TMP}/a2_grand_late.out' && ! grep -q 'ENV-BLOCKED  grand' '${TMP}/a2_grand_late.out' && ! alive '${TMP}/pid.glate'" \
+      "rc=${RC} alive=$(alive "${TMP}/pid.glate" && echo yes || echo no): $(tail -4 "${TMP}/a2_grand_late.out" | tr '\n' ' ')"
 
     # A3: ngưỡng qua capacity.py (12 lõi, tải 40): hold = 8 × 12 × hệ số
     printf '%s\n' "run_case \"thr\" wd1.sh 2 '{}'" > "${TMP}/a3_cap.sc"
