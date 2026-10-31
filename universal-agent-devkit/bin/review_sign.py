@@ -5,12 +5,19 @@ The key lives OUTSIDE every repo: ~/.config/agent-workbench/review.key (created 
 bin/review-merge.py (and review-fanout.sh's "nothing to review" path) sign; `review-fanout.sh --status` accepts a verdict only
 when <summary.json>.sig matches the summary bytes. Unsigned, unreadable or mismatched = not a verdict.
 
-  review_sign.py sign FILE      write FILE.sig
+  review_sign.py sign FILE      write FILE.sig — only for a review run's own summary: FILE is <...>/review-fanout/<H>/summary.json
+                                and its meta.code_hash is H (r14d, BUG-REV-738b4fa129: it sealed any file it was pointed at)
   review_sign.py verify FILE    exit 0 when FILE.sig matches, 1 otherwise
+A seal binds the code state it names: load_verified(FILE, H) reads the bytes ONCE, checks the MAC on them and returns the summary only
+when its meta.code_hash is H (BUG-REV-7b0abde38e / 76e3be1a9d: a sealed PASS copied into another run dir, or one with no code_hash,
+answered PASS there). Same uid, no privilege separation: the key is kept out of an agent's tool calls by hooks/guard-review-tamper.py
+and hooks/guard-secrets.py, not by the OS.
 """
 import hashlib
 import hmac
+import json
 import os
+import re
 import secrets
 import stat
 import sys
@@ -46,28 +53,58 @@ def _mac(key, data):
     return hmac.new(key, b"review-fanout-summary-v1\0" + data, hashlib.sha256).hexdigest()
 
 
+def _code_hash(data):
+    try:
+        d = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    meta = d.get("meta") if isinstance(d, dict) else None
+    h = meta.get("code_hash") if isinstance(meta, dict) else None
+    return h if isinstance(h, str) and re.fullmatch(r"[0-9a-f]{64}", h) else None
+
+
 def sign(path):
-    key = load_key(create=True)
-    with open(path, "rb") as fh:
+    real = os.path.realpath(path)
+    run = os.path.dirname(real)
+    if os.path.basename(real) != "summary.json" or os.path.basename(os.path.dirname(run)) != "review-fanout":
+        raise ValueError(f"{path}: only a review run's summary.json (<git dir>/review-fanout/<code hash>/summary.json) is sealed")
+    with open(real, "rb") as fh:
         data = fh.read()
+    if _code_hash(data) != os.path.basename(run):
+        raise ValueError(f"{path}: meta.code_hash is not its run directory {os.path.basename(run)[:12]} — not sealed")
+    key = load_key(create=True)
+    path = real
     tmp = path + ".sig.tmp"
     with open(tmp, "w") as fh:
         fh.write(_mac(key, data) + "\n")
     os.replace(tmp, path + ".sig")
 
 
-def verify(path):
+def _sealed_bytes(path):
+    """The file's bytes when FILE.sig matches them (one read), else None."""
     try:
         key = load_key(create=False)
         if not key:
-            return False
+            return None
         with open(path, "rb") as fh:
             data = fh.read()
         with open(path + ".sig") as fh:
             sig = fh.read().strip()
-        return hmac.compare_digest(sig, _mac(key, data))
+        return data if hmac.compare_digest(sig, _mac(key, data)) else None
     except (OSError, ValueError):
-        return False
+        return None
+
+
+def verify(path):
+    return _sealed_bytes(path) is not None
+
+
+def load_verified(path, code_hash):
+    """The summary dict when it is sealed AND names code_hash as its code state, else None (bytes read once: no TOCTOU)."""
+    data = _sealed_bytes(path)
+    if data is None or not code_hash or _code_hash(data) != code_hash:
+        return None
+    return json.loads(data.decode("utf-8"))
 
 
 if __name__ == "__main__":
@@ -75,6 +112,10 @@ if __name__ == "__main__":
         print(__doc__, file=sys.stderr)
         sys.exit(2)
     if sys.argv[1] == "sign":
-        sign(sys.argv[2])
+        try:
+            sign(sys.argv[2])
+        except (OSError, ValueError) as e:
+            print(f"review_sign: {e}", file=sys.stderr)
+            sys.exit(1)
         sys.exit(0)
     sys.exit(0 if verify(sys.argv[2]) else 1)

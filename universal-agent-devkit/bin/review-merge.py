@@ -212,11 +212,18 @@ def dedupe(findings):
         cited_ms = [m for m in ms if m.get("cited")]
         # a finding dropped by cite-check never sets the severity of a cluster that has a cited member
         head = dict(min(cited_ms or ms, key=lambda x: SEV_RANK[x["severity"]]))
-        head["reviewers"] = sorted({m["reviewer"] for m in ms})
+        # who backs the finding, and its known-pattern / deterministic flags, come from the members that passed cite-check
+        # (r14d, BUG-REV-9516f93323: an uncited finding joined to a cited cluster made it "consensus", unvetoable, and pulled
+        # its reviewer's "fail" onto another reviewer's P2); a cluster of uncited members only keeps them all (it never blocks)
+        backing = cited_ms or ms
+        head["reviewers"] = sorted({m["reviewer"] for m in backing})
         head["consensus"] = len(head["reviewers"]) >= 2
         head["unanimous"] = all(r in head["reviewers"] for r in CORE)   # relative to the default 4; decide() uses the run's
-        head["known_pattern"] = next((m["known_pattern"] for m in ms if m["known_pattern"]), "")
-        head["deterministic"] = any(m["deterministic"] for m in ms)
+        head["known_pattern"] = next((m["known_pattern"] for m in backing if m["known_pattern"]), "")
+        head["deterministic"] = any(m["deterministic"] for m in backing)
+        # reviewers whose own P0/P1 in this cluster was dropped by cite-check (decide(): their "fail" rests on no evidence)
+        head["dropped_by_cite"] = sorted({m["reviewer"] for m in ms if not m.get("cited") and m["severity"] in BLOCKING}
+                                         - set(head["reviewers"]))
         head["cited"] = any(m.get("cited") for m in ms)
         head["cite_why"] = "" if head["cited"] else "; ".join(sorted({m.get("cite_why", "") for m in ms}))
         snip = next((m["snippet"] for m in ms if m.get("cited") and m["snippet"]), head["snippet"])
@@ -304,16 +311,33 @@ def candidates(clusters):
             for c in clusters if c["cited"] and c["severity"] in BLOCKING and not c["deterministic"]]
 
 
-def rev_rows(repo):
+def load_status_file(repo, path):
+    """The checklist JSON at PATH, an absolute file OUTSIDE the repo (B2 of #742, decision 31/10 17:32: the status is read from
+    outside the tree, .agents/regression_status.json is never committed for the review). Inside the repo, relative, missing or not a
+    checklist: ValueError / OSError (the caller FAILs)."""
+    if not os.path.isabs(path):
+        raise ValueError(f"{path}: the status file must be an absolute path")
+    real, root = os.path.realpath(path), os.path.realpath(repo)
+    if real == root or real.startswith(root + os.sep):
+        raise ValueError(f"{path}: the status file must be outside the repo (inside the repo it is the tracked checklist)")
+    with open(real, encoding="utf-8") as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict) or not isinstance(data.get("items"), dict):
+        raise ValueError(f"{path}: not a regression checklist (no items)")
+    return data
+
+
+def rev_rows(repo, status_file=None):
     """{BUG-REV-id: status} of the review-born bug rows in the regression checklist — load_view: the tracked
     .agents/regression_status.json plus the rows main-in-trunk-mode keeps in <git common dir>/postfix-gate/pending_rows.json and a
-    linked worktree's overlay, exactly what regression_gate / test_evidence_gate read."""
+    linked worktree's overlay, exactly what regression_gate / test_evidence_gate read. With status_file (REVIEW_REGRESSION_STATUS,
+    B2): that out-of-tree checklist instead, judged by the same effective_status."""
     try:
         import regression_checklist as rc
     except Exception as e:   # the checklist module is the only judge of a row's status: no module, no pass
         return None, f"regression_checklist unavailable: {e!r}"
     try:
-        data = rc.load_view(repo)
+        data = load_status_file(repo, status_file) if status_file else rc.load_view(repo)
     except Exception as e:
         return None, f"regression checklist unreadable: {e!r}"
     rows = {}
@@ -378,7 +402,8 @@ def decide(meta, envs, clusters, rev=None, rev_err=""):
             mine = [c for c in clusters if name in c.get("reviewers", [])]
             own_blocking = [c for c in clusters if c.get("state") == "blocking" and name in c.get("reviewers", [])]
             dropped = [c for c in mine if c.get("state") in ("uncited", "refuted") and
-                       (c.get("original_severity") or c["severity"]) in BLOCKING]
+                       (c.get("original_severity") or c["severity"]) in BLOCKING] + \
+                      [c for c in clusters if name in (c.get("dropped_by_cite") or [])]
             if env.get("verdict") == "fail" and dropped and not own_blocking and \
                     not any(c["severity"] in BLOCKING and c.get("state") not in ("uncited", "refuted") for c in mine):
                 # its "fail" rests only on P0/P1 that cite-check or the verifier threw out: no evidence left for the fail
@@ -406,6 +431,21 @@ def decide(meta, envs, clusters, rev=None, rev_err=""):
                                f"(regression_checklist.py bug-link {iid} <test>, then post-fix-gate --run-tests; "
                                f"not a bug: regression_checklist.py drop {iid}, logged)")
     return ("PASS" if not reasons else "FAIL"), reasons, {"tokens": tok, "usd": round(usd, 4)}
+
+
+def record_status_file(repo, path, clusters):
+    """The blocking P0/P1 as OPEN rows BUG-REV-<id> in the out-of-tree status file too (B2): the next review reads them there."""
+    import regression_checklist as rc
+    data = load_status_file(repo, path)
+    for c in clusters:
+        if c.get("state") == "blocking":
+            rc.register_bug(data, f"[review {c['severity']}] {c['file']}:{c['line']} {c['problem'][:140]}", fixed=False,
+                            component=c["file"], severity=c["severity"], evidence=f"4-way review ({', '.join(c['reviewers'])})",
+                            bug_id=f"REV-{c['id']}")
+    tmp = os.path.realpath(path) + f".tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, os.path.realpath(path))
 
 
 def record_bugs(repo, clusters):
@@ -488,6 +528,10 @@ def main(argv=None):
     ap.add_argument("--pre", action="store_true")
     ap.add_argument("--record-bugs", action="store_true")
     ap.add_argument("--outcomes")
+    ap.add_argument("--status-file", default="",
+                    help="read (and record) the BUG-REV rows in this checklist JSON outside the repo (REVIEW_REGRESSION_STATUS)")
+    ap.add_argument("--tree-changed", metavar="NEW_HASH", default="",
+                    help="review-fanout.sh: the tree hashed differently after the reviewers ran — FAIL, no bug rows")
     a = ap.parse_args(argv)
     repo = os.path.realpath(a.repo or subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True,
                                                      text=True).stdout.strip() or ".")
@@ -504,10 +548,20 @@ def main(argv=None):
         print(f"candidates: {len(cands)}")
         return 0
     apply_verifications(clusters, envs.get("verifier"))
-    rev, rev_err = rev_rows(repo)
+    rev, rev_err = rev_rows(repo, a.status_file or None)
     verdict, reasons, usage = decide(meta, envs, clusters, rev, rev_err)
-    if a.record_bugs:
+    if a.tree_changed:   # cite-check / the verifier read files that are no longer the reviewed code state (r14d, BUG-REV-d5a4fc3b03)
+        reasons.insert(0, f"the working tree changed during the review (code hash {str(meta.get('code_hash'))[:12]} → "
+                          f"{a.tree_changed[:12]}): findings were checked against other code — nothing is sealed as a PASS; "
+                          "review the settled tree again")
+        verdict = "FAIL"
+    elif a.record_bugs:
         errs = record_bugs(repo, clusters)
+        if a.status_file and any(c.get("state") == "blocking" for c in clusters):
+            try:
+                record_status_file(repo, a.status_file, clusters)
+            except Exception as e:   # noqa: BLE001 — the FAIL stands; say the rows did not reach the outside file
+                errs.append(f"status file {a.status_file}: {e!r}")
         if errs:
             reasons.append("could not record accepted findings as bug rows: " + "; ".join(errs))
             verdict = "FAIL"

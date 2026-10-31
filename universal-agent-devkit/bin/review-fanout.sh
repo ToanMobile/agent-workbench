@@ -2,7 +2,7 @@
 # review-fanout.sh — THE code review, 4-way unanimous: Claude Code (Opus) + Antigravity + Grok + Alibaba OpenCodeReview,
 # in parallel; all 4 must pass.
 #
-#   review-fanout.sh [--base REF|verified|merge-base] [--repo DIR] [--skip grok,ocr] [--background] [--status] [--hash] [--force]
+#   review-fanout.sh [--base REF|verified|merge-base] [--repo DIR] [--skip grok,ocr] [--depth deep] [--background] [--status] [--hash] [--force]
 #   review-fanout.sh --full [--repo DIR] [review-full.py options: --list --chunk-lines N --jobs N --max-usd X ...]
 #     whole-solution scan (not a diff) by the same 4 reviewers, chunked by module, report only — bin/review-full.py
 #
@@ -24,6 +24,14 @@
 #      accepted P0/P1 → OPEN bug rows BUG-REV-<id> in the regression checklist, outcome → .claude/audit-gate/review_outcomes.jsonl
 # Depth: >= REVIEW_DEEP_LINES (50) changed lines, or a path that looks like auth / payment / schema / migration / secrets → deep
 # (security reviewer + verifier required, both Claude Opus); smaller → light prompts, still all 4 reviewers.
+# REVIEW_REGRESSION_STATUS=<absolute path OUTSIDE the repo> (B2 of #742, decision 31/10 17:32): the BUG-REV rows' status is read from
+# that checklist JSON instead of the tracked .agents/regression_status.json (never committed for the review); its bytes are part of
+# the code hash, a FAIL records its rows there too. Relative, missing or inside the repo = usage error (exit 2).
+# --depth deep (or a marker <git-common-dir>/review-fanout/deep-heads/<HEAD sha>, written by the merge gate for a machine-gated PR
+# whose review came out light — r14d BUG-REV-37b922ce04) forces a deep run; a forced run is its own code state in the hash.
+# A verdict answers only for the code state it names (r14d): --status reads summary.json once, checks the seal on those bytes and its
+# meta.code_hash == this code hash; the tree is hashed again before the verdict is sealed (changed during the review = FAIL, no bug
+# rows); a FAIL whose bug rows moved the hash (a linked worktree writes .agents/regression_status.json) is sealed under the new hash too.
 # Env: REVIEW_TIMEOUT_CLAUDE (900) REVIEW_TIMEOUT_OCR (900) REVIEW_TIMEOUT_AGY (1500) REVIEW_TIMEOUT_GROK (900)
 #      REVIEW_TIMEOUT_VERIFY (600) seconds;
 #      cost is logged in summary.json (usage), never a FAIL condition (user 31/10/2026: no cost limit);
@@ -40,29 +48,43 @@
 # --verify-summary PATH: exit 0 when the summary.json carries a valid HMAC seal, 1 when not (first argument only).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-BASE="" REPO="" MODE="run" FORCE=0 SKIP="${REVIEW_SKIP_REVIEWERS:-}"
+BASE="" REPO="" MODE="run" FORCE=0 SKIP="${REVIEW_SKIP_REVIEWERS:-}" DEPTH_FORCE=""
 if [ "${1:-}" = "--full" ]; then shift; exec python3 -I "$HERE/review-full.py" "$@"; fi
 # --verify-summary PATH: exit 0 only when PATH (a summary.json) carries a valid HMAC seal from this machine's review key
 # (bin/review_sign.py); 1 unsigned / tampered, 2 usage. Prints "<verdict> <code_hash>" when valid (merge gate, 31/10).
 if [ "${1:-}" = "--verify-summary" ]; then
   [ $# -eq 2 ] && [ -n "$2" ] || { echo "review-fanout: --verify-summary needs exactly one summary.json path" >&2; exit 2; }
-  python3 -I "$HERE/review_sign.py" verify "$2" || { echo "UNSIGNED $2" >&2; exit 1; }
-  python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("verdict","?"), d.get("code_hash") or (d.get("meta") or {}).get("code_hash",""))' "$2" 2>/dev/null || true
+  python3 -I - "$HERE" "$2" <<'PY' || { echo "UNSIGNED $2" >&2; exit 1; }
+import importlib.util, json, os, sys
+sp = importlib.util.spec_from_file_location("review_sign", os.path.join(sys.argv[1], "review_sign.py"))
+rs = importlib.util.module_from_spec(sp); sp.loader.exec_module(rs)
+data = rs._sealed_bytes(sys.argv[2])   # one read: the bytes checked are the bytes printed
+if data is None:
+    sys.exit(1)
+try:
+    d = json.loads(data.decode("utf-8"))
+except ValueError:
+    d = {}
+d = d if isinstance(d, dict) else {}
+print(d.get("verdict", "?"), (d.get("meta") or {}).get("code_hash", "") if isinstance(d.get("meta"), dict) else "")
+PY
   exit 0
 fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --full) echo "review-fanout: --full must be the first argument" >&2; exit 2 ;;
-    --base|--repo|--skip)
+    --base|--repo|--skip|--depth)
       [ $# -ge 2 ] || { echo "review-fanout: $1 needs a value" >&2; exit 2; }
-      case "$1" in --base) BASE="$2" ;; --repo) REPO="$2" ;; --skip) SKIP="$2" ;; esac
+      case "$1" in --base) BASE="$2" ;; --repo) REPO="$2" ;; --skip) SKIP="$2" ;;
+        --depth) [ "$2" = deep ] || { echo "review-fanout: --depth takes only 'deep' (a run is never forced lighter)" >&2; exit 2; }
+                 DEPTH_FORCE=deep ;; esac
       shift 2 ;;
     --background) MODE="background"; shift ;;
     --status) MODE="status"; shift ;;
     --hash) MODE="hash"; shift ;;
     --force) FORCE=1; shift ;;
     --child) MODE="child"; shift ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "review-fanout: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -80,6 +102,16 @@ PY
 export REVIEW_SKIP_REVIEWERS="$SKIP"
 skipped() { case ",$SKIP," in *",$1,"*) return 0 ;; esac; return 1; }
 cd "$REPO" || exit 2
+if [ -n "${REVIEW_REGRESSION_STATUS:-}" ]; then
+  python3 -I - "$REPO" "$REVIEW_REGRESSION_STATUS" <<'PY' || exit 2
+import os, sys
+repo, p = os.path.realpath(sys.argv[1]), sys.argv[2]
+real = os.path.realpath(p)
+if not os.path.isabs(p) or not os.path.isfile(real) or real == repo or real.startswith(repo + os.sep):
+    print(f"review-fanout: REVIEW_REGRESSION_STATUS must be an existing absolute file outside the repo (got {p})", file=sys.stderr)
+    sys.exit(1)
+PY
+fi
 if [ "$BASE" = "merge-base" ]; then   # hooks/review_gate.sh: merge-base(HEAD, origin/<base>) — the SAME base super-board-merge-gate.sh
   # queries, so the hook's review and the gate's verdict lookup hash one code state (BUG-REV: base mismatch -> gate exit 6 forever)
   _mb_br="${REVIEW_BASE_BRANCH:-$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')}"
@@ -103,9 +135,12 @@ if [ -z "$BASE" ]; then
 fi
 BASE_SHA="$(git rev-parse -q --verify "${BASE}^{commit}" 2>/dev/null)" || { echo "review-fanout: base $BASE is not a commit" >&2; exit 2; }
 
-CODE_HASH="$(python3 -I - "$BASE_SHA" "$SKIP" <<'PY'
+COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+# a machine-gated PR's head (marker from super-board-merge-gate.sh) is always reviewed deep
+[ -f "$COMMON/review-fanout/deep-heads/$(git rev-parse -q --verify HEAD 2>/dev/null)" ] && DEPTH_FORCE=deep
+code_hash() { python3 -I - "$BASE_SHA" "$SKIP" "$DEPTH_FORCE" <<'PY'
 import hashlib, os, stat, subprocess, sys
-base, skip = sys.argv[1], sys.argv[2]
+base, skip, depth_force = sys.argv[1], sys.argv[2], sys.argv[3]
 # files the review writes itself (the rendered checklist, outcome log): hashing them would make every review change the code
 # state it just judged. .agents/regression_status.json DOES count (audit 31/10): dropping or editing a BUG-REV row is a change
 # the review must see; the merge writes it only on a FAIL (blocking findings -> bug rows), never on a PASS.
@@ -115,6 +150,15 @@ h = hashlib.sha256(b"4way-review-v3\0" + base.encode() + b"\0")
 # the pinned models and the override are part of the code state: a review by another model, or a reduced run, is a different review
 h.update(("%s\0%s\0%s\0skip=%s\0" % (os.environ.get("REVIEW_CLAUDE_MODEL", "opus"), os.environ.get("REVIEW_GROK_MODEL", "grok-4.7"),
                                       os.environ.get("REVIEW_AGY_MODEL", "gemini-4-argon-high"), skip)).encode())
+_st = os.environ.get("REVIEW_REGRESSION_STATUS", "")
+if _st:   # the out-of-tree status the verdict reads (B2) is part of the code state it answers for
+    try:
+        with open(_st, "rb") as fh:
+            h.update(b"status=" + hashlib.sha256(fh.read()).hexdigest().encode() + b"\0")
+    except OSError:
+        h.update(b"status=?\0")
+if depth_force:   # a forced deep run is another review than the light one of the same code (only then: earlier hashes stay valid)
+    h.update(b"depth=" + depth_force.encode() + b"\0")
 h.update(subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True).stdout)
 h.update(subprocess.run(["git", "diff", "--binary", "--no-ext-diff", base, "--", ".", *EXCL], capture_output=True).stdout)
 for p in sorted(x for x in subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"],
@@ -136,18 +180,25 @@ for p in sorted(x for x in subprocess.run(["git", "ls-files", "--others", "--exc
         h.update(b"?")
 print(h.hexdigest())
 PY
-)" || { echo "review-fanout: could not hash the change" >&2; exit 2; }
+}
+CODE_HASH="$(code_hash)" && [ -n "$CODE_HASH" ] || { echo "review-fanout: could not hash the change" >&2; exit 2; }
 [ "$MODE" = "hash" ] && { echo "$CODE_HASH"; exit 0; }
 
-COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
 RUN="$COMMON/review-fanout/$CODE_HASH"
 mkdir -p "$COMMON/review-fanout" && chmod 700 "$COMMON/review-fanout"
 
 running() { [ -f "$RUN/pid" ] && kill -0 "$(cat "$RUN/pid" 2>/dev/null)" 2>/dev/null; }
 # a verdict counts only with a valid HMAC seal (bin/review_sign.py, key in ~/.config/agent-workbench/review.key): a summary.json
 # written by anyone else (an agent: {"verdict":"PASS"}) is UNSIGNED, never a verdict
-sealed() { python3 -I "$HERE/review_sign.py" verify "$RUN/summary.json" 2>/dev/null; }
-cached_verdict() { sealed && python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$RUN/summary.json" 2>/dev/null; }
+# one read: the seal is checked on the bytes the verdict is taken from, and the summary must name THIS code state (r14d, F12)
+cached_verdict() { python3 -I - "$HERE" "$RUN/summary.json" "$CODE_HASH" <<'PY' 2>/dev/null
+import importlib.util, os, sys
+sp = importlib.util.spec_from_file_location("review_sign", os.path.join(sys.argv[1], "review_sign.py"))
+rs = importlib.util.module_from_spec(sp); sp.loader.exec_module(rs)
+d = rs.load_verified(sys.argv[2], sys.argv[3])
+print(d.get("verdict", "") if isinstance(d, dict) else "")
+PY
+}
 
 if [ "$MODE" = "status" ]; then
   v="$(cached_verdict)"
@@ -190,7 +241,7 @@ fi
 
 if [ "$MODE" = "background" ]; then
   mkdir -p "$RUN" && chmod 700 "$RUN"
-  nohup bash "$0" --child --force --base "$BASE_SHA" --repo "$REPO" --skip "$SKIP" > "$RUN/fanout.log" 2>&1 < /dev/null &
+  nohup bash "$0" --child --force --base "$BASE_SHA" --repo "$REPO" --skip "$SKIP" ${DEPTH_FORCE:+--depth "$DEPTH_FORCE"} > "$RUN/fanout.log" 2>&1 < /dev/null &
   echo $! > "$RUN/pid"
   echo "review-fanout: started in the background (pid $!), results in $RUN/summary.md"
   exit 3
@@ -231,9 +282,9 @@ on_signal() { for p in $PIDS; do kill -TERM "$p" 2>/dev/null; done; for p in $PI
 trap 'rm -f "$RUN/pid"' EXIT
 trap on_signal INT TERM HUP
 
-python3 -I - "$REPO" "$BASE_SHA" "$CODE_HASH" "$RUN" "$HERE" "$SKIP" <<'PY' || { echo "review-fanout: meta failed" >&2; exit 2; }
+python3 -I - "$REPO" "$BASE_SHA" "$CODE_HASH" "$RUN" "$HERE" "$SKIP" "$DEPTH_FORCE" <<'PY' || { echo "review-fanout: meta failed" >&2; exit 2; }
 import json, os, re, stat, subprocess, sys
-repo, base, code_hash, run, here, skip = sys.argv[1:7]
+repo, base, code_hash, run, here, skip, depth_force = sys.argv[1:8]
 skipped = [x for x in skip.split(",") if x]
 def git(*a):
     return subprocess.run(["git", "-c", "core.quotePath=false", *a], capture_output=True, text=True).stdout
@@ -276,7 +327,7 @@ INJECT = re.compile(r"ignore (?:all |any )?(?:previous|prior|above) instructions
                     r"you are now|system prompt|as an ai (?:reviewer|model)|\"verdict\"\s*:\s*\"pass\"|reviewer[s]?:? (?:must|should) (?:pass|approve)|"
                     r"approve this (?:change|pr)|no findings? (?:needed|required)", re.I)
 signals = (["hidden unicode"] if HIDDEN.search(_dt) else []) + sorted({m.group(0).lower()[:60] for m in INJECT.finditer(_dt)})[:5]
-depth = "deep" if lines >= deep_lines or hot or signals else "light"
+depth = "deep" if depth_force == "deep" or lines >= deep_lines or hot or signals else "light"
 required = [r for r in ("claude", "antigravity", "grok", "ocr") if r not in skipped] + ["registry"] \
     + (["security", "verifier"] if depth == "deep" else [])
 def num(name, d, cast):
@@ -285,7 +336,8 @@ def num(name, d, cast):
         return cast(v) if str(v).strip() else None
     except ValueError:
         return cast(d)
-meta = {"repo": repo, "base": base, "code_hash": code_hash, "depth": depth, "changed_lines": lines, "sensitive_paths": hot, "injection_signals": signals,
+meta = {"repo": repo, "base": base, "code_hash": code_hash, "depth": depth, "depth_forced": depth_force == "deep",
+        "regression_status": os.environ.get("REVIEW_REGRESSION_STATUS") or ".agents/regression_status.json", "changed_lines": lines, "sensitive_paths": hot, "injection_signals": signals,
         "files": files, "untracked": untracked, "dirty": bool(git("status", "--porcelain", "--untracked-files=all").strip()),
         "commits_since_base": bool(git("rev-list", "--max-count=1", f"{base}..HEAD").strip()), "required": required,
         "skipped_by_override": skipped, "reduced": bool(skipped),
@@ -304,7 +356,7 @@ print(f"review-fanout: base {base[:12]} · {len(files)} file(s) · {lines} chang
 PY
 
 if [ "$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["files"]))' "$RUN/meta.json")" = "0" ]; then
-  python3 -I -c 'import json,sys,time; json.dump({"verdict":"PASS","reasons":[],"note":"nothing to review","ts":time.time()}, open(sys.argv[1],"w"))' "$RUN/summary.json"
+  python3 -I -c 'import json,sys,time; m=json.load(open(sys.argv[2])); json.dump({"verdict":"PASS","reasons":[],"note":"nothing to review","meta":m,"ts":time.time()}, open(sys.argv[1],"w"))' "$RUN/summary.json" "$RUN/meta.json"
   python3 -I "$HERE/review_sign.py" sign "$RUN/summary.json" || echo "review-fanout: summary not signed" >&2
   printf '# 4-way review: ✅ PASS\n\nNothing to review: no change since %s.\n' "$BASE_SHA" > "$RUN/summary.md"
   cat "$RUN/summary.md"; exit 0
@@ -341,7 +393,33 @@ if python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) el
   python3 -I "$R" verifier --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_VERIFY:-600}"
 fi
 
-python3 -I "$HERE/review-merge.py" --dir "$RUN" --repo "$REPO" --record-bugs
+# the tree is hashed again before the verdict is sealed: cite-check and the verifier read the live files, so a change made during
+# the review (r14d, BUG-REV-d5a4fc3b03) makes it a FAIL for this hash with no bug rows, never a PASS of code nobody reviewed
+NOW="$(code_hash)"
+if [ "$NOW" = "$CODE_HASH" ]; then
+  python3 -I "$HERE/review-merge.py" --dir "$RUN" --repo "$REPO" --record-bugs ${REVIEW_REGRESSION_STATUS:+--status-file "$REVIEW_REGRESSION_STATUS"}
+else
+  python3 -I "$HERE/review-merge.py" --dir "$RUN" --repo "$REPO" --tree-changed "${NOW:-unknown}" ${REVIEW_REGRESSION_STATUS:+--status-file "$REVIEW_REGRESSION_STATUS"}
+fi
 rc=$?
+# a FAIL's bug rows land in the tracked .agents/regression_status.json of a linked worktree and move the hash (r14d,
+# BUG-REV-49df56afb6: --status then said NONE and the Stop hook started the same billed review again). The code is the same and the
+# rows only add blockers, so the sealed FAIL answers for the new state too: same summary, meta.code_hash = the new hash.
+AFTER="$(code_hash)"
+if [ "$rc" = 1 ] && [ -n "$AFTER" ] && [ "$AFTER" != "$CODE_HASH" ] && [ "$NOW" = "$CODE_HASH" ]; then
+  ALIAS="$COMMON/review-fanout/$AFTER"
+  mkdir -p "$ALIAS" && chmod 700 "$ALIAS"
+  python3 -I - "$RUN/summary.json" "$ALIAS/summary.json" "$AFTER" "$CODE_HASH" <<'PY' \
+    && python3 -I "$HERE/review_sign.py" sign "$ALIAS/summary.json" && cp "$RUN/summary.md" "$ALIAS/summary.md" 2>/dev/null \
+    || echo "review-fanout: FAIL not re-filed under the post-bug-row hash" >&2
+import json, sys
+src, dst, new, old = sys.argv[1:5]
+s = json.load(open(src, encoding="utf-8"))
+if s.get("verdict") != "FAIL":
+    sys.exit(1)
+s["meta"] = dict(s.get("meta") or {}, code_hash=new, recorded_from=old)
+json.dump(s, open(dst, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+PY
+fi
 echo "(run: $RUN)"
 exit "$rc"

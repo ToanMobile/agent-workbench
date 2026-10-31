@@ -693,10 +693,10 @@ find_review_fanout() {
   done
   return 1
 }
-review_status() {  # review_status [<skip list>] → REVIEW_RC, REVIEW_LINE, REVIEW_WORD, REVIEW_RUN
+review_status() {  # review_status [<skip list>] [deep] → REVIEW_RC, REVIEW_LINE, REVIEW_WORD, REVIEW_RUN
   REVIEW_RC=0
   REVIEW_LINE=$(cd "$SCRATCH" && env -u REVIEW_SKIP_REVIEWERS -u REVIEW_CLAUDE_MODEL -u REVIEW_GROK_MODEL -u REVIEW_AGY_MODEL \
-    bash "$REVIEW_BIN/review-fanout.sh" --repo "$SCRATCH" --base "$REVIEW_BASE" ${1:+--skip "$1"} --status 2>/dev/null | tail -1) \
+    bash "$REVIEW_BIN/review-fanout.sh" --repo "$SCRATCH" --base "$REVIEW_BASE" ${1:+--skip "$1"} ${2:+--depth "$2"} --status 2>/dev/null | tail -1) \
     || REVIEW_RC=$?
   REVIEW_WORD=${REVIEW_LINE%% *}
   REVIEW_RUN=${REVIEW_LINE#* }
@@ -747,6 +747,22 @@ review_verdict_check() {
     *) echo "verification-readiness: review-fanout.sh --status could not be evaluated (exit ${REVIEW_RC}, '${REVIEW_LINE:-}') — nothing merged (fail-closed)" >&2
        exit 9 ;;
   esac
+  # A machine-gated PR needs a deep review, but review-fanout picks depth from size / paths only: a light PASS never turned deep and
+  # the card looped Review ↔ Merge (r14d, BUG-REV-37b922ce04). The gate marks the head (<git common dir>/review-fanout/deep-heads/
+  # <sha>): every later review of it — Stop hook, lane, by hand — runs deep, and the forced-deep code state is what is asked for here.
+  if [ "$GATED" -eq 1 ] && [ "$REVIEW_RC:$REVIEW_WORD" = "0:PASS" ] && [ "$(python3 -I -c 'import json,sys
+d = json.load(open(sys.argv[1])); m = d.get("meta") if isinstance(d, dict) else None
+print(m.get("depth", "") if isinstance(m, dict) else "")' "$REVIEW_RUN/summary.json" 2>/dev/null)" != deep ]; then
+    local deep_dir
+    deep_dir="$(cd "$SCRATCH" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/review-fanout/deep-heads"
+    mkdir -p "$deep_dir" && : > "$deep_dir/$HEAD_SHA" || say "review: could not mark ${HEAD_SHA:0:12} for a deep review"
+    review_status "" deep
+    case "$REVIEW_RC:$REVIEW_WORD" in
+      0:PASS) say "review: machine-gated PR — using the forced-deep review of ${HEAD_SHA:0:12}" ;;
+      3:RUNNING) say "review: the deep review of ${HEAD_SHA:0:12} is still running; nothing merged, the next wave retries"; exit 4 ;;
+      *) review_void "machine-gated PR: the review of ${HEAD_SHA:0:12} is light and no signed deep review exists (${REVIEW_WORD:-?}); the head is marked deep, so the next review of it runs deep — review-fanout.sh --base ${REVIEW_BASE:0:12} --depth deep" ;;
+    esac
+  fi
   [ -n "$REVIEW_RUN" ] && [ -d "$REVIEW_RUN" ] || review_void "--status ${REVIEW_WORD} named no run directory"
   REVIEW_TMP=$(mktemp -d)
   cp "$REVIEW_RUN/summary.json" "$REVIEW_TMP/summary.json" 2>/dev/null \
@@ -763,8 +779,8 @@ except (OSError, ValueError) as e:
 if not isinstance(s, dict) or s.get("verdict") != want:
     print("signed verdict is %r, not %s" % (s.get("verdict") if isinstance(s, dict) else None, want)); sys.exit(1)
 meta = s.get("meta") if isinstance(s.get("meta"), dict) else {}
-if meta.get("code_hash") not in (None, run):
-    print("the signed summary belongs to another code state"); sys.exit(1)
+if meta.get("code_hash") != run:   # None too: a summary that names no code state answers for none (r14d, BUG-REV-76e3be1a9d)
+    print("the signed summary belongs to another code state (code_hash %r, run %s)" % (meta.get("code_hash"), run[:12])); sys.exit(1)
 if gated:
     if meta.get("depth") != "deep":
         print("machine gate needs a deep review; summary depth is %r" % meta.get("depth")); sys.exit(1)
