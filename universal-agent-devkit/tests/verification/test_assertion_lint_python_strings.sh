@@ -180,6 +180,10 @@ fail() {{ exit 1; }}
     def test_comment_bridge(self):
         fail  # c
         (1)
+
+    def test_comment_first(self):
+        # comment trước dòng đầu của thân
+        self.assertTrue(f())
 PY
 
 # Thụt lề bằng tab (tokenize: tab nhảy tới bội số 8).
@@ -189,13 +193,19 @@ printf 'class Tabs:\n\tdef test_tab_assert(self):\n\t\tself.assertEqual(f(), 1)\
 printf 'def test_ff_empty():\n    pass\n    \fdef test_ff_next():\n    assert x\n' > src/test_ff.py
 printf 'class A:\n    def test_ff_assert(self):\n        x = 1\n\f        self.assertEqual(x, 1)\n' > src/test_ff2.py
 
+# Lề tách bởi "\" nối dòng: Python đo lề tới dấu "\" đầu tiên, không phải ở dòng có token.
+printf 'class A:\n    def test_bs_empty(self):\n        s = """\nx\n"""\n    \\\n        assert __name__\n' > src/test_bs.py
+printf 'class A:\n    def test_bs_assert(self):\n        x = 1\n        \\\n    assert x\n' > src/test_bs2.py
+# Test một dòng có "\f" trong chuỗi: thân đọc tới hết dòng `def` (tách ở "\n"), assert sau "\f" vẫn được tính.
+printf 'def test_sep_oneliner(): x = "\f"; assert x == 1\n' > src/test_sep1.py
+
 # tokenize ném IndentationError (lề lùi không khớp): quy tắc lề cũ, không traceback.
 printf 'def test_indent_err():\n        x = 1\n    y = 2\n' > src/test_indent_err.py
 
 LINT_SCRIPT="$DEVKIT_ROOT/scripts/linters/assertion_lint.py"
 
 OUTPUT=$(python3 -I "$LINT_SCRIPT" src/test_strings.py src/test_broken.py src/test_seps.py src/test_masked.py \
-         src/test_tabs.py src/test_indent_err.py src/test_ff.py src/test_ff2.py 2>&1)
+         src/test_tabs.py src/test_indent_err.py src/test_ff.py src/test_ff2.py src/test_bs.py src/test_bs2.py src/test_sep1.py 2>&1)
 RC=$?
 
 ERRORS=0
@@ -261,12 +271,15 @@ expect_not_flagged "src/test_masked.py" "79"   # chỉ che phần khớp asserti
 expect_not_flagged "src/test_masked.py" "82"   # code trong {…} của f-string nhiều dòng không bị che
 expect_flagged "src/test_masked.py" "87"       # che không tạo khớp mới (`assert` + phần che không thành `assert `)
 expect_flagged "src/test_masked.py" "90"       # comment che giữ `#`: `fail` + comment + `(1)` dòng sau không thành `fail(`
+expect_not_flagged "src/test_masked.py" "94"   # comment ngay sau dòng `def` (trước INDENT) không kết thúc thân
 expect_not_flagged "src/test_tabs.py" "2"
 expect_flagged "src/test_tabs.py" "5"
 expect_flagged "src/test_indent_err.py" "1"
 expect_flagged "src/test_ff.py" "1"            # `    \fdef` ở cột 0 (như tokenize) kết thúc thân test rỗng
-expect_not_flagged "src/test_ff.py" "3"
 expect_not_flagged "src/test_ff2.py" "2"       # `\f` rồi 8 dấu cách: vẫn trong method, assert được tính
+expect_flagged "src/test_bs.py" "2"            # `    \` rồi assert: lề 4 (mức class), test rỗng
+expect_not_flagged "src/test_bs2.py" "2"       # `        \` rồi assert: lề 8, vẫn trong method
+expect_not_flagged "src/test_sep1.py" "1"
 
 if [ "$RC" -ne 1 ] || echo "$OUTPUT" | grep -q "Traceback"; then
     echo "FAIL: rc=$RC (cần 1, không traceback)"

@@ -94,22 +94,27 @@ _QUOTE = re.compile(r"[A-Za-z]*('''|\"\"\"|'|\")")
 
 @functools.lru_cache(maxsize=1)
 def _python_scan(text: str) -> "tuple | None":
-    """(rows, masked) của một file Python. rows: số dòng (đếm từ 1, như tokenize) mở một dòng lệnh logic — dòng trong
-    chuỗi nhiều dòng (OfficeReader#242: script fake adb ở cột 0), trong ngoặc (`) -> None:` của chữ ký nhiều dòng) và dòng
-    comment không mở lệnh nào. masked: text cùng độ dài, giữ "\n", dấu nháy và `#`; thành dấu cách: comment, ruột chuỗi
+    """(rows, masked) của một file Python. rows: {số dòng (đếm từ 1, như tokenize): độ sâu khối} của các dòng mở một dòng
+    lệnh logic — dòng trong chuỗi nhiều dòng (OfficeReader#242: script fake adb ở cột 0), trong ngoặc (`) -> None:` của chữ
+    ký nhiều dòng) và dòng comment không mở lệnh nào. Độ sâu đếm INDENT/DEDENT của tokenize: lề do Python tính (tab, "\f",
+    "\" nối dòng), không dựng lại bằng tay. masked: text cùng độ dài, giữ "\n", dấu nháy và `#`; thành dấu cách: comment, ruột chuỗi
     nhiều dòng (f-string: phần chữ); thành "_": phần khớp _ASSERT trong chuỗi một dòng. Thân test giờ kéo qua dòng cột 0
     nên chữ `fail() {`, `# assert x` nằm sau đó không được thành assertion (bản cũ cắt thân nên không thấy) — không che
     là nới linter.
     Không tokenize được (không phải Python, cú pháp dở) ⇒ None: giữ quy tắc lề cũ."""
     if re.search("\r(?!\n)", text):
         return None     # "\r" đơn (gate --staged đọc blob): tokenize gom dòng khác splitlines của quy tắc cũ ⇒ quy tắc cũ
-    rows, fresh, cuts = set(), True, []
+    rows, fresh, depth, cuts = {}, True, 0, []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.INDENT:
+                depth += 1
+            elif tok.type == tokenize.DEDENT:
+                depth -= 1
             if tok.type == tokenize.NEWLINE:
                 fresh = True
             elif fresh and tok.type not in (tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT):
-                rows.add(tok.start[0])
+                rows[tok.start[0]] = depth
                 fresh = False
             if tok.type == tokenize.COMMENT:
                 cuts.append((tok.start, tok.end, True))
@@ -139,13 +144,7 @@ def _python_scan(text: str) -> "tuple | None":
             seg = _ASSERT.sub(lambda m: "_" * len(m.group()), seg)
         pieces += [text[prev:a], seg]
         prev = b
-    return frozenset(rows), "".join(pieces) + text[prev:]
-
-
-def _lead(line: str) -> int:
-    # lề như tokenize: tab nhảy tới bội số 8, "\f" đưa cột về 0
-    ws = line[:len(line) - len(line.lstrip(" \t\f"))]
-    return len(ws.rsplit("\f", 1)[-1].expandtabs(8))
+    return rows, "".join(pieces) + text[prev:]
 
 
 def _python_body(text: str, start: int) -> str:
@@ -154,15 +153,15 @@ def _python_body(text: str, start: int) -> str:
     row = text.count("\n", 0, start) + 1
     scan = _python_scan(text)
     if scan and row in scan[0] and start < len(text):
-        # `def` là lệnh thật (không nằm trong chuỗi fixture): thân hết ở lệnh kế tiếp có lề ≤ lề của chính dòng `def`
+        # `def` là lệnh thật (không nằm trong chuỗi fixture): thân hết ở lệnh kế tiếp có độ sâu khối ≤ độ sâu của dòng `def`
         # (regex khớp từ đầu dòng nên lề tính ở trên luôn 0 ⇒ method kéo tới cột 0, nuốt assert của test sau, #737),
         # và đọc trên bản đã che comment/chuỗi. Chỉ tách ở "\n" như tokenize: splitlines còn tách ở \f, U+2028…
         stmts, masked = scan
         lines = io.StringIO(masked[start:]).readlines()
-        out, indent = [lines[0]], _lead(lines[0])
+        out, depth = [lines[0]], stmts[row]
         row += lines[0].count("\n")
         for line in lines[1:]:
-            if row in stmts and _lead(line) <= indent:
+            if row in stmts and stmts[row] <= depth:
                 break
             out.append(line)
             row += line.count("\n")
