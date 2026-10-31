@@ -14,6 +14,8 @@
 - **Nguyên nhân gốc rễ:** Model cố gắng tối ưu token đầu ra nên bỏ qua đoạn giữa.
 - **Quy tắc bắt buộc:** Luôn thay thế trọn vẹn khối mã liền mạch, kiểm tra độ dài file và git diff trước khi xác nhận hoàn tất.
 - **Kiểm tra tự động:** `grep -En "// \.\.\.|\/\* \.\.\.|\# \.\.\." <modified_files>` phải trả về 0 kết quả.
+- **detect:** `^\s*(//|/\*|#)\s*\.\.\.\s*(existing|rest|keep|unchanged|same)\b`
+- **detect-glob:** `*.py`, `*.sh`, `*.bash`, `*.js`, `*.mjs`, `*.ts`, `*.tsx`, `*.kt`, `*.java`, `*.swift`, `*.go`, `*.rs`, `*.cs`
 
 ---
 
@@ -59,6 +61,8 @@
 - **Hiện tượng lỗi:** Ứng dụng chạy sai luồng dữ liệu, nút bấm không phản hồi nhưng không hề có thông báo hay crash log ("Ghost Bug").
 - **Nguyên nhân gốc rễ:** Dùng `catch (e) {}` hoặc `except: pass` để "chữa cháy" cho qua unit test mà không xử lý hoặc log lỗi.
 - **Quy tắc bắt buộc:** Nghiêm cấm khối catch rỗng. Bắt buộc ghi log lỗi kèm ngữ cảnh (Contextual Error Logging) hoặc hiển thị UI Error Boundary.
+- **detect:** `^\s*except\s*:\s*pass\s*$`, `^\s*except\s+(Base)?Exception\s*:\s*pass\s*$`, `catch\s*\([^)]*\)\s*\{\s*\}`
+- **detect-glob:** `*.py`, `*.sh`, `*.bash`, `*.js`, `*.mjs`, `*.ts`, `*.tsx`, `*.kt`, `*.java`, `*.swift`, `*.go`, `*.rs`, `*.cs`
 
 ---
 
@@ -576,6 +580,8 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** chuỗi giống khóa nằm nguyên khối trong mã nguồn; công cụ quét từng commit nên sửa mã mới không xoá được sự cố nằm ở commit cũ
 - **Quy tắc phòng ngừa & Cách fix:** ghép giá trị giả lúc chạy từ nhiều mảnh (tiền tố + phần còn lại), không bao giờ viết nguyên khối; làm ngay từ commit đầu vì sửa sau không xoá được lịch sử, chỉ còn đánh dấu dương tính giả hoặc dựng lại nhánh
 - **Lệnh kiểm tra:** `git diff origin/main -U0 | grep -E '^\+' | grep -E 'sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{10,}|Bearer [A-Za-z0-9]{10,}|(token|secret)=[A-Za-z0-9]{10,}' phải rỗng`
+- **detect:** `sk-(ant-|proj-)?[A-Za-z0-9]{20,}`, `ghp_[A-Za-z0-9]{30,}`, `AKIA[0-9A-Z]{16}`
+- **detect-glob:** `**`
 
 ---
 
@@ -708,6 +714,8 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa & Cách fix:** macOS: dùng sed -i '' (hoặc perl -pi -e); thay timeout bằng gtimeout hoặc perl -e 'alarm N; exec @ARGV'.
 - **Lệnh kiểm tra:** `grep -rnE "sed -i [^'\"]|(^|[ ;|&])timeout " scripts .claude 2>/dev/null | grep -v "sed -i ''"`
 - **Nguồn:** retro 2026-10-26
+- **detect:** `(^|[;&|]\s*)sed -i [^'"]`, `(^|[;&|(]\s*)timeout [0-9]`
+- **detect-glob:** `*.sh`, `*.bash`
 
 ---
 
