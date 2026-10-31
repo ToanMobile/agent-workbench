@@ -38,6 +38,12 @@ mkdir -p "$R/.claude/super-board/configs" && echo '{}' > "$R/.claude/super-board
 echo a > "$R/a"; git -C "$R" add -A; git -C "$R" commit -qm init
 mkdir -p "$R/.agents" && ln -s "$KIT" "$R/.agents/devkit"
 git -C "$R" remote add origin "$O"; git -C "$R" push -q origin main
+# Hook post-checkout của repo (như relink của GeelyEx2) tạo file chưa track lúc gate dựng scratch, TRƯỚC bước cài DevKit:
+# file đó không do install.sh tạo nên phải còn nguyên (ảnh chụp "trước" mới có tác dụng).
+mkdir -p "$R/.git/hooks"
+printf '#!/bin/sh\n[ "$3" = 1 ] && echo hook > pre-existing.txt\nexit 0\n' > "$R/.git/hooks/post-checkout"
+chmod +x "$R/.git/hooks/post-checkout"
+git -C "$R" config core.hooksPath "$R/.git/hooks"
 git -C "$R" branch -q --no-track issue-5-x main
 git -C "$R" worktree add -q "$WT" issue-5-x
 # PR: một file Markdown + mcp_config.json của chính PR (đã track, cùng tên với file install.sh ghi đè)
@@ -70,7 +76,7 @@ CFG="$TMP/cfg.json"
 # Lệnh verify đọc scratch như post-fix-gate --diff: file chưa track + file đổi so với base. Mỗi lệnh in dấu riêng rồi đỏ nếu sai.
 cat > "$CFG" <<'JSON'
 {"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":[
- "u=$(git ls-files --others --exclude-standard); [ -z \"$u\" ] || { echo UNTRACKED-L\"\"EFT $u; exit 1; }",
+ "u=$(git ls-files --others --exclude-standard); [ \"$u\" = pre-existing.txt ] || { echo UNTRACKED-L\"\"EFT $u; exit 1; }",
  "[ -L .agents/devkit ] || { echo DEVKIT-G\"\"ONE; exit 1; }",
  "[ \"$(cat mcp_config.json)\" = PR ] || { echo PR-FILE-CH\"\"ANGED $(cat mcp_config.json); exit 1; }",
  "git diff --name-only origin/main HEAD | grep -qx mcp_config.json || { echo PR-FILE-UNS\"\"EEN; exit 1; }",
@@ -78,7 +84,7 @@ cat > "$CFG" <<'JSON'
 JSON
 ( cd "$WT" && bash "$GATE" --config "$CFG" --pr 5 --expect-head "$H" --dry-run ) >"$TMP/gate.log" 2>&1; rc=$?
 ! grep -q "UNTRACKED-LEFT" "$TMP/gate.log" \
-  && ok "scratch không còn file chưa track do install.sh tạo (.mcp.json, .gemini/settings.json)" \
+  && ok "scratch chỉ còn file chưa track có từ trước khi cài (pre-existing.txt); file install.sh tạo (.mcp.json, .gemini/settings.json) đã xoá" \
   || fail "install.sh để lại file chưa track trong scratch: $(grep -m1 UNTRACKED-LEFT "$TMP/gate.log")"
 ! grep -q "DEVKIT-GONE" "$TMP/gate.log" && ok "link .agents/devkit (bị ignore) vẫn còn cho verify" || fail "xoá mất .agents/devkit"
 ! grep -q "PR-FILE-CHANGED" "$TMP/gate.log" && ok "mcp_config.json của PR giữ đúng nội dung PR" \

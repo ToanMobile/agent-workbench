@@ -92,7 +92,8 @@
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
 #      — or the merge call failed while GitHub still shows the PR OPEN at the verified head (nothing merged; next wave retries)
-#   5  the base could not be merged in (real conflict) — needs a rebase pass
+#   5  the base could not be merged in (real conflict) — needs a rebase pass; with no conflicted file (a git hook refused
+#      the local merge commit) the gate prints the git/hook message instead of the file list
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2 and 5
 #      as a rebase pass).
@@ -643,8 +644,9 @@ if ! MERGE_ERR=$(git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>&1); th
     say "this is a rebase pass for the Builder lane, not a Blocked card"
   else
     # GeelyEx2 #179: hook commit-msg của repo từ chối commit gộp ⇒ không có file xung đột; in lời git/hook thật, rebase không gỡ được.
-    say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused): $(printf '%s' "$MERGE_ERR" | tail -5 | clip 600)"
-    say "not a content conflict: fix the refusal above in the repo; a rebase pass will not clear it"
+    # Bỏ dòng "Not committing merge…" git tự thêm; lấy phần ĐẦU: lý do của hook thường ở dòng đầu (tail cắt mất khi hook in nhiều dòng).
+    say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused the local merge commit): $(printf '%s\n' "$MERGE_ERR" | grep -v '^Not committing merge' | head -8 | clip 600)"
+    say "not a content conflict in the PR: the reason is the git/hook message above"
   fi
   exit 5
 fi

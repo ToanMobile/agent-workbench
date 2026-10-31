@@ -43,9 +43,12 @@ printf '{"files":[{"path":"shared"}],"labels":[],"body":"","additions":1,"deleti
 git -C "$R" checkout -q main; echo c > "$R/c"; echo main > "$R/shared"; git -C "$R" add c shared; git -C "$R" commit -qm main-moves
 git -C "$R" push -q origin main
 # Hook commit-msg của repo (dùng chung cho mọi worktree) từ chối commit gộp, như guard-check.py của GeelyEx2
+# Lý do ở dòng ĐẦU rồi 6 dòng hướng dẫn: gate phải giữ được dòng lý do (tail -5 từng cắt mất). core.hooksPath tuyệt đối: máy có
+# core.hooksPath toàn cục không làm hook này bị bỏ qua.
 mkdir -p "$R/.git/hooks"
-printf '#!/bin/sh\necho "guard-check: thieu trailer Bug: <id> (HOOK-REJ""ECTED)" >&2\nexit 1\n' > "$R/.git/hooks/commit-msg"
+printf '#!/bin/sh\necho "guard-check: thieu trailer Bug: <id> (HOOK-REJ""ECTED)" >&2\nfor i in 1 2 3 4 5 6; do echo "huong dan $i" >&2; done\nexit 1\n' > "$R/.git/hooks/commit-msg"
 chmod +x "$R/.git/hooks/commit-msg"
+git -C "$R" config core.hooksPath "$R/.git/hooks"
 
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/gh" <<'SH'
