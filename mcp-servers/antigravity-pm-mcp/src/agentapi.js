@@ -260,7 +260,7 @@ const selfTag = () => { SELF_TAG = SELF_TAG || procTag(process.pid); return SELF
 // May ban (load1 > 100, #657) lam ps tra loi > 1,5 s: timeout cu coi cham la loi. Chinh duoc qua env, KEP o PS_TIMEOUT_MAX_MS: ngan sach ps duoi khoa
 // (<= 4 lan) x tran phai < LOCK_STALE_MS (4 x 7 s = 28 s < 40 s); muon tran cao hon thi nang LOCK_STALE_MS trong code (PM khac xet khoa cu bang hang so cua no, khong bang env cua chu khoa).
 const PS_TIMEOUT_MAX_MS = 7000;
-export const psTimeoutMs = () => { const n = Number(process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS); return Number.isFinite(n) && n > 0 ? Math.min(n, PS_TIMEOUT_MAX_MS) : 5000; };
+export const psTimeoutMs = () => { const n = Math.trunc(Number(process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS)); return Number.isFinite(n) && n > 0 ? Math.min(n, PS_TIMEOUT_MAX_MS) : 5000; };
 
 function procTag(pid) {
   if (!pid) return null;
@@ -352,6 +352,15 @@ function assertProjectDir(cwd) {
   if (!fs.existsSync(cwd)) throw new AgentApiError(`thu muc project ${cwd} khong con ton tai (da doi ten hoac xoa?): agy khong chay duoc o do`);
 }
 
+// #734: bien messaging cua phien Claude dang chay PM (MCP stdio thua env cua phien) khong duoc xuong agy va moi lenh cua agent
+// (--dangerously-skip-permissions). Danh sach TUONG MINH, khong loc theo mau: bo nham bien agy can thi luot agy hong.
+const CLAUDE_SESSION_ENV = ['CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_MESSAGING_SOCKET'];
+function agyEnv(outFile) {
+  const env = { ...process.env, [RUN_ENV]: runOf(outFile) };
+  for (const k of CLAUDE_SESSION_ENV) delete env[k];
+  return env;
+}
+
 /**
  * Chay `agy ...` tach nhom, cho den khi no in su kien `init` (co conversation_id + cwd that) roi de no chay tiep den het luot.
  * stdout+stderr vao 1 file 0600 trong agy-runs/ (dong khong phai JSON bi bo qua khi doc). Cho init ma server bi tat (SIGTERM) thi don luon nhom con.
@@ -368,7 +377,7 @@ function agyStart(args, cwd, onSpawn) {
   let child;
   try {
     // the luot: agy chuyen env cua no cho moi lenh cua agent => lenh sot lai sau luot nhan ra duoc (reapTurnLeftovers)
-    child = spawn(agy, args, { cwd, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, [RUN_ENV]: runOf(outFile) } });
+    child = spawn(agy, args, { cwd, detached: true, stdio: ['ignore', fd, fd], env: agyEnv(outFile) });
   } finally {
     fs.closeSync(fd);
   }
@@ -503,18 +512,22 @@ function reapOrphanAgy() {
 // daemon trong argv, khong theo chuoi bat ky. App GUI = file chinh `*.app/Contents/MacOS/<ten>`, TRU Python: python3 cua Homebrew /
 // python.org chay duoi ten `.../Python.app/Contents/MacOS/Python` (dung hinh tien trinh `while True` 30/10).
 const SHARED_BIN_RE = /^(emulator|qemu-system-[\w-]+|netsimd|crashpad_handler|watchman)$/;
-const SHARED_ARGV_RE = /^\S*\bjava\s.*\b(GradleDaemon|KotlinCompileDaemon)\b|^(\S*\/)?adb\s.*\bfork-server\b|\s--cbm-daemon-internal\b|^.*?\.app\/Contents\/MacOS\/(?!Python)/;
+const SHARED_ARGV_RE = /^(?:\S*|\/.*?\.app\/Contents\/\S*)\bjava\s.*\b(GradleDaemon|KotlinCompileDaemon)\b|^(\S*\/)?adb\s.*\bfork-server\b|\s--cbm-daemon-internal\b|^.*?\.app\/Contents\/MacOS\/(?!Python)/;
 const sharedDaemon = (argv) => SHARED_BIN_RE.test(path.basename(argv.split(/\s/)[0])) || SHARED_ARGV_RE.test(argv);
 const LSTART_RE = '(\\w{3} \\w{3} [ \\d]\\d \\d\\d:\\d\\d:\\d\\d \\d{4})';
 const REAP_MAX = 20;
 const psEnv = () => ({ ...process.env, LC_ALL: 'C', TZ: 'UTC' });   // lstart cung khuon voi procTag
+
+// #768: `-E` (in env sau argv) la co cua ps BSD/macOS; tren CI ubuntu `/bin/ps -axwwE ...` that bai (31/10) nen moi lan don bi bo qua.
+// procps (Linux) in env sau argv bang co BSD `e`.
+const PS_ENV_ARGS = process.platform === 'linux' ? ['axwwe'] : ['-axwwE'];
 
 /**
  * Ung vien (PPID 1) mang the luot: mot lan ps. Cot command cua `ps -E` noi argv + env bang dau cach, khong phan biet duoc: o day chi loc
  * tho; reapTurnLeftovers cat argv (procNow) roi moi xet bien o PHAN ENV.
  */
 function orphanAgentProcs() {
-  const text = execFileSync(process.env.ANTIGRAVITY_PM_PS || '/bin/ps', ['-axwwE', '-o', 'pid=,ppid=,lstart=,command='],
+  const text = execFileSync(process.env.ANTIGRAVITY_PM_PS || '/bin/ps', [...PS_ENV_ARGS, '-o', 'pid=,ppid=,lstart=,command='],
     { encoding: 'utf8', timeout: psTimeoutMs(), maxBuffer: 64 * 1024 * 1024, env: psEnv() });
   const re = new RegExp(`^\\s*(\\d+)\\s+1\\s+${LSTART_RE}\\s+(.*)$`);
   const procs = [];
@@ -636,8 +649,8 @@ async function agyNewConversation({ prompt, model, cwd }) {
   const root = fs.realpathSync(cwd);
   readAgyRegistry();   // hong thi nem loi NGAY, truoc khi sinh agent: sau khi spawn khong con cach nao theo doi no
   // ponytail: agy mo coi chi bi dung khi co lan mo hoi thoai agy ke tiep (cua PM nao cung duoc; PM chi gui tin thi khong don); nang cap: don them luc
-  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 5 s
-  // (timeout cua procTag) + 3 s (cho khoa); PM chet trong do thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
+  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 7 s
+  // (tran timeout cua procTag, mac dinh 5 s) + 3 s (cho khoa); PM chet trong do thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
   reapOrphanAgy();
   reapTurnLeftovers();
   // ps cua chinh PM tinh MOT lan, TRUOC spawn: hong (nem) hoac khong in gi (null: entryBusy / reaper khong nhan ra chu) thi tu choi, chua co agy nao chay
