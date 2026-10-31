@@ -1,7 +1,7 @@
 # Cổng máy cho mọi PR (pipeline tự động, không duyệt tay): lint, typecheck, test, semgrep (gồm các mẫu bug đã biết trong
-# .agents/instincts.md), gitleaks, quét mẫu bug đã biết, và Alibaba OpenCodeReview chế độ đầy đủ. BẤT KỲ bước nào lỗi → job đỏ.
+# .agents/instincts.md), gitleaks, quét mẫu bug đã biết. BẤT KỲ bước nào lỗi → job đỏ.
 # Review 4 bên (Claude Opus + Antigravity + Grok + OCR) chạy trên máy dev qua universal-agent-devkit/bin/review-fanout.sh; đây là lớp CI độc lập.
-# Secrets cần có: OCR_LLM_URL, OCR_LLM_TOKEN, OCR_LLM_MODEL (thiếu → bước OCR đỏ, không bao giờ "bỏ qua").
+# Bước Alibaba OpenCodeReview (`ocr-review --strict`) TẠM TẮT — xem ghi chú cuối file (#751).
 name: pr-review
 
 on:
@@ -100,28 +100,6 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --log-opts="$(git merge-base "$BASE_REF" HEAD)..HEAD" .
 
-      - name: Alibaba OpenCodeReview (full LLM review, strict — no delegate fallback)
-        env:
-          OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
-          OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}
-          OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
-        run: |
-          set -euo pipefail
-          npm i -g --no-audit --no-fund @alibaba-group/open-code-review@1.13.3
-          out="$RUNNER_TEMP/ocr"
-          mkdir -p "$out"
-          python3 universal-agent-devkit/bin/ocr-review --strict --from "$BASE_REF" --out "$out" | tee "$RUNNER_TEMP/ocr.txt"
-          # same rule as the 4-way review (bin/review_runner.py run_ocr): failed files or a critical/high comment = red
-          python3 - "$out/ocr-review.json" <<'PY'
-          import json, sys
-          rep = json.load(open(sys.argv[1], encoding="utf-8"))
-          cov = (rep.get("manifest") or {}).get("coverage") or {}
-          if rep.get("status") in ("failed", "error") or cov.get("failed"):
-              sys.exit("OCR review incomplete: status=%s failed_files=%d" % (rep.get("status"), len(cov.get("failed") or [])))
-          bad = [c for c in rep.get("comments") or [] if isinstance(c, dict)
-                 and str(c.get("severity", "")).lower() in ("critical", "high", "blocker", "major", "p0", "p1")]
-          for c in bad:
-              print("::error file=%s,line=%s::OCR %s: %s" % (c.get("path") or c.get("file"), c.get("line") or c.get("start_line") or 1,
-                    c.get("severity"), str(c.get("message") or c.get("body") or "")[:300]))
-          sys.exit(1 if bad else 0)
-          PY
+      # Alibaba OpenCodeReview (`ocr-review --strict`, cần secrets OCR_LLM_URL / OCR_LLM_TOKEN / OCR_LLM_MODEL): TẠM TẮT theo
+      # quyết định anh Đạt 31/10 16:17, bật lại khi repo có OCR_LLM_URL/TOKEN/MODEL. Repo chỉ có BOARD_PAT nên bước strict luôn
+      # exit 1 và job không bao giờ xanh. Bật lại: thẻ #751 (khôi phục nguyên bước từ lịch sử git của file này).
