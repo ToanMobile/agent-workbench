@@ -8,6 +8,8 @@ Vì sao: #315 có AC "lượt 2 dùng lại REG-DK-ALL-01" chưa ai làm mà th�
   collapsed      khối sb:ac ít dòng hơn số AC của thẻ (+ AC của thẻ tham chiếu) → exit 11, builder viết lại mỗi AC một dòng
   unticked       dòng AC chưa tick (đo số sau merge, thiết bị, người)          → vẫn merge, thẻ ở lại (nhãn ac-open)
   indirect       số thẻ mà AC ghi "AC của thẻ #X": merge gate đọc #X rồi chạy lại với --extra-issue-body
+  batch          (#724) thẻ Closes khác thẻ của nhánh mà body (--batch-member-body) mang `<!-- sb:batch-of #<thẻ nhánh> -->`:
+                 thành viên đợt, không phải thẻ lạ; AC của nó cộng vào issue_ac. Body thiếu/không đọc được → vẫn là thẻ lạ.
 Nhánh không mang số thẻ: {"skip": true}. PR không có sb:ac: chỉ có foreign_closes ("ac": false).
 
   --rewrite-closes <file> --card N : đổi từ khoá đóng #N (mọi dạng GitHub nhận) thành `Refs #N` tại chỗ.
@@ -30,6 +32,8 @@ CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([\w.-]+/[
 # ("AC của thẻ #315 đạt (xem PR #343)": #343 không phải thẻ được tham chiếu).
 INDIRECT = re.compile(r"\bAC\s+(?:của|of)\s+(?:(?:các\s+)?(?:thẻ|cards?|issues?)\s+)?(#\d+(?:\s*(?:,|và|and|&)\s*#\d+)*)", re.I)
 CARD_REF = re.compile(r"#(\d+)")
+# #724: marker create_task.py ghi vào body thẻ thành viên đợt (cùng regex với create_task.BATCH_OF_RE).
+BATCH_OF = re.compile(r"<!--\s*sb:batch-of\s+#(\d+)\s*-->")
 
 
 FENCE_BLOCK = re.compile(r"^[ \t]*```.*?^[ \t]*```[^\n]*$", re.S | re.M)
@@ -72,28 +76,54 @@ def indirect_cards(items, card):
     return sorted({int(n) for it in items for m in INDIRECT.finditer(it) for n in CARD_REF.findall(m.group(1))} - {card})
 
 
-def check(issue_body, pr_body, msg, branch, extra_bodies=()):
+def card_ac(items, card, by_card, skip=()):
+    """(số AC phải chứng minh, thẻ gián tiếp) của một thẻ: dòng "AC của thẻ #X" là chỗ đứng của mọi AC của #X (ít nhất 1 mỗi
+    thẻ, kể cả khi body #X không đọc được hay viết văn xuôi), nên mở rộng không bao giờ làm giảm số AC phải chứng minh."""
+    indirect = [x for x in indirect_cards(items, card) if x not in skip]
+    direct = [it for it in items if not INDIRECT.search(it)]
+    return max(len(items), len(direct) + sum(max(1, len(ac_items(by_card.get(x, "")))) for x in indirect)), indirect
+
+
+def batch_lead(body):
+    """Số thẻ trưởng mà body thẻ đánh dấu là đợt của nó; marker trong code fence/span không tính."""
+    m = BATCH_OF.search(prose(body))
+    return int(m.group(1)) if m else None
+
+
+def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
     card = CARD_FROM_BRANCH.search(branch or "")
     if not card:
         return {"skip": True, "reason": "branch carries no issue-<N>"}
     card = int(card.group(1))
     # Body PR là Markdown: từ khoá trong code không đóng issue. Message commit là văn bản thô: mọi từ khoá đều tính.
-    closes = {int(n) for _, n in CLOSES.findall(prose(pr_body) + "\n" + (msg or ""))}
-    out = {"skip": False, "card": card, "foreign_closes": sorted(closes - {card}), "closes_own": card in closes}
+    found = CLOSES.findall(prose(pr_body) + "\n" + (msg or ""))
+    closes = {int(n) for _, n in found}
+    # #724: thẻ Closes mà body mang marker đợt của chính thẻ nhánh là thành viên đợt (một nhánh, một PR, một gate). Chỉ Closes
+    # không kèm owner/repo: `Closes x/y#32` đóng issue của repo khác, body thẻ #32 ở đây không nói gì về nó.
+    members = dict(batch_bodies or {})
+    local = {int(n) for repo, n in found if not repo}
+    batch = sorted(n for n in local - {card} if n in members and batch_lead(members[n]) == card)
+    # AC của thành viên phải chứng minh trong cùng khối sb:ac: ít nhất 1 mỗi thẻ, như AC gián tiếp.
+    batch_ac = sum(max(1, len(ac_items(members[n]))) for n in batch)
+    out = {"skip": False, "card": card, "foreign_closes": sorted(closes - {card} - set(batch)), "closes_own": card in closes,
+           "batch": batch}
     m = AC_BLOCK.search(pr_body or "")
     out["ac"] = bool(m)
     items = ac_items(issue_body)
     if not m:
         # Không có khối sb:ac mà vẫn đóng thẻ (merge gate chỉ đưa body issue khi closes_own): nén về 0 dòng.
-        if issue_body:
-            out.update({"issue_ac": len(items), "pr_ac": 0, "collapsed": bool(items), "unticked": [], "indirect": []})
+        if issue_body or batch:
+            out.update({"issue_ac": len(items) + batch_ac, "pr_ac": 0, "collapsed": bool(items) or bool(batch),
+                        "unticked": [], "indirect": []})
         return out
-    indirect = indirect_cards(items, card)
-    # Dòng "AC của thẻ #X" là chỗ đứng của mọi AC của #X: thay nó bằng số AC của từng thẻ được nhắc (ít nhất 1 mỗi thẻ,
-    # kể cả khi body #X không đọc được hay viết văn xuôi), nên mở rộng không bao giờ làm giảm số AC phải chứng minh.
     by_card = dict(extra_bodies or {})
-    direct = [it for it in items if not INDIRECT.search(it)]
-    issue_ac = max(len(items), len(direct) + sum(max(1, len(ac_items(by_card.get(x, "")))) for x in indirect))
+    issue_ac, indirect = card_ac(items, card, by_card)
+    # #724: mỗi thành viên đếm như khi nó đứng riêng — "AC của thẻ #X" của thành viên cũng mở rộng (lỗ #315/#343), #X vào
+    # `indirect` để merge gate đọc. "AC của thẻ <trưởng/thành viên khác>" đã được đếm ở thẻ đó, không đếm hai lần.
+    for n in batch:
+        m_ac, m_indirect = card_ac(ac_items(members[n]), n, by_card, skip={card, *batch})
+        issue_ac += max(1, m_ac)
+        indirect = sorted(set(indirect) | set(m_indirect))
     pr_ac = [c for c in map(CHECKBOX.match, FENCE_BLOCK.sub("", m.group(1)).splitlines()) if c]
     out.update({
         "issue_ac": issue_ac,
@@ -120,6 +150,8 @@ def main():
     ap.add_argument("--issue-body")
     ap.add_argument("--extra-issue-body", action="append", default=[], metavar="N=FILE",
                     help="body of card #N that the AC refers to (repeat)")
+    ap.add_argument("--batch-member-body", action="append", default=[], metavar="N=FILE",
+                    help="body of card #N that the PR closes besides the branch card (#724 batch member check; repeat)")
     ap.add_argument("--pr-body")
     ap.add_argument("--msg")
     ap.add_argument("--branch", default="")
@@ -132,13 +164,14 @@ def main():
             ap.error("--rewrite-closes needs --card")
         print("rewritten" if rewrite_closes(a.rewrite_closes, a.card, a.foreign) else "unchanged")
         return 0
-    extra = {}
-    for spec in a.extra_issue_body:
-        n, sep, path = spec.partition("=")
-        if not sep or not n.isdigit():
-            ap.error(f"--extra-issue-body wants N=FILE, got {spec!r}")
-        extra[int(n)] = read(path)
-    print(json.dumps(check(read(a.issue_body), read(a.pr_body), read(a.msg), a.branch, extra), ensure_ascii=False))
+    extra, batch = {}, {}
+    for flag, specs, into in (("--extra-issue-body", a.extra_issue_body, extra), ("--batch-member-body", a.batch_member_body, batch)):
+        for spec in specs:
+            n, sep, path = spec.partition("=")
+            if not sep or not n.isdigit():
+                ap.error(f"{flag} wants N=FILE, got {spec!r}")
+            into[int(n)] = read(path)
+    print(json.dumps(check(read(a.issue_body), read(a.pr_body), read(a.msg), a.branch, extra, batch), ensure_ascii=False))
     return 0
 
 
