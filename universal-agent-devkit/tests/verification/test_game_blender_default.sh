@@ -416,14 +416,22 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/outsettings.blend')
   [ -s "$TMP/outsettings.blend" ] || fail "A33 setup: outsettings.blend was not built"
   "$BLENDER" -b -P "$PROP" -- --blend "$TMP/outsettings.blend" --output "$TMP/outsettings.png" >/dev/null 2>&1
   RC=$?
-  if [ "$RC" -eq 0 ] && need_png "A33" "$TMP/outsettings.png"; then
-    FRAME="$(frame_of "$TMP/outsettings.png")"
-    LEAK="$(python3 -I -c "import sys; print('leak' if b'.blend' in open(sys.argv[1], 'rb').read() else 'clean')" "$TMP/outsettings.png")"
-    [ "$FRAME" = "inside" ] && [ "$LEAK" = "clean" ] \
-      && ok "A33 stereo + video output + pixel aspect 2 + stamp in the source: a plain PNG at --output, framed, no source path inside" \
-      || fail "A33 the source's output settings leaked: frame=$FRAME, source path in the PNG=$LEAK"
-  else
+  # #719: exit/PNG first; no PIL only skips the frame measurement (need_png contract), the byte checks below need no PIL
+  if [ "$RC" -ne 0 ] || [ ! -s "$TMP/outsettings.png" ]; then
     fail "A33 source with stereo/video/stamp output: exit=$RC, PNG=$([ -s "$TMP/outsettings.png" ] && echo yes || echo no) (one stereo_L.png/stereo_R.png pair, or a TypeError on 'PNG')"
+  else
+    LEAK="$(python3 -I -c "import sys; print('leak' if b'.blend' in open(sys.argv[1], 'rb').read() else 'clean')" "$TMP/outsettings.png")"
+    if need_png "A33" "$TMP/outsettings.png"; then
+      FRAME="$(frame_of "$TMP/outsettings.png")"
+      [ "$FRAME" = "inside" ] && [ "$LEAK" = "clean" ] \
+        && ok "A33 stereo + video output + pixel aspect 2 + stamp in the source: a plain PNG at --output, framed, no source path inside" \
+        || fail "A33 the source's output settings leaked: frame=$FRAME, source path in the PNG=$LEAK"
+    else
+      SIG="$(python3 -I -c "import sys; print('png' if open(sys.argv[1], 'rb').read(8) == b'\x89PNG\r\n\x1a\n' else 'other')" "$TMP/outsettings.png")"
+      [ "$SIG" = "png" ] && [ "$LEAK" = "clean" ] \
+        && ok "A33 (no PIL) stereo + video output + stamp in the source: exit 0, a PNG file at --output, no source path inside" \
+        || fail "A33 the source's output settings leaked: file signature=$SIG, source path in the PNG=$LEAK"
+    fi
   fi
   # F5: geometry that renders as nothing (a curve without bevel, a mesh of edges) must not size the frame
   "$BLENDER" -b --python-expr "
@@ -563,7 +571,10 @@ bpy.ops.wm.save_as_mainfile(filepath=r'$TMP/eqsrc.blend')
   [ -s "$TMP/eqsrc.blend" ] || fail "A23 setup: eqsrc.blend was not built"
   "$BLENDER" -b -P "$PROP" -- --blend="$TMP/eqsrc.blend" --output "$TMP/eq.png" >"$TMP/eq.log" 2>&1
   RC=$?
-  if [ "$RC" -eq 0 ] && [ -s "$TMP/eq.png" ] && python3 -I -c "import PIL" 2>/dev/null; then
+  # #719: exit/PNG first; no PIL only skips the colour measurement (need_png contract: no PIL = SKIP, no PNG = FAIL)
+  if [ "$RC" -ne 0 ] || [ ! -s "$TMP/eq.png" ]; then
+    fail "A23 --blend=<file>: exit=$RC, PNG=$([ -s "$TMP/eq.png" ] && echo yes || echo no) $(grep -E 'usage|error|Error' "$TMP/eq.log" | head -n 3 | tr '\n' ' ')"
+  elif python3 -I -c "import PIL" 2>/dev/null; then
     EQ="$(python3 -I -c "
 from PIL import Image
 im = Image.open('$TMP/eq.png').convert('RGBA'); w, h = im.size
@@ -571,7 +582,7 @@ r, g, b, a = im.getpixel((w // 2, h // 2))
 print('red-source' if a > 0 and r > 50 and g < r / 2 and b < r / 2 else 'default-coin %s' % ((r, g, b, a),))")"
     [ "$EQ" = "red-source" ] && ok "A23 --blend=<file> (equals form) renders the source" || fail "A23 --blend=<file> was ignored and the default coin rendered: $EQ"
   else
-    fail "A23 --blend=<file>: exit=$RC, PNG=$([ -s "$TMP/eq.png" ] && echo yes || echo no) $(grep -E 'usage|error|Error' "$TMP/eq.log" | head -n 3 | tr '\n' ' ')"
+    skip "A23 no PIL, --blend=<file> rendered (exit 0, PNG) but the source colour is not measured"
   fi
   # an empty value (an unset shell variable in --blend "$SRC") is a refusal too, not the default coin
   rm -f "$TMP/emptyblend.png"
