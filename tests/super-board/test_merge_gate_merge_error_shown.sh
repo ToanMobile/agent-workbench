@@ -14,6 +14,8 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-mergeerr-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+# Không đọc config git của máy (core.hooksPath, commit.gpgsign…): kết quả chỉ do fixture
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 XDG_CONFIG_HOME="$TMP/xdg"
 export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"
 mkdir -p "$SB_HEAVY_SLOT_DIR"
 O="$TMP/origin.git"; R="$TMP/repo"; WT="$R/.claude/worktrees/deploy-x"

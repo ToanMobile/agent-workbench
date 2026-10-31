@@ -706,10 +706,18 @@ if [ -n "$DK_INSTALL" ]; then
   bash "$DK_INSTALL" -t "$SCRATCH" -a claude -y --no-githooks >"$VERIFY_LOG" 2>&1 || DK_RC=$?
   [ "$DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed (exit ${DK_RC}): $(tail -3 "$VERIFY_LOG" | clip 300)"
   git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
-  git -C "$SCRATCH" ls-files -z --others --exclude-standard | tr '\0' '\n' | LC_ALL=C sort \
-    | LC_ALL=C comm -13 <(printf '%s\n' "$DK_UNTRACKED_BEFORE") - | while IFS= read -r f; do
-      if [ -n "$f" ]; then rm -f -- "$SCRATCH/$f"; fi
-    done || say "could not list the files the DevKit install left untracked in the scratch tree; verify may count them"
+  # Nhiều lượt: repo không track .gitignore thì install.sh tạo một .gitignore chưa track che .agents/context/*; xoá nó ở lượt 1 làm các file
+  # đó lộ ra ở lượt 2. .agents/devkit không bao giờ xoá (verify cần nó; repo không ignore nó thì như trước khi có bước này).
+  for _dk_pass in 1 2 3; do
+    DK_NEW=$(git -C "$SCRATCH" ls-files -z --others --exclude-standard | LC_ALL=C tr '\0' '\n' | LC_ALL=C sort \
+      | LC_ALL=C comm -13 <(printf '%s\n' "$DK_UNTRACKED_BEFORE") -) \
+      || { say "could not list the files the DevKit install left untracked in the scratch tree; verify may count them"; break; }
+    DK_NEW=$(printf '%s\n' "$DK_NEW" | grep -v '^\.agents/devkit\(/\|$\)' || true)
+    [ -n "$DK_NEW" ] || break
+    while IFS= read -r f; do
+      [ -z "$f" ] || rm -f -- "$SCRATCH/$f" || true
+    done <<<"$DK_NEW"
+  done
 else
   : >"$VERIFY_LOG"
   say "no DevKit install.sh in ${REPO_PATH} or ${DK_MAIN:-the main checkout}: the scratch tree has no .agents/devkit"

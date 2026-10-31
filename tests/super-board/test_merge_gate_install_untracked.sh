@@ -15,6 +15,8 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-installuntracked-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+# Không đọc config git của máy (core.hooksPath, core.excludesFile, commit.gpgsign, ~/.config/git/ignore): kết quả chỉ do fixture
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 XDG_CONFIG_HOME="$TMP/xdg"
 export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"
 mkdir -p "$SB_HEAVY_SLOT_DIR"
 O="$TMP/origin.git"; R="$TMP/repo"; WT="$R/.claude/worktrees/deploy-x"; KIT="$TMP/kit"
@@ -25,7 +27,9 @@ cat > "$KIT/bin/install.sh" <<'SH'
 #!/usr/bin/env bash
 kit="$(cd "$(dirname "$0")/.." && pwd)"
 t=""; while [ $# -gt 0 ]; do case "$1" in -t) t="$2"; shift 2 ;; *) shift ;; esac; done
-mkdir -p "$t/.agents" "$t/.gemini" && ln -sfn "$kit" "$t/.agents/devkit"
+mkdir -p "$t/.agents/context" "$t/.gemini" && ln -sfn "$kit" "$t/.agents/devkit"
+# như repo không track .gitignore: install tạo file ignore chưa track che file thật của nó; xoá file ignore thì file kia lộ ra
+echo 'context/' > "$t/.agents/.gitignore"; echo ctx > "$t/.agents/context/essentials.md"
 echo '{"mcpServers":{"install":{}}}' > "$t/.mcp.json"
 echo INSTALL > "$t/mcp_config.json"
 echo '{}' > "$t/.gemini/settings.json"
@@ -77,6 +81,7 @@ CFG="$TMP/cfg.json"
 cat > "$CFG" <<'JSON'
 {"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":[
  "u=$(git ls-files --others --exclude-standard); [ \"$u\" = pre-existing.txt ] || { echo UNTRACKED-L\"\"EFT $u; exit 1; }",
+ "[ ! -e .mcp.json ] && [ ! -e .agents/context/essentials.md ] || { echo INSTALL-FILE-L\"\"EFT; exit 1; }",
  "[ -L .agents/devkit ] || { echo DEVKIT-G\"\"ONE; exit 1; }",
  "[ \"$(cat mcp_config.json)\" = PR ] || { echo PR-FILE-CH\"\"ANGED $(cat mcp_config.json); exit 1; }",
  "git diff --name-only origin/main HEAD | grep -qx mcp_config.json || { echo PR-FILE-UNS\"\"EEN; exit 1; }",
@@ -90,8 +95,8 @@ JSON
 ! grep -q "PR-FILE-CHANGED" "$TMP/gate.log" && ok "mcp_config.json của PR giữ đúng nội dung PR" \
   || fail "file của PR bị đổi: $(grep -m1 PR-FILE-CHANGED "$TMP/gate.log")"
 ! grep -q "PR-FILE-UNSEEN" "$TMP/gate.log" && ok "file của PR vẫn nằm trong diff mà verify thấy" || fail "verify không thấy file của PR"
-# Lệnh verify xanh không in output ra log gate: "5 command(s)" xanh là bằng chứng cả 5 lệnh kiểm ở trên đều qua.
-grep -q "verified green against main (5 command(s))" "$TMP/gate.log" && [ "$rc" -eq 0 ] && ok "PR Markdown + config: 5/5 lệnh verify xanh, dry run exit 0" \
+# Lệnh verify xanh không in output ra log gate: "6 command(s)" xanh là bằng chứng cả 6 lệnh kiểm ở trên đều qua.
+grep -q "verified green against main (6 command(s))" "$TMP/gate.log" && [ "$rc" -eq 0 ] && ok "PR Markdown + config: 6/6 lệnh verify xanh, dry run exit 0" \
   || fail "gate exit $rc (want 0, mọi lệnh verify chạy): $(tail -5 "$TMP/gate.log")"
 
 echo
