@@ -346,10 +346,14 @@ export async function runPanelAction(action, params = {}, opts = {}) {
     const mode = String(params.mode || 'even');
     if (!BALANCE_MODES.has(mode)) throw badInput('Chế độ chia repo không hợp lệ (even | swap).');
     const res = balanceRepoAccounts({ repos, stateDir, mode });
+    // a repo whose settings.local.json does not parse is skipped, never rewritten (#757): not counted, named in the message
+    const skipped = res.filter((r) => r.skipped).map((r) => r.name);
     return {
       ok: true,
-      message: mode === 'swap' ? 'Đã đảo nhóm repo giữa FinOS và FinOS Team.' : 'Đã chia đều repo cho FinOS và FinOS Team.',
-      changed: res.length,
+      message: (mode === 'swap' ? 'Đã đảo nhóm repo giữa FinOS và FinOS Team.' : 'Đã chia đều repo cho FinOS và FinOS Team.')
+        + (skipped.length ? ` Bỏ qua (settings.local.json lỗi): ${skipped.join(', ')}.` : ''),
+      changed: res.length - skipped.length,
+      skipped,
     };
   }
 

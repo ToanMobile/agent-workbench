@@ -45,7 +45,7 @@
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
   header.top { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; padding: 14px 18px; position: sticky; top: 8px; z-index: 5; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
-  .back { color: var(--muted); text-decoration: none; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+  .back { color: var(--muted); text-decoration: none; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; min-height: 44px; }
   .back:hover { color: var(--ink); }
   .title h1 { margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: -0.01em; }
   .title p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
@@ -54,7 +54,7 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-done); flex: none; }
   .dot.warn { background: var(--c-building); } .dot.err { background: var(--c-blocked); } .dot.off { background: var(--c-away); }
 
-  .btn { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 7px 12px; cursor: pointer; font-weight: 500; display: inline-flex; gap: 6px; align-items: center; justify-content: center; min-height: 36px; }
+  .btn { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 7px 12px; cursor: pointer; font-weight: 500; display: inline-flex; gap: 6px; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; }
   .btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--ink) 30%, var(--line)); }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
   .btn.primary { background: var(--c-ready); border-color: var(--c-ready); color: #fff; }
@@ -106,12 +106,12 @@
   .acc-actions .btn { flex: 1; }
 
   .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); }
-  .seg button { border: 0; background: transparent; padding: 7px 12px; cursor: pointer; min-height: 36px; }
+  .seg { display: inline-flex; gap: 8px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); }
+  .seg button { border: 0; background: transparent; padding: 7px 12px; cursor: pointer; min-height: 44px; min-width: 44px; }
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button[aria-pressed="true"] { background: var(--c-ready); color: #fff; font-weight: 600; }
-  .custom { display: inline-flex; gap: 6px; align-items: center; }
-  .custom input { width: 76px; padding: 7px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); min-height: 36px; }
+  .custom { display: inline-flex; gap: 8px; align-items: center; }
+  .custom input { width: 76px; padding: 7px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); min-height: 44px; }
   .hint { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
 
   ul.repos { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -124,10 +124,10 @@
   .rp-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; max-width: 340px; }
   .rp-note { font-size: 12px; color: var(--t-building); margin-top: 3px; max-width: 320px; }
   .rp-note.muted { color: var(--muted); }
-  .rp-assign { display: flex; gap: 6px; align-items: center; }
-  select, .field input { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; min-height: 34px; }
+  .rp-assign { display: flex; gap: 8px; align-items: center; }
+  select, .field input { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; min-height: 44px; }
   select.dirty { border-color: var(--c-ready); box-shadow: 0 0 0 1px var(--c-ready) inset; }
-  .btn.sm { min-height: 32px; padding: 4px 10px; font-size: 12.5px; }
+  .btn.sm { min-height: 44px; padding: 4px 10px; font-size: 12.5px; }
   .btn[hidden] { display: none; }
   tr.differs td { background: color-mix(in srgb, var(--c-building) 6%, transparent); }
   td.nowrap { white-space: nowrap; }

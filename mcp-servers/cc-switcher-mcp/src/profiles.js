@@ -875,15 +875,16 @@ export function balanceRepoAccounts(opts = {}) {
   const results = [];
   repos.forEach((r, idx) => {
     if (!fs.existsSync(r.path)) return;
-    const claudeDir = path.join(r.path, '.claude');
-    const settingsPath = path.join(claudeDir, 'settings.local.json');
-    let existing = {};
+    const settingsPath = path.join(r.path, '.claude', 'settings.local.json');
+    // A settings.local.json that does not parse (or is not a JSON object) is LEFT ALONE and reported as skipped:
+    // writing {account} over it wiped the repo's hooks/permissions/autoMemoryDirectory (#757).
+    let existing;
     try {
-      if (fs.existsSync(settingsPath)) {
-        existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      }
+      existing = readRepoSettings(r.path).data;
     } catch (err) {
-      logStructured('warn', 'parse_existing_settings_failed', { repo: r.name, error: err?.message });
+      logStructured('warn', 'repo_settings_unreadable_balance_skipped', { repo: r.name, settingsPath, error: err?.message });
+      results.push({ name: r.name, path: r.path, settingsPath, skipped: true, error: 'settings.local.json is not a readable JSON object' });
+      return;
     }
 
     let nextAccount = r.defaultAccount || (idx < half ? 'finos' : 'finos_team');
@@ -909,7 +910,8 @@ export function balanceRepoAccounts(opts = {}) {
     });
   });
 
-  logStructured('info', 'repo_accounts_balanced', { mode, count: results.length });
+  const skipped = results.filter((r) => r.skipped).length;
+  logStructured('info', 'repo_accounts_balanced', { mode, count: results.length - skipped, skipped });
   return results;
 }
 
