@@ -45,6 +45,7 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_review_fanout.sh"; sb_review_fixture "$TMP/bin"   # signed review PASS + CI checks (new gate preconditions)
 # Đường dẫn "ộ" (3 byte) đệm ASCII sao cho byte thứ 300 của "fatal: '<đường dẫn>…" rơi GIỮA một ký tự (dưới locale C cut -c1-300 cắt vỡ nó).
 BROKEN="$(python3 -c 'import sys; t=sys.argv[1]+"/"; p=len(b"fatal: \x27")+len(t.encode()); k=next(k for k in range(3) if (300-p-k)%3==1); sys.stdout.write(t+"x"*k+"ộ"*150+".git")' "$TMP")"
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" FAKE_REPO="$R" FAKE_BREAK_ORIGIN="$BROKEN"

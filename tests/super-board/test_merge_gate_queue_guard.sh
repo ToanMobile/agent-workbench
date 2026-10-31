@@ -22,9 +22,9 @@ trap 'rm -rf "$TMP"' EXIT
 export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"
 mkdir -p "$SB_HEAVY_SLOT_DIR"
 # Gate chạy từ bản sao bin: approval/notify giả, không đụng bản thật.
-cp -R "$ROOT/.claude/bin" "$TMP/gatebin"
-GATE="$TMP/gatebin/super-board-merge-gate.sh"
-cat > "$TMP/gatebin/super-board-approval.py" <<'PY'
+mkdir -p "$TMP/gk/.claude"; cp -R "$ROOT/.claude/bin" "$TMP/gk/.claude/bin"; ln -s "$ROOT/universal-agent-devkit" "$TMP/gk/universal-agent-devkit"   # DevKit beside the gate: review-fanout.sh
+GATE="$TMP/gk/.claude/bin/super-board-merge-gate.sh"
+cat > "$TMP/gk/.claude/bin/super-board-approval.py" <<'PY'
 #!/usr/bin/env python3
 import json, sys
 if "--request" in sys.argv:
@@ -32,7 +32,7 @@ if "--request" in sys.argv:
 else:
     print(json.dumps({"approved": False}))
 PY
-cat > "$TMP/gatebin/super-board-notify.py" <<PY
+cat > "$TMP/gk/.claude/bin/super-board-notify.py" <<PY
 #!/usr/bin/env python3
 import sys
 open("$TMP/notify.log", "a").write(" ".join(sys.argv[1:]) + "\n")
@@ -75,6 +75,7 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_review_fanout.sh"; sb_review_fixture "$TMP/bin"   # signed review PASS + CI checks (new gate preconditions)
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
 mkcfg() {  # mkcfg <file> <merge_queue.enabled> <merge_policy.default> [worker_backend: mặc định claude-p; "-" = không có khoá]

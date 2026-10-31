@@ -14,9 +14,9 @@ fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/sb-no-push-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 export SB_HEAVY_SLOT_DIR="$TMP/slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"
-cp -R "$ROOT/.claude/bin" "$TMP/gatebin"
-GATE="$TMP/gatebin/super-board-merge-gate.sh"
-cat > "$TMP/gatebin/super-board-approval.py" <<PY
+mkdir -p "$TMP/gk/.claude"; cp -R "$ROOT/.claude/bin" "$TMP/gk/.claude/bin"; ln -s "$ROOT/universal-agent-devkit" "$TMP/gk/universal-agent-devkit"   # DevKit beside the gate: review-fanout.sh
+GATE="$TMP/gk/.claude/bin/super-board-merge-gate.sh"
+cat > "$TMP/gk/.claude/bin/super-board-approval.py" <<PY
 #!/usr/bin/env python3
 import json, sys
 a = sys.argv[1:]
@@ -59,6 +59,7 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_review_fanout.sh"; sb_review_fixture "$TMP/bin"   # signed review PASS + CI checks (new gate preconditions)
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
 # Verify giả chạy trong scratch: ghi lại file nào có mặt (b của base, f61 của PR).
 cat > "$TMP/verify.py" <<PY

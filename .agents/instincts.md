@@ -799,3 +799,15 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Review 4 bên nói là chạy song song nhưng wall time = quét known-pattern + reviewer chậm nhất + một verifier Opus kiểm lần lượt mọi finding + độ trễ poll 5 s của Antigravity
 - **Nguyên nhân:** các bước phụ (quét, verify, poll kết quả) chạy trước/sau nhóm song song thay vì cùng lúc; verifier gom mọi finding vào một lời gọi; poll khoảng cố định dài
 - **Quy tắc phòng ngừa & Cách fix:** đo thời điểm từng file kết quả xong (mtime so với t0) trước khi tối ưu; bước không phụ thuộc chạy cùng nhóm reviewer; verifier mỗi finding một lời gọi, chạy song song có trần job, lỗi một lô = cả verifier lỗi (fail closed); poll 0.5–1 s; không nới luật (đồng thuận, pin model, fail-closed) để lấy tốc độ
+
+### [INSTINCT-094] Cổng merge chỉ tin bằng chứng gắn đúng commit và có chữ ký
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** merge gate tự động chỉ chạy verify cục bộ rồi `gh pr merge`; không hỏi verdict review 4 bên, không xem CI, nên PR chưa review / review FAIL / CI đỏ vẫn merge được
+- **Nguyên nhân:** mỗi cổng (review hook, CI, merge gate) tự kiểm phần của mình và tin rằng cổng khác đã chặn; verdict review là file JSON ai cũng ghi được
+- **Quy tắc phòng ngừa & Cách fix:** ngay trước merge, đòi verdict PASS cho đúng code state của head PR qua entry point của DevKit (`review-fanout.sh --status`, rồi `--verify-summary` trên bản chép); không tự tính lại HMAC; thiếu tool/entry point/khoá = không merge (exit 9); PASS_REDUCED chỉ qua cờ của chính lượt chạy; check CI đỏ/không đọc được = không merge; repo có required checks thì `--auto --match-head-commit`, không bao giờ `--admin`
+
+### [INSTINCT-095] Bỏ bước người duyệt thì thay bằng cổng máy chặt hơn, không phải bỏ cổng
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** PR money/auth/schema/migration dừng ở human-gate (exit 7) chờ người; muốn tự động 100% thì dễ xoá luôn category → các PR nhạy cảm nhất merge với cùng mức kiểm như PR sửa chữ
+- **Nguyên nhân:** "human" là cơ chế chặn duy nhất cho các category đó
+- **Quy tắc phòng ngừa & Cách fix:** category nhạy cảm → `machine_gate`: review deep + reviewer security ok/pass + test bổ sung riêng (merge_policy.machine_gate.verify_commands); thiếu test bổ sung = dừng (fail-closed), biên nhận merge train không thay được test bổ sung, PASS_REDUCED không bao giờ đủ

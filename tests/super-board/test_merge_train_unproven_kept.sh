@@ -57,17 +57,22 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_review_fanout.sh"; sb_review_fixture "$TMP/bin"   # signed review PASS + CI checks (new gate preconditions)
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" FAKE_REPO="$R"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_NOTIFY_SKIP=1
 
-# #21 sạch, #22 mang nhãn money (gate dry-run trả exit 7), #23 và #24 sạch.
+# #21 sạch, #22 vượt auto_max_lines (gate dry-run trả exit 7), #23 và #24 sạch.
 card_branch 21 f21; card_branch 22 f22; card_branch 23 f23; card_branch 24 f24
-printf '{"files":[{"path":"f22"}],"labels":[{"name":"money"}],"body":"","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr22.meta"
+# 31/10: money now goes to merge_policy.machine_gate (no human route); #22 is held by the size cap instead (still exit 7)
+# #22 adds 3 lines (> auto_max_lines 2), every other PR adds 1.
+printf '22\nb\nc\n' > "$W/issue-22-build/f22"; git -C "$W/issue-22-build" commit -qam "card 22 (3 lines)"; git -C "$R" push -q origin issue-22-x
+git -C "$R" rev-parse issue-22-x > "$TMP/pr22.head"; git -C "$R" diff origin/main issue-22-x > "$TMP/pr22.diff"
+printf '{"files":[{"path":"f22"}],"labels":[],"body":"","additions":3,"deletions":0,"changedFiles":1}' > "$TMP/pr22.meta"
 git -C "$R" worktree add -q --detach "$W/review" origin/main
 
 # Verify theo bộ đếm: lần 1 đỏ (cả 4 PR), lần 2 xanh ([21,22]), lần 3 và 4 hết giờ ([21,22,23,24] hai lần), từ lần 5 xanh.
 CFG="$TMP/cfg.json"
-printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo x >> %s/verify.count; n=$(wc -l < %s/verify.count | tr -d \\" \\"); case $n in 1) exit 1;; 2) exit 0;; 3|4) exit 124;; *) exit 0;; esac"]}\n' "$TMP" "$TMP" > "$CFG"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"merge_policy":{"auto_max_lines":2},"verify_commands":["echo x >> %s/verify.count; n=$(wc -l < %s/verify.count | tr -d \\" \\"); case $n in 1) exit 1;; 2) exit 0;; 3|4) exit 124;; *) exit 0;; esac"]}\n' "$TMP" "$TMP" > "$CFG"
 rm -f "$TMP/verify.count" "$TMP/merged"
 ( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs 21,22,23,24 ) >"$TMP/t.log" 2>&1; rc=$?
 

@@ -87,9 +87,11 @@ R="$(run "$TMP/cap400.json" "$HUGE" "" "$HEAD" 1)"
 [ "${R%%|*}" = false ] && ok "450 lines of real code over cap 400: still waits for a human" \
   || fail "size gate weakened by the re-check: $R"
 
+# 31/10/2026: auth / money / schema / migration không còn đường người duyệt (merge-policy → machine_gate). Thẻ Blocked cũ vì
+# human-gate auth được trả lại gate; ở đó machine gate đòi review deep + security + test bổ sung (test_merge_gate_review_ci_hardening.sh).
 R="$(run "$TMP/open.json" "$AUTH" "" "$HEAD" 1)"
-[ "${R%%|*}" = false ] && ok "always_human (auth path) still waits for a human with cap 0" \
-  || fail "auth change cleared automatically: $R"
+[ "${R%%|*}" = true ] && ok "auth path no longer waits for a human: the card goes back to the gate's machine gate" \
+  || fail "auth change still waits for a human: $R"
 
 R="$(run "$TMP/open.json" "$BIG" "needs-you: npm run db:migrate:live" "$HEAD" 1)"
 [ "${R%%|*}" = false ] && ok "PR body 'needs-you:' step still waits for a human" \

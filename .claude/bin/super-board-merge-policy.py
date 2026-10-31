@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""super-board-merge-policy.py — decide who merges a PR and which migrations run.
+"""super-board-merge-policy.py — decide which machine gates a PR must pass and which migrations run.
 
 Called by super-board-merge-gate.sh inside the merge lock. Pure function of the
 config, the PR metadata and the diff; no network, no side effects.
@@ -10,13 +10,21 @@ config, the PR metadata and the diff; no network, no side effects.
 `--diff` is `gh pr diff` (only ADDED lines are searched for keywords).
 
 Stdout, one JSON object:
-    { "human":      [ {"category": "money", "why": "path src/billing/charge.ts"} ],
+    { "human":      [ {"category": "size", "why": "big PR — please review: …"} ],
+      "machine_gate": [ {"category": "money", "why": "path src/billing/charge.ts"} ],
+      "require":    { "deep_review": true, "security_reviewer": true,
+                      "verify_commands": [ "npm run test:payments" ] },
       "migrations": [ "supabase/migrations/2026_add_col.sql" ],
       "run":        [ {"env": "staging", "cmd": "npm run db:migrate:staging"} ],
       "needs_you":  [ "npm run db:migrate:live   # live: not in allowed_envs" ],
       "done":       false }
 
-`human` non-empty → the gate exits 7 (a human merges). `needs_you` non-empty →
+`machine_gate` non-empty → NO human route (31/10/2026, autonomous merge path): the gate
+requires a signed 4-way review PASS at depth "deep" with the security reviewer ok/pass
+(PASS_REDUCED never counts), and runs `require.verify_commands` (the extra tests) in the
+scratch tree after config.verify_commands. Empty `require.verify_commands` on a gated PR
+→ the gate stops with verification-readiness (exit 9): fail-closed, never "merge anyway".
+`human` non-empty → the gate exits 7. `needs_you` non-empty →
 exit 8 unless the gate verifies a head-bound approval. `done` stays false for
 compatibility: labels never supply authority. Exit 2 on
 unreadable metadata, so the gate fails safe to "human".
@@ -30,9 +38,13 @@ Rules, from references/config-schema.json → merge_policy / migrations:
   snapshots) and migration files (migrations.globs) do not count; migration
   lines are reported separately. Per-file counts come from `files[].additions/
   deletions`; without them the PR totals are used.
-- merge_policy.always_human.<category>: any label, path glob or added-line
-  keyword match → human. Categories ship as money, auth, schema; setting
-  always_human replaces them all (`{}` turns category gating off).
+- merge_policy.machine_gate.categories.<category> (legacy name: merge_policy.always_human.<category>,
+  read when machine_gate.categories is absent): any label, path glob, added-line keyword
+  or pattern match → machine gate (NOT human). Categories ship as money, auth, schema;
+  setting categories replaces them all. A migration PR (migrations.globs) is always
+  gated as category "migration" — no opt-out.
+  Extra tests: merge_policy.machine_gate.verify_commands (every gated PR) plus
+  machine_gate.categories.<category>.verify_commands (that category only).
 - merge_policy.protected_paths (#605; default DEFAULT_PROTECTED_PATHS, a list replaces it, `[]` turns it off): a PR
   that DELETES (or renames away) a matching file → human, category "delete-protected". The only human-only
   category: a human `done` approves it; an agent cross-review marker does not (super-board-approval.py HUMAN_ONLY).
@@ -51,7 +63,7 @@ import json
 import re
 import sys
 
-DEFAULT_ALWAYS_HUMAN = {
+DEFAULT_MACHINE_GATE = {
     "money": {
         "labels": ["money", "payments", "billing", "pricing"],
         "paths": ["**/billing/**", "**/payments/**", "**/stripe/**", "**/checkout/**"],
@@ -107,6 +119,7 @@ DEFAULT_ALWAYS_HUMAN = {
                      r"\btruncate [a-z_\"`\[]"],
     },
 }
+DEFAULT_ALWAYS_HUMAN = DEFAULT_MACHINE_GATE   # tên cũ: test/tài liệu cũ còn import tên này
 # #605: xoá các file này chỉ người duyệt (luật chủ repo 28/10). `**/` để khớp cả file trong thư mục con.
 DEFAULT_PROTECTED_PATHS = [
     "**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json", ".agents/regression_matrix.active.json",
@@ -191,6 +204,13 @@ def deleted_paths(diff: str) -> list[str]:
     return list(dict.fromkeys(out))
 
 
+def str_list(value) -> list[str]:
+    """Only non-blank strings; anything else is dropped (a gated PR with no usable extra test fails closed in the gate)."""
+    if not isinstance(value, list):
+        return []
+    return [v for v in value if isinstance(v, str) and v.strip()]
+
+
 def comment_free(text: str) -> str:
     """`DROP/**/TABLE` is a valid DROP TABLE (SQL treats a comment as whitespace): blank `/*...*/` out."""
     return " ".join(re.sub(r"/\*.*?\*/", " ", text).split())
@@ -250,9 +270,18 @@ def main() -> int:
         extra = f" (+{mig_lines} migration lines counted separately)" if mig_lines else ""
         human.append({"category": "size",
                       "why": f"big PR — please review: {size} changed lines > auto_max_lines {cap}{extra}"})
-    always = policy["always_human"] if isinstance(policy.get("always_human"), dict) else DEFAULT_ALWAYS_HUMAN
+    # 31/10/2026: money / auth / schema / migration no longer route to a human. They go through an extra MACHINE gate
+    # (deep 4-way review + security reviewer + extra tests), enforced by super-board-merge-gate.sh; fail-closed there.
+    gate_cfg = policy.get("machine_gate") if isinstance(policy.get("machine_gate"), dict) else {}
+    if isinstance(gate_cfg.get("categories"), dict):
+        always = gate_cfg["categories"]
+    elif isinstance(policy.get("always_human"), dict):
+        always = policy["always_human"]
+    else:
+        always = DEFAULT_MACHINE_GATE
+    machine, extra_tests = [], str_list(gate_cfg.get("verify_commands"))
     for cat, rule in always.items():
-        rule = rule or {}
+        rule = rule if isinstance(rule, dict) else {}
         hit = next((f"label {l}" for l in rule.get("labels") or [] if l.lower() in labels), None)
         if not hit:
             hit = next((f"path {p} (matches {g})" for p in paths
@@ -264,7 +293,14 @@ def main() -> int:
             hit = next((f"pattern \"{r}\" in an added line" for r in rule.get("patterns") or []
                         if re.search(r, added) or re.search(r, added_nc)), None)
         if hit:
-            human.append({"category": cat, "why": hit})
+            machine.append({"category": cat, "why": hit})
+            extra_tests += str_list(rule.get("verify_commands"))
+    if mig_files:
+        shown = ", ".join(mig_files[:5]) + (f" (+{len(mig_files) - 5} more)" if len(mig_files) > 5 else "")
+        machine.append({"category": "migration", "why": f"migration files: {shown}"})
+    extra_tests = list(dict.fromkeys(extra_tests))
+    require = {"deep_review": bool(machine), "security_reviewer": bool(machine),
+               "verify_commands": extra_tests if machine else []}
     protected = policy.get("protected_paths")
     protected = DEFAULT_PROTECTED_PATHS if protected is None else protected
     gone = next((f"deletes {p} (matches {g})" for p in deleted_paths(diff) for g in [matches(p, protected)] if g), None)
@@ -294,8 +330,8 @@ def main() -> int:
         if m and m.group(1).lower() != "done":
             needs.append(m.group(1).strip("`"))
 
-    print(json.dumps({"human": human, "migrations": mig_files, "run": run,
-                      "needs_you": needs, "done": False}))
+    print(json.dumps({"human": human, "machine_gate": machine, "require": require, "migrations": mig_files,
+                      "run": run, "needs_you": needs, "done": False}))
     return 0
 
 

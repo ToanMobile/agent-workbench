@@ -54,6 +54,7 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_review_fanout.sh"; sb_review_fixture "$TMP/bin"   # signed review PASS + CI checks (new gate preconditions)
 # Train chạy từ một bản bin liên kết (symlink) để thay merge gate bằng shim: shim ghi lại SB_MERGE_CALLER + đối số, tự trả lời
 # `--preflight` (cờ của lane E; ca nào cần thì đặt $FAKE_DIR/preflight<N>.rc/.out), mọi lời gọi khác exec gate thật.
 mkdir -p "$TMP/sbbin"

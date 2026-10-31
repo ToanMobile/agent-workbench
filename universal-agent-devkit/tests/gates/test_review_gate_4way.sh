@@ -33,7 +33,7 @@ ev() { python3 "$TMP/ev.py" "$1" "$TR" "${@:2}"; }
 stop() { printf '{"session_id":"s","transcript_path":"%s","hook_event_name":"Stop"}' "$TR" \
   | CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/review_gate.sh" >/dev/null 2>"$TMP/err"; }
 F="$DEVKIT_DIR/bin/review-fanout.sh"
-rundir() { echo "$(cd "$P" && git rev-parse --git-common-dir | sed "s|^\.git$|$P/.git|")/review-fanout/$(env -u REVIEW_SKIP_REVIEWERS bash "$F" --repo "$P" --base verified --hash)"; }
+rundir() { echo "$(cd "$P" && git rev-parse --git-common-dir | sed "s|^\.git$|$P/.git|")/review-fanout/$(env -u REVIEW_SKIP_REVIEWERS bash "$F" --repo "$P" --base merge-base --hash)"; }
 verdict() { d="$(rundir)"; mkdir -p "$d"; printf '{"verdict":"%s","reasons":["%s"]}' "$1" "${2:-}" > "$d/summary.json"; printf '# 4-way review: %s\n- %s\n' "$1" "${2:-}" > "$d/summary.md"
   python3 "$DEVKIT_DIR/bin/review_sign.py" sign "$d/summary.json"; }   # a real review seals its summary (bin/review_sign.py)
 

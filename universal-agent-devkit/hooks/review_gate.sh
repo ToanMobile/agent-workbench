@@ -747,7 +747,7 @@ def _block(lines_):
 
 
 fanout = _fanout_path()
-review_base = "verified"   # bin/review-fanout.sh resolves the same verified head (devkit_harness) — one code state, one hash
+review_base = "merge-base"   # bin/review-fanout.sh resolves merge-base(HEAD, origin/<base>) — the base super-board-merge-gate.sh queries: one code state, one hash
 if not fanout:
     logline(f"[{ts}] BLOCK — bin/review-fanout.sh not found next to the hook")
     _block(["⛔ REVIEW-GATE: không tìm thấy bin/review-fanout.sh (review 4 bên) — chặn (fail-closed). Cài lại DevKit: agent-kit init."])

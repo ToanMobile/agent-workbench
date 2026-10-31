@@ -14933,6 +14933,86 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
       ]
+    },
+    "BUG-REV-merge-gate-no-review-verdict": {
+      "id": "BUG-REV-merge-gate-no-review-verdict",
+      "kind": "bug",
+      "severity": "P0",
+      "component": "super-board-merge-gate",
+      "title": "super-board-merge-gate.sh merged without a signed 4-way review PASS for the PR head (only local verify cmds)",
+      "evidence": "audit 31/10: gh pr merge --squash --match-head-commit ran after verify_commands; review-fanout --status never consulted",
+      "fixed": true,
+      "tests": [],
+      "runs_in_suite": [
+        "tests/super-board/test_merge_gate_review_ci_hardening.sh"
+      ]
+    },
+    "BUG-REV-merge-gate-unsigned-verdict": {
+      "id": "BUG-REV-merge-gate-unsigned-verdict",
+      "kind": "bug",
+      "severity": "P0",
+      "component": "super-board-merge-gate",
+      "title": "merge gate must refuse an unsigned / forged / edited-after-signing summary.json and a PASS of another code state",
+      "evidence": "fix: --status on the clean head + review-fanout --verify-summary on a private copy (no TOCTOU)",
+      "fixed": true,
+      "tests": [],
+      "runs_in_suite": [
+        "tests/super-board/test_merge_gate_review_ci_hardening.sh"
+      ]
+    },
+    "BUG-REV-merge-gate-pass-reduced": {
+      "id": "BUG-REV-merge-gate-pass-reduced",
+      "kind": "bug",
+      "severity": "P1",
+      "component": "super-board-merge-gate",
+      "title": "PASS_REDUCED is rejected by default; accepted only with --accept-reduced-review <exact skip list> / SB_MERGE_ACCEPT_REDUCED_REVIEW, never for a machine-gated PR; inherited REVIEW_SKIP_REVIEWERS ignored",
+      "evidence": "audit 31/10",
+      "fixed": true,
+      "tests": [],
+      "runs_in_suite": [
+        "tests/super-board/test_merge_gate_review_ci_hardening.sh"
+      ]
+    },
+    "BUG-REV-merge-gate-ignores-ci": {
+      "id": "BUG-REV-merge-gate-ignores-ci",
+      "kind": "bug",
+      "severity": "P0",
+      "component": "super-board-merge-gate",
+      "title": "merge gate merged with failing / unfinished CI checks; now gh pr checks fail-closed and --auto when the base has required checks (branch protection / ruleset / merge queue via gh api)",
+      "evidence": "audit 31/10",
+      "fixed": true,
+      "tests": [],
+      "runs_in_suite": [
+        "tests/super-board/test_merge_gate_review_ci_hardening.sh"
+      ]
+    },
+    "BUG-REV-merge-policy-human-route": {
+      "id": "BUG-REV-merge-policy-human-route",
+      "kind": "bug",
+      "severity": "P1",
+      "component": "super-board-merge-policy",
+      "title": "merge-policy routed money/auth/schema/migration PRs to a human (exit 7); now machine_gate: deep review + security reviewer ok/pass + extra tests, fail-closed (no extra test configured → exit 9)",
+      "evidence": "user 31/10/2026: autonomous merge path, no human step",
+      "fixed": true,
+      "tests": [],
+      "runs_in_suite": [
+        "tests/super-board/test_merge_policy_machine_gate.sh",
+        "tests/super-board/test_merge_gate_review_ci_hardening.sh",
+        "tests/super-board/test_deps_policy_cleared.sh"
+      ]
+    },
+    "BUG-REV-review-base-mismatch": {
+      "id": "BUG-REV-review-base-mismatch",
+      "kind": "bug",
+      "severity": "P0",
+      "component": "review_gate/super-board-merge-gate",
+      "title": "review_gate.sh ran review-fanout with --base verified, merge gate queried --base merge-base(head, origin/<base>): different code hash, gate always saw NONE (exit 6)",
+      "evidence": "31/10/2026: every merge stalled at exit 6; fix: hook uses --base merge-base (resolved by review-fanout.sh)",
+      "fixed": true,
+      "tests": [],
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_base_matches_merge_gate.sh"
+      ]
     }
   },
   "meta": {

@@ -2,7 +2,7 @@
 # review-fanout.sh — THE code review, 4-way unanimous: Claude Code (Opus) + Antigravity + Grok + Alibaba OpenCodeReview,
 # in parallel; all 4 must pass.
 #
-#   review-fanout.sh [--base REF|verified] [--repo DIR] [--skip grok,ocr] [--background] [--status] [--hash] [--force]
+#   review-fanout.sh [--base REF|verified|merge-base] [--repo DIR] [--skip grok,ocr] [--background] [--status] [--hash] [--force]
 #   review-fanout.sh --full [--repo DIR] [review-full.py options: --list --chunk-lines N --jobs N --max-usd X ...]
 #     whole-solution scan (not a diff) by the same 4 reviewers, chunked by module, report only — bin/review-full.py
 #
@@ -80,6 +80,13 @@ PY
 export REVIEW_SKIP_REVIEWERS="$SKIP"
 skipped() { case ",$SKIP," in *",$1,"*) return 0 ;; esac; return 1; }
 cd "$REPO" || exit 2
+if [ "$BASE" = "merge-base" ]; then   # hooks/review_gate.sh: merge-base(HEAD, origin/<base>) — the SAME base super-board-merge-gate.sh
+  # queries, so the hook's review and the gate's verdict lookup hash one code state (BUG-REV: base mismatch -> gate exit 6 forever)
+  _mb_br="${REVIEW_BASE_BRANCH:-$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')}"
+  BASE=""
+  if git rev-parse -q --verify "origin/${_mb_br:-main}^{commit}" >/dev/null 2>&1; then BASE="$(git merge-base HEAD "origin/${_mb_br:-main}" 2>/dev/null)"; fi
+  [ -n "$BASE" ] || BASE="verified"   # no remote base (fresh local repo): fall back to the verified head
+fi
 if [ "$BASE" = "verified" ]; then   # hooks/review_gate.sh: the DevKit's verified head (hooks/devkit_harness.py), else HEAD
   BASE="$(python3 -I - "$HERE/../hooks" "$REPO" <<'PY' 2>/dev/null
 import sys

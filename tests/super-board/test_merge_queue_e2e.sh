@@ -231,6 +231,7 @@ esac
 hold
 SH
 chmod +x "$TMP/path/gh" "$TMP/path/claude"
+SB_REVIEW_FIXTURE_HOME="$HOME"; . "$ROOT/tests/super-board/lib/fake_review_fanout.sh"; sb_review_fixture "$TMP/path"   # signed review PASS + CI checks (new gate preconditions)
 # post-fix-gate giả: ghi thư mục chạy (scratch của train hay của gate) + đối số, xanh.
 mkdir -p "$TMP/pfg"
 printf 'import os, sys\nopen(os.environ["FAKE"] + "/pfg.log", "a").write(os.getcwd() + " " + " ".join(sys.argv[1:]) + "\\n")\n' > "$TMP/pfg/post-fix-gate.py"
@@ -248,6 +249,8 @@ new_world() {
   git -C "$R" remote add origin "$O"; git -C "$R" push -q origin main
   mkdir -p "$R/.claude/bin" "$R/.claude/super-board/configs" "$R/.claude/worktrees"
   for f in "$BIN_SRC"/*; do ln -s "$f" "$R/.claude/bin/$(basename "$f")"; done
+  # the merge gate reads the signed 4-way verdict through the DevKit beside it (<repo>/universal-agent-devkit, git-excluded)
+  ln -s "$ROOT/universal-agent-devkit" "$R/universal-agent-devkit"; echo /universal-agent-devkit >> "$R/.git/info/exclude"
   rm -f "$R/.claude/bin/super-board-skills-ready.py"; printf 'print("ok")\n' > "$R/.claude/bin/super-board-skills-ready.py"
   CFG="$R/.claude/super-board/configs/e2e.json"
   printf '{"worker_backend":"claude-p","base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"project":{"owner":"o","number":1},"rebuild_cap":2,"verify_commands":["python3 %s/pfg/post-fix-gate.py --run-tests"],"merge_queue":{"enabled":%s,"enabled_at":null}}\n' "$TMP" "$2" > "$CFG"
