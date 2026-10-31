@@ -142,24 +142,31 @@ def _git(repo, *args):
     return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=60)
 
 
-def added_lines(repo, base):
+def added_lines(repo, base, paths=None):
     """[(path, line_no, text)] of lines the change adds: `git diff -U0 base` (committed since base + uncommitted) and whole
     untracked files."""
     out = []
-    r = _git(repo, "diff", "-U0", "--no-color", "--no-ext-diff", base, "--")
+    # core.quotePath=false: a non-ASCII path is printed as-is, not C-quoted ("\"b/…\""), so it matches the real path
+    r = _git(repo, "-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", base, "--", *(paths or []))
     if r.returncode != 0:
         raise RuntimeError(f"git diff {base} failed: {r.stderr.strip()[:300]}")
     path, ln = None, 0
     for line in r.stdout.splitlines():
         if line.startswith("+++ "):
-            path = None if line[4:] == "/dev/null" else line[4:][2:] if line[4:].startswith("b/") else line[4:]
+            hdr = line[4:].rstrip("\t")
+            if hdr.startswith('"') and hdr.endswith('"'):   # still quoted (a tab/newline/quote in the name): unescape
+                try:
+                    hdr = hdr[1:-1].encode("latin-1", "backslashreplace").decode("unicode_escape").encode("latin-1").decode("utf-8")
+                except (UnicodeError, ValueError):
+                    hdr = hdr[1:-1]
+            path = None if hdr == "/dev/null" else hdr[2:] if hdr.startswith("b/") else hdr
         elif line.startswith("@@"):
             m = re.search(r"\+(\d+)", line)
             ln = int(m.group(1)) if m else 0
         elif line.startswith("+") and path is not None:
             out.append((path, ln, line[1:]))
             ln += 1
-    u = _git(repo, "ls-files", "--others", "--exclude-standard", "-z")
+    u = _git(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *(paths or []))
     for p in [x for x in u.stdout.split("\0") if x]:
         fp = os.path.join(repo, p)
         if os.path.islink(fp) or not os.path.isfile(fp) or os.path.getsize(fp) > 2_000_000:
@@ -173,12 +180,12 @@ def added_lines(repo, base):
     return out
 
 
-def scan(repo, base, ents=None):
+def scan(repo, base, ents=None, paths=None):
     ents = entries(repo) if ents is None else ents
     active = [e for e in ents if e["_rx"]]
     hits = []
     if active:
-        for path, ln, text in added_lines(repo, base):
+        for path, ln, text in added_lines(repo, base, paths):
             for e in active:
                 if covers(e, path) and any(rx.search(text) for rx in e["_rx"]):
                     hits.append({"severity": "P0", "category": "recurring-bug", "file": path, "line": ln, "end_line": ln,

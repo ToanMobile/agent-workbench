@@ -56,10 +56,25 @@ def mask(text):
 
 
 def _kill_group(p):
+    """SIGKILL the ocr process group; when macOS refuses killpg (EPERM) or the group is gone, kill the process itself
+    (INSTINCT-056)."""
     try:
         os.killpg(p.pid, signal.SIGKILL)
-    except OSError as e:   # already gone
-        print("ocr-review: could not stop ocr (pid %d): %r" % (p.pid, e), file=sys.stderr)
+        return
+    except OSError as e:
+        print("ocr-review: killpg(%d) failed (%r) — killing the process" % (p.pid, e), file=sys.stderr)
+    try:
+        p.kill()
+    except OSError:
+        pass
+
+
+def _reap(p, grace=30):
+    """Output of a killed ocr, bounded: a grandchild that kept the pipes open can never hang the helper."""
+    try:
+        return p.communicate(timeout=grace)
+    except subprocess.TimeoutExpired:
+        return "", "ocr did not exit %ss after SIGKILL; output dropped" % grace
 
 
 def ocr(*args, timeout=None):
@@ -69,7 +84,7 @@ def ocr(*args, timeout=None):
         out, err = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_group(p)
-        out, err = p.communicate()
+        out, err = _reap(p)
         return subprocess.CompletedProcess(p.args, 124, out, (err or "") + "\nocr timed out after %ss" % timeout)
     except BaseException:
         _kill_group(p)

@@ -1,5 +1,5 @@
 # 📑 Mục Lục Bộ Nhớ 2 Tầng: .agents/instincts.md
-> **Tệp gốc:** `.agents/instincts.md` (753 dòng, 82.8 KB) · 89 mục
+> **Tệp gốc:** `.agents/instincts.md` (779 dòng, 84.8 KB) · 92 mục
 > **Quy tắc đọc:** KHÔNG nạp toàn bộ file gốc. Tìm mục cần thiết bên dưới rồi chạy đúng lệnh `sed -n` của mục đó từ thư mục gốc dự án.
 
 - Instincts & Failure Memory — Repository Lessons Learned — `sed -n '1,9p' .agents/instincts.md`
@@ -90,5 +90,8 @@
 - [INSTINCT-071] Sửa lỗi board theo mô tả thẻ, chưa đo và chưa fetch main — `sed -n '722,730p' .agents/instincts.md`
 - [INSTINCT-084] Gộp lane bằng cherry-pick làm kit không gỡ được worktree lane và Stop hook tự gộp main local vào lane — `sed -n '731,740p' .agents/instincts.md`
 - [INSTINCT-085] Lời duyệt AskUserQuestion của gate mất khi file bị sửa rồi hoàn nguyên — `sed -n '741,748p' .agents/instincts.md`
-- [INSTINCT-086] Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình — `sed -n '749,753p' .agents/instincts.md`
+- [INSTINCT-086] Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình — `sed -n '749,756p' .agents/instincts.md`
+- [INSTINCT-087] Parser tuỳ chọn shell: X="${2:-}"; shift 2 khi cờ là đối số cuối làm vòng lặp vô hạn — `sed -n '757,766p' .agents/instincts.md`
+- [INSTINCT-088] Gộp finding review: finding không trích dẫn quyết định mức độ của cụm có trích dẫn — `sed -n '767,774p' .agents/instincts.md`
+- [INSTINCT-089] Đường dẫn trong output git bị C-quote (core.quotePath) nên so khớp đường dẫn thật trượt — `sed -n '775,779p' .agents/instincts.md`
 

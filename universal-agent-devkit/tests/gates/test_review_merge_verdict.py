@@ -364,5 +364,133 @@ class Cli(Base):
         self.assertEqual(json.loads(out.read_text().splitlines()[-1])["verdict"], "FAIL")
 
 
+class Override(Base):
+    """REVIEW_SKIP_REVIEWERS / --skip: a per-run, user-chosen REDUCED run (grok, ocr only); the default stays 4-way."""
+    def reduced(self):
+        return dict(self.meta, required=["claude", "antigravity", "registry"], skipped_by_override=["grok", "ocr"], reduced=True)
+
+    def two(self):
+        return {n: self.env(n) for n in ("claude", "antigravity", "registry")}
+
+    def test_default_is_still_four_way(self):
+        envs = self.two()
+        v, reasons, _ = self.verdict(envs)
+        self.assertEqual(v, "FAIL")
+        self.assertTrue(any(r.startswith("grok: missing") for r in reasons) and any(r.startswith("ocr: missing") for r in reasons))
+        self.assertEqual(rm.run_label(self.meta), "4-way review")
+
+    def test_reduced_two_way_pass_is_labelled(self):
+        v, reasons, _ = self.verdict(self.two(), self.reduced())
+        self.assertEqual((v, reasons), ("PASS", []))
+        self.assertIn("REDUCED 2-way", rm.run_label(self.reduced()))
+        self.assertIn("skipped by user override", rm.run_label(self.reduced()))
+        md = rm.summary_md(v, reasons, self.reduced(), self.two(), [], {"tokens": 0, "usd": 0})
+        self.assertIn("| grok | SKIPPED |", md)
+        self.assertIn("| ocr | SKIPPED |", md)
+        self.assertTrue(md.startswith("# REDUCED 2-way review"))
+
+    def test_antigravity_missing_is_fail_in_a_reduced_run(self):
+        envs = self.two()
+        del envs["antigravity"]
+        v, reasons, _ = self.verdict(envs, self.reduced())
+        self.assertEqual(v, "FAIL")
+        self.assertTrue(any(r.startswith("antigravity: missing") for r in reasons))
+
+    def test_claude_non_opus_is_fail_in_a_reduced_run(self):
+        envs = self.two()
+        envs["claude"]["model"] = "claude-sonnet-4-5"
+        v, reasons, _ = self.verdict(envs, self.reduced())
+        self.assertEqual(v, "FAIL")
+        self.assertTrue(any("requires Claude Opus" in r for r in reasons))
+
+    def test_claude_or_antigravity_cannot_be_skipped(self):
+        for bad in ("claude", "antigravity", "grok,claude", "registry"):
+            names, err = rm.parse_skip(bad)
+            self.assertTrue(err, bad)
+        meta = dict(self.meta, skipped_by_override=["claude"])
+        v, reasons, _ = self.verdict(self.all_pass(), meta)
+        self.assertEqual(v, "FAIL")
+        self.assertTrue(any(r.startswith("override: cannot skip claude") for r in reasons))
+        self.assertEqual(rm.parse_skip(" OCR, grok "), (["grok", "ocr"], ""))
+
+    def test_cli_summary_marks_the_reduced_run(self):
+        run = Path(self.repo, "run")
+        run.mkdir()
+        (run / "meta.json").write_text(json.dumps(self.reduced()))
+        for n, e in self.two().items():
+            (run / f"{n}.json").write_text(json.dumps(e))
+        out = Path(self.repo, "outcomes.jsonl")
+        r = subprocess.run([sys.executable, str(ROOT / "bin" / "review-merge.py"), "--dir", str(run), "--repo", self.repo,
+                            "--outcomes", str(out)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        s = json.loads((run / "summary.json").read_text())
+        self.assertTrue(s["reduced"])
+        self.assertEqual(s["skipped_by_override"], ["grok", "ocr"])
+        self.assertEqual(json.loads(out.read_text().splitlines()[-1])["skipped_by_override"], ["grok", "ocr"])
+
+
+class MergeFixes(Base):
+    def test_uncited_member_never_sets_the_cluster_severity(self):
+        """BUG-REV review-merge.py:177 — a hallucinated P0 next to a cited P2 must not make a blocking P0."""
+        envs = self.all_pass()
+        envs["claude"]["findings"] = [{"severity": "P2", "category": "bug", "file": "app.py", "line": 9,
+                                       "snippet": "return items[0]", "problem": "IndexError when items is empty"}]
+        envs["antigravity"]["findings"] = [{"severity": "blocker", "category": "bug", "file": "app.py", "line": 9,
+                                            "snippet": "not in the file", "problem": "IndexError items empty"}]
+        v, _, cl = self.verdict(envs)
+        self.assertEqual(len(cl), 1)
+        self.assertEqual((cl[0]["severity"], cl[0]["state"]), ("P2", "advisory"))
+
+    def test_fail_verdict_resting_only_on_dropped_findings_is_not_a_fail(self):
+        """BUG-REV review-merge.py:311 — a reviewer's fail whose every P0/P1 was thrown out by cite-check has no evidence."""
+        envs = self.all_pass()
+        envs["antigravity"] = self.env("antigravity", verdict="fail", findings=[
+            {"severity": "P0", "file": "app.py", "line": 9, "snippet": "rm -rf /", "problem": "made up"}])
+        v, reasons, _ = self.verdict(envs)
+        self.assertEqual((v, reasons), ("PASS", []))
+        envs["antigravity"] = self.env("antigravity", verdict="fail")   # a fail with no finding at all still fails
+        v, reasons, _ = self.verdict(envs)
+        self.assertEqual(v, "FAIL")
+
+    def test_runner_kill_falls_back_when_killpg_is_refused(self):
+        """BUG-REV review_runner.py:88 / ocr-review:60 — EPERM from killpg must not leave the reviewer running."""
+        spec2 = importlib.util.spec_from_file_location("review_runner", ROOT / "bin" / "review_runner.py")
+        rr = importlib.util.module_from_spec(spec2)
+        spec2.loader.exec_module(rr)
+        real = rr.os.killpg
+        rr.os.killpg = lambda *a: (_ for _ in ()).throw(PermissionError(1, "EPERM"))
+        try:
+            rc, _, _, to = rr.run_bounded([sys.executable, "-c", "import time; time.sleep(60)"], 1, self.repo)
+        finally:
+            rr.os.killpg = real
+        self.assertEqual((rc, to), (124, True))
+
+    def test_registry_reads_non_ascii_paths(self):
+        """BUG-REV known_patterns.py:155 — a C-quoted +++ header hid every added line of a non-ASCII path."""
+        Path(self.repo, "lỗi.py").write_text("x = 1\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-qm", "b")
+        base = subprocess.run(["git", "-C", self.repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        Path(self.repo, "lỗi.py").write_text("x = 1\ntry:\n    pass\nexcept: pass\n")
+        env = kp.scan(self.repo, base)
+        self.assertIn("lỗi.py", {f["file"] for f in env["findings"]})
+
+    def test_runner_uses_the_devkits_own_antigravity_auditor(self):
+        """BUG-REV review_runner.py:319 — the auditor must not come from the repo under review when the DevKit ships one."""
+        spec2 = importlib.util.spec_from_file_location("review_runner2", ROOT / "bin" / "review_runner.py")
+        rr = importlib.util.module_from_spec(spec2)
+        spec2.loader.exec_module(rr)
+        old = os.environ.pop("REVIEW_AGY_CLI", None)
+        try:
+            cli = rr.agy_cli({"repo": self.repo})
+        finally:
+            if old is not None:
+                os.environ["REVIEW_AGY_CLI"] = old
+        own = ROOT.parent / "mcp-servers" / "antigravity-pm-mcp" / "bin" / "pm-review-audit.js"
+        if own.is_file():
+            self.assertEqual(os.path.realpath(cli), os.path.realpath(own))
+        self.assertFalse(cli.startswith(self.repo + os.sep) and own.is_file())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

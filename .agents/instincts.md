@@ -751,3 +751,27 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình
 - **Nguyên nhân:** reviewer/author, approved-head, task_id đều là chuỗi agent tự ghi (cùng tài khoản GitHub, cùng user máy); trailer task_id cũ dùng lại được cho nội dung mới
 - **Quy tắc phòng ngừa & Cách fix:** duyệt chỉ tính khi gắn với biên bản ngoài repo ghi auditedHead (sha) và nội dung hiện tại khớp cây đó, auditedHead sau base; marker thiếu bằng chứng → fail closed; chặn agent đăng comment duyệt trơn
+
+---
+
+### [INSTINCT-087] Parser tuỳ chọn shell: X="${2:-}"; shift 2 khi cờ là đối số cuối làm vòng lặp vô hạn
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Parser tuỳ chọn shell: X="${2:-}"; shift 2 khi cờ là đối số cuối làm vòng lặp vô hạn
+- **Nguyên nhân:** Dưới set -u không có set -e, shift 2 với $#=1 trả lỗi mà không giảm $#, while [ $# -gt 0 ] lặp mãi
+- **Quy tắc phòng ngừa & Cách fix:** Cờ cần giá trị: kiểm [ $# -ge 2 ] trước, thiếu thì báo lỗi exit 2; không dùng ${2:-} rồi shift 2
+
+---
+
+### [INSTINCT-088] Gộp finding review: finding không trích dẫn quyết định mức độ của cụm có trích dẫn
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Gộp finding review: finding không trích dẫn quyết định mức độ của cụm có trích dẫn
+- **Nguyên nhân:** dedupe chọn head = mức nặng nhất của mọi thành viên, kể cả thành viên bị cite-check loại, nên P0 bịa + P2 thật thành P0 blocking
+- **Quy tắc phòng ngừa & Cách fix:** Mức độ/verdict của cụm chỉ lấy từ thành viên đã qua cite-check; verdict fail của reviewer mà mọi P0/P1 đều bị loại thì không còn bằng chứng
+
+---
+
+### [INSTINCT-089] Đường dẫn trong output git bị C-quote (core.quotePath) nên so khớp đường dẫn thật trượt
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Đường dẫn trong output git bị C-quote (core.quotePath) nên so khớp đường dẫn thật trượt
+- **Nguyên nhân:** git diff/ls-files in tên file non-ASCII dạng "b/l\341\273\227i.py" khi core.quotePath=true (mặc định); code cắt line[4:] ra tên sai
+- **Quy tắc phòng ngừa & Cách fix:** Gọi git với -c core.quotePath=false và ưu tiên -z; tên còn trong ngoặc kép thì giải mã

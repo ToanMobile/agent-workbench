@@ -18,6 +18,9 @@ verbatim snippet, cite-checked), but every tracked source file is reviewed in fu
 Budget: --max-usd (REVIEW_FULL_MAX_USD, 40) / --max-tokens (REVIEW_FULL_MAX_TOKENS, 20000000) for the whole scan — once
 spent, no further chunk starts (the report says which chunks were skipped). REPORT ONLY: nothing is fixed, no bug row is
 recorded. Output: OUT/full-summary.md + full-summary.json (default OUT = <git-common-dir>/review-fanout/full-<HEAD12>-<ts>).
+Per-run override: --reviewers / REVIEW_SKIP_REVIEWERS may drop only grok and ocr (never claude or antigravity); the report
+then says "REDUCED n-way … skipped by user override" and judges the run on the remaining reviewers.
+OCR: a file OCR could not review is a failed OCR lane (status failed), never a silent partial pass.
 Exit 0 when every reviewer ran everywhere and nothing blocking was found, 1 otherwise, 2 usage error.
 """
 import argparse
@@ -191,20 +194,32 @@ def run_ocr_full(repo, out, files, timeout_s, max_tokens):
                      "error handling, resource leaks. Read callers/callees/tests in this tree."]
         if max_tokens:
             cmd += ["--max-tokens-budget", str(int(max_tokens))]
+        p = subprocess.Popen(cmd, cwd=scratch, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         try:
-            r = subprocess.run(cmd, cwd=scratch, capture_output=True, text=True, timeout=timeout_s + 120)
+            so, se = p.communicate(timeout=timeout_s + 120)
         except subprocess.TimeoutExpired:
+            try:
+                os.killpg(p.pid, 9)   # ocr and its workers: the whole group, never an orphan still billing
+            except OSError:
+                p.kill()
+            try:
+                p.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
             return env(status="timeout", reason=f"ocr review exceeded {timeout_s}s")
+        r = subprocess.CompletedProcess(cmd, p.returncode, so, se)
         data = read_json(rep)
         if r.returncode != 0 or not isinstance(data, dict):
-            return env(status="failed", reason=f"ocr review rc={r.returncode}: {(r.stderr or r.stdout).strip()[-400:]}")
+            tail = (r.stderr or r.stdout).strip().splitlines()
+            return env(status="failed", reason=f"ocr review rc={r.returncode}: {(tail[-1] if tail else '')[:400]}")
         cov = (data.get("manifest") or {}).get("coverage") or {}
         tokens = int((data.get("summary") or {}).get("total_tokens") or 0)
         failed = cov.get("failed") or []
         comments = [c for c in data.get("comments") or [] if isinstance(c, dict)]
-        if data.get("status") in ("failed", "error") or (failed and not cov.get("completed")):
-            return env(status="failed", usage={"tokens": tokens, "usd": 0.0},
-                       reason=f"ocr review status={data.get('status')} failed_files={len(failed)} (LLM endpoint rejected / quota?)")
+        if data.get("status") in ("failed", "error") or failed:
+            return env(status="failed", usage={"tokens": tokens, "usd": 0.0}, findings=comments, partial_failed=len(failed),
+                       reason=f"ocr review status={data.get('status')}: {len(failed)} file(s) not reviewed "
+                              f"(LLM endpoint rejected / quota?) — a partial OCR run is not an OCR pass")
         verdict = "fail" if any(str(c.get("severity", "")).lower() in ("critical", "high") for c in comments) else "pass"
         e = env(status="ok", verdict=verdict, findings=comments, usage={"tokens": tokens, "usd": 0.0},
                 reason=f"{len(failed)} file(s) failed in OCR" if failed else "", partial_failed=len(failed))
@@ -216,9 +231,9 @@ def run_ocr_full(repo, out, files, timeout_s, max_tokens):
 
 
 def run_registry(repo, files):
-    sel = set(files)
-    env = known_patterns.scan(repo, EMPTY_TREE)
-    env["findings"] = [f for f in env["findings"] if f["file"] in sel]
+    sel = sorted(set(files))
+    env = known_patterns.scan(repo, EMPTY_TREE, paths=sel)   # only the selection: not the >300 KB / vendored files too
+    env["findings"] = [f for f in env["findings"] if f["file"] in set(sel)]
     env["verdict"] = "fail" if env["findings"] else "pass"
     return env
 
@@ -239,9 +254,15 @@ def main(argv=None):
     a = ap.parse_args(argv)
     repo = os.path.realpath(git(a.repo, "rev-parse", "--show-toplevel").stdout.strip() or a.repo)
     reviewers = [r for r in a.reviewers.split(",") if r]
-    if not set(reviewers) <= {"claude", "antigravity", "grok", "ocr"}:
+    if not set(reviewers) <= set(rm.CORE):
         print("review-full: --reviewers takes claude,antigravity,grok,ocr", file=sys.stderr)
         return 2
+    env_skip, err = rm.parse_skip(os.environ.get("REVIEW_SKIP_REVIEWERS", ""))
+    skip_rev, err2 = rm.parse_skip(",".join(sorted((set(rm.CORE) - set(reviewers)) | set(env_skip))))
+    if err or err2:
+        print(f"review-full: {err or err2}", file=sys.stderr)
+        return 2
+    reviewers = [r for r in rm.CORE if r not in skip_rev]
     files, skipped = select_files(repo)
     wanted = [w.strip() for w in a.paths.split(",") if w.strip()]
     if wanted:
@@ -327,6 +348,7 @@ def main(argv=None):
         combined["ocr"] = ocr_env
     combined["registry"] = run_registry(repo, [p for p, _ in files])
     meta = {"mode": "full", "repo": repo, "base": "HEAD", "depth": "deep", "required": reviewers + ["registry"],
+            "skipped_by_override": skip_rev, "reduced": bool(skip_rev),
             "models": models, "files": [p for p, _ in files], "code_hash": head}
     # partial results still count as evidence: analyse every reviewer that produced findings, even if some chunks failed
     analysable = {k: dict(v, status="ok") if v.get("findings") else v for k, v in combined.items()}
@@ -345,7 +367,8 @@ def main(argv=None):
     if skipped_chunks:
         reasons.append(f"budget reached: chunks not reviewed: {', '.join(skipped_chunks)}")
         verdict = "FAIL"
-    summary = {"verdict": verdict, "reasons": reasons, "usage": usage, "head": head, "files": len(files), "excluded": skipped,
+    summary = {"verdict": verdict, "reasons": reasons, "usage": usage, "head": head, "run": rm.run_label(meta),
+               "reduced": bool(skip_rev), "skipped_by_override": skip_rev, "files": len(files), "excluded": skipped,
                "chunks": [{k: c[k] for k in ("id", "label", "lines")} | {"files": len(c["files"])} for c in chunks],
                "skipped_chunks": skipped_chunks,
                "reviewers": {r: {k: e.get(k) for k in ("status", "verdict", "model", "reason", "chunks_ok", "chunks_total")}
@@ -354,7 +377,7 @@ def main(argv=None):
                              for cid, envs in sorted(results.items())},
                "findings": clusters}
     write_json(os.path.join(out, "full-summary.json"), summary)
-    md = rm.summary_md(verdict, reasons, meta, combined, clusters, usage).replace("# 4-way review", "# 4-way FULL-solution review", 1)
+    md = rm.summary_md(verdict, reasons, meta, combined, clusters, usage).replace("review", "FULL-solution review", 1)
     with open(os.path.join(out, "full-summary.md"), "w", encoding="utf-8") as fh:
         fh.write(md)
     print(md)

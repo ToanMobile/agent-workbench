@@ -24,6 +24,11 @@ pinned to Opus, Antigravity, Grok, OCR full LLM mode): PASS only when
      is fixed WITH a linked regression test that last passed (regression_checklist.py bug-link BUG-REV-<id> <test>).
 Anything else is FAIL with the reasons listed.
 
+PER-RUN OVERRIDE (user 31/10/2026, reduced run): REVIEW_SKIP_REVIEWERS=grok,ocr (or review-fanout.sh --skip grok,ocr) drops
+those reviewers from ONE run. Only grok and ocr can be skipped (Claude Opus and Antigravity never); the skip list is written to
+meta.json ("skipped_by_override"), part of the cached code state, and every summary says "REDUCED n-way run … skipped by user
+override". The default, with no override, stays the 4-way unanimous rule.
+
 Severity: P0 blocker/critical · P1 major/high · P2 medium/minor/should-fix · P3 low/nit. Findings of different reviewers on
 the same file, lines within 3 and the same category (or similar text) are one finding, "consensus" when >= 2 reviewers.
 
@@ -47,6 +52,7 @@ sys.path.insert(0, HERE)
 import known_patterns  # noqa: E402
 
 CORE = ("claude", "antigravity", "grok", "ocr")
+SKIPPABLE = ("grok", "ocr")   # a per-run user override may drop these; claude (Opus) and antigravity are never skippable
 OPUS_REVIEWERS = ("claude", "security", "verifier")
 SEV_MAP = {"p0": "P0", "blocker": "P0", "critical": "P0", "crash": "P0",
            "p1": "P1", "major": "P1", "high": "P1", "error": "P1",
@@ -61,6 +67,34 @@ CAT_MAP = (("recurring", "recurring-bug"), ("secur", "security"), ("vuln", "secu
 # reviewers whose prompt requires a verbatim snippet: a finding without one is not cited
 NEEDS_SNIPPET = {"claude", "security", "antigravity", "grok"}
 REV_BAD = {"OPEN", "NEEDS_TEST", "NOT_IN_MATRIX", "NOT_RUN", "FAIL", "TIMEOUT", "VACUOUS", "STALE", "FLAKY", "REPORTED"}
+
+
+def parse_skip(value):
+    """(sorted skip list, error) from REVIEW_SKIP_REVIEWERS / --skip: only SKIPPABLE names, anything else is an error."""
+    names = sorted({x.strip().lower() for x in str(value or "").replace(" ", ",").split(",") if x.strip()})
+    bad = [n for n in names if n not in SKIPPABLE]
+    if bad:
+        return [], (f"cannot skip {', '.join(bad)}: only {', '.join(SKIPPABLE)} may be skipped by override "
+                    "(Claude Opus and Antigravity are always required)")
+    return names, ""
+
+
+def skipped_of(meta):
+    """The validated per-run skip list of a run (meta.json "skipped_by_override"); (list, error)."""
+    return parse_skip(",".join(meta.get("skipped_by_override") or []))
+
+
+def core_required(meta):
+    skipped, _ = skipped_of(meta)
+    return [r for r in CORE if r not in skipped]
+
+
+def run_label(meta):
+    skipped, _ = skipped_of(meta)
+    if not skipped:
+        return "4-way review"
+    return (f"REDUCED {len(CORE) - len(skipped)}-way review ({', '.join(skipped)} skipped by user override — "
+            "not the default 4-way gate)")
 
 
 def norm_sev(v):
@@ -168,10 +202,12 @@ def dedupe(findings):
     out = []
     for c in clusters:
         ms = c["members"]
-        head = dict(min(ms, key=lambda x: SEV_RANK[x["severity"]]))
+        cited_ms = [m for m in ms if m.get("cited")]
+        # a finding dropped by cite-check never sets the severity of a cluster that has a cited member
+        head = dict(min(cited_ms or ms, key=lambda x: SEV_RANK[x["severity"]]))
         head["reviewers"] = sorted({m["reviewer"] for m in ms})
         head["consensus"] = len(head["reviewers"]) >= 2
-        head["unanimous"] = all(r in head["reviewers"] for r in CORE)
+        head["unanimous"] = all(r in head["reviewers"] for r in CORE)   # relative to the default 4; decide() uses the run's
         head["known_pattern"] = next((m["known_pattern"] for m in ms if m["known_pattern"]), "")
         head["deterministic"] = any(m["deterministic"] for m in ms)
         head["cited"] = any(m.get("cited") for m in ms)
@@ -294,7 +330,10 @@ def model_reason(name, env, meta):
 def decide(meta, envs, clusters, rev=None, rev_err=""):
     """The unanimous rule. Returns (verdict, reasons)."""
     reasons = []
-    required = list(dict.fromkeys(list(CORE) + list(meta.get("required") or [])))
+    skipped, skip_err = skipped_of(meta)
+    if skip_err:
+        reasons.append(f"override: {skip_err}")
+    required = [r for r in dict.fromkeys(list(CORE) + list(meta.get("required") or [])) if r not in skipped]
     for name in required:
         env = envs.get(name)
         if env is None:
@@ -309,6 +348,14 @@ def decide(meta, envs, clusters, rev=None, rev_err=""):
             reasons.append(f"{name}: {bad_model}")
             continue
         if name != "verifier" and env.get("verdict") != "pass":
+            mine = [c for c in clusters if name in c.get("reviewers", [])]
+            own_blocking = [c for c in clusters if c.get("state") == "blocking" and name in c.get("reviewers", [])]
+            dropped = [c for c in mine if c.get("state") in ("uncited", "refuted") and
+                       (c.get("original_severity") or c["severity"]) in BLOCKING]
+            if env.get("verdict") == "fail" and dropped and not own_blocking and \
+                    not any(c["severity"] in BLOCKING and c.get("state") not in ("uncited", "refuted") for c in mine):
+                # its "fail" rests only on P0/P1 that cite-check or the verifier threw out: no evidence left for the fail
+                continue
             reasons.append(f"{name}: verdict {env.get('verdict') or 'missing'} (not pass)")
     for name in OPUS_REVIEWERS:   # an extra Claude run (e.g. a verifier at light depth) must be Opus too: it can refute findings
         if name not in required and name in envs:
@@ -371,10 +418,14 @@ def inline_comments(clusters):
 
 
 def summary_md(verdict, reasons, meta, envs, clusters, usage):
-    L = [f"# 4-way review: {'✅ PASS' if verdict == 'PASS' else '⛔ FAIL'}", "",
+    L = [f"# {run_label(meta)}: {'✅ PASS' if verdict == 'PASS' else '⛔ FAIL'}", "",
          f"base `{meta.get('base')}` · depth {meta.get('depth')} · code `{str(meta.get('code_hash', ''))[:12]}` · "
          f"{usage['tokens']} tokens · ${usage['usd']:.2f}", "", "| reviewer | status | verdict | model | findings |", "|---|---|---|---|---|"]
+    skipped, _ = skipped_of(meta)
     for name in list(dict.fromkeys(list(CORE) + list(meta.get("required") or []))):
+        if name in skipped:
+            L.append(f"| {name} | SKIPPED | - | - | skipped by user override (REVIEW_SKIP_REVIEWERS) |")
+            continue
         e = envs.get(name) or {}
         L.append(f"| {name} | {e.get('status', 'MISSING')} | {e.get('verdict', '-')} | {e.get('model') or '-'} | "
                  f"{len(e.get('findings') or e.get('verifications') or [])} |")
@@ -394,6 +445,7 @@ def summary_md(verdict, reasons, meta, envs, clusters, usage):
 
 def log_outcome(path, meta, verdict, reasons, clusters, usage, envs=None):
     rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "code_hash": meta.get("code_hash"), "base": meta.get("base"),
+           "run": run_label(meta), "skipped_by_override": meta.get("skipped_by_override") or [],
            "depth": meta.get("depth"), "verdict": verdict, "reasons": reasons, "usage": usage,
            "reviewers": {n: {k: e.get(k) for k in ("status", "verdict", "model")} for n, e in sorted((envs or {}).items())},
            "findings": [{"id": c["id"], "severity": c["severity"], "state": c.get("state"), "reviewers": c["reviewers"],
@@ -435,7 +487,9 @@ def main(argv=None):
         if errs:
             reasons.append("could not record accepted findings as bug rows: " + "; ".join(errs))
             verdict = "FAIL"
-    out = {"verdict": verdict, "reasons": reasons, "meta": meta, "usage": usage,
+    skipped, _ = skipped_of(meta)
+    out = {"verdict": verdict, "reasons": reasons, "meta": meta, "usage": usage, "run": run_label(meta),
+           "reduced": bool(skipped), "skipped_by_override": skipped,
            "reviewers": {n: {"status": e.get("status"), "verdict": e.get("verdict"), "reason": e.get("reason", ""),
                              "findings": len(e.get("findings") or []), "model": e.get("model")} for n, e in envs.items()},
            "findings": clusters, "inline_comments": inline_comments(clusters), "ts": time.time()}

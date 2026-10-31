@@ -32,7 +32,8 @@ cat > "$STUB/ocr" <<'SH'
 [ "$1" = review ] || exit 0
 out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done
 ls -R . > "$STUB_DIR/ocr.seen"
-printf '{"status":"completed","comments":[],"manifest":{"coverage":{"completed":["src/app.py"],"failed":[]}},"summary":{"total_tokens":3}}' > "$out"
+fl='[]'; [ "$(cat "$STUB_DIR/ocr.mode" 2>/dev/null)" = partial ] && fl='["lib/old.py"]'
+printf '{"status":"completed","comments":[],"manifest":{"coverage":{"completed":["src/app.py"],"failed":%s}},"summary":{"total_tokens":3}}' "$fl" > "$out"
 SH
 echo "const fs=require('fs');const a=process.argv;fs.appendFileSync(process.env.STUB_DIR+'/agy.scopes',a[a.indexOf('--scope')+1]+'\n');fs.appendFileSync(process.env.STUB_DIR+'/agy.labels',a[a.indexOf('--label')+1]+'\n');fs.writeFileSync(a[a.indexOf('--out')+1],JSON.stringify({reviewer:'antigravity',status:'ok',verdict:'pass',findings:[]}));" > "$STUB/agy.js"
 chmod +x "$STUB/claude" "$STUB/grok" "$STUB/ocr"
@@ -91,5 +92,20 @@ S="$TMP/run2/full-summary.json"
 [ "$rc" = 1 ] && [ "$(q 's["reviewers"]["grok"]["status"]')" = failed ] && grep -q '402' "$S" \
   && ok "Grok out of credit → reported as failed (402), scan FAIL" || { fail "grok nocredit rc=$rc"; cat "$TMP/out2"; }
 
+# per-run override: only grok / ocr may be dropped; the report names the REDUCED run
+REVIEW_SKIP_REVIEWERS=grok,ocr bash "$F" --full --repo "$P" --out "$TMP/run2" --chunk-lines 6 > "$TMP/out2" 2>&1
+S2="$TMP/run2/full-summary.json"
+python3 -c "import json,sys; s=json.load(open('$S2')); sys.exit(0 if s['reduced'] and s['skipped_by_override']==['grok','ocr'] and 'REDUCED 2-way' in s['run'] and not any(r.startswith(('grok','ocr')) for r in s['reasons']) else 1)" \
+  && grep -q 'REDUCED 2-way FULL-solution review' "$TMP/run2/full-summary.md" \
+  && ok "REVIEW_SKIP_REVIEWERS=grok,ocr → REDUCED 2-way full scan, grok/ocr not counted as missing" || { fail "reduced full scan"; cat "$TMP/out2"; }
+bash "$F" --full --repo "$P" --list --reviewers claude,grok > /dev/null 2>&1; [ $? = 2 ] \
+  && ok "--reviewers without antigravity → refused (exit 2)" || fail "antigravity skippable in --full"
+
+# OCR that could not review some files is a failed OCR lane, never a partial pass
+echo partial > "$STUB/ocr.mode"
+bash "$F" --full --repo "$P" --out "$TMP/run3" --chunk-lines 6 --reviewers claude,antigravity,ocr > "$TMP/out3" 2>&1
+python3 -c "import json,sys; s=json.load(open('$TMP/run3/ocr.json')); sys.exit(0 if s['status']=='failed' and 'not reviewed' in s['reason'] else 1)" \
+  && ok "OCR with failed files → status failed (no partial pass)" || { fail "partial OCR counted"; cat "$TMP/run3/ocr.json"; }
+rm -f "$STUB/ocr.mode"
 if [ "$FAILS" -ne 0 ]; then echo "review full: $FAILS FAILED"; exit 1; fi
 echo "review full: all checks passed"

@@ -65,3 +65,23 @@ verifier tries to refute each cited P0/P1. Product code goes before tests; once 
 spent no further chunk starts and the report lists the skipped ones. REPORT ONLY — nothing is fixed, no bug row is recorded.
 Output: `<git-common-dir>/review-fanout/full-<head>-<ts>/full-summary.md|json` (per-reviewer, per-chunk status and model;
 findings P0–P3 with state, consensus reviewers and file:line).
+
+## Per-run override: a REDUCED run (user decision only)
+
+The default is always the 4-way unanimous gate. When the user decides for a session that Grok and/or OCR cannot or should not
+run (for example Grok out of credit, OCR quota reached), one run can be reduced:
+
+```bash
+REVIEW_SKIP_REVIEWERS=grok,ocr bin/review-fanout.sh            # or: bin/review-fanout.sh --skip grok,ocr
+REVIEW_SKIP_REVIEWERS=grok,ocr bin/review-fanout.sh --full ...  # whole-solution scan, same override
+```
+
+- Only `grok` and `ocr` can be skipped. `claude` (pinned to Opus) and `antigravity` are always required; `--skip claude` or
+  `--skip antigravity` is a usage error (exit 2). The registry, security reviewer and verifier still run as usual.
+- Every remaining reviewer must still pass on the right model: missing, failed, timed out or a non-Opus Claude = FAIL.
+- The summary is titled "REDUCED 2-way review (grok, ocr skipped by user override — not the default 4-way gate)", lists
+  each skipped reviewer as `SKIPPED … skipped by user override`, and summary.json / review_outcomes.jsonl carry
+  `"reduced": true, "skipped_by_override": [...]`.
+- The skip list is part of the code hash: a reduced PASS never answers the default 4-way `--status`, so the Stop gate only
+  sees it when the same override is set in its environment.
+- An agent never sets the override on its own; it is the user's call for a session.

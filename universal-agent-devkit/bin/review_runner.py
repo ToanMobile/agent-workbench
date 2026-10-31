@@ -76,20 +76,51 @@ def env_out(run, name, **kw):
     return 0 if env["status"] == "ok" else 1
 
 
+class Interrupted(Exception):
+    """The fan-out was stopped (SIGTERM/SIGINT/SIGHUP): the reviewer's process group is already killed."""
+
+
+_CHILD = []
+
+
+def kill_tree(p):
+    """Kill p's process group; when macOS refuses killpg (EPERM) or the group is gone, kill p itself (INSTINCT-056)."""
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+        return
+    except OSError:
+        pass
+    try:
+        p.kill()
+    except OSError:
+        pass
+
+
+def _on_signal(signum, _frame):
+    for p in list(_CHILD):
+        kill_tree(p)
+    raise Interrupted(f"stopped by signal {signum}")
+
+
 def run_bounded(cmd, timeout, cwd, env=None, stdin_text=None):
-    """(rc, out, err, timed_out); the whole process group is killed on timeout."""
+    """(rc, out, err, timed_out); the whole process group is killed on timeout, and the reap after the kill is bounded too:
+    a CLI that survives the kill (or a grandchild holding the pipes) can never hang the runner."""
     p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    _CHILD.append(p)
     try:
-        out, err = p.communicate(stdin_text, timeout=timeout)
-        return p.returncode, out, err, False
-    except subprocess.TimeoutExpired:
         try:
-            os.killpg(p.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        out, err = p.communicate()
-        return 124, out, err, True
+            out, err = p.communicate(stdin_text, timeout=timeout)
+            return p.returncode, out, err, False
+        except subprocess.TimeoutExpired:
+            kill_tree(p)
+            try:
+                out, err = p.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                out, err = "", "(reviewer process did not exit 30s after SIGKILL; output dropped)"
+            return 124, out or "", err or "", True
+    finally:
+        _CHILD.remove(p)
 
 
 def read(path, default=""):
@@ -315,8 +346,18 @@ def run_ocr(a, meta, ctx):
     return env_out(a.run, "ocr", status="ok", verdict=verdict, findings=findings, usage={"tokens": tokens, "usd": 0.0})
 
 
+def agy_cli(meta):
+    """The DevKit's own pm-review-audit.js (next to this DevKit checkout), else the reviewed repo's: the review must not run
+    an auditor shipped by the code under review when the DevKit has one."""
+    if os.environ.get("REVIEW_AGY_CLI"):
+        return os.environ["REVIEW_AGY_CLI"]
+    rel = os.path.join("mcp-servers", "antigravity-pm-mcp", "bin", "pm-review-audit.js")
+    own = os.path.join(os.path.dirname(os.path.dirname(HERE)), rel)
+    return own if os.path.isfile(own) else os.path.join(meta["repo"], rel)
+
+
 def run_agy(a, meta, ctx):
-    cli = os.environ.get("REVIEW_AGY_CLI") or os.path.join(meta["repo"], "mcp-servers", "antigravity-pm-mcp", "bin", "pm-review-audit.js")
+    cli = agy_cli(meta)
     if not os.path.isfile(cli):
         return env_out(a.run, "antigravity", status="unavailable", reason=f"{cli} not found")
     msg = os.path.join(a.run, "antigravity-message.md")
@@ -351,6 +392,8 @@ def main(argv=None):
     ap.add_argument("--run", required=True)
     ap.add_argument("--timeout", type=int, default=900)
     a = ap.parse_args(argv)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, _on_signal)
     try:
         meta = json.loads(read(os.path.join(a.run, "meta.json")))
         ctx = read(os.path.join(a.run, "context.md"))
@@ -361,6 +404,8 @@ def main(argv=None):
         if a.name == "grok":
             return run_grok(a, meta, ctx)
         return run_agy(a, meta, ctx)
+    except Interrupted as e:
+        return env_out(a.run, a.name, status="error", reason=f"review interrupted: {e}")
     except Exception as e:   # never leave the vote empty-handed: an error is a recorded failure, not a silence
         return env_out(a.run, a.name, status="error", reason=f"review_runner crashed: {e!r}")
 

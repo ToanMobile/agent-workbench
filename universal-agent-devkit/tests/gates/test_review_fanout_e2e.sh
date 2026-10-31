@@ -138,5 +138,56 @@ for id in $(rev_ids); do (cd "$P" && CLAUDE_PROJECT_DIR="$P" python3 "$DEVKIT_DI
 echo high > "$STUB/ocr.mode"; printf 'def g(items):\n    return items[0]\n' > "$P/app.py"; echo "# v7" >> "$P/app.py"
 rc=$(run); [ "$rc" = 1 ] && reasons | grep -q '^ocr: verdict fail' && ok "one reviewer says fail → FAIL" || { fail "split vote passed rc=$rc"; reasons; }
 
+# 8. per-run override (user 31/10/2026): --skip grok,ocr / REVIEW_SKIP_REVIEWERS → a REDUCED 2-way run, labelled as such
+echo ok > "$STUB/ocr.mode"; echo pass > "$STUB/claude.mode"; echo pass > "$STUB/grok.mode"; echo pass > "$STUB/agy.mode"
+rm -f "$STUB/claude.model"
+for id in $(rev_ids); do (cd "$P" && CLAUDE_PROJECT_DIR="$P" python3 "$DEVKIT_DIR/bin/regression_checklist.py" drop "$id" >/dev/null 2>&1); done
+printf 'def g(items):\n    return items[0] if items else None\n# v8\n' > "$P/app.py"
+rm -f "$STUB/grok.args"; : > "$STUB/ocr.called"
+rc=$(run --skip grok,ocr)
+S8="$(bash "$F" --repo "$P" --base HEAD --skip grok,ocr --status | awk '{print $2}')/summary.json"
+[ "$rc" = 0 ] && grep -q 'REDUCED 2-way review' "$TMP/out" && grep -q '| grok | SKIPPED |' "$TMP/out" && grep -q '| ocr | SKIPPED |' "$TMP/out" \
+  && ok "--skip grok,ocr → REDUCED 2-way PASS, both listed as skipped by user override" || { fail "reduced run rc=$rc"; cat "$TMP/out"; }
+[ ! -s "$STUB/grok.args" ] && ok "a skipped reviewer is not started" || fail "grok ran although skipped"
+python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); sys.exit(0 if s["reduced"] and s["skipped_by_override"]==["grok","ocr"] else 1)' "$S8" \
+  && ok "summary.json: reduced=true, skipped_by_override=[grok, ocr]" || fail "summary.json lacks the override"
+st="$(bash "$F" --repo "$P" --base HEAD --status | awk '{print $1}')"
+[ "$st" = NONE ] && ok "a reduced PASS never answers the default 4-way --status (separate code hash)" || fail "4-way status saw the reduced run: $st"
+rc=$(REVIEW_SKIP_REVIEWERS=grok,ocr run); [ "$rc" = 0 ] && grep -q 'cached' "$TMP/out" && ok "REVIEW_SKIP_REVIEWERS env = same override (cached)" || fail "env override rc=$rc"
+echo "# v8b" >> "$P/app.py"; echo unavailable > "$STUB/agy.mode"
+rc=$(run --skip grok,ocr); [ "$rc" = 1 ] && grep -q 'antigravity: unavailable' "$TMP/out" && ok "reduced run: Antigravity missing → FAIL" || { fail "agy missing in reduced run rc=$rc"; cat "$TMP/out"; }
+echo pass > "$STUB/agy.mode"; echo "# v8c" >> "$P/app.py"; echo claude-sonnet-4-5 > "$STUB/claude.model"
+rc=$(run --skip grok,ocr); [ "$rc" = 1 ] && grep -q 'requires Opus' "$TMP/out" && ok "reduced run: Claude not on Opus → FAIL" || { fail "non-Opus in reduced run rc=$rc"; cat "$TMP/out"; }
+rm -f "$STUB/claude.model"
+for bad in claude antigravity "grok,claude"; do
+  rc=$(run --skip "$bad"); [ "$rc" = 2 ] || fail "--skip $bad accepted (rc=$rc)"
+done; ok "--skip claude / antigravity refused (exit 2)"
+rc=$(bash "$F" --repo "$P" --base > /dev/null 2>&1; echo $?); [ "$rc" = 2 ] && ok "--base without a value → usage error, no hang" || fail "--base last rc=$rc"
+
+# 9. the review's own writes (checklist rows) do not change the cached code state; a FIFO in the tree never hangs the hash
+h1="$(bash "$F" --repo "$P" --base HEAD --hash)"
+mkdir -p "$P/.agents"; echo '{"items":{}}' > "$P/.agents/regression_status.json"
+h2="$(bash "$F" --repo "$P" --base HEAD --hash)"
+[ "$h1" = "$h2" ] && ok "checklist written by the review is outside the code hash" || fail "checklist write changed the hash"
+rm -f "$P/.agents/regression_status.json"
+mkfifo "$P/pipe.fifo"
+( bash "$F" --repo "$P" --base HEAD --hash > "$TMP/h3" 2>&1; echo $? > "$TMP/h3.rc" ) & hp=$!
+for _ in $(seq 1 20); do [ -s "$TMP/h3.rc" ] && break; sleep 0.5; done
+if [ -s "$TMP/h3.rc" ]; then ok "an untracked FIFO does not hang the code hash"; else kill $hp 2>/dev/null; fail "hash hung on a FIFO"; fi
+rm -f "$P/pipe.fifo"
+
+# 10. a stopped review stops its reviewers (no orphan CLI left billing) and records why
+echo "# v10" >> "$P/app.py"; rm -f "$STUB/claude.model"
+STUB_SLEEP=30 bash "$F" --repo "$P" --base HEAD --skip grok,ocr > "$TMP/out10" 2>&1 & fp=$!
+for _ in $(seq 1 40); do pgrep -f "$STUB/claude" >/dev/null && break; sleep 0.25; done
+kill -TERM $fp; wait $fp 2>/dev/null
+sleep 1
+if pgrep -f "$STUB/claude" >/dev/null || pgrep -f "$STUB/agy.js" >/dev/null; then
+  fail "reviewers kept running after the fan-out was stopped"; pkill -f "$STUB/" 2>/dev/null
+else ok "SIGTERM to the fan-out stops every reviewer process"; fi
+R10="$(bash "$F" --repo "$P" --base HEAD --skip grok,ocr --hash)"
+grep -q 'interrupted' "$P/.git/review-fanout/$R10/claude.json" 2>/dev/null && ok "the stopped reviewer's envelope says interrupted" \
+  || fail "no interrupted envelope: $(cat "$P/.git/review-fanout/$R10/claude.json" 2>&1)"
+
 if [ "$FAILS" -ne 0 ]; then echo "review fanout: $FAILS FAILED"; exit 1; fi
 echo "review fanout: all checks passed"
