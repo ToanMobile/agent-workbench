@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { TOOLS, TOOLS_BY_NAME } from './tools.js';
+import { startLeftoverReaper } from './agentapi.js';
 import { logStderr, truncate } from './util.js';
 
 export const SERVER_NAME = 'antigravity-pm';
@@ -68,5 +69,6 @@ export async function main() {
   const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  startLeftoverReaper();   // #697: don lenh mo coi cua agent moi 60 s, doc lap voi viec PM goi tool
   logStderr(`${SERVER_NAME} v${SERVER_VERSION} da san sang (${TOOLS.length} tool)`);
 }
