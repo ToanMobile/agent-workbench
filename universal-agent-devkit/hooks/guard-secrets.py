@@ -32,6 +32,9 @@ SECRET_RE = re.compile("|".join([
     B + r"credentials(?:\.json)?" + E,
     r"service-account[A-Za-z0-9._-]*\.json",
     r"\.pem" + E,
+    # the review seal key (bin/review_sign.py, r14d BUG-REV-592ad1528c): read, the agent could sign its own review verdict
+    r"\.config/agent-workbench(?:/|" + E + ")",
+    B + r"review\.key" + E,
 ]))
 
 # The one sanctioned way to ask "is KEY set?": super-board-env-check.sh prints
