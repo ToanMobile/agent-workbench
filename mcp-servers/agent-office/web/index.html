@@ -171,16 +171,59 @@
   .spark-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .spark-legend i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
 
-  /* controls */
-  .controls { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 4px; padding: 6px; z-index: 5; }
-  .controls button { border: 0; background: transparent; padding: 8px 14px; border-radius: 11px; cursor: pointer; font-weight: 500; white-space: nowrap; }
+  /* controls: đúng MỘT hàng, không cuộn ngang ẩn (đo ở 390/768/1024/1280/1440 trong tests/ui_toolbar_account.js).
+     Ít dùng nằm trong menu ⋯; nút bật/tắt giữ nhãn cố định, trạng thái ở aria-pressed nên bề ngang không nhảy */
+  .controls { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 4px; padding: 6px; z-index: 5; flex-wrap: nowrap; max-width: calc(100vw - 24px); overflow: hidden; }
+  .controls button { flex: none; border: 0; background: transparent; padding: 8px 11px; border-radius: 11px; cursor: pointer; font-weight: 500; white-space: nowrap; }
   .controls button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
-  .controls { flex-wrap: nowrap; justify-content: flex-start; max-width: calc(100vw - 24px); overflow-x: auto; scrollbar-width: none; } /* một hàng dài: hẹp quá thì cuộn ngang, không xuống dòng */
-  .controls::-webkit-scrollbar { display: none; }
-  .controls button { flex: none; padding: 8px 11px; }
-  .controls .sec { display: none; }
-  .controls.more .sec { display: inline-block; }
-  .controls .more-btn { color: var(--muted); }
+  .controls button[aria-pressed="true"] { background: color-mix(in srgb, var(--c-ready) 14%, transparent); color: var(--t-ready); } /* không đổi độ đậm: bề ngang nút giữ nguyên khi bật/tắt */
+  .controls .short { display: none; }
+  .controls .badge { display: inline-block; min-width: 18px; margin-left: 5px; padding: 0 5px; border-radius: 9px; background: var(--c-you); color: #fff; font-size: 11.5px; font-weight: 700; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+  .controls .badge:empty { display: none; }
+  .controls .seg2 { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: 12px; background: color-mix(in srgb, var(--ink) 5%, transparent); }
+  .controls .seg2 button { padding: 6px 10px; border-radius: 9px; }
+  .controls .sep { flex: none; width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); }
+  .controls #btnMore { min-width: 40px; font-size: 18px; line-height: 1; padding: 6px 10px 9px; font-weight: 700; letter-spacing: .04em; }
+  .controls #btnMore[aria-expanded="true"] { background: color-mix(in srgb, var(--ink) 9%, transparent); }
+  /* menu ⋯: popover trên nút, điện thoại thành tấm dưới đáy */
+  .more-menu { position: fixed; right: max(12px, var(--menu-r, 12px)); bottom: calc(var(--bot-h, 64px) + 8px); z-index: 8; min-width: 236px; max-width: calc(100vw - 24px); max-height: calc(100vh - var(--bot-h, 64px) - 24px); overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+  .more-menu[hidden] { display: none; }
+  .more-menu button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 8px 12px; border: 0; border-radius: 10px; background: transparent; cursor: pointer; text-align: left; font-weight: 500; white-space: nowrap; }
+  .more-menu button:hover, .more-menu button:focus-visible { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+  .more-menu button[hidden] { display: none; }
+  .more-menu .mi-ic { width: 18px; flex: none; text-align: center; color: var(--muted); }
+  .more-menu .mi-k { margin-left: auto; padding-left: 14px; color: var(--faint); font-size: 12px; font-family: var(--mono); }
+  .more-menu [aria-checked="true"] .mi-ic { color: var(--t-ready); }
+  .more-menu [aria-checked="true"] { font-weight: 700; }
+  .more-menu .mi-sep { height: 1px; margin: 4px 6px; background: var(--line); flex: none; }
+  .more-menu .m-only, .more-menu .mi-sep.m-only { display: none; }
+  .more-menu .mi-appr { color: var(--t-you); font-weight: 700; }
+
+  /* tài khoản Claude + token còn: góc phải trên, cuối hàng header (không đè legend, drawer, nút zoom) */
+  .acct { flex: none; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 12px 6px 10px; cursor: pointer; font: inherit; color: var(--ink); text-align: left; white-space: nowrap; max-width: 300px; }
+  .acct:hover { border-color: var(--muted); }
+  .acct[aria-expanded="true"] { border-color: var(--c-ready); }
+  .acct .ac-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--c-done); }
+  .acct.empty .ac-dot { background: var(--c-away); }
+  .acct .ac-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+  .acct .ac-name { font-weight: 700; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; }
+  .acct .ac-tok { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+  .acct .ac-tok:empty { display: none; }
+  .acct .ac-tok .ts { display: none; }
+  .acct .ac-car { color: var(--muted); font-size: 11px; flex: none; }
+  .acct-pop { position: fixed; right: 12px; top: calc(var(--acct-b, 70px) + 8px); z-index: 8; width: min(360px, calc(100vw - 24px)); max-height: calc(100vh - var(--acct-b, 70px) - var(--bot-h, 64px) - 30px); overflow: auto; padding: 12px; }
+  .acct-pop[hidden] { display: none; }
+  .acct-pop h2 { margin: 0 4px 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .acct-pop .ap-row { display: grid; grid-template-columns: 9px 1fr auto; gap: 2px 9px; align-items: center; width: 100%; min-height: 44px; padding: 7px 8px; border: 0; border-radius: 10px; background: transparent; cursor: pointer; text-align: left; }
+  .acct-pop .ap-row + .ap-row { border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; }
+  .acct-pop .ap-row:hover, .acct-pop .ap-row:focus-visible { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+  .acct-pop .ap-row i { width: 9px; height: 9px; border-radius: 50%; }
+  .acct-pop .ap-who { font-weight: 600; font-size: 13.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acct-pop .ap-who small { font-weight: 500; color: var(--muted); font-size: 12px; margin-left: 5px; }
+  .acct-pop .ap-acc { font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+  .acct-pop .ap-tok { grid-column: 2 / -1; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .acct-pop .ap-row.away { opacity: .75; }
+  .acct-pop .empty { margin: 4px; }
 
   /* 3D labels */
   .lbl { position: absolute; left: 0; top: 0; will-change: transform; white-space: nowrap; }
@@ -262,8 +305,7 @@
   .row-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .readonly { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
   /* khung "Cần bạn duyệt": mỗi thẻ ngăn bằng đường kẻ (không card lồng panel), nút to cho ngón tay */
-  .controls #btnApprove { color: var(--t-you); font-weight: 700; }
-  .controls #btnApprove.pending { background: color-mix(in srgb, var(--c-you) 14%, transparent); }
+  .controls #btnApprove { display: none; color: var(--t-you); font-weight: 700; background: color-mix(in srgb, var(--c-you) 14%, transparent); } /* máy tính: băng "Duyệt ›" trên header đã làm việc này */
   /* băng nhắc: luôn hiện khi còn thẻ 🙋 chờ, bấm là mở khung duyệt (máy tính và điện thoại như nhau) */
   .appr-banner { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; margin-top: 10px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--c-you) 40%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--c-you) 12%, var(--panel-solid)); color: var(--t-you); font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: transform .08s; }
   .appr-banner[hidden] { display: none; }
@@ -399,9 +441,17 @@
     .rail h2 { display: none; }
     .repo { min-width: 190px; }
     .drawer { left: 12px; right: 12px; width: auto; top: auto; bottom: calc(var(--bot-h, 64px) + 8px); max-height: 58vh; }
-    .controls { left: 12px; right: 12px; transform: none; justify-content: center; flex-wrap: wrap; }
-    .controls .sec { display: none; }
-    .controls.more .sec, .controls .more-btn { display: inline-block; }
+    /* điện thoại / máy tính bảng dọc: chỉ Duyệt (khi có thẻ chờ), Bảng, Thêm, ⋯; còn lại nằm trong menu ⋯ (tấm dưới đáy) */
+    .controls { left: 50%; right: auto; transform: translateX(-50%); justify-content: center; }
+    .controls .d-only { display: none !important; }
+    .controls .short { display: inline; } .controls .full { display: none; }
+    .controls #btnApprove:not([hidden]) { display: inline-flex; align-items: center; }
+    .more-menu { left: 12px; right: 12px; min-width: 0; max-width: none; border-radius: 16px; }
+    .more-menu .m-only { display: flex; } .more-menu .mi-sep.m-only { display: block; }
+    .more-menu button { min-height: 44px; }
+    .more-menu .mi-k { display: none; }
+    .acct { max-width: 46vw; min-height: 44px; padding: 5px 10px 5px 9px; }
+    .acct .ac-tok .tl { display: none; } .acct .ac-tok .ts { display: inline; }
     .lbl-repo .rd, .bubble .btask, .lbl-idle { display: none !important; }
     .ag { min-width: 250px; }
     .lbl-repo { font-size: 13px !important; padding: 4px 8px 5px !important; border-right-width: 4px; }
@@ -417,10 +467,7 @@
     .board-head select, .board-head input { flex: 1 1 140px; }
     .board-head .count { width: 100%; margin-left: 0; }
     .board-head .hint { display: none; }
-    .controls button { padding: 8px 10px; min-height: 44px; }
-    /* điện thoại: thanh nút một hàng cuộn ngang thay vì ba hàng chiếm 1/5 màn hình */
-    .controls { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
-    .controls::-webkit-scrollbar { display: none; }
+    .controls button { padding: 8px 12px; min-height: 44px; }
     /* thông báo: trên điện thoại không chạy lệnh terminal được, chỉ giữ câu và nút Ẩn */
     .notice code, .notice .copy { display: none; }
   }
@@ -441,7 +488,9 @@
     <button type="button" class="appr-banner" id="apprBanner" aria-controls="drawer" hidden></button>
   </div>
   <div class="legend panel" id="legend" aria-label="Tổng số việc theo cột"></div>
+  <button type="button" class="acct panel empty" id="acctChip" aria-haspopup="dialog" aria-expanded="false" aria-controls="acctPop"><span class="ac-dot" aria-hidden="true"></span><span class="ac-txt"><span class="ac-name">Chưa có phiên</span><span class="ac-tok"></span></span><span class="ac-car" aria-hidden="true">▾</span></button>
 </header>
+<section class="acct-pop panel" id="acctPop" role="dialog" aria-label="Tài khoản Claude và token còn của từng agent" hidden></section>
 
 <nav class="rail panel" id="rail" aria-label="Các repo" hidden>
   <h2>Repo</h2>
@@ -455,21 +504,36 @@
 <aside class="drawer panel" id="drawer" hidden aria-live="polite"></aside>
 
 <div class="controls panel" role="toolbar" aria-label="Điều khiển">
-  <button type="button" id="btnApprove" aria-controls="drawer" hidden>Cần bạn duyệt</button>
-  <button type="button" id="btnAgents" aria-pressed="true">Ai đang làm gì</button>
-  <button type="button" id="btnFit">Toàn cảnh</button>
-  <button type="button" class="sec" id="btnZoom">Phóng to</button>
-  <button type="button" class="sec" id="btnRail" aria-pressed="false">Danh sách repo</button>
-  <button type="button" id="btnBoard">Dạng bảng</button>
-  <button type="button" id="btnAdd">Thêm việc</button>
-  <button type="button" id="btnEvents">Vừa xảy ra</button>
-  <button type="button" id="btnDash" aria-pressed="false" aria-controls="dash">Chỉ số</button>
-  <button type="button" class="sec" id="btnNext">Agent kế tiếp</button>
-  <button type="button" class="sec" id="btnDesk" aria-expanded="false" aria-controls="deskPicker">Kiểu bàn</button>
-  <button type="button" class="sec" id="btnTheme">Ca đêm</button>
-  <button type="button" class="sec" id="btnPhone" aria-haspopup="dialog" aria-controls="phoneDlg">Điện thoại</button>
-  <button type="button" class="sec" id="btnRefresh">Tải lại GitHub</button>
-  <button type="button" class="more-btn" id="btnMore" aria-expanded="false">Khác</button>
+  <button type="button" id="btnApprove" aria-controls="drawer" hidden>Duyệt<span class="badge" id="btnApproveN"></span></button>
+  <button type="button" id="btnBoard" aria-pressed="false" aria-label="Dạng bảng"><span class="full">Dạng bảng</span><span class="short">Bảng</span></button>
+  <button type="button" id="btnAdd" aria-label="Thêm việc"><span class="full">Thêm việc</span><span class="short">Thêm</span></button>
+  <button type="button" class="d-only" id="btnEvents" aria-label="Vừa xảy ra">Vừa xảy ra<span class="badge" id="btnEventsN"></span></button>
+  <button type="button" class="d-only" id="btnDash" aria-pressed="false" aria-controls="dash">Chỉ số</button>
+  <span class="sep d-only" aria-hidden="true"></span>
+  <span class="seg2 d-only" role="group" aria-label="Khung bên trái">
+    <button type="button" id="btnAgents" aria-pressed="true" aria-controls="agentsPanel" aria-label="Agent: ai đang làm gì">Agent</button>
+    <button type="button" id="btnRail" aria-pressed="false" aria-controls="rail" aria-label="Repo: danh sách repo">Repo</button>
+  </span>
+  <span class="seg2 d-only" role="group" aria-label="Góc nhìn camera">
+    <button type="button" id="btnFit">Toàn cảnh</button>
+    <button type="button" id="btnZoom" aria-label="Cận cảnh: bay tới chỗ các agent đang làm">Cận cảnh</button>
+  </span>
+  <button type="button" id="btnMore" aria-haspopup="menu" aria-expanded="false" aria-controls="moreMenu" aria-label="Thêm thao tác" title="Thêm thao tác">⋯</button>
+</div>
+<div class="more-menu panel" id="moreMenu" role="menu" aria-label="Thêm thao tác" hidden>
+  <button type="button" role="menuitem" class="mi-appr" id="miApprove" data-for="btnApprove" hidden><span class="mi-ic" aria-hidden="true">🙋</span><span class="mi-t">Cần bạn duyệt</span></button>
+  <button type="button" role="menuitem" class="m-only" data-for="btnEvents"><span class="mi-ic" aria-hidden="true">🕘</span><span class="mi-t">Vừa xảy ra</span><span class="mi-k">E</span></button>
+  <button type="button" role="menuitemcheckbox" class="m-only" data-for="btnDash" aria-checked="false"><span class="mi-ic" aria-hidden="true">▦</span><span class="mi-t">Chỉ số</span></button>
+  <button type="button" role="menuitemcheckbox" class="m-only" data-for="btnAgents" aria-checked="false"><span class="mi-ic" aria-hidden="true">☰</span><span class="mi-t">Ai đang làm gì</span><span class="mi-k">W</span></button>
+  <button type="button" role="menuitemcheckbox" class="m-only" data-for="btnRail" aria-checked="false"><span class="mi-ic" aria-hidden="true">≡</span><span class="mi-t">Danh sách repo</span><span class="mi-k">R</span></button>
+  <button type="button" role="menuitem" class="m-only" data-for="btnFit"><span class="mi-ic" aria-hidden="true">⤢</span><span class="mi-t">Toàn cảnh</span><span class="mi-k">F</span></button>
+  <button type="button" role="menuitem" class="m-only" data-for="btnZoom"><span class="mi-ic" aria-hidden="true">◎</span><span class="mi-t">Cận cảnh</span><span class="mi-k">Z</span></button>
+  <div class="mi-sep m-only" role="separator"></div>
+  <button type="button" role="menuitem" id="btnNext"><span class="mi-ic" aria-hidden="true">→</span><span class="mi-t">Agent kế tiếp</span><span class="mi-k">N</span></button>
+  <button type="button" role="menuitem" id="btnDesk" aria-haspopup="true" aria-expanded="false" aria-controls="deskPicker"><span class="mi-ic" aria-hidden="true">▭</span><span class="mi-t">Kiểu bàn</span><span class="mi-k">D</span></button>
+  <button type="button" role="menuitemcheckbox" id="btnTheme" aria-checked="false"><span class="mi-ic" aria-hidden="true">☾</span><span class="mi-t">Ca đêm</span><span class="mi-k">T</span></button>
+  <button type="button" role="menuitem" id="btnPhone" aria-haspopup="dialog" aria-controls="phoneDlg"><span class="mi-ic" aria-hidden="true">📱</span><span class="mi-t">Điện thoại</span></button>
+  <button type="button" role="menuitem" id="btnRefresh"><span class="mi-ic" aria-hidden="true">↻</span><span class="mi-t">Tải lại GitHub</span></button>
 </div>
 <section class="dash panel" id="dash" aria-label="Bảng chỉ số" hidden></section>
 <div class="desk-picker panel" id="deskPicker" role="group" aria-label="Chọn kiểu bàn làm việc" hidden></div>
@@ -1876,7 +1940,7 @@ $('#labels').addEventListener('click', (e) => { if (suppressLabelClick) { e.stop
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
-  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable], #drawer, #board, .rail')) || $('#createDlg').open || $('#phoneDlg').open) return;
+  if ((t && t.closest && t.closest('input, textarea, select, [contenteditable], #drawer, #board, .rail, #moreMenu, #acctPop')) || $('#createDlg').open || $('#phoneDlg').open) return;
   const act = { ArrowLeft: () => panBy(-70, 0), ArrowRight: () => panBy(70, 0), ArrowUp: () => panBy(0, -70), ArrowDown: () => panBy(0, 70),
     '+': () => zoomBy(0.85), '=': () => zoomBy(0.85), '-': () => zoomBy(1 / 0.85) }[e.key];
   if (act) { e.preventDefault(); act(); }
@@ -1967,8 +2031,8 @@ function updateSelectionVisuals() {
   });
 }
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !$('#deskPicker').hidden) { $('#deskPicker').hidden = true; $('#btnDesk').setAttribute('aria-expanded', 'false'); $('#btnDesk').focus(); return; }
-  if (e.key === 'Escape' && !selection && boardOpen && !($('#createDlg').open || $('#phoneDlg').open)) { boardOpen = false; $('#btnBoard').textContent = 'Dạng bảng'; renderBoard(); return; }
+  if (e.key === 'Escape' && !$('#deskPicker').hidden) { $('#deskPicker').hidden = true; $('#btnDesk').setAttribute('aria-expanded', 'false'); $('#btnMore').focus(); return; } // Kiểu bàn nằm trong menu ⋯ đã đóng: trả focus về ⋯
+  if (e.key === 'Escape' && !selection && boardOpen && !($('#createDlg').open || $('#phoneDlg').open)) { boardOpen = false; $('#btnBoard').setAttribute('aria-pressed', 'false'); renderBoard(); return; }
   if (e.key === 'Escape' && selection) { selection = null; renderDrawer(); renderRail(); updateSelectionVisuals(); } });
 
 // ------------------------------------------------------------ UI
@@ -1998,7 +2062,9 @@ function renderTop(S) {
   });
   const waiting = S.repos.reduce((a, r) => a + ((r.runner && r.runner.tick && r.runner.tick.waiting) || 0), 0);
   const nAppr = S.items.filter(needsApproval).length; const pend = pendingApprovals(S.items); const ba = $('#btnApprove');
-  ba.hidden = !nAppr; ba.textContent = 'Cần bạn duyệt (' + pend.length + ')'; ba.classList.toggle('pending', pend.length > 0);
+  // máy tính: băng "Duyệt ›" trên header; điện thoại: nút Duyệt trên thanh khi còn thẻ chờ; menu ⋯ luôn có lối vào khung duyệt khi có thẻ 🙋
+  ba.hidden = !pend.length; $('#btnApproveN').textContent = pend.length ? String(pend.length) : ''; ba.setAttribute('aria-label', 'Duyệt: ' + pend.length + ' thẻ chờ bạn duyệt');
+  $('#miApprove').hidden = !nAppr; $('#miApprove .mi-t').textContent = 'Cần bạn duyệt (' + pend.length + ')';
   const bn = $('#apprBanner'); bn.dataset.n = String(pend.length); syncApprBanner();
   if (pend.length) {
     const first = pend.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
@@ -2008,6 +2074,7 @@ function renderTop(S) {
     bn.setAttribute('aria-label', pend.length + ' thẻ chờ bạn duyệt. Mở khung duyệt');
   }
   if (waiting) { const c = h('button', 'chip you'); c.type = 'button'; c.onclick = () => select({ type: 'events' }, false); c.append(h('span', null, 'Đang chờ bạn'), h('b', null, String(waiting))); lg.append(c); }
+  renderAcct(S);
   renderDash(S);
 }
 // ---- bảng chỉ số: máy, agent theo lane, board, phiên (số lấy từ /api/state mỗi lần hỏi, lịch sử tải giữ ở trình duyệt)
@@ -2417,7 +2484,7 @@ function drawWorker(w) {
     ['Thẻ', card], ['Cách biết', w.issue && src ? src : null],
     ['Lane', w.lane || (s ? 'phiên điều phối' : null)], ['Cột', w.column],
     ['Thư mục', s && shortPath(s.cwd, repo), true], ['Nhánh', s && s.branch, true],
-    ['Hoạt động', s ? ago(s.lastTs) : null], ['Token còn', s && fmtTokens(s.tokensLeft)],
+    ['Hoạt động', s ? ago(s.lastTs) : null], ['Token còn', s && fmtTokens(s.tokensLeft)], ['Tài khoản', s && acctLabel(s) ? acctLabel(s) + (s.configDir ? ' (' + s.configDir + ')' : '') : null],
     ['Lần cuối', w.status === 'idle' && w.lastCard ? '#' + w.lastCard : null],
   ]));
   if (!s) {
@@ -2625,7 +2692,7 @@ function renderBoard() {
   const bcount = $('#boardCount'); bcount.textContent = shown + ' việc';
   if (canWrite()) bcount.append(h('span', 'hint', '. Kéo thẻ sang cột khác để chuyển trên GitHub.'));
 }
-$('#btnBoard').onclick = () => { boardOpen = !boardOpen; $('#btnBoard').textContent = boardOpen ? 'Dạng 3D' : 'Dạng bảng'; renderBoard(); };
+$('#btnBoard').onclick = () => { boardOpen = !boardOpen; $('#btnBoard').setAttribute('aria-pressed', String(boardOpen)); renderBoard(); }; // nhãn cố định: bật = dạng bảng, tắt = 3D
 $('#btnAdd').onclick = () => openCreate(selection && selection.type === 'repo' ? selection.id : (boardFilter.repo || null));
 function renderAgents() {
   const box = $('#agentList'); if (!box || !STATE) return;
@@ -2658,7 +2725,6 @@ function setLeftPanel(which) {
   document.body.classList.toggle('rail-open', !!which);
   $('#btnAgents').setAttribute('aria-pressed', String(which === 'agents'));
   $('#btnRail').setAttribute('aria-pressed', String(which === 'rail'));
-  $('#btnRail').textContent = which === 'rail' ? 'Ẩn danh sách' : 'Danh sách repo';
   try { localStorage.setItem('agent-office-left', which || 'none'); } catch (e) { /* chỉ nhớ trong phiên */ }
   if (STATE) { renderAgents(); renderRail(); requestAnimationFrame(syncChrome); }
 }
@@ -2673,18 +2739,139 @@ setInterval(() => { if (STATE && !document.hidden) { refreshDynamic(STATE); rend
 // ------------------------------------------------------------ đo khung
 function syncChrome() {
   const root = document.documentElement.style;
-  const brand = $('.brand').getBoundingClientRect(), legend = $('#legend').getBoundingClientRect(), ctr = $('.controls').getBoundingClientRect();
+  const brand = $('.brand').getBoundingClientRect(), legend = $('#legend').getBoundingClientRect(), ctr = $('.controls').getBoundingClientRect(), acct = $('#acctChip').getBoundingClientRect();
   root.setProperty('--top-h', Math.round(brand.bottom) + 'px');
-  root.setProperty('--top-r', Math.round(legend.height ? legend.bottom : brand.bottom) + 'px');
+  root.setProperty('--top-r', Math.round(Math.max(legend.height ? legend.bottom : brand.bottom, acct.height ? acct.bottom : 0)) + 'px'); // drawer, chỉ số nằm dưới cả legend lẫn ô tài khoản
+  root.setProperty('--acct-b', Math.round(acct.bottom || 70) + 'px');
   root.setProperty('--bot-h', Math.round(innerHeight - ctr.top) + 'px');
 }
-if (window.ResizeObserver) { const ro = new ResizeObserver(syncChrome); ro.observe($('.brand')); ro.observe($('.controls')); ro.observe($('#legend')); }
+if (window.ResizeObserver) { const ro = new ResizeObserver(syncChrome); ro.observe($('.brand')); ro.observe($('.controls')); ro.observe($('#legend')); ro.observe($('#acctChip')); }
 addEventListener('resize', syncChrome);
 const chromePx = (name, fallback) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) || fallback;
-$('#btnMore').onclick = () => {
-  const c = $('.controls'); const open = !c.classList.contains('more');
-  c.classList.toggle('more', open); $('#btnMore').setAttribute('aria-expanded', String(open)); $('#btnMore').textContent = open ? 'Thu gọn' : 'Khác';
-};
+// ---- menu ⋯ (thay cặp nút mở rộng cũ): role=menu, mũi tên/Home/End đi qua mục, Esc / Tab / bấm ra ngoài đóng, focus về ⋯
+const moreMenu = $('#moreMenu');
+const menuItems = () => [...moreMenu.querySelectorAll('[role^="menuitem"]')].filter((b) => !b.hidden && b.getClientRects().length);
+function syncMenu() {
+  moreMenu.querySelectorAll('[data-for]').forEach((mi) => {
+    const src = $('#' + mi.dataset.for); if (!src) return;
+    if (mi.getAttribute('role') === 'menuitemcheckbox') mi.setAttribute('aria-checked', src.getAttribute('aria-pressed') === 'true' ? 'true' : 'false');
+  });
+  const ev = moreMenu.querySelector('[data-for="btnEvents"] .mi-t'); if (ev) ev.textContent = 'Vừa xảy ra' + (unseen ? ' (' + unseen + ')' : '');
+}
+function placeMenu() {
+  const r = $('#btnMore').getBoundingClientRect();
+  document.documentElement.style.setProperty('--menu-r', Math.round(innerWidth - r.right - 6) + 'px');
+}
+function openMenu(focusLast) {
+  closeAcct(false); syncMenu(); placeMenu();
+  moreMenu.hidden = false; $('#btnMore').setAttribute('aria-expanded', 'true');
+  const items = menuItems(); if (items.length) (focusLast ? items[items.length - 1] : items[0]).focus();
+}
+function closeMenu(refocus) {
+  if (moreMenu.hidden) return;
+  moreMenu.hidden = true; $('#btnMore').setAttribute('aria-expanded', 'false');
+  if (refocus) $('#btnMore').focus();
+}
+$('#btnMore').onclick = () => (moreMenu.hidden ? openMenu(false) : closeMenu(true));
+$('#btnMore').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); openMenu(e.key === 'ArrowUp'); }
+});
+moreMenu.addEventListener('keydown', (e) => {
+  const items = menuItems(); const i = items.indexOf(document.activeElement);
+  const go = (j) => { e.preventDefault(); items[(j + items.length) % items.length].focus(); };
+  if (e.key === 'ArrowDown') go(i + 1);
+  else if (e.key === 'ArrowUp') go(i - 1);
+  else if (e.key === 'Home') go(0);
+  else if (e.key === 'End') go(items.length - 1);
+  else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
+  else if (e.key === 'Tab') closeMenu(false);
+});
+moreMenu.addEventListener('click', (e) => {
+  const mi = e.target.closest('[role^="menuitem"]'); if (!mi) return;
+  closeMenu(true); // mục thật (Agent kế tiếp, Kiểu bàn…) đã chạy onclick của nó; mục chỉ có trên điện thoại bấm hộ nút trên thanh
+  if (mi.dataset.for) $('#' + mi.dataset.for).click();
+  if (mi.id === 'btnDesk' && !$('#deskPicker').hidden) $('#deskPicker [aria-pressed="true"]').focus();
+});
+document.addEventListener('pointerdown', (e) => {
+  if (!moreMenu.hidden && !e.target.closest('#moreMenu, #btnMore')) closeMenu(false);
+  if (!$('#acctPop').hidden && !e.target.closest('#acctPop, #acctChip')) closeAcct(false);
+}, true);
+document.addEventListener('keydown', (e) => { // Esc khi focus không nằm trong menu (mở bằng chuột)
+  if (e.key !== 'Escape') return;
+  if (!moreMenu.hidden) { e.stopImmediatePropagation(); closeMenu(true); }
+  else if (!$('#acctPop').hidden) { e.stopImmediatePropagation(); closeAcct(true); }
+}, true);
+$('#phoneDlg').addEventListener('close', () => { if (!document.activeElement || document.activeElement === document.body || moreMenu.contains(document.activeElement)) $('#btnMore').focus(); });
+
+// ---- tài khoản Claude + token còn (góc phải trên): tên hồ sơ của account pool và số token còn, không bao giờ giá trị token
+const acctLabel = (s) => (s && s.account) || (s && s.configDir === '.claude' ? 'mặc định' : null);
+const fmtTokShort = (n) => n ? (n / 1e6).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + 'tr' : '';
+function acctRows(S) {
+  const rank = (w) => (w.status === 'working' ? 0 : 2) + (w.session ? 0 : 1); // đang làm có phiên trước, lane chưa khớp phiên sau, phiên nghỉ cuối
+  const order = new Map(S.repos.map((r, i) => [r.name, i]));
+  return S.workers.filter((w) => (w.session && !w.session.subagent) || (w.status === 'working' && !w.session))
+    .sort((a, b) => (rank(a) - rank(b)) || ((order.get(a.repo) || 0) - (order.get(b.repo) || 0)));
+}
+let acctSig = null;
+function renderAcct(S) {
+  const chip = $('#acctChip'); if (!chip || !S) return;
+  const rows = acctRows(S);
+  const live = rows.filter((w) => w.status === 'working' && w.session);
+  const pool = live.length ? live : rows.filter((w) => w.session);
+  const names = [...new Set(pool.map((w) => acctLabel(w.session)).filter(Boolean))];
+  const toks = pool.map((w) => w.session.tokensLeft).filter((n) => n > 0);
+  const low = toks.length ? Math.min(...toks) : null;
+  const name = !pool.length ? 'Chưa có phiên' : names.length ? names[0] + (names.length > 1 ? ' +' + (names.length - 1) : '') : 'Chưa rõ tài khoản';
+  chip.classList.toggle('empty', !pool.length);
+  $('.ac-name', chip).textContent = name;
+  const tok = $('.ac-tok', chip); tok.textContent = '';
+  if (low) tok.append(h('span', 'tl', (toks.length > 1 ? 'ít nhất ' : '') + fmtTokens(low)), h('span', 'ts', fmtTokShort(low) + ' token')); // điện thoại: số ngắn
+  const label = !pool.length ? 'Tài khoản Claude: chưa có phiên nào' : 'Tài khoản Claude: ' + (names.join(', ') || 'chưa rõ') + (low ? ', token còn ' + (toks.length > 1 ? 'ít nhất ' : '') + fmtTokens(low) : '') + '. Mở danh sách theo agent';
+  chip.setAttribute('aria-label', label); chip.title = label;
+  if (!$('#acctPop').hidden) renderAcctPop(S);
+}
+function renderAcctPop(S) {
+  const box = $('#acctPop'); const rows = acctRows(S);
+  const sig = JSON.stringify(rows.map((w) => [w.id, w.status, w.session && w.session.account, w.session && w.session.configDir, w.session && w.session.tokensLeft]));
+  if (sig === acctSig && box.childElementCount) return;
+  acctSig = sig;
+  const had = box.contains(document.activeElement) ? [...box.querySelectorAll('.ap-row')].indexOf(document.activeElement) : -1;
+  box.textContent = '';
+  box.append(h('h2', null, 'Tài khoản và token còn'));
+  if (!rows.length) { box.append(h('p', 'empty', 'Chưa có phiên Claude Code nào đang chạy.')); return; }
+  rows.forEach((w) => {
+    const s = w.session; const b = h('button', 'ap-row' + (w.status === 'working' ? '' : ' away')); b.type = 'button';
+    const dot = h('i'); dot.style.background = workerColor(w);
+    const who = h('span', 'ap-who', workerName(w).replace(' agent', '') + (w.issue ? ' #' + w.issue : '')); who.append(h('small', null, w.repo));
+    const acc = h('span', 'ap-acc', acctLabel(s) || 'chưa rõ');
+    const tk = h('span', 'ap-tok', (s && s.tokensLeft ? 'Token còn ' + fmtTokens(s.tokensLeft) : 'Chưa thấy số token còn') + (w.status === 'working' ? '' : ' · ' + WORKER_STATE[w.status]));
+    b.append(dot, who, acc, h('span'), tk);
+    b.setAttribute('aria-label', workerName(w) + (w.issue ? ' #' + w.issue : '') + ' ở ' + w.repo + ', tài khoản ' + (acctLabel(s) || 'chưa rõ') + ', ' + tk.textContent + '. Mở chi tiết agent');
+    b.onclick = () => { closeAcct(false); select({ type: 'worker', id: w.id }); };
+    box.append(b);
+  });
+  if (had >= 0) { const r = box.querySelectorAll('.ap-row')[had]; if (r) r.focus(); }
+}
+function openAcct() {
+  closeMenu(false);
+  const box = $('#acctPop'); acctSig = null; box.hidden = false; renderAcctPop(STATE || { workers: [], repos: [] });
+  $('#acctChip').setAttribute('aria-expanded', 'true');
+  const f = box.querySelector('.ap-row'); (f || box).focus();
+}
+function closeAcct(refocus) {
+  const box = $('#acctPop'); if (box.hidden) return;
+  box.hidden = true; $('#acctChip').setAttribute('aria-expanded', 'false');
+  if (refocus) $('#acctChip').focus();
+}
+$('#acctPop').tabIndex = -1;
+$('#acctChip').onclick = () => ($('#acctPop').hidden ? openAcct() : closeAcct(true));
+$('#acctPop').addEventListener('keydown', (e) => {
+  const rows = [...$('#acctPop').querySelectorAll('.ap-row')]; const i = rows.indexOf(document.activeElement);
+  if (!rows.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); rows[(i + 1) % rows.length].focus(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); rows[(i - 1 + rows.length) % rows.length].focus(); }
+  else if (e.key === 'Tab' && !e.shiftKey && i === rows.length - 1) closeAcct(false);
+});
 
 // ------------------------------------------------------------ controls
 $('#btnFit').onclick = () => { selection = null; renderDrawer(); renderRail(); updateSelectionVisuals(); requestAnimationFrame(() => fitAll()); };
@@ -2696,14 +2883,14 @@ $('#btnNext').onclick = () => {
   if (!list.length) { select({ type: 'repo', id: STATE.repos[0] && STATE.repos[0].name }); return; }
   nextIdx = (nextIdx + 1) % list.length; select({ type: 'worker', id: list[nextIdx].id });
 };
-function syncThemeBtn() { $('#btnTheme').textContent = document.documentElement.dataset.theme === 'dark' ? 'Ca ngày' : 'Ca đêm'; }
+function syncThemeBtn() { $('#btnTheme').setAttribute('aria-checked', String(document.documentElement.dataset.theme === 'dark')); } // nhãn cố định "Ca đêm", bật = tối
 $('#btnTheme').onclick = () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
   try { localStorage.setItem('agent-office-theme', next); } catch (e) {}
   syncThemeBtn(); if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
 };
-$('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() }).catch(() => {}); $('#btnRefresh').textContent = 'Đang tải…'; setTimeout(() => { $('#btnRefresh').textContent = 'Tải lại GitHub'; }, 2500); };
+$('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() }).catch(() => {}); const t = $('#btnRefresh .mi-t'); t.textContent = 'Đang tải…'; setTimeout(() => { t.textContent = 'Tải lại GitHub'; }, 2500); toast('Đang đọc lại GitHub Project…'); };
 
 // Menu "Điện thoại" (chỉ trên máy Mac): QR của Cloudflare tunnel kèm key để mở xưởng trên điện thoại ở mạng khác.
 // Server chỉ trả link cho chính máy Mac; mở qua tunnel thì ẩn nút (server cũng trả 403).
@@ -2754,7 +2941,7 @@ document.addEventListener('keydown', (e) => {
   const t = e.target;
   if ((t && t.closest && t.closest('input, textarea, select, [contenteditable]')) || $('#createDlg').open || $('#phoneDlg').open) return;
   const q = SHORTCUTS[(e.key || '').toLowerCase()]; if (!q) return;
-  e.preventDefault(); $(q).click();
+  e.preventDefault(); closeMenu(false); closeAcct(false); $(q).click();
 });
 function renderDeskPicker() {
   const box = $('#deskPicker'); box.textContent = '';
@@ -2809,7 +2996,7 @@ const serverEvents = () => (STATE && STATE.events) || [];
 function syncBadge() {
   unseen = serverEvents().filter((e) => e.ts > seenTs).length;
   document.title = (unseen ? '(' + unseen + ') ' : '') + BASE_TITLE;
-  $('#btnEvents').textContent = 'Vừa xảy ra' + (unseen ? ' (' + unseen + ')' : '');
+  $('#btnEventsN').textContent = unseen ? String(unseen) : ''; $('#btnEvents').setAttribute('aria-label', 'Vừa xảy ra' + (unseen ? ', ' + unseen + ' sự kiện chưa xem' : ''));
 }
 function notify(text) {
   if ('Notification' in window && Notification.permission === 'granted' && document.hidden) { try { new Notification('Xưởng agent', { body: text }); } catch (e) { /* trình duyệt chặn */ } }

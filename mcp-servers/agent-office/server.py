@@ -523,6 +523,7 @@ class LocalScanner:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self.cache = {}  # path -> (mtime, size, parsed)
+        self.acct_cache = {}  # log worker -> {"pos", "ino", "cur", "sids"}: tài khoản theo session id (session_accounts)
 
     def repo_paths(self, names):
         root = expand(self.cfg["root"])
@@ -680,6 +681,52 @@ class LocalScanner:
                 results.append((repo, p, ticks, fin, mtime))
         return results
 
+    def session_accounts(self, repo_paths: dict, max_age_days: float = 7) -> dict:
+        """session id → {account, configDir} từ dòng `account_pool: engine=… account=<tên> config_dir=<thư mục>` của log worker
+        super-board (cùng log find_worker_session đọc). Đọc tiếp từ chỗ dừng lần trước (log đang ghi không bị đọc lại từ đầu);
+        chỉ giữ tên hồ sơ đã lọc và tên thư mục, không giữ dòng log nào."""
+        cache = self.acct_cache
+        cutoff, seen, out = now() - max_age_days * 86400, set(), {}
+        for rp in repo_paths.values():
+            for p in glob.glob(os.path.join(rp, WORKER_LOG_GLOB)):
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                if st.st_mtime < cutoff:
+                    continue
+                seen.add(p)
+                c = cache.get(p)
+                if c is None or c["ino"] != st.st_ino or st.st_size < c["pos"]:
+                    c = cache[p] = {"pos": 0, "ino": st.st_ino, "cur": None, "sids": {}}
+                if st.st_size > c["pos"]:
+                    try:
+                        with open(p, "rb") as f:
+                            f.seek(c["pos"])
+                            chunk = f.read(min(st.st_size - c["pos"], 64 * 1024 * 1024))
+                    except OSError as e:
+                        warn("đọc log worker " + p, e)
+                        chunk = b""
+                    end = chunk.rfind(b"\n") + 1  # chỉ dòng đã ghi trọn; phần dở đọc lại lần sau
+                    for raw in chunk[:end].split(b"\n"):
+                        if raw.startswith(b"=== dispatch"):
+                            c["cur"] = None
+                        elif raw.startswith(b"account_pool:"):
+                            m = POOL_LINE_RE.match(raw.decode("utf-8", "replace"))
+                            if m:
+                                acc = safe_account(m.group(1))
+                                cdir = account_of_config_dir(m.group(2))[1]
+                                c["cur"] = {"account": acc, "configDir": cdir} if (acc or cdir) else None
+                        elif c["cur"] and b"session_id" in raw:
+                            for m in SECTION_SID_RE.finditer(raw.decode("utf-8", "replace")):
+                                c["sids"].setdefault(m.group(1) or m.group(2), c["cur"])
+                    c["pos"] += end
+                out.update(c["sids"])
+        for p in list(cache):
+            if p not in seen:
+                cache.pop(p, None)
+        return out
+
     def newest_manifest(self, repo_path: str):
         mds = glob.glob(os.path.join(repo_path, "docs", "super-board", "runs", "*.md"))
         if not mds:
@@ -740,12 +787,53 @@ def session_hints(s: dict):
     return path_issue, path_lane, tool_issue, tool_lane, mentions
 
 
-def slim_session(s: dict, tokens_fallback=None):
-    return {
+# Tài khoản Claude của phiên (góc phải trên): chỉ tên hồ sơ và tên thư mục cấu hình, không bao giờ đường dẫn đầy đủ hay giá trị token
+ACCOUNT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+CONFIG_DIR_RE = re.compile(r"^\.claude(?:-([A-Za-z0-9][A-Za-z0-9._-]{0,63}))?$")
+
+
+def safe_account(name):
+    """Tên hồ sơ của account pool (finos, finos_team, max…); chuỗi lạ (có dấu cách, =, /, quá dài) thì None, không đưa ra API."""
+    return name if isinstance(name, str) and ACCOUNT_NAME_RE.match(name) else None
+
+
+def account_of_config_dir(path):
+    """config_dir → (tên hồ sơ, tên thư mục): ~/.claude-finos → ("finos", ".claude-finos"); ~/.claude → (None, ".claude")
+    (tài khoản mặc định, không có tên); thư mục không theo mẫu .claude[-tên] → (None, None)."""
+    if not isinstance(path, str) or not path:
+        return None, None
+    base = os.path.basename(path.rstrip("/\\"))
+    m = CONFIG_DIR_RE.match(base)
+    if not m:
+        return None, None
+    return m.group(1), base
+
+
+def session_account(s: dict, accounts=None):
+    """{account, configDir} của một phiên. Phiên worker: dòng `account_pool:` trong log worker (accounts: sid → info).
+    Phiên không có dòng đó (điều phối, gõ tay): đoán từ thư mục cấu hình chứa transcript (~/.claude-finos/projects/… → finos)."""
+    hit = (accounts or {}).get(s.get("id")) if not s.get("subagent") else None
+    if hit:
+        return {"account": hit.get("account"), "configDir": hit.get("configDir")}
+    if s.get("account") or s.get("configDir"):  # demo / phiên đã gắn sẵn
+        acc = safe_account(s.get("account"))
+        cdir = account_of_config_dir(s.get("configDir"))[1]
+        return {"account": acc, "configDir": cdir}
+    for part in reversed(os.path.dirname(s.get("file") or "").split(os.sep)):
+        acc, cdir = account_of_config_dir(part)
+        if cdir:
+            return {"account": acc, "configDir": cdir}
+    return {"account": None, "configDir": None}
+
+
+def slim_session(s: dict, tokens_fallback=None, accounts=None):
+    out = {
         "id": s["id"], "cwd": s.get("cwd"), "branch": s.get("branch"), "lastTs": s.get("lastTs"),
         "texts": (s.get("texts") or [])[-6:], "tools": (s.get("tools") or [])[-14:],
         "tokensLeft": s.get("tokensLeft") or tokens_fallback, "subagent": s.get("subagent", False),
     }
+    out.update(session_account(s, accounts))
+    return out
 
 
 HEAVY_LOCK_DIR = os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")  # khoá việc nặng của DevKit (heavy_slot)
@@ -1210,6 +1298,7 @@ def build_state(cfg: dict, project: dict, gh_meta: dict, sessions: list, sess_in
         if n.lower() not in (x.lower() for x in names):
             names.append(n)
     repo_paths = scanner.repo_paths(names)
+    accounts = {} if demo else scanner.session_accounts(repo_paths)
 
     # gán repo cho từng phiên
     by_repo_sessions = {}
@@ -1355,7 +1444,7 @@ def build_state(cfg: dict, project: dict, gh_meta: dict, sessions: list, sess_in
                     target = lw
             if target is not None:
                 if target["session"] is None:
-                    target["session"] = slim_session(s)
+                    target["session"] = slim_session(s, accounts=accounts)
                     target["issueSource"] = source
                 continue
             if not active:
@@ -1369,7 +1458,7 @@ def build_state(cfg: dict, project: dict, gh_meta: dict, sessions: list, sess_in
                 "laneKey": LANE_KEY_OF.get(lane_name or ""), "lane": (lane_name or "").capitalize() if lane_name else None,
                 "busy": active, "issue": issue, "issueSource": source, "lastCard": issue,
                 "column": column, "itemId": it["id"] if it else None,
-                "session": slim_session(s), "status": "working" if active else "away",
+                "session": slim_session(s, accounts=accounts), "status": "working" if active else "away",
             })
 
     # tóm tắt repo
@@ -1506,8 +1595,9 @@ def demo_data(cfg: dict):
 
     root = expand(cfg["root"])
 
-    def sess(repo_dir, sid, last, texts, tools, ticks=None, tokens=None, finished=None, manifest=None):
+    def sess(repo_dir, sid, last, texts, tools, ticks=None, tokens=None, finished=None, manifest=None, account=None):
         return {"id": sid, "file": "", "cwd": os.path.join(root, repo_dir), "branch": "main", "lastTs": at(last),
+                "account": account, "configDir": "~/.claude-" + account if account else None,
                 "texts": [{"ts": at(last) - 60 * (len(texts) - i), "text": x} for i, x in enumerate(texts)],
                 "tools": [{"ts": at(last) - 20 * (len(tools) - i), "name": n, "summary": s} for i, (n, s) in enumerate(tools)],
                 "ticks": ticks or [], "tokensLeft": tokens, "finishedAt": at(finished) if finished else None,
@@ -1538,7 +1628,7 @@ def demo_data(cfg: dict):
             ("Edit", root + "/agent-workbench/.claude/worktrees/kit-rm-regenerated/universal-agent-devkit/scripts/git/worktree.py"),
             ("Bash", "bash universal-agent-devkit/tests/worktree_git/test_worktree_checklist.sh 2>&1 | grep -E \"^✗|^✓\""),
             ("Bash", "python3 -c \"…\""),
-        ], ticks=aw_ticks),
+        ], ticks=aw_ticks, tokens=1234567, account="max"),
         sess("GeelyEx2", "8592ef54-f992-46a5-b40e-3572a43ad563", "13:57:25", [
             "Đang xử lý: worktree build cũ của #41 còn 2 file sổ sách chưa về main nên `remove` bị từ chối. Tôi kiểm tra nội dung các file đó.",
             "Hai file đó do gate sinh tự động (dòng \"không sửa tay\", sinh lại được), nhánh không có commit chưa đẩy. Tôi reset chúng.",
@@ -1550,7 +1640,7 @@ def demo_data(cfg: dict):
             ("Bash", "cd " + root + "/GeelyEx2 && git -C .claude/worktrees/issue-41-build checkout -- .agents/CHECKLIST"),
             ("Write", "/private/tmp/claude-501/-Volumes-Data-Toan-GeelyEx2/8592ef54-f992-46a5-b40e-3572a43ad563/scratchpad/block-41.md"),
             ("Bash", "gh issue comment 41 --body-file /private/tmp/claude-501/…/block-41.md"),
-        ], ticks=ge_ticks, tokens=14874653, finished="13:57:25", manifest="docs/super-board/runs/2026-10-21-geelyex2.md"),
+        ], ticks=ge_ticks, tokens=14874653, finished="13:57:25", manifest="docs/super-board/runs/2026-10-21-geelyex2.md", account="finos"),
         sess("OfficeReader/OfficeReader", "issue-87-review", "14:44:37", [
             "Đang review PR #179 (issue #87): chỉ thêm bằng chứng QA, nên tôi đang kiểm tra threads, bằng chứng D2 và đối chiếu với A.",
         ], [
@@ -1559,7 +1649,7 @@ def demo_data(cfg: dict):
             ("Bash", "ls -d .claude/worktrees/issue-87-review 2>&1; git worktree list | grep issue-87; gh run view 3938905"),
             ("Bash", "git diff --name-status origin/main...origin/issue-87-refactor-nhom-c-d2"),
             ("Bash", "cd .claude/worktrees/issue-87-review && git diff --name-only"),
-        ], ticks=or_ticks, tokens=14887973),
+        ], ticks=or_ticks, tokens=14887973, account="finos_team"),
         sess("Goods-Triple", "goods-triple-runner", "14:44:25", [], [], ticks=gt_ticks),
         sess("Neighbours", "neighbours-runner", "14:44:23", [], [], ticks=nb_ticks),
     ]
@@ -1639,6 +1729,7 @@ WORKER_LOG_GLOB = os.path.join("docs", "super-board", "runs", "*-workers", "work
 DISPATCH_RE = re.compile(r"^=== dispatch lane=(\S+) issue=#(\d+)", re.M)
 SECTION_SID_RE = re.compile(r'^agent_office: session_id=([0-9a-f-]{36})$|"session_id":"([0-9a-f-]{36})"', re.M)
 POOL_CFG_RE = re.compile(r"^account_pool: engine=claude account=\S+ config_dir=(\S+)$", re.M)
+POOL_LINE_RE = re.compile(r"^account_pool: engine=\S+ account=(\S+) config_dir=(\S+)\s*$")  # tài khoản của phiên cho góc phải trên
 PROC_SID_RE = re.compile(r"--(?:session-id|resume)[ =]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b")
 
 

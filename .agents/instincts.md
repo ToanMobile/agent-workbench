@@ -743,3 +743,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình
 - **Nguyên nhân:** reviewer/author, approved-head, task_id đều là chuỗi agent tự ghi (cùng tài khoản GitHub, cùng user máy); trailer task_id cũ dùng lại được cho nội dung mới
 - **Quy tắc phòng ngừa & Cách fix:** duyệt chỉ tính khi gắn với biên bản ngoài repo ghi auditedHead (sha) và nội dung hiện tại khớp cây đó, auditedHead sau base; marker thiếu bằng chứng → fail closed; chặn agent đăng comment duyệt trơn
+
+---
+
+### [INSTINCT-096] agent-office: thanh nút dưới đáy "cuộn ngang ẩn" giấu mất nút
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** 15 nút khi mở "Khác" cần ~1460px; ở 1280 mất Thoại/Tải lại GitHub/Thu gọn, trên điện thoại cả nút "Khác" ra ngoài màn hình (overflow-x: auto + ẩn thanh cuộn)
+- **Nguyên nhân:** thêm nút thẳng vào `.controls`, nút bật/tắt đổi nhãn (đổi bề ngang), dựa vào cuộn ngang ẩn thay vì menu
+- **Quy tắc phòng ngừa & Cách fix:** thanh chỉ giữ nút chính, phần còn lại vào menu ⋯ (role=menu); nút bật/tắt giữ nhãn cố định + aria-pressed, không đổi font-weight; thêm nút mới phải chạy `tests/ui_toolbar_account.js` (scrollWidth<=clientWidth, một hàng ở 390/768/1024/1280/1440)
