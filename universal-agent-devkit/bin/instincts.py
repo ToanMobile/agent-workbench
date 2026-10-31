@@ -93,7 +93,16 @@ def find_duplicate(text: str, title: str):
     return None
 
 
-def format_entry(inst_id, title, cause=None, rule=None, symptom=None, check=None, today=None, source=None) -> str:
+def _detect_line(label, values):
+    """`- **detect:** `rx1`, `rx2`` — backticked items; a backtick inside a value cannot be kept, so it is refused."""
+    vals = [str(v).strip() for v in values or [] if str(v).strip()]
+    if any("`" in v or "\n" in v for v in vals):
+        raise ValueError(f"{label}: a value may not contain a backtick or a newline")
+    return f"- **{label}:** " + ", ".join(f"`{v}`" for v in vals) if vals else None
+
+
+def format_entry(inst_id, title, cause=None, rule=None, symptom=None, check=None, today=None, source=None,
+                 detect=None, detect_glob=None) -> str:
     none = tr("Chưa ghi", "Not recorded")
     lines = [
         f"### [{inst_id}] {md_escape(title)}",
@@ -106,11 +115,18 @@ def format_entry(inst_id, title, cause=None, rule=None, symptom=None, check=None
         lines.append(f"- **{tr('Lệnh kiểm tra', 'Check')}:** {md_code(check)}")
     if source:
         lines.append(f"- **{tr('Nguồn', 'Source')}:** {md_escape(source)}")
+    if detect:   # bin/known_patterns.py: the reviewers' recurring-bug scan + generated semgrep rules read these two lines
+        for rx in detect:
+            re.compile(rx)   # a bad regex is refused here, not at review time
+        for label, vals in (("detect", detect), ("detect-glob", detect_glob)):
+            line = _detect_line(label, vals)
+            if line:   # an empty / blank value adds no line (it used to append None and crash the join)
+                lines.append(line)
     return "\n".join(lines) + "\n"
 
 
 def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=None,
-                  force=False, dry_run=False, source=None, found_on=None, seed=None, seeded=None):
+                  force=False, dry_run=False, source=None, found_on=None, seed=None, seeded=None, detect=None, detect_glob=None):
     """Returns (status, inst_id, entry): status is "added", "dry-run" or "duplicate"
     (inst_id is then the existing entry). Raises OSError / ValueError.
     `seed`: a template file written first when the file is still empty once the lock is held (a copy made before the lock truncated a
@@ -134,7 +150,8 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
             return "duplicate", dup, None
         archive = path.with_name("instincts-archive.md")   # ids moved there stay taken
         inst_id = next_id(text + (archive.read_text(encoding="utf-8") if archive.is_file() else ""))
-        entry = format_entry(inst_id, title, cause, rule, symptom, check, today=found_on, source=source)
+        entry = format_entry(inst_id, title, cause, rule, symptom, check, today=found_on, source=source,
+                             detect=detect, detect_glob=detect_glob)
         if dry_run:
             return "dry-run", inst_id, entry
         lead = "" if not text or text.endswith("\n") else "\n"
@@ -187,8 +204,9 @@ def cmd_add(args) -> int:
     try:
         status, inst_id, entry = append_lesson(
             target, args.title, cause=args.cause, rule=args.rule, symptom=args.symptom,
-            check=args.check, force=args.force, dry_run=args.dry_run, seed=seed, seeded=created)
-    except (OSError, ValueError) as e:
+            check=args.check, force=args.force, dry_run=args.dry_run, seed=seed, seeded=created,
+            detect=getattr(args, "detect", None), detect_glob=getattr(args, "detect_glob", None))
+    except (OSError, ValueError, re.error) as e:
         print(f"✖ {e}", file=sys.stderr)
         return 2
     if status == "duplicate":
@@ -284,7 +302,8 @@ def cmd_promote(args) -> int:
                     continue
                     
                 if not args.dry_run:
-                    inst_id = next_id(profile_text)
+                    parch = profile_file.with_name("instincts-archive.md")   # ids moved there stay taken (as append_lesson)
+                    inst_id = next_id(profile_text + (parch.read_text(encoding="utf-8") if parch.is_file() else ""))
                     clean_chunk = chunk.lstrip("-").lstrip()
                     new_entry = re.sub(r'^###\s+\[INSTINCT-[^\]]+\]', f'### [{inst_id}]', clean_chunk, count=1, flags=re.MULTILINE)
                     pf.seek(0, 2)
@@ -396,9 +415,19 @@ def cmd_archive(args) -> int:
                 head = "" if af.read() else ARCHIVE_HEADER
                 af.write(head + "".join("\n---\n\n" + SEPARATOR_TAIL.sub("", chunk).rstrip() + "\n" for _, chunk in stale))
             kept = "".join(c for c, i in _entry_chunks(locked) if i not in moved)
+            # the kept entries are not in the archive: keep a synced copy of the old text until the rewrite is on disk, so a
+            # crash between truncate() and write() loses nothing (the file itself is not replaced: writers lock its inode)
+            backup = target.with_name(target.name + ".archive-bak")
+            with open(backup, "w", encoding="utf-8") as bf:
+                bf.write(locked)
+                bf.flush()
+                os.fsync(bf.fileno())
             f.seek(0)
             f.truncate()
             f.write(SEPARATOR_TAIL.sub("\n", kept) if SEPARATOR_TAIL.search(kept) else kept)
+            f.flush()
+            os.fsync(f.fileno())
+            backup.unlink()
     except OSError as e:
         print(f"✖ {e}", file=sys.stderr)
         return 2
@@ -488,6 +517,9 @@ def main(argv=None) -> int:
     add.add_argument("--rule", "--prevention", dest="rule", help="prevention rule / how to fix")
     add.add_argument("--symptom", help="observed symptom (default: the title)")
     add.add_argument("--check", help="command that detects the trap")
+    add.add_argument("--detect", action="append", default=[], help="regex an ADDED diff line matches when the bug recurs "
+                     "(repeatable; bin/known_patterns.py scan / semgrep, review-fanout and CI fail on a hit)")
+    add.add_argument("--detect-glob", action="append", default=[], help="files --detect applies to (repeatable, e.g. '*.py')")
     add.add_argument("--file", help="instincts file (default: <project>/.agents/instincts.md)")
     add.add_argument("--force", action="store_true", help="add even if the title is already recorded")
     add.add_argument("--dry-run", action="store_true", help="print the entry, write nothing")

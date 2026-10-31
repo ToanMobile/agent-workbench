@@ -110,6 +110,29 @@ case "$out" in
   *) echo "✔ clustered deny text does not hand the user a shell command" ;;
 esac
 
+# critical scan 31/10 (BUG-REV-gpp-*): wrappers/keywords, --signed, --repo, comments, sh -c, camelCase payload, config FIFO
+judge "--signed takes no separate value (BUG-REV-gpp-signed)" "git push --signed -f origin main" feat BLOCK
+judge "--repo=origin: every positional is a refspec (BUG-REV-gpp-repo-opt)" "git push -f --repo=origin main" feat BLOCK
+judge "--repo origin: every positional is a refspec" "git push --repo origin -f main" feat BLOCK
+for w in "if true; then git push -f origin main; fi" "time git push -f origin main" "{ git push -f origin main; }" \
+         "nohup git push -f origin main" "nice -n 5 git push -f origin main" "timeout 30 git push -f origin main" \
+         "env -i A=1 git push -f origin main" "! git push -f origin main" "sudo -u me git push -f origin main"; do
+  judge "wrapper/keyword is skipped (BUG-REV-gpp-wrappers): $w" "$w" feat BLOCK
+done
+judge "sh -c STR is read (BUG-REV-gpp-wrappers)" "bash -lc 'git push --force origin main'" feat BLOCK
+judge "a quote in a comment does not hide the next line (BUG-REV-gpp-comment)" "echo hi # it's
+git push -f origin main" feat BLOCK
+judge "plain push after a wrapper stays allowed" "nohup git push origin main" feat ALLOW
+out="$(python3 -c 'import json,sys; print(json.dumps({"toolInput":{"command":"git push -f origin main"},"cwd":sys.argv[1]}))' "$TMP/repo" \
+  | CLAUDE_PROJECT_DIR="$TMP/repo" python3 "$HOOK")"
+case "$out" in *Force\ push*) echo "✔ camelCase toolInput payload is judged (BUG-REV-gpp-payload)" ;;
+  *) echo "✖ camelCase payload not judged: $out"; FAILS=$((FAILS + 1)) ;; esac
+mkdir -p "$TMP/repo/.claude/super-board/configs" && mkfifo "$TMP/repo/.claude/super-board/configs/x.json"
+out="$( (feed "git push -f origin main" & P=$!; sleep 3; kill $P 2>/dev/null) )"
+case "$out" in *Force\ push*) echo "✔ a FIFO config does not hang the guard (BUG-REV-gpp-payload)" ;;
+  *) echo "✖ FIFO config hung or no deny: $out"; FAILS=$((FAILS + 1)) ;; esac
+rm -f "$TMP/repo/.claude/super-board/configs/x.json"
+
 [ "$FAILS" = 0 ] && exit 0
 echo "$FAILS failure(s)"
 exit 1

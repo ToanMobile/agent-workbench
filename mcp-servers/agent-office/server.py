@@ -2530,6 +2530,102 @@ def open_phone_tunnel(state_dir: str) -> str:
     return ""
 
 
+# Bảng điều khiển CC Switcher (đã chuyển từ Telegram sang đây): trang /cc-switcher, dữ liệu và thao tác gọi lại CLI JSON của
+# cc-switcher-mcp (node bin/cc-switcher-mcp.js --panel-json / --panel-action), không chép logic đổi tài khoản sang Python.
+# Chỉ phục vụ chính máy Mac: qua tunnel điện thoại (kể cả có key) trả 403, vì trang đổi được tài khoản Claude.
+CC_ACTIONS = {"refresh", "switch", "rotate", "limit", "unfreeze", "balance", "cooldown",
+              "repo_assign", "repo_add", "repo_remove"}
+CC_CLAUDE_ACCOUNTS = {"finos", "finos_team", "max"}   # repo chỉ gán được tài khoản Claude (CLAUDE_CONFIG_DIR=~/.claude-<id>)
+CC_PROFILES = {"finos", "finos_team", "max", "antigravity", "antigravity_pro", "grok"}
+CC_BALANCE_MODES = {"even", "swap"}
+_cc_lock = threading.Lock()   # một thao tác ghi một lúc: bấm hai nút liền không ghi chồng switcher-state.json
+
+
+def cc_switcher_bin() -> str:
+    """Đường dẫn bin/cc-switcher-mcp.js: biến môi trường (install-autostart.sh đặt) > thư mục anh em trong repo > cạnh ai-factory.sh."""
+    env = os.environ.get("AGENT_OFFICE_CC_SWITCHER")
+    if env:
+        return env
+    sibling = os.path.join(os.path.dirname(HERE), "cc-switcher-mcp", "bin", "cc-switcher-mcp.js")
+    if os.path.isfile(sibling):
+        return sibling
+    return os.path.join(os.path.dirname(FACTORY_SCRIPT), "mcp-servers", "cc-switcher-mcp", "bin", "cc-switcher-mcp.js")
+
+
+def cc_switcher_args(body: dict) -> list:
+    """Kiểm tra thao tác theo danh sách trắng trước khi gọi node; sai thì ValueError (HTTP 400)."""
+    action = body.get("action")
+    if action not in CC_ACTIONS:
+        raise ValueError("Thao tác không hợp lệ")
+    args = ["--panel-action", action]
+    if action == "switch":
+        target = body.get("target")
+        if target not in CC_PROFILES:
+            raise ValueError("Chọn một tài khoản hợp lệ")
+        args += ["--target", target]
+        if body.get("force") is True:
+            args.append("--force")
+    elif action == "balance":
+        mode = body.get("mode", "even")
+        if mode not in CC_BALANCE_MODES:
+            raise ValueError("Chế độ chia repo không hợp lệ")
+        args += ["--mode", mode]
+    elif action == "cooldown":
+        minutes = body.get("minutes")
+        if isinstance(minutes, bool) or not isinstance(minutes, int) or not 0 <= minutes <= 1440:
+            raise ValueError("Số phút nghỉ phải là số nguyên 0 - 1440")
+        args += ["--minutes", str(minutes)]
+    elif action in ("repo_assign", "repo_add", "repo_remove"):
+        repo = body.get("repo")
+        if not isinstance(repo, str) or not repo.startswith("/") or len(repo) > 1024 \
+                or any(ch in repo for ch in "\x00\n\r"):
+            raise ValueError("Đường dẫn repo phải là đường dẫn tuyệt đối")
+        args += ["--repo", repo]
+        if action != "repo_remove":
+            account = body.get("account")
+            if account not in CC_CLAUDE_ACCOUNTS:
+                raise ValueError("Repo chỉ gán được tài khoản Claude: finos, finos_team, max")
+            args += ["--account", account]
+        if action == "repo_add" and body.get("name") not in (None, ""):
+            name = body.get("name")
+            if not isinstance(name, str) or len(name) > 80 or name.startswith("-") \
+                    or any(ch in name for ch in "\x00\n\r"):
+                raise ValueError("Tên repo không hợp lệ")
+            args += ["--name", name]
+    return args
+
+
+def cc_switcher_call(args: list, timeout: int = 40) -> tuple:
+    """(HTTP status, dict). Lỗi node / JSON hỏng: 502 với lý do ngắn (không kèm stdout có thể dài)."""
+    node = shutil.which("node") or "/opt/homebrew/bin/node"
+    script = cc_switcher_bin()
+    if not os.path.isfile(script):
+        return 503, {"ok": False, "error": f"Không thấy cc-switcher-mcp ({script})"}
+    argv = [node, script, *args]
+    state_dir = os.environ.get("AGENT_OFFICE_CC_SWITCHER_STATE_DIR")
+    if state_dir:
+        argv += ["--state-dir", state_dir]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                           env=dict(os.environ, CC_SWITCHER_QUIET="1"), stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as exc:
+        warn("cc-switcher", exc)
+        return 502, {"ok": False, "error": f"Không chạy được cc-switcher: {exc}"}
+    line = (r.stdout or "").strip().splitlines()[-1:] or [""]
+    try:
+        data = json.loads(line[0])
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+    except ValueError:
+        print(f"[cc-switcher] rc={r.returncode} stderr={r.stderr.strip()[-300:]}", flush=True)
+        return 502, {"ok": False, "error": f"cc-switcher trả về dữ liệu hỏng (mã {r.returncode})"}
+    if r.returncode == 2:
+        return 400, data
+    if r.returncode != 0:
+        return 502, data
+    return 200, data
+
+
 def make_handler(app: App):
     extra = app.cfg.get("allowedHosts") or []
     if isinstance(extra, str):
@@ -2597,6 +2693,15 @@ def make_handler(app: App):
             if path == "/api/refresh":
                 app.refresh_evt.set()
                 return self.send(200, b'{"ok":true}', CTYPES[".json"])
+            if path in ("/cc-switcher", "/cc-switcher/", "/api/cc-switcher/state"):
+                if not from_mac(self):
+                    return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+                if path == "/api/cc-switcher/state":
+                    q = parse_qs(urlparse(self.path).query)
+                    args = ["--panel-json"] + (["--refresh"] if (q.get("refresh") or [""])[0] == "1" else [])
+                    code, res = cc_switcher_call(args)
+                    return self.send(code, json.dumps(res, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                path = "/cc-switcher.html"
             rel = "index.html" if path in ("", "/") else path.lstrip("/")
             if rel.startswith("api/"):
                 return self.send(404, b"not found", "text/plain")
@@ -2637,6 +2742,21 @@ def make_handler(app: App):
                     raise ValueError("body")
             except ValueError:
                 return self.send(400, b'{"ok":false,"error":"bad json"}', CTYPES[".json"])
+            if path == "/api/cc-switcher/action":
+                if not from_mac(self):
+                    return self.send(403, b'{"ok":false,"error":"forbidden"}', CTYPES[".json"])
+                try:
+                    args = cc_switcher_args(body)
+                except ValueError as e:
+                    return self.send(400, json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+                if not _cc_lock.acquire(timeout=30):
+                    return self.send(409, '{"ok":false,"error":"Đang có thao tác khác, thử lại sau vài giây"}'.encode("utf-8"), CTYPES[".json"])
+                try:
+                    code, res = cc_switcher_call(args)
+                finally:
+                    _cc_lock.release()
+                print(f"[cc-switcher] {body.get('action')} {'ok' if res.get('ok') else res.get('error') or res.get('code')}", flush=True)
+                return self.send(code, json.dumps(res, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
             if path == "/api/agent-message":  # nhắn lệnh cho agent: qua tunnel thì phải có mã xác nhận hiện trên Mac
                 try:
                     res, code = app.agent_message(body, remote=not from_mac(self)), 200

@@ -463,6 +463,7 @@
   <button type="button" id="btnBoard">Dạng bảng</button>
   <button type="button" id="btnAdd">Thêm việc</button>
   <button type="button" id="btnEvents">Vừa xảy ra</button>
+  <button type="button" id="btnCcs" title="Bảng điều khiển 6 tài khoản AI (đã chuyển từ Telegram)">CC Switcher</button>
   <button type="button" id="btnDash" aria-pressed="false" aria-controls="dash">Chỉ số</button>
   <button type="button" class="sec" id="btnNext">Agent kế tiếp</button>
   <button type="button" class="sec" id="btnDesk" aria-expanded="false" aria-controls="deskPicker">Kiểu bàn</button>
@@ -2696,6 +2697,8 @@ $('#btnNext').onclick = () => {
   if (!list.length) { select({ type: 'repo', id: STATE.repos[0] && STATE.repos[0].name }); return; }
   nextIdx = (nextIdx + 1) % list.length; select({ type: 'worker', id: list[nextIdx].id });
 };
+// CC Switcher: bảng điều khiển 6 tài khoản AI nằm ở trang riêng /cc-switcher (chỉ mở trên máy Mac)
+$('#btnCcs').addEventListener('click', () => { location.href = '/cc-switcher'; });
 function syncThemeBtn() { $('#btnTheme').textContent = document.documentElement.dataset.theme === 'dark' ? 'Ca ngày' : 'Ca đêm'; }
 $('#btnTheme').onclick = () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';

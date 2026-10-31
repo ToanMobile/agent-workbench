@@ -3327,7 +3327,13 @@ def _bug_command(args, project: Path) -> int:
                   + ("" if ok_ else f" — chưa đủ: cần ≥{REPEAT_MIN} lượt đạt và 0 hỏng"))
             return 0 if ok_ else 1
         if args.cmd == "drop":
+            if args.bug_id.startswith("BUG-REV-"):   # audit 31/10: a review-born bug row leaves only on a verifier's rejection
+                why = _rev_drop_refused(args.bug_id, getattr(args, "refuted_by", None), project)
+                if why:
+                    print(f"✖ {args.bug_id}: không xoá — {why}", file=sys.stderr)
+                    return 2
             item = drop(data, args.bug_id)
+            _append_drop_log(project, args.bug_id, item, getattr(args, "refuted_by", None))
             store([args.bug_id])   # dòng track bị bản chờ che cũng đi theo (không thì "đã xoá" mà dòng 💤 vẫn còn)
             if args.bug_id in read_pending(project):   # người đã drop: sổ chờ quên nó luôn, không thì nó hiện lại ở mọi view
                 pending_save_rows(project, data, [], drop=[args.bug_id])
@@ -3390,6 +3396,71 @@ def _restore_command(args, project: Path) -> int:
     return 0
 
 
+
+def _git_common_dir_real(path):
+    """realpath of the git common dir of PATH (shared by every worktree of one repo), or None when PATH is not a git checkout."""
+    import subprocess
+    try:
+        r = _git_quiet(path, "rev-parse", "--git-common-dir")
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"regression_checklist: git rev-parse --git-common-dir in {path} failed: {e}", file=sys.stderr)
+        return None
+    out = r.stdout.strip()
+    return os.path.realpath(os.path.join(str(path), out)) if r.returncode == 0 and out else None
+
+
+def _rev_drop_refused(bug_id, run_dir, project):
+    """None when RUN_DIR is a sealed review run (bin/review_sign.py) of THIS project whose verifier refuted the finding behind bug_id."""
+    if not run_dir:
+        return "BUG-REV-* chỉ xoá được khi verifier của một lần review đã bác finding: --refuted-by <run dir>"
+    import importlib.util
+    sp = importlib.util.spec_from_file_location("review_sign", os.path.join(os.path.dirname(os.path.realpath(__file__)), "review_sign.py"))
+    rs = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(rs)
+    summ = os.path.join(run_dir, "summary.json")
+    if not rs.verify(summ):
+        return f"{summ} không có dấu HMAC hợp lệ (không phải kết quả review thật)"
+    cid = bug_id[len("BUG-REV-"):]
+    try:
+        with open(os.path.join(run_dir, "verifier.json"), encoding="utf-8") as fh:
+            ver = json.load(fh)
+        with open(summ, encoding="utf-8") as fh:
+            summary = json.load(fh)
+        clusters = summary.get("findings") or []
+    except (OSError, ValueError, AttributeError) as e:
+        return f"không đọc được verifier.json / summary.json: {e}"
+    # #756: the seal key is one per machine (every repo, every temp repo), so a seal alone proves nothing about WHICH repo was
+    # reviewed. The run must be this project's own: <git common dir>/review-fanout/<meta.code_hash>/ (bin/review-fanout.sh),
+    # reviewed in this repo or one of its worktrees (they share the common dir). A run of a since-removed worktree is refused.
+    common = _git_common_dir_real(project)
+    if not common:
+        return f"{project} không phải git checkout: không biết review-fanout của project nằm đâu"
+    real_run = os.path.realpath(run_dir)
+    if os.path.dirname(real_run) != os.path.join(common, "review-fanout"):
+        return f"{run_dir} không nằm trong {os.path.join(common, 'review-fanout')} (lần review của repo khác)"
+    meta = summary.get("meta") if isinstance(summary.get("meta"), dict) else {}
+    if not meta.get("code_hash") or os.path.basename(real_run) != str(meta["code_hash"]):
+        return f"tên thư mục {os.path.basename(real_run)} khác meta.code_hash của summary ({meta.get('code_hash')})"
+    repo = meta.get("repo")
+    if not isinstance(repo, str) or not repo or (
+            os.path.realpath(repo) != os.path.realpath(str(project)) and _git_common_dir_real(repo) != common):
+        return f"summary là review của {repo!r}, không phải {project} hay một worktree của nó"
+    refuted = any(isinstance(v, dict) and str(v.get("id")) == cid and v.get("refuted") is True
+                  for v in (ver.get("verifications") or []))
+    state_ok = any(str(c.get("id")) == cid and c.get("state") == "refuted" for c in clusters)
+    return None if refuted and state_ok else f"verifier của {run_dir} không bác finding {cid}"
+
+
+def _append_drop_log(project, bug_id, item, run_dir):
+    """Append-only record of every dropped row (who/why/which review), next to the checklist."""
+    rec = {"ts": time.time(), "id": bug_id, "title": (item or {}).get("title"), "refuted_by": run_dir or "",
+           "agent": os.environ.get("DEVKIT_AGENT_ID", ""), "session": os.environ.get("CLAUDE_SESSION_ID", "")}
+    path = os.path.join(project, ".agents", "regression_drops.jsonl")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    with os.fdopen(fd, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Living regression checklist")
     parser.add_argument("--project", default=os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
@@ -3422,6 +3493,8 @@ def main(argv=None) -> int:
     p_bl.add_argument("test_ref")
     p_drop = sub.add_parser("drop", help="remove a bug or REQ row (not a bug / duplicate)")
     p_drop.add_argument("bug_id")
+    p_drop.add_argument("--refuted-by", dest="refuted_by", metavar="RUN_DIR",
+                        help="BUG-REV-* rows: the sealed review run whose verifier refuted this finding")
     p_ul = sub.add_parser("bug-unlink", help="undo a link that is context, not a guard")
     p_ul.add_argument("bug_id")
     p_ul.add_argument("test_ref")

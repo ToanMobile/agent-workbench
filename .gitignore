@@ -5,6 +5,8 @@
 # Dependencies
 node_modules/
 package-lock.json
+# CI (pr-review.yml) runs `npm ci` here, which needs a tracked lockfile
+!mcp-servers/antigravity-pm-mcp/package-lock.json
 yarn.lock
 
 # Build & dist

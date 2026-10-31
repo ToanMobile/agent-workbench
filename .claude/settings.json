@@ -140,6 +140,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "p=\"$CLAUDE_PROJECT_DIR\"/universal-agent-devkit/hooks/guard-review-tamper.py; f=\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-review-tamper.py; [ -f \"$p\" ] && exec python3 \"$p\"; [ -f \"$f\" ] && exec python3 \"$f\"; echo \"\u26d4 DevKit: guard-review-tamper.py is missing ($p and $f): tool call blocked (fail closed). Reinstall: agent-kit init\" >&2; exit 2",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-key-literals.py"
           }
         ]

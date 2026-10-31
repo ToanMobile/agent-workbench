@@ -1,8 +1,9 @@
-// Tien trinh chay nen (Daemon): theo doi log CC Switch phat hien Rate Limit 429 va lang nghe lenh Telegram tu dien thoai.
+// Tien trinh chay nen (Daemon): theo doi log CC Switch phat hien Rate Limit 429, gui canh bao Telegram va xu ly nut duyet super-board.
+// Bang dieu khien CC Switcher nam tren web (Agent Office /cc-switcher), khong con tren Telegram.
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveStateDir, logStructured, maskSecret } from './errors.js';
-import { rotateNextProfile, getStatusReport } from './profiles.js';
+import { rotateNextProfile } from './profiles.js';
 import {
   loadTelegramConfig,
   saveTelegramConfig,
@@ -12,9 +13,8 @@ import {
   handleTelegramCommand,
   handleTelegramCallback,
   refuseForeignTelegramChat,
-  buildTelegramDashboard,
-  buildReplyKeyboardMarkup,
-  ensureTelegramBotMenu,
+  clearLegacyTelegramPanel,
+  REMOVE_REPLY_KEYBOARD,
 } from './telegram.js';
 
 const RATE_LIMIT_PATTERNS = [
@@ -70,9 +70,14 @@ export function createLogTailReader(logFile) {
       }
 
       const freshText = buf.toString('utf8');
-      const combined = `${carryOver}${freshText}`;
+      // after a jump past the middle (delta > 64 KiB) the old tail is not adjacent to the new text: do not glue them
+      const combined = delta > 65536 ? freshText : `${carryOver}${freshText}`;
       carryOver = combined.slice(-256);
       return combined;
+    },
+    // called once a chunk matched: the matched 429 line must not ride along into the next chunk and fire again
+    resetCarryOver() {
+      carryOver = '';
     },
   };
 }
@@ -126,23 +131,18 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
         logStructured('warn', 'telegram_answer_cbq_failed', { error: err?.message });
       }
 
+      // Nut cua bang dieu khien cu: go hang nut khoi tin nhan (bang dieu khien da chuyen sang web)
       const msgId = cbq.message?.message_id;
-      if (msgId && cbResult.dashboard) {
+      if (msgId && cbResult.clearButtons) {
         try {
-          await apiCaller(cfg.botToken, 'editMessageText', {
+          await apiCaller(cfg.botToken, 'editMessageReplyMarkup', {
             chat_id: fromChatId,
             message_id: msgId,
-            text: cbResult.dashboard.text,
-            reply_markup: cbResult.dashboard.reply_markup,
+            reply_markup: { inline_keyboard: [] },
           });
         } catch (err) {
-          // Bo qua neu noi dung khong thay doi ("message is not modified")
           if (!/not modified/i.test(String(err?.message || ''))) {
-            await apiCaller(cfg.botToken, 'sendMessage', {
-              chat_id: fromChatId,
-              text: cbResult.dashboard.text,
-              reply_markup: cbResult.dashboard.reply_markup,
-            });
+            logStructured('warn', 'telegram_clear_buttons_failed', { error: err?.message });
           }
         }
       }
@@ -164,26 +164,12 @@ export async function processIncomingTelegramUpdates(updates, opts = {}) {
       continue;
     }
 
-    const trimmed = text.trim();
-    // Neu la /start hoac /menu -> ghim thanh phim tat nhanh o day man hinh truoc khi hien Bang dieu khien Inline
-    if (trimmed === '/start' || trimmed === '/menu') {
-      try {
-        await apiCaller(cfg.botToken, 'sendMessage', {
-          chat_id: fromChatId,
-          text: '⌨️ Đã ghim thanh phím tắt nhanh ở đáy màn hình. Bạn có thể chạm trực tiếp vào các nút bên dưới bất kỳ lúc nào:',
-          reply_markup: buildReplyKeyboardMarkup(),
-        });
-      } catch (err) {
-        logStructured('warn', 'telegram_reply_kb_failed', { error: err?.message });
-      }
-    }
-
+    // Bang dieu khien da chuyen sang web: moi tin nhan nhan lai link va go ban phim ghim cu khoi day man hinh.
     const reply = await handleTelegramCommand(text, { stateDir });
-    const dash = buildTelegramDashboard(getStatusReport({ stateDir }));
     await apiCaller(cfg.botToken, 'sendMessage', {
       chat_id: fromChatId,
       text: reply,
-      reply_markup: dash.reply_markup,
+      reply_markup: REMOVE_REPLY_KEYBOARD,
     });
   }
   return nextOffset;
@@ -230,7 +216,7 @@ export async function startSwitcherDaemon(opts = {}) {
   // (các lời gọi gh 15 s), một batch vài update vẫn dưới ngưỡng. Đo bằng đồng hồ đơn điệu: máy ngủ dậy không bắn nhầm.
   const tickTimeoutMs = opts.tickTimeoutMs || 300_000;
   const fetchUpdates = opts.fetchUpdates || fetchUpdatesSafely;
-  const ensureMenu = opts.ensureMenu || ensureTelegramBotMenu;
+  const ensureMenu = opts.ensureMenu || clearLegacyTelegramPanel;
   const exit = opts.exit || ((code) => process.exit(code));
   const offsetFile = path.join(stateDir, 'telegram.offset');
 
@@ -255,7 +241,9 @@ export async function startSwitcherDaemon(opts = {}) {
       const chunk = logReader.readNewChunk();
       if (!chunk) return;
       const nowMs = Date.now();
-      if (detectRateLimitInLogChunk(chunk) && nowMs - lastAutoRotateAtMs > 30_000) {
+      const limited = detectRateLimitInLogChunk(chunk);
+      if (limited) logReader.resetCarryOver?.();
+      if (limited && nowMs - lastAutoRotateAtMs > 30_000) {
         lastAutoRotateAtMs = nowMs;
         const rotated = rotateNextProfile({
           stateDir,

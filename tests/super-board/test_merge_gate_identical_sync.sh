@@ -50,6 +50,7 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_review_fanout.sh"; sb_review_fixture "$TMP/bin"   # signed review PASS + CI checks (new gate preconditions)
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" FAKE_REPO="$R"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
 CFG="$TMP/cfg.json"
@@ -281,10 +282,14 @@ git -C "$R" rm -q --cached ita43 >/dev/null 2>&1; rm -f "$R/ita43"; resync
 # ── 12. gate chạy từ chỗ KHÔNG có DevKit cạnh nó (worktree Reviewer của OfficeReader không có .agents/devkit; review 18/10): lần đồng bộ
 #    squash bình thường (main chỉ giữ commit của PR, sạch) vẫn phải `reset --keep` về origin — chốt va chạm file ignore không cần DevKit.
 mkdir -p "$TMP/nodk/.claude"; cp -R "$ROOT/.claude/bin" "$TMP/nodk/.claude/bin"
+# 31/10: the gate now needs review-fanout.sh to read the signed review verdict; here it comes from the repo's own vendored DevKit
+# (main checkout, git-excluded), as in agent-workbench — the gate's own folder still has no DevKit, which is what case 12 is about.
+ln -s "$ROOT/universal-agent-devkit" "$R/universal-agent-devkit"; echo /universal-agent-devkit >> "$(git -C "$R" rev-parse --git-common-dir)/info/exclude"
 branch 44 b5 "pr44 b5"; git -C "$R" merge -q --ff-only issue-44-x
 ( cd "$TMP/lw" && bash "$TMP/nodk/.claude/bin/super-board-merge-gate.sh" --config "$CFG" --pr 44 --expect-head "$(cat "$TMP/pr44.head")" ) >"$TMP/gate44.log" 2>&1
 synced 44 && grep -q "moved to origin/main" "$TMP/gate44.log" && ok "12: no DevKit next to the gate: the plain squash sync still moves main" \
   || fail "12: no DevKit next to the gate: main not synced: $(grep -E 'note|warning' "$TMP/gate44.log" | cut -c1-200)"
+rm -f "$R/universal-agent-devkit"
 resync
 if [ "$(git -C "$R" config --get core.ignorecase)" = true ]; then
   ignored_case 33 Local2.json local2.json file "case-only variant on a case-insensitive disk"

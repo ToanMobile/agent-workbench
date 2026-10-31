@@ -2568,6 +2568,47 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-gate-review-binding-742",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/bin/review-fanout.sh",
+        "universal-agent-devkit/bin/review_sign.py",
+        "tests/super-board/test_merge_gate_review_binding.sh",
+        "tests/super-board/test_merge_gate_review_ci_hardening.sh",
+        "tests/super-board/lib/fake_review_fanout.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-REVIEW-HARDENING-01",
+          "name": "#742: merge gate cần verdict review 4 bên đã ký cho đúng head (không có / không ký / ký giả / sửa sau ký / head khác / FAIL: exit 6), PASS_REDUCED chỉ qua --accept-reduced-review đúng skip list, CI đỏ exit 11, required checks dùng --auto --match-head-commit không --admin, PR machine-gate cần review deep + security ok/pass + test bổ sung, thiếu DevKit/--verify-summary exit 9, grandfather tạm tới 2026-11-01",
+          "command": "bash tests/super-board/test_merge_gate_review_ci_hardening.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-GATE-REVIEW-BINDING-01",
+          "name": "#742 r14d: summary đã ký không nêu code_hash không phải verdict (F1, exit 6); PR machine-gate review light: gate đánh dấu deep-heads/<sha>, lượt review sau của head đó chạy deep (mã băm riêng, = --depth deep), PASS deep thì merge; summary light đặt dưới mã băm deep vẫn exit 6; PR thường không bị đánh dấu",
+          "command": "bash tests/super-board/test_merge_gate_review_binding.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-policy-machine-gate-742",
+      "watch_files": [
+        ".claude/bin/super-board-merge-policy.py",
+        "tests/super-board/test_merge_policy_machine_gate.sh",
+        "tests/super-board/test_merge_policy_self_fixtures.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-POLICY-MACHINE-GATE-01",
+          "name": "#742/#747: PR tiền / auth / schema / migration đi machine_gate (review deep + security ok/pass + test bổ sung, thiếu test bổ sung exit 9), không còn đường người duyệt; fixture trong test của chính policy không kích machine-gate, cùng chuỗi trong code sản phẩm / test khác / file đổi tên / header giả / label vẫn bị chặn",
+          "command": "bash tests/super-board/test_merge_policy_machine_gate.sh && bash tests/super-board/test_merge_policy_self_fixtures.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

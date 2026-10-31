@@ -200,12 +200,26 @@ export function resolveProfile(target) {
 function syncToCcSwitchApp(stateDir, profile) {
   const dir = resolveStateDir(stateDir);
   const settingsFile = ccSwitchSettingsPath(dir);
-  const currentSettings = readJsonSafe(settingsFile, {});
-  currentSettings.currentProviderClaude = profile.id;
-  if (profile.settingsKey) {
-    currentSettings[profile.settingsKey] = profile.settingsValue;
+  // Missing file: {}. A file that does not parse (or is not a JSON object) is LEFT ALONE: readJsonSafe returned {} for it too,
+  // and writing that back wiped the CC Switch app's whole configuration (critical scan 31/10).
+  let currentSettings = {};
+  let settingsOk = true;
+  if (fs.existsSync(settingsFile)) {
+    try {
+      currentSettings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      if (!currentSettings || typeof currentSettings !== 'object' || Array.isArray(currentSettings)) throw new Error('not a JSON object');
+    } catch (err) {
+      settingsOk = false;
+      logStructured('warn', 'cc_switch_settings_unreadable_sync_skipped', { settingsFile, error: err?.message });
+    }
   }
-  writeJsonAtomic(settingsFile, currentSettings, 0o600);
+  if (settingsOk) {
+    currentSettings.currentProviderClaude = profile.id;
+    if (profile.settingsKey) {
+      currentSettings[profile.settingsKey] = profile.settingsValue;
+    }
+    writeJsonAtomic(settingsFile, currentSettings, 0o600);
+  }
 
   const dbFile = ccSwitchDbPath(dir);
   if (fs.existsSync(dbFile) && /^[a-z0-9_]+$/i.test(profile.id)) {
@@ -676,10 +690,60 @@ export const DEFAULT_REPOS = [
 ];
 
 /**
- * Doc danh sach phan bo tai khoan (.claude/settings.local.json -> account) cua 6 repo.
+ * So repo cc-switcher biet: 6 repo mac dinh (hoac opts.repos) + repo tu them trong <stateDir>/repos.json, tru repo da an.
+ * Truyen repos ma khong truyen stateDir (test cu) thi KHONG tron danh sach that tren may.
+ */
+export const REPO_REGISTRY_FILE = 'repos.json';
+
+function repoRegistryPath(stateDir) {
+  return path.join(resolveStateDir(stateDir), REPO_REGISTRY_FILE);
+}
+
+export function loadRepoRegistry(stateDir) {
+  const raw = readJsonSafe(repoRegistryPath(stateDir), null) || {};
+  const custom = Array.isArray(raw.custom)
+    ? raw.custom.filter((r) => r && typeof r.path === 'string' && typeof r.name === 'string')
+    : [];
+  const hidden = Array.isArray(raw.hidden) ? raw.hidden.filter((x) => typeof x === 'string') : [];
+  // defaults:false -> bo 6 repo mac dinh (dung cho thu muc trang thai tam trong test, khong dong vao repo that)
+  return { custom, hidden, defaults: raw.defaults !== false };
+}
+
+function saveRepoRegistry(stateDir, reg) {
+  const out = { custom: reg.custom, hidden: reg.hidden };
+  if (reg.defaults === false) out.defaults = false;
+  writeJsonAtomic(repoRegistryPath(stateDir), out);
+}
+
+export function listKnownRepos(opts = {}) {
+  const explicit = Array.isArray(opts.repos) && opts.repos.length > 0;
+  const base = (explicit ? opts.repos : DEFAULT_REPOS).map((r) => ({ ...r, source: 'default' }));
+  if (explicit && opts.stateDir === undefined) return base;
+  const reg = loadRepoRegistry(opts.stateDir);
+  const hidden = new Set(reg.hidden);
+  const out = explicit || reg.defaults ? base.filter((r) => !hidden.has(r.path)) : [];
+  for (const c of reg.custom) {
+    if (!out.some((r) => r.path === c.path)) out.push({ name: c.name, path: c.path, source: 'custom' });
+  }
+  return out;
+}
+
+function readRepoSettings(repoPath) {
+  const settingsPath = path.join(repoPath, '.claude', 'settings.local.json');
+  if (!fs.existsSync(settingsPath)) return { settingsPath, exists: false, data: {} };
+  const data = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new AppError('INVALID_INPUT', `${settingsPath} không phải object JSON, giữ nguyên.`);
+  }
+  return { settingsPath, exists: true, data };
+}
+
+/**
+ * Doc danh sach phan bo tai khoan (.claude/settings.local.json -> account) cua cac repo cc-switcher biet.
  */
 export function getRepoAssignments(opts = {}) {
-  const repos = Array.isArray(opts.repos) && opts.repos.length > 0 ? opts.repos : DEFAULT_REPOS;
+  const repos = listKnownRepos(opts);
+  const half = Math.ceil(repos.length / 2);
   return repos.map((r, idx) => {
     const settingsPath = path.join(r.path, '.claude', 'settings.local.json');
     let account = '';
@@ -695,15 +759,108 @@ export function getRepoAssignments(opts = {}) {
     } catch (err) {
       logStructured('warn', 'read_repo_settings_failed', { repo: r.name, error: err?.message });
     }
-    const fallbackAccount = r.defaultAccount || (idx < Math.ceil(repos.length / 2) ? 'finos' : 'finos_team');
+    const fallbackAccount = r.defaultAccount || (r.source === 'custom' ? '' : idx < half ? 'finos' : 'finos_team');
     return {
       name: r.name,
       path: r.path,
       account: account || fallbackAccount,
       pinnedInFile: Boolean(account),
       exists,
+      pathExists: fs.existsSync(r.path),
+      defaultAccount: r.defaultAccount || '',
+      source: r.source || 'default',
     };
   });
+}
+
+const CLAUDE_ACCOUNT_IDS = () => DEFAULT_PROFILES.filter((p) => p.vendor === 'anthropic').map((p) => p.id);
+
+function findKnownRepo(opts, repoPath) {
+  const wanted = String(repoPath || '').trim();
+  const repo = listKnownRepos(opts).find((r) => r.path === wanted);
+  if (!repo) throw new AppError('INVALID_INPUT', 'Repo không nằm trong danh sách cc-switcher.');
+  return repo;
+}
+
+function assertClaudeAccount(account) {
+  if (!CLAUDE_ACCOUNT_IDS().includes(account)) {
+    throw new AppError('INVALID_INPUT', `Repo chỉ gán được tài khoản Claude: ${CLAUDE_ACCOUNT_IDS().join(', ')}.`);
+  }
+}
+
+/**
+ * Gan tai khoan Claude cho 1 repo: ghi "account" vao .claude/settings.local.json (giong lenh claude-profile),
+ * giu nguyen cac khoa khac (hooks, permissions, autoMemoryDirectory...).
+ */
+export function setRepoAccount(opts = {}) {
+  const account = String(opts.account || '').trim();
+  assertClaudeAccount(account);
+  const repo = findKnownRepo(opts, opts.repoPath);
+  if (!fs.existsSync(repo.path)) throw new AppError('INVALID_INPUT', `Không thấy thư mục repo ${repo.path}.`);
+  const { settingsPath, data } = readRepoSettings(repo.path);
+  const previous = typeof data.account === 'string' ? data.account : '';
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  writeJsonAtomic(settingsPath, { ...data, account });
+  logStructured('info', 'repo_account_set', { repo: repo.name, from: previous, to: account });
+  return { name: repo.name, path: repo.path, previous, account };
+}
+
+const REPO_NAME_RE = /^[\p{L}\p{N} ._()+-]{1,80}$/u;
+
+/** Them 1 repo (thu muc git that) vao danh sach cc-switcher va gan tai khoan cho no. */
+export function addRepo(opts = {}) {
+  const raw = String(opts.repoPath || '').trim();
+  if (!raw || !path.isAbsolute(raw)) throw new AppError('INVALID_INPUT', 'Đường dẫn repo phải là đường dẫn tuyệt đối.');
+  const repoPath = path.resolve(raw).replace(/\/+$/, '') || '/';
+  if (repoPath === '/' || repoPath === path.resolve(os.homedir())) {
+    throw new AppError('INVALID_INPUT', 'Chọn thư mục của một repo, không phải / hay thư mục home.');
+  }
+  let st = null;
+  try { st = fs.statSync(repoPath); } catch { /* xu ly ben duoi */ }
+  if (!st || !st.isDirectory()) throw new AppError('INVALID_INPUT', `Không thấy thư mục ${repoPath}.`);
+  if (!fs.existsSync(path.join(repoPath, '.git'))) throw new AppError('INVALID_INPUT', `${repoPath} không phải Git repo (thiếu .git).`);
+  const account = String(opts.account || '').trim();
+  assertClaudeAccount(account);
+  const name = String(opts.name || '').trim() || path.basename(repoPath);
+  if (!REPO_NAME_RE.test(name)) throw new AppError('INVALID_INPUT', 'Tên repo chỉ gồm chữ, số, khoảng trắng và . _ ( ) + - (tối đa 80).');
+  if (listKnownRepos(opts).some((r) => r.path === repoPath)) throw new AppError('INVALID_INPUT', 'Repo này đã có trong danh sách.');
+
+  const reg = loadRepoRegistry(opts.stateDir);
+  const base = Array.isArray(opts.repos) && opts.repos.length > 0 ? opts.repos : DEFAULT_REPOS;
+  if (reg.hidden.includes(repoPath) && base.some((r) => r.path === repoPath)) {
+    reg.hidden = reg.hidden.filter((x) => x !== repoPath); // repo mac dinh tung bi go: hien lai
+  } else {
+    reg.custom.push({ name, path: repoPath, addedAtMs: Date.now() });
+  }
+  saveRepoRegistry(opts.stateDir, reg);
+  const res = setRepoAccount({ ...opts, repoPath, account });
+  return { ...res, added: true };
+}
+
+/**
+ * Go 1 repo khoi danh sach cc-switcher; mac dinh xoa luon khoa "account" trong settings.local.json
+ * (lenh claude trong repo quay ve ~/.claude mac dinh), giu nguyen cac khoa khac.
+ */
+export function removeRepo(opts = {}) {
+  const repo = findKnownRepo(opts, opts.repoPath);
+  const reg = loadRepoRegistry(opts.stateDir);
+  if (repo.source === 'custom') {
+    reg.custom = reg.custom.filter((c) => c.path !== repo.path);
+  } else if (!reg.hidden.includes(repo.path)) {
+    reg.hidden.push(repo.path);
+  }
+  saveRepoRegistry(opts.stateDir, reg);
+  let previous = '';
+  if (opts.clearAccount !== false && fs.existsSync(repo.path)) {
+    const { settingsPath, exists, data } = readRepoSettings(repo.path);
+    if (exists && typeof data.account === 'string') {
+      previous = data.account;
+      const { account: _drop, ...rest } = data;
+      writeJsonAtomic(settingsPath, rest);
+    }
+  }
+  logStructured('info', 'repo_removed', { repo: repo.name, clearedAccount: previous });
+  return { name: repo.name, path: repo.path, previous, removed: true };
 }
 
 /**
@@ -711,22 +868,23 @@ export function getRepoAssignments(opts = {}) {
  * giu nguyen 100% cac khoa cau hinh hien co (autoMemoryDirectory, hooks, permissions...).
  */
 export function balanceRepoAccounts(opts = {}) {
-  const repos = Array.isArray(opts.repos) && opts.repos.length > 0 ? opts.repos : DEFAULT_REPOS;
+  const repos = listKnownRepos(opts);
   const mode = opts.mode || 'even'; // 'even' | 'swap' | 'all_finos' | 'all_finos_team'
   const half = Math.ceil(repos.length / 2);
 
   const results = [];
   repos.forEach((r, idx) => {
     if (!fs.existsSync(r.path)) return;
-    const claudeDir = path.join(r.path, '.claude');
-    const settingsPath = path.join(claudeDir, 'settings.local.json');
-    let existing = {};
+    const settingsPath = path.join(r.path, '.claude', 'settings.local.json');
+    // A settings.local.json that does not parse (or is not a JSON object) is LEFT ALONE and reported as skipped:
+    // writing {account} over it wiped the repo's hooks/permissions/autoMemoryDirectory (#757).
+    let existing;
     try {
-      if (fs.existsSync(settingsPath)) {
-        existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      }
+      existing = readRepoSettings(r.path).data;
     } catch (err) {
-      logStructured('warn', 'parse_existing_settings_failed', { repo: r.name, error: err?.message });
+      logStructured('warn', 'repo_settings_unreadable_balance_skipped', { repo: r.name, settingsPath, error: err?.message });
+      results.push({ name: r.name, path: r.path, settingsPath, skipped: true, error: 'settings.local.json is not a readable JSON object' });
+      return;
     }
 
     let nextAccount = r.defaultAccount || (idx < half ? 'finos' : 'finos_team');
@@ -752,7 +910,8 @@ export function balanceRepoAccounts(opts = {}) {
     });
   });
 
-  logStructured('info', 'repo_accounts_balanced', { mode, count: results.length });
+  const skipped = results.filter((r) => r.skipped).length;
+  logStructured('info', 'repo_accounts_balanced', { mode, count: results.length - skipped, skipped });
   return results;
 }
 
@@ -763,7 +922,7 @@ export function getStatusReport(opts = {}) {
   const { stateDir, nowMs = Date.now(), repos } = opts;
   const state = loadSwitcherState(stateDir);
   const usage = readUsageStatsFromDb(stateDir);
-  const repoAssignments = getRepoAssignments({ repos });
+  const repoAssignments = getRepoAssignments({ repos, stateDir });
 
   const lastClaudeEvent = Math.max(state.lastClaudeSwitchAtMs || 0, state.lastClaudeRateLimitAtMs || 0);
   const claudeCooldownMs = (state.policy.claudeSwitchCooldownSec ?? 900) * 1000;

@@ -101,8 +101,12 @@ export function createTask(cfg, { title, brief, definitionOfDone = [], model, ta
   }
   if (!TASK_TYPES.includes(type)) throw new Error(`type phai thuoc ${TASK_TYPES.join('|')}`);
   if (!PROOF_KINDS.includes(proofKind)) throw new Error(`proofKind phai thuoc ${PROOF_KINDS.join('|')}`);
-  const id = `T${String(nextTaskNumber(cfg)).padStart(4, '0')}-${slug(title)}`;
-  const dir = ensureDir(taskDir(cfg, id));
+  // number + folder under one project-level lock: two PMs creating a task at once got the same Txxxx (critical scan 31/10)
+  ensureDir(path.dirname(cfg.pmTasksRoot));
+  const { id, dir } = withFileLock(`${cfg.pmTasksRoot}.lock`, () => {
+    const newId = `T${String(nextTaskNumber(cfg)).padStart(4, '0')}-${slug(title)}`;
+    return { id: newId, dir: ensureDir(taskDir(cfg, newId)) };
+  });
   ensureDir(path.join(dir, 'proof'));
   ensureDir(path.join(dir, 'logs'));
   const task = {
@@ -185,18 +189,39 @@ function writeChecked(file, task) {
 
 const SLEEP_CELL = new Int32Array(new SharedArrayBuffer(4));
 
-/** Khoa dong bo bang file tao O_EXCL; khoa bo roi > 30s (tien trinh chet) thi coi la cu va lay lai. */
-function withFileLock(lockFile, fn) {
+const LOCK_STALE_MS = 30000;
+
+/**
+ * Lay khoa cu (> 30s) bang doi ten nguyen tu: chi MOT tien trinh doi ten duoc; khoa vua duoc lam moi giua chung thi tra lai.
+ * Truoc day hai tien trinh cung thay khoa cu va cung rmSync => tien trinh thu hai xoa khoa MOI cua tien trinh thu nhat
+ * (critical scan 31/10).
+ */
+function takeStaleLock(lockFile, token) {
+  const aside = `${lockFile}.${token}.stale`;
+  try { fs.renameSync(lockFile, aside); } catch { return false; }
+  let fresh = true;
+  try { fresh = Date.now() - fs.statSync(aside).mtimeMs <= LOCK_STALE_MS; } catch { /* khong xet duoc: coi la tuoi */ }
+  if (fresh) {
+    try { fs.linkSync(aside, lockFile); fs.rmSync(aside, { force: true }); } catch { /* da co khoa moi: giu aside lam dau vet */ }
+    return false;
+  }
+  fs.rmSync(aside, { force: true });
+  return true;
+}
+
+/** Khoa dong bo bang file tao O_EXCL mang token rieng; chi go khoa CUA MINH (khoa da bi lay lai thi khong xoa). */
+export function withFileLock(lockFile, fn) {
   const deadline = Date.now() + 5000;
-  let fd;
+  const token = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`;
   for (;;) {
     try {
-      fd = fs.openSync(lockFile, 'wx');
+      const fd = fs.openSync(lockFile, 'wx');
+      try { fs.writeSync(fd, token); } finally { fs.closeSync(fd); }
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
       try {
-        if (Date.now() - fs.statSync(lockFile).mtimeMs > 30000) { fs.rmSync(lockFile, { force: true }); continue; }
+        if (Date.now() - fs.statSync(lockFile).mtimeMs > LOCK_STALE_MS && takeStaleLock(lockFile, token)) continue;
       } catch { continue; }
       if (Date.now() > deadline) throw new Error(`Khong lay duoc khoa ${lockFile} sau 5s — tien trinh khac dang ghi task`);
       Atomics.wait(SLEEP_CELL, 0, 0, 20);
@@ -205,8 +230,7 @@ function withFileLock(lockFile, fn) {
   try {
     return fn();
   } finally {
-    fs.closeSync(fd);
-    fs.rmSync(lockFile, { force: true });
+    try { if (fs.readFileSync(lockFile, 'utf8') === token) fs.rmSync(lockFile, { force: true }); } catch { /* da bi lay lai */ }
   }
 }
 

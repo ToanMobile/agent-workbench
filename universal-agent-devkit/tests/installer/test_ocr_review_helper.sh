@@ -160,4 +160,9 @@ rc="$(PATH="$TMP/bin:$PATH" OCR_FAKE=endpoint OCR_ARGS_LOG="$TMP/rng.args" pytho
 rc="$(PATH="/usr/bin:/bin" python3 "$HELPER" > "$TMP/out" 2> "$TMP/err"; echo $?)"
 [ "$rc" = 3 ] && grep -qi 'npm' "$TMP/out" "$TMP/err" && ok "ocr missing: exit 3 with the install hint" || fail "missing: rc=$rc"
 
+# BUG-REV-ocr-review-tmp-leak: a run without --out that ends in an error leaves no ocr-review.* folder in $TMPDIR
+TD="$TMP/tmpdir"; mkdir -p "$TD"
+TMPDIR="$TD" PATH="$TMP/bin:$PATH" OCR_FAKE=badkey python3 "$HELPER" --strict > /dev/null 2>&1
+[ -z "$(ls -A "$TD")" ] && ok "failed run without --out: its temp folder is removed" || fail "temp folder leaked: $(ls "$TD")"
+
 [ "$FAILS" = 0 ] && { echo "ALL PASS"; exit 0; } || { echo "FAILS=$FAILS"; exit 1; }

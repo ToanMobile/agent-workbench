@@ -849,7 +849,13 @@ def _own_check(cwd, rev, tag_remote, linked):
     homes = [d for d in dict.fromkeys((project, sproject, top, os.path.abspath(cwd))) if os.path.isfile(os.path.join(d, MATRIX))]
     if not homes:
         # main có ma trận (nếu không thì main đã trả True); worktree không ma trận chưa chạy test hồi quy nào để bảo lãnh
-        return (False, "no regression matrix in this linked worktree") if linked else (True, "no regression matrix")
+        if linked:
+            return False, "no regression matrix in this linked worktree"
+        # #482 as in strict_check: a repo with the DevKit installed (.agents/devkit, a symlink counts) that lost its matrix
+        # had it deleted or renamed — fail closed instead of "no matrix, nothing to check"
+        if os.path.lexists(os.path.join(top, ".agents", "devkit")):
+            return False, f"DevKit installed (.agents/devkit) but {MATRIX} is missing: restore it, then run agent-kit integrate"
+        return True, "no regression matrix"
     problem = None
     if receipt is not None and receipt.get("exit") == 0 and receipt.get("head"):
         problem = receipt_problem(top, rp, receipt, rev)

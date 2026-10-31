@@ -43,6 +43,7 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_review_fanout.sh"; sb_review_fixture "$TMP/bin"   # signed review PASS + CI checks (new gate preconditions)
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_HEAVY_SLOT_DIR="$TMP/slots"
 python3 -c 'import json; print(json.dumps({"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo VERIFY-RAN; exit 1"]}))' > "$TMP/cfg.json"

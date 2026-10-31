@@ -34,6 +34,9 @@ class InstallAutostart(unittest.TestCase):
             factory = plist["EnvironmentVariables"].get("AGENT_OFFICE_FACTORY_SCRIPT", "")
             self.assertEqual(os.path.realpath(factory), os.path.realpath(os.path.join(HERE, "..", "..", "ai-factory.sh")))
             self.assertTrue(os.path.isfile(factory), factory)
+            # trang /cc-switcher gọi cc-switcher-mcp ở repo thật, không phải bản chép
+            ccs = plist["EnvironmentVariables"].get("AGENT_OFFICE_CC_SWITCHER", "")
+            self.assertEqual(os.path.realpath(ccs), os.path.realpath(os.path.join(HERE, "..", "cc-switcher-mcp", "bin", "cc-switcher-mcp.js")))
 
 
 if __name__ == "__main__":

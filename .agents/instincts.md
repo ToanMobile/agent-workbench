@@ -14,6 +14,8 @@
 - **Nguyên nhân gốc rễ:** Model cố gắng tối ưu token đầu ra nên bỏ qua đoạn giữa.
 - **Quy tắc bắt buộc:** Luôn thay thế trọn vẹn khối mã liền mạch, kiểm tra độ dài file và git diff trước khi xác nhận hoàn tất.
 - **Kiểm tra tự động:** `grep -En "// \.\.\.|\/\* \.\.\.|\# \.\.\." <modified_files>` phải trả về 0 kết quả.
+- **detect:** `^\s*(//|/\*|#)\s*\.\.\.\s*(existing|rest|keep|unchanged|same)\b`
+- **detect-glob:** `*.py`, `*.sh`, `*.bash`, `*.js`, `*.mjs`, `*.ts`, `*.tsx`, `*.kt`, `*.java`, `*.swift`, `*.go`, `*.rs`, `*.cs`
 
 ---
 
@@ -59,6 +61,8 @@
 - **Hiện tượng lỗi:** Ứng dụng chạy sai luồng dữ liệu, nút bấm không phản hồi nhưng không hề có thông báo hay crash log ("Ghost Bug").
 - **Nguyên nhân gốc rễ:** Dùng `catch (e) {}` hoặc `except: pass` để "chữa cháy" cho qua unit test mà không xử lý hoặc log lỗi.
 - **Quy tắc bắt buộc:** Nghiêm cấm khối catch rỗng. Bắt buộc ghi log lỗi kèm ngữ cảnh (Contextual Error Logging) hoặc hiển thị UI Error Boundary.
+- **detect:** `^\s*except\s*:\s*pass\s*$`, `^\s*except\s+(Base)?Exception\s*:\s*pass\s*$`, `catch\s*\([^)]*\)\s*\{\s*\}`
+- **detect-glob:** `*.py`, `*.sh`, `*.bash`, `*.js`, `*.mjs`, `*.ts`, `*.tsx`, `*.kt`, `*.java`, `*.swift`, `*.go`, `*.rs`, `*.cs`
 
 ---
 
@@ -576,6 +580,8 @@ Mẫu ghi nhận:
 - **Nguyên nhân:** chuỗi giống khóa nằm nguyên khối trong mã nguồn; công cụ quét từng commit nên sửa mã mới không xoá được sự cố nằm ở commit cũ
 - **Quy tắc phòng ngừa & Cách fix:** ghép giá trị giả lúc chạy từ nhiều mảnh (tiền tố + phần còn lại), không bao giờ viết nguyên khối; làm ngay từ commit đầu vì sửa sau không xoá được lịch sử, chỉ còn đánh dấu dương tính giả hoặc dựng lại nhánh
 - **Lệnh kiểm tra:** `git diff origin/main -U0 | grep -E '^\+' | grep -E 'sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{10,}|Bearer [A-Za-z0-9]{10,}|(token|secret)=[A-Za-z0-9]{10,}' phải rỗng`
+- **detect:** `sk-(ant-|proj-)?[A-Za-z0-9]{20,}`, `ghp_[A-Za-z0-9]{30,}`, `AKIA[0-9A-Z]{16}`
+- **detect-glob:** `**`
 
 ---
 
@@ -708,6 +714,8 @@ Mẫu ghi nhận:
 - **Quy tắc phòng ngừa & Cách fix:** macOS: dùng sed -i '' (hoặc perl -pi -e); thay timeout bằng gtimeout hoặc perl -e 'alarm N; exec @ARGV'.
 - **Lệnh kiểm tra:** `grep -rnE "sed -i [^'\"]|(^|[ ;|&])timeout " scripts .claude 2>/dev/null | grep -v "sed -i ''"`
 - **Nguồn:** retro 2026-10-26
+- **detect:** `(^|[;&|]\s*)sed -i [^'"]`, `(^|[;&|(]\s*)timeout [0-9]`
+- **detect-glob:** `*.sh`, `*.bash`
 
 ---
 
@@ -743,3 +751,135 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Duyệt chéo bằng chuỗi tự khai: agent tự duyệt được cho chính mình
 - **Nguyên nhân:** reviewer/author, approved-head, task_id đều là chuỗi agent tự ghi (cùng tài khoản GitHub, cùng user máy); trailer task_id cũ dùng lại được cho nội dung mới
 - **Quy tắc phòng ngừa & Cách fix:** duyệt chỉ tính khi gắn với biên bản ngoài repo ghi auditedHead (sha) và nội dung hiện tại khớp cây đó, auditedHead sau base; marker thiếu bằng chứng → fail closed; chặn agent đăng comment duyệt trơn
+
+---
+
+### [INSTINCT-087] Parser tuỳ chọn shell: X="${2:-}"; shift 2 khi cờ là đối số cuối làm vòng lặp vô hạn
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Parser tuỳ chọn shell: X="${2:-}"; shift 2 khi cờ là đối số cuối làm vòng lặp vô hạn
+- **Nguyên nhân:** Dưới set -u không có set -e, shift 2 với $#=1 trả lỗi mà không giảm $#, while [ $# -gt 0 ] lặp mãi
+- **Quy tắc phòng ngừa & Cách fix:** Cờ cần giá trị: kiểm [ $# -ge 2 ] trước, thiếu thì báo lỗi exit 2; không dùng ${2:-} rồi shift 2
+
+---
+
+### [INSTINCT-088] Gộp finding review: finding không trích dẫn quyết định mức độ của cụm có trích dẫn
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Gộp finding review: finding không trích dẫn quyết định mức độ của cụm có trích dẫn
+- **Nguyên nhân:** dedupe chọn head = mức nặng nhất của mọi thành viên, kể cả thành viên bị cite-check loại, nên P0 bịa + P2 thật thành P0 blocking
+- **Quy tắc phòng ngừa & Cách fix:** Mức độ/verdict của cụm chỉ lấy từ thành viên đã qua cite-check; verdict fail của reviewer mà mọi P0/P1 đều bị loại thì không còn bằng chứng
+
+---
+
+### [INSTINCT-089] Đường dẫn trong output git bị C-quote (core.quotePath) nên so khớp đường dẫn thật trượt
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Đường dẫn trong output git bị C-quote (core.quotePath) nên so khớp đường dẫn thật trượt
+- **Nguyên nhân:** git diff/ls-files in tên file non-ASCII dạng "b/l\341\273\227i.py" khi core.quotePath=true (mặc định); code cắt line[4:] ra tên sai
+- **Quy tắc phòng ngừa & Cách fix:** Gọi git với -c core.quotePath=false và ưu tiên -z; tên còn trong ngoặc kép thì giải mã
+
+---
+
+### [INSTINCT-090] Verdict của gate đọc từ file/biến môi trường mà agent tự ghi được
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Gate review nhận summary.json PASS do agent tự viết, và review chạy rút gọn khi agent export REVIEW_SKIP_REVIEWERS / REVIEW_*_BIN trước khi Stop
+- **Nguyên nhân:** gate tin mọi file trong .git/review-fanout và kế thừa nguyên môi trường của phiên; không có gì phân biệt kết quả của máy review với chuỗi agent tự khai
+- **Quy tắc phòng ngừa & Cách fix:** kết quả gate phải có chữ ký HMAC (khoá ngoài repo, mode 600) và bị từ chối khi thiếu/sai chữ ký; gate gọi tool với allowlist môi trường; bỏ qua reviewer chỉ bằng token một lần gắn code hash, có hạn, có log; chạy rút gọn trả PASS_REDUCED khác PASS; hook chặn agent ghi vào thư mục kết quả, hooks, settings, workflow
+
+---
+
+### [INSTINCT-091] Diff đưa cho LLM reviewer là dữ liệu không tin cậy
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Comment/chuỗi trong code thay đổi có thể nói với reviewer ("ignore previous instructions", "approve this change") hoặc giấu ký tự unicode ẩn; reviewer có shell thì còn chạy được lệnh; một verifier đơn lẻ bác được finding nhiều reviewer cùng thấy
+- **Nguyên nhân:** prompt không đánh dấu diff là dữ liệu, độ sâu review chỉ theo số dòng/tên file, Grok có run_terminal_cmd, verifier có quyền phủ quyết tuyệt đối
+- **Quy tắc phòng ngừa & Cách fix:** prompt ghi rõ diff là UNTRUSTED và text nói với reviewer là finding P0 security; quét tất định unicode ẩn + cụm injection → ép depth deep; reviewer chỉ có công cụ đọc; verifier không bác được finding ≥2 reviewer hoặc P0 security
+
+---
+
+### [INSTINCT-093] Bước tuần tự giấu trong fan-out "song song"
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Review 4 bên nói là chạy song song nhưng wall time = quét known-pattern + reviewer chậm nhất + một verifier Opus kiểm lần lượt mọi finding + độ trễ poll 5 s của Antigravity
+- **Nguyên nhân:** các bước phụ (quét, verify, poll kết quả) chạy trước/sau nhóm song song thay vì cùng lúc; verifier gom mọi finding vào một lời gọi; poll khoảng cố định dài
+- **Quy tắc phòng ngừa & Cách fix:** đo thời điểm từng file kết quả xong (mtime so với t0) trước khi tối ưu; bước không phụ thuộc chạy cùng nhóm reviewer; verifier mỗi finding một lời gọi, chạy song song có trần job, lỗi một lô = cả verifier lỗi (fail closed); poll 0.5–1 s; không nới luật (đồng thuận, pin model, fail-closed) để lấy tốc độ
+
+### [INSTINCT-094] Cổng merge chỉ tin bằng chứng gắn đúng commit và có chữ ký
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** merge gate tự động chỉ chạy verify cục bộ rồi `gh pr merge`; không hỏi verdict review 4 bên, không xem CI, nên PR chưa review / review FAIL / CI đỏ vẫn merge được
+- **Nguyên nhân:** mỗi cổng (review hook, CI, merge gate) tự kiểm phần của mình và tin rằng cổng khác đã chặn; verdict review là file JSON ai cũng ghi được
+- **Quy tắc phòng ngừa & Cách fix:** ngay trước merge, đòi verdict PASS cho đúng code state của head PR qua entry point của DevKit (`review-fanout.sh --status`, rồi `--verify-summary` trên bản chép); không tự tính lại HMAC; thiếu tool/entry point/khoá = không merge (exit 9); PASS_REDUCED chỉ qua cờ của chính lượt chạy; check CI đỏ/không đọc được = không merge; repo có required checks thì `--auto --match-head-commit`, không bao giờ `--admin`
+
+### [INSTINCT-095] Bỏ bước người duyệt thì thay bằng cổng máy chặt hơn, không phải bỏ cổng
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** PR money/auth/schema/migration dừng ở human-gate (exit 7) chờ người; muốn tự động 100% thì dễ xoá luôn category → các PR nhạy cảm nhất merge với cùng mức kiểm như PR sửa chữ
+- **Nguyên nhân:** "human" là cơ chế chặn duy nhất cho các category đó
+- **Quy tắc phòng ngừa & Cách fix:** category nhạy cảm → `machine_gate`: review deep + reviewer security ok/pass + test bổ sung riêng (merge_policy.machine_gate.verify_commands); thiếu test bổ sung = dừng (fail-closed), biên nhận merge train không thay được test bổ sung, PASS_REDUCED không bao giờ đủ
+
+### [INSTINCT-096] Test của chính bộ phân loại chứa đúng chuỗi nó bắt nên PR sửa bộ phân loại tự bị chặn
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** PR #742 thêm `tests/super-board/test_merge_policy_machine_gate.sh` với fixture là đúng các từ khoá tiền / auth / schema của DEFAULT_MACHINE_GATE; merge-policy quét dòng thêm của mọi file nên tự xếp chính PR đó vào machine-gate money/auth/schema, REDUCED bị từ chối (exit 9). Lúc ghi bài học này, chính mục instincts trích nguyên văn các từ khoá đó cũng kích lại gate
+- **Nguyên nhân:** keyword/pattern quét toàn bộ diff, không phân biệt fixture trong test của chính policy với code sản phẩm
+- **Quy tắc phòng ngừa & Cách fix:** bỏ khỏi phần quét keyword/pattern đúng danh sách cứng test của chính policy (`POLICY_SELF_TESTS`, glob `*` không qua `/`), không config/env nào nới; label, path, migration, protected_paths, kích thước vẫn tính các file đó; test phải chứng minh cùng chuỗi trong code sản phẩm, test khác, file đổi tên và header diff giả VẪN bị chặn; không sửa fixture để lách detector; tài liệu, instincts, ghi chú PR nói về từ khoá thì mô tả, không chép nguyên văn
+
+### [INSTINCT-097] Hook fail-closed phải kiểm phụ thuộc trước lệnh ngoài đầu tiên
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** `review_gate.sh` chạy `mkdir -p` trước khi kiểm `python3`; với PATH không có python3 (QA K-4) dòng lỗi đầu tiên là `mkdir: command not found`, thông báo "python3 không có" bị che và hook còn thử ghi vào project
+- **Nguyên nhân:** khối kiểm phụ thuộc đặt sau phần dựng thư mục log, nên một lệnh ngoài khác hỏng trước
+- **Quy tắc phòng ngừa & Cách fix:** khối `command -v <tool>` của hook fail-closed đặt ngay sau phần xác định project, trước mọi lệnh ngoài và mọi lần ghi; test chạy hook với PATH chỉ có bash/cat, đòi exit 2, dòng đầu nhắc tên tool, không có "command not found", không tạo gì trong project
+
+### [INSTINCT-098] Chữ ký verdict phải buộc vào đúng code state, kiểm và đọc trên cùng một lần đọc
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** review 2/2 của #742 (r14c): summary "nothing to review" được ký mà không có `meta.code_hash`; `review-fanout.sh --status` kiểm MAC rồi mở file lần hai để lấy verdict và không so `code_hash`; merge gate chấp nhận `code_hash` vắng (`not in (None, run)`); `review_sign.py sign` ký mọi file được chỉ tới. Chép một PASS đã ký sang thư mục run của code khác là merge được code chưa review (BUG-REV-76e3be1a9d, 7b0abde38e, 738b4fa129)
+- **Nguyên nhân:** MAC chỉ phủ byte của file, còn "file này trả lời cho code nào" lấy từ tên thư mục; vắng trường thì coi như khớp
+- **Quy tắc phòng ngừa & Cách fix:** mọi summary được ký đều mang `meta.code_hash`; người đọc đọc byte MỘT lần, kiểm MAC trên đúng byte đó và đòi `code_hash` bằng mã băm đang hỏi (vắng = không phải verdict); người ký chỉ ký `<…>/review-fanout/<H>/summary.json` có `meta.code_hash` bằng H; test chép summary đã ký sang run khác và summary không có code_hash đều phải ra không-PASS
+
+### [INSTINCT-099] Guard phân tích lệnh shell: không đọc được thì chặn khi lệnh trỏ vào vùng cấm, không bao giờ `or []`
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** `guard-review-tamper.py` lọt: `python3 -I -c`, `node --x -e`, `/usr/bin/python3 -c` (regex đòi `-c` liền sau tên), `bash <<EOF` (không quét thân heredoc), `cd "$VAR"` rồi ghi đường dẫn tương đối, dòng shlex không tách được (`$'..'`) vì `targets(...) or []` biến None thành "không ghi gì", ghi qua symlink (normpath thay vì realpath), xoá cả thư mục hooks (regex đòi `hooks/<tên>`) (BUG-REV-c23bc3cb6d, 4a3ec3ef82, 5f7bee1cb0)
+- **Nguyên nhân:** guard fail-open ở mọi chỗ trình phân tích không chắc, lặp lại INSTINCT-045
+- **Quy tắc phòng ngừa & Cách fix:** `targets(cmd, cwd, run_bodies=True)`; None, "unparsed", ghi tương đối sau "cdvar" ⇒ chặn khi lệnh nêu vùng cấm; regex interpreter bỏ qua tuỳ chọn trước `-c/-e`, nhận đường dẫn đầy đủ và shell `-c`/`<<`; đường dẫn so cả normpath lẫn realpath của tổ tiên gần nhất có thật; test từng biến thể lách và các lệnh hợp lệ (chạy review-fanout, grep code, `cd $TMP && echo > notes`) vẫn qua
+
+### [INSTINCT-100] Khoá ký nằm cùng uid với agent thì guard phải chặn cả ĐỌC khoá và lái bộ ký, không chỉ chặn ghi
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** khoá HMAC của review đọc được bằng Read/Grep/`cat`; một script tự viết gọi bộ ký tự ký verdict PASS (BUG-REV-592ad1528c, 738b4fa129)
+- **Nguyên nhân:** guard ghi rõ "Reading stays allowed"; guard-secrets không có tên khoá
+- **Quy tắc phòng ngừa & Cách fix:** guard-secrets (đăng ký Read|Grep|Bash) coi đường dẫn khoá là secret; guard-review-tamper chặn Read/Grep/Glob tới thư mục khoá hay thư mục cha của nó, Bash nêu khoá, Bash chạy interpreter nêu bộ ký (trừ `review_sign.py verify`), Write/Edit file không phải tài liệu có tên bộ ký hay khoá; ghi rõ phần còn hở (cùng uid, script giấu tên) và giữ hai lớp sau: chữ ký buộc code_hash (INSTINCT-098) và cấm ghi `.git/review-fanout`; tách quyền thật (tiến trình hay uid riêng giữ khoá) là việc riêng
+
+### [INSTINCT-101] Gộp finding: thành viên bị cite-check loại không được góp người ủng hộ cho cụm
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** `dedupe()` tính `reviewers`, `known_pattern`, `deterministic` trên mọi thành viên: một finding bịa (cited=False) cùng file:dòng biến P1 sai của reviewer khác thành "consensus" không bác được; reviewer bỏ phiếu fail chỉ bằng P0 bị loại mà gộp vào cụm P2 hợp lệ vẫn làm cả lượt FAIL (BUG-REV-9516f93323, lặp INSTINCT-088)
+- **Nguyên nhân:** severity đã lấy từ thành viên cited nhưng các trường khác thì không
+- **Quy tắc phòng ngừa & Cách fix:** mọi trường quyết định (reviewers, known_pattern, deterministic) lấy từ `cited_ms or ms`; reviewer có P0/P1 bị cite-check loại trong cụm ghi riêng (`dropped_by_cite`) để decide() biết phiếu fail của họ không còn bằng chứng; test cả hai ca và đối chứng P1 cited thật vẫn FAIL
+
+### [INSTINCT-102] Lượt review không được tự đổi thứ nó băm, và phải băm lại trước khi ký
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** (a) FAIL ở worktree liên kết ghi hàng BUG-REV vào file trạng thái hồi quy track (nằm trong mã băm) nên ngay sau FAIL `--status` ra NONE và Stop hook chạy lại cùng review có tính tiền; (b) verdict nộp dưới mã băm lúc bắt đầu trong khi cite-check và verifier đọc cây lúc kết thúc: sửa file giữa chừng làm P1 thật thành "uncited" và ra PASS cho code chưa ai review (BUG-REV-49df56afb6, d5a4fc3b03)
+- **Nguyên nhân:** mã băm chụp một lần ở đầu; không ai so cây lúc ký với cây đã review
+- **Quy tắc phòng ngừa & Cách fix:** băm lại ngay trước review-merge: khác ⇒ FAIL "tree changed during the review", không ghi hàng bug; sau khi ghi hàng bug mà mã băm đổi thì nộp cùng FAIL (đã ký, `meta.code_hash` mới, `recorded_from`) dưới mã băm mới, chỉ FAIL, không bao giờ PASS; test ở worktree liên kết: FAIL rồi `--status` phải FAIL, lần chạy thứ hai lấy cache
+
+### [INSTINCT-103] Cổng đòi một mức review mà bộ chạy review không bao giờ tự chọn ⇒ vòng lặp vô tận
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** merge gate đòi review deep cho PR machine-gate, nhưng review-fanout chọn deep chỉ theo số dòng, tên đường dẫn, tín hiệu injection; PR nhỏ có label hay từ khoá bị gate thì mãi light, gate exit 6, thẻ quay Review ↔ Merge mãi (BUG-REV-37b922ce04)
+- **Nguyên nhân:** tiêu chí của cổng (merge-policy) và của bộ chạy (review-fanout) nằm ở hai nơi, không có đường nào truyền "cần deep" sang bộ chạy
+- **Quy tắc phòng ngừa & Cách fix:** cổng gặp PASS light của PR bị gate thì ghi `<git common dir>/review-fanout/deep-heads/<sha>`; review-fanout thấy dấu đó (hoặc `--depth deep`) thì chạy deep và đưa `depth=deep` vào mã băm (chỉ khi ép, mã băm cũ không đổi); cổng hỏi đúng code state ép-deep; lý do void nêu lệnh `--depth deep`; test: light ⇒ exit 6, có dấu, mã băm đổi; PASS deep ⇒ merge; PR thường không bị đánh dấu
+
+### [INSTINCT-104] Bằng chứng đã ký chỉ có giá trị trong đúng repo và đúng thư mục run của nó
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** lệnh drop hàng BUG-REV với `--refuted-by RUN_DIR` nhận mọi thư mục có `summary.json` ký hợp lệ; khoá dùng chung mọi repo trên máy nên run "refuted" của repo khác hay repo tạm cùng cluster id xoá được hàng đang chặn gate (BUG-REV-2cd72a67bb)
+- **Nguyên nhân:** chỉ kiểm chữ ký, không kiểm bằng chứng thuộc về ai
+- **Quy tắc phòng ngừa & Cách fix:** ngoài chữ ký đòi run nằm trong `<git common dir>/review-fanout/` của chính project, tên thư mục bằng `meta.code_hash`, `meta.repo` là project hoặc worktree cùng common dir; test run repo khác, run chép sang nhưng meta.repo lạ, tên lệch code_hash đều bị từ chối
+
+### [INSTINCT-105] Mã băm "cây không đổi" phải gồm HEAD và bỏ đúng file trạng thái của chính công cụ
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** `pm-review-audit.js` băm `git diff HEAD` cùng file untracked mà không băm HEAD: commit giữa lúc audit (hai cây đều sạch) vẫn ra cùng mã băm, audit trả `ok` cho commit cũ; tree0 chụp trước khi tạo task nên file `.antigravity-pm/` mới làm báo sai "differs" (BUG-REV-7f8358bf79)
+- **Nguyên nhân:** coi "diff rỗng" là "cùng code"; file trạng thái của chính công cụ lọt vào mã băm
+- **Quy tắc phòng ngừa & Cách fix:** băm `git rev-parse HEAD` trước diff; bỏ khỏi danh sách untracked đúng thư mục trạng thái mặc định của công cụ (không tin stateDir cấu hình được); test HEAD đổi giữa audit ⇒ không ok, file `.antigravity-pm/` mới ⇒ không báo sai
+
+### [INSTINCT-106] Đọc JSON cấu hình của người dùng lỗi thì bỏ qua và báo, không bao giờ ghi đè bằng `{}` cộng giá trị mới
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** `balanceRepoAccounts()` (cc-switcher) bắt lỗi `JSON.parse` của `.claude/settings.local.json`, giữ `existing = {}` rồi vẫn ghi file, xoá sạch hooks và permissions của repo, cùng lỗi đã sửa ở `syncToCcSwitchApp` và `readRepoSettings` cùng file (BUG-REV-8e5a7879c3)
+- **Nguyên nhân:** sửa lỗi theo từng hàm, không sửa ở hàm đọc dùng chung
+- **Quy tắc phòng ngừa & Cách fix:** mọi chỗ đọc settings dùng `readRepoSettings()`; parse lỗi hoặc không phải object ⇒ bỏ repo đó, log `warn`, trả `skipped: true`; người gọi (panel) không đếm repo bị bỏ và nêu tên; test file hỏng giữ nguyên từng byte
+
+### [INSTINCT-107] Review đọc trạng thái hồi quy từ file ngoài cây thì file đó phải nằm trong mã băm và ngoài repo
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** review của cây sạch (cây merge gate băm) chỉ thấy file trạng thái hồi quy đã commit; file này nằm trong danh sách cấm commit nên khoảng 65 hàng BUG-REV mãi NOT_RUN hay NEEDS_TEST và review không bao giờ PASS (B2 của #742)
+- **Nguyên nhân:** nguồn trạng thái duy nhất là file track trong cây
+- **Quy tắc phòng ngừa & Cách fix:** `REVIEW_REGRESSION_STATUS=<đường dẫn tuyệt đối NGOÀI repo>`: review-merge đọc hàng BUG-REV từ đó với cùng `effective_status` và `REV_BAD` (luật test liên kết phải PASS giữ nguyên), byte file vào mã băm, FAIL ghi hàng bug vào đó; tương đối, thiếu, hỏng hay nằm trong repo ⇒ FAIL hoặc exit 2; merge gate dùng cùng biến để hỏi đúng mã băm

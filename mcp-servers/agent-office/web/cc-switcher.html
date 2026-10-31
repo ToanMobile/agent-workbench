@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CC Switcher · Xưởng agent</title>
+<script>
+  (function () {
+    var saved = null;
+    try { saved = localStorage.getItem('agent-office-theme'); } catch (e) {}
+    var dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* cùng bộ màu với Xưởng agent (web/index.html) */
+  :root {
+    --bg: #E4E9EF; --floor: #EEF1F5; --floor2: #E2E7EE; --ink: #1C2431; --muted: #5A6475; --faint: #6B7484; --line: #CDD4DE;
+    --panel: rgba(250, 251, 253, 0.92); --card: #FFFFFF;
+    --c-ready: #3567D6; --c-building: #E58D0B; --c-qa: #8B5CF6; --c-review: #0E9A8A; --c-blocked: #D63E2C; --c-done: #4C9744; --c-away: #A3ABB8;
+    --t-ready: #2B58BD; --t-building: #8F5200; --t-qa: #6638D4; --t-review: #06705F; --t-blocked: #B02D1E; --t-done: #2C6E27;
+    --shadow: 0 10px 34px rgba(20, 32, 52, 0.13);
+    --font: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0D1218; --floor: #1A212B; --floor2: #212935; --ink: #E6EBF2; --muted: #9AA5B5; --faint: #8792A3; --line: #2B3543;
+    --panel: rgba(19, 25, 33, 0.92); --card: #1F2732;
+    --c-ready: #5B8BF2; --c-building: #F3A63A; --c-qa: #A27EFB; --c-review: #26B6A3; --c-blocked: #F05A47; --c-done: #69B35E; --c-away: #4D5664;
+    --t-ready: #86A9F6; --t-building: #F3A63A; --t-qa: #B99BFC; --t-review: #3FC4B1; --t-blocked: #F47B6B; --t-done: #7DC373;
+    --shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--c-ready); outline-offset: 2px; }
+  a { color: var(--c-ready); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 48px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  header.top { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; padding: 14px 18px; position: sticky; top: 8px; z-index: 5; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+  .back { color: var(--muted); text-decoration: none; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; min-height: 44px; }
+  .back:hover { color: var(--ink); }
+  .title h1 { margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: -0.01em; }
+  .title p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  .top .right { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .sync { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-done); flex: none; }
+  .dot.warn { background: var(--c-building); } .dot.err { background: var(--c-blocked); } .dot.off { background: var(--c-away); }
+
+  .btn { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 7px 12px; cursor: pointer; font-weight: 500; display: inline-flex; gap: 6px; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; }
+  .btn:hover:not(:disabled) { border-color: color-mix(in srgb, var(--ink) 30%, var(--line)); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.primary { background: var(--c-ready); border-color: var(--c-ready); color: #fff; }
+  .btn.danger { background: color-mix(in srgb, var(--c-blocked) 12%, var(--card)); border-color: color-mix(in srgb, var(--c-blocked) 45%, var(--line)); color: var(--t-blocked); }
+  .btn.danger.solid { background: var(--c-blocked); border-color: var(--c-blocked); color: #fff; }
+  .btn.ghost { background: transparent; }
+  .btn[aria-busy="true"]::before { content: ""; width: 12px; height: 12px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .banner { margin-top: 12px; padding: 10px 14px; border-radius: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border: 1px solid; }
+  .banner.err { background: color-mix(in srgb, var(--c-blocked) 10%, var(--card)); border-color: color-mix(in srgb, var(--c-blocked) 40%, var(--line)); color: var(--t-blocked); }
+  .banner.warn { background: color-mix(in srgb, var(--c-building) 12%, var(--card)); border-color: color-mix(in srgb, var(--c-building) 40%, var(--line)); color: var(--t-building); }
+  .banner[hidden] { display: none; }
+
+  section { margin-top: 18px; }
+  section > h2 { font-size: 15px; margin: 0 0 10px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  section > h2 small { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+  .grid { display: grid; gap: 12px; }
+  .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 980px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .g3 { grid-template-columns: 1fr; } }
+  @media (max-width: 620px) { .g4, .g2 { grid-template-columns: 1fr; } header.top { position: static; } }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; min-width: 0; }
+  .card.active { border-color: var(--c-done); box-shadow: 0 0 0 1px var(--c-done) inset; }
+  .card.frozen { border-color: color-mix(in srgb, var(--c-blocked) 55%, var(--line)); }
+  .kpi .label { color: var(--muted); font-size: 12.5px; }
+  .kpi .value { font-size: 20px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .kpi .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .acc-head { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; }
+  .acc-name { font-weight: 600; line-height: 1.3; }
+  .acc-mail { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .b-active { background: color-mix(in srgb, var(--c-done) 16%, transparent); color: var(--t-done); }
+  .b-parallel { background: color-mix(in srgb, var(--c-review) 16%, transparent); color: var(--t-review); }
+  .b-ready { background: color-mix(in srgb, var(--c-away) 22%, transparent); color: var(--muted); }
+  .b-frozen { background: color-mix(in srgb, var(--c-blocked) 16%, transparent); color: var(--t-blocked); }
+  .b-prio { background: color-mix(in srgb, var(--c-qa) 16%, transparent); color: var(--t-qa); }
+  .meter { margin-top: 12px; }
+  .meter .row { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); }
+  .meter .row b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; border-radius: 999px; background: var(--floor2); overflow: hidden; margin-top: 4px; }
+  .bar > i { display: block; height: 100%; border-radius: inherit; background: var(--c-done); transition: width .4s ease; }
+  .bar > i.mid { background: var(--c-building); } .bar > i.low { background: var(--c-blocked); }
+  .facts { margin: 12px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12.5px; }
+  .facts dt { color: var(--muted); } .facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .acc-actions { margin-top: 12px; display: flex; gap: 8px; }
+  .acc-actions .btn { flex: 1; }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .seg { display: inline-flex; gap: 8px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); }
+  .seg button { border: 0; background: transparent; padding: 7px 12px; cursor: pointer; min-height: 44px; min-width: 44px; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--c-ready); color: #fff; font-weight: 600; }
+  .custom { display: inline-flex; gap: 8px; align-items: center; }
+  .custom input { width: 76px; padding: 7px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); min-height: 44px; }
+  .hint { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+
+  ul.repos { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  ul.repos li { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; background: var(--floor); border-radius: 10px; font-size: 13px; }
+  .tag { font-size: 11.5px; color: var(--muted); }
+  .tag.warn { color: var(--t-building); }
+  .b-fallback { background: color-mix(in srgb, var(--c-building) 18%, transparent); color: var(--t-building); }
+  .b-group { background: var(--floor2); color: var(--muted); font-weight: 500; }
+  .rp-name { font-weight: 600; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .rp-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; max-width: 340px; }
+  .rp-note { font-size: 12px; color: var(--t-building); margin-top: 3px; max-width: 320px; }
+  .rp-note.muted { color: var(--muted); }
+  .rp-assign { display: flex; gap: 8px; align-items: center; }
+  select, .field input { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; min-height: 44px; }
+  select.dirty { border-color: var(--c-ready); box-shadow: 0 0 0 1px var(--c-ready) inset; }
+  .btn.sm { min-height: 44px; padding: 4px 10px; font-size: 12.5px; }
+  .btn[hidden] { display: none; }
+  tr.differs td { background: color-mix(in srgb, var(--c-building) 6%, transparent); }
+  td.nowrap { white-space: nowrap; }
+  .acc-repos li .tag.warn { font-weight: 600; }
+  .addform { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(140px, 1fr) auto auto; gap: 8px; align-items: end; margin-top: 12px; }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+  .field input { width: 100%; }
+  @media (max-width: 760px) { .addform { grid-template-columns: 1fr; } }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12.5px; }
+  td.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
+  .tablewrap { overflow-x: auto; }
+  .empty { color: var(--muted); padding: 18px; text-align: center; }
+
+  .skel { background: linear-gradient(90deg, var(--floor2), var(--floor), var(--floor2)); background-size: 200% 100%; animation: sh 1.2s ease-in-out infinite; border-radius: 14px; min-height: 96px; }
+  @keyframes sh { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .skel, .btn[aria-busy="true"]::before { animation: none; } .bar > i { transition: none; } }
+
+  dialog { border: 1px solid var(--line); border-radius: 16px; padding: 0; background: var(--card); color: var(--ink); box-shadow: var(--shadow); width: min(460px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgba(10, 14, 20, .45); }
+  dialog form { padding: 18px 20px; }
+  dialog h3 { margin: 0 0 8px; font-size: 16px; }
+  dialog p { margin: 0; color: var(--muted); white-space: pre-line; }
+  dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+  .toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); padding: 10px 16px; border-radius: 12px; max-width: min(560px, calc(100vw - 32px)); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 20; }
+  .toast.show { opacity: 1; }
+  .toast.err { color: var(--t-blocked); }
+  footer { margin-top: 24px; color: var(--faint); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top panel">
+    <div>
+      <a class="back" href="/">← Xưởng agent</a>
+      <div class="title">
+        <h1>CC Switcher</h1>
+        <p>Bảng điều khiển 6 tài khoản AI · chống ban · quota 5 giờ</p>
+      </div>
+    </div>
+    <div class="right">
+      <span class="sync" id="sync" role="status"><span class="dot off"></span><span>Đang tải…</span></span>
+      <button type="button" class="btn" id="btnRefresh" title="Đọc lại % quota thật từ Anthropic">Làm mới quota</button>
+      <button type="button" class="btn ghost" id="btnTheme">Ca đêm</button>
+    </div>
+  </header>
+
+  <div class="banner err" id="errBanner" role="alert" hidden>
+    <span id="errText"></span>
+    <button type="button" class="btn" id="btnRetry">Thử lại</button>
+  </div>
+  <div class="banner warn" id="warnBanner" hidden></div>
+
+  <main id="main" aria-busy="true">
+    <section aria-labelledby="h-sum">
+      <h2 id="h-sum" class="sr">Tổng quan</h2>
+      <div class="grid g4" id="summary">
+        <div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-claude">
+      <h2 id="h-claude">Tài khoản Claude <small>quota 5 giờ · cách ly theo repo · khóa nhảy chéo</small></h2>
+      <div class="grid g3" id="claude"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+    </section>
+
+    <section aria-labelledby="h-backup">
+      <h2 id="h-backup">Dự phòng khác hãng <small>hết limit tự xoay: Grok CLI → AGY Ultra → AGY Pro · không lo ban</small></h2>
+      <div class="grid g3" id="backup"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+    </section>
+
+    <section aria-labelledby="h-act">
+      <h2 id="h-act">Thao tác nhanh</h2>
+      <div class="card">
+        <div class="actions">
+          <button type="button" class="btn" data-act="rotate">Đổi sang tài khoản kế tiếp</button>
+          <button type="button" class="btn danger" data-act="limit">Báo chạm 429 (đóng băng &amp; đổi ngay)</button>
+          <button type="button" class="btn" data-act="unfreeze">Mở khóa 429 &amp; xóa cooldown</button>
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <span id="cdLabel">Nghỉ giữa 2 tài khoản Claude:</span>
+          <div class="seg" role="group" aria-labelledby="cdLabel" id="cdSeg">
+            <button type="button" data-min="15" aria-pressed="false">15 phút</button>
+            <button type="button" data-min="5" aria-pressed="false">5 phút</button>
+            <button type="button" data-min="0" aria-pressed="false">Tắt</button>
+          </div>
+          <form class="custom" id="cdForm">
+            <label for="cdInput" class="sr">Số phút tùy chọn</label>
+            <input id="cdInput" type="number" min="0" max="1440" step="1" inputmode="numeric" placeholder="phút">
+            <button type="submit" class="btn">Đặt</button>
+          </form>
+        </div>
+        <p class="hint">Đổi giữa hai tài khoản Claude phải chờ hết thời gian nghỉ (chống quét nhiều tài khoản). Đổi sang Antigravity / Grok không cần chờ.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-repo" id="repoSection">
+      <h2 id="h-repo">Repo ↔ Tài khoản <small>repo nào dùng tài khoản Claude nào · .claude/settings.local.json → "account" · worktree dùng chung tài khoản của repo gốc</small></h2>
+      <div class="grid g3" id="repoByAcc"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+      <div class="card tablewrap" id="repos" style="margin-top:12px"><div class="skel" style="min-height:120px"></div></div>
+      <div class="card" style="margin-top:12px">
+        <div class="actions">
+          <button type="button" class="btn" data-act="balance" data-mode="even">Chia đều mặc định (FinOS / FinOS Team)</button>
+          <button type="button" class="btn" data-act="balance" data-mode="swap">Đảo nhóm FinOS ↔ Team</button>
+        </div>
+        <form class="addform" id="repoAddForm" autocomplete="off">
+          <label class="field">Thêm repo (đường dẫn tuyệt đối tới thư mục Git)
+            <input id="raPath" type="text" placeholder="/Volumes/Data/Toan/ten-repo" spellcheck="false" required>
+          </label>
+          <label class="field">Tên hiển thị (tùy chọn)
+            <input id="raName" type="text" maxlength="80" placeholder="mặc định: tên thư mục">
+          </label>
+          <label class="field">Tài khoản
+            <select id="raAcc"></select>
+          </label>
+          <button type="submit" class="btn primary">Thêm repo</button>
+        </form>
+        <p class="hint">Gán / thêm repo ghi khóa "account" vào .claude/settings.local.json của repo (giữ nguyên hooks, permissions…), giống lệnh <span class="mono">claude-profile</span>. Áp dụng cho phiên <span class="mono">claude</span> mới mở trong repo. Gỡ repo: bỏ khỏi danh sách và xóa khóa "account" (repo quay về ~/.claude mặc định).</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="h-hist">
+      <h2 id="h-hist">Lịch sử chuyển tài khoản <small>50 lần gần nhất</small></h2>
+      <div class="card tablewrap" id="history"><div class="skel" style="min-height:60px"></div></div>
+    </section>
+  </main>
+  <footer>Chỉ mở trên chính máy Mac · Telegram chỉ còn gửi cảnh báo 429 / đổi tài khoản · giờ theo Asia/Ho_Chi_Minh</footer>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlgTitle" aria-describedby="dlgBody">
+  <form method="dialog">
+    <h3 id="dlgTitle"></h3>
+    <p id="dlgBody"></p>
+    <div class="row">
+      <button type="submit" class="btn" value="cancel">Hủy</button>
+      <button type="submit" class="btn primary" value="ok" id="dlgOk">Đồng ý</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast panel" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (s) { return document.querySelector(s); };
+  var TZ = 'Asia/Ho_Chi_Minh';
+  var state = null, loadedAt = 0, busy = false, timer = null;
+  var REASONS = {
+    web_ui_switch: 'Web', web_ui_force_switch: 'Web (ép chuyển)', web_ui_rotate: 'Web: xoay vòng', web_ui_limit_429: 'Web: báo 429',
+    log_detected_429: 'Tự động: phát hiện 429 trong log', auto_rotate: 'Tự động xoay', manual_switch: 'MCP / CLI',
+    telegram_ui_switch: 'Telegram (cũ)', telegram_ui_force_switch: 'Telegram (cũ, ép)', telegram_ui_rotate: 'Telegram (cũ)',
+    telegram_ui_limit_429: 'Telegram (cũ): báo 429', telegram_remote_switch: 'Telegram (cũ)', telegram_rotate: 'Telegram (cũ)', telegram_reported_429: 'Telegram (cũ): báo 429'
+  };
+
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) for (var k in attrs) {
+      if (k === 'text') n.textContent = attrs[k];
+      else if (k === 'class') n.className = attrs[k];
+      else if (attrs[k] !== null && attrs[k] !== undefined && attrs[k] !== false) n.setAttribute(k, attrs[k]);
+    }
+    (kids || []).forEach(function (c) { if (c) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function fmtTime(ms, withDate) {
+    if (!ms) return '—';
+    var o = { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false };
+    if (withDate) { o.day = '2-digit'; o.month = '2-digit'; }
+    return new Intl.DateTimeFormat('vi-VN', o).format(new Date(ms));
+  }
+  function fmtDur(sec) {
+    sec = Math.max(0, Math.round(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    if (h) return h + ' giờ ' + m + ' phút';
+    if (m) return m + ' phút ' + (s < 10 ? '0' : '') + s + ' giây';
+    return s + ' giây';
+  }
+  function ago(ms) {
+    if (!ms) return 'chưa có';
+    var d = Math.max(0, (Date.now() - ms) / 1000);
+    if (d < 60) return 'vừa xong';
+    if (d < 3600) return Math.floor(d / 60) + ' phút trước';
+    if (d < 86400) return Math.floor(d / 3600) + ' giờ trước';
+    return fmtTime(ms, true);
+  }
+  function splitName(name) {
+    var parts = String(name || '').split(' — ');
+    return { title: parts[0], detail: parts.slice(1).join(' — ') };
+  }
+  function nowDrift() { return state ? (Date.now() - loadedAt) : 0; }
+  function cooldownLeft() { return state ? Math.max(0, state.antiBan.claudeCooldownRemainSec - nowDrift() / 1000) : 0; }
+
+  function toast(msg, isErr) {
+    var t = $('#toast');
+    t.textContent = msg; t.className = 'toast panel show' + (isErr ? ' err' : '');
+    clearTimeout(toast._t); toast._t = setTimeout(function () { t.className = 'toast panel'; }, 4200);
+  }
+  function confirmDlg(title, body, okText, danger) {
+    return new Promise(function (resolve) {
+      var d = $('#dlg');
+      $('#dlgTitle').textContent = title; $('#dlgBody').textContent = body;
+      var ok = $('#dlgOk'); ok.textContent = okText || 'Đồng ý';
+      ok.className = 'btn ' + (danger ? 'danger solid' : 'primary');
+      d.returnValue = '';
+      d.addEventListener('close', function h() { d.removeEventListener('close', h); resolve(d.returnValue === 'ok'); });
+      d.showModal(); ok.focus();
+    });
+  }
+  function setSync(kind, text) {
+    var s = $('#sync'); s.innerHTML = '';
+    s.appendChild(el('span', { class: 'dot ' + kind })); s.appendChild(el('span', { text: text }));
+  }
+  function showError(msg) { $('#errText').textContent = msg; $('#errBanner').hidden = false; }
+  function clearError() { $('#errBanner').hidden = true; }
+
+  function api(url, opts) {
+    return fetch(url, opts).then(function (r) {
+      return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }).then(function (j) {
+        if (r.status === 403) throw new Error('Trang này chỉ mở trên chính máy Mac (không qua tunnel điện thoại).');
+        if (!r.ok && !j.needsForce) throw new Error(j.error || ('Lỗi máy chủ (HTTP ' + r.status + ')'));
+        return j;
+      });
+    });
+  }
+  function load(refresh) {
+    if (!state) setSync('off', 'Đang tải…');
+    else setSync('warn', refresh ? 'Đang đọc quota thật…' : 'Đang cập nhật…');
+    return api('/api/cc-switcher/state' + (refresh ? '?refresh=1' : ''), { cache: 'no-store' }).then(function (j) {
+      state = j; loadedAt = Date.now(); clearError(); render();
+      setSync('', 'Cập nhật lúc ' + fmtTime(Date.now()) + ':' + String(new Date().getSeconds()).padStart(2, '0'));
+    }).catch(function (e) {
+      setSync('err', 'Không đọc được dữ liệu');
+      showError(e.message || String(e));
+      if (!state) renderEmptyError();
+    }).finally(function () { $('#main').setAttribute('aria-busy', 'false'); });
+  }
+  function renderEmptyError() {
+    ['#summary', '#claude', '#backup', '#repos', '#repoByAcc'].forEach(function (s) { var n = $(s); n.innerHTML = ''; n.appendChild(el('div', { class: 'card empty', text: 'Chưa có dữ liệu.' })); });
+    $('#history').innerHTML = ''; $('#history').appendChild(el('div', { class: 'empty', text: 'Chưa có dữ liệu.' }));
+  }
+
+  function badgeFor(p) {
+    if (p.isFrozen) return el('span', { class: 'badge b-frozen', text: 'Đóng băng' });
+    if (p.isActive) return el('span', { class: 'badge b-active', text: 'Đang dùng' });
+    if (p.isParallelActive) return el('span', { class: 'badge b-parallel', text: 'Chạy song song' });
+    return el('span', { class: 'badge b-ready', text: 'Sẵn sàng' });
+  }
+  function meter(label, pct, extra) {
+    var v = Math.max(0, Math.min(100, Number(pct) || 0));
+    var i = el('i', { class: v <= 15 ? 'low' : v <= 40 ? 'mid' : '' }); i.style.width = v + '%';
+    return el('div', { class: 'meter' }, [
+      el('div', { class: 'row' }, [el('span', { text: label }), el('span', null, [el('b', { text: 'Còn ' + v + '%' }), extra ? ' · ' + extra : ''])]),
+      el('div', { class: 'bar', role: 'progressbar', 'aria-label': label, 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(v) }, [i])
+    ]);
+  }
+  function facts(rows) {
+    var dl = el('dl', { class: 'facts' });
+    rows.forEach(function (r) { if (!r) return; dl.appendChild(el('dt', { text: r[0] })); dl.appendChild(el('dd', { text: r[1] })); });
+    return dl;
+  }
+  function switchBtn(p) {
+    var b = el('button', { type: 'button', class: 'btn' + (p.isActive ? '' : ' primary'), 'data-switch': p.id }, [p.isActive ? 'Đang dùng' : 'Chuyển sang']);
+    if (p.isActive) b.disabled = true;
+    return b;
+  }
+  function accountCard(p) {
+    var n = splitName(p.name);
+    var resetLeft = p.resetAtMs ? (p.resetAtMs - Date.now()) / 1000 : 0;
+    var card = el('article', { class: 'card' + (p.isActive ? ' active' : '') + (p.isFrozen ? ' frozen' : ''), 'aria-label': n.title });
+    card.appendChild(el('div', { class: 'acc-head' }, [
+      el('div', null, [el('div', { class: 'acc-name', text: n.title }), el('div', { class: 'acc-mail', text: n.detail })]),
+      badgeFor(p)
+    ]));
+    card.appendChild(meter('Quota 5 giờ', p.remainingPct, p.resetAtMs ? ('reset ' + fmtTime(p.resetAtMs)) : ''));
+    if (p.weeklyRemainingPct !== null && p.weeklyRemainingPct !== undefined) card.appendChild(meter('Quota 7 ngày', p.weeklyRemainingPct));
+    card.appendChild(facts([
+      ['Đã dùng (5 giờ)', p.usedPct + '%'],
+      ['Reset / mở khóa', p.resetAtMs ? (fmtTime(p.resetAtMs) + ' · còn ' + fmtDur(resetLeft)) : 'Chưa có mốc'],
+      p.isFrozen && p.frozenUntilMs ? ['Đóng băng tới', fmtTime(p.frozenUntilMs, true)] : null,
+      ['Repo đang gán', String(p.assignedRepoCount || 0)],
+      ['Số liệu quota', p.quota.live ? ('live · ' + ago(p.quota.updatedAtMs)) : (p.quota.source ? (p.quota.source + ' · ' + ago(p.quota.updatedAtMs)) : 'chưa có số liệu live')]
+    ]));
+    card.appendChild(el('div', { class: 'acc-actions' }, [switchBtn(p)]));
+    return card;
+  }
+  function backupCard(p) {
+    var n = splitName(p.name);
+    var card = el('article', { class: 'card' + (p.isActive ? ' active' : '') + (p.isFrozen ? ' frozen' : ''), 'aria-label': n.title });
+    card.appendChild(el('div', { class: 'acc-head' }, [
+      el('div', null, [el('div', { class: 'acc-name', text: n.title }), el('div', { class: 'acc-mail', text: n.detail })]),
+      el('div', null, [el('span', { class: 'badge b-prio', text: 'Ưu tiên ' + p.backupPriority }), ' ', badgeFor(p)])
+    ]));
+    card.appendChild(facts([
+      ['Hãng', p.vendor === 'google' ? 'Google (Antigravity)' : p.vendor === 'xai' ? 'xAI (Grok)' : p.vendor],
+      ['Trạng thái', p.isFrozen ? ('Đóng băng, mở ' + (p.resetTimeFormatted || (p.freezeRemainMin + ' phút'))) : 'Đổi ngay, không cần chờ'],
+      p.isFrozen && p.frozenUntilMs ? ['Đóng băng tới', fmtTime(p.frozenUntilMs, true)] : null
+    ]));
+    card.appendChild(el('div', { class: 'acc-actions' }, [switchBtn(p)]));
+    return card;
+  }
+  function kpi(label, value, sub) {
+    return el('div', { class: 'card kpi' }, [el('div', { class: 'label', text: label }), el('div', { class: 'value', text: value }), sub ? el('div', { class: 'sub', text: sub }) : null]);
+  }
+  function renderSummary() {
+    var a = state.activeProfile, h = state.health, s = $('#summary'); s.innerHTML = '';
+    var cl = cooldownLeft();
+    s.appendChild(kpi('Đang dùng', splitName(a.name).title, 'Còn ' + a.remainingPct + '%' + (a.resetAtMs ? ' · reset ' + fmtTime(a.resetAtMs) : '')));
+    var cd = kpi('Chống ban (Claude ↔ Claude)', cl > 0 ? ('Chờ ' + fmtDur(cl)) : 'Đổi ngay được', 'Nghỉ ' + state.antiBan.cooldownMinutes + ' phút · đóng băng 429: ' + Math.round(state.antiBan.rateLimitFreezeSec / 3600 * 10) / 10 + ' giờ');
+    cd.querySelector('.value').id = 'cdLive';
+    s.appendChild(cd);
+    s.appendChild(kpi('Chi phí CC Switch', '$' + Number(state.usage.totalCostUsd || 0).toFixed(2), (state.usage.totalRequests || 0).toLocaleString('vi-VN') + ' request'));
+    var probs = [];
+    if (!h.daemon.running) probs.push('daemon tắt');
+    if (!h.telegram.configured) probs.push('Telegram chưa cấu hình');
+    if (!h.ccSwitchDb.exists) probs.push('thiếu cc-switch.db');
+    if (h.quotaSyncError) probs.push('lỗi đọc quota');
+    var hk = kpi('Sức khỏe', probs.length ? probs.length + ' cảnh báo' : 'Ổn định',
+      'Daemon ' + (h.daemon.running ? 'đang chạy' : 'không chạy') + ' · cảnh báo Telegram ' + (h.telegram.configured ? 'bật' : 'tắt') + ' · quota ' + ago(h.quotaFetchedAtMs));
+    s.appendChild(hk);
+    var w = $('#warnBanner');
+    if (probs.length) { w.textContent = 'Cần xem: ' + probs.join(', ') + '.' + (!h.daemon.running ? ' Daemon tự đổi tài khoản khi gặp 429 và gửi cảnh báo Telegram: bật bằng launchd asia.finos.cc-switcher-daemon.' : ''); w.hidden = false; }
+    else w.hidden = true;
+  }
+  var repoDirty = {};   // repo path -> tài khoản đang chọn nhưng chưa lưu (giữ qua lần tự làm mới)
+  function claudeIds() { return state.claudeAccounts || ['finos', 'finos_team', 'max']; }
+  function pShort(id) { var p = state.profiles.find(function (x) { return x.id === id; }); return p ? (p.shortLabel || splitName(p.name).title) : id; }
+  function effBadge(r) {
+    var e = r.effective || {};
+    if (e.kind === 'assigned') return el('span', { class: 'badge b-active', text: pShort(e.account) });
+    if (e.kind === 'fallback') return el('span', { class: 'badge b-fallback', text: 'Tạm: ' + pShort(e.account) });
+    if (e.kind === 'unpinned') return el('span', { class: 'badge b-ready', text: '~/.claude mặc định' });
+    if (e.kind === 'missing') return el('span', { class: 'badge b-frozen', text: 'Không thấy repo' });
+    if (e.kind === 'blocked') return el('span', { class: 'badge b-frozen', text: 'Đang khóa hết' });
+    return el('span', { class: 'badge b-frozen', text: 'Không rõ' });
+  }
+  function renderRepoByAcc() {
+    var box = $('#repoByAcc'); box.innerHTML = '';
+    claudeIds().forEach(function (id) {
+      var p = state.profiles.find(function (x) { return x.id === id; }) || { id: id, name: id };
+      var items = state.repoAssignments.filter(function (x) { return x.pinnedInFile && x.account === id; });
+      var ul = el('ul', { class: 'repos acc-repos' });
+      items.forEach(function (x) {
+        var e = x.effective || {};
+        ul.appendChild(el('li', null, [el('span', { text: x.name }),
+          el('span', { class: 'tag' + (x.differs ? ' warn' : ''), text: e.kind === 'fallback' ? 'tạm dùng ' + pShort(e.account) : e.kind === 'missing' ? 'không thấy thư mục' : x.lastUsedAtMs ? 'dùng ' + ago(x.lastUsedAtMs) : 'chưa dùng' })]));
+      });
+      if (!items.length) ul.appendChild(el('li', { class: 'empty', text: 'Chưa có repo nào gán' }));
+      box.appendChild(el('div', { class: 'card' + (p.isFrozen ? ' frozen' : '') }, [
+        el('div', { class: 'acc-head' }, [
+          el('div', null, [el('div', { class: 'acc-name', text: pShort(id) }), el('div', { class: 'acc-mail', text: p.isFrozen ? 'Đang khóa 429' + (p.resetTimeFormatted ? ' tới ' + p.resetTimeFormatted : '') : 'Còn ' + (p.remainingPct != null ? p.remainingPct : '—') + '% quota 5 giờ' })]),
+          el('span', { class: 'badge ' + (items.length ? 'b-parallel' : 'b-ready'), text: items.length + ' repo' })
+        ]), ul]));
+    });
+    var loose = state.repoAssignments.filter(function (x) { return !x.pinnedInFile || claudeIds().indexOf(x.account) < 0; });
+    if (loose.length) {
+      var ul2 = el('ul', { class: 'repos' });
+      loose.forEach(function (x) { ul2.appendChild(el('li', null, [el('span', { text: x.name }), el('span', { class: 'tag warn', text: x.pinnedInFile ? 'account lạ: ' + x.account : 'chưa ghim → ~/.claude' })])); });
+      box.appendChild(el('div', { class: 'card' }, [el('div', { class: 'acc-head' }, [el('div', { class: 'acc-name', text: 'Chưa ghim tài khoản' }), el('span', { class: 'badge b-fallback', text: loose.length + ' repo' })]), ul2]));
+    }
+  }
+  function renderRepos() {
+    renderRepoByAcc();
+    var r = $('#repos'); r.innerHTML = '';
+    if (!state.repoAssignments.length) { r.appendChild(el('div', { class: 'empty', text: 'cc-switcher chưa biết repo nào. Thêm repo ở ô bên dưới.' })); return; }
+    var tb = el('tbody');
+    state.repoAssignments.forEach(function (x) {
+      var sel = el('select', { 'aria-label': 'Tài khoản cho ' + x.name, 'data-repo-select': x.path, disabled: busy || !x.pathExists ? 'disabled' : null });
+      if (!x.pinnedInFile) sel.appendChild(el('option', { value: '', text: '— chưa ghim —' }));
+      claudeIds().forEach(function (id) { sel.appendChild(el('option', { value: id, text: pShort(id) })); });
+      if (x.pinnedInFile && claudeIds().indexOf(x.account) < 0) sel.appendChild(el('option', { value: x.account, text: x.account + ' (lạ)' }));
+      var cur = x.pinnedInFile ? x.account : '';
+      sel.value = repoDirty[x.path] !== undefined ? repoDirty[x.path] : cur;
+      sel.dataset.current = cur;
+      var save = el('button', { type: 'button', class: 'btn primary sm', 'data-repo-save': x.path, text: 'Lưu', hidden: sel.value === cur ? 'hidden' : null, disabled: busy ? 'disabled' : null });
+      if (sel.value !== cur) sel.classList.add('dirty');
+      var e = x.effective || {};
+      var group = el('span', { class: 'badge b-group', text: x.group });
+      var nameCell = el('td', null, [el('div', { class: 'rp-name' }, [el('span', { text: x.name }), group]),
+        el('div', { class: 'rp-path', text: x.path, title: x.path }),
+        x.worktrees && x.worktrees.length ? el('div', { class: 'tag', text: x.worktrees.length + ' git worktree dùng chung tài khoản', title: x.worktrees.join('\n') }) : null]);
+      var effCell = el('td', null, [effBadge(x), e.note ? el('div', { class: 'rp-note' + (e.kind === 'unpinned' ? ' muted' : ''), text: e.note }) : null]);
+      var lastCell = el('td', { class: 'nowrap' }, [el('div', { text: x.lastUsedAtMs ? ago(x.lastUsedAtMs) : 'chưa dùng' }),
+        x.lastUsedAtMs ? el('div', { class: 'tag', text: fmtTime(x.lastUsedAtMs, true) + ' · ' + pShort(x.lastUsedAccount) }) : null,
+        x.lastUsedAtMs && x.pinnedInFile && x.lastUsedAccount && x.lastUsedAccount !== x.account
+          ? el('div', { class: 'tag warn', text: 'phiên cuối chạy bằng tài khoản khác', title: 'Phiên Claude Code gần nhất của repo (hoặc worktree) nằm trong ' + pShort(x.lastUsedAccount) + ', không phải tài khoản gán. Thường do mở claude bằng alias claude-<tên> hoặc CLAUDE_CONFIG_DIR đặt tay.' })
+          : null]);
+      var rm = el('button', { type: 'button', class: 'btn ghost sm', 'data-repo-remove': x.path, text: 'Gỡ', 'aria-label': 'Gỡ ' + x.name + ' khỏi cc-switcher', disabled: busy ? 'disabled' : null });
+      tb.appendChild(el('tr', { class: x.differs ? 'differs' : '' }, [nameCell,
+        el('td', null, [el('div', { class: 'rp-assign' }, [sel, save]), !x.settingsExists && x.pathExists ? el('div', { class: 'tag warn', text: 'chưa có settings.local.json' }) : null]),
+        effCell, lastCell, el('td', null, [rm])]));
+    });
+    r.appendChild(el('table', null, [el('thead', null, [el('tr', null, [
+      el('th', { scope: 'col', text: 'Repo · nhóm · đường dẫn' }), el('th', { scope: 'col', text: 'Tài khoản gán' }),
+      el('th', { scope: 'col', text: 'Đang dùng thực tế' }), el('th', { scope: 'col', text: 'Lần dùng cuối' }), el('th', { scope: 'col', text: '' })])]), tb]));
+    var ra = $('#raAcc'), keep = ra.value; ra.innerHTML = '';
+    claudeIds().forEach(function (id) { ra.appendChild(el('option', { value: id, text: pShort(id) })); });
+    if (keep) ra.value = keep;
+  }
+  function repoByPath(p) { return state.repoAssignments.find(function (x) { return x.path === p; }); }
+  document.addEventListener('change', function (e) {
+    var sel = e.target.closest('[data-repo-select]');
+    if (!sel) return;
+    var p = sel.dataset.repoSelect, cur = sel.dataset.current;
+    if (sel.value === cur) delete repoDirty[p]; else repoDirty[p] = sel.value;
+    sel.classList.toggle('dirty', sel.value !== cur);
+    var b = document.querySelector('[data-repo-save="' + CSS.escape(p) + '"]');
+    if (b) b.hidden = sel.value === cur;
+  });
+  function renderHistory() {
+    var h = $('#history'); h.innerHTML = '';
+    if (!state.history.length) { h.appendChild(el('div', { class: 'empty', text: 'Chưa có lần chuyển nào.' })); return; }
+    var name = function (id) { var p = state.profiles.find(function (x) { return x.id === id; }); return p ? p.shortLabel : id; };
+    var tb = el('tbody');
+    state.history.forEach(function (x) {
+      tb.appendChild(el('tr', null, [
+        el('td', { class: 'mono', text: fmtTime(Date.parse(x.at), true) }),
+        el('td', { text: name(x.from) + ' → ' + name(x.to) }),
+        el('td', { text: REASONS[x.reason] || x.reason || '—' })
+      ]));
+    });
+    h.appendChild(el('table', null, [el('thead', null, [el('tr', null, [el('th', { scope: 'col', text: 'Thời gian' }), el('th', { scope: 'col', text: 'Chuyển' }), el('th', { scope: 'col', text: 'Nguồn' })])]), tb]));
+  }
+  function render() {
+    renderSummary();
+    var c = $('#claude'); c.innerHTML = '';
+    state.profiles.filter(function (p) { return p.vendor === 'anthropic'; }).forEach(function (p) { c.appendChild(accountCard(p)); });
+    var b = $('#backup'); b.innerHTML = '';
+    state.backupOrder.map(function (id) { return state.profiles.find(function (p) { return p.id === id; }); }).filter(Boolean)
+      .forEach(function (p) { b.appendChild(backupCard(p)); });
+    renderRepos(); renderHistory();
+    var m = state.antiBan.cooldownMinutes;
+    document.querySelectorAll('#cdSeg button').forEach(function (x) { x.setAttribute('aria-pressed', String(Number(x.dataset.min) === m)); });
+    $('#cdInput').placeholder = m + ' phút';
+    document.querySelectorAll('[data-act],#cdSeg button,#cdForm button,#btnRefresh,#repoAddForm button').forEach(function (x) { x.disabled = busy; });
+  }
+
+  function act(body, btn) {
+    if (busy) return Promise.resolve();
+    busy = true;
+    if (btn) btn.setAttribute('aria-busy', 'true');
+    document.querySelectorAll('[data-act],[data-switch],#cdSeg button,#cdForm button,#btnRefresh,#repoAddForm button,[data-repo-save],[data-repo-remove],[data-repo-select]').forEach(function (x) { x.disabled = true; });
+    return api('/api/cc-switcher/action', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agent-Office': '1' }, body: JSON.stringify(body) })
+      .then(function (j) {
+        if (j.state) { state = j.state; loadedAt = Date.now(); }
+        if (j.ok) { toast(j.message || 'Xong.'); return null; }
+        if (j.needsForce) return j;
+        toast(j.error || j.message || 'Không thực hiện được.', true); return null;
+      })
+      .catch(function (e) { toast(e.message || String(e), true); return null; })
+      .finally(function () {
+        busy = false; if (btn) btn.removeAttribute('aria-busy');
+        if (state) render();
+      });
+  }
+  function profileName(id) { var p = state && state.profiles.find(function (x) { return x.id === id; }); return p ? splitName(p.name).title : id; }
+
+  document.addEventListener('click', function (e) {
+    var sv = e.target.closest('[data-repo-save]');
+    if (sv && !sv.disabled) {
+      var rp = repoByPath(sv.dataset.repoSave), acc = repoDirty[sv.dataset.repoSave];
+      if (!rp || !acc) return;
+      var eff = rp.effective || {};
+      confirmDlg('Gán ' + rp.name + ' → ' + pShort(acc) + '?',
+        rp.path + '\n\nTừ: ' + (rp.pinnedInFile ? pShort(rp.account) : 'chưa ghim (~/.claude)') + '\nSang: ' + pShort(acc) +
+        '\n\nGhi "account" vào .claude/settings.local.json (giữ nguyên các khóa khác). Phiên claude đang mở không đổi; phiên mới trong repo và các worktree của nó dùng tài khoản mới.' +
+        (state.profiles.some(function (p) { return p.id === acc && p.isFrozen; }) ? '\n\n⚠ ' + pShort(acc) + ' đang khóa 429: repo sẽ tạm chạy dự phòng khác hãng tới khi mở khóa.' : ''),
+        'Gán tài khoản').then(function (ok) {
+        if (!ok) return;
+        act({ action: 'repo_assign', repo: rp.path, account: acc }, sv).then(function () {
+          var now = repoByPath(rp.path);
+          if (!now || (now.pinnedInFile && now.account === acc)) { delete repoDirty[rp.path]; if (state) render(); }
+        });
+      });
+      return;
+    }
+    var rmb = e.target.closest('[data-repo-remove]');
+    if (rmb && !rmb.disabled) {
+      var rr = repoByPath(rmb.dataset.repoRemove);
+      if (!rr) return;
+      confirmDlg('Gỡ ' + rr.name + ' khỏi cc-switcher?', rr.path + '\n\nBỏ repo khỏi danh sách' + (rr.pinnedInFile ? ' và xóa khóa "account" (' + pShort(rr.account) + ') trong .claude/settings.local.json: lệnh claude trong repo sẽ dùng ~/.claude mặc định.' : '.') + '\nThêm lại được bất cứ lúc nào.', 'Gỡ repo', true).then(function (ok) {
+        if (ok) act({ action: 'repo_remove', repo: rr.path }, rmb).then(function () { delete repoDirty[rr.path]; });
+      });
+      return;
+    }
+    var sw = e.target.closest('[data-switch]');
+    if (sw && !sw.disabled) {
+      var id = sw.dataset.switch;
+      confirmDlg('Chuyển sang ' + profileName(id) + '?', 'CC Switch sẽ dùng tài khoản này cho phiên Claude Code / Antigravity / Grok mới.', 'Chuyển').then(function (ok) {
+        if (!ok) return;
+        act({ action: 'switch', target: id }, sw).then(function (res) {
+          if (!res) return;
+          var cl = res.code === 'CLAUDE_COOLDOWN_ACTIVE';
+          confirmDlg('Chưa chuyển được', (cl ? 'Đang trong thời gian nghỉ chống ban giữa hai tài khoản Claude.' : 'Tài khoản này đang đóng băng vì chạm 429.') +
+            '\n\n' + (res.hint || '') + '\n\nÉp chuyển ngay sẽ bỏ qua bảo vệ này (tăng nguy cơ bị quét).', 'Ép chuyển ngay', true).then(function (ok2) {
+            if (ok2) act({ action: 'switch', target: id, force: true }, sw);
+          });
+        });
+      });
+      return;
+    }
+    var a = e.target.closest('[data-act]');
+    if (!a || a.disabled) return;
+    var kind = a.dataset.act;
+    var cfg = {
+      rotate: ['Đổi sang tài khoản kế tiếp?', 'Xoay vòng theo thứ tự 1 → 6, bỏ qua tài khoản đang đóng băng.', 'Đổi', false],
+      limit: ['Báo tài khoản hiện tại chạm 429?', 'Đóng băng "' + (state ? profileName(state.activeProfileId) : '') + '" ' + (state ? Math.round(state.antiBan.rateLimitFreezeSec / 3600 * 10) / 10 : 5) + ' giờ và chuyển ngay sang tài khoản an toàn kế tiếp.', 'Đóng băng & đổi', true],
+      unfreeze: ['Mở khóa toàn bộ?', 'Xóa mọi đóng băng 429 và đặt lại thời gian nghỉ chống ban về 0. Chỉ làm khi chắc quota đã hồi.', 'Mở khóa', true],
+      balance: a.dataset.mode === 'swap'
+        ? ['Đảo nhóm repo?', 'Repo đang gán FinOS chuyển sang FinOS Team và ngược lại (ghi .claude/settings.local.json của từng repo, giữ nguyên các khóa khác).', 'Đảo nhóm', false]
+        : ['Chia đều repo 3/3?', 'Gán lại 3 repo cho FinOS và 3 repo cho FinOS Team theo mặc định (ghi .claude/settings.local.json của từng repo).', 'Chia đều', false]
+    }[kind];
+    confirmDlg(cfg[0], cfg[1], cfg[2], cfg[3]).then(function (ok) {
+      if (ok) act(kind === 'balance' ? { action: 'balance', mode: a.dataset.mode } : { action: kind }, a);
+    });
+  });
+  document.querySelectorAll('#cdSeg button').forEach(function (b) {
+    b.addEventListener('click', function () { act({ action: 'cooldown', minutes: Number(b.dataset.min) }, b); });
+  });
+  $('#cdForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var v = $('#cdInput').value.trim();
+    var n = Number(v);
+    if (v === '' || !Number.isInteger(n) || n < 0 || n > 1440) { toast('Nhập số phút nguyên từ 0 đến 1440.', true); $('#cdInput').focus(); return; }
+    act({ action: 'cooldown', minutes: n }, e.submitter || null).then(function () { $('#cdInput').value = ''; });
+  });
+  $('#repoAddForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var path = $('#raPath').value.trim().replace(/\/+$/, ''), name = $('#raName').value.trim(), acc = $('#raAcc').value;
+    if (path.charAt(0) !== '/') { toast('Nhập đường dẫn tuyệt đối, bắt đầu bằng /.', true); $('#raPath').focus(); return; }
+    confirmDlg('Thêm repo → ' + pShort(acc) + '?', path + (name ? '\nTên: ' + name : '') + '\n\nThêm vào danh sách cc-switcher và ghi "account": "' + acc + '" vào .claude/settings.local.json của repo.', 'Thêm repo').then(function (ok) {
+      if (!ok) return;
+      var body = { action: 'repo_add', repo: path, account: acc };
+      if (name) body.name = name;
+      act(body, e.submitter || null).then(function () { if (state && repoByPath(path)) { $('#raPath').value = ''; $('#raName').value = ''; } });
+    });
+  });
+  $('#btnRefresh').addEventListener('click', function () {
+    var b = this; b.setAttribute('aria-busy', 'true'); b.disabled = true;
+    load(true).finally(function () { b.removeAttribute('aria-busy'); b.disabled = false; });
+  });
+  $('#btnRetry').addEventListener('click', function () { load(false); });
+  function syncThemeBtn() { $('#btnTheme').textContent = document.documentElement.dataset.theme === 'dark' ? 'Ca ngày' : 'Ca đêm'; }
+  $('#btnTheme').addEventListener('click', function () {
+    var next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('agent-office-theme', next); } catch (e) {}
+    syncThemeBtn();
+  });
+  syncThemeBtn();
+
+  // đồng hồ đếm ngược cooldown chạy tại chỗ; dữ liệu đọc lại mỗi 20 giây khi tab đang mở
+  setInterval(function () {
+    var n = document.getElementById('cdLive');
+    if (n && state) { var cl = cooldownLeft(); n.textContent = cl > 0 ? ('Chờ ' + fmtDur(cl)) : 'Đổi ngay được'; }
+  }, 1000);
+  function schedule() { clearInterval(timer); timer = setInterval(function () { if (!document.hidden && !busy) load(false); }, 20000); }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) load(false); });
+  load(false); schedule();
+})();
+</script>
+</body>
+</html>

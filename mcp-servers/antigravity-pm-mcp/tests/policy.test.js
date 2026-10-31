@@ -139,3 +139,11 @@ test('khong doc duoc git => cong chan noi CHUA XAC MINH chu khong cho qua', () =
   assert.ok(g.missing.some((m) => m.includes('CHUA XAC MINH')), g.missing.join(' | '));
   cleanup(dir);
 });
+
+// critical scan 31/10 — BUG-REV-agpm-web-provider-types
+test('browser/script task: a qa-visual or playwright provider (PM-run) counts, an agent file does not', () => {
+  const cfg = { proof: { providers: { qa: { type: 'qa-visual' }, pw: { type: 'playwright' } } } };
+  assert.equal(checkProofProvider(cfg, [{ provider: 'qa' }], { proofKind: 'browser' }).ok, true);
+  assert.equal(checkProofProvider(cfg, [{ provider: 'pw' }], { proofKind: 'script' }).ok, true);
+  assert.equal(checkProofProvider(cfg, [{ provider: 'file' }], { proofKind: 'browser' }).ok, false);
+});
