@@ -2530,6 +2530,28 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "proof-gate-trunk-main-722",
+      "watch_files": [
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        "universal-agent-devkit/tests/gates/test_proof_gate_main_predates_session.sh",
+        "universal-agent-devkit/tests/gates/test_proof_gate_api_request_blob.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-PROOF-MAIN-PREDATES-01",
+          "name": "#722: main trunk mode có file người khác để từ trước phiên, lệnh shell chỉ đọc nhắc tên; biên nhận trong lượt cho fp commit HEAD (PR squash, hay --tree HEAD trong worktree tạm): cho qua; file tạo trong phiên, nested repo, symlink, t0 tương lai, Edit nêu tên, touch -t, file đã xoá, không gate / gate lượt trước / main đi tiếp / trunk tắt / không biết t0: chặn; lời khuyên nêu --tree HEAD; copy-mode vẫn exit 2",
+          "command": "bash universal-agent-devkit/tests/gates/test_proof_gate_main_predates_session.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-DK-PROOF-API-BLOB-01",
+          "name": "#722: dòng api-request-blob (không timestamp) không đóng cửa biên nhận merge khi tool_use đã có bản ghi assistant (hay chỉ đọc); tool_use chỉ có trong blob mà ghi kho / gh pr merge / Bash bất kỳ, id rỗng hay null, blob nhắc kho không có tool_use, dòng assistant không timestamp (kể cả cặp gh pr merge + blob trùng id): chặn",
+          "command": "bash universal-agent-devkit/tests/gates/test_proof_gate_api_request_blob.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
