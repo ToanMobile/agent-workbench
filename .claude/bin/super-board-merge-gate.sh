@@ -636,10 +636,16 @@ fi
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
   say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
 
-if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
+if ! MERGE_ERR=$(git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>&1); then
   CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')
-  say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
-  say "this is a rebase pass for the Builder lane, not a Blocked card"
+  if [ -n "$CONFLICTS" ]; then
+    say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
+    say "this is a rebase pass for the Builder lane, not a Blocked card"
+  else
+    # GeelyEx2 #179: hook commit-msg của repo từ chối commit gộp ⇒ không có file xung đột; in lời git/hook thật, rebase không gỡ được.
+    say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused): $(printf '%s' "$MERGE_ERR" | tail -5 | clip 600)"
+    say "not a content conflict: fix the refusal above in the repo; a rebase pass will not clear it"
+  fi
   exit 5
 fi
 
@@ -691,9 +697,17 @@ for c in "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "${DK_M
 done
 if [ -n "$DK_INSTALL" ]; then
   DK_RC=0
+  # Idle #18: install.sh ghi .mcp.json / mcp_config.json; ở repo không track cũng không ignore chúng, file đó thành "thay đổi" của PR và
+  # verify exit 2. Chụp file chưa track (không ignore) trước và sau khi cài, xoá phần install.sh thêm. File của PR đã track nên không nằm
+  # trong danh sách; file bị ignore mà verify cần (.agents/devkit) cũng không.
+  DK_UNTRACKED_BEFORE=$(git -C "$SCRATCH" ls-files -z --others --exclude-standard | tr '\0' '\n' | LC_ALL=C sort) || true
   bash "$DK_INSTALL" -t "$SCRATCH" -a claude -y --no-githooks >"$VERIFY_LOG" 2>&1 || DK_RC=$?
   [ "$DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed (exit ${DK_RC}): $(tail -3 "$VERIFY_LOG" | clip 300)"
   git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
+  git -C "$SCRATCH" ls-files -z --others --exclude-standard | tr '\0' '\n' | LC_ALL=C sort \
+    | LC_ALL=C comm -13 <(printf '%s\n' "$DK_UNTRACKED_BEFORE") - | while IFS= read -r f; do
+      if [ -n "$f" ]; then rm -f -- "$SCRATCH/$f"; fi
+    done || say "could not list the files the DevKit install left untracked in the scratch tree; verify may count them"
 else
   : >"$VERIFY_LOG"
   say "no DevKit install.sh in ${REPO_PATH} or ${DK_MAIN:-the main checkout}: the scratch tree has no .agents/devkit"
