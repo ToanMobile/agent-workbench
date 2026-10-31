@@ -260,7 +260,7 @@ const selfTag = () => { SELF_TAG = SELF_TAG || procTag(process.pid); return SELF
 // May ban (load1 > 100, #657) lam ps tra loi > 1,5 s: timeout cu coi cham la loi. Chinh duoc qua env, KEP o PS_TIMEOUT_MAX_MS: ngan sach ps duoi khoa
 // (<= 4 lan) x tran phai < LOCK_STALE_MS (4 x 7 s = 28 s < 40 s); muon tran cao hon thi nang LOCK_STALE_MS trong code (PM khac xet khoa cu bang hang so cua no, khong bang env cua chu khoa).
 const PS_TIMEOUT_MAX_MS = 7000;
-export const psTimeoutMs = () => { const n = Number(process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS); return Number.isFinite(n) && n > 0 ? Math.min(n, PS_TIMEOUT_MAX_MS) : 5000; };
+export const psTimeoutMs = () => { const n = Math.trunc(Number(process.env.ANTIGRAVITY_PM_PS_TIMEOUT_MS)); return Number.isFinite(n) && n > 0 ? Math.min(n, PS_TIMEOUT_MAX_MS) : 5000; };
 
 function procTag(pid) {
   if (!pid) return null;
@@ -636,8 +636,8 @@ async function agyNewConversation({ prompt, model, cwd }) {
   const root = fs.realpathSync(cwd);
   readAgyRegistry();   // hong thi nem loi NGAY, truoc khi sinh agent: sau khi spawn khong con cach nao theo doi no
   // ponytail: agy mo coi chi bi dung khi co lan mo hoi thoai agy ke tiep (cua PM nao cung duoc; PM chi gui tin thi khong don); nang cap: don them luc
-  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 5 s
-  // (timeout cua procTag) + 3 s (cho khoa); PM chet trong do thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
+  // server khoi dong / trong pm_doctor. Cua so con lai: tu luc spawn den luc ban ghi cho duoc ghi (1 lan ps cua agy + khoa): thuong khoang chuc ms, xau nhat 7 s
+  // (tran timeout cua procTag, mac dinh 5 s) + 3 s (cho khoa); PM chet trong do thi agy khong co dau vet. Con cua agy (nhom) da thoat tu truoc thi khong bi dung; muc co pid vuot gioi han he dieu hanh (sua tay) duoc giu mai.
   reapOrphanAgy();
   reapTurnLeftovers();
   // ps cua chinh PM tinh MOT lan, TRUOC spawn: hong (nem) hoac khong in gi (null: entryBusy / reaper khong nhan ra chu) thi tu choi, chua co agy nao chay
