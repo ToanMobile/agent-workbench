@@ -2,8 +2,8 @@
 """`agent-kit integrate [--if-due] [--dry-run]` — điểm gộp của repo trunk-push (Q5, pha 2 merge queue, v4 mục 1).
 
 Repo không đi PR: các worktree `finish` vào main LOCAL, rồi ai đó push. Commit trên main local chưa có trên origin chính là hàng đợi;
-lệnh này gom cả hàng đợi vào MỘT lượt `post-fix-gate --run-tests --scoped` thay vì một lượt cho mỗi lần push (#644: scoped tự leo
---full khi đụng lõi; --full đêm thuộc skill gate-full).
+lệnh này gom cả hàng đợi vào MỘT lượt `post-fix-gate --run-tests --scoped` thay vì một lượt cho mỗi lần push (#644; #741: scoped không
+bao giờ tự leo --full; --full đêm thuộc skill gate-full).
 
   1. khoá fcntl `<git common dir>/devkit-integrate.lock` (LOCK_NB; bận → exit 0, lượt khác đang gộp);
   2. `git fetch origin <base>`; origin/<base> phải là tổ tiên của HEAD main, không thì dừng (exit 2) — không đốt một lượt --full
@@ -299,7 +299,7 @@ def run_gate(scratch, remote):
     """Exit code của `post-fix-gate --run-tests --scoped --brief --diff <origin/base>` trong scratch (124 khi quá
     DEVKIT_INTEGRATE_GATE_TIMEOUT_S). --diff: scratch tách rời không có upstream, cây sạch không --diff thì gate trả 3 (nothing to audit);
     origin/<base>..HEAD đúng là nội dung sẽ push (như mặc định @{u}..HEAD của gate trên một nhánh có upstream). Đây là lượt gate duy
-    nhất của cả đợt (điểm gộp). #644: --scoped = test của diff cả đợt + smoke, tự leo --full khi đụng file lõi hay không suy ra được test;
+    nhất của cả đợt (điểm gộp). #644: --scoped = test của diff cả đợt + smoke; #741: không leo --full (lõi chạy test chạm tới nó, không suy ra test thì [core-smoke]);
     --full đêm thuộc skill gate-full."""
     gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
     env = dict(os.environ, CLAUDE_PROJECT_DIR=scratch, DEVKIT_SLOT_PRIORITY="merge")

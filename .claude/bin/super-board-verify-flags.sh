@@ -1,5 +1,5 @@
 # Sourced, not run: sb_verify_inject_flags <command> <base-branch> [json]
-# In ra lệnh verify mà merge gate thật sự chạy: lệnh có token post-fix-gate.py được chèn ` --diff origin/<base> --force-full` (#251:
+# In ra lệnh verify mà merge gate thật sự chạy: lệnh có token post-fix-gate.py được chèn ` --diff origin/<base> --scoped` (#251, #644:
 # QA và merge gate phải chọn CÙNG tập suite cho cùng cây; nguồn duy nhất của luật chèn cờ là hàm này, gate và
 # super-board-verify-cmd.sh cùng gọi). Đối số thứ ba `json` (chỉ merge gate): thêm cả ` --json` để đọc điều kiện CHƯA XÁC MINH mà REJECT che
 # (#251 R1); --json chỉ đổi định dạng đầu ra, không đổi tập suite. Lệnh không có token đó: in nguyên. Không tách được token: in nguyên, cảnh báo ra stderr.
@@ -7,7 +7,8 @@ sb_verify_inject_flags() {
   local cmd="$1" base="$2" want_json="${3:-}" flags="" pfg_re pfg_after pfg_end pfg_rest
   if [[ "$cmd" == *"post-fix-gate.py"* ]]; then
     [[ "$cmd" == *"--diff"* ]] || flags=" --diff origin/${base}"
-    # #644: mặc định --scoped (test của diff qua đồ thị import + smoke; đụng lõi / không suy ra test thì post-fix-gate tự leo full). Dòng config
+    # #644: mặc định --scoped (test của diff qua đồ thị import + smoke; #741: không bao giờ tự leo full — lõi chạy test chạm tới nó, không
+    # suy ra test thì thêm [core-smoke]). Dòng config
     # còn ghi --full / --force-full thì giữ nguyên ý đó. --full đêm thuộc skill gate-full.
     # so TOKEN nguyên (chuỗi con thì `--full-name` cũng chặn --scoped)
     local tok_re="(^|[[:space:]\"'])--(full|force-full|scoped)(\$|[[:space:]\"';&|)])"
@@ -28,7 +29,7 @@ sb_verify_inject_flags() {
           cmd="$cmd$flags"
         fi
       else
-        echo "warning: cannot locate the post-fix-gate.py token in the verify command; --diff/--force-full not added: ${cmd}" >&2
+        echo "warning: cannot locate the post-fix-gate.py token in the verify command; --diff/--scoped not added: ${cmd}" >&2
       fi
     fi
   fi
