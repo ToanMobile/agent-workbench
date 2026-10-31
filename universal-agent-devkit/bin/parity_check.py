@@ -17,13 +17,17 @@ Mỗi chỗ lệch in một dòng `<loại>: <đường dẫn> — <chi tiết>`
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
 KIT = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 FORBIDDEN = ("full", "force-full", "auto-approve-tests")
-FLAG_RE = re.compile(r"(?<![\w-])--(" + "|".join(re.escape(f) for f in FORBIDDEN) + r")(?![\w-])")
-DROP_RE = re.compile(r"[ \t]+--(" + "|".join(re.escape(f) for f in FORBIDDEN) + r")(?![\w-])")
+# Cờ là token nguyên: sau nó là hết chuỗi, khoảng trắng, ngoặc hay dấu nối lệnh shell (`--full-name`, `--full=1` không tính)
+_FLAG = "--(" + "|".join(re.escape(f) for f in FORBIDDEN) + r")(?=$|[\s\"';&|)])"
+FLAG_RE = re.compile(r"(?<![\w-])" + _FLAG)
+DROP_RE = re.compile(r"\s+" + _FLAG)   # chỉ cờ đứng sau khoảng trắng mới bỏ được an toàn; cờ trong ngoặc thì báo, không sửa
+GATE_SCRIPT = "post-fix-gate.py"      # như super-board-verify-flags.sh: cờ chỉ là cờ gate khi lệnh gọi post-fix-gate.py
 LINK_DIRS = (".agents", ".claude", ".gemini", ".githooks", ".codex", ".cursor")
 SKIP_DIRS = {".git", "node_modules", "__pycache__", "worktrees", "Library", "build"}
 HOOK_REF_RE = re.compile(r"\.claude/hooks/([A-Za-z0-9_.-]+)")
@@ -58,7 +62,7 @@ def check_flags(repo, fix):
         cmds = cfg.get("verify_commands") if isinstance(cfg, dict) else None
         if not isinstance(cmds, list):
             continue
-        bad = [c for c in cmds if isinstance(c, str) and FLAG_RE.search(c)]
+        bad = [c for c in cmds if isinstance(c, str) and GATE_SCRIPT in c and FLAG_RE.search(c)]
         if not bad:
             continue
         rel = os.path.relpath(p, repo)
@@ -74,7 +78,10 @@ def check_flags(repo, fix):
 def fix_config(path, cfg, cmds):
     """Thay đúng chuỗi lệnh trong văn bản gốc (diff chỉ một dòng); không tìm được chuỗi đã mã hoá thì ghi lại cả file. Đọc lại phải ra
     đúng danh sách mới, sai thì không ghi gì."""
-    new = [DROP_RE.sub("", c) if isinstance(c, str) else c for c in cmds]
+    new = [DROP_RE.sub("", c) if isinstance(c, str) and GATE_SCRIPT in c else c for c in cmds]
+    if any(isinstance(c, str) and GATE_SCRIPT in c and FLAG_RE.search(c) for c in new):
+        return False   # còn cờ không bỏ an toàn được (trong ngoặc, đầu dòng mới…): báo forbidden-flag, không ghi "fixed"
+    path = os.path.realpath(path)   # config là symlink: ghi vào file thật, không thay link bằng file thường
     with open(path, encoding="utf-8") as f:
         raw = f.read()
     text = raw
@@ -83,7 +90,8 @@ def fix_config(path, cfg, cmds):
             continue
         for ascii_only in (False, True):
             enc = json.dumps(old, ensure_ascii=ascii_only)
-            if enc in text:
+            # Chuỗi đó còn ở khoá khác (qa_commands…) thì thay văn bản sẽ sửa cả khoá đó: ghi lại cả file theo cấu trúc
+            if enc in text and text.count(enc) == cmds.count(old):
                 text = text.replace(enc, json.dumps(cur, ensure_ascii=ascii_only))
                 break
         else:
@@ -101,6 +109,7 @@ def fix_config(path, cfg, cmds):
     tmp = path + ".parity.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
+    shutil.copymode(path, tmp)
     os.replace(tmp, path)
     return True
 
@@ -159,19 +168,31 @@ def check_copied_hooks(repo):
 
 
 def flat_hooks(hooks):
-    rows = set()
+    rows = []
     for event, entries in (hooks or {}).items():
         for e in entries if isinstance(entries, list) else []:
             for h in e.get("hooks", []) if isinstance(e, dict) else []:
                 if isinstance(h, dict) and h.get("command"):
-                    rows.add((event, e.get("matcher", "") or "", h["command"]))
+                    rows.append((event, e, h))
     return rows
+
+
+def merge_json():
+    """Cách nhận diện hook của chính installer (scripts/governance/merge_json.py): cùng script + matcher giao nhau là một hook, dù câu
+    lệnh viết khác (lời echo riêng, ngoặc, matcher đảo thứ tự). So khác cách đó thì init không bao giờ xoá được dòng báo."""
+    sys.path.insert(0, os.path.join(KIT, "scripts", "governance"))
+    import merge_json as mj  # noqa: E402
+    return mj
 
 
 def check_settings(repo):
     path = os.path.join(repo, ".claude", "settings.json")
     if not os.path.isfile(path):
         return []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        raw = f.read()
+    if ".claude/hooks/" not in raw:
+        return []   # Claude chưa cài DevKit ở repo này (như install.sh:166 nhận biết): settings.json là của người dùng, không so
     settings = load_json(path)
     if not isinstance(settings, dict):
         return ["hook-missing: .claude/settings.json — not valid JSON, no DevKit hook can run"]
@@ -179,13 +200,18 @@ def check_settings(repo):
     # Cùng phép thay đường dẫn như adapters/setup_claude.sh khi sinh settings.json từ hooks.json
     kit_hooks = json.loads(json.dumps(plugin.get("hooks", plugin)).replace(
         "${CLAUDE_PLUGIN_ROOT}/hooks/", "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/"))
+    mj = merge_json()
     have = flat_hooks(settings.get("hooks"))
-    out = [f"hook-missing: .claude/settings.json — {ev}{' ' + m if m else ''}: {cmd}"
-           for ev, m, cmd in sorted(flat_hooks(kit_hooks) - have)]
-    for ev, m, cmd in sorted(have):
-        for name in HOOK_REF_RE.findall(cmd):
+    out = []
+    for ev, e, h in flat_hooks(kit_hooks):
+        key, m = mj._hook_key(h), mj._matcher_set(e)
+        if not any(hev == ev and mj._hook_key(hh) == key and mj._overlap(mj._matcher_set(he), m) for hev, he, hh in have):
+            out.append(f"hook-missing: .claude/settings.json — {ev}{' ' + e.get('matcher') if e.get('matcher') else ''}: {h['command']}")
+    for ev, e, h in have:
+        for name in HOOK_REF_RE.findall(h["command"]):
             if not os.path.exists(os.path.join(repo, ".claude", "hooks", name)):
-                out.append(f"hook-dangling: .claude/settings.json — {ev}{' ' + m if m else ''} runs .claude/hooks/{name}, which does not exist")
+                out.append(f"hook-dangling: .claude/settings.json — {ev}{' ' + e.get('matcher') if e.get('matcher') else ''} runs "
+                           f".claude/hooks/{name}, which does not exist")
     return out
 
 
@@ -210,9 +236,10 @@ def main(argv):
     if [o for o in opts if o not in ("--fix",)] or len(args) > 1:
         print("usage: parity_check.py [repo] [--fix]", file=sys.stderr)
         return 2
-    repo = git_root(args[0] if args else os.getcwd()) or (os.path.abspath(args[0]) if args else None)
+    # Đường dẫn nêu rõ được dùng nguyên (install.sh -t mono/app: kiểm và sửa app, không leo lên gốc git); không nêu thì gốc git của cwd
+    repo = os.path.abspath(args[0]) if args else git_root(os.getcwd())
     if not repo or not os.path.isdir(repo):
-        print(f"parity: {args[0] if args else os.getcwd()} is not a directory", file=sys.stderr)
+        print(f"parity: {args[0] if args else os.getcwd()}: " + ("not a directory" if args else "not inside a git repo"), file=sys.stderr)
         return 2
     if os.path.realpath(repo) == KIT:
         print("parity: this is the kit itself — nothing to compare")

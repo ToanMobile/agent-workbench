@@ -38,10 +38,33 @@ mv "$P/.claude/super-board" "$TMP/sb-aside"
 bash "$DEVKIT/bin/install.sh" -t "$P" -y --no-githooks -m symlink > "$TMP/i2.out" 2>&1; rc=$?
 [ "$rc" -eq 0 ] && grep -q "^parity: .* matches the kit" "$TMP/i2.out" && ok "re-init khi repo khớp kit: exit 0, in 'matches the kit'" \
   || fail "re-init khi khớp kit: exit $rc, $(tail -3 "$TMP/i2.out")"
+# Hook kit viết khác mà installer vẫn coi là một (merge_json._hook_key + matcher giao nhau): matcher đảo thứ tự, lời echo riêng
+python3 - "$P/.claude/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]; s = json.load(open(p))
+for e in s["hooks"]["PreToolUse"]:
+    if e.get("matcher") == "Read|Edit":
+        e["matcher"] = "Edit|Read"
+for e in s["hooks"]["SessionStart"]:
+    for h in e["hooks"]:
+        if "session_context.sh" in h["command"]:
+            h["command"] = 'bash -c \'if [ -f "$1" ]; then exec bash "$1"; fi; echo "loi rieng cua repo"\' _ "${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/session_context.sh"'
+json.dump(s, open(p, "w"), indent=2)
+PY
 python3 "$DEVKIT/bin/parity_check.py" "$P" > "$TMP/p0.out" 2>&1; rc=$?
-[ "$rc" -eq 0 ] && grep -q "matches the kit" "$TMP/p0.out" && ok "repo vừa cài khớp kit: exit 0" \
+[ "$rc" -eq 0 ] && grep -q "matches the kit" "$TMP/p0.out" && ok "repo vừa cài khớp kit (kể cả hook viết khác cùng script): exit 0" \
   || fail "repo vừa cài bị báo lệch (exit $rc): $(head -5 "$TMP/p0.out")"
 mv "$TMP/sb-aside" "$P/.claude/super-board"
+
+# 2b) settings.json không có hook DevKit (chỉ cài Gemini) không bị so; thư mục con nêu rõ được kiểm nguyên, không leo lên gốc git
+Q="$TMP/mono"; mkdir -p "$Q/.claude" "$Q/app/.claude/super-board/configs" && (cd "$Q" && git init -q)
+echo '{"permissions":{"allow":[]}}' > "$Q/.claude/settings.json"
+python3 "$DEVKIT/bin/parity_check.py" "$Q" > "$TMP/q0.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && ok "settings.json không có hook DevKit: không báo hook-missing" || fail "báo sai repo không cài Claude: $(head -3 "$TMP/q0.out")"
+echo '{"verify_commands":["python3 .agents/devkit/bin/post-fix-gate.py --full"]}' > "$Q/app/.claude/super-board/configs/app.json"
+python3 "$DEVKIT/bin/parity_check.py" "$Q/app" > "$TMP/q1.out" 2>&1; rc=$?
+[ "$rc" -eq 1 ] && grep -q "^forbidden-flag: .claude/super-board/configs/app.json" "$TMP/q1.out" \
+  && ok "thư mục con nêu rõ: kiểm config của chính nó" || fail "thư mục con: exit $rc, $(head -3 "$TMP/q1.out")"
 
 # 3) mỗi loại lệch đều được báo, exit 1; gọi qua agent-kit parity
 printf '{"base_branch":"main","verify_commands":["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --force-full"]}\n' > "$CFG"
@@ -76,6 +99,24 @@ python3 "$DEVKIT/bin/parity_check.py" "$P" --fix > "$TMP/p2.out" 2>&1; rc=$?
 grep -q -- "--force-full" "$CFG" && fail "--fix không bỏ --force-full: $(cat "$CFG")" || ok "--fix bỏ --force-full"
 ! grep -q "^forbidden-flag" "$TMP/p2.out" && grep -q "^broken-link" "$TMP/p2.out" && [ "$rc" -eq 1 ] \
   && ok "--fix: chỗ lệch khác vẫn báo, exit 1" || fail "--fix: exit $rc, $(head -3 "$TMP/p2.out")"
+
+# 5) kiểm --fix với cờ trong ngoặc (DROP_RE chỉ bỏ cờ sau khoảng trắng): mong đợi dòng forbidden-flag, không dòng fixed, file y nguyên;
+#    lệnh không gọi post-fix-gate.py (git fsck --full) mong đợi không bị báo — hai assert ngay dưới
+printf '{"verify_commands":["python3 .agents/devkit/bin/post-fix-gate.py \\"--full\\"","git fsck --full"]}\n' > "$CFG"
+cp "$CFG" "$TMP/cfg.before"
+python3 "$DEVKIT/bin/parity_check.py" "$P" --fix > "$TMP/p3.out" 2>&1
+! grep -q "^fixed:" "$TMP/p3.out" && grep -qF 'forbidden-flag: .claude/super-board/configs/proj.json — verify_commands has --full: python3' "$TMP/p3.out" \
+  && cmp -s "$CFG" "$TMP/cfg.before" && ok "cờ trong ngoặc: báo, không ghi 'fixed', file giữ nguyên" || fail "cờ trong ngoặc: $(grep -E '^(fixed|forbidden)' "$TMP/p3.out")"
+! grep -q "git fsck" "$TMP/p3.out" && ok "lệnh không gọi post-fix-gate.py (git fsck --full) không bị báo" || fail "báo nhầm git fsck --full"
+
+# 6) worktree liên kết (worktree.py add, lane, scratch merge gate đều chạy install.sh): chỉ báo, không sửa config đã track
+printf '{"verify_commands":["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full"]}\n' > "$CFG"
+git -C "$P" add .claude/super-board/configs/proj.json && git -C "$P" commit -qm cfg
+git -C "$P" worktree add -q "$TMP/wt"
+bash "$DEVKIT/bin/install.sh" -t "$TMP/wt" -y --no-githooks -m symlink > "$TMP/i3.out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && [ -z "$(git -C "$TMP/wt" status --porcelain -- .claude/super-board)" ] && grep -q "^forbidden-flag: .claude/super-board/configs/proj.json" "$TMP/i3.out" \
+  && ok "init vào worktree liên kết: chỉ báo cờ cấm, config đã track không bẩn" \
+  || fail "worktree liên kết: exit $rc, $(git -C "$TMP/wt" status --porcelain -- .claude/super-board) $(grep -m2 -E '^(fixed|forbidden)' "$TMP/i3.out")"
 
 echo
 [ "$FAILS" -eq 0 ] && { echo "test_parity_check: PASS"; exit 0; } || { echo "test_parity_check: FAIL ($FAILS)"; exit 1; }
