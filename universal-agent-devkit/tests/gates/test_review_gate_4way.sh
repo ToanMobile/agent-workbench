@@ -39,6 +39,10 @@ echo "def f(): return 2" > "$P/app.py"; ev edit e1 "$P/app.py"
 stop; rc=$?
 [ "$rc" = 2 ] && grep -q "chưa có review 4 bên" "$TMP/err" && ok "edited code, no 4-way review: blocked" || fail "not blocked rc=$rc $(cat "$TMP/err")"
 [ ! -d "$(rundir)" ] && ok "REVIEW_GATE_AUTOSTART=0 (tests): no real reviewer started" || fail "autostart ran in a test"
+# BUG-REV-review-gate-fanout-child: a reviewer started by review-fanout (REVIEW_FANOUT_CHILD=1) is not gated (no nested review)
+printf '{"session_id":"s","transcript_path":"%s","hook_event_name":"Stop"}' "$TR" \
+  | REVIEW_FANOUT_CHILD=1 CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/review_gate.sh" >/dev/null 2>"$TMP/err"; rc=$?
+[ "$rc" = 0 ] && [ ! -d "$(rundir)" ] && ok "a review-fanout reviewer's own Stop is not gated" || fail "fanout child gated rc=$rc"
 ev agent a1; stop; [ $? = 2 ] && ok "an agent review alone does not pass" || fail "agent review alone passed"
 ev skill k1; stop; [ $? = 2 ] && ok "the open-code-review skill alone does not pass" || fail "skill alone passed"
 for i in 1 2 3 4 5; do stop; [ $? = 2 ] || { fail "stop $i released (anti-loop release is gone)"; break; }; done; [ "$i" = 5 ] && ok "no release after repeated blocks"

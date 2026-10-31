@@ -105,4 +105,14 @@ rexit="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("ex
   || { echo "✖ setup: gate exit $g, receipt exit '$rexit'"; FAILS=$((FAILS + 1)); }
 expect "an exit-4 (UNTESTED) receipt covering the pushed code: push blocked" 2
 
+# #482 / BUG-REV-push-gate-own-check-devkit: a main checkout with the DevKit installed (.agents/devkit) that lost its matrix
+# is refused by check() too, not only by strict_check
+NM="$(mktemp -d)"; (cd "$NM" && git init -q && git config user.email t@t && git config user.name t && mkdir -p .agents \
+  && ln -s /nonexistent-devkit .agents/devkit && echo x > f && git add f && git commit -qm i)
+r="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import push_gate as pg; ok, why = pg.check(sys.argv[2]); print(ok, why)' \
+     "$DEVKIT_DIR/bin" "$NM" 2>&1)"
+case "$r" in False*DevKit*missing*) echo "✔ check(): DevKit installed without the matrix → refused (fail closed)" ;;
+  *) echo "✖ check() without matrix but with .agents/devkit: $r"; FAILS=$((FAILS + 1)) ;; esac
+rm -rf "$NM"
+
 [ "$FAILS" -eq 0 ] && echo "push gate: all checks passed" || { echo "push gate: $FAILS FAILED"; exit 1; }

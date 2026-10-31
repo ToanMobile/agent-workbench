@@ -78,6 +78,11 @@ rc=$(run); grep -q "(cached:" "$TMP/out" && [ "$rc" = 0 ] && ok "same code → c
 bash "$F" --repo "$P" --base HEAD --status | grep -q '^PASS' && ok "--status PASS" || fail "--status"
 [ -s "$P/.claude/audit-gate/review_outcomes.jsonl" ] && ok "outcome logged" || fail "review_outcomes.jsonl missing"
 grep -q -- '--model opus' "$STUB/claude.args" && ok "Claude is started with --model opus" || fail "Claude not pinned to Opus: $(cat "$STUB/claude.args")"
+# BUG-REV-runner-claude-tools: only read tools exist in the reviewer (no Bash), project settings/hooks and MCP are not loaded
+grep -q -- '--tools Read,Grep,Glob --allowedTools' "$STUB/claude.args" && grep -q -- '--permission-mode default' "$STUB/claude.args" \
+  && grep -q -- '--setting-sources user' "$STUB/claude.args" && grep -q -- '--strict-mcp-config' "$STUB/claude.args" \
+  && ! grep -q 'Bash(' "$STUB/claude.args" && ok "Claude reviewers get read-only tools, no project settings, no MCP" \
+  || fail "Claude reviewer args: $(head -1 "$STUB/claude.args")"
 grep -q -- '-m grok-4.7' "$STUB/grok.args" && grep -q -- '--sandbox read-only' "$STUB/grok.args" \
   && ok "Grok is started pinned (-m grok-4.7) in the read-only sandbox" || fail "Grok args: $(cat "$STUB/grok.args")"
 python3 -c 'import json,sys; r=json.loads(open(sys.argv[1]).read().splitlines()[-1])["reviewers"]; sys.exit(0 if r["claude"]["model"]=="claude-opus-4-5" and r["grok"]["model"]=="grok-4.7" else 1)' \

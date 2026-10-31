@@ -252,6 +252,19 @@ else
     echo "OK: No .lock files in .agents/local/"
 fi
 
+echo "--- Test: promote skips ids taken by the profile's instincts-archive.md (BUG-REV-instincts-promote-archive-id) ---"
+printf '# Archive\n\n---\n\n### [INSTINCT-050] Archived Trap\n- **Rule:** x\n' > "$D/devkit/profiles/android/instincts-archive.md"
+"$REAL_DEVKIT_ROOT/bin/agent-kit" learn "Archive Id Trap" --cause "C9" --rule "R9" --symptom "S9" --generic >/dev/null 2>&1 || true
+python3 -I "$REAL_DEVKIT_ROOT/bin/instincts.py" promote --from "$D/proj" --profile android --kit "$D/devkit" >/dev/null 2>&1 || true
+NEWID="$(grep -o '### \[INSTINCT-[0-9]*\] Archive Id Trap' "$D/devkit/profiles/android/instincts.md" | grep -o '[0-9][0-9]*' | head -1)"
+if [ -n "$NEWID" ] && [ "$((10#$NEWID))" -gt 50 ]; then echo "OK: promoted id $NEWID is after the archived INSTINCT-050"
+else echo "FAIL: promoted id '$NEWID' reuses an archived id"; ERRORS=$((ERRORS+1)); fi
+
+echo "--- Test: add with an empty --detect does not crash (BUG-REV-instincts-empty-detect) ---"
+if python3 -I "$REAL_DEVKIT_ROOT/bin/instincts.py" add "Blank Detect Trap" --cause C --rule R --detect "" --detect-glob "" >/dev/null 2>&1 \
+   && grep -q "Blank Detect Trap" "$D/proj/.agents/instincts.md"; then echo "OK: blank --detect ignored"
+else echo "FAIL: blank --detect crashed add"; ERRORS=$((ERRORS+1)); fi
+
 if [ $ERRORS -gt 0 ]; then
     echo "$ERRORS FAILED"
     exit 1

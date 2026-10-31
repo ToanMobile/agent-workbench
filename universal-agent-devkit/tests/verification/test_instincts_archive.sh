@@ -55,6 +55,8 @@ grep -qF -- "$BLOCK" A/.agents/instincts-archive.md || fail "archive does not ho
 for kept in 001 003 004; do grep -q "\[INSTINCT-$kept\]" A/.agents/instincts.md || fail "INSTINCT-$kept lost"; done
 grep -q "INSTINCT-003" A/.agents/instincts-archive.md && fail "keep-flagged entry archived"
 perl -0777 -ne 'exit(!/---\s*\n\s*---/)' A/.agents/instincts.md && fail "double separator left in instincts.md"
+# BUG-REV-instincts-archive-atomic: the synced copy of the old text exists only while the rewrite runs
+[ -e A/.agents/instincts.md.archive-bak ] && fail "archive --apply left its .archive-bak behind"
 
 echo "--- second --apply is a no-op ---"
 cp A/.agents/instincts.md once.md

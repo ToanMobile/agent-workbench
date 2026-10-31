@@ -491,6 +491,30 @@ class MergeFixes(Base):
             self.assertEqual(os.path.realpath(cli), os.path.realpath(own))
         self.assertFalse(cli.startswith(self.repo + os.sep) and own.is_file())
 
+    def test_dot_slash_prefix_keeps_dot_folders(self):
+        """BUG-REV-merge-lstrip-dot — './.claude/x' must stay '.claude/x'."""
+        self.assertEqual(rm.normalize("claude", {"file": "./.claude/settings.json", "line": 1})["file"], ".claude/settings.json")
+        self.assertEqual(rm.normalize("claude", {"file": "././a.py", "line": 1})["file"], "a.py")
+
+    def test_non_object_finding_is_skipped_not_a_crash(self):
+        """BUG-REV-merge-non-dict-finding."""
+        envs = self.all_pass()
+        envs["claude"]["findings"] = ["oops", 3, None]
+        v, _, cl = self.verdict(envs)
+        self.assertEqual((v, cl), ("PASS", []))
+
+    def test_placeholder_or_unknown_known_pattern_is_not_p0(self):
+        """BUG-REV-merge-known-pattern-placeholder / BUG-REV-known-patterns-named-in-text."""
+        envs = self.all_pass()
+        for kp_value, problem in (("none", "minor"), ("INSTINCT-999", "minor"), ("", "unlike INSTINCT-001 this is fine")):
+            envs["claude"]["findings"] = [{"severity": "P3", "file": "app.py", "line": 9, "snippet": "return items[0]",
+                                           "problem": problem, "known_pattern": kp_value}]
+            v, _, cl = self.verdict(envs)
+            self.assertEqual((v, cl[0]["severity"]), ("PASS", "P3"), kp_value or problem)
+        envs["claude"]["findings"][0]["known_pattern"] = "INSTINCT-001"   # a real id still makes it a recurring P0
+        v, _, cl = self.verdict(envs)
+        self.assertEqual((v, cl[0]["severity"]), ("FAIL", "P0"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

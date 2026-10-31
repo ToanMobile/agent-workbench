@@ -131,11 +131,18 @@ def normalize(reviewer, raw):
     problem = " ".join(str(f.get("problem") or f.get("content") or f.get("message") or f.get("title") or "").split())
     sev = norm_sev(f.get("severity") or f.get("priority"))
     out = {"reviewer": reviewer, "severity": sev, "category": norm_cat(f.get("category") or f.get("class") or f.get("type"), problem),
-           "file": path.lstrip("./") if path.startswith("./") else path, "line": line, "end_line": max(end or 0, line or 0) or None,
+           "file": _strip_dot_slash(path), "line": line, "end_line": max(end or 0, line or 0) or None,
            "snippet": str(f.get("snippet") or f.get("code") or "")[:400], "problem": problem[:600],
            "why": str(f.get("why") or "")[:600], "fix": str(f.get("fix") or f.get("suggestion") or "")[:600],
            "known_pattern": str(f.get("known_pattern") or ""), "deterministic": bool(f.get("deterministic"))}
     return out
+
+
+def _strip_dot_slash(path):
+    """'./a/b' → 'a/b'; './.claude/x' keeps its dot (str.lstrip("./") ate it: '.claude/x' became 'claude/x')."""
+    while path.startswith("./"):
+        path = path[2:]
+    return path
 
 
 def _ws(s):
@@ -246,12 +253,14 @@ def analyse(repo, meta, envs, ents=None):
         if name == "verifier" or env.get("status") != "ok":
             continue
         for fr in env.get("findings") or []:
+            if not isinstance(fr, dict):   # a string / number in the list is no finding (it crashed normalize())
+                continue
             f = normalize(name, fr)
             ok, why = cite_check(repo, f)
             f["cited"], f["cite_why"] = ok, why
             hit = known_patterns.match_finding(ents, f) if ok else None
-            if hit or (ok and f["known_pattern"]):
-                f["known_pattern"] = hit[0] if hit else f["known_pattern"]
+            if hit:   # only a real registry id (or a detect hit): "none", "N/A" or an unknown id never makes a P0
+                f["known_pattern"] = hit[0]
                 f["severity"], f["category"] = "P0", "recurring-bug"
                 f["deterministic"] = f["deterministic"] or bool(hit and hit[1] == "detect")
             raw.append(f)

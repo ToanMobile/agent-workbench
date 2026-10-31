@@ -28,9 +28,11 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-READ_TOOLS = ("Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(git grep:*),"
-              "Bash(git ls-files:*),Bash(git status:*)")
-DENY_TOOLS = "Edit,Write,MultiEdit,NotebookEdit"
+# The Claude reviewers get ONLY read tools: --tools removes every other tool (no Bash at all — --allowedTools alone only
+# auto-approves, and the user's own settings run in defaultMode "auto" with Bash allow rules such as `git push origin main`).
+# The diff is handed over as a file (review.diff in the run dir, readable through --add-dir), as for Grok.
+READ_ONLY_TOOLS = "Read,Grep,Glob"
+DENY_TOOLS = "Edit,Write,MultiEdit,NotebookEdit,Bash,WebFetch,WebSearch,Task"
 OCR_SEV_FAIL = {"critical", "high", "blocker", "major", "p0", "p1"}
 GROK_TOOLS = "read_file,grep,list_dir,run_terminal_cmd"
 GROK_DENY = "write,search_replace,web_search,web_fetch,task"
@@ -217,7 +219,14 @@ def run_claude(name, a, meta, ctx):
     want = claude_model()
     if "opus" not in want.lower():
         return env_out(a.run, name, status="error", model="", reason=f"REVIEW_CLAUDE_MODEL={want} is not an Opus model — refused")
-    cmd = [bin_, "-p", "--output-format", "json", "--model", want, "--allowedTools", READ_TOOLS, "--disallowedTools", DENY_TOOLS]
+    if name != "verifier" and meta.get("mode") != "full":
+        prompt += "\n\n" + write_diff(a, meta)
+    # --setting-sources user: the project's settings (its hooks — the review Stop gate itself — and its allow rules) do not
+    # load in the reviewer; --permission-mode default + --tools: nothing outside the read tools can run, whatever the user's
+    # defaultMode; --strict-mcp-config: no MCP server (none is given)
+    cmd = [bin_, "-p", "--output-format", "json", "--model", want, "--tools", READ_ONLY_TOOLS, "--allowedTools", READ_ONLY_TOOLS,
+           "--disallowedTools", DENY_TOOLS, "--permission-mode", "default", "--strict-mcp-config", "--setting-sources", "user",
+           "--add-dir", a.run]
     rc, out, err, to = run_bounded(cmd, a.timeout, a.repo, env=dict(os.environ, REVIEW_FANOUT_CHILD="1"), stdin_text=prompt)
     if to:
         return env_out(a.run, name, status="timeout", reason=f"claude -p exceeded {a.timeout}s")
@@ -249,6 +258,14 @@ def run_claude(name, a, meta, ctx):
     return env_out(a.run, name, status="ok", verdict=ans["verdict"], findings=ans.get("findings") or [], usage=usage, **mk)
 
 
+def write_diff(a, meta):
+    """The change as a file in the run dir (reviewers without a shell read it), and the prompt line naming it."""
+    diff = os.path.join(a.run, "review.diff")
+    with open(diff, "wb") as fh:
+        fh.write(subprocess.run(["git", "diff", "--no-ext-diff", meta["base"], "--"], cwd=a.repo, capture_output=True).stdout)
+    return f"The full diff (`git diff {meta['base']}`) is in {diff}: read it first (you have no shell; use Read/Grep/Glob)."
+
+
 def grok_bin():
     b = os.environ.get("REVIEW_GROK_BIN")
     if b:
@@ -265,10 +282,7 @@ def run_grok(a, meta, ctx):
     # Grok gets read tools and a read-only shell (git grep/log/show), not edits: the diff is handed over as a file.
     tail = ""
     if meta.get("mode") != "full":
-        diff = os.path.join(a.run, "review.diff")
-        with open(diff, "wb") as fh:
-            fh.write(subprocess.run(["git", "diff", "--no-ext-diff", meta["base"], "--"], cwd=a.repo, capture_output=True).stdout)
-        tail = f"\n\nThe full diff is in {diff} (read it first)."
+        tail = "\n\n" + write_diff(a, meta)
     pf = os.path.join(a.run, "grok-prompt.md")
     with open(pf, "w", encoding="utf-8") as fh:
         fh.write(claude_prompt("claude", meta, ctx).replace(

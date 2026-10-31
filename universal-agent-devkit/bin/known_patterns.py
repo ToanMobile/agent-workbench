@@ -106,8 +106,9 @@ def covers(entry, path):
 def match_finding(ents, finding):
     """(entry id, how) when a review finding is a known pattern: it names the id, or its snippet hits a detect regex in a
     covered file. None otherwise."""
-    text = " ".join(str(finding.get(k) or "") for k in ("known_pattern", "problem", "category"))
-    named = set(ID_IN_TEXT.findall(text))
+    # only the finding's own known_pattern field names a pattern: an id merely mentioned in the problem text ("unlike
+    # INSTINCT-015…") does not make the finding that known bug
+    named = set(ID_IN_TEXT.findall(str(finding.get("known_pattern") or "")))
     for e in ents:
         if e["id"] in named:
             return e["id"], "named"

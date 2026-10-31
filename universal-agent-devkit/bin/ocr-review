@@ -133,6 +133,9 @@ def rejected_all(report):
         return False
 
 
+_AUTO_OUT, _KEEP_OUT = [], []
+
+
 def main(argv):
     if shutil.which("ocr") is None:
         print("ocr-review: `ocr` (OpenCodeReview) is not installed — npm i -g @alibaba-group/open-code-review", file=sys.stderr)
@@ -159,6 +162,7 @@ def main(argv):
         os.chmod(out, 0o700)
     else:
         out = tempfile.mkdtemp(prefix="ocr-review.")
+        _AUTO_OUT.append(out)   # removed on every path that does not print a report / spec in it (run())
     if not delegate_only:
         report = os.path.join(out, "ocr-review.json")
         try:   # --out is reused: a report left by an earlier run must never stand in for this one
@@ -167,6 +171,7 @@ def main(argv):
             pass
         r = ocr("review", "--audience", "agent", "--format", "json", "-o", report, *[a for a in keep if a], timeout=REVIEW_TIMEOUT_S)
         if r.returncode == 0 and os.path.exists(report):
+            _KEEP_OUT.append(out)
             print("mode: review")
             print("report: " + report)
             return 0
@@ -196,7 +201,8 @@ def main(argv):
         print("mode: delegate")
         print("nothing to review (ocr delegate preview: 0 reviewable files)")
         return 0
-    g = ocr("delegate", "rule", "--format", "json", *files, timeout=DELEGATE_TIMEOUT_S)
+    # "--": a changed file whose name starts with "-" is a path, never an ocr option
+    g = ocr("delegate", "rule", "--format", "json", "--", *files, timeout=DELEGATE_TIMEOUT_S)
     try:
         groups = json.loads(g.stdout).get("groups") or []
     except ValueError:
@@ -219,11 +225,20 @@ def main(argv):
         lines += ["", "## OCR rules for: " + ", ".join("`%s`" % x for x in grp.get("files") or []), "", grp.get("rule", "").strip()]
     with open(spec, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
+    _KEEP_OUT.append(out)
     print("mode: delegate")
     print("spec: " + spec)
     print("next: give this spec to a fresh-context reviewer (Agent tool); its findings are the OCR review")
     return 0
 
 
+def run(argv):
+    """main(), and a folder this helper created itself (no --out) is removed again unless it holds what was printed."""
+    rc = main(argv)
+    if _AUTO_OUT and not _KEEP_OUT:
+        shutil.rmtree(_AUTO_OUT[0], ignore_errors=True)
+    return rc
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(run(sys.argv[1:]))

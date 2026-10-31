@@ -13625,6 +13625,281 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_review_merge_verdict.py"
       ]
+    },
+    "BUG-REV-instincts-promote-archive-id": {
+      "id": "BUG-REV-instincts-promote-archive-id",
+      "kind": "bug",
+      "title": "instincts promote: next id skips ids already in instincts-archive.md",
+      "cause": null,
+      "component": "instincts",
+      "created_at": "2026-10-31 12:16:01",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P2",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:01",
+      "linked_ts": 1793423761.7520142,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_instincts_generic_promote.sh"
+      ]
+    },
+    "BUG-REV-instincts-empty-detect": {
+      "id": "BUG-REV-instincts-empty-detect",
+      "kind": "bug",
+      "title": "instincts add: a blank --detect/--detect-glob is not written as a match-everything rule",
+      "cause": null,
+      "component": "instincts",
+      "created_at": "2026-10-31 12:16:02",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P3",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:02",
+      "linked_ts": 1793423762.518603,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_instincts_generic_promote.sh"
+      ]
+    },
+    "BUG-REV-instincts-archive-atomic": {
+      "id": "BUG-REV-instincts-archive-atomic",
+      "kind": "bug",
+      "title": "instincts archive --apply: fsynced backup before the rewrite, no truncated registry on crash",
+      "cause": null,
+      "component": "instincts",
+      "created_at": "2026-10-31 12:16:03",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P2",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:03",
+      "linked_ts": 1793423763.3033118,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/verification/test_instincts_generic_promote.sh"
+      ]
+    },
+    "BUG-REV-push-gate-own-check-devkit": {
+      "id": "BUG-REV-push-gate-own-check-devkit",
+      "kind": "bug",
+      "title": "push_gate own check: a repo with .agents/devkit but no matrix fails instead of passing",
+      "cause": null,
+      "component": "push_gate",
+      "created_at": "2026-10-31 12:16:04",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:04",
+      "linked_ts": 1793423764.0493948,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_push_gate.sh"
+      ]
+    },
+    "BUG-REV-ocr-review-tmp-leak": {
+      "id": "BUG-REV-ocr-review-tmp-leak",
+      "kind": "bug",
+      "title": "ocr-review: auto-created temp folder removed on every error return",
+      "cause": null,
+      "component": "ocr-review",
+      "created_at": "2026-10-31 12:16:04",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P3",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:04",
+      "linked_ts": 1793423764.806287,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/installer/test_ocr_review_helper.sh"
+      ]
+    },
+    "BUG-REV-merge-lstrip-dot": {
+      "id": "BUG-REV-merge-lstrip-dot",
+      "kind": "bug",
+      "title": "review-merge normalize: './.claude/x' keeps the dot folder (lstrip ate it)",
+      "cause": null,
+      "component": "review-merge",
+      "created_at": "2026-10-31 12:16:05",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P2",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:05",
+      "linked_ts": 1793423765.558898,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_merge_verdict.py"
+      ]
+    },
+    "BUG-REV-merge-non-dict-finding": {
+      "id": "BUG-REV-merge-non-dict-finding",
+      "kind": "bug",
+      "title": "review-merge: a non-object entry in findings is skipped, not a crash",
+      "cause": null,
+      "component": "review-merge",
+      "created_at": "2026-10-31 12:16:06",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P2",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:06",
+      "linked_ts": 1793423766.318391,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_merge_verdict.py"
+      ]
+    },
+    "BUG-REV-merge-known-pattern-placeholder": {
+      "id": "BUG-REV-merge-known-pattern-placeholder",
+      "kind": "bug",
+      "title": "review-merge: placeholder/unknown known_pattern ('none', unknown id) does not escalate to P0",
+      "cause": null,
+      "component": "review-merge",
+      "created_at": "2026-10-31 12:16:07",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:07",
+      "linked_ts": 1793423767.0674,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_merge_verdict.py"
+      ]
+    },
+    "BUG-REV-known-patterns-named-in-text": {
+      "id": "BUG-REV-known-patterns-named-in-text",
+      "kind": "bug",
+      "title": "known_patterns.match_finding: only the known_pattern field names a pattern, not ids mentioned in problem text",
+      "cause": null,
+      "component": "known_patterns",
+      "created_at": "2026-10-31 12:16:07",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P2",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:07",
+      "linked_ts": 1793423767.824911,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_merge_verdict.py"
+      ]
+    },
+    "BUG-REV-runner-claude-tools": {
+      "id": "BUG-REV-runner-claude-tools",
+      "kind": "bug",
+      "title": "Claude reviewer: only Read/Grep/Glob, permission-mode default, user settings only, no MCP (user defaultMode auto + Bash allow rules)",
+      "cause": null,
+      "component": "review_runner",
+      "created_at": "2026-10-31 12:16:08",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P1",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:08",
+      "linked_ts": 1793423768.567369,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh"
+      ]
+    },
+    "BUG-REV-review-gate-fanout-child": {
+      "id": "BUG-REV-review-gate-fanout-child",
+      "kind": "bug",
+      "title": "review_gate: a review-fanout reviewer's own Stop is not gated (nested review)",
+      "cause": null,
+      "component": "review_gate",
+      "created_at": "2026-10-31 12:16:09",
+      "task": null,
+      "tests": [
+        "REG-DK-ALL-01",
+        "REG-DK-ALL-GATES-01",
+        "REG-DK-ALL-REST-01",
+        "REG-DK-ALL-WORKTREE-01"
+      ],
+      "last": null,
+      "history": [],
+      "fixed": true,
+      "severity": "P2",
+      "evidence": "critical scan 31/10 (review-fanout --full)",
+      "linked_at": "2026-10-31 12:16:09",
+      "linked_ts": 1793423769.325987,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_review_gate_4way.sh"
+      ]
     }
   },
   "meta": {

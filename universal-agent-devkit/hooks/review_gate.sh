@@ -34,6 +34,11 @@ set -u
 
 INPUT="$(cat)"
 
+# A reviewer started by bin/review-fanout.sh (review_runner sets REVIEW_FANOUT_CHILD=1) is itself the review: gating its own
+# Stop would start a nested 4-way review per reviewer (tests/gates/test_review_gate_4way.sh). The variable lives in the
+# environment Claude Code was started with; nothing a session runs through Bash can set it for its own hooks.
+[ "${REVIEW_FANOUT_CHILD:-}" = 1 ] && exit 0
+
 # The project (2026-10-09): CLAUDE_PROJECT_DIR, else the git tree of the payload cwd (of the process cwd when the payload has
 # none). Outside a git tree there is no project and nothing is written (tests/gates/test_hook_log_dir.sh): a run at /
 # created /.claude/audit-gate/.
