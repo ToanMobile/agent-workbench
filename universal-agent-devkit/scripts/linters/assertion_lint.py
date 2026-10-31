@@ -8,8 +8,11 @@ full parser: a test whose assert sits in a nested lambda still counts.
 
 from __future__ import annotations
 
+import functools
+import io
 import re
 import sys
+import tokenize
 from pathlib import Path
 
 _MARKER = re.compile(
@@ -35,6 +38,8 @@ _ASSERT = re.compile(
     r"|\bcheck(?:NotNull)?\s*\("
     r"|\bpytest\.raises\b"
     r"|\bself\.assert\w+\s*\("
+    # mock của Python như verify của Mockito: m.assert_called_once_with(…), assert_awaited…, assert_has_calls, assert_not_called
+    r"|\.assert_(?:called|awaited|any_call|any_await|has_calls|has_awaits|not_called|not_awaited)\w*\s*\("
     r"|\bassert\s+(?!True\b|False\b)"
     # Kotlin's assert(cond) (Gradle runs tests with -ea) and JUnit/kotlin.test fail(…)
     r"|\bassert\s*\(|\bfail\s*\("
@@ -82,11 +87,43 @@ def _body(text: str, start: int, limit: int | None = None) -> str:
     return text[brace:end]
 
 
+@functools.lru_cache(maxsize=1)
+def _statement_rows(text: str) -> "frozenset | None":
+    """Số dòng (đếm từ 1, như tokenize) mở một dòng lệnh logic. Dòng tiếp nối — trong chuỗi nhiều dòng (OfficeReader#242:
+    script fake adb ở cột 0), trong ngoặc (`) -> None:` của chữ ký nhiều dòng) — và dòng comment không mở lệnh nào.
+    Không tokenize được (không phải Python, cú pháp dở) ⇒ None: giữ quy tắc lề cũ."""
+    rows, fresh = set(), True
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.NEWLINE:
+                fresh = True
+            elif fresh and tok.type not in (tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT):
+                rows.add(tok.start[0])
+                fresh = False
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return frozenset(rows)
+
+
 def _python_body(text: str, start: int) -> str:
     line_start = text.rfind("\n", 0, start) + 1
     indent = len(text[line_start:start]) - len(text[line_start:start].lstrip(" "))
     lines = text[start:].splitlines(keepends=True)
     out = [lines[0]] if lines else []
+    row = text.count("\n", 0, start) + 1
+    stmts = _statement_rows(text)
+    if out and stmts is not None and row in stmts:
+        # `def` là lệnh thật (không nằm trong chuỗi fixture): thân hết ở lệnh kế tiếp có lề ≤ lề của chính dòng `def`.
+        # Regex khớp từ đầu dòng nên lề tính ở trên luôn 0 ⇒ method kéo tới cột 0, nuốt assert của test sau (#737).
+        def_line = text[line_start:start] + out[0]
+        indent = len(def_line) - len(def_line.lstrip(" "))
+        row += out[0].count("\n")
+        for line in lines[1:]:
+            if row in stmts and line.strip() and (len(line) - len(line.lstrip(" "))) <= indent:
+                break
+            out.append(line)
+            row += line.count("\n")
+        return "".join(out)
     for line in lines[1:]:
         if line.strip() and (len(line) - len(line.lstrip(" "))) <= indent and not line.lstrip().startswith("#"):
             break
