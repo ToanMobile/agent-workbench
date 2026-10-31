@@ -15013,6 +15013,20 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_review_base_matches_merge_gate.sh"
       ]
+    },
+    "BUG-REV-merge-gate-grandfather": {
+      "id": "BUG-REV-merge-gate-grandfather",
+      "kind": "bug",
+      "severity": "P1",
+      "component": "super-board-merge-gate",
+      "title": "TEMPORARY exception: PRs created before PR #742 (createdAt < 2026-10-31T08:21:22Z) skip only the signed review-verdict check until 2026-11-01T06:00:00+07:00; CI, lock, --match-head-commit, scratch verify, policy still apply; machine-gated PRs never; REMOVE after 2026-11-01 (.claude/bin/super-board-grandfather.py + grandfathered_review in the gate)",
+      "evidence": "31/10/2026: #742 merges before Agent-Factory's open PRs (#739, #700, #732), which have no signed fanout verdict",
+      "fixed": true,
+      "tests": [],
+      "remove_after": "2026-11-01",
+      "runs_in_suite": [
+        "tests/super-board/test_merge_gate_review_ci_hardening.sh"
+      ]
     }
   },
   "meta": {

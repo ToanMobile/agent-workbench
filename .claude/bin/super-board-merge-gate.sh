@@ -901,7 +901,19 @@ merge_pr() {
 
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
   say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
-review_verdict_check
+# TẠM (BUG-REV-merge-gate-grandfather, gỡ sau 2026-11-01): PR mở trước PR #742 được miễn RIÊNG phần verdict review có chữ ký tới
+# hạn trong super-board-grandfather.py (hằng số cứng, không env/cờ nào nới). PR machine-gated không bao giờ được miễn; CI, lock,
+# --match-head-commit, verify scratch, policy vẫn chạy đủ. Không đọc được createdAt / helper lỗi → luật đầy đủ (fail-closed).
+grandfathered_review() {
+  local created line
+  [ "$GATED" -eq 0 ] || return 1
+  [ -f "$HERE/super-board-grandfather.py" ] || return 1
+  created=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json createdAt -q .createdAt 2>/dev/null) || return 1
+  [ -n "$created" ] || return 1
+  line=$(python3 -I "$HERE/super-board-grandfather.py" --created "$created" 2>/dev/null) || return 1
+  say "GRANDFATHERED PR #${PR} (${line} — signed review verdict not required; CI and every other check still apply"
+}
+grandfathered_review || review_verdict_check
 ci_precheck   # rẻ, trước verify: check đã đỏ thì không tốn verify
 
 if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
