@@ -24,6 +24,13 @@ checks = {
     "semgrep pinned exactly": re.search(r"semgrep==\d+\.\d+\.\d+", s) is not None and "semgrep>=" not in s,
     "every action pinned to a commit": all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", u) for u in re.findall(r"uses:\s*(\S+)", s)),
 }
+# BUG-REV-ci-npm-ci-no-lockfile (run 41185270960): `npm ci` exits EUSAGE without a lockfile, and the root .gitignore drops
+# package-lock.json, so every directory the workflow runs `npm ci` in must have its lockfile tracked by git.
+import os, subprocess
+root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[1]))))
+tracked = set(subprocess.run(["git", "-C", root, "ls-files"], capture_output=True, text=True).stdout.splitlines())
+for d in sorted(set(re.findall(r"cd\s+(\S+?)\s*&&\s*npm ci\b", s))):
+    checks["npm ci lockfile tracked: " + d] = any(d + "/" + f in tracked for f in ("package-lock.json", "npm-shrinkwrap.json"))
 bad = [k for k, v in checks.items() if not v]
 for k, v in checks.items():
     print(("✔ " if v else "✖ ") + k)
