@@ -766,4 +766,10 @@ Mẫu ghi nhận:
 - **Ngày phát hiện:** 2026-10-31
 - **Hiện tượng lỗi:** xưởng rảnh vẫn ~45% CPU renderer + ~44% GPU (60 khung/giây, DPR 2, ~2500 draw call), giảm chuyển động vẫn vẽ 60 khung; ~300 lần tải texture xương mỗi khung; server glob ~5000 transcript mỗi 3 giây
 - **Nguyên nhân:** `frame()` vẽ mọi rAF; mỗi SkinnedMesh một Skeleton (GLTFLoader / SkeletonUtils.clone); `hoverDirty` bật sẵn mà không có chuột thì không bao giờ tắt; scan_sessions liệt kê lại cả cây mỗi vòng
-- **Quy tắc phòng ngừa & Cách fix:** thêm hoạt cảnh/chuyển động mới thì đưa điều kiện vào `busy` của frame() (frameDue: bận → mọi khung, rảnh 30 khung/giây, giảm chuyển động 2 khung/giây), cờ "bẩn" chỉ tính khi có nguồn tắt được nó; trần DPR 1,5; nhân bản người 3D qua `shareSkeletons`; quét file định kỳ phải tăng dần (mtime thư mục + quét đầy đủ thưa); đo lại bằng perf (CPU renderer/GPU, texSubImage2D/giây) trước khi gộp
+- **Quy tắc phòng ngừa & Cách fix:** thêm hoạt cảnh/chuyển động mới thì đưa điều kiện vào `busy` của frame() (frameDue: bận → mọi khung, rảnh ~20 khung/giây, giảm chuyển động / bảng che cảnh ~1 khung/giây), cờ "bẩn" chỉ tính khi có nguồn tắt được nó; trần DPR 1,5; nhân bản người 3D qua `shareSkeletons`; quét file định kỳ phải tăng dần (mtime thư mục + quét đầy đủ thưa); đo lại bằng perf (CPU renderer/GPU, texSubImage2D/giây) trước khi gộp
+
+### [INSTINCT-099] gate-full: nhiều repo cùng chạy --full một lúc làm máy quá tải, mỗi repo chỉ có khoá riêng
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** lịch đêm 00:00 của nhiều repo (mỗi repo một LaunchAgent) cùng nổ, cộng nút "Chạy gate full" bấm tay, chạy song song nhiều lượt post-fix-gate --full trên cùng máy
+- **Nguyên nhân:** gate_full.py chỉ khoá `<common>/postfix-gate/gate-full.lock` theo từng repo; không có gì xếp hàng giữa các repo
+- **Quy tắc phòng ngừa & Cách fix:** mọi lượt gate-full lấy thêm khoá TOÀN MÁY (flock `DEVKIT_GATE_FULL_GLOBAL_LOCK`, mặc định ~/Library/Caches/devkit-gate-full/global.lock, không bao giờ gỡ file) sau khoá repo, chờ tới `DEVKIT_GATE_FULL_GLOBAL_WAIT_S` rồi skip; test gọi `gate_full.py run` phải trỏ biến này vào thư mục tạm (không thì chờ / chặn lượt đêm thật); bên ngoài (Agent Office) chỉ dò khoá repo bằng đọc pid, không flock (flock thử làm lượt đêm skip), dò khoá toàn máy bằng LOCK_SH|NB

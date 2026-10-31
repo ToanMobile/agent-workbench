@@ -12685,6 +12685,29 @@
       "runs_in_suite": [
         "mcp-servers/agent-office/tests/test_perf_server.py"
       ]
+    },
+    "BUG-20261031-gate-full-chay-chong-nhieu-repo": {
+      "id": "BUG-20261031-gate-full-chay-chong-nhieu-repo",
+      "kind": "bug",
+      "title": "gate-full: lịch đêm nhiều repo + chạy tay chạy --full song song trên cùng máy (chỉ có khoá theo repo)",
+      "cause": null,
+      "component": "gate-full",
+      "created_at": "2026-11-01 00:09:27",
+      "task": "PR #758",
+      "tests": [
+        "REG-DK-ALL-GATES-01"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-11-01 00:09:27",
+      "sessions": [],
+      "linked_at": "2026-11-01 00:09:27",
+      "linked_ts": 1793466567.322111,
+      "runs_in_suite": [
+        "universal-agent-devkit/tests/gates/test_gate_full_global_lock.sh"
+      ]
     }
   },
   "meta": {
