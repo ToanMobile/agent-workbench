@@ -64,3 +64,4 @@ tests/lib/watchdog_env.py   hooks/tests/hook_contract_test.sh tests/gates/test_h
 bin/review_runner.py               tests/gates/test_review_fanout_e2e.sh tests/gates/test_review_gate_4way.sh
 bin/known_patterns.py              tests/gates/test_review_fanout_e2e.sh
 bin/review-merge.py                tests/gates/test_review_fanout_e2e.sh tests/gates/test_review_gate_4way.sh
+bin/review-full.py                 tests/gates/test_review_full.sh

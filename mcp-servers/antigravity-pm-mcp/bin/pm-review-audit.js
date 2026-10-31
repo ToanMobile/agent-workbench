@@ -2,7 +2,7 @@
 // pm-review-audit.js — Antigravity's vote in the 4-way review (universal-agent-devkit/bin/review-fanout.sh).
 // Same path as the MCP tools (pm_task_create -> pm_dispatch kind=audit), from a shell, then waits for audit-agent.json.
 //
-//   node bin/pm-review-audit.js --project ROOT --base REF --out FILE [--message-file F] [--timeout SEC] [--model M]
+//   node bin/pm-review-audit.js --project ROOT --base REF --out FILE [--message-file F] [--timeout SEC] [--model M] [--scope diff|full]
 //
 // Always writes an envelope to --out: {reviewer:"antigravity", status: ok|failed|timeout|error|unavailable, verdict, findings,
 // reason}. status ok only when Antigravity wrote audit-agent.json for THIS head (auditedHead == git HEAD) after the dispatch.
@@ -22,6 +22,7 @@ const out = arg('--out');
 const timeoutS = Number(arg('--timeout', '1200')) || 1200;
 const model = arg('--model');
 const msgFile = arg('--message-file');
+const scope = arg('--scope', 'diff');   // diff | full (whole-solution audit of the files named in the message)
 
 function write(env) {
   const full = { reviewer: 'antigravity', usage: { tokens: 0, usd: 0 }, findings: [], ...env };
@@ -52,10 +53,13 @@ async function main() {
   try {
     created = await call('pm_task_create', {
       project,
-      title: `[4-way review] ${head.slice(0, 12)} vs ${base}`,
-      brief: `CHI DOC, KHONG SUA. Audit doc lap cho thay doi: \`git diff ${base}\` (commit tu ${base} + thay doi chua commit + file moi chua track). `
+      title: scope === 'full' ? `[4-way full audit] ${head.slice(0, 12)}` : `[4-way review] ${head.slice(0, 12)} vs ${base}`,
+      brief: (scope === 'full'
+        ? 'CHI DOC, KHONG SUA. Audit TOAN BO cac file liet ke trong message (khong phai diff), doc tron ven tung file. '
+        : `CHI DOC, KHONG SUA. Audit doc lap cho thay doi: \`git diff ${base}\` (commit tu ${base} + thay doi chua commit + file moi chua track). `)
         + 'Day la 1 trong 4 reviewer (Claude Opus, Antigravity, Grok, OCR); PASS chi khi ca 4 cung pass.',
-      definitionOfDone: [`Khong con loi blocker/major trong thay doi so voi ${base}`],
+      definitionOfDone: [scope === 'full' ? 'Bao cao moi loi blocker/major trong cac file duoc liet ke'
+        : `Khong con loi blocker/major trong thay doi so voi ${base}`],
       type: 'refactor',
       proofKind: 'script',
       ...(model && { model }),

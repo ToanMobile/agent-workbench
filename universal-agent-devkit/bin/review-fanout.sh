@@ -3,6 +3,8 @@
 # in parallel; all 4 must pass.
 #
 #   review-fanout.sh [--base REF|verified] [--repo DIR] [--background] [--status] [--hash] [--force]
+#   review-fanout.sh --full [--repo DIR] [review-full.py options: --list --chunk-lines N --jobs N --max-usd X ...]
+#     whole-solution scan (not a diff) by the same 4 reviewers, chunked by module, report only — bin/review-full.py
 #
 # Rule (user 31/10/2026: "3 agent phải cùng thống nhất kết quả thì mới gọi là pass", widened the same day to 4 equal reviewers:
 # Claude Code pinned to Opus, Antigravity, Grok, OCR full LLM mode): PASS only when all 4 reviewers ran on the required model,
@@ -33,8 +35,10 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 BASE="" REPO="" MODE="run" FORCE=0
+if [ "${1:-}" = "--full" ]; then shift; exec python3 -I "$HERE/review-full.py" "$@"; fi
 while [ $# -gt 0 ]; do
   case "$1" in
+    --full) echo "review-fanout: --full must be the first argument" >&2; exit 2 ;;
     --base) BASE="${2:-}"; shift 2 ;;
     --repo) REPO="${2:-}"; shift 2 ;;
     --background) MODE="background"; shift ;;

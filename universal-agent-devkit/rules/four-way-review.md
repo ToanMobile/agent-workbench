@@ -54,3 +54,14 @@ The Stop hook `hooks/review_gate.sh` runs the same thing (`--base verified`) and
 `approved-head` and `cross-review-approved` are posted ONLY after `review-fanout.sh` printed PASS for that exact head
 (summary.json `verdict: PASS`); paste the summary path into the Reviewer report. Merge policy stays autonomous (no human approval);
 the machine gates are this review + `.github/workflows/pr-review.yml` (lint, typecheck, tests, semgrep, gitleaks, OCR).
+
+## Whole-solution scan (`review-fanout.sh --full`)
+`bash universal-agent-devkit/bin/review-fanout.sh --full --repo .` (`--list` shows the plan, no LLM) runs the same four reviewers
+over every tracked source file, not a diff: the separate clones (mcp-servers/rea, mcp-servers/super-board), node_modules,
+vendored / generated / build output, lockfiles, minified and binary files, data (.csv/.jsonl, .json > 1500 lines) and prose
+(.md/.txt, docs/) are excluded. Files are chunked by module (≤ 6000 lines, `--chunk-lines`); Claude Opus, Antigravity and
+Grok review each chunk, OCR reviews the whole selection once in a scratch copy, the registry checks every line, the Opus
+verifier tries to refute each cited P0/P1. Product code goes before tests; once `--max-usd` (40) / `--max-tokens` (20 M) is
+spent no further chunk starts and the report lists the skipped ones. REPORT ONLY — nothing is fixed, no bug row is recorded.
+Output: `<git-common-dir>/review-fanout/full-<head>-<ts>/full-summary.md|json` (per-reviewer, per-chunk status and model;
+findings P0–P3 with state, consensus reviewers and file:line).

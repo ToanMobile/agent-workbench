@@ -126,9 +126,22 @@ reachable path; P2 = should fix; P3 = nit. "verdict" is "pass" ONLY when there i
 Every file:line and snippet is machine-checked against the code: a citation that is not really there is thrown away."""
 
 
+def full_scope(meta):
+    """The whole-solution scan (bin/review-full.py): these files are reviewed in full, not a diff."""
+    return (f"You are an independent code reviewer (read-only: never edit, never commit). Repository: {meta['repo']}.\n"
+            f"WHOLE-SOLUTION AUDIT (not a diff) of module {meta.get('chunk') or '?'}: review these files IN FULL:\n"
+            + "\n".join(f"- {f}" for f in meta.get("files") or []) + "\n\n"
+            "For each file, read its callers, callees and tests elsewhere in the repo (git grep the names) to judge real "
+            "behaviour. Report real defects in THESE files only (bugs, security holes, swallowed errors, races, resource "
+            "leaks, broken contracts, dead guards), not style. Read CLAUDE.md / AGENTS.md for repo rules.\n\n")
+
+
 def claude_prompt(kind, meta, ctx):
     base, depth = meta["base"], meta["depth"]
-    common = (f"You are an independent code reviewer (read-only: never edit, never commit). Repository: {meta['repo']}.\n"
+    if meta.get("mode") == "full":
+        common = full_scope(meta)
+    else:
+        common = (f"You are an independent code reviewer (read-only: never edit, never commit). Repository: {meta['repo']}.\n"
               f"The change under review: `git diff {base}` (commits since {base} plus uncommitted edits) and these untracked "
               f"files, read whole: {', '.join(meta.get('untracked') or []) or 'none'}.\n"
               f"Changed files: {', '.join(meta.get('files') or [])}\n\n"
@@ -149,7 +162,9 @@ def claude_prompt(kind, meta, ctx):
 
 
 def verifier_prompt(meta, cands):
-    return (f"You are the VERIFIER of a code review in {meta['repo']} (read-only). The change is `git diff {meta['base']}`.\n"
+    scope = ("This is a whole-solution audit (files reviewed in full)." if meta.get("mode") == "full"
+             else f"The change is `git diff {meta['base']}`.")
+    return (f"You are the VERIFIER of a code review in {meta['repo']} (read-only). {scope}\n"
             "Below are P0/P1 findings other reviewers reported. For EACH, try hard to REFUTE it: open the file, read the "
             "lines, the callers and the tests; check whether the failure can really happen. Refute only with concrete "
             "evidence (a guard, a type, a caller contract, a test that shows it cannot happen). If you cannot refute it, "
@@ -217,14 +232,16 @@ def run_grok(a, meta, ctx):
     if not (os.path.isfile(bin_) and os.access(bin_, os.X_OK)):
         return env_out(a.run, "grok", status="unavailable", reason=f"Grok CLI not found at {bin_}")
     # Grok gets read tools and a read-only shell (git grep/log/show), not edits: the diff is handed over as a file.
-    diff = os.path.join(a.run, "review.diff")
-    with open(diff, "wb") as fh:
-        fh.write(subprocess.run(["git", "diff", "--no-ext-diff", meta["base"], "--"], cwd=a.repo, capture_output=True).stdout)
+    tail = ""
+    if meta.get("mode") != "full":
+        diff = os.path.join(a.run, "review.diff")
+        with open(diff, "wb") as fh:
+            fh.write(subprocess.run(["git", "diff", "--no-ext-diff", meta["base"], "--"], cwd=a.repo, capture_output=True).stdout)
+        tail = f"\n\nThe full diff is in {diff} (read it first)."
     pf = os.path.join(a.run, "grok-prompt.md")
     with open(pf, "w", encoding="utf-8") as fh:
         fh.write(claude_prompt("claude", meta, ctx).replace(
-            "You are an independent code reviewer", "You are Grok, one of four independent code reviewers", 1)
-            + f"\n\nThe full diff is in {diff} (read it first).")
+            "You are an independent code reviewer", "You are Grok, one of four independent code reviewers", 1) + tail)
     cmd = [bin_, "--prompt-file", pf, "--output-format", "json", "-m", want, "--cwd", a.repo, "--sandbox", "read-only",
            "--tools", GROK_TOOLS, "--disallowed-tools", GROK_DENY, "--disable-web-search", "--no-subagents",
            "--always-approve", "--max-turns", os.environ.get("REVIEW_GROK_MAX_TURNS", "60")]
@@ -305,12 +322,20 @@ def run_agy(a, meta, ctx):
     msg = os.path.join(a.run, "antigravity-message.md")
     depth = ("Do sau: DEEP (thay doi lon hoac cham auth/payment/schema) — soi ca bao mat." if meta["depth"] == "deep"
              else "Do sau: LIGHT (thay doi nho) — tap trung dung/sai va xu ly loi cua dong bi doi.")
+    full = meta.get("mode") == "full"
     with open(msg, "w", encoding="utf-8") as fh:
-        fh.write(f"Thay doi can audit: `git diff {meta['base']}` + file chua track: {', '.join(meta.get('untracked') or []) or 'khong'}.\n"
-                 f"{depth}\nMoi finding phai co snippet chep NGUYEN VAN tai file:dong (may se kiem).\n\n{ctx}")
+        if full:
+            fh.write(f"AUDIT TOAN BO SOLUTION (khong phai diff), module {meta.get('chunk')}: doc TRON VEN cac file sau, "
+                     "doc them caller/callee/test cua chung, bao loi THAT trong cac file nay (bug, bao mat, nuot loi, race, "
+                     "ro ri tai nguyen), khong bao style:\n" + "\n".join(f"- {f}" for f in meta.get("files") or [])
+                     + f"\nMoi finding phai co snippet chep NGUYEN VAN tai file:dong (may se kiem).\n\n{ctx}")
+        else:
+            fh.write(f"Thay doi can audit: `git diff {meta['base']}` + file chua track: {', '.join(meta.get('untracked') or []) or 'khong'}.\n"
+                     f"{depth}\nMoi finding phai co snippet chep NGUYEN VAN tai file:dong (may se kiem).\n\n{ctx}")
     out = os.path.join(a.run, "antigravity.json")
     rc, so, se, to = run_bounded(["node", cli, "--project", meta["repo"], "--base", meta["base"], "--out", out,
-                                  "--message-file", msg, "--timeout", str(max(30, a.timeout - 30))], a.timeout, a.repo)
+                                  "--message-file", msg, "--timeout", str(max(30, a.timeout - 30)),
+                                  *(["--scope", "full"] if full else [])], a.timeout, a.repo)
     if to:
         return env_out(a.run, "antigravity", status="timeout", reason=f"Antigravity audit exceeded {a.timeout}s")
     if not os.path.isfile(out):
