@@ -81,7 +81,7 @@ class Run:
     def summary(self) -> str:
         i = self.info
         dur = int((dt.datetime.now() - self.started).total_seconds())
-        label = {"green": "XANH", "red": "ĐỎ", "inconclusive": "CHƯA KẾT LUẬN", "skip": "skip", "error": "LỖI"}.get(i["result"], i["result"])
+        label = {"green": "XANH", "red": "ĐỎ", "inconclusive": "CHƯA KẾT LUẬN", "aborted": "BỊ DỪNG (aborted)", "skip": "skip", "error": "LỖI"}.get(i["result"], i["result"])
         out = ["# gate-full đêm %s" % self.started.strftime("%Y-%m-%d %H:%M:%S"), "",
                "- Kết quả: **%s**" % label,
                "- Ref: %s @ %s" % (i["ref"] or "-", i["sha"][:12] or "-"),
@@ -288,7 +288,20 @@ def test_paths(text: str, kit_dir: str) -> list:
     return seen
 
 
-def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, kit_rc, kit_out: str):
+def _full_gate_out(scratch: str, gate_out: str) -> str:
+    gitdir = git_out(scratch, "rev-parse", "--absolute-git-dir") if scratch and os.path.isdir(scratch) else ""
+    last_out = os.path.join(gitdir, "postfix-gate", "last_output.log") if gitdir else ""
+    if last_out and os.path.isfile(last_out):   # --brief: toàn văn (✖ tests/… của REG-DK-ALL-01) nằm ở đây
+        try:
+            with open(last_out, encoding="utf-8", errors="replace") as f:
+                return f.read() + "\n" + gate_out
+        except OSError as exc:
+            return gate_out + "\n[gate-full] không đọc được last_output.log: %s\n" % exc
+    return gate_out
+
+
+def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, kit_rc, kit_out: str,
+                record_notes: bool = True):
     """(verdict, checks). checks: [(nhãn, lệnh shell, cwd tương đối scratch)] — chỉ phần đỏ để chạy lại khi chia đôi."""
     data = last_json(gate_out)
     kit_dir = os.path.join(scratch, kit_rel) if kit_rel else ""
@@ -329,7 +342,8 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
         why += " (BUSY)"
     if "--tree:" in (gate_out or ""):
         why += " (--tree từ chối cây scratch: xem log)"
-    run.info["notes"].append(why + " — không có suite FAIL thật: không thẻ, không ghi last_full_green_sha")
+    if record_notes:
+        run.info["notes"].append(why + " — không có suite FAIL thật: không thẻ, không ghi last_full_green_sha")
     return "inconclusive", []
 
 
@@ -516,9 +530,24 @@ def cmd_run(args) -> int:
         run.log("skip: lượt trước đang chạy (pid %s)" % holder)
         run.finish()
         return 0
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # launchd bootout / tắt máy: finally vẫn gỡ scratch
+    aborted = False
+    completed = False
     scratch = ""
+    kit_rel = None
+    gate_rc = None
+    gate_out = ""
+    gate_out_full = ""
+    kit_rc, kit_out = None, ""
     rc_final = 2
+
+    def _on_sigterm(*_):
+        nonlocal aborted
+        if aborted:
+            return   # tránh SIGTERM lặp cắt ngang khối finally đang gỡ scratch / ghi history
+        aborted = True
+        sys.exit(143)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)   # launchd bootout / tắt máy: finally vẫn gỡ scratch
     try:
         for old in glob.glob(os.path.join(pg, "gate-full-scratch-*")):   # lượt chết trước (đang giữ khoá nên chắc chắn của lượt cũ)
             run.log("gỡ scratch sót: " + old)
@@ -532,6 +561,7 @@ def cmd_run(args) -> int:
         if not sha:
             run.info["result"] = "error"
             run.info["notes"].append("không resolve được ref " + args.ref)
+            completed = True
             return 2
         run.info["sha"] = sha
         scratch = os.path.join(pg, "gate-full-scratch-" + run.stamp)
@@ -539,10 +569,10 @@ def cmd_run(args) -> int:
         if rc != 0:
             run.info["result"] = "error"
             run.info["notes"].append("không tạo được scratch: " + out.strip()[-300:])
+            completed = True
             return 2
         run.log("scratch %s @ %s" % (scratch, sha[:12]))
         override = os.environ.get("DEVKIT_GATE_FULL_CMD")
-        kit_rel = None
         env = dict(os.environ, DEVKIT_SLOT_PRIORITY="nightly")   # hàng đợi heavy_slot: đêm đứng sau merge/push/interactive
         if override:
             gate_rc, gate_out = sh(override, cwd=scratch, timeout=GATE_TIMEOUT_S, env=env, shell=True)
@@ -552,6 +582,7 @@ def cmd_run(args) -> int:
             if not kit_rel:
                 run.info["result"] = "error"
                 run.info["notes"].append("scratch không có post-fix-gate.py (cài DevKit lỗi?)")
+                completed = True
                 return 2
             gate_cmd = [sys.executable, os.path.join(scratch, kit_rel, "bin", "post-fix-gate.py"),
                         "--run-tests", "--tree", "HEAD", "--no-cache", "--no-fail-fast", "--brief", "--json",
@@ -561,18 +592,12 @@ def cmd_run(args) -> int:
         run.raw(gate_out)
         run.log("gate exit %d" % gate_rc)
         gitdir = git_out(scratch, "rev-parse", "--absolute-git-dir")
-        last_out = os.path.join(gitdir, "postfix-gate", "last_output.log") if gitdir else ""
-        if last_out and os.path.isfile(last_out):   # --brief: toàn văn (✖ tests/… của REG-DK-ALL-01) nằm ở đây
-            with open(last_out, encoding="utf-8", errors="replace") as f:
-                gate_out_full = f.read() + "\n" + gate_out
-        else:
-            gate_out_full = gate_out
+        gate_out_full = _full_gate_out(scratch, gate_out)
         full_pass = os.path.join(gitdir, "postfix-gate", "full_pass.json") if gitdir else ""
         full_pass_copy = os.path.join(pg, "nightly", ".full_pass.pending")
         if full_pass and os.path.isfile(full_pass):   # chép TRƯỚC khi gỡ scratch: git dir của nó đi theo worktree
             os.makedirs(os.path.dirname(full_pass_copy), exist_ok=True)
             shutil.copyfile(full_pass, full_pass_copy)
-        kit_rc, kit_out = None, ""
         ak = os.path.join(scratch, "universal-agent-devkit", "bin", "agent-kit")
         if not override and os.path.isfile(ak):
             run.log("$ bash universal-agent-devkit/bin/agent-kit test")
@@ -601,9 +626,21 @@ def cmd_run(args) -> int:
             rc_final = 1
         else:
             rc_final = 3
+        completed = True
         return rc_final
     finally:
         try:
+            if aborted and not completed:
+                try:
+                    if run.info["result"] == "?" and gate_rc is not None:
+                        collect_red(run, scratch, kit_rel or "universal-agent-devkit", gate_rc,
+                                    gate_out_full or _full_gate_out(scratch, gate_out), kit_rc, kit_out, record_notes=False)
+                except Exception as exc:
+                    run.log("lỗi thu suite đỏ khi nhận SIGTERM: %s" % exc)
+                run.info["result"] = "aborted"
+                run.info["notes"].append("bị dừng bởi SIGTERM (exit 143)")
+            elif run.info["result"] == "?":
+                run.info["result"] = "error"
             if scratch:
                 remove_scratch(repo, scratch)
             pending = os.path.join(pg, "nightly", ".full_pass.pending")
