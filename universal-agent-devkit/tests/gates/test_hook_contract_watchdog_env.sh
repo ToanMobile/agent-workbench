@@ -13,8 +13,10 @@
 #   B. đầu-cuối: chạy THẬT hook_contract_test.sh trên cây kit mỏng (symlink) với block-dangerous-git.sh giả chỉ ở LẦN GỌI ĐẦU (ca want=2 đầu tiên) in
 #      thông điệp watchdog: bản cũ chấm ca đó "ok" (xanh giả, exit 0) ⇒ test ĐỎ; bản mới ENV-BLOCKED + marker + exit 1.
 #      Bản cũ để ĐỎ lượt RED của người viết: WATCHDOG_ENV_SCRIPT_UNDER_TEST=<file hook_contract_test.sh cũ> (đặt vào cây mỏng đúng chỗ), WATCHDOG_ENV_ONLY=B.
+#      B chạy dưới pguard 120 (#720): chỉ cắt khi b.out đứng yên 120 s; thời lượng theo tải (130 s lúc rảnh, 182 s ở gate-full 31/10) không phải điều kiện.
 #   C. không còn lời gọi hook trực tiếp nào chưa bọc chốt hết giờ; ca 937-938 lưu rc (hook treo bị cắt rc 142 không PASS).
 #   D. hc_watch (mọi điểm gọi trực tiếp dùng nó): 142 ⇒ FAIL; thông điệp trong stderr hoặc trong `out` JSON của bridge ⇒ ENV-BLOCKED/FAIL, không bao giờ PASS.
+#   E. pguard (#720): chậm mà có tiến độ ⇒ chạy hết; treo ⇒ cắt rc 142, cháu chết; khối B gọi pguard 120 ở cả hai nhánh; TERM tới pguard ⇒ nhóm con chết theo.
 # Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -41,6 +43,37 @@ trap cleanup EXIT
 
 # chạy một lệnh với trần cứng 150 s (lưới an toàn của test: bản cũ có thể treo)
 guard() { /usr/bin/perl -e 'alarm 150; exec @ARGV or exit 127' "$@"; }
+# pguard <stall_s> <watch_file> lệnh… (#720): guard của ca B. Ca B chạy CẢ hook_contract_test.sh nên trần đồng hồ 150 s của guard() thành điều kiện
+# ẩn theo tải (gate-full 31/10: rc 142 ở ca 2384/2482). pguard chạy lệnh trong process group riêng, CHỈ cắt (TERM, 0,3 s, KILL cả nhóm, rc 142) khi
+# <watch_file> không lớn thêm byte nào suốt <stall_s> giây = treo thật; trần tổng là của runner ngoài (tests/lib/run_bounded.py). TERM/INT/HUP tới
+# pguard (run_bounded.py killpg nhóm của test, Ctrl-C) được chuyển cho cả nhóm con rồi pguard chết bằng đúng tín hiệu đó: không để nhóm con mồ côi.
+# Chương trình để trong biến: E4 chạy thẳng perl ở nền để $! là pid của nó.
+PGUARD_PL='
+use strict; use warnings; use POSIX ":sys_wait_h"; use Time::HiRes qw(sleep time);
+my ($stall, $watch) = splice(@ARGV, 0, 2);
+my $pid;
+sub stop_group { kill "TERM", -$pid; sleep 0.3; kill "KILL", -$pid; waitpid($pid, 0); }
+for my $sig (qw(TERM INT HUP)) {
+  $SIG{$sig} = sub { stop_group() if $pid && $pid > 1; $SIG{$sig} = "DEFAULT"; kill $sig, $$; };
+}
+$pid = fork();
+exit 127 unless defined $pid;
+if (!$pid) { $SIG{$_} = "DEFAULT" for qw(TERM INT HUP); setpgrp(0, 0); { no warnings "exec"; exec { $ARGV[0] } @ARGV; } exit 127; }
+setpgrp($pid, $pid);
+my ($size, $last) = (-1, time);
+while (1) {
+  my $r = waitpid($pid, WNOHANG);
+  if ($r == $pid) { my $st = $?; exit(($st & 127) ? 128 + ($st & 127) : $st >> 8); }
+  exit 127 if $r < 0;
+  my $s = -s $watch; $s = 0 unless defined $s;
+  if ($s != $size) { $size = $s; $last = time; }
+  if (time - $last >= $stall) {
+    printf STDERR "pguard: %s không lớn thêm trong %d s — treo, cắt cả nhóm\n", $watch, $stall;
+    stop_group(); exit 142;
+  }
+  sleep 0.5;
+}'
+pguard() { /usr/bin/perl -e "${PGUARD_PL}" "$@"; }
 alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 
 WD1="BLOCKED: block-dangerous-git.sh: lệnh quá lớn / quá phức tạp để phân tích trong thời hạn (7 s) — chặn để an toàn. Chia thành lệnh nhỏ hơn, hoặc ghi vào file rồi chạy file."
@@ -234,11 +267,13 @@ fi
 exec bash "${DEVKIT_DIR}/hooks/block-dangerous-git.sh" "\$@"
 EOF
   chmod +x "${THIN}/hooks/block-dangerous-git.sh"
+  # pguard 120, không phải guard 150 (#720): stall 120 s = 4 × bell 30 s của harness (hook chậm luôn bị bell của harness chấm trước) ≈ 65 × khoảng lặng
+  # lớn nhất đo lúc rảnh (1,84 s giữa hai dòng). Treo thật (bản cũ không có bell) vẫn bị cắt ⇒ rc 142 ⇒ ĐỎ.
   if [ -n "${UNDER_TEST}" ]; then
     cp "${UNDER_TEST}" "${THIN}/hooks/tests/hook_contract_test.sh"
-    guard env HOOK_WATCHDOG_TEST_CORES=12 HOOK_WATCHDOG_TEST_LOAD=500 bash "${THIN}/hooks/tests/hook_contract_test.sh" > "${TMP}/b.out" 2>&1
+    pguard 120 "${TMP}/b.out" env HOOK_WATCHDOG_TEST_CORES=12 HOOK_WATCHDOG_TEST_LOAD=500 bash "${THIN}/hooks/tests/hook_contract_test.sh" > "${TMP}/b.out" 2>&1
   else
-    guard env HOOK_WATCHDOG_TEST_CORES=12 HOOK_WATCHDOG_TEST_LOAD=500 HOOK_CONTRACT_HOOKS_DIR="${THIN}/hooks" HOOK_CONTRACT_KIT_DIR="${DEVKIT_DIR}" \
+    pguard 120 "${TMP}/b.out" env HOOK_WATCHDOG_TEST_CORES=12 HOOK_WATCHDOG_TEST_LOAD=500 HOOK_CONTRACT_HOOKS_DIR="${THIN}/hooks" HOOK_CONTRACT_KIT_DIR="${DEVKIT_DIR}" \
       bash "${SCRIPT}" > "${TMP}/b.out" 2>&1
   fi
   BRC=$?
@@ -281,6 +316,36 @@ if [ "${ONLY}" != "B" ]; then
     chk "D watchdog, CPU hook 9000 ms ⇒ FAIL (tự tốn CPU)" "[ \"\$(d_watch 0 '${WD1}' '' 9000 500)\" = 'ret=0 FAIL=1 ENVB=0 PASS=0' ]" "$(d_watch 0 "${WD1}" '' 9000 500)"
     chk "D không có bell/watchdog ⇒ trả 1, không đổi bộ đếm (người gọi chấm assertion gốc)" "[ \"\$(d_watch 2 'blocked: reset --hard' '' 5 500)\" = 'ret=1 FAIL=0 ENVB=0 PASS=0' ]" "$(d_watch 2 'blocked: reset --hard' '' 5 500)"
   fi
+fi
+
+# ── E. pguard: guard theo tiến độ của ca B (#720) ─────────────────────────────────────────────────────────────────────────────────
+if [ "${ONLY}" != "B" ]; then
+  # E1: chậm mà có tiến độ: 1 dòng mỗi 0,2 s × 30 (~6 s > stall 4 s; biên 20×, không fork) ⇒ chạy hết, rc 0. Chỉ có cận dưới thời gian.
+  t0=$SECONDS
+  pguard 4 "${TMP}/e1.out" /usr/bin/perl -e '$| = 1; for (1 .. 30) { print "$_\n"; select(undef, undef, undef, 0.2) }' > "${TMP}/e1.out" 2>&1
+  r=$?; el=$((SECONDS - t0)); n="$(grep -c . "${TMP}/e1.out")"
+  chk "E1 chậm mà có tiến độ (${el} s > stall 4 s): chạy hết 30 dòng, rc 0 — tổng thời lượng không phải điều kiện" \
+    "[ ${r} -eq 0 ] && [ ${n} -eq 30 ] && [ ${el} -ge 5 ]" "rc=${r} lines=${n} elapsed=${el}"
+  # E2: treo (cháu sống, không in thêm) ⇒ cắt rc 142 + thông điệp, cháu chết. pid ghi TRƯỚC dòng start (kiểm cháu không rỗng).
+  rm -f "${TMP}/pid.e2"; t0=$SECONDS
+  pguard 2 "${TMP}/e2.out" sh -c "sleep 1000 & echo \$! > '${TMP}/pid.e2'; echo start; wait" > "${TMP}/e2.out" 2>&1
+  r=$?; el=$((SECONDS - t0))
+  chk "E2 treo ⇒ pguard cắt: rc 142, 'pguard: … treo', < 20 s (${el} s), cháu đã chết" \
+    "[ ${r} -eq 142 ] && [ -s '${TMP}/pid.e2' ] && grep -q '^pguard: .* treo' '${TMP}/e2.out' && [ ${el} -lt 20 ] && ! alive '${TMP}/pid.e2'" \
+    "rc=${r} elapsed=${el} alive=$(alive "${TMP}/pid.e2" && echo yes || echo no): $(tail -2 "${TMP}/e2.out" | tr '\n' ' ')"
+  # E3: khối B (cả nhánh UNDER_TEST lẫn nhánh thường) gọi pguard 120, không còn guard trần đồng hồ
+  bsec="$(sed -n '/^# ── B\./,/^# ── C\./p' "${DEVKIT_DIR}/tests/gates/$(basename "$0")")"
+  nb="$(printf '%s\n' "${bsec}" | grep -c '^[[:space:]]*pguard 120 ')"; ng="$(printf '%s\n' "${bsec}" | grep -c '^[[:space:]]*guard ')"
+  chk "E3 khối B gọi 'pguard 120' ở cả 2 nhánh, không còn 'guard ' (trần đồng hồ)" "[ ${nb} -eq 2 ] && [ ${ng} -eq 0 ]" "pguard 120: ${nb}, guard: ${ng}"
+  # E4: TERM tới pguard (như run_bounded.py killpg nhóm của test) ⇒ nhóm con chết theo, pguard chết bằng TERM. TERM gửi sau khi cháu đã có (theo sự kiện).
+  rm -f "${TMP}/pid.e4"
+  /usr/bin/perl -e "${PGUARD_PL}" 60 "${TMP}/e4.out" sh -c "sleep 1000 & echo \$! > '${TMP}/pid.e4'; echo start; wait" > "${TMP}/e4.out" 2>&1 &
+  pg=$!; PIDS="${PIDS} ${pg}"
+  i=0; while [ ${i} -lt 100 ] && [ ! -s "${TMP}/pid.e4" ]; do sleep 0.2; i=$((i + 1)); done
+  kill -TERM "${pg}" 2>/dev/null; wait "${pg}"; r=$?
+  i=0; while [ ${i} -lt 50 ] && alive "${TMP}/pid.e4"; do sleep 0.2; i=$((i + 1)); done
+  chk "E4 TERM tới pguard ⇒ nhóm con chết theo (không mồ côi khi trần ngoài giết test), pguard chết bằng TERM (rc ${r})" \
+    "[ -s '${TMP}/pid.e4' ] && [ ${r} -ge 128 ] && ! alive '${TMP}/pid.e4'" "rc=${r} alive=$(alive "${TMP}/pid.e4" && echo yes || echo no)"
 fi
 
 echo
