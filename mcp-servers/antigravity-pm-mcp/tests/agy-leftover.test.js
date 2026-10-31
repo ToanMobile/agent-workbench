@@ -121,6 +121,7 @@ test('#697 pm_status: lenh mo coi cua agent (ANTIGRAVITY_AGENT=1, luot agy da xo
     // #734: java cua JBR trong Android Studio, duong dan co dau cach => van la daemon dung chung
     ['J', { ANTIGRAVITY_AGENT: '1', ARGV0: '/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java' }, 'org.gradle.launcher.daemon.bootstrap.GradleDaemon'],
     ['Q', { ANTIGRAVITY_AGENT: '1' }, 'GradleDaemon'],                    // dung: chi la tham so, khong phai daemon java
+    ['V', { ANTIGRAVITY_AGENT: '1' }, '/x.app/Contents/java', 'GradleDaemon'],   // dung: duong dan java .app la THAM SO, argv[0] van la node
     // argv TRICH chuoi bien (vd prompt cua agy) nhung env khong co => giu (ps -E noi argv + env bang dau cach)
     ['X', { ANTIGRAVITY_AGENT: null, ANTIGRAVITY_PM_RUN: null }, 'ANTIGRAVITY_AGENT=1', 'ANTIGRAVITY_PM_RUN=$RUN'],
   ]);
@@ -147,7 +148,7 @@ test('#697 pm_status: lenh mo coi cua agent (ANTIGRAVITY_AGENT=1, luot agy da xo
 
   const res = await TOOLS_BY_NAME.get('pm_status').handler({ project, taskId: task.id });
   const text = typeof res === 'string' ? res : res.text;
-  for (const name of ['A', 'G', 'P', 'Q']) {
+  for (const name of ['A', 'G', 'P', 'Q', 'V']) {
     const { pid } = kids.get(name);
     await until(() => !alive(pid), 3000, `lenh mo coi ${name} (pid ${pid}) bi dung`).catch((e) => assert.fail(`${e.message}\n${text}`));
     assert.match(text, new RegExp(`pid ${pid}\\b`), `pm_status phai liet ke pid bi dung (${name})\n${text}`);
