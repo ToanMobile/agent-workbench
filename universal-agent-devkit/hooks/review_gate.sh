@@ -67,16 +67,17 @@ fi
 LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
 # No project: the loop guard below has nowhere to count re-Stops, and a gate that cannot count could hold every Stop.
 [ -n "${LOG_DIR}" ] || exit 0
+# QA K-4: without python3 this gate cannot run — say so instead of passing silently. Before any other command
+# (r14b, 31/10): with a stripped PATH `mkdir` failed first and its error hid this message.
+if ! command -v python3 >/dev/null 2>&1; then   # fail closed (31/10): a gate that cannot run cannot say the code was reviewed
+  echo "⛔ REVIEW-GATE: python3 không có — không kiểm được review 4 bên, chặn Stop. Cài python3." >&2
+  exit 2
+fi
 mkdir -p "${LOG_DIR}"
 for _fifo in "${LOG_DIR}"/* "${LOG_DIR}"/.[!.]*; do [ ! -p "${_fifo}" ] || rm -f -- "${_fifo}"; done   # a FIFO here (never one of ours) would hang the next open of a log or lock: drop it
 [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 LOG="${LOG_DIR}/review_gate.log"
 
-# QA K-4: without python3 this gate cannot run — say so instead of passing silently.
-if ! command -v python3 >/dev/null 2>&1; then   # fail closed (31/10): a gate that cannot run cannot say the code was reviewed
-  echo "⛔ REVIEW-GATE: python3 không có — không kiểm được review 4 bên, chặn Stop. Cài python3." >&2
-  exit 2
-fi
 # #528: worker của board không chấm main. Worktree liên kết vẫn chạy.
 if [ "${SB_BOARD_WORKER:-}" = "1" ] && python3 -I -c 'import os,sys
 _d = os.path.dirname(os.path.realpath(sys.argv[1]))
