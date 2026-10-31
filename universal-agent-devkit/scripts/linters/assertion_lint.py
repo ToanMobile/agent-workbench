@@ -108,7 +108,8 @@ def _statement_rows(text: str) -> "frozenset | None":
 def _python_body(text: str, start: int) -> str:
     line_start = text.rfind("\n", 0, start) + 1
     indent = len(text[line_start:start]) - len(text[line_start:start].lstrip(" "))
-    lines = text[start:].splitlines(keepends=True)
+    # chỉ tách ở "\n" như tokenize: splitlines còn tách ở \f, \x1c, U+2028… nằm trong chuỗi ⇒ mảnh lề 0 cắt thân test
+    lines = io.StringIO(text[start:]).readlines()
     out = [lines[0]] if lines else []
     row = text.count("\n", 0, start) + 1
     stmts = _statement_rows(text)

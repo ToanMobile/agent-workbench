@@ -83,9 +83,12 @@ def test_empty_broken():
 x = """unterminated
 PY
 
+# \f và U+2028 (octal của UTF-8) nằm trong chuỗi: không phải xuống dòng, không cắt thân test.
+printf 'class Seps:\n    def test_formfeed_in_string(self):\n        s = "a\fb"\n        self.assertEqual(s, "a")\n\n    def test_line_separator_in_string(self):\n        s = "a\342\200\250b"\n        self.assertEqual(s, "a")\n' > src/test_seps.py
+
 LINT_SCRIPT="$DEVKIT_ROOT/scripts/linters/assertion_lint.py"
 
-OUTPUT=$(python3 -I "$LINT_SCRIPT" src/test_strings.py src/test_broken.py 2>&1)
+OUTPUT=$(python3 -I "$LINT_SCRIPT" src/test_strings.py src/test_broken.py src/test_seps.py 2>&1)
 RC=$?
 
 ERRORS=0
@@ -121,6 +124,8 @@ expect_not_flagged "src/test_strings.py" "49"  # `) -> None:` của chữ ký nh
 expect_not_flagged "src/test_strings.py" "54"  # mock .assert_called_once_with là assertion (như verify của Mockito)
 expect_flagged "src/test_strings.py" "59"      # gọi mock mà không assert: rỗng
 expect_flagged "src/test_broken.py" "1"
+expect_not_flagged "src/test_seps.py" "2"      # \f trong chuỗi
+expect_not_flagged "src/test_seps.py" "6"      # U+2028 trong chuỗi
 
 if [ "$RC" -ne 1 ] || echo "$OUTPUT" | grep -q "Traceback"; then
     echo "FAIL: rc=$RC (cần 1, không traceback)"
