@@ -2593,6 +2593,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-policy-machine-gate-742",
+      "watch_files": [
+        ".claude/bin/super-board-merge-policy.py",
+        "tests/super-board/test_merge_policy_machine_gate.sh",
+        "tests/super-board/test_merge_policy_self_fixtures.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-POLICY-MACHINE-GATE-01",
+          "name": "#742/#747: PR tiền / auth / schema / migration đi machine_gate (review deep + security ok/pass + test bổ sung, thiếu test bổ sung exit 9), không còn đường người duyệt; fixture trong test của chính policy không kích machine-gate, cùng chuỗi trong code sản phẩm / test khác / file đổi tên / header giả / label vẫn bị chặn",
+          "command": "bash tests/super-board/test_merge_policy_machine_gate.sh && bash tests/super-board/test_merge_policy_self_fixtures.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
