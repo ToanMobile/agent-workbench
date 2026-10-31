@@ -15,7 +15,7 @@ verbatim snippet, cite-checked), but every tracked source file is reviewed in fu
   * registry: every line of the selection is checked against the `detect` patterns (P0 recurring bug, deterministic);
   * merge: bin/review-merge.py analyse (normalize P0-P3, cite-check, dedupe, consensus) + the Opus verifier tries to refute
     every cited P0/P1 (--no-verify skips it).
-Budget: --max-usd (REVIEW_FULL_MAX_USD, 40) / --max-tokens (REVIEW_FULL_MAX_TOKENS, 20000000) for the whole scan — once
+Budget: none by default (user 31/10: no cost limit; cost is logged). --max-usd / --max-tokens (> 0) opt in to a cap — once
 spent, no further chunk starts (the report says which chunks were skipped). REPORT ONLY: nothing is fixed, no bug row is
 recorded. Output: OUT/full-summary.md + full-summary.json (default OUT = <git-common-dir>/review-fanout/full-<HEAD12>-<ts>).
 Per-run override: --reviewers / REVIEW_SKIP_REVIEWERS may drop only grok and ocr (never claude or antigravity); the report
@@ -244,8 +244,8 @@ def main(argv=None):
     ap.add_argument("--out")
     ap.add_argument("--chunk-lines", type=int, default=int(os.environ.get("REVIEW_FULL_CHUNK_LINES", "6000")))
     ap.add_argument("--jobs", type=int, default=int(os.environ.get("REVIEW_FULL_JOBS", "2")))
-    ap.add_argument("--max-usd", type=float, default=float(os.environ.get("REVIEW_FULL_MAX_USD", "40")))
-    ap.add_argument("--max-tokens", type=int, default=int(os.environ.get("REVIEW_FULL_MAX_TOKENS", "20000000")))
+    ap.add_argument("--max-usd", type=float, default=float(os.environ.get("REVIEW_FULL_MAX_USD", "0")))   # 0 = no cap (user 31/10)
+    ap.add_argument("--max-tokens", type=int, default=int(os.environ.get("REVIEW_FULL_MAX_TOKENS", "0")))
     ap.add_argument("--reviewers", default="claude,antigravity,grok,ocr")
     ap.add_argument("--list", action="store_true", help="print the chunks and exit (no LLM)")
     ap.add_argument("--no-verify", action="store_true")
@@ -301,12 +301,12 @@ def main(argv=None):
     with cf.ThreadPoolExecutor(max_workers=max(1, a.jobs) + 1) as ex:
         if "ocr" in reviewers:
             ocr_future = ex.submit(run_ocr_full, repo, out, [p for p, _ in files], int(os.environ.get("REVIEW_TIMEOUT_OCR", "3600")),
-                                   a.max_tokens // 4)
+                                   (a.max_tokens // 4) or None)
         pending = sorted(chunks, key=priority)
         running = {}
         while pending or running:
             while pending and len(running) < max(1, a.jobs) and chunk_revs:
-                if spent["usd"] > a.max_usd or spent["tokens"] > a.max_tokens:
+                if (a.max_usd > 0 and spent["usd"] > a.max_usd) or (a.max_tokens > 0 and spent["tokens"] > a.max_tokens):
                     skipped_chunks += [c["id"] for c in pending]
                     pending = []
                     break

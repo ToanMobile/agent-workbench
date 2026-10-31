@@ -6,7 +6,7 @@
 RUN_DIR (written by bin/review-fanout.sh) holds meta.json and one envelope per reviewer:
   meta.json   {"required": ["claude","antigravity","grok","ocr","registry", (+"security","verifier" when depth=deep)],
                "models": {"claude": "opus", "grok": "grok-4.7"},
-               "depth": "light|deep", "base": REF, "code_hash": H, "max_tokens": N|null, "max_usd": X|null}
+               "depth": "light|deep", "base": REF, "code_hash": H}  (cost: logged in summary usage, never a FAIL)
   <name>.json {"reviewer", "status": ok|failed|timeout|error|unavailable, "verdict": pass|fail, "reason",
                "findings": [...], "usage": {"tokens", "usd"}, "model": <model that answered>, "models": [...]}
   verifier.json {"reviewer":"verifier","status":"ok", "verifications": [{"id","refuted":bool,"reason"}]}
@@ -395,10 +395,7 @@ def decide(meta, envs, clusters, rev=None, rev_err=""):
                        + "; ".join(f"[{c['severity']}] {c['file']}:{c['line']} {c['problem'][:80]}" for c in blocking[:5]))
     tok = sum(int((e.get("usage") or {}).get("tokens") or 0) for e in envs.values())
     usd = sum(float((e.get("usage") or {}).get("usd") or 0) for e in envs.values())
-    if meta.get("max_tokens") and tok > int(meta["max_tokens"]):
-        reasons.append(f"budget: {tok} tokens > REVIEW_MAX_TOKENS={meta['max_tokens']}")
-    if meta.get("max_usd") and usd > float(meta["max_usd"]):
-        reasons.append(f"budget: ${usd:.2f} > REVIEW_MAX_USD={meta['max_usd']}")
+    # cost is logged (summary usage), never a FAIL condition (user 31/10/2026: no cost limit on the review)
     if rev is None:
         reasons.append(f"regression checklist: {rev_err or 'not read'}")
     else:

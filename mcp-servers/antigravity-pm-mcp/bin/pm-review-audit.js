@@ -70,6 +70,13 @@ export function judgeAudit(rep, { head, tree0, tree1, model = '' }) {
 }
 
 const sleep = (ms) => new Promise((res) => { setTimeout(res, ms); });
+// result poll (speed 31/10): was a flat 5 s (2.5 s lost per audit on average); a stat() is cheap, so 0.5 s for the first
+// two minutes, then 1 s. PM_AUDIT_POLL_MS overrides (tests).
+export const pollDelay = (elapsedMs) => {
+  const fixed = Number(process.env.PM_AUDIT_POLL_MS);
+  if (Number.isFinite(fixed) && fixed > 0) return fixed;
+  return elapsedMs < 120000 ? 500 : 1000;
+};
 
 async function main() {
   if (!out) { process.stderr.write('pm-review-audit: --out FILE is required\n'); process.exit(2); }
@@ -118,13 +125,13 @@ async function main() {
       const st = fs.statSync(file);
       if (st.mtimeMs >= t0) {
         let rep;
-        try { rep = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { await sleep(3000); continue; }   // half-written
+        try { rep = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { await sleep(250); continue; }   // half-written
         let tree1 = '';
         try { tree1 = treeHash(project); } catch { /* '' never equals tree0 */ }
         write({ ...judgeAudit(rep, { head, tree0, tree1, model }), task_id: taskId, audit_file: file });
       }
     } catch { /* not written yet */ }
-    await sleep(5000);
+    await sleep(pollDelay(Date.now() - t0));
   }
   write({ status: 'timeout', reason: `no audit-agent.json from Antigravity within ${timeoutS}s (task ${taskId})`, task_id: taskId });
 }

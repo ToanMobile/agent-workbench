@@ -8,7 +8,7 @@ Writes RUN_DIR/<name>.json = {"reviewer", "status": ok|failed|timeout|error|unav
 a FAIL of the whole review, so this file never needs to guess. Exit 0 when status is ok, 1 otherwise.
 
 Claude Code (claude, security, verifier): `claude -p` read-only (Read/Grep/Glob and read-only git; Edit/Write denied),
---output-format json (cost + usage are counted against REVIEW_MAX_TOKENS / REVIEW_MAX_USD). REVIEW_CLAUDE_BIN overrides the
+--output-format json (cost + usage are logged in the summary, never a FAIL condition). REVIEW_CLAUDE_BIN overrides the
 binary. The model is PINNED to Opus (`--model opus`, REVIEW_CLAUDE_MODEL may name another Opus id, never a non-Opus one); the
 model that really answered is read from the result's modelUsage (the one with the most output tokens) and recorded as
 "model": not Opus, or not reported = status failed (user rule 31/10/2026).
@@ -210,6 +210,59 @@ def verifier_prompt(meta, cands):
             '"reason": "<evidence, file:line>"}]} — one entry per id.')
 
 
+def _verify_parallel(a, meta, cands, want, bin_):
+    """Verifier over many candidates: batches of REVIEW_VERIFIER_BATCH (1 = one Opus call per finding) verified in parallel,
+    at most REVIEW_VERIFIER_JOBS (8) at once (speed 31/10; no cost cap by the user's decision). Every
+    batch must answer for every one of its ids; any batch error/timeout/wrong model fails the whole verifier (fail closed)."""
+    from concurrent.futures import ThreadPoolExecutor
+    size = max(1, int(os.environ.get("REVIEW_VERIFIER_BATCH", "1") or 1))
+    batches = [cands[i:i + size] for i in range(0, len(cands), size)]
+    cmd = [bin_, "-p", "--output-format", "json", "--model", want, "--tools", READ_ONLY_TOOLS, "--allowedTools", READ_ONLY_TOOLS,
+           "--disallowedTools", DENY_TOOLS, "--permission-mode", "default", "--strict-mcp-config", "--setting-sources", "user",
+           "--add-dir", a.run]
+
+    def one(batch):
+        rc, out, err, to = run_bounded(cmd, a.timeout, a.repo, env=dict(os.environ, REVIEW_FANOUT_CHILD="1"),
+                                       stdin_text=verifier_prompt(meta, batch))
+        if to:
+            return {"status": "timeout", "reason": f"claude -p exceeded {a.timeout}s"}
+        try:
+            res = json.loads(out)
+        except ValueError:
+            return {"status": "error", "reason": f"claude -p rc={rc}: not JSON: {(err or out)[-400:]}"}
+        u = res.get("usage") or {}
+        usage = {"tokens": sum(int(u.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens")),
+                 "usd": float(res.get("total_cost_usd") or res.get("cost_usd") or 0)}
+        model, models = models_used(res)
+        r = {"usage": usage, "model": model, "models": models}
+        if rc != 0 or res.get("is_error"):
+            return dict(r, status="failed", reason=f"claude -p rc={rc}: {str(res.get('result'))[:400]}")
+        bad = model_problem("claude", model, want)
+        if bad:
+            return dict(r, status="failed", reason=bad)
+        try:
+            v = extract_json(str(res.get("result") or "")).get("verifications")
+        except (ValueError, AttributeError) as e:
+            return dict(r, status="error", reason=f"unparseable answer: {e}")
+        if not isinstance(v, list):
+            return dict(r, status="error", reason="no verifications list")
+        return dict(r, status="ok", verifications=v)
+
+    jobs = max(1, int(os.environ.get("REVIEW_VERIFIER_JOBS", "8") or 8))
+    with ThreadPoolExecutor(max_workers=min(len(batches), jobs)) as ex:
+        parts = list(ex.map(one, batches))
+    usage = {"tokens": sum((p.get("usage") or {}).get("tokens", 0) for p in parts),
+             "usd": round(sum((p.get("usage") or {}).get("usd", 0.0) for p in parts), 6)}
+    models = sorted({m for p in parts for m in (p.get("models") or [])})
+    model = next((p.get("model") for p in parts if p.get("model")), "")
+    bad = [p for p in parts if p.get("status") != "ok"]
+    if bad:
+        return env_out(a.run, "verifier", status=bad[0]["status"], usage=usage, model=model, models=models,
+                       reason=f"{len(bad)}/{len(parts)} verifier batch(es) failed: {bad[0].get('reason')}")
+    return env_out(a.run, "verifier", status="ok", verdict="pass", usage=usage, model=model, models=models,
+                   verifications=[v for p in parts for v in p["verifications"]], batches=len(parts))
+
+
 def run_claude(name, a, meta, ctx):
     bin_ = os.environ.get("REVIEW_CLAUDE_BIN", "claude")
     if name == "verifier":
@@ -217,6 +270,11 @@ def run_claude(name, a, meta, ctx):
         if not cands:
             return env_out(a.run, name, status="ok", verdict="pass", verifications=[], reason="no P0/P1 candidate",
                            skipped=True, model="")
+        if len(cands) > max(1, int(os.environ.get("REVIEW_VERIFIER_BATCH", "1") or 1)):
+            want = claude_model()
+            if "opus" not in want.lower():
+                return env_out(a.run, name, status="error", model="", reason=f"REVIEW_CLAUDE_MODEL={want} is not an Opus model — refused")
+            return _verify_parallel(a, meta, cands, want, bin_)
         prompt = verifier_prompt(meta, cands)
     else:
         prompt = claude_prompt(name, meta, ctx)

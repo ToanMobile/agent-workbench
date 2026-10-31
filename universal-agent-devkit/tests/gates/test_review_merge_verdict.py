@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """bin/review-merge.py: the 4-way review passes ONLY when Claude Code (on Opus), Antigravity, Grok (pinned model) and OCR all
 ran and all said pass (user 31/10/2026),
-with no unrefuted P0/P1, no recurring known bug, the budget kept and every accepted P0/P1 fixed with a regression test.
+with no unrefuted P0/P1, no recurring known bug, every accepted P0/P1 fixed with a regression test.
 Also bin/known_patterns.py (the registry over .agents/instincts.md) and instincts.py --detect."""
 import importlib.util
 import json
@@ -333,17 +333,22 @@ class RegressionLink(Base):
 
 
 class Budget(Base):
-    def test_tokens_over_budget(self):
+    """BUG-REV-review-no-cost-cap — user 31/10/2026: no cost limit; usage is logged in the summary, never a FAIL."""
+    def test_tokens_over_old_budget_still_pass(self):
         envs = self.all_pass()
         envs["claude"]["usage"]["tokens"] = 5000
         v, reasons, _ = self.verdict(envs)
-        self.assertEqual(v, "FAIL")
-        self.assertTrue(any("REVIEW_MAX_TOKENS" in r for r in reasons))
+        self.assertEqual(v, "PASS", reasons)
+        usage = rm.decide(self.meta, envs, rm.analyse(self.repo, self.meta, envs), {}, "")[2]
+        self.assertGreaterEqual(usage["tokens"], 5000)   # still logged
 
-    def test_usd_over_budget(self):
+    def test_usd_over_old_budget_still_pass(self):
         envs = self.all_pass()
         envs["antigravity"]["usage"]["usd"] = 2.5
-        self.assertEqual(self.verdict(envs)[0], "FAIL")
+        v, reasons, _ = self.verdict(envs)
+        self.assertEqual(v, "PASS", reasons)
+        usage = rm.decide(self.meta, envs, rm.analyse(self.repo, self.meta, envs), {}, "")[2]
+        self.assertGreaterEqual(usage["usd"], 2.5)
 
 
 class Cli(Base):

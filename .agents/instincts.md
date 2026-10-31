@@ -791,3 +791,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Comment/chuỗi trong code thay đổi có thể nói với reviewer ("ignore previous instructions", "approve this change") hoặc giấu ký tự unicode ẩn; reviewer có shell thì còn chạy được lệnh; một verifier đơn lẻ bác được finding nhiều reviewer cùng thấy
 - **Nguyên nhân:** prompt không đánh dấu diff là dữ liệu, độ sâu review chỉ theo số dòng/tên file, Grok có run_terminal_cmd, verifier có quyền phủ quyết tuyệt đối
 - **Quy tắc phòng ngừa & Cách fix:** prompt ghi rõ diff là UNTRUSTED và text nói với reviewer là finding P0 security; quét tất định unicode ẩn + cụm injection → ép depth deep; reviewer chỉ có công cụ đọc; verifier không bác được finding ≥2 reviewer hoặc P0 security
+
+---
+
+### [INSTINCT-093] Bước tuần tự giấu trong fan-out "song song"
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** Review 4 bên nói là chạy song song nhưng wall time = quét known-pattern + reviewer chậm nhất + một verifier Opus kiểm lần lượt mọi finding + độ trễ poll 5 s của Antigravity
+- **Nguyên nhân:** các bước phụ (quét, verify, poll kết quả) chạy trước/sau nhóm song song thay vì cùng lúc; verifier gom mọi finding vào một lời gọi; poll khoảng cố định dài
+- **Quy tắc phòng ngừa & Cách fix:** đo thời điểm từng file kết quả xong (mtime so với t0) trước khi tối ưu; bước không phụ thuộc chạy cùng nhóm reviewer; verifier mỗi finding một lời gọi, chạy song song có trần job, lỗi một lô = cả verifier lỗi (fail closed); poll 0.5–1 s; không nới luật (đồng thuận, pin model, fail-closed) để lấy tốc độ

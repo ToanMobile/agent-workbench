@@ -26,7 +26,8 @@
 # (security reviewer + verifier required, both Claude Opus); smaller → light prompts, still all 4 reviewers.
 # Env: REVIEW_TIMEOUT_CLAUDE (900) REVIEW_TIMEOUT_OCR (900) REVIEW_TIMEOUT_AGY (1500) REVIEW_TIMEOUT_GROK (900)
 #      REVIEW_TIMEOUT_VERIFY (600) seconds;
-#      REVIEW_MAX_TOKENS (3000000) REVIEW_MAX_USD (15) for the whole review — over budget = FAIL;
+#      cost is logged in summary.json (usage), never a FAIL condition (user 31/10/2026: no cost limit);
+#      REVIEW_VERIFIER_BATCH (1): P0/P1 candidates per verifier call, REVIEW_VERIFIER_JOBS (8) calls in parallel;
 #      REVIEW_CLAUDE_BIN / REVIEW_CLAUDE_MODEL (opus; anything that is not an Opus model is refused) / REVIEW_AGY_CLI /
 #      REVIEW_GROK_BIN (grok on PATH, else ~/.grok/bin/grok) / REVIEW_GROK_MODEL (grok-4.7).
 # Per-run override (user 31/10/2026): --skip grok,ocr or REVIEW_SKIP_REVIEWERS=grok,ocr drops those reviewers from THIS run
@@ -36,10 +37,19 @@
 # A finished code state is cached: the same code is never reviewed (or billed) twice; --force reruns it.
 # --status prints PASS|FAIL|RUNNING|NONE for the current code (exit 0 PASS, 1 FAIL, 3 RUNNING, 4 NONE); --hash prints the hash.
 # --background starts the review detached and returns (exit 3). Exit 0 PASS, 1 FAIL, 2 usage error.
+# --verify-summary PATH: exit 0 when the summary.json carries a valid HMAC seal, 1 when not (first argument only).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 BASE="" REPO="" MODE="run" FORCE=0 SKIP="${REVIEW_SKIP_REVIEWERS:-}"
 if [ "${1:-}" = "--full" ]; then shift; exec python3 -I "$HERE/review-full.py" "$@"; fi
+# --verify-summary PATH: exit 0 only when PATH (a summary.json) carries a valid HMAC seal from this machine's review key
+# (bin/review_sign.py); 1 unsigned / tampered, 2 usage. Prints "<verdict> <code_hash>" when valid (merge gate, 31/10).
+if [ "${1:-}" = "--verify-summary" ]; then
+  [ $# -eq 2 ] && [ -n "$2" ] || { echo "review-fanout: --verify-summary needs exactly one summary.json path" >&2; exit 2; }
+  python3 -I "$HERE/review_sign.py" verify "$2" || { echo "UNSIGNED $2" >&2; exit 1; }
+  python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("verdict","?"), d.get("code_hash") or (d.get("meta") or {}).get("code_hash",""))' "$2" 2>/dev/null || true
+  exit 0
+fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --full) echo "review-fanout: --full must be the first argument" >&2; exit 2 ;;
@@ -272,7 +282,6 @@ meta = {"repo": repo, "base": base, "code_hash": code_hash, "depth": depth, "cha
         "files": files, "untracked": untracked, "dirty": bool(git("status", "--porcelain", "--untracked-files=all").strip()),
         "commits_since_base": bool(git("rev-list", "--max-count=1", f"{base}..HEAD").strip()), "required": required,
         "skipped_by_override": skipped, "reduced": bool(skipped),
-        "max_tokens": num("REVIEW_MAX_TOKENS", "3000000", int), "max_usd": num("REVIEW_MAX_USD", "15", float),
         "models": {"claude": os.environ.get("REVIEW_CLAUDE_MODEL") or "opus",
                    "grok": os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7",
                    "antigravity": os.environ.get("REVIEW_AGY_MODEL") or "gemini-4-argon-high"}}
@@ -295,13 +304,13 @@ if [ "$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["
 fi
 DEPTH="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["depth"])' "$RUN/meta.json")"
 
-python3 -I "$HERE/known_patterns.py" --repo "$REPO" scan --base "$BASE_SHA" --out "$RUN/registry.json" >/dev/null
-[ -f "$RUN/registry.json" ] || python3 -I -c 'import json,sys; json.dump({"reviewer":"registry","status":"error","reason":"known_patterns scan failed"}, open(sys.argv[1],"w"))' "$RUN/registry.json"
-
 # the diff every reviewer reads, written ONCE before any reviewer starts (audit 31/10: each runner wrote it while others read it)
 git diff --no-ext-diff "$BASE_SHA" -- > "$RUN/review.diff" 2>/dev/null || : > "$RUN/review.diff"
 R="$HERE/review_runner.py"
-python3 -I "$R" claude      --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_CLAUDE:-900}" & PIDS="$!"
+# the known-pattern scan is a reviewer like the others: it runs alongside them, not before them (speed 31/10)
+( python3 -I "$HERE/known_patterns.py" --repo "$REPO" scan --base "$BASE_SHA" --out "$RUN/registry.json" >/dev/null
+  [ -f "$RUN/registry.json" ] || python3 -I -c 'import json,sys; json.dump({"reviewer":"registry","status":"error","reason":"known_patterns scan failed"}, open(sys.argv[1],"w"))' "$RUN/registry.json" ) & PIDS="$!"
+python3 -I "$R" claude      --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_CLAUDE:-900}" & PIDS="$PIDS $!"
 python3 -I "$R" antigravity --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_AGY:-1500}"   & PIDS="$PIDS $!"
 for opt in ocr grok; do
   if skipped "$opt"; then

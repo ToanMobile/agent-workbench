@@ -74,6 +74,10 @@ export STUB_SLEEP=3
 t0=$(date +%s); rc=$(run); t1=$(date +%s)
 [ "$rc" = 0 ] && grep -q "PASS" "$TMP/out" && ok "unanimous pass → exit 0" || { fail "unanimous pass rc=$rc"; cat "$TMP/out"; }
 [ $((t1 - t0)) -lt 9 ] && ok "4 reviewers ran in parallel ($((t1 - t0)) s)" || fail "reviewers not parallel ($((t1 - t0)) s)"
+# BUG-REV-review-registry-parallel: the known-pattern scan starts with the reviewers (after review.diff), not before them
+R1="$(bash "$F" --repo "$P" --base HEAD --status | awk '{print $2}')"
+python3 -c 'import os,sys; d=sys.argv[1]; sys.exit(0 if os.path.getmtime(d+"/registry.json") >= os.path.getmtime(d+"/review.diff") else 1)' "$R1" \
+  && ok "known-pattern scan runs alongside the reviewers" || fail "registry.json written before the reviewers started"
 export STUB_SLEEP=0
 rc=$(run); grep -q "(cached:" "$TMP/out" && [ "$rc" = 0 ] && ok "same code → cached verdict, not re-billed" || fail "no cache"
 bash "$F" --repo "$P" --base HEAD --status | grep -q '^PASS' && ok "--status PASS" || fail "--status"
@@ -238,6 +242,14 @@ python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); sys.exit(0 if m["de
 grep -q 'run_terminal_cmd' "$STUB/grok.args" && grep -q -- '--tools [^ ]*run_terminal_cmd' "$STUB/grok.args" \
   && fail "Grok still gets run_terminal_cmd" || ok "Grok reviewer has no terminal tool"
 [ -f "$(dirname "$M12")/review.diff" ] && ok "review.diff written once by fanout before the reviewers" || fail "no review.diff in the run dir: $(ls -la "$(dirname "$M12")")"
+
+# 13. --verify-summary (the merge gate's check of the signed summary): sealed → 0, edited → 1, no path → 2
+S13="$(dirname "$M12")/summary.json"
+bash "$F" --verify-summary "$S13" >/dev/null 2>&1 && ok "--verify-summary accepts a sealed summary (BUG-REV-review-verify-summary)" || fail "sealed summary refused"
+cp "$S13" "$TMP/s13.json"; cp "$S13.sig" "$TMP/s13.json.sig"; printf ' ' >> "$TMP/s13.json"
+bash "$F" --verify-summary "$TMP/s13.json" >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && ok "--verify-summary refuses an edited summary" || fail "edited summary rc=$rc"
+bash "$F" --verify-summary >/dev/null 2>&1; [ $? = 2 ] && ok "--verify-summary without a path is a usage error" || fail "no-path usage"
 
 if [ "$FAILS" -ne 0 ]; then echo "review fanout: $FAILS FAILED"; exit 1; fi
 echo "review fanout: all checks passed"
