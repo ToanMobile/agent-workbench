@@ -55,7 +55,10 @@ for i in 1 2 3 4 5 6; do
   g -C "$T/seed" merge -q --no-ff -m "Merge branch 'f$i'" "f$i"
 done
 g -C "$T/seed" push -q origin main
-BAD_MERGE="$(git -C "$T/seed" log --first-parent --merges --format='%H %s' | awk '/f4/ {print $1}')"
+# #713: tìm theo TIÊU ĐỀ. awk '/f4/' trên "%H %s" khớp cả sha của merge khác (~14 % mỗi sha có "f4") ⇒ BAD_MERGE nhiều dòng, b2 vẫn xanh
+# (grep nhiều mẫu) còn b5 so 12 ký tự đầu của sha sai ⇒ đỏ '1 FAIL' (log đủ: merge gate #728 31/10 11:01)
+BAD_MERGE="$(git -C "$T/seed" log --first-parent --merges --format=%H --grep="^Merge branch 'f4'\$")"
+chk "setup. BAD_MERGE là đúng một sha (merge f4)" '[ "$(printf "%s\n" "$BAD_MERGE" | grep -cE "^[0-9a-f]{40}$")" = 1 ] && [ "$(printf "%s\n" "$BAD_MERGE" | wc -l | tr -d " ")" = 1 ]' "BAD_MERGE=$BAD_MERGE"
 g clone -q "$T/origin.git" "$T/repo"
 COMMON="$(cd "$T/repo" && cd "$(git rev-parse --git-common-dir)" && pwd -P)"
 
@@ -210,7 +213,9 @@ python3 -c 'import fcntl, os, sys, time
 fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644); fcntl.flock(fd, fcntl.LOCK_EX); open(sys.argv[2], "w").close(); time.sleep(30)' \
   "$COMMON/postfix-gate/gate-full.lock" "$T/flock.ready" &
 SLEEP_PID=$!
-i=0; while [ ! -e "$T/flock.ready" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+# #713: chờ theo sự kiện (ready, hoặc tiến trình giữ đã chết), không theo trần 5 s: python3 khởi động chậm khi tải cao thì gate_full chạy trước flock
+i=0; while [ ! -e "$T/flock.ready" ] && kill -0 "$SLEEP_PID" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+chk "c5 setup. tiến trình giữ flock đã giữ khoá trước khi chạy gate_full" '[ -e "$T/flock.ready" ]' "chờ ${i} × 0,1 s, tiến trình giữ đã chết"
 : >"$T/gate.calls"
 rc=$(run_gf --ref origin/green)
 chk "c5. khoá rỗng do tiến trình sống giữ (flock): skip, gate không chạy, file khoá còn" \
