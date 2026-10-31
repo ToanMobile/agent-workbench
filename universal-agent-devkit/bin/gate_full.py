@@ -17,11 +17,14 @@ Một lượt:
   6. xanh ⇒ nightly/full_pass.json, last_full_green_sha, nightly/history.jsonl;
   7. đỏ ⇒ chạy lại CHỈ suite/test đỏ ở đỉnh, rồi chia đôi các merge first-parent last_green..sha (≤ 16; không có last_green: 8 merge gần
      nhất) ra commit nghi vấn, tạo thẻ P1 qua scripts/governance/create_task.py (đã có thẻ mở cùng suite đỏ (tiêu đề P1, hoặc mã suite trong tiêu đề/body) thì comment vào đó, không tạo trùng);
+     MỌI suite đỏ đều nhóm b (thời gian thực / môi trường: nhãn "timing": true trong ma trận, dấu hiệu GROUP_B_SIGN trên dòng không
+     phải dòng đạt, hoặc chạy lại ở đỉnh xanh) ⇒ result red-env, không chia đôi, thẻ vẫn mở / ghi thêm (#700).
+     DEVKIT_GATE_FULL_BISECT=0 không bao giờ chia đôi, =1 luôn chia đôi, auto (mặc định) bỏ chia đôi khi red-env;
   8. log <DEVKIT_GATE_FULL_LOG_DIR>/<yyyymmdd-HHMMSS>.log + summary-latest.md + summary-<yyyymmdd>.md (lịch đêm đặt biến này =
      ~/Library/Logs/devkit-gate-full/<slug> riêng từng repo; chạy tay không đặt: ~/Library/Logs/devkit-gate-full);
   9. finally: gỡ scratch, nhả khoá.
 Kết luận: 0 xanh (hoặc skip), 1 đỏ (suite FAIL thật), 3 chưa kết luận (exit 2/4/5, TIMEOUT, BUSY, môi trường — không thẻ, không ghi
-last_full_green_sha), 2 lỗi chuẩn bị (ref, scratch).
+last_full_green_sha; red-env cũng 3 nhưng có thẻ), 2 lỗi chuẩn bị (ref, scratch).
 Lượt đêm chạy nice 10 do plist (`/usr/bin/nice -n 10`, con thừa hưởng); gate_full.py không tự đặt nice (#696).
 Móc test: DEVKIT_GATE_FULL_CMD (lệnh gate thay thế, shell, cwd = scratch; khi đặt thì không chạy agent-kit test),
 DEVKIT_GATE_FULL_CARD_CMD (thay `python3 create_task.py`), DEVKIT_GATE_FULL_LOG_DIR, DEVKIT_GATE_FULL_POLL_S; tải giả qua
@@ -50,6 +53,14 @@ import capacity  # noqa: E402  nguồn ngưỡng tải chung (bin/capacity.py), 
 
 TEST_PATH = re.compile(r"^\s*✖\s+((?:hooks/)?tests/\S+\.(?:sh|py|mjs))\s*$")
 ISSUE_URL = re.compile(r"https://github\.com/[^\s/]+/[^\s/]+/issues/\d+")
+# #700: dấu hiệu nhóm b — đỏ vì thời gian thực / môi trường (watchdog 7 s của hook, hết giờ, bị giết): chạy lại ở commit cũ cũng đỏ y như
+# vậy nên chia đôi không quy được cho ai. Chỉ xét dòng KHÔNG phải dòng đạt: tên ca đạt có thể chứa chính các chữ này.
+# ponytail: một assertion đỏ thật có chữ TIMEOUT trong tên ca vẫn bị tính nhóm b; chỉ bỏ chia đôi khi MỌI suite đỏ đều nhóm b và thẻ vẫn
+# ghi đủ suite — gặp ca đổ oan thì thu hẹp mẫu về đúng dòng trạng thái của runner.
+GROUP_B_SIGN = re.compile(r"quá lớn / quá phức tạp để phân tích trong thời hạn|\bTIMEOUT\b|killed after \d+(?:\.\d+)?s \(deadline\)"
+                          r"|\bKilled: 9\b")
+PASS_HEAD = re.compile(r"^\s*(?:✔|✓|ok\b|PASS\b)")
+FAIL_BLOCK = re.compile(r"^(\s*)(?:✖|✘|✗|❌|not ok\b)")
 FETCH_TIMEOUT_S = 300
 GATE_TIMEOUT_S = 6 * 3600       # trần cả lượt gate (mỗi suite đã có --timeout riêng)
 KIT_TEST_TIMEOUT_S = 2 * 3600   # agent-kit test cả bộ (~5–10 phút lúc rảnh)
@@ -66,7 +77,8 @@ class Run:
         self.log_path = os.path.join(log_dir, self.stamp + ".log")
         self.log_f = open(self.log_path, "a", encoding="utf-8")
         self.info = {"result": "?", "ref": "", "sha": "", "load_start": None, "hold_load": None, "waited_s": 0,
-                     "wait_note": "", "red": [], "env_red": [], "suspect": "", "suspect_note": "", "card": "", "notes": []}
+                     "wait_note": "", "red": [], "env_red": [], "group_b": [], "suspect": "", "suspect_note": "", "card": "",
+                     "notes": []}
 
     def log(self, msg: str) -> None:
         line = "[gate-full %s] %s" % (dt.datetime.now().strftime("%H:%M:%S"), msg)
@@ -81,7 +93,8 @@ class Run:
     def summary(self) -> str:
         i = self.info
         dur = int((dt.datetime.now() - self.started).total_seconds())
-        label = {"green": "XANH", "red": "ĐỎ", "inconclusive": "CHƯA KẾT LUẬN", "aborted": "BỊ DỪNG (aborted)", "skip": "skip", "error": "LỖI"}.get(i["result"], i["result"])
+        label = {"green": "XANH", "red": "ĐỎ", "red-env": "ĐỎ NHÓM B (thời gian thực / môi trường, red-env)", "inconclusive": "CHƯA KẾT LUẬN",
+                 "aborted": "BỊ DỪNG (aborted)", "skip": "skip", "error": "LỖI"}.get(i["result"], i["result"])
         out = ["# gate-full đêm %s" % self.started.strftime("%Y-%m-%d %H:%M:%S"), "",
                "- Kết quả: **%s**" % label,
                "- Ref: %s @ %s" % (i["ref"] or "-", i["sha"][:12] or "-"),
@@ -90,6 +103,8 @@ class Run:
                "- Chờ tải: %s" % (("%d giây — %s" % (i["waited_s"], i["wait_note"])) if i["waited_s"] or i["wait_note"] else "không")]
         if i["red"]:
             out.append("- Suite/test đỏ: " + ", ".join(i["red"]))
+        if i["group_b"]:
+            out.append("- Suite đỏ nhóm b (thời gian thực / môi trường): " + ", ".join(i["group_b"]))
         if i["env_red"]:
             out.append("- Đỏ do môi trường (không tính): " + ", ".join(i["env_red"]))
         if i["suspect"] or i["suspect_note"]:
@@ -288,6 +303,35 @@ def test_paths(text: str, kit_dir: str) -> list:
     return seen
 
 
+def group_b_text(text: str) -> bool:
+    """Nhóm b khi có ít nhất một khối hỏng và MỌI khối hỏng có dấu hiệu GROUP_B_SIGN (trên dòng không phải dòng đạt). Khối = dòng mở
+    đầu ✖/✘/✗/❌/not ok + các dòng thụt sâu hơn ngay sau nó: run_impacted.sh in `✖ tests/…` + đuôi log bài đỏ, hook_contract_test.sh
+    in `✗ <ca>` + hook=/output: (lượt 30/10 00:00: 5 ca watchdog, chia đôi 5 giờ 27 phút). Cùng dòng mở đầu lặp lại (fail_lines + đuôi
+    output) là một khối. Dòng "FAIL <ca>" trần (danh sách chạy của hook_contract_test.sh) không mở khối: chi tiết nằm ở khối ✗."""
+    blocks, head, ind = {}, None, 0
+    for line in (text or "").splitlines():
+        sign = bool(GROUP_B_SIGN.search(line)) and not PASS_HEAD.match(line)
+        if head is not None and (not line.strip() or len(line) - len(line.lstrip()) > ind):
+            blocks[head] = blocks[head] or sign   # dòng chi tiết (kể cả khối con) thuộc khối ngoài
+            continue
+        m = FAIL_BLOCK.match(line)
+        head, ind = (line.strip(), len(m.group(1))) if m else (None, 0)
+        if m:
+            blocks[head] = blocks.get(head, False) or sign
+    return bool(blocks) and all(blocks.values())
+
+
+def timing_ids(matrix_path: str) -> set:
+    """Mã suite gắn "timing": true trong ma trận gate đã dùng (gate --json ghi matrix_path); đọc lỗi ⇒ không suite nào."""
+    try:
+        with open(matrix_path or "", encoding="utf-8") as f:
+            rules = json.load(f).get("rules") or []
+    except (OSError, ValueError, AttributeError):
+        return set()
+    return {t.get("id") for r in rules if isinstance(r, dict) for t in r.get("mandatory_regression_tests") or []
+            if isinstance(t, dict) and t.get("timing") is True}
+
+
 def _full_gate_out(scratch: str, gate_out: str) -> str:
     gitdir = git_out(scratch, "rev-parse", "--absolute-git-dir") if scratch and os.path.isdir(scratch) else ""
     last_out = os.path.join(gitdir, "postfix-gate", "last_output.log") if gitdir else ""
@@ -305,7 +349,8 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
     """(verdict, checks). checks: [(nhãn, lệnh shell, cwd tương đối scratch)] — chỉ phần đỏ để chạy lại khi chia đôi."""
     data = last_json(gate_out)
     kit_dir = os.path.join(scratch, kit_rel) if kit_rel else ""
-    checks, red, env_red = [], [], []
+    timing = timing_ids(data.get("matrix_path"))
+    checks, red, env_red, group_b = [], [], [], []
     for t in data.get("regression_tests") or []:
         if not isinstance(t, dict):
             continue
@@ -314,12 +359,14 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
             env_red.append(sid)
         elif st == "FAIL":
             red.append(sid)
-            paths = test_paths("\n".join((t.get("fail_lines") or []) + [t.get("output_tail") or ""]), kit_dir) \
-                if "run_impacted.sh" in cmd else []
+            text = "\n".join((t.get("fail_lines") or []) + [t.get("output_tail") or ""])
+            paths = test_paths(text, kit_dir) if "run_impacted.sh" in cmd else []
             if paths:
                 checks += [("%s:%s" % (sid, p), "bash " + shlex.quote(p), kit_rel) for p in paths]
             elif cmd:
                 checks.append((sid, cmd, "."))
+            if sid in timing or group_b_text(text):
+                group_b.append(sid)
         elif st in ("TIMEOUT", "UNTESTED"):
             env_red.append("%s (%s)" % (sid, st))
     if kit_rc not in (None, 0):
@@ -332,7 +379,9 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
         else:
             red.append("agent-kit test")
             checks.append(("agent-kit test", "bash %s/bin/agent-kit test" % shlex.quote(kit_rel), "."))
-    run.info["red"], run.info["env_red"] = red, env_red
+        if kit_rc != 124 and group_b_text(kit_out):
+            group_b.append("agent-kit test")
+    run.info["red"], run.info["env_red"], run.info["group_b"] = red, env_red, group_b
     if red:
         return "red", checks
     if gate_rc == 0 and data.get("accepted", True) is not False and kit_rc in (None, 0):
@@ -379,12 +428,15 @@ def checks_fail(run: Run, scratch: str, checks: list, timeout: int) -> str:
     return "good"
 
 
+TIP_GOOD = "(không tái hiện khi chạy lại ở đỉnh: flaky?)"
+
+
 def bisect(run: Run, repo: str, scratch: str, sha: str, last_green: str, checks: list, timeout: int):
     """(commit nghi vấn, ghi chú). Đỉnh không tái hiện thì không nghi ai (flaky); hết giờ giữa chừng thì chỉ báo khoảng còn lại —
     một lần chạy lại hết giờ không phải "đỏ", tính nó là đỏ thì mọi điểm giữa đều đỏ và thẻ đổ oan cho merge cũ nhất."""
     tip = checks_fail(run, scratch, checks, timeout)
     if tip == "good":
-        return "", "(không tái hiện khi chạy lại ở đỉnh: flaky?)"
+        return "", TIP_GOOD
     if tip == "timeout":
         return "", "(chạy lại ở đỉnh hết giờ: không chia đôi)"
     known_good = bool(last_green) and git(repo, "merge-base", "--is-ancestor", last_green, sha)[0] == 0
@@ -470,8 +522,11 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
     more = " (+%d)" % (len(i["red"]) - 1) if len(i["red"]) > 1 else ""
     title = "%s %s: %s%s đỏ" % (CARD_PREFIX, run.started.strftime("%Y-%m-%d"), first, more)
     subj = git_out(repo, "log", "-1", "--format=%s", i["suspect"]) if i["suspect"] else ""
-    problem = ("Lượt --full đêm trên %s @ %s đỏ: %s. Commit nghi vấn: %s %s %s. Log: %s"
-               % (i["ref"], sha[:12], ", ".join(i["red"]), i["suspect"] or "-", subj, i["suspect_note"], run.log_path))
+    env = i["result"] == "red-env"
+    problem = ("Lượt --full đêm trên %s @ %s đỏ: %s. %sCommit nghi vấn: %s %s %s. Log: %s"
+               % (i["ref"], sha[:12], ", ".join(i["red"]),
+                  "Mọi suite đỏ đều nhóm b (thời gian thực / môi trường: %s): không chia đôi. " % ", ".join(i["group_b"]) if env else "",
+                  i["suspect"] or "-", subj, i["suspect_note"], run.log_path))
     dup = open_issue_for(slug, first)
     if dup:
         # đêm sau vẫn đỏ cùng suite: ghi thêm vào thẻ đang mở, không mở thẻ mới (lỗi comment chỉ ghi log)
@@ -487,7 +542,8 @@ def file_card(run: Run, repo: str, slug: str, sha: str) -> None:
         "--fix", "Sửa hoặc revert commit nghi vấn %s cho các suite/test đỏ chạy lại PASS trên main." % (i["suspect"][:12] or "-"),
         "--ac", "Các suite/test đỏ (%s) chạy lại PASS trên origin/main" % ", ".join(i["red"]),
         "--ac", "Lượt gate_full.py run kế tiếp XANH, last_full_green_sha trỏ tới main mới",
-        "--risk", "🔴 High — main đỏ", "--blocked-by", "None."]
+        "--risk", "🟡 Medium — nhóm b (thời gian thực / môi trường), chưa chứng minh main đỏ" if env else "🔴 High — main đỏ",
+        "--blocked-by", "None."]
     rc, out = sh(cmd, cwd=repo, timeout=300)
     run.raw(out)
     m = ISSUE_URL.search(out or "")
@@ -629,13 +685,27 @@ def cmd_run(args) -> int:
             _write(last_green_path, sha + "\n")
             rc_final = 0
         elif verdict == "red":
-            try:
-                last_green = open(last_green_path, encoding="utf-8").read().strip()
-            except OSError:
-                last_green = ""
-            run.info["suspect"], run.info["suspect_note"] = bisect(run, repo, scratch, sha, last_green, checks, args.timeout)
+            mode = os.environ.get("DEVKIT_GATE_FULL_BISECT") or "auto"
+            if mode not in ("0", "auto", "1"):
+                run.info["notes"].append("DEVKIT_GATE_FULL_BISECT=%s không hợp lệ (0|auto|1): dùng auto" % mode)
+                mode = "auto"
+            all_b = set(run.info["red"]) <= set(run.info["group_b"])
+            if mode == "0" or (mode == "auto" and all_b):
+                run.info["suspect_note"] = "(không chia đôi: %s)" % (
+                    "DEVKIT_GATE_FULL_BISECT=0" if mode == "0" else "mọi suite đỏ đều nhóm b — thời gian thực / môi trường")
+                run.log("không chia đôi " + run.info["suspect_note"])
+            else:
+                try:
+                    last_green = open(last_green_path, encoding="utf-8").read().strip()
+                except OSError:
+                    last_green = ""
+                run.info["suspect"], run.info["suspect_note"] = bisect(run, repo, scratch, sha, last_green, checks, args.timeout)
+                if run.info["suspect_note"] == TIP_GOOD:   # chạy lại ở đỉnh xanh hết (khác lần đầu): mọi suite đỏ là nhóm b
+                    all_b, run.info["group_b"] = True, list(run.info["red"])
+            if all_b:
+                run.info["result"] = "red-env"
             file_card(run, repo, args.slug or origin_slug(repo), sha)
-            rc_final = 1
+            rc_final = 3 if all_b else 1
         else:
             rc_final = 3
         completed = True
@@ -662,7 +732,8 @@ def cmd_run(args) -> int:
             os.makedirs(hist, exist_ok=True)
             with open(os.path.join(hist, "history.jsonl"), "a", encoding="utf-8") as f:
                 f.write(json.dumps({"at": run.started.isoformat(timespec="seconds"), "result": run.info["result"], "ref": run.info["ref"],
-                                    "sha": run.info["sha"], "red": run.info["red"], "suspect": run.info["suspect"],
+                                    "sha": run.info["sha"], "red": run.info["red"], "group_b": run.info["group_b"],
+                                    "suspect": run.info["suspect"],
                                     "card": run.info["card"], "log": run.log_path}, ensure_ascii=False) + "\n")
             run.finish()
         finally:
