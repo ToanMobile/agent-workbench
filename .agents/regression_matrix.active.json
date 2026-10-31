@@ -2568,6 +2568,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-merge-queue-route-rows",
+      "watch_files": [
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_merge_queue_route_rows.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-QUEUE-ROUTE-01",
+          "name": "#762/#637/#639: route của hàng đợi merge — card_of/head_of/cache load_rows không chết khi dữ liệu lớn hơn bộ đệm ống (printf | awk exit dưới pipefail); thẻ qua closingIssuesReferences khi nhánh không theo mẫu issue-<N>-; đọc GitHub hỏng giữa lượt route không cắt dở các PR còn lại; gate-exit-11 của preflight không ghi là verify đỏ",
+          "command": "bash tests/super-board/test_merge_queue_route_rows.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
