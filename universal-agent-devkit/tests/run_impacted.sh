@@ -380,6 +380,13 @@ w=0; while [ -n "$after" ] && [ -n "$alone" ] && [ ! -e "$after" ] && [ "$w" -lt
   sleep 1; w=$((w + 1))
 done
 for t in $alone; do bash -c 'run_one "$1" "$2"' _ "$t" "$out"; done
+# #721: dòng hỏng của test đỏ (✖ ✘ ✗ ❌ FAIL not ok ở đầu dòng) nằm TRƯỚC 20 dòng đuôi in bên dưới. Gate-full 31/10:
+# test_game_blender_default.sh 'failures: 2' nhưng ✖ A33/A23 sớm hơn đuôi nên log không có. Tối đa 40; dòng đã ở trong đuôi không in lại.
+dk_fail_lines() { # <log>
+  LC_ALL=C awk -v cap=40 'NR == FNR { n++; next }
+    FNR <= n - 20 && /^[ \t]*(✖|✘|✗|❌|FAIL|not ok)/ { k++; if (k <= cap) print }
+    END { if (k > cap) printf "… còn %d dòng hỏng nữa\n", k - cap; if (k) print "… (20 dòng cuối)" }' "$1" "$1" </dev/null 2>/dev/null
+}   # </dev/null: awk giả đọc stdin (test_run_impacted_order.sh) không treo khi chạy tay ở terminal (T0183)
 rc=0; n_reuse=0; n_ran=0
 for t in $selected; do
   [ -f "$t" ] || continue
@@ -395,7 +402,7 @@ for t in $selected; do
   if [ "$(cat "$o.rc" 2>/dev/null)" = 0 ]; then
     echo "✔ $t"
   else
-    echo "✖ $t"; tail -n 20 "$o.log" 2>/dev/null | sed 's/^/    /'; rc=1
+    echo "✖ $t"; { dk_fail_lines "$o.log"; tail -n 20 "$o.log" 2>/dev/null; } | sed 's/^/    /'; rc=1
   fi
 done
 # #472 D: hit-rate của sổ per-test (post-fix-gate đọc dòng này ghi vào runs.jsonl); chỉ khi sổ bật

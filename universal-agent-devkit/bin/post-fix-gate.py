@@ -7563,7 +7563,12 @@ def main():
                 t["ptc"] = (int(m.group(1)), int(m.group(2)))
             # Which sub-test failed, from the WHOLE output: run_impacted's "✖ tests/x.sh" sits
             # mid-output, outside the last lines shown (2026-09-28, --brief showed five ✔).
-            t["fail_lines"] = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)][:8]
+            # #721: run_impacted.sh in dòng hỏng của test đỏ dưới tên nó; "✖ tests/x.sh" (cột 0) của test đỏ SAU không bị đẩy khỏi 8 dòng
+            # đầu — merge-train single_red_test (#578) đếm test đỏ từ đây, gate_full.collect_red tìm đường dẫn từ đây. dict.fromkeys:
+            # flaky_retry nối out = first + retry ở trên, mỗi dòng có hai lần.
+            fl = [l.rstrip()[:300] for l in (out or "").splitlines() if FAIL_LINE.search(l)]
+            head = fl[:8]
+            t["fail_lines"] = head + list(dict.fromkeys(l for l in fl if RED_TEST_LINE.match(l) and l not in head))[:40]
         else:
             t["status"] = "TIMEOUT"
             hang_report(t, out)
@@ -8510,7 +8515,8 @@ def main():
     return exit_code
 
 
-FAIL_LINE = re.compile(r"✖|✗|❌|\bFAILED\b|\bFAIL\b|\bERROR\b|Traceback|AssertionError|\bException\b")
+FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b")
+RED_TEST_LINE = re.compile(r"^✖ (?:hooks/)?tests/\S+\.(?:sh|py|mjs)\s*$")   # #721: dòng test đỏ của tests/run_impacted.sh (cột 0)
 
 
 def run_brief():
@@ -8544,7 +8550,10 @@ def run_brief():
         plain = re.sub(r"\x1b\[[0-9;]*m", "", line)
         if "KẾT LUẬN" in plain or "VERDICT" in plain:
             summary = True
-        if summary or (tail and plain.strip().startswith(("|", "Lệnh chạy", "Command"))):
+        # #721: "Log:" (#647, giữa dòng lệnh và khối '|') từng đặt tail = 0: suite không có dòng ✖ mất cả khối '|' ở --brief.
+        # ponytail: dòng ✖ chỉ đặt lại cửa sổ khi tail == 0, nên ≥ 7 test đỏ trong một shard có thể rơi dòng đuôi không-✖ khỏi
+        # --brief (toàn văn ở last_output.log); nâng khi có log thật thiếu dòng đuôi
+        if summary or (tail and plain.strip().startswith(("|", "Lệnh chạy", "Command", "Log:"))):
             keep.append(line)
             tail = max(tail - 1, 0)
             continue

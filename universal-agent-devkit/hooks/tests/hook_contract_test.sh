@@ -42,7 +42,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 HOOKS="${HOOK_CONTRACT_HOOKS_DIR:-$(cd "${HERE}/.." && pwd)}"
 HC_KIT="${HOOK_CONTRACT_KIT_DIR:-$(cd "${HERE}/../.." && pwd)}"
 
-SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/hookharness.XXXXXX")"; HC_TMPDIRS+=("${SANDBOX}")
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/hookharness.XXXXXX")"   # hc_cleanup (case_runner.sh) xoá SANDBOX riêng
 mkdir -p "${SANDBOX}/.claude/audit-gate"
 
 PASS=0; FAIL=0; FAILED_CASES=""
@@ -1060,6 +1060,7 @@ ctx_case() { # name hook payload expect-substring ("" = expect no output)
   ✗ $1 (exit=${got}, output: $(printf '%s' "${out}" | head -2 | tr '\n' ' '))"
     printf '  FAIL %-46s\n' "$1"
   fi
+  hc_check_limits   # #715: đủ 3 bell / 11 watchdog thì dừng ngay, không đợi run_case kế tiếp
 }
 CTX_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookctx.XXXXXX")"; HC_TMPDIRS+=("${CTX_PROJ}")
 mkdir -p "${CTX_PROJ}/.agents"
@@ -1550,9 +1551,11 @@ CLAUDE_TR="${SANDBOX}/claude_tr.jsonl"
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"hi"},"sessionId":"c"}' > "${CLAUDE_TR}"
 harness_case() { # name payload expect(agent:degraded) [ENV=VAL …]
   hname="$1"; hpayload="$2"; hwant="$3"; shift 3
-  hgot="$(printf '%s' "${hpayload}" | env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT "$@" \
-          ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null \
-          | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s:%s" % (d["agent"], int(d["degraded"])))' 2>/dev/null)"
+  # #715: rc lưu TRƯỚC khi parse — helper in JSON rồi treo bị cắt rc 142 là FAIL, JSON đã flush không được chấm PASS
+  hraw="$(printf '%s' "${hpayload}" | env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT "$@" \
+          ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>"${HC_STATE_DIR}/e.hn")"; hrc=$?
+  if hc_watch "${hname}" "${hrc}" "${HC_STATE_DIR}/e.hn"; then return 0; fi
+  hgot="$(printf '%s' "${hraw}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s:%s" % (d["agent"], int(d["degraded"])))' 2>/dev/null)"
   if [ "${hgot}" = "${hwant}" ]; then
     PASS=$((PASS + 1)); printf '  ok   %-46s %s\n' "${hname}" "${hgot}"
   else
@@ -1576,10 +1579,20 @@ harness_case "bridged agent (DEVKIT_AGENT=codex) → codex" \
   '{"session_id":"b"}' "codex:1" DEVKIT_AGENT=codex
 # No session id in the payload. session_key also reads GROK_SESSION_ID, which a
 # Grok runner exports — drop it so this case measures the pid+cwd key.
-NOSID_A="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=42 ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
-NOSID_B="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=42 ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
-NOSID_C="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=43 ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
-if [ -n "${NOSID_A}" ] && [ "${NOSID_A}" = "${NOSID_B}" ] && [ "${NOSID_A}" != "${NOSID_C}" ]; then
+# nosid_key <HOOK_PPID> ⇒ NSKEY. Gọi ở SHELL CHA (hc_watch cộng FAIL/ENVB vào biến của shell này); rc lưu trước khi parse (#715).
+nosid_key() {
+  local raw rc
+  NSKEY=""
+  raw="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID="$1" ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>"${HC_STATE_DIR}/e.ns")"; rc=$?
+  if hc_watch "no session id: detect HOOK_PPID=$1" "${rc}" "${HC_STATE_DIR}/e.ns"; then NOSID_WATCHED=1; return 0; fi
+  NSKEY="$(printf '%s' "${raw}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+}
+NOSID_WATCHED=0
+nosid_key 42; NOSID_A="${NSKEY}"
+nosid_key 42; NOSID_B="${NSKEY}"
+nosid_key 43; NOSID_C="${NSKEY}"
+if [ "${NOSID_WATCHED}" -eq 1 ]; then :   # hc_watch đã chấm (hết giờ / watchdog): không chấm lần hai
+elif [ -n "${NOSID_A}" ] && [ "${NOSID_A}" = "${NOSID_B}" ] && [ "${NOSID_A}" != "${NOSID_C}" ]; then
   PASS=$((PASS + 1)); printf '  ok   %-46s\n' "no session id: key = harness pid + cwd, stable"
 else
   FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
@@ -1899,6 +1912,7 @@ for h in claim_check.sh churn_guard.sh comment_claim_guard.sh review_gate.sh tes
   ✗ K-4 ${h} warns without python3 (rc=${rc}, out=$(printf '%s' "${out}" | head -1))"
     printf '  FAIL %-46s rc=%s\n' "K-4 ${h} warns without python3" "${rc}"
   fi
+  hc_check_limits
 done
 
 # K-5: a Bash `echo security-check` is not a review; shell writes are edits too.
@@ -2468,6 +2482,7 @@ else
   ✗ prompt-named worktree: main write warns only (rc=${rc}, out=$(printf '%s' "${out}" | head -c 160))"
   printf '  FAIL %-46s rc=%s\n' "prompt-named worktree: main write warns only" "${rc}"
 fi
+hc_check_limits
 rm -rf "${WG}"
 echo
 

@@ -13,8 +13,12 @@
 #   B. đầu-cuối: chạy THẬT hook_contract_test.sh trên cây kit mỏng (symlink) với block-dangerous-git.sh giả chỉ ở LẦN GỌI ĐẦU (ca want=2 đầu tiên) in
 #      thông điệp watchdog: bản cũ chấm ca đó "ok" (xanh giả, exit 0) ⇒ test ĐỎ; bản mới ENV-BLOCKED + marker + exit 1.
 #      Bản cũ để ĐỎ lượt RED của người viết: WATCHDOG_ENV_SCRIPT_UNDER_TEST=<file hook_contract_test.sh cũ> (đặt vào cây mỏng đúng chỗ), WATCHDOG_ENV_ONLY=B.
+#      B chạy dưới pguard 120 (#720): chỉ cắt khi b.out đứng yên 120 s; thời lượng theo tải (130 s lúc rảnh, 182 s ở gate-full 31/10) không phải điều kiện.
 #   C. không còn lời gọi hook trực tiếp nào chưa bọc chốt hết giờ; ca 937-938 lưu rc (hook treo bị cắt rc 142 không PASS).
 #   D. hc_watch (mọi điểm gọi trực tiếp dùng nó): 142 ⇒ FAIL; thông điệp trong stderr hoặc trong `out` JSON của bridge ⇒ ENV-BLOCKED/FAIL, không bao giờ PASS.
+#   E. pguard (#720): chậm mà có tiến độ ⇒ chạy hết; treo ⇒ cắt rc 142, cháu chết; khối B gọi pguard 120 ở cả hai nhánh; TERM tới pguard ⇒ nhóm con chết theo.
+#   F. (#715) harness_case / nosid_key THẬT (trích từ hook_contract_test.sh) với helper in JSON rồi treo ⇒ FAIL rc 142, không PASS nhờ JSON đã flush;
+#      C3/C3b/C3m: mọi điểm gọi trực tiếp hook có watchdog qua hc_watch với file stderr (cursor: kèm ${out}); C4: mọi detect lưu rc trước khi parse.
 # Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -41,6 +45,37 @@ trap cleanup EXIT
 
 # chạy một lệnh với trần cứng 150 s (lưới an toàn của test: bản cũ có thể treo)
 guard() { /usr/bin/perl -e 'alarm 150; exec @ARGV or exit 127' "$@"; }
+# pguard <stall_s> <watch_file> lệnh… (#720): guard của ca B. Ca B chạy CẢ hook_contract_test.sh nên trần đồng hồ 150 s của guard() thành điều kiện
+# ẩn theo tải (gate-full 31/10: rc 142 ở ca 2384/2482). pguard chạy lệnh trong process group riêng, CHỈ cắt (TERM, 0,3 s, KILL cả nhóm, rc 142) khi
+# <watch_file> không lớn thêm byte nào suốt <stall_s> giây = treo thật; trần tổng là của runner ngoài (tests/lib/run_bounded.py). TERM/INT/HUP tới
+# pguard (run_bounded.py killpg nhóm của test, Ctrl-C) được chuyển cho cả nhóm con rồi pguard chết bằng đúng tín hiệu đó: không để nhóm con mồ côi.
+# Chương trình để trong biến: E4 chạy thẳng perl ở nền để $! là pid của nó.
+PGUARD_PL='
+use strict; use warnings; use POSIX ":sys_wait_h"; use Time::HiRes qw(sleep time);
+my ($stall, $watch) = splice(@ARGV, 0, 2);
+my $pid;
+sub stop_group { kill "TERM", -$pid; sleep 0.3; kill "KILL", -$pid; waitpid($pid, 0); }
+for my $sig (qw(TERM INT HUP)) {
+  $SIG{$sig} = sub { stop_group() if $pid && $pid > 1; $SIG{$sig} = "DEFAULT"; kill $sig, $$; };
+}
+$pid = fork();
+exit 127 unless defined $pid;
+if (!$pid) { $SIG{$_} = "DEFAULT" for qw(TERM INT HUP); setpgrp(0, 0); { no warnings "exec"; exec { $ARGV[0] } @ARGV; } exit 127; }
+setpgrp($pid, $pid);
+my ($size, $last) = (-1, time);
+while (1) {
+  my $r = waitpid($pid, WNOHANG);
+  if ($r == $pid) { my $st = $?; exit(($st & 127) ? 128 + ($st & 127) : $st >> 8); }
+  exit 127 if $r < 0;
+  my $s = -s $watch; $s = 0 unless defined $s;
+  if ($s != $size) { $size = $s; $last = time; }
+  if (time - $last >= $stall) {
+    printf STDERR "pguard: %s không lớn thêm trong %d s — treo, cắt cả nhóm\n", $watch, $stall;
+    stop_group(); exit 142;
+  }
+  sleep 0.5;
+}'
+pguard() { /usr/bin/perl -e "${PGUARD_PL}" "$@"; }
 alive() { [ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null; }
 
 WD1="BLOCKED: block-dangerous-git.sh: lệnh quá lớn / quá phức tạp để phân tích trong thời hạn (7 s) — chặn để an toàn. Chia thành lệnh nhỏ hơn, hoặc ghi vào file rồi chạy file."
@@ -234,11 +269,13 @@ fi
 exec bash "${DEVKIT_DIR}/hooks/block-dangerous-git.sh" "\$@"
 EOF
   chmod +x "${THIN}/hooks/block-dangerous-git.sh"
+  # pguard 120, không phải guard 150 (#720): stall 120 s = 4 × bell 30 s của harness (hook chậm luôn bị bell của harness chấm trước) ≈ 65 × khoảng lặng
+  # lớn nhất đo lúc rảnh (1,84 s giữa hai dòng). Treo thật (bản cũ không có bell) vẫn bị cắt ⇒ rc 142 ⇒ ĐỎ.
   if [ -n "${UNDER_TEST}" ]; then
     cp "${UNDER_TEST}" "${THIN}/hooks/tests/hook_contract_test.sh"
-    guard env HOOK_WATCHDOG_TEST_CORES=12 HOOK_WATCHDOG_TEST_LOAD=500 bash "${THIN}/hooks/tests/hook_contract_test.sh" > "${TMP}/b.out" 2>&1
+    pguard 120 "${TMP}/b.out" env HOOK_WATCHDOG_TEST_CORES=12 HOOK_WATCHDOG_TEST_LOAD=500 bash "${THIN}/hooks/tests/hook_contract_test.sh" > "${TMP}/b.out" 2>&1
   else
-    guard env HOOK_WATCHDOG_TEST_CORES=12 HOOK_WATCHDOG_TEST_LOAD=500 HOOK_CONTRACT_HOOKS_DIR="${THIN}/hooks" HOOK_CONTRACT_KIT_DIR="${DEVKIT_DIR}" \
+    pguard 120 "${TMP}/b.out" env HOOK_WATCHDOG_TEST_CORES=12 HOOK_WATCHDOG_TEST_LOAD=500 HOOK_CONTRACT_HOOKS_DIR="${THIN}/hooks" HOOK_CONTRACT_KIT_DIR="${DEVKIT_DIR}" \
       bash "${SCRIPT}" > "${TMP}/b.out" 2>&1
   fi
   BRC=$?
@@ -281,6 +318,110 @@ if [ "${ONLY}" != "B" ]; then
     chk "D watchdog, CPU hook 9000 ms ⇒ FAIL (tự tốn CPU)" "[ \"\$(d_watch 0 '${WD1}' '' 9000 500)\" = 'ret=0 FAIL=1 ENVB=0 PASS=0' ]" "$(d_watch 0 "${WD1}" '' 9000 500)"
     chk "D không có bell/watchdog ⇒ trả 1, không đổi bộ đếm (người gọi chấm assertion gốc)" "[ \"\$(d_watch 2 'blocked: reset --hard' '' 5 500)\" = 'ret=1 FAIL=0 ENVB=0 PASS=0' ]" "$(d_watch 2 'blocked: reset --hard' '' 5 500)"
   fi
+fi
+
+# ── E. pguard: guard theo tiến độ của ca B (#720) ─────────────────────────────────────────────────────────────────────────────────
+if [ "${ONLY}" != "B" ]; then
+  # E1: chậm mà có tiến độ: 1 dòng mỗi 0,2 s × 30 (~6 s > stall 4 s; biên 20×, không fork) ⇒ chạy hết, rc 0. Chỉ có cận dưới thời gian.
+  t0=$SECONDS
+  pguard 4 "${TMP}/e1.out" /usr/bin/perl -e '$| = 1; for (1 .. 30) { print "$_\n"; select(undef, undef, undef, 0.2) }' > "${TMP}/e1.out" 2>&1
+  r=$?; el=$((SECONDS - t0)); n="$(grep -c . "${TMP}/e1.out")"
+  chk "E1 chậm mà có tiến độ (${el} s > stall 4 s): chạy hết 30 dòng, rc 0 — tổng thời lượng không phải điều kiện" \
+    "[ ${r} -eq 0 ] && [ ${n} -eq 30 ] && [ ${el} -ge 5 ]" "rc=${r} lines=${n} elapsed=${el}"
+  # E2: treo (cháu sống, không in thêm) ⇒ cắt rc 142 + thông điệp, cháu chết. pid ghi TRƯỚC dòng start (kiểm cháu không rỗng).
+  rm -f "${TMP}/pid.e2"; t0=$SECONDS
+  pguard 2 "${TMP}/e2.out" sh -c "sleep 1000 & echo \$! > '${TMP}/pid.e2'; echo start; wait" > "${TMP}/e2.out" 2>&1
+  r=$?; el=$((SECONDS - t0))
+  chk "E2 treo ⇒ pguard cắt: rc 142, 'pguard: … treo', < 20 s (${el} s), cháu đã chết" \
+    "[ ${r} -eq 142 ] && [ -s '${TMP}/pid.e2' ] && grep -q '^pguard: .* treo' '${TMP}/e2.out' && [ ${el} -lt 20 ] && ! alive '${TMP}/pid.e2'" \
+    "rc=${r} elapsed=${el} alive=$(alive "${TMP}/pid.e2" && echo yes || echo no): $(tail -2 "${TMP}/e2.out" | tr '\n' ' ')"
+  # E3: khối B (cả nhánh UNDER_TEST lẫn nhánh thường) gọi pguard 120, không còn guard trần đồng hồ
+  bsec="$(sed -n '/^# ── B\./,/^# ── C\./p' "${DEVKIT_DIR}/tests/gates/$(basename "$0")")"
+  nb="$(printf '%s\n' "${bsec}" | grep -c '^[[:space:]]*pguard 120 ')"; ng="$(printf '%s\n' "${bsec}" | grep -c '^[[:space:]]*guard ')"
+  chk "E3 khối B gọi 'pguard 120' ở cả 2 nhánh, không còn 'guard ' (trần đồng hồ)" "[ ${nb} -eq 2 ] && [ ${ng} -eq 0 ]" "pguard 120: ${nb}, guard: ${ng}"
+  # E4: TERM tới pguard (như run_bounded.py killpg nhóm của test) ⇒ nhóm con chết theo, pguard chết bằng TERM. TERM gửi sau khi cháu đã có (theo sự kiện).
+  rm -f "${TMP}/pid.e4"
+  /usr/bin/perl -e "${PGUARD_PL}" 60 "${TMP}/e4.out" sh -c "sleep 1000 & echo \$! > '${TMP}/pid.e4'; echo start; wait" > "${TMP}/e4.out" 2>&1 &
+  pg=$!; PIDS="${PIDS} ${pg}"
+  i=0; while [ ${i} -lt 100 ] && [ ! -s "${TMP}/pid.e4" ]; do sleep 0.2; i=$((i + 1)); done
+  kill -TERM "${pg}" 2>/dev/null; wait "${pg}"; r=$?
+  i=0; while [ ${i} -lt 50 ] && alive "${TMP}/pid.e4"; do sleep 0.2; i=$((i + 1)); done
+  chk "E4 TERM tới pguard ⇒ nhóm con chết theo (không mồ côi khi trần ngoài giết test), pguard chết bằng TERM (rc ${r})" \
+    "[ -s '${TMP}/pid.e4' ] && [ ${r} -ge 128 ] && ! alive '${TMP}/pid.e4'" "rc=${r} alive=$(alive "${TMP}/pid.e4" && echo yes || echo no)"
+fi
+
+# ── F. #715: harness_case / nosid_key lưu rc trước khi parse; mọi điểm gọi trực tiếp hook có watchdog đi qua hc_watch ─────────────────
+if [ "${ONLY}" != "B" ]; then
+  # f_run <hang|ok> <harness_case|nosid_key>: chạy hàm THẬT trích từ hook_contract_test.sh với devkit_harness.py giả (in JSON, flush; hang thì
+  # treo 60 s), bell 2 s (hang) / 30 s (ok). In "PASS=<n> FAIL=<n> 142=<số dòng 'rc 142'> key=<NSKEY> watched=<NOSID_WATCHED>".
+  f_run() {
+    (
+      SANDBOX="$(mktemp -d "${TMP}/fh.XXXXXX")"; HOOKS="${SANDBOX}/hooks"; HC_KIT="${DEVKIT_DIR}"; PASS=0; FAIL=0; FAILED_CASES=""
+      HOOK_CASE_BELL_S=2; [ "$1" = ok ] && HOOK_CASE_BELL_S=30   # ok: bell mặc định, tải cao không cắt nhầm helper bình thường
+      NSKEY=""; NOSID_WATCHED=0; mkdir -p "${HOOKS}"
+      { echo 'import json, time'; echo 'print(json.dumps({"agent": "claude", "degraded": 0, "session": "s"}), flush=True)'
+        [ "$1" = hang ] && echo 'time.sleep(60)'; } > "${HOOKS}/devkit_harness.py"
+      . "${LIBDIR}/case_runner.sh"
+      fpat="/^$2() {/,/^}/p"   # biến riêng: bash 3.2 brace-expand {/,/^} khi viết thẳng trong "$(sed … \"…\")" (T0182)
+      eval "$(sed -n "${fpat}" "${SCRIPT}")"
+      if [ "$2" = harness_case ]; then harness_case "f" '{"session_id":"c"}' "claude:0" > "${SANDBOX}/f.out" 2>&1
+      else nosid_key 42 > "${SANDBOX}/f.out" 2>&1; fi
+      echo "PASS=${PASS} FAIL=${FAIL} 142=$(grep -c 'rc 142' "${SANDBOX}/f.out") key=${NSKEY} watched=${NOSID_WATCHED}"
+    )
+  }
+  r="$(f_run hang harness_case)"
+  chk "F1 harness_case: helper in JSON rồi treo ⇒ cắt rc 142, FAIL (không PASS nhờ JSON đã flush)" "[ \"\$r\" = 'PASS=0 FAIL=1 142=1 key= watched=0' ]" "${r}"
+  r="$(f_run ok harness_case)"
+  chk "F1b harness_case: helper bình thường ⇒ PASS (không vacuous)" "[ \"\$r\" = 'PASS=1 FAIL=0 142=0 key= watched=0' ]" "${r}"
+  r="$(f_run hang nosid_key)"
+  chk "F2 nosid_key: helper treo ⇒ FAIL rc 142, khoá rỗng, đánh dấu đã chấm (không chấm lần hai)" "[ \"\$r\" = 'PASS=0 FAIL=1 142=1 key= watched=1' ]" "${r}"
+  r="$(f_run ok nosid_key)"
+  chk "F2b nosid_key: helper bình thường ⇒ khoá 's', không chấm" "[ \"\$r\" = 'PASS=0 FAIL=0 142=0 key=s watched=0' ]" "${r}"
+  # C3: mỗi điểm gọi trực tiếp hook có watchdog (block-dangerous-git.sh / hardware_safety_gate.sh qua HC_WRAP, mỗi lời gọi bridge_rm) có
+  # hc_watch "<tên>" "<rc>" "${HC_STATE_DIR}/e.…" (bridge_rm cursor: thêm "${out}") trong 4 dòng sau. In các điểm thiếu, dòng cuối "sites=<n>".
+  c3_check() {
+    python3 - "$1" <<'PY'
+import re, sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+call = re.compile(r'\$\{HC_WRAP\} bash "\$\{HOOKS\}/(block-dangerous-git|hardware_safety_gate)\.sh"|^\s*(out="\$\()?bridge_rm ')
+watch = re.compile(r'hc_watch "[^"]*" "\$\{?rc\}?" "\$\{HC_STATE_DIR\}/e\.[a-z]+"')
+watch_out = re.compile(r'hc_watch "[^"]*" "\$\{?rc\}?" "\$\{HC_STATE_DIR\}/e\.[a-z]+" "\$\{out\}"')
+sites = 0
+for i, ln in enumerate(lines):
+    if ln.lstrip().startswith("#") or not call.search(ln):
+        continue
+    sites += 1
+    w = watch_out if "bridge_rm cursor" in ln else watch   # cursor: agent_bridge đổi stderr thành JSON trên stdout ⇒ hc_watch phải xét cả ${out}
+    if not any(w.search(x) for x in lines[i + 1:i + 5]):
+        print("thiếu hc_watch sau dòng %d: %s" % (i + 1, ln.strip()[:90]))
+print("sites=%d" % sites)
+PY
+  }
+  r="$(c3_check "${SCRIPT}")"; n="${r##*sites=}"
+  chk "C3 mọi điểm gọi trực tiếp hook có watchdog (≥ 7) đều gọi hc_watch với file stderr" "[ \"\$(printf '%s\n' \"\$r\" | grep -c thiếu)\" -eq 0 ] && [ ${n:-0} -ge 7 ]" "${r}"
+  chk "C3b bridge_rm ghi stderr vào \${HC_STATE_DIR}/e.br" "sed -n '/^bridge_rm() {/,/^}/p' '${SCRIPT}' | grep -q '2>\"\${HC_STATE_DIR}/e.br\"'"
+  sed 's/^if hc_watch "git restore \. still blocked"/if false/' "${SCRIPT}" > "${TMP}/c3m.sh"
+  r="$(c3_check "${TMP}/c3m.sh")"
+  chk "C3m ratchet không vacuous: bỏ hc_watch của 'git restore . still blocked' ⇒ báo thiếu" "printf '%s\n' \"\$r\" | grep -q 'thiếu hc_watch'" "${r}"
+  # C4: mọi lời gọi devkit_harness.py detect ghi stderr vào file và lưu rc ngay trên dòng đó (không nối thẳng '| python3' parse)
+  r="$(python3 - "${SCRIPT}" <<'PY'
+import re, sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+call = re.compile(r'devkit_harness\.py" detect')
+saved = re.compile(r'devkit_harness\.py" detect 2>"\$\{HC_STATE_DIR\}/e\.[a-z]+"\)"; h?rc=\$\?$')
+watch = re.compile(r'hc_watch "[^"]*" "\$\{h?rc\}" "\$\{HC_STATE_DIR\}/e\.[a-z]+"')
+n = bad = 0
+for i, ln in enumerate(lines):
+    if ln.lstrip().startswith("#") or not call.search(ln):
+        continue
+    n += 1
+    if not saved.search(ln) or not any(watch.search(x) for x in lines[i + 1:i + 5]):
+        bad += 1; print("chưa lưu rc / thiếu hc_watch: dòng %d" % (i + 1))
+print("detect=%d bad=%d" % (n, bad))
+PY
+)"
+  chk "C4 mọi 'devkit_harness.py detect' (≥ 2) lưu rc trên chính dòng gọi và qua hc_watch với file stderr trước khi parse" \
+    "printf '%s' \"\$r\" | grep -Eq 'detect=([2-9]|[1-9][0-9]+) bad=0$'" "${r}"
 fi
 
 echo

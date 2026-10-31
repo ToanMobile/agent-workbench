@@ -32,6 +32,11 @@ function noFabricationBlock() {
   ].join('\n');
 }
 
+// Vai chi doc (phan bien ke hoach, audit): 30/10 lenh `while True` cua mot luot phan bien song sau luot, dot 1 loi 18 phut (#697).
+const READ_ONLY_RUN_RULE = '- Vai chi doc: chi chay lenh ngan tu ket thuc (grep, git, doc file). CAM chay lenh nang hoac chay vo han / dot CPU: '
+  + 'build, test ca bo, vong lap vo han (`while True`), server / watch / daemon, chay nen (`&`, nohup). PM tu chay test (pm_run); '
+  + 'lenh con song sau luot cua ban se bi PM dung.';
+
 // Prompt phinh => agent chet context (Unity T0007: prompt 32 KB nhung plan 38 KB, 3/6 vong "stream interrupted").
 // Mac dinh 12 KB, project doi bang promptPlanMaxBytes; phan con lai agent doc theo duong dan.
 export const PLAN_MAX_DEFAULT = 12000;
@@ -175,6 +180,7 @@ export function buildPlanCritiquePrompt(cfg, task, { planHash = null, delta = nu
     '   buoc nao khong lam duoc, buoc nao thieu, cho nao se lam vo phan dang chay dung, test de xuat co bat duoc loi khong.',
     '3. Khong tim ra cho sai nao thi noi thang la khong tim ra — dung bia loi cho co, va cung dung khen.',
     '4. TUYET DOI KHONG sua bat ky file source nao o giai doan nay.',
+    READ_ONLY_RUN_RULE,
     '',
     noFabricationBlock(),
     '## HOP DONG BAO CAO',
@@ -297,6 +303,7 @@ export function buildAuditPrompt(cfg, task, scope = '') {
     '4. Doi chieu voi Definition of Done ben duoi — cai nao CHUA dat thi noi ro.',
     '5. verdict "pass" CHI KHI khong con finding blocker/major nao. Co blocker/major => "fail".',
     scope ? `6. PM yeu cau soi ky them:\n${scope}` : '',
+    READ_ONLY_RUN_RULE,
     '',
     dodBlock(task, cfg),
     rulesBlock(cfg),
