@@ -363,9 +363,10 @@ if [ "${ONLY}" != "B" ]; then
         [ "$1" = hang ] && echo 'time.sleep(60)'; } > "${HOOKS}/devkit_harness.py"
       . "${LIBDIR}/case_runner.sh"
       fpat="/^$2() {/,/^}/p"   # biến riêng: bash 3.2 brace-expand {/,/^} khi viết thẳng trong "$(sed … \"…\")" (T0182)
-      eval "$(sed -n "${fpat}" "${SCRIPT}")"
+      [ "$2" = nosid_seq ] && fpat='/^nosid_key() {/,/^nosid_key 43;/p'   # #732: hàm + chuỗi gọi thật 42/42/43 của hook_contract_test.sh
+      if [ "$2" = nosid_seq ]; then eval "$(sed -n "${fpat}" "${SCRIPT}")" > "${SANDBOX}/f.out" 2>&1; else eval "$(sed -n "${fpat}" "${SCRIPT}")"; fi
       if [ "$2" = harness_case ]; then harness_case "f" '{"session_id":"c"}' "claude:0" > "${SANDBOX}/f.out" 2>&1
-      else nosid_key 42 > "${SANDBOX}/f.out" 2>&1; fi
+      elif [ "$2" = nosid_key ]; then nosid_key 42 > "${SANDBOX}/f.out" 2>&1; fi
       echo "PASS=${PASS} FAIL=${FAIL} 142=$(grep -c 'rc 142' "${SANDBOX}/f.out") key=${NSKEY} watched=${NOSID_WATCHED}"
     )
   }
@@ -377,6 +378,12 @@ if [ "${ONLY}" != "B" ]; then
   chk "F2 nosid_key: helper treo ⇒ FAIL rc 142, khoá rỗng, đánh dấu đã chấm (không chấm lần hai)" "[ \"\$r\" = 'PASS=0 FAIL=1 142=1 key= watched=1' ]" "${r}"
   r="$(f_run ok nosid_key)"
   chk "F2b nosid_key: helper bình thường ⇒ khoá 's', không chấm" "[ \"\$r\" = 'PASS=0 FAIL=0 142=0 key=s watched=0' ]" "${r}"
+  r="$(f_run hang nosid_seq)"
+  chk "F2c (#732) chuỗi gọi thật nosid_key 42/42/43, helper treo ⇒ một bell (1 FAIL), hai lời gọi sau không chạy" \
+    "[ \"\$r\" = 'PASS=0 FAIL=1 142=1 key= watched=1' ]" "${r}"
+  r="$(f_run ok nosid_seq)"
+  chk "F2d (#732) chuỗi gọi thật, helper bình thường ⇒ lời gọi cuối vẫn chạy (khoá 's'), không chấm" \
+    "[ \"\$r\" = 'PASS=0 FAIL=0 142=0 key=s watched=0' ]" "${r}"
   # C3: mỗi điểm gọi trực tiếp hook có watchdog (block-dangerous-git.sh / hardware_safety_gate.sh qua HC_WRAP, mỗi lời gọi bridge_rm) có
   # hc_watch "<tên>" "<rc>" "${HC_STATE_DIR}/e.…" (bridge_rm cursor: thêm "${out}") trong 4 dòng sau. In các điểm thiếu, dòng cuối "sites=<n>".
   c3_check() {
