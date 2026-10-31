@@ -1583,6 +1583,7 @@ harness_case "bridged agent (DEVKIT_AGENT=codex) → codex" \
 nosid_key() {
   local raw rc
   NSKEY=""
+  [ "${NOSID_WATCHED}" -eq 1 ] && return 0   # #732: lời gọi trước đã bị hc_watch chấm: helper treo thì mỗi lời gọi sau tốn thêm một bell
   raw="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID="$1" ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>"${HC_STATE_DIR}/e.ns")"; rc=$?
   if hc_watch "no session id: detect HOOK_PPID=$1" "${rc}" "${HC_STATE_DIR}/e.ns"; then NOSID_WATCHED=1; return 0; fi
   NSKEY="$(printf '%s' "${raw}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
