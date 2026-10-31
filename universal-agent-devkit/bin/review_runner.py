@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""review_runner.py — run ONE reviewer of the 3-way review and always leave its envelope (bin/review-fanout.sh calls it).
+
+  review_runner.py claude|security|verifier|ocr|antigravity --repo ROOT --base REF --run RUN_DIR --timeout SEC
+
+Writes RUN_DIR/<name>.json = {"reviewer", "status": ok|failed|timeout|error|unavailable, "verdict": pass|fail, "reason",
+"findings", "usage": {"tokens","usd"}}. Every failure path writes a non-ok status — the merge treats anything but ok+pass as
+a FAIL of the whole review, so this file never needs to guess. Exit 0 when status is ok, 1 otherwise.
+
+Claude Code (claude, security, verifier): `claude -p` read-only (Read/Grep/Glob and read-only git; Edit/Write denied),
+--output-format json (cost + usage are counted against REVIEW_MAX_TOKENS / REVIEW_MAX_USD). REVIEW_CLAUDE_BIN overrides the
+binary, REVIEW_CLAUDE_MODEL the model.
+OCR: bin/ocr-review --strict (its own LLM; the delegation fallback is refused) over the commits since base and over the
+uncommitted change. Antigravity: mcp-servers/antigravity-pm-mcp/bin/pm-review-audit.js (pm_task_create + pm_dispatch audit).
+Standard library only.
+"""
+import argparse
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+READ_TOOLS = ("Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(git grep:*),"
+              "Bash(git ls-files:*),Bash(git status:*)")
+DENY_TOOLS = "Edit,Write,MultiEdit,NotebookEdit"
+OCR_SEV_FAIL = {"critical", "high", "blocker", "major", "p0", "p1"}
+
+
+def env_out(run, name, **kw):
+    env = {"reviewer": name, "status": "error", "verdict": "fail", "reason": "", "findings": [],
+           "usage": {"tokens": 0, "usd": 0.0}}
+    env.update(kw)
+    path = os.path.join(run, f"{name}.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(env, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+    return 0 if env["status"] == "ok" else 1
+
+
+def run_bounded(cmd, timeout, cwd, env=None, stdin_text=None):
+    """(rc, out, err, timed_out); the whole process group is killed on timeout."""
+    p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        out, err = p.communicate(stdin_text, timeout=timeout)
+        return p.returncode, out, err, False
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        out, err = p.communicate()
+        return 124, out, err, True
+
+
+def read(path, default=""):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return default
+
+
+def extract_json(text):
+    """The last fenced ```json block, else the outermost {...} of the text."""
+    blocks = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text or "", re.S)
+    for cand in reversed(blocks):
+        try:
+            return json.loads(cand)
+        except ValueError:
+            continue
+    i, j = (text or "").find("{"), (text or "").rfind("}")
+    if i >= 0 and j > i:
+        return json.loads(text[i:j + 1])
+    raise ValueError("no JSON object in the reviewer's answer")
+
+
+FINDING_CONTRACT = """Answer with ONE JSON object and nothing else:
+{"verdict": "pass" | "fail",
+ "findings": [{"severity": "P0|P1|P2|P3", "category": "bug|security|performance|test|docs|recurring-bug",
+               "file": "<repo-relative path>", "line": <int>, "end_line": <int>,
+               "snippet": "<ONE line copied VERBATIM from the file at that line>",
+               "problem": "<what breaks>", "why": "<how it fails / who is hit>", "fix": "<smallest correct fix>",
+               "known_pattern": "<INSTINCT-id when this repeats a known bug, else empty>"}]}
+Severity: P0 = data loss, security hole, crash, wrong result on a main path, or a repeated known bug; P1 = real bug on a
+reachable path; P2 = should fix; P3 = nit. "verdict" is "pass" ONLY when there is no P0 and no P1.
+Every file:line and snippet is machine-checked against the code: a citation that is not really there is thrown away."""
+
+
+def claude_prompt(kind, meta, ctx):
+    base, depth = meta["base"], meta["depth"]
+    common = (f"You are an independent code reviewer (read-only: never edit, never commit). Repository: {meta['repo']}.\n"
+              f"The change under review: `git diff {base}` (commits since {base} plus uncommitted edits) and these untracked "
+              f"files, read whole: {', '.join(meta.get('untracked') or []) or 'none'}.\n"
+              f"Changed files: {', '.join(meta.get('files') or [])}\n\n"
+              "Before judging a changed function, class or symbol, read its callers, its callees and its tests "
+              "(git grep the name). Defects often sit where the change meets code it did not touch. Findings stay scoped to "
+              "the change: no findings about untouched code.\nRead CLAUDE.md / AGENTS.md for repo rules.\n\n")
+    if kind == "claude":
+        focus = ("Review depth: LIGHT (small change) — correctness, error handling and security of the changed lines and "
+                 "their direct callers.\n" if depth == "light" else
+                 "Review depth: DEEP — hunt bugs in parallel lenses: logic and edge cases, error handling / swallowed "
+                 "failures, concurrency and resource leaks, API contract and backward compatibility, tests that do not "
+                 "prove the behaviour, removed or weakened guards.\n")
+    else:
+        focus = ("You are the SECURITY reviewer: injection (shell, SQL, path), authn/authz bypass, secrets in code or logs, "
+                 "unsafe deserialization, SSRF, insecure temp files and permissions, TOCTOU, crypto misuse, payment / money "
+                 "integrity, destructive schema or data migrations. Report security findings only (category security).\n")
+    return common + focus + "\n" + ctx + "\n" + FINDING_CONTRACT
+
+
+def verifier_prompt(meta, cands):
+    return (f"You are the VERIFIER of a code review in {meta['repo']} (read-only). The change is `git diff {meta['base']}`.\n"
+            "Below are P0/P1 findings other reviewers reported. For EACH, try hard to REFUTE it: open the file, read the "
+            "lines, the callers and the tests; check whether the failure can really happen. Refute only with concrete "
+            "evidence (a guard, a type, a caller contract, a test that shows it cannot happen). If you cannot refute it, "
+            "it stands.\n\nFindings:\n" + json.dumps(cands, ensure_ascii=False, indent=1) +
+            '\n\nAnswer with ONE JSON object and nothing else: {"verifications": [{"id": "<id>", "refuted": true|false, '
+            '"reason": "<evidence, file:line>"}]} — one entry per id.')
+
+
+def run_claude(name, a, meta, ctx):
+    bin_ = os.environ.get("REVIEW_CLAUDE_BIN", "claude")
+    if name == "verifier":
+        cands = json.loads(read(os.path.join(a.run, "candidates.json"), "[]") or "[]")
+        if not cands:
+            return env_out(a.run, name, status="ok", verdict="pass", verifications=[], reason="no P0/P1 candidate")
+        prompt = verifier_prompt(meta, cands)
+    else:
+        prompt = claude_prompt(name, meta, ctx)
+    cmd = [bin_, "-p", "--output-format", "json", "--allowedTools", READ_TOOLS, "--disallowedTools", DENY_TOOLS]
+    if os.environ.get("REVIEW_CLAUDE_MODEL"):
+        cmd += ["--model", os.environ["REVIEW_CLAUDE_MODEL"]]
+    rc, out, err, to = run_bounded(cmd, a.timeout, a.repo, env=dict(os.environ, REVIEW_FANOUT_CHILD="1"), stdin_text=prompt)
+    if to:
+        return env_out(a.run, name, status="timeout", reason=f"claude -p exceeded {a.timeout}s")
+    try:
+        res = json.loads(out)
+    except ValueError:
+        return env_out(a.run, name, status="error", reason=f"claude -p rc={rc}: not JSON: {(err or out)[-400:]}")
+    u = res.get("usage") or {}
+    usage = {"tokens": sum(int(u.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens")),
+             "usd": float(res.get("total_cost_usd") or res.get("cost_usd") or 0)}
+    if rc != 0 or res.get("is_error"):
+        return env_out(a.run, name, status="failed", usage=usage, reason=f"claude -p rc={rc}: {str(res.get('result'))[:400]}")
+    try:
+        ans = extract_json(str(res.get("result") or ""))
+    except ValueError as e:
+        return env_out(a.run, name, status="error", usage=usage, reason=f"unparseable answer: {e}")
+    if name == "verifier":
+        v = ans.get("verifications")
+        if not isinstance(v, list):
+            return env_out(a.run, name, status="error", usage=usage, reason="no verifications list")
+        return env_out(a.run, name, status="ok", verdict="pass", usage=usage, verifications=v)
+    if ans.get("verdict") not in ("pass", "fail") or not isinstance(ans.get("findings", []), list):
+        return env_out(a.run, name, status="error", usage=usage, reason="answer lacks verdict/findings")
+    return env_out(a.run, name, status="ok", verdict=ans["verdict"], findings=ans.get("findings") or [], usage=usage)
+
+
+def run_ocr(a, meta, ctx):
+    helper = os.path.join(HERE, "ocr-review")
+    bg = ("3-way review (Claude + OCR + Antigravity, unanimous). Read callers/callees/tests of every changed symbol; findings "
+          "only on the change.\n" + ctx)[:3500]
+    scopes = []
+    if meta.get("commits_since_base"):
+        scopes.append(("range", ["--from", meta["base"]]))
+    if meta.get("dirty"):
+        scopes.append(("workspace", []))
+    if not scopes:
+        return env_out(a.run, "ocr", status="ok", verdict="pass", reason="nothing to review")
+    findings, tokens, deadline = [], 0, time.time() + a.timeout
+    for label, rng in scopes:
+        out_dir = os.path.join(a.run, f"ocr-{label}")
+        left = max(30, int(deadline - time.time()))
+        rc, out, err, to = run_bounded([sys.executable, "-I", helper, "--strict", "-b", bg, "--out", out_dir, *rng], left, a.repo)
+        if to:
+            return env_out(a.run, "ocr", status="timeout", reason=f"ocr review ({label}) exceeded the budget")
+        if rc == 3:
+            return env_out(a.run, "ocr", status="unavailable", reason="ocr is not installed")
+        if rc != 0:
+            return env_out(a.run, "ocr", status="failed", reason=f"ocr review ({label}) rc={rc}: {(err or out).strip()[-400:]}")
+        try:
+            rep = json.loads(read(os.path.join(out_dir, "ocr-review.json")))
+        except ValueError as e:
+            return env_out(a.run, "ocr", status="error", reason=f"ocr report ({label}) unreadable: {e}")
+        cov = (rep.get("manifest") or {}).get("coverage") or {}
+        if rep.get("status") in ("failed", "error") or cov.get("failed"):
+            return env_out(a.run, "ocr", status="failed",
+                           reason=f"ocr review ({label}) status={rep.get('status')} failed_files={len(cov.get('failed') or [])}")
+        tokens += int((rep.get("summary") or {}).get("total_tokens") or 0)
+        findings += [c for c in rep.get("comments") or [] if isinstance(c, dict)]
+    verdict = "fail" if any(str(c.get("severity", "")).lower() in OCR_SEV_FAIL for c in findings) else "pass"
+    return env_out(a.run, "ocr", status="ok", verdict=verdict, findings=findings, usage={"tokens": tokens, "usd": 0.0})
+
+
+def run_agy(a, meta, ctx):
+    cli = os.environ.get("REVIEW_AGY_CLI") or os.path.join(meta["repo"], "mcp-servers", "antigravity-pm-mcp", "bin", "pm-review-audit.js")
+    if not os.path.isfile(cli):
+        return env_out(a.run, "antigravity", status="unavailable", reason=f"{cli} not found")
+    msg = os.path.join(a.run, "antigravity-message.md")
+    depth = ("Do sau: DEEP (thay doi lon hoac cham auth/payment/schema) — soi ca bao mat." if meta["depth"] == "deep"
+             else "Do sau: LIGHT (thay doi nho) — tap trung dung/sai va xu ly loi cua dong bi doi.")
+    with open(msg, "w", encoding="utf-8") as fh:
+        fh.write(f"Thay doi can audit: `git diff {meta['base']}` + file chua track: {', '.join(meta.get('untracked') or []) or 'khong'}.\n"
+                 f"{depth}\nMoi finding phai co snippet chep NGUYEN VAN tai file:dong (may se kiem).\n\n{ctx}")
+    out = os.path.join(a.run, "antigravity.json")
+    rc, so, se, to = run_bounded(["node", cli, "--project", meta["repo"], "--base", meta["base"], "--out", out,
+                                  "--message-file", msg, "--timeout", str(max(30, a.timeout - 30))], a.timeout, a.repo)
+    if to:
+        return env_out(a.run, "antigravity", status="timeout", reason=f"Antigravity audit exceeded {a.timeout}s")
+    if not os.path.isfile(out):
+        return env_out(a.run, "antigravity", status="error", reason=f"pm-review-audit rc={rc} wrote nothing: {(se or so)[-400:]}")
+    return 0 if rc == 0 else 1
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="review_runner.py")
+    ap.add_argument("name", choices=["claude", "security", "verifier", "ocr", "antigravity"])
+    ap.add_argument("--repo", required=True)
+    ap.add_argument("--run", required=True)
+    ap.add_argument("--timeout", type=int, default=900)
+    a = ap.parse_args(argv)
+    try:
+        meta = json.loads(read(os.path.join(a.run, "meta.json")))
+        ctx = read(os.path.join(a.run, "context.md"))
+        if a.name in ("claude", "security", "verifier"):
+            return run_claude(a.name, a, meta, ctx)
+        if a.name == "ocr":
+            return run_ocr(a, meta, ctx)
+        return run_agy(a, meta, ctx)
+    except Exception as e:   # never leave the vote empty-handed: an error is a recorded failure, not a silence
+        return env_out(a.run, a.name, status="error", reason=f"review_runner crashed: {e!r}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
