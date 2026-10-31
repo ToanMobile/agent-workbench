@@ -10,6 +10,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { TOOLS_BY_NAME } from '../src/tools.js';
 
 function arg(name, dflt = '') {
@@ -39,6 +41,34 @@ async function call(name, args) {
   return typeof r === 'string' ? r : (r?.text ?? '');
 }
 
+// The working tree the audit is about: uncommitted diff + untracked files (names and bytes). An audit is only valid for the
+// head AND tree it started on (critical scan / audit 31/10: a missing auditedHead passed; edits during the audit passed).
+export function treeHash(root) {
+  const h = createHash('sha256');
+  const git = (...a) => execFileSync('git', ['-C', root, ...a], { maxBuffer: 256 * 1024 * 1024 });
+  h.update(git('diff', '--no-ext-diff', '--binary', 'HEAD'));
+  for (const f of git('ls-files', '-z', '--others', '--exclude-standard').toString('utf8').split('\0').filter(Boolean).sort()) {
+    h.update(`\0${f}\0`);
+    try {
+      const st = fs.lstatSync(path.join(root, f));
+      if (st.isFile()) h.update(fs.readFileSync(path.join(root, f)));
+      else if (st.isSymbolicLink()) h.update(fs.readlinkSync(path.join(root, f)));
+    } catch { h.update('<gone>'); }
+  }
+  return h.digest('hex');
+}
+
+/** The envelope for one audit-agent.json: ok only for THIS head and an unchanged working tree (fail closed otherwise). */
+export function judgeAudit(rep, { head, tree0, tree1, model = '' }) {
+  if (!rep?.auditedHead || rep.auditedHead !== head) {   // no auditedHead is no proof of what was audited
+    return { status: 'error', reason: rep?.auditedHead ? `audited ${rep.auditedHead} but HEAD is ${head} (stale audit)`
+      : 'audit-agent.json has no auditedHead (cannot tell which code was audited)' };
+  }
+  if (!tree0 || tree1 !== tree0) return { status: 'error', reason: 'the working tree changed during the audit (worktree hash differs)' };
+  return { status: 'ok', verdict: rep.verdict === 'pass' ? 'pass' : 'fail', findings: Array.isArray(rep.findings) ? rep.findings : [],
+    reason: rep.notes || '', audited_head: head, worktree_hash: tree0, model: String(model || rep.model || '') };   // the model PM dispatched to; the agent's own claim only without one
+}
+
 const sleep = (ms) => new Promise((res) => { setTimeout(res, ms); });
 
 async function main() {
@@ -49,6 +79,8 @@ async function main() {
   } catch (e) {
     write({ status: 'error', reason: `git rev-parse HEAD failed: ${e.message}` });
   }
+  let tree0;
+  try { tree0 = treeHash(project); } catch (e) { write({ status: 'error', reason: `working-tree hash failed: ${e.message}` }); }
   const message = msgFile ? fs.readFileSync(msgFile, 'utf8') : '';
   let created;
   try {
@@ -87,12 +119,9 @@ async function main() {
       if (st.mtimeMs >= t0) {
         let rep;
         try { rep = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { await sleep(3000); continue; }   // half-written
-        if (rep.auditedHead && rep.auditedHead !== head) {
-          write({ status: 'error', reason: `audited ${rep.auditedHead} but HEAD is ${head} (stale audit)`, task_id: taskId });
-        }
-        const verdict = rep.verdict === 'pass' ? 'pass' : 'fail';
-        write({ status: 'ok', verdict, findings: Array.isArray(rep.findings) ? rep.findings : [], task_id: taskId,
-          audit_file: file, reason: rep.notes || '' });
+        let tree1 = '';
+        try { tree1 = treeHash(project); } catch { /* '' never equals tree0 */ }
+        write({ ...judgeAudit(rep, { head, tree0, tree1, model }), task_id: taskId, audit_file: file });
       }
     } catch { /* not written yet */ }
     await sleep(5000);
@@ -100,4 +129,5 @@ async function main() {
   write({ status: 'timeout', reason: `no audit-agent.json from Antigravity within ${timeoutS}s (task ${taskId})`, task_id: taskId });
 }
 
-main().catch((e) => write({ status: 'error', reason: `pm-review-audit crashed: ${e?.stack || e}` }));
+const isMain = () => { try { return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); } catch { return false; } };
+if (isMain()) main().catch((e) => write({ status: 'error', reason: `pm-review-audit crashed: ${e?.stack || e}` }));

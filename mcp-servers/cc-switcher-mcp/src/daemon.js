@@ -70,9 +70,14 @@ export function createLogTailReader(logFile) {
       }
 
       const freshText = buf.toString('utf8');
-      const combined = `${carryOver}${freshText}`;
+      // after a jump past the middle (delta > 64 KiB) the old tail is not adjacent to the new text: do not glue them
+      const combined = delta > 65536 ? freshText : `${carryOver}${freshText}`;
       carryOver = combined.slice(-256);
       return combined;
+    },
+    // called once a chunk matched: the matched 429 line must not ride along into the next chunk and fire again
+    resetCarryOver() {
+      carryOver = '';
     },
   };
 }
@@ -236,7 +241,9 @@ export async function startSwitcherDaemon(opts = {}) {
       const chunk = logReader.readNewChunk();
       if (!chunk) return;
       const nowMs = Date.now();
-      if (detectRateLimitInLogChunk(chunk) && nowMs - lastAutoRotateAtMs > 30_000) {
+      const limited = detectRateLimitInLogChunk(chunk);
+      if (limited) logReader.resetCarryOver?.();
+      if (limited && nowMs - lastAutoRotateAtMs > 30_000) {
         lastAutoRotateAtMs = nowMs;
         const rotated = rotateNextProfile({
           stateDir,

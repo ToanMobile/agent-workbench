@@ -200,12 +200,26 @@ export function resolveProfile(target) {
 function syncToCcSwitchApp(stateDir, profile) {
   const dir = resolveStateDir(stateDir);
   const settingsFile = ccSwitchSettingsPath(dir);
-  const currentSettings = readJsonSafe(settingsFile, {});
-  currentSettings.currentProviderClaude = profile.id;
-  if (profile.settingsKey) {
-    currentSettings[profile.settingsKey] = profile.settingsValue;
+  // Missing file: {}. A file that does not parse (or is not a JSON object) is LEFT ALONE: readJsonSafe returned {} for it too,
+  // and writing that back wiped the CC Switch app's whole configuration (critical scan 31/10).
+  let currentSettings = {};
+  let settingsOk = true;
+  if (fs.existsSync(settingsFile)) {
+    try {
+      currentSettings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+      if (!currentSettings || typeof currentSettings !== 'object' || Array.isArray(currentSettings)) throw new Error('not a JSON object');
+    } catch (err) {
+      settingsOk = false;
+      logStructured('warn', 'cc_switch_settings_unreadable_sync_skipped', { settingsFile, error: err?.message });
+    }
   }
-  writeJsonAtomic(settingsFile, currentSettings, 0o600);
+  if (settingsOk) {
+    currentSettings.currentProviderClaude = profile.id;
+    if (profile.settingsKey) {
+      currentSettings[profile.settingsKey] = profile.settingsValue;
+    }
+    writeJsonAtomic(settingsFile, currentSettings, 0o600);
+  }
 
   const dbFile = ccSwitchDbPath(dir);
   if (fs.existsSync(dbFile) && /^[a-z0-9_]+$/i.test(profile.id)) {

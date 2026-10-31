@@ -119,3 +119,34 @@ test('Audit Fix 4: createLogTailReader ghep duoc dong log 429 bi cat doi giua 2 
     tmp.cleanup();
   }
 });
+
+// critical scan 31/10 — BUG-REV-ccs-carryover-refire
+test('createLogTailReader: after a 429 match the carried tail is dropped (no second rotation from the same line)', () => {
+  const tmp = createTempDir();
+  try {
+    const logFile = path.join(tmp.dir, 'claude.log');
+    fs.writeFileSync(logFile, '');
+    const reader = createLogTailReader(logFile);
+    fs.appendFileSync(logFile, 'error 429 Too Many Requests rate_limit_error\n');
+    const first = reader.readNewChunk();
+    assert.equal(detectRateLimitInLogChunk(first), true);
+    reader.resetCarryOver();
+    fs.appendFileSync(logFile, 'ok normal line\n');
+    assert.equal(detectRateLimitInLogChunk(reader.readNewChunk()), false);
+  } finally {
+    tmp.cleanup();
+  }
+});
+
+// critical scan 31/10 — BUG-REV-ccs-settings-wipe
+test('switchProfile: an unparsable CC Switch settings.json is left alone, never overwritten with {}', () => {
+  const tmp = createTempDir();
+  try {
+    const f = path.join(tmp.dir, 'settings.json');
+    fs.writeFileSync(f, '{ "currentProviderClaude": "finos", "keep": 1, ');   // truncated JSON
+    switchProfile({ stateDir: tmp.dir, target: 'finos_team', nowMs: Date.now(), enforceCooldown: false });
+    assert.equal(fs.readFileSync(f, 'utf8'), '{ "currentProviderClaude": "finos", "keep": 1, ');
+  } finally {
+    tmp.cleanup();
+  }
+});
