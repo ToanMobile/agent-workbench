@@ -2532,6 +2532,22 @@
       ]
     },
     {
+      "component": "card-batch-one-branch-724",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_batch.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-BATCH-724-01",
+          "name": "#724: một đợt thẻ = một nhánh/PR/gate — ac-check nhận Closes của thẻ mang marker sb:batch-of của thẻ nhánh (marker thẻ khác, trong code fence, body rỗng vẫn là thẻ lạ) và đếm AC của nó; merge gate merge PR đợt đủ AC, thiếu AC exit 11, còn AC chưa tick thì Refs cả đợt + ac-open, Closes thẻ ngoài đợt hoặc PR không sb:ac vẫn exit 11",
+          "command": "bash tests/super-board/test_merge_gate_batch.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "proof-gate-trunk-main-722",
       "watch_files": [
         "universal-agent-devkit/hooks/proof_gate.sh",
