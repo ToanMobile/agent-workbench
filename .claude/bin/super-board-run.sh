@@ -576,6 +576,15 @@ Next: Eric — merge this card into ${dup}, or cut the overlap from its Fix" >/d
   return 0
 }
 
+review_wait_cooldown() {
+  # $1 = issue. 0 = lượt review gần nhất của thẻ kết thúc sạch khi đang chờ một điều kiện (#671) chưa quá SB_REVIEW_WAIT_S (900) giây: chưa cho reviewer mới.
+  # Sổ review-wait/<issue> mỗi lượt chờ một dòng (epoch); mốc nghỉ là dòng cuối.
+  local f="$INFLIGHT_DIR/review-wait/$1" t
+  [ -f "$f" ] || return 1
+  t=$(tail -n 1 "$f" 2>/dev/null | tr -dc '0-9')
+  [ -n "$t" ] && [ $(( $(date +%s) - t )) -lt "${SB_REVIEW_WAIT_S:-900}" ]
+}
+
 top_card_in_column() {
   # Sets TOP_ISSUE / TOP_ITEM_ID to the FIRST dispatchable card in column $1:
   # no assignee, no local in-flight lock, and the underlying issue still OPEN.
@@ -600,6 +609,7 @@ top_card_in_column() {
       esac
       continue
     fi
+    if [ "$col" = "Review" ] && review_wait_cooldown "$issue"; then continue; fi   # #671: waiting review turn, rest before the next one
     local issue_rc=0
     issue_is_open "$issue" || issue_rc=$?
     [ "$issue_rc" -le 1 ] || exit "$issue_rc"
@@ -1589,7 +1599,7 @@ EOF
         prompt="Run merge-only on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Merge protocol. Config: ${CONFIG_PATH}. PR #${mo_pr} was already reviewed and approved at head ${mo_head} (approved-head comment); do NOT review again. Check the PR head is still ${mo_head} (gh pr view ${mo_pr} --json headRefOid); then mark ready and run .claude/bin/super-board-merge-gate.sh --expect-head ${mo_head} --config ${CONFIG_PATH} --pr ${mo_pr} and route its exit code exactly as the Merge protocol says. Head moved (exit 6 or a different sha): leave the card in Review for a fresh review."
       elif merge_queue_on; then
       # Pha 2 (Q1): reviewer vào hàng thay cho gọi merge gate; super-board-merge-queue.sh gom và merge cả đợt, rồi chuyển thẻ Done.
-      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is Antigravity's. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = the config repo.path, pm_dispatch kind=audit on that task, read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id>\"}. Antigravity unavailable (MCP tools absent, pm_dispatch errors, verdict not pass): post no approval, leave the card in Review with a [reviewer] comment whose last line is blocked-by: - (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
+      prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; the cross-review is Antigravity's. The merge queue is on for this board: never run the merge gate yourself (it refuses direct calls while the queue is on) and never merge. When ACs, tests, and truth-checks pass with no blockers, enter the merge queue instead: run an Antigravity audit of the PR head through the antigravity-pm MCP (pm_task_create with project = the config repo.path, pm_dispatch kind=audit on that task, read its audit-agent.json, and only when Antigravity's verdict is pass record pm_verdict kind=audit verdict=pass auditedHead=<the 40-char head sha>), then post a PR comment whose first line is exactly approved-head:<the 40-char head sha you reviewed> and whose second line is approved-by: {\"reviewer\":\"antigravity\",\"builder\":\"<the builder lane id>\",\"task_id\":\"<that T… task id>\",\"gate_receipt\":\"<impacted task receipt id: output of .claude/bin/super-board-gate-receipt.sh <the 40-char head sha>>\"}. Antigravity unavailable (MCP tools absent, pm_dispatch errors, verdict not pass): post no approval, leave the card in Review with a [reviewer] comment whose last line is blocked-by: - (never a bare approved-head line: the git guard blocks it). After the approval, run gh pr ready <PR>, run gh pr edit <PR> --add-label merge-queue, then comment on issue #${issue} exactly [reviewer] [report] ✅ merge-ready · queued PR #<PR> @ <sha7>, and leave the card in Review (super-board-merge-queue.sh merges the batch and moves the card to Done)."
       else
       prompt="Run super-review on issue #${issue} for super-board run. Read .claude/skills/super-board/references/run.md → Reviewer lifecycle. Config: ${CONFIG_PATH}. Your independent review + truth-check sub-agents are your own review; a cross-review-approved marker (gate exit 7/8) is posted only after an Antigravity audit pass of the head (run.md → Reviewer lifecycle). When ACs, tests, and truth-checks pass with no blockers, proceed directly to merge via .claude/bin/super-board-merge-gate.sh and move the card to Done (not when the gate printed ac-open: #N — merged with AC still unproven: leave the issue open, the gate moved the card to Ready)."
       fi ;;
@@ -1925,6 +1935,28 @@ worker_exit_line() {
   awk '/^=== dispatch /{l=""} /^worker_exit: /{l=$0} END{print l}' "$1" 2>/dev/null || true
 }
 
+# #434: exit=0 AND a successful result record as the last result in the log = the worker finished its turn on its own, no crash.
+# Exit 0 alone proves nothing: a session limit also exits 0 (19/10, #94) but prints text or `is_error: true`, so those still fail here.
+worker_ended_clean() {
+  case "$(worker_exit_line "$1")" in
+    *"exit=0 "*) python3 -c 'import json, sys
+rs = None
+with open(sys.argv[1], errors="replace") as fh:
+    for l in fh:
+        if l.startswith("=== dispatch "):
+            rs = None
+        elif l.startswith("{"):
+            try:
+                r = json.loads(l)
+            except ValueError:
+                continue
+            if r.get("type") == "result":
+                rs = r
+sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") else 1)' "$1" 2>/dev/null; return $? ;;
+  esac
+  return 1
+}
+
 note_worker_exit() {
   # $1 = issue; the lock just read (LANE) is the worker that died. Logs its exit record and, unless it exited 0, comments on the card.
   # No record = the wrapper itself was killed (SIGKILL, host asleep) or the worker predates the wrapper.
@@ -1962,21 +1994,7 @@ note_early_death() {
   # #434: a worker that ended with exit=0 AND a successful result record as its last log line finished its turn on its own (a quick
   # rebuild pass: 51 s and 80 s on #428), no crash. Its "did nothing" case is the no-op ledger's. Exit 0 alone proves nothing: a
   # session limit also exits 0 (19/10, #94) but prints text or `is_error: true`, so those, and non-zero or missing records, still count.
-  case "$(worker_exit_line "$wlog")" in
-    *"exit=0 "*) python3 -c 'import json, sys
-rs = None
-for l in open(sys.argv[1], errors="replace"):
-    if l.startswith("=== dispatch "):
-        rs = None
-    elif l.startswith("{"):
-        try:
-            r = json.loads(l)
-        except ValueError:
-            continue
-        if r.get("type") == "result":
-            rs = r
-sys.exit(0 if rs and rs.get("subtype") == "success" and not rs.get("is_error") else 1)' "$wlog" 2>/dev/null && return 0 ;;
-  esac
+  worker_ended_clean "$wlog" && return 0
   # How long the worker lived: up to its log's last write. Reap runs once per tick (tick_seconds, 120 by default), so "now" can be a
   # whole tick after the death (review 19/10: measured at reap time, no worker ever counted). No log: now, with one tick of slack.
   # The log's mtime counts only when later than STARTED: `claude -p` (text mode) writes nothing until it ends, so a long silent
@@ -2045,6 +2063,12 @@ issue_comment_count() {
   python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1" --jq .comments 2>/dev/null | tr -dc '0-9' || true
 }
 
+issue_last_comment() {
+  # $1 = issue, $2 = số comment của nó. In nội dung comment mới nhất; không in gì khi GitHub không trả lời hoặc số comment là 0.
+  [ "${2:-0}" -gt 0 ] || return 0
+  python3 "$SB_GITHUB_READ" --kind scalar -- api "repos/{owner}/{repo}/issues/$1/comments?per_page=1&page=$2" --jq '.[0].body' 2>/dev/null || true
+}
+
 dispatch_baseline() {
   # $1 = issue, $2 = lane, $3 = 1 when the dispatch is judged. Called BEFORE the worker starts (a worker that comments at once would
   # inflate COMMENTS0, #316 R8); prints the FROM_COL/COMMENTS0 lines for dispatch_lane to write into the lock in the same write as PID=.
@@ -2070,27 +2094,32 @@ note_worker_end() {
   # $1 = issue; the lock just read (LANE, FROM_COL, COMMENTS0) is the worker that ended. Queued for block_noop_workers.
   case "${LANE:-}" in qa|review) ;; *) return 0 ;; esac
   [ -n "${FROM_COL:-}" ] && [ -n "${COMMENTS0:-}" ] || return 0
-  NOOP_CHECK="${NOOP_CHECK:-} ${1}:${LANE}:${FROM_COL}:${COMMENTS0}"
+  # Trường thứ 5 là đường log của chính worker này (từ lock; lock là file shell nên đường dẫn không có dấu cách).
+  NOOP_CHECK="${NOOP_CHECK:-} ${1}:${LANE}:${FROM_COL}:${COMMENTS0}:${WORKER_LOG:-${WORKER_LOG_DIR:-docs/super-board}/worker-${LANE}-${1}.log}"
 }
 
 block_noop_workers() {
   # Expensive tick, after fetch_project_items: judge the workers queued by note_worker_end. Sets NOOP_MOVED=1 when a card was moved.
   local pending="${NOOP_CHECK:-}" window="${SB_NOOP_WINDOW_S:-86400}" max="${SB_NOOP_MAX:-2}"
   local entry issue lane from c0 col count f now n item_id title wlog last tag human_line
+  local wait_val wait_what wfile wlimit wn eff_max over_wait why_line human_wait
   NOOP_CHECK=""
   for entry in $pending; do
-    IFS=: read -r issue lane from c0 <<EOF
+    wlog=""
+    IFS=: read -r issue lane from c0 wlog <<EOF
 $entry
 EOF
     [ -n "$issue" ] && [ -n "$c0" ] || continue
     issue_locked "$issue" && continue
     f="$INFLIGHT_DIR/noops/$issue"
+    [ -n "$wlog" ] || wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
+    eff_max="$max"; over_wait=""; human_wait=""
     col=$(issue_status "$issue")
     [ -n "$col" ] || continue
     count=$(issue_comment_count "$issue")
     [ -n "$count" ] || continue   # GitHub cannot say: conclude nothing
     if [ "$col" != "$from" ] || [ "$count" -gt "$c0" ]; then
-      rm -f "$f" 2>/dev/null || true   # it moved the card or wrote something: progress
+      rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # it moved the card or wrote something: progress
       continue
     fi
     # Pha 2 (M4): a reviewer that queued the PR (merge-queue label + approved-head at the head) rightly leaves the card in Review:
@@ -2099,14 +2128,42 @@ EOF
       rm -f "$f" 2>/dev/null || true
       continue
     fi
+    # #671 (#659): review worker kết thúc lượt sạch (exit 0, result success) khi đang chờ một điều kiện, comment mới nhất của chính reviewer
+    # kết thúc bằng dòng `blocked-by: <X>`, thì không chết và không phải no-op: lượt sau đúng ra không đăng gì lần nữa. Kill và lỗi vẫn đếm.
+    # Chỉ comment của [reviewer] mới tính (dòng đầu sau marker `<!-- -->` là `[reviewer]`, dòng cuối là `blocked-by:`).
+    # Miễn có trần: thẻ nghỉ SB_REVIEW_WAIT_S (900) giữa hai lượt (review_wait_cooldown) và chỉ được miễn SB_REVIEW_WAIT_MAX (8) lượt trong
+    # SB_NOOP_WINDOW_S (24 giờ), quá thì Blocked "chờ <X> quá lâu". `blocked-by: -` là chờ người: không miễn, Blocked ngay.
+    if [ "$lane" = review ] && worker_ended_clean "$wlog"; then
+      wait_val=$(issue_last_comment "$issue" "$count" | tr -d '\r' | awk 'NF && !h && $0 !~ /^<!--/ {h=1; r=($0 ~ /^\[reviewer\]/)} NF{l=$0} END{if (r && l ~ /^blocked-by:/) print l}')
+      wait_what=$(printf '%s' "${wait_val#blocked-by:}" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+      if [ -n "$wait_val" ] && [ "$wait_what" = "-" ]; then
+        eff_max=1; human_wait=1   # chờ người, không có gì để dispatch lại
+      elif [ -n "$wait_what" ]; then   # `blocked-by:` rỗng không nêu điều kiện chờ: đếm no-op như thường
+        now=$(date +%s)
+        wfile="$INFLIGHT_DIR/review-wait/$issue"
+        wlimit="${SB_REVIEW_WAIT_MAX:-8}"; case "$wlimit" in ''|*[!0-9]*|0) wlimit=8 ;; esac
+        [ "${#wlimit}" -le 2 ] && [ "$wlimit" -le 19 ] || wlimit=19   # sổ chỉ giữ 20 dòng (tail 19 + dòng mới): trần cao hơn sẽ không bao giờ chạm
+        mkdir -p "$INFLIGHT_DIR/review-wait" 2>/dev/null || true
+        # Kết quả lấy từ chính lệnh ghi + mv (trong `if`, nên set -e không giết runner): ghi lỗi thì lượt này KHÔNG có bản ghi (wn=0, không miễn,
+        # fail-closed) và không suy từ việc đọc lại sổ, vì sổ cũ có thể đã có dòng cùng giây. wc chạy sau mv thành công nên sổ luôn tồn tại.
+        wn=0
+        if { { tail -n 19 "$wfile" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now"; } 2>/dev/null > "$wfile.tmp" \
+          && mv "$wfile.tmp" "$wfile" 2>/dev/null; then
+          wn=$( { wc -l < "$wfile"; } 2>/dev/null | tr -d ' ' || true)
+        fi
+        if [ "${wn:-0}" -ge 1 ] && [ "$wn" -le "$wlimit" ]; then
+          continue   # miễn: sổ no-op giữ nguyên, nên kill xen kẽ lượt chờ vẫn đếm dồn tới SB_NOOP_MAX
+        fi
+        if [ "${wn:-0}" -ge 1 ]; then over_wait="${wait_what:-?}"; eff_max=1; fi
+      fi
+    fi
     now=$(date +%s)
     mkdir -p "$INFLIGHT_DIR/noops" 2>/dev/null || true
     { { tail -n 19 "$f" 2>/dev/null || true; } | awk -v from=$((now - window)) '$1 >= from'; echo "$now $lane $col $count"; } > "$f.tmp" 2>/dev/null \
       && mv "$f.tmp" "$f" 2>/dev/null || true
     n=$( { wc -l < "$f"; } 2>/dev/null | tr -d ' ')
-    wlog="${WORKER_LOG_DIR:-docs/super-board}/worker-${lane}-${issue}.log"
     last=$( { grep -Ev '^[[:space:]]*$|^worker_exit: ' "$wlog" 2>/dev/null || true; } | tail -1 | cut -c1-200)
-    if [ "${n:-0}" -lt "$max" ]; then
+    if [ "${n:-0}" -lt "$eff_max" ]; then
       log "⚠ #${issue} (lane ${lane}): worker ended with the card still in ${col} and no new comment — no-op ${n} of ${max}; last log line: ${last:-<no worker log at ${wlog}>}"
       continue
     fi
@@ -2116,15 +2173,18 @@ EOF
     printf '%s' "$last" | grep -qiE 'máy thật|thiết bị|real device|device|adb' && tag="📱"
     # #529: `blocked-by:  -` hands the card to a person; only a missing device is theirs. Other no-ops are agent work (no machine line).
     human_line="blocked-by:  agent"; [ "$tag" = "📱" ] && human_line="blocked-by:  -"
+    why_line="the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment"
+    [ -z "$human_wait" ] || { human_line="blocked-by:  -"; why_line="the reviewer for #${issue} ended its turn waiting on a person (blocked-by: -); dispatching another review turn cannot change that"; }
+    [ -z "$over_wait" ] || why_line="the ${lane} worker for #${issue} has waited on ${over_wait} for more than ${wlimit} review turns in the last $((window / 3600)) hours with no new comment (chờ ${over_wait} quá lâu)"
     if [ -n "$item_id" ] && set_card_status "$item_id" "Blocked"; then
       NOOP_MOVED=1
-      rm -f "$f" 2>/dev/null || true
+      rm -f "$f" "$INFLIGHT_DIR/review-wait/$issue" 2>/dev/null || true   # thẻ sang Blocked: cả hai sổ bắt đầu lại khi người kéo về
       [ -n "$BOT_LOGIN" ] && gh_write_once issue edit "$issue" --remove-assignee "$BOT_LOGIN" >/dev/null 2>&1 || true
       gh_checkpoint
       gh_write_once issue comment "$issue" --body "[orchestrator] [blocker] 🛑 blocked · ${tag} ${lane} worker exited ${n} times without moving the card or commenting
 Card:        #${issue}${title:+ ${title}}
 Reason tag:  ${tag}
-Why blocked: the ${lane} worker for #${issue} exited ${n} times in a row with the card still in ${col} and no new comment
+Why blocked: ${why_line}
 Evidence:    ${wlog}; last log line: ${last:-<empty>}
 Checked:     inflight lock reaped; card still in ${col}; issue comment count unchanged since dispatch (${c0})
 What blocks: the worker cannot finish this card${last:+ — its last log line is quoted above}

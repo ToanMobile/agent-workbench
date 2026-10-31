@@ -29,8 +29,8 @@ Mỗi Task tạo ra BẮT BUỘC phải tuân thủ cấu trúc sau:
 
 ## 🧺 Gom Việc: Ít Thẻ Nhất Có Thể (BẮT BUỘC)
 
-Mỗi thẻ là một PR, một merge-gate và một lượt gate (`post-fix-gate --scoped`, tự leo `--full` khi đụng file lõi); nhiều thẻ nhỏ làm gate chạy đè nhau và máy quá tải
-(23/10: load 112 trên 12 lõi). Vì vậy **gom, đừng tách**:
+Mỗi NHÁNH là một PR, một merge-gate và một lượt gate (`post-fix-gate --scoped`, tự leo `--full` khi đụng file lõi); nhiều nhánh nhỏ làm gate chạy đè nhau và máy quá tải
+(23/10: load 112 trên 12 lõi). Vì vậy **gom, đừng tách**: cùng chủ đề thì gom vào một thẻ (mục này), khác chủ đề thì vào một ĐỢT (mục 🚃 dưới).
 - Việc mới cùng loại (`bug` / `feature` / `qa`) **tự nhập vào thẻ Backlog hoặc Ready chưa chạy** (Ready đã có PR mở head `issue-<số>-` là đã chạy, không nhận): script chọn thẻ trùng đường dẫn file nhiều
   nhất (hòa thì thẻ mới nhất), thêm dòng AC vào mục `## Acceptance Criteria` của thẻ đó và Problem/Fix vào mục `## Gộp thêm: <tiêu đề>`.
   Agent không cần tự chọn thẻ, không cần gọi `--merge-into`.
@@ -50,6 +50,35 @@ Mỗi thẻ là một PR, một merge-gate và một lượt gate (`post-fix-gat
 - **Gom tay (orchestrator gộp thẻ có sẵn) phải chép AC NGUYÊN VĂN** vào mục `## Acceptance Criteria` của thẻ nhận (giống
   `merge_body`), rồi mới đóng thẻ nguồn kèm link. Cấm dòng AC kiểu "AC của thẻ #X đạt (xem thẻ đó)": AC ở thẻ khác là AC không
   ai đếm (merge gate có đọc #X để đếm, nhưng builder vẫn dễ bỏ sót). Cấm gom phần còn lại của một thẻ vào thẻ khác chủ đề.
+
+---
+
+## 🚃 Đợt: nhiều thẻ, một nhánh, một PR, một lần gate (#724)
+
+Gom thẻ chỉ nhận việc cùng chủ đề (T0054), nên 5 việc khác scope từng là 5 nhánh, 5 gate, 5 merge gate. Đợt giữ thẻ RIÊNG (AC
+riêng, đóng riêng) nhưng build chung:
+- Việc không gom được (khác chủ đề, hoặc thẻ đủ trần AC) **tự vào đợt** của thẻ chưa chạy cùng loại, build được, không 🔴 High
+  (thẻ trưởng; số lớn nhất trước; không nhận thẻ trưởng `ac-open`). Script chỉ ghi trên chính thẻ mới: `## Blocked by` =
+  `- #<trưởng> — đợt: …` + marker `<!-- sb:batch-of #<trưởng> -->` + nhãn `waiting-on:#<trưởng>` (runner không giao thẻ Ready mang
+  nhãn này; sweep gỡ nhãn khi thẻ trưởng đóng); in `🚃 Vào đợt #N`. Không sửa thẻ trưởng. Không tạo được nhãn thì thẻ đứng riêng.
+- Trần đợt (#369): `SB_MAX_BATCH_CARDS` (mặc định 5 thẻ kể cả thẻ trưởng) và `SB_MAX_BATCH_AC` (mặc định 16 mục AC cộng mọi thẻ).
+  Vượt thì thẻ mới đứng riêng và thành thẻ trưởng của đợt sau; gom cùng chủ đề vào thẻ trưởng cũng không được làm đợt vượt trần.
+  Đợt chốt lúc tạo thẻ, không chờ gom (bài học #679).
+- Vẫn riêng: 🔴 High, `--blocked-by`, `--needs-you`, `--new-card`, `--from-file`, nhãn ngoài bug/feature/qa, khác loại, repo chưa bật
+  đợt (`PROJECT_REGISTRY[...]["batch"]`; hiện chỉ agent-workbench — merge gate repo khác chưa hiểu marker).
+- **Builder thẻ trưởng** (người hay lane): `python3 .agents/devkit/scripts/governance/card_batch.py plan --lead <N>` in danh sách thẻ.
+  Một worktree, một nhánh `issue-<N>-…`; mỗi thẻ một (vài) commit, subject kết thúc `(#m)`; PR body một dòng `Closes #x` cho MỖI
+  thẻ (GitHub chỉ đóng thẻ đầu với `Closes #1, #2`), đặt NGOÀI khối `<!-- sb:status -->` (lane QA/Review ghi đè khối đó), ví dụ sau
+  `<!-- /sb:risk -->`; khối sb:ac liệt kê AC của mọi thẻ, dòng của thành viên dạng `- [x] [#m] <AC>`
+(`[#m]` sau ô tích, không trước gạch đầu dòng). Một lần
+  gate scoped, một merge gate. Merge gate nhận Closes của thẻ mang marker đợt của nhánh và đếm AC của nó; còn dòng chưa tick thì
+  KHÔNG thẻ nào trong đợt tự đóng (Refs cả đợt, thẻ trưởng `ac-open`).
+- **Một thẻ bị chặn** (review, xung đột, AC không đạt): `card_batch.py split --lead <N> --card <M> --reason "<lý do>" --pr <P>`
+  trong worktree của đợt: revert đúng commit `(#M)` (một chuỗi, xung đột thì abort cả chuỗi), thẻ M về `Blocked by - None.` và
+  gỡ nhãn `waiting-on:#N` (thẻ riêng), PR bỏ `Closes #M` cùng dòng `[#M]` và các dòng `↳` của nó.
+  Chạy lại gate một lần rồi push; phần còn lại merge. Revert xung đột: exit 5, cây như cũ.
+
+Ví dụ 5 thẻ khác scope, cùng loại, ≤ 16 AC: trước 5 gate + 5 merge gate; giờ 1 gate + 1 merge gate (tách 1 thẻ: +1 gate lại).
 
 ---
 
@@ -76,6 +105,7 @@ python3 .agents/devkit/scripts/governance/create_task.py \
 `--ac` lặp lại cho mỗi điều kiện; câu thường tự thành `- [ ] …` (pre-flight chỉ đếm dòng dạng danh sách). Đừng ghép nhiều AC bằng `\n` trong ngoặc kép: shell gửi nguyên chữ `\n` và ra một mục.
 
 Thẻ được gom vào thẻ có sẵn thì script in `🧺 Đã gom ... vào thẻ chưa chạy #N` và không tạo issue; trả link thẻ #N cho người dùng.
+Thẻ vào đợt thì script in `🚃 Vào đợt #N` rồi tạo issue như thường; trả link thẻ mới kèm "đợt #N".
 Thêm `--new-card "<lý do>"` để mở thẻ riêng (xem mục Gom Việc).
 
 ### 1b. Thẻ chỉ người làm được (máy thật, playtest, store, secret, quyết định)

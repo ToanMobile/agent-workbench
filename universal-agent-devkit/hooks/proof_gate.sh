@@ -468,7 +468,8 @@ def foreign_dirty_only(rec, tree_fp):
 def dirty_state(root, tree_fp, t=10):
     """(HEAD, các đường dẫn khác HEAD hoặc chưa track, ngoài tree_fp.EXCLUDE, đã sắp xếp) của cây git ở root; None khi git lỗi."""
     import subprocess
-    excluded = lambda p: any(p == ex or p.startswith(ex + "/") for ex in tree_fp.EXCLUDE)
+    # #691: path ghim (settings.json do bản cài kit sửa) không phải việc của phiên nào: tree_fingerprint() đã lấy bản HEAD của nó
+    excluded = lambda p: any(p == ex or p.startswith(ex + "/") for ex in tree_fp.EXCLUDE) or tree_fp.head_pinned(p)
     git = lambda *a: subprocess.run(["git", "-C", root, *a], capture_output=True, timeout=t)
     try:
         now_head = git("rev-parse", "HEAD")

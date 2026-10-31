@@ -30,40 +30,28 @@
 # Exit 0 = every contract point holds. Exit 1 = at least one deviation.
 # bash 3.2 compatible.
 # ─────────────────────────────────────────────────────────────────────────────
+# #685: núm của người chạy phải được lưu TRƯỚC clean_git_env.sh (nó unset DEVKIT_CAPACITY*): tests/lib/watchdog_env.py dùng chúng
+HC_CAP_SAVED="${DEVKIT_CAPACITY-}"; HC_TEST_LOAD="${HOOK_WATCHDOG_TEST_LOAD-}"; HC_TEST_CORES="${HOOK_WATCHDOG_TEST_CORES-}"
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 export DEVKIT_SCRATCH_CLEANUP=0   # these cases run the real session hooks: never prune the real /tmp/claude-<uid> (review 2026-10-09)
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-HOOKS="$(cd "${HERE}/.." && pwd)"
+# HOOK_CONTRACT_HOOKS_DIR / HOOK_CONTRACT_KIT_DIR: chỉ cho test của chính harness (tests/gates/test_hook_contract_watchdog_env.sh) đặt hook giả;
+# mặc định cho đúng đường dẫn như trước. HC_KIT tách khỏi HOOKS: bin/ và profiles/ của kit thật.
+HOOKS="${HOOK_CONTRACT_HOOKS_DIR:-$(cd "${HERE}/.." && pwd)}"
+HC_KIT="${HOOK_CONTRACT_KIT_DIR:-$(cd "${HERE}/../.." && pwd)}"
 
-SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/hookharness.XXXXXX")"
-trap 'rm -rf "${SANDBOX}"' EXIT
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/hookharness.XXXXXX")"; HC_TMPDIRS+=("${SANDBOX}")
 mkdir -p "${SANDBOX}/.claude/audit-gate"
 
 PASS=0; FAIL=0; FAILED_CASES=""
 
-# run_case <name> <hook.sh> <expected_exit> <stdin-json> [ENV=VAL ...]
-# Bỏ marker Grok của phiên cha trước. Ca nào cần thì truyền GROK_HOOK_EVENT=...
-# phía sau các cờ -u, nên gán đó vẫn thắng. Không đổi exit mong đợi của ca.
-run_case() {
-  name="$1"; hook="$2"; want="$3"; payload="$4"; shift 4
-  out="$(printf '%s' "${payload}" | env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT \
-        CLAUDE_PROJECT_DIR="${SANDBOX}" "$@" \
-        bash "${HOOKS}/${hook}" 2>&1)"
-  got=$?
-  if [ "${got}" -eq "${want}" ]; then
-    PASS=$((PASS + 1))
-    printf '  ok   %-46s exit=%s\n' "${name}" "${got}"
-  else
-    FAIL=$((FAIL + 1))
-    FAILED_CASES="${FAILED_CASES}
-  ✗ ${name}
-      hook=${hook} want exit=${want}, got=${got}
-      output: $(printf '%s' "${out}" | head -3 | tr '\n' ' ')"
-    printf '  FAIL %-46s want=%s got=%s\n' "${name}" "${want}" "${got}"
-  fi
-}
+# run_case, hc_watch, hc_check_limits, hc_summary, hc_cleanup: tests/lib/case_runner.sh (#685: chốt hết giờ 30 s, watchdog 7 s không bao giờ PASS)
+. "$(cd "${HERE}/../.." && pwd)/tests/lib/case_runner.sh"
+trap hc_cleanup EXIT
+# HOOK_CONTRACT_SCENARIO_FILE: chỉ cho test của harness — chạy vài run_case của file kịch bản rồi tổng kết, không chạy fixture và các khối bên dưới
+if [ -n "${HOOK_CONTRACT_SCENARIO_FILE:-}" ]; then . "${HOOK_CONTRACT_SCENARIO_FILE}"; hc_summary; fi
 
 # ── fixtures ────────────────────────────────────────────────────────────────
 KT_UNSEEN="${SANDBOX}/Unseen.kt"
@@ -471,7 +459,7 @@ run_case "quoted subcommand \"reset\" blocked"    block-dangerous-git.sh 2 \
 # One developer, one branch (2026-09-26, GeelyEx2: `git push origin <sha>:main` of a commit the local
 # main did not hold left local main 2 commits behind origin; worktree branches piled up). New branches
 # only when the user asks (DEVKIT_ALLOW_BRANCH=1); a push of <src>:<dst> only when local <dst> holds <src>.
-GR="$(mktemp -d "${TMPDIR:-/tmp}/hookgr.XXXXXX")"
+GR="$(mktemp -d "${TMPDIR:-/tmp}/hookgr.XXXXXX")"; HC_TMPDIRS+=("${GR}")
 git -C "${GR}" init -q -b main && git -C "${GR}" -c user.email=t@t -c user.name=t commit -q --allow-empty -m a
 GR_OUT="$(git -C "${GR}" commit-tree 'HEAD^{tree}' -p HEAD -m side)"      # a commit local main does not hold
 gpay() { python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[2],"tool_input":{"command":sys.argv[1]}}))' "$1" "${2:-${SANDBOX}}"; }
@@ -496,7 +484,10 @@ run_case "solo: push \$(sha):main blocked (fail closed)"  block-dangerous-git.sh
 run_case "solo: checkout -b in \$(...) blocked"           block-dangerous-git.sh 2 "$(gpay "echo \$(date) && git checkout -b feat/x")"
 run_case "solo: export DEVKIT_ALLOW_BRANCH=1 allowed"     block-dangerous-git.sh 0 "$(gpay "export DEVKIT_ALLOW_BRANCH=1; git switch -c release/1.3")"
 run_case "solo: env DEVKIT_ALLOW_BRANCH=1 allowed"        block-dangerous-git.sh 0 "$(gpay "env DEVKIT_ALLOW_BRANCH=1 git worktree add ../x")"
-if printf '%s' "$(gpay "git checkout -b feat/x")" | env CLAUDE_PROJECT_DIR="${SANDBOX}" bash "${HOOKS}/block-dangerous-git.sh" 2>&1 >/dev/null | grep -q 'DEVKIT_ALLOW_BRANCH=1'; then
+printf '%s' "$(gpay "git checkout -b feat/x")" | env CLAUDE_PROJECT_DIR="${SANDBOX}" ${HC_WRAP} bash "${HOOKS}/block-dangerous-git.sh" 2>"${HC_STATE_DIR}/e.msg" >/dev/null
+rc=${PIPESTATUS[1]}
+if hc_watch "solo: block message names the user-asked escape" "${rc}" "${HC_STATE_DIR}/e.msg"; then :
+elif grep -q 'DEVKIT_ALLOW_BRANCH=1' "${HC_STATE_DIR}/e.msg"; then
   PASS=$((PASS + 1)); printf '  ok   %-46s\n' "solo: block message names the user-asked escape"
 else
   FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
@@ -623,27 +614,30 @@ gitcase 2 'git rebase main'
 gitcase 2 'git restore a.kt'
 gitcase 0 'git restore --staged a.kt'
 # restore of an existing file is allowed only after a backup of its current content
-RESTORE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hookrestore.XXXXXX")"
+RESTORE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hookrestore.XXXXXX")"; HC_TMPDIRS+=("${RESTORE_DIR}")
 printf 'uncommitted work\n' > "${RESTORE_DIR}/w.kt"
 ( cd "${RESTORE_DIR}" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git restore w.kt"}}' \
-    | CLAUDE_PROJECT_DIR="${RESTORE_DIR}" bash "${HOOKS}/block-dangerous-git.sh" >/dev/null 2>&1 )
+    | CLAUDE_PROJECT_DIR="${RESTORE_DIR}" ${HC_WRAP} bash "${HOOKS}/block-dangerous-git.sh" >/dev/null 2>"${HC_STATE_DIR}/e.rst" )
 rc=$?
-if [ "$rc" -eq 0 ] && grep -rqs "uncommitted work" "${RESTORE_DIR}/.claude/audit-gate/restore-backup/"; then
+if hc_watch "git restore <file> allowed after backup" "$rc" "${HC_STATE_DIR}/e.rst"; then :
+elif [ "$rc" -eq 0 ] && grep -rqs "uncommitted work" "${RESTORE_DIR}/.claude/audit-gate/restore-backup/"; then
   PASS=$((PASS + 1)); printf '  ok   %-46s exit=%s\n' "git restore <file> allowed after backup" "$rc"
 else
   FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
   ✗ git restore <file> allowed after backup (rc=$rc)"; printf '  FAIL %-46s\n' "git restore <file> allowed after backup"
 fi
 ( cd "${RESTORE_DIR}" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git restore ."}}' \
-    | CLAUDE_PROJECT_DIR="${RESTORE_DIR}" bash "${HOOKS}/block-dangerous-git.sh" >/dev/null 2>&1 )
+    | CLAUDE_PROJECT_DIR="${RESTORE_DIR}" ${HC_WRAP} bash "${HOOKS}/block-dangerous-git.sh" >/dev/null 2>"${HC_STATE_DIR}/e.rst" )
 rc=$?
-if [ "$rc" -eq 2 ]; then PASS=$((PASS + 1)); printf '  ok   %-46s exit=%s\n' "git restore . still blocked" "$rc"
+if hc_watch "git restore . still blocked" "$rc" "${HC_STATE_DIR}/e.rst"; then :
+elif [ "$rc" -eq 2 ]; then PASS=$((PASS + 1)); printf '  ok   %-46s exit=%s\n' "git restore . still blocked" "$rc"
 else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
   ✗ git restore . still blocked (rc=$rc)"; printf '  FAIL %-46s\n' "git restore . still blocked"; fi
 ( cd "${RESTORE_DIR}" && rm -rf .claude && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git restore w.kt && git reset --hard"}}' \
-    | CLAUDE_PROJECT_DIR="${RESTORE_DIR}" bash "${HOOKS}/block-dangerous-git.sh" >/dev/null 2>&1 )
+    | CLAUDE_PROJECT_DIR="${RESTORE_DIR}" ${HC_WRAP} bash "${HOOKS}/block-dangerous-git.sh" >/dev/null 2>"${HC_STATE_DIR}/e.rst" )
 rc=$?
-if [ "$rc" -eq 2 ] && [ ! -d "${RESTORE_DIR}/.claude/audit-gate/restore-backup" ]; then
+if hc_watch "blocked command leaves no restore backup" "$rc" "${HC_STATE_DIR}/e.rst"; then :
+elif [ "$rc" -eq 2 ] && [ ! -d "${RESTORE_DIR}/.claude/audit-gate/restore-backup" ]; then
   PASS=$((PASS + 1)); printf '  ok   %-46s exit=%s\n' "blocked command leaves no restore backup" "$rc"
 else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
   ✗ blocked command leaves no restore backup (rc=$rc)"; printf '  FAIL %-46s\n' "blocked command leaves no restore backup"; fi
@@ -919,23 +913,26 @@ run_case "hw-gate: fast path allows npm test without python3" hardware_safety_ga
   '{"tool_name":"Bash","tool_input":{"command":"npm test"}}' PATH="${NOJQ_BIN}"
 # Codex / Gemini / Cursor get the rm guard through agent_bridge.sh (shell → this gate).
 bridge_rm() { # platform payload → prints rc and stdout
-  printf '%s' "$2" | (cd "${SANDBOX}" && bash "${HOOKS}/agent_bridge.sh" "$1" shell hardware_safety_gate.sh 2>/dev/null)
+  printf '%s' "$2" | (cd "${SANDBOX}" && ${HC_WRAP} bash "${HOOKS}/agent_bridge.sh" "$1" shell hardware_safety_gate.sh 2>"${HC_STATE_DIR}/e.br")
 }
 for pf in codex gemini; do
   bridge_rm "${pf}" "{\"tool_input\":{\"command\":\"rm -fr src\"},\"cwd\":\"${SANDBOX}\"}" >/dev/null
   rc=$?
-  if [ "${rc}" -eq 2 ]; then PASS=$((PASS + 1)); printf '  ok   %-46s exit=2\n' "bridge ${pf}: rm -fr src blocked"
+  if hc_watch "bridge ${pf}: rm -fr src blocked" "${rc}" "${HC_STATE_DIR}/e.br"; then :
+  elif [ "${rc}" -eq 2 ]; then PASS=$((PASS + 1)); printf '  ok   %-46s exit=2\n' "bridge ${pf}: rm -fr src blocked"
   else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
   ✗ bridge ${pf}: rm -fr src not blocked (rc=${rc})"; printf '  FAIL %-46s rc=%s\n' "bridge ${pf}: rm -fr src blocked" "${rc}"; fi
 done
-out="$(bridge_rm cursor "{\"command\":\"rm -r -f app\",\"cwd\":\"${SANDBOX}\"}")"
-if printf '%s' "${out}" | grep -q '"permission": "deny"'; then PASS=$((PASS + 1)); printf '  ok   %-46s\n' "bridge cursor: rm -r -f app denied"
+out="$(bridge_rm cursor "{\"command\":\"rm -r -f app\",\"cwd\":\"${SANDBOX}\"}")"; rc=$?
+if hc_watch "bridge cursor: rm -r -f app denied" "${rc}" "${HC_STATE_DIR}/e.br" "${out}"; then :
+elif printf '%s' "${out}" | grep -q '"permission": "deny"'; then PASS=$((PASS + 1)); printf '  ok   %-46s\n' "bridge cursor: rm -r -f app denied"
 else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
   ✗ bridge cursor: rm -r -f app not denied (out=${out})"; printf '  FAIL %-46s\n' "bridge cursor: rm -r -f app denied"; fi
 # the session cwd reaches the gate: from <git root>/app, `rm -rf src` is app/src
 mkdir -p "${GP}/app/src"
-out="$(bridge_rm cursor "{\"command\":\"rm -rf src\",\"cwd\":\"${GP}/app\"}")"
-if [ -z "${out}" ]; then PASS=$((PASS + 1)); printf '  ok   %-46s\n' "bridge cursor: rm -rf src in app/ allowed (cwd)"
+out="$(bridge_rm cursor "{\"command\":\"rm -rf src\",\"cwd\":\"${GP}/app\"}")"; rc=$?
+if hc_watch "bridge cursor: rm -rf src in app/ allowed (cwd)" "${rc}" "${HC_STATE_DIR}/e.br" "${out}"; then :
+elif [ "${rc}" -eq 0 ] && [ -z "${out}" ]; then PASS=$((PASS + 1)); printf '  ok   %-46s\n' "bridge cursor: rm -rf src in app/ allowed (cwd)"
 else FAIL=$((FAIL + 1)); FAILED_CASES="${FAILED_CASES}
   ✗ bridge cursor: rm -rf src from app/ denied (out=${out})"; printf '  FAIL %-46s\n' "bridge cursor: rm -rf src in app/ allowed (cwd)"; fi
 echo
@@ -1055,7 +1052,7 @@ echo
 # Context loaders: never block (exit 0); output is what the model gets.
 echo "session_context.sh / prompt_context.sh"
 ctx_case() { # name hook payload expect-substring ("" = expect no output)
-  out="$(printf '%s' "$3" | env CLAUDE_PROJECT_DIR="${CTX_PROJ}" bash "${HOOKS}/$2" 2>/dev/null)"; got=$?
+  out="$(printf '%s' "$3" | env CLAUDE_PROJECT_DIR="${CTX_PROJ}" ${HC_WRAP} bash "${HOOKS}/$2" 2>/dev/null)"; got=$?
   if [ "${got}" -eq 0 ] && { { [ -z "$4" ] && [ -z "${out}" ]; } || { [ -n "$4" ] && printf '%s' "${out}" | grep -q -- "$4"; }; }; then
     PASS=$((PASS + 1)); printf '  ok   %-46s exit=%s\n' "$1" "${got}"
   else
@@ -1064,7 +1061,7 @@ ctx_case() { # name hook payload expect-substring ("" = expect no output)
     printf '  FAIL %-46s\n' "$1"
   fi
 }
-CTX_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookctx.XXXXXX")"
+CTX_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookctx.XXXXXX")"; HC_TMPDIRS+=("${CTX_PROJ}")
 mkdir -p "${CTX_PROJ}/.agents"
 printf '### [INSTINCT-001] Chống bấm đúp nút thanh toán (double-click)\n- **Hiện tượng lỗi:** click nhanh gọi API hai lần, debounce thiếu\n' > "${CTX_PROJ}/.agents/instincts.md"
 printf '{"profile":"legacy"}' > "${CTX_PROJ}/.active-profile.json"
@@ -1554,7 +1551,7 @@ printf '%s\n' '{"type":"user","message":{"role":"user","content":"hi"},"sessionI
 harness_case() { # name payload expect(agent:degraded) [ENV=VAL …]
   hname="$1"; hpayload="$2"; hwant="$3"; shift 3
   hgot="$(printf '%s' "${hpayload}" | env -u GROK_HOOK_EVENT -u GROK_HOOK_NAME -u GROK_SESSION_ID -u DEVKIT_AGENT "$@" \
-          python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null \
+          ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null \
           | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s:%s" % (d["agent"], int(d["degraded"])))' 2>/dev/null)"
   if [ "${hgot}" = "${hwant}" ]; then
     PASS=$((PASS + 1)); printf '  ok   %-46s %s\n' "${hname}" "${hgot}"
@@ -1579,9 +1576,9 @@ harness_case "bridged agent (DEVKIT_AGENT=codex) → codex" \
   '{"session_id":"b"}' "codex:1" DEVKIT_AGENT=codex
 # No session id in the payload. session_key also reads GROK_SESSION_ID, which a
 # Grok runner exports — drop it so this case measures the pid+cwd key.
-NOSID_A="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=42 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
-NOSID_B="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=42 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
-NOSID_C="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=43 python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+NOSID_A="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=42 ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+NOSID_B="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=42 ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
+NOSID_C="$(printf '{"cwd":"/x"}' | env -u GROK_SESSION_ID HOOK_PPID=43 ${HC_WRAP} python3 "${HOOKS}/devkit_harness.py" detect 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["session"])' 2>/dev/null)"
 if [ -n "${NOSID_A}" ] && [ "${NOSID_A}" = "${NOSID_B}" ] && [ "${NOSID_A}" != "${NOSID_C}" ]; then
   PASS=$((PASS + 1)); printf '  ok   %-46s\n' "no session id: key = harness pid + cwd, stable"
 else
@@ -1591,7 +1588,7 @@ fi
 
 # The two heavy Stop gates on a project whose build and suite FAIL: Grok's session-end
 # Stop is allowed without running them; its real turn end is still blocked.
-GK_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookgrok.XXXXXX")"
+GK_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookgrok.XXXXXX")"; HC_TMPDIRS+=("${GK_PROJ}")
 (
   cd "${GK_PROJ}" && git init -q . && mkdir -p lib/src/main .agents && touch lib/build.gradle.kts \
   && printf '#!/bin/bash\necho run >> "%s/gk_gradle_runs"\necho "e: A.kt:1:1 Unresolved reference: nope"\nexit 1\n' "${SANDBOX}" > gradlew \
@@ -1641,7 +1638,7 @@ print(json.dumps({"type":"user","timestamp":t,"message":{"role":"user","content"
 sleep 1
 # `sh result.sh`, không phải Gradle/Unity. Slot riêng: lệnh này đứng đến khi Stop ngắt ở 600s (20:32).
 mkdir -p "${SANDBOX}/heavy-slots"
-CLAUDE_PROJECT_DIR="${PG}" SB_HEAVY_SLOT_DIR="${SANDBOX}/heavy-slots" python3 "${HOOKS}/../bin/post-fix-gate.py" --run-tests --full --no-checklist >/dev/null 2>&1
+CLAUDE_PROJECT_DIR="${PG}" SB_HEAVY_SLOT_DIR="${SANDBOX}/heavy-slots" python3 "${HC_KIT}/bin/post-fix-gate.py" --run-tests --full --no-checklist >/dev/null 2>&1
 PG_PNG="reports/proof-$(date +%Y%m%d-%H%M%S).png"   # named for this turn: the gate reads the time in the name
 python3 - "${PG}/${PG_PNG}" <<'PY'
 import os, struct, sys, zlib
@@ -1664,7 +1661,7 @@ echo
 # makes no pass claim. A pass claim backed by TEST-*.xml this session produced in ANOTHER
 # project (and read with its own Bash) is backed. Every case runs in its own empty project.
 echo "test_evidence_gate.sh — attribution, negation, foreign XML"
-TE_P="$(mktemp -d "${TMPDIR:-/tmp}/hookte.XXXXXX")"
+TE_P="$(mktemp -d "${TMPDIR:-/tmp}/hookte.XXXXXX")"; HC_TMPDIRS+=("${TE_P}")
 te_case() { # name want session message [transcript]
   run_case "$1" test_evidence_gate.sh "$2" \
     "$(python3 -c 'import json,sys; print(json.dumps({"session_id": sys.argv[1], "transcript_path": sys.argv[3], "last_assistant_message": sys.argv[2]}))' \
@@ -1729,8 +1726,8 @@ te_case "guard: user said, N tests pass after my change"         2 te-q11 "User 
 te_case "guard: user reports: I fixed it"                        2 te-q12 "The user reports: I fixed it in LoginViewModel."
 te_case "guard: user reported X, that N tests pass is confirmed" 2 te-q13 "User reported a crash on submit, that 13/13 tests pass now is confirmed."
 # Foreign project: a Gradle root outside CLAUDE_PROJECT_DIR whose XML this session read.
-TE_F="$(mktemp -d "${TMPDIR:-/tmp}/hooktef.XXXXXX")"; TE_OLD="$(mktemp -d "${TMPDIR:-/tmp}/hookteo.XXXXXX")"
-TE_RED="$(mktemp -d "${TMPDIR:-/tmp}/hooketr.XXXXXX")"
+TE_F="$(mktemp -d "${TMPDIR:-/tmp}/hooktef.XXXXXX")"; TE_OLD="$(mktemp -d "${TMPDIR:-/tmp}/hookteo.XXXXXX")"; HC_TMPDIRS+=("${TE_F}"); HC_TMPDIRS+=("${TE_OLD}")
+TE_RED="$(mktemp -d "${TMPDIR:-/tmp}/hooketr.XXXXXX")"; HC_TMPDIRS+=("${TE_RED}")
 : > "${TE_P}/gradlew"                                          # the current project is Gradle, with no XML
 for r in "${TE_F}" "${TE_OLD}" "${TE_RED}"; do
   : > "${r}/gradlew"; mkdir -p "${r}/app/build/test-results/testDebugUnitTest" "${r}/app/src/main/java"
@@ -1851,10 +1848,10 @@ run_case "no uncommitted kotlin → nothing to review" review_gate.sh 0 \
   "{\"session_id\":\"rg1\",\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"xong\"}"
 # Profile-aware: on a web project an unreviewed .ts change blocks; a later
 # open-code-review Skill run counts as the review.
-RG_WEB="$(mktemp -d "${TMPDIR:-/tmp}/hookrgweb.XXXXXX")"
+RG_WEB="$(mktemp -d "${TMPDIR:-/tmp}/hookrgweb.XXXXXX")"; HC_TMPDIRS+=("${RG_WEB}")
 ( cd "${RG_WEB}" && git init -q . && git config user.email t@t && git config user.name t \
   && mkdir -p src .agents/active-profile && echo "export const a = 1" > src/app.ts \
-  && cp "${HOOKS}/../profiles/web/profile.json" .agents/active-profile/profile.json \
+  && cp "${HC_KIT}/profiles/web/profile.json" .agents/active-profile/profile.json \
   && git add src && git commit -qm init && echo "export const a = 2" > src/app.ts )
 python3 - "${RG_WEB}" <<'PY'
 import json, os, sys
@@ -1893,7 +1890,7 @@ run_case "K-4 security_gate w/o python3 releases on re-Stop" security_gate.sh 0 
   PATH="${NOJQ_BIN}"
 for h in claim_check.sh churn_guard.sh comment_claim_guard.sh review_gate.sh test_evidence_gate.sh; do
   out="$(printf '%s' "{\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"Đã chạy test, 3/3 pass.\"}" \
-        | env CLAUDE_PROJECT_DIR="${SANDBOX}" PATH="${NOJQ_BIN}" bash "${HOOKS}/${h}" 2>&1)"
+        | env CLAUDE_PROJECT_DIR="${SANDBOX}" PATH="${NOJQ_BIN}" ${HC_WRAP} bash "${HOOKS}/${h}" 2>&1)"
   rc=$?
   if [ "${rc}" -eq 0 ] && printf '%s' "${out}" | grep -q "python3"; then
     PASS=$((PASS + 1)); printf '  ok   %-46s exit=0 + warning\n' "K-4 ${h} warns without python3"
@@ -2044,7 +2041,7 @@ run_case "K-10 blind edit of .swift blocked" precode_gate.sh 2 \
 run_case "K-10 blind edit of .ts blocked" precode_gate.sh 2 \
   "{\"tool_name\":\"Edit\",\"session_id\":\"SESS-K10\",\"transcript_path\":\"${EMPTY_TR}\",\"tool_input\":{\"file_path\":\"${SANDBOX}/x.ts\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 # K-10/K-11: a Node project backs "tests pass" with the runner's own output.
-NODE_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hooknode.XXXXXX")"
+NODE_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hooknode.XXXXXX")"; HC_TMPDIRS+=("${NODE_PROJ}")
 mkdir -p "${NODE_PROJ}/.claude/audit-gate"
 python3 - "${NODE_PROJ}" <<'PY'
 import json, os, sys
@@ -2207,7 +2204,7 @@ rm -rf "${NODE_PROJ}"
 
 # K-7/K-8: testsourceset_gate with a fake gradlew — a module path with a space
 # is found, and one module lacking the task does not PASS the others.
-TS_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookgradle.XXXXXX")"
+TS_PROJ="$(mktemp -d "${TMPDIR:-/tmp}/hookgradle.XXXXXX")"; HC_TMPDIRS+=("${TS_PROJ}")
 (
   cd "${TS_PROJ}" && git init -q . && mkdir -p "my app/src/main" lib/src/main \
   && touch "my app/build.gradle.kts" lib/build.gradle.kts \
@@ -2228,7 +2225,7 @@ rm -rf "${TS_PROJ}"
 
 # Monorepo: no ./gradlew at the root, the Android build lives in android/. The
 # changed module is compiled with that wrapper, module path relative to it.
-TS_MONO="$(mktemp -d "${TMPDIR:-/tmp}/hookgradle.XXXXXX")"
+TS_MONO="$(mktemp -d "${TMPDIR:-/tmp}/hookgradle.XXXXXX")"; HC_TMPDIRS+=("${TS_MONO}")
 (
   cd "${TS_MONO}" && git init -q . && mkdir -p android/app/src/main web/src \
   && touch android/app/build.gradle.kts android/settings.gradle.kts && echo x > web/src/a.ts
@@ -2290,7 +2287,7 @@ echo
 # aimed at the MAIN checkout of the same repo is blocked. A single-tree session is never touched,
 # and a leader that started in the main checkout and merely `cd`s into a worktree is not declared.
 echo "worktree_guard.sh"
-WG="$(mktemp -d "${TMPDIR:-/tmp}/hookwg.XXXXXX")"; WG="$(cd "${WG}" && pwd -P)"
+WG="$(mktemp -d "${TMPDIR:-/tmp}/hookwg.XXXXXX")"; WG="$(cd "${WG}" && pwd -P)"; HC_TMPDIRS+=("${WG}")
 WG_M="${WG}/main"; WG_W="${WG}/wt"; WG_O="${WG_M}/.claude/worktrees/other"
 ( mkdir -p "${WG_M}/src" && cd "${WG_M}" && git init -q . && git config user.email t@t && git config user.name t \
   && printf 'a\n' > src/a.kt && printf '.claude/worktrees/\n.claude/audit-gate/\nlocal.properties\n.agents/local/memory/claude-auto/\n' > .gitignore \
@@ -2434,7 +2431,7 @@ run_case "isolated agent: log into M/.claude/audit-gate allowed" worktree_guard.
 run_case "isolated agent: agent-memory/../../ escape blocked"    worktree_guard.sh 2 "$(wg_payload Edit "${WG_M}" iso1 "$(wg_edit "${WG_M}/.claude/agent-memory/../../src/a.kt")")"
 # P3: MultiEdit and NotebookEdit write files too — the hook and every registry that wires it cover them.
 run_case "isolated agent: MultiEdit of MAIN blocked"             worktree_guard.sh 2 "$(wg_payload MultiEdit "${WG_M}" iso1 "$(wg_edit "${WG_M}/src/a.kt")")"
-wg_reg="$(python3 - "${HOOKS}/.." <<'PY'
+wg_reg="$(python3 - "${HC_KIT}" <<'PY'
 import json, os, sys
 root = sys.argv[1]
 bad = []
@@ -2463,7 +2460,7 @@ else
 fi
 # Only the PROMPT names the worktree (no harness isolation): a hint, not a declaration → warn, never block.
 out="$(printf '%s' "$(wg_payload Bash "${WG_M}" told1 "$(wg_bash "echo x > src/a.kt")")" \
-      | env CLAUDE_PROJECT_DIR="${SANDBOX}" bash "${HOOKS}/worktree_guard.sh" 2>/dev/null)"; rc=$?
+      | env CLAUDE_PROJECT_DIR="${SANDBOX}" ${HC_WRAP} bash "${HOOKS}/worktree_guard.sh" 2>/dev/null)"; rc=$?
 if [ "${rc}" -eq 0 ] && printf '%s' "${out}" | grep -q '"additionalContext"' && printf '%s' "${out}" | grep -q "${WG_W}"; then
   PASS=$((PASS + 1)); printf '  ok   %-46s exit=0 + warning\n' "prompt-named worktree: main write warns only"
 else
@@ -2482,13 +2479,4 @@ run_case "a Read matching no glob exits 0" instincts_file_context.sh 0 \
 echo
 
 # ── report ──────────────────────────────────────────────────────────────────
-echo "─────────────────────────────────────────────"
-echo "contract points: ${PASS} ok, ${FAIL} deviating"
-if [ "${FAIL}" -ne 0 ]; then
-  echo "${FAILED_CASES}"
-  echo
-  echo "A deviation means the hook and its documented contract disagree."
-  echo "Fix the hook, or fix the contract — do not relax the case (CLAUDE.md W4)."
-  exit 1
-fi
-exit 0
+hc_summary
