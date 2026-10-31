@@ -14,9 +14,11 @@ cp -R "$SRC/server.py" "$SRC/inbox_hook.py" "$SRC/config.json" "$SRC/web" "$APP/
 chmod 700 "$HOME/.agent-office" "$APP"
 # Bản chép không nằm trong repo: chỉ cho server đường dẫn ai-factory.sh thật (nút "Tạo mã mới" của menu Điện thoại gọi nó).
 FACTORY="$(cd "$SRC/../.." && pwd)/ai-factory.sh"
-"$PY" - "$PLIST" "$LABEL" "$PY" "$APP" "$HOME" "$FACTORY" <<'PYEOF'
+# Trang /cc-switcher gọi CLI JSON của cc-switcher-mcp ở repo thật (không chép vào bản chạy).
+CC_SWITCHER="$(cd "$SRC/.." && pwd)/cc-switcher-mcp/bin/cc-switcher-mcp.js"
+"$PY" - "$PLIST" "$LABEL" "$PY" "$APP" "$HOME" "$FACTORY" "$CC_SWITCHER" <<'PYEOF'
 import plistlib, sys
-path, label, py, app, home, factory = sys.argv[1:7]
+path, label, py, app, home, factory, cc_switcher = sys.argv[1:8]
 plist = {
     "Label": label,
     "ProgramArguments": [py, app + "/server.py"],
@@ -25,7 +27,8 @@ plist = {
     "KeepAlive": {"SuccessfulExit": False},
     "ThrottleInterval": 20,
     "EnvironmentVariables": {"PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-                             "AGENT_OFFICE_FACTORY_SCRIPT": factory},
+                             "AGENT_OFFICE_FACTORY_SCRIPT": factory,
+                             "AGENT_OFFICE_CC_SWITCHER": cc_switcher},
     "StandardOutPath": home + "/.agent-office/server.log",
     "StandardErrorPath": home + "/.agent-office/server.log",
 }

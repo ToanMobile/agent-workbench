@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Entrypoint cho cc-switcher-mcp: ho tro chay MCP server (stdio), chay Daemon ngam (--daemon), hoac CLI (--doctor, --status, --switch, --rotate).
+// Entrypoint cho cc-switcher-mcp: ho tro chay MCP server (stdio), chay Daemon ngam (--daemon), hoac CLI (--doctor, --status, --switch, --rotate,
+// --panel-json/--panel-action cho bang dieu khien web).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,45 @@ if (!fs.existsSync(localModules) && fs.existsSync(sharedModules)) {
     if (err?.code !== 'EEXIST') {
       process.stderr.write(`[cc-switcher-mcp] symlink warning: ${err?.message}\n`);
     }
+  }
+}
+
+const argv = process.argv.slice(2);
+
+function argValue(name) {
+  const idx = argv.indexOf(name);
+  return idx >= 0 ? argv[idx + 1] : undefined;
+}
+
+// Chay truoc khi nap MCP SDK (moi lan Agent Office goi la mot tien trinh moi, can nhanh).
+// Kenh JSON cho Agent Office (Python) goi lai logic cua cc-switcher: stdout chi co dung mot dong JSON, log di stderr.
+if (argv.includes('--panel-json') || argv.includes('--panel-action')) {
+  const { buildPanelState, runPanelAction } = await import('../src/panel.js');
+  const stateDir = argValue('--state-dir');
+  const print = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
+  try {
+    if (argv.includes('--panel-action')) {
+      const action = argValue('--panel-action');
+      const params = {
+        target: argValue('--target'),
+        force: argv.includes('--force'),
+        mode: argValue('--mode'),
+        minutes: argValue('--minutes'),
+      };
+      const result = await runPanelAction(action, params, { stateDir });
+      const state = await buildPanelState({ stateDir, sync: false });
+      print({ ...result, state });
+    } else {
+      print(await buildPanelState({
+        stateDir,
+        sync: !argv.includes('--no-sync'),
+        forceRefresh: argv.includes('--refresh'),
+      }));
+    }
+    process.exit(0);
+  } catch (err) {
+    print({ ok: false, code: err?.code || 'INTERNAL_ERROR', error: err?.message || String(err) });
+    process.exit(err?.code === 'INVALID_INPUT' || err?.code === 'PROFILE_NOT_FOUND' ? 2 : 1);
   }
 }
 
@@ -37,8 +77,6 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-const argv = process.argv.slice(2);
-
 if (argv.includes('--help') || argv.includes('-h')) {
   process.stdout.write(`cc-switcher-mcp — MCP Server & Auto-Switcher Daemon chong ban cho 6 profile CC Switch
 
@@ -48,6 +86,10 @@ Cach dung:
   --doctor / --status       In trang thai 6 profile, Cooldown va thong ke token/chi phi
   --switch <1..6|id>        Chuyen nhanh sang profile chi dinh
   --rotate                  Xoay vong sang profile an toan tiep theo
+  --panel-json              In JSON trang thai cho bang dieu khien web (Agent Office /cc-switcher)
+      [--refresh] [--no-sync] [--state-dir <dir>]
+  --panel-action <ten>      Thuc hien thao tac tu bang dieu khien web, in JSON ket qua
+      ten: refresh | switch --target <id> [--force] | rotate | limit | unfreeze | balance --mode even|swap | cooldown --minutes <0..1440>
   --tools                   Liet ke danh sach MCP tools
   --help                    Hien thi tro giup
 `);

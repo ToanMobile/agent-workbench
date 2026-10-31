@@ -11,9 +11,9 @@ import {
   saveTelegramConfig,
   discoverChatId,
   sendTelegramNotification,
-  formatStatusForTelegram,
   maskSecret,
 } from './telegram.js';
+import { formatStatusText } from './status-text.js';
 
 export const TOOLS = [
   {
@@ -32,7 +32,7 @@ export const TOOLS = [
     async handler(args = {}) {
       const report = getStatusReport({ stateDir: args.stateDir });
       const tg = loadTelegramConfig(args.stateDir);
-      const summary = formatStatusForTelegram(report);
+      const summary = formatStatusText(report);
       const tgInfo = `\n🔐 Telegram Bot: ${tg.botToken ? 'Đã cấu hình (' + maskSecret(tg.botToken, [tg.botToken]) + ')' : 'Chưa cấu hình'} | Chat ID: ${tg.chatId || 'Chưa có'}`;
       return {
         text: `${summary}${tgInfo}`,
@@ -245,7 +245,7 @@ export const TOOLS = [
       let testStatus = 'Chưa gửi tin nhắn thử.';
       if (args.sendTest !== false && saved.chatId) {
         const res = await sendTelegramNotification(
-          '✅ CC Switcher MCP đã kết nối thành công! Gõ /status để điều khiển 6 tài khoản từ điện thoại.',
+          '✅ CC Switcher MCP đã kết nối Telegram: bot sẽ gửi cảnh báo 429/đổi tài khoản tại đây.',
           { stateDir: args.stateDir },
         );
         testStatus = res.sent ? 'Đã gửi tin nhắn test thành công!' : `Không gửi được tin nhắn test: ${res.reason}`;

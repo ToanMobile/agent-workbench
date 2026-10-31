@@ -20,12 +20,15 @@ MCP Server và Auto-Switcher Daemon trên macOS dành cho 6 profile đã cấu h
 - `switcher_configure_policy`: Điều chỉnh thời gian nghỉ chống ban (`claudeCooldownMinutes`, `rateLimitFreezeMinutes`).
 - `switcher_telegram_setup`: Lưu Token và Chat ID Telegram vào `~/.cc-switch/telegram.env` (quyền `0600`, không bao giờ lưu vào Git).
 
-## Điều khiển từ điện thoại qua Telegram
+## Bảng điều khiển trên web (thay cho Telegram)
 
-Khi chạy chế độ Daemon (`node bin/cc-switcher-mcp.js --daemon`), bạn có thể nhắn trực tiếp vào Bot Telegram trên điện thoại:
+Bảng điều khiển nằm ở **http://ai-factory.localhost:4317/cc-switcher** (trang của Agent Office, nút "CC Switcher" trong Xưởng agent). Chỉ mở trên chính máy Mac: qua tunnel điện thoại, kể cả có key, trang trả 403.
 
-- `/status`: Xem danh sách 6 profile, tài khoản đang active và lượng token/chi phí đã dùng.
-- `/switch <1..6>`: Đổi sang tài khoản chỉ định từ xa.
-- `/rotate`: Tự động chuyển sang tài khoản an toàn kế tiếp.
-- `/limit`: Báo tài khoản hiện tại hết quota (đóng băng 5h + chuyển tài khoản).
-- `/cooldown 15`: Đặt khoảng nghỉ chống ban 15 phút giữa các tài khoản Claude.
+- 6 tài khoản: % quota 5 giờ và 7 ngày, giờ reset (giờ VN) kèm thời gian còn lại, đóng băng 429, số repo đang gán, nguồn và tuổi số liệu quota.
+- Chuyển tài khoản (có hộp xác nhận; đang trong cooldown hoặc đóng băng thì hỏi "Ép chuyển ngay"), xoay vòng, báo chạm 429, mở khóa 429 và cooldown, đặt thời gian nghỉ (15/5/0 phút hoặc số tùy chọn).
+- Chia đều / đảo nhóm repo FinOS ↔ FinOS Team, lịch sử 50 lần chuyển gần nhất, sức khỏe (daemon, cảnh báo Telegram, cc-switch.db, lần đọc quota gần nhất).
+- Trang gọi lại logic của gói này qua CLI JSON: `node bin/cc-switcher-mcp.js --panel-json [--refresh]` và `--panel-action <refresh|switch|rotate|limit|unfreeze|balance|cooldown>`. Không trả token hay chat id Telegram.
+
+## Telegram: chỉ còn cảnh báo
+
+Daemon (`node bin/cc-switcher-mcp.js --daemon`) vẫn gửi cảnh báo 429 / đổi tài khoản (văn bản, kèm link bảng điều khiển web) và giữ nút duyệt super-board. Bảng điều khiển, bàn phím ghim, danh sách lệnh (`/status`, `/menu`, `/switch`, `/rotate`, `/limit`, `/cooldown`, `/unfreeze`) đã gỡ: tin nhắn bất kỳ chỉ nhận lại link web, nút cũ trên tin nhắn cũ chỉ báo link rồi tự gỡ, daemon khởi động thì xóa danh sách lệnh cũ của bot.
