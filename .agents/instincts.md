@@ -751,3 +751,19 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** 15 nút khi mở "Khác" cần ~1460px; ở 1280 mất Thoại/Tải lại GitHub/Thu gọn, trên điện thoại cả nút "Khác" ra ngoài màn hình (overflow-x: auto + ẩn thanh cuộn)
 - **Nguyên nhân:** thêm nút thẳng vào `.controls`, nút bật/tắt đổi nhãn (đổi bề ngang), dựa vào cuộn ngang ẩn thay vì menu
 - **Quy tắc phòng ngừa & Cách fix:** thanh chỉ giữ nút chính, phần còn lại vào menu ⋯ (role=menu); nút bật/tắt giữ nhãn cố định + aria-pressed, không đổi font-weight; thêm nút mới phải chạy `tests/ui_toolbar_account.js` (scrollWidth<=clientWidth, một hàng ở 390/768/1024/1280/1440)
+
+---
+
+### [INSTINCT-097] agent-office: nút bật một khung mà CSS đang ẩn khung đó thì nút như chết
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** "Chỉ số" khi drawer mở chỉ đổi aria-pressed, bảng không hiện (`body.drawer-open .dash { display: none }`); đóng hộp Điện thoại mở từ menu ⋯ làm focus rơi về `<body>`
+- **Nguyên nhân:** hai khung dùng chung một góc nhưng nút của khung này không biết khung kia; showModal ghi "phần tử focus trước" là mục menu sắp bị ẩn
+- **Quy tắc phòng ngừa & Cách fix:** nút mở khung phải làm khung HIỆN THẬT (đóng khung đang chiếm chỗ), test đo rect > 0 chứ không chỉ aria-pressed; trước showModal từ menu thì đóng menu và focus nút mở menu (test kiểm activeElement sau Esc/Đóng)
+
+---
+
+### [INSTINCT-098] agent-office: vòng render 3D phải hạ nhịp khi cảnh đứng yên, tài nguyên GPU dùng chung
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** xưởng rảnh vẫn ~45% CPU renderer + ~44% GPU (60 khung/giây, DPR 2, ~2500 draw call), giảm chuyển động vẫn vẽ 60 khung; ~300 lần tải texture xương mỗi khung; server glob ~5000 transcript mỗi 3 giây
+- **Nguyên nhân:** `frame()` vẽ mọi rAF; mỗi SkinnedMesh một Skeleton (GLTFLoader / SkeletonUtils.clone); `hoverDirty` bật sẵn mà không có chuột thì không bao giờ tắt; scan_sessions liệt kê lại cả cây mỗi vòng
+- **Quy tắc phòng ngừa & Cách fix:** thêm hoạt cảnh/chuyển động mới thì đưa điều kiện vào `busy` của frame() (frameDue: bận → mọi khung, rảnh 30 khung/giây, giảm chuyển động 2 khung/giây), cờ "bẩn" chỉ tính khi có nguồn tắt được nó; trần DPR 1,5; nhân bản người 3D qua `shareSkeletons`; quét file định kỳ phải tăng dần (mtime thư mục + quét đầy đủ thưa); đo lại bằng perf (CPU renderer/GPU, texSubImage2D/giây) trước khi gộp

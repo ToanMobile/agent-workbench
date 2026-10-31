@@ -12546,6 +12546,145 @@
         "universal-agent-devkit/tests/gates/test_proof_gate_merge_receipt.sh",
         "tests/super-board/test_merge_gate_proof_receipt.sh"
       ]
+    },
+    "BUG-20261031-ao-dash-khong-hien-khi-drawer-mo": {
+      "id": "BUG-20261031-ao-dash-khong-hien-khi-drawer-mo",
+      "kind": "bug",
+      "title": "agent-office: bấm \"Chỉ số\" khi drawer (Vừa xảy ra / agent / repo) đang mở không hiện gì — bảng bật ngầm, CSS body.drawer-open ẩn .dash",
+      "cause": null,
+      "component": "agent-office-ui",
+      "created_at": "2026-10-31 23:47:26",
+      "task": "PR #758",
+      "tests": [
+        "REG-AGENT-OFFICE-01"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-10-31 23:47:26",
+      "sessions": [],
+      "linked_at": "2026-10-31 23:47:26",
+      "linked_ts": 1793465246.062897,
+      "runs_in_suite": [
+        "mcp-servers/agent-office/tests/test_ui_toolbar_account.py"
+      ]
+    },
+    "BUG-20261031-ao-phone-dialog-mat-focus": {
+      "id": "BUG-20261031-ao-phone-dialog-mat-focus",
+      "kind": "bug",
+      "title": "agent-office: đóng hộp Điện thoại (Esc / Đóng) mở từ menu ⋯ làm focus rơi về <body> (mục menu đã ẩn không nhận focus)",
+      "cause": null,
+      "component": "agent-office-ui",
+      "created_at": "2026-10-31 23:47:26",
+      "task": "PR #758",
+      "tests": [
+        "REG-AGENT-OFFICE-01"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-10-31 23:47:26",
+      "sessions": [],
+      "linked_at": "2026-10-31 23:47:26",
+      "linked_ts": 1793465246.0629,
+      "runs_in_suite": [
+        "mcp-servers/agent-office/tests/test_ui_toolbar_account.py"
+      ]
+    },
+    "BUG-20261031-ao-mobile-khung-agent-tran-mep-tren": {
+      "id": "BUG-20261031-ao-mobile-khung-agent-tran-mep-tren",
+      "kind": "bug",
+      "title": "agent-office điện thoại: khung \"Ai đang làm gì\" mọc lên quá mép trên (top -60px), nút + / − đè chữ, drawer/bảng chồng lên khung trái; chỗ bấm ⋯ / + / − / × / Ẩn dưới 44px",
+      "cause": null,
+      "component": "agent-office-ui",
+      "created_at": "2026-10-31 23:47:26",
+      "task": "PR #758",
+      "tests": [
+        "REG-AGENT-OFFICE-01"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-10-31 23:47:26",
+      "sessions": [],
+      "linked_at": "2026-10-31 23:47:26",
+      "linked_ts": 1793465246.062901,
+      "runs_in_suite": [
+        "mcp-servers/agent-office/tests/test_ui_toolbar_account.py"
+      ]
+    },
+    "BUG-20261031-ao-3d-ve-60fps-khi-dung-yen": {
+      "id": "BUG-20261031-ao-3d-ve-60fps-khi-dung-yen",
+      "kind": "bug",
+      "title": "agent-office: cảnh 3D vẽ 60 khung/giây ở DPR 2 cả khi đứng yên / giảm chuyển động (~45% CPU renderer + ~44% GPU lúc rảnh), tab ẩn vẫn tải /api/state ~480 KB mỗi 3 giây",
+      "cause": null,
+      "component": "agent-office-perf",
+      "created_at": "2026-10-31 23:47:26",
+      "task": "PR #758",
+      "tests": [
+        "REG-AGENT-OFFICE-01"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-10-31 23:47:26",
+      "sessions": [],
+      "linked_at": "2026-10-31 23:47:26",
+      "linked_ts": 1793465246.062902,
+      "runs_in_suite": [
+        "mcp-servers/agent-office/tests/test_frame_pacing.py",
+        "mcp-servers/agent-office/tests/test_poll.py"
+      ]
+    },
+    "BUG-20261031-ao-texture-xuong-moi-luoi": {
+      "id": "BUG-20261031-ao-texture-xuong-moi-luoi",
+      "kind": "bug",
+      "title": "agent-office: mỗi lưới có da của người 3D giữ Skeleton riêng dù cùng bộ xương — ~300 lần texSubImage2D (tải texture xương) mỗi khung",
+      "cause": null,
+      "component": "agent-office-perf",
+      "created_at": "2026-10-31 23:47:26",
+      "task": "PR #758",
+      "tests": [
+        "REG-AGENT-OFFICE-01"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-10-31 23:47:26",
+      "sessions": [],
+      "linked_at": "2026-10-31 23:47:26",
+      "linked_ts": 1793465246.062902,
+      "runs_in_suite": [
+        "mcp-servers/agent-office/tests/test_share_skeleton.py"
+      ]
+    },
+    "BUG-20261031-ao-server-glob-transcript-moi-3s": {
+      "id": "BUG-20261031-ao-server-glob-transcript-moi-3s",
+      "kind": "bug",
+      "title": "agent-office server: glob lại ~5000 transcript / ~3500 thư mục mỗi 3 giây (~100 ms CPU mỗi vòng), /api/state ~480 KB không nén",
+      "cause": null,
+      "component": "agent-office-perf",
+      "created_at": "2026-10-31 23:47:26",
+      "task": "PR #758",
+      "tests": [
+        "REG-AGENT-OFFICE-01"
+      ],
+      "last": null,
+      "history": [],
+      "state": "confirmed",
+      "fixed": true,
+      "touched_at": "2026-10-31 23:47:26",
+      "sessions": [],
+      "linked_at": "2026-10-31 23:47:26",
+      "linked_ts": 1793465246.062903,
+      "runs_in_suite": [
+        "mcp-servers/agent-office/tests/test_perf_server.py"
+      ]
     }
   },
   "meta": {

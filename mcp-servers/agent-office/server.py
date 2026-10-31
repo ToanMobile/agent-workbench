@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import gzip
 import hashlib
 import hmac
 import ipaddress
@@ -39,6 +40,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import gate_full_runner  # cùng thư mục: nút "Chạy gate full" (hàng đợi, khoá toàn máy, lệnh lấy từ plist lịch đêm)
 import inbox_hook  # cùng thư mục: hook hộp thư lệnh, cờ --settings và system prompt dùng chung với runner
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -301,6 +303,35 @@ def fill_models_version(page: bytes, version: str) -> bytes:
     return page.replace(b"__MODELS_V__", version.encode())
 
 
+def gzip_ok(accept_encoding) -> bool:
+    """Trình duyệt nhận gzip không (Accept-Encoding: gzip, không phải gzip;q=0)."""
+    for part in (accept_encoding or "").lower().split(","):
+        name, _, q = part.strip().partition(";")
+        if name.strip() in ("gzip", "*"):
+            q = q.strip()
+            return not (q.startswith("q=") and q[2:].strip() in ("0", "0.0", "0.00", "0.000"))
+    return False
+
+
+class GzipCache:
+    """Bản gzip của /api/state: nén một lần cho mỗi lần dựng (state_bytes mới), mọi lần hỏi sau dùng lại.
+    /api/state thật ~400 KB JSON mỗi 3 giây (điện thoại qua tunnel tải chừng ấy mỗi lần); nén còn ~1/4."""
+    MIN = 1024
+
+    def __init__(self):
+        self._src, self._gz = None, None
+        self.lock = threading.Lock()
+
+    def get(self, body: bytes) -> bytes:
+        with self.lock:
+            if self._src is body:
+                return self._gz
+        gz = gzip.compress(body, compresslevel=6, mtime=0)  # nén ngoài khoá: hai lần hỏi cùng lúc cùng lắm nén hai lần
+        with self.lock:
+            self._src, self._gz = body, gz
+        return gz
+
+
 def warn(context, err) -> None:
     print(f"[agent-office] {context}: {err}", file=sys.stderr, flush=True)
 
@@ -524,6 +555,66 @@ class LocalScanner:
         self.cfg = cfg
         self.cache = {}  # path -> (mtime, size, parsed)
         self.acct_cache = {}  # log worker -> {"pos", "ino", "cur", "sids"}: tài khoản theo session id (session_accounts)
+        # liệt kê transcript tăng dần (jsonl_files): thư mục -> (mtime_ns, thư mục con, file .jsonl); file đã cũ quá cửa sổ lookback
+        self.dir_cache, self.cold, self.last_full = {}, set(), None
+
+    FULL_EVERY = 30.0  # giây: chu kỳ quét đầy đủ (liệt kê lại mọi thư mục, stat cả file cũ)
+
+    def _list_dir(self, path: str, full: bool):
+        """(stat, thư mục con, file *.jsonl) của một thư mục. mtime thư mục chỉ đổi khi thêm/xoá/đổi tên mục bên trong,
+        nên thư mục không đổi mtime thì dùng lại danh sách lần trước (ghi nối vào file không cần liệt kê lại)."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            self.dir_cache.pop(path, None)
+            return None, [], []
+        hit = self.dir_cache.get(path)
+        if hit and not full and hit[0] == st.st_mtime_ns:
+            return st, hit[1], hit[2]
+        subs, files = [], []
+        try:
+            with os.scandir(path) as it:
+                for e in it:
+                    if e.name.startswith("."):
+                        continue  # như glob "**": bỏ mục ẩn
+                    try:
+                        if e.is_dir():
+                            subs.append(e.path)
+                        elif e.name.endswith(".jsonl"):
+                            files.append(e.path)
+                    except OSError:
+                        continue
+        except OSError:
+            return st, [], []
+        self.dir_cache[path] = (st.st_mtime_ns, subs, files)
+        return st, subs, files
+
+    def jsonl_files(self, top: str, cutoff: float, full: bool, visited: set):
+        """[(path, mtime)] mọi *.jsonl dưới top (như glob top/**/*.jsonl). Giữa hai lần quét đầy đủ chỉ stat thư mục (biết file
+        mới) và file còn trong cửa sổ lookback; file đã cũ hơn cutoff ở lần trước chỉ được stat lại ở lần quét đầy đủ, nên phiên
+        cũ được resume hiện lại trễ tối đa FULL_EVERY giây. ~/.claude/projects thật: ~5000 file / ~3500 thư mục, mỗi 3 giây."""
+        out, stack, inos = [], [top], set()
+        while stack:
+            d = stack.pop()
+            st, subs, files = self._list_dir(d, full)
+            if st is None or (st.st_dev, st.st_ino) in inos:
+                continue  # link vòng
+            inos.add((st.st_dev, st.st_ino)); visited.add(d)
+            stack.extend(subs)
+            for p in files:
+                if not full and p in self.cold:
+                    continue
+                try:
+                    m = os.stat(p).st_mtime
+                except OSError:
+                    self.cold.discard(p)
+                    continue
+                if m < cutoff:
+                    self.cold.add(p)
+                else:
+                    self.cold.discard(p)
+                    out.append((p, m))
+        return out
 
     def repo_paths(self, names):
         root = expand(self.cfg["root"])
@@ -617,15 +708,15 @@ class LocalScanner:
         cutoff = now() - float(self.cfg["lookbackMinutes"]) * 60
         sessions = []
         seen = set()
+        mono = time.monotonic()
+        full = self.last_full is None or mono - self.last_full >= self.FULL_EVERY
+        if full:
+            self.last_full, self.cold = mono, set()
+        visited = set()
         for d in os.scandir(base):
             if not d.is_dir() or (prefix and not d.name.startswith(prefix)):
                 continue
-            for path in glob.glob(os.path.join(d.path, "**", "*.jsonl"), recursive=True):
-                try:
-                    if os.path.getmtime(path) < cutoff:
-                        continue
-                except OSError:
-                    continue
+            for path, _mtime in self.jsonl_files(d.path, cutoff, full, visited):
                 seen.add(path)
                 s = self.parse_session(path)
                 if s:
@@ -635,6 +726,8 @@ class LocalScanner:
         for p in list(self.cache):
             if p not in seen and p.endswith(".jsonl"):
                 self.cache.pop(p, None)
+        if full:  # thư mục đã xoá / đổi tên: bỏ khỏi bộ nhớ đệm
+            self.dir_cache = {k: v for k, v in self.dir_cache.items() if k in visited}
         info["files"] = len(sessions)
         return sessions, info
 
@@ -1863,6 +1956,9 @@ class App:
         self.gh_meta = {"ok": None, "error": None, "fetchedAt": None}
         self.sessions, self.sess_info, self.file_ticks = [], {"ok": False}, []
         self.state_bytes = b"{}"
+        self.state_gz = GzipCache()
+        # demo không mở gate_full.py thật (không lịch, không hàng đợi); test đặt cfg["gateFull"] = thư mục LaunchAgents giả
+        self.gatefull = None if demo and not cfg.get("gateFull") else gate_full_runner.GateFull(cfg)
         self.refresh_evt = threading.Event()
         self.wake_evt = threading.Event()  # đánh thức local_loop khi có người xem trở lại (github_loop dùng refresh_evt)
         self.backfilled = set()  # thẻ đã thử đặt Backlog, mỗi thẻ chỉ thử một lần
@@ -1906,6 +2002,11 @@ class App:
             # ngoài mã phiên bản: số đổi liên tục mà không bắt trang dựng lại cảnh
             st["host"] = host
             st["session"] = dict(self.tally, since=self.started_at)
+            if self.gatefull:  # ngoài mã phiên bản như host: trạng thái lượt gate-full không bắt dựng lại cảnh
+                try:
+                    st["gateFull"] = self.gatefull.status(self.gate_repo_paths())
+                except Exception as e:  # noqa: BLE001
+                    warn("gate-full status", e)
             self.state_bytes = json.dumps(st, ensure_ascii=False).encode("utf-8")
 
     # ---- nhật ký sự kiện
@@ -2505,7 +2606,25 @@ class App:
             self.wake_evt.wait(loop_wait(float(self.cfg["localSeconds"]), 30, 6))  # không ai xem: ≥ 30 s
             self.wake_evt.clear()
 
+    def gate_repo_paths(self) -> dict:
+        """repo -> MAIN checkout (cùng cách tìm đường như build_state / scanner.repo_paths)."""
+        names = list(self.cfg.get("repos") or []) + sorted({it["repo"] for it in self.project.get("items", []) if it.get("repo")})
+        return self.scanner.repo_paths(names)
+
+    def gate_full(self, body: dict) -> dict:
+        if not self.gatefull:
+            raise ValueError("Chế độ demo không chạy gate full.")
+        repo = str(body.get("repo") or "").strip()
+        if not repo:
+            raise ValueError("Cần repo.")
+        res = self.gatefull.cancel(repo) if body.get("cancel") else self.gatefull.enqueue(repo, self.gate_repo_paths())
+        self.gatefull.tick(self.gate_repo_paths())  # khoá toàn máy rảnh thì chạy ngay, không đợi vòng 5 giây
+        self.rebuild()
+        return res
+
     def start(self):
+        if self.gatefull:
+            threading.Thread(target=self.gatefull.loop, args=(self.gate_repo_paths,), daemon=True).start()
         if self.demo:
             def demo_loop():
                 while True:
@@ -2657,9 +2776,11 @@ def make_handler(app: App):
         def log_message(self, *args):
             pass
 
-        def send(self, code, body: bytes, ctype: str):
+        def send(self, code, body: bytes, ctype: str, headers=None):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
             self.send_header("Content-Length", str(len(body)))
             # model 3D nặng và không đổi: để trình duyệt giữ một ngày; còn lại luôn lấy mới
             self.send_header("Cache-Control", "max-age=86400" if ctype.startswith("model/") else "no-store")
@@ -2680,7 +2801,9 @@ def make_handler(app: App):
                     app.wake_evt.set(); app.refresh_evt.set()  # tab vừa mở lại: đọc ngay, không đợi nhịp nền chậm
                 with app.lock:
                     body = app.state_bytes
-                return self.send(200, body, CTYPES[".json"])
+                if len(body) >= GzipCache.MIN and gzip_ok(self.headers.get("Accept-Encoding")):
+                    return self.send(200, app.state_gz.get(body), CTYPES[".json"], {"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+                return self.send(200, body, CTYPES[".json"], {"Vary": "Accept-Encoding"})
             if path == "/api/card-session":  # phiên worker gần nhất của một thẻ: để nhắn / resume thẻ không còn agent cầm
                 q = parse_qs(urlparse(self.path).query)
                 res = app.card_session((q.get("repo") or [""])[0], (q.get("issue") or [""])[0])
@@ -2741,6 +2864,15 @@ def make_handler(app: App):
                     warn("agent-message", e)
                     res, code = {"ok": False, "error": f"Lỗi máy chủ, chưa gửi: {e}"}, 500
                 print(f"[nhắn] {'ok' if res.get('ok') else res.get('error')}", flush=True)
+                return self.send(code, json.dumps(res, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
+            if path == "/api/gate-full":  # chạy / huỷ hàng chờ gate --full: chỉ trên chính máy Mac, qua tunnel (điện thoại) thì từ chối
+                if not from_mac(self):
+                    return self.send(403, '{"ok":false,"error":"Chạy gate full chỉ bấm được trên máy Mac"}'.encode("utf-8"), CTYPES[".json"])
+                try:
+                    res, code = app.gate_full(body), 200
+                except (KeyError, ValueError, TypeError) as e:
+                    res, code = {"ok": False, "error": str(e).strip("'\"")}, 400
+                print(f"[gate-full] {body.get('repo')} {'huỷ' if body.get('cancel') else 'chạy'}: {res.get('state') or res.get('error') or 'ok'}", flush=True)
                 return self.send(code, json.dumps(res, ensure_ascii=False).encode("utf-8"), CTYPES[".json"])
             action = path[len("/api/"):] if path.startswith("/api/") else ""
             try:

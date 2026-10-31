@@ -93,8 +93,8 @@ if (process.argv.includes('--probe')) { // test_ui_toolbar_account.py: có trìn
   const browser = await pw.chromium.launch({ executablePath: chromiumPath(), headless: true, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   try {
     const shoot = async (page, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, name + '.png'), timeout: 90000 }); } };
-    const open = async (w, h, scheme, mutate) => {
-      const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: scheme });
+    const open = async (w, h, scheme, mutate, extra) => {
+      const ctx = await browser.newContext(Object.assign({ viewport: { width: w, height: h }, colorScheme: scheme }, extra || {}));
       await ctx.addInitScript(() => { try { localStorage.setItem('agent-office-hint-nav2', '1'); } catch (e) { /* */ } });
       await ctx.route('**/api/**', async (r) => {
         const u = r.request().url();
@@ -173,6 +173,76 @@ if (process.argv.includes('--probe')) { // test_ui_toolbar_account.py: có trìn
         await page.keyboard.press('Escape');
         await ctx.close();
       }
+    }
+    // ---- lỗi tìm được khi audit PR #758 (BUG-REV-AO-UI-1..4)
+    { // máy tính: "Chỉ số" khi khung Vừa xảy ra đang mở phải hiện bảng chỉ số (trước đây bật ngầm, CSS ẩn vì drawer chiếm góc)
+      const { ctx, page } = await open(1440, 900, 'light', null, { deviceScaleFactor: 2 });
+      const dpr = await page.evaluate(() => { const c = document.getElementById('scene'); return c.width / c.clientWidth; });
+      report.dpr = dpr; check(dpr <= 1.5 + 1e-6, `màn 2x: canvas vẽ ở DPR ${dpr} (> 1,5)`);
+      await page.keyboard.press('e'); await sleep(300);
+      check(await page.evaluate(() => !document.getElementById('drawer').hidden), '1440: phím E không mở Vừa xảy ra');
+      await page.click('#btnDash'); await sleep(300);
+      const d = await page.evaluate(() => { const r = document.getElementById('dash').getBoundingClientRect(); return { w: r.width, h: r.height, drawer: document.getElementById('drawer').hidden, pressed: document.getElementById('btnDash').getAttribute('aria-pressed') }; });
+      report.dashOverDrawer = d;
+      check(d.w > 0 && d.h > 0 && d.drawer && d.pressed === 'true', `1440: bấm Chỉ số khi drawer mở không hiện bảng chỉ số (${JSON.stringify(d)})`);
+      // hộp Điện thoại mở từ menu ⋯: Esc / Đóng trả focus về ⋯ (trước đây rơi về <body>)
+      for (const how of ['Escape', 'close']) {
+        await page.click('#btnMore'); await page.click('#btnPhone'); await sleep(300);
+        if (how === 'Escape') await page.keyboard.press('Escape'); else await page.click('#phoneClose');
+        await sleep(200);
+        const f = await page.evaluate(() => [document.getElementById('phoneDlg').open, document.activeElement.id || document.activeElement.tagName]);
+        check(!f[0] && f[1] === 'btnMore', `1440: đóng hộp Điện thoại bằng ${how} không trả focus về ⋯ (${f})`);
+      }
+      await ctx.close();
+    }
+    { // điện thoại: khung "Ai đang làm gì" nằm gọn dưới header và tự cuộn; + / − và khung trái nhường chỗ; chỗ bấm >= 44px
+      const { ctx, page } = await open(390, 844, 'light', null, { hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+      const t = await page.evaluate(() => ['#btnMore', '#btnZoomIn', '#btnZoomOut', '.notice button'].map((q) => { const e = document.querySelector(q); const r = e ? e.getBoundingClientRect() : { width: 0, height: 0 }; return [q, Math.round(r.width), Math.round(r.height)]; }));
+      report.touch390 = t;
+      t.forEach(([q, w, h]) => check(w >= 44 && h >= 44, `390: ${q} chỉ ${w}×${h}px (< 44)`));
+      await page.click('#btnMore'); await page.click('#moreMenu [data-for="btnAgents"]'); await sleep(400);
+      const a = await page.evaluate(() => { const p = document.getElementById('agentsPanel').getBoundingClientRect(); const b = document.querySelector('.brand').getBoundingClientRect(); const c = document.querySelector('.controls').getBoundingClientRect(); const z = getComputedStyle(document.querySelector('.zoom-ctl')).display; return { top: p.top, bottom: p.bottom, brandB: b.bottom, barT: c.top, zoom: z }; });
+      report.agents390 = a;
+      check(a.top >= a.brandB && a.bottom <= a.barT, `390: khung Ai đang làm gì tràn ra ngoài (${JSON.stringify(a)})`);
+      check(a.zoom === 'none', '390: nút + / − đè lên khung Ai đang làm gì');
+      await page.click('#agentList .ag'); await sleep(400);
+      const dr = await page.evaluate(() => { const c = document.querySelector('#drawer .close').getBoundingClientRect(); return { rail: getComputedStyle(document.getElementById('agentsPanel')).display, close: [c.width, c.height] }; });
+      check(dr.rail === 'none', '390: drawer mở mà khung trái vẫn chồng bên dưới');
+      check(dr.close[0] >= 44 && dr.close[1] >= 44, `390: nút đóng drawer ${dr.close} (< 44)`);
+      checkBar(await measure(page), '390 khi mở drawer từ danh sách agent');
+      await ctx.close();
+    }
+    { // nút "Chạy gate full": ⋯ > bảng chọn repo, trạng thái chạy / xếp hàng / lần trước / lịch đêm, trong drawer repo; thanh vẫn một hàng
+      const now = Date.now() / 1000;
+      const { ctx, page } = await open(1440, 900, 'light', (j) => {
+        const n = j.repos.map((r) => r.name).filter((x) => x !== 'Nháp');
+        const base = { installed: true, next: now + 3600, logDir: '/tmp/gf', last: null, state: 'idle', since: null, waiting: false, position: 0, log: null };
+        const repos = {};
+        n.forEach((x, i) => { repos[x] = Object.assign({}, base); });
+        repos[n[0]] = Object.assign({}, base, { state: 'running', since: now - 300, log: '/tmp/gf/manual-1.out.log' });
+        repos[n[1]] = Object.assign({}, base, { state: 'queued', position: 1 });
+        if (n[2]) repos[n[2]] = Object.assign({}, base, { last: { verdict: 'FAIL', label: 'ĐỎ', at: now - 7200, log: '/tmp/gf/run.log' } });
+        if (n[3]) repos[n[3]] = Object.assign({}, base, { installed: false });
+        j.gateFull = { repos, queue: [n[1]], busy: true, busyRepo: n[0] };
+        report.gfRepos = n.slice(0, 4);
+      });
+      await page.click('#btnMore');
+      check(await page.evaluate(() => !document.getElementById('btnGateFull').hidden), 'gate full: ⋯ thiếu mục "Chạy gate full…"');
+      await page.click('#btnGateFull'); await sleep(400);
+      const g = await page.evaluate(() => [...document.querySelectorAll('#drawer .gf')].map((b) => ({ repo: b.dataset.repo, text: b.innerText, run: !!b.querySelector('[data-gf=run]') && !b.querySelector('[data-gf=run]').disabled, cancel: !!b.querySelector('[data-gf=cancel]') })));
+      report.gateFull = g;
+      const [r0, r1, r2, r3] = report.gfRepos;
+      const by = (x) => g.find((b) => b.repo === x) || { text: '' };
+      check(g.length >= 2, `gate full: bảng chọn repo chỉ có ${g.length} repo`);
+      check(/Đang chạy, 5 phút/.test(by(r0).text) && /manual-1\.out\.log/.test(by(r0).text) && !by(r0).run, `gate full: repo đang chạy hiện sai (${JSON.stringify(by(r0))})`);
+      check(/xếp hàng, thứ 1/.test(by(r1).text) && by(r1).cancel && !by(r1).run, `gate full: repo xếp hàng hiện sai (${JSON.stringify(by(r1))})`);
+      if (r2) check(/FAIL/.test(by(r2).text) && /Lượt đêm kế tiếp/.test(by(r2).text) && by(r2).run, `gate full: repo rảnh thiếu lần trước / lịch đêm / nút chạy (${JSON.stringify(by(r2))})`);
+      if (r3) check(/Chưa cài lịch/.test(by(r3).text) && !by(r3).run, `gate full: repo chưa cài lịch vẫn bấm được (${JSON.stringify(by(r3))})`);
+      checkBar(await measure(page), '1440 khi mở bảng gate full');
+      await page.click(`#drawer [data-gf-repo="${r2 || r0}"]`); await sleep(400);
+      check(await page.evaluate(() => !!document.querySelector('#drawer .gf [data-gf=run]')), 'gate full: drawer repo thiếu nút "Chạy gate full"');
+      await shoot(page, 'gate-full-repo');
+      await ctx.close();
     }
     // trạng thái rỗng
     const { ctx, page } = await open(1280, 800, 'light', (j) => { j.workers = []; });

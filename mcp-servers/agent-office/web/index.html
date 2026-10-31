@@ -157,6 +157,12 @@
   .bars .fill { height: 100%; border-radius: 4px; }
   .bars .n { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
   .lanes { display: flex; flex-direction: column; gap: 6px; }
+  /* gate --full theo yêu cầu: trạng thái từng repo + nút chạy / huỷ hàng chờ */
+  .gf { margin: 4px 0 12px; font-size: 13px; }
+  .gf .gf-st { font-weight: 600; } .gf .gf-st.run { color: var(--t-building); } .gf .gf-st.queue { color: var(--t-qa); }
+  .gf .gf-pass { color: var(--t-done); font-weight: 700; } .gf .gf-fail { color: var(--t-blocked); font-weight: 700; }
+  .gf .gf-meta { color: var(--muted); margin-top: 2px; } .gf .mono { overflow-wrap: anywhere; font-size: 12px; }
+  .gf .row-actions { margin-top: 6px; }
   .lane { display: grid; grid-template-columns: minmax(70px, auto) 1fr; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--floor2); font-size: 13.5px; border: 0; text-align: left; cursor: pointer; width: 100%; }
   .lane .ln { font-weight: 700; white-space: nowrap; }
   .lane .lv { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -394,7 +400,7 @@
   .zoom-ctl button { width: 38px; height: 38px; border: 0; background: transparent; border-radius: 9px; font-size: 22px; line-height: 1; cursor: pointer; color: var(--ink); }
   .zoom-ctl button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
   body.drawer-open .zoom-ctl { right: 412px; }
-  @media (max-width: 900px) { body.drawer-open .zoom-ctl { display: none; } }
+  @media (max-width: 900px) { body.drawer-open .zoom-ctl, body.rail-open .zoom-ctl, body.board-open .zoom-ctl { display: none; } } /* điện thoại: khung nào mở ở đáy thì + / − nhường chỗ (chụm hai ngón vẫn phóng to được), không đè chữ trong khung */
 
   /* dạng bảng */
   .board { position: fixed; left: 12px; right: 12px; top: calc(var(--top-h, 134px) + 12px); bottom: calc(var(--bot-h, 64px) + 10px); z-index: 4; display: flex; flex-direction: column; padding: 12px; }
@@ -468,10 +474,23 @@
     .board-head .count { width: 100%; margin-left: 0; }
     .board-head .hint { display: none; }
     .controls button { padding: 8px 12px; min-height: 44px; }
+    .controls #btnMore { min-width: 44px; }
+    /* khung "Ai đang làm gì" là danh sách dọc: cao tối đa tới dưới header rồi cuộn trong khung (trước đây mọc lên quá mép trên, mất dòng đầu) */
+    .rail.agents { display: block; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; max-height: calc(100vh - var(--top-h, 120px) - var(--bot-h, 64px) - 24px); max-height: calc(100dvh - var(--top-h, 120px) - var(--bot-h, 64px) - 24px); }
+    .rail.agents .ag { min-width: 0; }
+    /* drawer hay dạng bảng mở thì khung trái (cùng đáy màn hình) nhường chỗ, không chồng hai tấm lên nhau; đóng là hiện lại */
+    body.drawer-open .rail, body.board-open .rail { display: none; }
     /* thông báo: trên điện thoại không chạy lệnh terminal được, chỉ giữ câu và nút Ẩn */
     .notice code, .notice .copy { display: none; }
   }
   @media (prefers-reduced-motion: reduce) { .tip { transition: none; } }
+  body.tab-hidden *, body.tab-hidden *::before, body.tab-hidden *::after { animation-play-state: paused !important; } /* tab ẩn: không tính lại style cho hoạt cảnh CSS */
+  /* màn cảm ứng: chỗ bấm tối thiểu 44×44 (nút đóng drawer, + / −, Ẩn thông báo) */
+  @media (max-width: 900px), (pointer: coarse) {
+    .close { width: 44px; height: 44px; }
+    .zoom-ctl button { width: 44px; height: 44px; }
+    .notice button { min-height: 44px; min-width: 44px; }
+  }
 </style>
 </head>
 <body>
@@ -533,6 +552,7 @@
   <button type="button" role="menuitem" id="btnDesk" aria-haspopup="true" aria-expanded="false" aria-controls="deskPicker"><span class="mi-ic" aria-hidden="true">▭</span><span class="mi-t">Kiểu bàn</span><span class="mi-k">D</span></button>
   <button type="button" role="menuitemcheckbox" id="btnTheme" aria-checked="false"><span class="mi-ic" aria-hidden="true">☾</span><span class="mi-t">Ca đêm</span><span class="mi-k">T</span></button>
   <button type="button" role="menuitem" id="btnPhone" aria-haspopup="dialog" aria-controls="phoneDlg"><span class="mi-ic" aria-hidden="true">📱</span><span class="mi-t">Điện thoại</span></button>
+  <button type="button" role="menuitem" id="btnGateFull" aria-controls="drawer" hidden><span class="mi-ic" aria-hidden="true">▶</span><span class="mi-t">Chạy gate full…</span></button>
   <button type="button" role="menuitem" id="btnRefresh"><span class="mi-ic" aria-hidden="true">↻</span><span class="mi-t">Tải lại GitHub</span></button>
 </div>
 <section class="dash panel" id="dash" aria-label="Bảng chỉ số" hidden></section>
@@ -593,6 +613,7 @@
 const $ = (s, root = document) => root.querySelector(s);
 function h(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+let renderDirty = true; // cảnh vừa đổi (dữ liệu, chọn, khung trang): khung kế tiếp phải vẽ dù đang hạ nhịp (frameDue)
 
 // ------------------------------------------------------------ helpers
 const KIND_RULES = [
@@ -738,9 +759,12 @@ function hotNumbers(repo) { const s = new Set(); STATE.workers.forEach((w) => { 
 // ------------------------------------------------------------ three
 const canvas = $('#scene');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+// mật độ điểm ảnh tối đa 1,5: màn Retina 2x / điện thoại 3x vẽ 2,25-4 lần số điểm ảnh của 1x mà xưởng nhìn gần như nhau; GPU và pin đỡ ~44%
+const MAX_DPR = 1.5;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_DPR));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false; // frame() bật needsUpdate khi bóng thật sự đổi
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(26, 1, 0.1, 1200);
 camera.position.set(0, 60, 60);
@@ -1621,9 +1645,24 @@ function computePresent(root, idle) {
   return out;
 }
 const bump = (t, up, down) => { const r = 0.6; return smooth01((t - up) / r) * (1 - smooth01((t - down) / r)); };
+// GLTFLoader / SkeletonUtils.clone tạo một Skeleton cho MỖI lưới có da dù chúng cùng một bộ xương: mỗi khung three tính lại ma trận
+// xương và tải một texture xương lên GPU cho từng Skeleton (đo: ~300 lần texSubImage2D mỗi khung với ~16 người). Lưới cùng xương,
+// cùng boneInverses thì dùng chung một Skeleton: mỗi người một lần tính, một lần tải.
+function shareSkeletons(model) {
+  const shared = [];
+  model.traverse((o) => {
+    if (!o.isSkinnedMesh || !o.skeleton) return;
+    const s = o.skeleton;
+    const g = shared.find((k) => k.bones.length === s.bones.length && k.bones.every((b, j) => b === s.bones[j]) && k.boneInverses.every((m, j) => m.equals(s.boneInverses[j])));
+    if (!g) { shared.push(s); return; }
+    s.dispose(); o.bind(g, o.bindMatrix);
+  });
+  return shared.length;
+}
 function spawnActor(c, i, w) {
   const root = new THREE.Group(), model = THREE.SkeletonUtils.clone(c.scene);
   model.scale.setScalar(c.scale); root.add(model);
+  shareSkeletons(model); // trước khi tạo viền: viền bind theo o.skeleton (đã là bộ xương chung)
   const outlines = [];
   model.traverse((o) => {
     if (!o.isMesh) return;
@@ -2021,6 +2060,7 @@ function select(sel, fly = true) {
   if (fly) requestAnimationFrame(focusSelection);
 }
 function updateSelectionVisuals() {
+  renderDirty = true;
   hoverDirty = true; // thẻ được chọn nâng lên / hạ xuống: vật dưới chuột có thể đổi
   rowMarks.forEach((m, name) => { m.visible = !!selection && selection.type === 'repo' && selection.id === name; });
   workerRings.forEach((ring, id) => { ring.visible = !!selection && selection.type === 'worker' && selection.id === id; });
@@ -2163,7 +2203,14 @@ function renderDash(S) {
   }
   box.scrollTop = keepScroll;
 }
-$('#btnDash').onclick = () => { const d = $('#dash'); d.hidden = !d.hidden; $('#btnDash').setAttribute('aria-pressed', String(!d.hidden)); if (LAST_S) renderDash(LAST_S); };
+$('#btnDash').onclick = () => {
+  const d = $('#dash');
+  // khung chi tiết (agent, repo, Vừa xảy ra…) đang mở thì nó chiếm đúng góc của bảng chỉ số (CSS ẩn .dash): bấm "Chỉ số" đóng khung đó
+  // và hiện bảng, không bật/tắt ngầm một bảng không ai thấy
+  if (document.body.classList.contains('drawer-open')) { selection = null; renderDrawer(); renderRail(); updateSelectionVisuals(); d.hidden = false; }
+  else d.hidden = !d.hidden;
+  $('#btnDash').setAttribute('aria-pressed', String(!d.hidden)); if (LAST_S) renderDash(LAST_S);
+};
 // Thông báo info đã Ẩn nhớ qua lần tải lại; lỗi/cảnh báo/mất kết nối chỉ ẩn trong lần mở này
 const savedNotices = (() => { try { return new Set(JSON.parse(localStorage.getItem('ao-dismissed-info') || '[]')); } catch (e) { return new Set(); } })();
 const dismissed = new Set(savedNotices);
@@ -2250,7 +2297,8 @@ function renderDrawer(force) {
   if (!selection || !S) { d.hidden = true; drawerSig = null; return; }
   const sig = JSON.stringify([selection, document.documentElement.dataset.theme,
     selection.type === 'approvals' ? [canWrite(), S.items.filter(needsApproval).map((i) => [i.id, i.status, i.approval, i.lastComment, APPROVAL_UI.get(i.id)])]
-    : selection.type === 'repo' ? [idx.repo.get(selection.id), S.workers.filter((w) => w.repo === selection.id), S.items.filter((i) => i.repo === selection.id)]
+    : selection.type === 'gatefull' ? [S.gateFull, Math.floor(Date.now() / 60000)]
+    : selection.type === 'repo' ? [idx.repo.get(selection.id), S.workers.filter((w) => w.repo === selection.id), S.items.filter((i) => i.repo === selection.id), gfOf(selection.id), gfOf(selection.id) && gfOf(selection.id).state === 'running' ? Math.floor(Date.now() / 60000) : 0]
     : selection.type === 'item' ? [idx.item.get(selection.id), S.workers, S.messages] : selection.type === 'worker' ? [idx.worker.get(selection.id), S.messages] : selection.type === 'column' ? [S.items.filter((i) => i.status === selection.id), S.workers.map((w) => [w.id, w.status, w.issue])] : selection.type === 'station' ? stationWorkers(selection.id).map((w) => [w.id, w.status, describe(w).doing]) : idx.worker.get(selection.id)]);
   if (!force && sig === drawerSig && !d.hidden) return;
   // đang gõ trong ô "Nhắn agent" / ô mã: không dựng lại bảng theo nhịp poll (mất chữ đang ghép của bộ gõ tiếng Việt);
@@ -2272,6 +2320,7 @@ function renderDrawer(force) {
 function renderDrawerNow() {
   const S = STATE; const d = $('#drawer');
   if (selection.type === 'events') return drawEvents();
+  if (selection.type === 'gatefull') return drawGateFull();
   if (selection.type === 'approvals') return drawApprovals();
   if (selection.type === 'column') return drawColumn(selection.id);
   if (selection.type === 'station') return drawStation(selection.id);
@@ -2290,6 +2339,7 @@ function drawRepo(r) {
     const ra = h('div', 'row-actions'); const add = h('button', 'btn', 'Thêm việc vào ' + r.name); add.type = 'button';
     add.onclick = () => openCreate(r.name); ra.append(add); d.append(ra);
   }
+  if (gfOf(r.name)) d.append(h('h3', null, 'Gate full'), gfBlock(r.name));
 
   d.append(h('h3', null, 'Trên bảng GitHub (' + r.total + ' việc)'));
   if (r.total) {
@@ -2530,6 +2580,55 @@ async function api(action, body) {
   return data;
 }
 function rerender() { LAYOUT_KEY = null; apply(STATE); }
+// ---- gate --full theo yêu cầu (chỉ trên máy Mac): server đọc plist lịch đêm, khoá của gate_full.py và summary-latest.md (STATE.gateFull)
+const onMac = !location.hostname.endsWith('.trycloudflare.com');
+const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+const ddmm = (ts) => new Date(ts * 1000).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+const gfOf = (name) => { const g = STATE && STATE.gateFull; return (g && g.repos && g.repos[name]) || null; };
+function gfStatus(st) {
+  if (!st) return null;
+  if (!st.installed) return ['', 'Chưa cài lịch gate-full cho repo này'];
+  if (st.state === 'running') { const m = st.since ? Math.max(0, Math.round((Date.now() / 1000 - st.since) / 60)) : null; return ['run', 'Đang chạy' + (m != null ? ', ' + m + ' phút' : '') + (st.waiting ? ' (đang chờ lượt khác hoặc tải máy)' : '')]; }
+  if (st.state === 'queued') return ['queue', 'Đang xếp hàng, thứ ' + st.position];
+  return ['', 'Rảnh'];
+}
+function gfBlock(name) {
+  const st = gfOf(name); const box = h('div', 'gf'); box.dataset.repo = name;
+  const [cls, text] = gfStatus(st) || ['', 'Chưa có dữ liệu']; box.append(h('div', 'gf-st' + (cls ? ' ' + cls : ''), text));
+  if (st && st.installed) {
+    const last = h('div', 'gf-meta');
+    if (st.last) { last.append('Lần trước: '); last.append(h('span', st.last.verdict === 'PASS' ? 'gf-pass' : 'gf-fail', st.last.verdict)); last.append(' lúc ' + hhmm(st.last.at) + ' ' + ddmm(st.last.at)); }
+    else last.append('Chưa có lượt nào');
+    box.append(last);
+    if (st.next) box.append(h('div', 'gf-meta', 'Lượt đêm kế tiếp: ' + hhmm(st.next) + ' ' + ddmm(st.next)));
+    const logp = st.log || (st.last && st.last.log); if (logp) { const lg = h('div', 'gf-meta mono', 'Log: ' + logp); lg.title = logp; box.append(lg); }
+  } else if (st) box.append(h('div', 'gf-meta mono', 'universal-agent-devkit/bin/gate-full-schedule.sh install --repo <main checkout>'));
+  if (st && onMac) {
+    const ra = h('div', 'row-actions');
+    const run = h('button', 'btn', 'Chạy gate full'); run.type = 'button'; run.dataset.gf = 'run';
+    run.disabled = !st.installed || st.state === 'running' || st.state === 'queued';
+    run.title = !st.installed ? 'Repo chưa cài lịch gate-full' : st.state === 'idle' ? 'Mỗi lúc chỉ một lượt trên cả máy: có lượt khác đang chạy thì xếp hàng' : text;
+    run.onclick = () => gfRun(name, false); ra.append(run);
+    if (st.state === 'queued') { const c = h('button', 'btn', 'Bỏ khỏi hàng chờ'); c.type = 'button'; c.dataset.gf = 'cancel'; c.onclick = () => gfRun(name, true); ra.append(c); }
+    box.append(ra);
+  }
+  return box;
+}
+async function gfRun(name, cancel) {
+  try {
+    const r = await api('gate-full', cancel ? { repo: name, cancel: true } : { repo: name });
+    toast(cancel ? 'Đã bỏ ' + name + ' khỏi hàng chờ gate full' : r.state === 'running' ? 'Gate full ' + name + ' đang chạy' : 'Gate full ' + name + ': đang xếp hàng, thứ ' + r.position);
+  } catch (err) { toast('Không chạy được gate full ' + name + ': ' + err.message, 'error'); }
+  VERSION = null; poll(true); drawerSig = null; renderDrawer(true);
+}
+function drawGateFull() {
+  const d = drawerShell(); const S = STATE;
+  d.append(h('div', 'kicker', 'Gate --full theo yêu cầu'), h('h2', null, 'Chạy gate full'));
+  d.append(h('p', 'readonly', 'Mỗi lúc chỉ MỘT lượt trên cả máy, kể cả lượt đêm 00:00: đang có lượt khác thì bấm là xếp hàng, xong lượt trước tự chạy tiếp.'));
+  const names = S.repos.map((r) => r.name).filter((n) => gfOf(n));
+  if (!names.length) d.append(h('p', 'empty', 'Chưa có repo nào.'));
+  names.forEach((n) => { const t = h('h3'); const b = linkBtn(n, { type: 'repo', id: n }); b.dataset.gfRepo = n; b.title = 'Mở repo ' + n; t.append(b); d.append(t, gfBlock(n)); });
+}
 async function moveItem(it, colName) {
   if (!it || it.status === colName || !canWrite()) return;
   const prev = it.status;
@@ -2638,6 +2737,7 @@ $('#boardRepo').addEventListener('change', (e) => { boardFilter.repo = e.target.
 $('#boardQ').addEventListener('input', (e) => { boardFilter.q = e.target.value; renderBoard(); });
 function renderBoard() {
   const el = $('#board');
+  document.body.classList.toggle('board-open', !!(boardOpen && STATE));
   if (!boardOpen || !STATE) { el.hidden = true; return; }
   el.hidden = false;
   if (boardDragging) return;
@@ -2801,7 +2901,9 @@ document.addEventListener('keydown', (e) => { // Esc khi focus không nằm tron
   if (!moreMenu.hidden) { e.stopImmediatePropagation(); closeMenu(true); }
   else if (!$('#acctPop').hidden) { e.stopImmediatePropagation(); closeAcct(true); }
 }, true);
-$('#phoneDlg').addEventListener('close', () => { if (!document.activeElement || document.activeElement === document.body || moreMenu.contains(document.activeElement)) $('#btnMore').focus(); });
+// đóng hộp Điện thoại (Esc hoặc Đóng): Chromium trả focus về mục menu đã ẩn SAU sự kiện close nên focus rơi về <body>;
+// đợi một nhịp rồi mới đưa focus về nút ⋯ (nơi mở hộp)
+$('#phoneDlg').addEventListener('close', () => setTimeout(() => { const ae = document.activeElement; if (!ae || ae === document.body || moreMenu.contains(ae)) $('#btnMore').focus(); }, 0));
 
 // ---- tài khoản Claude + token còn (góc phải trên): tên hồ sơ của account pool và số token còn, không bao giờ giá trị token
 const acctLabel = (s) => (s && s.account) || (s && s.configDir === '.claude' ? 'mặc định' : null);
@@ -2897,6 +2999,9 @@ $('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() 
 const PHONE_HINT = 'Quét bằng camera điện thoại. Dùng được cả khi điện thoại ở mạng khác (4G, Wi-Fi khác). Tạo mã mới thì mã cũ hết hiệu lực.';
 let phoneLink = '';
 if (location.hostname.endsWith('.trycloudflare.com')) $('#btnPhone').hidden = true;
+// ⋯ > "Chạy gate full…": bảng chọn repo; chỉ hiện trên máy Mac khi server có lịch gate-full (POST từ tunnel bị 403)
+function syncGateFullMenu() { $('#btnGateFull').hidden = !(onMac && STATE && STATE.gateFull); }
+$('#btnGateFull').onclick = () => select({ type: 'gatefull' }, false);
 function showPhone(d) {
   const qr = $('#phoneQr');
   phoneLink = d && d.live ? d.link : '';
@@ -2925,7 +3030,7 @@ async function loadPhone(fresh) {
     if (fresh) setTimeout(() => { btn.disabled = false; btn.textContent = 'Tạo mã mới'; }, 1000);
   }
 }
-$('#btnPhone').onclick = () => { $('#phoneHint').textContent = PHONE_HINT; $('#phoneQr').textContent = 'Đang lấy mã…'; $('#phoneUrl').textContent = ''; $('#phoneDlg').showModal(); loadPhone(false); };
+$('#btnPhone').onclick = () => { closeMenu(true); /* focus về ⋯ TRƯỚC showModal: hộp đóng thì trình duyệt trả focus về đúng ⋯ (mục menu đã ẩn thì không nhận focus) */ $('#phoneHint').textContent = PHONE_HINT; $('#phoneQr').textContent = 'Đang lấy mã…'; $('#phoneUrl').textContent = ''; $('#phoneDlg').showModal(); loadPhone(false); };
 $('#phoneNew').onclick = () => loadPhone(true);
 $('#phoneClose').onclick = () => $('#phoneDlg').close();
 $('#phoneCopy').onclick = async () => {
@@ -3246,12 +3351,12 @@ $('#btnApprove').onclick = () => select({ type: 'approvals' }, false);
 $('#apprBanner').onclick = () => select({ type: 'approvals' }, false);
 
 function apply(S, force) {
-  STATE = S; indexState(S);
+  STATE = S; indexState(S); renderDirty = true; syncGateFullMenu();
   handleEvents(S);
   const key = layoutKey(S);
   if (force || key !== LAYOUT_KEY) { LAYOUT_KEY = key; const snap = snapshotPeople(); buildWorld(S); startWalks(snap); } else refreshDynamic(S);
   if (selection) {
-    const exists = selection.type === 'events' || selection.type === 'approvals' || selection.type === 'station' || (selection.type === 'column' && S.columns.some((c) => c.name === selection.id)) || (selection.type === 'repo' ? idx.repo.has(selection.id) : selection.type === 'item' ? idx.item.has(selection.id) : idx.worker.has(selection.id));
+    const exists = selection.type === 'events' || selection.type === 'approvals' || selection.type === 'gatefull' || selection.type === 'station' || (selection.type === 'column' && S.columns.some((c) => c.name === selection.id)) || (selection.type === 'repo' ? idx.repo.has(selection.id) : selection.type === 'item' ? idx.item.has(selection.id) : idx.worker.has(selection.id));
     if (!exists) selection = null;
   }
   if (pendingSelect && idx.item.has(pendingSelect)) { selection = { type: 'item', id: pendingSelect }; pendingSelect = null; drawerSig = null; requestAnimationFrame(focusSelection); }
@@ -3275,8 +3380,8 @@ function apply(S, force) {
     } else zoomView(0);
   }
 }
-let pollTimer = null, pollBusy = false;
-document.addEventListener('visibilitychange', () => { if (!document.hidden && typeof poll === 'function') poll(); }); // tab hiện lại: báo view=1 ngay, không đợi nhịp 3 giây bị trình duyệt làm chậm
+let pollTimer = null, pollBusy = false; const POLL_MS = 3000, POLL_HIDDEN_MS = 30000; // tab ẩn: hỏi thưa 10 lần (vẫn báo sự kiện), hiện lại thì hỏi ngay
+document.addEventListener('visibilitychange', () => { document.body.classList.toggle('tab-hidden', document.hidden); if (!document.hidden && typeof poll === 'function') poll(); }); // tab hiện lại: báo view=1 ngay, không đợi nhịp 3 giây bị trình duyệt làm chậm
 async function poll(once) {
   if (!once) { if (pollBusy) return; pollBusy = true; clearTimeout(pollTimer); } // một vòng poll tại một thời điểm: tab hiện lại giữa chừng không sinh vòng thứ hai
   try {
@@ -3287,19 +3392,23 @@ async function poll(once) {
     const S = await res.json();
     LAST_S = S;
     if (S.version !== VERSION) { VERSION = S.version; apply(S); }
-    else renderTop(S);
+    else {
+      renderTop(S);
+      // gateFull nằm ngoài mã phiên bản (không dựng lại cảnh 3D): chỉ cập nhật bảng bên khi trạng thái lượt đổi
+      if (STATE && JSON.stringify(S.gateFull) !== JSON.stringify(STATE.gateFull)) { STATE.gateFull = S.gateFull; syncGateFullMenu(); renderDrawer(); }
+    }
     if ($('#notices').dataset.offline === '1') { $('#notices').dataset.offline = '0'; dismissed.delete(OFFLINE_NOTICE); renderNotices(STATE, false); } // lần mất kết nối sau vẫn báo
   } catch (e) {
     console.error('Agent Office: không áp được dữ liệu', e);
     $('#notices').dataset.offline = '1'; renderNotices(STATE, true);
     if (!STATE) $('#boot').textContent = 'Không kết nối được server. Chạy: python3 server.py';
-  } finally { if (!once) { pollBusy = false; pollTimer = setTimeout(poll, 3000); } }
+  } finally { if (!once) { pollBusy = false; pollTimer = setTimeout(poll, document.hidden ? POLL_HIDDEN_MS : POLL_MS); } }
 }
 
 // ------------------------------------------------------------ loop
 const v3 = new THREE.Vector3();
 function resize() {
-  const w = innerWidth, hgt = innerHeight;
+  const w = innerWidth, hgt = innerHeight; renderDirty = true;
   renderer.setSize(w, hgt, false); camera.aspect = w / hgt; camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize); resize();
@@ -3344,7 +3453,11 @@ function updateLabels(moved) {
     l.el.style.zIndex = String(Math.round((1 - l.z) * 10000));
   }
 }
-let lastFrame = 0;
+let lastFrame = 0, lastRender = -Infinity, lastShadow = -Infinity;
+// nhịp vẽ: có gì đang chuyển động (camera, người đi, chuột, dữ liệu/nhãn mới) thì vẽ mọi khung; cảnh đứng yên chỉ còn hoạt cảnh nhỏ
+// (gõ phím, đèn nháy, vòng sáng) nên 20 khung/giây là đủ; giảm chuyển động (không hoạt cảnh nào) hoặc dạng bảng đang che cảnh: 1 khung/giây cho chắc
+const AMBIENT_MS = 1000 / 20, STILL_MS = 1000, SHADOW_MS = 250;
+function frameDue(now, last, busy, still) { return busy || now - last >= (still ? STILL_MS : AMBIENT_MS) - 1; }
 // camera có đổi so với khung trước không (vị trí, hướng, ống kính): đứng yên thì nhãn và dò chuột không cần tính lại
 const camSig = new Float64Array(18);
 function cameraMoved() {
@@ -3363,6 +3476,14 @@ function frame(now) {
     if (t >= 1) flight = null;
   }
   controls.update();
+  camera.updateMatrixWorld();
+  const moved = cameraMoved();
+  const busy = moved || !!flight || walkers.length > 0 || renderDirty || labelsDirty || (hoverDirty && !!hoverEvt) || !!(drag && drag.active);
+  if (!frameDue(now, lastRender, busy, reduceMotion.matches || boardOpen)) return;
+  // bóng đổ: mặt trời và camera bóng đứng yên trong thế giới, nên camera xoay/zoom không đổi shadow map; chỉ vẽ lại khi cảnh đổi,
+  // có người đang đi, hoặc 4 lần/giây cho cử động gõ phím (bỏ một lượt vẽ toàn cảnh ~1000 draw call ở các khung còn lại)
+  if (renderDirty || walkers.length > 0 || (drag && drag.active) || now - lastShadow >= SHADOW_MS) { renderer.shadowMap.needsUpdate = true; lastShadow = now; }
+  lastRender = now; renderDirty = false;
   const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
   if (!reduceMotion.matches) {
     stepWalkers(dt);
@@ -3382,8 +3503,6 @@ function frame(now) {
     for (const l of lamps) if (l.pulse) l.mesh.material.emissiveIntensity = 0.55 + Math.sin(t * 3) * 0.35;
     for (const hl of halos) { const k = (t * 0.7 + hl.phase) % 1; hl.mesh.scale.setScalar(1 + k * 0.9); hl.mesh.material.opacity = 0.85 * (1 - k); }
   }
-  camera.updateMatrixWorld();
-  const moved = cameraMoved();
   if (hoverEvt && !(drag && drag.active) && (hoverDirty || moved)) { hoverDirty = false; const p = hitAt(hoverEvt); setTip(p, hoverEvt); } // chỉ dò khi chuột hay camera vừa đổi
   updateLabels(moved);
   renderer.render(scene, camera);
