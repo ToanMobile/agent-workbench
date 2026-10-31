@@ -22,8 +22,8 @@ trong gate chỉ chạy test impacted) · gỡ scratch, nhả khoá. Lượt đ�
 
 `--tree HEAD` chỉ nhận cây đã có trên origin: `--ref` phải là commit origin đã có (mặc định `origin/main`), không phải nhánh chưa push.
 
-Kết quả (exit): `0` xanh hoặc skip · `1` đỏ (có suite FAIL thật) · `3` chưa kết luận (gate exit 2/4/5, TIMEOUT, BUSY, đỏ do môi trường — không thẻ)
-· `2` lỗi chuẩn bị (ref, scratch).
+Kết quả (exit): `0` xanh hoặc skip · `1` đỏ (có suite FAIL thật) · `3` chưa kết luận (gate exit 2/4/5, TIMEOUT, BUSY, đỏ do môi trường — không thẻ;
+hoặc `red-env`: mọi suite đỏ đều nhóm b — có thẻ) · `2` lỗi chuẩn bị (ref, scratch).
 
 ## Đọc kết quả
 
@@ -37,7 +37,14 @@ Lượt của lịch đêm ghi vào `~/Library/Logs/devkit-gate-full/<slug>/` ri
 
 ## Đỏ: chia đôi + thẻ P1
 
-1. Chạy lại CHỈ suite/test đỏ ở đỉnh (đường dẫn `✖ tests/…` của run_impacted, hoặc lệnh của suite đỏ). Không tái hiện ⇒ ghi "flaky?", không nghi ai.
+0. Nhóm b (#700): suite đỏ có nhãn `"timing": true` trong ma trận, hoặc trong toàn văn log của suite MỌI khối hỏng lá (`✖/✗ …` + dòng thụt
+   sâu hơn; khối có khối con chỉ xét khối con) có dấu hiệu thời gian thực / môi trường (watchdog "quá lớn / quá phức tạp…", `killed after
+   …s (deadline)`, `Killed: 9`), hoặc không có khối hỏng nào mà có dòng tổng kết hook contract `ENV-BLOCKED: hook watchdog fired under
+   load, no verdict`. Mọi suite đỏ đều nhóm b ⇒
+   `red-env`: không chia đôi, không ghi `last_full_green_sha`, thẻ risk 🟡. `DEVKIT_GATE_FULL_BISECT=0` không bao giờ chia đôi, `=1` luôn chia đôi,
+   `auto` (mặc định) như trên.
+1. Chạy lại CHỈ suite/test đỏ ở đỉnh (đường dẫn `✖ tests/…` của run_impacted, hoặc lệnh của suite đỏ). Không tái hiện ⇒ ghi "flaky?", không nghi ai,
+   result `red-env`.
 2. Chia đôi các merge first-parent `last_full_green_sha..sha` (≤ 16; chưa có lượt xanh: 8 merge gần nhất) ⇒ merge đầu tiên làm đỏ.
 3. Tạo thẻ qua `scripts/governance/create_task.py --new-card … --labels bug`, tiêu đề `🐛 [fix] P1 gate-full đêm <yyyy-mm-dd>: <suite> đỏ`,
    risk `🔴 High — main đỏ`. Đã có thẻ mở cùng suite đỏ (tiêu đề P1, hoặc mã REG-/BUG- trong tiêu đề/body) thì comment vào đó, không tạo trùng.
