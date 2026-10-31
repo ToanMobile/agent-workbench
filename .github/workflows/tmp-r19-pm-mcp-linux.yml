@@ -13,8 +13,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: node + ps
         run: node --version && ps --version
-      - name: npm ci
-        run: cd mcp-servers/antigravity-pm-mcp && npm ci --no-audit --no-fund
       - name: npm test
         run: cd mcp-servers/antigravity-pm-mcp && npm test
       - name: npm run test:coverage
