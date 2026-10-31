@@ -713,3 +713,15 @@ fi
 if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ]; then
   list_old_backups "$TARGET_DIR"
 fi
+
+# 8. Parity (#773): bỏ cờ cấm khỏi verify_commands của config super-board (--full / --force-full / --auto-approve-tests, #741/#764),
+#    rồi in mọi chỗ repo còn lệch kit (symlink hỏng, hook kit chưa đăng ký, bản sao super-board cũ…). Chỉ báo: exit của install không đổi.
+if [ "$TARGET_DIR" != "$DEVKIT_ROOT" ] && [ -f "$DEVKIT_ROOT/bin/parity_check.py" ]; then
+  _par_out="$(python3 "$DEVKIT_ROOT/bin/parity_check.py" "$TARGET_DIR" --fix 2>&1)" || true
+  printf '%s\n' "$_par_out" | grep '^fixed: ' || true
+  printf '%s\n' "$_par_out" | grep -v '^fixed: \|^parity: ' | head -10 || true
+  printf '%s\n' "$_par_out" | grep '^parity: ' || true
+  if printf '%s\n' "$_par_out" | grep -q '^parity: .* deviation'; then
+    echo "  - $(L "Danh sách đủ" "Full list"): agent-kit parity $TARGET_DIR"
+  fi
+fi
