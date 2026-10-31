@@ -11,24 +11,20 @@
 # independent reviewer with fresh context. This gate makes that non-optional.
 #
 # BLOCK (exit 2) when BOTH hold:
-#   • uncommitted code changes exist, AND
-#   • no supported review ran AFTER the last code Edit/Write this session (or Bash
-#     command that names a code file changed after it started) —
-#     i.e. either none ran, or the last one ran before the latest code change
-#     (the "reviewed-then-kept-coding" hole).
-# Review = Agent/Task tool_use with subagent_type ∈ REVIEW_AGENTS, or a Skill
-# invocation of code-review / review-pr / open-code-review, or a full OCR review.
-# With `ocr` installed (REVIEW_GATE_REQUIRE_OCR=0: off) an OCR review after the last
-# edit is REQUIRED (user, 13/10: OCR always runs again after principal-code-reviewer;
-# the two find different defects); with no LLM endpoint, `ocr-review` falling back to
-# its delegation spec plus an agent review after the edit stands in for it.
+#   • uncommitted code changes (or code committed since the verified head) exist that THIS session
+#     edited (Edit/Write, or a Bash command that names a code file changed after it started), AND
+#   • THE review of exactly that code state has not PASSED.
+# THE review (user, 31/10/2026: "3 agent review ... phải cùng thống nhất kết quả thì mới gọi là pass") is
+# bin/review-fanout.sh: Claude Code + Alibaba OpenCodeReview (full mode, its own LLM) + Antigravity
+# (antigravity-pm audit), in parallel, verdict by bin/review-merge.py — PASS only when all 3 ran and all 3
+# say pass, no unrefuted P0/P1, no recurring known bug, budget kept, accepted findings fixed with a test.
+# A sub-agent review, a skill, or OCR alone no longer counts. No review yet → the gate starts it in the
+# background and blocks; running → blocks; FAIL → blocks with the reasons and findings.
 #
-# Loop-guard: per-session attempts file, MAX_ATTEMPTS — release with a logged
-# warning if the environment genuinely can't run reviews (avoid infinite block).
-# The release covers ONE stuck episode: writing more unreviewed code afterwards
-# (a later edit, a file the release did not cover, or a file touched after the
-# release time) re-arms the gate and it blocks again.
-# Fail-open on any internal error (never block Claude because of a gate bug).
+# Fail-CLOSED (31/10/2026): no python3, an unreadable payload, a git error or a crash of this gate BLOCK the
+# Stop with the reason — there is no anti-loop release after N blocks and no fail-open path. Out of scope
+# (pass): no project, nothing this session edited, a board worker on main (#528), a progress reply that
+# pushed nothing (the handover turn is gated).
 #
 # Stop hook protocol: stdin JSON; exit 2 blocks (stderr→Claude); exit 0 allows.
 # bash 3.2 compatible.
@@ -69,12 +65,11 @@ mkdir -p "${LOG_DIR}"
 for _fifo in "${LOG_DIR}"/* "${LOG_DIR}"/.[!.]*; do [ ! -p "${_fifo}" ] || rm -f -- "${_fifo}"; done   # a FIFO here (never one of ours) would hang the next open of a log or lock: drop it
 [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
 LOG="${LOG_DIR}/review_gate.log"
-MAX_ATTEMPTS="${REVIEW_GATE_MAX_ATTEMPTS:-3}"
 
 # QA K-4: without python3 this gate cannot run — say so instead of passing silently.
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "⚠ review_gate: python3 không có — gate này KHÔNG chạy, kết quả không được kiểm." >&2
-  exit 0
+if ! command -v python3 >/dev/null 2>&1; then   # fail closed (31/10): a gate that cannot run cannot say the code was reviewed
+  echo "⛔ REVIEW-GATE: python3 không có — không kiểm được review 3 bên, chặn Stop. Cài python3." >&2
+  exit 2
 fi
 # #528: worker của board không chấm main. Worktree liên kết vẫn chạy.
 if [ "${SB_BOARD_WORKER:-}" = "1" ] && python3 -I -c 'import os,sys
@@ -88,7 +83,7 @@ fi
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
 # start and the gate passed (tests/gates/test_hook_large_payload.sh).
 CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
-CLAIM_REPO="${REPO_ROOT}" CLAIM_LOGDIR="${LOG_DIR}" CLAIM_MAX="${MAX_ATTEMPTS}" \
+CLAIM_REPO="${REPO_ROOT}" CLAIM_LOGDIR="${LOG_DIR}" \
 CLAIM_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" \
 python3 -I <<'PY' 3<<<"${INPUT}"
 import os, sys, json, re, shutil, subprocess, time
@@ -102,10 +97,6 @@ log     = os.environ.get("CLAIM_LOG", "/dev/null")
 ts      = os.environ.get("CLAIM_TS", "?")
 repo    = os.environ.get("CLAIM_REPO", ".")
 logdir  = os.environ.get("CLAIM_LOGDIR", ".")
-try:
-    maxatt = int(os.environ.get("CLAIM_MAX", "3") or "3")
-except ValueError:          # QA K-6: non-numeric env var → default, not a crash
-    maxatt = 3
 
 REVIEW_AGENTS = {
     # App project agents (AGENTS.md / CLAUDE.md)
@@ -138,9 +129,10 @@ def logline(s):
 
 try:
     d = json.loads(raw)
-except Exception as e:
-    logline(f"[{ts}] stdin parse fail: {e!r} — fail-open")
-    sys.exit(0)
+except Exception as e:   # fail closed (31/10)
+    logline(f"[{ts}] stdin parse fail: {e!r} — BLOCK (fail-closed)")
+    sys.stderr.write(f"⛔ REVIEW-GATE: không đọc được payload của Stop hook ({e!r}) — chặn (fail-closed).\n")
+    sys.exit(2)
 
 # A progress reply (status line CHƯA XONG / CHỜ DUYỆT …, no outcome claimed, no git push after the
 # turn's last edit): the fresh-context review is asked at the handover turn, not on every stop (T0003).
@@ -224,9 +216,10 @@ try:
                       if l.strip() and not os.path.islink(os.path.join(repo_root, l))})
     dirty = {l for l in diff.stdout.splitlines() + untracked.stdout.splitlines()   # the code a workspace OCR run sees
              if l.strip() and not os.path.islink(os.path.join(repo_root, l))}
-except Exception as e:
-    logline(f"[{ts}] git query failed: {e!r} — fail-open")
-    sys.exit(0)
+except Exception as e:   # fail closed (31/10)
+    logline(f"[{ts}] git query failed: {e!r} — BLOCK (fail-closed)")
+    sys.stderr.write(f"⛔ REVIEW-GATE: git lỗi khi tìm code chưa review ({e!r}) — chặn (fail-closed).\n")
+    sys.exit(2)
 
 if not changed:
     reset_attempts()
@@ -685,30 +678,6 @@ for _rel in (changed if bash_runs else ()):
         session_unreviewed.add(_rel)
         break
 
-# An OCR report (or a delegation spec) counts only when it is newer than every file this session edited (one from before the last
-# edit is stale).
-last_ocr_ws_idx = last_ocr_range_idx = -1   # newest valid OCR report over the workspace / over a commit range
-_newest = 0.0
-for _f in session_unreviewed:
-    try:
-        _newest = max(_newest, os.path.getmtime(os.path.join(repo_root, _f)))
-    except OSError:
-        pass   # deleted since the edit: nothing newer to compare
-if ocr_reports:
-    for _at, _rp, _argv in ocr_reports:
-        if _valid_ocr_report(_rp, _newest):
-            last_review_idx = max(last_review_idx, _at)
-            review_marks.append(_at)
-            if any(w in ("--from", "--commit", "-c") for w in _argv[:-1]):
-                if _covers_since(_argv):
-                    last_ocr_range_idx = max(last_ocr_range_idx, _at)
-                else:
-                    logline(f"[{ts}] OCR run at #{_at} covers only part of the code committed since {since_base[:12]} — not counted for it")
-            else:
-                last_ocr_ws_idx = max(last_ocr_ws_idx, _at)
-        else:
-            logline(f"[{ts}] OCR run at #{_at} named {_rp}: not a fresh OCR report — not counted")
-
 # A3 (audit 2026-10-25): the reply is work in progress and this turn's push came before more edits. It skips only when every push of
 # the turn carried reviewed code: no edit between the last review before it and it. Edits counted: Edit / Write of a changed code file,
 # a Bash run that changed one (above), and — fail closed — any Bash run before the push that names a changed code file and does more
@@ -723,10 +692,8 @@ if wip_push_start is not None:
         if any(_rv < e < _p for e in edit_marks) or any(_rv < _bi < _p and _may_edit(_bc) for _bi, _s, _e, _bc in bash_runs):
             _unreviewed_push = _p
             break
-    if _unreviewed_push is None:
-        logline(f"[{ts}] skip: work in progress — this turn pushed reviewed code, then went on editing; review at the handover turn")
-        sys.exit(0)
-    logline(f"[{ts}] work in progress, but push #{_unreviewed_push} of this turn carried code edited after the last review — gated")
+    # 31/10: a push carries code to others, so it needs THE 3-way review like a handover (no skip on an older agent review)
+    logline(f"[{ts}] work in progress, but this turn pushed (#{_unreviewed_push or push_marks}) — gated by the 3-way review")
 
 # No .kt edited by me this session (the dirty files are pre-existing /
 # someone else's) → nothing of mine to gate.
@@ -736,270 +703,77 @@ if last_edit_idx == -1:
             f"({changed}) — pass")
     sys.exit(0)
 
-reviewed_after_edits = last_review_idx > last_edit_idx and last_review_idx != -1
-def _spec_ok(sp):   # the helper's own spec file, written after every edited file (not an edited file named as one)
-    try:
-        return os.path.basename(sp) == "ocr-spec.md" and os.path.isfile(sp) and os.path.getmtime(sp) > _newest > 0
-    except OSError:
-        return False
+# ── 3) THE review: Claude Code + OCR + Antigravity, unanimous (bin/review-fanout.sh + bin/review-merge.py) ──
+def _fanout_path():
+    for cand in (os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "..", "bin", "review-fanout.sh"),
+                 os.path.join(os.path.dirname(os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "review_gate.sh"))),
+                              "..", "bin", "review-fanout.sh"),
+                 os.path.join(repo_root, ".agents", "devkit", "bin", "review-fanout.sh"),
+                 os.path.join(repo_root, "universal-agent-devkit", "bin", "review-fanout.sh")):
+        if os.path.isabs(cand) and os.path.isfile(cand):
+            return os.path.realpath(cand)
+    return ""
 
 
-# OCR must have covered what is unreviewed: the uncommitted code (a workspace run) and the code committed since the verified head
-# (a --from run; a workspace run sees none of it). The fallback stands in only when an agent review came AFTER it (somebody read
-# the spec) and its spec file is this run's, real and fresh.
-need_ws = bool(dirty) or not since   # uncommitted code, or nothing committed since the verified head: a workspace run
+def _block(lines_):
+    unrev_ = sorted(session_unreviewed)
+    out = list(lines_) + ["", f"{len(unrev_)} file code session này sửa, chưa có review 3 bên PASS cho đúng code hiện tại:"]
+    out += [f"  • {f}" for f in unrev_[:20]] + ([f"  … +{len(unrev_) - 20} file nữa"] if len(unrev_) > 20 else [])
+    sys.stderr.write("\n".join(out) + "\n")
+    sys.exit(2)
 
 
-def _fallback_for(ranged_scope):
-    """A delegation fallback after the last edit, read by an agent review after it, whose spec is this run's — credited to the
-    scope its run covered, like a report: a workspace run for the uncommitted code, a covering ranged run for the committed."""
-    for i, sp, argv in ocr_fallbacks:
-        ranged = any(w in ("--from", "--commit", "-c") for w in argv[:-1])
-        if last_edit_idx < i < last_review_idx and _spec_ok(sp) and ranged == ranged_scope and (not ranged or _covers_since(argv)):
-            return True
-    return False
-
-
-ocr_done = ((not need_ws or last_ocr_ws_idx > last_edit_idx or _fallback_for(False))
-            and (not since or last_ocr_range_idx > last_edit_idx or _fallback_for(True)))
-ocr_missing = (reviewed_after_edits and not ocr_done
-               and os.environ.get("REVIEW_GATE_OCR", "1") != "0" and os.environ.get("REVIEW_GATE_REQUIRE_OCR", "1") != "0"
-               and shutil.which("ocr") is not None)
-if ocr_missing:   # an agent review alone; `ocr` is here, so OCR must review the final code too (a full OCR run below still passes)
-    reviewed_after_edits = False
-    logline(f"[{ts}] agent review after the last edit, but no OCR review (ocr installed) — OCR required")
-
-# A full review diffs the workspace: code committed past verified_head (`since`) is not in it, so it never passes that (OCR, 13/10).
-if not reviewed_after_edits and OCR_MODE == "full" and not since:
-    try:
-        _fd = _full_dir()
-        if _full_report(_fd) is not None and _shown_to(_fd):
-            reset_attempts()
-            logline(f"[{ts}] OCR full review of this code shown to this session ({os.path.basename(_fd)}) — pass")
-            sys.exit(0)
-    except SystemExit:
-        raise
-    except Exception as _e:
-        logline(f"[{ts}] OCR full check failed: {_e!r}")
-
-if reviewed_after_edits:
+fanout = _fanout_path()
+review_base = "verified"   # bin/review-fanout.sh resolves the same verified head (devkit_harness) — one code state, one hash
+if not fanout:
+    logline(f"[{ts}] BLOCK — bin/review-fanout.sh not found next to the hook")
+    _block(["⛔ REVIEW-GATE: không tìm thấy bin/review-fanout.sh (review 3 bên) — chặn (fail-closed). Cài lại DevKit: agent-kit init."])
+cmd_show = f"bash {fanout} --repo {repo_root} --base {review_base}"
+try:
+    st = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--status"],
+                        capture_output=True, text=True, timeout=15)
+    state, run_dir = (st.stdout.split() + ["", ""])[:2]
+except Exception as e:
+    logline(f"[{ts}] review-fanout --status failed: {e!r} — BLOCK")
+    _block([f"⛔ REVIEW-GATE: không đọc được trạng thái review 3 bên ({e!r}) — chặn (fail-closed).", f"Chạy tay: {cmd_show}"])
+if state == "PASS":
     reset_attempts()
-    logline(f"[{ts}] review ran after last .kt edit "
-            f"(edit#{last_edit_idx} < review#{last_review_idx}) — pass")
+    logline(f"[{ts}] 3-way review PASS for this code ({os.path.basename(run_dir)}) — pass")
     sys.exit(0)
-
-# ── 3) would block — apply loop-guard (attempt_file hoisted above) ──
-# The release covers ONE stuck episode, not the rest of the session. While an
-# episode is live the file holds the bare attempt count; on release it holds JSON
-# {"n", "released_at", "released_time", "files"} — the transcript index, wall-clock
-# time and file set that release covered. The older shapes ("3", "4:97") are still
-# read, so a file written by a previous version never crashes the gate.
-#
-# Measured on OfficeReader (2026-09-08), with a bare counter that only a PASS reset:
-# three real blocks followed by 34 consecutive "BLOCK suppressed" lines to the end
-# of the session — every code file written after the release went unreviewed with
-# nothing left to notice. Writing MORE unreviewed code now starts a new episode.
-# Three re-arm signals, because each one alone has a hole:
-#   • a later edit index      — misses a transcript COMPACTED shorter mid-session;
-#   • an unreviewed file the release did not cover — misses the same file again;
-#   • a file mtime after the release time — survives compaction of the same file.
-n = 0
-released_at = None
-released_files = set()
-released_time = None
-try:
-    if os.path.exists(attempt_file):
-        raw_att = open(attempt_file).read().strip()
-        if raw_att.startswith("{"):
-            rec_att = json.loads(raw_att)
-            n = int(rec_att.get("n", 0))
-            released_at = rec_att.get("released_at")
-            released_files = set(rec_att.get("files") or [])
-            released_time = rec_att.get("released_time")
-        elif ":" in raw_att:
-            n_str, rel_str = raw_att.split(":", 1)
-            n = int(n_str or "0")
-            released_at = int(rel_str)
-        else:
-            n = int(raw_att or "0")
-except Exception:
-    n, released_at, released_files, released_time = 0, None, set(), None
-
-def _wrote_since_release():
-    if not isinstance(released_time, (int, float)):
-        return False
-    for rel in session_unreviewed:
-        try:
-            if os.path.getmtime(os.path.join(repo_root, rel)) > released_time:
-                return True
-        except Exception:
-            continue
-    return False
-
-if released_at is not None:
+if state == "FAIL":
     try:
-        newer_edit = last_edit_idx > int(released_at)
-    except Exception:
-        newer_edit = True
-    if newer_edit or (session_unreviewed - released_files) or _wrote_since_release():
-        n, released_at = 0, None      # new unreviewed code → new episode, re-arm
-    else:
-        logline(f"[{ts}] BLOCK suppressed — same stuck episode "
-                f"(edit#{last_edit_idx} <= released#{released_at}), "
-                f"manual review still required for {changed}")
-        sys.stderr.write(
-            f"⚠️ REVIEW-GATE: vẫn là episode đã thả — {len(changed)} file code CHƯA "
-            f"được review context-sạch, tự chịu trách nhiệm review thủ công.\n")
-        sys.exit(0)
-
-n += 1
-if n > maxatt:
+        with open(os.path.join(run_dir, "summary.md"), encoding="utf-8") as fh:
+            summ = fh.read().splitlines()[:45]
+    except OSError:
+        summ = [f"(summary.md không đọc được trong {run_dir})"]
+    logline(f"[{ts}] BLOCK — 3-way review FAIL ({os.path.basename(run_dir)})")
+    _block(["⛔ REVIEW-GATE: review 3 bên (Claude + OCR + Antigravity) KHÔNG PASS cho code này — cả 3 phải cùng pass.", ""] + summ + [
+        "", "Sửa từng finding P0/P1 (fix theo CLASS, không chỉ instance) + viết test hồi quy rồi",
+        "  regression_checklist.py bug-link BUG-REV-<id> <test>; bug lặp lại dạng mới: instincts.py add … --detect '<regex>'.",
+        f"Code đổi → review lại tự chạy. Chạy ngay và chờ kết quả: {cmd_show}",
+        f"Reviewer lỗi/timeout/thiếu thì chạy lại sau khi sửa môi trường: {cmd_show} --force"])
+if state == "RUNNING":
+    logline(f"[{ts}] BLOCK — 3-way review running ({os.path.basename(run_dir)})")
+    _block(["⛔ REVIEW-GATE: review 3 bên đang chạy cho đúng code này. Chờ kết quả (đừng sửa code giữa chừng):",
+            f"  {cmd_show}   (in kết quả khi xong; trạng thái: --status)"])
+if os.environ.get("REVIEW_GATE_AUTOSTART", "1") == "0":   # tests (tests/lib/clean_git_env.sh): never start real LLM reviewers; still blocks
+    started = "chưa (REVIEW_GATE_AUTOSTART=0) — tự chạy lệnh dưới"
+    logline(f"[{ts}] BLOCK — no 3-way review yet (autostart off)")
+else:
     try:
-        with open(attempt_file, "w") as fh:
-            json.dump({"n": n, "released_at": last_edit_idx,
-                       "released_time": time.time(),
-                       "files": sorted(session_unreviewed)}, fh)
-    except Exception:
-        pass
-    logline(f"[{ts}] BLOCK suppressed after {maxatt} attempts (anti-loop) — "
-            f"manual review still required for {changed}")
-    sys.stderr.write(
-        f"⚠️ REVIEW-GATE: đã nhắc {maxatt} lần, thả Stop để tránh kẹt loop.\n"
-        + (f"   Nhưng {len(changed)} file code vẫn CHƯA có lượt OpenCodeReview sau lần sửa cuối — tự chịu trách nhiệm.\n" if ocr_missing else
-           f"   Nhưng {len(changed)} file code vẫn CHƯA được review context-sạch — "
-           f"tự chịu trách nhiệm review thủ công.\n") +
-        f"   Viết THÊM code chưa review sẽ kích hoạt lại gate.\n")
-    sys.exit(0)
-
-try:
-    with open(attempt_file, "w") as fh:
-        fh.write(str(n))
-except Exception:
-    pass
-
-unrev = sorted(session_unreviewed)
-logline(f"[{ts}] BLOCK (attempt {n}/{maxatt}) — unreviewed code: {unrev}")
-lines = [
-    "⛔ REVIEW-GATE: thay đổi code chưa được review bằng CONTEXT SẠCH.",
-    "",
-    f"{len(unrev)} file code tôi sửa session này (chưa commit), chưa có",
-    "fresh-context review chạy SAU lần edit cuối (self-audit không tính — điểm mù):",
-    "",
-]
-for f in unrev[:20]:
-    lines.append(f"  • {f}")
-if len(unrev) > 20:
-    lines.append(f"  … +{len(unrev)-20} file nữa")
-lines += [
-    "",
-    "Bắt buộc trước khi xong — chạy review CONTEXT SẠCH (chọn 1):",
-    "  A) Agent principal-code-reviewer (DevKit cài sẵn ở .claude/agents) trên diff.",
-    "  B) Hoặc Skill code-review / open-code-review trên diff.",
-    "  C) Nếu đổi test/CI: thêm test-architect-seti; Android đổi kiến trúc/API: android-principal-architect.",
-    "  D) Hoặc Workflow 'multi-lens-audit' nếu môi trường hỗ trợ workflow.",
-    "Gom finding → fix theo CLASS (không chỉ instance) → rồi mới stop.",
-]
-if ocr_missing:   # the agent review is done: say exactly what is left
-    lines = [
-        "⛔ REVIEW-GATE: đã có review context sạch (agent hoặc skill) sau lần sửa cuối, nhưng máy có `ocr`:",
-        "BẮT BUỘC thêm một lượt OpenCodeReview trên code cuối (người dùng 13/10: OCR luôn chạy lại sau principal-code-reviewer —",
-        "hai bên tìm ra lỗi khác nhau). Chạy:",
-        *(['  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm>'] if need_ws else []),
-        *([f'  python3 .agents/devkit/bin/ocr-review -b "<chủ đề>" --out <thư mục tạm khác> --from {since_base[:12]}'
-           "   (phần đã commit sau lần xác minh cuối: lệnh không --from chỉ xem phần chưa commit)"] if since else []),
-        "rồi xử lý từng phát hiện (sửa, hoặc nói vì sao không); sửa code thì review lại. Máy chưa có LLM endpoint thì lệnh tự rơi về",
-        "spec delegation: giao spec đó cho một reviewer agent SAU lần chạy đó. Tắt: REVIEW_GATE_REQUIRE_OCR=0 (trước khi mở phiên).",
-        "",
-    ] + [f"  • {f}" for f in unrev[:20]] + ([f"  … +{len(unrev) - 20} file nữa"] if len(unrev) > 20 else [])
-# OpenCodeReview, run by the gate itself on this block path only (2026-10-13, user: run ocr review in every repo): the delegation
-# mode needs no LLM and no key (~1 s); its spec goes to the reviewer. REVIEW_GATE_OCR=0: off.
-_full_lines = []
-if OCR_MODE == "full":
-    _helper = os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "..", "bin", "ocr-review"))
-    try:
-        _fd = _full_dir()
-        _comments = _full_report(_fd)
-        if _comments is not None:
-            _sev = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-            _top = sorted(_comments, key=lambda c: _sev.get(str(c.get("severity", "")).lower(), 4))[:8]
-            _full_lines = ["", f"OCR review đầy đủ cho đúng code này đã xong: {len(_comments)} phát hiện "
-                               f"(report {os.path.join(_fd, 'ocr-review.json')}). Xử lý từng cái (sửa, hoặc nói vì sao không):"]
-            for c in _top:
-                _txt = " ".join(str(c.get("content") or c.get("message") or "").split())[:240]
-                _full_lines.append(f"  • [{c.get('severity', '?')}] {c.get('path', '?')}:{c.get('start_line', '?')} — {_txt}")
-            if len(_comments) > len(_top):
-                _full_lines.append(f"  … +{len(_comments) - len(_top)} phát hiện nữa trong report")
-            _full_lines.append("  Code không đổi thêm thì Stop sau được tính là đã review; sửa code thì OCR review lại."
-                               if not since else
-                               f"  {len(since)} file code đã commit sau lần xác minh cuối không nằm trong review này (OCR chỉ diff "
-                               "workspace): phần đó vẫn cần review context sạch (A–D).")
-            with open(os.path.join(_fd, "shown"), "a", encoding="utf-8") as fh:
-                fh.write(sid + "\n")
-            logline(f"[{ts}] OCR full review shown: {len(_comments)} finding(s) ({os.path.basename(_fd)})")
-        elif os.path.isfile(_helper):
-            _pidf = os.path.join(_fd, "pid")
-            _running = False
-            try:   # older than the helper's own bound: a recycled pid, not a running review
-                _age = time.time() - os.path.getmtime(_pidf)
-                with open(_pidf) as fh:
-                    _ptxt = fh.read().strip()
-                if _age < OCR_REVIEW_TIMEOUT_S + 120:
-                    if _ptxt:
-                        os.kill(int(_ptxt), 0)
-                        _running = True
-                    else:
-                        _running = _age < 30   # claimed by another Stop a moment ago, its pid not written yet
-            except (OSError, ValueError):
-                _running = False
-            _running_line = ["", "OCR review đầy đủ (LLM) đang chạy ở nền cho code này; Stop sau sẽ có kết quả."]
-            if _running:
-                _full_lines = _running_line
-            elif not os.path.isfile(_pidf):
-                os.makedirs(_fd, mode=0o700, exist_ok=True)
-                try:   # claim the run first: two Stops at once start one review, not two writing the same report
-                    _pfd = os.open(_pidf, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                except FileExistsError:
-                    _pfd = None
-                if _pfd is None:
-                    _full_lines = _running_line
-                else:
-                    with open(os.path.join(_fd, "run.log"), "w") as _lg:
-                        _pr = subprocess.Popen([sys.executable, "-I", _helper, "--out", _fd], cwd=repo_root,
-                                               stdin=subprocess.DEVNULL, stdout=_lg, stderr=subprocess.STDOUT, start_new_session=True)
-                    with os.fdopen(_pfd, "w") as fh:
-                        fh.write(str(_pr.pid))
-                    _full_lines = ["", "OCR review đầy đủ (LLM, ~1–2 phút) đã khởi động ở nền cho code này; Stop sau sẽ có kết quả."]
-                    logline(f"[{ts}] OCR full review started in the background pid={_pr.pid} ({os.path.basename(_fd)})")
-                    _prune_full_runs(_fd)
-            else:   # ended without a report (no endpoint, error): the delegation spec below is the way
-                logline(f"[{ts}] OCR full review ended without a report ({os.path.basename(_fd)}) — delegation only")
-    except Exception as _e:   # OCR is an aid here, never a reason to fail the gate
-        logline(f"[{ts}] OCR full review failed: {_e!r}")
-lines += _full_lines
-if os.environ.get("REVIEW_GATE_OCR", "1") != "0" and not ocr_missing and not any("đã xong" in l for l in _full_lines):
-    _helper = os.path.realpath(os.path.join(os.environ.get("CLAIM_HOOKDIR", ""), "..", "bin", "ocr-review"))
-    try:
-        if os.path.isfile(_helper):
-            # one folder per repo, in its git dir (never in the working tree; the message names the repo path, so it reads the same
-            # on every run), of the repo the gate checks (repo_root, the cwd's toplevel; not CLAUDE_PROJECT_DIR: OCR, 13/10);
-            # -I like every hook python: a module planted in the repo or PYTHONPATH must not run here
-            # (tests/gates/test_hook_python_isolation.sh)
-            _out = _ocr_root()
-            # 14 s: past the helper's own bound (2 x 6 s per ocr call) and inside the hook's 20 s, which Claude Code enforces by
-            # killing the hook, and a killed Stop hook lets the Stop through unreviewed (tests/gates/test_review_gate_ocr.sh)
-            _r = subprocess.run([sys.executable, "-I", _helper, "--delegate-only", "--out", _out], cwd=repo_root,
-                                capture_output=True, text=True, timeout=14)
-            _spec = next((l[6:].strip() for l in _r.stdout.splitlines() if l.startswith("spec: ")), "")
-            if _r.returncode == 0 and _spec:
-                lines += ["", "OCR (OpenCodeReview) đã tự chạy chế độ delegation: spec " + _spec,
-                          "  → giao spec này cho reviewer ở mục A; có khoá LLM thì chạy .agents/devkit/bin/ocr-review để OCR tự review "
-                          "(một lượt OCR review thành công sau lần sửa cuối được tính)."]
-            logline(f"[{ts}] ocr-review --delegate-only rc={_r.returncode} spec={_spec or '-'}")
-    except Exception as _e:   # OCR is an aid here, never a reason to fail the gate
-        logline(f"[{ts}] ocr-review failed: {_e!r}")
-sys.stderr.write("\n".join(lines) + "\n")
-sys.exit(2)
+        bg = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--background"],
+                            capture_output=True, text=True, timeout=15)
+        logline(f"[{ts}] BLOCK — 3-way review started: {bg.stdout.strip()[:200]}")
+        started = bg.stdout.strip() or bg.stderr.strip()
+    except Exception as e:
+        logline(f"[{ts}] review-fanout --background failed: {e!r}")
+        started = f"không tự khởi động được ({e!r})"
+_block(["⛔ REVIEW-GATE: code chưa có review 3 bên (Claude Code + Alibaba OCR + Antigravity, phải cùng PASS).",
+        f"Khởi động ở nền: {started}",
+        f"Chờ kết quả: {cmd_show}   (cùng code thì dùng lại kết quả, không chạy/tốn 2 lần)"])
 PY
 rc=$?
+[ "${rc}" -eq 0 ] && exit 0
 [ "${rc}" -eq 2 ] && exit 2
-exit 0
+echo "⛔ REVIEW-GATE: gate lỗi (python rc=${rc}) — chặn (fail-closed). Log: ${LOG}" >&2
+exit 2
