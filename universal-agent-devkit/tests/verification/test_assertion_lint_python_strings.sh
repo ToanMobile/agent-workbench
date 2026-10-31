@@ -196,13 +196,14 @@ RC=$?
 
 ERRORS=0
 
-# File chỉ xuống dòng bằng "\r" (gate --staged đọc blob không đổi xuống dòng): tokenize từ chối ⇒ quy tắc lề cũ, tách cả ở "\r".
+# File chỉ xuống dòng bằng "\r" (gate --staged đọc blob không đổi xuống dòng): quy tắc lề cũ, tách cả ở "\r" — có dòng
+# trống ("\r\r", tokenize từ chối) và không có (tokenize nhận nhưng gom cả file thành một dòng).
 CR_OUT=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import assertion_lint as a
-print(a.findings("def test_a():\r    pass\r\rdef test_b():\r    assert x\r"))' "$DEVKIT_ROOT/scripts/linters" 2>&1)
-if [ "$CR_OUT" = "[(1, 'test_a')]" ]; then
+print(a.findings("def test_a():\r    pass\r\rdef test_b():\r    assert x\r"), a.findings("def test_a():\r    pass\rdef test_b():\r    assert x\r"))' "$DEVKIT_ROOT/scripts/linters" 2>&1)
+if [ "$CR_OUT" = "[(1, 'test_a')] [(1, 'test_a')]" ]; then
     echo "OK: file chỉ có \\r: test_a rỗng bị báo"
 else
-    echo "FAIL: file chỉ có \\r: $CR_OUT (cần [(1, 'test_a')])"
+    echo "FAIL: file chỉ có \\r: $CR_OUT (cần [(1, 'test_a')] [(1, 'test_a')])"
     ERRORS=$((ERRORS+1))
 fi
 

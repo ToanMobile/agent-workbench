@@ -101,6 +101,8 @@ def _python_scan(text: str) -> "tuple | None":
     nên chữ `fail() {`, `# assert x` nằm sau đó không được thành assertion (bản cũ cắt thân nên không thấy) — không che
     là nới linter.
     Không tokenize được (không phải Python, cú pháp dở) ⇒ None: giữ quy tắc lề cũ."""
+    if re.search("\r(?!\n)", text):
+        return None     # "\r" đơn (gate --staged đọc blob): tokenize gom dòng khác splitlines của quy tắc cũ ⇒ quy tắc cũ
     rows, fresh, cuts = set(), True, []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(text).readline):
