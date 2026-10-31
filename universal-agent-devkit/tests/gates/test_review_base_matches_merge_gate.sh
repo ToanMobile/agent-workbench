@@ -6,7 +6,7 @@ set -u
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"; F="$HERE/bin/review-fanout.sh"; HOOK="$HERE/hooks/review_gate.sh"
 pass=0; fail=0; ok() { echo "ok - $1"; pass=$((pass+1)); }; ko() { echo "FAIL - $1"; fail=$((fail+1)); }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+. "$HERE/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 g() { git -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 g init -q -b main "$T/up" && echo a > "$T/up/a.txt" && g -C "$T/up" add a.txt && g -C "$T/up" commit -qm init
 g clone -q "$T/up" "$T/w" 2>/dev/null

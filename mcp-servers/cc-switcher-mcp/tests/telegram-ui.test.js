@@ -1,4 +1,6 @@
 // Bang dieu khien CC Switcher da go khoi Telegram (chuyen sang web). Telegram chi con canh bao va nut duyet super-board.
+// Giu duong dan cu telegram-ui.test.js: post-fix-gate khong duyet cheo duoc test da co bi xoa (khong co noi dung de buoc sha256);
+// kiem thu nghiep vu cu (quota, SQLite, chia repo) da chuyen sang panel.test.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
