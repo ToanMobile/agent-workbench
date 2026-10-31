@@ -53,6 +53,12 @@ bash "$F" --full --repo "$P" --list --chunk-lines 500 > "$TMP/list" 2>&1
 grep -q 'files in scope' "$TMP/list" && ! grep -q -E 'rea|super-board|node_modules|docs' "$TMP/list" \
   && ok "--list: chunks without the clones, node_modules, docs" || { fail "--list"; cat "$TMP/list"; }
 
+bash "$F" --full --repo "$P" --list --paths "lib/,tests/test_app.py,mcp-servers/rea/" > "$TMP/list2" 2>&1
+grep -q '^2 files in scope' "$TMP/list2" && grep -q 'lib' "$TMP/list2" && ! grep -q -E 'rea|src' "$TMP/list2" \
+  && ok "--paths limits the scan to the named files/folders (excludes still apply)" || { fail "--paths"; cat "$TMP/list2"; }
+bash "$F" --full --repo "$P" --list --paths "nope/" > /dev/null 2>&1; [ $? = 2 ] \
+  && ok "--paths matching nothing → exit 2" || fail "--paths empty"
+
 bash "$F" --full --repo "$P" --out "$TMP/run" --chunk-lines 6 > "$TMP/out" 2>&1; rc=$?
 S="$TMP/run/full-summary.json"
 [ "$rc" = 1 ] && [ -s "$S" ] && ok "full scan with a P1 + a recurring bug → exit 1, summary written" || { fail "rc=$rc"; cat "$TMP/out"; }

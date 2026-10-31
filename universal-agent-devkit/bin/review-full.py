@@ -234,6 +234,8 @@ def main(argv=None):
     ap.add_argument("--reviewers", default="claude,antigravity,grok,ocr")
     ap.add_argument("--list", action="store_true", help="print the chunks and exit (no LLM)")
     ap.add_argument("--no-verify", action="store_true")
+    ap.add_argument("--paths", default="", help="comma-separated files or folders (ending in /) to limit the scan to; "
+                                                "the excludes still apply")
     a = ap.parse_args(argv)
     repo = os.path.realpath(git(a.repo, "rev-parse", "--show-toplevel").stdout.strip() or a.repo)
     reviewers = [r for r in a.reviewers.split(",") if r]
@@ -241,6 +243,16 @@ def main(argv=None):
         print("review-full: --reviewers takes claude,antigravity,grok,ocr", file=sys.stderr)
         return 2
     files, skipped = select_files(repo)
+    wanted = [w.strip() for w in a.paths.split(",") if w.strip()]
+    if wanted:
+        def hit(p):
+            return any(p == w or (w.endswith("/") and p.startswith(w)) for w in wanted)
+        kept = [(p, n) for p, n in files if hit(p)]
+        skipped += len(files) - len(kept)
+        files = kept
+        if not files:
+            print("review-full: --paths matched no file in scope", file=sys.stderr)
+            return 2
     chunks = make_chunks(files, max(500, a.chunk_lines))
     if a.list:
         for c in chunks:
@@ -256,7 +268,8 @@ def main(argv=None):
     timeouts = {"claude": int(os.environ.get("REVIEW_TIMEOUT_CLAUDE", "1500")), "grok": int(os.environ.get("REVIEW_TIMEOUT_GROK", "1500")),
                 "antigravity": int(os.environ.get("REVIEW_TIMEOUT_AGY", "2400")), "security": 1500, "verifier": 1500}
     write_json(os.path.join(out, "plan.json"), {"repo": repo, "head": head, "files": len(files), "excluded": skipped,
-                                                "chunks": chunks, "reviewers": reviewers, "models": models})
+                                                "chunks": chunks, "reviewers": reviewers, "models": models,
+                                                "paths": wanted})
     print(f"review-full: {len(files)} files ({skipped} excluded) in {len(chunks)} chunks → {out}", flush=True)
 
     spent = {"usd": 0.0, "tokens": 0}
