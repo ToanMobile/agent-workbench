@@ -1,6 +1,6 @@
 # Cổng máy cho mọi PR (pipeline tự động, không duyệt tay): lint, typecheck, test, semgrep (gồm các mẫu bug đã biết trong
 # .agents/instincts.md), gitleaks, quét mẫu bug đã biết, và Alibaba OpenCodeReview chế độ đầy đủ. BẤT KỲ bước nào lỗi → job đỏ.
-# Review 3 bên (Claude + OCR + Antigravity) chạy trên máy dev qua universal-agent-devkit/bin/review-fanout.sh; đây là lớp CI độc lập.
+# Review 4 bên (Claude Opus + Antigravity + Grok + OCR) chạy trên máy dev qua universal-agent-devkit/bin/review-fanout.sh; đây là lớp CI độc lập.
 # Secrets cần có: OCR_LLM_URL, OCR_LLM_TOKEN, OCR_LLM_MODEL (thiếu → bước OCR đỏ, không bao giờ "bỏ qua").
 name: pr-review
 
@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           python3 universal-agent-devkit/tests/gates/test_review_merge_verdict.py
           bash universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh
-          bash universal-agent-devkit/tests/gates/test_review_gate_3way.sh
+          bash universal-agent-devkit/tests/gates/test_review_gate_4way.sh
           (cd mcp-servers/antigravity-pm-mcp && npm test)
           bash universal-agent-devkit/tests/run_impacted.sh --all
 
@@ -78,7 +78,7 @@ jobs:
           out="$RUNNER_TEMP/ocr"
           mkdir -p "$out"
           python3 universal-agent-devkit/bin/ocr-review --strict --from "$BASE_REF" --out "$out" | tee "$RUNNER_TEMP/ocr.txt"
-          # same rule as the 3-way review (bin/review_runner.py run_ocr): failed files or a critical/high comment = red
+          # same rule as the 4-way review (bin/review_runner.py run_ocr): failed files or a critical/high comment = red
           python3 - "$out/ocr-review.json" <<'PY'
           import json, sys
           rep = json.load(open(sys.argv[1], encoding="utf-8"))

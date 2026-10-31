@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hooks/review_gate.sh (31/10/2026): the ONLY review that passes a Stop is the unanimous 3-way review of exactly the current code
+# hooks/review_gate.sh (31/10/2026): the ONLY review that passes a Stop is the unanimous 4-way review of exactly the current code
 # (bin/review-fanout.sh: Claude Code + Alibaba OCR + Antigravity). An agent review or an OCR run alone does not; a FAIL or a running
 # review blocks; a code change after a PASS re-arms; there is no anti-loop release and the gate fails closed. With autostart on it
 # starts the review in the background itself (stub reviewers here, no LLM).
@@ -33,11 +33,11 @@ stop() { printf '{"session_id":"s","transcript_path":"%s","hook_event_name":"Sto
   | CLAUDE_PROJECT_DIR="$P" bash "$DEVKIT_DIR/hooks/review_gate.sh" >/dev/null 2>"$TMP/err"; }
 F="$DEVKIT_DIR/bin/review-fanout.sh"
 rundir() { echo "$(cd "$P" && git rev-parse --git-common-dir | sed "s|^\.git$|$P/.git|")/review-fanout/$(bash "$F" --repo "$P" --base verified --hash)"; }
-verdict() { d="$(rundir)"; mkdir -p "$d"; printf '{"verdict":"%s","reasons":["%s"]}' "$1" "${2:-}" > "$d/summary.json"; printf '# 3-way review: %s\n- %s\n' "$1" "${2:-}" > "$d/summary.md"; }
+verdict() { d="$(rundir)"; mkdir -p "$d"; printf '{"verdict":"%s","reasons":["%s"]}' "$1" "${2:-}" > "$d/summary.json"; printf '# 4-way review: %s\n- %s\n' "$1" "${2:-}" > "$d/summary.md"; }
 
 echo "def f(): return 2" > "$P/app.py"; ev edit e1 "$P/app.py"
 stop; rc=$?
-[ "$rc" = 2 ] && grep -q "chưa có review 3 bên" "$TMP/err" && ok "edited code, no 3-way review: blocked" || fail "not blocked rc=$rc $(cat "$TMP/err")"
+[ "$rc" = 2 ] && grep -q "chưa có review 4 bên" "$TMP/err" && ok "edited code, no 4-way review: blocked" || fail "not blocked rc=$rc $(cat "$TMP/err")"
 [ ! -d "$(rundir)" ] && ok "REVIEW_GATE_AUTOSTART=0 (tests): no real reviewer started" || fail "autostart ran in a test"
 ev agent a1; stop; [ $? = 2 ] && ok "an agent review alone does not pass" || fail "agent review alone passed"
 ev skill k1; stop; [ $? = 2 ] && ok "the open-code-review skill alone does not pass" || fail "skill alone passed"
@@ -45,14 +45,14 @@ for i in 1 2 3 4 5; do stop; [ $? = 2 ] || { fail "stop $i released (anti-loop r
 
 verdict FAIL "antigravity: timeout — no audit"
 stop; rc=$?
-[ "$rc" = 2 ] && grep -q "KHÔNG PASS" "$TMP/err" && grep -q "antigravity: timeout" "$TMP/err" && ok "3-way FAIL: blocked with the reasons" \
+[ "$rc" = 2 ] && grep -q "KHÔNG PASS" "$TMP/err" && grep -q "antigravity: timeout" "$TMP/err" && ok "4-way FAIL: blocked with the reasons" \
   || fail "FAIL summary not shown rc=$rc"
 rm -rf "$(rundir)"; mkdir -p "$(rundir)"; sleep 60 & echo $! > "$(rundir)/pid"
 stop; rc=$?; kill %1 2>/dev/null; wait 2>/dev/null
-[ "$rc" = 2 ] && grep -q "đang chạy" "$TMP/err" && ok "3-way review running: blocked" || fail "running not blocked rc=$rc"
+[ "$rc" = 2 ] && grep -q "đang chạy" "$TMP/err" && ok "4-way review running: blocked" || fail "running not blocked rc=$rc"
 rm -f "$(rundir)/pid"
 verdict PASS
-stop; [ $? = 0 ] && ok "unanimous 3-way PASS for this exact code: passes" || fail "PASS not honoured: $(cat "$TMP/err")"
+stop; [ $? = 0 ] && ok "unanimous 4-way PASS for this exact code: passes" || fail "PASS not honoured: $(cat "$TMP/err")"
 echo "def f(): return 3" > "$P/app.py"; ev edit e2 "$P/app.py"
 stop; [ $? = 2 ] && ok "code changed after the PASS: blocked again" || fail "stale PASS reused"
 
@@ -62,20 +62,22 @@ mkdir -p "$TMP/lone"; cp -R "$DEVKIT_DIR/hooks" "$TMP/lone/hooks"   # the hooks 
 printf '{"session_id":"s","transcript_path":"%s","hook_event_name":"Stop"}' "$TR" | CLAUDE_PROJECT_DIR="$P" bash "$TMP/lone/hooks/review_gate.sh" >/dev/null 2>"$TMP/err"; rc=$?
 [ "$rc" = 2 ] && grep -q "review-fanout.sh" "$TMP/err" && ok "no review-fanout.sh next to the hook: fail-closed (rc 2)" || fail "missing fanout passed rc=$rc"
 
-# autostart on, stub reviewers: the gate starts the review, a later Stop passes once all 3 said pass
+# autostart on, stub reviewers: the gate starts the review, a later Stop passes once all 4 said pass
 STUB="$TMP/stub"; mkdir -p "$STUB"
 printf '#!/usr/bin/env bash\nout=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done\n[ -n "$out" ] && printf %s > "$out"\n' \
   "'"'{"status":"completed","comments":[],"manifest":{"coverage":{"completed":["a"],"failed":[]}},"summary":{"total_tokens":1}}'"'" > "$STUB/ocr"
-printf '#!/usr/bin/env bash\ncat >/dev/null\necho %s\n' "'"'{"type":"result","is_error":false,"result":"{\"verdict\":\"pass\",\"findings\":[]}","total_cost_usd":0,"usage":{"input_tokens":1,"output_tokens":1}}'"'" > "$STUB/claude"
+printf '#!/usr/bin/env bash\ncat >/dev/null\necho %s\n' "'"'{"type":"result","is_error":false,"result":"{\"verdict\":\"pass\",\"findings\":[]}","total_cost_usd":0,"usage":{"input_tokens":1,"output_tokens":1},"modelUsage":{"claude-opus-4-5":{"outputTokens":1}}}'"'" > "$STUB/claude"
+printf '#!/usr/bin/env bash\necho %s\n' "'"'{"text":"{\"verdict\":\"pass\",\"findings\":[]}","usage":{"total_tokens":1},"modelUsage":{"grok-4.7":{"outputTokens":1}}}'"'" > "$STUB/grok"
 echo "const fs=require('fs');const a=process.argv;fs.writeFileSync(a[a.indexOf('--out')+1],JSON.stringify({reviewer:'antigravity',status:'ok',verdict:'pass',findings:[]}));" > "$STUB/agy.js"
-chmod +x "$STUB/ocr" "$STUB/claude"
-export PATH="$STUB:$PATH" REVIEW_CLAUDE_BIN="$STUB/claude" REVIEW_AGY_CLI="$STUB/agy.js"
+chmod +x "$STUB/ocr" "$STUB/claude" "$STUB/grok"
+unset REVIEW_CLAUDE_MODEL REVIEW_GROK_MODEL
+export PATH="$STUB:$PATH" REVIEW_CLAUDE_BIN="$STUB/claude" REVIEW_AGY_CLI="$STUB/agy.js" REVIEW_GROK_BIN="$STUB/grok"
 REVIEW_GATE_AUTOSTART=1 stop; rc=$?
-[ "$rc" = 2 ] && grep -q "Khởi động ở nền: review-fanout: started" "$TMP/err" && ok "autostart: the gate started the 3-way review and blocked" \
+[ "$rc" = 2 ] && grep -q "Khởi động ở nền: review-fanout: started" "$TMP/err" && ok "autostart: the gate started the 4-way review and blocked" \
   || fail "autostart did not start rc=$rc $(cat "$TMP/err")"
 for _ in $(seq 1 60); do [ -f "$(rundir)/summary.json" ] && break; sleep 0.5; done
 REVIEW_GATE_AUTOSTART=1 stop; rc=$?
 [ "$rc" = 0 ] && ok "after the background review PASSED, the Stop passes" || fail "background PASS not honoured rc=$rc $(cat "$TMP/err"; cat "$(rundir)/fanout.log" 2>/dev/null | tail -5)"
 
-if [ "$FAILS" -ne 0 ]; then echo "review gate 3-way: $FAILS FAILED"; exit 1; fi
-echo "review gate 3-way: all checks passed"
+if [ "$FAILS" -ne 0 ]; then echo "review gate 4-way: $FAILS FAILED"; exit 1; fi
+echo "review gate 4-way: all checks passed"

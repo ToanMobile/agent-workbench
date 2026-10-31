@@ -13,7 +13,7 @@
     failed on the provider, 0 tokens, and review_gate then held every Stop): the same delegation, with the provider's reason shown
     (`LLM endpoint unusable`). A review that reviewed some files and failed others stays a failure (exit 1).
 --delegate-only skips the LLM attempt (no cost, ~1 s): a spec for a human or an agent to read, never an OCR review.
---strict (bin/review-fanout.sh, the 3-way review): only the full LLM review counts — no endpoint, an endpoint that rejects every
+--strict (bin/review-fanout.sh, the 4-way review): only the full LLM review counts — no endpoint, an endpoint that rejects every
 request, or any failure is exit 1 with the reason; the delegation fallback is never taken (it is Claude reading OCR's rules,
 not OCR, so it can never stand in for the OCR vote).
 Output goes to a new temp folder (or --out DIR, reused and overwritten: review_gate passes one folder per repo so its block
@@ -156,7 +156,7 @@ def main(argv):
             print("report: " + report)
             return 0
         why = (r.stderr or r.stdout or "").strip()
-        if strict:   # the 3-way review: OCR itself or nothing
+        if strict:   # the 4-way review: OCR itself or nothing
             print("ocr-review: --strict: `ocr review` did not produce a report (rc=%d): %s" % (r.returncode, mask(why)[:500]),
                   file=sys.stderr)
             return 1

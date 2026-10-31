@@ -9,7 +9,7 @@ There is no second registry: every `### [INSTINCT-…]` entry of .agents/instinc
   - **detect-glob:** `*.py`, `*.sh`          (files the detect regexes apply to; default: the entry's glob, else every file)
 
 Subcommands
-  context [--files F ...] [--max N]   compact Markdown of the patterns, for the reviewers' prompts (all 3 get the same text)
+  context [--files F ...] [--max N]   compact Markdown of the patterns, for the reviewers' prompts (all 4 get the same text)
   scan --base REF [--out FILE]        added lines of `git diff REF` (+ untracked files) that match a `detect` regex in a file
                                       the entry's globs cover → a reviewer envelope "registry" (P0, category recurring-bug)
   semgrep --out FILE                  one semgrep rule (pattern-regex, paths.include = globs) per entry with a detect regex

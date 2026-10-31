@@ -48,6 +48,6 @@ export DEVKIT_GATE_SLOT_HELD=1
 # A test that runs session_context.sh (SessionStart) must not start a REAL incident scan of the 5 repos and file cards on the
 # public DevKit board (Antigravity plan review T0055); test_devkit_incident.sh unsets it to test the scanner itself.
 export DEVKIT_INCIDENT=0
-# hooks/review_gate.sh starts THE 3-way review (claude -p, ocr review, Antigravity audit: real LLM calls, real cost) in the
-# background on a block. A test never does: it still blocks. tests/gates/test_review_gate_3way.sh sets 1 with stub reviewers.
+# hooks/review_gate.sh starts THE 4-way review (claude -p, grok -p, ocr review, Antigravity audit: real LLM calls, real cost) in the
+# background on a block. A test never does: it still blocks. tests/gates/test_review_gate_4way.sh sets 1 with stub reviewers.
 export REVIEW_GATE_AUTOSTART=0

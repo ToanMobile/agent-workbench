@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// pm-review-audit.js — Antigravity's vote in the 3-way review (universal-agent-devkit/bin/review-fanout.sh).
+// pm-review-audit.js — Antigravity's vote in the 4-way review (universal-agent-devkit/bin/review-fanout.sh).
 // Same path as the MCP tools (pm_task_create -> pm_dispatch kind=audit), from a shell, then waits for audit-agent.json.
 //
 //   node bin/pm-review-audit.js --project ROOT --base REF --out FILE [--message-file F] [--timeout SEC] [--model M]
@@ -52,9 +52,9 @@ async function main() {
   try {
     created = await call('pm_task_create', {
       project,
-      title: `[3-way review] ${head.slice(0, 12)} vs ${base}`,
+      title: `[4-way review] ${head.slice(0, 12)} vs ${base}`,
       brief: `CHI DOC, KHONG SUA. Audit doc lap cho thay doi: \`git diff ${base}\` (commit tu ${base} + thay doi chua commit + file moi chua track). `
-        + 'Day la 1 trong 3 reviewer (Claude, OCR, Antigravity); PASS chi khi ca 3 cung pass.',
+        + 'Day la 1 trong 4 reviewer (Claude Opus, Antigravity, Grok, OCR); PASS chi khi ca 4 cung pass.',
       definitionOfDone: [`Khong con loi blocker/major trong thay doi so voi ${base}`],
       type: 'refactor',
       proofKind: 'script',

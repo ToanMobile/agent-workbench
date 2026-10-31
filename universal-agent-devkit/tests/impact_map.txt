@@ -60,7 +60,7 @@ skills/*/SKILL.md   tests/verification/test_skill_size.sh
 # 30/10 (#685): tests/lib/case_runner.pl và watchdog_env.py chạy qua tests/lib/case_runner.sh (hook_contract_test.sh source nó) mà không được gọi tên trong file test.
 tests/lib/case_runner.pl   hooks/tests/hook_contract_test.sh tests/gates/test_hook_contract_watchdog_env.sh
 tests/lib/watchdog_env.py   hooks/tests/hook_contract_test.sh tests/gates/test_hook_contract_watchdog_env.sh
-# 2026-10-31: the 3-way review — review-fanout.sh starts bin/review_runner.py and known_patterns.py; no test names the runner.
-bin/review_runner.py               tests/gates/test_review_fanout_e2e.sh tests/gates/test_review_gate_3way.sh
+# 2026-10-31: the 4-way review — review-fanout.sh starts bin/review_runner.py and known_patterns.py; no test names the runner.
+bin/review_runner.py               tests/gates/test_review_fanout_e2e.sh tests/gates/test_review_gate_4way.sh
 bin/known_patterns.py              tests/gates/test_review_fanout_e2e.sh
-bin/review-merge.py                tests/gates/test_review_fanout_e2e.sh tests/gates/test_review_gate_3way.sh
+bin/review-merge.py                tests/gates/test_review_fanout_e2e.sh tests/gates/test_review_gate_4way.sh

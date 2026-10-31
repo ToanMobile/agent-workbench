@@ -1,27 +1,32 @@
 #!/usr/bin/env bash
-# review-fanout.sh — THE code review: Claude Code + Alibaba OpenCodeReview + Antigravity, in parallel, unanimous.
+# review-fanout.sh — THE code review, 4-way unanimous: Claude Code (Opus) + Antigravity + Grok + Alibaba OpenCodeReview,
+# in parallel; all 4 must pass.
 #
 #   review-fanout.sh [--base REF|verified] [--repo DIR] [--background] [--status] [--hash] [--force]
 #
-# Rule (user 31/10/2026: "3 agent phải cùng thống nhất kết quả thì mới gọi là pass"): PASS only when all 3 reviewers ran,
+# Rule (user 31/10/2026: "3 agent phải cùng thống nhất kết quả thì mới gọi là pass", widened the same day to 4 equal reviewers:
+# Claude Code pinned to Opus, Antigravity, Grok, OCR full LLM mode): PASS only when all 4 reviewers ran on the required model,
 # finished, and each says pass, no unrefuted P0/P1 is left, no known bug pattern (.agents/instincts.md) recurs, the budget
 # holds and every accepted P0/P1 of an earlier run is fixed with a linked regression test. Missing / failed / timed-out /
 # unavailable reviewer = FAIL with the reason. There is no fallback that counts as a reviewer's pass.
 #
 # Flow (one run dir per code state, shared by every worktree: <git-common-dir>/review-fanout/<code-hash>/):
-#   1. meta.json (base, depth, files, budget) + context.md (known bug patterns for these files, same text for all 3)
+#   1. meta.json (base, depth, files, budget, pinned models) + context.md (known bug patterns for these files, same text for all)
 #   2. registry.json  — bin/known_patterns.py scan: added lines that match a `detect` regex = P0 recurring bug (deterministic)
 #   3. in parallel, each bounded by its own timeout (bin/review_runner.py):
-#        claude.json (claude -p, read-only) · ocr.json (ocr-review --strict, OCR's own LLM) · antigravity.json (pm audit)
+#        claude.json (claude -p --model opus, read-only; a non-Opus run = FAIL) · antigravity.json (pm audit) ·
+#        grok.json (grok -p headless, read-only sandbox, pinned model) · ocr.json (ocr-review --strict, OCR's own LLM)
 #        + security.json (Claude security reviewer) when depth=deep
 #   4. review-merge.py --pre → candidates.json (cited P0/P1) → verifier.json (Claude tries to refute each)
 #   5. review-merge.py --record-bugs → summary.json / summary.md (verdict + reasons + deduped findings + inline comments),
 #      accepted P0/P1 → OPEN bug rows BUG-REV-<id> in the regression checklist, outcome → .claude/audit-gate/review_outcomes.jsonl
 # Depth: >= REVIEW_DEEP_LINES (50) changed lines, or a path that looks like auth / payment / schema / migration / secrets → deep
-# (security reviewer + verifier required); smaller → light prompts, still all 3 reviewers.
-# Env: REVIEW_TIMEOUT_CLAUDE (900) REVIEW_TIMEOUT_OCR (900) REVIEW_TIMEOUT_AGY (1500) REVIEW_TIMEOUT_VERIFY (600) seconds;
+# (security reviewer + verifier required, both Claude Opus); smaller → light prompts, still all 4 reviewers.
+# Env: REVIEW_TIMEOUT_CLAUDE (900) REVIEW_TIMEOUT_OCR (900) REVIEW_TIMEOUT_AGY (1500) REVIEW_TIMEOUT_GROK (900)
+#      REVIEW_TIMEOUT_VERIFY (600) seconds;
 #      REVIEW_MAX_TOKENS (3000000) REVIEW_MAX_USD (15) for the whole review — over budget = FAIL;
-#      REVIEW_CLAUDE_BIN / REVIEW_CLAUDE_MODEL / REVIEW_AGY_CLI.
+#      REVIEW_CLAUDE_BIN / REVIEW_CLAUDE_MODEL (opus; anything that is not an Opus model is refused) / REVIEW_AGY_CLI /
+#      REVIEW_GROK_BIN (grok on PATH, else ~/.grok/bin/grok) / REVIEW_GROK_MODEL (grok-4.7).
 # A finished code state is cached: the same code is never reviewed (or billed) twice; --force reruns it.
 # --status prints PASS|FAIL|RUNNING|NONE for the current code (exit 0 PASS, 1 FAIL, 3 RUNNING, 4 NONE); --hash prints the hash.
 # --background starts the review detached and returns (exit 3). Exit 0 PASS, 1 FAIL, 2 usage error.
@@ -62,7 +67,9 @@ BASE_SHA="$(git rev-parse -q --verify "${BASE}^{commit}" 2>/dev/null)" || { echo
 CODE_HASH="$(python3 -I - "$BASE_SHA" <<'PY'
 import hashlib, os, subprocess, sys
 base = sys.argv[1]
-h = hashlib.sha256(b"3way-review-v1\0" + base.encode() + b"\0")
+h = hashlib.sha256(b"4way-review-v2\0" + base.encode() + b"\0")
+# the pinned models are part of the code state: a review by another model is a different review
+h.update(("%s\0%s\0" % (os.environ.get("REVIEW_CLAUDE_MODEL", "opus"), os.environ.get("REVIEW_GROK_MODEL", "grok-4.7"))).encode())
 h.update(subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True).stdout)
 h.update(subprocess.run(["git", "diff", "--binary", "--no-ext-diff", base, "--"], capture_output=True).stdout)
 for p in sorted(x for x in subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"],
@@ -118,7 +125,7 @@ fi
 [ "$FORCE" = 1 ] && [ "$MODE" != "child" ] && rm -rf "$RUN"
 mkdir -p "$RUN" && chmod 700 "$RUN"
 echo $$ > "$RUN/pid"
-rm -f "$RUN"/{claude,ocr,antigravity,security,verifier,registry}.json "$RUN/summary.json" "$RUN/candidates.json"
+rm -f "$RUN"/{claude,ocr,antigravity,grok,security,verifier,registry}.json "$RUN/summary.json" "$RUN/candidates.json"
 trap 'rm -f "$RUN/pid"' EXIT
 
 python3 -I - "$REPO" "$BASE_SHA" "$CODE_HASH" "$RUN" "$HERE" <<'PY' || { echo "review-fanout: meta failed" >&2; exit 2; }
@@ -144,7 +151,7 @@ sensitive = re.compile(r"(auth|login|session|token|oauth|passw|payment|billing|m
 deep_lines = int(os.environ.get("REVIEW_DEEP_LINES", "50") or 50)
 hot = [f for f in files if sensitive.search(f)]
 depth = "deep" if lines >= deep_lines or hot else "light"
-required = ["claude", "ocr", "antigravity", "registry"] + (["security", "verifier"] if depth == "deep" else [])
+required = ["claude", "antigravity", "grok", "ocr", "registry"] + (["security", "verifier"] if depth == "deep" else [])
 def num(name, d, cast):
     v = os.environ.get(name, d)
     try:
@@ -154,7 +161,9 @@ def num(name, d, cast):
 meta = {"repo": repo, "base": base, "code_hash": code_hash, "depth": depth, "changed_lines": lines, "sensitive_paths": hot,
         "files": files, "untracked": untracked, "dirty": bool(git("status", "--porcelain", "--untracked-files=all").strip()),
         "commits_since_base": bool(git("rev-list", "--max-count=1", f"{base}..HEAD").strip()), "required": required,
-        "max_tokens": num("REVIEW_MAX_TOKENS", "3000000", int), "max_usd": num("REVIEW_MAX_USD", "15", float)}
+        "max_tokens": num("REVIEW_MAX_TOKENS", "3000000", int), "max_usd": num("REVIEW_MAX_USD", "15", float),
+        "models": {"claude": os.environ.get("REVIEW_CLAUDE_MODEL") or "opus",
+                   "grok": os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7"}}
 with open(os.path.join(run, "meta.json"), "w") as fh:
     json.dump(meta, fh, indent=1)
 ctx = subprocess.run([sys.executable, "-I", os.path.join(here, "known_patterns.py"), "--repo", repo, "context", "--files", *files],
@@ -167,7 +176,7 @@ PY
 
 if [ "$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["files"]))' "$RUN/meta.json")" = "0" ]; then
   python3 -I -c 'import json,sys,time; json.dump({"verdict":"PASS","reasons":[],"note":"nothing to review","ts":time.time()}, open(sys.argv[1],"w"))' "$RUN/summary.json"
-  printf '# 3-way review: ✅ PASS\n\nNothing to review: no change since %s.\n' "$BASE_SHA" > "$RUN/summary.md"
+  printf '# 4-way review: ✅ PASS\n\nNothing to review: no change since %s.\n' "$BASE_SHA" > "$RUN/summary.md"
   cat "$RUN/summary.md"; exit 0
 fi
 DEPTH="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["depth"])' "$RUN/meta.json")"
@@ -179,7 +188,8 @@ R="$HERE/review_runner.py"
 python3 -I "$R" claude      --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_CLAUDE:-900}" & P1=$!
 python3 -I "$R" ocr         --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_OCR:-900}"    & P2=$!
 python3 -I "$R" antigravity --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_AGY:-1500}"   & P3=$!
-PIDS="$P1 $P2 $P3"
+python3 -I "$R" grok        --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_GROK:-900}"   & P4=$!
+PIDS="$P1 $P2 $P3 $P4"
 if [ "$DEPTH" = "deep" ]; then
   python3 -I "$R" security --repo "$REPO" --run "$RUN" --timeout "${REVIEW_TIMEOUT_CLAUDE:-900}" & PIDS="$PIDS $!"
 fi

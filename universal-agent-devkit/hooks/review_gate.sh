@@ -15,8 +15,9 @@
 #     edited (Edit/Write, or a Bash command that names a code file changed after it started), AND
 #   • THE review of exactly that code state has not PASSED.
 # THE review (user, 31/10/2026: "3 agent review ... phải cùng thống nhất kết quả thì mới gọi là pass") is
-# bin/review-fanout.sh: Claude Code + Alibaba OpenCodeReview (full mode, its own LLM) + Antigravity
-# (antigravity-pm audit), in parallel, verdict by bin/review-merge.py — PASS only when all 3 ran and all 3
+# bin/review-fanout.sh: Claude Code pinned to Opus + Antigravity (antigravity-pm audit) + Grok (grok CLI) +
+# Alibaba OpenCodeReview (full mode, its own LLM), in parallel, verdict by bin/review-merge.py — PASS only when all 4 ran (Claude
+# on Opus, Grok on its pinned model) and all 4
 # say pass, no unrefuted P0/P1, no recurring known bug, budget kept, accepted findings fixed with a test.
 # A sub-agent review, a skill, or OCR alone no longer counts. No review yet → the gate starts it in the
 # background and blocks; running → blocks; FAIL → blocks with the reasons and findings.
@@ -68,7 +69,7 @@ LOG="${LOG_DIR}/review_gate.log"
 
 # QA K-4: without python3 this gate cannot run — say so instead of passing silently.
 if ! command -v python3 >/dev/null 2>&1; then   # fail closed (31/10): a gate that cannot run cannot say the code was reviewed
-  echo "⛔ REVIEW-GATE: python3 không có — không kiểm được review 3 bên, chặn Stop. Cài python3." >&2
+  echo "⛔ REVIEW-GATE: python3 không có — không kiểm được review 4 bên, chặn Stop. Cài python3." >&2
   exit 2
 fi
 # #528: worker của board không chấm main. Worktree liên kết vẫn chạy.
@@ -692,8 +693,8 @@ if wip_push_start is not None:
         if any(_rv < e < _p for e in edit_marks) or any(_rv < _bi < _p and _may_edit(_bc) for _bi, _s, _e, _bc in bash_runs):
             _unreviewed_push = _p
             break
-    # 31/10: a push carries code to others, so it needs THE 3-way review like a handover (no skip on an older agent review)
-    logline(f"[{ts}] work in progress, but this turn pushed (#{_unreviewed_push or push_marks}) — gated by the 3-way review")
+    # 31/10: a push carries code to others, so it needs THE 4-way review like a handover (no skip on an older agent review)
+    logline(f"[{ts}] work in progress, but this turn pushed (#{_unreviewed_push or push_marks}) — gated by the 4-way review")
 
 # No .kt edited by me this session (the dirty files are pre-existing /
 # someone else's) → nothing of mine to gate.
@@ -717,7 +718,7 @@ def _fanout_path():
 
 def _block(lines_):
     unrev_ = sorted(session_unreviewed)
-    out = list(lines_) + ["", f"{len(unrev_)} file code session này sửa, chưa có review 3 bên PASS cho đúng code hiện tại:"]
+    out = list(lines_) + ["", f"{len(unrev_)} file code session này sửa, chưa có review 4 bên PASS cho đúng code hiện tại:"]
     out += [f"  • {f}" for f in unrev_[:20]] + ([f"  … +{len(unrev_) - 20} file nữa"] if len(unrev_) > 20 else [])
     sys.stderr.write("\n".join(out) + "\n")
     sys.exit(2)
@@ -727,7 +728,7 @@ fanout = _fanout_path()
 review_base = "verified"   # bin/review-fanout.sh resolves the same verified head (devkit_harness) — one code state, one hash
 if not fanout:
     logline(f"[{ts}] BLOCK — bin/review-fanout.sh not found next to the hook")
-    _block(["⛔ REVIEW-GATE: không tìm thấy bin/review-fanout.sh (review 3 bên) — chặn (fail-closed). Cài lại DevKit: agent-kit init."])
+    _block(["⛔ REVIEW-GATE: không tìm thấy bin/review-fanout.sh (review 4 bên) — chặn (fail-closed). Cài lại DevKit: agent-kit init."])
 cmd_show = f"bash {fanout} --repo {repo_root} --base {review_base}"
 try:
     st = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--status"],
@@ -735,10 +736,10 @@ try:
     state, run_dir = (st.stdout.split() + ["", ""])[:2]
 except Exception as e:
     logline(f"[{ts}] review-fanout --status failed: {e!r} — BLOCK")
-    _block([f"⛔ REVIEW-GATE: không đọc được trạng thái review 3 bên ({e!r}) — chặn (fail-closed).", f"Chạy tay: {cmd_show}"])
+    _block([f"⛔ REVIEW-GATE: không đọc được trạng thái review 4 bên ({e!r}) — chặn (fail-closed).", f"Chạy tay: {cmd_show}"])
 if state == "PASS":
     reset_attempts()
-    logline(f"[{ts}] 3-way review PASS for this code ({os.path.basename(run_dir)}) — pass")
+    logline(f"[{ts}] 4-way review PASS for this code ({os.path.basename(run_dir)}) — pass")
     sys.exit(0)
 if state == "FAIL":
     try:
@@ -746,29 +747,29 @@ if state == "FAIL":
             summ = fh.read().splitlines()[:45]
     except OSError:
         summ = [f"(summary.md không đọc được trong {run_dir})"]
-    logline(f"[{ts}] BLOCK — 3-way review FAIL ({os.path.basename(run_dir)})")
-    _block(["⛔ REVIEW-GATE: review 3 bên (Claude + OCR + Antigravity) KHÔNG PASS cho code này — cả 3 phải cùng pass.", ""] + summ + [
+    logline(f"[{ts}] BLOCK — 4-way review FAIL ({os.path.basename(run_dir)})")
+    _block(["⛔ REVIEW-GATE: review 4 bên (Claude Opus + Antigravity + Grok + OCR) KHÔNG PASS cho code này — cả 4 phải cùng pass.", ""] + summ + [
         "", "Sửa từng finding P0/P1 (fix theo CLASS, không chỉ instance) + viết test hồi quy rồi",
         "  regression_checklist.py bug-link BUG-REV-<id> <test>; bug lặp lại dạng mới: instincts.py add … --detect '<regex>'.",
         f"Code đổi → review lại tự chạy. Chạy ngay và chờ kết quả: {cmd_show}",
         f"Reviewer lỗi/timeout/thiếu thì chạy lại sau khi sửa môi trường: {cmd_show} --force"])
 if state == "RUNNING":
-    logline(f"[{ts}] BLOCK — 3-way review running ({os.path.basename(run_dir)})")
-    _block(["⛔ REVIEW-GATE: review 3 bên đang chạy cho đúng code này. Chờ kết quả (đừng sửa code giữa chừng):",
+    logline(f"[{ts}] BLOCK — 4-way review running ({os.path.basename(run_dir)})")
+    _block(["⛔ REVIEW-GATE: review 4 bên đang chạy cho đúng code này. Chờ kết quả (đừng sửa code giữa chừng):",
             f"  {cmd_show}   (in kết quả khi xong; trạng thái: --status)"])
 if os.environ.get("REVIEW_GATE_AUTOSTART", "1") == "0":   # tests (tests/lib/clean_git_env.sh): never start real LLM reviewers; still blocks
     started = "chưa (REVIEW_GATE_AUTOSTART=0) — tự chạy lệnh dưới"
-    logline(f"[{ts}] BLOCK — no 3-way review yet (autostart off)")
+    logline(f"[{ts}] BLOCK — no 4-way review yet (autostart off)")
 else:
     try:
         bg = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--background"],
                             capture_output=True, text=True, timeout=15)
-        logline(f"[{ts}] BLOCK — 3-way review started: {bg.stdout.strip()[:200]}")
+        logline(f"[{ts}] BLOCK — 4-way review started: {bg.stdout.strip()[:200]}")
         started = bg.stdout.strip() or bg.stderr.strip()
     except Exception as e:
         logline(f"[{ts}] review-fanout --background failed: {e!r}")
         started = f"không tự khởi động được ({e!r})"
-_block(["⛔ REVIEW-GATE: code chưa có review 3 bên (Claude Code + Alibaba OCR + Antigravity, phải cùng PASS).",
+_block(["⛔ REVIEW-GATE: code chưa có review 4 bên (Claude Code Opus + Antigravity + Grok + Alibaba OCR, cả 4 phải cùng PASS).",
         f"Khởi động ở nền: {started}",
         f"Chờ kết quả: {cmd_show}   (cùng code thì dùng lại kết quả, không chạy/tốn 2 lần)"])
 PY

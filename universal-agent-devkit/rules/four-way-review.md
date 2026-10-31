@@ -1,29 +1,36 @@
-# Three-way review — the only code review that passes (31/10/2026)
+# Four-way review — the only code review that passes (31/10/2026)
 
-> User: "Bất cứ review nào 3 agent review là ai và 3 nó phải cùng thống nhất kết quả thì mới gọi là pass."
+> User: "Bất cứ review nào 3 agent review là ai và 3 nó phải cùng thống nhất kết quả thì mới gọi là pass." — widened the same
+> day to FOUR equal reviewers: Claude Code on Opus, Antigravity, Grok and Alibaba OCR. All four must PASS, unanimously.
 
-## Who reviews
+## Who reviews (all four required, equal votes)
 | Reviewer | How it runs | Vote |
 |---|---|---|
-| **Claude Code** | `claude -p`, read-only (Read/Grep/Glob + read-only git) | its JSON `verdict` |
-| **Alibaba OpenCodeReview** | `bin/ocr-review --strict` — OCR's own LLM (full mode, `REVIEW_GATE_OCR=full`); the delegation spec never counts | pass iff the run completed and no critical/high comment |
+| **Claude Code — Opus** | `claude -p --model opus`, read-only (Read/Grep/Glob + read-only git) | its JSON `verdict`; the model that answered (result `modelUsage`) must be Opus |
 | **Antigravity** | `mcp-servers/antigravity-pm-mcp/bin/pm-review-audit.js` (pm_task_create → pm_dispatch kind=audit) | `audit-agent.json` verdict for this HEAD |
+| **Grok** | `grok --prompt-file … --output-format json -m grok-4.7 --sandbox read-only --tools read_file,grep,list_dir,run_terminal_cmd` | its JSON `verdict`; `modelUsage` must show the pinned model |
+| **Alibaba OpenCodeReview** | `bin/ocr-review --strict` — OCR's own LLM (full mode, `REVIEW_GATE_OCR=full`); the delegation spec never counts | pass iff the run completed and no critical/high comment |
 
 Plus, never optional: `registry` (bin/known_patterns.py — a known bug pattern on an added line is a P0 recurring bug) and, at depth
-**deep** (≥ 50 changed lines or an auth / payment / schema / migration / secret path): a Claude **security** reviewer and the
-**verifier** (tries to refute every P0/P1).
+**deep** (≥ 50 changed lines or an auth / payment / schema / migration / secret path): a Claude Opus **security** reviewer and the
+Claude Opus **verifier** (tries to refute every P0/P1).
+
+Models: `REVIEW_CLAUDE_MODEL` (default `opus`; a non-Opus value is refused) and `REVIEW_GROK_MODEL` (default `grok-4.7`). The
+model that really answered is recorded in each envelope (`model`, `models`), in `summary.md` and in `review_outcomes.jsonl`;
+Claude not on Opus (or not reported), Grok not on its pinned model (or not reported) = that reviewer FAILED.
 
 ## Run it
 ```
 bash .agents/devkit/bin/review-fanout.sh --base origin/<base>      # in the DevKit repo: universal-agent-devkit/bin/review-fanout.sh
 ```
-The 3 reviewers run in parallel, each with its own timeout. Results: `<git-common-dir>/review-fanout/<code-hash>/summary.md|json`
+The 4 reviewers run in parallel, each with its own timeout. Results: `<git-common-dir>/review-fanout/<code-hash>/summary.md|json`
 (one verdict, deduped findings with consensus marks, inline comments). The same code is never reviewed twice (cache by code hash).
 The Stop hook `hooks/review_gate.sh` runs the same thing (`--base verified`) and blocks until it PASSES.
 
 ## PASS only when ALL hold (bin/review-merge.py)
-1. Claude, OCR and Antigravity (and registry; security + verifier when deep) each produced a result, status `ok`, verdict `pass`.
-   Missing, failed, timed out, errored, unavailable, or a `fail` vote → **FAIL**. No fail-open, no fallback, no release after N blocks.
+1. Claude Code (Opus), Antigravity, Grok and OCR (and registry; security + verifier when deep) each produced a result, status `ok`,
+   verdict `pass`, on the required model. Missing, failed, timed out, errored, unavailable, out of credit, wrong model, or a `fail`
+   vote → **FAIL**. No fail-open, no fallback, no release after N blocks.
 2. No blocking finding: a P0/P1 whose file:line + verbatim snippet is really in the code (cite-check, every reviewer) and that the
    verifier did not refute. A refuted one is downgraded to P3 and logged. A `detect` hit of a known pattern is never refutable.
 3. Tokens / USD within `REVIEW_MAX_TOKENS` (3 000 000) / `REVIEW_MAX_USD` (15).
@@ -31,7 +38,7 @@ The Stop hook `hooks/review_gate.sh` runs the same thing (`--base verified`) and
    regression test that passed**: `regression_checklist.py bug-link BUG-REV-<id> <test>` then `post-fix-gate.py --run-tests`.
    Not a bug after all: `regression_checklist.py drop BUG-REV-<id>` (it stays in review_outcomes.jsonl).
 
-## Reviewer instructions (all three get the same)
+## Reviewer instructions (all four get the same)
 - Read the callers, callees and tests of every changed symbol; findings stay scoped to the change.
 - Known bug patterns of the repo (`.agents/instincts.md`) are in the prompt; a repeat is tagged `known_pattern` and is P0.
 - Severity: P0 data loss / security / crash / wrong result on a main path / recurring bug · P1 real bug on a reachable path ·

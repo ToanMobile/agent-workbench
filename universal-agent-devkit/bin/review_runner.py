@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""review_runner.py — run ONE reviewer of the 3-way review and always leave its envelope (bin/review-fanout.sh calls it).
+"""review_runner.py — run ONE reviewer of the 4-way review and always leave its envelope (bin/review-fanout.sh calls it).
 
-  review_runner.py claude|security|verifier|ocr|antigravity --repo ROOT --base REF --run RUN_DIR --timeout SEC
+  review_runner.py claude|security|verifier|ocr|antigravity|grok --repo ROOT --run RUN_DIR --timeout SEC
 
 Writes RUN_DIR/<name>.json = {"reviewer", "status": ok|failed|timeout|error|unavailable, "verdict": pass|fail, "reason",
-"findings", "usage": {"tokens","usd"}}. Every failure path writes a non-ok status — the merge treats anything but ok+pass as
+"findings", "usage": {"tokens","usd"}, "model", "models"}. Every failure path writes a non-ok status — the merge treats anything but ok+pass as
 a FAIL of the whole review, so this file never needs to guess. Exit 0 when status is ok, 1 otherwise.
 
 Claude Code (claude, security, verifier): `claude -p` read-only (Read/Grep/Glob and read-only git; Edit/Write denied),
 --output-format json (cost + usage are counted against REVIEW_MAX_TOKENS / REVIEW_MAX_USD). REVIEW_CLAUDE_BIN overrides the
-binary, REVIEW_CLAUDE_MODEL the model.
+binary. The model is PINNED to Opus (`--model opus`, REVIEW_CLAUDE_MODEL may name another Opus id, never a non-Opus one); the
+model that really answered is read from the result's modelUsage (the one with the most output tokens) and recorded as
+"model": not Opus, or not reported = status failed (user rule 31/10/2026).
+Grok: `grok --prompt-file … --output-format json` headless, --sandbox read-only, read tools only, pinned -m REVIEW_GROK_MODEL
+(grok-4.7); the model is checked the same way from modelUsage. REVIEW_GROK_BIN overrides the binary.
 OCR: bin/ocr-review --strict (its own LLM; the delegation fallback is refused) over the commits since base and over the
 uncommitted change. Antigravity: mcp-servers/antigravity-pm-mcp/bin/pm-review-audit.js (pm_task_create + pm_dispatch audit).
 Standard library only.
@@ -28,6 +32,36 @@ READ_TOOLS = ("Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),
               "Bash(git ls-files:*),Bash(git status:*)")
 DENY_TOOLS = "Edit,Write,MultiEdit,NotebookEdit"
 OCR_SEV_FAIL = {"critical", "high", "blocker", "major", "p0", "p1"}
+GROK_TOOLS = "read_file,grep,list_dir,run_terminal_cmd"
+GROK_DENY = "write,search_replace,web_search,web_fetch,task"
+
+
+def models_used(res):
+    """(main model, all models) from a headless result's modelUsage: the main one wrote the most output tokens."""
+    mu = res.get("modelUsage") if isinstance(res, dict) else None
+    if not isinstance(mu, dict) or not mu:
+        return "", []
+    def out_tokens(k):
+        v = mu.get(k) or {}
+        return int(v.get("outputTokens") or v.get("output_tokens") or 0) if isinstance(v, dict) else 0
+    names = sorted(mu, key=lambda k: (-out_tokens(k), k))
+    return names[0], names
+
+
+def claude_model():
+    m = (os.environ.get("REVIEW_CLAUDE_MODEL") or "opus").strip()
+    return m
+
+
+def model_problem(kind, model, pinned):
+    """None when `model` is the one the rule requires, else the reason."""
+    if not model:
+        return f"the {kind} run did not report which model answered (modelUsage missing) — cannot prove {pinned}"
+    if kind == "claude" and "opus" not in model.lower():
+        return f"Claude ran {model}, the review requires Opus"
+    if kind == "grok" and not model.lower().startswith(pinned.lower()):
+        return f"Grok ran {model}, the review pins {pinned}"
+    return None
 
 
 def env_out(run, name, **kw):
@@ -129,13 +163,15 @@ def run_claude(name, a, meta, ctx):
     if name == "verifier":
         cands = json.loads(read(os.path.join(a.run, "candidates.json"), "[]") or "[]")
         if not cands:
-            return env_out(a.run, name, status="ok", verdict="pass", verifications=[], reason="no P0/P1 candidate")
+            return env_out(a.run, name, status="ok", verdict="pass", verifications=[], reason="no P0/P1 candidate",
+                           skipped=True, model="")
         prompt = verifier_prompt(meta, cands)
     else:
         prompt = claude_prompt(name, meta, ctx)
-    cmd = [bin_, "-p", "--output-format", "json", "--allowedTools", READ_TOOLS, "--disallowedTools", DENY_TOOLS]
-    if os.environ.get("REVIEW_CLAUDE_MODEL"):
-        cmd += ["--model", os.environ["REVIEW_CLAUDE_MODEL"]]
+    want = claude_model()
+    if "opus" not in want.lower():
+        return env_out(a.run, name, status="error", model="", reason=f"REVIEW_CLAUDE_MODEL={want} is not an Opus model — refused")
+    cmd = [bin_, "-p", "--output-format", "json", "--model", want, "--allowedTools", READ_TOOLS, "--disallowedTools", DENY_TOOLS]
     rc, out, err, to = run_bounded(cmd, a.timeout, a.repo, env=dict(os.environ, REVIEW_FANOUT_CHILD="1"), stdin_text=prompt)
     if to:
         return env_out(a.run, name, status="timeout", reason=f"claude -p exceeded {a.timeout}s")
@@ -146,25 +182,89 @@ def run_claude(name, a, meta, ctx):
     u = res.get("usage") or {}
     usage = {"tokens": sum(int(u.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens")),
              "usd": float(res.get("total_cost_usd") or res.get("cost_usd") or 0)}
+    model, models = models_used(res)
+    mk = {"model": model, "models": models}
     if rc != 0 or res.get("is_error"):
-        return env_out(a.run, name, status="failed", usage=usage, reason=f"claude -p rc={rc}: {str(res.get('result'))[:400]}")
+        return env_out(a.run, name, status="failed", usage=usage, reason=f"claude -p rc={rc}: {str(res.get('result'))[:400]}", **mk)
+    bad = model_problem("claude", model, want)
+    if bad:
+        return env_out(a.run, name, status="failed", usage=usage, reason=bad, **mk)
     try:
         ans = extract_json(str(res.get("result") or ""))
     except ValueError as e:
-        return env_out(a.run, name, status="error", usage=usage, reason=f"unparseable answer: {e}")
+        return env_out(a.run, name, status="error", usage=usage, reason=f"unparseable answer: {e}", **mk)
     if name == "verifier":
         v = ans.get("verifications")
         if not isinstance(v, list):
-            return env_out(a.run, name, status="error", usage=usage, reason="no verifications list")
-        return env_out(a.run, name, status="ok", verdict="pass", usage=usage, verifications=v)
+            return env_out(a.run, name, status="error", usage=usage, reason="no verifications list", **mk)
+        return env_out(a.run, name, status="ok", verdict="pass", usage=usage, verifications=v, **mk)
     if ans.get("verdict") not in ("pass", "fail") or not isinstance(ans.get("findings", []), list):
-        return env_out(a.run, name, status="error", usage=usage, reason="answer lacks verdict/findings")
-    return env_out(a.run, name, status="ok", verdict=ans["verdict"], findings=ans.get("findings") or [], usage=usage)
+        return env_out(a.run, name, status="error", usage=usage, reason="answer lacks verdict/findings", **mk)
+    return env_out(a.run, name, status="ok", verdict=ans["verdict"], findings=ans.get("findings") or [], usage=usage, **mk)
+
+
+def grok_bin():
+    b = os.environ.get("REVIEW_GROK_BIN")
+    if b:
+        return b
+    from shutil import which
+    return which("grok") or os.path.expanduser("~/.grok/bin/grok")
+
+
+def run_grok(a, meta, ctx):
+    bin_ = grok_bin()
+    want = (os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7").strip()
+    if not (os.path.isfile(bin_) and os.access(bin_, os.X_OK)):
+        return env_out(a.run, "grok", status="unavailable", reason=f"Grok CLI not found at {bin_}")
+    # Grok gets read tools and a read-only shell (git grep/log/show), not edits: the diff is handed over as a file.
+    diff = os.path.join(a.run, "review.diff")
+    with open(diff, "wb") as fh:
+        fh.write(subprocess.run(["git", "diff", "--no-ext-diff", meta["base"], "--"], cwd=a.repo, capture_output=True).stdout)
+    pf = os.path.join(a.run, "grok-prompt.md")
+    with open(pf, "w", encoding="utf-8") as fh:
+        fh.write(claude_prompt("claude", meta, ctx).replace(
+            "You are an independent code reviewer", "You are Grok, one of four independent code reviewers", 1)
+            + f"\n\nThe full diff is in {diff} (read it first).")
+    cmd = [bin_, "--prompt-file", pf, "--output-format", "json", "-m", want, "--cwd", a.repo, "--sandbox", "read-only",
+           "--tools", GROK_TOOLS, "--disallowed-tools", GROK_DENY, "--disable-web-search", "--no-subagents",
+           "--always-approve", "--max-turns", os.environ.get("REVIEW_GROK_MAX_TURNS", "60")]
+    rc, out, err, to = run_bounded(cmd, a.timeout, a.repo, env=dict(os.environ, REVIEW_FANOUT_CHILD="1"))
+    if to:
+        return env_out(a.run, "grok", status="timeout", reason=f"grok exceeded {a.timeout}s")
+    res = None
+    for cand in (out.strip(), (out.strip().splitlines() or [""])[-1]):   # one object, pretty-printed or on the last line
+        try:
+            res = json.loads(cand)
+            break
+        except ValueError:
+            continue
+    if res is None:
+        return env_out(a.run, "grok", status="error", reason=f"grok rc={rc}: not JSON: {(err or out)[-400:]}")
+    if not isinstance(res, dict):
+        return env_out(a.run, "grok", status="error", reason="grok answered a non-object")
+    model, models = models_used(res)
+    mk = {"model": model, "models": models}
+    u = res.get("usage") or {}
+    usage = {"tokens": int(u.get("total_tokens") or 0) or sum(int(u.get(k) or 0) for k in ("input_tokens", "output_tokens")),
+             "usd": float(res.get("total_cost_usd") or 0)}
+    if rc != 0 or res.get("type") == "error" or res.get("is_error"):
+        return env_out(a.run, "grok", status="failed", usage=usage,
+                       reason=f"grok rc={rc}: {str(res.get('message') or res.get('text') or err)[:400]}", **mk)
+    bad = model_problem("grok", model, want)
+    if bad:
+        return env_out(a.run, "grok", status="failed", usage=usage, reason=bad, **mk)
+    try:
+        ans = extract_json(str(res.get("text") or res.get("result") or ""))
+    except ValueError as e:
+        return env_out(a.run, "grok", status="error", usage=usage, reason=f"unparseable answer: {e}", **mk)
+    if ans.get("verdict") not in ("pass", "fail") or not isinstance(ans.get("findings", []), list):
+        return env_out(a.run, "grok", status="error", usage=usage, reason="answer lacks verdict/findings", **mk)
+    return env_out(a.run, "grok", status="ok", verdict=ans["verdict"], findings=ans.get("findings") or [], usage=usage, **mk)
 
 
 def run_ocr(a, meta, ctx):
     helper = os.path.join(HERE, "ocr-review")
-    bg = ("3-way review (Claude + OCR + Antigravity, unanimous). Read callers/callees/tests of every changed symbol; findings "
+    bg = ("4-way review (Claude Opus + Antigravity + Grok + OCR, unanimous). Read callers/callees/tests of every changed symbol; findings "
           "only on the change.\n" + ctx)[:3500]
     scopes = []
     if meta.get("commits_since_base"):
@@ -220,7 +320,7 @@ def run_agy(a, meta, ctx):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="review_runner.py")
-    ap.add_argument("name", choices=["claude", "security", "verifier", "ocr", "antigravity"])
+    ap.add_argument("name", choices=["claude", "security", "verifier", "ocr", "antigravity", "grok"])
     ap.add_argument("--repo", required=True)
     ap.add_argument("--run", required=True)
     ap.add_argument("--timeout", type=int, default=900)
@@ -232,6 +332,8 @@ def main(argv=None):
             return run_claude(a.name, a, meta, ctx)
         if a.name == "ocr":
             return run_ocr(a, meta, ctx)
+        if a.name == "grok":
+            return run_grok(a, meta, ctx)
         return run_agy(a, meta, ctx)
     except Exception as e:   # never leave the vote empty-handed: an error is a recorded failure, not a silence
         return env_out(a.run, a.name, status="error", reason=f"review_runner crashed: {e!r}")

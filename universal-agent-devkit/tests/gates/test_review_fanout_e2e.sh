@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# bin/review-fanout.sh end to end with stub reviewers (no LLM, no network): the 3 run in parallel, a reviewer that times out,
-# fails or is unavailable makes the whole review FAIL (no delegate fallback for OCR), a known-bug pattern on an added line is a
+# bin/review-fanout.sh end to end with stub reviewers (no LLM, no network): the 4 (Claude Opus, Antigravity, Grok, OCR) run in
+# parallel, a reviewer that times out, fails, is unavailable or ran the wrong model (Claude not on Opus) makes the whole review
+# FAIL (no delegate fallback for OCR), a known-bug pattern on an added line is a
 # P0 recurring bug, an accepted P1 becomes an OPEN REV-<id> row of the regression checklist, results are cached by code hash,
 # and every run lands in .claude/audit-gate/review_outcomes.jsonl.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
@@ -23,13 +24,27 @@ SH
 cat > "$STUB/claude" <<'SH'
 #!/usr/bin/env bash
 p="$(cat)"; sleep "${STUB_SLEEP:-0}"; mode="$(cat "$STUB_DIR/claude.mode" 2>/dev/null || echo pass)"
+echo "$*" >> "$STUB_DIR/claude.args"
+model="$(cat "$STUB_DIR/claude.model" 2>/dev/null || echo claude-opus-4-5)"
 case "$p" in
   *VERIFIER*) r='{"verifications":[]}' ;;
   *) if [ "$mode" = p1 ] && [[ "$p" != *SECURITY* ]]; then
        r='{"verdict":"fail","findings":[{"severity":"P1","category":"bug","file":"app.py","line":2,"snippet":"return items[0]","problem":"IndexError when items is empty"}]}'
      else r='{"verdict":"pass","findings":[]}'; fi ;;
 esac
-python3 -c 'import json,sys; print(json.dumps({"type":"result","is_error":False,"result":sys.argv[1],"total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":20}}))' "$r"
+python3 -c 'import json,sys; print(json.dumps({"type":"result","is_error":False,"result":sys.argv[1],"total_cost_usd":0.01,"usage":{"input_tokens":100,"output_tokens":20},"modelUsage":{sys.argv[2]:{"outputTokens":20},"claude-haiku-4-5":{"outputTokens":3}}}))' "$r" "$model"
+SH
+# grok stub (headless --output-format json, pretty-printed like the real CLI): grok.mode = pass | nocredit | wrongmodel
+cat > "$STUB/grok" <<'SH'
+#!/usr/bin/env bash
+sleep "${STUB_SLEEP:-0}"; mode="$(cat "$STUB_DIR/grok.mode" 2>/dev/null || echo pass)"; m=""
+echo "$*" >> "$STUB_DIR/grok.args"
+while [ $# -gt 0 ]; do [ "$1" = -m ] && m="$2"; shift; done
+if [ "$mode" = nocredit ]; then
+  echo '{"type":"error","message":"API error (status 402 Payment Required): Grok Build usage balance exhausted"}'; exit 1
+fi
+[ "$mode" = wrongmodel ] && m="grok-4.5"
+python3 -c 'import json,sys; print(json.dumps({"text":"```json\n{\"verdict\":\"pass\",\"findings\":[]}\n```","stopReason":"end_turn","usage":{"total_tokens":50},"modelUsage":{sys.argv[1]:{"outputTokens":9}},"total_cost_usd":0.002}, indent=2))' "$m"
 SH
 # antigravity stub: agy.mode = pass | hang | unavailable
 cat > "$STUB/agy.js" <<'JS'
@@ -40,8 +55,10 @@ if (mode === 'hang') setTimeout(() => {}, 600000);
 else if (mode === 'unavailable') fin({ status: 'unavailable', reason: 'Antigravity is not running' });
 else setTimeout(() => fin({ status: 'ok', verdict: 'pass' }), Number(process.env.STUB_SLEEP || 0) * 1000);
 JS
-chmod +x "$STUB/ocr" "$STUB/claude"
-export STUB_DIR="$STUB" PATH="$STUB:$PATH" REVIEW_CLAUDE_BIN="$STUB/claude" REVIEW_AGY_CLI="$STUB/agy.js" REVIEW_TIMEOUT_AGY=40
+chmod +x "$STUB/ocr" "$STUB/claude" "$STUB/grok"
+unset REVIEW_CLAUDE_MODEL REVIEW_GROK_MODEL
+export STUB_DIR="$STUB" PATH="$STUB:$PATH" REVIEW_CLAUDE_BIN="$STUB/claude" REVIEW_AGY_CLI="$STUB/agy.js" REVIEW_TIMEOUT_AGY=40 \
+  REVIEW_GROK_BIN="$STUB/grok"
 P="$TMP/p"; mkdir -p "$P/.agents"
 (cd "$P" && git init -q && git config user.email t@t && git config user.name t && echo x > README && git add -A && git commit -qm i)
 printf '### [INSTINCT-001] Silent except\n- **Quy tắc phòng ngừa & Cách fix:** log it\n- **detect:** `except:\\s*pass`\n- **detect-glob:** `*.py`\n' > "$P/.agents/instincts.md"
@@ -51,15 +68,38 @@ F="$DEVKIT_DIR/bin/review-fanout.sh"
 run() { bash "$F" --repo "$P" --base HEAD "$@" > "$TMP/out" 2>&1; echo $?; }
 reasons() { python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["reasons"]))' "$(bash "$F" --repo "$P" --base HEAD --status | awk '{print $2}')/summary.json"; }
 
-# 1. all three pass, in parallel (each stub takes 3 s: sequential would be >= 9 s)
+# 1. all four pass, in parallel (each stub takes 3 s: sequential would be >= 12 s)
 export STUB_SLEEP=3
 t0=$(date +%s); rc=$(run); t1=$(date +%s)
 [ "$rc" = 0 ] && grep -q "PASS" "$TMP/out" && ok "unanimous pass → exit 0" || { fail "unanimous pass rc=$rc"; cat "$TMP/out"; }
-[ $((t1 - t0)) -lt 9 ] && ok "reviewers ran in parallel ($((t1 - t0)) s)" || fail "reviewers not parallel ($((t1 - t0)) s)"
+[ $((t1 - t0)) -lt 9 ] && ok "4 reviewers ran in parallel ($((t1 - t0)) s)" || fail "reviewers not parallel ($((t1 - t0)) s)"
 export STUB_SLEEP=0
 rc=$(run); grep -q "(cached:" "$TMP/out" && [ "$rc" = 0 ] && ok "same code → cached verdict, not re-billed" || fail "no cache"
 bash "$F" --repo "$P" --base HEAD --status | grep -q '^PASS' && ok "--status PASS" || fail "--status"
 [ -s "$P/.claude/audit-gate/review_outcomes.jsonl" ] && ok "outcome logged" || fail "review_outcomes.jsonl missing"
+grep -q -- '--model opus' "$STUB/claude.args" && ok "Claude is started with --model opus" || fail "Claude not pinned to Opus: $(cat "$STUB/claude.args")"
+grep -q -- '-m grok-4.7' "$STUB/grok.args" && grep -q -- '--sandbox read-only' "$STUB/grok.args" \
+  && ok "Grok is started pinned (-m grok-4.7) in the read-only sandbox" || fail "Grok args: $(cat "$STUB/grok.args")"
+python3 -c 'import json,sys; r=json.loads(open(sys.argv[1]).read().splitlines()[-1])["reviewers"]; sys.exit(0 if r["claude"]["model"]=="claude-opus-4-5" and r["grok"]["model"]=="grok-4.7" else 1)' \
+  "$P/.claude/audit-gate/review_outcomes.jsonl" && ok "models actually used are recorded in the outcome" || fail "models not recorded"
+
+# 1b. Claude answered on a non-Opus model → FAIL (even with a pass verdict)
+echo claude-sonnet-4-5 > "$STUB/claude.model"; echo "# v1b" >> "$P/app.py"
+rc=$(run); [ "$rc" = 1 ] && reasons | grep -q '^claude: failed — Claude ran claude-sonnet-4-5, the review requires Opus' \
+  && ok "Claude ran a non-Opus model → FAIL" || { fail "non-Opus Claude passed rc=$rc"; reasons; }
+rm -f "$STUB/claude.model"
+
+# 1c. Grok missing (CLI absent), out of credit, or on another model → FAIL
+echo "# v1c" >> "$P/app.py"
+rc=$(REVIEW_GROK_BIN="$TMP/no-such-grok" run); [ "$rc" = 1 ] && reasons | grep -q '^grok: unavailable' \
+  && ok "Grok missing → FAIL" || { fail "missing Grok passed rc=$rc"; reasons; }
+echo nocredit > "$STUB/grok.mode"; echo "# v1d" >> "$P/app.py"
+rc=$(run); [ "$rc" = 1 ] && reasons | grep -q '^grok: failed — grok rc=1: API error (status 402' \
+  && ok "Grok out of credit (402) → FAIL" || { fail "Grok 402 passed rc=$rc"; reasons; }
+echo wrongmodel > "$STUB/grok.mode"; echo "# v1e" >> "$P/app.py"
+rc=$(run); [ "$rc" = 1 ] && reasons | grep -q '^grok: failed — Grok ran grok-4.5, the review pins grok-4.7' \
+  && ok "Grok on another model → FAIL" || { fail "wrong Grok model passed rc=$rc"; reasons; }
+echo pass > "$STUB/grok.mode"
 
 # 2. Antigravity hangs past its timeout → FAIL
 echo "# v2" >> "$P/app.py"; echo hang > "$STUB/agy.mode"
@@ -92,7 +132,7 @@ echo pass > "$STUB/claude.mode"; printf 'def g(items):\n    return items[0] if i
 rc=$(run); [ "$rc" = 1 ] && reasons | grep -q '^BUG-REV-.*regression test' && ok "fixed finding without a regression test → FAIL" \
   || { fail "fixed-without-test not FAIL rc=$rc"; reasons; }
 
-# 7. OCR's high finding with a Claude/Antigravity pass → not unanimous → FAIL
+# 7. OCR's high finding with Claude/Antigravity/Grok passing → not unanimous → FAIL
 for id in $(rev_ids); do (cd "$P" && CLAUDE_PROJECT_DIR="$P" python3 "$DEVKIT_DIR/bin/regression_checklist.py" drop "$id" >/dev/null 2>&1); done
 [ -z "$(rev_ids)" ] && ok "dropped REV row (not a bug) no longer blocks" || fail "REV row could not be dropped: $(rev_ids)"
 echo high > "$STUB/ocr.mode"; printf 'def g(items):\n    return items[0]\n' > "$P/app.py"; echo "# v7" >> "$P/app.py"

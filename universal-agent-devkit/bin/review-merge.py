@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""review-merge.py — merge the 3-way review (Claude Code + Alibaba OpenCodeReview + Antigravity) into ONE verdict.
+"""review-merge.py — merge the 4-way review (Claude Code Opus + Antigravity + Grok + Alibaba OpenCodeReview) into ONE verdict.
 
   review-merge.py --dir RUN_DIR [--repo ROOT] [--pre] [--record-bugs] [--outcomes FILE]
 
 RUN_DIR (written by bin/review-fanout.sh) holds meta.json and one envelope per reviewer:
-  meta.json   {"required": ["claude","ocr","antigravity","registry", (+"security","verifier" when depth=deep)],
+  meta.json   {"required": ["claude","antigravity","grok","ocr","registry", (+"security","verifier" when depth=deep)],
+               "models": {"claude": "opus", "grok": "grok-4.7"},
                "depth": "light|deep", "base": REF, "code_hash": H, "max_tokens": N|null, "max_usd": X|null}
   <name>.json {"reviewer", "status": ok|failed|timeout|error|unavailable, "verdict": pass|fail, "reason",
-               "findings": [...], "usage": {"tokens", "usd"}}
+               "findings": [...], "usage": {"tokens", "usd"}, "model": <model that answered>, "models": [...]}
   verifier.json {"reviewer":"verifier","status":"ok", "verifications": [{"id","refuted":bool,"reason"}]}
 
-THE RULE (user, 31/10: "3 agent phải cùng thống nhất thì mới gọi là pass"): PASS only when
+THE RULE (user, 31/10: "3 agent phải cùng thống nhất thì mới gọi là pass", the same day: 4 equal reviewers — Claude Code
+pinned to Opus, Antigravity, Grok, OCR full LLM mode): PASS only when
   1. every required reviewer has an envelope, status ok and verdict pass — missing, failed, timed out, errored, unavailable
-     or a "fail" verdict is an overall FAIL (no fail-open, no fallback that counts as a pass);
+     or a "fail" verdict is an overall FAIL (no fail-open, no fallback that counts as a pass); every Claude envelope
+     (claude, security, verifier) must record an Opus model and grok the pinned Grok model — another or no model = FAIL;
   2. no blocking finding is left: a P0/P1 that passed cite-check (file:line exists, snippet is really there) and that the
      verifier did not refute; a finding that matches a known bug pattern (.agents/instincts.md) is a P0 recurring bug, and a
      deterministic `detect` hit can never be refuted;
@@ -43,7 +46,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, HERE)
 import known_patterns  # noqa: E402
 
-CORE = ("claude", "ocr", "antigravity")
+CORE = ("claude", "antigravity", "grok", "ocr")
+OPUS_REVIEWERS = ("claude", "security", "verifier")
 SEV_MAP = {"p0": "P0", "blocker": "P0", "critical": "P0", "crash": "P0",
            "p1": "P1", "major": "P1", "high": "P1", "error": "P1",
            "p2": "P2", "medium": "P2", "minor": "P2", "should fix": "P2", "should-fix": "P2", "warning": "P2",
@@ -55,7 +59,7 @@ CAT_MAP = (("recurring", "recurring-bug"), ("secur", "security"), ("vuln", "secu
            ("verif", "test"), ("style", "style"), ("nit", "style"), ("doc", "docs"), ("concurr", "bug"),
            ("race", "bug"), ("logic", "bug"), ("bug", "bug"), ("correct", "bug"), ("error", "bug"), ("regress", "bug"))
 # reviewers whose prompt requires a verbatim snippet: a finding without one is not cited
-NEEDS_SNIPPET = {"claude", "security", "antigravity"}
+NEEDS_SNIPPET = {"claude", "security", "antigravity", "grok"}
 REV_BAD = {"OPEN", "NEEDS_TEST", "NOT_IN_MATRIX", "NOT_RUN", "FAIL", "TIMEOUT", "VACUOUS", "STALE", "FLAKY", "REPORTED"}
 
 
@@ -268,6 +272,25 @@ def rev_rows(repo):
     return rows, ""
 
 
+def model_reason(name, env, meta):
+    """Why this envelope's model breaks the rule (Claude = Opus, Grok = the pinned model), or None."""
+    if name == "verifier" and env.get("skipped"):
+        return None   # nothing to verify: it never ran
+    model = str(env.get("model") or "")
+    if name in OPUS_REVIEWERS:
+        if not model:
+            return "model not recorded — cannot prove the review ran on Opus"
+        if "opus" not in model.lower():
+            return f"ran {model}, the review requires Claude Opus"
+    elif name == "grok":
+        want = str((meta.get("models") or {}).get("grok") or "grok")
+        if not model:
+            return "model not recorded — cannot prove which Grok model reviewed"
+        if not model.lower().startswith(want.lower()):
+            return f"ran {model}, the review pins {want}"
+    return None
+
+
 def decide(meta, envs, clusters, rev=None, rev_err=""):
     """The unanimous rule. Returns (verdict, reasons)."""
     reasons = []
@@ -281,8 +304,17 @@ def decide(meta, envs, clusters, rev=None, rev_err=""):
         if st != "ok":
             reasons.append(f"{name}: {st or 'no status'} — {str(env.get('reason') or '')[:300]}")
             continue
+        bad_model = model_reason(name, env, meta)
+        if bad_model:
+            reasons.append(f"{name}: {bad_model}")
+            continue
         if name != "verifier" and env.get("verdict") != "pass":
             reasons.append(f"{name}: verdict {env.get('verdict') or 'missing'} (not pass)")
+    for name in OPUS_REVIEWERS:   # an extra Claude run (e.g. a verifier at light depth) must be Opus too: it can refute findings
+        if name not in required and name in envs:
+            bad_model = model_reason(name, envs[name], meta)
+            if bad_model:
+                reasons.append(f"{name}: {bad_model}")
     blocking = [c for c in clusters if c.get("state") == "blocking"]
     if blocking:
         reasons.append(f"{len(blocking)} unrefuted P0/P1 finding(s): "
@@ -314,7 +346,7 @@ def record_bugs(repo, clusters):
             continue
         title = f"[review {c['severity']}] {c['file']}:{c['line']} {c['problem'][:140]}"
         r = subprocess.run([sys.executable, rc_bin, "add", title, "--id", f"REV-{c['id']}", "--severity", c["severity"],
-                            "--module", c["file"], "--evidence", f"3-way review ({', '.join(c['reviewers'])})"],
+                            "--module", c["file"], "--evidence", f"4-way review ({', '.join(c['reviewers'])})"],
                            cwd=repo, env=dict(os.environ, CLAUDE_PROJECT_DIR=repo), capture_output=True, text=True, timeout=120)
         if r.returncode != 0 and "đã có" not in (r.stdout + r.stderr) and "already" not in (r.stdout + r.stderr):
             errs.append(f"REV-{c['id']}: {(r.stderr or r.stdout).strip()[:200]}")
@@ -339,12 +371,13 @@ def inline_comments(clusters):
 
 
 def summary_md(verdict, reasons, meta, envs, clusters, usage):
-    L = [f"# 3-way review: {'✅ PASS' if verdict == 'PASS' else '⛔ FAIL'}", "",
+    L = [f"# 4-way review: {'✅ PASS' if verdict == 'PASS' else '⛔ FAIL'}", "",
          f"base `{meta.get('base')}` · depth {meta.get('depth')} · code `{str(meta.get('code_hash', ''))[:12]}` · "
-         f"{usage['tokens']} tokens · ${usage['usd']:.2f}", "", "| reviewer | status | verdict | findings |", "|---|---|---|---|"]
+         f"{usage['tokens']} tokens · ${usage['usd']:.2f}", "", "| reviewer | status | verdict | model | findings |", "|---|---|---|---|---|"]
     for name in list(dict.fromkeys(list(CORE) + list(meta.get("required") or []))):
         e = envs.get(name) or {}
-        L.append(f"| {name} | {e.get('status', 'MISSING')} | {e.get('verdict', '-')} | {len(e.get('findings') or e.get('verifications') or [])} |")
+        L.append(f"| {name} | {e.get('status', 'MISSING')} | {e.get('verdict', '-')} | {e.get('model') or '-'} | "
+                 f"{len(e.get('findings') or e.get('verifications') or [])} |")
     if reasons:
         L += ["", "## Why not PASS"] + [f"- {r}" for r in reasons]
     shown = [c for c in clusters if c.get("state") != "uncited"]
@@ -359,9 +392,10 @@ def summary_md(verdict, reasons, meta, envs, clusters, usage):
     return "\n".join(L) + "\n"
 
 
-def log_outcome(path, meta, verdict, reasons, clusters, usage):
+def log_outcome(path, meta, verdict, reasons, clusters, usage, envs=None):
     rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "code_hash": meta.get("code_hash"), "base": meta.get("base"),
            "depth": meta.get("depth"), "verdict": verdict, "reasons": reasons, "usage": usage,
+           "reviewers": {n: {k: e.get(k) for k in ("status", "verdict", "model")} for n, e in sorted((envs or {}).items())},
            "findings": [{"id": c["id"], "severity": c["severity"], "state": c.get("state"), "reviewers": c["reviewers"],
                          "consensus": c["consensus"], "known_pattern": c["known_pattern"], "file": c["file"], "line": c["line"],
                          **({"refuted_reason": c.get("refuted_reason")} if c.get("state") == "refuted" else {}),
@@ -403,7 +437,7 @@ def main(argv=None):
             verdict = "FAIL"
     out = {"verdict": verdict, "reasons": reasons, "meta": meta, "usage": usage,
            "reviewers": {n: {"status": e.get("status"), "verdict": e.get("verdict"), "reason": e.get("reason", ""),
-                             "findings": len(e.get("findings") or [])} for n, e in envs.items()},
+                             "findings": len(e.get("findings") or []), "model": e.get("model")} for n, e in envs.items()},
            "findings": clusters, "inline_comments": inline_comments(clusters), "ts": time.time()}
     with open(os.path.join(a.dir, "summary.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, indent=1)
@@ -412,7 +446,7 @@ def main(argv=None):
         fh.write(md)
     try:
         log_outcome(a.outcomes or os.path.join(repo, ".claude", "audit-gate", "review_outcomes.jsonl"), meta, verdict, reasons,
-                    clusters, usage)
+                    clusters, usage, envs)
     except OSError as e:
         print(f"review-merge: outcome log not written: {e}", file=sys.stderr)
     sys.stdout.write(md)
