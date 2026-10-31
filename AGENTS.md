@@ -120,8 +120,9 @@ reply with CHƯA XONG and stops. Do not write XONG, PASS, đã fix, or đã xong
    `python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief`
    Exit 0 is required. This scoped run writes the task receipt (and the scoped receipt), the proof for step 5:
    `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph, plus the fixed smoke
-   group; a file listed in `.agents/gate-core.txt` (gate, hooks, shared libraries, lockfiles, the map itself), a code file no
-   test reaches, or a graph error escalates the run to `--full` by itself. Build, QA, review, the merge queue / train (one run
+   group. It never escalates to `--full` (#741): a file listed in `.agents/gate-core.txt` (gate, hooks, shared libraries,
+   lockfiles, the map itself) runs the tests that reach it ("core-touched" in the verdict), and a file no test reaches or a graph
+   error adds the `[core-smoke]` group. Build, QA, review, the merge queue / train (one run
    for the union of the batch's diffs) and `agent-kit integrate` run the same `--scoped`; push and XONG accept its receipt
    for that tree. Nobody runs `--full` by hand for a task: the `gate-full` skill runs it on main every night at 00:00
    (launchd) and bisects a red one into a P1 card. Any other exit: paste the last

@@ -3676,11 +3676,15 @@ def _int_env(name, default):
 
 
 def force_full_reason(args):
-    """Why this run must use the full commands, or None (selection allowed)."""
+    """Why this run must use the full commands, or None (selection allowed). #741: lượt --scoped (PR, merge gate, train, integrate) chỉ full
+    khi gọi tường minh — --full / --force-full (--tree HEAD của gate-full đêm đặt cả hai); POSTFIX_GATE_FULL, POSTFIX_GATE_FORCE_FULL, CI,
+    --record-lesson và quyết định scoped không bao giờ đẩy nó lên full."""
     if getattr(args, "full", False):
         return "--full"
     if getattr(args, "force_full", False):
         return "--force-full"
+    if getattr(args, "scoped", False):
+        return None
     if os.environ.get("POSTFIX_GATE_FORCE_FULL") == "1":
         return "POSTFIX_GATE_FORCE_FULL=1"
     if os.environ.get("POSTFIX_GATE_FULL") == "1":
@@ -3689,8 +3693,6 @@ def force_full_reason(args):
         return "CI"
     if getattr(args, "record_lesson", None):
         return tr("--record-lesson (nghiệm thu)", "--record-lesson (acceptance)")
-    if getattr(args, "scoped_full", None):   # #644: --scoped mà bin/scoped_gate.py quyết full (lõi, không suy ra test, đồ thị lỗi)
-        return args.scoped_full
     return None
 
 
@@ -3712,12 +3714,13 @@ def _scoped_test_cmd(path):
     return None
 
 
-def scoped_suites(decision, rules, selected, covers=None):
+def scoped_suites(decision, rules, selected, covers=None, skip=None):
     """(suite thêm vào, danh sách test của kit tương đối kit, lý do leo full hoặc None) cho một quyết định scoped.
     Chỉ tests/<thư mục>/test_*.sh và hooks/tests/*.sh của kit (dưới thư mục của runner run_impacted.sh trong ma trận) đi qua runner đó — nó
     chạy từng cái bằng bash; thêm suite runner nếu luật của nó chưa được chọn. Test khác mà không lệnh suite đã chọn nào nhắc tới: luật ma trận
     có watch_files CỤ THỂ khớp (không bắt-tất-cả, lệnh không phải runner kit) ⇒ suite của luật đó (đúng môi trường của package); không luật
-    nào ⇒ .sh thành suite SCOPED-EXTRA (một vòng bash, đỏ khi một test đỏ), py/js ⇒ lý do leo full (fail closed)."""
+    nào ⇒ .sh thành suite SCOPED-EXTRA (một vòng bash, đỏ khi một test đỏ), py/js ⇒ lý do leo full (fail closed). #741: `skip` là list thì
+    py/js đó vào `skip` (không chạy ở PR, gate-full đêm chạy) và đi tiếp, không trả lý do."""
     from scoped_gate import _catch_all  # noqa: PLC0415 - main đã nạp bin/ vào sys.path trước khi gọi decide
     covers = covers or {}
     found = []
@@ -3753,6 +3756,9 @@ def scoped_suites(decision, rules, selected, covers=None):
                     have_ids.add(test.get("id"))
             continue
         c = _scoped_test_cmd(t)
+        if c is None and skip is not None:
+            skip.append(t)
+            continue
         if c is None:
             return [], [], tr(f"không luật ma trận cụ thể nào chạy được test {t} đúng môi trường",
                               f"no specific matrix rule runs test {t} in its environment")
@@ -6156,6 +6162,7 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             "ncpu": os.cpu_count() or None,
             "changed_files": [f[:200] for f in files[:RUN_LOG_CHANGED_MAX]],
             "ran_suites": [str(t.get("id") or "?")[:40] for t in regression_tests if id(t) in ran],
+            "core_touched": [f[:200] for f in (getattr(args, "core_touched", None) or [])[:RUN_LOG_CHANGED_MAX]],   # #741
         }
         ptc = [t["ptc"] for t in regression_tests if t.get("ptc")]
         if ptc:   # #472 D: hit-rate của per_test_cache (chỉ lượt có suite run_impacted.sh chạy với sổ per-test bật)
@@ -6214,8 +6221,9 @@ def main():
     parser.add_argument("--force-full", action="store_true",
                         help="Force the full test commands (like --full; kept for callers that pass it: --full is no longer deferred for sibling sessions)")
     parser.add_argument("--scoped", action="store_true",
-                        help="#644: run exactly the tests bin/scoped_gate.py derives from the diff (import graph) plus the smoke group; a change "
-                             "to a core file (.agents/gate-core.txt), a file no test reaches, or a graph error escalates to the full run. "
+                        help="#644: run exactly the tests bin/scoped_gate.py derives from the diff (import graph) plus the smoke group. #741: it "
+                             "never escalates to the full run — a core file (.agents/gate-core.txt) runs the tests that reach it, a file no test "
+                             "reaches or a graph error adds the [core-smoke] group; only --full / --force-full asked for explicitly run in full. "
                              "A PASS writes scoped_pass.json, which merge, push and XONG accept for that tree. Build/QA/merge/push use it; "
                              "--full belongs to the gate-full skill (by hand or the 00:00 launchd job)")
     parser.add_argument("--dry-run", action="store_true", help="Only list impacted tests, do not run them (default without --run-tests; never PASS)")
@@ -6644,41 +6652,51 @@ def main():
             })
         for guard in rule.get("immutable_guards", []):
             immutable_guards_protected.append((comp_name, guard))
-    # #644 --scoped: một bộ quyết định (bin/scoped_gate.py) cho task / QA / merge / push (INSTINCT-015). Lõi, test không suy ra được, đồ thị lỗi
-    # ⇒ full y như --force-full; còn lại chạy đúng test của diff + smoke. Lượt đã cưỡng bức, --since (Stop hook) giữ hành vi cũ.
+    # #644 --scoped: một bộ quyết định (bin/scoped_gate.py) cho task / QA / merge / push (INSTINCT-015): chạy đúng test của diff + smoke.
+    # #741 (anh Đạt 31/10): KHÔNG BAO GIỜ leo full — lõi chạy test chạm tới nó, file không test riêng / đồ thị lỗi thêm [core-smoke]
+    # (scoped_gate.no_full); cả bộ suite chỉ ở gate-full đêm 00:00. Lượt --full / --force-full tường minh, --since (Stop hook) giữ hành vi cũ.
     scoped = None
     os.environ.pop(SCOPED_TESTS_ENV, None)
     if getattr(args, "scoped", False) and run_tests and not force_full_reason(args) and not args.since:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import scoped_gate  # noqa: PLC0415 - sibling module in bin/ (thiếu thì gate hỏng to, không âm thầm leo full)
+        project = str(get_project_dir())
         try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            import scoped_gate  # noqa: PLC0415 - sibling module in bin/
-            scoped = scoped_gate.decide(str(get_project_dir()), base_ref, needs_no_test=needs_no_test, matrix_rules=rules,
-                                        # nguồn rename là file bị xoá với decide (code bị xoá ⇒ full), như _log_gate_run
+            scoped = scoped_gate.decide(project, base_ref, needs_no_test=needs_no_test, matrix_rules=rules,
+                                        # nguồn rename là file bị xoá với decide (code bị xoá ⇒ [core-smoke]), như _log_gate_run
                                         changed=sorted(set(modified_files) | set(RENAME_SOURCES.values())))
-        except Exception as e:   # noqa: BLE001 - không quyết được thì fail closed: full
-            scoped = {"mode": "full", "reasons": [f"scoped_gate: {e!r}"[:200]]}
-        why = None
-        if scoped.get("mode") == "scoped":
-            added, kit_tests, why = scoped_suites(scoped, rules, regression_tests, covers)
-        if scoped.get("mode") != "scoped" or why:
-            args.scoped_full = "--scoped → full: " + "; ".join(([why] if why else []) + list(scoped.get("reasons") or [])[:3])
-            print(f"  • {YELLOW}{args.scoped_full}{RESET}")
-            scoped = None
-        else:
-            for comp, test in added:
-                regression_tests.append({
-                    "component": comp, "id": test.get("id"), "name": test.get("name"), "command": test.get("command"),
-                    "impacted_command": test.get("impacted_command"), "files": [], "untested_exit": test.get("untested_exit"),
-                    "parallel_safe": test.get("parallel_safe") is True, "status": "NOT_RUN", "duration": "-",
-                    "covered_by": test.get("covered_by") if isinstance(test.get("covered_by"), str) else None})
-            os.environ[SCOPED_TESTS_ENV] = "\n".join(kit_tests)
-            args.scoped_run = True   # dòng runs.jsonl ghi mode "scoped" (push_gate đối chiếu biên nhận scoped với nó)
-            scoped["kit_tests"] = kit_tests
-            # base của biên nhận là sha commit (push_gate đòi sha hex): "HEAD" / tên nhánh phân giải NGAY lúc quyết định (HEAD có thể đi trong lượt)
-            scoped["base_sha"] = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", base_ref + "^{commit}"],
-                                                capture_output=True, text=True).stdout.strip()
-            print(f"  • {CYAN}--scoped: {len(scoped.get('tests') or [])} test của diff + {len(scoped.get('smoke') or [])} smoke"
-                  f" ({len(scoped.get('docs') or [])} file tài liệu, {scoped.get('elapsed_s', '?')} s){RESET}")
+        except Exception as e:   # noqa: BLE001 - không quyết được: smoke + [core-smoke], lý do giữ ở would_full
+            scoped = {"mode": "full", "reasons": [f"scoped_gate: {e!r}"[:200]], "graph_error": f"{e!r}"[:200], "tests": [], "smoke": []}
+        scoped = scoped_gate.no_full(scoped, project)
+        skipped = []
+        added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=skipped)
+        if skipped:   # test py/js không luật ma trận nào chạy đúng môi trường: không chạy ở PR, bù bằng [core-smoke]
+            scoped["not_run"] = skipped
+            scoped["would_full"].append("không luật ma trận cụ thể nào chạy được: " + ", ".join(skipped[:5]))
+            if not scoped["core_smoke"]:
+                scoped_gate.add_core_smoke(scoped, project)
+                added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=[])
+        if scoped["would_full"]:
+            print(f"  • {YELLOW}{tr('--scoped (#741: không leo full; trước đây: ', '--scoped (#741: no escalation to full; it used to: ')}"
+                  f"{'; '.join(scoped['would_full'][:3])})" + (f" + [core-smoke] {len(scoped['core_smoke'])} test" if scoped["core_smoke"] else "")
+                  + f"{RESET}")
+        args.core_touched = list(scoped.get("core_touched") or [])
+        for comp, test in added:
+            regression_tests.append({
+                "component": comp, "id": test.get("id"), "name": test.get("name"), "command": test.get("command"),
+                "impacted_command": test.get("impacted_command"), "files": [], "untested_exit": test.get("untested_exit"),
+                "parallel_safe": test.get("parallel_safe") is True, "status": "NOT_RUN", "duration": "-",
+                "covered_by": test.get("covered_by") if isinstance(test.get("covered_by"), str) else None})
+        os.environ[SCOPED_TESTS_ENV] = "\n".join(kit_tests)
+        args.scoped_run = True   # dòng runs.jsonl ghi mode "scoped" (push_gate đối chiếu biên nhận scoped với nó)
+        scoped["kit_tests"] = kit_tests
+        # base của biên nhận là sha commit (push_gate đòi sha hex): "HEAD" / tên nhánh phân giải NGAY lúc quyết định (HEAD có thể đi trong lượt)
+        scoped["base_sha"] = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", base_ref + "^{commit}"],
+                                            capture_output=True, text=True).stdout.strip()
+        print(f"  • {CYAN}--scoped: {len(scoped.get('tests') or [])} test của diff + {len(scoped.get('smoke') or [])} smoke"
+              f" ({len(scoped.get('docs') or [])} file tài liệu, {scoped.get('elapsed_s', '?')} s){RESET}")
+        if args.core_touched:
+            print(f"  • {YELLOW}core-touched ({len(args.core_touched)} file lõi; review 2/2 soi kỹ): {', '.join(args.core_touched[:10])}{RESET}")
     impacted_tests = list(regression_tests)   # what the change itself needs (coverage verdicts)
     project_dir = get_project_dir()
     run_start_tree = head_tree(project_dir)   # the tree this run tests; mark_merge_gate_receipt keys the receipt to THIS tree, not to whatever HEAD is after the run
@@ -8215,6 +8233,8 @@ def main():
     print(f"  • {tr('Test hồi quy đạt', 'Regression tests passed')}: {tests_passed}/{len(regression_tests)}" + (tr(" (chưa chạy)", " (not run)") if unverified else "")
           + (tr(f" — {len(impacted_run)} lệnh chỉ chạy test bị ảnh hưởng ({impacted_n} test), lệnh đầy đủ CHƯA chạy",
                 f" — {len(impacted_run)} commands ran impacted tests only ({impacted_n} tests), the full commands were NOT run") if impacted_run else ""))
+    if getattr(args, "core_touched", None):   # #741: lượt --scoped chạm lõi không leo full — dòng này nằm trong --brief cho review 2/2
+        print(f"  • {YELLOW}core-touched{RESET}: {', '.join(args.core_touched[:10])}" + (" …" if len(args.core_touched) > 10 else ""))
     print(f"  • {tr('Lớp tĩnh (bí mật, lười biếng, dependency, hiệu năng, nuốt lỗi, log)', 'Static checks (secrets, laziness, dependencies, performance, swallowed errors, logging)')}: "
           f"{tr('đạt', 'passed') if static_ok else tr('CÓ PHÁT HIỆN', 'FINDINGS')}")
     for f in unreadable[:5]:
@@ -8291,7 +8311,10 @@ def main():
         # read-only, không suite UNTESTED / BUSY / BUDGET / SLOT, không pm home lạ); một FAIL bỏ biên nhận scoped của cây đó. Không đụng full_pass.json.
         if scoped and run_tests and not project_gone:
             meta = {"scoped_tests": list(scoped.get("tests") or []), "smoke": list(scoped.get("smoke") or []),
-                    "reasons": list(scoped.get("reasons") or []), "base": scoped.get("base_sha") or "", "tree": run_start_tree}
+                    "reasons": list(scoped.get("reasons") or []), "base": scoped.get("base_sha") or "", "tree": run_start_tree,
+                    # #741: lượt không leo full — file lõi đã chạm, lý do leo full cũ, [core-smoke] đã chạy (review 2/2 đọc)
+                    "core_touched": list(scoped.get("core_touched") or []), "would_full": list(scoped.get("would_full") or []),
+                    "core_smoke": list(scoped.get("core_smoke") or [])}
             if exit_code == 0 and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", meta["base"]):
                 print(f"  • {YELLOW}{tr(f'Không ghi biên nhận scoped: không phân giải được base {base_ref} thành sha commit', f'Scoped receipt not written: base {base_ref} does not resolve to a commit sha')}{RESET}")
             elif exit_code == 0 and (impacted_run or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)):
@@ -8299,7 +8322,7 @@ def main():
                 print(f"  • {YELLOW}{tr('Không ghi biên nhận scoped: có suite chạy hẹp (impacted/resource/package/module)', 'Scoped receipt not written: a suite ran narrowed (impacted/resource/package/module)')}{RESET}")
             elif exit_code == 0 and _full_red_on_tree(project_dir, tested_fp):
                 # full đỏ trên cây này đã bỏ cả hai biên nhận; scoped không chọn suite đỏ thì PASS — không để nó mở lại merge / push
-                print(f"  • {YELLOW}{tr('Không ghi biên nhận scoped: cây này có lượt --full đỏ — chạy --full', 'Scoped receipt not written: this tree has a red --full run — run --full')}{RESET}")
+                print(f"  • {YELLOW}{tr('Không ghi biên nhận scoped: cây này có lượt --full đỏ — sửa suite đỏ (cây mới); --full chỉ chạy ở gate-full đêm', 'Scoped receipt not written: this tree has a red --full run — fix the red suite (a new tree); --full runs only in the nightly gate-full')}{RESET}")
             elif (exit_code == 0 and lock_held and not read_only and not pm_relax and not lock_busy and not budget_cut and not slot_busy
                     and not any(t.get("status") == "UNTESTED" for t in regression_tests)):
                 # PASS theo khoá CHÍNH XÁC vào biên nhận như UNTESTED / KEYED, như receipt_tests của biên nhận full
@@ -8482,6 +8505,7 @@ def main():
                             if (run_tests and not lock_held and not read_only) else None),
             "budget_exhausted": any(t.get("label") == "BUDGET" for t in regression_tests),   # GATE_TOTAL_BUDGET_S spent
             "test_mode": test_mode, "full_run_required": bool(impacted_run),
+            "core_touched": list(getattr(args, "core_touched", None) or []),   # #741: lượt --scoped chạm lõi (review 2/2 soi kỹ)
             "devkit_artifacts_skipped": len(devkit_artifacts), "device": device_state,
             "static": {"secrets": len(secrets), "lazy": len(lazy_findings), "dependencies": len(dep_findings),
                        "perf": len(perf_findings),
