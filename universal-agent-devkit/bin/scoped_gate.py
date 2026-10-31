@@ -537,7 +537,6 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
             res["deleted"].append(f)
             if not nnt(f):
                 res["reasons"].append("file code bị xoá ⇒ full: %s" % f)
-                res["no_own_test"].append(f)
             continue
         up = _reach(f, rev, barrier) if f in rev else {f}
         expanded |= up
@@ -553,6 +552,21 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
             res["matrix_covered"].append(f)
         else:
             res["unmapped"].append(f)
+    # #741: đồ thị dựng từ cây hiện tại không còn nút của file code bị xoá — test còn nhắc tên nó (gọi tên cũ, như `grep -F` của run_impacted)
+    # là test của nó; không test nào nhắc ⇒ no_own_test (no_full thêm [core-smoke])
+    gone = {os.path.basename(f): f for f in res["deleted"] if not nnt(f)}
+    named_gone = set()
+    for t in sorted(p for p in graph if is_test(p)) if gone else ():
+        try:
+            with open(os.path.join(project, t), encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        for name, f in gone.items():
+            if name in text:
+                tests.add(t)
+                named_gone.add(f)
+    res["no_own_test"] += [f for f in gone.values() if f not in named_gone]
     if res["core_hits"]:
         res["reasons"].insert(0, "khớp lõi ⇒ full: %s" % ", ".join(res["core_hits"][:10]))
     if res["unmapped"]:
@@ -583,9 +597,6 @@ def no_full(res, project):
     out["core_smoke"] = []
     if res.get("no_own_test") or res.get("unmapped") or res.get("graph_error"):
         add_core_smoke(out, project)
-    else:
-        out["smoke"] = list(dict.fromkeys(list(res.get("smoke") or []) + [p for p in load_core(project)["smoke"]
-                                                                          if os.path.isfile(os.path.join(project, p))]))
     out["reasons"] = []
     out["mode"] = "scoped"
     return out

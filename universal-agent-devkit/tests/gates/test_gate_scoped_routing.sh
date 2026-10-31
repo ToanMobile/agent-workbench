@@ -143,8 +143,9 @@ git mv src/old.py src/new.py
 scoped
 HMODE="$(tail -1 "$(git rev-parse --absolute-git-dir)/postfix-gate/runs.jsonl" 2>/dev/null | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("mode"))' 2>/dev/null)"
 if ! printf '%s\n' "$GOUT" | grep -q -- "--scoped → full" && printf '%s\n' "$GOUT" | grep -q "không leo full; trước đây: .*file code bị xoá ⇒ full: src/old.py" \
-   && [ "$HMODE" = scoped ]; then ok "h. git mv file code ⇒ nguồn rename vào decide như file bị xoá; --scoped nêu lý do cũ, không leo full (#741)"
-else fail "h. git mv src/old.py → src/new.py: exit $RC, mode $HMODE (mong scoped, nêu 'file code bị xoá' trong would_full)"; printf '%s\n' "$GOUT" | grep -E "scoped|REG-" | tail -5; fi
+   && [ "$HMODE" = scoped ] && [ "$RC" = 1 ]; then
+  ok "h. git mv file code ⇒ nguồn rename vào decide như file bị xoá; --scoped nêu lý do cũ, không leo full (#741), test gọi tên cũ vẫn ĐỎ (exit 1)"
+else fail "h. git mv src/old.py → src/new.py: exit $RC (mong 1), mode $HMODE (mong scoped, nêu 'file code bị xoá' trong would_full)"; printf '%s\n' "$GOUT" | grep -E "scoped|REG-" | tail -5; fi
 git mv src/new.py src/old.py
 
 # m. xanh scoped không đè full đỏ: runs.jsonl có lượt --full exit 1 trên cùng fp (sau lượt full xanh gần nhất) ⇒ không ghi biên nhận scoped

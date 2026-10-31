@@ -6671,7 +6671,7 @@ def main():
         skipped = []
         added, kit_tests, _ = scoped_suites(scoped, rules, regression_tests, covers, skip=skipped)
         if skipped:   # test py/js không luật ma trận nào chạy đúng môi trường: không chạy ở PR, bù bằng [core-smoke]
-            scoped["not_run"] = skipped
+            scoped["not_run"] = args.scoped_not_run = skipped
             scoped["would_full"].append("không luật ma trận cụ thể nào chạy được: " + ", ".join(skipped[:5]))
             if not scoped["core_smoke"]:
                 scoped_gate.add_core_smoke(scoped, project)
@@ -8235,6 +8235,9 @@ def main():
                 f" — {len(impacted_run)} commands ran impacted tests only ({impacted_n} tests), the full commands were NOT run") if impacted_run else ""))
     if getattr(args, "core_touched", None):   # #741: lượt --scoped chạm lõi không leo full — dòng này nằm trong --brief cho review 2/2
         print(f"  • {YELLOW}core-touched{RESET}: {', '.join(args.core_touched[:10])}" + (" …" if len(args.core_touched) > 10 else ""))
+    if getattr(args, "scoped_not_run", None):   # #741: test chạm diff mà không suite nào của ma trận chạy đúng môi trường
+        print(f"  • {YELLOW}{tr('Test chạm diff không chạy ở PR (không luật ma trận cụ thể nào chạy nó; đã thêm [core-smoke])', 'Tests reaching the diff not run at PR (no specific matrix rule runs them; [core-smoke] added)')}{RESET}: "
+              f"{', '.join(args.scoped_not_run[:10])}")
     print(f"  • {tr('Lớp tĩnh (bí mật, lười biếng, dependency, hiệu năng, nuốt lỗi, log)', 'Static checks (secrets, laziness, dependencies, performance, swallowed errors, logging)')}: "
           f"{tr('đạt', 'passed') if static_ok else tr('CÓ PHÁT HIỆN', 'FINDINGS')}")
     for f in unreadable[:5]:
@@ -8314,7 +8317,7 @@ def main():
                     "reasons": list(scoped.get("reasons") or []), "base": scoped.get("base_sha") or "", "tree": run_start_tree,
                     # #741: lượt không leo full — file lõi đã chạm, lý do leo full cũ, [core-smoke] đã chạy (review 2/2 đọc)
                     "core_touched": list(scoped.get("core_touched") or []), "would_full": list(scoped.get("would_full") or []),
-                    "core_smoke": list(scoped.get("core_smoke") or [])}
+                    "core_smoke": list(scoped.get("core_smoke") or []), "not_run": list(scoped.get("not_run") or [])}
             if exit_code == 0 and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", meta["base"]):
                 print(f"  • {YELLOW}{tr(f'Không ghi biên nhận scoped: không phân giải được base {base_ref} thành sha commit', f'Scoped receipt not written: base {base_ref} does not resolve to a commit sha')}{RESET}")
             elif exit_code == 0 and (impacted_run or any(t.get("mode") in PARTIAL_MODES for t in regression_tests)):

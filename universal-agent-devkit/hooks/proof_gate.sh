@@ -1394,10 +1394,10 @@ if gate_problem:
         _trunk_main = bool(_tr and not _tr[1] and session_worktree.trunk_mode(repo))
     except Exception:
         _trunk_main = False
-    if _trunk_main:   # worktree sạch ở HEAD: lượt không --diff là exit 3 "không có thay đổi"; #741: scoped theo diff, không --tree HEAD (= --full)
+    if _trunk_main:   # worktree sạch ở HEAD: --full / impacted là exit 3 "không có thay đổi"; --tree HEAD từ chối settings.json do kit sửa
         lines.append("- Cổng: " + gate_problem + " → main ở trunk mode: không gate ở đây (session_lock chặn). Worktree tạm ở HEAD main, sạch cả"
                      " .claude/settings.json (git checkout -- .claude/settings.json nếu kit đã sửa) → python3 .agents/devkit/bin/post-fix-gate.py"
-                     " --run-tests --scoped --diff <sha main đầu lượt> --brief (scoped; --full chỉ ở gate-full đêm 00:00) → gỡ worktree, Stop lại")
+                     " --run-tests --tree HEAD --brief (--tree HEAD = --full trên cây HEAD) → gỡ worktree, Stop lại")
     else:
         lines.append("- Cổng: " + gate_problem + " → python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief (scoped; --full chỉ ở gate-full đêm 00:00)")
 for bp in before_problems:
