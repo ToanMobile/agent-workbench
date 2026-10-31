@@ -39,7 +39,7 @@ _ASSERT = re.compile(
     r"|\bpytest\.raises\b"
     r"|\bself\.assert\w+\s*\("
     # mock của Python như verify của Mockito: m.assert_called_once_with(…), assert_awaited…, assert_has_calls, assert_not_called
-    r"|\.assert_(?:called|awaited|any_call|any_await|has_calls|has_awaits|not_called|not_awaited)\w*\s*\("
+    r"|\.assert_(?:(?:called|awaited)(?:_once)?(?:_with)?|any_call|any_await|has_calls|has_awaits|not_called|not_awaited)\s*\("
     r"|\bassert\s+(?!True\b|False\b)"
     # Kotlin's assert(cond) (Gradle runs tests with -ea) and JUnit/kotlin.test fail(…)
     r"|\bassert\s*\(|\bfail\s*\("
@@ -87,12 +87,19 @@ def _body(text: str, start: int, limit: int | None = None) -> str:
     return text[brace:end]
 
 
+# f-string (3.12+) / t-string (3.14+) là chuỗi token START … END, không phải một token STRING
+_STR_OPEN = {getattr(tokenize, n) for n in ("FSTRING_START", "TSTRING_START") if hasattr(tokenize, n)}
+_STR_CLOSE = {getattr(tokenize, n) for n in ("FSTRING_END", "TSTRING_END") if hasattr(tokenize, n)}
+
+
 @functools.lru_cache(maxsize=1)
-def _statement_rows(text: str) -> "frozenset | None":
-    """Số dòng (đếm từ 1, như tokenize) mở một dòng lệnh logic. Dòng tiếp nối — trong chuỗi nhiều dòng (OfficeReader#242:
-    script fake adb ở cột 0), trong ngoặc (`) -> None:` của chữ ký nhiều dòng) — và dòng comment không mở lệnh nào.
+def _python_scan(text: str) -> "tuple | None":
+    """(rows, masked) của một file Python. rows: số dòng (đếm từ 1, như tokenize) mở một dòng lệnh logic — dòng trong
+    chuỗi nhiều dòng (OfficeReader#242: script fake adb ở cột 0), trong ngoặc (`) -> None:` của chữ ký nhiều dòng) và dòng
+    comment không mở lệnh nào. masked: text cùng độ dài, phần chuỗi nhiều dòng từ dòng thứ hai tới dấu đóng thành dấu cách
+    (giữ "\n"): chữ `fail() {`, `assert x` trong fixture không phải assertion — không che thì kéo thân qua chuỗi là nới linter.
     Không tokenize được (không phải Python, cú pháp dở) ⇒ None: giữ quy tắc lề cũ."""
-    rows, fresh = set(), True
+    rows, fresh, spans, opened = set(), True, [], []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(text).readline):
             if tok.type == tokenize.NEWLINE:
@@ -100,31 +107,51 @@ def _statement_rows(text: str) -> "frozenset | None":
             elif fresh and tok.type not in (tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT):
                 rows.add(tok.start[0])
                 fresh = False
+            if tok.type in _STR_OPEN:
+                opened.append(tok.start)
+            elif tok.type in _STR_CLOSE and opened:
+                spans.append((opened.pop(), tok.end))
+            elif tok.type == tokenize.STRING:
+                spans.append((tok.start, tok.end))
     except (tokenize.TokenError, SyntaxError):
         return None
-    return frozenset(rows)
+    starts = [0] + [m.end() for m in re.finditer("\n", text)]
+    pieces, prev = [], 0
+    for (r0, _), (r1, c1) in sorted(s for s in spans if s[1][0] > s[0][0]):
+        a, b = max(starts[r0], prev), starts[r1 - 1] + c1      # từ đầu dòng thứ hai của chuỗi tới hết dấu đóng
+        if a < b:
+            pieces += [text[prev:a], re.sub(r"[^\n]", " ", text[a:b])]
+            prev = b
+    return frozenset(rows), "".join(pieces) + text[prev:]
+
+
+def _lead(line: str) -> int:
+    # lề như tokenize: tab nhảy tới bội số 8
+    s = line.expandtabs(8)
+    return len(s) - len(s.lstrip(" "))
 
 
 def _python_body(text: str, start: int) -> str:
     line_start = text.rfind("\n", 0, start) + 1
     indent = len(text[line_start:start]) - len(text[line_start:start].lstrip(" "))
-    # chỉ tách ở "\n" như tokenize: splitlines còn tách ở \f, \x1c, U+2028… nằm trong chuỗi ⇒ mảnh lề 0 cắt thân test
-    lines = io.StringIO(text[start:]).readlines()
-    out = [lines[0]] if lines else []
     row = text.count("\n", 0, start) + 1
-    stmts = _statement_rows(text)
-    if out and stmts is not None and row in stmts:
-        # `def` là lệnh thật (không nằm trong chuỗi fixture): thân hết ở lệnh kế tiếp có lề ≤ lề của chính dòng `def`.
-        # Regex khớp từ đầu dòng nên lề tính ở trên luôn 0 ⇒ method kéo tới cột 0, nuốt assert của test sau (#737).
-        def_line = text[line_start:start] + out[0]
-        indent = len(def_line) - len(def_line.lstrip(" "))
-        row += out[0].count("\n")
+    scan = _python_scan(text)
+    if scan and row in scan[0] and start < len(text):
+        # `def` là lệnh thật (không nằm trong chuỗi fixture): thân hết ở lệnh kế tiếp có lề ≤ lề của chính dòng `def`
+        # (regex khớp từ đầu dòng nên lề tính ở trên luôn 0 ⇒ method kéo tới cột 0, nuốt assert của test sau, #737),
+        # và đọc trên bản đã che chuỗi nhiều dòng. Chỉ tách ở "\n" như tokenize: splitlines còn tách ở \f, U+2028…
+        stmts, masked = scan
+        lines = io.StringIO(masked[start:]).readlines()
+        out, indent = [lines[0]], _lead(lines[0])
+        row += lines[0].count("\n")
         for line in lines[1:]:
-            if row in stmts and line.strip() and (len(line) - len(line.lstrip(" "))) <= indent:
+            if row in stmts and _lead(line) <= indent:
                 break
             out.append(line)
             row += line.count("\n")
         return "".join(out)
+    lines = io.StringIO(text[start:]).readlines()
+    out = [lines[0]] if lines else []
     for line in lines[1:]:
         if line.strip() and (len(line) - len(line.lstrip(" "))) <= indent and not line.lstrip().startswith("#"):
             break
