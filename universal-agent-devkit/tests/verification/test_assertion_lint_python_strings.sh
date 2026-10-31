@@ -176,6 +176,10 @@ fail() {{ exit 1; }}
 
     def test_masked_twice(self):
         log("assert.assert_called()")
+
+    def test_comment_bridge(self):
+        fail  # c
+        (1)
 PY
 
 # Thụt lề bằng tab (tokenize: tab nhảy tới bội số 8).
@@ -191,6 +195,16 @@ OUTPUT=$(python3 -I "$LINT_SCRIPT" src/test_strings.py src/test_broken.py src/te
 RC=$?
 
 ERRORS=0
+
+# File chỉ xuống dòng bằng "\r" (gate --staged đọc blob không đổi xuống dòng): tokenize từ chối ⇒ quy tắc lề cũ, tách cả ở "\r".
+CR_OUT=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import assertion_lint as a
+print(a.findings("def test_a():\r    pass\r\rdef test_b():\r    assert x\r"))' "$DEVKIT_ROOT/scripts/linters" 2>&1)
+if [ "$CR_OUT" = "[(1, 'test_a')]" ]; then
+    echo "OK: file chỉ có \\r: test_a rỗng bị báo"
+else
+    echo "FAIL: file chỉ có \\r: $CR_OUT (cần [(1, 'test_a')])"
+    ERRORS=$((ERRORS+1))
+fi
 
 function expect_flagged() {
     if echo "$OUTPUT" | grep -q "$1:$2:"; then
@@ -241,6 +255,7 @@ expect_flagged "src/test_masked.py" "73"       # f-string nhiều dòng cũng đ
 expect_not_flagged "src/test_masked.py" "79"   # chỉ che phần khớp assertion: hai literal vẫn khác nhau, không thành assertEqual(x, x)
 expect_not_flagged "src/test_masked.py" "82"   # code trong {…} của f-string nhiều dòng không bị che
 expect_flagged "src/test_masked.py" "87"       # che không tạo khớp mới (`assert` + phần che không thành `assert `)
+expect_flagged "src/test_masked.py" "90"       # comment che giữ `#`: `fail` + comment + `(1)` dòng sau không thành `fail(`
 expect_not_flagged "src/test_tabs.py" "2"
 expect_flagged "src/test_tabs.py" "5"
 expect_flagged "src/test_indent_err.py" "1"

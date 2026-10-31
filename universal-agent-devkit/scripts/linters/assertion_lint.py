@@ -96,9 +96,10 @@ _QUOTE = re.compile(r"[A-Za-z]*('''|\"\"\"|'|\")")
 def _python_scan(text: str) -> "tuple | None":
     """(rows, masked) của một file Python. rows: số dòng (đếm từ 1, như tokenize) mở một dòng lệnh logic — dòng trong
     chuỗi nhiều dòng (OfficeReader#242: script fake adb ở cột 0), trong ngoặc (`) -> None:` của chữ ký nhiều dòng) và dòng
-    comment không mở lệnh nào. masked: text cùng độ dài, giữ "\n" và dấu nháy; thành dấu cách: comment, ruột chuỗi nhiều
-    dòng, và phần khớp _ASSERT trong ruột chuỗi một dòng. Thân test giờ kéo qua dòng cột 0 nên chữ `fail() {`, `# assert x`
-    nằm sau đó không được thành assertion (bản cũ cắt thân nên không thấy) — không che là nới linter.
+    comment không mở lệnh nào. masked: text cùng độ dài, giữ "\n", dấu nháy và `#`; thành dấu cách: comment, ruột chuỗi
+    nhiều dòng (f-string: phần chữ); thành "_": phần khớp _ASSERT trong chuỗi một dòng. Thân test giờ kéo qua dòng cột 0
+    nên chữ `fail() {`, `# assert x` nằm sau đó không được thành assertion (bản cũ cắt thân nên không thấy) — không che
+    là nới linter.
     Không tokenize được (không phải Python, cú pháp dở) ⇒ None: giữ quy tắc lề cũ."""
     rows, fresh, cuts = set(), True, []
     try:
@@ -125,7 +126,10 @@ def _python_scan(text: str) -> "tuple | None":
         if a < prev or a >= b:
             continue                                            # ruột rỗng; token không chồng nhau, chặn phòng xa để giữ độ dài
         seg = text[a:b]
-        if whole or r1 > r0:
+        if whole:
+            # giữ `#`: che hết thì \s* của _ASSERT nối `fail  # c` với `(1)` ở dòng sau thành `fail(`
+            seg = seg[:1] + re.sub(r"[^\n]", " ", seg[1:])
+        elif r1 > r0:
             seg = re.sub(r"[^\n]", " ", seg)
         else:
             # chỉ che phần khớp: che cả chuỗi thì assertEqual("a", "b") thành hai literal giống nhau (_VACUOUS);
@@ -161,7 +165,8 @@ def _python_body(text: str, start: int) -> str:
             out.append(line)
             row += line.count("\n")
         return "".join(out)
-    lines = io.StringIO(text[start:]).readlines()
+    # quy tắc lề cũ y nguyên: file chỉ xuống dòng bằng "\r" (tokenize từ chối) vẫn phải tách được dòng
+    lines = text[start:].splitlines(keepends=True)
     out = [lines[0]] if lines else []
     for line in lines[1:]:
         if line.strip() and (len(line) - len(line.lstrip(" "))) <= indent and not line.lstrip().startswith("#"):
