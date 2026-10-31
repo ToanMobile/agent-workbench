@@ -349,6 +349,18 @@ def collect_red(run: Run, scratch: str, kit_rel, gate_rc: int, gate_out: str, ki
 
 # --- chia đôi -----------------------------------------------------------------------------------------------------------------
 
+FAIL_HEAD = re.compile(r"^[ \t]*(?:✖|✘|✗|❌|FAIL|not ok)")   # #721: cùng mẫu dk_fail_lines của tests/run_impacted.sh
+
+
+def red_excerpt(out: str, tail: int = 15, cap: int = 40) -> str:
+    """15 dòng cuối của một lần chạy lại đỏ, trước đó các dòng hỏng nằm sớm hơn (tối đa 40) — #721: log chia đôi 31/10 chỉ có
+    'failures: 2', hai dòng ✖ A33/A23 nằm trước 15 dòng cuối."""
+    lines = (out or "").splitlines()
+    early = [l for l in lines[:-tail] if FAIL_HEAD.match(l)]
+    more = ["… còn %d dòng hỏng nữa" % (len(early) - cap)] if len(early) > cap else []
+    return "\n".join(early[:cap] + more + (["… (%d dòng cuối)" % tail] if early else []) + lines[-tail:])
+
+
 def checks_fail(run: Run, scratch: str, checks: list, timeout: int) -> str:
     """"bad" (một phần đỏ chạy lại vẫn đỏ), "good", hay "timeout" (hết giờ: không kết luận được commit này)."""
     for label, cmd, cwd in checks:
@@ -359,7 +371,7 @@ def checks_fail(run: Run, scratch: str, checks: list, timeout: int) -> str:
         if m and cwd != "." and not os.path.isfile(os.path.join(d, m.group(1))):
             continue   # test chưa có ở commit này: chưa vỡ ở đây
         rc, out = sh(cmd, cwd=d, timeout=KIT_TEST_TIMEOUT_S if "agent-kit" in cmd else timeout, shell=True)
-        run.raw("$ (%s) %s -> %d\n%s" % (label, cmd, rc, "\n".join(out.splitlines()[-15:])))
+        run.raw("$ (%s) %s -> %d\n%s" % (label, cmd, rc, red_excerpt(out) if rc else "\n".join(out.splitlines()[-15:])))
         if rc == 124:
             return "timeout"
         if rc != 0:
