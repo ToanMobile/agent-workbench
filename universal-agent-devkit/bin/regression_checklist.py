@@ -3328,7 +3328,7 @@ def _bug_command(args, project: Path) -> int:
             return 0 if ok_ else 1
         if args.cmd == "drop":
             if args.bug_id.startswith("BUG-REV-"):   # audit 31/10: a review-born bug row leaves only on a verifier's rejection
-                why = _rev_drop_refused(args.bug_id, getattr(args, "refuted_by", None))
+                why = _rev_drop_refused(args.bug_id, getattr(args, "refuted_by", None), project)
                 if why:
                     print(f"✖ {args.bug_id}: không xoá — {why}", file=sys.stderr)
                     return 2
@@ -3397,8 +3397,20 @@ def _restore_command(args, project: Path) -> int:
 
 
 
-def _rev_drop_refused(bug_id, run_dir):
-    """None when RUN_DIR is a sealed review run (bin/review_sign.py) whose verifier refuted the finding behind bug_id."""
+def _git_common_dir_real(path):
+    """realpath of the git common dir of PATH (shared by every worktree of one repo), or None when PATH is not a git checkout."""
+    import subprocess
+    try:
+        r = _git_quiet(path, "rev-parse", "--git-common-dir")
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"regression_checklist: git rev-parse --git-common-dir in {path} failed: {e}", file=sys.stderr)
+        return None
+    out = r.stdout.strip()
+    return os.path.realpath(os.path.join(str(path), out)) if r.returncode == 0 and out else None
+
+
+def _rev_drop_refused(bug_id, run_dir, project):
+    """None when RUN_DIR is a sealed review run (bin/review_sign.py) of THIS project whose verifier refuted the finding behind bug_id."""
     if not run_dir:
         return "BUG-REV-* chỉ xoá được khi verifier của một lần review đã bác finding: --refuted-by <run dir>"
     import importlib.util
@@ -3413,9 +3425,26 @@ def _rev_drop_refused(bug_id, run_dir):
         with open(os.path.join(run_dir, "verifier.json"), encoding="utf-8") as fh:
             ver = json.load(fh)
         with open(summ, encoding="utf-8") as fh:
-            clusters = json.load(fh).get("findings") or []
-    except (OSError, ValueError) as e:
+            summary = json.load(fh)
+        clusters = summary.get("findings") or []
+    except (OSError, ValueError, AttributeError) as e:
         return f"không đọc được verifier.json / summary.json: {e}"
+    # #756: the seal key is one per machine (every repo, every temp repo), so a seal alone proves nothing about WHICH repo was
+    # reviewed. The run must be this project's own: <git common dir>/review-fanout/<meta.code_hash>/ (bin/review-fanout.sh),
+    # reviewed in this repo or one of its worktrees (they share the common dir). A run of a since-removed worktree is refused.
+    common = _git_common_dir_real(project)
+    if not common:
+        return f"{project} không phải git checkout: không biết review-fanout của project nằm đâu"
+    real_run = os.path.realpath(run_dir)
+    if os.path.dirname(real_run) != os.path.join(common, "review-fanout"):
+        return f"{run_dir} không nằm trong {os.path.join(common, 'review-fanout')} (lần review của repo khác)"
+    meta = summary.get("meta") if isinstance(summary.get("meta"), dict) else {}
+    if not meta.get("code_hash") or os.path.basename(real_run) != str(meta["code_hash"]):
+        return f"tên thư mục {os.path.basename(real_run)} khác meta.code_hash của summary ({meta.get('code_hash')})"
+    repo = meta.get("repo")
+    if not isinstance(repo, str) or not repo or (
+            os.path.realpath(repo) != os.path.realpath(str(project)) and _git_common_dir_real(repo) != common):
+        return f"summary là review của {repo!r}, không phải {project} hay một worktree của nó"
     refuted = any(isinstance(v, dict) and str(v.get("id")) == cid and v.get("refuted") is True
                   for v in (ver.get("verifications") or []))
     state_ok = any(str(c.get("id")) == cid and c.get("state") == "refuted" for c in clusters)

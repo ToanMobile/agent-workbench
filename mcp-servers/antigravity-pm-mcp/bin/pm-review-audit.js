@@ -41,13 +41,21 @@ async function call(name, args) {
   return typeof r === 'string' ? r : (r?.text ?? '');
 }
 
-// The working tree the audit is about: uncommitted diff + untracked files (names and bytes). An audit is only valid for the
-// head AND tree it started on (critical scan / audit 31/10: a missing auditedHead passed; edits during the audit passed).
+// The working tree the audit is about: HEAD + uncommitted diff + untracked files (names and bytes). An audit is only valid for
+// the head AND tree it started on (critical scan / audit 31/10: a missing auditedHead passed; edits during the audit passed).
+// HEAD is in the hash (#756): a commit during the audit leaves both trees clean, so the diff alone hashed the same. The PM's own
+// untracked task files (.antigravity-pm/, written by pm_task_create/pm_dispatch after tree0) are left out: in a repo that does
+// not gitignore it they made every audit 'worktree hash differs'.
+// ponytail: only the default stateDir is left out (a project-set stateDir could name "src"); a custom, un-ignored stateDir
+// still fails closed as 'differs' — read it from the config only if such a project shows up.
+const PM_STATE_DIR = '.antigravity-pm/';
 export function treeHash(root) {
   const h = createHash('sha256');
   const git = (...a) => execFileSync('git', ['-C', root, ...a], { maxBuffer: 256 * 1024 * 1024 });
+  h.update(git('rev-parse', 'HEAD'));
   h.update(git('diff', '--no-ext-diff', '--binary', 'HEAD'));
-  for (const f of git('ls-files', '-z', '--others', '--exclude-standard').toString('utf8').split('\0').filter(Boolean).sort()) {
+  for (const f of git('ls-files', '-z', '--others', '--exclude-standard').toString('utf8').split('\0')
+    .filter((p) => p && !p.startsWith(PM_STATE_DIR)).sort()) {
     h.update(`\0${f}\0`);
     try {
       const st = fs.lstatSync(path.join(root, f));
@@ -64,7 +72,7 @@ export function judgeAudit(rep, { head, tree0, tree1, model = '' }) {
     return { status: 'error', reason: rep?.auditedHead ? `audited ${rep.auditedHead} but HEAD is ${head} (stale audit)`
       : 'audit-agent.json has no auditedHead (cannot tell which code was audited)' };
   }
-  if (!tree0 || tree1 !== tree0) return { status: 'error', reason: 'the working tree changed during the audit (worktree hash differs)' };
+  if (!tree0 || tree1 !== tree0) return { status: 'error', reason: 'HEAD or the working tree changed during the audit (worktree hash differs)' };
   return { status: 'ok', verdict: rep.verdict === 'pass' ? 'pass' : 'fail', findings: Array.isArray(rep.findings) ? rep.findings : [],
     reason: rep.notes || '', audited_head: head, worktree_hash: tree0, model: String(model || rep.model || '') };   // the model PM dispatched to; the agent's own claim only without one
 }
