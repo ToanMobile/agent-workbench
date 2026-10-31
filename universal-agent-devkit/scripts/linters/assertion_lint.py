@@ -90,16 +90,18 @@ def _body(text: str, start: int, limit: int | None = None) -> str:
 # f-string (3.12+) / t-string (3.14+) là chuỗi token START … END, không phải một token STRING
 _STR_OPEN = {getattr(tokenize, n) for n in ("FSTRING_START", "TSTRING_START") if hasattr(tokenize, n)}
 _STR_CLOSE = {getattr(tokenize, n) for n in ("FSTRING_END", "TSTRING_END") if hasattr(tokenize, n)}
+_QUOTE = re.compile(r"[A-Za-z]*('''|\"\"\"|'|\")")
 
 
 @functools.lru_cache(maxsize=1)
 def _python_scan(text: str) -> "tuple | None":
     """(rows, masked) của một file Python. rows: số dòng (đếm từ 1, như tokenize) mở một dòng lệnh logic — dòng trong
     chuỗi nhiều dòng (OfficeReader#242: script fake adb ở cột 0), trong ngoặc (`) -> None:` của chữ ký nhiều dòng) và dòng
-    comment không mở lệnh nào. masked: text cùng độ dài, phần chuỗi nhiều dòng từ dòng thứ hai tới dấu đóng thành dấu cách
-    (giữ "\n"): chữ `fail() {`, `assert x` trong fixture không phải assertion — không che thì kéo thân qua chuỗi là nới linter.
+    comment không mở lệnh nào. masked: text cùng độ dài, giữ "\n" và dấu nháy; thành dấu cách: comment, ruột chuỗi nhiều
+    dòng, và phần khớp _ASSERT trong ruột chuỗi một dòng. Thân test giờ kéo qua dòng cột 0 nên chữ `fail() {`, `# assert x`
+    nằm sau đó không được thành assertion (bản cũ cắt thân nên không thấy) — không che là nới linter.
     Không tokenize được (không phải Python, cú pháp dở) ⇒ None: giữ quy tắc lề cũ."""
-    rows, fresh, spans, opened = set(), True, [], []
+    rows, fresh, cuts, opened = set(), True, [], []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(text).readline):
             if tok.type == tokenize.NEWLINE:
@@ -107,21 +109,32 @@ def _python_scan(text: str) -> "tuple | None":
             elif fresh and tok.type not in (tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT):
                 rows.add(tok.start[0])
                 fresh = False
-            if tok.type in _STR_OPEN:
-                opened.append(tok.start)
+            if tok.type == tokenize.COMMENT:
+                cuts.append((tok.start, tok.end, True))
+            elif tok.type in _STR_OPEN:
+                opened.append(tok.end)
             elif tok.type in _STR_CLOSE and opened:
-                spans.append((opened.pop(), tok.end))
+                cuts.append((opened.pop(), tok.start, False))
             elif tok.type == tokenize.STRING:
-                spans.append((tok.start, tok.end))
+                q = _QUOTE.match(tok.string)
+                if q:
+                    cuts.append(((tok.start[0], tok.start[1] + q.end()), (tok.end[0], tok.end[1] - len(q.group(1))), False))
     except (tokenize.TokenError, SyntaxError):
         return None
     starts = [0] + [m.end() for m in re.finditer("\n", text)]
     pieces, prev = [], 0
-    for (r0, _), (r1, c1) in sorted(s for s in spans if s[1][0] > s[0][0]):
-        a, b = max(starts[r0], prev), starts[r1 - 1] + c1      # từ đầu dòng thứ hai của chuỗi tới hết dấu đóng
-        if a < b:
-            pieces += [text[prev:a], re.sub(r"[^\n]", " ", text[a:b])]
-            prev = b
+    for (r0, c0), (r1, c1), whole in sorted(cuts, key=lambda c: c[0]):
+        a, b = starts[r0 - 1] + c0, starts[r1 - 1] + c1
+        if a < prev or a >= b:
+            continue                                            # chuỗi lồng trong f-string đã xử lý cùng chuỗi ngoài
+        seg = text[a:b]
+        if whole or r1 > r0:
+            seg = re.sub(r"[^\n]", " ", seg)
+        else:
+            # chỉ che phần khớp: che cả chuỗi thì assertEqual("a", "b") thành hai literal giống nhau (_VACUOUS)
+            seg = _ASSERT.sub(lambda m: " " * len(m.group()), seg)
+        pieces += [text[prev:a], seg]
+        prev = b
     return frozenset(rows), "".join(pieces) + text[prev:]
 
 
@@ -139,7 +152,7 @@ def _python_body(text: str, start: int) -> str:
     if scan and row in scan[0] and start < len(text):
         # `def` là lệnh thật (không nằm trong chuỗi fixture): thân hết ở lệnh kế tiếp có lề ≤ lề của chính dòng `def`
         # (regex khớp từ đầu dòng nên lề tính ở trên luôn 0 ⇒ method kéo tới cột 0, nuốt assert của test sau, #737),
-        # và đọc trên bản đã che chuỗi nhiều dòng. Chỉ tách ở "\n" như tokenize: splitlines còn tách ở \f, U+2028…
+        # và đọc trên bản đã che comment/chuỗi. Chỉ tách ở "\n" như tokenize: splitlines còn tách ở \f, U+2028…
         stmts, masked = scan
         lines = io.StringIO(masked[start:]).readlines()
         out, indent = [lines[0]], _lead(lines[0])

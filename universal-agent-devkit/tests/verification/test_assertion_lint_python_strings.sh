@@ -125,7 +125,7 @@ x
 
     def test_comment_col0_then_assert(self):
         value = 1
-# ghi chú ở cột 0
+# x
         self.assertEqual(value, 1)
 
     def test_mock_typo(self):
@@ -142,6 +142,32 @@ x
         self.assertEqual(dedent("""
             a
         """), "a\n")
+
+    def test_fixture_then_comment(self):
+        script = """
+echo hi
+"""
+        Path("adb").write_text(script)  # assert adb exists
+
+    def test_fixture_then_string_word(self):
+        script = """
+echo hi
+"""
+        log("fail() if missing")
+
+    def test_col0_single_string(self):
+        run(
+"fail() {}",
+        )
+
+    def test_fstring_fixture_only(self):
+        script = f"""
+fail() {{ exit 1; }}
+"""
+        Path("adb").write_text(script)
+
+    def test_assert_words_in_literals(self):
+        assertEqual("assert a", "assert b")
 PY
 
 # Thụt lề bằng tab (tokenize: tab nhảy tới bội số 8).
@@ -196,10 +222,15 @@ expect_flagged "src/test_masked.py" "12"       # docstring có dòng `assert` �
 expect_flagged "src/test_masked.py" "23"       # helper chỉ ghi chuỗi có `self.assertEqual(` không thành helper có assert
 expect_flagged "src/test_masked.py" "26"       # default của tham số là chuỗi nhiều dòng có `assert`
 expect_not_flagged "src/test_masked.py" "31"   # code sau dấu đóng chuỗi trên cùng dòng vẫn được đọc
-expect_not_flagged "src/test_masked.py" "36"   # comment ở cột 0 giữa thân không cắt thân
+expect_not_flagged "src/test_masked.py" "36"   # comment ngắn ở cột 0 giữa thân không cắt thân (comment không mở lệnh)
 expect_flagged "src/test_masked.py" "41"       # gõ sai tên mock assert: không phải assertion
 expect_flagged "src/test_masked.py" "45"       # `assert` thụt lề trong chuỗi nhiều dòng cũng chỉ là chữ
 expect_not_flagged "src/test_masked.py" "51"   # dòng mở chuỗi (assert bọc chuỗi) không bị che
+expect_flagged "src/test_masked.py" "56"       # comment `# assert …` sau fixture cột 0 không phải assertion
+expect_flagged "src/test_masked.py" "62"       # chữ `fail()` trong chuỗi một dòng không phải assertion
+expect_flagged "src/test_masked.py" "68"       # chuỗi một dòng mở ở cột 0
+expect_flagged "src/test_masked.py" "73"       # f-string nhiều dòng cũng được che
+expect_not_flagged "src/test_masked.py" "79"   # chỉ che phần khớp assertion: hai literal vẫn khác nhau, không thành assertEqual(x, x)
 expect_not_flagged "src/test_tabs.py" "2"
 expect_flagged "src/test_tabs.py" "5"
 expect_flagged "src/test_indent_err.py" "1"
