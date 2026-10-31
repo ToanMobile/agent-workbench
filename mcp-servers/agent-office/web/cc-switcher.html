@@ -118,6 +118,24 @@
   ul.repos li { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; background: var(--floor); border-radius: 10px; font-size: 13px; }
   .tag { font-size: 11.5px; color: var(--muted); }
   .tag.warn { color: var(--t-building); }
+  .b-fallback { background: color-mix(in srgb, var(--c-building) 18%, transparent); color: var(--t-building); }
+  .b-group { background: var(--floor2); color: var(--muted); font-weight: 500; }
+  .rp-name { font-weight: 600; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .rp-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; max-width: 340px; }
+  .rp-note { font-size: 12px; color: var(--t-building); margin-top: 3px; max-width: 320px; }
+  .rp-note.muted { color: var(--muted); }
+  .rp-assign { display: flex; gap: 6px; align-items: center; }
+  select, .field input { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; min-height: 34px; }
+  select.dirty { border-color: var(--c-ready); box-shadow: 0 0 0 1px var(--c-ready) inset; }
+  .btn.sm { min-height: 32px; padding: 4px 10px; font-size: 12.5px; }
+  .btn[hidden] { display: none; }
+  tr.differs td { background: color-mix(in srgb, var(--c-building) 6%, transparent); }
+  td.nowrap { white-space: nowrap; }
+  .acc-repos li .tag.warn { font-weight: 600; }
+  .addform { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(140px, 1fr) auto auto; gap: 8px; align-items: end; margin-top: 12px; }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+  .field input { width: 100%; }
+  @media (max-width: 760px) { .addform { grid-template-columns: 1fr; } }
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -209,12 +227,28 @@
       </div>
     </section>
 
-    <section aria-labelledby="h-repo">
-      <h2 id="h-repo">Phân bổ repo <small>.claude/settings.local.json → account</small></h2>
-      <div class="grid g2" id="repos"><div class="skel"></div><div class="skel"></div></div>
-      <div class="actions" style="margin-top:10px">
-        <button type="button" class="btn" data-act="balance" data-mode="even">Chia đều 3/3</button>
-        <button type="button" class="btn" data-act="balance" data-mode="swap">Đảo nhóm FinOS ↔ Team</button>
+    <section aria-labelledby="h-repo" id="repoSection">
+      <h2 id="h-repo">Repo ↔ Tài khoản <small>repo nào dùng tài khoản Claude nào · .claude/settings.local.json → "account" · worktree dùng chung tài khoản của repo gốc</small></h2>
+      <div class="grid g3" id="repoByAcc"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+      <div class="card tablewrap" id="repos" style="margin-top:12px"><div class="skel" style="min-height:120px"></div></div>
+      <div class="card" style="margin-top:12px">
+        <div class="actions">
+          <button type="button" class="btn" data-act="balance" data-mode="even">Chia đều mặc định (FinOS / FinOS Team)</button>
+          <button type="button" class="btn" data-act="balance" data-mode="swap">Đảo nhóm FinOS ↔ Team</button>
+        </div>
+        <form class="addform" id="repoAddForm" autocomplete="off">
+          <label class="field">Thêm repo (đường dẫn tuyệt đối tới thư mục Git)
+            <input id="raPath" type="text" placeholder="/Volumes/Data/Toan/ten-repo" spellcheck="false" required>
+          </label>
+          <label class="field">Tên hiển thị (tùy chọn)
+            <input id="raName" type="text" maxlength="80" placeholder="mặc định: tên thư mục">
+          </label>
+          <label class="field">Tài khoản
+            <select id="raAcc"></select>
+          </label>
+          <button type="submit" class="btn primary">Thêm repo</button>
+        </form>
+        <p class="hint">Gán / thêm repo ghi khóa "account" vào .claude/settings.local.json của repo (giữ nguyên hooks, permissions…), giống lệnh <span class="mono">claude-profile</span>. Áp dụng cho phiên <span class="mono">claude</span> mới mở trong repo. Gỡ repo: bỏ khỏi danh sách và xóa khóa "account" (repo quay về ~/.claude mặc định).</p>
       </div>
     </section>
 
@@ -334,7 +368,7 @@
     }).finally(function () { $('#main').setAttribute('aria-busy', 'false'); });
   }
   function renderEmptyError() {
-    ['#summary', '#claude', '#backup', '#repos'].forEach(function (s) { var n = $(s); n.innerHTML = ''; n.appendChild(el('div', { class: 'card empty', text: 'Chưa có dữ liệu.' })); });
+    ['#summary', '#claude', '#backup', '#repos', '#repoByAcc'].forEach(function (s) { var n = $(s); n.innerHTML = ''; n.appendChild(el('div', { class: 'card empty', text: 'Chưa có dữ liệu.' })); });
     $('#history').innerHTML = ''; $('#history').appendChild(el('div', { class: 'empty', text: 'Chưa có dữ liệu.' }));
   }
 
@@ -420,18 +454,91 @@
     if (probs.length) { w.textContent = 'Cần xem: ' + probs.join(', ') + '.' + (!h.daemon.running ? ' Daemon tự đổi tài khoản khi gặp 429 và gửi cảnh báo Telegram: bật bằng launchd asia.finos.cc-switcher-daemon.' : ''); w.hidden = false; }
     else w.hidden = true;
   }
-  function renderRepos() {
-    var r = $('#repos'); r.innerHTML = '';
-    [['finos', '1. FinOS'], ['finos_team', '2. FinOS Team']].forEach(function (g) {
-      var items = state.repoAssignments.filter(function (x) { return x.account === g[0]; });
-      var ul = el('ul', { class: 'repos' });
-      items.forEach(function (x) {
-        ul.appendChild(el('li', null, [el('span', { text: x.name }), el('span', { class: 'tag' + (x.exists ? '' : ' warn'), text: !x.exists ? 'chưa có settings.local.json' : x.pinnedInFile ? 'đã ghim' : 'mặc định' })]));
-      });
-      if (!items.length) ul.appendChild(el('li', { class: 'empty', text: 'Không có repo' }));
-      r.appendChild(el('div', { class: 'card' }, [el('div', { class: 'acc-head' }, [el('div', { class: 'acc-name', text: g[1] }), el('span', { class: 'badge b-ready', text: items.length + ' repo' })]), ul]));
-    });
+  var repoDirty = {};   // repo path -> tài khoản đang chọn nhưng chưa lưu (giữ qua lần tự làm mới)
+  function claudeIds() { return state.claudeAccounts || ['finos', 'finos_team', 'max']; }
+  function pShort(id) { var p = state.profiles.find(function (x) { return x.id === id; }); return p ? (p.shortLabel || splitName(p.name).title) : id; }
+  function effBadge(r) {
+    var e = r.effective || {};
+    if (e.kind === 'assigned') return el('span', { class: 'badge b-active', text: pShort(e.account) });
+    if (e.kind === 'fallback') return el('span', { class: 'badge b-fallback', text: 'Tạm: ' + pShort(e.account) });
+    if (e.kind === 'unpinned') return el('span', { class: 'badge b-ready', text: '~/.claude mặc định' });
+    if (e.kind === 'missing') return el('span', { class: 'badge b-frozen', text: 'Không thấy repo' });
+    if (e.kind === 'blocked') return el('span', { class: 'badge b-frozen', text: 'Đang khóa hết' });
+    return el('span', { class: 'badge b-frozen', text: 'Không rõ' });
   }
+  function renderRepoByAcc() {
+    var box = $('#repoByAcc'); box.innerHTML = '';
+    claudeIds().forEach(function (id) {
+      var p = state.profiles.find(function (x) { return x.id === id; }) || { id: id, name: id };
+      var items = state.repoAssignments.filter(function (x) { return x.pinnedInFile && x.account === id; });
+      var ul = el('ul', { class: 'repos acc-repos' });
+      items.forEach(function (x) {
+        var e = x.effective || {};
+        ul.appendChild(el('li', null, [el('span', { text: x.name }),
+          el('span', { class: 'tag' + (x.differs ? ' warn' : ''), text: e.kind === 'fallback' ? 'tạm dùng ' + pShort(e.account) : e.kind === 'missing' ? 'không thấy thư mục' : x.lastUsedAtMs ? 'dùng ' + ago(x.lastUsedAtMs) : 'chưa dùng' })]));
+      });
+      if (!items.length) ul.appendChild(el('li', { class: 'empty', text: 'Chưa có repo nào gán' }));
+      box.appendChild(el('div', { class: 'card' + (p.isFrozen ? ' frozen' : '') }, [
+        el('div', { class: 'acc-head' }, [
+          el('div', null, [el('div', { class: 'acc-name', text: pShort(id) }), el('div', { class: 'acc-mail', text: p.isFrozen ? 'Đang khóa 429' + (p.resetTimeFormatted ? ' tới ' + p.resetTimeFormatted : '') : 'Còn ' + (p.remainingPct != null ? p.remainingPct : '—') + '% quota 5 giờ' })]),
+          el('span', { class: 'badge ' + (items.length ? 'b-parallel' : 'b-ready'), text: items.length + ' repo' })
+        ]), ul]));
+    });
+    var loose = state.repoAssignments.filter(function (x) { return !x.pinnedInFile || claudeIds().indexOf(x.account) < 0; });
+    if (loose.length) {
+      var ul2 = el('ul', { class: 'repos' });
+      loose.forEach(function (x) { ul2.appendChild(el('li', null, [el('span', { text: x.name }), el('span', { class: 'tag warn', text: x.pinnedInFile ? 'account lạ: ' + x.account : 'chưa ghim → ~/.claude' })])); });
+      box.appendChild(el('div', { class: 'card' }, [el('div', { class: 'acc-head' }, [el('div', { class: 'acc-name', text: 'Chưa ghim tài khoản' }), el('span', { class: 'badge b-fallback', text: loose.length + ' repo' })]), ul2]));
+    }
+  }
+  function renderRepos() {
+    renderRepoByAcc();
+    var r = $('#repos'); r.innerHTML = '';
+    if (!state.repoAssignments.length) { r.appendChild(el('div', { class: 'empty', text: 'cc-switcher chưa biết repo nào. Thêm repo ở ô bên dưới.' })); return; }
+    var tb = el('tbody');
+    state.repoAssignments.forEach(function (x) {
+      var sel = el('select', { 'aria-label': 'Tài khoản cho ' + x.name, 'data-repo-select': x.path, disabled: busy || !x.pathExists ? 'disabled' : null });
+      if (!x.pinnedInFile) sel.appendChild(el('option', { value: '', text: '— chưa ghim —' }));
+      claudeIds().forEach(function (id) { sel.appendChild(el('option', { value: id, text: pShort(id) })); });
+      if (x.pinnedInFile && claudeIds().indexOf(x.account) < 0) sel.appendChild(el('option', { value: x.account, text: x.account + ' (lạ)' }));
+      var cur = x.pinnedInFile ? x.account : '';
+      sel.value = repoDirty[x.path] !== undefined ? repoDirty[x.path] : cur;
+      sel.dataset.current = cur;
+      var save = el('button', { type: 'button', class: 'btn primary sm', 'data-repo-save': x.path, text: 'Lưu', hidden: sel.value === cur ? 'hidden' : null, disabled: busy ? 'disabled' : null });
+      if (sel.value !== cur) sel.classList.add('dirty');
+      var e = x.effective || {};
+      var group = el('span', { class: 'badge b-group', text: x.group });
+      var nameCell = el('td', null, [el('div', { class: 'rp-name' }, [el('span', { text: x.name }), group]),
+        el('div', { class: 'rp-path', text: x.path, title: x.path }),
+        x.worktrees && x.worktrees.length ? el('div', { class: 'tag', text: x.worktrees.length + ' git worktree dùng chung tài khoản', title: x.worktrees.join('\n') }) : null]);
+      var effCell = el('td', null, [effBadge(x), e.note ? el('div', { class: 'rp-note' + (e.kind === 'unpinned' ? ' muted' : ''), text: e.note }) : null]);
+      var lastCell = el('td', { class: 'nowrap' }, [el('div', { text: x.lastUsedAtMs ? ago(x.lastUsedAtMs) : 'chưa dùng' }),
+        x.lastUsedAtMs ? el('div', { class: 'tag', text: fmtTime(x.lastUsedAtMs, true) + ' · ' + pShort(x.lastUsedAccount) }) : null,
+        x.lastUsedAtMs && x.pinnedInFile && x.lastUsedAccount && x.lastUsedAccount !== x.account
+          ? el('div', { class: 'tag warn', text: 'phiên cuối chạy bằng tài khoản khác', title: 'Phiên Claude Code gần nhất của repo (hoặc worktree) nằm trong ' + pShort(x.lastUsedAccount) + ', không phải tài khoản gán. Thường do mở claude bằng alias claude-<tên> hoặc CLAUDE_CONFIG_DIR đặt tay.' })
+          : null]);
+      var rm = el('button', { type: 'button', class: 'btn ghost sm', 'data-repo-remove': x.path, text: 'Gỡ', 'aria-label': 'Gỡ ' + x.name + ' khỏi cc-switcher', disabled: busy ? 'disabled' : null });
+      tb.appendChild(el('tr', { class: x.differs ? 'differs' : '' }, [nameCell,
+        el('td', null, [el('div', { class: 'rp-assign' }, [sel, save]), !x.settingsExists && x.pathExists ? el('div', { class: 'tag warn', text: 'chưa có settings.local.json' }) : null]),
+        effCell, lastCell, el('td', null, [rm])]));
+    });
+    r.appendChild(el('table', null, [el('thead', null, [el('tr', null, [
+      el('th', { scope: 'col', text: 'Repo · nhóm · đường dẫn' }), el('th', { scope: 'col', text: 'Tài khoản gán' }),
+      el('th', { scope: 'col', text: 'Đang dùng thực tế' }), el('th', { scope: 'col', text: 'Lần dùng cuối' }), el('th', { scope: 'col', text: '' })])]), tb]));
+    var ra = $('#raAcc'), keep = ra.value; ra.innerHTML = '';
+    claudeIds().forEach(function (id) { ra.appendChild(el('option', { value: id, text: pShort(id) })); });
+    if (keep) ra.value = keep;
+  }
+  function repoByPath(p) { return state.repoAssignments.find(function (x) { return x.path === p; }); }
+  document.addEventListener('change', function (e) {
+    var sel = e.target.closest('[data-repo-select]');
+    if (!sel) return;
+    var p = sel.dataset.repoSelect, cur = sel.dataset.current;
+    if (sel.value === cur) delete repoDirty[p]; else repoDirty[p] = sel.value;
+    sel.classList.toggle('dirty', sel.value !== cur);
+    var b = document.querySelector('[data-repo-save="' + CSS.escape(p) + '"]');
+    if (b) b.hidden = sel.value === cur;
+  });
   function renderHistory() {
     var h = $('#history'); h.innerHTML = '';
     if (!state.history.length) { h.appendChild(el('div', { class: 'empty', text: 'Chưa có lần chuyển nào.' })); return; }
@@ -457,14 +564,14 @@
     var m = state.antiBan.cooldownMinutes;
     document.querySelectorAll('#cdSeg button').forEach(function (x) { x.setAttribute('aria-pressed', String(Number(x.dataset.min) === m)); });
     $('#cdInput').placeholder = m + ' phút';
-    document.querySelectorAll('[data-act],#cdSeg button,#cdForm button,#btnRefresh').forEach(function (x) { x.disabled = busy; });
+    document.querySelectorAll('[data-act],#cdSeg button,#cdForm button,#btnRefresh,#repoAddForm button').forEach(function (x) { x.disabled = busy; });
   }
 
   function act(body, btn) {
     if (busy) return Promise.resolve();
     busy = true;
     if (btn) btn.setAttribute('aria-busy', 'true');
-    document.querySelectorAll('[data-act],[data-switch],#cdSeg button,#cdForm button,#btnRefresh').forEach(function (x) { x.disabled = true; });
+    document.querySelectorAll('[data-act],[data-switch],#cdSeg button,#cdForm button,#btnRefresh,#repoAddForm button,[data-repo-save],[data-repo-remove],[data-repo-select]').forEach(function (x) { x.disabled = true; });
     return api('/api/cc-switcher/action', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agent-Office': '1' }, body: JSON.stringify(body) })
       .then(function (j) {
         if (j.state) { state = j.state; loadedAt = Date.now(); }
@@ -481,6 +588,33 @@
   function profileName(id) { var p = state && state.profiles.find(function (x) { return x.id === id; }); return p ? splitName(p.name).title : id; }
 
   document.addEventListener('click', function (e) {
+    var sv = e.target.closest('[data-repo-save]');
+    if (sv && !sv.disabled) {
+      var rp = repoByPath(sv.dataset.repoSave), acc = repoDirty[sv.dataset.repoSave];
+      if (!rp || !acc) return;
+      var eff = rp.effective || {};
+      confirmDlg('Gán ' + rp.name + ' → ' + pShort(acc) + '?',
+        rp.path + '\n\nTừ: ' + (rp.pinnedInFile ? pShort(rp.account) : 'chưa ghim (~/.claude)') + '\nSang: ' + pShort(acc) +
+        '\n\nGhi "account" vào .claude/settings.local.json (giữ nguyên các khóa khác). Phiên claude đang mở không đổi; phiên mới trong repo và các worktree của nó dùng tài khoản mới.' +
+        (state.profiles.some(function (p) { return p.id === acc && p.isFrozen; }) ? '\n\n⚠ ' + pShort(acc) + ' đang khóa 429: repo sẽ tạm chạy dự phòng khác hãng tới khi mở khóa.' : ''),
+        'Gán tài khoản').then(function (ok) {
+        if (!ok) return;
+        act({ action: 'repo_assign', repo: rp.path, account: acc }, sv).then(function () {
+          var now = repoByPath(rp.path);
+          if (!now || (now.pinnedInFile && now.account === acc)) { delete repoDirty[rp.path]; if (state) render(); }
+        });
+      });
+      return;
+    }
+    var rmb = e.target.closest('[data-repo-remove]');
+    if (rmb && !rmb.disabled) {
+      var rr = repoByPath(rmb.dataset.repoRemove);
+      if (!rr) return;
+      confirmDlg('Gỡ ' + rr.name + ' khỏi cc-switcher?', rr.path + '\n\nBỏ repo khỏi danh sách' + (rr.pinnedInFile ? ' và xóa khóa "account" (' + pShort(rr.account) + ') trong .claude/settings.local.json: lệnh claude trong repo sẽ dùng ~/.claude mặc định.' : '.') + '\nThêm lại được bất cứ lúc nào.', 'Gỡ repo', true).then(function (ok) {
+        if (ok) act({ action: 'repo_remove', repo: rr.path }, rmb).then(function () { delete repoDirty[rr.path]; });
+      });
+      return;
+    }
     var sw = e.target.closest('[data-switch]');
     if (sw && !sw.disabled) {
       var id = sw.dataset.switch;
@@ -521,6 +655,17 @@
     var n = Number(v);
     if (v === '' || !Number.isInteger(n) || n < 0 || n > 1440) { toast('Nhập số phút nguyên từ 0 đến 1440.', true); $('#cdInput').focus(); return; }
     act({ action: 'cooldown', minutes: n }, e.submitter || null).then(function () { $('#cdInput').value = ''; });
+  });
+  $('#repoAddForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var path = $('#raPath').value.trim().replace(/\/+$/, ''), name = $('#raName').value.trim(), acc = $('#raAcc').value;
+    if (path.charAt(0) !== '/') { toast('Nhập đường dẫn tuyệt đối, bắt đầu bằng /.', true); $('#raPath').focus(); return; }
+    confirmDlg('Thêm repo → ' + pShort(acc) + '?', path + (name ? '\nTên: ' + name : '') + '\n\nThêm vào danh sách cc-switcher và ghi "account": "' + acc + '" vào .claude/settings.local.json của repo.', 'Thêm repo').then(function (ok) {
+      if (!ok) return;
+      var body = { action: 'repo_add', repo: path, account: acc };
+      if (name) body.name = name;
+      act(body, e.submitter || null).then(function () { if (state && repoByPath(path)) { $('#raPath').value = ''; $('#raName').value = ''; } });
+    });
   });
   $('#btnRefresh').addEventListener('click', function () {
     var b = this; b.setAttribute('aria-busy', 'true'); b.disabled = true;

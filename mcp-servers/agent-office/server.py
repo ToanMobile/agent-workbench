@@ -2533,7 +2533,9 @@ def open_phone_tunnel(state_dir: str) -> str:
 # Bảng điều khiển CC Switcher (đã chuyển từ Telegram sang đây): trang /cc-switcher, dữ liệu và thao tác gọi lại CLI JSON của
 # cc-switcher-mcp (node bin/cc-switcher-mcp.js --panel-json / --panel-action), không chép logic đổi tài khoản sang Python.
 # Chỉ phục vụ chính máy Mac: qua tunnel điện thoại (kể cả có key) trả 403, vì trang đổi được tài khoản Claude.
-CC_ACTIONS = {"refresh", "switch", "rotate", "limit", "unfreeze", "balance", "cooldown"}
+CC_ACTIONS = {"refresh", "switch", "rotate", "limit", "unfreeze", "balance", "cooldown",
+              "repo_assign", "repo_add", "repo_remove"}
+CC_CLAUDE_ACCOUNTS = {"finos", "finos_team", "max"}   # repo chỉ gán được tài khoản Claude (CLAUDE_CONFIG_DIR=~/.claude-<id>)
 CC_PROFILES = {"finos", "finos_team", "max", "antigravity", "antigravity_pro", "grok"}
 CC_BALANCE_MODES = {"even", "swap"}
 _cc_lock = threading.Lock()   # một thao tác ghi một lúc: bấm hai nút liền không ghi chồng switcher-state.json
@@ -2573,6 +2575,23 @@ def cc_switcher_args(body: dict) -> list:
         if isinstance(minutes, bool) or not isinstance(minutes, int) or not 0 <= minutes <= 1440:
             raise ValueError("Số phút nghỉ phải là số nguyên 0 - 1440")
         args += ["--minutes", str(minutes)]
+    elif action in ("repo_assign", "repo_add", "repo_remove"):
+        repo = body.get("repo")
+        if not isinstance(repo, str) or not repo.startswith("/") or len(repo) > 1024 \
+                or any(ch in repo for ch in "\x00\n\r"):
+            raise ValueError("Đường dẫn repo phải là đường dẫn tuyệt đối")
+        args += ["--repo", repo]
+        if action != "repo_remove":
+            account = body.get("account")
+            if account not in CC_CLAUDE_ACCOUNTS:
+                raise ValueError("Repo chỉ gán được tài khoản Claude: finos, finos_team, max")
+            args += ["--account", account]
+        if action == "repo_add" and body.get("name") not in (None, ""):
+            name = body.get("name")
+            if not isinstance(name, str) or len(name) > 80 or name.startswith("-") \
+                    or any(ch in name for ch in "\x00\n\r"):
+                raise ValueError("Tên repo không hợp lệ")
+            args += ["--name", name]
     return args
 
 

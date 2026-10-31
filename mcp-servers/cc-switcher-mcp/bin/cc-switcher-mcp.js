@@ -39,6 +39,9 @@ if (argv.includes('--panel-json') || argv.includes('--panel-action')) {
         force: argv.includes('--force'),
         mode: argValue('--mode'),
         minutes: argValue('--minutes'),
+        repo: argValue('--repo'),
+        account: argValue('--account'),
+        name: argValue('--name'),
       };
       const result = await runPanelAction(action, params, { stateDir });
       const state = await buildPanelState({ stateDir, sync: false });
@@ -90,6 +93,8 @@ Cach dung:
       [--refresh] [--no-sync] [--state-dir <dir>]
   --panel-action <ten>      Thuc hien thao tac tu bang dieu khien web, in JSON ket qua
       ten: refresh | switch --target <id> [--force] | rotate | limit | unfreeze | balance --mode even|swap | cooldown --minutes <0..1440>
+            | repo_assign --repo <path> --account <finos|finos_team|max>
+            | repo_add --repo <path> --account <id> [--name <ten>] | repo_remove --repo <path>
   --tools                   Liet ke danh sach MCP tools
   --help                    Hien thi tro giup
 `);

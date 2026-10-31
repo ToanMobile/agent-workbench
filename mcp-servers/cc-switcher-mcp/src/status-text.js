@@ -33,10 +33,14 @@ export function formatStatusText(report) {
   });
   if (Array.isArray(report.repoAssignments) && report.repoAssignments.length > 0) {
     lines.push('');
-    for (const acc of ['finos', 'finos_team']) {
+    const accs = ['finos', 'finos_team'];
+    for (const r of report.repoAssignments) if (r.account && !accs.includes(r.account)) accs.push(r.account);
+    for (const acc of accs) {
       const names = report.repoAssignments.filter((r) => r.account === acc).map((r) => r.name);
       lines.push(`📂 ${acc}: ${names.join(', ') || '(không có)'}`);
     }
+    const loose = report.repoAssignments.filter((r) => !r.account).map((r) => r.name);
+    if (loose.length) lines.push(`📂 chưa ghim (~/.claude): ${loose.join(', ')}`);
   }
   lines.push('');
   lines.push(`🎛 Bảng điều khiển: ${panelUrl()}`);

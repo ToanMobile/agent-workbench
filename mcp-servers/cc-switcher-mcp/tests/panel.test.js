@@ -131,7 +131,7 @@ test('panel actions rotate / limit / unfreeze / cooldown dung logic profiles.js'
     await assert.rejects(runPanelAction('cooldown', { minutes: '1.5' }, { stateDir: tmp.dir }), /0 - 1440/);
     await assert.rejects(runPanelAction('rm -rf', {}, { stateDir: tmp.dir }), /không hợp lệ/);
     await assert.rejects(runPanelAction('switch', { target: '../../etc' }, { stateDir: tmp.dir }), /hợp lệ/);
-    assert.deepEqual(PANEL_ACTIONS, ['refresh', 'switch', 'rotate', 'limit', 'unfreeze', 'balance', 'cooldown']);
+    assert.deepEqual(PANEL_ACTIONS, ['refresh', 'switch', 'rotate', 'limit', 'unfreeze', 'balance', 'cooldown', 'repo_assign', 'repo_add', 'repo_remove']);
     resetLocks(tmp.dir);
   } finally {
     tmp.cleanup();

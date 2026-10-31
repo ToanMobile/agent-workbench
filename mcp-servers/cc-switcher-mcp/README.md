@@ -26,8 +26,9 @@ Bảng điều khiển nằm ở **http://ai-factory.localhost:4317/cc-switcher*
 
 - 6 tài khoản: % quota 5 giờ và 7 ngày, giờ reset (giờ VN) kèm thời gian còn lại, đóng băng 429, số repo đang gán, nguồn và tuổi số liệu quota.
 - Chuyển tài khoản (có hộp xác nhận; đang trong cooldown hoặc đóng băng thì hỏi "Ép chuyển ngay"), xoay vòng, báo chạm 429, mở khóa 429 và cooldown, đặt thời gian nghỉ (15/5/0 phút hoặc số tùy chọn).
+- **Repo ↔ Tài khoản**: bảng mọi repo cc-switcher biết (tên, nhóm, đường dẫn, tài khoản gán, tài khoản đang dùng thực tế khi tài khoản gán chạm 429 hoặc repo chưa ghim, số git worktree, lần dùng Claude Code cuối và bằng tài khoản nào) và danh sách repo theo từng tài khoản. Đổi tài khoản của một repo ngay trong bảng (chọn → Lưu → xác nhận; ghi `account` vào `.claude/settings.local.json`, giống `claude-profile`), thêm repo Git mới hoặc gỡ repo (xóa khóa `account`). Danh sách repo thêm/gỡ lưu ở `~/.cc-switch/repos.json`.
 - Chia đều / đảo nhóm repo FinOS ↔ FinOS Team, lịch sử 50 lần chuyển gần nhất, sức khỏe (daemon, cảnh báo Telegram, cc-switch.db, lần đọc quota gần nhất).
-- Trang gọi lại logic của gói này qua CLI JSON: `node bin/cc-switcher-mcp.js --panel-json [--refresh]` và `--panel-action <refresh|switch|rotate|limit|unfreeze|balance|cooldown>`. Không trả token hay chat id Telegram.
+- Trang gọi lại logic của gói này qua CLI JSON: `node bin/cc-switcher-mcp.js --panel-json [--refresh]` và `--panel-action <refresh|switch|rotate|limit|unfreeze|balance|cooldown|repo_assign|repo_add|repo_remove>`. Không trả token hay chat id Telegram.
 
 ## Telegram: chỉ còn cảnh báo
 

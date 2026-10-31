@@ -23,6 +23,13 @@ class CcSwitcherPanel(unittest.TestCase):
         os.makedirs(cls.state)
         with open(os.path.join(cls.state, "settings.json"), "w") as f:
             json.dump({"currentProviderClaude": "finos"}, f)
+        with open(os.path.join(cls.state, "repos.json"), "w") as f:   # không đụng 6 repo thật trên máy
+            json.dump({"custom": [], "hidden": [], "defaults": False}, f)
+        cls.repo = os.path.join(cls.tmp.name, "code", "demo-repo")
+        os.makedirs(os.path.join(cls.repo, ".git"))
+        os.makedirs(os.path.join(cls.repo, ".claude"))
+        with open(os.path.join(cls.repo, ".claude", "settings.local.json"), "w") as f:
+            json.dump({"hooks": {"Stop": []}}, f)
         with open(os.path.join(cls.state, "telegram.env"), "w") as f:
             f.write(f"TELEGRAM_BOT_TOKEN=123456789:{SECRET}\nTELEGRAM_CHAT_ID=55667788\n")
         cls.key_file = os.path.join(cls.tmp.name, "remote-key")
@@ -77,6 +84,7 @@ class CcSwitcherPanel(unittest.TestCase):
             html = raw.decode("utf-8")
             self.assertIn("<title>CC Switcher", html)
             self.assertIn("/api/cc-switcher/state", html)
+            self.assertIn("Repo ↔ Tài khoản", html)
         code, raw = self.req("GET", "/")
         self.assertEqual(code, 200)
         self.assertIn('id="btnCcs"', raw.decode("utf-8"))  # nút mở trang từ Xưởng agent
@@ -125,6 +133,52 @@ class CcSwitcherPanel(unittest.TestCase):
         self.assertEqual(code, 403)
         st = json.loads(self.req("GET", "/api/cc-switcher/state")[1])
         self.assertEqual(st["activeProfileId"], "finos")
+
+
+    def settings(self):
+        with open(os.path.join(self.repo, ".claude", "settings.local.json")) as f:
+            return json.load(f)
+
+    def test_repo_account_table_assign_add_remove(self):
+        code, raw = self.post({"action": "repo_add", "repo": self.repo, "account": "finos", "name": "Demo Repo"})
+        self.assertEqual(code, 200, raw[:300])
+        res = json.loads(raw)
+        rows = res["state"]["repoAssignments"]
+        self.assertEqual([(r["name"], r["path"], r["account"]) for r in rows], [("Demo Repo", self.repo, "finos")])
+        row = rows[0]
+        for k in ("group", "effective", "differs", "worktrees", "lastUsedAtMs", "lastUsedAccount", "pinnedInFile"):
+            self.assertIn(k, row)
+        self.assertEqual(row["effective"]["kind"], "assigned")
+        self.assertEqual(res["state"]["claudeAccounts"], ["finos", "finos_team", "max"])
+
+        code, raw = self.post({"action": "repo_assign", "repo": self.repo, "account": "max"})
+        self.assertEqual(code, 200, raw[:300])
+        self.assertEqual(self.settings(), {"hooks": {"Stop": []}, "account": "max"})
+        st = json.loads(self.req("GET", "/api/cc-switcher/state")[1])
+        self.assertEqual(st["repoAssignments"][0]["account"], "max")
+
+        for bad in ({"action": "repo_assign", "repo": self.repo, "account": "grok"},
+                    {"action": "repo_assign", "repo": "relative/path", "account": "finos"},
+                    {"action": "repo_assign", "repo": self.repo + "\n--force", "account": "finos"},
+                    {"action": "repo_assign", "repo": "/etc", "account": "finos"},
+                    {"action": "repo_add", "repo": self.repo, "account": "finos", "name": "--x"},
+                    {"action": "repo_remove"}):
+            code, _ = self.post(bad)
+            self.assertEqual(code, 400, bad)
+        self.assertEqual(self.settings()["account"], "max")
+
+        # ghi repo cũng phải có header và chỉ từ máy Mac
+        code, _ = self.req("POST", "/api/cc-switcher/action", body={"action": "repo_remove", "repo": self.repo})
+        self.assertEqual(code, 403)
+        code, _ = self.post({"action": "repo_remove", "repo": self.repo}, host="abc.trycloudflare.com",
+                            headers={**TUNNEL, "X-Agent-Office-Key": KEY})
+        self.assertEqual(code, 403)
+        self.assertEqual(self.settings()["account"], "max")
+
+        code, raw = self.post({"action": "repo_remove", "repo": self.repo})
+        self.assertEqual(code, 200, raw[:300])
+        self.assertEqual(json.loads(raw)["state"]["repoAssignments"], [])
+        self.assertEqual(self.settings(), {"hooks": {"Stop": []}})
 
 
 if __name__ == "__main__":

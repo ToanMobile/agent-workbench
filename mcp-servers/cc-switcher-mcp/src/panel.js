@@ -14,11 +14,16 @@ import {
   updateAntiBanPolicy,
   balanceRepoAccounts,
   syncLiveQuotas,
+  setRepoAccount,
+  addRepo,
+  removeRepo,
 } from './profiles.js';
 
 export const DEFAULT_PANEL_URL = 'http://ai-factory.localhost:4317/cc-switcher';
 export const BACKUP_ORDER = ['grok', 'antigravity', 'antigravity_pro'];
-export const PANEL_ACTIONS = ['refresh', 'switch', 'rotate', 'limit', 'unfreeze', 'balance', 'cooldown'];
+export const PANEL_ACTIONS = [
+  'refresh', 'switch', 'rotate', 'limit', 'unfreeze', 'balance', 'cooldown', 'repo_assign', 'repo_add', 'repo_remove',
+];
 const BALANCE_MODES = new Set(['even', 'swap']);
 
 /** Link bang dieu khien web (ghi de bang CC_SWITCHER_PANEL_URL). */
@@ -113,7 +118,7 @@ function profileView(p, state, nowMs) {
  * chi phi, phan bo repo, lich su chuyen va suc khoe he thong. Khong chua token/chat id/duong dan config.
  */
 export async function buildPanelState(opts = {}) {
-  const { stateDir, nowMs = Date.now(), repos, sync = true, forceRefresh = false, quotaFetcher, daemonProbe } = opts;
+  const { stateDir, nowMs = Date.now(), repos, sync = true, forceRefresh = false, quotaFetcher, daemonProbe, claudeHomes } = opts;
   let syncError = '';
   if (sync) {
     try {
@@ -146,12 +151,8 @@ export async function buildPanelState(opts = {}) {
       lastClaudeRateLimitAtMs: state.lastClaudeRateLimitAtMs || 0,
     },
     usage: report.usage,
-    repoAssignments: report.repoAssignments.map((r) => ({
-      name: r.name,
-      account: r.account,
-      pinnedInFile: r.pinnedInFile,
-      exists: r.exists,
-    })),
+    repoAssignments: repoRows(report, profiles, claudeHomes),
+    claudeAccounts: profiles.filter((p) => p.vendor === 'anthropic').map((p) => p.id),
     history: state.switchHistory.slice().reverse(),
     health: {
       quotaFetchedAtMs: state.quotaFetchedAtMs || 0,
@@ -162,6 +163,115 @@ export async function buildPanelState(opts = {}) {
       telegram: telegramHealth(stateDir),
     },
   };
+}
+
+// ---- Repo <-> tai khoan -------------------------------------------------------------------------------------
+
+/** Ten thu muc du an cua Claude Code trong <configDir>/projects: moi ky tu khong phai chu/so thanh '-'. */
+export function claudeProjectKey(absPath) {
+  return String(absPath).replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+/** Duong dan cac git worktree cua repo (doc file gitdir trong .git/worktrees, khong goi git). */
+export function listGitWorktrees(repoPath) {
+  const dir = path.join(repoPath, '.git', 'worktrees');
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  const out = [];
+  for (const n of names) {
+    try {
+      const gitdir = fs.readFileSync(path.join(dir, n, 'gitdir'), 'utf8').trim();
+      if (gitdir) out.push(path.dirname(gitdir));
+    } catch { /* worktree hong: bo qua */ }
+  }
+  return out.sort();
+}
+
+function claudeHomesDefault() {
+  return Object.fromEntries(DEFAULT_PROFILES.filter((p) => p.vendor === 'anthropic').map((p) => [p.id, p.configDir]));
+}
+
+/**
+ * Lan cuoi repo duoc Claude Code dung (mtime file phien *.jsonl moi nhat) va tai khoan nao, tinh ca worktree
+ * (<repo>/.claude/worktrees/* va git worktree). Chi doc mtime, khong doc noi dung phien.
+ */
+export function repoLastUsed(repoPath, worktrees = [], claudeHomes = claudeHomesDefault()) {
+  const keys = [repoPath, ...worktrees].map(claudeProjectKey);
+  const ownWt = `${claudeProjectKey(repoPath)}--claude-worktrees-`;
+  let best = { atMs: 0, account: '' };
+  for (const [account, home] of Object.entries(claudeHomes)) {
+    const projects = path.join(home, 'projects');
+    let dirs = [];
+    try { dirs = fs.readdirSync(projects); } catch { continue; }
+    for (const d of dirs) {
+      if (!keys.includes(d) && !d.startsWith(ownWt)) continue;
+      let files = [];
+      try { files = fs.readdirSync(path.join(projects, d)); } catch { continue; }
+      for (const f of files) {
+        if (!f.endsWith('.jsonl')) continue;
+        try {
+          const m = fs.statSync(path.join(projects, d, f)).mtimeMs;
+          if (m > best.atMs) best = { atMs: Math.round(m), account };
+        } catch { /* file vua bi xoa */ }
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Tai khoan repo dang dung THUC TE luc nay, theo dung luat cua ham claude() trong ~/.zshrc + chong ban:
+ * - chua ghim account -> lenh claude dung ~/.claude mac dinh;
+ * - tai khoan Claude duoc gan dang 429/het quota -> KHONG nhay cheo Claude, Super-Board xoay khac hang Grok -> AGY Ultra -> AGY Pro.
+ */
+export function effectiveRepoAccount(row, profilesById) {
+  if (!row.pathExists) return { kind: 'missing', account: '', note: 'Không thấy thư mục repo trên máy.' };
+  if (!row.pinnedInFile) {
+    return { kind: 'unpinned', account: '', note: 'Chưa ghim "account" trong .claude/settings.local.json: lệnh claude dùng ~/.claude mặc định.' };
+  }
+  const p = profilesById[row.account];
+  if (!p) return { kind: 'unknown', account: '', note: `"${row.account}" không phải tài khoản cc-switcher biết.` };
+  if (!p.isFrozen) return { kind: 'assigned', account: p.id, note: '' };
+  const until = p.resetTimeFormatted ? ` tới ${p.resetTimeFormatted}` : '';
+  const fb = BACKUP_ORDER.map((id) => profilesById[id]).find((b) => b && !b.isFrozen);
+  if (!fb) {
+    return { kind: 'blocked', account: '', note: `${p.shortLabel || p.name} chạm 429/hết quota${until}; cả 3 dự phòng khác hãng cũng đang khóa.` };
+  }
+  return {
+    kind: 'fallback',
+    account: fb.id,
+    note: `${p.shortLabel || p.name} chạm 429/hết quota${until} → không nhảy chéo Claude, Super-Board xoay sang ${fb.shortLabel || fb.name}.`,
+  };
+}
+
+function groupLabel(row, profilesById) {
+  if (row.source === 'custom') return 'Tự thêm';
+  const p = profilesById[row.defaultAccount];
+  return p ? `Nhóm ${p.shortLabel || p.name}` : 'Mặc định';
+}
+
+function repoRows(report, profiles, claudeHomes) {
+  const byId = Object.fromEntries(profiles.map((p) => [p.id, p]));
+  return report.repoAssignments.map((r) => {
+    const worktrees = r.pathExists ? listGitWorktrees(r.path) : [];
+    const last = r.pathExists ? repoLastUsed(r.path, worktrees, claudeHomes) : { atMs: 0, account: '' };
+    const eff = effectiveRepoAccount(r, byId);
+    return {
+      name: r.name,
+      path: r.path,
+      account: r.account,
+      pinnedInFile: r.pinnedInFile,
+      settingsExists: r.exists,
+      pathExists: r.pathExists,
+      source: r.source,
+      group: groupLabel(r, byId),
+      effective: eff,
+      differs: eff.kind !== 'assigned',
+      worktrees,
+      lastUsedAtMs: last.atMs,
+      lastUsedAccount: last.account,
+    };
+  });
 }
 
 function badInput(message) {
@@ -235,12 +345,28 @@ export async function runPanelAction(action, params = {}, opts = {}) {
   if (action === 'balance') {
     const mode = String(params.mode || 'even');
     if (!BALANCE_MODES.has(mode)) throw badInput('Chế độ chia repo không hợp lệ (even | swap).');
-    const res = balanceRepoAccounts({ repos, mode });
+    const res = balanceRepoAccounts({ repos, stateDir, mode });
     return {
       ok: true,
       message: mode === 'swap' ? 'Đã đảo nhóm repo giữa FinOS và FinOS Team.' : 'Đã chia đều repo cho FinOS và FinOS Team.',
       changed: res.length,
     };
+  }
+
+  if (action === 'repo_assign' || action === 'repo_add' || action === 'repo_remove') {
+    const repoPath = String(params.repo ?? '').trim();
+    if (!repoPath) throw badInput('Thiếu đường dẫn repo.');
+    const label = (id) => DEFAULT_PROFILES.find((p) => p.id === id)?.shortLabel || id;
+    if (action === 'repo_assign') {
+      const res = setRepoAccount({ stateDir, repos, repoPath, account: String(params.account ?? '') });
+      return { ok: true, message: `${res.name}: ${res.previous ? `${label(res.previous)} → ` : ''}${label(res.account)}.`, repo: res };
+    }
+    if (action === 'repo_add') {
+      const res = addRepo({ stateDir, repos, repoPath, account: String(params.account ?? ''), name: params.name });
+      return { ok: true, message: `Đã thêm ${res.name} → ${label(res.account)}.`, repo: res };
+    }
+    const res = removeRepo({ stateDir, repos, repoPath });
+    return { ok: true, message: `Đã gỡ ${res.name} khỏi cc-switcher${res.previous ? ` (bỏ ghim ${label(res.previous)})` : ''}.`, repo: res };
   }
 
   // cooldown
