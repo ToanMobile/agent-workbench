@@ -811,3 +811,15 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** PR money/auth/schema/migration dừng ở human-gate (exit 7) chờ người; muốn tự động 100% thì dễ xoá luôn category → các PR nhạy cảm nhất merge với cùng mức kiểm như PR sửa chữ
 - **Nguyên nhân:** "human" là cơ chế chặn duy nhất cho các category đó
 - **Quy tắc phòng ngừa & Cách fix:** category nhạy cảm → `machine_gate`: review deep + reviewer security ok/pass + test bổ sung riêng (merge_policy.machine_gate.verify_commands); thiếu test bổ sung = dừng (fail-closed), biên nhận merge train không thay được test bổ sung, PASS_REDUCED không bao giờ đủ
+
+### [INSTINCT-096] Test của chính bộ phân loại chứa đúng chuỗi nó bắt nên PR sửa bộ phân loại tự bị chặn
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** PR #742 thêm `tests/super-board/test_merge_policy_machine_gate.sh` với fixture là đúng các từ khoá tiền / auth / schema của DEFAULT_MACHINE_GATE; merge-policy quét dòng thêm của mọi file nên tự xếp chính PR đó vào machine-gate money/auth/schema, REDUCED bị từ chối (exit 9). Lúc ghi bài học này, chính mục instincts trích nguyên văn các từ khoá đó cũng kích lại gate
+- **Nguyên nhân:** keyword/pattern quét toàn bộ diff, không phân biệt fixture trong test của chính policy với code sản phẩm
+- **Quy tắc phòng ngừa & Cách fix:** bỏ khỏi phần quét keyword/pattern đúng danh sách cứng test của chính policy (`POLICY_SELF_TESTS`, glob `*` không qua `/`), không config/env nào nới; label, path, migration, protected_paths, kích thước vẫn tính các file đó; test phải chứng minh cùng chuỗi trong code sản phẩm, test khác, file đổi tên và header diff giả VẪN bị chặn; không sửa fixture để lách detector; tài liệu, instincts, ghi chú PR nói về từ khoá thì mô tả, không chép nguyên văn
+
+### [INSTINCT-097] Hook fail-closed phải kiểm phụ thuộc trước lệnh ngoài đầu tiên
+- **Ngày phát hiện:** 2026-10-31
+- **Hiện tượng lỗi:** `review_gate.sh` chạy `mkdir -p` trước khi kiểm `python3`; với PATH không có python3 (QA K-4) dòng lỗi đầu tiên là `mkdir: command not found`, thông báo "python3 không có" bị che và hook còn thử ghi vào project
+- **Nguyên nhân:** khối kiểm phụ thuộc đặt sau phần dựng thư mục log, nên một lệnh ngoài khác hỏng trước
+- **Quy tắc phòng ngừa & Cách fix:** khối `command -v <tool>` của hook fail-closed đặt ngay sau phần xác định project, trước mọi lệnh ngoài và mọi lần ghi; test chạy hook với PATH chỉ có bash/cat, đòi exit 2, dòng đầu nhắc tên tool, không có "command not found", không tạo gì trong project
