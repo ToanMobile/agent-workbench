@@ -6633,10 +6633,12 @@ def main():
     for rule in rules:
         comp_name = rule.get("component", "UnknownComponent")
         watch_files = rule_watch(rule, covers)
-        # #741: nguồn của git mv (file đã rời chỗ cũ) cũng chọn luật — lượt --scoped không còn leo full khi đổi tên file code
-        rule_files = [f for f in list(modified_files) + [s for s in RENAME_SOURCES.values() if s not in modified_files]
-                      if any(match_pattern(f, pat) for pat in watch_files)]
-        if not rule_files and args.tree is None:   # --tree: every rule's suites run, whatever the files
+        rule_files = [f for f in modified_files if any(match_pattern(f, pat) for pat in watch_files)]
+        # #741: lượt --scoped không còn leo full khi đổi tên file code — nguồn git mv (đã rời chỗ cũ) cũng chọn luật; "files" chỉ giữ đường
+        # dẫn còn trên đĩa (narrow / impacted không nhận đường dẫn đã mất). Lượt khác giữ hành vi cũ.
+        moved_from = (any(match_pattern(s, pat) for s in RENAME_SOURCES.values() for pat in watch_files)
+                      if getattr(args, "scoped", False) else False)
+        if not rule_files and not moved_from and args.tree is None:   # --tree: every rule's suites run, whatever the files
             continue
         impacted_components.append(comp_name)
         for test in rule.get("mandatory_regression_tests", []):
@@ -8097,10 +8099,12 @@ def main():
     # dùng hàm đó để bỏ qua gate, mà chính gate mới là nơi quét secret cho sổ này.
     # Config board super-board (.claude/super-board/configs/*.json, 18/10): chỉ script super-board đọc, như .claude/settings.json; đổi luật
     # gộp ở đó không có test hồi quy nào của dự án bắt được. Rule nào theo dõi nó vẫn chạy test.
-    docs_only = bool(modified_files) and all(
-        needs_no_test(f) or f.replace("\\", "/") in GATE_STATE_FILES
-        or re.fullmatch(r"\.claude/super-board/configs/[^/]+\.json", f.replace("\\", "/")) is not None
-        for f in modified_files) and all(needs_no_test(s) for s in RENAME_SOURCES.values())   # #741: git mv code → tài liệu không phải "chỉ tài liệu"
+    def _doc_like(f):
+        return (needs_no_test(f) or f.replace("\\", "/") in GATE_STATE_FILES
+                or re.fullmatch(r"\.claude/super-board/configs/[^/]+\.json", f.replace("\\", "/")) is not None)
+    # #741: lượt --scoped — git mv code → tài liệu không phải "chỉ tài liệu" (nguồn rename xét cùng luật với đích)
+    docs_only = bool(modified_files) and all(_doc_like(f) for f in modified_files) and (
+        not getattr(args, "scoped", False) or all(_doc_like(s) for s in RENAME_SOURCES.values()))
     no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.

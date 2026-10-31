@@ -47,6 +47,7 @@ CACHE_AFTER_S = 3.0
 CACHE_KEEP = 4
 SCAN_VER = "v2"                                             # đổi khi _scan đổi cách đọc (v2: import nhiều dòng): cache cũ bỏ
 CODE_EXT = (".sh", ".py", ".bash", ".mjs", ".js")          # đích của luật nhắc tên (như run_impacted)
+STEM_EXT = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")   # import theo tên module (không đuôi): `from lib.gone import x`
 SOURCE_EXT = CODE_EXT + (".cjs", ".ts", ".tsx", ".jsx", ".zsh", ".jq")
 PY_SCAN_EXT = (".py", ".sh", ".bash")                       # import Python, kể cả heredoc `python3 - <<'PY'`
 SKIP_DIRS = ("vendor", "node_modules", "build")
@@ -554,27 +555,34 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
             res["matrix_covered"].append(f)
         else:
             res["unmapped"].append(f)
-    # #741: đồ thị dựng từ cây hiện tại không còn nút của file code bị xoá — test còn nhắc tên nó (basename như `grep -F` của run_impacted;
-    # .py thêm stem nguyên từ: `from lib import gone`) hay dòng impact_map.txt khớp nó là test của nó; không test nào ⇒ no_own_test
-    # (no_full thêm [core-smoke])
+    # #741: đồ thị dựng từ cây hiện tại không còn nút của file code bị xoá — test có token (TOKEN, như build_graph) bằng basename của nó,
+    # hay mảnh `.` của token bằng stem (STEM_EXT: `from lib.gone import x`), hay dòng impact_map.txt khớp nó là test của nó; không test nào
+    # ⇒ no_own_test (no_full thêm [core-smoke]). Mỗi test đọc + tách token một lần, tra dict: O(token), không O(file xoá × byte test).
     gone = [f for f in res["deleted"] if not nnt(f)]
     named_gone = set()
     if gone:
-        pats = {f: re.compile(re.escape(os.path.basename(f)) + ("|(?<![\\w.-])%s(?![\\w-])" % re.escape(os.path.basename(f)[:-3])
-                                                                if f.endswith(".py") else "")) for f in gone}
+        names = {}
+        for f in gone:
+            b = os.path.basename(f)
+            names.setdefault(b, set()).add(f)
+            if b.endswith(STEM_EXT):
+                names.setdefault(os.path.splitext(b)[0], set()).add(f)
         for t in sorted(x for x in graph if is_test(x)):
             try:
                 with open(os.path.join(project, t), encoding="utf-8", errors="replace") as fh:
-                    text = fh.read()
+                    toks = set(TOKEN.findall(fh.read()))
             except OSError:
                 continue
-            for f, pat in pats.items():
-                if pat.search(text):
-                    tests.add(t)
-                    named_gone.add(f)
-        files = list_files(project)
+            hit = set()
+            for tok in toks:
+                for piece in {tok} | set(tok.split(".")):
+                    hit |= names.get(piece, set())
+            if hit:
+                tests.add(t)
+                named_gone |= hit
+        files = list(graph)
         for t, f in _impact_map_edges(project, files + gone, set(files)):
-            if f in pats:
+            if f in gone:
                 tests.add(t)
                 named_gone.add(f)
     res["no_own_test"] += [f for f in gone if f not in named_gone]

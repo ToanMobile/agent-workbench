@@ -5,6 +5,7 @@
 #   u2. file [core] không test nào chạm ⇒ thêm [core-smoke]; u3. unmapped ⇒ [core-smoke]; u4. code bị xoá không test nào nhắc ⇒ [core-smoke];
 #   u4b. code bị xoá mà test còn nhắc tên (gọi tên cũ) ⇒ chọn đúng test đó (đồ thị của cây hiện tại không còn nút của file bị xoá);
 #   u4c. .py bị xoá mà test import theo stem (`from lib import gone3`) ⇒ chọn test đó; u4d. dòng tests/impact_map.txt khớp file bị xoá ⇒ chọn;
+#   u4e. import có chấm (`from lib.gone5 import G5`) ⇒ chọn; u4f. tên là chuỗi con của tên khác (`agone6.py`) ⇒ không chọn;
 #   u7. `gen --write-core` (write_core_auto) giữ nguyên mục [core-smoke];
 #   u5. base sai (đồ thị lỗi) ⇒ scoped, smoke + [core-smoke]; u6. file thường có test ⇒ không thêm [core-smoke];
 #   r.  [core-smoke] của repo có trần: mọi mục là file thật, có trong tests/lib/test_durations.txt, tổng ≤ 120 s;
@@ -15,7 +16,8 @@
 #   e4. đối chứng: `--scoped --full` / `--scoped --force-full` tường minh vẫn full; e5. `--tree HEAD` (đường của gate-full đêm) vẫn full;
 #   e6. gate_full.py vẫn gọi gate với `--tree HEAD`;
 #   e7. test .py chạm diff mà không luật ma trận nào chạy đúng môi trường: không chạy ở PR, [core-smoke] bù, nêu trong tóm tắt --brief;
-#   e8. git mv file code sang tài liệu: luật ma trận theo dõi đường dẫn CŨ vẫn chạy (không "chỉ tài liệu", không 0 test).
+#   e8. git mv file code sang tài liệu: luật ma trận theo dõi đường dẫn CŨ vẫn chạy (không "chỉ tài liệu", không 0 test);
+#   e9. lượt KHÔNG --scoped: nguồn git mv không chọn luật (hành vi cũ, không đưa đường dẫn đã mất vào suite ⇒ không narrow sai).
 # Python stdlib, tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -49,6 +51,11 @@ printf 'from lib import gone3\n\ndef test_g3():\n    assert gone3.G3\n' > tests/
 printf 'G4 = 1\n' > lib/gone4.py
 printf '#!/usr/bin/env bash\ntrue\n' > tests/x/test_im.sh
 printf 'lib/gone4.py tests/x/test_im.sh\n' > tests/impact_map.txt
+printf 'G5 = 1\n' > lib/gone5.py
+printf 'from lib.gone5 import G5\n\ndef test_g5():\n    assert G5\n' > tests/x/test_g5.py
+printf 'G6 = 1\n' > lib/gone6.py
+printf '#!/usr/bin/env bash\npython3 lib/agone6.py\n' > tests/x/test_ag6.sh
+printf 'A6 = 1\n' > lib/agone6.py
 printf '#!/usr/bin/env bash\npython3 lib/core_t.py\n' > tests/x/test_core_t.sh
 printf '#!/usr/bin/env bash\npython3 lib/plain.py\n' > tests/x/test_plain.sh
 printf '#!/usr/bin/env bash\ntrue\n' > tests/s/test_smoke.sh
@@ -89,6 +96,8 @@ reset(); os.remove(os.path.join(SB, "lib/gone2.py")); show("u4")
 reset(); os.remove(os.path.join(SB, "lib/gone.py")); show("u4b")
 reset(); os.remove(os.path.join(SB, "lib/gone3.py")); show("u4c")
 reset(); os.remove(os.path.join(SB, "lib/gone4.py")); show("u4d")
+reset(); os.remove(os.path.join(SB, "lib/gone5.py")); show("u4e")
+reset(); os.remove(os.path.join(SB, "lib/gone6.py")); show("u4f")
 reset(); show("u5", base="no-such-ref")
 reset(); edit("lib/plain.py", "P = 2\n"); show("u6")
 reset(); sg.write_core_auto(SB, [("lib/plain.py", "fan-in 9")]); print("u7|" + ",".join(sg.load_core(SB)["core_smoke"]))
@@ -109,6 +118,10 @@ case "$(u u4b)" in "u4b|cls=full|mode=scoped|tests=tests/x/test_gone.sh|smoke=te
   ok "u4b. code bị xoá mà test còn gọi tên cũ: chọn đúng test đó" ;; *) fail "u4b. code bị xoá, test còn gọi tên cũ không được chọn: $(u u4b)" ;; esac
 case "$(u u4c)" in "u4c|cls=full|mode=scoped|tests=tests/x/test_g3.py|"*"|cs=|"*) ok "u4c. .py bị xoá, test import theo stem: chọn test đó" ;;
   *) fail "u4c. .py bị xoá, test import theo stem không được chọn: $(u u4c)" ;; esac
+case "$(u u4e)" in "u4e|cls=full|mode=scoped|tests=tests/x/test_g5.py|"*"|cs=|"*) ok "u4e. import có chấm của file bị xoá: chọn test đó" ;;
+  *) fail "u4e. import có chấm (from lib.gone5 import) không được chọn: $(u u4e)" ;; esac
+case "$(u u4f)" in "u4f|cls=full|mode=scoped|tests=|"*"|cs=tests/s/test_cs.sh|"*) ok "u4f. tên chỉ là chuỗi con của tên khác (agone6.py): không chọn, [core-smoke]" ;;
+  *) fail "u4f. agone6.py bị tính là nhắc gone6.py: $(u u4f)" ;; esac
 case "$(u u4d)" in "u4d|cls=full|mode=scoped|tests=tests/x/test_im.sh|"*"|cs=|"*) ok "u4d. impact_map.txt khớp file bị xoá: chọn test đó" ;;
   *) fail "u4d. impact_map.txt khớp file bị xoá không được chọn: $(u u4d)" ;; esac
 [ "$(u u7)" = "u7|tests/s/test_cs.sh" ] && ok "u7. write_core_auto giữ [core-smoke]" || fail "u7. write_core_auto làm mất [core-smoke]: $(u u7)"
@@ -234,6 +247,11 @@ git mv src/mv.py docs/mv.md
 gate --scoped
 if [ "$RC" = 0 ] && [ "$(last)" = "mode=scoped|core=|reason=" ] && ran REG-C; then ok "e8. git mv code → tài liệu: luật theo dõi đường dẫn cũ vẫn chạy"
 else fail "e8. git mv code → tài liệu: exit $RC, runs.jsonl {$(last)}, ran: $(tr '\n' ' ' < "$TMP/ran" 2>/dev/null) (mong REG-C)"; printf '%s\n' "$GOUT" | grep -E "KẾT LUẬN|CHƯA|✖|⚠|orphan|mồ côi|không phủ|coverage" | head -8; fi
+
+# e9. lượt KHÔNG --scoped (task / Stop hook): nguồn git mv không chọn luật như trước #741 — REG-C (chỉ theo dõi đường dẫn cũ) không chạy
+gate
+if ! ran REG-C && [ "$(last)" != "mode=scoped|core=|reason=" ]; then ok "e9. lượt không --scoped: nguồn git mv không chọn luật (hành vi cũ)"
+else fail "e9. lượt không --scoped mà nguồn git mv chọn REG-C: exit $RC, runs.jsonl {$(last)}, ran: $(tr '\n' ' ' < "$TMP/ran" 2>/dev/null)"; fi
 git mv docs/mv.md src/mv.py
 
 [ "$FAILS" -eq 0 ] && { echo "PASS test_scoped_gate_nofull"; exit 0; }
