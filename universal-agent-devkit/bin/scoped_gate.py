@@ -127,6 +127,8 @@ def load_core(project):
             sec = _sections(f.read())
     except OSError:
         return {"core": list(DEFAULT_CORE), "smoke": [], "core_smoke": []}
+    except ValueError:                                      # không giải mã được (UnicodeDecodeError): lõi mặc định, không làm gate sập
+        return {"core": list(DEFAULT_CORE), "smoke": [], "core_smoke": []}
     core = sec.get("core", []) + [g for g in sec.get("core:auto", []) if g not in sec.get("core", [])]
     if CORE_FILE not in core:
         core.append(CORE_FILE)                              # sửa chính danh sách lõi luôn là lõi
@@ -506,7 +508,7 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
         graph = build_graph(project, _code=code, _reads=reads)
     except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as e:
         res["reasons"].append("base/đồ thị lỗi ⇒ full: %s" % e)
-        res["graph_error"] = str(e)[:300]
+        res["graph_error"] = (str(e) or repr(e))[:300]
         return done()
     rules = _load_matrix(project) if matrix_rules is None else matrix_rules
     fi = fan_in(graph)
@@ -552,21 +554,30 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
             res["matrix_covered"].append(f)
         else:
             res["unmapped"].append(f)
-    # #741: đồ thị dựng từ cây hiện tại không còn nút của file code bị xoá — test còn nhắc tên nó (gọi tên cũ, như `grep -F` của run_impacted)
-    # là test của nó; không test nào nhắc ⇒ no_own_test (no_full thêm [core-smoke])
-    gone = {os.path.basename(f): f for f in res["deleted"] if not nnt(f)}
+    # #741: đồ thị dựng từ cây hiện tại không còn nút của file code bị xoá — test còn nhắc tên nó (basename như `grep -F` của run_impacted;
+    # .py thêm stem nguyên từ: `from lib import gone`) hay dòng impact_map.txt khớp nó là test của nó; không test nào ⇒ no_own_test
+    # (no_full thêm [core-smoke])
+    gone = [f for f in res["deleted"] if not nnt(f)]
     named_gone = set()
-    for t in sorted(p for p in graph if is_test(p)) if gone else ():
-        try:
-            with open(os.path.join(project, t), encoding="utf-8", errors="replace") as fh:
-                text = fh.read()
-        except OSError:
-            continue
-        for name, f in gone.items():
-            if name in text:
+    if gone:
+        pats = {f: re.compile(re.escape(os.path.basename(f)) + ("|(?<![\\w.-])%s(?![\\w-])" % re.escape(os.path.basename(f)[:-3])
+                                                                if f.endswith(".py") else "")) for f in gone}
+        for t in sorted(x for x in graph if is_test(x)):
+            try:
+                with open(os.path.join(project, t), encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+            except OSError:
+                continue
+            for f, pat in pats.items():
+                if pat.search(text):
+                    tests.add(t)
+                    named_gone.add(f)
+        files = list_files(project)
+        for t, f in _impact_map_edges(project, files + gone, set(files)):
+            if f in pats:
                 tests.add(t)
                 named_gone.add(f)
-    res["no_own_test"] += [f for f in gone.values() if f not in named_gone]
+    res["no_own_test"] += [f for f in gone if f not in named_gone]
     if res["core_hits"]:
         res["reasons"].insert(0, "khớp lõi ⇒ full: %s" % ", ".join(res["core_hits"][:10]))
     if res["unmapped"]:

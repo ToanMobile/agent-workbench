@@ -6632,7 +6632,9 @@ def main():
     for rule in rules:
         comp_name = rule.get("component", "UnknownComponent")
         watch_files = rule_watch(rule, covers)
-        rule_files = [f for f in modified_files if any(match_pattern(f, pat) for pat in watch_files)]
+        # #741: nguồn của git mv (file đã rời chỗ cũ) cũng chọn luật — lượt --scoped không còn leo full khi đổi tên file code
+        rule_files = [f for f in list(modified_files) + [s for s in RENAME_SOURCES.values() if s not in modified_files]
+                      if any(match_pattern(f, pat) for pat in watch_files)]
         if not rule_files and args.tree is None:   # --tree: every rule's suites run, whatever the files
             continue
         impacted_components.append(comp_name)
@@ -8097,7 +8099,7 @@ def main():
     docs_only = bool(modified_files) and all(
         needs_no_test(f) or f.replace("\\", "/") in GATE_STATE_FILES
         or re.fullmatch(r"\.claude/super-board/configs/[^/]+\.json", f.replace("\\", "/")) is not None
-        for f in modified_files)
+        for f in modified_files) and all(needs_no_test(s) for s in RENAME_SOURCES.values())   # #741: git mv code → tài liệu không phải "chỉ tài liệu"
     no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.

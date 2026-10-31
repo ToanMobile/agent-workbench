@@ -29,7 +29,7 @@ sb_verify_inject_flags() {
           cmd="$cmd$flags"
         fi
       else
-        echo "warning: cannot locate the post-fix-gate.py token in the verify command; --diff/--force-full not added: ${cmd}" >&2
+        echo "warning: cannot locate the post-fix-gate.py token in the verify command; --diff/--scoped not added: ${cmd}" >&2
       fi
     fi
   fi
