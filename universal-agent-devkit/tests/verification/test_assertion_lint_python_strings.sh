@@ -168,6 +168,14 @@ fail() {{ exit 1; }}
 
     def test_assert_words_in_literals(self):
         assertEqual("assert a", "assert b")
+
+    def test_assert_in_fstring_field(self):
+        msg = f"""
+{self.assertEqual(f(), 1)}
+"""
+
+    def test_masked_twice(self):
+        log("assert.assert_called()")
 PY
 
 # Thụt lề bằng tab (tokenize: tab nhảy tới bội số 8).
@@ -231,6 +239,8 @@ expect_flagged "src/test_masked.py" "62"       # chữ `fail()` trong chuỗi m�
 expect_flagged "src/test_masked.py" "68"       # chuỗi một dòng mở ở cột 0
 expect_flagged "src/test_masked.py" "73"       # f-string nhiều dòng cũng được che
 expect_not_flagged "src/test_masked.py" "79"   # chỉ che phần khớp assertion: hai literal vẫn khác nhau, không thành assertEqual(x, x)
+expect_not_flagged "src/test_masked.py" "82"   # code trong {…} của f-string nhiều dòng không bị che
+expect_flagged "src/test_masked.py" "87"       # che không tạo khớp mới (`assert` + phần che không thành `assert `)
 expect_not_flagged "src/test_tabs.py" "2"
 expect_flagged "src/test_tabs.py" "5"
 expect_flagged "src/test_indent_err.py" "1"

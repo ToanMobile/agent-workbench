@@ -87,9 +87,8 @@ def _body(text: str, start: int, limit: int | None = None) -> str:
     return text[brace:end]
 
 
-# f-string (3.12+) / t-string (3.14+) là chuỗi token START … END, không phải một token STRING
-_STR_OPEN = {getattr(tokenize, n) for n in ("FSTRING_START", "TSTRING_START") if hasattr(tokenize, n)}
-_STR_CLOSE = {getattr(tokenize, n) for n in ("FSTRING_END", "TSTRING_END") if hasattr(tokenize, n)}
+# f-string (3.12+) / t-string (3.14+): phần chữ là token *_MIDDLE, code trong {…} là token thường (không che)
+_STR_MID = {getattr(tokenize, n) for n in ("FSTRING_MIDDLE", "TSTRING_MIDDLE") if hasattr(tokenize, n)}
 _QUOTE = re.compile(r"[A-Za-z]*('''|\"\"\"|'|\")")
 
 
@@ -101,7 +100,7 @@ def _python_scan(text: str) -> "tuple | None":
     dòng, và phần khớp _ASSERT trong ruột chuỗi một dòng. Thân test giờ kéo qua dòng cột 0 nên chữ `fail() {`, `# assert x`
     nằm sau đó không được thành assertion (bản cũ cắt thân nên không thấy) — không che là nới linter.
     Không tokenize được (không phải Python, cú pháp dở) ⇒ None: giữ quy tắc lề cũ."""
-    rows, fresh, cuts, opened = set(), True, [], []
+    rows, fresh, cuts = set(), True, []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(text).readline):
             if tok.type == tokenize.NEWLINE:
@@ -111,10 +110,8 @@ def _python_scan(text: str) -> "tuple | None":
                 fresh = False
             if tok.type == tokenize.COMMENT:
                 cuts.append((tok.start, tok.end, True))
-            elif tok.type in _STR_OPEN:
-                opened.append(tok.end)
-            elif tok.type in _STR_CLOSE and opened:
-                cuts.append((opened.pop(), tok.start, False))
+            elif tok.type in _STR_MID:
+                cuts.append((tok.start, tok.end, False))
             elif tok.type == tokenize.STRING:
                 q = _QUOTE.match(tok.string)
                 if q:
@@ -126,13 +123,14 @@ def _python_scan(text: str) -> "tuple | None":
     for (r0, c0), (r1, c1), whole in sorted(cuts, key=lambda c: c[0]):
         a, b = starts[r0 - 1] + c0, starts[r1 - 1] + c1
         if a < prev or a >= b:
-            continue                                            # chuỗi lồng trong f-string đã xử lý cùng chuỗi ngoài
+            continue                                            # ruột rỗng; token không chồng nhau, chặn phòng xa để giữ độ dài
         seg = text[a:b]
         if whole or r1 > r0:
             seg = re.sub(r"[^\n]", " ", seg)
         else:
-            # chỉ che phần khớp: che cả chuỗi thì assertEqual("a", "b") thành hai literal giống nhau (_VACUOUS)
-            seg = _ASSERT.sub(lambda m: " " * len(m.group()), seg)
+            # chỉ che phần khớp: che cả chuỗi thì assertEqual("a", "b") thành hai literal giống nhau (_VACUOUS);
+            # che bằng "_" vì dấu cách tạo khớp mới: "assert.assert_called()" thành `assert ` + cách
+            seg = _ASSERT.sub(lambda m: "_" * len(m.group()), seg)
         pieces += [text[prev:a], seg]
         prev = b
     return frozenset(rows), "".join(pieces) + text[prev:]
