@@ -385,8 +385,8 @@ for t in $alone; do bash -c 'run_one "$1" "$2"' _ "$t" "$out"; done
 dk_fail_lines() { # <log>
   LC_ALL=C awk -v cap=40 'NR == FNR { n++; next }
     FNR <= n - 20 && /^[ \t]*(✖|✘|✗|❌|FAIL|not ok)/ { k++; if (k <= cap) print }
-    END { if (k > cap) printf "… còn %d dòng hỏng nữa\n", k - cap; if (k) print "… (20 dòng cuối)" }' "$1" "$1" 2>/dev/null
-}
+    END { if (k > cap) printf "… còn %d dòng hỏng nữa\n", k - cap; if (k) print "… (20 dòng cuối)" }' "$1" "$1" </dev/null 2>/dev/null
+}   # </dev/null: awk giả đọc stdin (test_run_impacted_order.sh) không treo khi chạy tay ở terminal (T0183)
 rc=0; n_reuse=0; n_ran=0
 for t in $selected; do
   [ -f "$t" ] || continue
