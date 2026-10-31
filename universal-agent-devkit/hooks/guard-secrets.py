@@ -14,15 +14,19 @@ unquoted # / ${ / $[ / $' , and ANY scanner error make the whole command be judg
 
 Adapted from ai-builder-starter-kit's .agents/hooks/guard-secrets.sh (Eric Tech).
 """
+import fnmatch
 import json
 import re
 import sys
 
 B = r"(?:^|[^A-Za-z0-9._-])"   # boundary before a name
 E = r"(?:[^A-Za-z0-9._-]|$)"   # boundary after a name
+# dotenv (critical scan 31/10): ANY `.env(.part)*` is a secret file — `.env.production.local`, `.env.staging.local` (the
+# Next.js/Vite secret files) fell through the old fixed suffix list — and a glob right after `.env` (`.env.*`, `.env?`).
+# Allowed only when the LAST part is example / sample / template / dist: that file is how an agent learns the key names.
+DOTENV_RE = re.compile(B + r"\.env((?:\.[A-Za-z0-9_-]+)*)(?:(?=[^A-Za-z0-9._*?\[-])|$|([*?\[]))")
+DOTENV_OK = {"example", "sample", "template", "dist"}
 SECRET_RE = re.compile("|".join([
-    B + r"\.env" + E,
-    r"\.env\.(?:local|production|prod|staging|development|dev|test)" + E,
     B + r"id_(?:rsa|ed25519|ecdsa)" + E,
     B + r"\.npmrc" + E,
     B + r"credentials(?:\.json)?" + E,
@@ -218,6 +222,11 @@ def _segments(s):
                 continue
         if ws is None:
             ws = i
+            if c == "#":   # a comment, as the shell reads it: up to the end of the line (its quotes pair with nothing)
+                risky = True
+                nl = s.find("\n", i)
+                i = n if nl < 0 else nl
+                continue
         if c == "#" or (c == "$" and s[i + 1:i + 2] in ("{", "[", "'", '"')):
             risky = True
         if c == "\\":
@@ -284,14 +293,50 @@ def scrub_commit_messages(cmd):
     return "".join(out)
 
 
+# names a shell glob is tried against (a glob in a command opens what it matches: `cat .en?`, `cat id_*`)
+GLOB_TARGETS = (".env", ".env.local", ".env.production", ".env.production.local", "id_rsa", "id_ed25519", "id_ecdsa",
+                ".npmrc", "credentials", "credentials.json", "key.pem", "service-account.json")
+GLOB_HINT = re.compile(r"env|id_|npmrc|cred|pem|service")   # or a dotfile glob; `ls *` / `rm *.txt` are no secret read
+
+
+def _dotenv(text):
+    for m in DOTENV_RE.finditer(text):
+        parts = [x for x in m.group(1).split(".") if x]
+        if m.group(2) or not parts or parts[-1].lower() not in DOTENV_OK:
+            return True
+    return False
+
+
+def _globbed(text):
+    """A word with a glob char whose pattern matches a secret file name (a pattern without a leading dot matches no dotfile)."""
+    for word in re.split(r"[\s;&|()<>=]+", text):
+        base = word.rsplit("/", 1)[-1]
+        if not any(c in base for c in "*?[") or not (base.startswith(".") or GLOB_HINT.search(base.lower())):
+            continue
+        for name in GLOB_TARGETS:
+            if (base.startswith(".") or not name.startswith(".")) and fnmatch.fnmatchcase(name, base):
+                return True
+    return False
+
+
+def is_secret(text):
+    """True when the text names a secret file — also once the shell's quote removal is done (`.e"n"v`, `.en\\v`)."""
+    plain = re.sub(r"[\"'\\]", "", text)
+    return any(SECRET_RE.search(t) or _dotenv(t) or _globbed(t) for t in (text, plain))
+
+
+def _tool(payload):
+    ti = next((v for v in (payload.get(k) for k in ("tool_input", "toolInput", "input")) if isinstance(v, dict)), {})
+    return str(payload.get("tool_name") or payload.get("toolName") or ""), ti
+
+
 def subject(payload):
     """The text this tool call can expose: a shell command or a file path."""
-    tool = payload.get("tool_name") or ""
-    ti = payload.get("tool_input") or {}
+    tool, ti = _tool(payload)
     if tool == "Bash":
-        return ti.get("command") or ""
+        return str(ti.get("command") or "")
     if tool == "Read":
-        return ti.get("file_path") or ""
+        return str(ti.get("file_path") or ti.get("filePath") or ti.get("path") or "")
     if tool == "Grep":
         return " ".join(str(ti.get(k) or "") for k in ("path", "glob"))
     return ""
@@ -300,7 +345,7 @@ def subject(payload):
 def judged_text(payload):
     """What the secret patterns are matched against: the command without its commit messages."""
     text = subject(payload)
-    if payload.get("tool_name") != "Bash" or "commit" not in text:
+    if _tool(payload)[0] != "Bash" or "commit" not in text:
         return text
     try:
         return scrub_commit_messages(text)
@@ -311,15 +356,17 @@ def judged_text(payload):
 def main():
     try:
         payload = json.loads(sys.stdin.read() or "{}")
-        text = subject(payload)
-        if payload.get("tool_name") == "Bash" and ENV_CHECK.match(text):
+        if not isinstance(payload, dict):
             return
-        if text and SECRET_RE.search(judged_text(payload)):
+        text = subject(payload)
+        if _tool(payload)[0] == "Bash" and ENV_CHECK.match(text):
+            return
+        if text and is_secret(judged_text(payload)):
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                      "permissionDecision": "deny",
                                                      "permissionDecisionReason": REASON}}))
-    except Exception:
-        pass  # fail open rather than block every call in the project
+    except Exception as e:   # noqa: BLE001 — fail open rather than block every call in the project, but say so
+        sys.stderr.write("guard-secrets: skipped (%s: %s)\n" % (type(e).__name__, str(e)[:160]))
 
 
 if __name__ == "__main__":
