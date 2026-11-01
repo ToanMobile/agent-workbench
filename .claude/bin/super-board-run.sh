@@ -82,6 +82,7 @@ gh_write_once() {
     tries=$((tries + 1))
     if declare -F log >/dev/null; then log "⚠ GitHub $1 $2 failed with a transient error — retry ${tries}/2 in ${d}s"; fi
     if declare -F tick_sleep >/dev/null; then tick_sleep "$((10#$d))"; else sleep "$((10#$d))" || true; fi
+    gh_checkpoint   # board bị halt trong lúc ngủ (stop, watchdog, lần đọc hỏng) → không ghi nữa, như ở đầu hàm
     if [ -n "$token" ]; then
       seen=$(gh api "repos/${api_repo}/issues/${3}/comments" --paginate --jq ".[] | select(.body | contains(\"${token}\")) | .id" 2>/dev/null) || break
       if [ -n "$seen" ]; then rc=0; break; fi

@@ -53,6 +53,8 @@ import os, sys
 if '--halt' in sys.argv:
     open(os.environ['HALT_LOG'], 'a').write(' '.join(sys.argv[1:]) + '\n')
     sys.exit(79)
+if '--check' in sys.argv and os.path.exists(os.environ.get('HALTED_FLAG') or '/nonexistent'):
+    sys.exit(79)
 PY
 chmod +x "$TMP/bin/gh" "$TMP/sbin/"*
 
@@ -158,5 +160,13 @@ reset_env; FAIL_PAT='^issue edit 446 --remove-assignee'; FAIL_TIMES=9; FAIL_MSG=
 run_case r9 'SB_WRITE_RETRY_DELAYS="0 0 0 0"; gh_write_once issue edit 446 --remove-assignee bot; echo "rc=$?"'
 [ "$(calls '^issue edit 446 --remove-assignee')" = 3 ] && ok "r9: 4 delays configured → still 3 attempts" \
   || fail "r9: attempts=$(calls '^issue edit 446 --remove-assignee')"
+
+echo "r10. board bị halt trong lúc ngủ chờ thử lại → không ghi lại nữa (gh_checkpoint sau mỗi lần ngủ, OCR final)"
+reset_env; FAIL_PAT='^issue edit 446 --remove-assignee'; FAIL_TIMES=9; FAIL_MSG='HTTP 502: Bad Gateway'
+run_case r10 'rm -f "$TMP/halted"; export HALTED_FLAG="$TMP/halted"; tick_sleep() { : > "$TMP/halted"; }; gh_write_once issue edit 446 --remove-assignee bot; echo "rc=$?"'
+{ [ "$RC" = 79 ] && [ "$(calls '^issue edit 446 --remove-assignee')" = 1 ] && ! blocked; } \
+  && ok "r10: halted during the retry sleep → exits 79, no second write, card not moved" \
+  || fail "r10: RC=$RC attempts=$(calls '^issue edit 446 --remove-assignee') blocked=$(blocked && echo y || echo n)"
+rm -f "$TMP/halted"
 
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" = 0 ]
