@@ -95,6 +95,7 @@ chmod +x "$T/fakegate.sh" "$T/fakecard.sh" "$T/bin/gh"
 export PATH="$T/bin:$PATH" FAKE_CALLS="$T/gate.calls" FAKE_CARD_ARGS="$T/card.args"
 export DEVKIT_GATE_FULL_CMD="sh $T/fakegate.sh" DEVKIT_GATE_FULL_CARD_CMD="sh $T/fakecard.sh"
 export DEVKIT_GATE_FULL_LOG_DIR="$T/logs" DEVKIT_GATE_FULL_POLL_S=1 DEVKIT_CAPACITY_LOAD=0
+export DEVKIT_GATE_FULL_GLOBAL_LOCK="$T/global.lock"   # khoá toàn máy trong thư mục tạm: không chờ / chặn lượt đêm thật
 
 no_scratch() {   # scratch đã gỡ: không thư mục, không mục worktree, không khoá
   ! ls -d "$COMMON"/postfix-gate/gate-full-scratch-* >/dev/null 2>&1 \
