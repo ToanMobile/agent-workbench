@@ -140,9 +140,10 @@ Next: review again; write a new \`approved-head:<sha40>\` for the current head a
 # ---- route (dùng cho kết quả của train và cho PR đã merge còn nhãn) ---------------------------------------------------------------------
 # ROUTE_ROWS: "<mốc> <PR> <head> <nhánh>" mỗi dòng (đợt hiện tại + PR merged còn nhãn): card_of / head_of đọc từ đây.
 ROUTE_ROWS=""
-# CLOSES: "<PR> <issue>" mỗi dòng, PR có closingIssuesReferences trỏ ĐÚNG MỘT issue của repo này (#637). card_of dùng khi nhánh không
-# theo mẫu issue-<N>- (PR tay, nhánh fix-…), cùng luật với review_approved_head của runner (#607/#614). Lấy cùng lượt `pr list`; card_of
-# chỉ hỏi thêm card.sh item-id (có cache) xem issue đó có nằm trên board không, và lỗi của lần hỏi đó không làm hàng đợi thoát.
+# CLOSES: "<PR> <issue>" mỗi dòng, PR có closingIssuesReferences trỏ ĐÚNG MỘT issue của repo này (#637). resolve_card dùng khi nhánh không
+# theo mẫu issue-<N>- (PR tay, nhánh fix-…), cùng luật với review_approved_head của runner (#607/#614). Lấy cùng lượt `pr list`; resolve_card
+# chạy trực tiếp ở shell hiện tại (không qua subshell `$(…)`), hỏi card.sh item-id (có cache) xem issue có nằm trên board không để không ghi
+# nhầm lên issue thường ngoài board và vẫn truyền được READ_HALT / ROUTE_HALT lên shell cha khi gặp exit 79.
 CLOSES=""
 closes_rows() {   # closes_rows <JSON mảng PR của pr list>: in "<PR> <issue>"; 0 hoặc ≥ 2 issue (hay issue repo khác) thì không in
   printf '%s' "$1" | jq -r --arg r "$REPO" '.[] | . as $pr | [(.closingIssuesReferences // [])[]
@@ -150,21 +151,21 @@ closes_rows() {   # closes_rows <JSON mảng PR của pr list>: in "<PR> <issue>
     | .number] | unique | select(length == 1) | "\($pr.number) \(.[0])"'
 }
 # #762: awk đọc từ here-string, không `printf … | awk '…; exit'`: dưới pipefail, awk thoát ở dòng khớp khi printf còn đang ghi thì printf
-# nhận EPIPE/SIGPIPE, hàm trả lỗi dù đã in đúng kết quả, và `k=$(card_of …)` dưới set -e giết hàng đợi giữa lượt route (đỏ chập chờn
-# khi máy tải nặng; tất định khi ROUTE_ROWS lớn hơn bộ đệm ống).
-card_of() {
-  local k rc
+# nhận EPIPE/SIGPIPE, hàm trả lỗi dù đã in đúng kết quả, và dưới set -e giết hàng đợi giữa lượt route (đỏ chập chờn khi máy tải nặng;
+# tất định khi ROUTE_ROWS lớn hơn bộ đệm ống).
+CARD_OF=""
+resolve_card() {   # resolve_card <PR>: gán CARD_OF = số thẻ trên board ("" khi không có thẻ); trả 0 = xong, 1 = đọc lỗi (CARD_OF="")
+  local k rc=0
+  CARD_OF=""
   k=$(awk -v p="$1" '$2 == p {print $4; exit}' <<<"$ROUTE_ROWS" | sed -nE 's/^issue-([0-9]+)-.*/\1/p')
-  if [ -z "$k" ]; then   # nhánh issue-<N>- thắng; không có thì closingIssuesReferences
-    k=$(awk -v p="$1" '$1 == p {print $2; exit}' <<<"$CLOSES")
-    # Issue không nằm trên board (card.sh exit 3) không phải thẻ: PR như không có thẻ (hành vi trước #637: gỡ nhãn sạch, không đụng
-    # issue đó). Lỗi khác (đọc hỏng, halt) giữ k: issue_json / card_move sau đó tự báo lỗi hay halt, nhãn giữ.
-    if [ -n "$k" ]; then
-      rc=0; bash "$CARD" --config "$CONFIG" item-id "$k" >/dev/null 2>&1 || rc=$?
-      [ "$rc" -ne 3 ] || { say "PR #$1 closes #${k}, which is not on the board: routed as a PR without a card"; k=""; }
-    fi
-  fi
-  echo "$k"
+  if [ -n "$k" ]; then CARD_OF="$k"; return 0; fi
+  k=$(awk -v p="$1" '$1 == p {print $2; exit}' <<<"$CLOSES")   # nhánh issue-<N>- thắng; không có thì closingIssuesReferences
+  [ -n "$k" ] || return 0
+  bash "$CARD" --config "$CONFIG" item-id "$k" >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then CARD_OF="$k"; return 0; fi
+  if [ "$rc" -eq 3 ]; then say "PR #$1 closes #${k}, which is not on the board: routed as a PR without a card"; return 0; fi
+  read_failed "$rc" "$1" "whether #${k} is on the board"
+  return 1
 }
 head_of() { awk -v p="$1" '$2 == p {print $3; exit}' <<<"$ROUTE_ROWS"; }
 # #637: lỗi đọc GitHub trong lượt route chỉ bỏ PR đó (nhãn giữ, lượt sau route lại), các PR còn lại và merge-queue.attempts vẫn được ghi.
@@ -206,14 +207,23 @@ Move back:   drag this card to Ready after the steps above are done
 blocked-by: -" || true
 }
 # Trần body (#470): GitHub từ chối comment > 65536 ký tự. Mỗi dòng ≤ 400 ký tự, cả khối ≤ 12000 ký tự; dòng đầu (kết luận, suite đỏ) giữ, phần dư cắt
-# kèm một dòng báo. Chi tiết đầy đủ nằm ở log của train (stdout của queue), không ở comment.
+# kèm một dòng báo. Chi tiết đầy đủ nằm ở log của train (stdout của queue), không ở comment. Khi route lại từ merge-queue.pending (TOUT đã xoá),
+# đọc bản chụp merge-queue.detail.<PR> của lượt trước để không mất chi tiết chặn / lỗi verify.
 detail_lines() {
-  [ -n "${TOUT:-}" ] && [ -r "$TOUT" ] || return 0
-  sed -nE "s/^train-detail: $1 //p" "$TOUT" | LC_ALL=C awk -v max=12000 '
+  local raw
+  if [ -n "${TOUT:-}" ] && [ -r "$TOUT" ]; then
+    raw=$(sed -nE "s/^train-detail: $1 //p" "$TOUT")
+  elif [ -r "$QDIR/merge-queue.detail.$1" ]; then
+    raw=$(cat "$QDIR/merge-queue.detail.$1")
+  else
+    return 0
+  fi
+  [ -n "$raw" ] || return 0
+  LC_ALL=C awk -v max=12000 '
     { l = substr($0, 1, 400); if (length($0) > 400) l = l " …"
       if (used + length(l) + 1 > max) { cut = 1; next }
       print l; used += length(l) + 1 }
-    END { if (cut) print "… (detail truncated: the full train log is in the merge-queue output)" }'
+    END { if (cut) print "… (detail truncated: the full train log is in the merge-queue output)" }' <<<"$raw"
 }
 # rebuild_or_rebase <PR> <issue> <rebuild|rebase> <why> [tag] [did]: loop:rebuild-N hiện có ≥ rebuild_cap → Blocked 🛡, không thì về Ready.
 # tag / did: chữ đầu và dòng Did của comment rebuild (mặc định của verify đỏ; preflight exit 11 truyền chữ riêng, #639).
@@ -221,7 +231,7 @@ detail_lines() {
 # trước (LABEL_DONE=1) thì không gắn lần nữa (không đẩy loop:rebuild-N lên hai lần cho cùng một lần đỏ).
 # CARD_RETRY: như RETRY nhưng cho comment trên thẻ; 0 khi lượt trước chưa đọc được thẻ (pending cột 4 = r, CARD_UNREAD=1): thẻ chưa có
 # comment nào, nên lượt route lại vẫn comment trên thẻ (comment trên PR thì không lặp).
-RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0
+RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0; CARD_UNKNOWN=0
 rebuild_or_rebase() {
   local p="$1" k="$2" kind="$3" why="$4" tag="${5:-red}" did="${6:-verified the merge-queue batch with super-board-merge-train.sh}" ij labs cur rm=() l det
   det=$(detail_lines "$p")
@@ -256,24 +266,35 @@ Next: Builder rebases onto the base, verification green, then Review again" || t
   card_move "$k" Ready
 }
 ATTEMPTS="$QDIR/merge-queue.attempts"; ATTEMPT_MAX=3
-# merge-queue.pending: "<PR> <head> <kết quả> <nhãn loop:* đã gắn 0|1, r = chưa đọc được thẻ>" — kết quả kết thúc mà một bước bắt buộc của route lỗi. Lượt sau route
-# lại từ dòng này (không dựng train, không verify lại, không comment / notify lại); mỗi lần lỗi tính một lần thử (trần 3 → PR rời hàng).
+# merge-queue.pending: "<PR> <head> <kết quả> <0|1|r|u>" (1 = nhãn loop:* đã gắn, r = chưa đọc được thẻ, u = chưa xác minh thẻ có trên
+# board không nên chưa ghi gì lên PR/issue) — kết quả kết thúc mà một bước bắt buộc của route lỗi. Lượt sau route lại từ dòng này (không dựng
+# train, không verify lại, không lặp comment đã đăng); mỗi lần lỗi tính một lần thử (trừ halt 79; trần 3 → PR rời hàng).
 PENDING="$QDIR/merge-queue.pending"
 drop_row() {   # drop_row <file> <PR>
   [ -f "$1" ] || return 0
   awk -v p="$2" '$1 != p' "$1" > "$1.tmp" && mv -f "$1.tmp" "$1"
 }
-attempt_clear() { drop_row "$ATTEMPTS" "$1"; drop_row "$PENDING" "$1"; }   # PR rời bảng đếm và hàng route lại
+attempt_clear() { drop_row "$ATTEMPTS" "$1"; drop_row "$PENDING" "$1"; rm -f "$QDIR/merge-queue.detail.$1"; }   # PR rời bảng đếm và hàng route lại
 # attempt_retry <PR> <kết quả>: kết quả không kết thúc. n+1 cho dòng <PR> <head> (head khác = đếm lại từ 1); n ≥ 3 → PR rời hàng 🛡.
 attempt_retry() {
-  local p="$1" res="$2" head k n why ok=0
+  local p="$1" res="$2" head k="" n why ok=0
   ROUTE_HALT=0
-  head=$(head_of "$p"); k=$(card_of "$p")
+  head=$(head_of "$p")
   n=$(awk -v p="$p" -v h="$head" '$1 == p && $2 == h {print $3; exit}' "$ATTEMPTS" 2>/dev/null || true)
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
   n=$((n + 1))
   { awk -v p="$p" '$1 != p' "$ATTEMPTS" 2>/dev/null || true; echo "$p $head $n $(date +%s)"; } > "$ATTEMPTS.tmp" && mv -f "$ATTEMPTS.tmp" "$ATTEMPTS"
   if [ "$n" -lt "$ATTEMPT_MAX" ]; then say "PR #${p}: ${res}; stays queued for the next batch (try ${n}/${ATTEMPT_MAX})"; return 0; fi
+  # Chỉ tra thẻ khi đã chạm trần (n < trần không dùng thẻ). Nếu card.sh halt (79): dừng ngay trước block_comment để không ghi nhầm lên
+  # issue ngoài board, giữ nhãn + dòng attempts; lỗi khác 79 (69/66): k="" để PR vẫn rời hàng mà không đụng issue chưa xác minh.
+  if resolve_card "$p"; then
+    k=$CARD_OF
+  elif [ "$ROUTE_HALT" -eq 1 ]; then
+    say "PR #${p}: GitHub reads halted while checking its card at the retry cap; label kept, the next run retries"
+    return 0
+  else
+    ok=1
+  fi
   why="the merge queue ran PR #${p} in ${n} batches without a final result (last: ${res})"
   if [ -n "$k" ]; then
     block_comment "$k" "$p" "🛡" "$why" "train-result for PR #${p}: ${res}" \
@@ -285,19 +306,19 @@ attempt_retry() {
   if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted while moving card #${k} to Blocked; label kept, the next run retries"; return 0; fi
   gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 left the queue · 🛡 ${why}
 Next: a person looks at why, then labels the PR ${LABEL} again${k:+ (card #$k is Blocked)}" || true
-  # Trần: PR rời hàng dù card_move lỗi, để không route lại vô hạn mỗi tick.
-  [ "$ok" -eq 0 ] || say "PR #${p}: moving card #${k} to Blocked failed too; the PR leaves the queue anyway (comment above)"
+  # Trần: PR rời hàng dù card_move / tra thẻ lỗi, để không route lại vô hạn mỗi tick.
+  [ "$ok" -eq 0 ] || say "PR #${p}: moving its card to Blocked failed too; the PR leaves the queue anyway (comment above)"
   unlabel "$p"; attempt_clear "$p"
 }
 # route_one <PR> <kết quả>: một train-result. Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh trả 0; bước nào lỗi (lỗi đọc qua read_failed)
 # thì giữ nhãn, ghi merge-queue.pending và tính một lần thử (halt 79 thì không tính): lượt sau route lại từ pending, chỉ làm lại các bước
 # bắt buộc.
 route_one() {
-  local p="$1" res="$2" k st msha ij det title ok=0 head prow tag did src why
-  k=$(card_of "$p"); head=$(head_of "$p")
+  local p="$1" res="$2" k="" st msha ij det title ok=0 head prow tag did src why
+  head=$(head_of "$p")
   prow=$(awk -v p="$p" -v h="$head" '$1 == p && $2 == h {print $4; exit}' "$PENDING" 2>/dev/null || true)
-  RETRY=0; LABEL_DONE=0; CARD_UNREAD=0; ROUTE_HALT=0
-  if [ -n "$prow" ]; then RETRY=1; [ "$prow" != 1 ] || LABEL_DONE=1; fi
+  RETRY=0; LABEL_DONE=0; CARD_UNREAD=0; CARD_UNKNOWN=0; ROUTE_HALT=0
+  if [ -n "$prow" ] && [ "$prow" != u ]; then RETRY=1; [ "$prow" != 1 ] || LABEL_DONE=1; fi
   CARD_RETRY=$RETRY; [ "$prow" != r ] || CARD_RETRY=0
   case "$res" in
     merged)
@@ -305,8 +326,12 @@ route_one() {
       st=$(python3 "$GITHUB_READ" --kind merge-state -- pr view "$p" ${REPO:+--repo "$REPO"} --json state,mergeCommit,headRefOid) \
         || { read_failed $? "$p" "its merge state"; return 0; }
       if [ "$(printf '%s' "$st" | jq -r .state)" != MERGED ]; then
+        k=$(awk -v p="$p" '$2 == p {print $4; exit}' <<<"$ROUTE_ROWS" | sed -nE 's/^issue-([0-9]+)-.*/\1/p')
         say "train says PR #${p} merged but GitHub shows $(printf '%s' "$st" | jq -r .state); label kept${k:+, card #$k left as is}"; return 0
       fi
+      # Không tra được thẻ trên board: như chưa đọc được thẻ (giữ nhãn, không pending, không tính lần thử; lượt sau recover_merged xử lý).
+      resolve_card "$p" || return 0
+      k=$CARD_OF
       if [ -n "$k" ]; then
         msha=$(printf '%s' "$st" | jq -r '.mergeCommit.oid')
         # Thẻ không đọc được: chưa ghi gì cho PR này, nên như chưa route (nhãn giữ, không pending, không tính lần thử); lượt sau
@@ -323,31 +348,38 @@ Did: merged through the merge queue (one verify for the batch)
           card_move "$k" Done || ok=1
         fi
       fi ;;
-    red|gate-exit-11)
-      det=$(detail_lines "$p")
-      # #639: gate-exit-11 của train là preflight / --dry-run của gate (qa-report, AC) chặn PR trước khi dựng cây; verify đỏ của gate
-      # train đã đổi thành `red`. Cùng đường về Build, nhưng comment nói đúng nguồn chặn, không nói verify đỏ khi không suite nào chạy.
-      if [ "$res" = red ]; then
-        tag=red; did="verified the merge-queue batch; this PR is the one that turns it red"; why="${res} (verify red with this PR in the batch)"
+    red|gate-exit-11|conflict|gate-exit-2|gate-exit-5|gate-exit-7|gate-exit-8|gate-exit-3)
+      # Phải biết chắc PR có thẻ trên board hay không trước mọi lệnh ghi PR/issue (cột u = chưa ghi gì, lượt sau đăng đủ comment + detail).
+      if ! resolve_card "$p"; then
+        CARD_UNKNOWN=1; ok=1
       else
-        src=$(printf '%s\n' "$det" | sed -nE 's/^(qa-report|ac-check):.*/\1/p' | sort -u | tr '\n' ' ' | sed 's/ $//')
-        tag=preflight; did="the merge gate preflight refused this PR (${src:-exit 11}) before any tree was built; no verify ran"
-        why="${res} (merge gate preflight ${src:-exit 11}; no verify ran)"
-      fi
-      [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ ${tag} · ${res}
+        k=$CARD_OF
+        case "$res" in
+          red|gate-exit-11)
+            det=$(detail_lines "$p")
+            # #639: gate-exit-11 của train là preflight / --dry-run của gate (qa-report, AC) chặn PR trước khi dựng cây; verify đỏ của gate
+            # train đã đổi thành `red`. Cùng đường về Build, nhưng comment nói đúng nguồn chặn, không nói verify đỏ khi không suite nào chạy.
+            if [ "$res" = red ]; then
+              tag=red; did="verified the merge-queue batch; this PR is the one that turns it red"; why="${res} (verify red with this PR in the batch)"
+            else
+              src=$(printf '%s\n' "$det" | sed -nE 's/^(qa-report|ac-check):.*/\1/p' | sort -u | tr '\n' ' ' | sed 's/ $//')
+              tag=preflight; did="the merge gate preflight refused this PR (${src:-exit 11}) before any tree was built; no verify ran"
+              why="${res} (merge gate preflight ${src:-exit 11}; no verify ran)"
+            fi
+            [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ ${tag} · ${res}
 Did: ${did}${det:+
 ${det}}
 Next: back to Build${k:+ (card #$k)}" || true
-      [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebuild "$why" "$tag" "$did" || ok=1 ;;
-    conflict|gate-exit-2|gate-exit-5)
-      [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · ${res}
+            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebuild "$why" "$tag" "$did" || ok=1 ;;
+          conflict|gate-exit-2|gate-exit-5)
+            [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · ${res}
 Did: merged this PR into origin/<base> for the merge-queue batch
 Next: rebase pass${k:+ (card #$k)}" || true
-      [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebase "${res} (the base does not merge in cleanly)" || ok=1 ;;
-    gate-exit-7|gate-exit-8)
-      det=$(detail_lines "$p")
-      if [ -n "$k" ]; then
-        [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 the merge gate wants a person for PR #${p} (${res})
+            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebase "${res} (the base does not merge in cleanly)" || ok=1 ;;
+          gate-exit-7|gate-exit-8)
+            det=$(detail_lines "$p")
+            if [ -n "$k" ]; then
+              [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 the merge gate wants a person for PR #${p} (${res})
 Card:        #${k}
 PR:          #${p}
 Reason tag:  🙋
@@ -358,30 +390,32 @@ To unblock:  [ ] review PR #${p} and merge it yourself
 Owner:       repo owner
 Move back:   comment done (or merge PR #${p})
 blocked-by: -" || true
-        python3 "$NEEDS_YOU" mark ${REPO:+--repo "$REPO"} --issue "$k" \
-          --action "xem PR #${p} (merge gate ${res}) rồi tự merge, hoặc duyệt theo comment 🙋 trên thẻ" \
-          --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #${p})" >/dev/null || { say "needs-you mark #${k} failed"; ok=1; }
-        card_move "$k" Blocked || ok=1
-        [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 needs a person (${res}); request on issue #${k}" || true
-      elif [ "$RETRY" -eq 0 ]; then
-        gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 the merge gate wants a person (${res})
+              python3 "$NEEDS_YOU" mark ${REPO:+--repo "$REPO"} --issue "$k" \
+                --action "xem PR #${p} (merge gate ${res}) rồi tự merge, hoặc duyệt theo comment 🙋 trên thẻ" \
+                --next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #${p})" >/dev/null || { say "needs-you mark #${k} failed"; ok=1; }
+              card_move "$k" Blocked || ok=1
+              [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 needs a person (${res}); request on issue #${k}" || true
+            elif [ "$RETRY" -eq 0 ]; then
+              gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🙋 the merge gate wants a person (${res})
 ${det}" || true
-      fi
-      # Một tin Telegram có nút Approve (lượt route đầu), cùng chữ ký merge gate dùng (needs_you_notify, --source = PR). Lỗi chỉ log.
-      if [ "$RETRY" -eq 0 ]; then
-        title=$(gh pr view "$p" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true)
-        python3 "$NOTIFY" approve-button --repo "$REPO" --pr "$p" --head "$head" --source "$p" --card "PR #${p}" --title "$title" \
-          || say "approve-button notify for PR #${p} failed (exit $?)"
-      fi ;;
-    gate-exit-3)
-      det=$(detail_lines "$p")
-      [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🔑 the merge gate exited 3 after a green verify (GitHub refused the merge, or the PR is closed)${det:+
+            fi
+            # Một tin Telegram có nút Approve (lượt route đầu), cùng chữ ký merge gate dùng (needs_you_notify, --source = PR). Lỗi chỉ log.
+            if [ "$RETRY" -eq 0 ]; then
+              title=$(gh pr view "$p" ${REPO:+--repo "$REPO"} --json title -q .title 2>/dev/null || true)
+              python3 "$NOTIFY" approve-button --repo "$REPO" --pr "$p" --head "$head" --source "$p" --card "PR #${p}" --title "$title" \
+                || say "approve-button notify for PR #${p} failed (exit $?)"
+            fi ;;
+          gate-exit-3)
+            det=$(detail_lines "$p")
+            [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 blocked · 🔑 the merge gate exited 3 after a green verify (GitHub refused the merge, or the PR is closed)${det:+
 ${det}}" || true
-      if [ -n "$k" ]; then
-        [ "$RETRY" -eq 1 ] || block_comment "$k" "$p" "🔑" "the merge gate exited 3 for PR #${p} after a green verify (GitHub refused the merge, or the PR is closed)" \
-          "train-result: ${p} gate-exit-3${det:+
+            if [ -n "$k" ]; then
+              [ "$RETRY" -eq 1 ] || block_comment "$k" "$p" "🔑" "the merge gate exited 3 for PR #${p} after a green verify (GitHub refused the merge, or the PR is closed)" \
+                "train-result: ${p} gate-exit-3${det:+
 ${det}}" "a person reads the gate lines above, fixes what GitHub refused, or merges PR #${p}"
-        card_move "$k" Blocked || ok=1
+              card_move "$k" Blocked || ok=1
+            fi ;;
+        esac
       fi ;;
     head-moved|gate-exit-6)
       gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⚠ head moved · ${res}
@@ -391,7 +425,10 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
   esac
   if [ "$ok" -ne 0 ]; then
     say "PR #${p} (${res}): a routing step failed; label kept, the next run routes it again from merge-queue.pending"
-    local col=$LABEL_DONE; [ "$CARD_UNREAD" -eq 0 ] || col=r
+    if [ -n "${TOUT:-}" ] && [ -r "$TOUT" ]; then
+      sed -nE "s/^train-detail: $p //p" "$TOUT" > "$QDIR/merge-queue.detail.$p"
+    fi
+    local col=$LABEL_DONE; [ "$CARD_UNREAD" -eq 0 ] || col=r; [ "$CARD_UNKNOWN" -eq 0 ] || col=u
     { awk -v p="$p" '$1 != p' "$PENDING" 2>/dev/null || true; echo "$p $head $res $col"; } > "$PENDING.new" && mv -f "$PENDING.new" "$PENDING"
     if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted; not counted as a try"; return 0; fi
     attempt_retry "$p" "routing ${res} failed"

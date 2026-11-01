@@ -16,6 +16,12 @@
 #   H. Train không in train-result, PR ở lần thử thứ 3: card_move Blocked nhận 79 ⇒ hàng đợi vẫn thoát 79 (hợp đồng header), PR giữ
 #      nhãn và dòng attempts, không comment "left the queue" (thẻ chưa Blocked) — như bản cũ thoát 79 ngay tại card_move.
 #   I. Như H nhưng PR có train-result `deferred` (đường route_one).
+#   J. #637 (audit r2): ở trần lần thử (n=3), PR đóng #21 ngoài board gặp card-halt (79) ngay ở bước tra board ⇒ thoát 79,
+#      giữ nhãn + attempts, KHÔNG ghi nhầm blocker lên issue ngoài board #21; lượt sau gỡ halt thì PR rời hàng sạch, #21 nguyên vẹn.
+#   K. #637 (audit r2): PR nhánh fix-… đóng #21 ngoài board gặp gate-exit-7 khi card.sh halt (79) ⇒ dừng trước mọi ghi PR/issue,
+#      lưu pending cột u + detail, không tính lần thử, thoát 79, #21 không bị gắn needs-you/comment; lượt sau --resume đăng đủ
+#      comment + detail trên PR, gỡ nhãn, #21 vẫn không bị đụng.
+#   L. #637 (audit r2): card.sh lỗi tạm 69 (khác 3 và 79) ở trần lần thử ⇒ PR vẫn rời hàng ở trần nhưng không ghi lên issue #21 chưa xác minh.
 # Chạy offline: gh (python giả), train / card.sh / needs-you.py / notify.py là stub; github-read.py là bản thật. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -53,6 +59,7 @@ while [ "${1#--}" != "$1" ]; do shift 2; done
 # của card.sh hỏng (ghi file halt, 79); $FAKE/offboard-<K>: issue K không nằm trên board (exit 3).
 [ ! -f "$SB_GITHUB_HALT_FILE" ] || exit 79
 [ ! -f "$FAKE/card-halt" ] || { : > "$SB_GITHUB_HALT_FILE"; exit 79; }
+[ ! -f "$FAKE/card-err-$2" ] || exit 69
 [ ! -f "$FAKE/offboard-$2" ] || exit 3
 echo "card $*" >> "$FAKE/writes"
 SH
@@ -275,5 +282,55 @@ printf 'train-result: 1 deferred\n' > "$F/train.out"; echo 0 > "$F/train.rc"; : 
 run_q; rc=$?
 [ "$rc" -eq 79 ] && ! has_w "pr-unlabel 1" && ! has_w "left the queue" && grep -q "^1 $(sha 1) " "$ATT" 2>/dev/null \
   && ok "I deferred at the cap, card_move halted: exit 79, label and attempts row kept, no 'left the queue'" || fail "I rc=$rc att=$(cat "$ATT" 2>/dev/null) writes=$(cat "$F/writes")"
+
+# ── J. PR 4 nhánh fix-bar đóng #21 (ngoài board) ở trần lần thử (2 lần trước), card.sh halt (79) ngay lúc tra board.
+reset
+pr 4 fix-bar 20 "[$(ref 21)]"; issue 21; : > "$F/offboard-21"; : > "$F/card-halt"
+mkdir -p "$COMMON/super-board"; echo "4 $(sha 4) 2 $(date +%s)" > "$ATT"
+printf 'train-result: 4 deferred\n' > "$F/train.out"; echo 0 > "$F/train.rc"
+run_q; rc=$?
+[ "$rc" -eq 79 ] && ! has_w "pr-unlabel 4" && ! has_w "left the queue" && grep -q "^4 $(sha 4) " "$ATT" 2>/dev/null \
+  && ok "J cap + card.sh item-id halt (79): exit 79, label and attempts row kept" || fail "J rc=$rc att=$(cat "$ATT" 2>/dev/null) writes=$(cat "$F/writes")"
+has_w "issue-comment 21" && fail "J halted item-id still commented on unverified off-board issue #21: $(cat "$F/writes")" \
+  || ok "  … off-board issue #21 not commented during halt"
+rm -f "$TMP/halt.json" "$F/card-halt"; : > "$F/writes"
+run_q; rc=$?
+[ "$rc" -eq 0 ] && has_w "pr-unlabel 4 merge-queue" && has_w "pr-comment 4 [merge-queue] [blocker] 🛑 left the queue" \
+  && ! has_w "issue-comment 21" && ! has_w "card move 21" \
+  && ok "J next run: PR 4 leaves the queue at the cap, off-board issue #21 still untouched" || fail "J next: rc=$rc writes=$(cat "$F/writes")"
+
+# ── K. PR 4 nhánh fix-bar đóng #21 (ngoài board) gặp gate-exit-7 khi card.sh halt (79), lượt sau --resume.
+reset
+pr 4 fix-bar 20 "[$(ref 21)]"; issue 21; : > "$F/offboard-21"; : > "$F/card-halt"
+printf 'train-result: 4 gate-exit-7\ntrain-detail: 4 human-gate: touches auth/login.py\n' > "$F/train.out"; echo 0 > "$F/train.rc"
+run_q; rc=$?
+[ "$rc" -eq 79 ] && ! has_w "pr-unlabel 4" && ! has_w "issue-comment 21" && ! has_w "needs-you" && ! has_w "pr-comment 4" \
+  && ok "K gate-exit-7 + item-id halt (79): exit 79, no write to off-board #21 or partial PR comment" || fail "K rc=$rc writes=$(cat "$F/writes")"
+grep -q "^4 " "$ATT" 2>/dev/null && fail "K halted route counted as a try: $(cat "$ATT")" || ok "  … not counted as a try"
+rm -f "$TMP/halt.json" "$F/card-halt"; : > "$F/writes"
+: > "$F/train.out"
+run_q; rc=$?
+[ "$rc" -eq 0 ] && has_w "pr-unlabel 4 merge-queue" && ! has_w "issue-comment 21" && ! has_w "needs-you" \
+  && grep -q "human-gate: touches auth/login.py" "$F/pr-comment-4.txt" 2>/dev/null \
+  && ok "K next run: PR 4 gets full human-gate detail on PR, leaves queue, off-board #21 untouched" \
+  || fail "K next: rc=$rc writes=$(cat "$F/writes") pr4=$(cat "$F/pr-comment-4.txt" 2>/dev/null)"
+
+# ── L. PR 4 nhánh fix-bar đóng #21 gặp lỗi tạm card.sh exit 69 ở trần lần thử: PR rời hàng, không đụng issue #21 chưa xác minh.
+reset
+pr 4 fix-bar 20 "[$(ref 21)]"; issue 21; : > "$F/card-err-21"
+mkdir -p "$COMMON/super-board"; echo "4 $(sha 4) 2 $(date +%s)" > "$ATT"
+printf 'train-result: 4 deferred\n' > "$F/train.out"; echo 0 > "$F/train.rc"
+run_q; rc=$?
+[ "$rc" -eq 0 ] && has_w "pr-unlabel 4 merge-queue" && has_w "pr-comment 4 [merge-queue] [blocker] 🛑 left the queue" \
+  && ! has_w "issue-comment 21" && ! has_w "card move 21" \
+  && ok "L item-id exit 69 at cap: PR 4 leaves queue without touching unverified issue #21" || fail "L rc=$rc writes=$(cat "$F/writes")"
+
+# ── M. Đường không cần thẻ (head-moved, deferred lúc n < trần) không gọi card.sh item-id (không kích hoạt card-halt oan trong subshell).
+reset
+pr 4 fix-bar 30 "[$(ref 21)]"; pr 5 fix-moved 20 "[$(ref 22)]"; issue 21; issue 22; : > "$F/card-halt"
+printf 'train-result: 4 deferred\ntrain-result: 5 head-moved\n' > "$F/train.out"; echo 0 > "$F/train.rc"
+run_q; rc=$?
+[ "$rc" -eq 0 ] && [ ! -f "$TMP/halt.json" ] && has_w "pr-unlabel 5 merge-queue" && grep -q "^4 $(sha 4) 1 " "$ATT" 2>/dev/null \
+  && ok "M deferred (n<cap) and head-moved skip board lookup (no subshell halt)" || fail "M rc=$rc halt=$([ -f "$TMP/halt.json" ] && echo 1 || echo 0) writes=$(cat "$F/writes")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue_route_rows: all passed" || { echo "❌ test_merge_queue_route_rows: $FAILS failed"; exit 1; }
