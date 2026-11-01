@@ -757,11 +757,13 @@ cmd_show = f"bash {fanout} --repo {repo_root} --base {review_base}"
 
 def _fanout_env():
     """The environment the gate starts review-fanout with (audit 31/10): nothing inherited from settings.json or the session can
-    reduce the review (REVIEW_SKIP_REVIEWERS), swap a reviewer binary (REVIEW_*_BIN, REVIEW_AGY_CLI), lower the depth
-    (REVIEW_DEEP_LINES) or the budgets (REVIEW_MAX_*): the default gate always runs the default 4-way review."""
+    reduce the review (REVIEW_SKIP_REVIEWERS), swap a reviewer binary (REVIEW_*_BIN, REVIEW_AGY_CLI, ANTIGRAVITY_PM_AGY) or model
+    (REVIEW_*_MODEL), lower the depth (REVIEW_DEEP_LINES) or the budgets (REVIEW_MAX_*), or point the BUG-REV rows at a checklist
+    outside the repo (REVIEW_REGRESSION_STATUS: only a trusted caller — the merge gate, B2 of #742 — sets it; review of #742,
+    BUG-REV 2823727da8): the default gate always runs and judges the default 4-way review."""
     def stripped(k):
-        return (k == "REVIEW_SKIP_REVIEWERS" or k == "REVIEW_AGY_CLI" or k == "REVIEW_DEEP_LINES"
-                or (k.startswith("REVIEW_") and k.endswith("_BIN")) or k.startswith("REVIEW_MAX_"))
+        return (k in ("REVIEW_SKIP_REVIEWERS", "REVIEW_AGY_CLI", "REVIEW_DEEP_LINES", "REVIEW_REGRESSION_STATUS", "ANTIGRAVITY_PM_AGY")
+                or (k.startswith("REVIEW_") and k.endswith(("_BIN", "_MODEL"))) or k.startswith("REVIEW_MAX_"))
     return {k: v for k, v in os.environ.items() if not stripped(k)}
 
 try:
