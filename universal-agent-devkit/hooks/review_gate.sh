@@ -222,10 +222,20 @@ try:
     diff = subprocess.run(
         ["git", "-C", repo_root, "diff", "--name-only", "HEAD", "--", *PATHSPECS],
         capture_output=True, text=True, timeout=10)
+    if diff.returncode != 0 and subprocess.run(["git", "-C", repo_root, "rev-parse", "--verify", "-q", "HEAD"],
+                                               capture_output=True, text=True, timeout=10).returncode != 0:
+        # unborn HEAD (no commit yet): every file is new — compare with the empty tree
+        diff = subprocess.run(
+            ["git", "-C", repo_root, "diff", "--name-only", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "--", *PATHSPECS],
+            capture_output=True, text=True, timeout=10)
     untracked = subprocess.run(
         ["git", "-C", repo_root, "ls-files", "--others", "--exclude-standard",
          "--", *PATHSPECS],
         capture_output=True, text=True, timeout=10)
+    # git exits non-zero with empty stdout (corrupt index, dubious ownership): an empty list there is not "no code" (OCR #742)
+    for _q in (diff, untracked):
+        if _q.returncode != 0:
+            raise RuntimeError(f"git rc={_q.returncode}: {(_q.stderr or '').strip()[:200]}")
     # A symlink's content is a path, not code to review (DevKit hook links such as
     # .claude/hooks/devkit_profile.py in a symlink install).
     # Commits past the last verified HEAD (T0003): code committed mid-work still needs its review.

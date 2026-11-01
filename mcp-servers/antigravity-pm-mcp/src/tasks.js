@@ -105,6 +105,8 @@ export function createTask(cfg, { title, brief, definitionOfDone = [], model, ta
   ensureDir(path.dirname(cfg.pmTasksRoot));
   const { id, dir } = withFileLock(`${cfg.pmTasksRoot}.lock`, () => {
     const newId = `T${String(nextTaskNumber(cfg)).padStart(4, '0')}-${slug(title)}`;
+    // nextTaskNumber scans the PM-side root: its folder must exist before the lock is let go (OCR #742 b266f3d4)
+    ensureDir(path.dirname(taskFile(cfg, newId)));
     return { id: newId, dir: ensureDir(taskDir(cfg, newId)) };
   });
   ensureDir(path.join(dir, 'proof'));

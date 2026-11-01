@@ -151,9 +151,11 @@ def added_lines(repo, base, paths=None):
     r = _git(repo, "-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", base, "--", *(paths or []))
     if r.returncode != 0:
         raise RuntimeError(f"git diff {base} failed: {r.stderr.strip()[:300]}")
-    path, ln = None, 0
+    path, ln, in_hunk = None, 0, False
     for line in r.stdout.splitlines():
-        if line.startswith("+++ "):
+        if line.startswith("diff --git "):
+            in_hunk = False
+        elif line.startswith("+++ ") and not in_hunk:   # inside a hunk "+++ x" is an added line "++ x" (OCR #742)
             hdr = line[4:].rstrip("\t")
             if hdr.startswith('"') and hdr.endswith('"'):   # still quoted (a tab/newline/quote in the name): unescape
                 try:
@@ -162,9 +164,10 @@ def added_lines(repo, base, paths=None):
                     hdr = hdr[1:-1]
             path = None if hdr == "/dev/null" else hdr[2:] if hdr.startswith("b/") else hdr
         elif line.startswith("@@"):
+            in_hunk = True
             m = re.search(r"\+(\d+)", line)
             ln = int(m.group(1)) if m else 0
-        elif line.startswith("+") and path is not None:
+        elif line.startswith("+") and in_hunk and path is not None:
             out.append((path, ln, line[1:]))
             ln += 1
     u = _git(repo, "ls-files", "--others", "--exclude-standard", "-z", "--", *(paths or []))

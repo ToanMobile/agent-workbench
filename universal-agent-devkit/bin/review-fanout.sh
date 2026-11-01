@@ -340,7 +340,10 @@ hot = [f for f in files if sensitive.search(f) or machinery.search(f)]
 _dt = subprocess.run(["git", "diff", "--no-ext-diff", base, "--"], capture_output=True).stdout.decode("utf-8", "replace")
 for _u in untracked[:200]:
     try:
-        with open(_u, encoding="utf-8", errors="replace") as _fh:
+        if not stat.S_ISREG(os.lstat(_u).st_mode):   # never follow a symlink out of the repo, never block on a FIFO (OCR #742)
+            continue
+        _fd = os.open(_u, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(_fd, encoding="utf-8", errors="replace") as _fh:
             _dt += _fh.read(1 << 20)
     except OSError:
         pass
