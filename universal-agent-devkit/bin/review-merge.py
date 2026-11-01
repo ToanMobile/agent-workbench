@@ -5,7 +5,8 @@
 
 RUN_DIR (written by bin/review-fanout.sh) holds meta.json and one envelope per reviewer:
   meta.json   {"required": ["claude","antigravity","grok","ocr","registry", (+"security","verifier" when depth=deep)],
-               "models": {"claude": "opus", "grok": "grok-4.7"},
+               "models": {"claude": "opus", "grok": "grok-4.7", "antigravity": "gemini-4-argon-high"},
+               "runtime": {reviewer executables, review_runner.reviewer_runtime}, "repo": ROOT,
                "depth": "light|deep", "base": REF, "code_hash": H}  (cost: logged in summary usage, never a FAIL)
   <name>.json {"reviewer", "status": ok|failed|timeout|error|unavailable, "verdict": pass|fail, "reason",
                "findings": [...], "usage": {"tokens", "usd"}, "model": <model that answered>, "models": [...]}
@@ -19,7 +20,7 @@ pinned to Opus, Antigravity, Grok, OCR full LLM mode): PASS only when
   2. no blocking finding is left: a P0/P1 that passed cite-check (file:line exists, snippet is really there) and that the
      verifier did not refute; a finding that matches a known bug pattern (.agents/instincts.md) is a P0 recurring bug, and a
      deterministic `detect` hit can never be refuted;
-  3. the token / USD budget is not exceeded;
+  3. (no cost condition: tokens / USD are logged in the summary's usage, never a FAIL — user 31/10/2026, no cost limit);
   4. every accepted P0/P1 of an earlier run (a BUG-REV-<id> bug row of the regression checklist, .agents/regression_status.json)
      is fixed WITH a linked regression test that last passed (regression_checklist.py bug-link BUG-REV-<id> <test>).
 Anything else is FAIL with the reasons listed.

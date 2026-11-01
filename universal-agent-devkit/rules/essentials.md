@@ -30,9 +30,9 @@ decided before editing; (5) what stays unverified.
   the 7 golden standards (surgical, deterministic, boring, resource hygiene, operability, zero-trust
   boundary, deletable; core-rules §18 has them and the /100 scoring); the bilateral review record is
   required for large tasks only.
-- Simple or medium task (local bug fix, UI tweak, test update, script fix, 1–2 file logic): the agent
-  that was called, Claude or Antigravity, does it A to Z and verifies it itself (paired test RED→GREEN,
-  gate exit 0), with no second-agent review. Trivia: choose, ask no one.
+- Simple or medium task (local bug fix, UI tweak, test, script, 1–2 file logic): the agent called,
+  Claude or Antigravity, does it A to Z and verifies it (paired test RED→GREEN, gate exit 0), no
+  second-agent review of the plan; code review: 4-way at any size. Trivia: choose, ask no one.
 
 ## Lazy senior: build less, never check less
 Once the change is understood (read the code, trace the flow, grep every caller), stop at

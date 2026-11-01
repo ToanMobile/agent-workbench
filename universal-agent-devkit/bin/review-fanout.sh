@@ -8,12 +8,12 @@
 #
 # Rule (user 31/10/2026: "3 agent phải cùng thống nhất kết quả thì mới gọi là pass", widened the same day to 4 equal reviewers:
 # Claude Code pinned to Opus, Antigravity, Grok, OCR full LLM mode): PASS only when all 4 reviewers ran on the required model,
-# finished, and each says pass, no unrefuted P0/P1 is left, no known bug pattern (.agents/instincts.md) recurs, the budget
-# holds and every accepted P0/P1 of an earlier run is fixed with a linked regression test. Missing / failed / timed-out /
+# finished, and each says pass, no unrefuted P0/P1 is left, no known bug pattern (.agents/instincts.md) recurs, cost is logged
+# and every accepted P0/P1 of an earlier run is fixed with a linked regression test. Missing / failed / timed-out /
 # unavailable reviewer = FAIL with the reason. There is no fallback that counts as a reviewer's pass.
 #
 # Flow (one run dir per code state, shared by every worktree: <git-common-dir>/review-fanout/<code-hash>/):
-#   1. meta.json (base, depth, files, budget, pinned models) + context.md (known bug patterns for these files, same text for all)
+#   1. meta.json (base, depth, files, runtime, pinned models) + context.md (known bug patterns for these files, same text for all)
 #   2. registry.json  — bin/known_patterns.py scan: added lines that match a `detect` regex = P0 recurring bug (deterministic)
 #   3. in parallel, each bounded by its own timeout (bin/review_runner.py):
 #        claude.json (claude -p --model opus, read-only; a non-Opus run = FAIL) · antigravity.json (pm audit) ·
