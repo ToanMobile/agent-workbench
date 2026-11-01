@@ -24,6 +24,8 @@
 #      bằng cached_scoped_pass, exit 0 (không STALE oan); (b) mục store xuất hiện lúc scratch đang giữ test_run.lock chờ gate slot ⇒
 #      kiểm lại sau khoá/slot vẫn dùng lại (0 suite chạy, verdict=REUSED); (c) mục store bị lượt PASS khác ghi lại với suite đã mượn
 #      thành UNTESTED/KEYED ⇒ tra khoá nội dung của suite đó, còn trúng thì giữ, exit 0 (V4-3).
+#   6. Runner run_impacted.sh không có KEYS ở lượt --scoped: FAIL đã ghi trên cùng khoá chặn mượn PASS từ store còn nguyên (AG5-P1b).
+#   7. Lượt --scoped chép PASS từ full_pass.json riêng là lượt mượn: không ghi lại mục store mà một FAIL đã xoá (AG5-P1a).
 # Tương thích bash 3.2, chỉ dùng Python stdlib.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -566,6 +568,61 @@ else
 fi
 rm_wt wt-rl2
 git -C "$R" branch -q -D feat-rl
+
+# ── 6. AG5-P1b: runner run_impacted.sh (REG-K) không có KEYS ở lượt --scoped, nhưng FAIL của nó vào sổ khoá (F1). FAIL trên CÙNG khoá
+#    mà mục store còn (mô phỏng stale_rerun.py chạy lại suite trên cây đó: ghi fail_n, không đụng scoped_receipts/) ⇒ scratch mới KHÔNG
+#    được mượn PASS của REG-K. Khoá của run_impacted.sh phủ cả cây nên FAIL phải ở đúng cây đó; mục store được trả lại sau FAIL
+wipe_scoped
+rm -rf "$COMMON/postfix-gate/suite_cache"
+git -C "$R" branch -q feat-6 feat
+add_wt wt-6a feat-6
+run_scoped "$TMP/wt-6a"
+FP6="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import tree_fp; print(tree_fp.tree_fingerprint(sys.argv[2]))' "$DEVKIT_DIR/bin" "$TMP/wt-6a")"
+[ "$RC" = 0 ] && [ -f "$SSTORE/$FP6.json" ] || fail "6. tiền đề wt-6a: rc=$RC store=$([ -f "$SSTORE/$FP6.json" ] && echo yes || echo no)"
+rm_wt wt-6a
+cp -p "$SSTORE/$FP6.json" "$TMP/saved_fp6.json"
+add_wt wt-6c feat-6
+touch "$TMP/wt-6c/.hong"
+FLAKY_RETRY=0 run_scoped "$TMP/wt-6c" --no-cache
+[ "$RC" = 1 ] || fail "6. tiền đề wt-6c: rc=$RC (mong 1: REG-K FAIL, ghi fail_n vào sổ khoá)"
+rm -f "$TMP/wt-6c/.hong"
+rm_wt wt-6c
+mkdir -p "$SSTORE" && cp -p "$TMP/saved_fp6.json" "$SSTORE/$FP6.json"
+add_wt wt-6b feat-6
+b="$(snap)"; run_scoped "$TMP/wt-6b"; d="$(dlt "$b" "$(snap)")"
+if [ "$RC" = 0 ] && [ "$(printf '%s' "$d" | awk '{print $2}')" = "1" ]; then
+  ok "6. khoá REG-K đã có FAIL (sổ khoá) ⇒ scratch mới chạy thật REG-K, không mượn PASS từ store (AG5-P1b)"
+else
+  fail "6. mượn PASS của REG-K dù khoá đã FAIL: rc=$RC delta=$d (mong REG-K chạy 1 lần)"; printf '%s\n' "$OUT" | tail -15
+fi
+rm_wt wt-6b
+git -C "$R" branch -q -D feat-6
+
+# ── 7. AG5-P1a: lượt --scoped chép PASS từ full_pass.json riêng (reuse_full_pass) là lượt mượn: không hồi sinh mục store mà một FAIL đã xoá
+wipe_scoped
+rm -rf "$COMMON/postfix-gate/suite_cache"
+git -C "$R" branch -q feat-7 feat
+git -C "$R" worktree add -q "$TMP/wt-7a" feat-7
+(cd "$TMP/wt-7a" && CLAUDE_PROJECT_DIR="$TMP/wt-7a" python3 "$GATE" --diff origin/main --run-tests --full --no-checklist >/dev/null 2>&1)
+FP7="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import tree_fp; print(tree_fp.tree_fingerprint(sys.argv[2]))' "$DEVKIT_DIR/bin" "$TMP/wt-7a")"
+FULL7="$(git -C "$TMP/wt-7a" rev-parse --absolute-git-dir)/postfix-gate/full_pass.json"
+EXIT7="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("exit"))' "$FULL7" 2>/dev/null || echo NONE)"
+[ "$EXIT7" = 0 ] || fail "7. tiền đề: --full ở wt-7a không ghi full_pass.json exit 0 ($EXIT7)"
+rm -rf "$SSTORE"
+add_wt wt-7c feat-7
+touch "$TMP/wt-7c/.hong"
+FLAKY_RETRY=0 run_scoped "$TMP/wt-7c" --no-cache
+[ "$RC" = 1 ] && [ ! -e "$SSTORE/$FP7.json" ] || fail "7. tiền đề wt-7c FAIL: rc=$RC (mong 1, không còn mục store FP7)"
+rm -f "$TMP/wt-7c/.hong"
+rm_wt wt-7c
+run_scoped "$TMP/wt-7a"
+if [ "$RC" = 0 ] && [ ! -e "$SSTORE/$FP7.json" ]; then
+  ok "7. --scoped dùng lại full_pass.json riêng (exit 0) không ghi lại mục store đã bị FAIL xoá (AG5-P1a)"
+else
+  fail "7. lượt chép full_pass.json đã hồi sinh mục store: rc=$RC store FP7=$([ -e "$SSTORE/$FP7.json" ] && echo yes || echo no)"; printf '%s\n' "$OUT" | tail -15
+fi
+rm_wt wt-7a
+git -C "$R" branch -q -D feat-7
 
 echo
 [ "$FAILS" = 0 ] && { echo "PASS: test_gate_scoped_receipt_reuse"; exit 0; }

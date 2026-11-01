@@ -7066,7 +7066,16 @@ def main():
                 # V4-1: chỉ mượn PASS của đúng lệnh ma trận đó (SCOPED-EXTRA giữ id cố định nhưng lệnh đổi theo quyết định); lệch ⇒ chạy thật
                 if (prev.get(t.get("id")) or {}).get("full_command") != cmd:
                     return False
-            if sc is not None and any(sc.blocked(k, t.get("id")) for k in (KEYS.get(id(t)) or (None,))):
+            keys = KEYS.get(id(t))
+            if scoped_src and not keys and sc is not None and suite_keyable(src_m):
+                # #785 (AG5-P1b): lượt task / --scoped không dựng KEYS cho run_impacted.sh / Gradle, nhưng FAIL của chúng vẫn vào sổ khoá (F1):
+                # tính khoá tại chỗ (không ghi KEYS, lookup_key giữ None) để PASS mượn từ store không vượt một FAIL đã ghi trên khoá đó
+                try:
+                    keys = sc.keys(t)
+                except Exception as e:   # noqa: BLE001 - khoá không tính được: không mượn, suite này chạy thật
+                    log_warn(f"suite_cache key {t.get('id')}: {e!r}")
+                    return False
+            if sc is not None and any(sc.blocked(k, t.get("id")) for k in (keys or (None,))):
                 return False   # P2: khoá hiện tại từng FAIL hoặc suite bị cách ly (flaky): không có PASS nào được dùng lại cho nó
             if not DEVICE_SUITE.search(cmd):
                 return True
@@ -8570,10 +8579,12 @@ def main():
                 # PASS theo khoá CHÍNH XÁC vào biên nhận như UNTESTED / KEYED, như receipt_tests của biên nhận full.
                 # #785 (V4-4): lượt MƯỢN mục store (scoped_cache, chỉ reuse_scoped_pass đặt) giữ tested_at của mục đã mượn (không gia hạn TTL)
                 # và không ghi mục store (không hồi sinh mục đã bị FAIL xoá, không thu hẹp nó); lượt không mượn ghi như trước.
+                # AG5-P1a: lượt chép PASS từ biên nhận riêng (reuse_full_pass: full_pass.json / bản ghi budget, reuse_src) cũng là lượt mượn.
+                borrowed = scoped_cache is not None or reuse_src[0] is not None
                 write_full_pass_receipt(project_dir, 0, args.matrix,
                                         [dict(t, status="UNTESTED", label="KEYED") if precise_hit(t) else t for t in regression_tests],
-                                        tested_at=reuse_at if scoped_cache is not None else None,
-                                        write_store=scoped_cache is None,
+                                        tested_at=reuse_at if borrowed else None,
+                                        write_store=not borrowed,
                                         tested_fp=tested_fp, locked=True, scoped=meta)
                 mark_merge_gate_receipt(project_dir, diff_ref, run_start_tree, scoped=True, relaxing=[
                     flag for flag, on in (("--allow-no-tests", args.allow_no_tests), ("--allow-orphan-tests", args.allow_orphan_tests),
