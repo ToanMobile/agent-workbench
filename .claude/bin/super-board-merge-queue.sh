@@ -129,13 +129,33 @@ sys.stderr.write(e); sys.exit(p.returncode)
 ' "${SB_GH_WRITE_TIMEOUT:-15}" "$@" 2>&1); then return 0; fi
   say "gh $1 $2 $3 failed: $(printf '%s' "$err" | tail -1 | cut -c1-200)"; return 1
 }
-reject() {   # reject <PR> <lý do>: PR rời hàng (gỡ nhãn + comment). --dry-run chỉ in.
+reject() {   # reject <PR> <lý do> [nhánh]: PR rời hàng (gỡ nhãn + comment), báo cả thẻ PR đóng (#536). --dry-run chỉ in.
   if [ "$DRY" -eq 1 ]; then say "would drop PR #$1 from the queue: $2"; return 0; fi
   gh_w pr comment "$1" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⚠ left the queue · PR #$1
 Did: checked the approval before batching
 ❌ Not done: $2
 Next: review again; write a new \`approved-head:<sha40>\` for the current head and label \`$LABEL\`" || true
   gh_w pr edit "$1" ${REPO:+--repo "$REPO"} --remove-label "$LABEL" || true
+  reject_note_card "$1" "${3:-}" "$2"
+}
+# #536 (28/10: PR #517 rời hàng 07:49, các thẻ phụ thuộc đứng im ~3 giờ không ai được báo): thẻ mà PR đóng — nhánh issue-<K>-, không thì
+# closingIssuesReferences đúng một issue (CLOSES) — nhận một comment ngắn. Chỉ khi card.sh xác nhận K nằm trên board. Mọi lỗi đọc/ghi ở đây
+# bị bỏ qua (PR đã có comment ở trên) và không đụng READ_HALT: card.sh đọc qua github-read, đọc hỏng ghi file halt; nên lần đọc này dùng
+# SB_GITHUB_HALT_FILE riêng chưa tồn tại (xoá ngay sau) để không bao giờ để lại github-halt.json thật làm dừng hàng đợi hay board.
+reject_note_card() {   # reject_note_card <PR> <nhánh> <lý do>
+  local k haltf
+  k=$(sed -nE 's/^issue-([0-9]+)-.*/\1/p' <<<"${2:-}")
+  [ -n "$k" ] || k=$(awk -v p="$1" '$1 == p {print $2; exit}' <<<"$CLOSES")   # #762: here-string, không printf | awk exit
+  [ -n "$k" ] || return 0
+  haltf=$(mktemp -u "${TMPDIR:-/tmp}/sb-mq-note-halt.XXXXXX") || return 0
+  if ! SB_GITHUB_HALT_FILE="$haltf" bash "$CARD" --config "$CONFIG" item-id "$k" >/dev/null 2>&1; then
+    rm -f "$haltf"; return 0
+  fi
+  rm -f "$haltf"
+  gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⚠ PR #$1 left the queue
+Did: the merge queue dropped PR #$1 before batching
+❌ Not done: $3
+Next: the PR needs a fresh review and \`approved-head:<sha40>\` for its current head, then the \`$LABEL\` label again" || true
 }
 # ---- route (dùng cho kết quả của train và cho PR đã merge còn nhãn) ---------------------------------------------------------------------
 # ROUTE_ROWS: "<mốc> <PR> <head> <nhánh>" mỗi dòng (đợt hiện tại + PR merged còn nhãn): card_of / head_of đọc từ đây.
@@ -506,17 +526,17 @@ while read -r at n head ref; do
   # quyền ghi thắng; kèm `approved-by:` thì nguồn duyệt chéo phải đủ trường và không tự duyệt.
   verdict=$(printf '%s' "$comments" | jq -r -f "$APPROVED_HEAD_JQ") || { say "cannot evaluate approvals for PR #$n (jq failed); left in the queue"; continue; }
   IFS=$'\t' read -r vstate approved vwhy <<<"$verdict" || true
-  if [ -z "$approved" ]; then reject "$n" "no \`approved-head:<sha40>\` from an OWNER/MEMBER/COLLABORATOR on this PR"; continue; fi
-  if [ "$vstate" != ok ]; then reject "$n" "approved-head ${approved:0:7}: ${vwhy:-invalid approval}"; continue; fi
-  if [ "$approved" != "$head" ]; then reject "$n" "approved-head ${approved:0:7} is not the PR head ${head:0:7} (pushed after approval)"; continue; fi
+  if [ -z "$approved" ]; then reject "$n" "no \`approved-head:<sha40>\` from an OWNER/MEMBER/COLLABORATOR on this PR" "$ref"; continue; fi
+  if [ "$vstate" != ok ]; then reject "$n" "approved-head ${approved:0:7}: ${vwhy:-invalid approval}" "$ref"; continue; fi
+  if [ "$approved" != "$head" ]; then reject "$n" "approved-head ${approved:0:7} is not the PR head ${head:0:7} (pushed after approval)" "$ref"; continue; fi
   # #605 (audit T0066 vòng 2): task_id của approved-by là lời khai; chỉ tính khi antigravity-pm có audit pass với auditedHead == head.
   case "$vwhy" in
     owner) ;;
     # audit T0066 vòng 3: --pr = head chưa có object trong repo thì fetch refs/pull/<n>/head trước; fetch lỗi → loại như cũ.
     task:?*) if ! ( cd "$REPO_PATH" && python3 "$AUDIT_CHECK" --pr "$n" "${vwhy#task:}" "$head" ) 2>/dev/null; then
-               reject "$n" "approved-by task_id ${vwhy#task:} has no antigravity-pm audit pass with auditedHead ${head:0:7}"; continue
+               reject "$n" "approved-by task_id ${vwhy#task:} has no antigravity-pm audit pass with auditedHead ${head:0:7}" "$ref"; continue
              fi ;;
-    *) reject "$n" "approved-head ${approved:0:7}: approval source unreadable"; continue ;;
+    *) reject "$n" "approved-head ${approved:0:7}: approval source unreadable" "$ref"; continue ;;
   esac
   BATCH="${BATCH}${at} ${n} ${head} ${ref}"$'\n'; NB=$((NB + 1))
 done < <(printf '%s\n' "$ROWS")
