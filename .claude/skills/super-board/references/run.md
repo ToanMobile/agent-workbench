@@ -21,7 +21,8 @@ checkpoint limitations: [run-workflow.md](run-workflow.md#required-github-eviden
 
 **Super-board is an autonomous trader. The interactive Claude session that invokes `super-board run` is an orchestrator, NOT a worker.** Its only jobs are:
 
-1. Verify preconditions (see table below).
+1. Verify preconditions (see table below), then apply "Owner's standing decision" (after the wave-start sweep) to the
+   🙋/❓ cards: the headless runner has no decision step, so this is the only place it runs on this backend.
 2. Spawn the headless `nohup .claude/bin/super-board-run.sh <slug> &` runner. An explicit start clears the stop marker
    and installs the repo's launchd watchdog (`.claude/bin/super-board-watchdog.sh`): every 60 s it restarts a runner
    that died without a deliberate end, never one stopped with `super-board stop`, with backoff and a cap of 5
@@ -797,7 +798,7 @@ usual template — and, per §4, a `blocked-by:` line.
 ### The wave-start sweep
 
 Before planning any wave, `super-board-wave-plan.sh` reports the lists below the orchestrator must act on
-**before** launching (`waiting` — Ready cards labelled `needs-you` / `human-gated`, #95 — is only reported: a person
+**before** launching (`waiting` — Ready cards labelled `needs-you` / `human-gated`, #95 — is only reported unless the owner's standing decision answers (below): otherwise a person
 releases them by removing the label; one back in the lifecycle with `loop:rebase` / `loop:rebuild-N` is work again. So are
 `needs-device` cards whose QA is next, in QA or in Ready with `qa`, while no real device is online: a phone plugged in
 releases them):
@@ -829,6 +830,29 @@ releases them):
 for, that issue later merged, and nothing ever read the note back — the run's own done-condition
 ("only Blocked/Done cards remain") meant a closing blocker could not wake anything. Five
 cards sat that way on a real board until a human opened it and noticed.
+
+### Owner's standing decision (`[orchestrator] [decision]`, #516)
+
+The owner delegated 🙋/❓ blockers to the orchestrator: `.claude/skills/super-board/references/decision-policy.md`
+quotes the standing order. Before the orchestrator leaves any card at 🙋 or ❓ (a `Blocked` card waiting on a person,
+a `waiting` card carrying `needs-you`, or a lane's Block that asks a person to choose), it applies rules 1–5 of that
+file in order and stops at the first rule that answers:
+
+1. A rule answers → post one comment on the issue whose first line is `[orchestrator] [decision]` and which carries
+   `<!-- sb-decision:orchestrator -->`: the rule number, the reason, the evidence and "Quyết định cuối, không hỏi lại".
+   Post the same comment on the card's open PR when it has one: the merge gate's `super-board-qa-report.py` reads
+   only PR comments. Then run `python3 .claude/bin/super-board-needs-you.py unmark --repo <owner/name> --issue <N>`
+   and move the card: Review when it has a PR to land (the merge protocol lands it; Done means merged), Ready when
+   work is left, Done only when nothing needs merging (closed as not planned with 🤷, or its AC already met).
+2. The case is on the stop list of decision-policy.md (a real person or device, a change to product AC or scope,
+   data loss or another session's work, security, secrets, push rights or a looser gate, no substitute and no
+   precedent) → post no decision: the card keeps needs-you and stays where it is (Blocked, or Ready for `waiting`).
+3. `decision_policy.enabled: false` in the board config → skip this step; the card waits for a person as before.
+
+Only the orchestrator writes `[decision]`. A lane (builder, QA, reviewer) never posts one for the card it works
+on: when it needs a choice it writes the Block (block-template.md) and the orchestrator decides here. The readers
+(`super-board-deps.sh`, `super-board-needs-you.py mark`, the merge gate's `super-board-qa-report.py`) trust a
+decision only through `.claude/bin/super-board-decision.py`.
 
 ### Root-cause hash (used by the rebuild-cap gate)
 
