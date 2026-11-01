@@ -295,11 +295,14 @@ export function buildAuditPrompt(cfg, task, scope = '') {
     `Ho so task: ${paths.dir} (doc brief.md, plan.md, result.json)`,
     '',
     '## Viec can lam',
-    '1. Doc plan.md + result.json, roi doc THAT SU cac file da thay doi (dung `git diff` va doc code).',
-    '2. Truy tim: sai logic, hoi quy (guard bi xoa/lam mem), truong hop bien chua xu ly, ro ri tai nguyen,',
-    '   loi nuot exit code / nuot exception, tai lieu noi sai so voi code.',
-    '3. Doi chieu voi Definition of Done ben duoi — cai nao CHUA dat thi noi ro.',
-    scope ? `4. PM yeu cau soi ky them: ${scope}` : '',
+    '1. Doc plan.md + result.json (neu co), roi doc THAT SU cac file da thay doi (dung `git diff` va doc code).',
+    '2. Voi moi ham/lop/symbol bi doi: doc ca NOI GOI no (callers), cai no GOI (callees) va TEST cua no (git grep ten symbol).',
+    '   Loi hay nam o cho thay doi cham vao code khong bi sua. Finding van chi ve phan thay doi (diff).',
+    '3. Truy tim: sai logic, hoi quy (guard bi xoa/lam mem), truong hop bien chua xu ly, ro ri tai nguyen,',
+    '   loi nuot exit code / nuot exception, lo hong bao mat, tai lieu noi sai so voi code, lap lai bug da biet (.agents/instincts.md).',
+    '4. Doi chieu voi Definition of Done ben duoi — cai nao CHUA dat thi noi ro.',
+    '5. verdict "pass" CHI KHI khong con finding blocker/major nao. Co blocker/major => "fail".',
+    scope ? `6. PM yeu cau soi ky them:\n${scope}` : '',
     READ_ONLY_RUN_RULE,
     '',
     dodBlock(task, cfg),
@@ -314,7 +317,7 @@ export function buildAuditPrompt(cfg, task, scope = '') {
   "reviewer": "antigravity",
   "auditedHead": "<sha40 cua commit da audit (git rev-parse HEAD)>",
   "findings": [
-    { "severity": "blocker|major|minor", "file": "<file:dong>", "snippet": "<CHEP NGUYEN VAN 1 dong code tai file:dong>", "problem": "<sai gi>", "why": "<hong the nao>", "fix": "<sua sao>" }
+    { "severity": "blocker|major|minor", "category": "bug|security|performance|test|docs|recurring-bug", "file": "<file:dong>", "snippet": "<CHEP NGUYEN VAN 1 dong code tai file:dong>", "problem": "<sai gi>", "why": "<hong the nao>", "fix": "<sua sao>", "known_pattern": "<INSTINCT-id neu lap lai bug da biet, khong thi bo trong>" }
   ],
   "dod_check": [ { "item": "<muc DoD>", "met": true, "evidence": "<bang chung, file:dong neu la code>", "snippet": "<1 dong nguyen van neu evidence la file:dong>" } ],
   "notes": ""

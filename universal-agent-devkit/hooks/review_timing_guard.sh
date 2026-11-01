@@ -65,7 +65,7 @@ fi
 RT_LOG="${LOG_DIR}/review_timing_guard.log" \
 RT_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
 python3 -I <<'PY' 3<<<"${INPUT}"
-import os, sys, json
+import os, re, sys, json
 
 try:
     with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
@@ -89,9 +89,16 @@ except Exception as e:
     sys.exit(0)
 
 inp = d.get("tool_input") or {}
-edited = inp.get("file_path") or inp.get("notebook_path") or "" if isinstance(inp, dict) else ""
+edited = (inp.get("file_path") or inp.get("notebook_path") or "") if isinstance(inp, dict) else ""
 if not isinstance(edited, str) or not edited.endswith((".kt", ".java")):
     sys.exit(0)
+# a relative path is relative to the session's cwd, not to this hook's process cwd (critical scan 31/10)
+base_cwd = d.get("cwd") if isinstance(d.get("cwd"), str) and d.get("cwd") else os.getcwd()
+def _abs(p):
+    return os.path.realpath(os.path.join(base_cwd, os.path.expanduser(p)))
+edited = _abs(edited)
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+FANOUT_RX = re.compile(r"(?:^|[\s/])review-fanout\.sh\b")   # the 4-way review (review_gate.sh) is a review too
 
 tp = d.get("transcript_path")
 if not tp or not os.path.exists(tp):
@@ -171,10 +178,18 @@ try:
                     if tid:
                         error_ids.add(tid)
 
-    # Pass 2 — walk the tool_use blocks in order.
+    # Pass 2 — walk the tool_use blocks in order, up to (not including) the edit that fired this hook: counting it made
+    # every new burst look "mid-burst", so the warning could never fire (critical scan 31/10)
+    cur = d.get("tool_use_id")
+    if cur and blocks and blocks[-1].get("id") == cur:
+        blocks = blocks[:-1]
+    elif not cur and blocks and blocks[-1].get("name") in EDIT_TOOLS:
+        blocks = blocks[:-1]
     for blk in blocks:
         name = blk.get("name", "")
         binp = blk.get("input") or {}
+        if not isinstance(binp, dict):
+            binp = {}
 
         is_review = False
         if name in ("Agent", "Task") and binp.get("subagent_type", "") in REVIEW_AGENTS:
@@ -184,16 +199,19 @@ try:
         elif name == "Workflow" and ("multi-lens-audit" in (binp.get("name", "") or "")
                                      or "multi-lens-audit" in (binp.get("script", "") or "")):
             is_review = True
+        elif name == "Bash" and blk.get("id") not in error_ids and FANOUT_RX.search(str(binp.get("command") or "")):
+            is_review = True
         if is_review:
             seen_edit = False
             closed_bursts = 0
             continue
 
-        if name in ("Edit", "Write", "NotebookEdit"):
+        if name in EDIT_TOOLS:
             if blk.get("id") in error_ids:
                 continue                 # blocked/failed → nothing landed
             fp = binp.get("file_path") or binp.get("notebook_path") or ""
             if isinstance(fp, str) and fp.endswith((".kt", ".java")):
+                fp = _abs(fp)
                 # An edit that leaves the file identical to HEAD is a REVERT, not a
                 # fix — most often the restore half of a RED-check mutation cycle,
                 # which `check 2` makes mandatory. Counting it made this guard fire

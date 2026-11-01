@@ -282,3 +282,17 @@ test('prompt PHAN BIEN doi agent BAC BO va cho phep noi "khong tim ra"', () => {
   assert.ok(!p.includes('phase = "IMPLEMENT"'), 'giai doan nay tuyet doi khong duoc day agent di code');
   cleanup(dir);
 });
+
+// critical scan 31/10 — BUG-REV-agpm-config-null-object
+test('loadConfig: proof / antigravity set to null or a primitive fall back to the defaults with a warning, no crash', () => {
+  const dir = tmpProject({ proof: null, antigravity: 3, mustHave: [] });
+  try {
+    const cfg = loadConfig(dir);
+    assert.equal(cfg.proof.require, 1);
+    assert.equal(typeof cfg.antigravity, 'object');
+    assert.ok(cfg.antigravity && !Array.isArray(cfg.antigravity));
+    assert.ok(cfg.warnings.some((w) => w.startsWith('proof khong phai object')));
+  } finally {
+    cleanup(dir);
+  }
+});

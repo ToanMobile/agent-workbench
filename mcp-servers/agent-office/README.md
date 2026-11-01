@@ -38,6 +38,10 @@ Chỉ cần Python 3.8+ có sẵn trên macOS và GitHub CLI (`gh`). Three.js đ
 
 Đồng bộ hai chiều: server đọc lại Project mỗi 30 giây và ngay sau mỗi lần bạn sửa. Thay đổi do runner hoặc do người khác làm trên GitHub sẽ hiện lại trong vòng 30 giây.
 
+## CC Switcher
+
+Nút "CC Switcher" mở http://ai-factory.localhost:4317/cc-switcher: bảng điều khiển 6 tài khoản AI (quota, chống ban, chuyển tài khoản, bảng Repo ↔ Tài khoản để xem/đổi/thêm/gỡ repo, lịch sử), thay cho bảng điều khiển trên Telegram. Trang gọi `mcp-servers/cc-switcher-mcp` (CLI JSON) ở repo thật, đường dẫn do `install-autostart.sh` truyền qua `AGENT_OFFICE_CC_SWITCHER`. Chỉ mở trên chính máy Mac (qua tunnel trả 403).
+
 ## Đọc tình trạng
 
 - **Nhãn repo bên trái mỗi hàng:**

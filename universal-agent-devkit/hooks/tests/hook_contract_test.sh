@@ -1881,10 +1881,9 @@ PY
 run_case "web profile: unreviewed .ts change blocks" review_gate.sh 2 \
   "{\"session_id\":\"rgweb1\",\"cwd\":\"${RG_WEB}\",\"transcript_path\":\"${RG_WEB}/unreviewed.jsonl\",\"last_assistant_message\":\"xong\"}" \
   CLAUDE_PROJECT_DIR="${RG_WEB}"
-# REVIEW_GATE_REQUIRE_OCR=0: this case is about the profile and the skill counting as a review; with `ocr` installed the gate also
-# wants an OCR run after the edit (13/10), which tests/gates/test_review_gate_ocr.sh section 5 covers, so the result here must not
-# depend on whether this machine has `ocr`
-run_case "web profile: open-code-review after the edit passes" review_gate.sh 0 \
+# #742 (31/10): a review skill run (open-code-review) after the edit no longer counts. The gate wants the 4-way review-fanout verdict
+# PASS for this exact code; PASS / FAIL / skill alone / REDUCED overrides are covered by tests/gates/test_review_gate_4way.sh.
+run_case "web profile: open-code-review alone after the edit still blocks" review_gate.sh 2 \
   "{\"session_id\":\"rgweb2\",\"cwd\":\"${RG_WEB}\",\"transcript_path\":\"${RG_WEB}/reviewed.jsonl\",\"last_assistant_message\":\"xong\"}" \
   CLAUDE_PROJECT_DIR="${RG_WEB}" REVIEW_GATE_REQUIRE_OCR=0
 rm -rf "${RG_WEB}"
@@ -1902,7 +1901,11 @@ run_case "K-4 security_gate without python3 fails closed" security_gate.sh 2 \
 run_case "K-4 security_gate w/o python3 releases on re-Stop" security_gate.sh 0 \
   "{\"session_id\":\"k4\",\"stop_hook_active\":true,\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"xong\"}" \
   PATH="${NOJQ_BIN}"
-for h in claim_check.sh churn_guard.sh comment_claim_guard.sh review_gate.sh test_evidence_gate.sh; do
+# review_gate.sh fails closed without python3 (#742, 31/10): it cannot say the code was reviewed.
+run_case "K-4 review_gate without python3 fails closed" review_gate.sh 2 \
+  "{\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"Đã chạy test, 3/3 pass.\"}" \
+  CLAUDE_PROJECT_DIR="${SANDBOX}" PATH="${NOJQ_BIN}"
+for h in claim_check.sh churn_guard.sh comment_claim_guard.sh test_evidence_gate.sh; do
   out="$(printf '%s' "{\"transcript_path\":\"${EMPTY_TR}\",\"last_assistant_message\":\"Đã chạy test, 3/3 pass.\"}" \
         | env CLAUDE_PROJECT_DIR="${SANDBOX}" PATH="${NOJQ_BIN}" ${HC_WRAP} bash "${HOOKS}/${h}" 2>&1)"
   rc=$?

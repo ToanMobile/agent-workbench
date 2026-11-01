@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""super-board-merge-policy.py — decide who merges a PR and which migrations run.
+"""super-board-merge-policy.py — decide which machine gates a PR must pass and which migrations run.
 
 Called by super-board-merge-gate.sh inside the merge lock. Pure function of the
 config, the PR metadata and the diff; no network, no side effects.
@@ -10,13 +10,21 @@ config, the PR metadata and the diff; no network, no side effects.
 `--diff` is `gh pr diff` (only ADDED lines are searched for keywords).
 
 Stdout, one JSON object:
-    { "human":      [ {"category": "money", "why": "path src/billing/charge.ts"} ],
+    { "human":      [ {"category": "size", "why": "big PR — please review: …"} ],
+      "machine_gate": [ {"category": "money", "why": "path src/billing/charge.ts"} ],
+      "require":    { "deep_review": true, "security_reviewer": true,
+                      "verify_commands": [ "npm run test:payments" ] },
       "migrations": [ "supabase/migrations/2026_add_col.sql" ],
       "run":        [ {"env": "staging", "cmd": "npm run db:migrate:staging"} ],
       "needs_you":  [ "npm run db:migrate:live   # live: not in allowed_envs" ],
       "done":       false }
 
-`human` non-empty → the gate exits 7 (a human merges). `needs_you` non-empty →
+`machine_gate` non-empty → NO human route (31/10/2026, autonomous merge path): the gate
+requires a signed 4-way review PASS at depth "deep" with the security reviewer ok/pass
+(PASS_REDUCED never counts), and runs `require.verify_commands` (the extra tests) in the
+scratch tree after config.verify_commands. Empty `require.verify_commands` on a gated PR
+→ the gate stops with verification-readiness (exit 9): fail-closed, never "merge anyway".
+`human` non-empty → the gate exits 7. `needs_you` non-empty →
 exit 8 unless the gate verifies a head-bound approval. `done` stays false for
 compatibility: labels never supply authority. Exit 2 on
 unreadable metadata, so the gate fails safe to "human".
@@ -30,9 +38,15 @@ Rules, from references/config-schema.json → merge_policy / migrations:
   snapshots) and migration files (migrations.globs) do not count; migration
   lines are reported separately. Per-file counts come from `files[].additions/
   deletions`; without them the PR totals are used.
-- merge_policy.always_human.<category>: any label, path glob or added-line
-  keyword match → human. Categories ship as money, auth, schema; setting
-  always_human replaces them all (`{}` turns category gating off).
+- merge_policy.machine_gate.categories.<category> (legacy name: merge_policy.always_human.<category>,
+  read when machine_gate.categories is absent): any label, path glob, added-line keyword
+  or pattern match → machine gate (NOT human). Categories ship as money, auth, schema;
+  setting categories replaces them all. A migration PR (migrations.globs) is always
+  gated as category "migration" — no opt-out.
+  Keywords/patterns skip the added lines of the policy's own tests (POLICY_SELF_TESTS, a fixed list, #747): their
+  fixtures are not product code. Labels, paths, migrations, protected_paths and size still count those files.
+  Extra tests: merge_policy.machine_gate.verify_commands (every gated PR) plus
+  machine_gate.categories.<category>.verify_commands (that category only).
 - merge_policy.protected_paths (#605; default DEFAULT_PROTECTED_PATHS, a list replaces it, `[]` turns it off): a PR
   that DELETES (or renames away) a matching file → human, category "delete-protected". The only human-only
   category: a human `done` approves it; an agent cross-review marker does not (super-board-approval.py HUMAN_ONLY).
@@ -51,7 +65,7 @@ import json
 import re
 import sys
 
-DEFAULT_ALWAYS_HUMAN = {
+DEFAULT_MACHINE_GATE = {
     "money": {
         "labels": ["money", "payments", "billing", "pricing"],
         "paths": ["**/billing/**", "**/payments/**", "**/stripe/**", "**/checkout/**"],
@@ -107,6 +121,10 @@ DEFAULT_ALWAYS_HUMAN = {
                      r"\btruncate [a-z_\"`\[]"],
     },
 }
+DEFAULT_ALWAYS_HUMAN = DEFAULT_MACHINE_GATE   # tên cũ: test/tài liệu cũ còn import tên này
+# #747 (quyết định anh Đạt 31/10 16:17): chuỗi tiền / auth / schema làm fixture trong test của chính policy khiến PR sửa
+# policy tự bị machine gate. Hằng số cứng, không config/env nào nới; mọi file khác dưới tests/ vẫn bị dò.
+POLICY_SELF_TESTS = ["tests/super-board/test_merge_policy_*.sh"]
 # #605: xoá các file này chỉ người duyệt (luật chủ repo 28/10). `**/` để khớp cả file trong thư mục con.
 DEFAULT_PROTECTED_PATHS = [
     "**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json", ".agents/regression_matrix.active.json",
@@ -166,29 +184,111 @@ def added_text(diff: str) -> str:
     return " ".join(" ".join(out).lower().split())
 
 
+_C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def c_unquote(s: str):
+    """(tên, phần còn lại) khi s mở đầu bằng một tên C-quoted của git (`"..."`, core.quotePath: `\\ooo` là byte UTF-8 bát
+    phân, `\\t`… và `\\"` `\\\\`; INSTINCT-089); None khi s không mở bằng dấu nháy hoặc chuỗi hỏng."""
+    if not s.startswith('"'):
+        return None
+    out, i = bytearray(), 1
+    while i < len(s):
+        c = s[i]
+        if c == '"':
+            return out.decode("utf-8", "replace"), s[i + 1:]
+        if c != "\\":
+            out += c.encode("utf-8", "surrogateescape"); i += 1
+        elif s[i + 1:i + 2] in _C_ESCAPES:
+            out.append(_C_ESCAPES[s[i + 1]]); i += 2
+        elif re.fullmatch(r"[0-3][0-7]{2}", s[i + 1:i + 4]):
+            out.append(int(s[i + 1:i + 4], 8)); i += 4
+        else:
+            return None
+    return None
+
+
+def line_path(s: str, prefix: str):
+    """Đường dẫn trong giá trị của dòng `--- ` / `+++ ` / `rename from `: C-quoted hoặc thường (git thêm một tab sau tên
+    thường có khoảng trắng); bắt buộc có và bỏ `prefix` ("a/", "b/" hoặc ""). None khi không đọc được."""
+    s = s.rstrip("\r")
+    q = c_unquote(s)
+    if q is not None:
+        s = q[0] if not q[1].strip() else ""
+    elif s.startswith('"'):
+        return None
+    elif s.endswith("\t"):
+        s = s[:-1]
+    return s[len(prefix):] if s.startswith(prefix) and len(s) > len(prefix) else None
+
+
+def diff_git_paths(line: str):
+    """(cũ, mới) của header `diff --git a/<cũ> b/<mới>`, mỗi tên thường hoặc C-quoted; None khi không đọc được.
+
+    Hai tên thường mơ hồ khi tên chứa " b/": cùng một đường dẫn hai lần (mọi lần thêm, xoá, sửa) thì tách đúng giữa như git;
+    còn lại tách ở " b/" đầu tiên (đổi tên: dòng `rename from/to` đã nêu đường dẫn).
+    """
+    rest = line[len("diff --git "):].rstrip("\r")
+    q = c_unquote(rest)
+    if q is not None:   # tên cũ C-quoted, tên mới C-quoted hoặc thường
+        old, rest = q
+        new = line_path(rest[1:], "b/") if rest.startswith(" ") else None
+        return (old[2:], new) if old.startswith("a/") and len(old) > 2 and new else None
+    for i in [j for j in range(len(rest)) if rest.startswith(' "b/', j)]:   # tên cũ thường, tên mới C-quoted
+        nq = c_unquote(rest[i + 1:])
+        if nq is not None and not nq[1].strip():
+            old = line_path(rest[:i], "a/")
+            return (old, nq[0][2:]) if old and len(nq[0]) > 2 else None
+    n = (len(rest) - 1) // 2
+    if n > 2 and rest[n] == " " and rest.startswith("a/") and rest[n + 1:].startswith("b/") and rest[2:n] == rest[n + 3:]:
+        return rest[2:n], rest[2:n]
+    if not rest.startswith("a/") or " b/" not in rest:
+        return None
+    old, new = rest[2:].split(" b/", 1)
+    return (old, new) if old and new else None
+
+
+def drop_files(diff: str, globs) -> str:
+    """The diff without the file sections whose new path (`+++ b/<path>` before the first hunk) matches a glob.
+
+    A section whose new path cannot be read stays in (fail-closed). Only a real `diff --git ` line starts a section:
+    file content always carries a `+`/`-`/` ` prefix, so it cannot fake a header. Tên C-quoted được giải mã (line_path).
+    """
+    keep = []
+    for sec in re.split(r"(?m)^(?=diff --git )", diff):
+        new = next((line_path(h[4:], "b/") for h in sec.split("\n@@", 1)[0].split("\n") if h.startswith("+++ ")), None)
+        if not (sec.startswith("diff --git ") and new and matches(new, globs)):
+            keep.append(sec)
+    return "".join(keep)
+
+
 def deleted_paths(diff: str) -> list[str]:
     """Paths a unified git diff deletes: `deleted file mode`, `--- a/X` + `+++ /dev/null`, or `rename from X`.
 
-    Read from the diff headers, not `meta.files` (gh gives no change type there). A quoted path (special
-    characters) is unquoted only for the plain `"a/..."` form.
+    Read from the diff headers, not `meta.files` (gh gives no change type there). d1facdea5d: tên thường hoặc C-quoted
+    đều được giải mã; file rỗng bị xoá không có dòng `---`, chỉ có `diff --git` + `deleted file mode`; chỉ đọc phần header
+    trước `\\n@@` của từng mục để nội dung hunk không bao giờ giả được dòng xoá file. "" = một lần xoá không đọc được đường dẫn
+    (main() coi là chạm file bảo vệ: fail-closed).
     """
-    out, old, lines = [], None, diff.split("\n")
-    for i, line in enumerate(lines):
-        if line.startswith("diff --git "):
-            old = None
-        elif line.startswith("--- "):
-            old = line[4:].strip().strip('"')
-            old = old[2:] if old.startswith("a/") else None
-            if old and i + 1 < len(lines) and lines[i + 1].startswith("+++ /dev/null"):
-                out.append(old)
-        elif line.startswith("rename from "):
-            out.append(line[len("rename from "):].strip().strip('"'))
-        elif line.startswith("deleted file mode") and i > 0:
-            # header `diff --git a/X b/X` sits just above; `--- a/X` follows when the file had content.
-            head = next((h for h in reversed(lines[:i]) if h.startswith("diff --git ")), "")
-            if " b/" in head:
-                out.append(head[len("diff --git "):].split(" b/", 1)[0].strip('"').removeprefix("a/"))
+    out = []
+    for sec in re.split(r"(?m)^(?=diff --git )", diff):
+        hdr = sec.split("\n@@", 1)[0].split("\n")
+        for i, line in enumerate(hdr):
+            if line.startswith("--- ") and i + 1 < len(hdr) and hdr[i + 1].startswith("+++ /dev/null"):
+                out.append(line_path(line[4:], "a/") or "")
+            elif line.startswith("rename from "):
+                out.append(line_path(line[len("rename from "):], "") or "")
+            elif line.startswith("deleted file mode"):
+                head = next((h for h in reversed(hdr[:i]) if h.startswith("diff --git ")), "")
+                out.append((diff_git_paths(head) or ("",))[0])
     return list(dict.fromkeys(out))
+
+
+def str_list(value) -> list[str]:
+    """Only non-blank strings; anything else is dropped (a gated PR with no usable extra test fails closed in the gate)."""
+    if not isinstance(value, list):
+        return []
+    return [v for v in value if isinstance(v, str) and v.strip()]
 
 
 def comment_free(text: str) -> str:
@@ -218,7 +318,7 @@ def main() -> int:
 
     labels = {(l.get("name") or "").lower() for l in meta.get("labels") or []}
     paths = [f.get("path") or "" for f in meta.get("files") or []]
-    added = added_text(diff)
+    added = added_text(drop_files(diff, POLICY_SELF_TESTS))
     added_nc = comment_free(added)
     body = meta.get("body") or ""
 
@@ -250,9 +350,19 @@ def main() -> int:
         extra = f" (+{mig_lines} migration lines counted separately)" if mig_lines else ""
         human.append({"category": "size",
                       "why": f"big PR — please review: {size} changed lines > auto_max_lines {cap}{extra}"})
-    always = policy["always_human"] if isinstance(policy.get("always_human"), dict) else DEFAULT_ALWAYS_HUMAN
+    # 31/10/2026: money / auth / schema / migration no longer route to a human. They go through an extra MACHINE gate
+    # (deep 4-way review + security reviewer + extra tests), enforced by super-board-merge-gate.sh; fail-closed there.
+    gate_cfg = policy.get("machine_gate") if isinstance(policy.get("machine_gate"), dict) else {}
+    # Gộp trên DEFAULT_MACHINE_GATE để khai báo riêng từng category (vd. categories.migration.verify_commands) không làm rơi
+    # luật mặc định money / auth / schema; muốn tắt hẳn một category mặc định thì gán tường minh {} cho khoá đó.
+    always = dict(DEFAULT_MACHINE_GATE)
+    if isinstance(policy.get("always_human"), dict):
+        always.update(policy["always_human"])
+    if isinstance(gate_cfg.get("categories"), dict):
+        always.update(gate_cfg["categories"])
+    machine, extra_tests = [], str_list(gate_cfg.get("verify_commands"))
     for cat, rule in always.items():
-        rule = rule or {}
+        rule = rule if isinstance(rule, dict) else {}
         hit = next((f"label {l}" for l in rule.get("labels") or [] if l.lower() in labels), None)
         if not hit:
             hit = next((f"path {p} (matches {g})" for p in paths
@@ -264,10 +374,22 @@ def main() -> int:
             hit = next((f"pattern \"{r}\" in an added line" for r in rule.get("patterns") or []
                         if re.search(r, added) or re.search(r, added_nc)), None)
         if hit:
-            human.append({"category": cat, "why": hit})
+            machine.append({"category": cat, "why": hit})
+            extra_tests += str_list(rule.get("verify_commands"))
+    if mig_files:
+        shown = ", ".join(mig_files[:5]) + (f" (+{len(mig_files) - 5} more)" if len(mig_files) > 5 else "")
+        machine.append({"category": "migration", "why": f"migration files: {shown}"})
+        # 13bcd39b20: category migration đến từ migrations.globs, không qua vòng luật ở trên, nên đọc test bổ sung riêng của nó ở đây
+        mig_rule = always.get("migration")
+        extra_tests += str_list(mig_rule.get("verify_commands")) if isinstance(mig_rule, dict) else []
+    extra_tests = list(dict.fromkeys(extra_tests))
+    require = {"deep_review": bool(machine), "security_reviewer": bool(machine),
+               "verify_commands": extra_tests if machine else []}
     protected = policy.get("protected_paths")
     protected = DEFAULT_PROTECTED_PATHS if protected is None else protected
-    gone = next((f"deletes {p} (matches {g})" for p in deleted_paths(diff) for g in [matches(p, protected)] if g), None)
+    # "" = xoá một file không đọc được đường dẫn: coi như chạm file bảo vệ (fail-closed), trừ khi protected_paths tắt ([]).
+    gone = next((f"deletes {p or '<unreadable path>'} (matches {g})" for p in deleted_paths(diff)
+                 for g in [matches(p, protected) if p else (protected and "an unreadable diff header")] if g), None)
     if gone:
         human.append({"category": "delete-protected", "why": gone})
 
@@ -294,8 +416,8 @@ def main() -> int:
         if m and m.group(1).lower() != "done":
             needs.append(m.group(1).strip("`"))
 
-    print(json.dumps({"human": human, "migrations": mig_files, "run": run,
-                      "needs_you": needs, "done": False}))
+    print(json.dumps({"human": human, "machine_gate": machine, "require": require, "migrations": mig_files,
+                      "run": run, "needs_you": needs, "done": False}))
     return 0
 
 

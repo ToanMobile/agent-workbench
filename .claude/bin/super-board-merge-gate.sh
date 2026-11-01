@@ -99,9 +99,11 @@
 #      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
 #      the card goes back to Review (not Blocked, not a rebase pass)
+#   10 chưa có lượt review 4 bên nào cho đúng head này (review-fanout.sh --status NONE): stdout `review-missing: <head> base <sha>`.
+#      Không merge; merge-queue giữ nhãn và đếm lần thử (3 lần → 🛡 Blocked) thay vì lặp mù Review ↔ Merge khi chưa lane nào chạy
+#      review-fanout.sh trên head cuối (13bcd39b20). Chạy review xong thì merge lại.
 #   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
-#   7  merge policy says a human merges this one (money / auth / destructive
-#      schema, a diff over a positive auto_max_lines — default 0, so an unset
+#   7  merge policy says a human merges this one (a diff over a positive auto_max_lines — default 0, so an unset
 #      cap is not a size gate; a positive cap says "big PR — please review" —
 #      or merge_policy.default "human"). Stdout lists each
 #      `human-gate: <category> — <evidence>`. Nothing ran, nothing merged; the
@@ -121,11 +123,34 @@
 #      current request has verified trusted-human approval, the gate re-runs and
 #      merges.
 #
+# AUTONOMOUS MERGE HARDENING (31/10/2026) — no human step, fail-closed:
+#   * money / auth / destructive schema / migration PRs no longer go to a human. merge-policy lists them in
+#     `machine_gate` (stdout `machine-gate: <category> — <evidence>`); the gate then requires a DEEP 4-way review with the
+#     security reviewer ok/pass, never accepts PASS_REDUCED, and runs merge_policy.machine_gate.verify_commands (extra tests)
+#     after verify_commands (red → exit 11). No extra test configured → exit 9 (verification-readiness).
+#   * Before merging, a signed 4-way review PASS for the exact PR head is required: `review-fanout.sh --status` (DevKit,
+#     HMAC seal checked by the DevKit itself) run on the clean head with --base merge-base(head, origin/<base>), then the
+#     signed summary.json is re-verified with `review-fanout.sh --verify-summary` on a private copy. No fanout, or a fanout
+#     without --verify-summary → exit 9;
+#     UNSIGNED / forged / FAIL / PASS_REDUCED → exit 6 (back to Review); NONE → exit 10 (`review-missing:`); RUNNING → exit 4.
+#     2823727da8: REVIEW_REGRESSION_STATUS thừa hưởng từ môi trường luôn bị loại bỏ (cùng REVIEW_SKIP_REVIEWERS / REVIEW_*_MODEL /
+#     REVIEW_*_BIN); file trạng thái hồi quy ngoài cây của B2 chỉ nhận qua `--review-status-file <abs-path>` (cấm SB_BOARD_WORKER=1)
+#     hoặc `merge_policy.review_status_file` trong `--config` tin cậy, kiểm tra nằm ngoài repo/scratch và không làm rơi hàng BUG-REV-*.
+#     `--accept-reduced-review <skip list>` of this run (never an inherited variable, never a board worker: exit 13, d68ca2df2a)
+#     accepts PASS_REDUCED of that exact skip list for a PR outside the machine gate only. Default: rejected.
+#   * Never merges with a failing CI check (`gh pr checks`: fail/cancel/unknown bucket → exit 11; unreadable → exit 4).
+#     Required checks on <base> (branch protection, rulesets, merge queue; read with `gh api`) → `gh pr merge --auto --squash
+#     --delete-branch --match-head-commit <sha>`: GitHub waits for them; the gate keeps the lock and waits for MERGED
+#     (SB_MERGE_AUTO_WAIT_S, default 2700; poll SB_MERGE_AUTO_POLL_S, default 20). A red check, a moved head or the timeout
+#     disables auto-merge again (also on every other exit) and stops. No required check → the old immediate squash merge,
+#     only after every check finished without a failure. Never --admin.
+#
 # MERGE POLICY AND MIGRATIONS (config, all optional — defaults shown in
 # references/config-schema.json)
 #
 #   merge_policy: { default: "auto"|"human", auto_max_lines: 0, size_exclude,
-#                   always_human: { <category>: {labels, paths, keywords} } }
+#                   machine_gate: { categories: { <category>: {labels, paths, keywords, patterns, verify_commands} },
+#                                   verify_commands: [ <extra test cmd> ] } }   (legacy always_human = categories)
 #   migrations:   { globs, allowed_envs, target_env, commands: {<env>: cmd},
 #                   human_steps }
 #
@@ -142,6 +167,18 @@ GITHUB_READ="$HERE/super-board-github-read.py"
 
 CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""; TRAIN_RECEIPT=""
 PREFLIGHT=0; STANDALONE=0
+# PASS_REDUCED chỉ được nhận khi CHÍNH lượt chạy này nêu skip list bằng --accept-reduced-review; không bao giờ cho PR machine-gate.
+# d68ca2df2a: giống REVIEW_REGRESSION_STATUS, không bao giờ thừa hưởng từ môi trường (SB_MERGE_ACCEPT_REDUCED_REVIEW lọt vào môi trường
+# queue / train / worker là cửa hậu) và worker của board không được truyền cờ này.
+ACCEPT_REDUCED=""
+_INHERITED_ACCEPT_REDUCED="${SB_MERGE_ACCEPT_REDUCED_REVIEW-}"
+unset SB_MERGE_ACCEPT_REDUCED_REVIEW
+# 2823727da8: không bao giờ thừa hưởng REVIEW_REGRESSION_STATUS từ môi trường; file status ngoài repo (B2) chỉ nhận từ cờ của lượt chạy
+# này (ngoài board worker) hoặc từ merge_policy.review_status_file trong --config tin cậy.
+_INHERITED_REVIEW_STATUS="${REVIEW_REGRESSION_STATUS-}"
+unset REVIEW_REGRESSION_STATUS
+REVIEW_STATUS_FILE=""
+REVIEW_STATUS_SNAP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -155,11 +192,28 @@ while [ $# -gt 0 ]; do
     --dry-run)       DRY=1; shift ;;
     --preflight)     PREFLIGHT=1; shift ;;
     --standalone)    STANDALONE=1; shift ;;
+    --accept-reduced-review) ACCEPT_REDUCED="$2"; shift 2 ;;
+    --review-status-file) REVIEW_STATUS_FILE="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
 [ -n "$CONFIG" ] && [ -e "$CONFIG" ] || { echo "config not found: ${CONFIG:-<unset>}" >&2; exit 66; }
 [ -n "$PR" ] || { echo "--pr <number> is required" >&2; exit 64; }
+if [ -n "$ACCEPT_REDUCED" ] && [ "${SB_BOARD_WORKER-}" = 1 ]; then
+  echo "[merge-gate #${PR}] board worker may not pass --accept-reduced-review" >&2
+  exit 13
+fi
+[ -z "$_INHERITED_ACCEPT_REDUCED" ] || echo "[merge-gate #${PR}] note: inherited SB_MERGE_ACCEPT_REDUCED_REVIEW is ignored (d68ca2df2a); a reduced review is accepted only through --accept-reduced-review of this run" >&2
+if [ -n "$REVIEW_STATUS_FILE" ]; then
+  if [ "${SB_BOARD_WORKER-}" = 1 ]; then
+    echo "[merge-gate #${PR}] board worker may not pass --review-status-file" >&2
+    exit 13
+  fi
+  if ! { [[ "$REVIEW_STATUS_FILE" = /* ]] && [ -f "$REVIEW_STATUS_FILE" ]; }; then
+    echo "--review-status-file must name an existing file by absolute path (got '${REVIEW_STATUS_FILE}')" >&2
+    exit 64
+  fi
+fi
 [ -z "$MSG_FILE" ] || [ -r "$MSG_FILE" ] || { echo "--body-file not readable: $MSG_FILE" >&2; exit 66; }
 # ---- merge queue: một đường merge duy nhất ---------------------------------------
 # Đứng trước mọi việc tốn kém (đọc GitHub, khoá, scratch). Config không đọc được thì coi như tắt: đường cũ tự dừng ở bước kiểm config.
@@ -204,6 +258,19 @@ fi
 
 CONFIG_JSON=$(cat "$CONFIG")
 printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
+if [ -z "$REVIEW_STATUS_FILE" ]; then
+  REVIEW_STATUS_FILE=$(echo "$CONFIG_JSON" | jq -r '.merge_policy.review_status_file // ""')
+  if [ -n "$REVIEW_STATUS_FILE" ]; then
+    if [ "${SB_BOARD_WORKER-}" = 1 ]; then
+      echo "[merge-gate #${PR}] board worker may not use merge_policy.review_status_file" >&2
+      exit 13
+    fi
+    if ! { [[ "$REVIEW_STATUS_FILE" = /* ]] && [ -f "$REVIEW_STATUS_FILE" ]; }; then
+      echo "verification-readiness: merge_policy.review_status_file must name an existing file by absolute path (got '${REVIEW_STATUS_FILE}')" >&2
+      exit 9
+    fi
+  fi
+fi
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 PROJECT_OWNER=$(echo "$CONFIG_JSON" | jq -r '.project.owner // ""')
 PROJECT_NUMBER=$(echo "$CONFIG_JSON" | jq -r '.project.number // ""')
@@ -326,7 +393,7 @@ if [ "$PREFLIGHT" -ne 1 ]; then
   SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
 fi
 # SCRATCH rỗng (--preflight): không gọi worktree remove / rm với đường dẫn rỗng.
-cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${MERGE_LOG:+"$MERGE_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
+cleanup() { [ "${AUTO_ARMED:-0}" != 1 ] || disable_auto || true; [ -z "${REVIEW_TMP:-}" ] || rm -rf "$REVIEW_TMP" || true; [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${MERGE_LOG:+"$MERGE_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
 # #559: thư mục đã đổi tên bằng git worktree move thì SCRATCH rỗng, trap không gỡ.
 trap cleanup EXIT
 
@@ -422,6 +489,29 @@ if [ -n "$HUMAN" ] && [ "$APPROVED" != true ]; then
   say "merge policy: waiting for a trusted human to approve this exact head"
   needs_you_notify
   exit 7
+fi
+
+# ---- machine gate: money / auth / schema / migration (31/10/2026) ----------------------------------------------------------------
+# Không còn nhánh người duyệt cho các category này: board merge 100% tự động. PR phải qua cổng máy chặt hơn, fail-closed:
+#   1. review 4 bên PASS (có chữ ký HMAC) ở depth "deep", reviewer security đã chạy và ok/pass — kiểm ở review_verdict_check;
+#      PASS_REDUCED không bao giờ đủ cho PR bị gate;
+#   2. test bổ sung (plan.require.verify_commands, từ merge_policy.machine_gate) chạy trong scratch sau verify_commands, cùng luật
+#      đỏ (exit 11). PR bị gate mà không có test bổ sung → verification-readiness (exit 9): sửa config, không bao giờ "merge luôn".
+GATED=0
+MACHINE=$(echo "$PLAN" | jq -r '(.machine_gate // [])[] | "machine-gate: \(.category) — \(.why)"')
+if [ -n "$MACHINE" ]; then
+  GATED=1
+  echo "$MACHINE"
+  GATE_EXTRA=()
+  while IFS= read -r line; do
+    if [[ "$line" =~ [^[:space:]] ]]; then GATE_EXTRA+=("$line"); fi
+  done < <(echo "$PLAN" | jq -r '(.require.verify_commands // [])[] | strings')
+  if [ "${#GATE_EXTRA[@]}" -eq 0 ]; then
+    echo "verification-readiness: PR #${PR} touches a machine-gated area ($(echo "$PLAN" | jq -r '[.machine_gate[].category] | unique | join(", ")')) but merge_policy.machine_gate.verify_commands is empty — configure the extra tests and restart; nothing merged (fail-closed)" >&2
+    exit 9
+  fi
+  VERIFY+=("${GATE_EXTRA[@]}")
+  say "machine gate: deep 4-way review + security reviewer required; ${#GATE_EXTRA[@]} extra test command(s) added to verify"
 fi
 
 # ---- AC của thẻ (T0054, 24/10) ---------------------------------------------------
@@ -634,8 +724,366 @@ if [ "$PREFLIGHT" -eq 1 ]; then
   exit 0
 fi
 
+# ---- 4-way review verdict for this exact head (31/10/2026) ----------------------------------------------------------------------
+# Không merge khi chưa có verdict PASS của review 4 bên cho đúng head này. Gate KHÔNG tự tính HMAC: hỏi entry point của DevKit
+# (review-fanout.sh --status: cùng mã băm code state, tự kiểm chữ ký), rồi xác minh lại chữ ký trên BẢN CHÉP summary.json bằng
+# review-fanout.sh --verify-summary trước khi đọc depth/security (không TOCTOU giữa hai lần đọc). Thiếu tool → exit 9; UNSIGNED, giả mạo,
+# FAIL, PASS_REDUCED → exit 6 (về Review); NONE → exit 10 (review-missing); RUNNING → exit 4. Base của review = merge-base(head PR, origin/<base>), đúng mặc định của
+# review-fanout trên nhánh PR (toàn bộ diff của PR); cây scratch lúc gọi là head PR sạch (chưa gộp base). Biến REVIEW_* (skip, model,
+# binary, REVIEW_REGRESSION_STATUS) của môi trường bị loại bỏ: gate chỉ nhận review với model/binary mặc định đã ghim, PASS_REDUCED chỉ
+# qua --accept-reduced-review, và status ngoài cây (B2) chỉ qua --review-status-file hoặc merge_policy.review_status_file đã kiểm tra.
+find_review_fanout() {
+  local c
+  for c in "$HERE/../../universal-agent-devkit/bin" "$REPO_ABS/universal-agent-devkit/bin" "$REPO_ABS/.agents/devkit/bin" \
+           "$BASE_WT/universal-agent-devkit/bin" "$BASE_WT/.agents/devkit/bin"; do
+    if [ -f "$c/review-fanout.sh" ]; then (cd "$c" && pwd -P); return 0; fi
+  done
+  return 1
+}
+review_status() {  # review_status [<skip list>] [deep] → REVIEW_RC, REVIEW_LINE, REVIEW_WORD, REVIEW_RUN
+  REVIEW_RC=0
+  REVIEW_LINE=$(cd "$SCRATCH" && env "${REVIEW_ENV_UNSET[@]}" ${REVIEW_STATUS_SNAP:+"REVIEW_REGRESSION_STATUS=$REVIEW_STATUS_SNAP"} \
+    bash "$REVIEW_BIN/review-fanout.sh" --repo "$SCRATCH" --base "$REVIEW_BASE" ${1:+--skip "$1"} ${2:+--depth "$2"} --status 2>/dev/null | tail -1) \
+    || REVIEW_RC=$?
+  REVIEW_WORD=${REVIEW_LINE%% *}
+  REVIEW_RUN=${REVIEW_LINE#* }
+}
+review_void() { say "review: $*"; say "the review evidence is void — send the card back to Review"; exit 6; }
+# 13bcd39b20: chưa có lượt review nào cho head này (NONE) — khác bằng chứng hỏng / FAIL (exit 6, về Review). Exit 10 riêng để merge-queue
+# giữ nhãn và đếm lần thử (attempt_retry, đủ 3 lần → 🛡 Blocked) thay vì gỡ nhãn rồi lặp Review ↔ Merge vô hạn khi chưa lane nào chạy review.
+review_missing() {
+  echo "review-missing: ${HEAD_SHA} base ${REVIEW_BASE}"
+  say "review: $*"
+  say "no 4-way review run exists for ${HEAD_SHA:0:12}: run review-fanout.sh --base ${REVIEW_BASE:0:12} on a clean checkout of it, then merge again"
+  exit 10
+}
+# review_seal_check <summary.json>: the ONLY place the gate checks an HMAC seal, and it does not compute one — it asks the DevKit's
+# `review-fanout.sh --verify-summary` (exit 0 sealed, 1 unsigned/tampered, 2 usage). Any other answer (a DevKit from before the entry
+# point existed answers "unknown argument" with 2) means the seal cannot be checked: verification-readiness, never a merge.
+review_seal_check() {
+  local rc=0
+  env "${REVIEW_ENV_UNSET[@]}" bash "$REVIEW_BIN/review-fanout.sh" --verify-summary "$1" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) review_void "summary.json seal does not verify (unsigned or forged)" ;;
+    *) echo "verification-readiness: ${REVIEW_BIN}/review-fanout.sh --verify-summary is unavailable (exit ${rc}) — the review seal cannot be checked; nothing merged (fail-closed)" >&2
+       exit 9 ;;
+  esac
+}
+review_verdict_check() {
+  local want=PASS first st_out
+  REVIEW_BIN=$(find_review_fanout) || {
+    echo "verification-readiness: no DevKit review-fanout.sh next to the gate or in ${REPO_ABS} — the 4-way review verdict cannot be checked; nothing merged (fail-closed)" >&2
+    exit 9; }
+  # 0976a4c5db (INSTINCT-015): bộ biến bỏ trước review-fanout.sh lấy từ đúng danh sách của DevKit (review-fanout.sh --gate-env-names =
+  # review_runner.gate_env_stripped, cùng danh sách hooks/review_gate.sh dùng), để PASS ký trong môi trường của Stop hook đọc lại ở đây vẫn
+  # là cùng lượt chạy (trước đây gate giữ ANTIGRAVITY_PM_AGY nên PASS thành FOREIGN: exit 10). Không lấy được danh sách (DevKit cũ chưa có
+  # entry point này) → không đọc verdict đúng như lúc ký: fail-closed.
+  local _names _n
+  _names=$(bash "$REVIEW_BIN/review-fanout.sh" --gate-env-names) || {
+    echo "verification-readiness: ${REVIEW_BIN}/review-fanout.sh --gate-env-names is unavailable — the review environment cannot be fixed; nothing merged (fail-closed)" >&2
+    exit 9; }
+  REVIEW_ENV_UNSET=(-u REVIEW_REGRESSION_STATUS)
+  while IFS= read -r _n; do [ -z "$_n" ] || REVIEW_ENV_UNSET+=(-u "$_n"); done <<< "$_names"
+  if [ -n "$ACCEPT_REDUCED" ] && ! [[ "$ACCEPT_REDUCED" =~ ^[a-z]+(,[a-z]+)*$ ]]; then
+    echo "verification-readiness: --accept-reduced-review must be a reviewer list like grok,ocr (got '${ACCEPT_REDUCED}')" >&2
+    exit 9
+  fi
+  REVIEW_BASE=$(git -C "$REPO_PATH" merge-base "$HEAD_SHA" "$BASE_SHA" 2>/dev/null) || REVIEW_BASE=""
+  [ -n "$REVIEW_BASE" ] || review_void "no merge-base between ${HEAD_SHA} and origin/${BASE}"
+  REVIEW_TMP=$(mktemp -d "/tmp/sb-gate-rev.XXXXXX")
+  REVIEW_STATUS_SNAP=""
+  if [ -n "$_INHERITED_REVIEW_STATUS" ] && [ -z "$REVIEW_STATUS_FILE" ]; then
+    say "note: inherited REVIEW_REGRESSION_STATUS is ignored (2823727da8); pass --review-status-file <abs-path> (or merge_policy.review_status_file in --config) for an out-of-tree B2 review"
+  fi
+  if [ -n "$REVIEW_STATUS_FILE" ]; then
+    # 2823727da8 + B2: kiểm tra đường dẫn thật là file thường nằm ngoài mọi worktree/git-common-dir của repo, đọc một lần và chụp
+    # sang $REVIEW_TMP/regression_status.json (chống TOCTOU), kiểm bằng load_view(scratch) để không làm rơi/đổi kind hàng BUG-REV-*
+    # (kể cả pending_rows.json ở trunk mode), và chỉ chấp nhận trạng thái allowlist PASS / UNPROVEN (không nhận AUTO_CLOSED, NEEDS_CAR…).
+    if ! st_out=$(python3 -I - "$REVIEW_BIN" "$REPO_ABS" "$SCRATCH" "$REVIEW_STATUS_FILE" "$REVIEW_TMP/regression_status.json" 2>&1 <<'PY'
+import hashlib, json, os, stat, subprocess, sys
+rbin, repo_abs, scratch, st_path, snap_path = sys.argv[1:6]
+sys.dont_write_bytecode = True
+sys.path.insert(0, rbin)
+real = os.path.realpath(st_path)
+try:
+    st_meta = os.stat(real)
+except OSError:
+    st_meta = None
+if not os.path.isabs(st_path) or st_meta is None or not stat.S_ISREG(st_meta.st_mode):
+    print(f"review_status_file is not an existing regular file: {st_path}")
+    sys.exit(1)
+roots = {os.path.realpath(repo_abs), os.path.realpath(scratch)}
+wt_out = subprocess.run(["git", "-C", scratch, "worktree", "list", "--porcelain"], capture_output=True, text=True).stdout
+for line in wt_out.splitlines():
+    if line.startswith("worktree "):
+        roots.add(os.path.realpath(line[9:].strip()))
+common_out = subprocess.run(["git", "-C", scratch, "rev-parse", "--git-common-dir"], capture_output=True, text=True).stdout.strip()
+if common_out:
+    roots.add(os.path.realpath(os.path.join(scratch, common_out)))
+for root in sorted(roots):
+    if real == root or real.startswith(root + os.sep):
+        print(f"review_status_file must be outside the repo tree (got {st_path})")
+        sys.exit(1)
+with open(real, "rb") as fh:
+    raw = fh.read()
+try:
+    ext = json.loads(raw.decode("utf-8"))
+except (UnicodeDecodeError, ValueError) as e:
+    print(f"review_status_file is unreadable JSON ({e}): {st_path}")
+    sys.exit(1)
+if not isinstance(ext, dict) or not isinstance(ext.get("items"), dict):
+    print(f"review_status_file is not a regression checklist JSON (missing items): {st_path}")
+    sys.exit(1)
+import regression_checklist as rc
+tracked = rc.load_view(scratch)
+ext_items = ext["items"]
+for iid, item in sorted((tracked.get("items") or {}).items()):
+    if not ((iid.startswith("BUG-REV-") or iid.startswith("REV-")) and isinstance(item, dict) and item.get("kind") == "bug"):
+        continue
+    tst = str(rc.effective_status(tracked, item))
+    ext_item = ext_items.get(iid)
+    if not isinstance(ext_item, dict) or ext_item.get("kind") != "bug":
+        print(f"out-of-tree status file omits or alters kind of active review bug row {iid} ({tst}) from repo checklist view")
+        sys.exit(1)
+for iid, item in sorted(ext_items.items()):
+    if not (iid.startswith("BUG-REV-") or iid.startswith("REV-")):
+        continue
+    if not isinstance(item, dict) or item.get("kind") != "bug":
+        print(f"out-of-tree status file has non-bug entry for review id {iid}")
+        sys.exit(1)
+    est = str(rc.effective_status(ext, item))
+    if est not in ("PASS", "UNPROVEN") or (est == "UNPROVEN" and item.get("on_car")):
+        print(f"out-of-tree status file leaves review bug row {iid} in {est}")
+        sys.exit(1)
+fd = os.open(snap_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "wb") as out_fh:
+    out_fh.write(raw)
+print(hashlib.sha256(raw).hexdigest()[:16])
+PY
+    ); then
+      review_void "$(printf '%s\n' "$st_out" | tail -1 | clip 300)"
+    fi
+    REVIEW_STATUS_SNAP="$REVIEW_TMP/regression_status.json"
+    say "review: regression status from ${REVIEW_STATUS_FILE} (sha256 ${st_out}) — explicit out-of-tree override (B2)"
+  fi
+  review_status ""
+  case "$REVIEW_RC:$REVIEW_WORD" in
+    0:PASS) : ;;
+    1:FAIL) review_void "the 4-way review verdict for ${HEAD_SHA:0:12} is FAIL" ;;
+    3:RUNNING) say "review: the 4-way review of ${HEAD_SHA:0:12} is still running; nothing merged, the next wave retries"; exit 4 ;;
+    4:NONE|5:UNSIGNED|6:PASS_REDUCED)
+      first=$REVIEW_WORD
+      if [ -n "$ACCEPT_REDUCED" ] && [ "$GATED" -eq 0 ]; then
+        review_status "$ACCEPT_REDUCED"
+        case "$REVIEW_RC:$REVIEW_WORD" in
+          6:PASS_REDUCED)
+            want=PASS_REDUCED
+            say "review: accepting PASS_REDUCED (skipped: ${ACCEPT_REDUCED}) — explicit per-run override" ;;
+          3:RUNNING)
+            say "review: the reduced review (${ACCEPT_REDUCED}) of ${HEAD_SHA:0:12} is still running; nothing merged, the next wave retries"
+            exit 4 ;;
+          4:NONE)
+            [ "$first" != NONE ] || review_missing "no 4-way review and no review with skip list ${ACCEPT_REDUCED} for ${HEAD_SHA:0:12} (status NONE)"
+            review_void "no signed 4-way PASS (${first}) and no signed PASS_REDUCED for skip list ${ACCEPT_REDUCED} (NONE)" ;;
+          1:FAIL|5:UNSIGNED|0:PASS)
+            review_void "no signed 4-way PASS (${first}) and no signed PASS_REDUCED for skip list ${ACCEPT_REDUCED} (${REVIEW_WORD:-?})" ;;
+          *)
+            echo "verification-readiness: review-fanout.sh --status could not be evaluated (exit ${REVIEW_RC}, '${REVIEW_LINE:-}') — nothing merged (fail-closed)" >&2
+            exit 9 ;;
+        esac
+      elif [ "$first" = NONE ] && [ -n "$ACCEPT_REDUCED" ]; then
+        # GATED=1 kèm ACCEPT_REDUCED: nếu cả lượt 4 bên lẫn lượt skip đều chưa chạy (NONE) thì là thiếu review (exit 10),
+        # đang chạy thì chờ (exit 4), chỉ khi có lượt reduced đã xong mới từ chối vì machine-gate không nhận PASS_REDUCED (exit 6).
+        review_status "$ACCEPT_REDUCED"
+        case "$REVIEW_RC:$REVIEW_WORD" in
+          4:NONE) review_missing "no signed 4-way PASS for ${HEAD_SHA:0:12} (status NONE)" ;;
+          3:RUNNING) say "review: a review of ${HEAD_SHA:0:12} is still running; nothing merged, the next wave retries"; exit 4 ;;
+          1:FAIL|5:UNSIGNED|6:PASS_REDUCED|0:PASS) review_void "PASS_REDUCED is not accepted for a machine-gated PR — a full signed 4-way PASS is required" ;;
+          *) echo "verification-readiness: review-fanout.sh --status could not be evaluated (exit ${REVIEW_RC}, '${REVIEW_LINE:-}') — nothing merged (fail-closed)" >&2; exit 9 ;;
+        esac
+      elif [ "$first" = PASS_REDUCED ]; then
+        review_void "PASS_REDUCED is not accepted$([ "$GATED" -eq 1 ] && echo ' for a machine-gated PR') — a full signed 4-way PASS is required"
+      elif [ "$first" = NONE ]; then
+        review_missing "no signed 4-way PASS for ${HEAD_SHA:0:12} (status NONE)"
+      else
+        review_void "no signed 4-way PASS for ${HEAD_SHA:0:12} (status ${first}) — review the clean PR head with review-fanout.sh --base ${REVIEW_BASE:0:12}"
+      fi ;;
+    *) echo "verification-readiness: review-fanout.sh --status could not be evaluated (exit ${REVIEW_RC}, '${REVIEW_LINE:-}') — nothing merged (fail-closed)" >&2
+       exit 9 ;;
+  esac
+  # A machine-gated PR needs a deep review, but review-fanout picks depth from size / paths only: a light PASS never turned deep and
+  # the card looped Review ↔ Merge (r14d, BUG-REV-37b922ce04). The gate marks the head (<git common dir>/review-fanout/deep-heads/
+  # <sha>): every later review of it — Stop hook, lane, by hand — runs deep, and the forced-deep code state is what is asked for here.
+  if [ "$GATED" -eq 1 ] && [ "$REVIEW_RC:$REVIEW_WORD" = "0:PASS" ] && [ "$(python3 -I -c 'import json,sys
+d = json.load(open(sys.argv[1])); m = d.get("meta") if isinstance(d, dict) else None
+print(m.get("depth", "") if isinstance(m, dict) else "")' "$REVIEW_RUN/summary.json" 2>/dev/null)" != deep ]; then
+    local deep_dir
+    deep_dir="$(cd "$SCRATCH" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/review-fanout/deep-heads"
+    mkdir -p "$deep_dir" && : > "$deep_dir/$HEAD_SHA" || say "review: could not mark ${HEAD_SHA:0:12} for a deep review"
+    review_status "" deep
+    case "$REVIEW_RC:$REVIEW_WORD" in
+      0:PASS) say "review: machine-gated PR — using the forced-deep review of ${HEAD_SHA:0:12}" ;;
+      3:RUNNING) say "review: the deep review of ${HEAD_SHA:0:12} is still running; nothing merged, the next wave retries"; exit 4 ;;
+      1:FAIL|4:NONE|5:UNSIGNED|6:PASS_REDUCED) review_void "machine-gated PR: the review of ${HEAD_SHA:0:12} is light and no signed deep review exists (${REVIEW_WORD:-?}); the head is marked deep, so the next review of it runs deep — review-fanout.sh --base ${REVIEW_BASE:0:12} --depth deep" ;;
+      *) echo "verification-readiness: review-fanout.sh --status could not be evaluated (exit ${REVIEW_RC}, '${REVIEW_LINE:-}') — nothing merged (fail-closed)" >&2; exit 9 ;;
+    esac
+  fi
+  [ -n "$REVIEW_RUN" ] && [ -d "$REVIEW_RUN" ] || review_void "--status ${REVIEW_WORD} named no run directory"
+  cp "$REVIEW_RUN/summary.json" "$REVIEW_TMP/summary.json" 2>/dev/null \
+    && cp "$REVIEW_RUN/summary.json.sig" "$REVIEW_TMP/summary.json.sig" 2>/dev/null \
+    || review_void "summary.json or its signature is missing in ${REVIEW_RUN}"
+  review_seal_check "$REVIEW_TMP/summary.json"
+  if ! python3 -I - "$REVIEW_TMP/summary.json" "$want" "${REVIEW_RUN##*/}" "$GATED" >"$REVIEW_TMP/why" 2>&1 <<'PY'
+import json, sys
+path, want, run, gated = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
+try:
+    s = json.load(open(path, encoding="utf-8"))
+except (OSError, ValueError) as e:
+    print("unreadable summary: %s" % e); sys.exit(1)
+if not isinstance(s, dict) or s.get("verdict") != want:
+    print("signed verdict is %r, not %s" % (s.get("verdict") if isinstance(s, dict) else None, want)); sys.exit(1)
+meta = s.get("meta") if isinstance(s.get("meta"), dict) else {}
+if meta.get("code_hash") != run:   # None too: a summary that names no code state answers for none (r14d, BUG-REV-76e3be1a9d)
+    print("the signed summary belongs to another code state (code_hash %r, run %s)" % (meta.get("code_hash"), run[:12])); sys.exit(1)
+if gated:
+    if meta.get("depth") != "deep":
+        print("machine gate needs a deep review; summary depth is %r" % meta.get("depth")); sys.exit(1)
+    if "security" not in (meta.get("required") or []):
+        print("machine gate needs the security reviewer; this run did not require it"); sys.exit(1)
+    sec = (s.get("reviewers") or {}).get("security") or {}
+    if sec.get("status") != "ok" or sec.get("verdict") != "pass":
+        print("machine gate needs the security reviewer ok/pass; got %s/%s" % (sec.get("status"), sec.get("verdict"))); sys.exit(1)
+    if s.get("reduced") or s.get("skipped_by_override"):
+        print("machine gate never accepts a reduced review"); sys.exit(1)
+PY
+  then
+    review_void "$(tail -1 "$REVIEW_TMP/why" | clip 300)"
+  fi
+  say "review: signed 4-way ${want} for ${HEAD_SHA:0:12}$([ "$GATED" -eq 1 ] && echo ' (deep, security reviewer ok)')"
+}
+
+# ---- CI checks + required-check detection (31/10/2026) -------------------------------------------------------------------------
+# Không bao giờ merge khi có check đỏ. Repo có required checks (branch protection, ruleset, merge queue) → `gh pr merge --auto …
+# --match-head-commit`: GitHub tự chờ required checks, gate giữ khoá và chờ tới MERGED. Không có required check → merge ngay như cũ,
+# sau khi mọi check đã xong và không đỏ. Không đọc được checks / protection → không merge (exit 4). Không bao giờ --admin.
+AUTO_WAIT_S=${SB_MERGE_AUTO_WAIT_S:-2700}; AUTO_POLL_S=${SB_MERGE_AUTO_POLL_S:-20}
+case "$AUTO_WAIT_S" in ''|*[!0-9]*) AUTO_WAIT_S=2700;; esac
+case "$AUTO_POLL_S" in ''|*[!0-9]*|0) AUTO_POLL_S=20;; esac
+AUTO_ARMED=0; CI_REQUIRED=""; CI_JSON='[]'
+gh_repo_slug() { if [ -n "$REPO" ]; then printf '%s' "$REPO"; else printf '%s' '{owner}/{repo}'; fi; }
+# required_check_count: số required status check của $BASE (branch protection + ruleset; merge_queue tính 1). Exit 1: không đọc được.
+required_check_count() {
+  local r b n1 n2
+  r=$(gh_repo_slug); b=$(jq -rn --arg b "$BASE" '$b | @uri')
+  n1=$(cd "$REPO_ABS" && gh api "repos/${r}/branches/${b}" \
+    --jq '[((.protection.required_status_checks.contexts // [])[]), ((.protection.required_status_checks.checks // [])[] | .context)] | unique | length' 2>/dev/null) || return 1
+  n2=$(cd "$REPO_ABS" && gh api "repos/${r}/rules/branches/${b}?per_page=100" \
+    --jq '[.[] | select(.type == "required_status_checks" or .type == "merge_queue") | (.parameters.required_status_checks // [{}])[]] | length' 2>/dev/null) || return 1
+  [[ "$n1" =~ ^[0-9]+$ ]] && [[ "$n2" =~ ^[0-9]+$ ]] || return 1
+  echo $(( n1 + n2 ))
+}
+# ci_read: CI_JSON = [{name,state,bucket}] của head PR; "no checks reported" = []. Exit 1: không đọc được.
+ci_read() {
+  local out err
+  err=$(mktemp)
+  out=$(cd "$REPO_ABS" && gh pr checks "$PR" ${REPO:+--repo "$REPO"} --json name,state,bucket 2>"$err") || true
+  if printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1; then CI_JSON=$out
+  elif grep -qi 'no checks reported' "$err"; then CI_JSON='[]'
+  else rm -f "$err"; return 1; fi
+  rm -f "$err"
+}
+# Đỏ = mọi bucket ngoài pass / skipping / pending (fail, cancel, rỗng, lạ): fail-closed.
+ci_failed() { printf '%s' "$CI_JSON" | jq -r '.[] | select((.bucket // "") as $b | ["pass", "skipping", "pending"] | index($b) | not) | "ci-check: \(.name // "?") — \(.state // .bucket // "unknown")"'; }
+ci_pending() { printf '%s' "$CI_JSON" | jq '[.[] | select(.bucket == "pending")] | length'; }
+ci_precheck() {
+  ci_read || { say "could not read the CI checks of PR #${PR}; not merging (fail-closed) — the next wave retries"; exit 4; }
+  CI_FAIL=$(ci_failed)
+  if [ -n "$CI_FAIL" ]; then
+    echo "$CI_FAIL"
+    say "failing CI check(s) on ${HEAD_SHA:0:12}: never merged with a red check — back to Build"
+    exit 11
+  fi
+}
+disable_auto() {
+  local st
+  [ "${AUTO_ARMED:-0}" = 1 ] || return 0
+  if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --disable-auto >/dev/null 2>&1; then AUTO_ARMED=0; say "auto-merge disabled on PR #${PR}"; return 0; fi
+  st=$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json state,autoMergeRequest -q '.state + " " + (if .autoMergeRequest then "armed" else "off" end)' 2>/dev/null || true)
+  case "$st" in MERGED*|*" off") AUTO_ARMED=0; return 0 ;; esac
+  AUTO_ARMED=0
+  say "could not disable auto-merge on PR #${PR} (${st:-unreadable})"
+  python3 "$GITHUB_READ" --halt "auto-merge of PR #${PR} may still be armed after the merge gate stopped; run gh pr merge ${PR} --disable-auto and reconcile before restarting" >/dev/null 2>&1 || true
+  return 1
+}
+auto_wait() {
+  local start st
+  start=$(date +%s)
+  while :; do
+    STATE=$(pr_state) || exit $?
+    st=$(echo "$STATE" | jq -r .state)
+    if [ "$st" = MERGED ]; then AUTO_ARMED=0; return 0; fi
+    [ "$st" = OPEN ] || { say "PR closed while waiting for auto-merge; nothing merged"; exit 3; }
+    if [ "$(echo "$STATE" | jq -r .headRefOid)" != "$HEAD_SHA" ]; then
+      say "head moved while waiting for auto-merge: ${HEAD_SHA} -> $(echo "$STATE" | jq -r .headRefOid)"
+      say "the review evidence is void — send the card back to Review"
+      exit 6
+    fi
+    ci_read || { say "could not read the CI checks while waiting for auto-merge; not merging (fail-closed)"; exit 4; }
+    CI_FAIL=$(ci_failed)
+    if [ -n "$CI_FAIL" ]; then
+      echo "$CI_FAIL"
+      say "a CI check failed while waiting for auto-merge: nothing merged — back to Build"
+      exit 11
+    fi
+    if [ $(( $(date +%s) - start )) -ge "$AUTO_WAIT_S" ]; then
+      say "required checks did not finish within ${AUTO_WAIT_S}s; nothing merged — the next wave retries"
+      exit 4
+    fi
+    own_lock_or_stop
+    sleep "$AUTO_POLL_S"
+  done
+}
+wait_ci_settled() {
+  local start
+  start=$(date +%s)
+  while :; do
+    ci_precheck
+    [ "$(ci_pending)" -gt 0 ] || return 0
+    if [ $(( $(date +%s) - start )) -ge "$AUTO_WAIT_S" ]; then
+      say "CI checks still pending after ${AUTO_WAIT_S}s; not merging — the next wave retries"
+      exit 4
+    fi
+    own_lock_or_stop
+    sleep "$AUTO_POLL_S"
+  done
+}
+# merge_pr: 0 = GitHub đã merge (auto: đã chờ tới MERGED); khác 0 = lời gọi merge lỗi (đường đọc lại bên dưới xử lý).
+merge_pr() {
+  if [ "$CI_REQUIRED" -gt 0 ]; then
+    say "${CI_REQUIRED} required check(s) on ${BASE}: enabling auto-merge pinned to ${HEAD_SHA:0:12}; GitHub merges once they pass"
+    if ! gh pr merge "$PR" ${REPO:+--repo "$REPO"} --auto --squash --delete-branch \
+         ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
+         --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
+      # Phản hồi có thể mất sau khi GitHub đã bật auto: coi như đã bật trừ khi GitHub nói rõ là không (trap EXIT sẽ tắt nó).
+      [ "$(gh pr view "$PR" ${REPO:+--repo "$REPO"} --json autoMergeRequest -q '.autoMergeRequest == null' 2>/dev/null || true)" = true ] || AUTO_ARMED=1
+      return 1
+    fi
+    AUTO_ARMED=1
+    auto_wait
+  else
+    say "no required checks on ${BASE}: immediate squash merge (every CI check finished without a failure)"
+    wait_ci_settled
+    gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
+      ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
+      --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2
+  fi
+}
+
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
   say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
+review_verdict_check
+ci_precheck   # rẻ, trước verify: check đã đỏ thì không tốn verify
 
 # #775: stderr của git merge ghi ra file riêng, không `$(…)`: hook để tiến trình nền giữ ống stderr thì `$(…)` chờ tới khi tiến trình
 # đó thoát và gate treo. MERGE_LOG là file riêng: tiến trình nền của hook giữ fd của nó, nên chữ nó ghi về sau nằm ở đó, ngoài log verify.
@@ -671,6 +1119,12 @@ fi
 TREE_RECEIPT=$(sb_verified_tree_receipt "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
 TREE_KEY=${TREE_RECEIPT##*/}
 if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
+# Machine gate: biên nhận của merge train chỉ phủ verify_commands, không phủ test bổ sung → verify lại ở đây (biên nhận cây thì có,
+# vì khoá của nó gồm cả VERIFY đã thêm test bổ sung).
+if [ "$GATED" -eq 1 ] && [ "$TRAIN_PROVED" -eq 1 ] && [ "$TREE_PROVED" -eq 0 ]; then
+  say "machine gate: the merge train receipt does not cover the extra tests; verifying here"
+  TRAIN_PROVED=0
+fi
 # #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA. Exit 2 chỉ khi train chưa
 # chứng minh cây này, comment edited-tests còn đúng head, và base không còn là tổ tiên của head đó.
 REVIEWED_HEAD=$HEAD_SHA
@@ -1195,6 +1649,9 @@ fi
 own_lock_or_stop   # verify dài có thể đã để gate khác chiếm khoá: không merge song song với nó
 
 python3 "$GITHUB_READ" --check
+# Trước migration (có tác dụng phụ) và merge: check đỏ → không làm gì; đọc required checks một lần cho đường merge.
+ci_precheck
+CI_REQUIRED=$(required_check_count) || { say "could not read branch protection / rulesets of ${BASE}; not merging (fail-closed) — the next wave retries"; exit 4; }
 
 # ---- migrations (inside the lock, after the build proof) -------------------
 # Run the configured migrate command for every allowed env, from the verified
@@ -1249,7 +1706,8 @@ fi
 # ---- the merge -------------------------------------------------------------
 if [ "$DRY" -eq 1 ]; then
   [ -z "$AC_UNTICKED" ] || say "dry run: card #${AC_CARD} has unproven AC — would turn Closes into Refs and keep the card open (ac-open)"
-  say "dry run: would squash-merge PR #${PR}"
+  if [ "$CI_REQUIRED" -gt 0 ]; then say "dry run: would enable auto-merge (--auto --squash, ${CI_REQUIRED} required check(s)) for PR #${PR}"
+  else say "dry run: would squash-merge PR #${PR}"; fi
   exit 0
 fi
 
@@ -1398,9 +1856,7 @@ PY
 # including during the verification run above.
 python3 "$GITHUB_READ" --check
 own_lock_or_stop   # migration / làm mới approval có thể dài: vẫn đúng chủ khoá ngay trước khi merge
-if gh pr merge "$PR" ${REPO:+--repo "$REPO"} --squash --delete-branch \
-     ${SUBJECT:+--subject "$SUBJECT"} ${MSG_FILE:+--body-file "$MSG_FILE"} \
-     --match-head-commit "$HEAD_SHA" 2>&1 | tail -3 >&2; then
+if merge_pr; then
   say "merged ${HEAD_SHA}"
   write_merge_receipt || say "warning: could not write the merge receipt for proof_gate (the merge itself succeeded)"
   ac_after_merge

@@ -198,6 +198,16 @@ export function loadConfig(projectInput) {
   }
   if (!Array.isArray(cfg.rulesFiles)) cfg.rulesFiles = [];
   if (!Array.isArray(cfg.auditCommands)) cfg.auditCommands = [];
+  // a known key that must be an object but is null / a primitive / an array in the config file (deepMerge copies it as is)
+  // crashed loadConfig ({"proof": null}) or a tool later ({"antigravity": null}): warn and use the default (critical scan 31/10)
+  for (const k of ['proof', 'mustHave', 'antigravity', 'oracle', 'testEvidence', 'testStages']) {
+    const def = DEFAULT_CONFIG[k];
+    const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+    if (isObj(def) && !isObj(cfg[k])) {
+      warnings.push(`${k} khong phai object (${cfg[k] === null ? 'null' : typeof cfg[k]}) -> dung mac dinh`);
+      cfg[k] = structuredClone(def);
+    }
+  }
   if (typeof cfg.proof?.require !== 'number' || cfg.proof.require < 0) cfg.proof.require = 1;
   const widened = widenGradleTestCommand(root, cfg.testCommand);
   if (widened && widened !== cfg.testCommand) {

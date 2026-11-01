@@ -571,8 +571,9 @@ tra3 "$TRA3" va2 "E:$A3K" "B:git push origin main" "E:$A3K"; rv_unrev="$(rva3 va
 tra3 "$TRA3" va3 "E:$A3K" R "B:sed -i '' s/2/3/ src/A.kt" "B:git push origin main" "E:$A3K"; rv_sed="$(rva3 va3 "$WAIT_A3")"
 tra3 "$TRA3" va4 "E:$A3K" "B:git push origin main"; rv_last="$(rva3 va4 "$WAIT_A3")"
 tra3 "$TRA3" va5 "E:$A3K" R "B:git push origin main" "B:sed -i '' s/2/3/ src/A.kt"; setm3 "$A3K" -56; rv_bash_after="$(rva3 va5 "$WAIT_A3")"
-[ "$rv_ok" = 0 ] && ok "review_gate: edit → review → commit → push → edit, waiting reply: not held (the push carried reviewed code)" \
-  || fail "review_gate held a waiting reply after a push of reviewed code (rc=$rv_ok)"
+# 31/10: a push carries code to others: an agent review is no longer enough, a waiting reply that pushed is gated by the 3-way review
+[ "$rv_ok" = 2 ] && ok "review_gate: edit → agent review → commit → push → edit, waiting reply: held (a push needs the 3-way review)" \
+  || fail "review_gate let a push through on an agent review alone (rc=$rv_ok)"
 [ "$rv_unrev" = 2 ] && [ "$rv_sed" = 2 ] && [ "$rv_last" = 2 ] && [ "$rv_bash_after" = 2 ] \
   && ok "  … held: an unreviewed edit pushed (Edit, or a sed -i after the review), a push as the last step, a Bash edit after the push" \
   || fail "review_gate fail-open: unreviewed push rc=$rv_unrev, sed before push rc=$rv_sed, push last rc=$rv_last, bash edit after rc=$rv_bash_after"

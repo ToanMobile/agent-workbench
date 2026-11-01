@@ -12,22 +12,35 @@ the command (the paths, `&& cat .env` after it) still is. Fail closed (INSTINCT-
 that expands anything ($( ) backtick ${ } $[ ] <( )), an unquoted heredoc body, a commit segment with an
 unquoted # / ${ / $[ / $' , and ANY scanner error make the whole command be judged.
 
+The review seal key (~/.config/agent-workbench, case-folded for APFS) is refused to Read / Grep / Glob on it or a folder above it,
+and to Bash naming it, reaching it through a glob / brace, or naming its parent ~/.config as a whole (seal_glob_hit). Residual: Bash
+reading ~ or / recursively (`grep -r . ~`), a name built by a variable or command substitution (`~/.con$(echo)fig`), and a copy
+of ~ made and renamed by earlier calls.
+
 Adapted from ai-builder-starter-kit's .agents/hooks/guard-secrets.sh (Eric Tech).
 """
+import fnmatch
 import json
+import os
 import re
 import sys
 
 B = r"(?:^|[^A-Za-z0-9._-])"   # boundary before a name
 E = r"(?:[^A-Za-z0-9._-]|$)"   # boundary after a name
+# dotenv (critical scan 31/10): ANY `.env(.part)*` is a secret file — `.env.production.local`, `.env.staging.local` (the
+# Next.js/Vite secret files) fell through the old fixed suffix list — and a glob right after `.env` (`.env.*`, `.env?`).
+# Allowed only when the LAST part is example / sample / template / dist: that file is how an agent learns the key names.
+DOTENV_RE = re.compile(B + r"\.env((?:\.[A-Za-z0-9_-]+)*)(?:(?=[^A-Za-z0-9._*?\[-])|$|([*?\[]))")
+DOTENV_OK = {"example", "sample", "template", "dist"}
 SECRET_RE = re.compile("|".join([
-    B + r"\.env" + E,
-    r"\.env\.(?:local|production|prod|staging|development|dev|test)" + E,
     B + r"id_(?:rsa|ed25519|ecdsa)" + E,
     B + r"\.npmrc" + E,
     B + r"credentials(?:\.json)?" + E,
     r"service-account[A-Za-z0-9._-]*\.json",
     r"\.pem" + E,
+    # the review seal key (bin/review_sign.py, r14d BUG-REV-592ad1528c): read, the agent could sign its own review verdict
+    r"(?i:\.config/agent-workbench)(?:/|" + E + ")",   # case-folded: APFS opens .CONFIG/AGENT-WORKBENCH
+    B + r"(?i:review\.key)" + E,
 ]))
 
 # The one sanctioned way to ask "is KEY set?": super-board-env-check.sh prints
@@ -218,6 +231,11 @@ def _segments(s):
                 continue
         if ws is None:
             ws = i
+            if c == "#":   # a comment, as the shell reads it: up to the end of the line (its quotes pair with nothing)
+                risky = True
+                nl = s.find("\n", i)
+                i = n if nl < 0 else nl
+                continue
         if c == "#" or (c == "$" and s[i + 1:i + 2] in ("{", "[", "'", '"')):
             risky = True
         if c == "\\":
@@ -284,14 +302,221 @@ def scrub_commit_messages(cmd):
     return "".join(out)
 
 
+# names a shell glob is tried against (a glob in a command opens what it matches: `cat .en?`, `cat id_*`)
+GLOB_TARGETS = (".env", ".env.local", ".env.production", ".env.production.local", "id_rsa", "id_ed25519", "id_ecdsa",
+                ".npmrc", "credentials", "credentials.json", "key.pem", "service-account.json")
+GLOB_HINT = re.compile(r"env|id_|npmrc|cred|pem|service")   # or a dotfile glob; `ls *` / `rm *.txt` are no secret read
+
+
+def _dotenv(text):
+    for m in DOTENV_RE.finditer(text):
+        parts = [x for x in m.group(1).split(".") if x]
+        if m.group(2) or not parts or parts[-1].lower() not in DOTENV_OK:
+            return True
+    return False
+
+
+def _globbed(text):
+    """A word with a glob char whose pattern matches a secret file name (a pattern without a leading dot matches no dotfile)."""
+    for word in re.split(r"[\s;&|()<>=]+", text):
+        base = word.rsplit("/", 1)[-1]
+        if not any(c in base for c in "*?[") or not (base.startswith(".") or GLOB_HINT.search(base.lower())):
+            continue
+        for name in GLOB_TARGETS:
+            if (base.startswith(".") or not name.startswith(".")) and fnmatch.fnmatchcase(name, base):
+                return True
+    return False
+
+
+def is_secret(text):
+    """True when the text names a secret file — also once the shell's quote removal is done (`.e"n"v`, `.en\\v`)."""
+    plain = re.sub(r"[\"'\\]", "", text)
+    return any(SECRET_RE.search(t) or _dotenv(t) or _globbed(t) for t in (text, plain))
+
+
+SECRET_DIR = os.path.join("~", ".config", "agent-workbench")
+KEY_WORD = re.compile(r"\.config/agent-workbench|review\.key", re.I)
+
+
+def _real_path(p):
+    """Phân giải realpath của tổ tiên sâu nhất đang tồn tại ghép với phần đuôi còn lại để chống lách qua symlink."""
+    head, tail = p, []
+    while head and not os.path.lexists(head):
+        nxt = os.path.dirname(head)
+        if nxt == head:
+            break
+        tail.append(os.path.basename(head))
+        head = nxt
+    try:
+        base = os.path.realpath(head) if head else head
+    except OSError:
+        return p
+    return os.path.join(base, *reversed(tail)) if tail else base
+
+
+def _norm_path(p, cwd):
+    p = os.path.expanduser(str(p))
+    if not os.path.isabs(p):
+        p = os.path.join(cwd, p)
+    return os.path.normpath(p)
+
+
+def _secret_reach(p, cwd):
+    """Trả về True khi thao tác đọc/tìm kiếm đệ quy trên p chạm tới thư mục khoá ký ~/.config/agent-workbench."""
+    if not p:
+        return False
+    secret = _real_path(os.path.normpath(os.path.expanduser(SECRET_DIR))).lower()   # case-folded: APFS
+    for n in {_norm_path(p, cwd), _real_path(_norm_path(p, cwd))}:
+        n = n.rstrip("/").lower() or "/"
+        if n == secret or n.startswith(secret + "/") or secret.startswith(n.rstrip("/") + "/") or KEY_WORD.search(n):
+            return True
+    return False
+
+
+SEQ = re.compile(r"(-?\d+)\.\.(-?\d+)(?:\.\.-?\d+)?|([A-Za-z])\.\.([A-Za-z])(?:\.\.-?\d+)?")
+
+
+def _braces(w, cap=256):
+    """Brace expansion of w as bash / zsh do it (same reading as guard-review-tamper.py), or None past cap words."""
+    out, todo = [], [w]
+    while todo:
+        s = todo.pop()
+        m = re.search(r"\{([^{}]*)\}", s)
+        if not m:
+            out.append(s.replace("\x01", "{").replace("\x02", "}"))
+            continue
+        body, q = m.group(1), SEQ.fullmatch(m.group(1))
+        if s[m.start() - 1:m.start()] == "$" or not ("," in body or q):   # literal: hidden from the next search
+            todo.append(s[:m.start()] + "\x01" + body + "\x02" + s[m.end():])
+            continue
+        if "," in body:
+            parts = body.split(",")
+        elif q.group(1):
+            a, b = sorted((int(q.group(1)), int(q.group(2))))
+            parts = [str(i) for i in range(a, b + 1)] if b - a < cap else None
+        else:
+            a, b = sorted((ord(q.group(3)), ord(q.group(4))))
+            parts = [chr(i) for i in range(a, b + 1)]
+        if parts is None or len(out) + len(todo) + len(parts) > cap:
+            return None
+        todo += [s[:m.start()] + p + s[m.end():] for p in parts]
+    return out
+
+
+def _bracket_end(p, i):
+    """Index of the ] closing the bracket expression opened at p[i] ([!x] [^x] []x] [[:class:]]), or None: a lone [ is literal."""
+    j = i + 1 + (p[i + 1:i + 2] in ("!", "^"))
+    j += p[j:j + 1] == "]"
+    while j < len(p):
+        if p[j] == "[" and p[j + 1:j + 2] in (":", "=", "."):
+            k = p.find(p[j + 1] + "]", j + 2)
+            if k < 0:
+                return None
+            j = k + 2
+        elif p[j] == "]":
+            return j
+        else:
+            j += 1
+    return None
+
+
+def _shell_match(pat, name):
+    """Shell glob semantics for one path component, case-folded (APFS opens .CONFIG as .config) and loose enough for bash and
+    zsh: * and ? stay in the component, any [...] is one character, and a pattern not starting with . (or [) never matches a dot name."""
+    pat, name = pat.lower(), name.lower()
+    if name.startswith(".") and not pat.startswith((".", "[")):
+        return False
+    rx, i = "", 0
+    while i < len(pat):
+        j = _bracket_end(pat, i) if pat[i] == "[" else None
+        rx += "[^/]*" if pat[i] == "*" else "[^/]" if pat[i] == "?" or j else re.escape(pat[i])
+        i = (j or i) + 1
+    return re.fullmatch(rx, name, re.S) is not None
+
+
+def _is_glob(w):
+    """A word the shell expands: * or ? (not $? / $*), a closed [...] (not the `[` of a test), or a {a,b} / {1..3} brace."""
+    return bool(re.search(r"(?<!\$)[*?]", w) or any(c == "[" and _bracket_end(w, i) for i, c in enumerate(w))
+                or len(_braces(w) or [0, 0]) > 1)
+
+
+# a lone non-recursive `ls [-flags] <dir>`: it prints names, never file contents (test_guard_review_tamper_bypass: `ls ~/.config`)
+LS_NAMES = re.compile(r"[ \t]*ls(?:[ \t]+-[A-QS-Za-z1@]+)*[ \t]+[^\s;&|<>()`$*?\[{]+[ \t]*")
+
+
+def seal_glob_hit(text, cwd):
+    """Bash (968dac9af3): a shell word that reaches the seal key's folder once the shell expands it — `cat ~/.config/agent-work*/*`,
+    `cat ~/.conf*/agent-wo*/*`, `cat ~/.CONFIG/AGENT-WORKBENCH/REVIEW.KEY` — matched component by component against both forms of
+    the folder (expanduser and realpath; no file system access): the folder itself or anything inside it. Its parent ~/.config named
+    as a whole (`grep -r . ~/.config`, `cp -r ~/.config /tmp/c`, `tar czf x ~/.config`) is denied too, except a lone non-recursive
+    `ls ~/.config` (names only). A cd, a -C / --chdir / --directory (env, tar, git, make) or a glob moves the base the guard cannot
+    follow (`cd ~ && cat .c*/a*/*`, `env -C ~ cp -r .config /tmp`), so a command with one of them and a word that names .config is
+    denied too (fail closed: `ls ~/.config/gh/*`, `grep -C 3 x ~/.config/gh/hosts.yml`)."""
+    home = os.path.normpath(os.path.expanduser(SECRET_DIR))
+    folders = {tuple(c for c in f.split("/") if c) for f in (home, _real_path(home))}
+    parents = {f[:-1] for f in folders}
+    moved = re.search(r"(?:^|[\s;&|(`])(?:(?i:cd|pushd)(?=\s|$)|-C(?=\s|\S)|--chdir(?=[=\s])|--directory(?=[=\s]))", text)
+    globbed = config = parent = False
+    for w in re.split(r"[\s;&|()<>=`]+", re.sub(r"[\"'\\]", "", text)):
+        if not w:
+            continue
+        alts = _braces(w)
+        if alts is None:   # past the cap: a path-like word is judged unreadable
+            if "/" in w:
+                return True
+            alts = [w]
+        globbed = globbed or _is_glob(w)
+        for a in alts:
+            m = re.match(r"(?:\$\{(HOME|PWD)\}|\$(HOME|PWD)|~(\+))(?=/|$)", a)
+            if m:
+                a = (os.path.expanduser("~") if (m.group(1) or m.group(2)) == "HOME" else cwd) + a[m.end():]
+            try:
+                comps = [c for c in _norm_path(a, cwd).split("/") if c]
+            except ValueError:   # `~a<NUL>b`: no such path can run, and the guard must not fail open on it
+                return True
+            if any(len(comps) >= len(f) and all(_shell_match(p, n) for p, n in zip(comps, f)) for f in folders):
+                return True
+            parent = parent or any(len(comps) == len(f) and all(_shell_match(p, n) for p, n in zip(comps, f)) for f in parents)
+            config = config or any(_shell_match(c, ".config") for c in a.split("/") if c)
+    if parent and not LS_NAMES.fullmatch(text):
+        return True
+    return bool(globbed or moved) and config
+
+
+def seal_read_hit(payload):
+    """Kiểm tra Read/Grep/Glob/NotebookRead chạm thư mục khoá ký qua thư mục cha, cwd hoặc mẫu glob (e8eb813d18, ae4413f24a)."""
+    tool, ti = _tool(payload)
+    if tool not in ("Read", "Grep", "Glob", "NotebookRead"):
+        return False
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else os.getcwd()
+    paths = [str(p) for p in (ti.get(k) for k in ("file_path", "filePath", "path", "notebook_path", "notebookPath")) if p]
+    if tool in ("Grep", "Glob") and not ti.get("path"):
+        paths.append(cwd)
+    if any(_secret_reach(p, cwd) for p in paths):
+        return True
+    pat = str(ti.get("pattern") or "") if tool == "Glob" else ""
+    if pat:
+        full = _norm_path(pat, str(ti.get("path") or cwd))
+        lit = re.split(r"[*?\[{]", full, maxsplit=1)[0]
+        if lit != full and not lit.endswith("/"):
+            lit = os.path.dirname(lit)
+        if KEY_WORD.search(pat) or _secret_reach(lit or "/", cwd):
+            return True
+    return False
+
+
+def _tool(payload):
+    ti = next((v for v in (payload.get(k) for k in ("tool_input", "toolInput", "input")) if isinstance(v, dict)), {})
+    return str(payload.get("tool_name") or payload.get("toolName") or ""), ti
+
+
 def subject(payload):
     """The text this tool call can expose: a shell command or a file path."""
-    tool = payload.get("tool_name") or ""
-    ti = payload.get("tool_input") or {}
+    tool, ti = _tool(payload)
     if tool == "Bash":
-        return ti.get("command") or ""
-    if tool == "Read":
-        return ti.get("file_path") or ""
+        return str(ti.get("command") or "")
+    if tool in ("Read", "NotebookRead"):
+        return str(ti.get("file_path") or ti.get("filePath") or ti.get("notebook_path") or ti.get("notebookPath") or ti.get("path") or "")
     if tool == "Grep":
         return " ".join(str(ti.get(k) or "") for k in ("path", "glob"))
     return ""
@@ -300,7 +525,7 @@ def subject(payload):
 def judged_text(payload):
     """What the secret patterns are matched against: the command without its commit messages."""
     text = subject(payload)
-    if payload.get("tool_name") != "Bash" or "commit" not in text:
+    if _tool(payload)[0] != "Bash" or "commit" not in text:
         return text
     try:
         return scrub_commit_messages(text)
@@ -311,15 +536,19 @@ def judged_text(payload):
 def main():
     try:
         payload = json.loads(sys.stdin.read() or "{}")
-        text = subject(payload)
-        if payload.get("tool_name") == "Bash" and ENV_CHECK.match(text):
+        if not isinstance(payload, dict):
             return
-        if text and SECRET_RE.search(judged_text(payload)):
+        text = subject(payload)
+        if _tool(payload)[0] == "Bash" and ENV_CHECK.match(text):
+            return
+        cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else os.getcwd()
+        if seal_read_hit(payload) or (text and is_secret(judged_text(payload))) or \
+                (_tool(payload)[0] == "Bash" and seal_glob_hit(judged_text(payload), cwd)):
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                      "permissionDecision": "deny",
                                                      "permissionDecisionReason": REASON}}))
-    except Exception:
-        pass  # fail open rather than block every call in the project
+    except Exception as e:   # noqa: BLE001 — fail open rather than block every call in the project, but say so
+        sys.stderr.write("guard-secrets: skipped (%s: %s)\n" % (type(e).__name__, str(e)[:160]))
 
 
 if __name__ == "__main__":

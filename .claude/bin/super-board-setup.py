@@ -266,6 +266,16 @@ def migrate_config(cfg):
     if "merge_policy" not in c:
         c["merge_policy"] = {"default": "human" if c.get("human_approves_merge") else "auto"}
         changes.append(f"merge rule: merge_policy.default \"{c['merge_policy']['default']}\" (from human_approves_merge)")
+    mp = c.get("merge_policy")
+    mg = mp.get("machine_gate") if isinstance(mp, dict) else None
+    mg_cmds = mg.get("verify_commands") if isinstance(mg, dict) else None
+    if isinstance(mp, dict) and not (isinstance(mg_cmds, list) and any(isinstance(x, str) and x.strip() for x in mg_cmds)):
+        # 13bcd39b20: PR money / auth / schema / migration cần test bổ sung, thiếu thì merge gate exit 9 với MỌI PR bị gate.
+        # Mặc định: gate DevKit với --no-cache (help của post-fix-gate.py: chạy test kể cả khi PASS cũ còn khớp nội dung);
+        # dự án nên thay bằng test riêng của vùng nhạy cảm.
+        mp["machine_gate"] = dict(mg) if isinstance(mg, dict) else {}
+        mp["machine_gate"]["verify_commands"] = ["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief --no-cache"]
+        changes.append("merge_policy.machine_gate.verify_commands: uncached DevKit gate run added (extra test of money / auth / schema / migration PRs)")
     if "migrations" not in c:
         c["migrations"] = {"allowed_envs": ["test", "staging"],
                            "target_env": "live" if c.get("base_branch", "main") in ("main", "master") else "staging"}

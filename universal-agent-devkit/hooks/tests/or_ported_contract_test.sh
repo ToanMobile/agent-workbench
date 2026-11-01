@@ -10,6 +10,7 @@
 #   G2 review_gate.sh — after the anti-loop release, every later Stop stayed
 #      released until a review ran: one stuck episode disarmed the gate for the
 #      rest of the session (OfficeReader measured 34 suppressed Stops in a row).
+#      2026-10-31: the release itself is removed (3-way review, fail-closed).
 #   G3 security_gate.sh — bare CLEARTEXT under re.I flagged camelCase `clearText`.
 #   G6 testsourceset_gate.sh — (a) Kotlin written from Bash whose path never shows
 #      in the transcript fell out of scope; (b) a session that wrote no Kotlin was
@@ -188,7 +189,7 @@ check "hooks.json wires the ledger on Pre+PostToolUse Bash" $?
 echo
 
 # ═════════════════════════════════════════════════════════════════════════════
-# G2 — review_gate.sh: the anti-loop release is PER EPISODE, not per session
+# G2 — review_gate.sh: no anti-loop release at all, unreviewed code always blocks
 # ═════════════════════════════════════════════════════════════════════════════
 echo "G2 review_gate.sh"
 GITSB="${SANDBOX}/gitrepo"
@@ -206,54 +207,18 @@ RG_SHORT="${SANDBOX}/rg-short.jsonl"; mk_rg_tr "${RG_SHORT}" "${GITSB}/RgThree.k
 ATT="${SANDBOX}/.claude/audit-gate"
 rg_payload() { printf '{"session_id":"%s","cwd":"%s","transcript_path":"%s","last_assistant_message":"xong"}' "$1" "${GITSB}" "$2"; }
 
-rm -f "${ATT}/review_attempts_rg-rearm.txt"
-run_case "guard: unreviewed code blocks (1/3)" review_gate.sh 2 "$(rg_payload rg-rearm "${RG_TR1}")"
-run_case "guard: unreviewed code blocks (2/3)" review_gate.sh 2 "$(rg_payload rg-rearm "${RG_TR1}")"
-run_case "guard: unreviewed code blocks (3/3)" review_gate.sh 2 "$(rg_payload rg-rearm "${RG_TR1}")"
-run_case "guard: 4th attempt releases (anti-loop)" review_gate.sh 0 "$(rg_payload rg-rearm "${RG_TR1}")"
-run_case "guard: still released for the SAME episode" review_gate.sh 0 "$(rg_payload rg-rearm "${RG_TR1}")"
-run_case "NEW unreviewed file re-arms the gate" review_gate.sh 2 "$(rg_payload rg-rearm "${RG_TR2}")"
-rm -f "${ATT}/review_attempts_rg-rearm.txt"
-
-# More edits to a file the release ALREADY covered: only the growing index sees it.
-rm -f "${ATT}/review_attempts_rg-same.txt"
-for i in 1 2 3; do run_case "guard: same-file: block ${i}/3" review_gate.sh 2 "$(rg_payload rg-same "${RG_TR1}")"; done
-run_case "guard: same-file: release" review_gate.sh 0 "$(rg_payload rg-same "${RG_TR1}")"
-run_case "MORE edits to an already-released file re-arm" review_gate.sh 2 "$(rg_payload rg-same "${RG_AGAIN}")"
-rm -f "${ATT}/review_attempts_rg-same.txt"
-
-# COMPACTION: the transcript is rewritten SHORTER, so the index cannot re-arm; a
-# file the release never covered must.
-rm -f "${ATT}/review_attempts_rg-compact.txt"
-for i in 1 2 3; do run_case "guard: compaction: block ${i}/3" review_gate.sh 2 "$(rg_payload rg-compact "${RG_TR2}")"; done
-run_case "guard: compaction: release" review_gate.sh 0 "$(rg_payload rg-compact "${RG_TR2}")"
-run_case "post-compaction NEW file re-arms despite lower index" review_gate.sh 2 "$(rg_payload rg-compact "${RG_SHORT}")"
-rm -f "${ATT}/review_attempts_rg-compact.txt"
-
-# COMPACTION of the SAME file: neither the index nor the file set moves — only the
-# file's mtime. Released for real (no hand-written state), then compacted.
-rm -f "${ATT}/review_attempts_rg-mtime.txt"
-for i in 1 2 3; do run_case "guard: same-file compaction: block ${i}/3" review_gate.sh 2 "$(rg_payload rg-mtime "${RG_AGAIN}")"; done
-run_case "guard: same-file compaction: release" review_gate.sh 0 "$(rg_payload rg-mtime "${RG_AGAIN}")"
-run_case "guard: untouched file stays released after compaction" review_gate.sh 0 "$(rg_payload rg-mtime "${RG_TR1}")"
-sleep 1; printf 'class RgOne { val x = 1 }\n' > "${GITSB}/RgOne.kt"
-run_case "same file rewritten after a release re-arms (mtime)" review_gate.sh 2 "$(rg_payload rg-mtime "${RG_TR1}")"
-rm -f "${ATT}/review_attempts_rg-mtime.txt"
-
-# Hand-written released state (OfficeReader's own fixture shape): an untouched file
-# stays released, a file touched after the release re-arms.
+# 2026-10-31 (user rule: the 3-way review is the only pass, "no release after N blocks"): the anti-loop release is
+# GONE, so the OfficeReader failure (one stuck episode disarming the gate) cannot happen at all. The contract now:
+# unreviewed code blocks on EVERY Stop — 6 attempts, after compaction, with old release / attempt files on disk.
+for i in 1 2 3 4 5 6; do run_case "guard: unreviewed code blocks (${i}/6, never released)" review_gate.sh 2 "$(rg_payload rg-rearm "${RG_TR1}")"; done
+run_case "guard: compaction (shorter transcript) still blocks" review_gate.sh 2 "$(rg_payload rg-rearm "${RG_SHORT}")"
 python3 -c 'import json,sys,time; json.dump({"n":4,"released_at":99,"released_time":time.time()+60,"files":["RgOne.kt"]}, open(sys.argv[1],"w"))' "${ATT}/review_attempts_rg-json.txt"
-run_case "a recorded release keeps an untouched file released" review_gate.sh 0 "$(rg_payload rg-json "${RG_TR1}")"
+run_case "guard: a recorded old-style release is ignored" review_gate.sh 2 "$(rg_payload rg-json "${RG_TR1}")"
 rm -f "${ATT}/review_attempts_rg-json.txt"
-
-# Upgrade path: older attempt-file shapes never crash the gate.
-printf '3' > "${ATT}/review_attempts_rg-legacy.txt"
-run_case "guard: legacy bare attempt count is honoured" review_gate.sh 0 "$(rg_payload rg-legacy "${RG_TR1}")"
-printf '4:99' > "${ATT}/review_attempts_rg-legacy.txt"
-run_case "guard: legacy n:idx form re-arms (no file set)" review_gate.sh 2 "$(rg_payload rg-legacy "${RG_TR1}")"
-printf 'not json at all' > "${ATT}/review_attempts_rg-legacy.txt"
-run_case "guard: corrupt attempt file never crashes the gate" review_gate.sh 2 "$(rg_payload rg-legacy "${RG_TR1}")"
-rm -f "${ATT}/review_attempts_rg-legacy.txt"
+for form in '3' '4:99' 'not json at all'; do
+  printf '%s' "${form}" > "${ATT}/review_attempts_rg-legacy.txt"
+  run_case "guard: legacy attempt file '${form}' never releases nor crashes" review_gate.sh 2 "$(rg_payload rg-legacy "${RG_TR1}")"
+done
 echo
 
 # ═════════════════════════════════════════════════════════════════════════════

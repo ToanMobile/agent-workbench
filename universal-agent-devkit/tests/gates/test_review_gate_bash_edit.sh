@@ -60,7 +60,7 @@ EOF"
 change 2 -119; ev result -118 b1
 expect 2 "code rewritten by a Bash heredoc: blocked until reviewed"
 ev agent -60 a1 principal-code-reviewer
-expect 0 "a review after the Bash edit: passes"
+expect 2 "an agent review alone after the Bash edit still blocks (31/10: only the unanimous 3-way review passes)"
 
 # 2. sed -i through a variable path after the review: blocked again
 ev bash -30 b2 "sed -i '' 's/2/3/' \"\$W/scripts/app.py\""
@@ -151,7 +151,7 @@ expect 2 "run_in_background: its later change counts whatever its result says"
 ev agent -70 a14 principal-code-reviewer
 expect 2 "a background run changing the file after a review: still blocked"
 ev agent -10 a15 principal-code-reviewer
-expect 0 "a review after the background change: passes"
+expect 2 "an agent review alone after the background change still blocks (3-way rule)"
 
 # 11. a 72 KB token before the name (a base64 blob in a heredoc) stays fast: the hook has 20 s (review 14/10: 120 s)
 reset

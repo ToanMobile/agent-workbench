@@ -187,5 +187,22 @@ PY
     || fail "real guard-protected-push through the registration let a force push through (rc=$RC6 out='$OUT6' err='$ERR6')"
 fi
 
+# critical scan 31/10 (BUG-REV-secrets-dotenv-any / -dequote / -comment / -payload)
+expect deny Bash "cat .env.production.local (BUG-REV-secrets-dotenv-any)" "cat .env.production.local"
+expect deny Read "Read .env.staging.local" "/repo/.env.staging.local"
+expect deny Bash "cat .env.* glob" "cat .env.*"
+expect deny Bash "cat .env? glob" "cat .en?"
+expect allow Bash ".env.production.example stays readable" "cat .env.production.example"
+expect allow Bash ".env.sample stays readable" "cat .env.sample"
+expect allow Bash "process.env.X is no file" "grep -rn process.env.API_URL src"
+expect allow Bash "ls * is no secret read" "ls * && rm -f *.txt"
+expect deny Bash 'quote removal: .e"n"v (BUG-REV-secrets-dequote)' 'cat .e"n"v'
+expect deny Bash 'backslash: .en\v' 'cat .en\v'
+expect deny Bash "glob id_*" "cat ~/.ssh/id_*[!b]"
+expect deny Bash "a quote in a comment does not hide the commit's next line (BUG-REV-secrets-comment)" "$(printf 'git commit -m x # it'"'"'s\ncat .env')"
+got="$(printf '%s' '{"toolName":"Read","toolInput":{"filePath":"/r/.env"}}' | python3 "$GUARD")"
+case "$got" in *'"deny"'*) ok "camelCase toolName/toolInput/filePath is judged (BUG-REV-secrets-payload)" ;;
+  *) fail "camelCase payload passed: $got" ;; esac
+
 if [ "$FAILS" -ne 0 ]; then echo "guard_secrets: $FAILS FAILED"; exit 1; fi
 echo "guard_secrets: all checks passed"

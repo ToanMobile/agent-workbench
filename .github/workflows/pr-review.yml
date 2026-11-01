@@ -1,0 +1,130 @@
+# Cổng máy cho mọi PR (pipeline tự động, không duyệt tay): lint, typecheck, test, semgrep (gồm các mẫu bug đã biết trong
+# .agents/instincts.md), gitleaks, quét mẫu bug đã biết, và Alibaba OpenCodeReview chế độ đầy đủ. BẤT KỲ bước nào lỗi → job đỏ.
+# Review 4 bên (Claude Opus + Antigravity + Grok + OCR) chạy trên máy dev qua universal-agent-devkit/bin/review-fanout.sh; đây là lớp CI độc lập.
+# Secrets cần có: OCR_LLM_URL, OCR_LLM_TOKEN, OCR_LLM_MODEL (thiếu → bước OCR đỏ, không bao giờ "bỏ qua").
+name: pr-review
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number || github.event.merge_group.head_sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # PR: the target branch; merge queue: the queue's base; push to main: the commit before the push
+  BASE_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'push' && github.event.before || format('origin/{0}', github.base_ref || 'main') }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Lint (bash -n, py_compile, node --check)
+        run: |
+          set -euo pipefail
+          git ls-files -z '*.sh' '*.bash' | xargs -0 -r -n1 bash -n
+          git ls-files -z '*.py' | xargs -0 -r python3 -m py_compile
+          python3 -m py_compile universal-agent-devkit/bin/ocr-review   # no .py suffix
+          (cd mcp-servers/antigravity-pm-mcp && npm ci --no-audit --no-fund && npm run lint)
+
+      - name: Typecheck (JS syntax of every tracked .js/.mjs; workflow scripts use a top-level return, skipped)
+        run: git ls-files -z '*.js' '*.mjs' ':!:**/node_modules/**' ':!:**/workflows/*.js' | xargs -0 -r -n1 node --check
+
+      - name: Tests
+        run: |
+          set -euo pipefail
+          python3 universal-agent-devkit/tests/gates/test_review_merge_verdict.py
+          bash universal-agent-devkit/tests/gates/test_review_fanout_e2e.sh
+          bash universal-agent-devkit/tests/gates/test_review_gate_4way.sh
+          # TẠM TẮT 31/10 (anh Đạt duyệt): 5 test antigravity-pm-mcp đỏ trên Linux, vẫn chạy trong post-fix-gate trên Mac. Bật lại theo https://github.com/ToanMobile/agent-workbench/issues/768.
+          # (cd mcp-servers/antigravity-pm-mcp && npm test)
+          # TẠM TẮT 01/11 (luật anh Đạt: lỗi chỉ-Linux hoãn, gate Mac là đủ): 35 file test DevKit viết cho macOS đỏ trên ubuntu (run 41209128293),
+          # vẫn chạy trong post-fix-gate trên Mac. Bật lại theo https://github.com/ToanMobile/agent-workbench/issues/781.
+          # bash universal-agent-devkit/tests/run_impacted.sh --all
+
+      - name: Known bug patterns (.agents/instincts.md detect rules) on added lines
+        run: python3 universal-agent-devkit/bin/known_patterns.py --repo . scan --base "$BASE_REF" --out "$RUNNER_TEMP/registry.json"
+
+      - name: Semgrep (known patterns + p/default, new findings only)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'semgrep==1.183.0'
+          python3 universal-agent-devkit/bin/known_patterns.py --repo . semgrep --out "$RUNNER_TEMP/known-patterns.yml"
+          semgrep scan --metrics=off --error --baseline-commit "$(git merge-base "$BASE_REF" HEAD)" \
+            --config "$RUNNER_TEMP/known-patterns.yml" --config p/default
+
+      - name: Dependency review (new vulnerable or disallowed dependencies in this PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+
+      - name: OSV-Scanner (known vulnerabilities in every lockfile)
+        run: |
+          set -euo pipefail
+          v=2.7.0; f=osv-scanner_linux_amd64
+          curl -fsSL -o "$RUNNER_TEMP/$f" "https://github.com/google/osv-scanner/releases/download/v${v}/${f}"
+          echo "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b  $RUNNER_TEMP/$f" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/$f"
+          "$RUNNER_TEMP/$f" scan source --recursive .
+
+      - name: pip-audit (Python requirements)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'pip-audit==2.10.1'
+          git ls-files -z '*requirements*.txt' | xargs -0 -r -n1 python3 -m pip_audit --strict --progress-spinner off -r
+
+      - name: npm audit (production dependencies, high and above)
+        run: |
+          set -euo pipefail
+          git ls-files -z '*package-lock.json' ':!:**/node_modules/**' | while IFS= read -r -d '' lock; do
+            echo "npm audit: ${lock%/*}"
+            (cd "$(dirname "$lock")" && npm audit --omit=dev --audit-level=high)
+          done
+
+      - name: Gitleaks (commits of this PR)
+        run: |
+          set -euo pipefail
+          v=8.30.1; f=gitleaks_${v}_linux_x64.tar.gz
+          curl -fsSL -o "$RUNNER_TEMP/$f" "https://github.com/gitleaks/gitleaks/releases/download/v${v}/${f}"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --log-opts="$(git merge-base "$BASE_REF" HEAD)..HEAD" .
+
+      - name: Alibaba OpenCodeReview (full LLM review, strict — no delegate fallback)
+        env:
+          OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+          OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}
+          OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
+        run: |
+          set -euo pipefail
+          npm i -g --no-audit --no-fund @alibaba-group/open-code-review@1.13.3
+          out="$RUNNER_TEMP/ocr"
+          mkdir -p "$out"
+          python3 universal-agent-devkit/bin/ocr-review --strict --from "$BASE_REF" --out "$out" | tee "$RUNNER_TEMP/ocr.txt"
+          # Cùng quy tắc với review 4 bên (bin/review_runner.py run_ocr): file lỗi hoặc comment critical/high → job đỏ
+          python3 - "$out/ocr-review.json" <<'PY'
+          import json, sys
+          rep = json.load(open(sys.argv[1], encoding="utf-8"))
+          cov = (rep.get("manifest") or {}).get("coverage") or {}
+          if rep.get("status") in ("failed", "error") or cov.get("failed"):
+              sys.exit("OCR review incomplete: status=%s failed_files=%d" % (rep.get("status"), len(cov.get("failed") or [])))
+          bad = [c for c in rep.get("comments") or [] if isinstance(c, dict)
+                 and str(c.get("severity", "")).lower() in ("critical", "high", "blocker", "major", "p0", "p1")]
+          for c in bad:
+              print("::error file=%s,line=%s::OCR %s: %s" % (c.get("path") or c.get("file"), c.get("line") or c.get("start_line") or 1,
+                    c.get("severity"), str(c.get("message") or c.get("body") or "")[:300]))
+          sys.exit(1 if bad else 0)
+          PY

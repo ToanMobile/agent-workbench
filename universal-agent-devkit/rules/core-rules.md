@@ -162,7 +162,7 @@ Mọi dòng mã sinh ra hoặc sửa đổi BẮT BUỘC phải tuân thủ 5 ng
    - **Khi thiết kế / refactor:** Tự động kết hợp `grill-plan` (stress-test) ➔ `deep-module-design` (interface seam) / `deprecation-migration` ➔ `documentation-and-adrs` (ghi ADR).
    - **Khi làm việc với Android:** Tự động kích hoạt `android-real-device-qa` (đo FPS SurfaceFlinger, dump view hierarchy, ANR logcat triage, DEX scan).
    - **Khi điều phối Leader PM ↔ Worker:** Tự động kích hoạt `giao` (giao thức 7 giai đoạn có cổng nghiệm thu cứng).
-   - **Trước khi hoàn tất:** chạy review context sạch (`open-code-review` / `principal-code-reviewer`; **[hook]** `review_gate.sh` chặn dừng khi code đổi mà chưa review) và báo cáo nghiệm thu 4 mục với bằng chứng ở §2.3.
+   - **Trước khi hoàn tất:** review 4 bên — Claude Code (Opus) + Antigravity + Grok + Alibaba OCR chạy song song, CẢ 4 phải cùng PASS (`bin/review-fanout.sh`, luật đầy đủ ở `rules/four-way-review.md`; **[hook]** `review_gate.sh` chặn dừng tới khi PASS, không có lối thả; chế độ hiện tại (người dùng, 01/11/2026): review REDUCED 3 bên Claude + Antigravity + OCR cùng PASS, Grok vào lại sau 02/11 — merge gate chỉ nhận với `--accept-reduced-review grok`) và báo cáo nghiệm thu 4 mục với bằng chứng ở §2.3.
 3. **Điều kiện kích hoạt từng skill:** bảng điều phối theo giai đoạn vòng đời ở `AGENTS.md` §8.2 (nguồn duy nhất).
 
 ## 17. Quy Chuẩn Tối Ưu Hóa Token & Quản Trị Ngân Sách Ngữ Cảnh (Token Economics & Context Budget Management)
@@ -180,7 +180,7 @@ Mọi tác vụ thực thi BẮT BUỘC phải tuân thủ 5 nguyên tắc vàng
 ## 18. Cơ Chế Cộng Tác Claude ↔ Antigravity (CHỈ DÀNH CHO TASK LỚN & RỦI RO CAO)
 Cơ chế phản biện song phương Claude ↔ Antigravity (qua MCP `antigravity-pm` `plan_review` / `pm_plan` trước khi code và `audit` sau khi xong) CHỈ ÁP DỤNG CHO TASK LỚN: chạm ≥2 modules, ≥3 files, >200 LOC net diff, hoặc luồng rủi ro cao (auth, payment, database migration, production crashlytics triage, thay đổi kiến trúc cốt lõi).
 
-Đối với TASK ĐƠN GIẢN / TRUNG BÌNH (bug fix cục bộ, tinh chỉnh UI, cập nhật test, sửa script, logic 1-2 file): gọi agent nào (Claude hoặc Antigravity) thì agent đó TỰ LÀM LUÔN TỪ A-Z cho nhanh, tự kiểm chứng (paired test RED→GREEN, gate exit 0), KHÔNG CẦN gọi agent thứ 2 review để tối ưu tốc độ và tiết kiệm token.
+Đối với TASK ĐƠN GIẢN / TRUNG BÌNH (bug fix cục bộ, tinh chỉnh UI, cập nhật test, sửa script, logic 1-2 file): gọi agent nào (Claude hoặc Antigravity) thì agent đó TỰ LÀM LUÔN TỪ A-Z cho nhanh, tự kiểm chứng (paired test RED→GREEN, gate exit 0), không cần phản biện kế hoạch. Riêng REVIEW CODE CUỐI thì không có ngoại lệ theo cỡ task: luôn là review 4 bên cùng PASS (`rules/four-way-review.md`); task nhỏ (< 50 dòng) chỉ dùng prompt nhẹ hơn, vẫn đủ 4 reviewer.
 
 Mọi phương án kỹ thuật và kết quả nghiệm thu BẮT BUỘC đối chiếu theo 7 tiêu chuẩn vàng:
 1. **Chính xác phẫu thuật (Surgical & Zero Blast Radius):** Can thiệp trúng đích với diff tối thiểu, cô lập rủi ro tuyệt đối và không làm xước bất kỳ mô xung quanh nào.

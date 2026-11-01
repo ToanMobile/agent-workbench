@@ -111,6 +111,7 @@ print(json.dumps(rows[:limit]))' "$FAKE_DIR/merged.jsonl" "$head" "$search" "$li
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_review_fanout.sh"; sb_review_fixture "$TMP/bin"   # signed review PASS + CI checks (new gate preconditions)
 { declare -f squash; echo 'TMP="$FAKE_DIR"; C="$FAKE_DIR/clone"; squash "$1"'; } > "$TMP/squash.sh"
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0
