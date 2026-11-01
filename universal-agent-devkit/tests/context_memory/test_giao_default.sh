@@ -13,7 +13,9 @@ DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$DEVKIT_DIR/hooks/prompt_context.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-unset PROMPT_CONTEXT
+unset PROMPT_CONTEXT DEVKIT_ROOT PROMPT_DEDUPE DEVKIT_AGENT   # runner/host state (#573): another kit root, dedupe off, a bridged harness all change the hook output
+mkdir -p "$TMP/home" "$TMP/tmpdir"
+export HOME="$TMP/home" TMPDIR="$TMP/tmpdir" GIT_CONFIG_GLOBAL=/dev/null   # the hook and `git init` read HOME, TMPDIR and ~/.gitconfig
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 
 mkdir -p "$TMP/proj/.agents" "$TMP/global" && cd "$TMP/proj" || exit 1

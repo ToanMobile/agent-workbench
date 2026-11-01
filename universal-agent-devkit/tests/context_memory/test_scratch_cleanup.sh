@@ -11,9 +11,24 @@ set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SC="$DEVKIT_DIR/scripts/governance/scratch_cleanup.py"
 TMP="$(mktemp -d)"
-REAL_DK_OLD=""; SLASH_TMP_BOX=""
-trap 'rm -rf "$TMP" ${REAL_DK_OLD:+"$REAL_DK_OLD"} ${SLASH_TMP_BOX:+"$SLASH_TMP_BOX"}' EXIT INT TERM HUP
+REAL_DK_OLD=""; SLASH_TMP_BOX=""; DK_PAR=""
+trap 'rm -rf "$TMP" ${REAL_DK_OLD:+"$REAL_DK_OLD"} ${DK_PAR:+"$DK_PAR"} ${SLASH_TMP_BOX:+"$SLASH_TMP_BOX"}' EXIT INT TERM HUP
 export DEVKIT_TEST_TMP_ROOT="$TMP/no-test-tmp"   # --prune also sweeps test temp dirs: never the real TMPDIR here
+# Host state (#573): live_sessions() reads <CLAUDE_CONFIG_DIR or ~/.claude>/sessions/*.json. Pin CLAUDE_CONFIG_DIR (and HOME, git config) to
+# test-owned places for EVERY call; claude_home()/sessions stays the path under test, the other live-session cases set DEVKIT_CLAUDE_SESSIONS per call.
+unset DEVKIT_CLAUDE_SESSIONS DEVKIT_DK_TMP_ROOT DEVKIT_CLEAN_PROJECT DEVKIT_SCRATCH_CLEANUP   # runner/host state: each call below sets what it needs
+mkdir -p "$TMP/home" "$TMP/claude-home/sessions"
+export CLAUDE_CONFIG_DIR="$TMP/claude-home" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null
+# lsof of the test's own processes only (this shell and its direct children: the HOLD cwd holder, the socket server): never a
+# machine-wide snapshot, whose size and time depend on the host. Its exit status is lsof's own.
+cat > "$TMP/lsof-own" <<LSOF
+#!/bin/sh
+P=$$
+for c in \$(pgrep -P $$ 2>/dev/null); do P="\$P,\$c"; done
+exec "\$(command -v lsof || echo /usr/sbin/lsof)" -nPw -p "\$P" -Fn
+LSOF
+chmod +x "$TMP/lsof-own"
+export DEVKIT_LSOF="$TMP/lsof-own"
 FAILS=0
 ok()   { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -100,7 +115,7 @@ rc=$?
 # pid does not. Also kept: a dir whose task output is fresh, and a dir that cannot be read (never remove what cannot be judged).
 H=88888888-8888-4888-8888-888888888888; I=99999999-9999-4999-8999-999999999999; J=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
 K=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb; L=cccccccc-cccc-4ccc-8ccc-cccccccccccc
-SESS="$TMP/sessions"; mkdir -p "$SESS"; rm -f "$SESS"/*.json
+SESS="$TMP/claude-home/sessions"; mkdir -p "$SESS"   # the real claude_home()/sessions path: the first live-session case passes no DEVKIT_CLAUDE_SESSIONS; rm -f "$SESS"/*.json
 setup; mk "$H" 200; mk "$I" 200; mk "$J" 200; mk "$K" 200
 python3 -c 'import json,sys; json.dump({"pid": int(sys.argv[2]), "sessionId": sys.argv[3]}, open(sys.argv[1] + "/%s.json" % sys.argv[2], "w"))' "$SESS" "$$" "$H"
 python3 -c 'import json,sys; json.dump({"pid": 999999, "sessionId": sys.argv[2]}, open(sys.argv[1] + "/999999.json", "w"))' "$SESS" "$I"
@@ -110,7 +125,7 @@ python3 -c 'import os,sys,time; t=time.time()-200*3600; [os.utime(p,(t,t)) for p
 mkdir -p "$ROOT/-proj/$K/tasks"; age "$ROOT/-proj/$K" 200; chmod 000 "$ROOT/-proj/$K/tasks"   # a level it cannot read
 M=dddddddd-dddd-4ddd-8ddd-dddddddddddd; mk "$M" 200; echo x > "$ROOT/-proj/$M/gone"; age "$ROOT/-proj/$M" 200
 rm -f "$ROOT/-proj/$M/gone"                                                   # an entry removed just now: the dir itself is fresh
-DEVKIT_CLAUDE_SESSIONS="$SESS" run --prune --keep "$F"; rc=$?
+run --prune --keep "$F"; rc=$?
 chmod 755 "$ROOT/-proj/$K/tasks"
 [ -f "$ROOT/-proj/$M/scratchpad/big" ] && ok "  … a dir whose own mtime is fresh (an entry just removed) is kept" || fail "prune removed a dir with a fresh own mtime"
 [ "$rc" = 0 ] && [ -d "$ROOT/-proj/$H" ] && ok "prune: a 200 h old dir of a session whose Claude process is alive is kept" || fail "prune removed a live process's session dir (rc=$rc)"
@@ -212,7 +227,7 @@ tsetup; sweep --prune --keep "$F"; [ -d "$TR/hookctx.OLD1" ] && ok "  … at mos
 sweep --sweep-tmp; [ ! -e "$TR/hookctx.OLD1" ] && ok "  … while --sweep-tmp always sweeps" || fail "--sweep-tmp was rate-limited"
 # A burst of SessionStarts (super-board workers) while lsof is slow: the hour is claimed BEFORE lsof, so one lsof runs.
 tsetup; rm -f "$ROOT/.devkit-test-tmp-sweep" "$TMP/lsof.calls"
-printf '#!/bin/sh\necho call >> "%s"\nsleep 2\nexec "%s" "$@"\n' "$TMP/lsof.calls" "$(command -v lsof || echo /usr/sbin/lsof)" > "$TMP/slowlsof"
+printf '#!/bin/sh\necho call >> "%s"\nsleep 2\nexec "%s" "$@"\n' "$TMP/lsof.calls" "$TMP/lsof-own" > "$TMP/slowlsof"
 chmod +x "$TMP/slowlsof"
 for i in 1 2 3; do DEVKIT_LSOF="$TMP/slowlsof" sweep --prune --keep "$F" & done; wait
 calls=$(wc -l < "$TMP/lsof.calls" 2>/dev/null | tr -d ' ')
@@ -248,7 +263,7 @@ if command -v lsof >/dev/null 2>&1 || [ -x /usr/sbin/lsof ]; then
   mkdir -p "$DK_SIM/dk-oldsim" "$DK_SIM/dk-freshsim" "$DK_SIM/tmp.keepother" "$DK_SIM/dk-fifogit"
   mkfifo "$DK_SIM/dk-fifogit/.git"
   touch -t 202001010000 "$DK_SIM/dk-oldsim" "$DK_SIM/tmp.keepother" "$DK_SIM/dk-fifogit/.git" "$DK_SIM/dk-fifogit"
-  DEVKIT_DK_TMP_ROOT="$DK_SIM" python3 -I -c '
+  DEVKIT_SCRATCH_ROOT="$TMP/no-sr" DEVKIT_DK_TMP_ROOT="$DK_SIM" python3 -I -c '
 import os, subprocess, sys
 r = subprocess.run([sys.executable, "-I", sys.argv[1], "--sweep-tmp"], timeout=3, capture_output=True, text=True)
 sys.exit(r.returncode)
@@ -273,8 +288,10 @@ sys.exit(r.returncode)
   fi
   rm -rf "$SLASH_TMP_BOX"; SLASH_TMP_BOX=""
 
-  REAL_DK_OLD="$(mktemp -d /tmp/dk-sctst-XXXXXX)"
-  REAL_DK_SOCK="$(mktemp -d /tmp/dk-scsock-XXXXXX)"
+  # Own scan root under /tmp (a /private/tmp alias, as lsof prints a socket's bind string): never the shared /private/tmp of the host.
+  REAL_DK_OLD="$(mktemp -d /tmp/dk-scpar-XXXXXX)"; DK_PAR="$REAL_DK_OLD"
+  REAL_DK_OLD="$(mktemp -d "$DK_PAR/dk-sctst-XXXXXX")"
+  REAL_DK_SOCK="$(mktemp -d "$DK_PAR/dk-scsock-XXXXXX")"
   python3 -I - "$REAL_DK_SOCK/s.sock" "$TMP/sock.ready" <<'PY' &
 import os, socket, sys, time
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -286,14 +303,14 @@ PY
   SOCK_PID=$!
   for _ in $(seq 1 50); do [ -f "$TMP/sock.ready" ] && break; python3 -c 'import time; time.sleep(0.05)'; done
   touch -t 202001010000 "$REAL_DK_OLD" "$REAL_DK_SOCK/s.sock" "$REAL_DK_SOCK"
-  TMPDIR="$TR" env -u DEVKIT_TEST_TMP_ROOT DEVKIT_SCRATCH_ROOT="$ROOT" DEVKIT_CLAUDE_PROJECTS="$PROJ" python3 -I "$SC" --sweep-tmp >/dev/null 2>&1
+  TMPDIR="$TR" env -u DEVKIT_TEST_TMP_ROOT DEVKIT_DK_TMP_ROOT="$(cd "$DK_PAR" && pwd -P)" DEVKIT_SCRATCH_ROOT="$ROOT" DEVKIT_CLAUDE_PROJECTS="$PROJ" python3 -I "$SC" --sweep-tmp >/dev/null 2>&1
   kill "$SOCK_PID" 2>/dev/null; wait "$SOCK_PID" 2>/dev/null
   if [ ! -e "$REAL_DK_OLD" ] && [ -d "$REAL_DK_SOCK" ]; then
     ok "sweep_test_tmp removes stale /private/tmp/dk-* while keeping /tmp/dk-* held only by an AF_UNIX socket"
   else
     fail "/private/tmp dk-* or AF_UNIX socket check failed: old_exists=$([ -e "$REAL_DK_OLD" ] && echo y || echo n) sock_dir_exists=$([ -d "$REAL_DK_SOCK" ] && echo y || echo n)"
   fi
-  rm -rf "$REAL_DK_OLD" "$REAL_DK_SOCK" 2>/dev/null || true; REAL_DK_OLD=""
+  rm -rf "$DK_PAR" 2>/dev/null || true; REAL_DK_OLD=""; DK_PAR=""
 fi
 [ -d "$TR" ] && { chflags -R nouchg "$TR" 2>/dev/null; chmod -R u+rwX "$TR" 2>/dev/null; }
 
