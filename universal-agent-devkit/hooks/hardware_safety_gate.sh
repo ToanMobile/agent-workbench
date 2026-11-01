@@ -2460,7 +2460,7 @@ def subst_end(text, i, depth_left=64):
         elif c == "\x5c":
             j += 2
             continue
-        elif c == "\x60" or text.startswith("$(", j):
+        elif depth_left > 1 and (c == "\x60" or text.startswith("$(", j)):   # hết tầng: đếm ngoặc như thường
             k = subst_end(text, j, depth_left - 1)
             if k < 0:
                 return -1
@@ -2575,7 +2575,9 @@ def adb_calls(text):
         while j < len(toks) and re.fullmatch(r"wait-for-[\w-]+", toks[j]):   # adb wait-for-device remount
             j += 1
         # (01/11, r31adb) cắt ở $( ngay trong giá trị -s/-t (adb -s $(…) reboot): subcommand nằm sau lệnh con, không thấy ở đây
-        cut_sel = subst and j >= len(toks) and any(o[:2] in ("-s", "-t") for o in opts)
+        # cũng vậy khi xargs chạy adb mà chưa có subcommand (xargs adb -s): đối số tuỳ chọn đến từ stdin
+        cut_sel = j >= len(toks) and ((subst and any(o[:2] in ("-s", "-t") for o in opts))
+                                      or any(os.path.basename(t) == "xargs" for t in toks[:i]))
         yield toks[i], opts, (toks[j] if j < len(toks) else ("$(" if cut_sel else "")), env_serial, toks[j + 1:]
 
 def sdk_adb():
@@ -2604,18 +2606,24 @@ ASSIGN_ANY = re.compile(r"(?<![\w$.-])([A-Za-z_]\w*)=")
 ASSIGN_LIT = re.compile(r"(?:^|[;&|(\n]|\bexport)\s*([A-Za-z_]\w*)=([\w.:-]+)(?=[ \t]*(?:$|;|&&|\|\||\n))", re.M)
 
 def literal_vars(text):
+    # (01/11, r31adb) source / . nạp file có thể gán bất kỳ biến nào: không tin literal nào
+    if re.search(r"(?:^|[;&|(\n])\s*(?:source|\.)\s", text):
+        return {}
     lits, counts = {}, {}
     for name in ASSIGN_ANY.findall(text):
         counts[name] = counts.get(name, 0) + 1
     for name, val in ASSIGN_LIT.findall(text):
         lits.setdefault(name, []).append(val)
+    # (01/11, r31adb) unset / printf -v / declare / typeset / local / eval / let cũng đổi biến mà không có NAME=literal
+    # (S=a; unset S; adb -s "$S" là adb -s "" lúc chạy)
     return {n: v[0] for n, v in lits.items() if len(v) == counts.get(n) and len(set(v)) == 1
-            and not re.search(r"\b(?:for|read|select|getopts|mapfile|readarray)\b[^;&|\n]*\b"
-                              + re.escape(n) + r"\b", text)}
+            and not re.search(r"\b(?:for|read|select|getopts|mapfile|readarray|unset|printf|declare|typeset|local|eval|let)\b"
+                              r"[^;&|\n]*\b" + re.escape(n) + r"\b", text)}
 
 # (01/11, r31adb) chỉ $NAME và ${NAME}: regex cũ \$\{?NAME\}? thay cả phần đầu của ${S##*} / ${S/a/b} thành chuỗi
 # "emulator-5554##*}" (hết "$", được tin là serial) trong khi shell ra chuỗi rỗng / serial khác. Dạng khác giữ nguyên "$".
 VAR_REF = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
+SHELL_EXPANDS = re.compile(r"[{}*?\[]|^~")   # chữ shell còn bung lúc chạy (brace, glob, ~): serial không bao giờ có
 
 def expand_literals(word, lits):
     return VAR_REF.sub(lambda m: lits.get(m.group(1) or m.group(2), m.group(0)), word)
@@ -2641,7 +2649,8 @@ def target_serial(exe, opts, env_serial, lits=None, assigned=()):
     picks = [o for o in opts if o[:2] in ("-s", "-t")]
     if k < len(opts) and opts[k] and picks == ["-s"]:
         s = opts[k]
-        if "$" in s:
+        # (01/11, r31adb) { } * ? [ ~: shell còn bung chữ này lúc chạy (adb -s {X,} là -s X; xargs -I{} thay {})
+        if "$" in s or SHELL_EXPANDS.search(s):
             return (None, "serial " + s + " không xác định được")
         if any(s.startswith(pfx) for pfx in ("model:", "usb:", "product:", "device:")):
             adb = exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())
@@ -2659,7 +2668,7 @@ def target_serial(exe, opts, env_serial, lits=None, assigned=()):
     unknown = next((o for o in opts if "$" in o), None)
     if unknown is not None:
         return (None, "tuỳ chọn adb " + unknown + " không xác định được")
-    if "$" in env_serial:
+    if "$" in env_serial or SHELL_EXPANDS.search(env_serial):
         return None, "ANDROID_SERIAL=" + env_serial + " không xác định được"
     adb = exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())
     # (01/11, r31adb) picks khác rỗng ở đây: -s rỗng / -s lặp / -t, máy đích chỉ adb biết. Không tìm được adb để hỏi

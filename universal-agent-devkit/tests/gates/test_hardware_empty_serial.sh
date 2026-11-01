@@ -209,6 +209,17 @@ check 2d "$(printf '%s\n%s' "# check user's device" 'FOO="a;b" adb -s R58PHONE01
 check 2d "$(printf '%s\n%s' "# don't touch phone" 'X=$(echo a b) adb -s R58PHONE01 reboot')"
 check 2d "$(printf '%s\n%s' "X=\$( # it's" 'echo ok) adb -s R58PHONE01 reboot')"
 check 2d 'X=$(echo "$(echo ") a b")") adb -s R58PHONE01 reboot'   # lệnh con lồng trong nháy kép bên trong lệnh con
+check 2d "X=$(python3 -c 'print("$(echo " * 200 + "x" + ")" * 200)') adb -s R58PHONE01 reboot"   # lồng 200 tầng (quá trần đệ quy)
+echo "— biến bị đổi theo cách không phải NAME=literal (unset, printf -v, eval, source) → không tin literal cũ"
+check 2u 'S=emulator-5554; unset S; adb -s "$S" reboot'        # lúc chạy là -s "": adb tự chọn
+check 2u 'S=emulator-5554; printf -v S R58PHONE01; adb -s "$S" reboot'
+check 2u 'S=emulator-5554; eval S\=R58PHONE01; adb -s "$S" reboot'
+check 2u 'S=emulator-5554; . ./device.env; adb -s "$S" reboot'
+echo "— serial có ký tự mở rộng của shell / đối số từ stdin (xargs) → không xác định được"
+check 2u 'adb -s {R58PHONE01,} reboot'                          # brace expansion ra -s R58PHONE01
+check 2u 'echo R58PHONE01 | xargs -I{} adb -s {} reboot'
+check 2u 'echo R58PHONE01 reboot | xargs adb -s'
+check 0 'find . -name "*.apk" | xargs adb -s emulator-5554 install'   # xargs nối vào sau subcommand: serial đã ghi
 echo "— dòng đánh số \"1) adb …\" trong chuỗi / thân heredoc không có lệnh con → cho qua"
 check 0 "$(printf '%s\n%s' 'git commit -m "fix: hooks' '1) adb reboot"')"
 check 0 "$(printf '%s\n%s\n%s' "gh issue comment 829 --body 'Audit:" '(a) adb -s "" reboot' "(b) ok'")"
