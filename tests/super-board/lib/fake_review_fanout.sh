@@ -34,6 +34,7 @@ seed() {   # seed <head sha>: signed light PASS for merge-base(head, origin/<bas
     git -C "$tmp/c" cat-file -e "$c^{commit}" 2>/dev/null || continue
     mb=$(git -C "$tmp/c" merge-base "$sha" "$c" 2>/dev/null) || continue
     h=$(cd "$tmp/c" && env -u REVIEW_SKIP_REVIEWERS -u REVIEW_CLAUDE_MODEL -u REVIEW_GROK_MODEL -u REVIEW_AGY_MODEL \
+        -u REVIEW_CLAUDE_BIN -u REVIEW_GROK_BIN -u REVIEW_AGY_CLI -u REVIEW_DEEP_LINES -u REVIEW_REGRESSION_STATUS \
         bash "$SB_REVIEW_FIXTURE_DK/review-fanout.sh" --repo "$tmp/c" --base "$mb" --hash 2>/dev/null) || continue
     [ -n "$h" ] || continue
     run="$common/review-fanout/$h"
