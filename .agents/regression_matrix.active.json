@@ -2584,6 +2584,43 @@
       ]
     },
     {
+      "component": "super-board-merge-queue-route-rows",
+      "watch_files": [
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_merge_queue_route_rows.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-QUEUE-ROUTE-01",
+          "name": "#762/#637/#639: route của hàng đợi merge — card_of/head_of/cache load_rows không chết khi dữ liệu lớn hơn bộ đệm ống (printf | awk exit dưới pipefail); thẻ qua closingIssuesReferences khi nhánh không theo mẫu issue-<N>-; đọc GitHub hỏng giữa lượt route không cắt dở các PR còn lại; gate-exit-11 của preflight không ghi là verify đỏ",
+          "command": "bash tests/super-board/test_merge_queue_route_rows.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-install-untracked-merge-error",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_install_untracked.sh",
+        "tests/super-board/test_merge_gate_merge_error_shown.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-INSTALL-UNTRACKED-01",
+          "name": "Idle #18: install.sh ghi .mcp.json/.gemini chưa track vào scratch ⇒ merge gate xoá phần install.sh thêm (chụp ls-files --others trước/sau), giữ .agents/devkit bị ignore và file PR đã track (kể cả cùng tên bị install ghi đè); PR Markdown verify xanh, dry run exit 0",
+          "command": "bash tests/super-board/test_merge_gate_install_untracked.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-ERROR-SHOWN-01",
+          "name": "GeelyEx2 #179: git merge base vào scratch bị hook commit-msg từ chối (không file xung đột) ⇒ gate in stderr thật, không in 'conflicts:' rỗng, không bảo rebase; xung đột thật vẫn in tên file + rebase pass; exit 5 giữ nguyên",
+          "command": "bash tests/super-board/test_merge_gate_merge_error_shown.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-ac-check-cross-repo",
       "watch_files": [
         ".claude/bin/super-board-ac-check.py",
