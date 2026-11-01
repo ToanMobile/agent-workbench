@@ -10,7 +10,7 @@
 #      trong config → exit 9; PASS_REDUCED không bao giờ đủ
 #   T1 không tìm thấy review-fanout.sh của DevKit → exit 9 (fail-closed)
 #   T2 DevKit cũ không có `review-fanout.sh --verify-summary` → exit 9 (fail-closed, gate không tự tính HMAC)
-#   G1-G4 cửa sổ grandfather TẠM (PR mở trước #742, tới 2026-11-01 06:00 +07): chỉ miễn verdict, CI đỏ vẫn exit 11, PR mới exit 6
+#   G  #744: cửa sổ grandfather tạm (hạn 2026-11-01 06:00 +07) đã gỡ: PR mở trước #742 không verdict → exit 6, gate không đọc createdAt
 # Verdict đi qua đúng entry point thật: universal-agent-devkit/bin/review-fanout.sh --status / --verify-summary (khoá HMAC trong
 # HOME tạm của test, ký bằng review_sign.py như review-merge.py). gh là bản giả. Tương thích bash 3.2.
 set -u
@@ -295,49 +295,13 @@ gate 5 "$GATE_OLDDK" --
 [ "$RC" -eq 9 ] && [ "$(merged_calls)" = 0 ] && grep -q '^verification-readiness: .*--verify-summary is unavailable' "$TMP/err" \
   && ok "T2 review-fanout.sh without --verify-summary: exit 9, no merge (fail-closed)" || fail "T2 old DevKit: $(why)"
 
-# ── G. grandfather window (TẠM, BUG-REV-merge-gate-grandfather; gỡ sau 2026-11-01)
-OLD_TS=2026-10-30T10:00:00Z; NEW_TS=2026-10-31T09:00:00Z
-in_window() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import importlib.util as u
-s = u.spec_from_file_location("gf", sys.argv[1] + "/super-board-grandfather.py"); m = u.module_from_spec(s); s.loader.exec_module(m)
-from datetime import datetime, timezone; sys.exit(0 if datetime.now(timezone.utc) < m.parse(m.EXPIRY) else 1)' "$WB/.claude/bin"; }
+# ── G. #744: cửa sổ grandfather tạm (PR mở trước #742, hạn 2026-11-01 06:00 +07) đã hết hạn và bị gỡ khỏi gate: G1–G7 cũ
+# kiểm tính năng hết hạn đó (miễn verdict trong cửa sổ, đồng hồ, CLI không nới) nên bỏ cùng helper; còn lại đúng luật đầy đủ.
 clear_verdicts
-gate 5 "$GATE" FAKE_CREATED=$OLD_TS --
-if in_window; then
-  [ "$RC" -eq 0 ] && [ "$(merged_calls)" = 1 ] && grep -q "GRANDFATHERED PR #5 (created $OLD_TS < cutoff 2026-10-31T08:21:22Z), expires 2026-11-01T06:00:00+07:00" "$TMP/err" \
-    && ok "G1 PR opened before #742, no verdict, inside the window: merged, GRANDFATHERED logged" || fail "G1 grandfathered: $(why)"
-else
-  [ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ! grep -q GRANDFATHERED "$TMP/err" \
-    && ok "G1 (clock past expiry) PR opened before #742 without verdict: exit 6, window closed by itself" || fail "G1 after expiry: $(why)"
-fi
-gate 5 "$GATE" FAKE_CREATED=$NEW_TS --
-[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ! grep -q GRANDFATHERED "$TMP/err" \
-  && ok "G2 PR opened after #742 without verdict: exit 6 (full rules)" || fail "G2 new PR: $(why)"
-gate 5 "$GATE" FAKE_CREATED=$OLD_TS FAKE_CHECKS=fail --
-[ "$RC" -eq "$(in_window && echo 11 || echo 6)" ] && [ "$(merged_calls)" = 0 ] \
-  && ok "G3 grandfathered PR with a red CI check: still no merge (exit $RC)" || fail "G3 red CI: $(why)"
-gate 5 "$GATE" FAKE_CREATED=garbage --
-[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ok "G4 unreadable createdAt: exit 6 (fail-closed)" || fail "G4 bad createdAt: $(why)"
-CFG_SAVE=$CFG
-gate 7 "$GATE" FAKE_CREATED=$OLD_TS --
-[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ! grep -q GRANDFATHERED "$TMP/err" \
-  && ok "G5 machine-gated PR opened before #742: never grandfathered (exit 6)" || fail "G5 gated: $(why)"
-# expiry with a simulated clock: only through decide(now) (the CLI always uses the real clock; no env/flag widens the window)
-python3 -I - "$WB/.claude/bin/super-board-grandfather.py" <<'PY' && ok "G6 decide(): in window / after expiry / new PR / naive or empty ts" || fail "G6 decide() unit checks"
-import importlib.util as u, sys
-from datetime import datetime, timezone, timedelta
-s = u.spec_from_file_location("gf", sys.argv[1]); m = u.module_from_spec(s); s.loader.exec_module(m)
-exp = m.parse(m.EXPIRY)
-assert m.decide("2026-10-30T10:00:00Z", exp - timedelta(seconds=1))[0] is True
-assert m.decide("2026-10-30T10:00:00Z", exp)[0] is False
-assert m.decide("2026-10-30T10:00:00Z", exp + timedelta(days=1))[0] is False
-assert m.decide(m.CUTOFF, exp - timedelta(hours=1))[0] is False
-assert m.decide("2026-10-30T10:00:00", exp - timedelta(hours=1))[0] is False
-assert m.decide("", exp - timedelta(hours=1))[0] is False
-assert m.CUTOFF == "2026-10-31T08:21:22Z" and m.EXPIRY == "2026-11-01T06:00:00+07:00"
-PY
-# no env var can widen the window: the CLI takes only --created
-python3 -I "$WB/.claude/bin/super-board-grandfather.py" --created $OLD_TS --now 2026-10-01T00:00:00Z >/dev/null 2>&1; r=$?
-[ "$r" -eq 2 ] && ! grep -qE 'os\.environ|getenv' "$WB/.claude/bin/super-board-grandfather.py" \
-  && ok "G7 no clock/env override in the CLI (extra args → usage error)" || fail "G7 override possible: rc=$r"
+gate 5 "$GATE" FAKE_CREATED=2026-10-30T10:00:00Z --
+[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ! grep -q GRANDFATHERED "$TMP/err" && ! grep -q createdAt "$TMP/gh.calls" \
+  && [ ! -e "$WB/.claude/bin/super-board-grandfather.py" ] \
+  && ok "G PR opened before #742 without a signed verdict: exit 6, never grandfathered, createdAt never read, helper gone" \
+  || fail "G pre-cutoff PR: $(why) createdAt=$(grep -c createdAt "$TMP/gh.calls")"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

@@ -61,8 +61,6 @@ case " $* " in
     esac
     if [ -n "$jqx" ]; then printf '%s' "$body" | jq -r "$jqx"; else printf '%s\n' "$body"; fi
     exit 0 ;;
-  *" pr view "*createdAt*)   # after the #742 cutoff: older tests always see the full (signed-verdict) rules, never the grandfather window
-    echo "2026-11-02T00:00:00Z"; exit 0 ;;
   *" pr checks "*)
     echo '[{"name":"ci/test","state":"SUCCESS","bucket":"pass"}]'; exit 0 ;;
   *" pr view "*headRefOid*|*" pr list "*headRefOid*)
