@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# hooks/hardware_safety_gate.sh, chính sách thiết bị (lane r31adb, 01/11): `adb -s ""` lọt denylist.
+#   Tái hiện trên GeelyEx2 (.adb-denylist có điện thoại thật): `adb -s '' reboot`, `adb -s "" shell pm clear …`,
+#   `adb -s "" shell rm -rf /sdcard/Download` đều rc 0, còn `adb -s "" get-serialno` trả đúng serial bị cấm.
+#   Nguyên nhân: target_serial trả serial rỗng ("không có serial") nên device_violation bỏ qua. Serial rỗng nghĩa là
+#   adb tự chọn thiết bị (như không có -s), nên cổng phải hỏi adb get-serialno như với adb trần.
+#   Cùng chỗ đó cổng tin chuỗi -s ĐẦU TIÊN, còn adb 37.0.1 (đo 01/11 bằng serial không tồn tại) dùng -s CUỐI CÙNG
+#   (cả dạng dính -s<số>) và -t thắng -s bất kể thứ tự: `adb -s emulator-5554 -s "" reboot`,
+#   `adb -s emulator-5554 -t 2 reboot` cũng lọt. Biến chưa biết trong -t/-s sau cũng phải bị từ chối như -s "$X".
+#   --serial không phải tuỳ chọn của adb 37 ("unknown command --serial"); cổng vẫn coi nó như -s cho chắc.
+# Chỉ chạy hook — không bao giờ chạy lệnh. check() đặt $TMP/bin (adb giả) lên đầu PATH của hook: adb giả chỉ trả lời
+# get-serialno, ghi mọi lần gọi vào $ADB_FAKE_LOG và trả 97 với lệnh khác; dòng cuối của test đọc log đó.
+# HW_HOOK=<đường dẫn hook> chạy bản hook khác (bản chưa sửa: RED).
+. "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # bỏ GIT_* thừa kế: tests/lib/clean_git_env.sh
+set -u
+DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+HOOK="${HW_HOOK:-$DEVKIT_DIR/hooks/hardware_safety_gate.sh}"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+FAILS=0
+ok()   { echo "✔ $1"; }
+fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
+command -v python3 >/dev/null 2>&1 || { echo "skip: python3 missing"; exit 0; }
+
+P="$TMP/proj"
+mkdir -p "$P" "$TMP/bin" "$TMP/xdg"
+# R58PHONE01: điện thoại cá nhân (thiết bị duy nhất adb tự chọn); 0PHONE2: serial bắt đầu bằng số (dạng dính -s0PHONE2)
+printf '# máy cá nhân\nR58PHONE01\n0PHONE2\n' > "$P/.adb-denylist"
+export ADB_FAKE_LOG="$TMP/adb.log"
+: > "$ADB_FAKE_LOG"
+# adb giả theo thứ tự chọn thiết bị của adb 37.0.1: -t thắng -s; -s cuối thắng; -s "" = thiết bị adb tự chọn
+# (ANDROID_SERIAL chỉ dùng khi không có -s). Transport 1 = emulator-5554, 2 = R58PHONE01. -H khác localhost: không
+# nối được server (lỗi, như adb thật với host không tồn tại).
+cat > "$TMP/bin/adb" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$ADB_FAKE_LOG"
+serial="" sset=0 tid=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s) serial="${2-}"; sset=1; shift 2 || shift ;;
+    -s[0-9]*) serial="${1#-s}"; sset=1; shift ;;
+    -t) tid="${2-}"; shift 2 || shift ;;
+    -t[0-9]*) tid="${1#-t}"; shift ;;
+    -d|-e) shift ;;
+    -H) [ "${2-}" = localhost ] || { echo "error: cannot connect to daemon at tcp:${2-}:5037" >&2; exit 1; }; shift 2 ;;
+    -P|-L) shift 2 || shift ;;
+    -*) echo "adb: unknown command $1" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
+[ "${1-}" = get-serialno ] || { echo "adb giả: lệnh thật không được chạy: $*" >&2; exit 97; }
+known() { case "$1" in emulator-5554|R58PHONE01|0PHONE2) echo "$1" ;; *) echo "error: device '$1' not found" >&2; exit 1 ;; esac; }
+if [ -n "$tid" ]; then
+  case "$tid" in 1) echo emulator-5554 ;; 2) echo R58PHONE01 ;; *) echo "error: no device with transport id '$tid'" >&2; exit 1 ;; esac
+  exit 0
+fi
+[ "$sset" = 1 ] && [ -n "$serial" ] && { known "$serial"; exit 0; }
+[ "$sset" = 0 ] && [ -n "${ANDROID_SERIAL-}" ] && { known "$ANDROID_SERIAL"; exit 0; }
+echo R58PHONE01
+EOF
+chmod +x "$TMP/bin/adb"
+# hook tìm adb theo PATH (shutil.which): adb đầu PATH của check() phải là adb giả, không phải adb thật của máy
+[ "$(PATH="$TMP/bin:$PATH"; command -v adb)" = "$TMP/bin/adb" ] || { echo "FAIL: adb giả không đứng đầu PATH"; exit 1; }
+
+# check <mong đợi> <lệnh> [VAR=giá trị …]: chạy hook một lần với lệnh Bash đó, cwd = fixture.
+# Mong đợi: 0 (cho qua) · 2d (chặn, lý do denylist) · 2u (chặn, không xác định được thiết bị đích).
+check() {
+  local want="$1" c="$2" why=""; shift 2
+  case "$want" in 2d) why='nằm trong denylist' ;; 2u) why='không xác định được thiết bị đích' ;; esac
+  want="${want%[du]}"
+  python3 -I -c 'import json,sys; print(json.dumps({"session_id":"s","transcript_path":"","cwd":sys.argv[2],"hook_event_name":"PreToolUse",
+    "tool_name":"Bash","tool_input":{"command":sys.argv[1],"description":"d"}}))' "$c" "$P" > "$TMP/in.json"
+  ( cd "$P" && env -u ANDROID_SERIAL -u ADB_DENY_SERIALS -u ADB_ALLOW_SERIALS -u HARDWARE_OVERRIDE -u HARDWARE_SAFETY_GATE \
+      PATH="$TMP/bin:$PATH" XDG_CONFIG_HOME="$TMP/xdg" CLAUDE_PROJECT_DIR="$P" "$@" bash "$HOOK" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
+  local rc=$?
+  if grep -q 'Traceback\|lỗi nội bộ' "$TMP/err"; then fail "hook lỗi (rc $rc): $c — $(head -c 300 "$TMP/err" | tr '\n' ' ')"; return; fi
+  # rc 2 phải đến từ chính sách thiết bị (hook lỗi cũng trả 2 qua _fail_closed: không được tính là chặn đúng)
+  if [ -n "$why" ] && [ "$rc" = 2 ] && ! grep -q "$why" "$TMP/err"; then
+    fail "rc 2 nhưng lý do không phải \"$why\": $c — $(head -c 200 "$TMP/err" | tr '\n' ' ')"; return
+  fi
+  if [ "$rc" = "$want" ]; then ok "rc $rc: $c${*:+  [$*]}"; else fail "rc $rc (want $want): $c${*:+  [$*]} — $(head -c 200 "$TMP/err" | tr '\n' ' ')"; fi
+}
+
+echo "— serial rỗng: adb tự chọn thiết bị (ở đây là điện thoại bị cấm) → chặn"
+check 2d 'adb -s "" reboot'
+check 2d "adb -s '' reboot"
+check 2d 'adb --serial "" reboot'   # adb 37.0.1 từ chối --serial (lệnh tự lỗi, không phải lỗ cũ); cổng vẫn xét như -s
+check 2d 'adb -s "" shell pm clear com.ecarx.launcher'
+check 2d 'adb -s "" shell rm -rf /sdcard/Download'
+check 2d 'adb -s "" install app.apk'
+check 2d 'adb -s "" reboot' ANDROID_SERIAL=emulator-5554   # -s "" đè ANDROID_SERIAL: adb vẫn tự chọn
+check 2d 'ANDROID_SERIAL= adb reboot'                       # đối chứng: đã chặn từ trước
+echo "— lệnh shell có ; && | trong nháy: adb_calls cắt segment giữa chuỗi nháy → vẫn đọc đúng serial"
+check 2d 'adb -s "" shell "cd /sdcard; ls"'
+check 2d "adb -s '' shell 'cd /sdcard && ls'"
+check 2d 'adb -s "" shell "ls | head"'
+check 2d 'adb -s "R58PHONE01" shell "cd /sdcard; ls"'      # serial bị cấm trong nháy
+check 0 'adb -s "emulator-5554" shell "cd /sdcard; ls"'
+echo "— -s cuối cùng thắng, -t thắng -s (adb 37.0.1) → chặn"
+check 2d 'adb -s emulator-5554 -s "" reboot'
+check 2d 'adb -s emulator-5554 -s R58PHONE01 reboot'
+check 2d 'adb -s emulator-5554 -s0PHONE2 reboot'
+check 2d 'adb -s emulator-5554 -t 2 reboot'
+check 2d 'adb -t 2 -s emulator-5554 reboot'
+check 2d 'T=2; adb -s emulator-5554 -t "$T" reboot'
+echo "— serial / tuỳ chọn lấy từ lệnh con \$( ) hay \` \`: adb_calls cắt segment ở đó → không xác định được → chặn"
+check 2u "adb -s \$(adb devices | awk 'NR==2{print \$1}') reboot"
+check 2u 'adb -s "$(cat serial.txt)" reboot'
+check 2u 'adb -s "`cat serial.txt`" reboot'
+check 2u 'adb $(echo -s R58PHONE01) reboot'
+check 2u 'adb -s emulator-5554 $(echo -s R58PHONE01) reboot'   # -s cuối do lệnh con đưa ra mới thắng
+check 0 'adb -s emulator-5554 shell "echo $(date)"'             # lệnh con nằm trong lệnh shell, serial đã ghi
+check 0 'adb -s emulator-5554 shell "echo $((1 + 2))"'
+check 0 'X=$(adb -s emulator-5554 shell getprop ro.serialno)'
+echo "— biến chưa biết trong tuỳ chọn chọn thiết bị → không xác định được → chặn"
+check 2u 'adb -s emulator-5554 -s "$R31_UNSET_SERIAL" reboot'
+check 2u 'adb -t "$R31_UNSET_TID" reboot'
+check 2u 'adb -s "$R31_UNSET_SERIAL" reboot'               # đối chứng: đã chặn từ trước
+check 2d 'adb -s R58PHONE01 reboot'                         # đối chứng: serial bị cấm
+echo "— giữ nguyên: emulator, biến đã biết, host-only, override → cho qua"
+check 0 'adb -s emulator-5554 reboot'
+check 0 'adb -s emulator-5554 shell rm -rf /sdcard/Download'
+check 0 'S=emulator-5554; adb -s "$S" reboot'
+check 0 'adb -s R58PHONE01 -s emulator-5554 reboot'      # -s cuối là emulator
+check 0 'adb -t 1 reboot'
+check 0 'adb -P "$R31_UNSET_PORT" -s emulator-5554 install app.apk'   # cổng server không đổi serial -s đã ghi
+check 0 'adb -s "" devices'
+check 0 'adb -s "" reboot' HARDWARE_OVERRIDE=1
+check 0 'adb -s "" shell rm -rf /sdcard/Download' HARDWARE_OVERRIDE=1
+echo "— -s là giá trị của tuỳ chọn khác: không được làm hook lỗi (IndexError)"
+check 0 'adb -H -s reboot'               # -H "-s": không nối được server, lệnh tự lỗi
+check 0 'T=-s; adb -t "$T" reboot'       # -t "-s": transport id sai, lệnh tự lỗi
+
+# adb giả chỉ được hỏi get-serialno: lệnh thật (reboot, shell …) không bao giờ chạy
+if grep -v 'get-serialno$' "$ADB_FAKE_LOG" | grep -q .; then
+  fail "hook chạy adb ngoài get-serialno: $(grep -v 'get-serialno$' "$ADB_FAKE_LOG" | head -3 | tr '\n' ';')"
+else ok "adb giả chỉ nhận get-serialno ($(wc -l < "$ADB_FAKE_LOG" | tr -d ' ') lần)"; fi
+
+echo
+if [ "$FAILS" -eq 0 ]; then echo "PASS: test_hardware_empty_serial"; exit 0; fi
+echo "FAIL: test_hardware_empty_serial ($FAILS)"; exit 1

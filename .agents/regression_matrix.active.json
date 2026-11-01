@@ -2641,6 +2641,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-hardware-empty-serial",
+      "watch_files": [
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/tests/gates/test_hardware_empty_serial.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-HW-EMPTY-SERIAL-01",
+          "name": "#829: adb -s \"\" / -s '' (adb tự chọn thiết bị, cả khi lệnh shell có ; && | trong nháy), serial bị cấm trong nháy, -s lặp lại (-s cuối thắng, cả -s<số>), -t cùng -s (-t thắng) và biến chưa biết hay lệnh con $( ) / ` ` ở tuỳ chọn chọn thiết bị bị chặn khi máy đích nằm trong denylist (--serial được xét như -s); emulator, biến đã biết, -P chưa biết cạnh -s literal, lệnh con trong lệnh shell của serial đã ghi, host-only, HARDWARE_OVERRIDE=1 vẫn cho qua; -s làm giá trị tuỳ chọn khác không làm hook lỗi; adb giả chỉ nhận get-serialno",
+          "command": "bash universal-agent-devkit/tests/gates/test_hardware_empty_serial.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
