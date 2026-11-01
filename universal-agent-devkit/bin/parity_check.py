@@ -28,6 +28,7 @@ _FLAG = "--(" + "|".join(re.escape(f) for f in FORBIDDEN) + r")(?=$|[\s\"';&|)])
 FLAG_RE = re.compile(r"(?<![\w-])" + _FLAG)
 DROP_RE = re.compile(r"\s+" + _FLAG)   # chỉ cờ đứng sau khoảng trắng mới bỏ được an toàn; cờ trong ngoặc thì báo, không sửa
 GATE_SCRIPT = "post-fix-gate.py"      # như super-board-verify-flags.sh: cờ chỉ là cờ gate khi lệnh gọi post-fix-gate.py
+_CMD_SEP = set(";&|<>)}`\n")             # hết lệnh gate: cùng tập dấu với pfg_re của super-board-verify-flags.sh
 LINK_DIRS = (".agents", ".claude", ".gemini", ".githooks", ".codex", ".cursor")
 SKIP_DIRS = {".git", "node_modules", "__pycache__", "worktrees", "Library", "build"}
 HOOK_REF_RE = re.compile(r"\.claude/hooks/([A-Za-z0-9_.-]+)")
@@ -55,6 +56,54 @@ def configs(repo):
     return sorted(os.path.join(d, n) for n in os.listdir(d) if n.endswith(".json")) if os.path.isdir(d) else []
 
 
+def gate_spans(c):
+    """(đầu, cuối) phần đối số của từng lần gọi post-fix-gate.py trong chuỗi lệnh: từ sau token tới dấu hết lệnh đầu tiên (_CMD_SEP)
+    ngoài ngoặc mở sau token, hoặc tới dấu ngoặc bao token (`bash -c '…'`). Cờ ngoài phần này là của lệnh khác
+    (`… && git fsck --full`, review Claude #773): không báo, không sửa. ponytail: không hiểu $(…) lồng hay heredoc — chuỗi verify một dòng."""
+    spans, quote, i = [], None, 0
+    while i < len(c):
+        if c.startswith(GATE_SCRIPT, i):
+            j, inner = i + len(GATE_SCRIPT), None
+            while j < len(c):
+                ch = c[j]
+                if ch == "\\":
+                    j += 2
+                    continue
+                if inner:
+                    inner = None if ch == inner else inner
+                elif ch == quote or ch in _CMD_SEP:
+                    break
+                elif ch in "\"'":
+                    inner = ch
+                j += 1
+            spans.append((i + len(GATE_SCRIPT), min(j, len(c))))
+            i = j
+            continue
+        ch = c[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        i += 1
+    return spans
+
+
+def gate_flags(c):
+    """Cờ cấm trong phần đối số post-fix-gate.py của chuỗi lệnh; giá trị không phải str, hoặc gate_spans ra rỗng, trả []."""
+    return [m for s, e in gate_spans(c) for m in FLAG_RE.findall(c[s:e])] if isinstance(c, str) else []
+
+
+def drop_gate_flags(c):
+    if not isinstance(c, str):
+        return c
+    for s, e in reversed(gate_spans(c)):
+        c = c[:s] + DROP_RE.sub("", c[s:e]) + c[e:]
+    return c
+
+
 def check_flags(repo, fix):
     out, fixed = [], []
     for p in configs(repo):
@@ -62,15 +111,15 @@ def check_flags(repo, fix):
         cmds = cfg.get("verify_commands") if isinstance(cfg, dict) else None
         if not isinstance(cmds, list):
             continue
-        bad = [c for c in cmds if isinstance(c, str) and GATE_SCRIPT in c and FLAG_RE.search(c)]
+        bad = [c for c in cmds if gate_flags(c)]
         if not bad:
             continue
         rel = os.path.relpath(p, repo)
         if fix and fix_config(p, cfg, cmds):
-            fixed.append(f"fixed: {rel} — removed " + ", ".join(sorted({"--" + m for c in bad for m in FLAG_RE.findall(c)})))
+            fixed.append(f"fixed: {rel} — removed " + ", ".join(sorted({"--" + m for c in bad for m in gate_flags(c)})))
             continue
         for c in bad:
-            flags = ", ".join("--" + m for m in FLAG_RE.findall(c))
+            flags = ", ".join("--" + m for m in gate_flags(c))
             out.append(f"forbidden-flag: {rel} — verify_commands has {flags}: {c}")
     return out, fixed
 
@@ -78,8 +127,8 @@ def check_flags(repo, fix):
 def fix_config(path, cfg, cmds):
     """Thay đúng chuỗi lệnh trong văn bản gốc (diff chỉ một dòng); không tìm được chuỗi đã mã hoá thì ghi lại cả file. Đọc lại phải ra
     đúng danh sách mới, sai thì không ghi gì."""
-    new = [DROP_RE.sub("", c) if isinstance(c, str) and GATE_SCRIPT in c else c for c in cmds]
-    if any(isinstance(c, str) and GATE_SCRIPT in c and FLAG_RE.search(c) for c in new):
+    new = [drop_gate_flags(c) for c in cmds]
+    if any(gate_flags(c) for c in new):
         return False   # còn cờ không bỏ an toàn được (trong ngoặc, đầu dòng mới…): báo forbidden-flag, không ghi "fixed"
     path = os.path.realpath(path)   # config là symlink: ghi vào file thật, không thay link bằng file thường
     with open(path, encoding="utf-8") as f:

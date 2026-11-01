@@ -109,6 +109,16 @@ python3 "$DEVKIT/bin/parity_check.py" "$P" --fix > "$TMP/p3.out" 2>&1
   && cmp -s "$CFG" "$TMP/cfg.before" && ok "cờ trong ngoặc: báo, không ghi 'fixed', file giữ nguyên" || fail "cờ trong ngoặc: $(grep -E '^(fixed|forbidden)' "$TMP/p3.out")"
 ! grep -q "git fsck" "$TMP/p3.out" && ok "lệnh không gọi post-fix-gate.py (git fsck --full) không bị báo" || fail "báo nhầm git fsck --full"
 
+# 5b) review Claude #773: lệnh gate nối lệnh khác bằng && / ;. Cờ của lệnh sau (git fsck --full, npm … -- --full) không phải cờ gate:
+#     --fix chỉ bỏ cờ cấm trong phần đối số của post-fix-gate.py; --full-name là token khác, không báo
+printf '{"verify_commands":["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full && git fsck --full","python3 .agents/devkit/bin/post-fix-gate.py --brief; npm run e2e -- --full","python3 .agents/devkit/bin/post-fix-gate.py --full-name x"]}\n' > "$CFG"
+want='{"verify_commands":["python3 .agents/devkit/bin/post-fix-gate.py --run-tests && git fsck --full","python3 .agents/devkit/bin/post-fix-gate.py --brief; npm run e2e -- --full","python3 .agents/devkit/bin/post-fix-gate.py --full-name x"]}'
+python3 "$DEVKIT/bin/parity_check.py" "$P" --fix > "$TMP/p4.out" 2>&1
+[ "$(cat "$CFG")" = "$want" ] && ok "lệnh nối: --fix chỉ bỏ --full của post-fix-gate.py, giữ git fsck --full / npm -- --full / --full-name" \
+  || fail "lệnh nối: config sau --fix: $(cat "$CFG")"
+grep -qF "fixed: .claude/super-board/configs/proj.json — removed --full" "$TMP/p4.out" && ! grep -q "^forbidden-flag" "$TMP/p4.out" \
+  && ok "lệnh nối: in fixed, không còn forbidden-flag" || fail "lệnh nối: $(grep -E '^(fixed|forbidden)' "$TMP/p4.out")"
+
 # 6) worktree liên kết (worktree.py add, lane, scratch merge gate đều chạy install.sh): chỉ báo, không sửa config đã track
 printf '{"verify_commands":["python3 .agents/devkit/bin/post-fix-gate.py --run-tests --full"]}\n' > "$CFG"
 git -C "$P" add .claude/super-board/configs/proj.json && git -C "$P" commit -qm cfg
