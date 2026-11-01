@@ -2643,6 +2643,23 @@
       ]
     },
     {
+      "component": "super-board-wave-model-ladder",
+      "watch_files": [
+        ".claude/workflows/super-board-wave.js",
+        ".claude/skills/super-board/SKILL.md",
+        ".claude/skills/super-board/references/run-workflow.md",
+        "tests/super-board/test_wave_model_ladder.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAVE-MODEL-LADDER-01",
+          "name": "#553: thang model của super-board-wave.js — tier medium thẻ high không yếu hơn thẻ medium (không để undefined = model phiên, có thể là sonnet); tier low/high giữ nguyên; comment trên LADDERS, SKILL.md, run-workflow.md ghi đúng thang",
+          "command": "bash tests/super-board/test_wave_model_ladder.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-guard-merge-queue-label-536",
       "watch_files": [
         "universal-agent-devkit/hooks/block-dangerous-git.sh",
