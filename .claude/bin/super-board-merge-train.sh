@@ -282,13 +282,20 @@ for cmd in "${VERIFY[@]}"; do
   done
 done
 
-# build_chain <PR...>: scratch = base + các head theo thứ tự. 1 nếu một head không merge sạch (in PR đó ra stderr qua $CHAIN_FAIL).
-CHAIN_FAIL=""
+# scratch_merge <sha>: merge một head vào scratch, KHÔNG chạy hook của repo (#740). Từ PR thứ hai (hay PR chưa chứa base mới) git phải tạo
+# commit merge; hook commit-msg / pre-merge-commit của repo (GeelyEx2: guard-check đòi trailer `Bug:`) từ chối nó và PR sạch bị
+# deferred/conflict oan. Commit merge ở scratch chỉ dựng cây verify, không bao giờ được push: hook vẫn chạy đủ ở commit thật của builder.
+scratch_merge() { git -c core.hooksPath=/dev/null -C "$SCRATCH" merge --no-edit --quiet "$1"; }
+# build_chain <PR...>: scratch = base + các head theo thứ tự. 1 nếu một head không merge sạch (in PR đó ra stderr qua $CHAIN_FAIL,
+# lý do qua $CHAIN_WHY: `conflicts: <file…>` khi xung đột thật, không thì dòng lỗi cuối của git).
+CHAIN_FAIL=""; CHAIN_WHY=""
 build_chain() {
-  local p
+  local p out
   git -C "$SCRATCH" reset -q --hard "$BASE_SHA"; git -C "$SCRATCH" clean -qfd 2>/dev/null || true
   for p in "$@"; do
-    if ! git -C "$SCRATCH" merge --no-edit --quiet "$(head_of "$p")" >/dev/null 2>&1; then
+    if ! out=$(scratch_merge "$(head_of "$p")" 2>&1); then
+      CHAIN_WHY=$(git -C "$SCRATCH" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
+      if [ -n "$CHAIN_WHY" ]; then CHAIN_WHY="conflicts: ${CHAIN_WHY}"; else CHAIN_WHY="git: $(printf '%s\n' "$out" | tail -1 | cut -c1-200)"; fi
       git -C "$SCRATCH" merge --abort 2>/dev/null || true
       CHAIN_FAIL="$p"; return 1
     fi
@@ -371,7 +378,7 @@ Làm test ổn định (bỏ phụ thuộc thời gian/tải) thay vì để mer
 #                     · 3 hết giờ sau một lần chạy lại (máy quá tải, không quy lỗi cho PR nào).
 verify_set() {
   local cmd run_cmd busy_line rc try merged p emeta
-  build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]"; return 2; }
+  build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*] (${CHAIN_WHY})"; return 2; }
   # #643: clean -qfd giữ file ignore. Xoá rồi cài lại theo đúng các PR của lượt này, kẻo nửa chuỗi trước còn sót.
   rm -f "$SCRATCH/.claude/audit-gate/approved_tests.json"
   for p in "$@"; do
@@ -442,11 +449,15 @@ verify_set() {
 GOOD=(); RED=(); GATERED=(); CONFLICT=(); DEFERRED=()   # BLOCKED / DRYRC: đã khởi tạo ở preflight
 # Một PR không merge sạch vào base + các PR trước: bỏ ra trước, rồi mới chứng minh phần còn lại.
 # Sạch với base mà chỉ xung đột với PR đứng trước (R8): không phải lỗi của PR, ở lại Review chờ wave sau (lúc đó base đã có PR trước).
+# Log ghi lý do (#740): file xung đột, hay dòng lỗi của git khi không có xung đột.
 CANDS=()
 for p in "${LIST[@]}"; do
   if build_chain ${CANDS[@]+"${CANDS[@]}"} "$p"; then CANDS+=("$p")
-  elif build_chain "$p"; then DEFERRED+=("$p")
-  else CONFLICT+=("$p"); fi
+  else
+    why=$CHAIN_WHY
+    if build_chain "$p"; then DEFERRED+=("$p"); say "PR #${p} merges into ${BASE} alone but not after [${CANDS[*]-}] (${why}); deferred to the next wave"
+    else CONFLICT+=("$p"); say "PR #${p} does not merge into ${BASE} (${CHAIN_WHY}); conflict"; fi
+  fi
 done
 # solve <PR...>: GOOD dài ra bằng các PR xanh; PR đỏ vào RED. Đỏ thì chia đôi, đúng một PR đỏ thì đó là thủ phạm.
 # Hết giờ (3) dừng cả chia đôi (ABORT): PR chưa chứng minh được không bị quy là đỏ. Chuỗi không dựng được (2) ở đúng một PR → CONFLICT.
@@ -510,7 +521,7 @@ if [ "${#GOOD[@]}" -gt 0 ]; then
   : >"$RECEIPT"
   git -C "$SCRATCH" reset -q --hard "$BASE_SHA"
   for p in "${GOOD[@]}"; do
-    git -C "$SCRATCH" merge --no-edit --quiet "$(head_of "$p")" >/dev/null 2>&1 || { say "internal: chain merge failed for #${p}"; exit 1; }
+    scratch_merge "$(head_of "$p")" >/dev/null 2>&1 || { say "internal: chain merge failed for #${p}"; exit 1; }
     echo "$(head_of "$p") $(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" >>"$RECEIPT"
   done
 fi

@@ -2568,6 +2568,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-merge-train-hook-chain",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_merge_train_hook_chain.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-TRAIN-HOOK-CHAIN-01",
+          "name": "#740: merge train dựng chuỗi scratch không chạy hook commit-msg / pre-merge-commit của repo (PR thứ hai, PR sau base không còn bị deferred/conflict oan); xung đột thật vẫn conflict/deferred, log ghi file xung đột hoặc dòng lỗi git",
+          "command": "bash tests/super-board/test_merge_train_hook_chain.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
