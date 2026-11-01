@@ -1399,7 +1399,7 @@ if gate_problem:
                      " .claude/settings.json (git checkout -- .claude/settings.json nếu kit đã sửa) → python3 .agents/devkit/bin/post-fix-gate.py"
                      " --run-tests --tree HEAD --brief (--tree HEAD = --full trên cây HEAD) → gỡ worktree, Stop lại")
     else:
-        lines.append("- Cổng: " + gate_problem + " → python3 .agents/devkit/bin/post-fix-gate.py --run-tests --brief (impacted; --full chỉ ở integrate)")
+        lines.append("- Cổng: " + gate_problem + " → python3 .agents/devkit/bin/post-fix-gate.py --run-tests --scoped --brief (--full: gate-full đêm)")   # #741; khối chặn ≤ 400 ký tự (hooks/tests/test_stop_repeat.sh c)
 for bp in before_problems:
     lines.append("- " + bp)
 if problems or (not good and need_image):

@@ -3,7 +3,7 @@
 # nên review worker ở worktree khác lấy được mà không cần mã trong comment builder/QA.
 # Dùng: super-board-gate-receipt.sh <sha40>   → stdout: fp, exit 0 · exit 1: head chưa có biên nhận (chạy gate scoped trên head)
 #   · exit 2: lỗi kỹ thuật (không nạp được tree_fp, git lỗi hoặc quá hạn; chi tiết ở stderr) · 64: sai tham số.
-# Nguồn 1: scoped_receipts/*.json và tree_receipts/*.json (lượt gate thật: --scoped, hoặc --full khi nó tự leo; exit 0, trường "head" = HEAD lúc chạy; khoá theo cây làm việc nên tìm theo head).
+# Nguồn 1: scoped_receipts/*.json và tree_receipts/*.json (lượt gate thật: --scoped (#741: không tự leo), hoặc --full tường minh; exit 0, trường "head" = HEAD lúc chạy; khoá theo cây làm việc nên tìm theo head).
 # Nguồn 2: task_receipts/<commit_fingerprint(head)>.json (lượt không --scoped trên cây sạch).
 set -u
 SHA="${1:-}"

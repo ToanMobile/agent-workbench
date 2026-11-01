@@ -37,7 +37,7 @@
    - **DevKit repo** (it has `.agents/devkit/bin/post-fix-gate.py`): the reviewed head needs a
      `post-fix-gate.py --run-tests --scoped --brief` exit 0 (its scoped receipt) on that exact SHA — read it from QA's
      report and never rerun post-fix-gate --full yourself: the merge point (the merge queue's train; queue off,
-     the merge gate) verifies the merged tree once with `--scoped`, which escalates to `--full` on a core file. A review run on its own, outside the board,
+     the merge gate) verifies the merged tree once with `--scoped`, which never escalates to `--full` (#741; `core-touched` in the gate output = review those core files with extra care). A review run on its own, outside the board,
      runs the impacted gate itself when QA left no result for this SHA; its merge goes through the merge gate
      with `--standalone`, which runs the full verify (Merge protocol step 2) — only outside the board, never
      inside a board lane.
