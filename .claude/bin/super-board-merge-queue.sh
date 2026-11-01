@@ -14,7 +14,7 @@
 #   --dry-run: in đợt sẽ gửi rồi thoát trước khối train; reject chỉ in (tests/super-board/test_merge_queue.sh ca 8 kiểm điều này).
 #
 # Route mỗi `train-result: <PR> <kết quả>` (bước ghi nhãn đi SAU cùng: chết giữa chừng thì lượt sau route lại, không mất việc).
-# Dòng `train-detail: <PR> <dòng>` của train (dòng gate, đuôi verify đỏ) chép nguyên văn vào comment issue của red / 11 / 3 / 7 / 8:
+# Dòng `train-detail: <PR> <dòng>` của train (dòng gate, đuôi verify đỏ, lời git/hook) chép nguyên văn vào comment issue của red / 11 / 3 / 7 / 8 / 5:
 #   merged                        gỡ nhãn; thẻ (nhánh issue-<K>-…, không thì closingIssuesReferences đúng một issue của repo nằm trên
 #                                 board, #637) không mang ac-open: đóng issue, card Done, comment ✅ merged <sha>
 #   red · gate-exit-11            thẻ về Ready với loop:rebuild-(K+1) (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn. gate-exit-11 = preflight
@@ -278,9 +278,13 @@ Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "wha
   else
     add_label "$k" "loop:rebase" || return 1
     LABEL_DONE=1
-    [ "$CARD_RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · PR #${p} needs a rebase pass (loop:rebase)
+    # tag ở nhánh rebase: `conflict`, hoặc `merge refused` khi train in lời git/hook (gate-exit-5 không file xung đột, #775). Chỉ
+    # `merge refused` chép train-detail (một nơi quyết định: route_one chọn tag); conflict không kèm dòng nào, như comment PR.
+    [ "${5:-conflict}" = "merge refused" ] || det=""
+    [ "$CARD_RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ ${5:-conflict} · PR #${p} needs a rebase pass (loop:rebase)
 Did: merged the PR head into origin/<base> in the merge-queue batch
-❌ Not done: ${why}
+❌ Not done: ${why}${det:+; the git / hook lines:
+${det}}
 Next: Builder rebases onto the base, verification green, then Review again" || true
   fi
   card_move "$k" Ready
@@ -392,10 +396,20 @@ ${det}}
 Next: back to Build${k:+ (card #$k)}" || true
             [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebuild "$why" "$tag" "$did" || ok=1 ;;
           conflict|gate-exit-2|gate-exit-5)
-            [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · ${res}
-Did: merged this PR into origin/<base> for the merge-queue batch
+            # #775: train in gate-exit-5 kèm train-detail `merge-refused: …` từ note_refused (super-board-merge-train.sh; build_chain gọi
+            # nó khi git merge thất bại mà `git diff --diff-filter=U` rỗng): chép các dòng đó, chữ "merge refused". gate-exit-5 không có
+            # dòng mang tiền tố đó (gate tự thoát 5) và conflict giữ chữ cũ.
+            det=$(detail_lines "$p")
+            if [ "$res" = gate-exit-5 ] && grep -q '^merge-refused: ' <<<"$det"; then
+              tag="merge refused"; why="${res} (a git hook or git refused the local merge commit; no conflicting file)"
+            else
+              tag=conflict; why="${res} (the base does not merge in cleanly)"; det=""
+            fi
+            [ "$RETRY" -eq 1 ] || gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ ${tag} · ${res}
+Did: merged this PR into origin/<base> for the merge-queue batch${det:+
+${det}}
 Next: rebase pass${k:+ (card #$k)}" || true
-            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebase "${res} (the base does not merge in cleanly)" || ok=1 ;;
+            [ -z "$k" ] || rebuild_or_rebase "$p" "$k" rebase "$why" "$tag" || ok=1 ;;
           gate-exit-7|gate-exit-8)
             det=$(detail_lines "$p")
             if [ -n "$k" ]; then
