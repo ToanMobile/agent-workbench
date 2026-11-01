@@ -70,8 +70,8 @@ same rule: **prose above for the human, one parseable line below for the loop.**
   turns them into Ready + `waiting-on:#N`), the runner's suite fuse (`blocked-by: <kept card>`). A pre-flight
   `hold — in progress` duplicate waits like a sequence (run.md): `waiting-on:#N`, stays Ready. A new card that only waits for another card to close uses `waiting-on:#N`
   (stays Ready), never Blocked with this line.
-- `blocked-by: -` — nothing on this board clears it. It waits for a person, and the sweep leaves it
-  alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
+- `blocked-by: -` — nothing on this board clears it. It waits for a person (unless the orchestrator's standing decision
+  answers it, run.md → "Owner's standing decision"), and the sweep leaves it alone. Use this for every `🔐`, `💳`, `🔑`, `🧑`, `🎨` and `🙋` block.
 - `blocked-by: agent` — the runner parked it (a crashed build worker, a no-op worker): agent work, no person, nothing to wait
   for. Not human-gated, never swept (#529).
 
@@ -125,7 +125,8 @@ python3 .claude/bin/super-board-needs-you.py mark --repo <owner/name> --issue <N
 - A 🙋 merge hold (merge gate exit 7 or 8): `--next "comment đúng một chữ done trên issue để duyệt (hoặc tự merge PR #<P>)"` — never "drag to Ready": only an exact
   `done` comment resumes it (`super-board-approval.py` `DONE`), so "done rồi" or "xong" do nothing.
 - `--action` is one line of at most 500 characters: shorten long commands, the full ones stay in the Block comment.
-- Never unmark a card a lane may still do. The person who did the step removes the label, or runs
+- Never unmark a card a lane may still do. The person who did the step (or the orchestrator, after a standing
+  decision) removes the label, or runs
   `super-board-needs-you.py unmark --repo <owner/name> --issue <N>` (the comment, and the `🙋` line of a
   `## Cần người` body section, become ✅ notes).
 - Exit 1 = a gh call failed: retry once, then name it in the lane report. The Block still stands.

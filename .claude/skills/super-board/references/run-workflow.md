@@ -215,7 +215,7 @@ Repeat until a done condition or halt gate fires:
    `## Blocked by` line to be fixed, and return every stranded Building card to
    `Ready` (below). Swept, resumed, approval-refresh and stranded cards are NOT in this pass's
    `cards`; they join the next wave. `waiting` lists Ready cards labelled `needs-you` / `human-gated`
-   (#95): only a person can move them, so they are never in `cards`. Before leaving them, apply
+   (#95): only a person (or the owner's standing decision) can move them, so they are never in `cards`. Before leaving them, apply
    run.md → "Owner's standing decision" to them and to the 🙋/❓ cards in Blocked: a decided card moves column
    and joins the next wave. Leave the rest, name them in the
    summary, and they return once a person removes the label. It also lists Ready cards labelled
