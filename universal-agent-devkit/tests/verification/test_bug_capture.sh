@@ -374,4 +374,35 @@ PY
 
 bash "$KIT" bugs bogus >/dev/null 2>&1; [ $? = 2 ] && ok "unknown bugs action → exit 2" || fail "bad action accepted"
 
+# ── #827: câu hỏi hay lệnh về việc theo dõi không phải báo bug, trừ khi kể triệu chứng ──
+# 01/11 câu hỏi của chủ repo "… check có đang dùng cũ hay sai gì ko?" và lệnh "Hook đã tự ghi câu hỏi … thành một mục
+# bug trong checklist tạo 1 task …" thành dòng REPORTED. Nhãn (lỗi, bug, "sai gì ko", "fail không") chỉ gọi tên hoặc
+# hỏi; triệu chứng (văng, mất dữ liệu, bị blocked, stack trace, ảnh bugs/) vẫn là báo bug. Thẻ nêu theo số (thẻ #827,
+# #520 trần cạnh từ task) đã là ticket.
+n0="$(nbugs)"
+i=0
+for p in "REG-DK-ALL-GATES-01 tôi nhớ đã tách ra nhỏ rồi và nhanh hơn rồi mà check có đang dùng cũ hay sai gì ko?" \
+         "Hook đã tự ghi câu hỏi của anh thành một mục bug trong checklist tạo 1 task fix gốc vụ này đây là high siêu nghiêm trọng đưa vô ready" \
+         "xong hết rồi à dev kit đã fix hết lỗi cũng như tối ưu chất lượng, hiệu năng tốt nhất rồi hả" \
+         "đưa toàn bộ các issues, bugs, task, roadmap lên hết backlog chưa?" \
+         "update toàn bộ status vào issues-bugs vs workflow-improvements hết sau đó xoá những task hay issues đã làm xong rồi" \
+         "test có fail không?" "app có bị lỗi gì không?" \
+         "Bạn là lane r30bug. Việc: thẻ #827 (high, Ready). Hook prompt ghi câu hỏi thành bug REPORTED; sửa gốc, test ĐỎ trên code cũ, kẹt thì ghi BLOCKED." \
+         "tạo trên worktree mới làm những task này cho tôi LANE C 1. #520 thử lại lỗi ghi GitHub trước khi đẩy thẻ vào Blocked 2. #619 lệnh mark lỗi làm thẻ kẹt Ready"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "k$i")")"
+  nothing "#827 question / tracking request '${p:0:40}…' → no row" "$out"
+done
+i=0
+for p in "sao app văng khi mở PDF có mật khẩu?" "tại sao bấm Lưu ở màn đơn hàng thì mất dữ liệu?" \
+         "tổng tiền ở giỏ hàng hiển thị sai?" "card thanh toán hiển thị sai trên tablet" \
+         "audit, review cho tôi 5 repo https://github.com/ToanMobile?tab=projects hiện nhiều task bị blocked,ready ko chạy được tìm nguyên nhân và fix cho tôi đi" \
+         "sao còn lỗi ở màn chọn bài? bugs/Screenshot_827.png" \
+         "sửa lỗi \"bắt chế độ chờ khi rời xe\" luôn" \
+         "sao lại lỗi thế này khi mở file DOCX?
+java.lang.NullPointerException: doc is null
+	at com.techlead.reader.DocView.open(DocView.kt:42)"; do
+  i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "ks$i")")"
+  landed "#827 symptom kept '${p:0:40}…' → REPORTED row" "$out"
+done
+
 [ "$FAILS" -eq 0 ] && echo "✅ test_bug_capture: all passed" || { echo "❌ test_bug_capture: $FAILS failed"; exit 1; }

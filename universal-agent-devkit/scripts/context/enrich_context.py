@@ -827,6 +827,24 @@ IS_THERE_A_BUG_RE = re.compile(
 KNOWN_BUGS_RE = re.compile(
     r"((?<!\w)(?:các|những|mấy|mọi|tất cả|all|\d+|tổng số|số lượng|số|link|gắn|viết test cho|test cho"
     r"|list|danh sách|checklist)\s+(?:\w+\s+)?)bugs?(?!\w)")
+# Câu hỏi và lệnh về việc đang theo dõi không phải báo bug (#827, 01/11: "… check có đang dùng cũ hay sai gì ko?" và
+# "Hook đã tự ghi câu hỏi của anh thành một mục bug trong checklist tạo 1 task fix gốc …" thành dòng REPORTED). Một
+# luật, không thêm bộ lọc theo mẫu câu: từ lỗi hoặc chỉ GỌI TÊN lỗi (NHÃN: danh từ lỗi / bug, "bị lỗi", hay từ lỗi bị
+# hỏi tới — "sai gì ko", "fail không"), hoặc kể điều người dùng THẤY hỏng (TRIỆU CHỨNG: crash, văng, treo, sai, fail,
+# "bị xoá", "không mở", stack trace, ảnh trong bugs/). Câu hỏi, hay lệnh về việc theo dõi (task, thẻ, card, backlog,
+# checklist …), chỉ ghi dòng khi có triệu chứng: "sao app văng khi mở PDF?" và "nhiều task bị blocked, ko chạy được"
+# vẫn ghi. Prompt trỏ tới thẻ theo số (thẻ #827, issue #12, URL issue GitHub, hay #536 trần cạnh từ task) nói về lỗi
+# đã có thẻ: không ghi dòng, như lane opener.
+LABEL_WORDS = ("lỗi", "bug")
+ASKED_RE = re.compile(r"\s+(?:gì|nào|(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa))(?!\w)")
+LABEL_AFTER_BI_RE = re.compile(r"\s+(?:lỗi|bugs?|vấn đề|issues?)(?!\w)")
+SYMPTOM_WORDS_RE = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) + (r"s?(?!\w)" if len(w) <= 3 else r"\w*")
+                                                       for w in DEFECT_WORDS if w not in LABEL_WORDS) + ")")
+STACK_RE = re.compile(r"traceback \(most recent call last\)|fatal exception|^\s*at [\w$.<>]+\([^)\n]*:\d+\)", re.M)
+TRACKING_RE = re.compile(r"(?<!\w)(?:thẻ|tasks?|cards?|tickets?|backlog|ready|checklist|mục bug)(?!\w)")
+TRACKED_REF_RE = re.compile(r"(?<!\w)(?:thẻ|issues?|cards?|tickets?|tasks?|prs?|pull requests?|bugs?)\s*#\d+(?!\w)"
+                            r"|(?<!\w)(?:issues?|prs?)\s+\d+(?!\w)|/(?:issues|pull)/\d+(?!\w)")   # "thẻ 2" có thể là tab UI
+BARE_REF_RE = re.compile(r"(?<![\w#&])#\d+(?!\w)")
 
 # Agent and harness prompts are not the user's bug reports. Grok (2026-09-25, OfficeReader)
 # runs the prompt hook for its own sub-agents too, and "You are a hostile code reviewer. Do
@@ -887,6 +905,39 @@ def probe_payload(payload):
     return not non_claude(payload)
 
 
+def _symptom(p_norm, p_lower):
+    """p_lower (đã bỏ đường dẫn và tập bug đã biết) kể điều đã hỏng, không chỉ gọi tên lỗi (#827)."""
+    if BUG_EVIDENCE_RE.search(p_norm) or STACK_RE.search(p_norm):
+        return True
+    for m in list(SYMPTOM_WORDS_RE.finditer(p_lower)) + list(DEFECT_RE.finditer(p_lower)):
+        rest = p_lower[m.end():m.end() + 40]
+        if m.group(0) == "bị":
+            if not LABEL_AFTER_BI_RE.match(rest):   # "bị gì?", "bị xoá", "bị giữ": đã có chuyện xảy ra
+                return True
+        elif not ASKED_RE.match(rest):   # "sai gì ko?", "fail không?" là hỏi có hay không
+            return True
+    return False
+
+
+def bug_report(prompt):
+    """Prompt tả một lỗi đáng ghi dòng REPORTED: còn từ lỗi sau khi bỏ tập bug đã biết, đường dẫn và câu hỏi
+    "có lỗi gì không"; với câu hỏi hay lệnh về việc theo dõi thì phải có triệu chứng (#827).
+    Prompt trỏ tới thẻ theo số nói về lỗi đã có thẻ."""
+    first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
+    # A wrapped message (<cross-session-message …>, <task-notification>) is not the user's report.
+    if not first or first.startswith("<"):
+        return False
+    p_norm = normalize(prompt)
+    p_norm = OUTDATED_RE.sub("outdatedterm", IS_THERE_A_BUG_RE.sub(" ", NOT_A_REPORT_RE.sub(" ", p_norm)))
+    p_lower = KNOWN_BUGS_RE.sub(r"\1 ", PATHLIKE_RE.sub(" ", p_norm))
+    if not (BUG_EVIDENCE_RE.search(p_norm) or mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
+        return False
+    tracking = TRACKING_RE.search(p_norm)
+    if TRACKED_REF_RE.search(p_norm) or (tracking and BARE_REF_RE.search(p_norm)):
+        return False
+    return _symptom(p_norm, p_lower) or not (tracking or is_question(p_norm.strip()))
+
+
 def capture_bug(prompt, dossier, project_root, session, payload=None):
     """A bug prompt → a REPORTED row in .agents/regression_status.json (deduplicated
     against rows still open), so a reported bug is on the checklist before anyone fixes
@@ -902,15 +953,9 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     if not (os.path.isfile(os.path.join(agents, "regression_status.json"))
             or os.path.isfile(os.path.join(agents, "regression_matrix.active.json"))):
         return ""
+    if not bug_report(prompt):
+        return ""
     first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
-    # A wrapped message (<cross-session-message …>, <task-notification>) is not the user's report.
-    if not first or first.startswith("<"):
-        return ""
-    p_norm = normalize(prompt)
-    p_norm = OUTDATED_RE.sub("outdatedterm", IS_THERE_A_BUG_RE.sub(" ", NOT_A_REPORT_RE.sub(" ", p_norm)))
-    p_lower = KNOWN_BUGS_RE.sub(r"\1 ", PATHLIKE_RE.sub(" ", p_norm))
-    if not (BUG_EVIDENCE_RE.search(p_norm) or mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
-        return ""
     title = " ".join(first.split())
     try:
         sys.path.insert(0, os.path.join(get_devkit_dir(), "bin"))
@@ -1128,12 +1173,16 @@ def _ask(regex, text):
     return ""
 
 
+def is_question(norm):
+    """norm (đã normalize, strip) là câu hỏi: xét mấy chữ đầu (trừ câu dẫn "Why …:") hoặc mấy chữ cuối."""
+    return bool((QUESTION_START_RE.match(norm) and not norm.split("\n", 1)[0].rstrip().endswith(":"))
+                or QUESTION_END_RE.search(norm[-80:]))
+
+
 def parallel_split(prompt):
     """Why this request can be split across agents ("4 repo", "danh sách 3 việc", "nhiều agent"…), or "" when it cannot."""
     norm = normalize(prompt).strip()
-    if len(norm) < 8 or norm.startswith("/") or harness_prompt(prompt) \
-            or (QUESTION_START_RE.match(norm) and not norm.split("\n", 1)[0].rstrip().endswith(":")) \
-            or QUESTION_END_RE.search(norm[-80:]):
+    if len(norm) < 8 or norm.startswith("/") or harness_prompt(prompt) or is_question(norm):
         return ""
     text = FENCE_RE.sub(" ", norm)
     reason = _ask(SPLIT_REPOS_RE, text)   # one file in several repos is still one lane per repo
