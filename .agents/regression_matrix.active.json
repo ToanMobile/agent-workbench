@@ -2707,6 +2707,51 @@
       ]
     },
     {
+      "component": "super-board-ac-check-cross-repo",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        "tests/super-board/test_ac_check_cross_repo.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AC-CHECK-CROSS-REPO-01",
+          "name": "#731: ac-check — Closes owner/repo#N của repo khác luôn là thẻ lạ kể cả trùng số thẻ nhánh / thành viên đợt; --rewrite-closes --foreign cùng luật; closes_own chỉ tính repo này; origin đọc ở SB_REPO_PATH",
+          "command": "bash tests/super-board/test_ac_check_cross_repo.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "create-task-pr-mention",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/create_task.py",
+        "universal-agent-devkit/tests/verification/test_create_task_pr_mention.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-CREATE-TASK-PR-MENTION-01",
+          "name": "#735: create-task không gom vào thẻ Ready/Backlog đã có PR mở nhắc nó (Closes/Fixes/Resolves/Refs #N, closingIssuesReferences) dù nhánh không theo mẫu issue-<N>-",
+          "command": "bash universal-agent-devkit/tests/verification/test_create_task_pr_mention.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "card-batch-fresh-lead",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/create_task.py",
+        "universal-agent-devkit/tests/verification/test_card_batch_fresh_lead.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-CARD-BATCH-FRESH-LEAD-01",
+          "name": "#731: pick_batch_lead kiểm lại Risk 🔴 High và trần AC trên body đọc lại của thẻ trưởng; thẻ Backlog có PR mở không thành đích gom",
+          "command": "bash universal-agent-devkit/tests/verification/test_card_batch_fresh_lead.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "merge-queue-parallel-trains",
       "watch_files": [
         ".claude/bin/super-board-merge-queue.sh",
