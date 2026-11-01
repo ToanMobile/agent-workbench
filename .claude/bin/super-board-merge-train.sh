@@ -121,7 +121,7 @@ detail_tail() {
     echo "train-detail: $1 ${pre}($([ -n "${3:-}" ] && echo "git/hook message" || echo "verify log tail") hidden: the DevKit secret redactor could not be loaded)"
   fi
 }
-trap 'rm -rf "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"' EXIT
+trap 'rm -rf "$GATE_OUT" "$GATE_ERR" "$GATE_RC" "$DETAIL_DIR"' EXIT
 . "$HERE/super-board-verify-flags.sh"
 CONFIG_JSON=$(cat "$CONFIG")
 printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
@@ -160,7 +160,7 @@ claim_live() {   # claim_live <dir>: 0 khi claim thuộc một merge train còn 
   fi
   kill -0 "$pid" 2>/dev/null && ps -o command= -p "$pid" 2>/dev/null | grep -q 'super-board-merge-train'
 }
-trap 'release_claims; rm -rf "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"' EXIT
+trap 'release_claims; rm -rf "$GATE_OUT" "$GATE_ERR" "$GATE_RC" "$DETAIL_DIR"' EXIT
 for p in $(printf '%s\n' "${LIST[@]}" | sort -un); do
   d="$TRAIN_COMMON/super-board/merge-train.claim.$p"
   if ! mkdir "$d" 2>/dev/null; then

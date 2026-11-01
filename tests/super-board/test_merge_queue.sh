@@ -156,6 +156,7 @@ issue() {   # issue <K> [labels comma]
 reset() {
   rm -rf "$F"; mkdir -p "$F/labeled"; PRS_ROWS=""; printf '[]\n' > "$F/prs.json"; : > "$F/writes"; : > "$F/calls"
   rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled" "$ATT" "$COMMON/super-board/merge-queue.lock.pid" "$COMMON/super-board/merge-queue.pending"; rm -rf "$INF/merge.lock"
+  rm -f "$COMMON/super-board/merge-queue.inflight" "$COMMON/super-board/merge-queue.basemoved"   # #676: trạng thái train nền theo PR
 }
 run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }
 calls() { grep -c '^train ' "$F/calls" 2>/dev/null | tr -d ' '; }

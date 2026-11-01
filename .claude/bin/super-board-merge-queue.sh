@@ -5,7 +5,11 @@
 # (29/10): `--full` chỉ chạy một lần lúc nửa đêm (gate-full), nên không còn lý do chờ đủ PR hay chờ PR cũ. Mỗi lần gọi, MỌI PR hợp lệ đang
 # trong hàng vào một train (một lượt verify cho cả nhóm đang có); không trần đợt, không hạn chờ, không đợi máy rảnh.
 #
-# Usage: super-board-merge-queue.sh --config <config.json> [--dry-run]
+# #676: mỗi lượt NGẮN — thu train đã xong (merge-queue.inflight), phóng tối đa merge_queue.max_trains (mặc định 3) train nền MỘT PR mỗi train
+# (verify main+PR của chính nó, chạy song song qua pool slot; chỉ `gh pr merge` được khoá merge của gate tuần tự hoá), rồi thoát. Lượt sau
+# route kết quả. `--wait` (test / tay): chờ các train vừa phóng rồi thu luôn.
+#
+# Usage: super-board-merge-queue.sh --config <config.json> [--dry-run] [--wait]
 #   Bật/tắt: SB_MERGE_QUEUE=1 bật, =0 tắt, không đặt thì theo config `merge_queue.enabled` (mặc định false).
 #   PR vào hàng: mở, không draft, có nhãn `merge-queue`, comment `approved-head:<sha40>` MỚI NHẤT của OWNER/MEMBER/COLLABORATOR khớp
 #     `headRefOid`. Không khớp (head dời, không có, người ngoài duyệt) → gỡ nhãn + comment lý do. Draft: bỏ qua, giữ nhãn.
@@ -494,6 +498,9 @@ collect() {
     COLLECTED="${COLLECTED}${n} "
     TOUT="$dir/out"; trc=$(cat "$dir/rc" 2>/dev/null || true)
     cat "$TOUT" 2>/dev/null || true   # log của queue thấy nguyên kết quả train, như trước
+    # stderr của train (log train + merge gate) và của launcher: trước #676 đi thẳng ra stderr của queue (log runner); giữ như vậy trước khi
+    # xoá thư mục (audit Antigravity #676).
+    cat "$dir/err" "$dir/launch.log" >&2 2>/dev/null || true
     if [ -z "$trc" ]; then
       say "PR #${n}: its train (pid ${pid}) ended without an exit code (killed); one attempt counted"
       attempt_retry "$n" "train died without a result" </dev/null
@@ -535,9 +542,16 @@ launch_train() {
   mkdir -p "$TRAINS_DIR"
   dir=$(mktemp -d "$TRAINS_DIR/pr${n}.XXXXXX")
   ci=$(awk -v p="$n" '$1 == p {print $2; exit}' <<<"$CLOSES"); ci=${ci:-0}
-  python3 -I -c 'import os, sys; os.setsid(); os.execvp("bash", ["bash", "-c"] + sys.argv[1:])' \
+  python3 -I -c 'import os, sys
+os.setsid(); open(sys.argv[-1] + "/session", "w").close()
+os.execvp("bash", ["bash", "-c"] + sys.argv[1:])' \
     "$LAUNCHER" merge-queue-launch "$TRAIN" "$CONFIG" "${n}:${head}" "$dir" 9>&- >"$dir/launch.log" 2>&1 </dev/null &
   LAUNCHED+=("$!")
+  # Chờ launcher TÁCH session xong (dấu <dir>/session ghi ngay sau os.setsid) rồi mới tiếp / thoát: queue thoát trước đó thì launchd giết cả
+  # process group lúc python còn khởi động (~14 ms, lâu hơn khi tải cao) — audit Antigravity #676. Tối đa 5 s.
+  local w=0
+  while [ ! -e "$dir/session" ] && [ "$w" -lt 250 ]; do sleep 0.02; w=$((w + 1)); done
+  [ -e "$dir/session" ] || say "PR #${n}: the train launcher did not report its own session within 5 s (a later kill of this run's process group may take it)"
   echo "${n} ${head} ${ref} ${ci} $! ${dir}" >> "$INFLIGHT"
   say "PR #${n}: train started for ${n}:${head} (pid $!, ${dir})"
 }
@@ -672,7 +686,7 @@ while True:
         time.sleep(0.2)
 ' "${SB_MQ_WAIT_LOCK_S:-600}" || { say "--wait: could not take ${LOCK} again; the next run routes the finished trains"; exit 0; }
 echo "queue $$" > "$LOCK.pid"
-READ_HALT=0; HALT_RC=0
+READ_HALT=0; HALT_RC=0; ROUTE_ROWS=""; COLLECTED=" "
 collect
 if [ "$READ_HALT" -eq 1 ] || [ "$HALT_RC" -eq 79 ]; then say "GitHub reads halted while routing: routed what needed no read; stopping"; exit 79; fi
 if [ "$HALT_RC" -eq 9 ]; then say "train exit 9 (verification readiness): routed what it reported; stopping"; exit 9; fi

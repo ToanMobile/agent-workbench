@@ -289,8 +289,9 @@ printf 'train-result: 6 merged\n' >> "$F/train.out"; qpr 6; : > "$F/hold-6"
 ( cd "$QR" && qenv python3 -c 'import os, subprocess, sys
 os.setsid(); open(sys.argv[1], "w").write(str(os.getpgid(0)))
 sys.exit(subprocess.run(sys.argv[2:]).returncode)' "$B/pgid" bash "$QUEUE" --config "$B/cfg.json" ) >"$B/q6.out" 2>"$B/q6.err"
-wait_file "$F/started-6" || fail "B5 PR6's train never started: $(cat "$B/q6.err")"
-kill -TERM -- "-$(cat "$B/pgid")" 2>/dev/null; sleep 0.3
+# Giết NGAY khi queue vừa thoát (audit Antigravity #676): launchd không chờ train kịp tách session.
+kill -TERM -- "-$(cat "$B/pgid")" 2>/dev/null
+wait_file "$F/started-6" || fail "B5 PR6's train never started (killed with the job's process group?): $(cat "$B/q6.err")"
 rm -f "$F/hold-6"; settle
 D6=$(awk '$1 == 6 {print $6}' "$QC/merge-queue.inflight")
 [ -n "$D6" ] && [ -f "$D6/rc" ] && ok "B5 the job's process group is killed after the queue exits: the background train survives and writes its rc" \
