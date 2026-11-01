@@ -266,12 +266,20 @@ FAIL_PAT='^project item-edit .*OREADY'; run_tick Blocked 'set_card_status I446 R
 
 echo "s17. state chỉ nhận đúng dạng lệnh runner ghi (cờ cho phép theo từng lệnh): cờ lạ / issue close → không phát lại (review P2-1)"
 for bad in '["issue","edit","446","--repo","acme/other","--add-label","x"]' '["issue","comment","446","--body-file","/etc/hosts"]' \
-           '["issue","close","446"]' '["issue","edit","446","--title","pwned"]' '["issue","comment","446","--body","a","--repo","acme/other"]'; do
+           '["issue","close","446"]' '["issue","edit","446","--title","pwned"]' '["issue","comment","446","--body","a","--repo","acme/other"]' \
+           '["issue","edit","446","--add-label","x\u0000--repo\u0000acme/other"]'; do
   fresh; mkdir -p "$TMP/inflight/card-write-failed"
   printf '{"from":"QA","item":"I446","argvs":[%s],"fails":0,"cycles":0,"gave_up":false}' "$bad" > "$STATE"
   run_tick Blocked 'sweep_card_write_failed'
   { ! gh_has '^issue ' && ! gh_has 'option-id OQA' && [ "$(jq -r .gave_up "$STATE" 2>/dev/null)" = true ]; } \
     && ok "s17: $bad not replayed, state given up" || fail "s17: $bad gh=$(ghl | cut -c1-200) state=$(cat "$STATE" 2>/dev/null)"
 done
+
+echo "s18. state đã gave_up (đã gọi người) mà lệnh khác của thẻ hỏng → không nối vào state không ai phát lại, log nói rõ (OCR vòng 3)"
+fresh; mkdir -p "$TMP/inflight/card-write-failed"
+printf '{"from":"QA","item":"I446","argvs":[["issue","edit","446","--remove-assignee","bot"]],"fails":3,"cycles":0,"gave_up":true}' > "$STATE"
+FAIL_PAT='^issue edit 446 --add-label'; run_tick Blocked 'gh_write_once issue edit 446 --add-label waiting'; FAIL_PAT=""
+{ [ "$(jq -r '.argvs | length' "$STATE" 2>/dev/null)" = 1 ] && grep -q 'not retried' "$TMP/log" && ! grep -q 'added to its retry state' "$TMP/log"; } \
+  && ok "s18: given-up state left as is, log says the write is not retried" || fail "s18: state=$(cat "$STATE" 2>/dev/null) log=$(tail -2 "$TMP/log" 2>/dev/null)"
 
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" = 0 ]

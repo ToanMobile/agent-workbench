@@ -445,7 +445,10 @@ block_card_after_failed_write() {
   local again=" ${CARD_WRITE_BLOCKED:-} "
   if [ -n "$sf" ] && [ -f "$sf" ] && [ "$col" = Blocked ]; then again=" ${issue} "; fi
   case "$again" in *" ${issue} "*)
-    if [ -n "$sf" ] && [ -f "$sf" ] && [ -n "${SB_WRITE_ARGS_JSON:-}" ] \
+    # state đã gave_up (đã gọi người, hoặc state hỏng): sweep không còn phát lại nó → không nối vào, nói rõ lệnh này không được thử lại
+    if [ -n "$sf" ] && [ -f "$sf" ] && [ "$(jq -r '.gave_up // false' "$sf" 2>/dev/null)" = true ]; then
+      log "⚠ GitHub write for #${issue} failed again (gh ${what}) — the card already waits for a person; this write is not retried"
+    elif [ -n "$sf" ] && [ -f "$sf" ] && [ -n "${SB_WRITE_ARGS_JSON:-}" ] \
        && jq -c --argjson a "$SB_WRITE_ARGS_JSON" '.argvs = ((.argvs // []) + [$a])' "$sf" > "$sf.tmp" 2>/dev/null && mv -f "$sf.tmp" "$sf"; then
       log "⚠ GitHub write for #${issue} failed again (gh ${what}) — added to its retry state, card already Blocked"
     else
@@ -581,7 +584,7 @@ sweep_card_write_failed() {
     [ "$n" -gt 0 ] || verb=""
     for ((i = 0; i < n; i++)); do   # đúng số đối số và đúng cờ của từng dạng; lỗi jq (argv không phải mảng chuỗi) = lạ
       [ "$(jq -r --argjson i "$i" --arg n "$issue" '.argvs[$i] as $a
-        | ($a | type) == "array" and all($a[]; type == "string")
+        | ($a | type) == "array" and all($a[]; type == "string" and (contains("\u0000") | not))
           and (if $a[0:2] == ["issue", "edit"] then ($a | length) == 5 and $a[2] == $n
                  and ([$a[3]] | inside(["--add-assignee", "--remove-assignee", "--add-label", "--remove-label"]))
                elif $a[0:2] == ["issue", "comment"] then ($a | length) == 5 and $a[2] == $n and $a[3] == "--body"
