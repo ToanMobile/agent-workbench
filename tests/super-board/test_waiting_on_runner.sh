@@ -252,7 +252,9 @@ reset; rm -f "$TMP/alive"; PROJECT_ITEMS_JSON="$BOARD_MIX"; export STUB_WO_RC=79
 # merge-queue.sh không có chế độ lib/source (grep SB_LIB_ONLY trong file đó: 0 dòng, 28/10), nên chạy test sẵn có của nó và đòi
 # đúng dòng kiểm "at rebuild_cap → Blocked".
 mq_out=$(cd "$ROOT" && env -i HOME="$HOME" PATH="$ORIG_PATH" TMPDIR="${TMPDIR:-/tmp}" bash "$ROOT/tests/super-board/test_merge_queue.sh" 2>&1); mq_rc=$?
-[ "$mq_rc" = 0 ] && printf '%s\n' "$mq_out" | grep -q "✔ gate-exit-5 at rebuild_cap → Blocked, not Ready" \
+# #750: grep đọc here-string, không `printf … | grep -q`: runner source ở trên bật pipefail, grep -q thoát ở dòng khớp khi printf còn ghi
+# phần đuôi output thì printf dính EPIPE và cả ca đỏ dù test_merge_queue.sh xanh (chập chờn dưới tải)
+[ "$mq_rc" = 0 ] && grep -q "✔ gate-exit-5 at rebuild_cap → Blocked, not Ready" <<<"$mq_out" \
   && ok "AC3 rebuild_cap still goes to Blocked (test_merge_queue.sh PASS, rebuild_cap case green)" \
   || fail "AC3 rebuild_cap: test_merge_queue.sh rc=$mq_rc $(printf '%s\n' "$mq_out" | grep -E '✖|rebuild_cap' | head -3)"
 
