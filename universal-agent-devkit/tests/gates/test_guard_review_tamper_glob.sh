@@ -128,6 +128,23 @@ expect allow "$RT" 'cat review/*.md'
 expect allow "$RT" 'grep -r sign src/'
 expect allow "$RT" 'ls reviewers/*'
 expect allow "$RT" 'for f in universal-agent-devkit/tests/gates/*.sh; do bash "$f"; done'
+# audit T0023: a second signal — the `sign` subcommand on a line that can reach the signer without naming it plainly
+W='ls universal-agent-devkit/bin | grep sign | while read f; do %s "universal-agent-devkit/bin/$f" sign .git/review-fanout/H/summary.json; done'
+expect deny "$RT" "$(printf 'shopt -s extglob\nuniversal-agent-devkit/bin/*@(sign).py sign .git/review-fanout/H/summary.json')"
+expect deny "$RT" 'shopt -s nullglob; universal-agent-devkit/bin/*_{s,x=y}ign.py sign .git/review-fanout/H/summary.json'
+expect deny "$RT" '${u:-universal-agent-devkit/bin/rev*_sign.py} s""ign .g""it/review-f""anout/H/sum""mary.json'
+for pre in 'X=1' 'env -i' 'command -p' 'timeout 5' 'if' '!' '</dev/null'; do
+  expect deny "$RT" "$(printf "$W" "$pre")"
+done
+expect deny "$RT" 'ls universal-agent-devkit/bin | grep sign | xargs -I@ env universal-agent-devkit/bin/@ sign .git/review-fanout/H/summary.json'
+expect deny "$RT" 'ls universal-agent-devkit/bin | xargs -I% % sign x'
+touch "$R/sign"
+expect deny "$R" './r*n.py s?gn x'
+expect deny "$R" '${u:-x} ${y:-sign} s'
+expect allow "$RT" 'sed -n /load_key/p universal-agent-devkit/bin/review_sign.py'
+expect allow "$R" 'ls src/*'
+expect allow "$R" 'rm -f build/*.o'
+expect allow "$R" 'git commit -m "fix review"'
 # nocaseglob (bash) / NO_CASE_GLOB (zsh): a glob matches a folder in any case
 expect deny "$R" "shopt -s nocaseglob; cp x $DK/HOO?S/guard-secrets.py"
 # allowed: reads, and globs that expand to nothing protected

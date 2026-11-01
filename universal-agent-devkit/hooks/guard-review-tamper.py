@@ -28,8 +28,11 @@ brace that expands to the signer from cwd or a folder the line names, is denied 
 …/review_sign.py verify <file>` or ONE plain read (cat / head / tail / wc / ls / stat / file / shasum / sha256sum / md5 / grep,
 `sed -n <lines>p`) with no ; & | ` $( ${ < > # or newline; a command whose name is computed ("$f", {} of find -exec, $( )) on a
 line that says `sign` or points at the machinery is denied too, and so is a Write/Edit of a non-document file whose text names
-review_sign, load_key or the key path. Accepted false positives: any other line naming the signer (`git diff` / `git log` of it,
-a commit message, `git add` of it) and any word with shell syntax that spells review…sign.
+review_sign, load_key or the key path. T0023, a second signal: a line carrying the `sign` subcommand (any case, through quotes,
+braces, ${…}, or a glob token like `s?gn`) that also holds glob / brace / $ / backtick / extglob / {} syntax, an interpreter, an
+xargs / parallel runner, a computed command or a word naming the signer is denied. Accepted false positives: any other line naming
+the signer (`git diff` / `git log` of it, a commit message, `git add` of it), any word with shell syntax that spells review…sign,
+and a glob / computed / interpreter line that also has the word sign (`ls s*`, `git commit -m "sign $X"`, `python3 test_sign.py`).
 Paths, the key / signer names, interpreter and file-command names and glob components match case-folded (APFS runs
 `CP x .GIT/REVIEW-FANOUT/…`; nocaseglob); the folded line only adds to the line parsed as written. A write target computed by
 $VAR / $( ) / backtick is denied on a line that points at the machinery.
@@ -326,7 +329,26 @@ COMPUTED_RUN = re.compile(r"(?:^|[;&|(\n`{]|(?<![\w-])(?:do|then|else|exec|nohup
 # denied (fail closed). No git / rg / less / more: each has a pager / exec / textconv option family (`git grep -nO<pager>`).
 SIGNER_READS = {"cat", "head", "tail", "wc", "ls", "stat", "file", "shasum", "sha256sum", "md5", "grep", "egrep", "fgrep", "sed"}
 NOT_PLAIN = re.compile(r"[;&|`<>#\n]|\$[({]")   # an operator, substitution, redirection, comment or second line anywhere
-SAFE_SED = re.compile(r"(?:\d+|\$)(?:,(?:\d+|\$))?p|/[^/wWer]*/p")   # no w / W / e / r command can hide in it
+SAFE_SED = re.compile(r"(?:\d+|\$)(?:,(?:\d+|\$))?p|/[^/]*/p")   # nothing after the closing / but p: no w / W / e / r command
+
+# T0023: every CLI signing needs the literal subcommand `sign` (review_sign.py signs only when argv[1] == "sign"). A line that
+# carries it (_carries_sign) AND can reach the signer without naming it plainly — a glob / brace / $ / backtick / extglob / {}
+# word, an interpreter, an xargs / parallel runner, a computed command or a word naming the signer — is denied (fail closed).
+RUNS_INTERP = re.compile(r"(?:^|[\s;&|(`])" + _INTERP + r"(?=\s|$)")
+REACH_SYNTAX = re.compile(r"[*?\[\]{}$`]|[@+!]\(|(?:^|[\s/;&|(])(?i:xargs|parallel)(?=\s|$)")
+
+
+def _carries_sign(cmd):
+    """True when, after quote / backslash removal and brace expansion, a word split on every non-alphanumeric char holds the
+    token `sign` (any case: `${x:-sign}`, `"sign"`, `s''ign`, `s\\ign`, `{sign,x}`), or a glob token with a literal letter that
+    can match it (`s?gn`, `s*`, `[s]ign`, `si*`)."""
+    for w in re.sub(r"[\"'\\]", "", cmd).split():
+        for a in _braces(w) or [w]:
+            if any(t.lower() == "sign" for t in re.split(r"[^A-Za-z0-9]+", a)) or any(
+                    re.search(r"[*?\[]", t) and re.search(r"[A-Za-z]", t) and _match(t, "sign")
+                    for t in re.split(r"[^A-Za-z0-9*?\[\]!^]+", a)):
+                return True
+    return False
 
 
 def _signer_read(cmd):
@@ -437,6 +459,10 @@ def bash_hits(cmd, cwd):
     sig = _signer_named(cmd, cwd)
     if sig and not VERIFY_ONLY.fullmatch(cmd) and not _signer_read(cmd):
         return ["seal:" + sig]
+    plain = re.sub(r"[\"'\\]", "", cmd)
+    if not VERIFY_ONLY.fullmatch(cmd) and not _signer_read(cmd) and _carries_sign(cmd) and (
+            sig or REACH_SYNTAX.search(plain) or RUNS_INTERP.search(re.sub(r"[\"'\\`]", " ", cmd)) or COMPUTED_RUN.search(plain)):
+        return ["seal:the `sign` subcommand on a line that can reach the signer"]
     if COMPUTED_RUN.search(re.sub(r"[\"'\\]", "", cmd)):
         if re.search(r"(?<![\w.-])sign(?![\w.-])", cmd):
             return ["seal:a computed command that signs"]
