@@ -71,7 +71,8 @@ GROUP_B_SIGN = re.compile(r"quá lớn / quá phức tạp để phân tích tro
 ENV_BLOCKED_SUMMARY = re.compile(r"^ENV-BLOCKED: hook watchdog fired under load, no verdict\s*$", re.M)
 PASS_HEAD = re.compile(r"^\s*(?:✔|✓|✅|ok\b|PASS\b)")
 FAIL_BLOCK = re.compile(r"^\s*(?:✖|✘|✗|❌|not ok\b)")
-BARE_FAIL = re.compile(r"^\s*FAIL\b")
+# bỏ dòng tổng đếm cuối file test ("FAIL: 2 case(s)", "FAIL (2)", "FAIL: 2", "FAIL test_x (2)"): nó đếm lại các ca ✖ đã xét, không là lá
+BARE_FAIL = re.compile(r"^\s*FAIL\b(?!:?\s*(?:\(\d+\)|\d+(?:\s+(?:case\(s\)|cases?\b).*)?|test_\w+\s+\(\d+\))\s*$)")
 # #749: dòng hỏng khác ngoài khối — có nó thì dòng tổng kết ENV-BLOCKED không đủ để gọi là nhóm b
 OTHER_FAIL = re.compile(r"^\s*(?:FAIL(?:ED)?\b|Traceback \(most recent call last\):)", re.M)
 # #749: post-fix-gate flaky_retry nối "lần đầu + mốc này + lần chạy lại" vào cùng output / log bằng chứng

@@ -45,7 +45,8 @@ Lượt của lịch đêm ghi vào `~/Library/Logs/devkit-gate-full/<slug>/` ri
    sâu hơn; khối có khối con chỉ xét khối con) có dấu hiệu thời gian thực / môi trường (watchdog "quá lớn / quá phức tạp…", `killed after
    …s (deadline)`, `Killed: 9`), hoặc không có khối hỏng nào mà có dòng tổng kết hook contract `ENV-BLOCKED: hook watchdog fired under
    load, no verdict` (và không có Traceback / dòng `FAIL` trần). Không bao giờ nhóm b (#749): lần đầu đỏ thật dù lần chạy lại (FLAKY_RETRY)
-   dính watchdog, dòng `FAIL …` trần không dấu hiệu trong khối có khối con, log bằng chứng bị cắt đầu. Mọi suite đỏ đều nhóm b ⇒
+   dính watchdog, dòng `FAIL …` trần không dấu hiệu trong khối (trừ dòng tổng đếm cuối file: `FAIL: 2 case(s)`, `FAIL (2)`,
+   `FAIL test_x (2)`), log bằng chứng bị cắt đầu. Mọi suite đỏ đều nhóm b ⇒
    `red-env`: không chia đôi, không ghi `last_full_green_sha`, thẻ risk 🟡. `DEVKIT_GATE_FULL_BISECT=0` không bao giờ chia đôi, `=1` luôn chia đôi
    (ra commit nghi vấn và thấy commit trước nó xanh ở lượt này ⇒ `red`, exit 1, 🔴 — #748), `auto` (mặc định) như trên.
 1. Chạy lại CHỈ suite/test đỏ ở đỉnh (đường dẫn `✖ tests/…` của run_impacted, hoặc lệnh của suite đỏ). Không tái hiện ⇒ ghi "flaky?", không nghi ai,

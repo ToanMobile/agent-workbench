@@ -9,6 +9,8 @@
 #       không bị cắt ⇒ red-env;
 #   e4. không khối nào, dòng tổng kết ENV-BLOCKED + Traceback ⇒ red;
 #   e5. khối LÁ (file không in ca ✖ con): dòng 'Killed: 9' của helper bị giết + dòng 'FAIL ca B: want 0 got 1' trần ⇒ red (review r20).
+#   e6ok. dòng tổng đếm cuối file ('FAIL: 1 case(s)', 'FAIL test_b (1)', 'FAILED: 1 lỗi (…)') dưới khối cha mà mọi ca con dính watchdog
+#       không phải lá đỏ thật ⇒ vẫn red-env (review r20b: guard test in tổng đếm sau ca watchdog 7 s).
 # #748 — DEVKIT_GATE_FULL_BISECT=1 (ép chia đôi) khi mọi suite là nhóm b:
 #   b1. chia đôi ra commit nghi vấn (đỉnh đỏ, commit cũ xanh: tái hiện được) ⇒ result red, exit 1, thẻ High;
 #   b2. chia đôi không ra commit ⇒ result red-env, thẻ không ghi "không chia đôi" (đã chia đôi);
@@ -87,6 +89,8 @@ suites = {
     "e4": lambda: [red("REG-TB-01", tail='Traceback (most recent call last):\n  File "x.py", line 3, in <module>\nValueError: hỏng\n'
                "contract points: 690 ok, 2 env-blocked (no verdict)\nENV-BLOCKED: hook watchdog fired under load, no verdict")],
     "e5": lambda: [kit("✖ tests/a.sh\n    tests/a.sh: line 40: 1234 Killed: 9   sleep 100\n    FAIL ca B: want 0 got 1\nfailures: 1")],
+    "e6ok": lambda: [kit("✖ tests/a.sh\n    ✖ rc 2 (want 0): git status\n" + WD + "\n    FAIL: 1 case(s)\n✖ tests/b.sh\n    ✖ ca B\n" + WD
+                         + "\n    FAIL test_b (1)\n✖ tests/c.sh\n    ✖ ca C\n" + WD + "\n    FAILED: 1 lỗi (4 kiểm tra đạt)\nfailures: 3")],
     # b1: lệnh chỉ đỏ từ c2 (có f2.txt) — đỉnh đỏ, base/c1 xanh ⇒ chia đôi ra c2
     "b1": lambda: [red("REG-B-SUS-01", fail_lines=["✖ ca W"], tail="✖ ca W\n" + WD, cmd="echo REG-B-SUS-01 >>%s; test ! -f f2.txt" % rr)],
     "b2": lambda: [red("REG-B-ALL-01", fail_lines=["✖ ca W"], tail="✖ ca W\n" + WD)],
@@ -156,6 +160,9 @@ chk "e4. không khối, dòng tổng kết ENV-BLOCKED + Traceback ⇒ red, chia
 rc=$(run_gf e5)
 chk "e5. khối lá: 'Killed: 9' của helper + 'FAIL ca B: want 0 got 1' trần ⇒ red, chia đôi" \
   'red_bisect e5 "$rc"' "rc=$rc reruns=$(reruns) $(tail -1 "$HIST")"
+rc=$(run_gf e6ok)
+chk "e6ok. dòng tổng đếm 'FAIL: 1 case(s)' / 'FAIL test_b (1)' / 'FAILED: 1 lỗi' sau ca watchdog ⇒ vẫn red-env" \
+  'red_env "$rc"' "rc=$rc reruns=$(reruns) $(tail -1 "$HIST")"
 
 # --- #748 -----------------------------------------------------------------------------------------------------------------
 rc=$(run_gf b1 DEVKIT_GATE_FULL_BISECT=1)
