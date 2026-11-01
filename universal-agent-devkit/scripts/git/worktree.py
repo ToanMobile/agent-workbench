@@ -3252,12 +3252,13 @@ def _exit0_same_content(wt):
 
 
 def _untested_for_device(tests):
-    """Exit 4 chỉ vì máy này không có thiết bị hoặc công cụ. SLOT, BUSY, BUDGET và FAIL không thuộc nhóm này."""
+    """Exit 4 chỉ vì máy này không có thiết bị hoặc công cụ. SLOT, BUSY, BUDGET, STALE (PASS dùng lại đã mất hiệu lực,
+    chưa kiểm lại) và FAIL không thuộc nhóm này."""
     if not tests:
         return False
     if any(x.get("status") in ("FAIL", "TIMEOUT") for x in tests):
         return False
-    if any(x.get("label") in ("SLOT", "BUSY", "BUDGET") for x in tests):
+    if any(x.get("label") in ("SLOT", "BUSY", "BUDGET", "STALE") for x in tests):
         return False
     return any(x.get("status") == "UNTESTED" for x in tests)
 
@@ -3269,8 +3270,8 @@ def _merge_gate(wt, base, matrix):
     to audit (exit 3). Otherwise (reason, verdict): a regression test that FAILed (verdict True: the same commits get the same answer,
     kept), or one that TIMED OUT, tests that could not run because another run holds the lock, or a gate that did not finish (verdict
     False: often the machine's load, so tried again next time), refuse. #486: exit 2 refuses when tests_touched,
-    uncovered or orphan_tests is set, or the matrix is not trusted; exit 1 while no suite is FAIL and exit 4 label
-    SLOT also refuse. Exit 0, exit 3, exit 4 that is only a missing device, and exit 2 no_match (no code file in the
+    uncovered, orphan_tests or unreadable is set, or the matrix is not trusted; exit 1 while no suite is FAIL and exit 4 label
+    SLOT or STALE also refuse. Exit 0, exit 3, exit 4 that is only a missing device, and exit 2 no_match (no code file in the
     diff) may fast-forward. Past WORKTREE_MERGE_GATE_TIMEOUT_S the gate gets
     SIGTERM (it stops its suites and puts back what it reverted), then SIGKILL; VACUITY_REVERT=0, so it reverts nothing here."""
     gate = os.path.join(DEVKIT, "bin", "post-fix-gate.py")
@@ -3318,8 +3319,8 @@ def _merge_gate(wt, base, matrix):
         return (tr("test hồi quy ĐỎ trên kết quả gộp: ", "regression tests RED on the merged result: ")
                 + ", ".join(f"{x.get('id')} {x.get('status')}" for x in bad) + f" ({res.get('report', '')})",
                 any(x.get("status") == "FAIL" and not x.get("flaky") for x in bad))   # failed, then passed on a retry: not kept
-    # #486: exit 2 chỉ bị chặn khi có test đã sửa chưa duyệt, file code chưa có test, test mồ côi, hoặc ma trận
-    # không tin được. #154: biên nhận --full exit 0 của đúng nội dung này còn sống thì phiên đã duyệt — gộp như cũ.
+    # #486: exit 2 chỉ bị chặn khi có test đã sửa chưa duyệt, file code chưa có test, test mồ côi, file không đọc được
+    # để quét, hoặc ma trận không tin được. #154: biên nhận --full exit 0 của đúng nội dung này còn sống thì phiên đã duyệt — gộp như cũ.
     # Exit 2 no_match (diff không có file code, ví dụ main thêm .txt trong lúc gate chạy) vẫn gộp:
     # suite đã chạy thì PASS, và test_worktree_trunk_merge ca 5 dựa vào đường đó.
     if p.returncode == 0:
@@ -3341,6 +3342,13 @@ def _merge_gate(wt, base, matrix):
         shown = ", ".join((uncovered or orphans)[:8]) or str(res.get("matrix_problem"))[:160]
         return tr(f"gate exit 2 (file chưa có test hoặc ma trận không tin được): {shown}. Main không đổi",
                   f"gate exit 2 (a changed file has no regression test, or the matrix is not trusted): {shown}. Main was not moved"), False
+    # #831: exit 2 vì file không đọc được để quét (FIFO, socket, file biến mất) là chưa xác minh, không phải no_match: chặn.
+    unreadable = [x for x in (res.get("unreadable") or []) if isinstance(x, str) and x]
+    if p.returncode == 2 and unreadable:
+        shown = ", ".join(unreadable[:8])
+        return tr(f"gate exit 2 ({len(unreadable)} file không đọc được để quét: FIFO, socket hoặc file biến mất): {shown}. Main không đổi",
+                  f"gate exit 2 ({len(unreadable)} files could not be read for scanning: a FIFO, a socket or a file gone): {shown}. "
+                  f"Main was not moved"), False
     if p.returncode == 2:
         return None, False
     if p.returncode == 4 and any(x.get("label") == "SLOT" for x in tests):

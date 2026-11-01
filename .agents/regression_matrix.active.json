@@ -2658,6 +2658,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-gate-stale-unreadable-831",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_stale_unreadable.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MERGE-GATE-STALE-UNREADABLE-01",
+          "name": "#831: worktree finish từ chối gate exit 4 có suite nhãn STALE (cả khi lẫn suite thiếu thiết bị) và exit 2 có file unreadable (nêu tên, en+vi); exit 4 chỉ thiếu thiết bị và exit 2 no_match vẫn fast-forward",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_stale_unreadable.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
