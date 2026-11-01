@@ -162,7 +162,7 @@ Mọi dòng mã sinh ra hoặc sửa đổi BẮT BUỘC phải tuân thủ 5 ng
    - **Khi thiết kế / refactor:** Tự động kết hợp `grill-plan` (stress-test) ➔ `deep-module-design` (interface seam) / `deprecation-migration` ➔ `documentation-and-adrs` (ghi ADR).
    - **Khi làm việc với Android:** Tự động kích hoạt `android-real-device-qa` (đo FPS SurfaceFlinger, dump view hierarchy, ANR logcat triage, DEX scan).
    - **Khi điều phối Leader PM ↔ Worker:** Tự động kích hoạt `giao` (giao thức 7 giai đoạn có cổng nghiệm thu cứng).
-   - **Trước khi hoàn tất:** review 4 bên — Claude Code (Opus) + Antigravity + Grok + Alibaba OCR chạy song song, CẢ 4 phải cùng PASS (`bin/review-fanout.sh`, luật đầy đủ ở `rules/four-way-review.md`; **[hook]** `review_gate.sh` chặn dừng tới khi PASS, không có lối thả) và báo cáo nghiệm thu 4 mục với bằng chứng ở §2.3.
+   - **Trước khi hoàn tất:** review 4 bên — Claude Code (Opus) + Antigravity + Grok + Alibaba OCR chạy song song, CẢ 4 phải cùng PASS (`bin/review-fanout.sh`, luật đầy đủ ở `rules/four-way-review.md`; **[hook]** `review_gate.sh` chặn dừng tới khi PASS, không có lối thả; chế độ hiện tại (người dùng, 01/11/2026): review REDUCED 3 bên Claude + Antigravity + OCR cùng PASS, Grok vào lại sau 02/11 — merge gate chỉ nhận với `--accept-reduced-review grok`) và báo cáo nghiệm thu 4 mục với bằng chứng ở §2.3.
 3. **Điều kiện kích hoạt từng skill:** bảng điều phối theo giai đoạn vòng đời ở `AGENTS.md` §8.2 (nguồn duy nhất).
 
 ## 17. Quy Chuẩn Tối Ưu Hóa Token & Quản Trị Ngân Sách Ngữ Cảnh (Token Economics & Context Budget Management)

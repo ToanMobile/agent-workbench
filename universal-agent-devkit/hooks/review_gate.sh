@@ -18,7 +18,7 @@
 # bin/review-fanout.sh: Claude Code pinned to Opus + Antigravity (antigravity-pm audit) + Grok (grok CLI) +
 # Alibaba OpenCodeReview (full mode, its own LLM), in parallel, verdict by bin/review-merge.py — PASS only when all 4 ran (Claude
 # on Opus, Grok on its pinned model) and all 4
-# say pass, no unrefuted P0/P1, no recurring known bug, budget kept, accepted findings fixed with a test.
+# say pass, no unrefuted P0/P1, no recurring known bug, accepted findings fixed with a test.
 # A sub-agent review, a skill, or OCR alone no longer counts. No review yet → the gate starts it in the
 # background and blocks; running → blocks; FAIL → blocks with the reasons and findings.
 #

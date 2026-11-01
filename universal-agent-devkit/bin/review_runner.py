@@ -381,7 +381,7 @@ def run_grok(a, meta, ctx):
     want = (os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7").strip()
     if not (os.path.isfile(bin_) and os.access(bin_, os.X_OK)):
         return env_out(a.run, "grok", status="unavailable", reason=f"Grok CLI not found at {bin_}")
-    # Grok gets read tools and a read-only shell (git grep/log/show), not edits: the diff is handed over as a file.
+    # Grok gets read/grep/list tools only (no shell, no edits): the diff is handed over as a file.
     tail = ""
     if meta.get("mode") != "full":
         tail = "\n\n" + write_diff(a, meta)
