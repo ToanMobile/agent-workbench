@@ -2435,10 +2435,13 @@ def quote_split(text):
 
 SUBST_WORD = "$-SUBST-"   # chữ thay lệnh con: VAR_REF không bung được ($- không phải tên biến), luôn còn "$"
 
-def subst_end(text, i):
+def subst_end(text, i, depth_left=64):
     """Chỉ số ngay sau dấu đóng của lệnh con mở tại i, -1 khi không đóng (01/11, r31adb). $( … ): đếm ngoặc ngoài nháy (nháy
-    đơn, nháy kép, gạch chéo ngược) bên trong lệnh con. \x60 … \x60: tới backtick không có gạch chéo ngược đứng trước."""
+    đơn, nháy kép, gạch chéo ngược) bên trong lệnh con; lệnh con lồng (cả trong nháy kép: "$(echo ")")") nhảy qua trọn bằng
+    đệ quy, sâu quá 64 tầng thì coi như không đóng. \x60 … \x60: tới backtick không có gạch chéo ngược đứng trước."""
     n = len(text)
+    if depth_left <= 0:
+        return -1
     if text[i] == "\x60":
         j = i + 1
         while j < n:
@@ -2456,6 +2459,12 @@ def subst_end(text, i):
             q = "" if c == "\x27" else q
         elif c == "\x5c":
             j += 2
+            continue
+        elif c == "\x60" or text.startswith("$(", j):
+            k = subst_end(text, j, depth_left - 1)
+            if k < 0:
+                return -1
+            j = k
             continue
         elif c in "\x22\x27":
             q = "" if q == c else (q or c)
@@ -2506,14 +2515,19 @@ def adb_calls(text):
     # Bản cắt thô: segment cắt ở $( được gắn "$(" vào chữ cuối, nên -s/-t lấy từ lệnh con mang "$" cả khi flat_substitutions
     # đọc nháy sai; không gắn cho backtick (backtick markdown trong chuỗi nháy đơn của commit / comment sẽ bị chặn nhầm).
     # Thêm bản cắt theo nháy (quote_split) của bản thay lệnh con: lệnh có ; | trong nháy là một lệnh.
-    # Cờ thứ ba: bản đọc từ bản thay lệnh con, chỉ ở đó chữ "xxx)" đầu lệnh mới được coi là đuôi lệnh con / nhánh case;
-    # ở bản cắt thô của text, echo "$(date) adb started" cho segment "date) adb started" (chữ, không phải lệnh adb).
-    flat = flat_substitutions(text)
-    cut_readings = ((toks, cut == "$(", t == flat) for t in dict.fromkeys((text, flat))
+    # Cờ thứ ba: chỉ bản quote_split (cắt ngoài nháy), và chỉ từ segment đầu tiên có lệnh con đã thay trở đi, coi chữ "xxx)"
+    # đầu lệnh là đuôi lệnh con / nhánh case; ở chỗ khác "1) adb …" (dòng đánh số trong thân heredoc, echo "$(date) adb …",
+    # grep "a|b) adb …") là chữ. Bản đọc theo nháy dựng trên text đã bỏ comment và đổi $\x27…\x27 thành \x27…\x27 (shell_norm):
+    # nháy đơn trong comment hay \x5c\x27 trong $\x27…\x27 làm lệch cách đọc theo nháy (FOO=$\x27it\x5c\x27s\x27 adb -s X reboot).
+    clean = shell_norm.ansi_c_to_single(shell_norm.drop_comments(text))
+    flat = flat_substitutions(clean)
+    cut_readings = ((toks, cut == "$(", False) for t in dict.fromkeys((text, flat))
                     for parts in (re.split(r"([;&|\n]+|\$\(|`)", t),)
                     for seg, cut in zip(parts[0::2], parts[1::2] + [""])
                     for toks in split_readings(seg + "$(" if cut == "$(" else seg))
-    whole_readings = ((toks, False, True) for seg in quote_split(flat) for toks in split_readings(seg))
+    qsegs = quote_split(flat)
+    first_subst = next((n for n, s in enumerate(qsegs) if SUBST_WORD in s), len(qsegs))
+    whole_readings = ((toks, False, n >= first_subst) for n, seg in enumerate(qsegs) for toks in split_readings(seg))
     readings = (r for src in (cut_readings, whole_readings) for r in src)
     for toks, subst, from_flat in readings:
         toks = shell_norm.inline_script(toks)   # sudo -s STR, env -S STR
@@ -2637,8 +2651,10 @@ def target_serial(exe, opts, env_serial, lits=None, assigned=()):
                     resolved = r.stdout.strip()
                     if r.returncode == 0 and resolved and resolved != "unknown":
                         return (resolved, None)
-                except Exception:
-                    pass
+                except (OSError, subprocess.SubprocessError) as e:
+                    return (None, "adb get-serialno cho " + s + " không trả lời (" + type(e).__name__ + ")")
+            # (01/11, r31adb) model:/usb:/… không phân giải được thì chuỗi đó không bao giờ khớp denylist: không đoán, từ chối
+            return (None, "serial " + s + " không phân giải được qua adb")
         return (s, None)
     unknown = next((o for o in opts if "$" in o), None)
     if unknown is not None:
@@ -2680,10 +2696,12 @@ def device_violation(text):
         # (01/11, r31adb) biến hay lệnh con ở chỗ subcommand có thể bung ra tuỳ chọn chọn thiết bị (adb $O reboot với
         # O="-s X", adb $(echo -s X) reboot, O=-s; adb -s A $O B reboot): còn "$" sau khi bung biến đã biết, hay giá trị bung
         # ra là tuỳ chọn (bắt đầu bằng -) hoặc nhiều chữ, thì tuỳ chọn và máy đích chỉ biết lúc chạy
+        # (bung ra rỗng: shell bỏ chữ đó và chữ sau thành subcommand, adb $V reboot với V= là adb reboot)
         raw_sub, sub = sub, expand_env(expand_literals(sub, lits), assigned)
-        if not sub or sub in ADB_HOST_ONLY:
+        bad_sub = "$" in sub or (sub != raw_sub and (sub.startswith("-") or len(sub.split()) != 1))
+        if not bad_sub and (not sub or sub in ADB_HOST_ONLY):
             continue
-        if "$" in sub or (sub != raw_sub and (sub.startswith("-") or len(sub.split()) != 1)):
+        if bad_sub:
             serial, why = None, "biến / lệnh con ở chỗ subcommand adb: " + raw_sub
         else:
             key = (exe, tuple(opts), env_serial)

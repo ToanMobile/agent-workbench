@@ -36,6 +36,7 @@ cat > "$TMP/bin/adb" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$ADB_FAKE_LOG"
 [ "${FAKE_FAIL-}" = 1 ] && { echo "error: closed" >&2; exit 1; }
+[ "${FAKE_HANG-}" = 1 ] && { sleep 12; exit 1; }   # server treo: watchdog 7 s của hook phải chặn trước
 serial="" sset=0 tid="" usb=0 tcp=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -52,7 +53,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ "${1-}" = get-serialno ] || { echo "adb giả: lệnh thật không được chạy: $*" >&2; exit 97; }
-known() { case "$1" in emulator-5554|R58PHONE01|0PHONE2) echo "$1" ;; *) echo "error: device '$1' not found" >&2; exit 1 ;; esac; }
+known() { case "$1" in emulator-5554|R58PHONE01|0PHONE2) echo "$1" ;; model:Phone) echo R58PHONE01 ;; model:Emu) echo emulator-5554 ;;
+  *) echo "error: device '$1' not found" >&2; exit 1 ;; esac; }
 if [ -n "$tid" ]; then
   case "$tid" in 1) echo emulator-5554 ;; 2) echo R58PHONE01 ;; *) echo "error: no device with transport id '$tid'" >&2; exit 1 ;; esac
   exit 0
@@ -67,7 +69,8 @@ echo "${FAKE_DEFAULT:-R58PHONE01}"
 EOF
 chmod +x "$TMP/bin/adb"
 # PATH không có adb nào (hook không tìm được adb): python3 vẫn là python3 mặc định của máy (link tới đúng bản đó)
-mkdir -p "$TMP/noadb" && ln -s "$(command -v python3)" "$TMP/noadb/python3"
+mkdir -p "$TMP/noadb" && ln -s "$(python3 -c 'import sys; print(sys.executable)')" "$TMP/noadb/python3" \
+  && ln -s "$(command -v bash)" "$TMP/noadb/bash"   # trình thông dịch thật (không phải shim pyenv) và đúng bash đang chạy
 NOADB="$TMP/noadb:/usr/bin:/bin"
 # hook tìm adb theo PATH (shutil.which): adb đầu PATH của check() phải là adb giả, không phải adb thật của máy
 [ "$(PATH="$TMP/bin:$PATH"; command -v adb)" = "$TMP/bin/adb" ] || { echo "FAIL: adb giả không đứng đầu PATH"; exit 1; }
@@ -177,6 +180,13 @@ check 2u 'O=-s; adb -s emulator-5554 $O R58PHONE01 reboot'   # biến bung ra tu
 check 2u 'adb -s emulator-5554 $R31_ARGS reboot' R31_ARGS="-s R58PHONE01"
 echo "— lựa chọn thiết bị phải hỏi adb mà adb không trả lời được → không xác định được → chặn"
 check 2u 'adb -s "" reboot' FAKE_FAIL=1
+check 2 'adb -s "" reboot' FAKE_HANG=1                  # get-serialno treo: chặn (watchdog), không cho qua
+check 2d 'adb -s model:Phone reboot'                     # -s model:/usb:/product:/device: phân giải qua adb
+check 0 'adb -s model:Emu reboot'
+check 2u 'adb -s model:Phone reboot' FAKE_FAIL=1         # không phân giải được: không so chuỗi "model:Phone" với denylist
+check 2d 'adb -t2 reboot'                                # dạng dính
+check 2d 'adb -s0PHONE2 reboot'
+check 2u 'adb -sR58PHONE01 reboot'                       # adb 37 từ chối (-s requires an argument): không đoán
 check 2u 'adb -s emulator-5554 -t 2 reboot' FAKE_FAIL=1
 check 0 'adb -s emulator-5554 reboot' FAKE_FAIL=1   # serial literal duy nhất: không cần hỏi adb
 if [ -x /usr/bin/adb ] || [ -x /bin/adb ]; then echo "skip: có adb ở /usr/bin hay /bin, không dựng được PATH không có adb"
@@ -188,6 +198,25 @@ check 0 'adb -s "" reboot' FAKE_DEFAULT=emulator-5554   # -s "" hỏi adb thật
 echo "— -d / -e: adb tự chọn theo loại kết nối"
 check 2d 'adb -d reboot'                     # đối chứng: đã chặn từ trước
 check 0 'adb -e reboot'
+echo "— biến bung ra rỗng ở chỗ subcommand: shell bỏ chữ đó, lệnh thành adb <phần sau> → vẫn xét"
+check 2u 'adb $R31_EMPTY reboot' R31_EMPTY=
+check 2u 'adb ${R31_EMPTY} reboot' R31_EMPTY=
+echo "— \$'…' có \\\\' và nháy đơn trong comment không làm lệch cách đọc theo nháy"
+check 2d "FOO=\$'it\\'s ok' adb -s R58PHONE01 reboot"
+check 2d "FOO=\$'a\\'b;c' adb -s R58PHONE01 reboot"
+check 2d "FOO=\$'it\\'s ok' adb -s \"\" reboot"
+check 2d "$(printf '%s\n%s' "# check user's device" 'FOO="a;b" adb -s R58PHONE01 reboot')"
+check 2d "$(printf '%s\n%s' "# don't touch phone" 'X=$(echo a b) adb -s R58PHONE01 reboot')"
+check 2d "$(printf '%s\n%s' "X=\$( # it's" 'echo ok) adb -s R58PHONE01 reboot')"
+check 2d 'X=$(echo "$(echo ") a b")") adb -s R58PHONE01 reboot'   # lệnh con lồng trong nháy kép bên trong lệnh con
+echo "— dòng đánh số \"1) adb …\" trong chuỗi / thân heredoc không có lệnh con → cho qua"
+check 0 "$(printf '%s\n%s' 'git commit -m "fix: hooks' '1) adb reboot"')"
+check 0 "$(printf '%s\n%s\n%s' "gh issue comment 829 --body 'Audit:" '(a) adb -s "" reboot' "(b) ok'")"
+check 0 "$(printf '%s\n%s\n%s' "cat <<'EOF' | wc -l" '1) adb reboot' 'EOF')"
+check 0 "$(printf '%s\n%s\n%s' "tee /dev/null <<'EOF'" '1) adb reboot' 'EOF')"
+echo "— chữ \"x) adb …\" trong chuỗi (lệnh con chỉ nằm trong nháy đơn, | trong nháy kép) → cho qua"
+check 0 "git commit -m 'note: \$(date) adb started'"
+check 0 'grep -E "a|b) adb -s R58PHONE01 reboot" notes.txt'
 echo "— biến chưa biết trong tuỳ chọn chọn thiết bị → không xác định được → chặn"
 check 2u 'adb -s emulator-5554 -s "$R31_UNSET_SERIAL" reboot'
 check 2u 'adb -t "$R31_UNSET_TID" reboot'
