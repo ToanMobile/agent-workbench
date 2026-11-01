@@ -222,6 +222,8 @@ rec("PROC", name, "leader=%d" % (os.getpgrp() == os.getpid()),   # its own proce
 if hasattr(signal, "SIGQUIT"):
     signal.signal(signal.SIGQUIT, lambda *_: sys.exit(0))
 time.sleep(float(os.environ.get("STUB_SLEEP_" + name, "0.3")))
+if name == "pool" and os.environ.get("STUB_PROGRESS"):   # run_impacted.sh's per-test progress lines (stderr)
+    sys.stderr.write("· start tests/gates/test_p.sh\n· done rc=0 1s tests/gates/test_p.sh\n"); sys.stderr.flush()
 sys.stdout.write("out-%s\n" % name); sys.stdout.flush()
 sys.stderr.write("err-%s\n" % name); sys.stderr.flush()
 rc = int(os.environ.get("STUB_RC_" + name, "0"))
@@ -298,6 +300,15 @@ done
 
 run_kit "$K" STUB_RC_pool=2 STUB_SLEEP_pool=0.2
 [ "$RC" = 1 ] && ok "A9 the pool exits 2: still exit 1, as the \`|| exit 1\` did" || fail "A9 pool exit 2 gave exit $RC"
+
+# A9b (#473): the pool's stderr is replayed BEFORE its stdout and without the `· start` / `· done` progress lines (they are for a killed run's
+# evidence log): on a terminal (both streams in one file) the ✔/✖ list stays the end of the output, nothing is pushed below it.
+mkdir -p "$K/tmp"; : > "$K/log"
+( cd "$TMP" && env STUB_LOG="$K/log" TMPDIR="$K/tmp" PATH="$K/stubbin:$PATH" STUB_PROGRESS=1 STUB_SLEEP_pool=0.2 python3 -I "$TMP/tools.py" exec bash "$K/bin/agent-kit" test >"$K/both" 2>&1 < <(yes 2>/dev/null) )
+BOTH="$(cat "$K/both")"
+[ -z "$(printf '%s\n' "$BOTH" | grep -E '^· (start|done) ')" ] && [ "$(printf '%s\n' "$BOTH" | tail -n 1)" = "out-pool" ] && printf '%s\n' "$BOTH" | grep -qx "err-pool" \
+  && ok "A9b the pool's progress lines are not replayed and its stdout (the ✔/✖ list) is the last thing printed" \
+  || fail "A9b progress lines replayed or stdout not last: $(printf '%s' "$BOTH" | tail -n 5 | tr '\n' '|')"
 
 run_kit "$K" CONTRACT_FACTS_SKIP_HARNESS=0 DEVKIT_TEST_JOBS=7 STUB_SLEEP_pool=0.2
 env_of() { grep "^ENV $1 " "$K/log" | head -1; }
