@@ -15,8 +15,8 @@
 #
 # Route mỗi `train-result: <PR> <kết quả>` (bước ghi nhãn đi SAU cùng: chết giữa chừng thì lượt sau route lại, không mất việc).
 # Dòng `train-detail: <PR> <dòng>` của train (dòng gate, đuôi verify đỏ) chép nguyên văn vào comment issue của red / 11 / 3 / 7 / 8:
-#   merged                        gỡ nhãn; thẻ (nhánh issue-<K>-…, không thì closingIssuesReferences đúng một issue của repo, #637) không
-#                                 mang ac-open: đóng issue, card Done, comment ✅ merged <sha>
+#   merged                        gỡ nhãn; thẻ (nhánh issue-<K>-…, không thì closingIssuesReferences đúng một issue của repo nằm trên
+#                                 board, #637) không mang ac-open: đóng issue, card Done, comment ✅ merged <sha>
 #   red · gate-exit-11            thẻ về Ready với loop:rebuild-(K+1) (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn. gate-exit-11 = preflight
 #                                 (qa-report / AC) chặn trước khi dựng cây: comment nói nguồn đó, không nói verify đỏ (#639).
 #   conflict · gate-exit-2/5      thẻ về Ready với loop:rebase (đủ rebuild_cap thì Blocked 🛡); gỡ nhãn
@@ -141,8 +141,8 @@ Next: review again; write a new \`approved-head:<sha40>\` for the current head a
 # ROUTE_ROWS: "<mốc> <PR> <head> <nhánh>" mỗi dòng (đợt hiện tại + PR merged còn nhãn): card_of / head_of đọc từ đây.
 ROUTE_ROWS=""
 # CLOSES: "<PR> <issue>" mỗi dòng, PR có closingIssuesReferences trỏ ĐÚNG MỘT issue của repo này (#637). card_of dùng khi nhánh không
-# theo mẫu issue-<N>- (PR tay, nhánh fix-…), cùng luật với review_approved_head của runner (#607/#614). Lấy cùng lượt `pr list`, nên
-# card_of không đọc GitHub: lỗi đọc không thể làm hàng đợi thoát ở đây.
+# theo mẫu issue-<N>- (PR tay, nhánh fix-…), cùng luật với review_approved_head của runner (#607/#614). Lấy cùng lượt `pr list`; card_of
+# chỉ hỏi thêm card.sh item-id (có cache) xem issue đó có nằm trên board không, và lỗi của lần hỏi đó không làm hàng đợi thoát.
 CLOSES=""
 closes_rows() {   # closes_rows <JSON mảng PR của pr list>: in "<PR> <issue>"; 0 hoặc ≥ 2 issue (hay issue repo khác) thì không in
   printf '%s' "$1" | jq -r --arg r "$REPO" '.[] | . as $pr | [(.closingIssuesReferences // [])[]
@@ -153,9 +153,17 @@ closes_rows() {   # closes_rows <JSON mảng PR của pr list>: in "<PR> <issue>
 # nhận EPIPE/SIGPIPE, hàm trả lỗi dù đã in đúng kết quả, và `k=$(card_of …)` dưới set -e giết hàng đợi giữa lượt route (đỏ chập chờn
 # khi máy tải nặng; tất định khi ROUTE_ROWS lớn hơn bộ đệm ống).
 card_of() {
-  local k
+  local k rc
   k=$(awk -v p="$1" '$2 == p {print $4; exit}' <<<"$ROUTE_ROWS" | sed -nE 's/^issue-([0-9]+)-.*/\1/p')
-  [ -n "$k" ] || k=$(awk -v p="$1" '$1 == p {print $2; exit}' <<<"$CLOSES")   # nhánh issue-<N>- thắng; không có thì closingIssuesReferences
+  if [ -z "$k" ]; then   # nhánh issue-<N>- thắng; không có thì closingIssuesReferences
+    k=$(awk -v p="$1" '$1 == p {print $2; exit}' <<<"$CLOSES")
+    # Issue không nằm trên board (card.sh exit 3) không phải thẻ: PR như không có thẻ (hành vi trước #637: gỡ nhãn sạch, không đụng
+    # issue đó). Lỗi khác (đọc hỏng, halt) giữ k: issue_json / card_move sau đó tự báo lỗi hay halt, nhãn giữ.
+    if [ -n "$k" ]; then
+      rc=0; bash "$CARD" --config "$CONFIG" item-id "$k" >/dev/null 2>&1 || rc=$?
+      [ "$rc" -ne 3 ] || { say "PR #$1 closes #${k}, which is not on the board: routed as a PR without a card"; k=""; }
+    fi
+  fi
   echo "$k"
 }
 head_of() { awk -v p="$1" '$2 == p {print $3; exit}' <<<"$ROUTE_ROWS"; }
@@ -259,6 +267,7 @@ attempt_clear() { drop_row "$ATTEMPTS" "$1"; drop_row "$PENDING" "$1"; }   # PR 
 # attempt_retry <PR> <kết quả>: kết quả không kết thúc. n+1 cho dòng <PR> <head> (head khác = đếm lại từ 1); n ≥ 3 → PR rời hàng 🛡.
 attempt_retry() {
   local p="$1" res="$2" head k n why ok=0
+  ROUTE_HALT=0
   head=$(head_of "$p"); k=$(card_of "$p")
   n=$(awk -v p="$p" -v h="$head" '$1 == p && $2 == h {print $3; exit}' "$ATTEMPTS" 2>/dev/null || true)
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
@@ -271,6 +280,9 @@ attempt_retry() {
       "a person looks at why its batches keep ending in ${res}, then labels the PR ${LABEL} again or drags the card to Ready"
     card_move "$k" Blocked || ok=1
   fi
+  # Halt (79) khi chuyển thẻ: như bản cũ thoát 79 ngay tại card_move — PR giữ nhãn và dòng attempts, chưa comment rời hàng (thẻ chưa
+  # Blocked); lượt sau (sau --resume) chạm trần lần nữa và chuyển thẻ (comment blocker trên thẻ có thể lặp một lần, như bản cũ).
+  if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted while moving card #${k} to Blocked; label kept, the next run retries"; return 0; fi
   gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [blocker] 🛑 left the queue · 🛡 ${why}
 Next: a person looks at why, then labels the PR ${LABEL} again${k:+ (card #$k is Blocked)}" || true
   # Trần: PR rời hàng dù card_move lỗi, để không route lại vô hạn mỗi tick.
@@ -506,6 +518,7 @@ if ! grep -q '^train-result: ' "$TOUT"; then
   fi
   say "train exit ${TRC} with no train-result line; nothing routed, labels kept; one attempt counted per PR"
   while read -r _ p _ _; do [ -n "${p:-}" ] && attempt_retry "$p" "train exit ${TRC} without a train-result" </dev/null; done < <(printf '%s\n' "$BATCH")
+  if [ "$READ_HALT" -eq 1 ]; then say "GitHub reads halted while counting attempts: stopping"; exit 79; fi
   [ "$TRC" -ne 9 ] || exit 9
   exit 0
 fi

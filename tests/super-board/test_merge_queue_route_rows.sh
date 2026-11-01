@@ -11,6 +11,11 @@
 #      lượt sau recover_merged route lại và comment ✅ merged trên thẻ.
 #   F. #637 (audit Antigravity): halt giữa lượt route: thẻ của PR red đọc hỏng, card_move của PR gate-exit-3 nhận 79, PR deferred
 #      đứng sau vẫn được đếm; exit 79 không tính lần thử; lượt sau comment trên thẻ còn thiếu, không comment trùng trên PR.
+#   G. #637 (review Claude): issue lấy qua closingIssuesReferences mà không nằm trên board (card.sh exit 3) ⇒ PR như không có thẻ
+#      (hành vi cũ: gỡ nhãn sạch), không pending, không tính lần thử, không comment / đóng issue đó.
+#   H. Train không in train-result, PR ở lần thử thứ 3: card_move Blocked nhận 79 ⇒ hàng đợi vẫn thoát 79 (hợp đồng header), PR giữ
+#      nhãn và dòng attempts, không comment "left the queue" (thẻ chưa Blocked) — như bản cũ thoát 79 ngay tại card_move.
+#   I. Như H nhưng PR có train-result `deferred` (đường route_one).
 # Chạy offline: gh (python giả), train / card.sh / needs-you.py / notify.py là stub; github-read.py là bản thật. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -44,8 +49,11 @@ SH
 cat > "$Q/super-board-card.sh" <<'SH'
 #!/usr/bin/env bash
 while [ "${1#--}" != "$1" ]; do shift 2; done
-# Như bản thật: move đọc thẻ qua github-read, mà github-read từ chối khi file halt đã có.
+# Như bản thật: move / item-id đọc thẻ qua github-read, mà github-read từ chối khi file halt đã có; $FAKE/card-halt: chính lần đọc
+# của card.sh hỏng (ghi file halt, 79); $FAKE/offboard-<K>: issue K không nằm trên board (exit 3).
 [ ! -f "$SB_GITHUB_HALT_FILE" ] || exit 79
+[ ! -f "$FAKE/card-halt" ] || { : > "$SB_GITHUB_HALT_FILE"; exit 79; }
+[ ! -f "$FAKE/offboard-$2" ] || exit 3
 echo "card $*" >> "$FAKE/writes"
 SH
 printf 'import os, sys\nopen(os.environ["FAKE"] + "/writes", "a").write("needs-you " + " ".join(sys.argv[1:]) + "\\n")\n' > "$Q/super-board-needs-you.py"
@@ -238,5 +246,34 @@ run_q; rc=$?
 [ "$(cnt "$F/pr-comment-1.txt" '❌ red · red')" = 1 ] && [ "$(cnt "$F/issue-comment-12.txt" 'blocked · 🔑')" = 1 ] \
   && ok "  … no second PR 1 comment, no second blocker on card #12" || fail "  … duplicates: pr1=$(cnt "$F/pr-comment-1.txt" '❌ red · red') card12=$(cnt "$F/issue-comment-12.txt" 'blocked · 🔑')"
 has_w "pr-unlabel 1 merge-queue" && has_w "pr-unlabel 2 merge-queue" && ok "  … PR 1 and PR 2 leave the queue" || fail "  … labels: $(cat "$F/writes")"
+
+# ── G. PR 4 nhánh fix-bar đóng #21; #21 không nằm trên board.
+reset
+pr 4 fix-bar 20 "[$(ref 21)]"; issue 21; : > "$F/offboard-21"; sha 4 c > "$F/merged-4"
+printf 'train-result: 4 merged\n' > "$F/train.out"; echo 0 > "$F/train.rc"
+run_q; rc=$?
+[ "$rc" -eq 0 ] && has_w "pr-unlabel 4 merge-queue" && ok "G closing issue not on the board: PR 4 leaves the queue as a card-less PR" || fail "G rc=$rc $(cat "$F/writes") err=$(tail -3 "$TMP/err")"
+grep -q "^4 " "$PEND" "$ATT" 2>/dev/null && fail "G PR 4 went to pending / attempts: $(cat "$PEND" "$ATT" 2>/dev/null)" || ok "  … no pending row, no try counted"
+has_w "issue-comment 21" || has_w "issue-close 21" || has_w "card move 21" && fail "  … issue #21 (not a card) was routed: $(cat "$F/writes")" || ok "  … issue #21 untouched (not a card)"
+
+# ── H. Train thoát 1, không train-result; PR 1 đã 2 lần thử cùng head; card_move Blocked ở trần nhận 79.
+reset
+pr 1 issue-11-a 20; issue 11
+mkdir -p "$COMMON/super-board"; echo "1 $(sha 1) 2 $(date +%s)" > "$ATT"
+: > "$F/train.out"; echo 1 > "$F/train.rc"; : > "$F/card-halt"
+run_q; rc=$?
+[ "$rc" -eq 79 ] && ok "H no train-result, card_move at the cap halted: exit 79" || fail "H rc=$rc (want 79): $(tail -3 "$TMP/err")"
+has_w "pr-unlabel 1" || has_w "pr-comment 1 [merge-queue] [blocker] 🛑 left the queue" && fail "  … PR 1 left the queue although card #11 was not moved: $(cat "$F/writes")" \
+  || ok "  … PR 1 keeps its label, no 'left the queue' comment"
+grep -q "^1 $(sha 1) " "$ATT" 2>/dev/null && ok "  … its attempts row is kept (the next run retries the cap)" || fail "  … attempts row gone: $(cat "$ATT" 2>/dev/null)"
+
+# ── I. Như H, PR 1 có train-result deferred.
+reset
+pr 1 issue-11-a 20; issue 11
+mkdir -p "$COMMON/super-board"; echo "1 $(sha 1) 2 $(date +%s)" > "$ATT"
+printf 'train-result: 1 deferred\n' > "$F/train.out"; echo 0 > "$F/train.rc"; : > "$F/card-halt"
+run_q; rc=$?
+[ "$rc" -eq 79 ] && ! has_w "pr-unlabel 1" && ! has_w "left the queue" && grep -q "^1 $(sha 1) " "$ATT" 2>/dev/null \
+  && ok "I deferred at the cap, card_move halted: exit 79, label and attempts row kept, no 'left the queue'" || fail "I rc=$rc att=$(cat "$ATT" 2>/dev/null) writes=$(cat "$F/writes")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue_route_rows: all passed" || { echo "❌ test_merge_queue_route_rows: $FAILS failed"; exit 1; }
