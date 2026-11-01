@@ -144,6 +144,9 @@ CODE_SPAN = re.compile(r"`[^`\n]*`")
 WAITING_ON_COLOR = "FBCA04"   # cùng LABEL_COLOR của .claude/bin/super-board-waiting-on.py
 # Đường dẫn file có "/" (tên trơn như server.py quá chung để coi là trùng).
 PATH_RE = re.compile(r"[\w.\-]+(?:/[\w.\-]+)+\.\w{1,5}")
+# PR mở nhắc thẻ (#735): từ khoá đóng của GitHub hoặc Refs trước `#N` / `owner/repo#N`. Số trùng của repo khác chỉ làm bỏ thêm
+# một thẻ khỏi việc gom (thẻ riêng — hướng an toàn).
+PR_MENTION_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?):?\s+(?:[\w.-]+/[\w.-]+)?#(\d+)\b", re.I)
 
 # Mỗi lệnh gh có hạn (#305): mạng treo không được làm createTask treo theo. Quá hạn = lỗi exit 124 (như lệnh thất bại).
 def gh_timeout_s():
@@ -289,12 +292,14 @@ def auto_labels(title, labels=None):
     return ["qa"] if "[qa]" in lower_title else ["feature"]
 
 def ready_started(repo):
-    """Số issue có PR mở head `issue-<n>-`. Lỗi đọc, JSON hỏng, hoặc đủ 100 PR (danh sách có thể bị cắt) → RuntimeError.
+    """Số issue có PR mở: head `issue-<n>-`, hoặc PR nhắc thẻ dù nhánh tên tuỳ ý (#735: body Closes/Fixes/Resolves/Refs #n,
+    closingIssuesReferences — PR #730 chạy #721 #722 #723 trên nhánh fix-stop-hold-fixture-now). Lỗi đọc, JSON hỏng, hoặc đủ 100
+    PR (danh sách có thể bị cắt) → RuntimeError.
 
     ponytail: trần 100 PR mở của `gh pr list --limit 100`; khi một repo có nhiều hơn, bỏ mọi thẻ Ready thay vì gom nhầm
     vào thẻ đã chạy. Nâng khi một board thật vượt 100 PR mở."""
     res = run_cmd(["gh", "pr", "list", "--repo", repo, "--state", "open",
-                   "--json", "headRefName", "--limit", "100"], check=False)
+                   "--json", "headRefName,body,closingIssuesReferences", "--limit", "100"], check=False)
     if res.returncode != 0:
         raise RuntimeError(res.stderr.strip()[:200] or f"gh pr list thoát {res.returncode}")
     try:
@@ -307,9 +312,13 @@ def ready_started(repo):
         raise RuntimeError("đủ 100 PR mở: không biết thẻ Ready nào đã có PR")
     started = set()
     for p in prs:
-        m = re.match(r"issue-(\d+)-", str((p or {}).get("headRefName") or ""))
+        p = p or {}
+        m = re.match(r"issue-(\d+)-", str(p.get("headRefName") or ""))
         if m:
             started.add(int(m.group(1)))
+        started.update(int(n) for n in PR_MENTION_RE.findall(str(p.get("body") or "")))
+        started.update(int(i["number"]) for i in p.get("closingIssuesReferences") or []
+                       if isinstance(i, dict) and str(i.get("number")).isdigit())
     return started
 
 def board_items(cfg):
@@ -328,7 +337,8 @@ def item_repo(content):
     return str(content.get("repository") or "").rstrip("/").split("github.com/")[-1].lower()
 
 def backlog_cards(cfg, repo, items=None):
-    """Thẻ Issue của `repo` chưa chạy: Backlog, và Ready chưa có PR mở head `issue-<n>-`. [{number, title, body, labels}].
+    """Thẻ Issue của `repo` chưa chạy: Backlog, và Ready chưa có PR mở (ready_started). [{number, title, body, labels}].
+    Thẻ Backlog có PR mở bị loại ở lần đọc lại thẻ đích (fresh_body), không ở đây.
 
     Lỗi đọc board → RuntimeError. Không đọc được PR mở → bỏ mọi thẻ Ready, vẫn trả Backlog.
     Board có thể chứa issue của repo khác (repo chưa đăng ký dùng Project #1): `gh issue edit N --repo <repo>` lên số
@@ -354,13 +364,17 @@ def backlog_cards(cfg, repo, items=None):
     return cards
 
 def fresh_body(repo, n):
-    """Body hiện tại của issue #n nếu còn mở, ngược lại None (không đọc được, đã đóng)."""
-    res = run_cmd(["gh", "issue", "view", str(n), "--repo", repo, "--json", "body,state"], check=False)
+    """Body hiện tại của issue #n nếu còn mở và chưa có PR nào sắp đóng nó, ngược lại None (không đọc được, đã đóng, đang chạy).
+
+    #731: backlog_cards chỉ đọc PR mở khi có thẻ Ready, nên thẻ Backlog có PR mở `Closes #n` nhánh tên tuỳ ý (31/10: #723 ở
+    PR #730) chỉ lộ ra ở đây — closedByPullRequestsReferences trong cùng lời gọi, không thêm lệnh mạng."""
+    res = run_cmd(["gh", "issue", "view", str(n), "--repo", repo, "--json", "body,state,closedByPullRequestsReferences"],
+                  check=False)
     try:
         d = json.loads(res.stdout) if res.returncode == 0 else {}
     except ValueError:
         d = {}
-    return d.get("body") if d.get("state") == "OPEN" else None
+    return d.get("body") if d.get("state") == "OPEN" and not d.get("closedByPullRequestsReferences") else None
 
 def scope_of(title):
     """Phần giữa `]` và `:` của tiêu đề (`🐛 [fix] gate: …` → "gate"); scope chung chung (task, misc…) như không có."""
@@ -418,9 +432,9 @@ def batch_ac(card, index):
 def pick_batch_lead(cards, items, labels, repo, new_ac=0):
     """Thẻ trưởng của đợt nhận thẻ mới (#724), hoặc None. Ứng viên = thẻ chưa chạy (`cards` của backlog_cards) cùng loại,
     build được (Blocked by `- None.`, không nhãn NOT_BUILDABLE — thành viên đợt khác vì thế cũng bị loại), không mang marker,
-    rủi ro không 🔴 High, đọc lại còn mở; đợt còn chỗ: 1 + thành viên + 1 ≤ max_batch_cards() và tổng mục AC (trưởng + thành
-    viên + mới) ≤ max_batch_ac(). Thẻ số lớn nhất (đợt mới nhất) trước. Trả (thẻ trưởng với body đọc lại, thứ tự thẻ mới
-    trong đợt, trần thẻ, tổng AC, trần AC)."""
+    rủi ro không 🔴 High, đọc lại còn mở và chưa có PR; đợt còn chỗ: 1 + thành viên + 1 ≤ max_batch_cards() và tổng mục AC (trưởng
+    + thành viên + mới) ≤ max_batch_ac(); Risk và AC của thẻ trưởng kiểm lại trên body đọc lại (#731). Thẻ số lớn nhất (đợt mới
+    nhất) trước. Trả (thẻ trưởng với body đọc lại, thứ tự thẻ mới trong đợt, trần thẻ, tổng AC, trần AC)."""
     if not PROJECT_REGISTRY.get(repo, {}).get("batch"):
         return None
     cap_cards, cap_ac = max_batch_cards(), max_batch_ac()
@@ -437,6 +451,10 @@ def pick_batch_lead(cards, items, labels, repo, new_ac=0):
         current = fresh_body(repo, c["number"])   # board có thể trễ: thẻ trưởng đã đóng thì đợt của nó không nhận thêm
         if (current is None or batch_of(current) is not None
                 or [l.strip() for l in section(current, "Blocked by") if l.strip()] not in ([], ["- None."])):
+            continue
+        # #731: phiên song song vừa gom vào thẻ trưởng (merge_body nâng Risk, thêm AC) mà board còn body cũ: Risk và AC theo body tươi.
+        total += ac_count(current) - ac_count(c["body"])
+        if is_high("\n".join(section(current, "Risk")).strip()) or total > cap_ac:
             continue
         return dict(c, body=current), members + 2, cap_cards, total, cap_ac
     return None
@@ -877,7 +895,8 @@ def main():
             # va chạm xảy ra thật (khoá file theo số thẻ).
             current = fresh_body(repo, n)
             if current is None:
-                print(f"   ⚠️  Không gom được vào #{n} (đã đóng hoặc không đọc lại được): tạo thẻ mới.", file=sys.stderr)
+                print(f"   ⚠️  Không gom được vào #{n} (đã đóng, có PR mở sắp đóng nó, hoặc không đọc lại được): tạo thẻ mới.",
+                      file=sys.stderr)
             else:
                 res = run_cmd(["gh", "issue", "edit", str(n), "--repo", repo, "--body", merge_body(current, title, body)],
                               check=False)
