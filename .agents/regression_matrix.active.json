@@ -2570,6 +2570,20 @@
       ]
     },
     {
+      "component": "mcp-servers/agent-office/gate-full-runner",
+      "watch_files": [
+        "mcp-servers/agent-office/gate_full_runner.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-AGENT-OFFICE-GATE-FULL-RUNNER-01",
+          "name": "agent-office: nút \"Chạy gate full\" — hàng đợi FIFO bỏ trùng, lưu qua khởi động lại, một lượt mỗi lúc, chờ khoá toàn máy, huỷ, repo chưa cài lịch, đọc khoá repo không flock, endpoint chặn tunnel/CSRF/DNS rebinding (gate_full.py giả)",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests -p test_gate_full_runner.py",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-merge-queue-route-rows",
       "watch_files": [
         ".claude/bin/super-board-merge-queue.sh",
