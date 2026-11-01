@@ -100,6 +100,8 @@ chmod +x "$TMP/sbbin/super-board-merge-gate.sh"
 TRAIN="$TMP/sbbin/super-board-merge-train.sh"
 export PATH="$TMP/bin:$PATH" FAKE_DIR="$TMP" FAKE_REPO="$R"
 export SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_NOTIFY_SKIP=1
+# Hàng heavy_slot riêng của test (như test_merge_queue_e2e.sh): verify của train không chờ tải máy, không chen vé vào hàng thật.
+export SB_HEAVY_SLOT_DIR="$TMP/slots" DEVKIT_SLOT_LOAD_MAX=100000
 unset SB_MERGE_CALLER SB_MERGE_QUEUE SB_BOARD_WORKER
 CFG="$TMP/cfg.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["echo x >> %s/verify.count; ls >> %s/verify.files"]}\n' "$TMP" "$TMP" > "$CFG"
