@@ -114,7 +114,7 @@ if [[ -x "$LAUNCHER" ]]; then
   # Dùng here-string `<<<` và `-Fqx` thay cho `printf | grep -qx` để không dính SIGPIPE (Broken pipe) dưới `set -uo pipefail` (#780)
   if grep -Fqx 'IMPECCABLE_NO_TELEMETRY=1' <<<"$ENV_DUMP" \
     && grep -Fqx 'DO_NOT_TRACK=1' <<<"$ENV_DUMP" \
-    && grep -Fqx "IMPECCABLE_SKILL_DIR=$SKILL_DIR" <<<"$ENV_DUMP"; then
+    && grep -Fqx -- "IMPECCABLE_SKILL_DIR=$SKILL_DIR" <<<"$ENV_DUMP"; then
     pass "scripts/impeccable thực sự export IMPECCABLE_NO_TELEMETRY=1, DO_NOT_TRACK=1 và IMPECCABLE_SKILL_DIR khi exec"
   else
     fail "scripts/impeccable không export đủ biến môi trường bảo mật khi chạy thực tế"
@@ -261,7 +261,7 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Lọc skill theo profile (profile_skills.py)
 # ---------------------------------------------------------------------------
-# Dùng here-string `<<<` thay cho `printf | grep -qx` để tránh SIGPIPE làm đỏ oan ở dòng 264 hoặc lọt lỗi giả ở dòng 274 (#780)
+# Dùng here-string `<<<` thay cho `printf | grep -qx` để tránh SIGPIPE làm đỏ oan ở vòng kiểm profile UI hoặc lọt lỗi giả ở nhánh elif loại trừ (#780)
 for prof in web android ios automotive universal voice-assistant; do
   if PROF_OUT="$(python3 "$PROFILE_SKILLS_PY" "$prof" 2>&1)" && grep -Fqx "impeccable" <<<"$PROF_OUT"; then
     pass "profile_skills.py bao gồm impeccable cho profile '$prof'"
