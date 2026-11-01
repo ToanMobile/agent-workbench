@@ -145,6 +145,7 @@ chmod +x "$T/fakecard.sh" "$T/bin/gh"
 export PATH="$T/bin:$PATH" FAKE_RERUNS="$T/reruns" FAKE_CARD_ARGS="$T/card.args" FAKE_MATRIX="$T/matrix.json"
 export DEVKIT_GATE_FULL_CMD="python3 $T/fakegate.py" DEVKIT_GATE_FULL_CARD_CMD="sh $T/fakecard.sh"
 export DEVKIT_GATE_FULL_LOG_DIR="$T/logs" DEVKIT_GATE_FULL_POLL_S=1 DEVKIT_CAPACITY_LOAD=0
+export DEVKIT_GATE_FULL_GLOBAL_LOCK="$T/global.lock"   # khoá toàn máy trong thư mục tạm: không chờ / chặn lượt đêm thật
 unset DEVKIT_GATE_FULL_BISECT
 
 # run_gf <mode> [-u VAR] [VAR=giá trị…]: một lượt gate_full.py; in exit code. Xoá dấu vết lượt trước (reruns, thẻ).

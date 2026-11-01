@@ -87,7 +87,15 @@ Nút "Kiểu bàn" (phím D) có 5 mẫu: Gỗ sáng, Góc chữ L (hai màn hì
 
 ## Thanh nút
 
-Thanh dưới đáy có 5 nút chính: Ai đang làm gì, Toàn cảnh, Dạng bảng, Thêm việc, Vừa xảy ra. Nút "Khác" mở thêm Phóng to, Agent kế tiếp, Danh sách repo, Kiểu bàn, Ca đêm, Tải lại GitHub.
+Thanh dưới đáy luôn nằm trên **một hàng** (không cuộn ngang, không cắt nút) từ 390 px tới màn to:
+
+- **Máy tính:** Dạng bảng · Thêm việc · Vừa xảy ra · Chỉ số · [Agent | Repo] (khung bên trái: ai đang làm gì hoặc danh sách repo, bấm lại để ẩn) · [Toàn cảnh | Cận cảnh] (góc nhìn camera) · ⋯. Nút bật/tắt giữ nhãn cố định và sáng lên khi đang bật. Lối vào khung duyệt là băng "Duyệt ›" trên header.
+- **Menu ⋯:** Agent kế tiếp, Kiểu bàn, Ca đêm, Điện thoại, Tải lại GitHub (và "Cần bạn duyệt" khi có thẻ 🙋). Mũi tên lên xuống đi qua các mục, Esc hoặc bấm ra ngoài để đóng.
+- **Điện thoại (< 900 px):** chỉ Duyệt (khi còn thẻ chờ), Bảng, Thêm, ⋯; mọi nút khác nằm trong tấm ⋯ dưới đáy.
+
+## Tài khoản và token còn
+
+Ô ở góc phải trên hiện tài khoản Claude đang dùng (tên hồ sơ của account pool, ví dụ `finos`, `finos_team`, `max`) và số token còn của phiên đang chạy, ví dụ "finos · 1,2 triệu token" (nhiều phiên thì hiện số thấp nhất). Bấm vào để xem từng agent/lane với tài khoản và token còn; bấm một dòng để mở chi tiết agent đó. Tài khoản lấy từ dòng `account_pool: … account=<tên> config_dir=<thư mục>` trong log worker; phiên điều phối không có dòng đó thì đoán từ thư mục cấu hình chứa transcript (`~/.claude-finos` → finos, `~/.claude` → mặc định). API chỉ trả tên hồ sơ và tên thư mục, không trả đường dẫn đầy đủ hay giá trị token.
 
 ## Di chuyển trong xưởng
 
@@ -99,7 +107,7 @@ Thanh dưới đáy có 5 nút chính: Ai đang làm gì, Toàn cảnh, Dạng b
 
 ## Phím tắt
 
-W ai đang làm gì, F toàn cảnh, Z phóng to, B dạng bảng, A thêm việc, N agent kế tiếp, T ca ngày hoặc ca đêm, R danh sách repo, D chọn kiểu bàn, E xem "Vừa xảy ra", Esc đóng bảng chi tiết hoặc dạng bảng. Phím Tab đi qua các nút, rồi tới nhãn repo (repo đã dừng không có nhãn: dùng Danh sách repo) và bóng thoại của từng agent trong xưởng.
+W ai đang làm gì, F toàn cảnh, Z cận cảnh, B dạng bảng, A thêm việc, N agent kế tiếp, T ca ngày hoặc ca đêm, R danh sách repo, D chọn kiểu bàn, E xem "Vừa xảy ra", Esc đóng bảng chi tiết hoặc dạng bảng. Phím Tab đi qua các nút, rồi tới nhãn repo (repo đã dừng không có nhãn: dùng Danh sách repo) và bóng thoại của từng agent trong xưởng.
 
 ## Agent đang làm gì lấy từ đâu
 

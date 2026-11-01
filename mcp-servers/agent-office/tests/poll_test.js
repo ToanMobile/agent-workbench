@@ -9,11 +9,11 @@ const html = fs.readFileSync(path.join(__dirname, '..', 'web', 'index.html'), 'u
 const m = html.match(/let pollTimer[\s\S]*?\n\}\n/);
 assert.ok(m, 'không tìm thấy poll trong index.html');
 
-const timers = new Map(); let nextId = 1; let fetches = 0; const releases = [];
+const timers = new Map(); const delays = []; let nextId = 1; let fetches = 0; const releases = [];
 const el = { hidden: false, textContent: '', dataset: {} };
 const ctx = {
-  document: { hidden: true, addEventListener: (ev, fn) => { if (ev === 'visibilitychange') ctx.onVisible = fn; } },
-  setTimeout: (fn) => { const id = nextId++; timers.set(id, fn); return id; },
+  document: { hidden: true, body: { classList: { toggle() {} } }, addEventListener: (ev, fn) => { if (ev === 'visibilitychange') ctx.onVisible = fn; } },
+  setTimeout: (fn, ms) => { const id = nextId++; timers.set(id, fn); delays.push(ms); return id; },
   clearTimeout: (id) => { timers.delete(id); },
   fetch: () => { fetches++; return new Promise((r) => releases.push(() => r({ ok: true, status: 200, json: async () => ({ version: 1 }) }))); },
   apiHeaders: () => ({}), $: () => el, console, renderTop() {}, apply() {}, renderNotices() {}, dismissed: new Set(),
@@ -32,5 +32,11 @@ vm.runInContext(m[0] + '\nthis.poll = poll;', ctx);
   // poll xong rồi thì tab hiện lại vẫn poll ngay
   ctx.onVisible(); assert.strictEqual(fetches, 2, 'poll rảnh phải chạy khi tab hiện lại');
   releases.forEach((r) => r());
+  await new Promise((r) => setImmediate(r));
+  // tab đang hiện: nhịp 3 giây; tab ẩn: hỏi thưa (30 giây), không tải ~400 KB mỗi 3 giây cho một tab không ai xem (BUG-REV-AO-PERF-1)
+  assert.strictEqual(delays[delays.length - 1], 3000, 'tab hiện: poll kế tiếp sau 3 giây, thấy ' + delays[delays.length - 1]);
+  ctx.document.hidden = true; releases.length = 0;
+  const p3 = ctx.poll(); releases.forEach((r) => r()); await p3;
+  assert.strictEqual(delays[delays.length - 1], 30000, 'tab ẩn: poll kế tiếp sau 30 giây, thấy ' + delays[delays.length - 1]);
   console.log('poll_test OK');
 })().catch((e) => { console.error(e); process.exit(1); });
