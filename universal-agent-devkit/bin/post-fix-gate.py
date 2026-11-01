@@ -1513,6 +1513,103 @@ def sibling_receipts(project_dir):
     return [p for _, p in sorted(found, reverse=True)[:SIBLING_RECEIPTS_MAX]]
 
 
+def scoped_store_receipt(project_dir, fp):
+    """Đường dẫn `<common>/postfix-gate/scoped_receipts/<fp>.json` khi mục store scoped của đúng cây `fp` là file thường (#785), None nếu không."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - module cùng thư mục bin/
+        tdir = tree_fp.tree_receipt_dir(project_dir)
+    except (ImportError, OSError, subprocess.SubprocessError):
+        return None
+    if not tdir or not re.fullmatch(r"[0-9a-f]{24}", fp or ""):
+        return None
+    p = os.path.join(os.path.dirname(tdir), tree_fp.SCOPED_STORE_DIR, fp + ".json")
+    try:
+        return p if stat.S_ISREG(os.lstat(p).st_mode) else None   # chỉ file thường (INSTINCT-040)
+    except OSError:
+        return None
+
+
+def cached_scoped_pass(project_dir, matrix_arg, fp, scoped_decision, path=None, why_out=None):
+    """#785: đọc và xác thực biên nhận scoped từ store chung (`<common>/postfix-gate/scoped_receipts/<fp>.json`).
+    Chỉ trả dict biên nhận khi khớp toàn bộ: scope=='scoped', exit==0, không carried_from, còn trong hạn DEVKIT_GATE_CACHE_MAX_S theo tested_at,
+    cùng result_format + gate_sha + matrix_sha, cùng dấu vân tay cây fp, không có --full đỏ trên cây, cùng local_sha, và tập test quyết định
+    hiện tại nằm trọn trong tập mà biên nhận đã kiểm."""
+    def _reject(msg):
+        if isinstance(why_out, list):
+            why_out.append(msg)
+        return None
+    if not isinstance(scoped_decision, dict):
+        return _reject("not_found")
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import tree_fp  # noqa: PLC0415 - module cùng thư mục bin/
+        fp = fp or tree_fp.tree_fingerprint(project_dir)
+        path = path or scoped_store_receipt(project_dir, fp)
+        if not path or not stat.S_ISREG(os.lstat(path).st_mode):
+            return _reject("not_found")
+        r = _load_state_json(path)
+        max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
+    except (ImportError, OSError, ValueError, TypeError, OverflowError, RecursionError):
+        return _reject("not_found")
+    if not isinstance(r, dict) or not isinstance(r.get("tests"), list) or not r["tests"]:
+        return _reject("malformed")
+    if r.get("scope") != "scoped":
+        return _reject("malformed")
+    if r.get("exit") != 0 or isinstance(r.get("exit"), bool) or r.get("carried_from") or not isinstance(r.get("project"), str):
+        return _reject("exit_or_carried")
+    def _time_ok(v):
+        return not isinstance(v, bool) and isinstance(v, (int, float)) and -1e15 < v < 1e15
+    tested, now = r.get("tested_at"), time.time()
+    if not _time_ok(tested) or tested > now + 60 or now - tested > max_s:
+        return _reject("ttl")
+    if any(not isinstance(x, dict) or not (x.get("ran_at") is None or _time_ok(x.get("ran_at"))) for x in r["tests"]):
+        return _reject("malformed")
+    def _str_or_none(v):
+        return v is None or isinstance(v, str)
+    if any(not isinstance(x.get("id"), str) or not all(_str_or_none(x.get(k)) for k in ("status", "log", "duration", "full_command")) for x in r["tests"]):
+        return _reject("malformed")
+    if not all(isinstance(r.get(k, []), list) and all(isinstance(x, str) for x in r.get(k, []))
+               for k in ("scoped_tests", "smoke", "core_smoke", "not_run")):
+        return _reject("malformed")
+    if r.get("untested") is not None and not (isinstance(r["untested"], list) and all(isinstance(u, str) for u in r["untested"])):
+        return _reject("malformed")
+    r_base, cur_base = r.get("base") or "", scoped_decision.get("base_sha") or ""
+    if not (re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", r_base) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", cur_base)):
+        return _reject("malformed")
+    if r.get("result_format") != RESULT_FORMAT:
+        return _reject("result_format")
+    if r.get("gate_sha") != _sha_file(__file__):
+        return _reject("gate_sha")
+    if r.get("matrix_sha") != _sha_file(find_matrix_path(matrix_arg)):
+        return _reject("matrix_sha")
+    if not fp or r.get("fingerprint") != fp:
+        return _reject("fp")
+    if _full_red_on_tree(project_dir, fp):
+        return _reject("full_red")
+    want_ts = set(scoped_decision.get("tests") or []) | set(scoped_decision.get("smoke") or [])
+    have_ts = set(r.get("scoped_tests") or []) | set(r.get("smoke") or [])
+    want_cs = set(scoped_decision.get("core_smoke") or [])
+    have_cs = set(r.get("core_smoke") or [])
+    have_nr = set(r.get("not_run") or [])
+    want_nr = set(scoped_decision.get("not_run") or [])
+    if not (want_ts <= have_ts and want_cs <= have_cs and have_nr <= want_nr):
+        return _reject("superset")
+    if r.get("local_sha") in (None, "?"):
+        return _reject("local_sha")
+    regen = r.get("local_regen") or []
+    if not (isinstance(regen, list) and all(isinstance(p, str) for p in regen)):
+        return _reject("local_sha")
+    try:
+        regen = regen_allowed(regen)
+    except Exception:
+        return _reject("local_sha")
+    want_local = local_state_sha(project_dir, regen) if regen else local_state_sha(project_dir)
+    if r.get("local_sha") != want_local:
+        return _reject("local_sha")
+    return r
+
+
 # Modes that ran a subset of a suite's command, or nothing: never a full PASS — no PASS row in
 # the checklist, no full-pass receipt (audit 2026-09-28: a RESOURCE run that ran nothing and a
 # PACKAGE subset were both stamped as a full PASS, and a later --full reused them).
@@ -6095,7 +6192,7 @@ def default_gate_slots() -> int:
 
 def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
                   cache, run_tests, force_reason, no_test_only, project_dir, git_dir, read_only=False, log_fp="", exit_reason="",
-                  slot_waits=None):
+                  slot_waits=None, reused_scoped="", reuse_miss_reason=""):
     """Append the run log line (see above). Takes only values the gate already has and reads nothing; `no_test_only` is main()'s own
     `docs_only` (every changed file passes needs_no_test()), while the logged `docs_only` is stricter: every changed file, rename source
     included, is documentation by DOC_EXT / DOC_NAMES. `log_fp` and `exit_reason` are values main() already holds: this function does not
@@ -6118,7 +6215,7 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
             verdict = "FAIL"
         elif deferred_by and exit_code in (0, 5):
             verdict = "DEFERRED"
-        elif exit_code == 0 and cache and not any(s[2] is not None for s in suites):
+        elif exit_code == 0 and (cache or reused_scoped) and not any(s[2] is not None for s in suites):
             verdict = "REUSED"
             reason = "reused"   # nhánh này quyết trong logger: lý do main đưa vào không còn mô tả đúng lượt
         elif exit_code == 0:
@@ -6165,6 +6262,10 @@ def _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, i
         }
         if getattr(args, "core_touched", None):   # #741: lượt --scoped chạm lõi (không leo full); chỉ ghi khi có, như ptc
             rec["core_touched"] = [f[:200] for f in args.core_touched[:RUN_LOG_CHANGED_MAX]]
+        if reused_scoped:   # #785: lượt dùng lại biên nhận scoped ghi dấu vân tay cây đã mượn
+            rec["reused_scoped"] = reused_scoped
+        elif reuse_miss_reason and re.fullmatch(r"[a-z0-9_]{1,40}", str(reuse_miss_reason)):
+            rec["reuse_miss_reason"] = str(reuse_miss_reason)
         ptc = [t["ptc"] for t in regression_tests if t.get("ptc")]
         if ptc:   # #472 D: hit-rate của per_test_cache (chỉ lượt có suite run_impacted.sh chạy với sổ per-test bật)
             rec["ptc_reuse"], rec["ptc_ran"] = sum(p[0] for p in ptc), sum(p[1] for p in ptc)
@@ -6866,7 +6967,8 @@ def main():
     # polls every 0.5 s and, if it won the lock before the full-pass receipt below was written
     # (the static audits and the receipt's own fingerprint sit in between: 0.1-20 s), found no
     # receipt to re-use and ran every suite again. Closed right after the receipt block below.
-    cache = None
+    cache = scoped_cache = None
+    scoped_miss = [""]
     tested_fp = tree_fp_of(project_dir) if run_tests and (force_reason or scoped) else None   # #644: biên nhận scoped cũng gắn cây đã kiểm
     # T0061: cây mà một lượt task kiểm, lấy TRƯỚC khi suite chạy (biên nhận task chỉ ghi khi cây vẫn là nó; một FAIL bỏ biên nhận của cây đó)
     task_fp = tree_fp_of(project_dir) if (run_tests and not force_reason and not deferred_by and not args.since and task_off_trunk
@@ -6932,7 +7034,7 @@ def main():
     budget_fp = tested_fp or (tree_fp_of(project_dir) if budget_s > 0 and use_cache else None)
     budget_head = _head_sha(project_dir) if budget_fp and not force_reason else None   # the HEAD of the same moment: a Stop record names both
 
-    def reuse_from(found, budget_run=False, partial=False):
+    def reuse_from(found, budget_run=False, partial=False, respect_no_cache=False):
         """Mark every reusable suite PASS from `found`, the receipt (or the budget record) of this exact content; it, or None.
         partial (biên nhận của worktree anh em): suite mà biên nhận KHÔNG có thì chạy thật, không huỷ cả lần dùng lại — merge gate #56
         (17/10): scratch không có overlay checklist của worktree nên chạy thêm một suite STALE nhẹ, và vì biên nhận thiếu đúng suite đó
@@ -6952,6 +7054,10 @@ def main():
 
         def reusable_suite(t):
             cmd = t["command"]
+            if respect_no_cache:   # #785: suite khai "cache": false hoặc khớp DEVICE_SUITE vẫn chạy thật mỗi lượt kể cả khi mượn biên nhận scoped
+                src_m = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == cmd), t)
+                if src_m.get("cache") is False or DEVICE_SUITE.search(cmd):
+                    return False
             if sc is not None and any(sc.blocked(k, t.get("id")) for k in (KEYS.get(id(t)) or (None,))):
                 return False   # P2: khoá hiện tại từng FAIL hoặc suite bị cách ly (flaky): không có PASS nào được dùng lại cho nó
             if not DEVICE_SUITE.search(cmd):
@@ -7025,6 +7131,69 @@ def main():
                 return found
         return None
 
+    def _scoped_entry_block():
+        """#785 (AG2-P1, OCR2-H2): chụp cổng vào MỘT lần trước acquire_test_run_lock (dòng dưới tạo
+        .claude/audit-gate/test_run.lock làm _ever_gated trả True từ đó trở đi), để các lần kiểm lại
+        sau chờ khoá/slot không bị chính khoá của lượt này chặn."""
+        if not scoped or force_reason or getattr(args, "force", False):
+            return "disabled"
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        try:
+            import tree_fp as _tfp  # noqa: PLC0415 - module cùng thư mục bin/
+            own = _result_file(project_dir, None)
+            own_sp = _tfp.scoped_receipt_path(project_dir)
+        except (ImportError, OSError):
+            return "disabled"
+        if not own or not own_sp:
+            return "disabled"
+        if _file_stamp(own) is not None or _file_stamp(own_sp) is not None:
+            return "own_receipt"
+        if _ever_gated(project_dir):
+            return "ever_gated"
+        return ""
+
+    scoped_entry_block = _scoped_entry_block() if (use_cache and scoped is not None) else "disabled"
+
+    def reuse_scoped_pass(fp=None, quiet=False):
+        """#785: dùng lại biên nhận scoped từ store chung (`<common>/postfix-gate/scoped_receipts/<fp>.json`)
+        cho lượt `--scoped` trong một git dir CHƯA từng chạy gate (scratch của merge gate, integrate, worktree QA/review mới).
+        Worktree đã có biên nhận hoặc đã từng chạy gate (`_ever_gated`) giữ nguyên hành vi cũ (chạy lại suite không khoá như run_impacted.sh)."""
+        if scoped_entry_block:
+            if not quiet and scoped_entry_block in ("own_receipt", "ever_gated"):
+                scoped_miss[0] = scoped_entry_block
+            return None
+        fp = (fp or tree_fp_of(project_dir)) or None
+        if tested_fp and fp != tested_fp:
+            if not quiet:
+                scoped_miss[0] = "fp"
+            return None
+        path = scoped_store_receipt(project_dir, fp)
+        if not path:
+            if not quiet:
+                scoped_miss[0] = "not_found"
+            return None
+        stamp = _file_stamp(path)   # lấy TRƯỚC khi đọc để stale_reused phát hiện mọi thay đổi/xoá lúc chờ khoá
+        why = []
+        cand = cached_scoped_pass(project_dir, args.matrix, fp, scoped, path, why)
+        if cand is None:
+            reason_code = why[0] if why else "malformed"
+            if not quiet:
+                scoped_miss[0] = reason_code
+                print(f"    {DIM}({tr('không dùng lại biên nhận scoped', 'scoped receipt not reused')}: {os.path.basename(path)}: {','.join(why) or 'malformed'}){RESET}")
+            return None
+        found = reuse_from(cand, partial=True, respect_no_cache=True)
+        if found:
+            scoped_miss[0] = ""
+            print(f"    {DIM}({tr('biên nhận scoped theo cây', 'scoped tree receipt')}: {path}){RESET}")
+            regen = regen_allowed(found.get("local_regen") or [])
+            if regen:
+                print(f"    {DIM}{tr('không so (suite tự ghi lại)', 'not compared (rewritten by its suites)')}: {len(regen)}: {', '.join(regen[:3])}{RESET}")
+            reuse_src[0] = (path, stamp, "__scoped__", True)
+            return found
+        if not quiet:
+            scoped_miss[0] = "no_reusable_suite"
+        return None
+
     def recheck_keyed():
         """PASS dùng lại theo khoá phải còn đứng vững (sổ khoá có flock riêng; một FAIL vừa ghi ở lượt/worktree khác lật nó thành UNTESTED).
         Gọi sau các suite và một lần nữa ngay trước kết luận, có hay không có khoá dự án (review 20/10, P1-5)."""
@@ -7041,7 +7210,12 @@ def main():
                         f"{len(gone_keyed)} content-key PASS no longer stand — UNTESTED"))
 
     def reused_tested_at():
-        """Lúc chạy cũ nhất của các suite PASS dùng lại (biên nhận cả cây hoặc khoá); None khi lượt này không dùng lại gì."""
+        """Lúc chạy cũ nhất của các suite PASS dùng lại; ở lượt --scoped chỉ tính suite mượn từ biên nhận (không gộp KEYED_IDS lưu UNTESTED/KEYED)."""
+        if scoped and not force_reason:
+            ts = [float(t.get("tested_at") or 0) for t in reused_pass()]
+            if scoped_cache:
+                ts.append(float(scoped_cache.get("tested_at") or 0))
+            return min(ts) if ts else None
         ts = [float(t.get("tested_at") or 0) for t in regression_tests if t.get("mode") == "cached" and t.get("status") == "PASS"]
         if cache:
             ts.append(float(cache.get("tested_at") or 0))
@@ -7072,14 +7246,18 @@ def main():
         now = _file_stamp(src)   # before the read, as at the first one
         if now == stamp:
             return []
-        # biên nhận của worktree anh em: đọc lại đúng file đó với luật của anh em; biên nhận của mình: như cũ (path None)
-        found = cached_full_pass(project_dir, args.matrix, budget_fp, name, src if sibling else None) if now else None
+        # biên nhận scoped (#785) hoặc biên nhận của worktree anh em: đọc lại đúng file đó với luật tương ứng; biên nhận của mình: như cũ (path None)
+        if name == "__scoped__":
+            found = cached_scoped_pass(project_dir, args.matrix, None, scoped, src) if (now and (not budget_fp or tree_fp_of(project_dir) == budget_fp)) else None
+        else:
+            found = cached_full_pass(project_dir, args.matrix, budget_fp, name, src if sibling else None) if now else None
         if found:
             reuse_src[0] = (src, now, name, sibling)
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
-        untested = set((found or {}).get("untested") or [])
+        untested = set((found or {}).get("untested") or []) | (
+            {i for i, x in prev.items() if x.get("status") == "UNTESTED"} if name == "__scoped__" else set())
         return [t for t in reused_pass() if not (found and t["id"] not in untested and prev.get(t["id"], {}).get("status") == "PASS"
-                                                 and (name is None or prev[t["id"]].get("full_command") == t["command"]))]
+                                                 and (name in (None, "__scoped__") or prev[t["id"]].get("full_command") == t["command"]))]
 
     def stale_to_untested(label, gone):
         """A re-used PASS that cannot be stood on (its file moved and no longer vouches for it, or there is no lock to check it under) is UNTESTED,
@@ -7100,11 +7278,21 @@ def main():
         except (ImportError, OSError, TypeError):
             return None
 
+    def scoped_receipt_stamp(fp=None):
+        """#785 (P1-AG1c): dấu stamp của mục store scoped_receipts/<fp>.json để nhận biết lượt khác vừa ghi biên nhận lúc ta chờ khoá/slot."""
+        if not scoped:
+            return None
+        p = scoped_store_receipt(project_dir, (fp or tree_fp_of(project_dir)) or None)
+        return _file_stamp(p) if p else None
+
     stamp_before = receipt_stamp() if use_cache else None
+    scoped_stamp_before = scoped_receipt_stamp(budget_fp) if (use_cache and scoped is not None) else None
     if use_cache:
         # budget_fp (= tested_fp for a forced run) was taken just above and nothing has run since: the same tree (A13). The
         # re-check after the lock wait below takes a fresh one: the tree may have changed while this run waited.
         cache = reuse_full_pass(budget_fp)
+        if cache is None and scoped is not None:
+            scoped_cache = reuse_scoped_pass(budget_fp)
     if sc is not None and keyed_ok:
         for t in regression_tests:
             k = lookup_key(t)
@@ -7178,6 +7366,21 @@ def main():
         cache = reuse_full_pass()
         to_run = [t for t in regression_tests if t.get("mode") not in ("cached", "edited")]
         nothing_to_run = not any(t.get("command") for t in to_run)
+    if use_cache and cache is None and scoped_cache is None and scoped is not None and lock_held:
+        cur_scoped_stamp = scoped_receipt_stamp(tested_fp)
+        if cur_scoped_stamp not in (None, scoped_stamp_before):
+            scoped_cache = reuse_scoped_pass(quiet=True)
+            if scoped_cache is not None:
+                if sc is not None and keyed_ok:
+                    for t in regression_tests:
+                        k = lookup_key(t)
+                        if k and t.get("mode") != "cached":
+                            rec = sc.hit(k, t)
+                            if rec:
+                                mark_keyed(t, rec)
+                to_run = [t for t in regression_tests if t.get("mode") not in ("cached", "edited")]
+                nothing_to_run = not any(t.get("command") for t in to_run)
+        scoped_stamp_before = cur_scoped_stamp
     # T0056: hàng đợi gate toàn máy (pool 'gate', tối đa N lượt chạy suite cùng lúc). Chỉ xin slot khi đã giữ khoá dự án,
     # thực sự còn suite cần chạy và tiến trình cha chưa giữ slot (DEVKIT_GATE_SLOT_HELD != "1").
     if run_tests and lock_held and not nothing_to_run and prev_gate_slot_held != "1":
@@ -7213,6 +7416,8 @@ def main():
                     # kiểm tra lại ngay, nếu không còn suite nào cần chạy thì trả slot liền cho hàng đợi.
                     if use_cache and cache is None:
                         cache = reuse_full_pass()
+                        if cache is None and scoped_cache is None and scoped is not None and scoped_receipt_stamp(tested_fp) not in (None, scoped_stamp_before):
+                            scoped_cache = reuse_scoped_pass(quiet=True)
                     if use_cache and sc is not None and not keyed_ok and not sc.sentinel_due():
                         sentinel_run = False
                         keyed_ok = True
@@ -8284,6 +8489,8 @@ def main():
     if pm_relax:
         print(f"  • {YELLOW}{tr('Lời duyệt test dựa vào biên bản antigravity-pm ở ANTIGRAVITY_PM_STATE_HOME lạ (không phải ~/.antigravity-pm): kết luận giữ nguyên nhưng KHÔNG ghi biên nhận task / merge gate, full_pass.json không là exit 0', 'Test approval rests on an antigravity-pm record under a foreign ANTIGRAVITY_PM_STATE_HOME (not ~/.antigravity-pm): verdict kept, but NO task / merge-gate receipt, full_pass.json is not exit 0')}{RESET}")
     try:
+        # #785 (OCR4-1, P1-AG1a): tính reuse_at MỘT lần trước cả hai khối full_pass và scoped_pass (--scoped luôn có partial=True nên không đi vào khối full_pass).
+        reuse_at = reused_tested_at()
         if run_tests and not impacted_run and not deferred_by and not lock_busy and not budget_cut and not slot_busy and not edited_early and (not partial or (exit_code != 0 and not receipt_untested)) \
                 and (lock_held or partial or exit_code != 0):
             # only a full run writes the receipt; a partial PASS — or a partial UNTESTED, whose runnable
@@ -8302,7 +8509,6 @@ def main():
             # ponytail: a --full that re-used some suites of its own exit-2 receipt (the Stop hook dropped the tree entry) and ran the rest leaves no
             # tree entry for a removed worktree: safe, only slower; upgrade when a PASS carries its lineage (real-run time) so a copy of a real
             # run can be told from a copy of a copy.
-            reuse_at = reused_tested_at()
             # pm home lạ (pm_relaxed): exit 0 vào biên nhận như exit 2 — suite vẫn dùng lại được, proof/push gate không nhận
             write_full_pass_receipt(project_dir, 2 if exit_code == 0 and pm_relax else exit_code, args.matrix, receipt_tests,
                                     tested_at=reuse_at, refresh_only=reuse_src[0] is not None,
@@ -8335,9 +8541,11 @@ def main():
                 print(f"  • {YELLOW}{tr('Không ghi biên nhận scoped: cây này có lượt --full đỏ — sửa suite đỏ (cây mới); --full chỉ chạy ở gate-full đêm', 'Scoped receipt not written: this tree has a red --full run — fix the red suite (a new tree); --full runs only in the nightly gate-full')}{RESET}")
             elif (exit_code == 0 and lock_held and not read_only and not pm_relax and not lock_busy and not budget_cut and not slot_busy
                     and not any(t.get("status") == "UNTESTED" for t in regression_tests)):
-                # PASS theo khoá CHÍNH XÁC vào biên nhận như UNTESTED / KEYED, như receipt_tests của biên nhận full
+                # PASS theo khoá CHÍNH XÁC vào biên nhận như UNTESTED / KEYED, như receipt_tests của biên nhận full.
+                # #785: truyền tested_at=reuse_at và refresh_only=reuse_src[0] is not None để không gia hạn TTL và không hồi sinh mục store đã xoá.
                 write_full_pass_receipt(project_dir, 0, args.matrix,
                                         [dict(t, status="UNTESTED", label="KEYED") if precise_hit(t) else t for t in regression_tests],
+                                        tested_at=reuse_at, refresh_only=reuse_src[0] is not None,
                                         tested_fp=tested_fp, locked=True, scoped=meta)
                 mark_merge_gate_receipt(project_dir, diff_ref, run_start_tree, scoped=True, relaxing=[
                     flag for flag, on in (("--allow-no-tests", args.allow_no_tests), ("--allow-orphan-tests", args.allow_orphan_tests),
@@ -8544,8 +8752,10 @@ def main():
     if run_tests and not _run_log_fp(log_fp):
         log_fp = tree_fp_of(project_dir)
     _log_gate_run(args, exit_code, modified_files, regression_tests, ran_cmds, impacted_run, deferred_by, lock_busy, lock_held,
-                  cache or (keyed_hits or None), run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
-                  log_fp=log_fp, exit_reason=exit_reason, slot_waits=slot_waits)
+                  cache or scoped_cache or (keyed_hits or None), run_tests, force_reason, docs_only, project_dir, git_dir, read_only=read_only,
+                  log_fp=log_fp, exit_reason=exit_reason, slot_waits=slot_waits,
+                  reused_scoped=_run_log_fp(scoped_cache.get("fingerprint")) if (scoped_cache and exit_code == 0) else "",
+                  reuse_miss_reason=scoped_miss[0] if (scoped is not None and not scoped_cache) else "")
     return exit_code
 
 
