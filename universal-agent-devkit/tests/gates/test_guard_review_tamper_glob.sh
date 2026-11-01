@@ -96,6 +96,19 @@ expect deny "$R" "x=\`$DK/bin/review_sign.py sign /tmp/s.json\`"
 expect allow "$R" "cat $DK/bin/review_sign.py"
 expect allow "$R" "grep -n load_key $DK/bin/review_sign.py"
 expect allow "$R" "sed -n 1,20p $DK/bin/review_sign.py"
+# audit T0021: a line naming the signer passes only as VERIFY_ONLY or one plain read — command-position parsing missed these
+expect deny "$R" "out=\"\$($DK/bin/review_sign.py sign .git/review-fanout/$H/summary.json)\""
+expect deny "$R" "echo \"\`$DK/bin/review_sign.py sign /tmp/s.json\`\""
+expect deny "$R" "cat <($DK/bin/review_sign.py sign x)"
+expect deny "$R" "$(printf "# '\n%s sign x\n# '" "$DK/bin/review_sign.py")"
+expect deny "$R" "find . -name summary.json -exec env $DK/bin/review_sign.py sign {} \\;"
+expect deny "$R" "git commit -m \"x\" && $DK/bin/review_sign.py sign y"
+expect allow "$R" 'cat universal-agent-devkit/bin/review_sign.py'
+expect allow "$R" 'grep -n load_key universal-agent-devkit/bin/review_sign.py'
+expect allow "$R" 'sed -n 1,40p universal-agent-devkit/bin/review_sign.py'
+expect allow "$R" 'git diff origin/main -- universal-agent-devkit/bin/review_sign.py'
+expect allow "$R" 'python3 universal-agent-devkit/bin/review_sign.py verify .git/review-fanout/H/summary.json'
+expect allow "$R" 'bash tests/gates/test_review_seal_binding.sh'
 # nocaseglob (bash) / NO_CASE_GLOB (zsh): a glob matches a folder in any case
 expect deny "$R" "shopt -s nocaseglob; cp x $DK/HOO?S/guard-secrets.py"
 # allowed: reads, and globs that expand to nothing protected
