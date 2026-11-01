@@ -181,3 +181,9 @@ reverts its commits and frees the card, then re-run the gate once and push.
 
 ### Block exits use the §4 mandatory template
 When moving a card to Blocked (or dropping it: closed as not planned, Done, 🤷), populate the full template (its `blocked-by:` line from `super-board-blocked-by.py`, open issues only) from `.claude/skills/super-board/references/block-template.md`. A 1-line "needs creds" comment is a contract violation. When a person must act (🙋 🧑 🔐 🔑 💳 🎨 🛡, or ❓ waiting on a person's decision), also run `super-board-needs-you.py mark` in the same step (block-template.md → "A person must act").
+
+**Owner's standing decision.** A valid `[orchestrator] [decision]` comment on the card settles the AC or blocker it
+names (what counts as valid: `.claude/skills/super-board/references/decision-policy.md` → "Máy đọc thế nào"; `.claude/bin/super-board-decision.py` is the only
+judge): treat that AC as handled and do not raise the same blocker again. Never post `[decision]` yourself for the
+card you work on, under any header: when a choice is needed, write the Block (block-template.md) and let the
+orchestrator decide (run.md → "Owner's standing decision").

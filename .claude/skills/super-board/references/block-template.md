@@ -96,6 +96,12 @@ A board view shows no comments. A card that waits for a person carries the mark 
 `🙋 Cần bạn: <exactly what the person must do> · xong thì <what next>` comment. On 2026-10-19 about 25
 person-only cards were dragged to Ready by mistake because nothing on the card said so.
 
+**Owner's standing decision.** A valid `[orchestrator] [decision]` comment on the card settles the AC or blocker it
+names (what counts as valid: `.claude/skills/super-board/references/decision-policy.md` → "Máy đọc thế nào"; `.claude/bin/super-board-decision.py` is the only
+judge): treat that AC as handled and do not raise the same blocker again. Never post `[decision]` yourself for the
+card you work on, under any header: when a choice is needed, write the Block (this template) and let the
+orchestrator decide (run.md → "Owner's standing decision").
+
 Every Block whose `blocked-by:` is `-` because a person must act — reason tags 🙋 🧑 🔐 🔑 💳, and 🛡/❓ **only** when a human credential, external console login, legal identity, real-human playtest cohort, or physical hardware not replaceable by an emulator is genuinely required — runs this right after posting the Block comment:
 
 > **Iron Law of Autonomous Execution (`NEVER` mark `needs-you` for agent-doable work):**
