@@ -9,16 +9,24 @@
 # như nhau).
 #
 # Fixture: ma trận cỡ PR #742 (145 rule, 179 test, 495 glob) + checklist 179 test + 167 bug (~ checklist thật của workbench).
-# Ngân sách giữ nguyên test_budgets.sh: trung vị CPU 5 lần ≤ 150 ms, wall ≤ 5×. Thêm 2 ý không phụ thuộc tải:
+# Ngân sách giữ nguyên test_budgets.sh: trung vị CPU 5 lần ≤ 150 ms, wall ≤ 5×. Thêm các ý không phụ thuộc tải:
 #   - sau lần chạy đầu, bytecode của regression_checklist được giữ trong TMPDIR (lần sau không compile lại), ở cả env gate
 #     lẫn env hook của Claude Code (PYTHONDONTWRITEBYTECODE=1, không prefix);
+#   - đường cache là symlink hay thư mục quyền lỏng thì hook không ghi vào đó;
 #   - không một .pyc nào được ghi vào cây kit (lý do của sys.dont_write_bytecode trong enrich_context.py).
+# Mọi lần chạy dùng BẢN SAO kit trong $TMP và chỉ quét bản sao: cây kit thật nhận pyc của tiến trình khác (gate, hook chạy
+# `python3 -I` bỏ qua env pycache), quét nó là đỏ oan (review Claude 01/11).
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # no inherited GIT_*: tests/lib/clean_git_env.sh
 set -u
 DEVKIT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FAILS=0; ok() { echo "✔ $1"; }; fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
 export STALE_RERUN=0 RED_PROOF=0
+
+# Bản sao kit: clone APFS (cp -c) nếu được, không thì chép thường (~26 MB). Bỏ __pycache__ chép theo từ cây thật.
+K="$TMP/kit"
+cp -cR "$DEVKIT_DIR" "$K" 2>/dev/null || { rm -rf "$K"; cp -R "$DEVKIT_DIR" "$K"; } || { echo "✖ không chép được kit"; exit 1; }
+find "$K" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
 STAMP="$TMP/stamp"; : > "$STAMP"
 
 P="$TMP/p"; mkdir -p "$P/.agents" "$P/src"
@@ -53,6 +61,7 @@ PY
 git add -A && git commit -qm init
 export CLAUDE_PROJECT_DIR="$P"
 python3 -c 'import json; print(json.dumps({"prompt": "App bị crash khi mở màn hình bản đồ lần thứ hai", "session_id": "b", "transcript_path": "/nonexistent/claude-tr.jsonl"}))' > "$TMP/prompt.json"
+HOOK="$K/hooks/prompt_context.sh"
 
 # Giống test_budgets.sh: CPU của hook và mọi tiến trình con (getrusage RUSAGE_CHILDREN), trung vị 5 lần; wall trần 5×.
 median_ms() {  # median_ms <cmd…> (stdin from $STDIN_FILE): "<median CPU ms> <median wall ms>"
@@ -80,42 +89,42 @@ cached_rc() {  # cached_rc <dir>: số file bytecode của regression_checklist 
 
 # 1) Env gate (run_impacted.sh:243): TMPDIR mới, PYTHONPYCACHEPREFIX rỗng trong đó, PYTHONDONTWRITEBYTECODE=1 của Claude Code.
 G="$TMP/g"; mkdir -p "$G"
-OUT="$(TMPDIR="$G" PYTHONPYCACHEPREFIX="$G/pyc" PYTHONDONTWRITEBYTECODE=1 bash "$DEVKIT_DIR/hooks/prompt_context.sh" < "$TMP/prompt.json" 2>&1)"
+OUT="$(TMPDIR="$G" PYTHONPYCACHEPREFIX="$G/pyc" PYTHONDONTWRITEBYTECODE=1 bash "$HOOK" < "$TMP/prompt.json" 2>&1)"
 case "$OUT" in *"Bug đã ghi vào checklist: "*) ok "env gate: hook vẫn ghi bug vào checklist" ;;
   *) fail "env gate: hook không còn ghi bug (output: $(printf '%s' "$OUT" | head -c 300))" ;; esac
 [ "$(cached_rc "$G")" -ge 1 ] && ok "env gate: bytecode regression_checklist được giữ trong TMPDIR sau lần chạy đầu" \
   || fail "env gate: không giữ bytecode nào của regression_checklist dưới $G — mỗi prompt compile lại 3517 dòng + stdlib"
 within "env gate, ma trận cỡ #742: prompt hook with bug capture" 150 \
-  "$(TMPDIR="$G" PYTHONPYCACHEPREFIX="$G/pyc" PYTHONDONTWRITEBYTECODE=1 STDIN_FILE="$TMP/prompt.json" median_ms bash "$DEVKIT_DIR/hooks/prompt_context.sh")"
+  "$(TMPDIR="$G" PYTHONPYCACHEPREFIX="$G/pyc" PYTHONDONTWRITEBYTECODE=1 STDIN_FILE="$TMP/prompt.json" median_ms bash "$HOOK")"
 
 # 2) Env hook của Claude Code: PYTHONDONTWRITEBYTECODE=1, không prefix — bytecode của kit vẫn phải được giữ ngoài cây kit.
 H="$TMP/h"; mkdir -p "$H"
-env -u PYTHONPYCACHEPREFIX TMPDIR="$H" PYTHONDONTWRITEBYTECODE=1 bash "$DEVKIT_DIR/hooks/prompt_context.sh" < "$TMP/prompt.json" >/dev/null 2>&1
+env -u PYTHONPYCACHEPREFIX TMPDIR="$H" PYTHONDONTWRITEBYTECODE=1 bash "$HOOK" < "$TMP/prompt.json" >/dev/null 2>&1
 [ "$(cached_rc "$H")" -ge 1 ] && ok "env hook: bytecode regression_checklist được giữ trong TMPDIR" \
   || fail "env hook: không giữ bytecode nào của regression_checklist dưới $H"
 
 # 3) Ca kiểm (OCR 01/11): đường cache là symlink, như khi người khác cài sẵn trong /tmp dùng chung. Mong đợi: đích symlink vẫn
-#    rỗng sau khi hook chạy, và hook vẫn in dòng bug.
+#    rỗng sau khi hook chạy, và hook vẫn chạy (in dòng bug, hoặc dòng "như lượt trước" của dedupe phiên).
 L="$TMP/l"; mkdir -p "$L" "$TMP/evil"; ln -s "$TMP/evil" "$L/devkit-pycache-${UID:-x}"
-OUT="$(env -u PYTHONPYCACHEPREFIX TMPDIR="$L" PYTHONDONTWRITEBYTECODE=1 bash "$DEVKIT_DIR/hooks/prompt_context.sh" < "$TMP/prompt.json" 2>&1)"
+OUT="$(env -u PYTHONPYCACHEPREFIX TMPDIR="$L" PYTHONDONTWRITEBYTECODE=1 bash "$HOOK" < "$TMP/prompt.json" 2>&1)"
 [ -z "$(ls -A "$TMP/evil")" ] && ok "cache là symlink: không dùng, đích symlink vẫn rỗng" \
   || fail "cache là symlink: hook ghi vào đích symlink ($(ls -A "$TMP/evil" | head -3 | tr '\n' ' '))"
 case "$OUT" in *"Bug đã ghi vào checklist: "*|*"(ngữ cảnh DevKit như lượt trước)"*) ok "cache là symlink: hook vẫn chạy bình thường" ;;
   *) fail "cache là symlink: hook không chạy được (output: $(printf '%s' "$OUT" | head -c 300))" ;; esac
-
-# Ca kiểm: thư mục cache có sẵn mà nhóm/người khác ghi được (0777). Mong đợi: hook không ghi pyc nào vào đó.
+# Ca kiểm (OCR + Antigravity 01/11): thư mục cache có sẵn mà nhóm/người khác ghi được (0777). Mong đợi: hook không ghi pyc vào đó.
 W="$TMP/w"; mkdir -p "$W/devkit-pycache-${UID:-x}"; chmod 777 "$W/devkit-pycache-${UID:-x}"
-env -u PYTHONPYCACHEPREFIX TMPDIR="$W" PYTHONDONTWRITEBYTECODE=1 bash "$DEVKIT_DIR/hooks/prompt_context.sh" < "$TMP/prompt.json" >/dev/null 2>&1
+env -u PYTHONPYCACHEPREFIX TMPDIR="$W" PYTHONDONTWRITEBYTECODE=1 bash "$HOOK" < "$TMP/prompt.json" >/dev/null 2>&1
 [ -z "$(ls -A "$W/devkit-pycache-${UID:-x}")" ] && ok "cache quyền lỏng (0777): không dùng, thư mục vẫn rỗng" \
   || fail "cache quyền lỏng (0777): hook ghi vào ($(ls -A "$W/devkit-pycache-${UID:-x}" | head -3 | tr '\n' ' '))"
 
-# Ca kiểm (Antigravity 01/11): chạy CLI enrich_context.py không prefix, được ghi bytecode — nhánh sys.pycache_prefix is None của
-# _no_kit_pycache(); bước 4 bắt pyc ghi vào cây kit.
-env -u PYTHONPYCACHEPREFIX -u PYTHONDONTWRITEBYTECODE TMPDIR="$TMP" python3 "$DEVKIT_DIR/scripts/context/enrich_context.py" --hook \
+# Ca kiểm (Antigravity 01/11): hook mà cache bị từ chối, và CLI enrich_context.py — cả hai không prefix, ĐƯỢC ghi bytecode: nhánh
+# sys.pycache_prefix is None của _no_kit_pycache(); bước 4 bắt pyc ghi vào bản sao kit.
+env -u PYTHONPYCACHEPREFIX -u PYTHONDONTWRITEBYTECODE TMPDIR="$L" bash "$HOOK" < "$TMP/prompt.json" >/dev/null 2>&1
+env -u PYTHONPYCACHEPREFIX -u PYTHONDONTWRITEBYTECODE TMPDIR="$TMP" python3 "$K/scripts/context/enrich_context.py" --hook \
   < "$TMP/prompt.json" >/dev/null 2>&1
 
-# 4) Không ghi .pyc / __pycache__ nào vào cây kit (lý do của sys.dont_write_bytecode trong enrich_context.py).
-LEAK="$(find "$DEVKIT_DIR" -newer "$STAMP" \( -name '*.pyc' -o -name __pycache__ \) 2>/dev/null | head -3)"
+# 4) Không ghi .pyc / __pycache__ nào vào (bản sao) cây kit (lý do của sys.dont_write_bytecode trong enrich_context.py).
+LEAK="$(find "$K" -newer "$STAMP" \( -name '*.pyc' -o -name __pycache__ \) 2>/dev/null | head -3)"
 [ -z "$LEAK" ] && ok "không có bytecode nào ghi vào cây kit" || fail "bytecode ghi vào cây kit: $LEAK"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_prompt_hook_gate_env: all passed" || { echo "❌ test_prompt_hook_gate_env: $FAILS failed"; exit 1; }
