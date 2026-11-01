@@ -510,7 +510,6 @@ def test_change_is_append_only(base_ref: str, repo_path: str, old_path: str = ""
 
 
 _MERGE_BASES = {}
-_ON_FIRST_PARENT = {}
 
 
 def _blob_sha(ref: str, repo_path: str):
@@ -525,23 +524,6 @@ def _merge_base(a: str, b: str):
         res = subprocess.run(["git", "-C", str(get_repo_root()), "merge-base", a, b], capture_output=True, text=True)
         _MERGE_BASES[(a, b)] = (res.stdout.strip() or None) if res.returncode == 0 else None
     return _MERGE_BASES[(a, b)]
-
-
-def _landed_base(a: str, r: str):
-    """merge-base(a, r) chỉ khi nó là một trạng thái r thật sự từng là đầu nhánh (đã qua gate merge của r): nằm trên chuỗi first-parent
-    của r, hoặc có trong reflog của r (một merge "foxtrot" — pull --no-rebase trên main rồi push — đẩy đầu cũ sang cha thứ hai; review
-    #834). Commit giữa chừng ở cha thứ hai của một PR đã gộp (WIP chưa từng là đầu r) hay git lỗi ⇒ None (audit #834)."""
-    mb = _merge_base(a, r)
-    if mb and (mb, r) not in _ON_FIRST_PARENT:
-        root = str(get_repo_root())
-        # đi first-parent từ r, dừng ở các cha của mb: mb có trong danh sách ⇔ mb nằm trên chuỗi first-parent của r
-        res = subprocess.run(["git", "-C", root, "rev-list", "--first-parent", r, "--not", f"{mb}^@"], capture_output=True, text=True)
-        ok = res.returncode == 0 and mb in res.stdout.split()
-        if not ok:
-            lg = subprocess.run(["git", "-C", root, "log", "-g", "--format=%H", r], capture_output=True, text=True)
-            ok = lg.returncode == 0 and mb in lg.stdout.split()
-        _ON_FIRST_PARENT[(mb, r)] = ok
-    return mb if mb and _ON_FIRST_PARENT[(mb, r)] else None
 
 
 def _landed_refs(project_dir) -> list:
@@ -569,26 +551,26 @@ def _landed_refs(project_dir) -> list:
 
 
 def since_test_weakened(since: str, repo_path: str, upstream=(), runner: bool = False) -> bool:
-    """True khi test này đã có ở `since`, nhánh có phần đổi của riêng nó trên test trong `since..HEAD` (một trong hai
-    đầu không phải nội dung đã landed trên các ref `upstream` — _landed_refs; nhận cả một chuỗi ref), và thay đổi của
-    nó tới cây làm việc không phải chỉ nối thêm — tính từ commit mới nhất trong dải chạm nó có dòng `Test-approved-by:`
-    (nội dung commit đó đã được audit), không có thì từ `since`. Nội dung đã landed (của đồng đội, trunk của origin gộp
-    vào) đã qua gate của chính nó.
+    """True khi test này đã có ở `since`, nhánh có phần đổi của riêng nó trên test trong `since..HEAD` (không hội tụ về
+    đầu một ref đã landed trong `upstream` — _landed_refs; nhận cả một chuỗi ref), và thay đổi của nó tới cây làm việc
+    không phải chỉ nối thêm — tính từ commit mới nhất trong dải chạm nó có dòng `Test-approved-by:` (nội dung commit đó
+    đã được audit), không có thì từ `since`. Nội dung đầu trunk của origin (gộp vào) đã qua gate của chính nó.
     runner: script chạy suite (A2), xét bằng test_change_is_append_only(runner=True)."""
     root = str(get_repo_root())
     if object_info(since, repo_path) is None:
         return False
     landed = [r for r in ([upstream] if isinstance(upstream, str) else list(upstream or ())) if r]
     # Xét theo NỘI DUNG, không theo `rev-list --not <landed> -- path` (#638, review/audit #834): rev-list có path rút gọn lịch sử
-    # (TREESAME) — commit gộp giữ bản của một cha (`--theirs`, `git rm`) che commit bên kia; và chỉ rút gọn qua cha là mốc --not
-    # tường minh, nên sau một merge "foxtrot" trên main commit gộp hợp lệ của nhánh lại hiện ra. Nhánh không có phần đổi riêng khi:
-    # dải không đổi nó, hoặc với cùng một ref r, bản ở <since> bằng bản ở _landed_base(<since>, r) VÀ bản ở HEAD bằng bản ở
-    # _landed_base(HEAD, r) (đầu nhánh r thật sự từng có: first-parent hoặc reflog — loại commit gộp trả bản yếu cũ của main về
-    # và commit WIP ở cha thứ hai của một PR đã merge).
+    # (TREESAME) — commit gộp giữ bản của một cha (`--theirs`, `git rm`) che commit bên kia. Nhánh không có phần đổi riêng khi dải
+    # không đổi nó, hoặc với cùng một ref r: bản ở HEAD bằng bản ở ĐẦU r hiện tại (gộp nhánh vào r không đổi test này; đầu r đã qua
+    # gate) VÀ bản ở <since> bằng bản ở merge-base(<since>, r) (ở mốc đã kiểm nhánh chưa sửa riêng). Không tin commit giữa chừng
+    # trong lịch sử r (cha thứ nhất của merge foxtrot, commit WIP của PR, commit giữa của một lần push nhiều commit — audit T0004
+    # #834): bản HEAD khớp chúng mà khác đầu r thì vẫn xét như cũ. Test bị xoá ở HEAD không được nới (chặt hơn).
+    # ponytail: chỉ so với đầu r hiện tại; r đã đi tiếp và đổi lại test sau khi nhánh gộp thì đòi duyệt như main — #839 nếu thấy chặn oan.
     mine, head = _blob_sha(since, repo_path), _blob_sha("HEAD", repo_path)
-    if mine is not None and (mine == head or any(
-            _landed_base(since, r) and _landed_base("HEAD", r) and mine == _blob_sha(_landed_base(since, r), repo_path)
-            and head == _blob_sha(_landed_base("HEAD", r), repo_path) for r in landed)):
+    if mine is not None and (mine == head or head is not None and any(
+            head == _blob_sha(r, repo_path) and _merge_base(since, r) and mine == _blob_sha(_merge_base(since, r), repo_path)
+            for r in landed)):
         return False                                  # chỉ nội dung đã landed
     res = subprocess.run(["git", "-C", root, "log", "--format=%H", "-E",
                           "--grep=^Test-approved-by:[[:space:]]*[^[:space:]]", f"{since}..HEAD",
@@ -6580,30 +6562,24 @@ def main():
         extra = [f for f in since_paths if os.path.exists(os.path.join(str(get_project_dir()), f))]
         all_changed = sorted(set(all_changed) | set(extra))
         # #638: commit đã nằm trên ref đã landed (trunk của origin gộp vào nhánh, upstream giống trunk) đã qua gate của chính nó —
-        # một danh sách dùng chung cho kiểm tĩnh bên dưới và since_test_weakened (một bộ phân loại, INSTINCT-015).
+        # chỉ since_test_weakened dùng danh sách này; kiểm tĩnh A1 bên dưới giữ nguyên luật cũ (chỉ @{u}).
         landed = _landed_refs(get_project_dir())
         # The static checks judge the committed work too (A1, 2026-10-09): against HEAD, an AWS key or a placeholder
         # committed in <since>..HEAD was "already there" — exit 0 and a receipt. Their base is <since>; a file renamed
         # in the range (or renamed again in the tree) is read at <since> under its old path. A file only commits already
-        # on a landed ref touched (a teammate's, pulled in) keeps HEAD: they passed their own gate (as since_test_weakened).
+        # on the upstream touched (a teammate's, pulled in) keeps HEAD: they passed their own gate (as since_test_weakened).
+        # ponytail: A1 chỉ tin @{u}, thống nhất với _landed_refs ở #839 (hai bộ phân loại, INSTINCT-015: nới A1 cho trunk origin
+        # để lọt placeholder qua merge foxtrot criss-cross — audit T0004 PR #834 — nên giữ luật cũ tới khi #839 sửa merge-base).
         if not args.diff:
             BASE_REF = args.since
-            if landed:
+            up = subprocess.run(["git", "-C", str(get_project_dir()), "rev-parse", "--verify", "-q", "@{u}"],
+                                capture_output=True, text=True).stdout.strip()
+            if up:
                 lg = subprocess.run(["git", "-C", str(get_project_dir()), "log", "--format=", "--name-only", "-z", "--cc",
-                                     "--relative", f"{args.since}..HEAD", "--not", *landed], capture_output=True)
+                                     "--relative", f"{args.since}..HEAD", "--not", up], capture_output=True)
                 local = set(lg.stdout.decode("utf-8", errors="surrogateescape").split("\0")) if lg.returncode == 0 else None
-                # Chỉ nới khi bản ở HEAD cũng là nội dung đã landed: không khác merge-base(HEAD, ref đã landed) nằm trên chuỗi
-                # first-parent của ref đó (review/audit #834: commit gộp trả về bản có placeholder mà main đã gỡ, hay commit WIP ở cha
-                # thứ hai của một PR đã merge). Một lệnh diff cho mỗi ref.
-                landed_same = set()
-                for mb in {m for m in (_landed_base("HEAD", r) for r in landed) if m}:
-                    d = subprocess.run(["git", "-C", str(get_project_dir()), "diff", "--name-only", "-z", "--no-renames", "--relative",
-                                        mb, "HEAD"], capture_output=True)
-                    if d.returncode == 0:
-                        differ = set(d.stdout.decode("utf-8", errors="surrogateescape").split("\0"))
-                        landed_same.update(f for f in since_paths if f not in differ)
                 if local is not None:
-                    _BASE_REF_FOR.update((f, "HEAD") for f in since_paths if f not in local and f in landed_same)
+                    _BASE_REF_FOR.update((f, "HEAD") for f in since_paths if f not in local)
             for dst, src in list(RENAME_SOURCES.items()):
                 if dst not in _BASE_REF_FOR:
                     RENAME_SOURCES[dst] = since_renames.get(src, src)
