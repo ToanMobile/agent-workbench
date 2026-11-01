@@ -171,7 +171,7 @@ for _hd in (os.environ.get("CLAIM_HOOKDIR", ""),
 # the project the bash part resolved (CLAUDE_PROJECT_DIR, or the session's worktree through session_worktree.project) wins
 # when it is a git tree; the payload cwd is the fallback for a project dir outside git (critical scan 31/10: cwd first sent
 # a worktree session back to main; hooks/tests/or_ported_contract_test.sh: a non-git CLAUDE_PROJECT_DIR keeps the cwd's repo)
-repo_root = repo
+repo_root, in_git = repo, False
 for cwd in (repo, d.get("cwd")):
     if not cwd or not isinstance(cwd, str):
         continue
@@ -179,9 +179,28 @@ for cwd in (repo, d.get("cwd")):
         repo_root = subprocess.run(
             ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, timeout=10, check=True).stdout.strip() or repo
+        in_git = True
         break
     except Exception:
         continue
+def _under_dotgit(p):
+    p = os.path.abspath(p)
+    while True:
+        if os.path.lexists(os.path.join(p, ".git")):
+            return True
+        q = os.path.dirname(p)
+        if q == p:
+            return False
+        p = q
+if not in_git:
+    # rev-parse failed with a .git above: a broken repo (dubious ownership, bad gitdir) — fail closed (OCR #742 5aa9335b)
+    if any(isinstance(c, str) and c and _under_dotgit(c) for c in (repo, d.get("cwd"))):
+        logline(f"[{ts}] git rev-parse failed inside a git tree ({repo}) — BLOCK (fail-closed)")
+        sys.stderr.write(f"⛔ REVIEW-GATE: git lỗi khi tìm repo của {repo} — chặn (fail-closed).\n")
+        sys.exit(2)
+    # no git project at all: out of scope (the header) — never a Stop that can never pass
+    logline(f"[{ts}] no git project at {repo} / {d.get('cwd')} — pass")
+    sys.exit(0)
 cwd = d.get("cwd") or repo   # relative paths in the transcript are relative to the session's own cwd
 
 # Per-session attempts file + reset helper (hoisted so PASS paths can clear it).
@@ -224,9 +243,11 @@ try:
         capture_output=True, text=True, timeout=10)
     if diff.returncode != 0 and subprocess.run(["git", "-C", repo_root, "rev-parse", "--verify", "-q", "HEAD"],
                                                capture_output=True, text=True, timeout=10).returncode != 0:
-        # unborn HEAD (no commit yet): every file is new — compare with the empty tree
+        # unborn HEAD (no commit yet): every file is new — compare with the empty tree (asked from git: SHA-1 or SHA-256 repo)
+        _empty = subprocess.run(["git", "-C", repo_root, "hash-object", "-t", "tree", "/dev/null"],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
         diff = subprocess.run(
-            ["git", "-C", repo_root, "diff", "--name-only", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "--", *PATHSPECS],
+            ["git", "-C", repo_root, "diff", "--name-only", _empty or "HEAD", "--", *PATHSPECS],
             capture_output=True, text=True, timeout=10)
     untracked = subprocess.run(
         ["git", "-C", repo_root, "ls-files", "--others", "--exclude-standard",

@@ -55,12 +55,13 @@ if [ -f "$M" ]; then
 else fail "no meta.json after the symlink run (rc=$rc)"; fi
 rm -f "$P/notes.txt"
 
-# 2. an untracked FIFO never hangs the review
+# 2. an untracked symlink to a FIFO never hangs the review (git does not list a bare FIFO; a symlink to one it does)
 echo "# v2" >> "$P/app.py"
-mkfifo "$P/pipe.fifo"
+mkfifo "$TMP/pipe.fifo"; ln -s "$TMP/pipe.fifo" "$P/pipe.link"
 rc=$(run_capped 60)
-[ "$rc" != hung ] && [ -f "$(meta)" ] && ok "an untracked FIFO does not hang the review (rc=$rc)" || fail "review hung on an untracked FIFO (rc=$rc)"
-rm -f "$P/pipe.fifo"
+[ "$rc" != hung ] && [ -f "$(meta)" ] && ok "an untracked symlink to a FIFO does not hang the review (rc=$rc)" \
+  || fail "review hung on an untracked symlink to a FIFO (rc=$rc)"
+rm -f "$P/pipe.link" "$TMP/pipe.fifo"
 
 # 3. a regular untracked file is still scanned
 echo "# v3" >> "$P/app.py"

@@ -31,14 +31,41 @@ stop; rc=$?
 # 2. git cannot read the index: the gate blocks instead of passing an empty change list
 cp "$P/.git/index" "$TMP/index.bak"
 printf 'not an index' > "$P/.git/index"
-git -C "$P" diff --name-only HEAD >/dev/null 2>&1 && fail "fixture: git still reads the corrupt index"
+git -C "$P" diff --name-only HEAD >/dev/null 2>&1 && { echo "✖ fixture: git still reads the corrupt index"; exit 1; }
 stop; rc=$?
-[ "$rc" = 2 ] && ok "git error while listing the uncommitted code: blocked (fail-closed)" || fail "git error passed the Stop rc=$rc $(cat "$TMP/err")"
+[ "$rc" = 2 ] && grep -q "git lỗi" "$TMP/err" && ok "git error while listing the uncommitted code: blocked (fail-closed)" \
+  || fail "git error passed the Stop rc=$rc $(cat "$TMP/err")"
 cp "$TMP/index.bak" "$P/.git/index"
 
 # 3. clean tree after commit: nothing to review passes
-git -C "$P" add -A && git -C "$P" commit -qm c
+git -C "$P" add -A && git -C "$P" commit -qm c >/dev/null
 stop; rc=$?
 [ "$rc" = 0 ] && ok "committed and clean: passes" || fail "clean tree blocked rc=$rc $(cat "$TMP/err")"
+
+# 4. project dir and cwd outside any git tree: out of scope, the Stop passes (it must not block every Stop forever)
+N="$TMP/nogit"; mkdir -p "$N"
+printf '{"session_id":"s","transcript_path":"%s","cwd":"%s","hook_event_name":"Stop"}' "$TR" "$N" \
+  | CLAUDE_PROJECT_DIR="$N" REVIEW_GATE_AUTOSTART=0 bash "$DEVKIT_DIR/hooks/review_gate.sh" >/dev/null 2>"$TMP/err"; rc=$?
+[ "$rc" = 0 ] && ok "no git project: passes" || fail "no git project blocked rc=$rc $(cat "$TMP/err")"
+
+# 4b. a broken repo (a .git whose gitdir does not exist: rev-parse fails) is not "no project": blocked (fail-closed)
+B="$TMP/broken"; mkdir -p "$B"; echo "gitdir: $TMP/no-such-gitdir" > "$B/.git"
+printf '{"session_id":"s","transcript_path":"%s","cwd":"%s","hook_event_name":"Stop"}' "$TR" "$B" \
+  | CLAUDE_PROJECT_DIR="$B" REVIEW_GATE_AUTOSTART=0 bash "$DEVKIT_DIR/hooks/review_gate.sh" >/dev/null 2>"$TMP/err"; rc=$?
+[ "$rc" = 2 ] && grep -q "git lỗi" "$TMP/err" && ok "broken repo (.git present, rev-parse fails): blocked" \
+  || fail "broken repo rc=$rc $(cat "$TMP/err")"
+
+# 5. unborn HEAD (no commit yet): an untracked edited .py is code to review — blocked by the review rule, not by a git error
+U="$TMP/unborn"; mkdir -p "$U"; (cd "$U" && git init -q && echo "def f(): return 3" > app.py); U="$(cd "$U" && pwd -P)"
+python3 -I - "$TR" "$U/app.py" <<'PY'
+import datetime, json, sys
+stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+c = {"type": "tool_use", "id": "e2", "name": "Edit", "input": {"file_path": sys.argv[2], "old_string": "1", "new_string": "3"}}
+open(sys.argv[1], "a").write(json.dumps({"type": "assistant", "timestamp": stamp, "message": {"role": "assistant", "content": [c]}}) + "\n")
+PY
+printf '{"session_id":"s","transcript_path":"%s","hook_event_name":"Stop"}' "$TR" \
+  | CLAUDE_PROJECT_DIR="$U" REVIEW_GATE_AUTOSTART=0 bash "$DEVKIT_DIR/hooks/review_gate.sh" >/dev/null 2>"$TMP/err"; rc=$?
+[ "$rc" = 2 ] && ! grep -q "git lỗi" "$TMP/err" && ok "unborn HEAD: edited code blocked by the review rule, not a git error" \
+  || fail "unborn HEAD rc=$rc $(cat "$TMP/err")"
 
 [ "$FAILS" -eq 0 ] && { echo "PASS: test_review_gate_git_error"; exit 0; } || { echo "FAIL: $FAILS"; exit 1; }
