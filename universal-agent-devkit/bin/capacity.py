@@ -9,24 +9,27 @@ Hai ngưỡng tải:
   busy_load (3 × lõi, 12 lõi: 36)  chỉ để mở thêm việc TÙY CHỌN (worker build / QA / review thêm của super-board).
 Nhóm suite của gate co dần từ tải = lõi tới hold_load (free_fraction).
 
-  capacity.py <khoá>    in một số (khoá: xem KEYS, thêm cores / scale / load / free_fraction)
+  capacity.py <khoá>    in một số (khoá: xem KEYS, thêm cores / scale / load / free_fraction / gate_busy)
   capacity.py load      in tải 1 phút, hoặc chuỗi rỗng khi không đọc được (exit 0)
-  capacity.py --json    in mọi khoá ("load": số thực | null)
+  capacity.py --json    in mọi khoá ("load": số thực | null, kèm "gate_busy")
   khoá lạ / sai số đối số: exit 2
 
-Biến: DEVKIT_CAPACITY (nút người dùng, số thực kẹp [0.25, 4]; rỗng/rác/≤ 0 = 1), DEVKIT_CAPACITY_CORES và DEVKIT_CAPACITY_LOAD (móc
-test: giả số lõi / tải). Biến cũ cụ thể hơn (DEVKIT_SLOT_LOAD_MAX, DEVKIT_TEST_JOBS, …) vẫn do chỗ gọi xét trước. Stdlib; không hàm nào
-ném lỗi ra chỗ gọi."""
+Biến: DEVKIT_CAPACITY (nút người dùng, số thực kẹp [0.25, 4]; rỗng/rác/≤ 0 = 1), DEVKIT_CAPACITY_CORES, DEVKIT_CAPACITY_LOAD và
+DEVKIT_TEST_JOBS_BUSY (móc test / ghi đè số slot pool gate đang bận). Biến cũ cụ thể hơn (DEVKIT_SLOT_LOAD_MAX, DEVKIT_TEST_JOBS, …)
+vẫn do chỗ gọi xét trước. Stdlib thuần (không import heavy_slot); không hàm nào ném lỗi ra chỗ gọi."""
 
 from __future__ import annotations
 
 import json
 import math
 import os
+import stat
 import sys
 
 FALLBACK_CORES = 4          # os.cpu_count() không trả lời
 MAX_CORES = 1_000_000       # DEVKIT_CAPACITY_CORES lớn hơn là gõ nhầm (và tràn float khi nhân)
+MAX_SLOT_INDEX = 1_000_000  # trần số thứ tự file gate-<i>.lock.held chống chuỗi chữ số khổng lồ (không giới hạn theo gate_max)
+MAX_PID = 2_147_483_647     # trần PID hợp lệ POSIX 32-bit tránh OverflowError trong os.kill
 SCALE_MIN, SCALE_MAX = 0.25, 4.0
 _EPS = 1e-9                 # 12 × (1/3) = 3.9999999… không được làm tròn xuống 3
 _READ = object()            # "chưa truyền tải": đọc tải thật
@@ -128,12 +131,156 @@ def free_fraction(cores=None, scale=None, load=_READ) -> float:
     return 1.0 - 0.75 * (l - low) / (hold - low)
 
 
-def test_jobs(cores=None, scale=None, load=None) -> int:
-    """Số test run_impacted.sh chạy cùng lúc: lõi × 4/3 × hệ số, sàn 4 (12 lõi: 16). KHÔNG co theo tải (người dùng 23/10): máy bận thì
-    gate chờ trước khi chạy (heavy_slot); pool nhỏ đi chỉ giành ít CPU hơn các phiên khác và đẩy REG-DK-ALL-01 tới 900 s. Tham số
-    `load` giữ để snapshot() gọi mọi khoá theo một dạng fn(c, s, l)."""
+def _parse_busy_env():
+    """Đọc DEVKIT_TEST_JOBS_BUSY: rỗng -> None; số nguyên 1..MAX_CORES -> v; rác / ≤ 0 -> cảnh báo stderr, trả None."""
+    raw = os.environ.get("DEVKIT_TEST_JOBS_BUSY", "").strip()
+    if not raw:
+        return None
+    try:
+        v = int(raw, 10)
+        if 1 <= v <= MAX_CORES:
+            return v
+    except ValueError:
+        pass
+    print("[capacity] DEVKIT_TEST_JOBS_BUSY=%r không hợp lệ (cần số nguyên 1..%d); bỏ qua" % (raw[:40], MAX_CORES), file=sys.stderr)
+    return None
+
+
+def _is_simulating(cores_arg) -> bool:
+    """True khi người gọi giả lập số lõi / tải (truyền đối số cores hoặc đặt DEVKIT_CAPACITY_CORES / DEVKIT_CAPACITY_LOAD khác rỗng)."""
+    if cores_arg is not None:
+        return True
+    return bool(os.environ.get("DEVKIT_CAPACITY_CORES", "").strip() or os.environ.get("DEVKIT_CAPACITY_LOAD", "").strip())
+
+
+def _pid_alive(pid) -> bool:
+    """Kiểm tra PID còn sống bằng stdlib os.kill(pid, 0) mà không import heavy_slot (giữ capacity.py tự đủ)."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or not (0 < pid <= MAX_PID):
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OSError, OverflowError, ValueError, TypeError):
+        return False
+    return True
+
+
+def _resolve_slot_dir(explicit=None) -> str:
+    custom = explicit.strip() if isinstance(explicit, str) else ""
+    if not custom:
+        custom = os.environ.get("SB_HEAVY_SLOT_DIR", "").strip()
+    if custom:
+        return custom
+    return os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")
+
+
+def slot_dir(explicit=None) -> str:
+    """Trả về thư mục chứa file khoá heavy-gate (đồng bộ 100% với heavy_slot.slot_dir()):
+    explicit → SB_HEAVY_SLOT_DIR (strip, khác rỗng) → ~/.claude/super-board/locks."""
+    return _resolve_slot_dir(explicit)
+
+
+def gate_busy(slot_dir=None) -> int:
+    """Đếm MỌI marker gate-<i>.lock.held có PID sống trong thư mục khoá (trả tối thiểu 1, #787).
+    KHÔNG giới hạn i ≤ gate_max hay DEVKIT_GATE_SLOTS (suite_env gỡ DEVKIT_GATE_SLOTS trước lúc gọi run_impacted.sh;
+    khi DEVKIT_GATE_SLOTS=0 tắt hàng đợi thì không ai ghi marker nên tự trả 1).
+    Tuyệt đối KHÔNG dùng flock dưới mọi dạng và KHÔNG đọc PID trong file .lock (_unlock không xoá PID nên đếm thừa).
+    ponytail: PID tái dùng sau SIGKILL (hiếm) -> đếm thừa tới khi slot được lấy lại -> J chỉ giảm, không bỏ test;
+    nâng cấp ghi kèm thời điểm khởi động tiến trình vào marker nếu đo thấy."""
+    d = _resolve_slot_dir(slot_dir)
+    try:
+        lst = os.lstat(d)
+    except FileNotFoundError:
+        return 1   # thư mục khoá chưa từng tạo: rảnh, không in cảnh báo
+    except OSError as exc:
+        print("[capacity] không đọc được thư mục khoá %s: %s; dùng busy=1" % (d, exc), file=sys.stderr)
+        return 1
+    if stat.S_ISLNK(lst.st_mode) or not stat.S_ISDIR(lst.st_mode):
+        print("[capacity] đường dẫn khoá %s không phải thư mục thực (symlink hoặc file); dùng busy=1" % d, file=sys.stderr)
+        return 1
+    candidates = []
+    try:
+        with os.scandir(d) as it:
+            for entry in it:
+                name = entry.name
+                if not (name.startswith("gate-") and name.endswith(".lock.held")):
+                    continue
+                mid = name[5:-10]
+                if not mid.isascii() or not mid.isdigit() or mid.startswith("0") or len(mid) > 9:
+                    continue
+                idx = int(mid, 10)
+                if 1 <= idx <= MAX_SLOT_INDEX:
+                    candidates.append((idx, name))
+    except OSError as exc:
+        print("[capacity] không quét được thư mục khoá %s: %s; dùng busy=1" % (d, exc), file=sys.stderr)
+        return 1
+    candidates.sort()
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    live_pids = set()
+    for _, name in candidates:
+        p = os.path.join(d, name)
+        try:
+            fd = os.open(p, flags)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            print("[capacity] bỏ qua marker %s không mở được (%s)" % (p, exc), file=sys.stderr)
+            continue
+        try:
+            fst = os.fstat(fd)
+            if not stat.S_ISREG(fst.st_mode):
+                print("[capacity] bỏ qua marker %s không phải file thường" % p, file=sys.stderr)
+                continue
+            raw = os.read(fd, 64)
+        except OSError as exc:
+            print("[capacity] bỏ qua marker %s lỗi đọc (%s)" % (p, exc), file=sys.stderr)
+            continue
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        txt = raw.decode("utf-8", errors="replace").strip()
+        if not txt:
+            continue
+        try:
+            pid = int(txt, 10)
+        except ValueError:
+            print("[capacity] nội dung PID không hợp lệ trong %s; bỏ qua" % p, file=sys.stderr)
+            continue
+        if _pid_alive(pid):
+            live_pids.add(pid)
+    return max(1, len(live_pids))
+
+
+def _effective_busy(cores_arg=None, busy=None) -> int:
+    """Chọn mẫu số slot bận b cho test_jobs() và snapshot() theo đúng 4 bước ưu tiên (#787):
+    1) tham số busy là int (không phải bool) ≥ 1 -> busy;
+    2) biến môi trường DEVKIT_TEST_JOBS_BUSY nguyên ≥ 1 -> giá trị đó;
+    3) chế độ giả lập (cores_arg khác None, hoặc DEVKIT_CAPACITY_CORES / DEVKIT_CAPACITY_LOAD khác rỗng) -> 1;
+    4) còn lại -> gate_busy()."""
+    if isinstance(busy, int) and not isinstance(busy, bool) and 1 <= busy <= MAX_CORES:
+        return busy
+    eb = _parse_busy_env()
+    if eb is not None:
+        return eb
+    if _is_simulating(cores_arg):
+        return 1
+    return gate_busy()
+
+
+def test_jobs(cores=None, scale=None, load=None, busy=None) -> int:
+    """Số test run_impacted.sh chạy cùng lúc trên mỗi lượt gate (#787): max(4, ⌊lõi × 4 × hệ số / (3 × b)⌋)
+    (12 lõi: b=1 → 16, b=2 → 8, b=3 → 5; tổng toàn máy ~15–16 job thay vì 48; b chụp lúc runner khởi động).
+    KHÔNG co theo tải 1 phút (người dùng 23/10): máy bận thì gate chờ trước khi chạy (heavy_slot). Tham số `load` giữ để
+    snapshot() và caller 3 đối số vị trí tương thích ngược 100%.
+    ponytail: b chụp một lần khi run_impacted.sh khởi động (:170); gate vào lúc rảnh giữ b=1 tới hết lượt, nâng cấp đọc lại b giữa các bài nếu thấy load1 > 24 kéo dài."""
     c, s = _resolve(cores, scale)
-    return max(4, _floor(c * 4 * s / 3))
+    b = _effective_busy(cores_arg=cores, busy=busy)
+    return max(4, _floor(c * 4 * s / (3 * b)))
 
 
 def gate_parallel(cores=None, scale=None, load=_READ) -> int:
@@ -180,18 +327,19 @@ KEYS = {
 
 
 def snapshot() -> dict:
-    """Mọi khoá trên MỘT lần đọc lõi / hệ số / tải (các khoá khớp nhau)."""
+    """Mọi khoá trên MỘT lần đọc lõi / hệ số / tải / slot bận (các khoá khớp nhau)."""
     c, s, l = cores(), scale(), load()
-    out = {"cores": c, "scale": s, "load": l, "free_fraction": free_fraction(c, s, l)}
+    b = _effective_busy(cores_arg=None, busy=None)
+    out = {"cores": c, "scale": s, "load": l, "free_fraction": free_fraction(c, s, l), "gate_busy": b}
     for name, fn in KEYS.items():
-        out[name] = fn(c, s, l)
+        out[name] = test_jobs(c, s, l, busy=b) if name == "test_jobs" else fn(c, s, l)
     return out
 
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 1:
-        print("usage: capacity.py <key> | --json   (keys: %s, cores, scale, load, free_fraction)" % ", ".join(KEYS), file=sys.stderr)
+        print("usage: capacity.py <key> | --json   (keys: %s, cores, scale, load, free_fraction, gate_busy)" % ", ".join(KEYS), file=sys.stderr)
         return 2
     key = args[0]
     if key == "--json":
@@ -201,11 +349,11 @@ def main(argv=None) -> int:
         l = load()
         print("" if l is None else l)
         return 0
-    fn = KEYS.get(key) or {"cores": cores, "scale": scale, "free_fraction": free_fraction}.get(key)
+    fn = KEYS.get(key) or {"cores": cores, "scale": scale, "free_fraction": free_fraction, "gate_busy": gate_busy}.get(key)
     if fn is not None:
         print(fn())
         return 0
-    print("capacity.py: unknown key %r (keys: %s, cores, scale, load, free_fraction)" % (key, ", ".join(KEYS)), file=sys.stderr)
+    print("capacity.py: unknown key %r (keys: %s, cores, scale, load, free_fraction, gate_busy)" % (key, ", ".join(KEYS)), file=sys.stderr)
     return 2
 
 
