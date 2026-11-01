@@ -22,6 +22,7 @@ checks = {
     "pip-audit pinned exactly": re.search(r"pip-audit==\d+\.\d+\.\d+", s) is not None,
     "npm audit": "npm audit --omit=dev --audit-level=high" in s,
     "semgrep pinned exactly": re.search(r"semgrep==\d+\.\d+\.\d+", s) is not None and "semgrep>=" not in s,
+    "ocr-review --strict enabled (#751)": "ocr-review --strict --from" in s and "@alibaba-group/open-code-review@1.13.3" in s and "TẠM TẮT theo" not in s,
     "every action pinned to a commit": all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", u) for u in re.findall(r"uses:\s*(\S+)", s)),
 }
 # BUG-REV-ci-npm-ci-no-lockfile (run 41185270960): `npm ci` exits EUSAGE without a lockfile, and the root .gitignore drops
