@@ -1223,6 +1223,7 @@ def gh_comment_rule(rest, base):
 MQ_LABEL = "merge-queue"
 MQ_MSG = "gắn nhãn merge-queue khi PR chưa có approved-head khớp head"
 MQ_HELPER = os.path.join(".claude", "bin", "super-board-queue-label.sh")
+MQ_HELPER_DEPS = [os.path.join(".claude", "bin", "super-board-approved-head.jq"), os.path.join(".claude", "bin", "super-board-audit-check.py")]
 MQ_BUDGET_S = 9.0   # tổng thời gian của guard khi có lời gọi helper: dưới timeout 10 s của hook ở Codex/Gemini/Cursor
 # Cờ KHÔNG mang giá trị của gh pr edit / issue edit / pr create (gh 2.103.3 --help); mọi cờ dài khác mang giá trị.
 MQ_BOOL_LONG = {"--remove-milestone", "--remove-parent", "--remove-type", "--draft", "--dry-run", "--editor", "--fill",
@@ -1254,9 +1255,12 @@ def _mq_helper_at(root):
         return (path if os.path.isfile(path) else None), None
     if not os.path.isfile(path):
         return None, f"{MQ_MSG}: {MQ_HELPER} git đã theo dõi nhưng không còn trong cây ({root}) — {restore}"
-    rc, _ = _mq_git(root, "diff", "--quiet", "HEAD", "--", MQ_HELPER)
+    # luật duyệt helper dùng (jq approved-head, audit-check) cũng phải khớp HEAD: sửa chúng trong cây là duyệt mọi PR (OCR final)
+    files = [MQ_HELPER] + MQ_HELPER_DEPS
+    rc, _ = _mq_git(root, "diff", "--quiet", "HEAD", "--", *files)
     if rc != 0:
-        return None, f"{MQ_MSG}: {MQ_HELPER} khác bản HEAD ({root}) — {restore}, hoặc commit bản sửa trước"
+        return None, (f"{MQ_MSG}: {MQ_HELPER} hoặc luật duyệt nó dùng khác bản HEAD ({root}) — khôi phục: git -C {root} checkout -- "
+                      f"{chr(32).join(files)}, hoặc commit bản sửa trước")
     return path, None
 
 def _mq_helper():

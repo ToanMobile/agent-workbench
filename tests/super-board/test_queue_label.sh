@@ -26,8 +26,9 @@ cp "$ROOT/.claude/bin/super-board-queue-label.sh" "$ROOT/.claude/bin/super-board
   || { echo "✖ helper or jq missing under $ROOT/.claude/bin"; exit 1; }
 # audit-check giả: ghi argv, exit theo $AUDIT_RC
 cat > "$TMP/bin/super-board-audit-check.py" <<'PY'
-import os, sys
+import os, sys, time
 open(os.environ["AUDIT_LOG"], "a").write(" ".join(sys.argv[1:]) + "\n")
+time.sleep(float(os.environ.get("AUDIT_SLEEP", "0")))
 sys.exit(int(os.environ.get("AUDIT_RC", "0")))
 PY
 # gh giả: pr view → $PR_JSON (VIEW_RC khác 0 thì hỏng); pr edit → ghi log, EDIT_RC
@@ -104,5 +105,9 @@ reset; run 5 --bogus; [ "$RC" = 64 ] && ok "h9b unknown option → exit 64" || f
 # OCR #826: thời hạn 0 s (communicate(timeout=0) hết giờ ngay) làm mọi lần gắn nhãn exit 69 → coi là giá trị sai, dùng mặc định 6 s
 reset; pr "[$(cmt OWNER "approved-head:$HEAD")]"; SB_QUEUE_LABEL_GH_TIMEOUT=0 run --check 5
 [ "$RC" = 0 ] && ok "h10 SB_QUEUE_LABEL_GH_TIMEOUT=0 → default timeout, valid approval passes" || fail "h10 rc=$RC err=$(head -c 200 "$TMP/err")"
+# OCR final: audit-check hết giờ (fetch refs/pull chậm) là "không kiểm được" (69), không phải "chưa duyệt" (3, bảo quay về lane Review)
+reset; pr "[$(cmt MEMBER "approved-head:$HEAD
+approved-by: $BY")]"; AUDIT_SLEEP=3 SB_QUEUE_LABEL_GH_TIMEOUT=1 run 5
+{ [ "$RC" = 69 ] && ! edited; } && ok "h11 audit-check timeout → exit 69 (unknown), not 3 (not approved)" || fail "h11 rc=$RC err=$(head -c 200 "$TMP/err")"
 
 [ "$FAILS" -eq 0 ] && echo "PASS test_queue_label" || { echo "FAIL test_queue_label ($FAILS)"; exit 1; }

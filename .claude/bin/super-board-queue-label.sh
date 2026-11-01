@@ -88,7 +88,11 @@ case "$vwhy" in
     origin=$(git -C "$top" remote get-url origin 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:|ssh://git@github\.com/)##; s#\.git$##' | tr 'A-Z' 'a-z') || origin=""
     [ -n "$prrepo" ] && [ "$origin" = "$prrepo" ] \
       || refuse "$approved" "approved-by task_id ${vwhy#task:} được audit trong repo ${origin:-không rõ}, PR thuộc repo ${prrepo:-không rõ}"
-    run_t python3 "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${vwhy#task:}" "$head" >/dev/null 2>"$ERRF" \
+    arc=0
+    run_t python3 "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${vwhy#task:}" "$head" >/dev/null 2>"$ERRF" || arc=$?
+    # hết giờ (fetch refs/pull chậm) là "không kiểm được" (69), không phải "chưa duyệt" (3 bảo agent quay về lane Review)
+    [ "$arc" -ne 124 ] || { echo "queue-label: kiểm audit của approved-by task_id ${vwhy#task:} hết ${LIMIT} s — không gắn nhãn ${LABEL}, thử lại sau" >&2; exit 69; }
+    [ "$arc" -eq 0 ] \
       || refuse "$approved" "approved-by task_id ${vwhy#task:} chưa có audit pass của antigravity-pm với auditedHead ${head:0:7} ($(tail -1 "$ERRF" 2>/dev/null | cut -c1-160))" ;;
   *) refuse "$approved" "không rõ nguồn duyệt" ;;
 esac

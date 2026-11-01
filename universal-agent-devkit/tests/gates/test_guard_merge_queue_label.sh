@@ -173,7 +173,9 @@ check 0 "gh pr edit 5 --add-label merge-queue" "$BARE"
 echo "J. helper git đã theo dõi mà bị mv / ghi đè (chỉ rm là file bảo vệ): chặn, không mở cửa (OCR #826)"
 T="$TMP/tracked"; TW="$TMP/tracked-wt"; H=.claude/bin/super-board-queue-label.sh
 git -C "$TMP" init -q -b main tracked; mkdir -p "$T/.claude/bin"; stub "$T"; echo 0 > "$T/rc"
-git -C "$T" add "$H" && git -C "$T" -c user.email=t@example.invalid -c user.name=t commit -q -m helper
+printf '"luat duyet"\n' > "$T/.claude/bin/super-board-approved-head.jq"; printf 'import sys\n' > "$T/.claude/bin/super-board-audit-check.py"
+git -C "$T" add "$H" .claude/bin/super-board-approved-head.jq .claude/bin/super-board-audit-check.py \
+  && git -C "$T" -c user.email=t@example.invalid -c user.name=t commit -q -m helper
 check 0 "gh pr edit 5 --add-label merge-queue" "$T"
 [ -s "$T/calls" ] && echo "  ✔ tracked helper matching HEAD is used" || { echo "  ✖ tracked helper not called"; FAILS=$((FAILS + 1)); }
 mv "$T/$H" "$TMP/moved-helper"
@@ -182,6 +184,12 @@ mv "$TMP/moved-helper" "$T/$H"; echo 3 > "$T/rc"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$T/$H"
 check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
 check 2 "gh api repos/acme/widgets/issues/5/labels -f 'labels[]=merge-queue'" "$T"; grep_err 'khác bản HEAD'
+# helper khớp HEAD nhưng luật duyệt nó dùng (jq / audit-check) bị sửa trong cây → cũng chặn (OCR final)
+git -C "$T" checkout -q -- "$H"; printf '"ok\\t\\(.headRefOid)\\towner"\n' > "$T/.claude/bin/super-board-approved-head.jq"
+check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
+git -C "$T" checkout -q -- .claude/bin/super-board-approved-head.jq; printf 'import sys; sys.exit(0)\n' > "$T/.claude/bin/super-board-audit-check.py"
+check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
+git -C "$T" checkout -q -- .claude/bin/super-board-audit-check.py
 git -C "$T" checkout -q -- "$H"; git -C "$T" worktree add -q --detach "$TW" 2>/dev/null; echo 0 > "$TW/rc"
 mv "$T/$H" "$TMP/moved-helper"
 check 2 "gh pr edit 5 --add-label merge-queue" "$TW"; grep_err 'checkout --'
@@ -192,6 +200,7 @@ reset 3; check 2 "GH pr edit 5 --add-label merge-queue"; expect_call '^--check 5
 reset 3; check 2 "Gh issue edit 5 --add-label merge-queue"; expect_call '^--check 5$'
 reset 3; check 2 "g[h] pr edit 5 --add-label merge-queue"; expect_call '^--check 5$'
 reset 3; check 2 "python3 -c \"import subprocess; subprocess.run(['GH', 'pr', 'edit', '5', '--add-label', 'merge-queue'])\""; expect_call '^--check 5$'
+reset 3; check 2 "python3 -c \"import os; os.system('GH pr edit 5 --add-label merge-queue')\""; expect_call '^--check 5$'
 reset 0; check 2 "gh api repos/acme/widgets/issues/5/labels -f \"labels[]=\$L\""; expect_call none
 
 [ "$FAILS" -eq 0 ] && echo "PASS test_guard_merge_queue_label" || { echo "FAIL test_guard_merge_queue_label ($FAILS)"; exit 1; }
