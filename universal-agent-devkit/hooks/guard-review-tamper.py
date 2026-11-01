@@ -17,8 +17,8 @@ symlinks; a line it cannot tokenise, an unparsed body, or a relative write after
 machinery (fail-closed, r14d BUG-REV-c23bc3cb6d / 5f7bee1cb0). An interpreter given inline code (python -I -c, /usr/bin/python3 -c,
 node --x -e, perl -w -e, bash <<EOF, …; options before -c/-e are skipped, BUG-REV-4a3ec3ef82) that names a protected path is denied
 too (its writes cannot be read statically). The signer is never driven by an agent: a Bash line running an interpreter that names
-review_sign / load_key (except `review_sign.py verify`), and a Write/Edit of a non-document file whose text names review_sign,
-load_key or the key path, are denied.
+review_sign / load_key (except a line that is only `python3 [-I] …/review_sign.py verify <file>`), and a Write/Edit of a
+non-document file whose text names review_sign, load_key or the key path, are denied.
 Residual (same uid, no privilege separation): a script that hides those names (string building, encoding) is not seen; the
 code_hash binding of the seal (bin/review_sign.py) and the write ban on .git/review-fanout keep a forged verdict out of the run dir.
 Reading the code stays allowed. DEVKIT_ALLOW_GATE_EDIT=1 in the hook process environment (the operator's shell / launchd, never a
@@ -52,7 +52,10 @@ PATH_WORD = re.compile(r"[\w.~/-]*(?:\.git/review-fanout|\.claude/settings[\w.-]
 MACHINERY_HINT = re.compile(r"review-fanout|git-(?:common-)?dir|\.git\b|\.claude|\bhooks\b|workflows|\.config|summary\.json|settings[^/\s]*\.json")
 KEY_WORD = re.compile(r"\.config/agent-workbench|review\.key")
 SIGNER_WORD = re.compile(r"\breview_sign\b|\bload_key\b|review-fanout-summary-v1")
-VERIFY_ONLY = re.compile(r"review_sign\.py['\"]?\s+verify\b")
+# lệnh bộ ký duy nhất agent được chạy (ac772c846b): CẢ dòng là `python3 [-I] [<path>/]review_sign.py verify <file>` — không nối
+# lệnh, thế lệnh, redirect, comment, dòng thứ hai hay code inline đi kèm (search không neo cho lọt `-c '…load_key…' # …`)
+VERIFY_ONLY = re.compile(r"[ \t]*(?:[\w.~/-]*/)?python[\d.]*(?:[ \t]+-I)?[ \t]+(?:[\w.~/-]*/)?review_sign\.py[ \t]+verify"
+                         r"[ \t]+[\w.~/@+=:-]+[ \t]*")
 DOC_EXT = (".md", ".rst", ".txt", ".adoc")
 REASON = ("Blocked by guard-review-tamper: agents may not write or delete the review machinery ({}). The 4-way review gate "
           "decides on these files; change them through a reviewed PR by the operator (DEVKIT_ALLOW_GATE_EDIT=1 in the hook "
@@ -109,7 +112,7 @@ def bash_hits(cmd, cwd):
     named = [w for w in PATH_WORD.findall(cmd) if protected(w, cwd)]
     if KEY_WORD.search(cmd):
         return ["seal:" + KEY_WORD.search(cmd).group(0)]
-    if SIGNER_WORD.search(cmd) and RUNS_INTERP.search(cmd) and not VERIFY_ONLY.search(cmd):
+    if SIGNER_WORD.search(cmd) and RUNS_INTERP.search(cmd) and not VERIFY_ONLY.fullmatch(cmd):
         return ["seal:" + SIGNER_WORD.search(cmd).group(0)]
     try:
         import shell_writes
