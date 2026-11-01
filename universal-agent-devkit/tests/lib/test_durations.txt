@@ -475,5 +475,3 @@
 # #748 #749 #759 (2026-11-01): ca biên nhóm b, BISECT=1 ra commit nghi vấn, truy vết đỏ (fixture git giả, ước lượng)
 15 tests/gates/test_gate_full_red_env_edges.sh
 15 tests/gates/test_gate_full_trace.sh
-# #787 (2026-11-01): chia test_jobs theo số slot pool gate đang bận
-25 tests/gates/test_capacity_test_jobs_busy.sh

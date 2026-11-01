@@ -11,7 +11,7 @@ Nhóm suite của gate co dần từ tải = lõi tới hold_load (free_fraction
 
   capacity.py <khoá>    in một số (khoá: xem KEYS, thêm cores / scale / load / free_fraction / gate_busy)
   capacity.py load      in tải 1 phút, hoặc chuỗi rỗng khi không đọc được (exit 0)
-  capacity.py --json    in mọi khoá ("load": số thực | null)
+  capacity.py --json    in mọi khoá ("load": số thực | null, kèm "gate_busy")
   khoá lạ / sai số đối số: exit 2
 
 Biến: DEVKIT_CAPACITY (nút người dùng, số thực kẹp [0.25, 4]; rỗng/rác/≤ 0 = 1), DEVKIT_CAPACITY_CORES, DEVKIT_CAPACITY_LOAD và
@@ -20,7 +20,6 @@ vẫn do chỗ gọi xét trước. Stdlib thuần (không import heavy_slot); k
 
 from __future__ import annotations
 
-import errno
 import json
 import math
 import os
@@ -29,9 +28,8 @@ import sys
 
 FALLBACK_CORES = 4          # os.cpu_count() không trả lời
 MAX_CORES = 1_000_000       # DEVKIT_CAPACITY_CORES lớn hơn là gõ nhầm (và tràn float khi nhân)
-MAX_GATE_SLOTS = 256        # trần an toàn khi quét file gate-<i>.lock tránh DEVKIT_GATE_SLOTS khổng lồ
+MAX_SLOT_INDEX = 1_000_000  # trần số thứ tự file gate-<i>.lock.held chống chuỗi chữ số khổng lồ (không giới hạn theo gate_max)
 MAX_PID = 2_147_483_647     # trần PID hợp lệ POSIX 32-bit tránh OverflowError trong os.kill
-DEFAULT_LOCK_DIR = "~/.claude/super-board/locks"   # đồng bộ quy ước thư mục khoá với bin/heavy_slot.py
 SCALE_MIN, SCALE_MAX = 0.25, 4.0
 _EPS = 1e-9                 # 12 × (1/3) = 3.9999999… không được làm tròn xuống 3
 _READ = object()            # "chưa truyền tải": đọc tải thật
@@ -133,35 +131,30 @@ def free_fraction(cores=None, scale=None, load=_READ) -> float:
     return 1.0 - 0.75 * (l - low) / (hold - low)
 
 
-def _has_valid_cores_env() -> bool:
-    """True khi người gọi chủ động ghim số lõi qua DEVKIT_CAPACITY_CORES hợp lệ."""
-    raw = os.environ.get("DEVKIT_CAPACITY_CORES", "").strip()
-    if not raw:
-        return False
-    try:
-        v = int(raw, 10)
-    except ValueError:
-        return False
-    return 1 <= v <= MAX_CORES
-
-
 def _parse_busy_env():
-    """Đọc DEVKIT_TEST_JOBS_BUSY: rỗng -> None; số nguyên 0..MAX_CORES -> max(1, v); rác -> cảnh báo stderr, trả None."""
+    """Đọc DEVKIT_TEST_JOBS_BUSY: rỗng -> None; số nguyên 1..MAX_CORES -> v; rác / ≤ 0 -> cảnh báo stderr, trả None."""
     raw = os.environ.get("DEVKIT_TEST_JOBS_BUSY", "").strip()
     if not raw:
         return None
     try:
         v = int(raw, 10)
-        if 0 <= v <= MAX_CORES:
-            return max(1, v)
+        if 1 <= v <= MAX_CORES:
+            return v
     except ValueError:
         pass
-    print("[capacity] DEVKIT_TEST_JOBS_BUSY=%r không hợp lệ (cần số nguyên 0..%d); bỏ qua" % (raw[:40], MAX_CORES), file=sys.stderr)
+    print("[capacity] DEVKIT_TEST_JOBS_BUSY=%r không hợp lệ (cần số nguyên 1..%d); bỏ qua" % (raw[:40], MAX_CORES), file=sys.stderr)
     return None
 
 
+def _is_simulating(cores_arg) -> bool:
+    """True khi người gọi giả lập số lõi / tải (truyền đối số cores hoặc đặt DEVKIT_CAPACITY_CORES / DEVKIT_CAPACITY_LOAD khác rỗng)."""
+    if cores_arg is not None:
+        return True
+    return bool(os.environ.get("DEVKIT_CAPACITY_CORES", "").strip() or os.environ.get("DEVKIT_CAPACITY_LOAD", "").strip())
+
+
 def _pid_alive(pid) -> bool:
-    """Kiểm tra PID còn sống mà không import heavy_slot (giữ capacity.py chạy độc lập trong mk_kit / super-board-capacity)."""
+    """Kiểm tra PID còn sống bằng stdlib os.kill(pid, 0) mà không import heavy_slot (giữ capacity.py tự đủ)."""
     if not isinstance(pid, int) or isinstance(pid, bool) or not (0 < pid <= MAX_PID):
         return False
     try:
@@ -175,24 +168,29 @@ def _pid_alive(pid) -> bool:
     return True
 
 
-def _gate_slots_count(c: int, s: float) -> int:
-    """Số slot của pool 'gate': DEVKIT_GATE_SLOTS nguyên ≥ 0 nếu có (0 = tắt hàng đợi), không thì gate_max(c, s), kẹp MAX_GATE_SLOTS."""
-    raw = os.environ.get("DEVKIT_GATE_SLOTS", "").strip()
-    if raw:
-        try:
-            n = int(raw, 10)
-            if n >= 0:
-                return 0 if n == 0 else min(n, MAX_GATE_SLOTS)
-        except ValueError:
-            pass
-    return min(gate_max(c, s), MAX_GATE_SLOTS)
+def _resolve_slot_dir(explicit=None) -> str:
+    custom = explicit.strip() if isinstance(explicit, str) else ""
+    if not custom:
+        custom = os.environ.get("SB_HEAVY_SLOT_DIR", "").strip()
+    if custom:
+        return custom
+    return os.path.join(os.path.expanduser("~"), ".claude", "super-board", "locks")
 
 
-def _read_gate_locks(c: int, s: float, slot_dir=None) -> int:
-    """Đếm PID sống trong thư mục khoá pool 'gate' (trả tối thiểu 1)."""
-    d = (slot_dir.strip() if isinstance(slot_dir, str) else "") or os.environ.get("SB_HEAVY_SLOT_DIR", "").strip()
-    if not d:
-        d = os.path.expanduser(DEFAULT_LOCK_DIR)
+def slot_dir(explicit=None) -> str:
+    """Trả về thư mục chứa file khoá heavy-gate (đồng bộ 100% với heavy_slot.slot_dir()):
+    explicit → SB_HEAVY_SLOT_DIR (strip, khác rỗng) → ~/.claude/super-board/locks."""
+    return _resolve_slot_dir(explicit)
+
+
+def gate_busy(slot_dir=None) -> int:
+    """Đếm MỌI marker gate-<i>.lock.held có PID sống trong thư mục khoá (trả tối thiểu 1, #787).
+    KHÔNG giới hạn i ≤ gate_max hay DEVKIT_GATE_SLOTS (suite_env gỡ DEVKIT_GATE_SLOTS trước lúc gọi run_impacted.sh;
+    khi DEVKIT_GATE_SLOTS=0 tắt hàng đợi thì không ai ghi marker nên tự trả 1).
+    Tuyệt đối KHÔNG dùng flock dưới mọi dạng và KHÔNG đọc PID trong file .lock (_unlock không xoá PID nên đếm thừa).
+    ponytail: PID tái dùng sau SIGKILL (hiếm) -> đếm thừa tới khi slot được lấy lại -> J chỉ giảm, không bỏ test;
+    nâng cấp ghi kèm thời điểm khởi động tiến trình vào marker nếu đo thấy."""
+    d = _resolve_slot_dir(slot_dir)
     try:
         lst = os.lstat(d)
     except FileNotFoundError:
@@ -203,30 +201,43 @@ def _read_gate_locks(c: int, s: float, slot_dir=None) -> int:
     if stat.S_ISLNK(lst.st_mode) or not stat.S_ISDIR(lst.st_mode):
         print("[capacity] đường dẫn khoá %s không phải thư mục thực (symlink hoặc file); dùng busy=1" % d, file=sys.stderr)
         return 1
-    n = _gate_slots_count(c, s)
-    if n <= 0:
+    candidates = []
+    try:
+        with os.scandir(d) as it:
+            for entry in it:
+                name = entry.name
+                if not (name.startswith("gate-") and name.endswith(".lock.held")):
+                    continue
+                mid = name[5:-10]
+                if not mid.isascii() or not mid.isdigit() or mid.startswith("0") or len(mid) > 9:
+                    continue
+                idx = int(mid, 10)
+                if 1 <= idx <= MAX_SLOT_INDEX:
+                    candidates.append((idx, name))
+    except OSError as exc:
+        print("[capacity] không quét được thư mục khoá %s: %s; dùng busy=1" % (d, exc), file=sys.stderr)
         return 1
+    candidates.sort()
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     live_pids = set()
-    for i in range(1, n + 1):
-        p = os.path.join(d, "gate-%d.lock" % i)
+    for _, name in candidates:
+        p = os.path.join(d, name)
         try:
             fd = os.open(p, flags)
         except FileNotFoundError:
             continue
         except OSError as exc:
-            if exc.errno == errno.ELOOP:
-                continue
-            print("[capacity] không mở được file khoá %s: %s; dùng busy=1" % (p, exc), file=sys.stderr)
-            return 1
+            print("[capacity] bỏ qua marker %s không mở được (%s)" % (p, exc), file=sys.stderr)
+            continue
         try:
             fst = os.fstat(fd)
             if not stat.S_ISREG(fst.st_mode):
+                print("[capacity] bỏ qua marker %s không phải file thường" % p, file=sys.stderr)
                 continue
             raw = os.read(fd, 64)
         except OSError as exc:
-            print("[capacity] lỗi đọc file khoá %s: %s; dùng busy=1" % (p, exc), file=sys.stderr)
-            return 1
+            print("[capacity] bỏ qua marker %s lỗi đọc (%s)" % (p, exc), file=sys.stderr)
+            continue
         finally:
             try:
                 os.close(fd)
@@ -245,49 +256,30 @@ def _read_gate_locks(c: int, s: float, slot_dir=None) -> int:
     return max(1, len(live_pids))
 
 
-def gate_busy(cores=None, scale=None, slot_dir=None) -> int:
-    """Số slot pool 'gate' đang có tiến trình sống giữ khoá (tối thiểu 1 để chia mẫu số an toàn, #787).
-    Tuyệt đối KHÔNG dùng flock dưới mọi dạng (kể cả LOCK_SH|LOCK_NB) để không bao giờ làm hụt acquire_pool(wait_s=0)
-    của _gate_pool_has_room; mở O_RDONLY|O_NOFOLLOW|O_NONBLOCK chống treo FIFO và khử trùng tập PID sống."""
-    c, s = _resolve(cores, scale)
-    if slot_dir is None:
-        if os.environ.get("SB_HEAVY_SLOT_HELD") == "1" or os.environ.get("_DEVKIT_CHILD_TEST") == "1":
-            return 1
-        eb = _parse_busy_env()
-        if eb is not None:
-            return eb
-    return _read_gate_locks(c, s, slot_dir=slot_dir)
-
-
-def _effective_busy(c: int, s: float, cores_arg=None, busy=None) -> int:
-    """Xác định mẫu số slot bận cho test_jobs() và snapshot():
-    1) busy truyền tường minh (int ≥ 0, không phải bool);
-    2) cô lập tuyệt đối các bài test có sẵn qua SB_HEAVY_SLOT_HELD=1 (clean_git_env.sh) / _DEVKIT_CHILD_TEST=1;
-    3) DEVKIT_TEST_JOBS_BUSY hợp lệ hoặc SB_HEAVY_SLOT_DIR đặt tường minh;
-    4) truy vấn giả lập số lõi (cores_arg / DEVKIT_CAPACITY_CORES) trả 1 tất định; còn lại thăm thư mục khoá thật."""
-    if busy is not None:
-        if isinstance(busy, int) and not isinstance(busy, bool) and busy >= 0:
-            return max(1, busy)
-        return 1
-    if os.environ.get("SB_HEAVY_SLOT_HELD") == "1" or os.environ.get("_DEVKIT_CHILD_TEST") == "1":
-        return 1
+def _effective_busy(cores_arg=None, busy=None) -> int:
+    """Chọn mẫu số slot bận b cho test_jobs() và snapshot() theo đúng 4 bước ưu tiên (#787):
+    1) tham số busy là int (không phải bool) ≥ 1 -> busy;
+    2) biến môi trường DEVKIT_TEST_JOBS_BUSY nguyên ≥ 1 -> giá trị đó;
+    3) chế độ giả lập (cores_arg khác None, hoặc DEVKIT_CAPACITY_CORES / DEVKIT_CAPACITY_LOAD khác rỗng) -> 1;
+    4) còn lại -> gate_busy()."""
+    if isinstance(busy, int) and not isinstance(busy, bool) and 1 <= busy <= MAX_CORES:
+        return busy
     eb = _parse_busy_env()
     if eb is not None:
         return eb
-    if os.environ.get("SB_HEAVY_SLOT_DIR", "").strip():
-        return _read_gate_locks(c, s)
-    if cores_arg is not None or _has_valid_cores_env():
+    if _is_simulating(cores_arg):
         return 1
-    return _read_gate_locks(c, s)
+    return gate_busy()
 
 
 def test_jobs(cores=None, scale=None, load=None, busy=None) -> int:
-    """Số test run_impacted.sh chạy cùng lúc trên mỗi lượt gate (#787): max(4, ⌊lõi × 4 × hệ số / (3 × busy)⌋)
-    (12 lõi: busy=1 → 16, busy=2 → 8, busy=3 → 5; tổng toàn máy ~15–16 job thay vì 48; busy chụp lúc khởi chạy shard).
+    """Số test run_impacted.sh chạy cùng lúc trên mỗi lượt gate (#787): max(4, ⌊lõi × 4 × hệ số / (3 × b)⌋)
+    (12 lõi: b=1 → 16, b=2 → 8, b=3 → 5; tổng toàn máy ~15–16 job thay vì 48; b chụp lúc runner khởi động).
     KHÔNG co theo tải 1 phút (người dùng 23/10): máy bận thì gate chờ trước khi chạy (heavy_slot). Tham số `load` giữ để
-    snapshot() và caller 3 đối số vị trí tương thích ngược 100%."""
+    snapshot() và caller 3 đối số vị trí tương thích ngược 100%.
+    ponytail: b chụp một lần khi run_impacted.sh khởi động (:170); gate vào lúc rảnh giữ b=1 tới hết lượt, nâng cấp đọc lại b giữa các bài nếu thấy load1 > 24 kéo dài."""
     c, s = _resolve(cores, scale)
-    b = _effective_busy(c, s, cores_arg=cores, busy=busy)
+    b = _effective_busy(cores_arg=cores, busy=busy)
     return max(4, _floor(c * 4 * s / (3 * b)))
 
 
@@ -337,8 +329,8 @@ KEYS = {
 def snapshot() -> dict:
     """Mọi khoá trên MỘT lần đọc lõi / hệ số / tải / slot bận (các khoá khớp nhau)."""
     c, s, l = cores(), scale(), load()
-    b = _effective_busy(c, s, cores_arg=None, busy=None)
-    out = {"cores": c, "scale": s, "load": l, "free_fraction": free_fraction(c, s, l)}
+    b = _effective_busy(cores_arg=None, busy=None)
+    out = {"cores": c, "scale": s, "load": l, "free_fraction": free_fraction(c, s, l), "gate_busy": b}
     for name, fn in KEYS.items():
         out[name] = test_jobs(c, s, l, busy=b) if name == "test_jobs" else fn(c, s, l)
     return out
