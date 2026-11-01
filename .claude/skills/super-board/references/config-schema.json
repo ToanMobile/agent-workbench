@@ -48,7 +48,7 @@
   // Default model ladder for lane workers, indexed by card complexity from
   // the classify router. Overridden per run by `super-board run --low|--high`.
   //   "low"    — haiku (low) / sonnet (medium) / opus (high)
-  //   "medium" — (default) sonnet / opus / session model
+  //   "medium" — (default) sonnet / opus / opus
   //   "high"   — opus for every card
   "model_tier": "medium",
 

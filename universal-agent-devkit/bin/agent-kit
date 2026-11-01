@@ -160,6 +160,10 @@ case "$CMD" in
     shift || true
     python3 "$DEVKIT_ROOT/bin/agent-config.py" "$@"
     ;;
+  parity)
+    shift || true
+    exec python3 "$DEVKIT_ROOT/bin/parity_check.py" "$@"
+    ;;
   health|check-health)
     shift || true
     H_RC=0; python3 "$DEVKIT_ROOT/bin/agent-health.py" "$@" || H_RC=$?
@@ -344,6 +348,9 @@ Commands:
                       android | ios | web | backend | automotive | game | voice-assistant | universal
                       (case-insensitive; aliases e.g. xehoi, frontend, api)
   health              Run the health diagnostic
+  parity [path] [--fix]  List where the project differs from this kit (forbidden verify flags, broken links,
+                      unregistered hooks, stale super-board copies); exit 1 when it differs. --fix drops
+                      --full/--force-full/--auto-approve-tests from verify_commands (init runs it last)
   gate                Run the post-fix static diff gate on the current changes
                       (--staged: static checks on the staged content only)
   githooks [install|uninstall|status] [path]

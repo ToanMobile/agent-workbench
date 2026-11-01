@@ -47,7 +47,7 @@ setTimeout(() => out({ event: 'result', result: { conversation_id: id, status: '
   }), Number(process.env.FAKE_AGY_INIT_DELAY_MS || 0));
 }
 `;
-const KEYS = ['FAKE_AGY_INIT_UNTIL', 'FAKE_AGY_HOLD_UNTIL', 'FAKE_AGY_SPACED_JSON', 'FAKE_AGY_HOLD_RESUME_MS', 'ANTIGRAVITY_PM_PING_WAIT_MS', 'FAKE_AGY_INIT_CWD', 'FAKE_AGY_CORRUPT_REGISTRY', 'ANTIGRAVITY_PM_PS', 'ANTIGRAVITY_LS_ADDRESS', 'ANTIGRAVITY_CSRF_TOKEN', 'ANTIGRAVITY_PM_AGY', 'FAKE_AGY_LOG', 'FAKE_AGY_ID', 'FAKE_AGY_HOLD_MS', 'FAKE_AGY_INIT_DELAY_MS', 'ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS', 'ANTIGRAVITY_PM_PROJECTS_DIR', 'HOME'];
+const KEYS = ['ANTIGRAVITY_PM_AGENTAPI', 'FAKE_AGY_INIT_UNTIL', 'FAKE_AGY_HOLD_UNTIL', 'FAKE_AGY_SPACED_JSON', 'FAKE_AGY_HOLD_RESUME_MS', 'ANTIGRAVITY_PM_PING_WAIT_MS', 'FAKE_AGY_INIT_CWD', 'FAKE_AGY_CORRUPT_REGISTRY', 'ANTIGRAVITY_PM_PS', 'ANTIGRAVITY_LS_ADDRESS', 'ANTIGRAVITY_CSRF_TOKEN', 'ANTIGRAVITY_PM_AGY', 'FAKE_AGY_LOG', 'FAKE_AGY_ID', 'FAKE_AGY_HOLD_MS', 'FAKE_AGY_INIT_DELAY_MS', 'ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS', 'ANTIGRAVITY_PM_PROJECTS_DIR', 'HOME'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // #723 (d′) FIXTURE_NOW: MOT moc now cho moi fixture (mau #699/#703); moi moc gia (mtime cu, reservedAt, at) tinh tu do. Chi trong test:
 // src van doc dong ho that, moc "cu" cach nguong src (RESERVATION_MAX_MS 90 s, LOCK_STALE_MS 40 s, stallMinutes) >= 6 lan.
@@ -60,8 +60,12 @@ function fakeAgy(t, env = {}) {
   const bin = path.join(dir, 'agy');
   fs.writeFileSync(bin, FAKE, { mode: 0o755 });
   const log = path.join(dir, 'calls.jsonl');
+  // #768: duong IDE trong test khong duoc chay agentapi THAT cua may (CI Linux khong cai Antigravity => "Khong tim thay binary agentapi" thay vi
+  // loi cua IDE). Gia dung nhu agentapi that khi cong IDE dong: in JSON co "error" + exit 1.
+  const agentapi = path.join(dir, 'agentapi');
+  fs.writeFileSync(agentapi, `#!/bin/sh\necho '{"response": {}, "error": "rpc error: code = Unavailable desc = connection error"}'\nexit 1\n`, { mode: 0o755 });
   const prev = { ...process.env };
-  Object.assign(process.env, { ANTIGRAVITY_PM_AGY: bin, FAKE_AGY_LOG: log, ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS: '1' }, env);
+  Object.assign(process.env, { ANTIGRAVITY_PM_AGY: bin, FAKE_AGY_LOG: log, ANTIGRAVITY_PM_AGY_SKIP_PERMISSIONS: '1', ANTIGRAVITY_PM_AGENTAPI: agentapi }, env);
   t.after(() => {
     for (const k of KEYS) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
     fs.rmSync(path.join(homeStateDir(), 'agy-conversations.json'), { force: true });   // chung cho ca file test: mot test do bo day khong duoc keo test sau

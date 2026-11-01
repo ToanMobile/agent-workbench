@@ -14,9 +14,9 @@
   },
   "scripts": {
     "start": "node bin/antigravity-pm-mcp.js",
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.js",
     "doctor": "node bin/antigravity-pm-mcp.js --doctor",
-    "test:coverage": "node --test --experimental-test-coverage tests/",
+    "test:coverage": "node --test --experimental-test-coverage tests/*.test.js",
     "lint": "node --check bin/antigravity-pm-mcp.js && for f in src/*.js tests/*.js; do node --check $f || exit 1; done"
   },
   "dependencies": {

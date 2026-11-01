@@ -251,3 +251,11 @@ Hash lane = `qa`. Same input definition as super-build.
 ### Block/Skip exits use the §4 mandatory template
 Same rule as super-build, including `super-board-needs-you.py mark` when a person must act
 (a real device, a human judgement the AC asks for, a credential).
+
+**Owner's standing decision.** A valid `[orchestrator] [decision]` comment on the card settles the AC or blocker it
+names (what counts as valid: `.claude/skills/super-board/references/decision-policy.md` → "Máy đọc thế nào"; `.claude/bin/super-board-decision.py` is the only
+judge): treat that AC as handled and do not raise the same blocker again. Never post `[decision]` yourself for the
+card you work on, under any header: when a choice is needed, write the Block (block-template.md) and let the
+orchestrator decide (run.md → "Owner's standing decision"). In your `[qa] [report]` list an AC settled that way
+under ✅ with a link to the decision, never under ❌ Not done: the merge gate skips only the ❌ items of reports older
+than the decision.
