@@ -111,9 +111,10 @@ fi
 
 if [[ -x "$LAUNCHER" ]]; then
   ENV_DUMP="$(env -u IMPECCABLE_NO_TELEMETRY -u DO_NOT_TRACK -u IMPECCABLE_SKILL_DIR IMPECCABLE_BIN="$(command -v env)" "$LAUNCHER" 2>/dev/null || true)"
-  if printf '%s\n' "$ENV_DUMP" | grep -qx 'IMPECCABLE_NO_TELEMETRY=1' \
-    && printf '%s\n' "$ENV_DUMP" | grep -qx 'DO_NOT_TRACK=1' \
-    && printf '%s\n' "$ENV_DUMP" | grep -qx "IMPECCABLE_SKILL_DIR=$SKILL_DIR"; then
+  # Dùng here-string `<<<` và `-Fqx` thay cho `printf | grep -qx` để không dính SIGPIPE (Broken pipe) dưới `set -uo pipefail` (#780)
+  if grep -Fqx 'IMPECCABLE_NO_TELEMETRY=1' <<<"$ENV_DUMP" \
+    && grep -Fqx 'DO_NOT_TRACK=1' <<<"$ENV_DUMP" \
+    && grep -Fqx "IMPECCABLE_SKILL_DIR=$SKILL_DIR" <<<"$ENV_DUMP"; then
     pass "scripts/impeccable thực sự export IMPECCABLE_NO_TELEMETRY=1, DO_NOT_TRACK=1 và IMPECCABLE_SKILL_DIR khi exec"
   else
     fail "scripts/impeccable không export đủ biến môi trường bảo mật khi chạy thực tế"
@@ -260,8 +261,9 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Lọc skill theo profile (profile_skills.py)
 # ---------------------------------------------------------------------------
+# Dùng here-string `<<<` thay cho `printf | grep -qx` để tránh SIGPIPE làm đỏ oan ở dòng 264 hoặc lọt lỗi giả ở dòng 274 (#780)
 for prof in web android ios automotive universal voice-assistant; do
-  if PROF_OUT="$(python3 "$PROFILE_SKILLS_PY" "$prof" 2>&1)" && printf '%s\n' "$PROF_OUT" | grep -qx "impeccable"; then
+  if PROF_OUT="$(python3 "$PROFILE_SKILLS_PY" "$prof" 2>&1)" && grep -Fqx "impeccable" <<<"$PROF_OUT"; then
     pass "profile_skills.py bao gồm impeccable cho profile '$prof'"
   else
     fail "profile_skills.py thiếu impeccable cho profile '$prof'"
@@ -271,7 +273,7 @@ done
 for prof in backend game; do
   if ! PROF_OUT="$(python3 "$PROFILE_SKILLS_PY" "$prof" 2>&1)"; then
     fail "profile_skills.py lỗi khi chạy với profile '$prof': $PROF_OUT"
-  elif printf '%s\n' "$PROF_OUT" | grep -qx "impeccable"; then
+  elif grep -Fqx "impeccable" <<<"$PROF_OUT"; then
     fail "profile_skills.py KHÔNG ĐƯỢC bao gồm impeccable cho profile '$prof'"
   else
     pass "profile_skills.py loại trừ đúng impeccable khỏi profile '$prof'"
