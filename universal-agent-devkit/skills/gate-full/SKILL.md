@@ -31,7 +31,11 @@ Lượt của lịch đêm ghi vào `~/Library/Logs/devkit-gate-full/<slug>/` ri
 `status` in đường dẫn); chạy tay không đặt `DEVKIT_GATE_FULL_LOG_DIR` thì ghi thẳng vào `~/Library/Logs/devkit-gate-full/`.
 
 - `<thư mục log>/summary-latest.md` (và `summary-<yyyymmdd>.md`): kết quả, thời gian, tải lúc bắt đầu, có chờ tải không,
-  suite đỏ, commit nghi vấn, link thẻ, đường dẫn log.
+  suite đỏ, commit nghi vấn, link thẻ, đường dẫn log; lượt đỏ thêm mục "Truy vết" (#759): khoảng `last_full_green_sha..sha`, PR + thẻ của
+  từng commit, với mỗi suite đỏ các commit đụng file test / nguồn nó chạm (đồ thị của `bin/scoped_gate.py`) / `watch_files` cụ thể,
+  mức tin cậy `chắc` (commit nghi vấn của chia đôi và đụng file) · `nghi` · `không rõ`.
+- `<thư mục log>/trace-latest.json`: cùng truy vết cho máy đọc (`result`, `sha`, `last_green`, `commits`, `tests[].candidates`); lượt
+  không đỏ thì `tests` rỗng.
 - `<thư mục log>/<yyyymmdd-HHMMSS>.log`: toàn văn gate, `agent-kit test`, từng bước chia đôi.
 - `<git common dir>/postfix-gate/last_full_green_sha`, `nightly/full_pass.json`, `nightly/history.jsonl` (một dòng mỗi lượt).
 
@@ -40,9 +44,11 @@ Lượt của lịch đêm ghi vào `~/Library/Logs/devkit-gate-full/<slug>/` ri
 0. Nhóm b (#700): suite đỏ có nhãn `"timing": true` trong ma trận, hoặc trong toàn văn log của suite MỌI khối hỏng lá (`✖/✗ …` + dòng thụt
    sâu hơn; khối có khối con chỉ xét khối con) có dấu hiệu thời gian thực / môi trường (watchdog "quá lớn / quá phức tạp…", `killed after
    …s (deadline)`, `Killed: 9`), hoặc không có khối hỏng nào mà có dòng tổng kết hook contract `ENV-BLOCKED: hook watchdog fired under
-   load, no verdict`. Mọi suite đỏ đều nhóm b ⇒
-   `red-env`: không chia đôi, không ghi `last_full_green_sha`, thẻ risk 🟡. `DEVKIT_GATE_FULL_BISECT=0` không bao giờ chia đôi, `=1` luôn chia đôi,
-   `auto` (mặc định) như trên.
+   load, no verdict` (và không có Traceback / dòng `FAIL` trần). Không bao giờ nhóm b (#749): lần đầu đỏ thật dù lần chạy lại (FLAKY_RETRY)
+   dính watchdog, dòng `FAIL …` trần không dấu hiệu trong khối (trừ dòng tổng đếm cuối file: `FAIL: 2 case(s)`, `FAIL (2)`,
+   `FAIL test_x (2)`), log bằng chứng bị cắt đầu. Mọi suite đỏ đều nhóm b ⇒
+   `red-env`: không chia đôi, không ghi `last_full_green_sha`, thẻ risk 🟡. `DEVKIT_GATE_FULL_BISECT=0` không bao giờ chia đôi, `=1` luôn chia đôi
+   (ra commit nghi vấn và thấy commit trước nó xanh ở lượt này ⇒ `red`, exit 1, 🔴 — #748), `auto` (mặc định) như trên.
 1. Chạy lại CHỈ suite/test đỏ ở đỉnh (đường dẫn `✖ tests/…` của run_impacted, hoặc lệnh của suite đỏ). Không tái hiện ⇒ ghi "flaky?", không nghi ai,
    result `red-env`.
 2. Chia đôi các merge first-parent `last_full_green_sha..sha` (≤ 16; chưa có lượt xanh: 8 merge gần nhất) ⇒ merge đầu tiên làm đỏ.
