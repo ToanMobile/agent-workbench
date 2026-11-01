@@ -451,6 +451,50 @@ def test_map(project, graph=None, barrier=None):
 
 # --- diff + quyết định -----------------------------------------------------------------------------------------------------
 
+def pin_to_head(project, base, changed, from_tree=False):
+    """#770: (changed đã ghim theo HEAD, các path đã bỏ). Path ghim HEAD (tree_fp.HEAD_PINNED, kể cả con của nó: .claude/settings.json mà
+    `agent-kit init` sửa cục bộ) được nhìn như tree_fp #691 nhìn nó — bản của HEAD. Path ghim chỉ bẩn ở cây làm việc / chưa track mà không
+    commit nào đổi nó ⇒ bỏ khỏi changed: vân tay và biên nhận lấy bản của HEAD, test nhắc tên nó không kiểm thay đổi nào của commit.
+    - from_tree (changed do changed_files tự tính theo merge-base): "đã commit" = merge-base(base, HEAD)..HEAD (commit mới của base sau điểm rẽ
+      không phải đổi của nhánh, #300) và HỢP path ghim đổi đã commit vào changed, kể cả khi cây làm việc bị ghi đè về bản mb (git diff <mb> --
+      không thấy nó);
+    - changed của caller (post-fix-gate): "đã commit" thêm base..HEAD (`--diff A..B` đưa base = A; nhánh A sửa settings.json sau mb vẫn là đổi)
+      và CHỈ bỏ, không thêm gì ngoài tập caller đã chọn (caller đã lọc, vd. is_devkit_artifact).
+    Không có base, không nạp được tree_fp, HEAD giữ path ghim không phải blob/symlink (tree_fp cũng từ chối) hay git lỗi ⇒ trả nguyên changed
+    (fail closed: thừa test, không thiếu).
+    ponytail: `--diff A..B` với B khác HEAD (đứng ở nhánh khác B, không caller tự động nào dùng) không thấy commit của B; gate vẫn chạy test trên
+    cây làm việc và biên nhận khoá theo vân tay của cây đó, nên không có biên nhận nào bảo lãnh cho B. Nâng khi có caller dùng dải như vậy."""
+    if not base:
+        return changed, []
+    try:
+        bindir = os.path.dirname(os.path.abspath(__file__))
+        if bindir not in sys.path:
+            sys.path.insert(0, bindir)
+        import tree_fp  # noqa: PLC0415 - module cạnh trong bin/: một nguồn danh sách path ghim với vân tay (INSTINCT-015)
+    except ImportError:
+        return changed, []
+    pins = list(tree_fp.HEAD_PINNED)
+    mb = _git(project, "merge-base", base, "HEAD", check=False)
+    mb_sha = mb.stdout.decode().strip()
+    if mb.returncode != 0 or not mb_sha:
+        return changed, []
+    q = ["--literal-pathspecs"]
+    ls = _git(project, *q, "ls-tree", "HEAD", "--", *pins, check=False)
+    if ls.returncode != 0 or any(not r.startswith(("100644 blob ", "100755 blob ", "120000 blob "))
+                                 for r in ls.stdout.decode("utf-8", "surrogateescape").splitlines()):
+        return changed, []
+    runs = [_git(project, *q, "diff", "--name-only", "-z", "--no-renames", "--relative", a, "HEAD", "--", *pins, check=False)
+            for a in ((mb_sha,) if from_tree else dict.fromkeys((mb_sha, base)))]
+    runs += [_git(project, *q, "diff", "--name-only", "-z", "--no-renames", "--relative", "HEAD", "--", *pins, check=False),
+             _git(project, *q, "ls-files", "-z", "-o", "--exclude-standard", "--", *pins, check=False)]
+    if any(r.returncode != 0 for r in runs):
+        return changed, []
+    committed = {f for r in runs[:-2] for f in _z(r.stdout)}
+    dirty = set(_z(runs[-2].stdout)) | set(_z(runs[-1].stdout))
+    drop = [f for f in changed if tree_fp.head_pinned(f) and f in dirty and f not in committed]
+    return sorted((set(changed) - set(drop)) | (committed if from_tree else set())), drop
+
+
 def changed_files(project, base):
     """`git diff --name-only $(git merge-base base HEAD)` (gồm cây làm việc, đổi tên = xoá + thêm) ∪ file mới chưa ignore."""
     mb = _git(project, "merge-base", base, "HEAD").stdout.decode().strip()
@@ -490,7 +534,8 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
     project = os.path.abspath(project)
     nnt = needs_no_test or default_needs_no_test
     res = {"mode": "full", "reasons": [], "core_hits": [], "changed": [], "docs": [], "tests": [], "smoke": [],
-           "unmapped": [], "expanded": [], "matrix_covered": [], "deleted": [], "no_own_test": [], "graph_error": None, "elapsed_s": 0.0}
+           "unmapped": [], "expanded": [], "matrix_covered": [], "deleted": [], "no_own_test": [], "graph_error": None, "elapsed_s": 0.0,
+           "head_pinned": []}
     core = load_core(project)
     res["smoke"] = [p for p in core["smoke"] if os.path.isfile(os.path.join(project, p))]
 
@@ -498,12 +543,14 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
         res["elapsed_s"] = round(time.monotonic() - t0, 3)
         return res
 
+    from_tree = changed is None   # #770: changed tự tính theo merge-base, không phải tập caller đã chọn
     try:
         if changed is None:
             if not base:
                 raise RuntimeError("thiếu base")
             changed = changed_files(project, base)
         changed = sorted({c.replace("\\", "/") for c in changed if c})
+        changed, res["head_pinned"] = pin_to_head(project, base, changed, from_tree)   # #770: path ghim nhìn theo HEAD như tree_fp
         res["changed"] = changed
         code, reads = {}, {}
         graph = build_graph(project, _code=code, _reads=reads)

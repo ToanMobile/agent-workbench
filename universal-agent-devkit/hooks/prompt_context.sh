@@ -48,8 +48,11 @@ while [ -L "${SELF}" ]; do
   case "${LINK}" in /*) SELF="${LINK}" ;; *) SELF="$(dirname "${SELF}")/${LINK}" ;; esac
 done
 ENRICH=""
-for cand in "$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)/scripts/context/enrich_context.py" \
-            "$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)/scripts/enrich_context.py" \
+# #813: thư mục kit tính MỘT lần bằng parameter expansion (trước đây 2 lần `$(cd -P "$(dirname …)")`, mỗi lần 2 subshell + exec dirname).
+case "${SELF}" in */*) _HERE="${SELF%/*}" ;; *) _HERE="." ;; esac
+_KIT="$(cd -P "${_HERE:-/}/.." 2>/dev/null && pwd)"
+for cand in "${_KIT}/scripts/context/enrich_context.py" \
+            "${_KIT}/scripts/enrich_context.py" \
             "${DEVKIT_ROOT:-}/scripts/context/enrich_context.py" \
             "${DEVKIT_ROOT:-}/scripts/enrich_context.py" \
             "${HOME}/.universal-agent-devkit/scripts/context/enrich_context.py" \
@@ -74,7 +77,24 @@ if [ -z "${REPO_ROOT}" ]; then
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
 [ -n "${REPO_ROOT}" ] || exit 0
-RULES="$(dirname "${ENRICH}")/rule_context.py"
+
+# Bytecode của python3 trong hook (#813): thư mục riêng của user, không bao giờ trong cây kit. Claude Code xuất
+# PYTHONDONTWRITEBYTECODE=1, nên regression_checklist.py (3517 dòng) bị compile lại ở MỌI prompt; còn gate (tests/run_impacted.sh)
+# đặt PYTHONPYCACHEPREFIX vào thư mục rỗng, nên cả stdlib cũng compile lại mỗi lần: ~180–230 ms CPU thay vì ~100 ms
+# (tests/context_memory/test_prompt_hook_gate_env.sh). Thư mục: $TMPDIR, TMPDIR trống thì ${XDG_CACHE_HOME:-$HOME/.cache} (không
+# dùng /tmp chung). Một lần find (lstat, không theo symlink) kiểm cùng lúc: là thư mục thật, chủ là user này, nhóm/người khác không
+# có bit ghi — thư mục có sẵn với quyền lỏng có thể đã chứa pyc người khác cài, chmod lại không gỡ được (OCR, Antigravity, Claude
+# 01/11). Không đạt, hay đường dẫn không tuyệt đối: hook chạy với env của người gọi.
+# ponytail: cache không tự dọn (~0,4 MB mỗi đường kit + ~1,3 MB mỗi bản python); khi có hàng trăm worktree kit sống lâu thì thêm
+# bước dọn vào scripts/governance/scratch_cleanup.py.
+_PYC="${TMPDIR:-${XDG_CACHE_HOME:-${HOME:-}/.cache}}"; _PYC="${_PYC%/}/devkit-pycache-${UID:-x}"
+case "${_PYC}" in
+  /*) [ -d "${_PYC}" ] || mkdir -m 700 "${_PYC}" 2>/dev/null
+      if _OK="$(find "${_PYC}" -prune -type d -user "${UID:-x}" ! -perm -020 ! -perm -002 -print 2>/dev/null)" && [ -n "${_OK}" ]; then
+        export PYTHONPYCACHEPREFIX="${_PYC}"; unset PYTHONDONTWRITEBYTECODE
+      fi ;;
+esac
+RULES="${ENRICH%/*}/rule_context.py"
 RULES_OUT=""
 if [ -f "${RULES}" ] && [ -f "${REPO_ROOT}/.agents/context/rules-index.md" ]; then
   # In parallel with enrich_context.py: the hook's wall time is one python start, not two.
