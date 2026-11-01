@@ -21,13 +21,15 @@ node --x -e, perl -w -e, bash <<EOF, …; options before -c/-e are skipped, BUG-
 too (its writes cannot be read statically). git that rewrites the tree (28b85d96f4): checkout / restore / reset / rm / mv / clean /
 stash with a protected operand, a folder holding the machinery or a glob, and apply / am of a patch file (named anywhere on the
 line) whose headers edit a protected path, are denied; ref-driven merge / pull / cherry-pick / rebase / revert and a patch piped
-from a producer the guard cannot read are residual. The signer is never driven by an agent (T0021, fail closed): a Bash line that
-names review_sign / load_key / review-fanout-summary-v1 (any case, after quote removal) or holds a glob / brace word that can
-name the signer file (`review_sig?.py`) is denied unless the whole line is `python3 [-I] …/review_sign.py verify <file>` or ONE
-plain read (cat / head / tail / less / more / wc / file / stat / ls / grep / rg / diff / cmp / shasum / md5, `sed -n <lines>p`,
-git show / diff / log / blame / grep / ls-files / status) with no ; & | ` $( ${ < > # or newline; a Write/Edit of a non-document
-file whose text names review_sign, load_key or the key path is denied too. Accepted false positives: any other line naming the
-signer (a commit message, `git add` of it).
+from a producer the guard cannot read are residual. The signer is never driven by an agent (T0021 / T0022, fail closed): a Bash
+line that names review_sign / load_key / review-fanout-summary-v1 (any case, after quote removal), holds a word that spells
+r…e…v…i…e…w…s…i…g…n through shell syntax (`${u:-…/review_sig?.py}`, `review_{s,x=y}ign.py`, `+(r)eview_sign.py`), or a glob /
+brace that expands to the signer from cwd or a folder the line names, is denied unless the whole line is `python3 [-I]
+…/review_sign.py verify <file>` or ONE plain read (cat / head / tail / wc / ls / stat / file / shasum / sha256sum / md5 / grep,
+`sed -n <lines>p`) with no ; & | ` $( ${ < > # or newline; a command whose name is computed ("$f", {} of find -exec, $( )) on a
+line that says `sign` or points at the machinery is denied too, and so is a Write/Edit of a non-document file whose text names
+review_sign, load_key or the key path. Accepted false positives: any other line naming the signer (`git diff` / `git log` of it,
+a commit message, `git add` of it) and any word with shell syntax that spells review…sign.
 Paths, the key / signer names, interpreter and file-command names and glob components match case-folded (APFS runs
 `CP x .GIT/REVIEW-FANOUT/…`; nocaseglob); the folded line only adds to the line parsed as written. A write target computed by
 $VAR / $( ) / backtick is denied on a line that points at the machinery.
@@ -93,6 +95,7 @@ SEQ = re.compile(r"(-?\d+)\.\.(-?\d+)(?:\.\.-?\d+)?|([A-Za-z])\.\.([A-Za-z])(?:\
 HEADS = ((".git", ("review-fanout",)), (".claude", ("settings.json", "settings.local.json")), (".github", ("workflows",)),
          (".config", ("agent-workbench",)))
 SIGNER_NAMES = ("review_sign.py", "review_sign")
+SIGNER_LETTERS = "reviewsign"
 # command names APFS runs in any case (`CP`, `TEE`, `GIT`, `PYTHON3`): folded before shell_writes / the git scan read the line
 VERBS = re.compile(r"(?<![\w.-])(?i:cp|mv|rm|tee|install|rsync|ln|scp|touch|truncate|mkdir|rmdir|chmod|unlink|dd|sed|perl|ruby|"
                    r"python[\d.]*|node|deno|bun|php|bash|sh|zsh|dash|ksh|git|cd|pushd|popd|env|sudo|nohup|nice|timeout|exec|"
@@ -283,29 +286,52 @@ def _names_signer(w, cwd):
     return False
 
 
+def _spells_signer(word):
+    """T0022: a word holding shell syntax (* ? [ ] { } $ ( ) @ + ! , = : ~ ` \\ ' ") that still spells r…e…v…i…e…w…s…i…g…n in
+    order once that syntax is deleted, case-insensitive, a ? or a [...] standing for one letter (`${u:-…/review_sig?.py}`,
+    `review_{s,x=y}ign.py`, `+(r)eview_sign.py`, `review_sig[n].py`); `review/*.md` does not."""
+    if not re.search(r"[*?\[\]{}$()@+!,=:~`\\'\"]", word):
+        return False
+    w, k, i = word.lower(), 0, 0
+    while i < len(w) and k < len(SIGNER_LETTERS):
+        j = _bracket_end(w, i) if w[i] == "[" else None
+        k += w[i] == "?" or bool(j) or w[i] == SIGNER_LETTERS[k]
+        i = (j or i) + 1
+    return k == len(SIGNER_LETTERS)
+
+
 def _signer_named(cmd, cwd):
-    """The first word of the line (as written, or after the shell's quote removal: `review_s"ign"`) that names the signer or can
-    expand to it (_names_signer), or None."""
+    """The first word of the line that names the signer or can expand to it, or None: SIGNER_WORD (as written, or after the
+    shell's quote removal: `review_s"ign"`), a word that spells it through shell syntax (_spells_signer), or a glob / brace
+    (_names_signer) walked from cwd and from every folder the line names (`find bin -name '*.py' -exec {} …`,
+    `cd bin && for f in ???????????.py`)."""
     plain = re.sub(r"[\"'\\]", "", cmd)
     m = SIGNER_WORD.search(cmd) or SIGNER_WORD.search(plain)
     if m:
         return m.group(0)
-    return next((w for w in re.split(r"[\s;&|()<>=`]+", plain) if GLOB.search(w) and _names_signer(w, cwd)), None)
+    hit = next((w for w in re.split(r"[\s;&|<>]+", cmd) if _spells_signer(w)), None)
+    if hit:
+        return hit
+    words = [w for w in re.split(r"[\s;&|()<>=`]+", plain) if w]
+    dirs = [cwd] + [d for d in dict.fromkeys(_norm(w, cwd) for w in words if not GLOB.search(w)) if os.path.isdir(d)][:8]
+    return next((w for w in words if GLOB.search(w) and any(_names_signer(w, d) for d in dirs)), None)
 
 
-# T0021: a line that names the signer runs only as VERIFY_ONLY or as ONE plain read of it — any other line naming it is denied
-# (fail closed; parsing where a command starts missed "$(…)" in quotes, <( ), a quote in a comment, find -exec env …)
-SIGNER_READS = {"cat", "head", "tail", "less", "more", "wc", "file", "stat", "ls", "grep", "egrep", "fgrep", "rg", "diff", "cmp",
-                "shasum", "sha256sum", "md5", "sed", "git"}
-GIT_READS = {"show", "diff", "log", "blame", "grep", "ls-files", "status"}
+# a command whose name is computed ($f, "./$f", {} of find -exec, $( ), a backtick): what it runs cannot be named, so a line that
+# says `sign` or points at the machinery is denied with it (fail closed: `ls bin | while read f; do "bin/$f" sign …; done`)
+COMPUTED_RUN = re.compile(r"(?:^|[;&|(\n`{]|(?<![\w-])(?:do|then|else|exec|nohup|time|command|builtin|env|xargs|sudo|nice|-exec|"
+                          r"-execdir|-ok|-okdir)(?![\w-]))[ \t]*[^\s;&|=]*(?:\$|\{\}|`)")
+
+# T0021 / T0022: a line that names the signer runs only as VERIFY_ONLY or as ONE plain read of it — any other line naming it is
+# denied (fail closed). No git / rg / less / more: each has a pager / exec / textconv option family (`git grep -nO<pager>`).
+SIGNER_READS = {"cat", "head", "tail", "wc", "ls", "stat", "file", "shasum", "sha256sum", "md5", "grep", "egrep", "fgrep", "sed"}
 NOT_PLAIN = re.compile(r"[;&|`<>#\n]|\$[({]")   # an operator, substitution, redirection, comment or second line anywhere
-SAFE_SED = re.compile(r"(?:\d+|\$)(?:,(?:\d+|\$))?p|/[^/]*/p")
+SAFE_SED = re.compile(r"(?:\d+|\$)(?:,(?:\d+|\$))?p|/[^/wWer]*/p")   # no w / W / e / r command can hide in it
 
 
 def _signer_read(cmd):
-    """True when the whole line is one plain read: a SIGNER_READS command (git: a GIT_READS subcommand right after it; sed: only
-    `sed -n <lines>p <files>`) with plain words only, and no option that runs or writes something (rg --pre, git -O /
-    --open-files-in-pager / --output / --ext-diff / --textconv, less / more +cmd)."""
+    """True when the whole line is one plain read: a SIGNER_READS command with plain words only (sed: only `sed -n <lines>p
+    <files>` or `sed -n /re/p <files>`)."""
     if NOT_PLAIN.search(cmd):
         return False
     try:
@@ -314,14 +340,9 @@ def _signer_read(cmd):
         return False
     if not w or w[0] not in SIGNER_READS:
         return False
-    if w[0] == "git":
-        return len(w) > 1 and w[1] in GIT_READS and not any(
-            a.startswith(("-O", "--open-files-in-pager", "--output", "--ext-diff", "--textconv")) for a in w[2:])
-    if w[0] == "sed":
-        return len(w) > 3 and w[1] == "-n" and bool(SAFE_SED.fullmatch(w[2])) and not any(a.startswith("-") for a in w[3:])
-    if w[0] == "rg":
-        return not any(a.startswith("--pre") for a in w[1:])
-    return w[0] not in ("less", "more") or not any(a.startswith("+") for a in w[1:])
+    return w[0] != "sed" or (len(w) > 3 and w[1] == "-n" and bool(SAFE_SED.fullmatch(w[2]))
+                             and not any(a.startswith("-") for a in w[3:]))
+
 
 
 def _secret_reach(p, cwd):
@@ -416,6 +437,11 @@ def bash_hits(cmd, cwd):
     sig = _signer_named(cmd, cwd)
     if sig and not VERIFY_ONLY.fullmatch(cmd) and not _signer_read(cmd):
         return ["seal:" + sig]
+    if COMPUTED_RUN.search(re.sub(r"[\"'\\]", "", cmd)):
+        if re.search(r"(?<![\w.-])sign(?![\w.-])", cmd):
+            return ["seal:a computed command that signs"]
+        if MACHINERY_HINT.search(cmd):
+            hits.append("a computed command on a line that points at the machinery")
     try:
         import shell_writes
         literal = shell_writes._literal_exists = getattr(shell_writes, "_literal_exists", shell_writes._exists)

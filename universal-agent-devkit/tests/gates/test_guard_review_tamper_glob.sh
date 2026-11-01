@@ -106,9 +106,28 @@ expect deny "$R" "git commit -m \"x\" && $DK/bin/review_sign.py sign y"
 expect allow "$R" 'cat universal-agent-devkit/bin/review_sign.py'
 expect allow "$R" 'grep -n load_key universal-agent-devkit/bin/review_sign.py'
 expect allow "$R" 'sed -n 1,40p universal-agent-devkit/bin/review_sign.py'
-expect allow "$R" 'git diff origin/main -- universal-agent-devkit/bin/review_sign.py'
+expect deny "$R" 'git diff origin/main -- universal-agent-devkit/bin/review_sign.py'   # accepted false positive (T0022: no git)
 expect allow "$R" 'python3 universal-agent-devkit/bin/review_sign.py verify .git/review-fanout/H/summary.json'
 expect allow "$R" 'bash tests/gates/test_review_seal_binding.sh'
+# audit T0022: git / rg / less / more left the read list (pager / exec option families); a word that spells the signer through
+# shell syntax names it; a glob is walked from the folders the line names too; a computed command on a line that signs is denied
+RT="$(cd "$DK/.." && pwd)"
+expect deny "$RT" "git grep -nO\"sh -c 'universal-agent-devkit/bin/review_sign.py sign .git/review-fanout/H/summary.json'\" hi README.md"
+expect deny "$RT" "git grep --open=\"sh -c 'universal-agent-devkit/bin/review_sign.py sign .git/review-fanout/H/summary.json'\" hi README.md"
+expect deny "$RT" '${u:-universal-agent-devkit/bin/review_sig?.py} sign .git/review-fanout/H/summary.json'
+expect deny "$RT" 'set -- universal-agent-devkit/bin/review_{s,x=y}ign.py; "$1" sign .git/review-fanout/H/summary.json'
+expect deny "$RT" "$(printf 'shopt -s extglob\nuniversal-agent-devkit/bin/review_+(s)ign.py sign .git/review-fanout/H/summary.json')"
+expect deny "$RT" 'universal-agent-devkit/bin/@(review_sign).py sign .git/review-fanout/H/summary.json'
+expect deny "$RT" 'universal-agent-devkit/bin/review_sig[n].py sign .git/review-fanout/H/summary.json'
+expect deny "$RT" "find universal-agent-devkit/bin -name '*.py' -exec {} sign .git/review-fanout/H/summary.json \\;"
+expect deny "$RT" 'cd universal-agent-devkit/bin && for f in ???????????.py; do "./$f" sign .git/review-fanout/H/summary.json; done'
+expect deny "$RT" 'ls universal-agent-devkit/bin | while read f; do "universal-agent-devkit/bin/$f" sign /tmp/s.json; done'
+expect allow "$RT" 'ls -l universal-agent-devkit/bin/review_sign.py'
+expect allow "$RT" 'wc -l universal-agent-devkit/bin/*.py'
+expect allow "$RT" 'cat review/*.md'
+expect allow "$RT" 'grep -r sign src/'
+expect allow "$RT" 'ls reviewers/*'
+expect allow "$RT" 'for f in universal-agent-devkit/tests/gates/*.sh; do bash "$f"; done'
 # nocaseglob (bash) / NO_CASE_GLOB (zsh): a glob matches a folder in any case
 expect deny "$R" "shopt -s nocaseglob; cp x $DK/HOO?S/guard-secrets.py"
 # allowed: reads, and globs that expand to nothing protected
