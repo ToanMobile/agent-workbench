@@ -231,6 +231,14 @@ gate 5 "$GATE" -- --accept-reduced-review grok
   && ok "R3 --accept-reduced-review grok: PASS_REDUCED accepted for this run only" || fail "R3 flag: $(why)"
 gate 5 "$GATE" REVIEW_SKIP_REVIEWERS=grok --
 [ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && ok "R3 inherited REVIEW_SKIP_REVIEWERS is ignored (no back door, exit 10)" || fail "R3 env skip: $(why)"
+# Lượt review reduced đang chạy (3:RUNNING) → exit 4 chờ nhịp sau, không đánh đồng thành exit 6 (về Review).
+clear_verdicts
+RUN_GROK="$COMMON/review-fanout/$(hash_of "$H5" "grok")"
+mkdir -p "$RUN_GROK"; echo "$$" > "$RUN_GROK/pid"
+gate 5 "$GATE" -- --accept-reduced-review grok
+rm -rf "$RUN_GROK"
+[ "$RC" -eq 4 ] && [ "$(merged_calls)" = 0 ] && grep -q 'still running' "$TMP/err" \
+  && ok "R3 reduced review still running (3:RUNNING): exit 4 retry, not exit 6" || fail "R3 running reduced: $(why)"
 # PASS_REDUCED ghi vào thư mục của review đủ 4 bên cũng không phải PASS
 clear_verdicts; verdict "$H5" "" PASS_REDUCED light ok pass sign
 gate 5 "$GATE" --
@@ -359,6 +367,31 @@ clear_verdicts; REVIEW_REGRESSION_STATUS="$STF" verdict "$H8" "" PASS light ok p
 gate 8 "$GATE" -- --review-status-file "$STF"
 [ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && grep -q 'BUG-REV-s5' "$TMP/err" \
   && ok "S5 empty out-of-tree status file cannot mask active BUG-REV-* row in tracked checklist (exit 6)" || fail "S5 mask bug row: $(why)"
+STF_KIND="$TMP/status-spoof-kind.json"
+printf '%s\n' '{"version":1,"items":{"BUG-REV-s5":{"kind":"test","last":{"status":"PASS"}}}}' > "$STF_KIND"
+clear_verdicts; REVIEW_REGRESSION_STATUS="$STF_KIND" verdict "$H8" "" PASS light ok pass sign
+gate 8 "$GATE" -- --review-status-file "$STF_KIND"
+[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && grep -q 'BUG-REV-s5' "$TMP/err" \
+  && ok "S5b out-of-tree status file changing BUG-REV-* kind away from bug is rejected (exit 6)" || fail "S5b kind spoof: $(why)"
+STF_AUTO="$TMP/status-autoclosed.json"
+printf '%s\n' '{"version":1,"items":{"BUG-REV-s5":{"kind":"bug","state":"auto_closed","tests":[]}}}' > "$STF_AUTO"
+clear_verdicts; REVIEW_REGRESSION_STATUS="$STF_AUTO" verdict "$H8" "" PASS light ok pass sign
+gate 8 "$GATE" -- --review-status-file "$STF_AUTO"
+[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && grep -q 'BUG-REV-s5' "$TMP/err" \
+  && ok "S5c out-of-tree status file marking BUG-REV-* AUTO_CLOSED without test is rejected (exit 6)" || fail "S5c auto_closed spoof: $(why)"
+mkdir -p "$COMMON/postfix-gate"
+printf '%s\n' '{"rows":{"BUG-REV-p1":{"id":"BUG-REV-p1","kind":"bug","fixed":false,"title":"pending bug","tests":[]}},"stats":{},"inbox":{}}' > "$COMMON/postfix-gate/pending_rows.json"
+clear_verdicts; REVIEW_REGRESSION_STATUS="$STF" verdict "$H5" "" PASS light ok pass sign
+gate 5 "$GATE" -- --review-status-file "$STF"
+rm -f "$COMMON/postfix-gate/pending_rows.json"
+[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && grep -q 'BUG-REV-p1' "$TMP/err" \
+  && ok "S5d out-of-tree status file omitting BUG-REV-* from trunk pending_rows.json (load_view) is rejected (exit 6)" || fail "S5d pending_rows mask: $(why)"
+STF_UNPROVEN="$TMP/status-unproven.json"
+printf '%s\n' '{"version":1,"items":{"BUG-REV-s5":{"id":"BUG-REV-s5","kind":"bug","fixed":true,"tests":["REG-T1"],"linked_ts":1700000000},"REG-T1":{"id":"REG-T1","kind":"test","last":{"status":"PASS","ts":1700000010,"at":"2026-11-01T00:00:10Z"}}}}' > "$STF_UNPROVEN"
+clear_verdicts; REVIEW_REGRESSION_STATUS="$STF_UNPROVEN" verdict "$H8" "" PASS light ok pass sign
+gate 8 "$GATE" -- --review-status-file "$STF_UNPROVEN"
+[ "$RC" -eq 0 ] && [ "$(merged_calls)" = 1 ] \
+  && ok "S5e out-of-tree status file with fixed + passing linked test (UNPROVEN, B2) is accepted (exit 0)" || fail "S5e unproven B2: $(why)"
 
 CFG_B2="$TMP/cfg-b2.json"
 python3 - "$CFG" "$CFG_B2" "$STF" <<'PY'
@@ -368,9 +401,23 @@ json.dump(c, open(sys.argv[2], "w"))
 PY
 clear_verdicts; REVIEW_REGRESSION_STATUS="$STF" verdict "$H5" "" PASS light ok pass sign
 CFG_SAVE=$CFG; CFG=$CFG_B2
+gate 5 "$GATE" SB_BOARD_WORKER=1 --
+[ "$RC" -eq 13 ] && [ "$(merged_calls)" = 0 ] && grep -q 'board worker may not use merge_policy.review_status_file' "$TMP/err" \
+  && ok "S6a SB_BOARD_WORKER=1 cannot inject merge_policy.review_status_file via --config (exit 13)" || fail "S6a worker config status: $(why)"
 gate 5 "$GATE" --
 CFG=$CFG_SAVE
 [ "$RC" -eq 0 ] && [ "$(merged_calls)" = 1 ] && grep -q "review: regression status from $STF (sha256 " "$TMP/err" \
   && ok "S6 merge_policy.review_status_file in trusted --config matches B2 review without CLI flag" || fail "S6 config status file: $(why)"
+CFG_BAD_B2="$TMP/cfg-bad-b2.json"
+python3 - "$CFG" "$CFG_BAD_B2" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c.setdefault("merge_policy", {})["review_status_file"] = "relative-status.json"
+json.dump(c, open(sys.argv[2], "w"))
+PY
+CFG=$CFG_BAD_B2
+gate 5 "$GATE" --
+CFG=$CFG_SAVE
+[ "$RC" -eq 9 ] && [ "$(merged_calls)" = 0 ] && grep -q 'verification-readiness: merge_policy.review_status_file' "$TMP/err" \
+  && ok "S6b invalid merge_policy.review_status_file in --config fails readiness (exit 9)" || fail "S6b bad config status: $(why)"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

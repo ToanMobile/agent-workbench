@@ -26,4 +26,17 @@ echo '{"merge_policy":{"machine_gate":{"verify_commands":["bash t/all.sh"],"cate
 [ "$(tests_of "$TMP/c2.json" "$TMP/mig.json" | tr '\n' '|')" = "bash t/all.sh|bash t/mig.sh|" ] \
   && ok "global + migration tests, de-duplicated in order" || fail "global + migration: [$(tests_of "$TMP/c2.json" "$TMP/mig.json" | tr '\n' '|')]"
 
+# Khai riêng categories.migration không được làm rơi luật mặc định money / auth / schema (DEFAULT_MACHINE_GATE).
+cats_of() {   # cats_of <cfg> <path> <added_line> → danh sách category của machine_gate
+  printf 'diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -1,1 +1,2 @@\n ctx\n+%s\n' "$2" "$2" "$2" "$2" "$3" > "$TMP/one.diff"
+  printf '{"labels":[],"body":"","files":[{"path":"%s","additions":1,"deletions":0}]}' "$2" > "$TMP/one.json"
+  python3 "$POLICY" --config "$1" --meta "$TMP/one.json" --diff "$TMP/one.diff" \
+    | python3 -c 'import json,sys; print(",".join(m["category"] for m in json.load(sys.stdin)["machine_gate"]))'
+}
+[ "$(cats_of "$TMP/c1.json" "server/auth/login.kt" "x = 1")" = "auth" ] \
+  && [ "$(cats_of "$TMP/c1.json" "app/pay.ts" "import Stripe from 'stripe';")" = "money" ] \
+  && [ "$(cats_of "$TMP/c1.json" "db/q.sql" "DROP TABLE users;")" = "schema" ] \
+  && ok "partial categories.migration preserves default auth / money / schema machine_gate rules" \
+  || fail "partial categories wiped defaults: auth=[$(cats_of "$TMP/c1.json" "server/auth/login.kt" "x = 1")] money=[$(cats_of "$TMP/c1.json" "app/pay.ts" "import Stripe from 'stripe';")] schema=[$(cats_of "$TMP/c1.json" "db/q.sql" "DROP TABLE users;")]"
+
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

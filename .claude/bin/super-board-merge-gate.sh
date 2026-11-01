@@ -173,6 +173,7 @@ ACCEPT_REDUCED="${SB_MERGE_ACCEPT_REDUCED_REVIEW:-}"
 _INHERITED_REVIEW_STATUS="${REVIEW_REGRESSION_STATUS-}"
 unset REVIEW_REGRESSION_STATUS
 REVIEW_STATUS_FILE=""
+REVIEW_STATUS_SNAP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -249,9 +250,15 @@ CONFIG_JSON=$(cat "$CONFIG")
 printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
 if [ -z "$REVIEW_STATUS_FILE" ]; then
   REVIEW_STATUS_FILE=$(echo "$CONFIG_JSON" | jq -r '.merge_policy.review_status_file // ""')
-  if [ -n "$REVIEW_STATUS_FILE" ] && ! { [[ "$REVIEW_STATUS_FILE" = /* ]] && [ -f "$REVIEW_STATUS_FILE" ]; }; then
-    echo "verification-readiness: merge_policy.review_status_file must name an existing file by absolute path (got '${REVIEW_STATUS_FILE}')" >&2
-    exit 9
+  if [ -n "$REVIEW_STATUS_FILE" ]; then
+    if [ "${SB_BOARD_WORKER-}" = 1 ]; then
+      echo "[merge-gate #${PR}] board worker may not use merge_policy.review_status_file" >&2
+      exit 13
+    fi
+    if ! { [[ "$REVIEW_STATUS_FILE" = /* ]] && [ -f "$REVIEW_STATUS_FILE" ]; }; then
+      echo "verification-readiness: merge_policy.review_status_file must name an existing file by absolute path (got '${REVIEW_STATUS_FILE}')" >&2
+      exit 9
+    fi
   fi
 fi
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
@@ -727,7 +734,7 @@ review_status() {  # review_status [<skip list>] [deep] → REVIEW_RC, REVIEW_LI
   REVIEW_RC=0
   REVIEW_LINE=$(cd "$SCRATCH" && env -u REVIEW_SKIP_REVIEWERS -u REVIEW_CLAUDE_MODEL -u REVIEW_GROK_MODEL -u REVIEW_AGY_MODEL \
     -u REVIEW_CLAUDE_BIN -u REVIEW_GROK_BIN -u REVIEW_AGY_CLI -u REVIEW_DEEP_LINES \
-    -u REVIEW_REGRESSION_STATUS ${REVIEW_STATUS_FILE:+"REVIEW_REGRESSION_STATUS=$REVIEW_STATUS_FILE"} \
+    -u REVIEW_REGRESSION_STATUS ${REVIEW_STATUS_SNAP:+"REVIEW_REGRESSION_STATUS=$REVIEW_STATUS_SNAP"} \
     bash "$REVIEW_BIN/review-fanout.sh" --repo "$SCRATCH" --base "$REVIEW_BASE" ${1:+--skip "$1"} ${2:+--depth "$2"} --status 2>/dev/null | tail -1) \
     || REVIEW_RC=$?
   REVIEW_WORD=${REVIEW_LINE%% *}
@@ -768,19 +775,26 @@ review_verdict_check() {
   fi
   REVIEW_BASE=$(git -C "$REPO_PATH" merge-base "$HEAD_SHA" "$BASE_SHA" 2>/dev/null) || REVIEW_BASE=""
   [ -n "$REVIEW_BASE" ] || review_void "no merge-base between ${HEAD_SHA} and origin/${BASE}"
+  REVIEW_TMP=$(mktemp -d "/tmp/sb-gate-rev.XXXXXX")
+  REVIEW_STATUS_SNAP=""
   if [ -n "$_INHERITED_REVIEW_STATUS" ] && [ -z "$REVIEW_STATUS_FILE" ]; then
     say "note: inherited REVIEW_REGRESSION_STATUS is ignored (2823727da8); pass --review-status-file <abs-path> (or merge_policy.review_status_file in --config) for an out-of-tree B2 review"
   fi
   if [ -n "$REVIEW_STATUS_FILE" ]; then
-    # 2823727da8 + B2: kiểm tra đường dẫn thật nằm ngoài cả repo chính lẫn scratch, đúng định dạng checklist JSON, không chứa hàng
-    # BUG-REV-* chưa PASS, và không làm rơi bất kỳ hàng BUG-REV-* đang hoạt động nào trong .agents/regression_status.json của nhánh.
-    if ! st_out=$(python3 -I - "$REVIEW_BIN" "$REPO_ABS" "$SCRATCH" "$REVIEW_STATUS_FILE" 2>&1 <<'PY'
-import hashlib, json, os, subprocess, sys
-rbin, repo_abs, scratch, st_path = sys.argv[1:5]
+    # 2823727da8 + B2: kiểm tra đường dẫn thật là file thường nằm ngoài mọi worktree/git-common-dir của repo, đọc một lần và chụp
+    # sang $REVIEW_TMP/regression_status.json (chống TOCTOU), kiểm bằng load_view(scratch) để không làm rơi/đổi kind hàng BUG-REV-*
+    # (kể cả pending_rows.json ở trunk mode), và chỉ chấp nhận trạng thái allowlist PASS / UNPROVEN (không nhận AUTO_CLOSED, NEEDS_CAR…).
+    if ! st_out=$(python3 -I - "$REVIEW_BIN" "$REPO_ABS" "$SCRATCH" "$REVIEW_STATUS_FILE" "$REVIEW_TMP/regression_status.json" 2>&1 <<'PY'
+import hashlib, json, os, stat, subprocess, sys
+rbin, repo_abs, scratch, st_path, snap_path = sys.argv[1:6]
 sys.dont_write_bytecode = True
 sys.path.insert(0, rbin)
 real = os.path.realpath(st_path)
-if not os.path.isabs(st_path) or not os.path.isfile(real):
+try:
+    st_meta = os.stat(real)
+except OSError:
+    st_meta = None
+if not os.path.isabs(st_path) or st_meta is None or not stat.S_ISREG(st_meta.st_mode):
     print(f"review_status_file is not an existing regular file: {st_path}")
     sys.exit(1)
 roots = {os.path.realpath(repo_abs), os.path.realpath(scratch)}
@@ -795,7 +809,8 @@ for root in sorted(roots):
     if real == root or real.startswith(root + os.sep):
         print(f"review_status_file must be outside the repo tree (got {st_path})")
         sys.exit(1)
-raw = open(real, "rb").read()
+with open(real, "rb") as fh:
+    raw = fh.read()
 try:
     ext = json.loads(raw.decode("utf-8"))
 except (UnicodeDecodeError, ValueError) as e:
@@ -805,30 +820,35 @@ if not isinstance(ext, dict) or not isinstance(ext.get("items"), dict):
     print(f"review_status_file is not a regression checklist JSON (missing items): {st_path}")
     sys.exit(1)
 import regression_checklist as rc
-REV_BAD = {"OPEN", "NEEDS_TEST", "NOT_IN_MATRIX", "NOT_RUN", "FAIL", "TIMEOUT", "VACUOUS", "STALE", "FLAKY", "REPORTED"}
-tracked = rc.load(scratch)
+tracked = rc.load_view(scratch)
 ext_items = ext["items"]
 for iid, item in sorted((tracked.get("items") or {}).items()):
     if not ((iid.startswith("BUG-REV-") or iid.startswith("REV-")) and isinstance(item, dict) and item.get("kind") == "bug"):
         continue
     tst = str(rc.effective_status(tracked, item))
-    if tst == "DROPPED":
-        continue
-    if iid not in ext_items or not isinstance(ext_items.get(iid), dict):
-        print(f"out-of-tree status file omits active review bug row {iid} ({tst}) from tracked checklist")
+    ext_item = ext_items.get(iid)
+    if not isinstance(ext_item, dict) or ext_item.get("kind") != "bug":
+        print(f"out-of-tree status file omits or alters kind of active review bug row {iid} ({tst}) from repo checklist view")
         sys.exit(1)
 for iid, item in sorted(ext_items.items()):
-    if not ((iid.startswith("BUG-REV-") or iid.startswith("REV-")) and isinstance(item, dict) and item.get("kind") == "bug"):
+    if not (iid.startswith("BUG-REV-") or iid.startswith("REV-")):
         continue
+    if not isinstance(item, dict) or item.get("kind") != "bug":
+        print(f"out-of-tree status file has non-bug entry for review id {iid}")
+        sys.exit(1)
     est = str(rc.effective_status(ext, item))
-    if est in REV_BAD or est.startswith("ERROR"):
+    if est not in ("PASS", "UNPROVEN") or (est == "UNPROVEN" and item.get("on_car")):
         print(f"out-of-tree status file leaves review bug row {iid} in {est}")
         sys.exit(1)
+fd = os.open(snap_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "wb") as out_fh:
+    out_fh.write(raw)
 print(hashlib.sha256(raw).hexdigest()[:16])
 PY
     ); then
       review_void "$(printf '%s\n' "$st_out" | tail -1 | clip 300)"
     fi
+    REVIEW_STATUS_SNAP="$REVIEW_TMP/regression_status.json"
     say "review: regression status from ${REVIEW_STATUS_FILE} (sha256 ${st_out}) — explicit out-of-tree override (B2)"
   fi
   review_status ""
@@ -840,19 +860,32 @@ PY
       first=$REVIEW_WORD
       if [ -n "$ACCEPT_REDUCED" ] && [ "$GATED" -eq 0 ]; then
         review_status "$ACCEPT_REDUCED"
-        [ "$first:$REVIEW_RC:$REVIEW_WORD" != "NONE:4:NONE" ] \
-          || review_missing "no 4-way review and no review with skip list ${ACCEPT_REDUCED} for ${HEAD_SHA:0:12} (status NONE)"
-        [ "$REVIEW_RC:$REVIEW_WORD" = "6:PASS_REDUCED" ] \
-          || review_void "no signed 4-way PASS (${first}) and no signed PASS_REDUCED for skip list ${ACCEPT_REDUCED} (${REVIEW_WORD:-?})"
-        want=PASS_REDUCED
-        say "review: accepting PASS_REDUCED (skipped: ${ACCEPT_REDUCED}) — explicit per-run override"
+        case "$REVIEW_RC:$REVIEW_WORD" in
+          6:PASS_REDUCED)
+            want=PASS_REDUCED
+            say "review: accepting PASS_REDUCED (skipped: ${ACCEPT_REDUCED}) — explicit per-run override" ;;
+          3:RUNNING)
+            say "review: the reduced review (${ACCEPT_REDUCED}) of ${HEAD_SHA:0:12} is still running; nothing merged, the next wave retries"
+            exit 4 ;;
+          4:NONE)
+            [ "$first" != NONE ] || review_missing "no 4-way review and no review with skip list ${ACCEPT_REDUCED} for ${HEAD_SHA:0:12} (status NONE)"
+            review_void "no signed 4-way PASS (${first}) and no signed PASS_REDUCED for skip list ${ACCEPT_REDUCED} (NONE)" ;;
+          1:FAIL|5:UNSIGNED|0:PASS)
+            review_void "no signed 4-way PASS (${first}) and no signed PASS_REDUCED for skip list ${ACCEPT_REDUCED} (${REVIEW_WORD:-?})" ;;
+          *)
+            echo "verification-readiness: review-fanout.sh --status could not be evaluated (exit ${REVIEW_RC}, '${REVIEW_LINE:-}') — nothing merged (fail-closed)" >&2
+            exit 9 ;;
+        esac
       elif [ "$first" = NONE ] && [ -n "$ACCEPT_REDUCED" ]; then
         # GATED=1 kèm ACCEPT_REDUCED: nếu cả lượt 4 bên lẫn lượt skip đều chưa chạy (NONE) thì là thiếu review (exit 10),
-        # chỉ khi có lượt reduced đã chạy (vd. PASS_REDUCED) mới từ chối vì machine-gate không nhận PASS_REDUCED (exit 6).
+        # đang chạy thì chờ (exit 4), chỉ khi có lượt reduced đã xong mới từ chối vì machine-gate không nhận PASS_REDUCED (exit 6).
         review_status "$ACCEPT_REDUCED"
-        [ "$REVIEW_RC:$REVIEW_WORD" != "4:NONE" ] \
-          || review_missing "no signed 4-way PASS for ${HEAD_SHA:0:12} (status NONE)"
-        review_void "PASS_REDUCED is not accepted for a machine-gated PR — a full signed 4-way PASS is required"
+        case "$REVIEW_RC:$REVIEW_WORD" in
+          4:NONE) review_missing "no signed 4-way PASS for ${HEAD_SHA:0:12} (status NONE)" ;;
+          3:RUNNING) say "review: a review of ${HEAD_SHA:0:12} is still running; nothing merged, the next wave retries"; exit 4 ;;
+          1:FAIL|5:UNSIGNED|6:PASS_REDUCED|0:PASS) review_void "PASS_REDUCED is not accepted for a machine-gated PR — a full signed 4-way PASS is required" ;;
+          *) echo "verification-readiness: review-fanout.sh --status could not be evaluated (exit ${REVIEW_RC}, '${REVIEW_LINE:-}') — nothing merged (fail-closed)" >&2; exit 9 ;;
+        esac
       elif [ "$first" = PASS_REDUCED ]; then
         review_void "PASS_REDUCED is not accepted$([ "$GATED" -eq 1 ] && echo ' for a machine-gated PR') — a full signed 4-way PASS is required"
       elif [ "$first" = NONE ]; then
@@ -876,11 +909,11 @@ print(m.get("depth", "") if isinstance(m, dict) else "")' "$REVIEW_RUN/summary.j
     case "$REVIEW_RC:$REVIEW_WORD" in
       0:PASS) say "review: machine-gated PR — using the forced-deep review of ${HEAD_SHA:0:12}" ;;
       3:RUNNING) say "review: the deep review of ${HEAD_SHA:0:12} is still running; nothing merged, the next wave retries"; exit 4 ;;
-      *) review_void "machine-gated PR: the review of ${HEAD_SHA:0:12} is light and no signed deep review exists (${REVIEW_WORD:-?}); the head is marked deep, so the next review of it runs deep — review-fanout.sh --base ${REVIEW_BASE:0:12} --depth deep" ;;
+      1:FAIL|4:NONE|5:UNSIGNED|6:PASS_REDUCED) review_void "machine-gated PR: the review of ${HEAD_SHA:0:12} is light and no signed deep review exists (${REVIEW_WORD:-?}); the head is marked deep, so the next review of it runs deep — review-fanout.sh --base ${REVIEW_BASE:0:12} --depth deep" ;;
+      *) echo "verification-readiness: review-fanout.sh --status could not be evaluated (exit ${REVIEW_RC}, '${REVIEW_LINE:-}') — nothing merged (fail-closed)" >&2; exit 9 ;;
     esac
   fi
   [ -n "$REVIEW_RUN" ] && [ -d "$REVIEW_RUN" ] || review_void "--status ${REVIEW_WORD} named no run directory"
-  REVIEW_TMP=$(mktemp -d)
   cp "$REVIEW_RUN/summary.json" "$REVIEW_TMP/summary.json" 2>/dev/null \
     && cp "$REVIEW_RUN/summary.json.sig" "$REVIEW_TMP/summary.json.sig" 2>/dev/null \
     || review_void "summary.json or its signature is missing in ${REVIEW_RUN}"
