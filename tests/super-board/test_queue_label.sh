@@ -116,5 +116,17 @@ reset; export AUDIT_RC=1; pr "[$(cmt MEMBER "approved-head:$HEAD
 approved-by: $BY")]"; run 5
 { [ "$RC" = 3 ] && ! edited; } && ok "h12 untracked json.py next to audit-check does not turn a failed audit into a pass" || fail "h12 rc=$RC edited=$(edited && echo y || echo n)"
 rm -f "$TMP/bin/json.py"
+# Antigravity F6: origin có userinfo (token) / .git / dấu / cuối vẫn rút ra owner/name; không bao giờ in URL thô (lộ token).
+# URL ghép lúc chạy (INSTINCT-068: bộ quét secret đọc diff, token giả viết liền trong URL cũng bị báo).
+FAKE_USERINFO="x-access-token:ghs_$(printf 'SECRET')TOKEN"; SCHEME="https:"
+git -C "$TMP/repo" remote set-url origin "$SCHEME//$FAKE_USERINFO@github.com/acme/widgets.git/"
+reset; pr "[$(cmt MEMBER "approved-head:$HEAD
+approved-by: $BY")]"; run 5
+{ [ "$RC" = 0 ] && edited; } && ok "h13 origin with userinfo + trailing slash → owner/name, approval counted" || fail "h13 rc=$RC err=$(head -c 200 "$TMP/err" | sed 's/ghs_[A-Za-z0-9]*/ghs_***/g')"
+git -C "$TMP/repo" remote set-url origin "$SCHEME//$FAKE_USERINFO@example.com/acme/widgets.git"
+reset; pr "[$(cmt MEMBER "approved-head:$HEAD
+approved-by: $BY")]"; run 5
+{ [ "$RC" = 3 ] && ! grep -q 'ghs_' "$TMP/err"; } && ok "h13b origin not on github.com → refused, token never printed" || fail "h13b rc=$RC token-in-stderr=$(grep -c 'ghs_' "$TMP/err")"
+git -C "$TMP/repo" remote set-url origin https://github.com/acme/widgets.git
 
 [ "$FAILS" -eq 0 ] && echo "PASS test_queue_label" || { echo "FAIL test_queue_label ($FAILS)"; exit 1; }

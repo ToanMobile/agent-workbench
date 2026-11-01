@@ -28,7 +28,7 @@ done
 LIMIT="${SB_QUEUE_LABEL_GH_TIMEOUT:-6}"
 case "$LIMIT" in ''|*[!0-9]*|???*|0|00) LIMIT=6 ;; esac   # 0 s: hết giờ ngay, mọi lần gắn nhãn exit 69
 
-# Lệnh có timeout: hết giờ giết cả nhóm tiến trình (gh / git fetch có thể sinh tiến trình con), exit 124.
+# Lệnh có timeout: hết giờ giết tiến trình con trực tiếp, exit 124 (cả nhóm tiến trình do guard giết khi helper chạy dưới guard).
 run_t() {
   python3 -I -c '
 import os, signal, subprocess, sys
@@ -85,7 +85,9 @@ case "$vwhy" in
     # Repo của PR (lấy từ url GitHub trả về, đúng cả khi chọn PR bằng URL / GH_REPO / --repo) phải là origin của repo chứa biên bản:
     # biên bản và fetch refs/pull ở repo khác không chứng minh gì cho PR này → không tính nguồn task:.
     prrepo=$(printf '%s' "$view" | jq -r '.url // empty' 2>/dev/null | sed -nE 's#^https://github\.com/([^/]+/[^/]+)/pull/[0-9]+$#\1#p' | tr 'A-Z' 'a-z') || prrepo=""
-    origin=$(git -C "$top" remote get-url origin 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:|ssh://git@github\.com/)##; s#\.git$##' | tr 'A-Z' 'a-z') || origin=""
+    # owner/name từ mọi dạng URL github.com (userinfo / token, .git, dấu / cuối — như super-board-github-read.py); không khớp → rỗng,
+    # không bao giờ đưa URL thô (có thể chứa token) vào lời từ chối (Antigravity audit vòng 2)
+    origin=$(git -C "$top" remote get-url origin 2>/dev/null | sed -nE 's#/*$##; s#\.git$##; s#^.*github\.com[:/]([^/:]+/[^/]+)$#\1#p' | tr 'A-Z' 'a-z') || origin=""
     [ -n "$prrepo" ] && [ "$origin" = "$prrepo" ] \
       || refuse "$approved" "approved-by task_id ${vwhy#task:} được audit trong repo ${origin:-không rõ}, PR thuộc repo ${prrepo:-không rõ}"
     arc=0
