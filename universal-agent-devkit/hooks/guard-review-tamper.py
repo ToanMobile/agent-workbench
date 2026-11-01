@@ -16,7 +16,10 @@ Bash: write targets through hooks/shell_writes.py with heredoc / `bash -c` bodie
 symlinks; a line it cannot tokenise, an unparsed body, or a relative write after `cd "$VAR"` is denied when the line points at the
 machinery (fail-closed, r14d BUG-REV-c23bc3cb6d / 5f7bee1cb0). An interpreter given inline code (python -I -c, /usr/bin/python3 -c,
 node --x -e, perl -w -e, bash <<EOF, …; options before -c/-e are skipped, BUG-REV-4a3ec3ef82) that names a protected path is denied
-too (its writes cannot be read statically). The signer is never driven by an agent: a Bash line running an interpreter that names
+too (its writes cannot be read statically). git that rewrites the tree (28b85d96f4): checkout / restore / reset / rm / mv / clean /
+stash with a protected operand, a folder holding the machinery or a glob, and apply / am of a patch file (named anywhere on the
+line) whose headers edit a protected path, are denied; ref-driven merge / pull / cherry-pick / rebase / revert and a patch piped
+from a producer the guard cannot read are residual. The signer is never driven by an agent: a Bash line running an interpreter that names
 review_sign / load_key (except a line that is only `python3 [-I] …/review_sign.py verify <file>`), and a Write/Edit of a
 non-document file whose text names review_sign, load_key or the key path, are denied.
 Residual (same uid, no privilege separation): a script that hides those names (string building, encoding) is not seen; the
@@ -25,9 +28,12 @@ Reading the code stays allowed. DEVKIT_ALLOW_GATE_EDIT=1 in the hook process env
 prefix on the command: the agent cannot set it for its own hooks) turns the guard off for a maintenance session.
 Its own errors never block (it reports them on stderr); a shell_writes failure denies a line that names the machinery.
 """
+import codecs
+import glob
 import json
 import os
 import re
+import shlex
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -56,6 +62,17 @@ SIGNER_WORD = re.compile(r"\breview_sign\b|\bload_key\b|review-fanout-summary-v1
 # lệnh, thế lệnh, redirect, comment, dòng thứ hai hay code inline đi kèm (search không neo cho lọt `-c '…load_key…' # …`)
 VERIFY_ONLY = re.compile(r"[ \t]*(?:[\w.~/-]*/)?python[\d.]*(?:[ \t]+-I)?[ \t]+(?:[\w.~/-]*/)?review_sign\.py[ \t]+verify"
                          r"[ \t]+[\w.~/@+=:-]+[ \t]*")
+# git ghi lại cây làm việc (28b85d96f4): các lệnh này lấy nội dung từ ref / index / stash cho đúng đường dẫn chúng nhận;
+# apply / am ghi đường dẫn trong bản vá. merge / pull / cherry-pick / rebase / revert / stash pop đi theo ref, không theo đường
+# dẫn: phần dư (cùng lớp với script cất tên đi), như ghi chú Residual ở trên.
+GIT_PATH_WRITE = {"checkout", "restore", "reset", "rm", "mv", "clean", "stash"}
+GIT_PATCH = {"apply", "am"}
+PATCH_NO_WRITE = {"--check", "--stat", "--numstat", "--summary", "--abort", "--quit", "--show-current-patch"}
+PATCH_HEAD = re.compile(r"^(?:diff --git |--- |\+\+\+ |rename (?:from|to) |copy (?:from|to) )(.+)$", re.M)
+C_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
+# một thư mục chứa máy review: `git checkout REF -- .` hay `-- universal-agent-devkit` ghi lại cả hooks/ bên trong nó
+MACHINERY_UNDER = (".claude/settings*.json", ".github/workflows", ".git/review-fanout", "hooks", "*/hooks", "*/*/hooks",
+                   "bin/review*", "*/bin/review*")
 DOC_EXT = (".md", ".rst", ".txt", ".adoc")
 REASON = ("Blocked by guard-review-tamper: agents may not write or delete the review machinery ({}). The 4-way review gate "
           "decides on these files; change them through a reviewed PR by the operator (DEVKIT_ALLOW_GATE_EDIT=1 in the hook "
@@ -107,6 +124,78 @@ def _secret_reach(p, cwd):
     return False
 
 
+def _git_calls(cmd):
+    """Trả về ([(subcommand, từ phía sau)] của mọi lệnh git trên dòng, mọi từ trên dòng) — đã bỏ dấu nháy qua shlex;
+    dòng shlex không tách được trả ([], []) (shell_writes sẽ trả None và nhánh gọi fail-closed)."""
+    try:
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|<>()\n")
+        lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
+        toks = list(lex)
+    except ValueError:
+        return [], []
+    calls, seg = [], []
+    for t in toks + [";"]:
+        if not (t and set(t) <= set(";&|()\n")):
+            seg.append(t)
+            continue
+        k = next((i for i, w in enumerate(seg) if os.path.basename(w) == "git"), None)
+        skip = None
+        for i, a in enumerate(seg[k + 1:] if k is not None else [], (k or 0) + 1):
+            if skip:
+                skip = None
+            elif a in ("-C", "-c", "--git-dir", "--work-tree"):
+                skip = a
+            elif not a.startswith("-"):
+                calls.append((a, seg[i + 1:]))
+                break
+        seg = []
+    return calls, [t for t in toks if not set(t) <= set(";&|()<>\n")]
+
+
+def _git_operand_hit(a, dirs):
+    """Toán hạng checkout/restore/reset/rm/mv/clean/stash chạm máy review: đường dẫn được bảo vệ, thư mục chứa máy review,
+    hoặc glob / pathspec magic không khai triển tĩnh được (fail-closed)."""
+    if re.search(r"[*?\[]", a) or a.startswith(":"):
+        return True
+    for d in dirs:
+        if protected(a, d):
+            return True
+        n = _real(_norm(a, d))
+        if os.path.isdir(n) and any(glob.glob(os.path.join(glob.escape(n), m)) for m in MACHINERY_UNDER):
+            return True
+    return False
+
+
+def _patch_paths(value):
+    """Các đường dẫn trong một dòng header patch: giải mã C-quoted (core.quotePath, INSTINCT-089) và bỏ tiền tố a/ b/."""
+    out = []
+    for q in C_QUOTED.findall(value):
+        try:
+            out.append(codecs.escape_decode(q.encode("utf-8"))[0].decode("utf-8", "replace"))
+        except ValueError:
+            out.append(q)
+    out += C_QUOTED.sub(" ", value).split()
+    return [re.sub(r"^[ab]/", "", p) for p in out]
+
+
+def _patch_hits(words, dirs):
+    """Đường dẫn được bảo vệ bị sửa bởi file patch nêu bất kỳ đâu trên dòng (toán hạng, `< f`, `cat f |`, nguồn của cp)."""
+    hits = []
+    for w in dict.fromkeys(words):
+        for d in dirs:
+            p = _real(_norm(w, d))
+            try:
+                if not os.path.isfile(p) or os.path.getsize(p) > (8 << 20):
+                    continue
+                with open(p, "rb") as f:
+                    text = f.read().decode("utf-8", "replace")
+            except OSError:
+                continue
+            hits += [t for m in PATCH_HEAD.finditer(text) for t in _patch_paths(m.group(1)) if PROTECTED.search(t)]
+            break
+    return hits
+
+
 def bash_hits(cmd, cwd):
     hits = []
     named = [w for w in PATH_WORD.findall(cmd) if protected(w, cwd)]
@@ -117,12 +206,12 @@ def bash_hits(cmd, cwd):
     try:
         import shell_writes
         got = shell_writes.targets(cmd, cwd, run_bodies=True)
-        if got is None:   # bash runs lines shlex cannot tokenise ($'..', odd quoting): fail closed when it points at the machinery
+        if got is None:   # bash vẫn chạy dòng shlex không tách được ($'..', nháy lẻ): fail-closed khi chạm máy review
             hits += named or ([cmd.strip()[:60]] if MACHINERY_HINT.search(cmd) else [])
             got = []
         cd_unknown = ""
         for kind, target, here in got:
-            if kind == "cdvar":   # `cd "$VAR"`: later relative targets are relative to a directory nobody can read statically
+            if kind == "cdvar":   # `cd "$VAR"`: đích tương đối phía sau không đọc tĩnh được thư mục gốc
                 cd_unknown = str(target)
                 continue
             if kind == "unparsed":
@@ -131,9 +220,25 @@ def bash_hits(cmd, cwd):
             if kind in ("redirect", "file", "interp") and target:
                 if protected(target, here or cwd):
                     hits.append(target)
+                elif kind == "file" and re.search(r"\b(?:cp|mv|rsync|scp|ln|rm|rmdir)\b", cmd) and \
+                        re.search(r"(?:^|/)\.(?:git|claude|github)/*$", str(target)):
+                    # Chặn chép đè hoặc xoá thư mục cha chứa máy review (8ec050fad4: cp -R /tmp/review-fanout <common>/.git/)
+                    hits.append(target)
                 elif cd_unknown and not os.path.isabs(os.path.expanduser(str(target))) and \
                         (MACHINERY_HINT.search(cd_unknown) or MACHINERY_HINT.search(str(target))):
                     hits.append(f"{cd_unknown}/{target}")
+        # 28b85d96f4: ("git", dir) của shell_writes không còn bị bỏ qua — đường dẫn tương đối tính theo cwd và thư mục của
+        # từng lệnh git (sau cd / -C)
+        dirs = [cwd] + [str(t) for kind, t, _ in got if kind == "git" and t]
+        calls, words = _git_calls(cmd)
+        for sub, rest in calls:
+            ops = [a for a in rest if not a.startswith("-") and a not in ("<", ">")]
+            if sub == "stash" and ops[:1] in (["list"], ["show"], ["create"]):
+                continue
+            if sub in GIT_PATH_WRITE:
+                hits += named + [a for a in (ops or (["."] if sub == "clean" else [])) if _git_operand_hit(a, dirs)]
+            elif sub in GIT_PATCH and ("--apply" in rest or not PATCH_NO_WRITE & set(rest)):
+                hits += named + _patch_hits(words, dirs)
     except Exception as e:   # noqa: BLE001 — fail closed on a line that names the machinery
         sys.stderr.write(f"guard-review-tamper: shell_writes unavailable ({e.__class__.__name__}) — textual check only\n")
         hits += named
@@ -154,6 +259,27 @@ def _content(tool, ti):
     return ""
 
 
+def read_reason(tool, ti, cwd):
+    """Lý do chặn khi Read/Grep/Glob/NotebookRead chạm tới thư mục khoá ký, ngược lại trả None (ae4413f24a): hỗ trợ khoá
+    camelCase, Grep/Glob bỏ trống path thì xét cwd, và mẫu Glob được cắt tại ký tự đại diện đầu tiên (* ? [ {) sau khi ghép
+    với thư mục gốc tìm kiếm. Hàm cùng logic cũng chạy ở guard-secrets.py cho Read|Grep trong .claude/settings.json (e8eb813d18)."""
+    paths = [str(p) for p in (ti.get(k) for k in ("file_path", "filePath", "path", "notebook_path", "notebookPath")) if p]
+    if tool in ("Grep", "Glob") and not ti.get("path"):
+        paths.append(cwd)
+    for p in paths:
+        if _secret_reach(p, cwd):
+            return SEAL_REASON.format(p)
+    pat = str(ti.get("pattern") or "") if tool == "Glob" else ""
+    if pat:
+        full = _norm(pat, str(ti.get("path") or cwd))
+        lit = re.split(r"[*?\[{]", full, maxsplit=1)[0]
+        if lit != full and not lit.endswith("/"):
+            lit = os.path.dirname(lit)
+        if KEY_WORD.search(pat) or _secret_reach(lit or "/", cwd):
+            return SEAL_REASON.format(pat)
+    return None
+
+
 def judge(payload):
     if not isinstance(payload, dict):
         return None
@@ -171,13 +297,7 @@ def judge(payload):
                 return SEAL_REASON.format(m.group(0))
         return None
     if tool in ("Read", "Grep", "Glob", "NotebookRead"):
-        for p in (ti.get("file_path"), ti.get("path"), ti.get("notebook_path")):
-            if p and _secret_reach(p, cwd):
-                return SEAL_REASON.format(p)
-        pat = str(ti.get("pattern") or "") if tool == "Glob" else ""
-        if pat and (KEY_WORD.search(pat) or (os.path.isabs(os.path.expanduser(pat)) and _secret_reach(pat.split("*")[0], cwd))):
-            return SEAL_REASON.format(pat)
-        return None
+        return read_reason(tool, ti, cwd)
     if tool == "Bash":
         hits = bash_hits(str(ti.get("command") or ""), cwd)
         seal = [h[5:] for h in hits if h.startswith("seal:")]

@@ -16,6 +16,7 @@ Adapted from ai-builder-starter-kit's .agents/hooks/guard-secrets.sh (Eric Tech)
 """
 import fnmatch
 import json
+import os
 import re
 import sys
 
@@ -328,6 +329,67 @@ def is_secret(text):
     return any(SECRET_RE.search(t) or _dotenv(t) or _globbed(t) for t in (text, plain))
 
 
+SECRET_DIR = os.path.join("~", ".config", "agent-workbench")
+KEY_WORD = re.compile(r"\.config/agent-workbench|review\.key")
+
+
+def _real_path(p):
+    """Phân giải realpath của tổ tiên sâu nhất đang tồn tại ghép với phần đuôi còn lại để chống lách qua symlink."""
+    head, tail = p, []
+    while head and not os.path.lexists(head):
+        nxt = os.path.dirname(head)
+        if nxt == head:
+            break
+        tail.append(os.path.basename(head))
+        head = nxt
+    try:
+        base = os.path.realpath(head) if head else head
+    except OSError:
+        return p
+    return os.path.join(base, *reversed(tail)) if tail else base
+
+
+def _norm_path(p, cwd):
+    p = os.path.expanduser(str(p))
+    if not os.path.isabs(p):
+        p = os.path.join(cwd, p)
+    return os.path.normpath(p)
+
+
+def _secret_reach(p, cwd):
+    """Trả về True khi thao tác đọc/tìm kiếm đệ quy trên p chạm tới thư mục khoá ký ~/.config/agent-workbench."""
+    if not p:
+        return False
+    secret = _real_path(os.path.normpath(os.path.expanduser(SECRET_DIR)))
+    for n in {_norm_path(p, cwd), _real_path(_norm_path(p, cwd))}:
+        n = n.rstrip("/") or "/"
+        if n == secret or n.startswith(secret + "/") or secret.startswith(n.rstrip("/") + "/") or KEY_WORD.search(n):
+            return True
+    return False
+
+
+def seal_read_hit(payload):
+    """Kiểm tra Read/Grep/Glob/NotebookRead chạm thư mục khoá ký qua thư mục cha, cwd hoặc mẫu glob (e8eb813d18, ae4413f24a)."""
+    tool, ti = _tool(payload)
+    if tool not in ("Read", "Grep", "Glob", "NotebookRead"):
+        return False
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else os.getcwd()
+    paths = [str(p) for p in (ti.get(k) for k in ("file_path", "filePath", "path", "notebook_path", "notebookPath")) if p]
+    if tool in ("Grep", "Glob") and not ti.get("path"):
+        paths.append(cwd)
+    if any(_secret_reach(p, cwd) for p in paths):
+        return True
+    pat = str(ti.get("pattern") or "") if tool == "Glob" else ""
+    if pat:
+        full = _norm_path(pat, str(ti.get("path") or cwd))
+        lit = re.split(r"[*?\[{]", full, maxsplit=1)[0]
+        if lit != full and not lit.endswith("/"):
+            lit = os.path.dirname(lit)
+        if KEY_WORD.search(pat) or _secret_reach(lit or "/", cwd):
+            return True
+    return False
+
+
 def _tool(payload):
     ti = next((v for v in (payload.get(k) for k in ("tool_input", "toolInput", "input")) if isinstance(v, dict)), {})
     return str(payload.get("tool_name") or payload.get("toolName") or ""), ti
@@ -338,8 +400,8 @@ def subject(payload):
     tool, ti = _tool(payload)
     if tool == "Bash":
         return str(ti.get("command") or "")
-    if tool == "Read":
-        return str(ti.get("file_path") or ti.get("filePath") or ti.get("path") or "")
+    if tool in ("Read", "NotebookRead"):
+        return str(ti.get("file_path") or ti.get("filePath") or ti.get("notebook_path") or ti.get("notebookPath") or ti.get("path") or "")
     if tool == "Grep":
         return " ".join(str(ti.get(k) or "") for k in ("path", "glob"))
     return ""
@@ -364,7 +426,7 @@ def main():
         text = subject(payload)
         if _tool(payload)[0] == "Bash" and ENV_CHECK.match(text):
             return
-        if text and is_secret(judged_text(payload)):
+        if seal_read_hit(payload) or (text and is_secret(judged_text(payload))):
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                      "permissionDecision": "deny",
                                                      "permissionDecisionReason": REASON}}))
