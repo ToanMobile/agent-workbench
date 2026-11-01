@@ -22,11 +22,13 @@ too (its writes cannot be read statically). git that rewrites the tree (28b85d96
 stash with a protected operand, a folder holding the machinery or a glob, and apply / am of a patch file (named anywhere on the
 line) whose headers edit a protected path, are denied; ref-driven merge / pull / cherry-pick / rebase / revert and a patch piped
 from a producer the guard cannot read are residual. The signer is never driven by an agent: a Bash line running an interpreter that names
-review_sign / load_key, or a glob / brace word that can name the signer file (`review_sig?.py`) (except a line that is only
-`python3 [-I] …/review_sign.py verify <file>`), and a Write/Edit of a non-document file whose text names review_sign, load_key or
-the key path, are denied.
-Paths, the key / signer names, interpreter and file-command names match case-folded (APFS runs `CP x .GIT/REVIEW-FANOUT/…`); a
-write target computed by $VAR / $( ) / backtick is denied on a line that points at the machinery.
+review_sign / load_key, or a glob / brace word that can name the signer file (`review_sig?.py`), or the signer run directly as a
+command (`bin/review_sign.py sign …`, after VAR=, env / nohup / xargs / sudo …, find -exec, sh -c, eval) (except a line that is
+only `python3 [-I] …/review_sign.py verify <file>`), and a Write/Edit of a non-document file whose text names review_sign,
+load_key or the key path, are denied.
+Paths, the key / signer names, interpreter and file-command names and glob components match case-folded (APFS runs
+`CP x .GIT/REVIEW-FANOUT/…`; nocaseglob); the folded line only adds to the line parsed as written. A write target computed by
+$VAR / $( ) / backtick is denied on a line that points at the machinery.
 Residual (same uid, no privilege separation): a script that hides those names (string building, encoding) is not seen, nor a
 computed write target on a line with no machinery hint (`cp x "$P"`, P set by an earlier call), nor a file a planted
 `…/bin/review_sign.py verify <new path>` creates; the code_hash binding of the seal
@@ -180,7 +182,9 @@ def _bracket_end(p, i):
 
 def _match(pat, name):
     """True when glob component pat can match file name name, read loosely enough to cover bash and zsh: * and ? stay in one
-    component, any [...] is one character, and only a pattern starting with . or [ reaches a dot name."""
+    component, any [...] is one character, case-folded (nocaseglob / NO_CASE_GLOB, APFS), and only a pattern starting with .
+    or [ reaches a dot name."""
+    pat, name = pat.lower(), name.lower()
     if name.startswith(".") and not pat.startswith((".", "[")):
         return False
     rx, i = "", 0
@@ -261,21 +265,80 @@ def _glob_hit(paths, here):
     return False
 
 
+def _names_signer(w, cwd):
+    """True when shell word w can be the signer file: named (any case), or a glob / brace whose alternative names it, whose
+    pattern with a literal character besides `.py` can match it, or whose walk finds it (a bare `*.py` / `*` is judged by the
+    walk only: `python3 -m pytest tests/*.py`)."""
+    if SIGNER_WORD.search(w):
+        return True
+    if not GLOB.search(w):
+        return False
+    paths = _glob_paths(w, cwd)
+    for a in paths if paths is not None else [w]:
+        b = a.rstrip("/").rsplit("/", 1)[-1].lower()
+        if SIGNER_WORD.search(a) or (re.sub(r"[*?\[\]!^]", "", re.sub(r"\.py$", "", b)) and
+                                     any(_match(b, n) for n in SIGNER_NAMES)):
+            return True
+    return False
+
+
 def _signer_glob(cmd, cwd):
-    """A glob / brace word on a line that runs an interpreter whose file name can be the signer (`python3 bin/review_sig?.py
-    sign …`): an alternative names it, a pattern with a literal character besides `.py` can match it, or the walk finds it
-    (a bare `*.py` / `*` is judged by the walk only: `python3 -m pytest tests/*.py`)."""
+    """A glob / brace word on a line that runs an interpreter that can name the signer (`python3 bin/review_sig?.py sign …`)."""
     if not RUNS_INTERP.search(re.sub(r"[\"'\\`]", " ", cmd)) or VERIFY_ONLY.fullmatch(cmd):
         return None
-    for w in re.split(r"[\s;&|()<>=`]+", re.sub(r"[\"'\\]", "", cmd)):
-        if not GLOB.search(w):
+    return next((w for w in re.split(r"[\s;&|()<>=`]+", re.sub(r"[\"'\\]", "", cmd))
+                 if GLOB.search(w) and _names_signer(w, cwd)), None)
+
+
+# words that run the command after them: their own words are judged too (`env X=1 …`, `nohup …`, `xargs -I{} …`, `sudo -u u …`)
+RUNNERS = {"env", "exec", "command", "builtin", "nohup", "time", "nice", "xargs", "sudo", "doas", "timeout", "stdbuf",
+           "caffeinate", "watch", "unbuffer"}
+KEYWORDS = {"!", "{", "}", "if", "then", "else", "elif", "do", "while", "until"}
+
+
+def _signer_command(cmd, cwd, depth=0):
+    """A word that can be the signer run as a command — the signer is executable (`bin/review_sign.py sign …`, `./bin/review_sig?.py`):
+    the first word of a simple command after VAR=… and keywords, any word after a runner, the word after find's -exec, and the
+    code of `sh -c` / eval. Reading it (`cat`, `grep`, `sed -n`) stays allowed, and so does the VERIFY_ONLY line."""
+    if VERIFY_ONLY.fullmatch(cmd):
+        return None
+    try:   # a backtick opens a command like `$(`
+        lex = shlex.shlex(cmd.replace("`", "\n"), posix=True, punctuation_chars=";&|<>()\n")
+        lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
+        toks = list(lex)
+    except ValueError:   # cannot split it: any word that can name the signer counts
+        return next((w for w in re.split(r"[\s;&|()<>`]+", cmd) if w and _names_signer(w, cwd)), None)
+    seg = []
+    for t in toks + [";"]:
+        if not (t and set(t) <= set(";&|()\n")):
+            seg.append(t)
             continue
-        paths = _glob_paths(w, cwd)
-        for a in paths if paths is not None else [w]:
-            b = a.rstrip("/").rsplit("/", 1)[-1].lower()
-            if SIGNER_WORD.search(a) or (re.sub(r"[*?\[\]!^]", "", re.sub(r"\.py$", "", b)) and
-                                         any(_match(b, n) for n in SIGNER_NAMES)):
-                return w
+        words, redir = [], False
+        for w in seg:   # a redirection and its file are no command words
+            op = bool(w) and set(w) <= set("<>&")
+            if redir or op:
+                redir = not redir and op
+                continue
+            words.append(w)
+        seg = []
+        while words and (words[0] in KEYWORDS or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])):
+            words = words[1:]
+        if not words:
+            continue
+        verb, hit = os.path.basename(words[0]).lower(), None
+        if _names_signer(words[0], cwd):
+            hit = words[0]
+        elif verb in RUNNERS:
+            hit = next((w for w in words[1:] if _names_signer(w, cwd)), None)
+        elif verb == "find":
+            hit = next((w for k, w in enumerate(words[1:], 1) if words[k - 1] in ("-exec", "-execdir", "-ok", "-okdir")
+                        and _names_signer(w, cwd)), None)
+        elif depth < 3 and (verb == "eval" or re.fullmatch(_SHELL, verb)):
+            code = " ".join(words[1:]) if verb == "eval" else next(
+                (words[k + 1] for k in range(1, len(words) - 1) if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", words[k])), "")
+            hit = _signer_command(code, cwd, depth + 1) if code else None
+        if hit:
+            return hit
     return None
 
 
@@ -370,7 +433,7 @@ def bash_hits(cmd, cwd):
         return ["seal:" + KEY_WORD.search(cmd).group(0)]
     if SIGNER_WORD.search(cmd) and RUNS_INTERP.search(cmd) and not VERIFY_ONLY.fullmatch(cmd):
         return ["seal:" + SIGNER_WORD.search(cmd).group(0)]
-    sig = _signer_glob(cmd, cwd)
+    sig = _signer_glob(cmd, cwd) or _signer_command(cmd, cwd)
     if sig:
         return ["seal:" + sig]
     try:
@@ -387,40 +450,49 @@ def bash_hits(cmd, cwd):
             ps = _glob_paths(a, here) if GLOB.search(a) else []
             return ps is None or any(os.path.lexists(_norm(_lead(p, here), here)) for p in ps)
         shell_writes._exists = glob_exists   # this hook process only
+        # the line is parsed as written; its case-folded copy (APFS runs `CP`, `TEE`, `GIT`) can only add targets — parsed alone it
+        # would also fold a heredoc delimiter or body line and move where a body ends (audit of c42aef31)
         folded = VERBS.sub(lambda m: m.group(0).lower(), cmd)
-        got = shell_writes.targets(folded, cwd, run_bodies=True)
-        if got is None:   # bash vẫn chạy dòng shlex không tách được ($'..', nháy lẻ): fail-closed khi chạm máy review
+        parses = [shell_writes.targets(cmd, cwd, run_bodies=True)]
+        if folded != cmd:
+            parses.append(shell_writes.targets(folded, cwd, run_bodies=True))
+        if any(p is None for p in parses):   # bash vẫn chạy dòng shlex không tách được ($'..', nháy lẻ): fail-closed khi chạm máy review
             hits += named or ([cmd.strip()[:60]] if MACHINERY_HINT.search(cmd) else [])
-            got = []
-        cd_unknown = ""
-        for kind, target, here in got:
-            if kind == "cdvar":   # `cd "$VAR"`: đích tương đối phía sau không đọc tĩnh được thư mục gốc
-                cd_unknown = str(target)
-                continue
-            if kind == "unparsed":
-                hits += named or ([cmd.strip()[:60]] if MACHINERY_HINT.search(cmd) else [])
-                continue
-            if kind in ("redirect", "file", "interp") and target:
-                # b91e0de56a: a glob / brace target is judged on its expansions; a zsh group or qualifier right after it
-                # (`.git/(review-fanout|x)/…`, `f(N)`) cannot be read: fail closed when the line points at the machinery
-                globbed = GLOB.search(str(target)) is not None
-                paths = _glob_paths(str(target), here or cwd) if globbed else [target]
-                if protected(target, here or cwd) or (globbed and _glob_hit(paths, here or cwd)) or \
-                        (re.search(r"(?:^|[\s<>|&;(])" + re.escape(str(target)) + r"\(", cmd) and MACHINERY_HINT.search(cmd)):
-                    hits.append(target)
-                elif kind == "file" and re.search(r"\b(?:cp|mv|rsync|scp|ln|rm|rmdir)\b", folded) and \
-                        any(re.search(r"(?i)(?:^|/)\.(?:git|claude|github)/*$", str(p)) for p in paths or []):
-                    # Chặn chép đè hoặc xoá thư mục cha chứa máy review (8ec050fad4: cp -R /tmp/review-fanout <common>/.git/)
-                    hits.append(target)
-                elif kind != "interp" and re.search(r"\$\(|`|^\$", _lead(str(target), here or cwd)) and MACHINERY_HINT.search(cmd):
-                    hits.append(target)   # a computed target ($(…), `…`, $VAR) on a line that points at the machinery
-                elif cd_unknown and not os.path.isabs(os.path.expanduser(str(target))) and \
-                        (MACHINERY_HINT.search(cd_unknown) or MACHINERY_HINT.search(str(target))):
-                    hits.append(f"{cd_unknown}/{target}")
+        got = [t for p in parses if p for t in p]
+        for part in parses:
+            cd_unknown = ""
+            for kind, target, here in part or []:
+                if kind == "cdvar":   # `cd "$VAR"`: đích tương đối phía sau không đọc tĩnh được thư mục gốc
+                    cd_unknown = str(target)
+                    continue
+                if kind == "unparsed":
+                    hits += named or ([cmd.strip()[:60]] if MACHINERY_HINT.search(cmd) else [])
+                    continue
+                if kind in ("redirect", "file", "interp") and target:
+                    # b91e0de56a: a glob / brace target is judged on its expansions; a zsh group or qualifier right after it
+                    # (`.git/(review-fanout|x)/…`, `f(N)`) cannot be read: fail closed when the line points at the machinery
+                    globbed = GLOB.search(str(target)) is not None
+                    paths = _glob_paths(str(target), here or cwd) if globbed else [target]
+                    if protected(target, here or cwd) or (globbed and _glob_hit(paths, here or cwd)) or \
+                            (re.search(r"(?:^|[\s<>|&;(])" + re.escape(str(target)) + r"\(", cmd) and MACHINERY_HINT.search(cmd)):
+                        hits.append(target)
+                    elif kind == "file" and re.search(r"\b(?:cp|mv|rsync|scp|ln|rm|rmdir)\b", folded) and \
+                            any(re.search(r"(?i)(?:^|/)\.(?:git|claude|github)/*$", str(p)) for p in paths or []):
+                        # Chặn chép đè hoặc xoá thư mục cha chứa máy review (8ec050fad4: cp -R /tmp/review-fanout <common>/.git/)
+                        hits.append(target)
+                    elif kind != "interp" and re.search(r"\$\(|`|^\$", _lead(str(target), here or cwd)) and \
+                            MACHINERY_HINT.search(cmd):
+                        hits.append(target)   # a computed target ($(…), `…`, $VAR) on a line that points at the machinery
+                    elif cd_unknown and not os.path.isabs(os.path.expanduser(str(target))) and \
+                            (MACHINERY_HINT.search(cd_unknown) or MACHINERY_HINT.search(str(target))):
+                        hits.append(f"{cd_unknown}/{target}")
         # 28b85d96f4: ("git", dir) của shell_writes không còn bị bỏ qua — đường dẫn tương đối tính theo cwd và thư mục của
         # từng lệnh git (sau cd / -C)
         dirs = [cwd] + [str(t) for kind, t, _ in got if kind == "git" and t]
-        calls, words = _git_calls(folded)
+        calls, words = _git_calls(cmd)
+        if folded != cmd:
+            more = _git_calls(folded)
+            calls, words = calls + more[0], words + more[1]
         for sub, rest in calls:
             ops = [a for a in rest if not a.startswith("-") and a not in ("<", ">")]
             if sub == "stash" and ops[:1] in (["list"], ["show"], ["create"]):

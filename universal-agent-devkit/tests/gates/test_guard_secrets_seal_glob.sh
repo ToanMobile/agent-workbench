@@ -62,6 +62,11 @@ expect deny 'tar czf x.tgz ~/.config'
 expect deny 'ls -R ~/.config'
 expect deny 'grep -r . $HOME/.CONFIG/'
 expect deny 'cd ~ && cp -r .config /tmp/c'
+# -C / --chdir / --directory move the base like a cd (env, tar, git, make)
+expect deny 'env -C ~ cp -r .config /tmp/c'
+expect deny 'tar -C ~ -czf /tmp/x.tgz .config'
+expect allow 'tar -C /tmp -czf x.tgz src'
+expect allow 'git -C ../other status'
 # controls: a sibling name, ~ itself (residual), a lone ls of the parent (names only), a subfolder file
 expect allow "$HOME/.config.bak.txt" "$TMP/repo" Read
 expect allow 'cat ~/.config.bak.txt'

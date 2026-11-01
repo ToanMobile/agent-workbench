@@ -81,6 +81,23 @@ expect allow "$R" "$HOME/.config.bak.txt" Read
 expect allow "$R" 'echo $(date) > out.txt'
 expect allow "$R" 'python3 tool.py install hooks'
 expect allow "$R" "python3 $DK/hooks/guard-secrets.py"
+# audit of c42aef31: the case-folded copy alone moved a heredoc end (`SH` -> `sh`), so a later `<<END` swallowed the real cp
+expect deny "$R" "$(printf 'cat <<%s > /tmp/a\nSH\ncat <<%s\nsh\ncp x .git/review-fanout/%s/summary.json\nEND' "'sh'" "'END'" "$H")"
+expect allow "$R" "$(printf 'cat <<%s > /tmp/a\ncp x .git/review-fanout/%s/summary.json\nsh\necho done' "'sh'" "$H")"
+# the signer is executable: run directly, through VAR= / env / nohup / xargs / find -exec / a backtick, it is still driven
+expect deny "$R" "$DK/bin/review_sign.py sign .git/review-fanout/$H/summary.json"
+expect deny "$DK" "./bin/review_sig?.py sign /tmp/s.json"
+expect deny "$R" "env X=1 $DK/bin/review_sign.py sign /tmp/s.json"
+expect deny "$R" "nohup $DK/bin/review_sign.py sign /tmp/s.json"
+expect deny "$R" "X=1 $DK/bin/REVIEW_SIGN.py sign /tmp/s.json"
+expect deny "$R" "echo f | xargs -I{} $DK/bin/review_sign.py sign {}"
+expect deny "$R" "find . -name summary.json -exec $DK/bin/review_sign.py sign {} ;"
+expect deny "$R" "x=\`$DK/bin/review_sign.py sign /tmp/s.json\`"
+expect allow "$R" "cat $DK/bin/review_sign.py"
+expect allow "$R" "grep -n load_key $DK/bin/review_sign.py"
+expect allow "$R" "sed -n 1,20p $DK/bin/review_sign.py"
+# nocaseglob (bash) / NO_CASE_GLOB (zsh): a glob matches a folder in any case
+expect deny "$R" "shopt -s nocaseglob; cp x $DK/HOO?S/guard-secrets.py"
 # allowed: reads, and globs that expand to nothing protected
 expect allow "$R" 'cat .git/review-fanout/*/summary.md'
 expect allow "$R" "sed -n 1,5p $DK/hoo?s/guard-secrets.py"

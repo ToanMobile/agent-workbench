@@ -449,12 +449,13 @@ def seal_glob_hit(text, cwd):
     `cat ~/.conf*/agent-wo*/*`, `cat ~/.CONFIG/AGENT-WORKBENCH/REVIEW.KEY` — matched component by component against both forms of
     the folder (expanduser and realpath; no file system access): the folder itself or anything inside it. Its parent ~/.config named
     as a whole (`grep -r . ~/.config`, `cp -r ~/.config /tmp/c`, `tar czf x ~/.config`) is denied too, except a lone non-recursive
-    `ls ~/.config` (names only). A cd or a glob moves the base the guard cannot follow (`cd ~ && cat .c*/a*/*`, `cd ~ && cp -r
-    .config /tmp`), so a command with a cd / pushd or a glob word that names .config is denied too (fail closed: `ls ~/.config/gh/*`)."""
+    `ls ~/.config` (names only). A cd, a -C / --chdir / --directory (env, tar, git, make) or a glob moves the base the guard cannot
+    follow (`cd ~ && cat .c*/a*/*`, `env -C ~ cp -r .config /tmp`), so a command with one of them and a word that names .config is
+    denied too (fail closed: `ls ~/.config/gh/*`, `grep -C 3 x ~/.config/gh/hosts.yml`)."""
     home = os.path.normpath(os.path.expanduser(SECRET_DIR))
     folders = {tuple(c for c in f.split("/") if c) for f in (home, _real_path(home))}
     parents = {f[:-1] for f in folders}
-    moved = re.search(r"(?:^|[\s;&|(`])(?i:cd|pushd)(?=\s|$)", text)
+    moved = re.search(r"(?:^|[\s;&|(`])(?:(?i:cd|pushd)(?=\s|$)|-C(?=\s|\S)|--chdir(?=[=\s])|--directory(?=[=\s]))", text)
     globbed = config = parent = False
     for w in re.split(r"[\s;&|()<>=`]+", re.sub(r"[\"'\\]", "", text)):
         if not w:
