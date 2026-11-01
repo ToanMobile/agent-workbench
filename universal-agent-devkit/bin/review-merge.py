@@ -570,6 +570,8 @@ def main(argv=None):
     # PASS_REDUCED is accepted anywhere is a separate decision (review_gate.sh accepts only PASS)
     if verdict == "PASS" and skipped:
         verdict = "PASS_REDUCED"
+    fdir = _signer_mod()._fanout_dir(repo)
+    meta["common_dir"] = os.path.dirname(fdir) if fdir else ""
     out = {"verdict": verdict, "reasons": reasons, "meta": meta, "usage": usage, "run": run_label(meta),
            "reduced": bool(skipped), "skipped_by_override": skipped,
            "reviewers": {n: {"status": e.get("status"), "verdict": e.get("verdict"), "reason": e.get("reason", ""),
@@ -593,12 +595,16 @@ def main(argv=None):
     return 0 if verdict in ("PASS", "PASS_REDUCED") else 1
 
 
-def _sign_summary(path):
+def _signer_mod():
     import importlib.util
     sp = importlib.util.spec_from_file_location("review_sign", os.path.join(os.path.dirname(os.path.realpath(__file__)), "review_sign.py"))
     mod = importlib.util.module_from_spec(sp)
     sp.loader.exec_module(mod)
-    mod.sign(path)
+    return mod
+
+
+def _sign_summary(path):
+    _signer_mod().sign(path)
 
 
 if __name__ == "__main__":

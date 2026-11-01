@@ -6,7 +6,8 @@ bin/review-merge.py (and review-fanout.sh's "nothing to review" path) sign; `rev
 when <summary.json>.sig matches the summary bytes. Unsigned, unreadable or mismatched = not a verdict.
 
   review_sign.py sign FILE      write FILE.sig — only for a review run's own summary: FILE is <...>/review-fanout/<H>/summary.json
-                                and its meta.code_hash is H (r14d, BUG-REV-738b4fa129: it sealed any file it was pointed at)
+                                and its meta.code_hash is H (r14d, BUG-REV-738b4fa129: it sealed any file it was pointed at), in
+                                the review-fanout folder of meta.repo's git common dir (r23c: not /tmp/review-fanout/<H>)
   review_sign.py verify FILE    exit 0 when FILE.sig matches, 1 otherwise
 A seal binds the code state it names: load_verified(FILE, H) reads the bytes ONCE, checks the MAC on them and returns the summary only
 when its meta.code_hash is H (BUG-REV-7b0abde38e / 76e3be1a9d: a sealed PASS copied into another run dir, or one with no code_hash,
@@ -20,6 +21,7 @@ import os
 import re
 import secrets
 import stat
+import subprocess
 import sys
 
 
@@ -63,6 +65,20 @@ def _code_hash(data):
     return h if isinstance(h, str) and re.fullmatch(r"[0-9a-f]{64}", h) else None
 
 
+def _fanout_dir(repo):
+    """realpath of <git common dir of repo>/review-fanout, or None. GIT_* of the caller is dropped: GIT_DIR=<another git dir> must
+    not move the answer."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        r = subprocess.run(["git", "-C", repo, "rev-parse", "--git-common-dir"], capture_output=True, text=True, timeout=15, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    common = r.stdout.strip()
+    if r.returncode != 0 or not common:
+        return None
+    return os.path.realpath(os.path.join(repo, common, "review-fanout"))
+
+
 def sign(path):
     real = os.path.realpath(path)
     run = os.path.dirname(real)
@@ -72,6 +88,19 @@ def sign(path):
         data = fh.read()
     if _code_hash(data) != os.path.basename(run):
         raise ValueError(f"{path}: meta.code_hash is not its run directory {os.path.basename(run)[:12]} — not sealed")
+    # the run dir must be the one review-fanout.sh keeps for that repo (r23c, BUG-REV 8ec050fad4): <git common dir of meta.repo>/
+    # review-fanout, or — a summary that names no repo — of the git dir holding it; /tmp/review-fanout/<H> is never sealed
+    try:
+        meta = json.loads(data.decode("utf-8"))["meta"]
+        repo = meta.get("repo") if isinstance(meta, dict) else None
+        cdir = meta.get("common_dir") if isinstance(meta, dict) else None
+    except (UnicodeDecodeError, ValueError, KeyError, TypeError, AttributeError):
+        repo, cdir = None, None
+    home = _fanout_dir(repo if isinstance(repo, str) and repo else os.path.dirname(os.path.dirname(run)))
+    if home is None or os.path.dirname(run) != home:
+        raise ValueError(f"{path}: not in the review-fanout folder of {repo or 'a git dir'} ({home or 'no git common dir'}) — not sealed")
+    if cdir is not None and (not isinstance(cdir, str) or not cdir or os.path.join(os.path.realpath(cdir), "review-fanout") != home):
+        raise ValueError(f"{path}: meta.common_dir ({cdir!r}) does not match {home} — not sealed")
     key = load_key(create=True)
     path = real
     tmp = path + ".sig.tmp"
@@ -100,11 +129,19 @@ def verify(path):
 
 
 def load_verified(path, code_hash):
-    """The summary dict when it is sealed AND names code_hash as its code state, else None (bytes read once: no TOCTOU)."""
+    """The summary dict when it is sealed, names code_hash, and — when meta.common_dir is set — sits in that common dir (bytes read once)."""
     data = _sealed_bytes(path)
     if data is None or not code_hash or _code_hash(data) != code_hash:
         return None
-    return json.loads(data.decode("utf-8"))
+    d = json.loads(data.decode("utf-8"))
+    meta = d.get("meta") if isinstance(d, dict) and isinstance(d.get("meta"), dict) else {}
+    cdir = meta.get("common_dir")
+    if cdir is not None:
+        if not isinstance(cdir, str) or not cdir:
+            return None
+        if os.path.join(os.path.realpath(cdir), "review-fanout") != os.path.dirname(os.path.dirname(os.path.realpath(path))):
+            return None
+    return d
 
 
 if __name__ == "__main__":

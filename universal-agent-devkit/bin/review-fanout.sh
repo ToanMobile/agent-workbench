@@ -302,9 +302,9 @@ on_signal() { for p in $PIDS; do kill -TERM "$p" 2>/dev/null; done; for p in $PI
 trap 'rm -f "$RUN/pid"' EXIT
 trap on_signal INT TERM HUP
 
-_REVIEW_RUNTIME="$RUNTIME" python3 -I - "$REPO" "$BASE_SHA" "$CODE_HASH" "$RUN" "$HERE" "$SKIP" "$DEPTH_FORCE" <<'PY' || { echo "review-fanout: meta failed" >&2; exit 2; }
+_REVIEW_RUNTIME="$RUNTIME" python3 -I - "$REPO" "$BASE_SHA" "$CODE_HASH" "$RUN" "$HERE" "$SKIP" "$DEPTH_FORCE" "$COMMON" <<'PY' || { echo "review-fanout: meta failed" >&2; exit 2; }
 import json, os, re, stat, subprocess, sys
-repo, base, code_hash, run, here, skip, depth_force = sys.argv[1:8]
+repo, base, code_hash, run, here, skip, depth_force, common_dir = sys.argv[1:9]
 runtime = os.environ["_REVIEW_RUNTIME"]
 skipped = [x for x in skip.split(",") if x]
 def git(*a):
@@ -357,7 +357,7 @@ def num(name, d, cast):
         return cast(v) if str(v).strip() else None
     except ValueError:
         return cast(d)
-meta = {"repo": repo, "base": base, "code_hash": code_hash, "depth": depth, "depth_forced": depth_force == "deep",
+meta = {"repo": repo, "common_dir": common_dir, "base": base, "code_hash": code_hash, "depth": depth, "depth_forced": depth_force == "deep",
         "regression_status": os.environ.get("REVIEW_REGRESSION_STATUS") or ".agents/regression_status.json", "changed_lines": lines, "sensitive_paths": hot, "injection_signals": signals,
         "files": files, "untracked": untracked, "dirty": bool(git("status", "--porcelain", "--untracked-files=all").strip()),
         "commits_since_base": bool(git("rev-list", "--max-count=1", f"{base}..HEAD").strip()), "required": required,
