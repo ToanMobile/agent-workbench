@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # Hồi quy 31/10/2026 — merge gate tự động 100%, fail-closed (super-board-merge-gate.sh):
-#   R1 không có verdict review 4 bên → không merge (exit 6)
-#   R2 summary.json không chữ ký / chữ ký giả / bị sửa sau khi ký → không merge (exit 6)
+#   R1 chưa có lượt review 4 bên nào (NONE) → không merge, báo rõ `review-missing:` và thoát riêng exit 10 để merge-queue đếm lần thử
+#      (3 lần → 🛡 Blocked) thay vì lặp mù Review ↔ Merge (13bcd39b20)
+#   R2 summary.json không chữ ký / chữ ký giả / bị sửa sau khi ký / FAIL → không merge (exit 6); verdict của head khác → exit 10
 #   R3 PASS_REDUCED bị từ chối mặc định; chỉ nhận khi lượt chạy đặt --accept-reduced-review <đúng skip list>
 #   C1 check CI đỏ → không merge (exit 11), kể cả check đỏ khi đang chờ auto-merge (auto-merge bị tắt lại)
 #   C2 repo có required checks → `gh pr merge --auto --squash --delete-branch --match-head-commit <sha>`, không --admin;
 #      không có required check → merge ngay (không --auto); đọc protection lỗi → không merge (exit 4)
 #   M1 PR money/auth/migration: không có đường người duyệt; cần review deep + security ok/pass + test bổ sung; thiếu test bổ sung
-#      trong config → exit 9; PASS_REDUCED không bao giờ đủ
+#      trong config → exit 9; PASS_REDUCED không bao giờ đủ (exit 6); chưa review gì kể cả kèm --accept-reduced-review → exit 10
 #   T1 không tìm thấy review-fanout.sh của DevKit → exit 9 (fail-closed)
 #   T2 DevKit cũ không có `review-fanout.sh --verify-summary` → exit 9 (fail-closed, gate không tự tính HMAC)
-#   G  #744: cửa sổ grandfather tạm (hạn 2026-11-01 06:00 +07) đã gỡ: PR mở trước #742 không verdict → exit 6, gate không đọc createdAt
+#   G  #744: cửa sổ grandfather tạm (hạn 2026-11-01 06:00 +07) đã gỡ: PR mở trước #742 thiếu review → exit 10, summary không ký → exit 6,
+#      gate không đọc createdAt và helper đã xoá
 # Verdict đi qua đúng entry point thật: universal-agent-devkit/bin/review-fanout.sh --status / --verify-summary (khoá HMAC trong
 # HOME tạm của test, ký bằng review_sign.py như review-merge.py). gh là bản giả. Tương thích bash 3.2.
 set -u
@@ -186,11 +188,12 @@ gate() {
 merged_calls() { [ -s "$TMP/merge.calls" ] && wc -l < "$TMP/merge.calls" | tr -d ' ' || echo 0; }
 why() { echo "rc=$RC out=[$(tail -4 "$TMP/out" | tr '\n' '|')] err=[$(tail -6 "$TMP/err" | tr '\n' '|')]"; }
 
-# ── R1. không có verdict
+# ── R1. chưa có lượt review (NONE → exit 10 riêng để merge-queue không lặp Review ↔ Merge, 13bcd39b20)
 clear_verdicts
 gate 5 "$GATE" -- 
-[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && grep -q 'no signed 4-way PASS' "$TMP/err" && [ ! -e "$TMP/verified" ] \
-  && ok "R1 no review verdict: exit 6, nothing verified, gh pr merge never called" || fail "R1 no verdict: $(why)"
+[ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && grep -q "^review-missing: $H5 " "$TMP/out" \
+  && grep -q 'no 4-way review run exists' "$TMP/err" && [ ! -e "$TMP/verified" ] \
+  && ok "R1 no review run (NONE): distinct exit 10 + review-missing stdout, nothing verified, gh pr merge never called" || fail "R1 no verdict: $(why)"
 
 # ── R2. không chữ ký / bị sửa sau khi ký / chữ ký giả
 for mode in nosig tamper badsig; do
@@ -207,7 +210,7 @@ gate 5 "$GATE" --
 # Verdict PASS của head khác không trả lời cho head này
 clear_verdicts; verdict "$H7" "" PASS light ok pass sign
 gate 5 "$GATE" --
-[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ok "R2 a signed PASS of another head does not count" || fail "R2 other head: $(why)"
+[ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && ok "R2 a signed PASS of another head does not count (no review of this head: exit 10)" || fail "R2 other head: $(why)"
 # Verdict FAIL
 clear_verdicts; verdict "$H5" "" FAIL light ok pass sign
 gate 5 "$GATE" --
@@ -216,14 +219,14 @@ gate 5 "$GATE" --
 # ── R3. PASS_REDUCED
 clear_verdicts; verdict "$H5" "grok" PASS_REDUCED light ok pass sign
 gate 5 "$GATE" --
-[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ok "R3 PASS_REDUCED without an override: rejected (exit 6)" || fail "R3 default: $(why)"
+[ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && ok "R3 PASS_REDUCED without an override: rejected (no full review of the head: exit 10)" || fail "R3 default: $(why)"
 gate 5 "$GATE" SB_MERGE_ACCEPT_REDUCED_REVIEW=ocr --
-[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ok "R3 override for another skip list (ocr) does not accept a grok-reduced PASS" || fail "R3 wrong list: $(why)"
+[ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && ok "R3 override for another skip list (ocr) does not accept a grok-reduced PASS (exit 10)" || fail "R3 wrong list: $(why)"
 gate 5 "$GATE" -- --accept-reduced-review grok
 [ "$RC" -eq 0 ] && [ "$(merged_calls)" = 1 ] && grep -q 'accepting PASS_REDUCED' "$TMP/err" \
   && ok "R3 --accept-reduced-review grok: PASS_REDUCED accepted for this run only" || fail "R3 flag: $(why)"
 gate 5 "$GATE" REVIEW_SKIP_REVIEWERS=grok --
-[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ok "R3 inherited REVIEW_SKIP_REVIEWERS is ignored (no back door)" || fail "R3 env skip: $(why)"
+[ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && ok "R3 inherited REVIEW_SKIP_REVIEWERS is ignored (no back door, exit 10)" || fail "R3 env skip: $(why)"
 # PASS_REDUCED ghi vào thư mục của review đủ 4 bên cũng không phải PASS
 clear_verdicts; verdict "$H5" "" PASS_REDUCED light ok pass sign
 gate 5 "$GATE" --
@@ -283,6 +286,10 @@ CFG=$CFG_SAVE
 clear_verdicts; verdict "$H7" "grok" PASS_REDUCED deep ok pass sign
 gate 7 "$GATE" -- --accept-reduced-review grok
 [ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ok "M1 gated PR: PASS_REDUCED refused even with --accept-reduced-review" || fail "M1 reduced: $(why)"
+clear_verdicts
+gate 7 "$GATE" -- --accept-reduced-review grok
+[ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && grep -q "^review-missing: $H7 " "$TMP/out" \
+  && ok "M1 unreviewed gated PR with --accept-reduced-review: still exit 10 (review-missing, no exit-6 queue loop)" || fail "M1 unreviewed reduced: $(why)"
 
 # ── T1. DevKit review tool missing
 clear_verdicts; verdict "$H5" "" PASS light ok pass sign
@@ -299,9 +306,14 @@ gate 5 "$GATE_OLDDK" --
 # kiểm tính năng hết hạn đó (miễn verdict trong cửa sổ, đồng hồ, CLI không nới) nên bỏ cùng helper; còn lại đúng luật đầy đủ.
 clear_verdicts
 gate 5 "$GATE" FAKE_CREATED=2026-10-30T10:00:00Z --
-[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ! grep -q GRANDFATHERED "$TMP/err" && ! grep -q createdAt "$TMP/gh.calls" \
+[ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && ! grep -q GRANDFATHERED "$TMP/err" && ! grep -q createdAt "$TMP/gh.calls" \
   && [ ! -e "$WB/.claude/bin/super-board-grandfather.py" ] \
-  && ok "G PR opened before #742 without a signed verdict: exit 6, never grandfathered, createdAt never read, helper gone" \
-  || fail "G pre-cutoff PR: $(why) createdAt=$(grep -c createdAt "$TMP/gh.calls")"
+  && ok "G PR opened before #742 with no review run: exit 10 (review-missing), never grandfathered, createdAt never read, helper gone" \
+  || fail "G pre-cutoff PR (no review): $(why) createdAt=$(grep -c createdAt "$TMP/gh.calls")"
+clear_verdicts; verdict "$H5" "" PASS light ok pass nosig
+gate 5 "$GATE" FAKE_CREATED=2026-10-30T10:00:00Z --
+[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ! grep -q GRANDFATHERED "$TMP/err" && ! grep -q createdAt "$TMP/gh.calls" \
+  && ok "G PR opened before #742 without a signed verdict (unsigned summary): exit 6, never grandfathered, createdAt never read" \
+  || fail "G pre-cutoff PR (unsigned): $(why) createdAt=$(grep -c createdAt "$TMP/gh.calls")"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi
