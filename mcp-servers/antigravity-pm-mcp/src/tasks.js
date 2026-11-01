@@ -191,22 +191,44 @@ const SLEEP_CELL = new Int32Array(new SharedArrayBuffer(4));
 
 const LOCK_STALE_MS = 30000;
 
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+/** Khoa bo duoc: chu (pid trong token) da chet, hoac giu qua 30s; noi dung khong doc duoc (khoa cu, rong) thi xet mtime. */
+function lockAbandoned(lockFile) {
+  let body;
+  try { body = fs.readFileSync(lockFile, 'utf8'); } catch { return false; }
+  const m = /^(\d+)\.(\d+)\./.exec(body);
+  if (m) return !pidAlive(Number(m[1])) || Date.now() - Number(m[2]) > LOCK_STALE_MS;
+  try { return Date.now() - fs.statSync(lockFile).mtimeMs > LOCK_STALE_MS; } catch { return false; }
+}
+
 /**
- * Lay khoa cu (> 30s) bang doi ten nguyen tu: chi MOT tien trinh doi ten duoc; khoa vua duoc lam moi giua chung thi tra lai.
- * Truoc day hai tien trinh cung thay khoa cu va cung rmSync => tien trinh thu hai xoa khoa MOI cua tien trinh thu nhat
- * (critical scan 31/10).
+ * Thu hoi khoa bo duoc. Truoc day doi ten lockFile sang aside roi moi xet tuoi: giua luc stat va rename, khoa cu vua duoc nha
+ * va C vua lay khoa moi thi B doi ten mat khoa SONG cua C, D chen vao, aside .stale bi bo lai (#742 46b9215e8f).
+ * Nay: xet noi dung truoc, roi duoi khoa .reap (mot nguoi thu hoi mot luc) doc lai va chi xoa khi van bo duoc.
+ * Chu da chet thi khong ai nha khoa giua lan doc lai va lan xoa; .reap luon duoc don trong finally.
+ * ponytail: chu con song nhung giu qua 30s van con cua so vai micro-giay giua doc lai va xoa; can hon thi dung flock.
  */
-function takeStaleLock(lockFile, token) {
-  const aside = `${lockFile}.${token}.stale`;
-  try { fs.renameSync(lockFile, aside); } catch { return false; }
-  let fresh = true;
-  try { fresh = Date.now() - fs.statSync(aside).mtimeMs <= LOCK_STALE_MS; } catch { /* khong xet duoc: coi la tuoi */ }
-  if (fresh) {
-    try { fs.linkSync(aside, lockFile); fs.rmSync(aside, { force: true }); } catch { /* da co khoa moi: giu aside lam dau vet */ }
+function takeStaleLock(lockFile) {
+  if (!lockAbandoned(lockFile)) return false;
+  const reap = `${lockFile}.reap`;
+  try {
+    fs.closeSync(fs.openSync(reap, 'wx'));
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+    // nguoi thu hoi chet giua chung (vung nay chi vai micro-giay): .reap qua 30s thi bo
+    try { if (Date.now() - fs.statSync(reap).mtimeMs > LOCK_STALE_MS) fs.rmSync(reap, { force: true }); } catch { /* da duoc don */ }
     return false;
   }
-  fs.rmSync(aside, { force: true });
-  return true;
+  try {
+    if (!lockAbandoned(lockFile)) return false;
+    fs.rmSync(lockFile, { force: true });
+    return true;
+  } finally {
+    fs.rmSync(reap, { force: true });
+  }
 }
 
 /** Khoa dong bo bang file tao O_EXCL mang token rieng; chi go khoa CUA MINH (khoa da bi lay lai thi khong xoa). */
@@ -220,9 +242,7 @@ export function withFileLock(lockFile, fn) {
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      try {
-        if (Date.now() - fs.statSync(lockFile).mtimeMs > LOCK_STALE_MS && takeStaleLock(lockFile, token)) continue;
-      } catch { continue; }
+      if (takeStaleLock(lockFile)) continue;
       if (Date.now() > deadline) throw new Error(`Khong lay duoc khoa ${lockFile} sau 5s — tien trinh khac dang ghi task`);
       Atomics.wait(SLEEP_CELL, 0, 0, 20);
     }
