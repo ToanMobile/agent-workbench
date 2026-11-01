@@ -29,6 +29,10 @@
 # the code hash, a FAIL records its rows there too. Relative, missing or inside the repo = usage error (exit 2).
 # --depth deep (or a marker <git-common-dir>/review-fanout/deep-heads/<HEAD sha>, written by the merge gate for a machine-gated PR
 # whose review came out light — r14d BUG-REV-37b922ce04) forces a deep run; a forced run is its own code state in the hash.
+# A PASS answers only for the reviewer executables that made it (r23c, BUG-REV 2ff4519b9f): meta.json records where claude, grok,
+# ocr, node (+ REVIEW_AGY_CLI / ANTIGRAVITY_PM_AGY when set, a raised REVIEW_DEEP_LINES) resolve (review_runner.reviewer_runtime);
+# --status reads a sealed PASS made with other ones as NONE (exit 4) and a run reviews again. Not in the code hash: the run dir stays
+# the same code state, a FAIL answers FAIL whoever asks, and a CLI self-update (same PATH entry) keeps the verdict.
 # A verdict answers only for the code state it names (r14d): --status reads summary.json once, checks the seal on those bytes and its
 # meta.code_hash == this code hash; the tree is hashed again before the verdict is sealed (changed during the review = FAIL, no bug
 # rows); a FAIL whose bug rows moved the hash (a linked worktree writes .agents/regression_status.json) is sealed under the new hash too.
@@ -84,7 +88,7 @@ while [ $# -gt 0 ]; do
     --hash) MODE="hash"; shift ;;
     --force) FORCE=1; shift ;;
     --child) MODE="child"; shift ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     *) echo "review-fanout: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -183,6 +187,13 @@ PY
 }
 CODE_HASH="$(code_hash)" && [ -n "$CODE_HASH" ] || { echo "review-fanout: could not hash the change" >&2; exit 2; }
 [ "$MODE" = "hash" ] && { echo "$CODE_HASH"; exit 0; }
+RUNTIME="$(python3 -I - "$HERE" "$SKIP" <<'PY'
+import importlib.util, json, os, sys
+sp = importlib.util.spec_from_file_location("review_runner", os.path.join(sys.argv[1], "review_runner.py"))
+rr = importlib.util.module_from_spec(sp); sp.loader.exec_module(rr)
+print(json.dumps(rr.reviewer_runtime([x for x in sys.argv[2].split(",") if x]), sort_keys=True))
+PY
+)" && [ -n "$RUNTIME" ] || { echo "review-fanout: could not resolve the reviewer executables" >&2; exit 2; }
 
 RUN="$COMMON/review-fanout/$CODE_HASH"
 mkdir -p "$COMMON/review-fanout" && chmod 700 "$COMMON/review-fanout"
@@ -191,12 +202,17 @@ running() { [ -f "$RUN/pid" ] && kill -0 "$(cat "$RUN/pid" 2>/dev/null)" 2>/dev/
 # a verdict counts only with a valid HMAC seal (bin/review_sign.py, key in ~/.config/agent-workbench/review.key): a summary.json
 # written by anyone else (an agent: {"verdict":"PASS"}) is UNSIGNED, never a verdict
 # one read: the seal is checked on the bytes the verdict is taken from, and the summary must name THIS code state (r14d, F12)
-cached_verdict() { python3 -I - "$HERE" "$RUN/summary.json" "$CODE_HASH" <<'PY' 2>/dev/null
-import importlib.util, os, sys
+# and a PASS made by other reviewer executables than this environment's (meta.runtime) is FOREIGN; a summary from before the runtime
+# was recorded (or a test fixture) carries none
+cached_verdict() { _REVIEW_RUNTIME="$RUNTIME" python3 -I - "$HERE" "$RUN/summary.json" "$CODE_HASH" <<'PY' 2>/dev/null
+import importlib.util, json, os, sys
 sp = importlib.util.spec_from_file_location("review_sign", os.path.join(sys.argv[1], "review_sign.py"))
 rs = importlib.util.module_from_spec(sp); sp.loader.exec_module(rs)
 d = rs.load_verified(sys.argv[2], sys.argv[3])
-print(d.get("verdict", "") if isinstance(d, dict) else "")
+v = d.get("verdict", "") if isinstance(d, dict) else ""
+meta = d.get("meta") if isinstance(d, dict) else None
+rt = meta.get("runtime") if isinstance(meta, dict) else None
+print("FOREIGN" if v in ("PASS", "PASS_REDUCED") and rt is not None and rt != json.loads(os.environ["_REVIEW_RUNTIME"]) else v)
 PY
 }
 
@@ -205,6 +221,10 @@ if [ "$MODE" = "status" ]; then
   if [ "$v" = "PASS" ]; then echo "PASS $RUN"; exit 0; fi
   if [ "$v" = "FAIL" ]; then echo "FAIL $RUN"; exit 1; fi
   if [ "$v" = "PASS_REDUCED" ]; then echo "PASS_REDUCED $RUN"; exit 6; fi   # never the default gate's PASS
+  if [ "$v" = "FOREIGN" ] && ! running; then
+    echo "review-fanout: the sealed PASS in $RUN was made by other reviewer executables than this environment runs — no verdict here" >&2
+    echo "NONE $RUN"; exit 4
+  fi
   if [ -z "$v" ] && [ -f "$RUN/summary.json" ] && ! running; then echo "UNSIGNED $RUN"; exit 5; fi
   if running; then echo "RUNNING $RUN"; exit 3; fi
   echo "NONE $RUN"; exit 4
@@ -212,7 +232,7 @@ fi
 
 if [ "$FORCE" = 0 ] && [ "$MODE" != "child" ]; then
   v="$(cached_verdict)"
-  if [ -n "$v" ]; then cat "$RUN/summary.md" 2>/dev/null; echo "(cached: $RUN)"; case "$v" in PASS|PASS_REDUCED) exit 0 ;; *) exit 1 ;; esac; fi
+  if [ -n "$v" ] && [ "$v" != FOREIGN ]; then cat "$RUN/summary.md" 2>/dev/null; echo "(cached: $RUN)"; case "$v" in PASS|PASS_REDUCED) exit 0 ;; *) exit 1 ;; esac; fi
 fi
 if running && [ "$MODE" != "child" ]; then
   echo "review-fanout: a review of this code is already running ($RUN, pid $(cat "$RUN/pid")) — wait for it:"
@@ -282,9 +302,10 @@ on_signal() { for p in $PIDS; do kill -TERM "$p" 2>/dev/null; done; for p in $PI
 trap 'rm -f "$RUN/pid"' EXIT
 trap on_signal INT TERM HUP
 
-python3 -I - "$REPO" "$BASE_SHA" "$CODE_HASH" "$RUN" "$HERE" "$SKIP" "$DEPTH_FORCE" <<'PY' || { echo "review-fanout: meta failed" >&2; exit 2; }
+_REVIEW_RUNTIME="$RUNTIME" python3 -I - "$REPO" "$BASE_SHA" "$CODE_HASH" "$RUN" "$HERE" "$SKIP" "$DEPTH_FORCE" <<'PY' || { echo "review-fanout: meta failed" >&2; exit 2; }
 import json, os, re, stat, subprocess, sys
 repo, base, code_hash, run, here, skip, depth_force = sys.argv[1:8]
+runtime = os.environ["_REVIEW_RUNTIME"]
 skipped = [x for x in skip.split(",") if x]
 def git(*a):
     return subprocess.run(["git", "-c", "core.quotePath=false", *a], capture_output=True, text=True).stdout
@@ -340,7 +361,7 @@ meta = {"repo": repo, "base": base, "code_hash": code_hash, "depth": depth, "dep
         "regression_status": os.environ.get("REVIEW_REGRESSION_STATUS") or ".agents/regression_status.json", "changed_lines": lines, "sensitive_paths": hot, "injection_signals": signals,
         "files": files, "untracked": untracked, "dirty": bool(git("status", "--porcelain", "--untracked-files=all").strip()),
         "commits_since_base": bool(git("rev-list", "--max-count=1", f"{base}..HEAD").strip()), "required": required,
-        "skipped_by_override": skipped, "reduced": bool(skipped),
+        "skipped_by_override": skipped, "reduced": bool(skipped), "runtime": json.loads(runtime),
         "models": {"claude": os.environ.get("REVIEW_CLAUDE_MODEL") or "opus",
                    "grok": os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7",
                    "antigravity": os.environ.get("REVIEW_AGY_MODEL") or "gemini-4-argon-high"}}

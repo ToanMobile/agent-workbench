@@ -56,6 +56,10 @@ def claude_model():
     return m
 
 
+def claude_bin():
+    return os.environ.get("REVIEW_CLAUDE_BIN", "claude")
+
+
 def model_problem(kind, model, pinned):
     """None when `model` is the one the rule requires, else the reason."""
     if not model:
@@ -264,7 +268,7 @@ def _verify_parallel(a, meta, cands, want, bin_):
 
 
 def run_claude(name, a, meta, ctx):
-    bin_ = os.environ.get("REVIEW_CLAUDE_BIN", "claude")
+    bin_ = claude_bin()
     if name == "verifier":
         cands = json.loads(read(os.path.join(a.run, "candidates.json"), "[]") or "[]")
         if not cands:
@@ -337,6 +341,39 @@ def grok_bin():
         return b
     from shutil import which
     return which("grok") or os.path.expanduser("~/.grok/bin/grok")
+
+
+def reviewer_runtime(skipped=()):
+    """The reviewer executables this environment runs, resolved as the runners here resolve them, plus a raised depth threshold
+    (review of #742, BUG-REV 2ff4519b9f). review-fanout.sh records it in meta.json and a sealed PASS answers --status only where it
+    is the same: a run with fake reviewers (REVIEW_*_BIN, REVIEW_AGY_CLI, ANTIGRAVITY_PM_AGY, another claude / grok / ocr / node
+    first on PATH, REVIEW_DEEP_LINES raised) is no verdict for the real ones. A location is the real directory of the PATH entry
+    plus the name, not the final symlink target: `claude` points into versions/<v> and moves on every self-update. A skipped
+    reviewer does not run, so its binary is left out."""
+    from shutil import which
+
+    def where(cmd):
+        p = cmd if os.sep in cmd else which(cmd)
+        if not p:
+            return f"missing:{cmd}"
+        p = os.path.abspath(os.path.expanduser(p))
+        return os.path.join(os.path.realpath(os.path.dirname(p)), os.path.basename(p))
+    rt = {"claude": where(claude_bin()), "node": where("node")}
+    for key, var in (("agy_cli", "REVIEW_AGY_CLI"), ("agy", "ANTIGRAVITY_PM_AGY")):
+        if os.environ.get(var):
+            rt[key] = where(os.environ[var])
+    if "grok" not in skipped:
+        rt["grok"] = where(grok_bin())
+    if "ocr" not in skipped:
+        rt["ocr"] = where("ocr")
+    deep = (os.environ.get("REVIEW_DEEP_LINES") or "").strip()
+    try:
+        deep = "" if not deep or int(deep) == 50 else str(int(deep))
+    except ValueError:
+        pass
+    if deep:
+        rt["deep_lines"] = deep
+    return rt
 
 
 def run_grok(a, meta, ctx):
