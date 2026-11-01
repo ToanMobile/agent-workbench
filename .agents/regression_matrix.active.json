@@ -2623,6 +2623,25 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-policy-paths-setup-verify-742",
+      "watch_files": [
+        ".claude/bin/super-board-merge-policy.py",
+        ".claude/bin/super-board-setup.py",
+        ".claude/super-board/configs/*.json",
+        "tests/super-board/test_merge_policy_diff_header_paths.sh",
+        "tests/super-board/test_merge_policy_migration_verify.sh",
+        "tests/super-board/test_setup_machine_gate_verify.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-POLICY-PATHS-SETUP-742-01",
+          "name": "#742 r23a: policy đọc đúng đường dẫn file bị xoá trong header diff C-quoted và file rỗng (d1facdea5d); category migration đọc verify_commands; setup/config khai test bổ sung cho machine gate (13bcd39b20 1/2)",
+          "command": "bash tests/super-board/test_merge_policy_diff_header_paths.sh && bash tests/super-board/test_merge_policy_migration_verify.sh && bash tests/super-board/test_setup_machine_gate_verify.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
