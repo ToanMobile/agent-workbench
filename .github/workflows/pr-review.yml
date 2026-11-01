@@ -50,7 +50,9 @@ jobs:
           bash universal-agent-devkit/tests/gates/test_review_gate_4way.sh
           # TẠM TẮT 31/10 (anh Đạt duyệt): 5 test antigravity-pm-mcp đỏ trên Linux, vẫn chạy trong post-fix-gate trên Mac. Bật lại theo https://github.com/ToanMobile/agent-workbench/issues/768.
           # (cd mcp-servers/antigravity-pm-mcp && npm test)
-          bash universal-agent-devkit/tests/run_impacted.sh --all
+          # TẠM TẮT 01/11 (luật anh Đạt: lỗi chỉ-Linux hoãn, gate Mac là đủ): 35 file test DevKit viết cho macOS đỏ trên ubuntu (run 41209128293),
+          # vẫn chạy trong post-fix-gate trên Mac. Bật lại theo https://github.com/ToanMobile/agent-workbench/issues/781.
+          # bash universal-agent-devkit/tests/run_impacted.sh --all
 
       - name: Known bug patterns (.agents/instincts.md detect rules) on added lines
         run: python3 universal-agent-devkit/bin/known_patterns.py --repo . scan --base "$BASE_REF" --out "$RUNNER_TEMP/registry.json"
