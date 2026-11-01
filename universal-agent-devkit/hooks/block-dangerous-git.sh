@@ -1256,7 +1256,7 @@ def _mq_helper_at(root):
         return None, f"{MQ_MSG}: {MQ_HELPER} git đã theo dõi nhưng không còn trong cây ({root}) — {restore}"
     rc, _ = _mq_git(root, "diff", "--quiet", "HEAD", "--", MQ_HELPER)
     if rc != 0:
-        return None, f"{MQ_MSG}: {MQ_HELPER} khác bản HEAD ({root}) — {restore}"
+        return None, f"{MQ_MSG}: {MQ_HELPER} khác bản HEAD ({root}) — {restore}, hoặc commit bản sửa trước"
     return path, None
 
 def _mq_helper():
@@ -1513,9 +1513,8 @@ def gh_label_rule(rest, base, env_repo=None):
         if helper is None or reason:
             return reason if helper else None
         repo = api_repo or env_repo
-        if not repo and _mq_ghrepo_reason():
-            return _mq_ghrepo_reason()
-        return _mq_check(helper, sels, repo, base)
+        why = None if repo else _mq_ghrepo_reason()
+        return why or _mq_check(helper, sels, repo, base)
     create = sub in (["pr", "create"], ["pr", "new"])
     if not create and sub not in (["pr", "edit"], ["issue", "edit"]):
         return None
@@ -1529,8 +1528,9 @@ def gh_label_rule(rest, base, env_repo=None):
         return hwhy
     if helper is None:
         return None
-    if not repo and _mq_ghrepo_reason():
-        return _mq_ghrepo_reason()
+    why = None if repo else _mq_ghrepo_reason()
+    if why:
+        return why
     if create:
         return f"{MQ_MSG}: PR mới chưa thể có approved-head — tạo PR không kèm nhãn này, nhãn do lane Review gắn sau khi duyệt ({MQ_HELPER} <pr>)"
     return _mq_check(helper, sels, repo, base)
@@ -1545,11 +1545,11 @@ def _lit_decode(s):
 def gh_in_literals(code, base):
     """(audit T0066 vòng 2) interpreter (-c / -e / heredoc) gọi gh: dạng danh sách ([\x22gh\x22, \x22issue\x22, …], mỗi literal một đối số,
     giữ xuống dòng của body) và dạng chuỗi (\x22gh pr comment 5 --body done\x22, tách như shell) đều đi qua gh_comment_rule."""
-    if "gh" not in code:
+    if "gh" not in code.lower():
         return None
     lits = [_lit_decode(next((g for g in m.groups() if g is not None), "")) for m in STR_LITERAL.finditer(code)]
     for idx, lit in enumerate(lits):
-        if lit.rsplit("/", 1)[-1] == "gh":
+        if lit.rsplit("/", 1)[-1].lower() == "gh":   # (#536 review) macOS chạy GH / Gh như gh
             reason = gh_comment_rule(lits[idx + 1:], base) or gh_label_rule(lits[idx + 1:], base)
         else:
             try:
@@ -1557,7 +1557,7 @@ def gh_in_literals(code, base):
             except ValueError:
                 ws = lit.split()
             reason = next((r for r in (gh_comment_rule(ws[k + 1:], base) or gh_label_rule(ws[k + 1:], base)
-                                       for k, w in enumerate(ws) if w.rsplit("/", 1)[-1] == "gh") if r), None)
+                                       for k, w in enumerate(ws) if w.rsplit("/", 1)[-1].lower() == "gh") if r), None)
         if reason:
             return reason
     return None
@@ -1654,6 +1654,9 @@ def analyse_simple(tokens, depth):
         rec = prog == "rm" and any(a == "--recursive" or (a.startswith("-") and not a.startswith("--") and ("r" in a or "R" in a))
                                    for a in opts)
         return protected_delete_rule(_operands(rest), CUR_DIR[0], walk=rec)   # (#605 Lane H) rm -r: quét nông thư mục
+    # (#536 review) như git ở trên: macOS chạy GH / Gh như gh, glob g[h] / g? có thể nở ra gh
+    if prog.lower() == "gh" or (re.search(r"[*?\[]", prog) and _fnm("gh", prog)):
+        prog = "gh"
     if prog == "gh":   # (#605 Lane H) agent không tự đăng approved-head trơn / done; (#536) nhãn merge-queue cần approved-head
         return gh_comment_rule(rest, CUR_DIR[0]) or gh_label_rule(rest, CUR_DIR[0], assigns.get("GH_REPO"))
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there

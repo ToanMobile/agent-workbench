@@ -187,4 +187,11 @@ mv "$T/$H" "$TMP/moved-helper"
 check 2 "gh pr edit 5 --add-label merge-queue" "$TW"; grep_err 'checkout --'
 [ ! -s "$TW/calls" ] && echo "  ✔ worktree's own helper not used while main's tracked helper is gone" || { echo "  ✖ worktree helper used"; FAILS=$((FAILS + 1)); }
 
+echo "K. tên chương trình khác hoa/thường / glob (APFS mặc định chạy GH = gh, như GIT = git) — review #826 P1"
+reset 3; check 2 "GH pr edit 5 --add-label merge-queue"; expect_call '^--check 5$'
+reset 3; check 2 "Gh issue edit 5 --add-label merge-queue"; expect_call '^--check 5$'
+reset 3; check 2 "g[h] pr edit 5 --add-label merge-queue"; expect_call '^--check 5$'
+reset 3; check 2 "python3 -c \"import subprocess; subprocess.run(['GH', 'pr', 'edit', '5', '--add-label', 'merge-queue'])\""; expect_call '^--check 5$'
+reset 0; check 2 "gh api repos/acme/widgets/issues/5/labels -f \"labels[]=\$L\""; expect_call none
+
 [ "$FAILS" -eq 0 ] && echo "PASS test_guard_merge_queue_label" || { echo "FAIL test_guard_merge_queue_label ($FAILS)"; exit 1; }

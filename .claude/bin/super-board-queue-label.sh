@@ -88,8 +88,8 @@ case "$vwhy" in
     origin=$(git -C "$top" remote get-url origin 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:|ssh://git@github\.com/)##; s#\.git$##' | tr 'A-Z' 'a-z') || origin=""
     [ -n "$prrepo" ] && [ "$origin" = "$prrepo" ] \
       || refuse "$approved" "approved-by task_id ${vwhy#task:} được audit trong repo ${origin:-không rõ}, PR thuộc repo ${prrepo:-không rõ}"
-    run_t python3 "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${vwhy#task:}" "$head" >/dev/null 2>&1 \
-      || refuse "$approved" "approved-by task_id ${vwhy#task:} chưa có audit pass của antigravity-pm với auditedHead ${head:0:7}" ;;
+    run_t python3 "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${vwhy#task:}" "$head" >/dev/null 2>"$ERRF" \
+      || refuse "$approved" "approved-by task_id ${vwhy#task:} chưa có audit pass của antigravity-pm với auditedHead ${head:0:7} ($(tail -1 "$ERRF" 2>/dev/null | cut -c1-160))" ;;
   *) refuse "$approved" "không rõ nguồn duyệt" ;;
 esac
 [ "$CHECK" -eq 0 ] || exit 0
