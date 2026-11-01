@@ -586,7 +586,7 @@ sweep_card_write_failed() {
       [ "$(jq -r --argjson i "$i" --arg n "$issue" '.argvs[$i] as $a
         | ($a | type) == "array" and all($a[]; type == "string" and (contains("\u0000") | not))
           and (if $a[0:2] == ["issue", "edit"] then ($a | length) == 5 and $a[2] == $n
-                 and ([$a[3]] | inside(["--add-assignee", "--remove-assignee", "--add-label", "--remove-label"]))
+                 and any(["--add-assignee", "--remove-assignee", "--add-label", "--remove-label"][]; . == $a[3])
                elif $a[0:2] == ["issue", "comment"] then ($a | length) == 5 and $a[2] == $n and $a[3] == "--body"
                elif $a[0:2] == ["issue", "reopen"] then ($a | length) == 3 and $a[2] == $n
                else $a[0:2] == ["project", "item-edit"] end)' "$f" 2>/dev/null)" = true ] || verb=""
@@ -626,7 +626,7 @@ sweep_card_write_failed() {
     if [ "$rc" -eq 0 ] && { [ "$to" = Blocked ] || SB_CARD_BLOCKING=1 set_card_status "$item" "$to"; }; then
       rm -f "$f"
       if [ "$to" = Blocked ]; then   # thẻ vốn đã được chặn có chủ đích: chỉ cần lệnh ghi còn thiếu, giữ nguyên cột
-        log "card-write-failed #${issue}: GitHub write re-applied (gh ${what}) — card stays Blocked as it was"
+        log "card-write-failed #${issue}: retry state done (gh ${what}; label / comment writes re-applied, column moves left to the runner's own steps) — card stays Blocked"
         continue
       fi
       jq -nc --argjson c "$((cycles + 1))" --argjson at "$(date +%s)" '{cycles: $c, at: $at}' > "$sdir/${issue}.done.tmp" 2>/dev/null \
@@ -2892,7 +2892,7 @@ sweep_blocked_cards() {
     log "⚠ blocked sweep skipped: wave planner exit ${rc}; retrying in ${SWEEP_RETRY_SECONDS}s"
     return 2
   fi
-  local next key
+  local next key retry=0
   sync_waiting_labels "$plan"
   log_unreadable_blocked_by "$plan"
   while IFS=$'\t' read -r issue cleared; do
@@ -2902,6 +2902,15 @@ sweep_blocked_cards() {
     # vòng lặp; bị chặn bởi blocker KHÁC (daemon chạy nhiều ngày) thì vẫn được sweep khi blocker mới đóng.
     key="${issue}:$(printf '%s' "$cleared" | tr -d ' #')"
     if swept_seen "$key"; then log "blocked sweep: #${issue} already swept for ${cleared} — left Blocked"; continue; fi
+    # #520 (review vòng 3): thẻ còn lệnh ghi đang chờ ghi lại (card-write-failed/<N>.json chưa gave_up), vd comment chặn
+    # `blocked-by:  agent` của reclaim / noop vừa hỏng: dòng blocked-by cũ hoặc mục Blocked by trong body chưa phải lý do chặn thật
+    # → không nhả lúc này; thử lại sau SWEEP_RETRY_SECONDS (state được xoá thì sig của maybe_sweep_blocked không đổi).
+    if [ -n "${INFLIGHT_DIR:-}" ] && [ -f "$INFLIGHT_DIR/card-write-failed/${issue}.json" ] \
+       && [ "$(jq -r '.gave_up // false' "$INFLIGHT_DIR/card-write-failed/${issue}.json" 2>/dev/null)" != true ]; then
+      log "blocked sweep: #${issue} has a GitHub write waiting to be re-applied — not released yet"
+      retry=1
+      continue
+    fi
     # `needs-you` là quyết định của người, kể cả khi planner thả thẻ (planner chỉ đọc 8 comment cuối).
     if echo "$PROJECT_ITEMS_JSON" | jq -e --argjson n "$issue" '[.items[] | select(.content.number == $n)
          | ((.labels // []) + (.content.labels // []))[] | (if type == "object" then .name else . end) | ascii_downcase]
@@ -2931,7 +2940,7 @@ EOF
   # 24/10 (#321): `resume` = a 🙋 card whose current-head request a trusted human answered `done` (super-board-approval.py,
   # verified by the deps helper). Only the workflow backend read it, so the legacy runner never acted on an approval and
   # #321 sat Blocked ~18 h. Back to Review, where the Reviewer re-checks the approval at the merge gate. Once per card.
-  local akey why resume_repo retry=0
+  local akey why resume_repo
   while IFS=$'\t' read -r issue akey why; do
     [ -n "$issue" ] || continue
     key="${issue}:resume:${akey:-none}"   # one move per approval (head + request id): a later approval moves it again

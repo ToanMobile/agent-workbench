@@ -16,6 +16,7 @@
 #  s13 `issue reopen` không phát lại (issue_is_open tự xét lại); s14 không lưu được state → comment không hứa "Retry"
 #  s15 board đọc lại rồi lệnh khác của thẻ đã Blocked có state hỏng → nối vào state, không ghi đè (review vòng 2)
 #  s16 thẻ ĐANG Blocked mà lệnh ghi của nó hỏng → không chuyển cột, không comment `blocked-by:  -` đè lý do chặn của thẻ (review 3 P1)
+#  s19 thẻ còn state ghi lại đang chờ → blocked sweep không nhả (review 3, vòng 2)
 #  s17 state có cờ lạ (--repo, --body-file, --title, issue close) → không phát lại, bỏ state (review 3 P2)
 # Runner THẬT của checkout chứa file test (ROOT từ $0). Offline, gh giả. Tương thích bash 3.2.
 set -u
@@ -281,5 +282,18 @@ printf '{"from":"QA","item":"I446","argvs":[["issue","edit","446","--remove-assi
 FAIL_PAT='^issue edit 446 --add-label'; run_tick Blocked 'gh_write_once issue edit 446 --add-label waiting'; FAIL_PAT=""
 { [ "$(jq -r '.argvs | length' "$STATE" 2>/dev/null)" = 1 ] && grep -q 'not retried' "$TMP/log" && ! grep -q 'added to its retry state' "$TMP/log"; } \
   && ok "s18: given-up state left as is, log says the write is not retried" || fail "s18: state=$(cat "$STATE" 2>/dev/null) log=$(tail -2 "$TMP/log" 2>/dev/null)"
+
+echo "s19. thẻ còn state ghi lại đang chờ (vd comment chặn blocked-by: agent của reclaim chưa lên GitHub): blocked sweep không nhả (review vòng 3)"
+printf '#!/usr/bin/env bash\nprintf %s\n' "'{\"sweep\":[{\"number\":446,\"clearedBy\":[601]}],\"flag\":[],\"resume\":[]}\n'" > "$TMP/sbin/super-board-wave-plan.sh"
+chmod +x "$TMP/sbin/super-board-wave-plan.sh"
+fresh; mkdir -p "$TMP/inflight/card-write-failed"
+printf '{"from":"Blocked","item":"I446","argvs":[["issue","comment","446","--body","[orchestrator] [blocker] parked"]],"fails":0,"cycles":0,"gave_up":false}' > "$STATE"
+run_tick Blocked 'sweep_blocked_cards; echo "rc=$?"'
+{ ! gh_has 'option-id OREADY' && printf '%s\n' "$OUT" | grep -qx 'rc=2'; } \
+  && ok "s19: card with a pending write replay not released, sweep retried later (rc 2)" || fail "s19: out=$OUT gh=$(ghl | cut -c1-200)"
+rm -f "$STATE"
+run_tick Blocked 'sweep_blocked_cards; echo "rc=$?"'
+{ gh_has 'option-id OREADY' && printf '%s\n' "$OUT" | grep -qx 'rc=0'; } \
+  && ok "s19: control — no pending state → released as before" || fail "s19 control: out=$OUT gh=$(ghl | cut -c1-200)"
 
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" = 0 ]
