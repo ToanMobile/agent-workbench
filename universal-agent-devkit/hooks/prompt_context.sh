@@ -48,8 +48,11 @@ while [ -L "${SELF}" ]; do
   case "${LINK}" in /*) SELF="${LINK}" ;; *) SELF="$(dirname "${SELF}")/${LINK}" ;; esac
 done
 ENRICH=""
-for cand in "$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)/scripts/context/enrich_context.py" \
-            "$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)/scripts/enrich_context.py" \
+# #813: thư mục kit tính MỘT lần bằng parameter expansion (trước đây 2 lần `$(cd -P "$(dirname …)")`, mỗi lần 2 subshell + exec dirname).
+case "${SELF}" in */*) _HERE="${SELF%/*}" ;; *) _HERE="." ;; esac
+_KIT="$(cd -P "${_HERE:-/}/.." 2>/dev/null && pwd)"
+for cand in "${_KIT}/scripts/context/enrich_context.py" \
+            "${_KIT}/scripts/enrich_context.py" \
             "${DEVKIT_ROOT:-}/scripts/context/enrich_context.py" \
             "${DEVKIT_ROOT:-}/scripts/enrich_context.py" \
             "${HOME}/.universal-agent-devkit/scripts/context/enrich_context.py" \
@@ -57,6 +60,17 @@ for cand in "$(cd -P "$(dirname "${SELF}")/.." 2>/dev/null && pwd)/scripts/conte
   [ -f "${cand}" ] && { ENRICH="${cand}"; break; }
 done
 [ -n "${ENRICH}" ] || exit 0
+
+# Bytecode của python3 trong hook (#813): thư mục riêng của user trong TMPDIR, không bao giờ trong cây kit. Claude Code xuất
+# PYTHONDONTWRITEBYTECODE=1, nên regression_checklist.py (3517 dòng) bị compile lại ở MỌI prompt; còn gate (tests/run_impacted.sh)
+# đặt PYTHONPYCACHEPREFIX vào thư mục rỗng, nên cả stdlib cũng compile lại mỗi lần: ~180–230 ms CPU thay vì ~100 ms
+# (tests/context_memory/test_prompt_hook_gate_env.sh). Điều kiện dùng: là thư mục, không phải symlink, do chính user này sở hữu
+# (TMPDIR trống thì là /tmp, chỗ user khác cũng tạo được thư mục và cài pyc). Thiếu một điều kiện: hook chạy với env của người gọi.
+_PYC="${TMPDIR:-/tmp}"; _PYC="${_PYC%/}/devkit-pycache-${UID:-x}"
+[ -d "${_PYC}" ] || mkdir -m 700 "${_PYC}" 2>/dev/null
+if [ -d "${_PYC}" ] && [ ! -L "${_PYC}" ] && [ -O "${_PYC}" ]; then
+  export PYTHONPYCACHEPREFIX="${_PYC}" PYTHONDONTWRITEBYTECODE=   # rỗng = được ghi (python chỉ cấm khi chuỗi khác rỗng)
+fi
 
 # enrich_context.py --hook reads the payload itself and stays silent for slash
 # commands and prompts under 8 characters.
@@ -74,7 +88,7 @@ if [ -z "${REPO_ROOT}" ]; then
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
 [ -n "${REPO_ROOT}" ] || exit 0
-RULES="$(dirname "${ENRICH}")/rule_context.py"
+RULES="${ENRICH%/*}/rule_context.py"
 RULES_OUT=""
 if [ -f "${RULES}" ] && [ -f "${REPO_ROOT}/.agents/context/rules-index.md" ]; then
   # In parallel with enrich_context.py: the hook's wall time is one python start, not two.

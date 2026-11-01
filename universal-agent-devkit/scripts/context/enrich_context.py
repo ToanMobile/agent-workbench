@@ -33,6 +33,14 @@ def get_devkit_dir():
     return d
 
 
+def _no_kit_pycache():
+    """Trước khi import module của kit: không để __pycache__ trong cây kit (kit được link vào repo app). Có PYTHONPYCACHEPREFIX
+    (hooks/prompt_context.sh đặt thư mục riêng trong TMPDIR, #813) thì pyc nằm ngoài cây kit, nên vẫn cho ghi: cấm ghi khi đó chỉ
+    làm regression_checklist.py compile lại ở mọi prompt."""
+    if sys.pycache_prefix is None:
+        sys.dont_write_bytecode = True
+
+
 def instinct_sources(devkit_root, project_root):
     """Dự án trước (bài học thật của dự án), rồi tới DevKit; bỏ trùng theo realpath."""
     cands = []
@@ -871,7 +879,7 @@ def probe_payload(payload):
         return False
     try:
         sys.path.insert(0, os.path.join(get_devkit_dir(), "hooks"))
-        sys.dont_write_bytecode = True
+        _no_kit_pycache()
         from devkit_harness import non_claude
     except ImportError:
         return False     # cannot tell: keep the capture (a lost report is worse than a probe row)
@@ -905,7 +913,7 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     title = " ".join(first.split())
     try:
         sys.path.insert(0, os.path.join(get_devkit_dir(), "bin"))
-        sys.dont_write_bytecode = True     # no __pycache__ inside a linked DevKit
+        _no_kit_pycache()     # no __pycache__ inside a linked DevKit
         import regression_checklist as rc
         title = getattr(rc, "redact_secrets", lambda t: t)(title)   # before find_bug: the stored title is redacted too
         if len(title) > TITLE_MAX:   # after the redaction: a key cut at the limit leaves a stub no pattern matches (OCR, 13/10)
@@ -953,7 +961,7 @@ def watch_inbox(project_root):
         return ""
     try:
         sys.path.insert(0, os.path.join(get_devkit_dir(), "bin"))
-        sys.dont_write_bytecode = True
+        _no_kit_pycache()
         import regression_checklist as rc
         if _linked(rc, project_root):
             return ""   # a LINKED worktree writes no "seen" keys, so the item would be listed (and "@làm" ordered) on EVERY prompt: the INBOX is the main checkout's
@@ -999,7 +1007,7 @@ def command_words(prompt, project_root):
         sys.path.insert(0, os.path.join(get_devkit_dir(), "bin"))
         sys.path.insert(0, os.path.join(get_devkit_dir(), "scripts", "context"))
         sys.path.insert(0, os.path.join(get_devkit_dir(), "scripts", "testing"))
-        sys.dont_write_bytecode = True
+        _no_kit_pycache()
         import regression_checklist as rc
         data = rc.load(project_root)
     except Exception:  # noqa: BLE001
