@@ -114,6 +114,25 @@ echo "— nháy mở ở segment trước, đóng ở segment có lệnh adb (; 
 check 2d 'FOO="a;b" adb -s R58PHONE01 reboot'
 check 2d "env FOO='x|y' adb -s R58PHONE01 reboot"
 check 0 'FOO="a;b" adb -s emulator-5554 reboot'
+check 2d 'FOO="a;b" adb -s R58PHONE01 shell "cd /sdcard; ls"'
+check 2d 'FOO="a;b" adb -s "" shell "cd /sdcard; ls"'
+check 2d 'env FOO="a|b" adb -s "" shell "ls | head"'
+check 2d 'ANDROID_SERIAL= adb reboot' ANDROID_SERIAL=emulator-5554   # ANDROID_SERIAL rỗng đè env của phiên
+echo "— chữ \"adb …\" trong chuỗi nháy đơn nhiều câu / nhiều dòng (script, commit, comment) không phải lệnh adb → cho qua"
+check 0 "python3 -c 'import sys; cmd = \"adb reboot\"'"
+check 0 "git commit -m \$'fix: issue #829\\nCheck \"adb reboot\" case'"
+check 0 "gh issue comment 829 --body \$'Summary:\\nTested \"adb shell pm list packages\" on emulator'"
+check 0 "echo 'note: a; see \"adb install app.apk\"'"
+check 0 "$(printf 'git commit -m %s' "'fix: x
+Check \"adb reboot\" case'")"   # xuống dòng thật trong chuỗi nháy đơn
+check 0 "git commit -m 'hook: x; \"adb reboot\" is blocked'"
+check 0 "git commit -m \"hook: x; 'adb reboot' is blocked\""
+check 0 'echo "$(date) adb started"'
+check 0 'echo $(date) adb reboot done'
+check 2d "$(printf '%s' "cat <<EOF
+it's fine
+EOF
+adb -s \"\" shell \"cd /sdcard; ls\"")"   # nháy đơn trong thân heredoc làm quote_split đọc sai: bản cắt thô vẫn chặn
 echo "— -s cuối cùng thắng, -t thắng -s (adb 37.0.1) → chặn"
 check 2d 'adb -s emulator-5554 -s "" reboot'
 check 2d 'adb -s emulator-5554 -s R58PHONE01 reboot'
@@ -134,6 +153,12 @@ check 2d 'X=$(pwd) adb -s R58PHONE01 reboot'              # lệnh con ở phép
 check 2d 'X=$(pwd) adb -s "" reboot'
 check 2u 'ANDROID_SERIAL=$(echo R58PHONE01) adb reboot'
 check 0 'adb -P $(echo 5037) -s emulator-5554 install app.apk'   # lệnh con ở -P, serial đã ghi
+check 2u "echo '\$('; adb -s \$(echo R58PHONE01) reboot"           # \$( trong nháy đơn trước đó không nuốt phần sau
+check 2u "git commit -m 'use \`x'; adb -s \`echo R58PHONE01\` reboot"   # backtick lẻ trong nháy đơn
+check 2u '__SUBST__=emulator-5554; adb -s $(echo R58PHONE01) reboot'   # chữ thay lệnh con không bị bung như biến
+check 2d 'X=$(echo "(") adb -s R58PHONE01 reboot; echo )'          # ngoặc trong nháy bên trong lệnh con
+check 2d 'X=$(echo "a ) b") adb -s R58PHONE01 reboot'
+check 2d 'X=$(case a in a) echo 1;; esac) adb -s R58PHONE01 reboot'   # ) của nhánh case bên trong lệnh con
 echo "— backtick markdown trong chuỗi nháy đơn (commit, comment) không phải lệnh adb chạy được → cho qua"
 check 0 "git commit -m 'fix: block \`adb -s \"\"\` on denylist'"
 check 0 "echo 'usage: \`adb -e\` or \`adb -d\`'"
@@ -148,12 +173,17 @@ check 2u 'O="-s R58PHONE01"; adb $O reboot'
 check 2u 'adb ${O} reboot'
 check 2u 'adb "$@" reboot'
 check 0 'C=reboot; adb -s emulator-5554 $C'   # biến đã biết
+check 2u 'O=-s; adb -s emulator-5554 $O R58PHONE01 reboot'   # biến bung ra tuỳ chọn: -s cuối mới thắng
+check 2u 'adb -s emulator-5554 $R31_ARGS reboot' R31_ARGS="-s R58PHONE01"
 echo "— lựa chọn thiết bị phải hỏi adb mà adb không trả lời được → không xác định được → chặn"
 check 2u 'adb -s "" reboot' FAKE_FAIL=1
 check 2u 'adb -s emulator-5554 -t 2 reboot' FAKE_FAIL=1
-check 2u 'adb -s "" reboot' PATH="$NOADB"
 check 0 'adb -s emulator-5554 reboot' FAKE_FAIL=1   # serial literal duy nhất: không cần hỏi adb
-check 0 'adb -s emulator-5554 reboot' PATH="$NOADB"
+if [ -x /usr/bin/adb ] || [ -x /bin/adb ]; then echo "skip: có adb ở /usr/bin hay /bin, không dựng được PATH không có adb"
+else
+  check 2u 'adb -s "" reboot' PATH="$NOADB"
+  check 0 'adb -s emulator-5554 reboot' PATH="$NOADB"
+fi
 check 0 'adb -s "" reboot' FAKE_DEFAULT=emulator-5554   # -s "" hỏi adb thật sự, không chặn mù
 echo "— -d / -e: adb tự chọn theo loại kết nối"
 check 2d 'adb -d reboot'                     # đối chứng: đã chặn từ trước
