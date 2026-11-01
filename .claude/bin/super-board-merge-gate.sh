@@ -326,7 +326,7 @@ if [ "$PREFLIGHT" -ne 1 ]; then
   SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
 fi
 # SCRATCH rỗng (--preflight): không gọi worktree remove / rm với đường dẫn rỗng.
-cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
+cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${MERGE_LOG:+"$MERGE_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
 # #559: thư mục đã đổi tên bằng git worktree move thì SCRATCH rỗng, trap không gỡ.
 trap cleanup EXIT
 
@@ -637,15 +637,23 @@ fi
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
   say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
 
-if ! MERGE_ERR=$(git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>&1); then
+# #775: stderr của git merge ghi ra file riêng, không `$(…)`: hook để tiến trình nền giữ ống stderr thì `$(…)` chờ tới khi tiến trình
+# đó thoát và gate treo. MERGE_LOG là file riêng: tiến trình nền của hook giữ fd của nó, nên chữ nó ghi về sau nằm ở đó, ngoài log verify.
+MERGE_LOG=$(mktemp)
+if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet >"$MERGE_LOG" 2>&1; then
   CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')
   if [ -n "$CONFLICTS" ]; then
     say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
+    # Dòng CONFLICT (…) của git nói loại xung đột (content, add/add, modify/delete…), tối đa 8 dòng.
+    grep -a '^CONFLICT' "$MERGE_LOG" | head -8 | while IFS= read -r line; do say "  ${line}"; done || true
     say "this is a rebase pass for the Builder lane, not a Blocked card"
   else
-    # GeelyEx2 #179: hook commit-msg của repo từ chối commit gộp ⇒ không có file xung đột; in lời git/hook thật, rebase không gỡ được.
-    # Bỏ dòng "Not committing merge…" git tự thêm; lấy phần ĐẦU: lý do của hook thường ở dòng đầu (tail cắt mất khi hook in nhiều dòng).
-    say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused the local merge commit): $(printf '%s\n' "$MERGE_ERR" | grep -v '^Not committing merge' | head -8 | clip 600)"
+    # GeelyEx2 #179: hook commit-msg của repo từ chối commit gộp ⇒ không có file xung đột; in lời git/hook, qua bộ che secret
+    # (sb_redact_text: lời hook là chữ tuỳ ý, log gate vào log runner / train). Bỏ dòng "Not committing merge…" git tự thêm; lấy
+    # phần ĐẦU: lý do của hook thường ở dòng đầu (tail cắt mất khi hook in nhiều dòng). `sed -n` đọc hết ống: không SIGPIPE.
+    MERGE_WHY=$(sed '/^Not committing merge/d' "$MERGE_LOG" | sed -n '1,8p' | sb_redact_text | clip 600) \
+      || MERGE_WHY="(git/hook message hidden: the DevKit secret redactor could not be loaded)"
+    say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused the local merge commit): ${MERGE_WHY}"
     say "not a content conflict in the PR: the reason is the git/hook message above"
   fi
   exit 5
