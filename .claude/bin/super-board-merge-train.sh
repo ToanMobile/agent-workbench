@@ -27,12 +27,15 @@
 #       12 verify hết giờ sau một lần chạy lại: PR chưa chứng minh ở lại Review, wave sau thử lại, không PR nào bị quy là đỏ ·
 #       5 có PR conflict, không PR nào đỏ/hết giờ · 79/9 của github-read và readiness đi thẳng tới caller.
 #       6 có PR đã dời head khỏi sha duyệt (`--prs N:sha`): PR đó rời đợt, dòng `head-moved`, ở lại Review chờ review lại.
-#       Mỗi PR một dòng `train-result: <N> <merged|red|conflict|deferred|timeout|head-moved|gate-exit-K>` trên stdout.
+#       #676: gate được gọi với --require-receipt; base dời sau verify (gate exit 12) thì train fetch base mới và chứng minh lại phần chưa
+#       merge NGOÀI khoá merge, tối đa 2 lần; lần thứ 3 phần còn lại `base-moved` (exit 12 như hết giờ: ở lại hàng, queue không tính lần thử).
+#       Mỗi PR một dòng `train-result: <N> <merged|red|conflict|deferred|timeout|base-moved|head-moved|gate-exit-K>` trên stdout.
 #       Dòng `approval-request:|human-gate:|needs-you:|ac-check:|qa-report:|verification-readiness:` của gate (preflight, --dry-run,
 #       merge) và ≤ 20 dòng cuối của verify đỏ (của train, hoặc stderr của gate khi gate đỏ) in lại thành `train-detail: <N> <dòng>`
 #       để bên gọi (super-board-merge-queue.sh) chép nguyên văn vào comment issue. Mọi lời gọi gate mang SB_MERGE_CALLER=train.
 #       13: queue bật + SB_BOARD_WORKER=1 mà bên gọi không phải queue (SB_MERGE_CALLER=queue): worker gắn nhãn merge-queue thay vì gọi train.
-#       4 không kèm train-result: một train khác giữ <git-common-dir>/super-board/merge-train.lock; chưa PR nào chạy.
+#       4 không kèm train-result: một train khác đang giữ claim của một PR trong --prs (<git-common-dir>/super-board/merge-train.claim.<PR>,
+#       #676 — train khác PR chạy song song được); chưa PR nào chạy.
 #       PR có head không còn trong repo (nhánh bị force-push / xoá, fork không fetch được): `train-result: <N> gate-exit-6`, phần còn lại chạy tiếp.
 # ponytail: preflight lọc PR bị policy chặn trước verify; gate --dry-run sau verify vẫn còn (R11) cho phần preflight không thấy (người duyệt
 #           đổi ý giữa chừng): PR bị chặn ở đó ra khỏi chuỗi rồi phần còn lại verify lại, thêm một lượt verify mỗi vòng như vậy.
@@ -75,18 +78,27 @@ done
 export SB_MERGE_CALLER=train
 
 say() { echo "[merge-train] $*" >&2; }
+# git_retry <git args…>: #676 — nhiều train song song cùng git common dir ⇒ fetch / worktree add có thể đua khoá ref / config.lock; thử tối
+# đa 3 lần, nghỉ 0,5 s. Lỗi thật (mạng, ref không có) vẫn trả 1 sau lần thứ 3.
+git_retry() { local t; for t in 1 2 3; do git "$@" && return 0; [ "$t" -eq 3 ] || sleep 0.5; done; return 1; }
 # run_gate <PR> <out-stream 1|2> <gate args…>: chạy merge gate, GRC = exit của nó. Stdout của gate đi nguyên vẹn ra luồng cũ (merge: stdout,
 # vì `ac-open: #N` / "verify skipped" là của bên gọi; preflight / --dry-run: stderr), stderr của gate đi ra stderr ngay khi gate in
 # (tee, #453; giữ trong $GATE_ERR cho đuôi verify đỏ), rồi các dòng approval-request/human-gate/needs-you/ac-check/qa-report/verification-readiness
 # (verification-readiness gate in ra stderr) in thêm thành `train-detail: <PR> <dòng>` trên stdout.
 GATE_OUT=$(mktemp); GATE_ERR=$(mktemp); GATE_RC=$(mktemp); DETAIL_DIR=$(mktemp -d)
 run_gate() {
-  local p="$1" to="$2" line; shift 2
+  local p="$1" to="$2" line try; shift 2
   GRC=0
   # #453: stderr của gate đi qua tee: ra stderr của train NGAY khi gate in (log runner thấy tiến độ), vẫn giữ trong $GATE_ERR.
   # Exit của gate đi qua $GATE_RC vì pipe trả exit của tee.
-  { grc=0; bash "$GATE" "$@" >"$GATE_OUT" 8>&- || grc=$?; echo "$grc" >"$GATE_RC"; } 2>&1 | tee "$GATE_ERR" >&2
-  GRC=$(cat "$GATE_RC" 2>/dev/null || echo 1)
+  # #676: nhiều train song song cùng git common dir ⇒ `git fetch` của gate (merge-gate.sh, trước khoá merge) có thể đua khoá ref và thoát 1.
+  # Gate không bao giờ thoát 1 sau `gh pr merge`, nên exit 1 kèm lời khoá ref/.lock được thử lại tối đa 3 lần (nghỉ 0,5 s).
+  for try in 1 2 3; do
+    { grc=0; bash "$GATE" "$@" >"$GATE_OUT" 8>&- || grc=$?; echo "$grc" >"$GATE_RC"; } 2>&1 | tee "$GATE_ERR" >&2
+    GRC=$(cat "$GATE_RC" 2>/dev/null || echo 1)
+    [ "$GRC" -eq 1 ] && [ "$try" -lt 3 ] && grep -Eq "cannot lock ref|Unable to create '[^']*\.lock'" "$GATE_ERR" || break
+    say "merge gate for PR #${p} hit a git ref lock (another train fetching); retrying (${try}/3)"; sleep 0.5
+  done
   if [ "$to" = 1 ]; then cat "$GATE_OUT"; else cat "$GATE_OUT" >&2; fi
   while IFS= read -r line; do
     case "$line" in
@@ -124,27 +136,42 @@ done < <(echo "$CONFIG_JSON" | jq -r '.verify_commands[] | select(test("\\S"))')
 [ "${#VERIFY[@]}" -gt 0 ] || { echo "verification-readiness: verify_commands yielded no usable shell commands." >&2; exit 9; }
 python3 "$GITHUB_READ" --check
 
-# Một train mỗi repo (Antigravity audit A): fcntl LOCK_EX|LOCK_NB trên fd 8 của chính shell này, giữ tới khi train thoát. Bận → exit 4 trước
-# mọi train-result (queue: không kết thúc, không tính lần thử). Tiến trình con sống lâu (gate, verify, cài DevKit) chạy với `8>&-`: train
-# bị giết thì khoá đi theo nó, không bị verify mồ côi giữ.
+# #676: một train mỗi PR (không còn một train mỗi repo): claim `merge-train.claim.<PR>` (mkdir nguyên tử + file pid) cho từng PR của
+# --prs (khử trùng, tăng dần). Hai train khác PR chạy song song; hai train cùng một PR thì train sau thoát 4 trước mọi train-result (queue:
+# không kết thúc, không tính lần thử). Hai PR không bao giờ ghi main song song: khoá merge.lock của merge gate bao `gh pr merge`.
+# claim_live dưới đây quyết định reap: pid trong claim phải sống VÀ lệnh của nó chứa super-board-merge-train (chống pid tái dùng); sai
+# thì claim bị gỡ (train bị SIGKILL để lại). Claim là thư mục, không phải fd mở, nên tiến trình con (verify, gate) không giữ nó.
 TRAIN_COMMON=$(cd "$REPO_PATH" && cd "$(git rev-parse --git-common-dir)" && pwd -P) || { say "cannot resolve the git common dir of ${REPO_PATH}"; exit 1; }
 mkdir -p "$TRAIN_COMMON/super-board"
-TRAIN_LOCK="$TRAIN_COMMON/super-board/merge-train.lock"
-TRAIN_STATE="$TRAIN_COMMON/super-board/merge-train.state"
-exec 8>>"$TRAIN_LOCK"
-TLRC=0
-python3 -I -c '
-import errno, fcntl, sys
-try:
-    fcntl.flock(8, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except OSError as e:
-    sys.exit(3 if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES) else (print(e, file=sys.stderr) or 2))
-' || TLRC=$?
-case "$TLRC" in
-  0) ;;
-  3) say "another merge train holds ${TRAIN_LOCK}; nothing ran"; exit 4 ;;
-  *) say "could not lock ${TRAIN_LOCK} (exit ${TLRC})"; exit 1 ;;
-esac
+TRAIN_STATE="$TRAIN_COMMON/super-board/merge-train.$$.state"
+CLAIMED=()
+release_claims() {
+  local d
+  for d in ${CLAIMED[@]+"${CLAIMED[@]}"}; do [ "$(cat "$d/pid" 2>/dev/null || true)" != "$$" ] || rm -rf "$d" 2>/dev/null || true; done
+  CLAIMED=()
+}
+claim_live() {   # claim_live <dir>: 0 khi claim thuộc một merge train còn sống. Chưa có pid: sống chỉ trong 10 s đầu (train vừa mkdir,
+  # chưa kịp ghi pid); quá 10 s không pid = train chết giữa mkdir và ghi pid (OCR #676) ⇒ reap được.
+  local pid="" t age
+  for t in 1 2 3; do pid=$(cat "$1/pid" 2>/dev/null || true); [ -z "$pid" ] || break; sleep 0.05; done
+  if [ -z "$pid" ]; then
+    age=$(( $(date +%s) - $(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || date +%s) ))
+    [ "$age" -lt 10 ]; return
+  fi
+  kill -0 "$pid" 2>/dev/null && ps -o command= -p "$pid" 2>/dev/null | grep -q 'super-board-merge-train'
+}
+trap 'release_claims; rm -rf "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"' EXIT
+for p in $(printf '%s\n' "${LIST[@]}" | sort -un); do
+  d="$TRAIN_COMMON/super-board/merge-train.claim.$p"
+  if ! mkdir "$d" 2>/dev/null; then
+    if claim_live "$d"; then say "another merge train holds PR #${p} (${d}); nothing ran"; exit 4; fi
+    # Reap nguyên tử: chỉ một train đổi tên được thư mục claim chết (hai train cùng thấy claim chết thì train thua không xoá nhầm
+    # claim mới của train thắng — OCR #676).
+    if mv "$d" "$d.reap.$$" 2>/dev/null; then say "reaped the claim of a dead merge train on PR #${p}"; rm -rf "$d.reap.$$"; fi
+    mkdir "$d" 2>/dev/null || { say "another merge train took PR #${p} meanwhile; nothing ran"; exit 4; }
+  fi
+  echo "$$" >"$d/pid.tmp" && mv -f "$d/pid.tmp" "$d/pid"; CLAIMED+=("$d")
+done
 # TERM/INT/HUP (queue chuyển xuống khi nó bị dừng): thoát qua trap EXIT để dọn scratch.
 trap 'exit 143' TERM; trap 'exit 130' INT; trap 'exit 129' HUP
 
@@ -154,7 +181,7 @@ BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.train-scratch-XXXXXX")
 RECEIPT=$(mktemp); VLOG=$(mktemp); CHAIN_ERR=$(mktemp)
-cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$CHAIN_ERR" "$GATE_OUT" "$GATE_ERR" "$GATE_RC" "$DETAIL_DIR"; rm -f "$TRAIN_STATE" "$TRAIN_STATE.tmp"; }
+cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$CHAIN_ERR" "$GATE_OUT" "$GATE_ERR" "$GATE_RC" "$DETAIL_DIR"; rm -f "$TRAIN_STATE" "$TRAIN_STATE.tmp"; release_claims; }
 trap cleanup EXIT
 # Trạng thái train cho Agent Office / super-board-status.py (#562): `pid`, `started_at`, `step` (gate | merge) và mỗi PR một dòng
 # `pr <N> <sha> <ref>`. Ghi nguyên tử, chỉ sau khi giữ khoá và đã đặt trap dọn: train thoát exit 4 (khoá bận) không bao giờ đụng file của train
@@ -208,7 +235,7 @@ early_results() {
   for b in ${BLOCKED[@]+"${BLOCKED[@]}"}; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done
 }
 if [ "${#PF_LIST[@]}" -eq 0 ]; then early_results; exit "$DRYRC"; fi
-if ! git -C "$REPO_PATH" fetch origin "$BASE" --quiet; then
+if ! git_retry -C "$REPO_PATH" fetch origin "$BASE" --quiet; then
   say "cannot fetch origin/${BASE}; every PR waits for the next batch"
   early_results; for p in "${PF_LIST[@]}"; do echo "train-result: $p deferred"; done
   exit 1
@@ -219,8 +246,8 @@ fi
 LIST=(); REFS=(); HEADS=()
 for i in "${!PF_LIST[@]}"; do
   p="${PF_LIST[$i]}"
-  git -C "$REPO_PATH" fetch origin "${PF_REFS[$i]}" --quiet 2>/dev/null \
-    || git -C "$REPO_PATH" fetch origin "refs/pull/${p}/head" --quiet 2>/dev/null \
+  git_retry -C "$REPO_PATH" fetch origin "${PF_REFS[$i]}" --quiet 2>/dev/null \
+    || git_retry -C "$REPO_PATH" fetch origin "refs/pull/${p}/head" --quiet 2>/dev/null \
     || say "could not fetch ${PF_REFS[$i]} (or pull/${p}/head) of PR #${p}; using the head if it is already here"
   if git -C "$REPO_PATH" cat-file -e "${PF_HEADS[$i]}^{commit}" 2>/dev/null; then
     LIST+=("$p"); REFS+=("${PF_REFS[$i]}"); HEADS+=("${PF_HEADS[$i]}")
@@ -234,20 +261,20 @@ train_state gate
 BASE_SHA=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}") || { say "cannot resolve origin/${BASE}"; exit 1; }
 head_of() { local i; for i in "${!LIST[@]}"; do [ "${LIST[$i]}" = "$1" ] && { echo "${HEADS[$i]}"; return 0; }; done; return 1; }
 
+# edited_review_stale <PR>: #643 — PR có test sửa đã duyệt mà origin/<base> (BASE_SHA hiện tại) không còn là tổ tiên head ⇒ duyệt cũ: 0.
+# 1 = còn đúng (hoặc không có test sửa). Lỗi khác của bộ kiểm: thoát train với mã đó (như trước #676).
+edited_review_stale() {
+  local emeta et_rc=0
+  emeta=$(mktemp)
+  gh pr view "$1" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
+  bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$1")" >/dev/null 2>&1 || et_rc=$?
+  rm -f "$emeta"
+  case "$et_rc" in 0) ;; 1) return 1 ;; *) exit "$et_rc" ;; esac
+  ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$(head_of "$1")"
+}
 # #643: duyệt test sửa mà base đã đi trước head thì rời đợt trước khi dựng scratch. Không làm đỏ cả chuỗi.
 for p in "${LIST[@]}"; do
-  emeta=$(mktemp)
-  gh pr view "$p" ${REPO:+--repo "$REPO"} --json labels,files,comments >"$emeta" 2>/dev/null || printf '{}' >"$emeta"
-  edited=0
-  if bash "$HERE/super-board-install-edited-test-approval.sh" --has-edited-tests "$emeta" "$(head_of "$p")" >/dev/null 2>&1; then
-    edited=1
-  else
-    et_rc=$?
-    rm -f "$emeta"
-    [ "$et_rc" -eq 1 ] || exit "$et_rc"
-  fi
-  rm -f "$emeta"
-  if [ "$edited" -eq 1 ] && ! git -C "$REPO_PATH" merge-base --is-ancestor "$BASE_SHA" "$(head_of "$p")"; then
+  if edited_review_stale "$p"; then
     say "PR #${p}: edited-test review is stale before the chain"
     early_results
     echo "train-result: $p gate-exit-2"
@@ -255,7 +282,7 @@ for p in "${LIST[@]}"; do
   fi
 done
 
-git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$BASE_SHA" --quiet 2>/dev/null || { say "could not create the train scratch worktree"; exit 1; }
+git_retry -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$BASE_SHA" --quiet 2>/dev/null || { say "could not create the train scratch worktree"; exit 1; }
 # Cùng cách chuẩn bị scratch như merge gate: DevKit + config cục bộ bị ignore. Cài một lần; reset --hard giữ file bị ignore.
 for c in "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "${MAIN_WT:-$REPO_PATH}/universal-agent-devkit" "${MAIN_WT:-$REPO_PATH}/.agents/devkit"; do
   if [ -f "$c/bin/install.sh" ]; then
@@ -425,9 +452,13 @@ verify_set() {
       say "verify [$*]: ${cmd}"
       rc=0
       # CLAUDE_PROJECT_DIR / TARGET_DIR của bên gọi (cây chính) thắng cwd trong get_project_dir của post-fix-gate: bỏ để verify kiểm scratch.
+      # #676: lệnh post-fix-gate gọi THẲNG như merge gate (run_verify_cmd_inner): bọc trong super-board-heavy-slot.py đặt
+      # DEVKIT_SLOT_ADVISORY_HELD=1 nên post-fix-gate bỏ qua pool heavy — nhiều train song song sẽ lách trần suite nặng. Lệnh khác vẫn qua slot.
+      local slot_wrap=(python3 "$HERE/super-board-heavy-slot.py" --)
+      [[ "$run_cmd" != *"post-fix-gate.py"* ]] || slot_wrap=()
       ( cd "$SCRATCH" && unset POSTFIX_GATE_FORCE_FULL CLAUDE_PROJECT_DIR TARGET_DIR && export DEVKIT_SLOT_PRIORITY="${DEVKIT_SLOT_PRIORITY:-merge}" \
           DEVKIT_GATE_SLOT_WAIT_S="${DEVKIT_GATE_SLOT_WAIT_S:-1800}" \
-          && DEVKIT_LANG="${DEVKIT_LANG:-vi}" python3 "$HERE/super-board-heavy-slot.py" -- bash -c "$run_cmd" ) >"$VLOG" 2>&1 8>&- || rc=$?
+          && DEVKIT_LANG="${DEVKIT_LANG:-vi}" ${slot_wrap[@]+"${slot_wrap[@]}"} bash -c "$run_cmd" ) >"$VLOG" 2>&1 8>&- || rc=$?
       [ "$rc" -ne 0 ] || break
       # T0056: post-fix-gate thoát 4 kèm JSON .busy == true (hàng đợi gate / khoá dự án bận): trả 3 NGAY, không retry (tránh 1800s × 2 chạm trần 3600s).
       if [ "$rc" -eq 4 ]; then
@@ -479,10 +510,6 @@ classify_unchained() {
     note_refused "$1"; say "PR #$1: ${CHAIN_WHY}; not a content conflict (result gate-exit-5, as the merge gate exits here)"
   fi
 }
-CANDS=()
-for p in "${LIST[@]}"; do
-  if build_chain ${CANDS[@]+"${CANDS[@]}"} "$p"; then CANDS+=("$p"); else classify_unchained "$p"; fi
-done
 # solve <PR...>: GOOD dài ra bằng các PR xanh; PR đỏ vào RED. Đỏ thì chia đôi, đúng một PR đỏ thì đó là thủ phạm.
 # Hết giờ (3) dừng cả chia đôi (ABORT): PR chưa chứng minh được không bị quy là đỏ. Chuỗi không dựng được (2) ở đúng một PR → classify_unchained.
 ABORT=0
@@ -504,72 +531,146 @@ solve() {
   solve "${all[@]:0:$half}"
   solve "${all[@]:$half}"
 }
-[ "${#CANDS[@]}" -eq 0 ] || solve "${CANDS[@]}"
-# R11: biên nhận chỉ chứng minh cây của CHUỖI ĐẦY ĐỦ. PR sau bị gate chặn giữa đợt (policy cần người, exit 7…) sẽ để main dừng ở một
-# cây chưa ai verify. Nên trước khi merge gì: gate --dry-run từng PR xanh (biên nhận dry = cây merge(base, head), nên không verify lại, chỉ
-# chạy policy/approval); PR bị chặn ra khỏi chuỗi và phần còn lại được chứng minh lại. Lặp tối đa số PR lần.
+in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
+PENDING=()   # PR chưa chứng minh vì verify hết giờ; vòng R11 / lượt chứng minh lại ghi đè CANDS nên phải giữ riêng
+note_unproven() {
+  local p
+  for p in ${CANDS[@]+"${CANDS[@]}"}; do
+    in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} \
+      ${REFUSED[@]+"${REFUSED[@]}"} ${DEFERRED[@]+"${DEFERRED[@]}"} ${PENDING[@]+"${PENDING[@]}"} || PENDING+=("$p")
+  done
+}
+# prove <PR...>: chứng minh trên BASE_SHA hiện tại: chuỗi ứng viên (R8), solve, rồi R11. Xong: GOOD = chuỗi đã chứng minh, RECEIPT = cây sau
+# từng head. PROVE_MOVED=1 khi gate --dry-run thấy base đã dời (exit 12): GOOD là tập cần chứng minh lại. Trả 0 mọi lúc (set -e vẫn bật
+# bên trong; bên gọi đọc cờ, không đọc mã trả).
+# R11: biên nhận chỉ chứng minh cây của CHUỖI ĐẦY ĐỦ. PR sau bị gate chặn giữa đợt (policy cần người, exit 7…) sẽ để main dừng ở một cây
+# chưa ai verify. Nên trước khi merge gì: gate --dry-run từng PR xanh (biên nhận dry = cây merge(base, head), nên không verify lại, chỉ chạy
+# policy/approval); PR bị chặn ra khỏi chuỗi và phần còn lại được chứng minh lại. Train một PR bỏ vòng này (#676: không có PR thứ hai nào để
+# main dừng giữa chừng; gate merge thật vẫn chạy đủ policy).
 # ponytail: gate chặn sau preflight (đua với người duyệt/chờ khoá) vẫn có thể để main ở cây đã verify của tiền tố chuỗi trước đó; nâng lên khi
 #           cần tuyệt đối: merge các PR bằng một ref-update duy nhất thay vì từng gate.
-in_list() { local x="$1" e; shift; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
-PENDING=()   # PR chưa chứng minh vì verify hết giờ ở lượt solve trước; vòng preflight ghi đè CANDS nên phải giữ riêng
-while [ "${#GOOD[@]}" -gt 0 ]; do
-  : >"$RECEIPT"
-  for p in "${GOOD[@]}"; do
-    echo "$(head_of "$p") $(git -C "$SCRATCH" merge-tree --write-tree "$BASE_SHA" "$(head_of "$p")" 2>/dev/null || echo none)" >>"$RECEIPT"
+# base_really_moved: gate --require-receipt vừa thoát 12. Fetch lại origin/<base>: 0 khi base THẬT SỰ khác BASE_SHA (PR khác vừa merge) hoặc
+# không fetch được (để vòng dời base xử lý). 1 khi base đứng yên: cây của gate khác biên nhận vì lý do khác — gate gộp head+base còn train
+# gộp base+head, với file merge=union thứ tự dòng khác (review #676 P1). Khi đó bên gọi để gate tự verify như trước #676, không lặp mãi.
+base_really_moved() {
+  git_retry -C "$REPO_PATH" fetch origin "$BASE" --quiet || return 0
+  [ "$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}" || true)" != "$BASE_SHA" ]
+}
+PROVE_MOVED=0
+prove() {
+  local p j
+  PROVE_MOVED=0; CANDS=(); GOOD=(); ABORT=0
+  train_state gate
+  for p in "$@"; do
+    if build_chain ${CANDS[@]+"${CANDS[@]}"} "$p"; then CANDS+=("$p"); else classify_unchained "$p"; fi
   done
-  NEWGOOD=(); DROPPED=0
-  for p in "${GOOD[@]}"; do
-    run_gate "$p" 2 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" --dry-run ${PASS[@]+"${PASS[@]}"}
-    case "$GRC" in
-      0) NEWGOOD+=("$p") ;;
-      79|9) echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;
-      *) BLOCKED+=("$p:$GRC"); DROPPED=1; say "PR #${p} is blocked by the merge gate (exit ${GRC}); the chain is proved again without it"
-         [ "$DRYRC" -ne 0 ] || DRYRC=$GRC ;;
-    esac
-  done
-  [ "$DROPPED" -eq 1 ] || break
-  for p in "${CANDS[@]+"${CANDS[@]}"}"; do
-    in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} \
-      ${REFUSED[@]+"${REFUSED[@]}"} ${DEFERRED[@]+"${DEFERRED[@]}"} || PENDING+=("$p")
-  done
-  CANDS=(${NEWGOOD[@]+"${NEWGOOD[@]}"}); GOOD=(); ABORT=0
   [ "${#CANDS[@]}" -eq 0 ] || solve "${CANDS[@]}"
+  while [ "${#GOOD[@]}" -gt 1 ]; do
+    : >"$RECEIPT"
+    for p in "${GOOD[@]}"; do
+      echo "$(head_of "$p") $(git -C "$SCRATCH" merge-tree --write-tree "$BASE_SHA" "$(head_of "$p")" 2>/dev/null || echo none)" >>"$RECEIPT"
+    done
+    NEWGOOD=(); DROPPED=0; j=0
+    for p in "${GOOD[@]}"; do
+      run_gate "$p" 2 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" --dry-run --require-receipt ${PASS[@]+"${PASS[@]}"}
+      if [ "$GRC" -eq 12 ] && ! base_really_moved; then
+        say "PR #${p}: origin/${BASE} did not move but the gate's tree differs from the train receipt (merge orientation, e.g. merge=union); the gate verifies it itself"
+        run_gate "$p" 2 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" --dry-run ${PASS[@]+"${PASS[@]}"}
+      fi
+      case "$GRC" in
+        0) NEWGOOD+=("$p") ;;
+        79|9) early_results; echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;
+        # Base dời giữa dry run: chứng minh lại PR đã qua dry run + PR chưa tới lượt; PR vừa bị chặn ở lượt này (BLOCKED) KHÔNG vào lại
+        # (OCR #676: không merge PR đã bị chặn, không in hai kết quả cho một PR).
+        12) say "origin/${BASE} moved during the dry run of PR #${p}"; note_unproven
+            GOOD=(${NEWGOOD[@]+"${NEWGOOD[@]}"} "${GOOD[@]:$j}"); PROVE_MOVED=1; return 0 ;;
+        *) BLOCKED+=("$p:$GRC"); DROPPED=1; say "PR #${p} is blocked by the merge gate (exit ${GRC}); the chain is proved again without it"
+           [ "$RC" -ne 0 ] || RC=$GRC ;;
+      esac
+      j=$((j + 1))
+    done
+    [ "$DROPPED" -eq 1 ] || break
+    note_unproven
+    CANDS=(${NEWGOOD[@]+"${NEWGOOD[@]}"}); GOOD=(); ABORT=0
+    [ "${#CANDS[@]}" -eq 0 ] || solve "${CANDS[@]}"
+  done
+  note_unproven
+  # Biên nhận: cây sau từng head của chuỗi GOOD (đúng tập vừa qua verify xanh ở lượt solve gần nhất có thêm PR).
+  if [ "${#GOOD[@]}" -gt 0 ]; then
+    build_chain "${GOOD[@]}" || { say "internal: the verified chain no longer builds (#${CHAIN_FAIL}: ${CHAIN_WHY})"; exit 1; }
+    printf '%s\n' "${CHAIN_TREES[@]}" >"$RECEIPT"
+  fi
+  return 0
+}
+
+# Merge: từng PR của GOOD qua gate với --require-receipt (#676). Gate thoát 12 = origin/<base> đã dời sau khi train verify (PR khác vừa
+# merge): train KHÔNG để gate verify trong khoá merge, mà fetch base mới, kiểm lại #643, chứng minh lại phần CHƯA merge ngoài khoá (prove:
+# chia đôi như lượt đầu) rồi merge tiếp. Tối đa 2 lần base dời mỗi train; lần thứ 3 thì phần còn lại `base-moved` (ở lại hàng, queue không
+# đếm lần thử).
+RC=$DRYRC; MOVES=0; MERGED_OK=(); GATEX=(); BASEMOVED=(); TODO=("${LIST[@]}")
+while [ "${#TODO[@]}" -gt 0 ]; do
+  prove "${TODO[@]}"
+  TODO=()
+  if [ "$PROVE_MOVED" -eq 1 ]; then
+    TODO=(${GOOD[@]+"${GOOD[@]}"})
+  else
+    train_state merge
+    i=0
+    for p in ${GOOD[@]+"${GOOD[@]}"}; do
+      run_gate "$p" 1 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" --require-receipt ${PASS[@]+"${PASS[@]}"}
+      if [ "$GRC" -eq 12 ] && ! base_really_moved; then
+        say "PR #${p}: origin/${BASE} did not move but the gate's tree differs from the train receipt (merge orientation, e.g. merge=union); the gate verifies it itself"
+        run_gate "$p" 1 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" ${PASS[@]+"${PASS[@]}"}
+      fi
+      case "$GRC" in
+        0)     MERGED_OK+=("$p"); echo "train-result: $p merged"; for t in ${FLAKY[@]+"${FLAKY[@]}"}; do note_flaky "$p" "$t"; done ;;
+        79|9)  early_results; echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # R7: halt / readiness của gate đi thẳng tới caller
+        11)    echo "train-result: $p red"; echo "train-red: $p"; GATERED+=("$p")   # R7: verify riêng của gate đỏ = PR về Build, có dòng train-red
+               detail_tail "$p" "$GATE_ERR" ;;   # gate in đuôi log verify đỏ ra stderr
+        12)    TODO=("${GOOD[@]:$i}"); say "origin/${BASE} moved before PR #${p} merged"; break ;;
+        *)     GATEX+=("$p"); echo "train-result: $p gate-exit-${GRC}"; [ "$RC" -ne 0 ] || RC=$GRC ;;
+      esac
+      i=$((i + 1))
+    done
+  fi
+  [ "${#TODO[@]}" -gt 0 ] || break
+  MOVES=$((MOVES + 1))
+  NEW_BASE=""
+  if [ "$MOVES" -le 2 ] && git_retry -C "$REPO_PATH" fetch origin "$BASE" --quiet; then
+    NEW_BASE=$(git -C "$REPO_PATH" rev-parse --verify -q "origin/${BASE}^{commit}" || true)
+  fi
+  if [ -z "$NEW_BASE" ]; then
+    say "origin/${BASE} moved ${MOVES} time(s) during this train (or cannot be fetched again): [${TODO[*]}] wait for the next run (base-moved)"
+    BASEMOVED+=("${TODO[@]}"); break
+  fi
+  BASE_SHA=$NEW_BASE; KEEP=()
+  for p in "${TODO[@]}"; do
+    if edited_review_stale "$p"; then
+      say "PR #${p}: edited-test review is stale on the moved base"; BLOCKED+=("$p:2"); [ "$RC" -ne 0 ] || RC=2
+    else KEEP+=("$p"); fi
+  done
+  TODO=(${KEEP[@]+"${KEEP[@]}"})
+  [ "${#TODO[@]}" -eq 0 ] || say "origin/${BASE} is now ${BASE_SHA:0:12}: proving [${TODO[*]}] again outside the merge lock (move ${MOVES}/2)"
 done
-# PR chưa được chứng minh xanh/đỏ/conflict vì verify hết giờ.
+# PR chưa được chứng minh xanh/đỏ/conflict vì verify hết giờ (và không có kết quả nào khác về sau).
+BLOCKED_IDS=(); for b in ${BLOCKED[@]+"${BLOCKED[@]}"}; do BLOCKED_IDS+=("${b%%:*}"); done
 TIMEDOUT=()
-for p in "${PENDING[@]+"${PENDING[@]}"}" "${CANDS[@]+"${CANDS[@]}"}"; do
-  in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} \
-    ${REFUSED[@]+"${REFUSED[@]}"} ${DEFERRED[@]+"${DEFERRED[@]}"} || TIMEDOUT+=("$p")
+for p in ${PENDING[@]+"${PENDING[@]}"}; do
+  in_list "$p" ${MERGED_OK[@]+"${MERGED_OK[@]}"} ${GATERED[@]+"${GATERED[@]}"} ${GATEX[@]+"${GATEX[@]}"} ${RED[@]+"${RED[@]}"} \
+    ${CONFLICT[@]+"${CONFLICT[@]}"} ${REFUSED[@]+"${REFUSED[@]}"} ${DEFERRED[@]+"${DEFERRED[@]}"} ${BASEMOVED[@]+"${BASEMOVED[@]}"} \
+    ${BLOCKED_IDS[@]+"${BLOCKED_IDS[@]}"} ${TIMEDOUT[@]+"${TIMEDOUT[@]}"} || TIMEDOUT+=("$p")
 done
 
-# Biên nhận: cây sau từng head của chuỗi GOOD (đúng tập vừa qua verify xanh ở lượt solve gần nhất có thêm PR).
-if [ "${#GOOD[@]}" -gt 0 ]; then
-  build_chain "${GOOD[@]}" || { say "internal: the verified chain no longer builds (#${CHAIN_FAIL}: ${CHAIN_WHY})"; exit 1; }
-  printf '%s\n' "${CHAIN_TREES[@]}" >"$RECEIPT"
-fi
-
-train_state merge
-RC=$DRYRC
-for p in ${PREMERGED[@]+"${PREMERGED[@]}"}; do echo "train-result: $p merged"; done
-for b in "${BLOCKED[@]+"${BLOCKED[@]}"}"; do echo "train-result: ${b%%:*} gate-exit-${b##*:}"; done
-for p in "${GOOD[@]+"${GOOD[@]}"}"; do
-  run_gate "$p" 1 --config "$CONFIG" --pr "$p" --expect-head "$(head_of "$p")" --train-receipt "$RECEIPT" ${PASS[@]+"${PASS[@]}"}
-  case "$GRC" in
-    0)     echo "train-result: $p merged"; for t in ${FLAKY[@]+"${FLAKY[@]}"}; do note_flaky "$p" "$t"; done ;;
-    79|9)  echo "train-result: $p gate-exit-${GRC}"; exit "$GRC" ;;   # R7: halt / readiness của gate đi thẳng tới caller, không bị che bởi 11
-    11)    echo "train-result: $p red"; echo "train-red: $p"; GATERED+=("$p")   # R7: verify riêng của gate đỏ = PR về Build, có dòng train-red
-           detail_tail "$p" "$GATE_ERR" ;;   # gate in đuôi log verify đỏ ra stderr
-    *)     echo "train-result: $p gate-exit-${GRC}"; [ "$RC" -ne 0 ] || RC=$GRC ;;
-  esac
-done
+early_results
 for p in "${DEFERRED[@]+"${DEFERRED[@]}"}"; do echo "train-result: $p deferred"; done
 for p in "${CONFLICT[@]+"${CONFLICT[@]}"}"; do echo "train-result: $p conflict"; done
 for p in "${REFUSED[@]+"${REFUSED[@]}"}"; do echo "train-result: $p gate-exit-5"; cat "$DETAIL_DIR/refused-$p" 2>/dev/null || true; done
 for p in "${RED[@]+"${RED[@]}"}"; do echo "train-result: $p red"; echo "train-red: $p"; cat "$DETAIL_DIR/red-$p" 2>/dev/null || true; done
 for p in "${TIMEDOUT[@]+"${TIMEDOUT[@]}"}"; do echo "train-result: $p timeout"; done
+for p in "${BASEMOVED[@]+"${BASEMOVED[@]}"}"; do echo "train-result: $p base-moved"; done
 if [ "${#RED[@]}" -gt 0 ] || [ "${#GATERED[@]}" -gt 0 ]; then exit 11; fi
 if [ "$RC" -ne 0 ]; then exit "$RC"; fi
-if [ "${#TIMEDOUT[@]}" -gt 0 ]; then exit 12; fi
+if [ "${#TIMEDOUT[@]}" -gt 0 ] || [ "${#BASEMOVED[@]}" -gt 0 ]; then exit 12; fi
 if [ "${#CONFLICT[@]}" -gt 0 ] || [ "${#REFUSED[@]}" -gt 0 ]; then exit 5; fi
 if [ "${#MOVED[@]}" -gt 0 ]; then exit 6; fi
 exit 0

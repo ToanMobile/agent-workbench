@@ -2705,6 +2705,24 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-queue-parallel-trains",
+      "watch_files": [
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_merge_queue_parallel.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-QUEUE-PARALLEL-01",
+          "name": "#676: queue lượt ngắn phóng một train nền mỗi PR (PR đến sau không chờ train khác, khoá queue không giữ lúc verify chờ slot, max_trains, train chết ⇒ một lần thử, base-moved không tính lần thử); train claim theo PR, verify --scoped gọi thẳng post-fix-gate; gate --require-receipt thoát 12 khi base dời ⇒ train verify lại ngoài khoá (2 lần rồi base-moved); gh pr merge không chồng; BUSY ⇒ timeout; status gộp state các train sống",
+          "command": "bash tests/super-board/test_merge_queue_parallel.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
