@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
-import { newConversation, sendMessage, reapTurnLeftovers, startLeftoverReaper } from '../src/agentapi.js';
+import { newConversation, sendMessage, reapTurnLeftovers, startLeftoverReaper, agyTurnStatus } from '../src/agentapi.js';
 import { loadConfig } from '../src/config.js';
 import { createTask, updateTask, loadTask } from '../src/tasks.js';
 import { buildPlanCritiquePrompt, buildAuditPrompt } from '../src/prompt.js';
@@ -90,6 +90,9 @@ function setup(t, id, kids) {
       recorded.set(name, { pid: Number(pid), tag: tagOf(Number(pid)) });
     }
     await until(() => [...recorded.values()].every(({ pid }) => ppidOf(pid) === 1), 10000, 'lenh con thanh mo coi (PPID 1)');
+    // #752: con thanh mo coi ngay khi agy gia thoat, nhung agy con la zombie (van co lstart trong ps) toi khi vong lap su kien cua test thu no.
+    // Lan kiem PPID cuoi tra true khong qua vong lap nao => luot 1 van "dang chay" (AGY_TURN_BUSY / khong duoc don). Doi theo dieu kien, khong hen gio.
+    await until(() => !agyTurnStatus(id)?.running, 10000, `agy gia cua hoi thoai ${id} da thoat han (khong con zombie)`);
     return recorded;
   };
   return { project, orphans };
@@ -115,7 +118,10 @@ test('#697 pm_status: lenh mo coi cua agent (ANTIGRAVITY_AGENT=1, luot agy da xo
     ['E', { ANTIGRAVITY_AGENT: '1', ANTIGRAVITY_PM_RUN: tokOtherPm }],    // luot da xong cua PM KHAC con song: PM do tu don
     // daemon dung chung (build cua phien khac co the dang noi vao): java ... GradleDaemon
     ['F', { ANTIGRAVITY_AGENT: '1', ARGV0: '/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home/bin/java' }, 'org.gradle.launcher.daemon.bootstrap.GradleDaemon'],
+    // #734: java cua JBR trong Android Studio, duong dan co dau cach => van la daemon dung chung
+    ['J', { ANTIGRAVITY_AGENT: '1', ARGV0: '/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java' }, 'org.gradle.launcher.daemon.bootstrap.GradleDaemon'],
     ['Q', { ANTIGRAVITY_AGENT: '1' }, 'GradleDaemon'],                    // dung: chi la tham so, khong phai daemon java
+    ['V', { ANTIGRAVITY_AGENT: '1' }, '/x.app/Contents/java', 'GradleDaemon'],   // dung: duong dan java .app la THAM SO, argv[0] van la node
     // argv TRICH chuoi bien (vd prompt cua agy) nhung env khong co => giu (ps -E noi argv + env bang dau cach)
     ['X', { ANTIGRAVITY_AGENT: null, ANTIGRAVITY_PM_RUN: null }, 'ANTIGRAVITY_AGENT=1', 'ANTIGRAVITY_PM_RUN=$RUN'],
   ]);
@@ -142,13 +148,13 @@ test('#697 pm_status: lenh mo coi cua agent (ANTIGRAVITY_AGENT=1, luot agy da xo
 
   const res = await TOOLS_BY_NAME.get('pm_status').handler({ project, taskId: task.id });
   const text = typeof res === 'string' ? res : res.text;
-  for (const name of ['A', 'G', 'P', 'Q']) {
+  for (const name of ['A', 'G', 'P', 'Q', 'V']) {
     const { pid } = kids.get(name);
     await until(() => !alive(pid), 3000, `lenh mo coi ${name} (pid ${pid}) bi dung`).catch((e) => assert.fail(`${e.message}\n${text}`));
     assert.match(text, new RegExp(`pid ${pid}\\b`), `pm_status phai liet ke pid bi dung (${name})\n${text}`);
   }
   assert.ok(!text.includes('setInterval'), `chi in ten file thuc thi, khong in argv (co the chua token)\n${text}`);
-  for (const name of ['B', 'C', 'D', 'E', 'F', 'H', 'U', 'X']) {
+  for (const name of ['B', 'C', 'D', 'E', 'F', 'H', 'J', 'U', 'X']) {
     const { pid } = kids.get(name);
     assert.ok(alive(pid), `${name} (pid ${pid}) KHONG duoc bi dung`);
     assert.ok(!new RegExp(`pid ${pid}\\b`).test(text), `${name} (pid ${pid}) khong duoc bi liet ke la da dung\n${text}`);

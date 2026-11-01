@@ -92,7 +92,8 @@
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
 #      — or the merge call failed while GitHub still shows the PR OPEN at the verified head (nothing merged; next wave retries)
-#   5  the base could not be merged in (real conflict) — needs a rebase pass
+#   5  the base could not be merged in (real conflict) — needs a rebase pass; with no conflicted file (a git hook refused
+#      the local merge commit) the gate prints the git/hook message instead of the file list
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2 and 5
 #      as a rebase pass).
@@ -1069,10 +1070,17 @@ git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/
 review_verdict_check
 ci_precheck   # rẻ, trước verify: check đã đỏ thì không tốn verify
 
-if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>/dev/null; then
+if ! MERGE_ERR=$(git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>&1); then
   CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')
-  say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
-  say "this is a rebase pass for the Builder lane, not a Blocked card"
+  if [ -n "$CONFLICTS" ]; then
+    say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
+    say "this is a rebase pass for the Builder lane, not a Blocked card"
+  else
+    # GeelyEx2 #179: hook commit-msg của repo từ chối commit gộp ⇒ không có file xung đột; in lời git/hook thật, rebase không gỡ được.
+    # Bỏ dòng "Not committing merge…" git tự thêm; lấy phần ĐẦU: lý do của hook thường ở dòng đầu (tail cắt mất khi hook in nhiều dòng).
+    say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused the local merge commit): $(printf '%s\n' "$MERGE_ERR" | grep -v '^Not committing merge' | head -8 | clip 600)"
+    say "not a content conflict in the PR: the reason is the git/hook message above"
+  fi
   exit 5
 fi
 
@@ -1130,9 +1138,25 @@ for c in "$REPO_PATH/universal-agent-devkit" "$REPO_PATH/.agents/devkit" "${DK_M
 done
 if [ -n "$DK_INSTALL" ]; then
   DK_RC=0
+  # Idle #18: install.sh ghi .mcp.json / mcp_config.json; ở repo không track cũng không ignore chúng, file đó thành "thay đổi" của PR và
+  # verify exit 2. Chụp file chưa track (không ignore) trước và sau khi cài, xoá phần install.sh thêm. File của PR đã track nên không nằm
+  # trong danh sách; file bị ignore mà verify cần (.agents/devkit) cũng không.
+  DK_UNTRACKED_BEFORE=$(git -C "$SCRATCH" ls-files -z --others --exclude-standard | tr '\0' '\n' | LC_ALL=C sort) || true
   bash "$DK_INSTALL" -t "$SCRATCH" -a claude -y --no-githooks >"$VERIFY_LOG" 2>&1 || DK_RC=$?
   [ "$DK_RC" -eq 0 ] || say "DevKit install into the scratch tree failed (exit ${DK_RC}): $(tail -3 "$VERIFY_LOG" | clip 300)"
   git -C "$SCRATCH" checkout -q -- . 2>/dev/null || true
+  # Nhiều lượt: repo không track .gitignore thì install.sh tạo một .gitignore chưa track che .agents/context/*; xoá nó ở lượt 1 làm các file
+  # đó lộ ra ở lượt 2. .agents/devkit không bao giờ xoá (verify cần nó; repo không ignore nó thì như trước khi có bước này).
+  for _dk_pass in 1 2 3; do
+    DK_NEW=$(git -C "$SCRATCH" ls-files -z --others --exclude-standard | LC_ALL=C tr '\0' '\n' | LC_ALL=C sort \
+      | LC_ALL=C comm -13 <(printf '%s\n' "$DK_UNTRACKED_BEFORE") -) \
+      || { say "could not list the files the DevKit install left untracked in the scratch tree; verify may count them"; break; }
+    DK_NEW=$(printf '%s\n' "$DK_NEW" | grep -v '^\.agents/devkit\(/\|$\)' || true)
+    [ -n "$DK_NEW" ] || break
+    while IFS= read -r f; do
+      [ -z "$f" ] || rm -f -- "$SCRATCH/$f" || true
+    done <<<"$DK_NEW"
+  done
 else
   : >"$VERIFY_LOG"
   say "no DevKit install.sh in ${REPO_PATH} or ${DK_MAIN:-the main checkout}: the scratch tree has no .agents/devkit"
