@@ -49,6 +49,15 @@ if [ -z "${REPO_ROOT}" ]; then   # the regex costs ~10 ms on a 1 MB payload: onl
   case "${_PCWD}" in *\\*) _PCWD="$(python3 -I -c 'import json,sys; sys.stdout.buffer.write(json.loads("\"%s\"" % sys.argv[1]).encode())' "${_PCWD}" 2>/dev/null)" || _PCWD="." ;; esac
   REPO_ROOT="$(git -C "${_PCWD}" rev-parse --show-toplevel 2>/dev/null)"
 fi
+# No project: the loop guard below has nowhere to count re-Stops, and a gate that cannot count could hold every Stop.
+[ -n "${REPO_ROOT}" ] || exit 0
+# QA K-4: without python3 this gate cannot run — say so instead of passing silently. Before any other command
+# (r14b, 31/10): with a stripped PATH `mkdir` failed first and its error hid this message; before the W1 v6 block too (#754):
+# a worktree session's first line was its warning or "basename: command not found".
+if ! command -v python3 >/dev/null 2>&1; then   # fail closed (31/10): a gate that cannot run cannot say the code was reviewed
+  echo "⛔ REVIEW-GATE: python3 không có — không kiểm được review 4 bên, chặn Stop. Cài python3." >&2
+  exit 2
+fi
 # W1 v6 (hooks/session_worktree.py): a session that ENTERED a worktree (EnterWorktree: CLAUDE_PROJECT_DIR still names main) or a subagent
 # the harness started in one is judged in that worktree, not in a clean main. Python only when the payload or a session record can need it.
 _SW_SID='"session_id"[[:space:]]*:[[:space:]]*"([A-Za-z0-9][A-Za-z0-9._-]*)"'
@@ -61,18 +70,10 @@ if os.path.isabs(_d): sys.path.append(_d)
 import session_worktree as s; print(s.project(json.loads(sys.stdin.read() or "{}")) or "")' "$0" <<<"${INPUT}" 2>/dev/null)"; then
     [ -n "${_SW_ROOT}" ] && REPO_ROOT="${_SW_ROOT}"
   else   # never silent: this gate then judges what CLAUDE_PROJECT_DIR names, possibly a clean main (OCR 14/10)
-    echo "⚠ DevKit $(basename "$0"): the session's worktree could not be resolved (hooks/session_worktree.py next to the real hook) - judging ${REPO_ROOT}" >&2
+    echo "⚠ DevKit ${0##*/}: the session's worktree could not be resolved (hooks/session_worktree.py next to the real hook) - judging ${REPO_ROOT}" >&2
   fi
 fi
-LOG_DIR="${REPO_ROOT:+${REPO_ROOT}/.claude/audit-gate}"
-# No project: the loop guard below has nowhere to count re-Stops, and a gate that cannot count could hold every Stop.
-[ -n "${LOG_DIR}" ] || exit 0
-# QA K-4: without python3 this gate cannot run — say so instead of passing silently. Before any other command
-# (r14b, 31/10): with a stripped PATH `mkdir` failed first and its error hid this message.
-if ! command -v python3 >/dev/null 2>&1; then   # fail closed (31/10): a gate that cannot run cannot say the code was reviewed
-  echo "⛔ REVIEW-GATE: python3 không có — không kiểm được review 4 bên, chặn Stop. Cài python3." >&2
-  exit 2
-fi
+LOG_DIR="${REPO_ROOT}/.claude/audit-gate"
 mkdir -p "${LOG_DIR}"
 for _fifo in "${LOG_DIR}"/* "${LOG_DIR}"/.[!.]*; do [ ! -p "${_fifo}" ] || rm -f -- "${_fifo}"; done   # a FIFO here (never one of ours) would hang the next open of a log or lock: drop it
 [ -e "${LOG_DIR}/.gitignore" ] || printf '*\n' > "${LOG_DIR}/.gitignore" 2>/dev/null || true
