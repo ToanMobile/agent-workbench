@@ -12,7 +12,7 @@
 #   i. file code bị xoá ⇒ full;
 #   j. test bị sửa tự chọn chính nó; tests/impact_map.txt của kit thêm cạnh test→file;
 #   k. CLI: `decide --json` và `gen --write-core` (giữ [core] + [smoke], viết [core:auto] có file fan-in ≥ 5);
-#   m. trạng thái agent (.claude/settings.json) ≥ 5 test đọc không thành lõi: scoped, chọn đúng các test đọc nó;
+#   m. trạng thái agent (.claude/settings.json, đổi đã commit) ≥ 5 test đọc không thành lõi: scoped, chọn đúng các test đọc nó;
 #   n. project là thư mục con của repo: file bẩn chưa commit không lấy scan cũ từ cache (cạnh import mới có).
 # Chưa có bin/scoped_gate.py thì ĐỎ. Python stdlib, tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
@@ -25,7 +25,7 @@ SB="$TMP/repo"
 mkdir -p "$SB" && cd "$SB" || exit 2
 git init -q -b main . && git config user.email t@t && git config user.name t
 
-# --- sandbox: mọi thứ nằm trong commit gốc, mỗi ca chỉ đổi cây làm việc rồi decide(base="HEAD")
+# --- sandbox: mọi thứ nằm trong commit gốc, mỗi ca chỉ đổi cây làm việc rồi decide(base="HEAD") (trừ ca m: commit tạm, #770)
 mkdir -p lib hub tool svc docs tests/x tests/y .agents universal-agent-devkit/lib universal-agent-devkit/tests/x
 printf 'import b\nprint(b.double(21))\n' > lib/a.py
 printf 'def double(x):\n    return x * 2\n' > lib/b.py
@@ -274,10 +274,13 @@ d = decide()
 chk(d["mode"] == "scoped" and d["tests"] == ["tests/x/test_foo.sh"],
     "l3. */SKILL.md theo tên skill (foo-bar): chỉ test nhắc tên đó, 5 test nhắc \"SKILL.md\" không làm nó thành lõi", d)
 
-# m. .claude/settings.json (AGENT_STATE) 5 test đọc: không lõi test-read-by ⇒ scoped, chọn đúng 5 test đó
+# m. .claude/settings.json (AGENT_STATE) 5 test đọc, đổi ĐÃ COMMIT: không lõi test-read-by ⇒ scoped, chọn đúng 5 test đó. #770: chỉ bẩn ở
+#    cây làm việc thì không vào changed (tests/gates/test_scoped_gate_head_pinned.sh) ⇒ commit tạm, quyết theo HEAD~1, rồi bỏ commit đó.
 reset()
 edit(".claude/settings.json", '{"hooks": {"x": 1}}\n')
-d = decide()
+git("commit", "-qam", "m-settings")
+d = sg.decide(SB, "HEAD~1")
+git("reset", "-q", "--hard", "HEAD~1")
 chk(d["mode"] == "scoped" and not d["core_hits"] and all("tests/s/test_st%d.sh" % i in d["tests"] for i in range(1, 6)),
     "m. sửa .claude/settings.json (5 test đọc) ⇒ scoped, không lõi, chọn 5 test đọc nó", d)
 
