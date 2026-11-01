@@ -2921,7 +2921,10 @@ sweep_blocked_cards() {
     [ -n "$item_id" ] || continue
     if ! set_card_status "$item_id" "Ready"; then
       gh_checkpoint
-      log "⚠ blocked sweep: could not move #${issue} to Ready"
+      # #520: lệnh nhả hỏng giữ thẻ ở Blocked (block_card_after_failed_write không đổi cột thẻ vốn Blocked); sig của maybe_sweep_blocked
+      # không đổi nên phải hẹn thử lại, không thì thẻ chờ tới lần có thẻ về Done kế tiếp
+      log "⚠ blocked sweep: could not move #${issue} to Ready — retrying in ${SWEEP_RETRY_SECONDS}s"
+      retry=1
       continue
     fi
     swept_add "$key"

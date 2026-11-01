@@ -17,6 +17,7 @@
 #  s15 board đọc lại rồi lệnh khác của thẻ đã Blocked có state hỏng → nối vào state, không ghi đè (review vòng 2)
 #  s16 thẻ ĐANG Blocked mà lệnh ghi của nó hỏng → không chuyển cột, không comment `blocked-by:  -` đè lý do chặn của thẻ (review 3 P1)
 #  s19 thẻ còn state ghi lại đang chờ → blocked sweep không nhả (review 3, vòng 2)
+#  s20 lệnh nhả thẻ của sweep hỏng → sweep thử lại sau SWEEP_RETRY_SECONDS
 #  s17 state có cờ lạ (--repo, --body-file, --title, issue close) → không phát lại, bỏ state (review 3 P2)
 # Runner THẬT của checkout chứa file test (ROOT từ $0). Offline, gh giả. Tương thích bash 3.2.
 set -u
@@ -295,5 +296,11 @@ rm -f "$STATE"
 run_tick Blocked 'sweep_blocked_cards; echo "rc=$?"'
 { gh_has 'option-id OREADY' && printf '%s\n' "$OUT" | grep -qx 'rc=0'; } \
   && ok "s19: control — no pending state → released as before" || fail "s19 control: out=$OUT gh=$(ghl | cut -c1-200)"
+
+echo "s20. chính lệnh nhả Blocked → Ready của sweep hỏng → sweep hẹn thử lại (rc 2), không nằm chờ tới lần có thẻ về Done (OCR final)"
+fresh
+FAIL_PAT='^project item-edit .*OREADY'; run_tick Blocked 'sweep_blocked_cards; echo "rc=$?"'; FAIL_PAT=""
+{ printf '%s\n' "$OUT" | grep -qx 'rc=2' && ! gh_has 'back to Ready'; } \
+  && ok "s20: failed release → rc 2 (maybe_sweep_blocked retries after SWEEP_RETRY_SECONDS)" || fail "s20: out=$OUT gh=$(ghl | cut -c1-200)"
 
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" = 0 ]
