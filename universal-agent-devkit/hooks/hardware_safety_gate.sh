@@ -2382,20 +2382,163 @@ ADB_WRAPPERS = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "x
 # "for …; do adb …; done" reached the device unseen (review 2026-09-27).
 SHELL_LEAD = {"if", "then", "else", "elif", "while", "until", "do", "!", "{", "("}
 
+def split_closed(seg):
+    """shlex.split một segment của adb_calls (01/11, r31adb). Segment bị cắt ở ; & | trước shlex, nên đối số shell
+    trong nháy (adb -s "" shell "cd /x; ls") mất nháy đóng; tách theo khoảng trắng thì -s "" ra chữ "" (khác rỗng) và
+    -s "SERIAL" ra SERIAL còn nháy, cả hai lọt denylist. Đóng nháy còn mở rồi tách lại; không đóng được thì tách như cũ.
+    Segment kết thúc bằng gạch chéo ngược trong nháy kép (find … -exec ls {} \x5c; bị cắt ở ;): thêm nháy kép thì nháy đó
+    bị escape, nên thử thêm cả gạch chéo ngược lẫn nháy kép."""
+    for close in ("", "\x22", "\x27", "\x5c\x22"):
+        try:
+            return shlex.split(seg + close)
+        except ValueError:
+            continue   # nháy này không đóng được segment: thử nháy kế tiếp, hết thì tách theo khoảng trắng
+    return seg.split()
+
+def split_readings(seg):
+    """Mọi cách đọc token của một segment cắt thô (01/11, r31adb). shlex tách được: một cách. Không tách được: đóng nháy còn
+    mở ở cuối (split_closed), tách theo khoảng trắng như bản cũ, và bản đó bỏ nháy dính ở đầu/cuối chữ (-s "" ra rỗng,
+    "SERIAL" ra SERIAL); chữ bỏ nháy thành adb thì giữ nháy ("adb reboot" trong câu của commit là chữ, không phải lệnh).
+    Cổng xét mọi cách đọc nên mọi lệnh adb bản cũ thấy vẫn được thấy. Nháy mở ở segment trước (FOO="a;b" adb -s X reboot)
+    do quote_split lo, không đoán ở đây: coi nháy đầu tiên là nháy đóng thì chữ "adb …" trong chuỗi nháy đơn nhiều câu
+    (script inline, commit, comment) thành lệnh adb và bị chặn nhầm."""
+    try:
+        return [shlex.split(seg)]
+    except ValueError:
+        words = seg.split()
+        bare = [w.strip("\x22\x27") for w in words]
+        return [split_closed(seg), words,
+                [b if os.path.basename(b) not in ("adb", "adb.exe") else w for w, b in zip(words, bare)]]
+
+def quote_split(text):
+    """text cắt ở ; & | xuống dòng NẰM NGOÀI nháy (nháy đơn, nháy kép, gạch chéo ngược), như shell (01/11, r31adb). Là cách đọc
+    THÊM bên cạnh bản cắt thô: FOO="a;b" adb -s X shell "cd /x; ls" là một lệnh. Chỗ máy quét này hiểu sai nháy (thân heredoc,
+    $\x27…\x27) chỉ làm segment dài hơn; bản cắt thô vẫn được xét nên không che lệnh nào."""
+    out, start, i, n, q = [], 0, 0, len(text), ""
+    while i < n:
+        c = text[i]
+        if q == "\x27":
+            q = "" if c == "\x27" else q
+        elif c == "\x5c":
+            i += 2
+            continue
+        elif c == "\x22":
+            q = "" if q else "\x22"
+        elif c == "\x27" and not q:
+            q = "\x27"
+        elif not q and c in ";&|\n":
+            out.append(text[start:i])
+            start = i + 1
+        i += 1
+    out.append(text[start:])
+    return out
+
+SUBST_WORD = "$-SUBST-"   # chữ thay lệnh con: VAR_REF không bung được ($- không phải tên biến), luôn còn "$"
+
+def subst_end(text, i, depth_left=64):
+    """Chỉ số ngay sau dấu đóng của lệnh con mở tại i, -1 khi không đóng (01/11, r31adb). $( … ): đếm ngoặc ngoài nháy (nháy
+    đơn, nháy kép, gạch chéo ngược) bên trong lệnh con; lệnh con lồng (cả trong nháy kép: "$(echo ")")") nhảy qua trọn bằng
+    đệ quy, sâu quá 64 tầng thì coi như không đóng. \x60 … \x60: tới backtick không có gạch chéo ngược đứng trước."""
+    n = len(text)
+    if depth_left <= 0:
+        return -1
+    if text[i] == "\x60":
+        j = i + 1
+        while j < n:
+            if text[j] == "\x5c":
+                j += 2
+                continue
+            if text[j] == "\x60":
+                return j + 1
+            j += 1
+        return -1
+    depth, j, q = 1, i + 2, ""
+    while j < n:
+        c = text[j]
+        if q == "\x27":
+            q = "" if c == "\x27" else q
+        elif c == "\x5c":
+            j += 2
+            continue
+        elif depth_left > 1 and (c == "\x60" or text.startswith("$(", j)):   # hết tầng: đếm ngoặc như thường
+            k = subst_end(text, j, depth_left - 1)
+            if k < 0:
+                return -1
+            j = k
+            continue
+        elif c in "\x22\x27":
+            q = "" if q == c else (q or c)
+        elif not q and c in "()":
+            depth += 1 if c == "(" else -1
+            if not depth:
+                return j + 1
+        j += 1
+    return -1
+
+def flat_substitutions(text):
+    """text với mỗi lệnh con $( … ) và \x60 … \x60 thay bằng SUBST_WORD (01/11, r31adb). Cắt thô ở $( và \x60 thấy lệnh adb BÊN
+    TRONG lệnh con nhưng làm mất cấu trúc lệnh ngoài: X=$(pwd) adb -s X reboot còn lại "pwd) adb …" (lệnh đầu là pwd). Bản thay
+    giữ lệnh ngoài; chữ thay có "$" nên serial / subcommand lấy từ lệnh con là không xác định được. Theo nháy như shell: trong
+    nháy đơn và sau gạch chéo ngược, $( và \x60 là chữ thường (echo $( trong nháy đơn không nuốt lệnh sau). Lệnh con không đóng
+    thì giữ nguyên chữ (không nuốt phần còn lại); chỗ máy quét này hiểu sai nháy chỉ làm bản thay giữ "$(" (vẫn bị từ chối) hoặc
+    thay một đoạn mà shell coi là chữ; adb_calls vẫn xét cả bản cắt thô. Quá 32 lệnh con không đóng thì dừng thay (giới hạn thời gian)."""
+    if "$(" not in text and "\x60" not in text:
+        return text
+    out, i, n, q, fails = [], 0, len(text), "", 0
+    while i < n:
+        c = text[i]
+        if q == "\x27":
+            q = "" if c == "\x27" else q
+        elif c == "\x5c":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        elif c == "\x22":
+            q = "" if q else "\x22"
+        elif c == "\x27" and not q:
+            q = "\x27"
+        elif (c == "\x60" or text.startswith("$(", i)) and fails <= 32:
+            j = subst_end(text, i)
+            if j > 0:
+                out.append(SUBST_WORD)
+                i = j
+                continue
+            fails += 1
+        out.append(c)
+        i += 1
+    return "".join(out)
+
 def adb_calls(text):
     """(adb executable token, selection options, subcommand, ANDROID_SERIAL, words after
     the subcommand) per adb call."""
-    for seg in re.split(r"[;&|\n]+|\$\(|`", text):
-        try:
-            toks = shlex.split(seg)
-        except ValueError:
-            toks = seg.split()
+    # (01/11, r31adb) xét cả text lẫn bản thay lệnh con (flat_substitutions), mỗi segment theo mọi cách đọc (split_readings).
+    # Bản cắt thô: segment cắt ở $( được gắn "$(" vào chữ cuối, nên -s/-t lấy từ lệnh con mang "$" cả khi flat_substitutions
+    # đọc nháy sai; không gắn cho backtick (backtick markdown trong chuỗi nháy đơn của commit / comment sẽ bị chặn nhầm).
+    # Thêm bản cắt theo nháy (quote_split) của bản thay lệnh con: lệnh có ; | trong nháy là một lệnh.
+    # Cờ thứ ba: chỉ bản quote_split (cắt ngoài nháy), và chỉ từ segment đầu tiên có lệnh con đã thay trở đi, coi chữ "xxx)"
+    # đầu lệnh là đuôi lệnh con / nhánh case; ở chỗ khác "1) adb …" (dòng đánh số trong thân heredoc, echo "$(date) adb …",
+    # grep "a|b) adb …") là chữ. Bản đọc theo nháy dựng trên text đã bỏ comment và đổi $\x27…\x27 thành \x27…\x27 (shell_norm):
+    # nháy đơn trong comment hay \x5c\x27 trong $\x27…\x27 làm lệch cách đọc theo nháy (FOO=$\x27it\x5c\x27s\x27 adb -s X reboot).
+    clean = shell_norm.ansi_c_to_single(shell_norm.drop_comments(text))
+    flat = flat_substitutions(clean)
+    cut_readings = ((toks, cut == "$(", False) for t in dict.fromkeys((text, flat))
+                    for parts in (re.split(r"([;&|\n]+|\$\(|`)", t),)
+                    for seg, cut in zip(parts[0::2], parts[1::2] + [""])
+                    for toks in split_readings(seg + "$(" if cut == "$(" else seg))
+    qsegs = quote_split(flat)
+    first_subst = next((n for n, s in enumerate(qsegs) if SUBST_WORD in s), len(qsegs))
+    whole_readings = ((toks, False, n >= first_subst) for n, seg in enumerate(qsegs) for toks in split_readings(seg))
+    readings = (r for src in (cut_readings, whole_readings) for r in src)
+    for toks, subst, from_flat in readings:
         toks = shell_norm.inline_script(toks)   # sudo -s STR, env -S STR
         env_serial = os.environ.get("ANDROID_SERIAL", "")
         # Only the word in command position (after VAR=… and sudo/env/timeout N …):
         # `grep adb notes.txt` is not an adb call.
         i = 0
+        # (01/11, r31adb) bản đọc từ bản thay lệnh con: chữ kết thúc bằng ")" ở vị trí lệnh là đuôi của lệnh con / nhánh case
+        # mà subst_end đóng sớm (X=$(case a in a) echo 1;; esac) adb …): lệnh thật đứng sau nó
         while i < len(toks) and (re.match(r"^\w+=", toks[i]) or toks[i] in ADB_WRAPPERS or toks[i] in SHELL_LEAD
+                                 or (from_flat and toks[i].endswith(")") and os.path.basename(toks[i]) not in ("adb", "adb.exe"))
                                  or (i > 0 and toks[i - 1] in ADB_WRAPPERS and re.match(r"^(-\S*|\d+\w?)$", toks[i]))):
             if toks[i].startswith("ANDROID_SERIAL="):
                 env_serial = toks[i].split("=", 1)[1]
@@ -2423,13 +2566,19 @@ def adb_calls(text):
             continue
         opts, j = [], i + 1
         while j < len(toks) and toks[j].startswith("-"):
+            if toks[j] == "--serial":   # (01/11, r31adb) adb 37.0.1 báo "unknown command --serial"; cổng coi như -s cho chắc
+                toks[j] = "-s"
             if toks[j] in ADB_VALUE_OPTS and j + 1 < len(toks):
                 opts += toks[j:j + 2]; j += 2
             else:
                 opts.append(toks[j]); j += 1
         while j < len(toks) and re.fullmatch(r"wait-for-[\w-]+", toks[j]):   # adb wait-for-device remount
             j += 1
-        yield toks[i], opts, (toks[j] if j < len(toks) else ""), env_serial, toks[j + 1:]
+        # (01/11, r31adb) cắt ở $( ngay trong giá trị -s/-t (adb -s $(…) reboot): subcommand nằm sau lệnh con, không thấy ở đây
+        # cũng vậy khi xargs chạy adb mà chưa có subcommand (xargs adb -s): đối số tuỳ chọn đến từ stdin
+        cut_sel = j >= len(toks) and ((subst and any(o[:2] in ("-s", "-t") for o in opts))
+                                      or any(os.path.basename(t) == "xargs" for t in toks[:i]))
+        yield toks[i], opts, (toks[j] if j < len(toks) else ("$(" if cut_sel else "")), env_serial, toks[j + 1:]
 
 def sdk_adb():
     """adb the way replicant-mcp finds it: ANDROID_HOME / ANDROID_SDK_ROOT, also from the
@@ -2457,26 +2606,51 @@ ASSIGN_ANY = re.compile(r"(?<![\w$.-])([A-Za-z_]\w*)=")
 ASSIGN_LIT = re.compile(r"(?:^|[;&|(\n]|\bexport)\s*([A-Za-z_]\w*)=([\w.:-]+)(?=[ \t]*(?:$|;|&&|\|\||\n))", re.M)
 
 def literal_vars(text):
+    # (01/11, r31adb) source / . nạp file có thể gán bất kỳ biến nào: không tin literal nào
+    if re.search(r"(?:^|[;&|(\n])\s*(?:source|\.)\s", text):
+        return {}
     lits, counts = {}, {}
     for name in ASSIGN_ANY.findall(text):
         counts[name] = counts.get(name, 0) + 1
     for name, val in ASSIGN_LIT.findall(text):
         lits.setdefault(name, []).append(val)
+    # (01/11, r31adb) unset / printf -v / declare / typeset / local / eval / let cũng đổi biến mà không có NAME=literal
+    # (S=a; unset S; adb -s "$S" là adb -s "" lúc chạy)
     return {n: v[0] for n, v in lits.items() if len(v) == counts.get(n) and len(set(v)) == 1
-            and not re.search(r"\b(?:for|read|select|getopts|mapfile|readarray)\b[^;&|\n]*\b"
-                              + re.escape(n) + r"\b", text)}
+            and not re.search(r"\b(?:for|read|select|getopts|mapfile|readarray|unset|printf|declare|typeset|local|eval|let)\b"
+                              r"[^;&|\n]*\b" + re.escape(n) + r"\b", text)}
+
+# (01/11, r31adb) chỉ $NAME và ${NAME}: regex cũ \$\{?NAME\}? thay cả phần đầu của ${S##*} / ${S/a/b} thành chuỗi
+# "emulator-5554##*}" (hết "$", được tin là serial) trong khi shell ra chuỗi rỗng / serial khác. Dạng khác giữ nguyên "$".
+VAR_REF = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
+SHELL_EXPANDS = re.compile(r"[{}*?\[]|^~")   # chữ shell còn bung lúc chạy (brace, glob, ~): serial không bao giờ có
 
 def expand_literals(word, lits):
-    return re.sub(r"\$\{?([A-Za-z_]\w*)\}?", lambda m: lits.get(m.group(1), m.group(0)), word)
+    return VAR_REF.sub(lambda m: lits.get(m.group(1) or m.group(2), m.group(0)), word)
 
-def target_serial(exe, opts, env_serial, lits=None):
+def expand_env(word, assigned=()):
+    """$NAME / ${NAME} lấy từ env của hook, trừ tên mà chính lệnh gán (01/11, r31adb: R=""; adb -s "$R" reboot — env của
+    hook không phải giá trị lúc chạy). Tên không có trong env giữ nguyên, như os.path.expandvars."""
+    return VAR_REF.sub(lambda m: m.group(0) if (m.group(1) or m.group(2)) in assigned
+                       else os.environ.get(m.group(1) or m.group(2), m.group(0)), word)
+
+def target_serial(exe, opts, env_serial, lits=None, assigned=()):
     """(serial, None) · (None, None) when adb itself would find no single target
     (the command then fails on its own) · (None, why) when it cannot be resolved."""
     lits = lits or {}
     env_serial = expand_literals(env_serial, lits)
-    if "-s" in opts:
-        s = os.path.expandvars(expand_literals(opts[opts.index("-s") + 1], lits))
-        if "$" in s:
+    # (01/11, r31adb) adb 37.0.1 (đo bằng serial không tồn tại): -t thắng -s bất kể thứ tự, -s cuối cùng thắng
+    # (cả dạng dính -s<số>), và -s "" để adb tự chọn thiết bị (GeelyEx2: get-serialno trả điện thoại bị cấm),
+    # không phải "không có thiết bị". Chuỗi -s chỉ được tin khi khác rỗng và là lựa chọn thiết bị duy nhất; còn lại
+    # hỏi adb get-serialno với đúng các tuỳ chọn đã bung biến, như adb trần; khi đó biến chưa biết ở tuỳ chọn nào
+    # cũng làm đích không xác định. -s là giá trị của tuỳ chọn khác (adb -H -s …) không có giá trị đi sau: hỏi adb.
+    opts = [expand_env(expand_literals(o, lits), assigned) for o in opts]
+    k = opts.index("-s") + 1 if "-s" in opts else len(opts)
+    picks = [o for o in opts if o[:2] in ("-s", "-t")]
+    if k < len(opts) and opts[k] and picks == ["-s"]:
+        s = opts[k]
+        # (01/11, r31adb) { } * ? [ ~: shell còn bung chữ này lúc chạy (adb -s {X,} là -s X; xargs -I{} thay {})
+        if "$" in s or SHELL_EXPANDS.search(s):
             return (None, "serial " + s + " không xác định được")
         if any(s.startswith(pfx) for pfx in ("model:", "usb:", "product:", "device:")):
             adb = exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())
@@ -2486,35 +2660,63 @@ def target_serial(exe, opts, env_serial, lits=None):
                     resolved = r.stdout.strip()
                     if r.returncode == 0 and resolved and resolved != "unknown":
                         return (resolved, None)
-                except Exception:
-                    pass
+                except (OSError, subprocess.SubprocessError) as e:
+                    return (None, "adb get-serialno cho " + s + " không trả lời (" + type(e).__name__ + ")")
+            # (01/11, r31adb) model:/usb:/… không phân giải được thì chuỗi đó không bao giờ khớp denylist: không đoán, từ chối
+            return (None, "serial " + s + " không phân giải được qua adb")
         return (s, None)
-    if "$" in env_serial:
+    unknown = next((o for o in opts if "$" in o), None)
+    if unknown is not None:
+        return (None, "tuỳ chọn adb " + unknown + " không xác định được")
+    if "$" in env_serial or SHELL_EXPANDS.search(env_serial):
         return None, "ANDROID_SERIAL=" + env_serial + " không xác định được"
     adb = exe if "/" in exe and os.access(exe, os.X_OK) else (shutil.which("adb") or sdk_adb())
+    # (01/11, r31adb) picks khác rỗng ở đây: -s rỗng / -s lặp / -t, máy đích chỉ adb biết. Không tìm được adb để hỏi
+    # (PATH của hook có thể khác shell của lệnh) hay adb không phân giải được (server đang khởi động lại, máy chưa cắm):
+    # lệnh thật vẫn có thể chạy trên máy bị cấm, nên từ chối. adb trần giữ như cũ: lệnh tự lỗi khi không có đúng một máy.
     if not adb:
         # A Bash adb call then fails on its own; replicant-mcp finds its adb elsewhere.
-        return (None, "không tìm thấy adb để biết replicant-mcp dùng thiết bị nào — đặt ANDROID_HOME") if MCP else (None, None)
+        return ((None, "không tìm thấy adb để biết replicant-mcp dùng thiết bị nào — đặt ANDROID_HOME") if MCP
+                else (None, "không tìm thấy adb để biết " + " ".join(opts) + " chọn thiết bị nào") if picks else (None, None))
     env = dict(os.environ)
     if env_serial:
         env["ANDROID_SERIAL"] = env_serial
+    else:
+        env.pop("ANDROID_SERIAL", None)   # (01/11, r31adb) ANDROID_SERIAL= rỗng trong lệnh đè ANDROID_SERIAL của phiên
     try:
         r = subprocess.run([adb] + opts + ["get-serialno"], capture_output=True, text=True,
                            timeout=8, env=env)
     except (OSError, subprocess.SubprocessError):
         return None, "adb get-serialno không trả lời"
     s = r.stdout.strip()
-    return (s, None) if r.returncode == 0 and s and s != "unknown" else (None, None)
+    if r.returncode == 0 and s and s != "unknown":
+        return (s, None)
+    return ((None, "adb " + " ".join(opts) + " get-serialno: " + ((r.stderr or "").strip().splitlines() or ["lỗi"])[0][:120])
+            if picks else (None, None))
 
 def device_violation(text):
     deny, allow = serial_set("ADB_DENY_SERIALS", "denylist"), serial_set("ADB_ALLOW_SERIALS", "allowlist")
     if not deny and not allow:
         return None
     lits = literal_vars(text)
+    assigned = set(ASSIGN_ANY.findall(text))   # (01/11, r31adb) tên lệnh tự gán: không lấy giá trị từ env của hook
+    memo = {}   # (01/11, r31adb) nhiều cách đọc cho cùng lệnh adb: mỗi bộ tuỳ chọn chỉ hỏi adb get-serialno một lần
     for exe, opts, sub, env_serial, _rest in adb_calls(text):
-        if not sub or sub in ADB_HOST_ONLY:
+        # (01/11, r31adb) biến hay lệnh con ở chỗ subcommand có thể bung ra tuỳ chọn chọn thiết bị (adb $O reboot với
+        # O="-s X", adb $(echo -s X) reboot, O=-s; adb -s A $O B reboot): còn "$" sau khi bung biến đã biết, hay giá trị bung
+        # ra là tuỳ chọn (bắt đầu bằng -) hoặc nhiều chữ, thì tuỳ chọn và máy đích chỉ biết lúc chạy
+        # (bung ra rỗng: shell bỏ chữ đó và chữ sau thành subcommand, adb $V reboot với V= là adb reboot)
+        raw_sub, sub = sub, expand_env(expand_literals(sub, lits), assigned)
+        bad_sub = "$" in sub or (sub != raw_sub and (sub.startswith("-") or len(sub.split()) != 1))
+        if not bad_sub and (not sub or sub in ADB_HOST_ONLY):
             continue
-        serial, why = target_serial(exe, opts, env_serial, lits)
+        if bad_sub:
+            serial, why = None, "biến / lệnh con ở chỗ subcommand adb: " + raw_sub
+        else:
+            key = (exe, tuple(opts), env_serial)
+            if key not in memo:
+                memo[key] = target_serial(exe, opts, env_serial, lits, assigned)
+            serial, why = memo[key]
         if why:
             return "không xác định được thiết bị đích (" + why + ") — " + (
                 "chọn thiết bị bằng adb-device select" if MCP else "ghi rõ adb -s <SERIAL>")
