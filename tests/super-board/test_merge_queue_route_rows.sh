@@ -7,6 +7,10 @@
 #      issue-<N>- vẫn thắng; 0 / ≥ 2 issue hay issue repo khác thì không nhận.
 #   C. #637: đọc GitHub hỏng khi route một PR không cắt dở các PR còn lại và merge-queue.attempts; halt (79) thoát 79 sau khi route xong.
 #   D. #639: gate-exit-11 (preflight qa-report) không bị ghi là verify đỏ; `red` thật vẫn ghi verify đỏ.
+#   E. #637 (audit Antigravity): thẻ của PR đã merge đọc hỏng ⇒ như chưa route (nhãn giữ, không pending, không tính lần thử);
+#      lượt sau recover_merged route lại và comment ✅ merged trên thẻ.
+#   F. #637 (audit Antigravity): halt giữa lượt route: thẻ của PR red đọc hỏng, card_move của PR gate-exit-3 nhận 79, PR deferred
+#      đứng sau vẫn được đếm; exit 79 không tính lần thử; lượt sau comment trên thẻ còn thiếu, không comment trùng trên PR.
 # Chạy offline: gh (python giả), train / card.sh / needs-you.py / notify.py là stub; github-read.py là bản thật. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -40,6 +44,8 @@ SH
 cat > "$Q/super-board-card.sh" <<'SH'
 #!/usr/bin/env bash
 while [ "${1#--}" != "$1" ]; do shift 2; done
+# Như bản thật: move đọc thẻ qua github-read, mà github-read từ chối khi file halt đã có.
+[ ! -f "$SB_GITHUB_HALT_FILE" ] || exit 79
 echo "card $*" >> "$FAKE/writes"
 SH
 printf 'import os, sys\nopen(os.environ["FAKE"] + "/writes", "a").write("needs-you " + " ".join(sys.argv[1:]) + "\\n")\n' > "$Q/super-board-needs-you.py"
@@ -47,7 +53,8 @@ printf 'import os, sys\nopen(os.environ["FAKE"] + "/writes", "a").write("notify 
 chmod +x "$Q"/*.sh
 # gh giả (cùng giao kèo với test_merge_queue.sh). PR: $FAKE/prs.json (giữ nguyên mọi trường, kể cả closingIssuesReferences);
 # nhãn merge-queue = $FAKE/labeled/<N>; issue: $FAKE/issue-<K>.json; PR đã merge: $FAKE/merged-<N>; $FAKE/state-broken-<N>: trạng
-# thái PR đọc ra sai dạng (github-read thử 3 lần rồi halt). Mọi lệnh ghi một dòng vào $FAKE/writes.
+# thái PR đọc ra sai dạng (github-read thử 3 lần rồi halt); $FAKE/issue-broken-<K>: issue K đọc ra sai dạng (cũng halt). Mọi lệnh
+# ghi một dòng vào $FAKE/writes.
 cat > "$TMP/path/gh" <<'PY'
 #!/usr/bin/env python3
 import json, os, sys
@@ -83,7 +90,8 @@ elif a[0] == 'api' and '/timeline' in a[1]:
     ev = [{'event': 'labeled', 'label': {'name': 'merge-queue'}, 'created_at': open(p).read().strip()}] if os.path.exists(p) else []
     print(json.dumps([ev]))
 elif a[:2] == ['issue', 'view']:
-    print(json.dumps(issue(num())))
+    k = num()
+    print('{}' if os.path.exists(f'{F}/issue-broken-{k}') else json.dumps(issue(k)))
 elif a[:2] == ['pr', 'edit']:
     n = num(); lab = opt('--remove-label'); w(f'pr-unlabel {n} {lab}')
     if lab == 'merge-queue' and os.path.exists(f'{F}/labeled/{n}'):
@@ -188,5 +196,47 @@ grep -q "preflight" "$F/pr-comment-9.txt" 2>/dev/null && grep -q "qa-report" "$F
   && ok "#639 the comments name the preflight source (qa-report)" || fail "#639 source: $(cat "$F/pr-comment-9.txt" "$F/issue-comment-19.txt" 2>/dev/null)"
 grep -q "verify red with this PR in the batch" "$F/issue-comment-20.txt" 2>/dev/null && grep -q "this PR is the one that turns it red" "$F/pr-comment-10.txt" 2>/dev/null \
   && ok "#639 a real red verify still says 'verify red with this PR in the batch'" || fail "#639 red text: $(cat "$F/pr-comment-10.txt" "$F/issue-comment-20.txt" 2>/dev/null)"
+
+PEND="$COMMON/super-board/merge-queue.pending"
+cnt() { grep -c -- "$2" "$1" 2>/dev/null || true; }   # cnt <file> <chuỗi>: số dòng chứa chuỗi (file thiếu → 0)
+
+# ── E. Thẻ #11 của PR 1 (train báo merged) đọc ra sai dạng ⇒ halt. PR 2 deferred đứng sau.
+reset
+pr 1 issue-11-a 30; pr 2 issue-12-b 20; issue 11; issue 12
+sha 1 c > "$F/merged-1"; : > "$F/issue-broken-11"
+printf 'train-result: 1 merged\ntrain-result: 2 deferred\n' > "$F/train.out"; echo 12 > "$F/train.rc"
+run_q; rc=$?
+[ "$rc" -eq 79 ] && grep -q "^2 $(sha 2) 1 " "$ATT" 2>/dev/null && ok "E card of a merged PR unreadable: exit 79, PR 2 after it still counted" || fail "E rc=$rc att=$(cat "$ATT" 2>/dev/null) err=$(tail -3 "$TMP/err")"
+grep -q "^1 " "$ATT" 2>/dev/null && fail "E the halted card read was counted as a try for PR 1: $(cat "$ATT")" || ok "  … PR 1 not counted (a halt is not a try)"
+grep -q "^1 " "$PEND" 2>/dev/null && fail "E PR 1 went to merge-queue.pending, so the next run would skip its ✅ comment: $(cat "$PEND")" || ok "  … PR 1 not in merge-queue.pending (nothing was written for it)"
+has_w "pr-unlabel 1" && fail "  … PR 1 lost its label" || ok "  … PR 1 keeps its label"
+# Lượt sau: GitHub đã ghi PR 1 MERGED, halt gỡ (--resume), thẻ đọc được ⇒ recover_merged route PR 1.
+rm -f "$TMP/halt.json" "$F/issue-broken-11"; : > "$F/writes"
+PRS_ROWS=""; pr 1 issue-11-a 30 "[]" MERGED; pr 2 issue-12-b 20
+printf 'train-result: 2 deferred\n' > "$F/train.out"
+run_q; rc=$?
+[ "$rc" -eq 0 ] && has_w "issue-comment 11 [merge-queue] [report] ✅ merged" && has_w "card move 11 Done" && has_w "pr-unlabel 1 merge-queue" \
+  && ok "E next run: card #11 gets its ✅ merged comment, Done, PR 1 unlabelled" || fail "E next run: rc=$rc $(cat "$F/writes") err=$(tail -3 "$TMP/err")"
+
+# ── F. PR 1 red: thẻ #11 đọc hỏng ⇒ halt. PR 2 gate-exit-3: comment xong, card_move nhận 79 (halt). PR 3 deferred đứng sau.
+reset
+pr 1 issue-11-a 30; pr 2 issue-12-b 20; pr 3 issue-13-c 10; issue 11; issue 12; issue 13
+: > "$F/issue-broken-11"
+printf 'train-result: 1 red\ntrain-result: 2 gate-exit-3\ntrain-result: 3 deferred\n' > "$F/train.out"; echo 12 > "$F/train.rc"
+run_q; rc=$?
+[ "$rc" -eq 79 ] && grep -q "^3 $(sha 3) 1 " "$ATT" 2>/dev/null && ok "F halt mid-route (card read, then card_move 79): exit 79, PR 3 after them still counted" || fail "F rc=$rc att=$(cat "$ATT" 2>/dev/null) err=$(tail -3 "$TMP/err")"
+grep -q "^[12] " "$ATT" 2>/dev/null && fail "F a halted route was counted as a try: $(cat "$ATT")" || ok "  … PR 1 and PR 2 not counted (a halt is not a try)"
+grep -q "^1 $(sha 1) red " "$PEND" 2>/dev/null && grep -q "^2 $(sha 2) gate-exit-3 " "$PEND" && ok "  … PR 1 and PR 2 wait in merge-queue.pending (no second verify)" || fail "  … pending: $(cat "$PEND" 2>/dev/null)"
+has_w "pr-unlabel 1" || has_w "pr-unlabel 2" && fail "  … a PR whose route did not finish lost its label: $(cat "$F/writes")" || ok "  … PR 1 and PR 2 keep their labels"
+# Lượt sau: halt gỡ, thẻ đọc được ⇒ route lại từ pending.
+rm -f "$TMP/halt.json" "$F/issue-broken-11"; : > "$F/writes"
+printf 'train-result: 3 deferred\n' > "$F/train.out"; echo 0 > "$F/train.rc"
+run_q; rc=$?
+[ "$rc" -eq 0 ] && has_w "issue-labels 11 loop:rebuild-1" && has_w "card move 11 Ready" && has_w "card move 12 Blocked" \
+  && ok "F next run: PR 1 back to Build (loop:rebuild-1, Ready), card #12 Blocked" || fail "F next run: rc=$rc $(cat "$F/writes") err=$(tail -3 "$TMP/err")"
+[ "$(cnt "$F/issue-comment-11.txt" '❌ red · PR #1 back to Build')" = 1 ] && ok "  … card #11 gets the ❌ red comment it never got" || fail "  … card #11 comments: $(cat "$F/issue-comment-11.txt" 2>/dev/null)"
+[ "$(cnt "$F/pr-comment-1.txt" '❌ red · red')" = 1 ] && [ "$(cnt "$F/issue-comment-12.txt" 'blocked · 🔑')" = 1 ] \
+  && ok "  … no second PR 1 comment, no second blocker on card #12" || fail "  … duplicates: pr1=$(cnt "$F/pr-comment-1.txt" '❌ red · red') card12=$(cnt "$F/issue-comment-12.txt" 'blocked · 🔑')"
+has_w "pr-unlabel 1 merge-queue" && has_w "pr-unlabel 2 merge-queue" && ok "  … PR 1 and PR 2 leave the queue" || fail "  … labels: $(cat "$F/writes")"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue_route_rows: all passed" || { echo "❌ test_merge_queue_route_rows: $FAILS failed"; exit 1; }

@@ -28,15 +28,16 @@
 #                                 merge-queue.attempts (<PR> <head> <n> <epoch>; head mới đếm lại); n ≥ 3 → comment, thẻ Blocked 🛡, gỡ nhãn.
 #                                 Kết quả kết thúc (các dòng trên) xoá dòng của PR. Không tính: exit 79 của train (GitHub dừng đọc) và exit 4
 #                                 không train-result (merge-train.lock bận: một train khác đang chạy, PR chưa chạy).
-# Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh route xong (card_move, đóng issue, nhãn loop:*, needs-you mark). Bước nào lỗi (khác 79): giữ
-#   nhãn, ghi merge-queue.pending (<PR> <head> <kết quả> <nhãn loop:* đã gắn>), tính một lần thử; lượt sau route lại từ đó, không dựng train,
-#   không comment / notify lại.
+# Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh route xong (card_move, đóng issue, nhãn loop:*, needs-you mark). Bước nào lỗi: giữ nhãn, ghi
+#   merge-queue.pending (<PR> <head> <kết quả> <nhãn loop:* đã gắn>), tính một lần thử (halt 79: không tính); lượt sau route lại từ đó, không
+#   dựng train, không comment / notify lại (comment trên thẻ chưa đọc được thì vẫn đăng).
 # PR đã merge mà còn nhãn (train merge xong rồi queue chết trước khi route): mỗi lượt đọc thêm `pr list --state merged --label merge-queue`
 #   và route `merged` cho PR GitHub xác nhận MERGED (nhãn gỡ sau cùng nên lượt sau thấy lại nếu chết giữa chừng).
 #
 # Exit: 0 xong / chưa tới hạn / tắt / khoá bận · 79 và 9 của github-read / train đi thẳng lên (9: route các dòng đã có rồi mới thoát) ·
 #       64 sai cú pháp · 66 không thấy config · 1 không khoá được (lỗi hệ thống, không phải bận).
-#       Đọc GitHub hỏng khi route một PR (#637): PR đó giữ nhãn, các PR còn lại vẫn route; github-read 79 thì thoát 79 sau khi route xong.
+#       Đọc GitHub hỏng khi route một PR (#637): PR đó giữ nhãn, các PR còn lại vẫn route; github-read 79 (kể cả 79 của card_move) thì
+#       thoát 79 sau khi route xong, và lần route dừng vì halt không tính lần thử.
 # ponytail: thẻ incident của canary (Pha 2 v3 mục 3) chưa nối vào đây; làm khi batch_canary.py (lane D) đã vào kit.
 set -euo pipefail
 export SB_GITHUB_READ_STRICT=1
@@ -160,16 +161,17 @@ card_of() {
 head_of() { awk -v p="$1" '$2 == p {print $3; exit}' <<<"$ROUTE_ROWS"; }
 # #637: lỗi đọc GitHub trong lượt route chỉ bỏ PR đó (nhãn giữ, lượt sau route lại), các PR còn lại và merge-queue.attempts vẫn được ghi.
 # github-read thoát 79 (halt) thì nhớ lại: route nốt phần không cần đọc rồi thoát 79 (như exit 9 của train).
-READ_HALT=0
+# ROUTE_HALT: lượt route_one hiện tại gặp halt (đọc hay card_move) ⇒ ghi pending nhưng không tính lần thử (như exit 79 của train).
+READ_HALT=0; ROUTE_HALT=0
 read_failed() {   # read_failed <rc> <PR> <đọc gì>
-  [ "$1" -ne 79 ] || READ_HALT=1
+  [ "$1" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; }
   say "PR #$2: reading $3 failed (github-read exit $1); label kept, the next run routes it again"
 }
 issue_json() { python3 "$GITHUB_READ" --kind issue -- issue view "$1" ${REPO:+--repo "$REPO"} --json number,title,body,labels,state; }
-card_move() {   # card_move <issue> <Status>: 79 dừng cả lượt; lỗi khác log rồi trả 1 (nhãn giữ lại, lượt sau route lại)
+card_move() {   # card_move <issue> <Status>: lỗi log rồi trả 1 (nhãn giữ lại, lượt sau route lại); 79 nhớ halt, thoát 79 sau khi route xong
   local rc=0
   bash "$CARD" --config "$CONFIG" move "$1" "$2" >/dev/null || rc=$?
-  [ "$rc" -ne 79 ] || { say "card move #$1 $2: GitHub reads halted"; exit 79; }
+  [ "$rc" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; say "card move #$1 $2: GitHub reads halted"; return 1; }
   [ "$rc" -eq 0 ] || { say "card move #$1 $2 failed (exit ${rc})"; return 1; }
 }
 unlabel() { gh_w pr edit "$1" ${REPO:+--repo "$REPO"} --remove-label "$LABEL" || true; }
@@ -209,16 +211,18 @@ detail_lines() {
 # tag / did: chữ đầu và dòng Did của comment rebuild (mặc định của verify đỏ; preflight exit 11 truyền chữ riêng, #639).
 # Trả 0 chỉ khi các bước bắt buộc (nhãn loop:*, card_move) xong. Lượt route lại (RETRY=1): không comment lại; nhãn loop:* đã gắn ở lượt
 # trước (LABEL_DONE=1) thì không gắn lần nữa (không đẩy loop:rebuild-N lên hai lần cho cùng một lần đỏ).
-RETRY=0; LABEL_DONE=0
+# CARD_RETRY: như RETRY nhưng cho comment trên thẻ; 0 khi lượt trước chưa đọc được thẻ (pending cột 4 = r, CARD_UNREAD=1): thẻ chưa có
+# comment nào, nên lượt route lại vẫn comment trên thẻ (comment trên PR thì không lặp).
+RETRY=0; LABEL_DONE=0; CARD_RETRY=0; CARD_UNREAD=0
 rebuild_or_rebase() {
   local p="$1" k="$2" kind="$3" why="$4" tag="${5:-red}" did="${6:-verified the merge-queue batch with super-board-merge-train.sh}" ij labs cur rm=() l det
   det=$(detail_lines "$p")
   if [ "$RETRY" -eq 1 ] && [ "$LABEL_DONE" -eq 1 ]; then card_move "$k" Ready; return; fi
-  ij=$(issue_json "$k") || { read_failed $? "$p" "card #${k}"; return 1; }
+  ij=$(issue_json "$k") || { read_failed $? "$p" "card #${k}"; CARD_UNREAD=1; return 1; }
   labs=$(printf '%s' "$ij" | jq -r '.labels[].name')
   cur=$(printf '%s\n' "$labs" | sed -nE 's/^loop:rebuild-([0-9]+)$/\1/p' | sort -n | tail -1); cur=${cur:-0}
   if [ "$cur" -ge "$REBUILD_CAP" ]; then
-    [ "$RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
+    [ "$CARD_RETRY" -eq 1 ] || block_comment "$k" "$p" "🛡" "rebuild_cap ${REBUILD_CAP} reached (loop:rebuild-${cur}) and the merge queue saw ${why}" \
       "train-result for PR #${p}: ${why}${det:+
 ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
     card_move "$k" Blocked
@@ -228,7 +232,7 @@ ${det}}" "a person looks at why this card keeps failing, then drags it to Ready"
     for l in $labs; do case "$l" in loop:rebuild-*) rm+=(--remove-label "$l") ;; esac; done
     add_label "$k" "loop:rebuild-$((cur + 1))" ${rm[@]+"${rm[@]}"} || return 1
     LABEL_DONE=1
-    [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ ${tag} · PR #${p} back to Build (loop:rebuild-$((cur + 1)))
+    [ "$CARD_RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ ${tag} · PR #${p} back to Build (loop:rebuild-$((cur + 1)))
 Did: ${did}
 ❌ Not done: ${why}${det:+; the gate / verify lines:
 ${det}}
@@ -236,7 +240,7 @@ Next: Builder fixes $([ "$tag" = red ] && echo "the failing verify" || echo "wha
   else
     add_label "$k" "loop:rebase" || return 1
     LABEL_DONE=1
-    [ "$RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · PR #${p} needs a rebase pass (loop:rebase)
+    [ "$CARD_RETRY" -eq 1 ] || gh_w issue comment "$k" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ❌ conflict · PR #${p} needs a rebase pass (loop:rebase)
 Did: merged the PR head into origin/<base> in the merge-queue batch
 ❌ Not done: ${why}
 Next: Builder rebases onto the base, verification green, then Review again" || true
@@ -244,7 +248,7 @@ Next: Builder rebases onto the base, verification green, then Review again" || t
   card_move "$k" Ready
 }
 ATTEMPTS="$QDIR/merge-queue.attempts"; ATTEMPT_MAX=3
-# merge-queue.pending: "<PR> <head> <kết quả> <nhãn loop:* đã gắn 0|1>" — kết quả kết thúc mà một bước bắt buộc của route lỗi. Lượt sau route
+# merge-queue.pending: "<PR> <head> <kết quả> <nhãn loop:* đã gắn 0|1, r = chưa đọc được thẻ>" — kết quả kết thúc mà một bước bắt buộc của route lỗi. Lượt sau route
 # lại từ dòng này (không dựng train, không verify lại, không comment / notify lại); mỗi lần lỗi tính một lần thử (trần 3 → PR rời hàng).
 PENDING="$QDIR/merge-queue.pending"
 drop_row() {   # drop_row <file> <PR>
@@ -273,15 +277,16 @@ Next: a person looks at why, then labels the PR ${LABEL} again${k:+ (card #$k is
   [ "$ok" -eq 0 ] || say "PR #${p}: moving card #${k} to Blocked failed too; the PR leaves the queue anyway (comment above)"
   unlabel "$p"; attempt_clear "$p"
 }
-# route_one <PR> <kết quả>: một train-result. Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh trả 0; bước nào lỗi (79 của card_move đi
-# thẳng lên; lỗi đọc qua read_failed) thì giữ nhãn, ghi merge-queue.pending và tính một lần thử: lượt sau route lại từ pending, chỉ làm
-# lại các bước bắt buộc.
+# route_one <PR> <kết quả>: một train-result. Nhãn chỉ gỡ khi mọi bước bắt buộc của nhánh trả 0; bước nào lỗi (lỗi đọc qua read_failed)
+# thì giữ nhãn, ghi merge-queue.pending và tính một lần thử (halt 79 thì không tính): lượt sau route lại từ pending, chỉ làm lại các bước
+# bắt buộc.
 route_one() {
   local p="$1" res="$2" k st msha ij det title ok=0 head prow tag did src why
   k=$(card_of "$p"); head=$(head_of "$p")
   prow=$(awk -v p="$p" -v h="$head" '$1 == p && $2 == h {print $4; exit}' "$PENDING" 2>/dev/null || true)
-  RETRY=0; LABEL_DONE=0
+  RETRY=0; LABEL_DONE=0; CARD_UNREAD=0; ROUTE_HALT=0
   if [ -n "$prow" ]; then RETRY=1; [ "$prow" != 1 ] || LABEL_DONE=1; fi
+  CARD_RETRY=$RETRY; [ "$prow" != r ] || CARD_RETRY=0
   case "$res" in
     merged)
       # Không đọc được trạng thái: như GitHub chưa thấy MERGED (nhãn giữ, không tính lần thử); lượt sau recover_merged hoặc train xét lại.
@@ -292,10 +297,10 @@ route_one() {
       fi
       if [ -n "$k" ]; then
         msha=$(printf '%s' "$st" | jq -r '.mergeCommit.oid')
-        ij=$(issue_json "$k") || { read_failed $? "$p" "card #${k}"; ok=1; }
-        if [ "$ok" -ne 0 ]; then
-          :   # bước bắt buộc chưa làm được: xuống nhánh pending bên dưới (lượt sau route lại, không comment lại)
-        elif printf '%s' "$ij" | jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' >/dev/null; then
+        # Thẻ không đọc được: chưa ghi gì cho PR này, nên như chưa route (nhãn giữ, không pending, không tính lần thử); lượt sau
+        # recover_merged route lại từ đầu và comment ✅. Không tính lần thử: PR đã merge không bao giờ bị trần đẩy sang Blocked.
+        ij=$(issue_json "$k") || { read_failed $? "$p" "card #${k}"; return 0; }
+        if printf '%s' "$ij" | jq -e 'any(.labels[]?; (.name | ascii_downcase) == "ac-open")' >/dev/null; then
           say "PR #${p} merged; card #${k} carries ac-open: left open (the gate moved it to Ready)"
         else
           # Comment một lần (lượt route đầu); `Closes #K` thường đã làm GitHub đóng issue lúc merge, nên chỉ đóng khi còn mở.
@@ -374,7 +379,9 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
   esac
   if [ "$ok" -ne 0 ]; then
     say "PR #${p} (${res}): a routing step failed; label kept, the next run routes it again from merge-queue.pending"
-    { awk -v p="$p" '$1 != p' "$PENDING" 2>/dev/null || true; echo "$p $head $res $LABEL_DONE"; } > "$PENDING.new" && mv -f "$PENDING.new" "$PENDING"
+    local col=$LABEL_DONE; [ "$CARD_UNREAD" -eq 0 ] || col=r
+    { awk -v p="$p" '$1 != p' "$PENDING" 2>/dev/null || true; echo "$p $head $res $col"; } > "$PENDING.new" && mv -f "$PENDING.new" "$PENDING"
+    if [ "$ROUTE_HALT" -eq 1 ]; then say "PR #${p}: GitHub reads halted; not counted as a try"; return 0; fi
     attempt_retry "$p" "routing ${res} failed"
     return 0
   fi
