@@ -94,7 +94,27 @@ env -u PYTHONPYCACHEPREFIX TMPDIR="$H" PYTHONDONTWRITEBYTECODE=1 bash "$DEVKIT_D
 [ "$(cached_rc "$H")" -ge 1 ] && ok "env hook: bytecode regression_checklist được giữ trong TMPDIR" \
   || fail "env hook: không giữ bytecode nào của regression_checklist dưới $H"
 
-# 3) Không ghi .pyc / __pycache__ nào vào cây kit (lý do của sys.dont_write_bytecode trong enrich_context.py).
+# 3) Ca kiểm (OCR 01/11): đường cache là symlink, như khi người khác cài sẵn trong /tmp dùng chung. Mong đợi: đích symlink vẫn
+#    rỗng sau khi hook chạy, và hook vẫn in dòng bug.
+L="$TMP/l"; mkdir -p "$L" "$TMP/evil"; ln -s "$TMP/evil" "$L/devkit-pycache-${UID:-x}"
+OUT="$(env -u PYTHONPYCACHEPREFIX TMPDIR="$L" PYTHONDONTWRITEBYTECODE=1 bash "$DEVKIT_DIR/hooks/prompt_context.sh" < "$TMP/prompt.json" 2>&1)"
+[ -z "$(ls -A "$TMP/evil")" ] && ok "cache là symlink: không dùng, đích symlink vẫn rỗng" \
+  || fail "cache là symlink: hook ghi vào đích symlink ($(ls -A "$TMP/evil" | head -3 | tr '\n' ' '))"
+case "$OUT" in *"Bug đã ghi vào checklist: "*|*"(ngữ cảnh DevKit như lượt trước)"*) ok "cache là symlink: hook vẫn chạy bình thường" ;;
+  *) fail "cache là symlink: hook không chạy được (output: $(printf '%s' "$OUT" | head -c 300))" ;; esac
+
+# Ca kiểm: thư mục cache có sẵn mà nhóm/người khác ghi được (0777). Mong đợi: hook không ghi pyc nào vào đó.
+W="$TMP/w"; mkdir -p "$W/devkit-pycache-${UID:-x}"; chmod 777 "$W/devkit-pycache-${UID:-x}"
+env -u PYTHONPYCACHEPREFIX TMPDIR="$W" PYTHONDONTWRITEBYTECODE=1 bash "$DEVKIT_DIR/hooks/prompt_context.sh" < "$TMP/prompt.json" >/dev/null 2>&1
+[ -z "$(ls -A "$W/devkit-pycache-${UID:-x}")" ] && ok "cache quyền lỏng (0777): không dùng, thư mục vẫn rỗng" \
+  || fail "cache quyền lỏng (0777): hook ghi vào ($(ls -A "$W/devkit-pycache-${UID:-x}" | head -3 | tr '\n' ' '))"
+
+# Ca kiểm (Antigravity 01/11): chạy CLI enrich_context.py không prefix, được ghi bytecode — nhánh sys.pycache_prefix is None của
+# _no_kit_pycache(); bước 4 bắt pyc ghi vào cây kit.
+env -u PYTHONPYCACHEPREFIX -u PYTHONDONTWRITEBYTECODE TMPDIR="$TMP" python3 "$DEVKIT_DIR/scripts/context/enrich_context.py" --hook \
+  < "$TMP/prompt.json" >/dev/null 2>&1
+
+# 4) Không ghi .pyc / __pycache__ nào vào cây kit (lý do của sys.dont_write_bytecode trong enrich_context.py).
 LEAK="$(find "$DEVKIT_DIR" -newer "$STAMP" \( -name '*.pyc' -o -name __pycache__ \) 2>/dev/null | head -3)"
 [ -z "$LEAK" ] && ok "không có bytecode nào ghi vào cây kit" || fail "bytecode ghi vào cây kit: $LEAK"
 

@@ -64,11 +64,13 @@ done
 # Bytecode của python3 trong hook (#813): thư mục riêng của user trong TMPDIR, không bao giờ trong cây kit. Claude Code xuất
 # PYTHONDONTWRITEBYTECODE=1, nên regression_checklist.py (3517 dòng) bị compile lại ở MỌI prompt; còn gate (tests/run_impacted.sh)
 # đặt PYTHONPYCACHEPREFIX vào thư mục rỗng, nên cả stdlib cũng compile lại mỗi lần: ~180–230 ms CPU thay vì ~100 ms
-# (tests/context_memory/test_prompt_hook_gate_env.sh). Điều kiện dùng: là thư mục, không phải symlink, do chính user này sở hữu
-# (TMPDIR trống thì là /tmp, chỗ user khác cũng tạo được thư mục và cài pyc). Thiếu một điều kiện: hook chạy với env của người gọi.
+# (tests/context_memory/test_prompt_hook_gate_env.sh). Điều kiện dùng: là thư mục, không phải symlink, do chính user này sở hữu,
+# và nhóm/người khác KHÔNG có quyền ghi (TMPDIR trống thì là /tmp dùng chung; thư mục có sẵn với quyền lỏng có thể đã chứa pyc
+# người khác cài, chmod lại không gỡ được chúng — OCR + Antigravity 01/11). Thiếu một điều kiện: hook chạy với env của người gọi.
 _PYC="${TMPDIR:-/tmp}"; _PYC="${_PYC%/}/devkit-pycache-${UID:-x}"
 [ -d "${_PYC}" ] || mkdir -m 700 "${_PYC}" 2>/dev/null
-if [ -d "${_PYC}" ] && [ ! -L "${_PYC}" ] && [ -O "${_PYC}" ]; then
+if [ -d "${_PYC}" ] && [ ! -L "${_PYC}" ] && [ -O "${_PYC}" ] \
+   && _LOOSE="$(find "${_PYC}" -prune \( -perm -020 -o -perm -002 \) -print 2>/dev/null)" && [ -z "${_LOOSE}" ]; then   # find exit ≠ 0 ⇒ nhánh else (env người gọi)
   export PYTHONPYCACHEPREFIX="${_PYC}" PYTHONDONTWRITEBYTECODE=   # rỗng = được ghi (python chỉ cấm khi chuỗi khác rỗng)
 fi
 

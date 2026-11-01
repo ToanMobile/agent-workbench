@@ -533,6 +533,7 @@ def enrich_prompt(prompt, devkit_root=".", project_root=None):
 
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        _no_kit_pycache()     # Antigravity 01/11: chạy CLI không prefix thì import này cũng ghi __pycache__ vào cây kit
         import hardware_boundaries as _hb
         hits = _hb.match_text(_hb.load(project_root or ""), prompt)
     except Exception:
