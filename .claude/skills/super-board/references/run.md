@@ -258,7 +258,7 @@ in a sub-agent, before touching a worktree.
 ```
 [ ] source .claude/bin/super-board-gh-guard.sh; sb_gh_guard_check 200
 [ ] build the in-flight list: .claude/bin/super-board-card.sh --config <cfg> items (one call) → [{number,title,status}] for
-    Building / QA / Review / Ready cards, leaving out every Ready card labelled `waiting-on:#*` (any case, on the item or its
+    Building / QA / Review / Ready cards, leaving out every Ready card labelled `waiting-on:#<number>` (#619: digits only, malformed labels do not hold a card; any case, on the item or its
     content, string or {name}) — a waiting card is not in progress; save it to a temp file
 [ ] bash .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> \
          --inflight <file> --cap <merge_policy.auto_max_lines, 0 when unset> [--files <paths you expect to touch>]

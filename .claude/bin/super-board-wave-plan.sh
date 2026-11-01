@@ -195,7 +195,8 @@ echo "$ITEMS" | jq --argjson cols "$COLUMNS" --argjson cap "$MAX_WORKERS" --argj
   def for_a_person($l): (($l | index("needs-you")) or ($l | index("human-gated")))
                         and ($l | map(. == "loop:rebase" or startswith("loop:rebuild-")) | any | not);
   # #601: thẻ Ready chỉ chờ thẻ khác mang nhãn `waiting-on:#N` (super-board-waiting-on.py mark); không phát, gỡ nhãn mới chạy.
-  def waiting_on($l): $l | map(startswith("waiting-on:#")) | any;
+  # #619: N phải là số — cùng regex với WAITING_ON_JQ của super-board-run.sh và LABEL_RE của super-board-waiting-on.py.
+  def waiting_on($l): $l | map(test("^waiting-on:#[0-9]+$"; "i")) | any;
   # #95: its QA needs a real device and none is online ($nodev, above). Not Review; a Ready card without `qa` is built first.
   def held_for_device($s; $l): $nodev and ($l | index("needs-device")) != null
                                and ($s == "QA" or ($s == "Ready" and ($l | index("qa")) != null));
