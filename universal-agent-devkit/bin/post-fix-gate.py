@@ -1530,6 +1530,15 @@ def scoped_store_receipt(project_dir, fp):
         return None
 
 
+def _scoped_reuse_max_s():
+    """#803: hạn tuổi (giây) của PASS mượn từ biên nhận scoped: DEVKIT_GATE_CACHE_MAX_S (mặc định 6 h); rác, nan, inf hay ≤ 0 ⇒ None (không mượn)."""
+    try:
+        v = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
+    except ValueError:
+        return None
+    return v if math.isfinite(v) and v > 0 else None
+
+
 def cached_scoped_pass(project_dir, matrix_arg, fp, scoped_decision, path=None, why_out=None):
     """#785: đọc và xác thực biên nhận scoped từ store chung (`<common>/postfix-gate/scoped_receipts/<fp>.json`).
     Chỉ trả dict biên nhận khi khớp toàn bộ: scope=='scoped', exit==0, không carried_from, còn trong hạn DEVKIT_GATE_CACHE_MAX_S theo tested_at,
@@ -1549,7 +1558,7 @@ def cached_scoped_pass(project_dir, matrix_arg, fp, scoped_decision, path=None, 
         if not path or not stat.S_ISREG(os.lstat(path).st_mode):
             return _reject("not_found")
         r = _load_state_json(path)
-        max_s = float(os.environ.get("DEVKIT_GATE_CACHE_MAX_S", "21600"))
+        max_s = _scoped_reuse_max_s()
     except (ImportError, OSError, ValueError, TypeError, OverflowError, RecursionError):
         return _reject("not_found")
     if not isinstance(r, dict) or not isinstance(r.get("tests"), list) or not r["tests"]:
@@ -1561,7 +1570,7 @@ def cached_scoped_pass(project_dir, matrix_arg, fp, scoped_decision, path=None, 
     def _time_ok(v):
         return not isinstance(v, bool) and isinstance(v, (int, float)) and -1e15 < v < 1e15
     tested, now = r.get("tested_at"), time.time()
-    if not _time_ok(tested) or tested > now + 60 or now - tested > max_s:
+    if max_s is None or not _time_ok(tested) or tested > now + 60 or now - tested > max_s:
         return _reject("ttl")
     if any(not isinstance(x, dict) or not (x.get("ran_at") is None or _time_ok(x.get("ran_at"))) for x in r["tests"]):
         return _reject("malformed")
@@ -7053,6 +7062,7 @@ def main():
             unity_max_s = float(os.environ.get("DEVKIT_UNITY_REUSE_MAX_S", "3600"))
         except ValueError:
             unity_max_s = 3600.0
+        scoped_max_s = _scoped_reuse_max_s() if scoped_src else None
 
         def ran_at(t):   # when this suite really ran: its own stamp, else the receipt's (a receipt without ran_at)
             return float((prev.get(t.get("id")) or {}).get("ran_at") or (found or {}).get("tested_at") or 0)
@@ -7066,6 +7076,13 @@ def main():
                 # V4-1: chỉ mượn PASS của đúng lệnh ma trận đó (SCOPED-EXTRA giữ id cố định nhưng lệnh đổi theo quyết định); lệch ⇒ chạy thật
                 if (prev.get(t.get("id")) or {}).get("full_command") != cmd:
                     return False
+                # #803: PASS mượn phải còn hạn theo ran_at của CHÍNH suite (tested_at của biên nhận có thể mới hơn) và chưa bị SuiteCache
+                # void sau lần chạy đó (TIMEOUT / FAIL chập chờn ở nơi khác), như SuiteCache.hit
+                at = ran_at(t)
+                if scoped_max_s is None or not (-60 < time.time() - at <= scoped_max_s):
+                    return False
+                if sc is not None and sc.voided(t.get("id"), at):
+                    return False
             keys = KEYS.get(id(t))
             if scoped_src and not keys and sc is not None and suite_keyable(src_m):
                 # #785 (AG5-P1b): lượt task / --scoped không dựng KEYS cho run_impacted.sh / Gradle, nhưng FAIL của chúng vẫn vào sổ khoá (F1):
@@ -7074,6 +7091,8 @@ def main():
                     keys = sc.keys(t)
                 except Exception as e:   # noqa: BLE001 - khoá không tính được: không mượn, suite này chạy thật
                     log_warn(f"suite_cache key {t.get('id')}: {e!r}")
+                    return False
+                if not any(keys or ()):   # #803: (None, None) — sổ khoá hỏng, --list lỗi / quá giờ: như nhánh ngoại lệ, không mượn
                     return False
             if sc is not None and any(sc.blocked(k, t.get("id")) for k in (keys or (None,))):
                 return False   # P2: khoá hiện tại từng FAIL hoặc suite bị cách ly (flaky): không có PASS nào được dùng lại cho nó

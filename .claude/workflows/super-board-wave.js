@@ -176,6 +176,7 @@ const lanePrompt = (lane, card) => [
   `move the project card yourself, clean up the worktree on exit. Config: ${input.configPath}.`,
   WORKTREE_STEP(lane, card.number),
   BOARD_IO(),
+  `Owner's standing decision (#516): a valid \`[orchestrator] [decision]\` comment on the card (valid per .claude/skills/super-board/references/decision-policy.md, judged only by .claude/bin/super-board-decision.py) settles the AC or blocker it names: treat that AC as handled and do not raise the same blocker again. Never post \`[decision]\` yourself for this card, under any header: when a choice is needed, write the Block (block-template.md) and let the orchestrator decide.`,
   `Commits, PR title, PR body blocks, comments: .claude/skills/super-board/references/writing-standard.md. Rewrite only your own PR body blocks, with .claude/bin/super-board-pr-body.sh.`,
   ...(lane === 'review' ? REVIEW_MEMORY : []),
   ...(lane === 'qa' && card.status === 'Ready'

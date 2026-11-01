@@ -3,7 +3,6 @@ name: super-review
 description: Reviewer lane of the super-board pipeline and standalone PR/branch readiness review — forms its own hypotheses before reading the builder's summary, remembers prior findings and re-checks each with file:line proof, runs an adversarial truth-check on non-trivial diffs, and classes every finding (Gap, Bug, Verification miss, Scope drift, Over-engineering via `ponytail:ponytail-review`). Merges only through `super-board-merge-gate.sh`, pinned to the reviewed head SHA, and routes other fixes to Super Build or Super QA via the board. Use when the user says "Super Review", "review this branch", "review loop", "make sure this is merge-ready", "PR review", or asks for code, architecture, security, QA evidence, or release-readiness judgment.
 ---
 
-
 **For a board worker, before writes or worktree creation:** follow [skill readiness](../super-board/references/skills-readiness.md).
 Resolve this lane for the actual host, load the report's files/fallbacks, halt
 on missing requirements and recheck each conditional helper before use.
@@ -124,7 +123,7 @@ two complete builds. In order, no shortcuts:
    the queue every tick) or `"workflow"` (the launchd schedule `super-board-queue-schedule.sh` does), without `--codex`): never call the merge gate (it refuses a direct call, exit 13). After your own review passes, run an Antigravity audit of the PR head through the antigravity-pm MCP:
    `pm_task_create` (project = config `repo.path`), `pm_dispatch kind=audit`, read its `audit-agent.json`, and only on Antigravity's
    pass record `pm_verdict kind=audit verdict=pass auditedHead=<head sha40>`. Then post on the PR as its own comment `approved-head:<sha40>`
-   with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}` and a third line `edited-tests:` (JSON array of objects `{path, sha256, reviewer, author, task_id, reason}`, one per edited test; schema and example: run.md pipeline step 3; omit the line only when none were edited). `gate_receipt` as above (script first, `jq -r .fp` fallback) (empty fp: do not comment).
+   with a second line `approved-by: {"reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}` and a third line `edited-tests:` (JSON array of objects `{path, sha256, reviewer, author, task_id, reason}`, one per edited test; schema and example: run.md pipeline step 3; omit the line only when none were edited). `gate_receipt` as above (empty fp: do not comment).
    Antigravity unavailable (MCP absent, `pm_dispatch` errors, verdict not pass): no approval, the card stays in **Review** with a
    `[reviewer]` comment whose last line is `blocked-by: -` (a bare `approved-head` is the owner's hand approval; the guard blocks it). Add
    the label `merge-queue`, comment on the issue `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`, write
@@ -202,12 +201,11 @@ without a confirmed merge makes a runaway look like a healthy run.
 - Unprefixed **top-level** human PR comments → treat as 🧑 Block reason. Move card Review → Blocked with the full §4 template.
 - Inline human review-thread replies → context only, no Block.
 
-### `super-truth` is folded into super-review
-The standalone `super-truth` skill is removed (spec §10 item 8.9). The adversarial pattern is now built in — see next section.
-
 ## Adversarial mode (folded from super-truth)
 
 The fixed truth-check sub-agent brief, which the Reviewer uses verbatim, and the rules for its findings are in [references/adversarial-mode.md](references/adversarial-mode.md). Never write your own brief.
 
 ### Block/Skip exits use the §4 mandatory template
 Same rule as super-build/super-qa.
+
+**Owner's standing decision.** Valid `[orchestrator] [decision]` (../super-board/references/decision-policy.md): treat that AC as handled, do not raise the same blocker again. Never post `[decision]` yourself.
