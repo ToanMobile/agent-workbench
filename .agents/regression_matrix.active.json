@@ -2619,6 +2619,53 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "merge-train-hook-refusal",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_train_hook_refusal.sh",
+        "tests/super-board/test_merge_gate_merge_stderr.sh",
+        "tests/super-board/test_merge_queue_refused_detail.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TRAIN-HOOK-REFUSAL-01",
+          "name": "#740/#775: train dựng chuỗi bằng git merge thật (hook vẫn chạy); hook guard-check kiểu GeelyEx2 #181 ⇒ 2 PR đụng file guard khác nhau cùng merged, PR chậm hơn base vẫn verify + merged; hook từ chối không file xung đột ⇒ gate-exit-5 + lời hook ở train-detail (không 'conflict'), chỉ trong chuỗi ⇒ deferred có lý do trong log; xung đột thật vẫn conflict exit 5 kèm tên file",
+          "command": "bash tests/super-board/test_merge_train_hook_refusal.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MQ-REFUSED-DETAIL-01",
+          "name": "#775: queue route gate-exit-5 kèm train-detail (git/hook từ chối) ⇒ comment PR + thẻ ghi 'merge refused' kèm lời hook, vẫn loop:rebase + Ready; conflict thật giữ chữ cũ",
+          "command": "bash tests/super-board/test_merge_queue_refused_detail.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-STDERR-FILE-01",
+          "name": "#775: merge gate ghi stderr của git merge ra file (hook để tiến trình nền giữ stderr không làm gate treo), in dòng CONFLICT của git khi xung đột thật, giữ link .agents/devkit khi repo không ignore nó",
+          "command": "bash tests/super-board/test_merge_gate_merge_stderr.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "verify-flags-arg-span",
+      "watch_files": [
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_verify_flags_arg_span.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-VERIFY-FLAGS-ARG-SPAN-01",
+          "name": "#802: sb_verify_inject_flags chỉ xét --full/--force-full/--scoped/--diff/--json trong phần đối số của post-fix-gate.py; token của lệnh khác trong lệnh ghép không chặn ' --diff origin/<base> --scoped' chèn ngay sau token",
+          "command": "bash tests/super-board/test_verify_flags_arg_span.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

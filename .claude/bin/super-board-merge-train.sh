@@ -9,7 +9,8 @@
 #   1. Mọi kích thước (cả 1 PR, Pha 2 hàng đợi merge) đi cùng một đường. Trước khi dựng cây: gate `--preflight` từng PR (policy, qa-report,
 #      AC, migrations, head; vài giây, không verify/merge). PR rớt preflight rời đợt với `train-result: <N> gate-exit-K`.
 #   2. Dựng scratch = origin/<base> + lần lượt các head (merge, đúng thứ tự --prs) rồi chạy verify_commands một lần.
-#      PR không merge sạch vào chuỗi thì bị loại (kết quả `conflict`, exit 5 như gate).
+#      PR không merge sạch vào chuỗi thì bị loại (kết quả `conflict`, exit 5 như gate). Hook của repo vẫn chạy trên commit gộp; hook từ
+#      chối mà không có file xung đột thì kết quả `gate-exit-5` kèm lời hook ở `train-detail:` (#740/#775), không ghi `conflict`.
 #   3. Đỏ: chia đôi tìm PR gây lỗi (tập đã xanh + nửa trái, rồi + nửa phải). PR đỏ bị loại, phần còn lại vẫn được chứng minh.
 #   4. Ghi biên nhận `<head sha> <cây sau khi merge head đó vào chuỗi>` cho các PR xanh, rồi gọi gate cho từng PR theo thứ tự với
 #      `--train-receipt`. Gate tự merge base hiện tại với head: cây trùng biên nhận thì bỏ verify, khác (base đã dời, head đổi,
@@ -94,26 +95,18 @@ run_gate() {
   done < <(cat "$GATE_OUT" "$GATE_ERR")
   return 0
 }
-# detail_tail <PR> <file>: ≤ 20 dòng cuối không rỗng của log đỏ, bỏ mã màu, thành `train-detail: <PR> <dòng>` (queue chép vào comment issue).
-# Đuôi log là dữ liệu tuỳ ý và đi vào comment issue CÔNG KHAI: mọi dòng qua redact_secrets() của kit (regression_checklist.py).
-# Không nạp được bộ che thì giấu cả đuôi (đóng an toàn), không bao giờ đăng log thô.
+# detail_tail <PR> <file> [nhãn]: ≤ 20 dòng cuối không rỗng của log, bỏ mã màu, thành `train-detail: <PR> <nhãn: ><dòng>` (queue chép vào
+# comment issue). Không nhãn = đuôi log verify đỏ; nhãn `merge-refused` = lời git/hook của note_refused (queue nhận ra bằng tiền tố đó).
+# Log là dữ liệu tuỳ ý và đi vào comment issue CÔNG KHAI: mọi dòng qua redact_secrets() của kit (regression_checklist.py).
+# Không nạp được bộ che (sb_redact_text, super-board-verify-flags.sh) thì giấu cả đoạn (đóng an toàn), không bao giờ đăng log thô.
 detail_tail() {
-  local raw kit="" d k
+  local raw pre="${3:+$3: }"
   raw=$(LC_ALL=C sed "s/$(printf '\033')\[[0-9;]*m//g" "$2" 2>/dev/null | grep -av '^[[:space:]]*$' | tail -20 || true)
   [ -n "$raw" ] || return 0
-  for d in "$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)" "$HERE"; do
-    for k in "$d/../../universal-agent-devkit/bin" "$d/../../.agents/devkit/bin" "${DEVKIT_ROOT:-/nonexistent}/bin"; do
-      [ -f "$k/regression_checklist.py" ] && { kit="$k"; break 2; }
-    done
-  done
-  # Che cả đoạn một lần (không từng dòng): khối khoá PEM nhiều dòng chỉ nhận ra được khi thấy cả khối. Lỗi của bộ che ra stderr của train.
-  if [ -n "$kit" ] && printf '%s\n' "$raw" | python3 -I -c 'import sys
-sys.path.insert(0, sys.argv[1])
-from regression_checklist import redact_secrets
-sys.stdout.write(redact_secrets(sys.stdin.read()))' "$kit" > "$DETAIL_DIR/.redacted"; then
-    sed "s/^/train-detail: $1 /" "$DETAIL_DIR/.redacted"
+  if printf '%s\n' "$raw" | sb_redact_text > "$DETAIL_DIR/.redacted"; then
+    sed "s/^/train-detail: $1 ${pre}/" "$DETAIL_DIR/.redacted"
   else
-    echo "train-detail: $1 (verify log tail hidden: the DevKit secret redactor could not be loaded)"
+    echo "train-detail: $1 ${pre}($([ -n "${3:-}" ] && echo "git/hook message" || echo "verify log tail") hidden: the DevKit secret redactor could not be loaded)"
   fi
 }
 trap 'rm -rf "$GATE_OUT" "$GATE_ERR" "$DETAIL_DIR"' EXIT
@@ -160,8 +153,8 @@ MAIN_WT=$(git -C "$REPO_ABS" worktree list --porcelain | sed -n '1s/^worktree //
 BASE_WT=${MAIN_WT:-$REPO_ABS}
 mkdir -p "$BASE_WT/.claude/worktrees"
 SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.train-scratch-XXXXXX")
-RECEIPT=$(mktemp); VLOG=$(mktemp)
-cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$GATE_OUT" "$GATE_ERR" "$GATE_RC" "$DETAIL_DIR"; rm -f "$TRAIN_STATE" "$TRAIN_STATE.tmp"; }
+RECEIPT=$(mktemp); VLOG=$(mktemp); CHAIN_ERR=$(mktemp)
+cleanup() { git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH" "$RECEIPT" "$VLOG" "$CHAIN_ERR" "$GATE_OUT" "$GATE_ERR" "$GATE_RC" "$DETAIL_DIR"; rm -f "$TRAIN_STATE" "$TRAIN_STATE.tmp"; }
 trap cleanup EXIT
 # Trạng thái train cho Agent Office / super-board-status.py (#562): `pid`, `started_at`, `step` (gate | merge) và mỗi PR một dòng
 # `pr <N> <sha> <ref>`. Ghi nguyên tử, chỉ sau khi giữ khoá và đã đặt trap dọn: train thoát exit 4 (khoá bận) không bao giờ đụng file của train
@@ -282,18 +275,45 @@ for cmd in "${VERIFY[@]}"; do
   done
 done
 
-# build_chain <PR...>: scratch = base + các head theo thứ tự. 1 nếu một head không merge sạch (in PR đó ra stderr qua $CHAIN_FAIL).
-CHAIN_FAIL=""
+# build_chain <PR...>: scratch = base + các head theo thứ tự, bằng `git merge` thật: hook của repo vẫn chạy trên commit gộp (chỉ đạo trên
+# #740: không tắt hook trong train/gate; hook phải tự nhận commit gộp sạch, như guard-check của GeelyEx2 sau #181).
+# 0: CHAIN_TREES = "<head> <cây sau khi gộp head đó vào chuỗi>" từng bước (biên nhận cho gate).
+# 1: một head không merge được: CHAIN_FAIL = PR đó, CHAIN_WHY = lý do. CHAIN_CONFLICT=1 khi có file xung đột thật; 0 khi git/hook từ chối
+#    commit gộp mà không có file xung đột (#740/#775: trước đây stderr bị nuốt, PR thành deferred/conflict không lý do). Lời git/hook ở
+#    $CHAIN_ERR (ghi ra file, không `$(…)`: hook để tiến trình nền giữ ống thì `$(…)` treo, review #772).
+CHAIN_FAIL=""; CHAIN_WHY=""; CHAIN_CONFLICT=0; CHAIN_TREES=()
 build_chain() {
-  local p
+  local p files why
+  CHAIN_FAIL=""; CHAIN_WHY=""; CHAIN_CONFLICT=0; CHAIN_TREES=()
   git -C "$SCRATCH" reset -q --hard "$BASE_SHA"; git -C "$SCRATCH" clean -qfd 2>/dev/null || true
   for p in "$@"; do
-    if ! git -C "$SCRATCH" merge --no-edit --quiet "$(head_of "$p")" >/dev/null 2>&1; then
+    if ! git -C "$SCRATCH" merge --no-edit --quiet "$(head_of "$p")" >"$CHAIN_ERR" 2>&1 8>&-; then
+      files=$(git -C "$SCRATCH" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ' || true)
+      if [ -n "$files" ]; then
+        CHAIN_CONFLICT=1; CHAIN_WHY="conflicts: ${files% }"
+      else
+        # Lý do của hook thường ở dòng ĐẦU (tail cắt mất khi hook in nhiều dòng); bỏ dòng "Not committing merge…" git tự thêm.
+        # Lời hook là dữ liệu tuỳ ý và log train vào manifest run: qua bộ che secret như train-detail. `sed -n` (không `head`): đọc hết
+        # ống, không SIGPIPE dưới pipefail.
+        why=$(sed -e '/^Not committing merge/d' -e '/^[[:space:]]*$/d' "$CHAIN_ERR" | sed -n '1,8p' | sb_redact_text | tr '\n' ' ' | cut -c1-600) \
+          || why="(git/hook message hidden: the DevKit secret redactor could not be loaded)"
+        CHAIN_WHY="a git hook or git itself refused the local merge commit (no conflicting file): ${why}"
+      fi
       git -C "$SCRATCH" merge --abort 2>/dev/null || true
       CHAIN_FAIL="$p"; return 1
     fi
+    CHAIN_TREES+=("$(head_of "$p") $(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')")
   done
   return 0
+}
+# note_refused <PR>: PR một mình cũng bị git/hook từ chối commit gộp (không có file xung đột, lời ở $CHAIN_ERR của lượt build_chain vừa
+# rồi): kết quả `gate-exit-5` — đúng mã merge gate thoát khi gộp base vào scratch bị từ chối (GeelyEx2 #179), nên queue và runner route
+# như gate (rebase pass: Builder tự gộp base với commit hợp lệ với hook). Lời hook thành train-detail (qua bộ che secret của detail_tail).
+REFUSED=()
+note_refused() {
+  sed -e '/^Not committing merge/d' "$CHAIN_ERR" | head -20 > "$DETAIL_DIR/.refused-src" || true
+  detail_tail "$1" "$DETAIL_DIR/.refused-src" merge-refused > "$DETAIL_DIR/refused-$1"
+  REFUSED+=("$1")
 }
 # verify_timed_out <rc>: verify hết giờ chứ không đỏ. Cùng tiêu chí với is_verify_timeout của merge gate: exit 124; gate đã in KẾT LUẬN thì chỉ khi
 # mọi suite đỏ là TIMEOUT; lệnh khác (không có dòng kết luận) thì log chứa "TIMEOUT after" / "quá giới hạn".
@@ -371,7 +391,7 @@ Làm test ổn định (bỏ phụ thuộc thời gian/tải) thay vì để mer
 #                     · 3 hết giờ sau một lần chạy lại (máy quá tải, không quy lỗi cho PR nào).
 verify_set() {
   local cmd run_cmd busy_line rc try merged p emeta
-  build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]"; return 2; }
+  build_chain "$@" || { say "PR #${CHAIN_FAIL} does not merge into the chain of [$*]: ${CHAIN_WHY}"; return 2; }
   # #643: clean -qfd giữ file ignore. Xoá rồi cài lại theo đúng các PR của lượt này, kẻo nửa chuỗi trước còn sót.
   rm -f "$SCRATCH/.claude/audit-gate/approved_tests.json"
   for p in "$@"; do
@@ -442,14 +462,27 @@ verify_set() {
 GOOD=(); RED=(); GATERED=(); CONFLICT=(); DEFERRED=()   # BLOCKED / DRYRC: đã khởi tạo ở preflight
 # Một PR không merge sạch vào base + các PR trước: bỏ ra trước, rồi mới chứng minh phần còn lại.
 # Sạch với base mà chỉ xung đột với PR đứng trước (R8): không phải lỗi của PR, ở lại Review chờ wave sau (lúc đó base đã có PR trước).
+# Git/hook từ chối commit gộp (không file xung đột): một mình cũng bị → note_refused (gate-exit-5); chỉ trong chuỗi → deferred như R8.
+# Mọi nhánh ghi lý do vào log (#740/#775).
+# classify_unchained <PR>: PR vừa không dựng được vào một chuỗi (lý do ở CHAIN_WHY của lượt build_chain vừa rồi) — dựng lại một mình
+# trên base: được ⇒ DEFERRED (R8); không ⇒ CONFLICT (có file xung đột) hoặc note_refused (git/hook từ chối). Dùng ở vòng ứng viên và
+# trong solve (chuỗi GOOD + PR khác chuỗi ứng viên khi một PR giữa chừng bị loại).
+classify_unchained() {
+  local chain_why=$CHAIN_WHY
+  if build_chain "$1"; then
+    DEFERRED+=("$1"); say "PR #$1 merges into origin/${BASE} alone but not after the PRs before it (${chain_why}); deferred to the next wave"
+  elif [ "$CHAIN_CONFLICT" -eq 1 ]; then
+    CONFLICT+=("$1"); say "PR #$1 does not merge into origin/${BASE}: ${CHAIN_WHY}"
+  else
+    note_refused "$1"; say "PR #$1: ${CHAIN_WHY}; not a content conflict (result gate-exit-5, as the merge gate exits here)"
+  fi
+}
 CANDS=()
 for p in "${LIST[@]}"; do
-  if build_chain ${CANDS[@]+"${CANDS[@]}"} "$p"; then CANDS+=("$p")
-  elif build_chain "$p"; then DEFERRED+=("$p")
-  else CONFLICT+=("$p"); fi
+  if build_chain ${CANDS[@]+"${CANDS[@]}"} "$p"; then CANDS+=("$p"); else classify_unchained "$p"; fi
 done
 # solve <PR...>: GOOD dài ra bằng các PR xanh; PR đỏ vào RED. Đỏ thì chia đôi, đúng một PR đỏ thì đó là thủ phạm.
-# Hết giờ (3) dừng cả chia đôi (ABORT): PR chưa chứng minh được không bị quy là đỏ. Chuỗi không dựng được (2) ở đúng một PR → CONFLICT.
+# Hết giờ (3) dừng cả chia đôi (ABORT): PR chưa chứng minh được không bị quy là đỏ. Chuỗi không dựng được (2) ở đúng một PR → classify_unchained.
 ABORT=0
 solve() {
   [ "$#" -gt 0 ] && [ "$ABORT" -eq 0 ] || return 0
@@ -461,7 +494,8 @@ solve() {
   esac
   if [ "$#" -eq 1 ]; then
     # Đỏ đúng một PR: $VLOG lúc này là log của lệnh verify đỏ với PR này (lượt sau ghi đè), giữ đuôi của nó cho train-detail.
-    if [ "$rc" -eq 2 ]; then CONFLICT+=("$1"); else RED+=("$1"); detail_tail "$1" "$VLOG" > "$DETAIL_DIR/red-$1"; fi
+    if [ "$rc" -eq 2 ]; then classify_unchained "$1"
+    else RED+=("$1"); detail_tail "$1" "$VLOG" > "$DETAIL_DIR/red-$1"; fi
     return 0
   fi
   local half=$(( $# / 2 )) all=("$@")
@@ -493,7 +527,8 @@ while [ "${#GOOD[@]}" -gt 0 ]; do
   done
   [ "$DROPPED" -eq 1 ] || break
   for p in "${CANDS[@]+"${CANDS[@]}"}"; do
-    in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} || PENDING+=("$p")
+    in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} \
+      ${REFUSED[@]+"${REFUSED[@]}"} ${DEFERRED[@]+"${DEFERRED[@]}"} || PENDING+=("$p")
   done
   CANDS=(${NEWGOOD[@]+"${NEWGOOD[@]}"}); GOOD=(); ABORT=0
   [ "${#CANDS[@]}" -eq 0 ] || solve "${CANDS[@]}"
@@ -501,18 +536,14 @@ done
 # PR chưa được chứng minh xanh/đỏ/conflict vì verify hết giờ.
 TIMEDOUT=()
 for p in "${PENDING[@]+"${PENDING[@]}"}" "${CANDS[@]+"${CANDS[@]}"}"; do
-  in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} || TIMEDOUT+=("$p")
+  in_list "$p" ${GOOD[@]+"${GOOD[@]}"} ${RED[@]+"${RED[@]}"} ${CONFLICT[@]+"${CONFLICT[@]}"} \
+    ${REFUSED[@]+"${REFUSED[@]}"} ${DEFERRED[@]+"${DEFERRED[@]}"} || TIMEDOUT+=("$p")
 done
 
 # Biên nhận: cây sau từng head của chuỗi GOOD (đúng tập vừa qua verify xanh ở lượt solve gần nhất có thêm PR).
 if [ "${#GOOD[@]}" -gt 0 ]; then
-  build_chain "${GOOD[@]}" || { say "internal: the verified chain no longer builds"; exit 1; }
-  : >"$RECEIPT"
-  git -C "$SCRATCH" reset -q --hard "$BASE_SHA"
-  for p in "${GOOD[@]}"; do
-    git -C "$SCRATCH" merge --no-edit --quiet "$(head_of "$p")" >/dev/null 2>&1 || { say "internal: chain merge failed for #${p}"; exit 1; }
-    echo "$(head_of "$p") $(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" >>"$RECEIPT"
-  done
+  build_chain "${GOOD[@]}" || { say "internal: the verified chain no longer builds (#${CHAIN_FAIL}: ${CHAIN_WHY})"; exit 1; }
+  printf '%s\n' "${CHAIN_TREES[@]}" >"$RECEIPT"
 fi
 
 train_state merge
@@ -531,11 +562,12 @@ for p in "${GOOD[@]+"${GOOD[@]}"}"; do
 done
 for p in "${DEFERRED[@]+"${DEFERRED[@]}"}"; do echo "train-result: $p deferred"; done
 for p in "${CONFLICT[@]+"${CONFLICT[@]}"}"; do echo "train-result: $p conflict"; done
+for p in "${REFUSED[@]+"${REFUSED[@]}"}"; do echo "train-result: $p gate-exit-5"; cat "$DETAIL_DIR/refused-$p" 2>/dev/null || true; done
 for p in "${RED[@]+"${RED[@]}"}"; do echo "train-result: $p red"; echo "train-red: $p"; cat "$DETAIL_DIR/red-$p" 2>/dev/null || true; done
 for p in "${TIMEDOUT[@]+"${TIMEDOUT[@]}"}"; do echo "train-result: $p timeout"; done
 if [ "${#RED[@]}" -gt 0 ] || [ "${#GATERED[@]}" -gt 0 ]; then exit 11; fi
 if [ "$RC" -ne 0 ]; then exit "$RC"; fi
 if [ "${#TIMEDOUT[@]}" -gt 0 ]; then exit 12; fi
-if [ "${#CONFLICT[@]}" -gt 0 ]; then exit 5; fi
+if [ "${#CONFLICT[@]}" -gt 0 ] || [ "${#REFUSED[@]}" -gt 0 ]; then exit 5; fi
 if [ "${#MOVED[@]}" -gt 0 ]; then exit 6; fi
 exit 0
