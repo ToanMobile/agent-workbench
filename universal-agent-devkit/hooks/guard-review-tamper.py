@@ -40,6 +40,9 @@ Residual (same uid, no privilege separation): a script that hides those names (s
 computed write target on a line with no machinery hint (`cp x "$P"`, P set by an earlier call), nor a file a planted
 `…/bin/review_sign.py verify <new path>` creates; the code_hash binding of the seal
 (bin/review_sign.py) and the write ban on .git/review-fanout keep a forged verdict out of the run dir.
+Quyết định của chủ repo 02/11/2026 cho #742, câu trả lời nguyên văn: "Nhận residual #760 (Khuyến nghị)". Mọi cách gọi bộ ký
+review_sign.py (chạy trực tiếp, qua shell, qua biến, xây chuỗi…) là residual của #760 (cùng uid, không tách quyền), không chặn
+#742: phần chặn bộ ký ở trên là lớp cố gắng tối đa, một dạng gọi bộ ký mà nó bỏ lọt không phải finding của guard này.
 Reading the code stays allowed. DEVKIT_ALLOW_GATE_EDIT=1 in the hook process environment (the operator's shell / launchd, never a
 prefix on the command: the agent cannot set it for its own hooks) turns the guard off for a maintenance session.
 Its own errors never block (it reports them on stderr); a shell_writes failure denies a line that names the machinery.
