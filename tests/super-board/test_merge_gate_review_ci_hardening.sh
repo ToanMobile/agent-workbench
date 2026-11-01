@@ -13,6 +13,9 @@
 #   T2 DevKit cũ không có `review-fanout.sh --verify-summary` → exit 9 (fail-closed, gate không tự tính HMAC)
 #   G  #744: cửa sổ grandfather tạm (hạn 2026-11-01 06:00 +07) đã gỡ: PR mở trước #742 thiếu review → exit 10, summary không ký → exit 6,
 #      gate không đọc createdAt và helper đã xoá
+#   S  2823727da8: REVIEW_REGRESSION_STATUS thừa hưởng từ môi trường bị loại bỏ; đường dẫn status ngoài cây (B2) chỉ nhận qua cờ
+#      --review-status-file <abs-path> (cấm SB_BOARD_WORKER=1) hoặc merge_policy.review_status_file trong --config tin cậy, kiểm tra nằm
+#      ngoài repo/scratch và không được làm rơi/bỏ qua hàng BUG-REV-* đang mở trong checklist của nhánh
 # Verdict đi qua đúng entry point thật: universal-agent-devkit/bin/review-fanout.sh --status / --verify-summary (khoá HMAC trong
 # HOME tạm của test, ký bằng review_sign.py như review-merge.py). gh là bản giả. Tương thích bash 3.2.
 set -u
@@ -28,7 +31,8 @@ trap 'rm -rf "$TMP"' EXIT
 TMP="$(cd "$TMP" && pwd -P)"
 DK="$ROOT/universal-agent-devkit/bin"
 export HOME="$TMP/home"; mkdir -p "$HOME"
-unset REVIEW_SKIP_REVIEWERS REVIEW_CLAUDE_MODEL REVIEW_GROK_MODEL REVIEW_AGY_MODEL SB_MERGE_ACCEPT_REDUCED_REVIEW
+unset REVIEW_SKIP_REVIEWERS REVIEW_CLAUDE_MODEL REVIEW_GROK_MODEL REVIEW_AGY_MODEL REVIEW_REGRESSION_STATUS \
+  REVIEW_CLAUDE_BIN REVIEW_GROK_BIN REVIEW_AGY_CLI REVIEW_DEEP_LINES SB_MERGE_ACCEPT_REDUCED_REVIEW
 export SB_HEAVY_SLOT_DIR="$TMP/heavy-slots"; mkdir -p "$SB_HEAVY_SLOT_DIR"
 export SB_NOTIFY_SKIP=1 SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_MERGE_RECHECK_DELAY_S=0
 export SB_MERGE_AUTO_POLL_S=1 SB_MERGE_AUTO_WAIT_S=20
@@ -315,5 +319,58 @@ gate 5 "$GATE" FAKE_CREATED=2026-10-30T10:00:00Z --
 [ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && ! grep -q GRANDFATHERED "$TMP/err" && ! grep -q createdAt "$TMP/gh.calls" \
   && ok "G PR opened before #742 without a signed verdict (unsigned summary): exit 6, never grandfathered, createdAt never read" \
   || fail "G pre-cutoff PR (unsigned): $(why) createdAt=$(grep -c createdAt "$TMP/gh.calls")"
+
+# ── S. 2823727da8: REVIEW_REGRESSION_STATUS thừa hưởng từ môi trường bị loại bỏ; status ngoài cây (B2) chỉ nhận qua --review-status-file
+# hoặc merge_policy.review_status_file trong --config, phải nằm ngoài repo/scratch và không được làm rơi hàng BUG-REV-* đang mở.
+STF="$TMP/status-outside.json"; printf '%s\n' '{"version":1,"items":{}}' > "$STF"
+clear_verdicts; REVIEW_REGRESSION_STATUS="$STF" verdict "$H5" "" PASS light ok pass sign
+gate 5 "$GATE" REVIEW_REGRESSION_STATUS="$STF" --
+[ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && [ ! -e "$TMP/verified" ] && grep -q 'inherited REVIEW_REGRESSION_STATUS is ignored' "$TMP/err" \
+  && ok "S1 inherited REVIEW_REGRESSION_STATUS is ignored: bound review not matched (exit 10), no merge" || fail "S1 env status: $(why)"
+gate 5 "$GATE" -- --review-status-file "$STF"
+[ "$RC" -eq 0 ] && [ "$(merged_calls)" = 1 ] && grep -q "review: regression status from $STF (sha256 " "$TMP/err" \
+  && ok "S2 --review-status-file <the file the review read>: signed PASS found, merged, file + sha256 logged" || fail "S2 flag: $(why)"
+printf '%s\n' '{"version":1,"items":{"REG-X":{"kind":"test","status":"PASS"}}}' > "$TMP/status-other.json"
+gate 5 "$GATE" -- --review-status-file "$TMP/status-other.json"
+[ "$RC" -eq 10 ] && [ "$(merged_calls)" = 0 ] && ok "S3 --review-status-file with other bytes: another code state (exit 10), no merge" || fail "S3 other status: $(why)"
+gate 5 "$GATE" -- --review-status-file status-outside.json
+[ "$RC" -eq 64 ] && [ "$(merged_calls)" = 0 ] && grep -q 'must name an existing file by absolute path' "$TMP/err" \
+  && ok "S4a relative --review-status-file: usage error (exit 64)" || fail "S4a relative: $(why)"
+printf '%s\n' '{"version":1,"items":{}}' > "$R/inside-repo.json"
+gate 5 "$GATE" -- --review-status-file "$R/inside-repo.json"
+rm -f "$R/inside-repo.json"
+[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && grep -q 'outside the repo' "$TMP/err" \
+  && ok "S4b inside-repo --review-status-file (even valid checklist JSON in main worktree): rejected (exit 6), no merge" || fail "S4b inside repo: $(why)"
+gate 5 "$GATE" SB_BOARD_WORKER=1 -- --review-status-file "$STF"
+[ "$RC" -eq 13 ] && [ "$(merged_calls)" = 0 ] && grep -q 'board worker may not pass --review-status-file' "$TMP/err" \
+  && ok "S4c SB_BOARD_WORKER=1 cannot pass --review-status-file (exit 13)" || fail "S4c worker flag: $(why)"
+
+git -C "$R" branch -q --no-track feat-8 origin/main
+git -C "$R" worktree add -q "$W/build-8" feat-8
+mkdir -p "$W/build-8/.agents"
+printf '%s\n' '{"version":1,"items":{"BUG-REV-s5":{"kind":"bug","status":"OPEN","title":"open review bug","tests":[]}}}' > "$W/build-8/.agents/regression_status.json"
+git -C "$W/build-8" add .agents/regression_status.json; git -C "$W/build-8" commit -qm "card 8"
+git -C "$R" push -q origin feat-8
+H8=$(git -C "$R" rev-parse feat-8); echo "$H8" > "$TMP/pr8.head"; echo "feat-8" > "$TMP/pr8.ref"
+git -C "$R" diff origin/main feat-8 > "$TMP/pr8.diff"
+printf '{"files":[{"path":".agents/regression_status.json","additions":1,"deletions":0}],"labels":[],"body":"","additions":1,"deletions":0,"changedFiles":1}' > "$TMP/pr8.meta"
+git -C "$R" worktree add -q --detach "$W/review-8" "$H8"
+clear_verdicts; REVIEW_REGRESSION_STATUS="$STF" verdict "$H8" "" PASS light ok pass sign
+gate 8 "$GATE" -- --review-status-file "$STF"
+[ "$RC" -eq 6 ] && [ "$(merged_calls)" = 0 ] && grep -q 'BUG-REV-s5' "$TMP/err" \
+  && ok "S5 empty out-of-tree status file cannot mask active BUG-REV-* row in tracked checklist (exit 6)" || fail "S5 mask bug row: $(why)"
+
+CFG_B2="$TMP/cfg-b2.json"
+python3 - "$CFG" "$CFG_B2" "$STF" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c.setdefault("merge_policy", {})["review_status_file"] = sys.argv[3]
+json.dump(c, open(sys.argv[2], "w"))
+PY
+clear_verdicts; REVIEW_REGRESSION_STATUS="$STF" verdict "$H5" "" PASS light ok pass sign
+CFG_SAVE=$CFG; CFG=$CFG_B2
+gate 5 "$GATE" --
+CFG=$CFG_SAVE
+[ "$RC" -eq 0 ] && [ "$(merged_calls)" = 1 ] && grep -q "review: regression status from $STF (sha256 " "$TMP/err" \
+  && ok "S6 merge_policy.review_status_file in trusted --config matches B2 review without CLI flag" || fail "S6 config status file: $(why)"
 
 if [ "$FAILS" -eq 0 ]; then echo "all passed"; exit 0; else echo "$FAILS failed"; exit 1; fi

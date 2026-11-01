@@ -132,6 +132,9 @@
 #     signed summary.json is re-verified with `review-fanout.sh --verify-summary` on a private copy. No fanout, or a fanout
 #     without --verify-summary → exit 9;
 #     UNSIGNED / forged / FAIL / PASS_REDUCED → exit 6 (back to Review); NONE → exit 10 (`review-missing:`); RUNNING → exit 4.
+#     2823727da8: REVIEW_REGRESSION_STATUS thừa hưởng từ môi trường luôn bị loại bỏ (cùng REVIEW_SKIP_REVIEWERS / REVIEW_*_MODEL /
+#     REVIEW_*_BIN); file trạng thái hồi quy ngoài cây của B2 chỉ nhận qua `--review-status-file <abs-path>` (cấm SB_BOARD_WORKER=1)
+#     hoặc `merge_policy.review_status_file` trong `--config` tin cậy, kiểm tra nằm ngoài repo/scratch và không làm rơi hàng BUG-REV-*.
 #     `--accept-reduced-review <skip list>` (or SB_MERGE_ACCEPT_REDUCED_REVIEW=<list>, per run) accepts PASS_REDUCED of that
 #     exact skip list for a PR outside the machine gate only. Default: rejected.
 #   * Never merges with a failing CI check (`gh pr checks`: fail/cancel/unknown bucket → exit 11; unreadable → exit 4).
@@ -165,6 +168,11 @@ CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJ
 PREFLIGHT=0; STANDALONE=0
 # PASS_REDUCED is never accepted unless THIS run names the skip list explicitly (flag or env); never for a machine-gated PR.
 ACCEPT_REDUCED="${SB_MERGE_ACCEPT_REDUCED_REVIEW:-}"
+# 2823727da8: không bao giờ thừa hưởng REVIEW_REGRESSION_STATUS từ môi trường; file status ngoài repo (B2) chỉ nhận từ cờ của lượt chạy
+# này (ngoài board worker) hoặc từ merge_policy.review_status_file trong --config tin cậy.
+_INHERITED_REVIEW_STATUS="${REVIEW_REGRESSION_STATUS-}"
+unset REVIEW_REGRESSION_STATUS
+REVIEW_STATUS_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -179,11 +187,22 @@ while [ $# -gt 0 ]; do
     --preflight)     PREFLIGHT=1; shift ;;
     --standalone)    STANDALONE=1; shift ;;
     --accept-reduced-review) ACCEPT_REDUCED="$2"; shift 2 ;;
+    --review-status-file) REVIEW_STATUS_FILE="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
 [ -n "$CONFIG" ] && [ -e "$CONFIG" ] || { echo "config not found: ${CONFIG:-<unset>}" >&2; exit 66; }
 [ -n "$PR" ] || { echo "--pr <number> is required" >&2; exit 64; }
+if [ -n "$REVIEW_STATUS_FILE" ]; then
+  if [ "${SB_BOARD_WORKER-}" = 1 ]; then
+    echo "[merge-gate #${PR}] board worker may not pass --review-status-file" >&2
+    exit 13
+  fi
+  if ! { [[ "$REVIEW_STATUS_FILE" = /* ]] && [ -f "$REVIEW_STATUS_FILE" ]; }; then
+    echo "--review-status-file must name an existing file by absolute path (got '${REVIEW_STATUS_FILE}')" >&2
+    exit 64
+  fi
+fi
 [ -z "$MSG_FILE" ] || [ -r "$MSG_FILE" ] || { echo "--body-file not readable: $MSG_FILE" >&2; exit 66; }
 # ---- merge queue: một đường merge duy nhất ---------------------------------------
 # Đứng trước mọi việc tốn kém (đọc GitHub, khoá, scratch). Config không đọc được thì coi như tắt: đường cũ tự dừng ở bước kiểm config.
@@ -228,6 +247,13 @@ fi
 
 CONFIG_JSON=$(cat "$CONFIG")
 printf '%s\n' "$CONFIG_JSON" | python3 "$HERE/super-board-verification-ready.py" --config -
+if [ -z "$REVIEW_STATUS_FILE" ]; then
+  REVIEW_STATUS_FILE=$(echo "$CONFIG_JSON" | jq -r '.merge_policy.review_status_file // ""')
+  if [ -n "$REVIEW_STATUS_FILE" ] && ! { [[ "$REVIEW_STATUS_FILE" = /* ]] && [ -f "$REVIEW_STATUS_FILE" ]; }; then
+    echo "verification-readiness: merge_policy.review_status_file must name an existing file by absolute path (got '${REVIEW_STATUS_FILE}')" >&2
+    exit 9
+  fi
+fi
 BASE=$(echo "$CONFIG_JSON" | jq -r '.base_branch // "main"')
 PROJECT_OWNER=$(echo "$CONFIG_JSON" | jq -r '.project.owner // ""')
 PROJECT_NUMBER=$(echo "$CONFIG_JSON" | jq -r '.project.number // ""')
@@ -686,8 +712,9 @@ fi
 # (review-fanout.sh --status: cùng mã băm code state, tự kiểm chữ ký), rồi xác minh lại chữ ký trên BẢN CHÉP summary.json bằng
 # review-fanout.sh --verify-summary trước khi đọc depth/security (không TOCTOU giữa hai lần đọc). Thiếu tool → exit 9; UNSIGNED, giả mạo,
 # FAIL, PASS_REDUCED → exit 6 (về Review); NONE → exit 10 (review-missing); RUNNING → exit 4. Base của review = merge-base(head PR, origin/<base>), đúng mặc định của
-# review-fanout trên nhánh PR (toàn bộ diff của PR); cây scratch lúc gọi là head PR sạch (chưa gộp base). Biến REVIEW_* (skip, model)
-# của môi trường bị bỏ: gate chỉ nhận review với model mặc định đã ghim, PASS_REDUCED chỉ qua --accept-reduced-review.
+# review-fanout trên nhánh PR (toàn bộ diff của PR); cây scratch lúc gọi là head PR sạch (chưa gộp base). Biến REVIEW_* (skip, model,
+# binary, REVIEW_REGRESSION_STATUS) của môi trường bị loại bỏ: gate chỉ nhận review với model/binary mặc định đã ghim, PASS_REDUCED chỉ
+# qua --accept-reduced-review, và status ngoài cây (B2) chỉ qua --review-status-file hoặc merge_policy.review_status_file đã kiểm tra.
 find_review_fanout() {
   local c
   for c in "$HERE/../../universal-agent-devkit/bin" "$REPO_ABS/universal-agent-devkit/bin" "$REPO_ABS/.agents/devkit/bin" \
@@ -699,6 +726,8 @@ find_review_fanout() {
 review_status() {  # review_status [<skip list>] [deep] → REVIEW_RC, REVIEW_LINE, REVIEW_WORD, REVIEW_RUN
   REVIEW_RC=0
   REVIEW_LINE=$(cd "$SCRATCH" && env -u REVIEW_SKIP_REVIEWERS -u REVIEW_CLAUDE_MODEL -u REVIEW_GROK_MODEL -u REVIEW_AGY_MODEL \
+    -u REVIEW_CLAUDE_BIN -u REVIEW_GROK_BIN -u REVIEW_AGY_CLI -u REVIEW_DEEP_LINES \
+    -u REVIEW_REGRESSION_STATUS ${REVIEW_STATUS_FILE:+"REVIEW_REGRESSION_STATUS=$REVIEW_STATUS_FILE"} \
     bash "$REVIEW_BIN/review-fanout.sh" --repo "$SCRATCH" --base "$REVIEW_BASE" ${1:+--skip "$1"} ${2:+--depth "$2"} --status 2>/dev/null | tail -1) \
     || REVIEW_RC=$?
   REVIEW_WORD=${REVIEW_LINE%% *}
@@ -718,7 +747,9 @@ review_missing() {
 # point existed answers "unknown argument" with 2) means the seal cannot be checked: verification-readiness, never a merge.
 review_seal_check() {
   local rc=0
-  env -u REVIEW_SKIP_REVIEWERS bash "$REVIEW_BIN/review-fanout.sh" --verify-summary "$1" >/dev/null 2>&1 || rc=$?
+  env -u REVIEW_SKIP_REVIEWERS -u REVIEW_CLAUDE_MODEL -u REVIEW_GROK_MODEL -u REVIEW_AGY_MODEL \
+    -u REVIEW_CLAUDE_BIN -u REVIEW_GROK_BIN -u REVIEW_AGY_CLI -u REVIEW_DEEP_LINES -u REVIEW_REGRESSION_STATUS \
+    bash "$REVIEW_BIN/review-fanout.sh" --verify-summary "$1" >/dev/null 2>&1 || rc=$?
   case "$rc" in
     0) return 0 ;;
     1) review_void "summary.json seal does not verify (unsigned or forged)" ;;
@@ -727,7 +758,7 @@ review_seal_check() {
   esac
 }
 review_verdict_check() {
-  local want=PASS first
+  local want=PASS first st_out
   REVIEW_BIN=$(find_review_fanout) || {
     echo "verification-readiness: no DevKit review-fanout.sh next to the gate or in ${REPO_ABS} — the 4-way review verdict cannot be checked; nothing merged (fail-closed)" >&2
     exit 9; }
@@ -737,6 +768,69 @@ review_verdict_check() {
   fi
   REVIEW_BASE=$(git -C "$REPO_PATH" merge-base "$HEAD_SHA" "$BASE_SHA" 2>/dev/null) || REVIEW_BASE=""
   [ -n "$REVIEW_BASE" ] || review_void "no merge-base between ${HEAD_SHA} and origin/${BASE}"
+  if [ -n "$_INHERITED_REVIEW_STATUS" ] && [ -z "$REVIEW_STATUS_FILE" ]; then
+    say "note: inherited REVIEW_REGRESSION_STATUS is ignored (2823727da8); pass --review-status-file <abs-path> (or merge_policy.review_status_file in --config) for an out-of-tree B2 review"
+  fi
+  if [ -n "$REVIEW_STATUS_FILE" ]; then
+    # 2823727da8 + B2: kiểm tra đường dẫn thật nằm ngoài cả repo chính lẫn scratch, đúng định dạng checklist JSON, không chứa hàng
+    # BUG-REV-* chưa PASS, và không làm rơi bất kỳ hàng BUG-REV-* đang hoạt động nào trong .agents/regression_status.json của nhánh.
+    if ! st_out=$(python3 -I - "$REVIEW_BIN" "$REPO_ABS" "$SCRATCH" "$REVIEW_STATUS_FILE" 2>&1 <<'PY'
+import hashlib, json, os, subprocess, sys
+rbin, repo_abs, scratch, st_path = sys.argv[1:5]
+sys.dont_write_bytecode = True
+sys.path.insert(0, rbin)
+real = os.path.realpath(st_path)
+if not os.path.isabs(st_path) or not os.path.isfile(real):
+    print(f"review_status_file is not an existing regular file: {st_path}")
+    sys.exit(1)
+roots = {os.path.realpath(repo_abs), os.path.realpath(scratch)}
+wt_out = subprocess.run(["git", "-C", scratch, "worktree", "list", "--porcelain"], capture_output=True, text=True).stdout
+for line in wt_out.splitlines():
+    if line.startswith("worktree "):
+        roots.add(os.path.realpath(line[9:].strip()))
+common_out = subprocess.run(["git", "-C", scratch, "rev-parse", "--git-common-dir"], capture_output=True, text=True).stdout.strip()
+if common_out:
+    roots.add(os.path.realpath(os.path.join(scratch, common_out)))
+for root in sorted(roots):
+    if real == root or real.startswith(root + os.sep):
+        print(f"review_status_file must be outside the repo tree (got {st_path})")
+        sys.exit(1)
+raw = open(real, "rb").read()
+try:
+    ext = json.loads(raw.decode("utf-8"))
+except (UnicodeDecodeError, ValueError) as e:
+    print(f"review_status_file is unreadable JSON ({e}): {st_path}")
+    sys.exit(1)
+if not isinstance(ext, dict) or not isinstance(ext.get("items"), dict):
+    print(f"review_status_file is not a regression checklist JSON (missing items): {st_path}")
+    sys.exit(1)
+import regression_checklist as rc
+REV_BAD = {"OPEN", "NEEDS_TEST", "NOT_IN_MATRIX", "NOT_RUN", "FAIL", "TIMEOUT", "VACUOUS", "STALE", "FLAKY", "REPORTED"}
+tracked = rc.load(scratch)
+ext_items = ext["items"]
+for iid, item in sorted((tracked.get("items") or {}).items()):
+    if not ((iid.startswith("BUG-REV-") or iid.startswith("REV-")) and isinstance(item, dict) and item.get("kind") == "bug"):
+        continue
+    tst = str(rc.effective_status(tracked, item))
+    if tst == "DROPPED":
+        continue
+    if iid not in ext_items or not isinstance(ext_items.get(iid), dict):
+        print(f"out-of-tree status file omits active review bug row {iid} ({tst}) from tracked checklist")
+        sys.exit(1)
+for iid, item in sorted(ext_items.items()):
+    if not ((iid.startswith("BUG-REV-") or iid.startswith("REV-")) and isinstance(item, dict) and item.get("kind") == "bug"):
+        continue
+    est = str(rc.effective_status(ext, item))
+    if est in REV_BAD or est.startswith("ERROR"):
+        print(f"out-of-tree status file leaves review bug row {iid} in {est}")
+        sys.exit(1)
+print(hashlib.sha256(raw).hexdigest()[:16])
+PY
+    ); then
+      review_void "$(printf '%s\n' "$st_out" | tail -1 | clip 300)"
+    fi
+    say "review: regression status from ${REVIEW_STATUS_FILE} (sha256 ${st_out}) — explicit out-of-tree override (B2)"
+  fi
   review_status ""
   case "$REVIEW_RC:$REVIEW_WORD" in
     0:PASS) : ;;
