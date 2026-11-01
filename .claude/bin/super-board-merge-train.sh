@@ -311,7 +311,9 @@ build_chain() {
 # như gate (rebase pass: Builder tự gộp base với commit hợp lệ với hook). Lời hook thành train-detail (qua bộ che secret của detail_tail).
 REFUSED=()
 note_refused() {
-  sed -e '/^Not committing merge/d' "$CHAIN_ERR" | head -20 > "$DETAIL_DIR/.refused-src" || true
+  # Bỏ dòng trắng TRƯỚC khi lấy 20 dòng đầu; hook im lặng (thoát khác 0, không in gì) vẫn có một dòng merge-refused để queue nhận ra.
+  sed -e '/^Not committing merge/d' -e '/^[[:space:]]*$/d' "$CHAIN_ERR" | sed -n '1,20p' > "$DETAIL_DIR/.refused-src" || true
+  [ -s "$DETAIL_DIR/.refused-src" ] || echo "(a git hook refused the local merge commit without printing a reason)" > "$DETAIL_DIR/.refused-src"
   detail_tail "$1" "$DETAIL_DIR/.refused-src" merge-refused > "$DETAIL_DIR/refused-$1"
   REFUSED+=("$1")
 }

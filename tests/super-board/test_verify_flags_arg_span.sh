@@ -66,6 +66,9 @@ sb_verify_inject_flags "echo post-fix-gate.pyx && true" main >/dev/null 2>"$TMPE
 TOK="gh""p_$(printf 'Z%.0s' $(seq 1 30))"
 out=$(printf 'auth %s\n' "$TOK" | sb_redact_text); rc=$?
 [ "$rc" -eq 0 ] && [ -n "$out" ] && ! printf '%s' "$out" | grep -q "$TOK" && ok "sb_redact_text redacts a token" || fail "sb_redact_text: rc=$rc out=[$out]"
+# Byte không phải UTF-8 (log nhị phân, mã màu hỏng): vẫn che và in được, không rơi vào đường giấu cả đoạn (audit Antigravity).
+out=$(printf 'bin \377\376 auth %s\n' "$TOK" | sb_redact_text); rc=$?
+[ "$rc" -eq 0 ] && [ -n "$out" ] && ! printf '%s' "$out" | grep -q "$TOK" && ok "sb_redact_text handles non-UTF-8 bytes" || fail "sb_redact_text non-UTF-8: rc=$rc out=[$out]"
 mkdir -p "$TMPD/bin"; cp "$ROOT/.claude/bin/super-board-verify-flags.sh" "$TMPD/bin/"
 out=$(printf 'auth %s\n' "$TOK" | HERE=/nonexistent DEVKIT_ROOT=/nonexistent bash -c '. "$1"; sb_redact_text' _ "$TMPD/bin/super-board-verify-flags.sh"); rc=$?
 [ "$rc" -ne 0 ] && [ -z "$out" ] && ok "sb_redact_text without a kit: non-zero, prints nothing (fail closed)" || fail "sb_redact_text fail-closed: rc=$rc out=[$out]"

@@ -92,5 +92,5 @@ sb_redact_text() {
   python3 -I -c 'import sys
 sys.path.insert(0, sys.argv[1])
 from regression_checklist import redact_secrets
-sys.stdout.write(redact_secrets(sys.stdin.read()))' "$kit"
+sys.stdout.write(redact_secrets(sys.stdin.buffer.read().decode("utf-8", "replace")))' "$kit"
 }

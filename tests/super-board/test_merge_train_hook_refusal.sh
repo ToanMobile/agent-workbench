@@ -50,6 +50,10 @@ case "$mode" in
     echo "auth token=$FAKE_TOK" >&2
     for i in 1 2 3 4 5 6; do echo "huong dan $i" >&2; done
     exit 1 ;;
+  silent-merge)
+    # như guard-check thoát 1 mà không in gì (audit Antigravity T0002)
+    [ "$merge" = 1 ] && exit 1
+    exit 0 ;;
   need-fa)
     # chỉ cho commit gộp khi HEAD đã có file fa (từ chối chuỗi thiếu PR #10 trong `solve`)
     [ "$merge" = 1 ] || exit 0
@@ -168,6 +172,14 @@ grep -q "Not committing merge" "$TMP/c1.out" && fail "  … git's 'Not committin
 # Lời hook là dữ liệu tuỳ ý: token trong đó bị che ở CẢ train-detail (comment issue công khai) lẫn log của train (manifest run).
 if grep -q "$FAKE_TOK" "$TMP/c1.out" "$TMP/c1.err"; then fail "  … a token printed by the hook reached the train output/log"
 else ok "  … a token printed by the hook is redacted in train-detail and in the log"; fi
+
+# ── C3. Hook từ chối mà KHÔNG in gì: vẫn có dòng `train-detail: N merge-refused: …` để queue ghi "merge refused" (audit Antigravity).
+echo silent-merge > "$TMP/hook.mode"
+card_branch 13 f13; main_moves m3
+reset_run; train c3 13
+grep -q "^train-result: 13 gate-exit-5$" "$TMP/c3.out" && grep -q "^train-detail: 13 merge-refused: " "$TMP/c3.out" \
+  && ok "silent hook refusal: gate-exit-5 with a merge-refused detail line" || fail "silent hook refusal: $(grep train- "$TMP/c3.out" | tr '\n' ';')"
+echo refuse-merge > "$TMP/hook.mode"
 
 # ── C2. AC #775: hai PR cùng chứa main; #6 chỉ bị hook từ chối khi gộp vào chuỗi sau #5 (một mình fast-forward): deferred như cũ,
 #    nhưng log ghi lời hook; #5 vẫn merge.
