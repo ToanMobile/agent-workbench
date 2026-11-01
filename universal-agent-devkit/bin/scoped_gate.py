@@ -45,7 +45,7 @@ FAN_IN_CORE = 5
 MAX_BYTES = 2 * 1024 * 1024
 CACHE_AFTER_S = 3.0
 CACHE_KEEP = 4
-SCAN_VER = "v2"                                             # đổi khi _scan đổi cách đọc (v2: import nhiều dòng): cache cũ bỏ
+SCAN_VER = "v3"                                             # đổi khi _scan đổi cách đọc (v3: đường dẫn tĩnh/động #788): cache cũ bỏ
 CODE_EXT = (".sh", ".py", ".bash", ".mjs", ".js")          # đích của luật nhắc tên (như run_impacted)
 STEM_EXT = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx")   # import theo tên module (không đuôi): `from lib.gone import x`
 SOURCE_EXT = CODE_EXT + (".cjs", ".ts", ".tsx", ".jsx", ".zsh", ".jq")
@@ -58,6 +58,14 @@ DEFAULT_CORE = ["*.lock", "package*.json", "*/package*.json", "*pnpm-lock.yaml",
                 "conftest.py", "*/conftest.py", "tests/lib/*", "*/tests/lib/*", ".githooks/*", ".claude/hooks/*", CORE_FILE]
 
 TOKEN = re.compile(r"[A-Za-z0-9_.+-]+")
+PATH_TOK = re.compile(r"[A-Za-z0-9_.$+-]+(?:/[A-Za-z0-9_.$+-]+)+")
+_CMD_TOK = re.compile(r"[A-Za-z0-9_./$+-]+")
+_DEVICE_SUITE_RE = re.compile(
+    r"\badb\b|connected\w*(?:Test|Check)|\bemulator\b|\bsimctl\b|"
+    r"\bxcodebuild\b[^\n]*\btest\b|replicant|-testPlatform[ =]+(?!EditMode\b|PlayMode\b)\w+|"
+    r"unity-batch|-runTests\b",
+    re.I,
+)
 # `from x import (a,\n    b,  # chú thích\n)` nhiều dòng: nhóm 3 là cả danh sách trong ngoặc (tới `)`), nhóm 4 là danh sách một dòng
 PY_FROM = re.compile(r"^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n#]+))", re.M)
 PY_COMMENT = re.compile(r"#[^\n]*")
@@ -163,16 +171,48 @@ def _shebang(full):
 
 
 def _scan(project, path):
-    """Dữ liệu thô của một file nguồn: token (nhắc tên), import Python, đích `source`. Đọc lỗi / nhị phân → rỗng."""
+    """Dữ liệu thô của một file nguồn: token (nhắc tên), đường dẫn tĩnh/động (#788), import Python, đích `source`. Đọc lỗi / nhị phân → rỗng."""
     try:
         with open(os.path.join(project, path), "rb") as f:
             raw = f.read(MAX_BYTES)
     except OSError:
-        return {"tok": [], "imp": [], "src": []}
+        return {"tok": [], "imp": [], "src": [], "paths": [], "non_static_tok": []}
     if b"\0" in raw[:8192]:
-        return {"tok": [], "imp": [], "src": []}
+        return {"tok": [], "imp": [], "src": [], "paths": [], "non_static_tok": []}
     text = raw.decode("utf-8", "replace")
     toks = sorted({t.rstrip(".-") for t in TOKEN.findall(text)} - {""})
+    paths = []
+    for m in PATH_TOK.finditer(text):
+        raw_p = m.group(0)
+        segs = raw_p.split("/")
+        prev = text[m.start() - 1] if m.start() > 0 else ""
+        # Luật động (#788, AG2-P0, OCR2-H1, CL3-P2-5): có `$` ở bất kỳ đoạn nào, có `..`/`~`, hoặc ký tự ngay trước match là `/})`$~%`
+        is_dyn = ("$" in raw_p) or (".." in segs) or raw_p.startswith("~") or (prev in "/})`$~%")
+        s, e = m.start(), m.end()
+        if not is_dyn:
+            trimmed = raw_p.rstrip(".-")
+            if "/" in trimmed:
+                raw_p = trimmed
+                e = s + len(trimmed)
+            else:
+                is_dyn = True
+        norm_p = raw_p[2:] if raw_p.startswith("./") else raw_p
+        if not is_dyn and "/" not in norm_p:
+            is_dyn = True
+        paths.append([norm_p, "dynamic" if is_dyn else "static", s, e])
+    static_spans = [(s, e) for _, kind, s, e in paths if kind == "static"]
+    if static_spans:
+        chunks, cur = [], 0
+        for s, e in static_spans:
+            if s > cur:
+                chunks.append(text[cur:s])
+            chunks.append(" ")
+            cur = max(cur, e)
+        if cur < len(text):
+            chunks.append(text[cur:])
+        non_static_tok = sorted({t.rstrip(".-") for t in TOKEN.findall("".join(chunks))} - {""})
+    else:
+        non_static_tok = toks
     imps = []
     if path.endswith(PY_SCAN_EXT) or "." not in os.path.basename(path):
         for dots, mod, paren, line in PY_FROM.findall(text):
@@ -188,7 +228,7 @@ def _scan(project, path):
             words = TOKEN.findall(rest)
             if words:
                 srcs.append(words[-1].rstrip(".-"))
-    return {"tok": toks, "imp": imps, "src": srcs}
+    return {"tok": toks, "imp": imps, "src": srcs, "paths": paths, "non_static_tok": non_static_tok}
 
 
 def _is_source(project, path):
@@ -278,7 +318,71 @@ def _word_runs(token):
                 yield "".join(parts[i:j + 1])
 
 
-def build_graph(project, _files=None, _code=None, _reads=None):
+def _rules_covered_tests(test_files, rules):
+    """Tập test có đường dẫn tương đối đầy đủ từ gốc repo (có hoặc không `./` đầu, ở ranh giới token — không khớp basename,
+    AG2-P2) trong `mandatory_regression_tests[].command`, loại lệnh có `covered_by`, `untested_exit` hoặc `DEVICE_SUITE` (CL3-P2-8)."""
+    if not isinstance(rules, list):
+        return None
+    cmd_toks = set()
+    for rule in rules:
+        if not isinstance(rule, dict) or not isinstance(rule.get("mandatory_regression_tests"), list):
+            continue
+        for entry in rule["mandatory_regression_tests"]:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("covered_by") or entry.get("untested_exit") is not None:
+                continue
+            cmd = entry.get("command")
+            if not isinstance(cmd, str) or _DEVICE_SUITE_RE.search(cmd):
+                continue
+            for m in _CMD_TOK.finditer(cmd):
+                if m.start() > 0 and cmd[m.start() - 1] in "})`$~%":
+                    continue
+                tok = m.group(0)
+                if tok.startswith("./") and not tok.startswith("./."):
+                    tok = tok[2:]
+                cmd_toks.add(tok)
+    return {p for p in test_files if p in cmd_toks}
+
+
+def _nightly_covered_tests(project, files=None, rules=None):
+    """Tập phủ đêm N (#788, P1-3, AG2-P2, V4-8): N = N(matrix_rules) ∩ N(ma trận trên đĩa của cây), cộng test kit
+    `universal-agent-devkit/{tests/*,hooks/tests}/test_*.sh` khi có `universal-agent-devkit/bin/agent-kit` (`gate_full.py:923-926`).
+    Đọc ma trận lỗi ⇒ tập rỗng (fail closed, không thu hẹp gì)."""
+    if rules is not None and not isinstance(rules, list):
+        return set()
+    disk_rules = _load_matrix_strict(project)
+    if disk_rules is None:
+        return set()
+    all_files = files if files is not None else list_files(project)
+    test_files = {p for p in all_files if is_test(p)}
+    covered = _rules_covered_tests(test_files, disk_rules)
+    if rules is not None and rules is not disk_rules:
+        covered &= _rules_covered_tests(test_files, rules)
+    if os.path.isfile(os.path.join(project, "universal-agent-devkit", "bin", "agent-kit")):
+        for p in test_files:
+            parts = p.split("/")
+            if (len(parts) == 4 and parts[0] == "universal-agent-devkit"
+                    and parts[3].startswith("test_") and parts[3].endswith(".sh")
+                    and ((parts[1] == "tests" and bool(parts[2])) or (parts[1] == "hooks" and parts[2] == "tests"))):
+                covered.add(p)
+    return covered
+
+
+def _tracked_symlink_bases(project):
+    """Basename có ít nhất một mục symlink tracked (mode 120000) trong git index (#788, CL2-P2-4); git lỗi ⇒ None (fail closed)."""
+    r = _git(project, "ls-files", "-s", "-z", check=False)
+    if r.returncode != 0:
+        return None
+    bases = set()
+    for rec in _z(r.stdout):
+        meta, sep, path = rec.partition("\t")
+        if sep and (meta.startswith("120000 ") or os.path.islink(os.path.join(project, path))):
+            bases.add(os.path.basename(path))
+    return bases
+
+
+def build_graph(project, _files=None, _code=None, _reads=None, _matrix_rules=None):
     """{file: set(file)}: A→B khi A tham chiếu B. Mọi file trong danh sách đều là khoá. `_code` (dict) nhận thêm riêng cạnh CODE thật
     (Python import, shell `source` / `.`), không có cạnh nhắc tên / stem / impact_map: dùng cho luật dep-of-core. `_reads` (dict) nhận
     {file tài liệu / dữ liệu: set(test nhắc basename của nó)} — một bước, ngoài đồ thị (test_readers)."""
@@ -341,9 +445,16 @@ def build_graph(project, _files=None, _code=None, _reads=None):
             by_data[base] = rest
     lens = sorted({len(b) for b in by_data}) if _reads is not None else []
     skills = skills if _reads is not None else {}
+    nightly_tests = _nightly_covered_tests(project, files, rules=_matrix_rules) if _reads is not None else set()
+    symlink_bases = _tracked_symlink_bases(project) if _reads is not None else set()
+    if symlink_bases is not None and _reads is not None:
+        for base, cands in by_data.items():
+            if any(os.path.islink(os.path.join(project, p)) for p in cands):
+                symlink_bases.add(base)
     for src, sc in scans.items():
         out = graph[src]
         test_src = is_test(src)
+        hit_bases = set()
         for t in sc["tok"]:
             out.update(named.get(t, ()))
             if test_src:                                    # stem nguyên từ, như run_impacted (chỉ test)
@@ -353,12 +464,40 @@ def build_graph(project, _files=None, _code=None, _reads=None):
                     if n > len(t):
                         break
                     for i in range(len(t) - n + 1):
-                        for p in by_data.get(t[i:i + n], ()):
-                            _reads.setdefault(p, set()).add(src)
+                        b = t[i:i + n]
+                        if b in by_data:
+                            hit_bases.add(b)
                 if skills:
                     for w in _word_runs(t):
                         for p in skills.get(w, ()):
                             _reads.setdefault(p, set()).add(src)
+        if test_src and hit_bases:
+            paths_info = sc.get("paths") or ()
+            static_list = [tp for tp, kind, _, _ in paths_info if kind == "static"]
+            rem_toks = sc.get("non_static_tok")
+            if rem_toks is None:
+                rem_toks = sc["tok"]
+            for base in hit_bases:
+                cands = by_data[base]
+                if (len(cands) < 2 or symlink_bases is None or base in symlink_bases
+                        or src not in nightly_tests):
+                    for p in cands:
+                        _reads.setdefault(p, set()).add(src)
+                    continue
+                s_base = [tp for tp in static_list if any(base in tk.rstrip(".-") for tk in TOKEN.findall(tp))]
+                if s_base and not any(base in rt for rt in rem_toks) and all(tp.rsplit("/", 1)[-1] == base for tp in s_base):
+                    per_mention = [[p for p in cands if p == tp or p.endswith("/" + tp)] for tp in s_base]
+                    if all(per_mention):
+                        for matched in per_mention:
+                            for p in matched:
+                                _reads.setdefault(p, set()).add(src)
+                        continue
+                # Không thu hẹp được theo đường dẫn tĩnh: chỉ cô lập giữa mcp-servers/<pkg>/ và universal-agent-devkit/ (#776)
+                is_dk_src = src.startswith("universal-agent-devkit/")
+                for p in cands:
+                    if is_dk_src and p.startswith("mcp-servers/") and p.count("/") >= 2:
+                        continue
+                    _reads.setdefault(p, set()).add(src)
         dep = code[src]
         for level, mod, names in sc["imp"]:
             dep.update(py_targets(src, level, mod, names))
@@ -434,12 +573,13 @@ def _reach(start, adj, barrier=()):
     return seen
 
 
-def test_map(project, graph=None, barrier=None):
+def test_map(project, graph=None, barrier=None, rules=None):
     """{file: sorted [test]}: T phủ F khi F trong bao đóng bắc cầu tham chiếu của T (T phủ chính nó; không đi xuyên file lõi)."""
     code = None
     if graph is None:
         code = {}
-        graph = build_graph(project, _code=code)
+        strict_rules = _load_matrix_strict(project) if rules is None else rules
+        graph = build_graph(project, _code=code, _matrix_rules=(False if strict_rules is None else strict_rules))
     barrier = core_nodes(project, graph, code=code) if barrier is None else barrier
     out = {}
     for t in graph:
@@ -461,13 +601,18 @@ def changed_files(project, base):
     return sorted(set(diff) | set(new))
 
 
-def _load_matrix(project):
+def _load_matrix_strict(project):
     try:
         with open(os.path.join(project, MATRIX_FILE), encoding="utf-8") as f:
-            rules = json.load(f).get("rules", [])
-        return rules if isinstance(rules, list) else []
-    except (OSError, ValueError, AttributeError):
-        return []
+            data = json.load(f)
+        return data["rules"] if isinstance(data, dict) and isinstance(data.get("rules"), list) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _load_matrix(project):
+    rules = _load_matrix_strict(project)
+    return rules if rules is not None else []
 
 
 def _catch_all(pat):
@@ -498,6 +643,8 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
         res["elapsed_s"] = round(time.monotonic() - t0, 3)
         return res
 
+    strict_rules = _load_matrix_strict(project) if matrix_rules is None else matrix_rules
+    rules = strict_rules if isinstance(strict_rules, list) else []
     try:
         if changed is None:
             if not base:
@@ -506,12 +653,12 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
         changed = sorted({c.replace("\\", "/") for c in changed if c})
         res["changed"] = changed
         code, reads = {}, {}
-        graph = build_graph(project, _code=code, _reads=reads)
+        graph = build_graph(project, _code=code, _reads=reads,
+                            _matrix_rules=(False if strict_rules is None else strict_rules))
     except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as e:
         res["reasons"].append("base/đồ thị lỗi ⇒ full: %s" % e)
         res["graph_error"] = (str(e) or repr(e))[:300]
         return done()
-    rules = _load_matrix(project) if matrix_rules is None else matrix_rules
     fi = fan_in(graph)
     rev = _reverse(graph)
     roots = core_nodes(project, graph, core)
@@ -696,8 +843,10 @@ def write_core_auto(project, entries):
 
 def gen(project, write_core=False):
     code, reads = {}, {}
-    graph = build_graph(project, _code=code, _reads=reads)
-    tm = test_map(project, graph, core_nodes(project, graph, code=code))
+    strict_rules = _load_matrix_strict(project)
+    graph = build_graph(project, _code=code, _reads=reads,
+                        _matrix_rules=(False if strict_rules is None else strict_rules))
+    tm = test_map(project, graph, core_nodes(project, graph, code=code), rules=strict_rules)
     auto = core_auto(project, graph, reads)
     out = os.path.join(common_dir(project), "postfix-gate")
     os.makedirs(out, exist_ok=True)
@@ -715,16 +864,19 @@ def gen(project, write_core=False):
 
 def explain(project, path):
     code, reads = {}, {}
-    graph = build_graph(project, _code=code, _reads=reads)
+    strict_rules = _load_matrix_strict(project)
+    rules = strict_rules if isinstance(strict_rules, list) else []
+    graph = build_graph(project, _code=code, _reads=reads,
+                        _matrix_rules=(False if strict_rules is None else strict_rules))
     rev = _reverse(graph)
     core = load_core(project)
-    tm = test_map(project, graph, core_nodes(project, graph, core, code))
+    tm = test_map(project, graph, core_nodes(project, graph, core, code), rules=strict_rules)
     fi = fan_in(graph)
     return {"file": path, "in_graph": path in graph, "is_test": is_test(path), "test_read_by": sorted(reads.get(path, ())),
             "core_glob": [g for g in core["core"] if match_pattern(path, g)], "fan_in": fi.get(path, 0),
             "dep_of_core": core_deps(code, core_nodes(project, graph, core)).get(path),
             "references": sorted(graph.get(path, ())), "referenced_by": sorted(rev.get(path, ())),
-            "tests": tm.get(path, []), "matrix_covered": _matrix_covers(path, _load_matrix(project)),
+            "tests": tm.get(path, []), "matrix_covered": _matrix_covers(path, rules),
             "needs_no_test": default_needs_no_test(path)}
 
 
