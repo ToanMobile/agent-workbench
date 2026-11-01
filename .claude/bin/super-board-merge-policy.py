@@ -376,6 +376,9 @@ def main() -> int:
     if mig_files:
         shown = ", ".join(mig_files[:5]) + (f" (+{len(mig_files) - 5} more)" if len(mig_files) > 5 else "")
         machine.append({"category": "migration", "why": f"migration files: {shown}"})
+        # 13bcd39b20: category migration đến từ migrations.globs, không qua vòng luật ở trên, nên đọc test bổ sung riêng của nó ở đây
+        mig_rule = always.get("migration")
+        extra_tests += str_list(mig_rule.get("verify_commands")) if isinstance(mig_rule, dict) else []
     extra_tests = list(dict.fromkeys(extra_tests))
     require = {"deep_review": bool(machine), "security_reviewer": bool(machine),
                "verify_commands": extra_tests if machine else []}
