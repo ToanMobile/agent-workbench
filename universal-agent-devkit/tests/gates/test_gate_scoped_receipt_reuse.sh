@@ -4,23 +4,26 @@
 # trong một git dir CHƯA từng chạy gate (scratch của merge gate, integrate, worktree QA/review mới):
 #   1. Worktree A chạy --scoped PASS (gồm cả suite KEYED qua SuiteCache và runner run_impacted.sh chạy thật) rồi bị gỡ;
 #      scratch B mới chạy đúng trình tự .merge-scratch (worktree add --detach -> git merge origin/main -> install.sh --no-githooks
-#      -> git checkout -q -- . -> --scoped): _ever_gated(B)==False, fp giữ nguyên, 0 suite chạy lại, exit 0, tested_at giữ nguyên,
-#      push_gate nhận, runs.jsonl ghi mode="scoped", verdict="REUSED", reused_full_pass=true, reused_scoped=<fp>.
+#      -> git checkout -q -- . -> copy_ignored của super-board-scratch-config.sh -> .merge-evidence/ -> --scoped): _ever_gated(B)==False,
+#      fp và local_sha giữ nguyên, 0 suite chạy lại, exit 0, tested_at giữ nguyên, push_gate nhận, runs.jsonl ghi mode="scoped",
+#      verdict="REUSED", reused_full_pass=true, reused_scoped=<fp>; mục store không bị lượt mượn ghi đè (V4-4) và mang full_command (V4-1).
 #   1b. Chạy lại --scoped ngay trên cùng worktree (own_receipt) vẫn chạy REG-K + REG-N; ở scratch mới, suite khai "cache": false
 #       vẫn chạy thật mỗi lượt kể cả khi các suite khác dùng lại biên nhận scoped.
 #   2. Không dùng lại (chạy lại suite + ghi reuse_miss_reason vào runs.jsonl) khi: (a) đổi matrix_sha,
 #      (b) đổi gate_sha (bản sao post-fix-gate.py đặt ngoài cây repo), (c) thêm file chưa track (đổi fp -> not_found),
 #      (d) biên nhận exit != 0, (e) cùng cây nhưng base khác làm phát sinh test ngoài biên nhận (superset),
 #      (f) mục KEYED mất hiệu lực trong SuiteCache, (g) quá hạn DEVKIT_GATE_CACHE_MAX_S (ttl),
-#      (h) có dòng --full đỏ trên cùng fp (full_red), (i) worktree đã từng chạy gate (ever_gated) hoặc mục store là symlink (not_found).
+#      (h) có dòng --full đỏ trên cùng fp (full_red), (i) worktree đã từng chạy gate (ever_gated) hoặc mục store là symlink (not_found),
+#      (j) SCOPED-EXTRA cùng id nhưng khác lệnh (base khác đổi suite ma trận đã chọn) ⇒ chạy thật (V4-1).
 #   3. Một lượt FAIL sau đó trên cùng cây xoá mục scoped_receipts/<fp>.json; worktree mới phải chạy lại suite và lượt dùng lại cũ
-#      không bao giờ hồi sinh mục đã xoá (refresh_only=True).
+#      không bao giờ hồi sinh mục đã xoá (lượt mượn không ghi mục store: write_store=False, V4-4).
 #   4. Race khoá (stale_reused): biên nhận scoped nguồn bị xoá trước kết luận (mô phỏng lượt song song vừa FAIL) ⇒ kết luận
 #      lật thành UNTESTED (STALE, exit 4), không bao giờ trả exit 0 dựa trên biên nhận đã huỷ.
 #   4b. Lượt --scoped PASS bình thường khi store rỗng (không reuse) vẫn ghi scoped_pass.json + mục store, không UnboundLocalError (OCR4-1).
 #   5. Cổng vào chụp trước test_run.lock (AG2-P1, OCR2-H2): (a) mục store bị ghi lại hợp lệ lúc đang giữ khoá ⇒ stale_reused kiểm lại
 #      bằng cached_scoped_pass, exit 0 (không STALE oan); (b) mục store xuất hiện lúc scratch đang giữ test_run.lock chờ gate slot ⇒
-#      kiểm lại sau khoá/slot vẫn dùng lại (0 suite chạy, verdict=REUSED).
+#      kiểm lại sau khoá/slot vẫn dùng lại (0 suite chạy, verdict=REUSED); (c) mục store bị lượt PASS khác ghi lại với suite đã mượn
+#      thành UNTESTED/KEYED ⇒ tra khoá nội dung của suite đó, còn trúng thì giữ, exit 0 (V4-3).
 # Tương thích bash 3.2, chỉ dùng Python stdlib.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -157,19 +160,33 @@ add_wt wt-b feat
 git -C "$TMP/wt-b" merge origin/main --no-edit -q
 bash "$DEVKIT_DIR/bin/install.sh" -t "$TMP/wt-b" -a claude -y --no-githooks >/dev/null 2>&1 || true
 git -C "$TMP/wt-b" checkout -q -- .
-PRE_B="$(python3 - "$GATE" "$DEVKIT_DIR/bin" "$TMP/wt-b" <<'PY'
+# V4-6: hai bước thật còn lại của merge gate trước verify — super-board-scratch-config.sh (worktree.py copy_ignored từ main checkout)
+# và prepare_scratch_evidence (.merge-evidence/ + dòng exclude trong git dir của scratch)
+if ! python3 - "$DEVKIT_DIR/scripts/git/worktree.py" "$R" "$TMP/wt-b" >/dev/null 2>&1 <<'PY'
 import importlib.util, sys
-gate_path, bin_dir, wt = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("devkit_worktree", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.copy_ignored(sys.argv[2], sys.argv[3])
+PY
+then fail "1. copy_ignored (super-board-scratch-config.sh) vào wt-b lỗi"; fi
+GD_B="$(git -C "$TMP/wt-b" rev-parse --absolute-git-dir)"
+mkdir -p "$GD_B/info" "$TMP/wt-b/.merge-evidence/tests"
+grep -qxF '.merge-evidence/' "$GD_B/info/exclude" 2>/dev/null || printf '%s\n' '.merge-evidence/' >> "$GD_B/info/exclude"
+PRE_B="$(python3 - "$GATE" "$DEVKIT_DIR/bin" "$TMP/wt-b" "$SF" <<'PY'
+import importlib.util, json, sys
+gate_path, bin_dir, wt, store = sys.argv[1:]
 sys.path.insert(0, bin_dir)
 import tree_fp
 spec = importlib.util.spec_from_file_location("pfg_pre_b", gate_path)
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-print("%s|%s" % (m._ever_gated(wt), tree_fp.tree_fingerprint(wt)))
+print("%s|%s|%s" % (m._ever_gated(wt), tree_fp.tree_fingerprint(wt), m.local_state_sha(wt) == json.load(open(store)).get("local_sha")))
 PY
 )"
-[ "$PRE_B" = "False|$FP0" ] && ok "1. sau install.sh + checkout -- .: _ever_gated(wt-b)=False và fp giữ nguyên ($FP0)" \
-  || fail "1. trạng thái wt-b trước gate lệch: $PRE_B (mong False|$FP0)"
+[ "$PRE_B" = "False|$FP0|True" ] && ok "1. sau install.sh + checkout -- . + copy_ignored + .merge-evidence/: _ever_gated(wt-b)=False, fp giữ nguyên ($FP0), local_sha khớp" \
+  || fail "1. trạng thái wt-b trước gate lệch: $PRE_B (mong False|$FP0|True)"
+STORE_SHA0="$(shasum -a 256 "$SF" | cut -d' ' -f1)"
 b1="$(snap)"
 run_scoped "$TMP/wt-b" --brief
 d1="$(dlt "$b1" "$(snap)")"
@@ -185,6 +202,11 @@ TESTED_B="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["tes
 LOG_CHECK="$(tail -1 "$RUNLOG" | python3 -c 'import json,sys; r=json.loads(sys.stdin.read()); print("%s|%s|%s|%s|%s" % (r.get("mode"), r.get("verdict"), r.get("exit_reason"), r.get("reused_full_pass"), r.get("reused_scoped","")))')"
 [ "$LOG_CHECK" = "scoped|REUSED|reused|True|$FP0" ] && ok "1. runs.jsonl ghi mode=scoped, verdict=REUSED, reused_full_pass=True, reused_scoped=$FP0" \
   || fail "1. runs.jsonl sai: $LOG_CHECK (mong scoped|REUSED|reused|True|$FP0)"
+# V4-4: lượt mượn KHÔNG ghi lại mục store (refresh_only vẫn ghi đè mục đang có); V4-1: mục store mang full_command của từng suite
+[ "$(shasum -a 256 "$SF" 2>/dev/null | cut -d' ' -f1)" = "$STORE_SHA0" ] && ok "1. lượt mượn không ghi đè mục scoped_receipts/<fp>.json (V4-4)" \
+  || fail "1. lượt mượn đã ghi đè mục store (V4-4)"
+FC_OK="$(python3 -c 'import json,sys; t=json.load(open(sys.argv[1]))["tests"]; print(bool(t) and all(isinstance(x.get("full_command"), str) and x["full_command"] for x in t))' "$SF")"
+[ "$FC_OK" = "True" ] && ok "1. mục store ghi full_command cho mọi suite (V4-1)" || fail "1. mục store thiếu full_command (V4-1)"
 PUSH_OUT="$(python3 "$PG" "$TMP/wt-b" 2>&1)"; PUSH_RC=$?
 [ "$PUSH_RC" = 0 ] && ok "1. push_gate nhận scoped_pass.json của worktree dùng lại" \
   || fail "1. push_gate từ chối worktree dùng lại ($PUSH_RC: $PUSH_OUT)"
@@ -345,6 +367,39 @@ rm -f "$SF" && mv "$TMP/real_scoped.json" "$SF"
   || fail "2i-symlink. nhận nhầm symlink: rc=$RC delta=$d miss=$(last_miss_reason)"
 rm_wt wt-sym
 
+# ── 2j. V4-1 (AG4-P0): SCOPED-EXTRA giữ id cố định nhưng lệnh đổi theo quyết định. A (so origin/main) chọn REG-A nên tests/test_a.sh chạy
+#    trong REG-A, SCOPED-EXTRA của A chỉ có tests/test_z.sh; B cùng cây nhưng so HEAD~1 (a.py không đổi) không chọn REG-A nên
+#    tests/test_a.sh rơi vào SCOPED-EXTRA của B ⇒ B KHÔNG được mượn PASS của SCOPED-EXTRA khác lệnh, phải chạy thật
+git -C "$R" branch -q feat-v41 main
+git -C "$R" worktree add -q "$TMP/wt-v41a" feat-v41
+echo 'a = 41' > "$TMP/wt-v41a/src/a.py"
+git -C "$TMP/wt-v41a" commit -qam "v41 a"
+printf '\n# v41\n' >> "$TMP/wt-v41a/tests/test_a.sh"
+printf '#!/usr/bin/env bash\necho run >> %s\n' "'$TMP/count.Z'" > "$TMP/wt-v41a/tests/test_z.sh"
+chmod +x "$TMP/wt-v41a/tests/test_z.sh"
+git -C "$TMP/wt-v41a" add -A && git -C "$TMP/wt-v41a" commit -qm "v41 tests"
+zb="$(cnt Z)"; ab="$(cnt A)"
+DIFF_REF="origin/main" run_scoped "$TMP/wt-v41a" --allow-orphan-tests   # test_z.sh cố ý không thuộc suite ma trận nào
+FP41="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import tree_fp; print(tree_fp.tree_fingerprint(sys.argv[2]))' "$DEVKIT_DIR/bin" "$TMP/wt-v41a")"
+EXTRA_A="$(python3 -c 'import json,sys; t=json.load(open(sys.argv[1]))["tests"]; print(next((x.get("full_command") or "" for x in t if x["id"]=="SCOPED-EXTRA"), ""))' "$SSTORE/$FP41.json" 2>/dev/null)"
+if [ "$RC" = 0 ] && [ "$(cnt A)" -gt "$ab" ] && [ "$(cnt Z)" -gt "$zb" ] && printf '%s' "$EXTRA_A" | grep -q 'test_z.sh' \
+   && ! printf '%s' "$EXTRA_A" | grep -q 'test_a.sh'; then
+  ok "2j. tiền đề: A chạy REG-A + SCOPED-EXTRA chỉ có test_z.sh, mục store ghi lệnh đó"
+else
+  fail "2j. tiền đề A: rc=$RC extra='$EXTRA_A'"; printf '%s\n' "$OUT" | tail -15
+fi
+rm_wt wt-v41a
+add_wt wt-v41b feat-v41
+zb="$(cnt Z)"
+DIFF_REF="HEAD~1" run_scoped "$TMP/wt-v41b" --allow-orphan-tests
+if [ "$RC" = 0 ] && [ "$(( $(cnt Z) - zb ))" = 1 ]; then
+  ok "2j. B cùng cây, SCOPED-EXTRA khác lệnh (thêm test_a.sh) ⇒ chạy thật, không mượn PASS của lệnh khác (V4-1)"
+else
+  fail "2j. B mượn PASS của SCOPED-EXTRA khác lệnh: rc=$RC Z+=$(( $(cnt Z) - zb )) (mong 1)"; printf '%s\n' "$OUT" | tail -15
+fi
+rm_wt wt-v41b
+git -C "$R" branch -q -D feat-v41
+
 # ── 3. Lượt FAIL trên cùng cây xoá scoped_receipts/<fp>.json; lượt dùng lại không hồi sinh mục đã xoá
 add_wt wt-fail feat
 touch "$TMP/wt-fail/.hong"
@@ -460,6 +515,57 @@ else
   fail "5b. sau chờ slot không dùng lại được: rc=$RC5B delta=$d5b log=$LOG5B"; tail -20 "$TMP/wt5b.out" 2>/dev/null
 fi
 rm_wt wt-5b
+
+# ── 5c. V4-3 (AG4-P1, AG3-P1-1): lượt PASS khác (A2) ghi lại mục store, suite B vừa mượn PASS (REG-A) giờ là UNTESTED/KEYED (A2 trúng
+#    SuiteCache) ⇒ stale_reused tra khoá nội dung của REG-A; khoá còn trúng ⇒ giữ, exit 0 (không STALE oan), REG-A không chạy lại
+cat > "$TMP/relabel.py" <<'PY'
+import glob, json, os, sys, time
+for p in glob.glob(os.path.join(sys.argv[1], "*.json")):
+    d = json.load(open(p))
+    for x in d.get("tests") or []:
+        if x.get("id") == "REG-A":
+            x.update(status="UNTESTED", label="KEYED")
+    d["time"] = time.time()
+    open(p + ".tmp", "w").write(json.dumps(d))
+    os.replace(p + ".tmp", p)
+PY
+cat > "$TMP/m_rl.json" <<JSON
+{"project":"t","rules":[
+  {"component":"A","watch_files":["src/a.py"],
+   "mandatory_regression_tests":[{"id":"REG-A","name":"a","command":"echo run >> '$TMP/count.A'; bash tests/test_a.sh"}]},
+  {"component":"K","watch_files":["src/k.py","kit/*"],
+   "mandatory_regression_tests":[{"id":"REG-K","name":"kit","command":"bash kit/tests/run_impacted.sh"}]},
+  {"component":"N","watch_files":["src/n.py"],
+   "mandatory_regression_tests":[{"id":"REG-RL","name":"relabel","cache":false,
+    "command":"if [ -f '$TMP/relabel_now' ]; then python3 '$TMP/relabel.py' '$SSTORE'; fi"}]}
+]}
+JSON
+git -C "$R" branch -q feat-rl feat
+git -C "$R" worktree add -q "$TMP/wt-rl1" feat-rl
+echo 'n = 5' > "$TMP/wt-rl1/src/n.py"
+git -C "$TMP/wt-rl1" commit -qam "relabel setup"
+wipe_scoped
+rm -rf "$COMMON/postfix-gate/suite_cache"
+ab="$(cnt A)"
+run_scoped "$TMP/wt-rl1" --matrix "$TMP/m_rl.json"
+RL_A="$(python3 -c 'import json,sys; t=json.load(open(sys.argv[1]))["tests"]; print(next((x.get("status") for x in t if x["id"]=="REG-A"), "?"))' "$(store_file)" 2>/dev/null)"
+if [ "$RC" = 0 ] && [ "$(cnt A)" -gt "$ab" ] && [ "$RL_A" = "PASS" ]; then
+  ok "5c. tiền đề: A chạy thật REG-A (PASS trong mục store, khoá nội dung đã ghi vào SuiteCache)"
+else
+  fail "5c. tiền đề A: rc=$RC REG-A=$RL_A"; printf '%s\n' "$OUT" | tail -15
+fi
+rm_wt wt-rl1
+touch "$TMP/relabel_now"
+add_wt wt-rl2 feat-rl
+b="$(snap)"; run_scoped "$TMP/wt-rl2" --matrix "$TMP/m_rl.json"; d="$(dlt "$b" "$(snap)")"
+rm -f "$TMP/relabel_now"
+if [ "$RC" = 0 ] && [ "$(printf '%s' "$d" | awk '{print $1, $2}')" = "0 0" ]; then
+  ok "5c. mục store ghi lại với REG-A thành UNTESTED/KEYED, khoá nội dung còn trúng ⇒ giữ PASS theo khoá, exit 0 (V4-3)"
+else
+  fail "5c. relabel KEYED: rc=$RC delta=$d (mong rc=0, REG-A/REG-K 0 0)"; printf '%s\n' "$OUT" | tail -15
+fi
+rm_wt wt-rl2
+git -C "$R" branch -q -D feat-rl
 
 echo
 [ "$FAILS" = 0 ] && { echo "PASS: test_gate_scoped_receipt_reuse"; exit 0; }

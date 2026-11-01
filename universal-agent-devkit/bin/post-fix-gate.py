@@ -1832,7 +1832,8 @@ def _tree_store(tree_fp, project_dir, fp, data=None, create=True, kind=TREE_STOR
 
 
 def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None, tested_at=None, tested_fp=None,
-                            untested=None, partial=False, locked=True, keep_same=False, refresh_only=False, scoped=None):
+                            untested=None, partial=False, locked=True, keep_same=False, refresh_only=False, scoped=None,
+                            write_store=True):
     """After a full regression run: drop the previous receipt, and on exit 0 record
     {time, fingerprint} of the audited code in .git/postfix-gate/full_pass.json (outside the
     tree). hooks/proof_gate.sh accepts an XONG only with a receipt from this turn whose
@@ -1852,7 +1853,9 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
     content as it is (what the session owes is its own gate's business); a receipt of other content is still dropped.
     refresh_only (#247): the run re-used a PASS — its tree store entry is refreshed when there, never created (see _tree_store).
     scoped (#644): a --scoped run — the same record, in scoped_pass.json + <common>/postfix-gate/scoped_receipts/ instead, with "scope": "scoped"
-    and these extra fields (the tests it ran, why); full_pass.json is left alone."""
+    and these extra fields (the tests it ran, why); full_pass.json is left alone.
+    write_store False (#785, V4-4): lượt exit 0 đã MƯỢN mục store chỉ ghi biên nhận của chính nó, không ghi mục store
+    (refresh_only vẫn ghi đè mục đang có: quyết định hẹp hơn, tested_at khác)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import tree_fp  # noqa: PLC0415 - sibling module in bin/
@@ -1954,7 +1957,9 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
                 "tests": [{"id": t.get("id"), "status": t.get("status"), "log": t.get("log"),
                            "duration": t.get("duration"), "ran_at": SUITE_RAN_AT.get(t.get("id")),
                            # #645: biên nhận scoped ghi rõ suite dùng lại PASS (mode "cached", label khoá nội dung) hay chạy thật
-                           **({"mode": t.get("mode"), "label": t.get("label")} if scoped is not None else {})}
+                           # #785 (V4-1): và lệnh ma trận suite đã PASS — SCOPED-EXTRA cùng id nhưng lệnh đổi theo quyết định
+                           **({"mode": t.get("mode"), "label": t.get("label"), "full_command": t.get("full_command") or t.get("command")}
+                              if scoped is not None else {})}
                           for t in (tests or []) if t.get("command")]}
         if scoped is not None:
             data.update(scoped, scope="scoped")
@@ -1968,7 +1973,7 @@ def write_full_pass_receipt(project_dir, exit_code, matrix_arg=None, tests=None,
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
         os.replace(tmp, path)
-        if exit_code == 0:
+        if exit_code == 0 and write_store:
             _tree_store(tree_fp, project_dir, fingerprint, data, create=not refresh_only, kind=store_kind)
     except OSError as e:
         log_err(f"full-pass receipt not written: {e}")
@@ -7034,7 +7039,7 @@ def main():
     budget_fp = tested_fp or (tree_fp_of(project_dir) if budget_s > 0 and use_cache else None)
     budget_head = _head_sha(project_dir) if budget_fp and not force_reason else None   # the HEAD of the same moment: a Stop record names both
 
-    def reuse_from(found, budget_run=False, partial=False, respect_no_cache=False):
+    def reuse_from(found, budget_run=False, partial=False, scoped_src=False):
         """Mark every reusable suite PASS from `found`, the receipt (or the budget record) of this exact content; it, or None.
         partial (biên nhận của worktree anh em): suite mà biên nhận KHÔNG có thì chạy thật, không huỷ cả lần dùng lại — merge gate #56
         (17/10): scratch không có overlay checklist của worktree nên chạy thêm một suite STALE nhẹ, và vì biên nhận thiếu đúng suite đó
@@ -7054,9 +7059,12 @@ def main():
 
         def reusable_suite(t):
             cmd = t["command"]
-            if respect_no_cache:   # #785: suite khai "cache": false hoặc khớp DEVICE_SUITE vẫn chạy thật mỗi lượt kể cả khi mượn biên nhận scoped
+            if scoped_src:   # #785: suite khai "cache": false hoặc khớp DEVICE_SUITE vẫn chạy thật mỗi lượt kể cả khi mượn biên nhận scoped
                 src_m = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == cmd), t)
                 if src_m.get("cache") is False or DEVICE_SUITE.search(cmd):
+                    return False
+                # V4-1: chỉ mượn PASS của đúng lệnh ma trận đó (SCOPED-EXTRA giữ id cố định nhưng lệnh đổi theo quyết định); lệch ⇒ chạy thật
+                if (prev.get(t.get("id")) or {}).get("full_command") != cmd:
                     return False
             if sc is not None and any(sc.blocked(k, t.get("id")) for k in (KEYS.get(id(t)) or (None,))):
                 return False   # P2: khoá hiện tại từng FAIL hoặc suite bị cách ly (flaky): không có PASS nào được dùng lại cho nó
@@ -7181,7 +7189,7 @@ def main():
                 scoped_miss[0] = reason_code
                 print(f"    {DIM}({tr('không dùng lại biên nhận scoped', 'scoped receipt not reused')}: {os.path.basename(path)}: {','.join(why) or 'malformed'}){RESET}")
             return None
-        found = reuse_from(cand, partial=True, respect_no_cache=True)
+        found = reuse_from(cand, partial=True, scoped_src=True)
         if found:
             scoped_miss[0] = ""
             print(f"    {DIM}({tr('biên nhận scoped theo cây', 'scoped tree receipt')}: {path}){RESET}")
@@ -7256,8 +7264,26 @@ def main():
         prev = {x.get("id"): x for x in (found or {}).get("tests") or []}
         untested = set((found or {}).get("untested") or []) | (
             {i for i, x in prev.items() if x.get("status") == "UNTESTED"} if name == "__scoped__" else set())
-        return [t for t in reused_pass() if not (found and t["id"] not in untested and prev.get(t["id"], {}).get("status") == "PASS"
-                                                 and (name in (None, "__scoped__") or prev[t["id"]].get("full_command") == t["command"]))]
+        gone = [t for t in reused_pass() if not (found and t["id"] not in untested and prev.get(t["id"], {}).get("status") == "PASS"
+                                                 and (name is None or prev[t["id"]].get("full_command") == t["command"]))]
+        if found and name == "__scoped__" and sc is not None and keyed_ok:
+            # V4-3: mục store bị một lượt PASS khác ghi lại có thể giữ suite này dạng UNTESTED/KEYED (lượt kia trúng SuiteCache):
+            # tra khoá nội dung của chính suite; trúng ⇒ giữ như PASS theo khoá, trượt hoặc lỗi ⇒ vẫn là gone (STALE, an toàn)
+            def _relabel(t):
+                x = prev.get(t["id"]) or {}
+                if x.get("status") != "UNTESTED" or x.get("label") != "KEYED" or x.get("full_command") != t["command"]:
+                    return False
+                try:
+                    k = lookup_key(t)
+                    rec = sc.hit(k, t) if k else None
+                except Exception as e:   # noqa: BLE001 - sổ khoá không đọc được: suite này không đứng vững
+                    log_warn(f"suite_cache relabel {t.get('id')}: {e!r}")
+                    return False
+                if rec:
+                    mark_keyed(t, rec)
+                return bool(rec)
+            gone = [t for t in gone if not _relabel(t)]
+        return gone
 
     def stale_to_untested(label, gone):
         """A re-used PASS that cannot be stood on (its file moved and no longer vouches for it, or there is no lock to check it under) is UNTESTED,
@@ -8542,10 +8568,12 @@ def main():
             elif (exit_code == 0 and lock_held and not read_only and not pm_relax and not lock_busy and not budget_cut and not slot_busy
                     and not any(t.get("status") == "UNTESTED" for t in regression_tests)):
                 # PASS theo khoá CHÍNH XÁC vào biên nhận như UNTESTED / KEYED, như receipt_tests của biên nhận full.
-                # #785: truyền tested_at=reuse_at và refresh_only=reuse_src[0] is not None để không gia hạn TTL và không hồi sinh mục store đã xoá.
+                # #785 (V4-4): lượt MƯỢN mục store (scoped_cache, chỉ reuse_scoped_pass đặt) giữ tested_at của mục đã mượn (không gia hạn TTL)
+                # và không ghi mục store (không hồi sinh mục đã bị FAIL xoá, không thu hẹp nó); lượt không mượn ghi như trước.
                 write_full_pass_receipt(project_dir, 0, args.matrix,
                                         [dict(t, status="UNTESTED", label="KEYED") if precise_hit(t) else t for t in regression_tests],
-                                        tested_at=reuse_at, refresh_only=reuse_src[0] is not None,
+                                        tested_at=reuse_at if scoped_cache is not None else None,
+                                        write_store=scoped_cache is None,
                                         tested_fp=tested_fp, locked=True, scoped=meta)
                 mark_merge_gate_receipt(project_dir, diff_ref, run_start_tree, scoped=True, relaxing=[
                     flag for flag, on in (("--allow-no-tests", args.allow_no_tests), ("--allow-orphan-tests", args.allow_orphan_tests),
