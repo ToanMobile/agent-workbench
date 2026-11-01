@@ -17,6 +17,7 @@ Nhánh không mang số thẻ: {"skip": true}. PR không có sb:ac: chỉ có fo
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -95,14 +96,18 @@ def batch_lead(body):
 
 
 def own_repo():
-    """`owner/repo` (chữ thường) của origin nơi đang đứng (merge gate chạy trong checkout của repo); không đọc được → ""
-    (mọi `owner/repo#N` là repo khác: fail-closed)."""
+    """`owner/repo` (chữ thường) của origin ở SB_REPO_PATH (merge gate export repo.path của board), không có thì nơi đang đứng;
+    không đọc được → "" (mọi `owner/repo#N` là repo khác: fail-closed, có dòng báo ở stderr)."""
+    where = os.environ.get("SB_REPO_PATH") or None
     try:
-        r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, timeout=10, cwd=where)
     except (OSError, subprocess.SubprocessError) as e:
         print(f"ac-check: cannot read origin ({e}); every owner/repo#N counts as another repo", file=sys.stderr)
         return ""
     m = GITHUB_SLUG.search(r.stdout.strip()) if r.returncode == 0 else None
+    if not m:
+        print(f"ac-check: origin of {where or '.'} is not a GitHub repo (exit {r.returncode}); every owner/repo#N counts as another repo",
+              file=sys.stderr)
     return m.group(1).lower() if m else ""
 
 
@@ -126,7 +131,7 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
     # AC của thành viên phải chứng minh trong cùng khối sb:ac: ít nhất 1 mỗi thẻ, như AC gián tiếp.
     batch_ac = sum(max(1, len(ac_items(members[n]))) for n in batch)
     out = {"skip": False, "card": card, "foreign_closes": sorted((local - {card} - set(batch)) | cross_repo),
-           "closes_own": card in closes, "batch": batch}
+           "closes_own": card in local, "batch": batch}
     m = AC_BLOCK.search(pr_body or "")
     out["ac"] = bool(m)
     items = ac_items(issue_body)
@@ -156,10 +161,17 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
 
 
 def rewrite_closes(path, card, foreign=False):
-    """Đổi từ khoá đóng #card thành `Refs` (foreign=True: đổi mọi thẻ KHÁC #card, giữ Closes của chính thẻ)."""
+    """Đổi từ khoá đóng #card thành `Refs` (foreign=True: đổi mọi thẻ KHÁC #card và mọi Closes của repo khác, giữ Closes của chính
+    thẻ). #731: cùng luật repo với check() — `Fixes x/y#<card>` không phải thẻ này; không đổi thì gate exit 11 lại sau verify (log
+    commit đã push không sửa được) hay đóng issue của repo khác."""
     text = read(path)
-    new = CLOSES.sub(lambda m: f"Refs {m.group(1) or ''}#{m.group(2)}" if (int(m.group(2)) != card) == foreign else m.group(0),
-                     text)
+    own = own_repo() if foreign and any(repo for repo, _ in CLOSES.findall(text)) else ""
+
+    def other(m):
+        return int(m.group(2)) != card or bool(m.group(1) and m.group(1).lower() != own)
+
+    new = CLOSES.sub(lambda m: f"Refs {m.group(1) or ''}#{m.group(2)}" if (other(m) if foreign else int(m.group(2)) == card)
+                     else m.group(0), text)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(new)
     return new != text
