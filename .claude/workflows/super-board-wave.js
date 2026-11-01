@@ -192,16 +192,17 @@ const lanePrompt = (lane, card) => [
   `column = the column the card is in when you exit. detail = one line. Include prUrl/branch when they exist.`,
 ].join('\n')
 
-// Run-tier model ladders. Card complexity indexes into the active ladder;
-// undefined = inherit the session model (the strongest available — e.g.
-// Fable/Opus). Cards entering past Ready (cls null, never classified)
-// always inherit the session model.
+// Run-tier model ladders. Card complexity indexes into the active ladder.
+// Every cell names a model: an undefined cell would inherit the session
+// model, which ~/.claude/settings.json may set to sonnet, so a high card
+// could run weaker than a medium one (#553). Cards entering past Ready
+// (cls null, never classified) still inherit the session model.
 //   low    (run --low):  haiku / sonnet / opus
-//   medium (default):    sonnet / opus / session
+//   medium (default):    sonnet / opus / opus
 //   high   (run --high): opus for every card
 const LADDERS = {
   low: { low: 'haiku', medium: 'sonnet', high: 'opus' },
-  medium: { low: 'sonnet', medium: 'opus', high: undefined },
+  medium: { low: 'sonnet', medium: 'opus', high: 'opus' },
   high: { low: 'opus', medium: 'opus', high: 'opus' },
 }
 const ladder = LADDERS[input.tier || 'medium']
