@@ -23,13 +23,17 @@ sb_review_fixture() {
 # sb-review-fixture wrapper
 inner="$(dirname "$0")/gh.sb-inner"
 seed() {   # seed <head sha>: signed light PASS for merge-base(head, origin/<base>) in the repo the gate runs gh from
-  local sha="$1" common tmp mb h run base="${SB_REVIEW_FIXTURE_BASE:-main}" cands c
+  local sha="$1" common tmp mb h run base="${SB_REVIEW_FIXTURE_BASE:-main}" cands c hp
   common=$(git rev-parse --git-common-dir 2>/dev/null) || return 0
   common=$(cd "$common" && pwd -P)
   git cat-file -e "$sha^{commit}" 2>/dev/null || return 0
   cands=$(git rev-parse -q --verify "refs/remotes/origin/$base" 2>/dev/null; git ls-remote origin "refs/heads/$base" 2>/dev/null | cut -f1)
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/sb-review-fixture.XXXXXX")
-  git clone -q --shared --no-checkout "$common" "$tmp/c" 2>/dev/null && git -C "$tmp/c" -c advice.detachedHead=false checkout -q --detach "$sha" 2>/dev/null || { rm -rf "$tmp"; return 0; }
+  # The gate's scratch is a `git worktree add` of this repo, so the repo's post-checkout hook (core.hooksPath, e.g. a relink hook) runs
+  # there and can leave untracked files that review-fanout --hash counts. A clone does not inherit core.hooksPath: carry it over first.
+  hp=$(git config --get core.hooksPath 2>/dev/null || true)
+  git clone -q --shared --no-checkout "$common" "$tmp/c" 2>/dev/null && { [ -z "$hp" ] || git -C "$tmp/c" config core.hooksPath "$hp"; } \
+    && git -C "$tmp/c" -c advice.detachedHead=false checkout -q --detach "$sha" 2>/dev/null || { rm -rf "$tmp"; return 0; }
   for c in $(printf '%s\n' $cands | sort -u); do
     git -C "$tmp/c" cat-file -e "$c^{commit}" 2>/dev/null || continue
     mb=$(git -C "$tmp/c" merge-base "$sha" "$c" 2>/dev/null) || continue
