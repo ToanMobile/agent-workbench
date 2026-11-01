@@ -170,4 +170,21 @@ check 2 "rm .claude/bin/super-board-queue-label.sh" "$W"
 echo "H. project chưa có helper (super-board cũ): luật không chạy"
 check 0 "gh pr edit 5 --add-label merge-queue" "$BARE"
 
+echo "J. helper git đã theo dõi mà bị mv / ghi đè (chỉ rm là file bảo vệ): chặn, không mở cửa (OCR #826)"
+T="$TMP/tracked"; TW="$TMP/tracked-wt"; H=.claude/bin/super-board-queue-label.sh
+git -C "$TMP" init -q -b main tracked; mkdir -p "$T/.claude/bin"; stub "$T"; echo 0 > "$T/rc"
+git -C "$T" add "$H" && git -C "$T" -c user.email=t@example.invalid -c user.name=t commit -q -m helper
+check 0 "gh pr edit 5 --add-label merge-queue" "$T"
+[ -s "$T/calls" ] && echo "  ✔ tracked helper matching HEAD is used" || { echo "  ✖ tracked helper not called"; FAILS=$((FAILS + 1)); }
+mv "$T/$H" "$TMP/moved-helper"
+check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'checkout --'
+mv "$TMP/moved-helper" "$T/$H"; echo 3 > "$T/rc"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$T/$H"
+check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
+check 2 "gh api repos/acme/widgets/issues/5/labels -f 'labels[]=merge-queue'" "$T"; grep_err 'khác bản HEAD'
+git -C "$T" checkout -q -- "$H"; git -C "$T" worktree add -q --detach "$TW" 2>/dev/null; echo 0 > "$TW/rc"
+mv "$T/$H" "$TMP/moved-helper"
+check 2 "gh pr edit 5 --add-label merge-queue" "$TW"; grep_err 'checkout --'
+[ ! -s "$TW/calls" ] && echo "  ✔ worktree's own helper not used while main's tracked helper is gone" || { echo "  ✖ worktree helper used"; FAILS=$((FAILS + 1)); }
+
 [ "$FAILS" -eq 0 ] && echo "PASS test_guard_merge_queue_label" || { echo "FAIL test_guard_merge_queue_label ($FAILS)"; exit 1; }

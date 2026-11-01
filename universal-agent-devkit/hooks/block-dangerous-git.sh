@@ -1233,23 +1233,47 @@ def _mq_has(v):
     """Danh sách nhãn (phân tách dấu phẩy) có merge-queue; GitHub so tên nhãn không phân biệt hoa thường."""
     return any(x.strip().casefold() == MQ_LABEL for x in (v or "").split(","))
 
+def _mq_git(root, *args):
+    """(exit, stdout) của git ở `root`; (-1, "") khi không chạy được / quá 5 s."""
+    try:
+        r = subprocess.run(["git", "-C", root, *args], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+        return r.returncode, r.stdout
+    except (OSError, subprocess.SubprocessError):
+        return -1, ""
+
+def _mq_helper_at(root):
+    """(đường dẫn, lý do chặn) của helper dưới `root`. Git HEAD theo dõi helper mà file vắng (mv, git mv) hoặc khác HEAD (ghi đè,
+    sed -i, cp) → lý do chặn: chỉ rm là file bảo vệ, nên mất file không được làm luật thôi chạy (OCR #826). Git không theo dõi: file có
+    thì dùng (bản đồng bộ chưa commit), không có thì (None, None)."""
+    path = os.path.join(root, MQ_HELPER)
+    restore = f"khôi phục: git -C {root} checkout -- {MQ_HELPER}"
+    rc, out = _mq_git(root, "ls-tree", "--name-only", "HEAD", "--", MQ_HELPER)
+    if rc == -1:
+        return None, f"{MQ_MSG}: không kiểm được {MQ_HELPER} của {root} bằng git — chặn để an toàn"
+    if rc != 0 or not out.strip():   # chưa có commit / git không theo dõi helper
+        return (path if os.path.isfile(path) else None), None
+    if not os.path.isfile(path):
+        return None, f"{MQ_MSG}: {MQ_HELPER} git đã theo dõi nhưng không còn trong cây ({root}) — {restore}"
+    rc, _ = _mq_git(root, "diff", "--quiet", "HEAD", "--", MQ_HELPER)
+    if rc != 0:
+        return None, f"{MQ_MSG}: {MQ_HELPER} khác bản HEAD ({root}) — {restore}"
+    return path, None
+
 def _mq_helper():
-    """Đường dẫn helper của project phiên (bản của checkout chính khi project là linked worktree); None khi project chưa có helper."""
+    """(helper, lý do chặn) của project phiên: helper của checkout chính trước khi project là linked worktree, rồi của chính project.
+    (None, None) khi project chưa có helper (luật không chạy, ponytail ở đầu mục)."""
     proj = backup_root()
     if not proj:
-        return None
-    try:
-        r = subprocess.run(["git", "-C", proj, "rev-parse", "--path-format=absolute", "--git-common-dir"], stdin=subprocess.DEVNULL,
-                           capture_output=True, text=True, timeout=5)
-        common = r.stdout.strip() if r.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
-        common = ""
-    if common and os.path.basename(common.rstrip("/")) == ".git":
-        main_helper = os.path.join(os.path.dirname(common.rstrip("/")), MQ_HELPER)
-        if os.path.isfile(main_helper):
-            return main_helper
-    own = os.path.join(proj, MQ_HELPER)
-    return own if os.path.isfile(own) else None
+        return None, None
+    rc, common = _mq_git(proj, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    common = common.strip().rstrip("/") if rc == 0 else ""
+    roots = [os.path.dirname(common)] if common and os.path.basename(common) == ".git" else []
+    roots += [proj] if os.path.realpath(proj) not in [os.path.realpath(r) for r in roots] else []
+    for root in roots:
+        path, why = _mq_helper_at(root)
+        if why or path:
+            return path, why
+    return None, None
 
 def _mq_parse(args, kind):
     """Tách đối số gh theo pflag: [(cờ, giá trị|None)], [positional]. Cụm cờ ngắn (-dl x, -lmerge-queue, -if k=v): chữ boolean đi tiếp,
@@ -1483,7 +1507,9 @@ def gh_label_rule(rest, base, env_repo=None):
         reason, sels, api_repo = _mq_api(rest[j + 1:], base)
         if not reason and not sels:
             return None
-        helper = _mq_helper()   # project chưa có helper: luật không chạy (ponytail ở đầu mục)
+        helper, hwhy = _mq_helper()   # project chưa có helper: luật không chạy (ponytail ở đầu mục)
+        if hwhy:
+            return reason or hwhy
         if helper is None or reason:
             return reason if helper else None
         repo = api_repo or env_repo
@@ -1498,7 +1524,9 @@ def gh_label_rule(rest, base, env_repo=None):
     want = ("--label", "-l") if create else ("--add-label",)
     if not any(o in want and (v is None or _unknowable(v) or _mq_has(v)) for o, v in flags):
         return None
-    helper = _mq_helper()   # project chưa có helper: luật không chạy (ponytail ở đầu mục)
+    helper, hwhy = _mq_helper()   # project chưa có helper: luật không chạy (ponytail ở đầu mục)
+    if hwhy:
+        return hwhy
     if helper is None:
         return None
     if not repo and _mq_ghrepo_reason():
@@ -1614,7 +1642,6 @@ def analyse_simple(tokens, depth):
         CUR_DIR[0] = None if unknown else os.path.join(CUR_DIR[0], os.path.expanduser(tgt))
     if prog == "export" and ALLOW_BRANCH_ENV in rest:
         ALLOW_BRANCH[0] = True
-
     # (2026-10-22, #144) kill / wait by process NAME reaches every session on the machine: `pkill -f post-fix-gate` killed the gates
     # of other boards, `pgrep -f "git push"` matched the push of another session. A PID the session recorded (`kill $pid`, `wait $pid`)
     # and a plain `pgrep NAME` lookup stay allowed. tests/gates/test_guard_kill_by_name.sh

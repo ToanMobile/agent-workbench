@@ -101,5 +101,8 @@ reset; pr "[$(cmt OWNER "approved-head:$HEAD")]"; run --check
 { [ "$RC" = 0 ] && grep -q '^pr view --json number,state,url,headRefOid,comments' "$TMP/gh.log"; } \
   && ok "h9 no PR selector → the PR of the current branch (gh pr view without a selector)" || fail "h9 rc=$RC gh=$(tr '\n' '|' < "$TMP/gh.log")"
 reset; run 5 --bogus; [ "$RC" = 64 ] && ok "h9b unknown option → exit 64" || fail "h9b rc=$RC"
+# OCR #826: thời hạn 0 s (communicate(timeout=0) hết giờ ngay) làm mọi lần gắn nhãn exit 69 → coi là giá trị sai, dùng mặc định 6 s
+reset; pr "[$(cmt OWNER "approved-head:$HEAD")]"; SB_QUEUE_LABEL_GH_TIMEOUT=0 run --check 5
+[ "$RC" = 0 ] && ok "h10 SB_QUEUE_LABEL_GH_TIMEOUT=0 → default timeout, valid approval passes" || fail "h10 rc=$RC err=$(head -c 200 "$TMP/err")"
 
 [ "$FAILS" -eq 0 ] && echo "PASS test_queue_label" || { echo "FAIL test_queue_label ($FAILS)"; exit 1; }

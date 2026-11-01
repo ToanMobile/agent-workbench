@@ -26,7 +26,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 LIMIT="${SB_QUEUE_LABEL_GH_TIMEOUT:-6}"
-case "$LIMIT" in ''|*[!0-9]*|???*) LIMIT=6 ;; esac
+case "$LIMIT" in ''|*[!0-9]*|???*|0|00) LIMIT=6 ;; esac   # 0 s: hết giờ ngay, mọi lần gắn nhãn exit 69
 
 # Lệnh có timeout: hết giờ giết cả nhóm tiến trình (gh / git fetch có thể sinh tiến trình con), exit 124.
 run_t() {

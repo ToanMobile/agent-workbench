@@ -191,4 +191,16 @@ run_q; rc=$?
 run_q; rc=$?
 [ "$rc" -eq 0 ] && ok "R7 next run is not halted" || fail "R7 next run rc=$rc err=$(tail -c 200 "$TMP/err")"
 
+# ── R8. nhánh không phải issue-K- mà đóng HAI issue → không đoán thẻ nào, chỉ comment PR (luật "đúng một issue")
+reset; pr 14 fix-baz 30 "[$(ref 24),$(ref 25)]"; issue 24; issue 25; rm -f "$F/head-14"
+run_q
+{ has_w "pr-comment 14 [merge-queue] [report] ⚠ left the queue" && ! has_w "issue-comment 24" && ! has_w "issue-comment 25"; } \
+  && ok "R8 two closing issues → no card guessed, only the PR comment" || fail "R8 writes=$(cat "$F/writes")"
+
+# ── R9. card.sh đọc thẻ lỗi (exit 69, không halt) → bỏ qua ghi chú thẻ, PR vẫn rời hàng, hàng đợi exit 0
+reset; pr 15 issue-26-u 30; issue 26; rm -f "$F/head-15"; touch "$F/card-err-26"
+run_q; rc=$?
+{ [ "$rc" -eq 0 ] && has_w "pr-comment 15 [merge-queue] [report] ⚠ left the queue" && ! has_w "issue-comment 26"; } \
+  && ok "R9 card lookup error → card note skipped, PR still leaves, queue exits 0" || fail "R9 rc=$rc writes=$(cat "$F/writes")"
+
 [ "$FAILS" -eq 0 ] && echo "PASS test_merge_queue_reject_card_note" || { echo "FAIL test_merge_queue_reject_card_note ($FAILS)"; exit 1; }
