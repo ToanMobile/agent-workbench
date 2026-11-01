@@ -93,11 +93,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 REPO="$(git -C "${REPO:-.}" rev-parse --show-toplevel 2>/dev/null)" || { echo "review-fanout: not a git repo" >&2; exit 2; }
-SKIP="$(python3 -I - "$HERE" "$SKIP" <<'PY'
+SKIP="$(python3 -I - "$HERE" "skip=$SKIP" <<'PY'
 import importlib.util, os, sys
 sp = importlib.util.spec_from_file_location("rm", os.path.join(sys.argv[1], "review-merge.py"))
 rm = importlib.util.module_from_spec(sp); sp.loader.exec_module(rm)
-names, err = rm.parse_skip(sys.argv[2])
+names, err = rm.parse_skip(sys.argv[2][5:])
 if err:
     print(err, file=sys.stderr); sys.exit(2)
 print(",".join(names))
@@ -142,9 +142,9 @@ BASE_SHA="$(git rev-parse -q --verify "${BASE}^{commit}" 2>/dev/null)" || { echo
 COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
 # a machine-gated PR's head (marker from super-board-merge-gate.sh) is always reviewed deep
 [ -f "$COMMON/review-fanout/deep-heads/$(git rev-parse -q --verify HEAD 2>/dev/null)" ] && DEPTH_FORCE=deep
-code_hash() { python3 -I - "$BASE_SHA" "$SKIP" "$DEPTH_FORCE" <<'PY'
+code_hash() { python3 -I - "$BASE_SHA" "skip=$SKIP" "depth=$DEPTH_FORCE" <<'PY'
 import hashlib, os, stat, subprocess, sys
-base, skip, depth_force = sys.argv[1], sys.argv[2], sys.argv[3]
+base, skip, depth_force = sys.argv[1], sys.argv[2][5:], sys.argv[3][6:]
 # files the review writes itself (the rendered checklist, outcome log): hashing them would make every review change the code
 # state it just judged. .agents/regression_status.json DOES count (audit 31/10): dropping or editing a BUG-REV row is a change
 # the review must see; the merge writes it only on a FAIL (blocking findings -> bug rows), never on a PASS.
@@ -187,13 +187,6 @@ PY
 }
 CODE_HASH="$(code_hash)" && [ -n "$CODE_HASH" ] || { echo "review-fanout: could not hash the change" >&2; exit 2; }
 [ "$MODE" = "hash" ] && { echo "$CODE_HASH"; exit 0; }
-RUNTIME="$(python3 -I - "$HERE" "$SKIP" <<'PY'
-import importlib.util, json, os, sys
-sp = importlib.util.spec_from_file_location("review_runner", os.path.join(sys.argv[1], "review_runner.py"))
-rr = importlib.util.module_from_spec(sp); sp.loader.exec_module(rr)
-print(json.dumps(rr.reviewer_runtime([x for x in sys.argv[2].split(",") if x]), sort_keys=True))
-PY
-)" && [ -n "$RUNTIME" ] || { echo "review-fanout: could not resolve the reviewer executables" >&2; exit 2; }
 
 RUN="$COMMON/review-fanout/$CODE_HASH"
 mkdir -p "$COMMON/review-fanout" && chmod 700 "$COMMON/review-fanout"
@@ -204,15 +197,19 @@ running() { [ -f "$RUN/pid" ] && kill -0 "$(cat "$RUN/pid" 2>/dev/null)" 2>/dev/
 # one read: the seal is checked on the bytes the verdict is taken from, and the summary must name THIS code state (r14d, F12)
 # and a PASS made by other reviewer executables than this environment's (meta.runtime) is FOREIGN; a summary from before the runtime
 # was recorded (or a test fixture) carries none
-cached_verdict() { _REVIEW_RUNTIME="$RUNTIME" python3 -I - "$HERE" "$RUN/summary.json" "$CODE_HASH" <<'PY' 2>/dev/null
-import importlib.util, json, os, sys
-sp = importlib.util.spec_from_file_location("review_sign", os.path.join(sys.argv[1], "review_sign.py"))
-rs = importlib.util.module_from_spec(sp); sp.loader.exec_module(rs)
-d = rs.load_verified(sys.argv[2], sys.argv[3])
+cached_verdict() {
+  [ -f "$RUN/summary.json" ] || return 0
+  python3 -I - "$HERE" "$RUN/summary.json" "$CODE_HASH" "${SKIP:-none}" <<'PY' 2>/dev/null
+import importlib.util, os, sys
+def _load(name):
+    sp = importlib.util.spec_from_file_location(name, os.path.join(sys.argv[1], name + ".py"))
+    m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m); return m
+d = _load("review_sign").load_verified(sys.argv[2], sys.argv[3])
 v = d.get("verdict", "") if isinstance(d, dict) else ""
 meta = d.get("meta") if isinstance(d, dict) else None
 rt = meta.get("runtime") if isinstance(meta, dict) else None
-print("FOREIGN" if v in ("PASS", "PASS_REDUCED") and rt is not None and rt != json.loads(os.environ["_REVIEW_RUNTIME"]) else v)
+skipped = [] if sys.argv[4] == "none" else [x for x in sys.argv[4].split(",") if x]
+print("FOREIGN" if v in ("PASS", "PASS_REDUCED") and rt is not None and rt != _load("review_runner").reviewer_runtime(skipped) else v)
 PY
 }
 
@@ -302,11 +299,15 @@ on_signal() { for p in $PIDS; do kill -TERM "$p" 2>/dev/null; done; for p in $PI
 trap 'rm -f "$RUN/pid"' EXIT
 trap on_signal INT TERM HUP
 
-_REVIEW_RUNTIME="$RUNTIME" python3 -I - "$REPO" "$BASE_SHA" "$CODE_HASH" "$RUN" "$HERE" "$SKIP" "$DEPTH_FORCE" "$COMMON" <<'PY' || { echo "review-fanout: meta failed" >&2; exit 2; }
-import json, os, re, stat, subprocess, sys
+python3 -I - "$REPO" "$BASE_SHA" "$CODE_HASH" "$RUN" "$HERE" "${SKIP:-none}" "${DEPTH_FORCE:-auto}" "$COMMON" <<'PY' || { echo "review-fanout: meta failed" >&2; exit 2; }
+import importlib.util, json, os, re, stat, subprocess, sys
 repo, base, code_hash, run, here, skip, depth_force, common_dir = sys.argv[1:9]
-runtime = os.environ["_REVIEW_RUNTIME"]
-skipped = [x for x in skip.split(",") if x]
+skipped = [] if skip == "none" else [x for x in skip.split(",") if x]
+if depth_force == "auto":
+    depth_force = ""
+_rr_sp = importlib.util.spec_from_file_location("review_runner", os.path.join(here, "review_runner.py"))
+_rr = importlib.util.module_from_spec(_rr_sp); _rr_sp.loader.exec_module(_rr)
+runtime = _rr.reviewer_runtime(skipped)
 def git(*a):
     return subprocess.run(["git", "-c", "core.quotePath=false", *a], capture_output=True, text=True).stdout
 files, lines = [], 0
@@ -361,7 +362,7 @@ meta = {"repo": repo, "common_dir": common_dir, "base": base, "code_hash": code_
         "regression_status": os.environ.get("REVIEW_REGRESSION_STATUS") or ".agents/regression_status.json", "changed_lines": lines, "sensitive_paths": hot, "injection_signals": signals,
         "files": files, "untracked": untracked, "dirty": bool(git("status", "--porcelain", "--untracked-files=all").strip()),
         "commits_since_base": bool(git("rev-list", "--max-count=1", f"{base}..HEAD").strip()), "required": required,
-        "skipped_by_override": skipped, "reduced": bool(skipped), "runtime": json.loads(runtime),
+        "skipped_by_override": skipped, "reduced": bool(skipped), "runtime": runtime,
         "models": {"claude": os.environ.get("REVIEW_CLAUDE_MODEL") or "opus",
                    "grok": os.environ.get("REVIEW_GROK_MODEL") or "grok-4.7",
                    "antigravity": os.environ.get("REVIEW_AGY_MODEL") or "gemini-4-argon-high"}}

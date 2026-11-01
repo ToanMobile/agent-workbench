@@ -16,7 +16,7 @@ mkrepo() { mkdir -p "$1" && (cd "$1" && git init -q && git config user.email t@t
   && git add -A && git commit -qm i); }
 P="$TMP/p"; Q="$TMP/q"; mkrepo "$P"; mkrepo "$Q"
 git -C "$P" worktree add -q -b w "$TMP/w"
-H="$(printf 'r23c' | shasum -a 256 | awk '{print $1}')"
+H="$(python3 -c 'import hashlib; print(hashlib.sha256(b"r23c").hexdigest())')"
 # summary <run dir> [repo]: a PASS summary naming code state H (and repo, when given)
 summary() { mkdir -p "$1"; rm -f "$1/summary.json.sig"; python3 - "$1/summary.json" "$H" "${2:-}" <<'PY'
 import json, sys
