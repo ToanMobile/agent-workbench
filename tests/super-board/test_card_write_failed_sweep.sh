@@ -15,6 +15,8 @@
 #  s12 hai lệnh ghi của cùng thẻ hỏng trong một tick → lệnh sau nối vào state, giữ cột cũ, phát lại cả hai theo thứ tự
 #  s13 `issue reopen` không phát lại (issue_is_open tự xét lại); s14 không lưu được state → comment không hứa "Retry"
 #  s15 board đọc lại rồi lệnh khác của thẻ đã Blocked có state hỏng → nối vào state, không ghi đè (review vòng 2)
+#  s16 thẻ ĐANG Blocked mà lệnh ghi của nó hỏng → không chuyển cột, không comment `blocked-by:  -` đè lý do chặn của thẻ (review 3 P1)
+#  s17 state có cờ lạ (--repo, --body-file, --title, issue close) → không phát lại, bỏ state (review 3 P2)
 # Runner THẬT của checkout chứa file test (ROOT từ $0). Offline, gh giả. Tương thích bash 3.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -246,7 +248,30 @@ FAIL_PAT='^issue comment 446 --body second'; run_tick Blocked 'gh_write_once iss
   && ok "s15: later failure on a Blocked card with state → appended (from=QA kept), no second blocker comment" \
   || fail "s15: state=$(cat "$STATE" 2>/dev/null) gh=$(ghl | cut -c1-200)"
 
+echo "s16. thẻ ĐANG Blocked (lý do chặn riêng) mà lệnh ghi của nó hỏng → giữ nguyên thẻ, không comment blocked-by:  -, lưu state (review P1-1)"
+fresh
+FAIL_PAT='^issue edit 446 --add-label'; run_tick Blocked 'gh_write_once issue edit 446 --add-label waiting; echo "rc=$?"'; FAIL_PAT=""
+{ printf '%s\n' "$OUT" | grep -qx 'rc=1' && ! gh_has '^project item-edit' && ! gh_has '^issue comment 446' \
+  && [ "$(jq -r .from "$STATE" 2>/dev/null)" = Blocked ] && [ "$(jq -c '.argvs[0]' "$STATE" 2>/dev/null)" = '["issue","edit","446","--add-label","waiting"]' ]; } \
+  && ok "s16: Blocked card left as is (no move, no blocker comment overriding its blocked-by), state from=Blocked saved" \
+  || fail "s16: out=$OUT state=$(cat "$STATE" 2>/dev/null) gh=$(ghl | cut -c1-300)"
+run_tick Blocked 'sweep_card_write_failed'
+{ gh_has '^issue edit 446 --add-label waiting' && ! gh_has '^project item-edit' && ! gh_has 'back to' && [ ! -e "$STATE" ] && [ ! -s "$TMP/ny.log" ]; } \
+  && ok "s16: next tick re-applies the label only, card stays Blocked, no needs-you" || fail "s16 t2: gh=$(ghl | cut -c1-300)"
+fresh
+FAIL_PAT='^project item-edit .*OREADY'; run_tick Blocked 'set_card_status I446 Ready; echo "rc=$?"'; FAIL_PAT=""
+{ ! gh_has '^issue comment 446' && ! gh_has 'option-id OBLOCKED' && [ "$(jq -r .from "$STATE" 2>/dev/null)" = Blocked ]; } \
+  && ok "s16: failed release of a Blocked card → no blocker comment (the blocked sweep decides the release again)" \
+  || fail "s16 release: out=$OUT gh=$(ghl | cut -c1-300) state=$(cat "$STATE" 2>/dev/null)"
+
+echo "s17. state chỉ nhận đúng dạng lệnh runner ghi (cờ cho phép theo từng lệnh): cờ lạ / issue close → không phát lại (review P2-1)"
+for bad in '["issue","edit","446","--repo","acme/other","--add-label","x"]' '["issue","comment","446","--body-file","/etc/hosts"]' \
+           '["issue","close","446"]' '["issue","edit","446","--title","pwned"]' '["issue","comment","446","--body","a","--repo","acme/other"]'; do
+  fresh; mkdir -p "$TMP/inflight/card-write-failed"
+  printf '{"from":"QA","item":"I446","argvs":[%s],"fails":0,"cycles":0,"gave_up":false}' "$bad" > "$STATE"
+  run_tick Blocked 'sweep_card_write_failed'
+  { ! gh_has '^issue ' && ! gh_has 'option-id OQA' && [ "$(jq -r .gave_up "$STATE" 2>/dev/null)" = true ]; } \
+    && ok "s17: $bad not replayed, state given up" || fail "s17: $bad gh=$(ghl | cut -c1-200) state=$(cat "$STATE" 2>/dev/null)"
+done
+
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" = 0 ]
-
-
-

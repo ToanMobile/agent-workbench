@@ -153,4 +153,10 @@ reset_env; FAIL_PAT='^issue edit 446'; FAIL_TIMES=9; FAIL_MSG='HTTP 422: unique-
 run_case r8 'gh_write_once issue edit 446 --add-label x; echo "rc=$?"'
 grep -qF 'unique-stderr-marker' "$TMP/err" && ok "r8: gh stderr is passed through" || fail "r8: stderr lost: $(head -c 200 "$TMP/err")"
 
+echo "r9. trần 2 lần thử lại giữ cả khi SB_WRITE_RETRY_DELAYS dài hơn (review P3-3)"
+reset_env; FAIL_PAT='^issue edit 446 --remove-assignee'; FAIL_TIMES=9; FAIL_MSG='HTTP 502: Bad Gateway'
+run_case r9 'SB_WRITE_RETRY_DELAYS="0 0 0 0"; gh_write_once issue edit 446 --remove-assignee bot; echo "rc=$?"'
+[ "$(calls '^issue edit 446 --remove-assignee')" = 3 ] && ok "r9: 4 delays configured → still 3 attempts" \
+  || fail "r9: attempts=$(calls '^issue edit 446 --remove-assignee')"
+
 echo "pass=$PASS fail=$FAIL"; [ "$FAIL" = 0 ]

@@ -455,6 +455,23 @@ block_card_after_failed_write() {
     SB_WRITE_ARGS_JSON=""
     return 0 ;;
   esac
+  # #520 (review P1-1): thẻ ĐANG ở Blocked có lý do chặn riêng (dòng `blocked-by:` cuối của nó: một thẻ khác, hoặc người). Chuyển cột và
+  # đăng comment chặn mới (`blocked-by:  -`) sẽ đè lý do đó: thẻ lẽ ra tự nhả khi thẻ kia đóng thành chờ người mãi. Giữ nguyên thẻ, không
+  # comment; lưu state để sweep ghi lại nhãn / comment (lệnh nhả thẻ không phát lại: blocked sweep tự quyết lại mỗi tick).
+  if [ "$col" = Blocked ]; then
+    if [ -n "$sf" ] && [ -n "${SB_WRITE_ARGS_JSON:-}" ] && mkdir -p "$sdir" 2>/dev/null \
+       && jq -nc --arg item "$item" --argjson argv "$SB_WRITE_ARGS_JSON" \
+            '{from: "Blocked", item: $item, argvs: [$argv], fails: 0, cycles: 0, gave_up: false}' > "$sf.tmp" 2>/dev/null \
+       && mv -f "$sf.tmp" "$sf"; then
+      log "⚠ GitHub write for #${issue} failed (gh ${what}) — card already Blocked, left as it is; the write is retried each tick"
+    else
+      rm -f "$sf.tmp" 2>/dev/null || true
+      log "⚠ GitHub write for #${issue} failed (gh ${what}) — card already Blocked, left as it is; the runner decides this step again next tick"
+    fi
+    SB_WRITE_ARGS_JSON=""
+    CARD_WRITE_BLOCKED="${CARD_WRITE_BLOCKED:-} ${issue}"
+    return 0
+  fi
   log "⚠ GitHub write for #${issue} failed (gh ${what}) — #${issue} ${col:-?} → Blocked, the board keeps running"
   # #520: chỉ hứa tự ghi lại khi lưu được state (argv đúng như đã gửi, biết cột cũ). Thẻ vừa được ghi lại xong mà bị chặn lại trong 6 giờ
   # mang số vòng (`cycles`) từ sổ <N>.done sang: sweep thôi trả thẻ về sau 2 vòng (chặn ↔ trả về lặp mãi với lệnh không phát lại).
@@ -517,7 +534,9 @@ blocked-by:  -" >/dev/null 2>&1; then
 
 # #520: thẻ vào Blocked vì một lệnh ghi GitHub của nó hỏng (block_card_after_failed_write) được ghi lại MỖI tick, không chờ người.
 # Lệnh lấy từ state cục bộ $INFLIGHT_DIR/card-write-failed/<N>.json do chính runner ghi lúc chặn thẻ — không bao giờ từ comment GitHub —
-# và chỉ nhận đúng dạng runner tự ghi: `issue edit|comment|reopen|close <N> …`, `project item-edit`. Nhiều lệnh (argvs) phát lại theo thứ tự.
+# và chỉ nhận đúng dạng runner tự ghi (review P2-1: cả cờ, không --repo / --body-file / --title…): `issue edit <N> --add-assignee|
+# --remove-assignee|--add-label|--remove-label <v>`, `issue comment <N> --body <v>`, `issue reopen <N>`, `project item-edit …`. Nhiều lệnh
+# (argvs) phát lại theo thứ tự.
 #   không phát lại (net của "ghi lại rồi về cột cũ" là về cột cũ, bước của runner tự quyết lại): `project item-edit` (chuyển cột),
 #   `issue reopen` (issue_is_open xét lại nhãn ac-open / NOT_PLANNED), `issue edit … --add-assignee` khi thẻ không còn lock (lượt nhận
 #   thẻ đã huỷ)
@@ -560,13 +579,14 @@ sweep_card_write_failed() {
     # mọi lệnh phải đúng dạng runner tự ghi, cho đúng thẻ này; một lệnh lạ là cả state không dùng được
     verb=ok
     [ "$n" -gt 0 ] || verb=""
-    for ((i = 0; i < n; i++)); do
-      case "$(jq -r --argjson i "$i" '.argvs[$i] | .[:2] | map(tostring) | join(" ")' "$f" 2>/dev/null)" in
-        "issue edit"|"issue comment"|"issue reopen"|"issue close")
-          [ "$(jq -r --argjson i "$i" '.argvs[$i][2] // empty | tostring' "$f" 2>/dev/null)" = "$issue" ] || verb="" ;;
-        "project item-edit") ;;
-        *) verb="" ;;
-      esac
+    for ((i = 0; i < n; i++)); do   # đúng số đối số và đúng cờ của từng dạng; lỗi jq (argv không phải mảng chuỗi) = lạ
+      [ "$(jq -r --argjson i "$i" --arg n "$issue" '.argvs[$i] as $a
+        | ($a | type) == "array" and all($a[]; type == "string")
+          and (if $a[0:2] == ["issue", "edit"] then ($a | length) == 5 and $a[2] == $n
+                 and ([$a[3]] | inside(["--add-assignee", "--remove-assignee", "--add-label", "--remove-label"]))
+               elif $a[0:2] == ["issue", "comment"] then ($a | length) == 5 and $a[2] == $n and $a[3] == "--body"
+               elif $a[0:2] == ["issue", "reopen"] then ($a | length) == 3 and $a[2] == $n
+               else $a[0:2] == ["project", "item-edit"] end)' "$f" 2>/dev/null)" = true ] || verb=""
     done
     if [ -z "$verb" ] || [ -z "$from" ] || [ -z "$item" ]; then
       log "⚠ card-write-failed #${issue}: retry state not usable (gh ${what:-?}, from '${from}') — left in Blocked for a person"
@@ -622,7 +642,8 @@ Next: the card continues from ${to}; nothing to do" >/dev/null 2>&1 || log "⚠ 
       # --action/--next ngắn, không dòng máy (Reason tag:, blocked-by:, <!--) — super-board-needs-you.py one_line từ chối các dòng đó.
       if [ -n "$repo" ] && python3 "$(dirname "$SB_GITHUB_READ")/super-board-needs-you.py" mark --repo "$repo" --issue "$issue" \
            --action "kiểm trên GitHub lệnh ghi runner không ghi lại được (gh ${what}) và làm tay nếu chưa có hiệu lực" \
-           --next "kéo #${issue} về ${to}" >/dev/null 2>>"${RUN_MANIFEST:-/dev/null}"; then
+           --next "$([ "$to" = Blocked ] && echo "để #${issue} ở Blocked tới khi lý do chặn của nó hết" || echo "kéo #${issue} về ${to}")" \
+           >/dev/null 2>>"${RUN_MANIFEST:-/dev/null}"; then
         jq -c --argjson n "$fails" '.fails = $n | .gave_up = true' "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" || rm -f "$f.tmp"
         moved=0
         log "✖ card-write-failed #${issue}: ${why} — labelled needs-you, no more retries"
@@ -632,7 +653,8 @@ Next: the card continues from ${to}; nothing to do" >/dev/null 2>&1 || log "⚠ 
     else
       log "⚠ card-write-failed #${issue}: writing it again failed (tick ${fails}/${CWF_MAX_TICKS}) — card stays Blocked"
     fi
-    jq -c --argjson n "$fails" '.fails = $n' "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" || rm -f "$f.tmp"
+    jq -c --argjson n "$fails" '.fails = $n' "$f" > "$f.tmp" 2>/dev/null && mv -f "$f.tmp" "$f" || {
+      rm -f "$f.tmp"; log "⚠ card-write-failed #${issue}: retry counter not saved (${f}) — the ${CWF_MAX_TICKS}-tick cap cannot advance"; }
   done
   return "$moved"
 }
@@ -1232,7 +1254,7 @@ dispatch_ready_tick() {
     if [ "${DISPATCH_COUNT:-0}" -gt "$before" ]; then ACTIVE_WORKERS=$((ACTIVE_WORKERS + 1)); return 0; fi
     case " ${PREFLIGHT_SKIP} " in *" ${TOP_ISSUE} "*) ;; *) return 0 ;; esac   # không giao vì lý do khác (claim, account, đĩa)
     tries=$((tries + 1))
-    [ "$tries" -lt 3 ] || { log "Ready: ${tries} cards skipped by preflight this tick — next ones wait for the next tick"; return 0; }
+    [ "$tries" -lt 3 ] || { log "Ready: ${tries} cards skipped by preflight this tick — the next tick tries the top cards again"; return 0; }
   done
   return 0
 }
