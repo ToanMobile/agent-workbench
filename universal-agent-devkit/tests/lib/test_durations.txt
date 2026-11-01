@@ -410,6 +410,7 @@
 70 tests/worktree_git/test_trunk_main_pending_writers.sh
 # 2026-10-25: tích hợp skill impeccable v4.7.1; đo ~2 s.
 2 tests/verification/test_impeccable_skill.sh
+4 tests/verification/test_impeccable_pipefail_guard.sh
 # 2026-10-25: test_evidence_gate chặn nhầm (tên chu trình trong kế hoạch, mã thoát in bằng echo, lệnh bị từ chối, động từ khẳng định bị phủ định); đo 22 s lúc máy tải 53 (12 nhân).
 # 2026-10-25 (review af339645): 40 → 77 ca + 3 ca giới hạn thời gian; đo 77 s lúc máy tải 45 (12 nhân).
 5 tests/gates/test_evidence_false_blocks.sh
@@ -472,6 +473,8 @@
 1 tests/gates/test_gate_head_and_dirty_settings.sh
 # #721 (2026-10-31, tải ~9, chạy một mình): test đỏ in mọi dòng hỏng (run_impacted / gate_full chia đôi / fail_lines của gate)
 2 tests/gates/test_red_fail_lines.sh
+5 tests/verification/test_create_task_pr_mention.sh
+2 tests/verification/test_card_batch_fresh_lead.sh
 # #748 #749 #759 (2026-11-01): ca biên nhóm b, BISECT=1 ra commit nghi vấn, truy vết đỏ (fixture git giả, ước lượng)
 15 tests/gates/test_gate_full_red_env_edges.sh
 15 tests/gates/test_gate_full_trace.sh
