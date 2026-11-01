@@ -294,20 +294,25 @@ def _rank(qdir: str, name: Optional[str]) -> int:
     return order.index(name) if name in order else 0
 
 
-def _try_lock_path(path: str) -> Optional[IO[str]]:
-    """flock LOCK_NB trên một file khoá; ghi PID khi lấy được."""
+def _write_lock_pid(fh: IO[str]) -> None:
+    try:
+        fh.seek(0)
+        fh.truncate()
+        fh.write(f"{os.getpid()}\n")
+        fh.flush()
+    except OSError:
+        pass
+
+
+def _try_lock_path(path: str, write_pid: bool = True) -> Optional[IO[str]]:
+    """flock LOCK_NB trên một file khoá; ghi PID khi lấy được (write_pid=False khi chỉ dò hàng đợi trước lúc chốt slot)."""
     fh: Optional[IO[str]] = None
     try:
         fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
         fh = os.fdopen(fd, "r+", encoding="utf-8")
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        try:
-            fh.seek(0)
-            fh.truncate()
-            fh.write(f"{os.getpid()}\n")
-            fh.flush()
-        except OSError:
-            pass
+        if write_pid:
+            _write_lock_pid(fh)
         return fh
     except OSError:
         if fh is not None:
@@ -321,6 +326,14 @@ def _try_lock_path(path: str) -> Optional[IO[str]]:
 def _unlock(fh: Optional[IO[str]]) -> None:
     if fh is None:
         return
+    # Xoá trắng PID ngay khi còn giữ LOCK_EX trước lúc LOCK_UN (#787): tránh tiến trình còn sống sau khi nhả khoá
+    # (_gate_pool_has_room, acquire_pool nhả got[1:], kết thúc gate) bị capacity.gate_busy() đếm nhầm là đang giữ slot.
+    try:
+        fh.seek(0)
+        fh.truncate()
+        fh.flush()
+    except OSError:
+        pass
     try:
         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
     except OSError:
@@ -378,7 +391,7 @@ def acquire_pool(pool: str, paths: list, *, wait_s: float, prio: Optional[str] =
             first = _rank(qdir, ticket) == 0
             got = []
             for path in paths:
-                fh = _try_lock_path(path)
+                fh = _try_lock_path(path, write_pid=False)
                 if fh is not None:
                     got.append((fh, path))
                     if first:
@@ -386,6 +399,7 @@ def acquire_pool(pool: str, paths: list, *, wait_s: float, prio: Optional[str] =
             if got and _rank(qdir, ticket) < len(got):
                 for fh, _ in got[1:]:
                     _unlock(fh)
+                _write_lock_pid(got[0][0])
                 return PoolHandle(pool, fh=got[0][0], path=got[0][1], waited_s=time.monotonic() - t_start)
             for fh, _ in got:
                 _unlock(fh)
