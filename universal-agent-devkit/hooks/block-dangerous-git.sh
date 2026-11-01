@@ -1224,7 +1224,6 @@ MQ_LABEL = "merge-queue"
 MQ_MSG = "gắn nhãn merge-queue khi PR chưa có approved-head khớp head"
 MQ_HELPER = os.path.join(".claude", "bin", "super-board-queue-label.sh")
 MQ_BUDGET_S = 9.0   # tổng thời gian của guard khi có lời gọi helper: dưới timeout 10 s của hook ở Codex/Gemini/Cursor
-GH_REPO_ENV = [None]   # `export GH_REPO=…` trước đó trong cùng dòng lệnh
 # Cờ KHÔNG mang giá trị của gh pr edit / issue edit / pr create (gh 2.103.3 --help); mọi cờ dài khác mang giá trị.
 MQ_BOOL_LONG = {"--remove-milestone", "--remove-parent", "--remove-type", "--draft", "--dry-run", "--editor", "--fill",
                 "--fill-first", "--fill-verbose", "--no-maintainer-edit", "--web", "--help"}
@@ -1233,17 +1232,6 @@ MQ_BOOL_SHORT = {"create": "defwh", "edit": "h", "api": "ih"}   # cờ ngắn bo
 def _mq_has(v):
     """Danh sách nhãn (phân tách dấu phẩy) có merge-queue; GitHub so tên nhãn không phân biệt hoa thường."""
     return any(x.strip().casefold() == MQ_LABEL for x in (v or "").split(","))
-
-def _mq_repo(rest):
-    """Giá trị -R/--repo của lệnh gh (tách rời, =, dính liền); None khi không có."""
-    for k, a in enumerate(rest):
-        if a in ("-R", "--repo") and k + 1 < len(rest):
-            return rest[k + 1]
-        if a.startswith("--repo="):
-            return a[7:]
-        if a[:2] == "-R" and len(a) > 2:
-            return a[2:]
-    return None
 
 def _mq_helper():
     """Đường dẫn helper của project phiên (bản của checkout chính khi project là linked worktree); None khi project chưa có helper."""
@@ -1305,11 +1293,28 @@ def _mq_parse(args, kind):
         k += 1
     return flags, pos
 
+def _mq_ghrepo_reason():
+    """GH_REPO đặt ở chỗ khác trong dòng lệnh (export, gán trần, subshell, unset…) chứ không làm tiền tố của chính lệnh gh: guard
+    không theo được giá trị gh thấy lúc chạy → lý do chặn; None khi dòng lệnh không nhắc GH_REPO."""
+    if re.search(r"\bGH_REPO\b", cmd):
+        return f"{MQ_MSG}: GH_REPO đặt ngoài lệnh gh (export / gán / unset), không biết gh sẽ gắn nhãn repo nào — ghi --repo OWNER/NAME"
+    return None
+
+def _mq_last(flags, names):
+    """Giá trị của lần cuối cờ xuất hiện (pflag: cờ lặp thì giá trị sau đè giá trị trước); None khi không có."""
+    v = None
+    for o, val in flags:
+        if o in names:
+            v = val
+    return v
+
 def _mq_check(helper, sels, repo, base):
     """None = cho gắn nhãn; chuỗi = lý do chặn. sels = các số / URL / nhánh PR (phải có ít nhất một)."""
     if not sels:
         return f"{MQ_MSG}: không thấy số PR trong lệnh (PR của nhánh hiện tại, xargs, biến của script) — ghi số PR thật"
-    if re.search(r"(^|[^A-Za-z0-9_.-])xargs([^A-Za-z0-9_.-]|$)", cmd):
+    if not repo and (not base or _unknowable(base) or not os.path.isdir(base)):   # cd $X / popd: repo của lệnh không xác định
+        return f"{MQ_MSG}: thư mục chạy lệnh không xác định (cd tới đường dẫn chỉ biết lúc chạy) — ghi --repo OWNER/NAME"
+    if re.search(r"\bxargs\b[^;&|\n]*\bgh\b", cmd):
         return f"{MQ_MSG}: lệnh chạy qua xargs — số PR do stdin nối thêm, guard không biết PR nào bị gắn nhãn; ghi số PR thật, mỗi lệnh một PR"
     for v in list(sels) + ([repo] if repo else []):
         if _unknowable(v) or "{" in v:
@@ -1360,12 +1365,19 @@ def _mq_label_values(text):
         o = json.loads(text)
     except ValueError:
         return [text]
+    if isinstance(o, dict) and "labels" not in o:
+        return []
     vals = o.get("labels") if isinstance(o, dict) else o
     if isinstance(vals, str):
         return [vals]
     if not isinstance(vals, list):
         return [text]
     return [v.get("name") if isinstance(v, dict) else v for v in vals if isinstance(v, (str, dict))]
+
+def _mq_gql_shell(t):
+    """Chuỗi query/--input graphql có nội suy shell: `${…}`, hoặc tên field là biến (`{ $M(` / `: $M(`) — GraphQL không cho
+    biến ở vị trí tên field, nên đó chỉ có thể là biến shell."""
+    return "${" in t or re.search(r"[{:]\s*\$\w+\s*\(", t) is not None
 
 def _mq_gql_label(texts):
     """Mutation graphql gắn nhãn: addLabelsToLabelable, hoặc labelIds trong updatePullRequest / updateIssue (createIssue thì không)."""
@@ -1377,8 +1389,8 @@ def _mq_api(args, base):
     """gh api: (lý do chặn | None, [số PR], repo) — None, [], None khi không phải lệnh thêm nhãn merge-queue."""
     flags, pos = _mq_parse(args, "api")
     fields = [(o, v) for o, v in flags if v is not None and o in ("-f", "-F", "--field", "--raw-field")]
-    input_src = next((v for o, v in flags if o == "--input"), None)
-    method = next((v.upper() for o, v in flags if o in ("-X", "--method") and v), None)
+    input_src = _mq_last(flags, ("--input",))
+    method = (_mq_last(flags, ("-X", "--method")) or "").upper() or None
     if any(_gh_graphql_endpoint(x) for x in pos):
         texts, query, query_bad, data_bad = [], None, False, False
         for o, nv in fields:
@@ -1387,7 +1399,7 @@ def _mq_api(args, base):
             t, _why = _gh_field_text(o, v, base) if eq else (v, None)
             # `$id` trong query là biến GraphQL, không phải biến shell: luôn quét chữ thô; chỉ coi là không đọc được khi cả giá trị là
             # một biến shell / lệnh con, hoặc file không đọc được.
-            bad = t is None or bool(re.fullmatch(r"\s*\$\{?\w+\}?\s*", t)) or SUBST in t or "`" in t
+            bad = t is None or bool(re.fullmatch(r"\s*\$\{?\w+\}?\s*", t)) or SUBST in t or "`" in t or _mq_gql_shell(t)
             if name == "query":
                 query, query_bad = (None, True) if bad else (t, False)
             elif bad:
@@ -1396,7 +1408,7 @@ def _mq_api(args, base):
                 texts.append(t)
         if input_src is not None:
             t = ("\n".join(_gh_stdin_texts()) or None) if input_src == "-" else _gh_file(input_src, base)
-            if t is None:
+            if t is None or SUBST in t or "`" in t or _mq_gql_shell(t):   # heredoc không quote: shell nội suy trước khi gh đọc
                 query_bad = query is None
                 data_bad = True
             else:
@@ -1446,7 +1458,7 @@ def _mq_api(args, base):
         names.extend(_mq_label_values(t) if t.lstrip().startswith(("[", "{", "\x22")) else [t])
     if input_src is not None:
         t = ("\n".join(_gh_stdin_texts()) or None) if input_src == "-" else _gh_file(input_src, base)
-        if t is None:
+        if t is None or _unknowable(t):
             return f"{MQ_MSG}: --input của gh api …/issues/{num}/labels không đọc được, không kiểm được có merge-queue không", [], None
         names.extend(_mq_label_values(t))
     if any(isinstance(n, str) and _mq_has(n) for n in names):
@@ -1457,10 +1469,14 @@ def gh_label_rule(rest, base, env_repo=None):
     """Lý do chặn khi lệnh gh thêm nhãn merge-queue cho PR chưa có approved-head khớp head; None khi không phải lệnh đó, PR đủ điều
     kiện, hoặc project chưa có helper."""
     rest = drop_redirects(rest)
-    repo = _mq_repo(rest) or env_repo or GH_REPO_ENV[0]
-    rest = _gh_strip_globals(rest)
-    j = 0
-    while j < len(rest) and rest[j].startswith("-"):
+    j, lead_repo = 0, None
+    while j < len(rest) and rest[j].startswith("-"):   # cờ toàn cục đứng trước lệnh con: gh -R o/r pr edit …
+        a = rest[j]
+        if a in GH_GLOBAL_ARG and j + 1 < len(rest):
+            lead_repo = rest[j + 1] if a in ("-R", "--repo") else lead_repo
+            j += 2
+            continue
+        lead_repo = a[7:] if a.startswith("--repo=") else a[2:] if (a[:2] == "-R" and len(a) > 2) else lead_repo
         j += 1
     sub, args = rest[j:j + 2], rest[j + 2:]
     if sub[:1] == ["api"]:
@@ -1470,17 +1486,23 @@ def gh_label_rule(rest, base, env_repo=None):
         helper = _mq_helper()   # project chưa có helper: luật không chạy (ponytail ở đầu mục)
         if helper is None or reason:
             return reason if helper else None
-        return _mq_check(helper, sels, api_repo or repo, base)
+        repo = api_repo or env_repo
+        if not repo and _mq_ghrepo_reason():
+            return _mq_ghrepo_reason()
+        return _mq_check(helper, sels, repo, base)
     create = sub in (["pr", "create"], ["pr", "new"])
     if not create and sub not in (["pr", "edit"], ["issue", "edit"]):
         return None
     flags, sels = _mq_parse(args, "create" if create else "edit")
+    repo = _mq_last(flags, ("-R", "--repo")) or lead_repo or env_repo
     want = ("--label", "-l") if create else ("--add-label",)
     if not any(o in want and (v is None or _unknowable(v) or _mq_has(v)) for o, v in flags):
         return None
     helper = _mq_helper()   # project chưa có helper: luật không chạy (ponytail ở đầu mục)
     if helper is None:
         return None
+    if not repo and _mq_ghrepo_reason():
+        return _mq_ghrepo_reason()
     if create:
         return f"{MQ_MSG}: PR mới chưa thể có approved-head — tạo PR không kèm nhãn này, nhãn do lane Review gắn sau khi duyệt ({MQ_HELPER} <pr>)"
     return _mq_check(helper, sels, repo, base)
@@ -1579,8 +1601,6 @@ def analyse_simple(tokens, depth):
         HOME_SET[0] = True
     if (HOME_SET[0] or "HOME" in assigns) and i < len(tokens) and GATE_CMD.search(" ".join(tokens[i:])):
         return f"{PM_STATE_MSG} HOME: lệnh gate / push / integrate kèm HOME do agent đặt thì ~/.antigravity-pm là thư mục agent tự viết"
-    if "GH_REPO" in assigns and i >= len(tokens):   # (#536) `GH_REPO=x; export GH_REPO`: repo của các lệnh gh sau
-        GH_REPO_ENV[0] = assigns["GH_REPO"]
     if i >= len(tokens):
         return None
     prog, rest = tokens[i].rsplit("/", 1)[-1], tokens[i + 1:]
@@ -1594,10 +1614,7 @@ def analyse_simple(tokens, depth):
         CUR_DIR[0] = None if unknown else os.path.join(CUR_DIR[0], os.path.expanduser(tgt))
     if prog == "export" and ALLOW_BRANCH_ENV in rest:
         ALLOW_BRANCH[0] = True
-    if prog == "export":   # (#536) repo của các lệnh gh sau trong cùng dòng lệnh
-        for a in rest:
-            if a.startswith("GH_REPO="):
-                GH_REPO_ENV[0] = a.split("=", 1)[1]
+
     # (2026-10-22, #144) kill / wait by process NAME reaches every session on the machine: `pkill -f post-fix-gate` killed the gates
     # of other boards, `pgrep -f "git push"` matched the push of another session. A PID the session recorded (`kill $pid`, `wait $pid`)
     # and a plain `pgrep NAME` lookup stay allowed. tests/gates/test_guard_kill_by_name.sh

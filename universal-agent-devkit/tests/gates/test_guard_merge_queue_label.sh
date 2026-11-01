@@ -36,6 +36,7 @@ printf '{"labels":["merge-queue"]}' > "$P/labels.json"
 printf '{"labels":["bug"]}' > "$P/other.json"
 printf '[{"name":"merge-queue"}]' > "$P/named.json"
 printf '{"labels":"merge-queue"}' > "$P/str.json"
+printf '{"title":"fix, merge-queue, cleanup"}' > "$P/patch_title.json"
 printf 'mutation($in: UpdatePullRequestInput!) { updatePullRequest(input: $in) { clientMutationId } }' > "$P/q.graphql"
 
 # check <want rc> <command> [project dir]
@@ -77,9 +78,17 @@ reset 0; check 0 "gh pr edit --remove-milestone 5 --add-label merge-queue"; expe
 reset 0; check 0 "gh pr edit 5 --attach shot.png --add-label merge-queue"; expect_call '^--check 5$'
 reset 0; check 2 "echo 5 | xargs gh pr edit --add-label merge-queue"; expect_call none
 reset 0; check 2 "python3 -c \"import subprocess; n = 5; subprocess.run(['gh', 'pr', 'edit', str(n), '--add-label', 'merge-queue'])\""; expect_call none
-reset 3; check 2 "export GH_REPO=acme/w; gh pr edit 5 --add-label merge-queue"; expect_call '^--check 5 --repo acme/w$'
-reset 3; check 2 "GH_REPO=acme/w; export GH_REPO; gh pr edit 5 --add-label merge-queue"; expect_call '^--check 5 --repo acme/w$'
+reset 0; check 2 "export GH_REPO=acme/w; gh pr edit 5 --add-label merge-queue"; expect_call none
+reset 0; check 2 "GH_REPO=acme/w; export GH_REPO; gh pr edit 5 --add-label merge-queue"; expect_call none
+reset 0; check 2 "( export GH_REPO=acme/w ); gh pr edit 5 --add-label merge-queue"; expect_call none
+reset 0; check 2 "GH_REPO=acme/w; gh pr edit 5 --add-label merge-queue"; expect_call none
 reset 0; check 2 "echo 6 | xargs gh issue edit 5 --add-label merge-queue"; expect_call none
+reset 0; check 0 "gh pr comment 5 --body \"note about xargs\" && gh pr edit 5 --add-label merge-queue"; expect_call '^--check 5$'
+reset 0; check 0 "printf a | xargs echo && gh pr edit 5 --add-label merge-queue"; expect_call '^--check 5$'
+reset 0; check 0 "gh pr edit 5 -t -R --add-label merge-queue"; expect_call '^--check 5$'
+reset 3; check 2 "gh pr edit 5 -R other/repo -R acme/widgets --add-label merge-queue"; expect_call '^--check 5 --repo acme/widgets$'
+reset 0; check 2 "cd \$OTHER && gh pr edit 5 --add-label merge-queue"; expect_call none
+reset 0; check 0 "cd \$OTHER && gh pr edit 5 --repo acme/widgets --add-label merge-queue"; expect_call '^--check 5 --repo acme/widgets$'
 reset 3; check 2 "GH_REPO=acme/widgets gh pr edit 5 --add-label merge-queue"; expect_call '^--check 5 --repo acme/widgets$'
 reset 0; echo 3 > "$P/rc-11"; check 2 "gh issue edit 10 11 --add-label merge-queue"; expect_call '^--check 11$'
 reset 3; check 2 "cd \$X && gh pr edit --add-label merge-queue"; expect_call none
@@ -91,6 +100,7 @@ reset 0; check 0 "gh pr create --title t --body b --label bug"; expect_call none
 reset 0; check 2 "gh pr new -l merge-queue"; expect_call none
 reset 0; check 2 "gh pr create -t t -b b -lmerge-queue"; expect_call none
 reset 0; check 2 "gh pr create -dl merge-queue -t t -b b"; expect_call none
+reset 0; check 2 "gh pr create -t -H --label merge-queue -b body"; expect_call none
 reset 0; check 0 "gh pr create -dfl bug"; expect_call none
 
 echo "C. nhãn khác / gỡ nhãn: không gọi helper"
@@ -119,6 +129,13 @@ reset 0; check 2 "gh api graphql -f query='mutation(\$in:UpdatePullRequestInput!
 reset 0; check 2 "gh api graphql -f query=\"\$Q\""; expect_call none
 reset 0; check 0 "gh api graphql -f query='mutation { createIssue(input: {repositoryId: \"R\", title: \"t\", labelIds: [\"LA_y\"]}) { issue { number } } }'"; expect_call none
 reset 3; check 2 "gh api repos/acme/widgets/issues/\$PR/labels -f 'labels[]=merge-queue'"; expect_call none
+reset 3; check 2 "gh api -X GET -X POST repos/acme/widgets/issues/5/labels -f 'labels[]=merge-queue'"; expect_call '^--check 5 --repo acme/widgets$'
+reset 3; check 2 "gh api repos/acme/widgets/issues/5/labels --input other.json --input labels.json"; expect_call '^--check 5 --repo acme/widgets$'
+reset 0; check 2 "L=merge-queue; gh api repos/acme/widgets/issues/5/labels --input - <<EOF
+[\"\$L\"]
+EOF"; expect_call none
+reset 0; check 0 "gh api -X PATCH repos/acme/widgets/issues/5 --input patch_title.json"; expect_call none
+reset 0; check 2 "M=addLabelsToLabelable; gh api graphql -f \"query=mutation { \${M}(input:{labelableId:\\\"PR_x\\\",labelIds:[\\\"LA_y\\\"]}){clientMutationId} }\""; expect_call none
 reset 3; check 2 "gh api repos/acme/widgets/issues/5/labels -if 'labels[]=merge-queue'"; expect_call '^--check 5 --repo acme/widgets$'
 reset 3; check 2 "gh api -f note=x/issues/1 repos/acme/widgets/issues/5/labels -f 'labels[]=merge-queue'"; expect_call '^--check 5 --repo acme/widgets$'
 reset 0; check 2 "gh api repositories/123/issues/5/labels -f 'labels[]=merge-queue'"; expect_call none

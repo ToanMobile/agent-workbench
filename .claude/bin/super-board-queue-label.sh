@@ -33,6 +33,7 @@ run_t() {
   python3 -I -c '
 import os, signal, subprocess, sys
 # Cùng nhóm tiến trình với helper (không start_new_session): guard giết cả nhóm của helper khi hết thời hạn thì gh / git fetch chết theo.
+# ponytail: chạy độc lập mà hết giờ thì chỉ giết con trực tiếp; cháu (git fetch của audit-check) tự dừng theo timeout 60 s của nó.
 p = subprocess.Popen(sys.argv[2:], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 try:
     o, e = p.communicate(timeout=float(sys.argv[1]))
@@ -47,7 +48,7 @@ SEL=(); [ -z "$PR" ] || SEL=("$PR")
 ERRF=$(mktemp "${TMPDIR:-/tmp}/sb-qlabel.XXXXXX") || { echo "queue-label: mktemp hỏng — không gắn nhãn" >&2; exit 69; }
 trap 'rm -f "$ERRF"' EXIT
 # ${a[@]+"${a[@]}"}: mảng rỗng dưới set -u của bash 3.2 (macOS) không bị coi là biến chưa đặt.
-view=$(run_t gh pr view ${SEL[@]+"${SEL[@]}"} ${REPO_ARG[@]+"${REPO_ARG[@]}"} --json number,state,headRefOid,comments 2>"$ERRF") || {
+view=$(run_t gh pr view ${SEL[@]+"${SEL[@]}"} ${REPO_ARG[@]+"${REPO_ARG[@]}"} --json number,state,url,headRefOid,comments 2>"$ERRF") || {
   echo "queue-label: không đọc được PR ${PR:-của nhánh hiện tại} từ GitHub ($(tail -1 "$ERRF" 2>/dev/null | cut -c1-160)) — không gắn nhãn ${LABEL}" >&2
   exit 69; }
 n=$(printf '%s' "$view" | jq -r '.number // empty' 2>/dev/null) || n=""
@@ -81,12 +82,12 @@ case "$vwhy" in
     if [ -n "$cwd_top" ] && [ -n "$cwd_common" ] && [ "$cwd_common" = "$top_common" ]; then
       top="$cwd_top"
     fi
-    # --repo khác origin của repo đó: biên bản / fetch refs/pull ở đây là của repo khác → không tính nguồn task:.
-    if [ -n "$REPO" ]; then
-      origin=$(git -C "$top" remote get-url origin 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:|ssh://git@github\.com/)##; s#\.git$##' | tr 'A-Z' 'a-z') || origin=""
-      [ "$origin" = "$(printf '%s' "$REPO" | tr 'A-Z' 'a-z')" ] \
-        || refuse "$approved" "approved-by task_id ${vwhy#task:} được audit trong repo ${origin:-không rõ}, không phải ${REPO}"
-    fi
+    # Repo của PR (lấy từ url GitHub trả về, đúng cả khi chọn PR bằng URL / GH_REPO / --repo) phải là origin của repo chứa biên bản:
+    # biên bản và fetch refs/pull ở repo khác không chứng minh gì cho PR này → không tính nguồn task:.
+    prrepo=$(printf '%s' "$view" | jq -r '.url // empty' 2>/dev/null | sed -nE 's#^https://github\.com/([^/]+/[^/]+)/pull/[0-9]+$#\1#p' | tr 'A-Z' 'a-z') || prrepo=""
+    origin=$(git -C "$top" remote get-url origin 2>/dev/null | sed -E 's#^(https?://github\.com/|git@github\.com:|ssh://git@github\.com/)##; s#\.git$##' | tr 'A-Z' 'a-z') || origin=""
+    [ -n "$prrepo" ] && [ "$origin" = "$prrepo" ] \
+      || refuse "$approved" "approved-by task_id ${vwhy#task:} được audit trong repo ${origin:-không rõ}, PR thuộc repo ${prrepo:-không rõ}"
     run_t python3 "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${vwhy#task:}" "$head" >/dev/null 2>&1 \
       || refuse "$approved" "approved-by task_id ${vwhy#task:} chưa có audit pass của antigravity-pm với auditedHead ${head:0:7}" ;;
   *) refuse "$approved" "không rõ nguồn duyệt" ;;
