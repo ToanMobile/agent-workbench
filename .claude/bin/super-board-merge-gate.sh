@@ -98,6 +98,9 @@
 #      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
 #      the card goes back to Review (not Blocked, not a rebase pass)
+#   10 chưa có lượt review 4 bên nào cho đúng head này (review-fanout.sh --status NONE): stdout `review-missing: <head> base <sha>`.
+#      Không merge; merge-queue giữ nhãn và đếm lần thử (3 lần → 🛡 Blocked) thay vì lặp mù Review ↔ Merge khi chưa lane nào chạy
+#      review-fanout.sh trên head cuối (13bcd39b20). Chạy review xong thì merge lại.
 #   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
 #   7  merge policy says a human merges this one (a diff over a positive auto_max_lines — default 0, so an unset
 #      cap is not a size gate; a positive cap says "big PR — please review" —
@@ -128,7 +131,7 @@
 #     HMAC seal checked by the DevKit itself) run on the clean head with --base merge-base(head, origin/<base>), then the
 #     signed summary.json is re-verified with `review-fanout.sh --verify-summary` on a private copy. No fanout, or a fanout
 #     without --verify-summary → exit 9;
-#     NONE / UNSIGNED / forged / FAIL / PASS_REDUCED → exit 6 (back to Review); RUNNING → exit 4.
+#     UNSIGNED / forged / FAIL / PASS_REDUCED → exit 6 (back to Review); NONE → exit 10 (`review-missing:`); RUNNING → exit 4.
 #     `--accept-reduced-review <skip list>` (or SB_MERGE_ACCEPT_REDUCED_REVIEW=<list>, per run) accepts PASS_REDUCED of that
 #     exact skip list for a PR outside the machine gate only. Default: rejected.
 #   * Never merges with a failing CI check (`gh pr checks`: fail/cancel/unknown bucket → exit 11; unreadable → exit 4).
@@ -681,8 +684,8 @@ fi
 # ---- 4-way review verdict for this exact head (31/10/2026) ----------------------------------------------------------------------
 # Không merge khi chưa có verdict PASS của review 4 bên cho đúng head này. Gate KHÔNG tự tính HMAC: hỏi entry point của DevKit
 # (review-fanout.sh --status: cùng mã băm code state, tự kiểm chữ ký), rồi xác minh lại chữ ký trên BẢN CHÉP summary.json bằng
-# review-fanout.sh --verify-summary trước khi đọc depth/security (không TOCTOU giữa hai lần đọc). Thiếu tool → exit 9; NONE, UNSIGNED, giả mạo,
-# FAIL, PASS_REDUCED → exit 6 (về Review); RUNNING → exit 4. Base của review = merge-base(head PR, origin/<base>), đúng mặc định của
+# review-fanout.sh --verify-summary trước khi đọc depth/security (không TOCTOU giữa hai lần đọc). Thiếu tool → exit 9; UNSIGNED, giả mạo,
+# FAIL, PASS_REDUCED → exit 6 (về Review); NONE → exit 10 (review-missing); RUNNING → exit 4. Base của review = merge-base(head PR, origin/<base>), đúng mặc định của
 # review-fanout trên nhánh PR (toàn bộ diff của PR); cây scratch lúc gọi là head PR sạch (chưa gộp base). Biến REVIEW_* (skip, model)
 # của môi trường bị bỏ: gate chỉ nhận review với model mặc định đã ghim, PASS_REDUCED chỉ qua --accept-reduced-review.
 find_review_fanout() {
@@ -702,6 +705,14 @@ review_status() {  # review_status [<skip list>] [deep] → REVIEW_RC, REVIEW_LI
   REVIEW_RUN=${REVIEW_LINE#* }
 }
 review_void() { say "review: $*"; say "the review evidence is void — send the card back to Review"; exit 6; }
+# 13bcd39b20: chưa có lượt review nào cho head này (NONE) — khác bằng chứng hỏng / FAIL (exit 6, về Review). Exit 10 riêng để merge-queue
+# giữ nhãn và đếm lần thử (attempt_retry, đủ 3 lần → 🛡 Blocked) thay vì gỡ nhãn rồi lặp Review ↔ Merge vô hạn khi chưa lane nào chạy review.
+review_missing() {
+  echo "review-missing: ${HEAD_SHA} base ${REVIEW_BASE}"
+  say "review: $*"
+  say "no 4-way review run exists for ${HEAD_SHA:0:12}: run review-fanout.sh --base ${REVIEW_BASE:0:12} on a clean checkout of it, then merge again"
+  exit 10
+}
 # review_seal_check <summary.json>: the ONLY place the gate checks an HMAC seal, and it does not compute one — it asks the DevKit's
 # `review-fanout.sh --verify-summary` (exit 0 sealed, 1 unsigned/tampered, 2 usage). Any other answer (a DevKit from before the entry
 # point existed answers "unknown argument" with 2) means the seal cannot be checked: verification-readiness, never a merge.
@@ -735,12 +746,23 @@ review_verdict_check() {
       first=$REVIEW_WORD
       if [ -n "$ACCEPT_REDUCED" ] && [ "$GATED" -eq 0 ]; then
         review_status "$ACCEPT_REDUCED"
+        [ "$first:$REVIEW_RC:$REVIEW_WORD" != "NONE:4:NONE" ] \
+          || review_missing "no 4-way review and no review with skip list ${ACCEPT_REDUCED} for ${HEAD_SHA:0:12} (status NONE)"
         [ "$REVIEW_RC:$REVIEW_WORD" = "6:PASS_REDUCED" ] \
           || review_void "no signed 4-way PASS (${first}) and no signed PASS_REDUCED for skip list ${ACCEPT_REDUCED} (${REVIEW_WORD:-?})"
         want=PASS_REDUCED
         say "review: accepting PASS_REDUCED (skipped: ${ACCEPT_REDUCED}) — explicit per-run override"
-      elif [ "$first" = PASS_REDUCED ] || [ -n "$ACCEPT_REDUCED" ]; then
+      elif [ "$first" = NONE ] && [ -n "$ACCEPT_REDUCED" ]; then
+        # GATED=1 kèm ACCEPT_REDUCED: nếu cả lượt 4 bên lẫn lượt skip đều chưa chạy (NONE) thì là thiếu review (exit 10),
+        # chỉ khi có lượt reduced đã chạy (vd. PASS_REDUCED) mới từ chối vì machine-gate không nhận PASS_REDUCED (exit 6).
+        review_status "$ACCEPT_REDUCED"
+        [ "$REVIEW_RC:$REVIEW_WORD" != "4:NONE" ] \
+          || review_missing "no signed 4-way PASS for ${HEAD_SHA:0:12} (status NONE)"
+        review_void "PASS_REDUCED is not accepted for a machine-gated PR — a full signed 4-way PASS is required"
+      elif [ "$first" = PASS_REDUCED ]; then
         review_void "PASS_REDUCED is not accepted$([ "$GATED" -eq 1 ] && echo ' for a machine-gated PR') — a full signed 4-way PASS is required"
+      elif [ "$first" = NONE ]; then
+        review_missing "no signed 4-way PASS for ${HEAD_SHA:0:12} (status NONE)"
       else
         review_void "no signed 4-way PASS for ${HEAD_SHA:0:12} (status ${first}) — review the clean PR head with review-fanout.sh --base ${REVIEW_BASE:0:12}"
       fi ;;
