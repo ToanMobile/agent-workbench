@@ -6,6 +6,10 @@
 
 Một lượt:
   1. khoá <common>/postfix-gate/gate-full.lock (pid + lúc bắt đầu, O_EXCL): pid còn sống ⇒ "skip", exit 0; pid chết ⇒ chiếm lại;
+  1b. khoá TOÀN MÁY DEVKIT_GATE_FULL_GLOBAL_LOCK (mặc định ~/Library/Caches/devkit-gate-full/global.lock, flock + pid/repo): mỗi lúc
+     chỉ MỘT lượt gate-full trên cả máy, mọi repo (lịch đêm 00:00 của nhiều repo cùng nổ, nút "Chạy gate full" của Agent Office);
+     bận ⇒ chờ, kiểm mỗi DEVKIT_GATE_FULL_GLOBAL_POLL_S (5 s), tối đa DEVKIT_GATE_FULL_GLOBAL_WAIT_S (21600 s) rồi "skip" (nhả khoá repo);
+     file khoá không bao giờ bị gỡ (flock trên inode cố định), nhả = đóng fd;
   2. chờ tải 1 phút ≤ capacity.hold_load() (bin/capacity.py), kiểm mỗi DEVKIT_GATE_FULL_POLL_S (60 s), tối đa --max-wait-s rồi chạy luôn;
   3. git fetch origin, resolve sha của --ref;
   4. scratch `git worktree add --detach <common>/postfix-gate/gate-full-scratch-<stamp> <sha>`, cài DevKit như merge train;
@@ -27,7 +31,8 @@ Kết luận: 0 xanh (hoặc skip), 1 đỏ (suite FAIL thật), 3 chưa kết l
 last_full_green_sha; red-env cũng 3 nhưng có thẻ), 2 lỗi chuẩn bị (ref, scratch).
 Lượt đêm chạy nice 10 do plist (`/usr/bin/nice -n 10`, con thừa hưởng); gate_full.py không tự đặt nice (#696).
 Móc test: DEVKIT_GATE_FULL_CMD (lệnh gate thay thế, shell, cwd = scratch; khi đặt thì không chạy agent-kit test),
-DEVKIT_GATE_FULL_CARD_CMD (thay `python3 create_task.py`), DEVKIT_GATE_FULL_LOG_DIR, DEVKIT_GATE_FULL_POLL_S; tải giả qua
+DEVKIT_GATE_FULL_CARD_CMD (thay `python3 create_task.py`), DEVKIT_GATE_FULL_LOG_DIR, DEVKIT_GATE_FULL_POLL_S,
+DEVKIT_GATE_FULL_GLOBAL_LOCK / _GLOBAL_POLL_S / _GLOBAL_WAIT_S (test đặt khoá toàn máy trong thư mục tạm); tải giả qua
 DEVKIT_CAPACITY_LOAD / DEVKIT_CAPACITY_CORES của capacity.py. Stdlib."""
 
 from __future__ import annotations
@@ -244,6 +249,68 @@ def release_lock(path: str) -> None:
         pass
     os.close(_LOCK_FD)
     _LOCK_FD = None
+
+
+_GLOBAL_FD = None   # fd giữ flock khoá toàn máy
+
+
+def global_lock_path() -> str:
+    return os.environ.get("DEVKIT_GATE_FULL_GLOBAL_LOCK") or os.path.expanduser("~/Library/Caches/devkit-gate-full/global.lock")
+
+
+def _global_holder(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.loads(f.read() or "{}")
+        return "pid %s, repo %s, từ %s" % (d.get("pid"), d.get("repo"), d.get("started"))
+    except (OSError, ValueError):
+        return "chưa rõ"
+
+
+def acquire_global(run: "Run", repo: str) -> bool:
+    """Chờ khoá toàn máy (một lượt gate-full mỗi lúc trên cả máy). False khi chờ quá DEVKIT_GATE_FULL_GLOBAL_WAIT_S.
+    Không gỡ file khoá khi nhả (khác khoá repo): mọi lượt flock cùng một inode nên không có khe đổi inode; Agent Office dò bằng LOCK_SH|NB."""
+    global _GLOBAL_FD
+    path = global_lock_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    poll = float(os.environ.get("DEVKIT_GATE_FULL_GLOBAL_POLL_S") or 5)
+    max_wait = float(os.environ.get("DEVKIT_GATE_FULL_GLOBAL_WAIT_S") or 21600)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    start = time.monotonic()
+    waited = False
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if not waited:
+                run.log("chờ khoá toàn máy %s: lượt gate-full khác đang chạy (%s)" % (path, _global_holder(path)))
+                waited = True
+            left = max_wait - (time.monotonic() - start)
+            if left <= 0:
+                os.close(fd)
+                run.info["global_wait_s"] = int(time.monotonic() - start)
+                return False
+            time.sleep(max(0.05, min(poll, left)))
+    os.ftruncate(fd, 0)
+    os.write(fd, json.dumps({"pid": os.getpid(), "started": dt.datetime.now().isoformat(timespec="seconds"), "repo": repo}).encode())
+    _GLOBAL_FD = fd
+    if waited:
+        run.info["global_wait_s"] = int(time.monotonic() - start)
+        run.log("có khoá toàn máy sau %d giây" % run.info["global_wait_s"])
+    return True
+
+
+def release_global() -> None:
+    global _GLOBAL_FD
+    if _GLOBAL_FD is None:
+        return
+    try:
+        os.ftruncate(_GLOBAL_FD, 0)
+    except OSError:
+        pass
+    os.close(_GLOBAL_FD)
+    _GLOBAL_FD = None
 
 
 # --- scratch ------------------------------------------------------------------------------------------------------------------
@@ -623,6 +690,19 @@ def cmd_run(args) -> int:
         run.log("skip: lượt trước đang chạy (pid %s)" % holder)
         run.finish()
         return 0
+    try:
+        got_global = acquire_global(run, repo)
+    except BaseException:   # SIGTERM / Ctrl-C khi đang chờ: nhả khoá repo
+        release_lock(lock)
+        raise
+    if not got_global:
+        run.info["result"] = "skip"
+        run.info["notes"].append("skip: chờ khoá toàn máy %s quá %d giây (lượt gate-full khác chạy quá lâu: %s)"
+                                 % (global_lock_path(), run.info.get("global_wait_s", 0), _global_holder(global_lock_path())))
+        run.log(run.info["notes"][-1])
+        release_lock(lock)
+        run.finish()
+        return 0
     aborted = False
     completed = False
     scratch = ""
@@ -765,6 +845,7 @@ def cmd_run(args) -> int:
                                     "card": run.info["card"], "log": run.log_path}, ensure_ascii=False) + "\n")
             run.finish()
         finally:
+            release_global()
             release_lock(lock)
 
 
