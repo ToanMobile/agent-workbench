@@ -685,10 +685,14 @@ class SuiteCache:
             return None
         if self.quarantined(test.get("id"), now):
             return None
-        void_at = self._load_side("void.json").get(test.get("id"))
-        if isinstance(void_at, (int, float)) and not isinstance(void_at, bool) and at <= void_at:
+        if self.voided(test.get("id"), at):
             return None   # PASS có trước một lần chạy thật không-PASS của suite này (FAIL, TIMEOUT, lỗi hạ tầng…) ở bất kỳ đâu
         return rec
+
+    def voided(self, sid, at):
+        """True khi suite sid bị void (void()) lúc hoặc sau `at`: PASS chạy lúc `at` không còn dùng lại được, ở mọi khoá và mọi biên nhận."""
+        void_at = self._load_side("void.json").get(sid)
+        return isinstance(void_at, (int, float)) and not isinstance(void_at, bool) and at <= void_at
 
     def void(self, sid, now=None):
         """Mọi PASS của suite sid ghi trước lúc này hết dùng lại được (mọi khoá): một lần chạy THẬT vừa ra không-PASS — FAIL, TIMEOUT,

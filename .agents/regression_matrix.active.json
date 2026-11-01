@@ -2621,6 +2621,28 @@
       ]
     },
     {
+      "component": "super-board-decision-prompts",
+      "watch_files": [
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-board/references/block-template.md",
+        ".claude/skills/super-board/references/run-workflow.md",
+        ".claude/skills/super-build/SKILL.md",
+        ".claude/skills/super-build/references/worker-preamble.md",
+        ".claude/skills/super-qa/SKILL.md",
+        ".claude/skills/super-review/SKILL.md",
+        ".claude/workflows/super-board-wave.js",
+        "tests/super-board/test_decision_prompts.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-DECISION-PROMPTS-01",
+          "name": "#518: prompt orchestrator (run.md) áp luật 1–5 của decision-policy.md, ghi [orchestrator] [decision] kèm marker sb-decision:orchestrator, unmark needs-you, danh sách dừng giữ needs-you; prompt builder/QA/reviewer/block-template/wave lanePrompt coi AC đã quyết là xong, không dựng lại blocker, cấm tự đăng [decision]",
+          "command": "bash tests/super-board/test_decision_prompts.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "merge-train-hook-refusal",
       "watch_files": [
         ".claude/bin/super-board-merge-train.sh",
