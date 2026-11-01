@@ -16,6 +16,8 @@
 #  8. commit gộp nhánh cắt từ commit cũ của main trả bản test yếu cũ về -> exit 2 (ĐỎ cả trên code cũ; review #834)
 #  9. cùng hình dạng, trả placeholder main đã gỡ -> kiểm tĩnh exit 1 (XANH trên code cũ, chốt chặn phần nới A1)
 #  10. gộp commit WIP ở cha thứ hai của PR đã merge vào main (yếu test_a + placeholder) -> exit 1, liệt kê test_a (audit #834)
+#  11. foxtrot (pull --no-rebase trên main rồi push) đẩy đầu main nhánh đã gộp sang cha thứ hai -> vẫn exit 0 (reflog; review #834)
+#  12. đối chứng: upstream origin/develop (giống trunk) được tin -> commit đồng đội không bị tính, exit 0
 # bash 3.2 compatible.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"
 set -u
@@ -59,7 +61,7 @@ gate() {
   OUT="$(CLAUDE_PROJECT_DIR="$PWD" python3 "$GATE" --matrix "$PWD/matrix.json" --lang en --json --run-tests --since "$BASE" 2>&1)"; RC=$?
   JSON="$(printf '%s\n' "$OUT" | grep '^{' | tail -1)"
 }
-touched() { printf '%s' "$JSON" | python3 -c 'import json,sys; print(" ".join(sorted(json.load(sys.stdin).get("tests_touched") or [])))' 2>/dev/null; }
+touched() { printf '%s' "$JSON" | python3 -c 'import json,sys; print(" ".join(sorted(json.load(sys.stdin)["tests_touched"])))' 2>/dev/null || echo PARSE_ERROR; }
 show() { printf '%s\n' "$OUT" | tail -12; }
 
 # 1. AC1: nhánh 1 commit riêng (code), gộp origin/main có sửa test_b
@@ -153,8 +155,8 @@ mate_commit "printf '#!/bin/sh\n[ 1 = 1 ]\n[ 9 = 9 ]\ntrue\n' > tests/test_a.sh"
 git fetch -q origin && git merge -q --ff-only origin/main || exit 1
 BASE="$(git rev-parse HEAD)"; OLD="$(git rev-parse HEAD~1)"
 git checkout -q -b old "$OLD" && printf 'x = 1\n' > src/u.py && git add src/u.py && git commit -qm "old: việc khác" || exit 1
-git checkout -q feat && git merge -q --no-ff --no-commit old >/dev/null 2>&1
-git show "$OLD:tests/test_a.sh" > tests/test_a.sh && git add tests/test_a.sh && git commit -qm "merge: trả test_a cũ" || exit 1
+git checkout -q feat && git merge -q --no-ff --no-commit old >/dev/null 2>&1 || exit 1
+git show "$OLD:tests/test_a.sh" > tests/test_a.sh && git add tests/test_a.sh && git commit -qm "merge: trả test_a cũ" && git rev-parse -q --verify HEAD^2 >/dev/null || exit 1
 gate
 if [ "$RC" = 2 ] && [ "$(touched)" = "tests/test_a.sh" ]; then ok "8: commit gộp trả bản test yếu cũ của main về vẫn bị liệt kê, exit 2"
 else bad "8: rc=$RC tests_touched='$(touched)' (mong 2 và tests/test_a.sh)"; show; fi
@@ -167,8 +169,8 @@ mate_commit "printf 'def h():\n    return 3\n' > src/old.py"
 git fetch -q origin && git merge -q --ff-only origin/main || exit 1
 BASE="$(git rev-parse HEAD)"; OLD="$(git rev-parse HEAD~1)"
 git checkout -q -b old "$OLD" && printf 'x = 1\n' > src/u.py && git add src/u.py && git commit -qm "old: việc khác" || exit 1
-git checkout -q feat && git merge -q --no-ff --no-commit old >/dev/null 2>&1
-git show "$OLD:src/old.py" > src/old.py && git add src/old.py && git commit -qm "merge: trả old.py cũ" || exit 1
+git checkout -q feat && git merge -q --no-ff --no-commit old >/dev/null 2>&1 || exit 1
+git show "$OLD:src/old.py" > src/old.py && git add src/old.py && git commit -qm "merge: trả old.py cũ" && git rev-parse -q --verify HEAD^2 >/dev/null || exit 1
 gate
 if [ "$RC" = 1 ] && printf '%s' "$JSON" | grep -q 'lazy-placeholder'; then ok "9: commit gộp trả placeholder main đã gỡ vẫn bị kiểm tĩnh chặn, exit 1"
 else bad "9: rc=$RC (mong 1 và lazy-placeholder)"; show; fi
@@ -186,6 +188,32 @@ gate
 if [ "$RC" = 1 ] && [ "$(touched)" = "tests/test_a.sh" ] && printf '%s' "$JSON" | grep -q 'lazy-placeholder'; then
   ok "10: gộp commit WIP cha thứ hai của PR: test_a vẫn bị liệt kê và placeholder vẫn bị chặn, exit 1"
 else bad "10: rc=$RC tests_touched='$(touched)' (mong 1, tests/test_a.sh và lazy-placeholder)"; show; fi
+
+# 11. "foxtrot": nhánh gộp L1 (đầu origin/main lúc đó: main sửa test_b + thêm placeholder); đồng đội pull --no-rebase rồi push nên
+#     L1 thành cha thứ hai của origin/main mới. L1 vẫn là nội dung đã landed (có trong reflog của origin/main): exit 0 (review #834)
+mk c11
+MATE2="$TMP/c11-mate2"; git clone -q "$ORIGIN" "$MATE2" 2>/dev/null && (cd "$MATE2" && cfg) || exit 1
+printf 'def f():\n    return 2\n' > src/core.py && git commit -qam "feat: code"
+mate_commit "printf '#!/bin/sh\ntrue\n' > tests/test_b.sh && printf 'def m():\n    # ... existing code ...\n    return 4\n' > src/main2.py"
+merge_main; L1="$(git rev-parse origin/main)"
+(cd "$MATE2" && printf 'y = 2\n' > src/t.py && git add src/t.py && git commit -qm "mate2: T" \
+  && git pull -q --no-rebase --no-edit origin main && git push -q origin main 2>/dev/null) || exit 1
+git fetch -q origin && [ "$(git rev-parse -q --verify origin/main^2)" = "$L1" ] || exit 1
+gate
+if [ "$RC" = 0 ] && [ -n "$JSON" ] && [ -z "$(touched)" ]; then ok "11: foxtrot đẩy đầu main đã gộp sang cha thứ hai: không đòi duyệt chéo, exit 0"
+else bad "11: rc=$RC tests_touched='$(touched)' (mong 0 và rỗng)"; show; fi
+
+# 12. đối chứng chiều tin: nhánh theo dõi origin/develop (giống trunk), đồng đội làm yếu test_b trên develop, nhánh pull --ff-only
+#     -> @{u} được tin, không liệt kê test_b, exit 0 (không chỉ dựa vào task_trunk = origin/main)
+mk c12
+(cd "$MATE" && git checkout -q -b develop && git push -q origin develop 2>/dev/null) || exit 1
+git fetch -q origin && git checkout -q -b dev --track origin/develop >/dev/null 2>&1 || exit 1
+BASE="$(git rev-parse HEAD)"
+(cd "$MATE" && printf '#!/bin/sh\ntrue\n' > tests/test_b.sh && git commit -qam "develop: yếu test_b" && git push -q origin develop 2>/dev/null) || exit 1
+git pull -q --ff-only || exit 1
+gate
+if [ "$RC" = 0 ] && [ -n "$JSON" ] && [ -z "$(touched)" ]; then ok "12: upstream origin/develop được tin, commit đồng đội không bị tính, exit 0"
+else bad "12: rc=$RC tests_touched='$(touched)' (mong 0 và rỗng)"; show; fi
 
 [ "$FAILS" -eq 0 ] && { echo "gate since trunk merge: all passed"; exit 0; }
 echo "gate since trunk merge: $FAILS FAILED"; exit 1
