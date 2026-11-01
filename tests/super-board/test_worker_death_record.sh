@@ -157,6 +157,7 @@ sleep 1
 if [ -n "$LCHILD" ] && ! kill -0 "$LCHILD" 2>/dev/null && ! kill -0 "$LP" 2>/dev/null; then ok "L: stop's kill_pid takes the wrapper's child too"; else fail "L: child $LCHILD survived stop"; kill -9 "$LCHILD" "$LP" 2>/dev/null; fi
 
 # ── M (R9): trap TERM được đặt trước khi chạy con, nên TERM tới sớm không làm wrapper chết mà không dọn con.
-if awk '/^trap /{t=NR} /^"\$@" &/{c=NR} END{exit !(t && c && t<c)}' "$WRAP"; then ok "M: wrapper installs its trap before starting the child"; else fail "M: trap is set after the child starts"; fi
+# Dòng chạy con: `"$@" &` hoặc dạng subshell gỡ trap của #507 (249cb8e2) `( trap - TERM INT HUP; exec "$@" ) &`.
+if awk '/^trap /{t=NR} /^("\$@"|\( *trap - [A-Z ]+; *exec "\$@" *\)) &/{c=NR} END{exit !(t && c && t<c)}' "$WRAP"; then ok "M: wrapper installs its trap before starting the child"; else fail "M: trap is set after the child starts"; fi
 
 [ "$FAILS" -eq 0 ] && echo "ALL PASS" || { echo "$FAILS FAIL"; exit 1; }
