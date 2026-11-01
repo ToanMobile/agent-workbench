@@ -53,6 +53,18 @@ echo '{"merge_policy":{"protected_paths":[]}}' > "$TMP/cfg.json"
 [ -z "$(gone)" ] && ok "protected_paths [] (off): an unreadable header is not gated" || fail "protected_paths off still gated: [$(gone)]"
 echo '{}' > "$TMP/cfg.json"
 
+# Nội dung hunk sau @@ mang dòng bắt đầu bằng `-- a/…` rồi `++ /dev/null` (trong diff thành `--- a/…` / `+++ /dev/null`) không phải xoá file.
+mkdir -p "$R/docs"
+printf '%s\n' '-- a/.agents/local/rules/not-deleted.md' > "$R/docs/notes.txt"
+git -C "$R" add -A; git -C "$R" commit -qm "add notes"
+printf '%s\n' '++ /dev/null' > "$R/docs/notes.txt"
+git -C "$R" add -A; git -C "$R" commit -qm "edit notes"
+git -C "$R" diff HEAD~1 HEAD > "$TMP/d.diff"
+grep -q '^--- a/\.agents/local/rules/not-deleted\.md$' "$TMP/d.diff" && grep -q '^+++ /dev/null$' "$TMP/d.diff" \
+  || fail "fixture: expected hunk lines starting with --- a/... and +++ /dev/null"
+[ -z "$(gone)" ] && ok "hunk content lines mimicking --- a/<protected> + +++ /dev/null after @@ do not trigger delete-protected" \
+  || fail "hunk content false-triggered delete-protected: [$(gone)]"
+
 # drop_files: the policy's own test fixtures (POLICY_SELF_TESTS) are dropped by their decoded +++ path, other files stay
 python3 -I - "$POLICY" <<'PY' && ok "parser units: quoted/unquoted headers, octal + backslash escapes, drop_files by decoded path" || fail "parser units"
 import importlib.util as u, sys

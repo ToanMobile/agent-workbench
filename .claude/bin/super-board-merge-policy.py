@@ -266,19 +266,21 @@ def deleted_paths(diff: str) -> list[str]:
     """Paths a unified git diff deletes: `deleted file mode`, `--- a/X` + `+++ /dev/null`, or `rename from X`.
 
     Read from the diff headers, not `meta.files` (gh gives no change type there). d1facdea5d: tên thường hoặc C-quoted
-    đều được giải mã; file rỗng bị xoá không có dòng `---`, chỉ có `diff --git` + `deleted file mode`. "" = một lần xoá
-    không đọc được đường dẫn (main() coi là chạm file bảo vệ: fail-closed).
+    đều được giải mã; file rỗng bị xoá không có dòng `---`, chỉ có `diff --git` + `deleted file mode`; chỉ đọc phần header
+    trước `\\n@@` của từng mục để nội dung hunk không bao giờ giả được dòng xoá file. "" = một lần xoá không đọc được đường dẫn
+    (main() coi là chạm file bảo vệ: fail-closed).
     """
-    out, lines = [], diff.split("\n")
-    for i, line in enumerate(lines):
-        if line.startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ /dev/null"):
-            out.append(line_path(line[4:], "a/") or "")
-        elif line.startswith("rename from "):
-            out.append(line_path(line[len("rename from "):], "") or "")
-        elif line.startswith("deleted file mode") and i > 0:
-            # header `diff --git a/X b/X` sits just above; `--- a/X` follows when the file had content.
-            head = next((h for h in reversed(lines[:i]) if h.startswith("diff --git ")), "")
-            out.append((diff_git_paths(head) or ("",))[0])
+    out = []
+    for sec in re.split(r"(?m)^(?=diff --git )", diff):
+        hdr = sec.split("\n@@", 1)[0].split("\n")
+        for i, line in enumerate(hdr):
+            if line.startswith("--- ") and i + 1 < len(hdr) and hdr[i + 1].startswith("+++ /dev/null"):
+                out.append(line_path(line[4:], "a/") or "")
+            elif line.startswith("rename from "):
+                out.append(line_path(line[len("rename from "):], "") or "")
+            elif line.startswith("deleted file mode"):
+                head = next((h for h in reversed(hdr[:i]) if h.startswith("diff --git ")), "")
+                out.append((diff_git_paths(head) or ("",))[0])
     return list(dict.fromkeys(out))
 
 
@@ -351,12 +353,13 @@ def main() -> int:
     # 31/10/2026: money / auth / schema / migration no longer route to a human. They go through an extra MACHINE gate
     # (deep 4-way review + security reviewer + extra tests), enforced by super-board-merge-gate.sh; fail-closed there.
     gate_cfg = policy.get("machine_gate") if isinstance(policy.get("machine_gate"), dict) else {}
+    # Gộp trên DEFAULT_MACHINE_GATE để khai báo riêng từng category (vd. categories.migration.verify_commands) không làm rơi
+    # luật mặc định money / auth / schema; muốn tắt hẳn một category mặc định thì gán tường minh {} cho khoá đó.
+    always = dict(DEFAULT_MACHINE_GATE)
+    if isinstance(policy.get("always_human"), dict):
+        always.update(policy["always_human"])
     if isinstance(gate_cfg.get("categories"), dict):
-        always = gate_cfg["categories"]
-    elif isinstance(policy.get("always_human"), dict):
-        always = policy["always_human"]
-    else:
-        always = DEFAULT_MACHINE_GATE
+        always.update(gate_cfg["categories"])
     machine, extra_tests = [], str_list(gate_cfg.get("verify_commands"))
     for cat, rule in always.items():
         rule = rule if isinstance(rule, dict) else {}
