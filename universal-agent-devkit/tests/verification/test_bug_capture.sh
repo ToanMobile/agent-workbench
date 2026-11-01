@@ -398,6 +398,9 @@ for p in "sao app văng khi mở PDF có mật khẩu?" "tại sao bấm Lưu �
          "audit, review cho tôi 5 repo https://github.com/ToanMobile?tab=projects hiện nhiều task bị blocked,ready ko chạy được tìm nguyên nhân và fix cho tôi đi" \
          "sao còn lỗi ở màn chọn bài? bugs/Screenshot_827.png" \
          "sửa lỗi \"bắt chế độ chờ khi rời xe\" luôn" \
+         "sao app crash chưa fix?" "sao app văng ko mở được?" \
+         "sửa lỗi card thanh toán" "fix bug trong task runner" "sửa lỗi nút Ready" \
+         "card hiển thị màu #000 sai ở màn đơn hàng" \
          "sao lại lỗi thế này khi mở file DOCX?
 java.lang.NullPointerException: doc is null
 	at com.techlead.reader.DocView.open(DocView.kt:42)"; do

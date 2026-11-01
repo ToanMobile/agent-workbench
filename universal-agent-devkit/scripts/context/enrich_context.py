@@ -836,13 +836,20 @@ KNOWN_BUGS_RE = re.compile(
 # vẫn ghi. Prompt trỏ tới thẻ theo số (thẻ #827, issue #12, URL issue GitHub, hay #536 trần cạnh từ task) nói về lỗi
 # đã có thẻ: không ghi dòng, như lane opener.
 LABEL_WORDS = ("lỗi", "bug")
-ASKED_RE = re.compile(r"\s+(?:gì|nào|(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa))(?!\w)")
+# Tiểu từ hỏi chỉ tính khi nó kết thúc mệnh đề: "sai gì ko?", "kẹt ko"; "crash chưa fix?", "văng ko mở được" là phủ định
+# của động từ sau, vẫn là triệu chứng (OCR #827).
+ASKED_RE = re.compile(r"\s+(?:gì|nào|(?:(?:hay|hoặc)\s+)?(?:không|ko|k|chưa))(?!\w)"
+                      r"(?=\s*(?:$|[?.!,;]|(?:không|ko|k|chưa|vậy|thế|nhỉ|hả|à|ạ)(?!\w)))")
 LABEL_AFTER_BI_RE = re.compile(r"\s+(?:lỗi|bugs?|vấn đề|issues?)(?!\w)")
 SYMPTOM_WORDS_RE = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) + (r"s?(?!\w)" if len(w) <= 3 else r"\w*")
                                                        for w in DEFECT_WORDS if w not in LABEL_WORDS) + ")")
 STACK_RE = re.compile(r"traceback \(most recent call last\)|fatal exception|^\s*at [\w$.<>]+\([^)\n]*:\d+\)", re.M)
-TRACKING_RE = re.compile(r"(?<!\w)(?:thẻ|tasks?|cards?|tickets?|backlog|ready|checklist|mục bug)(?!\w)")
-TRACKED_REF_RE = re.compile(r"(?<!\w)(?:thẻ|issues?|cards?|tickets?|tasks?|prs?|pull requests?|bugs?)\s*#\d+(?!\w)"
+# checklist / backlog / mục bug luôn là việc theo dõi; task, thẻ, card, ticket, issue, ready cũng là tên trong sản phẩm
+# ("sửa lỗi card thanh toán", "task runner") nên chỉ tính khi là đối tượng của động từ quản lý việc (OCR #827).
+TRACKING_RE = re.compile(r"(?<!\w)(?:checklist|backlog|mục bug)(?!\w)"
+                         r"|(?<!\w)(?:tạo|đưa|chuyển|gom|cập nhật|update|xoá|xóa|đóng|close|move|create|link|gắn|ghi|làm|lên|vô)"
+                         r"\s+(?:[^\s.;:!?]+\s+){0,3}?(?:thẻ|tasks?|cards?|tickets?|issues?|ready)(?!\w)")
+TRACKED_REF_RE = re.compile(r"(?<!\w)(?:thẻ|issues?|tickets?|tasks?|prs?|pull requests?|bugs?)\s*#\d+(?!\w)"
                             r"|(?<!\w)(?:issues?|prs?)\s+\d+(?!\w)|/(?:issues|pull)/\d+(?!\w)")   # "thẻ 2" có thể là tab UI
 BARE_REF_RE = re.compile(r"(?<![\w#&])#\d+(?!\w)")
 
