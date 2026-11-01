@@ -100,6 +100,7 @@ printf '#!/bin/sh\necho "[]"\n' >"$T/bin/gh"
 chmod +x "$T/bin/gh"
 export PATH="$T/bin:$PATH"
 export DEVKIT_GATE_FULL_LOG_DIR="$T/logs" DEVKIT_GATE_FULL_POLL_S=1 DEVKIT_CAPACITY_LOAD=0
+export DEVKIT_GATE_FULL_GLOBAL_LOCK="$T/global.lock"   # khoá toàn máy trong thư mục tạm: không chờ / chặn lượt đêm thật
 unset DEVKIT_GATE_FULL_CMD DEVKIT_GATE_FULL_CARD_CMD
 
 wait_file() {   # chờ file $1 có nội dung (tối đa ~10 s, bước 50 ms)
