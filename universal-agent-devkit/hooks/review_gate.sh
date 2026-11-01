@@ -32,6 +32,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
+# The hook's start for python's one deadline (#742 ab09d0a1f2): whole seconds, bash 3.2 has no EPOCHREALTIME. Silent without `date`
+# (the python3 check below must stay the first message: tests/gates/test_review_gate_no_python3.sh); python then uses its own start.
+CLAIM_T0="$(date +%s 2>/dev/null)"
 INPUT="$(cat)"
 
 # A reviewer started by bin/review-fanout.sh (review_runner sets REVIEW_FANOUT_CHILD=1) is itself the review: gating its own
@@ -90,11 +93,11 @@ raise SystemExit(0 if s.worker_skip_main(sys.argv[2]) else 1)' "$0" "${REPO_ROOT
 fi
 # The payload goes to python on fd 3, not in an env var (2026-10-09): past the OS limit for one variable python could not
 # start and the gate passed (tests/gates/test_hook_large_payload.sh).
-CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" \
+CLAIM_LOG="${LOG}" CLAIM_TS="$(date +%Y-%m-%dT%H:%M:%S)" CLAIM_T0="${CLAIM_T0}" \
 CLAIM_REPO="${REPO_ROOT}" CLAIM_LOGDIR="${LOG_DIR}" \
 CLAIM_HOOKDIR="$(cd "$(dirname "$0")" && pwd)" \
 python3 -I <<'PY' 3<<<"${INPUT}"
-import os, sys, json, re, shutil, subprocess, time
+import os, sys, json, re, shutil, signal, subprocess, time
 
 try:
     with os.fdopen(3, encoding="utf-8", errors="replace") as _fh:
@@ -134,6 +137,46 @@ def logline(s):
             fh.write(s + "\n")
     except Exception:
         pass
+
+# One deadline for the whole hook (#742 ab09d0a1f2, 24d852716a): Claude Code kills a Stop hook at its "timeout" (20 s in
+# hooks/hooks.json and .claude/settings.json) and then lets the Stop THROUGH, so a slow path (git on a big tree, the tree hash that
+# review-fanout.sh --status and --background each compute) turned this fail-closed gate fail-open. The clock starts where the bash
+# part started (CLAIM_T0, whole seconds rounded down: the margin to 20 s covers it), else here. Every subprocess gets at most the
+# time left (_time_left), a step with too little time left is not started and the Stop is blocked, and a watchdog blocks it just
+# after the deadline wherever the hook is (a git call inside devkit_harness, a long transcript scan).
+HOOK_BUDGET_S, STEP_MIN_S, WATCHDOG_GRACE_S = 17.0, 1.0, 0.5
+_now = time.time()
+try:
+    _t0 = float(os.environ.get("CLAIM_T0") or "nan")
+except ValueError:
+    _t0 = float("nan")
+DEADLINE = (_t0 if _now - 60 <= _t0 <= _now else _now) + HOOK_BUDGET_S   # missing, garbled or not this run's: python's own start
+
+
+def _time_left(cap, step, hint=""):
+    """The timeout of one subprocess: its own cap, never past the deadline. Less than STEP_MIN_S left: the step is not started and
+    the Stop is blocked (fail-closed) — the hook ends by itself before Claude Code kills it."""
+    left = DEADLINE - time.time()
+    if left < STEP_MIN_S:
+        logline(f"[{ts}] BLOCK — {left:.1f} s left of the {HOOK_BUDGET_S:.0f} s budget: {step} not started")
+        sys.stderr.write(f"⛔ REVIEW-GATE: Stop hook chỉ còn {max(left, 0.0):.1f}/{HOOK_BUDGET_S:.0f} s (Claude Code giết hook ở timeout "
+                         f"20 s thì Stop lọt qua) — không chạy {step}, chặn (fail-closed).\n" + (hint + "\n" if hint else ""))
+        sys.exit(2)
+    return min(cap, left)
+
+
+def _out_of_time(_sig, _frame):
+    logline(f"[{ts}] BLOCK — the {HOOK_BUDGET_S:.0f} s budget ran out (watchdog)")
+    os.write(2, (f"⛔ REVIEW-GATE: Stop hook hết {HOOK_BUDGET_S:.0f} s (Claude Code giết hook ở timeout 20 s thì Stop lọt qua) — chặn "
+                 f"(fail-closed). Stop lại; lặp lại thì xem {log}.\n").encode())
+    os._exit(2)
+
+
+try:
+    signal.signal(signal.SIGALRM, _out_of_time)
+    signal.setitimer(signal.ITIMER_REAL, max(DEADLINE + WATCHDOG_GRACE_S - time.time(), 0.01))
+except (AttributeError, ValueError, OSError) as e:   # no SIGALRM here: the per-step limits still hold
+    logline(f"[{ts}] watchdog unavailable: {e!r}")
 
 try:
     d = json.loads(raw)
@@ -178,7 +221,7 @@ for cwd in (repo, d.get("cwd")):
     try:
         repo_root = subprocess.run(
             ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=10, check=True).stdout.strip() or repo
+            capture_output=True, text=True, timeout=_time_left(10, "git rev-parse"), check=True).stdout.strip() or repo
         in_git = True
         break
     except Exception:
@@ -240,19 +283,19 @@ def is_code(path):
 try:
     diff = subprocess.run(
         ["git", "-C", repo_root, "diff", "--name-only", "HEAD", "--", *PATHSPECS],
-        capture_output=True, text=True, timeout=10)
+        capture_output=True, text=True, timeout=_time_left(10, "git diff"))
     if diff.returncode != 0 and subprocess.run(["git", "-C", repo_root, "rev-parse", "--verify", "-q", "HEAD"],
-                                               capture_output=True, text=True, timeout=10).returncode != 0:
+                                               capture_output=True, text=True, timeout=_time_left(10, "git rev-parse")).returncode != 0:
         # unborn HEAD (no commit yet): every file is new — compare with the empty tree (asked from git: SHA-1 or SHA-256 repo)
         _empty = subprocess.run(["git", "-C", repo_root, "hash-object", "-t", "tree", "/dev/null"],
-                                capture_output=True, text=True, timeout=10).stdout.strip()
+                                capture_output=True, text=True, timeout=_time_left(10, "git hash-object")).stdout.strip()
         diff = subprocess.run(
             ["git", "-C", repo_root, "diff", "--name-only", _empty or "HEAD", "--", *PATHSPECS],
-            capture_output=True, text=True, timeout=10)
+            capture_output=True, text=True, timeout=_time_left(10, "git diff"))
     untracked = subprocess.run(
         ["git", "-C", repo_root, "ls-files", "--others", "--exclude-standard",
          "--", *PATHSPECS],
-        capture_output=True, text=True, timeout=10)
+        capture_output=True, text=True, timeout=_time_left(10, "git ls-files"))
     # git exits non-zero with empty stdout (corrupt index, dubious ownership): an empty list there is not "no code" (OCR #742)
     for _q in (diff, untracked):
         if _q.returncode != 0:
@@ -665,15 +708,19 @@ def _fanout_env():
     reduce the review (REVIEW_SKIP_REVIEWERS), swap a reviewer binary (REVIEW_*_BIN, REVIEW_AGY_CLI, ANTIGRAVITY_PM_AGY) or model
     (REVIEW_*_MODEL), lower the depth (REVIEW_DEEP_LINES) or the budgets (REVIEW_MAX_*), or point the BUG-REV rows at a checklist
     outside the repo (REVIEW_REGRESSION_STATUS: only a trusted caller — the merge gate, B2 of #742 — sets it; review of #742,
-    BUG-REV 2823727da8): the default gate always runs and judges the default 4-way review."""
-    def stripped(k):
-        return (k in ("REVIEW_SKIP_REVIEWERS", "REVIEW_AGY_CLI", "REVIEW_DEEP_LINES", "REVIEW_REGRESSION_STATUS", "ANTIGRAVITY_PM_AGY")
-                or (k.startswith("REVIEW_") and k.endswith(("_BIN", "_MODEL"))) or k.startswith("REVIEW_MAX_"))
-    return {k: v for k, v in os.environ.items() if not stripped(k)}
+    BUG-REV 2823727da8): the default gate always runs and judges the default 4-way review. The list is review_runner.gate_env, next
+    to review-fanout.sh: the one the merge gate unsets too (BUG-REV 0976a4c5db, INSTINCT-015). Not loadable: the caller blocks."""
+    import importlib.util
+    sp = importlib.util.spec_from_file_location("review_runner", os.path.join(os.path.dirname(fanout), "review_runner.py"))
+    rr = importlib.util.module_from_spec(sp)
+    sp.loader.exec_module(rr)
+    return rr.gate_env()
 
 try:
-    st = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--status"],
-                        capture_output=True, text=True, timeout=15, env=_fanout_env())
+    _status_t0 = time.time()
+    st = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--status"], capture_output=True, text=True,
+                        timeout=_time_left(15, "đọc trạng thái review 4 bên", f"Đọc tay: {cmd_show} --status"), env=_fanout_env())
+    status_took = time.time() - _status_t0
     state, run_dir = (st.stdout.split() + ["", ""])[:2]
 except Exception as e:
     logline(f"[{ts}] review-fanout --status failed: {e!r} — BLOCK")
@@ -701,10 +748,14 @@ if state == "RUNNING":
 if os.environ.get("REVIEW_GATE_AUTOSTART", "1") == "0":   # tests (tests/lib/clean_git_env.sh): never start real LLM reviewers; still blocks
     started = "chưa (REVIEW_GATE_AUTOSTART=0) — tự chạy lệnh dưới"
     logline(f"[{ts}] BLOCK — no 4-way review yet (autostart off)")
+elif DEADLINE - time.time() < max(STEP_MIN_S, status_took):   # --background hashes the tree as --status just did: no time to finish
+    started = (f"chưa — Stop hook chỉ còn {max(DEADLINE - time.time(), 0.0):.1f} s, không kịp (--status vừa mất {status_took:.1f} s); "
+               f"tự chạy: {cmd_show} --background   (Stop sau cũng tự thử lại)")
+    logline(f"[{ts}] BLOCK — no 4-way review yet, not started: too little time left (--status took {status_took:.1f} s)")
 else:
     try:
-        bg = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--background"],
-                            capture_output=True, text=True, timeout=15, env=_fanout_env())
+        bg = subprocess.run(["bash", fanout, "--repo", repo_root, "--base", review_base, "--background"], capture_output=True, text=True,
+                            timeout=_time_left(15, "khởi động review 4 bên", f"Tự chạy: {cmd_show} --background"), env=_fanout_env())
         logline(f"[{ts}] BLOCK — 4-way review started: {bg.stdout.strip()[:200]}")
         started = bg.stdout.strip() or bg.stderr.strip()
     except Exception as e:

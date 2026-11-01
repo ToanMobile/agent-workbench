@@ -343,6 +343,22 @@ def grok_bin():
     return which("grok") or os.path.expanduser("~/.grok/bin/grok")
 
 
+def gate_env_stripped(name):
+    """True for a variable a gate never hands on to review-fanout.sh: it would reduce the review (REVIEW_SKIP_REVIEWERS), swap a
+    reviewer binary (REVIEW_*_BIN, REVIEW_AGY_CLI, ANTIGRAVITY_PM_AGY) or model (REVIEW_*_MODEL), lower the depth (REVIEW_DEEP_LINES)
+    or the budgets (REVIEW_MAX_*), or point the BUG-REV rows at a checklist outside the repo (REVIEW_REGRESSION_STATUS: the merge
+    gate passes only its own checked copy). ONE list for both gates, hooks/review_gate.sh and .claude/bin/super-board-merge-gate.sh
+    (`review_runner.py gate-env-names`): the merge gate kept ANTIGRAVITY_PM_AGY, so a PASS sealed under the Stop hook's environment
+    read back FOREIGN there (review of #742, BUG-REV 0976a4c5db, INSTINCT-015)."""
+    return (name in ("REVIEW_SKIP_REVIEWERS", "REVIEW_AGY_CLI", "REVIEW_DEEP_LINES", "REVIEW_REGRESSION_STATUS", "ANTIGRAVITY_PM_AGY")
+            or (name.startswith("REVIEW_") and name.endswith(("_BIN", "_MODEL"))) or name.startswith("REVIEW_MAX_"))
+
+
+def gate_env(environ=None):
+    """The environment a gate starts review-fanout.sh with: ENVIRON (os.environ) without what gate_env_stripped names."""
+    return {k: v for k, v in (os.environ if environ is None else environ).items() if not gate_env_stripped(k)}
+
+
 def reviewer_runtime(skipped=()):
     """The reviewer executables this environment runs, resolved as the runners here resolve them, plus a raised depth threshold
     (review of #742, BUG-REV 2ff4519b9f). review-fanout.sh records it in meta.json and a sealed PASS answers --status only where it
@@ -503,6 +519,9 @@ def run_agy(a, meta, ctx):
 
 
 def main(argv=None):
+    if (sys.argv[1:] if argv is None else argv)[:1] == ["gate-env-names"]:   # the names a gate unsets (super-board-merge-gate.sh)
+        print("\n".join(sorted(k for k in os.environ if gate_env_stripped(k))))
+        return 0
     ap = argparse.ArgumentParser(prog="review_runner.py")
     ap.add_argument("name", choices=["claude", "security", "verifier", "ocr", "antigravity", "grok"])
     ap.add_argument("--repo", required=True)

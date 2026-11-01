@@ -136,8 +136,8 @@
 #     2823727da8: REVIEW_REGRESSION_STATUS thừa hưởng từ môi trường luôn bị loại bỏ (cùng REVIEW_SKIP_REVIEWERS / REVIEW_*_MODEL /
 #     REVIEW_*_BIN); file trạng thái hồi quy ngoài cây của B2 chỉ nhận qua `--review-status-file <abs-path>` (cấm SB_BOARD_WORKER=1)
 #     hoặc `merge_policy.review_status_file` trong `--config` tin cậy, kiểm tra nằm ngoài repo/scratch và không làm rơi hàng BUG-REV-*.
-#     `--accept-reduced-review <skip list>` (or SB_MERGE_ACCEPT_REDUCED_REVIEW=<list>, per run) accepts PASS_REDUCED of that
-#     exact skip list for a PR outside the machine gate only. Default: rejected.
+#     `--accept-reduced-review <skip list>` of this run (never an inherited variable, never a board worker: exit 13, d68ca2df2a)
+#     accepts PASS_REDUCED of that exact skip list for a PR outside the machine gate only. Default: rejected.
 #   * Never merges with a failing CI check (`gh pr checks`: fail/cancel/unknown bucket → exit 11; unreadable → exit 4).
 #     Required checks on <base> (branch protection, rulesets, merge queue; read with `gh api`) → `gh pr merge --auto --squash
 #     --delete-branch --match-head-commit <sha>`: GitHub waits for them; the gate keeps the lock and waits for MERGED
@@ -167,8 +167,12 @@ GITHUB_READ="$HERE/super-board-github-read.py"
 
 CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""; TRAIN_RECEIPT=""
 PREFLIGHT=0; STANDALONE=0
-# PASS_REDUCED is never accepted unless THIS run names the skip list explicitly (flag or env); never for a machine-gated PR.
-ACCEPT_REDUCED="${SB_MERGE_ACCEPT_REDUCED_REVIEW:-}"
+# PASS_REDUCED chỉ được nhận khi CHÍNH lượt chạy này nêu skip list bằng --accept-reduced-review; không bao giờ cho PR machine-gate.
+# d68ca2df2a: giống REVIEW_REGRESSION_STATUS, không bao giờ thừa hưởng từ môi trường (SB_MERGE_ACCEPT_REDUCED_REVIEW lọt vào môi trường
+# queue / train / worker là cửa hậu) và worker của board không được truyền cờ này.
+ACCEPT_REDUCED=""
+_INHERITED_ACCEPT_REDUCED="${SB_MERGE_ACCEPT_REDUCED_REVIEW-}"
+unset SB_MERGE_ACCEPT_REDUCED_REVIEW
 # 2823727da8: không bao giờ thừa hưởng REVIEW_REGRESSION_STATUS từ môi trường; file status ngoài repo (B2) chỉ nhận từ cờ của lượt chạy
 # này (ngoài board worker) hoặc từ merge_policy.review_status_file trong --config tin cậy.
 _INHERITED_REVIEW_STATUS="${REVIEW_REGRESSION_STATUS-}"
@@ -195,6 +199,11 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$CONFIG" ] && [ -e "$CONFIG" ] || { echo "config not found: ${CONFIG:-<unset>}" >&2; exit 66; }
 [ -n "$PR" ] || { echo "--pr <number> is required" >&2; exit 64; }
+if [ -n "$ACCEPT_REDUCED" ] && [ "${SB_BOARD_WORKER-}" = 1 ]; then
+  echo "[merge-gate #${PR}] board worker may not pass --accept-reduced-review" >&2
+  exit 13
+fi
+[ -z "$_INHERITED_ACCEPT_REDUCED" ] || echo "[merge-gate #${PR}] note: inherited SB_MERGE_ACCEPT_REDUCED_REVIEW is ignored (d68ca2df2a); a reduced review is accepted only through --accept-reduced-review of this run" >&2
 if [ -n "$REVIEW_STATUS_FILE" ]; then
   if [ "${SB_BOARD_WORKER-}" = 1 ]; then
     echo "[merge-gate #${PR}] board worker may not pass --review-status-file" >&2
@@ -733,9 +742,7 @@ find_review_fanout() {
 }
 review_status() {  # review_status [<skip list>] [deep] → REVIEW_RC, REVIEW_LINE, REVIEW_WORD, REVIEW_RUN
   REVIEW_RC=0
-  REVIEW_LINE=$(cd "$SCRATCH" && env -u REVIEW_SKIP_REVIEWERS -u REVIEW_CLAUDE_MODEL -u REVIEW_GROK_MODEL -u REVIEW_AGY_MODEL \
-    -u REVIEW_CLAUDE_BIN -u REVIEW_GROK_BIN -u REVIEW_AGY_CLI -u REVIEW_DEEP_LINES \
-    -u REVIEW_REGRESSION_STATUS ${REVIEW_STATUS_SNAP:+"REVIEW_REGRESSION_STATUS=$REVIEW_STATUS_SNAP"} \
+  REVIEW_LINE=$(cd "$SCRATCH" && env "${REVIEW_ENV_UNSET[@]}" ${REVIEW_STATUS_SNAP:+"REVIEW_REGRESSION_STATUS=$REVIEW_STATUS_SNAP"} \
     bash "$REVIEW_BIN/review-fanout.sh" --repo "$SCRATCH" --base "$REVIEW_BASE" ${1:+--skip "$1"} ${2:+--depth "$2"} --status 2>/dev/null | tail -1) \
     || REVIEW_RC=$?
   REVIEW_WORD=${REVIEW_LINE%% *}
@@ -755,9 +762,7 @@ review_missing() {
 # point existed answers "unknown argument" with 2) means the seal cannot be checked: verification-readiness, never a merge.
 review_seal_check() {
   local rc=0
-  env -u REVIEW_SKIP_REVIEWERS -u REVIEW_CLAUDE_MODEL -u REVIEW_GROK_MODEL -u REVIEW_AGY_MODEL \
-    -u REVIEW_CLAUDE_BIN -u REVIEW_GROK_BIN -u REVIEW_AGY_CLI -u REVIEW_DEEP_LINES -u REVIEW_REGRESSION_STATUS \
-    bash "$REVIEW_BIN/review-fanout.sh" --verify-summary "$1" >/dev/null 2>&1 || rc=$?
+  env "${REVIEW_ENV_UNSET[@]}" bash "$REVIEW_BIN/review-fanout.sh" --verify-summary "$1" >/dev/null 2>&1 || rc=$?
   case "$rc" in
     0) return 0 ;;
     1) review_void "summary.json seal does not verify (unsigned or forged)" ;;
@@ -770,8 +775,18 @@ review_verdict_check() {
   REVIEW_BIN=$(find_review_fanout) || {
     echo "verification-readiness: no DevKit review-fanout.sh next to the gate or in ${REPO_ABS} — the 4-way review verdict cannot be checked; nothing merged (fail-closed)" >&2
     exit 9; }
+  # 0976a4c5db (INSTINCT-015): bộ biến bỏ trước review-fanout.sh lấy từ đúng danh sách của DevKit (review-fanout.sh --gate-env-names =
+  # review_runner.gate_env_stripped, cùng danh sách hooks/review_gate.sh dùng), để PASS ký trong môi trường của Stop hook đọc lại ở đây vẫn
+  # là cùng lượt chạy (trước đây gate giữ ANTIGRAVITY_PM_AGY nên PASS thành FOREIGN: exit 10). Không lấy được danh sách (DevKit cũ chưa có
+  # entry point này) → không đọc verdict đúng như lúc ký: fail-closed.
+  local _names _n
+  _names=$(bash "$REVIEW_BIN/review-fanout.sh" --gate-env-names) || {
+    echo "verification-readiness: ${REVIEW_BIN}/review-fanout.sh --gate-env-names is unavailable — the review environment cannot be fixed; nothing merged (fail-closed)" >&2
+    exit 9; }
+  REVIEW_ENV_UNSET=(-u REVIEW_REGRESSION_STATUS)
+  while IFS= read -r _n; do [ -z "$_n" ] || REVIEW_ENV_UNSET+=(-u "$_n"); done <<< "$_names"
   if [ -n "$ACCEPT_REDUCED" ] && ! [[ "$ACCEPT_REDUCED" =~ ^[a-z]+(,[a-z]+)*$ ]]; then
-    echo "verification-readiness: --accept-reduced-review / SB_MERGE_ACCEPT_REDUCED_REVIEW must be a reviewer list like grok,ocr (got '${ACCEPT_REDUCED}')" >&2
+    echo "verification-readiness: --accept-reduced-review must be a reviewer list like grok,ocr (got '${ACCEPT_REDUCED}')" >&2
     exit 9
   fi
   REVIEW_BASE=$(git -C "$REPO_PATH" merge-base "$HEAD_SHA" "$BASE_SHA" 2>/dev/null) || REVIEW_BASE=""

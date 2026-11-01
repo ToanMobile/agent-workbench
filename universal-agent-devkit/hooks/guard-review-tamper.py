@@ -13,17 +13,24 @@ Denied for agent tool calls:
   ~/.config/agent-workbench/**  the summary seal key: not written, and (r14d, BUG-REV-592ad1528c / 738b4fa129) not READ either —
                                 Read / Grep / Glob on it or on a folder above it, a Bash line naming it
 Bash: write targets through hooks/shell_writes.py with heredoc / `bash -c` bodies scanned (run_bodies); paths resolved through
-symlinks; a line it cannot tokenise, an unparsed body, or a relative write after `cd "$VAR"` is denied when the line points at the
-machinery (fail-closed, r14d BUG-REV-c23bc3cb6d / 5f7bee1cb0). An interpreter given inline code (python -I -c, /usr/bin/python3 -c,
+symlinks; a target or interpreter / sed -i operand holding a glob or brace is judged on its expansions (brace alternatives, a walk
+of the folders, a pair like `.git/review-fanou?` that can name a head; too wide to walk: denied, b91e0de56a); a line it cannot
+tokenise, an unparsed body, or a relative write after `cd "$VAR"` is denied when the line points at the machinery (fail-closed,
+r14d BUG-REV-c23bc3cb6d / 5f7bee1cb0). An interpreter given inline code (python -I -c, /usr/bin/python3 -c,
 node --x -e, perl -w -e, bash <<EOF, …; options before -c/-e are skipped, BUG-REV-4a3ec3ef82) that names a protected path is denied
 too (its writes cannot be read statically). git that rewrites the tree (28b85d96f4): checkout / restore / reset / rm / mv / clean /
 stash with a protected operand, a folder holding the machinery or a glob, and apply / am of a patch file (named anywhere on the
 line) whose headers edit a protected path, are denied; ref-driven merge / pull / cherry-pick / rebase / revert and a patch piped
 from a producer the guard cannot read are residual. The signer is never driven by an agent: a Bash line running an interpreter that names
-review_sign / load_key (except a line that is only `python3 [-I] …/review_sign.py verify <file>`), and a Write/Edit of a
-non-document file whose text names review_sign, load_key or the key path, are denied.
-Residual (same uid, no privilege separation): a script that hides those names (string building, encoding) is not seen; the
-code_hash binding of the seal (bin/review_sign.py) and the write ban on .git/review-fanout keep a forged verdict out of the run dir.
+review_sign / load_key, or a glob / brace word that can name the signer file (`review_sig?.py`) (except a line that is only
+`python3 [-I] …/review_sign.py verify <file>`), and a Write/Edit of a non-document file whose text names review_sign, load_key or
+the key path, are denied.
+Paths, the key / signer names, interpreter and file-command names match case-folded (APFS runs `CP x .GIT/REVIEW-FANOUT/…`); a
+write target computed by $VAR / $( ) / backtick is denied on a line that points at the machinery.
+Residual (same uid, no privilege separation): a script that hides those names (string building, encoding) is not seen, nor a
+computed write target on a line with no machinery hint (`cp x "$P"`, P set by an earlier call), nor a file a planted
+`…/bin/review_sign.py verify <new path>` creates; the code_hash binding of the seal
+(bin/review_sign.py) and the write ban on .git/review-fanout keep a forged verdict out of the run dir.
 Reading the code stays allowed. DEVKIT_ALLOW_GATE_EDIT=1 in the hook process environment (the operator's shell / launchd, never a
 prefix on the command: the agent cannot set it for its own hooks) turns the guard off for a maintenance session.
 Its own errors never block (it reports them on stderr); a shell_writes failure denies a line that names the machinery.
@@ -44,20 +51,21 @@ PROTECTED = re.compile(
     r"|(?:^|/)hooks(?:/|$)"
     r"|(?:^|/)bin/review[^/]*$"
     r"|(?:^|/)\.github/workflows(?:/|$)"
-    r"|(?:^|/)\.config/agent-workbench(?:/|$)")
+    r"|(?:^|/)\.config/agent-workbench(?:/|$)", re.I)   # APFS opens .GIT/REVIEW-FANOUT as .git/review-fanout
 SECRET_DIR = os.path.join("~", ".config", "agent-workbench")
-_INTERP = r"(?:[\w.~/-]*/)?(?:python[\d.]*|node|deno|bun|ruby|perl|php)"
-_SHELL = r"(?:[\w.~/-]*/)?(?:bash|sh|zsh|dash|ksh)"
+_INTERP = r"(?:[\w.~/-]*/)?(?i:python[\d.]*|node|deno|bun|ruby|perl|php)"   # APFS runs PYTHON3 too
+_SHELL = r"(?:[\w.~/-]*/)?(?i:bash|sh|zsh|dash|ksh)"
 _OPT = r"(?:\s+-{1,2}[A-Za-z][\w.=-]*(?:\s+(?![-<])[^\s;&|<>]+)??)*?"
 INLINE = re.compile(r"(?:^|[\s;&|(`])(?:" + _INTERP + _OPT + r"\s+(?:-[A-Za-z]*[cer][A-Za-z]*\b|-(?=\s|$)|<<|<\s*\S)"
                     r"|" + _SHELL + _OPT + r"\s+(?:-[A-Za-z]*c[A-Za-z]*\b|-s\b|-(?=\s|$)|<<|<\s*\S))")
 RUNS_INTERP = re.compile(r"(?:^|[\s;&|(`])" + _INTERP + r"(?=\s|$)")
 PATH_WORD = re.compile(r"[\w.~/-]*(?:\.git/review-fanout|\.claude/settings[\w.-]*\.json|hooks(?:/[\w.-]+)?|bin/review[\w.-]*"
-                       r"|\.github/workflows|\.config/agent-workbench)[\w./-]*")
-# a computed cd target or a relative write that points at the machinery (used only after `cd "$VAR"` / an unparsed line)
-MACHINERY_HINT = re.compile(r"review-fanout|git-(?:common-)?dir|\.git\b|\.claude|\bhooks\b|workflows|\.config|summary\.json|settings[^/\s]*\.json")
-KEY_WORD = re.compile(r"\.config/agent-workbench|review\.key")
-SIGNER_WORD = re.compile(r"\breview_sign\b|\bload_key\b|review-fanout-summary-v1")
+                       r"|\.github/workflows|\.config/agent-workbench)[\w./-]*", re.I)
+# a computed cd target or a relative write that points at the machinery (used only after `cd "$VAR"` / an unparsed line / a
+# computed write target)
+MACHINERY_HINT = re.compile(r"review-fanout|git-(?:common-)?dir|\.git\b|\.claude|\bhooks\b|workflows|\.config|summary\.json|settings[^/\s]*\.json", re.I)
+KEY_WORD = re.compile(r"\.config/agent-workbench|review\.key", re.I)
+SIGNER_WORD = re.compile(r"\breview_sign\b|\bload_key\b|review-fanout-summary-v1", re.I)
 # lệnh bộ ký duy nhất agent được chạy (ac772c846b): CẢ dòng là `python3 [-I] [<path>/]review_sign.py verify <file>` — không nối
 # lệnh, thế lệnh, redirect, comment, dòng thứ hai hay code inline đi kèm (search không neo cho lọt `-c '…load_key…' # …`)
 VERIFY_ONLY = re.compile(r"[ \t]*(?:[\w.~/-]*/)?python[\d.]*(?:[ \t]+-I)?[ \t]+(?:[\w.~/-]*/)?review_sign\.py[ \t]+verify"
@@ -74,6 +82,19 @@ C_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
 MACHINERY_UNDER = (".claude/settings*.json", ".github/workflows", ".git/review-fanout", "hooks", "*/hooks", "*/*/hooks",
                    "bin/review*", "*/bin/review*")
 DOC_EXT = (".md", ".rst", ".txt", ".adoc")
+# b91e0de56a: a write target / operand holding a glob or brace is judged on what the shell can make of it, not on its text
+GLOB = re.compile(r"[*?\[{]")
+SEQ = re.compile(r"(-?\d+)\.\.(-?\d+)(?:\.\.-?\d+)?|([A-Za-z])\.\.([A-Za-z])(?:\.\.-?\d+)?")
+# (parent, child names) of the machinery: a pattern pair that can name one counts even before the folder exists (review-fanout.sh
+# earlier on the same line makes the run dir)
+HEADS = ((".git", ("review-fanout",)), (".claude", ("settings.json", "settings.local.json")), (".github", ("workflows",)),
+         (".config", ("agent-workbench",)))
+SIGNER_NAMES = ("review_sign.py", "review_sign")
+# command names APFS runs in any case (`CP`, `TEE`, `GIT`, `PYTHON3`): folded before shell_writes / the git scan read the line
+VERBS = re.compile(r"(?<![\w.-])(?i:cp|mv|rm|tee|install|rsync|ln|scp|touch|truncate|mkdir|rmdir|chmod|unlink|dd|sed|perl|ruby|"
+                   r"python[\d.]*|node|deno|bun|php|bash|sh|zsh|dash|ksh|git|cd|pushd|popd|env|sudo|nohup|nice|timeout|exec|"
+                   r"command|builtin|time)(?![\w.-])")
+DIR_READS = 2000   # folder listings one glob may cost; past it (or 5000 paths) the glob is too wide to judge: denied
 REASON = ("Blocked by guard-review-tamper: agents may not write or delete the review machinery ({}). The 4-way review gate "
           "decides on these files; change them through a reviewed PR by the operator (DEVKIT_ALLOW_GATE_EDIT=1 in the hook "
           "environment for a maintenance session).")
@@ -112,13 +133,159 @@ def protected(p, cwd):
     return bool(PROTECTED.search(n) or PROTECTED.search(_real(n)))
 
 
+def _braces(w, cap=256):
+    """Brace expansion of w as bash / zsh do it ({a,b} lists, {1..3} / {a..c} sequences, innermost first; ${…} and a brace with
+    neither stay literal), or None past cap words."""
+    out, todo = [], [w]
+    while todo:
+        s = todo.pop()
+        m = re.search(r"\{([^{}]*)\}", s)
+        if not m:
+            out.append(s.replace("\x01", "{").replace("\x02", "}"))
+            continue
+        body, q = m.group(1), SEQ.fullmatch(m.group(1))
+        if s[m.start() - 1:m.start()] == "$" or not ("," in body or q):   # literal: hidden from the next search
+            todo.append(s[:m.start()] + "\x01" + body + "\x02" + s[m.end():])
+            continue
+        if "," in body:
+            parts = body.split(",")
+        elif q.group(1):
+            a, b = sorted((int(q.group(1)), int(q.group(2))))
+            parts = [str(i) for i in range(a, b + 1)] if b - a < cap else None
+        else:
+            a, b = sorted((ord(q.group(3)), ord(q.group(4))))
+            parts = [chr(i) for i in range(a, b + 1)]
+        if parts is None or len(out) + len(todo) + len(parts) > cap:
+            return None
+        todo += [s[:m.start()] + p + s[m.end():] for p in parts]
+    return out
+
+
+def _bracket_end(p, i):
+    """Index of the ] closing the bracket expression opened at p[i] ([!x] [^x] []x] [[:class:]]), or None: a lone [ is literal."""
+    j = i + 1 + (p[i + 1:i + 2] in ("!", "^"))
+    j += p[j:j + 1] == "]"
+    while j < len(p):
+        if p[j] == "[" and p[j + 1:j + 2] in (":", "=", "."):
+            k = p.find(p[j + 1] + "]", j + 2)
+            if k < 0:
+                return None
+            j = k + 2
+        elif p[j] == "]":
+            return j
+        else:
+            j += 1
+    return None
+
+
+def _match(pat, name):
+    """True when glob component pat can match file name name, read loosely enough to cover bash and zsh: * and ? stay in one
+    component, any [...] is one character, and only a pattern starting with . or [ reaches a dot name."""
+    if name.startswith(".") and not pat.startswith((".", "[")):
+        return False
+    rx, i = "", 0
+    while i < len(pat):
+        j = _bracket_end(pat, i) if pat[i] == "[" else None
+        rx += "[^/]*" if pat[i] == "*" else "[^/]" if pat[i] == "?" or j else re.escape(pat[i])
+        i = (j or i) + 1
+    return re.fullmatch(rx, name, re.S) is not None
+
+
+def _lead(w, here):
+    """w with a leading $HOME / ${HOME} / $PWD / ${PWD} / ~+ replaced as the shell does (~ and ~user: _norm)."""
+    m = re.match(r"(?:\$\{(HOME|PWD)\}|\$(HOME|PWD)|~(\+))(?=/|$)", w)
+    if not m:
+        return w
+    return (os.path.expanduser("~") if (m.group(1) or m.group(2)) == "HOME" else here) + w[m.end():]
+
+
+def _walk(path, reads):
+    """Paths the absolute glob path can name: a glob component against the folder's entries, ** as any run of folders (zsh,
+    bash globstar; dot folders skipped as they do), a literal component kept whether or not it exists (the write may create it).
+    None once reads (a one-item list of folder listings left) runs out or the paths pass 5000."""
+    cur = ["/"]
+    for comp in path.split("/")[1:]:
+        if not comp or not GLOB.search(comp):
+            cur = [os.path.join(d, comp) for d in cur] if comp else cur
+            continue
+        nxt = []
+        for d in cur:
+            stack = [d]
+            while stack:
+                x = stack.pop()
+                if reads[0] <= 0:
+                    return None
+                reads[0] -= 1
+                try:
+                    with os.scandir(x) as it:
+                        ents = list(it)
+                except OSError:
+                    continue
+                if comp == "**":
+                    nxt.append(x)
+                    stack += [e.path for e in ents if not e.name.startswith(".") and e.is_dir()]
+                else:
+                    nxt += [e.path for e in ents if _match(comp, e.name)]
+        cur = nxt
+        if len(cur) > 5000:
+            return None
+    return cur
+
+
+def _glob_paths(word, here):
+    """What the shell can make of a word holding a glob or brace: its brace alternatives plus, for each one with a glob, the paths
+    the walk names; None when too wide to judge."""
+    alts = _braces(word)
+    if alts is None:
+        return None
+    out, reads = list(alts), [DIR_READS]
+    for a in alts:
+        if GLOB.search(a):
+            got = _walk(_norm(_lead(a, here), here), reads)
+            if got is None:
+                return None
+            out += got
+    return out
+
+
+def _glob_hit(paths, here):
+    """True when one of a glob word's paths (_glob_paths; None: too wide) is protected, or a (parent, child) pair of its
+    components can name a head of HEADS (`.git/review-fanou?`, `.claude/setting*.json`, `.gi?/review-fanout`)."""
+    if paths is None:
+        return True
+    for p in paths:
+        c = _norm(_lead(p, here), here).lower().split("/")
+        if protected(p, here) or any(_match(c[i - 1], pp) and any(_match(c[i], n) for n in names)
+                                     for i in range(1, len(c)) for pp, names in HEADS):
+            return True
+    return False
+
+
+def _signer_glob(cmd, cwd):
+    """A glob / brace word on a line that runs an interpreter whose file name can be the signer (`python3 bin/review_sig?.py
+    sign …`): an alternative names it, a pattern with a literal character besides `.py` can match it, or the walk finds it
+    (a bare `*.py` / `*` is judged by the walk only: `python3 -m pytest tests/*.py`)."""
+    if not RUNS_INTERP.search(re.sub(r"[\"'\\`]", " ", cmd)) or VERIFY_ONLY.fullmatch(cmd):
+        return None
+    for w in re.split(r"[\s;&|()<>=`]+", re.sub(r"[\"'\\]", "", cmd)):
+        if not GLOB.search(w):
+            continue
+        paths = _glob_paths(w, cwd)
+        for a in paths if paths is not None else [w]:
+            b = a.rstrip("/").rsplit("/", 1)[-1].lower()
+            if SIGNER_WORD.search(a) or (re.sub(r"[*?\[\]!^]", "", re.sub(r"\.py$", "", b)) and
+                                         any(_match(b, n) for n in SIGNER_NAMES)):
+                return w
+    return None
+
+
 def _secret_reach(p, cwd):
     """True when a read of p (a file, or a folder searched recursively) reaches the seal key's folder."""
     if not p:
         return False
-    secret = _real(os.path.normpath(os.path.expanduser(SECRET_DIR)))
+    secret = _real(os.path.normpath(os.path.expanduser(SECRET_DIR))).lower()   # case-folded: APFS
     for n in {_norm(p, cwd), _real(_norm(p, cwd))}:
-        n = n.rstrip("/") or "/"
+        n = n.rstrip("/").lower() or "/"
         if n == secret or n.startswith(secret + "/") or secret.startswith(n.rstrip("/") + "/") or KEY_WORD.search(n):
             return True
     return False
@@ -203,9 +370,25 @@ def bash_hits(cmd, cwd):
         return ["seal:" + KEY_WORD.search(cmd).group(0)]
     if SIGNER_WORD.search(cmd) and RUNS_INTERP.search(cmd) and not VERIFY_ONLY.fullmatch(cmd):
         return ["seal:" + SIGNER_WORD.search(cmd).group(0)]
+    sig = _signer_glob(cmd, cwd)
+    if sig:
+        return ["seal:" + sig]
     try:
         import shell_writes
-        got = shell_writes.targets(cmd, cwd, run_bodies=True)
+        literal = shell_writes._literal_exists = getattr(shell_writes, "_literal_exists", shell_writes._exists)
+
+        def glob_exists(a, here):
+            """shell_writes reports an interpreter's / sed -i's operand only when it exists literally (b91e0de56a): a glob
+            operand exists when one of its expansions does (or it is too wide to judge), and a protected path counts before
+            it exists (`python3 w.py .git/review-fanout/H/new`; a bare word like `hooks` stays an argument; a VERIFY_ONLY line
+            keeps the literal rule: its summary is judged only once it exists)."""
+            if literal(a, here) or ("/" in a and protected(a, here) and not VERIFY_ONLY.fullmatch(cmd)):
+                return True
+            ps = _glob_paths(a, here) if GLOB.search(a) else []
+            return ps is None or any(os.path.lexists(_norm(_lead(p, here), here)) for p in ps)
+        shell_writes._exists = glob_exists   # this hook process only
+        folded = VERBS.sub(lambda m: m.group(0).lower(), cmd)
+        got = shell_writes.targets(folded, cwd, run_bodies=True)
         if got is None:   # bash vẫn chạy dòng shlex không tách được ($'..', nháy lẻ): fail-closed khi chạm máy review
             hits += named or ([cmd.strip()[:60]] if MACHINERY_HINT.search(cmd) else [])
             got = []
@@ -218,19 +401,26 @@ def bash_hits(cmd, cwd):
                 hits += named or ([cmd.strip()[:60]] if MACHINERY_HINT.search(cmd) else [])
                 continue
             if kind in ("redirect", "file", "interp") and target:
-                if protected(target, here or cwd):
+                # b91e0de56a: a glob / brace target is judged on its expansions; a zsh group or qualifier right after it
+                # (`.git/(review-fanout|x)/…`, `f(N)`) cannot be read: fail closed when the line points at the machinery
+                globbed = GLOB.search(str(target)) is not None
+                paths = _glob_paths(str(target), here or cwd) if globbed else [target]
+                if protected(target, here or cwd) or (globbed and _glob_hit(paths, here or cwd)) or \
+                        (re.search(r"(?:^|[\s<>|&;(])" + re.escape(str(target)) + r"\(", cmd) and MACHINERY_HINT.search(cmd)):
                     hits.append(target)
-                elif kind == "file" and re.search(r"\b(?:cp|mv|rsync|scp|ln|rm|rmdir)\b", cmd) and \
-                        re.search(r"(?:^|/)\.(?:git|claude|github)/*$", str(target)):
+                elif kind == "file" and re.search(r"\b(?:cp|mv|rsync|scp|ln|rm|rmdir)\b", folded) and \
+                        any(re.search(r"(?i)(?:^|/)\.(?:git|claude|github)/*$", str(p)) for p in paths or []):
                     # Chặn chép đè hoặc xoá thư mục cha chứa máy review (8ec050fad4: cp -R /tmp/review-fanout <common>/.git/)
                     hits.append(target)
+                elif kind != "interp" and re.search(r"\$\(|`|^\$", _lead(str(target), here or cwd)) and MACHINERY_HINT.search(cmd):
+                    hits.append(target)   # a computed target ($(…), `…`, $VAR) on a line that points at the machinery
                 elif cd_unknown and not os.path.isabs(os.path.expanduser(str(target))) and \
                         (MACHINERY_HINT.search(cd_unknown) or MACHINERY_HINT.search(str(target))):
                     hits.append(f"{cd_unknown}/{target}")
         # 28b85d96f4: ("git", dir) của shell_writes không còn bị bỏ qua — đường dẫn tương đối tính theo cwd và thư mục của
         # từng lệnh git (sau cd / -C)
         dirs = [cwd] + [str(t) for kind, t, _ in got if kind == "git" and t]
-        calls, words = _git_calls(cmd)
+        calls, words = _git_calls(folded)
         for sub, rest in calls:
             ops = [a for a in rest if not a.startswith("-") and a not in ("<", ">")]
             if sub == "stash" and ops[:1] in (["list"], ["show"], ["create"]):

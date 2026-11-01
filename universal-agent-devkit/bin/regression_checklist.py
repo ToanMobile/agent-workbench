@@ -3417,18 +3417,7 @@ def _rev_drop_refused(bug_id, run_dir, project):
     sp = importlib.util.spec_from_file_location("review_sign", os.path.join(os.path.dirname(os.path.realpath(__file__)), "review_sign.py"))
     rs = importlib.util.module_from_spec(sp)
     sp.loader.exec_module(rs)
-    summ = os.path.join(run_dir, "summary.json")
-    if not rs.verify(summ):
-        return f"{summ} không có dấu HMAC hợp lệ (không phải kết quả review thật)"
     cid = bug_id[len("BUG-REV-"):]
-    try:
-        with open(os.path.join(run_dir, "verifier.json"), encoding="utf-8") as fh:
-            ver = json.load(fh)
-        with open(summ, encoding="utf-8") as fh:
-            summary = json.load(fh)
-        clusters = summary.get("findings") or []
-    except (OSError, ValueError, AttributeError) as e:
-        return f"không đọc được verifier.json / summary.json: {e}"
     # #756: the seal key is one per machine (every repo, every temp repo), so a seal alone proves nothing about WHICH repo was
     # reviewed. The run must be this project's own: <git common dir>/review-fanout/<meta.code_hash>/ (bin/review-fanout.sh),
     # reviewed in this repo or one of its worktrees (they share the common dir). A run of a since-removed worktree is refused.
@@ -3438,9 +3427,21 @@ def _rev_drop_refused(bug_id, run_dir, project):
     real_run = os.path.realpath(run_dir)
     if os.path.dirname(real_run) != os.path.join(common, "review-fanout"):
         return f"{run_dir} không nằm trong {os.path.join(common, 'review-fanout')} (lần review của repo khác)"
+    # 30f955ea7f (INSTINCT-098): ONE read — the seal is checked on exactly the bytes the findings / meta are taken from
+    # (review_sign.load_verified, which also requires meta.code_hash == the run dir's name); a second open of summary.json read
+    # bytes no seal covered (swap after the check).
+    summ = os.path.join(real_run, "summary.json")
+    summary = rs.load_verified(summ, os.path.basename(real_run))
+    if not isinstance(summary, dict):
+        return (f"{summ} không có dấu HMAC hợp lệ cho đúng thư mục {os.path.basename(real_run)} (không phải kết quả review thật, "
+                "hoặc meta.code_hash khác tên thư mục)")
+    try:
+        with open(os.path.join(real_run, "verifier.json"), encoding="utf-8") as fh:
+            ver = json.load(fh)
+        clusters = summary.get("findings") or []
+    except (OSError, ValueError, AttributeError) as e:
+        return f"không đọc được verifier.json: {e}"
     meta = summary.get("meta") if isinstance(summary.get("meta"), dict) else {}
-    if not meta.get("code_hash") or os.path.basename(real_run) != str(meta["code_hash"]):
-        return f"tên thư mục {os.path.basename(real_run)} khác meta.code_hash của summary ({meta.get('code_hash')})"
     repo = meta.get("repo")
     if not isinstance(repo, str) or not repo or (
             os.path.realpath(repo) != os.path.realpath(str(project)) and _git_common_dir_real(repo) != common):

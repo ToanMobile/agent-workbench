@@ -50,10 +50,14 @@
 # --status prints PASS|FAIL|RUNNING|NONE for the current code (exit 0 PASS, 1 FAIL, 3 RUNNING, 4 NONE); --hash prints the hash.
 # --background starts the review detached and returns (exit 3). Exit 0 PASS, 1 FAIL, 2 usage error.
 # --verify-summary PATH: exit 0 when the summary.json carries a valid HMAC seal, 1 when not (first argument only).
+# --gate-env-names: the names of this environment a gate unsets before it calls this script (review_runner.gate_env_stripped).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 BASE="" REPO="" MODE="run" FORCE=0 SKIP="${REVIEW_SKIP_REVIEWERS:-}" DEPTH_FORCE=""
 if [ "${1:-}" = "--full" ]; then shift; exec python3 -I "$HERE/review-full.py" "$@"; fi
+# ONE list for both gates (review of #742, BUG-REV 0976a4c5db, INSTINCT-015): hooks/review_gate.sh and super-board-merge-gate.sh
+# strip the same variables, so a PASS sealed under the Stop hook's environment answers the merge gate's --status too.
+if [ "${1:-}" = "--gate-env-names" ]; then exec python3 -I "$HERE/review_runner.py" gate-env-names; fi
 # --verify-summary PATH: exit 0 only when PATH (a summary.json) carries a valid HMAC seal from this machine's review key
 # (bin/review_sign.py); 1 unsigned / tampered, 2 usage. Prints "<verdict> <code_hash>" when valid (merge gate, 31/10).
 if [ "${1:-}" = "--verify-summary" ]; then

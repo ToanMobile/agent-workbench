@@ -7,7 +7,7 @@
 <script>
   (function () {
     var saved = null;
-    try { saved = localStorage.getItem('agent-office-theme'); } catch (e) {}
+    try { saved = localStorage.getItem('agent-office-theme'); } catch (e) { console.warn('Không đọc được giao diện đã lưu', e); }
     var dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
   })();
@@ -2992,7 +2992,7 @@ function syncThemeBtn() { $('#btnTheme').setAttribute('aria-checked', String(doc
 $('#btnTheme').onclick = () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
-  try { localStorage.setItem('agent-office-theme', next); } catch (e) {}
+  try { localStorage.setItem('agent-office-theme', next); } catch (e) { console.warn('Không lưu được giao diện', e); }
   syncThemeBtn(); if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }
 };
 $('#btnRefresh').onclick = () => { fetch('api/refresh', { headers: apiHeaders() }).catch(() => {}); const t = $('#btnRefresh .mi-t'); t.textContent = 'Đang tải…'; setTimeout(() => { t.textContent = 'Tải lại GitHub'; }, 2500); toast('Đang đọc lại GitHub Project…'); };
@@ -3061,7 +3061,7 @@ function renderDeskPicker() {
 }
 function setDesk(i) {
   if (i === deskStyle) return;
-  deskStyle = i; try { localStorage.setItem('agent-office-desk', String(i)); } catch (e) {}
+  deskStyle = i; try { localStorage.setItem('agent-office-desk', String(i)); } catch (e) { console.warn('Không lưu được kiểu bàn', e); }
   const had = document.activeElement && document.activeElement.closest('#deskPicker');
   renderDeskPicker(); if (had) $('#deskPicker [aria-pressed="true"]').focus();
   if (STATE) { LAYOUT_KEY = null; apply(STATE, true); }

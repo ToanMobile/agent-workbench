@@ -7,7 +7,7 @@
 <script>
   (function () {
     var saved = null;
-    try { saved = localStorage.getItem('agent-office-theme'); } catch (e) {}
+    try { saved = localStorage.getItem('agent-office-theme'); } catch (e) { console.warn('Không đọc được giao diện đã lưu', e); }
     var dark = saved ? saved === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
   })();
@@ -676,7 +676,7 @@
   $('#btnTheme').addEventListener('click', function () {
     var next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = next;
-    try { localStorage.setItem('agent-office-theme', next); } catch (e) {}
+    try { localStorage.setItem('agent-office-theme', next); } catch (e) { console.warn('Không lưu được giao diện', e); }
     syncThemeBtn();
   });
   syncThemeBtn();

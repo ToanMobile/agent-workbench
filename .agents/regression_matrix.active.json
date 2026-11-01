@@ -2701,6 +2701,64 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "review-round3-742",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/bin/review_runner.py",
+        "universal-agent-devkit/bin/regression_checklist.py",
+        "universal-agent-devkit/bin/review_sign.py",
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/guard-review-tamper.py",
+        "universal-agent-devkit/hooks/guard-secrets.py",
+        "universal-agent-devkit/hooks/shell_writes.py",
+        "mcp-servers/agent-office/web/*.html",
+        "tests/super-board/test_merge_gate_review_env_worker.sh",
+        "mcp-servers/agent-office/tests/test_web_no_empty_catch.py",
+        "universal-agent-devkit/tests/gates/test_rev_drop_sealed_once.sh",
+        "universal-agent-devkit/tests/gates/test_review_gate_time_budget.sh",
+        "universal-agent-devkit/tests/gates/test_guard_review_tamper_glob.sh",
+        "universal-agent-devkit/tests/gates/test_guard_secrets_seal_glob.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-742-R3-MERGE-GATE-ENV-01",
+          "name": "#742 review 409a7296 (0976a4c5db, d68ca2df2a): merge gate bỏ cùng bộ biến môi trường với Stop hook (review_runner.py gate-env-names, có ANTIGRAVITY_PM_AGY / REVIEW_MAX_*), PASS ký dưới môi trường Stop hook vẫn merge; PASS_REDUCED chỉ qua --accept-reduced-review của lượt chạy (biến thừa hưởng bị bỏ qua, worker exit 13)",
+          "command": "bash tests/super-board/test_merge_gate_review_env_worker.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-742-R3-WEB-NO-EMPTY-CATCH-01",
+          "name": "#742 review 409a7296 (fc1b157568, INSTINCT-007): không trang nào trong agent-office/web có catch rỗng",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_web_no_empty_catch",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-742-R3-REV-DROP-SEALED-ONCE-01",
+          "name": "#742 review 409a7296 (30f955ea7f, INSTINCT-098): drop BUG-REV --refuted-by đọc summary.json một lần, kiểm dấu và lấy verdict trên cùng bytes (đổi file sau lúc kiểm dấu không xoá được hàng)",
+          "command": "bash universal-agent-devkit/tests/gates/test_rev_drop_sealed_once.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-742-R3-REVIEW-GATE-BUDGET-01",
+          "name": "#742 review 409a7296 (ab09d0a1f2, 24d852716a): Stop hook review_gate có một hạn chung < 20 s; review-fanout chậm/treo thì hook tự chặn (exit 2) trước khi bị kill, không fail-open",
+          "command": "bash universal-agent-devkit/tests/gates/test_review_gate_time_budget.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-742-R3-GUARD-TAMPER-GLOB-01",
+          "name": "#742 review 409a7296 (b91e0de56a): guard-review-tamper chặn đích ghi có glob/brace vào máy review và bộ ký gọi qua glob (review_sig?.py)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_review_tamper_glob.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-742-R3-GUARD-SECRETS-GLOB-01",
+          "name": "#742 review 409a7296 (968dac9af3): guard-secrets chặn lệnh Bash đọc khoá ký qua glob (~/.config/agent-work*/*, ~/.conf*/agent-wo*/*, cd ~/.config && cat */*)",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_secrets_seal_glob.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
