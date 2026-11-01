@@ -1223,7 +1223,8 @@ def gh_comment_rule(rest, base):
 MQ_LABEL = "merge-queue"
 MQ_MSG = "gắn nhãn merge-queue khi PR chưa có approved-head khớp head"
 MQ_HELPER = os.path.join(".claude", "bin", "super-board-queue-label.sh")
-MQ_HELPER_DEPS = [os.path.join(".claude", "bin", "super-board-approved-head.jq"), os.path.join(".claude", "bin", "super-board-audit-check.py")]
+MQ_HELPER_DEPS = [os.path.join(".claude", "bin", "super-board-approved-head.jq"), os.path.join(".claude", "bin", "super-board-audit-check.py"),
+                  os.path.join("universal-agent-devkit", "bin", "push_gate.py"), os.path.join(".agents", "devkit", "bin", "push_gate.py")]
 MQ_BUDGET_S = 9.0   # tổng thời gian của guard khi có lời gọi helper: dưới timeout 10 s của hook ở Codex/Gemini/Cursor
 # Cờ KHÔNG mang giá trị của gh pr edit / issue edit / pr create (gh 2.103.3 --help); mọi cờ dài khác mang giá trị.
 MQ_BOOL_LONG = {"--remove-milestone", "--remove-parent", "--remove-type", "--draft", "--dry-run", "--editor", "--fill",
@@ -1255,12 +1256,24 @@ def _mq_helper_at(root):
         return (path if os.path.isfile(path) else None), None
     if not os.path.isfile(path):
         return None, f"{MQ_MSG}: {MQ_HELPER} git đã theo dõi nhưng không còn trong cây ({root}) — {restore}"
-    # luật duyệt helper dùng (jq approved-head, audit-check) cũng phải khớp HEAD: sửa chúng trong cây là duyệt mọi PR (OCR final)
-    files = [MQ_HELPER] + MQ_HELPER_DEPS
-    rc, _ = _mq_git(root, "diff", "--quiet", "HEAD", "--", *files)
-    if rc != 0:
+    # Luật duyệt helper dùng (jq approved-head, audit-check, push_gate) cũng phải khớp HEAD: sửa chúng trong cây là duyệt mọi PR (OCR
+    # final). So NỘI DUNG file với blob của HEAD (hash-object --no-filters), không qua git diff: --assume-unchanged / --skip-worktree /
+    # filter giấu thay đổi khỏi diff. File HEAD không theo dõi (symlink .agents/devkit) bỏ qua; symlink trong cây cũng bỏ qua.
+    rc, out = _mq_git(root, "ls-tree", "HEAD", "--", MQ_HELPER, *MQ_HELPER_DEPS)
+    want = {}
+    for line in (out.splitlines() if rc == 0 else []):
+        meta, _, rel = line.partition("\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[1] == "blob" and parts[0] in ("100644", "100755"):
+            want[rel] = parts[2]
+    rels = sorted(want)
+    got = []
+    if rc == 0 and rels and all(os.path.isfile(os.path.join(root, r)) for r in rels):
+        hrc, hout = _mq_git(root, "hash-object", "--no-filters", "--", *rels)
+        got = hout.split() if hrc == 0 else []
+    if rc != 0 or not rels or [want[r] for r in rels] != got:
         return None, (f"{MQ_MSG}: {MQ_HELPER} hoặc luật duyệt nó dùng khác bản HEAD ({root}) — khôi phục: git -C {root} checkout -- "
-                      f"{chr(32).join(files)}, hoặc commit bản sửa trước")
+                      f"{chr(32).join(rels or [MQ_HELPER])}, hoặc commit bản sửa trước")
     return path, None
 
 def _mq_helper():
@@ -1507,6 +1520,11 @@ def gh_label_rule(rest, base, env_repo=None):
         lead_repo = a[7:] if a.startswith("--repo=") else a[2:] if (a[:2] == "-R" and len(a) > 2) else lead_repo
         j += 1
     sub, args = rest[j:j + 2], rest[j + 2:]
+    if sub[:1] == ["alias"] and any(MQ_LABEL in a.casefold() for a in rest[j:]):   # (OCR final) alias gọi sau guard không thấy
+        helper, hwhy = _mq_helper()
+        if hwhy or helper:
+            return hwhy or f"{MQ_MSG}: gh alias mở rộng thành lệnh gắn nhãn {MQ_LABEL}, guard không kiểm được lúc gọi alias — gắn nhãn bằng {MQ_HELPER} <pr>"
+        return None
     if sub[:1] == ["api"]:
         reason, sels, api_repo = _mq_api(rest[j + 1:], base)
         if not reason and not sels:
@@ -1666,6 +1684,11 @@ def analyse_simple(tokens, depth):
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there
     # (`$(echo gi)t reset --hard`, 2026-10-09): its output is the program name.
     if prog.startswith("$") or SUBST in prog:
+        # (#536, OCR final) `G=gh; $G pr edit 5 --add-label merge-queue`, `$(echo g)h …`: có thể là gh, nhắc merge-queue → luật nhãn chặn
+        if any(MQ_LABEL in a.casefold() for a in rest):
+            mq_helper, mq_why = _mq_helper()
+            if mq_why or mq_helper:
+                return mq_why or f"{MQ_MSG}: chương trình là biến / thay thế lệnh, guard không biết có phải gh không — gọi gh trực tiếp"
         if IN_C_SCRIPT[0] and SUBST in prog:
             PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "( $(curl ...) )", "if $(...)", "exec $(...)": the command word is generated text
         return danger_in_git(rest[0], rest[1:]) if rest else None

@@ -89,7 +89,8 @@ case "$vwhy" in
     [ -n "$prrepo" ] && [ "$origin" = "$prrepo" ] \
       || refuse "$approved" "approved-by task_id ${vwhy#task:} được audit trong repo ${origin:-không rõ}, PR thuộc repo ${prrepo:-không rõ}"
     arc=0
-    run_t python3 "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${vwhy#task:}" "$head" >/dev/null 2>"$ERRF" || arc=$?
+    # -I: file chưa track cạnh audit-check (vd argparse.py) không được che module stdlib để đổi verdict (review #826)
+    run_t python3 -I "$HERE/super-board-audit-check.py" --top "$top" --pr "$n" "${vwhy#task:}" "$head" >/dev/null 2>"$ERRF" || arc=$?
     # hết giờ (fetch refs/pull chậm) là "không kiểm được" (69), không phải "chưa duyệt" (3 bảo agent quay về lane Review)
     [ "$arc" -ne 124 ] || { echo "queue-label: kiểm audit của approved-by task_id ${vwhy#task:} hết ${LIMIT} s — không gắn nhãn ${LABEL}, thử lại sau" >&2; exit 69; }
     [ "$arc" -eq 0 ] \

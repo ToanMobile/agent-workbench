@@ -174,7 +174,8 @@ echo "J. helper git đã theo dõi mà bị mv / ghi đè (chỉ rm là file b�
 T="$TMP/tracked"; TW="$TMP/tracked-wt"; H=.claude/bin/super-board-queue-label.sh
 git -C "$TMP" init -q -b main tracked; mkdir -p "$T/.claude/bin"; stub "$T"; echo 0 > "$T/rc"
 printf '"luat duyet"\n' > "$T/.claude/bin/super-board-approved-head.jq"; printf 'import sys\n' > "$T/.claude/bin/super-board-audit-check.py"
-git -C "$T" add "$H" .claude/bin/super-board-approved-head.jq .claude/bin/super-board-audit-check.py \
+mkdir -p "$T/universal-agent-devkit/bin"; printf 'def audited_head(top, task):\n    return None\n' > "$T/universal-agent-devkit/bin/push_gate.py"
+git -C "$T" add "$H" .claude/bin/super-board-approved-head.jq .claude/bin/super-board-audit-check.py universal-agent-devkit/bin/push_gate.py \
   && git -C "$T" -c user.email=t@example.invalid -c user.name=t commit -q -m helper
 check 0 "gh pr edit 5 --add-label merge-queue" "$T"
 [ -s "$T/calls" ] && echo "  ✔ tracked helper matching HEAD is used" || { echo "  ✖ tracked helper not called"; FAILS=$((FAILS + 1)); }
@@ -190,6 +191,17 @@ check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
 git -C "$T" checkout -q -- .claude/bin/super-board-approved-head.jq; printf 'import sys; sys.exit(0)\n' > "$T/.claude/bin/super-board-audit-check.py"
 check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
 git -C "$T" checkout -q -- .claude/bin/super-board-audit-check.py
+# audit-check nạp push_gate.py để ra verdict task: → cũng phải khớp HEAD (review #826 P2)
+printf 'def audited_head(top, task):\n    return "x"\n' > "$T/universal-agent-devkit/bin/push_gate.py"
+check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
+git -C "$T" checkout -q -- universal-agent-devkit/bin/push_gate.py
+# assume-unchanged / skip-worktree giấu thay đổi khỏi git diff: so nội dung file với blob của HEAD (OCR final)
+git -C "$T" update-index --assume-unchanged "$H"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/$H"
+check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
+git -C "$T" update-index --no-assume-unchanged "$H"; git -C "$T" checkout -q -- "$H"
+git -C "$T" update-index --skip-worktree .claude/bin/super-board-approved-head.jq; printf '"ok"\n' > "$T/.claude/bin/super-board-approved-head.jq"
+check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
+git -C "$T" update-index --no-skip-worktree .claude/bin/super-board-approved-head.jq; git -C "$T" checkout -q -- .claude/bin/super-board-approved-head.jq
 git -C "$T" checkout -q -- "$H"; git -C "$T" worktree add -q --detach "$TW" 2>/dev/null; echo 0 > "$TW/rc"
 mv "$T/$H" "$TMP/moved-helper"
 check 2 "gh pr edit 5 --add-label merge-queue" "$TW"; grep_err 'checkout --'
@@ -202,5 +214,11 @@ reset 3; check 2 "g[h] pr edit 5 --add-label merge-queue"; expect_call '^--check
 reset 3; check 2 "python3 -c \"import subprocess; subprocess.run(['GH', 'pr', 'edit', '5', '--add-label', 'merge-queue'])\""; expect_call '^--check 5$'
 reset 3; check 2 "python3 -c \"import os; os.system('GH pr edit 5 --add-label merge-queue')\""; expect_call '^--check 5$'
 reset 0; check 2 "gh api repos/acme/widgets/issues/5/labels -f \"labels[]=\$L\""; expect_call none
+# chương trình là biến / thay thế lệnh: không biết có phải gh không mà lệnh nhắc merge-queue → chặn (OCR final)
+reset 0; check 2 "G=gh; \$G pr edit 5 --add-label merge-queue"; expect_call none
+reset 0; check 2 "\$(echo g)h pr edit 5 --add-label merge-queue"; expect_call none
+# gh alias mở rộng thành lệnh gắn nhãn: guard không thấy được lúc gọi alias → chặn lúc định nghĩa (OCR final)
+reset 0; check 2 "gh alias set mq 'pr edit \$1 --add-label merge-queue'"; expect_call none
+reset 0; check 0 "gh alias set co 'pr checkout'"; expect_call none
 
 [ "$FAILS" -eq 0 ] && echo "PASS test_guard_merge_queue_label" || { echo "FAIL test_guard_merge_queue_label ($FAILS)"; exit 1; }

@@ -27,6 +27,7 @@ cp "$ROOT/.claude/bin/super-board-queue-label.sh" "$ROOT/.claude/bin/super-board
 # audit-check giả: ghi argv, exit theo $AUDIT_RC
 cat > "$TMP/bin/super-board-audit-check.py" <<'PY'
 import os, sys, time
+import json  # module thuần Python: h12 che nó bằng json.py chưa track cạnh audit-check
 open(os.environ["AUDIT_LOG"], "a").write(" ".join(sys.argv[1:]) + "\n")
 time.sleep(float(os.environ.get("AUDIT_SLEEP", "0")))
 sys.exit(int(os.environ.get("AUDIT_RC", "0")))
@@ -109,5 +110,11 @@ reset; pr "[$(cmt OWNER "approved-head:$HEAD")]"; SB_QUEUE_LABEL_GH_TIMEOUT=0 ru
 reset; pr "[$(cmt MEMBER "approved-head:$HEAD
 approved-by: $BY")]"; AUDIT_SLEEP=3 SB_QUEUE_LABEL_GH_TIMEOUT=1 run 5
 { [ "$RC" = 69 ] && ! edited; } && ok "h11 audit-check timeout → exit 69 (unknown), not 3 (not approved)" || fail "h11 rc=$RC err=$(head -c 200 "$TMP/err")"
+# review #826 P2: audit-check chạy với python3 -I — file chưa track cạnh nó (json.py) không được che module stdlib để đổi verdict
+printf 'raise SystemExit(0)\n' > "$TMP/bin/json.py"
+reset; export AUDIT_RC=1; pr "[$(cmt MEMBER "approved-head:$HEAD
+approved-by: $BY")]"; run 5
+{ [ "$RC" = 3 ] && ! edited; } && ok "h12 untracked json.py next to audit-check does not turn a failed audit into a pass" || fail "h12 rc=$RC edited=$(edited && echo y || echo n)"
+rm -f "$TMP/bin/json.py"
 
 [ "$FAILS" -eq 0 ] && echo "PASS test_queue_label" || { echo "FAIL test_queue_label ($FAILS)"; exit 1; }
