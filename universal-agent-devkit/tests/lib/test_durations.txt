@@ -505,3 +505,5 @@
 5 tests/gates/test_scoped_gate_matrix_append.sh
 1 tests/gates/test_matrix_real_readers.sh
 7 tests/gates/test_gate_matrix_append_only_coverage.sh
+# gate kẹt và chậm PR 1 (02/11) P8: trần gấp đôi cho shard GATES (3 lượt gate fixture, ~12 s)
+12 tests/gates/test_gate_suite_timeout_gates_shard.sh

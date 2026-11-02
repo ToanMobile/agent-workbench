@@ -4562,6 +4562,9 @@ PER_TEST_CACHE = {"mode": "0"}   # B2: DEVKIT_PER_TEST_CACHE cho run_impacted.sh
 EXTEND_STEP_S = 60   # #616 A: step of the extension below; DEVKIT_GATE_EXTEND_STEP_S overrides it (tests)
 EXTEND_CAP_FACTOR = 3   # #616 A: hard ceiling = this × timeout, load never lifts it
 EXTEND_MIN_TIMEOUT_S = 60   # #616 A: a --timeout below this is a test's own short budget, never extended (DEVKIT_GATE_EXTEND_MIN_S overrides: tests)
+# #801 / owner 02/11: the workbench tests/gates shard passes at p95 860 s of the 900 s --timeout (12 TIMEOUTs since 31/10): it gets
+# this many times --timeout. ponytail: ids fixed in the kit; move to a per-test matrix key when a second suite needs its own ceiling.
+SUITE_TIMEOUT_FACTOR = {"REG-DK-ALL-GATES-01": 2}
 
 
 def _extend_step_s() -> float:
@@ -4578,6 +4581,12 @@ def _extend_min_s() -> float:
         return v if v >= 0 else EXTEND_MIN_TIMEOUT_S
     except ValueError:
         return EXTEND_MIN_TIMEOUT_S
+
+
+def suite_timeout(t: dict, timeout):
+    """--timeout of one suite: times SUITE_TIMEOUT_FACTOR of its id; a test's own short budget (below _extend_min_s()) is kept."""
+    factor = SUITE_TIMEOUT_FACTOR.get(str(t.get("id") or ""))
+    return timeout * factor if factor and timeout >= _extend_min_s() else timeout
 
 
 def _machine_busy() -> bool:
@@ -7847,7 +7856,7 @@ def main():
         # (gradle daemons, test workers), not just the shell. Commands come from the matrix at the base
         # ref (load_active_matrix), so the audited change cannot rewrite them.
         ext = {}
-        code, out, timed_out = run_in_group(cmd, str(project_dir), env, args.timeout, extend=ext)
+        code, out, timed_out = run_in_group(cmd, str(project_dir), env, suite_timeout(t, args.timeout), extend=ext)
         if ext.get("s"):
             t["extended_s"] = ext["s"]   # #616 A: seconds past --timeout the suite was left running because the machine was busy
         full_cmd = t.get("full_command") or ""
@@ -7861,7 +7870,7 @@ def main():
             cmd, mode = full_cmd, "full"
             t.update({"command": cmd, "mode": mode, "mode_reason": reason})
             narrow_out = out or ""
-            code, out, timed_out = run_in_group(cmd, str(project_dir), env, args.timeout)
+            code, out, timed_out = run_in_group(cmd, str(project_dir), env, suite_timeout(t, args.timeout))
             out = narrow_out + f"\n# --- narrow không khớp test nào, chạy lại lệnh đầy đủ — exit {code} ---\n" + (out or "")
         if not timed_out:
             t["status"] = "PASS" if code == 0 else "FAIL"
