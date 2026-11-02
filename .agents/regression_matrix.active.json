@@ -2957,6 +2957,25 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-review-plan-858",
+      "watch_files": [
+        ".claude/bin/super-board-review-plan.sh",
+        "universal-agent-devkit/bin/review_tier.py",
+        ".claude/super-board/configs/agent-workbench.json",
+        ".claude/skills/super-review/references/review-flow.md",
+        ".claude/skills/super-board/references/run.md",
+        "tests/super-board/test_review_plan_tier.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-PLAN-01",
+          "name": "#858: super-board-review-plan.sh in bậc review S/M/L (review_tier.py) và các bên review theo config review_tiers: PR giả bậc S ⇒ 1 bên (claude), M ⇒ 2, diff 5 dòng merge-gate ⇒ L 4 bên, --deletes-data ⇒ L; config tuỳ biến được đọc; danh sách rỗng / sai kiểu / JSON hỏng ⇒ mặc định luật chủ repo; thiếu review_tier.py ⇒ L kèm cảnh báo; super-review review-flow.md và run.md gọi script",
+          "command": "bash tests/super-board/test_review_plan_tier.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
