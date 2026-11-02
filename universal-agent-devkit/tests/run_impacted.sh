@@ -8,6 +8,8 @@
 # so a regression matrix that watches the DevKit (agent-workbench's) uses this instead.
 # ponytail: a changed file that no test names gets repo-consistency only, add a test when such a file breaks
 # devkit-selection-list: `--list` only prints the selection and runs nothing: post-fix-gate's suite cache (bin/suite_cache.py) asks it, by this marker.
+# devkit-selection-inputs: một lượt chỉ chạy đúng các test `--list` in ra (`bash <test>`) cùng helper nêu tên trong file này, nên suite cache khoá
+# suite theo input của các test đó trong đồ thị bin/scoped_gate.py, không theo cả cây (#851). Chạy thêm thứ gì khác ngoài tập chọn thì bỏ dấu này.
 # Usage: run_impacted.sh [--list | --all | --jobs]   (--list prints the selection and runs nothing; --all runs the whole
 # suite, whatever changed: what `agent-kit test` calls, in parallel — one test after another took ~19 min;
 # --jobs prints how many tests a run starts at once and exits)
