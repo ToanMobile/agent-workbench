@@ -376,9 +376,10 @@ bash "$KIT" bugs bogus >/dev/null 2>&1; [ $? = 2 ] && ok "unknown bugs action �
 
 # ── #827: câu hỏi hay lệnh về việc theo dõi không phải báo bug, trừ khi kể triệu chứng ──
 # 01/11 câu hỏi của chủ repo "… check có đang dùng cũ hay sai gì ko?" và lệnh "Hook đã tự ghi câu hỏi … thành một mục
-# bug trong checklist tạo 1 task …" thành dòng REPORTED. Nhãn (lỗi, bug, "sai gì ko", "fail không") chỉ gọi tên hoặc
-# hỏi; triệu chứng (văng, mất dữ liệu, bị blocked, stack trace, ảnh bugs/) vẫn là báo bug. Thẻ nêu theo số (thẻ #827,
-# #520 trần cạnh từ task) đã là ticket.
+# bug trong checklist tạo 1 task …" thành dòng REPORTED. Từ lỗi bị hỏi tới ("sai gì ko", "fail không nhé") không phải báo
+# bug; nhãn (lỗi, bug) trong câu hỏi hay lệnh về thẻ/checklist cũng không; triệu chứng (văng, mất dữ liệu, bị blocked,
+# "bị lỗi khi", "báo lỗi", stack trace, ảnh bugs/) vẫn là báo bug, kể cả khi có số PR/thẻ. "Bạn là phiên/lane …" là lệnh
+# giao việc của phiên điều phối, không phải người dùng báo bug.
 n0="$(nbugs)"
 i=0
 for p in "REG-DK-ALL-GATES-01 tôi nhớ đã tách ra nhỏ rồi và nhanh hơn rồi mà check có đang dùng cũ hay sai gì ko?" \
@@ -388,7 +389,10 @@ for p in "REG-DK-ALL-GATES-01 tôi nhớ đã tách ra nhỏ rồi và nhanh hơ
          "update toàn bộ status vào issues-bugs vs workflow-improvements hết sau đó xoá những task hay issues đã làm xong rồi" \
          "test có fail không?" "app có bị lỗi gì không?" \
          "Bạn là lane r30bug. Việc: thẻ #827 (high, Ready). Hook prompt ghi câu hỏi thành bug REPORTED; sửa gốc, test ĐỎ trên code cũ, kẹt thì ghi BLOCKED." \
-         "tạo trên worktree mới làm những task này cho tôi LANE C 1. #520 thử lại lỗi ghi GitHub trước khi đẩy thẻ vào Blocked 2. #619 lệnh mark lỗi làm thẻ kẹt Ready"; do
+         "Bạn là phiên r23cl9, tiếp nối r23cl8: PR #742 vẫn crash ở gate, kẹt thì ghi BLOCKED" \
+         "các lỗi ở devkit trong quá trình chạy đã fix hết chưa nếu chưa có tạo task lên board chưa?" \
+         "test có fail ko" "check có đang dùng cũ hay bị sai gì ko?" "review module thanh toán xem có sai gì không nhé" \
+         "có task nào kẹt ko"; do
   i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "k$i")")"
   nothing "#827 question / tracking request '${p:0:40}…' → no row" "$out"
 done
@@ -401,11 +405,24 @@ for p in "sao app văng khi mở PDF có mật khẩu?" "tại sao bấm Lưu �
          "sao app crash chưa fix?" "sao app văng ko mở được?" \
          "sửa lỗi card thanh toán" "fix bug trong task runner" "sửa lỗi nút Ready" \
          "card hiển thị màu #000 sai ở màn đơn hàng" \
+         "sau khi merge PR #810 thì app bị crash khi mở file PDF" "App bị văng khi xoá thẻ #1 trong ví thanh toán" \
+         "tại sao app bị lỗi khi mở file PDF?" "sao bấm nút Lưu lại báo lỗi?" "sao lỗi khi build release?" \
+         "Màn hình checklist hiển thị sai màu #333 trên dark mode" "Bạn là phiên bản 2.3 rồi mà app vẫn văng khi mở PDF" \
          "sao lại lỗi thế này khi mở file DOCX?
 java.lang.NullPointerException: doc is null
 	at com.techlead.reader.DocView.open(DocView.kt:42)"; do
   i=$((i + 1)); out="$(raw_hook "$(tp_payload "$p" "ks$i")")"
   landed "#827 symptom kept '${p:0:40}…' → REPORTED row" "$out"
 done
+# Antigravity #827: STACK_RE "^\s*at" với re.M quét bậc hai trên dòng trống (80 000 dòng: 9 s, hook timeout 10 s). Đo CPU, không
+# đo giờ tường: tải máy không làm đỏ oan.
+python3 - "$DEVKIT_DIR/scripts/context/enrich_context.py" <<'PY' && ok "#827 bug_report tuyến tính: 80 000 dòng trống < 1 s CPU" \
+  || fail "#827 bug_report bậc hai trên dòng trống"
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("ec", sys.argv[1])
+ec = importlib.util.module_from_spec(spec); spec.loader.exec_module(ec)
+t0 = time.process_time(); ec.bug_report("\n" * 80000 + "sao lỗi?"); cpu = time.process_time() - t0
+assert cpu < 1.0, "%.2f s CPU" % cpu
+PY
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_bug_capture: all passed" || { echo "❌ test_bug_capture: $FAILS failed"; exit 1; }
