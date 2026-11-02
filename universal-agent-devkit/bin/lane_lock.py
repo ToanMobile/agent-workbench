@@ -25,13 +25,13 @@ tải; lỗi, quá giờ, lệnh khác (chuỗi `bash -c`, --full, --since, --tr
 ponytail: số test thay cho thời lượng; đo thấy lượt nhẹ > 5 phút thì xét theo thời lượng ghi nhận. Ở tải 12–24 việc nhẹ có thể vượt việc
 nặng (việc nặng cần mọi slot trống); chấp nhận ở 2–3 lane.
 
-#849 (mở rộng 02/11) — lệnh (hay hậu duệ) đang CHỜ pool gate của heavy_slot thì nhả slot lane: mỗi LANE_LOCK_POOL_POLL_S (5 s) đọc CHỈ ĐỌC
-vé <heavy_slot.slot_dir()>/queue/gate/*.json; vé sống (heavy_slot.ticket_alive), wait_s > 0, đã chờ ≥ LANE_LOCK_POOL_WAIT_S (5 s), tiến trình
-mang PID đó sinh trước t0 của vé (không phải PID tái dùng), và cả cây của con (cùng nhóm, hay chuỗi ppid tới con) là MỘT chuỗi con → … →
-người chờ (cùng hậu duệ của nó: không việc nào chạy song song ngoài pool) ⇒ xoá .owner rồi nhả flock. Wrapper không bao giờ chặn con nên
-không deadlock; pool gate giới hạn phần chờ, hết giờ pool thì gate báo BUSY không chạy suite. Đã nhả mà cây không còn vé chờ hay marker
-gate-*.lock.held nào (lệnh ra khỏi pool, ví dụ `gate; suite`) ⇒ lấy lại slot theo luật cũ, thử mỗi lượt thăm dò. ponytail: phần đuôi chạy
-không slot trong lúc chờ lấy lại; lệnh tự đặt SB_HEAVY_SLOT_DIR khác thì không thấy vé (giữ slot như cũ).
+#849 (mở rộng 02/11) — lệnh đang CHỜ pool gate của heavy_slot thì nhả slot lane: mỗi LANE_LOCK_POOL_POLL_S (5 s) đọc CHỈ ĐỌC vé
+<heavy_slot.slot_dir()>/queue/gate/*.json; vé sống (heavy_slot.ticket_alive), wait_s > 0, đã chờ ≥ LANE_LOCK_POOL_WAIT_S (5 s), ghi sau lúc
+con được tạo, và PID của vé là CHÍNH tiến trình con (lệnh là gate, kể cả qua `env …` / `exec`) ⇒ xoá .owner rồi nhả flock, không lấy lại:
+phần còn lại của gate chạy trong pool gate (hết giờ pool thì gate báo BUSY, không chạy suite), nên số việc chạy thật ngoài pool không vượt
+LANE_LOCK_SLOTS. Wrapper không bao giờ chặn con: không deadlock. Lệnh ghép (`bash -c "…; gate"`, merge gate với verify_commands) giữ slot
+như cũ: phần khác của nó chạy ngoài pool (review 02/11 vòng 2, P2-A/B). ponytail: hậu duệ chờ pool vẫn giữ slot lane; cần nhả cho lệnh
+ghép thì chỉ khi chứng minh được phần còn lại nằm trong pool.
 """
 from __future__ import annotations
 
@@ -166,6 +166,8 @@ if not base:
     r = subprocess.run(["git", "-C", project, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"], capture_output=True, text=True)
     refs = [r.stdout.strip()] if r.returncode == 0 and r.stdout.strip() else []
     refs += [p + n for p in ("refs/remotes/origin/", "refs/heads/") for n in ("main", "master", "trunk")]
+    br = subprocess.run(["git", "-C", project, "symbolic-ref", "-q", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+    refs = [x for x in refs if x.rsplit("/", 1)[-1] != br]   # đứng trên nhánh đích: gate không dùng merge-base của task (task_off_trunk)
     refs.append("@{upstream}")   # không có nhánh đích: gate kiểm upstream..HEAD của cây sạch đi trước upstream
     base = next((x for x in refs if ok(x)), "HEAD")
 mb = subprocess.run(["git", "-C", project, "merge-base", base, "HEAD"], capture_output=True, text=True).stdout.strip() or base
@@ -262,29 +264,6 @@ def light_job(argv: list) -> tuple:
     return verdict["light"], str(verdict.get("why") or "")
 
 
-def _procs() -> dict:
-    """{pid: (ppid, pgid, giây đã sống, zombie)} của mọi tiến trình (một lần `ps`, etime dạng [[dd-]hh:]mm:ss); {} khi lỗi."""
-    try:
-        r = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid=,etime=,stat="], capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    out = {}
-    for line in r.stdout.splitlines():
-        parts = line.split()
-        if len(parts) != 5 or not all(x.isdigit() for x in parts[:3]):
-            continue
-        days, _, hms = parts[3].rpartition("-")
-        try:
-            secs = 0
-            for x in hms.split(":"):
-                secs = secs * 60 + int(x)
-            secs += int(days or 0) * 86400
-        except ValueError:
-            continue
-        out[int(parts[0])] = (int(parts[1]), int(parts[2]), secs, parts[4].startswith("Z"))
-    return out
-
-
 def _read_small(path: str, limit: int) -> bytes:
     """Tối đa limit byte của một FILE THƯỜNG (O_NOFOLLOW, O_NONBLOCK: symlink lỗi, FIFO không treo — INSTINCT-040); fd luôn đóng."""
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
@@ -314,65 +293,15 @@ def _gate_tickets() -> list:
     return out
 
 
-def _held_pids() -> set:
-    """PID ghi trong marker <slot_dir>/gate-*.lock.held (người đang giữ slot pool gate, heavy_slot._write_gate_held); chỉ đọc."""
-    d = heavy_slot.slot_dir()
-    try:
-        names = [n for n in os.listdir(d) if n.startswith("gate-") and n.endswith(".lock.held")]
-    except OSError:
-        return set()
-    out = set()
-    for n in names:
-        try:
-            out.add(int(_read_small(os.path.join(d, n), 64).split()[0]))
-        except (OSError, ValueError, IndexError):
-            continue
-    return out
-
-
-def pool_state(root: int, holding: bool):
-    """Cây tiến trình của root (cùng nhóm root, hoặc chuỗi ppid tới root; bỏ zombie) so với pool gate (#849):
-    ("wait", pid, nhãn): cả cây là MỘT chuỗi root → … → người chờ (cùng hậu duệ của nó), người chờ có vé đã chờ ≥ LANE_LOCK_POOL_WAIT_S ⇒ nhả;
-    ("out", None, ""): không tiến trình nào của cây có vé chờ hay marker .held của pool gate ⇒ lấy lại slot;
-    ("pool", None, ""): còn lại (đang trong pool, vé non, có việc chạy song song với người chờ); None: không đọc được ps.
-    holding: wrapper đang giữ slot (chỉ cần biết có nhả được không)."""
-    tickets = _gate_tickets()
-    held = set() if holding else _held_pids()
-    if not tickets and not held:
-        return ("pool", None, "") if holding else ("out", None, "")
-    procs = _procs()
-    if not procs:
-        return None
-    now = time.time()
-
-    def up(p):   # [p, cha, …, root] khi chuỗi ppid tới root; None khi không tới
-        chain, seen = [], set()
-        while p > 1 and p not in seen:
-            chain.append(p)
-            seen.add(p)
-            if p == root:
-                return chain
-            p = procs.get(p, (0,))[0]
-        return None
-
-    tree = {}
-    for p, (_ppid, pgid, _age, zombie) in procs.items():
-        if not zombie:
-            chain = up(p)
-            if chain is not None or pgid == root:
-                tree[p] = chain
-    # người ghi vé sống từ trước t0; tiến trình mang PID đó sinh SAU t0 (+2 s làm tròn etime) = PID tái dùng của vé mồ côi
-    mine = [(pid, t0, label) for pid, t0, label in tickets if pid in tree and now - procs[pid][2] <= t0 + 2]
-    if not holding:
-        return ("pool", None, "") if mine or held & set(tree) else ("out", None, "")
+def pool_waiting(root: int, spawned: float):
+    """(pid, nhãn) khi CHÍNH tiến trình con root (lệnh là gate, kể cả qua `env …` / `exec`) có vé chờ pool gate đã chờ
+    ≥ LANE_LOCK_POOL_WAIT_S; None khi không. Vé ghi trước lúc con được tạo (t0 < spawned − 1 s) là vé mồ côi của một PID cũ trùng số."""
     min_age = _env_num("LANE_LOCK_POOL_WAIT_S", 5.0)
-    for pid, t0, label in mine:
-        above = tree.get(pid)
-        if now - t0 < min_age or above is None:   # vé non (gate vừa lấy được slot) / người chờ chỉ cùng nhóm, không rõ chuỗi
-            continue
-        if all(m in above or (c is not None and pid in c) for m, c in tree.items()):   # tổ tiên của người chờ, hay hậu duệ của nó
-            return ("wait", pid, label)
-    return ("pool", None, "")
+    now = time.time()
+    for pid, t0, label in _gate_tickets():
+        if pid == root and t0 >= spawned - 1.0 and now - t0 >= min_age:
+            return pid, label
+    return None
 
 
 def try_take(paths: list, load, light: bool = False) -> tuple:
@@ -446,7 +375,7 @@ def main(argv=None) -> int:
     proc = None
     forwarded = {}
     released = None   # monotonic lúc nhả slot sớm (#849: lệnh chờ pool gate); từ đó slot và .owner có thể là của lane khác
-    first_release, retaken = None, 0
+    spawned = 0.0   # time.time() ngay trước Popen: vé của con phải ghi sau lúc này
 
     def _signal_group(sig) -> bool:
         """Gửi sig cho cả nhóm của con; False khi nhóm không còn (macOS: nhóm chỉ còn zombie trả PermissionError)."""
@@ -474,49 +403,36 @@ def main(argv=None) -> int:
         _say(f"[lock] {name} giữ khoá {time.strftime('%T')} (slot {idx + 1}/{len(paths)}, cho phép {cap}, chờ {waited:.0f} s, load {ltxt}"
              f"{', nhẹ' if light and light[0] else ''})")
         try:
+            spawned = time.time()
             proc = subprocess.Popen(args, close_fds=True, start_new_session=True)
         except OSError as exc:
             _say(f"[lock] {name}: không chạy được {args[0]}: {exc}", err=True)
         else:
             if forwarded:   # tín hiệu tới trước khi con kịp chạy: gửi lại cho nhóm của con
                 _signal_group(forwarded["sig"])
-            pool_poll = max(0.05, _env_num("LANE_LOCK_POOL_POLL_S", 5.0))   # None: thôi thăm dò sau lỗi bất ngờ (giữ nguyên trạng slot)
+            pool_poll = max(0.05, _env_num("LANE_LOCK_POOL_POLL_S", 5.0))   # None: thôi thăm dò (đã nhả, hoặc lỗi bất ngờ ⇒ giữ slot)
             while True:
                 try:
-                    status = proc.wait(timeout=pool_poll)
+                    status = proc.wait(timeout=None if released is not None else pool_poll)
                     break
                 except InterruptedError:
                     continue
                 except subprocess.TimeoutExpired:
                     try:
-                        state = pool_state(proc.pid, released is None)
+                        waiting = pool_waiting(proc.pid, spawned)
                     except Exception as exc:  # noqa: BLE001 - thăm dò vé không được làm chết wrapper khi con còn chạy
-                        _say(f"[lock] {name}: thăm dò pool gate lỗi ({exc!r}); thôi thăm dò tới khi lệnh xong", err=True)
+                        _say(f"[lock] {name}: thăm dò pool gate lỗi ({exc!r}); giữ slot tới khi lệnh xong", err=True)
                         pool_poll = None
                         continue
-                    if state is None:
-                        continue
-                    if released is None and state[0] == "wait":   # .owner xoá TRƯỚC khi nhả: không xoá owner của người lấy slot sau
+                    if waiting is not None:   # .owner xoá TRƯỚC khi nhả: không xoá owner của người lấy slot sau
                         try:
                             os.remove(owner)
                         except OSError:
                             pass
                         heavy_slot._unlock(fh)
                         released = time.monotonic()
-                        first_release = first_release or released
-                        _say(f"[lock] {name} nhả slot lane sau {released - t1:.0f} s: lệnh đang chờ pool gate (pid {state[1]}"
-                             f"{', ' + state[2] if state[2] else ''})")
-                    elif released is not None and state[0] == "out":   # lệnh ra khỏi pool gate mà còn chạy: tính lại slot như lúc đầu
-                        got, k, _cap = try_take(paths, heavy_slot.load_now(), bool(light and light[0]))
-                        if got is not None:
-                            fh, idx, released, retaken = got, k, None, retaken + 1
-                            owner = paths[idx][:-5] + ".owner"
-                            try:
-                                with open(owner, "w", encoding="utf-8") as f:
-                                    f.write(f"{name} pid {os.getpid()} từ {time.strftime('%T')}\n")
-                            except OSError:
-                                pass
-                            _say(f"[lock] {name} lấy lại slot lane {idx + 1}/{len(paths)}: lệnh đã ra khỏi pool gate")
+                        _say(f"[lock] {name} nhả slot lane sau {released - t1:.0f} s: lệnh đang chờ pool gate (pid {waiting[0]}"
+                             f"{', ' + waiting[1] if waiting[1] else ''}); phần còn lại của gate chạy trong pool, không lấy lại")
             rc = status if status >= 0 else 128 - status
             # cháu cùng nhóm còn sống: chờ ân hạn LANE_LOCK_GRACE_S rồi mới nhả slot; nhận tín hiệu thì giết nốt nhóm sau ân hạn
             grace_end = time.monotonic() + _env_num("LANE_LOCK_GRACE_S", 5.0)
@@ -536,7 +452,7 @@ def main(argv=None) -> int:
             except OSError:
                 pass
             heavy_slot._unlock(fh)
-        early = "" if first_release is None else f", nhả slot sớm sau {first_release - t1:.0f} s" + (f", lấy lại {retaken} lần" if retaken else "")
+        early = "" if released is None else f", nhả slot sớm sau {released - t1:.0f} s"
         _say(f"[lock] {name} nhả khoá rc={rc} {time.strftime('%T')} (giữ {time.monotonic() - t1:.0f} s{early})")
     return rc
 

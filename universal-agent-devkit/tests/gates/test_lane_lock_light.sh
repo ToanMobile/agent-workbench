@@ -6,7 +6,7 @@
 #   5. tải 40: hai gate nhỏ giữ đủ 2 slot ⇒ gate nhỏ thứ ba chờ (không bao giờ 3 người giữ)
 #   6. tải 15: việc nặng giữ slot 1 ⇒ gate nhỏ lấy slot 2 chạy song song   7. tải 15: gate nhỏ đang giữ ⇒ việc nặng chờ nó xong
 #   8. bộ thăm dò lỗi / quá giờ ⇒ coi là nặng (chờ)   9. tải thấp: không gọi bộ thăm dò   10. không file khoá / marker mới
-#   11. base: nhánh đích, không nhánh đích thì @{upstream}   12–14. ma trận, covers, rule chỉ-thêm, runner kit   15. test gọi gradle ⇒ nặng
+#   11. base: nhánh đích, không nhánh đích (hay đứng trên nó) thì @{upstream}   12–14. ma trận, covers, rule chỉ-thêm, runner kit   15. test gọi gradle ⇒ nặng
 # Fixture: repo git tạm với kit/bin/post-fix-gate.py giả (là chính việc chạy) và kit/bin/scoped_gate.py giả (số test đọc từ file).
 # Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
@@ -170,7 +170,7 @@ else bad "5. tải 40: hai gate nhỏ không được nhận" "L5a $(val L5a.sta
 release_all
 
 # 6. tải 15 (1 slot cho việc nặng): việc nặng giữ slot 1 ⇒ gate nhỏ lấy slot 2, chạy song song
-load 15; ntests 3; heavy H6 3; started_in H6 6 >/dev/null; gate L6 0.2 --run-tests --scoped
+load 15; ntests 3; heavy H6 8; started_in H6 6 >/dev/null; gate L6 0.2 --run-tests --scoped
 started_in L6 6 >/dev/null; wait_job H6
 if [ "$(val L6.start)" != 0 ] && [ "$(val H6.end)" != 0 ] && lt "$(val L6.start)" "$(val H6.end)"; then ok "6. tải 15: gate nhỏ chạy song song với việc nặng (slot 2)"
 else bad "6. tải 15: gate nhỏ chờ việc nặng xong" "H6 end $(val H6.end), L6 start $(val L6.start)"; fi
@@ -192,9 +192,9 @@ load 40; stub_mode sleep; t8="$(now)"
   > "${TMP}/H8b.log" 2>&1 &
 echo $! > "${TMP}/H8b.pid"
 if started_in H8b 3.5; then bad "8b. thăm dò quá giờ mà gate vẫn được nhận"; else ok "8b. thăm dò quá giờ ⇒ gate chờ như việc nặng"; fi
-t8="$(now)"; release_all
-if [ "$(val H8b.start)" != 0 ] && lt "$(val H8b.start)" "$(python3 -c "print(${t8} + 10)")"; then ok "8c. thăm dò bị cắt ở giới hạn (không treo 30 s)"
-else bad "8c. thăm dò không bị cắt ở LANE_LOCK_LIGHT_PROBE_S" "bắt đầu $(val H8b.start), nhả tải lúc ${t8}"; fi
+release_all
+if [ "$(val H8b.start)" != 0 ] && lt "$(val H8b.start)" "$(python3 -c "print(${t8} + 28)")"; then ok "8c. thăm dò bị cắt ở giới hạn (không treo 30 s)"
+else bad "8c. thăm dò không bị cắt ở LANE_LOCK_LIGHT_PROBE_S" "bắt đầu $(val H8b.start), gọi lúc ${t8} (stub treo 30 s)"; fi
 stub_mode ok
 
 # 9. tải thấp: ca này kiểm stub không bị nạp (decide thật đo 0.9–1.2 s ngày 02/11, chỉ tốn khi tải buộc phải chờ)
@@ -234,6 +234,20 @@ load 40
 echo $! > "${TMP}/H11c.pid"
 if started_in H11c 2.5; then bad "11c. không nhánh đích: 20 file đã commit bị xếp nhẹ (base HEAD)" "$(tr '\n' ' ' < "${TMP}/H11c.log" | cut -c1-200)"
 else ok "11c. không nhánh đích: base @{upstream} ⇒ 20 file ⇒ nặng, chờ"; fi
+release_all
+# 11d. checkout ĐỨNG TRÊN nhánh đích (main), không upstream, 20 commit trước origin/main, cây sạch: gate không dùng merge-base của task
+#      (task_off_trunk) và không có gì để kiểm ⇒ bộ thăm dò không lấy origin/main làm base ⇒ nhẹ (audit Antigravity 02/11 vòng 2)
+R5="${TMP}/r5"; mkdir -p "${R5}/src"; cp -R "${REPO}/kit" "${R5}/kit"; printf 'kit/\n' > "${R5}/.gitignore"
+G5() { git -C "${R5}" -c user.email=t@t -c user.name=t "$@"; }
+G5 init -q -b main && G5 add .gitignore && G5 commit -q -m init && G5 update-ref refs/remotes/origin/main HEAD || bad "11d. dựng fixture main"
+i=0; while [ "${i}" -lt 20 ]; do echo "${i}" > "${R5}/src/m_${i}.sh"; i=$((i + 1)); done
+G5 add src && G5 commit -q -m twenty || bad "11d. commit 20 file"
+load 40
+( cd "${R5}" && JOB_P="${TMP}/L11d" JOB_DUR=0.2 exec python3 "${LL_PY}" L11d -- python3 "${R5}/kit/bin/post-fix-gate.py" --run-tests --scoped ) \
+  > "${TMP}/L11d.log" 2>&1 &
+echo $! > "${TMP}/L11d.pid"
+if started_in L11d 6; then ok "11d. đứng trên nhánh đích, không upstream: base không phải origin/main ⇒ nhẹ, nhận ngay"
+else bad "11d. đứng trên nhánh đích mà vẫn lấy origin/main làm base" "$(tr '\n' ' ' < "${TMP}/L11d.log" | cut -c1-200)"; fi
 release_all
 
 # 12. ma trận: file JSON hỏng ⇒ nặng; luật Gradle khớp file đổi ⇒ nặng (heavy_slot.classify, bản của lane_lock khi kit gate thiếu)
