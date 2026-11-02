@@ -8,15 +8,15 @@ Mục tiêu (chủ repo, 01/11): "tăng chất lượng 5 repo cũng như nâng 
 - **Chỉ làm tối ưu mà 5 repo app nhận được khi đồng bộ kit**: tốc độ gate/merge gate chạy trong app, tài nguyên máy dùng chung (slot, số test song song), luồng board/merge/review mà app dùng, giảm chỗ app phải làm tay.
 - **CẤM làm tối ưu chỉ có lợi cho nội bộ agent-workbench**: test riêng của kit (`tests/gates`, shard REG-DK-*), công cụ đo/thông báo/dashboard của kit, tiện ích điều phối chỉ chạy ở workbench. Thẻ loại này đóng "not planned" hoặc để Hoãn, không mở lane.
 - **Ngoại lệ 1, lỗi nghiêm trọng ở kit** (mất dữ liệu hay commit, main hỏng hoặc lệch origin, merge/push hỏng làm luồng tự động dừng, lỗ bảo mật, gate báo xanh sai). Đây là sửa lỗi, không phải tối ưu; vẫn làm ngay.
-- **Ngoại lệ 2, việc DevKit thật sự quan trọng** (lệnh chủ repo 01/11, nguyên văn: "nếu nó thật sự quan trọng thật sự cần cho dev kit thì vẫn đưa vô được"). Việc không port sang app chỉ được làm khi đạt ít nhất một mức sau, đo trên dữ liệu thật (PR đã merge, log board), không ước lượng:
-  - a. Gỡ một tín hiệu đụng tay lặp lại ở board workbench (thẻ Blocked/🙋, merge gate đỏ oan hoặc TIMEOUT làm board dừng), gặp từ 2 lần trong 7 ngày, kèm số thẻ/PR làm bằng chứng.
-  - b. Tiết kiệm giờ máy lớn: giảm từ 10% tổng số test hoặc tổng thời gian gate trên các PR đã merge 14 ngày gần nhất (máy chạy chung với 5 repo app).
+- **Ngoại lệ 2, việc DevKit thật sự quan trọng** (lệnh chủ repo 01/11, nguyên văn: "nếu nó thật sự quan trọng thật sự cần cho dev kit thì vẫn đưa vô được"). Ngoài ngoại lệ 1, việc không port sang app chỉ được làm khi đạt ít nhất một mức sau, đo trên dữ liệu thật (PR đã merge, log board, log gate), không ước lượng:
+  - a. Gỡ một tín hiệu đụng tay lặp lại ở board workbench (thẻ Blocked/🙋, merge gate đỏ oan hoặc TIMEOUT do chậm hay chập chờn làm board dừng), gặp từ 2 lần trong 7 ngày gần nhất, kèm số thẻ/PR làm bằng chứng. Merge/push hỏng hẳn thuộc ngoại lệ 1, làm ngay từ lần đầu.
+  - b. Tiết kiệm giờ máy lớn: giảm ít nhất 10% tổng số test gate chọn chạy hoặc tổng thời gian gate trên các PR đã merge 14 ngày gần nhất (máy chạy chung với 5 repo app), đo bằng cách chạy lại bước chọn test của gate trên các PR đó; không tính phần giảm do xoá hay nới test.
   - c. Là điều kiện bắt buộc của một việc port sang app đã nhận (ghi số thẻ app đó).
-- Đạt mức nào thì lợi ích vẫn phải lớn hơn công làm, review và rủi ro chạm file lõi. Không đạt mức nào thì đóng "not planned" như việc nội bộ thường.
+- Dù đạt mức nào, lợi ích vẫn phải lớn hơn công làm, review và rủi ro chạm file lõi. Không đạt mức nào thì đóng "not planned" như việc nội bộ thường.
 
 ## 2. Kiểm trước khi nhận thẻ tối ưu
 - Thẻ, PR hoặc plan tối ưu phải ghi một dòng `Port: <repo app nào nhận, qua file kit nào>`. Việc theo ngoại lệ 2 ghi `Kit: <mức a/b/c>, <số đo và nguồn>` thay cho `Port:`. Không ghi được một trong hai dòng thì không làm.
-- Lợi ích ở app phải lớn hơn công port (mỗi thay đổi kit tốn 5 PR đồng bộ). Lợi ích nhỏ hoặc không đo được thì Hoãn.
+- Việc `Port:`: lợi ích ở app phải lớn hơn công port (mỗi thay đổi kit tốn 5 PR đồng bộ). Lợi ích nhỏ hoặc không đo được thì Hoãn.
 - Tốc độ không phải là tự động: ghi rõ thẻ gỡ được tín hiệu đụng tay nào ở app (Blocked, duyệt tay, needs-you), hoặc ghi "chỉ tiết kiệm giờ máy".
 
 ## 3. Thẻ mới
