@@ -355,6 +355,11 @@ class PolicyDeleteProtected(unittest.TestCase):
         for path in (".agents/local/memory/" + DOT_ENV, ".agents/local/rules/release.keystore"):
             plan = policy(self.CFG, [{"path": path, "additions": 0, "deletions": 1}], deletion(path))
             self.assertEqual(self.cats(plan), ["delete-protected"], (path, plan))
+        # protected_paths tự khai chỉ gồm một glob reviewable: file nhạy cảm bên trong vẫn chỉ người.
+        cfg = {"merge_policy": {"default": "auto", "protected_paths": [".agents/local/memory/**"]}}
+        path = ".agents/local/memory/" + DOT_ENV
+        plan = policy(cfg, [{"path": path, "additions": 0, "deletions": 1}], deletion(path))
+        self.assertEqual(self.cats(plan), ["delete-protected"], plan)
 
     def test_custom_glob_over_reviewable_dir_stays_human(self):
         # OCR (T0209): protected_paths tự khai chồng lên thư mục reviewable vẫn chỉ người, không bị hạ xuống delete-reviewable.
