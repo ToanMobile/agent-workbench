@@ -3039,6 +3039,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-gate-pool-mixed-size",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_gate_pool_mixed_size.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GATE-POOL-MIXED-01",
+          "name": "pool gate có vé khác cỡ (P1): vé ghi n = số path; vé đứng sau ghép tham lam (vé trước theo n tăng dần giữ chỗ trống lớn nhất < n), còn dư thì lấy chỗ nhỏ nhất — không còn slot trống mà không ai lấy; chừa đúng slot cho vé nhỏ đứng trước; .held chỉ cho slot giữ",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_pool_mixed_size.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
