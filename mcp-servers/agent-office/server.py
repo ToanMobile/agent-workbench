@@ -1322,18 +1322,8 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def read_merge_train(repo_path: str, alive=_pid_alive):
-    """Train merge đang chạy của repo (#562) từ `<repo>/.git/super-board/merge-train.state`, hoặc None.
-
-    Train ghi `pid`, `started_at`, `step` (gate | merge) và mỗi PR một dòng `pr <N> <sha> <ref>`, rồi xoá file khi thoát. File thiếu, hỏng,
-    pid chết (train bị SIGKILL để lại file mồ côi) thì coi như không có train: giao diện về đúng hành vi cũ. Chỉ ĐỌC file, không bao giờ
-    flock merge-train.lock: một train khác đang xin khoá sẽ thoát exit 4.
-    ponytail: pid bị tái dùng bởi tiến trình khác giữ file mồ côi sống; hàng đợi merge kiểm thêm lệnh của pid, thêm vào đây khi gặp."""
-    try:
-        with open(os.path.join(repo_path, ".git", "super-board", "merge-train.state"), encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
-    except OSError:
-        return None
+def _parse_train_state(lines):
+    """Một file state train: (pid, started_at, step, prs)."""
     pid = started = None
     step = "gate"
     prs = []
@@ -1350,10 +1340,38 @@ def read_merge_train(repo_path: str, alive=_pid_alive):
         elif parts[0] == "pr" and parts[1].isdigit():
             m = BRANCH_CARD_RE.match(parts[3]) if len(parts) > 3 else None
             prs.append({"pr": int(parts[1]), "card": int(m.group(1)) if m else None})
-    if pid is None or started is None or not prs or not alive(pid):
+    return pid, started, step, prs
+
+
+def read_merge_train(repo_path: str, alive=_pid_alive):
+    """Train merge đang chạy của repo từ `<repo>/.git/super-board/merge-train.<pid>.state` (#676; trước đó `merge-train.state`, #562),
+    hoặc None.
+
+    Mỗi train ghi `pid`, `started_at`, `step` (gate | merge) và mỗi PR một dòng `pr <N> <sha> <ref>`, rồi xoá file khi thoát. #676: một
+    train mỗi PR, nhiều train cùng lúc — các train sống gộp thành một: PR/thẻ của mọi train, `startedAt` sớm nhất, step `merge` khi có
+    train đang merge, pid của train sớm nhất. File thiếu, hỏng, pid chết (train bị SIGKILL để lại file mồ côi) thì bỏ qua. Chỉ ĐỌC file.
+    ponytail: pid bị tái dùng bởi tiến trình khác giữ file mồ côi sống; hàng đợi merge kiểm thêm lệnh của pid, thêm vào đây khi gặp."""
+    sb = os.path.join(repo_path, ".git", "super-board")
+    try:
+        names = sorted(n for n in os.listdir(sb) if n.startswith("merge-train.") and n.endswith(".state"))
+    except OSError:
         return None
-    return {"pid": pid, "startedAt": started, "step": "merge" if step == "merge" else "gate", "prs": prs,
-            "cards": [x["card"] for x in prs if x["card"] is not None]}
+    live = []
+    for name in names:
+        try:
+            with open(os.path.join(sb, name), encoding="utf-8", errors="replace") as f:
+                pid, started, step, prs = _parse_train_state(f.read().splitlines())
+        except OSError:
+            continue
+        if pid is None or started is None or not prs or not alive(pid):
+            continue
+        live.append((started, pid, step, prs))
+    if not live:
+        return None
+    live.sort(key=lambda t: (t[0], t[1]))
+    prs_all = [x for t in live for x in t[3]]
+    return {"pid": live[0][1], "startedAt": live[0][0], "step": "merge" if any(t[2] == "merge" for t in live) else "gate",
+            "prs": prs_all, "cards": [x["card"] for x in prs_all if x["card"] is not None]}
 
 
 def read_queued_cards(repo_path: str) -> set:

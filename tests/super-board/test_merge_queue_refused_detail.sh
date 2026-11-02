@@ -25,7 +25,9 @@ done
 QUEUE="$Q/super-board-merge-queue.sh"
 cat > "$Q/super-board-merge-train.sh" <<'SH'
 #!/usr/bin/env bash
-cat "$FAKE/train.out"; exit "$(cat "$FAKE/train.rc")"
+# #676: một train cho MỘT PR — stub chỉ in dòng train-* của PR trong --prs; mã thoát train.rc.<N> nếu có, không thì train.rc
+n=""; prev=""; for a in "$@"; do [ "$prev" = --prs ] && n="${a%%:*}"; prev="$a"; done
+grep -E "^train-(result|detail|red): ${n}( |\$)" "$FAKE/train.out"; exit "$(cat "$FAKE/train.rc.$n" 2>/dev/null || cat "$FAKE/train.rc")"
 SH
 cat > "$Q/super-board-card.sh" <<'SH'
 #!/usr/bin/env bash
@@ -86,7 +88,7 @@ for n in 1 2 3; do : > "$F/labeled/$n"; sha "$n" > "$F/head-$n"; printf '{"numbe
 # (vd ac-check của gate) ⇒ thẻ không kèm dòng đó (một nơi quyết định).
 printf 'train-result: 2 conflict\ntrain-detail: 2 ac-check: STALE-DETAIL\ntrain-result: 1 gate-exit-5\ntrain-detail: 1 merge-refused: guard-check: commit gop bi tu choi (HOOK-REFUSED)\ntrain-detail: 1 merge-refused: huong dan 1\ntrain-result: 3 gate-exit-5\n' > "$F/train.out"
 echo 5 > "$F/train.rc"; : > "$F/writes"
-( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" ) >"$TMP/out" 2>"$TMP/err"; rc=$?
+( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait ) >"$TMP/out" 2>"$TMP/err"; rc=$?
 
 [ "$rc" -eq 0 ] && ok "queue exit 0" || fail "queue exit $rc: $(tail -3 "$TMP/err")"
 grep -q "issue-labels 11 loop:rebase" "$F/writes" && grep -q "card move 11 Ready" "$F/writes" \
