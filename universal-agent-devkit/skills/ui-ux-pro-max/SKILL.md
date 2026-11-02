@@ -1,11 +1,15 @@
 ---
 name: ui-ux-pro-max
-description: "Design Intelligence & UI/UX Engine cho Mobile (SwiftUI, Flutter, Jetpack Compose, React Native) và Game (Unity 6 uGUI, Casual Puzzle, Arcade). Dùng khi thiết kế giao diện mới, chọn bảng màu, font chữ, styling button, juice/micro-interactions, haptic feedback, hoặc audit thẩm mỹ giao diện giúp UI không bị phèn/template mặc định."
+description: "Dùng khi thiết kế giao diện UI/UX Mobile/Game mới, chọn bảng màu, font chữ, styling button, juice/micro-interactions, haptic feedback, hoặc audit thẩm mỹ giao diện giúp UI không bị phèn/template mặc định."
 ---
 
 # UI/UX Pro Max - Design Intelligence
 
 Searchable local UI/UX guidance: 79 searchable styles (50 active), 192 product palettes and exact reasoning profiles, 74 font pairings, 119 UX guidelines, 105 curated icons, 17 GSAP presets, 25 chart types, and 23 technology stacks.
+
+## Phạm vi
+
+Design Intelligence & UI/UX Engine cho Mobile (SwiftUI, Flutter, Jetpack Compose, React Native) và Game (Unity 6 uGUI, Casual Puzzle, Arcade).
 
 ## When to Apply
 

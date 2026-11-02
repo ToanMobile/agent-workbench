@@ -1,11 +1,15 @@
 ---
 name: parallel-lanes
-description: "Dùng khi một việc được chia cho từ hai agent/lane trở lên chạy song song (fixer, reviewer, lane test, đợt merge): xếp lane đường găng và lane nặng chạy trước, giới hạn số lane theo CPU còn trống, brief sẵn các bẫy lặp lại, mỗi lane một worktree, review theo mức rủi ro nhưng không bỏ vòng nào, một gate full cho cả đợt ở điểm gộp (integrate / merge gate / merge train). Lệnh: `agent-kit lanes plan|slots|record`."
+description: "Dùng khi một việc được chia cho từ hai agent/lane trở lên chạy song song (fixer, reviewer, lane test, đợt merge). Lệnh: `agent-kit lanes plan|slots|record`."
 ---
 
 # Parallel Lanes (nhiều agent, xong sớm nhất mà không bớt chất lượng)
 
 Nhanh ở đây đến từ **xếp lịch**, không đến từ bỏ một vòng review hay verify (người dùng, 15/10: "chất lượng DevKit là ưu tiên cao nhất"). Đợt 15/10 mất nhiều giờ vì lane rủi ro nhất bắt đầu sau các lane nhỏ và bảy agent cùng chạy test đẩy load lên 37.
+
+## Phạm vi
+
+Xếp lane đường găng và lane nặng chạy trước, giới hạn số lane theo CPU còn trống, brief sẵn các bẫy lặp lại, mỗi lane một worktree, review theo mức rủi ro nhưng không bỏ vòng nào, một gate full cho cả đợt ở điểm gộp (integrate / merge gate / merge train).
 
 ## 1. Lập kế hoạch đợt
 1. Viết `lanes.json` (một list): `id`, `est_min` (bỏ trống thì lấy trung vị các lane cùng `kind` đã ghi, mặc định 30), `kind`, `deps` (lane phải xong trước), `risk` (`high` cho hook/guard/gate/code giết tiến trình), `files` (đường dẫn lane sẽ sửa, tính từ gốc repo; một thư mục tính là mọi file trong nó). Để `lanes.json` NGOÀI repo (thư mục scratch của phiên): file nằm trong worktree bị auto-merge quét vào main.

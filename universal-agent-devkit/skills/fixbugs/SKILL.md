@@ -1,11 +1,15 @@
 ---
 name: fixbugs
-description: Quy trình chuẩn đoán, triage sự cố Crashlytics/ANR và sửa lỗi tuân thủ Paired Executable Oracle (RED -> GREEN). Kích hoạt khi gặp bug, crash log, production stack trace, ANR traces.txt, native crash, memory leak OOM, hoặc cần sửa lỗi phẫu thuật (surgical fix) không gây hồi quy.
+description: Kích hoạt khi gặp bug, crash log Crashlytics/ANR, production stack trace, ANR traces.txt, native crash, memory leak OOM, hoặc cần sửa lỗi phẫu thuật (surgical fix) không gây hồi quy.
 ---
 
 # Quy trình Sửa Lỗi & Triage Sự Cố Chuẩn (Bug Fixing & Incident Protocol)
 
 Skill hướng dẫn quy trình điều tra, triage sự cố production/Crashlytics, tái hiện và sửa lỗi theo nguyên tắc **Paired Executable Oracle (RED → GREEN)** và **Surgical Edits** trong Target Project / Codebase.
+
+## Phạm vi
+
+Quy trình chuẩn đoán, triage sự cố Crashlytics/ANR và sửa lỗi tuân thủ Paired Executable Oracle (RED -> GREEN).
 
 ---
 
