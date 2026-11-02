@@ -34,8 +34,9 @@ Rules, from references/config-schema.json → merge_policy / migrations:
   keyword match → human. Categories ship as money, auth, schema; setting
   always_human replaces them all (`{}` turns category gating off).
 - merge_policy.protected_paths (#605; default DEFAULT_PROTECTED_PATHS, a list replaces it, `[]` turns it off): a PR
-  that DELETES (or renames away) a matching file → human, category "delete-protected". The only human-only
-  category: a human `done` approves it; an agent cross-review marker does not (super-board-approval.py HUMAN_ONLY).
+  that DELETES (or renames away) a matching file → human. Every deleted path counts (T0209): a REVIEWABLE_DELETE_GLOBS
+  path (matrix, memory, project rules) that is not SENSITIVE → "delete-reviewable", approved by the cross-review marker;
+  any other match → "delete-protected", the only human-only category (super-board-approval.py HUMAN_ONLY).
 - migrations: a changed path matching migrations.globs makes this a migration
   PR. Every env in allowed_envs with a command runs (a command of "-" means the
   deploy pipeline applies it: nothing to run). target_env not in allowed_envs, or
@@ -107,11 +108,13 @@ DEFAULT_ALWAYS_HUMAN = {
                      r"\btruncate [a-z_\"`\[]"],
     },
 }
-# #605: xoá các file này chỉ người duyệt (luật chủ repo 28/10). `**/` để khớp cả file trong thư mục con.
-DEFAULT_PROTECTED_PATHS = [
-    "**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json", ".agents/regression_matrix.active.json",
-    ".agents/local/memory/**", ".agents/local/rules/**",
-]   # giữ khớp PROTECTED_DELETE_DEFAULT của universal-agent-devkit/hooks/block-dangerous-git.sh (trừ .git/**: PR không xoá được)
+# #605: xoá các file được bảo vệ phải có người duyệt (luật chủ repo 28/10). `**/` để khớp cả file trong thư mục con.
+# T0209 (chủ repo 02/11): xoá REVIEWABLE_DELETE_GLOBS → delete-reviewable, marker duyệt chéo Antigravity thay `done`;
+# file nhạy cảm (SENSITIVE_DELETE_GLOBS, kể cả nằm trong thư mục reviewable) và protected_paths tự khai vẫn chỉ người.
+SENSITIVE_DELETE_GLOBS = ["**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json"]
+REVIEWABLE_DELETE_GLOBS = [".agents/regression_matrix.active.json", ".agents/local/memory/**", ".agents/local/rules/**"]
+DEFAULT_PROTECTED_PATHS = [*SENSITIVE_DELETE_GLOBS, *REVIEWABLE_DELETE_GLOBS]
+# giữ khớp PROTECTED_DELETE_DEFAULT của universal-agent-devkit/hooks/block-dangerous-git.sh (trừ .git/**: PR không xoá được)
 DEFAULT_MIGRATION_GLOBS = [
     "supabase/migrations/**", "prisma/migrations/**", "drizzle/**",
     "**/migrations/*.sql", "db/migrate/**", "alembic/versions/**",
@@ -267,9 +270,19 @@ def main() -> int:
             human.append({"category": cat, "why": hit})
     protected = policy.get("protected_paths")
     protected = DEFAULT_PROTECTED_PATHS if protected is None else protected
-    gone = next((f"deletes {p} (matches {g})" for p in deleted_paths(diff) for g in [matches(p, protected)] if g), None)
-    if gone:
-        human.append({"category": "delete-protected", "why": gone})
+    # Xét MỌI path bị xoá (T0209): một file nhạy cảm hay một protected_paths tự khai là cả PR chờ người.
+    # Reviewable chỉ khi path khớp REVIEWABLE và KHÔNG khớp glob protected nào khác (protected_paths tự khai chồng lên
+    # thư mục reviewable, OCR T0209) hay nhóm nhạy cảm.
+    gone = {"delete-protected": None, "delete-reviewable": None}
+    other = [x for x in protected if x not in REVIEWABLE_DELETE_GLOBS]
+    for p in deleted_paths(diff):
+        g = matches(p, protected)
+        if not g:
+            continue
+        cat = ("delete-reviewable" if matches(p, REVIEWABLE_DELETE_GLOBS) and not matches(p, other)
+               and not matches(p, SENSITIVE_DELETE_GLOBS) else "delete-protected")
+        gone[cat] = gone[cat] or f"deletes {p} (matches {g})"
+    human.extend({"category": c, "why": w} for c, w in gone.items() if w)
 
     run, needs = [], []
     if mig_files:

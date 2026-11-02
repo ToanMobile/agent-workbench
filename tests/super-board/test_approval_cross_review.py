@@ -5,7 +5,8 @@ Reviewer lane đăng một comment riêng chứa đúng một dòng `cross-revie
 validate() nhận khi repo/pr/head/scope khớp request, reviewer khác builder (không phân biệt hoa thường), task_id và
 gate_receipt không rỗng, người đăng có quyền ghi. Luật chủ repo 28/10: schema và needs_you (migrate DB live) cũng được
 duyệt chéo; chỉ xoá file được bảo vệ (delete-protected) mới cần `done` của người.
-Policy: PR xoá file khớp merge_policy.protected_paths → human có category delete-protected.
+Policy: PR xoá file khớp merge_policy.protected_paths → human có category delete-protected; riêng ma trận hồi quy,
+memory và luật dự án (chủ repo 02/11, T0209) → delete-reviewable, duyệt chéo được; secret được xét trước.
 """
 import importlib.util
 import json
@@ -325,19 +326,49 @@ class PolicyDeleteProtected(unittest.TestCase):
         return [h["category"] for h in plan["human"]]
 
     def test_deleting_protected_default_path_goes_to_human(self):
-        for path in (".agents/regression_matrix.active.json", DOT_ENV + ".local", "app/" + DOT_ENV,
-                     "app/release.keystore", ".agents/local/rules/00.md",
+        for path in (DOT_ENV + ".local", "app/" + DOT_ENV, "app/release.keystore", "app/upload.jks",
                      # #605 Lane H: đồng bộ với PROTECTED_DELETE_DEFAULT của block-dangerous-git.sh
                      "app/google-services.json", "google-services.json"):
             plan = policy(self.CFG, [{"path": path, "additions": 0, "deletions": 1}], deletion(path))
             self.assertIn("delete-protected", self.cats(plan), (path, plan))
             self.assertFalse(approval.cross_review_allowed(plan))
 
+    def test_deleting_reviewable_default_path_allows_cross_review(self):
+        # Chủ repo 02/11 (T0209): xoá ma trận hồi quy, memory, luật dự án → marker duyệt chéo Antigravity thay `done`.
+        for path in (".agents/regression_matrix.active.json", ".agents/local/memory/x.md", ".agents/local/rules/00.md"):
+            plan = policy(self.CFG, [{"path": path, "additions": 0, "deletions": 1}], deletion(path))
+            self.assertEqual(self.cats(plan), ["delete-reviewable"], (path, plan))
+            r = run(comment(2, cross(), "2026-10-28T10:05:00Z", login="sb-bot", kind="Bot"), plan=plan)
+            self.assertTrue(r["approved"], (path, r))
+
+    def test_mixed_sensitive_and_reviewable_delete_stays_human(self):
+        # Mọi path bị xoá đều được xét (không dừng ở path đầu): có một file nhạy cảm là cả PR chờ người, theo cả hai thứ tự diff.
+        rules_md, env_file = ".agents/local/rules/00.md", "app/" + DOT_ENV
+        for order in ((rules_md, env_file), (env_file, rules_md)):
+            files = [{"path": p, "additions": 0, "deletions": 1} for p in order]
+            plan = policy(self.CFG, files, "".join(deletion(p) for p in order))
+            self.assertEqual(sorted(self.cats(plan)), ["delete-protected", "delete-reviewable"], (order, plan))
+            self.assertFalse(approval.cross_review_allowed(plan))
+
+    def test_sensitive_file_inside_reviewable_dir_stays_human(self):
+        # `**` của memory/rules cũng khớp file nhạy cảm nằm bên trong: nhóm nhạy cảm được xét trước nên vẫn chỉ người.
+        for path in (".agents/local/memory/" + DOT_ENV, ".agents/local/rules/release.keystore"):
+            plan = policy(self.CFG, [{"path": path, "additions": 0, "deletions": 1}], deletion(path))
+            self.assertEqual(self.cats(plan), ["delete-protected"], (path, plan))
+
+    def test_custom_glob_over_reviewable_dir_stays_human(self):
+        # OCR (T0209): protected_paths tự khai chồng lên thư mục reviewable vẫn chỉ người, không bị hạ xuống delete-reviewable.
+        for globs in ([".agents/local/**"], [".agents/local/rules/00-immutable.md"]):
+            cfg = {"merge_policy": {"default": "auto", "protected_paths": globs}}
+            path = ".agents/local/rules/00-immutable.md"
+            plan = policy(cfg, [{"path": path, "additions": 0, "deletions": 1}], deletion(path))
+            self.assertEqual(self.cats(plan), ["delete-protected"], (globs, plan))
+
     def test_editing_protected_path_is_not_a_deletion(self):
         path = ".agents/regression_matrix.active.json"
         diff = f"diff --git a/{path} b/{path}\nindex 1..2 100644\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-x\n+y\n"
         plan = policy(self.CFG, [{"path": path, "additions": 1, "deletions": 1}], diff)
-        self.assertNotIn("delete-protected", self.cats(plan), plan)
+        self.assertEqual(plan["human"], [], plan)
 
     def test_deleting_unprotected_path_stays_auto(self):
         plan = policy(self.CFG, [{"path": "src/old.py", "additions": 0, "deletions": 1}], deletion("src/old.py"))

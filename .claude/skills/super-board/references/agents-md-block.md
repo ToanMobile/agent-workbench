@@ -20,7 +20,7 @@ Board: Backlog · Ready · Building · QA · Review · Blocked · Done. Labels r
 |---|---|
 | Config | `.claude/super-board/configs/<slug>.json` |
 | Isolation | 1 card · 1 worktree · 1 branch |
-| Merge | auto for normal changes · money, auth, destructive schema, deleting a protected file → human · line count is a human gate only when `auto_max_lines` is a positive number (unset default is 0) |
+| Merge | auto for normal changes · money, auth, destructive schema, deleting memory/rules/matrix → Antigravity cross-review · deleting .env/keystore/jks/google-services or a custom protected path → human · line count is a human gate only when `auto_max_lines` is a positive number (unset default is 0) |
 | Migrations | additive → robot migrates allowed DBs only · live DB → 🙋 `done` or cross-review marker |
 | Blocked card | block-template comment · last line `blocked-by:` · 🙋 = needs you |
 | Secrets | NEVER read `.env`; key names via `.claude/bin/super-board-env-check.sh` |

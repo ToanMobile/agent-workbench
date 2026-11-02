@@ -174,8 +174,9 @@
                   "keywords": ["drop table", "drop column", "truncate table", "rename column", "drop schema"] }
     },
     // #605: a PR that DELETES (or renames away) a file matching one of these
-    // globs → human, category "delete-protected": only a human "done" approves it;
-    // the reviewer's cross-review-approved marker does not.
+    // globs → human. Matrix, memory and project-rules deletes (T0209) → "delete-reviewable",
+    // approved by the cross-review marker; any other match (.env, keystore, jks,
+    // google-services, custom globs) → "delete-protected": only a human "done" approves it.
     // Setting this replaces the defaults below; [] turns it off.
     "protected_paths": ["**/.env*", "**/*.keystore", "**/*.jks", "**/google-services.json",
                         ".agents/regression_matrix.active.json",
