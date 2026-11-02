@@ -6,7 +6,8 @@
 #   a2. project là thư mục con của repo (git show <ref>:./…) ⇒ như a;
 #   b. sửa 1 rule cũ / rule mới trùng id / trùng component / có covered_by / đổi khoá top-level / JSON hỏng / chỉ đổi định dạng ⇒ như cũ:
 #      ma trận vào core_hits, mọi test nhắc tên ma trận được chọn;
-#   c. changed do caller truyền (from_tree=False), base đi tiếp sau merge-base và ma trận ở base khác ⇒ như cũ (so cả merge-base lẫn base).
+#   c. changed do caller truyền (from_tree=False), base đi tiếp sau merge-base và ma trận ở base khác ⇒ như cũ (so cả merge-base lẫn base);
+#   d. không rule nào theo dõi ma trận (danh sách đọc-thật rỗng) ⇒ như cũ.
 # Python stdlib, tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -162,6 +163,12 @@ d = sg.decide(SB, "main")
 chk(MX not in d["core_hits"] and d["tests"] == ["tests/r/test_reader.sh"],
     "c2. cùng cây, changed tự tính theo merge-base ⇒ chỉ-nối so với merge-base: chỉ test đọc thật", (d["core_hits"], d["tests"]))
 git("checkout", "-q", "-f", "main")
+
+# d. không rule nào theo dõi ma trận (danh sách đọc-thật rỗng) ⇒ như cũ, không chọn 0 test (review vòng 1)
+reset()
+edit(lambda m: [r.__setitem__("watch_files", [w for w in r.get("watch_files") or [] if w != MX]) for r in m["rules"]])
+git("commit", "-qam", "bỏ ma trận khỏi watch_files")
+as_before("không rule nào theo dõi ma trận + nối rule", lambda m: m["rules"].append(json.loads(json.dumps(NEW))))
 
 print("PASS" if not fails else "FAIL: %d" % fails)
 sys.exit(1 if fails else 0)

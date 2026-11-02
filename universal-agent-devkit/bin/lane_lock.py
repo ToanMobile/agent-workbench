@@ -453,11 +453,15 @@ def main(argv=None) -> int:
     last_log = None
     light = None   # (bool, lý do) của #849: thăm dò một lần, chỉ khi luật cũ vừa bắt chờ vì tải (tải thấp, hay lấy được ngay: không tốn gì)
     load_waited = False   # P7: lane này đã phải chờ vì tải ở một vòng trước
+    stagger_t0 = None     # P7: lúc lane bị chống dồn lần đầu; quá LANE_LOCK_STAGGER_S thì thôi (review: job ngắn nối đuôi làm lane chờ đói)
     while True:
         load = heavy_slot.load_now()
         is_light = bool(light and light[0])
-        stagger = not is_light and (load_waited or load is None or load >= _env_num("LANE_LOCK_STAGGER_LOAD", 6.0))
+        stagger = not is_light and (load_waited or load is None or load >= _env_num("LANE_LOCK_STAGGER_LOAD", 6.0)) and (
+            stagger_t0 is None or time.monotonic() - stagger_t0 < _env_num("LANE_LOCK_STAGGER_S", 60.0))
         fh, idx, cap = try_take(paths, load, is_light, stagger)
+        if cap == STAGGERED and stagger_t0 is None:
+            stagger_t0 = time.monotonic()
         high = load is None or load >= _env_num("LANE_LOCK_LOAD_TWO", 12.0)
         if fh is None and light is None and (high or cap == STAGGERED):
             light = light_job(args)

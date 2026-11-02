@@ -560,7 +560,7 @@ def _matrix_append_readers(project, base, from_tree):
                     if not got:
                         return None
                     readers |= set(got)
-        return sorted(readers)
+        return sorted(readers) or None   # không rule nào theo dõi ma trận ⇒ luật cũ, không chọn 0 test (review vòng 1)
     except (RuntimeError, OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
         return None
 

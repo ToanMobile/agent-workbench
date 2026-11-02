@@ -4629,7 +4629,7 @@ def run_in_group(cmd: str, cwd: str, env: dict, timeout, extend: dict = None) ->
             except subprocess.TimeoutExpired:
                 if extend is None or not timeout or timeout < _extend_min_s():
                     raise
-                cap, step, added = EXTEND_CAP_FACTOR * timeout, _extend_step_s(), 0.0
+                cap, step, added = EXTEND_CAP_FACTOR * (extend.get("base_s") or timeout), _extend_step_s(), 0.0
                 try:
                     while timeout + added < cap and _machine_busy():
                         wait = min(step, cap - timeout - added)
@@ -7857,7 +7857,7 @@ def main():
         # Own session/process group (run_in_group) so a timeout or a signal to the gate kills the whole tree
         # (gradle daemons, test workers), not just the shell. Commands come from the matrix at the base
         # ref (load_active_matrix), so the audited change cannot rewrite them.
-        ext = {}
+        ext = {"base_s": args.timeout}   # P8: trần gia hạn #616 tính trên --timeout gốc, không trên trần đã nhân (review: 3 × 1800 s)
         code, out, timed_out = run_in_group(cmd, str(project_dir), env, suite_timeout(t, args.timeout, _stop_like), extend=ext)
         if ext.get("s"):
             t["extended_s"] = ext["s"]   # #616 A: seconds past --timeout the suite was left running because the machine was busy

@@ -8,6 +8,7 @@
 #   3. đối chứng: tải 5 vào thẳng (chưa chờ tải, < 6) ⇒ cả hai vào ngay (STAGGER_S 30: chặn sai thì lệch ≥ 30 s)
 #   4. tải 8 (≥ 6): việc nặng vừa giữ slot 1 ⇒ gate scoped nhỏ (#849) vẫn lấy slot 2 ngay; việc nặng khác chờ chống dồn
 #   5. không file mới trong LANE_LOCK_DIR (chỉ dùng .owner sẵn có)
+#   6. chống dồn có hạn: lane đã chờ tải bị chặn tối đa LANE_LOCK_STAGGER_S, slot 1 nối job ngắn (.owner luôn mới) không làm nó đói
 # Mỗi ca dùng LANE_LOCK_DIR riêng (mktemp -d); SB_HEAVY_SLOT_DIR riêng. Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
 set -u
@@ -181,6 +182,31 @@ for c in s1 s2 s3 s4; do
   [ "${left}" = "lane-1.lock lane-2.lock " ] || bad "5. ${c}: file lạ trong LANE_LOCK_DIR" "${left}"
 done
 [ "${fails}" -gt 0 ] || ok "5. không file khoá / owner / marker mới trong LANE_LOCK_DIR"
+
+# 6. chống dồn có hạn (review vòng 1): lane đã chờ tải bị chống dồn tối đa LANE_LOCK_STAGGER_S (3 s) rồi thôi, dù slot 1 liên tục có
+#    .owner mới (job ngắn nối đuôi nhau) — trước sửa lane đói tới khi slot 1 trống hẳn (ở đây 15 s)
+fresh s6; mkdir -p "${LANE_LOCK_DIR}"; load 30
+python3 - "${LANE_LOCK_DIR}" 15 <<'PY' > /dev/null 2>&1 &
+import fcntl, os, sys, time
+d, dur = sys.argv[1], float(sys.argv[2])
+fh = open(os.path.join(d, "lane-1.lock"), "a+"); fcntl.flock(fh, fcntl.LOCK_EX)
+end = time.time() + dur
+while time.time() < end:   # job ngắn nối đuôi: .owner luôn < 1 s tuổi
+    with open(os.path.join(d, "lane-1.owner"), "w") as f:
+        f.write("churn %d\n" % os.getpid())
+    time.sleep(0.5)
+os.remove(os.path.join(d, "lane-1.owner"))
+PY
+echo $! > "${TMP}/churn6.pid"
+job W6 0.2
+if log_has W6 'chờ (load' 15; then
+  t_drop="$(now)"; load 4
+  has_in W6.start 20 >/dev/null; wait_job W6
+  if [ "$(val W6.start)" != 0 ] && lt "$(diff_s "$(val W6.start)" "${t_drop}")" 9; then
+    ok "6. chống dồn có hạn: lane đã chờ tải vào slot 2 sau $(diff_s "$(val W6.start)" "${t_drop}") s dù slot 1 nối job ngắn"
+  else bad "6. lane đã chờ tải bị chống dồn mãi khi slot 1 nối job ngắn" "start $(val W6.start), hạ tải ${t_drop}; $(log1 W6)"; fi
+else bad "6. W6 không chờ ở tải 30" "$(log1 W6)"; fi
+kill "$(cat "${TMP}/churn6.pid")" 2>/dev/null; rm -f "${TMP}/churn6.pid"
 
 echo
 if [ "${fails}" -eq 0 ]; then echo "test_lane_lock_stagger: tất cả XANH"; exit 0; fi
