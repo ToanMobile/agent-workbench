@@ -105,6 +105,11 @@
   "no_progress_cycles": 240,
   "truth_gate": "non-trivial",
   "truth_threshold": 70,
+  "review_tiers": {
+    "S": ["claude"],
+    "M": ["claude", "antigravity"],
+    "L": ["claude", "antigravity", "ocr", "grok"]
+  },
   "verify_commands": [
     "python3 universal-agent-devkit/bin/post-fix-gate.py --run-tests --brief"
   ],

@@ -198,6 +198,16 @@ export function loadConfig(projectInput) {
   }
   if (!Array.isArray(cfg.rulesFiles)) cfg.rulesFiles = [];
   if (!Array.isArray(cfg.auditCommands)) cfg.auditCommands = [];
+  // khoa da biet phai la object nhung file config ghi null / gia tri don / mang (deepMerge chep nguyen) lam crash loadConfig
+  // ({"proof": null}) hoac mot tool ve sau ({"antigravity": null}): canh bao va dung mac dinh (quet critical 31/10)
+  for (const k of ['proof', 'mustHave', 'antigravity', 'oracle', 'testEvidence', 'testStages']) {
+    const def = DEFAULT_CONFIG[k];
+    const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+    if (isObj(def) && !isObj(cfg[k])) {
+      warnings.push(`${k} khong phai object (${cfg[k] === null ? 'null' : typeof cfg[k]}) -> dung mac dinh`);
+      cfg[k] = structuredClone(def);
+    }
+  }
   if (typeof cfg.proof?.require !== 'number' || cfg.proof.require < 0) cfg.proof.require = 1;
   const widened = widenGradleTestCommand(root, cfg.testCommand);
   if (widened && widened !== cfg.testCommand) {

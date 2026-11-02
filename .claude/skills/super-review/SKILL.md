@@ -1,6 +1,6 @@
 ---
 name: super-review
-description: Reviewer lane of the super-board pipeline and standalone PR/branch readiness review — forms its own hypotheses before reading the builder's summary, remembers prior findings and re-checks each with file:line proof, runs an adversarial truth-check on non-trivial diffs, and classes every finding (Gap, Bug, Verification miss, Scope drift, Over-engineering via `ponytail:ponytail-review`). Merges only through `super-board-merge-gate.sh`, pinned to the reviewed head SHA, and routes other fixes to Super Build or Super QA via the board. Use when the user says "Super Review", "review this branch", "review loop", "make sure this is merge-ready", "PR review", or asks for code, architecture, security, QA evidence, or release-readiness judgment.
+description: Reviewer lane of the super-board pipeline and standalone PR/branch readiness review. Use when the user says "Super Review", "review this branch", "review loop", "make sure this is merge-ready", "PR review", or asks for code, architecture, security, QA evidence, or release-readiness judgment.
 ---
 
 **For a board worker, before writes or worktree creation:** follow [skill readiness](../super-board/references/skills-readiness.md).
@@ -9,7 +9,7 @@ on missing requirements and recheck each conditional helper before use.
 
 # Super Review — PR/code readiness reviewer
 
-**Super Review** is the super-board reviewer. It checks whether a branch or PR is safe to merge, records actionable findings, and routes fixes to the right Super workflow.
+**Super Review** is the super-board reviewer. It checks whether a branch or PR is safe to merge: it forms its own hypotheses before reading the builder's summary, remembers prior findings and re-checks each with file:line proof, runs an adversarial truth-check on non-trivial diffs, and classes every finding (Gap, Bug, Verification miss, Scope drift, Over-engineering via `ponytail:ponytail-review`). It records actionable findings, merges only through `super-board-merge-gate.sh`, pinned to the reviewed head SHA, and routes other fixes to Super Build or Super QA via the board.
 
 Super Review should be conservative with claims: only say **merge-ready** when review evidence is clean and verification has passed. If evidence is missing, say what is unverified.
 
@@ -141,7 +141,7 @@ two complete builds. In order, no shortcuts:
    leave the card in **Review** with a `[reviewer]` comment naming both shas.
    The gate owns the merge decision (config `merge_policy`, `migrations`):
    - **Exit 9 — verification-readiness.** Halt the run; preserve card, approval, claims, and worktree. Configure `verify_commands` with the owning project's real checks — or, when the gate says the scratch tree has no `post-fix-gate.py`, repair the main checkout's DevKit install — and restart explicitly. No bounce to Build, rebase retry, approval request, or bare merge.
-   - **Exit 2 / 5 — stale branch or real conflict.** Rebase pass (run.md → "The rebase pass").
+   - **Exit 2 / 5 / 14 — stale branch or real conflict (14: GitHub reports the PR CONFLICTING; nothing verified).** Rebase pass (run.md → "The rebase pass").
    - **Exit 11 — verify red, branch NOT behind the base.** A rebase changes nothing: open a `[builder]` thread quoting the gate's "verify failed (exit N: …)" line, move Review → Ready with `loop:rebuild-N`.
    - **Exit 7 — a human merges.** `merge_policy` matched (money / auth / schema label,
      path or added-line keyword; a diff over a positive `auto_max_lines` — unset default is 0, so
