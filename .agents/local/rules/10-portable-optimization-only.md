@@ -12,7 +12,7 @@ Mục tiêu (chủ repo, 01/11): "tăng chất lượng 5 repo cũng như nâng 
   - a. Gỡ một tín hiệu đụng tay lặp lại ở board workbench (thẻ Blocked/🙋, merge gate đỏ oan hoặc TIMEOUT do chậm hay chập chờn làm board dừng), gặp từ 2 lần trong 7 ngày gần nhất, kèm số thẻ/PR làm bằng chứng. Merge/push hỏng hẳn thuộc ngoại lệ 1, làm ngay từ lần đầu.
   - b. Tiết kiệm giờ máy lớn: giảm ít nhất 10% tổng số test gate chọn chạy hoặc tổng thời gian gate trên các PR đã merge vào main agent-workbench 14 ngày gần nhất (máy chạy chung với 5 repo app): số test đo bằng cách chạy lại bước chọn test của gate trên các PR đó, thời gian đo từ log gate của các PR đó; không tính phần giảm do xoá hay nới test.
   - c. Là điều kiện bắt buộc của một việc port sang app đã nhận (ghi số thẻ app đó).
-- Dù đạt mức nào, lợi ích vẫn phải lớn hơn công làm, review và rủi ro chạm file lõi. Không đạt mức nào thì đóng "not planned" như việc nội bộ thường.
+- Dù đạt mức nào, lợi ích vẫn phải lớn hơn công làm, review và rủi ro chạm file lõi. Không đạt mức nào thì xử lý như việc nội bộ thường ở dòng trên: để Hoãn, hoặc đóng "not planned" khi chủ repo không giữ.
 
 ## 2. Kiểm trước khi nhận thẻ tối ưu
 - Thẻ, PR hoặc plan tối ưu phải ghi một dòng `Port: <repo app nào nhận, qua file kit nào>`. Việc theo ngoại lệ 2 ghi `Kit: <mức a/b/c>, <số đo hoặc số thẻ, kèm nguồn>` thay cho `Port:`. Không ghi được một trong hai dòng thì không làm.
