@@ -466,11 +466,13 @@ If a screenshot file is >5MB, downscale to ≤1920px wide before committing; Git
    `.claude/bin/super-board-review-plan.sh --config <config path> --base origin/<base>` (add `--deletes-data` when the card deletes
    data) and copy its two lines into the report; later heads of the same PR keep that tier (never lower it). `reviewers:` lists
    the content-review sides: `claude` = this review plus the truth-check sub-agents; `antigravity` = `pm_dispatch kind=audit` of
-   the head; `ocr` = `ocr-review -b origin/<base> --out <file>` (endpoint down: delegate per the ocr skill); `grok` =
+   the head; `ocr` = `.agents/devkit/bin/ocr-review --from origin/<base> --to HEAD -b "<card title>" --out <dir>` (`-b` is the
+   change description, not the base; endpoint down: delegate per the ocr skill); `grok` =
    `~/.grok/bin/grok -m grok-4.7 --permission-mode plan --prompt-file <brief>` (read-only). Run every listed side in parallel. A
-   side that fails on a limit, 429, quota or tool error is retried once, then dropped (4→3→2→1, at least one real PASS); a
-   P0/P1 is a finding, never a reason to drop a side. A P0/P1 from an S or M review is re-reviewed one tier up after the fix.
-   The Antigravity audit that signs `approved-by` for the merge queue (#605, Merge protocol) stays at every tier, S included.
+   side that fails on a limit, 429, quota or tool error is retried once, then dropped (4→3→2→1, at least one real PASS); at S,
+   OCR stands in when `claude` fails twice. A P0/P1 is a finding, never a reason to drop a side. A P0/P1 from an S or M review
+   is re-reviewed one tier up after the fix. The Antigravity audit that signs `approved-by` for the merge queue (#605, Merge
+   protocol) stays at every tier, S included; at M and L that one step-5 audit of the head is also the `antigravity` side.
 5. **Reviewer-side test rerun** (always — closes the Tester self-verification gap):
    - Bring the review worktree to the PR head: `git fetch origin && git checkout --detach origin/issue-<N>-<slug>`.
    - Re-run the test command Tester used (recorded in Tester's PR handoff comment as `Local tests:` line).

@@ -10,7 +10,7 @@
    - If there are unrelated dirty files, stop and ask before touching them.
    - Load `prior_report`. If one exists, run round 1 of "Review remembers" before step 2.
    - Review tier (#858): run `.claude/bin/super-board-review-plan.sh --base origin/<base>` (on the board add
-     `--config <config path>`) once, on the first head you review; its `reviewers:` line is the set of review sides
+     `--config <config path>`; add `--deletes-data` when the card deletes data) once, on the first head you review; its `reviewers:` line is the set of review sides
      (S: claude, M: + antigravity, L: + ocr, grok). How each side runs, the retry-then-drop rule and the merge-queue
      Antigravity approval: super-board `run.md` → Reviewer step 4.
 
@@ -46,7 +46,8 @@
      with `--standalone`, which runs the full verify (Merge protocol step 2) — only outside the board, never
      inside a board lane.
      When `.claude/bin/super-board-qa-exit2.sh` printed `review`, that is the only reason an existing test was edited: the card goes to Review for Antigravity, not Blocked and not needs-you, so do not demand QA exit 0. Before `pm_dispatch kind=audit`, `git fetch origin <base>` then `git merge-base --is-ancestor origin/<base> HEAD`. False → Review → Ready with `loop:rebase`. The Reviewer does not commit and does not push. After the audit pass, `gate_receipt=$(.claude/bin/super-board-gate-receipt.sh <head sha40>)` (reads the head's receipt from the shared gate store, works from any worktree; only when it prints nothing, fall back to `jq -r .fp "$(git rev-parse --git-path postfix-gate/task_pass.json)"` in the worktree where the gate ran at that head) (empty fp: do not comment) and post `approved-head`, `approved-by` and `edited-tests:`.
-     It also needs an `.agents/devkit/bin/ocr-review` pass on the diff. Missing either is a
+     It also needs an `.agents/devkit/bin/ocr-review` pass on the diff when `ocr` is a side of the tier (step 1; an OCR
+     side dropped after a tool error under run.md Reviewer step 4 is not a miss). Missing either is a
      **Verification miss**, also when `/super-review` runs on its own, outside the board.
 
 3. **Classify findings** — every finding gets a **class** (what kind of problem) and a

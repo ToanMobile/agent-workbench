@@ -3,8 +3,10 @@
 #   super-board-review-plan.sh [--config FILE] [--base REF] [--deletes-data]
 # Chạy ở gốc worktree review đã ở head PR. In 2 dòng:
 #   <S|M|L> product_lines=<N> reasons=<…>   (nguyên văn review_tier.py)
-#   reviewers: claude antigravity …         (config review_tiers[<bậc>]; thiếu khoá hay sai kiểu ⇒ mặc định luật chủ repo 02/11)
+#   reviewers: claude antigravity …         (mặc định luật chủ repo 02/11 là sàn; config review_tiers[<bậc>] chỉ THÊM bên;
+#                                            danh sách sai kiểu / tên ngoài claude|antigravity|ocr|grok ⇒ bỏ cả danh sách)
 # review_tier.py thiếu hoặc lỗi ⇒ bậc L (nghiêng bậc cao, không rơi về S) kèm cảnh báo stderr; exit 0 để lane luôn có danh sách.
+# Repo kit: bản review_tier.py ở base cũng tính và chỉ được nâng bậc, để PR sửa chính review_tier.py không tự hạ bậc.
 # Audit Antigravity để DUYỆT merge queue (#605) không do danh sách này quyết: nó giữ ở mọi bậc (run.md → Merge protocol).
 # Tương thích bash 3.2.
 set -u
@@ -35,6 +37,17 @@ case "$line" in
   *) echo "review-plan: không tính được bậc (review_tier.py: ${TIER_PY:-không có}) ⇒ bậc L" >&2
      line="L product_lines=- reasons=tier-error" ;;
 esac
+rank() { case "$1" in S) echo 1 ;; M) echo 2 ;; *) echo 3 ;; esac; }
+if [ "$TIER_PY" = "$ROOT/universal-agent-devkit/bin/review_tier.py" ]; then
+  bdir="$(mktemp -d "${TMPDIR:-/tmp}/review-plan.XXXXXX")" || bdir=""
+  if [ -n "$bdir" ] && git -C "$ROOT" show "$BASE:universal-agent-devkit/bin/review_tier.py" > "$bdir/review_tier.py" 2>/dev/null; then
+    bline="$(cd "$ROOT" && python3 "$bdir/review_tier.py" --base "$BASE" ${DELETES:+--deletes-data} 2>/dev/null)" || bline=""
+    case "$bline" in
+      "S "*|"M "*|"L "*) if [ "$(rank "${bline%% *}")" -gt "$(rank "${line%% *}")" ]; then line="$bline"; fi ;;
+    esac
+  fi
+  [ -z "$bdir" ] || rm -rf "$bdir"
+fi
 tier="${line%% *}"
 case "$tier" in
   S) list="claude" ;;
@@ -42,10 +55,12 @@ case "$tier" in
   *) list="claude antigravity ocr grok" ;;
 esac
 if [ -n "$CONFIG" ]; then
-  # Danh sách rỗng hay phần tử không phải chuỗi thì không nhận: không có bậc nào 0 bên review.
-  conf="$(jq -r --arg t "$tier" '(.review_tiers // {})[$t] // [] | if type == "array" and length > 0
-           and all(.[]; type == "string" and test("^[a-z0-9-]+$")) then join(" ") else "" end' "$CONFIG" 2>/dev/null)" \
+  # Chỉ nhận mảng toàn tên bên đã biết; tên lạ / sai kiểu ⇒ bỏ cả danh sách. Mặc định là sàn: config chỉ thêm bên.
+  conf="$(jq -r --arg t "$tier" '(.review_tiers // {})[$t] // [] | if type == "array"
+           and all(.[]; . == "claude" or . == "antigravity" or . == "ocr" or . == "grok") then join(" ") else "" end' "$CONFIG" 2>/dev/null)" \
     || { echo "review-plan: không đọc được review_tiers trong $CONFIG ⇒ danh sách mặc định" >&2; conf=""; }
-  [ -z "$conf" ] || list="$conf"
+  for n in $conf; do
+    case " $list " in *" $n "*) ;; *) list="$list $n" ;; esac
+  done
 fi
 printf '%s\nreviewers: %s\n' "$line" "$list"

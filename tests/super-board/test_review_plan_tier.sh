@@ -68,13 +68,30 @@ run pr-s --config "$TMP/c1.json"; expect "config tuỳ biến S" S "claude ocr"
 run pr-m --config "$TMP/c1.json"; expect "config thiếu bậc M ⇒ mặc định" M "claude antigravity"
 printf '{"review_tiers":{"S":[]}}' > "$TMP/c2.json"
 run pr-s --config "$TMP/c2.json"; expect "S rỗng ⇒ mặc định" S "claude"
-printf '{"review_tiers":{"S":[1,"claude"]}}' > "$TMP/c3.json"
-run pr-s --config "$TMP/c3.json"; expect "S sai kiểu ⇒ mặc định" S "claude"
+printf '{"review_tiers":{"S":[1,"ocr"]}}' > "$TMP/c3.json"
+run pr-s --config "$TMP/c3.json"; expect "S sai kiểu ⇒ bỏ cả danh sách" S "claude"
 printf '{"review_tiers": ' > "$TMP/c4.json"
 run pr-s --config "$TMP/c4.json"; expect "config hỏng ⇒ mặc định" S "claude"
 case "$ERR" in *review_tiers*) ok "config hỏng có cảnh báo stderr" ;; *) fail "config hỏng không cảnh báo: '$ERR'" ;; esac
+# mặc định là sàn: config chỉ thêm bên, không bớt (PR sửa config của chính nó không tự giảm bên review)
+printf '{"review_tiers":{"L":["claude"],"M":["claude"]}}' > "$TMP/c5.json"
+run pr-l --config "$TMP/c5.json"; expect "config L ít bên hơn luật ⇒ vẫn đủ 4" L "claude antigravity ocr grok"
+run pr-m --config "$TMP/c5.json"; expect "config M ít bên hơn luật ⇒ vẫn 2" M "claude antigravity"
+printf '{"review_tiers":{"S":["ocr","foo"]}}' > "$TMP/c6.json"
+run pr-s --config "$TMP/c6.json"; expect "tên bên lạ ⇒ bỏ cả danh sách" S "claude"
+printf '{"review_tiers":{"S":["ocr","claude","ocr"]}}' > "$TMP/c7.json"
+run pr-s --config "$TMP/c7.json"; expect "tên trùng ⇒ một lần" S "claude ocr"
+printf '{"review_tiers":{"S":["ocr\\n"]}}' > "$TMP/c8.json"
+run pr-s --config "$TMP/c8.json"; expect "tên có xuống dòng ⇒ bỏ" S "claude"
+
+# PR sửa review_tier.py của chính nó cho ra S: bản ở base vẫn tính, giữ bậc cao hơn
+git -C "$REPO" checkout -q main; git -C "$REPO" checkout -q -b pr-self
+printf 'print("S product_lines=0 reasons=-")\n' > "$REPO/universal-agent-devkit/bin/review_tier.py"
+git -C "$REPO" commit -qam pr-self
+run pr-self;                     expect "PR tự hạ review_tier.py ⇒ bậc của base (L)" L "claude antigravity ocr grok"
 
 # thiếu review_tier.py ⇒ bậc L (không rơi về S)
+git -C "$REPO" checkout -q pr-s
 mv "$REPO/universal-agent-devkit" "$TMP/kit-off"
 run pr-s;                        expect "thiếu review_tier.py ⇒ L" L "claude antigravity ocr grok"
 case "$ERR" in *"bậc L"*) ok "thiếu review_tier.py có cảnh báo stderr" ;; *) fail "thiếu review_tier.py không cảnh báo: '$ERR'" ;; esac
@@ -86,5 +103,15 @@ for f in "$ROOT/.claude/skills/super-review/references/review-flow.md" "$ROOT/.c
   grep -q 'super-board-review-plan.sh' "$f" && ok "${f#$ROOT/} gọi super-board-review-plan.sh" \
     || fail "${f#$ROOT/} chưa gọi super-board-review-plan.sh"
 done
+RUNMD="$ROOT/.claude/skills/super-board/references/run.md"
+FLOW="$ROOT/.claude/skills/super-review/references/review-flow.md"
+# ocr-review: -b là mô tả (--background), base đi bằng --from/--to; -b origin/<base> chỉ diff working tree rỗng (0 file)
+grep -qF 'ocr-review --from origin/<base> --to HEAD' "$RUNMD" && ok "run.md: lệnh OCR dùng --from/--to" || fail "run.md: lệnh OCR sai"
+grep -qF 'ocr-review -b origin/' "$RUNMD" && fail "run.md còn 'ocr-review -b origin/'" || ok "run.md không dùng -b làm base"
+grep -qF -- '--deletes-data' "$FLOW" && ok "review-flow.md có --deletes-data" || fail "review-flow.md thiếu --deletes-data"
+# review-flow bước 2 không còn bắt OCR ở mọi bậc
+grep -qF 'when `ocr` is a side of the tier' "$FLOW" && ok "review-flow.md: OCR chỉ bắt buộc khi có trong bậc" \
+  || fail "review-flow.md còn bắt OCR ở mọi bậc"
+grep -qF 'OCR stands in' "$RUNMD" && ok "run.md: bậc S Claude lỗi ⇒ OCR thay" || fail "run.md thiếu OCR thay Claude ở bậc S"
 
 [ "$FAILS" -eq 0 ] && echo "PASS" || { echo "FAIL ($FAILS)"; exit 1; }
