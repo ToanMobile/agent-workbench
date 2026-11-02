@@ -250,7 +250,9 @@ The essentials keep the obligation; this section keeps how the tools carry it ou
 - **UI files** (Zero-Slop applies): `*.kt`/`*.java`/`*.xml`, `*.swift`, `*.dart`, `*.tsx`/`*.jsx`/`*.vue`/`*.css`, `*.prefab`,
   `*UI*.cs`.
 - **Git**: a finished task means the task receipt of step 3, the proof when required and the acceptance report. On a PR branch
-  re-run `post-fix-gate.py --run-tests --scoped` after any pull, merge or conflict fix. A trunk-push repo pushes main only
+  re-run `post-fix-gate.py --run-tests --scoped` after any pull, merge or conflict fix — except a clean merge of the base into the
+  PR branch only to clear GitHub CONFLICTING (owner 02/11): push it plainly with no new gate, the merge gate verifies base + PR
+  in its own scratch (a merge with a conflict fix still re-gates). A trunk-push repo pushes main only
   through `agent-kit integrate` (one `--scoped` run in a scratch worktree, then the push); never a `--full` in the main checkout.
   The edited-test exception needs `Test-approved-by: antigravity <task-id>` in `git log origin/<branch>..HEAD`. Session start
   names branch drift and leftover worktrees (AGENTS.md §7.1).
