@@ -78,10 +78,13 @@
 #
 # `--train-receipt <file>` (super-board-merge-train.sh): lines `<head sha> <tree sha>`. The train verified the combined tree of several
 # PRs once; when this gate's clean merge of the base and the PR head produces exactly the tree recorded for that head, the proof
-# already exists and verification is skipped. Any other tree (the base moved, the head changed) verifies as usual.
+# already exists and verification is skipped. Any other tree (the base moved, the head changed) verifies as usual — except with
+# `--require-receipt` (#676, the train sends it): then an unproven tree exits 12 instead, so verification never runs inside the lock.
 #
 # Exit codes, all meaningful to the caller:
 #   0  merged (--preflight: every cheap check passed, stdout `preflight: ok`)
+#   12 --require-receipt only: the merge of the CURRENT base and the head has no train / verified-tree receipt (the base moved after the
+#      train verified); nothing merged, lock released; the train verifies again outside the lock and calls the gate again
 #   13 merge queue is on and the caller is neither the train nor the queue (no --standalone, or --standalone from a board worker
 #      with SB_BOARD_WORKER=1): label the PR merge-queue instead; nothing ran, no lock touched
 #   11 verification failed after merging the base cleanly into the scratch tree —
@@ -141,7 +144,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 
 CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""; TRAIN_RECEIPT=""
-PREFLIGHT=0; STANDALONE=0
+PREFLIGHT=0; STANDALONE=0; REQUIRE_RECEIPT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -155,6 +158,7 @@ while [ $# -gt 0 ]; do
     --dry-run)       DRY=1; shift ;;
     --preflight)     PREFLIGHT=1; shift ;;
     --standalone)    STANDALONE=1; shift ;;
+    --require-receipt) REQUIRE_RECEIPT=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
@@ -568,7 +572,9 @@ if [ "$DRY" -ne 1 ] && [ "$PREFLIGHT" -ne 1 ] && [ -n "$TRAIN_RECEIPT" ] && [ -r
     [ "$PRE_TREE" != "$(git -C "$REPO_PATH" merge-tree --write-tree "origin/${BASE}" "$HEAD_SHA" 2>/dev/null)" ] || SKIP_LOAD_WAIT=1
   fi
 fi
+# #676: --require-receipt (train) không bao giờ verify trong khoá: cây lệch biên nhận thì thoát 12 ở dưới, nên không chờ tải (cả --dry-run).
 if [ "$SKIP_LOAD_WAIT" -eq 1 ]; then LOAD_WAITED=0; LOAD_WAIT_ON=0; say "train receipt matches the tree to merge: verify will be skipped, not waiting for the load"
+elif [ "$REQUIRE_RECEIPT" -eq 1 ]; then LOAD_WAITED=0; LOAD_WAIT_ON=0; say "--require-receipt: not waiting for the load (a tree the train did not prove exits 12 below)"
 else wait_for_load; fi
 # Đã chờ thì PR có thể đã đổi: đọc lại head và trạng thái, không verify code không còn là PR.
 if [ "${LOAD_WAITED:-0}" -gt 0 ]; then
@@ -671,6 +677,12 @@ fi
 TREE_RECEIPT=$(sb_verified_tree_receipt "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
 TREE_KEY=${TREE_RECEIPT##*/}
 if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
+# #676: --require-receipt (train): cây gộp với base HIỆN TẠI chưa được chứng minh (base dời sau verify của train) ⇒ không verify trong
+# khoá merge; thoát 12 (trap EXIT thả khoá) TRƯỚC khối #643 và bước cài DevKit, để train verify lại ngoài khoá rồi gọi lại.
+if [ "$REQUIRE_RECEIPT" -eq 1 ] && [ "$TRAIN_PROVED" -eq 0 ]; then
+  say "base moved since the train verified ${HEAD_SHA:0:12}: tree $(git -C "$SCRATCH" rev-parse --short 'HEAD^{tree}') has no receipt; not verifying inside the merge lock (exit 12)"
+  exit 12
+fi
 # #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA. Exit 2 chỉ khi train chưa
 # chứng minh cây này, comment edited-tests còn đúng head, và base không còn là tổ tiên của head đó.
 REVIEWED_HEAD=$HEAD_SHA
