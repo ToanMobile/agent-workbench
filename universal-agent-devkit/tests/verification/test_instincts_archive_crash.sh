@@ -73,6 +73,73 @@ else fail "the old text is lost: instincts.md is $(wc -c < A/.agents/instincts.m
 grep -q 'INSTINCT-002' A/.agents/instincts-archive.md 2>/dev/null && ok "the stale entry reached the archive first" \
   || fail "INSTINCT-002 is not in the archive"
 
+echo "--- (c) a re-run after the failure refuses instead of reporting success on the 0-byte file ---"
+CLAUDE_PROJECT_DIR="$D/A" python3 -I "$DEVKIT_ROOT/bin/instincts.py" archive --days 30 --apply > c.out 2>&1; RC=$?
+if [ "$RC" -eq 2 ] && grep -q 'archive-bak' c.out; then ok "re-run refuses (rc=2) and names the leftover .archive-bak"
+else fail "re-run after the failure: rc=$RC, expected 2 naming .archive-bak: $(tail -2 c.out)"; fi
+cmp -s before.md "$BAK" && ok ".archive-bak still holds the old text" || fail ".archive-bak changed or vanished after the re-run"
+
+echo "--- (d) a later archive with a stale entry does not overwrite or delete the leftover .archive-bak ---"
+printf '\n### [INSTINCT-003] Later Stale\n- **Found on:** %s\n- **Symptom:** s 003\n\n---\n' "$(day 90)" >> A/.agents/instincts.md
+CLAUDE_PROJECT_DIR="$D/A" python3 -I "$DEVKIT_ROOT/bin/instincts.py" archive --days 30 --apply > d.out 2>&1; RC=$?
+[ "$RC" -eq 2 ] && ok "archive refuses (rc=2) while .archive-bak is left" || fail "archive ran over the leftover .archive-bak: rc=$RC"
+cmp -s before.md "$BAK" && ok ".archive-bak is not overwritten or deleted" || fail "the only copy of the old text in .archive-bak is gone"
+grep -q 'INSTINCT-003' A/.agents/instincts.md && ok "instincts.md is untouched" || fail "INSTINCT-003 left instincts.md"
+
+echo "--- (e) add while .archive-bak is left skips the ids it holds ---"
+mkdir -p F/.agents
+: > F/.agents/instincts.md
+printf '# Instincts\n\n---\n\n### [INSTINCT-001] One\n- **Rule:** r\n\n---\n\n### [INSTINCT-009] Nine\n- **Rule:** r\n' > F/.agents/instincts.md.archive-bak
+CLAUDE_PROJECT_DIR="$D/F" python3 -I "$DEVKIT_ROOT/bin/instincts.py" add "Fresh Trap" --rule "r" --file "$D/F/.agents/instincts.md" > e.out 2>&1 \
+  || fail "add exit $?: $(tail -3 e.out)"
+NEWID="$(grep -o '### \[INSTINCT-[0-9]*\] Fresh Trap' F/.agents/instincts.md | grep -o '[0-9][0-9]*' | head -1)"
+if [ -n "$NEWID" ] && [ "$((10#$NEWID))" -gt 9 ]; then ok "add takes id $NEWID after the ids in .archive-bak"
+else fail "add id '$NEWID' reuses an id held by .archive-bak"; fi
+
+echo "--- (f) a failed .archive-bak write changes nothing: no archive append, no partial copy ---"
+mkdir -p G/.agents G/.claude/audit-gate
+cp before.md G/.agents/instincts.md
+cp A/.claude/audit-gate/surfaced.jsonl G/.claude/audit-gate/surfaced.jsonl
+CLAUDE_PROJECT_DIR="$D/G" python3 -I - "$DEVKIT_ROOT/bin/instincts.py" "$D/G/.agents/instincts.md.archive-bak" > f.out 2>&1 <<'PY2'
+import importlib.machinery, importlib.util, os, sys
+src, bak = sys.argv[1], os.path.realpath(sys.argv[2])
+loader = importlib.machinery.SourceFileLoader("instincts_under_test", src)
+mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+loader.exec_module(mod)
+
+class FailWrite:
+    """Bọc file bản sao (.archive-bak hoặc file tạm của nó): write() ném OSError như đĩa đầy."""
+    def __init__(self, f):
+        self._f = f
+    def __enter__(self):
+        self._f.__enter__()
+        return self
+    def __exit__(self, *exc):
+        return self._f.__exit__(*exc)
+    def write(self, s):
+        raise OSError(28, "No space left on device (test)")
+    def __getattr__(self, name):
+        return getattr(self._f, name)
+
+real_open = open
+def fake_open(path, *a, **k):
+    f = real_open(path, *a, **k)
+    return FailWrite(f) if os.path.realpath(str(path)).startswith(bak) else f
+mod.open = fake_open
+rc = mod.main(["archive", "--days", "30", "--apply"])
+print("rc=%s" % rc)
+PY2
+grep -q '^rc=2' f.out && ok "a failed copy write reports rc=2" || fail "copy write failure not reported: $(tail -3 f.out)"
+cmp -s before.md G/.agents/instincts.md && ok "instincts.md is unchanged" || fail "instincts.md changed although the copy failed"
+grep -q 'INSTINCT-002' G/.agents/instincts-archive.md 2>/dev/null && fail "INSTINCT-002 was appended to the archive although the copy failed (a re-run duplicates it)" \
+  || ok "the archive got nothing"
+ls G/.agents | grep -q 'archive-bak' && fail "a partial copy is left: $(ls G/.agents | grep archive-bak)" || ok "no .archive-bak or temp file is left"
+
+echo "--- (g) a successful archive --apply removes its copy ---"
+CLAUDE_PROJECT_DIR="$D/G" python3 -I "$DEVKIT_ROOT/bin/instincts.py" archive --days 30 --apply > g.out 2>&1 || fail "archive exit $?: $(tail -3 g.out)"
+grep -q 'INSTINCT-002' G/.agents/instincts-archive.md 2>/dev/null && ok "INSTINCT-002 moved to the archive" || fail "INSTINCT-002 not archived"
+ls G/.agents | grep -q 'archive-bak' && fail "copy left after a successful archive" || ok "no copy left after success"
+
 echo "--- (b) promote skips ids taken by the profile's instincts-archive.md ---"
 mkdir -p K/profiles/android P/.agents/local
 printf '# Android\n\n### [INSTINCT-001] Live Trap\n- **Rule:** r\n' > K/profiles/android/instincts.md
