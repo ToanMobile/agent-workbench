@@ -195,6 +195,29 @@ Mọi phương án kỹ thuật và kết quả nghiệm thu BẮT BUỘC đối
 - **Chấm điểm Agent (Agent Quality Score /100):** Mỗi Agent được chấm điểm độc lập trên thang 100 dựa trên mức độ đáp ứng 7 tiêu chuẩn vàng. Điều kiện để nghiệm thu bàn giao: Cả hai Agent đều phải đạt $\ge 95/100$, không có bất kỳ tiêu chuẩn nào dưới 90 điểm. Điểm đồng thuận = trung bình cộng của hai Agent.
 - **Ảnh nghiệm thu tinh gọn:** Nhúng đúng 1 dòng ảnh hiển thị trực tiếp (không lặp path): `![Ảnh nghiệm thu](reports/proof-<stamp>.png)`.
 
+### Bậc review của PR: S / M / L (chủ repo duyệt 02/11, #858)
+PR đem review trước merge gate (lane điều phối, board super-board) có số bên review theo bậc, thay số cố định; task làm trực tiếp
+không qua PR giữ hai đoạn đầu mục này. Bậc tính MỘT lần trên head đầu tiên đem review, bằng lệnh, không tự chọn:
+`python3 .agents/devkit/bin/review_tier.py --base origin/main` (thẻ xoá dữ liệu thêm `--deletes-data`) in
+`<S|M|L> product_lines=<N> reasons=<…>`. Ghi bậc, lệnh và số dòng vào PROGRESS và file duyệt.
+- **Dòng code sản phẩm** = tổng cột thêm+xoá của `git diff --numstat origin/main...HEAD`, trừ đường dẫn bắt đầu bằng `tests/` hoặc
+  chứa `/tests/`, `.agents/regression_matrix`, `test_durations`, `*.md`.
+- **L**: > 400 dòng sản phẩm, HOẶC thẻ xoá dữ liệu, HOẶC đường dẫn sản phẩm khớp (không phân biệt hoa thường)
+  `hardware_safety_gate|block-dangerous-git|guard-review|bin/review|review_sign|merge-gate|merge_gate|auth|billing|payment|migration`.
+  **M**: 51–400 dòng, HOẶC đường dẫn sản phẩm khớp `universal-agent-devkit/hooks/|universal-agent-devkit/bin/|post-fix-gate|\.claude/bin/`.
+  Còn lại **S**.
+- **S**: 1 bên, Claude bối cảnh sạch (Claude lỗi/limit thì OCR thay); không `plan_review`.
+- **M**: 2 bên, Claude bối cảnh sạch + Antigravity `audit` (auditedHead = head); không `plan_review`. Một bên lỗi công cụ thì đi tiếp 1 bên.
+- **L**: Antigravity `plan_review` trước code, rồi 4 bên song song trên head cuối: Claude bối cảnh sạch, Antigravity `audit`
+  (auditedHead = head), OCR (`ocr-review -b … --out …`; endpoint hỏng thì delegate), Grok chỉ đọc (`grok -m grok-4.7
+  --permission-mode plan --prompt-file <brief>`, brief như của Antigravity, kèm diff). Bên dính limit/429/quota/lỗi công cụ (không
+  phải FAIL nội dung): thử lại 1 lần, còn lỗi thì bỏ bên đó và đi tiếp 4→3→2→1, không dừng task, không ghi BLOCKED vì thiếu
+  reviewer; tối thiểu 1 bên PASS thật; ghi bên bị bỏ, lý do và log lỗi.
+- **Leo bậc, không hạ**: reviewer bậc S/M ra P0/P1 ⇒ sửa xong review lại ở bậc kế (S→M→L); không bao giờ hạ bậc giữa chừng.
+- **Mọi bậc giữ nguyên**: test cặp ĐỎ→XANH, gate exit 0, P0/P1 trong code PR đưa vào vẫn chặn (bên FAIL nội dung là finding, không
+  phải lý do bỏ bên đó); test cũ bị sửa vẫn bắt buộc Antigravity `audit` (auditedHead) để duyệt chéo: Antigravity lỗi thì chờ/thử
+  lại, không thay bằng bên khác.
+
 ## 19. Gate, proof and Git mechanics (moved from the essentials, 2026-11-02)
 The essentials keep the obligation; this section keeps how the tools carry it out.
 - **Step 3 scope**: `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph, plus the
