@@ -9,6 +9,10 @@
    - Check working tree status before reviewing.
    - If there are unrelated dirty files, stop and ask before touching them.
    - Load `prior_report`. If one exists, run round 1 of "Review remembers" before step 2.
+   - Review tier (#858): run `.claude/bin/super-board-review-plan.sh --base origin/<base>` (on the board add
+     `--config <config path>`) once, on the first head you review; its `reviewers:` line is the set of review sides
+     (S: claude, M: + antigravity, L: + ocr, grok). How each side runs, the retry-then-drop rule and the merge-queue
+     Antigravity approval: super-board `run.md` → Reviewer step 4.
 
 2. **Inspect changes — your own pass first**
    - **Before reading the builder's account** (PR description summary, `[builder] [report]` comment, Tester
