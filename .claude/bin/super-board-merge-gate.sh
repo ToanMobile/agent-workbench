@@ -92,16 +92,19 @@
 #      quotes its last KẾT LUẬN/VERDICT line), NOT a rebase pass, NOT a Blocked card
 #      — also when the newest `[qa] [report]` comment still has a non-empty `❌ Not done:` line, or a `- [x]` AC of the PR body has
 #      no `↳ <proof>` line (super-board-qa-report.py, #364); stdout lists each `qa-report: <reason>`
+#      — also when a CI check of the PR head is red (`gh pr checks`: a bucket other than pass / skipping / pending, an empty or
+#      unknown one included): stdout and stderr list each `ci-check: <name> — <state>`; nothing migrated, nothing merged
 #   3  PR is closed without a merge; no merge attempted
 #   4  could not take the lock within the timeout
 #      — or the merge call failed while GitHub still shows the PR OPEN at the verified head (nothing merged; next wave retries)
+#      — or the CI checks of the PR could not be read, or are still pending after SB_MERGE_AUTO_WAIT_S (nothing merged)
 #   5  the base could not be merged in (real conflict) — needs a rebase pass; with no conflicted file (a git hook refused
 #      the local merge commit) the gate prints the git/hook message instead of the file list
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
 #      worktree. Not a conflict and not a rebase pass (the lane treats only 2 and 5
 #      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
-#      the card goes back to Review (not Blocked, not a rebase pass)
+#      the card goes back to Review (not Blocked, not a rebase pass); also when the head moves while the gate reads or waits for CI
 #   7  (also: the QA report / AC checker could not decide — metadata unreadable or checker crashed: `human-gate: qa-report — …`)
 #   7  merge policy says a human merges this one (money / auth / destructive
 #      schema, a diff over a positive auto_max_lines — default 0, so an unset
@@ -123,6 +126,12 @@
 #      `needs-you: <command>` lines. Card → Blocked with the 🙋 template; once the
 #      current request has verified trusted-human approval, the gate re-runs and
 #      merges.
+#
+# CI CHECKS (A4, F5 of #742): after verification, before any migration and the merge, the gate reads
+# `gh pr checks <PR> --json name,state,bucket` and never merges with a red check (exit 11), even when the base branch has no
+# required checks. "no checks reported" = no CI: merges as before. Unreadable checks → exit 4 (fail-closed). A real run waits
+# while checks are pending (poll SB_MERGE_AUTO_POLL_S, default 20; at most SB_MERGE_AUTO_WAIT_S, default 2700 → exit 4), keeping
+# the lock; each poll re-reads the PR first: MERGED → 0, not OPEN → 3, head moved → 6. `--dry-run` reads CI once and never waits.
 #
 # MERGE POLICY AND MIGRATIONS (config, all optional — defaults shown in
 # references/config-schema.json)
@@ -1207,6 +1216,74 @@ fi
 own_lock_or_stop   # verify dài có thể đã để gate khác chiếm khoá: không merge song song với nó
 
 python3 "$GITHUB_READ" --check
+
+# ---- CI checks (A4, F5 của #742) -------------------------------------------
+# Sau verify, trước migration (có tác dụng phụ) và merge: không bao giờ merge khi có check đỏ, kể cả khi base không bật required
+# checks. "no checks reported" = repo không có CI → merge như cũ. Không đọc được → exit 4 (fail-closed, wave sau thử lại).
+# ponytail: chưa dùng `gh pr merge --auto` cho base có required checks (GitHub từ chối thì đường "merge call failed" thoát 4, không
+# báo xanh sai); nâng cấp khi một repo bật merge queue / ruleset required checks.
+AUTO_WAIT_S=${SB_MERGE_AUTO_WAIT_S:-2700}; AUTO_POLL_S=${SB_MERGE_AUTO_POLL_S:-20}
+case "$AUTO_WAIT_S" in ''|*[!0-9]*) AUTO_WAIT_S=2700;; esac
+case "$AUTO_POLL_S" in ''|*[!0-9]*|0) AUTO_POLL_S=20;; esac
+CI_JSON='[]'
+# ci_read: CI_JSON = [{name,state,bucket}] của head PR; "no checks reported" = []. Exit 1: không đọc được.
+ci_read() {
+  local out err
+  err=$(mktemp)
+  out=$(cd "$REPO_ABS" && gh pr checks "$PR" ${REPO:+--repo "$REPO"} --json name,state,bucket 2>"$err") || true
+  if printf '%s' "$out" | jq -e 'type == "array" and all(.[]; type == "object")' >/dev/null 2>&1; then CI_JSON=$out
+  elif grep -qi 'no checks reported' "$err"; then CI_JSON='[]'
+  else rm -f "$err"; return 1; fi
+  rm -f "$err"
+}
+# Đỏ = mọi bucket ngoài pass / skipping / pending (fail, cancel, rỗng, lạ): fail-closed.
+ci_failed() { printf '%s' "$CI_JSON" | jq -r '.[] | select((.bucket // "") as $b | ["pass", "skipping", "pending"] | index($b) | not) | "ci-check: \(.name // "?") — \(.state // .bucket // "unknown")"'; }
+ci_pending() { printf '%s' "$CI_JSON" | jq '[.[] | select(.bucket == "pending")] | length'; }
+# ci_pr_recheck: đọc lại PR như khối sau merge lỗi ở cuối file: MERGED → 0, không còn OPEN → 3, head đổi (push mới lúc chờ) → 6.
+ci_pr_recheck() {
+  local now_sha
+  STATE=$(pr_state) || exit $?
+  if [ "$(echo "$STATE" | jq -r .state)" = MERGED ]; then say "merged on GitHub while the gate read CI; nothing to repeat"; exit 0; fi
+  [ "$(echo "$STATE" | jq -r .state)" = OPEN ] || { say "PR closed while the gate read CI; refusing merge"; exit 3; }
+  now_sha=$(echo "$STATE" | jq -r .headRefOid)
+  if [ "$now_sha" != "$HEAD_SHA" ]; then
+    say "head moved while the gate read CI: verified ${HEAD_SHA}, PR head is now ${now_sha}"
+    say "the review evidence is void — send the card back to Review"
+    exit 6
+  fi
+}
+ci_precheck() {
+  ci_read || { say "could not read the CI checks of PR #${PR}; not merging (fail-closed) — the next wave retries"; exit 4; }
+  CI_FAIL=$(ci_failed)
+  if [ -n "$CI_FAIL" ]; then
+    ci_pr_recheck   # check đỏ của head cũ không nói gì về head mới: head đổi → 6 (Review), không in ci-check
+    echo "$CI_FAIL"; echo "$CI_FAIL" >&2   # stdout cho lane; stderr cho detail_tail của merge train (đường 1 PR)
+    say "failing CI check(s) on ${HEAD_SHA:0:12}: never merged with a red check — back to Build"
+    exit 11
+  fi
+}
+# wait_ci_settled: lượt thật chờ hết pending, giữ khoá (own_lock_or_stop làm mới mốc mỗi vòng). Mỗi vòng đọc lại PR TRƯỚC khi đọc
+# CI: push mới trong lúc ngủ → exit 6, không rơi xuống migration.
+wait_ci_settled() {
+  local start said=0
+  start=$(date +%s)
+  while :; do
+    ci_pr_recheck
+    ci_precheck
+    [ "$(ci_pending)" -gt 0 ] || return 0
+    if [ $(( $(date +%s) - start )) -ge "$AUTO_WAIT_S" ]; then
+      say "CI checks still pending after ${AUTO_WAIT_S}s; not merging — the next wave retries"
+      exit 4
+    fi
+    [ "$said" -eq 1 ] || { say "$(ci_pending) CI check(s) pending on ${HEAD_SHA:0:12}; waiting (poll ${AUTO_POLL_S}s, at most ${AUTO_WAIT_S}s)"; said=1; }
+    own_lock_or_stop
+    sleep "$AUTO_POLL_S"
+  done
+}
+if [ "$DRY" -eq 1 ]; then
+  ci_precheck
+  [ "$(ci_pending)" -eq 0 ] || say "dry run: $(ci_pending) CI check(s) still pending; a real run waits for them before migrating or merging"
+else wait_ci_settled; fi
 
 # ---- migrations (inside the lock, after the build proof) -------------------
 # Run the configured migrate command for every allowed env, from the verified
