@@ -159,13 +159,31 @@ pair("U22 file dữ liệu chỉ lib_a.py (code tập chọn) nhắc đổi", da
 # B1 chiều ngược: công cụ test của tập chọn nhắc (python3 trong test_a.sh) vẫn vào khoá — phiên bản python đổi ⇒ MISS
 pair("U23 phiên bản python (test_a.sh nhắc python3) đổi", lambda: m._TOOL_VERSIONS.__setitem__("python", "Python 3.0.0"),
      lambda: m._TOOL_VERSIONS.__setitem__("python", "Python 9.9.9"), False)
+# P1 review 02/11: file lõi chỉ được VÀO (_reach không mở tiếp, chống nổ tập chọn) — script mà hub lõi tập chạm tới chạy theo tên
+# (install.sh → adapters/setup_claude.sh) vẫn là input của khoá; chuỗi hub → script → hub2 → script2 cũng vậy (điểm bất động)
+def hub(*names):
+    os.makedirs(os.path.join(repo, ".agents"), exist_ok=True)
+    with open(os.path.join(repo, ".agents/gate-core.txt"), "w", encoding="utf-8") as f:
+        f.write("[core]\n" + "".join(K + "bin/" + n + "\n" for n in names))
+    write(K + "bin/hub.sh", 'DK="$(cd "$(dirname "$0")/.." && pwd)"\nbash "$DK/bin/sub.sh"\n')
+    write(K + "bin/sub.sh", 'DK="$(cd "$(dirname "$0")/.." && pwd)"\nbash "$DK/bin/hub2.sh"\n')
+    write(K + "bin/hub2.sh", 'DK="$(cd "$(dirname "$0")/.." && pwd)"\nbash "$DK/bin/sub2.sh"\n')
+    write(K + "bin/sub2.sh", "true\n")
+    write(K + "tests/gates/test_a.sh", 'bash "$DK/bin/hub.sh"\n')
+pair("U24 script hub lõi (hub.sh) tập chạm tới chạy theo tên (sub.sh) đổi", lambda: hub("hub.sh", "hub2.sh"),
+     lambda: write(K + "bin/sub.sh", "\n# đổi\n"), False)
+pair("U25 chuỗi hub.sh → sub.sh → hub2.sh (lõi) → sub2.sh: sub2.sh đổi", lambda: hub("hub.sh", "hub2.sh"),
+     lambda: write(K + "bin/sub2.sh", "\n# đổi\n"), False)
+# OCR review 02/11: `--all` chạy mọi test nhưng `--list --all` của runner in tập chọn scoped ⇒ lệnh `--all` không có khoá theo tập chọn
+(k7, t7), _ = keys(cmd=shard + " --all")
+print(("OK " if k7 and k7 == t7 else "BAD ") + f"U26 lệnh runner --all: khoá chính xác = khoá cả cây ({k7 == t7})")
 PY
 )"
 printf '%s\n' "$OUT_U" | grep -E '^(sel|OK|BAD)' | sed 's/^/    /'
 if ! printf '%s\n' "$OUT_U" | grep -q '^sel tests/gates/test_a.sh tests/gates/test_b.sh$'; then
   fail "U0. tập chọn của fixture không phải {test_a, test_b}"; printf '%s\n' "$OUT_U" | tail -5
 fi
-for c in U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14 U15 U16 U17 U18 U19 U20 U21 U22 U23; do
+for c in U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14 U15 U16 U17 U18 U19 U20 U21 U22 U23 U24 U25 U26; do
   line="$(printf '%s\n' "$OUT_U" | grep -E "^(OK|BAD) $c " | head -1)"
   case "$line" in OK*) ok "${line#OK }" ;; BAD*) fail "${line#BAD }" ;; *) fail "$c: không có kết quả"; printf '%s\n' "$OUT_U" | tail -3 ;; esac
 done

@@ -534,7 +534,7 @@ def selection_inputs_marked(project_dir, command):
     """#851: runner của lệnh (SELECTION_CMD, file thường trong cây) có cả SELECTION_MARK lẫn SELECTION_INPUTS_MARK trong 4096 byte đầu ⇒
     frozenset các test (tương đối kit) nêu sau SELECTION_TREE_MARK (có thể rỗng); không ⇒ None."""
     m = SELECTION_CMD.match(command or "")
-    if not m:
+    if not m or "--all" in command.split():   # OCR 02/11: `--all` chạy mọi test, `--list --all` vẫn in tập scoped ⇒ chỉ khoá cả cây
         return None
     root = os.path.realpath(str(project_dir))
     real = os.path.realpath(os.path.join(str(project_dir), m.group("script")))
@@ -618,7 +618,7 @@ class SuiteCache:
     def selection_inputs(self, script, sel):
         """#851: input (đường dẫn tương đối project) của một lượt runner `script` chạy tập `sel` (tương đối thư mục kit = cha của tests/):
         runner, <kit>/tests/impact_map.txt và hàng xóm KHÔNG phải test một bước của runner; mọi file mỗi test được chọn chạm tới theo đồ thị
-        (scoped_gate._reach, như merge gate scoped chọn test: vào file lõi, không mở tiếp); bao đóng cạnh CODE (import / source, bắc cầu,
+        (scoped_gate._reach; hub lõi không phải test thì mở tiếp hàng xóm không phải test, tới điểm bất động); bao đóng cạnh CODE (import / source, bắc cầu,
         xuyên cả lõi: hub lõi import F thì F là input); file dữ liệu mà test chạm tới nhắc basename (`_reads`). None (không có khoá chính xác)
         khi đồ thị lỗi hay runner / một test được chọn không phải nút của đồ thị (symlink, > 2 MB, vendor): không biết nó đọc gì."""
         g = self._graph()
@@ -633,6 +633,18 @@ class SuiteCache:
             if p not in graph:
                 return None
             ran |= sg._reach(p, graph, core)
+        # P1 review 02/11: _reach chỉ VÀO file lõi (chống nổ tập CHỌN); với khoá, hub lõi không phải test mà tập chạm tới chạy script theo
+        # tên (install.sh → adapters/setup_claude.sh) nên mở hàng xóm không phải test của nó, lặp tới điểm bất động (hub → script → hub2)
+        opened = set()
+        while True:
+            hubs = {c for c in ran & core if c not in opened and not sg.is_test(c)}
+            if not hubs:
+                break
+            opened |= hubs
+            for c in hubs:
+                for n in graph.get(c, ()):
+                    if n not in ran and not sg.is_test(n):
+                        ran |= sg._reach(n, graph, core)
         files |= ran
         stack = list(files)
         while stack:
