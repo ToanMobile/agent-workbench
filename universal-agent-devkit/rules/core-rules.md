@@ -199,10 +199,12 @@ Mọi phương án kỹ thuật và kết quả nghiệm thu BẮT BUỘC đối
 PR đem review trước merge gate (lane điều phối, board super-board) có số bên review theo bậc, thay số cố định; task làm trực tiếp
 không qua PR giữ hai đoạn đầu mục này. Bậc tính MỘT lần trên head đầu tiên đem review, bằng lệnh, không tự chọn:
 `python3 .agents/devkit/bin/review_tier.py --base origin/main` (thẻ xoá dữ liệu thêm `--deletes-data`) in
-`<S|M|L> product_lines=<N> reasons=<…>`. Ghi bậc, lệnh và số dòng vào PROGRESS và file duyệt.
+`<S|M|L> product_lines=<N> reasons=<…>`; diff rỗng hay lỗi ⇒ exit 2, không có bậc (sửa lệnh, không tự chọn bậc). Ghi bậc,
+lệnh và số dòng vào PROGRESS và file duyệt.
 - **Dòng code sản phẩm** = tổng cột thêm+xoá của `git diff --numstat origin/main...HEAD`, trừ đường dẫn bắt đầu bằng `tests/` hoặc
-  chứa `/tests/`, `.agents/regression_matrix`, `test_durations`, `*.md`.
-- **L**: > 400 dòng sản phẩm, HOẶC thẻ xoá dữ liệu, HOẶC đường dẫn sản phẩm khớp (không phân biệt hoa thường)
+  chứa `/tests/`, `.agents/regression_matrix`, `test_durations`, `*.md`. Rename tính khi đường dẫn cũ HOẶC mới là sản phẩm (dời merge
+  gate vào `tests/` hay thành `.md` không tụt bậc). Regex đường dẫn của L và M không phân biệt hoa thường.
+- **L**: > 400 dòng sản phẩm, HOẶC thẻ xoá dữ liệu, HOẶC đường dẫn sản phẩm khớp
   `hardware_safety_gate|block-dangerous-git|guard-review|bin/review|review_sign|merge-gate|merge_gate|auth|billing|payment|migration`.
   **M**: 51–400 dòng, HOẶC đường dẫn sản phẩm khớp `universal-agent-devkit/hooks/|universal-agent-devkit/bin/|post-fix-gate|\.claude/bin/`.
   Còn lại **S**.

@@ -5,11 +5,13 @@
 
 In một dòng `<S|M|L> product_lines=<N> reasons=<…>`; token đầu là bậc, để board và lane đọc cùng một kết quả.
 Dòng code sản phẩm = tổng thêm+xoá của numstat, trừ đường dẫn bắt đầu bằng `tests/` hoặc chứa `/tests/`,
-`.agents/regression_matrix`, `test_durations`, đuôi `.md` (rename: xét đường dẫn mới).
-L: > 400 dòng, HOẶC đường dẫn sản phẩm (cũ hoặc mới) khớp L_PATHS, HOẶC --deletes-data (thẻ xoá dữ liệu).
+`.agents/regression_matrix`, `test_durations`, đuôi `.md`. Rename là sản phẩm khi đường dẫn cũ HOẶC mới là sản phẩm (dời merge gate
+vào tests/ hay thành .md không tụt bậc); regex chỉ xét đường dẫn sản phẩm của dòng đó.
+L: > 400 dòng, HOẶC đường dẫn sản phẩm khớp L_PATHS, HOẶC --deletes-data (thẻ xoá dữ liệu).
 M: 51–400 dòng, HOẶC đường dẫn sản phẩm khớp M_PATHS. Còn lại S.
 Chỗ mơ hồ nghiêng về bậc cao: L_PATHS/M_PATHS không phân biệt hoa thường (AuthRepository.kt ở repo app là auth), phần loại trừ
-thì có phân biệt. File nhị phân (`-`) tính 0 dòng. Lỗi git, dòng numstat sai, base dạng cờ ⇒ exit 2, không in bậc (không rơi về S).
+thì có phân biệt. File nhị phân (`-`) tính 0 dòng. Lỗi git, dòng numstat sai, diff rỗng (HEAD == base: chạy nhầm checkout),
+base dạng cờ ⇒ exit 2, không in bậc (không rơi về S). git chạy với --no-relative --no-ext-diff: config người dùng không đổi kết quả.
 """
 from __future__ import annotations
 
@@ -47,23 +49,26 @@ def parse_numstat(text: str) -> list[tuple[int, str, str]]:
         if not line.strip():
             continue
         parts = line.split("\t", 2)
-        if len(parts) != 3 or not parts[2] or not all(p == "-" or p.isdigit() for p in parts[:2]):
+        if len(parts) != 3 or not parts[2] or not all(p == "-" or (p.isascii() and p.isdigit()) for p in parts[:2]):
             raise TierError(f"dòng numstat {n} sai: {line[:120]!r}")
         old, new = _paths(parts[2])
         rows.append((sum(int(p) for p in parts[:2] if p != "-"), old, new))
+    if not rows:
+        raise TierError("diff rỗng: không có gì để tính bậc (HEAD == base? sai checkout hoặc sai --base)")
     return rows
 
 
 def classify(rows: list[tuple[int, str, str]], deletes_data: bool = False) -> tuple[str, int, list[str]]:
     lines, l_hits, m_hits = 0, [], []
     for count, old, new in rows:
-        if EXCLUDED.search(new):
+        prod = [p for p in dict.fromkeys((old, new)) if not EXCLUDED.search(p)]
+        if not prod:   # cả đường dẫn cũ lẫn mới đều là test/ma trận/durations/md
             continue
         lines += count
-        if L_PATHS.search(old) or L_PATHS.search(new):
-            l_hits.append(new)
-        elif M_PATHS.search(old) or M_PATHS.search(new):
-            m_hits.append(new)
+        if any(L_PATHS.search(p) for p in prod):
+            l_hits.append(prod[0])
+        elif any(M_PATHS.search(p) for p in prod):
+            m_hits.append(prod[0])
     l_why = (["deletes-data"] if deletes_data else []) + (["lines>400"] if lines > 400 else []) + [f"path:{p}" for p in l_hits]
     if l_why:
         return "L", lines, l_why
@@ -75,7 +80,8 @@ def git_numstat(base: str) -> str:
     if not base or base.startswith("-"):
         raise TierError(f"base không hợp lệ: {base!r}")
     try:
-        proc = subprocess.run(["git", "-c", "core.quotePath=false", "diff", "--numstat", f"{base}...HEAD"],
+        proc = subprocess.run(["git", "-c", "core.quotePath=false", "diff", "--no-relative", "--no-ext-diff", "--numstat",
+                               f"{base}...HEAD"],
                               capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise TierError(f"git diff --numstat {base}...HEAD không chạy được: {exc}") from exc
@@ -93,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.numstat == "-":
             text = sys.stdin.read()
-        elif args.numstat:
+        elif args.numstat is not None:   # `--numstat ""` (biến rỗng) là lỗi, không phải "chạy git"
             with open(args.numstat, encoding="utf-8") as fh:
                 text = fh.read()
         else:
