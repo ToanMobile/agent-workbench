@@ -203,6 +203,12 @@ expect deny Bash "a quote in a comment does not hide the commit's next line (BUG
 got="$(printf '%s' '{"toolName":"Read","toolInput":{"filePath":"/r/.env"}}' | python3 "$GUARD")"
 case "$got" in *'"deny"'*) ok "camelCase toolName/toolInput/filePath is judged (BUG-REV-secrets-payload)" ;;
   *) fail "camelCase payload passed: $got" ;; esac
+# audit #864: a glob char inside quotes is literal (no expansion), so a quoted regex reads no secret file
+expect allow Bash 'quoted regex: grep ".*"' 'grep ".*" file.txt'
+expect allow Bash "quoted regex: git log --grep" 'git log --grep=".*" -n 1'
+expect allow Bash "quoted regex: sed s/.*/x/" "sed 's/.*/x/' file.txt"
+expect deny Bash 'quotes around the name only, glob unquoted: ".en"?' 'cat ".en"?'
+expect deny Bash "unbalanced quote: judged as if unquoted" "$(printf 'echo it'"'"'s; cat .en?')"
 
 if [ "$FAILS" -ne 0 ]; then echo "guard_secrets: $FAILS FAILED"; exit 1; fi
 echo "guard_secrets: all checks passed"
