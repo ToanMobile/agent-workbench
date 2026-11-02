@@ -32,11 +32,14 @@
 #
 # Never blocks: always exit 0. Escape hatch: PROMPT_CONTEXT=0.
 # Protocol: stdin JSON {"prompt": …}; stdout is added to the context.
+# `--midlane` (#857): đăng ký ở PostToolUse, chỉ in cảnh báo bối cảnh lớn (context_note) giữa lượt, xem khối --midlane bên dưới.
 # bash 3.2 compatible.
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
 [ "${PROMPT_CONTEXT:-1}" = "0" ] && exit 0
+# --midlane chạy sau MỌI tool: tắt (CONTEXT_WARN_TOKENS=0) thì thoát trước khi khởi động python.
+[ "${1:-}" = "--midlane" ] && [ "${CONTEXT_WARN_TOKENS:-}" = "0" ] && exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 
 # Locate the DevKit: this script's real path (symlink install), $DEVKIT_ROOT, or the
@@ -94,6 +97,39 @@ case "${_PYC}" in
         export PYTHONPYCACHEPREFIX="${_PYC}"; unset PYTHONDONTWRITEBYTECODE
       fi ;;
 esac
+if [ "${1:-}" = "--midlane" ]; then
+  # #857: cảnh báo bối cảnh lớn GIỮA lượt. Lane headless `claude -p` chỉ gửi một prompt lúc đầu nên context_note ở
+  # UserPromptSubmit không chạy lại dù lane lên 400–500k token. Dùng lại nguyên context_note: ngưỡng CONTEXT_WARN_TOKENS,
+  # ở đây mặc định 250 000 (chủ repo 02/11), 0 = tắt; mỗi bậc ngưỡng một lần mỗi phiên, state riêng
+  # .claude/audit-gate/context_note_<phiên>-midlane (không lẫn bậc 160k của prompt hook). Lệnh của subagent (agent_id) bỏ
+  # qua: transcript là của phiên chính. Stdout thường của PostToolUse không tới model nên in hookSpecificOutput.additionalContext.
+  # Không bao giờ chặn tool: luôn exit 0, lỗi ghi stderr. sys.path[0] = thư mục enrich_context.py (không phải cwd: file .py
+  # của repo không che được stdlib); enrich_context được import nên bytecode của nó vào PYTHONPYCACHEPREFIX ở trên.
+  # Test: tests/context_memory/test_context_midlane.sh.
+  printf '%s' "${PAYLOAD}" | CLAUDE_PROJECT_DIR="${REPO_ROOT}" python3 -c '
+import json, os, sys
+sys.path[0] = sys.argv[1]
+try:
+    d = json.loads(sys.stdin.read() or "{}")
+    if not isinstance(d, dict) or d.get("agent_id"):
+        sys.exit(0)
+    tp = d.get("transcript_path")
+    if isinstance(tp, str) and tp and not os.access(tp, os.R_OK):
+        print(f"prompt_context --midlane: transcript không đọc được, bỏ qua cảnh báo bối cảnh: {tp}", file=sys.stderr)
+        sys.exit(0)
+    os.environ["CONTEXT_WARN_TOKENS"] = os.environ.get("CONTEXT_WARN_TOKENS") or "250000"
+    if sys.pycache_prefix is None:
+        sys.dont_write_bytecode = True   # như enrich_context._no_kit_pycache: không prefix thì không ghi __pycache__ vào cây kit
+    import enrich_context
+    note = enrich_context.context_note(d, os.environ["CLAUDE_PROJECT_DIR"], str(d.get("session_id") or "") + "-midlane")
+    if note:
+        note = "[DevKit] " + note.lstrip("- ") + " Lane headless (claude -p): ghi handoff ≤ 3 KB (đã xong, còn lại, lệnh kế) rồi kết thúc lượt."
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note}}, ensure_ascii=False))
+except Exception as e:
+    print(f"prompt_context --midlane: {type(e).__name__}: {e}", file=sys.stderr)
+' "${ENRICH%/*}"
+  exit 0
+fi
 RULES="${ENRICH%/*}/rule_context.py"
 RULES_OUT=""
 if [ -f "${RULES}" ] && [ -f "${REPO_ROOT}/.agents/context/rules-index.md" ]; then
