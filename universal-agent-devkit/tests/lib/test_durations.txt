@@ -501,3 +501,7 @@
 47 tests/gates/test_lane_lock_stagger.sh
 # gate kẹt và chậm PR 1 (02/11) P5: merge gate nhả slot lane khi chỉ chạy trong pool gate (đo ở tải 15–45)
 31 tests/gates/test_lane_lock_merge_gate_release.sh
+# gate kẹt và chậm PR 1 (02/11) P6: ma trận chỉ-nối chỉ kéo test đọc ma trận thật; test canh danh sách đọc-thật; no_match khi chỉ nối rule
+5 tests/gates/test_scoped_gate_matrix_append.sh
+1 tests/gates/test_matrix_real_readers.sh
+7 tests/gates/test_gate_matrix_append_only_coverage.sh

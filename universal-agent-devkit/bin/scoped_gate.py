@@ -31,6 +31,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -514,6 +515,56 @@ def _load_matrix(project):
         return []
 
 
+def _matrix_append_readers(project, base, from_tree):
+    """P6: test đọc ma trận THẬT khi ma trận trên đĩa chỉ NỐI rule so với merge-base(base, HEAD) (và so với base khi changed do caller
+    chọn, như pin_to_head); không thì None (luật cũ: test nhắc tên ma trận + lõi). Chỉ-nối = bất biến của matrix_additions (post-fix-gate):
+    khoá top-level ngoài "rules" y nguyên, rule cũ là tiền tố y nguyên, ≥ 1 rule mới, mỗi rule mới có test {id, command} không covered_by,
+    id chưa có ở base (kể cả covered_by) và không trùng nhau; thêm: component của rule mới chưa có ở base, không trùng nhau. Đọc base bằng
+    `git show <ref>:./…` (project có thể là thư mục con), KHÔNG qua matrix_rules (lane_lock ghép base + hiện tại). Danh sách đọc-thật =
+    đường dẫn test trong lệnh mandatory_regression_tests của mọi rule có MATRIX_FILE trong watch_files; lệnh không ra test nào ⇒ None."""
+    if not base:
+        return None
+    try:
+        mb = _git(project, "merge-base", base, "HEAD").stdout.decode().strip()
+        with open(os.path.join(project, MATRIX_FILE), encoding="utf-8") as fh:
+            cur = json.load(fh)
+        if not mb or not isinstance(cur, dict) or not isinstance(cur.get("rules"), list):
+            return None
+        for ref in ((mb,) if from_tree else dict.fromkeys((mb, base))):
+            old = json.loads(_git(project, "show", "%s:./%s" % (ref, MATRIX_FILE)).stdout.decode("utf-8"))
+            if not isinstance(old, dict) or not isinstance(old.get("rules"), list):
+                return None
+            if {k: v for k, v in old.items() if k != "rules"} != {k: v for k, v in cur.items() if k != "rules"}:
+                return None
+            n = len(old["rules"])
+            if cur["rules"][:n] != old["rules"] or len(cur["rules"]) == n:
+                return None
+            ids = {t[k] for r in old["rules"] if isinstance(r, dict) for t in (r.get("mandatory_regression_tests") or [])
+                   if isinstance(t, dict) for k in ("id", "covered_by") if isinstance(t.get(k), str)}
+            comps = {r.get("component") for r in old["rules"] if isinstance(r, dict)}
+            for r in cur["rules"][n:]:
+                ts = r.get("mandatory_regression_tests") if isinstance(r, dict) else None
+                if not isinstance(ts, list) or not ts or not isinstance(r.get("component"), str) or r["component"] in comps:
+                    return None
+                comps.add(r["component"])
+                for t in ts:
+                    if not (isinstance(t, dict) and isinstance(t.get("id"), str) and t["id"].strip() and isinstance(t.get("command"), str)
+                            and t["command"].strip() and "covered_by" not in t) or t["id"] in ids:
+                        return None
+                    ids.add(t["id"])
+        readers = set()
+        for r in cur["rules"]:
+            if isinstance(r, dict) and MATRIX_FILE in (r.get("watch_files") or []):
+                for t in r.get("mandatory_regression_tests") or []:
+                    got = [w for w in shlex.split(t["command"]) if is_test(w) and os.path.isfile(os.path.join(project, w))]
+                    if not got:
+                        return None
+                    readers |= set(got)
+        return sorted(readers)
+    except (RuntimeError, OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
+        return None
+
+
 def _catch_all(pat):
     return pat in ("*", "**", "**/*") or re.fullmatch(r"[^/*?\[]+/\*\*?(/\*)?", pat) is not None
 
@@ -565,7 +616,12 @@ def decide(project, base, needs_no_test=None, matrix_rules=None, changed=None):
     deps = core_deps(code, roots)
     barrier = roots | set(deps)
     tests, expanded = set(), set(changed)
+    mx_readers = _matrix_append_readers(project, base, from_tree) if MATRIX_FILE in changed else None
     for f in changed:
+        if f == MATRIX_FILE and mx_readers is not None:   # P6: ma trận chỉ nối rule ⇒ không lõi, chỉ test đọc ma trận thật (rule mới: gate chạy)
+            tests |= set(mx_readers)
+            res["matrix_covered"].append(f)
+            continue
         hit = True
         # trạng thái agent (.claude/settings.json bẩn ở mọi worktree, 38 test nhắc "settings.json"): không thành lõi theo fan-in /
         # test-read-by, chỉ cộng đúng các test đọc nó; [core] viết tay vẫn thắng

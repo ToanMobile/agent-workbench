@@ -8420,7 +8420,8 @@ def main():
     # #741: lượt --scoped — git mv code → tài liệu không phải "chỉ tài liệu" (nguồn rename xét cùng luật với đích)
     docs_only = bool(modified_files) and all(_doc_like(f) for f in modified_files) and (
         not getattr(args, "scoped", False) or all(_doc_like(s) for s in RENAME_SOURCES.values()))
-    no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only
+    # P6: impacted_tests chụp trước khi nối test của rule mới (matrix_added) — ma trận chỉ-nối có test mới vừa chạy thì không phải "không test"
+    no_coverage = (not rules or not impacted_tests) and not args.allow_no_tests and not docs_only and not (run_tests and matrix_added)
     # Every changed source file must be re-testable later; one no rule watches would
     # silently fall out of the regression checklist.
     uncovered = [] if args.allow_no_tests else uncovered_code_files(modified_files, rules)
