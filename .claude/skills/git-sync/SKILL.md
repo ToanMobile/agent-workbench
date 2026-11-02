@@ -1,11 +1,13 @@
 ---
 name: git-sync
-description: Sync the current branch in one pass — commit the working tree as one commit per logical change (in the host repo's commit format, or the super-board writing standard), gate Supabase schema changes, merge-pull, resolve conflicts hunk by hunk, then push without force. Use when the user runs /git-sync or says "git-sync", "sync", "commit and push", "pull and push", or "sync my branch".
+description: Sync the current branch in one pass — commit, merge-pull, push without force. Use when the user runs /git-sync or says "git-sync", "sync", "commit and push", "pull and push", or "sync my branch".
 ---
 
 # /git-sync
 
-Commit what is in the working tree, pull, push, report. One step per line.
+Commit what is in the working tree as one commit per logical change (in the host repo's commit
+format, or the super-board writing standard), gate Supabase schema changes, merge-pull, resolve
+conflicts hunk by hunk, push without force, report. One step per line.
 Stop and tell the user when a step says stop. NEVER force push, rebase shared history, or
 skip a hook (`--no-verify`).
 

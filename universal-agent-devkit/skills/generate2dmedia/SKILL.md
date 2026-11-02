@@ -1,11 +1,21 @@
 ---
 name: generate2dmedia
-description: The art-route layer of the Forge skills. route_media.py is the one command that generates an image or an image-to-video clip - through the paid API of any provider whose key is configured (OpenAI, Google Gemini, xAI, BytePlus ModelArk, fal.ai; paid calls need the user's go-ahead after a dry run, DevKit rule), else through the user's own signed-in Codex or Grok CLI - and prints one JSON line with the route, artifact, sha256 and cost estimate; with no route it answers no-route (codeart2d is then the last resort). Also the capability check (forge_doctor), API key configuration, the spend ledger, resume and Codex image adoption. Use when a Forge skill sends a generation here, for the capability check, or when the user asks about keys, routes or spend. Not for planning, processing or QA of sprites, video frames or maps (generate2dsprite, video2dsprite, generate2dmap) or for code-drawn art (codeart2d).
+description: Use when a Forge skill sends a generation here (route_media.py), for the capability check (forge_doctor), or when the user asks about keys, routes or spend. Not for planning, processing or QA of sprites, video or maps (generate2dsprite, video2dsprite, generate2dmap) or code-drawn art (codeart2d).
 ---
 
 # Generate 2D Media
 
 The route layer. It makes raw media; the owning skill plans the asset before and checks it after.
+
+## Scope
+
+The art-route layer of the Forge skills. `route_media.py` is the one command that generates an image or an
+image-to-video clip - through the paid API of any provider whose key is configured (OpenAI, Google Gemini, xAI,
+BytePlus ModelArk, fal.ai; paid calls need the user's go-ahead after a dry run, DevKit rule), else through the
+user's own signed-in Codex or Grok CLI - and prints one JSON line with the route, artifact, sha256 and cost
+estimate; with no route it answers no-route (codeart2d is then the last resort). Also the capability check
+(forge_doctor), API key configuration, the spend ledger, resume and Codex image adoption. Not for planning,
+processing or QA of sprites, video frames or maps.
 
 ## Use when
 

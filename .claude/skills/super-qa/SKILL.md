@@ -2,12 +2,7 @@
 name: super-qa
 description: >-
   Super QA canonical workflow for functional bug-bash, evidence capture, and fix-ready issue filing.
-  Crawls routes from `docs/super-qa/queue.md` with Playwright, records screenshots/logs/HARs, files
-  product-readable issues with clear type/priority/area labels, and continues until traversal is
-  complete or only human-gated blockers remain. Crawling is always browser-driven, but the regression
-  test it leaves behind is written at whichever layer the defect actually lives — unit or integration
-  in Vitest, e2e in Playwright only when the browser is the thing that broke. Use when the user says
-  "run super-qa", "QA review", "bug bash", "verify and fix", or invokes `/super-qa`.
+  Use when the user says "run super-qa", "QA review", "bug bash", "verify and fix", or invokes `/super-qa`.
 ---
 
 
@@ -16,6 +11,12 @@ Resolve this lane for the actual host, load the report's files/fallbacks, halt
 on missing requirements and recheck each conditional helper before use.
 
 # super-qa — BFS Route-Crawler that Builds the Spec Suite
+
+Super QA crawls routes from `docs/super-qa/queue.md` with Playwright, records screenshots/logs/HARs,
+files product-readable issues with clear type/priority/area labels, and continues until traversal is
+complete or only human-gated blockers remain. Crawling is always browser-driven, but the regression
+test it leaves behind is written at whichever layer the defect actually lives — unit or integration
+in Vitest, e2e in Playwright only when the browser is the thing that broke.
 
 ## Auth bootstrap — auto-discover, never ask
 
