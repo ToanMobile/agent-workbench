@@ -550,23 +550,8 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def read_merge_train(
-    common_dir: Path | None, now: float, alive: Callable[[int], bool] = pid_alive
-) -> dict[str, Any] | None:
-    """The running merge train from `<common>/super-board/merge-train.state` (#562), else None.
-
-    The train writes `pid`, `started_at`, `step` (gate | merge) and one `pr <N> <sha> <ref>` line per PR, and removes the file on
-    exit. An unreadable file, a missing/dead pid or an orphan left by a SIGKILL means no train: the status falls back to what it
-    showed before. Never takes the train's flock (a second claimant would exit 4).
-    ponytail: a pid reused by an unrelated process keeps an orphan file alive; the queue's `ps` command check would close it, add
-    when it shows up.
-    """
-    if common_dir is None:
-        return None
-    try:
-        text = (common_dir / "super-board" / "merge-train.state").read_text()
-    except OSError:
-        return None
+def _parse_train_state(text: str) -> tuple[int | None, int | None, str, list[dict[str, Any]]]:
+    """One train state file: (pid, started_at, step, prs)."""
     pid = started = None
     step = "gate"
     prs: list[dict[str, Any]] = []
@@ -581,10 +566,45 @@ def read_merge_train(
         elif len(parts) >= 2 and parts[0] == "pr" and parts[1].isdigit():
             ref = parts[3] if len(parts) > 3 else ""
             prs.append({"pr": int(parts[1]), "ref": ref, "card": _branch_card(ref)})
-    if pid is None or started is None or not prs or not alive(pid):
+    return pid, started, step, prs
+
+
+def read_merge_train(
+    common_dir: Path | None, now: float, alive: Callable[[int], bool] = pid_alive
+) -> dict[str, Any] | None:
+    """The running merge train(s) from `<common>/super-board/merge-train.<pid>.state` (#676; `merge-train.state` before it, #562), else None.
+
+    Each train writes `pid`, `started_at`, `step` (gate | merge) and one `pr <N> <sha> <ref>` line per PR, and removes its file on
+    exit. #676 runs one train per PR, several at once: the live ones are merged into one view (PRs and cards of all, oldest
+    `started_at`, step `merge` when any train merges, pid of the oldest). An unreadable file, a missing/dead pid or an orphan left by a
+    SIGKILL is skipped. Never touches a train's claim.
+    ponytail: a pid reused by an unrelated process keeps an orphan file alive; the queue's `ps` command check would close it, add
+    when it shows up.
+    """
+    if common_dir is None:
         return None
-    return {"pid": pid, "started_at": started, "step": step, "prs": prs,
-            "cards": [x["card"] for x in prs if x["card"] is not None], "elapsed_s": max(0, int(now) - started)}
+    sb = common_dir / "super-board"
+    try:
+        paths = sorted(sb.glob("merge-train.*.state")) + [sb / "merge-train.state"]
+    except OSError:
+        return None
+    live: list[tuple[int, int, str, list[dict[str, Any]]]] = []
+    for path in paths:
+        try:
+            pid, started, step, prs = _parse_train_state(path.read_text())
+        except OSError:
+            continue
+        if pid is None or started is None or not prs or not alive(pid):
+            continue
+        live.append((started, pid, step, prs))
+    if not live:
+        return None
+    live.sort(key=lambda t: (t[0], t[1]))
+    prs_all = [x for t in live for x in t[3]]
+    started = live[0][0]
+    step = "merge" if any(t[2] == "merge" for t in live) else "gate"
+    return {"pid": live[0][1], "started_at": started, "step": step, "prs": prs_all,
+            "cards": [x["card"] for x in prs_all if x["card"] is not None], "elapsed_s": max(0, int(now) - started)}
 
 
 def read_queued_cards(common_dir: Path | None) -> dict[int, int]:
