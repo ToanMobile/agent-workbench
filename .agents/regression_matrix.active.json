@@ -3008,6 +3008,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "suite-env-heavy-slot-knobs-p3",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_suite_env_heavy_knobs.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SUITE-ENV-HEAVY-KNOBS-01",
+          "name": "PR 1 gate kẹt (P3): suite_env bỏ DEVKIT_SLOT_HEAVY_MAX, DEVKIT_SLOT_HEAVY_WAIT_S, DEVKIT_SLOT_HEAVY_BUDGET_S (núm của một lần gate), vẫn giữ DEVKIT_GATE_SLOT_HELD (T0056)",
+          "command": "bash universal-agent-devkit/tests/gates/test_suite_env_heavy_knobs.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

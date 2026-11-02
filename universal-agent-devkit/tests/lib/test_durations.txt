@@ -489,3 +489,5 @@
 1 tests/verification/test_instincts_archive_crash.sh
 # #869 (2026-11-02): ocr-review kill/reap có hạn (ocr giả giữ pipe 90 s, chờ ~37 s)
 37 tests/installer/test_ocr_review_reap.sh
+# gate kẹt và chậm PR 1 (02/11) P3: suite_env bỏ núm pool heavy (< 1 s)
+1 tests/gates/test_suite_env_heavy_knobs.sh
