@@ -107,7 +107,7 @@ _PYTHON = re.compile(r"python(?:\d+(?:\.\d+)*)?")
 _ASSIGN = re.compile(r"[A-Za-z_]\w*=")
 # cờ post-fix-gate được phép ở việc nhẹ; cờ khác (--full, --force-full, --since, --tree, --staged, --matrix, viết tắt argparse…) ⇒ nặng
 _LIGHT_FLAGS = {"--run-tests", "--scoped", "--brief", "--json", "--no-cache", "--no-fail-fast", "--no-checklist"}
-_LIGHT_VALUE_FLAGS = {"--diff", "--session", "--transcript", "--task", "--lang", "-l", "--timeout"}
+_LIGHT_VALUE_FLAGS = {"--diff", "--task", "--lang", "-l", "--timeout"}   # --session/--transcript đổi base của gate ⇒ nặng
 
 
 def gate_call(argv: list):
@@ -145,7 +145,7 @@ def gate_call(argv: list):
         else:
             return None
         k += 1
-    if not {"--run-tests", "--scoped"} <= seen:
+    if not {"--run-tests", "--scoped"} <= seen or env.get("DEVKIT_GATE_MERGE_CHECK") == "1":   # lượt merge check: base khác lượt task
         return None
     return os.path.realpath(os.path.join(os.getcwd(), gate)), base, env
 
@@ -166,10 +166,11 @@ if not base:
     r = subprocess.run(["git", "-C", project, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"], capture_output=True, text=True)
     refs = [r.stdout.strip()] if r.returncode == 0 and r.stdout.strip() else []
     refs += [p + n for p in ("refs/remotes/origin/", "refs/heads/") for n in ("main", "master", "trunk")]
+    trunk = next((x for x in refs if ok(x)), "")   # như task_trunk của gate: ref hợp lệ đầu tiên
+    name = trunk.split("refs/remotes/origin/", 1)[-1] if trunk.startswith("refs/remotes/origin/") else trunk[len("refs/heads/"):]
     br = subprocess.run(["git", "-C", project, "symbolic-ref", "-q", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
-    refs = [x for x in refs if x.rsplit("/", 1)[-1] != br]   # đứng trên nhánh đích: gate không dùng merge-base của task (task_off_trunk)
-    refs.append("@{upstream}")   # không có nhánh đích: gate kiểm upstream..HEAD của cây sạch đi trước upstream
-    base = next((x for x in refs if ok(x)), "HEAD")
+    # không có nhánh đích, hay đứng ngay trên nó (task_off_trunk sai): gate kiểm upstream..HEAD của cây sạch đi trước upstream, không thì cây
+    base = trunk if trunk and name != br else ("@{upstream}" if ok("@{upstream}") else "HEAD")
 mb = subprocess.run(["git", "-C", project, "merge-base", base, "HEAD"], capture_output=True, text=True).stdout.strip() or base
 sys.path[:0] = [gate_file.rsplit("/", 1)[0], own_bin]   # scoped_gate / heavy_slot của kit gate; heavy_slot thiếu thì của lane_lock
 spec = importlib.util.spec_from_file_location("lane_lock_probe_gate", gate_file)
@@ -295,11 +296,11 @@ def _gate_tickets() -> list:
 
 def pool_waiting(root: int, spawned: float):
     """(pid, nhãn) khi CHÍNH tiến trình con root (lệnh là gate, kể cả qua `env …` / `exec`) có vé chờ pool gate đã chờ
-    ≥ LANE_LOCK_POOL_WAIT_S; None khi không. Vé ghi trước lúc con được tạo (t0 < spawned − 1 s) là vé mồ côi của một PID cũ trùng số."""
+    ≥ LANE_LOCK_POOL_WAIT_S; None khi không. Vé ghi trước lúc con được tạo (t0 < spawned) là vé mồ côi của một PID cũ trùng số."""
     min_age = _env_num("LANE_LOCK_POOL_WAIT_S", 5.0)
     now = time.time()
     for pid, t0, label in _gate_tickets():
-        if pid == root and t0 >= spawned - 1.0 and now - t0 >= min_age:
+        if pid == root and t0 >= spawned and now - t0 >= min_age:
             return pid, label
     return None
 
