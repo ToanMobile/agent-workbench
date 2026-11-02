@@ -68,7 +68,8 @@ ran() { [ "$1" -eq 11 ] && [ -f "$STARTED" ]; }
 # Ca 1: tải 99 suốt, poll 1, chờ tối đa 3 s → có dòng chờ, hết giờ vẫn verify (exit 11), verify sau ≥ 3 s, trong khoá.
 echo 99 > "$LOADF"; rm -f "$STARTED"
 t0=$(date +%s)
-SB_MERGE_LOAD_WAIT_S=3 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate1.log" 2>&1; rc=$?
+# PR3: chờ tải trong khoá chỉ còn ở chế độ bi quan (SB_MERGE_OPTIMISTIC=0); mặc định chờ ngoài khoá.
+SB_MERGE_OPTIMISTIC=0 SB_MERGE_LOAD_WAIT_S=3 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate1.log" 2>&1; rc=$?
 grep -q "waiting for load" "$TMP/gate1.log" \
   && ok "high load: the gate says it waits" || fail "no wait message at load 99: $(grep merge-gate "$TMP/gate1.log" | head -3)"
 grep -q "verifying anyway" "$TMP/gate1.log" \
@@ -153,7 +154,7 @@ ran "$rc" && ok "unreadable load: verify ran (exit 11)" || fail "unreadable load
 # Ca 8: lúc chờ, mốc "at" của khoá được làm mới (không thì gate khác gỡ khoá "bỏ quên" và hai merge chạy cùng lúc).
 AT="$WT/.claude/super-board/inflight/merge.lock/at"
 echo 99 > "$LOADF"; rm -f "$STARTED"
-SB_MERGE_LOAD_WAIT_S=8 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate8.log" 2>&1 &
+SB_MERGE_OPTIMISTIC=0 SB_MERGE_LOAD_WAIT_S=8 SB_MERGE_LOAD_POLL_S=1 gate >"$TMP/gate8.log" 2>&1 &   # PR3: khoá giữ lúc chờ = chế độ bi quan
 gp=$!
 i=0; while [ "$i" -lt 60 ] && ! grep -q "waiting for load" "$TMP/gate8.log" 2>/dev/null; do sleep 0.5; i=$((i + 1)); done
 a1=$(cat "$AT" 2>/dev/null || echo 0); sleep 3; a2=$(cat "$AT" 2>/dev/null || echo 0)
