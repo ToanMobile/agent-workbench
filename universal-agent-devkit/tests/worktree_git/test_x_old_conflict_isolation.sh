@@ -97,9 +97,10 @@ echo "✔ [Test 2 PASS] Old Project: DevKit installed as core, project content i
 # --- TEST 3: agent-kit list-old Verification ---
 echo "▶ [Test 3] Testing 'agent-kit list-old' command..."
 output="$(bash "$DEVKIT_ROOT/bin/agent-kit" list-old "$OLD_DIR")"
-echo "$output" | grep -q "AGENTS_old.md" || { echo "❌ FAIL: agent-kit list-old did not find AGENTS_old.md"; exit 1; }
-echo "$output" | grep -q ".cursorrules_old" || { echo "❌ FAIL: agent-kit list-old did not find .cursorrules_old"; exit 1; }
-echo "$output" | grep -q "CLAUDE_old.md" || { echo "❌ FAIL: agent-kit list-old did not find CLAUDE_old.md"; exit 1; }
+# Dùng here-string `<<<` và `-Fq` thay cho `echo | grep -q` để tránh SIGPIPE dưới `set -euo pipefail` (#780)
+grep -Fq "AGENTS_old.md" <<<"$output" || { echo "❌ FAIL: agent-kit list-old did not find AGENTS_old.md"; exit 1; }
+grep -Fq ".cursorrules_old" <<<"$output" || { echo "❌ FAIL: agent-kit list-old did not find .cursorrules_old"; exit 1; }
+grep -Fq "CLAUDE_old.md" <<<"$output" || { echo "❌ FAIL: agent-kit list-old did not find CLAUDE_old.md"; exit 1; }
 
 echo "✔ [Test 3 PASS] agent-kit list-old successfully detected and reported all *_old items!"
 

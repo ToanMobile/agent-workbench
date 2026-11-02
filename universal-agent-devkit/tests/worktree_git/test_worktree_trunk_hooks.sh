@@ -4,7 +4,7 @@
 # every isolated subagent, so the hook must always hand back a path (last stdout line) unless there is truly no room, and its removal
 # twin must never delete work. Cases:
 #   1 hook-create: <main>/.claude/worktrees/<name>, detached, the owning session in its state, the path alone on stdout (real path)
-#   2 trunk mode: a session's worktree takes no slot of WORKTREE_MAX (the 4th session would have nowhere to write); trunk mode off: the cap
+#   2 trunk mode: a second session worktree is made (#607: no count of worktrees)
 #   3 the disk floor still refuses (exit 4, no path)   4 the same name again: the same worktree back   5 a name that is a path: refused
 #   6 the DevKit set-up fails after git registered the worktree: a plain worktree is still handed back, its state final (not provisional)
 #   7 hook-remove: a clean worktree goes; one with a commit main lacks stays (exit non-zero); main or a non-worktree: refused
@@ -43,13 +43,7 @@ fi
 # 2
 repo b; G "$TMP/b" config devkit.trunkMode true; G "$TMP/b" worktree add -q --detach "$TMP/b-x" HEAD
 create b s2 sess-2 WORKTREE_MAX=1; rc=$?
-[ "$rc" = 0 ] && [ -d "$TMP/b/.claude/worktrees/s2" ] && ok "trunk mode: a session's worktree takes no slot of WORKTREE_MAX" || fail "trunk mode cap (rc $rc): $(tail -2 "$TMP/err")"
-G "$TMP/b" config devkit.trunkMode false
-create b s3 sess-3 WORKTREE_MAX=1; rc=$?
-[ "$rc" = 4 ] && [ ! -e "$TMP/b/.claude/worktrees/s3" ] && [ ! -s "$TMP/out" ] && ok "  … trunk mode off: the cap holds (exit 4, no path)" || fail "cap without trunk mode (rc $rc): $(tail -2 "$TMP/err")"
-G "$TMP/b" config devkit.trunkMode true
-create b s4 sess-4 WORKTREE_MAX=1 WORKTREE_TRUNK_MODE=0; rc=$?
-[ "$rc" = 4 ] && ok "  … WORKTREE_TRUNK_MODE=0: the cap holds again (R7)" || fail "R7 switch ignored by the cap (rc $rc)"
+[ "$rc" = 0 ] && [ -d "$TMP/b/.claude/worktrees/s2" ] && ok "trunk mode: a session's worktree is made next to another one (#607: no count)" || fail "trunk mode add (rc $rc): $(tail -2 "$TMP/err")"
 
 # 3
 create a s5 sess-5 WORKTREE_DISK_MIN_GIB=99999999; rc=$?

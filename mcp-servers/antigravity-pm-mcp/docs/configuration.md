@@ -154,6 +154,7 @@ pm_capture_proof { taskId, label: "...", sourceFile: "/duong/dan/anh.png" }
 | `ANTIGRAVITY_PM_PROJECT` | Project mặc định khi tool không truyền `project` |
 | `ANTIGRAVITY_PM_AGENTAPI` | Trỏ tới binary `agentapi` khác (khi Antigravity cài chỗ lạ) |
 | `ANTIGRAVITY_PM_QUIET` | `1` ⇒ tắt log stderr |
+| `ANTIGRAVITY_PM_PS_TIMEOUT_MS` | Hạn chờ mỗi lệnh `ps` đọc dấu vân tay tiến trình (mặc định 5000, trần 7000; máy rất bận thì nâng lên) |
 | `ANTIGRAVITY_PM_GLOBAL_CONFIG` | Trỏ cấu hình chung sang file khác thay cho `~/.antigravity-pm.json` |
 
 Server tự dò địa chỉ language server của IDE đang chạy; nếu MCP được khởi động **từ trong terminal của Antigravity** thì nó dùng luôn biến môi trường mà IDE đã bơm vào.

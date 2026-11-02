@@ -30,11 +30,13 @@ Exit: 0 xong · 1 một lệnh gh lỗi · 2 sai cú pháp (argparse) · 64 text
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 LABEL = "needs-you"
 LEGACY_LABEL = "human-gated"
@@ -72,7 +74,7 @@ AGENT_DOABLE_RULES = (
             r"(?:dưới|<\s*)400\s+dòng|tách\s+#\d+\s+thành",
             re.I,
         ),
-        "tách thẻ lớn (<400 dòng) hoặc thu gọn phạm vi lát cắt là việc agent phải tự thực hiện",
+        "nhờ người tách thẻ hoặc thu gọn diff theo số dòng là việc agent không đẩy sang người",
     ),
     (
         re.compile(
@@ -93,6 +95,12 @@ GENUINE_HUMAN_RE = re.compile(
     re.I,
 )
 TIMEOUT = 60
+
+
+# #516: bộ đọc [decision] dùng chung; tên file có gạch ngang nên nạp bằng importlib.
+_spec = importlib.util.spec_from_file_location("sb_decision", Path(__file__).with_name("super-board-decision.py"))
+_DEC = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_DEC)
 
 PROJECT_QUERY = """query($owner:String!,$number:Int!){
   repositoryOwner(login:$owner){
@@ -204,9 +212,18 @@ def read_issue(repo, issue):
 SECTION_LINE = re.compile(r"(^##[ \t]+Cần người[ \t]*\r?\n(?:(?!##[ \t])[^\r\n]*\r?\n)*?)🙋 Cần bạn:", re.M)
 
 
-def mark(repo, issue, action, nxt, dry):
+def mark(repo, issue, action, nxt, dry, config=None):
     done = [f"label {ensure_label(repo, dry)}"]
     labels, comments, _ = read_issue(repo, issue)
+    # #516: một [decision] hợp lệ mới hơn comment needs-you gần nhất đã xử lý blocker này, trừ DANH SÁCH DỪNG của chủ.
+    policy = _DEC.load_policy(config or os.environ.get("SB_CONFIG"))
+    at = _DEC.newest_valid_index(comments, policy)
+    # Mốc = blocker mới nhất: comment needs-you, hoặc Block 🙋 / dòng `blocked-by:` mà lane vừa đăng trước khi gọi mark.
+    last_mark = max((i for i, c in enumerate(comments)
+                     if not _DEC.is_valid(c, policy) and ((c.get("body") or "").startswith(MARKER)
+                     or re.search(r"Reason tag:[^\n]*🙋|(^|\n)[ \t]*blocked-by:", c.get("body") or "", re.I))), default=-1)
+    if at > last_mark and not _DEC.is_stop(action):
+        return done + ["skipped: [decision] hợp lệ mới hơn đã xử lý blocker, không gắn needs-you"]
     if LABEL not in labels:
         if not dry:
             gh("api", f"repos/{repo}/issues/{issue}/labels", "-f", f"labels[]={LABEL}")
@@ -313,6 +330,7 @@ def main():
         if name == "mark":
             p.add_argument("--action", required=True, help="exactly what the person must do")
             p.add_argument("--next", default=DEFAULT_NEXT, help="what to do once it is done")
+            p.add_argument("--config", help="super-board config (decision_policy)")
         p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("board")
     p.add_argument("--owner", required=True)
@@ -331,7 +349,7 @@ def main():
         return 64
     try:
         if args.cmd == "mark":
-            done, where = mark(args.repo, args.issue, action, nxt, args.dry_run), f"{args.repo}#{args.issue}"
+            done, where = mark(args.repo, args.issue, action, nxt, args.dry_run, args.config), f"{args.repo}#{args.issue}"
         elif args.cmd == "unmark":
             done, where = unmark(args.repo, args.issue, args.dry_run), f"{args.repo}#{args.issue}"
         elif args.cmd == "label":

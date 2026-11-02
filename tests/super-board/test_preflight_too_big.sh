@@ -38,9 +38,10 @@ export PATH="$TMP/bin:$PATH" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETR
   SB_GH_GUARD_STATE_FILE="$TMP/budget"
 
 # Một lần gọi cho cả lô của mỗi repo, như wave và lint gọi.
+# Script mặc định --cap 0 (không giữ vì nhiều việc). Lô này ghim --cap 400 để vẫn kiểm bộ dò opt-in.
 for spec in Neighbours-From-Hell:4,13,14,15,16,24,47,54 OfficeReader:94,98,102 GeelyEx2:11 Synthetic:901,902,903,904,905,906,907,908,909,910,911,912; do
   repo="${spec%%:*}"
-  bash "$PREFLIGHT" --repo "ToanMobile/$repo" --issues "${spec##*:}" >"$TMP/$repo.json" 2>"$TMP/$repo.err" \
+  bash "$PREFLIGHT" --repo "ToanMobile/$repo" --issues "${spec##*:}" --cap 400 >"$TMP/$repo.json" 2>"$TMP/$repo.err" \
     || fail "$repo: preflight exit $? ($(tail -1 "$TMP/$repo.err"))"
 done
 
@@ -90,6 +91,10 @@ bash "$PREFLIGHT" --repo ToanMobile/Neighbours-From-Hell --issues 16 --cap 0 >"$
   || fail "--cap 0: preflight exit $? ($(tail -1 "$TMP/cap0.err"))"
 got=$(jq -r '.["16"] | "\(.verdict)/\(.tag)"' "$TMP/cap0.json" 2>/dev/null)
 [ "$got" = proceed/clean ] && ok "--cap 0: thẻ nhiều việc (#16) proceed, không đòi tách" || fail "--cap 0 #16: muốn proceed/clean, được $got"
+bash "$PREFLIGHT" --repo ToanMobile/Neighbours-From-Hell --issues 16 >"$TMP/capdef.json" 2>"$TMP/capdef.err" \
+  || fail "cap mặc định: preflight exit $? ($(tail -1 "$TMP/capdef.err"))"
+got=$(jq -r '.["16"] | "\(.verdict)/\(.tag)"' "$TMP/capdef.json" 2>/dev/null)
+[ "$got" = proceed/clean ] && ok "cap mặc định: thẻ nhiều việc (#16) proceed" || fail "cap mặc định #16: muốn proceed/clean, được $got"
 bash "$PREFLIGHT" --repo ToanMobile/Synthetic --issues 909 --cap 0 >"$TMP/cap0d.json" 2>/dev/null
 got=$(jq -r '.["909"] | "\(.verdict)/\(.tag)"' "$TMP/cap0d.json" 2>/dev/null)
 [ "$got" = hold/too-big ] && ok "--cap 0: AC cần máy thật (#909) vẫn hold" || fail "--cap 0 #909: muốn hold/too-big, được $got"

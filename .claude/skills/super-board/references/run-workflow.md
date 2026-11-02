@@ -215,7 +215,9 @@ Repeat until a done condition or halt gate fires:
    `## Blocked by` line to be fixed, and return every stranded Building card to
    `Ready` (below). Swept, resumed, approval-refresh and stranded cards are NOT in this pass's
    `cards`; they join the next wave. `waiting` lists Ready cards labelled `needs-you` / `human-gated`
-   (#95): only a person can move them, so they are never in `cards`; leave them, name them in the
+   (#95): only a person (or the owner's standing decision) can move them, so they are never in `cards`. Before leaving them, apply
+   run.md → "Owner's standing decision" to them and to the 🙋/❓ cards in Blocked: a decided card moves column
+   and joins the next wave. Leave the rest, name them in the
    summary, and they return once a person removes the label. It also lists Ready cards labelled
    `waiting-on:#N` (#601): they wait on another card, need nobody, and return once the sweep drops
    the label. It also lists, with a `why`, the cards
@@ -242,7 +244,11 @@ Repeat until a done condition or halt gate fires:
    and moves held cards to Blocked itself (run.md → "Builder pre-flight"); the summary reports those
    as `preflight:blocked`. A card sequenced behind an open card is never Blocked: the agent runs
    `super-board-waiting-on.py mark`, the card stays in Ready with `waiting-on:#N`, and the summary
-   reports `preflight:waiting`; the `sweep` above drops the label when N closes. `preflight:failed`
+   reports `preflight:waiting`; the `sweep` above drops the label when N closes. Two Ready cards
+   that share files, and neither has an open `issue-<N>-*` PR, fold instead: the higher is verdict
+   `merge`, its AC is copied verbatim onto the lower, the source closes as not planned, and that
+   card's column is Done. A peer that already started stays `sequence` (Ready, never Blocked).
+   `preflight:failed`
    means pre-flight was blind and the card stays in Ready for the next wave.
    Wave width is every card the dependency graph says is free, in flight
    first (Review → QA → Ready), cut to `max_workers` when it is set (0 or
@@ -250,7 +256,7 @@ Repeat until a done condition or halt gate fires:
    after a wave that hit the hourly limit. If `cards` is empty and
    Building/QA/Review counts are 0 → done. Cards the planner lists in `waiting`
    (a person, or a real device) are not counted in those columns. If empty but
-   cards sit in Blocked or `waiting` only → report and stop. This is unfinished work, not a completed-run calibration trigger.
+   cards sit in Blocked or `waiting` only (after the standing decision above) → report and stop. This is unfinished work, not a completed-run calibration trigger.
 3. **Claim** — for each card, `gh issue edit <n> --add-assignee <bot_identity>`,
    then VERIFY: re-read assignees (`gh issue view <n> --json assignees`) and
    proceed only if the list is exactly `[<bot_identity>]`. Adding an assignee
@@ -269,7 +275,7 @@ Repeat until a done condition or halt gate fires:
    `tier` is the run's model ladder: `'low'` when the user invoked
    `super-board run --low` (haiku/sonnet/opus by card complexity), `'high'`
    for `run --high` (opus for every card), omitted/`'medium'`
-   otherwise (sonnet/opus/session — the default). A `model_tier` key in the
+   otherwise (sonnet/opus/opus — the default). A `model_tier` key in the
    config sets the default; an explicit flag wins over config.
 5. **Reconcile** (when the run completes) — read the returned `cards`
    summary. If `halted: true`, any card is `halted`, or the GitHub helper's `--check`
@@ -395,7 +401,7 @@ up front (onboard → Permissions), so the first overnight run does not stall:
 
 Without them every Reviewer merge pauses for one interactive approval, so the
 backend is **attended-only**. With them, the gate still enforces
-`merge_policy` (money / auth / destructive schema / over `auto_max_lines` → human, exit 7) and `migrations`
+`merge_policy` (money / auth / destructive schema → human, exit 7; a line-count hold only when `auto_max_lines` is a positive number) and `migrations`
 (live DB → 🙋 needs you, exit 8), so the allowlist removes the prompt, not
 the policy. Pair auto-merge with a non-production `base_branch`.
 

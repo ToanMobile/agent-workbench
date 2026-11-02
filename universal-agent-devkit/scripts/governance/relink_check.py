@@ -27,6 +27,7 @@ link pointing elsewhere, a regular file and a live link are never touched. Sessi
 it with --links-only (no context refresh: SessionStart does its own), so a session heals the
 repo with no git operation and no `agent-kit init`.
 """
+import contextlib
 import fcntl
 import json
 import os
@@ -45,6 +46,8 @@ def git(project, *args):
 
 
 def should_run(project, argv):
+    """False, True (checkout chính: mọi link + context), hoặc "worktree" (#644: linked worktree, chỉ với --links-only của SessionStart —
+    chỉ link lệnh / skill của kit; .agents/devkit và hook do `agent-kit worktree add` / heal lo)."""
     if os.environ.get("DEVKIT_RELINK") == "0":
         return False
     if (os.path.realpath(project) + os.sep).startswith(os.path.realpath(DEVKIT) + os.sep):
@@ -57,9 +60,30 @@ def should_run(project, argv):
     if gd and cd:
         common = cd if os.path.isabs(cd) else os.path.join(project, cd)
         if os.path.realpath(gd) != os.path.realpath(common):
-            return False                # a linked worktree
+            # a linked worktree: .agents/context is git-ignored there, the tracked profile marks the install
+            return "worktree" if ("--links-only" in argv
+                                  and os.path.isfile(os.path.join(project, ".agents", "active-profile.json"))) else False
     return (os.path.isfile(os.path.join(project, ".agents", "active-profile.json"))
             and os.path.isdir(os.path.join(project, ".agents", "context")))
+
+
+def main_checkout(project):
+    """Thư mục checkout chính của repo (dòng đầu `git worktree list`), None khi không biết."""
+    out = git(project, "worktree", "list", "--porcelain") or ""
+    first = out.split("\n", 1)[0]
+    return first[9:] if first.startswith("worktree ") else None
+
+
+def foreign_kit(project):
+    """True khi kit đang chạy nằm trong một checkout KHÁC của cùng repo (checkout chính chạy cho worktree, hay ngược lại): link lệnh /
+    skill trỏ sang đó thì đổi theo nhánh của checkout kia và mất khi nó bị gỡ. Kit ở repo riêng (cài qua .agents/devkit) không phải."""
+    top = git(DEVKIT, "rev-parse", "--show-toplevel")
+    if not top:
+        return False
+    kc, pc = git(DEVKIT, "rev-parse", "--path-format=absolute", "--git-common-dir"), \
+        git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    return bool(kc and pc and os.path.realpath(kc) == os.path.realpath(pc)
+                and os.path.realpath(top) != os.path.realpath(project))
 
 
 def in_kit(path):
@@ -76,8 +100,18 @@ def excluded_skills(project):
     return set(prof.get("exclude_skills", []))
 
 
-def missing(project):
-    """Relative paths of DevKit links the project should have and does not."""
+def missing(project, worktree=False):
+    """Relative paths of DevKit links the project should have and does not. worktree=True: only command / skill links (a linked
+    worktree's .agents/skills/ holds git-ignored links only, so it is wanted when the main checkout has one). None of either when the
+    running kit lies in another checkout of this repository (foreign_kit)."""
+    out = []
+    if worktree:
+        return [] if foreign_kit(project) else _kit_items(project, main_checkout(project))
+    out = [] if foreign_kit(project) else _kit_items(project, None)
+    return sorted(set(_hooks_and_devkit(project) + out))
+
+
+def _hooks_and_devkit(project):
     out = []
     try:
         settings = json.load(open(os.path.join(project, ".claude", "settings.json"), encoding="utf-8"))
@@ -91,6 +125,13 @@ def missing(project):
                         out.append(rel)
     if not os.path.exists(os.path.join(project, ".agents", "devkit", "rules", "essentials.md")):
         out.append(".agents/devkit")    # master rules, core-rules, the post-fix gate
+    return out
+
+
+def _kit_items(project, main):
+    """Lệnh / skill của kit mà project chưa có link. main: checkout chính (linked worktree) — .agents/skills/ của worktree được muốn khi
+    checkout chính có."""
+    out = []
     excluded = excluded_skills(project)
     cmds = os.path.join(DEVKIT, "commands")
     # a link directory that resolves into the kit is the kit's own folder: never write into it. One that is absent is rebuilt
@@ -108,33 +149,69 @@ def missing(project):
     skills_dir = os.path.join(project, ".agents", "skills")
     kit_skills = os.path.join(DEVKIT, "skills")
     # ponytail: a skills dir removed whole is not rebuilt (a claude-only install never had one), upgrade when the installer records it
-    if os.path.isdir(skills_dir) and not in_kit(skills_dir) and os.path.isdir(kit_skills):
+    want = os.path.isdir(skills_dir) or (main is not None and not os.path.lexists(skills_dir)
+                                         and os.path.isdir(os.path.join(main, ".agents", "skills")))
+    if want and not in_kit(skills_dir) and os.path.isdir(kit_skills):
         for name in sorted(os.listdir(kit_skills)):
             if (name not in excluded and os.path.isfile(os.path.join(DEVKIT, "skills", name, "SKILL.md"))
                     and not os.path.lexists(os.path.join(skills_dir, name))):
                 out.append(f".agents/skills/{name}")
-    return sorted(set(out))
+    return out
 
 
-def keep_out_of_git(project, rel):
-    """A new link is local state, as the installer keeps it: /rel goes to .git/info/exclude unless an ignore rule covers it."""
+def keep_out_of_git(project, rel, common=None):
+    """A new link is local state, as the installer keeps it: /rel goes to .git/info/exclude unless an ignore rule covers it.
+    Gọi trong exclude_lock() (relink truyền common): đọc để biết dòng đã có chưa rồi APPEND tại chỗ bằng một os.write (O_APPEND) —
+    hai relink song song không mất / không trùng dòng; không bao giờ ghi đè cả file, nên dòng mà bên ghi không lấy khoá (worktree.py
+    append dòng secret, install.sh) chen vào giữa lúc đọc và ghi vẫn còn."""
     if subprocess.run(["git", "-C", project, "check-ignore", "-q", "--", rel], capture_output=True).returncode == 0:
         return
-    common = git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    common = common or git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if not common:
         return
     path = os.path.join(common, "info", "exclude")
     line = "/" + rel
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a+", encoding="utf-8") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)      # check-then-append is one step: parallel runs wrote the line twice
-            fh.seek(0)
-            raw = fh.read()
-            if line not in raw.splitlines():
-                fh.write(("\n" if raw and not raw.endswith("\n") else "") + line + "\n")
-    except OSError:
-        pass
+        try:
+            with open(path, encoding="utf-8") as fh:
+                raw = fh.read()
+        except FileNotFoundError:
+            raw = ""
+        if line in raw.splitlines():
+            return
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            os.write(fd, (("\n" if raw and not raw.endswith("\n") else "") + line + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+    except OSError as e:
+        sys.stderr.write(f"DevKit: cannot add {line} to {path}: {e}\n")
+
+
+@contextlib.contextmanager
+def exclude_lock(project):
+    """Khoá fcntl trên <git-common-dir>/info/exclude.lock (file riêng, như lúc exclude còn bị os.replace: tên khoá giữ nguyên
+    cho các bản relink cũ đang chạy song song).
+    Trả common dir (None khi không phải git / không mở được khoá — vẫn chạy, chỉ không khoá)."""
+    common = git(project, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    fd = None
+    if common:
+        try:
+            os.makedirs(os.path.join(common, "info"), exist_ok=True)
+            fd = os.open(os.path.join(common, "info", "exclude.lock"), os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as e:
+            sys.stderr.write(f"DevKit: exclude lock not taken: {e}\n")
+    try:
+        yield common
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _same_link(dst, src):
+    """dst là symlink tới đúng nơi src trỏ (phiên kia tạo cùng link) — chỉ link như vậy mới được ghi exclude, file người dùng thì không."""
+    return os.path.islink(dst) and os.path.realpath(dst) == os.path.realpath(src)
 
 
 def link_root(project):
@@ -204,29 +281,45 @@ def prune(project, stale):
 
 
 def relink(project, gone, raced=None):
-    """Re-create the links in gone; returns those it could not. A link another session made first is appended to raced."""
+    """Re-create the links in gone; returns those it could not. A link another session made first is appended to raced.
+    Tạo link + ghi exclude dưới cùng một khoá; link hợp lệ do phiên kia tạo (trước lúc kiểm hay lúc os.symlink) vẫn được ghi exclude."""
     left = []
-    for rel in gone:
-        src, dst = source_for(project, rel), os.path.join(project, rel)
-        if not src or os.path.lexists(dst):
-            left.append(rel)
-            continue
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        if src.startswith(os.path.join(project, ".agents", "local") + os.sep):
-            src = os.path.relpath(src, os.path.dirname(dst))   # project tier: relative, like the installer
-        try:
-            os.symlink(src, dst)
-        except FileExistsError:
-            if raced is not None:
-                raced.append(rel)         # another session's SessionStart made it a moment ago
-            continue
-        keep_out_of_git(project, rel)
+    with exclude_lock(project) as common:
+        for rel in gone:
+            src, dst = source_for(project, rel), os.path.join(project, rel)
+            if not src:
+                left.append(rel)
+                continue
+            if os.path.lexists(dst):
+                if not _same_link(dst, src):
+                    left.append(rel)      # file / link khác của người dùng: không đụng, không ghi exclude
+                    continue
+                if raced is not None:
+                    raced.append(rel)     # phiên kia tạo giữa missing() và đây
+                keep_out_of_git(project, rel, common)
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            target = src
+            if src.startswith(os.path.join(project, ".agents", "local") + os.sep):
+                target = os.path.relpath(src, os.path.dirname(dst))   # project tier: relative, like the installer
+            try:
+                os.symlink(target, dst)
+            except FileExistsError:
+                if raced is not None:
+                    raced.append(rel)     # another session's SessionStart made it a moment ago
+                if not _same_link(dst, src):
+                    continue              # không phải link của kit: không ghi exclude
+            keep_out_of_git(project, rel, common)
     return left
 
 
 def main(argv):
     project = os.path.realpath(argv[1] if len(argv) > 1 and not argv[1].startswith("-") else os.getcwd())
-    if not should_run(project, argv):
+    mode = should_run(project, argv)
+    if not mode:
+        return 0
+    if mode == "worktree":   # chỉ thêm link lệnh / skill còn thiếu; không dọn, không context (worktree add / heal lo phần còn lại)
+        relink(project, missing(project, worktree=True))
         return 0
     stale = dangling(project)
     pruned = prune(project, stale) if stale else 0

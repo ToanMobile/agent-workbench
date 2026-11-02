@@ -24,14 +24,14 @@ else ok "prompt reviewer không chứa lệnh post-fix-gate --full"; fi
 case "$(cat "$RUN")" in *"$MARK"*) ok "run.md nêu '$MARK'" ;; *) fail "run.md thiếu '$MARK'" ;; esac
 case "$(cat "$SKILL")" in *"$MARK"*) ok "SKILL nêu '$MARK'" ;; *) fail "SKILL thiếu '$MARK'" ;; esac
 if grep -q "rerun it" "$SKILL"; then fail "SKILL còn 'rerun it yourself'"; else ok "SKILL hết 'rerun it yourself'"; fi
-# Merge gate vẫn thêm --force-full vào lệnh verify. Chuỗi cờ nằm ở super-board-verify-flags.sh (sb_verify_inject_flags, #251);
-# kiểm cả chuỗi: gate source file đó, gate gọi hàm đó, và hàm thật sự chèn --force-full vào lệnh post-fix-gate.
+# Merge gate vẫn thêm --scoped vào lệnh verify (#644; trước đó --force-full). Chuỗi cờ nằm ở super-board-verify-flags.sh (sb_verify_inject_flags, #251);
+# kiểm cả chuỗi: gate source file đó, gate gọi hàm đó, và hàm thật sự chèn --scoped vào lệnh post-fix-gate.
 GATE="$ROOT/.claude/bin/super-board-merge-gate.sh"
 FLAGS="$ROOT/.claude/bin/super-board-verify-flags.sh"
 grep -q 'super-board-verify-flags\.sh' "$GATE" && grep -q 'sb_verify_inject_flags ' "$GATE" \
   && injected="$(bash -c '. "$1"; sb_verify_inject_flags "python3 x/post-fix-gate.py --run-tests" main' _ "$FLAGS" 2>/dev/null)" \
-  && case "$injected" in *" --force-full"*) true ;; *) false ;; esac \
-  && ok "merge gate vẫn thêm --force-full (qua sb_verify_inject_flags)" || fail "merge gate mất --force-full"
+  && case "$injected" in *" --scoped"*) true ;; *) false ;; esac \
+  && ok "merge gate vẫn thêm --scoped (#644, qua sb_verify_inject_flags)" || fail "merge gate mất --scoped"
 
 # R5 (audit Antigravity #1, #6): merge queue chỉ bật khi config bật VÀ worker_backend là claude-p (runner claude-p rút hàng mỗi
 # tick). Lane workflow (wave.js) / codex không có ai rút hàng: gắn nhãn merge-queue ở đó làm thẻ kẹt Review, wave sau review lại.

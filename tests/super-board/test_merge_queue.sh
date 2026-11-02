@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test (Pha 2) cho .claude/bin/super-board-merge-queue.sh — bộ gom đứng riêng: PR mở, không draft, có nhãn merge-queue + approved-head
-# hợp lệ khớp head → MỘT lượt super-board-merge-train.sh; route từng `train-result:`; --if-due; khoá chạy chồng; đợt sau đỏ thu nhỏ.
+# hợp lệ khớp head → MỘT lượt super-board-merge-train.sh; route từng `train-result:`; không gom đợt (không --if-due, không trần, không chờ); khoá chạy chồng.
 # Chạy offline: gh (python giả), train / card.sh / needs-you.py là stub ghi lại lời gọi; github-read.py là bản thật. Tương thích bash 3.2.
 set -u
 export LC_ALL=C LANG=C
@@ -28,6 +28,8 @@ ATT="$COMMON/super-board/merge-queue.attempts"
 # Bộ gom thật + github-read thật (symlink: HERE của script là $Q), các helper khác là stub.
 ln -s "$ROOT/.claude/bin/super-board-merge-queue.sh" "$Q/super-board-merge-queue.sh"
 ln -s "$ROOT/.claude/bin/super-board-github-read.py" "$Q/super-board-github-read.py"
+ln -s "$ROOT/.claude/bin/super-board-approved-head.jq" "$Q/super-board-approved-head.jq"
+ln -s "$ROOT/.claude/bin/super-board-audit-check.py" "$Q/super-board-audit-check.py"
 QUEUE="$Q/super-board-merge-queue.sh"
 cat > "$Q/super-board-merge-train.sh" <<'SH'
 #!/usr/bin/env bash
@@ -37,8 +39,10 @@ if [ -e "$FAKE/train.hold" ]; then
   : > "$FAKE/train.started"; i=0
   while [ -e "$FAKE/train.hold" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
 fi
-[ -f "$FAKE/train.out" ] && cat "$FAKE/train.out"
-exit "$(cat "$FAKE/train.rc" 2>/dev/null || echo 0)"
+# #676: một train cho MỘT PR — stub chỉ in dòng train-* của PR trong --prs; mã thoát train.rc.<N> nếu có, không thì train.rc
+n=""; prev=""; for a in "$@"; do [ "$prev" = --prs ] && n="${a%%:*}"; prev="$a"; done
+[ -f "$FAKE/train.out" ] && grep -E "^train-(result|detail|red): ${n}( |\$)" "$FAKE/train.out"
+exit "$(cat "$FAKE/train.rc.$n" 2>/dev/null || cat "$FAKE/train.rc" 2>/dev/null || echo 0)"
 SH
 cat > "$Q/super-board-card.sh" <<'SH'
 #!/usr/bin/env bash
@@ -69,6 +73,8 @@ def w(line):
     open(F + '/writes', 'a').write(line + '\n')
 def issue(k):
     return json.load(open(f'{F}/issue-{k}.json'))
+if os.path.exists(F + '/gh.hang') and a[:2] in (['pr', 'edit'], ['pr', 'comment'], ['issue', 'comment'], ['issue', 'edit'], ['issue', 'close']):
+    import time; time.sleep(60)   # #453: a GitHub write that never answers
 if a[:2] == ['pr', 'list']:
     open(F + '/reads', 'a').write('list ' + ' '.join(a[2:]) + '\n')
     st = (opt('--state') or 'open').upper()
@@ -127,15 +133,15 @@ chmod +x "$TMP/path/gh"
 export PATH="$TMP/path:$PATH" FAKE="$F" TRAIN_PIDS="$TMP/train.pids" SB_GITHUB_HALT_FILE="$TMP/halt.json" SB_GITHUB_RETRY_DELAY=0 SB_NOTIFY_SKIP=1
 unset SB_MERGE_QUEUE SB_MERGE_CALLER SB_GITHUB_READ_STRICT
 
-cfg() {   # cfg <enabled> <batch_max> [max_wait_min]
-  printf '{"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"worker_backend":"claude-p","rebuild_cap":2,"verify_commands":["true"],"merge_queue":{"enabled":%s,"enabled_at":null,"batch_max":%s,"max_wait_min":%s}}\n' "$1" "$2" "${3:-60}" > "$TMP/cfg.json"
+cfg() {   # cfg <enabled> [ignored…]: không còn batch_max / max_wait_min (gom đợt đã bỏ); đối số thừa của ca cũ bị bỏ qua
+  printf '{"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"worker_backend":"claude-p","rebuild_cap":2,"verify_commands":["true"],"merge_queue":{"enabled":%s,"enabled_at":null,"max_trains":50}}\n' "$1" > "$TMP/cfg.json"
 }
 ago() { python3 -c 'import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 sha() { printf '%040d' "$1" | tr 0 "${2:-a}"; }
 # pr <N> <branch> <minutes since labeled> [draft] [state]: PR có nhãn (mặc định mở), head = sha(N).
 PRS_ROWS=""
-pr() {
-  PRS_ROWS="${PRS_ROWS}${PRS_ROWS:+,}{\"number\":$1,\"headRefName\":\"$2\",\"headRefOid\":\"$(sha "$1")\",\"isDraft\":${4:-false},\"state\":\"${5:-OPEN}\"}"
+pr() {   # [head] (#605): head thật (commit trong $R) cho ca approved-by cần đối chiếu biên bản audit
+  PRS_ROWS="${PRS_ROWS}${PRS_ROWS:+,}{\"number\":$1,\"headRefName\":\"$2\",\"headRefOid\":\"${6:-$(sha "$1")}\",\"isDraft\":${4:-false},\"state\":\"${5:-OPEN}\"}"
   printf '[%s]\n' "$PRS_ROWS" > "$F/prs.json"
   ago "$3" > "$F/labeled/$1"
 }
@@ -150,8 +156,9 @@ issue() {   # issue <K> [labels comma]
 reset() {
   rm -rf "$F"; mkdir -p "$F/labeled"; PRS_ROWS=""; printf '[]\n' > "$F/prs.json"; : > "$F/writes"; : > "$F/calls"
   rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled" "$ATT" "$COMMON/super-board/merge-queue.lock.pid" "$COMMON/super-board/merge-queue.pending"; rm -rf "$INF/merge.lock"
+  rm -f "$COMMON/super-board/merge-queue.inflight" "$COMMON/super-board/merge-queue.basemoved"   # #676: trạng thái train nền theo PR
 }
-run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" "$@" ) >"$TMP/out" 2>"$TMP/err"; }
+run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }
 calls() { grep -c '^train ' "$F/calls" 2>/dev/null | tr -d ' '; }
 has_w() { grep -qF -- "$1" "$F/writes"; }
 
@@ -164,26 +171,35 @@ run_q; rc=$?
 reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 ( export SB_MERGE_QUEUE=0; run_q ); rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "SB_MERGE_QUEUE=0 turns it off over the config" || fail "SB_MERGE_QUEUE=0: rc=$rc calls=$(calls)"
-# fix-round1-contract: bật cần thêm worker_backend "claude-p" (thiếu = workflow); backend khác = tắt, cả khi SB_MERGE_QUEUE=1.
-jq '.worker_backend = "workflow"' "$TMP/cfg.json" > "$TMP/cfg.tmp" && mv "$TMP/cfg.tmp" "$TMP/cfg.json"
+# fix-round1-contract, #453: bật cần worker_backend "claude-p" hoặc "workflow" (thiếu = workflow, có lịch rút); backend khác (codex) = tắt.
+reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
+jq '.worker_backend = "codex"' "$TMP/cfg.json" > "$TMP/cfg.tmp" && mv "$TMP/cfg.tmp" "$TMP/cfg.json"
 ( export SB_MERGE_QUEUE=1; run_q ); rc=$?
-[ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "worker_backend workflow: off even with SB_MERGE_QUEUE=1" || fail "workflow backend: rc=$rc calls=$(calls)"
+[ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "worker_backend codex: off even with SB_MERGE_QUEUE=1" || fail "codex backend: rc=$rc calls=$(calls)"
+jq '.worker_backend = "workflow"' "$TMP/cfg.json" > "$TMP/cfg.tmp" && mv "$TMP/cfg.tmp" "$TMP/cfg.json"
+run_q; rc=$?
+[ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "worker_backend workflow: on with merge_queue.enabled true (the schedule drains it)" || fail "workflow backend: rc=$rc calls=$(calls)"
+reset; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 jq 'del(.worker_backend)' "$TMP/cfg.json" > "$TMP/cfg.tmp" && mv "$TMP/cfg.tmp" "$TMP/cfg.json"
 run_q; rc=$?
-[ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "no worker_backend (= workflow): off with merge_queue.enabled true" || fail "no backend: rc=$rc calls=$(calls)"
+[ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "no worker_backend (= workflow): on with merge_queue.enabled true" || fail "no backend: rc=$rc calls=$(calls)"
 
 # ── 2. Chọn PR: 3 hợp lệ → MỘT train, cũ nhất trước; approved-head lệch / người ngoài → gỡ nhãn + comment; draft → bỏ qua, giữ nhãn.
 reset; cfg true 6
 pr 1 issue-11-a 10; pr 2 issue-12-b 30; pr 3 feature-x 20; pr 4 issue-14-d 40; pr 5 issue-15-e 50; pr 6 issue-16-f 60 true
-approve 1 OWNER "$(sha 1)"; approve 2 MEMBER "$(sha 2)"; approve 3 COLLABORATOR "$(sha 3)"
+# #605 Lane H: approved-head trơn chỉ của OWNER; MEMBER/COLLABORATOR trơn bị loại (ca riêng ở cuối file).
+approve 1 OWNER "$(sha 1)"; approve 2 OWNER "$(sha 2)"; approve 3 OWNER "$(sha 3)"
 approve 4 OWNER "$(sha 4 b)"; approve 5 CONTRIBUTOR "$(sha 5)"; approve 6 OWNER "$(sha 6)"
 issue 11; issue 12 ac-open; issue 14; issue 15; issue 16
 printf '%s\n' "$(sha 1 c)" > "$F/merged-1"; printf '%s\n' "$(sha 2 c)" > "$F/merged-2"; printf '%s\n' "$(sha 3 c)" > "$F/merged-3"
 printf 'train-result: 1 merged\ntrain-result: 2 merged\ntrain-result: 3 merged\n' > "$F/train.out"
 run_q; rc=$?
 [ "$rc" -eq 0 ] && ok "3 valid PRs: exit 0" || fail "3 valid PRs: rc=$rc: $(tail -5 "$TMP/err")"
-[ "$(calls)" = 1 ] && ok "3 valid PRs: exactly one train" || fail "3 valid PRs: $(calls) trains"
-grep -q -- "--prs 2:$(sha 2),3:$(sha 3),1:$(sha 1)\$" "$F/calls" && ok "  … oldest labelled first, each pinned to its approved head" || fail "  … wrong --prs: $(cat "$F/calls")"
+# #676: một train cho MỖI PR (cây main+PR của chính nó), phóng theo thứ tự gắn nhãn cũ nhất trước.
+[ "$(calls)" = 3 ] && ! grep -q -- "--prs [0-9]*:[0-9a-f]*," "$F/calls" && ok "3 valid PRs: three trains, one PR each" || fail "3 valid PRs: $(calls) trains: $(cat "$F/calls")"
+grep -q -- "--prs 2:$(sha 2)\$" "$F/calls" && grep -q -- "--prs 3:$(sha 3)\$" "$F/calls" && grep -q -- "--prs 1:$(sha 1)\$" "$F/calls" \
+  && [ "$(grep -o 'PR #[0-9]*: train started' "$TMP/err" | tr -dc '0-9\n' | tr '\n' ' ')" = "2 3 1 " ] \
+  && ok "  … oldest labelled first, each pinned to its approved head" || fail "  … wrong --prs / order: $(cat "$F/calls") $(grep 'train started' "$TMP/err")"
 grep -q "caller=queue" "$F/calls" && ok "  … SB_MERGE_CALLER=queue for the train" || fail "  … caller: $(cat "$F/calls")"
 has_w "pr-unlabel 4 merge-queue" && has_w "pr-comment 4 " && ok "approved-head off the head: unlabelled + commented" || fail "PR 4 not rejected: $(cat "$F/writes")"
 has_w "pr-unlabel 5 merge-queue" && has_w "pr-comment 5 " && ok "approved-head by an outsider: unlabelled + commented" || fail "PR 5 not rejected: $(cat "$F/writes")"
@@ -197,60 +213,40 @@ has_w "pr-unlabel 1 merge-queue" && has_w "pr-unlabel 3 merge-queue" && ok "merg
 : > "$F/train.out"; run_q
 [ "$(grep -c '^pr-comment 4 ' "$F/writes")" = 1 ] && ok "second run: a rejected PR is not commented again" || fail "second run re-commented PR 4"
 
-# ── 3. --if-due.
-reset; cfg true 6 60
-pr 1 issue-11-a 5; pr 2 issue-12-b 5; approve 1 OWNER "$(sha 1)"; approve 2 OWNER "$(sha 2)"; issue 11; issue 12
-# Train giả ở ca này in `deferred` (không kết thúc, giữ nhãn); xoá số lần thử trước mỗi lượt để trần 3 lần (ca 9) không gỡ nhãn giữa ca.
-printf 'train-result: 1 deferred\ntrain-result: 2 deferred\n' > "$F/train.out"
-run_q() { rm -f "$ATT"; ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" "$@" ) >"$TMP/out" 2>"$TMP/err"; }
+# ── 3. Không gom đợt: PR đã duyệt vào train ngay, không chờ đủ số PR, không chờ PR cũ, không chờ máy rảnh; --if-due đã bỏ.
+reset; cfg true
+pr 1 issue-11-a 1; approve 1 OWNER "$(sha 1)"; issue 11
+printf 'train-result: 1 deferred\n' > "$F/train.out"
+run_q() { rm -f "$ATT"; ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }
 sleep 60 & LIVE=$!; PIDS="$PIDS $LIVE"
 printf 'PID=%s\nLANE=build\n' "$LIVE" > "$INF/77"
-run_q --if-due; rc=$?
-[ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "--if-due: 2 PRs, 5 min old, a worker alive → not due" || fail "--if-due busy: rc=$rc calls=$(calls): $(cat "$TMP/err")"
-grep -q '^comments' "$F/reads" 2>/dev/null && fail "--if-due not due: approval comments were read (GraphQL per PR per tick)" || ok "--if-due not due: no approval comment read"
-: > "$F/reads"; run_q --if-due
-grep -q '^timeline' "$F/reads" && fail "--if-due second tick re-read the timelines: $(cat "$F/reads")" || ok "--if-due second tick: labelled times come from the cache"
-rm -f "$COMMON/super-board/merge-queue.labeled"   # mốc gắn nhãn đổi dưới đây: đọc lại timeline
-ago 61 > "$F/labeled/2"
-run_q --if-due
-[ "$(calls)" = 1 ] && ok "--if-due: oldest waited 61 min ≥ max_wait_min → due" || fail "--if-due age: calls=$(calls): $(cat "$TMP/err")"
-: > "$F/calls"; ago 5 > "$F/labeled/2"; cfg true 2 60; rm -f "$COMMON/super-board/merge-queue.labeled"
-run_q --if-due
-[ "$(calls)" = 1 ] && ok "--if-due: count reaches batch_max → due (worker still alive)" || fail "--if-due count: calls=$(calls)"
-: > "$F/calls"; cfg true 6 60; rm -f "$INF/77"
-printf 'PID=999999\nLANE=build\n' > "$INF/78"
-run_q --if-due
-[ "$(calls)" = 1 ] && ok "--if-due: no live worker (dead PID in inflight), no gate → idle → due" || fail "--if-due idle: calls=$(calls): $(cat "$TMP/err")"
-# merge.lock của gate còn sống (holder sống, mới) → bận; holder chết + quá stale-after → không bận. Không bao giờ xoá khoá.
+run_q; rc=$?
+[ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "no batching: 1 PR labelled 1 min ago, a board worker alive → the train runs now" || fail "no batching, busy: rc=$rc calls=$(calls): $(cat "$TMP/err")"
 : > "$F/calls"; mkdir -p "$INF/merge.lock"
 echo "$LIVE" > "$INF/merge.lock/pid"; ps -o pgid= -p "$LIVE" | tr -d ' ' > "$INF/merge.lock/pgid"; hostname > "$INF/merge.lock/host"; date +%s > "$INF/merge.lock/at"
-run_q --if-due
-[ "$(calls)" = 0 ] && ok "--if-due: a live merge.lock holder → busy" || fail "--if-due merge.lock live: calls=$(calls)"
-echo 999999 > "$INF/merge.lock/pid"; echo 999999 > "$INF/merge.lock/pgid"; echo $(( $(date +%s) - 6000 )) > "$INF/merge.lock/at"
-run_q --if-due
-[ "$(calls)" = 1 ] && ok "--if-due: merge.lock of a dead holder past stale-after → idle" || fail "--if-due merge.lock dead: calls=$(calls): $(cat "$TMP/err")"
-[ -d "$INF/merge.lock" ] && ok "  … the queue never reaps the gate's lock" || fail "  … merge.lock was removed"
-# Busy = holder còn VÀ khoá chưa quá stale-after (cả hai): holder chết + khoá mới → rảnh; holder sống + khoá quá 6000 s → rảnh.
-: > "$F/calls"; date +%s > "$INF/merge.lock/at"
-run_q --if-due
-[ "$(calls)" = 1 ] && ok "--if-due: merge.lock of a dead holder, fresh → idle" || fail "--if-due dead fresh: calls=$(calls)"
-: > "$F/calls"; echo "$LIVE" > "$INF/merge.lock/pid"; ps -o pgid= -p "$LIVE" | tr -d ' ' > "$INF/merge.lock/pgid"; echo $(( $(date +%s) - 6000 )) > "$INF/merge.lock/at"
-run_q --if-due
-[ "$(calls)" = 1 ] && ok "--if-due: merge.lock of a live holder past stale-after → idle" || fail "--if-due live stale: calls=$(calls)"
-rm -rf "$INF/merge.lock"
-# test_run.lock của post-fix-gate trong một worktree đang bị giữ → bận.
+run_q
+[ "$(calls)" = 1 ] && ok "  … a live merge.lock holder does not delay it" || fail "  … merge.lock delayed the train: calls=$(calls)"
+rm -r "$INF/merge.lock"
 : > "$F/calls"; git -C "$R" worktree add -q --detach "$TMP/wt1" HEAD
 mkdir -p "$TMP/wt1/.claude/audit-gate"; : > "$TMP/wt1/.claude/audit-gate/test_run.lock"
 python3 -c 'import fcntl,sys,time;f=open(sys.argv[1],"a");fcntl.flock(f,fcntl.LOCK_EX);open(sys.argv[2],"w").close();time.sleep(60)' \
   "$TMP/wt1/.claude/audit-gate/test_run.lock" "$TMP/held" & HOLD=$!; PIDS="$PIDS $HOLD"
 i=0; while [ ! -e "$TMP/held" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-run_q --if-due
-[ "$(calls)" = 0 ] && ok "--if-due: a held test_run.lock in a worktree → busy" || fail "--if-due test_run.lock: calls=$(calls): $(cat "$TMP/err")"
+run_q
+[ "$(calls)" = 1 ] && ok "  … a held test_run.lock does not delay it" || fail "  … test_run.lock delayed the train: calls=$(calls)"
 kill "$HOLD" 2>/dev/null; wait "$HOLD" 2>/dev/null
-run_q --if-due
-[ "$(calls)" = 1 ] && ok "--if-due: test_run.lock released → due" || fail "--if-due test_run.lock released: calls=$(calls)"
 kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
-run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" "$@" ) >"$TMP/out" 2>"$TMP/err"; }
+rm -f "$INF/77"
+# Không có trần đợt: 8 PR đã duyệt vào MỘT train, kể cả khi config cũ còn batch_max.
+reset; cfg true; jq '.merge_queue.batch_max = 2 | .merge_queue.max_wait_min = 600' "$TMP/cfg.json" > "$TMP/cfg.tmp" && mv "$TMP/cfg.tmp" "$TMP/cfg.json"
+for n in 61 62 63 64 65 66 67 68; do pr "$n" "issue-$((n + 10))-x" 2; approve "$n" OWNER "$(sha "$n")"; issue $((n + 10)); done
+printf 'train-result: 61 deferred\n' > "$F/train.out"
+run_q
+[ "$(calls)" = 8 ] && [ "$(grep -o '[0-9]*:[0-9a-f]\{40\}' "$F/calls" | wc -l | tr -d ' ')" = 8 ] \
+  && ok "no batching: 8 approved PRs get 8 trains at once under max_trains (a leftover batch_max / max_wait_min is ignored)" || fail "no cap: calls=$(calls) $(cat "$F/calls")"
+run_q --if-due; rc=$?
+[ "$rc" -eq 64 ] && grep -q 'unknown arg: --if-due' "$TMP/err" && ok "--if-due is gone: unknown argument, exit 64" || fail "--if-due still accepted: rc=$rc $(cat "$TMP/err")"
+run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }
 
 # ── 4. Hai lượt chạy chồng. Ca này khẳng định: lượt sau thoát 0 ngay (khoá fcntl) và số lời gọi train vẫn là 1.
 reset; cfg true 6
@@ -260,7 +256,7 @@ pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 i=0; while [ ! -e "$F/train.started" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 run_q; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "overlapping run: exits 0 at once, no second train" || fail "overlap: rc=$rc calls=$(calls): $(cat "$TMP/err")"
-grep -qi "lock\|another" "$TMP/err" && ok "  … and says the queue is held" || fail "  … no busy message: $(cat "$TMP/err")"
+grep -q "PR #1: its train is still running; not started again" "$TMP/err" && ok "  … and says the PR's train is still running" || fail "  … no busy message: $(cat "$TMP/err")"
 rm -f "$F/train.hold"; wait "$FIRST"; rc=$?
 [ "$rc" -eq 0 ] && ok "  … the first run finishes normally" || fail "  … first run rc=$rc: $(cat "$TMP/err1")"
 
@@ -301,7 +297,6 @@ grep -q "train-detail" "$F/issue-comment-35.txt" 2>/dev/null && fail "  … the 
 has_w "pr-unlabel 26 merge-queue" && has_w "card move 36 Blocked" && ok "gate-exit-3 → unlabel, Blocked" || fail "exit 3 #26: $(cat "$F/writes")"
 has_w "pr-unlabel 27 merge-queue" && has_w "card move 37 Blocked" && ! has_w "card move 37 Ready" && ok "gate-exit-5 at rebuild_cap → Blocked, not Ready" || fail "exit 5 cap #27: $(cat "$F/writes")"
 has_w "pr-unlabel 29 merge-queue" && has_w "issue-labels 39 loop:rebuild-2" && has_w "card move 39 Ready" && ok "gate-exit-11 → loop:rebuild-1 becomes loop:rebuild-2, Ready" || fail "exit 11 #29: $(cat "$F/writes")"
-[ "$(jq -r .last_red "$STATE" 2>/dev/null)" = true ] && ok "red batch recorded next to the lock" || fail "state after red: $(cat "$STATE" 2>/dev/null)"
 # R1 mục 3: dòng train-detail của PR vào comment issue (red, exit 11, exit 3); exit 3 không còn câu cố định "branch protection".
 grep -q "^ac-check: the sb:ac block lists 1 of 3$" "$F/issue-comment-31.txt" 2>/dev/null && grep -q "^FAILED tests/test_x.py::test_y$" "$F/issue-comment-31.txt" \
   && ok "red → the issue comment carries the train-detail lines (ac-check, verify tail)" || fail "red detail: $(cat "$F/issue-comment-31.txt" 2>/dev/null)"
@@ -313,16 +308,16 @@ grep -qi "branch protection" "$F/pr-comment-26.txt" "$F/issue-comment-36.txt" 2>
 [ "$(grep -c '^notify approve-button' "$F/writes")" = 1 ] && has_w "notify approve-button --repo o/r --pr 25 --head $(sha 25) --source 25 --card PR #25 --title title of PR 25" \
   && ok "gate-exit-7 → one approve-button notify with the gate's arguments" || fail "notify: $(grep '^notify' "$F/writes")"
 
-# ── 6. Đợt sau một đợt đỏ: gom tối đa batch_max/2; đợt xanh trả lại batch_max.
-reset; cfg true 4
+# ── 6. Đợt đỏ không thu nhỏ đợt sau: không còn merge-queue.state, trạng thái cũ còn trên đĩa bị bỏ qua.
+reset; cfg true
 echo '{"last_red":true}' > "$STATE"
 for n in 51 52 53 54; do pr "$n" "issue-$((n + 10))-x" $((60 - n)); approve "$n" OWNER "$(sha "$n")"; issue $((n + 10)); done
-printf 'train-result: 51 deferred\ntrain-result: 52 deferred\ntrain-result: 53 deferred\ntrain-result: 54 deferred\n' > "$F/train.out"   # không đỏ, giữ nhãn
+printf 'train-result: 51 red\ntrain-result: 52 deferred\ntrain-result: 53 deferred\ntrain-result: 54 deferred\n' > "$F/train.out"
 run_q
-grep -q -- "--prs 51:$(sha 51),52:$(sha 52)\$" "$F/calls" && ok "after a red batch: at most batch_max/2 (the 2 oldest of 4)" || fail "halved batch: $(cat "$F/calls")"
-[ "$(jq -r .last_red "$STATE" 2>/dev/null)" = false ] && ok "  … a green batch clears the red mark" || fail "  … state: $(cat "$STATE" 2>/dev/null)"
-: > "$F/calls"; run_q
-grep -q -- "--prs 51:$(sha 51),52:$(sha 52),53:$(sha 53),54:$(sha 54)\$" "$F/calls" && ok "  … and the next batch is full again" || fail "full batch: $(cat "$F/calls")"
+[ "$(calls)" = 4 ] && grep -q -- "--prs 51:$(sha 51)\$" "$F/calls" && grep -q -- "--prs 54:$(sha 54)\$" "$F/calls" && ok "a stale red mark on disk does not hold back any PR (one train each)" || fail "held back: $(cat "$F/calls")"
+[ "$(jq -r .last_red "$STATE" 2>/dev/null)" = true ] && ok "  … and a red PR in the train does not write a new mark (the stale file is untouched)" || fail "  … state rewritten: $(cat "$STATE" 2>/dev/null)"
+: > "$F/calls"; rm -f "$STATE"; run_q
+grep -q -- "--prs 52:" "$F/calls" && [ ! -e "$STATE" ] && ok "  … no merge-queue.state is created" || fail "  … state created: $(cat "$STATE" 2>/dev/null)"
 
 # ── 7. Train exit 79: dừng, đi thẳng lên, không route. Exit 9: route các dòng đã in rồi thoát 9.
 reset; cfg true 6
@@ -333,10 +328,9 @@ run_q; rc=$?
 echo 9 > "$F/train.rc"; : > "$F/writes"
 run_q; rc=$?
 [ "$rc" -eq 9 ] && has_w "card move 11 Done" && ok "train exit 9: merged PRs routed, then exit 9" || fail "9: rc=$rc writes=$(cat "$F/writes")"
-# Train hỏng mà không in kết quả nào (exit 1): không đụng trạng thái đỏ của đợt trước, nói rõ trong log.
-echo '{"last_red":true}' > "$STATE"; : > "$F/train.out"; echo 1 > "$F/train.rc"; : > "$F/writes"; ago 5 > "$F/labeled/1"
+# Train hỏng mà không in kết quả nào (exit 1): nói rõ trong log, không route.
+: > "$F/train.out"; echo 1 > "$F/train.rc"; : > "$F/writes"; ago 5 > "$F/labeled/1"
 run_q; rc=$?
-[ "$(jq -r .last_red "$STATE" 2>/dev/null)" = true ] && ok "train exit 1 with no results: red mark kept" || fail "no results: state $(cat "$STATE")"
 grep -q "no train-result" "$TMP/err" && ok "  … and the log says so" || fail "  … log: $(tail -3 "$TMP/err")"
 [ ! -s "$F/writes" ] && ok "  … nothing routed" || fail "  … writes: $(cat "$F/writes")"
 
@@ -386,7 +380,7 @@ reset; cfg true 6
 pr 5 issue-15-e 5 false MERGED; printf '%s\n' "$(sha 5 c)" > "$F/merged-5"; issue 15
 run_q --dry-run
 [ ! -s "$F/writes" ] && ok "merged recovery: --dry-run writes nothing" || fail "merged recovery dry-run wrote: $(cat "$F/writes")"
-run_q --if-due; rc=$?
+run_q; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 0 ] && ok "merged recovery: exit 0, no train" || fail "merged recovery: rc=$rc calls=$(calls)"
 has_w "issue-close 15" && has_w "card move 15 Done" && has_w "pr-unlabel 5 merge-queue" && ok "merged recovery: issue closed, card Done, label removed" || fail "merged recovery: $(cat "$F/writes")"
 run_q
@@ -397,14 +391,14 @@ grep -q "state merged" "$QUEUE" && ok "header documents the merged recovery" || 
 reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 printf 'train-result: 1 gate-exit-11\ntrain-detail: 1 ac-check: x\n' > "$F/train.out"; echo 11 > "$F/train.rc"
 run_q
-[ "$(jq -r .last_red "$STATE" 2>/dev/null)" = false ] && ok "gate-exit-11 alone: not a red batch (next batch not halved)" || fail "gate-exit-11 red mark: $(cat "$STATE" 2>/dev/null)"
 
 # ── 12. R1 mục 5: queue bị giết giữa đợt (khoá đi theo nó), train mồ côi còn chạy: lượt sau KHÔNG dựng train thứ hai.
 reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 : > "$F/train.hold"; printf 'train-result: 1 merged\n' > "$F/train.out"
 ( cd "$R" && exec bash "$QUEUE" --config "$TMP/cfg.json" ) >"$TMP/out1" 2>"$TMP/err1" & QPID=$!; PIDS="$PIDS $QPID"
 i=0; while [ ! -e "$F/train.started" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-grep -q "^train [0-9][0-9]*$" "$COMMON/super-board/merge-queue.lock.pid" 2>/dev/null && ok "lock.pid records the train pid" || fail "lock.pid: $(cat "$COMMON/super-board/merge-queue.lock.pid" 2>/dev/null)"
+# #676: train chạy nền theo PR, ghi ở merge-queue.inflight (không còn `train <pid>` trong lock.pid).
+grep -q "^1 $(sha 1) issue-11-a [0-9]* [0-9][0-9]* " "$COMMON/super-board/merge-queue.inflight" 2>/dev/null && ok "inflight records the PR's running train" || fail "inflight: $(cat "$COMMON/super-board/merge-queue.inflight" 2>/dev/null)"
 kill -9 "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
 run_q; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "orphan train alive: no second train" || fail "orphan train: rc=$rc calls=$(calls): $(cat "$TMP/err")"
@@ -416,7 +410,8 @@ i=0; while [ "$i" -lt 60 ]; do alive=0; for t in $(cat "$TMP/train.pids" 2>/dev/
 # ── 13. Antigravity audit (A): queue nhận TERM/INT/HUP giữa đợt → chuyển TERM xuống train con rồi thoát (không để train mồ côi).
 reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 : > "$TMP/train.pids"; : > "$F/train.hold"; printf 'train-result: 1 merged\n' > "$F/train.out"
-( cd "$R" && exec bash "$QUEUE" --config "$TMP/cfg.json" ) >"$TMP/out1" 2>"$TMP/err1" & QPID=$!; PIDS="$PIDS $QPID"
+# #676: chỉ lượt --wait chờ train nên chỉ nó chuyển TERM xuống train (lượt thường đã thoát ngay sau khi phóng).
+( cd "$R" && exec bash "$QUEUE" --config "$TMP/cfg.json" --wait ) >"$TMP/out1" 2>"$TMP/err1" & QPID=$!; PIDS="$PIDS $QPID"
 i=0; while [ ! -e "$F/train.started" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 TP=$(head -1 "$TMP/train.pids")
 kill -TERM "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
@@ -470,5 +465,102 @@ PC="$F/pr-comment-5.txt"; IC="$F/issue-comment-15.txt"
 [ -s "$PC" ] && [ "$(wc -c < "$PC")" -lt 65536 ] && [ "$(wc -c < "$IC")" -lt 65536 ] && ok "#470 oversized train-detail: PR and issue comment bodies stay under 65536 chars" || fail "#470 sizes: pr=$(wc -c < "$PC" 2>/dev/null) issue=$(wc -c < "$IC" 2>/dev/null)"
 grep -q "^\[merge-queue\] \[report\] ❌ red · red" "$PC" && grep -q "^FAILED tests/test_first.py::test_red$" "$PC" && ok "  … the verdict line and the red suite line survive" || fail "  … lost lines: $(head -c 400 "$PC")"
 grep -q "^Next: back to Build" "$PC" && ok "  … the trailing Next line survives" || fail "  … no Next line"
+
+# #453: ghi lên GitHub có timeout: gh treo thì gh_w bỏ cuộc sau SB_GH_WRITE_TIMEOUT (mặc định 15 s), hàng đợi không chết và route tiếp.
+reset; cfg true 6; pr 6 issue-16-f 5; approve 6 OWNER "$(sha 6 b)"; issue 16; : > "$F/gh.hang"
+t0=$(date +%s); ( export SB_GH_WRITE_TIMEOUT=1; run_q ); rc=$?; t1=$(date +%s)
+[ "$rc" -eq 0 ] && [ $((t1 - t0)) -lt 20 ] && ok "#453 a hanging gh write is cut by the timeout: exit 0 in $((t1 - t0)) s" || fail "#453 hang: rc=$rc took $((t1 - t0)) s: $(tail -3 "$TMP/err")"
+grep -q "timed out" "$TMP/err" && ok "  … the timeout is logged" || fail "  … no timeout line: $(cat "$TMP/err")"
+grep -q 'SB_GH_WRITE_TIMEOUT:-15' "$QUEUE" && ok "  … default is 15 s" || fail "  … default is not 15 s"
+
+# #605 Lane F: approved-head kèm nguồn duyệt chéo `approved-by: {json}` (reviewer khác builder, 4 trường không rỗng).
+# Body có ngoặc kép nên dựng bằng jq (approve() dùng printf thô).
+approve_body() {   # approve_body <N> <assoc> <body>
+  jq -n --arg a "$2" --arg b "$3" '{comments:[{authorAssociation:$a,body:"[reviewer] [report] ✅ pass"},{authorAssociation:$a,body:$b}]}' > "$F/comments-$1.json"
+}
+by() {   # by <reviewer> <builder> [task_id] [gate_receipt]
+  jq -cn --arg r "$1" --arg b "$2" --arg t "${3-T0605-cross}" --arg g "${4-receipt-1}" '{reviewer:$r,builder:$b,task_id:$t,gate_receipt:$g}'
+}
+# #605 (audit T0066 vòng 2): task_id của approved-by phải có biên bản audit pass của antigravity-pm với auditedHead == head PR
+# (commit có trong repo). PM state giả chỉ trong test này.
+export ANTIGRAVITY_PM_STATE_HOME="$TMP/pm"
+export DEVKIT_PM_HOME_TEST=1   # fixture dưới thư mục tạm (audit T0066 vòng 3: thiếu công tắc thì không tính)
+pm_task() {   # pm_task <task_id> <auditedHead> [verdict]
+  mkdir -p "$TMP/pm/projects/p/tasks/$1"
+  jq -n --arg id "$1" --arg p "$(git -C "$R" rev-parse --show-toplevel)" --arg h "$2" --arg v "${3:-pass}" \
+    '{id:$id,project:$p,verdicts:{audit:{verdict:$v,reviewer:"pm",notes:("fixture\nauditedHead: "+$h)}}}' > "$TMP/pm/projects/p/tasks/$1/task.json"
+}
+git -C "$R" commit -q --allow-empty -m pr1; RH1=$(git -C "$R" rev-parse HEAD)
+git -C "$R" commit -q --allow-empty -m pr11; RH11=$(git -C "$R" rev-parse HEAD)
+git -C "$R" reset -q --hard HEAD~2
+pm_task T0605-cross "$RH1"; pm_task T0611-old "$RH1"; pm_task T0612-failed "$RH11" fail
+reset; cfg true 6
+pr 1 issue-11-a 10 false OPEN "$RH1"; pr 2 issue-12-b 20; pr 3 issue-13-c 30; pr 4 issue-14-d 40; pr 5 issue-15-e 50; pr 6 issue-16-f 60; pr 7 issue-17-g 70; pr 8 issue-18-h 80; pr 9 issue-19-i 90; pr 10 issue-20-j 100
+approve_body 1 COLLABORATOR "approved-head:$RH1
+approved-by: $(by antigravity claude-builder)
+note: } trailing line"
+approve_body 2 MEMBER "approved-head:$(sha 2)
+approved-by: $(by Claude-Builder claude-builder)"
+approve_body 3 MEMBER "approved-head:$(sha 3 b)
+approved-by: $(by antigravity claude-builder)"
+approve 4 OWNER "$(sha 4)"
+approve_body 5 MEMBER "approved-head:$(sha 5)
+approved-by: {not json"
+approve_body 6 MEMBER "approved-head:$(sha 6)
+approved-by: $(by antigravity claude-builder '' receipt-1)"
+jq -n --arg h "$(sha 7)" --arg ok "$(by antigravity claude-builder)" --arg self "$(by claude claude)" \
+  '{comments:[{authorAssociation:"MEMBER",body:("approved-head:"+$h+"\napproved-by: "+$ok)},{authorAssociation:"MEMBER",body:("approved-head:"+$h+"\napproved-by: "+$self)}]}' > "$F/comments-7.json"
+# #605 Lane H: approved-head trơn của MEMBER / COLLABORATOR → loại, đòi approved-by; trường số (không phải chuỗi) → loại.
+approve 8 MEMBER "$(sha 8)"; approve 9 COLLABORATOR "$(sha 9)"
+approve_body 10 MEMBER "approved-head:$(sha 10)
+approved-by: {\"reviewer\":1,\"builder\":2,\"task_id\":3,\"gate_receipt\":4}"
+# audit T0066 vòng 2 (BYPASS-R2-04): task_id tự khai không có biên bản / biên bản cho head khác / verdict fail / sai dạng → loại.
+pr 11 issue-21-k 110 false OPEN "$RH11"; pr 12 issue-22-l 120 false OPEN "$RH11"; pr 13 issue-23-m 130 false OPEN "$RH11"
+pr 14 issue-24-n 140 false OPEN "$RH11"
+approve_body 11 MEMBER "approved-head:$RH11
+approved-by: $(by antigravity claude-builder T0999-forged)"
+approve_body 12 MEMBER "approved-head:$RH11
+approved-by: $(by antigravity claude-builder T0611-old)"
+approve_body 13 MEMBER "approved-head:$RH11
+approved-by: $(by antigravity claude-builder T0612-failed)"
+approve_body 14 MEMBER "approved-head:$RH11
+approved-by: $(by antigravity claude-builder 'issue-605')"
+for k in 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do issue "$k"; done
+: > "$F/train.out"
+( export SB_MERGE_QUEUE=1; run_q --dry-run ); rc=$?
+OUT="$(cat "$TMP/out" "$TMP/err")"
+printf '%s' "$OUT" | grep -q -- "--prs 4:$(sha 4)\$" && printf '%s' "$OUT" | grep -q -- "--prs 1:$RH1\$" && ok "#605 cross-review marker (reviewer≠builder) and bare OWNER approved-head: both queued (one train each)" || fail "#605 batch: rc=$rc $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #2 .*self-review" && ok "#605 reviewer == builder (case-insensitive): rejected as self-review" || fail "#605 self-review not rejected: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #3 .*not the PR head" && ok "#605 marker on another head: rejected" || fail "#605 head mismatch: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #5 .*approved-by" && ok "#605 malformed approved-by: rejected (no fallback to bare)" || fail "#605 malformed: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #6 .*approved-by" && ok "#605 empty task_id: rejected" || fail "#605 empty field: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #7 .*self-review" && ok "#605 newer self-review marker voids an older valid one" || fail "#605 newest wins: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #8 .*approved-by required" && ok "#605 bare approved-head from a MEMBER: rejected (approved-by required)" || fail "#605 bare MEMBER honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #9 .*approved-by required" && ok "#605 bare approved-head from a COLLABORATOR: rejected (approved-by required)" || fail "#605 bare COLLABORATOR honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #10 .*approved-by needs non-empty" && ok "#605 numeric approved-by fields: rejected (strings only)" || fail "#605 numeric fields honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #11 .*audit" && ok "#605 approved-by task_id with no antigravity-pm audit record: rejected" || fail "#605 forged task_id honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #12 .*audit" && ok "#605 approved-by task_id audited on another head: rejected" || fail "#605 replayed task_id honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #13 .*audit" && ok "#605 approved-by task_id whose audit verdict is fail: rejected" || fail "#605 failed audit honoured: $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #14 .*task_id" && ok "#605 approved-by task_id not in the antigravity-pm id shape: rejected" || fail "#605 bad task_id shape honoured: $OUT"
+
+# audit T0066 vòng 3 (finding 2): head PR chưa có object trong repo của board → queue fetch refs/pull/<n>/head rồi mới đối chiếu
+# auditedHead; ref không có ở origin → loại như cũ.
+O="$TMP/origin.git"; W="$TMP/work"
+git init -q --bare "$O"; git init -q -b main "$W"
+git -C "$W" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m pr15; RH15=$(git -C "$W" rev-parse HEAD)
+git -C "$W" push -q "$O" HEAD:refs/pull/15/head
+git -C "$R" remote add origin "$O" 2>/dev/null || git -C "$R" remote set-url origin "$O"
+pm_task T0615-fetch "$RH15"; pm_task T0616-nofetch "$(sha 16 d)"
+reset; cfg true 6
+pr 15 issue-25-o 10 false OPEN "$RH15"; pr 16 issue-26-p 20 false OPEN "$(sha 16 d)"
+approve_body 15 MEMBER "approved-head:$RH15
+approved-by: $(by antigravity claude-builder T0615-fetch)"
+approve_body 16 MEMBER "approved-head:$(sha 16 d)
+approved-by: $(by antigravity claude-builder T0616-nofetch)"
+issue 25; issue 26
+( export SB_MERGE_QUEUE=1; run_q --dry-run ); rc=$?
+OUT="$(cat "$TMP/out" "$TMP/err")"
+printf '%s' "$OUT" | grep -q -- "--prs 15:$RH15\$" && ok "#605 PR head missing locally: fetched from refs/pull/15/head, audit pass honoured" || fail "#605 fetch-when-missing: rc=$rc $OUT"
+printf '%s' "$OUT" | grep -q "drop PR #16 .*audit" && ok "#605 PR head not on origin either: rejected" || fail "#605 unfetchable head: $OUT"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_queue: all passed" || { echo "❌ test_merge_queue: $FAILS failed"; exit 1; }

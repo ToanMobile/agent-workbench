@@ -34,7 +34,7 @@ scripts/governance/fold_agent_file.py   tests/installer/test_uninstall.sh tests/
 scripts/governance/devkit_i18n.py   tests/installer/test_i18n_profiles.sh
 # 23/10 (T0052): bin/capacity.py cho mặc định của heavy_slot.py (ngưỡng tải, trần suite nặng), post-fix-gate.py (nhóm suite song song) và
 # lane_plan.py (trần lane); test của các file đó chạy qua mặc định ấy mà không gọi tên capacity.py.
-bin/capacity.py   tests/gates/test_capacity.sh tests/gates/test_heavy_slot_cap.sh tests/gates/test_gate_slot_classes.sh tests/gates/test_gate_parallel_suites.sh tests/gates/test_lane_plan.sh
+bin/capacity.py   tests/gates/test_capacity.sh tests/gates/test_heavy_slot_cap.sh tests/gates/test_gate_slot_classes.sh tests/gates/test_gate_parallel_suites.sh tests/gates/test_lane_plan.sh tests/gates/test_hook_contract_watchdog_env.sh
 # 25/10 (audit B6): run_impacted.sh khớp stem (tên bỏ đuôi) như một từ CHỈ cho file code; tài liệu dưới đây trước đó chỉ tới được người đọc
 # thật của nó qua stem (chữ thường: "fix", "hooks", "profile"…). Người đọc thật: cài đặt / profile / health / gỡ cài đặt đọc file đó.
 # commands/: bin/install.sh nối lệnh của kit vào .claude/commands; các test này liệt kê / so khớp commands/ của kit (repo consistency luôn chạy).
@@ -57,3 +57,6 @@ templates/regression_matrix.json   tests/installer/test_agent_health.sh tests/in
 skills/*/evals/*   tests/verification/test_skill_eval.sh
 # 28/10 (#545): test_skill_size.sh scans every skills/*/SKILL.md and .claude/skills/*/SKILL.md for the 20000-character cap without naming them.
 skills/*/SKILL.md   tests/verification/test_skill_size.sh
+# 30/10 (#685): tests/lib/case_runner.pl và watchdog_env.py chạy qua tests/lib/case_runner.sh (hook_contract_test.sh source nó) mà không được gọi tên trong file test.
+tests/lib/case_runner.pl   hooks/tests/hook_contract_test.sh tests/gates/test_hook_contract_watchdog_env.sh
+tests/lib/watchdog_env.py   hooks/tests/hook_contract_test.sh tests/gates/test_hook_contract_watchdog_env.sh

@@ -116,12 +116,12 @@ else
   fail "3: Not approved after content restored. Out: $out"
 fi
 
-# 4. Agent auto-approve
+# 4. #605: --auto-approve-tests là agent tự duyệt -> bị từ chối, không duyệt (trước: in "agent tự duyệt" và duyệt)
 out="$(run_gate --auto-approve-tests)"
-if printf '%s' "$out" | grep -q 'agent tự duyệt'; then
-  ok "4: Agent approval with --auto-approve-tests shows Tự động duyệt"
+if printf '%s' "$out" | grep -q 'tự duyệt bị từ chối' && ! printf '%s' "$out" | grep -q 'agent tự duyệt\|duyệt chéo bởi'; then
+  ok "4: --auto-approve-tests is refused (self-approval) and approves nothing"
 else
-  fail "4: Agent approval --auto-approve-tests failed. Out: $out"
+  fail "4: --auto-approve-tests was not refused. Out: $out"
 fi
 
 # 5. Corrupted state file
@@ -187,13 +187,13 @@ else
   fail "7.0: Hash match exempted missing user approval! Out: $out"
 fi
 
-# 7.1 Agent approval present but no user approval
+# 7.1 #605: an agent's AUTO-APPROVE marker (self-approval) never approves, even when the hash matches
 agent_approval "$TR" "tests/test_old.sh" 0
 touch "$TR"; out="$(run_gate)"
-if printf '%s' "$out" | grep -q 'agent tự duyệt'; then
-  ok "7.1: Agent approval is used when user approval is missing, even if hash matches"
+if printf '%s' "$out" | grep -q 'agent tự duyệt\|người dùng đã duyệt\|duyệt chéo bởi'; then
+  fail "7.1: the agent's own AUTO-APPROVE marker approved the test. Out: $out"
 else
-  fail "7.1: Agent approval not respected or showed user approval. Out: $out"
+  ok "7.1: the agent's own AUTO-APPROVE marker does not approve (#605)"
 fi
 
 # 7.2 Agent approval in a CLAUDE CODE transcript (2026-10-13). Claude writes the reply under message.content (a list of parts), never a
@@ -214,7 +214,7 @@ PY
 }
 not_approved() {   # not_approved <case> <what>
   touch "$TR"; out="$(run_gate)"
-  if printf '%s' "$out" | grep -q 'agent tự duyệt\|người dùng đã duyệt'; then fail "$1: $2 approved the test. Out: $out"
+  if printf '%s' "$out" | grep -q 'agent tự duyệt\|người dùng đã duyệt\|duyệt chéo bởi'; then fail "$1: $2 approved the test. Out: $out"
   elif printf '%s' "$out" | grep -q 'Traceback'; then fail "$1: traceback. Out: $out"
   else ok "$1: $2 does not approve"; fi
 }
@@ -234,13 +234,7 @@ claude_recs "$TMP/tr/other-session.jsonl" '[{"type": "assistant", "timestamp": "
 not_approved 7.2g "another session's marker"
 rm -f "$TMP/tr/other-session.jsonl"
 claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "Diff chỉ thêm kiểm tra, không nới assertion.\nAUTO-APPROVE: tests/test_old.sh"}]}}]'
-touch "$TR"; out="$(run_gate)"
-if printf '%s' "$out" | grep -q 'agent tự duyệt'; then
-  ok "7.2b: an AUTO-APPROVE line in this session's Claude Code reply is read"
-else
-  fail "7.2b: the AUTO-APPROVE line in a Claude Code reply was not read. Out: $out"
-fi
-if printf '%s' "$out" | grep -q 'người dùng đã duyệt'; then fail "7.2c: the agent's reply became the user's approval"; else ok "7.2c: and it is never the user's approval"; fi
+not_approved 7.2b "#605: an AUTO-APPROVE line in this session's own Claude Code reply (self-approval)"
 
 # 7.3 The top-level "content" path (Antigravity logs; issue #11, 2026-10-13 review of cd0fb04). Claude Code writes `queue-operation`
 # records with a top-level "content" (messages from other sessions, task notifications, queued user prompts): one that said "…tôi không
@@ -266,14 +260,10 @@ not_approved 7.3g "an Antigravity log of another project"
 claude_recs "$AGY/transcript.jsonl" "[{\"type\": \"PLANNER_RESPONSE\", \"created_at\": \"TS\", \"content\": \"Workspace $B\nAUTO-APPROVE: tests/test_old.sh\"}]"
 not_approved 7.4j "a RELATIVE path in an Antigravity log (it covers many projects: only an absolute path names this one)"
 claude_recs "$AGY/transcript.jsonl" "[{\"type\": \"PLANNER_RESPONSE\", \"created_at\": \"TS\", \"content\": \"Workspace $B\nAUTO-APPROVE: $B/tests/test_old.sh\"}]"
-touch "$TR"; out="$(run_gate)"
-if printf '%s' "$out" | grep -q 'agent tự duyệt'; then ok "7.3h: an Antigravity PLANNER_RESPONSE marker with this project's absolute path approves"
-else fail "7.3h: Antigravity's marker for this project was not read. Out: $out"; fi
+not_approved 7.3h "#605: an Antigravity PLANNER_RESPONSE marker with this project's absolute path (an agent's own line, not a cross-review entry)"
 rm -rf "$HOME/.gemini/antigravity/brain/conv-other"
 claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "AUTO-APPROVE: tests/test_old.sh, tests/other.sh"}]}}]'
-touch "$TR"; out="$(run_gate)"
-if printf '%s' "$out" | grep -q 'agent tự duyệt'; then ok "7.3i: a marker listing this test among others approves it"
-else fail "7.3i: a marker listing the test was not matched. Out: $out"; fi
+not_approved 7.3i "#605: a marker listing this test among others"
 
 # 7.4 Review of W1 step -1 (13/10 night). The Antigravity user-answer branch ("A1: Duyệt …", counted as the USER's approval) took any
 # record: a queue-operation of another session or another project's Antigravity log approved the test as the user (P1, older than this
@@ -307,15 +297,11 @@ not_approved 7.4l "a marker after an unclosed fence"
 claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "Trích:\n````\n```\nAUTO-APPROVE: tests/test_old.sh\n```\n````"}]}}]'
 not_approved 7.4m "a marker inside a triple-backtick block nested in a 4-backtick fence"
 claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "```x``` là ví dụ inline\nAUTO-APPROVE: tests/test_old.sh"}]}}]'
-touch "$TR"; out="$(run_gate)"
-if printf '%s' "$out" | grep -q 'agent tự duyệt'; then ok "7.4n: an inline triple-backtick span at a line start does not swallow the real marker after it"
-else fail "7.4n: the real marker after an inline triple-backtick span was dropped. Out: $out"; fi
+not_approved 7.4n "#605: a real marker after an inline triple-backtick span"
 claude_recs "$TR" '[{"type": "assistant", "timestamp": "TS", "message": {"role": "assistant", "content": [{"type": "text", "text": "AUTO-APPROVE: ../tests/test_old.sh /Volumes/Other/repo/tests/test_old.sh test_old.sh"}]}}]'
 not_approved 7.4g "../, another repo's absolute path or a bare file name"
 claude_recs "$TR" "[{\"type\": \"assistant\", \"timestamp\": \"TS\", \"message\": {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"SHA256: abc\nAUTO-APPROVE: \`$B/tests/test_old.sh\`.\"}]}}]"
-touch "$TR"; out="$(run_gate)"
-if printf '%s' "$out" | grep -q 'agent tự duyệt'; then ok "7.4h: a marker with this repo's absolute path in backticks approves, next to a 'SHA256:' line"
-else fail "7.4h: the marker next to 'SHA256:' was not read. Out: $out"; fi
+not_approved 7.4h "#605: a marker with this repo's absolute path in backticks"
 
 [ $FAILS -eq 0 ] && echo "ALL OK" && exit 0 || { echo "$FAILS FAILED"; exit 1; }
 

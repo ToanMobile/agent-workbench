@@ -74,6 +74,11 @@ if [ "\$pre" = 0 ] && [ "\$dry" = 0 ] && [ -f "\$FAKE_DIR/gatered\$n" ]; then
   printf 'gate verify line %s\n' 1 2 3 >&2; echo "[merge-gate #\$n] verify failed (exit 1)" >&2
   exit 11
 fi
+# gateslow<N>: #453 — gate in một dòng stderr rồi chờ file gateslow<N>.release trong thư mục test (preflight): dòng đó phải ra stderr của train NGAY, không sau khi gate xong.
+if [ "\$pre" = 1 ] && [ -f "\$FAKE_DIR/gateslow\$n" ]; then
+  echo "slow gate progress line" >&2; : > "\$FAKE_DIR/gateslow\$n.started"
+  i=0; while [ ! -e "\$FAKE_DIR/gateslow\$n.release" ] && [ "\$i" -lt 300 ]; do sleep 0.1; i=\$((i + 1)); done
+fi
 if [ "\$pre" = 1 ]; then
   # Hợp đồng lane E: qua preflight = exit 0 + dòng "preflight: ok"; exit 0 không có dòng đó = PR đã MERGED.
   [ -f "\$FAKE_DIR/preflight\$n.out" ] && cat "\$FAKE_DIR/preflight\$n.out"
@@ -305,7 +310,7 @@ card_branch 49 f49; printf '7\n' > "$TMP/preflight49.rc"
 CFG_Q="$TMP/cfg-q.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"worker_backend":"claude-p","merge_queue":{"enabled":true},"verify_commands":["true"]}\n' > "$CFG_Q"
 CFG_QW="$TMP/cfg-qw.json"
-printf '{"base_branch":"main","repo":{"path":".","remote":""},"worker_backend":"workflow","merge_queue":{"enabled":true},"verify_commands":["true"]}\n' > "$CFG_QW"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"worker_backend":"codex","merge_queue":{"enabled":true},"verify_commands":["true"]}\n' > "$CFG_QW"
 reset_run
 ( cd "$W/review" && SB_BOARD_WORKER=1 bash "$TRAIN" --config "$CFG_Q" --prs 49 ) >"$TMP/t19.log" 2>&1; rc=$?
 [ "$rc" -eq 13 ] && grep -q "^merge-queue: label the PR merge-queue instead of calling the gate directly$" "$TMP/t19.log" && [ ! -s "$TMP/gate.calls" ] \
@@ -315,7 +320,13 @@ reset_run
 [ "$rc" -eq 7 ] && ok "F4: SB_MERGE_CALLER=queue runs (preflight exit 7 here)" || fail "F4 queue caller: exit $rc: $(tail -3 "$TMP/t20.log")"
 reset_run
 ( cd "$W/review" && SB_BOARD_WORKER=1 bash "$TRAIN" --config "$CFG_QW" --prs 49 ) >"$TMP/t21.log" 2>&1; rc=$?
-[ "$rc" -eq 7 ] && ok "F4: worker_backend workflow = queue off, the train runs" || fail "F4 workflow backend: exit $rc"
+[ "$rc" -eq 7 ] && ok "F4: worker_backend codex = queue off, the train runs" || fail "F4 codex backend: exit $rc"
+CFG_QF="$TMP/cfg-qf.json"
+printf '{"base_branch":"main","repo":{"path":".","remote":""},"worker_backend":"workflow","merge_queue":{"enabled":true},"verify_commands":["true"]}\n' > "$CFG_QF"
+reset_run
+( cd "$W/review" && SB_BOARD_WORKER=1 bash "$TRAIN" --config "$CFG_QF" --prs 49 ) >"$TMP/t21w.log" 2>&1; rc=$?
+[ "$rc" -eq 13 ] && grep -q "^merge-queue: label the PR merge-queue instead of calling the gate directly$" "$TMP/t21w.log" && [ ! -s "$TMP/gate.calls" ] \
+  && ok "F4: worker_backend workflow = queue on (#453) → exit 13, no gate call" || fail "F4 workflow backend: exit $rc: $(tail -3 "$TMP/t21w.log")"
 reset_run
 ( cd "$W/review" && SB_BOARD_WORKER=1 SB_MERGE_QUEUE=0 bash "$TRAIN" --config "$CFG_Q" --prs 49 ) >"$TMP/t22.log" 2>&1; rc=$?
 [ "$rc" -eq 7 ] && ok "F4: SB_MERGE_QUEUE=0 = queue off, the train runs" || fail "F4 SB_MERGE_QUEUE=0: exit $rc"
@@ -343,28 +354,46 @@ reset_run
   && ok "branch gone from origin: every PR still gets a train-result (exit $rc), #53 merged" || fail "branch gone: exit $rc: $(grep train- "$TMP/t25.log") $(tail -3 "$TMP/t25.log")"
 rm -f "$TMP/preflight51.rc"
 
-# ── 18. Antigravity audit (A): train giữ fcntl LOCK_EX trên <common>/super-board/merge-train.lock cả lượt; train thứ hai → exit 4, không
-#    train-result, 0 lời gọi gate cho #55 (các assert dưới kiểm). Ca cuối: train bị kill -9 giữa verify (verify mồ côi còn chạy) → train sau
-#    vẫn lấy được khoá.
+# ── 18. #676 (thay Antigravity audit A): khoá theo PR — claim <common>/super-board/merge-train.claim.<PR>. Train #54 đang giữ verify:
+#    train #55 (PR khác) chạy song song và merge; train thứ hai cùng #54 → exit 4, không train-result, 0 lời gọi gate cho #54. Train #54
+#    bị kill -9 giữa verify (claim còn pid chết) → train sau reap claim và chạy được.
 card_branch 54 f54; card_branch 55 f55
 CFG_HOLD="$TMP/cfg-hold.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["if [ -e %s/hold ] && [ ! -e %s/hold.started ]; then : > %s/hold.started; while [ -e %s/hold ]; do sleep 0.1; done; fi"]}\n' "$TMP" "$TMP" "$TMP" "$TMP" > "$CFG_HOLD"
 reset_run; rm -f "$TMP/hold.started"; : > "$TMP/hold"
 ( cd "$W/review" && exec bash "$TRAIN" --config "$CFG_HOLD" --prs 54 ) >"$TMP/t26a.log" 2>&1 & T1=$!
 i=0; while [ ! -e "$TMP/hold.started" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+[ -e "$TMP/hold.started" ] && [ -d "$R/.git/super-board/merge-train.claim.54" ] && ok "#54's train is inside its verify and holds its claim" \
+  || fail "#54's train never reached its verify: $(tail -3 "$TMP/t26a.log")"
 ( cd "$W/review" && bash "$TRAIN" --config "$CFG_HOLD" --prs 55 ) >"$TMP/t26b.log" 2>&1; rc=$?
-[ "$rc" -eq 4 ] && ! grep -q "^train-result:" "$TMP/t26b.log" && ! grep -q -- "--pr 55" "$TMP/gate.calls" 2>/dev/null \
-  && ok "second train while one runs: exit 4, no train-result, no gate call" || fail "second train: exit $rc: $(tail -3 "$TMP/t26b.log")"
+[ "$rc" -eq 0 ] && grep -q "^train-result: 55 merged$" "$TMP/t26b.log" && kill -0 "$T1" 2>/dev/null \
+  && ok "train on another PR while #54's train holds its verify: runs in parallel and merges" || fail "parallel train #55: exit $rc: $(tail -3 "$TMP/t26b.log")"
+: > "$TMP/gate.calls"
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_HOLD" --prs 54 ) >"$TMP/t26c.log" 2>&1; rc=$?
+[ "$rc" -eq 4 ] && ! grep -q "^train-result:" "$TMP/t26c.log" && ! grep -q -- "--pr 54" "$TMP/gate.calls" 2>/dev/null \
+  && ok "second train on the same PR: exit 4, no train-result, no gate call" || fail "same-PR train: exit $rc: $(tail -3 "$TMP/t26c.log")"
 kill -9 "$T1" 2>/dev/null; wait "$T1" 2>/dev/null
-( cd "$W/review" && bash "$TRAIN" --config "$CFG_HOLD" --prs 55 ) >"$TMP/t26c.log" 2>&1; rc=$?
-[ "$rc" -eq 0 ] && grep -q "^train-result: 55 merged$" "$TMP/t26c.log" && ok "train killed mid-verify: its orphan verify does not hold the lock" || fail "after kill -9: exit $rc: $(tail -3 "$TMP/t26c.log")"
+[ -d "$R/.git/super-board/merge-train.claim.54" ] && ok "  … kill -9 leaves #54's claim behind (dead pid)" || fail "  … no claim left after kill -9"
 rm -f "$TMP/hold"
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_HOLD" --prs 54 ) >"$TMP/t26d.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "^train-result: 54 merged$" "$TMP/t26d.log" && ok "train killed mid-verify: its dead claim is reaped, the next train runs" || fail "after kill -9: exit $rc: $(tail -3 "$TMP/t26d.log")"
+[ ! -e "$R/.git/super-board/merge-train.claim.54" ] && [ ! -e "$R/.git/super-board/merge-train.claim.55" ] && ok "  … claims removed when the trains exit" || fail "  … claims left: $(ls "$R/.git/super-board/")"
 
 # ── 12. #288: ghi chú ponytail đầu file mô tả đúng hành vi: PR bị gate chặn đã ra khỏi chuỗi trước khi verify (R11), không "vẫn nằm trong chuỗi".
 grep -q "vẫn nằm trong chuỗi verify" "$TRAIN" && fail "the ponytail note at the top still says a gate-blocked PR stays in the verify chain" \
   || ok "ponytail note matches R11 (blocked PRs leave the chain before verify)"
 
-# ── 13. #579: verify_timed_out chạy dưới `set -euo pipefail` của train; log lớn (> bộ đệm pipe) làm `grep -q` thoát sớm → printf SIGPIPE → 141.
+# ── 13. #453: stderr của gate ra stderr của train ngay khi gate in (log runner không mất tiến độ), không chỉ sau khi gate xong.
+card_branch 90 s90; : > "$TMP/gateslow90"; reset_run; rm -f "$TMP/gateslow90.started" "$TMP/gateslow90.release"
+( cd "$W/review" && bash "$TRAIN" --config "$CFG" --prs 90 ) >"$TMP/t90.log" 2>"$TMP/t90.err" &
+TPID=$!
+i=0; while [ ! -e "$TMP/gateslow90.started" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+i=0; while ! grep -q "slow gate progress line" "$TMP/t90.err" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+grep -q "slow gate progress line" "$TMP/t90.err" && ok "gate stderr reaches the train's stderr while the gate still runs" || fail "gate stderr held back until the gate exits: $(cat "$TMP/t90.err")"
+: > "$TMP/gateslow90.release"; wait "$TPID" 2>/dev/null
+[ "$(grep -c "slow gate progress line" "$TMP/t90.err")" = 1 ] && ok "  … printed once (not again after the gate)" || fail "  … duplicated: $(grep -c "slow gate progress line" "$TMP/t90.err")"
+
+# ── 14. #579: verify_timed_out chạy dưới `set -euo pipefail` của train; log lớn (> bộ đệm pipe) làm `grep -q` thoát sớm → printf SIGPIPE → 141.
 #    Hàm được trích nguyên văn từ script rồi chạy dưới pipefail, VLOG > 128 KB, dòng kết luận ở đầu log.
 VT_FN="$TMP/verify_timed_out.fn"
 awk '/^verify_timed_out\(\) [{(]/ { on = 1 } on { print } on && /^[})]/ { exit }' "$TRAIN" > "$VT_FN"
@@ -378,11 +407,13 @@ vt_log "$TMP/vt1.log" 'KẾT LUẬN: đỏ\n  [ ] TIMEOUT | suite-a\n  [ ] TIMEO
 vt_log "$TMP/vt2.log" 'KẾT LUẬN: đỏ\n  [ ] TIMEOUT | suite-a\n  [ ] FAIL | suite-b\n'
 vt_log "$TMP/vt3.log" 'chạy lệnh khác\nTIMEOUT after 900s\n'
 vt_log "$TMP/vt4.log" 'chạy lệnh khác\nlỗi thật\n'
+vt_log "$TMP/vt5.log" 'KẾT LUẬN: đỏ\n  [ ] TIMEOUT (HANG) | REG-DK-ALL-GATES-01\n  [ ] TIMEOUT | REG-DK-ALL-REST-01\n'
 [ "$(vt_run "$TMP/vt1.log" 1)" -eq 0 ] && ok "big VLOG, KẾT LUẬN + only TIMEOUT suites → timed out (0)" || fail "big VLOG all-TIMEOUT: want 0"
 grep -q "Broken pipe" "$TMP/vt.err" && fail "verify_timed_out printed 'Broken pipe'" || ok "no 'Broken pipe' on a big VLOG"
 [ "$(vt_run "$TMP/vt2.log" 1)" -ne 0 ] && ok "big VLOG, KẾT LUẬN + a FAIL suite → real red (non-zero)" || fail "big VLOG with FAIL suite: want non-zero"
 [ "$(vt_run "$TMP/vt3.log" 1)" -eq 0 ] && ok "big VLOG, no KẾT LUẬN, 'TIMEOUT after' → timed out (0)" || fail "big VLOG 'TIMEOUT after': want 0"
 [ "$(vt_run "$TMP/vt4.log" 1)" -ne 0 ] && ok "big VLOG, no KẾT LUẬN, no timeout text → non-zero" || fail "big VLOG plain red: want non-zero"
+[ "$(vt_run "$TMP/vt5.log" 1)" -eq 0 ] && ok "#616: KẾT LUẬN + TIMEOUT (HANG) và TIMEOUT thường → timed out (0)" || fail "#616: TIMEOUT (HANG) suite: want 0"
 [ "$(vt_run "$TMP/vt4.log" 124)" -eq 0 ] && ok "rc=124 → timed out (0)" || fail "rc 124: want 0"
 
 [ "$FAILS" -eq 0 ] && echo "✅ test_merge_train: all passed" || { echo "❌ test_merge_train: $FAILS failed"; exit 1; }
