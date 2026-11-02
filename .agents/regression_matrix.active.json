@@ -2936,6 +2936,29 @@
       ]
     },
     {
+      "component": "merge-gate-conflicting-precheck",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_conflicting_precheck.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_merge_queue_gate_exit_14.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-CONFLICTING-01",
+          "name": "#881 #883 #885 (02/11): driver gộp chỉ có ở local (merge=union, devkit-matrix) ⇒ scratch sạch nhưng GitHub CONFLICTING; merge gate đọc mergeable trong khoá trước verify: CONFLICTING (cả sau UNKNOWN) ⇒ exit 14, không verify, không gh pr merge, câu báo gộp origin/main + push + --expect-head mới, khoá được thả; MERGEABLE, UNKNOWN rồi MERGEABLE, UNKNOWN mãi (đọc lại có giới hạn) và lỗi đọc ⇒ verify + merge như cũ, không halt",
+          "command": "bash tests/super-board/test_merge_gate_conflicting_precheck.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-QUEUE-EXIT14-01",
+          "name": "PR #893: train in gate-exit-14 (GitHub CONFLICTING, cả ở --preflight) ⇒ merge queue route như xung đột: thẻ về Ready + loop:rebase, gỡ nhãn merge-queue, comment PR và thẻ ghi GitHub CONFLICTING; không tính lần thử lại, không Blocked",
+          "command": "bash tests/super-board/test_merge_queue_gate_exit_14.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "merge-policy-diff-paths-742-split-a3",
       "watch_files": [
         ".claude/bin/super-board-merge-policy.py",
