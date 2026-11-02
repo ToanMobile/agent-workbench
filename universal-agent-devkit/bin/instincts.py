@@ -284,7 +284,8 @@ def cmd_promote(args) -> int:
                     continue
                     
                 if not args.dry_run:
-                    inst_id = next_id(profile_text)
+                    parch = profile_file.with_name("instincts-archive.md")   # id đã chuyển sang archive vẫn bị chiếm (như append_lesson)
+                    inst_id = next_id(profile_text + (parch.read_text(encoding="utf-8") if parch.is_file() else ""))
                     clean_chunk = chunk.lstrip("-").lstrip()
                     new_entry = re.sub(r'^###\s+\[INSTINCT-[^\]]+\]', f'### [{inst_id}]', clean_chunk, count=1, flags=re.MULTILINE)
                     pf.seek(0, 2)
@@ -396,9 +397,19 @@ def cmd_archive(args) -> int:
                 head = "" if af.read() else ARCHIVE_HEADER
                 af.write(head + "".join("\n---\n\n" + SEPARATOR_TAIL.sub("", chunk).rstrip() + "\n" for _, chunk in stale))
             kept = "".join(c for c, i in _entry_chunks(locked) if i not in moved)
+            # các mục giữ lại không nằm trong archive: giữ bản sao đã fsync của nội dung cũ tới khi bản viết lại đã xuống đĩa, để
+            # chết giữa truncate() và write() không mất gì (không thay file: người ghi khác khoá đúng inode của nó)
+            backup = target.with_name(target.name + ".archive-bak")
+            with open(backup, "w", encoding="utf-8") as bf:
+                bf.write(locked)
+                bf.flush()
+                os.fsync(bf.fileno())
             f.seek(0)
             f.truncate()
             f.write(SEPARATOR_TAIL.sub("\n", kept) if SEPARATOR_TAIL.search(kept) else kept)
+            f.flush()
+            os.fsync(f.fileno())
+            backup.unlink()
     except OSError as e:
         print(f"✖ {e}", file=sys.stderr)
         return 2
