@@ -127,7 +127,7 @@ test('Xoay vong 6 profile tuan tu va bo qua tai khoan dang dong bang 5h', () => 
   }
 });
 
-test('Telegram config luu an toan, mask secret va xu ly lenh dieu khien tu xa (/status, /switch, /cooldown)', async () => {
+test('Telegram config luu an toan, mask secret; lenh /status, /switch, /cooldown chi tra link bang dieu khien web', async () => {
   const tmp = createTempEnv();
   try {
     const sampleKey = ['123456789', 'AAH_test_key_value_987654321'].join(':');
@@ -140,16 +140,12 @@ test('Telegram config luu an toan, mask secret va xu ly lenh dieu khien tu xa (/
     assert.ok(!masked.includes('AAH_test_key_value_987654321'));
     assert.ok(masked.includes('***REDACTED***'));
 
-    const statusReply = await handleTelegramCommand('/status', { stateDir: tmp.dir });
-    assert.match(statusReply, /FinOS/);
-    assert.match(statusReply, /Antigravity Ultra/);
-
-    const switchReply = await handleTelegramCommand('/switch 4', { stateDir: tmp.dir });
-    assert.match(switchReply, /Antigravity Ultra/);
-    assert.equal(getStatusReport({ stateDir: tmp.dir }).activeProfileId, 'antigravity');
-
-    const cdReply = await handleTelegramCommand('/cooldown 15', { stateDir: tmp.dir });
-    assert.match(cdReply, /15/);
+    // Bang dieu khien da chuyen sang web: lenh Telegram chi tra link, khong doi tai khoan hay cooldown
+    for (const cmd of ['/status', '/switch 4', '/cooldown 15']) {
+      const reply = await handleTelegramCommand(cmd, { stateDir: tmp.dir });
+      assert.match(reply, /ai-factory\.localhost:4317\/cc-switcher/);
+    }
+    assert.equal(getStatusReport({ stateDir: tmp.dir }).activeProfileId, 'finos');
   } finally {
     tmp.cleanup();
   }
