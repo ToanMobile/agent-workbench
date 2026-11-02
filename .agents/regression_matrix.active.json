@@ -2991,6 +2991,23 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-suite-cache-selection-inputs",
+      "watch_files": [
+        "universal-agent-devkit/bin/suite_cache.py",
+        "universal-agent-devkit/bin/scoped_gate.py",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "universal-agent-devkit/tests/gates/test_gate_suite_cache_selection_inputs.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SUITE-CACHE-SEL-INPUTS-851-01",
+          "name": "#851: suite run_impacted.sh có dấu devkit-selection-inputs khoá chính xác theo input của tập chọn (đồ thị scoped_gate, symlink kit, dữ liệu code nhắc, công cụ và đích ngoài cây của tập chọn, bỏ DEVKIT_SCOPED_TESTS); test quét cả kit (devkit-selection-tree) trong tập ⇒ chỉ khoá cả cây; merge gate H+main dùng lại shard khi main đổi file ngoài input",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_suite_cache_selection_inputs.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
