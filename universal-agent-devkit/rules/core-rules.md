@@ -194,3 +194,44 @@ Mọi phương án kỹ thuật và kết quả nghiệm thu BẮT BUỘC đối
 ### Quy Chuẩn Điểm Đánh Giá & Hiển Thị Nghiệm Thu (Thang Điểm 100):
 - **Chấm điểm Agent (Agent Quality Score /100):** Mỗi Agent được chấm điểm độc lập trên thang 100 dựa trên mức độ đáp ứng 7 tiêu chuẩn vàng. Điều kiện để nghiệm thu bàn giao: Cả hai Agent đều phải đạt $\ge 95/100$, không có bất kỳ tiêu chuẩn nào dưới 90 điểm. Điểm đồng thuận = trung bình cộng của hai Agent.
 - **Ảnh nghiệm thu tinh gọn:** Nhúng đúng 1 dòng ảnh hiển thị trực tiếp (không lặp path): `![Ảnh nghiệm thu](reports/proof-<stamp>.png)`.
+
+## 19. Gate, proof and Git mechanics (moved from the essentials, 2026-11-02)
+The essentials keep the obligation; this section keeps how the tools carry it out.
+- **Step 3 scope**: `bin/scoped_gate.py` maps the branch's diff since the trunk to its tests through the import graph, plus the
+  fixed smoke group; never `--full` (#741): a `.agents/gate-core.txt` file runs the tests that reach it (`core-touched`), a file
+  no test reaches or a graph error adds `[core-smoke]`. The merge queue / train runs one `--scoped` for the union of the batch's
+  diffs; push and XONG accept its receipt for that tree. The `gate-full` skill runs `--full` on main every night at 00:00
+  (launchd) and bisects a red one into a P1 card.
+- **Step 3 cache**: a suite whose content key (its inputs + environment, `bin/suite_cache.py`, shared by every worktree) already
+  PASSed is reused, the rest run; Gradle/Unity/device suites, network commands and `"cache": false` always run; `--no-cache` runs
+  them all. A later gate run on the same tree, mode and suite list reuses `<git-dir>/postfix-gate/rerun_skip.json` and returns 0
+  without the test lock, unless `--force`, `--no-cache` or `DEVKIT_GATE_CACHE=0`.
+- **Step 3 load**: suites run by machine load (`bin/heavy_slot.py`): under a 1-minute load of 8 × cores (`bin/capacity.py`;
+  `DEVKIT_SLOT_LOAD_MAX` / `DEVKIT_CAPACITY` override) they start at once, above it they wait up to 600 s and run anyway; only
+  Unity and device suites hold an exclusive lock.
+- **Step 4 waiver**: the profile was backend when the turn started (committed, or an uncommitted profile file written before the
+  turn), or every file changed since HEAD at the turn start (commits, merges, pulls included; new files too) is under a
+  top-level `.agents/ .claude/ .gemini/ .github/ .githooks/ .codebase-memory/ docs/ reports/ scripts/ bin/ tools/`, a top-level
+  test folder (`tests/`, `*Tests/`), a `src/<test source set>/`, a `*.log` file anywhere, or is Markdown / LICENSE-type at the
+  root (on a web profile `docs/` counts as the site). `hooks/proof_gate.sh` applies the same rule (`bin/tree_fp.py`).
+- **Step 4 proofs**: cite only this turn's proofs: every cited PNG is checked (stamp in its name from this turn, not a byte copy
+  of another proof; real PNG larger than 8 KB, mtime in this turn). A UI change committed in an earlier turn is that turn's proof
+  to attach; a later turn that only touches tests is not asked again.
+- **Step 4 device**: `proof-capture.py` checks `adb devices` first. A declared serial is used only when its state is `device`
+  and it is not on the denylist. If that serial is offline, or no allowed device is online, it starts the AVD in
+  `.antigravity-pm.json` (`proof.providers.<name>.avd`); with no avd name it starts the phone AVD on an android profile, or the
+  existing CarConnect AVD on an automotive profile, waits for `sys.boot_completed=1`, and writes
+  `reports/proof-<yyyyMMdd-HHmmss>.png`. It does not screencap a dead address and does not substitute another plugged-in phone.
+- **UI files** (Zero-Slop applies): `*.kt`/`*.java`/`*.xml`, `*.swift`, `*.dart`, `*.tsx`/`*.jsx`/`*.vue`/`*.css`, `*.prefab`,
+  `*UI*.cs`.
+- **Git**: a finished task means the task receipt of step 3, the proof when required and the acceptance report. On a PR branch
+  re-run `post-fix-gate.py --run-tests --scoped` after any pull, merge or conflict fix. A trunk-push repo pushes main only
+  through `agent-kit integrate` (one `--scoped` run in a scratch worktree, then the push); never a `--full` in the main checkout.
+  The edited-test exception needs `Test-approved-by: antigravity <task-id>` in `git log origin/<branch>..HEAD`. Session start
+  names branch drift and leftover worktrees (AGENTS.md §7.1).
+- **Worktree finish**: `agent-kit worktree finish <path>` fast-forwards the trunk and removes the worktree; the Stop hook
+  finishes it too. Main still held → wait for the holder to idle (about a minute after its turn). `agent-kit worktree trunk off`
+  turns trunk mode off.
+- **Scratch**: the session hooks remove the session's temp dir at SessionEnd and prune dead sessions' dirs (idle 7 days) at
+  SessionStart (`.agents/devkit/scripts/governance/scratch_cleanup.py`); a stage awaiting the user or a handoff lives outside
+  `/tmp/claude-<uid>`, e.g. in the repo's ignored `.agents/local/`.
