@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Test hồi quy (#849, mở rộng 02/11): bin/lane_lock.py nhả slot lane khi lệnh bên trong (hay hậu duệ) đang CHỜ pool gate của heavy_slot.
+# Test hồi quy (#849, mở rộng 02/11): bin/lane_lock.py nhả slot lane khi CHÍNH tiến trình con đang CHỜ pool gate của heavy_slot
+# (lệnh ghép / hậu duệ chờ pool thì giữ slot như main).
 #   P0. lane_lock.py và heavy_slot.py chạy là bản trong CHÍNH checkout chứa test (INSTINCT-057)
 #   P1. A giữ slot lane duy nhất, CHÍNH con của A chờ pool gate (đã đầy) ⇒ A nhả slot, B lấy được trong ≤ 15 s khi con vẫn chờ
 #   P2. cháu chờ pool (con là bash: lệnh ghép) ⇒ giữ slot   P2b. `bash -c "exec …"` (cùng PID) ⇒ nhả
@@ -260,7 +261,7 @@ if holder; then
       bash -c "python3 '${TMP}/waiter.py' '${HS_BIN}' '${TMP}/A10' 0 & python3 '${TMP}/job.py'; wait" ) > "${TMP}/A10.log" 2>&1 &
   echo $! > "${TMP}/A10.pid"
   has_in A10j.start 5 >/dev/null; has_in A10.wpid 5 >/dev/null; job B10 0.2
-  has_in A10j.end 15 >/dev/null; has_in B10.start 15 >/dev/null
+  has_in A10j.end 15 >/dev/null; sleep 1.5   # sau khi việc song song xong: đủ để bản sai nhả slot (POOL_POLL 0.3 + WAIT 1)
 else bad "10. không chiếm được pool gate cho fixture"; fi
 unhold; wait_job A10 15; wait_job B10 10
 if [ "$(val B10.start)" != 0 ] && [ "$(val A10j.end)" != 0 ] && ! lt "$(val B10.start)" "$(val A10j.end)"; then

@@ -175,7 +175,7 @@ mkdir -p "$F/labeled" "$Q" "$B/path"
 git init -q -b main "$QR"; git -C "$QR" config user.email t@example.invalid; git -C "$QR" config user.name t
 printf '.claude/\n' > "$QR/.gitignore"; git -C "$QR" add .gitignore; git -C "$QR" commit -qm init
 QC="$QR/.git/super-board"
-for f in super-board-merge-queue.sh super-board-github-read.py super-board-approved-head.jq super-board-audit-check.py; do ln -s "$ROOT/.claude/bin/$f" "$Q/$f"; done
+for f in super-board-merge-queue.sh super-board-github-read.py super-board-approved-head.jq super-board-audit-check.py super-board-ac-check.py; do ln -s "$ROOT/.claude/bin/$f" "$Q/$f"; done
 QUEUE="$Q/super-board-merge-queue.sh"
 # train giả: một PR mỗi lượt; hold-<N> giữ tới khi file biến mất; die-<N> tự SIGKILL; in dòng train-* của PR đó.
 cat > "$Q/super-board-merge-train.sh" <<'SH'
@@ -212,6 +212,8 @@ if a[:2] == ['pr', 'list']:
     print(json.dumps(prs))
 elif a[:2] == ['pr', 'view'] and opt('--json') == 'comments':
     print(json.dumps({'comments': [{'authorAssociation': 'OWNER', 'body': 'approved-head:' + open(f'{F}/head-{num()}').read().strip()}]}))
+elif a[:2] == ['pr', 'view'] and opt('--json') == 'body,headRefOid':   # #531: PR body for the sb:ac check (no block = nothing unproven)
+    print(json.dumps({'body': '', 'headRefOid': 'a' * 40}))
 elif a[:2] == ['pr', 'view'] and 'state' in (opt('--json') or ''):
     n = num(); m = f'{F}/merged-{n}'
     print(json.dumps({'state': 'MERGED', 'mergeCommit': {'oid': 'c' * 40}, 'headRefOid': 'a' * 40} if os.path.exists(m)
