@@ -1,0 +1,3 @@
+15	0	.agents/regression_matrix.active.json
+223	22	universal-agent-devkit/hooks/hardware_safety_gate.sh
+365	0	universal-agent-devkit/tests/gates/test_hardware_empty_serial.sh
