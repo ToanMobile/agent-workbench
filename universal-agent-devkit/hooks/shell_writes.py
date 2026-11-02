@@ -324,10 +324,12 @@ def _exists(a, here):
     return os.path.exists(p if os.path.isabs(p) else os.path.join(here, p))
 
 
-def _nested(code, wd, depth, run_bodies):
+def _nested(code, wd, depth, run_bodies, decode):
     """The targets of a script a shell runs (`bash -c`, a heredoc fed to a shell). One that cannot be tokenised, for a caller that runs bodies
-    (run_bodies: bin/session_lock.py trunk_write), is a write it cannot rule out: kind "unparsed", where the script runs - it used to count as none."""
-    got = targets(code, wd, depth, run_bodies)
+    (run_bodies: bin/session_lock.py trunk_write), is a write it cannot rule out: kind "unparsed", where the script runs - it used to count as none.
+    decode: cách đọc của dòng ngoài (_targets) - cách đọc cũ (False) đọc script lồng đúng như main, không chen đích giải mã vào giữa (review L
+    T4 #844: `bash -c '… cd $D'; cp a ../x` - cdvar giải mã đứng trước ../x làm _family_write_held bỏ đích tương đối)."""
+    got = targets(code, wd, depth, run_bodies) if decode else _targets(code, wd, depth, run_bodies, False)
     return [("unparsed", "", wd)] if got is None and run_bodies else got or []
 
 
@@ -536,7 +538,7 @@ def _targets(cmd, here, depth, run_bodies, decode):
             module = next((words[k + 1] for k in range(1, len(words) - 1) if words[k] == "-m"), None)
             if code is not None:
                 if depth < 3:
-                    found += _nested(code, wd, depth + 1, run_bodies)
+                    found += _nested(code, wd, depth + 1, run_bodies, decode)
             elif (module and module.split(".")[0] in MODULE_BUILDERS) or \
                     (not module and args and BUILDERS.match(os.path.basename(args[0]))):
                 hits.append(("build", wd))
@@ -547,10 +549,10 @@ def _targets(cmd, here, depth, run_bodies, decode):
                         if base not in SHELLS:
                             hits += [("file", w.group("p")) for rx in SCRIPT_WRITES for w in rx.finditer(body)]
                         elif depth < 3:
-                            found += _nested(body, wd, depth + 1, run_bodies)
+                            found += _nested(body, wd, depth + 1, run_bodies, decode)
         found += [(kind, t, wd) for kind, t in hits]
     if run_bodies and not paired and depth < 3:   # (a data body read as commands: a false alarm here is the price of never missing a write)
         for body in bodies:
-            found += _nested(body, here, depth + 1, run_bodies)
+            found += _nested(body, here, depth + 1, run_bodies, decode)
             found += [("file", w.group("p"), here) for rx in SCRIPT_WRITES for w in rx.finditer(body)]
     return found

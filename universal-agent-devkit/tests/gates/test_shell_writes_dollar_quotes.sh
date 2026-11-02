@@ -141,7 +141,14 @@ try:
     for label, c in (("touch $'<FW2>/f.txt'", f"touch $'{FW2}/f.txt'"),
                      ("cp … $\"<FW2>/f.txt\"", f'cp /etc/hosts $"{FW2}/f.txt"'),
                      ("echo x > $'<FW2>/f.txt'", f"echo x > $'{FW2}/f.txt'"),
-                     ("bash -c $'touch <FW2>/f.txt'", f"bash -c $'touch {FW2}/f.txt'")):
+                     ("bash -c $'touch <FW2>/f.txt'", f"bash -c $'touch {FW2}/f.txt'"),
+                     # review L (Claude sạch, Antigravity audit trên 0b696fde): cdvar của cách đọc giải mã script lồng từng chen trước đích
+                     # tương đối của cách đọc cũ ⇒ _family_write_held bỏ ../family-wt2/f.txt (main chặn, bản đó cho qua)
+                     ("bash -c \"echo $'it\\'s #1' ; cd \\$D\"; cp … ../family-wt2/f.txt",
+                      "bash -c \"echo $'it\\'s #1' ; cd \\$D\"; cp /etc/hosts ../family-wt2/f.txt"),
+                     ("bash -c 'echo $\"x\" `true #` ; cd $D'; cp … ../family-wt2/f.txt",
+                      "bash -c 'echo $\"x\" `true #` ; cd $D'; cp /etc/hosts ../family-wt2/f.txt"),
+                     ("bash -c '$\"cd\" \"$DIR\"' && cp … ../family-wt2/f.txt", "bash -c '$\"cd\" \"$DIR\"' && cp /etc/hosts ../family-wt2/f.txt"),                     ("bash -c 'true'; cp … ../family-wt2/f.txt (không $'…': main cũng chặn)", "bash -c 'true'; cp /etc/hosts ../family-wt2/f.txt")):
         check(label, hook(c, FW), 2)
     for label, c in (("touch $'<FW>/f.txt' (chính nó)", f"touch $'{FW}/f.txt'"),
                      ("touch $'<FW3 khoá đã chết>/f.txt'", f"touch $'{FW3}/f.txt'"),
@@ -182,7 +189,10 @@ try:
         check("trunk_write từ W: " + label, tw(c, W), True)
     for label, c in (("$'touch' <W>/x.py", f"$'touch' {W}/x.py"), ("bash -c $'touch <W>/x.py'", f"bash -c $'touch {W}/x.py'"),
                      ("rg $'<main>/src/a.py' . (tìm kiếm)", f"rg $'{M}/src/a.py' ."),
-                     ("cat $'<main>/src/a.py' > out.txt (đọc main, ghi ở W)", f"cat $'{M}/src/a.py' > out.txt")):
+                     ("cat $'<main>/src/a.py' > out.txt (đọc main, ghi ở W)", f"cat $'{M}/src/a.py' > out.txt"),
+                     # review L (Antigravity audit trên 0b696fde): cdvar giải mã của thân heredoc từng chen trước b.txt ⇒ cd_unsafe chặn nhầm
+                     ("bash <<'EOF' && cp a.txt b.txt (thân: printf $'a\\'b' / cd \"$TMPDIR\" / # don't)",
+                      "bash <<'EOF' && cp a.txt b.txt\nprintf $'a\\'b'\ncd \"$TMPDIR\" && ls\n# don't\nEOF")):
         check("  đối chứng: trunk_write từ W: " + label, tw(c, W), False)
     # cwd không phải repo (unknown={}: đích `$` không biết thì bỏ qua): đích $'…' / $"…" vào main nay thấy được
     PLAIN = os.path.join(tmp, "plain")
@@ -200,6 +210,12 @@ try:
           [("file", "$/x/a", "/w"), ("file", "b.txt", "/w"), ("file", "/x/a", "/w")])
     check("không trùng: touch $'/x/a' /x/a", t("touch $'/x/a' /x/a"), [("file", "$/x/a", "/w"), ("file", "/x/a", "/w")])
     check("$\"…\": echo x > $\"/x/a\"", t('echo x > $"/x/a"'), [("redirect", "$/x/a", "/w"), ("redirect", "/x/a", "/w")])
+    # script lồng: cách đọc cũ của nó y như main (main: chỉ ../x), cdvar giải mã nối SAU (review L trên 0b696fde: từng đứng trước ../x)
+    for c in ("bash -c \"echo $'it\\'s #1' ; cd \\$D\"; cp a ../x", "bash -c '$\"cd\" \"$D\"' && cp a ../x"):
+        for rb in (False, True):
+            check(f"script lồng, run_bodies={rb}: {c}", t(c, rb), [("file", "../x", "/w"), ("cdvar", "$D", "/w")])
+    check("thân heredoc không ghép (run_bodies): cách đọc cũ của thân y như main, cdvar giải mã nối sau",
+          t("echo '<<EOF' && true\necho $'it\\'s #1' ; cd $D\nPath('../x').write_text('a')\nEOF", True), [("file", "../x", "/w"), ("cdvar", "$D", "/w")])
     check("thân heredoc cho shell (run_bodies): bash <<EOF / touch $'/x/a'", ("file", "/x/a", "/w") in (t("bash <<EOF\ntouch $'/x/a'\nEOF", True) or ()), True)
     check("None giữ None: touch \"hở nháy $'/x/a'", t("touch \"hở nháy $'/x/a'"), None)
     check("None giữ None (như main) cả khi cách đọc giải mã tách được: touch $'it\\'s'", t("touch $'it\\'s'"), None)
