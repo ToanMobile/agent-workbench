@@ -1225,10 +1225,6 @@ MQ_MSG = "gắn nhãn merge-queue khi PR chưa có approved-head khớp head"
 MQ_HELPER = os.path.join(".claude", "bin", "super-board-queue-label.sh")
 MQ_HELPER_DEPS = [os.path.join(".claude", "bin", "super-board-approved-head.jq"), os.path.join(".claude", "bin", "super-board-audit-check.py"),
                   os.path.join("universal-agent-devkit", "bin", "push_gate.py"), os.path.join(".agents", "devkit", "bin", "push_gate.py")]
-# Lệnh gh chỉ đọc / chỉ comment: nhắc merge-queue (lọc theo nhãn, chữ trong body) mà không gắn nhãn được
-MQ_SAFE_SUBS = {("pr", "list"), ("pr", "view"), ("pr", "status"), ("pr", "checks"), ("pr", "diff"), ("pr", "comment"), ("pr", "review"),
-                ("pr", "close"), ("pr", "reopen"), ("pr", "ready"), ("issue", "list"), ("issue", "view"), ("issue", "comment"),
-                ("issue", "close"), ("issue", "reopen"), ("label", "list")}
 MQ_BUDGET_S = 9.0   # tổng thời gian của guard khi có lời gọi helper: dưới timeout 10 s của hook ở Codex/Gemini/Cursor
 # Cờ KHÔNG mang giá trị của gh pr edit / issue edit / pr create (gh 2.103.3 --help); mọi cờ dài khác mang giá trị.
 MQ_BOOL_LONG = {"--remove-milestone", "--remove-parent", "--remove-type", "--draft", "--dry-run", "--editor", "--fill",
@@ -1262,7 +1258,8 @@ def _mq_helper_at(root):
         return None, f"{MQ_MSG}: {MQ_HELPER} git đã theo dõi nhưng không còn trong cây ({root}) — {restore}"
     # Luật duyệt helper dùng (jq approved-head, audit-check, push_gate) cũng phải khớp HEAD: sửa chúng trong cây là duyệt mọi PR (OCR
     # final). So NỘI DUNG file với blob của HEAD (hash-object --no-filters), không qua git diff: --assume-unchanged / --skip-worktree /
-    # filter giấu thay đổi khỏi diff. File HEAD không theo dõi (symlink .agents/devkit) bỏ qua; symlink trong cây cũng bỏ qua.
+    # filter giấu thay đổi khỏi diff. Path HEAD không theo dõi dưới dạng file thường (.agents/devkit symlink) bỏ qua; file theo dõi
+    # mà trong cây là symlink → không khớp.
     rc, out = _mq_git(root, "ls-tree", "HEAD", "--", MQ_HELPER, *MQ_HELPER_DEPS)
     want = {}
     for line in (out.splitlines() if rc == 0 else []):
@@ -1272,7 +1269,7 @@ def _mq_helper_at(root):
             want[rel] = parts[2]
     rels = sorted(want)
     got = []
-    if rc == 0 and rels and all(os.path.isfile(os.path.join(root, r)) for r in rels):
+    if rc == 0 and rels and all(os.path.isfile(os.path.join(root, r)) and not os.path.islink(os.path.join(root, r)) for r in rels):
         hrc, hout = _mq_git(root, "hash-object", "--no-filters", "--", *rels)
         got = hout.split() if hrc == 0 else []
     if rc != 0 or not rels or [want[r] for r in rels] != got:
@@ -1420,12 +1417,9 @@ def _mq_label_values(text):
     return [v.get("name") if isinstance(v, dict) else v for v in vals if isinstance(v, (str, dict))]
 
 def _mq_gql_shell(t):
-    """Chuỗi query graphql có nội suy shell: `${…}`, `$x(`, `$` không theo sau một tên, hoặc `$x` không được khai báo là biến
-    GraphQL (`$x:` trong phần khai báo của operation) — GraphQL chỉ dùng biến đã khai báo, còn lại chỉ có thể là biến shell
-    (Antigravity audit vòng 2: `__typename $M(`, `$A$B`)."""
-    decls = set(re.findall(r"\$([A-Za-z_]\w*)\s*:", t))
-    return ("${" in t or re.search(r"\$\w*\s*\(", t) is not None or re.search(r"\$(?![A-Za-z_])", t) is not None
-            or any(v not in decls for v in re.findall(r"\$([A-Za-z_]\w*)", t)))
+    """Chuỗi query graphql có nội suy shell dạng thường gặp: `${…}`, hoặc tên field là biến (`{ $M(` / `: $M(`) — GraphQL không
+    cho biến ở vị trí tên field. Dạng nội suy cố ý né luật (ghép chuỗi, biến trùng tên biến GraphQL) nằm ngoài phạm vi (#536)."""
+    return "${" in t or re.search(r"[{:]\s*\$\w+\s*\(", t) is not None
 
 def _gh_stdin_expanding():
     """Có heredoc KHÔNG quote mà body có `$` / backtick / thay thế lệnh: shell nội suy trước khi gh đọc stdin. Lỗi khi đọc → coi như có."""
@@ -1454,7 +1448,7 @@ def _mq_api(args, base):
             t, _why = _gh_field_text(o, v, base) if eq else (v, None)
             # Query: `$x` đã khai báo là biến GraphQL, còn lại là nội suy shell (_mq_gql_shell). Field khác: mọi `$` / lệnh con là shell.
             if name == "query":
-                bad = t is None or SUBST in t or "`" in t or _mq_gql_shell(t)
+                bad = t is None or bool(re.fullmatch(r"\s*\$\{?\w+\}?\s*", t)) or SUBST in t or "`" in t or _mq_gql_shell(t)
             else:
                 bad = t is None or _unknowable(t) or (v == "@-" and _gh_stdin_expanding())
             if name == "query":
@@ -1473,11 +1467,9 @@ def _mq_api(args, base):
                 try:   # --input là JSON {query, variables}: so cả bản đã giải mã (escape \u trong tên mutation)
                     o = json.loads(t)
                     if isinstance(o, dict):
-                        if isinstance(o.get("query"), str):
+                        if isinstance(o.get("query"), str):   # file / heredoc có quote: chữ nguyên văn, không có nội suy shell
                             query = o["query"]
                             texts.append(query)
-                            if SUBST in query or "`" in query or _mq_gql_shell(query):
-                                query_bad = True
                         texts.append(json.dumps(o.get("variables"), ensure_ascii=False))
                 except ValueError:
                     query = query if query is not None else t
@@ -1538,12 +1530,17 @@ def gh_label_rule(rest, base, env_repo=None):
             continue
         lead_repo = a[7:] if a.startswith("--repo=") else a[2:] if (a[:2] == "-R" and len(a) > 2) else lead_repo
         j += 1
-    sub, args = rest[j:j + 2], rest[j + 2:]
-    if sub[:1] == ["alias"] and any(MQ_LABEL in a.casefold() for a in rest[j:]):   # (OCR final) alias gọi sau guard không thấy
-        helper, hwhy = _mq_helper()
-        if hwhy or helper:
-            return hwhy or f"{MQ_MSG}: gh alias mở rộng thành lệnh gắn nhãn {MQ_LABEL}, guard không kiểm được lúc gọi alias — gắn nhãn bằng {MQ_HELPER} <pr>"
-        return None
+    k = j + 1
+    if rest[j:j + 1] in (["pr"], ["issue"]):   # cờ của lệnh nhóm đứng trước lệnh con (gh pr -R o/r edit 5 …): nhóm pr / issue chỉ có -R / --repo
+        while k < len(rest) and rest[k].startswith("-"):
+            a = rest[k]
+            if a in ("-R", "--repo") and k + 1 < len(rest):
+                lead_repo, k = rest[k + 1], k + 2
+            elif a.startswith("--repo=") or (a[:2] == "-R" and len(a) > 2):
+                lead_repo, k = (a[7:] if a.startswith("--repo=") else a[2:]), k + 1
+            else:
+                break
+    sub, args = rest[j:j + 1] + rest[k:k + 1], rest[k + 1:]
     if sub[:1] == ["api"]:
         reason, sels, api_repo = _mq_api(rest[j + 1:], base)
         if not reason and not sels:
@@ -1558,12 +1555,6 @@ def gh_label_rule(rest, base, env_repo=None):
         return why or _mq_check(helper, sels, repo, base)
     create = sub in (["pr", "create"], ["pr", "new"])
     if not create and sub not in (["pr", "edit"], ["issue", "edit"]):
-        if sub[:1] == ["search"] or tuple(sub) in MQ_SAFE_SUBS or not any(MQ_LABEL in a.casefold() for a in rest):
-            return None
-        helper, hwhy = _mq_helper()
-        if hwhy or helper:   # (#536, Antigravity audit vòng 2) gh pr -R x edit …, gh -X POST api …, gh pr --add-label … edit
-            return hwhy or (f"{MQ_MSG}: lệnh gh nhắc {MQ_LABEL} mà guard không nhận diện được (cờ đứng giữa lệnh nhóm và lệnh con, hoặc lệnh "
-                            f"con lạ) — đặt cờ sau lệnh con (gh pr edit <pr> --add-label …), hoặc dùng {MQ_HELPER} <pr>")
         return None
     flags, sels = _mq_parse(args, "create" if create else "edit")
     repo = _mq_last(flags, ("-R", "--repo")) or lead_repo or env_repo
@@ -1637,7 +1628,6 @@ def analyse_simple(tokens, depth):
         prog = tokens[i].rsplit("/", 1)[-1]
         if prog == "env":
             i += 1
-            env_opts = False
             while i < len(tokens) and (tokens[i].startswith("-") or "=" in tokens[i]):
                 # env -S STRING / --split-string=STRING splits STRING into the words env runs (2026-10-09: the value was
                 # skipped as an option argument, so `env -S "git reset --hard"` passed): those words replace it.
@@ -1656,14 +1646,7 @@ def analyse_simple(tokens, depth):
                 allow_branch = allow_branch or tokens[i] == ALLOW_BRANCH_ENV
                 if "=" in tokens[i] and not tokens[i].startswith("-"):
                     assigns.update([tokens[i].split("=", 1)])
-                elif tokens[i].startswith("-"):
-                    env_opts = True
                 i += 2 if tokens[i] in ("-u", "-C", "-S", "-P") else 1
-            # (#536, Antigravity audit vòng 2) -u / -i / -C đổi GH_REPO hay thư mục mà guard không mô hình: lệnh nhắc merge-queue → chặn
-            if env_opts and MQ_LABEL in cmd.casefold():
-                mq_helper, mq_why = _mq_helper()
-                if mq_why or mq_helper:
-                    return mq_why or f"{MQ_MSG}: env có tuỳ chọn (-u / -i / -C …) đổi môi trường hoặc thư mục, guard không biết gh gắn nhãn ở repo nào — bỏ tuỳ chọn env, ghi --repo OWNER/NAME"
         elif prog in WRAPPERS:
             i = skip_wrapper(tokens, i, prog)
         elif tokens[i] in KEYWORDS:
@@ -1717,11 +1700,6 @@ def analyse_simple(tokens, depth):
     # `$g reset --hard` / `${GIT} clean -f`: a variable in command position may be git. So may a $(…) / backtick there
     # (`$(echo gi)t reset --hard`, 2026-10-09): its output is the program name.
     if prog.startswith("$") or SUBST in prog:
-        # (#536, OCR final) `G=gh; $G pr edit 5 --add-label merge-queue`, `$(echo g)h …`: có thể là gh, nhắc merge-queue → luật nhãn chặn
-        if any(MQ_LABEL in a.casefold() for a in rest):
-            mq_helper, mq_why = _mq_helper()
-            if mq_why or mq_helper:
-                return mq_why or f"{MQ_MSG}: chương trình là biến / thay thế lệnh, guard không biết có phải gh không — gọi gh trực tiếp"
         if IN_C_SCRIPT[0] and SUBST in prog:
             PENDING_FEED.append(UNREADABLE_CSUBST)   # bash -c "( $(curl ...) )", "if $(...)", "exec $(...)": the command word is generated text
         return danger_in_git(rest[0], rest[1:]) if rest else None

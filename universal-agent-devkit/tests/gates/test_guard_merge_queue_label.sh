@@ -204,6 +204,10 @@ git -C "$T" update-index --no-assume-unchanged "$H"; git -C "$T" checkout -q -- 
 git -C "$T" update-index --skip-worktree .claude/bin/super-board-approved-head.jq; printf '"ok"\n' > "$T/.claude/bin/super-board-approved-head.jq"
 check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
 git -C "$T" update-index --no-skip-worktree .claude/bin/super-board-approved-head.jq; git -C "$T" checkout -q -- .claude/bin/super-board-approved-head.jq
+cp "$T/.claude/bin/super-board-audit-check.py" "$TMP/ac-copy.py"; rm -f "$T/.claude/bin/super-board-audit-check.py"
+ln -s "$TMP/ac-copy.py" "$T/.claude/bin/super-board-audit-check.py"
+check 2 "gh pr edit 5 --add-label merge-queue" "$T"; grep_err 'khác bản HEAD'
+rm -f "$T/.claude/bin/super-board-audit-check.py"; git -C "$T" checkout -q -- .claude/bin/super-board-audit-check.py
 git -C "$T" checkout -q -- "$H"; git -C "$T" worktree add -q --detach "$TW" 2>/dev/null; echo 0 > "$TW/rc"
 mv "$T/$H" "$TMP/moved-helper"
 check 2 "gh pr edit 5 --add-label merge-queue" "$TW"; grep_err 'checkout --'
@@ -216,26 +220,24 @@ reset 3; check 2 "g[h] pr edit 5 --add-label merge-queue"; expect_call '^--check
 reset 3; check 2 "python3 -c \"import subprocess; subprocess.run(['GH', 'pr', 'edit', '5', '--add-label', 'merge-queue'])\""; expect_call '^--check 5$'
 reset 3; check 2 "python3 -c \"import os; os.system('GH pr edit 5 --add-label merge-queue')\""; expect_call '^--check 5$'
 reset 0; check 2 "gh api repos/acme/widgets/issues/5/labels -f \"labels[]=\$L\""; expect_call none
-# chương trình là biến / thay thế lệnh: không biết có phải gh không mà lệnh nhắc merge-queue → chặn (OCR final)
-reset 0; check 2 "G=gh; \$G pr edit 5 --add-label merge-queue"; expect_call none
-reset 0; check 2 "\$(echo g)h pr edit 5 --add-label merge-queue"; expect_call none
-# gh alias mở rộng thành lệnh gắn nhãn: guard không thấy được lúc gọi alias → chặn lúc định nghĩa (OCR final)
-reset 0; check 2 "gh alias set mq 'pr edit \$1 --add-label merge-queue'"; expect_call none
-reset 0; check 0 "gh alias set co 'pr checkout'"; expect_call none
+# Phạm vi (#536, chủ repo chọn thu hẹp 02/11): guard bắt các dạng gắn nhãn thông thường; dạng lách cố ý (chương trình là biến, alias,
+# env -u/-i/-C, graphql ghép chuỗi, cờ gh đặt trước `api`) nằm ngoài — hàng đợi merge kiểm approved-head lúc chạy và loại PR.
+# Đổi lại luật không được chặn nhầm lệnh thường có chữ merge-queue (2 reviewer đo 14 + 7 ca ở c3e3c28a / d71c0c75):
+reset 0; check 0 "\"\$BASH\" .claude/bin/super-board-merge-queue.sh --dry-run"; expect_call none
+reset 0; check 0 "\$EDITOR docs/merge-queue.md"; expect_call none
+reset 0; check 0 "gh alias set mql 'pr list --label merge-queue'"; expect_call none
 
-echo "L. Antigravity audit vòng 2: không nhận diện chắc chắn thì chặn (cờ chen giữa, graphql biến shell, env -u/-i/-C, xargs GH)"
-reset 0; check 2 "gh pr -R acme/other edit 5 --add-label merge-queue"; expect_call none
-reset 0; check 2 "gh issue --repo acme/other edit 5 --add-label merge-queue"; expect_call none
+echo "L. Antigravity audit vòng 2/3 (trong phạm vi): cờ nhóm trước lệnh con, graphql có nội suy shell, xargs GH; không chặn nhầm"
+reset 3; check 2 "gh pr -R acme/other edit 5 --add-label merge-queue"; expect_call '^--check 5 --repo acme/other$'
+reset 3; check 2 "gh issue --repo acme/other edit 5 --add-label merge-queue"; expect_call '^--check 5 --repo acme/other$'
+reset 0; check 0 "gh pr -R acme/other edit 5 --add-label merge-queue"; expect_call '^--check 5 --repo acme/other$'
 reset 0; check 2 "gh pr -R acme/other create -t t -b b --label merge-queue"; expect_call none
-reset 0; check 2 "gh -X POST api repos/acme/other/issues/5/labels -f 'labels[]=merge-queue'"; expect_call none
-reset 0; check 2 "gh pr --add-label merge-queue edit 5"; expect_call none
+reset 3; check 2 "L=merge-queue; gh pr -R acme/widgets edit 5 --add-label \"\$L\""; expect_call '^--check 5 --repo acme/widgets$'
 reset 0; check 0 "gh pr list --label merge-queue"; expect_call none
 reset 0; check 0 "gh pr comment 5 --body 'waiting for merge-queue'"; expect_call none
 reset 0; check 2 "gh api graphql -f query='mutation(\$in:UpdatePullRequestInput!){updatePullRequest(input:\$in){clientMutationId}}' --input - <<EOF
 {\"variables\":{\"in\":\"\$IN\"}}
 EOF"; expect_call none
-reset 0; check 2 "M=addLabelsToLabelable; gh api graphql -f \"query=mutation { __typename \$M(input:{labelableId:\\\"PR_x\\\"}) { clientMutationId } }\""; expect_call none
-reset 0; check 2 "A=\"mutation { addLabels\"; B=\"ToLabelable(input:{}) }\"; gh api graphql -f \"query=\$A\$B\""; expect_call none
 reset 0; check 2 "gh api graphql -f \"query=mutation(\\\$in:UpdatePullRequestInput!){updatePullRequest(input:\\\$in){clientMutationId}}\" -F \"in={\\\"pullRequestId\\\":\\\"PR_x\\\",\$REST}\""; expect_call none
 reset 0; check 2 "M=addLabelsToLabelable; gh api graphql -f query='query{viewer{login}}' --input - <<EOF
 {\"query\":\"mutation { \${M}(input:{}) { clientMutationId } }\"}
@@ -243,12 +245,19 @@ EOF"; expect_call none
 reset 0; check 0 "gh api graphql --input - <<'EOF'
 {\"query\":\"query { viewer { login } }\"}
 EOF"; expect_call none
-reset 3; check 2 "GH_REPO=acme/widgets env -u GH_REPO gh pr edit 5 --add-label merge-queue"; expect_call none
-reset 3; check 2 "GH_REPO=acme/widgets env -i PATH=/usr/bin gh pr edit 5 --add-label merge-queue"; expect_call none
-reset 0; check 2 "env -C /tmp gh pr edit 5 --add-label merge-queue"; expect_call none
 reset 0; check 0 "env FOO=1 gh pr edit 5 --add-label merge-queue"; expect_call '^--check 5$'
 reset 0; check 2 "echo 5 | xargs GH pr edit 99 --add-label merge-queue"; expect_call none
 reset 0; check 2 "echo 5 | xargs g[h] pr edit 99 --add-label merge-queue"; expect_call none
+echo "   không chặn nhầm lệnh thường có chữ merge-queue (Claude rv6b, Antigravity vòng 3)"
+reset 0; check 0 "gh issue create --title 'merge-queue: train red on PR 5' --body 'see log'"; expect_call none
+reset 0; check 0 "gh pr checkout issue-536-merge-queue-label-guard"; expect_call none
+reset 0; check 0 "gh run list --branch issue-536-merge-queue-label-guard"; expect_call none
+reset 0; check 0 "gh label create merge-queue --color BFD4F2 --force"; expect_call none
+reset 0; check 0 "gh pr -R acme/widgets list --label merge-queue"; expect_call none
+reset 0; check 0 "gh pr -R acme/widgets edit 5 --remove-label merge-queue"; expect_call none
+reset 0; check 0 "env -u GIT_DIR git log -n 1 --grep merge-queue"; expect_call none
+reset 0; check 0 "env -u GH_PAGER gh pr list --label merge-queue"; expect_call none
+reset 0; check 0 "gh api graphql -f query='mutation { createIssue(input: {repositoryId: \"R\", title: \"Fix \$PATH\"}) { issue { number } } }'"; expect_call none
 echo "   chặn nhầm (Antigravity F5): PATCH --input không nhãn merge-queue"
 reset 0; check 0 "gh api -X PATCH repos/acme/widgets/issues/5 --input body_only.json"; expect_call none
 reset 0; check 0 "gh api -X PATCH repos/acme/widgets/issues/5 --input - <<'EOF'
