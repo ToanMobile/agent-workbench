@@ -1,6 +1,6 @@
 ---
 name: super-collect
-description: Find problems in one project and file them as tickets into its super-board Backlog — the board fixes them. Source plug-ins - sentry (app errors), posthog (exceptions, rage/dead clicks, failure events, web vitals, tracking gaps), github (issues not on the board), prs (recurring problems in merged PRs and their review comments), architecture (refactor findings), plus any custom source added in onboard (an MCP server, HTTP API, CLI command or app). Each candidate is checked by one fresh verifier before filing. Dry-run by default. Use when the user says "super-collect", "/super-collect", "/super-collect sentry", "collect tickets", "triage errors onto the board", "what keeps breaking", or "find refactors".
+description: Find problems in one project and file them as tickets into its super-board Backlog — the board fixes them. Use when the user says "super-collect", "/super-collect", "/super-collect sentry", "collect tickets", "triage errors onto the board", "what keeps breaking", or "find refactors".
 ---
 
 # super-collect — find problems, file them into Backlog
@@ -8,7 +8,11 @@ description: Find problems in one project and file them as tickets into its supe
 One job: find problems and file tickets into the board's **Backlog**. The board fixes them.
 super-collect never builds, never edits app code, and never moves a card to `Ready` —
 `super-board lint` decides that. Per project only: it reads the active project's super-board
-config and files onto that project's board.
+config and files onto that project's board. Source plug-ins: sentry (app errors), posthog
+(exceptions, rage/dead clicks, failure events, web vitals, tracking gaps), github (issues not on
+the board), prs (recurring problems in merged PRs and their review comments), architecture
+(refactor findings), plus any custom source added in onboard (an MCP server, HTTP API, CLI command
+or app). Each candidate is checked by one fresh verifier before filing. Dry-run by default.
 
 ## Invocation
 

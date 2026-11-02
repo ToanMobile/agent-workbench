@@ -133,7 +133,8 @@ def append_lesson(path: Path, title, cause=None, rule=None, symptom=None, check=
         if dup and not force:
             return "duplicate", dup, None
         archive = path.with_name("instincts-archive.md")   # ids moved there stay taken
-        inst_id = next_id(text + (archive.read_text(encoding="utf-8") if archive.is_file() else ""))
+        bak = path.with_name(path.name + ".archive-bak")   # archive chết giữa chừng: id trong bản sao vẫn bị chiếm
+        inst_id = next_id("\n".join(p.read_text(encoding="utf-8") for p in (archive, bak) if p.is_file()) + "\n" + text)
         entry = format_entry(inst_id, title, cause, rule, symptom, check, today=found_on, source=source)
         if dry_run:
             return "dry-run", inst_id, entry
@@ -284,7 +285,8 @@ def cmd_promote(args) -> int:
                     continue
                     
                 if not args.dry_run:
-                    inst_id = next_id(profile_text)
+                    parch = profile_file.with_name("instincts-archive.md")   # id đã chuyển sang archive vẫn bị chiếm (như append_lesson)
+                    inst_id = next_id(profile_text + (parch.read_text(encoding="utf-8") if parch.is_file() else ""))
                     clean_chunk = chunk.lstrip("-").lstrip()
                     new_entry = re.sub(r'^###\s+\[INSTINCT-[^\]]+\]', f'### [{inst_id}]', clean_chunk, count=1, flags=re.MULTILINE)
                     pf.seek(0, 2)
@@ -377,18 +379,43 @@ def cmd_archive(args) -> int:
         print(f"{'  ' if args.apply else '• '}{inst_id} {HEADING.match(chunk).group(2)}")
     print(tr(f"{len(stale)} mục không hiện trong {args.days} ngày", f"{len(stale)} entries not shown in {args.days} days")
           + ("" if args.apply else tr(" (chạy thử — thêm --apply để chuyển)", " (dry-run — add --apply to move)")))
+    backup = target.with_name(target.name + ".archive-bak")
+
+    def bak_left() -> int:   # lần archive trước chết giữa chừng: bản sao có thể là bản duy nhất của các mục giữ lại, không ghi đè/xoá nó
+        print(tr(f"✖ còn {backup} của lần archive trước bị lỗi: so với {target.name}, khôi phục bằng tay rồi xoá nó trước khi archive lại",
+                 f"✖ {backup} is left by a failed archive: compare it with {target.name}, restore by hand, then delete it before archiving again"),
+              file=sys.stderr)
+        return 2
+
+    if args.apply and backup.exists():   # trước lối ra "0 mục": file 0 byte sau sự cố không được báo thành công
+        return bak_left()
     if not args.apply or not stale:
         return 0
     archive = target.with_name("instincts-archive.md")
+    made_bak = cut = False
     try:
         with open(target, "r+", encoding="utf-8") as f:   # same lock as append_lesson; stale is recomputed from the text read under it
             if fcntl is not None:
                 fcntl.flock(f, fcntl.LOCK_EX)
+            if backup.exists():   # bản sao chỉ sinh và xoá dưới khoá này: còn nó tức là một lần archive đã chết
+                return bak_left()
             locked = f.read()
             stale = stale_of(locked)
             if not stale:
                 return 0
             moved = {inst_id for inst_id, _ in stale}
+            # các mục giữ lại không nằm trong archive: bản sao đã fsync của nội dung cũ, ghi TRƯỚC mọi thay đổi qua file tạm + os.replace
+            # (bản sao trên đĩa luôn nguyên vẹn), giữ tới khi bản viết lại đã xuống đĩa (không thay instincts.md: người ghi khác khoá đúng inode)
+            tmp = backup.with_name(backup.name + ".tmp")
+            try:
+                with open(tmp, "w", encoding="utf-8") as bf:
+                    bf.write(locked)
+                    bf.flush()
+                    os.fsync(bf.fileno())
+                os.replace(tmp, backup)
+                made_bak = True
+            finally:
+                tmp.unlink(missing_ok=True)
             with open(archive, "a+", encoding="utf-8") as af:   # archive first: a crash in between loses nothing
                 if fcntl is not None:
                     fcntl.flock(af, fcntl.LOCK_EX)
@@ -396,11 +423,17 @@ def cmd_archive(args) -> int:
                 head = "" if af.read() else ARCHIVE_HEADER
                 af.write(head + "".join("\n---\n\n" + SEPARATOR_TAIL.sub("", chunk).rstrip() + "\n" for _, chunk in stale))
             kept = "".join(c for c, i in _entry_chunks(locked) if i not in moved)
+            cut = True
             f.seek(0)
             f.truncate()
             f.write(SEPARATOR_TAIL.sub("\n", kept) if SEPARATOR_TAIL.search(kept) else kept)
+            f.flush()
+            os.fsync(f.fileno())
+            backup.unlink()
     except OSError as e:
-        print(f"✖ {e}", file=sys.stderr)
+        if made_bak and not cut:   # instincts.md chưa bị cắt: bản sao của lần này thừa, xoá để lần sau không bị từ chối
+            backup.unlink(missing_ok=True)
+        print(f"✖ {e}" + (f" ({tr('nội dung cũ', 'old text')}: {backup})" if cut else ""), file=sys.stderr)
         return 2
     _refresh_index(target, project)
     print(f"✔ {tr('Đã chuyển sang', 'Moved to')} {archive}")

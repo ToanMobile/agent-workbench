@@ -1,11 +1,15 @@
 ---
 name: compose-recomp-audit
-description: Kiểm toán và tối ưu hóa hiện tượng Recomposition thừa trong Jetpack Compose, hướng tới tốc độ hiển thị 120 FPS không giật lag. Tự động kích hoạt khi chỉnh sửa giao diện Jetpack Compose, State, ViewModel, LazyColumn/LazyRow, hoặc khi phát hiện UI Jank / đơ khung hình trên Android.
+description: Tự động kích hoạt khi chỉnh sửa giao diện Jetpack Compose, State, ViewModel, LazyColumn/LazyRow, hoặc khi phát hiện UI Jank / đơ khung hình trên Android (Recomposition thừa).
 ---
 
 # Jetpack Compose Recomposition & 120 FPS Audit
 
 Kỹ năng chuyên sâu kiểm toán vòng lặp vẽ lại (Recomposition Loop), tối ưu hóa tính ổn định của tham số (Parameter Stability) và loại bỏ hiện tượng giật khung hình (Jank/Stutter) trong Jetpack Compose.
+
+## Phạm vi
+
+Kiểm toán và tối ưu hóa hiện tượng Recomposition thừa trong Jetpack Compose, hướng tới tốc độ hiển thị 120 FPS không giật lag.
 
 ## Nguyên Tắc Vàng 120 FPS
 1. **Ngân sách khung hình cực hạn:** Màn hình 120Hz chỉ có **8.33ms** cho mỗi khung hình (so với 16.6ms ở 60Hz). Mọi tính toán thừa hoặc recomposition không cần thiết đều dẫn đến drop frame.

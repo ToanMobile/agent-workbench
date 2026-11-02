@@ -17,11 +17,19 @@ import glob
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+try:   # the one reading of a command line the guards share (keywords, wrappers, env options, comments, sh -c)
+    import shell_norm
+except Exception:   # noqa: BLE001 — without it the guard still reads plain `git push` (below)
+    shell_norm = None
+
 GIT_VALUE_OPTS = {"-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"}
-PUSH_VALUE_OPTS = {"--repo", "--receive-pack", "--exec", "-o", "--push-option", "--signed"}
+# options whose value is the NEXT word (--signed takes its value only attached: `--signed=if-asked`, critical scan 31/10)
+PUSH_VALUE_OPTS = {"--repo", "--receive-pack", "--exec", "-o", "--push-option"}
 # Thứ tự quyết định tiền tố nào thắng. Cờ an toàn phải có, nếu không `--dry-run`
 # thành `--delete` và `--follow-tags` thành `--force`.
 DANGER_LONG = (
@@ -127,19 +135,57 @@ def branch_name(ref):
     return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
 
 
-def pushes(command, cwd):
-    """[(git_dir, flags, positional)] for every `git push` in the command."""
+def program(tokens):
+    """tokens from the program word on: after VAR=, keywords (if/then/do/!/{), redirects, env with its options and
+    assignments, and wrappers (sudo, command, nohup, nice, timeout, time, …) — shell_norm.prefix_end."""
+    if shell_norm is not None:
+        tokens = shell_norm.inline_script(tokens)
+        return tokens[shell_norm.prefix_end(tokens):]
+    return bare_program(tokens)
+
+
+def bare_program(tokens):
+    """tokens after VAR= and one sudo/command/env: the only `cd` the guard follows (review L 02/11 #871). A `cd` behind
+    nohup/nice/timeout runs in a child, and one behind if/while/!/a redirect may never run or may fail, so the push
+    after it still runs in the old directory."""
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens = tokens[1:]
+    if tokens and tokens[0] in ("sudo", "command", "env"):
+        tokens = tokens[1:]
+    return tokens
+
+
+def pushes(command, cwd, depth=0):
+    """[(git_dir, flags, positional, repo_opt)] for every `git push` in the command (also inside `sh -c STR`).
+
+    Read twice when comments change the text: with comments dropped (a quote inside a comment no longer swallows the
+    next line) AND as written, because drop_comments does not know heredoc bodies, where a `# $(git push …)` line runs
+    (review 02/11 #871). A push either reading blocks is blocked."""
+    found = _pushes(command, cwd, depth)
+    if shell_norm is not None:
+        dropped = shell_norm.drop_comments(command)
+        if dropped != command:
+            found += _pushes(dropped, cwd, depth)
+    return found
+
+
+def _pushes(command, cwd, depth):
+    """pushes() for one reading of the command."""
     found, d = [], cwd
-    for tokens in segments(command):
-        while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
-            tokens = tokens[1:]
-        if tokens and tokens[0] in ("sudo", "command", "env"):
-            tokens = tokens[1:]
+    for raw in segments(command):
+        tokens = program(raw)
         if not tokens:
             continue
         cmd, args = tokens[0], tokens[1:]
-        if cmd == "cd" and args and "$" not in args[0]:
-            d = os.path.normpath(os.path.join(d, os.path.expanduser(args[0])))
+        if shell_norm is not None and depth < 4 and os.path.basename(cmd) in shell_norm.SHELLS:
+            script = shell_norm.shell_script(args)
+            if script:
+                found += pushes(script, d, depth + 1)
+            continue
+        if cmd == "cd":
+            bare = bare_program(raw)
+            if bare[:1] == ["cd"] and len(bare) > 1 and "$" not in bare[1]:
+                d = os.path.normpath(os.path.join(d, os.path.expanduser(bare[1])))
             continue
         if os.path.basename(cmd) != "git":
             continue
@@ -154,20 +200,25 @@ def pushes(command, cwd):
                 i += 1
         if i >= len(args) or args[i] != "push":
             continue
-        flags, positional, j = [], [], i + 1
+        flags, positional, j, repo_opt = [], [], i + 1, False
         while j < len(args):
             a = args[j]
             if a == "--":
                 positional += args[j + 1:]
                 break
-            if a in PUSH_VALUE_OPTS:
+            if a.startswith("--repo="):
+                repo_opt = True
+            elif a in PUSH_VALUE_OPTS:
+                repo_opt = repo_opt or a == "--repo"
                 j += 1
             elif a.startswith("-"):
                 flags.append(a)
             elif not re.match(r"^\d*[<>]", a):
                 positional.append(a)
             j += 1
-        found.append((git_dir, flags, positional))
+        found.append((git_dir, flags, positional, False))
+        if repo_opt:   # git still reads a first positional as the remote (review 02/11 #871): judge both readings
+            found.append((git_dir, flags, positional, True))
     return found
 
 
@@ -185,7 +236,11 @@ def protected_branches(project_dir):
     names = {"main", "master"}
     for p in glob.glob(os.path.join(project_dir, ".claude", "super-board", "configs", "*.json")):
         try:
-            base = json.load(open(p)).get("base_branch")
+            fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))   # a FIFO never hangs the hook
+            with os.fdopen(fd, "rb") as fh:
+                if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                    continue
+                base = json.loads(fh.read(1 << 20)).get("base_branch")
             if isinstance(base, str) and base:
                 names.add(base)
         except (OSError, ValueError, AttributeError):
@@ -203,8 +258,10 @@ def check(command, cwd, protected, branch_of):
     """
     if not re.search(r"\bpush\b", command):
         return None
-    for git_dir, flags, positional in pushes(command, cwd):
+    for git_dir, flags, positional, repo_opt in pushes(command, cwd):
         flags = [expand_long(f) for f in flags]
+        if repo_opt:   # --repo names the remote: every positional word is a refspec
+            positional = ["<--repo>"] + positional
         specs = positional[1:]
         force = deleting = mirror = prune = no_verify = False
         names = []
@@ -267,18 +324,21 @@ def main():
         if os.environ.get("SB_ALLOW_PROTECTED_PUSH") == "1":
             return
         payload = json.loads(sys.stdin.read() or "{}")
-        command = (payload.get("tool_input") or {}).get("command")
+        if not isinstance(payload, dict):
+            return
+        ti = next((v for v in (payload.get(k) for k in ("tool_input", "toolInput", "input")) if isinstance(v, dict)), {})
+        command = ti.get("command")
         if not isinstance(command, str):
             return
-        cwd = payload.get("cwd") or os.getcwd()
+        cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else os.getcwd()
         project = os.environ.get("CLAUDE_PROJECT_DIR") or cwd
         reason = check(command, cwd, protected_branches(project), current_branch)
         if reason:
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                      "permissionDecision": "deny",
                                                      "permissionDecisionReason": reason}}))
-    except Exception:
-        pass  # a broken guard must never block unrelated work
+    except Exception as e:   # noqa: BLE001 — a broken guard must never block unrelated work, but it says so
+        sys.stderr.write("guard-protected-push: skipped (%s: %s)\n" % (type(e).__name__, str(e)[:160]))
 
 
 if __name__ == "__main__":

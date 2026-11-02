@@ -92,9 +92,8 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 4. A proof image blocks like exit 0, unless the change surely cannot show on a screen: a backend
    profile, or every changed file is tooling, tests, docs or logs (exact list: core-rules §19;
    `hooks/proof_gate.sh` applies it). Then write "ảnh: không cần — <reason>" in line 3 and skip this
-   step. Otherwise run `python3 .agents/devkit/bin/proof-capture.py` from the repo root (it picks an
-   allowed online device or boots the profile's AVD and writes `reports/proof-<yyyyMMdd-HHmmss>.png`),
-   install this turn's build on that serial, reach the success screen, run it again and embed the PNG inline
+   step. Otherwise run `python3 .agents/devkit/bin/proof-capture.py` from the repo root (it writes
+   `reports/proof-<yyyyMMdd-HHmmss>.png`), install this turn's build on that serial, reach the success screen, run it again and embed the PNG inline
    with its serial: `![Ảnh nghiệm thu](reports/proof-<stamp>.png)`. Never draw, reuse an old image
    or substitute a test XML; no device → CHƯA XONG with the command's error. A UI or gesture bug
    also needs BEFORE evidence from the unfixed build (`reports/before-<stamp>.png`) or `before: không cần — <reason>`.
@@ -157,5 +156,6 @@ stops. Do not write XONG, PASS, đã fix or đã xong without step 5.
 - **Language**: code comments, acceptance reports, handovers, PR notes and commit messages are English by default;
   with `"lang": "vi"` (`.agents/active-profile.json` or a project rule) comments, reports and commit messages
   are Vietnamese; replies match the user's language; identifiers, commands and paths stay English (core-rules §2.3).
-- Long session or a big refactor ahead: checkpoint and compact instead of filling the window.
+- Long session or a big refactor ahead: checkpoint and compact instead of filling the window. Read code
+  by range (Read offset/limit, codebase-memory); never `cat` a big file.
 - Traps from past bugs arrive with each request (`.agents/instincts.md`); read the named entry.
