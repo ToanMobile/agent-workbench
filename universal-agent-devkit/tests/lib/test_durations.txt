@@ -497,3 +497,5 @@
 1 tests/gates/test_gate_pool_mixed_size.sh
 # gate kẹt và chậm PR 1 (02/11) P4: sổ PASS per-test cho lượt --scoped (4 lượt gate fixture)
 12 tests/gates/test_gate_scoped_per_test_cache.sh
+# gate kẹt và chậm PR 1 (02/11) P7: lane_lock chống dồn (đo ở tải 15–45)
+47 tests/gates/test_lane_lock_stagger.sh

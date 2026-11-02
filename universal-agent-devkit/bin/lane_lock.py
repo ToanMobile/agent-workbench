@@ -12,7 +12,8 @@ kill -9, nên không có khoá mồ côi. Con KHÔNG thừa hưởng fd khoá (c
 gửi cho wrapper được chuyển cho con; wrapper chờ con rồi nhả. Exit = exit của lệnh (127 khi không chạy được, 128+sig khi con bị tín hiệu).
 
 Biến: LANE_LOCK_DIR (mặc định <git common dir>/lane-lock, chung cho main và mọi worktree), LANE_LOCK_SLOTS (2), LANE_LOCK_LOAD_TWO (12),
-LANE_LOCK_LOAD_MAX (24), LANE_LOCK_POLL_S (5), LANE_LOCK_LOG_S (60); tải giả cho test: DEVKIT_SLOT_LOAD_FILE (của heavy_slot.load_now).
+LANE_LOCK_LOAD_MAX (24), LANE_LOCK_POLL_S (5), LANE_LOCK_LOG_S (60), LANE_LOCK_STAGGER_S (60), LANE_LOCK_STAGGER_LOAD (6); tải giả cho
+test: DEVKIT_SLOT_LOAD_FILE (của heavy_slot.load_now).
 ponytail: không có hàng vé/ưu tiên (2–3 người chờ, jitter tránh đồng pha); ≥ 4 lane chờ thường xuyên thì chuyển sang hàng vé của
 heavy_slot.acquire_pool.
 
@@ -32,6 +33,13 @@ phần còn lại của gate chạy trong pool gate (hết giờ pool thì gate 
 LANE_LOCK_SLOTS. Wrapper không bao giờ chặn con: không deadlock. Lệnh ghép (`bash -c "…; gate"`, merge gate với verify_commands) giữ slot
 như cũ: phần khác của nó chạy ngoài pool (review 02/11 vòng 2, P2-A/B). ponytail: hậu duệ chờ pool vẫn giữ slot lane; cần nhả cho lệnh
 ghép thì chỉ khi chứng minh được phần còn lại nằm trong pool.
+
+P7 (02/11) — chống dồn: load1 là trung bình trượt 1 phút, trễ 30–60 s; tải vừa tụt dưới ngưỡng thì cả loạt lane chờ vào cùng một vòng
+(9 → 88 → 10). Lượt KHÔNG nhẹ chưa lấy khi có ≥ 1 slot lane KHÁC đang bị giữ thật (flock bận) mà lane-<j>.owner của nó mới
+< LANE_LOCK_STAGGER_S tuổi (.owner chưa kịp ghi ⇒ tuổi 0), VÀ (lane này đã phải chờ vì tải ở vòng trước — tải ≥ LANE_LOCK_LOAD_TWO hay
+không đọc được — hoặc tải ≥ LANE_LOCK_STAGGER_LOAD) ⇒ chờ vòng sau. 0 slot bị giữ ⇒ không bao giờ chặn. Slot bận gặp trên đường thăm
+được xét tuổi TRƯỚC khi thử slot sau (hai lane cùng thức không khoá chéo slot 1 / slot 2 rồi cùng nhả). Bị chống dồn chặn thì thăm dò việc
+nhẹ #849 như lúc chờ vì tải (việc nhẹ không bị chống dồn, lấy slot trống nếu có). Không file mới trong lock_dir: dùng .owner sẵn có.
 """
 from __future__ import annotations
 
@@ -305,18 +313,44 @@ def pool_waiting(root: int, spawned: float):
     return None
 
 
-def try_take(paths: list, load, light: bool = False) -> tuple:
+def _owner_fresh(path: str, now: float) -> bool:
+    """P7: lane-<j>.owner của slot (đang bị giữ) mới < LANE_LOCK_STAGGER_S tuổi; chưa có / không đọc được ⇒ tuổi 0 (fail closed)."""
+    try:
+        age = now - os.stat(path[:-5] + ".owner").st_mtime
+    except OSError:
+        age = 0.0
+    return age < _env_num("LANE_LOCK_STAGGER_S", 60.0)
+
+
+STAGGERED = -1   # cap trả về khi chống dồn (P7) chặn (slot bận còn non; có thể vẫn còn slot trống)
+
+
+def try_take(paths: list, load, light: bool = False, stagger: bool = False) -> tuple:
     """Một lượt xin slot theo tải. Trả (fh, chỉ số slot, cap) khi lấy được, (None, None, cap) khi phải chờ.
-    light (#849): bỏ ngưỡng tải, lấy slot trống bất kỳ như lúc tải thấp (không quá len(paths) người giữ)."""
+    light (#849): bỏ ngưỡng tải, lấy slot trống bất kỳ như lúc tải thấp (không quá len(paths) người giữ).
+    stagger (P7, chỉ lượt không nhẹ): slot khác bị giữ mà .owner còn non ⇒ (None, None, STAGGERED)."""
     two = _env_num("LANE_LOCK_LOAD_TWO", 12.0)
     cap_max = _env_num("LANE_LOCK_LOAD_MAX", 24.0)
     if not light and load is not None and load >= cap_max:
         return None, None, 0
     if light or (load is not None and load < two):
+        stagger = stagger and not light
+        now = time.time()
         for i, path in enumerate(paths):
             fh = heavy_slot._try_lock_path(path)
-            if fh is not None:
-                return fh, i, len(paths)
+            if fh is None:
+                if stagger and _owner_fresh(path, now):   # xét slot bận TRƯỚC khi thử slot sau: không khoá chéo với lane cùng thức
+                    return None, None, STAGGERED
+                continue
+            if stagger:   # slot sau slot vừa lấy: thăm flock, bận mà .owner còn non ⇒ nhả, chờ vòng sau
+                for later in paths[i + 1:]:
+                    probe = heavy_slot._try_lock_path(later)
+                    if probe is not None:
+                        heavy_slot._unlock(probe)
+                    elif _owner_fresh(later, now):
+                        heavy_slot._unlock(fh)
+                        return None, None, STAGGERED
+            return fh, i, len(paths)
         return None, None, len(paths)
     # tải cao (hoặc đọc lỗi): 1 slot = phải lấy được slot đầu VÀ mọi slot khác đang trống (không ai khác giữ)
     fh = heavy_slot._try_lock_path(paths[0])
@@ -351,19 +385,26 @@ def main(argv=None) -> int:
     t0 = time.monotonic()
     last_log = None
     light = None   # (bool, lý do) của #849: thăm dò một lần, chỉ khi luật cũ vừa bắt chờ vì tải (tải thấp, hay lấy được ngay: không tốn gì)
+    load_waited = False   # P7: lane này đã phải chờ vì tải ở một vòng trước
     while True:
         load = heavy_slot.load_now()
-        fh, idx, cap = try_take(paths, load, bool(light and light[0]))
-        if fh is None and light is None and (load is None or load >= _env_num("LANE_LOCK_LOAD_TWO", 12.0)):
+        is_light = bool(light and light[0])
+        stagger = not is_light and (load_waited or load is None or load >= _env_num("LANE_LOCK_STAGGER_LOAD", 6.0))
+        fh, idx, cap = try_take(paths, load, is_light, stagger)
+        high = load is None or load >= _env_num("LANE_LOCK_LOAD_TWO", 12.0)
+        if fh is None and light is None and (high or cap == STAGGERED):
             light = light_job(args)
             _say(f"[lock] {name} " + (f"nhẹ ({light[1]}): bỏ ngưỡng tải, vẫn giữ số slot" if light[0] else f"việc nặng ({light[1]})"))
             if light[0]:
                 fh, idx, cap = try_take(paths, load, True)
         if fh is not None:
             break
+        load_waited = load_waited or high
         now = time.monotonic()
         if last_log is None or now - last_log >= log_every:
             why = f"load {load:.1f} ≥ {_env_num('LANE_LOCK_LOAD_MAX', 24.0):g}" if cap == 0 else f"đủ {cap} slot"
+            if cap == STAGGERED:
+                why = f"chống dồn: slot khác vừa được lấy < {_env_num('LANE_LOCK_STAGGER_S', 60.0):g} s"
             if load is None:
                 why += " (không đọc được tải: coi là tải cao)"
             _say(f"[lock] {name} chờ ({why}; đang giữ: {_owners(paths)}) {time.strftime('%T')}")

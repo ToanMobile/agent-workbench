@@ -3072,6 +3072,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-lane-lock-stagger-p7",
+      "watch_files": [
+        "universal-agent-devkit/bin/lane_lock.py",
+        "universal-agent-devkit/tests/gates/test_lane_lock_stagger.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-LANE-LOCK-STAGGER-01",
+          "name": "P7 (gate kẹt và chậm 02/11): lane_lock chống dồn — 2 lane nặng chờ ở tải 30, tải xuống 9 hay 5 ⇒ lane đầu vào ngay (0 slot giữ không chặn), lane sau chỉ vào khi .owner lane đầu ≥ LANE_LOCK_STAGGER_S; đối chứng tải 5 chưa chờ tải ⇒ vào ngay; tải 8: gate scoped nhỏ #849 không bị chống dồn, việc nặng thứ hai chờ; không file mới trong LANE_LOCK_DIR",
+          "command": "bash universal-agent-devkit/tests/gates/test_lane_lock_stagger.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
