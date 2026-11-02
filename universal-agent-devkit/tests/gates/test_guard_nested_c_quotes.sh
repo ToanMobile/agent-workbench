@@ -32,7 +32,7 @@ run() {
   ( cd "$P" && CLAUDE_PROJECT_DIR="$P" XDG_CONFIG_HOME="$TMP/xdg" ADB_DENY_SERIALS= ADB_ALLOW_SERIALS= ANDROID_SERIAL= \
       bash "$1" < "$TMP/in.json" > /dev/null 2> "$TMP/err" )
   local rc=$?
-  if grep -q -E 'Traceback|lỗi nội bộ|python không chạy được|không nạp được shell_norm.py' "$TMP/err"; then
+  if grep -q -E 'Traceback|lỗi nội bộ|python không chạy được|không nạp được .*shell_norm' "$TMP/err"; then
     echo "✖ crash: $2 — $(head -c 200 "$TMP/err" | LC_ALL=C tr '\n' ' ')"; FAILS=$((FAILS + 1))
   fi
   return "$rc"
@@ -287,6 +287,13 @@ check 2 GG $'echo \\ #; bash -c "g\\$\\"it\\" reset --hard"'
 check 2 HW $'echo a\r#; bash -c "\\$\'rm\' -rf ~"'
 check 2 GG $'echo a\r#; bash -c "g\\$\\"it\\" reset --hard"'
 check 2 HW $'x=`true`#; bash -c "\\$\'rm\' -rf ~"'
+echo "   review PR (OCR, Claude): cách đọc thêm không để lại trạng thái (DEVKIT_ALLOW_BRANCH) cho cách đọc gốc — main chặn thì vẫn chặn"
+check 2 GG $'bash -c \'export $"DEVKIT_ALLOW_BRANCH=1"\'; git switch -c evil'
+check 2 GG 'x=$(export $"DEVKIT_ALLOW_BRANCH=1"); git switch -c evil'
+check 2 GG $'eval \'export $"DEVKIT_ALLOW_BRANCH=1"\'; git switch -c evil'
+check 2 GG 'echo "$(export $"DEVKIT_ALLOW_BRANCH=1")"; git checkout -b evil'
+check 2 GG $'sh -c \'export $"DEVKIT_ALLOW_BRANCH=1"\'; git worktree add ../x'
+check 0 GG 'export DEVKIT_ALLOW_BRANCH=1; git switch -c ok'
 
 echo "   locale_to_double (public, lane T4 dùng): bỏ \$ của \$\"…\" ngoài nháy, không bao giờ sinh nháy đơn"
 python3 -I - "$NORM_DIR" <<'PY' || FAILS=$((FAILS + 1))
@@ -374,7 +381,7 @@ for a, b, want in [("echo a x b", "echo a x b", True), ("echo a x b", "echo a ; 
     ok = got == want
     print(("✔ " if ok else "✖ ") + "_same_shape(" + repr(a) + ", " + repr(b) + ") = " + str(got))
     bad += not ok
-# _lexer_dq_escapes: chỉ \ mà lex_words đọc trong nháy kép (không trong nháy đơn, không ngoài nháy)
+# _lexer_quotes()[0]: chỉ \ mà lex_words đọc trong nháy kép (không trong nháy đơn, không ngoài nháy)
 t = "a \"\\$x\" \x27\\$y\x27 \\$z $\x27\\$w\x27"
 got, want = s._lexer_quotes(t)[0], {t.index("\\")}
 print(("✔ " if got == want else "✖ ") + "_lexer_quotes(" + repr(t) + ")[0]" + ") = " + repr(sorted(got)))
