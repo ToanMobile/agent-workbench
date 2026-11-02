@@ -264,7 +264,7 @@ def copy_approved_tests(main, scratch):
             json.dump({"approvals": keep}, out)
         paths = sorted({e["path"] for e in keep})
         say(f"đã chép vào scratch {len(keep)} mục duyệt chéo của {len(paths)} file: {', '.join(paths[:8])}")
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, RecursionError) as e:   # RecursionError: JSON lồng sâu, không phải ValueError
         say(f"không chép được lời duyệt test vào scratch: {type(e).__name__}: {e}")
 
 

@@ -482,3 +482,5 @@
 11 tests/gates/test_guard_merge_queue_label.sh
 # #870 (2026-11-02): instincts archive an toàn khi crash, promote không dùng lại id đã archive
 1 tests/verification/test_instincts_archive_crash.sh
+# #869 (2026-11-02): ocr-review kill/reap có hạn (ocr giả giữ pipe 90 s, chờ ~37 s)
+37 tests/installer/test_ocr_review_reap.sh
