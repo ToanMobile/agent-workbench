@@ -156,13 +156,16 @@ def data_a():
     write(K + "bin/lib_a.py", '\nDATA = os.path.join(os.path.dirname(__file__), "../fixtures/data_a.json")\n')
     write(K + "fixtures/data_a.json", '{"a": 1}\n')
 pair("U22 file dữ liệu chỉ lib_a.py (code tập chọn) nhắc đổi", data_a, lambda: write(K + "fixtures/data_a.json", " "), False)
+# B1 chiều ngược: công cụ test của tập chọn nhắc (python3 trong test_a.sh) vẫn vào khoá — phiên bản python đổi ⇒ MISS
+pair("U23 phiên bản python (test_a.sh nhắc python3) đổi", lambda: m._TOOL_VERSIONS.__setitem__("python", "Python 3.0.0"),
+     lambda: m._TOOL_VERSIONS.__setitem__("python", "Python 9.9.9"), False)
 PY
 )"
 printf '%s\n' "$OUT_U" | grep -E '^(sel|OK|BAD)' | sed 's/^/    /'
 if ! printf '%s\n' "$OUT_U" | grep -q '^sel tests/gates/test_a.sh tests/gates/test_b.sh$'; then
   fail "U0. tập chọn của fixture không phải {test_a, test_b}"; printf '%s\n' "$OUT_U" | tail -5
 fi
-for c in U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14 U15 U16 U17 U18 U19 U20 U21 U22; do
+for c in U1 U2 U3 U4 U5 U6 U7 U8 U9 U10 U11 U12 U13 U14 U15 U16 U17 U18 U19 U20 U21 U22 U23; do
   line="$(printf '%s\n' "$OUT_U" | grep -E "^(OK|BAD) $c " | head -1)"
   case "$line" in OK*) ok "${line#OK }" ;; BAD*) fail "${line#BAD }" ;; *) fail "$c: không có kết quả"; printf '%s\n' "$OUT_U" | tail -3 ;; esac
 done
