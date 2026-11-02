@@ -489,3 +489,5 @@
 1 tests/verification/test_instincts_archive_crash.sh
 # #869 (2026-11-02): ocr-review kill/reap có hạn (ocr giả giữ pipe 90 s, chờ ~37 s)
 37 tests/installer/test_ocr_review_reap.sh
+# T4 #844 (2026-11-02): shell_writes đọc thêm đích $'…' / $"…" (worktree_guard, session_lock)
+3 tests/gates/test_shell_writes_dollar_quotes.sh
