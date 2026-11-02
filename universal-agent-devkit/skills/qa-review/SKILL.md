@@ -1,6 +1,6 @@
 ---
 name: qa-review
-description: Dùng khi chất vấn một diff (branch, commit, PR) trước khi tạo PR để sinh acceptance criteria và ma trận test scenario. Kích hoạt khi người dùng nói "review diff trước khi tạo PR", "chất vấn tính năng này", "viết acceptance criteria", "QA cái PR này".
+description: Dùng khi chất vấn một diff trước khi tạo PR. Kích hoạt khi người dùng nói "review diff trước khi tạo PR", "chất vấn tính năng này", "viết acceptance criteria", "liệt kê test case cho thay đổi này", "QA cái PR này".
 ---
 
 # qa-review

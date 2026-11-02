@@ -7,7 +7,10 @@
 # disable-model-invocation: true (not listed). A ratchet: lower MAX_BYTES when every description fits.
 set -u
 DK="$(cd "$(dirname "$0")/../.." && pwd)"
-ROOT="$(cd "$DK/.." && pwd)"
+# The project root: agent-workbench keeps the kit at <repo>/universal-agent-devkit, an app repo at <repo>/.agents/devkit,
+# so $DK/.. is not it there. The gate runs from the repo root; fall back to the parent of the kit outside git.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+[ -n "$ROOT" ] || ROOT="$(cd "$DK/.." && pwd)"
 MAX_BYTES=300
 
 python3 -I - "$MAX_BYTES" "$DK" "$ROOT" <<'PY'
@@ -42,7 +45,9 @@ for p in files:
         text = f.read().replace("\r", "")
     m = re.match(r"---\n(.*?)\n---", text, re.S)
     if not m:
-        continue   # no frontmatter (commands/unity-test.md): nothing is listed
+        if p.endswith("SKILL.md"):
+            empty.append(os.path.relpath(p, root))   # a skill always needs frontmatter
+        continue   # a command without frontmatter (commands/unity-test.md) is listed with no description
     fm = m.group(1)
     if re.search(r"^disable-model-invocation:\s*true\b", fm, re.M):
         continue
