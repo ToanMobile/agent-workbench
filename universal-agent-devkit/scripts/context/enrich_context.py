@@ -827,6 +827,29 @@ IS_THERE_A_BUG_RE = re.compile(
 KNOWN_BUGS_RE = re.compile(
     r"((?<!\w)(?:các|những|mấy|mọi|tất cả|all|\d+|tổng số|số lượng|số|link|gắn|viết test cho|test cho"
     r"|list|danh sách|checklist)\s+(?:\w+\s+)?)bugs?(?!\w)")
+# #827 (01/11): câu hỏi "… check có đang dùng cũ hay sai gì ko?", lệnh "Hook đã tự ghi câu hỏi … thành một mục bug trong
+# checklist tạo 1 task …" và lệnh giao việc "Bạn là lane r30bug …" thành dòng REPORTED. bug_report chỉ BỎ BỚT so với luật
+# trên (từ lỗi nào cũng ghi), không bao giờ ghi thêm, theo 3 luật chắc chắn:
+#   (a) prompt mở đầu "Bạn là phiên|lane <mã có chữ số>": lệnh của phiên điều phối giao thẻ cho một phiên agent;
+#   (b) MỌI từ lỗi đều đang bị hỏi tới: "sai gì ko?", "fail không", "kẹt ko", "bị lỗi gì không" — hỏi có hay không;
+#   (c) từ lỗi còn lại chỉ là nhãn lỗi/bug và prompt nói về việc theo dõi: checklist, backlog, "mục bug".
+# Ảnh trong bugs/ hay stack trace Java/Kotlin, Python (STACK_RE) thì (b), (c) không áp dụng. Không đoán câu hỏi (dấu ?, "sao …") và không chia nhãn với
+# triệu chứng: hai vòng làm thế đều làm mất bug thật mà luật cũ vẫn ghi ("sao app lỗi, mở PDF không được?").
+LANE_ORDER_RE = re.compile(r"\W*bạn là\s+(?:phiên|lane)\s+[\w-]*\d")   # "phiên mới", "phiên bản 2.3" không có số liền sau
+DEFECT_WORD_RE = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(w) + (r"s?(?!\w)" if len(w) <= 3 else r"\w*")
+                                                     for w in map(normalize, DEFECT_WORDS)) + ")")   # từng chỗ mentions() thấy
+# Hỏi có hay không ngay sau từ lỗi, cùng dòng, rồi hết mệnh đề: "sai gì ko?", "fail không nhé", "lỗi gì hay không", "lỗi nào à?".
+# Không phải hỏi có/không, vẫn là báo lỗi: "crash chưa fix", "văng ko mở được", "sai gì không đi đúng làn" (phủ định động
+# từ sau; vì thế "đi" không là tiểu từ hỏi), "lỗi gì vậy?", "lỗi gì hả?" (= "lỗi gì?"), "không biết bị lỗi gì, app tự thoát"
+# (lỗi đã xảy ra), "vẫn crash⏎chưa" (xuống dòng là hết mệnh đề: hai câu trả lời) (review #827).
+_ASKED_END = r"(?=(?:[^\S\n]*(?:vậy|thế|nhỉ|hả|à|ạ|nhé|nha)(?!\w))?[^\S\n]*(?:$|[?.!,;\n]))"
+ASKED_RE = re.compile(r"[^\S\n]+(?:(?:gì|nào)[^\S\n]+)?(?:(?:hay|hoặc)[^\S\n]+)?(?:không|ko|k|chưa)(?!\w)" + _ASKED_END
+                      + r"|[^\S\n]+(?:gì|nào)[^\S\n]+à(?!\w)(?=[^\S\n]*(?:$|[?.!,;\n]))")
+SPACES_RE = re.compile(r"\s*")
+LABEL_WORDS = {"lỗi", "bug", "bugs"}
+TRACKING_RE = re.compile(r"(?<!\w)(?:checklist|backlog|mục bug)(?!\w)")
+# [ \t]*, không \s*: với re.M, \s nuốt cả xuống dòng nên mỗi dòng trống quét lại phần sau (80 000 dòng trống: 9 s).
+STACK_RE = re.compile(r"traceback \(most recent call last\)|^[ \t]*at [\w$.<>]+\([^)\n]*:\d+\)", re.M)
 
 # Agent and harness prompts are not the user's bug reports. Grok (2026-09-25, OfficeReader)
 # runs the prompt hook for its own sub-agents too, and "You are a hostile code reviewer. Do
@@ -887,6 +910,33 @@ def probe_payload(payload):
     return not non_claude(payload)
 
 
+def bug_report(prompt):
+    """Prompt đáng ghi dòng REPORTED: luật cũ (ảnh bugs/ hoặc một từ lỗi, sau khi bỏ đường dẫn, tập bug đã biết và câu
+    "có lỗi gì không") trừ (a) lệnh giao việc "Bạn là phiên|lane <mã>", (b) mọi từ lỗi đều bị hỏi tới, (c) chỉ còn nhãn
+    lỗi/bug trong prompt về checklist, backlog, mục bug (#827)."""
+    first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
+    # A wrapped message (<cross-session-message …>, <task-notification>) is not the user's report.
+    if not first or first.startswith("<") or LANE_ORDER_RE.match(normalize(first)):
+        return False
+    p_norm = normalize(prompt)
+    p_norm = OUTDATED_RE.sub("outdatedterm", IS_THERE_A_BUG_RE.sub(" ", NOT_A_REPORT_RE.sub(" ", p_norm)))
+    p_lower = KNOWN_BUGS_RE.sub(r"\1 ", PATHLIKE_RE.sub(" ", p_norm))
+    if BUG_EVIDENCE_RE.search(p_norm):
+        return True
+    if not (mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
+        return False
+    if STACK_RE.search(p_norm):
+        return True
+    found = sorted(list(DEFECT_WORD_RE.finditer(p_lower)) + list(DEFECT_RE.finditer(p_lower)), key=lambda m: m.start())
+    asked = set()
+    for m in reversed(found):   # từ sau trước: "bị" chỉ bị hỏi tới khi từ lỗi liền sau nó bị hỏi tới ("bị lỗi gì không");
+        # "bị gì?" ("log báo xe bị gì?") hỏi chuyện gì đã xảy ra, vẫn là báo lỗi như luật cũ
+        if (SPACES_RE.match(p_lower, m.end()).end() in asked) if m.group(0) == "bị" else ASKED_RE.match(p_lower, m.end()):
+            asked.add(m.start())
+    live = [m.group(0) for m in found if m.start() not in asked]
+    return bool(live) and not (set(live) <= LABEL_WORDS and TRACKING_RE.search(p_lower))
+
+
 def capture_bug(prompt, dossier, project_root, session, payload=None):
     """A bug prompt → a REPORTED row in .agents/regression_status.json (deduplicated
     against rows still open), so a reported bug is on the checklist before anyone fixes
@@ -902,15 +952,9 @@ def capture_bug(prompt, dossier, project_root, session, payload=None):
     if not (os.path.isfile(os.path.join(agents, "regression_status.json"))
             or os.path.isfile(os.path.join(agents, "regression_matrix.active.json"))):
         return ""
+    if not bug_report(prompt):
+        return ""
     first = next((l.strip() for l in prompt.splitlines() if l.strip()), "")
-    # A wrapped message (<cross-session-message …>, <task-notification>) is not the user's report.
-    if not first or first.startswith("<"):
-        return ""
-    p_norm = normalize(prompt)
-    p_norm = OUTDATED_RE.sub("outdatedterm", IS_THERE_A_BUG_RE.sub(" ", NOT_A_REPORT_RE.sub(" ", p_norm)))
-    p_lower = KNOWN_BUGS_RE.sub(r"\1 ", PATHLIKE_RE.sub(" ", p_norm))
-    if not (BUG_EVIDENCE_RE.search(p_norm) or mentions(p_lower, DEFECT_WORDS) or DEFECT_RE.search(p_lower)):
-        return ""
     title = " ".join(first.split())
     try:
         sys.path.insert(0, os.path.join(get_devkit_dir(), "bin"))

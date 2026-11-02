@@ -354,22 +354,30 @@ reset_run
   && ok "branch gone from origin: every PR still gets a train-result (exit $rc), #53 merged" || fail "branch gone: exit $rc: $(grep train- "$TMP/t25.log") $(tail -3 "$TMP/t25.log")"
 rm -f "$TMP/preflight51.rc"
 
-# ── 18. Antigravity audit (A): train giữ fcntl LOCK_EX trên <common>/super-board/merge-train.lock cả lượt; train thứ hai → exit 4, không
-#    train-result, 0 lời gọi gate cho #55 (các assert dưới kiểm). Ca cuối: train bị kill -9 giữa verify (verify mồ côi còn chạy) → train sau
-#    vẫn lấy được khoá.
+# ── 18. #676 (thay Antigravity audit A): khoá theo PR — claim <common>/super-board/merge-train.claim.<PR>. Train #54 đang giữ verify:
+#    train #55 (PR khác) chạy song song và merge; train thứ hai cùng #54 → exit 4, không train-result, 0 lời gọi gate cho #54. Train #54
+#    bị kill -9 giữa verify (claim còn pid chết) → train sau reap claim và chạy được.
 card_branch 54 f54; card_branch 55 f55
 CFG_HOLD="$TMP/cfg-hold.json"
 printf '{"base_branch":"main","repo":{"path":".","remote":""},"verify_commands":["if [ -e %s/hold ] && [ ! -e %s/hold.started ]; then : > %s/hold.started; while [ -e %s/hold ]; do sleep 0.1; done; fi"]}\n' "$TMP" "$TMP" "$TMP" "$TMP" > "$CFG_HOLD"
 reset_run; rm -f "$TMP/hold.started"; : > "$TMP/hold"
 ( cd "$W/review" && exec bash "$TRAIN" --config "$CFG_HOLD" --prs 54 ) >"$TMP/t26a.log" 2>&1 & T1=$!
 i=0; while [ ! -e "$TMP/hold.started" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+[ -e "$TMP/hold.started" ] && [ -d "$R/.git/super-board/merge-train.claim.54" ] && ok "#54's train is inside its verify and holds its claim" \
+  || fail "#54's train never reached its verify: $(tail -3 "$TMP/t26a.log")"
 ( cd "$W/review" && bash "$TRAIN" --config "$CFG_HOLD" --prs 55 ) >"$TMP/t26b.log" 2>&1; rc=$?
-[ "$rc" -eq 4 ] && ! grep -q "^train-result:" "$TMP/t26b.log" && ! grep -q -- "--pr 55" "$TMP/gate.calls" 2>/dev/null \
-  && ok "second train while one runs: exit 4, no train-result, no gate call" || fail "second train: exit $rc: $(tail -3 "$TMP/t26b.log")"
+[ "$rc" -eq 0 ] && grep -q "^train-result: 55 merged$" "$TMP/t26b.log" && kill -0 "$T1" 2>/dev/null \
+  && ok "train on another PR while #54's train holds its verify: runs in parallel and merges" || fail "parallel train #55: exit $rc: $(tail -3 "$TMP/t26b.log")"
+: > "$TMP/gate.calls"
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_HOLD" --prs 54 ) >"$TMP/t26c.log" 2>&1; rc=$?
+[ "$rc" -eq 4 ] && ! grep -q "^train-result:" "$TMP/t26c.log" && ! grep -q -- "--pr 54" "$TMP/gate.calls" 2>/dev/null \
+  && ok "second train on the same PR: exit 4, no train-result, no gate call" || fail "same-PR train: exit $rc: $(tail -3 "$TMP/t26c.log")"
 kill -9 "$T1" 2>/dev/null; wait "$T1" 2>/dev/null
-( cd "$W/review" && bash "$TRAIN" --config "$CFG_HOLD" --prs 55 ) >"$TMP/t26c.log" 2>&1; rc=$?
-[ "$rc" -eq 0 ] && grep -q "^train-result: 55 merged$" "$TMP/t26c.log" && ok "train killed mid-verify: its orphan verify does not hold the lock" || fail "after kill -9: exit $rc: $(tail -3 "$TMP/t26c.log")"
+[ -d "$R/.git/super-board/merge-train.claim.54" ] && ok "  … kill -9 leaves #54's claim behind (dead pid)" || fail "  … no claim left after kill -9"
 rm -f "$TMP/hold"
+( cd "$W/review" && bash "$TRAIN" --config "$CFG_HOLD" --prs 54 ) >"$TMP/t26d.log" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && grep -q "^train-result: 54 merged$" "$TMP/t26d.log" && ok "train killed mid-verify: its dead claim is reaped, the next train runs" || fail "after kill -9: exit $rc: $(tail -3 "$TMP/t26d.log")"
+[ ! -e "$R/.git/super-board/merge-train.claim.54" ] && [ ! -e "$R/.git/super-board/merge-train.claim.55" ] && ok "  … claims removed when the trains exit" || fail "  … claims left: $(ls "$R/.git/super-board/")"
 
 # ── 12. #288: ghi chú ponytail đầu file mô tả đúng hành vi: PR bị gate chặn đã ra khỏi chuỗi trước khi verify (R11), không "vẫn nằm trong chuỗi".
 grep -q "vẫn nằm trong chuỗi verify" "$TRAIN" && fail "the ponytail note at the top still says a gate-blocked PR stays in the verify chain" \

@@ -275,7 +275,7 @@ Repeat until a done condition or halt gate fires:
    `tier` is the run's model ladder: `'low'` when the user invoked
    `super-board run --low` (haiku/sonnet/opus by card complexity), `'high'`
    for `run --high` (opus for every card), omitted/`'medium'`
-   otherwise (sonnet/opus/session — the default). A `model_tier` key in the
+   otherwise (sonnet/opus/opus — the default). A `model_tier` key in the
    config sets the default; an explicit flag wins over config.
 5. **Reconcile** (when the run completes) — read the returned `cards`
    summary. If `halted: true`, any card is `halted`, or the GitHub helper's `--check`

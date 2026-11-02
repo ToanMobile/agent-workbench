@@ -773,3 +773,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** lịch đêm 00:00 của nhiều repo (mỗi repo một LaunchAgent) cùng nổ, cộng nút "Chạy gate full" bấm tay, chạy song song nhiều lượt post-fix-gate --full trên cùng máy
 - **Nguyên nhân:** gate_full.py chỉ khoá `<common>/postfix-gate/gate-full.lock` theo từng repo; không có gì xếp hàng giữa các repo
 - **Quy tắc phòng ngừa & Cách fix:** mọi lượt gate-full lấy thêm khoá TOÀN MÁY (flock `DEVKIT_GATE_FULL_GLOBAL_LOCK`, mặc định ~/Library/Caches/devkit-gate-full/global.lock, không bao giờ gỡ file) sau khoá repo, chờ tới `DEVKIT_GATE_FULL_GLOBAL_WAIT_S` rồi skip; test gọi `gate_full.py run` phải trỏ biến này vào thư mục tạm (không thì chờ / chặn lượt đêm thật); bên ngoài (Agent Office) chỉ dò khoá repo bằng đọc pid, không flock (flock thử làm lượt đêm skip), dò khoá toàn máy bằng LOCK_SH|NB
+
+---
+
+### [INSTINCT-100] Biên nhận cây của train và cây của merge gate gộp theo hai chiều ngược nhau; tiến trình nền của job launchd chết theo process group
+- **Ngày phát hiện:** 2026-11-01
+- **Hiện tượng lỗi:** Biên nhận cây của train và cây của merge gate gộp theo hai chiều ngược nhau; tiến trình nền của job launchd chết theo process group
+- **Nguyên nhân:** train dựng biên nhận base+head (ours=base), gate dựng head+base (ours=head): file merge=union cho thứ tự dòng khác nên cây khác dù base đứng yên ⇒ gate --require-receipt thoát 12 mãi (base-moved lặp vô hạn); queue phóng train nền rồi thoát nhưng launchd (không AbandonProcessGroup) giết cả process group của job ⇒ train chết mỗi phút (#676, 01/11)
+- **Quy tắc phòng ngừa & Cách fix:** so cây giữa hai công cụ thì phải cùng chiều merge, hoặc khi lệch mà base không dời thì rơi về verify đầy đủ thay vì lặp; tiến trình nền phải sống sau khi script thoát thì chạy trong session riêng (python os.setsid, macOS không có setsid) và có test giết process group của job

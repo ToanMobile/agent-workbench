@@ -103,6 +103,14 @@
         "mcp-servers/antigravity-pm-mcp/*.ts",
         "mcp-servers/antigravity-pm-mcp/*.tsx",
         "mcp-servers/antigravity-pm-mcp/*.vue"
+      ],
+      "stale_since": "2026-11-02 10:25:51",
+      "stale_files": [
+        "mcp-servers/antigravity-pm-mcp/src/agentapi.js",
+        "mcp-servers/antigravity-pm-mcp/src/prompt.js",
+        "mcp-servers/antigravity-pm-mcp/src/server.js",
+        "mcp-servers/antigravity-pm-mcp/src/tasks.js",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js"
       ]
     },
     "REG-AUTO-PLAY-STORE-MCP-01": {
@@ -291,7 +299,9 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
-        "universal-agent-devkit/bin/post-fix-gate.py"
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/tree_fp.py",
+        "universal-agent-devkit/scripts/linters/assertion_lint.py"
       ]
     },
     "REG-DK-GATE-02": {
@@ -376,7 +386,9 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
-        "universal-agent-devkit/bin/post-fix-gate.py"
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/tree_fp.py",
+        "universal-agent-devkit/scripts/linters/assertion_lint.py"
       ]
     },
     "REG-DK-HOOK-01": {
@@ -701,7 +713,8 @@
       "command": "bash universal-agent-devkit/tests/run_impacted.sh",
       "watch_files": [
         "universal-agent-devkit/*"
-      ]
+      ],
+      "retired": true
     },
     "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du": {
       "id": "BUG-20260925-prompt-bao-bug-that-cung-se-khong-con-du",
@@ -3538,24 +3551,6 @@
         "universal-agent-devkit/tests/worktree_git/test_worktree_trunk_merge.sh"
       ]
     },
-    "BUG-20261014-goal-set-fix-het-toan-bo-roi-xoa-issues": {
-      "id": "BUG-20261014-goal-set-fix-het-toan-bo-roi-xoa-issues",
-      "kind": "bug",
-      "title": "Goal set: fix hết toàn bộ rồi xoá issues-bugs vs workflow-improvements.md luôn",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-14 19:09:28",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-14 19:09:28",
-      "sessions": [
-        "11cbd0c7-4c0b-43e4-a5d7-4b0b6578d36c"
-      ]
-    },
     "BUG-20261014-budget-cut-forgets-passed-suites": {
       "id": "BUG-20261014-budget-cut-forgets-passed-suites",
       "kind": "bug",
@@ -4641,60 +4636,6 @@
         "universal-agent-devkit/tests/gates/test_proof_gate.sh"
       ]
     },
-    "BUG-20261015-hien-dang-co-phien-dang-chay-do-bi-limit": {
-      "id": "BUG-20261015-hien-dang-co-phien-dang-chay-do-bi-limit",
-      "kind": "bug",
-      "title": "hiện đang có phiên đang chạy dở bị limit hãy làm tiếp đi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-15 20:28:30",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-15 20:28:30",
-      "sessions": [
-        "ed61f731-9cb8-47ea-8537-4ba35cfa51c7"
-      ]
-    },
-    "BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs": {
-      "id": "BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs",
-      "kind": "bug",
-      "title": "update toàn bộ status vào issues-bugs vs workflow-improvements chưa xoá những task hay issues đã làm xong rồi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-16 11:21:24",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-16 11:21:24",
-      "sessions": [
-        "ed61f731-9cb8-47ea-8537-4ba35cfa51c7"
-      ]
-    },
-    "BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs-2": {
-      "id": "BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs-2",
-      "kind": "bug",
-      "title": "update toàn bộ status vào issues-bugs vs workflow-improvements hết sau đó xoá những task hay issues đã làm xong rồi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-16 11:22:11",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-16 11:22:11",
-      "sessions": [
-        "ed61f731-9cb8-47ea-8537-4ba35cfa51c7"
-      ]
-    },
     "BUG-20261016-audit-review-cho-toi-5-repo-https-github": {
       "id": "BUG-20261016-audit-review-cho-toi-5-repo-https-github",
       "kind": "bug",
@@ -4714,42 +4655,6 @@
         "a13f8e8d-85d9-4242-8cf5-e49085f8b11a"
       ]
     },
-    "BUG-20261016-background-from-the-session-that-started": {
-      "id": "BUG-20261016-background-from-the-session-that-started",
-      "kind": "bug",
-      "title": "Background (from the session that started this one):",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-16 19:53:56",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-16 19:53:56",
-      "sessions": [
-        "e5b728b1-4fa5-46da-9204-8d13f6f035bd"
-      ]
-    },
-    "BUG-20261016-phien-sort-task-backlog-cua-account-kia": {
-      "id": "BUG-20261016-phien-sort-task-backlog-cua-account-kia",
-      "kind": "bug",
-      "title": "phiên sort task backlog của account kia bị limit á",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-16 20:56:35",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-16 20:56:35",
-      "sessions": [
-        "26051942-4b4e-410e-b464-cea92b089132"
-      ]
-    },
     "BUG-20261016-gan-label-theo-thu-tu-uu-tien-da-lap-va": {
       "id": "BUG-20261016-gan-label-theo-thu-tu-uu-tien-da-lap-va",
       "kind": "bug",
@@ -4766,24 +4671,6 @@
       "touched_at": "2026-10-16 20:57:33",
       "sessions": [
         "26051942-4b4e-410e-b464-cea92b089132"
-      ]
-    },
-    "BUG-20261017-them-watch-files-cho-super-board-vao-reg": {
-      "id": "BUG-20261017-them-watch-files-cho-super-board-vao-reg",
-      "kind": "bug",
-      "title": "Thêm watch_files cho super-board vào regression checklist để test_github_read.sh và test_runner_lanes.sh được chọn khi…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-17 08:02:27",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-17 08:02:27",
-      "sessions": [
-        "71bf3cd7-c81f-4f52-afa9-13cf27a07d4a"
       ]
     },
     "BUG-20261017-toi-se-chi-file-hoac-config-co-duong-dan": {
@@ -4884,10 +4771,10 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/bin/super-board-ac-check.py",
-        ".claude/bin/super-board-card.sh",
-        ".claude/bin/super-board-codex-lane.sh",
-        ".claude/bin/super-board-codex-wave.sh",
-        ".claude/bin/super-board-drift.py"
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-card.sh"
       ]
     },
     "REG-SB-RUNNER-LANES-01": {
@@ -4970,10 +4857,10 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/bin/super-board-ac-check.py",
-        ".claude/bin/super-board-card.sh",
-        ".claude/bin/super-board-codex-lane.sh",
-        ".claude/bin/super-board-codex-wave.sh",
-        ".claude/bin/super-board-drift.py"
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-card.sh"
       ]
     },
     "REG-SB-MERGE-SYNC-01": {
@@ -5054,24 +4941,6 @@
         ".claude/bin/super-board-*"
       ],
       "retired": true
-    },
-    "BUG-20261019-hoc-tu-kandev-centralized-daemon-global": {
-      "id": "BUG-20261019-hoc-tu-kandev-centralized-daemon-global",
-      "kind": "bug",
-      "title": "Học từ Kandev (Centralized Daemon & Global Worker Pool):",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 16:41:26",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 16:41:26",
-      "sessions": [
-        "01a15320-8be7-7c61-a626-c6d8ff01e97c"
-      ]
     },
     "REG-SB-MERGE-GATE-STALE-01": {
       "id": "REG-SB-MERGE-GATE-STALE-01",
@@ -5239,7 +5108,8 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/bin/super-board-github-read.py",
-        ".claude/bin/super-board-preflight.sh"
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_preflight_too_big.sh"
       ]
     },
     "REG-SB-RUNNER-WATCHDOG-01": {
@@ -5409,6 +5279,7 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
+        ".claude/bin/super-board-approval.py",
         ".claude/bin/super-board-github-read.py",
         ".claude/bin/super-board-merge-policy.py"
       ]
@@ -5496,6 +5367,7 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
+        ".claude/bin/super-board-approval.py",
         ".claude/bin/super-board-github-read.py",
         ".claude/bin/super-board-merge-policy.py"
       ]
@@ -5666,6 +5538,12 @@
         ".claude/bin/super-board-approval.py",
         ".claude/bin/super-board-deps.sh",
         "tests/super-board/test_needs_you.sh"
+      ],
+      "stale_since": "2026-11-02 10:25:51",
+      "stale_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py"
       ]
     },
     "REG-SB-NEEDS-YOU-SKIP-01": {
@@ -5751,8 +5629,10 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
+        ".claude/bin/super-board-needs-you.py",
         ".claude/bin/super-board-run.sh",
-        ".claude/bin/super-board-status.py"
+        ".claude/bin/super-board-status.py",
+        ".claude/bin/super-board-wave-plan.sh"
       ]
     },
     "REG-SB-WATCHDOG-PATHS-01": {
@@ -6106,78 +5986,6 @@
         "dd5b5fec-39dd-45b9-85f2-f82a9ce5678b"
       ]
     },
-    "BUG-20261018-https-github-com-toanmobile-neighbours-f": {
-      "id": "BUG-20261018-https-github-com-toanmobile-neighbours-f",
-      "kind": "bug",
-      "title": "https://github.com/ToanMobile/Neighbours-From-Hell/issues/8 đang bị blocked check và fix",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-18 20:28:30",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-18 20:28:30",
-      "sessions": [
-        "0066c134-de16-4e8b-bcaa-f1f5533d913c"
-      ]
-    },
-    "BUG-20261018-lam-cho-toi-89-vs-76": {
-      "id": "BUG-20261018-lam-cho-toi-89-vs-76",
-      "kind": "bug",
-      "title": "làm cho tôi 89 vs 76",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-18 21:18:33",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-18 21:18:33",
-      "sessions": [
-        "6ca65ad7-3c6e-4060-9fbe-bccd01b14dbe"
-      ]
-    },
-    "BUG-20261018-kiem-tra-cac-task-dang-bi-blocked-cho-to": {
-      "id": "BUG-20261018-kiem-tra-cac-task-dang-bi-blocked-cho-to",
-      "kind": "bug",
-      "title": "kiểm tra các task đang bị blocked cho tôi fix root cause",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-18 21:57:27",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-18 21:57:27",
-      "sessions": [
-        "fb3a73f2-d51c-4a1e-91ca-c23107bf8798"
-      ]
-    },
-    "BUG-20261019-qua-nhieu-task-bi-blocked-tim-nguyen-nha": {
-      "id": "BUG-20261019-qua-nhieu-task-bi-blocked-tim-nguyen-nha",
-      "kind": "bug",
-      "title": "quá nhiều task bị blocked tìm nguyên nhân và fix root cause ở devkit",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 07:23:33",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 07:23:33",
-      "sessions": [
-        "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
-    },
     "BUG-20261019-update-lai-cac-pr-log-comment-don-gian-t": {
       "id": "BUG-20261019-update-lai-cac-pr-log-comment-don-gian-t",
       "kind": "bug",
@@ -6230,60 +6038,6 @@
       "touched_at": "2026-10-19 09:10:06",
       "sessions": [
         "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
-    },
-    "BUG-20261019-ok-da-tao-phien-fix-loi-nay-chua": {
-      "id": "BUG-20261019-ok-da-tao-phien-fix-loi-nay-chua",
-      "kind": "bug",
-      "title": "ok đã tạo phiên fix lỗi này chưa?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 10:44:50",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 10:44:50",
-      "sessions": [
-        "43812cf5-424a-4a34-b03b-9ad4a7495423"
-      ]
-    },
-    "BUG-20261019-tao-worktree-cho": {
-      "id": "BUG-20261019-tao-worktree-cho",
-      "kind": "bug",
-      "title": "tạo worktree cho",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 14:50:08",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 14:50:08",
-      "sessions": [
-        "01a15320-8be7-7c61-a626-c6d8ff01e97c"
-      ]
-    },
-    "BUG-20261019-dong-y-sao-luu-2-file-trang-thai-abort-m": {
-      "id": "BUG-20261019-dong-y-sao-luu-2-file-trang-thai-abort-m",
-      "kind": "bug",
-      "title": "Đồng ý: sao lưu 2 file trạng thái, abort merge kẹt, rồi reset main local agent-workbench về origin/main.",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 16:38:19",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 16:38:19",
-      "sessions": [
-        "ff4a47a7-4071-46aa-aad4-4d1bb1d7d77a"
       ]
     },
     "REG-SB-SCRATCH-CONFIG-01": {
@@ -6363,6 +6117,10 @@
       "watch_files": [
         ".claude/bin/super-board-scratch-config.sh",
         "tests/super-board/test_scratch_config.sh"
+      ],
+      "stale_since": "2026-11-02 10:25:51",
+      "stale_files": [
+        ".claude/bin/super-board-scratch-config.sh"
       ]
     },
     "REG-SB-NEEDS-DEVICE-01": {
@@ -6450,79 +6208,8 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/bin/super-board-run.sh",
-        ".claude/bin/super-board-status.py"
-      ]
-    },
-    "BUG-20261019-108-88-duyet-a-con-worktree-treo-nao-mo": {
-      "id": "BUG-20261019-108-88-duyet-a-con-worktree-treo-nao-mo",
-      "kind": "bug",
-      "title": "#108, #88 duyệt á, còn worktree treo nào mồ côi thì xoá đi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 21:44:31",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 21:44:31",
-      "sessions": [
-        "dd5b5fec-39dd-45b9-85f2-f82a9ce5678b"
-      ]
-    },
-    "BUG-20261019-tao-5-agent-quet-toan-bo-xem-con-toi-uu": {
-      "id": "BUG-20261019-tao-5-agent-quet-toan-bo-xem-con-toi-uu",
-      "kind": "bug",
-      "title": "tạo 5 agent quét toàn bộ xem còn tối ưu hay bugs chỗ nào nữa ko?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 21:54:26",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 21:54:26",
-      "sessions": [
-        "01a15320-8be7-7c61-a626-c6d8ff01e97c"
-      ]
-    },
-    "BUG-20261019-ban-tiep-quan-mot-viec-do-trong-repo-vol": {
-      "id": "BUG-20261019-ban-tiep-quan-mot-viec-do-trong-repo-vol",
-      "kind": "bug",
-      "title": "Bạn tiếp quản một việc dở trong repo /Volumes/Data/Toan/agent-workbench (agent-workbench, GitHub ToanMobile/agent-workb…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 22:37:59",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 22:37:59",
-      "sessions": [
-        "01a154cf-c637-7e21-9843-056b01f6afba"
-      ]
-    },
-    "BUG-20261019-tiep-quan-agent-workbench-19-10-2026-22": {
-      "id": "BUG-20261019-tiep-quan-agent-workbench-19-10-2026-22",
-      "kind": "bug",
-      "title": "Tiếp quản agent-workbench (19/10/2026, ~22:30). Đọc trước: .agents/local/memory/claude-auto/handoff-2026-10-19-ocr-batc…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-19 22:38:14",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-19 22:38:14",
-      "sessions": [
-        "01a154d0-2060-7b41-94b4-1012cb7e4ab7"
+        ".claude/bin/super-board-status.py",
+        ".claude/bin/super-board-wave-plan.sh"
       ]
     },
     "REG-SB-RUN-SWEEP-TICK-01": {
@@ -6740,42 +6427,6 @@
         "01a154d1-f7e9-7670-a2bc-3f25a7cda5e3"
       ]
     },
-    "BUG-20261020-commit-di-khong-chay-gate": {
-      "id": "BUG-20261020-commit-di-khong-chay-gate",
-      "kind": "bug",
-      "title": "commit đi, không chạy gate",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-20 00:37:23",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-20 00:37:23",
-      "sessions": [
-        "01a154d1-f7e9-7670-a2bc-3f25a7cda5e3"
-      ]
-    },
-    "BUG-20261020-voi-6-repo-thi-co-bi-2000-lan-ko": {
-      "id": "BUG-20261020-voi-6-repo-thi-co-bi-2000-lan-ko",
-      "kind": "bug",
-      "title": "với 6 repo thì có bị 2000 lần ko",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-20 14:24:31",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-20 14:24:31",
-      "sessions": [
-        "0c25f8b8-650f-49bb-94ff-41c537a1fc51"
-      ]
-    },
     "REG-SB-NOTIFY-SLOTS-01": {
       "id": "REG-SB-NOTIFY-SLOTS-01",
       "kind": "test",
@@ -6949,24 +6600,6 @@
       "stale_since": "2026-10-24 13:11:48",
       "stale_files": [
         "universal-agent-devkit/bin/post-fix-gate.py"
-      ]
-    },
-    "BUG-20261020-audit-review-cac-nay-da-fix-ok-chua": {
-      "id": "BUG-20261020-audit-review-cac-nay-da-fix-ok-chua",
-      "kind": "bug",
-      "title": "audit,review các này đã fix ok chưa?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-20 14:38:04",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-20 14:38:04",
-      "sessions": [
-        "0dc256bf-b963-452b-bd7f-7fffb54b73e4"
       ]
     },
     "REG-SB-BOARD-HEARTBEAT-01": {
@@ -7401,6 +7034,7 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
+        "tests/super-board/test_heavy_slot.sh",
         "universal-agent-devkit/bin/heavy_slot.py"
       ]
     },
@@ -7595,60 +7229,6 @@
         "a218bb0b-c506-4f26-b9c5-69fbd3def415"
       ]
     },
-    "BUG-20261021-co-task-nao-ket-ko": {
-      "id": "BUG-20261021-co-task-nao-ket-ko",
-      "kind": "bug",
-      "title": "có task nào kẹt ko",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-21 09:14:26",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-21 09:14:26",
-      "sessions": [
-        "a218bb0b-c506-4f26-b9c5-69fbd3def415"
-      ]
-    },
-    "BUG-20261021-check-toan-bo-blocked-dang-bi-issues-gi": {
-      "id": "BUG-20261021-check-toan-bo-blocked-dang-bi-issues-gi",
-      "kind": "bug",
-      "title": "check toàn bộ blocked đang bị issues gì nếu do devkit thì fix đi và chuyển các task đó về lại backlog",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-21 09:26:28",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-21 09:26:28",
-      "sessions": [
-        "63413c7c-ec10-401b-9985-fc2720ba1e19"
-      ]
-    },
-    "BUG-20261021-sau-khi-fix-xong-thi-het-bi-blocked-chua": {
-      "id": "BUG-20261021-sau-khi-fix-xong-thi-het-bi-blocked-chua",
-      "kind": "bug",
-      "title": "sau khi fix xong thì hết bị blocked chưa?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-21 09:38:00",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-21 09:38:00",
-      "sessions": [
-        "63413c7c-ec10-401b-9985-fc2720ba1e19"
-      ]
-    },
     "REG-SB-BUILD-WORKERS-01": {
       "id": "REG-SB-BUILD-WORKERS-01",
       "kind": "test",
@@ -7730,24 +7310,6 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/bin/super-board-run.sh"
-      ]
-    },
-    "BUG-20261021-co-co-che-neu-full-tai-3-thi-no-doi-de-v": {
-      "id": "BUG-20261021-co-co-che-neu-full-tai-3-thi-no-doi-de-v",
-      "kind": "bug",
-      "title": "Có cơ chế nếu full tải 3 thì nó đợi để vào hàng chứ ko bị lỗi nhé",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-21 19:25:05",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-21 19:25:05",
-      "sessions": [
-        "ac87d24a-1767-4ca6-aa8c-1c1b5b0edd35"
       ]
     },
     "REG-DK-HEAVY-CAP-01": {
@@ -8177,42 +7739,6 @@
         ".claude/bin/super-board-merge-gate.sh"
       ]
     },
-    "BUG-20261022-check-cac-case-nay-tao-task-tren-backlog": {
-      "id": "BUG-20261022-check-cac-case-nay-tao-task-tren-backlog",
-      "kind": "bug",
-      "title": "check các case này tạo task trên backlog cho tôi đi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 11:27:41",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 11:27:41",
-      "sessions": [
-        "bfb7590e-74fe-45b6-ab9a-e4f34543011c"
-      ]
-    },
-    "BUG-20261022-nay-h-dev-kit-chua-co-loi-nao-a": {
-      "id": "BUG-20261022-nay-h-dev-kit-chua-co-loi-nao-a",
-      "kind": "bug",
-      "title": "nãy h dev kit chưa có lỗi nào à?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 12:39:26",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 12:39:26",
-      "sessions": [
-        "8845c1d6-6268-4b23-89c9-cd724ab8794f"
-      ]
-    },
     "BUG-20261022-dung-ai-factory-test-va-sua-luon-loi-kie": {
       "id": "BUG-20261022-dung-ai-factory-test-va-sua-luon-loi-kie",
       "kind": "bug",
@@ -8227,24 +7753,6 @@
       "state": "reported",
       "fixed": null,
       "touched_at": "2026-10-22 13:15:47",
-      "sessions": [
-        "c4fc41b8-867f-4e1b-b247-241fd1c44821"
-      ]
-    },
-    "BUG-20261022-sua-tiep-hai-loi-roi-commit-nhanh": {
-      "id": "BUG-20261022-sua-tiep-hai-loi-roi-commit-nhanh",
-      "kind": "bug",
-      "title": "sửa tiếp hai lỗi rồi commit nhánh",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 13:17:08",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 13:17:08",
       "sessions": [
         "c4fc41b8-867f-4e1b-b247-241fd1c44821"
       ]
@@ -8329,7 +7837,8 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
-        ".claude/bin/super-board-run.sh"
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_reclaim_dead_build.sh"
       ]
     },
     "REG-SB-MERGE-DEAD-HOLDER-01": {
@@ -8500,11 +8009,11 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
+        "mcp-servers/agent-office/install-autostart.sh",
         "mcp-servers/agent-office/server.py",
         "mcp-servers/agent-office/tests/describe_cmd_test.js",
-        "mcp-servers/agent-office/tests/poll_test.js",
-        "mcp-servers/agent-office/tests/test_agent_workload.py",
-        "mcp-servers/agent-office/tests/test_describe_cmd.py"
+        "mcp-servers/agent-office/tests/frame_pacing_test.js",
+        "mcp-servers/agent-office/tests/poll_test.js"
       ]
     },
     "BUG-20261022-tuong-nam-hang-doc-sai-roi-tuong-phai-ha": {
@@ -8571,42 +8080,6 @@
         "status": "INCONCLUSIVE",
         "reason": "không biết file test nào (link bằng file/class test)"
       }
-    },
-    "BUG-20261022-nguyen-nhan-sao-vo-blocked-fix-dev-kit-c": {
-      "id": "BUG-20261022-nguyen-nhan-sao-vo-blocked-fix-dev-kit-c",
-      "kind": "bug",
-      "title": "nguyên nhân sao vô blocked? Fix dev kit cho tôi tránh lần sau bị lại nữa",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 17:07:03",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 17:07:03",
-      "sessions": [
-        "8845c1d6-6268-4b23-89c9-cd724ab8794f"
-      ]
-    },
-    "BUG-20261022-neu-bi-dung-roi-thi-thoi-de-sau": {
-      "id": "BUG-20261022-neu-bi-dung-roi-thi-thoi-de-sau",
-      "kind": "bug",
-      "title": "nếu bị dừng rồi thì thôi để sau",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-22 17:18:31",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-22 17:18:31",
-      "sessions": [
-        "8845c1d6-6268-4b23-89c9-cd724ab8794f"
-      ]
     },
     "BUG-20261022-sao-228-cung-nam-trong-blocked-de-ntn-to": {
       "id": "BUG-20261022-sao-228-cung-nam-trong-blocked-de-ntn-to",
@@ -9290,7 +8763,8 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/bin/super-board-preflight.sh",
-        ".claude/bin/super-board-run.sh"
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_preflight_swept.sh"
       ]
     },
     "REG-SB-BLOCKED-BY-OPEN-ONLY-01": {
@@ -9539,7 +9013,9 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/bin/super-board-merge-gate.sh",
-        ".claude/bin/super-board-verify-cmd.sh"
+        ".claude/bin/super-board-verify-cmd.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_verify_cmd_same_as_gate.sh"
       ]
     },
     "REG-SB-VERIFY-CMD-01": {
@@ -9626,7 +9102,9 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/bin/super-board-merge-gate.sh",
-        ".claude/bin/super-board-verify-cmd.sh"
+        ".claude/bin/super-board-verify-cmd.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_verify_cmd_same_as_gate.sh"
       ]
     },
     "REG-SB-SELF-RELOAD-01": {
@@ -9793,7 +9271,8 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
-        ".claude/bin/super-board-preflight.sh"
+        ".claude/bin/super-board-preflight.sh",
+        "tests/super-board/test_preflight_overlap_stale.sh"
       ]
     },
     "REG-SB-PREFLIGHT-NUMBERED-AC-01": {
@@ -9963,24 +9442,6 @@
       "stale_files": [
         ".claude/bin/super-board-run.sh",
         "tests/super-board/test_runner_review_approved_head.sh"
-      ]
-    },
-    "BUG-20261023-cac-loi-o-devkit-trong-qua-trinh-chay-da": {
-      "id": "BUG-20261023-cac-loi-o-devkit-trong-qua-trinh-chay-da",
-      "kind": "bug",
-      "title": "các lỗi ở devkit trong quá trình chạy đã fix hết chưa nếu chưa có tạo task lên board chưa?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-23 09:55:54",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-23 09:55:54",
-      "sessions": [
-        "8845c1d6-6268-4b23-89c9-cd724ab8794f"
       ]
     },
     "REG-SB-RUNNER-READY-ORDER-01": {
@@ -10251,42 +9712,6 @@
         "7124a215-fcc4-4151-b92a-7426609d4eb0"
       ]
     },
-    "BUG-20261023-vay-thi-giu-van-dc-toi-tuong-no-la-bug": {
-      "id": "BUG-20261023-vay-thi-giu-van-dc-toi-tuong-no-la-bug",
-      "kind": "bug",
-      "title": "vậy thì giữ vẫn đc tôi tưởng nó là bug",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-23 11:48:00",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-23 11:48:00",
-      "sessions": [
-        "7124a215-fcc4-4151-b92a-7426609d4eb0"
-      ]
-    },
-    "BUG-20261023-audit-review-them-phan-nay": {
-      "id": "BUG-20261023-audit-review-them-phan-nay",
-      "kind": "bug",
-      "title": "audit,review thêm phần này",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-23 13:41:31",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-23 13:41:31",
-      "sessions": [
-        "6345b04c-e062-4273-ad6e-3bb48e202023"
-      ]
-    },
     "REG-DK-DISCARD-SQUASH-01": {
       "id": "REG-DK-DISCARD-SQUASH-01",
       "kind": "test",
@@ -10369,42 +9794,6 @@
       "stale_files": [
         "universal-agent-devkit/scripts/git/worktree.py",
         "universal-agent-devkit/tests/worktree_git/test_worktree_discard_squash.sh"
-      ]
-    },
-    "BUG-20261023-chay-kiem-tra-di-neu-loi-thi-fix-devkit": {
-      "id": "BUG-20261023-chay-kiem-tra-di-neu-loi-thi-fix-devkit",
-      "kind": "bug",
-      "title": "chạy kiểm tra đi nếu lỗi thì fix devkit để lần sau dọn dẹp cho gọn gàng vào",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-23 15:35:30",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-23 15:35:30",
-      "sessions": [
-        "c8fa1362-82a4-4f59-b22d-9252a2ca3021"
-      ]
-    },
-    "BUG-20261023-tiep-tuc-307-super-build-doc-claude-audi": {
-      "id": "BUG-20261023-tiep-tuc-307-super-build-doc-claude-audi",
-      "kind": "bug",
-      "title": "Tiếp tục #307 super-build: đọc .claude/audit-gate/gate307c.log trong worktree issue-307-build (gate --full --diff origi…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-23 16:04:03",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-23 16:29:57",
-      "sessions": [
-        "8e3ee565-56b1-4f53-a089-01bd3c03dcc4"
       ]
     },
     "REG-DK-MERGE-TREE-NOLEAK-01": {
@@ -11263,7 +10652,7 @@
           "deleted": []
         }
       ],
-      "title": "một trần worker duy nhất: build+qa+review của mọi repo trên máy <= max_workers (5), đếm qua thư mục slot chung, PID chết tự trả slot; tải CPU, WIP, gate_max không còn chi phối",
+      "title": "một trần worker max_workers (5) cho mọi repo, cộng phanh spawn khi load1 vượt ngưỡng (mặc định busy_load); dưới ngưỡng tải không chặn; lib mode không đọc máy thật",
       "component": "super-board-total-worker-cap",
       "command": "bash tests/super-board/test_runner_total_cap.sh",
       "watch_files": [
@@ -11274,7 +10663,8 @@
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
         ".claude/bin/super-board-run.sh",
-        ".claude/super-board/configs/agent-workbench.json"
+        ".claude/super-board/configs/agent-workbench.json",
+        "tests/super-board/test_runner_total_cap.sh"
       ]
     },
     "BUG-20261024-fix-root-cause-devkit-de-sau-nay-ko-bi-l": {
@@ -11336,24 +10726,6 @@
         "reason": "không biết file test nào (link bằng file/class test)"
       }
     },
-    "BUG-20261024-http-ai-factory-localhost-4317-hien-chay": {
-      "id": "BUG-20261024-http-ai-factory-localhost-4317-hien-chay",
-      "kind": "bug",
-      "title": "http://ai-factory.localhost:4317/ hiện chạy trên phone hơi khó xem audit, review lại ui,ux. repo nào dừng thì nên tắt l…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 07:30:30",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 07:30:30",
-      "sessions": [
-        "308c22ac-1c3f-4304-bac9-61b7d81c175e"
-      ]
-    },
     "REG-SB-RUNNER-NOOP-WORKER-01": {
       "id": "REG-SB-RUNNER-NOOP-WORKER-01",
       "kind": "test",
@@ -11390,25 +10762,8 @@
       ],
       "stale_since": "2026-10-25 13:16:02",
       "stale_files": [
-        ".claude/bin/super-board-run.sh"
-      ]
-    },
-    "BUG-20261024-sua-logic-need-you-o-dev-kit-de-tranh-la": {
-      "id": "BUG-20261024-sua-logic-need-you-o-dev-kit-de-tranh-la",
-      "kind": "bug",
-      "title": "sửa logic need you ở dev kit để tránh lặp lại lỗi",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 08:02:24",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 08:02:24",
-      "sessions": [
-        "b6755c6d-dbfb-4058-8769-4114a9fddbcf"
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_noop_worker.sh"
       ]
     },
     "BUG-20261024-need-you-vs-gom-task-toi-da-tung-lam-tru": {
@@ -11425,78 +10780,6 @@
       "state": "reported",
       "fixed": null,
       "touched_at": "2026-10-24 08:29:21",
-      "sessions": [
-        "b6755c6d-dbfb-4058-8769-4114a9fddbcf"
-      ]
-    },
-    "BUG-20261024-update-lai-devkit-co-che-gate-check-nhu": {
-      "id": "BUG-20261024-update-lai-devkit-co-che-gate-check-nhu",
-      "kind": "bug",
-      "title": "update lại devkit cơ chế gate check như thế nào mà lại làm hổng bug rất nhiều lần như vậy siết lại thêm",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 08:44:45",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 08:44:45",
-      "sessions": [
-        "b6755c6d-dbfb-4058-8769-4114a9fddbcf"
-      ]
-    },
-    "BUG-20261024-check-cac-task-blocked-sao-lai-bi-block": {
-      "id": "BUG-20261024-check-cac-task-blocked-sao-lai-bi-block",
-      "kind": "bug",
-      "title": "check các task blocked sao lại bị block?",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 09:15:06",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 09:15:06",
-      "sessions": [
-        "b6755c6d-dbfb-4058-8769-4114a9fddbcf"
-      ]
-    },
-    "BUG-20261024-check-gate-run-2-for-issue-320-build-gre": {
-      "id": "BUG-20261024-check-gate-run-2-for-issue-320-build-gre",
-      "kind": "bug",
-      "title": "Check gate run 2 for issue #320 build: grep GATE_RC in /tmp/gate320b.log (task bndrj2p0u). If GATE_RC=0 push issue-320-…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 11:57:00",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 11:57:00",
-      "sessions": [
-        "c5cca13e-7208-407e-8b4f-1853285723bf"
-      ]
-    },
-    "BUG-20261024-con-task-nao-dang-bi-blocked-nua-ko": {
-      "id": "BUG-20261024-con-task-nao-dang-bi-blocked-nua-ko",
-      "kind": "bug",
-      "title": "Còn task nào đang bị blocked nữa ko",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 12:25:34",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 12:25:34",
       "sessions": [
         "b6755c6d-dbfb-4058-8769-4114a9fddbcf"
       ]
@@ -11538,6 +10821,7 @@
       ],
       "stale_since": "2026-10-27 19:04:46",
       "stale_files": [
+        "universal-agent-devkit/tests/gates/test_gate_stop_reuse_race.sh",
         "universal-agent-devkit/tests/gates/test_multi_session_gate.sh"
       ]
     },
@@ -11839,74 +11123,6 @@
         "universal-agent-devkit/scripts/git/githooks.sh",
         "universal-agent-devkit/hooks/session_context.sh",
         "universal-agent-devkit/tests/worktree_git/test_matrix_driver_refresh.sh"
-      ]
-    },
-    "BUG-20261024-first-operation-run-claude-bin-super-boa": {
-      "id": "BUG-20261024-first-operation-run-claude-bin-super-boa",
-      "kind": "bug",
-      "title": "First operation: run .claude/bin/super-board-skills-ready.py --root '/Volumes/Data/Toan/agent-workbench' --host claude…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 16:48:41",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 21:53:18",
-      "sessions": [
-        "6290dc39-f7f1-4d13-9214-bce83ccb753b",
-        "20a36f9b-a209-4057-bdba-3fea8da9ce74",
-        "e7b07ce7-4936-4bcd-9787-2a1ef19dfd4f",
-        "215259aa-3857-41b7-8ab6-cd95ccf5a9b6",
-        "4cec9f97-36c4-444b-99fd-1cbcbd5a19f6",
-        "f25e8446-f638-43a7-a505-59323e3539fa",
-        "a10b1411-e930-4b66-b933-0da95cf791a2",
-        "482d829d-34af-4dc9-874a-9e06d19dc30d",
-        "964783b0-bbd1-4b0f-8da6-7c7874e8b2d0",
-        "b67b6245-e3f1-4c75-9fb3-6bd9c7c2cf77",
-        "c88f7376-1eec-4b81-8326-bb6e782c6f69",
-        "36f755f2-b5e6-4b6a-b36b-ff3b2c40ab11",
-        "f40cba8c-f93f-498f-afc4-de940e7fa5d3",
-        "3cb77084-e37e-4f7d-a760-dc6ebf0e227c",
-        "f00b5929-0d9c-4ba4-9fa8-d0181dca61c4"
-      ]
-    },
-    "BUG-20261024-kiem-tra-cac-task-bi-blocked": {
-      "id": "BUG-20261024-kiem-tra-cac-task-bi-blocked",
-      "kind": "bug",
-      "title": "kiểm tra. các task bị blocked",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 17:19:51",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 17:19:51",
-      "sessions": [
-        "224a2956-d9a2-440b-b1df-0035f4a653c1"
-      ]
-    },
-    "BUG-20261024-dang-comment-chan-moi-tren-319-voi-dong": {
-      "id": "BUG-20261024-dang-comment-chan-moi-tren-319-voi-dong",
-      "kind": "bug",
-      "title": "Đăng comment chặn mới trên #319 với dòng cuối `blocked-by: 377` (dùng super-board-blocked-by.py), rồi tạo thẻ Backlog c…",
-      "cause": null,
-      "component": "-",
-      "created_at": "2026-10-24 17:39:57",
-      "task": null,
-      "tests": [],
-      "last": null,
-      "history": [],
-      "state": "reported",
-      "fixed": null,
-      "touched_at": "2026-10-24 17:39:57",
-      "sessions": [
-        "224a2956-d9a2-440b-b1df-0035f4a653c1"
       ]
     },
     "BUG-20261024-tai-sao-tien-trinh-bi-ket-check-fix-dev": {
@@ -12708,6 +11924,1013 @@
       "runs_in_suite": [
         "universal-agent-devkit/tests/gates/test_gate_full_global_lock.sh"
       ]
+    },
+    "REG-DK-REMOVE-REFLOG-SQUASH-01": {
+      "id": "REG-DK-REMOVE-REFLOG-SQUASH-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "worktree remove: commit chỉ còn trong reflog mà trunk đã có patch (squash) thì gỡ được kèm refs/devkit/discarded; trunk chưa có patch thì vẫn từ chối UNREACHABLE (#421)",
+      "component": "worktree-remove-reflog-squash",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh"
+      ]
+    },
+    "REG-SB-WORKER-WRAP-TERM-01": {
+      "id": "REG-SB-WORKER-WRAP-TERM-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "worker-wrap dừng được worker dù con nuốt mất SIGTERM đầu tiên (TERM tới con trước exec): gửi lại sau 1 s, không treo kill + wait (#489)",
+      "component": "super-board-worker-wrap-term",
+      "command": "bash tests/super-board/test_worker_wrap_term.sh",
+      "watch_files": [
+        ".claude/bin/super-board-worker-wrap.sh",
+        "tests/super-board/test_worker_wrap_term.sh"
+      ]
+    },
+    "REG-SB-CARD-WRITE-BLOCK-01": {
+      "id": "REG-SB-CARD-WRITE-BLOCK-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "gh_write_once: lệnh ghi GitHub của MỘT thẻ hỏng thì thẻ đó vào Blocked kèm comment chặn, board chạy tiếp; bước chặn hỏng hoặc lệnh không thuộc thẻ thì halt 79 như cũ; dispatch không phóng worker cho thẻ vừa bị chặn (28/10)",
+      "component": "super-board-card-write-fail-blocks-card",
+      "command": "bash tests/super-board/test_card_write_fail_blocks_card.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_card_write_fail_blocks_card.sh"
+      ]
+    },
+    "REG-SB-SWEEP-NEEDS-YOU-529-01": {
+      "id": "REG-SB-SWEEP-NEEDS-YOU-529-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#529: Blocked by không bullet đọc được số; resume gỡ needs-you trước khi sang Review; denylist soi --next và từng mệnh đề; reclaim/no-op ❓ không ghi blocked-by: -; trần im lặng build/qa; tick rẻ đếm chu kỳ không tiến triển",
+      "component": "super-board-sweep-needs-you-529",
+      "command": "bash tests/super-board/test_issue529_sweep_needs_you.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-wave-plan.sh",
+        "tests/super-board/test_issue529_sweep_needs_you.sh"
+      ]
+    },
+    "REG-SB-TRAIN-SINGLE-TEST-RETRY-578-01": {
+      "id": "REG-SB-TRAIN-SINGLE-TEST-RETRY-578-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#578: verify đỏ chỉ vì đúng một test của REG-DK-ALL-01 thì train chạy lại riêng test đó một lần (xanh = flaky ghi vào PR + thẻ test; đỏ hai lần = red kèm tên test); hai test trở lên, suite khác đỏ, tên test mất, đường dẫn lạ = red ngay",
+      "component": "super-board-merge-train-single-test-retry-578",
+      "command": "env -u SB_BOARD_WORKER -u SB_MERGE_QUEUE bash tests/super-board/test_merge_train_single_test_retry.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_merge_train_single_test_retry.sh"
+      ]
+    },
+    "REG-SB-RUNNER-MQ-RESTART-599-01": {
+      "id": "REG-SB-RUNNER-MQ-RESTART-599-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#599: runner restart giữa chừng khi bộ gom nền còn chạy không bật bộ gom thứ hai (đọc lại .mq.pid); .mq.rc do runner cũ để lại vẫn được runner mới đọc và áp 79/9 (halt), mã khác chỉ ghi log",
+      "component": "super-board-runner-mq-restart-599",
+      "command": "bash tests/super-board/test_runner_mq_restart.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_mq_restart.sh"
+      ]
+    },
+    "REG-SB-HOST-AGY-549-01": {
+      "id": "REG-SB-HOST-AGY-549-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#549: super-board-host.sh nhận diện claude, codex, agy (SUPER_BOARD_HOST hoặc ANTIGRAVITY_*), host lạ thoát 64",
+      "component": "super-board-door-blast-host-agy-549",
+      "command": "bash tests/super-board/test_host_detect.sh",
+      "watch_files": [
+        ".claude/bin/super-board-host.sh",
+        ".claude/skills/super-board/references/writing-standard.md",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-build/SKILL.md",
+        ".claude/skills/super-qa/references/iteration-preamble.md",
+        ".claude/skills/super-review/SKILL.md",
+        "tests/super-board/test_host_detect.sh",
+        "tests/super-board/test_risk_door_blast.sh"
+      ]
+    },
+    "REG-SB-RISK-DOOR-BLAST-549-01": {
+      "id": "REG-SB-RISK-DOOR-BLAST-549-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#549: khối Risk nêu Door (one-way/two-way) và Blast radius ở writing-standard và các tài liệu lane; mọi SKILL.md dưới 20000 byte",
+      "component": "super-board-door-blast-host-agy-549",
+      "command": "bash tests/super-board/test_risk_door_blast.sh",
+      "watch_files": [
+        ".claude/bin/super-board-host.sh",
+        ".claude/skills/super-board/references/writing-standard.md",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-build/SKILL.md",
+        ".claude/skills/super-qa/references/iteration-preamble.md",
+        ".claude/skills/super-review/SKILL.md",
+        "tests/super-board/test_host_detect.sh",
+        "tests/super-board/test_risk_door_blast.sh"
+      ]
+    },
+    "REG-SB-WAITING-ON-HELPER-601-01": {
+      "id": "REG-SB-WAITING-ON-HELPER-601-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#601 helper waiting-on: mark gắn nhãn waiting-on:#N + comment một lần (không dòng blocked-by:); sweep gỡ nhãn khi N CLOSED/MERGED, mỗi N đọc một lần, số lỗi không chặn số khác; migrate thẻ Blocked chỉ chờ → Ready + nhãn, bỏ needs-you/fuse, chạy 2 lần cùng kết quả",
+      "component": "super-board-waiting-on-601",
+      "command": "bash tests/super-board/test_waiting_on_helper.sh",
+      "watch_files": [
+        ".claude/bin/super-board-waiting-on.py",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/workflows/super-board-wave.js",
+        ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_waiting_on_helper.sh",
+        "tests/super-board/test_waiting_on_runner.sh",
+        "tests/super-board/test_waiting_on_wave.sh"
+      ]
+    },
+    "REG-SB-WAITING-ON-RUNNER-601-01": {
+      "id": "REG-SB-WAITING-ON-RUNNER-601-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#601 runner: preflight sequence có blocker mở không Blocked mà gọi mark, thẻ ở Ready; dispatch/inflight bỏ qua thẻ waiting-on; sweep_waiting_on theo nhịp, lỗi không halt; hold vẫn Blocked",
+      "component": "super-board-waiting-on-601",
+      "command": "bash tests/super-board/test_waiting_on_runner.sh",
+      "watch_files": [
+        ".claude/bin/super-board-waiting-on.py",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/workflows/super-board-wave.js",
+        ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_waiting_on_helper.sh",
+        "tests/super-board/test_waiting_on_runner.sh",
+        "tests/super-board/test_waiting_on_wave.sh"
+      ]
+    },
+    "REG-SB-WAITING-ON-WAVE-601-01": {
+      "id": "REG-SB-WAITING-ON-WAVE-601-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#601 workflow: planner để thẻ waiting-on ngoài Ready (vào waiting), pending có needsYou; wave.js không build sequence có blocker mở, preflightExit = waiting@Ready",
+      "component": "super-board-waiting-on-601",
+      "command": "bash tests/super-board/test_waiting_on_wave.sh",
+      "watch_files": [
+        ".claude/bin/super-board-waiting-on.py",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/workflows/super-board-wave.js",
+        ".claude/bin/super-board-codex-lane.sh",
+        ".claude/bin/super-board-codex-wave.sh",
+        "tests/super-board/test_waiting_on_helper.sh",
+        "tests/super-board/test_waiting_on_runner.sh",
+        "tests/super-board/test_waiting_on_wave.sh"
+      ]
+    },
+    "REG-SB-AC-SHORT-HEADING-01": {
+      "id": "REG-SB-AC-SHORT-HEADING-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#616/#618: heading `## AC` là mục AC ở preflight (không hold unclear), luật kéo Backlog và ac-check; `## ACL` không phải",
+      "component": "super-board-ac-short-heading",
+      "command": "bash tests/super-board/test_preflight_ac_short_heading.sh",
+      "watch_files": [
+        ".claude/bin/super-board-preflight.sh",
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-ac-check.py",
+        "tests/super-board/test_preflight_ac_short_heading.sh"
+      ]
+    },
+    "REG-DK-GATE-CROSS-REVIEW-605-01": {
+      "id": "REG-DK-GATE-CROSS-REVIEW-605-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#605: test có sẵn bị sửa chỉ được duyệt chéo (approved_tests.json approvals: reviewer khác author/DEVKIT_AGENT_ID, sha256 khớp, đủ 6 trường); tự duyệt (--auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS, AUTO-APPROVE:) và dạng cũ không nguồn = exit 2, in cần duyệt lại + sha256",
+      "component": "gate-cross-review-approval-605",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_cross_review_approval.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/tests/gates/test_gate_cross_review_approval.sh"
+      ]
+    },
+    "REG-SB-APPROVAL-CROSS-REVIEW-605-01": {
+      "id": "REG-SB-APPROVAL-CROSS-REVIEW-605-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#605: marker cross-review-approved hợp lệ (reviewer khác builder, head/scope khớp request, task_id + gate_receipt không rỗng, người đăng có quyền ghi) thay cho done; tự duyệt, head lệch, sửa comment, đăng trước request = không nhận; chỉ plan có delete-protected mới cần done của người (schema / needs_you nhận marker); policy: xoá file khớp merge_policy.protected_paths → human delete-protected (cả file nhị phân qua github-read); --deps --config nhận marker khi plan hiện tại cho phép",
+      "component": "super-board-approval-cross-review-605",
+      "command": "python3 tests/super-board/test_approval_cross_review.py",
+      "watch_files": [
+        ".claude/bin/super-board-approval.py",
+        ".claude/bin/super-board-merge-policy.py",
+        "tests/super-board/test_approval_cross_review.py"
+      ]
+    },
+    "REG-SB-APPROVED-HEAD-605-01": {
+      "id": "REG-SB-APPROVED-HEAD-605-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#605: approved-head kèm approved-by {reviewer,builder,task_id,gate_receipt} được nhận (reviewer khác builder); tự duyệt, approved-by hỏng/thiếu trường, head lệch bị loại; marker mới nhất thắng; bare approved-head của OWNER vẫn nhận (runner)",
+      "component": "super-board-approved-head-605",
+      "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+      "watch_files": [
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_merge_queue.sh",
+        "tests/super-board/test_runner_review_approved_head.sh"
+      ]
+    },
+    "REG-SB-APPROVED-HEAD-605-02": {
+      "id": "REG-SB-APPROVED-HEAD-605-02",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#605: merge-queue dùng chung luật approved-head (super-board-approved-head.jq): marker hợp lệ và bare OWNER vào train; tự duyệt, approved-by hỏng, task_id rỗng, head lệch, marker tự duyệt mới hơn bị loại kèm lý do",
+      "component": "super-board-approved-head-605",
+      "command": "bash tests/super-board/test_merge_queue.sh",
+      "watch_files": [
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_merge_queue.sh",
+        "tests/super-board/test_runner_review_approved_head.sh"
+      ]
+    },
+    "REG-DK-GUARD-PROTECTED-DELETE-01": {
+      "id": "REG-DK-GUARD-PROTECTED-DELETE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "git guard chỉ hỏi người khi: force push (-f/--force/--force-with-lease/+ref), xoá ref remote (push --delete/-d/:ref/--mirror/--prune), xoá file quan trọng (rm/unlink/git rm/find -delete theo protected_delete mặc định + .antigravity-pm.json); xoá file thường vẫn qua (#605)",
+      "component": "devkit-guard-protected-delete",
+      "command": "bash universal-agent-devkit/tests/gates/test_guard_protected_delete.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/tests/gates/test_guard_protected_delete.sh"
+      ]
+    },
+    "REG-DK-GUARD-SELF-APPROVAL-01": {
+      "id": "REG-DK-GUARD-SELF-APPROVAL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "git guard chặn agent tự đăng approved-head trơn (không approved-by:) hoặc dòng done qua gh pr/issue comment, gh api …/comments (--body, -b, --body-file, -F, -f/-F body=); approved-head + approved-by và cross-review-approved vẫn qua (#605 Lane H)",
+      "component": "devkit-guard-self-approval-comment",
+      "command": "bash universal-agent-devkit/tests/gates/test_guard_self_approval_comment.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/tests/gates/test_guard_self_approval_comment.sh"
+      ]
+    },
+    "REG-DK-AUDITED-HEAD-BASE-01": {
+      "id": "REG-DK-AUDITED-HEAD-BASE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "duyệt chéo: auditedHead trước base không duyệt chép lùi test (mục duyệt, trailer, push_gate.approved); audited_head đọc verdicts.audit.auditedHead trước notes; ANTIGRAVITY_PM_STATE_HOME lạ không cấp biên nhận task / full_pass exit 0 (#605 audit T0066 vòng 2)",
+      "component": "devkit-gate-audited-head-base",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_audited_head_base.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_audited_head_base.sh"
+      ]
+    },
+    "REG-SB-AUDIT-CHECK-605-01": {
+      "id": "REG-SB-AUDIT-CHECK-605-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#605 (audit T0066 vòng 2): task_id của cross-review-approved chỉ tính khi antigravity-pm có audit pass với auditedHead == head của request; không biên bản, head khác, verdict fail, project khác, task_id sai dạng = không duyệt; CLI super-board-audit-check.py exit 0/1",
+      "component": "super-board-audit-check-605",
+      "command": "python3 tests/super-board/test_approval_cross_review.py",
+      "watch_files": [
+        ".claude/bin/super-board-audit-check.py"
+      ]
+    },
+    "REG-SB-AUDIT-CHECK-605-02": {
+      "id": "REG-SB-AUDIT-CHECK-605-02",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#605 (audit T0066 vòng 2): merge-queue loại approved-by có task_id không có audit pass khớp head PR (giả, head cũ, verdict fail, sai dạng); bare OWNER vẫn vào train",
+      "component": "super-board-audit-check-605",
+      "command": "bash tests/super-board/test_merge_queue.sh",
+      "watch_files": [
+        ".claude/bin/super-board-audit-check.py"
+      ]
+    },
+    "REG-SB-AUDIT-CHECK-605-03": {
+      "id": "REG-SB-AUDIT-CHECK-605-03",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#605 (audit T0066 vòng 2): review_approved_head của runner chỉ merge-only khi task_id của approved-by có audit pass khớp head PR",
+      "component": "super-board-audit-check-605",
+      "command": "bash tests/super-board/test_runner_review_approved_head.sh",
+      "watch_files": [
+        ".claude/bin/super-board-audit-check.py"
+      ]
+    },
+    "REG-SB-REVIEWER-AUDIT-605-01": {
+      "id": "REG-SB-REVIEWER-AUDIT-605-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#605 (audit T0066 vòng 3): prompt Review headless, run.md, worker-preamble.md, super-review/SKILL.md và ai-factory doc cùng một hợp đồng: reviewer chạy audit Antigravity thật qua antigravity-pm (pm_task_create, pm_dispatch kind=audit, audit-agent.json, pm_verdict auditedHead) trước approved-by, gate_receipt = biên nhận task impacted, Antigravity không có thì thẻ ở Review với blocked-by",
+      "component": "super-board-reviewer-antigravity-audit-605",
+      "command": "bash tests/super-board/test_reviewer_antigravity_audit_contract.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-build/references/worker-preamble.md",
+        ".claude/skills/super-review/SKILL.md",
+        "universal-agent-devkit/docs/init_board/ai-factory-superboard-workflow.md"
+      ]
+    },
+    "REG-SB-APPROVED-HEAD-CLOSING-REF-01": {
+      "id": "REG-SB-APPROVED-HEAD-CLOSING-REF-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#607/#614: review_approved_head nhận PR nhánh không phải issue-<N>- khi đúng một PR mở có closingIssuesReferences chứa N; nhánh issue-<N>- vẫn thắng, hai PR đóng N thì không chọn; thẻ Review có PR như vậy đã vào hàng không bị đẩy Blocked vì no-op",
+      "component": "super-board-approved-head-closing-ref",
+      "command": "bash tests/super-board/test_runner_approved_head_closing_ref.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_approved_head_closing_ref.sh"
+      ]
+    },
+    "REG-DK-AUDITED-HEAD-ASCII-629-01": {
+      "id": "REG-DK-AUDITED-HEAD-ASCII-629-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#629: push_gate.AUDITED_HEAD (khoảng trắng [ \\t\\n\\r\\f\\v], cùng regex pm_verdict) không nhận `auditedHead:` ngăn bởi \\x1c-\\x1f/U+0085 mà regex JS của pm_verdict không thấy; dấu cách/tab vẫn nhận",
+      "component": "audited-head-ascii-space-629",
+      "command": "bash universal-agent-devkit/tests/gates/test_audited_head_ascii_space.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/push_gate.py",
+        "mcp-servers/antigravity-pm-mcp/src/tools.js"
+      ]
+    },
+    "REG-DK-ALL-SHARD-RULES-616-01": {
+      "id": "REG-DK-ALL-SHARD-RULES-616-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#616: ba suite shard REG-DK-ALL-* thay REG-DK-ALL-01 (đã bỏ khỏi ma trận), khối shard liền nhau và chỉ-thêm sau các rule trước nó (rule nối sau không làm đỏ, #453), theo dõi universal-agent-devkit/*, run_impacted.sh --list của ba lệnh hợp lại đúng tập không shard, không trùng",
+      "component": "devkit-all-shard-rules",
+      "command": "bash tests/super-board/test_matrix_shard_rules.sh",
+      "watch_files": [
+        ".agents/regression_matrix.active.json",
+        "tests/super-board/test_matrix_shard_rules.sh"
+      ]
+    },
+    "REG-DK-ALL-GATES-01": {
+      "id": "REG-DK-ALL-GATES-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (tests/gates): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s",
+      "component": "devkit-all-shard-gates",
+      "command": "DEVKIT_IMPACTED_DIRS=gates bash universal-agent-devkit/tests/run_impacted.sh",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ]
+    },
+    "REG-DK-ALL-WORKTREE-01": {
+      "id": "REG-DK-ALL-WORKTREE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (tests/worktree_git): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s",
+      "component": "devkit-all-shard-worktree",
+      "command": "DEVKIT_IMPACTED_DIRS=worktree_git bash universal-agent-devkit/tests/run_impacted.sh",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ]
+    },
+    "REG-DK-ALL-REST-01": {
+      "id": "REG-DK-ALL-REST-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (phần còn lại: verification, installer, context_memory, hooks/tests): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s",
+      "component": "devkit-all-shard-rest",
+      "command": "DEVKIT_IMPACTED_DIRS=!gates,!worktree_git bash universal-agent-devkit/tests/run_impacted.sh",
+      "watch_files": [
+        "universal-agent-devkit/*"
+      ]
+    },
+    "REG-SB-WAVE-PLAN-QUEUED-01": {
+      "id": "REG-SB-WAVE-PLAN-QUEUED-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#453 backend workflow + queue bật: wave-plan bỏ thẻ Review có PR nhãn merge-queue (chờ lịch rút hàng); queue tắt / codex / SB_MERGE_QUEUE=0 giữ nguyên",
+      "component": "super-board-queue-schedule",
+      "command": "bash tests/super-board/test_wave_plan_queued.sh",
+      "watch_files": [
+        ".claude/bin/super-board-queue-schedule.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_wave_plan_queued.sh"
+      ]
+    },
+    "REG-DK-WT-PRUNE-MERGED-ANCESTOR-01": {
+      "id": "REG-DK-WT-PRUNE-MERGED-ANCESTOR-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#453 prune-branch nhận nhánh có tip là tổ tiên head của PR MERGED vào trunk (PR lấy head từ nhánh khác); commit ngoài head đó, hoặc PR gộp vào nhánh khác trunk: giữ",
+      "component": "devkit-worktree-prune-merged-ancestor",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_prune_ancestor_of_merged.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_prune_ancestor_of_merged.sh"
+      ]
+    },
+    "REG-SB-DECISION-READER-01": {
+      "id": "REG-SB-DECISION-READER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "[orchestrator] [decision] hợp lệ (marker orchestrator hoặc comment tay của chủ không marker) gỡ blocker ở deps.sh, needs-you mark, qa-report; lane tự đăng thì bị bỏ qua; ca DỪNG vẫn gắn needs-you (#516, 28/10)",
+      "component": "super-board-decision-reader",
+      "command": "bash tests/super-board/test_decision_reader.sh",
+      "watch_files": [
+        ".claude/bin/super-board-decision.py",
+        ".claude/bin/super-board-deps.sh",
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-qa-report.py",
+        "tests/super-board/test_decision_reader.sh"
+      ]
+    },
+    "REG-DK-MERGE-GATE-EDITED-TEST-486-01": {
+      "id": "REG-DK-MERGE-GATE-EDITED-TEST-486-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#486: worktree finish từ chối gate exit 2 (test đã sửa chưa duyệt, nêu tên file), exit 1 khi suite PASS, và exit 4 nhãn SLOT; exit 0, exit 3, và exit 4 thiếu thiết bị vẫn fast-forward",
+      "component": "merge-gate-edited-test-486",
+      "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_edited_test.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_edited_test.sh"
+      ]
+    },
+    "REG-SB-QA-DETACHED-557-01": {
+      "id": "REG-SB-QA-DETACHED-557-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#557: QA thêm worktree detached tại origin/<PR branch>, không gỡ worktree build khi nhánh đã đổi tên hoặc còn agent-memory chưa commit, và đẩy commit bằng chứng bằng git push origin HEAD:<PR branch>",
+      "component": "qa-detached-worktree-557",
+      "command": "bash tests/super-board/test_qa_detached_worktree.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/workflows/super-board-wave.js",
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-qa/SKILL.md",
+        "tests/super-board/test_qa_detached_worktree.sh"
+      ]
+    },
+    "REG-SB-FILE-WAIT-556-01": {
+      "id": "REG-SB-FILE-WAIT-556-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#556: sequence conflictWith giữ Ready + nhãn chờ thẻ khác, gỡ khi PR không còn đụng file, không tính RUNAWAY, không giao cùng thẻ đụng file",
+      "component": "file-wait-ready-556",
+      "command": "bash tests/super-board/test_runner_file_wait.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_runner_file_wait.sh"
+      ]
+    },
+    "REG-SB-MERGE-SCRATCH-KEEP-559-01": {
+      "id": "REG-SB-MERGE-SCRATCH-KEEP-559-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#559: REG-DK-ALL-01 không PASS thì giữ scratch, log đỏ và env.txt đã che secret; PASS thì dọn; tối đa 2 bản",
+      "component": "merge-scratch-keep-559",
+      "command": "bash tests/super-board/test_merge_gate_keep_scratch.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "universal-agent-devkit/tests/run_impacted.sh",
+        "tests/super-board/test_merge_gate_keep_scratch.sh"
+      ]
+    },
+    "REG-DK-SUITE-ENV-WORKER-528-01": {
+      "id": "REG-DK-SUITE-ENV-WORKER-528-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#528: suite_env và clean_git_env bỏ SB_BOARD_WORKER, SB_MERGE_CALLER, SB_MERGE_QUEUE, SB_REPO_PATH, SB_GITHUB_READ_STRICT",
+      "component": "suite-env-board-worker-528",
+      "command": "bash universal-agent-devkit/tests/gates/test_suite_env_worker_vars.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/hooks/session_worktree.py",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        "universal-agent-devkit/hooks/test_evidence_gate.sh",
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/testsourceset_gate.sh",
+        "universal-agent-devkit/hooks/security_gate.sh",
+        "universal-agent-devkit/tests/gates/test_suite_env_worker_vars.sh",
+        "universal-agent-devkit/tests/gates/test_gate_worker_main.sh"
+      ]
+    },
+    "REG-DK-WORKER-MAIN-528-01": {
+      "id": "REG-DK-WORKER-MAIN-528-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#528: SB_BOARD_WORKER=1 trên main thì hook thoát 0 và không chạy suite; không có cờ thì chạy; worktree liên kết vẫn chạy",
+      "component": "suite-env-board-worker-528",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_worker_main.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/lib/clean_git_env.sh",
+        "universal-agent-devkit/hooks/session_worktree.py",
+        "universal-agent-devkit/hooks/regression_gate.sh",
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        "universal-agent-devkit/hooks/test_evidence_gate.sh",
+        "universal-agent-devkit/hooks/review_gate.sh",
+        "universal-agent-devkit/hooks/testsourceset_gate.sh",
+        "universal-agent-devkit/hooks/security_gate.sh",
+        "universal-agent-devkit/tests/gates/test_suite_env_worker_vars.sh",
+        "universal-agent-devkit/tests/gates/test_gate_worker_main.sh"
+      ]
+    },
+    "REG-DK-RERUN-SKIP-648-01": {
+      "id": "REG-DK-RERUN-SKIP-648-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#648: cùng cây, cùng chế độ, cùng danh sách suite thì thoát 0 từ rerun_skip.json trước khi lấy khoá; --force, --no-cache và DEVKIT_GATE_CACHE=0 vẫn chạy",
+      "component": "gate-rerun-skip-648",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_rerun_skip.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "Agents.md",
+        "universal-agent-devkit/tests/gates/test_gate_rerun_skip.sh"
+      ]
+    },
+    "REG-DK-FAIL-FAST-647-01": {
+      "id": "REG-DK-FAIL-FAST-647-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#647: suite FAIL hoặc TIMEOUT thì phần NOT_RUN còn lại thành UNTESTED; --no-fail-fast chạy tiếp; merge-train và gate_full truyền cờ",
+      "component": "gate-fail-fast-647",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_fail_fast.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/bin/gate_full.py",
+        ".claude/bin/super-board-merge-train.sh",
+        "universal-agent-devkit/tests/gates/test_gate_fail_fast.sh"
+      ]
+    },
+    "REG-SB-SPAWN-LOAD-530-01": {
+      "id": "REG-SB-SPAWN-LOAD-530-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#530: load1 vượt ngưỡng thì build+qa+review hoãn spawn (log holding spawn load1); 30 vẫn spawn; 36.5 hoãn; rỗng/rác/lib mode không chặn; tick rẻ không nuốt merge queue hay no-progress khi 0 worker",
+      "component": "super-board-spawn-load-530",
+      "command": "bash tests/super-board/test_runner_total_cap.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/skills/super-board/references/config-schema.json",
+        "tests/super-board/test_runner_total_cap.sh"
+      ]
+    },
+    "REG-SB-QA-EXIT2-643-01": {
+      "id": "REG-SB-QA-EXIT2-643-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#643: QA exit 2 chỉ vì test sửa đi Review rồi merge nhờ duyệt chéo",
+      "component": "qa-exit2-edited-test-643",
+      "command": "bash tests/super-board/test_qa_exit2_edited_test.sh",
+      "watch_files": [
+        ".claude/bin/super-board-qa-exit2.sh",
+        ".claude/bin/super-board-install-edited-test-approval.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        "tests/super-board/test_qa_exit2_edited_test.sh"
+      ]
+    },
+    "REG-SB-MERGE-GATE-NO-PUSH-PR-01": {
+      "id": "REG-SB-MERGE-GATE-NO-PUSH-PR-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "gate không ghi lên nhánh PR: PR chậm hơn base thì head trên origin giữ nguyên, verify chạy trên cây scratch đã gộp, approved-head và --match-head-commit vẫn khớp head PR (#570)",
+      "component": "merge-gate-no-push-pr-branch",
+      "command": "bash tests/super-board/test_merge_gate_no_push_pr_branch.sh",
+      "watch_files": []
+    },
+    "REG-DK-GATE-APPROVAL-FRESH-WT-628-01": {
+      "id": "REG-DK-GATE-APPROVAL-FRESH-WT-628-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#628 AC2: lời duyệt test (approved_hashes.json) của main checkout còn hiệu lực ở worktree mới (chỉ so sha256 nội dung, không mtime); đổi 1 byte test: vẫn exit 2",
+      "component": "gate-approval-fresh-worktree-628",
+      "command": "bash universal-agent-devkit/tests/gates/test_gate_approval_fresh_worktree.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/post-fix-gate.py",
+        "universal-agent-devkit/tests/gates/test_gate_approval_fresh_worktree.sh"
+      ]
+    },
+    "REG-SB-SETUP-BIN-02": {
+      "id": "REG-SB-SETUP-BIN-02",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "test_setup_bin_list.sh quét .claude/bin, skills, workflows, hooks theo thư mục: thêm hay sửa script super-* ở đó phải chọn lại suite này (main đỏ REG-SB-SETUP-BIN-01 sau #656 vì watch_files chỉ liệt kê 2 file)",
+      "component": "super-board-setup-bin-scan",
+      "command": "bash tests/super-board/test_setup_bin_list.sh",
+      "watch_files": [
+        ".claude/bin/*",
+        ".claude/skills/*",
+        ".claude/workflows/*",
+        ".claude/hooks/*"
+      ]
+    },
+    "REG-DK-TREE-FP-SETTINGS-01": {
+      "id": "REG-DK-TREE-FP-SETTINGS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "tree_fingerprint bỏ qua sửa chưa commit của .claude/settings.json (bản cài kit), vẫn tính nội dung đã commit và mọi file tracked khác (#691)",
+      "component": "devkit-tree-fp-settings-local",
+      "command": "bash universal-agent-devkit/tests/gates/test_tree_fp_settings_local.sh",
+      "watch_files": [
+        "universal-agent-devkit/bin/tree_fp.py"
+      ]
+    },
+    "REG-SB-GATE-RECEIPT-BY-HEAD-671-01": {
+      "id": "REG-SB-GATE-RECEIPT-BY-HEAD-671-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#671 AC1: super-board-gate-receipt.sh in fp theo head từ store chung; biên nhận của cây bẩn (file thật) không phủ commit sạch, file cài đặt worktree thì qua",
+      "component": "review-wait-receipt-671",
+      "command": "bash tests/super-board/test_issue671_gate_receipt_by_head.sh",
+      "watch_files": []
+    },
+    "REG-SB-REVIEW-WAIT-NOT-NOOP-671-01": {
+      "id": "REG-SB-REVIEW-WAIT-NOT-NOOP-671-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#671 AC2/AC3: review worker kết thúc sạch khi chờ (comment [reviewer] cuối blocked-by:) không bị đếm no-op và nghỉ SB_REVIEW_WAIT_S; bị kill, is_error hoặc comment không phải reviewer vẫn Blocked",
+      "component": "review-wait-receipt-671",
+      "command": "bash tests/super-board/test_issue671_review_wait_not_noop.sh",
+      "watch_files": []
+    },
+    "REG-SB-MERGE-SCRATCH-KEEP-SHARDS-712-01": {
+      "id": "REG-SB-MERGE-SCRATCH-KEEP-SHARDS-712-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#712: merge gate giữ scratch cả khi shard REG-DK-ALL-GATES/WORKTREE/REST-01 FAIL/TIMEOUT/HANG (dòng '<ID> : …' có mã màu); PASS, UNTESTED và suite khác chỉ nhắc REG-DK-ALL-01 trong mô tả thì không",
+      "component": "merge-scratch-keep-shards-712",
+      "command": "bash tests/super-board/test_merge_gate_keep_scratch_shards.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_keep_scratch_shards.sh"
+      ]
+    },
+    "REG-SB-MERGE-GATE-BATCH-724-01": {
+      "id": "REG-SB-MERGE-GATE-BATCH-724-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#724: một đợt thẻ = một nhánh/PR/gate — ac-check nhận Closes của thẻ mang marker sb:batch-of của thẻ nhánh (marker thẻ khác, trong code fence, body rỗng vẫn là thẻ lạ) và đếm AC của nó; merge gate merge PR đợt đủ AC, thiếu AC exit 11, còn AC chưa tick thì Refs cả đợt + ac-open, Closes thẻ ngoài đợt hoặc PR không sb:ac vẫn exit 11",
+      "component": "card-batch-one-branch-724",
+      "command": "bash tests/super-board/test_merge_gate_batch.sh",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_batch.sh"
+      ]
+    },
+    "REG-DK-PROOF-MAIN-PREDATES-01": {
+      "id": "REG-DK-PROOF-MAIN-PREDATES-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#722: main trunk mode có file người khác để từ trước phiên, lệnh shell chỉ đọc nhắc tên; biên nhận trong lượt cho fp commit HEAD (PR squash, hay --tree HEAD trong worktree tạm): cho qua; file tạo trong phiên, nested repo, symlink, t0 tương lai, Edit nêu tên, touch -t, file đã xoá, không gate / gate lượt trước / main đi tiếp / trunk tắt / không biết t0: chặn; lời khuyên nêu --tree HEAD; copy-mode vẫn exit 2",
+      "component": "proof-gate-trunk-main-722",
+      "command": "bash universal-agent-devkit/tests/gates/test_proof_gate_main_predates_session.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        "universal-agent-devkit/tests/gates/test_proof_gate_main_predates_session.sh",
+        "universal-agent-devkit/tests/gates/test_proof_gate_api_request_blob.sh"
+      ]
+    },
+    "REG-DK-PROOF-API-BLOB-01": {
+      "id": "REG-DK-PROOF-API-BLOB-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#722: dòng api-request-blob (không timestamp) không đóng cửa biên nhận merge khi tool_use đã có bản ghi assistant (hay chỉ đọc); tool_use chỉ có trong blob mà ghi kho / gh pr merge / Bash bất kỳ, id rỗng hay null, blob nhắc kho không có tool_use, dòng assistant không timestamp (kể cả cặp gh pr merge + blob trùng id): chặn",
+      "component": "proof-gate-trunk-main-722",
+      "command": "bash universal-agent-devkit/tests/gates/test_proof_gate_api_request_blob.sh",
+      "watch_files": [
+        "universal-agent-devkit/hooks/proof_gate.sh",
+        "universal-agent-devkit/tests/gates/test_proof_gate_main_predates_session.sh",
+        "universal-agent-devkit/tests/gates/test_proof_gate_api_request_blob.sh"
+      ]
+    },
+    "REG-AGENT-OFFICE-GATE-FULL-RUNNER-01": {
+      "id": "REG-AGENT-OFFICE-GATE-FULL-RUNNER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "agent-office: nút \"Chạy gate full\" — hàng đợi FIFO bỏ trùng, lưu qua khởi động lại, một lượt mỗi lúc, chờ khoá toàn máy, huỷ, repo chưa cài lịch, đọc khoá repo không flock, endpoint chặn tunnel/CSRF/DNS rebinding (gate_full.py giả)",
+      "component": "mcp-servers/agent-office/gate-full-runner",
+      "command": "cd mcp-servers/agent-office && python3 -m unittest discover -s tests -p test_gate_full_runner.py",
+      "watch_files": [
+        "mcp-servers/agent-office/gate_full_runner.py"
+      ]
+    },
+    "REG-SB-MERGE-QUEUE-ROUTE-01": {
+      "id": "REG-SB-MERGE-QUEUE-ROUTE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#762/#637/#639: route của hàng đợi merge — card_of/head_of/cache load_rows không chết khi dữ liệu lớn hơn bộ đệm ống (printf | awk exit dưới pipefail); thẻ qua closingIssuesReferences khi nhánh không theo mẫu issue-<N>-; đọc GitHub hỏng giữa lượt route không cắt dở các PR còn lại; gate-exit-11 của preflight không ghi là verify đỏ",
+      "component": "super-board-merge-queue-route-rows",
+      "command": "bash tests/super-board/test_merge_queue_route_rows.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_merge_queue_route_rows.sh"
+      ]
+    },
+    "REG-SB-MERGE-INSTALL-UNTRACKED-01": {
+      "id": "REG-SB-MERGE-INSTALL-UNTRACKED-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "Idle #18: install.sh ghi .mcp.json/.gemini chưa track vào scratch ⇒ merge gate xoá phần install.sh thêm (chụp ls-files --others trước/sau), giữ .agents/devkit bị ignore và file PR đã track (kể cả cùng tên bị install ghi đè); PR Markdown verify xanh, dry run exit 0",
+      "component": "merge-gate-install-untracked-merge-error",
+      "command": "bash tests/super-board/test_merge_gate_install_untracked.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_install_untracked.sh",
+        "tests/super-board/test_merge_gate_merge_error_shown.sh"
+      ]
+    },
+    "REG-SB-MERGE-ERROR-SHOWN-01": {
+      "id": "REG-SB-MERGE-ERROR-SHOWN-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "GeelyEx2 #179: git merge base vào scratch bị hook commit-msg từ chối (không file xung đột) ⇒ gate in stderr thật, không in 'conflicts:' rỗng, không bảo rebase; xung đột thật vẫn in tên file + rebase pass; exit 5 giữ nguyên",
+      "component": "merge-gate-install-untracked-merge-error",
+      "command": "bash tests/super-board/test_merge_gate_merge_error_shown.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_install_untracked.sh",
+        "tests/super-board/test_merge_gate_merge_error_shown.sh"
+      ]
+    },
+    "REG-SB-DECISION-PROMPTS-01": {
+      "id": "REG-SB-DECISION-PROMPTS-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#518: prompt orchestrator (run.md) áp luật 1–5 của decision-policy.md, ghi [orchestrator] [decision] kèm marker sb-decision:orchestrator, unmark needs-you, danh sách dừng giữ needs-you; prompt builder/QA/reviewer/block-template/wave lanePrompt coi AC đã quyết là xong, không dựng lại blocker, cấm tự đăng [decision]",
+      "component": "super-board-decision-prompts",
+      "command": "bash tests/super-board/test_decision_prompts.sh",
+      "watch_files": [
+        ".claude/skills/super-board/references/run.md",
+        ".claude/skills/super-board/references/block-template.md",
+        ".claude/skills/super-board/references/run-workflow.md",
+        ".claude/skills/super-build/SKILL.md",
+        ".claude/skills/super-build/references/worker-preamble.md",
+        ".claude/skills/super-qa/SKILL.md",
+        ".claude/skills/super-review/SKILL.md",
+        ".claude/workflows/super-board-wave.js",
+        "tests/super-board/test_decision_prompts.sh"
+      ]
+    },
+    "REG-SB-WAVE-MODEL-LADDER-01": {
+      "id": "REG-SB-WAVE-MODEL-LADDER-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#553: thang model của super-board-wave.js — tier medium thẻ high không yếu hơn thẻ medium (không để undefined = model phiên, có thể là sonnet); tier low/high giữ nguyên; comment trên LADDERS, SKILL.md, run-workflow.md ghi đúng thang",
+      "component": "super-board-wave-model-ladder",
+      "command": "bash tests/super-board/test_wave_model_ladder.sh",
+      "watch_files": [
+        ".claude/workflows/super-board-wave.js",
+        ".claude/skills/super-board/SKILL.md",
+        ".claude/skills/super-board/references/run-workflow.md",
+        "tests/super-board/test_wave_model_ladder.sh"
+      ]
+    },
+    "REG-SB-TRAIN-HOOK-REFUSAL-01": {
+      "id": "REG-SB-TRAIN-HOOK-REFUSAL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#740/#775: train dựng chuỗi bằng git merge thật (hook vẫn chạy); hook guard-check kiểu GeelyEx2 #181 ⇒ 2 PR đụng file guard khác nhau cùng merged, PR chậm hơn base vẫn verify + merged; hook từ chối không file xung đột ⇒ gate-exit-5 + lời hook ở train-detail (không 'conflict'), chỉ trong chuỗi ⇒ deferred có lý do trong log; xung đột thật vẫn conflict exit 5 kèm tên file",
+      "component": "merge-train-hook-refusal",
+      "command": "bash tests/super-board/test_merge_train_hook_refusal.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_train_hook_refusal.sh",
+        "tests/super-board/test_merge_gate_merge_stderr.sh",
+        "tests/super-board/test_merge_queue_refused_detail.sh"
+      ]
+    },
+    "REG-SB-MQ-REFUSED-DETAIL-01": {
+      "id": "REG-SB-MQ-REFUSED-DETAIL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#775: queue route gate-exit-5 kèm train-detail (git/hook từ chối) ⇒ comment PR + thẻ ghi 'merge refused' kèm lời hook, vẫn loop:rebase + Ready; conflict thật giữ chữ cũ",
+      "component": "merge-train-hook-refusal",
+      "command": "bash tests/super-board/test_merge_queue_refused_detail.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_train_hook_refusal.sh",
+        "tests/super-board/test_merge_gate_merge_stderr.sh",
+        "tests/super-board/test_merge_queue_refused_detail.sh"
+      ]
+    },
+    "REG-SB-MERGE-STDERR-FILE-01": {
+      "id": "REG-SB-MERGE-STDERR-FILE-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#775: merge gate ghi stderr của git merge ra file (hook để tiến trình nền giữ stderr không làm gate treo), in dòng CONFLICT của git khi xung đột thật, giữ link .agents/devkit khi repo không ignore nó",
+      "component": "merge-train-hook-refusal",
+      "command": "bash tests/super-board/test_merge_gate_merge_stderr.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_train_hook_refusal.sh",
+        "tests/super-board/test_merge_gate_merge_stderr.sh",
+        "tests/super-board/test_merge_queue_refused_detail.sh"
+      ]
+    },
+    "REG-SB-VERIFY-FLAGS-ARG-SPAN-01": {
+      "id": "REG-SB-VERIFY-FLAGS-ARG-SPAN-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#802: sb_verify_inject_flags chỉ xét --full/--force-full/--scoped/--diff/--json trong phần đối số của post-fix-gate.py; token của lệnh khác trong lệnh ghép không chặn ' --diff origin/<base> --scoped' chèn ngay sau token",
+      "component": "verify-flags-arg-span",
+      "command": "bash tests/super-board/test_verify_flags_arg_span.sh",
+      "watch_files": [
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_verify_flags_arg_span.sh"
+      ]
+    },
+    "REG-SB-AC-CHECK-CROSS-REPO-01": {
+      "id": "REG-SB-AC-CHECK-CROSS-REPO-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#731: ac-check — Closes owner/repo#N của repo khác luôn là thẻ lạ kể cả trùng số thẻ nhánh / thành viên đợt; --rewrite-closes --foreign cùng luật; closes_own chỉ tính repo này; origin đọc ở SB_REPO_PATH",
+      "component": "super-board-ac-check-cross-repo",
+      "command": "bash tests/super-board/test_ac_check_cross_repo.sh",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        "tests/super-board/test_ac_check_cross_repo.sh"
+      ]
+    },
+    "REG-DK-CREATE-TASK-PR-MENTION-01": {
+      "id": "REG-DK-CREATE-TASK-PR-MENTION-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#735: create-task không gom vào thẻ Ready/Backlog đã có PR mở nhắc nó (Closes/Fixes/Resolves/Refs #N, closingIssuesReferences) dù nhánh không theo mẫu issue-<N>-",
+      "component": "create-task-pr-mention",
+      "command": "bash universal-agent-devkit/tests/verification/test_create_task_pr_mention.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/create_task.py",
+        "universal-agent-devkit/tests/verification/test_create_task_pr_mention.sh"
+      ]
+    },
+    "REG-DK-CARD-BATCH-FRESH-LEAD-01": {
+      "id": "REG-DK-CARD-BATCH-FRESH-LEAD-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#731: pick_batch_lead kiểm lại Risk 🔴 High và trần AC trên body đọc lại của thẻ trưởng; thẻ Backlog có PR mở không thành đích gom",
+      "component": "card-batch-fresh-lead",
+      "command": "bash universal-agent-devkit/tests/verification/test_card_batch_fresh_lead.sh",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/create_task.py",
+        "universal-agent-devkit/tests/verification/test_card_batch_fresh_lead.sh"
+      ]
+    },
+    "REG-SB-MERGE-QUEUE-PARALLEL-01": {
+      "id": "REG-SB-MERGE-QUEUE-PARALLEL-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#676: queue lượt ngắn phóng một train nền mỗi PR (PR đến sau không chờ train khác, khoá queue không giữ lúc verify chờ slot, max_trains, train chết ⇒ một lần thử, base-moved không tính lần thử); train claim theo PR, verify --scoped gọi thẳng post-fix-gate; gate --require-receipt thoát 12 khi base dời ⇒ train verify lại ngoài khoá (2 lần rồi base-moved); gh pr merge không chồng; BUSY ⇒ timeout; status gộp state các train sống",
+      "component": "merge-queue-parallel-trains",
+      "command": "bash tests/super-board/test_merge_queue_parallel.sh",
+      "watch_files": [
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_merge_queue_parallel.sh"
+      ]
+    },
+    "REG-SB-GH-WRITE-RETRY-01": {
+      "id": "REG-SB-GH-WRITE-RETRY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#520: gh_write_once thử lại lỗi ghi GitHub thoáng qua (5xx, timeout, rate limit, mạng) tối đa 2 lần trước đường #517; 422/404/401/không tìm thấy và stderr rỗng không thử lại; comment đọc lại marker token trước khi thử lại (đã đăng thì không đăng lần 2, đọc hỏng thì không đăng mù); lệnh không thuộc thẻ vẫn halt 79 khi hết lượt",
+      "component": "super-board-gh-write-retry-520",
+      "command": "bash tests/super-board/test_gh_write_retry.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_gh_write_retry.sh",
+        "tests/super-board/test_card_write_failed_sweep.sh"
+      ]
+    },
+    "REG-SB-CARD-WRITE-RETRY-01": {
+      "id": "REG-SB-CARD-WRITE-RETRY-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#520: thẻ Blocked vì lệnh ghi GitHub hỏng (card-write-failed) được runner ghi lại mỗi tick từ state cục bộ: được thì về cột cũ, 3 tick hỏng liên tiếp thì needs-you một lần rồi thôi thử (sống qua restart, không bao giờ halt); không phát lại chuyển cột / nhận thẻ đã huỷ; cột cũ Blocked thì giữ Blocked; người kéo thẻ ra thì bỏ state",
+      "component": "super-board-gh-write-retry-520",
+      "command": "bash tests/super-board/test_card_write_failed_sweep.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_gh_write_retry.sh",
+        "tests/super-board/test_card_write_failed_sweep.sh"
+      ]
+    },
+    "REG-SB-WAITING-ON-SKIP-01": {
+      "id": "REG-SB-WAITING-ON-SKIP-01",
+      "kind": "test",
+      "last": null,
+      "history": [],
+      "title": "#619: runner, planner và helper cùng một regex nhãn waiting-on:#<số> (nhãn sai dạng không giữ thẻ Ready); preflight không giao thẻ Ready đầu (mark hỏng) thì thẻ Ready kế được giao trong cùng tick, tối đa 3 thẻ mỗi tick",
+      "component": "super-board-waiting-on-skip-619",
+      "command": "bash tests/super-board/test_waiting_on_skip_next.sh",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-waiting-on.py",
+        "tests/super-board/test_waiting_on_skip_next.sh"
+      ]
     }
   },
   "meta": {
@@ -12715,6 +12938,6 @@
   },
   "stats": {
     "reported_total": 130,
-    "reported_dropped": 50
+    "reported_dropped": 95
   }
 }

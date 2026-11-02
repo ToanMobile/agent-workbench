@@ -4,7 +4,8 @@
 Vì sao: #315 có AC "lượt 2 dùng lại REG-DK-ALL-01" chưa ai làm mà thẻ vẫn đóng — #318 chỉ ghi "AC của thẻ #315 (xem thẻ
 đó)", PR #343 nén 7 AC của #318 thành 3 dòng tóm tắt đã tick, và `Closes #N` đóng thẻ dù AC chưa chứng minh. Script chỉ
 ĐỌC file (body issue, body PR, message squash) và in một JSON; merge gate quyết định:
-  foreign_closes Closes/Fixes/Resolves thẻ khác thẻ của nhánh issue-<N>       → exit 11 (kiểm cả khi PR không có sb:ac)
+  foreign_closes Closes/Fixes/Resolves thẻ khác thẻ của nhánh issue-<N>, hoặc owner/repo#N của repo khác (#731)
+                                                                              → exit 11 (kiểm cả khi PR không có sb:ac)
   collapsed      khối sb:ac ít dòng hơn số AC của thẻ (+ AC của thẻ tham chiếu) → exit 11, builder viết lại mỗi AC một dòng
   unticked       dòng AC chưa tick (đo số sau merge, thiết bị, người)          → vẫn merge, thẻ ở lại (nhãn ac-open)
   indirect       số thẻ mà AC ghi "AC của thẻ #X": merge gate đọc #X rồi chạy lại với --extra-issue-body
@@ -16,7 +17,9 @@ Nhánh không mang số thẻ: {"skip": true}. PR không có sb:ac: chỉ có fo
 """
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 
 # Mục AC cấp 1 (không thụt lề) — cùng dạng super-board-preflight.sh nhận (#283): `-`, `*`, `1.`, `1)`; năm (2026.) không phải mục.
@@ -34,6 +37,8 @@ INDIRECT = re.compile(r"\bAC\s+(?:của|of)\s+(?:(?:các\s+)?(?:thẻ|cards?|iss
 CARD_REF = re.compile(r"#(\d+)")
 # #724: marker create_task.py ghi vào body thẻ thành viên đợt (cùng regex với create_task.BATCH_OF_RE).
 BATCH_OF = re.compile(r"<!--\s*sb:batch-of\s+#(\d+)\s*-->")
+# #731: `owner/repo` của origin (cùng regex với create_task.detect_repo).
+GITHUB_SLUG = re.compile(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$")
 
 
 FENCE_BLOCK = re.compile(r"^[ \t]*```.*?^[ \t]*```[^\n]*$", re.S | re.M)
@@ -90,6 +95,22 @@ def batch_lead(body):
     return int(m.group(1)) if m else None
 
 
+def own_repo():
+    """`owner/repo` (chữ thường) của origin ở SB_REPO_PATH (merge gate export repo.path của board), không có thì nơi đang đứng;
+    không đọc được → "" (mọi `owner/repo#N` là repo khác: fail-closed, có dòng báo ở stderr)."""
+    where = os.environ.get("SB_REPO_PATH") or None
+    try:
+        r = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True, timeout=10, cwd=where)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"ac-check: cannot read origin ({e}); every owner/repo#N counts as another repo", file=sys.stderr)
+        return ""
+    m = GITHUB_SLUG.search(r.stdout.strip()) if r.returncode == 0 else None
+    if not m:
+        print(f"ac-check: origin of {where or '.'} is not a GitHub repo (exit {r.returncode}); every owner/repo#N counts as another repo",
+              file=sys.stderr)
+    return m.group(1).lower() if m else ""
+
+
 def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
     card = CARD_FROM_BRANCH.search(branch or "")
     if not card:
@@ -99,14 +120,18 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
     found = CLOSES.findall(prose(pr_body) + "\n" + (msg or ""))
     closes = {int(n) for _, n in found}
     # #724: thẻ Closes mà body mang marker đợt của chính thẻ nhánh là thành viên đợt (một nhánh, một PR, một gate). Chỉ Closes
-    # không kèm owner/repo: `Closes x/y#32` đóng issue của repo khác, body thẻ #32 ở đây không nói gì về nó.
+    # của repo này (`#32`, hoặc `<origin>#32`): `Closes x/y#32` đóng issue của repo khác, body thẻ #32 ở đây không nói gì về nó.
     members = dict(batch_bodies or {})
-    local = {int(n) for repo, n in found if not repo}
+    own = own_repo() if any(repo for repo, _ in found) else ""
+    local = {int(n) for repo, n in found if not repo or repo.lower() == own}
+    # #731: Closes repo khác luôn là thẻ lạ — trước đây tính trên tập số đã bỏ tiền tố repo, nên `Closes #32` (thành viên) hay
+    # thẻ của nhánh trùng số che mất `Closes x/y#32`.
+    cross_repo = {int(n) for repo, n in found if repo and repo.lower() != own}
     batch = sorted(n for n in local - {card} if n in members and batch_lead(members[n]) == card)
     # AC của thành viên phải chứng minh trong cùng khối sb:ac: ít nhất 1 mỗi thẻ, như AC gián tiếp.
     batch_ac = sum(max(1, len(ac_items(members[n]))) for n in batch)
-    out = {"skip": False, "card": card, "foreign_closes": sorted(closes - {card} - set(batch)), "closes_own": card in closes,
-           "batch": batch}
+    out = {"skip": False, "card": card, "foreign_closes": sorted((local - {card} - set(batch)) | cross_repo),
+           "closes_own": card in local, "batch": batch}
     m = AC_BLOCK.search(pr_body or "")
     out["ac"] = bool(m)
     items = ac_items(issue_body)
@@ -136,10 +161,17 @@ def check(issue_body, pr_body, msg, branch, extra_bodies=(), batch_bodies=()):
 
 
 def rewrite_closes(path, card, foreign=False):
-    """Đổi từ khoá đóng #card thành `Refs` (foreign=True: đổi mọi thẻ KHÁC #card, giữ Closes của chính thẻ)."""
+    """Đổi từ khoá đóng #card thành `Refs` (foreign=True: đổi mọi thẻ KHÁC #card và mọi Closes của repo khác, giữ Closes của chính
+    thẻ). #731: cùng luật repo với check() — `Fixes x/y#<card>` không phải thẻ này; không đổi thì gate exit 11 lại sau verify (log
+    commit đã push không sửa được) hay đóng issue của repo khác."""
     text = read(path)
-    new = CLOSES.sub(lambda m: f"Refs {m.group(1) or ''}#{m.group(2)}" if (int(m.group(2)) != card) == foreign else m.group(0),
-                     text)
+    own = own_repo() if foreign and any(repo for repo, _ in CLOSES.findall(text)) else ""
+
+    def other(m):
+        return int(m.group(2)) != card or bool(m.group(1) and m.group(1).lower() != own)
+
+    new = CLOSES.sub(lambda m: f"Refs {m.group(1) or ''}#{m.group(2)}" if (other(m) if foreign else int(m.group(2)) == card)
+                     else m.group(0), text)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(new)
     return new != text

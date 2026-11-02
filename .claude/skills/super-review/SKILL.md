@@ -170,9 +170,9 @@ two complete builds. In order, no shortcuts:
      `cross-review-approved: {"repo":"<owner/name>","pr":<P>,"head":"<sha40>","scope":"<request scope>","reviewer":"antigravity","builder":"<builder lane id>","task_id":"<that T… id>","gate_receipt":"<impacted task receipt id>"}`
      (repo/pr/head/scope copied from the request). `super-board-approval.py` accepts it in place
      of `done` (schema and `needs-you:` steps too), except when the plan has `delete-protected`
-     (a deleted `merge_policy.protected_paths` file): that still needs a human `done`.
-   - The rule in one line: only deleting a protected file waits for a person; everything
-     else (live databases, money, auth, schema) is approved by the cross-review marker.
+     (a deleted .env/keystore/jks/google-services or custom `protected_paths` file): human `done`.
+   - In one line: only those deletes wait for a person; all else (live DBs, money, auth,
+     schema, deleting memory/rules/matrix) is approved by the marker.
      Never post a bare `approved-head:` or a `done` yourself: the git guard blocks both
      (only the human owner types them).
 3. **Confirm the merge landed** — never trust the merge command's exit code:

@@ -2641,6 +2641,229 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-wave-model-ladder",
+      "watch_files": [
+        ".claude/workflows/super-board-wave.js",
+        ".claude/skills/super-board/SKILL.md",
+        ".claude/skills/super-board/references/run-workflow.md",
+        "tests/super-board/test_wave_model_ladder.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAVE-MODEL-LADDER-01",
+          "name": "#553: thang model của super-board-wave.js — tier medium thẻ high không yếu hơn thẻ medium (không để undefined = model phiên, có thể là sonnet); tier low/high giữ nguyên; comment trên LADDERS, SKILL.md, run-workflow.md ghi đúng thang",
+          "command": "bash tests/super-board/test_wave_model_ladder.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-train-hook-refusal",
+      "watch_files": [
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_merge_train_hook_refusal.sh",
+        "tests/super-board/test_merge_gate_merge_stderr.sh",
+        "tests/super-board/test_merge_queue_refused_detail.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-TRAIN-HOOK-REFUSAL-01",
+          "name": "#740/#775: train dựng chuỗi bằng git merge thật (hook vẫn chạy); hook guard-check kiểu GeelyEx2 #181 ⇒ 2 PR đụng file guard khác nhau cùng merged, PR chậm hơn base vẫn verify + merged; hook từ chối không file xung đột ⇒ gate-exit-5 + lời hook ở train-detail (không 'conflict'), chỉ trong chuỗi ⇒ deferred có lý do trong log; xung đột thật vẫn conflict exit 5 kèm tên file",
+          "command": "bash tests/super-board/test_merge_train_hook_refusal.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MQ-REFUSED-DETAIL-01",
+          "name": "#775: queue route gate-exit-5 kèm train-detail (git/hook từ chối) ⇒ comment PR + thẻ ghi 'merge refused' kèm lời hook, vẫn loop:rebase + Ready; conflict thật giữ chữ cũ",
+          "command": "bash tests/super-board/test_merge_queue_refused_detail.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-STDERR-FILE-01",
+          "name": "#775: merge gate ghi stderr của git merge ra file (hook để tiến trình nền giữ stderr không làm gate treo), in dòng CONFLICT của git khi xung đột thật, giữ link .agents/devkit khi repo không ignore nó",
+          "command": "bash tests/super-board/test_merge_gate_merge_stderr.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "verify-flags-arg-span",
+      "watch_files": [
+        ".claude/bin/super-board-verify-flags.sh",
+        "tests/super-board/test_verify_flags_arg_span.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-VERIFY-FLAGS-ARG-SPAN-01",
+          "name": "#802: sb_verify_inject_flags chỉ xét --full/--force-full/--scoped/--diff/--json trong phần đối số của post-fix-gate.py; token của lệnh khác trong lệnh ghép không chặn ' --diff origin/<base> --scoped' chèn ngay sau token",
+          "command": "bash tests/super-board/test_verify_flags_arg_span.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-ac-check-cross-repo",
+      "watch_files": [
+        ".claude/bin/super-board-ac-check.py",
+        "tests/super-board/test_ac_check_cross_repo.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-AC-CHECK-CROSS-REPO-01",
+          "name": "#731: ac-check — Closes owner/repo#N của repo khác luôn là thẻ lạ kể cả trùng số thẻ nhánh / thành viên đợt; --rewrite-closes --foreign cùng luật; closes_own chỉ tính repo này; origin đọc ở SB_REPO_PATH",
+          "command": "bash tests/super-board/test_ac_check_cross_repo.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "create-task-pr-mention",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/create_task.py",
+        "universal-agent-devkit/tests/verification/test_create_task_pr_mention.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-CREATE-TASK-PR-MENTION-01",
+          "name": "#735: create-task không gom vào thẻ Ready/Backlog đã có PR mở nhắc nó (Closes/Fixes/Resolves/Refs #N, closingIssuesReferences) dù nhánh không theo mẫu issue-<N>-",
+          "command": "bash universal-agent-devkit/tests/verification/test_create_task_pr_mention.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "card-batch-fresh-lead",
+      "watch_files": [
+        "universal-agent-devkit/scripts/governance/create_task.py",
+        "universal-agent-devkit/tests/verification/test_card_batch_fresh_lead.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-CARD-BATCH-FRESH-LEAD-01",
+          "name": "#731: pick_batch_lead kiểm lại Risk 🔴 High và trần AC trên body đọc lại của thẻ trưởng; thẻ Backlog có PR mở không thành đích gom",
+          "command": "bash universal-agent-devkit/tests/verification/test_card_batch_fresh_lead.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-queue-parallel-trains",
+      "watch_files": [
+        ".claude/bin/super-board-merge-queue.sh",
+        ".claude/bin/super-board-merge-train.sh",
+        ".claude/bin/super-board-merge-gate.sh",
+        ".claude/bin/super-board-status.py",
+        "tests/super-board/test_merge_queue_parallel.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-QUEUE-PARALLEL-01",
+          "name": "#676: queue lượt ngắn phóng một train nền mỗi PR (PR đến sau không chờ train khác, khoá queue không giữ lúc verify chờ slot, max_trains, train chết ⇒ một lần thử, base-moved không tính lần thử); train claim theo PR, verify --scoped gọi thẳng post-fix-gate; gate --require-receipt thoát 12 khi base dời ⇒ train verify lại ngoài khoá (2 lần rồi base-moved); gh pr merge không chồng; BUSY ⇒ timeout; status gộp state các train sống",
+          "command": "bash tests/super-board/test_merge_queue_parallel.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-gh-write-retry-520",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_gh_write_retry.sh",
+        "tests/super-board/test_card_write_failed_sweep.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GH-WRITE-RETRY-01",
+          "name": "#520: gh_write_once thử lại lỗi ghi GitHub thoáng qua (5xx, timeout, rate limit, mạng) tối đa 2 lần trước đường #517; 422/404/401/không tìm thấy và stderr rỗng không thử lại; comment đọc lại marker token trước khi thử lại (đã đăng thì không đăng lần 2, đọc hỏng thì không đăng mù); lệnh không thuộc thẻ vẫn halt 79 khi hết lượt",
+          "command": "bash tests/super-board/test_gh_write_retry.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-CARD-WRITE-RETRY-01",
+          "name": "#520: thẻ Blocked vì lệnh ghi GitHub hỏng (card-write-failed) được runner ghi lại mỗi tick từ state cục bộ: được thì về cột cũ, 3 tick hỏng liên tiếp thì needs-you một lần rồi thôi thử (sống qua restart, không bao giờ halt); không phát lại chuyển cột / nhận thẻ đã huỷ; cột cũ Blocked thì giữ Blocked; người kéo thẻ ra thì bỏ state",
+          "command": "bash tests/super-board/test_card_write_failed_sweep.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-waiting-on-skip-619",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-waiting-on.py",
+        "tests/super-board/test_waiting_on_skip_next.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAITING-ON-SKIP-01",
+          "name": "#619: runner, planner và helper cùng một regex nhãn waiting-on:#<số> (nhãn sai dạng không giữ thẻ Ready); preflight không giao thẻ Ready đầu (mark hỏng) thì thẻ Ready kế được giao trong cùng tick, tối đa 3 thẻ mỗi tick",
+          "command": "bash tests/super-board/test_waiting_on_skip_next.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-gate-stale-unreadable-831",
+      "watch_files": [
+        "universal-agent-devkit/scripts/git/worktree.py",
+        "universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_stale_unreadable.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-MERGE-GATE-STALE-UNREADABLE-01",
+          "name": "#831: worktree finish từ chối gate exit 4 có suite nhãn STALE (cả khi lẫn suite thiếu thiết bị) và exit 2 có file unreadable (nêu tên, en+vi); exit 4 chỉ thiếu thiết bị và exit 2 no_match vẫn fast-forward",
+          "command": "bash universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_stale_unreadable.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-guard-merge-queue-label-536",
+      "watch_files": [
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/shell_norm.py",
+        ".claude/bin/super-board-queue-label.sh",
+        "universal-agent-devkit/tests/gates/test_guard_merge_queue_label.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-MQ-LABEL-01",
+          "name": "#536: git guard hỏi .claude/bin/super-board-queue-label.sh --check trước khi cho gắn nhãn merge-queue (gh pr/issue edit --add-label, gh api …/issues/N/labels, interpreter gọi gh); helper từ chối / treo → chặn trong thời hạn, không gợi ý prefix !; gh pr create|new --label merge-queue và mutation graphql gắn nhãn theo id → chặn; nhãn khác / gỡ nhãn / GET / DELETE → qua, không gọi helper; helper của project phiên (checkout chính khi là worktree), không theo cd; project chưa có helper → luật không chạy",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_merge_queue_label.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-queue-label-536",
+      "watch_files": [
+        ".claude/bin/super-board-queue-label.sh",
+        ".claude/bin/super-board-approved-head.jq",
+        ".claude/bin/super-board-audit-check.py",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_queue_label.sh",
+        "tests/super-board/test_merge_queue_reject_card_note.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-QUEUE-LABEL-01",
+          "name": "#536: super-board-queue-label.sh gắn nhãn merge-queue chỉ khi approved-head hợp lệ (luật chung super-board-approved-head.jq + audit-check) khớp head hiện tại; thiếu / head cũ / không phải OWNER-MEMBER-COLLABORATOR / audit không khớp → exit 3 kèm lý do và bước đúng; đọc/ghi GitHub hỏng → 69; --check không ghi",
+          "command": "bash tests/super-board/test_queue_label.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MQ-REJECT-NOTE-01",
+          "name": "#536: hàng đợi merge loại PR vì approved-head thiếu / lệch head thì comment thêm lên thẻ PR đóng (nhánh issue-<K>- hoặc closingIssuesReferences, chỉ khi thẻ trên board, đọc hỏng không để lại file halt); --dry-run không ghi",
+          "command": "bash tests/super-board/test_merge_queue_reject_card_note.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

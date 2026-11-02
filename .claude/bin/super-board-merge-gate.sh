@@ -78,10 +78,13 @@
 #
 # `--train-receipt <file>` (super-board-merge-train.sh): lines `<head sha> <tree sha>`. The train verified the combined tree of several
 # PRs once; when this gate's clean merge of the base and the PR head produces exactly the tree recorded for that head, the proof
-# already exists and verification is skipped. Any other tree (the base moved, the head changed) verifies as usual.
+# already exists and verification is skipped. Any other tree (the base moved, the head changed) verifies as usual — except with
+# `--require-receipt` (#676, the train sends it): then an unproven tree exits 12 instead, so verification never runs inside the lock.
 #
 # Exit codes, all meaningful to the caller:
 #   0  merged (--preflight: every cheap check passed, stdout `preflight: ok`)
+#   12 --require-receipt only: the merge of the CURRENT base and the head has no train / verified-tree receipt (the base moved after the
+#      train verified); nothing merged, lock released; the train verifies again outside the lock and calls the gate again
 #   13 merge queue is on and the caller is neither the train nor the queue (no --standalone, or --standalone from a board worker
 #      with SB_BOARD_WORKER=1): label the PR merge-queue instead; nothing ran, no lock touched
 #   11 verification failed after merging the base cleanly into the scratch tree —
@@ -141,7 +144,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GITHUB_READ="$HERE/super-board-github-read.py"
 
 CONFIG=""; PR=""; LOCK_TIMEOUT=1800; STALE_AFTER=""; DRY=0; EXPECT_HEAD=""; SUBJECT=""; MSG_FILE=""; TRAIN_RECEIPT=""
-PREFLIGHT=0; STANDALONE=0
+PREFLIGHT=0; STANDALONE=0; REQUIRE_RECEIPT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)        CONFIG="$2"; shift 2 ;;
@@ -155,6 +158,7 @@ while [ $# -gt 0 ]; do
     --dry-run)       DRY=1; shift ;;
     --preflight)     PREFLIGHT=1; shift ;;
     --standalone)    STANDALONE=1; shift ;;
+    --require-receipt) REQUIRE_RECEIPT=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
 done
@@ -326,7 +330,7 @@ if [ "$PREFLIGHT" -ne 1 ]; then
   SCRATCH=$(mktemp -d "$BASE_WT/.claude/worktrees/.merge-scratch-XXXXXX")
 fi
 # SCRATCH rỗng (--preflight): không gọi worktree remove / rm với đường dẫn rỗng.
-cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
+cleanup() { [ -z "${HB_PID:-}" ] || kill "$HB_PID" 2>/dev/null || true; if [ -n "$SCRATCH" ]; then git -C "$BASE_WT" worktree remove --force "$SCRATCH" 2>/dev/null || true; fi; rm -rf ${SCRATCH:+"$SCRATCH"} ${META:+"$META"} ${DIFF:+"$DIFF"} ${VERIFY_LOG:+"$VERIFY_LOG"} ${MERGE_LOG:+"$MERGE_LOG"} ${AC_DIR:+"$AC_DIR"} || true; release; }
 # #559: thư mục đã đổi tên bằng git worktree move thì SCRATCH rỗng, trap không gỡ.
 trap cleanup EXIT
 
@@ -568,7 +572,9 @@ if [ "$DRY" -ne 1 ] && [ "$PREFLIGHT" -ne 1 ] && [ -n "$TRAIN_RECEIPT" ] && [ -r
     [ "$PRE_TREE" != "$(git -C "$REPO_PATH" merge-tree --write-tree "origin/${BASE}" "$HEAD_SHA" 2>/dev/null)" ] || SKIP_LOAD_WAIT=1
   fi
 fi
+# #676: --require-receipt (train) không bao giờ verify trong khoá: cây lệch biên nhận thì thoát 12 ở dưới, nên không chờ tải (cả --dry-run).
 if [ "$SKIP_LOAD_WAIT" -eq 1 ]; then LOAD_WAITED=0; LOAD_WAIT_ON=0; say "train receipt matches the tree to merge: verify will be skipped, not waiting for the load"
+elif [ "$REQUIRE_RECEIPT" -eq 1 ]; then LOAD_WAITED=0; LOAD_WAIT_ON=0; say "--require-receipt: not waiting for the load (a tree the train did not prove exits 12 below)"
 else wait_for_load; fi
 # Đã chờ thì PR có thể đã đổi: đọc lại head và trạng thái, không verify code không còn là PR.
 if [ "${LOAD_WAITED:-0}" -gt 0 ]; then
@@ -637,15 +643,23 @@ fi
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {
   say "could not create a scratch worktree for ${HEAD_REF}@${HEAD_SHA}"; exit 1; }
 
-if ! MERGE_ERR=$(git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet 2>&1); then
+# #775: stderr của git merge ghi ra file riêng, không `$(…)`: hook để tiến trình nền giữ ống stderr thì `$(…)` chờ tới khi tiến trình
+# đó thoát và gate treo. MERGE_LOG là file riêng: tiến trình nền của hook giữ fd của nó, nên chữ nó ghi về sau nằm ở đó, ngoài log verify.
+MERGE_LOG=$(mktemp)
+if ! git -C "$SCRATCH" merge "$BASE_SHA" --no-edit --quiet >"$MERGE_LOG" 2>&1; then
   CONFLICTS=$(git -C "$SCRATCH" diff --name-only --diff-filter=U | tr '\n' ' ')
   if [ -n "$CONFLICTS" ]; then
     say "the base does not merge in cleanly — conflicts: ${CONFLICTS}"
+    # Dòng CONFLICT (…) của git nói loại xung đột (content, add/add, modify/delete…), tối đa 8 dòng.
+    grep -a '^CONFLICT' "$MERGE_LOG" | head -8 | while IFS= read -r line; do say "  ${line}"; done || true
     say "this is a rebase pass for the Builder lane, not a Blocked card"
   else
-    # GeelyEx2 #179: hook commit-msg của repo từ chối commit gộp ⇒ không có file xung đột; in lời git/hook thật, rebase không gỡ được.
-    # Bỏ dòng "Not committing merge…" git tự thêm; lấy phần ĐẦU: lý do của hook thường ở dòng đầu (tail cắt mất khi hook in nhiều dòng).
-    say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused the local merge commit): $(printf '%s\n' "$MERGE_ERR" | grep -v '^Not committing merge' | head -8 | clip 600)"
+    # GeelyEx2 #179: hook commit-msg của repo từ chối commit gộp ⇒ không có file xung đột; in lời git/hook, qua bộ che secret
+    # (sb_redact_text: lời hook là chữ tuỳ ý, log gate vào log runner / train). Bỏ dòng "Not committing merge…" git tự thêm; lấy
+    # phần ĐẦU: lý do của hook thường ở dòng đầu (tail cắt mất khi hook in nhiều dòng). `sed -n` đọc hết ống: không SIGPIPE.
+    MERGE_WHY=$(sed '/^Not committing merge/d' "$MERGE_LOG" | sed -n '1,8p' | sb_redact_text | clip 600) \
+      || MERGE_WHY="(git/hook message hidden: the DevKit secret redactor could not be loaded)"
+    say "git merge of ${BASE} into the scratch tree failed without a conflict (a git hook or git itself refused the local merge commit): ${MERGE_WHY}"
     say "not a content conflict in the PR: the reason is the git/hook message above"
   fi
   exit 5
@@ -663,6 +677,12 @@ fi
 TREE_RECEIPT=$(sb_verified_tree_receipt "$(git -C "$SCRATCH" rev-parse 'HEAD^{tree}')" "$BASE" "$REPO_PATH" "${VERIFY[@]}")
 TREE_KEY=${TREE_RECEIPT##*/}
 if [ "$TRAIN_PROVED" -eq 0 ] && [ -n "$TREE_RECEIPT" ] && [ -f "$TREE_RECEIPT" ]; then TRAIN_PROVED=1; TREE_PROVED=1; fi
+# #676: --require-receipt (train): cây gộp với base HIỆN TẠI chưa được chứng minh (base dời sau verify của train) ⇒ không verify trong
+# khoá merge; thoát 12 (trap EXIT thả khoá) TRƯỚC khối #643 và bước cài DevKit, để train verify lại ngoài khoá rồi gọi lại.
+if [ "$REQUIRE_RECEIPT" -eq 1 ] && [ "$TRAIN_PROVED" -eq 0 ]; then
+  say "base moved since the train verified ${HEAD_SHA:0:12}: tree $(git -C "$SCRATCH" rev-parse --short 'HEAD^{tree}') has no receipt; not verifying inside the merge lock (exit 12)"
+  exit 12
+fi
 # #643: giữ head đã review trước khi khối behind gán HEAD_SHA = MERGED_SHA. Exit 2 chỉ khi train chưa
 # chứng minh cây này, comment edited-tests còn đúng head, và base không còn là tổ tiên của head đó.
 REVIEWED_HEAD=$HEAD_SHA
