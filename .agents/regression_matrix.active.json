@@ -2770,6 +2770,45 @@
       ]
     },
     {
+      "component": "super-board-gh-write-retry-520",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        "tests/super-board/test_gh_write_retry.sh",
+        "tests/super-board/test_card_write_failed_sweep.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-GH-WRITE-RETRY-01",
+          "name": "#520: gh_write_once thử lại lỗi ghi GitHub thoáng qua (5xx, timeout, rate limit, mạng) tối đa 2 lần trước đường #517; 422/404/401/không tìm thấy và stderr rỗng không thử lại; comment đọc lại marker token trước khi thử lại (đã đăng thì không đăng lần 2, đọc hỏng thì không đăng mù); lệnh không thuộc thẻ vẫn halt 79 khi hết lượt",
+          "command": "bash tests/super-board/test_gh_write_retry.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-CARD-WRITE-RETRY-01",
+          "name": "#520: thẻ Blocked vì lệnh ghi GitHub hỏng (card-write-failed) được runner ghi lại mỗi tick từ state cục bộ: được thì về cột cũ, 3 tick hỏng liên tiếp thì needs-you một lần rồi thôi thử (sống qua restart, không bao giờ halt); không phát lại chuyển cột / nhận thẻ đã huỷ; cột cũ Blocked thì giữ Blocked; người kéo thẻ ra thì bỏ state",
+          "command": "bash tests/super-board/test_card_write_failed_sweep.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-waiting-on-skip-619",
+      "watch_files": [
+        ".claude/bin/super-board-run.sh",
+        ".claude/bin/super-board-wave-plan.sh",
+        ".claude/bin/super-board-waiting-on.py",
+        "tests/super-board/test_waiting_on_skip_next.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-WAITING-ON-SKIP-01",
+          "name": "#619: runner, planner và helper cùng một regex nhãn waiting-on:#<số> (nhãn sai dạng không giữ thẻ Ready); preflight không giao thẻ Ready đầu (mark hỏng) thì thẻ Ready kế được giao trong cùng tick, tối đa 3 thẻ mỗi tick",
+          "command": "bash tests/super-board/test_waiting_on_skip_next.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-guard-merge-queue-label-536",
       "watch_files": [
         "universal-agent-devkit/hooks/block-dangerous-git.sh",
