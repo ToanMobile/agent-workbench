@@ -77,7 +77,7 @@ test('Audit Fix 2: processIncomingTelegramUpdates tu dong luu chatId vao telegra
     assert.equal(loadTelegramConfig(tmp.dir).chatId, '88990011');
     assert.equal(sentMessages.length, 1);
     assert.equal(sentMessages[0].chat_id, '88990011');
-    assert.match(sentMessages[0].text, /CC SWITCHER/);
+    assert.match(sentMessages[0].text, /ai-factory\.localhost:4317\/cc-switcher/);
   } finally {
     tmp.cleanup();
   }
