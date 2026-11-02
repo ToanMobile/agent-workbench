@@ -1,11 +1,18 @@
 ---
 name: android-real-device-qa
-description: Bộ công cụ kiểm thử chất lượng trên thiết bị Android thật hoặc máy ảo (emulator). Tự động kích hoạt khi kiểm thử trên Android, khi kết nối adb, đo FPS bề mặt (Jank/Stutter), trích xuất UI hierarchy XML để audit tọa độ/touch target, chẩn đoán ANR/crash logcat, quét method count DEX ngăn tràn 64K, và xuất báo cáo HTML kèm ảnh chụp thực tế. Tuyệt đối không tạo kết quả PASS ảo khi không có thiết bị thật online.
+description: Kích hoạt khi kiểm thử trên thiết bị Android thật hoặc emulator, khi kết nối adb, đo FPS (Jank/Stutter), audit UI hierarchy/touch target, chẩn đoán ANR/crash logcat hoặc quét method count DEX 64K.
 ---
 
 # Android Real-Device Quality Assurance (Thiết Bị Thật & Emulator)
 
 Kỹ năng này cung cấp bộ công cụ đo lường và thẩm định chất lượng thực tế trên thiết bị Android vật lý hoặc máy ảo ADB.
+
+## Phạm vi
+
+Bộ công cụ kiểm thử chất lượng trên thiết bị Android thật hoặc máy ảo (emulator). Tự động kích hoạt khi kiểm thử
+trên Android, khi kết nối adb, đo FPS bề mặt (Jank/Stutter), trích xuất UI hierarchy XML để audit tọa độ/touch
+target, chẩn đoán ANR/crash logcat, quét method count DEX ngăn tràn 64K, và xuất báo cáo HTML kèm ảnh chụp thực
+tế. Tuyệt đối không tạo kết quả PASS ảo khi không có thiết bị thật online.
 
 ## Nguyên Tắc Cốt Lõi
 1. **Thiết bị thật là thẩm phán tối cao (Device as Single Source of Truth):** Kiểm thử trên JVM unit test không thể thay thế cho hành vi render, binder transaction, và bộ nhớ thực tế trên Android OS.
