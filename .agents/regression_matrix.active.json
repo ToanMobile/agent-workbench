@@ -2917,6 +2917,30 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "agent-office-cc-switcher-page-742-split",
+      "watch_files": [
+        "mcp-servers/agent-office/web/*.html",
+        "mcp-servers/agent-office/tests/cc_switcher_retry_test.js",
+        "mcp-servers/agent-office/tests/test_cc_switcher_retry.py",
+        "mcp-servers/agent-office/tests/test_cc_switcher_touch_targets.py",
+        "mcp-servers/agent-office/tests/test_web_no_empty_catch.py"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-742-R3-WEB-NO-EMPTY-CATCH-01",
+          "name": "#742 review 409a7296 (fc1b157568, INSTINCT-007), tách từ #742: không trang nào trong agent-office/web có catch rỗng",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_web_no_empty_catch",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-742-R4-CC-RETRY-01",
+          "name": "#742 review c27d199d (c39f91d4e7, INSTINCT-002), tách từ #742: nút Thử lại của /cc-switcher disabled + aria-busy ngay khi bấm, khoá >= 1000 ms; load() chỉ một request đang chạy; vùng chạm >= 44px",
+          "command": "cd mcp-servers/agent-office && python3 -m unittest tests.test_cc_switcher_retry tests.test_cc_switcher_touch_targets",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
