@@ -147,7 +147,7 @@ def glob_re(pattern: str) -> re.Pattern:
             out += "[^/]"; i += 1
         else:
             out += re.escape(pattern[i]); i += 1
-    return re.compile("^" + out + "$")
+    return re.compile("^" + out + "$", re.S)   # tên C-quoted giải mã `\n` thành xuống dòng thật: `**` phải khớp qua nó
 
 
 def matches(path: str, globs) -> str | None:

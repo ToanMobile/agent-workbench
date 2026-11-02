@@ -9,6 +9,7 @@ export LC_ALL=C LANG=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 POLICY="$ROOT/.claude/bin/super-board-merge-policy.py"
 . "$ROOT/universal-agent-devkit/tests/lib/clean_git_env.sh"
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1   # diff.noprefix / mnemonicPrefix toàn cục không đổi header fixture
 FAILS=0
 ok() { echo "✔ $1"; }
 fail() { echo "✖ $1"; FAILS=$((FAILS + 1)); }
@@ -53,6 +54,19 @@ echo '{}' > "$TMP/cfg.json"
 
 deleted_diff "docs/plain é.md" ""
 [ -z "$(gone)" ] && ok "deleting an unprotected quoted file stays auto" || fail "unprotected quoted delete gated: [$(gone)]"
+
+# Review vòng 1 (Antigravity + Claude 02/11): `\n` trong tên C-quoted giải mã thành xuống dòng thật; glob `**` phải khớp qua nó.
+cats() { gone | python3 -c 'import sys; print(" ".join(sorted({w.split(":")[0] for w in sys.stdin.read().split(" | ") if w.strip()})))'; }
+deleted_diff $'.agents/local/rules/a\nb.md' ""
+grep -q '^diff --git "a/\.agents/local/rules/a\\nb\.md"' "$TMP/d.diff" || fail "fixture: expected a C-quoted header holding \\n"
+[ "$(cats)" = "delete-reviewable" ] && ok "empty rules file with a newline in its name: delete-reviewable" \
+  || fail "newline-named rules file slipped the delete gate: [$(cats)]"
+deleted_diff $'.agents/local/memory/m\nn.md' "note"
+[ "$(cats)" = "delete-reviewable" ] && ok "non-empty memory file with a newline in its name: delete-reviewable" \
+  || fail "newline-named memory file slipped the delete gate: [$(cats)]"
+deleted_diff $'keys\nx/app.jks' "k"
+[ "$(cats)" = "delete-protected" ] && ok "keystore under a newline-named folder: delete-protected" \
+  || fail "newline-named folder hid a sensitive delete: [$(cats)]"
 
 printf 'diff --git "a/bad\\9" "b/bad\\9"\ndeleted file mode 100644\nindex e69de29..0000000\n' > "$TMP/d.diff"
 case "$(gone)" in "delete-protected: deletes <unreadable path> "*) ok "a deletion whose header cannot be read: delete-protected (fail-closed)" ;;
