@@ -2864,6 +2864,29 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "guard-push-742-split-a1",
+      "watch_files": [
+        "universal-agent-devkit/hooks/guard-protected-push.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_guard_protected_push_wrappers.sh",
+        "universal-agent-devkit/tests/gates/test_push_gate_devkit_no_matrix.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-742-A1-GUARD-PUSH-WRAPPERS-01",
+          "name": "#742 tách A1 (critical scan 31/10, BUG-REV-gpp-*): guard-protected-push chặn force push lên main sau wrapper/keyword (time, nohup, nice, timeout, env -i, sudo -u, if/then, { }, !), trong bash -lc STR, sau --signed / --repo, sau comment có dấu nháy; đọc payload camelCase; config FIFO không treo hook; mỗi ca có đối chứng không force vẫn được phép",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_protected_push_wrappers.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-742-A1-PUSH-GATE-DEVKIT-NO-MATRIX-01",
+          "name": "#742 tách A1 (#482, BUG-REV-push-gate-own-check-devkit): push_gate.check() từ chối main checkout đã cài DevKit (.agents/devkit) mà mất ma trận hồi quy; repo chưa cài DevKit không ma trận vẫn qua",
+          "command": "bash universal-agent-devkit/tests/gates/test_push_gate_devkit_no_matrix.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
