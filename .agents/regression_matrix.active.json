@@ -3234,6 +3234,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "super-board-needs-you-guard-v2",
+      "watch_files": [
+        ".claude/bin/super-board-needs-you.py",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_needs_you_guard_v2.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-NEEDS-YOU-GUARD-V2-01",
+          "name": "optimizer đợt 1: cờ needs_you_guard_v2 tắt = nhận mọi lời 🙋 như v1; bật = từ chối 18 lời agent tự làm được (gõ tay duyệt test, quyết kỹ thuật/AC, dọn thẻ, --full tay, frame time Android) + 1 câu trộn, vẫn nhận 33 lời của người và câu human-gate của merge-queue; cờ đọc từ flags.json của checkout chính",
+          "command": "bash tests/super-board/test_needs_you_guard_v2.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }

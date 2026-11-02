@@ -94,6 +94,34 @@ GENUINE_HUMAN_RE = re.compile(
     r"cho\s+xe\s+online|đăng\s+nhập\s+vietmap|spending\s+limit|giới\s+hạn\s+chi\s+tiêu|\b(?:postgres|database|db)\s+production\b|\bproduction\s+(?:db|database)\b",
     re.I,
 )
+# v2 (cờ needs_you_guard_v2, mặc định tắt): các lớp việc agent làm được còn lọt bản trên, đo trên 52 lời 🙋 thật
+# của 6 board (03/11): gõ tay duyệt test đã sửa (chỉ audit Antigravity được duyệt), quyết kỹ thuật/AC và dọn thẻ,
+# chạy --full/merge gate tay, dọn cây dirty, đo frame time trên máy Android. Không chặn "review/merge PR": merge gate
+# thoát 7/8 (human-gate) và merge-queue gắn needs-you bằng đúng câu "xem PR #N … rồi tự merge" (super-board-merge-queue.sh).
+V2_RULES = (
+    (
+        re.compile(r"\bauto-approve\b|\bgõ\s+tay\b|\bduyệt\s+chéo\b|\baudit\s+antigravity\b", re.I),
+        "test đã sửa do audit Antigravity duyệt, không do người gõ tay",
+    ),
+    (
+        re.compile(
+            r"\bquyết\s+định\b|\bchọn\s+(?:đường|hướng)\b|\bchọn\s+bỏ\b|\bchốt\s+goal\b|\bsửa\s+ac\b|"
+            r"\bviết\s+lại\s+thẻ\b|\[decision\]|\bđóng\s+#\d+\s+vì\b",
+            re.I,
+        ),
+        "quyết định kỹ thuật/phạm vi AC và sửa, đóng thẻ thuộc thẩm quyền tự chủ của agent (Decide, don't ask)",
+    ),
+    (
+        re.compile(r"\bchạy\s+--full\b|\bmerge\s+gate\s+thủ\s+công\b|\bdọn\s+cây\b|\bkhôi\s+phục\s+checklist\b", re.I),
+        "chạy gate/merge gate và dọn cây làm việc là việc của agent",
+    ),
+    (
+        re.compile(r"\bframe\s*time\b|\btrên\s+máy\s+android\b", re.I),
+        "đo hiệu năng trên máy Android nối adb là việc của QA",
+    ),
+)
+V2_HUMAN_RE = re.compile(r"keychain|khoá\s+ký|cấp\s+danh\s+tính|\bpii\b|trên\s+xe\b|chủ\s+xe|\bphát\s+hành\b", re.I)
+FLAG = "needs_you_guard_v2"
 TIMEOUT = 60
 
 
@@ -145,6 +173,33 @@ def gh(*args, stdin=None):
         raise GhError(f"gh {' '.join(args[:3])} returned non-JSON output") from e
 
 
+_V2 = None
+
+
+def guard_v2():
+    """Cờ v2: env SB_NEEDS_YOU_GUARD_V2=1/0 thắng; không thì `needs_you_guard_v2` trong
+    <checkout chính>/.agents/local/flags.json (worktree của thẻ dùng chung cờ của repo). Thiếu/hỏng = tắt."""
+    global _V2
+    if _V2 is None:
+        env = os.environ.get("SB_NEEDS_YOU_GUARD_V2")
+        if env in ("0", "1"):
+            _V2 = env == "1"
+        else:
+            _V2 = False
+            try:
+                common = subprocess.run(
+                    ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                    capture_output=True, text=True, timeout=10,
+                ).stdout.strip()
+                if common:
+                    flags = Path(common).parent / ".agents" / "local" / "flags.json"
+                    _V2 = json.loads(flags.read_text(encoding="utf-8")).get(FLAG) is True
+            except (OSError, ValueError, AttributeError, subprocess.SubprocessError) as e:
+                if not isinstance(e, FileNotFoundError):
+                    print(f"needs-you: {FLAG} đọc lỗi, coi là tắt: {e}", file=sys.stderr)
+    return _V2
+
+
 def one_line(text, what):
     text = " ".join((text or "").split())
     if not text:
@@ -157,11 +212,16 @@ def one_line(text, what):
     # `;` `·` `,` `.` and the words "và"/"rồi"/"and"/"then", so "đăng nhập firebase và chạy lại gate" still trips on the gate clause.
     # Split only when a human keyword is present (else the whole text is one clause: the rules' lookaheads and the
     # `.claude/worktrees/` / `x.py` patterns need it intact). A `.` separates only before a space or the end.
-    clauses = re.split(r"[;·,]|\.(?=\s|$)|\b(?:và|rồi|and|then)\b", text, flags=re.I) if GENUINE_HUMAN_RE.search(text) else [text]
+    if guard_v2():
+        rules = AGENT_DOABLE_RULES + V2_RULES
+        human = lambda s: GENUINE_HUMAN_RE.search(s) or V2_HUMAN_RE.search(s)
+    else:
+        rules, human = AGENT_DOABLE_RULES, GENUINE_HUMAN_RE.search
+    clauses = re.split(r"[;·,]|\.(?=\s|$)|\b(?:và|rồi|and|then)\b", text, flags=re.I) if human(text) else [text]
     for clause in clauses:
-        if GENUINE_HUMAN_RE.search(clause):
+        if human(clause):
             continue
-        for pat, why in AGENT_DOABLE_RULES:
+        for pat, why in rules:
             if pat.search(clause):
                 raise ValueError(
                     f"{what} mô tả việc agent phải tự xử lý ({why}); "
