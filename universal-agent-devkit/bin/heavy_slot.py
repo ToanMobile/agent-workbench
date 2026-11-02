@@ -200,7 +200,10 @@ def priority_name() -> str:
 # ── Hàng đợi vé (một thư mục mỗi pool) ─────────────────────────────────────────────────────────────────────────
 def queue_order(tickets: list, now: float) -> list:
     """Thứ tự phục vụ: (mức ưu tiên, vé của lượt đã bắt đầu trước, thời lượng ước tính − thời gian đã chờ, lúc đến). Việc dài chờ lâu dần lên
-    đầu; một lượt đã chạy suite đầu thì chạy cho xong, không nhường lại cho lượt mới đến (#338)."""
+    đầu; một lượt đã chạy suite đầu thì chạy cho xong, không nhường lại cho lượt mới đến (#338). Mức ưu tiên lão hoá (P2, 02/11): mỗi
+    DEVKIT_SLOT_PRIO_AGE_S (450 s; 0, rác hay âm thì mặc định) đã chờ thì lên một mức, tới merge (0) thì thôi — vé chờ lâu không bị đói."""
+    age_s = _env_float("DEVKIT_SLOT_PRIO_AGE_S", 450.0) or 450.0
+
     def key(t):
         try:
             est = float(t.get("est_s"))
@@ -210,8 +213,10 @@ def queue_order(tickets: list, now: float) -> list:
             t0 = float(t.get("t0"))
         except (TypeError, ValueError):
             t0 = now
-        return (PRIORITY.get(t.get("prio"), PRIORITY["interactive"]), 0 if t.get("cont") else 1, est - max(0.0, now - t0), t0,
-                str(t.get("name") or ""))
+        waited = max(0.0, now - t0)
+        base, steps = PRIORITY.get(t.get("prio"), PRIORITY["interactive"]), waited // age_s
+        prio = base - int(steps) if steps < base else 0   # steps NaN/vô cực (t0 rác) cũng thành 0, không ném
+        return (prio, 0 if t.get("cont") else 1, est - waited, t0, str(t.get("name") or ""))
     return sorted(tickets, key=key)
 
 

@@ -491,3 +491,5 @@
 37 tests/installer/test_ocr_review_reap.sh
 # gate kẹt và chậm PR 1 (02/11) P3: suite_env bỏ núm pool heavy (< 1 s)
 1 tests/gates/test_suite_env_heavy_knobs.sh
+# gate kẹt và chậm PR 1 (02/11) P2: lão hoá ưu tiên vé heavy_slot (< 1 s)
+1 tests/gates/test_gate_slot_aging.sh

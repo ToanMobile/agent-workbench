@@ -3024,6 +3024,21 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-slot-prio-aging",
+      "watch_files": [
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_gate_slot_aging.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SLOT-AGING-01",
+          "name": "hàng đợi vé heavy_slot lão hoá ưu tiên (P2): mỗi DEVKIT_SLOT_PRIO_AGE_S (450 s) đã chờ lên một mức tới merge; interactive chờ 1000 s đứng trước merge mới đến, chờ 10 s vẫn sau; núm 0/rác = mặc định, không chia cho 0",
+          "command": "bash universal-agent-devkit/tests/gates/test_gate_slot_aging.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
