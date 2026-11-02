@@ -6999,11 +6999,17 @@ def main():
             src = next((m for m in MATRIX_TESTS.get(t.get("id"), ()) if m.get("command") == t.get("command")), t)   # "cache": false
             # #645 lượt task / --scoped: chỉ suite cache được theo khoá chính xác — không run_impacted.sh (tập chọn theo lịch sử git, `--list`
             # mỗi lượt), không Gradle (đồ thị build ngầm, P0-2); FAIL của chúng vẫn vào sổ khoá ở khối F1 sau các suite
-            if task_keyed and not (suite_cacheable(src)[0] and not PRECOMMIT_HEAVY.search(t.get("command") or "")):
+            # #851: runner run_impacted.sh chuẩn được xét ở lượt này khi khoá CHÍNH XÁC của nó theo input tập chọn có thật (khác khoá cả cây:
+            # runner có dấu devkit-selection-inputs, đồ thị dựng được); không thì như #645 (chạy, không khoá)
+            sel_task = task_keyed and bool(suite_cache_mod().selection_keyable(src))
+            if task_keyed and not sel_task and not (suite_cacheable(src)[0] and not PRECOMMIT_HEAVY.search(t.get("command") or "")):
                 continue
             if t.get("command") and not t.get("matrix_added") and suite_keyable(src):
                 try:
-                    KEYS[id(t)] = sc.keys(t)
+                    ks = sc.keys(t)
+                    if sel_task and (not ks[0] or ks[0] == ks[1]):
+                        continue
+                    KEYS[id(t)] = ks
                     if task_keyed:
                         TASK_PRECISE.add(id(t))
                 except Exception as e:   # noqa: BLE001 - khoá không tính được: suite này chạy
@@ -8867,7 +8873,23 @@ def main():
     return exit_code
 
 
-FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b")
+# 02/11: cả dòng hỏng của runner ở 5 repo app — Kotlin `e:`, Gradle, Unity/C# `error CS…`, javac/clang/swiftc `file:N: error`,
+# pytest `E   …`, jest `●`, npm, Android `FATAL EXCEPTION`, `…Error:`, tín hiệu chết tiến trình. Trước đó khối '| …' của suite Gradle
+# đỏ chỉ có đuôi "Run with --stacktrace…", dòng `e:` thật nằm giữa log (tests/gates/test_fail_line_ecosystems.sh).
+# `…Error:` (kể cả tên gói/lớp lồng `java.net.X`, `Outer$Inner`) không khớp khi cả tên đứng ngay sau một từ thường + dấu cách
+# (`retry after java.net.SocketTimeoutError:`, `✔ … with TypeError:`): dòng INFO/✔ đó chiếm 8 dòng đầu của fail_lines (#906).
+# Mọi tiền tố khác vẫn khớp: đầu dòng, Gradle `   > `, logcat `tag: `, `stack=`, `| `, `[x] ` (#901 neo đầu dòng làm mất chúng:
+# tests/gates/test_fail_line_prefixed.sh). Tuyến tính nhờ `(?<![\w.$])`: tên chỉ bắt đầu ở đầu một cụm `[\w.$]`, mỗi cụm quét
+# một lần; bỏ nó thì `Ab…` 100 KB mất hơn 40 s (tests/gates/test_fail_line_qualified.sh). Đổi lại `Uncaught TypeError:` không khớp;
+# `Killed: N` không neo: bash in `x.sh: line N: PID Killed: 9 cmd` (tests/gates/test_fail_line_precision.sh).
+# ponytail: `^E {2,}` lấy cả diff assertion nhiều dòng của pytest, test đỏ đầu có thể chiếm hết 8 dòng đầu; bỏ nhánh này khi log thật
+# của app mất tên test đỏ sau (dòng `file:N: AssertionError` vẫn khớp nhánh AssertionError).
+FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b"
+                       r"|^[ \t]*e: \S|What went wrong:|Execution failed for task|\berror (?:CS|MSB)\d{4}\b"
+                       r"|:\d+(?::\d+)?: (?:fatal )?error\b|^E {2,}\S|^[ \t]*● |^npm (?:ERR!|error) |FATAL EXCEPTION"
+                       r"|(?<![a-z] )(?<![\w.$])(?:\w+[.$])*[A-Z]\w*Error:"
+                       r"|\b(?:Segmentation fault|Bus error|Abort trap)\b"
+                       r"|\bKilled: \d")
 RED_TEST_LINE = re.compile(r"^✖ (?:hooks/)?tests/\S+\.(?:sh|py|mjs)\s*$")   # #721: dòng test đỏ của tests/run_impacted.sh (cột 0)
 
 
