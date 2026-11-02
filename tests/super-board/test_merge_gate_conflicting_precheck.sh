@@ -48,6 +48,7 @@ case " $* " in
 esac
 SH
 chmod +x "$TMP/bin/gh"
+. "$ROOT/tests/super-board/lib/fake_ci_checks.sh"; sb_ci_checks_fixture "$TMP/bin"
 export PATH="$TMP/bin:$PATH"
 
 # case <tên> <dòng mergeable…>: fixture mới mỗi ca (biên nhận verified-tree của ca trước không được làm verify bị bỏ ở ca sau).
