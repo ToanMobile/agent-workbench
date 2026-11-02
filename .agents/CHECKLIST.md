@@ -1,12 +1,12 @@
 # 🧪 Regression Checklist
 
-**An toàn 4% (11/263)** · ❌ 114 · 🔁 0 · 🚫 0 · 🟡 73 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 60 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 67 · ma trận chờ duyệt: không
+**An toàn 2% (8/338)** · ❌ 113 · 🔁 0 · 🚫 0 · 🟡 92 cần chạy lại · ⚠️ 2 cần test · ⚠️ 0 test có thể không suite nào chạy · 🐞 3 chưa sửa · ⏳ 120 chờ · 🚗 0 chờ chạy lặp trên xe · 🟡 REPORTED 22 · ma trận chờ duyệt: không
 
-> Sinh tự động lúc 2026-10-27 19:04:46 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
+> Sinh tự động lúc 2026-11-02 10:27:37 — **không sửa tay**. % an toàn = PASS ÷ mọi dòng test/REQ/bug đã xác nhận (REPORTED không tính). PASS chỉ từ lần chạy thật + (bug/REQ) test đã chứng minh ĐỎ.
 
 **Bug không có test hồi quy nào chặn tái phát: 2** (0 chưa có test · 2 có test nhưng gate không chạy)
 
-## 🚨 Cần xử lý (192)
+## 🚨 Cần xử lý (210)
 
 | Trạng thái | ID | Tính năng / Bug | Component | Việc cần làm |
 |---|---|---|---|---|
@@ -118,17 +118,33 @@
 | ❌ TIMEOUT | BUG-20261024-fix-root-cause-devkit-de-sau-nay-ko-bi-l | Fix root cause devkit để sau này ko bị lỗi dừng board cũng như cáv task bị kẹt lại như thế này nữa | - | suite quá giờ — tìm test treo, chạy lại |
 | ❌ TIMEOUT | BUG-VACUITY-SINCE-BASE | gate: vacuity revert uses HEAD under --since, so committed fixes look vacuous | - | suite quá giờ — tìm test treo, chạy lại |
 | ❌ TIMEOUT | BUG-WT-1013 | worktree copies keep the macOS uchg flag so remove cannot delete them and leaves an unregistered orphan folder | - | suite quá giờ — tìm test treo, chạy lại |
-| ❌ TIMEOUT | REG-DK-ALL-01 | DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit | devkit-all | suite quá giờ — tìm test treo, chạy lại |
 | ❌ TIMEOUT | REG-DK-HOOK-01 | hook contract | devkit-hooks | suite quá giờ — tìm test treo, chạy lại |
 | ❌ TIMEOUT | REG-DK-SENTINEL-MERGE-ENV-01 | test_gate_sentinel.sh xanh khi DEVKIT_SLOT_PRIORITY=merge / DEVKIT_SLOT_LOAD_WAIT_S=0 rò từ merge gate vào verify (#167) | devkit-sentinel-merge-env | suite quá giờ — tìm test treo, chạy lại |
 | ❌ TIMEOUT | REG-SB-MERGE-LOAD-WAIT-01 | merge gate waits (bounded, inside the lock before the base is pinned, lock stamp refreshed) for the machine load to drop, then verifies anyway | super-board-merge-gate-load-wait | suite quá giờ — tìm test treo, chạy lại |
 | ❌ TIMEOUT | REG-SB-MERGE-TIMEOUT-RETRY-01 | merge gate retries a post-fix-gate verify once only when every red suite is TIMEOUT (REJECT exit 1, static checks passed); a real FAIL, UNTESTED or static finding is not retried; verify exit 124 still retried once | super-board-merge-gate-timeout-retry | suite quá giờ — tìm test treo, chạy lại |
 | ❌ TIMEOUT | REG-SB-RUNNER-WATCHDOG-01 | super-board runner survives a killed sleep; durable stop marker; launchd watchdog never restarts a stopped board | super-board-runner-watchdog | suite quá giờ — tìm test treo, chạy lại |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-agy-init-compact-json-only | agy init event was found by a compact-JSON substring only: a stream-json line with spaces after the colon made every agy dispatch fail or wait the 60 s init timeout | pm-mcp | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-agy-lock-takeover-race | agy registry lock: stale-lock takeover was delete-then-create, so two PMs that saw the same stale lock could both enter the critical section (the second deleted the first one's NEW lock) and overwrite agy-conversations.json | pm-mcp | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-agy-prune-budget-breaks-loop | agy registry prune: once 3 entries with a pid had been checked with ps the loop stopped, so older entries without a pid (no ps needed) were kept and the registry grew past 500 | pm-mcp | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-doctor-agy-only-default-model | pm_doctor printed the agy diagnostics (binary, broken registry, permission policy) only when defaultModel was an agy model, so a task that runs agy through its own model or pm_dispatch model got no explanation for a failed dispatch | pm-mcp | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-ping-kills-reused-pid | pm_doctor ping stopped its agy turns with kill(pid,0)+kill(-pid): up to 90 s later the pid may have exited and been reused, so it could SIGKILL a stranger's process group | pm-mcp | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-status-agy-by-task-model | pm_status trusted task.model to tell an agy conversation from an IDE one: with ps broken a tier task whose conversation went through agy (pm_dispatch model=...) was nudged anyway and lost its whole report; the PLAN-phase nudge branch had no unknown-state check at all | pm-mcp | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-tests-guessable-agy-path | MCP tests that simulate a missing agy pointed ANTIGRAVITY_PM_AGY at a guessable path in the shared TMPDIR: an executable planted there would be run, in two tests with --dangerously-skip-permissions | pm-mcp | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-droppending-always-writes | pm-mcp: dropPending rewrote the registry even when it removed nothing (delete returns true for absent keys) | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-droppending-foreign-entry | pm-mcp: dropPending deleted by key only and could remove another live PM's pending entry | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-null-selftag-accepted | pm-mcp: a null own fingerprint was accepted, leaving an entry that is never reaped | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-orphan-sigkill | pm-mcp: agy opened by newConversation is orphaned when the PM is SIGKILLed while waiting for init (no pending record by pid) | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-pending-leak-final-write | pm-mcp: a failed real-entry write after agy init left a pending-<pid> record in the registry | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-reaper-recheck-before-kill | pm-mcp: reaper identity check ran outside the lock, long before the kill under the lock | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-reaper-same-key-kill | pm-mcp: reaper re-check compared only the pid under a pid-keyed entry, so a rewritten pending entry (pid reuse) was killed | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-reaper-stale-snapshot-kill | pm-mcp: orphan reaper killed from a stale registry snapshot, so an agy a PM had just registered could be killed | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-selftag-after-spawn | pm-mcp: the PM read its own ps fingerprint after spawning agy, widening the untracked window | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261022-check-cac-task-trong-blocked-dang-bi-gi | check các task trong blocked đang bị gì fix devkit rồi restart lại | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261022-co-dang-bi-stuck-ko-vay | có đang bị stuck ko vậy? | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261023-cac-config-cpu-workload-hoat-dong-khong | các config cpu workload hoạt động không chính xác cần đổi logic lại đơn giản hơn là tổng số task chạy cùng trên buildin… | - | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-AGENT-OFFICE-01 | agent-office: unittest (server, redact, host check) và tìm đường A* của người đi trong xưởng (node) | mcp-servers/agent-office | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-AGENT-OFFICE-INBOX-02 | agent-office: hook hộp thư lệnh (rỗng, có lệnh, sai session, file hỏng, subagent, thiếu nonce, song song) và POST /api/agent-message (rate limit, tunnel cần mã, resume bị từ chối khi phiên còn chạy hoặc thẻ còn worker) | agent-office-agent-message | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-AUTO-ANTIGRAVITY-PM-MCP-01 | antigravity-pm-mcp: package.json test script | mcp-servers/antigravity-pm-mcp | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-AUTO-CC-SWITCHER-MCP-01 | cc-switcher-mcp: package.json test script | mcp-servers/cc-switcher-mcp | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-CAPACITY-CODEX-WAVE-01 | codex-wave: số lane Codex = min(max_workers, capacity build_workers); max_workers 0 lấy capacity; capacity vắng/hỏng/rác thì công thức cũ | capacity | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-CAPACITY-MERGE-HOLD-01 | merge gate: config thiếu merge_load_max thì chờ theo capacity hold_load (12 lõi: 96, biên 95/96), capacity vắng thì cùng công thức 8 × lõi (lệnh trùng REG-SB-MERGE-LOAD-WAIT-01) | capacity | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
@@ -169,6 +185,7 @@
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-MERGE-POLICY-NL-01 | merge-policy sees always_human keywords after VT/FF/CR/NEL/U+2028, in ++ lines and across odd whitespace | super-board-diff-policy | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-MERGE-TRAIN-01 | merge train: 3 PR sẵn sàng thì verify đúng một lần và cả 3 merge; một PR đỏ được chia đôi tìm ra (exit 11) và hai PR còn lại vẫn merge; một PR chạy như gate thường (#110) | super-board-merge-train | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-NEEDS-DEVICE-01 | runner, planner and status hold needs-device QA cards while no real device is online (emulator, denylist, no adb) | super-board-needs-device | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-NEEDS-YOU-01 | needs-you mark is idempotent, migrates human-gated and carries no machine line | super-board-needs-you | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-NEEDS-YOU-SKIP-01 | runner, planner and status leave Ready cards that wait for a person (needs-you / human-gated) to the person | super-board-needs-you-skip | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-NOTIFY-SLOTS-01 | notify blocks test/lib/runaway Telegram spam; super_board_all covers all 6 repos; monitor scans worktree transcripts; claim loop caps total early deaths | super-board-notify-and-slots | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-POST-MERGE-CLEAN-01 | post-merge clean and --sweep remove merged lane worktrees, keep work, one sweep at a time, salvage leaves no junk | super-board-post-merge-clean | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
@@ -186,11 +203,12 @@
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-RUNNER-READ-RETRY-01 | runner đọc lại board có backoff khi lần đọc hỏng tạm thời; hỏng hết lượt thì bỏ tick thay vì chết; halt 79 vẫn dừng; vòng chính chỉ đọc qua tick_fetch (#256) | super-board-runner-board-read-retry | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-RUNNER-READY-ORDER-01 | runner giao thẻ Ready theo priority label, bug trước, số issue tăng dần; thẻ body nhắm repo khác → Blocked kèm block-template; thẻ có Fix trùng thẻ đang mở → comment một lần, không giao | super-board-runner-ready-order | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01 | runner trả thẻ Building có worker build chết giữa lượt chạy về lại Ready kèm sổ reclaims; quá trần trong cửa sổ thì chuyển sang Blocked có dòng blocked-by: - | super-board-runner-reclaim-dead-build | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-SCRATCH-CONFIG-01 | merge gate scratch tree gets ignored local config, build inputs and the ignored hooks settings registers | super-board-scratch-config | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-SELF-RELOAD-01 | runner rảnh tự nạp lại super-board-run.sh khi origin đổi: ff main rồi exec lại; main lệch origin / ff hỏng / sai cú pháp thì notify một lần, không restart mù; còn worker thì không đụng | super-board-self-reload | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-SETUP-BIN-01 | setup BIN lists every super-board script the runner, merge gate and skills call | super-board-setup-bin-list | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-STATUS-NEEDS-YOU-01 | status: option Needs You của Project vẽ thành ô riêng và vào nhóm Waiting on you; không có thẻ Needs You thì đầu ra không đổi | super-board-status-needs-you-column | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-TEST-SLOT-ISO-01 | tests never queue behind the machine's real heavy-verify slots | test-heavy-slot-isolation | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
-| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-TOTAL-CAP-01 | một trần worker duy nhất: build+qa+review của mọi repo trên máy <= max_workers (5), đếm qua thư mục slot chung, PID chết tự trả slot; tải CPU, WIP, gate_max không còn chi phối | super-board-total-worker-cap | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-TOTAL-CAP-01 | một trần worker max_workers (5) cho mọi repo, cộng phanh spawn khi load1 vượt ngưỡng (mặc định busy_load); dưới ngưỡng tải không chặn; lib mode không đọc máy thật | super-board-total-worker-cap | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-UPSTREAM-66-67-01 | github-read keeps odd-newline diffs byte-exact without halting; approval links body issues off the default base | super-board-diff-policy | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-VERIFY-CMD-01 | QA in đúng lệnh verify của merge gate (cùng hàm chèn --diff/--force-full) (#251) | super-board-red-on-base | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-WAVE-NEEDSYOU-01 | wave.js: prompt exit 7 và exit 8 của merge gate gọi super-board-needs-you.py mark với --next comment done (#106) | super-board-wave-needs-you-mark | code đổi sau lần PASS — chạy lại (suite nhẹ tự chạy nền; nặng: `postfix-gate --run-tests --full`) |
@@ -218,6 +236,12 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-APPROVAL-AUTO-MERGE-01 | duyệt head X vẫn hiệu lực khi merge gate tự gộp main thành Y; commit khác đẩy thêm thì đòi duyệt lại (#262) | chưa chạy | python3 tests/super-board/test_approval_auto_merge_head.py |
 
+### audited-head-ascii-space-629 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-AUDITED-HEAD-ASCII-629-01 | #629: push_gate.AUDITED_HEAD (khoảng trắng [ \t\n\r\f\v], cùng regex pm_verdict) không nhận `auditedHead:` ngăn bởi \x1c-\x1f/U+0085 mà regex JS của pm_verdict không thấy; dấu cách/tab vẫn nhận | chưa chạy | bash universal-agent-devkit/tests/gates/test_audited_head_ascii_space.sh |
+
 ### batch-canary — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -238,11 +262,53 @@
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-CAPACITY-SLOTS-02 | test super-board không xếp hàng sau slot thật của máy khi ngưỡng tải đến từ capacity (lệnh trùng REG-SB-TEST-SLOT-ISO-01) | 2026-10-24 13:07:21 · 0.11s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-TEST-SLOT-ISO-01/20261024-125828.log) | bash tests/super-board/test_tests_skip_machine_slots.sh |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-CAPACITY-SLOTS-03 | super_board_all: dòng khởi động in ngưỡng hold_load của capacity, nút DEVKIT_CAPACITY không lái test (lệnh trùng REG-SB-NOTIFY-SLOTS-01) | 2026-10-24 13:07:21 · 9.84s · exit 0 · 38166b6b+dirty · [log](evidence/REG-CAPACITY-SLOTS-03/20261024-130701.log) | python3 tests/super-board/test_notify.py && python3 tests/super-board/test_super_board_all_slots.py && bash tests/super-board/test_runner_claim_loop.sh |
 
-### devkit-all — 0/1 PASS
+### card-batch-fresh-lead — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ❌ TIMEOUT | REG-DK-ALL-01 | DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit | 2026-10-24 07:30:48 · 119.88s · exit None · 82f868e7+dirty · [log](evidence/REG-DK-ALL-01/20261024-073048.log) | bash universal-agent-devkit/tests/run_impacted.sh |
+| ⏳ chưa chạy | REG-DK-CARD-BATCH-FRESH-LEAD-01 | #731: pick_batch_lead kiểm lại Risk 🔴 High và trần AC trên body đọc lại của thẻ trưởng; thẻ Backlog có PR mở không thành đích gom | chưa chạy | bash universal-agent-devkit/tests/verification/test_card_batch_fresh_lead.sh |
+
+### card-batch-one-branch-724 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-MERGE-GATE-BATCH-724-01 | #724: một đợt thẻ = một nhánh/PR/gate — ac-check nhận Closes của thẻ mang marker sb:batch-of của thẻ nhánh (marker thẻ khác, trong code fence, body rỗng vẫn là thẻ lạ) và đếm AC của nó; merge gate merge PR đợt đủ AC, thiếu AC exit 11, còn AC chưa tick thì Refs cả đợt + ac-open, Closes thẻ ngoài đợt hoặc PR không sb:ac vẫn exit 11 | chưa chạy | bash tests/super-board/test_merge_gate_batch.sh |
+
+### create-task-pr-mention — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-CREATE-TASK-PR-MENTION-01 | #735: create-task không gom vào thẻ Ready/Backlog đã có PR mở nhắc nó (Closes/Fixes/Resolves/Refs #N, closingIssuesReferences) dù nhánh không theo mẫu issue-<N>- | chưa chạy | bash universal-agent-devkit/tests/verification/test_create_task_pr_mention.sh |
+
+### devkit-all — 0/0 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| 💤 đã nghỉ (suite không còn trong ma trận) | REG-DK-ALL-01 | DevKit tests that name a changed file (code, templates, rules) + repo consistency; the full suite exceeds the 900 s gate limit | 2026-10-24 07:30:48 · 119.88s · exit None · 82f868e7+dirty · [log](evidence/REG-DK-ALL-01/20261024-073048.log) | bash universal-agent-devkit/tests/run_impacted.sh |
+
+### devkit-all-shard-gates — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-ALL-GATES-01 | #616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (tests/gates): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s | chưa chạy | DEVKIT_IMPACTED_DIRS=gates bash universal-agent-devkit/tests/run_impacted.sh |
+
+### devkit-all-shard-rest — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-ALL-REST-01 | #616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (phần còn lại: verification, installer, context_memory, hooks/tests): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s | chưa chạy | DEVKIT_IMPACTED_DIRS=!gates,!worktree_git bash universal-agent-devkit/tests/run_impacted.sh |
+
+### devkit-all-shard-rules — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-ALL-SHARD-RULES-616-01 | #616: ba suite shard REG-DK-ALL-* thay REG-DK-ALL-01 (đã bỏ khỏi ma trận), khối shard liền nhau và chỉ-thêm sau các rule trước nó (rule nối sau không làm đỏ, #453), theo dõi universal-agent-devkit/*, run_impacted.sh --list của ba lệnh hợp lại đúng tập không shard, không trùng | chưa chạy | bash tests/super-board/test_matrix_shard_rules.sh |
+
+### devkit-all-shard-worktree — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-ALL-WORKTREE-01 | #616 shard thay REG-DK-ALL-01 (đã bỏ ở #650) theo thư mục (tests/worktree_git): DevKit tests that name a changed file, chia để mỗi suite ngắn hơn trần 900 s | chưa chạy | DEVKIT_IMPACTED_DIRS=worktree_git bash universal-agent-devkit/tests/run_impacted.sh |
 
 ### devkit-gate — 0/2 PASS
 
@@ -250,6 +316,12 @@
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-DK-GATE-01 | post-fix gate | 2026-10-24 13:12:26 · 35.01s · exit 0 · b93a50cc+dirty · [log](evidence/REG-DK-GATE-01/20261024-131226.log) | bash universal-agent-devkit/tests/gates/test_postfix_gate.sh |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-DK-GATE-02 | proof gate (tree_fp) | 2026-10-24 13:12:49 · 21.97s · exit 0 · b93a50cc+dirty · [log](evidence/REG-DK-GATE-02/20261024-131248.log) | bash universal-agent-devkit/tests/gates/test_proof_gate.sh |
+
+### devkit-gate-audited-head-base — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-AUDITED-HEAD-BASE-01 | duyệt chéo: auditedHead trước base không duyệt chép lùi test (mục duyệt, trailer, push_gate.approved); audited_head đọc verdicts.audit.auditedHead trước notes; ANTIGRAVITY_PM_STATE_HOME lạ không cấp biên nhận task / full_pass exit 0 (#605 audit T0066 vòng 2) | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_audited_head_base.sh |
 
 ### devkit-gate-robustness — 0/1 PASS
 
@@ -274,6 +346,18 @@
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-DK-GUARD-KILL-BY-NAME-01 | git guard chặn pkill / killall / pgrep -f (kill theo tên trúng mọi board); kill <PID>, pgrep không -f và chữ pkill trong echo/grep/commit -m vẫn qua (#144) | chưa chạy | bash universal-agent-devkit/tests/gates/test_guard_kill_by_name.sh |
+
+### devkit-guard-protected-delete — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-GUARD-PROTECTED-DELETE-01 | git guard chỉ hỏi người khi: force push (-f/--force/--force-with-lease/+ref), xoá ref remote (push --delete/-d/:ref/--mirror/--prune), xoá file quan trọng (rm/unlink/git rm/find -delete theo protected_delete mặc định + .antigravity-pm.json); xoá file thường vẫn qua (#605) | chưa chạy | bash universal-agent-devkit/tests/gates/test_guard_protected_delete.sh |
+
+### devkit-guard-self-approval-comment — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-GUARD-SELF-APPROVAL-01 | git guard chặn agent tự đăng approved-head trơn (không approved-by:) hoặc dòng done qua gh pr/issue comment, gh api …/comments (--body, -b, --body-file, -F, -f/-F body=); approved-head + approved-by và cross-review-approved vẫn qua (#605 Lane H) | chưa chạy | bash universal-agent-devkit/tests/gates/test_guard_self_approval_comment.sh |
 
 ### devkit-health — 0/1 PASS
 
@@ -374,11 +458,23 @@
 
 </details>
 
+### devkit-tree-fp-settings-local — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-TREE-FP-SETTINGS-01 | tree_fingerprint bỏ qua sửa chưa commit của .claude/settings.json (bản cài kit), vẫn tính nội dung đã commit và mọi file tracked khác (#691) | chưa chạy | bash universal-agent-devkit/tests/gates/test_tree_fp_settings_local.sh |
+
 ### devkit-verification-py — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-DK-VERIFY-PY-01 | unity compile skip when editmode/playmode runs + proof-capture run-before under device lock | 2026-10-24 13:07:21 · 10.46s · exit 0 · 38166b6b+dirty · [log](evidence/REG-DK-VERIFY-PY-01/20261024-124402.log) | python3 universal-agent-devkit/tests/verification/test_unity_compile_skip.py && python3 universal-agent-devkit/tests/verification/test_proof_run_before.py |
+
+### devkit-worktree-prune-merged-ancestor — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-WT-PRUNE-MERGED-ANCESTOR-01 | #453 prune-branch nhận nhánh có tip là tổ tiên head của PR MERGED vào trunk (PR lấy head từ nhánh khác); commit ngoài head đó, hoặc PR gộp vào nhánh khác trunk: giữ | chưa chạy | bash universal-agent-devkit/tests/worktree_git/test_worktree_prune_ancestor_of_merged.sh |
 
 ### devkit-worktree-sandbox — 0/1 PASS
 
@@ -391,6 +487,36 @@
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-DK-DURATIONS-UNION-01 | test_durations.txt gộp bằng merge=union: hai nhánh cùng nối dòng cuối không xung đột, dòng trùng còn một (#302) | chưa chạy | bash universal-agent-devkit/tests/gates/test_durations_union_merge.sh |
+
+### file-wait-ready-556 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-FILE-WAIT-556-01 | #556: sequence conflictWith giữ Ready + nhãn chờ thẻ khác, gỡ khi PR không còn đụng file, không tính RUNAWAY, không giao cùng thẻ đụng file | chưa chạy | bash tests/super-board/test_runner_file_wait.sh |
+
+### gate-approval-fresh-worktree-628 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-GATE-APPROVAL-FRESH-WT-628-01 | #628 AC2: lời duyệt test (approved_hashes.json) của main checkout còn hiệu lực ở worktree mới (chỉ so sha256 nội dung, không mtime); đổi 1 byte test: vẫn exit 2 | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_approval_fresh_worktree.sh |
+
+### gate-cross-review-approval-605 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-GATE-CROSS-REVIEW-605-01 | #605: test có sẵn bị sửa chỉ được duyệt chéo (approved_tests.json approvals: reviewer khác author/DEVKIT_AGENT_ID, sha256 khớp, đủ 6 trường); tự duyệt (--auto-approve-tests, DEVKIT_AUTO_APPROVE_TESTS, AUTO-APPROVE:) và dạng cũ không nguồn = exit 2, in cần duyệt lại + sha256 | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_cross_review_approval.sh |
+
+### gate-fail-fast-647 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-FAIL-FAST-647-01 | #647: suite FAIL hoặc TIMEOUT thì phần NOT_RUN còn lại thành UNTESTED; --no-fail-fast chạy tiếp; merge-train và gate_full truyền cờ | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_fail_fast.sh |
+
+### gate-rerun-skip-648 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-RERUN-SKIP-648-01 | #648: cùng cây, cùng chế độ, cùng danh sách suite thì thoát 0 từ rerun_skip.json trước khi lấy khoá; --force, --no-cache và DEVKIT_GATE_CACHE=0 vẫn chạy | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_rerun_skip.sh |
 
 ### issue-363-batch — 0/8 PASS
 
@@ -425,13 +551,17 @@
 
 </details>
 
-<details><summary>✅ mcp-servers/antigravity-pm-mcp — 1/1 PASS</summary>
+### mcp-servers/agent-office/gate-full-runner — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-AUTO-ANTIGRAVITY-PM-MCP-01 | antigravity-pm-mcp: package.json test script | 2026-10-24 13:07:21 · 98.05s · exit 0 · 38166b6b+dirty · [log](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) | cd mcp-servers/antigravity-pm-mcp && npm test |
+| ⏳ chưa chạy | REG-AGENT-OFFICE-GATE-FULL-RUNNER-01 | agent-office: nút "Chạy gate full" — hàng đợi FIFO bỏ trùng, lưu qua khởi động lại, một lượt mỗi lúc, chờ khoá toàn máy, huỷ, repo chưa cài lịch, đọc khoá repo không flock, endpoint chặn tunnel/CSRF/DNS rebinding (gate_full.py giả) | chưa chạy | cd mcp-servers/agent-office && python3 -m unittest discover -s tests -p test_gate_full_runner.py |
 
-</details>
+### mcp-servers/antigravity-pm-mcp — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-AUTO-ANTIGRAVITY-PM-MCP-01 | antigravity-pm-mcp: package.json test script | 2026-10-24 13:07:21 · 98.05s · exit 0 · 38166b6b+dirty · [log](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) | cd mcp-servers/antigravity-pm-mcp && npm test |
 
 ### mcp-servers/cc-switcher-mcp — 0/1 PASS
 
@@ -453,11 +583,56 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-APPROVED-HEAD-RECEIPT-01 | gate đẩy merge commit Y rồi thoát: lượt gate thứ hai vẫn nhận duyệt của X qua biên nhận; commit người đẩy thêm thì đòi duyệt lại (#262) | chưa chạy | bash tests/super-board/test_merge_gate_approved_head_second_run.sh |
 
+### merge-gate-edited-test-486 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-MERGE-GATE-EDITED-TEST-486-01 | #486: worktree finish từ chối gate exit 2 (test đã sửa chưa duyệt, nêu tên file), exit 1 khi suite PASS, và exit 4 nhãn SLOT; exit 0, exit 3, và exit 4 thiếu thiết bị vẫn fast-forward | chưa chạy | bash universal-agent-devkit/tests/worktree_git/test_worktree_merge_gate_edited_test.sh |
+
+### merge-gate-install-untracked-merge-error — 0/2 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-MERGE-ERROR-SHOWN-01 | GeelyEx2 #179: git merge base vào scratch bị hook commit-msg từ chối (không file xung đột) ⇒ gate in stderr thật, không in 'conflicts:' rỗng, không bảo rebase; xung đột thật vẫn in tên file + rebase pass; exit 5 giữ nguyên | chưa chạy | bash tests/super-board/test_merge_gate_merge_error_shown.sh |
+| ⏳ chưa chạy | REG-SB-MERGE-INSTALL-UNTRACKED-01 | Idle #18: install.sh ghi .mcp.json/.gemini chưa track vào scratch ⇒ merge gate xoá phần install.sh thêm (chụp ls-files --others trước/sau), giữ .agents/devkit bị ignore và file PR đã track (kể cả cùng tên bị install ghi đè); PR Markdown verify xanh, dry run exit 0 | chưa chạy | bash tests/super-board/test_merge_gate_install_untracked.sh |
+
+### merge-gate-no-push-pr-branch — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-MERGE-GATE-NO-PUSH-PR-01 | gate không ghi lên nhánh PR: PR chậm hơn base thì head trên origin giữ nguyên, verify chạy trên cây scratch đã gộp, approved-head và --match-head-commit vẫn khớp head PR (#570) | chưa chạy | bash tests/super-board/test_merge_gate_no_push_pr_branch.sh |
+
 ### merge-gate-scratch-agents-clean — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-SCRATCH-AGENTS-CLEAN-01 | scratch của merge gate không để AGENTS.md đã track bị sửa sau khi cài DevKit (#234) | chưa chạy | bash tests/super-board/test_merge_gate_scratch_agents_clean.sh |
+
+### merge-queue-parallel-trains — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-MERGE-QUEUE-PARALLEL-01 | #676: queue lượt ngắn phóng một train nền mỗi PR (PR đến sau không chờ train khác, khoá queue không giữ lúc verify chờ slot, max_trains, train chết ⇒ một lần thử, base-moved không tính lần thử); train claim theo PR, verify --scoped gọi thẳng post-fix-gate; gate --require-receipt thoát 12 khi base dời ⇒ train verify lại ngoài khoá (2 lần rồi base-moved); gh pr merge không chồng; BUSY ⇒ timeout; status gộp state các train sống | chưa chạy | bash tests/super-board/test_merge_queue_parallel.sh |
+
+### merge-scratch-keep-559 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-MERGE-SCRATCH-KEEP-559-01 | #559: REG-DK-ALL-01 không PASS thì giữ scratch, log đỏ và env.txt đã che secret; PASS thì dọn; tối đa 2 bản | chưa chạy | bash tests/super-board/test_merge_gate_keep_scratch.sh |
+
+### merge-scratch-keep-shards-712 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-MERGE-SCRATCH-KEEP-SHARDS-712-01 | #712: merge gate giữ scratch cả khi shard REG-DK-ALL-GATES/WORKTREE/REST-01 FAIL/TIMEOUT/HANG (dòng '<ID> : …' có mã màu); PASS, UNTESTED và suite khác chỉ nhắc REG-DK-ALL-01 trong mô tả thì không | chưa chạy | bash tests/super-board/test_merge_gate_keep_scratch_shards.sh |
+
+### merge-train-hook-refusal — 0/3 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-MERGE-STDERR-FILE-01 | #775: merge gate ghi stderr của git merge ra file (hook để tiến trình nền giữ stderr không làm gate treo), in dòng CONFLICT của git khi xung đột thật, giữ link .agents/devkit khi repo không ignore nó | chưa chạy | bash tests/super-board/test_merge_gate_merge_stderr.sh |
+| ⏳ chưa chạy | REG-SB-MQ-REFUSED-DETAIL-01 | #775: queue route gate-exit-5 kèm train-detail (git/hook từ chối) ⇒ comment PR + thẻ ghi 'merge refused' kèm lời hook, vẫn loop:rebase + Ready; conflict thật giữ chữ cũ | chưa chạy | bash tests/super-board/test_merge_queue_refused_detail.sh |
+| ⏳ chưa chạy | REG-SB-TRAIN-HOOK-REFUSAL-01 | #740/#775: train dựng chuỗi bằng git merge thật (hook vẫn chạy); hook guard-check kiểu GeelyEx2 #181 ⇒ 2 PR đụng file guard khác nhau cùng merged, PR chậm hơn base vẫn verify + merged; hook từ chối không file xung đột ⇒ gate-exit-5 + lời hook ở train-detail (không 'conflict'), chỉ trong chuỗi ⇒ deferred có lý do trong log; xung đột thật vẫn conflict exit 5 kèm tên file | chưa chạy | bash tests/super-board/test_merge_train_hook_refusal.sh |
 
 ### post-fix-gate-tree-mode — 0/1 PASS
 
@@ -472,11 +647,50 @@
 | ⏳ chưa chạy | REG-DK-PROOF-MERGE-RECEIPT-01 | proof_gate nhận biên nhận merge của merge gate (lượt gộp qua merge gate chạy nền, push qua pipe: cho qua); biên nhận lượt trước / phiên khác / không session, squash không có trên origin, cha squash khác base, commit chưa qua gate sau squash (kể cả ngày giả), main bẩn file của phiên, gh pr merge, ghi tay kho biên nhận: chặn | chưa chạy | bash universal-agent-devkit/tests/gates/test_proof_gate_merge_receipt.sh |
 | ⏳ chưa chạy | REG-SB-MERGE-GATE-PROOF-RECEIPT-01 | merge gate THẬT ghi biên nhận merge (pr, head, base, verified_tree, squash, session) mà proof_gate nhận; phiên khác / không session: chặn; kho không ghi được: gate vẫn gộp, exit 0 | chưa chạy | bash tests/super-board/test_merge_gate_proof_receipt.sh |
 
+### proof-gate-trunk-main-722 — 0/2 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-PROOF-API-BLOB-01 | #722: dòng api-request-blob (không timestamp) không đóng cửa biên nhận merge khi tool_use đã có bản ghi assistant (hay chỉ đọc); tool_use chỉ có trong blob mà ghi kho / gh pr merge / Bash bất kỳ, id rỗng hay null, blob nhắc kho không có tool_use, dòng assistant không timestamp (kể cả cặp gh pr merge + blob trùng id): chặn | chưa chạy | bash universal-agent-devkit/tests/gates/test_proof_gate_api_request_blob.sh |
+| ⏳ chưa chạy | REG-DK-PROOF-MAIN-PREDATES-01 | #722: main trunk mode có file người khác để từ trước phiên, lệnh shell chỉ đọc nhắc tên; biên nhận trong lượt cho fp commit HEAD (PR squash, hay --tree HEAD trong worktree tạm): cho qua; file tạo trong phiên, nested repo, symlink, t0 tương lai, Edit nêu tên, touch -t, file đã xoá, không gate / gate lượt trước / main đi tiếp / trunk tắt / không biết t0: chặn; lời khuyên nêu --tree HEAD; copy-mode vẫn exit 2 | chưa chạy | bash universal-agent-devkit/tests/gates/test_proof_gate_main_predates_session.sh |
+
+### qa-detached-worktree-557 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-QA-DETACHED-557-01 | #557: QA thêm worktree detached tại origin/<PR branch>, không gỡ worktree build khi nhánh đã đổi tên hoặc còn agent-memory chưa commit, và đẩy commit bằng chứng bằng git push origin HEAD:<PR branch> | chưa chạy | bash tests/super-board/test_qa_detached_worktree.sh |
+
+### qa-exit2-edited-test-643 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-QA-EXIT2-643-01 | #643: QA exit 2 chỉ vì test sửa đi Review rồi merge nhờ duyệt chéo | chưa chạy | bash tests/super-board/test_qa_exit2_edited_test.sh |
+
+### review-wait-receipt-671 — 0/2 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-GATE-RECEIPT-BY-HEAD-671-01 | #671 AC1: super-board-gate-receipt.sh in fp theo head từ store chung; biên nhận của cây bẩn (file thật) không phủ commit sạch, file cài đặt worktree thì qua | chưa chạy | bash tests/super-board/test_issue671_gate_receipt_by_head.sh |
+| ⏳ chưa chạy | REG-SB-REVIEW-WAIT-NOT-NOOP-671-01 | #671 AC2/AC3: review worker kết thúc sạch khi chờ (comment [reviewer] cuối blocked-by:) không bị đếm no-op và nghỉ SB_REVIEW_WAIT_S; bị kill, is_error hoặc comment không phải reviewer vẫn Blocked | chưa chạy | bash tests/super-board/test_issue671_review_wait_not_noop.sh |
+
 ### sb-runner-suite-fuse — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-SUITE-FUSE-01 | cầu chì suite của runner: ≥2 thẻ Blocked cùng suite id trong N giờ gộp một thẻ và ngưng giao Builder tới khi thẻ gộp rời Blocked; khác suite hay ngoài cửa sổ giờ không gộp (#363) | chưa chạy | bash tests/super-board/test_runner_suite_fuse.sh |
+
+### suite-env-board-worker-528 — 0/2 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-SUITE-ENV-WORKER-528-01 | #528: suite_env và clean_git_env bỏ SB_BOARD_WORKER, SB_MERGE_CALLER, SB_MERGE_QUEUE, SB_REPO_PATH, SB_GITHUB_READ_STRICT | chưa chạy | bash universal-agent-devkit/tests/gates/test_suite_env_worker_vars.sh |
+| ⏳ chưa chạy | REG-DK-WORKER-MAIN-528-01 | #528: SB_BOARD_WORKER=1 trên main thì hook thoát 0 và không chạy suite; không có cờ thì chạy; worktree liên kết vẫn chạy | chưa chạy | bash universal-agent-devkit/tests/gates/test_gate_worker_main.sh |
+
+### super-board-ac-check-cross-repo — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-AC-CHECK-CROSS-REPO-01 | #731: ac-check — Closes owner/repo#N của repo khác luôn là thẻ lạ kể cả trùng số thẻ nhánh / thành viên đợt; --rewrite-closes --foreign cùng luật; closes_own chỉ tính repo này; origin đọc ở SB_REPO_PATH | chưa chạy | bash tests/super-board/test_ac_check_cross_repo.sh |
 
 ### super-board-ac-proven-before-close — 0/3 PASS
 
@@ -485,6 +699,12 @@
 | ⏳ chưa chạy | REG-SB-AC-CHECK-01 | ac-check (T0054): đếm mọi dạng mục AC, mở rộng AC gián tiếp 'AC của thẻ #X', bắt AC nén (#318/PR #343), Closes thẻ lạ, dòng chưa tick, đổi Closes → Refs | chưa chạy | bash tests/super-board/test_ac_check.sh |
 | ⏳ chưa chạy | REG-SB-AC-OPEN-NOT-DONE-01 | thẻ ac-open không vào Done (T0054): card.sh move Done exit 5; runner mở lại issue đóng còn ac-open thay vì reconcile Done; preflight không coi là đã giao | chưa chạy | bash tests/super-board/test_card_done_ac_open.sh && bash tests/super-board/test_runner_reconcile_ac_open.sh && bash tests/super-board/test_preflight_ac_open.sh |
 | ⏳ chưa chạy | REG-SB-MERGE-GATE-AC-01 | merge gate (T0054): AC nén / Closes thẻ lạ (body, message, commit) → exit 11; còn AC chưa tick → merge nhưng Refs, nhãn ac-open, thẻ về Ready; đủ AC → gỡ nhãn; PR không sb:ac như cũ | chưa chạy | bash tests/super-board/test_merge_gate_ac_check.sh |
+
+### super-board-ac-short-heading — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-AC-SHORT-HEADING-01 | #616/#618: heading `## AC` là mục AC ở preflight (không hold unclear), luật kéo Backlog và ac-check; `## ACL` không phải | chưa chạy | bash tests/super-board/test_preflight_ac_short_heading.sh |
 
 ### super-board-agents-md-block — 0/1 PASS
 
@@ -497,6 +717,33 @@
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-AGENTS-MD-BLOCK-02 | run.md still points every lane to the DevKit pipeline that moved out of the AGENTS.md block (same test as REG-SB-AGENTS-MD-BLOCK-01, watched on run.md and the test itself) | chưa chạy | bash tests/super-board/test_agents_md_block_size.sh |
+
+### super-board-approval-cross-review-605 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-APPROVAL-CROSS-REVIEW-605-01 | #605: marker cross-review-approved hợp lệ (reviewer khác builder, head/scope khớp request, task_id + gate_receipt không rỗng, người đăng có quyền ghi) thay cho done; tự duyệt, head lệch, sửa comment, đăng trước request = không nhận; chỉ plan có delete-protected mới cần done của người (schema / needs_you nhận marker); policy: xoá file khớp merge_policy.protected_paths → human delete-protected (cả file nhị phân qua github-read); --deps --config nhận marker khi plan hiện tại cho phép | chưa chạy | python3 tests/super-board/test_approval_cross_review.py |
+
+### super-board-approved-head-605 — 0/2 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-APPROVED-HEAD-605-01 | #605: approved-head kèm approved-by {reviewer,builder,task_id,gate_receipt} được nhận (reviewer khác builder); tự duyệt, approved-by hỏng/thiếu trường, head lệch bị loại; marker mới nhất thắng; bare approved-head của OWNER vẫn nhận (runner) | chưa chạy | bash tests/super-board/test_runner_review_approved_head.sh |
+| ⏳ chưa chạy | REG-SB-APPROVED-HEAD-605-02 | #605: merge-queue dùng chung luật approved-head (super-board-approved-head.jq): marker hợp lệ và bare OWNER vào train; tự duyệt, approved-by hỏng, task_id rỗng, head lệch, marker tự duyệt mới hơn bị loại kèm lý do | chưa chạy | bash tests/super-board/test_merge_queue.sh |
+
+### super-board-approved-head-closing-ref — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-APPROVED-HEAD-CLOSING-REF-01 | #607/#614: review_approved_head nhận PR nhánh không phải issue-<N>- khi đúng một PR mở có closingIssuesReferences chứa N; nhánh issue-<N>- vẫn thắng, hai PR đóng N thì không chọn; thẻ Review có PR như vậy đã vào hàng không bị đẩy Blocked vì no-op | chưa chạy | bash tests/super-board/test_runner_approved_head_closing_ref.sh |
+
+### super-board-audit-check-605 — 0/3 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-AUDIT-CHECK-605-01 | #605 (audit T0066 vòng 2): task_id của cross-review-approved chỉ tính khi antigravity-pm có audit pass với auditedHead == head của request; không biên bản, head khác, verdict fail, project khác, task_id sai dạng = không duyệt; CLI super-board-audit-check.py exit 0/1 | chưa chạy | python3 tests/super-board/test_approval_cross_review.py |
+| ⏳ chưa chạy | REG-SB-AUDIT-CHECK-605-02 | #605 (audit T0066 vòng 2): merge-queue loại approved-by có task_id không có audit pass khớp head PR (giả, head cũ, verdict fail, sai dạng); bare OWNER vẫn vào train | chưa chạy | bash tests/super-board/test_merge_queue.sh |
+| ⏳ chưa chạy | REG-SB-AUDIT-CHECK-605-03 | #605 (audit T0066 vòng 2): review_approved_head của runner chỉ merge-only khi task_id của approved-by có audit pass khớp head PR | chưa chạy | bash tests/super-board/test_runner_review_approved_head.sh |
 
 <details><summary>✅ super-board-blocked-by-open-only — 1/1 PASS</summary>
 
@@ -526,6 +773,24 @@
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-CARD-ITEMS-RETRY-01 | card.sh items đọc lại 1 lần khi số item lệch totalCount (không chết runner); lệch cả hai lần vẫn exit 69; stop.sh ghi marker trước kill (#256) | 2026-10-24 13:07:21 · 6.75s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-CARD-ITEMS-RETRY-01/20261024-130107.log) | bash tests/super-board/test_card_items_count_retry.sh |
 
+### super-board-card-write-fail-blocks-card — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-CARD-WRITE-BLOCK-01 | gh_write_once: lệnh ghi GitHub của MỘT thẻ hỏng thì thẻ đó vào Blocked kèm comment chặn, board chạy tiếp; bước chặn hỏng hoặc lệnh không thuộc thẻ thì halt 79 như cũ; dispatch không phóng worker cho thẻ vừa bị chặn (28/10) | chưa chạy | bash tests/super-board/test_card_write_fail_blocks_card.sh |
+
+### super-board-decision-prompts — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-DECISION-PROMPTS-01 | #518: prompt orchestrator (run.md) áp luật 1–5 của decision-policy.md, ghi [orchestrator] [decision] kèm marker sb-decision:orchestrator, unmark needs-you, danh sách dừng giữ needs-you; prompt builder/QA/reviewer/block-template/wave lanePrompt coi AC đã quyết là xong, không dựng lại blocker, cấm tự đăng [decision] | chưa chạy | bash tests/super-board/test_decision_prompts.sh |
+
+### super-board-decision-reader — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-DECISION-READER-01 | [orchestrator] [decision] hợp lệ (marker orchestrator hoặc comment tay của chủ không marker) gỡ blocker ở deps.sh, needs-you mark, qa-report; lane tự đăng thì bị bỏ qua; ca DỪNG vẫn gắn needs-you (#516, 28/10) | chưa chạy | bash tests/super-board/test_decision_reader.sh |
+
 ### super-board-diff-policy — 0/2 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -533,11 +798,25 @@
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-MERGE-POLICY-NL-01 | merge-policy sees always_human keywords after VT/FF/CR/NEL/U+2028, in ++ lines and across odd whitespace | 2026-10-24 14:59:54 · 1.83s · exit 0 · 7a3d58a8+dirty · [log](evidence/REG-SB-MERGE-POLICY-NL-01/20261024-145954.log) | bash tests/super-board/test_merge_policy_odd_newlines.sh |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-UPSTREAM-66-67-01 | github-read keeps odd-newline diffs byte-exact without halting; approval links body issues off the default base | 2026-10-24 15:08:27 · 0.96s · exit 0 · 7a3d58a8+dirty · [log](evidence/REG-SB-UPSTREAM-66-67-01/20261024-150827.log) | bash tests/super-board/test_upstream_66_67.sh |
 
+### super-board-door-blast-host-agy-549 — 0/2 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-HOST-AGY-549-01 | #549: super-board-host.sh nhận diện claude, codex, agy (SUPER_BOARD_HOST hoặc ANTIGRAVITY_*), host lạ thoát 64 | chưa chạy | bash tests/super-board/test_host_detect.sh |
+| ⏳ chưa chạy | REG-SB-RISK-DOOR-BLAST-549-01 | #549: khối Risk nêu Door (one-way/two-way) và Blast radius ở writing-standard và các tài liệu lane; mọi SKILL.md dưới 20000 byte | chưa chạy | bash tests/super-board/test_risk_door_blast.sh |
+
 ### super-board-gh-write-once-marker — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-WRITE-MARKER-01 | gh_write_once: comment ghi chưa rõ kết quả mang marker duy nhất cho mỗi lần, comment cố định lặp không làm reconcile báo đã áp dụng nhầm | 2026-10-24 12:13:59 · 2.63s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-WRITE-MARKER-01/20261024-121359.log) | bash tests/super-board/test_gh_write_once_marker.sh |
+
+### super-board-gh-write-retry-520 — 0/2 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-CARD-WRITE-RETRY-01 | #520: thẻ Blocked vì lệnh ghi GitHub hỏng (card-write-failed) được runner ghi lại mỗi tick từ state cục bộ: được thì về cột cũ, 3 tick hỏng liên tiếp thì needs-you một lần rồi thôi thử (sống qua restart, không bao giờ halt); không phát lại chuyển cột / nhận thẻ đã huỷ; cột cũ Blocked thì giữ Blocked; người kéo thẻ ra thì bỏ state | chưa chạy | bash tests/super-board/test_card_write_failed_sweep.sh |
+| ⏳ chưa chạy | REG-SB-GH-WRITE-RETRY-01 | #520: gh_write_once thử lại lỗi ghi GitHub thoáng qua (5xx, timeout, rate limit, mạng) tối đa 2 lần trước đường #517; 422/404/401/không tìm thấy và stderr rỗng không thử lại; comment đọc lại marker token trước khi thử lại (đã đăng thì không đăng lần 2, đọc hỏng thì không đăng mù); lệnh không thuộc thẻ vẫn halt 79 khi hết lượt | chưa chạy | bash tests/super-board/test_gh_write_retry.sh |
 
 ### super-board-github-read-foreign-halt — 0/1 PASS
 
@@ -623,11 +902,23 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-MERGE-QUEUE-E2E-01 | đầu-cuối qua runner + hàng đợi + train + merge gate THẬT: 3 PR lệch nhịp (2 thẻ + 1 PR tương tác) chỉ 1 lượt verify trong train, 0 verify lẻ, thẻ Done; lane worker gọi thẳng gate khi queue bật ra exit 13; SB_MERGE_QUEUE=0 giữ đường cũ (trên origin/main trước Pha 2: 0 train) | chưa chạy | bash tests/super-board/test_merge_queue_e2e.sh |
 
+### super-board-merge-queue-route-rows — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-MERGE-QUEUE-ROUTE-01 | #762/#637/#639: route của hàng đợi merge — card_of/head_of/cache load_rows không chết khi dữ liệu lớn hơn bộ đệm ống (printf \| awk exit dưới pipefail); thẻ qua closingIssuesReferences khi nhánh không theo mẫu issue-<N>-; đọc GitHub hỏng giữa lượt route không cắt dở các PR còn lại; gate-exit-11 của preflight không ghi là verify đỏ | chưa chạy | bash tests/super-board/test_merge_queue_route_rows.sh |
+
 ### super-board-merge-train — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-MERGE-TRAIN-01 | merge train: 3 PR sẵn sàng thì verify đúng một lần và cả 3 merge; một PR đỏ được chia đôi tìm ra (exit 11) và hai PR còn lại vẫn merge; một PR chạy như gate thường (#110) | 2026-10-24 15:00:37 · 42.71s · exit 0 · 7a3d58a8+dirty · [log](evidence/REG-SB-MERGE-TRAIN-01/20261024-150037.log) | bash tests/super-board/test_merge_train.sh |
+
+### super-board-merge-train-single-test-retry-578 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-TRAIN-SINGLE-TEST-RETRY-578-01 | #578: verify đỏ chỉ vì đúng một test của REG-DK-ALL-01 thì train chạy lại riêng test đó một lần (xanh = flaky ghi vào PR + thẻ test; đỏ hai lần = red kèm tên test); hai test trở lên, suite khác đỏ, tên test mất, đường dẫn lạ = red ngay | chưa chạy | env -u SB_BOARD_WORKER -u SB_MERGE_QUEUE bash tests/super-board/test_merge_train_single_test_retry.sh |
 
 ### super-board-needs-device — 0/1 PASS
 
@@ -635,13 +926,11 @@
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-NEEDS-DEVICE-01 | runner, planner and status hold needs-device QA cards while no real device is online (emulator, denylist, no adb) | 2026-10-24 12:09:58 · 3.13s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-NEEDS-DEVICE-01/20261024-120958.log) | bash tests/super-board/test_needs_device_skip.sh |
 
-<details><summary>✅ super-board-needs-you — 1/1 PASS</summary>
+### super-board-needs-you — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-SB-NEEDS-YOU-01 | needs-you mark is idempotent, migrates human-gated and carries no machine line | 2026-10-24 15:07:48 · 4.86s · exit 0 · 7a3d58a8+dirty · [log](evidence/REG-SB-NEEDS-YOU-01/20261024-150748.log) | bash tests/super-board/test_needs_you.sh |
-
-</details>
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-NEEDS-YOU-01 | needs-you mark is idempotent, migrates human-gated and carries no machine line | 2026-10-24 15:07:48 · 4.86s · exit 0 · 7a3d58a8+dirty · [log](evidence/REG-SB-NEEDS-YOU-01/20261024-150748.log) | bash tests/super-board/test_needs_you.sh |
 
 ### super-board-needs-you-skip — 0/1 PASS
 
@@ -679,6 +968,12 @@
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-PREFLIGHT-STALE-OVERLAP-01 | preflight câu 3: PR của thẻ Backlog/Blocked không chặn; PR của thẻ đang chạy vẫn chặn; thẻ có PR riêng không bị sequence lại; không --inflight giữ hành vi cũ (#280) | 2026-10-24 13:07:21 · 12.32s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-PREFLIGHT-STALE-OVERLAP-01/20261024-130512.log) | bash tests/super-board/test_preflight_overlap_stale.sh |
 
+### super-board-queue-schedule — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-WAVE-PLAN-QUEUED-01 | #453 backend workflow + queue bật: wave-plan bỏ thẻ Review có PR nhãn merge-queue (chờ lịch rút hàng); queue tắt / codex / SB_MERGE_QUEUE=0 giữ nguyên | chưa chạy | bash tests/super-board/test_wave_plan_queued.sh |
+
 ### super-board-red-on-base — 0/2 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -697,6 +992,12 @@
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-REVIEW-MERGE-TRAIN-01 | runner: từ 2 thẻ Review đã duyệt đúng head trở lên thì một worker chạy super-board-merge-train.sh --prs cho cả đợt (lock chung PID, không bị coi là zombie khi thẻ đầu đã Done); thẻ chưa duyệt, sai head, đã khoá hay SB_REVIEW_TRAIN=0 thì đường từng thẻ như cũ (#228) | 2026-10-24 12:10:21 · 8.02s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-REVIEW-MERGE-TRAIN-01/20261024-121021.log) | bash tests/super-board/test_runner_review_merge_train.sh |
+
+### super-board-reviewer-antigravity-audit-605 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-REVIEWER-AUDIT-605-01 | #605 (audit T0066 vòng 3): prompt Review headless, run.md, worker-preamble.md, super-review/SKILL.md và ai-factory doc cùng một hợp đồng: reviewer chạy audit Antigravity thật qua antigravity-pm (pm_task_create, pm_dispatch kind=audit, audit-agent.json, pm_verdict auditedHead) trước approved-by, gate_receipt = biên nhận task impacted, Antigravity không có thì thẻ ở Review với blocked-by | chưa chạy | bash tests/super-board/test_reviewer_antigravity_audit_contract.sh |
 
 ### super-board-run-stop-mark-mtime — 0/1 PASS
 
@@ -730,6 +1031,12 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-SB-RUNNER-MERGE-QUEUE-01 | runner khi bật merge queue: không phóng lại reviewer cho thẻ đã vào hàng, không merge-only/train, không phạt no-op/RUNAWAY, gọi merge-queue --if-due mỗi tick; SB_MERGE_QUEUE=0 giữ đường cũ | chưa chạy | bash tests/super-board/test_runner_merge_queue.sh |
 
+### super-board-runner-mq-restart-599 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-RUNNER-MQ-RESTART-599-01 | #599: runner restart giữa chừng khi bộ gom nền còn chạy không bật bộ gom thứ hai (đọc lại .mq.pid); .mq.rc do runner cũ để lại vẫn được runner mới đọc và áp 79/9 (halt), mã khác chỉ ghi log | chưa chạy | bash tests/super-board/test_runner_mq_restart.sh |
+
 ### super-board-runner-noop-worker — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -760,13 +1067,11 @@
 |---|---|---|---|---|
 | ❌ TIMEOUT | REG-SB-RUNNER-WATCHDOG-01 | super-board runner survives a killed sleep; durable stop marker; launchd watchdog never restarts a stopped board | 2026-10-24 13:55:01 · 51.07s · exit None · 1b575f4f+dirty · [log](evidence/REG-SB-RUNNER-WATCHDOG-01/20261024-135501.log) | bash tests/super-board/test_runner_watchdog.sh |
 
-<details><summary>✅ super-board-scratch-config — 1/1 PASS</summary>
+### super-board-scratch-config — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| ✅ PASS | REG-SB-SCRATCH-CONFIG-01 | merge gate scratch tree gets ignored local config, build inputs and the ignored hooks settings registers | 2026-10-24 13:07:21 · 0.80s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-SCRATCH-CONFIG-01/20261024-125748.log) | bash tests/super-board/test_scratch_config.sh |
-
-</details>
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-SCRATCH-CONFIG-01 | merge gate scratch tree gets ignored local config, build inputs and the ignored hooks settings registers | 2026-10-24 13:07:21 · 0.80s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-SCRATCH-CONFIG-01/20261024-125748.log) | bash tests/super-board/test_scratch_config.sh |
 
 ### super-board-self-reload — 0/1 PASS
 
@@ -780,17 +1085,35 @@
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-SETUP-BIN-01 | setup BIN lists every super-board script the runner, merge gate and skills call | 2026-10-24 13:07:21 · 0.24s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-SETUP-BIN-01/20261024-125644.log) | bash tests/super-board/test_setup_bin_list.sh |
 
+### super-board-setup-bin-scan — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-SETUP-BIN-02 | test_setup_bin_list.sh quét .claude/bin, skills, workflows, hooks theo thư mục: thêm hay sửa script super-* ở đó phải chọn lại suite này (main đỏ REG-SB-SETUP-BIN-01 sau #656 vì watch_files chỉ liệt kê 2 file) | chưa chạy | bash tests/super-board/test_setup_bin_list.sh |
+
+### super-board-spawn-load-530 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-SPAWN-LOAD-530-01 | #530: load1 vượt ngưỡng thì build+qa+review hoãn spawn (log holding spawn load1); 30 vẫn spawn; 36.5 hoãn; rỗng/rác/lib mode không chặn; tick rẻ không nuốt merge queue hay no-progress khi 0 worker | chưa chạy | bash tests/super-board/test_runner_total_cap.sh |
+
 ### super-board-status-needs-you-column — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-STATUS-NEEDS-YOU-01 | status: option Needs You của Project vẽ thành ô riêng và vào nhóm Waiting on you; không có thẻ Needs You thì đầu ra không đổi | 2026-10-24 13:07:21 · 0.21s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-STATUS-NEEDS-YOU-01/20261024-130604.log) | bash tests/super-board/test_status_needs_you_column.sh |
 
+### super-board-sweep-needs-you-529 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-SWEEP-NEEDS-YOU-529-01 | #529: Blocked by không bullet đọc được số; resume gỡ needs-you trước khi sang Review; denylist soi --next và từng mệnh đề; reclaim/no-op ❓ không ghi blocked-by: -; trần im lặng build/qa; tick rẻ đếm chu kỳ không tiến triển | chưa chạy | bash tests/super-board/test_issue529_sweep_needs_you.sh |
+
 ### super-board-total-worker-cap — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
-| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-TOTAL-CAP-01 | một trần worker duy nhất: build+qa+review của mọi repo trên máy <= max_workers (5), đếm qua thư mục slot chung, PID chết tự trả slot; tải CPU, WIP, gate_max không còn chi phối | 2026-10-24 12:13:53 · 7.51s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-TOTAL-CAP-01/20261024-121352.log) | bash tests/super-board/test_runner_total_cap.sh |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-TOTAL-CAP-01 | một trần worker max_workers (5) cho mọi repo, cộng phanh spawn khi load1 vượt ngưỡng (mặc định busy_load); dưới ngưỡng tải không chặn; lib mode không đọc máy thật | 2026-10-24 12:13:53 · 7.51s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-TOTAL-CAP-01/20261024-121352.log) | bash tests/super-board/test_runner_total_cap.sh |
 
 <details><summary>✅ super-board-waiting-label — 1/1 PASS</summary>
 
@@ -799,6 +1122,20 @@
 | ✅ PASS | REG-SB-WAITING-LABEL-01 | thẻ Blocked chỉ chờ thẻ khác mang nhãn '⏳ chờ thẻ khác' (planner pending, runner gắn/gỡ), thẻ 🙋 không có nhãn, status tách hai nhóm (#235) | 2026-10-24 13:07:21 · 1.55s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-WAITING-LABEL-01/20261024-130606.log) | bash tests/super-board/test_waiting_label.sh |
 
 </details>
+
+### super-board-waiting-on-601 — 0/3 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-WAITING-ON-HELPER-601-01 | #601 helper waiting-on: mark gắn nhãn waiting-on:#N + comment một lần (không dòng blocked-by:); sweep gỡ nhãn khi N CLOSED/MERGED, mỗi N đọc một lần, số lỗi không chặn số khác; migrate thẻ Blocked chỉ chờ → Ready + nhãn, bỏ needs-you/fuse, chạy 2 lần cùng kết quả | chưa chạy | bash tests/super-board/test_waiting_on_helper.sh |
+| ⏳ chưa chạy | REG-SB-WAITING-ON-RUNNER-601-01 | #601 runner: preflight sequence có blocker mở không Blocked mà gọi mark, thẻ ở Ready; dispatch/inflight bỏ qua thẻ waiting-on; sweep_waiting_on theo nhịp, lỗi không halt; hold vẫn Blocked | chưa chạy | bash tests/super-board/test_waiting_on_runner.sh |
+| ⏳ chưa chạy | REG-SB-WAITING-ON-WAVE-601-01 | #601 workflow: planner để thẻ waiting-on ngoài Ready (vào waiting), pending có needsYou; wave.js không build sequence có blocker mở, preflightExit = waiting@Ready | chưa chạy | bash tests/super-board/test_waiting_on_wave.sh |
+
+### super-board-waiting-on-skip-619 — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-WAITING-ON-SKIP-01 | #619: runner, planner và helper cùng một regex nhãn waiting-on:#<số> (nhãn sai dạng không giữ thẻ Ready); preflight không giao thẻ Ready đầu (mark hỏng) thì thẻ Ready kế được giao trong cùng tick, tối đa 3 thẻ mỗi tick | chưa chạy | bash tests/super-board/test_waiting_on_skip_next.sh |
 
 <details><summary>✅ super-board-watchdog-lock-atomic — 1/1 PASS</summary>
 
@@ -816,6 +1153,12 @@
 
 </details>
 
+### super-board-wave-model-ladder — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-WAVE-MODEL-LADDER-01 | #553: thang model của super-board-wave.js — tier medium thẻ high không yếu hơn thẻ medium (không để undefined = model phiên, có thể là sonnet); tier low/high giữ nguyên; comment trên LADDERS, SKILL.md, run-workflow.md ghi đúng thang | chưa chạy | bash tests/super-board/test_wave_model_ladder.sh |
+
 ### super-board-wave-needs-you-mark — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
@@ -828,11 +1171,23 @@
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-WIP-LIMIT-01 | runner giới hạn WIP (#252): không giao build khi QA+Review chờ >= build_wip_k × (qa_workers+review_workers); không giao build / worker QA-Review thêm khi số post-fix-gate đang chạy >= gate_max; log lý do; số gate không đếm được thì không chặn | 2026-10-24 12:13:54 · 0.22s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-WIP-LIMIT-01/20261024-121354.log) | bash tests/super-board/test_runner_wip_limit.sh |
 
+### super-board-worker-wrap-term — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-WORKER-WRAP-TERM-01 | worker-wrap dừng được worker dù con nuốt mất SIGTERM đầu tiên (TERM tới con trước exec): gửi lại sau 1 s, không treo kill + wait (#489) | chưa chạy | bash tests/super-board/test_worker_wrap_term.sh |
+
 ### test-heavy-slot-isolation — 0/1 PASS
 
 | Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
 |---|---|---|---|---|
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | REG-SB-TEST-SLOT-ISO-01 | tests never queue behind the machine's real heavy-verify slots | 2026-10-24 13:07:21 · 0.11s · exit 0 · 38166b6b+dirty · [log](evidence/REG-SB-TEST-SLOT-ISO-01/20261024-125828.log) | bash tests/super-board/test_tests_skip_machine_slots.sh |
+
+### verify-flags-arg-span — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-SB-VERIFY-FLAGS-ARG-SPAN-01 | #802: sb_verify_inject_flags chỉ xét --full/--force-full/--scoped/--diff/--json trong phần đối số của post-fix-gate.py; token của lệnh khác trong lệnh ghép không chặn ' --diff origin/<base> --scoped' chèn ngay sau token | chưa chạy | bash tests/super-board/test_verify_flags_arg_span.sh |
 
 ### workbench-agent-config — 0/1 PASS
 
@@ -858,7 +1213,13 @@
 |---|---|---|---|---|
 | ⏳ chưa chạy | REG-DK-WT-MERGED-CLEANER-01 | một bộ dọn worktree đã gộp (U2 25/10): gc --merged / held / remove --merged của worktree.py và post-merge clean của board không gỡ worktree có commit trunk chưa có, chỉ file chưa commit, commit chỉ reflog giữ, phiên sống giữ, nhánh có PR mở; gỡ worktree đã tích hợp sạch; không còn đường git trần | chưa chạy | bash universal-agent-devkit/tests/worktree_git/test_worktree_gc_merged.sh && bash tests/super-board/test_post_merge_clean.sh |
 
-## 📒 Sổ tay bug (138)
+### worktree-remove-reflog-squash — 0/1 PASS
+
+| Trạng thái | ID | Tên | Chữ ký lần chạy (thời điểm · thời lượng · exit · commit · log) | Lệnh / Test |
+|---|---|---|---|---|
+| ⏳ chưa chạy | REG-DK-REMOVE-REFLOG-SQUASH-01 | worktree remove: commit chỉ còn trong reflog mà trunk đã có patch (squash) thì gỡ được kèm refs/devkit/discarded; trunk chưa có patch thì vẫn từ chối UNREACHABLE (#421) | chưa chạy | bash universal-agent-devkit/tests/worktree_git/test_worktree_remove_reflog_squash.sh |
+
+## 📒 Sổ tay bug (145)
 
 | Trạng thái | Mã | Mô tả | Component | Test bảo vệ | Bằng chứng |
 |---|---|---|---|---|---|
@@ -970,6 +1331,22 @@
 | ❌ TIMEOUT | BUG-20261024-fix-root-cause-devkit-de-sau-nay-ko-bi-l | Fix root cause devkit để sau này ko bị lỗi dừng board cũng như cáv task bị kẹt lại như thế này nữa | - | REG-SB-RUNNER-WATCHDOG-01 | [log REG-SB-RUNNER-WATCHDOG-01](evidence/REG-SB-RUNNER-WATCHDOG-01/20261024-135501.log) |
 | ❌ TIMEOUT | BUG-VACUITY-SINCE-BASE | gate: vacuity revert uses HEAD under --since, so committed fixes look vacuous | - | REG-DK-ALL-01, universal-agent-devkit/tests/verification/test_vacuity_since.sh (trong suite) | RED-proof PROVEN: [log](evidence/redproof-BUG-VACUITY-SINCE-BASE/20261009-171732.log) |
 | ❌ TIMEOUT | BUG-WT-1013 | worktree copies keep the macOS uchg flag so remove cannot delete them and leaves an unregistered orphan folder | - | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_worktree_immutable_copy.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-agy-init-compact-json-only | agy init event was found by a compact-JSON substring only: a stream-json line with spaces after the colon made every agy dispatch fail or wait the 60 s init timeout | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-agy-lock-takeover-race | agy registry lock: stale-lock takeover was delete-then-create, so two PMs that saw the same stale lock could both enter the critical section (the second deleted the first one's NEW lock) and overwrite agy-conversations.json | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-agy-prune-budget-breaks-loop | agy registry prune: once 3 entries with a pid had been checked with ps the loop stopped, so older entries without a pid (no ps needed) were kept and the registry grew past 500 | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-doctor-agy-only-default-model | pm_doctor printed the agy diagnostics (binary, broken registry, permission policy) only when defaultModel was an agy model, so a task that runs agy through its own model or pm_dispatch model got no explanation for a failed dispatch | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-ping-kills-reused-pid | pm_doctor ping stopped its agy turns with kill(pid,0)+kill(-pid): up to 90 s later the pid may have exited and been reused, so it could SIGKILL a stranger's process group | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-status-agy-by-task-model | pm_status trusted task.model to tell an agy conversation from an IDE one: with ps broken a tier task whose conversation went through agy (pm_dispatch model=...) was nudged anyway and lost its whole report; the PLAN-phase nudge branch had no unknown-state check at all | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261014-pm-tests-guessable-agy-path | MCP tests that simulate a missing agy pointed ANTIGRAVITY_PM_AGY at a guessable path in the shared TMPDIR: an executable planted there would be run, in two tests with --dangerously-skip-permissions | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-droppending-always-writes | pm-mcp: dropPending rewrote the registry even when it removed nothing (delete returns true for absent keys) | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-droppending-foreign-entry | pm-mcp: dropPending deleted by key only and could remove another live PM's pending entry | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-null-selftag-accepted | pm-mcp: a null own fingerprint was accepted, leaving an entry that is never reaped | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-orphan-sigkill | pm-mcp: agy opened by newConversation is orphaned when the PM is SIGKILLed while waiting for init (no pending record by pid) | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-pending-leak-final-write | pm-mcp: a failed real-entry write after agy init left a pending-<pid> record in the registry | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-reaper-recheck-before-kill | pm-mcp: reaper identity check ran outside the lock, long before the kill under the lock | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-reaper-same-key-kill | pm-mcp: reaper re-check compared only the pid under a pid-keyed entry, so a rewritten pending entry (pid reuse) was killed | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-reaper-stale-snapshot-kill | pm-mcp: orphan reaper killed from a stale registry snapshot, so an agy a PM had just registered could be killed | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
+| 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261015-agy-selftag-after-spawn | pm-mcp: the PM read its own ps fingerprint after spawning agy, widening the untracked window | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261022-check-cac-task-trong-blocked-dang-bi-gi | check các task trong blocked đang bị gì fix devkit rồi restart lại | - | REG-SB-PREFLIGHT-STALE-OVERLAP-01 | [log REG-SB-PREFLIGHT-STALE-OVERLAP-01](evidence/REG-SB-PREFLIGHT-STALE-OVERLAP-01/20261024-130512.log) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261022-co-dang-bi-stuck-ko-vay | có đang bị stuck ko vậy? | - | REG-SB-RUNNER-READ-RETRY-01 | [log REG-SB-RUNNER-READ-RETRY-01](evidence/REG-SB-RUNNER-READ-RETRY-01/20261024-121059.log) |
 | 🟡 CẦN CHẠY LẠI (code đã đổi) | BUG-20261023-cac-config-cpu-workload-hoat-dong-khong | các config cpu workload hoạt động không chính xác cần đổi logic lại đơn giản hơn là tổng số task chạy cùng trên buildin… | - | REG-SB-TOTAL-CAP-01 | [log REG-SB-TOTAL-CAP-01](evidence/REG-SB-TOTAL-CAP-01/20261024-121352.log) |
@@ -978,99 +1355,45 @@
 | 🐞 chưa sửa | BUG-20261023-test-chap-chon-flaky-reg-sb-runner-recla | Test chập chờn (flaky): REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01 | super-board-runner-reclaim-dead-build | REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01 | [log REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01](evidence/REG-SB-RUNNER-RECLAIM-DEAD-BUILD-01/20261024-121326.log) |
 | ⚠️ có test, gate không chạy | BUG-20261013-bug-capture-copied-a-pasted-secret | Bug capture copied an API key pasted in a prompt into regression_status.json and CHECKLIST.md (title and id unredacted) | checklist | tests/verification/test_bug_secret_redaction.sh (ngoài matrix) | 13/10 workbench: REPORTED row held a pasted key; redact_secrets at register_bug/ |
 | ⚠️ có test, gate không chạy | BUG-20261013-regression-gate-held-skip-ignored-writers | regression_gate skipped the Stop for a payload without session_id or with DEVKIT_ALLOW_SHARED_CHECKOUT=1 while another session held the lock | gates | tests/gates/test_regression_gate_held_by_other.sh (ngoài matrix) | OpenCodeReview of Dot 29 (13/10): held-by-other skip ignored the cases session_l |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261014-pm-agy-init-compact-json-only | agy init event was found by a compact-JSON substring only: a stream-json line with spaces after the colon made every agy dispatch fail or wait the 60 s init timeout | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261014-pm-agy-lock-takeover-race | agy registry lock: stale-lock takeover was delete-then-create, so two PMs that saw the same stale lock could both enter the critical section (the second deleted the first one's NEW lock) and overwrite agy-conversations.json | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261014-pm-agy-prune-budget-breaks-loop | agy registry prune: once 3 entries with a pid had been checked with ps the loop stopped, so older entries without a pid (no ps needed) were kept and the registry grew past 500 | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261014-pm-doctor-agy-only-default-model | pm_doctor printed the agy diagnostics (binary, broken registry, permission policy) only when defaultModel was an agy model, so a task that runs agy through its own model or pm_dispatch model got no explanation for a failed dispatch | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261014-pm-ping-kills-reused-pid | pm_doctor ping stopped its agy turns with kill(pid,0)+kill(-pid): up to 90 s later the pid may have exited and been reused, so it could SIGKILL a stranger's process group | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261014-pm-status-agy-by-task-model | pm_status trusted task.model to tell an agy conversation from an IDE one: with ps broken a tier task whose conversation went through agy (pm_dispatch model=...) was nudged anyway and lost its whole report; the PLAN-phase nudge branch had no unknown-state check at all | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261014-pm-tests-guessable-agy-path | MCP tests that simulate a missing agy pointed ANTIGRAVITY_PM_AGY at a guessable path in the shared TMPDIR: an executable planted there would be run, in two tests with --dangerously-skip-permissions | pm-mcp | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-droppending-always-writes | pm-mcp: dropPending rewrote the registry even when it removed nothing (delete returns true for absent keys) | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-droppending-foreign-entry | pm-mcp: dropPending deleted by key only and could remove another live PM's pending entry | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-null-selftag-accepted | pm-mcp: a null own fingerprint was accepted, leaving an entry that is never reaped | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-orphan-sigkill | pm-mcp: agy opened by newConversation is orphaned when the PM is SIGKILLed while waiting for init (no pending record by pid) | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-pending-leak-final-write | pm-mcp: a failed real-entry write after agy init left a pending-<pid> record in the registry | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-reaper-recheck-before-kill | pm-mcp: reaper identity check ran outside the lock, long before the kill under the lock | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-reaper-same-key-kill | pm-mcp: reaper re-check compared only the pid under a pid-keyed entry, so a rewritten pending entry (pid reuse) was killed | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-reaper-stale-snapshot-kill | pm-mcp: orphan reaper killed from a stale registry snapshot, so an agy a PM had just registered could be killed | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
-| ⏳ chưa chứng minh ĐỎ | BUG-20261015-agy-selftag-after-spawn | pm-mcp: the PM read its own ps fingerprint after spawning agy, widening the untracked window | - | REG-AUTO-ANTIGRAVITY-PM-MCP-01, mcp-servers/antigravity-pm-mcp/tests/agy-round2.test.js (trong suite) | [log REG-AUTO-ANTIGRAVITY-PM-MCP-01](evidence/REG-AUTO-ANTIGRAVITY-PM-MCP-01/20261024-124541.log) |
 | ⏳ chưa chạy | BUG-20261024-antigravity-2-tien-trinh-da-chay-03-35-1 | Antigravity · / · 2 tiến trình · đã chạy 03:35:14 chạy 26 tiến trình có đúng ko hay là lỗi | - | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_agent_workload.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
 | ⏳ chưa chạy | BUG-20261024-dieu-tra-tai-sao-test-gate-suite-cache-s | Điều tra tại sao test_gate_suite_cache_selection S5 đỏ khi chạy trong gate gộp nhưng xanh khi chạy lẻ, sửa nếu là lỗi c… | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_gate_suite_cache_selection.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261024-fix-dev-kit-de-lan-sau-ko-bi-loi-nghiem | fix dev kit để lần sau ko bị lỗi nghiêm trọng này nữa, đây là lỗi tuyệt đối nghiêm trọng sau này ko đc phép bị lại nữa | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_run_bounded.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261024-fix-het-cac-cho-bi-ket-luon-di | Fix hết các chỗ bị kẹt luôn đi | - | REG-DK-ALL-01, tests/gates/test_gate_robustness.sh (ngoài matrix) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261024-tai-sao-tien-trinh-bi-ket-check-fix-dev | tại sao tiến trình bị kẹt check fix dev kit | - | REG-DK-ALL-01, universal-agent-devkit/tests/gates/test_run_bounded.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
 | ⏳ chưa chạy | BUG-20261027-1-the-backlog-xep-integrate-py-thieu-han | 1. Thẻ Backlog: xếp "integrate.py thiếu handler SIGTERM → scratch chứa .env/keystore bị bỏ lại" lên P2, trên 2 điểm P3… | - | REG-DK-ALL-01, universal-agent-devkit/tests/worktree_git/test_integrate_signal_cleanup.sh (trong suite) | [log REG-DK-ALL-01](evidence/REG-DK-ALL-01/20261024-073048.log) |
+| ⏳ chưa chạy | BUG-20261031-ao-3d-ve-60fps-khi-dung-yen | agent-office: cảnh 3D vẽ 60 khung/giây ở DPR 2 cả khi đứng yên / giảm chuyển động (~45% CPU renderer + ~44% GPU lúc rảnh), tab ẩn vẫn tải /api/state ~480 KB mỗi 3 giây | agent-office-perf | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_frame_pacing.py (trong suite), mcp-servers/agent-office/tests/test_poll.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
+| ⏳ chưa chạy | BUG-20261031-ao-dash-khong-hien-khi-drawer-mo | agent-office: bấm "Chỉ số" khi drawer (Vừa xảy ra / agent / repo) đang mở không hiện gì — bảng bật ngầm, CSS body.drawer-open ẩn .dash | agent-office-ui | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_ui_toolbar_account.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
+| ⏳ chưa chạy | BUG-20261031-ao-mobile-khung-agent-tran-mep-tren | agent-office điện thoại: khung "Ai đang làm gì" mọc lên quá mép trên (top -60px), nút + / − đè chữ, drawer/bảng chồng lên khung trái; chỗ bấm ⋯ / + / − / × / Ẩn dưới 44px | agent-office-ui | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_ui_toolbar_account.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
+| ⏳ chưa chạy | BUG-20261031-ao-phone-dialog-mat-focus | agent-office: đóng hộp Điện thoại (Esc / Đóng) mở từ menu ⋯ làm focus rơi về <body> (mục menu đã ẩn không nhận focus) | agent-office-ui | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_ui_toolbar_account.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
+| ⏳ chưa chạy | BUG-20261031-ao-server-glob-transcript-moi-3s | agent-office server: glob lại ~5000 transcript / ~3500 thư mục mỗi 3 giây (~100 ms CPU mỗi vòng), /api/state ~480 KB không nén | agent-office-perf | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_perf_server.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
+| ⏳ chưa chạy | BUG-20261031-ao-texture-xuong-moi-luoi | agent-office: mỗi lưới có da của người 3D giữ Skeleton riêng dù cùng bộ xương — ~300 lần texSubImage2D (tải texture xương) mỗi khung | agent-office-perf | REG-AGENT-OFFICE-01, mcp-servers/agent-office/tests/test_share_skeleton.py (trong suite) | [log REG-AGENT-OFFICE-01](evidence/REG-AGENT-OFFICE-01/20261024-120921.log) |
+| ⏳ chưa chạy | BUG-20261031-gate-full-chay-chong-nhieu-repo | gate-full: lịch đêm nhiều repo + chạy tay chạy --full song song trên cùng máy (chỉ có khoá theo repo) | gate-full | REG-DK-ALL-GATES-01, universal-agent-devkit/tests/gates/test_gate_full_global_lock.sh (trong suite) | - |
 
-## 🟡 REPORTED — bug báo qua prompt, chưa xác nhận (67)
+## 🟡 REPORTED — bug báo qua prompt, chưa xác nhận (22)
 
 > Chưa tính là bug. Xác nhận: `agent-kit bugs add "<tiêu đề>" --id <ID>` · có test ĐỎ→XANH: `agent-kit bugs link <ID> <TEST>` · không phải bug: `agent-kit bugs drop <ID>`
 
 | ID | Prompt | Ngày |
 |---|---|---|
-| BUG-20261014-goal-set-fix-het-toan-bo-roi-xoa-issues | Goal set: fix hết toàn bộ rồi xoá issues-bugs vs workflow-improvements.md luôn | 2026-10-14 19:09:28 |
-| BUG-20261015-hien-dang-co-phien-dang-chay-do-bi-limit | hiện đang có phiên đang chạy dở bị limit hãy làm tiếp đi | 2026-10-15 20:28:30 |
 | BUG-20261016-audit-review-cho-toi-5-repo-https-github | audit, review cho tôi 5 repo https://github.com/ToanMobile?tab=projects hiện nhiều task bị blocked,ready ko chạy được t… | 2026-10-16 17:44:34 |
-| BUG-20261016-background-from-the-session-that-started | Background (from the session that started this one): | 2026-10-16 19:53:56 |
 | BUG-20261016-gan-label-theo-thu-tu-uu-tien-da-lap-va | Gắn label theo thứ tự ưu tiên đã lập và dừng vòng lặp super-board đang lỗi | 2026-10-16 20:57:33 |
-| BUG-20261016-phien-sort-task-backlog-cua-account-kia | phiên sort task backlog của account kia bị limit á | 2026-10-16 20:56:35 |
-| BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs | update toàn bộ status vào issues-bugs vs workflow-improvements chưa xoá những task hay issues đã làm xong rồi | 2026-10-16 11:21:24 |
-| BUG-20261016-update-toan-bo-status-vao-issues-bugs-vs-2 | update toàn bộ status vào issues-bugs vs workflow-improvements hết sau đó xoá những task hay issues đã làm xong rồi | 2026-10-16 11:22:11 |
-| BUG-20261017-them-watch-files-cho-super-board-vao-reg | Thêm watch_files cho super-board vào regression checklist để test_github_read.sh và test_runner_lanes.sh được chọn khi… | 2026-10-17 08:02:27 |
 | BUG-20261017-toi-se-chi-file-hoac-config-co-duong-dan | Tôi sẽ chỉ file hoặc config có đường dẫn push_gate sai | 2026-10-17 08:23:46 |
-| BUG-20261018-https-github-com-toanmobile-neighbours-f | https://github.com/ToanMobile/Neighbours-From-Hell/issues/8 đang bị blocked check và fix | 2026-10-18 20:28:30 |
-| BUG-20261018-kiem-tra-cac-task-dang-bi-blocked-cho-to | kiểm tra các task đang bị blocked cho tôi fix root cause | 2026-10-18 21:57:27 |
-| BUG-20261018-lam-cho-toi-89-vs-76 | làm cho tôi 89 vs 76 | 2026-10-18 21:18:33 |
-| BUG-20261019-108-88-duyet-a-con-worktree-treo-nao-mo | #108, #88 duyệt á, còn worktree treo nào mồ côi thì xoá đi | 2026-10-19 21:44:31 |
-| BUG-20261019-ban-tiep-quan-mot-viec-do-trong-repo-vol | Bạn tiếp quản một việc dở trong repo /Volumes/Data/Toan/agent-workbench (agent-workbench, GitHub ToanMobile/agent-workb… | 2026-10-19 22:37:59 |
-| BUG-20261019-dong-y-sao-luu-2-file-trang-thai-abort-m | Đồng ý: sao lưu 2 file trạng thái, abort merge kẹt, rồi reset main local agent-workbench về origin/main. | 2026-10-19 16:38:19 |
 | BUG-20261019-hien-cac-task-dang-bi-ket-o-cac-luong-re | hiện các task đang bị kẹt ở các luồng review, QA, building xử lý ntn? | 2026-10-19 09:07:27 |
 | BUG-20261019-hien-con-nhieu-branch-dang-bi-mo-coi-ngu | hiện còn nhiều branch đang bị mồ côi nguyên nhân tại sao vậy? | 2026-10-19 16:53:00 |
-| BUG-20261019-hoc-tu-kandev-centralized-daemon-global | Học từ Kandev (Centralized Daemon & Global Worker Pool): | 2026-10-19 16:41:26 |
-| BUG-20261019-ok-da-tao-phien-fix-loi-nay-chua | ok đã tạo phiên fix lỗi này chưa? | 2026-10-19 10:44:50 |
-| BUG-20261019-qua-nhieu-task-bi-blocked-tim-nguyen-nha | quá nhiều task bị blocked tìm nguyên nhân và fix root cause ở devkit | 2026-10-19 07:23:33 |
 | BUG-20261019-sao-bi-ket-hoai-vay-truoc-do-chay-test-2 | sao bị kẹt hoài vậy trước đó chạy test 20 phiên mỗi repo đều pass trơn tru mà? | 2026-10-19 09:10:06 |
-| BUG-20261019-tao-5-agent-quet-toan-bo-xem-con-toi-uu | tạo 5 agent quét toàn bộ xem còn tối ưu hay bugs chỗ nào nữa ko? | 2026-10-19 21:54:26 |
-| BUG-20261019-tao-worktree-cho | tạo worktree cho | 2026-10-19 14:50:08 |
-| BUG-20261019-tiep-quan-agent-workbench-19-10-2026-22 | Tiếp quản agent-workbench (19/10/2026, ~22:30). Đọc trước: .agents/local/memory/claude-auto/handoff-2026-10-19-ocr-batc… | 2026-10-19 22:38:14 |
 | BUG-20261019-update-lai-cac-pr-log-comment-don-gian-t | update lại các PR log comment đơn giản tự nhiên nhanh gọn ko dài dòng tránh lỗi chặn khi diff PR quá lớn | 2026-10-19 07:34:55 |
-| BUG-20261020-audit-review-cac-nay-da-fix-ok-chua | audit,review các này đã fix ok chưa? | 2026-10-20 14:38:04 |
-| BUG-20261020-commit-di-khong-chay-gate | commit đi, không chạy gate | 2026-10-20 00:37:23 |
 | BUG-20261020-hien-van-bi-ket-tin-nhan | hiện vẫn bị kẹt tin nhắn | 2026-10-20 00:17:04 |
 | BUG-20261020-la-sao-fix-chua-do-hien-van-ket-phai-bam | là sao fix chưa? đó hiện vẫn kẹt phải bấm send now để gửi ép | 2026-10-20 00:07:23 |
 | BUG-20261020-no-ket-stop-hook-prompt-cua-toi-ko-run-d | nó kẹt stop hook prompt của tôi ko run đc | 2026-10-20 00:02:14 |
 | BUG-20261020-tai-sao-no-phai-chay-full-nhi-no-chay-te | tại sao nó phải chạy --full nhỉ nó chạy tets trên những file sửa của worktree đó thôi còn full thì chạy 1 lần khi push… | 2026-10-20 17:36:09 |
-| BUG-20261020-voi-6-repo-thi-co-bi-2000-lan-ko | với 6 repo thì có bị 2000 lần ko | 2026-10-20 14:24:31 |
-| BUG-20261021-check-toan-bo-blocked-dang-bi-issues-gi | check toàn bộ blocked đang bị issues gì nếu do devkit thì fix đi và chuyển các task đó về lại backlog | 2026-10-21 09:26:28 |
-| BUG-20261021-co-co-che-neu-full-tai-3-thi-no-doi-de-v | Có cơ chế nếu full tải 3 thì nó đợi để vào hàng chứ ko bị lỗi nhé | 2026-10-21 19:25:05 |
-| BUG-20261021-co-task-nao-ket-ko | có task nào kẹt ko | 2026-10-21 09:14:26 |
-| BUG-20261021-sau-khi-fix-xong-thi-het-bi-blocked-chua | sau khi fix xong thì hết bị blocked chưa? | 2026-10-21 09:38:00 |
 | BUG-20261021-xu-ly-cho-xong-nhung-issues-bi-ket-het-c | xử lý cho xong những issues bị kẹt hết cho tôi | 2026-10-21 08:04:56 |
 | BUG-20261022-audit-review-devkit-board-dang-bi-ket-ch | audit, review devkit board đang bị kẹt check tại sao fix đi | 2026-10-22 07:33:51 |
 | BUG-20261022-bi-dung-roi-a | bị đứng rồi à | 2026-10-22 16:56:22 |
 | BUG-20261022-check-21-gate-hien-lam-gi-nhieu-vay-dc-c | Check 21 gate hiện làm gì nhiều vậy đc chắc chắn có gate bị kẹt cũ lại | 2026-10-22 21:22:12 |
-| BUG-20261022-check-cac-case-nay-tao-task-tren-backlog | check các case này tạo task trên backlog cho tôi đi | 2026-10-22 11:27:41 |
 | BUG-20261022-dung-ai-factory-test-va-sua-luon-loi-kie | dùng ai-factory.test và sửa luôn lỗi kiểm Host | 2026-10-22 13:15:47 |
 | BUG-20261022-la-sao-gate-bi-dinh-cu-dung-ko | Là sao gate bị dính cũ đúng ko | 2026-10-22 21:28:12 |
-| BUG-20261022-nay-h-dev-kit-chua-co-loi-nao-a | nãy h dev kit chưa có lỗi nào à? | 2026-10-22 12:39:26 |
-| BUG-20261022-neu-bi-dung-roi-thi-thoi-de-sau | nếu bị dừng rồi thì thôi để sau | 2026-10-22 17:18:31 |
-| BUG-20261022-nguyen-nhan-sao-vo-blocked-fix-dev-kit-c | nguyên nhân sao vô blocked? Fix dev kit cho tôi tránh lần sau bị lại nữa | 2026-10-22 17:07:03 |
 | BUG-20261022-sao-228-cung-nam-trong-blocked-de-ntn-to | sao 228 cũng nằm trong blocked? Để ntn tôi sẽ bị nhầm nó đang đứng ko chạy được? | 2026-10-22 17:22:36 |
-| BUG-20261022-sua-tiep-hai-loi-roi-commit-nhanh | sửa tiếp hai lỗi rồi commit nhánh | 2026-10-22 13:17:08 |
 | BUG-20261022-tuong-nam-hang-doc-sai-roi-tuong-phai-ha | tường nằm hàng dọc sai rồi tường phải hàng ngang còn các phòng có tường nhưng giữa cùng 1 repo có cửa để di chuyển sang… | 2026-10-22 16:18:33 |
 | BUG-20261022-van-de-la-toi-uu-de-no-ko-chay-gate-lien | Vấn đề là tối ưu để nó ko chạy gate liên tục chỉ có 3 review sao chạy tới 21 gate logic sai | 2026-10-22 21:33:10 |
-| BUG-20261023-audit-review-them-phan-nay | audit,review thêm phần này | 2026-10-23 13:41:31 |
-| BUG-20261023-cac-loi-o-devkit-trong-qua-trinh-chay-da | các lỗi ở devkit trong quá trình chạy đã fix hết chưa nếu chưa có tạo task lên board chưa? | 2026-10-23 09:55:54 |
-| BUG-20261023-chay-kiem-tra-di-neu-loi-thi-fix-devkit | chạy kiểm tra đi nếu lỗi thì fix devkit để lần sau dọn dẹp cho gọn gàng vào | 2026-10-23 15:35:30 |
-| BUG-20261023-tiep-tuc-307-super-build-doc-claude-audi | Tiếp tục #307 super-build: đọc .claude/audit-gate/gate307c.log trong worktree issue-307-build (gate --full --diff origi… | 2026-10-23 16:04:03 |
 | BUG-20261023-update-them-toi-muon-cai-ban-xoay-lai-hu | update thêm tôi muốn cái bàn xoay lại hướng tôi hiện bị quay lưng rồi | 2026-10-23 11:46:11 |
-| BUG-20261023-vay-thi-giu-van-dc-toi-tuong-no-la-bug | vậy thì giữ vẫn đc tôi tưởng nó là bug | 2026-10-23 11:48:00 |
-| BUG-20261024-check-cac-task-blocked-sao-lai-bi-block | check các task blocked sao lại bị block? | 2026-10-24 09:15:06 |
-| BUG-20261024-check-gate-run-2-for-issue-320-build-gre | Check gate run 2 for issue #320 build: grep GATE_RC in /tmp/gate320b.log (task bndrj2p0u). If GATE_RC=0 push issue-320-… | 2026-10-24 11:57:00 |
-| BUG-20261024-con-task-nao-dang-bi-blocked-nua-ko | Còn task nào đang bị blocked nữa ko | 2026-10-24 12:25:34 |
-| BUG-20261024-dang-comment-chan-moi-tren-319-voi-dong | Đăng comment chặn mới trên #319 với dòng cuối `blocked-by: 377` (dùng super-board-blocked-by.py), rồi tạo thẻ Backlog c… | 2026-10-24 17:39:57 |
-| BUG-20261024-first-operation-run-claude-bin-super-boa | First operation: run .claude/bin/super-board-skills-ready.py --root '/Volumes/Data/Toan/agent-workbench' --host claude… | 2026-10-24 16:48:41 |
-| BUG-20261024-http-ai-factory-localhost-4317-hien-chay | http://ai-factory.localhost:4317/ hiện chạy trên phone hơi khó xem audit, review lại ui,ux. repo nào dừng thì nên tắt l… | 2026-10-24 07:30:30 |
-| BUG-20261024-kiem-tra-cac-task-bi-blocked | kiểm tra. các task bị blocked | 2026-10-24 17:19:51 |
 | BUG-20261024-need-you-vs-gom-task-toi-da-tung-lam-tru | need you vs gom task tôi đã từng làm trước đó nhưng hiện không hoạt động được | 2026-10-24 08:29:21 |
-| BUG-20261024-sua-logic-need-you-o-dev-kit-de-tranh-la | sửa logic need you ở dev kit để tránh lặp lại lỗi | 2026-10-24 08:02:24 |
-| BUG-20261024-update-lai-devkit-co-che-gate-check-nhu | update lại devkit cơ chế gate check như thế nào mà lại làm hổng bug rất nhiều lần như vậy siết lại thêm | 2026-10-24 08:44:45 |
