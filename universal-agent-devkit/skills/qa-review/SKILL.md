@@ -1,11 +1,19 @@
 ---
 name: qa-review
-description: Chất vấn một thay đổi code trước khi tạo PR (hỗ trợ cả Web, Mobile Android/iOS/Flutter, Unity Game). Dùng khi cần đọc diff (branch, commit, hoặc PR số) rồi đặt câu hỏi làm rõ tính năng, sinh acceptance criteria kiểm chứng được, và dựng ma trận test scenario theo vai trò × trạng thái dữ liệu × luồng lỗi. Kích hoạt khi người dùng nói "review diff trước khi tạo PR", "chất vấn tính năng này", "viết acceptance criteria", "liệt kê test case cho thay đổi này", "QA cái PR này". Đây là bước hỏi và lập kế hoạch test, không phải bước tìm bug trong code hay chạy test.
+description: Dùng khi chất vấn một diff (branch, commit, PR) trước khi tạo PR để sinh acceptance criteria và ma trận test scenario. Kích hoạt khi người dùng nói "review diff trước khi tạo PR", "chất vấn tính năng này", "viết acceptance criteria", "QA cái PR này".
 ---
 
 # qa-review
 
 Đọc diff → **chất vấn** → acceptance criteria → ma trận scenario. Đầu ra là tài liệu để con người quyết, không phải bản vá.
+
+## Phạm vi
+
+Chất vấn một thay đổi code trước khi tạo PR (hỗ trợ cả Web, Mobile Android/iOS/Flutter, Unity Game): đọc diff
+(branch, commit, hoặc PR số) rồi đặt câu hỏi làm rõ tính năng, sinh acceptance criteria kiểm chứng được, và dựng
+ma trận test scenario theo vai trò × trạng thái dữ liệu × luồng lỗi. Cũng kích hoạt khi người dùng nói
+"liệt kê test case cho thay đổi này". Đây là bước hỏi và lập kế hoạch test, không phải bước tìm bug trong code
+hay chạy test.
 
 ## Không nhầm với
 

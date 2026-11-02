@@ -1,11 +1,15 @@
 ---
 name: create-task
-description: "Tự động tạo task chuẩn Super-Board (Problem, Context, Fix, AC, Risk) và đẩy trực tiếp lên cột Backlog của GitHub Project Board #1 (https://github.com/users/ToanMobile/projects/1/views/2). Kích hoạt khi gõ /createTask, /create-task, hoặc khi người dùng yêu cầu 'tạo task', 'đẩy lên backlog'."
+description: "Tạo task chuẩn Super-Board lên cột Backlog của GitHub Project #1. Kích hoạt khi gõ /createTask, /create-task, hoặc khi người dùng yêu cầu 'tạo task', 'đẩy lên backlog'."
 ---
 
 # Create Task & Push to Backlog (Super-Board)
 
 Skill này giúp tự động hóa việc khởi tạo task theo đúng quy chuẩn **Super-Board** ([`docs/agents/issue-tracker.md`](file:///Volumes/Data/Toan/agent-workbench/docs/agents/issue-tracker.md)) và đẩy trực tiếp lên cột **Backlog** của [GitHub Project #1](https://github.com/users/ToanMobile/projects/1/views/2).
+
+## Phạm vi
+
+Tự động tạo task chuẩn Super-Board (Problem, Context, Fix, AC, Risk) và đẩy trực tiếp lên cột Backlog của GitHub Project Board #1 (https://github.com/users/ToanMobile/projects/1/views/2).
 
 ---
 

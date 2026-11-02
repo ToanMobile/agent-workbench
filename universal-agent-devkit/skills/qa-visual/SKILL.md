@@ -1,11 +1,18 @@
 ---
 name: qa-visual
-description: Chụp màn hình và audit layout cho project có qa.config.json. Dùng khi cần capture các route × viewport khai trong qa.config.json, tự đăng nhập bằng form login của app để chụp được màn sau login, dò lỗi bố cục đo trên DOM (tràn khung, lệch align, chồng lấp, chạm cạnh màn hình), suy design token từ CSS thực tế, upload ảnh lên Cloudflare R2 và đính vào PR. Kích hoạt khi người dùng nói "chụp màn", "screenshot các trang", "audit layout", "check giao diện", "UI có lệch không", "đính ảnh vào PR".
+description: Dùng khi cần chụp màn route × viewport và audit layout cho project có qa.config.json, đính ảnh vào PR. Kích hoạt khi người dùng nói "chụp màn", "screenshot các trang", "audit layout", "check giao diện", "UI có lệch không", "đính ảnh vào PR".
 ---
 
 # qa-visual
 
 Chụp màn hình + audit layout **đo bằng DOM, không đoán bằng LLM**. Mọi thứ stack-specific nằm trong `qa.config.json` ở gốc project.
+
+## Phạm vi
+
+Chụp màn hình và audit layout cho project có qa.config.json: capture các route × viewport khai trong
+qa.config.json, tự đăng nhập bằng form login của app để chụp được màn sau login, dò lỗi bố cục đo trên DOM (tràn
+khung, lệch align, chồng lấp, chạm cạnh màn hình), suy design token từ CSS thực tế, upload ảnh lên Cloudflare R2
+và đính vào PR.
 
 ## Điều kiện tiên quyết
 
