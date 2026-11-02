@@ -3087,6 +3087,22 @@
           "parallel_safe": true
         }
       ]
+    },
+    {
+      "component": "devkit-lane-lock-merge-gate-release-p5",
+      "watch_files": [
+        "universal-agent-devkit/bin/lane_lock.py",
+        "universal-agent-devkit/bin/heavy_slot.py",
+        "universal-agent-devkit/tests/gates/test_lane_lock_merge_gate_release.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-LANE-LOCK-MG-RELEASE-01",
+          "name": "P5 (gate kẹt và chậm 02/11): lane_lock nhả slot lane khi super-board-merge-gate.sh (argv[0] / env … bash <path>) có hậu duệ giữ slot pool gate (.held PID hậu duệ, mtime ≥ lúc tạo con) hoặc chờ vé queue/gate ≥ 5 s; vé queue/heavy, bash -c bọc gate thường, .held của tiến trình lạ ⇒ giữ slot; ps lỗi ⇒ giữ slot, log một lần; không deadlock",
+          "command": "bash universal-agent-devkit/tests/gates/test_lane_lock_merge_gate_release.sh",
+          "parallel_safe": true
+        }
+      ]
     }
   ]
 }
