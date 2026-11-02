@@ -333,10 +333,12 @@
   // Optional. Merge queue (Pha 2, 26/10): reviewers label an approved PR
   // `merge-queue` (plus an `approved-head:<sha40>` comment) instead of calling
   // the merge gate; `.claude/bin/super-board-merge-queue.sh --config <cfg>`
-  // sends every valid queued PR to ONE super-board-merge-train.sh run (one
-  // verify for the PRs waiting right now) and routes every `train-result:`
-  // line. No batching (29/10): no PR cap, no wait for more PRs, no age limit,
-  // no wait for an idle machine; `--full` runs once a night (gate-full).
+  // starts one background super-board-merge-train.sh per valid queued PR
+  // (#676: scoped verify of main+PR, several at once through the slot pool;
+  // only `gh pr merge` is serialised by the merge gate's lock), exits at once,
+  // and routes every finished train's `train-result:` lines on its next run.
+  // No batching: no wait for more PRs, no age limit, no wait for an idle
+  // machine; `--full` runs once a night (gate-full).
   // Off by default.
   // On only for worker_backend "claude-p" (its runner calls it every tick)
   // or "workflow" (the launchd schedule super-board-queue-schedule.sh does, which
@@ -344,7 +346,9 @@
   // `SB_MERGE_QUEUE=1` / `0` overrides `enabled` for one process.
   //   enabled_at:   ISO time it was switched on (the batch canary only reads
   //                 runs after it); null while off.
-  "merge_queue": { "enabled": false, "enabled_at": null },
+  //   max_trains:   trains running at once (#676); default 3. A PR over the
+  //                 cap waits for the next run; no attempt is counted.
+  "merge_queue": { "enabled": false, "enabled_at": null, "max_trains": 3 },
 
   // When the count of Blocked cards exceeds this percent of the initial Ready
   // count, post a mid-run breakdown in the run report. Default `30`. Set to `0`

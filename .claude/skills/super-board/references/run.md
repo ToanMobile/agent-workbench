@@ -259,7 +259,7 @@ in a sub-agent, before touching a worktree.
 ```
 [ ] source .claude/bin/super-board-gh-guard.sh; sb_gh_guard_check 200
 [ ] build the in-flight list: .claude/bin/super-board-card.sh --config <cfg> items (one call) → [{number,title,status}] for
-    Building / QA / Review / Ready cards, leaving out every Ready card labelled `waiting-on:#*` (any case, on the item or its
+    Building / QA / Review / Ready cards, leaving out every Ready card labelled `waiting-on:#<number>` (#619: digits only, malformed labels do not hold a card; any case, on the item or its
     content, string or {name}) — a waiting card is not in progress; save it to a temp file
 [ ] bash .claude/bin/super-board-preflight.sh --repo <owner/name> --issues <N[,M…]> \
          --inflight <file> --cap <merge_policy.auto_max_lines, 0 when unset> [--files <paths you expect to touch>]
@@ -525,8 +525,9 @@ never calls the merge gate (it refuses a direct call, exit 13). In place of step
 4. comment on the Issue, one line: `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`;
 5. write the Reviewer report (status `merge-ready`), leave the card in Review and exit.
 
-`super-board-merge-queue.sh` batches the queued PRs into one merge train (one `--scoped` verify of the merged tree, `--full` on a core file), merges
-them and routes every `train-result` (merged → Done). Queue off (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`): the steps below. The workflow backend drains the queue through the launchd schedule `super-board-queue-schedule.sh`. Only `--codex` and `SB_MERGE_QUEUE=0` leave it undrained; a `merge-queue` label there would leave the card in Review, re-reviewed every wave.
+`super-board-merge-queue.sh` starts one background merge train per queued PR (#676: a `--scoped` verify of main + that PR, up to `merge_queue.max_trains`
+at once, default 3; the queue lock is never held while a verify waits for a slot), exits, and on its next run routes every finished train's `train-result`
+(merged → Done; `base-moved` = main kept moving while it verified: stays queued, no attempt counted). Only `gh pr merge` is serialised (the merge gate's lock). Queue off (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`): the steps below. The workflow backend drains the queue through the launchd schedule `super-board-queue-schedule.sh`. Only `--codex` and `SB_MERGE_QUEUE=0` leave it undrained; a `merge-queue` label there would leave the card in Review, re-reviewed every wave.
 
 ```
 1. Mark ready      gh pr ready <PR>                     # idempotent; no-op if already ready
