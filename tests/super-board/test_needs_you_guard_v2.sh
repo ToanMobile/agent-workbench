@@ -7,6 +7,7 @@
 # Cờ tắt: mọi câu được nhận như v1. Cờ bật: R, M exit 64; H exit 0. Cờ đọc từ env SB_NEEDS_YOU_GUARD_V2
 # hoặc <checkout chính>/.agents/local/flags.json.
 set -euo pipefail
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR  # cờ đọc qua git: không để biến git của gate trỏ vào repo thật
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 NEEDS_YOU="$REPO_ROOT/.claude/bin/super-board-needs-you.py"
@@ -136,6 +137,28 @@ for act in \
   "Nâng giới hạn kết nối Postgres production để test suite tải chạy được"; do
   rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
   [ "$rc" = 0 ] && pass || fail "T3b cờ bật chặn nhầm (exit $rc): $act"
+done
+
+# T2c: cờ bật không được nới v1 — câu v1 đang từ chối vẫn bị từ chối dù có từ người của v2 (phát hành, trên xe, PII).
+for act in \
+  "Chạy lại gate --full trước khi phát hành" \
+  "Thử PR #12 trên máy ảo trước khi phát hành bản 1.4" \
+  "Chạy lại gate --full trên xe giả lập AAOS" \
+  "Gỡ worktree .claude/worktrees/issue-9-build chứa log PII"; do
+  rc="$(SB_NEEDS_YOU_GUARD_V2=0 mark_rc "$act")"
+  [ "$rc" = 64 ] && pass || fail "T2c v1 phải từ chối (exit $rc): $act"
+  rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
+  [ "$rc" = 64 ] && pass || fail "T2c cờ bật nới v1 (exit $rc, cần 64): $act"
+done
+
+# T3c: việc trong danh sách phải hỏi người (force-push, deploy production, thanh toán, đăng nhập) vẫn được nhận khi cờ bật.
+for act in \
+  "Quyết định có force-push để xoá token lộ khỏi lịch sử không" \
+  "Quyết định có deploy ai-assist lên production không" \
+  "Quyết định có bật thanh toán trả phí cho OpenAI không" \
+  "Gõ tay mã thiết bị cho gh auth login trên máy build"; do
+  rc="$(SB_NEEDS_YOU_GUARD_V2=1 mark_rc "$act")"
+  [ "$rc" = 0 ] && pass || fail "T3c cờ bật chặn nhầm việc phải hỏi người (exit $rc): $act"
 done
 
 # T4: cờ trong flags.json của checkout chính (không env) bật v2; thiếu file hoặc JSON hỏng là tắt.
