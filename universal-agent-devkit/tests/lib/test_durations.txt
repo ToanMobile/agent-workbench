@@ -507,3 +507,5 @@
 7 tests/gates/test_gate_matrix_append_only_coverage.sh
 # gate kẹt và chậm PR 1 (02/11) P8: trần gấp đôi cho shard GATES (3 lượt gate fixture, ~12 s)
 12 tests/gates/test_gate_suite_timeout_gates_shard.sh
+# T4 #844 (2026-11-02): shell_writes đọc thêm đích $'…' / $"…" (worktree_guard, session_lock)
+3 tests/gates/test_shell_writes_dollar_quotes.sh

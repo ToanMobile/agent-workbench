@@ -8,6 +8,7 @@ file writes into the held checkout). Standard library only.
 import os
 import re
 import shlex
+import sys
 
 # `<<WORD` (not the here-string `<<<`), WORD up to a metacharacter with `-` in it (OCR 26/10 r3: `<<END-X` read as END) - as bin/session_lock.py
 HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)([^\s;&|<>()'\"`\\]+)\1")
@@ -323,10 +324,12 @@ def _exists(a, here):
     return os.path.exists(p if os.path.isabs(p) else os.path.join(here, p))
 
 
-def _nested(code, wd, depth, run_bodies):
+def _nested(code, wd, depth, run_bodies, decode):
     """The targets of a script a shell runs (`bash -c`, a heredoc fed to a shell). One that cannot be tokenised, for a caller that runs bodies
-    (run_bodies: bin/session_lock.py trunk_write), is a write it cannot rule out: kind "unparsed", where the script runs - it used to count as none."""
-    got = targets(code, wd, depth, run_bodies)
+    (run_bodies: bin/session_lock.py trunk_write), is a write it cannot rule out: kind "unparsed", where the script runs - it used to count as none.
+    decode: cách đọc của dòng ngoài (_targets) - cách đọc cũ (False) đọc script lồng đúng như main, không chen đích giải mã vào giữa (review L
+    T4 #844: `bash -c '… cd $D'; cp a ../x` - cdvar giải mã đứng trước ../x làm _family_write_held bỏ đích tương đối)."""
+    got = targets(code, wd, depth, run_bodies) if decode else _targets(code, wd, depth, run_bodies, False)
     return [("unparsed", "", wd)] if got is None and run_bodies else got or []
 
 
@@ -357,7 +360,25 @@ def targets(cmd, here, depth=0, run_bodies=False):
     the line of `env -S '…'` / `--split-string` is split into words in place (_env_split).
     A body run_bodies cannot tokenise comes back as ("unparsed", "", directory).
     Thư mục theo cd chữ (cd / pushd; cd có $VAR / backtick / NUL: "cdvar", thư mục giữ); #427 vòng 3: `)` đưa nó về như trước `(` (khi
-    _scoped), `popd` về thư mục pushd tương ứng đã rời (ngăn rỗng / không theo được: giữ)."""
+    _scoped), `popd` về thư mục pushd tương ứng đã rời (ngăn rỗng / không theo được: giữ).
+    T4 (#844): dòng có $'…' / $"…" được đọc THÊM một lần đã giải mã (_targets decode=True: comment bỏ bằng shell_norm.drop_comments, rồi
+    ansi_c_to_single và locale_to_double như hai guard lệnh) và đích của cách đọc đó nối sau đích của cách đọc cũ - shlex đọc $'<M>/a' là
+    `$<M>/a`, caller bỏ qua đích có `$`. Cách đọc cũ đứng trước và giữ nguyên (None vẫn là None): không đích nào của main mất đi, thứ tự cũ
+    giữ nguyên (cdvar của _family_write_held). Cách đọc thêm lỗi (không tách được, module không nạp được): chỉ cách đọc cũ."""
+    got = _targets(cmd, here, depth, run_bodies, False)
+    if got is None or ("$\x27" not in cmd and "$\x22" not in cmd):
+        return got
+    try:
+        more = _targets(cmd, here, depth, run_bodies, True)
+    except Exception as e:  # noqa: BLE001 - lỗi của cách đọc thêm không được làm mất cách đọc cũ (worktree_guard: hook văng = cho qua)
+        sys.stderr.write(f"shell_writes: bỏ cách đọc giải mã $'…' / $\"…\": {e!r}\n")
+        return got
+    seen = set(got)
+    return got + [t for t in more or () if t not in seen]
+
+
+def _targets(cmd, here, depth, run_bodies, decode):
+    """Một cách đọc của targets(): decode=True đọc dòng đã giải mã $'…' / $"…" (shell_norm), False là cách đọc cũ."""
     out, bodies, pos, ends = [], [], 0, {}
     while True:                               # heredoc bodies are data, not commands
         m = HEREDOC.search(cmd, pos)
@@ -375,7 +396,11 @@ def targets(cmd, here, depth=0, run_bodies=False):
         e = cmd.find("\n", s)
         pos = len(cmd) if e < 0 else e
     try:
-        text = _drop_fd_numbers(strip_comments("".join(out)))
+        if decode:   # thứ tự của hai guard lệnh: bỏ comment (biết $'…') rồi giải mã; T3 (#883): locale_to_double sau ansi_c_to_single
+            import shell_norm   # noqa: PLC0415 - chỉ dòng có $'…' / $"…" trả giá nạp; cùng thư mục hooks/ trên sys.path của caller
+            text = _drop_fd_numbers(shell_norm.locale_to_double(shell_norm.ansi_c_to_single(shell_norm.drop_comments("".join(out)))))
+        else:
+            text = _drop_fd_numbers(strip_comments("".join(out)))
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|<>()\n")
         lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
         toks = list(lex)
@@ -513,7 +538,7 @@ def targets(cmd, here, depth=0, run_bodies=False):
             module = next((words[k + 1] for k in range(1, len(words) - 1) if words[k] == "-m"), None)
             if code is not None:
                 if depth < 3:
-                    found += _nested(code, wd, depth + 1, run_bodies)
+                    found += _nested(code, wd, depth + 1, run_bodies, decode)
             elif (module and module.split(".")[0] in MODULE_BUILDERS) or \
                     (not module and args and BUILDERS.match(os.path.basename(args[0]))):
                 hits.append(("build", wd))
@@ -524,10 +549,10 @@ def targets(cmd, here, depth=0, run_bodies=False):
                         if base not in SHELLS:
                             hits += [("file", w.group("p")) for rx in SCRIPT_WRITES for w in rx.finditer(body)]
                         elif depth < 3:
-                            found += _nested(body, wd, depth + 1, run_bodies)
+                            found += _nested(body, wd, depth + 1, run_bodies, decode)
         found += [(kind, t, wd) for kind, t in hits]
     if run_bodies and not paired and depth < 3:   # (a data body read as commands: a false alarm here is the price of never missing a write)
         for body in bodies:
-            found += _nested(body, here, depth + 1, run_bodies)
+            found += _nested(body, here, depth + 1, run_bodies, decode)
             found += [("file", w.group("p"), here) for rx in SCRIPT_WRITES for w in rx.finditer(body)]
     return found
