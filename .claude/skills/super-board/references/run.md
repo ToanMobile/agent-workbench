@@ -525,8 +525,9 @@ never calls the merge gate (it refuses a direct call, exit 13). In place of step
 4. comment on the Issue, one line: `[reviewer] [report] ✅ merge-ready · queued PR #<P> @ <sha7>`;
 5. write the Reviewer report (status `merge-ready`), leave the card in Review and exit.
 
-`super-board-merge-queue.sh` batches the queued PRs into one merge train (one `--scoped` verify of the merged tree, `--full` on a core file), merges
-them and routes every `train-result` (merged → Done). Queue off (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`): the steps below. The workflow backend drains the queue through the launchd schedule `super-board-queue-schedule.sh`. Only `--codex` and `SB_MERGE_QUEUE=0` leave it undrained; a `merge-queue` label there would leave the card in Review, re-reviewed every wave.
+`super-board-merge-queue.sh` starts one background merge train per queued PR (#676: a `--scoped` verify of main + that PR, up to `merge_queue.max_trains`
+at once, default 3; the queue lock is never held while a verify waits for a slot), exits, and on its next run routes every finished train's `train-result`
+(merged → Done; `base-moved` = main kept moving while it verified: stays queued, no attempt counted). Only `gh pr merge` is serialised (the merge gate's lock). Queue off (`SB_MERGE_QUEUE=0`, not enabled, or `--codex`): the steps below. The workflow backend drains the queue through the launchd schedule `super-board-queue-schedule.sh`. Only `--codex` and `SB_MERGE_QUEUE=0` leave it undrained; a `merge-queue` label there would leave the card in Review, re-reviewed every wave.
 
 ```
 1. Mark ready      gh pr ready <PR>                     # idempotent; no-op if already ready
