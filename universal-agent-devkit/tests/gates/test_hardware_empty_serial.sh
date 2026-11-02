@@ -147,6 +147,38 @@ check 0 "$(printf '%s\n%s\n%s' "tee notes.md <<'EOF' >/dev/null" 'adb -s "" rebo
 check 0 "$(printf '%s\n%s\n%s' 'cat <<EOF' 'adb -s "" reboot' 'EOF')"
 check 0 "$(printf '%s\n%s\n%s' "gh pr create --title t --body-file - <<'EOF'" 'adb -s "" reboot' 'EOF')"
 check 0 "$(printf '%s\n%s\n%s\n%s' "cat > /tmp/r.sh <<'EOF'" "adb -s '' reboot" 'EOF' 'chmod +x /tmp/r.sh')"
+echo '— thân heredoc chữ ở lệnh shell_norm không model hoá (\ xuống dòng, ${…}, trap, while, ( ), EOF-1) hay không nháy có $: cho qua'
+check 0 $'gh pr create --title "fix #829" \\\n  --body-file - <<\'EOF\'\nBlocked `adb -s "" reboot` on denylist\nEOF'
+check 0 $'git commit --no-verify \\\n  -F - <<\'EOF\'\nfix: block `adb -s "" reboot`\nEOF'
+check 0 $'TMP=$(mktemp -d); trap \'rm -rf "$TMP"\' EXIT\ncat > "$TMP/pr.md" <<\'EOF\'\nadb -s "" reboot\nEOF'
+check 0 $'while IFS= read -r c; do printf \'%s\\n\' "$c"; done <<\'CORPUS\'\nadb -s "" reboot\nCORPUS'
+check 0 $'cat > "${TMP:-/tmp}/pr.md" <<\'EOF\'\nBlocked `adb -s "" reboot` on denylist\nEOF'
+check 0 $'cat <<\'EOF-1\' > /tmp/notes.md\nadb -s "" reboot\nEOF-1'
+check 0 $'(cat <<\'EOF\' > /tmp/notes.md\nadb -s "" reboot\nEOF\n)'
+check 0 $'cat > notes.md <<EOF\nHost: $HOST\nadb -s "" reboot\nEOF'
+check 0 $'cat > notes.md <<EOF\nCost: $5\nadb -s \'\' shell pm clear com.ecarx.launcher\nEOF'
+check 0 $'tee notes.md <<EOF >/dev/null\nUser: $USER\nadb -s "" shell rm -rf /sdcard/Download\nEOF'
+check 0 $'cat <<EOF | wc -l\n$HOME\nadb -s "" reboot\nEOF'
+check 0 $'git commit -F - <<EOF\nfix: hook ($USER)\n\nadb -s "" shell rm -rf /sdcard/Download was rc 0\nEOF'
+check 0 $'gh pr create --title "fix #829" --body "$(cat <<EOF\nHead: $(git rev-parse --short HEAD)\nRepro:\n    adb -s "" reboot\nEOF\n)"'
+check 0 $'cat > /tmp/r.md <<EOF\n${PWD}\nadb -s emulator-5554 -s "" reboot\nEOF'
+check 0 $'cat > notes.md <<EOF\nHost: $HOST\nadb -s emulator-5554 $ARGS reboot\nEOF'
+check 2d $'git commit -m "$(cat <<\'EOF\'\nfix\n\nadb -s \'\' reboot\nEOF\n)" && adb -s \'\' reboot'   # thân "data" hook đã cắt sẵn: lệnh adb sau vẫn thấy
+echo "— serial IPv6 trong nháy ([::1]:5555): [ không bung khi không có file khớp → như trước #829"
+check 0 $'adb -s "[::1]:5555" reboot'
+check 0 $'adb -s \'[fe80::1]:5555\' shell ls'
+check 0 $'ANDROID_SERIAL="[::1]:5555" adb reboot'
+check 0 $'adb connect "[::1]:5555" && adb -s "[::1]:5555" install app.apk'
+echo "— thân heredoc mà shell đọc, hay lệnh con trong thân không nháy: lệnh chạy thật → chặn"
+check 2d $'bash \\\n <<\'EOF\'\nadb -s "" reboot\nEOF'
+check 2d $'bash <<\'EOF\'\nadb -s "" reboot\nEOF'
+check 2d $'cat <<\'EOF\' | bash\nadb -s \'\' reboot\nEOF'
+check 2d $'cat <<EOF\n$(adb -s \'\' reboot)\nEOF'
+check 2d $'cat <<EOF\n`adb -s \'\' reboot`\nEOF'
+check 2d $'cat <<EOF > notes.md\nRun `adb -s "" reboot` to repro\nEOF'
+check 2d $'cat > notes.md <<EOF\nHost: $HOST\n$(adb -s "" shell getprop ro.serialno)\nEOF'
+check 2d $'X=$(cat <<\'EOF\'\nit\'s\nEOF\n); adb -s \'\' reboot'
+check 2d $'cat > f <<\'EOF\'\ndon\'t\nEOF\nadb -s \'\' reboot'
 echo "— biến đã gán literal, rồi chữ printf / echo / source quanh nó: vẫn là biến đã biết (như trước #829)"
 check 0 'S=emulator-5554; printf "using %s\n" "$S"; adb -s "$S" reboot'
 check 0 'SERIAL=emulator-5554; printf "Installing on %s\n" "$SERIAL"; adb -s "$SERIAL" install -r app.apk'

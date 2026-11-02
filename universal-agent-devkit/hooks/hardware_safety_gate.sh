@@ -2483,6 +2483,28 @@ def flat_substitutions(text, bodies=None):
         i += 1
     return "".join(out)
 
+def cut_text_heredocs(text, work):
+    """text bỏ thân heredoc mà không shell nào đọc (kind khác "shell"), cho bản đọc theo nháy của adb_calls (02/11, r31adb2).
+    Không theo h.cut_ok như strip_heredocs: lệnh có \x5c xuống dòng, ${…}, trap, while, ( ) hay EOF-1 không được shell_norm model
+    hoá nên strip_heredocs giữ thân, và chữ adb -s "" … trong đó bị chặn nhầm. Bản cắt thô vẫn xét nguyên text như trước #829,
+    nên cắt ở đây không lỏng hơn bản cũ. Thân không nháy: shell vẫn chạy $( ) / backtick trong đó, thân các lệnh con có chữ adb
+    vào hàng đợi work. Thân mơ hồ (các shell đọc chỗ kết thúc khác nhau) hay chưa đóng: giữ — TEXTS của hook đã cắt sẵn thân
+    "data" (git commit -m "$(cat <<EOF …)"), toán tử còn lại trông như heredoc chưa đóng, cắt tới hết sẽ che lệnh adb sau nó."""
+    if "<<" not in text:
+        return text
+    out, pos = [], 0
+    for h in shell_norm.heredocs(text):
+        if h.body_start < pos or not h.terminated or h.ambiguous or h.kind == "shell":
+            continue
+        if not h.quoted:
+            bodies = []
+            flat_substitutions(h.body(text), bodies)
+            work += [b for b in bodies if "adb" in b]
+        out.append(text[pos:h.body_start])
+        pos = h.end
+    out.append(text[pos:])
+    return "".join(out)
+
 def adb_calls(text, strict=True):
     """(adb executable token, selection options, subcommand, ANDROID_SERIAL, words after
     the subcommand, strict) per adb call."""
@@ -2498,9 +2520,7 @@ def adb_calls(text, strict=True):
     readings = []
     work = [text] if strict else []
     while work:
-        clean = shell_norm.drop_comments(work.pop())
-        if "<<" in clean:
-            clean = shell_norm.strip_heredocs(clean, lambda h: h.kind != "shell", shell_norm.heredocs(clean))
+        clean = cut_text_heredocs(shell_norm.drop_comments(work.pop()), work)
         bodies = []
         for seg in quote_split(flat_substitutions(shell_norm.ansi_c_to_single(clean), bodies)):
             try:
@@ -2597,7 +2617,7 @@ def literal_vars(text):
 # (01/11, r31adb) chỉ $NAME và ${NAME}: regex cũ \$\{?NAME\}? thay cả phần đầu của ${S##*} / ${S/a/b} thành chuỗi
 # "emulator-5554##*}" (hết "$", được tin là serial) trong khi shell ra chuỗi rỗng / serial khác. Dạng khác giữ nguyên "$".
 VAR_REF = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
-SHELL_EXPANDS = re.compile(r"[{}*?\[]|^~")   # chữ shell còn bung lúc chạy (brace, glob, ~): serial không bao giờ có
+SHELL_EXPANDS = re.compile(r"[{}]|^~")   # chữ shell luôn bung lúc chạy (brace, ~); glob [ * ? chỉ bung khi có file khớp, và serial IPv6 có [ ]
 
 VAR_REF_CUT = re.compile(r"\$\{?([A-Za-z_]\w*)\}?")   # (02/11, r31adb2) regex trước #829, chỉ cho bản cắt thô
 
