@@ -797,3 +797,11 @@ Mẫu ghi nhận:
 - **Hiện tượng lỗi:** Dem dong reflog so voi log -g: dong null-oid bi bo qua
 - **Nguyên nhân:** branch -m ghi dong co oid moi toan so 0 vao logs/HEAD; log -g bo qua dong do nen so dong file lon hon so muc va worktree.py coi reflog khong doc duoc, remove bao UNREACHABLE oan
 - **Quy tắc phòng ngừa & Cách fix:** Chi loai dung dong co oid moi bang null 0x40 hoac 0x64; dong hong hoac cat cut van dem de fail closed; test co ca branch -m va ca dong hong
+
+---
+
+### [INSTINCT-102] Phân loại rủi ro theo diff chỉ xét đường dẫn mới của rename
+- **Ngày phát hiện:** 2026-11-02
+- **Hiện tượng lỗi:** Phân loại rủi ro theo diff chỉ xét đường dẫn mới của rename
+- **Nguyên nhân:** numstat rename {a => tests}/x: loại trừ theo đường dẫn mới làm file merge-gate dời vào tests/ hoặc thành .md tụt về S
+- **Quy tắc phòng ngừa & Cách fix:** Rename là thuộc vùng được canh khi đường dẫn cũ HOẶC mới thuộc vùng đó; test có ca git mv ra khỏi vùng

@@ -8870,15 +8870,18 @@ def main():
 # 02/11: cả dòng hỏng của runner ở 5 repo app — Kotlin `e:`, Gradle, Unity/C# `error CS…`, javac/clang/swiftc `file:N: error`,
 # pytest `E   …`, jest `●`, npm, Android `FATAL EXCEPTION`, `…Error:`, tín hiệu chết tiến trình. Trước đó khối '| …' của suite Gradle
 # đỏ chỉ có đuôi "Run with --stacktrace…", dòng `e:` thật nằm giữa log (tests/gates/test_fail_line_ecosystems.sh).
-# `…Error:` neo đầu dòng hoặc sau tag logcat `AndroidRuntime:` (cho phép `Caused by: `, tên gói và lớp lồng `.`/`$`; đoạn tên
-# `\w+` không chứa `$` để không backtrack bùng nổ): giữa câu nó khớp dòng INFO/✔, chiếm 8 dòng đầu của fail_lines;
+# `…Error:` (kể cả tên gói/lớp lồng `java.net.X`, `Outer$Inner`) không khớp khi cả tên đứng ngay sau một từ thường + dấu cách
+# (`retry after java.net.SocketTimeoutError:`, `✔ … with TypeError:`): dòng INFO/✔ đó chiếm 8 dòng đầu của fail_lines (#906).
+# Mọi tiền tố khác vẫn khớp: đầu dòng, Gradle `   > `, logcat `tag: `, `stack=`, `| `, `[x] ` (#901 neo đầu dòng làm mất chúng:
+# tests/gates/test_fail_line_prefixed.sh). Tuyến tính nhờ `(?<![\w.$])`: tên chỉ bắt đầu ở đầu một cụm `[\w.$]`, mỗi cụm quét
+# một lần; bỏ nó thì `Ab…` 100 KB mất hơn 40 s (tests/gates/test_fail_line_qualified.sh). Đổi lại `Uncaught TypeError:` không khớp;
 # `Killed: N` không neo: bash in `x.sh: line N: PID Killed: 9 cmd` (tests/gates/test_fail_line_precision.sh).
 # ponytail: `^E {2,}` lấy cả diff assertion nhiều dòng của pytest, test đỏ đầu có thể chiếm hết 8 dòng đầu; bỏ nhánh này khi log thật
 # của app mất tên test đỏ sau (dòng `file:N: AssertionError` vẫn khớp nhánh AssertionError).
 FAIL_LINE = re.compile(r"✖|✘|✗|❌|\bFAILED\b|\bFAIL\b|^[ \t]*not ok\b|\bERROR\b|Traceback|AssertionError|\bException\b"
                        r"|^[ \t]*e: \S|What went wrong:|Execution failed for task|\berror (?:CS|MSB)\d{4}\b"
                        r"|:\d+(?::\d+)?: (?:fatal )?error\b|^E {2,}\S|^[ \t]*● |^npm (?:ERR!|error) |FATAL EXCEPTION"
-                       r"|(?:^[ \t]*|\bAndroidRuntime(?:\(\s*\d+\))?:[ \t]*)(?:Caused by: )?(?:\w+[.$])*[A-Z]\w*Error:"
+                       r"|(?<![a-z] )(?<![\w.$])(?:\w+[.$])*[A-Z]\w*Error:"
                        r"|\b(?:Segmentation fault|Bus error|Abort trap)\b"
                        r"|\bKilled: \d")
 RED_TEST_LINE = re.compile(r"^✖ (?:hooks/)?tests/\S+\.(?:sh|py|mjs)\s*$")   # #721: dòng test đỏ của tests/run_impacted.sh (cột 0)

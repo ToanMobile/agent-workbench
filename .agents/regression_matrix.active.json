@@ -2936,6 +2936,63 @@
       ]
     },
     {
+      "component": "merge-gate-conflicting-precheck",
+      "watch_files": [
+        ".claude/bin/super-board-merge-gate.sh",
+        "tests/super-board/test_merge_gate_conflicting_precheck.sh",
+        ".claude/bin/super-board-merge-queue.sh",
+        "tests/super-board/test_merge_queue_gate_exit_14.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-MERGE-GATE-CONFLICTING-01",
+          "name": "#881 #883 #885 (02/11): driver gộp chỉ có ở local (merge=union, devkit-matrix) ⇒ scratch sạch nhưng GitHub CONFLICTING; merge gate đọc mergeable trong khoá trước verify: CONFLICTING (cả sau UNKNOWN) ⇒ exit 14, không verify, không gh pr merge, câu báo gộp origin/main + push + --expect-head mới, khoá được thả; MERGEABLE, UNKNOWN rồi MERGEABLE, UNKNOWN mãi (đọc lại có giới hạn) và lỗi đọc ⇒ verify + merge như cũ, không halt",
+          "command": "bash tests/super-board/test_merge_gate_conflicting_precheck.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-SB-MERGE-QUEUE-EXIT14-01",
+          "name": "PR #893: train in gate-exit-14 (GitHub CONFLICTING, cả ở --preflight) ⇒ merge queue route như xung đột: thẻ về Ready + loop:rebase, gỡ nhãn merge-queue, comment PR và thẻ ghi GitHub CONFLICTING; không tính lần thử lại, không Blocked",
+          "command": "bash tests/super-board/test_merge_queue_gate_exit_14.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "super-board-review-plan-858",
+      "watch_files": [
+        ".claude/bin/super-board-review-plan.sh",
+        "universal-agent-devkit/bin/review_tier.py",
+        ".claude/super-board/configs/agent-workbench.json",
+        ".claude/skills/super-review/references/review-flow.md",
+        ".claude/skills/super-board/references/run.md",
+        "tests/super-board/test_review_plan_tier.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-SB-REVIEW-PLAN-01",
+          "name": "#858: super-board-review-plan.sh in bậc review S/M/L (review_tier.py) và các bên review theo config review_tiers: PR giả bậc S ⇒ 1 bên (claude), M ⇒ 2, diff 5 dòng merge-gate ⇒ L 4 bên, --deletes-data ⇒ L; config tuỳ biến được đọc; danh sách rỗng / sai kiểu / JSON hỏng ⇒ mặc định luật chủ repo; thiếu review_tier.py ⇒ L kèm cảnh báo; super-review review-flow.md và run.md gọi script",
+          "command": "bash tests/super-board/test_review_plan_tier.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "merge-policy-diff-paths-742-split-a3",
+      "watch_files": [
+        ".claude/bin/super-board-merge-policy.py",
+        "tests/super-board/test_merge_policy_diff_header_paths.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-742-A3-MERGE-POLICY-DIFF-PATHS-01",
+          "name": "#742 tách A3 (review P0 d1facdea5d, INSTINCT-089): merge-policy đọc đường dẫn file bị xoá từ header diff git: C-quoted (UTF-8, dấu cách, escape bát phân), file rỗng chỉ có diff --git + deleted file mode, tên chứa \" b/\"; header không đọc được → delete-protected (fail-closed, trừ protected_paths []); dòng nội dung hunk giả --- a/ + +++ /dev/null không tính là xoá",
+          "command": "bash tests/super-board/test_merge_policy_diff_header_paths.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "devkit-shell-writes-dollar-quotes",
       "watch_files": [
         "universal-agent-devkit/hooks/shell_writes.py",
