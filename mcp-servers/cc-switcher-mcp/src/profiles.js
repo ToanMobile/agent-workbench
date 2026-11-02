@@ -632,21 +632,23 @@ export async function syncLiveQuotas(opts = {}) {
   const fresh = loadSwitcherState(stateDir);
   let updated = false;
   for (const [p, q] of fetched) {
+    // Moc dong bang bi ghi xen trong luc cho mang (daemon 429) moi hon quota vua do: khong ghi/xoa de len.
+    const freezeUntouched = fresh.frozenUntil[p.id] === state.frozenUntil[p.id];
     if (q && typeof q.remainingPct === 'number') {
       fresh.quotaCache[p.id] = {
         ...q,
         updatedAtMs: nowMs,
       };
-      if (q.remainingPct <= 0 && q.resetAtMs > nowMs) {
+      if (freezeUntouched && q.remainingPct <= 0 && q.resetAtMs > nowMs) {
         fresh.frozenUntil[p.id] = q.resetAtMs;
-      } else if (q.remainingPct > 0 && fresh.frozenUntil[p.id]) {
+      } else if (freezeUntouched && q.remainingPct > 0 && fresh.frozenUntil[p.id]) {
         delete fresh.frozenUntil[p.id];
       }
       updated = true;
     } else if (fresh.quotaCache?.[p.id]?.source === 'anthropic_429_header') {
       // Tu dong xoa cache 0% gia do loi quy chup HTTP 429 cua endpoint /api/oauth/usage truoc day
       delete fresh.quotaCache[p.id];
-      delete fresh.frozenUntil[p.id];
+      if (freezeUntouched) delete fresh.frozenUntil[p.id];
       updated = true;
     }
   }

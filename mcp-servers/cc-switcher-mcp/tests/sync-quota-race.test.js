@@ -14,11 +14,14 @@ test('syncLiveQuotas giữ thay đổi state ghi xen trong lúc chờ quota', as
     fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ currentProviderClaude: 'finos' }));
     saveSwitcherState(dir, { ...loadSwitcherState(dir), activeProfileId: 'finos', frozenUntil: { finos_team: nowMs + 3_600_000 } });
 
-    let raced = false;
+    // finos được đo trước (còn 50 %), rồi lúc sync đang chờ quota finos_team thì tiến trình khác đóng băng finos (429):
+    // quota cũ đo trước khi ghi xen không được xoá đóng băng mới (Antigravity audit #865, profiles.js:642).
     const quotaFetcher = async (p) => {
-      if (!raced) {
-        // một tiến trình khác chuyển tài khoản và đóng băng max đúng lúc sync còn đang chờ mạng
-        raced = true;
+      if (p.id === 'finos') {
+        return { remainingPct: 50, usedPct: 50, resetAtMs: nowMs + 600_000, isRateLimited: false, source: 'anthropic_oauth' };
+      }
+      if (p.id === 'finos_team') {
+        // một tiến trình khác chuyển tài khoản và đóng băng finos đúng lúc sync còn đang chờ mạng
         const other = loadSwitcherState(dir);
         other.activeProfileId = 'max';
         other.lastClaudeSwitchAtMs = nowMs - 1000;
@@ -40,6 +43,7 @@ test('syncLiveQuotas giữ thay đổi state ghi xen trong lúc chờ quota', as
     assert.equal(st.frozenUntil.finos, nowMs + 5 * 3_600_000, 'đóng băng ghi xen phải còn');
     assert.equal(st.frozenUntil.finos_team, undefined, 'quota sống > 0 vẫn mở khoá finos_team');
     assert.equal(st.quotaCache.finos_team.remainingPct, 40, 'kết quả quota mới vẫn được lưu');
+    assert.equal(st.quotaCache.finos.remainingPct, 50, 'quota finos vẫn được lưu dù không đụng đóng băng');
     assert.equal(st.quotaFetchedAtMs, nowMs);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
