@@ -323,10 +323,24 @@ tick() {
   fetch_project_items || fail "board read failed (rc=$?)"
   NOOP_MOVED=0; block_noop_workers
   lane_dispatch_tick review Review
-  if type merge_queue_due >/dev/null 2>&1; then merge_queue_due; else NO_MQ_DUE=1; fi
+  # #676: queue phóng train nền rồi thoát; tick chờ các train đó xong rồi gọi queue thêm một lượt để thu kết quả trong cùng tick.
+  if type merge_queue_due >/dev/null 2>&1; then merge_queue_due; mq_settle; merge_queue_due; else NO_MQ_DUE=1; fi
+}
+# mq_settle: chờ (tối đa 120 s) mọi dòng merge-queue.inflight có rc hoặc pid đã chết.
+mq_settle() {
+  local f="$R/.git/super-board/merge-queue.inflight" i=0 busy pid dir
+  while [ "$i" -lt 1200 ]; do
+    busy=0
+    if [ -s "$f" ]; then
+      while read -r _ _ _ _ pid dir; do [ -f "$dir/rc" ] || ! kill -0 "$pid" 2>/dev/null || busy=1; done < "$f"
+    fi
+    [ "$busy" = 0 ] && return 0
+    sleep 0.1; i=$((i + 1))
+  done
+  fail "mq_settle: background trains still running after 120 s: $(cat "$f" 2>/dev/null | tr '\n' '|')"; return 1
 }
 dispatches() { grep -c "^review $1\$" "$F/claude.calls" 2>/dev/null | tr -d ' '; }
-trains() { grep -c '^\[merge-queue\] train of' "$RUN_MANIFEST" 2>/dev/null | tr -d ' '; }
+trains() { grep -c '^\[merge-queue\] PR #[0-9]*: train started' "$RUN_MANIFEST" 2>/dev/null | tr -d ' '; }   # #676: một train mỗi PR
 pfg() { if [ -f "$F/pfg.log" ]; then grep -c -- "$1" "$F/pfg.log" | tr -d ' '; else echo 0; fi; }
 no_halt() {
   if [ -e "$SB_GITHUB_HALT_FILE" ]; then fail "$1: github-read halted: $(head -c 400 "$SB_GITHUB_HALT_FILE")"; fi
@@ -374,7 +388,7 @@ tail -n +"$((M0 + 1))" "$RUN_MANIFEST" | grep -q 'skip #7 in Review: PR 70 is in
 grep -q 'no-op' "$RUN_MANIFEST" && fail "(a)  … card #7 was judged a no-op" || ok "(a)  … and card #7 is not penalised as a no-op"
 # tick 3b: khoá được thả → PR 70 vào train ngay dù builder #8 còn sống (không chờ đủ PR, không chờ máy rảnh).
 free_queue; M1=$(wc -l < "$RUN_MANIFEST"); tick; no_halt "tick 3b"
-[ "$(trains)" = 1 ] && grep '^\[merge-queue\] train of' "$RUN_MANIFEST" | tail -1 | grep -q -- "70:$H70\$" \
+[ "$(trains)" = 1 ] && grep -q "^\[merge-queue\] PR #70: train started for 70:$H70 " "$RUN_MANIFEST" \
   && ok "(b) lock free: PR 70 went into a train at once (1 PR, builder #8 alive, no wait)" \
   || fail "(b) trains=$(trains): $(grep -i 'merge.queue' "$RUN_MANIFEST" | tail -3 | tr '\n' '|')"
 [ "$(st '.prs["70"].state')" = MERGED ] && [ "$(pfg .train-scratch-)" = 1 ] && [ "$(pfg .)" = 1 ] && ok "(b)  … PR 70 merged with one verify (in the train scratch)" || fail "(b)  … PR 70 state $(st '.prs["70"].state') verifies: $(cat "$F/pfg.log" 2>/dev/null)"
@@ -383,7 +397,7 @@ tail -n +"$((M1 + 1))" "$RUN_MANIFEST" | grep -q 'not due' && fail "(b) a 'not d
 # PR tương tác 72 (không thẻ): người duyệt tay vào hàng.
 gh pr comment 72 --body "approved-head:$H72" && gh pr ready 72 && gh pr edit 72 --add-label merge-queue
 tick; no_halt "tick 4"
-[ "$(trains)" = 2 ] && grep '^\[merge-queue\] train of' "$RUN_MANIFEST" | tail -1 | grep -q -- "72:$H72\$" \
+[ "$(trains)" = 2 ] && grep -q "^\[merge-queue\] PR #72: train started for 72:$H72 " "$RUN_MANIFEST" \
   && ok "(b) tick 4: interactive PR 72 went into its own train at once, builder #8 still alive" || fail "(b) tick 4: trains=$(trains): $(grep '^\[merge-queue\]' "$RUN_MANIFEST" | tail -3 | tr '\n' '|')"
 
 # Builder #8 xong: thẻ sang Review, builder thoát. tick 5: reviewer #8 được phóng và vào hàng; tick 6: PR 71 vào train dù reviewer #8 còn sống.
@@ -397,7 +411,7 @@ M2=$(wc -l < "$RUN_MANIFEST"); tick; no_halt "tick 6"
 tail -n +"$((M2 + 1))" "$RUN_MANIFEST" | grep -q 'skip #8 in Review: PR 71 is in the merge queue' && ok "(a)  … card #8 waits in Review with the merge-queue skip line" || fail "(a)  … no skip line for #8: $(tail -n +"$((M2 + 1))" "$RUN_MANIFEST" | tail -4 | tr '\n' '|')"
 [ "$(trains)" = 2 ] && ok "tick 6: queue lock held, no train yet" || fail "tick 6: trains=$(trains)"
 free_queue; tick; no_halt "tick 7"
-[ "$(trains)" = 3 ] && grep '^\[merge-queue\] train of' "$RUN_MANIFEST" | tail -1 | grep -q -- "71:$H71\$" \
+[ "$(trains)" = 3 ] && grep -q "^\[merge-queue\] PR #71: train started for 71:$H71 " "$RUN_MANIFEST" \
   && ok "(b) tick 6: PR 71 went into a train as soon as the queue lock was free" || fail "(b) tick 6: trains=$(trains): $(grep '^\[merge-queue\]' "$RUN_MANIFEST" | tail -3 | tr '\n' '|')"
 [ "$(pfg .train-scratch-)" = 3 ] && ok "(b) three trains, one verify each (in the train scratch)" || fail "(b) train verifies: $(pfg .train-scratch-): $(cat "$F/pfg.log" 2>/dev/null)"
 [ "$(pfg .)" = 3 ] && ok "(b)  … and 0 single-PR verifies by the merge gate" || fail "(b) total verifies $(pfg .): $(cat "$F/pfg.log" 2>/dev/null)"
@@ -472,14 +486,18 @@ sys.exit(subprocess.run(d['ProgramArguments'], cwd=d['WorkingDirectory']).return
 PY
 }
 sched_run; rc=$?
-[ "$rc" = 0 ] && [ "$(grep -c '^\[merge-queue\] train of' "$W/sched.out")" = 1 ] && ok "(e) the scheduled command ran ONE train" \
+# #676: lượt lịch phóng MỘT train cho MỖI PR (verify main+PR của chính nó) rồi thoát; lượt lịch sau thu kết quả.
+[ "$rc" = 0 ] && [ "$(grep -c '^\[merge-queue\] PR #[0-9]*: train started' "$W/sched.out")" = 3 ] && ok "(e) the scheduled command started one train per queued PR (3) and exited" \
   || fail "(e) scheduled run rc=$rc: $(tail -8 "$W/sched.out" | tr '\n' '|')"
+mq_settle; sched_run
 [ "$(sed -n 's/^interval //p' "$W/sched.out")" -le 60 ] && ok "(e)  … and the schedule fires at least every 60 s (the queue drains PRs the minute they are queued)" || fail "(e) interval: $(head -1 "$W/sched.out")"
-[ "$(st '[.prs[] | select(.state == "MERGED") | .number] | sort | join(",")')" = "81,82,83" ] && [ "$(pfg .train-scratch-)" = 1 ] && [ "$(pfg .)" = 1 ] \
-  && ok "(e)  … 3 PRs merged with exactly one verify (in the train scratch)" || fail "(e) merged: $(st '[.prs[] | {n: .number, s: .state}]') verifies: $(cat "$F/pfg.log" 2>/dev/null)"
+# Ba train song song: train merge sau thấy base dời (gate --require-receipt thoát 12) và verify lại NGOÀI khoá; gate không verify gì.
+[ "$(st '[.prs[] | select(.state == "MERGED") | .number] | sort | join(",")')" = "81,82,83" ] && [ "$(pfg .train-scratch-)" -ge 3 ] && [ "$(pfg .merge-scratch-)" = 0 ] \
+  && ok "(e)  … 3 PRs merged, every verify in a train scratch, none inside the merge gate's lock" || fail "(e) merged: $(st '[.prs[] | {n: .number, s: .state}]') verifies: $(cat "$F/pfg.log" 2>/dev/null)"
+V_E=$(pfg .)
 [ "$(st '.board["11"]')" = Done ] && [ "$(st '.issues["13"].state')" = CLOSED ] && ok "(e)  … cards Done and issues closed" || fail "(e) board: $(st '.board')"
 sched_run
-[ "$(pfg .)" = 1 ] && ok "(e) the next scheduled tick finds the queue empty: no second train" || fail "(e) second tick verifies: $(pfg .)"
+[ "$(pfg .)" = "$V_E" ] && ok "(e) the next scheduled tick finds the queue empty: no further train" || fail "(e) next tick verifies: $(pfg .) (was $V_E)"
 unset SB_LAUNCH_AGENTS_DIR
 
 [ "$FAILS" -eq 0 ] && { echo "✅ test_merge_queue_e2e: all passed"; exit 0; } || { echo "❌ test_merge_queue_e2e: $FAILS failed"; exit 1; }

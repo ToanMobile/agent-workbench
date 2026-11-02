@@ -39,8 +39,10 @@ if [ -e "$FAKE/train.hold" ]; then
   : > "$FAKE/train.started"; i=0
   while [ -e "$FAKE/train.hold" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
 fi
-[ -f "$FAKE/train.out" ] && cat "$FAKE/train.out"
-exit "$(cat "$FAKE/train.rc" 2>/dev/null || echo 0)"
+# #676: một train cho MỘT PR — stub chỉ in dòng train-* của PR trong --prs; mã thoát train.rc.<N> nếu có, không thì train.rc
+n=""; prev=""; for a in "$@"; do [ "$prev" = --prs ] && n="${a%%:*}"; prev="$a"; done
+[ -f "$FAKE/train.out" ] && grep -E "^train-(result|detail|red): ${n}( |\$)" "$FAKE/train.out"
+exit "$(cat "$FAKE/train.rc.$n" 2>/dev/null || cat "$FAKE/train.rc" 2>/dev/null || echo 0)"
 SH
 cat > "$Q/super-board-card.sh" <<'SH'
 #!/usr/bin/env bash
@@ -132,7 +134,7 @@ export PATH="$TMP/path:$PATH" FAKE="$F" TRAIN_PIDS="$TMP/train.pids" SB_GITHUB_H
 unset SB_MERGE_QUEUE SB_MERGE_CALLER SB_GITHUB_READ_STRICT
 
 cfg() {   # cfg <enabled> [ignored…]: không còn batch_max / max_wait_min (gom đợt đã bỏ); đối số thừa của ca cũ bị bỏ qua
-  printf '{"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"worker_backend":"claude-p","rebuild_cap":2,"verify_commands":["true"],"merge_queue":{"enabled":%s,"enabled_at":null}}\n' "$1" > "$TMP/cfg.json"
+  printf '{"base_branch":"main","repo":{"path":".","remote":"https://github.com/o/r"},"worker_backend":"claude-p","rebuild_cap":2,"verify_commands":["true"],"merge_queue":{"enabled":%s,"enabled_at":null,"max_trains":50}}\n' "$1" > "$TMP/cfg.json"
 }
 ago() { python3 -c 'import datetime,sys;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 sha() { printf '%040d' "$1" | tr 0 "${2:-a}"; }
@@ -154,8 +156,9 @@ issue() {   # issue <K> [labels comma]
 reset() {
   rm -rf "$F"; mkdir -p "$F/labeled"; PRS_ROWS=""; printf '[]\n' > "$F/prs.json"; : > "$F/writes"; : > "$F/calls"
   rm -f "$INF"/[0-9]* "$STATE" "$COMMON/super-board/merge-queue.labeled" "$ATT" "$COMMON/super-board/merge-queue.lock.pid" "$COMMON/super-board/merge-queue.pending"; rm -rf "$INF/merge.lock"
+  rm -f "$COMMON/super-board/merge-queue.inflight" "$COMMON/super-board/merge-queue.basemoved"   # #676: trạng thái train nền theo PR
 }
-run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" "$@" ) >"$TMP/out" 2>"$TMP/err"; }
+run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }
 calls() { grep -c '^train ' "$F/calls" 2>/dev/null | tr -d ' '; }
 has_w() { grep -qF -- "$1" "$F/writes"; }
 
@@ -192,8 +195,11 @@ printf '%s\n' "$(sha 1 c)" > "$F/merged-1"; printf '%s\n' "$(sha 2 c)" > "$F/mer
 printf 'train-result: 1 merged\ntrain-result: 2 merged\ntrain-result: 3 merged\n' > "$F/train.out"
 run_q; rc=$?
 [ "$rc" -eq 0 ] && ok "3 valid PRs: exit 0" || fail "3 valid PRs: rc=$rc: $(tail -5 "$TMP/err")"
-[ "$(calls)" = 1 ] && ok "3 valid PRs: exactly one train" || fail "3 valid PRs: $(calls) trains"
-grep -q -- "--prs 2:$(sha 2),3:$(sha 3),1:$(sha 1)\$" "$F/calls" && ok "  … oldest labelled first, each pinned to its approved head" || fail "  … wrong --prs: $(cat "$F/calls")"
+# #676: một train cho MỖI PR (cây main+PR của chính nó), phóng theo thứ tự gắn nhãn cũ nhất trước.
+[ "$(calls)" = 3 ] && ! grep -q -- "--prs [0-9]*:[0-9a-f]*," "$F/calls" && ok "3 valid PRs: three trains, one PR each" || fail "3 valid PRs: $(calls) trains: $(cat "$F/calls")"
+grep -q -- "--prs 2:$(sha 2)\$" "$F/calls" && grep -q -- "--prs 3:$(sha 3)\$" "$F/calls" && grep -q -- "--prs 1:$(sha 1)\$" "$F/calls" \
+  && [ "$(grep -o 'PR #[0-9]*: train started' "$TMP/err" | tr -dc '0-9\n' | tr '\n' ' ')" = "2 3 1 " ] \
+  && ok "  … oldest labelled first, each pinned to its approved head" || fail "  … wrong --prs / order: $(cat "$F/calls") $(grep 'train started' "$TMP/err")"
 grep -q "caller=queue" "$F/calls" && ok "  … SB_MERGE_CALLER=queue for the train" || fail "  … caller: $(cat "$F/calls")"
 has_w "pr-unlabel 4 merge-queue" && has_w "pr-comment 4 " && ok "approved-head off the head: unlabelled + commented" || fail "PR 4 not rejected: $(cat "$F/writes")"
 has_w "pr-unlabel 5 merge-queue" && has_w "pr-comment 5 " && ok "approved-head by an outsider: unlabelled + commented" || fail "PR 5 not rejected: $(cat "$F/writes")"
@@ -211,7 +217,7 @@ has_w "pr-unlabel 1 merge-queue" && has_w "pr-unlabel 3 merge-queue" && ok "merg
 reset; cfg true
 pr 1 issue-11-a 1; approve 1 OWNER "$(sha 1)"; issue 11
 printf 'train-result: 1 deferred\n' > "$F/train.out"
-run_q() { rm -f "$ATT"; ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" "$@" ) >"$TMP/out" 2>"$TMP/err"; }
+run_q() { rm -f "$ATT"; ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }
 sleep 60 & LIVE=$!; PIDS="$PIDS $LIVE"
 printf 'PID=%s\nLANE=build\n' "$LIVE" > "$INF/77"
 run_q; rc=$?
@@ -236,11 +242,11 @@ reset; cfg true; jq '.merge_queue.batch_max = 2 | .merge_queue.max_wait_min = 60
 for n in 61 62 63 64 65 66 67 68; do pr "$n" "issue-$((n + 10))-x" 2; approve "$n" OWNER "$(sha "$n")"; issue $((n + 10)); done
 printf 'train-result: 61 deferred\n' > "$F/train.out"
 run_q
-[ "$(calls)" = 1 ] && [ "$(grep -o '[0-9]*:[0-9a-f]\{40\}' "$F/calls" | wc -l | tr -d ' ')" = 8 ] \
-  && ok "no cap: 8 approved PRs go into one train (a leftover batch_max / max_wait_min in the config is ignored)" || fail "no cap: calls=$(calls) $(cat "$F/calls")"
+[ "$(calls)" = 8 ] && [ "$(grep -o '[0-9]*:[0-9a-f]\{40\}' "$F/calls" | wc -l | tr -d ' ')" = 8 ] \
+  && ok "no batching: 8 approved PRs get 8 trains at once under max_trains (a leftover batch_max / max_wait_min is ignored)" || fail "no cap: calls=$(calls) $(cat "$F/calls")"
 run_q --if-due; rc=$?
 [ "$rc" -eq 64 ] && grep -q 'unknown arg: --if-due' "$TMP/err" && ok "--if-due is gone: unknown argument, exit 64" || fail "--if-due still accepted: rc=$rc $(cat "$TMP/err")"
-run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" "$@" ) >"$TMP/out" 2>"$TMP/err"; }
+run_q() { ( cd "$R" && bash "$QUEUE" --config "$TMP/cfg.json" --wait "$@" ) >"$TMP/out" 2>"$TMP/err"; }
 
 # ── 4. Hai lượt chạy chồng. Ca này khẳng định: lượt sau thoát 0 ngay (khoá fcntl) và số lời gọi train vẫn là 1.
 reset; cfg true 6
@@ -250,7 +256,7 @@ pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 i=0; while [ ! -e "$F/train.started" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 run_q; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "overlapping run: exits 0 at once, no second train" || fail "overlap: rc=$rc calls=$(calls): $(cat "$TMP/err")"
-grep -qi "lock\|another" "$TMP/err" && ok "  … and says the queue is held" || fail "  … no busy message: $(cat "$TMP/err")"
+grep -q "PR #1: its train is still running; not started again" "$TMP/err" && ok "  … and says the PR's train is still running" || fail "  … no busy message: $(cat "$TMP/err")"
 rm -f "$F/train.hold"; wait "$FIRST"; rc=$?
 [ "$rc" -eq 0 ] && ok "  … the first run finishes normally" || fail "  … first run rc=$rc: $(cat "$TMP/err1")"
 
@@ -308,7 +314,7 @@ echo '{"last_red":true}' > "$STATE"
 for n in 51 52 53 54; do pr "$n" "issue-$((n + 10))-x" $((60 - n)); approve "$n" OWNER "$(sha "$n")"; issue $((n + 10)); done
 printf 'train-result: 51 red\ntrain-result: 52 deferred\ntrain-result: 53 deferred\ntrain-result: 54 deferred\n' > "$F/train.out"
 run_q
-grep -q -- "--prs 51:$(sha 51),52:$(sha 52),53:$(sha 53),54:$(sha 54)\$" "$F/calls" && ok "a stale red mark on disk does not halve the batch" || fail "halved batch: $(cat "$F/calls")"
+[ "$(calls)" = 4 ] && grep -q -- "--prs 51:$(sha 51)\$" "$F/calls" && grep -q -- "--prs 54:$(sha 54)\$" "$F/calls" && ok "a stale red mark on disk does not hold back any PR (one train each)" || fail "held back: $(cat "$F/calls")"
 [ "$(jq -r .last_red "$STATE" 2>/dev/null)" = true ] && ok "  … and a red PR in the train does not write a new mark (the stale file is untouched)" || fail "  … state rewritten: $(cat "$STATE" 2>/dev/null)"
 : > "$F/calls"; rm -f "$STATE"; run_q
 grep -q -- "--prs 52:" "$F/calls" && [ ! -e "$STATE" ] && ok "  … no merge-queue.state is created" || fail "  … state created: $(cat "$STATE" 2>/dev/null)"
@@ -391,7 +397,8 @@ reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 : > "$F/train.hold"; printf 'train-result: 1 merged\n' > "$F/train.out"
 ( cd "$R" && exec bash "$QUEUE" --config "$TMP/cfg.json" ) >"$TMP/out1" 2>"$TMP/err1" & QPID=$!; PIDS="$PIDS $QPID"
 i=0; while [ ! -e "$F/train.started" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-grep -q "^train [0-9][0-9]*$" "$COMMON/super-board/merge-queue.lock.pid" 2>/dev/null && ok "lock.pid records the train pid" || fail "lock.pid: $(cat "$COMMON/super-board/merge-queue.lock.pid" 2>/dev/null)"
+# #676: train chạy nền theo PR, ghi ở merge-queue.inflight (không còn `train <pid>` trong lock.pid).
+grep -q "^1 $(sha 1) issue-11-a [0-9]* [0-9][0-9]* " "$COMMON/super-board/merge-queue.inflight" 2>/dev/null && ok "inflight records the PR's running train" || fail "inflight: $(cat "$COMMON/super-board/merge-queue.inflight" 2>/dev/null)"
 kill -9 "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
 run_q; rc=$?
 [ "$rc" -eq 0 ] && [ "$(calls)" = 1 ] && ok "orphan train alive: no second train" || fail "orphan train: rc=$rc calls=$(calls): $(cat "$TMP/err")"
@@ -403,7 +410,8 @@ i=0; while [ "$i" -lt 60 ]; do alive=0; for t in $(cat "$TMP/train.pids" 2>/dev/
 # ── 13. Antigravity audit (A): queue nhận TERM/INT/HUP giữa đợt → chuyển TERM xuống train con rồi thoát (không để train mồ côi).
 reset; cfg true 6; pr 1 issue-11-a 5; approve 1 OWNER "$(sha 1)"; issue 11
 : > "$TMP/train.pids"; : > "$F/train.hold"; printf 'train-result: 1 merged\n' > "$F/train.out"
-( cd "$R" && exec bash "$QUEUE" --config "$TMP/cfg.json" ) >"$TMP/out1" 2>"$TMP/err1" & QPID=$!; PIDS="$PIDS $QPID"
+# #676: chỉ lượt --wait chờ train nên chỉ nó chuyển TERM xuống train (lượt thường đã thoát ngay sau khi phóng).
+( cd "$R" && exec bash "$QUEUE" --config "$TMP/cfg.json" --wait ) >"$TMP/out1" 2>"$TMP/err1" & QPID=$!; PIDS="$PIDS $QPID"
 i=0; while [ ! -e "$F/train.started" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 TP=$(head -1 "$TMP/train.pids")
 kill -TERM "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
@@ -521,7 +529,7 @@ for k in 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do issue "$k"; done
 : > "$F/train.out"
 ( export SB_MERGE_QUEUE=1; run_q --dry-run ); rc=$?
 OUT="$(cat "$TMP/out" "$TMP/err")"
-printf '%s' "$OUT" | grep -q -- "--prs 4:$(sha 4),1:$RH1\$" && ok "#605 cross-review marker (reviewer≠builder) and bare OWNER approved-head: both batched" || fail "#605 batch: rc=$rc $OUT"
+printf '%s' "$OUT" | grep -q -- "--prs 4:$(sha 4)\$" && printf '%s' "$OUT" | grep -q -- "--prs 1:$RH1\$" && ok "#605 cross-review marker (reviewer≠builder) and bare OWNER approved-head: both queued (one train each)" || fail "#605 batch: rc=$rc $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #2 .*self-review" && ok "#605 reviewer == builder (case-insensitive): rejected as self-review" || fail "#605 self-review not rejected: $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #3 .*not the PR head" && ok "#605 marker on another head: rejected" || fail "#605 head mismatch: $OUT"
 printf '%s' "$OUT" | grep -q "drop PR #5 .*approved-by" && ok "#605 malformed approved-by: rejected (no fallback to bare)" || fail "#605 malformed: $OUT"

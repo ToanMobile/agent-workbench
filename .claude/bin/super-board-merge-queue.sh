@@ -5,7 +5,11 @@
 # (29/10): `--full` chỉ chạy một lần lúc nửa đêm (gate-full), nên không còn lý do chờ đủ PR hay chờ PR cũ. Mỗi lần gọi, MỌI PR hợp lệ đang
 # trong hàng vào một train (một lượt verify cho cả nhóm đang có); không trần đợt, không hạn chờ, không đợi máy rảnh.
 #
-# Usage: super-board-merge-queue.sh --config <config.json> [--dry-run]
+# #676: mỗi lượt NGẮN — thu train đã xong (merge-queue.inflight), phóng tối đa merge_queue.max_trains (mặc định 3) train nền MỘT PR mỗi train
+# (verify main+PR của chính nó, chạy song song qua pool slot; chỉ `gh pr merge` được khoá merge của gate tuần tự hoá), rồi thoát. Lượt sau
+# route kết quả. `--wait` (test / tay): chờ các train vừa phóng rồi thu luôn.
+#
+# Usage: super-board-merge-queue.sh --config <config.json> [--dry-run] [--wait]
 #   Bật/tắt: SB_MERGE_QUEUE=1 bật, =0 tắt, không đặt thì theo config `merge_queue.enabled` (mặc định false).
 #   PR vào hàng: mở, không draft, có nhãn `merge-queue`, comment `approved-head:<sha40>` MỚI NHẤT của OWNER/MEMBER/COLLABORATOR khớp
 #     `headRefOid`. Không khớp (head dời, không có, người ngoài duyệt) → gỡ nhãn + comment lý do. Draft: bỏ qua, giữ nhãn.
@@ -50,11 +54,12 @@ CARD="$HERE/super-board-card.sh"
 NEEDS_YOU="$HERE/super-board-needs-you.py"
 LABEL="merge-queue"
 
-CONFIG=""; DRY=0
+CONFIG=""; DRY=0; WAIT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)  CONFIG="${2:-}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
+    --wait)    WAIT=1; shift ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
@@ -84,9 +89,9 @@ SLUG=${REPO:-"{owner}/{repo}"}   # gh api thay {owner}/{repo} bằng repo của 
 
 # ---- khoá một bản mỗi repo --------------------------------------------------------------------------------------------------------------
 # fcntl.flock trên fd 9 của chính shell này: khoá thuộc open file description, Python thoát rồi shell vẫn giữ tới khi tiến trình kết thúc
-# (macOS không có lệnh flock). Train chạy với `9>&-` nên không giữ khoá: queue chết giữa đợt thì khoá đi theo nó, hàng không kẹt. Để lượt
-# sau không dựng train thứ hai lên train mồ côi còn chạy, merge-queue.lock.pid ghi `queue <pid>` rồi `train <pid>`; lượt giữ được khoá
-# kiểm pid train đó trước (còn sống và lệnh của nó là super-board-merge-train, chống pid tái dùng).
+# (macOS không có lệnh flock). #676: lượt queue NGẮN (vài giây): thu kết quả train đã xong, phóng train mới chạy nền rồi thoát — khoá
+# không bao giờ giữ lúc verify chờ slot. Train chạy với `9>&-` nên không giữ khoá. Train đang chạy của từng PR ghi ở merge-queue.inflight
+# (pid kiểm sống + lệnh là queue/train, chống pid tái dùng): lượt sau không phóng train thứ hai cho PR đó. merge-queue.lock.pid: `queue <pid>`.
 COMMON=$(cd "$REPO_PATH" && cd "$(git rev-parse --git-common-dir)" && pwd -P) || { say "cannot resolve the git common dir of ${REPO_PATH}"; exit 1; }
 QDIR="$COMMON/super-board"; mkdir -p "$QDIR"
 LOCK="$QDIR/merge-queue.lock"
@@ -104,12 +109,6 @@ case "$LRC" in
   3) say "another merge-queue run ($(tr '\n' ' ' < "$LOCK.pid" 2>/dev/null || echo 'pid ?')) holds ${LOCK}; nothing to do"; exit 0 ;;
   *) say "could not lock ${LOCK} (exit ${LRC})"; exit 1 ;;
 esac
-OLD_TRAIN=$(sed -n 's/^train \([0-9][0-9]*\)$/\1/p' "$LOCK.pid" 2>/dev/null | head -1 || true)
-if [ -n "$OLD_TRAIN" ] && kill -0 "$OLD_TRAIN" 2>/dev/null \
-   && ps -o command= -p "$OLD_TRAIN" 2>/dev/null | grep -q 'super-board-merge-train'; then
-  say "the train of an earlier merge-queue run (pid ${OLD_TRAIN}) is still running; no second train this run"
-  exit 0
-fi
 echo "queue $$" > "$LOCK.pid"   # ai đang giữ khoá (và train của nó, ghi thêm lúc chạy), cho lượt sau và người đọc khi hàng có vẻ kẹt
 
 # ---- PR trong hàng ----------------------------------------------------------------------------------------------------------------------
@@ -183,7 +182,8 @@ card_move() {   # card_move <issue> <Status>: lỗi log rồi trả 1 (nhãn gi�
   [ "$rc" -ne 79 ] || { READ_HALT=1; ROUTE_HALT=1; say "card move #$1 $2: GitHub reads halted"; return 1; }
   [ "$rc" -eq 0 ] || { say "card move #$1 $2 failed (exit ${rc})"; return 1; }
 }
-unlabel() { gh_w pr edit "$1" ${REPO:+--repo "$REPO"} --remove-label "$LABEL" || true; }
+UNLABELED=" "   # #676: PR đã gỡ nhãn trong lượt này (trễ nhất quán của nhãn trên GitHub): không phóng train cho nó nữa
+unlabel() { UNLABELED="${UNLABELED}$1 "; gh_w pr edit "$1" ${REPO:+--repo "$REPO"} --remove-label "$LABEL" || true; }
 add_label() {   # add_label <issue> <label> [--remove-label X …]: tạo nhãn khi repo chưa có rồi thử lại một lần
   local k="$1" l="$2"; shift 2
   gh_w issue edit "$k" ${REPO:+--repo "$REPO"} --add-label "$l" "$@" && return 0
@@ -278,7 +278,8 @@ drop_row() {   # drop_row <file> <PR>
   [ -f "$1" ] || return 0
   awk -v p="$2" '$1 != p' "$1" > "$1.tmp" && mv -f "$1.tmp" "$1"
 }
-attempt_clear() { drop_row "$ATTEMPTS" "$1"; drop_row "$PENDING" "$1"; rm -f "$QDIR/merge-queue.detail.$1"; }   # PR rời bảng đếm và hàng route lại
+BASEMOVED_F="$QDIR/merge-queue.basemoved"
+attempt_clear() { drop_row "$ATTEMPTS" "$1"; drop_row "$PENDING" "$1"; drop_row "$BASEMOVED_F" "$1"; rm -f "$QDIR/merge-queue.detail.$1"; }   # PR rời bảng đếm và hàng route lại
 # attempt_retry <PR> <kết quả>: kết quả không kết thúc. n+1 cho dòng <PR> <head> (head khác = đếm lại từ 1); n ≥ 3 → PR rời hàng 🛡.
 attempt_retry() {
   local p="$1" res="$2" head k="" n why ok=0
@@ -435,6 +436,20 @@ ${det}}" "a person reads the gate lines above, fixes what GitHub refused, or mer
       gh_w pr comment "$p" ${REPO:+--repo "$REPO"} --body "[merge-queue] [report] ⚠ head moved · ${res}
 Did: the PR head is no longer the approved one (or its branch is gone from origin); the approval is void
 Next: a fresh review of the new head, then a new approved-head and the ${LABEL} label" || true ;;
+    # #676: train thua đua khi main đang tiến (base dời quá 2 lần trong một train): giữ nhãn, KHÔNG tính lần thử (PR khoẻ không bao giờ
+    # bị đẩy sang Blocked vì main tiến nhanh), không comment; lượt sau phóng train mới trên base mới.
+    # Chống đói (OCR #676): base-moved liên tiếp đếm riêng ở merge-queue.basemoved (<PR> <head> <n>); lần thứ 5 mới tính MỘT lần thử
+    # (attempt_retry: trần 3 ⇒ comment + Blocked 🛡) để người thấy PR không bao giờ thắng đua. Head mới đếm lại.
+    base-moved)
+      local bm
+      bm=$(awk -v p="$p" -v h="$head" '$1 == p && $2 == h {print $3; exit}' "$BASEMOVED_F" 2>/dev/null || true)
+      bm=$(( ${bm:-0} + 1 ))
+      { awk -v p="$p" '$1 != p' "$BASEMOVED_F" 2>/dev/null || true; echo "$p $head $bm"; } > "$BASEMOVED_F.tmp" && mv -f "$BASEMOVED_F.tmp" "$BASEMOVED_F"
+      if [ "$bm" -ge 5 ]; then
+        drop_row "$BASEMOVED_F" "$p"
+        attempt_retry "$p" "base-moved ${bm} times in a row (origin/${BASE} keeps moving while its train verifies)"; return 0
+      fi
+      say "PR #${p}: base-moved (origin/${BASE} kept moving during its train, ${bm}/5); stays queued, no attempt counted"; return 0 ;;
     deferred|timeout|gate-exit-4|*) attempt_retry "$p" "$res"; return 0 ;;
   esac
   if [ "$ok" -ne 0 ]; then
@@ -450,7 +465,104 @@ Next: a fresh review of the new head, then a new approved-head and the ${LABEL} 
   fi
   unlabel "$p"; attempt_clear "$p"
 }
+# ---- train nền theo PR (#676) -----------------------------------------------------------------------------------------------------------
+# merge-queue.inflight: "<PR> <head> <ref> <issue đóng|0> <pid> <dir>" mỗi dòng — train của PR đang chạy nền (pid = subshell phóng nó),
+# kết quả ở <dir>/out, mã thoát ở <dir>/rc (chỉ ghi khi train thoát bình thường; chết vì tín hiệu thì không có rc).
+INFLIGHT="$QDIR/merge-queue.inflight"
+TRAINS_DIR="$QDIR/merge-queue.trains"
+COLLECTED=" "; HALT_RC=0
+in_str() { case "$1" in *" $2 "*) return 0 ;; esac; return 1; }   # in_str "<danh sách cách nhau bởi dấu cách>" <PR>
+inflight_alive() {   # inflight_alive <pid>: subshell phóng train còn sống (lệnh vẫn là queue/train: chống pid tái dùng)
+  [ -n "$1" ] && kill -0 "$1" 2>/dev/null && ps -o command= -p "$1" 2>/dev/null | grep -Eq 'super-board-merge-(queue|train)'
+}
+live_inflight() {   # in " <PR> <PR> … " của các dòng inflight có train còn chạy
+  local n pid out=" "
+  [ -s "$INFLIGHT" ] || { printf ' '; return 0; }
+  while read -r n _ _ _ pid _; do
+    [ -n "${n:-}" ] || continue
+    inflight_alive "$pid" && out="${out}${n} "
+  done < "$INFLIGHT"
+  printf '%s' "$out"
+}
+# collect: route mọi train đã xong (có rc, hoặc pid chết). Chạy TRƯỚC recover_merged / pending (A1): ROUTE_ROWS và CLOSES dựng thẳng từ
+# dòng inflight (PR đã merge / đóng không còn trong `pr list --state open`). Train exit 79 (GitHub dừng đọc): không route, không tính lần
+# thử (như trước #676), HALT_RC=79; exit 9: route các dòng đã có, HALT_RC=9 (79 thắng). Train chết không rc: một lần thử.
+collect() {
+  [ "$DRY" -eq 0 ] && [ -s "$INFLIGHT" ] || return 0
+  local n head ref ci pid dir trc keep="" p res
+  while read -r n head ref ci pid dir; do
+    [ -n "${n:-}" ] || continue
+    if [ ! -f "$dir/rc" ] && inflight_alive "$pid"; then keep="${keep}${n} ${head} ${ref} ${ci} ${pid} ${dir}"$'\n'; continue; fi
+    ROUTE_ROWS="${ROUTE_ROWS}0 ${n} ${head} ${ref}"$'\n'
+    [ "$ci" = 0 ] || CLOSES="${CLOSES}${n} ${ci}"$'\n'
+    COLLECTED="${COLLECTED}${n} "
+    TOUT="$dir/out"; trc=$(cat "$dir/rc" 2>/dev/null || true)
+    cat "$TOUT" 2>/dev/null || true   # log của queue thấy nguyên kết quả train, như trước
+    # stderr của train (log train + merge gate) và của launcher: trước #676 đi thẳng ra stderr của queue (log runner); giữ như vậy trước khi
+    # xoá thư mục (audit Antigravity #676).
+    cat "$dir/err" "$dir/launch.log" >&2 2>/dev/null || true
+    if [ -z "$trc" ]; then
+      say "PR #${n}: its train (pid ${pid}) ended without an exit code (killed); one attempt counted"
+      attempt_retry "$n" "train died without a result" </dev/null
+    elif [ "$trc" -eq 79 ]; then
+      say "PR #${n}: train exit 79 (GitHub reads halted); nothing routed, label kept"; HALT_RC=79
+    elif ! grep -q '^train-result: ' "$TOUT" 2>/dev/null; then
+      if [ "$trc" -eq 4 ]; then say "PR #${n}: train exit 4 (another train holds this PR); nothing ran, no attempt counted"
+      else
+        say "PR #${n}: train exit ${trc} with no train-result line; one attempt counted"
+        attempt_retry "$n" "train exit ${trc} without a train-result" </dev/null
+      fi
+      [ "$trc" -ne 9 ] || [ "$HALT_RC" -eq 79 ] || HALT_RC=9
+    else
+      while read -r p res; do
+        [ -n "${p:-}" ] || continue
+        route_one "$p" "$res" </dev/null
+      done < <(sed -nE 's/^train-result: ([0-9]+) (.+)$/\1 \2/p' "$TOUT")
+      [ "$trc" -ne 9 ] || [ "$HALT_RC" -eq 79 ] || HALT_RC=9
+    fi
+    rm -rf "$dir"
+  done < "$INFLIGHT"
+  printf '%s' "$keep" > "$INFLIGHT.tmp" && mv -f "$INFLIGHT.tmp" "$INFLIGHT"
+  TOUT=""
+}
+# launch_train <PR> <head> <ref>: một train cho MỘT PR (cây main+PR của chính nó), chạy nền, tách khỏi lượt queue này. set +e trong subshell
+# (queue chạy set -e); TERM/INT/HUP tới subshell được chuyển xuống đúng train; train chết vì tín hiệu (≥ 129) thì KHÔNG ghi rc ⇒ lượt sau
+# thấy pid chết không rc ⇒ một lần thử. 9>&-: train không giữ khoá queue; stdout/stderr của launcher ra file: bên gọi đọc queue qua ống
+# không bị train nền giữ ống tới khi xong. Launcher chạy trong SESSION RIÊNG (os.setsid rồi exec bash; macOS không có lệnh setsid):
+# launchd (super-board-queue-schedule.sh, không đặt AbandonProcessGroup) giết cả process group của job khi queue thoát — cùng group
+# thì mọi train nền chết sau mỗi lượt lịch (OCR #676).
+LAUNCHED=()
+LAUNCHER='set +e; cpid=""
+trap "[ -z \"\$cpid\" ] || kill -TERM \"\$cpid\" 2>/dev/null; wait \"\$cpid\" 2>/dev/null; exit 143" TERM INT HUP
+SB_MERGE_CALLER=queue bash "$1" --config "$2" --prs "$3" >"$4/out" 2>"$4/err" </dev/null &
+cpid=$!; wait "$cpid"; rc=$?
+[ "$rc" -ge 129 ] || { echo "$rc" >"$4/rc.tmp" && mv -f "$4/rc.tmp" "$4/rc"; }'
+launch_train() {
+  local n="$1" head="$2" ref="$3" dir ci
+  mkdir -p "$TRAINS_DIR"
+  dir=$(mktemp -d "$TRAINS_DIR/pr${n}.XXXXXX")
+  ci=$(awk -v p="$n" '$1 == p {print $2; exit}' <<<"$CLOSES"); ci=${ci:-0}
+  python3 -I -c 'import os, sys
+os.setsid(); open(sys.argv[-1] + "/session", "w").close()
+os.execvp("bash", ["bash", "-c"] + sys.argv[1:])' \
+    "$LAUNCHER" merge-queue-launch "$TRAIN" "$CONFIG" "${n}:${head}" "$dir" 9>&- >"$dir/launch.log" 2>&1 </dev/null &
+  LAUNCHED+=("$!")
+  # Chờ launcher TÁCH session xong (dấu <dir>/session ghi ngay sau os.setsid) rồi mới tiếp / thoát: queue thoát trước đó thì launchd giết cả
+  # process group lúc python còn khởi động (~14 ms, lâu hơn khi tải cao) — audit Antigravity #676. Tối đa 5 s.
+  local w=0
+  while [ ! -e "$dir/session" ] && [ "$w" -lt 250 ]; do sleep 0.02; w=$((w + 1)); done
+  [ -e "$dir/session" ] || say "PR #${n}: the train launcher did not report its own session within 5 s (a later kill of this run's process group may take it)"
+  echo "${n} ${head} ${ref} ${ci} $! ${dir}" >> "$INFLIGHT"
+  say "PR #${n}: train started for ${n}:${head} (pid $!, ${dir})"
+}
+
+collect
+if [ "$READ_HALT" -eq 1 ] || [ "$HALT_RC" -eq 79 ]; then say "GitHub reads halted while routing finished trains; no new train this run"; exit 79; fi
+if [ "$HALT_RC" -eq 9 ]; then say "a train exited 9 (verification readiness): routed what it reported; stopping"; exit 9; fi
+LIVE=$(live_inflight)
+
 # PR merged còn nhãn (train merge xong, queue chết trước khi route): route `merged` sau khi GitHub xác nhận MERGED. --dry-run chỉ in.
+# PR vừa thu ở collect hoặc đang có train sống thì bỏ qua (kết quả của train sẽ route nó).
 recover_merged() {
   local merged_json n head ref st
   merged_json=$(python3 "$GITHUB_READ" --kind array -- pr list ${REPO:+--repo "$REPO"} --state merged --base "$BASE" --label "$LABEL" \
@@ -458,6 +570,7 @@ recover_merged() {
   CLOSES="${CLOSES}$(closes_rows "$merged_json")"$'\n'
   while read -r n head ref; do
     [ -n "${n:-}" ] || continue
+    if in_str "$COLLECTED" "$n" || in_str "$LIVE" "$n"; then continue; fi
     if [ "$DRY" -eq 1 ]; then say "would route PR #${n} as merged (merged while still labelled ${LABEL})"; continue; fi
     ROUTE_ROWS="${ROUTE_ROWS}0 ${n} ${head} ${ref}"$'\n'
     say "PR #${n} merged but still labelled ${LABEL}: routing it as merged"
@@ -469,27 +582,17 @@ PRS_JSON=$(python3 "$GITHUB_READ" --kind array -- pr list ${REPO:+--repo "$REPO"
              --json number,headRefName,headRefOid,isDraft,closingIssuesReferences) || exit $?
 CLOSES="${CLOSES}$(closes_rows "$PRS_JSON")"$'\n'
 NOW=$(date +%s)
-# Mốc gắn nhãn (REST timeline) nhớ trong merge-queue.labeled theo <PR> <head>, nên các tick sau không đọc lại timeline.
-CANDS=$(printf '%s' "$PRS_JSON" | jq -r '.[] | select(.isDraft != true) | "\(.number) \(.headRefOid) \(.headRefName)"')
-# PR có dòng merge-queue.pending cùng head: kết quả đã có, chỉ route lại các bước bắt buộc, không vào đợt (không verify lại).
-if [ -s "$PENDING" ] && [ -n "$CANDS" ]; then
-  KEEP_CANDS=""
-  while read -r n head ref; do
-    [ -n "${n:-}" ] || continue
-    res=$(awk -v p="$n" -v h="$head" '$1 == p && $2 == h {print $3; exit}' "$PENDING")
-    if [ -z "$res" ]; then KEEP_CANDS="${KEEP_CANDS}${n} ${head} ${ref}"$'\n'; continue; fi
-    if [ "$DRY" -eq 1 ]; then say "would route PR #${n} again (${res}, a routing step failed last run)"; continue; fi
-    ROUTE_ROWS="${ROUTE_ROWS}0 ${n} ${head} ${ref}"$'\n'
-    say "PR #${n}: routing ${res} again (a routing step failed last run)"
-    route_one "$n" "$res" </dev/null
-  done < <(printf '%s\n' "$CANDS")
-  CANDS=${KEEP_CANDS%$'\n'}
-fi
-if [ "$READ_HALT" -eq 1 ]; then say "GitHub reads halted while routing PRs from an earlier run; no train this run"; exit 79; fi
+# Mốc gắn nhãn (REST timeline) nhớ trong merge-queue.labeled theo <PR> <head>, nên các tick sau không đọc lại timeline. #676: labeled phản
+# ánh MỌI PR còn trong hàng (cả PR đang có train, PR chờ route lại) cho runner (RUNAWAY) / status; PR vừa gỡ nhãn trong lượt này thì bỏ.
+CANDS=""
+while read -r n head ref; do
+  [ -n "${n:-}" ] || continue
+  in_str "$UNLABELED" "$n" || CANDS="${CANDS}${n} ${head} ${ref}"$'\n'
+done < <(printf '%s' "$PRS_JSON" | jq -r '.[] | select(.isDraft != true) | "\(.number) \(.headRefOid) \(.headRefName)"')
+CANDS=${CANDS%$'\n'}
 for n in $(printf '%s' "$PRS_JSON" | jq -r '.[] | select(.isDraft == true) | .number'); do say "PR #${n} is a draft; skipped (label kept)"; done
-N=0; [ -z "$CANDS" ] || N=$(printf '%s\n' "$CANDS" | wc -l | tr -d ' ')
-[ "$N" -gt 0 ] || { say "nothing queued"; exit 0; }
 LABELED="$QDIR/merge-queue.labeled"
+if [ -z "$CANDS" ]; then rm -f "$LABELED"; say "nothing queued"; exit 0; fi
 ROWS=""   # "<mốc gắn nhãn epoch> <PR> <head> <nhánh>" mỗi dòng, cũ nhất trước
 load_rows() {
   local n head ref at tl cache="" out=""
@@ -508,11 +611,32 @@ load_rows() {
   ROWS=$(printf '%s' "$out" | sort -n -k1,1 -k2,2)
   printf '%s\n' "$ROWS" | awk 'NF {print $2, $3, $1, $4}' > "$LABELED.tmp" && mv -f "$LABELED.tmp" "$LABELED"
 }
-
 load_rows
 
-# Đợt: đi từ PR cũ nhất, đọc comment duyệt từng PR (GraphQL); PR duyệt sai rời hàng ngay lượt này.
-BATCH=""; NB=0
+# PR có dòng merge-queue.pending cùng head: kết quả đã có, chỉ route lại các bước bắt buộc (không phóng train, không verify lại). PR vừa thu
+# ở collect thì không route lại lần nữa trong lượt này. PR đang có train sống: không phóng thêm.
+LAUNCH_ROWS=""
+while read -r at n head ref; do
+  [ -n "${n:-}" ] || continue
+  res=""; [ ! -s "$PENDING" ] || res=$(awk -v p="$n" -v h="$head" '$1 == p && $2 == h {print $3; exit}' "$PENDING")
+  if [ -n "$res" ]; then
+    in_str "$COLLECTED" "$n" && continue
+    if [ "$DRY" -eq 1 ]; then say "would route PR #${n} again (${res}, a routing step failed last run)"; continue; fi
+    ROUTE_ROWS="${ROUTE_ROWS}0 ${n} ${head} ${ref}"$'\n'
+    say "PR #${n}: routing ${res} again (a routing step failed last run)"
+    route_one "$n" "$res" </dev/null
+    continue
+  fi
+  if in_str "$LIVE" "$n"; then say "PR #${n}: its train is still running; not started again"; continue; fi
+  LAUNCH_ROWS="${LAUNCH_ROWS}${at} ${n} ${head} ${ref}"$'\n'
+done < <(printf '%s\n' "$ROWS")
+if [ "$READ_HALT" -eq 1 ]; then say "GitHub reads halted while routing PRs from an earlier run; no train this run"; exit 79; fi
+
+# Duyệt: đi từ PR cũ nhất, đọc comment duyệt từng PR (GraphQL); PR duyệt sai rời hàng ngay lượt này. Phóng tối đa
+# merge_queue.max_trains (mặc định 3) trừ số train còn chạy; PR dư nằm yên trong hàng (lượt sau), không tính lần thử.
+MAX_TRAINS=$(posint "$(echo "$CONFIG_JSON" | jq -r '.merge_queue.max_trains // empty')" 3)
+NLIVE=0; for n in $LIVE; do NLIVE=$((NLIVE + 1)); done
+SLOTS=$((MAX_TRAINS - NLIVE)); NB=0
 while read -r at n head ref; do
   [ -n "${n:-}" ] || continue
   comments=$(python3 "$GITHUB_READ" --kind object -- pr view "$n" ${REPO:+--repo "$REPO"} --json comments) || exit $?
@@ -532,54 +656,38 @@ while read -r at n head ref; do
              fi ;;
     *) reject "$n" "approved-head ${approved:0:7}: approval source unreadable"; continue ;;
   esac
-  BATCH="${BATCH}${at} ${n} ${head} ${ref}"$'\n'; NB=$((NB + 1))
-done < <(printf '%s\n' "$ROWS")
-BATCH=${BATCH%$'\n'}
-[ "$NB" -gt 0 ] || { say "no queued PR carries a valid approval; nothing to run"; exit 0; }
-PRS_ARG=$(printf '%s\n' "$BATCH" | awk '{printf "%s%s:%s", (NR > 1 ? "," : ""), $2, $3}')
-if [ "$DRY" -eq 1 ]; then
-  echo "merge-queue: would run super-board-merge-train.sh --prs ${PRS_ARG}"
-  exit 0
-fi
-say "train of $(printf '%s\n' "$BATCH" | wc -l | tr -d ' '): ${PRS_ARG}"
+  if [ "$NB" -ge "$SLOTS" ]; then say "PR #${n}: ${NLIVE} train(s) running + ${NB} started ≥ merge_queue.max_trains ${MAX_TRAINS}; waits for the next run"; continue; fi
+  NB=$((NB + 1))
+  if [ "$DRY" -eq 1 ]; then echo "merge-queue: would run super-board-merge-train.sh --prs ${n}:${head}"; continue; fi
+  ROUTE_ROWS="${ROUTE_ROWS}${at} ${n} ${head} ${ref}"$'\n'
+  launch_train "$n" "$head" "$ref"
+done < <(printf '%s' "$LAUNCH_ROWS")
+[ "$NB" -gt 0 ] || say "no new train this run"
+[ "$DRY" -eq 0 ] || exit 0
 
-# ---- một lượt train ---------------------------------------------------------------------------------------------------------------------
-ROUTE_ROWS="${ROUTE_ROWS}${BATCH}"$'\n'
-TOUT=$(mktemp); ERRF=$(mktemp)
-TPID=""
-trap 'rm -f "$TOUT" "$ERRF"' EXIT
-# Queue bị dừng (TERM/INT/HUP của runner hay người) giữa đợt: chuyển tín hiệu xuống train con rồi thoát, không bỏ train chạy mồ côi.
-# SIGKILL không bắt được: lượt sau thấy `train <pid>` còn sống trong merge-queue.lock.pid và không dựng train thứ hai.
-forward_stop() { [ -z "$TPID" ] || kill -TERM "$TPID" 2>/dev/null || true; exit "$1"; }
+# ---- --wait (test / chạy tay): chờ các train vừa phóng rồi thu luôn ----------------------------------------------------------------------
+# Thả khoá TRƯỚC khi chờ (lượt queue khác vẫn chạy được), lấy lại khoá (chờ có trần) rồi thu như đầu lượt. Chỉ ở đây queue chuyển TERM /
+# INT / HUP xuống các subshell phóng train (chúng chuyển tiếp xuống train). Không có --wait (cách super-board-run.sh merge_queue_due và
+# plist của super-board-queue-schedule.sh gọi queue, grep 01/11): queue thoát ngay, lượt sau thu.
+[ "$WAIT" -eq 1 ] && [ "${#LAUNCHED[@]}" -gt 0 ] || exit 0
+forward_stop() { local t; for t in ${LAUNCHED[@]+"${LAUNCHED[@]}"}; do kill -TERM "$t" 2>/dev/null || true; done; exit "$1"; }
 trap 'forward_stop 143' TERM; trap 'forward_stop 130' INT; trap 'forward_stop 129' HUP
-TRC=0
-# 9>&-: train và mọi tiến trình nền của nó (verify, gate) không mang khoá của queue; queue chết thì khoá đi theo nó, không kẹt hàng.
-SB_MERGE_CALLER=queue bash "$TRAIN" --config "$CONFIG" --prs "$PRS_ARG" >"$TOUT" 9>&- &
-TPID=$!
-echo "train $TPID" >> "$LOCK.pid"
-wait "$TPID" || TRC=$?
-TPID=""
+exec 9>&-
+for t in "${LAUNCHED[@]}"; do wait "$t" 2>/dev/null || true; done
+exec 9>>"$LOCK"
+python3 -I -c '
+import fcntl, sys, time
+end = time.time() + float(sys.argv[1])
+while True:
+    try:
+        fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+    except OSError:
+        if time.time() > end: sys.exit(3)
+        time.sleep(0.2)
+' "${SB_MQ_WAIT_LOCK_S:-600}" || { say "--wait: could not take ${LOCK} again; the next run routes the finished trains"; exit 0; }
 echo "queue $$" > "$LOCK.pid"
-cat "$TOUT"
-if [ "$TRC" -eq 79 ]; then say "train exit 79 (GitHub reads halted); nothing routed, labels kept"; exit 79; fi
-if ! grep -q '^train-result: ' "$TOUT"; then
-  if [ "$TRC" -eq 4 ]; then
-    # Train thấy merge-train.lock bận (một train khác đang chạy): các PR chưa chạy, không tính lần thử.
-    say "train exit 4 (another train holds merge-train.lock); nothing ran, labels kept, no attempt counted"; exit 0
-  fi
-  say "train exit ${TRC} with no train-result line; nothing routed, labels kept; one attempt counted per PR"
-  while read -r _ p _ _; do [ -n "${p:-}" ] && attempt_retry "$p" "train exit ${TRC} without a train-result" </dev/null; done < <(printf '%s\n' "$BATCH")
-  if [ "$READ_HALT" -eq 1 ]; then say "GitHub reads halted while counting attempts: stopping"; exit 79; fi
-  [ "$TRC" -ne 9 ] || exit 9
-  exit 0
-fi
-
-# ---- route từng train-result ------------------------------------------------------------------------------------------------------------
-while read -r p res; do
-  [ -n "${p:-}" ] || continue
-  route_one "$p" "$res" </dev/null
-done < <(sed -nE 's/^train-result: ([0-9]+) (.+)$/\1 \2/p' "$TOUT")
-
-if [ "$READ_HALT" -eq 1 ]; then say "GitHub reads halted while routing: routed what needed no read; stopping"; exit 79; fi
-if [ "$TRC" -eq 9 ]; then say "train exit 9 (verification readiness): routed what it reported; stopping"; exit 9; fi
+READ_HALT=0; HALT_RC=0; ROUTE_ROWS=""; COLLECTED=" "
+collect
+if [ "$READ_HALT" -eq 1 ] || [ "$HALT_RC" -eq 79 ]; then say "GitHub reads halted while routing: routed what needed no read; stopping"; exit 79; fi
+if [ "$HALT_RC" -eq 9 ]; then say "train exit 9 (verification readiness): routed what it reported; stopping"; exit 9; fi
 exit 0
