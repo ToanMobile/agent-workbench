@@ -97,8 +97,12 @@
 #      — or the merge call failed while GitHub still shows the PR OPEN at the verified head (nothing merged; next wave retries)
 #   5  the base could not be merged in (real conflict) — needs a rebase pass; with no conflicted file (a git hook refused
 #      the local merge commit) the gate prints the git/hook message instead of the file list
+#   14 GitHub reports the PR CONFLICTING with the base (read inside the lock, before verify): a merge driver that exists only
+#      locally (merge=union, merge=devkit-matrix) would let the scratch merge pass and GitHub refuse `gh pr merge` after a full
+#      verify. Nothing verified, nothing merged, lock released. Merge origin/<base> into the PR branch, push, run the gate again
+#      with the new --expect-head (for a board card: a rebase pass)
 #   1  could not read the PR head, resolve origin/<base>, or create the scratch
-#      worktree. Not a conflict and not a rebase pass (the lane treats only 2 and 5
+#      worktree. Not a conflict and not a rebase pass (the lane treats only 2, 5 and 14
 #      as a rebase pass).
 #   6  the PR head is not the commit that was reviewed — review evidence is void,
 #      the card goes back to Review (not Blocked, not a rebase pass)
@@ -638,6 +642,24 @@ if [ "$PREFLIGHT" -eq 1 ]; then
   fi
   echo "preflight: ok"
   exit 0
+fi
+
+# ---- GitHub còn coi PR là xung đột không (#881 #883 #885, 02/11) ----------------------------------------------------------------------
+# .gitattributes gộp test_durations.txt (merge=union) và ma trận (merge=devkit-matrix) bằng driver chỉ có ở local: scratch bên dưới gộp
+# sạch, verify xanh 30–35 phút, rồi GitHub từ chối `gh pr merge` ("Pull Request has merge conflicts", exit 4). Đọc `mergeable` trong
+# khoá, trước scratch và verify: CONFLICTING ⇒ thoát 14 (trap EXIT thả khoá). UNKNOWN (GitHub còn đang tính) ⇒ đọc lại tối đa 3 lần.
+# Đọc lỗi hay UNKNOWN mãi ⇒ đi tiếp như trước: `gh pr merge --match-head-commit` vẫn là chốt cuối, kiểm này chỉ bỏ verify vô ích.
+# Gate không tự gộp base hay push lên nhánh PR (#570); --expect-head / approved-head giữ nguyên. SB_MERGEABLE_POLL_S: móc test.
+mergeable_now() { gh pr view "$PR" ${REPO:+--repo "$REPO"} --json mergeable -q .mergeable 2>/dev/null | head -1 | tr -d '[:space:]' || true; }
+MG_POLL=${SB_MERGEABLE_POLL_S:-10}; [[ "$MG_POLL" =~ ^[0-9]{1,3}$ ]] || MG_POLL=10
+MERGEABLE=$(mergeable_now); MG_TRY=0
+while [ "$MERGEABLE" = UNKNOWN ] && [ "$MG_TRY" -lt 3 ]; do
+  sleep "$MG_POLL"; MG_TRY=$((MG_TRY + 1)); MERGEABLE=$(mergeable_now)
+done
+if [ "$MERGEABLE" = CONFLICTING ]; then
+  say "GitHub reports PR #${PR} CONFLICTING with ${BASE} (a merge driver such as merge=union / merge=devkit-matrix resolves it only locally; GitHub would refuse the merge after verify): nothing verified, nothing merged"
+  say "fix: in the PR worktree run \`git merge --no-edit origin/${BASE}\`, push it plainly (\`git push origin ${HEAD_REF}\`), then run the gate again with --expect-head <the new head>"
+  exit 14
 fi
 
 git -C "$REPO_PATH" worktree add --detach "$SCRATCH" "$HEAD_SHA" --quiet 2>/dev/null || {

@@ -758,7 +758,7 @@ The three locks (assignee, in-flight file, lane PID) are defense in depth: any o
 | No card progresses for 3 ticks AND no lane is idle | Halt, dump state |
 | Auth expires mid-run | Halt, ping user with refresh instruction |
 | Pre-flight check fails on re-validation | Halt with the specific missing item |
-| Merge conflict, or a stale branch the merge gate rejects (exit 2 / 5) | Move card to **`Ready`** with the `loop:rebase` label — NOT Blocked. See "The rebase pass" below |
+| Merge conflict, or a stale branch the merge gate rejects (exit 2 / 5; exit 14 = GitHub reports the PR CONFLICTING) | Move card to **`Ready`** with the `loop:rebase` label — NOT Blocked. See "The rebase pass" below |
 | Merge gate verify red on a branch not behind the base (exit 11) | Move card to **`Ready`** with `loop:rebuild-N` and a `[builder]` thread quoting the gate's verify line — NOT a rebase pass, NOT Blocked |
 | User-defined time/budget window reached | Graceful halt: finish in-flight workers, no new dispatches |
 | Destructive action would be required (prod deploy, db drop, secret rotation) | Halt, never proceed; move card to Blocked with reason 🛡 |
