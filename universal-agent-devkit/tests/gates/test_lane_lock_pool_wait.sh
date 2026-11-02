@@ -6,9 +6,11 @@
 #   P3. không deadlock: pool gate trống ra khi B giữ slot ⇒ cháu của A vào pool, A xong rc 0 trước khi B xong
 #   P4. A xong không xoá file .owner của B      P5. B giữ slot ⇒ C chờ (không quá LANE_LOCK_SLOTS việc chạy thật)
 #   P6. vé chờ của tiến trình KHÔNG phải hậu duệ ⇒ A giữ slot
-#   P7. vé wait_s 0 (thăm dò chỗ trống của gate) hay vé còn non (< LANE_LOCK_POOL_WAIT_S) ⇒ A giữ slot; vé chết không bị lane_lock xoá
+#   P7. vé wait_s 0 (thăm dò chỗ trống của gate) hay vé còn non (< LANE_LOCK_POOL_WAIT_S) ⇒ A giữ slot; vé chết không bị lane_lock xoá;
+#       d. vé hỏng (pid 1e400), FIFO, symlink, thư mục tên *.json ⇒ wrapper sống, không treo   e. PID tái dùng (sinh sau t0 của vé) ⇒ giữ slot
 #   P8. TERM cho A sau khi nhả ⇒ rc 143, cháu chết theo nhóm, không để lại owner của A
 #   P9. không file mới trong LANE_LOCK_DIR
+#   P10. việc chạy song song với người chờ ⇒ không nhả khi nó còn chạy   P11. `waiter; job` ⇒ lấy lại slot khi ra khỏi pool
 # Mỗi ca dùng LANE_LOCK_DIR / SB_HEAVY_SLOT_DIR riêng (mktemp -d), 1 slot lane, tải giả 3, pool gate 1 slot bị một tiến trình giữ.
 # Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
@@ -98,8 +100,10 @@ import json, os, sys, time
 q = os.path.join(os.environ["SB_HEAVY_SLOT_DIR"], "queue", "gate")
 os.makedirs(q, exist_ok=True)
 mine = os.path.join(q, "%d-000000000001.json" % os.getpid())
-# t0 lùi 10 s: đủ tuổi (> LANE_LOCK_POOL_WAIT_S 1) mà ticket_alive vẫn sống (≤ wait_s + 60) ⇒ chỉ luật wait_s > 0 loại được vé này
-json.dump({"pid": os.getpid(), "prio": "interactive", "est_s": 600.0, "t0": time.time() - 10, "wait_s": 0.0,
+# ngủ 3 s rồi ghi t0 lùi 1.5 s: đủ tuổi (> LANE_LOCK_POOL_WAIT_S 1), sau lúc tiến trình sinh (không bị coi là PID tái dùng), ticket_alive
+# vẫn sống (≤ wait_s + 60) ⇒ chỉ luật wait_s > 0 loại được vé này
+time.sleep(3)
+json.dump({"pid": os.getpid(), "prio": "interactive", "est_s": 600.0, "t0": time.time() - 1.5, "wait_s": 0.0,
            "label": "probe", "cont": False}, open(mine, "w"))
 open(sys.argv[1] + ".start", "w").write(repr(time.time()))
 time.sleep(3)
@@ -158,7 +162,7 @@ if holder; then
     if has_in B2.start 15; then ok "2. cháu setsid vẫn được nhận ra (chuỗi ppid) ⇒ nhả slot"
     else bad "2. cháu setsid chờ pool mà A2 vẫn giữ slot" "$(log1 A2)"; fi
   else bad "2. cháu của A2 không chạy" "$(log1 A2)"; fi
-fi
+else bad "2. không chiếm được pool gate cho fixture"; fi
 unhold; wait_job A2 10; wait_job B2 10
 
 # P6: vé chờ của tiến trình KHÔNG phải hậu duệ ⇒ A6 giữ slot
@@ -168,7 +172,7 @@ if holder; then
   has_in W6.wpid 5 >/dev/null
   job A6 4; has_in A6.start 5 >/dev/null; job B6 0.2
   sleep 2.5   # vé của W6 còn sống trong lúc A6 chạy: đủ để bản sai nhả slot (POOL_POLL 0.3 + WAIT 1)
-fi
+else bad "6. không chiếm được pool gate cho fixture"; fi
 unhold; wait_job W6 10; wait_job A6 10; wait_job B6 10
 # ca phủ định so MỐC GIỜ (B bắt đầu sau khi A xong), không đếm vòng chờ: dưới tải cao vòng sleep 0.05 dài hơn 0.05 s
 if ! grep -q 'nhả slot lane' "${TMP}/A6.log" && [ "$(val B6.start)" != 0 ] && [ "$(val A6.end)" != 0 ] && ! lt "$(val B6.start)" "$(val A6.end)"
@@ -181,7 +185,7 @@ mkdir -p "${SB_HEAVY_SLOT_DIR}/queue/gate"
 dead="${SB_HEAVY_SLOT_DIR}/queue/gate/999999-0000000000ff.json"
 printf '{"pid": 999999, "prio": "interactive", "est_s": 600.0, "t0": 1.0, "wait_s": 60.0, "label": "dead", "cont": false}\n' > "${dead}"
 ll A7 python3 "${TMP}/fake_ticket.py" "${TMP}/A7"; has_in A7.start 5 >/dev/null; job B7 0.2
-wait_job A7 10; wait_job B7 10
+wait_job A7 15; wait_job B7 10
 if ! grep -q 'nhả slot lane' "${TMP}/A7.log" && [ "$(val B7.start)" != 0 ] && [ "$(val A7.end)" != 0 ] && ! lt "$(val B7.start)" "$(val A7.end)"
 then ok "7a. vé wait_s 0 (thăm dò chỗ trống) ⇒ A7 giữ slot"
 else bad "7a. vé wait_s 0 làm A7 nhả slot" "A7 end $(val A7.end), B7 start $(val B7.start); $(log1 A7)"; fi
@@ -193,11 +197,80 @@ if holder; then
   ( LANE_LOCK_POOL_WAIT_S=30 exec python3 "${LL_PY}" A7b -- bash -c "$(waiter_cmd A7b 0)" ) > "${TMP}/A7b.log" 2>&1 & echo $! > "${TMP}/A7b.pid"
   has_in A7b.wpid 5 >/dev/null; job B7b 0.2
   sleep 2.5   # đủ để bản sai nhả slot (POOL_POLL 0.3 + WAIT 1) trước khi pool gate trống ra
-fi
+else bad "7b. không chiếm được pool gate cho fixture"; fi
 unhold; wait_job A7b 10; wait_job B7b 10
 if ! grep -q 'nhả slot lane' "${TMP}/A7b.log" && [ "$(val B7b.start)" != 0 ] && [ "$(val A7b.end)" != 0 ] && ! lt "$(val B7b.start)" "$(val A7b.end)"
 then ok "7b. vé còn non ⇒ A7b giữ slot"
 else bad "7b. vé chờ chưa đủ LANE_LOCK_POOL_WAIT_S mà A7b đã nhả" "A7b end $(val A7b.end), B7b start $(val B7b.start); $(log1 A7b)"; fi
+
+# P7d: vé hỏng (pid 1e400 ⇒ OverflowError trong ticket_alive), FIFO, symlink trong thư mục vé ⇒ wrapper không chết, không treo, giữ slot
+#      (không có waiter heavy_slot thật trong ca này: _read_tickets của nó mở vé bằng open() thường)
+fresh p7d
+q="${SB_HEAVY_SLOT_DIR}/queue/gate"; mkdir -p "${q}"
+printf '{"pid": 1e400, "prio": "interactive", "est_s": 600.0, "t0": %s, "wait_s": 60.0, "label": "bad", "cont": false}\n' \
+  "$(python3 -c 'import time; print(time.time() - 10)')" > "${q}/1-0000000000aa.json"
+mkfifo "${q}/2-0000000000bb.json"; ln -s /etc/hosts "${q}/3-0000000000cc.json"; mkdir "${q}/4-0000000000ee.json"
+job A7d 3; has_in A7d.start 5 >/dev/null; job B7d 0.2
+wait_job A7d 15; wait_job B7d 10
+if [ "$(val A7d.rc)" = 0 ] && ! grep -q 'Traceback' "${TMP}/A7d.log" && [ "$(val B7d.start)" != 0 ] && ! lt "$(val B7d.start)" "$(val A7d.end)"
+then ok "7d. vé hỏng / FIFO / symlink: wrapper sống, không treo, giữ slot"
+else bad "7d. vé hỏng làm wrapper chết / treo / nhả slot" "A7d rc $(val A7d.rc), A7d end $(val A7d.end), B7d start $(val B7d.start); $(log1 A7d)"; fi
+
+# P7e: PID tái dùng — vé của hậu duệ ghi t0 TRƯỚC lúc tiến trình mang PID đó sinh ra (vé mồ côi) ⇒ giữ slot
+cat > "${TMP}/reuse.py" <<'PY'
+import json, os, subprocess, sys, time
+q = os.path.join(os.environ["SB_HEAVY_SLOT_DIR"], "queue", "gate")
+os.makedirs(q, exist_ok=True)
+kid = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])   # hậu duệ thật, vừa sinh
+mine = os.path.join(q, "%d-0000000000dd.json" % kid.pid)
+json.dump({"pid": kid.pid, "prio": "interactive", "est_s": 600.0, "t0": time.time() - 4, "wait_s": 60.0, "label": "reused",
+           "cont": False}, open(mine, "w"))
+open(sys.argv[1] + ".start", "w").write(repr(time.time()))
+kid.wait()
+os.remove(mine)
+open(sys.argv[1] + ".end", "w").write(repr(time.time()))
+PY
+fresh p7e
+ll A7e python3 "${TMP}/reuse.py" "${TMP}/A7e"; has_in A7e.start 5 >/dev/null; job B7e 0.2
+wait_job A7e 15; wait_job B7e 10
+if ! grep -q 'nhả slot lane' "${TMP}/A7e.log" && [ "$(val B7e.start)" != 0 ] && [ "$(val A7e.end)" != 0 ] && ! lt "$(val B7e.start)" "$(val A7e.end)"
+then ok "7e. vé có PID tái dùng (tiến trình sinh sau t0) ⇒ giữ slot"
+else bad "7e. vé PID tái dùng làm A7e nhả slot" "A7e end $(val A7e.end), B7e start $(val B7e.start); $(log1 A7e)"; fi
+
+# log_has <tên> <chuỗi> <giây>: log của lane có chuỗi đó trong hạn (đếm vòng: chỉ dùng cho điều kiện dương)
+log_has() { local i=0 lim; lim="$(python3 -c "print(int(float('$3') * 20))")"
+  while ! grep -q "$2" "${TMP}/$1.log" 2>/dev/null && [ "${i}" -lt "${lim}" ]; do sleep 0.05; i=$((i + 1)); done; grep -q "$2" "${TMP}/$1.log"; }
+
+# P10: việc chạy SONG SONG với người chờ (`waiter & job; wait`) ⇒ không nhả khi job còn chạy (review Claude P1-1: 2 việc thật / 1 slot)
+fresh p10
+if holder; then
+  ( JOB_P="${TMP}/A10j" JOB_DUR=4 exec python3 "${LL_PY}" A10 -- \
+      bash -c "python3 '${TMP}/waiter.py' '${HS_BIN}' '${TMP}/A10' 0 & python3 '${TMP}/job.py'; wait" ) > "${TMP}/A10.log" 2>&1 &
+  echo $! > "${TMP}/A10.pid"
+  has_in A10j.start 5 >/dev/null; has_in A10.wpid 5 >/dev/null; job B10 0.2
+  has_in A10j.end 15 >/dev/null; has_in B10.start 15 >/dev/null
+else bad "10. không chiếm được pool gate cho fixture"; fi
+unhold; wait_job A10 15; wait_job B10 10
+if [ "$(val B10.start)" != 0 ] && [ "$(val A10j.end)" != 0 ] && ! lt "$(val B10.start)" "$(val A10j.end)"; then
+  ok "10. việc song song với người chờ ⇒ chỉ nhả sau khi việc đó xong"
+else bad "10. nhả slot khi lệnh còn việc chạy song song ngoài pool" "A10 job end $(val A10j.end), B10 start $(val B10.start); $(log1 A10)"; fi
+
+# P11: lệnh tuần tự (`waiter; job`) ⇒ nhả khi chờ pool, LẤY LẠI slot khi ra khỏi pool: C chỉ chạy sau phần đuôi của A
+fresh p11
+if holder; then
+  ( JOB_P="${TMP}/A11t" JOB_DUR=4 exec python3 "${LL_PY}" A11 -- \
+      bash -c "python3 '${TMP}/waiter.py' '${HS_BIN}' '${TMP}/A11' 0; python3 '${TMP}/job.py'" ) > "${TMP}/A11.log" 2>&1 &
+  echo $! > "${TMP}/A11.pid"
+  if has_in A11.wpid 5 && log_has A11 'nhả slot lane' 15; then
+    unhold; has_in A11t.start 10 >/dev/null
+    sleep 2   # A thăm dò mỗi 0.3 s: đủ để lấy lại slot đang trống
+    job C11 0.2
+  else bad "11. A11 không nhả slot khi chờ pool (không dựng được ca)" "$(log1 A11)"; fi
+else bad "11. không chiếm được pool gate cho fixture"; fi
+unhold; wait_job A11 20; wait_job C11 10
+if grep -q 'lấy lại slot lane' "${TMP}/A11.log" && [ "$(val C11.start)" != 0 ] && [ "$(val A11t.end)" != 0 ] \
+   && ! lt "$(val C11.start)" "$(val A11t.end)"; then ok "11. ra khỏi pool ⇒ lấy lại slot, C chạy sau phần đuôi của A"
+else bad "11. phần đuôi sau gate chạy không slot" "A11 tail $(val A11t.start)–$(val A11t.end), C11 start $(val C11.start); $(log1 A11)"; fi
 
 # P8: TERM cho A8 sau khi nhả ⇒ rc 143, cháu chết theo nhóm, owner còn là của B8
 fresh p8
@@ -211,7 +284,7 @@ if holder; then
     if grep -q '^B8 ' "${LANE_LOCK_DIR}/lane-1.owner" 2>/dev/null; then ok "8b. owner vẫn của B8 (A8 không để lại / xoá owner)"
     else bad "8b. owner sai sau khi A8 bị TERM" "$(cat "${LANE_LOCK_DIR}/lane-1.owner" 2>/dev/null || echo không-có)"; fi
   else bad "8. không dựng được ca (A8 chờ pool, B8 lấy slot)" "$(log1 A8)"; fi
-fi
+else bad "8. không chiếm được pool gate cho fixture"; fi
 unhold; wait_job A8 5; wait_job B8 15
 
 echo

@@ -6,6 +6,7 @@
 #   5. tải 40: hai gate nhỏ giữ đủ 2 slot ⇒ gate nhỏ thứ ba chờ (không bao giờ 3 người giữ)
 #   6. tải 15: việc nặng giữ slot 1 ⇒ gate nhỏ lấy slot 2 chạy song song   7. tải 15: gate nhỏ đang giữ ⇒ việc nặng chờ nó xong
 #   8. bộ thăm dò lỗi / quá giờ ⇒ coi là nặng (chờ)   9. tải thấp: không gọi bộ thăm dò   10. không file khoá / marker mới
+#   11. base: nhánh đích, không nhánh đích thì @{upstream}   12–14. ma trận, covers, rule chỉ-thêm, runner kit   15. test gọi gradle ⇒ nặng
 # Fixture: repo git tạm với kit/bin/post-fix-gate.py giả (là chính việc chạy) và kit/bin/scoped_gate.py giả (số test đọc từ file).
 # Tương thích bash 3.2.
 . "$(cd "$(dirname "$0")/../.." && pwd)/tests/lib/clean_git_env.sh"   # không thừa hưởng GIT_*: tests/lib/clean_git_env.sh
@@ -60,6 +61,7 @@ def find_matrix_path(_m=None):
     p = Path(os.getcwd()) / ".agents" / "regression_matrix.active.json"
     return p if p.exists() else None
 def load_active_matrix(_m=None, _base="HEAD"): return {}, None
+def trust_additive_matrix(matrix, problem, _path, _base): return matrix, problem, []
 if __name__ == "__main__":
     p, dur = os.environ["JOB_P"], float(os.environ.get("JOB_DUR", "0.2"))
     open(p + ".start", "w").write(repr(time.time()))
@@ -159,7 +161,7 @@ release_all
 load 40; ntests 3; gate L5a 2.5 --run-tests --scoped; gate L5b 2.5 --run-tests --scoped
 if started_in L5a 6 && started_in L5b 6; then
   gate L5c 0.2 --run-tests --scoped
-  started_in L5c 8 >/dev/null
+  started_in L5c 8 >/dev/null; wait_job L5a; wait_job L5b; wait_job L5c
   first_end="$(python3 -c 'import sys; print(min(float(sys.argv[1]), float(sys.argv[2])))' "$(val L5a.end)" "$(val L5b.end)")"
   if [ "$(val L5c.start)" != 0 ] && [ "$(val L5a.end)" != 0 ] && [ "$(val L5b.end)" != 0 ] && ! lt "$(val L5c.start)" "${first_end}"; then
     ok "5. tải 40: gate nhỏ thứ ba chờ slot (không vượt 2 slot)"
@@ -190,9 +192,9 @@ load 40; stub_mode sleep; t8="$(now)"
   > "${TMP}/H8b.log" 2>&1 &
 echo $! > "${TMP}/H8b.pid"
 if started_in H8b 3.5; then bad "8b. thăm dò quá giờ mà gate vẫn được nhận"; else ok "8b. thăm dò quá giờ ⇒ gate chờ như việc nặng"; fi
-release_all
-if [ "$(val H8b.start)" != 0 ] && lt "$(val H8b.start)" "$(python3 -c "print(${t8} + 15)")"; then ok "8c. thăm dò bị cắt ở giới hạn (không treo 30 s)"
-else bad "8c. thăm dò không bị cắt ở LANE_LOCK_LIGHT_PROBE_S" "bắt đầu $(val H8b.start), gọi lúc ${t8}"; fi
+t8="$(now)"; release_all
+if [ "$(val H8b.start)" != 0 ] && lt "$(val H8b.start)" "$(python3 -c "print(${t8} + 10)")"; then ok "8c. thăm dò bị cắt ở giới hạn (không treo 30 s)"
+else bad "8c. thăm dò không bị cắt ở LANE_LOCK_LIGHT_PROBE_S" "bắt đầu $(val H8b.start), nhả tải lúc ${t8}"; fi
 stub_mode ok
 
 # 9. tải thấp: ca này kiểm stub không bị nạp (decide thật đo 0.9–1.2 s ngày 02/11, chỉ tốn khi tải buộc phải chờ)
@@ -216,6 +218,22 @@ if started_in H11 2.5; then bad "11a. nhánh 20 file đã commit (upstream == HE
 release_all
 on_branch small 3; load 40; gate L11 0.2 --run-tests --scoped
 if started_in L11 6; then ok "11b. nhánh 3 file đã commit: nhẹ, nhận ngay"; else bad "11b. nhánh 3 file đã commit vẫn chờ tải"; fi
+release_all
+# 11c. không có nhánh đích (chỉ develop + origin/develop): base @{upstream} như gate (upstream..HEAD của cây sạch), không phải HEAD
+#      (audit Antigravity 02/11 m2) — 20 file đã commit ⇒ nặng, chờ
+R3="${TMP}/r3"; mkdir -p "${R3}/src"; cp -R "${REPO}/kit" "${R3}/kit"
+G3() { git -C "${R3}" -c user.email=t@t -c user.name=t "$@"; }
+G3 init -q -b develop && G3 commit -q --allow-empty -m init && G3 update-ref refs/remotes/origin/develop HEAD \
+  && G3 remote add origin "${TMP}/nowhere3.git" && G3 config branch.develop.remote origin && G3 config branch.develop.merge refs/heads/develop \
+  || bad "11c. dựng fixture develop"
+i=0; while [ "${i}" -lt 20 ]; do echo "${i}" > "${R3}/src/d_${i}.sh"; i=$((i + 1)); done
+G3 add src && G3 commit -q -m twenty || bad "11c. commit 20 file"
+load 40
+( cd "${R3}" && JOB_P="${TMP}/H11c" JOB_DUR=0.2 exec python3 "${LL_PY}" H11c -- python3 "${R3}/kit/bin/post-fix-gate.py" --run-tests --scoped ) \
+  > "${TMP}/H11c.log" 2>&1 &
+echo $! > "${TMP}/H11c.pid"
+if started_in H11c 2.5; then bad "11c. không nhánh đích: 20 file đã commit bị xếp nhẹ (base HEAD)" "$(tr '\n' ' ' < "${TMP}/H11c.log" | cut -c1-200)"
+else ok "11c. không nhánh đích: base @{upstream} ⇒ 20 file ⇒ nặng, chờ"; fi
 release_all
 
 # 12. ma trận: file JSON hỏng ⇒ nặng; luật Gradle khớp file đổi ⇒ nặng (heavy_slot.classify, bản của lane_lock khi kit gate thiếu)
@@ -245,13 +263,14 @@ no = [["python3", g, "--scoped"], ["python3", g, "--run-tests", "--scoped", "--f
       ["python3", g, "--run-tests", "--scoped", "--matrix", "m.json"], ["python3", g, "--run-tests", "--scoped", "--since", "HEAD~1"],
       ["python3", g, "--run-tests", "--scoped", "--timeout"], ["python3", g, "--run-tests=1", "--scoped"], ["python3", "-u", g, "--run-tests", "--scoped"],
       ["env", "GIT_DIR=/y", "python3", g, "--run-tests", "--scoped"], ["bash", "-c", "python3 %s --run-tests --scoped" % g],
-      ["python3", "/x/post-fix-gate.sh", "--run-tests", "--scoped"], ["python3", g, "--run-tests", "--scoped", "extra"]]
+      ["python3", "/x/post-fix-gate.sh", "--run-tests", "--scoped"], ["python3", g, "--run-tests", "--scoped", "extra"],
+      ["python3", g, "--run-tests", "--scoped", "--diff", "-x"], ["python3", g, "--run-tests", "--scoped", "--diff=--full"]]
 bad = [a for a in yes if m.gate_call(a) is None] + [a for a in no if m.gate_call(a) is not None]
 base = m.gate_call(yes[2])[1] if m.gate_call(yes[2]) else None
 if bad or base != "origin/main":
     print("sai:", bad, "base:", base); sys.exit(1)
 PY
-then ok "13. nhận dạng gate: 4 dạng nhận, 14 dạng từ chối (--full, viết tắt, --tree=, A..B, --matrix, GIT_DIR=, bash -c…)"
+then ok "13. nhận dạng gate: 4 dạng nhận, 16 dạng từ chối (--full, viết tắt, --tree=, A..B, --diff -x, --matrix, GIT_DIR=, bash -c…)"
 else bad "13. nhận dạng gate sai"; fi
 
 # 14. bộ thăm dò với post-fix-gate.py + scoped_gate.py THẬT của kit này (OCR 02/11): phân loại bằng hàm của gate, không chép lại
@@ -282,6 +301,48 @@ case "${v14b}" in "HEAVY 16 test"*) ok "14b. docs/tool.py là code theo needs_no
   *) bad "14b. docs/tool.py bị coi là tài liệu" "${v14b}" ;; esac
 echo '# x' > "${R2}/docs/readme.md"; v14c="$(probe)"; rm -f "${R2}/docs/readme.md"
 case "${v14c}" in "LIGHT "*) ok "14c. đối chứng: chỉ đổi tài liệu ⇒ nhẹ (${v14c})" ;; *) bad "14c. đổi tài liệu bị xếp nặng" "${v14c}" ;; esac
+
+# 14d–g (audit Antigravity 02/11 M1/M2): repo thật thứ hai, [core-smoke] 2 test (file không test riêng không tự thành nặng)
+#   d. ma trận chỉ THÊM rule Gradle (watch không khớp): gate chạy rule thêm vô điều kiện ⇒ nặng; d2. rule thêm nhẹ ⇒ vẫn nhẹ
+#   e. đúng lệnh runner kit có tiền tố shard ⇒ nhẹ   f. `run_impacted.sh --all` (bỏ danh sách scoped) ⇒ nặng   g. lệnh ghép `x; runner` ⇒ nặng
+R4="${TMP}/real4"; mkdir -p "${R4}/.agents" "${R4}/t" "${R4}/docs" "${R4}/kit" "${R4}/kitall" "${R4}/kitcmp"
+printf '[core-smoke]\nt/test_0.sh\nt/test_1.sh\n' > "${R4}/.agents/gate-core.txt"; printf 'exit 0\n' > "${R4}/t/test_0.sh"; printf 'exit 0\n' > "${R4}/t/test_1.sh"
+R4_RULES='{"component": "kit", "watch_files": ["kit/**"], "mandatory_regression_tests": [{"id": "K1", "command": "DEVKIT_IMPACTED_DIRS=gates bash kit/tests/run_impacted.sh"}]},
+{"component": "kitall", "watch_files": ["kitall/**"], "mandatory_regression_tests": [{"id": "K2", "command": "bash kit/tests/run_impacted.sh --all"}]},
+{"component": "kitcmp", "watch_files": ["kitcmp/**"], "mandatory_regression_tests": [{"id": "K3", "command": "./gradlew x; bash kit/tests/run_impacted.sh"}]}'
+base_matrix4() { printf '{"rules": [%s]}\n' "${R4_RULES}" > "${R4}/.agents/regression_matrix.active.json"; }
+base_matrix4
+printf '%s\n' '{"items": {}}' > "${R4}/.agents/regression_status.json"; echo base > "${R4}/kit/base.txt"
+git -C "${R4}" init -q && git -C "${R4}" add -A && git -C "${R4}" -c user.email=t@t -c user.name=t commit -q -m init \
+  && git -C "${R4}" update-ref refs/remotes/origin/main HEAD || bad "14d. dựng fixture repo thật thứ hai"
+probe4() { ( cd "${R4}" && python3 - "${LL_PY}" "${DEVKIT_DIR}/bin/post-fix-gate.py" <<'PY'
+import importlib.util as u, sys
+s = u.spec_from_file_location("lane_lock_t14d", sys.argv[1]); m = u.module_from_spec(s); s.loader.exec_module(m)
+light, why = m.light_job(["python3", sys.argv[2], "--run-tests", "--scoped", "--brief"])
+print(("LIGHT " if light else "HEAVY ") + why)
+PY
+) 2>&1 | tail -1; }
+add_rule() { printf '{"rules": [%s,\n{"component": "new", "watch_files": ["nomatch/**"], "mandatory_regression_tests": [{"id": "N1", "command": "%s"}]}]}\n' \
+  "${R4_RULES}" "$1" > "${R4}/.agents/regression_matrix.active.json"; }
+echo '# x' > "${R4}/docs/readme.md"
+add_rule "./gradlew assembleDebug"; v14d="$(probe4)"
+add_rule "true"; v14d2="$(probe4)"
+base_matrix4; rm -f "${R4}/docs/readme.md"
+case "${v14d}" in "HEAVY suite gradle:"*) ok "14d. rule Gradle chỉ-thêm (watch không khớp) ⇒ nặng (${v14d})" ;; *) bad "14d. rule chỉ-thêm bị bỏ sót" "${v14d}" ;; esac
+case "${v14d2}" in "LIGHT "*) ok "14d2. đối chứng: rule chỉ-thêm nhẹ ⇒ nhẹ (${v14d2})" ;; *) bad "14d2. rule chỉ-thêm nhẹ bị xếp nặng" "${v14d2}" ;; esac
+echo a > "${R4}/kit/a.txt"; v14e="$(probe4)"; rm -f "${R4}/kit/a.txt"
+echo a > "${R4}/kitall/a.txt"; v14f="$(probe4)"; rm -f "${R4}/kitall/a.txt"
+echo a > "${R4}/kitcmp/a.txt"; v14g="$(probe4)"; rm -f "${R4}/kitcmp/a.txt"
+case "${v14e}" in "LIGHT "*) ok "14e. đúng lệnh runner kit (tiền tố shard) ⇒ nhẹ (${v14e})" ;; *) bad "14e. runner kit scoped bị xếp nặng" "${v14e}" ;; esac
+case "${v14f}" in "HEAVY runner kit"*) ok "14f. run_impacted.sh --all ⇒ nặng (${v14f})" ;; *) bad "14f. runner --all bị coi là scoped" "${v14f}" ;; esac
+case "${v14g}" in "HEAVY "*) ok "14g. lệnh ghép chứa runner kit ⇒ nặng (${v14g})" ;; *) bad "14g. lệnh ghép chứa runner bị coi là scoped" "${v14g}" ;; esac
+
+# 15. test do decide chọn mà thân script gọi gradle ⇒ nặng (review Claude 02/11 P1-2: classify từng `bash <test>`, không chỉ đuôi .sh)
+ntests 1; printf './gradlew testDebugUnitTest\n' > "${REPO}/tests/test_0.sh"
+load 40; gate H15 0.2 --run-tests --scoped
+if started_in H15 2.5; then bad "15. test gọi gradle bị xếp nhẹ" "$(tr '\n' ' ' < "${TMP}/H15.log" | cut -c1-200)"
+else ok "15. test do decide chọn mà gọi gradle ⇒ nặng, chờ"; fi
+release_all; rm -f "${REPO}/tests/test_0.sh"; ntests 3
 
 # 10. không file khoá / marker mới: thư mục lane chỉ còn lane-1.lock, lane-2.lock; thư mục heavy_slot không có gì (gate_busy đếm gate-*.lock.held)
 left="$(cd "${LANE_LOCK_DIR}" && ls -A | tr '\n' ' ')"; heavy_left="$(ls -A "${SB_HEAVY_SLOT_DIR}" | tr '\n' ' ')"
