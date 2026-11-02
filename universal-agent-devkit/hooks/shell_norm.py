@@ -22,6 +22,7 @@ quotes …). What decides it lives here, once; each guard keeps its own verdict 
     program_cut): the shell runs what a program prints in a $( ), a redirect or a pipe.
 Standard library only. Loaded by the guards from their own directory (python3 -I keeps the project off sys.path).
 """
+import bisect
 import os
 import posixpath
 import re
@@ -443,6 +444,198 @@ def ansi_c_to_single(text, cut_at_nul=True):
     return "".join(out)
 
 
+def _lexer_quotes(text):
+    """(chỗ các \\ mà lex_words đọc trong nháy kép, các đoạn (đầu, cuối) '…' / $'…' ĐÃ ĐÓNG mà lex_words đọc là nháy đơn), cùng luật nháy của
+    ansi_c_to_single (\\ escape ngoài nháy đơn, $'…' sau dãy $ chẵn là một chuỗi, ' và " mở / đóng). _decoded không sửa gì trong một đoạn nháy
+    đơn đã đóng (plan_review T0001 v5, v6): shell ngoài đưa nguyên văn nó cho shell lồng (bash -c '…', eval '…'), guard tự giải mã nó ở tầng lồng.
+    Bỏ \\ của \\$ chỉ ở chỗ lexer đọc trong nháy kép: đó là chỗ shlex giữ \\ mà bash bỏ."""
+    dqbs, spans, i, n, q, dr, s0 = set(), [], 0, len(text), None, 0, 0
+    while i < n:
+        c = text[i]
+        if q != "\x27" and c == "\\" and i + 1 < n:
+            if q == "\x22":
+                dqbs.add(i)
+            i += 2; dr = 0; continue
+        if q is None and c == "$" and text.startswith("\x27", i + 1) and dr % 2 == 0:
+            j = i + 2
+            while j < n and text[j] != "\x27":
+                j += 2 if text[j] == "\\" else 1
+            if j < n:
+                spans.append((i, j))
+            i = j + 1; dr = 0; continue
+        if c == "\x27" and q is None:
+            q, s0 = c, i
+        elif c == "\x27" and q == c:
+            q = None
+            spans.append((s0, i))
+        elif c == "\x22" and q in (None, c):
+            q = None if q else c
+        dr = dr + 1 if c == "$" and q is None else 0
+        i += 1
+    return dqbs, spans
+
+
+_DQ_DOLLAR_QUOTE_TAIL = re.compile(r"(?:\\\\)*\\?[\x27\x22]")   # sau \$ trong "…": một nháy, có thể sau các cặp \\ và một \ lẻ (\$\"rm\")
+
+
+def _dollar_quotes(text, unescape, bash32=False, keep=(), mark=False, strict=False, lexq=None):
+    """Một lượt quét theo ngữ cảnh của shell (ngăn xếp như _join_outside_single_quotes, thêm backtick, ( ) trong $( ) và ${ }), dùng chung cho
+    locale_to_double và _decoded (#844):
+      - ngữ cảnh lệnh (ngoài nháy, $( … ), ( … ), `…`, ${ … }): $"…" bỏ $ thành "…" khi dãy $ ngay trước chẵn ($$"x" là PID rồi "x" thường);
+        '…' và thân $'…' (\\ escape trong đó) chép nguyên; \\ escape một ký tự. ${ … } lồng "…" và đọc $"q" là q cả khi nằm trong "…";
+        khi đó (dq_brace) \\$ vẫn theo quy tắc nháy kép như bên dưới, và ' là chữ (zsh, ksh) hay ghép cặp (bash32: bash 3.2, đo 02/11);
+      - trong "…": $(, ` và ${ mở ngữ cảnh mới; $"…" không giải mã (bash: "a$"b là a$b); unescape=True thì \\$ trước một nháy (\\$' \\$" \\$\\")
+        mất \\: shlex giữ \\ đó, bash bỏ, nên script của bash -c "\\$'rm' -rf ~" là $'rm' -rf ~. Bỏ \\ đó không đổi chỗ nháy đóng và không sinh
+        phép thế mới ($ trước nháy hay \\ trong "…" là chữ thường);
+      - $( và ${ sau một dãy $ lẻ: zsh và ksh đọc $$ là PID rồi ( / { chữ (mặc định), bash 3.2 vẫn ghép ngoặc (bash32, đo "$$(" và "$${"
+        thiếu nháy đóng). readings xét cả hai cách (_decoded).
+    Chỗ bỏ $ thứ m (đếm từ 0 theo thứ tự quét): m trong keep thì giữ $; mark=True thì ghi \\ue000m\\ue001 thay cho $ (để _decoded biết từ nào chứa nó).
+    strict=True: None khi lượt quét kết thúc còn nháy mở ("…", ${ } trong "…", '…' hay $'…' chưa đóng): chế độ này đọc nháy khác shell
+    ($( ( ` chưa đóng là văn bản dở, không phải lệch nháy)
+    (plan_review T0001 v5: "${x:-'"'}" của bash làm chế độ zsh lệch và sửa vào trong script bash -c '…' phía sau).
+    lexq (= _lexer_quotes(text), _decoded truyền): giữ $ của $"…" nằm trong một đoạn nháy đơn đã đóng của lexer; bỏ \\ chỉ ở chỗ lexer đọc trong "…".
+    # mở đầu từ ở ngữ cảnh lệnh: comment tới hết dòng, chép nguyên (nháy hay ${ trong comment của `…` / $( ) không làm lệch ngăn xếp)."""
+    dqbs, spans = lexq if lexq is not None else (_lexer_quotes(text) if unescape and "\\$" in text else ((), ()))
+    starts = [a for a, _ in spans]
+    out, i, n, stack, dr, m, unclosed = [], 0, len(text), [], 0, 0, False   # stack: "dq" "…", "sub" $( ), "par" ( ), "bt" `…`, "brace" / "dq_brace" ${ }; dr: dãy $ ngay trước i
+    wstart = True   # i mở được đầu từ (# ở đó là comment), như drop_comments: không sau \x, CR hay ` đóng (plan_review T0001 v7)
+    while i < n:
+        c, top = text[i], (stack[-1] if stack else None)
+        opens = bash32 or dr % 2 == 0
+        if c == "\\" and i + 1 < n:
+            if top in ("dq", "dq_brace") and unescape and i in dqbs and text[i + 1] == "$" and _DQ_DOLLAR_QUOTE_TAIL.match(text, i + 2):
+                out.append("$"); i += 2; dr = 0; wstart = False; continue
+            wstart = wstart and (top == "dq" or text[i + 1] == "\n")   # \<nl> nối dòng giữ trạng thái của ký tự trước nó
+            out.append(text[i:i + 2]); i += 2; dr = 0; continue
+        if c == "$" and opens and text.startswith("{", i + 1):
+            stack.append("dq_brace" if top in ("dq", "dq_brace") else "brace"); out.append("${"); i += 2; dr = 0; wstart = True; continue
+        if c == "$" and opens and text.startswith("(", i + 1):
+            stack.append("sub"); out.append("$("); i += 2; dr = 0; wstart = True; continue
+        if top == "dq":
+            if c == "\x22":
+                stack.pop()
+            elif c == "`":
+                stack.append("bt")
+            wstart = c == "`"
+            dr = dr + 1 if c == "$" else 0
+            out.append(c); i += 1; continue
+        if c == "$" and dr % 2 == 0 and text.startswith("\x22", i + 1):
+            k = bisect.bisect_right(starts, i) - 1
+            held = m in keep or (k >= 0 and spans[k][0] < i < spans[k][1])   # giữ $: van theo từng từ, hay trong '…' đã đóng của lexer
+            out.append("$" if held else "\ue000%d\ue001" % m if mark else "")   # bỏ $ (hay giữ / đánh dấu), " đọc tiếp như nháy mở thường
+            i += 1; dr = 0; m += 1; wstart = False; continue
+        if c == "#" and top not in ("brace", "dq_brace") and wstart:   # comment tới hết dòng; trong `…` tới trước ` đóng không escape
+            j, bt = i, "bt" in stack
+            while j < n and text[j] != "\n" and not (bt and text[j] == "`"):
+                j += 2 if bt and text[j] == "\\" and text[j + 1:j + 2] in ("\\", "`") else 1
+            j = min(j, n)
+            out.append(text[i:j]); i = j; dr = 0; wstart = True; continue
+        if (bash32 or top != "dq_brace") and (c == "\x27" or (c == "$" and dr % 2 == 0 and text.startswith("\x27", i + 1))):   # '…'; $'…' có \\ escape
+            j = i + (2 if c == "$" else 1)
+            while j < n and text[j] != "\x27":
+                j += 2 if (c == "$" and text[j] == "\\") else 1
+            unclosed = unclosed or j >= n
+            out.append(text[i:j + 1]); i = j + 1; dr = 0; wstart = False; continue
+        wstart = c in " \t\n;&|("   # CR không tách từ; ) } " và ` đóng nối vào từ trước
+        if c == "\x22":
+            stack.append("dq")
+        elif c == "}" and top in ("brace", "dq_brace"):
+            stack.pop()
+        elif c == "(" and top in ("sub", "par"):   # ( ) trong $( ): ) của nó không đóng $( ) sớm; ( trần trong ${ } hay `…` là chữ
+            stack.append("par")
+        elif c == ")" and top in ("sub", "par"):
+            stack.pop()
+        elif c == "`":
+            if "bt" in stack:   # ` không escape đóng khung `…` đang mở (shell ngoài cắt `…` ở ` đầu tiên)
+                del stack[stack.index("bt"):]
+            else:
+                stack.append("bt"); wstart = True
+        dr = dr + 1 if c == "$" else 0
+        out.append(c); i += 1
+    return None if strict and (unclosed or "dq" in stack or "dq_brace" in stack) else "".join(out)
+
+
+def locale_to_double(text):
+    """text với $ của mọi $"…" ở ngữ cảnh lệnh (ngoài nháy, trong $( ), ( ), `…`) bị bỏ: thành "…" thường (#844, lane r31quote). bash, sh và ksh
+    đọc $"rm" là rm (chuỗi locale, chính nó khi không có catalog), zsh và dash đọc $rm: guard lấy cách đọc chạy được. KHÔNG BAO GIỜ thành '…': thân
+    $"…" là chuỗi nháy kép, $( ) trong đó chạy (echo $"$(git reset --hard)"). Thân '…' / $'…' chép nguyên, nên gọi trước hay sau ansi_c_to_single
+    đều như nhau. Hàm public: shell_writes (lane T4) gọi sau ansi_c_to_single trước khi tách từ."""
+    return _dollar_quotes(text, False) if "$\x22" in text else text
+
+
+_OPS = set(";&|<>(){}!\n")
+_MARK = re.compile("\ue000(\\d+)\ue001")
+
+
+def _role(word):
+    """Vai trò guard đọc ở một từ của lex_words: 2 = cú pháp (rỗng, hay chỉ gồm ; & | < > ( ) { } ! xuống dòng: SEPARATORS của
+    block-dangerous-git.sh, { } mà hardware_safety_gate.sh đếm ở mọi chỗ), 1 = chuyển hướng (REDIRECT, đích là phần sau), 0 = chữ."""
+    return 2 if not word or set(word) <= _OPS else 1 if REDIRECT.match(word) else 0
+
+
+def _dropped(orig, word):
+    """True khi word là orig bỏ đi một số ký tự $ và \\ (không thêm, không đổi gì khác)."""
+    k = 0
+    for ch in orig:
+        if k < len(word) and word[k] == ch:
+            k += 1
+        elif ch not in "$\\":
+            return False
+    return k == len(word)
+
+
+def _same_shape(a, b):
+    """True khi lex_words tách a (bản giải mã) và b (văn bản gốc) thành cùng số từ, cùng vai trò (_role) từng chỗ, mỗi từ của a là từ của b chỉ
+    mất một số $ / \\ (_dropped); hay khi cả hai đều không tách được."""
+    def words(t):
+        try:
+            return lex_words(t)
+        except ValueError:
+            return None
+    wa, wb = words(a), words(b)
+    if wa is None or wb is None:
+        return wa is None and wb is None
+    return len(wa) == len(wb) and all(_role(x) == _role(y) and _dropped(y, x) for x, y in zip(wa, wb))
+
+
+def _decoded(text, bash32=False):
+    """Cách đọc THÊM của readings (không thay cách đọc cũ): $"…" thành "…" và \\$ trước nháy trong "…" thành $ (_dollar_quotes). text khi không đổi.
+    Van an toàn, để lệch nháy giữa bộ quét và shell chỉ có thể bỏ sót (như cách đọc cũ), không chặn nhầm:
+      - lượt quét không được kết thúc còn nháy mở (strict): chế độ quét đọc nháy khác shell thì không có cách đọc thêm;
+      - theo từng từ: chỗ $"…" nào đổi vai trò từ của nó (_role: "{" "(;" "|" "" thành cú pháp, ">x" thành chuyển hướng) thì giữ $ ở đó;
+      - không sửa gì trong một đoạn nháy đơn đã đóng của lex_words, bỏ \\ chỉ ở chỗ lex_words đọc trong nháy kép (_lexer_quotes): script nháy
+        đơn mà shell lồng nhận nguyên văn để tầng lồng tự giải mã;
+      - chưa xét được từng từ (văn bản có sẵn U+E000, hay lex_words không tách được) thì bản giải mã phải tách như text (_same_shape)."""
+    if "$\x22" not in text and "\\$" not in text:
+        return text
+    keep, checked, lexq = set(), False, _lexer_quotes(text)   # checked: đã xét từng từ (bỏ $ không đổi ranh giới từ, chỉ đổi vai trò một từ)
+    if "$\x22" in text and "\ue000" not in text:
+        marked = _dollar_quotes(text, False, bash32, mark=True, strict=True, lexq=lexq)
+        if marked is None:
+            return text
+        try:
+            words, checked = lex_words(marked), not dq_nested_quote(text)   # " lồng trong "$( )": hardware_safety_gate.sh tách thô (rm_walk)
+        except ValueError:
+            words = []
+        if not checked:   # cách tách thô của hai guard: bỏ nháy và \ (HW rm_walk, GG crude_words), GG còn lex_words từng dòng
+            words += [re.sub(r"[\\\x27\x22]", "", x) for x in re.split(r"\s+|([;&|()]+)", marked.replace("\n", " ; ")) if x and x.strip()]
+            for ln in marked.split("\n"):
+                if "\ue000" in ln:
+                    try:
+                        words.extend(lex_words(ln))
+                    except ValueError:   # dòng không tách được: từ của nó đã có ở cách tách thô trên
+                        continue
+        for w in words:
+            if "\ue000" in w and _role(_MARK.sub("", w)) != _role(_MARK.sub("$", w)):
+                keep.update(int(k) for k in _MARK.findall(w))
+    loc = _dollar_quotes(text, False, bash32, keep, strict=True, lexq=lexq)
+    if loc is None or not (loc == text or checked or _same_shape(loc, text)):
+        return text
+    if "\\$" in text:   # bỏ \\ chỉ ở chỗ cả bộ quét lẫn lex_words đọc trong nháy kép, lượt quét cân: không đổi ranh giới từ
+        return _dollar_quotes(text, True, bash32, keep, strict=True, lexq=lexq) or loc
+    return loc
+
+
 def lex_words(text):
     """The words of a command line as the guards read them, the ONE lexer of both: quotes removed, and ; & | ( ) and a NEWLINE outside quotes words of their
     own (a run of them is one word: &&, ;;, |<nl>), so a newline is a command separator by itself. A newline INSIDE quotes stays in its word exactly as typed.
@@ -576,6 +769,13 @@ def readings(text):
         uncut = ansi_c_to_single(t, cut_at_nul=False)
         if uncut != ansi_c_to_single(t) and uncut not in out and uncut not in extra:
             extra.append(uncut)
+    # #844: $"rm" (bash đọc là rm) và \$'rm' trong "…" (script bash -c "…" nhận $'rm') được đọc THÊM một lần đã giải mã (_decoded); chặn khi bất kỳ cách đọc nào chặn.
+    for t in out + extra:
+        # zsh / ksh và bash 3.2 ghép nháy khác nhau ở "${ }" và sau $$: cách đọc bash32 chỉ khi lượt quét (rẻ) của nó cân và khác lượt mặc định
+        b32 = ("$$" in t or "${" in t) and _dollar_quotes(t, True, True, mark=True, strict=True) not in (None, _dollar_quotes(t, True, False, mark=True, strict=True))
+        for dec in (_decoded(t), _decoded(t, bash32=True) if b32 else t):
+            if dec != t and dec not in out and dec not in extra:
+                extra.append(dec)
     return out + extra
 
 

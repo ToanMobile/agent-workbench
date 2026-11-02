@@ -1,11 +1,19 @@
 ---
 name: context-enricher
-description: Tự động phân tích, mở rộng và làm giàu ngữ cảnh từ câu prompt ngắn gọn hoặc ngôn ngữ tự nhiên của người dùng thành Hồ Sơ Kỹ Thuật Đầy Đủ 5 Chiều (5D Context Dossier). Tự động truy vết codebase graph, nạp ràng buộc của active profile, tra cứu bẫy mã nguồn lịch sử (instincts), và gắn các yêu cầu phi chức năng ngầm định (debounce, a11y >= 48dp, non-blocking main thread, mask PII, paired test oracle) trước khi viết code, đảm bảo đầu ra luôn đạt chất lượng 10/10 mà không cần người dùng phải prompt chi tiết.
+description: Dùng khi người dùng chỉ gõ prompt ngắn gọn hoặc ngôn ngữ tự nhiên, cần làm giàu ngữ cảnh thành Hồ Sơ Kỹ Thuật 5 Chiều (5D Context Dossier) trước khi viết code.
 ---
 
 # Autonomous Prompt Context & Intent Enrichment (Làm Giàu Ngữ Cảnh Tự Động)
 
 Kỹ năng này giải quyết triệt để vấn đề: **Người dùng chỉ gõ prompt ngắn gọn hoặc ngôn ngữ tự nhiên đời thường, nhưng hệ thống vẫn tự động suy luận và sinh ra kết quả xuất sắc đẳng cấp Senior mà không cần người dùng phải nhắc chi tiết từng quy chuẩn kỹ thuật.**
+
+## Phạm vi
+
+Tự động phân tích, mở rộng và làm giàu ngữ cảnh từ câu prompt ngắn gọn hoặc ngôn ngữ tự nhiên của người dùng
+thành Hồ Sơ Kỹ Thuật Đầy Đủ 5 Chiều (5D Context Dossier). Tự động truy vết codebase graph, nạp ràng buộc của
+active profile, tra cứu bẫy mã nguồn lịch sử (instincts), và gắn các yêu cầu phi chức năng ngầm định (debounce,
+a11y >= 48dp, non-blocking main thread, mask PII, paired test oracle) trước khi viết code, đảm bảo đầu ra luôn
+đạt chất lượng 10/10 mà không cần người dùng phải prompt chi tiết.
 
 ---
 

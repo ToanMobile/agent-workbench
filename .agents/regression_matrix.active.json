@@ -2881,6 +2881,61 @@
       ]
     },
     {
+      "component": "guard-push-742-split-a1",
+      "watch_files": [
+        "universal-agent-devkit/hooks/guard-protected-push.py",
+        "universal-agent-devkit/bin/push_gate.py",
+        "universal-agent-devkit/tests/gates/test_guard_protected_push_wrappers.sh",
+        "universal-agent-devkit/tests/gates/test_push_gate_devkit_no_matrix.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-742-A1-GUARD-PUSH-WRAPPERS-01",
+          "name": "#742 tách A1 (critical scan 31/10, BUG-REV-gpp-*): guard-protected-push chặn force push lên main sau wrapper/keyword (time, nohup, nice, timeout, env -i, sudo -u, if/then, { }, !), trong bash -lc STR, sau --signed / --repo, sau comment có dấu nháy; đọc payload camelCase; config FIFO không treo hook; mỗi ca có đối chứng không force vẫn được phép",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_protected_push_wrappers.sh",
+          "parallel_safe": true
+        },
+        {
+          "id": "REG-742-A1-PUSH-GATE-DEVKIT-NO-MATRIX-01",
+          "name": "#742 tách A1 (#482, BUG-REV-push-gate-own-check-devkit): push_gate.check() từ chối main checkout đã cài DevKit (.agents/devkit) mà mất ma trận hồi quy; repo chưa cài DevKit không ma trận vẫn qua",
+          "command": "bash universal-agent-devkit/tests/gates/test_push_gate_devkit_no_matrix.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-skill-description-budget",
+      "watch_files": [
+        ".claude/skills/*/SKILL.md",
+        "universal-agent-devkit/tests/verification/test_skill_description_budget.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-SKILL-DESC-BUDGET-01",
+          "name": "T0211: mọi description skill/command được liệt kê (kit skills, commands, .claude/skills) ≤ 300 byte UTF-8, không rỗng",
+          "command": "bash universal-agent-devkit/tests/verification/test_skill_description_budget.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
+      "component": "devkit-guard-nested-c-quotes",
+      "watch_files": [
+        "universal-agent-devkit/hooks/shell_norm.py",
+        "universal-agent-devkit/hooks/block-dangerous-git.sh",
+        "universal-agent-devkit/hooks/hardware_safety_gate.sh",
+        "universal-agent-devkit/tests/gates/test_guard_nested_c_quotes.sh"
+      ],
+      "mandatory_regression_tests": [
+        {
+          "id": "REG-DK-GUARD-NESTED-C-QUOTES-01",
+          "name": "#844: $\"…\" (locale) và \\$ trước nháy trong nháy kép của script bash -c / sh -c / eval được đọc thêm đã giải mã (không bao giờ thành '…'); corpus tìm kiếm rg/grep -E/git grep/sed vẫn qua",
+          "command": "bash universal-agent-devkit/tests/gates/test_guard_nested_c_quotes.sh",
+          "parallel_safe": true
+        }
+      ]
+    },
+    {
       "component": "super-board-review-plan-858",
       "watch_files": [
         ".claude/bin/super-board-review-plan.sh",
