@@ -45,6 +45,7 @@ ln -s "$ROOT/.claude/bin/super-board-merge-queue.sh" "$Q/super-board-merge-queue
 ln -s "$ROOT/.claude/bin/super-board-github-read.py" "$Q/super-board-github-read.py"
 ln -s "$ROOT/.claude/bin/super-board-approved-head.jq" "$Q/super-board-approved-head.jq"
 ln -s "$ROOT/.claude/bin/super-board-audit-check.py" "$Q/super-board-audit-check.py"
+ln -s "$ROOT/.claude/bin/super-board-ac-check.py" "$Q/super-board-ac-check.py"   # #531: merged-PR routing reads the sb:ac block
 QUEUE="$Q/super-board-merge-queue.sh"
 cat > "$Q/super-board-merge-train.sh" <<'SH'
 #!/usr/bin/env bash
@@ -94,6 +95,8 @@ if a[:2] == ['pr', 'list']:
     print(json.dumps(prs))
 elif a[:2] == ['pr', 'view'] and opt('--json') == 'comments':
     print(json.dumps({'comments': [{'authorAssociation': 'OWNER', 'body': 'approved-head:' + open(f'{F}/head-{num()}').read().strip()}]}))
+elif a[:2] == ['pr', 'view'] and opt('--json') == 'body,headRefOid':   # #531: PR body for the sb:ac check (no block = nothing unproven)
+    print(json.dumps({'body': '', 'headRefOid': 'a' * 40}))
 elif a[:2] == ['pr', 'view'] and 'state' in (opt('--json') or ''):
     n = num(); m = f'{F}/merged-{n}'
     if os.path.exists(f'{F}/state-broken-{n}'):
