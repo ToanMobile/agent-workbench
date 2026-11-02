@@ -91,4 +91,13 @@ grep -q 'no git common dir' "$TMP/e5.log" && grep -q 'inflight/merge.lock' "$TMP
   && ok "no git common dir: the gate keeps the per-checkout lock path and says so" \
   || fail "no-git fallback not reported: $(grep 'merge-gate' "$TMP/e5.log" | head -3 | tr '\n' '|')"
 
+# ── 6. <common dir>/super-board bị một FILE chiếm (như test_merge_gate_verify_log_outside.sh dựng): `mkdir -p` dưới set -e từng giết
+# gate (rc 1) trước khi lấy khoá. Gate phải giữ khoá theo checkout, nói ra, và chạy tiếp như cũ.
+rm -rf "$GCD/super-board" && : > "$GCD/super-board"
+gate "$WB" 6 --lock-timeout 5 >"$TMP/f6.log" 2>&1; rc=$?
+grep -q 'no git common dir' "$TMP/f6.log" && grep -q 'lock taken' "$TMP/f6.log" \
+  && ok "common-dir super-board occupied by a file: per-checkout lock, said, the gate goes on (rc=$rc)" \
+  || fail "common-dir super-board occupied by a file: gate died before the lock (rc=$rc): $(tail -2 "$TMP/f6.log" | tr '\n' '|')"
+rm -f "$GCD/super-board"
+
 echo "---"; [ "$FAILS" -eq 0 ] && { echo "PASS"; exit 0; } || { echo "FAIL ($FAILS)"; exit 1; }
